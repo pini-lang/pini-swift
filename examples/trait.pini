@@ -1,0 +1,21 @@
+; 特征 trait：类型可实现 trait，trait 可带默认实现（类型未覆盖时自动可用）
+; 运行：pini run examples/trait.pini
+; 预期：旺财
+; 类型层会校验「实现 trait 的类型满足其抽象方法约束」；运行时按需分发默认/覆盖实现。
+
+<可描述>
+    描述(self) -> (String,)
+        return "默认描述"
+
+(狗)
+    名字: String = "旺财"
+    实现: 可描述
+
+((狗))
+    描述|self() -> (String,)
+        return 名字
+
+main|func() -> ()
+    var d = 狗()
+    print(d.描述())
+    return

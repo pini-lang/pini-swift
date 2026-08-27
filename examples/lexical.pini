@@ -1,0 +1,35 @@
+; lexical.pini —— 演示 P1-3 词法补全：数值进制 / 科学计数 / 字符串转义 / 字符串插值
+; 数值：十进制 42 ／ 0xFF 十六 ／ 0b1010 二 ／ 0o17 八；1.5e3 科学计数
+; 转义：\n \t \r \0 \\ \"；插值："x=\(expr)"
+
+main|func() -> ()
+
+; 数值进制
+    var h = 0xFF
+    var b = 0b1010
+    var o = 0o17
+    print(h)
+    print(b)
+    print(o)
+
+; 科学计数
+    var s1 = 1.5e3
+    var s2 = 2e-2
+    var s3 = 3.0E+2
+    print(s1)
+    print(s2)
+    print(s3)
+
+; 字符串转义
+    print("line1\nline2\ttab")
+    print("backslash:\\ and quote:\"")
+
+; 字符串插值（\(expr)，Swift 风）
+    var name = "Pini"
+    var ver = 0.2
+    print("lang=\(name), version=\(ver)")
+    print("sum=\(1 + 2), half=\(10.0 / 4.0)")
+    print("nested array=\([1, 2, 3])")
+    print("mixed=\(name) has \(len(name)) chars")
+
+    return

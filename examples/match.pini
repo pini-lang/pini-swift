@@ -1,0 +1,27 @@
+; 模式匹配 match / case：标量、字面量、通配模式
+; 运行：pini run examples/match.pini
+; 预期：78.53975 / 12.0 / 6.0
+[形状]
+圆(F64,)
+矩形(F64, F64,)
+三角形(F64, F64,)
+
+计算面积|func(s: 形状,) -> (F64,)
+    match s:
+        case 圆(r,):
+            return 3.14159 * r * r
+        case 矩形(w, h,):
+            return w * h
+        case 三角形(b, h,):
+            return b * h / 2.0
+        case _:
+            return 0.0
+
+main|func() -> ()
+    var c = 圆(5.0,)
+    var r = 矩形(3.0, 4.0,)
+    var t = 三角形(3.0, 4.0,)
+    print(计算面积(c,))
+    print(计算面积(r,))
+    print(计算面积(t,))
+    return

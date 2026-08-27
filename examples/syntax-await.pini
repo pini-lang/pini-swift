@@ -1,0 +1,19 @@
+; 语法点 ②：wait 是「值级等待」——出现在表达式位置、就地取结果。
+;
+; 同步感来源：控制流自上而下、像顺序调用；并行来自 => 的【急切派发】
+;            （调用即返回运行中的 Future，任务此刻已并发推进），而非来自 join。
+
+慢|func(n: I32,) => (I32,)
+    sleep(30)
+    return ok(n)
+
+main|func() -> ()
+    var a = 慢(1)          ; 急切派发：a 此刻已并发推进
+    var b = 慢(2)
+    match wait a:            ; 在「需要结果」处就地等待，像同步取值
+        case ok(va): print(va)
+        case err(e): print(e)
+    match wait b:            ; 控制流仍是自上而下顺序可读
+        case ok(vb): print(vb)
+        case err(e): print(e)
+    return

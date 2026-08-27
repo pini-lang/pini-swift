@@ -1,0 +1,18 @@
+; Pini P1-5 基础 IO 演示
+; 运行：pini run examples/io.pini
+; 注意：SwiftPM 下须 --disable-sandbox 方可落盘写入文件
+
+main|func() -> ()
+    ; 1. 格式化输出：print 多参，空格连接各项 + 末尾换行（单参行为不变）
+    print("name:", "Pini", "v0.5")
+    print("sum:", 1, 2, 3)
+
+    ; 2. 文件写入 + 读取（非交互）
+    var path = "/tmp/pini-io-demo.txt"
+    writeFile(path, "hello from pini")
+    print(readFile(path))
+
+    ; 3. 标准输入（交互）：运行时从 stdin 读一行；取消下一行注释即可体验
+    ; print(readLine())
+
+    return

@@ -1,0 +1,9 @@
+; 多文件模块：跨文件共享同一模块命名空间（需以目录为入口运行）
+; 运行：pini run examples/multifile   （注意：传目录而非单文件）
+; 预期：5 / 25 / 0
+main|func() -> ()
+    var v = 向量()
+    print(add(2, 3))
+    print(square(add(2, 3)))
+    print(v.x)
+    return

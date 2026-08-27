@@ -1,0 +1,23 @@
+; 结构块 struct（值类型）：声明字段，构造实例、访问字段、调用自身方法
+; 运行：pini run examples/struct.pini
+; 预期：3.0 / 4.0 / 5.0
+; 运行：pini run examples/struct.pini
+; 预期输出：3.0、4.0、5.0（点(3,4) 到原点的距离）
+
+(点)
+x: F64 = 0.0
+y: F64 = 0.0
+
+
+((点))
+距离原点|self() -> (F64,)
+    return sqrt(self.x * self.x + self.y * self.y)
+
+main|func() -> ()
+    var p = 点()
+    p.x = 3.0
+    p.y = 4.0
+    print(p.x)
+    print(p.y)
+    print(p.距离原点())
+    return

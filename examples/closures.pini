@@ -1,0 +1,42 @@
+; closures.pini -- 阶段 B：LLVM 一等函数 + 闭包（捕获 / 高阶 / 具名函数作为值）
+; 运行：pini run examples/closures.pini
+;       pini run-llvm examples/closures.pini   （两端输出应一致）
+; 预期输出：
+; 36
+; 15
+; 105
+; 42
+; 49
+; 103
+
+; 高阶函数：把函数类型参数 f 应用于 x
+应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,)
+    return f(x)
+
+加倍|func(n: I32) -> (I32,)
+    return n * 2
+
+main|func() -> ()
+    ; 1) 闭包绑定 + 直接调用（无捕获）
+    var sq = func (n,) -> (I32,):
+        return n * n
+    print(sq(6))            ; 36
+
+    ; 2) 捕获：闭包按引用捕获外层变量 base（与解释器 currentEnv 共享语义一致）
+    var base = 10
+    var addBase = func (n,) -> (I32,):
+        return n + base
+    print(addBase(5))       ; 15
+    base = 100
+    print(addBase(5))       ; 105（引用捕获：后续修改对闭包可见）
+
+    ; 3) 高阶：具名函数作为值传递
+    print(应用(加倍, 21))    ; 42
+
+    ; 4) 高阶：闭包变量作为值传递
+    print(应用(sq, 7))       ; 49
+
+    ; 5) 高阶：直接匿名函数作为实参
+    print(应用(func (n,) -> (I32,): return n + 100, 3))   ; 103
+
+    return

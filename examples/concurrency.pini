@@ -1,0 +1,54 @@
+; P5 真并发活文档（立场 B 形态）：两个 `=>` 进程交错执行（真实并发，非「末尾才并行」）。
+; 运行：pini run examples/concurrency.pini
+; 预期：A / B 标记交错出现（如 A B A B …），证明两个 worker 任务同时推进；
+;      若某任务独占线程则不会出现交错。末尾打印 done 表示全部 join 完成、无死锁。
+;
+; 语义要点（Pini草稿.md（异步函数块））：
+;   `=>` 声明 = 调用即派发到 worker 线程，返回运行中的 Future（调用点零标记）。
+;   `wait` 前缀 = 同步阻塞 join（默认后端）；`await` 用于异步函数体内的挂起等待；
+;               二者均返回 Result<T, Error>（错误即数据，不抛出）；suspend 模式释放 OS 线程、精确恢复（见 spec 3.1 / ADR-012）。
+
+workerA|func() => ()
+    var i = 0
+    while i < 4:
+        print("A")
+        sleep(30)
+        i = i + 1
+    return
+
+workerB|func() => ()
+    var i = 0
+    while i < 4:
+        print("B")
+        sleep(30)
+        i = i + 1
+    return
+
+; 带返回值与错误的进程：正常路径 ok(v)，失败路径 err(Error("..."))
+compute|func(n: I32,) => (I32,)
+    if n < 0:
+        return err(Error("n 必须非负"))
+    return ok(n * 2)
+
+main|func() -> ()
+    var a = workerA()
+    var b = workerB()
+    wait a
+    wait b
+
+    var r = wait compute(21)
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+
+    var bad = wait compute(0 - 1)
+    match bad:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+
+    print("done")
+    return

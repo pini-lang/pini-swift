@@ -1,0 +1,20 @@
+; 引用类型 object：ARC 管理的引用语义
+; 运行：pini run examples/object.pini
+; 预期：3
+{计数对象}
+数值: I32 = 0
+
+{{计数对象}}
+增加|self() -> ()
+    self.数值 = self.数值 + 1
+    return
+获取值|self() -> (I32,)
+    return self.数值
+
+main|func() -> ()
+    let 计数器 = 计数对象()
+    计数器.增加()
+    计数器.增加()
+    计数器.增加()
+    print(计数器.获取值())
+    return

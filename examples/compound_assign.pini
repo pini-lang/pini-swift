@@ -1,0 +1,27 @@
+; 复合赋值：+= -= *= /= %= 等
+; 运行：pini run examples/compound_assign.pini
+; 预期：15 / 12 / 24 / 6 / 2 / 8 / 9 / 10 / 40 / 20
+main|func() -> ()
+    var x = 10
+    x += 5
+    print(x)
+    x -= 3
+    print(x)
+    x *= 2
+    print(x)
+    x /= 4
+    print(x)
+    x %= 4
+    print(x)
+    var b = 12
+    b &= 10
+    print(b)
+    b |= 1
+    print(b)
+    b ^= 3
+    print(b)
+    b <<= 2
+    print(b)
+    b >>= 1
+    print(b)
+    return

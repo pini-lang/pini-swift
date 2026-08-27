@@ -1,0 +1,24 @@
+; 并发聚合 joinAll：等待一组 Future 全部完成
+; 运行：pini run examples/concurrency-joinall.pini
+; 预期：[2, 4]
+;
+; 语义要点（与 concurrency.pini 同体系）：
+;   `=>` 声明 = 调用即派发到 worker 线程，返回运行中的 Future。
+;   `joinAll([a, b, ...])` = 把多个 Future 聚合成一个 Future，
+;       其结果为各任务 Result 的数组；用 `wait` 阻塞等待整体完成。
+
+任务|func(n: I32,) => (I32,)
+    sleep(20)
+    return ok(n * 2)
+
+main|func() -> ()
+    var a = 任务(1)
+    var b = 任务(2)
+    var all = joinAll([a, b])
+    var r = wait all
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# hooks/pre-commit — 校验提交者身份已在 GIT_WORKFLOW.md §2 注册（防名称弹跳）
+# 启用：git config core.hooksPath hooks
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+WF="$root/GIT_WORKFLOW.md"
+[ -f "$WF" ] || exit 0
+
+name="$(git config user.name || true)"
+email="$(git config user.email || true)"
+
+# 从注册表提取已登记的 user.name（第 3 列）与 user.email（第 4 列）
+# 表格数据行形如：| `human:winterarch` | 人 | WinterArch | winterarch@foxmail.com | ... |
+registered_names=()
+registered_emails=()
+while IFS= read -r row; do
+  IFS='|' read -ra cols <<< "$row"
+  n="$(echo "${cols[3]:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/`//g')"
+  e="$(echo "${cols[4]:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/`//g')"
+  [ -n "$n" ] && registered_names+=("$n")
+  [ -n "$e" ] && registered_emails+=("$e")
+done < <(grep -E '^\|[[:space:]]*`[a-zA-Z]+:[^`]*`[[:space:]]*\|' "$WF" || true)
+
+ok=1
+if ! printf '%s\n' "${registered_names[@]:-}" | grep -qx "$name"; then
+  echo "⛔ pre-commit: user.name=\"$name\" 未登记到 $WF 的 §2 注册表。" >&2
+  ok=0
+fi
+if ! printf '%s\n' "${registered_emails[@]:-}" | grep -qx "$email"; then
+  echo "⛔ pre-commit: user.email=\"$email\" 未登记到 $WF 的 §2 注册表。" >&2
+  ok=0
+fi
+
+if [ "$ok" -eq 0 ]; then
+  echo "   已登记身份 (user.name): ${registered_names[*]:-}" >&2
+  echo "   请先在该文件 §2 登记你的唯一 ID，并执行：" >&2
+  echo "     git config user.name \"<规范名>\" && git config user.email \"<规范邮箱>\"" >&2
+  exit 1
+fi
+
+# 注释风格门禁（pini-comment-style-guide.md §7；违规已清零 → block 模式）
+"$root/hooks/comment-lint.sh" || exit 1
+
+exit 0

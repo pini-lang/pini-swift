@@ -1,0 +1,19 @@
+; optional.pini -- 可选值 Optional：some 携带值、none 表示缺失，并用 match 解构
+; 运行：pini run examples/optional.pini
+; 预期输出：
+; 42
+; none
+main|func() -> ()
+    var a = Optional.some(42)
+    match a:
+        case some(v,):
+            print(v)
+        case none:
+            print("none")
+    var b = Optional.none
+    match b:
+        case some(v,):
+            print(v)
+        case none:
+            print("none")
+    return

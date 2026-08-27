@@ -1,0 +1,27 @@
+; 数组基础（LLVM 后端 / 解释器双后端可用）
+; 运行：pini run-llvm examples/array_basic.pini  （或 pini run）
+; 预期（双后端一致，剥离换行后）：20 3 world 3 true 3 b 10 7
+; 说明：#46-D D1 —— 数组以 opaque handle 经运行时 shim（@bk_array_*）承载；
+;       元素类型支持 I32 / F64 / Bool / String（装箱-raw 模型，任意宽度元素）。
+;       #46-D D1.5 —— 数组下标写 a[i]=v / 复合 a[i]+=k 双后端对齐（见末尾 w 演示）。
+;       注意：F64 因 LLVM printf %f 格式（2.500000 vs 2.5）与解释器存在已知浮点打印差异（G-IR-enum-print），
+;       其余类型（Int / Bool / String / 嵌套数组）双后端精确对齐。字典 / 集合见 examples/collections.pini。
+
+main|func() -> ()
+    let a = [10, 20, 30]
+    print(a[1])
+    print(len(a))
+    let s = ["hello", "world", "foo"]
+    print(s[1])
+    print(len(s))
+    let b = [true, false, true]
+    print(b[0])
+    print(len(b))
+    let m = [["a", "b"], ["c", "d"]]
+    print(m[0][1])
+    var w = [1, 2, 3]
+    w[0] = 10
+    w[1] += 5
+    print(w[0])
+    print(w[1])
+    return

@@ -1,0 +1,39 @@
+; 语法点：异步「传染性」的终点
+;
+; 在 Rust / JS / Kotlin 等语言里，`async` 是病毒式（contagious）的：
+;   只要函数体内 `await` 了一个异步调用，这个函数本身也必须声明为 `async`，
+;   否则编译不过。链条一路向上传染，直到被运行时（main）兜底打断。
+;
+; Pini 不同：`=>` 只标记「被调用方是异步的」，而 `wait`/`await` 是「值级等待」，
+; 任何函数——无论自己有没有 `=>`——都能用 `wait`/`await` 去拿到结果。
+; 因此「传染性」在这里的终点是「你写下 `wait`/`await` 的那一行」，
+; 不必把每个调用者都标成 `=>`，也不必一路传染到 main。
+;
+; 本例刻意让 main 是「普通同步函数」（无 `=>`），却用 `wait` 把整条异步链落地，
+; 以展示：async 的传染性在 Pini 里是可以「中途就地截断」的。
+
+; —— 真正并发的末端服务（标 `=>`）——
+fetchPrice|func(id: I32,) => (I32,)
+    sleep(100)
+    return ok(id * 10)              ; => 体必须 ok/err 包裹（errors-as-data）
+
+; —— 中间编排层：自身 `=>`，内部 `await`/`wait` 等待子任务 ——
+aggregate|func() => (I32,)
+    var a = await fetchPrice(1)        ; 在此 await，得到 Result
+    match a:
+        case ok(v):
+            return ok(v)
+        case err(e):
+            return ok(0)
+
+; —— 终点：一个「普通同步」函数，没有 `=>` ——
+; 它用 `wait` 把上面的异步链落地。传染到此为止，
+; 不需要把 main 也写成 `main|func() => ()`。
+main|func() -> ()
+    var r = wait aggregate()          ; 异步传染的终点：非 async 函数也能等待
+    match r:
+        case ok(v):
+            print(v)                    ; 预期打印 10
+        case err(e):
+            print("err")
+    return

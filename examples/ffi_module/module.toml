@@ -1,0 +1,16 @@
+# FFI & unsafe 模块清单（ADR-015 / ADR-017，spec 2.7）
+# 本目录含 module.toml ⇒ CLI 将其视为一个「多文件模块」（ffimodule），而非独立文件集合。
+[package]
+name = "ffimodule"
+version = "0.1.0"
+
+# ── FFI 配置（演示「配置点」）──
+# abi：全局唯一 ABI，默认 "C"；子模块不可覆盖（与模块级 ABI 决策一致）。
+# search_paths：库搜索路径，相对「本模块目录」解析（FileLoader.loadManifest 规一为绝对路径），
+#   与调用 cwd 解耦，故示例可在任意检出位置独立运行。这里指向同目录下的 vendored 依赖 lib/。
+# libs：需链接的库（LLVM 阶段拼接 -L/-l）；解释器经 dlsym 按块名解析，
+#   块名 [ffilib|foreign] ⇒ 搜索 libffilib.{dylib,so}（见 lib/ 目录，已随仓库提交）。
+[ffi]
+abi = "C"
+search_paths = ["lib"]
+libs = ["ffilib"]

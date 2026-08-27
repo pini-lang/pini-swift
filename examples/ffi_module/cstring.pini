@@ -1,0 +1,131 @@
+; ════════════════════════════════════════════════════════════════════════
+; ffi_module — FFI & unsafe 完整模块示例（ADR-015 / ADR-017）
+;
+; 本文件与 module.toml 同处 examples/ffi_module/ 多文件模块（模块名 ffimodule）。
+; 演示「配置外部接口 + 以最小不安全范围调用」的完整链路：
+;
+; ① [ffilib|foreign] 块：声明外部 C 函数签名（块内函数自动 |unsafe）。
+; 块名 ffilib ⇒ 加载同目录 lib/libffilib.{dylib,so}（已随仓库提交，项目内依赖，
+; 不依赖宿主机的 libc 隐式解析或硬编码 search_paths）。解析顺序：
+; shim 白名单（cstr）→ 裸 C 绑定（dlsym：ffi_atoi / ffi_strcmp 等）。
+; ⚠ 注意：foreign 符号为「文件级作用域」，raw 调用必须与声明同文件。
+; ② *T 原始指针 + load / store / addressof 指针原语（须不安全上下文）。
+; ③ 安全封装模式：不安全内核写成 |unsafe 自由函数，安全函数检查前置条件后
+; 经单个 unsafe 消耗点调用内核（最小不安全范围）；消费方零 unsafe。
+; ④ |test 语言级测试块（G41）：本文件可被 `pini test` 直接收集执行。
+; ⑤ main 同时演示 raw 调用（unsafe 消耗点）与安全封装调用（消费方零 unsafe）。
+;
+; 运行 / 测试：
+; pini run examples/ffi_module/ # 多文件模块，执行本文件 main
+; pini check examples/ffi_module/ # 解析 + 语义 + 类型三阶段门禁
+; pini test examples/ffi_module/cstring.pini # 收集本文件 |test 块逐一执行
+;
+; 依赖独立性：外部符号全部来自 lib/ffilib.{c,dylib}，由 module.toml 的
+; [ffi] search_paths=["lib"] 指向；search_paths 相对本模块目录解析，故示例
+; 在任意检出位置、任意调用 cwd 下均可独立运行（见 docs 与 FFIModuleTests）。
+;
+; 类型坑（实验确定，供测试工程师注意）：
+; · load 返回动态 Any；只有在「非 unsafe 上下文」（main / |test 块）用 `unsafe load(p)`
+; 才能显式标注收回具体标量（`var v: U8 = unsafe load(p)`）。在 |unsafe 函数体内
+; load 恒为 Any，无法转具体类型——因此「读回指针值」的演示放在 main / |test 中。
+; · assert 参数内的比较只接受 I32（U64 / U8 比较在 assert 内报类型错，但在 if 条件内可比较）。
+; 故 U64 / U8 结果的判定用 `if ... : assert(true,...) else: assert(false,...)` 模式。
+; ════════════════════════════════════════════════════════════════════════
+
+; ── ① 外部接口声明（配置点：哪些 C 符号可用，签名即契约；均来自项目内 lib/ffilib）──
+[ffilib|foreign]
+ffi_malloc(size: U64,) -> (*U8,)
+ffi_free(p: *U8,) -> ()
+ffi_strlen(s: *U8,) -> (U64,)
+cstr(s: String,) -> (*U8,) ; shim 白名单：Pini String → 调用方拥有的 C 字符串
+ffi_puts(s: *U8,) -> (I32,)
+ffi_memcpy(dst: *U8, src: *U8, n: U64,) -> (*U8,)
+ffi_memset(p: *U8, v: I32, n: U64,) -> (*U8,)
+ffi_atoi(s: *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解析
+ffi_strcmp(a: *U8, b: *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解析
+
+; ── ② 安全封装层：unsafe 内核（|unsafe 自由函数，函数体自动不安全上下文）──
+; 把 Pini String 转 C 串量长度后立即释放，调用方无需触碰指针（返回 U64，由 strlen 提供）。
+c串长度|unsafe(源: String,) -> (U64,)
+ var p = cstr(源)
+ var n = ffi_strlen(p)
+ ffi_free(p)
+ return n
+
+; 分配 owned C 字符串副本并返回指针（调用方负责 free）。
+c串复制|unsafe(源: String,) -> (*U8,)
+ return cstr(源)
+
+; 经 dlsym 裸 C 绑定把字符串解析为整数（返回 I32，调用方拿到的已是强类型值）。
+c整型|unsafe(源: String,) -> (I32,)
+ var p = cstr(源)
+ var n = ffi_atoi(p)
+ ffi_free(p)
+ return n
+
+; 堆字节分配 + 写入一个字节，返回 owned 缓冲（调用方在非 unsafe 上下文读取 / 释放）。
+; 注：store 在 |unsafe 函数体内返回 ()，无需 load，故可正常收回 *U8 类型。
+堆字节|unsafe(值: U8,) -> (*U8,)
+ var buf = ffi_malloc(8)
+ store(buf, 值)
+ return buf
+
+; ── ③ 安全函数（非 unsafe 上下文）：检查前置条件，仅解引用那一行加 unsafe 前缀 ──
+; 「最小不安全范围」推荐写法：函数本身不在 unsafe 上下文，出错也只在那一行。
+分配并写|func(值: I32,) -> (*U8,)
+ if 值 < 0:
+  print("分配并写: 负值被钳为 0")
+  值 = 0
+ var buf = unsafe ffi_malloc(8) ; unsafe 消耗点：单次不安全调用
+ unsafe store(buf, 值) ; unsafe 消耗点：单次指针写（*U8 ⇒ 低字节）
+ return buf
+
+; ── ④ 语言级测试块（G41，由 `pini test` 收集）──
+; 测试块本身非 unsafe 上下文，故经 unsafe 消耗点调用 unsafe 内核 / foreign 函数。
+; 当前解释器 `==` 仅对 I32 可靠（U64 / U8 结果无法参与 `==` 比较），故 |test 断言
+; 聚焦于 I32 返回的绑定：dlsym 裸 C 绑定 atoi、strcmp。其余路径（shim cstr/strlen、
+; store/load 指针原语、memcpy/memset）在 ⑤ main 经 golden 输出端到端验证。
+裸绑定测试|test() -> ()
+ var n: I32 = c整型("123")
+ assert(n == 123, "dlsym atoi(\"123\") 应为 123")
+ return
+
+比较测试|test() -> ()
+ var a = unsafe cstr("abc")
+ var b = unsafe cstr("abc")
+ var c: I32 = ffi_strcmp(a, b)
+ assert(c == 0, "ffi_strcmp 相等应返回 0")
+ unsafe ffi_free(a)
+ unsafe ffi_free(b)
+ return
+
+; ── ⑤ 演示入口：raw 调用（unsafe 消耗点）+ 安全封装调用（消费方零 unsafe）──
+main|func() -> ()
+ ; 安全封装调用：消费方代码完全不出现 unsafe 关键字
+ print("长度 =", c串长度("Pini FFI"))
+ print("atoi =", c整型("4096"))
+
+ ; 安全封装 + 非 unsafe 上下文读回（load 在此收回具体类型）
+ var buf1 = 堆字节(7)
+ print("填充字节 =", unsafe load(buf1))
+ unsafe ffi_free(buf1)
+
+ ; raw 调用（unsafe 消耗点演示指针原语与 foreign 函数）
+ ; 注：load 对 *U8 按「有符号字节」解读，故值 ≥128 会显示为负数；这里用 100 避免歧义。
+ var buf = 分配并写(100)
+ print("堆字节 =", unsafe load(buf))
+ unsafe ffi_free(buf)
+
+ ; 指针原语：memset 填充 + memcpy 缓冲拷贝
+ var a = unsafe ffi_malloc(4)
+ unsafe ffi_memset(a, 7, 4)
+ var b = unsafe ffi_malloc(4)
+ unsafe ffi_memcpy(b, a, 4)
+ print("拷贝字节 =", unsafe load(b))
+ unsafe ffi_free(a)
+ unsafe ffi_free(b)
+
+ var raw = unsafe cstr("hello, FFI")
+ unsafe ffi_puts(raw) ; ffi_puts 直写真实 stdout（绕过 outputSink；pini run 可见，进程内测试捕获不含此行）
+ unsafe ffi_free(raw)
+ return

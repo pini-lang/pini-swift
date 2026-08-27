@@ -1,0 +1,37 @@
+; 语法点 ④：=> 调用返回的是 Future【句柄】——一个普通值，可赋值、可传参。
+;            joinAll / joinWithin / cancel / detach / isCancel 都是「对这个句柄的操作」。
+;
+; 同步感来源：var f = slow() 就是一次普通赋值；之后对 f 的各种操作都是
+;            值上的函数调用，没有额外的并发关键字。
+
+slow|func() => (I32,)
+    sleep(50)
+    return ok(1)
+
+main|func() -> ()
+    ; 1) 句柄即普通值：赋值、传递都跟同步代码一样
+    var f = slow()
+
+    ; 2) 对句柄调用取消（含其派生子任务）
+    f.cancel()
+    var r = wait f
+    match r:
+        case ok(v): print(v)
+        case err(e):
+            if isCancel(e):
+                print("已被取消")      ; isCancel 是对错误值的判断
+            else:
+                print(e)
+
+    ; 3) 带超时的 join：超时归约为取消（仍是一个对句柄的函数调用）
+    var g = slow()
+    var r2 = joinWithin(g, 10)
+    match r2:
+        case ok(v): print(v)
+        case err(e):
+            if isCancel(e): print("已超时")
+
+    ; 4) fire-and-forget：detach 把句柄从父作用域剪枝，不消费结果（语句形式，任务 #13）
+    var h = slow()
+    detach h
+    return

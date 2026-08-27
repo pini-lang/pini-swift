@@ -1,0 +1,14 @@
+; 基准测试：紧凑 while 循环累加（循环 + 算术，无函数调用）
+; 解释器运行：pini run bench/bench_loop.pini
+; 预期输出：5000000
+compute|func() -> (I32,)
+    var i = 0
+    var sum = 0
+    while i < 5000000:
+        sum = sum + 1
+        i = i + 1
+    return sum
+
+main|func() -> ()
+    print(compute())
+    return

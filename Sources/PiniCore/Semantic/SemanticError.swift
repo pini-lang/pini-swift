@@ -1,0 +1,18 @@
+import Foundation
+
+/// 语义分析错误
+public enum SemanticError: Error, Equatable {
+ case undefinedVariable(name: String, location: SourceLocation)
+ case undefinedFunction(name: String, location: SourceLocation)
+ case undefinedType(name: String, location: SourceLocation)
+ case redeclaredSymbol(name: String, location: SourceLocation)
+ /// 跨文件可见性违规：引用了定义在其他文件中、且按 4 级可见性不可见的符号。
+ /// `definedIn` 为定义所在源文件，`level` 为该符号的可见性级别。
+ case inaccessibleSymbol(name: String, definedIn: String, level: VisibilityLevel, location: SourceLocation)
+ /// validated 匹配模式（由 match 通配子块触发）下，出现了非任何已知枚举 case 的模式名
+ ///（与同 match 内已解析的合法 case 并存时视为拼写错误）。`caseName` 为未识别的模式。
+ case unknownMatchCase(caseName: String, location: SourceLocation)
+ /// validated 匹配模式（由 match 通配子块触发）下，所有 case 映射到同一枚举但覆盖不全，
+ /// 且无通配子块/default 兜底。`missingCases` 为未覆盖的 case 名列表。
+ case nonExhaustiveMatch(missingCases: [String], location: SourceLocation)
+}

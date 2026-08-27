@@ -1,0 +1,59 @@
+; for-in 迭代（G36）—— 双后端（解释器 / LLVM JIT / AOT）可用
+; 运行：pini run examples/for.pini        （解释器）
+;        pini run-llvm examples/for.pini   （LLVM JIT）
+;        pini compile examples/for.pini    （LLVM AOT）
+; 预期（双后端一致，剥离换行后）：6 55 10 3 9 3 10
+; 说明：
+;   - 模式元组与集合元素一一对应绑定：数组/集合=1 字段、字典=2 字段 (k, v)。
+;   - `_` 占位忽略绑定（仅迭代次数）。
+;   - `step:` 与 `标签|控制流` 与 while 一致（break label 可跳出指定层，ADR-014）。
+;   - 嵌套集合迭代：数组元素为数组时，集合型模式变量每轮 body 末精确释放。
+
+main|func() -> ()
+    ; 1) 数组：单字段绑定元素值
+    var acc = 0
+    for (v,) in [1, 2, 3]:
+        acc = acc + v
+    print(acc)
+
+    ; 2) 字典：(k, v) 两字段一一对应
+    let ages = ["Alice": 30, "Bob": 25]
+    var total = 0
+    for (k, v,) in ages:
+        total = total + v
+    print(total)
+
+    ; 3) 集合：单字段绑定元素值
+    var ssum = 0
+    for (v,) in {2, 3, 5}:
+        ssum = ssum + v
+    print(ssum)
+
+    ; 4) `_` 占位忽略绑定（仅迭代次数）
+    var cnt = 0
+    for (_ ,) in [7, 8, 9]:
+        cnt = cnt + 1
+    print(cnt)
+
+    ; 5) step：每轮 body 后执行（与 while 一致）
+    var t = 0
+    for (v,) in [1, 2, 3]:
+        t = t + 1
+    step:
+        t = t + v
+    print(t)
+
+    ; 6) 标签|控制流 + break label（单层退出，ADR-014）
+    var s = 0
+    outer|for (v,) in [1, 2, 3, 4]:
+        if v == 3:
+            break outer
+        s = s + v
+    print(s)
+
+    ; 7) 嵌套集合迭代：数组元素为数组，集合型模式变量每轮 body 末精确释放
+    var nested = 0
+    for (row,) in [[1, 2], [3, 4]]:
+        nested = nested + row[0] + row[1]
+    print(nested)
+    return

@@ -1,0 +1,34 @@
+; 集合：数组 / 字典 / 集合、下标、len、嵌套、print 格式化
+; 运行：pini run examples/collections.pini
+; 预期：[1, 2, 3, 4, 5] / 1 / 5 / [[1, 2], [3, 4], [5, 6]] / 5 / {Alice: 30, Bob: 25, Carol: 41} / 25 / {2, 3, 5, 7, 11} / 5 / 3 / 5 / 7
+; 表达式位 [ ] = 数组或字典（元素含 : 即字典），{ } = 集合；行首 [ ]{ } 仍是块声明（靠行首消歧）
+; D3（#46-D）：LLVM 后端 print(容器) 现已逐字节对齐解释器——数组/字典/集合/嵌套/缺失键均一致输出
+
+main|func() -> ()
+; 数组
+    var nums = [1, 2, 3, 4, 5]
+    print(nums)
+    print(nums[0])
+    print(nums[4])
+
+; 嵌套数组
+    var matrix = [[1, 2], [3, 4], [5, 6]]
+    print(matrix)
+    print(matrix[2][0])
+
+; 字典（key: value）
+    var ages = ["Alice": 30, "Bob": 25, "Carol": 41]
+    print(ages)
+    print(ages["Bob"])
+
+; 集合（保序去重）
+    var primes = {2, 3, 3, 5, 7, 7, 11}
+    print(primes)
+
+; len 泛化到所有容器与字符串
+    print(len(nums))
+    print(len(ages))
+    print(len(primes))
+    print(len("Pini"))
+
+    return

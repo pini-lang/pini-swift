@@ -1,0 +1,28 @@
+import Foundation
+
+public enum ParserError: Error, Equatable {
+ case unexpectedToken(expected: String, actual: String, location: SourceLocation)
+ case expectedToken(token: String, location: SourceLocation)
+ case missingIndent(location: SourceLocation)
+ case missingDedent(location: SourceLocation)
+ case invalidDeclaration(reason: String, location: SourceLocation)
+ case invalidExpression(reason: String, location: SourceLocation)
+ case invalidStatement(reason: String, location: SourceLocation)
+ case invalidType(reason: String, location: SourceLocation)
+ case missingBlockBody(location: SourceLocation)
+ case missingBlockEnd(location: SourceLocation)
+ case invalidModifier(reason: String, location: SourceLocation)
+ case missingParameterName(location: SourceLocation)
+ case missingReturnType(location: SourceLocation)
+ case missingFieldName(location: SourceLocation)
+ case missingCaseName(location: SourceLocation)
+ case missingMethodName(location: SourceLocation)
+ case missingTraitName(location: SourceLocation)
+ case missingStructName(location: SourceLocation)
+ case missingObjectName(location: SourceLocation)
+ case missingEnumName(location: SourceLocation)
+ case missingGenericParam(location: SourceLocation)
+ case missingLabel(location: SourceLocation)
+ case unexpectedEOF(location: SourceLocation)
+ case methodDefaultAssumptionTerminated(location: SourceLocation)
+}

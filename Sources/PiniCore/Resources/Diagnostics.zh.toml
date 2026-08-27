@@ -1,0 +1,159 @@
+# Pini 诊断语言资源（zh，默认）
+# T1/T11（2026-08-24）：错误码 → 消息模板 / 建议模板。占位符 {param} 由错误 payload 填充
+# （参数名 = 错误 case 的关联值 label；无 label 的 case 走代码内兜底硬编码）。
+# 约定：append-only；本 TOML（en/zh 两份）为错误码权威映射（spec §2.6）。新增错误码只须登记
+# 此处；docs/diagnostic-codes.md 为派生的迟维护人类可读视图，可随后补登、非强制、不纳入门禁。
+
+[labels]
+lexer = "词法错误"
+parser = "语法错误"
+semantic = "语义错误"
+semanticWarning = "语义警告"
+type = "类型错误"
+runtime = "运行时错误"
+irgen = "IR 生成错误"
+io = "IO 错误"
+general = "错误"
+
+[E7-001]
+message = "未使用变量 '{name}'"
+suggestion = "删除它；若有意保留，加 `_` 前缀"
+
+[E2-001]
+message = "期望 {expected}，实际得到 {actual}"
+# E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。
+[E2-003]
+message = "缺少缩进"
+[E2-004]
+message = "缺少反缩进"
+[E2-005]
+message = "无效声明：{reason}"
+[E2-006]
+message = "无效表达式：{reason}"
+[E2-007]
+message = "无效语句：{reason}"
+[E2-008]
+message = "无效类型：{reason}"
+[E2-009]
+message = "缺少块体"
+[E2-010]
+message = "缺少块结束"
+[E2-011]
+message = "无效修饰符：{reason}"
+[E2-012]
+message = "缺少参数名"
+[E2-013]
+message = "缺少返回类型"
+[E2-014]
+message = "缺少字段名"
+[E2-015]
+message = "缺少 case 名"
+[E2-016]
+message = "缺少方法名"
+[E2-017]
+message = "缺少 trait 名"
+[E2-018]
+message = "缺少结构名"
+[E2-019]
+message = "缺少对象名"
+[E2-020]
+message = "缺少枚举名"
+[E2-021]
+message = "缺少泛型参数"
+[E2-022]
+message = "缺少标签"
+[E2-023]
+message = "意外到达文件末尾"
+[E2-024]
+message = "块内函数必须显式声明 self 修饰符（如 `方法名|self()` 或 `方法名|Self()`）"
+
+[E3-001]
+message = "未定义变量 '{name}'"
+suggestion = "你是想说 '{closest}' 吗？"
+[E3-002]
+message = "未定义函数 '{name}'"
+suggestion = "你是想说 '{closest}' 吗？"
+[E3-003]
+message = "未定义类型 '{name}'"
+suggestion = "你是想说 '{closest}' 吗？"
+[E3-004]
+message = "符号重复声明 '{name}'"
+[E3-005]
+message = "符号 '{name}'（{level}）定义于 '{definedIn}'，从当前文件不可见"
+[E3-006]
+message = "未知 match case '{caseName}'"
+[E3-007]
+message = "match 未穷尽覆盖枚举：缺少 case {missingCases}（需覆盖全部 case，或用 `case _:` 兜底）"
+
+[E4-001]
+message = "类型不匹配：期望 {expected}，实际得到 {got}"
+[E4-002]
+message = "未定义类型 '{name}'"
+[E4-003]
+message = "无法推断类型"
+[E4-004]
+message = "对类型 '{type}' 执行 '{op}' 无效"
+[E4-005]
+message = "参数数量不匹配：期望 {expected} 个，实际 {got} 个"
+[E4-006]
+message = "泛型 '{typeName}' 类型实参数量不匹配：期望 {expected}，实际 {got}"
+[E4-007]
+message = "类型 '{typeName}' 声明实现 trait '{traitName}' 但未提供抽象方法 '{methodName}'"
+[E4-008]
+message = "类型 '{typeName}' 实现 trait '{traitName}' 的方法 '{methodName}' 签名不符：{detail}"
+[E4-009]
+message = "类型 '{typeName}' 没有成员 '{memberName}'"
+[E4-010]
+message = "不能对 'let' 不可变变量 '{variableName}' 重新赋值"
+[E4-011]
+message = "符号 '{name}'（{level}）定义于 '{definedIn}'，从当前文件不可见"
+[E4-012]
+message = "字段 '{typeName}.{fieldName}' 为 type-private（仅 {typeName} 类型自身的方法可访问）"
+[E4-013]
+message = "不能把引用类型 '{typeName}' 传给并发进程 '{functionName}' 的形参 '{paramName}'：跨任务共享可变引用不安全。改传值类型（struct），或让 '{functionName}' 返回结果后用 `joinAll` 汇合"
+[E4-014]
+message = "枚举用例 '{caseName}' 的构造为位置式，不允许具名实参 '{label}:'（请改为位置实参，如 `{caseName}(值)`）"
+
+[E5-001]
+message = "未定义变量 '{name}'"
+suggestion = "你是想说 '{closest}' 吗？"
+[E5-002]
+message = "不可修改的变量 '{name}'"
+[E5-003]
+message = "类型不匹配：期望 {expected}，实际得到 {got}"
+[E5-004]
+message = "除以零"
+[E5-005]
+message = "索引越界"
+[E5-006]
+message = "无效操作：{reason}"
+[E5-007]
+message = "未找到 main 函数"
+[E5-008]
+message = "值不可调用"
+[E5-009]
+message = "参数数量不匹配：期望 {expected} 个，实际 {got} 个"
+[E5-010]
+message = "无法访问私有字段 '{typeName}.{fieldName}'：该字段为 type-private，仅 {typeName} 类型自身的方法可访问"
+[E5-011]
+message = "{reason}"
+[E5-012]
+message = "match 未穷尽：值 '{value}' 未匹配任何 case 且无 `case _:` 兜底"
+[E5-013]
+message = "断言失败：{message}"
+
+[E5-016]
+message = "FFI 库 '{library}' 未找到（已搜索：{searched}）"
+[E5-017]
+message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
+
+[E6-001]
+message = "不支持的类型 '{name}'"
+[E6-002]
+message = "不支持的表达式 '{kind}'"
+[E6-003]
+message = "不支持的语句 '{kind}'"
+[E6-004]
+message = "不支持的特性 '{feature}'"
+[E6-005]
+message = "类型不匹配：期望 '{expected}'，实际 '{got}'"

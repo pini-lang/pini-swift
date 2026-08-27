@@ -1,0 +1,24 @@
+; G40 LazyRef 懒加载引用语义示例（#46-E，2026-08-24 落地）
+; 运行：
+;   pini run examples/lazyref.pini       → 解释器
+;   pini run-llvm examples/lazyref.pini  → LLVM 后端
+; 预期（run，剥离换行后）：
+;   init
+;   42
+;   42
+; 语义要点：
+;   - LazyRef<T>(初始化闭包)：引用语义（复制共享同一 box），首访执行闭包并缓存，后续返回缓存
+;   - .value 同步阻塞获取（内部锁保证 once，多线程首访仅一个线程执行初始化）
+
+main|func() -> ()
+    var r = LazyRef<I32>(func () -> (I32,):
+        print("init")
+        return 42
+    )
+    ; 首次访问触发初始化（init 打印一次），后续返回缓存
+    print(r.value)
+    print(r.value)
+    ; 复制共享同一缓存（引用语义）
+    var s = r
+    print(s.value)
+    return

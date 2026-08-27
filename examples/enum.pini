@@ -1,0 +1,23 @@
+; 枚举 enum：带关联值的变体，实际构造并用 match 计算面积
+; 运行：pini run examples/enum.pini
+; 预期：12.56636 / 12.0
+; 运行：pini run examples/enum.pini
+; 预期输出：12.56636（圆 π·2²）与 12.0（矩形 3×4）
+
+[形状]
+圆(F64,)
+矩形(F64, F64,)
+
+面积|func(s: 形状,) -> (F64,)
+    match s:
+        case 圆(r,):
+            return 3.14159 * r * r
+        case 矩形(w, h,):
+            return w * h
+
+main|func() -> ()
+    let c = 圆(2.0,)
+    let r = 矩形(3.0, 4.0,)
+    print(面积(c))
+    print(面积(r))
+    return

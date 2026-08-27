@@ -1,0 +1,24 @@
+; 字典 / 集合（LLVM 后端 / 解释器双后端可用）—— #46-D D2
+; 运行：pini run-llvm examples/dict_set_d2.pini  （或 pini run）
+; 预期（双后端一致，剥离换行后）：25 3 26 99 5 3
+; 说明：字典经 opaque handle（%bk_dict*）+ 运行时 shim（@bk_dict_*）承载，键按 tag+字节内容比较
+;       （与 generateStringLiteral 不为相同文本复用全局解耦，字符串键跨构造/读取稳定）；集合同理
+;       （%bk_set* / @bk_set_*）。print(容器) 整体格式化见 D3。
+
+main|func() -> ()
+    ; 字典：构造 / 键读 / len
+    let ages = ["Alice": 30, "Bob": 25, "Carol": 41]
+    print(ages["Bob"])
+    print(len(ages))
+    ; 字典键写：既有键替换 + 新增键
+    var scores = ["x": 1, "y": 2]
+    scores["y"] = 26
+    scores["z"] = 99
+    print(scores["y"])
+    print(scores["z"])
+    ; 集合：保序去重 + len
+    let primes = {2, 3, 5, 7, 11}
+    print(len(primes))
+    let nums = {10, 20, 10, 30}
+    print(len(nums))
+    return

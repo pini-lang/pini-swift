@@ -1,0 +1,41 @@
+; optional-sugar.pini -- nil 关键字（= Optional.none 等效常量）、?T 可选类型糖（= Optional<T>）与 Optional 双向互通
+; 运行：pini run examples/optional-sugar.pini
+; 预期输出：
+; none
+; none
+; matched-nil
+; none
+; q-none
+; q-assign
+main|func() -> ()
+    ; nil 等价于 Optional.none（表达式位置）
+    var a = nil
+    match a:
+        case none:
+            print("none")
+    ; Optional.none 等价于 nil（match 模式位置可用 case nil:）
+    var b = Optional.none
+    match b:
+        case nil:
+            print("none")
+    ; 带类型注解的 nil
+    var c: Optional<I32> = nil
+    match c:
+        case nil:
+            print("matched-nil")
+    ; nil 与 Optional.none 同值（同一解释器路径）
+    var d: Optional<I32> = nil
+    match d:
+        case none:
+            print("none")
+    ; Phase 3：前缀 ?T 可选类型糖（= Optional<T>）
+    var e: ?I32 = nil
+    match e:
+        case nil:
+            print("q-none")
+    ; ?T 与 Optional<T> 同类型，可互相赋值
+    var f: Optional<I32> = e
+    match f:
+        case none:
+            print("q-assign")
+    return

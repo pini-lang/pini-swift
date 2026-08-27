@@ -1,0 +1,24 @@
+; 基准测试：试除法统计质数个数（嵌套循环 + 取模 + 分支）
+; 解释器运行：pini run bench/bench_primes.pini
+; 预期输出：9592
+isPrime|func(n: I32,) -> (I32,)
+    if n < 2:
+        return 0
+    var d = 2
+    while d * d <= n:
+        if n % d == 0:
+            return 0
+        d = d + 1
+    return 1
+
+compute|func() -> (I32,)
+    var count = 0
+    var i = 2
+    while i < 100000:
+        count = count + isPrime(i)
+        i = i + 1
+    return count
+
+main|func() -> ()
+    print(compute())
+    return

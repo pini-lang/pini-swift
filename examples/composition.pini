@@ -1,0 +1,36 @@
+; 内嵌组合：结构体内首行裸父类型名 = 嵌入父类型字段与方法 / 默认实现复用
+; 运行：pini run examples/composition.pini
+; 预期：2 / 1 / 默认
+(计数器)
+数值: I32 = 0
+标签: String = "默认"
+
+
+((计数器))
+增加|self() -> ()
+    self.数值 = self.数值 + 1
+    return
+
+描述|self() -> ()
+    print(self.标签)
+    return
+
+(倒计数)
+计数器
+步长: I32 = 1
+
+
+((倒计数))
+减少|self() -> ()
+    self.数值 = self.数值 - self.步长
+    return
+
+main|func() -> ()
+    let c = 倒计数()
+    c.增加()
+    c.增加()
+    print(c.数值)
+    c.减少()
+    print(c.数值)
+    c.描述()
+    return

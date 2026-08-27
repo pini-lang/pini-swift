@@ -1,0 +1,159 @@
+# Pini 诊断语言资源（en，默认语言）
+# T1/T11（2026-08-24）：错误码 → 消息模板 / 建议模板。占位符 {param} 由错误 payload 填充
+# （参数名 = 错误 case 的关联值 label；无 label 的单关联值 case 走代码内兜底英文硬编码）。
+# 约定：append-only；本 TOML（en/zh 两份）为错误码权威映射（spec §2.6）。新增错误码只须登记
+# 此处；docs/diagnostic-codes.md 为派生的迟维护人类可读视图，可随后补登、非强制、不纳入门禁。
+
+[labels]
+lexer = "Lexer Error"
+parser = "Parse Error"
+semantic = "Semantic Error"
+semanticWarning = "Semantic Warning"
+type = "Type Error"
+runtime = "Runtime Error"
+irgen = "IRGen Error"
+io = "IO Error"
+general = "Error"
+
+[E7-001]
+message = "unused variable '{name}'"
+suggestion = "remove it, or prefix with `_` if intentionally unused"
+
+[E2-001]
+message = "expected {expected}, got {actual}"
+# E2-002 expectedToken(token) 为单关联值 case（无法提取参数名），走英文硬编码兜底。
+[E2-003]
+message = "missing indent"
+[E2-004]
+message = "missing dedent"
+[E2-005]
+message = "invalid declaration: {reason}"
+[E2-006]
+message = "invalid expression: {reason}"
+[E2-007]
+message = "invalid statement: {reason}"
+[E2-008]
+message = "invalid type: {reason}"
+[E2-009]
+message = "missing block body"
+[E2-010]
+message = "missing block end"
+[E2-011]
+message = "invalid modifier: {reason}"
+[E2-012]
+message = "missing parameter name"
+[E2-013]
+message = "missing return type"
+[E2-014]
+message = "missing field name"
+[E2-015]
+message = "missing case name"
+[E2-016]
+message = "missing method name"
+[E2-017]
+message = "missing trait name"
+[E2-018]
+message = "missing struct name"
+[E2-019]
+message = "missing object name"
+[E2-020]
+message = "missing enum name"
+[E2-021]
+message = "missing generic parameter"
+[E2-022]
+message = "missing label"
+[E2-023]
+message = "unexpected end of file"
+[E2-024]
+message = "block-local function must declare self explicitly (e.g. `方法名|self()` or `方法名|Self()`)"
+
+[E3-001]
+message = "undefined variable '{name}'"
+suggestion = "Did you mean '{closest}'?"
+[E3-002]
+message = "undefined function '{name}'"
+suggestion = "Did you mean '{closest}'?"
+[E3-003]
+message = "undefined type '{name}'"
+suggestion = "Did you mean '{closest}'?"
+[E3-004]
+message = "redeclared symbol '{name}'"
+[E3-005]
+message = "symbol '{name}' ({level}) defined in '{definedIn}' is not visible from this file"
+[E3-006]
+message = "unknown match case '{caseName}'"
+[E3-007]
+message = "non-exhaustive match: missing case(s) {missingCases} (cover all cases or add `case _:`)"
+
+[E4-001]
+message = "type mismatch: expected {expected}, got {got}"
+[E4-002]
+message = "undefined type '{name}'"
+[E4-003]
+message = "cannot infer type"
+[E4-004]
+message = "invalid operation '{op}' on type '{type}'"
+[E4-005]
+message = "argument count mismatch: expected {expected} argument(s), got {got}"
+[E4-006]
+message = "generic '{typeName}' argument count mismatch: expected {expected}, got {got}"
+[E4-007]
+message = "type '{typeName}' declares trait '{traitName}' but does not provide abstract method '{methodName}'"
+[E4-008]
+message = "type '{typeName}' implements trait '{traitName}' method '{methodName}' with mismatched signature: {detail}"
+[E4-009]
+message = "type '{typeName}' has no member '{memberName}'"
+[E4-010]
+message = "cannot reassign to immutable 'let' variable '{variableName}'"
+[E4-011]
+message = "symbol '{name}' ({level}) defined in '{definedIn}' is not visible from this file"
+[E4-012]
+message = "field '{typeName}.{fieldName}' is type-private (only accessible within {typeName} methods)"
+[E4-013]
+message = "cannot pass reference type '{typeName}' to concurrent task '{functionName}' parameter '{paramName}': sharing mutable references across tasks is unsafe. Pass a value type (struct) or join results with `joinAll`"
+[E4-014]
+message = "enum case '{caseName}' is constructed positionally; named argument '{label}:' is not allowed (use positional arguments, e.g. `{caseName}(value)`)"
+
+[E5-001]
+message = "undefined variable '{name}'"
+suggestion = "Did you mean '{closest}'?"
+[E5-002]
+message = "cannot modify immutable variable '{name}'"
+[E5-003]
+message = "type mismatch: expected {expected}, got {got}"
+[E5-004]
+message = "division by zero"
+[E5-005]
+message = "index out of range"
+[E5-006]
+message = "invalid operation: {reason}"
+[E5-007]
+message = "main function not found"
+[E5-008]
+message = "value is not callable"
+[E5-009]
+message = "arity mismatch: expected {expected} argument(s), got {got}"
+[E5-010]
+message = "cannot access private field '{typeName}.{fieldName}': type-private, only accessible within {typeName} methods"
+[E5-011]
+message = "{reason}"
+[E5-012]
+message = "match not exhaustive: value '{value}' matched no case and has no `case _:` fallback"
+[E5-013]
+message = "assertion failed: {message}"
+
+[E5-016]
+message = "FFI library '{library}' not found (searched: {searched})"
+[E5-017]
+message = "symbol '{symbol}' not found in FFI library '{library}'"
+
+[E6-001]
+message = "unsupported type '{name}'"
+[E6-002]
+message = "unsupported expression '{kind}'"
+[E6-003]
+message = "unsupported statement '{kind}'"
+[E6-004]
+message = "unsupported feature '{feature}'"
+[E6-005]
+message = "type mismatch: expected '{expected}', got '{got}'"

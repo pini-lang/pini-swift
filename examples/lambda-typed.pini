@@ -1,0 +1,19 @@
+; lambda-typed.pini -- 匿名函数类型推断（spec G29：lambda 已统一为 func）
+; 演示：1) 变量绑定 func 靠运算符自底向上推断 (I32)->(I32)；
+;       2) 内联 func 体仅用参数名，靠调用点期望类型自顶向下推断；
+;       二者均可作为强类型函数参数通过静态 check。
+; 运行：pini run examples/lambda-typed.pini
+; 预期输出：
+; 6
+; 5
+; 10
+应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,)
+    return f(x)
+
+main|func() -> ()
+    var g = func (n,) -> (I32,):
+        return n + 1
+    print(应用(g, 5))                              ; 6：自底向上：n+1 推 n:I32, 返 I32
+    print(应用(func (n,) -> (I32,): return n, 5))      ; 5：内联 func 体只有 n，靠期望 (I32)->(I32) 定型
+    print(应用(func (n,) -> (I32,): return n * 2, 5))  ; 10：自底向上(n*2) + 期望类型双重确认
+    return

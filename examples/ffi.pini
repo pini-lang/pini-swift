@@ -1,0 +1,52 @@
+; Phase 2a（ADR-015 FFI）：FFI & unsafe 子系统示例（解释器优先，用户决策 D1）。
+;
+; 特性演示：
+;   1. `[libc|foreign]` 块声明外部 C 函数签名（块内函数自动视为 |unsafe）
+;   2. `unsafe <expr>` 不安全消耗点前缀
+;   3. `&x` 不安全取地址（解释器快照语义）
+;   4. `load` / `store` / `addressof` 指针原语
+;   5. `|unsafe` 自由函数（函数体自动处于不安全上下文）
+;   6. `*T` 指针类型与 C 兼容性约束（禁 object，ARC 隔离）
+;
+; 运行：pini run examples/ffi.pini
+
+[libc|foreign]
+malloc(size: U64,) -> (*U8,)
+free(p: *U8,) -> ()
+strlen(s: *U8,) -> (U64,)
+cstr(s: String,) -> (*U8,)
+puts(s: *U8,) -> (I32,)
+
+; |unsafe 自由函数：函数体自动处于不安全上下文，内部无需 unsafe 前缀
+量长度|unsafe(s: String,) -> (U64,)
+    var p = cstr(s)
+    var n = strlen(p)
+    free(p)
+    return n
+
+main|func() -> ()
+    ; 不安全消耗点：unsafe 前缀标记单次指针操作
+    var buf = unsafe malloc(64)
+
+    ; store/load 按指针元素类型写读
+    unsafe store(buf, 42)
+    print("buf = ", unsafe load(buf))
+    unsafe store(buf, 100)
+    print("buf = ", unsafe load(buf))
+
+    ; & 取地址（快照） + load/store 自洽
+    var x: I64 = 7
+    var px = unsafe &x
+    print("x = ", unsafe load(px))
+
+    ; |unsafe 函数 + foreign C 调用
+    var len = 量长度("hello")
+    print("len = ", len)
+
+    ; C 字符串输出
+    var s = unsafe cstr("hello, FFI")
+    unsafe puts(s)
+    unsafe free(s)
+
+    unsafe free(buf)
+    return

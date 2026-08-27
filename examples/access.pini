@@ -1,0 +1,22 @@
+; 访问：字段直接访问 + 方法访问（方法内通过 self 读取字段）
+; 运行：pini run examples/access.pini
+; 预期：秒表 / 60 / 60
+; 运行：pini run examples/access.pini
+; 预期输出：秒表、60、60（字段 周期 与方法 获取周期 读到同一值）
+
+(计数器)
+名称: String = "秒表"
+周期: I8 = 60
+步长: I32 = 1
+
+
+((计数器))
+获取周期|self() -> (I8,)
+    return self.周期
+
+main|func() -> ()
+    let c = 计数器()
+    print(c.名称)        ; 字段访问
+    print(c.周期)        ; 字段访问
+    print(c.获取周期())  ; 方法访问（内部读取同一字段）
+    return

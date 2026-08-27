@@ -1,0 +1,14 @@
+; 基准测试：递归斐波那契 fib(30)（函数调用密集）
+; 解释器运行：pini run bench/bench_fib.pini
+; 预期输出：832040
+fib|func(n: I32,) -> (I32,)
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+compute|func() -> (I32,)
+    return fib(30)
+
+main|func() -> ()
+    print(compute())
+    return

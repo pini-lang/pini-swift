@@ -1,0 +1,19 @@
+; 语法点 ③：wait 是【双义】的（位置消歧），类比 - 的 -x（前缀）与 a-b（中缀）：
+;   - 位于操作数起始位（前面没有左值）→ 前缀「join / 挂起 await」
+;   - 已取得左操作数              → 中缀「比较」
+; 同一个符号，靠「位置」消解歧义 —— 这是 Pini 并发语法最微妙的一点。
+
+fetch|func() => (I32,)
+    sleep(20)
+    return ok(7)
+
+main|func() -> ()
+    var f = fetch()
+    var joined = wait f       ; 前缀：wait f  = 阻塞等待，拿到 Result<I32>
+    var seven = 7
+    var cmp = seven <= 7    ; 中缀：seven <= 7 = 比较（得到 true）
+    print(cmp)
+    match joined:
+        case ok(v): print(v)    ; 打印 7
+        case err(e): print(e)
+    return

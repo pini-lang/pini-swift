@@ -1,0 +1,12 @@
+; 控制流 if / elif / else
+; 运行：pini run examples/control_if.pini
+; 预期：大于5
+main|func() -> ()
+    var x = 10
+    if x > 5:
+        print("大于5")
+    elif x == 5:
+        print("等于5")
+    else:
+        print("小于5")
+    return

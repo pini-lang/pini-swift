@@ -1,0 +1,51 @@
+; 集合值语义 / COW（写时复制）—— #46-D D4，双后端一致
+; 运行：pini run examples/cow.pini  （或 pini run-llvm examples/cow.pini）
+; 预期（双后端一致，剥离换行后）：
+;   [1, 2, 3] [99, 2, 3] {a: 1} {a: 9}
+;   [42, 2] [[1, 2]]
+;   [[99, 2], [3, 4]] [[1, 2], [3, 4]]
+;   [{k: 9}, {k: 2}] [{k: 1}, {k: 2}]
+;
+; 说明：数组 / 字典 / 集合是**值类型**——`var b = a` 之后写任一方，另一方不受影响。
+;   实现上不做立即深拷，而是共享底层存储 + 写时分裂（COW）：
+;   - 解释器：Swift 原生 Array/Dictionary 的 COW 直接给出该语义；
+;   - LLVM 后端：容器以不透明句柄承载，运行时维护显式 share count，
+;     codegen 在别名点补 share、在写路径捕获分裂后的新句柄并写回变量槽；
+;     嵌套写 `m[0][0] = v` 自顶向下逐层独占化，外层与内层各自分裂。
+
+main|func() -> ()
+    ; 1) 数组别名：写别名不影响源
+    var a = [1, 2, 3]
+    var b = a
+    b[0] = 99
+    print(a)
+    print(b)
+
+    ; 2) 字典别名：改写已有键同样分裂
+    var m = ["a": 1]
+    var n = m
+    n["a"] = 9
+    print(m)
+    print(n)
+
+    ; 3) 容器被放进另一个容器：外层持有的是当时的快照
+    var inner = [1, 2]
+    var outer = [inner]
+    inner[0] = 42
+    print(inner)
+    print(outer)
+
+    ; 4) 嵌套写：只改目标内层槽，别名的内层快照不受污染
+    var g = [[1, 2], [3, 4]]
+    var h = g
+    g[0][0] = 99
+    print(g)
+    print(h)
+
+    ; 5) 混合嵌套（数组套字典）同样递归分裂
+    var p = [["k": 1], ["k": 2]]
+    var q = p
+    p[0]["k"] = 9
+    print(p)
+    print(q)
+    return

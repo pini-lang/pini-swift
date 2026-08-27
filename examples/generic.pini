@@ -1,0 +1,23 @@
+; 泛型类型 generic type：盒<T> 真正持有并使用类型参数 T
+; 运行：pini run examples/generic.pini
+; 预期：7 / 泛型值
+; 运行：pini run examples/generic.pini
+; 预期输出：7（I32 盒）、泛型值（String 盒）
+
+(盒<T>)
+内容: T
+
+
+((盒<T>))
+取|self() -> (T,)
+    return self.内容
+
+main|func() -> ()
+    var h = 盒<I32>()
+    h.内容 = 7
+    print(h.取())
+
+    var s = 盒<String>()
+    s.内容 = "泛型值"
+    print(s.取())
+    return
