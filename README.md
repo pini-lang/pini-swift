@@ -285,13 +285,10 @@ swift test
 
 ## 📚 相关文档
 
-> 规范事实源以 [Pini 不完善规范 v0](./docs/pini-spec-v0.md) 为准；文档清单与事实源层级见 [项目规范](./docs/pini-project-spec.md)。
+> 语言级文档（规范/项目规范/注释风格/术语/ADR/路线图/诊断码/测试规范/CHANGELOG）已迁移至 **pini-meta** 仓库（语言级治理单一事实源，2026-08-28，见 ADR-018）。本仓库 docs/ 仅保留实现级文档。
 
-- [Pini 不完善规范 v0](./docs/pini-spec-v0.md) — 权威语言规范（单一事实源）；**形式文法 EBNF 在 spec 附录**（唯一载体）
-- [项目规范](./docs/pini-project-spec.md) — 项目目录结构约定（必需 / 可扩展 / 预留）
-- [演进路线图](./docs/pini-roadmap-next.md) — 路线图（Now/Next/Later + 草稿意图候选项 + 批次实施计划）
-- [诊断码目录](./docs/diagnostic-codes.md) — 诊断码与修复建议（派生视图；权威映射在 `Diagnostics.{en,zh}.toml`，见 spec）
-- [测试重构原则](./docs/test-refactoring-principles.md) — 强制测试规范（三要素 / 模板 / checklist）
+- pini-meta 仓库：pini-spec-v0.md（权威语言规范，单一事实源；**形式文法 EBNF 在 spec 附录**，唯一载体）／ pini-project-spec.md（项目目录结构约定）／ pini-comment-style-guide.md（注释风格，spec §7 治理）／ pini-glossary.toml（中英术语表）／ adr-index.md（ADR 登记表）／ pini-roadmap-next.md（演进路线图）／ diagnostic-codes.md（诊断码表，派生视图）／ test-refactoring-principles.md（测试规范，spec §6 治理）／ CHANGELOG.md（版本演进史）
+- 本仓库 docs/：issue-ffi-module-2026-08-27.md（实现级记录）
 
 ---
 
@@ -307,7 +304,7 @@ swift test
 > - **测试（v0.42.0）**：`\|test` 函数块 + `assert` 内建 + `pini test` 已落地；`.valueFuture` 已抛弃。
 > - **FFI（ADR-015，Phase 2a，Experimental）**：解释器端已落地——`foreign` 块经预注册原生函数表（`malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`）解析，未注册函数注册期报错；`&` 为**快照取址**（写回不更新原变量，与 LLVM 端真引用语义不同）；dlsym 动态符号解析与 LLVM 端 FFI 为后续阶段。见 `examples/ffi.pini`。
 
-更多待完善特性与已知缺口见 [Pini 不完善规范 v0](./docs/pini-spec-v0.md)。
+更多待完善特性与已知缺口见 pini-meta 仓库的 Pini 不完善规范 v0（语言级文档已迁移至 pini-meta，见上方相关文档）。
 
 ---
 
