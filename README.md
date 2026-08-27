@@ -304,7 +304,7 @@ swift test
 > - **测试（v0.42.0）**：`\|test` 函数块 + `assert` 内建 + `pini test` 已落地；`.valueFuture` 已抛弃。
 > - **FFI（ADR-015，Phase 2a，Experimental）**：解释器端已落地——`foreign` 块经预注册原生函数表（`malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`）解析，未注册函数注册期报错；`&` 为**快照取址**（写回不更新原变量，与 LLVM 端真引用语义不同）；dlsym 动态符号解析与 LLVM 端 FFI 为后续阶段。见 `examples/ffi.pini`。
 
-更多待完善特性与已知缺口见 [Pini 不完善规范 v0](./docs/pini-spec-v0.md)。
+更多待完善特性与已知缺口见 pini-meta 仓库的 Pini 不完善规范 v0（语言级文档已迁移至 pini-meta，见上方相关文档）。
 
 ---
 
