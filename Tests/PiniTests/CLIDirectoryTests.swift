@@ -261,4 +261,39 @@ final class CLIDirectoryTests: XCTestCase {
         let manifest = try FileLoader.loadManifest(directory: tmp)
         XCTAssertEqual(manifest?.name, "renamed")
     }
+
+    // MARK: - R5 点前缀路径不扫描
+
+    /// R5：点前缀路径组件不参与源码扫描。
+    /// 意图：R5（issue-pini-dir-namespace-2026-08-29）护栏——命名空间根 `.pini/` 本身以 `.pini`
+    /// 结尾，若无此规则，`hasSuffix(".pini")` 会把**目录 `.pini`** 当源文件去读
+    /// （实测报「The file ".pini" couldn't be opened」，症状离原因很远）。验证三点：
+    /// ① 嵌套在点目录下的 `.pini` 不被聚合；② 目录 `.pini` 自身不被当文件读（不抛错）；
+    /// ③ 正常源文件不受影响。
+    func testDotPrefixedPathsAreNotScanned() throws {
+        let tmp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_r5_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            atPath: tmp, withIntermediateDirectories: true, attributes: nil)
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+
+        // 正常源文件（应被聚合）。
+        try "main() -> ()\n    return\n".write(
+            toFile: (tmp as NSString).appendingPathComponent("main.pini"),
+            atomically: true, encoding: .utf8)
+        // 嵌套在命名空间根下的 .pini（不应被聚合）。
+        let nested = (tmp as NSString).appendingPathComponent(".pini/toolchain/host")
+        try FileManager.default.createDirectory(
+            atPath: nested, withIntermediateDirectories: true, attributes: nil)
+        try "nope() -> ()\n    return\n".write(
+            toFile: (nested as NSString).appendingPathComponent("buried.pini"),
+            atomically: true, encoding: .utf8)
+
+        let pkg = try FileLoader.loadDirectory(path: tmp)
+        XCTAssertEqual(pkg.fileUnits.count, 1,
+                       "只应聚合 main.pini；.pini/ 下的内容（含目录本身）不得进入扫描")
+        XCTAssertTrue(pkg.fileUnits.allSatisfy {
+            ($0.fileName as NSString).lastPathComponent == "main.pini"
+        })
+    }
 }
