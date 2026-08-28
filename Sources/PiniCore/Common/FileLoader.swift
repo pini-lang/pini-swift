@@ -35,7 +35,8 @@ public struct FileLoader {
  }
  var units: [FileUnit] = []
  for case let rel as String in enumerator {
- guard rel.hasSuffix(LangConfig.sourceSuffix), !rel.contains("__MACOSX") else { continue }
+ guard rel.hasSuffix(LangConfig.sourceSuffix), !rel.contains("__MACOSX"),
+       !FileLoader.isInsideDotPath(rel) else { continue }   // R5 点前缀不扫描
  if excludeEntries.contains(where: { rel == $0 || rel.hasPrefix($0 + "/") }) { continue }
  let full = (path as NSString).appendingPathComponent(rel)
  let source = try String(contentsOfFile: full, encoding: .utf8)
@@ -55,6 +56,23 @@ public struct FileLoader {
  /// 该目录会从「模块边界」退化为「普通文件」，其下源码被父模块扫入且**全程不报错**，
  /// 症状（"这目录的文件怎么被扫进去了"）离原因很远。
  public static let legacyManifestFileName = "module.toml"
+
+ /// R5（issue-pini-dir-namespace-2026-08-29）：点前缀路径组件不参与源码扫描。
+ ///
+ /// **只取 `.`，不取 `_`**——`_` 前缀在 Pini 是 package 级可见性语义，Go 的「工具不可见」
+ /// 语义不可照搬（照搬会撞车）。与 R1 正交：R1 切「另一个模块」，R5 切「不是源码」。
+ ///
+ /// 实现注：按**路径组件**判断（任一组件以 `.` 开头即整棵子树跳过），而非仅判断首段——
+ /// 嵌套的点目录（如 `src/.gen/x.pini`）同样要跳过。由于 `subpathsOfDirectory` 返回的
+ /// 相对路径无法区分「末段是文件还是目录」，以点开头的**文件**也一并跳过——这是 R5
+ /// 「目录不扫描」的**超集**，与意图一致（以点开头的东西本就不是给人写的模块源码）。
+ ///
+ /// ⚠ 这条规则的存在有实证理由：命名空间根 `.pini/` 本身以 `.pini` 结尾，
+ /// 若无此规则，`hasSuffix(LangConfig.sourceSuffix)` 会把**目录 `.pini`** 当源文件去读，
+ /// 报「The file ".pini" couldn't be opened」——症状离原因很远。
+ public static func isInsideDotPath(_ relativePath: String) -> Bool {
+     relativePath.split(separator: "/").contains { $0.hasPrefix(".") }
+ }
 
  /// 在目录中寻找并解析 `pini.toml`；不存在则返回 `nil`（隐式根模块兜底）。
  /// Phase 5 起为 CLI / 加载器识别「这是一个显式多文件模块」的唯一信号。

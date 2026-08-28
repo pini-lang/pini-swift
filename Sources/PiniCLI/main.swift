@@ -927,7 +927,7 @@ private func runModuleTests(moduleRoot: String, scopePath: String?) throws {
  var isDir: ObjCBool = false
  if FileManager.default.fileExists(atPath: sp, isDirectory: &isDir), isDir.boolValue {
  let files = try FileManager.default.subpathsOfDirectory(atPath: sp)
- .filter { $0.hasSuffix(LangConfig.sourceSuffix) && !$0.contains("__MACOSX") }
+ .filter { $0.hasSuffix(LangConfig.sourceSuffix) && !$0.contains("__MACOSX") && !FileLoader.isInsideDotPath($0) }   // R5 点前缀不扫描
  .sorted()
  for rel in files {
  let full = (sp as NSString).appendingPathComponent(rel)
@@ -1074,7 +1074,7 @@ func runCheckPath(_ path: String) {
  let files: [String]
  do {
  files = try fm.subpathsOfDirectory(atPath: path)
- .filter { $0.hasSuffix(LangConfig.sourceSuffix) && !$0.contains("__MACOSX") }
+ .filter { $0.hasSuffix(LangConfig.sourceSuffix) && !$0.contains("__MACOSX") && !FileLoader.isInsideDotPath($0) }   // R5 点前缀不扫描
  .filter { !isInsideNestedModule($0, root: path) }
  .sorted()
  } catch {
