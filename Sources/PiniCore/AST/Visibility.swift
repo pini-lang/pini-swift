@@ -71,7 +71,7 @@ public struct PackageSymbol: Equatable {
  /// - 不同文件仅 `package` / `public` 可见（private/internal 跨文件不可见）。
  ///
  /// 注：Phase 3 仅处理「同模块多文件」场景——一个 `Package` 内所有 `FileUnit`
- /// 同属一个模块（module.toml 边界锚定），故 `package` 级符号跨文件可见；
+ /// 同属一个模块（pini.toml 边界锚定），故 `package` 级符号跨文件可见；
  /// 跨模块（import/export）边界的 enforce 留待 P4 后续阶段（运行时 import 解析）。
  public func isVisible(from referencingFile: String) -> Bool {
  if referencingFile == fileName { return true }

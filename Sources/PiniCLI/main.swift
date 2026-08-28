@@ -596,8 +596,8 @@ func printHelp() {
  print(" version Print version information")
  print("")
  print("Directory / module mode:")
- print(" A directory containing module.toml is treated as one multi-file module.")
- print(" A directory without module.toml is checked file-by-file as independent programs.")
+ print(" A directory containing pini.toml is treated as one multi-file module.")
+ print(" A directory without pini.toml is checked file-by-file as independent programs.")
 }
 
 func printVersion() {
@@ -648,8 +648,8 @@ func runParseCommand(source: String, fileName: String) throws {
 
 /// P4 Phase 5：run 接收文件或目录。
 /// - 文件 → 单文件运行（零回归）。
-/// - 目录含 `module.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
-/// - 目录无 `module.toml` → 无法定位单一入口，报错（运行一组独立程序无意义）。
+/// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
+/// - 目录无 `pini.toml` → 无法定位单一入口，报错（运行一组独立程序无意义）。
 func runRunPath(_ path: String) {
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -674,7 +674,7 @@ func runRunPath(_ path: String) {
  printError(formatCLIError(error: error, source: nil)); exit(1)
  }
  guard let manifest = manifest else {
- printError("Error: 目录 '\(path)' 不含 module.toml，无法作为多文件模块运行。请运行单个 .pini 文件，或在该目录添加 module.toml。")
+ printError("Error: 目录 '\(path)' 不含 pini.toml，无法作为多文件模块运行。请运行单个 .pini 文件，或在该目录添加 pini.toml。")
  exit(1)
  }
  let pkg: Package
@@ -746,7 +746,7 @@ struct CLIDebugDriver: DebugDriver {
  }
 }
 
-/// 源码级调试入口（P7-4）：单 `.pini` 文件或含 `module.toml` 的目录/模块均可。
+/// 源码级调试入口（P7-4）：单 `.pini` 文件或含 `pini.toml` 的目录/模块均可。
 func runDebugPath(_ path: String) {
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -1018,9 +1018,9 @@ private func runSingleFileTests(path: String) throws {
 
 /// P4 Phase 5：check / build 接收文件或目录。
 /// - 文件 → 单文件收集式 check（零回归）。
-/// - 目录含 `module.toml` → 显式多文件模块，跨文件 analyze/check（首个错误即报，见 Phase 3/4）。
-/// - 目录无 `module.toml` → 视为一组**独立程序**，逐 `.pini` 独立 check；
-/// 跳过含自身 module.toml 的嵌套模块子目录（避免 examples/multifile 被当独立文件误报未定义符号）。
+/// - 目录含 `pini.toml` → 显式多文件模块，跨文件 analyze/check（首个错误即报，见 Phase 3/4）。
+/// - 目录无 `pini.toml` → 视为一组**独立程序**，逐 `.pini` 独立 check；
+/// 跳过含自身 pini.toml 的嵌套模块子目录（避免 examples/multifile 被当独立文件误报未定义符号）。
 func runCheckPath(_ path: String) {
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -1106,14 +1106,14 @@ func runCheckPath(_ path: String) {
  print("检查通过（\(files.count) 个独立文件）：\(path)")
 }
 
-/// 判断某 `.pini`（相对路径）是否位于「含自身 module.toml 的嵌套模块目录」内；
+/// 判断某 `.pini`（相对路径）是否位于「含自身 pini.toml 的嵌套模块目录」内；
 /// 若是则其归属该嵌套模块，父级目录的逐文件 check 应跳过，避免误报未定义符号。
 private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Bool {
  var dir = (root as NSString).appendingPathComponent(
  (relativeBkPath as NSString).deletingLastPathComponent)
  while dir != root {
  if FileManager.default.fileExists(
- atPath: (dir as NSString).appendingPathComponent("module.toml")) {
+ atPath: (dir as NSString).appendingPathComponent("pini.toml")) {
  return true
  }
  let parent = (dir as NSString).deletingLastPathComponent

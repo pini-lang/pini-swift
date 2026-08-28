@@ -15,7 +15,7 @@ import Foundation
 final class ModuleTestCollectionTests: XCTestCase {
 
     /// 建立临时模块夹具：
-    /// - module.toml：`[package] name=smoke` + `[build] exclude=["examples"]`；
+    /// - pini.toml：`[package] name=smoke` + `[build] exclude=["examples"]`；
     /// - src/lib.pini：`加` 助手函数（跨文件符号）；
     /// - tests/t1.pini：`|test` 调用 `加`（跨文件可见性验证点）；
     /// - examples/garbage.pini：**非法** Pini 文本（exclude 生效性验证点——进包即炸）。
@@ -54,7 +54,7 @@ final class ModuleTestCollectionTests: XCTestCase {
         """
         let garbage = "this is not valid pini !!! ==="
 
-        try manifest.write(toFile: root + "/module.toml", atomically: true, encoding: .utf8)
+        try manifest.write(toFile: root + "/pini.toml", atomically: true, encoding: .utf8)
         try lib.write(toFile: root + "/src/lib.pini", atomically: true, encoding: .utf8)
         try test1.write(toFile: root + "/tests/t1.pini", atomically: true, encoding: .utf8)
         try garbage.write(toFile: root + "/examples/garbage.pini", atomically: true, encoding: .utf8)

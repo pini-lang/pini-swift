@@ -8,8 +8,8 @@ import Foundation
 /// 同一组公共 API**——`FileLoader.loadManifest` / `loadDirectory` + 包级
 /// `SemanticAnalyzer.analyze(package:)` / `TypeChecker.check(package:)` / `Interpreter.run(package:)`——
 /// 覆盖两种目录语义：
-/// 1. 含 `module.toml` 的目录 = 显式多文件模块（跨文件符号解析 + 运行时链接）；
-/// 2. 无 `module.toml` 的目录 = 一组独立程序（逐文件 check，不合并命名空间）。
+/// 1. 含 `pini.toml` 的目录 = 显式多文件模块（跨文件符号解析 + 运行时链接）；
+/// 2. 无 `pini.toml` 的目录 = 一组独立程序（逐文件 check，不合并命名空间）。
 /// 这与 `main.swift` 的 `runCheckPath` / `runRunPath` 行为完全一致，可作为 CLI 目录路由的回归屏障。
 final class CLIDirectoryTests: XCTestCase {
 
@@ -49,14 +49,14 @@ final class CLIDirectoryTests: XCTestCase {
                       encoding: .utf8) ?? ""
     }
 
-    // MARK: - 模块模式（含 module.toml）
+    // MARK: - 模块模式（含 pini.toml）
 
     /// 验收：examples/multifile 作为多文件模块，check 通过且 run 完成跨文件运行时链接。
     /// 意图：验证 examples/multifile 作为显式多文件模块可加载（manifest 名 demo、聚合 2 个 .pini 单元），模块级 analyze/check 不抛错，run 完成跨文件链接并输出 5/25/0。
     func testMultiFileModuleCheckAndRun() throws {
         let dir = (packageRoot() as NSString).appendingPathComponent("examples/multifile")
         let manifest = try FileLoader.loadManifest(directory: dir)
-        XCTAssertNotNil(manifest, "examples/multifile 应含 module.toml")
+        XCTAssertNotNil(manifest, "examples/multifile 应含 pini.toml")
         XCTAssertEqual(manifest?.name, "demo")
 
         let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
@@ -93,7 +93,7 @@ final class CLIDirectoryTests: XCTestCase {
     func testPackageDemoConventionVisibility() throws {
         let dir = (packageRoot() as NSString).appendingPathComponent("examples/package-demo")
         let manifest = try FileLoader.loadManifest(directory: dir)
-        XCTAssertNotNil(manifest, "examples/package-demo 应含 module.toml")
+        XCTAssertNotNil(manifest, "examples/package-demo 应含 pini.toml")
         XCTAssertEqual(manifest?.name, "packagedemo")
 
         let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
@@ -128,9 +128,9 @@ final class CLIDirectoryTests: XCTestCase {
             atPath: tmp, withIntermediateDirectories: true, attributes: nil)
         defer { try? FileManager.default.removeItem(atPath: tmp) }
 
-        // module.toml 标记本目录为显式多文件模块。
+        // pini.toml 标记本目录为显式多文件模块。
         try "[package]\nname = \"demo\"\n".write(
-            toFile: (tmp as NSString).appendingPathComponent("module.toml"),
+            toFile: (tmp as NSString).appendingPathComponent("pini.toml"),
             atomically: true, encoding: .utf8)
         // lib.pini 声明 hard-private 函数；main.pini 跨文件调用它。
         try "_secret() -> ()\n    return\n".write(
@@ -169,11 +169,11 @@ final class CLIDirectoryTests: XCTestCase {
         XCTAssertTrue(isVisibilityError, "应报 inaccessibleSymbol，实际：\(String(describing: thrown))")
     }
 
-    // MARK: - 独立程序模式（无 module.toml）
+    // MARK: - 独立程序模式（无 pini.toml）
 
-    /// 验收：无 module.toml 的目录在 CLI 层被当作独立程序逐文件 check（不合并命名空间）。
+    /// 验收：无 pini.toml 的目录在 CLI 层被当作独立程序逐文件 check（不合并命名空间）。
     /// 用临时目录放两个互不依赖的单文件程序验证该分支不被误合并。
-    /// 意图：验证无 module.toml 的目录在 CLI 层按独立程序逐文件 check（不合并命名空间）——临时目录两个互不依赖的单文件程序各自语义/类型检查均无错误。
+    /// 意图：验证无 pini.toml 的目录在 CLI 层按独立程序逐文件 check（不合并命名空间）——临时目录两个互不依赖的单文件程序各自语义/类型检查均无错误。
     func testDirectoryWithoutManifestChecksEachFileIndependently() throws {
         let tmp = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("pini_cli_\(UUID().uuidString)")
@@ -215,5 +215,50 @@ final class CLIDirectoryTests: XCTestCase {
             module: mainUnit!.module)
         XCTAssertFalse(diags.isEmpty,
                        "main.pini 独立 check 应报跨文件未定义符号（add/square/向量）")
+    }
+
+    // MARK: - R8 清单改名护栏（module.toml → pini.toml）
+
+    /// 旧名 `module.toml` 必须抛错，**不得**静默当作「无清单」。
+    /// 意图：R8（issue-pini-dir-namespace-2026-08-29）护栏——清单文件名是 R1 判定模块边界的哨兵；
+    /// 硬切后若旧名被静默忽略，该目录会从「模块边界」退化为「普通文件」，其下源码被父模块扫入
+    /// 且全程不报错（症状离原因很远）。故命中旧名必须抛 `legacyManifestName`。
+    func testLegacyManifestNameThrowsInsteadOfDegradingSilently() throws {
+        let tmp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_legacy_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            atPath: tmp, withIntermediateDirectories: true, attributes: nil)
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+
+        // 仅放旧名清单，不放 pini.toml。
+        try "[package]\nname = \"legacy\"\n".write(
+            toFile: (tmp as NSString).appendingPathComponent("module.toml"),
+            atomically: true, encoding: .utf8)
+
+        var thrown: Error?
+        do { _ = try FileLoader.loadManifest(directory: tmp) } catch { thrown = error }
+        guard let err = thrown else {
+            return XCTFail("命中旧名 module.toml 应抛错，不得静默返回 nil")
+        }
+        guard case LoaderError.legacyManifestName = err else {
+            return XCTFail("应抛 legacyManifestName，实际：\(err)")
+        }
+    }
+
+    /// 对照：新名 `pini.toml` 存在时正常加载。
+    /// 意图：R8 正向护栏——新名清单应被正常识别为模块（防止上一测试的「必抛错」分支被写成恒真）。
+    func testNewManifestNameLoadsNormally() throws {
+        let tmp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_newname_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            atPath: tmp, withIntermediateDirectories: true, attributes: nil)
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+
+        try "[package]\nname = \"renamed\"\n".write(
+            toFile: (tmp as NSString).appendingPathComponent("pini.toml"),
+            atomically: true, encoding: .utf8)
+
+        let manifest = try FileLoader.loadManifest(directory: tmp)
+        XCTAssertEqual(manifest?.name, "renamed")
     }
 }

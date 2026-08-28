@@ -2,7 +2,7 @@
 //
 // 目的：让 FFI 示例不再依赖宿主机的隐式 libc 解析（`dlopen(nil)`）或写死的系统
 // search_paths（如 /opt/homebrew/lib、/usr/local/lib），从而可在任意检出位置、
-// 任意调用 cwd 下独立运行。`module.toml` 的 `[ffi] search_paths = ["lib"]` 会解析到
+// 任意调用 cwd 下独立运行。`pini.toml` 的 `[ffi] search_paths = ["lib"]` 会解析到
 // 本目录，loader 据此 `dlopen` 这里的 `libffilib.{dylib,so}`。
 //
 // 导出符号（薄封装，仅转发到 C 标准库，便于演示「配置 + 调用外来接口」链路）：

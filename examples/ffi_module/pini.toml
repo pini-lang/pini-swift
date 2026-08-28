@@ -1,5 +1,5 @@
 # FFI & unsafe 模块清单（ADR-015 / ADR-017，spec 2.7）
-# 本目录含 module.toml ⇒ CLI 将其视为一个「多文件模块」（ffimodule），而非独立文件集合。
+# 本目录含 pini.toml ⇒ CLI 将其视为一个「多文件模块」（ffimodule），而非独立文件集合。
 [package]
 name = "ffimodule"
 version = "0.1.0"

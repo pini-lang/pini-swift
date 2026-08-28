@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | B1 | dlsym 返回的 `*T` 指针 `elemType:nil`，导致 `store`/`load` 报「指针元素类型未知」(E5-006) | 解释器后端 | `Sources/PiniCore/Interpreter/ForeignThunk.swift`：从签名 `*T` 提取元素类型回填 `RawPointerValue` | 原 libc 版靠 native shim 白名单绕过，改 `ffi_*` 名字暴露；修复后 vendored lib 上 store/load 正常 |
 | B2 | `[ffi].search_paths` 按进程 cwd 解析，配置不随模块目录移动 | 加载器 | `Sources/PiniCore/Common/FileLoader.swift`：`loadManifest` 将非绝对项规一为相对模块目录的绝对路径 | 从 `/tmp` 等不同 cwd 运行 `pini run/test` 均定位到 vendored lib |
-| B3 | `pini test <单文件>` 不读所在目录 `module.toml` 的 ffi 配置，找不到 vendored lib | CLI | `Sources/PiniCLI/main.swift`：`runTestPath` 改为从单文件目录 `loadManifest` 并 `Interpreter(ffiConfig:)` | 单文件 `pini test examples/ffi_module/cstring.pini` 2 用例通过 |
+| B3 | `pini test <单文件>` 不读所在目录 `pini.toml` 的 ffi 配置，找不到 vendored lib | CLI | `Sources/PiniCLI/main.swift`：`runTestPath` 改为从单文件目录 `loadManifest` 并 `Interpreter(ffiConfig:)` | 单文件 `pini test examples/ffi_module/cstring.pini` 2 用例通过 |
 
 > 以上三项已随示例独立性改造在本会话内修复，`swift test` 全绿（FFIModuleTests 7 用例通过）。
 
