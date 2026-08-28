@@ -581,7 +581,7 @@ func printHelp() {
  print(" run <path> Run a Pini program (single .pini file or a directory/module)")
  print(" check <path> Type check a Pini program (file or directory/module)")
  print(" build <path> Type check (alias of check) a file or directory/module")
- print(" test <file.pini> Run all |test test blocks in a file (G41; assert-based)")
+ print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
  print(" parse <file.pini> Parse and print the AST")
  print(" tokens <file.pini> Print tokens from lexical analysis")
  print(" emit <file.pini> Emit LLVM IR (.ll) to stdout or -o file")
@@ -855,13 +855,135 @@ func runCheckCommand(source: String, fileName: String) throws {
  print("检查通过：\(fileName)")
 }
 
-/// #46-E G41（R1）：`pini test <file>` —— 收集顶级 `|test` 函数块逐一执行并汇总报告。
+/// #46-E G41（R1）：`pini test [path]` —— 收集顶级 `|test` 函数块逐一执行并汇总报告。
 ///
-/// 流程：语义/类型门禁（与 check 一致）→ 解析模块 → `Interpreter.runTests` 逐测试执行
-/// （参数注入零值，R4）→ 汇总通过/失败。
+/// G49（issue-tdd-module-blockers-2026-08-28）：收集单位 = 模块（回归 G41「收集所有 |test」原意）。
+/// - 无 `path`：收集当前目录所属模块根（向上定位清单），模块全量收集；
+/// - `path` 为目录：定位所属模块后，收集范围限定该目录；
+/// - `path` 为文件：定位所属模块后，收集范围限定该文件；
+/// - 显式 `path` 可加回 `[build] exclude` 排除目录（测试目标可检视排除区）；
+/// - 模块外单文件：保持单文件行为（向后兼容）。
+/// 语义/类型门禁：模块模式整包 analyze/check（与 check 目录模式一致）；失败退出码 1。
 /// 退出码：全部通过 0；存在失败测试 1；文件/解析/框架错误 2。
-func runTestPath(_ path: String) {
+func runTestPath(_ path: String?) {
  do {
+ // 无参：收集当前目录所属模块根
+ guard let path = path else {
+ let cwd = FileManager.default.currentDirectoryPath
+ guard let root = try FileLoader.locateModuleRoot(for: cwd) else {
+ printError("Error: \(cwd) 不属于任何模块（向上未找到清单）；请在模块内运行 `pini test`，或显式指定路径")
+ exit(1)
+ }
+ try runModuleTests(moduleRoot: root, scopePath: nil)
+ return
+ }
+
+ let abs = URL(fileURLWithPath: path).standardized.path
+ var isDir: ObjCBool = false
+ guard FileManager.default.fileExists(atPath: abs, isDirectory: &isDir) else {
+ printError("Error: 路径不存在：\(path)")
+ exit(1)
+ }
+
+ // 模块内（文件或目录）：模块模式
+ if let root = try FileLoader.locateModuleRoot(for: abs) {
+ try runModuleTests(moduleRoot: root, scopePath: abs)
+ return
+ }
+
+ if isDir.boolValue {
+ // 模块外目录：聚合为包后全量收集（隐式根模块兜底）
+ let pkg = try FileLoader.loadDirectory(path: abs)
+ try gateAndRunTests(pkg: pkg, scope: nil, scopeLabel: nil, ffiConfig: .default)
+ return
+ }
+
+ // 模块外单文件：单文件行为（G41 原语义，向后兼容）
+ try runSingleFileTests(path: abs)
+ } catch let err as SemanticError {
+ handleSemanticError(err); exit(1)
+ } catch let err as TypeError {
+ handleTypeError(err); exit(1)
+ } catch {
+ printError(formatCLIError(error: error, source: nil))
+ exit(2)
+ }
+}
+
+/// G49：模块模式测试——整包加载（`[build] exclude` 生效）+ 显式路径加回 + 收集范围限定。
+private func runModuleTests(moduleRoot: String, scopePath: String?) throws {
+ let manifest = try FileLoader.loadManifest(directory: moduleRoot)
+ var pkg = try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
+
+ var scope: ((String) -> Bool)? = nil
+ var scopeLabel: String? = nil
+ if let sp = scopePath {
+ // 收集范围限定显式路径（文件或目录）
+ scope = { $0 == sp || $0.hasPrefix(sp + "/") }
+ scopeLabel = sp
+ // 显式路径加回：若该路径下的源文件未进包（整体被 `[build] exclude` 排除），逐文件补载
+ let covered = pkg.fileUnits.contains { $0.fileName == sp || $0.fileName.hasPrefix(sp + "/") }
+ if !covered {
+ var isDir: ObjCBool = false
+ if FileManager.default.fileExists(atPath: sp, isDirectory: &isDir), isDir.boolValue {
+ let files = try FileManager.default.subpathsOfDirectory(atPath: sp)
+ .filter { $0.hasSuffix(LangConfig.sourceSuffix) && !$0.contains("__MACOSX") }
+ .sorted()
+ for rel in files {
+ let full = (sp as NSString).appendingPathComponent(rel)
+ let unit = try FileLoader.loadFile(path: full)
+ pkg = Package(name: pkg.name, fileUnits: pkg.fileUnits + unit.fileUnits)
+ }
+ } else {
+ let unit = try FileLoader.loadFile(path: sp)
+ pkg = Package(name: pkg.name, fileUnits: pkg.fileUnits + unit.fileUnits)
+ }
+ }
+ }
+
+ try gateAndRunTests(pkg: pkg, scope: scope, scopeLabel: scopeLabel,
+ ffiConfig: manifest?.ffi ?? .default)
+}
+
+/// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级 runTests → 汇总报告。
+private func gateAndRunTests(pkg: Package, scope: ((String) -> Bool)?, scopeLabel: String?,
+ ffiConfig: FFIConfig) throws {
+ do {
+ let analyzer = SemanticAnalyzer()
+ try analyzer.analyze(package: pkg)
+ let checker = TypeChecker()
+ try checker.check(package: pkg)
+ } catch let err as SemanticError {
+ handleSemanticError(err); exit(1)
+ } catch let err as TypeError {
+ handleTypeError(err); exit(1)
+ }
+
+ let interpreter = Interpreter(ffiConfig: ffiConfig)
+ let results = try interpreter.runTests(package: pkg, fileScope: scope)
+
+ if let label = scopeLabel {
+ print("测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件，范围 \(label)）")
+ } else {
+ print("测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件）")
+ }
+ var passed = 0, failed = 0
+ for r in results {
+ if r.passed {
+ passed += 1
+ print(" ✓ \(r.name)")
+ } else {
+ failed += 1
+ print(" ✗ \(r.name): \(r.message)")
+ }
+ }
+ if results.isEmpty { print(" （未找到 |test 测试函数）") }
+ print("结果: \(passed) 通过, \(failed) 失败")
+ if failed > 0 { exit(1) }
+}
+
+/// G41 原单文件语义（模块外单文件向后兼容路径）。
+private func runSingleFileTests(path: String) throws {
  let source = try readFile(path)
  let diagnostics = checkSingleFileDiagnostics(source: source, fileName: path)
  if !diagnostics.isEmpty {
@@ -872,7 +994,7 @@ func runTestPath(_ path: String) {
  let tokens = try lexer.tokenize()
  let parser = Parser(tokens: tokens, fileName: path)
  let module = try parser.parseModule()
- // Phase 2b（ADR-017）：单文件测试若位于含 module.toml 的模块内，加载其 `[ffi]` 配置，
+ // Phase 2b（ADR-017）：单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，
  // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
  let dir = (path as NSString).deletingLastPathComponent
  let manifest = try? FileLoader.loadManifest(directory: dir)
@@ -892,10 +1014,6 @@ func runTestPath(_ path: String) {
  if results.isEmpty { print(" （未找到 |test 测试函数）") }
  print("结果: \(passed) 通过, \(failed) 失败")
  if failed > 0 { exit(1) }
- } catch {
- printError(formatCLIError(error: error, source: nil))
- exit(2)
- }
 }
 
 /// P4 Phase 5：check / build 接收文件或目录。
@@ -1224,12 +1342,8 @@ case "check", "build":
  }
  runCheckPath(args[2])
 case "test":
- // #46-E G41（R1）：测试子命令——收集顶级 |test 函数块逐一执行（参数注入零值），汇总报告。
- guard args.count >= 3 else {
- printError("Error: test command requires a file path")
- exit(1)
- }
- runTestPath(args[2])
+ // #46-E G41（R1）/ G49：测试子命令——path 可选；无参 = 收集当前目录所属模块根。
+ runTestPath(args.count >= 3 ? args[2] : nil)
 case "emit":
  guard args.count >= 3 else {
  printError("Error: emit command requires a file path")

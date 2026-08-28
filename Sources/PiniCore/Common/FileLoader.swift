@@ -27,9 +27,16 @@ public struct FileLoader {
  guard let enumerator = fm.enumerator(atPath: path) else {
  throw LoaderError.cannotReadDirectory(path: path)
  }
+ // G49（issue-tdd-module-blockers-2026-08-28）：`[build] exclude` 显式排除——
+ // 被排除路径（目录前缀或全路径）从模块包加载中剔除，run/check/build/test 全目标统一生效。
+ let excludeEntries = (manifest?.buildExclude ?? []).map { (entry: String) -> String in
+ let trimmed = entry.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+ return trimmed.isEmpty ? entry : trimmed
+ }
  var units: [FileUnit] = []
  for case let rel as String in enumerator {
  guard rel.hasSuffix(LangConfig.sourceSuffix), !rel.contains("__MACOSX") else { continue }
+ if excludeEntries.contains(where: { rel == $0 || rel.hasPrefix($0 + "/") }) { continue }
  let full = (path as NSString).appendingPathComponent(rel)
  let source = try String(contentsOfFile: full, encoding: .utf8)
  units.append(try parseUnit(fileName: full, source: source))
@@ -58,7 +65,27 @@ public struct FileLoader {
  }
  let normalized = FFIConfig(abi: ffi.abi, searchPaths: resolved, libs: ffi.libs)
  return ModuleManifest(name: manifest.name, version: manifest.version,
- dependencies: manifest.dependencies, ffi: normalized)
+ dependencies: manifest.dependencies, ffi: normalized,
+ buildExclude: manifest.buildExclude)
+ }
+
+ /// G49（issue-tdd-module-blockers-2026-08-28）：自 `path`（文件或目录）向上定位所属模块根
+ /// （逐级寻找含合法 `module.toml` 的目录）；抵达文件系统根仍未见则返回 `nil`
+ /// （独立文件 / 目录语义）。清单非法（`invalidManifest`）向上抛出——坏清单不应被
+ /// 静默当作「无模块」。
+ public static func locateModuleRoot(for path: String) throws -> String? {
+ var isDir: ObjCBool = false
+ let start =
+ (FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue)
+ ? path
+ : (path as NSString).deletingLastPathComponent
+ var dir = URL(fileURLWithPath: start).standardized.path
+ while true {
+ if try loadManifest(directory: dir) != nil { return dir }
+ let parent = (dir as NSString).deletingLastPathComponent
+ if parent == dir { return nil }
+ dir = parent
+ }
  }
 
  // MARK: - 内部
@@ -119,12 +146,17 @@ public struct ModuleManifest: Equatable {
  public let dependencies: [String: String]
  /// Phase 2b（ADR-017）：`[ffi]` FFI 配置；无 `[ffi]` 表时为 `nil`（解释器回退 `FFIConfig.default`）。
  public let ffi: FFIConfig?
+ /// G49（issue-tdd-module-blockers-2026-08-28）：`[build] exclude`——模块包加载排除路径
+ /// （相对模块根；目录前缀匹配；`loadDirectory` 统一生效，`pini test` 显式路径可加回）。
+ public let buildExclude: [String]
 
- public init(name: String, version: String? = nil, dependencies: [String: String] = [:], ffi: FFIConfig? = nil) {
+ public init(name: String, version: String? = nil, dependencies: [String: String] = [:],
+ ffi: FFIConfig? = nil, buildExclude: [String] = []) {
  self.name = name
  self.version = version
  self.dependencies = dependencies
  self.ffi = ffi
+ self.buildExclude = buildExclude
  }
 }
 
@@ -166,6 +198,7 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
  var ffiAbi: String? = nil
  var ffiSearchPaths: [String] = []
  var ffiLibs: [String] = []
+ var buildExclude: [String] = []
 
  for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
  var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -192,6 +225,9 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
  if key == "abi" { ffiAbi = unquoted }
  else if key == "search_paths" { ffiSearchPaths = parseTOMLArray(value) }
  else if key == "libs" { ffiLibs = parseTOMLArray(value) }
+ case "build":
+ // G49（issue-tdd-module-blockers-2026-08-28）：[build] exclude 内联数组（相对模块根路径）。
+ if key == "exclude" { buildExclude = parseTOMLArray(value) }
  default:
  break
  }
@@ -203,7 +239,8 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
  let ffi: FFIConfig? = (ffiAbi != nil || !ffiSearchPaths.isEmpty || !ffiLibs.isEmpty)
  ? FFIConfig(abi: ffiAbi ?? "C", searchPaths: ffiSearchPaths, libs: ffiLibs)
  : nil
- return ModuleManifest(name: n, version: version, dependencies: dependencies, ffi: ffi)
+ return ModuleManifest(name: n, version: version, dependencies: dependencies, ffi: ffi,
+ buildExclude: buildExclude)
 }
 
 /// 解析 TOML 内联数组字面量 `["a", "b"]` / `[ "a" ]` → 字符串数组；非数组原样返回单元素。

@@ -174,19 +174,43 @@ public class Interpreter {
  var results: [TestRunResult] = []
  for decl in module.declarations {
  guard case .funcDecl(let f) = decl, f.modifiers.contains("test") else { continue }
+ results.append(executeCollectedTest(f))
+ }
+ return results
+ }
+
+ /// G49（issue-tdd-module-blockers-2026-08-28）：包级测试收集——`pini test [path]` 模块模式的
+ /// 运行时入口。注册包内**全部文件**声明（跨文件符号可见）后，仅执行 `fileScope` 命中的
+ /// 文件单元中的顶级 `|test`（`fileScope == nil` = 模块全量收集）。执行语义与
+ /// `runTests(module:)` 一致（参数注入零值、失败不中断）。
+ public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
+ registerBuiltins()
+ for unit in package.fileUnits {
+ try registerDecls(module: unit.module)
+ }
+ var results: [TestRunResult] = []
+ for unit in package.fileUnits {
+ if let scope = fileScope, !scope(unit.fileName) { continue }
+ for decl in unit.module.declarations {
+ guard case .funcDecl(let f) = decl, f.modifiers.contains("test") else { continue }
+ results.append(executeCollectedTest(f))
+ }
+ }
+ return results
+ }
+
+ /// 单个已收集 `|test` 函数的执行（注册查询 + 零值注入 + 失败捕获），G41/G49 共用。
+ private func executeCollectedTest(_ f: FuncDecl) -> TestRunResult {
  guard case .function(let fv)? = try? globalEnv.get(name: f.name) else {
- results.append(TestRunResult(name: f.name, passed: false, message: "测试函数未注册到全局环境"))
- continue
+ return TestRunResult(name: f.name, passed: false, message: "测试函数未注册到全局环境")
  }
  let args = f.params.map { zeroValueForTestParam($0) }
  do {
  _ = try callFunctionValue(fv, args: args)
- results.append(TestRunResult(name: f.name, passed: true, message: ""))
+ return TestRunResult(name: f.name, passed: true, message: "")
  } catch {
- results.append(TestRunResult(name: f.name, passed: false, message: "\(error)"))
+ return TestRunResult(name: f.name, passed: false, message: "\(error)")
  }
- }
- return results
  }
 
  /// R4 参数注入：按类型标注注入零值（无标注注入 null）。
