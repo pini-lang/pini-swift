@@ -1501,7 +1501,21 @@ public class Interpreter {
  let l = try evaluateExpression(left)
  let r = try evaluateExpression(right)
  return try evaluateBinaryOp(l, op, r)
- case .unary(let op, let operand, _):
+ case .unary(let op, let operand, let location):
+ if op == .forceUnwrap {
+ // 后缀强制解包 `!`：some(x) → x；none → trap（与严格枚举语义一致，强制取元素时越界即崩溃）。
+ let v = try evaluateExpression(operand)
+ guard case .enumValue(let ev) = v else {
+ throw RuntimeError.invalidOperation(reason: "强制解包 `!` 的操作数不是 Optional 值: \(v)", location: location)
+ }
+ if ev.caseName == "some", let inner = ev.associatedValues.first {
+ return inner
+ }
+ if ev.caseName == "none" {
+ throw RuntimeError.invalidOperation(reason: "强制解包 `!` 命中 Optional.none（元素不存在）", location: location)
+ }
+ throw RuntimeError.invalidOperation(reason: "强制解包 `!` 的操作数不是 Optional 值: \(v)", location: location)
+ }
  let v = try evaluateExpression(operand)
  return try evaluateUnaryOp(op, v)
  case .call(let callee, let arguments, let loc):

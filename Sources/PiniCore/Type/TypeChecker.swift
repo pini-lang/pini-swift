@@ -1397,7 +1397,33 @@ public final class TypeChecker {
  try checkExpression(right)
  try checkBinaryOperandTypes(left: left, op: op, right: right, location: location)
 
- case .unary(_, let operand, _):
+ case .unary(let op, let operand, let location):
+ if op == .forceUnwrap {
+ // 强制解包 `!` 仅在 unsafe 上下文可用（与 `&` 取地址同构）。
+ guard unsafeContextDepth > 0 else {
+ try report(TypeError.mismatch(
+ expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
+ got: "强制解包 `!` 出现在非 unsafe 上下文",
+ location: location
+ ))
+ return
+ }
+ try checkExpression(operand)
+ // 操作数须为 Optional<T>；可静态解析为具体非 Optional 类型时报错，不可推断（nil）时放行。
+ if let operandType = inference.infer(expression: operand) {
+ let isOptional: Bool
+ if case .generic(let name, _, _) = operandType { isOptional = (name == "Optional") }
+ else { isOptional = false }
+ if !isOptional {
+ try report(TypeError.mismatch(
+ expected: "Optional<T>",
+ got: operandType.describe(),
+ location: location
+ ))
+ }
+ }
+ return
+ }
  try checkExpression(operand)
 
  case .resultUnwrap(let operand, let location):

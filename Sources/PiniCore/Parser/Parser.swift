@@ -2929,6 +2929,16 @@ public class Parser {
  continue
  }
 
+ // 后缀强制解包 `!`：紧接 primary/后缀表达式（标识符、调用、成员、下标、元组位置…）之后。
+ // 与前缀逻辑非 `!` 同字符，按位置消歧——parseUnary 在操作数起始位消费前缀 `!`（→ .not），
+ // 此处仅在已取得左操作数后的后缀位消费 `!`（→ .forceUnwrap），如 `a[i]!`、`m[i]![j]`。
+ // `!=` 已被词法归并为单独 .notEqual token，故后缀位出现的 .logicalNot 必为强制解包。
+ if case .logicalNot(_) = currentToken {
+ advance()
+ result = Expression.unary(op: .forceUnwrap, operand: result, location: loc)
+ continue
+ }
+
  break
  }
 

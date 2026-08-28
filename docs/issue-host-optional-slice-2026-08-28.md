@@ -59,9 +59,30 @@ for subscript but provides no usable way to consume it.
 ## 修复范围（本分支已完成）
 
 `Sources/PiniCore/Interpreter/SubscriptStrategies.swift`：三处读策略（array / string / dictionary）越界返回
-`Optional.none`、界内返回 `Optional.some(value)`；`read`/`write` 入口对 `some(x)` 透明解包以支持嵌套下标
-`a[i][j]`（与 LLVM 裸元素行为对齐）。严格枚举语义：下标读**始终**是 `some(...)`/`none`，元素必须靠 `match`
-取出；复合赋值 `a[i] += k` 不再对下标读做值语境透明解包，须改写为 `match a[i]: case some(v): a[i] = v + k`。
+`Optional.none`、界内返回 `Optional.some(value)`。**严格枚举语义：下标读/写入口一律不做 `some(x)` → `x`
+透明解包**——此前的"透明解包后门"已回退（当初为支持 `a[i][j]` 隐式剥壳而加，属权宜且引入读/写二义，
+按设计讨论"涟漪1"推翻）。嵌套下标必须显式剥壳 `a[i]![j]!`（后缀 `!` 见下）或经 `match` 取内层后写回：
+`var row = unsafe a[i]!; row[j] = v; a[i] = row`。
+
+### 后缀 `!` 强制解包运算符（本分支新增）
+
+多维下标访问对强制解包提出了硬需求。设计要点（设计讨论"涟漪2/3"修正后落地）：
+
+- **两种 `!` 身份消歧**：前缀 `!` = 逻辑取反 `logicalNot`；后缀 `!` = 强制解包 `forceUnwrap`。因 `!=` 已被词法
+  归并为 `.notEqual`，故后缀位遇到的 `.logicalNot` token 必为强制解包，无歧义。
+- **实现最小侵入**：复用 `.unary(op: .forceUnwrap)` 而非新增 AST 节点，仅触及 5 处编译器逻辑
+  （`UnaryExpr` 枚举项 + `Parser.parsePrimarySuffix` 后缀解析 + `TypeInference` 去 Optional 壳 +
+  `TypeChecker` 门控/校验 + `Interpreter` 求值）+ LLVM `ExprEmitter` 兜底 no-op（M2 见下）。
+- **`unsafe` 上下文门控（与 `&` 对称）**：后缀 `!` 须处于 `unsafe` 上下文
+  （`|unsafe` 函数体，或 `unsafe (...)` 零散消耗点，`unsafeContextDepth > 0`）。非 `unsafe` 上下文出现 `!`
+  由 `TypeChecker` 拦截并报告"强制解包 `!` 出现在非 unsafe 上下文"。`!` **不强制**整函数 `|unsafe`，可由零散
+  `unsafe (...)` 前缀逐点消费。
+- **`!` 是只读右值**：不能作 lvalue，`a[i]![j] = v` / `a[i]! += 5` 不成立；嵌套写范式见上 `var row = ...`。
+- **求值语义**：操作数须为 `Optional` 枚举值（`some(x)`/`none`）；命中 `some` 取内层、命中 `none` 抛
+  "强制解包 `!` 命中 Optional.none（元素不存在）"。
+- **示例载体**：`examples/multidim.pini`（新建）演示安全 `match` 路径 + 强制解包路径 + 嵌套写，函数本身为
+  安全 `|func`，仅那一处 `!` 由零散 `unsafe` 前缀消费；`examples/array_basic.pini`、`examples/collections.pini`、
+  `examples/cow.pini` 的嵌套读/写均已改写为显式 `!` 剥壳。
 
 ## M2 gap：LLVM / IR 双后端未对齐（已知、已登记、显式跳过）
 
@@ -83,6 +104,8 @@ P2-C 既有 backlog）。两侧现存在系统性分歧：
 - `RuntimeBackendTests.testF64ArrayViaRuntimeLLI`
 - `RuntimeBackendTests.testBoolArrayViaRuntimeLLI`
 - `RuntimeBackendTests.testArraySubscriptWriteBothBackends`
+- `RuntimeBackendTests.testNestedSubscriptWriteBothBackends`（新增：严格枚举下嵌套写须 `!`+`unsafe`，而 LLVM 后端暂不支持 FFI/unsafe 子系统）
+- `RuntimeBackendTests.testNestedAliasCOWBothBackends`（新增：同上，双后端嵌套别名 COW 锁步待 M2）
 - `RuntimeBackendTests.testDictViaRuntimeLLI`
 - `RuntimeBackendTests.testDictSubscriptWriteBothBackends`
 - `RuntimeBackendTests.testCompoundAssignAliasCOWBothBackends`
@@ -95,8 +118,12 @@ P2-C 既有 backlog）。两侧现存在系统性分歧：
 - `IRExecutionTests.testD3ContainerPrintBothBackendsMatch`
 - `IRPrintGoldenTests.testAggregatePrintMatchesInterpreter`
 
-解释器专属用例（无 LLVM 依赖）已就地改写为严格枚举：`RuntimeBackendTests.testArraySubscriptWriteInterpreter`
-（`a[1] += 5` → `match a[1]: case some(v): a[1] = v + 5`）。
+解释器专属用例（无 LLVM 依赖）已就地改写为严格枚举 + 显式 `!` 剥壳：
+- `RuntimeBackendTests.testArraySubscriptWriteInterpreter`：`a[1] += 5` 改 `match a[1]: case some(v): a[1] = v + 5`；
+  嵌套读 `m[0][1]` 改 `print(unsafe m[0]![1]!)`（取裸值 `99`），预期输出同步为
+  `some(10)/some(25)/some(3)/99/some(z)/some(false)`。
+- 前述 `testNestedSubscriptWriteBothBackends` / `testNestedAliasCOWBothBackends` 因含 `!`+`unsafe` 嵌套写且 LLVM
+  端不支持 FFI/unsafe 子系统，按决策标 M2 跳过（见上方清单），不计入红。
 
 **M2 待办**：在 LLVM codegen 与运行时 shim 中将下标读包装为 `Optional.some`/`none`，使双后端锁步；
 完成前上述 skip 保持生效。

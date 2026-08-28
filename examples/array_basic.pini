@@ -18,7 +18,9 @@ main|func() -> ()
     print(b[0])
     print(len(b))
     let m = [["a", "b"], ["c", "d"]]
-    print(m[0][1])
+    ; 严格枚举语义下嵌套读须显式强制解包 `!`（须 unsafe 上下文）：m[0] 是 some([...])，
+    ; `!` 剥出内层数组再下标；内层 [1] 读仍返回 some，故再 `!` 取裸值。
+    print(unsafe m[0]![1]!)
     var w = [1, 2, 3]
     w[0] = 10
     ; 严格枚举语义（issue-host-optional-slice）：下标读返回 Optional，复合赋值须先 match 取元素

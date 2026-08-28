@@ -552,6 +552,10 @@ extension IRGenerator {
  case .decrement:
  emitLine(" \(temp) = sub \(operandVal.llvmType) \(operandVal.ssaName), 1")
  return IRValue(llvmType: operandVal.llvmType, ssaName: temp)
+ case .forceUnwrap:
+ // M2：LLVM 后端下标读本就不做 Optional 包装（返回裸元素），故 `!` 在 IR 层为 no-op——
+ // 直接返回操作数值，与既有的 Optional 枚举包装分歧一致（详见 issue-host-optional-slice 工单）。
+ return operandVal
  }
  }
 

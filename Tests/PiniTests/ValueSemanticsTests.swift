@@ -329,21 +329,31 @@ final class ValueSemanticsTests: XCTestCase {
         main|func() -> ()
             var g = [[1, 2], [3, 4]]
             var h = g
-            g[0][0] = 99
+            var gr = unsafe g[0]!
+            gr[0] = 99
+            g[0] = gr
             print(g)
             print(h)
             var d = ["a": [1, 2]]
             var e = d
-            d["a"][0] = 7
+            var da = unsafe d["a"]!
+            da[0] = 7
+            d["a"] = da
             print(d)
             print(e)
             var p = [["k": 1], ["k": 2]]
             var q = p
-            p[0]["k"] = 9
+            var p0 = unsafe p[0]!
+            p0["k"] = 9
+            p[0] = p0
             print(p)
             print(q)
             var t = [[[1, 2], [3, 4]]]
-            t[0][1][0] = 77
+            var t0 = unsafe t[0]!
+            var t01 = unsafe t0[1]!
+            t01[0] = 77
+            t0[1] = t01
+            t[0] = t0
             print(t)
             return
         """)

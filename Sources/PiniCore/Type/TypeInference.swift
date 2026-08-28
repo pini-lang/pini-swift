@@ -52,6 +52,12 @@ public final class TypeInference {
  switch op {
  case .not:
  return .simple(name: "Bool", location: SourceLocation(line: 0, column: 0, fileName: ""))
+ case .forceUnwrap:
+ // 后缀 `!` 的类型 = Optional<T> 的内部类型 T；非 Optional / 不可推断时回退 nil（交由 TypeChecker 报错）。
+ if case .generic(let name, let params, _) = operandType, name == "Optional", !params.isEmpty {
+ return params[0]
+ }
+ return nil
  default:
  return operandType
  }

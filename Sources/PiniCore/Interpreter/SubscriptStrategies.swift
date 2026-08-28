@@ -82,21 +82,17 @@ enum SubscriptReadStrategy {
 
  /// 执行下标读：查表分派，缺策略抛 unsupported。
  static func read(container: Value, index: Value, location: SourceLocation) throws -> Value {
- // 宿主修复（issue-host-optional-slice-2026-08-28）：下标读现返回 Optional 枚举 some/none
- // （与 P2-E 的 Optional<T> 静态类型对齐）。嵌套下标 `a[i][j]` 要求内层 `a[i]`
- // （`some(array)`）仍可作容器再下标，故此处透明解包 `some(x)` -> `x`，
- // 与 LLVM 后端裸元素行为对齐；首层 `a[i]` 仍返回 `some(x)` 供 `match` 解构。
- var c = container
- if case .enumValue(let ev) = c, ev.caseName == "some", let inner = ev.associatedValues.first {
- c = inner
- }
- guard let k = kind(of: c) else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(c)", location: location)
+ // 严格枚举语义（issue-host-optional-slice-2026-08-28）：下标读一律返回 Optional 枚举
+ // some/none，不做任何 `some(x)` → `x` 透明解包。嵌套下标必须显式剥壳：
+ // `a[i]![j]`（`!` 强制解包 `a[i]` 的 `some(array)` 取内层数组再下标），
+ // 不再有隐式把 Optional 当裸值用的语法糖。
+ guard let k = kind(of: container) else {
+ throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(container)", location: location)
  }
  guard let strategy = registry[k] else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标访问: \(c)[\(index)]", location: location)
+ throw RuntimeError.invalidOperation(reason: "不支持的下标访问: \(container)[\(index)]", location: location)
  }
- return try strategy(c, index, location)
+ return try strategy(container, index, location)
  }
 }
 
@@ -157,17 +153,14 @@ enum SubscriptWriteStrategy {
 
  /// 执行下标写：查表分派，缺策略抛 unsupported。
  static func write(container: Value, index: Value, newValue: Value, location: SourceLocation) throws -> Value {
- // 同 read：嵌套写 `a[i][j] = v` 时内层 `a[i]` 为 `some(array)`，透明解包后再写。
- var c = container
- if case .enumValue(let ev) = c, ev.caseName == "some", let inner = ev.associatedValues.first {
- c = inner
- }
- guard let k = SubscriptReadStrategy.kind(of: c) else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(c)", location: location)
+ // 同 read：严格枚举语义下不做 `some(x)` → `x` 透明解包。嵌套写须经显式 `!` 剥壳
+ // （`a[i]![j] = v`，且 `!` 须处于 unsafe 上下文），或经 `match` 取内层后写回。
+ guard let k = SubscriptReadStrategy.kind(of: container) else {
+ throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(container)", location: location)
  }
  guard let strategy = registry[k] else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标写: \(c)[\(index)]", location: location)
+ throw RuntimeError.invalidOperation(reason: "不支持的下标写: \(container)[\(index)]", location: location)
  }
- return try strategy(c, index, newValue, location)
+ return try strategy(container, index, newValue, location)
  }
 }
