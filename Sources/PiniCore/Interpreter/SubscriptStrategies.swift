@@ -31,21 +31,23 @@ enum SubscriptReadStrategy {
  guard case .array(let arr) = container, case .int(let i) = index else {
  throw RuntimeError.invalidOperation(reason: "数组下标需整数索引: \(container)[\(index)]", location: loc)
  }
- guard i >= 0 && i < arr.count else {
- throw RuntimeError.invalidOperation(reason: "数组下标越界: \(i)", location: loc)
- }
- return arr[i]
+ // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
+ let idx = i < 0 ? arr.count + i : i
+ // P2-C：安全通道越界返回 nil（与字典缺失键一致），调用者显式解包。
+ guard idx >= 0, idx < arr.count else { return .null }
+ return arr[idx]
  }
 
  r[.string] = { container, index, loc in
  guard case .string(let s) = container, case .int(let i) = index else {
  throw RuntimeError.invalidOperation(reason: "字符串下标需整数索引: \(container)[\(index)]", location: loc)
  }
- guard i >= 0 && i < s.count else {
- throw RuntimeError.invalidOperation(reason: "字符串下标越界: \(i)", location: loc)
- }
- let idx = s.index(s.startIndex, offsetBy: i)
- return .string(String(s[idx]))
+ // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
+ let idx = i < 0 ? s.count + i : i
+ // P2-C：安全通道越界返回 nil（与字典缺失键一致），调用者显式解包。
+ guard idx >= 0, idx < s.count else { return .null }
+ let cidx = s.index(s.startIndex, offsetBy: idx)
+ return .string(String(s[cidx]))
  }
 
  r[.dictionary] = { container, index, loc in
@@ -105,10 +107,14 @@ enum SubscriptWriteStrategy {
  guard case .array(var arr) = container, case .int(let i) = index else {
  throw RuntimeError.invalidOperation(reason: "数组下标写需整数索引: \(container)[\(index)]", location: loc)
  }
- guard i >= 0, i < arr.count else {
- throw RuntimeError.invalidOperation(reason: "数组下标越界: \(i)", location: loc)
+ // P2-A：负索引尾部计数（i<0 → len+i）。
+ let idx = i < 0 ? arr.count + i : i
+ // 写通道越界仍报错：不能经赋值越界扩容器（与 Python `a[5]=x` 越界 IndexError 一致）；
+ // 读通道越界返回 nil（P2-C），读写不对称是有意设计（见 issue-lexer-gaps P2-C 论证）。
+ guard idx >= 0, idx < arr.count else {
+ throw RuntimeError.invalidOperation(reason: "数组下标写越界: \(i)", location: loc)
  }
- arr[i] = newValue
+ arr[idx] = newValue
  return .array(arr)
  }
 

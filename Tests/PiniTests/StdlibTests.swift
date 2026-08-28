@@ -208,10 +208,23 @@ main|func() -> ()
         XCTAssertThrowsError(try runProgram(source), "abs(Int.min) 应抛整数溢出错误，而非崩溃")
     }
 
-    /// 缺陷 D2：substring 负索引导致 String 下标越界崩溃。
-    /// 验收期望：负索引安全夹紧到 0，substring(-1, 3) == "hel"。
-    /// 意图：验证 substring(-1, 3) 负索引安全夹紧到 0，输出 "hel" 而非越界崩溃。
+    /// P2-D（迁移）：substring 负索引由"夹 0"改为"尾部计数"（Python 一致）。
+    /// 验收期望：substring(1, -1) 中 -1 → len-1 = 4，输出 "ell"（半开区间 [1, 4)）。
+    /// 意图：验证负索引尾部计数，而非夹紧到 0。
     func testSubstringNegativeIndexClamped() throws {
+        let source = """
+main|func() -> ()
+    var s = "hello"
+    print(s.substring(1, -1))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "ell\n", "substring 负索引应尾部计数（Python 一致）")
+    }
+
+    /// P2-D（迁移）：起始越界末尾（start > end）返回空串而非崩溃。
+    /// substring(-1, 3) 中 -1 → 4，4 > 3 → 空串。
+    func testSubstringNegativeStartBeyondEnd() throws {
         let source = """
 main|func() -> ()
     var s = "hello"
@@ -219,7 +232,7 @@ main|func() -> ()
     return
 """
         let output = try runProgram(source)
-        XCTAssertEqual(output, "hel\n", "substring 负索引应夹紧到 0")
+        XCTAssertEqual(output, "\n", "substring start>end 应返回空串")
     }
 
     /// 缺陷 D3：substring start>end 导致 range 反向越界崩溃。

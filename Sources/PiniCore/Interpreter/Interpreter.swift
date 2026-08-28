@@ -2037,7 +2037,7 @@ public class Interpreter {
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  case .string(let s):
  switch memberName {
- case "upper", "lower", "contains", "substring", "split":
+ case "upper", "lower", "contains", "substring", "split", "slice":
  let methodEnv = Environment(enclosing: globalEnv)
  methodEnv.define(name: "self", value: .string(s), isMutable: false)
  let params: [Parameter]
@@ -2045,6 +2045,8 @@ public class Interpreter {
  case "contains":
  params = [Parameter(name: "sub")]
  case "substring":
+ params = [Parameter(name: "start"), Parameter(name: "end")]
+ case "slice":
  params = [Parameter(name: "start"), Parameter(name: "end")]
  case "split":
  params = [Parameter(name: "sep")]
@@ -2117,6 +2119,17 @@ public class Interpreter {
  return .function(FunctionValue(
  name: memberName,
  params: [Parameter(name: "value")],
+ returnTypes: [],
+ body: nil,
+ decl: nil,
+ closure: methodEnv
+ ))
+ case "slice":
+ let methodEnv = Environment(enclosing: globalEnv)
+ methodEnv.define(name: "self", value: .array(arr), isMutable: false)
+ return .function(FunctionValue(
+ name: memberName,
+ params: [Parameter(name: "start"), Parameter(name: "end")],
  returnTypes: [],
  body: nil,
  decl: nil,
@@ -2493,10 +2506,23 @@ public class Interpreter {
  }
  }
 
- // MARK: - 内置方法接收者取值
+// MARK: - 内置方法接收者取值
 
- private func builtinStringReceiver(_ fv: FunctionValue) throws -> String {
- guard case .string(let s) = try fv.closure.get(name: "self") else {
+/// 切片边界解析（P2-B）：开放边界（nil = Optional.none 或 .null）→ 取默认值；
+/// 整数支持负索引尾部计数（i<0 → count+i）；其余类型报错。
+private func sliceBound(_ v: Value, count: Int, defaultWhenOpen: Int) throws -> Int {
+ if case .enumValue(let ev) = v, ev.caseName == "none" { return defaultWhenOpen }
+ if case .null = v { return defaultWhenOpen }
+ guard case .int(let i) = v else {
+ throw RuntimeError.invalidOperation(
+ reason: "slice 边界必须是整数或省略",
+ location: Interpreter.builtinLocation
+ )
+ }
+ return i < 0 ? count + i : i
+}
+
+private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard case .string(let s) = try fv.closure.get(name: "self") else {
  throw RuntimeError.invalidOperation(
  reason: "该操作仅可用于字符串接收者",
  location: SourceLocation(line: 0, column: 0, fileName: "")
@@ -2733,13 +2759,44 @@ public class Interpreter {
  )
  }
  let count = s.count
- // 越界安全夹紧：负索引与正向越界均夹到 [0, count]；start>end 返回空串，杜绝下标越界崩溃
- let lo = min(max(start, 0), count)
- let hi = min(max(end, 0), count)
+ // P2-D：负索引改尾部计数（Python 一致）—— start/end < 0 → count+值；
+ // 与切片统一语义。越界仍夹紧到 [0, count]；hi<lo 返回空串。
+ let lo = min(max(start < 0 ? count + start : start, 0), count)
+ let hi = min(max(end < 0 ? count + end : end, 0), count)
  guard hi >= lo else { return .string("") }
  let startIdx = s.index(s.startIndex, offsetBy: lo)
  let endIdx = s.index(s.startIndex, offsetBy: hi)
  return .string(String(s[startIdx..<endIdx]))
+ }
+ if fv.name == "slice" {
+ // P2-B：半开区间切片（Python 风）。起始默认 0、终止默认容器长度；
+ // 负索引尾部计数；开放边界（nil = Optional.none）取默认值；越界夹紧；hi<lo 返回空。
+ let selfVal = try fv.closure.get(name: "self")
+ switch selfVal {
+ case .array(let arr):
+ let count = arr.count
+ let lo = try sliceBound(args[0], count: count, defaultWhenOpen: 0)
+ let hi = try sliceBound(args[1], count: count, defaultWhenOpen: count)
+ let cLo = min(max(lo, 0), count)
+ let cHi = min(max(hi, 0), count)
+ guard cHi >= cLo else { return .array([]) }
+ return .array(Array(arr[cLo..<cHi]))
+ case .string(let s):
+ let count = s.count
+ let lo = try sliceBound(args[0], count: count, defaultWhenOpen: 0)
+ let hi = try sliceBound(args[1], count: count, defaultWhenOpen: count)
+ let cLo = min(max(lo, 0), count)
+ let cHi = min(max(hi, 0), count)
+ guard cHi >= cLo else { return .string("") }
+ let startIdx = s.index(s.startIndex, offsetBy: cLo)
+ let endIdx = s.index(s.startIndex, offsetBy: cHi)
+ return .string(String(s[startIdx..<endIdx]))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "slice 仅支持数组与字符串",
+ location: Interpreter.builtinLocation
+ )
+ }
  }
  if fv.name == "split" {
  let s = try builtinStringReceiver(fv)

@@ -22,6 +22,17 @@
 
 > 安全模型定义：**安全通道（索引/切片）越界返回可空（nil），调用者显式解包；不安全通道（单元素直接访问）搁置，未来经 trait 为集合默认派发。** 下标 `a[i]` 机制 = 零拷贝全切片视图 → 负索引映射（i<0 → len+i）→ 边界检查 → 界内返回 T / 越界返回 nil。
 
+### 安全通道下标判定流程
+
+```mermaid
+graph TD
+    SYN["传统下标语法 a[i]"] --> V["① 全切片视图 a[:]<br/>零拷贝 COW，O(1)<br/>类型：Slice&lt;T&gt;（视图，不复制）"]
+    V --> N["② 负索引映射<br/>i &lt; 0 → i += len（尾部计数）<br/>i = -1 → len-1（最后一个）"]
+    N --> C{"③ 边界检查<br/>0 ≤ i &lt; len？"}
+    C -->|"是（界内）"| OK["返回：T（非空单元素）<br/>例：a[1] → 元素 1"]
+    C -->|"否（越界）"| NIL["返回：nil（可空 T?）<br/>例：a[100] → nil"]
+```
+
 | # | 缺口 | 现状 | 建议 | 类型 |
 |---|---|---|---|---|
 | P2-A | **负索引**（下标 + 切片尾部计数） | `a[-1]` 崩溃（E5-006） | 实现 i<0 → len+i（-k=len-k，-len=首元素） | 新特性 |
@@ -52,12 +63,18 @@
 
 ## 五、验收口径（Definition of Done）
 
-- [ ] P1-A 落地：`is_letter` 内建可用（探针 + 测试），IDENT 判定成立
-- [ ] P1-B/C 落地：数组 `append` + 栈操作可用，lexer 可产出 `[token]`/`[diag]`/缩进栈
-- [ ] 阻塞项落地后 `pini/` lexer 可写出（阶段差分门禁：tokens 输出对齐宿主，P2 契约）
-- [ ] P2 安全模型 spec 登记（G 新编号）：负索引/切片/越界可空/substring 语义变更 + 迁移说明
-- [ ] P2-F（unsafe 通道）登记 roadmap backlog（搁置）
-- [ ] P4-A 宿主 lexer 向 EBNF 对齐（pass/test）
+- [x] P1-A 落地：`is_letter` 内建可用（探针 + 测试），IDENT 判定成立（G45，v0.49.0）
+- [x] P1-B/C 落地：数组 `append` + 栈操作可用，lexer 可产出 `[token]`/`[diag]`/缩进栈（G46/G47，v0.49.0）
+- [x] 阻塞项落地后 `pini/` lexer 可写出（阶段差分门禁：tokens 输出对齐宿主，P2 契约）
+- [x] P2 安全模型 spec 登记（**G48**）：负索引/切片/越界可空/substring 语义变更 + 迁移说明
+- [x] P2-F（unsafe 通道）登记 roadmap backlog（搁置）—— 见 G48 注：经 trait 为集合默认派发不安全访问
+- [ ] P4-A 宿主 lexer 向 EBNF 对齐（pass/test）—— 独立治理项，不在 P2 范围
+
+### 已知差异（非阻塞）
+
+- **LLVM 后端越界行为未与解释器锁步**：P2-C 后解释器越界返回 `nil`，LLVM 端 `bk_panic` 仍终止进程（stdout 空）。
+  解释器为主后端，LLVM 安全通道对齐属 M2 阶段工作（`RuntimeBackendTests.testArrayOutOfBoundsBothBackendsError` 已标注此分歧）。
+- 下标写越界仍抛错（不能经赋值越界扩容器），与 Python `a[5]=x` 越界 `IndexError` 一致；读/写不对称为有意设计。
 
 ---
 

@@ -197,9 +197,9 @@ final class RuntimeBackendTests: XCTestCase {
         XCTAssertFalse(ir.contains("[3 x i32]"), "不应再生成定长数组内联类型 [3 x i32]（已迁运行时句柄）")
     }
 
-    /// 双后端锁步（epic-46 3.4）：越界下标两侧均报错。
-    /// 解释器抛 RuntimeError；LLVM 经运行时 `bk_panic` 终止进程（stdout 空）。
-    /// 意图：验证越界下标 a[99] 双后端均报错——解释器抛 RuntimeError，LLVM 经 bk_panic 终止且 stdout 为空。
+    /// 双后端锁步（epic-46 3.4）：越界下标——P2-C 后解释器侧改为安全通道返回 nil（不再抛错），
+    /// 与字典缺失键一致；LLVM 侧仍走 `bk_panic`（M2 阶段再对齐安全通道，见 issue-lexer-gaps P2-C 对齐 backlog）。
+    /// 意图：验证解释器越界下标 a[99] 返回 nil；LLVM 越界经 bk_panic 终止且 stdout 为空（两侧尚未统一为 nil）。
     func testArrayOutOfBoundsBothBackendsError() throws {
         let src = """
         main|func() -> ()
@@ -208,10 +208,12 @@ final class RuntimeBackendTests: XCTestCase {
             return
         """
 
-        // 解释器侧：越界下标应抛错
-        XCTAssertThrowsError(try runViaInterpreter(src), "解释器越界下标 a[99] 应抛 RuntimeError")
+        // 解释器侧（P2-C）：安全通道越界返回 nil，不再抛 RuntimeError
+        let interpOut = try runViaInterpreter(src)
+        XCTAssertEqual(interpOut, "null\n", "P2-C：解释器越界下标 a[99] 应返回 nil（安全通道）")
 
-        // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空
+        // LLVM 侧（M2 前）：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
+        // 注意：LLVM 安全通道（越界→nil）对齐属 M2 阶段工作，暂未与解释器锁步。
         try XCTSkipUnless(lliAvailable, "lli not available")
         guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)

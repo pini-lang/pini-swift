@@ -2891,9 +2891,39 @@ public class Parser {
 
  // 下标访问 [index]：容器是任意前序表达式（call/member/subscript/元组/...），非 identifier-only——
  // 解析累积到 `result`，故 (expr)[i] 天然支持（架构演进 #45 固化的契约）。
+ // P2-B：检测到冒号即进入切片语法脱糖（见 sliceSugar 助手），`a[i:j]`/`a[i:]`/`a[:j]`/`a[:]`。
  if case .leftBracket(_) = currentToken {
  advance()
+ // 切片形态一：起始省略 `a[:j]` / `a[:]`
+ if case .colon(_) = currentToken {
+ advance() // 消费起始冒号，随后解析终止边界
+ let start = sliceNilLiteral(loc)
+ let end: Expression
+ if case .rightBracket(_) = currentToken {
+ end = sliceNilLiteral(loc)
+ advance() // 消费 ]
+ } else {
+ end = try parseExpression()
+ try expect(.rightBracket(loc))
+ }
+ result = sliceSugar(base: result, start: start, end: end, location: loc)
+ continue
+ }
  let indexExpr = try parseExpression()
+ // 切片形态二：起始给定，`a[i:j]` / `a[i:]`
+ if case .colon(_) = currentToken {
+ advance()
+ let end: Expression
+ if case .rightBracket(_) = currentToken {
+ end = sliceNilLiteral(loc)
+ advance() // 消费 ]
+ } else {
+ end = try parseExpression()
+ try expect(.rightBracket(loc))
+ }
+ result = sliceSugar(base: result, start: indexExpr, end: end, location: loc)
+ continue
+ }
  try expect(.rightBracket(loc))
  result = Expression.subscript(expr: result, index: indexExpr, location: loc)
  continue
@@ -2901,11 +2931,30 @@ public class Parser {
 
  break
  }
- 
+
  return result
- }
- 
- // MARK: - TypeAnnotation解析
+}
+
+// MARK: - 切片语法脱糖（P2-B）
+
+/// 开放边界字面量：复用 `nil` 的 AST 形态（= `.member(identifier("Optional"), "none")`），
+/// 运行时求值为 `Optional.none`，切片实现据此识别为"省略该边界"。
+private func sliceNilLiteral(_ loc: SourceLocation) -> Expression {
+ return .member(object: .identifier(name: "Optional", location: loc), name: "none", location: loc)
+}
+
+/// 将切片语法 `base[start:end]` 脱糖为成员调用 `base.slice(start, end)`，
+/// 复用既有的数组 / 字符串成员方法通道（evaluateMember + defineMethod），
+/// 不新增 AST 节点、不触碰 ~25 处 Expression 穷尽 switch。
+private func sliceSugar(base: Expression, start: Expression, end: Expression, location: SourceLocation) -> Expression {
+ return .call(
+ callee: .member(object: base, name: "slice", location: location),
+ arguments: [CallArgument(expression: start), CallArgument(expression: end)],
+ location: location
+ )
+}
+
+// MARK: - TypeAnnotation解析
  
  private func parseTypeAnnotation() throws -> TypeAnnotation {
  let loc = currentLocation

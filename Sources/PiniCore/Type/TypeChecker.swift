@@ -115,6 +115,8 @@ public final class TypeChecker {
  typeEnv.defineMethod(typeName: "String", methodName: "contains", params: [str], returns: [bool])
  typeEnv.defineMethod(typeName: "String", methodName: "substring", params: [i32, i32], returns: [str])
  typeEnv.defineMethod(typeName: "String", methodName: "split", params: [str], returns: [arrayOfString])
+ // P2-B：切片语法 a[i:j] 脱糖为 a.slice(i, j)（开放边界传 nil = Optional.none，故参数用 anyType 放行）。
+ typeEnv.defineMethod(typeName: "String", methodName: "slice", params: [anyType, anyType], returns: [str])
 
  // Array 成员方法
  typeEnv.defineMethod(typeName: "Array", methodName: "join", params: [str], returns: [str])
@@ -125,6 +127,8 @@ public final class TypeChecker {
  // pop 返回 (新数组, 栈顶) 元组（返回类型 Any 通配，运行时为元组），供 IndentTracker。
  typeEnv.defineMethod(typeName: "Array", methodName: "last", params: [], returns: [anyType])
  typeEnv.defineMethod(typeName: "Array", methodName: "pop", params: [], returns: [anyType])
+ // P2-B：切片语法 a[i:j] 脱糖为 a.slice(i, j)；返回同元素类型数组（此处以 anyType 通配）。
+ typeEnv.defineMethod(typeName: "Array", methodName: "slice", params: [anyType, anyType], returns: [TypeAnnotation.generic(name: "Array", params: [anyType], location: loc)])
  }
 
  /// 立场 B 并发内建类型（契约见 Pini草稿.md（异步函数块） ）：

@@ -89,20 +89,16 @@ main|func() -> ()
         XCTAssertEqual(try runProgram(source), "[[1, 2], [3, 4]]\n")
     }
 
-    // Intent: 验证数组下标越界抛出 RuntimeError.invalidOperation（驳回性测量：错误类型必须精确匹配，而非其它错误）
-    func testArraySubscriptOutOfRangeThrows() throws {
+    // Intent: 验证数组下标越界返回 nil（P2-C 安全通道越界可空，与字典缺失键一致）—— 迁移性测量：
+    // 原实现越界抛 RuntimeError.invalidOperation，P2-C 改为统一返回 nil。
+    func testArraySubscriptOutOfRangeReturnsNull() throws {
         let source = """
 main|func() -> ()
     var a = [10, 20, 30]
     print(a[99])
     return
 """
-        XCTAssertThrowsError(try runProgram(source)) { error in
-            guard case RuntimeError.invalidOperation = error else {
-                XCTFail("应为 RuntimeError.invalidOperation，实际: \(error)")
-                return
-            }
-        }
+        XCTAssertEqual(try runProgram(source), "null\n")
     }
 
     // MARK: - 字典
@@ -207,20 +203,92 @@ main|func() -> ()
         XCTAssertEqual(try runProgram(source), "e\n")
     }
 
-    // Intent: 验证字符串下标越界抛出 RuntimeError.invalidOperation（与数组下标越界行为一致）—— 驳回性测量
-    func testStringSubscriptOutOfRangeThrows() throws {
+    // Intent: 验证数组负索引尾部计数（P2-A：a[-1]=末元素，a[-len]=首元素）—— 推进性测量
+    func testArrayNegativeIndex() throws {
+        let source = """
+main|func() -> ()
+    var a = [10, 20, 30]
+    print(a[-1])
+    print(a[-3])
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "30\n10\n")
+    }
+
+    // Intent: 验证字符串负索引尾部计数（P2-A：s[-1]=末字符）—— 推进性测量
+    func testStringNegativeIndex() throws {
+        let source = """
+main|func() -> ()
+    print("hello"[-1])
+    print("hello"[-5])
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "o\nh\n")
+    }
+
+    // Intent: 验证越界下负索引仍返回 nil（P2-A + P2-C：-k 超过长度即越界）—— 驳回性测量
+    func testNegativeIndexBeyondBoundsReturnsNull() throws {
+        let source = """
+main|func() -> ()
+    var a = [10, 20, 30]
+    print(a[-4])
+    var s = "hi"
+    print(s[-3])
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "null\nnull\n")
+    }
+
+    // MARK: - 切片语法（P2-B）
+
+    // Intent: 验证数组四种切片形态 a[i:j]/a[i:]/a[:j]/a[:]（Python 风半开区间）—— 推进性测量
+    func testArraySliceForms() throws {
+        let source = """
+main|func() -> ()
+    var a = [10, 20, 30, 40]
+    print(a[1:3])
+    print(a[1:])
+    print(a[:3])
+    print(a[:])
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "[20, 30]\n[20, 30, 40]\n[10, 20, 30]\n[10, 20, 30, 40]\n")
+    }
+
+    // Intent: 验证字符串切片形态与负索引尾部计数（P2-A + P2-B）—— 推进性测量
+    func testStringSliceAndNegative() throws {
+        let source = """
+main|func() -> ()
+    print("hello"[1:4])
+    print("hello"[1:])
+    print("hello"[:-1])
+    print("hello"[-3:])
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "ell\nello\nhell\nllo\n")
+    }
+
+    // Intent: 验证切片越界夹紧、hi<lo 返回空（Python 一致）—— 驳回性测量
+    func testSliceClampAndEmpty() throws {
+        let source = """
+main|func() -> ()
+    print([1, 2, 3][1:99])
+    print([1, 2, 3][3:1])
+    print("abc"[-9:9])
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "[2, 3]\n[]\nabc\n")
+    }
+
+    // Intent: 验证字符串下标越界返回 nil（P2-C 安全通道越界可空，与数组下标一致）—— 迁移性测量
+    func testStringSubscriptOutOfRangeReturnsNull() throws {
         let source = """
 main|func() -> ()
     var s = "hello"
     print(s[99])
     return
 """
-        XCTAssertThrowsError(try runProgram(source)) { error in
-            guard case RuntimeError.invalidOperation = error else {
-                XCTFail("应为 RuntimeError.invalidOperation，实际: \(error)")
-                return
-            }
-        }
+        XCTAssertEqual(try runProgram(source), "null\n")
     }
 
     // MARK: - 类型检查放行

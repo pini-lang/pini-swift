@@ -185,8 +185,23 @@ public final class TypeInference {
  case .selfKeyword, .selfTypeKeyword:
  return nil
 
- case .arrayLiteral, .dictionaryLiteral, .setLiteral, .subscript:
+ case .arrayLiteral, .dictionaryLiteral, .setLiteral:
  return nil
+
+ case .subscript(let container, let index, let loc):
+ // P2-E：安全通道下标返回可空 T?（越界/缺键 → nil，与运行时 .null 对齐）。
+ // 仅当容器类型可静态解析时给出精确 Optional<元素>；否则回退 nil（未知），不报错。
+ guard let containerType = infer(expression: container, scopedParams: scopedParams) else { return nil }
+ switch containerType {
+ case .generic(let name, let params, _) where name == "Array":
+ return .generic(name: "Optional", params: [params.first ?? .simple(name: "Any", location: loc)], location: loc)
+ case .generic(let name, let params, _) where name == "Dictionary":
+ return .generic(name: "Optional", params: [params.last ?? .simple(name: "Any", location: loc)], location: loc)
+ case .simple(let name, _) where name == "String":
+ return .generic(name: "Optional", params: [.simple(name: "String", location: loc)], location: loc)
+ default:
+ return nil
+ }
 
  case .join(let inner, _):
  // `await`/`wait` fut 归约为 `Result<T, E>`（fut : Future<T, E>）。
