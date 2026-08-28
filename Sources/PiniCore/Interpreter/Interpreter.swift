@@ -284,6 +284,16 @@ public class Interpreter {
  )
  globalEnv.define(name: "len", value: .function(lenFunc), isMutable: false)
 
+ let isLetterFunc = FunctionValue(
+ name: "is_letter",
+ params: [Parameter(name: "value")],
+ returnTypes: [],
+ body: nil,
+ decl: nil,
+ closure: globalEnv
+ )
+ globalEnv.define(name: "is_letter", value: .function(isLetterFunc), isMutable: false)
+
  let absFunc = FunctionValue(
  name: "abs",
  params: [Parameter(name: "x")],
@@ -2657,6 +2667,17 @@ public class Interpreter {
  location: SourceLocation(line: 0, column: 0, fileName: "")
  )
  }
+ }
+
+ if fv.name == "is_letter" {
+ guard case .string(let s) = args[0] else {
+ throw RuntimeError.invalidOperation(
+ reason: "is_letter 的参数必须是字符串",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ guard let first = s.first else { return .bool(false) }
+ return .bool(first.isLetter)
  }
 
  // 成员方法实现入口（非全局自由函数）：

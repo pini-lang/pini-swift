@@ -50,6 +50,8 @@ public final class SemanticAnalyzer {
  "abs", "min", "max", "sqrt", "sin", "cos", "tan", // P1-4 数学自由函数
  "writeFile", "readFile", "readLine", // P1-5 基础 IO 自由函数
  "sleep", // P5 并发：sleep(ms: I32)
+ // G45（自举 lexer 前置）：字符谓词 is_letter——UCD \p{L} 字母判定（issue-lexer-gaps-2026-08-28 P1-A）。
+ "is_letter",
  // G41（test 块，R2）：assert 内建——assert(条件: Bool) / assert(条件: Bool, 消息: String)。
  "assert",
  // 立场 B 并发内建（与 TypeChecker.registerConcurrencyBuiltins / Interpreter 对齐）：

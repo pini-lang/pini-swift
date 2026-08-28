@@ -309,4 +309,33 @@ main|func() -> ()
             XCTAssertTrue(reason.contains("Bool"), "错误信息应提示条件需为 Bool，实际: \(reason)")
         }
     }
+
+    // MARK: - is_letter（lexer 字符谓词，G45）
+
+    /// 意图：is_letter 按 Unicode 字母（UCD L 类）判定——ASCII 字母与中文均 true。
+    /// 推进性测量：输出 "true\ntrue\n"（h、字）。
+    func testIsLetterUnicode() throws {
+        let source = """
+main|func() -> ()
+    print(is_letter("h"))
+    print(is_letter("字"))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "true\ntrue\n", "ASCII 与中文字母均应判定为字母")
+    }
+
+    /// 意图：is_letter 对非字母（数字/下划线/空串）返回 false——IDENT 首字符判定边界。
+    /// 驳回性测量：输出 "false\nfalse\nfalse\n"（1、_、空串）。
+    func testIsLetterRejectsNonLetters() throws {
+        let source = """
+main|func() -> ()
+    print(is_letter("1"))
+    print(is_letter("_"))
+    print(is_letter(""))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "false\nfalse\nfalse\n", "数字/下划线/空串均不应判定为字母")
+    }
 }

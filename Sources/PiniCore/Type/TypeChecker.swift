@@ -84,6 +84,9 @@ public final class TypeChecker {
  // 使 1 参/2 参调用均通过类型检查；arity 上限由运行时 assert 分支守卫（1-2 参）。
  let boolType = TypeAnnotation.simple(name: "Bool", location: loc)
  typeEnv.defineFunction(name: "assert", params: [boolType, string], returns: [], isVariadic: true)
+ // G45（自举 lexer 前置）：字符谓词 is_letter——String -> Bool（UCD \p{L} 判定，
+ // issue-lexer-gaps-2026-08-28 P1-A），与 Interpreter.registerBuiltins / SemanticAnalyzer 对齐。
+ typeEnv.defineFunction(name: "is_letter", params: [string], returns: [boolType])
  // P5 并发：sleep(ms: I32) -> ()，与运行时 Interpreter.registerBuiltins 对齐
  typeEnv.defineFunction(name: "sleep", params: [i32], returns: [])
 
