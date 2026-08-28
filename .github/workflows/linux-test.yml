@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        swift: ["5.9", "6.0"]
+        swift: ["6.2-noble", "6.3-noble"]
     container:
       image: swift:${{ matrix.swift }}
     steps:
