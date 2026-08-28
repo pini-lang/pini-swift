@@ -257,4 +257,37 @@ main|func() -> ()
         let output = try runProgram(source)
         XCTAssertEqual(output, "[1, 2, 3]\n[1, 2, 3, 4]\n", "append 应返回新数组且原数组不变")
     }
+
+    // MARK: - last / pop（G45/G46，S1.3 栈操作：IndentTracker 依赖）
+
+    /// 意图：last 读取栈顶（函数式），pop 返回 (新数组, 栈顶) 元组——缩进栈的 peek/pop。
+    /// 推进性测量：输出 "3\n3\n[1, 2]\n"（last=3；pop 解构 top=3、b=[1,2]）。
+    func testArrayLastAndPopStackSemantics() throws {
+        let source = """
+main|func() -> ()
+    var a = [1, 2, 3]
+    print(a.last())
+    var (b, top) = a.pop()
+    print(top)
+    print(b)
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "3\n3\n[1, 2]\n", "last 应返回栈顶，pop 应返回新数组与栈顶")
+    }
+
+    /// 意图：空数组 last/pop 返回 null（不崩溃）——安全模型先例（对齐字典缺失键 null）。
+    /// 推进性测量：输出 "null\n[]\n"（[].last()=null；[].pop() 解构 x=null、e=[]）。
+    func testArrayLastPopOnEmptyReturnsNull() throws {
+        let source = """
+main|func() -> ()
+    print([].last())
+    var (e, x) = [].pop()
+    print(x)
+    print(e)
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "null\nnull\n[]\n", "空数组 last 应返回 null，pop 解构为 (空数组, null)")
+    }
 }

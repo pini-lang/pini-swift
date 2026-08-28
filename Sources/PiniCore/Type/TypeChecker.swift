@@ -121,6 +121,10 @@ public final class TypeChecker {
  // G45/G46（自举 lexer 前置）：append 成员方法——函数式返回新数组（COW，原数组不变），
  // 与运行时 evaluateMember 的 .array 分支对齐（issue-lexer-gaps-2026-08-28 P1-B）。
  typeEnv.defineMethod(typeName: "Array", methodName: "append", params: [anyType], returns: [TypeAnnotation.generic(name: "Array", params: [anyType], location: loc)])
+ // G45/G46（自举 lexer 前置，S1.3）：栈操作——last 读取栈顶（空 → null），
+ // pop 返回 (新数组, 栈顶) 元组（返回类型 Any 通配，运行时为元组），供 IndentTracker。
+ typeEnv.defineMethod(typeName: "Array", methodName: "last", params: [], returns: [anyType])
+ typeEnv.defineMethod(typeName: "Array", methodName: "pop", params: [], returns: [anyType])
  }
 
  /// 立场 B 并发内建类型（契约见 Pini草稿.md（异步函数块） ）：
