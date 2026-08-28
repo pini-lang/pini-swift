@@ -2111,6 +2111,17 @@ public class Interpreter {
  decl: nil,
  closure: methodEnv
  ))
+ case "append":
+ let methodEnv = Environment(enclosing: globalEnv)
+ methodEnv.define(name: "self", value: .array(arr), isMutable: false)
+ return .function(FunctionValue(
+ name: memberName,
+ params: [Parameter(name: "value")],
+ returnTypes: [],
+ body: nil,
+ decl: nil,
+ closure: methodEnv
+ ))
  default:
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
@@ -2738,6 +2749,10 @@ public class Interpreter {
  )
  }
  return .string(arr.map { stringify($0) }.joined(separator: sep))
+ }
+ if fv.name == "append" {
+ let arr = try builtinArrayReceiver(fv)
+ return .array(arr + [args[0]])
  }
  if fv.name == "abs" {
  switch args[0] {

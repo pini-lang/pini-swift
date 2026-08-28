@@ -118,6 +118,9 @@ public final class TypeChecker {
 
  // Array 成员方法
  typeEnv.defineMethod(typeName: "Array", methodName: "join", params: [str], returns: [str])
+ // G45/G46（自举 lexer 前置）：append 成员方法——函数式返回新数组（COW，原数组不变），
+ // 与运行时 evaluateMember 的 .array 分支对齐（issue-lexer-gaps-2026-08-28 P1-B）。
+ typeEnv.defineMethod(typeName: "Array", methodName: "append", params: [anyType], returns: [TypeAnnotation.generic(name: "Array", params: [anyType], location: loc)])
  }
 
  /// 立场 B 并发内建类型（契约见 Pini草稿.md（异步函数块） ）：

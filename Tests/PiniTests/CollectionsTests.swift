@@ -240,4 +240,21 @@ main|func() -> ()
 """
         XCTAssertNoThrow(try checkProgram(source))
     }
+
+    // MARK: - append（G45/G46，自举 lexer 前置：函数式返回新数组）
+
+    /// 意图：append 为函数式成员方法——返回追加后的新数组，原数组不变（COW 值语义）。
+    /// 推进性测量：输出 "[1, 2, 3]\n[1, 2, 3, 4]\n"（a 不变，b 追加）。
+    func testArrayAppendFunctionalReturnsNewArray() throws {
+        let source = """
+main|func() -> ()
+    var a = [1, 2, 3]
+    var b = a.append(4)
+    print(a)
+    print(b)
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "[1, 2, 3]\n[1, 2, 3, 4]\n", "append 应返回新数组且原数组不变")
+    }
 }
