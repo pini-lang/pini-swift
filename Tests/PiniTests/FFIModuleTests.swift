@@ -5,7 +5,7 @@ import XCTest
 /// `examples/ffi_module/` 这个「配置 + 调用外部接口」的完整模块示例。
 ///
 /// 覆盖：
-/// · 目录级多文件模块运行（loadDirectory 经 module.toml 的 `[ffi]` 配置 → Interpreter.run(package:)），
+/// · 目录级多文件模块运行（loadDirectory 经 pini.toml 的 `[ffi]` 配置 → Interpreter.run(package:)），
 /// 断言 `pini run examples/ffi_module/` 的 golden 输出逐字节一致；
 /// · 语言级 `|test` 块收集执行（runTests，等价于 `pini test examples/ffi_module/cstring.pini`）；
 /// · 类型/语义门禁（check 零错误）；
@@ -33,7 +33,7 @@ final class FFIModuleTests: XCTestCase {
  (packageRoot() as NSString).appendingPathComponent("examples/ffi_module")
  }
 
- /// 目录级多文件模块运行：loadDirectory（自动解析 module.toml 的 `[ffi]`）→
+ /// 目录级多文件模块运行：loadDirectory（自动解析 pini.toml 的 `[ffi]`）→
  /// Interpreter.run(package:)，stdout 经 outputSink 重定向为字符串。
  /// 复刻 CLI `pini run examples/ffi_module/` 的进程内等价路径。
  /// `[ffi].search_paths` 已由 FileLoader.loadManifest 规一为相对模块目录的绝对路径，

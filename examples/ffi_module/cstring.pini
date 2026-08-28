@@ -1,7 +1,7 @@
 ; ════════════════════════════════════════════════════════════════════════
 ; ffi_module — FFI & unsafe 完整模块示例（ADR-015 / ADR-017）
 ;
-; 本文件与 module.toml 同处 examples/ffi_module/ 多文件模块（模块名 ffimodule）。
+; 本文件与 pini.toml 同处 examples/ffi_module/ 多文件模块（模块名 ffimodule）。
 ; 演示「配置外部接口 + 以最小不安全范围调用」的完整链路：
 ;
 ; ① [ffilib|foreign] 块：声明外部 C 函数签名（块内函数自动 |unsafe）。
@@ -20,7 +20,7 @@
 ; pini check examples/ffi_module/ # 解析 + 语义 + 类型三阶段门禁
 ; pini test examples/ffi_module/cstring.pini # 收集本文件 |test 块逐一执行
 ;
-; 依赖独立性：外部符号全部来自 lib/ffilib.{c,dylib}，由 module.toml 的
+; 依赖独立性：外部符号全部来自 lib/ffilib.{c,dylib}，由 pini.toml 的
 ; [ffi] search_paths=["lib"] 指向；search_paths 相对本模块目录解析，故示例
 ; 在任意检出位置、任意调用 cwd 下均可独立运行（见 docs 与 FFIModuleTests）。
 ;

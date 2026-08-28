@@ -28,7 +28,7 @@ public struct FileUnit: Equatable, ASTNode {
 /// 设计约束（用户指令）：本类型**仅做聚合与路径归属**，不在本阶段改变
 /// `Module` 消费管线（`SemanticAnalyzer` / `TypeChecker` / `Interpreter` 仍吃 `Module`）。
 public struct Package: Equatable, ASTNode {
- /// 模块名：来自 `module.toml`，或在无清单时由目录名推导（隐式根模块兜底）。
+ /// 模块名：来自 `pini.toml`，或在无清单时由目录名推导（隐式根模块兜底）。
  public let name: String
  /// 包内所有源文件单元（递归扫描所得，含嵌套 `_` 目录以支持后续包级可见性）。
  public let fileUnits: [FileUnit]

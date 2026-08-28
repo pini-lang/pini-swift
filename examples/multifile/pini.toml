@@ -1,5 +1,5 @@
 # Pini 多文件模块清单（P4 Phase 5 演示）
-# 本目录含 module.toml，故 CLI 将其视为「一个显式多文件模块」而非独立文件集合。
+# 本目录含 pini.toml，故 CLI 将其视为「一个显式多文件模块」而非独立文件集合。
 [package]
 name = "demo"
 version = "0.1.0"

@@ -3,13 +3,13 @@ import Foundation
 /// P4 文件 / 目录加载器：将磁盘上的源文件（后缀见 `LangConfig.sourceSuffix`）解析为 `Package`。
 ///
 /// 本阶段（Phase 1）仅负责「读取 + 词法/语法解析 + 聚合」，
-/// **不处理**跨文件符号解析 / 可见性 enforce / `module.toml` 语义化
+/// **不处理**跨文件符号解析 / 可见性 enforce / `pini.toml` 语义化
 /// （那些在 P4 后续阶段，由 `SemanticAnalyzer` / `TypeChecker` / `Interpreter`
 /// 消费 `Package` 时落地）。CLI 行为本阶段保持不变（仍单文件）。
 public struct FileLoader {
 
  /// 解析单个文件为 `Package`（单文件模式，向后兼容）。
- /// - 模块名：目录名兜底（后续阶段优先取 `module.toml` 的 `name`）。
+ /// - 模块名：目录名兜底（后续阶段优先取 `pini.toml` 的 `name`）。
  public static func loadFile(path: String) throws -> Package {
  let source = try String(contentsOfFile: path, encoding: .utf8)
  let unit = try parseUnit(fileName: path, source: source)
@@ -19,7 +19,7 @@ public struct FileLoader {
  }
 
  /// 解析目录为 `Package`（目录模式，递归扫描 `LangConfig.sourceSuffix` 源文件）。
- /// - 模块名：优先取目录内 `module.toml` 的 `[package] name`；无清单时取目录名（隐式根模块兜底）。
+ /// - 模块名：优先取目录内 `pini.toml` 的 `[package] name`；无清单时取目录名（隐式根模块兜底）。
  /// - Phase 5：CLI 收目录时通过 `manifest` 激活多文件「模块」语义；无清单的目录在 CLI 层被视为
  /// 一组**独立程序**（见 `main.swift`），此处仅负责物理聚合。
  public static func loadDirectory(path: String, manifest: ModuleManifest? = nil) throws -> Package {
@@ -47,11 +47,26 @@ public struct FileLoader {
  return Package(name: name, fileUnits: units)
  }
 
- /// 在目录中寻找并解析 `module.toml`；不存在则返回 `nil`（隐式根模块兜底）。
+ /// R8（issue-pini-dir-namespace-2026-08-29）：模块清单文件名。
+ /// R1 以「目录内是否存在此文件」作**哨兵**判定模块边界，故文件名必须语言级特异——
+ /// 旧名 `module.toml` 是通名，外来工程（非 Pini 项目）携带同名文件会导致误判。
+ public static let manifestFileName = "pini.toml"
+ /// R8：G52 之前的旧名。命中一律**报错**而非静默忽略——旧名若被当作「无清单」，
+ /// 该目录会从「模块边界」退化为「普通文件」，其下源码被父模块扫入且**全程不报错**，
+ /// 症状（"这目录的文件怎么被扫进去了"）离原因很远。
+ public static let legacyManifestFileName = "module.toml"
+
+ /// 在目录中寻找并解析 `pini.toml`；不存在则返回 `nil`（隐式根模块兜底）。
  /// Phase 5 起为 CLI / 加载器识别「这是一个显式多文件模块」的唯一信号。
  public static func loadManifest(directory: String) throws -> ModuleManifest? {
- let tomlPath = (directory as NSString).appendingPathComponent("module.toml")
- guard FileManager.default.fileExists(atPath: tomlPath) else { return nil }
+ let tomlPath = (directory as NSString).appendingPathComponent(manifestFileName)
+ let legacyPath = (directory as NSString).appendingPathComponent(legacyManifestFileName)
+ if !FileManager.default.fileExists(atPath: tomlPath) {
+ if FileManager.default.fileExists(atPath: legacyPath) {
+ throw LoaderError.legacyManifestName(path: legacyPath)
+ }
+ return nil
+ }
  let text = try String(contentsOfFile: tomlPath, encoding: .utf8)
  let manifest = try parseManifest(text, path: tomlPath)
  // Phase 2b（ADR-017）：将 `[ffi].search_paths` 的非绝对项规一为「相对本模块目录」
@@ -70,7 +85,7 @@ public struct FileLoader {
  }
 
  /// G49（issue-tdd-module-blockers-2026-08-28）：自 `path`（文件或目录）向上定位所属模块根
- /// （逐级寻找含合法 `module.toml` 的目录）；抵达文件系统根仍未见则返回 `nil`
+ /// （逐级寻找含合法 `pini.toml` 的目录）；抵达文件系统根仍未见则返回 `nil`
  /// （独立文件 / 目录语义）。清单非法（`invalidManifest`）向上抛出——坏清单不应被
  /// 静默当作「无模块」。
  public static func locateModuleRoot(for path: String) throws -> String? {
@@ -106,7 +121,7 @@ public struct FileLoader {
  }
 }
 
-/// FFI 模块配置（`module.toml` 的 `[ffi]` 表，ADR-017 Phase 2b）。
+/// FFI 模块配置（`pini.toml` 的 `[ffi]` 表，ADR-017 Phase 2b）。
 ///
 /// - `abi`：全局唯一，默认 `"C"`，子模块**不可覆盖**（与模块级 ABI 决策一致）。
 /// - `searchPaths`：库搜索路径，**分层追加**（子模块追加到父模块之后）。
@@ -135,11 +150,11 @@ public struct FFIConfig: Equatable {
  }
 }
 
-/// 模块清单（`module.toml`）。
+/// 模块清单（`pini.toml`）。
 ///
 /// Phase 5 解析 `[package] name`（必需，覆盖目录名作为模块身份）与 `version`、
 /// `[dependencies]`（记录但**不解析**——跨模块依赖加载属 P6+ 范畴，本阶段仅占位）。
-/// 依赖解析的硬约束（package 锚定 module.toml 身份、非目录名）见 spec 。
+/// 依赖解析的硬约束（package 锚定 pini.toml 身份、非目录名）见 spec 。
 public struct ModuleManifest: Equatable {
  public let name: String
  public let version: String?
@@ -164,6 +179,9 @@ public struct ModuleManifest: Equatable {
 public enum LoaderError: Error, Equatable {
  case cannotReadDirectory(path: String)
  case invalidManifest(path: String)
+ /// R8：命中旧名 `module.toml`。必须报错而非静默当作「无清单」——
+ /// 否则该目录会从模块边界退化为普通文件，源码被父模块扫入。
+ case legacyManifestName(path: String)
  /// 单文件解析产生的多个错误（聚合一次性抛出，避免只报首个而吞没其余）。
  case parseErrors(file: String, errors: [ParserError])
 }
@@ -174,7 +192,10 @@ extension LoaderError: LocalizedError {
  case .cannotReadDirectory(let path):
  return "无法读取目录：\(path)"
  case .invalidManifest(let path):
- return "非法的 module.toml：\(path)"
+ return "非法的 pini.toml：\(path)"
+ case .legacyManifestName(let path):
+ return "模块清单已由 module.toml 更名为 pini.toml，请将 \(path) 重命名为 pini.toml"
+ + "（旧名不会被静默忽略：否则该目录将从模块边界退化为普通文件，其下源码被父模块扫入）"
  case .parseErrors(let file, let errors):
  let details = errors.map { " - \(String(describing: $0))" }.joined(separator: "\n")
  return "解析错误（\(file)）：\n\(details)"
