@@ -66,10 +66,10 @@ final class ExamplesRunTests: XCTestCase {
             ("trait.pini", "旺财\n"),
             ("stdlib.pini", "HELLO, WORLD\nhello, world\ntrue\nHello\n[Hello,  World]\na-b-c\n42\n3\n9\n5.0\n0.0\n1.0\n0.0\n"),
             ("tuple.pini", "[3, 2]\n"),
-            ("array_basic.pini", "20\n3\nworld\n3\ntrue\n3\nb\n10\n7\n"),
+            ("array_basic.pini", "some(20)\n3\nsome(world)\n3\nsome(true)\n3\nsome(b)\nsome(10)\nsome(7)\n"),
             // G48（P2）：切片语法 a[i:j]/a[i:]/a[:j]/a[:] + 负索引尾部计数 + 越界读 nil（半开区间、开放边界、越界夹紧全覆盖）。
-            ("slice.pini", "[20, 30]\n[10, 20]\n[40, 50]\n[10, 20, 30, 40, 50]\n[40, 50]\n[10, 20, 30, 40]\n[20, 30, 40, 50]\n[]\n50\nnull\nell\nllo\nhell\nnull\n"),
-            ("dict_set_d2.pini", "25\n3\n26\n99\n5\n3\n"),
+            ("slice.pini", "[20, 30]\n[10, 20]\n[40, 50]\n[10, 20, 30, 40, 50]\n[40, 50]\n[10, 20, 30, 40]\n[20, 30, 40, 50]\n[]\nsome(50)\nnone\nell\nllo\nhell\nnone\n"),
+            ("dict_set_d2.pini", "some(25)\n3\nsome(26)\nsome(99)\n5\n3\n"),
             // #46-D D4：集合值语义 / COW（别名分裂、容器内快照、嵌套与混合嵌套递归分裂）。
             ("cow.pini", "[1, 2, 3]\n[99, 2, 3]\n{a: 1}\n{a: 9}\n[42, 2]\n[[1, 2]]\n"
                 + "[[99, 2], [3, 4]]\n[[1, 2], [3, 4]]\n[{k: 9}, {k: 2}]\n[{k: 1}, {k: 2}]\n"),

@@ -33,9 +33,13 @@ enum SubscriptReadStrategy {
  }
  // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
  let idx = i < 0 ? arr.count + i : i
- // P2-C：安全通道越界返回 nil（与字典缺失键一致），调用者显式解包。
- guard idx >= 0, idx < arr.count else { return .null }
- return arr[idx]
+ // P2-C + 宿主修复（issue-host-optional-slice-2026-08-28）：安全通道越界返回 Optional.none，
+ // 界内返回 Optional.some(元素)，与 P2-E 标注的 Optional<T> 静态类型对齐；
+ // 使 `match a[i]: case some(x): case none:` 可正常工作（此前运行时未做 some/none 包装）。
+ guard idx >= 0, idx < arr.count else {
+ return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ }
+ return .enumValue(EnumValue(caseName: "some", associatedValues: [arr[idx]]))
  }
 
  r[.string] = { container, index, loc in
@@ -44,10 +48,12 @@ enum SubscriptReadStrategy {
  }
  // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
  let idx = i < 0 ? s.count + i : i
- // P2-C：安全通道越界返回 nil（与字典缺失键一致），调用者显式解包。
- guard idx >= 0, idx < s.count else { return .null }
+ // P2-C + 宿主修复（issue-host-optional-slice-2026-08-28）：越界返回 Optional.none，界内返回 Optional.some(字符)。
+ guard idx >= 0, idx < s.count else {
+ return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ }
  let cidx = s.index(s.startIndex, offsetBy: idx)
- return .string(String(s[cidx]))
+ return .enumValue(EnumValue(caseName: "some", associatedValues: [.string(String(s[cidx]))]))
  }
 
  r[.dictionary] = { container, index, loc in
@@ -55,9 +61,10 @@ enum SubscriptReadStrategy {
  throw RuntimeError.invalidOperation(reason: "字典下标需字典容器: \(container)", location: loc)
  }
  for (k, v) in entries {
- if k == index { return v }
+ if k == index { return .enumValue(EnumValue(caseName: "some", associatedValues: [v])) }
  }
- return .null
+ // 缺失键返回 Optional.none（与 P2-E 标注的 Optional<T> 对齐）。
+ return .enumValue(EnumValue(caseName: "none", associatedValues: []))
  }
 
  return r
@@ -75,13 +82,21 @@ enum SubscriptReadStrategy {
 
  /// 执行下标读：查表分派，缺策略抛 unsupported。
  static func read(container: Value, index: Value, location: SourceLocation) throws -> Value {
- guard let k = kind(of: container) else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(container)", location: location)
+ // 宿主修复（issue-host-optional-slice-2026-08-28）：下标读现返回 Optional 枚举 some/none
+ // （与 P2-E 的 Optional<T> 静态类型对齐）。嵌套下标 `a[i][j]` 要求内层 `a[i]`
+ // （`some(array)`）仍可作容器再下标，故此处透明解包 `some(x)` -> `x`，
+ // 与 LLVM 后端裸元素行为对齐；首层 `a[i]` 仍返回 `some(x)` 供 `match` 解构。
+ var c = container
+ if case .enumValue(let ev) = c, ev.caseName == "some", let inner = ev.associatedValues.first {
+ c = inner
+ }
+ guard let k = kind(of: c) else {
+ throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(c)", location: location)
  }
  guard let strategy = registry[k] else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标访问: \(container)[\(index)]", location: location)
+ throw RuntimeError.invalidOperation(reason: "不支持的下标访问: \(c)[\(index)]", location: location)
  }
- return try strategy(container, index, location)
+ return try strategy(c, index, location)
  }
 }
 
@@ -142,12 +157,17 @@ enum SubscriptWriteStrategy {
 
  /// 执行下标写：查表分派，缺策略抛 unsupported。
  static func write(container: Value, index: Value, newValue: Value, location: SourceLocation) throws -> Value {
- guard let k = SubscriptReadStrategy.kind(of: container) else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(container)", location: location)
+ // 同 read：嵌套写 `a[i][j] = v` 时内层 `a[i]` 为 `some(array)`，透明解包后再写。
+ var c = container
+ if case .enumValue(let ev) = c, ev.caseName == "some", let inner = ev.associatedValues.first {
+ c = inner
+ }
+ guard let k = SubscriptReadStrategy.kind(of: c) else {
+ throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(c)", location: location)
  }
  guard let strategy = registry[k] else {
- throw RuntimeError.invalidOperation(reason: "不支持的下标写: \(container)[\(index)]", location: location)
+ throw RuntimeError.invalidOperation(reason: "不支持的下标写: \(c)[\(index)]", location: location)
  }
- return try strategy(container, index, newValue, location)
+ return try strategy(c, index, newValue, location)
  }
 }

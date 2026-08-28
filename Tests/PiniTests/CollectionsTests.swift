@@ -68,7 +68,7 @@ main|func() -> ()
         XCTAssertEqual(try runProgram(source), "[]\n")
     }
 
-    // Intent: 验证数组下标访问返回对应索引元素（推进性测量：a[1] == 20）
+    // Intent: 验证数组下标读返回 Optional 包装（严格枚举语义，issue-host-optional-slice）：a[1] == some(20)
     func testArraySubscript() throws {
         let source = """
 main|func() -> ()
@@ -76,7 +76,7 @@ main|func() -> ()
     print(a[1])
     return
 """
-        XCTAssertEqual(try runProgram(source), "20\n")
+        XCTAssertEqual(try runProgram(source), "some(20)\n")
     }
 
     // Intent: 验证嵌套数组字面量正确打印（推进性测量：[[1, 2], [3, 4]]）
@@ -89,8 +89,8 @@ main|func() -> ()
         XCTAssertEqual(try runProgram(source), "[[1, 2], [3, 4]]\n")
     }
 
-    // Intent: 验证数组下标越界返回 nil（P2-C 安全通道越界可空，与字典缺失键一致）—— 迁移性测量：
-    // 原实现越界抛 RuntimeError.invalidOperation，P2-C 改为统一返回 nil。
+    // Intent: 验证数组下标越界返回 Optional.none（严格枚举语义，issue-host-optional-slice：
+    // 越界从 .null 改为 .enumValue(none)，与 nil 字面量同构，可被 match case none 命中）。
     func testArraySubscriptOutOfRangeReturnsNull() throws {
         let source = """
 main|func() -> ()
@@ -98,7 +98,7 @@ main|func() -> ()
     print(a[99])
     return
 """
-        XCTAssertEqual(try runProgram(source), "null\n")
+        XCTAssertEqual(try runProgram(source), "none\n")
     }
 
     // MARK: - 字典
@@ -113,7 +113,7 @@ main|func() -> ()
         XCTAssertEqual(try runProgram(source), "{1: a, 2: b}\n")
     }
 
-    // Intent: 验证字典下标访问返回对应键的值（推进性测量：d[2] == "y"）
+    // Intent: 验证字典下标读返回 Optional 包装（严格枚举语义）：d[2] == some(y)
     func testDictionarySubscript() throws {
         let source = """
 main|func() -> ()
@@ -121,10 +121,10 @@ main|func() -> ()
     print(d[2])
     return
 """
-        XCTAssertEqual(try runProgram(source), "y\n")
+        XCTAssertEqual(try runProgram(source), "some(y)\n")
     }
 
-    // Intent: 验证字典缺失键下标返回 null（而非抛错）—— 驳回性测量：越界访问不应崩溃
+    // Intent: 验证字典缺失键下标返回 Optional.none（严格枚举语义，与数组越界一致）—— 驳回性测量
     func testDictionarySubscriptMissingKeyReturnsNull() throws {
         let source = """
 main|func() -> ()
@@ -133,7 +133,7 @@ main|func() -> ()
     print(r)
     return
 """
-        XCTAssertEqual(try runProgram(source), "null\n")
+        XCTAssertEqual(try runProgram(source), "none\n")
     }
 
     // MARK: - 集合
@@ -193,17 +193,17 @@ main|func() -> ()
 
     // MARK: - 字符串下标
 
-    // Intent: 验证字符串下标访问返回对应字符（推进性测量："hello"[1] == "e"）
+    // Intent: 验证字符串下标读返回 Optional 包装（严格枚举语义）："hello"[1] == some(e)
     func testStringSubscript() throws {
         let source = """
 main|func() -> ()
     print("hello"[1])
     return
 """
-        XCTAssertEqual(try runProgram(source), "e\n")
+        XCTAssertEqual(try runProgram(source), "some(e)\n")
     }
 
-    // Intent: 验证数组负索引尾部计数（P2-A：a[-1]=末元素，a[-len]=首元素）—— 推进性测量
+    // Intent: 验证数组负索引尾部计数（P2-A）+ 严格枚举包装：a[-1]==some(30), a[-3]==some(10)
     func testArrayNegativeIndex() throws {
         let source = """
 main|func() -> ()
@@ -212,10 +212,10 @@ main|func() -> ()
     print(a[-3])
     return
 """
-        XCTAssertEqual(try runProgram(source), "30\n10\n")
+        XCTAssertEqual(try runProgram(source), "some(30)\nsome(10)\n")
     }
 
-    // Intent: 验证字符串负索引尾部计数（P2-A：s[-1]=末字符）—— 推进性测量
+    // Intent: 验证字符串负索引尾部计数（P2-A）+ 严格枚举包装：s[-1]==some(o), s[-5]==some(h)
     func testStringNegativeIndex() throws {
         let source = """
 main|func() -> ()
@@ -223,10 +223,10 @@ main|func() -> ()
     print("hello"[-5])
     return
 """
-        XCTAssertEqual(try runProgram(source), "o\nh\n")
+        XCTAssertEqual(try runProgram(source), "some(o)\nsome(h)\n")
     }
 
-    // Intent: 验证越界下负索引仍返回 nil（P2-A + P2-C：-k 超过长度即越界）—— 驳回性测量
+    // Intent: 验证越界下负索引返回 Optional.none（严格枚举语义，P2-A + P2-C：-k 超过长度即越界）—— 驳回性测量
     func testNegativeIndexBeyondBoundsReturnsNull() throws {
         let source = """
 main|func() -> ()
@@ -236,7 +236,7 @@ main|func() -> ()
     print(s[-3])
     return
 """
-        XCTAssertEqual(try runProgram(source), "null\nnull\n")
+        XCTAssertEqual(try runProgram(source), "none\nnone\n")
     }
 
     // MARK: - 切片语法（P2-B）
@@ -280,7 +280,7 @@ main|func() -> ()
         XCTAssertEqual(try runProgram(source), "[2, 3]\n[]\nabc\n")
     }
 
-    // Intent: 验证字符串下标越界返回 nil（P2-C 安全通道越界可空，与数组下标一致）—— 迁移性测量
+    // Intent: 验证字符串下标越界返回 Optional.none（严格枚举语义，P2-C 安全通道越界可空）—— 迁移性测量
     func testStringSubscriptOutOfRangeReturnsNull() throws {
         let source = """
 main|func() -> ()
@@ -288,7 +288,7 @@ main|func() -> ()
     print(s[99])
     return
 """
-        XCTAssertEqual(try runProgram(source), "null\n")
+        XCTAssertEqual(try runProgram(source), "none\n")
     }
 
     // MARK: - 类型检查放行

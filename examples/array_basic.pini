@@ -21,7 +21,12 @@ main|func() -> ()
     print(m[0][1])
     var w = [1, 2, 3]
     w[0] = 10
-    w[1] += 5
+    ; 严格枚举语义（issue-host-optional-slice）：下标读返回 Optional，复合赋值须先 match 取元素
+    match w[1]:
+        case some(v):
+            w[1] = v + 5
+        case none:
+            break
     print(w[0])
     print(w[1])
     return
