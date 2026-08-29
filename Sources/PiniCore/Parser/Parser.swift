@@ -938,13 +938,14 @@ public class Parser {
  if case .leftParen(_) = currentToken {
  advance()
  while !check(.rightParen(loc)) && !isEOF() {
- // 3.15：枚举关联值仅接受位置类型注解 `type-annotation {',' type-annotation} [',']`。
- // 不允许具名（IDENT ':'）、默认值（IDENT '=' / 裸字面量）；解析到这些形式直接报错。
- if case .identifier(let possibleName, let nl) = currentToken, peekIsColon() {
- throw ParserError.invalidStatement(
- reason: "枚举用例关联值不允许具名参数（如 `\(possibleName): 类型`）；rule 3.15 要求位置类型注解，请直接写类型（例如 `F64`）",
- location: nl
- )
+ // ADR-021/具名关联值决议（2026-08-29）：具名形参 `IDENT ':' 类型` 合法
+ // （推翻规则 3.15 的具名拒绝；spec A.2.2 具名四形态收口）。默认值 / 裸字面量
+ // / 表达式默认值仍拒绝（与具名无关）。
+ var assocName: String? = nil
+ if case .identifier(let possibleName, _) = currentToken, peekIsColon() {
+ assocName = possibleName
+ advance()
+ advance()
  }
  if case .identifier(let badName, let al) = currentToken, peekIsAssign() {
  throw ParserError.invalidStatement(
@@ -969,7 +970,8 @@ public class Parser {
  )
  }
  let type = try parseTypeAnnotation()
- associatedParams.append(AssociatedParam(name: nil, type: type, defaultValue: nil))
+ associatedParams.append(AssociatedParam(name: assocName, type: type, defaultValue: nil))
+ assocName = nil
  if case .comma(_) = currentToken {
  advance()
  } else {
@@ -2181,15 +2183,25 @@ public class Parser {
  let firstTok = currentToken
  if case .identifier(let possibleName, let nameLoc) = firstTok {
  let nextTok = peek(offset: 1)
- if case .colon(_) = nextTok {
- // 3.15：枚举关联值已位置化，match 模式不再支持具名 `name: var` 绑定。
- throw ParserError.invalidStatement(
- reason: "match 模式枚举绑定已位置化：不再支持具名绑定 `\(possibleName): 变量`；请直接写 `\(possibleName)` 按位置绑定",
- location: nameLoc
- )
+ if case .colon(let colonLoc) = nextTok {
+ // ADR 具名关联值决议（2026-08-29）：具名绑定 `关联值名: 变量` 解禁
+ // （推翻 3.15 具名绑定拒绝；语义 = 按关联值名对位绑定）。
+ advance()
+ advance()
+ guard case .identifier(let varIdent, _) = currentToken else {
+ throw ParserError.unexpectedToken(expected: "identifier (binding variable)", actual: currentToken.typeName, location: currentLocation)
  }
  advance()
+ bindings.append(MatchBinding(paramName: possibleName, varName: varIdent))
+ _ = colonLoc
+ } else if possibleName == "_" {
+ // `_` 占位：占一个关联值位置但不产生绑定变量（按位忽略）
+ advance()
+ bindings.append(MatchBinding(paramName: nil, varName: "_"))
+ } else {
+ advance()
  bindings.append(MatchBinding(paramName: nil, varName: possibleName))
+ }
  } else {
  throw ParserError.unexpectedToken(expected: "identifier", actual: currentToken.typeName, location: currentLocation)
  }

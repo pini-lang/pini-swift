@@ -208,22 +208,78 @@ main|func() -> ()
 
     // MARK: - 枚举关联值位置化（ADR-016 规则 3.15）
 
-    /// 意图：规则 3.15——枚举用例声明括号内只接受位置类型注解，具名形参须在解析期报错
-    /// 推进性测量：`矩形(宽度: F64, 高度: F64,)` 抛出 ParserError.invalidStatement
-    /// 驳回性测量：具名形参声明被静默接受
-    func testEnumNamedParamDeclarationRejected() {
+    /// 意图：具名关联值决议（2026-08-29，推翻规则 3.15 具名拒绝）——具名形参声明
+    /// `矩形(宽度: F64, 高度: F64,)` 合法，且 match 位置解构按位绑定。
+    /// 推进性测量：check 零错误；运行输出 12.0（宽 3.0 × 高 4.0）。
+    func testEnumNamedParamDeclarationAccepted() {
         let source = """
 [形状]
 矩形(宽度: F64, 高度: F64,)
 
+面积|func(s: 形状,) -> (F64,)
+    match s:
+        case 矩形(w, h):
+            return w * h
+
 main|func() -> ()
+    print(面积(矩形(3.0, 4.0,)))
     return
 """
-        XCTAssertThrowsError(try checkModule(source), "规则 3.15：枚举用例具名形参应在解析期报错") { error in
-            guard case ParserError.invalidStatement = error else {
-                XCTFail("期望 ParserError.invalidStatement，得到 \(error)")
+        XCTAssertNoThrow(try checkModule(source), "具名形参声明应合法")
+    }
+
+    /// 意图：具名关联值全链路 E2E——具名声明 + 构造 + 三种 match 解构
+    ///（位置绑定 / 具名绑定 / `_` 占位）。
+    /// 推进性测量：输出 "x\n7\ny\n8\n9\n"。
+    func testNamedAssociatedValuesEndToEnd() throws {
+        let source = """
+[Token]
+identifier(text: String, loc: I32,)
+plus
+
+main|func() -> ()
+    var t = identifier(text: "x", loc: 7,)
+    match t:
+        case identifier(text, loc):
+            print(text)
+            print(loc)
+    var u = identifier(text: "y", loc: 8,)
+    match u:
+        case identifier(text: s, loc: l):
+            print(s)
+            print(l)
+    var v = identifier(text: "z", loc: 9,)
+    match v:
+        case identifier(_, l2):
+            print(l2)
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "x\n7\ny\n8\n9\n", "三种解构应依次输出 x/7、y/8、9")
+    }
+
+    /// 意图：绑定数与关联值数不匹配应报 E4（argumentCountMismatch）——
+    /// 此前静默错绑（首名绑整元组、其余 null）。
+    /// 驳回性测量：3 绑定对 2 关联值必须报错。
+    func testMatchBindingArityMismatchRejected() {
+        let source = """
+[Token]
+identifier(text: String, loc: I32,)
+
+main|func() -> ()
+    var t = identifier("x", 7,)
+    match t:
+        case identifier(a, b, c):
+            print(a)
+    return
+"""
+        XCTAssertThrowsError(try checkModule(source), "绑定数不匹配应报类型错误") { error in
+            guard case TypeError.argumentCountMismatch(let expected, let got, _) = error else {
+                XCTFail("期望 argumentCountMismatch，得到 \(error)")
                 return
             }
+            XCTAssertEqual(expected, 2)
+            XCTAssertEqual(got, 3)
         }
     }
 
