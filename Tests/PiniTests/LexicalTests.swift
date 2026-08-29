@@ -66,10 +66,20 @@ final class LexicalTests: XCTestCase {
         XCTAssertEqual(v, 7, "前导零十进制应保持十进制语义，不按八进制解释")
     }
 
-    // Intent: 驳回性测量——非法十六进制 "0xG" 应抛出词法错误
+    // Intent: ADR-021 宽松词法——"0xG" 不再抛错：前缀后无有效数字，
+    // 只消费 '0' 产出 int 0，"xG" 走标识符通道（错误后移到解析/语义）。
+    // 驳回性测量：若恢复抛错或吞掉 '0'，本用例失败。
     func testInvalidHexThrows() throws {
         let lexer = Lexer(source: "0xG", fileName: "t.pini")
-        XCTAssertThrowsError(try lexer.tokenize(), "非法十六进制应报错")
+        let tokens = try lexer.tokenize()
+        guard case .integerLiteral(let v, _) = tokens[0] else {
+            XCTFail("首 token 应为 int 0"); return
+        }
+        XCTAssertEqual(v, 0)
+        guard case .identifier(let name, _) = tokens[1] else {
+            XCTFail("次 token 应为 identifier xG"); return
+        }
+        XCTAssertEqual(name, "xG")
     }
 
     // MARK: - 科学计数
@@ -121,10 +131,15 @@ final class LexicalTests: XCTestCase {
         XCTAssertEqual(output, "q\"q\n")
     }
 
-    // Intent: 驳回性测量——非法转义 \q 应抛出词法错误
+    // Intent: ADR-021 宽松词法——非法转义 \q 原样保留进字符串内容（不报错）。
+    // 驳回性测量：若抛错或吞掉反斜杠，本用例失败。
     func testInvalidEscapeThrows() throws {
         let lexer = Lexer(source: "\"\\q\"", fileName: "t.pini")
-        XCTAssertThrowsError(try lexer.tokenize(), "非法转义 \\q 应报错")
+        let tokens = try lexer.tokenize()
+        guard case .stringLiteral(let s, _) = tokens[0] else {
+            XCTFail("应为 stringLiteral"); return
+        }
+        XCTAssertEqual(s, "\\q", "非法转义应原样保留")
     }
 
     // MARK: - 字符串插值（\(expr)）
