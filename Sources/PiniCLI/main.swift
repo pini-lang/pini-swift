@@ -602,7 +602,7 @@ func printHelp() {
 
 func printVersion() {
  // CLI 版本号对齐 spec 版本语义（历史曾滞后于 spec minor）。
- print("Pini 0.48.4")
+ print("Pini \(PiniVersion.current)")
 }
 
 func readFile(_ path: String) throws -> String {
