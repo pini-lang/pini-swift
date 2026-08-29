@@ -14,6 +14,63 @@ final class TraitConstraintTests: XCTestCase {
         return TypeChecker().checkCollecting(module: module)
     }
 
+    // MARK: - 内建特征 collection（ADR-020 步骤 A 声明面）
+
+    /// 意图：宿主预注册的 `collection` 特征对用户类型可用——
+    /// 提供 6 个抽象方法（len/contains/append/pop/slice/join）的用户类型可通过
+    /// verifyTraitConformance 严格校验（内建 String/Array 为标记式登记，不走此路径）。
+    /// 推进性测量：整个模块零类型错误。
+    func testBuiltinCollectionTraitConformanceSatisfied() throws {
+        let source = """
+(袋子)
+    实现: collection
+
+((袋子))
+    len|self() -> (I32,)
+        return 0
+    contains|self(v: I32,) -> (Bool,)
+        return false
+    append|self(v: I32,) -> (I32,)
+        return 0
+    pop|self() -> (I32,)
+        return 0
+    slice|self(a: I32, b: I32,) -> (I32,)
+        return 0
+    join|self(sep: I32,) -> (I32,)
+        return 0
+
+main|func() -> ()
+    return
+"""
+        let diagnostics = checkCollecting(source)
+        XCTAssertTrue(diagnostics.isEmpty, "补齐 6 方法的类型应通过 collection 校验，实际: \(diagnostics)")
+    }
+
+    /// 意图：collection 为严格抽象特征——缺任一抽象方法即报
+    /// traitRequirementNotSatisfied（与用户声明特征同语义）。
+    /// 驳回性测量：缺 len 时应命中该方法缺失诊断。
+    func testBuiltinCollectionTraitMissingMethodRejected() throws {
+        let source = """
+(袋子)
+    实现: collection
+
+((袋子))
+    contains|self(v: I32,) -> (Bool,)
+        return false
+
+main|func() -> ()
+    return
+"""
+        let diagnostics = checkCollecting(source)
+        let hit = diagnostics.contains {
+            if case .traitRequirementNotSatisfied(typeName: "袋子", traitName: "collection", methodName: "len", _) = $0 {
+                return true
+            }
+            return false
+        }
+        XCTAssertTrue(hit, "缺 len 应报 traitRequirementNotSatisfied，实际: \(diagnostics)")
+    }
+
     /// 意图：类型声明实现 trait 且提供了抽象方法，且 `obj.traitMethod()` 成员调用能过类型检查。
     /// 推进性测量：整个模块零类型错误。
     /// 驳回性测量：若 trait 方法未注册为可见方法，成员调用会落入不匹配分支而报错。

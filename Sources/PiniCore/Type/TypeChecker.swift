@@ -85,6 +85,45 @@ public final class TypeChecker {
 
  registerConcurrencyBuiltins(loc: loc, string: string)
 
+ // ADR-020 步骤 A（D1/D7）：内建特征 collection 声明面。
+ // 方法面 = D1 最小集的成员方法部分（append/pop/slice/join/contains + len，
+ // len 现为自由函数，方法化随步骤 B 裁决；下标读属运算符通道，不入方法表）。
+ // 抽象签名参数/返回一律 `_` 通配位（joinWithin 先例；Any 非顶部类型，
+ // isAssignable 对 expected=Any 不放行）——严格形状随步骤 B 的 per-type
+ // witness 表钉定。
+ // String/Array 的遵循为标记式登记（markConformance），不触发严格校验；
+ // 用户源码 `实现: collection` 仍走 verifyTraitConformance 全量校验。
+ let any = TypeAnnotation.simple(name: "_", location: loc)
+ let selfParam = Parameter(name: "self")
+ func collectionMethod(_ name: String, extra: [Parameter], returns: [TypeAnnotation]) -> FuncDecl {
+ return FuncDecl(
+ name: name,
+ modifiers: [],
+ genericParams: [],
+ params: [selfParam] + extra,
+ returnTypes: returns,
+ body: nil,
+ location: loc
+ )
+ }
+ let collectionTrait = TraitDecl(
+ name: "collection",
+ genericParams: [],
+ signatures: [
+ collectionMethod("len", extra: [], returns: [any]),
+ collectionMethod("contains", extra: [Parameter(name: "v", typeAnnotation: any)], returns: [any]),
+ collectionMethod("append", extra: [Parameter(name: "v", typeAnnotation: any)], returns: [any]),
+ collectionMethod("pop", extra: [], returns: [any]),
+ collectionMethod("slice", extra: [Parameter(name: "a", typeAnnotation: any), Parameter(name: "b", typeAnnotation: any)], returns: [any]),
+ collectionMethod("join", extra: [Parameter(name: "sep", typeAnnotation: any)], returns: [any]),
+ ],
+ location: loc
+ )
+ typeEnv.defineTrait(name: "collection", trait: collectionTrait)
+ for (typeName, traitNames) in BuiltinRegistry.conformances {
+ typeEnv.markConformance(typeName: typeName, traits: traitNames)
+ }
+
  // 内建类型（String/Array）成员方法签名登记（P3-2 ③：内建成员方法静态校验）。
  // 与解释器运行时 evaluateMember 的实现严格对齐：String 支持 upper/lower/contains/substring/split，
  // Array 支持 join。未知成员将被类型层捕获（unknownMember），提前于运行时 undefinedVariable。

@@ -147,6 +147,22 @@ public final class TypeEnvironment {
  return traits[name]
  }
 
+ // MARK: - 内建类型 conformance 标记（ADR-020 步骤 A）
+
+ /// 内建类型的特征遵循标记（typeName -> trait 集合）。仅承载声明：
+ /// 用户源码里的 `实现: 特征` 仍走 verifyTraitConformance 严格校验，
+ /// 内建标记不触发校验（内建方法由 registerBuiltinTypes 的 defineMethod
+ /// 路径供给，逐方法严格校验随步骤 B 特征派发切换一并启用）。
+ private var builtinConformances: [String: Set<String>] = [:]
+
+ public func markConformance(typeName: String, traits: [String]) {
+ builtinConformances[typeName, default: []].formUnion(traits)
+ }
+
+ public func conformsTo(typeName: String, traitName: String) -> Bool {
+ return builtinConformances[typeName]?.contains(traitName) ?? false
+ }
+
  // MARK: - Generic types
 
  private struct GenericTypeTemplate {
