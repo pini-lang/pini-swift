@@ -2700,84 +2700,15 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
 
  // 成员方法实现入口（非全局自由函数）：
- // upper/lower/contains/substring/split/join 并**未在 registerBuiltins 注册**，
- // 而是由 evaluateMember 在 .string / .array 分支中以同名 FunctionValue 派发至此。
- // 因此唯一调用形态是成员方法（s.upper() / arr.join(sep)）；自由调用 upper(s) 会因
- // 未注册而报 undefinedFunction。请勿将本段误判为「冗余的自由函数别名」而删除——
- // 删除会使上述成员方法全部失效。
+ // 剩余原生成员 = upper/lower/join/append/last/pop（各自的前置缺口见
+ // Common/StdlibPini.swift 头注释）。已下沉方法（contains/substring/split/slice）
+ // 的语言内实现经 callFunctionValue 的 body-first 通道执行，先于本链——
+ // 请勿为已下沉方法在本链恢复按名分支（会造成死代码与双实现漂移）。
  if fv.name == "upper" {
  return .string(try builtinStringReceiver(fv).uppercased())
  }
  if fv.name == "lower" {
  return .string(try builtinStringReceiver(fv).lowercased())
- }
- if fv.name == "contains" {
- let s = try builtinStringReceiver(fv)
- guard case .string(let sub) = args[0] else {
- throw RuntimeError.invalidOperation(
- reason: "contains 的参数必须是字符串",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- return .bool(s.contains(sub))
- }
- if fv.name == "substring" {
- let s = try builtinStringReceiver(fv)
- guard case .int(let start) = args[0], case .int(let end) = args[1] else {
- throw RuntimeError.invalidOperation(
- reason: "substring 的参数必须是整数",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- let count = s.count
- // P2-D：负索引改尾部计数（Python 一致）—— start/end < 0 → count+值；
- // 与切片统一语义。越界仍夹紧到 [0, count]；hi<lo 返回空串。
- let lo = min(max(start < 0 ? count + start : start, 0), count)
- let hi = min(max(end < 0 ? count + end : end, 0), count)
- guard hi >= lo else { return .string("") }
- let startIdx = s.index(s.startIndex, offsetBy: lo)
- let endIdx = s.index(s.startIndex, offsetBy: hi)
- return .string(String(s[startIdx..<endIdx]))
- }
- if fv.name == "slice" {
- // P2-B：半开区间切片（Python 风）。起始默认 0、终止默认容器长度；
- // 负索引尾部计数；开放边界（nil = Optional.none）取默认值；越界夹紧；hi<lo 返回空。
- let selfVal = try fv.closure.get(name: "self")
- switch selfVal {
- case .array(let arr):
- let count = arr.count
- let lo = try sliceBound(args[0], count: count, defaultWhenOpen: 0)
- let hi = try sliceBound(args[1], count: count, defaultWhenOpen: count)
- let cLo = min(max(lo, 0), count)
- let cHi = min(max(hi, 0), count)
- guard cHi >= cLo else { return .array([]) }
- return .array(Array(arr[cLo..<cHi]))
- case .string(let s):
- let count = s.count
- let lo = try sliceBound(args[0], count: count, defaultWhenOpen: 0)
- let hi = try sliceBound(args[1], count: count, defaultWhenOpen: count)
- let cLo = min(max(lo, 0), count)
- let cHi = min(max(hi, 0), count)
- guard cHi >= cLo else { return .string("") }
- let startIdx = s.index(s.startIndex, offsetBy: cLo)
- let endIdx = s.index(s.startIndex, offsetBy: cHi)
- return .string(String(s[startIdx..<endIdx]))
- default:
- throw RuntimeError.invalidOperation(
- reason: "slice 仅支持数组与字符串",
- location: Interpreter.builtinLocation
- )
- }
- }
- if fv.name == "split" {
- let s = try builtinStringReceiver(fv)
- guard case .string(let sep) = args[0] else {
- throw RuntimeError.invalidOperation(
- reason: "split 的参数必须是字符串",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- return .array(s.components(separatedBy: sep).map { .string($0) })
  }
  if fv.name == "join" {
  let arr = try builtinArrayReceiver(fv)

@@ -35,5 +35,147 @@ enum StdlibPini {
              return true
          i = i + 1
      return false
+
+ ; substring -- negative tail-count, clamp to [0, len], hi < lo -> "".
+ substring|self(start: I32, end: I32,) -> (String,)
+     var n = len(self)
+     var lo = start
+     var hi = end
+     if lo < 0:
+         lo = n + lo
+     if hi < 0:
+         hi = n + hi
+     if lo < 0:
+         lo = 0
+     if lo > n:
+         lo = n
+     if hi < 0:
+         hi = 0
+     if hi > n:
+         hi = n
+     if hi < lo:
+         return ""
+     var out = ""
+     var k = lo
+     while k < hi:
+         out = out + self[k]!
+         k = k + 1
+     return out
+
+ ; split -- mirror components(separatedBy:); empty separator yields
+ ; grapheme chars (correct per ADR-019 D1; the native impl splits UTF-16).
+ split|self(sep: String,) -> (Array,)
+     var parts = []
+     var cur = ""
+     var n = len(self)
+     var m = len(sep)
+     if m == 0:
+         var i = 0
+         while i < n:
+             parts = parts.append(self[i]!)
+             i = i + 1
+         return parts
+     var i = 0
+     while i < n:
+         var j = 0
+         var hit = true
+         while j < m:
+             if i + j >= n:
+                 hit = false
+                 break
+             if self[i + j]! != sep[j]!:
+                 hit = false
+                 break
+             j = j + 1
+         if hit:
+             parts = parts.append(cur)
+             cur = ""
+             i = i + m
+         else:
+             cur = cur + self[i]!
+             i = i + 1
+     parts = parts.append(cur)
+     return parts
+
+ ; slice -- sliceBound semantics: none open bounds default to [0, len);
+ ; int bounds may be negative (tail count); clamp; hi < lo -> "".
+ ; (null-as-open is accepted by the native path only; the desugar never
+ ; produces it.)
+ slice|self(a: Any, b: Any,) -> (String,)
+     var n = len(self)
+     var lo = 0
+     var hi = n
+     match a:
+         case none:
+             lo = 0
+         case _:
+             if a < 0:
+                 lo = n + a
+             else:
+                 lo = a
+     match b:
+         case none:
+             hi = n
+         case _:
+             if b < 0:
+                 hi = n + b
+             else:
+                 hi = b
+     if lo < 0:
+         lo = 0
+     if lo > n:
+         lo = n
+     if hi < 0:
+         hi = 0
+     if hi > n:
+         hi = n
+     if hi < lo:
+         return ""
+     var out = ""
+     var k = lo
+     while k < hi:
+         out = out + self[k]!
+         k = k + 1
+     return out
+
+ ((Array))
+ ; slice -- same bound semantics as String.slice; elements via
+ ; subscript unwrap; empty array for hi < lo.
+ slice|self(a: Any, b: Any,) -> (Array,)
+     var n = len(self)
+     var lo = 0
+     var hi = n
+     match a:
+         case none:
+             lo = 0
+         case _:
+             if a < 0:
+                 lo = n + a
+             else:
+                 lo = a
+     match b:
+         case none:
+             hi = n
+         case _:
+             if b < 0:
+                 hi = n + b
+             else:
+                 hi = b
+     if lo < 0:
+         lo = 0
+     if lo > n:
+         lo = n
+     if hi < 0:
+         hi = 0
+     if hi > n:
+         hi = n
+     if hi < lo:
+         return []
+     var out = []
+     var k = lo
+     while k < hi:
+         out = out.append(self[k]!)
+         k = k + 1
+     return out
  """
 }
