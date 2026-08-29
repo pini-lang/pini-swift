@@ -57,41 +57,27 @@ public final class TypeChecker {
 
  private func registerBuiltinTypes() {
  let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
- let anyType = TypeAnnotation.simple(name: "Any", location: loc)
- typeEnv.defineFunction(name: "print", params: [anyType], returns: [], isVariadic: true)
- typeEnv.defineFunction(name: "len", params: [anyType], returns: [.simple(name: "I32", location: loc)])
-
- // 语言内建（与运行时 Interpreter.registerBuiltins 对齐）：类型层须登记签名，
- // 否则示例/用户代码调用这些自由函数会因调用点查不到签名而被跳过校验，
- // 且语义层 undefinedFunction 已由 SemanticAnalyzer 登记同名符号。
+ // ADR-020 D3：内建静态签名从单点登记表（BuiltinRegistry）派生——
+ // 类型层须登记签名，否则示例/用户代码调用这些自由函数会因调用点查不到
+ // 签名而被跳过校验。带泛型/指针/通配位的特例（load/store/addressof、
+ // ok/err/Error/CancelError、isCancel/joinAll/joinWithin）由专属路径登记，
+ // 在表中以 typeSignature = nil 标记。
  // 注：TypeEnvironment.defineFunction 按名覆盖、不支持重载，故 abs 仅登记 I32 形态
  // （示例 abs(-42) 为整数字面量，推断为 I32）。
- let i32 = TypeAnnotation.simple(name: "I32", location: loc)
- let f64 = TypeAnnotation.simple(name: "F64", location: loc)
+ for decl in BuiltinRegistry.decls {
+ guard let sig = decl.typeSignature else { continue }
+ typeEnv.defineFunction(
+ name: decl.name,
+ params: sig.params,
+ returns: sig.returns,
+ isVariadic: sig.isVariadic
+ )
+ }
  let string = TypeAnnotation.simple(name: "String", location: loc)
- typeEnv.defineFunction(name: "abs", params: [i32], returns: [i32])
- typeEnv.defineFunction(name: "min", params: [i32, i32], returns: [i32])
- typeEnv.defineFunction(name: "max", params: [i32, i32], returns: [i32])
- typeEnv.defineFunction(name: "sqrt", params: [f64], returns: [f64])
- typeEnv.defineFunction(name: "sin", params: [f64], returns: [f64])
- typeEnv.defineFunction(name: "cos", params: [f64], returns: [f64])
- typeEnv.defineFunction(name: "tan", params: [f64], returns: [f64])
- typeEnv.defineFunction(name: "writeFile", params: [string, string], returns: [])
- typeEnv.defineFunction(name: "readFile", params: [string], returns: [string])
- typeEnv.defineFunction(name: "readLine", params: [], returns: [string])
- // G41（test 块，R2）：assert 内建——`assert(条件)` / `assert(条件, 消息)`。
- // 消息可选：用变参形态登记（前 2 个形参照常做类型守卫：条件 Bool、消息 String），
- // 使 1 参/2 参调用均通过类型检查；arity 上限由运行时 assert 分支守卫（1-2 参）。
- let boolType = TypeAnnotation.simple(name: "Bool", location: loc)
- typeEnv.defineFunction(name: "assert", params: [boolType, string], returns: [], isVariadic: true)
- // G45（自举 lexer 前置）：字符谓词 is_letter——String -> Bool（UCD \p{L} 判定，
- // issue-lexer-gaps-2026-08-28 P1-A），与 Interpreter.registerBuiltins / SemanticAnalyzer 对齐。
- typeEnv.defineFunction(name: "is_letter", params: [string], returns: [boolType])
- // P5 并发：sleep(ms: I32) -> ()，与运行时 Interpreter.registerBuiltins 对齐
- typeEnv.defineFunction(name: "sleep", params: [i32], returns: [])
 
  // Phase 2a（ADR-015 FFI）：指针原语内建（与 Interpreter.registerPointerBuiltins 对齐）。
  // load/store 参数用 Any 通配——接受任意 `*T`（元素类型由运行时指针值自描述，静态层不约束）。
+ let anyType = TypeAnnotation.simple(name: "Any", location: loc)
  let anyPtr = TypeAnnotation.pointer(element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
  typeEnv.defineFunction(name: "load", params: [anyType], returns: [])
  typeEnv.defineFunction(name: "store", params: [anyType, anyType], returns: [])
@@ -104,8 +90,9 @@ public final class TypeChecker {
  // Array 支持 join。未知成员将被类型层捕获（unknownMember），提前于运行时 undefinedVariable。
  // 注：数组字面量在类型层推断为 nil（TypeInference.arrayLiteral → nil），故 Array 成员校验
  // 仅在接收者类型可解析时生效；注册不引入回归（解析不到类型时仍走原跳过路径）。
- // 注：`i32` / `string` 已在上方自由函数登记段声明，此处复用。
+ // 注：`i32` / `string` 于本段及上方登记段各自声明、按名对齐。
  let bool = TypeAnnotation.simple(name: "Bool", location: loc)
+ let i32 = TypeAnnotation.simple(name: "I32", location: loc)
  let str = TypeAnnotation.simple(name: "String", location: loc)
  let arrayOfString = TypeAnnotation.generic(name: "Array", params: [str], location: loc)
 
@@ -445,13 +432,13 @@ public final class TypeChecker {
  }
  }
 
- /// 把类型注解中的 `Self` 替换为具体实现类型名（trait 约束求解与成员可见性需要）。
+ /// 把类型注解中的 `own`（G50 更名自 Self）替换为具体实现类型名（trait 约束求解与成员可见性需要）。
  private func replaceSelf(_ type: TypeAnnotation, with typeName: String) -> TypeAnnotation {
  switch type {
  case .simple(let name, let loc):
- return name == "Self" ? .simple(name: typeName, location: loc) : type
+ return name == "own" ? .simple(name: typeName, location: loc) : type
  case .generic(let name, let params, let loc):
- let newName = name == "Self" ? typeName : name
+ let newName = name == "own" ? typeName : name
  return .generic(name: newName, params: params.map { replaceSelf($0, with: typeName) }, location: loc)
  default:
  return type

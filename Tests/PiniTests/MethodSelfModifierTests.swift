@@ -4,7 +4,7 @@ import XCTest
 /// 类型体内禁止函数声明 + 扩展块方法显式 `self` 修饰符（ADR-016 规则 3.2/3.14）
 ///
 /// 类型体（struct/object/enum）内任何函数声明（含 `|self`）一律报 invalidStatement，
-/// 方法须移至同文件扩展块 `((T))`/`{{T}}`/`[[T]]` 并显式 `|self`（或 `|Self`）；
+/// 方法须移至同文件扩展块 `((T))`/`{{T}}`/`[[T]]` 并显式 `|self`（或 `|own`，G50）；
 /// 扩展块内缺 `self` 的自由函数同样报错；顶级裸函数无需 `self`。
 /// （由 DraftV5AlignmentTests 的 Task A5 迁入，随 ADR-016 规则 3.2 重写。）
 final class MethodSelfModifierTests: XCTestCase {
@@ -83,15 +83,15 @@ x: I32 = 0
         XCTAssertTrue(ext.methods[0].modifiers.contains("self"), "modifiers 应包含 'self'")
     }
 
-    /// StructDecl 内 |Self（大写）也合法
-    /// 意图：验证 StructDecl 内大写 `|Self` 修饰方法同样合法；应生成 .structDecl 且方法 modifiers 含 "Self"。
-    func testStructDeclMethodWithSelfUpperModifierParses() throws {
+    /// StructDecl 内 |own（G50 更名自 |Self）也合法
+    /// 意图：验证 StructDecl 内 `|own` 本型方法修饰符同样合法；应生成 .structDecl 且方法 modifiers 含 "own"。
+    func testStructDeclMethodWithOwnModifierParses() throws {
         let source = """
 (点)
 x: I32 = 0
 
 ((点))
-移动|Self(dx: I32) -> ()
+移动|own(dx: I32) -> ()
     self.x = self.x + dx
     return
 """
@@ -106,7 +106,7 @@ x: I32 = 0
         guard case .extensionDecl(let ext) = module.declarations[1] else { XCTFail("第二个声明应为扩展块"); return }
         XCTAssertEqual(ext.targetType, "点")
         XCTAssertEqual(ext.methods.count, 1)
-        XCTAssertTrue(ext.methods[0].modifiers.contains("Self"), "modifiers 应包含 'Self'")
+        XCTAssertTrue(ext.methods[0].modifiers.contains("own"), "modifiers 应包含 'own'")
     }
 
     /// 顶级裸函数无需 self 修饰符

@@ -338,4 +338,114 @@ main|func() -> ()
         let output = try runProgram(source)
         XCTAssertEqual(output, "false\nfalse\nfalse\n", "数字/下划线/空串均不应判定为字母")
     }
+
+    // MARK: - is_ascii_digit（ADR-019 D4）
+
+    /// 意图：is_ascii_digit 对 ASCII 数字 [0-9] 返回 true——INT 字面量扫描判定。
+    /// 推进性测量：输出 "true\ntrue\ntrue\n"（0、9、5）。
+    func testIsAsciiDigitAcceptsDigits() throws {
+        let source = """
+main|func() -> ()
+    print(is_ascii_digit("0"))
+    print(is_ascii_digit("9"))
+    print(is_ascii_digit("5"))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "true\ntrue\ntrue\n", "ASCII 数字应判定为 digit")
+    }
+
+    /// 意图：is_ascii_digit 拒绝非 ASCII 数字字符——含带数值的汉字 三（numeric property
+    /// 但非 [0-9]）、字母、空串；INT 字面量严格 ASCII 的边界锚（ADR-019 D3 对照）。
+    /// 驳回性测量：输出 "false\nfalse\nfalse\nfalse\n"（三、a、_、空串）。
+    func testIsAsciiDigitRejectsNonDigits() throws {
+        let source = """
+main|func() -> ()
+    print(is_ascii_digit("三"))
+    print(is_ascii_digit("a"))
+    print(is_ascii_digit("_"))
+    print(is_ascii_digit(""))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "false\nfalse\nfalse\nfalse\n", "汉字/字母/下划线/空串均不应判定为 digit")
+    }
+
+    // MARK: - is_number（ADR-019 D4 / D3）
+
+    /// 意图：is_number 按 Unicode numeric property 判定——含 三（Lo 类带数值汉字，
+    /// 严格超集 \p{N} 的裁决锚，ADR-019 D3）与 〇（Nl 类）。
+    /// 推进性测量：输出 "true\ntrue\ntrue\ntrue\n"（0、三、〇、½）。
+    func testIsNumberAcceptsNumericProperty() throws {
+        let source = """
+main|func() -> ()
+    print(is_number("0"))
+    print(is_number("三"))
+    print(is_number("〇"))
+    print(is_number("½"))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "true\ntrue\ntrue\ntrue\n", "numeric property 字符均应判定为 number")
+    }
+
+    /// 意图：is_number 对无 numeric property 的字符返回 false——与 is_letter 的
+    /// 互斥锚（字 为字母但无数值）、下划线、空串。
+    /// 驳回性测量：输出 "false\nfalse\nfalse\nfalse\n"（字、a、_、空串）。
+    func testIsNumberRejectsNonNumeric() throws {
+        let source = """
+main|func() -> ()
+    print(is_number("字"))
+    print(is_number("a"))
+    print(is_number("_"))
+    print(is_number(""))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "false\nfalse\nfalse\nfalse\n", "非 numeric property 字符不应判定为 number")
+    }
+
+    // MARK: - chars（ADR-019 性能项：grapheme 预切）
+
+    /// 意图：chars 按 grapheme cluster 预切字符数组——中文/ASCII 混排与 len 一致。
+    /// 推进性测量：输出 "3\n圆\n0"（len=3、首元素、拼接还原）。
+    func testCharsSplitsGraphemes() throws {
+        let source = """
+main|func() -> ()
+    var cs = chars("a圆b")
+    print(len(cs))
+    print(cs[0]!)
+    print(cs[0]! + cs[1]! + cs[2]! == "a圆b")
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "3\na\ntrue\n", "chars 应按 grapheme 切分且可还原")
+    }
+
+    /// 意图：chars 对星外平面字符（𝐀，U+1D400，代理对）保持单个 grapheme——
+    /// 与 split("") 的 UTF-16 劈开行为形成回归锚（ADR-019 D1 grapheme 模型）。
+    /// 推进性测量：输出 "1\ntrue\n"（𝐀 切分后长度 1，且仍为字母）。
+    func testCharsKeepsAstralPlaneGraphemes() throws {
+        let source = """
+main|func() -> ()
+    var cs = chars("𝐀")
+    print(len(cs))
+    print(is_letter(cs[0]!))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "1\ntrue\n", "代理对字符不应被劈开，且可参与字符判定")
+    }
+
+    /// 意图：chars 对空串返回空数组——len 恒等边界。
+    /// 驳回性测量：输出 "0\n"。
+    func testCharsEmptyString() throws {
+        let source = """
+main|func() -> ()
+    print(len(chars("")))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "0\n", "空串应切出空数组")
+    }
 }

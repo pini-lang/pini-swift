@@ -42,29 +42,13 @@ public final class SemanticAnalyzer {
 
  private func registerBuiltins() {
  let dummyLoc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
- // 语言内建（与运行时 Interpreter.registerBuiltins 对齐）：静态分析层须先登记，
- // 否则示例/用户代码中调用这些自由函数会被误报 undefinedFunction。
- // 字符串成员方法（s.upper() 等）走成员调用路径，不经符号表查找，无需在此登记。
- let builtins = [
- "print", "len",
- "abs", "min", "max", "sqrt", "sin", "cos", "tan", // P1-4 数学自由函数
- "writeFile", "readFile", "readLine", // P1-5 基础 IO 自由函数
- "sleep", // P5 并发：sleep(ms: I32)
- // G45（自举 lexer 前置）：字符谓词 is_letter——UCD \p{L} 字母判定（issue-lexer-gaps-2026-08-28 P1-A）。
- "is_letter",
- // G41（test 块，R2）：assert 内建——assert(条件: Bool) / assert(条件: Bool, 消息: String)。
- "assert",
- // 立场 B 并发内建（与 TypeChecker.registerConcurrencyBuiltins / Interpreter 对齐）：
- // Result<T,E> 的用例构造器 ok/err，以及内建默认错误构造 Error("msg")。
- "ok", "err", "Error",
- // B2-1 结构化取消：CancelError("msg") 构造 + isCancel(e) 判别谓词。
- "CancelError", "isCancel", "joinAll", "joinWithin",
- // 任务 #13：detach 由内建函数升格为语句关键字 `detach <expr>`，不再登记为自由函数。
- // Phase 2a（ADR-015 FFI）：指针原语内建（与 Interpreter.registerPointerBuiltins 对齐）。
- "load", "store", "addressof"
- ]
- for name in builtins {
- symbolTable.define(Symbol(name: name, kind: .function, location: dummyLoc))
+ // ADR-020 D3：内建符号从单点登记表（BuiltinRegistry）派生——
+ // 名字与归组只声明一次，解释器 / 类型检查 / 本层各自取用。
+ // 静态分析层须先登记，否则示例/用户代码中调用这些自由函数会被误报
+ // undefinedFunction。字符串成员方法（s.upper() 等）走成员调用路径，
+ // 不经符号表查找，无需在此登记。
+ for decl in BuiltinRegistry.decls where decl.definesSymbol {
+ symbolTable.define(Symbol(name: decl.name, kind: .function, location: dummyLoc))
  }
  }
 

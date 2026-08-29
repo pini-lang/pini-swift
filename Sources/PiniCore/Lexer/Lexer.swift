@@ -301,6 +301,8 @@ public class Lexer {
  }
 
  private func readIdentifier(startingWith prefix: String) -> String {
+ // ADR-019 D3：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——spec 已按
+ // numeric property（isNumber 语义，严格超集 \p{N}）放宽对齐本实现（见 spec「词法类」主题）；INT 字面量仍限 [0-9]。
  var name = prefix
  while let char = currentChar, char.isLetter || char.isNumber || char == "_" {
  name.append(char)
