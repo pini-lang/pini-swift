@@ -126,4 +126,14 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "joinAll", group: .concurrency, paramNames: ["futures"], definesRuntimeValue: false),
  BuiltinDecl(name: "joinWithin", group: .concurrency, paramNames: ["future", "ms"], definesRuntimeValue: false),
  ]
+
+ /// ADR-020 步骤 A（D1/D7）：内建类型 conformance 声明（声明面）。
+ /// 特征方法派发（步骤 B）落地前，成员方法仍走 evaluateMember 既有路径；
+ /// 此处仅使 String/Array 在类型环境中可查询「遵循 collection」。
+ /// 方法面 = D1 最小集的成员方法部分（append/pop/slice/join/contains）+
+ /// len（现为自由函数，方法化随步骤 B 裁决）；下标读属运算符通道，不入方法表。
+ public static let conformances: [String: [String]] = [
+ "String": ["collection"],
+ "Array": ["collection"],
+ ]
 }
