@@ -640,16 +640,16 @@ public class Parser {
  let isTraitExt = (kind == .traitExt)
  if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
  if !isTraitExt && !isSelfMethodStart() {
- // 类型扩展：顶格非 `|self`/`|Self`（如 `main|func`、字段）→ 扩展块结束
+ // 类型扩展：顶格非 `|self`/`|own`（如 `main|func`、字段）→ 扩展块结束
  break
  }
  let funcDecl = try parseBareFuncDecl(isTopLevel: false, allowEmptyBody: isTraitExt)
- // 规则 3.14：类型扩展内只允许 |self/|Self 方法；特征扩展保持 trait-body 宽松
+ // 规则 3.14：类型扩展内只允许 |self/|own 方法（G50：Self 更名 own）；特征扩展保持 trait-body 宽松
  if !isTraitExt {
- let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("Self")
+ let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("own")
  if !hasSelfModifier {
  throw ParserError.invalidStatement(
- reason: "扩展块内只允许 `|self`/`|Self` 方法（规则 3.14）：`\(funcDecl.name)` 缺少 self 修饰符，自由函数应移至模块顶层",
+ reason: "扩展块内只允许 `|self`/`|own` 方法（规则 3.14）：`\(funcDecl.name)` 缺少 self 修饰符，自由函数应移至模块顶层",
  location: funcDecl.location
  )
  }
@@ -668,12 +668,12 @@ public class Parser {
  return ExtensionDecl(kind: kind, targetType: target, targetTypeAnnotation: targetAnnotation, methods: methods, location: loc)
  }
 
- /// 当前是否为 `方法名|self(...)` / `方法名|Self(...)` 的方法声明头（扩展块方法预判）。
+ /// 当前是否为 `方法名|self(...)` / `方法名|own(...)` 的方法声明头（扩展块方法预判；G50：Self 更名 own）。
  private func isSelfMethodStart() -> Bool {
  guard case .identifier(_) = currentToken else { return false }
  guard case .pipe(_) = peek(offset: 1) else { return false }
  if case .keyword(.self, _) = peek(offset: 2) { return true }
- if case .keyword(.Self, _) = peek(offset: 2) { return true }
+ if case .keyword(.own, _) = peek(offset: 2) { return true }
  return false
  }
 
@@ -2555,7 +2555,8 @@ public class Parser {
  case .keyword(.self, _):
  advance()
  return .selfKeyword(location: loc)
- case .keyword(.Self, _):
+ // G50：`own`（原 Self）在表达式位置仍产出 selfTypeKeyword 节点（AST case 名暂不改，最小迁移面）
+ case .keyword(.own, _):
  advance()
  return .selfTypeKeyword(location: loc)
  case .keyword(.func, _):
@@ -3111,15 +3112,15 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  return .tuple(labels: labels, elements: elements, location: loc)
  }
  
- // self 和 Self 类型
+ // self 和 own 类型（G50：Self 更名 own）
  if checkKeyword(.self) {
  advance()
  return .simple(name: "self", location: loc)
  }
- 
- if checkKeyword(.Self) {
+
+ if checkKeyword(.own) {
  advance()
- return .simple(name: "Self", location: loc)
+ return .simple(name: "own", location: loc)
  }
  
  throw ParserError.invalidType(reason: "无效的类型标注", location: loc)
@@ -3197,9 +3198,9 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  case .keyword(.self, _):
  advance()
  return "self"
- case .keyword(.Self, _):
+ case .keyword(.own, _):
  advance()
- return "Self"
+ return "own"
  case .keyword(.func, _):
  advance()
  return "func"

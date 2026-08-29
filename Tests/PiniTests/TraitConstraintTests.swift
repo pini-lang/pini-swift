@@ -65,13 +65,13 @@ final class TraitConstraintTests: XCTestCase {
         XCTAssertTrue(hit, "漏实现抽象方法应报 traitRequirementNotSatisfied，实际: \(diagnostics)")
     }
 
-    /// 意图：trait 方法返回类型用 `Self`，实现方法返回具体类型，约束求解不应误判。
-    /// 推进性测量：整个模块零类型错误（Self 被正确替换为实现类型）。
-    /// 驳回性测量：若 Self 被当字面类型名比较，isAssignable(点, Self) 失败会误报 mismatch。
+    /// 意图：trait 方法返回类型用 `own`（G50 更名），实现方法返回具体类型，约束求解不应误判。
+    /// 推进性测量：整个模块零类型错误（own 被正确替换为实现类型）。
+    /// 驳回性测量：若 own 被当字面类型名比较，isAssignable(点, own) 失败会误报 mismatch。
     func testSelfReturnTypeConformance() throws {
         let source = """
         <可克隆>
-            克隆(self) -> (Self,)
+            克隆(self) -> (own,)
 
         (点)
             x: I32 = 0
@@ -87,16 +87,16 @@ final class TraitConstraintTests: XCTestCase {
             return
         """
         let diagnostics = checkCollecting(source)
-        XCTAssertTrue(diagnostics.isEmpty, "Self 返回类型约束应不误判，实际: \(diagnostics)")
+        XCTAssertTrue(diagnostics.isEmpty, "own 返回类型约束应不误判，实际: \(diagnostics)")
     }
 
-    /// 意图：实现方法返回类型与 trait 要求（Self 替换后）不符，类型层必须报 traitMethodSignatureMismatch。
+    /// 意图：实现方法返回类型与 trait 要求（own 替换后）不符，类型层必须报 traitMethodSignatureMismatch。
     /// 推进性测量：诊断含 (typeName: "点", traitName: "可克隆", methodName: "克隆")。
     /// 驳回性测量：若返回类型比对缺失，此测试会失败（漏报）。
     func testReturnTypeMismatchReported() throws {
         let source = """
         <可克隆>
-            克隆(self) -> (Self,)
+            克隆(self) -> (own,)
 
         (点)
             x: I32 = 0
@@ -119,14 +119,14 @@ final class TraitConstraintTests: XCTestCase {
         XCTAssertTrue(hit, "返回类型不符应报 traitMethodSignatureMismatch，实际: \(diagnostics)")
     }
 
-    /// 意图：trait **默认实现**（带 body）返回 `Self` 时，经 registerTraitMethods 以具体类型
+    /// 意图：trait **默认实现**（带 body）返回 `own` 时，经 registerTraitMethods 以具体类型
     /// 替换后注册为可见方法——`p.克隆()` 成员调用类型检查通过且返回具体类型。
     /// 推进性测量：整个模块零类型错误。
-    /// 驳回性测量：若默认实现的 Self 未替换，成员调用会落「未注册方法」报错。
+    /// 驳回性测量：若默认实现的 own 未替换，成员调用会落「未注册方法」报错。
     func testSelfReturnTypeInDefaultImplementation() throws {
         let source = """
         <可克隆>
-            克隆(self) -> (Self,)
+            克隆(self) -> (own,)
                 return 点()
 
         (点)
@@ -139,6 +139,6 @@ final class TraitConstraintTests: XCTestCase {
             return
         """
         let diagnostics = checkCollecting(source)
-        XCTAssertTrue(diagnostics.isEmpty, "默认实现返回 Self 应经具体类型替换后注册，实际: \(diagnostics)")
+        XCTAssertTrue(diagnostics.isEmpty, "默认实现返回 own 应经具体类型替换后注册，实际: \(diagnostics)")
     }
 }

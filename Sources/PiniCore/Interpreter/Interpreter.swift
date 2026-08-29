@@ -288,136 +288,25 @@ public class Interpreter {
  // MARK: - 注册
 
  private func registerBuiltins() {
- let printFunc = FunctionValue(
- name: "print",
- params: [Parameter(name: "value")],
+ // ADR-020 D3：运行时 FunctionValue 从单点登记表（BuiltinRegistry）派生——
+ // 名字/形参/归属声明一次，三层各自取用；分发实现按函数值名在各 dispatch 分支，
+ // 不进本表。专属路径（并发 registerConcurrencyBuiltins / 指针 registerPointerBuiltins /
+ // 枚举构造器）定义表中 definesRuntimeValue = false 的条目，互不重叠。
+ for decl in BuiltinRegistry.decls where decl.definesRuntimeValue {
+ let fn = FunctionValue(
+ name: decl.name,
+ params: decl.paramNames.map { Parameter(name: $0) },
  returnTypes: [],
  body: nil,
  decl: nil,
  closure: globalEnv
  )
- globalEnv.define(name: "print", value: .function(printFunc), isMutable: false)
-
- let lenFunc = FunctionValue(
- name: "len",
- params: [Parameter(name: "value")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "len", value: .function(lenFunc), isMutable: false)
-
- let isLetterFunc = FunctionValue(
- name: "is_letter",
- params: [Parameter(name: "value")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "is_letter", value: .function(isLetterFunc), isMutable: false)
-
- let absFunc = FunctionValue(
- name: "abs",
- params: [Parameter(name: "x")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "abs", value: .function(absFunc), isMutable: false)
-
- let minFunc = FunctionValue(
- name: "min",
- params: [Parameter(name: "a"), Parameter(name: "b")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "min", value: .function(minFunc), isMutable: false)
- let maxFunc = FunctionValue(
- name: "max",
- params: [Parameter(name: "a"), Parameter(name: "b")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "max", value: .function(maxFunc), isMutable: false)
-
- let sleepFunc = FunctionValue(
- name: "sleep",
- params: [Parameter(name: "ms")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "sleep", value: .function(sleepFunc), isMutable: false)
-
- // G41（test 块，R2）：assert 内建——`assert(条件: Bool,)` / `assert(条件: Bool, 消息: String,)`。
- // 条件为 false 时抛 RuntimeError.assertionFailed（消息缺省 "assert failed"），
- // 测试运行器（pini test）捕获为测试失败；非测试场景直接终止（与解释器抛错语义一致）。
- let assertFunc = FunctionValue(
- name: "assert",
- params: [Parameter(name: "条件"), Parameter(name: "消息")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "assert", value: .function(assertFunc), isMutable: false)
-
- registerConcurrencyBuiltins()
-
- let sqrtFunc = FunctionValue(
- name: "sqrt",
- params: [Parameter(name: "x")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: "sqrt", value: .function(sqrtFunc), isMutable: false)
-
- for trigName in ["sin", "cos", "tan"] {
- let trigFunc = FunctionValue(
- name: trigName,
- params: [Parameter(name: "x")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: globalEnv
- )
- globalEnv.define(name: trigName, value: .function(trigFunc), isMutable: false)
+ globalEnv.define(name: decl.name, value: .function(fn), isMutable: false)
  }
 
- // P1-5 基础 IO（自由函数 Provisional）
- let readFileFunc = FunctionValue(
- name: "readFile",
- params: [Parameter(name: "path")],
- returnTypes: [],
- body: nil, decl: nil, closure: globalEnv
- )
- globalEnv.define(name: "readFile", value: .function(readFileFunc), isMutable: false)
-
- let writeFileFunc = FunctionValue(
- name: "writeFile",
- params: [Parameter(name: "path"), Parameter(name: "content")],
- returnTypes: [],
- body: nil, decl: nil, closure: globalEnv
- )
- globalEnv.define(name: "writeFile", value: .function(writeFileFunc), isMutable: false)
-
- let readLineFunc = FunctionValue(
- name: "readLine",
- params: [],
- returnTypes: [],
- body: nil, decl: nil, closure: globalEnv
- )
- globalEnv.define(name: "readLine", value: .function(readLineFunc), isMutable: false)
+ // 并发内建（ok/err/Error/CancelError/isCancel/joinAll/joinWithin）：专属路径，
+ // 覆盖表中 definesRuntimeValue = false 的条目（ADR-020 D3）。
+ registerConcurrencyBuiltins()
 
  // 内置 Error 特征（空特征）
  let errorTrait = TraitDecl(
@@ -2764,6 +2653,43 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
  guard let first = s.first else { return .bool(false) }
  return .bool(first.isLetter)
+ }
+
+ // ADR-019 D4：is_ascii_digit——ASCII [0-9]（数字字面量扫描用；INT 严格 ASCII）。
+ if fv.name == "is_ascii_digit" {
+ guard case .string(let s) = args[0] else {
+ throw RuntimeError.invalidOperation(
+ reason: "is_ascii_digit 的参数必须是字符串",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ guard let first = s.first else { return .bool(false) }
+ return .bool(first >= "0" && first <= "9")
+ }
+
+ // ADR-019 D4 / D3：is_number——Unicode numeric property（IDENT 续字符用；
+ // 严格超集 \p{N}，含 三/万 等带数值 Lo 类汉字；宿主 Character.isNumber 语义）。
+ if fv.name == "is_number" {
+ guard case .string(let s) = args[0] else {
+ throw RuntimeError.invalidOperation(
+ reason: "is_number 的参数必须是字符串",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ guard let first = s.first else { return .bool(false) }
+ return .bool(first.isNumber)
+ }
+
+ // ADR-019 性能项：chars——按 grapheme cluster 预切字符数组（与 Swift Character 一致，
+ // 代理对不劈开）；空串 → 空数组。len(chars(s)) == len(s)（grapheme 数）恒成立。
+ if fv.name == "chars" {
+ guard case .string(let s) = args[0] else {
+ throw RuntimeError.invalidOperation(
+ reason: "chars 的参数必须是字符串",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ return .array(s.map { .string(String($0)) })
  }
 
  // 成员方法实现入口（非全局自由函数）：

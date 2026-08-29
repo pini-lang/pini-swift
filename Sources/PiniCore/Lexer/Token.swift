@@ -283,7 +283,9 @@ public enum Keyword: String, CaseIterable {
  case `break` = "break"
  case `continue` = "continue"
  case `self` = "self"
- case `Self` = "Self"
+ // G50：`Self` 更名 `own`——类型内自指 + 扩展块方法修饰符 `|own`（与 `|self` 配对）；
+ // `Self` 降级为普通标识符，旧代码须迁移为 `own`。
+ case `own` = "own"
  case `defer` = "defer"
 // ADR-012：异步表层 `<=` 前缀 join（立场 B）逆转，由 `await`/`wait` 关键字承载。
 // `await` 用于异步函数体（=>` 派发）内的挂起等待；`wait` 用于同步上下文的阻塞 join；
