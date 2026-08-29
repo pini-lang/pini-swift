@@ -2689,6 +2689,33 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
 
  // ADR-019 性能项：chars——按 grapheme cluster 预切字符数组（与 Swift Character 一致，
  // 代理对不劈开）；空串 → 空数组。len(chars(s)) == len(s)（grapheme 数）恒成立。
+ // 词法门禁 H1：ord——首 Unicode scalar 的码点值；空串哨兵 -1；
+ // 多 scalar grapheme 取首 scalar（ADR-019 D1 grapheme 模型，行为已登记）。
+ if fv.name == "ord" {
+ guard case .string(let s) = args[0] else {
+ throw RuntimeError.invalidOperation(
+ reason: "ord 的参数必须是字符串",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ guard let first = s.unicodeScalars.first else { return .int(-1) }
+ return .int(Int(first.value))
+ }
+
+ // 词法门禁 H1：chr——码点值转单字符字符串；越界（负值 / 超出 scalar 上限 /
+ // 代理区）哨兵返回空串。
+ if fv.name == "chr" {
+ guard case .int(let code) = args[0] else {
+ throw RuntimeError.invalidOperation(
+ reason: "chr 的参数必须是整数",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ guard code >= 0, code <= 0x10FFFF, !(0xD800...0xDFFF).contains(code),
+ let scalar = UnicodeScalar(UInt32(code)) else { return .string("") }
+ return .string(String(scalar))
+ }
+
  if fv.name == "chars" {
  guard case .string(let s) = args[0] else {
  throw RuntimeError.invalidOperation(

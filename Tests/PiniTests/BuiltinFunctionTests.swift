@@ -448,4 +448,38 @@ main|func() -> ()
         let output = try runProgram(source)
         XCTAssertEqual(output, "0\n", "空串应切出空数组")
     }
+
+    // MARK: - ord / chr（词法门禁 H1：码点原语）
+
+    /// 意图：ord 取首 Unicode scalar 码点值——ASCII 与中文；空串哨兵 -1
+    /// （errors-as-data 风，ADR-019 D1 grapheme 模型下多 scalar grapheme
+    /// 取首 scalar）。
+    /// 推进性/驳回性测量：输出 "65\n23383\n-1\n"。
+    func testOrdCodepoints() throws {
+        let source = """
+main|func() -> ()
+    print(ord("A"))
+    print(ord("字"))
+    print(ord(""))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "65\n23383\n-1\n", "ord 应返回首 scalar 码点，空串哨兵 -1")
+    }
+
+    /// 意图：chr 码点值转字符；负值 / 超出 scalar 上限 / 代理区哨兵返回空串。
+    /// 推进性/驳回性测量：输出 "A\n字\n\n\n\n"。
+    func testChrCodepoints() throws {
+        let source = """
+main|func() -> ()
+    print(chr(65))
+    print(chr(23383))
+    print(chr(-1))
+    print(chr(1114112))
+    print(chr(55296))
+    return
+"""
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "A\n字\n\n\n\n", "chr 合法码点应还原字符，越界/代理区哨兵空串")
+    }
 }

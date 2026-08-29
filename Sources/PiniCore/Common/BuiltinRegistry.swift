@@ -87,6 +87,14 @@ public enum BuiltinRegistry {
  params: [t("String")], returns: [t("Bool")]),
  BuiltinDecl(name: "chars", group: .char, paramNames: ["value"],
  params: [t("String")], returns: [.generic(name: "Array", params: [t("String")], location: builtinLocation)]),
+ // 词法门禁 H1（lexer 缺口审计）：码点原语——解锁字符范围判定（hex 判定等）
+ // 与 upper/lower 下沉。grapheme 模型对齐（ADR-019 D1）：ord 取首 Unicode
+ // scalar；空串哨兵 -1（errors-as-data 风，与 is_letter("") 同调）；
+ // chr 越界/代理区返回空串。
+ BuiltinDecl(name: "ord", group: .char, paramNames: ["value"],
+ params: [t("String")], returns: [t("I32")]),
+ BuiltinDecl(name: "chr", group: .char, paramNames: ["code"],
+ params: [t("I32")], returns: [t("String")]),
 
  // ---- pointer（unsafe；专属路径 registerPointerBuiltins）----
  BuiltinDecl(name: "load", group: .pointer, paramNames: ["p"], definesRuntimeValue: false),
