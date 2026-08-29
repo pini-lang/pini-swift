@@ -46,19 +46,26 @@ Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏
 
 ## 🚀 快速开始
 
+> **分发策略（ADR-022）**：本项目**以源码分发、用户自行构建**——当前仅支持 macOS，不提供预编译二进制；本地构建产物无 Gatekeeper 隔离标记，无需签名。完整指南见 [docs/BUILDING.md](docs/BUILDING.md)。
+
 ### 环境要求
 
-- Swift 5.9+
-- macOS 12+ 或 Linux
+- macOS 26.x（宿主实现仅支持 macOS，Linux 待稳定后评估）
+- **Swift 6.2+ 工具链**（随 Xcode 或 swift.org 安装；实测锚定 Apple Swift 6.3.3）
+- 可选：clang / lli（仅 LLVM 后端 `emit`/`compile`/`run-llvm` 需要；解释器功能不依赖）
 
-### 构建项目
+### 构建
 
 ```bash
-cd Pini
-# 项目位于外置卷（如 /Volumes/*）时 SwiftPM 沙箱不可用，需禁用沙箱：
+# 开发构建（约 1-2 分钟，增量秒级）
 swift build --disable-sandbox
-# 本地磁盘可直接 swift build
+
+# 发布构建（推荐；约 3-8 分钟，峰值内存数 GB——
+# 构建期间关闭其他重负载，不要并行第二个构建）
+swift build -c release --disable-sandbox
 ```
+
+产物在 `.build/<debug|release>/`：`pini`（CLI）+ `libPiniRuntime.dylib`（集合运行时，仅 LLVM 后端需要，须与 `pini` 同目录）。
 
 ### 运行你的第一个程序
 
@@ -73,13 +80,28 @@ main|func() -> ()
 运行：
 
 ```bash
-swift run pini run hello.pini
+swift run pini run hello.pini        # 开发构建
+.build/release/pini run hello.pini   # 发布构建
 ```
 
 > [!success] 预期输出
 > ```
 > Hello, Pini!
 > ```
+
+### 安装到 PATH（可选）
+
+```bash
+# 方式 A：构建目录直接进 PATH（升级 = 重新 build）
+export PATH="$PATH:$(pwd)/.build/release"
+
+# 方式 B：拷贝到固定目录（libPiniRuntime.dylib 须与 pini 同目录）
+mkdir -p ~/.local/bin
+cp .build/release/pini .build/release/libPiniRuntime.dylib ~/.local/bin/
+export PATH="$PATH:$HOME/.local/bin"
+```
+
+> **说明**：本项目位于外置卷（如 `/Volumes/*`）时 SwiftPM 沙箱不可用，构建需 `--disable-sandbox`。环境变量 `PINI_RUNTIME_LIB` / `PINI_LLVM_BIN` 可显式指定运行时库与 LLVM 工具路径——完整说明见 [docs/BUILDING.md](docs/BUILDING.md)。
 
 ---
 
