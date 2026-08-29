@@ -136,4 +136,62 @@ public enum BuiltinRegistry {
  "String": ["collection"],
  "Array": ["collection"],
  ]
+
+ // MARK: - 内建成员方法表（ADR-020 步骤 B）
+
+ /// 内建成员方法声明：类型层签名与运行时派发共用同一张表。
+ public struct MemberDecl {
+ public let typeName: String
+ public let name: String
+ public let paramNames: [String]
+ public let params: [TypeAnnotation]
+ public let returns: [TypeAnnotation]
+ /// 是否属于 collection 特征方法面（D1 最小集）
+ public let inTrait: Bool
+
+ init(typeName: String, name: String, paramNames: [String],
+ params: [TypeAnnotation], returns: [TypeAnnotation], inTrait: Bool) {
+ self.typeName = typeName
+ self.name = name
+ self.paramNames = paramNames
+ self.params = params
+ self.returns = returns
+ self.inTrait = inTrait
+ }
+ }
+
+ /// 内建成员方法全集（唯一事实源；TypeChecker.defineMethod 与
+ /// Interpreter.evaluateMember 均从本表派生）。
+ /// `inTrait = true` 的方法属于 collection 特征面（D1）；其余为类型扩展面。
+ /// slice 参数用 Any 通配——开放边界传 nil = Optional.none（P2-B）。
+ public static let memberMethods: [MemberDecl] = [
+ // String（collection 子集：contains/slice；扩展面：upper/lower/substring/split）
+ MemberDecl(typeName: "String", name: "upper", paramNames: [],
+ params: [], returns: [t("String")], inTrait: false),
+ MemberDecl(typeName: "String", name: "lower", paramNames: [],
+ params: [], returns: [t("String")], inTrait: false),
+ MemberDecl(typeName: "String", name: "contains", paramNames: ["sub"],
+ params: [t("String")], returns: [t("Bool")], inTrait: true),
+ MemberDecl(typeName: "String", name: "substring", paramNames: ["start", "end"],
+ params: [t("I32"), t("I32")], returns: [t("String")], inTrait: false),
+ MemberDecl(typeName: "String", name: "split", paramNames: ["sep"],
+ params: [t("String")], returns: [TypeAnnotation.generic(name: "Array", params: [t("String")], location: builtinLocation)], inTrait: false),
+ MemberDecl(typeName: "String", name: "slice", paramNames: ["start", "end"],
+ params: [t("Any"), t("Any")], returns: [t("String")], inTrait: true),
+ // Array（collection 子集：append/pop/slice/join；扩展面：last）
+ MemberDecl(typeName: "Array", name: "join", paramNames: ["sep"],
+ params: [t("String")], returns: [t("String")], inTrait: true),
+ MemberDecl(typeName: "Array", name: "append", paramNames: ["value"],
+ params: [t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("Any")], location: builtinLocation)], inTrait: true),
+ MemberDecl(typeName: "Array", name: "slice", paramNames: ["start", "end"],
+ params: [t("Any"), t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("Any")], location: builtinLocation)], inTrait: true),
+ MemberDecl(typeName: "Array", name: "last", paramNames: [],
+ params: [], returns: [t("Any")], inTrait: false),
+ MemberDecl(typeName: "Array", name: "pop", paramNames: [],
+ params: [], returns: [t("Any")], inTrait: true),
+ ]
+
+ public static func member(typeName: String, name: String) -> MemberDecl? {
+ return memberMethods.first(where: { $0.typeName == typeName && $0.name == name })
+ }
 }

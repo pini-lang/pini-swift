@@ -124,37 +124,14 @@ public final class TypeChecker {
  typeEnv.markConformance(typeName: typeName, traits: traitNames)
  }
 
- // 内建类型（String/Array）成员方法签名登记（P3-2 ③：内建成员方法静态校验）。
- // 与解释器运行时 evaluateMember 的实现严格对齐：String 支持 upper/lower/contains/substring/split，
- // Array 支持 join。未知成员将被类型层捕获（unknownMember），提前于运行时 undefinedVariable。
+ // ADR-020 步骤 B：内建成员方法签名从单点登记表（BuiltinRegistry.memberMethods）
+ // 派生——与运行时 evaluateMember 的表驱动派发共用同一张表。未知成员将被
+ // 类型层捕获（unknownMember），提前于运行时 undefinedVariable。
  // 注：数组字面量在类型层推断为 nil（TypeInference.arrayLiteral → nil），故 Array 成员校验
  // 仅在接收者类型可解析时生效；注册不引入回归（解析不到类型时仍走原跳过路径）。
- // 注：`i32` / `string` 于本段及上方登记段各自声明、按名对齐。
- let bool = TypeAnnotation.simple(name: "Bool", location: loc)
- let i32 = TypeAnnotation.simple(name: "I32", location: loc)
- let str = TypeAnnotation.simple(name: "String", location: loc)
- let arrayOfString = TypeAnnotation.generic(name: "Array", params: [str], location: loc)
-
- // String 成员方法
- typeEnv.defineMethod(typeName: "String", methodName: "upper", params: [], returns: [str])
- typeEnv.defineMethod(typeName: "String", methodName: "lower", params: [], returns: [str])
- typeEnv.defineMethod(typeName: "String", methodName: "contains", params: [str], returns: [bool])
- typeEnv.defineMethod(typeName: "String", methodName: "substring", params: [i32, i32], returns: [str])
- typeEnv.defineMethod(typeName: "String", methodName: "split", params: [str], returns: [arrayOfString])
- // P2-B：切片语法 a[i:j] 脱糖为 a.slice(i, j)（开放边界传 nil = Optional.none，故参数用 anyType 放行）。
- typeEnv.defineMethod(typeName: "String", methodName: "slice", params: [anyType, anyType], returns: [str])
-
- // Array 成员方法
- typeEnv.defineMethod(typeName: "Array", methodName: "join", params: [str], returns: [str])
- // G45/G46（自举 lexer 前置）：append 成员方法——函数式返回新数组（COW，原数组不变），
- // 与运行时 evaluateMember 的 .array 分支对齐（issue-lexer-gaps-2026-08-28 P1-B）。
- typeEnv.defineMethod(typeName: "Array", methodName: "append", params: [anyType], returns: [TypeAnnotation.generic(name: "Array", params: [anyType], location: loc)])
- // G45/G46（自举 lexer 前置，S1.3）：栈操作——last 读取栈顶（空 → null），
- // pop 返回 (新数组, 栈顶) 元组（返回类型 Any 通配，运行时为元组），供 IndentTracker。
- typeEnv.defineMethod(typeName: "Array", methodName: "last", params: [], returns: [anyType])
- typeEnv.defineMethod(typeName: "Array", methodName: "pop", params: [], returns: [anyType])
- // P2-B：切片语法 a[i:j] 脱糖为 a.slice(i, j)；返回同元素类型数组（此处以 anyType 通配）。
- typeEnv.defineMethod(typeName: "Array", methodName: "slice", params: [anyType, anyType], returns: [TypeAnnotation.generic(name: "Array", params: [anyType], location: loc)])
+ for m in BuiltinRegistry.memberMethods {
+ typeEnv.defineMethod(typeName: m.typeName, methodName: m.name, params: m.params, returns: m.returns)
+ }
  }
 
  /// 立场 B 并发内建类型（契约见 Pini草稿.md（异步函数块） ）：

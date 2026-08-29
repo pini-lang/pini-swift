@@ -287,6 +287,15 @@ public class Interpreter {
 
  // MARK: - 注册
 
+ /// ADR-020 D2：语言内标准库成员实现表（typeName -> methodName -> FuncDecl）。
+ /// 源 = StdlibPini.source，registerBuiltins 期解析（固化资产，失败 fail-fast）。
+ private var stdlibMembers: [String: [String: FuncDecl]] = [:]
+
+ /// 查询内建类型的语言内成员实现（Pini 下沉表）。
+ fileprivate func stdlibMemberImpl(typeName: String, name: String) -> FuncDecl? {
+ return stdlibMembers[typeName]?[name]
+ }
+
  private func registerBuiltins() {
  // ADR-020 D3：运行时 FunctionValue 从单点登记表（BuiltinRegistry）派生——
  // 名字/形参/归属声明一次，三层各自取用；分发实现按函数值名在各 dispatch 分支，
@@ -322,6 +331,21 @@ public class Interpreter {
 
  // Phase 2a（ADR-015 FFI）：libc 原生函数表（`[名称|foreign]` 声明解析）。
  registerNativeFunctions()
+
+ // ADR-020 D2：解析语言内标准库源（Pini 实现表）。固化资产，解析失败 fail-fast。
+ do {
+ let stdlibTokens = try Lexer(source: StdlibPini.source, fileName: "<stdlib.pini>").tokenize()
+ let stdlibModule = try Parser(tokens: stdlibTokens, fileName: "<stdlib.pini>").parseModule()
+ var impls: [String: [String: FuncDecl]] = [:]
+ for decl in stdlibModule.declarations {
+ if case .extensionDecl(let ext) = decl {
+ for m in ext.methods { impls[ext.targetType, default: [:]][m.name] = m }
+ }
+ }
+ stdlibMembers = impls
+ } catch {
+ fatalError("StdlibPini source broken: \(error)")
+ }
  }
 
  // MARK: - Phase 2a ADR-015 FFI：指针原语内建
@@ -1719,6 +1743,8 @@ public class Interpreter {
  case (.float(let a), .float(let b), .divide): return .float(a / b)
  case (.string(let a), .string(let b), .plus): return .string(a + b)
  case (.string(let a), .string(let b), .equal): return .bool(a == b)
+ // ADR-020 D2 试点发现：String 缺 notEqual 分派（语言内 contains 需要）——补齐。
+ case (.string(let a), .string(let b), .notEqual): return .bool(a != b)
  case (.bool(let a), .bool(let b), .equal): return .bool(a == b)
  case (.bool(let a), .bool(let b), .notEqual): return .bool(a != b)
  case (.bool(let a), .bool(let b), .and): return .bool(a && b)
@@ -1963,34 +1989,32 @@ public class Interpreter {
  }
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  case .string(let s):
- switch memberName {
- case "upper", "lower", "contains", "substring", "split", "slice":
+ // ADR-020 步骤 B：成员派发表驱动（BuiltinRegistry.memberMethods，
+ // 与 TypeChecker.defineMethod 共用同一张表）。未知成员 → undefinedVariable。
+ // 步骤 C：语言内默认实现（Pini body）优先，缺失时回落宿主原生实现。
+ guard let member = BuiltinRegistry.member(typeName: "String", name: memberName) else {
+ throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
+ }
  let methodEnv = Environment(enclosing: globalEnv)
  methodEnv.define(name: "self", value: .string(s), isMutable: false)
- let params: [Parameter]
- switch memberName {
- case "contains":
- params = [Parameter(name: "sub")]
- case "substring":
- params = [Parameter(name: "start"), Parameter(name: "end")]
- case "slice":
- params = [Parameter(name: "start"), Parameter(name: "end")]
- case "split":
- params = [Parameter(name: "sep")]
- default:
- params = []
+ if let impl = stdlibMemberImpl(typeName: "String", name: memberName) {
+ return .function(FunctionValue(
+ name: impl.name,
+ params: impl.params.first?.name == "self" ? Array(impl.params.dropFirst()) : impl.params,
+ returnTypes: impl.returnTypes,
+ body: impl.body,
+ decl: impl,
+ closure: methodEnv
+ ))
  }
  return .function(FunctionValue(
- name: memberName,
- params: params,
+ name: member.name,
+ params: member.paramNames.map { Parameter(name: $0) },
  returnTypes: [],
  body: nil,
  decl: nil,
  closure: methodEnv
  ))
- default:
- throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
- }
  case .enumValue(let ev):
  // ADR-016 规则 3.14：枚举方法（含扩展块方法）——`枚举值.方法()` 按 parentEnum 查方法表。
  let enumTypeName = ev.parentEnum ?? ev.caseName
@@ -2028,54 +2052,30 @@ public class Interpreter {
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
  case .array(let arr):
- switch memberName {
- case "join":
- let methodEnv = Environment(enclosing: globalEnv)
- methodEnv.define(name: "self", value: .array(arr), isMutable: false)
- return .function(FunctionValue(
- name: memberName,
- params: [Parameter(name: "sep")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: methodEnv
- ))
- case "append":
- let methodEnv = Environment(enclosing: globalEnv)
- methodEnv.define(name: "self", value: .array(arr), isMutable: false)
- return .function(FunctionValue(
- name: memberName,
- params: [Parameter(name: "value")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: methodEnv
- ))
- case "slice":
- let methodEnv = Environment(enclosing: globalEnv)
- methodEnv.define(name: "self", value: .array(arr), isMutable: false)
- return .function(FunctionValue(
- name: memberName,
- params: [Parameter(name: "start"), Parameter(name: "end")],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: methodEnv
- ))
- case "last", "pop":
- let methodEnv = Environment(enclosing: globalEnv)
- methodEnv.define(name: "self", value: .array(arr), isMutable: false)
- return .function(FunctionValue(
- name: memberName,
- params: [],
- returnTypes: [],
- body: nil,
- decl: nil,
- closure: methodEnv
- ))
- default:
+ // ADR-020 步骤 B：同 .string——成员派发表驱动 + Pini 实现优先。
+ guard let member = BuiltinRegistry.member(typeName: "Array", name: memberName) else {
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
+ let methodEnv = Environment(enclosing: globalEnv)
+ methodEnv.define(name: "self", value: .array(arr), isMutable: false)
+ if let impl = stdlibMemberImpl(typeName: "Array", name: memberName) {
+ return .function(FunctionValue(
+ name: impl.name,
+ params: impl.params.first?.name == "self" ? Array(impl.params.dropFirst()) : impl.params,
+ returnTypes: impl.returnTypes,
+ body: impl.body,
+ decl: impl,
+ closure: methodEnv
+ ))
+ }
+ return .function(FunctionValue(
+ name: member.name,
+ params: member.paramNames.map { Parameter(name: $0) },
+ returnTypes: [],
+ body: nil,
+ decl: nil,
+ closure: methodEnv
+ ))
  default:
  throw RuntimeError.invalidOperation(reason: "无法访问成员", location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
@@ -2585,6 +2585,13 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  case .future(let fut) = receiver {
  fut.cancel()
  return .null
+ }
+
+ // ADR-020 D2：语言内默认实现优先——带 Pini body 的内建成员函数值先于
+ // 按名原生分派执行。isAsync 函数（body 非空）不受影响：`=>` 派生在后方
+ // 按 isAsync 分支处理，不经过本分支（本分支要求 !isAsync）。
+ if fv.body != nil, !fv.isAsync {
+ return try executeFunctionBody(fv, args: args)
  }
 
  // print 支持多参数（空格连接 + 换行），不受下方单参计数守卫限制
