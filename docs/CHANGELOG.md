@@ -24,6 +24,19 @@
 - String `notEqual` 分派缺失（语言内 contains 试点发现）
 - 后缀 `!` 强制解包 + 回退透明解包（嵌套下标）
 
+## Unreleased
+
+### Breaking
+- **match 单绑定语义**（ADR-023 D2）：`case X(b):` 的 `b` 现在绑定**第 1 个关联值**（原为整个关联值元组）。
+  迁移：`case 圆(r):` 对 2 关联值声明 → 改写 `case 圆(r, _):`。
+  实测影响面：examples/tests 中 26 处单绑定均为单值关联值（等价、零迁移）；
+  `examples/enum-namespacing.pini` 已迁移（2 关联值 + 单绑定）。
+- **绑定数与关联值数不匹配 → E4-005**（原静默绑 `.null`）。
+
+### Added
+- 具名枚举关联值全链路（ADR-023）：声明 `case E(x: T, y: U,)`、标签实参构造（具名声明）、
+  match 具名解构 `case E(x: v):`、`_` 占位。
+
 ## v0.48.4 (2026-08-24)
 
 - Initial public release of Pini (Swift implementation)

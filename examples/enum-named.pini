@@ -1,0 +1,38 @@
+; 具名枚举关联值：声明 / 标签实参构造 / match 解构（位置 · 具名 · `_` 占位）
+; 运行：pini run examples/enum-named.pini
+; 预期：x / y / 3 / plus
+
+[Token]
+identifier(text: String, loc: I32,)
+plus
+
+取文本|func(t: Token,) -> (String,)
+    match t:
+        case identifier(text, loc):
+            return text
+        case plus:
+            return "plus"
+    return "?"
+
+具名取文本|func(t: Token,) -> (String,)
+    match t:
+        case identifier(text: s, loc: l):
+            return s
+        case plus:
+            return "plus"
+    return "?"
+
+取位置|func(t: Token,) -> (I32,)
+    match t:
+        case identifier(_, l):
+            return l
+        case plus:
+            return 0
+    return -1
+
+main|func() -> ()
+    print(取文本(identifier(text: "x", loc: 1,)))
+    print(具名取文本(identifier(text: "y", loc: 2,)))
+    print(取位置(identifier(text: "z", loc: 3,)))
+    print(取文本(plus))
+    return
