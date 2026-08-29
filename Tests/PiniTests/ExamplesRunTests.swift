@@ -61,6 +61,7 @@ final class ExamplesRunTests: XCTestCase {
             ("try.pini", "读取失败\n"),
             ("access.pini", "秒表\n60\n60\n"),
             ("enum.pini", "12.56636\n12.0\n"),
+            ("enum-named.pini", "x\ny\n3\nplus\n"),
             ("generic.pini", "7\n泛型值\n"),
             ("struct.pini", "3.0\n4.0\n5.0\n"),
             ("trait.pini", "旺财\n"),
