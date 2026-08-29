@@ -154,7 +154,7 @@ public class Lexer {
 
  private func nextToken() throws -> Token {
  guard let char = currentChar else {
- throw LexerError.invalidCharacter("EOF", currentLocation)
+ return .eof(currentLocation)
  }
 
  let loc = currentLocation
@@ -205,18 +205,21 @@ public class Lexer {
  _ = advance()
  return .questionMark(loc)
  case "+", "-", "*", "/", "%", "!", "~", "&", "^", "<", ">", "=":
- return try operatorToken()
+ return try operatorToken(char)
  case "_":
  return try underscoreToken()
  default:
  if char.isLetter {
  return try identifierOrKeyword()
  }
- throw LexerError.invalidCharacter(String(char), loc)
+ // ADR-021：宽松词法——未匹配任何词法类的字符产出单字符标识符，
+ // 错误报告后移到解析/语义阶段（标识符落在不合适的位置被拒）。
+ _ = advance()
+ return .identifier(String(char), loc)
  }
  }
 
- private func operatorToken() throws -> Token {
+ private func operatorToken(_ head: Character) throws -> Token {
  let loc = currentLocation
 
  switch currentChar {
@@ -281,7 +284,8 @@ public class Lexer {
  if match(">") { return .doubleArrow(loc) }
  return .assign(loc)
  default:
- throw LexerError.invalidCharacter(String(currentChar!), loc)
+ // ADR-021：宽松词法兜底（防御分支，现有 12 字符均有 case）
+ return .identifier(String(head), loc)
  }
  }
 
@@ -331,26 +335,38 @@ public class Lexer {
  if let first = currentChar, first == "0", let second = peek(offset: 1) {
  switch second {
  case "x", "X":
- _ = advance(); _ = advance()
+ // ADR-021：前缀后无有效数字 → 只消费 '0' 产出 int 0，余下按标识符走
+ // （注意检查的是「前缀字母 + 后随数字」，x 本身不是 hex 字符）
+ _ = advance()
+ if let d3 = currentChar, d3 == "x" || d3 == "X",
+ let d4 = peek(offset: 1), "0123456789abcdefABCDEF".contains(d4) {
+ _ = advance()
  let rest = readRadixDigits("0123456789abcdefABCDEF")
  if let value = Int(rest, radix: 16) {
  return .integerLiteral(value, loc)
  }
- throw LexerError.invalidCharacter("Invalid hex literal: 0x\(rest)", loc)
+ }
+ return .integerLiteral(0, loc)
  case "b":
- _ = advance(); _ = advance()
+ _ = advance()
+ if let d3 = currentChar, d3 == "b", let d4 = peek(offset: 1), "01".contains(d4) {
+ _ = advance()
  let rest = readRadixDigits("01")
  if let value = Int(rest, radix: 2) {
  return .integerLiteral(value, loc)
  }
- throw LexerError.invalidCharacter("Invalid binary literal: 0b\(rest)", loc)
+ }
+ return .integerLiteral(0, loc)
  case "o":
- _ = advance(); _ = advance()
+ _ = advance()
+ if let d3 = currentChar, d3 == "o", let d4 = peek(offset: 1), "01234567".contains(d4) {
+ _ = advance()
  let rest = readRadixDigits("01234567")
  if let value = Int(rest, radix: 8) {
  return .integerLiteral(value, loc)
  }
- throw LexerError.invalidCharacter("Invalid octal literal: 0o\(rest)", loc)
+ }
+ return .integerLiteral(0, loc)
  default:
  break
  }
@@ -375,8 +391,18 @@ public class Lexer {
  }
  }
 
- // 科学计数法：e/E[+-]?digits
+ // 科学计数法：e/E[+-]?digits——ADR-021：仅当指数位确有数字才消费，
+ // 否则 e 留给标识符通道（如 `1e` → int 1 + identifier e）
  if let char = currentChar, char == "e" || char == "E" {
+ var offset = 1
+ var hasExpDigit = false
+ if let sign = peek(offset: offset), sign == "+" || sign == "-" {
+ offset += 1
+ }
+ if let d = peek(offset: offset), d.isNumber {
+ hasExpDigit = true
+ }
+ if hasExpDigit {
  isFloat = true
  digits.append(char)
  _ = advance()
@@ -384,14 +410,10 @@ public class Lexer {
  digits.append(sign)
  _ = advance()
  }
- var hasExpDigit = false
  while let c = currentChar, c.isNumber {
  digits.append(c)
  _ = advance()
- hasExpDigit = true
  }
- if !hasExpDigit {
- throw LexerError.invalidCharacter("Invalid exponent in float literal: \(digits)", loc)
  }
  }
 
@@ -433,7 +455,9 @@ public class Lexer {
 
  while let char = currentChar, char != "\"" {
  if char == "\n" {
- throw LexerError.unterminatedString(loc)
+ // ADR-021：宽松词法——字符串在行尾隐式终止（换行不消费，
+ // 版面处理照常），不再抛 unterminatedString
+ break
  }
  if char == "\\" {
  _ = advance()
@@ -453,7 +477,9 @@ public class Lexer {
  case "\\": literal.append("\\")
  case "\"": literal.append("\"")
  default:
- throw LexerError.invalidCharacter("Invalid escape sequence: \\(esc)", currentLocation)
+ // ADR-021：非法转义原样保留（反斜杠 + 字符），不报错
+ literal.append("\\")
+ literal.append(esc)
  }
  _ = advance()
  }
@@ -463,10 +489,9 @@ public class Lexer {
  }
  }
 
- if currentChar != "\"" {
- throw LexerError.unterminatedString(loc)
- }
+ if currentChar == "\"" {
  _ = advance()
+ }
 
  flushLiteral()
 

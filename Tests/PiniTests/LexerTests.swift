@@ -201,15 +201,18 @@ main() -> ()
         }
     }
 
-    /// 意图：无效字符 `$` 应抛出 LexerError.invalidCharacter("$") 错误
+    /// 意图：ADR-021 宽松词法——无效字符 `$` 不再抛错，产出单字符标识符
+    /// token（错误报告后移到解析/语义阶段：标识符落在不合适的位置被拒）。
+    /// 推进性测量：tokenize 不抛错，唯一 token 为 identifier "$"，后随 eof。
+    /// 驳回性测量：若恢复抛错或产出 unknown token，本用例失败。
     func testTokenizeInvalidCharacter() throws {
         // 注：`@` 原为无效字符样本，G35 已改为合法块标签 sigil（.at token），故改用 `$`
         let lexer = Lexer(source: "$", fileName: "test.pini")
-        XCTAssertThrowsError(try lexer.tokenize(), "无效字符应抛出错误") { error in
-            guard case LexerError.invalidCharacter("$", _) = error else {
-                XCTFail("应为 invalidCharacter 错误")
-                return
-            }
+        let tokens = try lexer.tokenize()
+        guard case .identifier(let name, _) = tokens.first else {
+            XCTFail("应为 identifier token"); return
         }
+        XCTAssertEqual(name, "$")
+        guard case .eof = tokens.last else { XCTFail("应以 eof 结尾"); return }
     }
 }
