@@ -683,8 +683,11 @@ public final class TypeChecker {
  resolvedParent = typeEnv.parentEnum(of: caseName)
  }
  guard let parent = resolvedParent else { return }
- // 3.15：枚举用例构造为位置式，不允许具名实参（如 `圆(半径: 5.0)`）。
- if let labeled = args.first(where: { $0.label != nil }) {
+ // 具名关联值决议（2026-08-29）：声明为具名形态时标签实参合法（按名对位）；
+ // 位置声明仍拒绝具名实参（规则 3.15 残余）。
+ let declaredNames = typeEnv.lookupEnumCaseFields(enumName: parent, caseName: caseName) ?? []
+ let declaredNamed = declaredNames.allSatisfy { $0.name != nil } && !declaredNames.isEmpty
+ if !declaredNamed, let labeled = args.first(where: { $0.label != nil }) {
  try report(TypeError.enumCaseArgumentLabel(
  label: labeled.label!, caseName: caseName, location: location
  ))
@@ -1137,7 +1140,7 @@ public final class TypeChecker {
  _ c: MatchCase,
  subjectType: TypeAnnotation? = nil,
  _ body: () throws -> Void
- ) rethrows {
+ ) throws {
  typeEnv.pushScope()
  if case .enumCase(let name) = c.pattern,
  let parent = typeEnv.parentEnum(of: name),
@@ -1146,22 +1149,33 @@ public final class TypeChecker {
  let fields = typeEnv.lookupSpecializedEnumCase(
  typeName: parent, typeArgs: typeArgs, caseName: name
  ) {
- bindMatchCaseVariables(c, fields: fields)
+ try bindMatchCaseVariables(c, fields: fields)
  } else if case .enumCase(let name) = c.pattern,
  let parent = typeEnv.parentEnum(of: name),
  let fields = typeEnv.lookupEnumCase(enumName: parent, caseName: name) {
- bindMatchCaseVariables(c, fields: fields)
+ try bindMatchCaseVariables(c, fields: fields)
  }
  try body()
  typeEnv.popScope()
  }
 
  /// 将 match 用例的解构绑定按「具名优先、否则按位」注入当前作用域。
+ /// 绑定数与关联值数不匹配 → E4 类型错误（ADR 具名关联值决议 2026-08-29 决策 D；
+ /// 此前静默错绑/兜底 Any）。`_` 占位计入数量但不注入变量。
  private func bindMatchCaseVariables(
  _ c: MatchCase,
  fields: [(name: String?, type: TypeAnnotation)]
- ) {
+ ) throws {
+ if !c.bindings.isEmpty, c.bindings.count != fields.count {
+ try report(TypeError.argumentCountMismatch(
+ expected: fields.count,
+ got: c.bindings.count,
+ location: c.location
+ ))
+ return
+ }
  for (index, binding) in c.bindings.enumerated() {
+ if binding.varName == "_" { continue }
  let type: TypeAnnotation
  if let pname = binding.paramName,
  let matched = fields.first(where: { $0.name == pname }) {

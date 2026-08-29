@@ -2305,13 +2305,28 @@ public class Interpreter {
 
  // 仅 enumCase 模式携带绑定（命名/位置）；字面量/通配模式无关联值
  if case .enumCase = matchCase.pattern, case .enumValue(let ev) = matchValue {
+ // 绑定数 vs 关联值数校验（ADR 具名关联值决议 2026-08-29 决策 D）：
+ // 不匹配此前静默绑 .null——现改为运行时报错（类型层同批加 E4 校验）。
+ // `_` 占位仍占一个位置但不产生绑定变量。
+ if !matchCase.bindings.isEmpty, matchCase.bindings.count != ev.associatedValues.count {
+ throw RuntimeError.arityMismatch(
+ expected: ev.associatedValues.count,
+ got: matchCase.bindings.count,
+ location: location
+ )
+ }
  for (bindingIndex, binding) in matchCase.bindings.enumerated() {
+ if binding.varName == "_" { continue }
  let boundValue: Value
  if let paramName = binding.paramName {
  if let idx = ev.paramNames.firstIndex(where: { $0 == paramName }), idx < ev.associatedValues.count {
  boundValue = ev.associatedValues[idx]
  } else {
- boundValue = .null
+ throw RuntimeError.arityMismatch(
+ expected: ev.associatedValues.count,
+ got: matchCase.bindings.count,
+ location: location
+ )
  }
  } else {
  boundValue = bindingIndex < ev.associatedValues.count ? ev.associatedValues[bindingIndex] : .null
@@ -2511,7 +2526,9 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return .enumValue(EnumValue(
  caseName: fv.enumCaseName,
  associatedValues: finalArgs,
- paramNames: [],
+ // 具名关联值决议（2026-08-29）：声明参数名进入运行时值，
+ // 供 match 具名绑定 `case c(关联值名: 变量)` 按名对位。
+ paramNames: fv.params.map { $0.name },
  parentEnum: fv.enumParentName.isEmpty ? nil : fv.enumParentName
  ))
  }
@@ -3060,10 +3077,9 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  if ev.associatedValues.isEmpty {
  return "\(ev.caseName)"
  }
- let inner = ev.associatedValues.enumerated().map { i, v in
- let prefix = (i < ev.paramNames.count && ev.paramNames[i] != nil) ? "\(ev.paramNames[i]!): " : ""
- return prefix + stringify(v)
- }.joined(separator: ", ")
+ // 渲染不带关联值名（项目契约：`圆(5.0)` 而非 `圆(r: 5.0)`——paramNames
+ // 仅供 match 具名绑定按名对位，不进渲染；2026-08-29 具名关联值决议）。
+ let inner = ev.associatedValues.map { stringify($0) }.joined(separator: ", ")
  return "\(ev.caseName)(\(inner))"
  case .function(let fv): return "<\(fv.name)>"
  case .future(let fv):
