@@ -1142,10 +1142,12 @@ public final class TypeChecker {
  typeEnv.pushScope()
  // 方法体作用域：注册 self 与所属类型字段，使字段引用可参与类型推断（P3-1 示例 trait.pini 触发）。
  // 字段先于参数注册，参数可遮蔽同名字段。
- if !fields.isEmpty {
  if let tn = typeName {
+ // G-P8（重开修正）：self 的注册不得以「类型有字段」为前提——无字段类型
+ // （或字段表未传入）的扩展方法此前拿不到 self，方法体内 self 调用退化 Any。
  typeEnv.defineVariable(name: "self", type: .simple(name: tn, location: funcDecl.location))
  }
+ if !fields.isEmpty {
  for (fname, ftype) in fields {
  typeEnv.defineVariable(name: fname, type: ftype)
  }

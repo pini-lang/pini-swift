@@ -56,11 +56,41 @@ main|func() -> ()
         XCTAssertTrue(out.contains("zero"), out)
     }
 
+    /// 意图：无字段类型的扩展方法同样拥有 self（此前 self 注册以「有字段」为前提，
+    /// 无字段类型的方法体内 self 调用退化 Any）
+    /// 推进性测量：check 通过并输出 y
+    /// 驳回性测量：E4-001 expected-Any 报错均不合格
+    func testFieldlessObjectSelfCallPropagates() throws {
+        let source = """
+{o}
+
+{{o}}
+k_at|self(k: I32,) -> (String,)
+    return "s"
+use1|self() -> (String,)
+    let k = self.k_at(0)
+    if k == "s":
+        return "y"
+    return "n"
+
+main|func() -> ()
+    var a = o()
+    print(a.use1())
+    return
+"""
+        let out = try runSource(source)
+        XCTAssertTrue(out.contains("y"), out)
+    }
+
     private func runSource(_ source: String) throws -> String {
+        // G-P8 复盘：本 harness 此前不跑 checker——E4-001 永不触发，测试空转
+        // （假绿）。类型类测试的 harness 必须先 check 再 run。
         let lexer = Lexer(source: source, fileName: "selfcall.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "selfcall.pini")
         let module = try parser.parseModule()
+        let checker = TypeChecker()
+        try checker.check(module: module)
         let pipe = Pipe()
         let originalStdout = dup(STDOUT_FILENO)
         setvbuf(stdout, nil, _IONBF, 0)
