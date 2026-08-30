@@ -90,3 +90,15 @@ G-P1：`BuiltinRegistry` 新增 F64 转换（按 ADR-020 D3/D4 快速路径，�
 4. 自举侧 Any 位构造改为限定形式（`token.int_lit(...)` 等 9 处）；checker 的 Any 接收者成员调用实参不下探的预存盲区另行挂账（与本提案无耦合）。
 
 验证：宿主全量 1047 测试 0 失败（4 个「动态消歧」测试翻转为「check 期拒绝」）；selfhost 33 测试 0 失败；L0 MATCH；audit GREEN。
+
+---
+
+## 附录 F：G-P8 重开-再闭合 + S5 Type-B findings（2026-08-30）
+
+1. **G-P8 重开-再闭合**：S5 的 parser 链实测暴露首次闭环是假绿——SelfCallInferenceTests 的 harness 不跑 checker，E4-001 永不触发。真缺陷：`checkFuncBody` 以「类型有字段」为前提注册 self，无字段类型（含字段表未传入的调用路径）的扩展方法体内 self 调用退化 Any。修复：self 注册仅以已知声明类型名为前提；harness 补 check；新增无字段对象回归测试。自举侧 7+1 处 typed-let 绕行随之拆除（cce9d22 / 自举 b8a2f8b）。
+2. **S5 Type-B findings（并入 L1a Type-B 批次，暂存于附录）**：
+   - 算符 → opText 映射表（17 项：`*`→multiply、`&&`→and、`||`→or、`<`→lessThan……）未钉定——S9 差分的权威参考面；
+   - BinaryOperator 枚举冗余/死面：and/or 与 logicalAnd/logicalOr 双套；assign 族 10 个 case 表达式位不可达（赋值是语句级）；
+   - 前缀 `++`/`--` 的求值语义未钉；
+   - tuple-or-paren 消歧规则（单元素无标签=表达式、单标签=元组、空=空元组、IDENT: 前瞻）只在解析器代码中。
+3. **测试纪律（双方通用）**：类型类测试的 harness 必须先 check 再 run——空转 harness 会把缺陷变成假绿。
