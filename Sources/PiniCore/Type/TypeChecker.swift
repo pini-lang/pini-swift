@@ -40,6 +40,7 @@ public final class TypeChecker {
  /// 形参名单独存是因为 `TypeEnvironment.FunctionSignature` 只保留类型、不保留名字，
  /// 而一条好的隔离报错必须能指名道姓说出是哪个形参。
  private var asyncFunctionParamNames: [String: [String]] = [:]
+ private var functionParamNames: [String: [String]] = [:]
 
  /// B3-1：`Type.method` → 形参名列表，覆盖标了 `=>` 的**方法**（与自由函数同等对待）。
  private var asyncMethodParamNames: [String: [String]] = [:]
@@ -766,6 +767,9 @@ public final class TypeChecker {
  let returnTypes = TypeChecker.signatureReturns(of: f)
  // B3-1：登记并发进程的形参名，供任务隔离检查在报错时指名道姓
  if f.isAsync { asyncFunctionParamNames[f.name] = f.params.map { $0.name } }
+ // G-P11：登记全部函数形参名，供调用点标签校验（此前标签只按位置绑定，
+ // 不匹配的标签 check 静默通过、运行期才报 未知参数名）。
+ functionParamNames[f.name] = f.params.map { $0.name }
  if !f.genericParams.isEmpty {
  // P3-0：泛型函数模板注册——供调用点 T 占位通配比对（端到端）
  typeEnv.defineGenericFunction(
@@ -1516,7 +1520,7 @@ public final class TypeChecker {
  // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
  try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
  if let sig = typeEnv.lookupFunction(name: calleeName) {
- try validateCallArguments(arguments: arguments, signature: sig, location: location)
+ try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])
  // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
  if let paramNames = asyncFunctionParamNames[calleeName] {
  try enforceTaskIsolation(
@@ -1779,8 +1783,19 @@ public final class TypeChecker {
  private func validateCallArguments(
  arguments: [CallArgument],
  signature sig: TypeEnvironment.FunctionSignature,
- location: SourceLocation
+ location: SourceLocation,
+ paramNames: [String]? = nil
  ) throws {
+ // G-P11：带标签实参须命中形参名（缺名册时保守跳过——与既有推断不了就不误报一致）
+ if let names = paramNames, !sig.isVariadic {
+ for arg in arguments {
+ if let label = arg.label, !names.contains(label) {
+ try report(TypeError.unknownMember(
+ typeName: "函数", memberName: label, location: location
+ ))
+ }
+ }
+ }
  if !sig.isVariadic && arguments.count != sig.params.count {
  try report(TypeError.argumentCountMismatch(
  expected: sig.params.count,

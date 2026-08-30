@@ -2582,6 +2582,15 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  )
  }
  if fv.isTypeConstructor {
+ // G-P10(c)：类型构造不接受实参（字段经初始化器/赋值设置）；
+ // 此前实参被静默丢弃（位置形式），属静默数据丢失，改为元数报错。
+ guard args.isEmpty else {
+ throw RuntimeError.arityMismatch(
+ expected: 0,
+ got: args.count,
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
  return try createInstance(typeName: fv.typeName, kind: fv.typeKind)
  }
 
