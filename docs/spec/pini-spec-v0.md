@@ -826,7 +826,29 @@ unary-expr      ::= ('await' | 'wait' | '^' | '!' | '++' | '--' | '~' | '+' | '-
 (* await/wait: join 挂起等待
    ^: 右值解包前缀
    &: 不安全取地址
-   unsafe: 不安全消耗点 *)
+   unsafe: 不安全消耗点
+   ++/--: 前缀自增/自减，语义见下「前缀 ++/--」注 *)
+
+(* 前缀 `++`/`--`（F3，按 Pini草稿 算术运算符表「前自增 / 前自减」意图钉定）：
+   仅前缀（无后缀形态）；作用于**可赋值目标**（变量 / 成员 / 下标）；语义为读-改-写回，
+   表达式值取改写**后**的值；作用于不可赋值目标（字面量、一般表达式）为编译错误。
+   宿主现行实现与该语义有三处偏离（登记待修）：表达式位不写回、成员/下标目标不写回、
+   不可赋值目标不报错（`++1` 求值为 2）。 *)
+
+(* 规范投影的算符文本（F1，事实钉定）：`pini parse` 投影及任何规范形式输出中，算符以
+   下列 opText 呈现（自举 parser 已按此表对齐，差分门禁以之为权威参考）：
+     二元（17 项）
+       '+'->plus  '-'->minus  '*'->multiply  '/'->divide  '%'->modulo
+       '=='->equal  '!='->notEqual
+       '<'->lessThan  '>'->greaterThan  '<='->lessThanOrEqual  '>='->greaterThanOrEqual
+       '&&'->and  '||'->or
+       '&'->bitwiseAnd  '^'->bitwiseXor  '<<'->leftShift  '>>'->rightShift
+     一元（6 项）
+       '!'->not  '-'->minus  '+'->plus  '~'->bitwiseNot  '++'->increment  '--'->decrement
+   注意：`|` **没有**二元或形态——`|` 是定界符（修饰符/标签/联合类型分隔符），故
+   bitwise-or 仅经复合赋值 `|=` 去糖得到（去糖后 opText 为 bitwiseOr）。
+   其余一元形态（`await` / `wait` / `^` 解包 / `&` 取地址 / `unsafe`）的投影文本待
+   L1b 覆盖时补齐，不在本表内。 *)
 
 primary-expr    ::= primary-atom postfix-suffix*;
 
@@ -857,6 +879,14 @@ primary-atom    ::= IDENT [generic-construct]
                   | '[' collection-literal ']'
                   | '{' [expression {',' expression}] '}'
                   | builtin-call;
+(* 括号/元组消歧（F4，事实钉定）：`( ... )` 的形态由内容判定——
+     1. `()`                  → 空元组；
+     2. 单元素**无标签** `(e)` → 解包为该表达式本身（不是元组）；
+     3. 单元素**带标签** `(a: e)`（无尾逗号）→ 仍是元组；
+     4. 多元素（容忍尾逗号）  → 元组；元素标签由 `IDENT ':'` 前瞻判定。
+   宿主与自举均按此实现并测试覆盖。
+   ⚠ 本产生式尚未记载**带标签的元组元素**形态（`IDENT ':' expression`），与实现存在
+   偏差——随本条一并登记为待补产生式。 *)
 
 generic-construct ::= '<' type-annotation {',' type-annotation} '>'
                       ('(' [call-arg {',' call-arg}] ')' | '.');
