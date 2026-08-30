@@ -300,7 +300,7 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
  }
  }
  return String(result.dropLast())
- case .whileStatement(let condition, let body, _, let label, _):
+ case .whileStatement(let condition, let body, let step, let label, _):
  var result = "\(indent)while"
  if let l = label {
  result += " (\(l))"
@@ -311,6 +311,13 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
  result += "\(indent) body:\n"
  for s in body.statements {
  result += describeStatement(s, indent: indent + " ") + "\n"
+ }
+ // G-P7：step 块此前不渲染（宿主 AST 明明持有），补齐为 for 同款
+ if let step = step {
+ result += "\n\(indent) step:\n"
+ for s in step.statements {
+ result += describeStatement(s, indent: indent + " ") + "\n"
+ }
  }
  return String(result.dropLast())
  case .forStatement(let pattern, let iterable, let body, let step, let label, _):
@@ -433,7 +440,12 @@ func describeFuncDecl(_ funcDecl: FuncDecl, indent: String = "") -> String {
 }
 
 func describeFieldDecl(_ field: FieldDecl, indent: String = "") -> String {
- return "\(indent)field \(field.name): \(describeTypeAnnotation(field.typeAnnotation))"
+ var result = "\(indent)field \(field.name): \(describeTypeAnnotation(field.typeAnnotation))"
+ // G-P7：字段初始化器此前不渲染，补齐
+ if let initExpr = field.initializer {
+ result += " = \(describeExpression(initExpr, indent: ""))"
+ }
+ return result
 }
 
 func describeStructDecl(_ structDecl: StructDecl, indent: String = "") -> String {
@@ -564,8 +576,16 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
 
 func describeAST(_ module: Module) -> String {
  var result = "Module:\n"
+ // G-P7：import/export 此前不渲染（存于 Module.imports/exports 而非
+ // declarations），补齐；顺序信息宿主未保留，按 imports/declarations/exports 输出
+ for imp in module.imports {
+ result += describeTopLevelDecl(.importDecl(imp), indent: " ") + "\n"
+ }
  for decl in module.declarations {
  result += describeTopLevelDecl(decl, indent: " ") + "\n"
+ }
+ for exp in module.exports {
+ result += describeTopLevelDecl(.exportDecl(exp), indent: " ") + "\n"
  }
  return String(result.dropLast())
 }

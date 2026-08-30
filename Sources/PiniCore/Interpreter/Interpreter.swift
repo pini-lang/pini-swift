@@ -2894,6 +2894,18 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  )
  }
  }
+ if fv.name == "F64" {
+ // G-P1：值构造（见 BuiltinRegistry 同名条目注释）
+ switch args[0] {
+ case .float(let f): return .float(f)
+ case .int(let i): return .float(Double(i))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "F64 的参数必须是数值（int/float）",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
  if fv.name == "sqrt" {
  switch args[0] {
  case .int(let v): return .float(sqrt(Double(v)))

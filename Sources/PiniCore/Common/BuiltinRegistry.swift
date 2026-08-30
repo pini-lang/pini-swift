@@ -76,6 +76,11 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "ok", group: .value, paramNames: ["value"], definesRuntimeValue: false),
  BuiltinDecl(name: "err", group: .value, paramNames: ["value"], definesRuntimeValue: false),
  BuiltinDecl(name: "Error", group: .value, paramNames: ["message"], definesRuntimeValue: false),
+ // G-P1（自举探针批次 4）：F64 值构造——此前无 I32→F64 转换路径，
+ // 整型表达式无法参与浮点算术（E5-003 混合算术拒绝）；按 ADR-020
+ // 内建快速路径补齐（最小面：int→float、float 原样，字符串解析另行提案）。
+ BuiltinDecl(name: "F64", group: .value, paramNames: ["value"],
+ params: [t("Any")], returns: [t("F64")]),
  BuiltinDecl(name: "CancelError", group: .value, paramNames: ["message"], definesRuntimeValue: false),
 
  // ---- char ----
