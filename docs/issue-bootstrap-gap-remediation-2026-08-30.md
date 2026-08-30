@@ -66,3 +66,14 @@ G-P1：`BuiltinRegistry` 新增 F64 转换（按 ADR-020 D3/D4 快速路径，�
 1. **G-P1 → CLOSED**：`F64(x)` 值构造内建（ADR-020 快速路径，int→float、float 原样），spec 内建清单 28→29；混合算术 E5-003 缺口消除（E2E 实证 F64(3)+0.5=3.5）。
 2. **G-P7 → CLOSED**：`pini parse` 投影补齐三处丢失形状（while `step:` 块——与 for 同款习语；struct 字段初始化器；Module.imports/exports 渲染）；AST 持有性测试钉定数据前提，CLI E2E 实证；自举侧打印机同步镜像新形状。
 3. **G-P10 → 仍 OPEN**：根因定位推进到「AST 解析产物正确；运行期递归穿过 callFunctionValue 深度（E5-006）；宿主存在 Interpreter 与 SuspendEvaluator 双求值路径」，根因归属待续查。
+
+---
+
+## 附录 D：G-P10 根因收口（2026-08-30）
+
+**递归理论被证伪**：临时插桩深度追踪显示，「带标签调用无限递归」实为误读——E5-006 是 invalidOperation 的**共享错误码**，完整消息一直是干净的「未知参数名」。真缺陷两项，均已修复（`9761097`）：
+
+1. **类型构造静默丢参**：`createInstance` 忽略实参，位置形式实参被静默丢弃（自举侧 `src_loc("", 0, 0, 0, 0,)` 即死代码，靠事后字段赋值掩盖）→ 运行期改为元数报错；自举侧同步拆除死实参（`ad150de`）。
+2. **checker 不校验实参标签**：`f(b: 3)` check 静默通过（标签按位置绑定）、运行期才报 → `validateCallArguments` 增加标签校验（新增全函数形参名册，此前仅 async 有），check 期 E4 拒绝。
+
+带标签的字段绑定构造（`pt(x: 7)` 语义）维持「显式报错」，作为 spec 提案另行排期。LabelValidationTests 3/3；全量 **1047 测试 0 失败**。
