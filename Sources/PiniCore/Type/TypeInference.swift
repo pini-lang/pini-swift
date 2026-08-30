@@ -113,6 +113,15 @@ public final class TypeInference {
  return .generic(name: "Optional", params: [.simple(name: "Any", location: loc)], location: loc)
  }
 
+ // ADR-026 D2：限定枚举用例构造 Enum.case(args) 推断为父枚举类型，
+ // 使以其为 scrutinee 的 match 按正确父枚举解析 case 字段。
+ if case .member(let object, let caseName, _) = callee,
+ case .identifier(let typeName, _) = object,
+ let env = environment,
+ env.lookupEnumCase(enumName: typeName, caseName: caseName) != nil {
+ return .simple(name: typeName, location: loc)
+ }
+
  // P2-1.4：成员方法调用返回类型推断（obj.method(args)）。
  // Optional.some / .none 已在上方特判并返回，此处仅处理普通成员方法。
  if case .member(let object, let memberName, _) = callee, let env = environment {

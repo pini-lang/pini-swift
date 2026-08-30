@@ -1171,8 +1171,26 @@ public final class TypeChecker {
  _ body: () throws -> Void
  ) throws {
  typeEnv.pushScope()
+ // ADR-026 D2：歧义 case 名按 scrutinee 类型在候选集中解析，
+ // 不得信任单值反查（跨枚举同名会绑到错误父枚举的字段，E4-005）。
+ var resolvedParent: String? = nil
+ if case .enumCase(let name) = c.pattern {
+ let candidates = typeEnv.parentEnums(of: name)
+ if candidates.count == 1 {
+ resolvedParent = candidates[0]
+ } else if let st = subjectType {
+ let sName: String?
+ switch st {
+ case .simple(let n, _): sName = n
+ case .generic(let n, _, _): sName = n
+ default: sName = nil
+ }
+ if let sName = sName, candidates.contains(sName) { resolvedParent = sName }
+ }
+ if resolvedParent == nil { resolvedParent = typeEnv.parentEnum(of: name) }
+ }
  if case .enumCase(let name) = c.pattern,
- let parent = typeEnv.parentEnum(of: name),
+ let parent = resolvedParent,
  case .generic(let subjectName, let typeArgs, _)? = subjectType,
  subjectName == parent,
  let fields = typeEnv.lookupSpecializedEnumCase(
@@ -1180,7 +1198,7 @@ public final class TypeChecker {
  ) {
  try bindMatchCaseVariables(c, fields: fields)
  } else if case .enumCase(let name) = c.pattern,
- let parent = typeEnv.parentEnum(of: name),
+ let parent = resolvedParent,
  let fields = typeEnv.lookupEnumCase(enumName: parent, caseName: name) {
  try bindMatchCaseVariables(c, fields: fields)
  }

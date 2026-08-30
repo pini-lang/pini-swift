@@ -43,6 +43,41 @@ main|func() -> ()
         _ = try runSource(source)
     }
 
+    /// 意图：match 模式按 scrutinee 类型解析（ADR-026 D2）——同名 case 不同元数时
+    /// 各自绑定正确父枚举的字段（旧代码按单值反查绑错父枚举 → E4-005）
+    /// 推进性测量：两个 match 的解构绑定都成功并输出正确值
+    /// 驳回性测量：E4-005 arity 报错或绑定错值均不合格
+    func testMatchResolvesByScrutineeType() throws {
+        let source = """
+[BoxA]
+foo(a: I32,)
+
+[BoxB]
+foo(x: String, y: String,)
+
+describe_a|func(b: BoxA,) -> (I32,)
+    match b:
+        case foo(v,):
+            return v
+    return 0
+
+describe_b|func(b: BoxB,) -> (I32,)
+    match b:
+        case foo(x, y,):
+            if x == y:
+                return 7
+    return 0
+
+main|func() -> ()
+    print(describe_a(foo(a: 5)))
+    print(describe_b(foo(x: "k", y: "k")))
+    return
+"""
+        let out = try runSource(source)
+        XCTAssertTrue(out.contains("5"), out)
+        XCTAssertTrue(out.contains("7"), out)
+    }
+
     private func runSource(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "ambiguous.pini")
         let tokens = try lexer.tokenize()
