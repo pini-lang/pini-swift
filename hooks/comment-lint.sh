@@ -30,24 +30,41 @@ if [ "${#targets[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# ADR-024 D2：.gitignore 锚定的嵌套独立仓（examples/selfhost）不属本仓扫描范围。
+# 实测：rg 对嵌套 .git 边界内的文件不套用父仓 ignore 规则；grep 从不尊重 ignore。
+# 显式排除（rg 用锚定全路径 glob，grep 用末段目录名），双后端行为一致。
+excl_rg=()
+excl_grep=()
+if [ -f .gitignore ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      /*)
+        d="${line%/}"
+        excl_rg+=("--glob=!$d/**")
+        excl_grep+=("--exclude-dir=${d##*/}")
+        ;;
+    esac
+  done < <(grep -vE '^[[:space:]]*(#|$)' .gitignore 2>/dev/null)
+fi
+
 has_rg=0
 command -v rg >/dev/null 2>&1 && has_rg=1
 
 scan() { # $1=pattern，输出命中行
   local pat="$1"
   if [ "$has_rg" -eq 1 ]; then
-    rg -n --glob '*.swift' --glob '*.pini' "$pat" "${targets[@]}" 2>/dev/null
+    rg -n --glob '*.swift' --glob '*.pini' ${excl_rg[@]+"${excl_rg[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   else
-    grep -rEn --include='*.swift' --include='*.pini' "$pat" "${targets[@]}" 2>/dev/null
+    grep -rEn --include='*.swift' --include='*.pini' ${excl_grep[@]+"${excl_grep[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   fi
 }
 
 scan_o() { # $1=pattern，仅输出匹配片段（L6 用，无文件名前缀）
   local pat="$1"
   if [ "$has_rg" -eq 1 ]; then
-    rg -o --no-filename --glob '*.swift' --glob '*.pini' "$pat" "${targets[@]}" 2>/dev/null
+    rg -o --no-filename --glob '*.swift' --glob '*.pini' ${excl_rg[@]+"${excl_rg[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   else
-    grep -rEoh --include='*.swift' --include='*.pini' "$pat" "${targets[@]}" 2>/dev/null
+    grep -rEoh --include='*.swift' --include='*.pini' ${excl_grep[@]+"${excl_grep[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   fi
 }
 
@@ -73,10 +90,12 @@ check "L3 文档名快照"   '^[[:space:]]*(//|///|;|#).*[A-Za-z0-9_-]+\.md'
 check "L4 版本号叙事"   '^[[:space:]]*(//|///|;|#).*v0\.[0-9]+'
 check "L5 裸待办"       '(TODO|FIXME|HACK|XXX)'
 
-# L6 ADR ID 兑付：登记表来自 docs/adr-index.md 首列（大小写不敏感匹配，堵小写盲区）
-registered="$(sed -nE 's/^\| (ADR-[0-9]+) \|.*/\1/p' docs/adr-index.md 2>/dev/null | sort -u)"
+# L6 ADR ID 兑付：登记表来自 docs/spec/adr/adr-index.md 首列（大小写不敏感匹配，堵小写盲区）
+# ADR-024：登记表随语言级资产迁入 docs/spec/adr/；路径须与之一致，否则 L6 静默失效。
+index_file="docs/spec/adr/adr-index.md"
+registered="$(sed -nE 's/^\| (ADR-[0-9]+) \|.*/\1/p' "$index_file" 2>/dev/null | sort -u)"
 if [ -z "$registered" ]; then
-  echo "⚠️  [L6] 无法读取 ADR 登记表（docs/adr-index.md），跳过"
+  echo "⚠️  [L6] 无法读取 ADR 登记表（$index_file），跳过"
 else
   bad="$(scan_o '[Aa][Dd][Rr]-[0-9]+' | tr '[:lower:]' '[:upper:]' | sort -u | grep -vxF -f <(printf '%s\n' "$registered") || true)"
   if [ -n "$bad" ]; then

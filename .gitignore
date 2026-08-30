@@ -2,3 +2,6 @@
 .swiftpm/
 .workbuddy/
 .DS_Store
+
+# 嵌套独立仓：自举项目（探针）。物理在内、git 归属在外 —— 不进本仓历史与归档（ADR-024 D2）
+/examples/selfhost

@@ -42,4 +42,7 @@ fi
 # 注释风格门禁（pini-comment-style-guide.md §7；违规已清零 → block 模式）
 "$root/hooks/comment-lint.sh" || exit 1
 
+# 文档链接校验（ADR-024 挂账 8）：引用失效即拦截 —— 补上 M1 当年结构性缺失的能力
+"$root/tools/check-doc-links.sh" || exit 1
+
 exit 0

@@ -1,0 +1,600 @@
+# Pini spec 证据表（Evidence Ledger）
+#
+# 治理协议：spec §1.4 证据新鲜度协议（Evidence Freshness）
+# - 粒度：60 分钟。证据自 validated_at 起 60 分钟内可信；超期未重新验证 → status = "STALE"（不可信）。
+# - 过筛不成即不可信：治理时 grep/read 对应 code_ref——找不到符号、或语义不符 → STALE，
+#   不得作为写入依据。机械过筛（行号存在/符号存在）≠ 可信；语义验证才算 FRESH。
+# - 行号 = 软证据（软定位）：code_ref 中的行号仅作快速查看指导，不参与 FRESH/STALE 判定。
+#   注释/编辑会移动行号（spec §A 出处曾整体漂移 +120~180 行而语义未变）；权威判定键 = 符号名 + 语义。
+#   行号漂移而符号仍在附近 → 证据仍可信；治理时可顺手更新行号（见各条目 note 中的「code_ref 自 X 修正」）。
+# - 刷新协议（MUST）：把待刷新的 STALE 条目拷贝到新条目（保留痕迹），移除旧条目，
+#   重新验证后写入新 validated_at。每次治理只保留一张当前证据表（本文件）。
+# - status 取值：FRESH（本次治理 ≤60min 内验证通过）| STALE（超期 / 验证失败 / 语义已过时）。
+# - 约定：code_ref 行号为软证据；若 spec 正文仍引用旧行号，在 note 中标注，
+#   由治理方按 code_ref 同步修正 spec 正文（§A 出处块行号系统性漂移，见本次 refresh_note）。
+#
+# 本表由治理脚本/人工在批次治理时更新；spec 正文的代码引用以符号定位为主、行号为软证据（§1.4）。
+
+[meta]
+spec_ref = "pini-spec-v0.md §1.4"
+granularity_minutes = 60
+last_refresh = "2026-08-29T23:45:00+08:00"
+refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。"
+
+[[evidence]]
+id = "E-001"
+assertion = "await/wait 关键字前缀 → .join AST（ADR-012 逆转，取代旧 `<=` 前缀）"
+spec_ref = "§A.4 规则 3.1 / §3.1.1"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2237-2246"
+validated_at = "2026-08-25T00:15:00+08:00"
+status = "FRESH"
+note = "实测精确命中：2237-2241 await→.join；2242-2246 wait→.join"
+
+[[evidence]]
+id = "E-002"
+assertion = "行首定界符分派（G2）：'(' '[' '{' '<' 行首 → 顶级类型声明分派"
+spec_ref = "§A.4 规则 3.0 / §2.1"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:347-384"
+validated_at = "2026-08-25T00:15:00+08:00"
+status = "FRESH"
+note = "实测精确命中：358-375 paren/bracket/brace/lessThan 分派"
+
+[[evidence]]
+id = "E-003"
+assertion = "优先级解析链 11 函数行号（parseExpression→…→parsePrimary）"
+spec_ref = "§A.6.4 / §A.3"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2053/2057/2062/2075/2088/2112/2146/2180/2204/2230/2296"
+validated_at = "2026-08-25T00:15:00+08:00"
+status = "FRESH"
+note = "11/11 精确命中。注意：§A.3 优先级表同列另有 6 处旧行号（1922/1935/1948/2006/2040/2064/2430）与 E-003 矛盾，须按本条目修正（见 E-034/E-035/E-039 修正值）"
+
+[[evidence]]
+id = "E-004"
+assertion = "executeTry 错误位取 elements[1]（errors-as-data 核心）"
+spec_ref = "§2.4.4（G3）"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:1996"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "executeTry 1996 精确命中；2004 取 elements[1]"
+
+[[evidence]]
+id = "E-005"
+assertion = "`^` 右值糖：throw UnwrapErrSignal（err(e) 抛信号）"
+spec_ref = "§2.4.4（G3）"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:1385/1393"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "1385 注释、1393 throw 精确命中"
+
+[[evidence]]
+id = "E-006"
+assertion = "函数边界捕获 UnwrapErrSignal → makeUnwrapErrorReturn 注入返回元组末槽"
+spec_ref = "§2.4.4（G3）"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2536-2538"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "2536 catch UnwrapErrSignal；2538 makeUnwrapErrorReturn(signal.error, returnTypes: fv.returnTypes)"
+
+[[evidence]]
+id = "E-007"
+assertion = "makeUnwrapErrorReturn 定义位置"
+spec_ref = "§2.4.4（G3）"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:1509"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-009"
+assertion = "G3 错误位 elements[1]（executeTry 内部）"
+spec_ref = "§2.4.4"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2002-2005"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-010"
+assertion = "成功/错误判定逻辑（executeTry：null/空串→成功；否则→except）"
+spec_ref = "§2.4.4"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2007-2035"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "2009-2016 null/空串→tryBlock；2020-2035 非空→except"
+
+[[evidence]]
+id = "E-011"
+assertion = "单 except 不按错误类型分派（循环内首条执行后即 return）"
+spec_ref = "§2.4.4"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2020-2034"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-012"
+assertion = "=> 派发：doubleArrow → 异步函数体"
+spec_ref = "§3.1.1"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:945"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "945-947 doubleArrow → isAsync = true"
+
+[[evidence]]
+id = "E-013"
+assertion = "挂起模式：suspendMode 下 Future 未决 → 保存续体挂起（.join 分支）"
+spec_ref = "§3.1.1"
+code_ref = "Sources/PiniCore/Interpreter/SuspendEvaluator.swift:358-384"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "evalK 358；.join 分支 366-386；挂起判定 374（suspendMode && !fut.isFinished）"
+
+[[evidence]]
+id = "E-014"
+assertion = "同步/阻塞默认后端 GCDScheduler.shared"
+spec_ref = "§3.1.1"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:25"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "code_ref 自 29 修正（实测 25）；spec §3.1.1 出处须同步"
+
+[[evidence]]
+id = "E-015"
+assertion = "阻塞路径：非挂起（suspendMode=false）走阻塞 joinFuture"
+spec_ref = "§3.1.1"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:1377-1382"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "1377 suspendMode 判定；1380 throw SuspendSignal；1382 joinFuture"
+
+[[evidence]]
+id = "E-016"
+assertion = "joinWithin(t, ms) 超时 → cancel + err(CancelError)（与手动取消同构）"
+spec_ref = "§3.1.1 / §3.1.4"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:664-676"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "joinFuture(timeoutMs:) 664；超时 cancel+err(CancelError) 670-676"
+
+[[evidence]]
+id = "E-017"
+assertion = "取消树父子：children 强引用 / parent 弱引用"
+spec_ref = "§3.1.2（B2-1）"
+code_ref = "Sources/PiniCore/Interpreter/Value.swift:30-31"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "30 weak parent；31 children 强引用数组"
+
+[[evidence]]
+id = "E-018"
+assertion = "closeScope 收集 leaked 失败（供边界上浮聚合 err(aggregate)）"
+spec_ref = "§3.1.2（B2-2）"
+code_ref = "Sources/PiniCore/Interpreter/Value.swift:106"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-019"
+assertion = "detach 内建（脱离取消树 / 退出 scope 所有权）"
+spec_ref = "§3.1.2"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:635、2190-2199"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "635 定义注释/637-645 内建；2190-2199 运行时 dispatch（fut.detachFromParent）"
+
+[[evidence]]
+id = "E-020"
+assertion = "detachFromParent（从父 children 移除）"
+spec_ref = "§3.1.2"
+code_ref = "Sources/PiniCore/Interpreter/Value.swift:69"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-021"
+assertion = "onCancel 即时唤醒（协作式取消 resume 边界检查点）"
+spec_ref = "§3.1.3"
+code_ref = "Sources/PiniCore/Interpreter/SuspendEvaluator.swift:227"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-022"
+assertion = "SuspendTaskCPS 上下文五项还原（currentEnv/currentFuture/deferStack/debugDepth/callStackNames）"
+spec_ref = "§3.1.3"
+code_ref = "Sources/PiniCore/Interpreter/SuspendEvaluator.swift:164"
+validated_at = "2026-08-25T00:16:00+08:00"
+status = "FRESH"
+note = "SuspendTaskCPS 164；字段 171-175；保存-还原 236-259"
+
+[[evidence]]
+id = "E-023"
+assertion = "词法 token 全集：标识符/关键字（identifierOrKeyword + makeIdentifierOrKeyword）"
+spec_ref = "§A.1.1"
+code_ref = "Sources/PiniCore/Lexer/Lexer.swift:297-323；Sources/PiniCore/Lexer/Token.swift:6-68"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 Lexer 290-310 修正；spec §A.1.1 出处须同步。Token enum 6-68 精确"
+
+[[evidence]]
+id = "E-024"
+assertion = "boolLiteral true/false 映射（makeIdentifierOrKeyword）"
+spec_ref = "§A.1.1"
+code_ref = "Sources/PiniCore/Lexer/Lexer.swift:316-321"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 303-308 修正（原为 readIdentifier）；spec §A.1.1 出处须同步"
+
+[[evidence]]
+id = "E-025"
+assertion = "运算符 token + 最长匹配（operatorToken）"
+spec_ref = "§A.1.2"
+code_ref = "Sources/PiniCore/Lexer/Lexer.swift:219-286；Sources/PiniCore/Lexer/Token.swift:15-46"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 Lexer 206-273 修正；spec §A.1.2 出处须同步。`<<=` 优先于 `<<` 于 264-266；`=>` 优先于 `=` 于 280-282"
+
+[[evidence]]
+id = "E-026"
+assertion = "分隔符/布局 token + 缩进栈（tokenize / IndentTracker）"
+spec_ref = "§A.1.3"
+code_ref = "Sources/PiniCore/Lexer/Token.swift:48-67；Sources/PiniCore/Lexer/Lexer.swift:24-71；Sources/PiniCore/Lexer/IndentTracker.swift:1-39"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "IndentTracker 1-39 精确（栈初始 [0]）；tokenize 24-71；Lexer 旧引用 20-65 微漂，spec §A.1.3 出处可保持或微调"
+
+[[evidence]]
+id = "E-027"
+assertion = "空白/注释行（; 起始）整行跳过（不参与缩进）"
+spec_ref = "§A.1.3"
+code_ref = "Sources/PiniCore/Lexer/Lexer.swift:132-153"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 121-142 修正（skipBlankOrCommentLine 132-153）；spec §A.1.3 出处须同步。注：代码同时跳过 `#` 起始行，spec 注只写 `;`，建议补充"
+
+[[evidence]]
+id = "E-028"
+assertion = "; 行注释 / # 文档注释 skipToEndOfLine"
+spec_ref = "§A.1.4"
+code_ref = "Sources/PiniCore/Lexer/Lexer.swift:49-53"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 45-52 微修（49-53）；spec §A.1.4 出处可保持或微调"
+
+[[evidence]]
+id = "E-029"
+assertion = "模块/顶级：parseModuleImpl 分派 import/export；parseTopLevelDecl"
+spec_ref = "§A.2.1"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:224-274、347-384"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "parseModuleImpl 224；imports/exports 分派 225-244；code_ref 自 210-274 微调"
+
+[[evidence]]
+id = "E-030"
+assertion = "struct 声明（parseStructDecl，含内嵌组合）"
+spec_ref = "§A.2.2"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:465-548"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+
+[[evidence]]
+id = "E-031"
+assertion = "trait 提取 extractTraits（字段名 `实现` 特殊）"
+spec_ref = "§A.2.2"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:797-810"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 800-813 微修（函数 797 起）；spec §A.2.2 出处可保持或微调"
+
+[[evidence]]
+id = "E-032"
+assertion = "函数声明块形式（parseFuncDecl）"
+spec_ref = "§A.2.3"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:838-892"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 841-894 微修；spec §A.2.3 出处可保持或微调"
+
+[[evidence]]
+id = "E-033"
+assertion = "语句分派（parseStatement：var/let/return/break/continue/if/while/for/scope/match/try/defer/func/pass）"
+spec_ref = "§A.2.4"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:1529-1573"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 1508-1541 修正（parseStatement 1529-1573）；spec §A.2.4 出处块整体漂移，须系统性更新（parseVarDecl 1575 / parseAssignOrExpr 1628 / parseWhile 1770 / parseFor 1832 / parseScope 1869 / parseMatch 1885 / parseTry 2008 / parseDefer 2041）"
+
+[[evidence]]
+id = "E-034"
+assertion = "表达式优先级分层（parseExpression→…→parsePrimary 嵌套产生式）"
+spec_ref = "§A.2.5 / §A.3"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2053-2296"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 1913-2139 修正；精确链见 E-003。spec §A.2.5 出处须同步"
+
+[[evidence]]
+id = "E-035"
+assertion = "primary-atom（parsePrimaryAtom：identifier/self/own/funcLiteral/字面量/nil/元组/数组字典/集合）"
+spec_ref = "§A.2.5"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2301-2375"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 2141-2220 修正；spec §A.2.5 出处须同步；2026-08-29 G50 随动刷新：Self→own 关键字更名（Token.Keyword.own），语义不变"
+
+[[evidence]]
+id = "E-036"
+assertion = "类型注解 parseTypeAnnotation（?T / [T] / [K:V] / {T} / generic / 元组/函数 / self/own）"
+spec_ref = "§A.2.6"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2672-2821"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 2490-2619 修正；spec §A.2.6 出处须同步（另 parseGenericParams 2823+，原 2621-2661 过时）；2026-08-29 G50 随动刷新：parseTypeAnnotation 类型名 Self→own（TypeChecker.replaceSelf 匹配 own）"
+
+[[evidence]]
+id = "E-037"
+assertion = "泛型 IDENT '<' 消歧：类型位置直接解析；嵌套 >> 不闭合（已知简化）"
+spec_ref = "§A.2.6"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2720-2742"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 2544 修正（2544 实为 parseCollectionLiteral 空数组，非类型注解注释）；spec §A.2.6 出处须同步"
+
+[[evidence]]
+id = "E-038"
+assertion = "消歧 3.3/3.8 泛型构造 lookahead 与回退（parseGenericConstructLookahead）"
+spec_ref = "§A.4 规则 3.3/3.8"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2380-2461"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 2225-2306 修正（2225-2306 实为 parseFactor/parseUnary/parsePrimary）；spec §A.4 3.3/3.8 与 §A.2.5 出处须同步。另 parseTypeAnnotationForLookahead 实际 2464-2479（spec 称 2309-2324）"
+
+[[evidence]]
+id = "E-039"
+assertion = "消歧 3.4 `{...}` 函数 vs 对象（isBraceFuncDecl 预读 `}` 后是 `(`）"
+spec_ref = "§A.4 规则 3.4"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:551-590"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 554-593 微修；spec §A.4 3.4 出处可保持或微调"
+
+[[evidence]]
+id = "E-040"
+assertion = "消歧 3.5 [名称|…] 枚举 vs 对象（无修饰符默认枚举）"
+spec_ref = "§A.4 规则 3.5"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:427-441"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "427-441 精确命中：|object→对象 / |enum→枚举 / 无修饰符 438-441→isEnum=true"
+
+[[evidence]]
+id = "E-041"
+assertion = "消歧 3.6 裸函数声明判定（isBareFunctionDeclStart）"
+spec_ref = "§A.4 规则 3.6"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:1139-1184"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 1124-1169 修正（原范围未含决定性箭头判定 1172-1181）；spec §A.4 3.6 与 §A.2.3 出处须同步"
+
+[[evidence]]
+id = "E-042"
+assertion = "match `default` 消歧（G28 更新）：default 在 match 子块内被显式报错（提示改用 `case _:`），不再特判为默认分支"
+spec_ref = "§A.4 规则 3.7（已随 v0.47.x 改写）/ §2.4.3"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:1911-1916"
+validated_at = "2026-08-25T00:26:00+08:00"
+status = "FRESH"
+note = "原 STALE（语义过时）随 spec 规则 3.7 改写转 FRESH：1911-1916 对 `default:` 抛『已废弃，请改用 case _:』"
+
+[[evidence]]
+id = "E-043"
+assertion = "消歧 3.9 内嵌组合（结构体内首行裸父类型名）"
+spec_ref = "§A.4 规则 3.9"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:497-515"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 499-518 微修（检测块 497-515）；spec §A.4 3.9 出处可保持或微调"
+
+[[evidence]]
+id = "E-044"
+assertion = "match 子块结构（G28）：子块内只允许 `case`；`case _:` 为通配兜底；`default:`/裸 `pass` 通配子块已移除（报错）"
+spec_ref = "§A.4 规则 3.10（已随 v0.47.x 改写）/ §2.4.3"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:1894-1921"
+validated_at = "2026-08-25T00:26:00+08:00"
+status = "FRESH"
+note = "原 STALE（语义过时）随 spec 规则 3.10 改写转 FRESH：1894-1901 注释确认 G28；1909-1921 对 default:/pass 抛错、仅允许 case"
+
+[[evidence]]
+id = "E-045"
+assertion = "消歧 3.11 复合赋值折叠：x op= y → x = (x op y)"
+spec_ref = "§A.4 规则 3.11"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:1652-1690"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 1597-1603 修正（1597-1603 实为 var 解构；折叠在 1652-1656，compoundAssignmentBinaryOp 1676-1690）；spec §A.4 3.11 与 §A.2.4 出处须同步"
+
+[[evidence]]
+id = "E-046"
+assertion = "消歧 3.12 nil 映射 Optional.none（表达式 / 匹配模式）"
+spec_ref = "§A.4 规则 3.12"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2359-2364、1945-1949"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "code_ref 自 2204-2209 修正（表达式侧 nil 在 parsePrimaryAtom 2359-2364；匹配模式侧 1945-1949）；spec §A.4 3.12 出处须同步"
+
+[[evidence]]
+id = "E-047"
+assertion = "关键字全集 33 个（含 capture/unsafe/foreign；对齐 §A.1.1『共 33』）"
+spec_ref = "§A.1.1"
+code_ref = "Sources/PiniCore/Lexer/Token.swift:268-309"
+validated_at = "2026-08-27T00:26:00+08:00"
+status = "FRESH"
+note = "2026-08-27 Phase 2a 刷新：unsafe/foreign 升格为保留关键字（ADR-015 FFI，§A.2.5 modifier/§A.2.2 foreign-decl），Keyword enum 31→33，对齐 spec §A.1.1 的 33；test 关键字仍由 `|test` 块承载（G41，无需独立 lex 关键字）。"
+
+[[evidence]]
+id = "E-048"
+assertion = "标准库内建函数 18 个（abs/cancel/contains/isCancel/join/joinAll/joinWithin/lower/max/min/readFile/readLine/sleep/split/sqrt/substring/upper/writeFile）"
+spec_ref = "§2.4.1 / §3 已实现清单"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:614-621、1665-1709、2165、2204、2274"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "全部 18 个存在：upper/lower/contains/substring/split 1665-1674；cancel 1693-1697；join 1709；joinAll 614-621/2165；其余为直接 define 与 runtime dispatch"
+
+[[evidence]]
+id = "E-049"
+assertion = "测试套件全绿计数（§A.6.5 声称 941）"
+spec_ref = "§A.6.5"
+code_ref = "Tests/**（swift test --disable-sandbox 实测，2026-08-27 Phase 2b 落地后）"
+validated_at = "2026-08-27T01:48:00+08:00"
+status = "FRESH"
+note = "实测 1031 = 987 XCTest（PiniPackageTests.xctest）+ 44 SwiftTesting（宿主 bundle），全绿 exit=0。『941』为旧数，spec §A.6.5 须更新。Phase 2b 较 Phase 2a（983 XCTest）净增 4（3 个新 dlsym 测试 + 1 个既有测试语义改写）。"
+
+[[evidence]]
+id = "E-050"
+assertion = "examples 示例数与覆盖（§A.6.2 声称 45/45 PASS 含 multifile/package-demo 子目录）"
+spec_ref = "§A.6.2"
+code_ref = "examples/（文件系统实测 2026-08-25）"
+validated_at = "2026-08-25T00:17:00+08:00"
+status = "FRESH"
+note = "实测 46 顶层 + 7 子目录 = 53 个 .pini。ExamplesConformanceTests.exampleFiles() 仅枚举顶层（46）；ExamplesRunTests 递归（53）。『45/45 PASS（含 multifile/package-demo 子目录）』计数与覆盖描述均与测试实现不符，spec §A.6.2 须更新"
+
+[[evidence]]
+id = "E-051"
+assertion = "元组访问测试证据：spec §2.4.1 已修正为 TupleIndexTests / TupleNamedTests（原引不存在的 TupleAccessTests 已移除）"
+spec_ref = "§2.4.1（已随 v0.47.x 修正）"
+code_ref = "Tests/PiniTests/TupleIndexTests.swift；Tests/PiniTests/TupleNamedTests.swift"
+validated_at = "2026-08-25T00:26:00+08:00"
+status = "FRESH"
+note = "原 STALE（证据对象不存在）随 spec §2.4.1 证据栏修正转 FRESH；`.tupleIndex` / tuple labels 语义见 Parser.swift:2644-2650"
+
+[[evidence]]
+id = "E-052"
+assertion = "消歧 3.13 标签语法：语句位置 IDENT '|' 后跟 if/while/for → 带标签语句；声明位置后跟 self/own/func/test/unsafe/foreign → 声明修饰"
+spec_ref = "§A.4 规则 3.13"
+code_ref = "Sources/PiniCore/Parser/Parser.swift（parseStatement 标签|控制流分派；parseIf/parseWhile/parseFor(label:)）；Tests/PiniTests/BlockLabelTests.swift；Tests/PiniTests/GrammarConsistencyTests.swift"
+validated_at = "2026-08-26T22:35:00+08:00"
+status = "FRESH"
+note = "ADR-014 已落地（commit a62aa21）：`scope 块标签:` 转 reserved-error（G44），标签语法改为 `标签|if/while/for`；配套测试与 examples/for.pini、examples/control_while.pini 已迁移。；2026-08-29 G50 随动刷新：声明位置修饰符 self/Self→self/own"
+
+[[evidence]]
+id = "E-053"
+assertion = "消歧 3.14 扩展块内禁止自由函数（仅允许 |self/|own 方法）"
+spec_ref = "§A.4 规则 3.14"
+code_ref = "Sources/PiniCore/Parser/Parser.swift（parseExtensionDecl：((T))/{{T}}/[[T]]/<<T>> 四种扩展 + 泛型；方法体校验 |self/|own）；Sources/PiniCore/AST/Declarations/ExtensionDecl.swift；Sources/PiniCore/Type/TypeChecker.swift（registerExtensionMethods）；Sources/PiniCore/Interpreter/Interpreter.swift（extMethodsByType 合并 + 枚举方法分派）；Tests/PiniTests/MethodSelfModifierTests.swift"
+validated_at = "2026-08-26T23:50:00+08:00"
+status = "FRESH"
+note = "ADR-016 规则 3.2/3.14 全量落地（任务 #12）：parseExtension 从零实现；类型体禁函数（methodDefaultAssumption 状态机移除）；~20 测试文件 + 9 示例方法迁移到扩展块；970 XCTest + 44 SwiftTesting 全绿。；2026-08-29 G50 随动刷新：扩展块方法修饰符 |Self→|own（测试 testStructDeclMethodWithOwnModifierParses）"
+
+[[evidence]]
+id = "E-054"
+assertion = "消歧 3.15 枚举关联参数仅位置类型（拒 IDENT:/IDENT=/字面量）"
+spec_ref = "§A.4 规则 3.15"
+code_ref = "Sources/PiniCore/Parser/Parser.swift（parseEnumCase 拒具名/默认/裸字面量；match 模式位置绑定）；Sources/PiniCore/Type/TypeChecker.swift（checkEnumCaseConstruction 拒具名实参，TypeError.enumCaseArgumentLabel）；Tests/PiniTests/IntegrationTests.swift（3.15 三测试）；examples/enum.pini、match.pini、enum-namespacing.pini"
+validated_at = "2026-08-26T22:35:00+08:00"
+status = "FRESH"
+note = "ADR-016 规则 3.15 全量落地：声明/匹配/构造/显示全部位置化；关联值默认值特性移除；新增诊断码 E4-014；970 XCTest + 44 SwiftTesting 全绿。"
+
+[[evidence]]
+id = "E-055"
+assertion = "函数体强制缩进 ≥1 层（草稿意图已采纳）：§A.2.3 func-body 仅 `INDENT { statement } DEDENT`，禁止顶级内容态顶格累积语句"
+spec_ref = "§A.2.3 func-body / §2.3 缩进敏感"
+code_ref = "Sources/PiniCore/Parser/Parser.swift（parseBareFuncDecl/parseFuncDecl 强制 INDENT，非缩进抛 invalidStatement；trait 抽象方法 allowEmptyBody 豁免；parseTopLevelFunctionBody 已移除）；Tests/PiniTests/ParserTests.swift（testParseTopLevelFunctionBodyWithoutIndentRejected）；examples/hello.pini 等 13 个示例迁移"
+validated_at = "2026-08-26T23:05:00+08:00"
+status = "FRESH"
+note = "任务 #13 下半落地：13 示例 + 5 测试文件迁移；trait 抽象方法（无 body 签名）豁免；970 XCTest + 44 SwiftTesting 全绿。"
+
+[[evidence]]
+id = "E-056"
+assertion = "Phase 2a FFI 解释器优先落地：foreign 块 + 原生函数表 + *T 指针 + unsafe 消耗点 + |unsafe 函数 + ARC 隔离"
+spec_ref = "§2.7 FFI 与 unsafe / §A.2.2 foreign-decl / §A.2.5 &/unsafe / §A.2.6 *T"
+code_ref = "Sources/PiniCore/Parser/Parser.swift（parseForeignDecl/`*T`/unsafe/`&`/|unsafe 校验）；Sources/PiniCore/Type/TypeChecker.swift（validateDeclPointerTypes C 兼容性 + unsafeContextDepth）；Sources/PiniCore/Interpreter/Interpreter.swift（registerNativeFunctions 原生函数表 + registerPointerBuiltins + snapshotPointer）；Sources/PiniCore/Interpreter/Value.swift（RawPointerValue）；Sources/PiniRuntime/PiniRuntime.swift（bk_ptr_* cdecl）；Tests/PiniTests/FFITests.swift（13 用例）；examples/ffi.pini"
+validated_at = "2026-08-27T00:26:00+08:00"
+status = "FRESH"
+note = "G43 由未实现转已实现（Experimental）：malloc/free/memcpy/memset/strlen/puts/strcmp/cstr 预注册原生函数表；load/store/addressof 指针原语；`&` 解释器快照语义（写回不更新原变量，文档化限制）；LLVM 端显式 unsupported（D1）。**Phase 2b 扩展（ADR-017，2026-08-27）**：foreign 函数 shim 未命中改走 dlsym 裸绑定（E-057/058/059），原 E5-015 注册期 fail-fast 被 E5-017（符号未找到）取代；`[ffi]` 配置解析落地（E-060）。987 XCTest 全绿。"
+
+[[evidence]]
+id = "E-057"
+assertion = "Phase 2b 跨平台动态链接封装：dlopen/dlclose + dlsym + openDefault（libc 保留名走进程已加载映像），仅返回裸地址，不涉 ABI 语义"
+spec_ref = "§2.7 裸 C 绑定 / §6.2 库名解析"
+code_ref = "Sources/PiniCore/Interpreter/SystemDL.swift（open/openDefault/symbol/close/error）"
+validated_at = "2026-08-27T01:48:00+08:00"
+status = "FRESH"
+note = "实测精确命中：open 16-18 dlopen(RTLD_NOW)；openDefault 22-24 dlopen(nil, RTLD_NOW)；symbol 27-30 dlsym；error 37-41 dlerror；#if canImport(Darwin)/Glibc 跨平台 3-7。"
+
+[[evidence]]
+id = "E-058"
+assertion = "Phase 2b 库名→路径解析（① libc 保留名→openDefault ② 含 `/`→直路径 ③ 否则 search_paths 搜 lib<名称>.{dylib,so}）+ 句柄按名缓存 + 符号查找；库/符号未找到→E5-016/E5-017"
+spec_ref = "§2.7 裸 C 绑定 / §6.2"
+code_ref = "Sources/PiniCore/Interpreter/FFILoader.swift（resolve/openLibrary/openBySearch）"
+validated_at = "2026-08-27T01:48:00+08:00"
+status = "FRESH"
+note = "resolve 17-23；openLibrary 25-47（libc→openDefault 31-33；含 `/`→open 34-36；else openBySearch 38-39；dlopen 失败抛 E5-016 42-44）；openBySearch 50-60 遍历 search_paths×{dylib,so}；NSLock 句柄缓存线程安全 11-12/26。"
+
+[[evidence]]
+id = "E-059"
+assertion = "Phase 2b 每签名 thunk 工厂：封闭标量/指针类型集 → 分支可枚举；GPR 路径（8×UInt64 通用寄存器，@convention(c)）覆盖整数/指针/void；浮点路径（F64/F32 同宽）；混用 GPR+浮点 / 超 8 参拒绝；避免 libffi 依赖"
+spec_ref = "§2.7 类型映射与 thunk 工厂"
+code_ref = "Sources/PiniCore/Interpreter/ForeignThunk.swift（make/makeFloatThunk/kind/toUInt64/fromUInt64）"
+validated_at = "2026-08-27T01:48:00+08:00"
+status = "FRESH"
+note = "make 17-57（单返回校验 18-20；paramKinds 21-26；GPR typealias GPRFn 42 unsafeBitCast 43；调用 53）；makeFloatThunk 61-99（F32 62-79/F64 80-98）；Kind 103；kind(of:) 105-120；toUInt64 123-146；fromUInt64 156-175（指针 158-162 withUnsafeBytes 重建 RawPointerValue.ownsMemory=false）。"
+
+[[evidence]]
+id = "E-060"
+assertion = "Phase 2b `[ffi]` 模块配置解析：FFIConfig（abi 全局唯一不可覆盖 / search_paths 分层追加 / libs 全局）+ parseManifest [ffi] 表（容忍未知表）；无 [ffi] 时 nil、解释器回退 FFIConfig.default"
+spec_ref = "§2.7 [ffi] 模块配置 / §6.1"
+code_ref = "Sources/PiniCore/Common/FileLoader.swift（FFIConfig/merging/ModuleManifest.ffi/parseManifest [ffi]）"
+validated_at = "2026-08-27T01:48:00+08:00"
+status = "FRESH"
+note = "FFIConfig 75-96（abi 76；default 系统路径 /usr/lib,/usr/local/lib,/opt/homebrew/lib 87-90；merging 94-96 分层追加、abi 以父为准）；ModuleManifest.ffi 109/115；parseManifest [ffi] 178-194（abi/search_paths/libs；未知 section default: break 容忍）。"
+
+[[evidence]]
+id = "E-061"
+assertion = "具名枚举关联值声明：case 声明括号内接受具名形参 `IDENT ':' 类型`（推翻规则 3.15 具名拒绝）"
+spec_ref = "§A.2.2 associated-param 四形态 / §A.5 规则 3.15（2026-08-29 修订）/ §3 G54"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:941-952 (parseEnumCase)"
+validated_at = "2026-08-29T23:45:00+08:00"
+status = "FRESH"
+note = "实测命中：parseEnumCase 内 assocName 分支解析 IDENT ':' 并 advance 两次（名+冒号），关联参数以 AssociatedParam(name: assocName) 登记"
+
+[[evidence]]
+id = "E-062"
+assertion = "match 模式绑定支持三种形态：位置绑定 / `_` 占位（占位置不产生变量）/ 具名绑定 `关联值名: 变量`"
+spec_ref = "§A.4 match-pattern / §3 G54 / ADR-023 D1"
+code_ref = "Sources/PiniCore/Parser/Parser.swift:2182-2210 (match case 绑定解析)"
+validated_at = "2026-08-29T23:45:00+08:00"
+status = "FRESH"
+note = "实测命中：colon 分支解析具名绑定；`_` 分支产出 paramName=nil/varName='_'；否则位置绑定"
+
+[[evidence]]
+id = "E-063"
+assertion = "枚举构造把声明参数名写入运行时值（EnumValue.paramNames），供 match 具名绑定按名对位"
+spec_ref = "§A.2.2 / ADR-023 D1"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2531 (callFunctionValue 枚举构造路径)"
+validated_at = "2026-08-29T23:45:00+08:00"
+status = "FRESH"
+note = "实测命中：paramNames: fv.params.map { $0.name }（此前硬编码 []，具名绑定因此静默失败）"
+
+[[evidence]]
+id = "E-064"
+assertion = "match 绑定数与关联值数不匹配 → 运行时 arityMismatch（E5-009）；`_` 占位跳过变量定义；单绑定 = 第 1 个关联值"
+spec_ref = "§A.4 / ADR-023 D2-D3"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2305-2330 (executeMatch)"
+validated_at = "2026-08-29T23:45:00+08:00"
+status = "FRESH"
+note = "实测命中：bindings.count != associatedValues.count 抛 arityMismatch；varName=='_' continue；按位绑定 associatedValues[bindingIndex]"
+
+[[evidence]]
+id = "E-065"
+assertion = "类型层：match 绑定数 ≠ 关联值数 → argumentCountMismatch（E4-005），且 throw 传播至非 collecting 路径"
+spec_ref = "§3 G54 / ADR-023 D3"
+code_ref = "Sources/PiniCore/Type/TypeChecker.swift:1165-1180 (bindMatchCaseVariables)"
+validated_at = "2026-08-29T23:45:00+08:00"
+status = "FRESH"
+note = "实测命中：pini check 对 3 绑定/2 关联值输出 E4-005；修复前 try? report 吞诊断导致非 collecting 路径不报错"
+
+[[evidence]]
+id = "E-066"
+assertion = "枚举值渲染不带关联值名（项目契约：`圆(5.0)` 而非 `圆(r: 5.0)`）；paramNames 仅供 match 对位"
+spec_ref = "ADR-023 D4"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:3080-3083 (stringify enumValue)"
+validated_at = "2026-08-29T23:45:00+08:00"
+status = "FRESH"
+note = "实测命中：inner = associatedValues.map { stringify($0) }，无 paramNames 前缀"
