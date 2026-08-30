@@ -164,10 +164,22 @@ public final class TypeInference {
  }
  // ADR-026 D5（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，
  // 使 case 值可在期望父枚举的位置（return/关联值）通过检查（G-P3）。
- // 歧义名不在此推断，交由 D1 的期望类型/实参类型消歧与 checker 报告。
  let caseParents = env.parentEnums(of: name)
  if caseParents.count == 1 {
  return .simple(name: caseParents[0], location: loc)
+ }
+ // ADR-026 D1（实参位补全）：歧义 case 名且期望类型命中候选 → 按期望解析。
+ // 此前实参位置不线程期望类型，跨枚举同名 case（如两个 none）在实参位
+ // 无法构造——S4.9 宿主对等改名回退的前置。
+ if let exp = expected {
+ switch exp {
+ case .simple(let en, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ case .generic(let en, _, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ default:
+ break
+ }
  }
  return .simple(name: name, location: loc)
  }

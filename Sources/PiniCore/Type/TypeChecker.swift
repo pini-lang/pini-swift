@@ -564,6 +564,14 @@ public final class TypeChecker {
  // 元素类型对内建而言无关紧要，只需锚定外层构造子与元数。顶层 `_` 早在
  // validateCallArguments 放行，此处覆盖嵌套位。
  if matchesWithWildcards(actual: actual, expected: expected) { return true }
+ // nil 底值语义（varDecl 标注下推后暴露）：`Optional<Any>`（nil 构造的推断
+ // 形态）可赋给任意 `Optional<T>`——none 是所有 Optional 特化的公共底值。
+ if case .generic(let aName, let aArgs, _) = actual,
+ aName == "Optional", aArgs.count == 1,
+ case .simple(let aInner, _) = aArgs[0], aInner == "Any",
+ case .generic(let eName, _, _) = expected, eName == "Optional" {
+ return true
+ }
  if case .simple(let aName, _) = actual {
  let parent = typeEnv.parentEnum(of: aName)
  if case .simple(let eName, _) = expected, parent == eName { return true }
@@ -739,7 +747,10 @@ public final class TypeChecker {
  // refineEnumCaseConstruction 在期望特化类型下推路径处理。
  if typeEnv.genericEnumParamCount(name: parent) == nil {
  for (i, arg) in args.enumerated() {
- guard let actual = inference.infer(expression: arg.expression) else { continue }
+ // ADR-026 D1（实参位补全）：线程字段声明类型作期望——嵌套 case 构造
+ // （如 target_annot: none(...)）的歧义名由此消歧；不线程则嵌套歧义名
+ // 一律推断失败（S4.9 宿主对等改名回退的前置）。
+ guard let actual = inference.infer(expression: arg.expression, expected: fields[i].type) else { continue }
  if !isAssignable(actual: actual, expected: fields[i].type) {
  try report(TypeError.mismatch(
  expected: fields[i].type.describe(),
@@ -1304,13 +1315,28 @@ public final class TypeChecker {
 
  private func checkStatement(_ stmt: Statement) throws {
  switch stmt {
- case .varDecl(let name, _, let initializer, let isMutable, let location):
+ case .varDecl(let name, let annot, let initializer, let isMutable, let location):
+ // ADR-026 D1：显式标注此前被整体忽略（绑定类型只看推断）——现作为期望
+ // 类型下推：枚举用例构造走 refine（跨枚举同名 case 按标注消歧），其余按
+ // 标注比对；绑定类型 = 标注（与宿主声明类型语义对齐）。
  let declaredType: TypeAnnotation
  if let initExpr = initializer {
  try checkExpression(initExpr)
- declaredType = inference.infer(expression: initExpr) ?? .simple(name: "Any", location: location)
+ if let annot = annot {
+ if !(try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
+ if let actual = inference.infer(expression: initExpr, expected: annot),
+ !isAssignable(actual: actual, expected: annot) {
+ try report(TypeError.mismatch(
+ expected: annot.describe(), got: actual.describe(), location: location
+ ))
+ }
+ }
+ declaredType = annot
  } else {
- declaredType = .simple(name: "Any", location: location)
+ declaredType = inference.infer(expression: initExpr) ?? .simple(name: "Any", location: location)
+ }
+ } else {
+ declaredType = annot ?? .simple(name: "Any", location: location)
  }
  typeEnv.defineVariable(name: name, type: declaredType, isMutable: isMutable)
 
