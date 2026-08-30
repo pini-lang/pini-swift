@@ -188,7 +188,12 @@ public final class TypeInference {
  case .funcLiteral(let decl, let loc):
  return inferFuncLiteral(decl: decl, expected: expected, location: loc)
 
- case .selfKeyword, .selfTypeKeyword:
+ case .selfKeyword:
+ // ADR-026 D3：self 在方法体内已登记为接收对象类型（checkBody 的 defineVariable），
+ // 与外部标识符接收者同路径解析，修复合绑定退化 Any（G-P8）。
+ return environment?.lookupVariable(name: "self")
+
+ case .selfTypeKeyword:
  return nil
 
  case .arrayLiteral, .dictionaryLiteral, .setLiteral:
