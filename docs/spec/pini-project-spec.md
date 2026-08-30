@@ -33,7 +33,7 @@
 | `pini.toml` | 文件 | **项目清单（Manifest）**：项目名、版本、`spec` 钉住的规范版本（如 `spec = "0.1"`）、入口声明、依赖列表 | 等价 SwiftPM 的 `Package.swift` 在语言层的存在；若项目以 SwiftPM 宿主方式组织，则可用 `Package.swift` 代替并内嵌等效字段 |
 | `src/` | 目录 | **源码根**：所有 `.pini` 源文件默认所在目录 | 必需；不可改名（约定优于配置） |
 | `src/main.pini` | 文件 | **可执行项目入口**：顶级交替起点 | 库项目可用 `src/lib.pini` 代替；二选一必需 |
-| `.pini/version` | 文件 | 钉住的**工具链/规范版本**，保证可复现构建 | 内容如 `pini 0.4.0 (spec 0.1)`；CI 与 `pini run` 据此选择工具链 |
+| `.pini/baseline` | 文件 | **标定记录**：上次构建/差分验证通过时的宿主状态（ADR-024 D8） | 内容如 `host=<sha> version=0.50.0 spec=0.1 verified=<date>`；宿主与规范同仓时，单 `sha` 同时钉住二者，差分失败时据此判定哪侧变动。~~原 `.pini/version`（「拉取指令」语义）~~ 由 ADR-024 D8 改写 |
 | `docs/` | 目录 | 项目自身文档（含对 spec v0 的引用摘录） | 库项目必需；可执行小工具可豁免 |
 
 **必需项的设计约束**
@@ -56,6 +56,7 @@
 | `std/` | 目录 | 随项目分发/可被覆盖的**标准库源码** | 允许项目本地覆盖 stdlib（实验性） |
 | `src/**`（子包目录） | 目录 | 按主题拆分的源码子目录 | 模块系统落地前，用目录近似「内部分包」 |
 | **`deps/`** | 目录 | **外部依赖源码落地**（G52 激活，从 §3 迁入） | `vendor` 概念；当前经 git submodule 落地，物理形态为 `deps/<name>/`，每个含自己的 `pini.toml` |
+| **`.pini/toolchain/`** | 目录 | vendored 宿主工具链（历史上经 git submodule 落地，G52 R6 确立） | **ADR-024 后自举项目不再使用**——宿主以嵌套独立仓 `examples/selfhost/` 入树（物理在内、git 归属在外）；保留为一般性机制，§7.1/§7.2 的「宿主不属 require/resources」注记指向此处 |
 
 **扩展项的演进钩子**
 - `src/**` 子目录在 **P4 模块系统**落地后，应平滑升级为显式 `module` 声明，无需改动物理路径（路径即模块名，零破坏）。
@@ -63,6 +64,7 @@
 - `deps/` 的**边界性质（G52 R6 修订）**：它**只放 `require` 的 Pini 模块**——其下每个模块自带 `pini.toml`，由 **R1 自动切出**父模块的扫描，**无需任何排除配置**。
   ~~原 R1'「`deps/` 是保留目录，工具链永不扫描」**已撤销**~~：非 Pini 依赖与宿主一律落 `.pini/`（R6，点前缀目录不参与扫描），
   目录级特例因此不再需要（撤销理由见 `issue/issue-module-system-rules-2026-08-28.md` R1 条）。
+  **宿主判定补注（ADR-024）**：判据按**清单类型**判定——宿主 pini-swift 根含 `Package.swift`（SwiftPM 清单）而非 `pini.toml`，不满足「Pini 模块」判据，故从不属 `deps/`。其承载方式：submodule 时代落 `.pini/toolchain/`；ADR-024 起为嵌套独立仓（见 §5）。
 
 ---
 
@@ -114,8 +116,9 @@ vendor/
 # 但 .pini/ 下还有**必须提交**的内容，须显式豁免：
 !.pini/resources/
 !.pini/toolchain/
-!.pini/version
+!.pini/baseline
 # 不豁免的后果：换机器后 verify 报「内容缺失」，症状离原因很远。
+# （原 !.pini/version → !.pini/baseline，ADR-024 D8：标定记录取代拉取指令）
 
 # 例外：pini-summary.toml 虽由 MVS 生成，但它是**锁文件**而非构建产物，
 # 必须纳入版本控制，否则无可复现构建（G52 R3 / D10）
@@ -138,12 +141,13 @@ vendor/
 | `build/` `gen/` 预留 | `pini-roadmap-next.md` P6/P3 | 后端与代码生成的产出目录 |
 | `examples/` 已采用 | 当前 `Pini/examples/*.pini` | 规范追认现有实践，零破坏 |
 | 宿主布局并存 | 当前 `Package.swift` + `Sources/` + `Tests/` | 实现宿主 vs 语言布局的层级区分（§0） |
+| 嵌套独立仓 | `examples/selfhost/`（自举项目，ADR-024 D2） | 宿主自带的语言项目示例：**物理在内、git 归属在外**——宿主 `.gitignore` 忽略 `/examples/selfhost`，不进宿主历史与归档；自举项目仍完整遵循本规范 |
 
 ---
 
 ## 6. 验收标志（Definition of Done）
 
-- [ ] 一份合法 Pini 项目的最小磁盘结构 = `pini.toml` + `src/` + 入口 + `.pini/version` + `docs/`（库）/ 入口（可执行）。
+- [ ] 一份合法 Pini 项目的最小磁盘结构 = `pini.toml` + `src/` + 入口 + `.pini/baseline` + `docs/`（库）/ 入口（可执行）。
 - [ ] 工具链能据 Manifest 的 `spec` 字段校验破坏性变更兼容性。
 - [ ] `tests/` `examples/` `benches/` 被默认发现，无需额外配置（`[build] exclude` 显式排除的路径除外，G49）。
 - [ ] 所有 §3 预留目录在包管理器/模块系统启用前保持「占坑不用」，且进入 `.gitignore` 基线。
@@ -201,7 +205,8 @@ uni = "^3.0"
 # [resources] 资源落地：目标**根不含 pini.toml**（语料、数据集、脚本、非 Pini 资产）。
 #              **不可 import、不参与 MVS**；固定落地 .pini/resources/<name>/（R6，点前缀不扫描）。
 #              检查**只看目标根**（R7）：根含 pini.toml 即拒，提示改用 [require]；不查深层。
-#              ⚠ 宿主 pini-swift **不属本节**——它是工具链，归 .pini/toolchain/（见 §2）。
+#              ⚠ 宿主 pini-swift **不属本节**——它是工具链，归 .pini/toolchain/（见 §2；
+#              ADR-024 后自举项目经嵌套独立仓 examples/selfhost/ 入树，亦不属本节）。
 [resources]
 corpus     = "1.0"
 dataset    = "2.3"
@@ -265,7 +270,7 @@ opt-level = 2
 
 - `spec = "0.1"` 表示：本项目按 **spec v0.1** 编写，工具链承诺仅接受 v0.1.x 内的兼容变更；遇到 v0.2+ 的破坏性语法时**报错并提示迁移**，而非静默误编译。
 - 工具链读取 `spec` 后锁定对应稳定性分级表（spec v0），据此决定哪些语言特性可用、哪些标记为 Deprecated。
-- 与 `.pini/version`（工具链版本）解耦：`spec` 管「语言契约」，`.pini/version` 管「用哪版工具链构建」。
+- 与 `.pini/baseline`（标定记录）分工（ADR-024 D8）：`spec` 是**意图声明**（本项目承诺兼容的规范版本），`baseline` 是**实测观察**（上次验证通过时的宿主状态）。二者必须一致，由门禁校验——否则等于重新引入一对会漂移的双钉。宿主与规范同仓时（ADR-024），`baseline` 的单 `host=<sha>` 即同时钉住工具链与规范。
 
 ---
 
@@ -278,7 +283,7 @@ opt-level = 2
 ```
 hello/
 ├── pini.toml
-├── .pini/version
+├── .pini/baseline
 ├── src/
 │   └── main.pini
 └── docs/
@@ -298,10 +303,10 @@ name = "hello"
 entry = "src/main.pini"
 ```
 
-**`.pini/version`**
+**`.pini/baseline`**（ADR-024 D8：标定记录，非拉取指令）
 
 ```
-pini 0.42.0 (spec 0.1)
+host=<sha> version=0.42.0 spec=0.1 verified=2026-08-30
 ```
 
 **`src/main.pini`**（顶级交替入口；`;` 为行注释）
