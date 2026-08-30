@@ -189,12 +189,10 @@ public enum BuiltinRegistry {
  // Array（collection 子集：append/pop/slice/join；扩展面：last）
  MemberDecl(typeName: "Array", name: "join", paramNames: ["sep"],
  params: [t("String")], returns: [t("String")], inTrait: true),
- // 元素类型以占位 "T" 表达（H2，2026-08-30）：查找时按接收者的类型实参
- // 代入，使 `Array<Token>.append` 返回 `Array<Token>` 而非擦除为 `Array<Any>`。
  MemberDecl(typeName: "Array", name: "append", paramNames: ["value"],
- params: [t("T")], returns: [TypeAnnotation.generic(name: "Array", params: [t("T")], location: builtinLocation)], inTrait: true),
+ params: [t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("Any")], location: builtinLocation)], inTrait: true),
  MemberDecl(typeName: "Array", name: "slice", paramNames: ["start", "end"],
- params: [t("Any"), t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("T")], location: builtinLocation)], inTrait: true),
+ params: [t("Any"), t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("Any")], location: builtinLocation)], inTrait: true),
  MemberDecl(typeName: "Array", name: "last", paramNames: [],
  params: [], returns: [t("Any")], inTrait: false),
  MemberDecl(typeName: "Array", name: "pop", paramNames: [],

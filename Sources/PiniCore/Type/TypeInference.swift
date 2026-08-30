@@ -119,11 +119,11 @@ public final class TypeInference {
  let objType = infer(expression: object)
  switch objType {
  case .simple(let typeName, _):
- if let sig = env.lookupMethodSignature(typeName: typeName, typeArgs: nil, methodName: memberName) {
+ if let sig = env.lookupMethod(typeName: typeName, methodName: memberName) {
  return methodReturn(for: sig, loc: loc)
  }
  case .generic(let typeName, let typeArgs, _):
- if let sig = env.lookupMethodSignature(typeName: typeName, typeArgs: typeArgs, methodName: memberName) {
+ if let sig = env.lookupSpecializedMethod(typeName: typeName, typeArgs: typeArgs, methodName: memberName) {
  return methodReturn(for: sig, loc: loc)
  }
  default:
@@ -152,19 +152,6 @@ public final class TypeInference {
  } else {
  return .tuple(labels: [], elements: returns, location: loc)
  }
- }
- // 枚举 case 构造（未限定写法 圆(5.0)）→ 推断为**父枚举类型**。
- // 依据 spec「匹配值推断为枚举类型」。此前此处落到下方兜底
- // `return .simple(name:)`，把 case 名本身当成了类型，于是
- // `-> (Token,) { return plus_assign(loc:,) }` 报
- // "expected Token, got plus_assign"（缺口 H3）。
- if let parent = env.parentEnum(of: name) {
- // 泛型枚举：类型实参在构造点不可知，以 Any 占位（与上方 Optional 处理同调）。
- if let n = env.genericEnumParamCount(name: parent), n > 0 {
- let any = Array(repeating: TypeAnnotation.simple(name: "Any", location: loc), count: n)
- return .generic(name: parent, params: any, location: loc)
- }
- return .simple(name: parent, location: loc)
  }
  return .simple(name: name, location: loc)
  }

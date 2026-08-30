@@ -501,11 +501,6 @@ extension Interpreter {
 
  private func dispatchCallK(_ task: SuspendTaskCPS, _ cval: Value, _ argVals: [Value], _ arguments: [CallArgument], _ loc: SourceLocation, _ cont: @escaping EvalK) throws {
  guard case .function(let fv) = cval else {
- // 与解释器主路径同构：无关联值枚举 case 的调用形态 `red()` 等价于裸名。
- if arguments.isEmpty, case .enumValue = cval {
- try cont(cval)
- return
- }
  throw RuntimeError.notCallable(location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
  // labeled 实参重排（与 evaluateExpression .call 的 hasLabeledArgs 逻辑一致，探针边界已收窄）。
