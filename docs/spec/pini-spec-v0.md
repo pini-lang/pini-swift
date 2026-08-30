@@ -560,7 +560,12 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 (* ---- A.1.1  词法类 ----------------------------------------------------- *)
 
-IDENT        ::= ID_START ID_CONTINUE*;
+IDENT        ::= ID_START ID_CONTINUE*
+               | '`' ESCAPED_NAME '`';   (* ADR-027 D1：反引号转义——整体产出
+                  IDENT token、跳过关键字分类，允许关键字作标识符/构造标签。
+                  未闭合（行尾/EOF）或空内容回退宽松词法兜底（单字符 IDENT，
+                  ADR-021）——词法器零错误契约不变，畸形转义的诊断后移到
+                  解析/语义阶段 *)
 ID_START     ::= [\p{L}_];
 ID_CONTINUE  ::= ID_START | NUMERIC;
 NUMERIC      ::= (* Unicode numeric property 字符（Numeric_Type ≠ None），即

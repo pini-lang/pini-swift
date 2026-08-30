@@ -31,6 +31,7 @@
 | ADR-023 | 语言级 | 具名枚举关联值与 match 解构（具名声明/标签构造/位置·具名·`_` 解构；单绑定=第 1 位（破坏性）；arity → E4；含「实现先于 spec」的流程越界记录与事后追认） | active | `adr-023-named-associated-values.md` |
 | ADR-024 | 治理级 | 规范治理归位——撤销元仓、三层规范模型与自举探针定位 | active | `adr-024-spec-governance-relocation.md` |
 | ADR-026 | 语言级 | 歧义 case 名消歧与类型传播（裸名构造按期望类型/实参类型消歧；match 按 scrutinee 解析；self 调用传播；作用域化类型变量；case 值完整身份） | active | `adr-026-ambiguous-case-resolution.md` |
+| ADR-027 | 语言级 | 反引号关键字转义（`名称` 整体产出 IDENT，关键字可作标识符/构造标签；自举探针 G-P5） | active | `adr-027-backtick-escape.md` |
 
 ## 备注
 
