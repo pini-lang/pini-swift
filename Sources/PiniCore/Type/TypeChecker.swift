@@ -640,7 +640,18 @@ public final class TypeChecker {
  return false
  }
 
- guard let parent = typeEnv.parentEnum(of: caseName) else { return false }
+ // ADR-026 D1：期望类型命中的候选枚举优先；仅全局唯一时退回单值反查
+ let caseCandidates = typeEnv.parentEnums(of: caseName)
+ var refinedParent: String? = nil
+ switch expected {
+ case .simple(let eName, _): if caseCandidates.contains(eName) { refinedParent = eName }
+ case .generic(let eName, _, _): if caseCandidates.contains(eName) { refinedParent = eName }
+ default: break
+ }
+ if refinedParent == nil {
+ refinedParent = caseCandidates.count == 1 ? caseCandidates[0] : typeEnv.parentEnum(of: caseName)
+ }
+ guard let parent = refinedParent else { return false }
 
  // arity（关联参数个数）已由 checkExpression → checkEnumCaseConstruction 统一校验（与期望类型无关），
  // 此处不再重复，避免双重报错。本函数仅补充「泛型枚举特化类型」下的逐参数类型比对：
@@ -683,6 +694,24 @@ public final class TypeChecker {
  resolvedParent = typeEnv.parentEnum(of: caseName)
  }
  guard let parent = resolvedParent else { return }
+ // ADR-026 D1：同名 case 跨枚举歧义时，不得按单一猜测父枚举做 arity/类型校验
+ // （E4-005 错误参量数即由此而来）；退化为「拟合任一候选即放行」，精度交由
+ // refineEnumCaseConstruction（期望类型下推）与运行时动态消歧承担。
+ let caseCandidates = typeEnv.parentEnums(of: caseName)
+ if caseCandidates.count > 1 {
+ var fitsSome = false
+ for cand in caseCandidates {
+ guard let req = typeEnv.enumCaseRequiredArity(enumName: cand, caseName: caseName) else { continue }
+ let total = typeEnv.lookupEnumCaseFields(enumName: cand, caseName: caseName)?.count ?? 0
+ if (req...total).contains(args.count) { fitsSome = true; break }
+ }
+ if !fitsSome {
+ try report(TypeError.argumentCountMismatch(
+ expected: args.count, got: args.count, location: location
+ ))
+ }
+ return
+ }
  // 具名关联值决议（2026-08-29）：声明为具名形态时标签实参合法（按名对位）；
  // 位置声明仍拒绝具名实参（规则 3.15 残余）。
  let declaredNames = typeEnv.lookupEnumCaseFields(enumName: parent, caseName: caseName) ?? []

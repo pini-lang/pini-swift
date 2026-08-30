@@ -641,6 +641,27 @@ public class Interpreter {
  /// 必须在**任何** registerDecls 之前、对**全部**文件完成：否则单个文件的局部
  /// 统计会把仅在该文件出现的 case 名判为不歧义并注册到 globalEnv，而后处理文件
  /// 的同名 case 会覆盖它（构造到错误的父枚举）。
+ /// ADR-026 D1：运行时值动态类别 / 声明类型名 → 类别映射（消歧计分用）
+ static func dynamicKind(of v: Value) -> String {
+ switch v {
+ case .int: return "int"
+ case .string: return "string"
+ case .bool: return "bool"
+ case .float: return "float"
+ default: return "other"
+ }
+ }
+
+ static func declaredKind(_ t: String) -> String {
+ switch t {
+ case "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64": return "int"
+ case "F32", "F64": return "float"
+ case "String": return "string"
+ case "Bool": return "bool"
+ default: return "other"
+ }
+ }
+
  func collectEnumCaseNames(module: Module) {
  for decl in module.declarations {
  if case .enumDecl(let e) = decl {
@@ -866,6 +887,7 @@ public class Interpreter {
  fv.enumIsGeneric = isGeneric
  fv.enumParentName = parentName
  fv.enumGenericParamCount = genericParamCount
+ fv.enumCaseParamTypeNames = associatedParams.map { $0.type.describe() }
  // P5-5 B2：按 (父枚举 → case) 注册，供限定构造 形状.圆(...) 解析（跨枚举同名不冲突）。
  if enumCaseConstructors[parentName] == nil { enumCaseConstructors[parentName] = [:] }
  enumCaseConstructors[parentName]![caseName] = fv
@@ -1489,6 +1511,33 @@ public class Interpreter {
  let ctor = enumCaseConstructors[parentName]?[caseName] {
  var argValues: [Value] = []
  for arg in arguments { argValues.append(try evaluateExpression(arg.expression)) }
+ return try callFunctionValue(ctor, args: argValues)
+ }
+
+ // ADR-026 D1：歧义 case 的裸名构造 → 动态消歧（期望类型优先在静态检查侧；
+ // 此处按实参动态类型对各候选计分，取最高分，并列取父枚举字典序首个，保证确定性）。
+ if case .identifier(let caseName, _) = callee,
+ ambiguousEnumCases.contains(caseName),
+ (try? globalEnv.get(name: caseName)) == nil {
+ var argValues: [Value] = []
+ for arg in arguments { argValues.append(try evaluateExpression(arg.expression)) }
+ var best: (FunctionValue, Int)? = nil
+ for parent in (enumCaseNameParents[caseName] ?? []).sorted() {
+ guard let ctor = enumCaseConstructors[parent]?[caseName] else { continue }
+ guard ctor.params.count == argValues.count else { continue }
+ var score = 0
+ for (v, tn) in zip(argValues, ctor.enumCaseParamTypeNames)
+ where Interpreter.dynamicKind(of: v) == Interpreter.declaredKind(tn) {
+ score += 1
+ }
+ if best == nil || score > best!.1 { best = (ctor, score) }
+ }
+ guard let (ctor, _) = best else {
+ throw RuntimeError.invalidOperation(
+ reason: "歧义 case 构造无匹配候选: \(caseName)",
+ location: loc
+ )
+ }
  return try callFunctionValue(ctor, args: argValues)
  }
 
