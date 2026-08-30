@@ -95,4 +95,80 @@ final class CrossFileRuntimeTests: XCTestCase {
             XCTAssertTrue(error is RuntimeError, "无 main 应抛 RuntimeError（mainNotFound），实际 \(error)")
         }
     }
+
+    // MARK: - 枚举 case 的跨文件可见性（H1，2026-08-30）
+
+    /// 意图：枚举声明在 A 文件、使用在 B 文件时，**未限定** case 构造须可用。
+    /// 修复前包级符号索引只登记枚举类型名、不登记 case 名，跨文件未限定构造
+    /// 报 `undefined function`（外部表现为「枚举 case 是文件作用域」）。
+    /// 推进性测量：输出 7（circle 载荷经跨文件 match 解构取出）。
+    func testCrossFileUnqualifiedEnumCaseConstruction() throws {
+        let out = try runPackage([
+            ("shape.pini", "[Shape]\ncircle(r: I32,)\nsquare(s: I32,)\n"),
+            ("main.pini", """
+area|func(sh: Shape,) -> (I32,)
+    match sh:
+        case circle(r,):
+            return r
+        case square(s,):
+            return s
+    return 0
+
+main|func() -> ()
+    print(area(circle(r: 7,)))
+    return
+"""),
+        ])
+        XCTAssertTrue(out.contains("7"), "跨文件未限定构造 circle 应可用，实际输出：\(out)")
+    }
+
+    /// 意图：**限定** case 构造（形状.圆(...)）跨文件可用——H1 修复不得破坏既有路径。
+    /// 推进性测量：输出 1（构造出 1 个 token/元素）。
+    func testCrossFileQualifiedEnumCaseConstruction() throws {
+        let out = try runPackage([
+            ("shape.pini", "[Shape]\ncircle(r: I32,)\n"),
+            ("main.pini", """
+main|func() -> ()
+    var xs = []
+    xs = xs.append(Shape.circle(r: 3,))
+    print(len(xs))
+    return
+"""),
+        ])
+        XCTAssertTrue(out.contains("1"), "跨文件限定构造应可用，实际输出：\(out)")
+    }
+
+    /// 意图：同名 case 分属不同枚举（P5-5 HIGH-1 允许共存）时，**未限定**构造必须被拒绝，
+    /// 否则会构造到错误的父枚举。
+    /// 驳回性测量：未限定 dup_case 须抛错。
+    func testCrossFileAmbiguousCaseRejectsUnqualified() {
+        XCTAssertThrowsError(try runPackage([
+            ("a.pini", "[Shape]\ndup_case(r: I32,)\n"),
+            ("b.pini", "[Other]\ndup_case(x: I32,)\n"),
+            ("main.pini", """
+main|func() -> ()
+    var xs = []
+    xs = xs.append(dup_case(r: 1,))
+    print(len(xs))
+    return
+"""),
+        ]), "同名跨枚举的未限定构造应被拒绝")
+    }
+
+    /// 意图：同名 case 分属不同枚举时，**限定**构造仍可用（歧义只影响未限定写法）。
+    /// 推进性测量：输出 1。
+    func testCrossFileAmbiguousCaseAllowsQualified() throws {
+        let out = try runPackage([
+            ("a.pini", "[Shape]\ndup_case(r: I32,)\n"),
+            ("b.pini", "[Other]\ndup_case(x: I32,)\n"),
+            ("main.pini", """
+main|func() -> ()
+    var xs = []
+    xs = xs.append(Other.dup_case(x: 1,))
+    print(len(xs))
+    return
+"""),
+        ])
+        XCTAssertTrue(out.contains("1"), "同名跨枚举的限定构造应可用，实际输出：\(out)")
+    }
 }

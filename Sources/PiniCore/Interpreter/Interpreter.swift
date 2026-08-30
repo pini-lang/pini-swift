@@ -142,6 +142,7 @@ public class Interpreter {
 
  public func run(module: Module) throws {
  registerBuiltins()
+ collectEnumCaseNames(module: module)
  try registerDecls(module: module)
  try executeMain()
  }
@@ -170,6 +171,7 @@ public class Interpreter {
  /// - 不执行 `main`（测试入口独立于程序入口）。
  public func runTests(module: Module) throws -> [TestRunResult] {
  registerBuiltins()
+ collectEnumCaseNames(module: module)
  try registerDecls(module: module)
  var results: [TestRunResult] = []
  for decl in module.declarations {
@@ -185,6 +187,7 @@ public class Interpreter {
  /// `runTests(module:)` 一致（参数注入零值、失败不中断）。
  public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
  registerBuiltins()
+ collectEnumCaseNames(package: package)
  for unit in package.fileUnits {
  try registerDecls(module: unit.module)
  }
@@ -241,6 +244,7 @@ public class Interpreter {
  return
  }
  registerBuiltins()
+ collectEnumCaseNames(package: package)
  for unit in package.fileUnits {
  try registerDecls(module: unit.module)
  }
@@ -253,6 +257,7 @@ public class Interpreter {
  /// 之后测试可反复 `runSuspendableEntry(main)` 验证有界池下的挂起行为。
  func prepareSuspend(_ module: Module) throws {
  registerBuiltins()
+ collectEnumCaseNames(module: module)
  try registerDecls(module: module)
  }
 
@@ -625,6 +630,26 @@ public class Interpreter {
  return rp
  }
 
+ /// 预扫描：统计枚举 case 名的父枚举归属并判定歧义（同名跨枚举 → 歧义，
+ /// 须改用 形状.圆(...) 限定写法，避免 globalEnv 互相覆盖）。
+ ///
+ /// 必须在**任何** registerDecls 之前、对**全部**文件完成：否则单个文件的局部
+ /// 统计会把仅在该文件出现的 case 名判为不歧义并注册到 globalEnv，而后处理文件
+ /// 的同名 case 会覆盖它（构造到错误的父枚举）。
+ func collectEnumCaseNames(module: Module) {
+ for decl in module.declarations {
+ if case .enumDecl(let e) = decl {
+ for ec in e.cases { enumCaseNameParents[ec.name, default: []].insert(e.name) }
+ }
+ }
+ ambiguousEnumCases = Set(enumCaseNameParents.filter { $0.value.count > 1 }.map { $0.key })
+ }
+
+ /// 包级预扫描：对包内所有文件单元累积统计（跨文件可见性的前提）。
+ func collectEnumCaseNames(package: Package) {
+ for unit in package.fileUnits { collectEnumCaseNames(module: unit.module) }
+ }
+
  private func registerDecls(module: Module) throws {
  // 第一遍：注册所有类型定义（不处理组合）
  for decl in module.declarations {
@@ -668,16 +693,6 @@ public class Interpreter {
  for (typeName, methods) in extMethodsByType {
  typeMethods[typeName] = (typeMethods[typeName] ?? []) + methods
  }
-
- // P5-5 B2：预扫描统计每个 case 名归属的父枚举集合，判定未限定构造是否歧义
- // （同名跨枚举 → 歧义，须改用 形状.圆(...) 限定写法，避免 globalEnv 互相覆盖）。
- var caseNameParents: [String: Set<String>] = [:]
- for decl in module.declarations {
- if case .enumDecl(let e) = decl {
- for ec in e.cases { caseNameParents[ec.name, default: []].insert(e.name) }
- }
- }
- ambiguousEnumCases = Set(caseNameParents.filter { $0.value.count > 1 }.map { $0.key })
 
  // 第二遍：处理类型组合（合并父类型字段和方法），并注册构造器
  for decl in module.declarations {
@@ -811,6 +826,12 @@ public class Interpreter {
  /// P5-5 B2：枚举 case 构造器按 (父枚举 → case) 注册，供限定构造 形状.圆(...) 解析。
  /// 键为 parentName → caseName → 构造 FunctionValue；未限定全局函数仅在 case 名全局唯一时注册。
  private var enumCaseConstructors: [String: [String: FunctionValue]] = [:]
+
+ /// P5-5 B2 跨文件修正（H1，2026-08-30）：case 名 → 父枚举名集合，**跨文件累积**。
+ /// 此前该统计是 registerDecls 的局部变量、每次调用整体覆盖，导致包内后处理的
+ /// 文件看不到先前文件的枚举，未限定 case 构造器因此漏注册到 globalEnv
+ /// （外部表现为「枚举 case 是文件作用域」）。
+ private var enumCaseNameParents: [String: Set<String>] = [:]
  /// 跨枚举同名的歧义 case 名集合（预扫描填充）：这些名不挂未限定全局函数。
  private var ambiguousEnumCases: Set<String> = []
 
