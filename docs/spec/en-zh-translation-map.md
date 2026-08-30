@@ -116,3 +116,29 @@
 | 契约 | contract | 契约面 |
 | 纪律 | discipline | 身份纪律等 |
 | 上下文 / 备注 | context / note | 表头 |
+
+## 5. 仓库治理与自举（2026-08-30 ADR-024 迁移与英文化作业沉淀）
+
+| 中文 | English | 上下文 / 备注 |
+|---|---|---|
+| 嵌套独立仓 | nested independent repo | 物理在内、git 归属在外；examples/selfhost 拓扑 |
+| 标定记录 | calibration record | 取代「拉取指令」语义（.pini/baseline，D8） |
+| 拉取指令 | fetch instruction | 旧 .pini/version 语义（已废弃） |
+| 钉住 / 双钉 | pin / dual pins | 版本锚定；双钉必然漂移 |
+| 结构化 token 流 | structured token stream | lexer 产物流（issue-bootstrap-token-stream） |
+| 词法模型统一 | lexer model unification | 同上 |
+| 投影 | projection | 文本对 token 流的投影 |
+| 差分门禁 | differential gate | L0 对拍门禁 |
+| 门禁盲区 | gate blind spot | 语料覆盖缺失处 |
+| 锁步 | lockstep | 多路径对拍推进方式 |
+| 传递等价 | transitive equivalence | 双后端等价链 |
+| 薄实现 + 厚接口 | thin implementation + thick interfaces | LLVM 后端分层 |
+| 全绿 / 记红 | all green / record red | 门禁结果纪律（不伪造绿，D9） |
+| 兑付 / 悬空 | redeemable / dangling | ADR ID 登记表校验 |
+| 文档名快照 | doc-name snapshot | L3 规则名 |
+| 版本号叙事 | version narrative | L4 规则名 |
+| 占坑不用 | reserved, unused | 预留目录纪律 |
+| 宿主缺口 | host gap | 自举探针发现的宿主缺陷登记 |
+| 登记偏离 | register as deviation | 不静默绕路、不擅自改宿主 |
+| 特化—代入通道 | specialization–substitution channel | 泛型查找机制（H2/H3） |
+| 全局占位名 | global placeholder name | 「叫 T 的类型出现前都成立」式不变量 |
