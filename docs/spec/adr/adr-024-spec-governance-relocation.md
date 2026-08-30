@@ -171,3 +171,27 @@ ADR-018 中继续有效：D2（目录布局）、D3（英文项目）、D2-注�
 - **前置**：ADR-018（部分被取代，ID 保留可兑付）、ADR-022（重分类为宿主级）、ADR-023（D5 的反例）
 - **产物**：`docs/spec/` 目录结构、`.pini/baseline`、本 ADR
 - **后续**：见「挂账」12 项。建议执行顺序——① 本 ADR 批准 ② 元仓三向切分 ③ 8 处引用修正 + 链接校验脚本 ④ `../pini-project-spec.md` 修订 ⑤ 自举入树（先移动后改路径）+ submodule 移除 ⑥ 跑差分门禁确立 baseline ⑦ 四项实测 ⑧ `adr-index.md` 转登记表 ⑨ pini-meta 归档（最后）
+
+---
+
+## 后记（2026-08-30）：pini-meta 删除
+
+内容全部迁出并通过验收（③ 引用校验 / ⑥ 差分 MATCH / ⑦ 四项实测）后，`pini-meta`
+于同日**直接删除**——修订 D1 的「归档保留」：持有成本虽近零，但工作区留有一个
+名字带 meta 的只读目录，会持续诱发「去元仓看看」的错觉，与「同一件事只写一处」
+冲突。56 个（实为 60 个）文档提交的演进史随之丢弃，按 M2 原则由 ADR/CHANGELOG
+语义化承载；**未做 bundle 存档**（用户裁决，接受不可逆）。
+
+归档 README 的「内容去向映射表」抢救如下，作为本仓之外的唯一存续记录：
+
+| 原资产（pini-meta） | 新家 |
+|---|---|
+| 语言级文档：spec v0 / project-spec / comment-style-guide / glossary / roadmap / landing-plan-v048 / diagnostic-codes / test-refactoring-principles / evidence-table / CHANGELOG(语言) / Pini草稿 | `docs/spec/` |
+| 语言级 ADR：018 / 019 / 020 / 021 / 023 + adr-index（已转登记表） | `docs/spec/adr/` |
+| 宿主级 ADR：022（分发策略） | `docs/adr/` |
+| 语言级 issue：draft-impl-syntax-audit / spec-impl-syntax-audit / module-system-rules / pini-dir-namespace / tdd-module-blockers | `docs/spec/issue/` |
+| 宿主级 issue：lexer-gap-closure / unicode-char-predicates | `docs/`（平铺） |
+| 自举级文档：pini-bootstrap-architecture / issue-bootstrap-token-stream（均已英文化） | `examples/selfhost/docs/` |
+| hooks/comment-lint.sh、根 GIT_WORKFLOW、归档 README | 不迁移（副本在宿主与 selfhost 各存；治理随仓归档） |
+
+文中其余「归档保留」表述以本后记为准。
