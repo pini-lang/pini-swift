@@ -650,6 +650,15 @@ COMMENT ::= ';' { (* 除换行外任意字符 *) }                    (* 行注�
 (* ---- A.2.1  模块与顶级结构 ---------------------------------------------- *)
 
 module          ::= { NEWLINE } { top-level-decl NEWLINE } EOF;
+(* 缩进敏感块文法（F5，规范维护项）：本 EBNF 描述**记号序列**，不描述缩进——`NEWLINE`
+   仅作分隔，INDENT/DEDENT/空行不出现在产生式里。块体的实际规则另行钉定：
+   - 缩进块：块头 `:` 或声明头之后，体为更深一级的缩进行，由 DEDENT 闭合（空行不闭合）；
+   - 顶格块（如 `examples/object.pini` 的扩展块、`struct-decl` 的字段行）：体与块头同列，
+     由**下一个不属于该体的行**闭合（空行、DEDENT、或下一顶级形态的行首定界符）；
+   - 空行在两种块中都只作分隔，不单独闭块。
+   未钉定这些规则则第三方实现（含自举 parser）只能从宿主实现反推——差分门禁的权威
+   参考面会出现不可核对的部分。维护提案：在 EBNF 引入块记号，或在语法章显式声明
+   「EBNF 不描述缩进、块边界另章规定」。 *)
 
 top-level-decl  ::= import-decl | export-decl
                   | struct-decl | object-decl | object-decl-sugar | enum-decl | bare-func-decl
@@ -658,7 +667,12 @@ top-level-decl  ::= import-decl | export-decl
 import-decl     ::= '[' 'import' '|' 'import' ']' NEWLINE { import-item };
 import-item     ::= IDENT '=' STRING;
 (* import/export 块形式是唯一顶级形态（G51，Pini草稿 §[名称|import]/§[类型名称|export]）；
-   顶级裸 `import X`/`export X` 语句不属于本语言——宿主现行裸语句实现为已知偏差，收敛待办；
+   顶级裸 `import X`/`export X` 语句不属于本语言——宿主现行裸语句实现为已知偏差。
+   **2026-08-31 裁决：移除裸语句实现**（用户拍板）。理由：本语言甚至未为全局变量留出裸
+   语句空间，不可能仅为 import/export 破例——顶级形态一律是块。排期：块形式批次（依赖
+   G52 的「import 即依赖」与跨模块访问语义先落地），移除为破坏性变更，走 Provisional
+   破坏窗口。返工点：自举 parser 的 import/export 解析、其语料与投影镜像均按宿主裸语句
+   实现对齐，宿主收敛后须同步（见自举侧 host-gaps 台账）。
    import 绑定包路径，`_` 前缀别名 = 注入的隐式包调用别名；export 为可见性别名导出表（与 `_` 访问控制联动） *)
 
 export-decl     ::= '[' 'export' '|' 'export' ']' NEWLINE { export-item };
