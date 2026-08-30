@@ -73,10 +73,12 @@ check "L3 文档名快照"   '^[[:space:]]*(//|///|;|#).*[A-Za-z0-9_-]+\.md'
 check "L4 版本号叙事"   '^[[:space:]]*(//|///|;|#).*v0\.[0-9]+'
 check "L5 裸待办"       '(TODO|FIXME|HACK|XXX)'
 
-# L6 ADR ID 兑付：登记表来自 docs/adr-index.md 首列（大小写不敏感匹配，堵小写盲区）
-registered="$(sed -nE 's/^\| (ADR-[0-9]+) \|.*/\1/p' docs/adr-index.md 2>/dev/null | sort -u)"
+# L6 ADR ID 兑付：登记表来自 docs/spec/adr/adr-index.md 首列（大小写不敏感匹配，堵小写盲区）
+# ADR-024：登记表随语言级资产迁入 docs/spec/adr/；路径须与之一致，否则 L6 静默失效。
+index_file="docs/spec/adr/adr-index.md"
+registered="$(sed -nE 's/^\| (ADR-[0-9]+) \|.*/\1/p' "$index_file" 2>/dev/null | sort -u)"
 if [ -z "$registered" ]; then
-  echo "⚠️  [L6] 无法读取 ADR 登记表（docs/adr-index.md），跳过"
+  echo "⚠️  [L6] 无法读取 ADR 登记表（$index_file），跳过"
 else
   bad="$(scan_o '[Aa][Dd][Rr]-[0-9]+' | tr '[:lower:]' '[:upper:]' | sort -u | grep -vxF -f <(printf '%s\n' "$registered") || true)"
   if [ -n "$bad" ]; then

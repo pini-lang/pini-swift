@@ -1,0 +1,112 @@
+# pini-glossary.toml —— Pini 中英术语表（语言级治理）
+
+# 引用纪律：文档/诊断消息引用术语用稳定 ID `{term:<en>}`，不直接内嵌文本，保证机器可追溯。
+# 核心字段：en（索引键=规范英文）/ zh（规范中文）/ status / since
+# 消歧字段（可选）：alt_zh（允许变体）/ pos（词性）/ contexts（上下文限定）
+
+[term.lexer]
+en = "lexer"
+zh = "词法分析器"
+status = "stable"
+since = "2026-08-28"
+
+[term.parser]
+en = "parser"
+zh = "语法分析器"
+status = "stable"
+since = "2026-08-28"
+
+[term.AST]
+en = "AST"
+zh = "抽象语法树"
+alt_zh = ["语法树"]
+status = "stable"
+since = "2026-08-28"
+
+[term.token]
+en = "token"
+zh = "词法单元"
+status = "stable"
+since = "2026-08-28"
+
+[term.struct]
+en = "struct"
+zh = "结构块"
+status = "stable"
+since = "2026-08-28"
+contexts = ["类型体"]
+
+[term.object]
+en = "object"
+zh = "对象块"
+status = "stable"
+since = "2026-08-28"
+contexts = ["类型体"]
+
+[term.enum]
+en = "enum"
+zh = "枚举块"
+alt_zh = ["枚举"]
+status = "stable"
+since = "2026-08-28"
+contexts = ["类型体"]
+
+[term.extension]
+en = "extension"
+zh = "扩展块"
+status = "stable"
+since = "2026-08-28"
+
+[term.block]
+en = "block"
+zh = "块"
+pos = "noun"
+contexts = ["控制流", "结构"]
+status = "stable"
+since = "2026-08-28"
+
+[term.match]
+en = "match"
+zh = "匹配"
+pos = "verb"
+contexts = ["模式匹配"]
+status = "stable"
+since = "2026-08-28"
+
+[term.diagnostic]
+en = "diagnostic"
+zh = "诊断"
+status = "stable"
+since = "2026-08-28"
+
+[term.typecheck]
+en = "typecheck"
+zh = "类型检查"
+pos = "verb"
+status = "stable"
+since = "2026-08-28"
+
+[term.interpreter]
+en = "interpreter"
+zh = "解释器"
+status = "stable"
+since = "2026-08-28"
+
+[term.bootstrap]
+en = "bootstrap"
+zh = "自举"
+status = "stable"
+since = "2026-08-28"
+
+[term.corpus]
+en = "corpus"
+zh = "语料库"
+status = "stable"
+since = "2026-08-28"
+contexts = ["差分测试"]
+
+[term.differential_testing]
+en = "differential testing"
+zh = "差分测试"
+status = "stable"
+since = "2026-08-28"
