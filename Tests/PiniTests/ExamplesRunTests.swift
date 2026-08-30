@@ -115,9 +115,13 @@ final class ExamplesRunTests: XCTestCase {
         // 确保空壳占位打印无处藏身。
         let enumerator = FileManager.default.enumerator(atPath: dir)
         var offenders: [(file: String, line: String)] = []
+        var isDir: ObjCBool = false
         while let entry = enumerator?.nextObject() as? String {
             guard entry.hasSuffix(".pini") else { continue }
             let path = (dir as NSString).appendingPathComponent(entry)
+            // 跳过目录（如自举仓的标定目录），其名字同样以 .pini 结尾但不是源文件
+            FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+            if isDir.boolValue { continue }
             let content = try String(contentsOfFile: path, encoding: .utf8)
             content.enumerateLines { line, _ in
                 if line.contains("示例运行成功") {
