@@ -138,12 +138,13 @@ main|func() -> ()
         XCTAssertTrue(out.contains("1"), "跨文件限定构造应可用，实际输出：\(out)")
     }
 
-    /// 意图：同名 case 分属不同枚举（P5-5 HIGH-1 允许共存）时，**未限定**构造按
-    /// ADR-026 D1 动态消歧——元数与实参类型完全并列时取父枚举字典序首个（确定性）。
-    /// 推进性测量：构造成功，输出 1（不再抛错迫使限定写法——限定形式已被 ADR-023 移除）。
-    /// 驳回性测量：抛「无匹配候选」或 undefined variable 均不合格。
-    func testCrossFileAmbiguousCaseResolvesUnqualified() throws {
-        let out = try runPackage([
+    /// 意图：同名 case 分属不同枚举（P5-5 HIGH-1 允许共存）时，**未限定**构造
+    /// 无期望类型即歧义——ADR-026 D1 静态收敛版要求限定形式（case 由复合类型
+    /// 确定，不做运行期猜测；2026-08-30 设计讨论裁决）。
+    /// 推进性测量：check 期报错。
+    /// 驳回性测量：静默解析到任一父枚举均不合格。
+    func testCrossFileAmbiguousCaseRejectsUnqualified() {
+        XCTAssertThrowsError(try runPackage([
             ("a.pini", "[Shape]\ndup_case(r: I32,)\n"),
             ("b.pini", "[Other]\ndup_case(x: I32,)\n"),
             ("main.pini", """
@@ -153,8 +154,7 @@ main|func() -> ()
     print(len(xs))
     return
 """),
-        ])
-        XCTAssertTrue(out.contains("1"), "歧义裸名构造应确定性解析，实际输出：\(out)")
+        ]), "歧义裸名构造应被 check 拒绝并要求限定形式")
     }
 
     /// 意图：同名 case 分属不同枚举时，**限定**构造仍可用（歧义只影响未限定写法）。

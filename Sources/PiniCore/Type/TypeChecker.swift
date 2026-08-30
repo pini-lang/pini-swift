@@ -260,6 +260,7 @@ public final class TypeChecker {
 
  /// 检查模块
  public func check(module: Module) throws {
+ BareCaseResolutionRegistry.reset()
  // 预注册所有 trait 声明，确保后续类型声明（无论出现先后）都能解析其 `traits` 引用
  preregisterTraits(module)
  for decl in module.declarations {
@@ -549,6 +550,38 @@ public final class TypeChecker {
  /// 例如 `圆` 是 `形状` 的用例时，期望 `形状`、实际 `圆` 视为合法（P2 收尾：enum 进入静态类型检查）。
  /// 立场 B 追加：期望为泛型枚举特化类型（`Result<I32, Error>`）时，其用例名（`ok` / `err`）
  /// 同样视为可赋值——实参精度由 `refineEnumCaseConstruction` 在下推路径上单独校验。
+ /// ADR-026 D1（静态收敛版）：观测一次裸名 case 构造的推断结局——
+ /// 期望类型命中候选 → 记录静态决议（供运行期查表构造）；
+ /// 歧义且未解析（推断退化为例名同名类型）→ 按「需限定形式」报错。
+ private func noteBareCaseOutcome(_ expr: Expression, actual: TypeAnnotation, location: SourceLocation) throws {
+ let bareName: String?
+ let callLoc: SourceLocation
+ switch expr {
+ case .call(.identifier(let cn, _), _, let l):
+ bareName = cn
+ callLoc = l
+ case .identifier(let cn, let l):
+ bareName = cn
+ callLoc = l
+ default:
+ return
+ }
+ guard let n = bareName else { return }
+ let parents = typeEnv.parentEnums(of: n)
+ guard parents.count > 1 else { return }
+ if case .simple(let t, _) = actual, parents.contains(t), t != n {
+ BareCaseResolutionRegistry.record(callLoc, parent: t)
+ return
+ }
+ if case .simple(let t, _) = actual, t == n {
+ try report(TypeError.mismatch(
+ expected: "限定形式 枚举名.\(n)(...)（同名用例歧义）",
+ got: n,
+ location: location
+ ))
+ }
+ }
+
  private func isAssignable(actual: TypeAnnotation, expected: TypeAnnotation) -> Bool {
  if actual.isStructurallyEquivalent(to: expected) { return true }
  // Phase 0：隐式整型宽度转换（对齐解释器 leniency）。整型 primitive 族（I8..I64/U8..U64）
@@ -661,6 +694,9 @@ public final class TypeChecker {
  refinedParent = caseCandidates.count == 1 ? caseCandidates[0] : typeEnv.parentEnum(of: caseName)
  }
  guard let parent = refinedParent else { return false }
+ if case .call = expr, caseCandidates.count > 1, refinedParent != nil {
+ BareCaseResolutionRegistry.record(location, parent: parent)
+ }
 
  // arity（关联参数个数）已由 checkExpression → checkEnumCaseConstruction 统一校验（与期望类型无关），
  // 此处不再重复，避免双重报错。本函数仅补充「泛型枚举特化类型」下的逐参数类型比对：
@@ -751,6 +787,7 @@ public final class TypeChecker {
  // （如 target_annot: none(...)）的歧义名由此消歧；不线程则嵌套歧义名
  // 一律推断失败（S4.9 宿主对等改名回退的前置）。
  guard let actual = inference.infer(expression: arg.expression, expected: fields[i].type) else { continue }
+ try noteBareCaseOutcome(arg.expression, actual: actual, location: location)
  if !isAssignable(actual: actual, expected: fields[i].type) {
  try report(TypeError.mismatch(
  expected: fields[i].type.describe(),
@@ -1324,16 +1361,22 @@ public final class TypeChecker {
  try checkExpression(initExpr)
  if let annot = annot {
  if !(try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
- if let actual = inference.infer(expression: initExpr, expected: annot),
- !isAssignable(actual: actual, expected: annot) {
+ if let actual = inference.infer(expression: initExpr, expected: annot) {
+ try noteBareCaseOutcome(initExpr, actual: actual, location: location)
+ if !isAssignable(actual: actual, expected: annot) {
  try report(TypeError.mismatch(
  expected: annot.describe(), got: actual.describe(), location: location
  ))
  }
  }
+ }
  declaredType = annot
  } else {
- declaredType = inference.infer(expression: initExpr) ?? .simple(name: "Any", location: location)
+ let actual = inference.infer(expression: initExpr)
+ if let actual = actual {
+ try noteBareCaseOutcome(initExpr, actual: actual, location: location)
+ }
+ declaredType = actual ?? .simple(name: "Any", location: location)
  }
  } else {
  declaredType = annot ?? .simple(name: "Any", location: location)
@@ -1834,6 +1877,7 @@ public final class TypeChecker {
  let paramType = sig.params[index]
  if case .simple(let pname, _) = paramType, (pname == "_" || pname == "Any") { continue }
  guard let argType = inference.infer(expression: arg.expression, expected: paramType) else { continue }
+ try noteBareCaseOutcome(arg.expression, actual: argType, location: location)
  if !isAssignable(actual: argType, expected: paramType) {
  try report(TypeError.mismatch(expected: paramType.describe(), got: argType.describe(), location: location))
  }

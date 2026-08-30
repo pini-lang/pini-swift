@@ -8,7 +8,11 @@ final class AmbiguousCaseResolutionTests: XCTestCase {
     /// 意图：同名 case 实参类型可区分时，裸名构造各自命中正确父枚举
     /// 推进性测量：两个构造都成功执行（此前歧义名被排除出全局函数表，运行期无路可走）
     /// 驳回性测量：任一构造报「无匹配候选」或 undefined variable 均不合格
-    func testBareConstructionResolvesByArgType() throws {
+    /// 意图：歧义裸名构造无期望类型 → check 期拒绝并要求限定形式
+    /// （ADR-026 D1 静态收敛版：运行期动态消歧已移除，2026-08-30 裁决）
+    /// 推进性测量：check 期报错
+    /// 驳回性测量：按实参类型静默解析均不合格
+    func testBareConstructionRequiresQualification() {
         let source = """
 [ShpA]
 mk(v: I32,)
@@ -21,13 +25,17 @@ main|func() -> ()
     print(mk(v: "s"))
     return
 """
-        _ = try runSource(source)
+        XCTAssertThrowsError(try runSource(source), "歧义裸名构造应被 check 拒绝")
     }
 
     /// 意图：同名 case 元数不同时，裸名构造按元数消歧（E4-005 错误参量数不再误报）
     /// 推进性测量：两种元数的构造都通过
     /// 驳回性测量：arity 报错即不合格
-    func testAmbiguousArityResolves() throws {
+    /// 意图：同名 case 元数不同、无期望类型 → check 期拒绝（元数不再是消歧依据，
+    /// ADR-026 D1 静态收敛版，2026-08-30 裁决）
+    /// 推进性测量：check 期报错
+    /// 驳回性测量：按元数静默解析均不合格
+    func testAmbiguousArityRequiresQualification() {
         let source = """
 [BoxA]
 foo(a: I32,)
@@ -40,7 +48,7 @@ main|func() -> ()
     print(foo("a", "b"))
     return
 """
-        _ = try runSource(source)
+        XCTAssertThrowsError(try runSource(source), "歧义裸名构造应被 check 拒绝")
     }
 
     /// 意图：match 模式按 scrutinee 类型解析（ADR-026 D2）——同名 case 不同元数时
@@ -106,6 +114,8 @@ main|func() -> ()
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "ambiguous.pini")
         let module = try parser.parseModule()
+        let checker = TypeChecker()
+        try checker.check(module: module)
         let pipe = Pipe()
         let originalStdout = dup(STDOUT_FILENO)
         setvbuf(stdout, nil, _IONBF, 0)

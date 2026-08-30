@@ -714,6 +714,11 @@ field-decl      ::= IDENT ':' type-annotation ['=' expression];
 
 enum-case       ::= IDENT ['(' type-annotation {',' type-annotation} [','] ')'];
 (* Swift 风格：位置关联参数，不具名，位置绝对对应，无默认值 *)
+(* 用例构造消歧（ADR-026 D1 静态收敛版，2026-08-30）：裸名用例构造
+   caseName(args) 按序解析——1) 期望类型唯一命中声明该用例的枚举 → 该枚举；
+   2) 模块内恰好一个枚举声明该用例 → 该枚举；3) 歧义且无期望类型 → 编译
+   错误，要求限定形式 枚举名.caseName(...)。case 由复合类型确定成员身份，
+   运行期不做动态猜测；match 模式恒按被匹配值类型解析（§2.4.3）。 *)
 
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
