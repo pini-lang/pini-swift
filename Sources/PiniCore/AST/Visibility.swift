@@ -88,15 +88,21 @@ public struct PackageSymbol: Equatable {
 /// 本索引仅服务于多文件场景，故**不引入任何单文件回归**。
 public struct PackageSymbolIndex: Equatable {
  private let byName: [String: PackageSymbol]
+ /// 枚举 case 名 → 父枚举名集合。case 名按枚举命名空间隔离（P5-5 HIGH-1：
+ /// 跨枚举同名 case 允许共存），故同名可映射到多个父枚举；多于一个即**歧义**，
+ /// 未限定构造须改用 形状.圆(...) 限定写法。
+ private let caseParents: [String: Set<String>]
 
- public init(byName: [String: PackageSymbol]) {
+ public init(byName: [String: PackageSymbol], caseParents: [String: Set<String>] = [:]) {
  self.byName = byName
+ self.caseParents = caseParents
  }
 
  /// 构建包级符号索引；跨文件同名顶级声明视为**重声明错误**（包内命名空间共享）。
  /// 语义层调用（须主动暴露重声明），抛 `SemanticError.redeclaredSymbol`。
  public static func build(package: Package) throws -> PackageSymbolIndex {
  var byName: [String: PackageSymbol] = [:]
+ var caseParents: [String: Set<String>] = [:]
  for unit in package.fileUnits {
  for decl in unit.module.declarations {
  guard let info = topLevelSymbolInfo(decl) else { continue }
@@ -109,15 +115,34 @@ public struct PackageSymbolIndex: Equatable {
  visibility: vis, kind: info.kind,
  location: info.location
  )
+ // 枚举 case 名同样进入包级索引：跨文件未限定构造（圆(5.0)）据此解析。
+ // 同名跨枚举合法（各属其枚举命名空间），故只累积 parents，不抛重声明。
+ if case .enumDecl(let e) = decl {
+ let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: unit.fileName)
+ for ec in e.cases {
+ let ownVis = VisibilityLevel.forSymbol(name: ec.name, fileName: unit.fileName)
+ // 可见性取父枚举与 case 名的较严者（private=0 最低）
+ let caseVis = min(parentVis, ownVis)
+ if byName[ec.name] == nil {
+ byName[ec.name] = PackageSymbol(
+ name: ec.name, fileName: unit.fileName,
+ visibility: caseVis, kind: .enumCase,
+ location: ec.location
+ )
+ }
+ caseParents[ec.name, default: []].insert(e.name)
  }
  }
- return PackageSymbolIndex(byName: byName)
+ }
+ }
+ return PackageSymbolIndex(byName: byName, caseParents: caseParents)
  }
 
  /// 类型层专用：以「先到先得」聚合（不抛重声明）；
  /// 跨文件重声明由语义层 `build` 先行拦截，类型层仅在已通过语义的程序上运行。
  public init(package: Package) {
  var byName: [String: PackageSymbol] = [:]
+ var caseParents: [String: Set<String>] = [:]
  for unit in package.fileUnits {
  for decl in unit.module.declarations {
  guard let info = topLevelSymbolInfo(decl) else { continue }
@@ -129,14 +154,36 @@ public struct PackageSymbolIndex: Equatable {
  location: info.location
  )
  }
+ if case .enumDecl(let e) = decl {
+ let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: unit.fileName)
+ for ec in e.cases {
+ let ownVis = VisibilityLevel.forSymbol(name: ec.name, fileName: unit.fileName)
+ let caseVis = min(parentVis, ownVis)
+ if byName[ec.name] == nil {
+ byName[ec.name] = PackageSymbol(
+ name: ec.name, fileName: unit.fileName,
+ visibility: caseVis, kind: .enumCase,
+ location: ec.location
+ )
+ }
+ caseParents[ec.name, default: []].insert(e.name)
+ }
+ }
  }
  }
  self.byName = byName
+ self.caseParents = caseParents
  }
 
  /// 按名字查找包级符号（含定义文件与可见性）。
  public func lookup(_ name: String) -> PackageSymbol? {
  byName[name]
+ }
+
+ /// 该 case 名是否歧义（包内多个枚举声明了同名 case）。歧义时未限定构造不可用，
+ /// 须改用 形状.圆(...) 限定写法。
+ public func isAmbiguousCase(_ name: String) -> Bool {
+ (caseParents[name]?.count ?? 0) > 1
  }
 }
 
