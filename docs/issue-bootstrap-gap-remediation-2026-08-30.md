@@ -77,3 +77,16 @@ G-P1：`BuiltinRegistry` 新增 F64 转换（按 ADR-020 D3/D4 快速路径，�
 2. **checker 不校验实参标签**：`f(b: 3)` check 静默通过（标签按位置绑定）、运行期才报 → `validateCallArguments` 增加标签校验（新增全函数形参名册，此前仅 async 有），check 期 E4 拒绝。
 
 带标签的字段绑定构造（`pt(x: 7)` 语义）维持「显式报错」，作为 spec 提案另行排期。LabelValidationTests 3/3；全量 **1047 测试 0 失败**。
+
+---
+
+## 附录 E：D1 静态收敛——设计讨论落点（2026-08-30）
+
+用户设计原则：**case 是枚举的成员，成员身份由复合类型确定（与字段/方法同理），关联值只是载荷布局**。据此裁决：
+
+1. ADR-026 D1 收敛为三档**纯静态**规则（期望类型命中 → 模块唯一 → 编译错误要求限定形式），**移除运行期动态消歧**（实参嗅探决定成员身份违反原则）；静态决议经定位键决议表（`BareCaseResolutionRegistry`）交接运行期。
+2. spec 在 enum-case 产生式处钉定该规则；match（D2）不变，恒按被匹配值类型解析。
+3. **`.caseName(...)` 点号构造语法立项为提案**（`docs/spec/issue/proposal-dot-case-construction-2026-08-30.md`）——Swift 的关键洞察是点号把「成员意图」语法化，使上下文消歧安全无歧义；择 Provisional 破坏窗口裁决。
+4. 自举侧 Any 位构造改为限定形式（`token.int_lit(...)` 等 9 处）；checker 的 Any 接收者成员调用实参不下探的预存盲区另行挂账（与本提案无耦合）。
+
+验证：宿主全量 1047 测试 0 失败（4 个「动态消歧」测试翻转为「check 期拒绝」）；selfhost 33 测试 0 失败；L0 MATCH；audit GREEN。
