@@ -25,6 +25,11 @@ public class Interpreter {
  /// 主线程为 nil（同步路径永不被取消，零开销）。
  private let tlCurrentFuture = ThreadLocal<FutureValue>()
 
+ /// 调用深度护栏：无限递归以可诊断错误终止，而非打穿线程栈（零诊断崩溃）。
+ /// 每层 Pini 函数调用对应数层 Swift 帧，上限取保守值，正常递归远不可及。
+ private var callDepth = 0
+ private let maxCallDepth = 120
+
  /// 并发调度脊柱（ADR-009 阶段 A）：解释器只依赖 `Scheduler` 协议，
  /// 当前后端为 `GCDScheduler`；阶段 B 可换挂起实现（`SuspendScheduler`）而不改调用点。
  var scheduler: Scheduler = GCDScheduler.shared
@@ -2519,6 +2524,14 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
 
  public func callFunctionValue(_ fv: FunctionValue, args: [Value]) throws -> Value {
+ callDepth += 1
+ defer { callDepth -= 1 }
+ if callDepth > maxCallDepth {
+ throw RuntimeError.invalidOperation(
+ reason: "调用深度超过上限 \(maxCallDepth)，疑似无限递归",
+ location: Interpreter.builtinLocation
+ )
+ }
  if fv.isTypeConstructor {
  return try createInstance(typeName: fv.typeName, kind: fv.typeKind)
  }
