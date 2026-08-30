@@ -78,6 +78,29 @@ main|func() -> ()
         XCTAssertTrue(out.contains("7"), out)
     }
 
+    /// 意图：裸名 case 构造且父枚举唯一时推断为父枚举类型（ADR-026 D5 缩窄版，G-P3）——
+    /// case 值可在期望父枚举的 return 位置通过类型检查（此前 E4-001 expected-expr-got-case）
+    /// 推进性测量：构造成功并输出正确字段值
+    /// 驳回性测量：E2/E4 类型报错均不合格
+    func testBareUniqueCaseConstructionInfersParentType() throws {
+        let source = """
+[Tok]
+int_lit(v: I32,)
+
+pick|func() -> (Tok,)
+    return int_lit(v: 9)
+
+main|func() -> ()
+    let t = pick()
+    match t:
+        case int_lit(v,):
+            print(v)
+    return
+"""
+        let out = try runSource(source)
+        XCTAssertTrue(out.contains("9"), out)
+    }
+
     private func runSource(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "ambiguous.pini")
         let tokens = try lexer.tokenize()

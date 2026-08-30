@@ -162,6 +162,13 @@ public final class TypeInference {
  return .tuple(labels: [], elements: returns, location: loc)
  }
  }
+ // ADR-026 D5（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，
+ // 使 case 值可在期望父枚举的位置（return/关联值）通过检查（G-P3）。
+ // 歧义名不在此推断，交由 D1 的期望类型/实参类型消歧与 checker 报告。
+ let caseParents = env.parentEnums(of: name)
+ if caseParents.count == 1 {
+ return .simple(name: caseParents[0], location: loc)
+ }
  return .simple(name: name, location: loc)
  }
  return nil
