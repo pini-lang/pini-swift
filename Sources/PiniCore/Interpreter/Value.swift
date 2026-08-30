@@ -485,6 +485,8 @@ public class FunctionValue {
  public var enumIsGeneric: Bool = false
  public var enumParentName: String = ""
  public var enumGenericParamCount: Int = 0
+ /// ADR-026 D1：关联参数声明类型名（describe），供歧义 case 裸名构造的动态消歧计分
+ public var enumCaseParamTypeNames: [String] = []
  private var _isAsync: Bool = false
 
  public var isAsync: Bool {

@@ -25,6 +25,11 @@ public class Interpreter {
  /// 主线程为 nil（同步路径永不被取消，零开销）。
  private let tlCurrentFuture = ThreadLocal<FutureValue>()
 
+ /// 调用深度护栏：无限递归以可诊断错误终止，而非打穿线程栈（零诊断崩溃）。
+ /// 每层 Pini 函数调用对应数层 Swift 帧，上限取保守值，正常递归远不可及。
+ private var callDepth = 0
+ private let maxCallDepth = 120
+
  /// 并发调度脊柱（ADR-009 阶段 A）：解释器只依赖 `Scheduler` 协议，
  /// 当前后端为 `GCDScheduler`；阶段 B 可换挂起实现（`SuspendScheduler`）而不改调用点。
  var scheduler: Scheduler = GCDScheduler.shared
@@ -636,6 +641,27 @@ public class Interpreter {
  /// 必须在**任何** registerDecls 之前、对**全部**文件完成：否则单个文件的局部
  /// 统计会把仅在该文件出现的 case 名判为不歧义并注册到 globalEnv，而后处理文件
  /// 的同名 case 会覆盖它（构造到错误的父枚举）。
+ /// ADR-026 D1：运行时值动态类别 / 声明类型名 → 类别映射（消歧计分用）
+ static func dynamicKind(of v: Value) -> String {
+ switch v {
+ case .int: return "int"
+ case .string: return "string"
+ case .bool: return "bool"
+ case .float: return "float"
+ default: return "other"
+ }
+ }
+
+ static func declaredKind(_ t: String) -> String {
+ switch t {
+ case "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64": return "int"
+ case "F32", "F64": return "float"
+ case "String": return "string"
+ case "Bool": return "bool"
+ default: return "other"
+ }
+ }
+
  func collectEnumCaseNames(module: Module) {
  for decl in module.declarations {
  if case .enumDecl(let e) = decl {
@@ -861,6 +887,7 @@ public class Interpreter {
  fv.enumIsGeneric = isGeneric
  fv.enumParentName = parentName
  fv.enumGenericParamCount = genericParamCount
+ fv.enumCaseParamTypeNames = associatedParams.map { $0.type.describe() }
  // P5-5 B2：按 (父枚举 → case) 注册，供限定构造 形状.圆(...) 解析（跨枚举同名不冲突）。
  if enumCaseConstructors[parentName] == nil { enumCaseConstructors[parentName] = [:] }
  enumCaseConstructors[parentName]![caseName] = fv
@@ -1484,6 +1511,33 @@ public class Interpreter {
  let ctor = enumCaseConstructors[parentName]?[caseName] {
  var argValues: [Value] = []
  for arg in arguments { argValues.append(try evaluateExpression(arg.expression)) }
+ return try callFunctionValue(ctor, args: argValues)
+ }
+
+ // ADR-026 D1：歧义 case 的裸名构造 → 动态消歧（期望类型优先在静态检查侧；
+ // 此处按实参动态类型对各候选计分，取最高分，并列取父枚举字典序首个，保证确定性）。
+ if case .identifier(let caseName, _) = callee,
+ ambiguousEnumCases.contains(caseName),
+ (try? globalEnv.get(name: caseName)) == nil {
+ var argValues: [Value] = []
+ for arg in arguments { argValues.append(try evaluateExpression(arg.expression)) }
+ var best: (FunctionValue, Int)? = nil
+ for parent in (enumCaseNameParents[caseName] ?? []).sorted() {
+ guard let ctor = enumCaseConstructors[parent]?[caseName] else { continue }
+ guard ctor.params.count == argValues.count else { continue }
+ var score = 0
+ for (v, tn) in zip(argValues, ctor.enumCaseParamTypeNames)
+ where Interpreter.dynamicKind(of: v) == Interpreter.declaredKind(tn) {
+ score += 1
+ }
+ if best == nil || score > best!.1 { best = (ctor, score) }
+ }
+ guard let (ctor, _) = best else {
+ throw RuntimeError.invalidOperation(
+ reason: "歧义 case 构造无匹配候选: \(caseName)",
+ location: loc
+ )
+ }
  return try callFunctionValue(ctor, args: argValues)
  }
 
@@ -2519,7 +2573,24 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
 
  public func callFunctionValue(_ fv: FunctionValue, args: [Value]) throws -> Value {
+ callDepth += 1
+ defer { callDepth -= 1 }
+ if callDepth > maxCallDepth {
+ throw RuntimeError.invalidOperation(
+ reason: "调用深度超过上限 \(maxCallDepth)，疑似无限递归",
+ location: Interpreter.builtinLocation
+ )
+ }
  if fv.isTypeConstructor {
+ // G-P10(c)：类型构造不接受实参（字段经初始化器/赋值设置）；
+ // 此前实参被静默丢弃（位置形式），属静默数据丢失，改为元数报错。
+ guard args.isEmpty else {
+ throw RuntimeError.arityMismatch(
+ expected: 0,
+ got: args.count,
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
  return try createInstance(typeName: fv.typeName, kind: fv.typeKind)
  }
 
@@ -2828,6 +2899,18 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  default:
  throw RuntimeError.invalidOperation(
  reason: "min/max 的参数必须是同类型数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+ if fv.name == "F64" {
+ // G-P1：值构造（见 BuiltinRegistry 同名条目注释）
+ switch args[0] {
+ case .float(let f): return .float(f)
+ case .int(let i): return .float(Double(i))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "F64 的参数必须是数值（int/float）",
  location: SourceLocation(line: 0, column: 0, fileName: "")
  )
  }

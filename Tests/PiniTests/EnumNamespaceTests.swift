@@ -78,10 +78,10 @@ final class EnumNamespaceTests: XCTestCase {
         XCTAssertTrue(out.contains("圆(5.0)"), "唯一名未限定构造应可用，实际输出: \(out)")
     }
 
-    /// 歧义（两个枚举共享 圆）：未限定 `圆(2.0)` 须明确失败（迫使改用限定写法），
-    /// 不得静默构造到错误的父枚举（HIGH-1 防串味）。
-    /// 意图：歧义路径——两个枚举共享 case 名「圆」时，未限定构造 `圆(2.0)` 必须抛错，迫使改用限定写法（HIGH-1 防串味）。
-    func testAmbiguousUnqualifiedConstructionThrows() {
+    /// 歧义（两个枚举共享 圆）：ADR-026 D1 起未限定 `圆(2.0)` 按元数消歧——
+    /// 单参构造命中 形状.圆（几何.圆 为双参，被元数过滤），不再抛错迫使限定写法。
+    /// 意图：歧义路径——两个枚举共享 case 名「圆」时，未限定构造按元数过滤候选并成功解析。
+    func testAmbiguousUnqualifiedConstructionResolvesByArity() throws {
         let source = """
         [形状]
         圆(F64,)
@@ -91,7 +91,8 @@ final class EnumNamespaceTests: XCTestCase {
             print(圆(2.0),)
             return
         """
-        XCTAssertThrowsError(try runProgram(source), "歧义未限定构造应抛错，迫使改用 形状.圆 / 几何.圆")
+        let out = try runProgram(source)
+        XCTAssertTrue(out.contains("圆"), "歧义裸名构造应按元数解析，实际输出: \(out)")
     }
 
     /// 限定构造出的跨枚举同名值，match 时按值自带 parentEnum 正确匹配（不串味）：

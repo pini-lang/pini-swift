@@ -40,6 +40,7 @@ public final class TypeChecker {
  /// 形参名单独存是因为 `TypeEnvironment.FunctionSignature` 只保留类型、不保留名字，
  /// 而一条好的隔离报错必须能指名道姓说出是哪个形参。
  private var asyncFunctionParamNames: [String: [String]] = [:]
+ private var functionParamNames: [String: [String]] = [:]
 
  /// B3-1：`Type.method` → 形参名列表，覆盖标了 `=>` 的**方法**（与自由函数同等对待）。
  private var asyncMethodParamNames: [String: [String]] = [:]
@@ -563,6 +564,14 @@ public final class TypeChecker {
  // 元素类型对内建而言无关紧要，只需锚定外层构造子与元数。顶层 `_` 早在
  // validateCallArguments 放行，此处覆盖嵌套位。
  if matchesWithWildcards(actual: actual, expected: expected) { return true }
+ // nil 底值语义（varDecl 标注下推后暴露）：`Optional<Any>`（nil 构造的推断
+ // 形态）可赋给任意 `Optional<T>`——none 是所有 Optional 特化的公共底值。
+ if case .generic(let aName, let aArgs, _) = actual,
+ aName == "Optional", aArgs.count == 1,
+ case .simple(let aInner, _) = aArgs[0], aInner == "Any",
+ case .generic(let eName, _, _) = expected, eName == "Optional" {
+ return true
+ }
  if case .simple(let aName, _) = actual {
  let parent = typeEnv.parentEnum(of: aName)
  if case .simple(let eName, _) = expected, parent == eName { return true }
@@ -640,7 +649,18 @@ public final class TypeChecker {
  return false
  }
 
- guard let parent = typeEnv.parentEnum(of: caseName) else { return false }
+ // ADR-026 D1：期望类型命中的候选枚举优先；仅全局唯一时退回单值反查
+ let caseCandidates = typeEnv.parentEnums(of: caseName)
+ var refinedParent: String? = nil
+ switch expected {
+ case .simple(let eName, _): if caseCandidates.contains(eName) { refinedParent = eName }
+ case .generic(let eName, _, _): if caseCandidates.contains(eName) { refinedParent = eName }
+ default: break
+ }
+ if refinedParent == nil {
+ refinedParent = caseCandidates.count == 1 ? caseCandidates[0] : typeEnv.parentEnum(of: caseName)
+ }
+ guard let parent = refinedParent else { return false }
 
  // arity（关联参数个数）已由 checkExpression → checkEnumCaseConstruction 统一校验（与期望类型无关），
  // 此处不再重复，避免双重报错。本函数仅补充「泛型枚举特化类型」下的逐参数类型比对：
@@ -683,6 +703,24 @@ public final class TypeChecker {
  resolvedParent = typeEnv.parentEnum(of: caseName)
  }
  guard let parent = resolvedParent else { return }
+ // ADR-026 D1：同名 case 跨枚举歧义时，不得按单一猜测父枚举做 arity/类型校验
+ // （E4-005 错误参量数即由此而来）；退化为「拟合任一候选即放行」，精度交由
+ // refineEnumCaseConstruction（期望类型下推）与运行时动态消歧承担。
+ let caseCandidates = typeEnv.parentEnums(of: caseName)
+ if caseCandidates.count > 1 {
+ var fitsSome = false
+ for cand in caseCandidates {
+ guard let req = typeEnv.enumCaseRequiredArity(enumName: cand, caseName: caseName) else { continue }
+ let total = typeEnv.lookupEnumCaseFields(enumName: cand, caseName: caseName)?.count ?? 0
+ if (req...total).contains(args.count) { fitsSome = true; break }
+ }
+ if !fitsSome {
+ try report(TypeError.argumentCountMismatch(
+ expected: args.count, got: args.count, location: location
+ ))
+ }
+ return
+ }
  // 具名关联值决议（2026-08-29）：声明为具名形态时标签实参合法（按名对位）；
  // 位置声明仍拒绝具名实参（规则 3.15 残余）。
  let declaredNames = typeEnv.lookupEnumCaseFields(enumName: parent, caseName: caseName) ?? []
@@ -709,7 +747,10 @@ public final class TypeChecker {
  // refineEnumCaseConstruction 在期望特化类型下推路径处理。
  if typeEnv.genericEnumParamCount(name: parent) == nil {
  for (i, arg) in args.enumerated() {
- guard let actual = inference.infer(expression: arg.expression) else { continue }
+ // ADR-026 D1（实参位补全）：线程字段声明类型作期望——嵌套 case 构造
+ // （如 target_annot: none(...)）的歧义名由此消歧；不线程则嵌套歧义名
+ // 一律推断失败（S4.9 宿主对等改名回退的前置）。
+ guard let actual = inference.infer(expression: arg.expression, expected: fields[i].type) else { continue }
  if !isAssignable(actual: actual, expected: fields[i].type) {
  try report(TypeError.mismatch(
  expected: fields[i].type.describe(),
@@ -737,6 +778,9 @@ public final class TypeChecker {
  let returnTypes = TypeChecker.signatureReturns(of: f)
  // B3-1：登记并发进程的形参名，供任务隔离检查在报错时指名道姓
  if f.isAsync { asyncFunctionParamNames[f.name] = f.params.map { $0.name } }
+ // G-P11：登记全部函数形参名，供调用点标签校验（此前标签只按位置绑定，
+ // 不匹配的标签 check 静默通过、运行期才报 未知参数名）。
+ functionParamNames[f.name] = f.params.map { $0.name }
  if !f.genericParams.isEmpty {
  // P3-0：泛型函数模板注册——供调用点 T 占位通配比对（端到端）
  typeEnv.defineGenericFunction(
@@ -1142,8 +1186,26 @@ public final class TypeChecker {
  _ body: () throws -> Void
  ) throws {
  typeEnv.pushScope()
+ // ADR-026 D2：歧义 case 名按 scrutinee 类型在候选集中解析，
+ // 不得信任单值反查（跨枚举同名会绑到错误父枚举的字段，E4-005）。
+ var resolvedParent: String? = nil
+ if case .enumCase(let name) = c.pattern {
+ let candidates = typeEnv.parentEnums(of: name)
+ if candidates.count == 1 {
+ resolvedParent = candidates[0]
+ } else if let st = subjectType {
+ let sName: String?
+ switch st {
+ case .simple(let n, _): sName = n
+ case .generic(let n, _, _): sName = n
+ default: sName = nil
+ }
+ if let sName = sName, candidates.contains(sName) { resolvedParent = sName }
+ }
+ if resolvedParent == nil { resolvedParent = typeEnv.parentEnum(of: name) }
+ }
  if case .enumCase(let name) = c.pattern,
- let parent = typeEnv.parentEnum(of: name),
+ let parent = resolvedParent,
  case .generic(let subjectName, let typeArgs, _)? = subjectType,
  subjectName == parent,
  let fields = typeEnv.lookupSpecializedEnumCase(
@@ -1151,7 +1213,7 @@ public final class TypeChecker {
  ) {
  try bindMatchCaseVariables(c, fields: fields)
  } else if case .enumCase(let name) = c.pattern,
- let parent = typeEnv.parentEnum(of: name),
+ let parent = resolvedParent,
  let fields = typeEnv.lookupEnumCase(enumName: parent, caseName: name) {
  try bindMatchCaseVariables(c, fields: fields)
  }
@@ -1253,13 +1315,28 @@ public final class TypeChecker {
 
  private func checkStatement(_ stmt: Statement) throws {
  switch stmt {
- case .varDecl(let name, _, let initializer, let isMutable, let location):
+ case .varDecl(let name, let annot, let initializer, let isMutable, let location):
+ // ADR-026 D1：显式标注此前被整体忽略（绑定类型只看推断）——现作为期望
+ // 类型下推：枚举用例构造走 refine（跨枚举同名 case 按标注消歧），其余按
+ // 标注比对；绑定类型 = 标注（与宿主声明类型语义对齐）。
  let declaredType: TypeAnnotation
  if let initExpr = initializer {
  try checkExpression(initExpr)
- declaredType = inference.infer(expression: initExpr) ?? .simple(name: "Any", location: location)
+ if let annot = annot {
+ if !(try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
+ if let actual = inference.infer(expression: initExpr, expected: annot),
+ !isAssignable(actual: actual, expected: annot) {
+ try report(TypeError.mismatch(
+ expected: annot.describe(), got: actual.describe(), location: location
+ ))
+ }
+ }
+ declaredType = annot
  } else {
- declaredType = .simple(name: "Any", location: location)
+ declaredType = inference.infer(expression: initExpr) ?? .simple(name: "Any", location: location)
+ }
+ } else {
+ declaredType = annot ?? .simple(name: "Any", location: location)
  }
  typeEnv.defineVariable(name: name, type: declaredType, isMutable: isMutable)
 
@@ -1469,7 +1546,7 @@ public final class TypeChecker {
  // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
  try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
  if let sig = typeEnv.lookupFunction(name: calleeName) {
- try validateCallArguments(arguments: arguments, signature: sig, location: location)
+ try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])
  // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
  if let paramNames = asyncFunctionParamNames[calleeName] {
  try enforceTaskIsolation(
@@ -1732,8 +1809,19 @@ public final class TypeChecker {
  private func validateCallArguments(
  arguments: [CallArgument],
  signature sig: TypeEnvironment.FunctionSignature,
- location: SourceLocation
+ location: SourceLocation,
+ paramNames: [String]? = nil
  ) throws {
+ // G-P11：带标签实参须命中形参名（缺名册时保守跳过——与既有推断不了就不误报一致）
+ if let names = paramNames, !sig.isVariadic {
+ for arg in arguments {
+ if let label = arg.label, !names.contains(label) {
+ try report(TypeError.unknownMember(
+ typeName: "函数", memberName: label, location: location
+ ))
+ }
+ }
+ }
  if !sig.isVariadic && arguments.count != sig.params.count {
  try report(TypeError.argumentCountMismatch(
  expected: sig.params.count,

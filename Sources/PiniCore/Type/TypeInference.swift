@@ -113,6 +113,15 @@ public final class TypeInference {
  return .generic(name: "Optional", params: [.simple(name: "Any", location: loc)], location: loc)
  }
 
+ // ADR-026 D2：限定枚举用例构造 Enum.case(args) 推断为父枚举类型，
+ // 使以其为 scrutinee 的 match 按正确父枚举解析 case 字段。
+ if case .member(let object, let caseName, _) = callee,
+ case .identifier(let typeName, _) = object,
+ let env = environment,
+ env.lookupEnumCase(enumName: typeName, caseName: caseName) != nil {
+ return .simple(name: typeName, location: loc)
+ }
+
  // P2-1.4：成员方法调用返回类型推断（obj.method(args)）。
  // Optional.some / .none 已在上方特判并返回，此处仅处理普通成员方法。
  if case .member(let object, let memberName, _) = callee, let env = environment {
@@ -153,6 +162,25 @@ public final class TypeInference {
  return .tuple(labels: [], elements: returns, location: loc)
  }
  }
+ // ADR-026 D5（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，
+ // 使 case 值可在期望父枚举的位置（return/关联值）通过检查（G-P3）。
+ let caseParents = env.parentEnums(of: name)
+ if caseParents.count == 1 {
+ return .simple(name: caseParents[0], location: loc)
+ }
+ // ADR-026 D1（实参位补全）：歧义 case 名且期望类型命中候选 → 按期望解析。
+ // 此前实参位置不线程期望类型，跨枚举同名 case（如两个 none）在实参位
+ // 无法构造——S4.9 宿主对等改名回退的前置。
+ if let exp = expected {
+ switch exp {
+ case .simple(let en, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ case .generic(let en, _, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ default:
+ break
+ }
+ }
  return .simple(name: name, location: loc)
  }
  return nil
@@ -188,7 +216,12 @@ public final class TypeInference {
  case .funcLiteral(let decl, let loc):
  return inferFuncLiteral(decl: decl, expected: expected, location: loc)
 
- case .selfKeyword, .selfTypeKeyword:
+ case .selfKeyword:
+ // ADR-026 D3：self 在方法体内已登记为接收对象类型（checkBody 的 defineVariable），
+ // 与外部标识符接收者同路径解析，修复合绑定退化 Any（G-P8）。
+ return environment?.lookupVariable(name: "self")
+
+ case .selfTypeKeyword:
  return nil
 
  case .arrayLiteral, .dictionaryLiteral, .setLiteral:

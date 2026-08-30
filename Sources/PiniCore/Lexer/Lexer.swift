@@ -199,6 +199,28 @@ public class Lexer {
  case "@":
  _ = advance()
  return .at(loc)
+ case "`":
+ // ADR-027 D1：反引号转义——`名称` 整体产出 IDENT token（跳过关键字
+ // 分类），允许关键字作标识符/构造标签（自举探针 G-P5，用户提案）。
+ // D2：未闭合（行尾/EOF）或空内容回退 ADR-021 兜底（单字符 IDENT），
+ // 保持「词法器零错误」契约；L0 语料第 95 行的裸反引号即此兜底。
+ _ = advance()
+ var escaped = ""
+ var closed = false
+ while let c = currentChar {
+ if c == "`" {
+ _ = advance()
+ closed = true
+ break
+ }
+ if c == "\n" { break }
+ escaped.append(c)
+ _ = advance()
+ }
+ if closed && !escaped.isEmpty {
+ return .identifier(escaped, loc)
+ }
+ return .identifier("`", loc)
  // `#` 已由行级注释拦截（G35：文档注释/退化行注释），不再产出 token；
  // 若意外到达此处则落入 default → invalidCharacter（历史 `.hash` token 保留于 Token.swift 供兼容）。
  case "?":
