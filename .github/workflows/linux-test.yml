@@ -2,9 +2,9 @@ name: Linux Test
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ main ]
   pull_request:
-    branches: [ master, main ]
+    branches: [ main ]
 
 jobs:
   linux-test:
@@ -21,6 +21,9 @@ jobs:
 
       - name: Comment Style Lint
         run: bash hooks/comment-lint.sh
+
+      - name: Doc Link Check
+        run: bash tools/check-doc-links.sh
 
       - name: Build
         run: swift build --disable-sandbox
