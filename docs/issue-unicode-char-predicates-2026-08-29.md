@@ -1,6 +1,6 @@
 # Issue: Unicode 字符判定与自举 lexer 词法化收敛（2026-08-29）
 
-> **决策依据**：ADR-019（`docs/adr/adr-019-unicode-char-model.md`）。
+> **决策依据**：ADR-019（`docs/spec/adr/adr-019-unicode-char-model.md`）。
 > **前置**：G45 `is_letter`（v0.49.0，issue-lexer-gaps-2026-08-28 P1-A）；ADR-018 自举契约（L0 差分门禁 `diff_tokens.sh`）。
 > **类型**：规范变更（§1.3，Provisional 语义放宽）+ 实现缺口闭环。
 

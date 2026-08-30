@@ -16,7 +16,7 @@
 # 本表由治理脚本/人工在批次治理时更新；spec 正文的代码引用以符号定位为主、行号为软证据（§1.4）。
 
 [meta]
-spec_ref = "docs/pini-spec-v0.md §1.4"
+spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 last_refresh = "2026-08-29T23:45:00+08:00"
 refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。"

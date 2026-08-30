@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> 宿主实现（pini-swift）版本演进记录。语言级治理变更见 pini-meta 仓库（spec/ADR/issue）。
+> 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（ADR）与 `spec/issue/`。
 > 版本号与 `pini version` 输出同源：`PiniCore/Common/Version.swift`。
 
 ## v0.49.0 (2026-08-29)
@@ -17,7 +17,7 @@
 ### Changed
 - **G50（破坏性）**：`Self` 关键字更名 `own`，`Self` 降级普通标识符（对齐自举 lexer 与 spec EBNF）
 - **module.toml → pini.toml**；R5：点前缀路径构件扫描跳过
-- 语言级文档迁移至 pini-meta 仓库（ADR-018）
+- 语言级文档迁移至 pini-meta 仓库（ADR-018）——2026-08-30 由 ADR-024 迁回本仓 `docs/spec/`
 
 ### Fixed
 - G48 下标安全模型：负索引尾部计数、越界 nil、切片语法、substring 尾部计数；下标读严格 Optional some/none（P2-E）

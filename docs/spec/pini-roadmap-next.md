@@ -69,7 +69,7 @@
 
 ## 2.5 长期愿景：自举纯 libc（北极星指引）
 
-> 权威锚点：`docs/pini-spec-v0.md`（阶段 2 C-ABI 版本化 / 阶段 3 自举纯 libc + 自举前置检查清单）。本节为执行指引：自举不是 RICE 候选排期项，而是长期北极星——以 Pini 自身重写 `libPiniRuntime` 的 `@bk_*` C ABI 面，最终用户程序只依赖 libPiniRuntime（乃至纯 libc）。
+> 权威锚点：`pini-spec-v0.md`（阶段 2 C-ABI 版本化 / 阶段 3 自举纯 libc + 自举前置检查清单）。本节为执行指引：自举不是 RICE 候选排期项，而是长期北极星——以 Pini 自身重写 `libPiniRuntime` 的 `@bk_*` C ABI 面，最终用户程序只依赖 libPiniRuntime（乃至纯 libc）。
 
 **已实现愿景支撑（2026-08-24 检查）**：
 - **C ABI shim 边界已守住**：`@bk_*` 仅接受/返回 C 兼容类型，`RuntimeBackendTests` 三执行路径锁步（解释器 / `lli`-JIT / `clang`-AOT）防 Swift 类型泄漏；
@@ -102,7 +102,7 @@
 - T4 COW 范围与语义（已落地 v0.38.0，G34）——决策直接钉入 spec，不另立 ADR 文档
 - spec v0 附录：形式文法 EBNF + 运算符优先级表（T5，EBNF 草案已交付，已于 v0.43.0 并入 spec 附录）
 - spec v0 附录：异步语义契约（T7，吸收 `Pini草稿.md` 异步函数块细则）
-- 诊断错误码登记表 `docs/diagnostic-codes.md`（T1）——**已落地**（v0.44.0 批次 A：`DiagnosticProviding` + TOML 语言资源；权威映射规则见 spec，本 md 为派生的迟维护视图）
+- 诊断错误码登记表 `diagnostic-codes.md`（T1）——**已落地**（v0.44.0 批次 A：`DiagnosticProviding` + TOML 语言资源；权威映射规则见 spec，本 md 为派生的迟维护视图）
 
 ---
 
@@ -147,7 +147,7 @@
 5. G37/G38 扩展块/路径枚举：纯新增，依赖 G8 trait 约束求解先落定。
 6. ~~**批次 4：Lazy + test 块（G40/G41）**~~——✅ **已实现并转正**（v0.42.0：`LazyRef<T>` + `\|test`/`assert`/`pini test`；另有 G42 Ref 系引用语义修复，见 §6.6）。
 
-> **历史注记（批次进度）**：批次 1-4 已全部落地并转正——G35/G36（v0.39.0）、批次 1/2/3（元组/`^`、if-elif 同级块、match 子块结构）、G40/G41/G42（v0.42.0）均已采纳并移出本节（见 §6.1 删除线；细节归档 `docs/CHANGELOG.md`）。本节剩余候选：G37/G38/G39（见 §6.2 第 4-5 条）。
+> **历史注记（批次进度）**：批次 1-4 已全部落地并转正——G35/G36（v0.39.0）、批次 1/2/3（元组/`^`、if-elif 同级块、match 子块结构）、G40/G41/G42（v0.42.0）均已采纳并移出本节（见 §6.1 删除线；细节归档 `CHANGELOG.md`）。本节剩余候选：G37/G38/G39（见 §6.2 第 4-5 条）。
 
 ### 6.3 治理清理 backlog（非新意图，须跟进）
 
@@ -157,7 +157,7 @@
 
 ### 6.4 批次 3 实施记录（match 子块结构，G28——✅ 已实现 v0.42.0）
 
-**现况**：`case` 缩进进 match 子块；通配兜底=`case _:`；`default:`/pass 通配子块已移除；穷尽性检查**总是开启**（R1，枚举缺变体且无 `case _:` → `nonExhaustiveMatch`）；字面量 match 未命中且无 `case _:` 时静默（R3）。14 示例 + 20 测试文件已迁移（commit `9fdc20b`）。权威语义见 spec；迁移细节归档 `docs/CHANGELOG.md`。
+**现况**：`case` 缩进进 match 子块；通配兜底=`case _:`；`default:`/pass 通配子块已移除；穷尽性检查**总是开启**（R1，枚举缺变体且无 `case _:` → `nonExhaustiveMatch`）；字面量 match 未命中且无 `case _:` 时静默（R3）。14 示例 + 20 测试文件已迁移（commit `9fdc20b`）。权威语义见 spec；迁移细节归档 `CHANGELOG.md`。
 
 ### 6.5 批次 4 决策记录（Lazy / test 块，2026-08-24 全部拍板并落地，见 §6.6）
 

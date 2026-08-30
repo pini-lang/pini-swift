@@ -123,7 +123,7 @@
 | L3 文档名快照 | `^\s*(//\|///\|;\|#).*[A-Za-z0-9_-]+\.md` | 违规 | **0 命中**（已清，2026-08-27 治理收口） |
 | L4 版本号叙事 | `^\s*(//\|///\|;\|#).*v0\.[0-9]+` | 违规 | **0 命中**（已清，2026-08-27 治理收口） |
 | L5 裸 TODO | `(TODO\|FIXME\|HACK\|XXX)` 不跟 `issue-`/`ADR-` | 违规 | **0 命中**（已清） |
-| L6 ID 可兑付 | 抽取 `ADR-[0-9]+`，逐个在 ADR 登记表查 | 悬空即违规 | **全部可兑付**（`docs/adr-index.md` 已建，2026-08-27 治理收口） |
+| L6 ID 可兑付 | 抽取 `ADR-[0-9]+`，逐个在 ADR 登记表查 | 悬空即违规 | **全部可兑付**（`adr/adr-index.md` 已建，2026-08-27 治理收口） |
 
 落地方式：`hooks/comment-lint.sh` 已实现 L1–L6 机械检查并**转 `exit 1` block 模式**（2026-08-27）；`hooks/pre-commit` 与 `.github/workflows/linux-test.yml` 各挂一次。无 ripgrep 时自动回退 `grep -E`（模式已 POSIX 化），CI 容器零额外依赖。
 
@@ -145,7 +145,7 @@
 
 | 类别 | 初始命中 | 2026-08-27 治理后 | 主要落点 |
 |---|---|---|---|
-| **V1 悬空 ADR ID** | 184 处引用 / 9 个 ID | ✅ **全部可兑付**（180 处引用，`docs/adr-index.md` 登记表建成） | 全仓（ADR-015×62、ADR-016×42、ADR-008×26、ADR-017×19、ADR-014×15…） |
+| **V1 悬空 ADR ID** | 184 处引用 / 9 个 ID | ✅ **全部可兑付**（180 处引用，`adr/adr-index.md` 登记表建成） | 全仓（ADR-015×62、ADR-016×42、ADR-008×26、ADR-017×19、ADR-014×15…） |
 | **V2 跨文件章节号** | 36 处 / 20 文件 | ✅ **0 命中**（含命中行内无 `§` 前缀章节号一并缩减，见 §9.4） | `Interpreter` `TypeChecker` `SemanticAnalyzer` `Visibility` `RuntimeError` + 5 测试 + 5 示例 |
 | **V3 版本号叙事** | 35 处 / 17 文件 | ✅ **0 命中**（保留当前有效 ID，删版本号与「逆转」史） | `Parser.swift`×8、`LexerTests`×4、`GrammarConsistencyTests`×3、`Interpreter`×3 |
 | **V4 文档名快照** | 历史 5 处 + 治理前回归 3 处 | ✅ **0 命中** | 历史死链已修复；2026-08-27 清除 `docs/*.md` 快照 3 处（`GrammarConsistencyTests` `FFIModuleTests` `DiagnosticResources`） |
@@ -157,14 +157,14 @@
 ### 9.2 改造批次（依赖顺序，逐批可独立验收）
 
 **Phase 0 — 建 ADR 登记表（前置，阻塞 V1）** ✅ 已完成（2026-08-27）
-- 产出 `docs/adr-index.md`：每个 ADR 一行 = ID ／ 标题 ／ 决策一句话 ／ 落地版本 ／ 权威段落定位（用符号名或主题词，不用章节号）。
+- 产出 `adr/adr-index.md`：每个 ADR 一行 = ID ／ 标题 ／ 决策一句话 ／ 落地版本 ／ 权威段落定位（用符号名或主题词，不用章节号）。
 - 范围：ADR-001 / 008 / 009 / 012 / 013 / 014 / 015 / 016 / 017（信息源：CHANGELOG 历史条目 + spec 状态表）。
 - 验收：L6 lint 全绿（180 处引用均可兑付）。**不改任何源码**。
 
 **Phase 1 — 死链清除（V4）** ✅ 已完成（2026-08-27，含回归 3 处）
 - 3 处死链：删除文档名，改留符号型 ID（如 `ADR-008` / `G##`）或主题词。
 - 文档名已统一为 `pini-*.md`；`pini-spec-v0.md` 现已可直接解析，引用见 spec 即可。
-- 2026-08-27 治理收口清除回归 3 处：`GrammarConsistencyTests` `FFIModuleTests`（`docs/*.md` 快照）、`DiagnosticResources`（`docs/diagnostic-codes.md` 快照）。
+- 2026-08-27 治理收口清除回归 3 处：`GrammarConsistencyTests` `FFIModuleTests`（`docs/*.md` 快照）、`DiagnosticResources`（`diagnostic-codes.md` 快照）。
 - 验收：L3 lint 全绿；`swift build --disable-sandbox` 通过。
 
 **Phase 2 — 章节号缩减（V2）** ✅ 已完成（2026-08-27 治理收口）

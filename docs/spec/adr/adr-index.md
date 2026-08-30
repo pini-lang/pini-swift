@@ -1,6 +1,6 @@
 # ADR 索引（ADR Index）
 
-> **性质**：受 `pini-spec-v0.md` §7 治理的配套登记表。代码注释中引用的 `ADR-NNN` 必须在此可兑付（redeemable）；缺失或悬空的 ID 视为注释违规（spec §7.4）。
+> **性质**：受 `../pini-spec-v0.md` §7 治理的配套登记表。代码注释中引用的 `ADR-NNN` 必须在此可兑付（redeemable）；缺失或悬空的 ID 视为注释违规（spec §7.4）。
 >
 > **ADR-024 后本表为「登记表」而非「目录」**：语言级 ADR 落 `docs/spec/adr/`，宿主级落 `docs/adr/`，自举实施细则落 `examples/selfhost/docs/`。**编号全局共享**——代码注释引用裸 `ADR-NNN`，ID 空间不分层，否则 L6 兑付崩溃。
 >
@@ -35,6 +35,6 @@
 
 - 本表为**最小登记表**：ID → 层级 → 标题 → 状态 → 定义位置，使代码注释里的 `ADR-NNN` 可追。**第一列必须是 `ADR-NNN`**——`hooks/comment-lint.sh` L6 依赖首列做兑付匹配。
 - **层级与定义位置可以不同**：ADR-018 标记为自举级（其内容规范自举项目），但文件落在 `docs/spec/adr/`，以保证既有注释中的 ID 兑付不中断（ADR-024 挂账 7）。
-- `reversed` 类（ADR-013）在旧注释中仍大量出现，属历史语境；注释清理时保留 ID 但删除其附带的版本号叙事（见 `pini-comment-style-guide.md` §9 P3）。
+- `reversed` 类（ADR-013）在旧注释中仍大量出现，属历史语境；注释清理时保留 ID 但删除其附带的版本号叙事（见 `../pini-comment-style-guide.md` §9 P3）。
 - 2026-08-27 治理收口：全仓 180 处 `ADR-NNN` 引用（集中在 `PiniCore` 并发 / FFI / 解析器）**全部可兑付**，`comment-lint.sh` L6 已作为门禁挂 pre-commit 与 CI（大小写不敏感，堵 `adr-` 小写盲区）。
 - **2026-08-30（ADR-024）**：登记表自 `pini-meta` 迁至本目录；`comment-lint.sh` 中的登记表路径同步改为 `docs/spec/adr/adr-index.md`，L6 门禁恢复。

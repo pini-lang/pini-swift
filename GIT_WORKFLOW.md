@@ -39,17 +39,17 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 
 ## 3. 并发多分支策略
 
-- **主干保护：** `master` 为受保护分支，**任何会话都不得直接提交到 `master`**。所有改动走特性分支。
+- **主干保护：** `main` 为受保护分支，**任何会话都不得直接提交到 `main`**。所有改动走特性分支。
 - **分支命名：**
   - 特性：`feature/<id>/<slug>`（例：`feature/human/winterarch/stdlib-io`）
   - 修复：`fix/<id>/<slug>`
   - AI 会话临时工作：`agent/<id>/<slug>`
   - 其中 `<id>` 取 §2 注册的唯一 ID，`<slug>` 为短横线小写描述。
   - ⚠️ **引用名禁用字符：** git 不允许 `:` 出现在分支名中。因此在分支名里把注册 ID 的 `:` 替换为 `/`。例如注册 ID `human:winterarch` 对应分支前缀 `human/winterarch`；AI 默认会话 `agent:pini-dev` 对应 `agent/pini-dev`。
-- **基线：** 从最新的 `master` 切出；开工前先 `git fetch`（若存在远程）确认基线最新。
-- **集成回 `master`：**
+- **基线：** 从最新的 `main` 切出；开工前先 `git fetch`（若存在远程）确认基线最新。
+- **集成回 `main`：**
   - 推荐 `git merge --no-ff <branch>`（保留分支拓扑，便于回溯）。
-  - 或个人分支上 `git rebase master` 保持线性；
+  - 或个人分支上 `git rebase main` 保持线性；
   - **禁止对已经推送 / 被他人依赖的共享分支做 rebase 或任何历史改写。**
 - **冲突解决：** 本地解决。用 `git status` 与 `git diff --name-only --diff-filter=U` 定位冲突文件；解决后 `git add` 再继续。
 
@@ -88,46 +88,33 @@ git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
 1. 读取本文件。
 2. 在 §2 确认或登记你的唯一 ID。
 3. 执行 `git config user.name / user.email` 设为规范值。
-4. 从 `master` 切出特性分支，按 §3 / §4 工作。
-5. 完成后合回 `master` 并（若有远程）推送。
+4. 从 `main` 切出特性分支，按 §3 / §4 工作。
+5. 完成后合回 `main` 并（若有远程）推送。
 
-> ⚠️ **开工前先 `git worktree list` 确认自己位于哪一棵树**（见 §7）：本仓库挂接了多个物理工作树，不同目录共享同一 `.git` 对象库。务必先定位当前工作树与所在分支，再动手，避免跨树混淆。
-
----
-
-## 7. 仓库拓扑：多工作树（worktree）
-
-本仓库在**单一 `.git` 对象库**下挂接多个物理工作树（不同目录共享同一份历史，互不漂移）。任何会话都可能身处其中任一目录——开工前先 `git worktree list` 确认自己位于哪一棵树。
-
-### 当前已登记的工作树
-
-| 物理目录 | 角色 | 分支 | 说明 |
-|---|---|---|---|
-| `Projects/Pini语言语法与Swift-Package实现_20260808/Pini` | 主工作树 | `master` | 常规开发主入口 |
-| `Downloads/Pini语言语法与Swift-Package实现_20260808/Pini` | 次要工作树 | `worktree/secondary` | 与主树内容一致，可作另一会话 / 人并行或暂存之用 |
-
-> 两树的 `.git` 指向同一对象库（次要树的 `.git` 是**链接文件**而非目录）。它们**不是**两个独立仓库，不存在“落错仓库”风险。
-
-### 操作纪律（worktree 专属）
-
-- **提交安全：** 在任一工作树提交都写入同一仓库；主操作仍建议放在主工作树（`master`）。
-- **分支互斥：** 同一分支不能同时在两个工作树 checkout。主树已占 `master`，故次要树用专用分支 `worktree/<purpose>`（当前 `worktree/secondary`）。新增工作树沿用此前缀，避免与 `feature/*` / `fix/*` / `agent/*` 冲突。
-- **新增工作树：**
-  ```bash
-  git worktree add <path> -b worktree/<purpose> master
-  ```
-- **摘除工作树（务必用命令，勿直接 `rm`）：**
-  ```bash
-  git worktree remove <path>      # 有未提交改动会拒绝；确认干净或用 --force（慎用）
-  ```
-- **钩子跨树生效：** `core.hooksPath` 已设为绝对路径，保证从任一工作树提交都触发 §2 身份校验。
-- **记忆目录 `.workbuddy/` 位于仓库父级**（不在 `Pini/` 内），未被 git 跟踪，不属任何工作树。
-
-### 排障
-
-- 若某工作树变成“独立仓库”（两侧 `git worktree list` 各只显示自己），即发生目录分叉。恢复：移除分叉目录的 `.git`，再 `git worktree add` 挂回主仓库。
-- 切换工作树前先 `git status` 确认无未提交改动，避免跨树混淆。
+> ⚠️ **开工前先 `git status -sb` 确认所在分支**：本仓库主干为 `main`，改动一律走特性分支（§3）。
 
 ---
 
-*本文件由 `agent:pini-dev` 于仓库初始化协作约定时建立，随仓库提交，所有会话默认读取。§3 分支命名修正（去除 git 禁用的 `:`）、§5 改为绝对 `hooksPath`、§7 多工作树布局于 2026-08-09 增补，反映 worktree 统一后的实际拓扑。*
+## 7. 仓库拓扑：单工作树 + 嵌套独立仓
+
+### 本仓
+
+单一 `.git`、单一工作树（`Projects/Pini语言语法与Swift-Package实现_20260827/pini-swift`），分支 `main`，远程 `origin = github.com/pini-lang/pini-swift`。如需并行工作，按 §3 用 `worktree/<purpose>` 前缀新增工作树：
+
+```bash
+git worktree add <path> -b worktree/<purpose> main
+git worktree remove <path>    # 摘除务必用命令，勿直接 rm
+```
+
+### 嵌套独立仓：`examples/selfhost/`（ADR-024 D2）
+
+自举项目（探针）位于 `examples/selfhost/`，是**独立 git 仓库**（自有 `.git`），经 `.gitignore` 的 `/examples/selfhost` 条目**不进本仓历史与归档**：
+
+- **不要**在本仓 `git add` 它——git 会对嵌套仓发出 embedded repository 警告并记下悬空 gitlink；被 ignore 后此风险已消除，但仍不得强行 `add -f`
+- **不要**用 `git clean -ffdx`（双 `f`）——那会删除嵌套仓；单 `-f` 是安全的（git 保护含 `.git` 的目录）
+- 本仓 clone 不含它；新环境须单独获取（探针为本地唯一副本，ADR-024 D2）
+- 它有自己的 GIT_WORKFLOW 与身份注册表（§3/§4 纪律同样适用于其内提交）
+
+---
+
+*本文件由 `agent:pini-dev` 于仓库初始化协作约定时建立，随仓库提交，所有会话默认读取。§3 分支命名修正（去除 git 禁用的 `:`）、§5 改为绝对 `hooksPath`（2026-08-09）；§7 由多工作树改写为单工作树 + 嵌套独立仓拓扑、主干 `master`→`main`（2026-08-30，ADR-024）。*

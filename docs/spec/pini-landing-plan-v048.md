@@ -1,6 +1,6 @@
 # Pini 新版 spec 落地规划（v0.48.0 候选）
 
-> **状态**：执行中（Phase 0 治理起步）。本文是 `Pini草稿.md`（更新意图）+ `docs/pini-spec-v0.md`（人工干预）所定义「新版 spec」的落地规划，遵循 spec v0 §1.3 变更治理与 GIT_WORKFLOW。
+> **状态**：执行中（Phase 0 治理起步）。本文是 `Pini草稿.md`（更新意图）+ `pini-spec-v0.md`（人工干预）所定义「新版 spec」的落地规划，遵循 spec v0 §1.3 变更治理与 GIT_WORKFLOW。
 > **制定依据**：所有「代码现状」结论均经 `grep`/`Read` 证据核实（见 §3 证据列），非凭记忆。
 > **已拍板决策**（用户，2026-08-26）：
 > - **D1 FFI 范围**：解释器优先、LLVM 暂缓（仿 LazyRef 模式；FFI 标 Experimental 保可逆）。
@@ -43,7 +43,7 @@
 1. **spec 内部自相矛盾（最高优先级）**：§2.4.1 散文（spec 行 `94/115/116/121`）仍规定 `scope 块标签:`（ADR-013），§A EBNF + 规则 3.13 规定 `标签\|关键字` 且 `scope`"保留但不再使用"。落地前须对齐；为不虚假声称已实现，§2.4.1 改为新设计但标「实现状态：待 Phase 1」。
 2. **FFI 是「文法孤儿」**：草稿有完整设计、§A 有文法，但 spec **prose（§2.x）、§3 缺口表、ADR 全缺**。T14 此前未立项。须先补 FFI prose + ADR-015 + §3 缺口登记再写码。
 3. **关键字集漂移**：§A.1.1 标称 33 关键字（含 `unsafe`/`foreign`/`test`/`detach`），`Token.swift` 仅 lex 子集（证据 E-047 称 30）。随 Phase 1/2 补齐或修正声明。
-4. **证据表未刷新（违反 §1.4）**：新规则 3.2/3.13/3.14/3.15 未进 `docs/evidence-table.toml`；旧 E-008（方法缺省假定）随 3.2 逆转应置 STALE/废弃；E-047 关键字数应更新为 33。
+4. **证据表未刷新（违反 §1.4）**：新规则 3.2/3.13/3.14/3.15 未进 `evidence-table.toml`；旧 E-008（方法缺省假定）随 3.2 逆转应置 STALE/废弃；E-047 关键字数应更新为 33。
 5. **版本**：当前 `v0.47.0`（CHANGELOG）。含破坏性变更 → `v0.48.0` + 迁移说明（spec §1.1 允许 v0.x 破坏性变更，须迁移说明）。
 
 ## 5. ADR 草案
@@ -78,7 +78,7 @@
 
 ## 6. 分阶段落地计划
 
-> 遵循 GIT_WORKFLOW：master 受保护，走 `feature/agent/pini-dev/<slug>`；Conventional Commits；身份 `Pini Dev <dev@pini.local>`。当前 `Pini草稿.md` 与 `docs/pini-spec-v0.md` 为 **staged 未提交**，须先切分支再提交（不直推 master）。
+> 遵循 GIT_WORKFLOW：master 受保护，走 `feature/agent/pini-dev/<slug>`；Conventional Commits；身份 `Pini Dev <dev@pini.local>`。当前 `Pini草稿.md` 与 `pini-spec-v0.md` 为 **staged 未提交**，须先切分支再提交（不直推 master）。
 
 **Phase 0 · 治理补全（先于任何代码）** — `feature/agent/pini-dev/spec-v048-governance`
 1. 提交人工已 staged 的草稿+spec 基线。

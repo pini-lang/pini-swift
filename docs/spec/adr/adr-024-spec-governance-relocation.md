@@ -26,7 +26,7 @@ Accepted（2026-08-30，用户批准）
 
 | 目的地 | 内容 | 判据 |
 |---|---|---|
-| `pini-swift/docs/spec/` | `pini-spec-v0.md`、`pini-project-spec.md`、`pini-comment-style-guide.md`、`pini-glossary.toml`、`en-zh-translation-map.md`、`diagnostic-codes.md`、`test-refactoring-principles.md`、`pini-roadmap-next.md`、`pini-landing-plan-v048.md`、`evidence-table.toml`、语言 CHANGELOG、**语言级 ADR** | 对所有实现成立 |
+| `pini-swift/docs/spec/` | `../pini-spec-v0.md`、`../pini-project-spec.md`、`../pini-comment-style-guide.md`、`../pini-glossary.toml`、`../en-zh-translation-map.md`、`../diagnostic-codes.md`、`../test-refactoring-principles.md`、`../pini-roadmap-next.md`、`../pini-landing-plan-v048.md`、`../evidence-table.toml`、语言 CHANGELOG、**语言级 ADR** | 对所有实现成立 |
 | `pini-swift/docs/` | ADR-022（宿主级）、宿主侧 `issue-*.md`、BUILDING、实现级 CHANGELOG | 仅对 pini-swift 成立 |
 | `examples/selfhost/docs/` | `pini-bootstrap-architecture.md`、`code-style.md`、`abbreviations.md`、自举侧 `issue-*.md` | 仅对自举成立 |
 
@@ -48,7 +48,7 @@ Accepted（2026-08-30，用户批准）
 | 无 submodule / 无 pin / 无漂移 | ✅ | 钉版漂移这一类失效被根除 |
 | `git clean -fdx`（单 f）误删 | ✅ 安全 | git 保护含 `.git` 的目录；仅 `-ffdx` 才会删 |
 
-> **命名说明**：目录名取 `selfhost`，以避开与宿主可执行文件 `pini`（`.build/debug/pini`）撞名。其愿景含义见 `pini-roadmap-next.md` §2.5，本 ADR 不重述。
+> **命名说明**：目录名取 `selfhost`，以避开与宿主可执行文件 `pini`（`.build/debug/pini`）撞名。其愿景含义见 `../pini-roadmap-next.md` §2.5，本 ADR 不重述。
 
 ### D3 三层规范模型
 
@@ -149,7 +149,7 @@ ADR-018 中继续有效：D2（目录布局）、D3（英文项目）、D2-注�
 2. **8 处引用腐烂待改**（原列 7 处，补 1）：
    - pini-swift 侧：`README.md`×3（312/314/331 行）、`docs/README.md`、`docs/CHANGELOG.md` 首行、**`GIT_WORKFLOW.md` §7（`master`→`main`、worktree 路径过期、需增列 `examples/selfhost` 为嵌套独立仓）**
    - selfhost 侧：`GIT_WORKFLOW.md` §7（拓扑与路径全改）、`docs/code-style.md` 头部、`pini.toml` 注释
-3. **`pini-project-spec.md` 4 处过时点待修订**：
+3. **`../pini-project-spec.md` 4 处过时点待修订**：
    - §7.1 注称「宿主归 `.pini/toolchain`（见 §2）」但 **§2 表中无该条目**，交叉引用指向不存在的小节
    - §2 `deps/` 判据「根含 `pini.toml`」**对宿主失效**（宿主含 `Package.swift`）
    - §4 `.gitignore` 同时 ignore `deps/` 又说 submodule 被跟踪（注释已自认矛盾）
@@ -170,4 +170,4 @@ ADR-018 中继续有效：D2（目录布局）、D3（英文项目）、D2-注�
 
 - **前置**：ADR-018（部分被取代，ID 保留可兑付）、ADR-022（重分类为宿主级）、ADR-023（D5 的反例）
 - **产物**：`docs/spec/` 目录结构、`.pini/baseline`、本 ADR
-- **后续**：见「挂账」12 项。建议执行顺序——① 本 ADR 批准 ② 元仓三向切分 ③ 8 处引用修正 + 链接校验脚本 ④ `pini-project-spec.md` 修订 ⑤ 自举入树（先移动后改路径）+ submodule 移除 ⑥ 跑差分门禁确立 baseline ⑦ 四项实测 ⑧ `adr-index.md` 转登记表 ⑨ pini-meta 归档（最后）
+- **后续**：见「挂账」12 项。建议执行顺序——① 本 ADR 批准 ② 元仓三向切分 ③ 8 处引用修正 + 链接校验脚本 ④ `../pini-project-spec.md` 修订 ⑤ 自举入树（先移动后改路径）+ submodule 移除 ⑥ 跑差分门禁确立 baseline ⑦ 四项实测 ⑧ `adr-index.md` 转登记表 ⑨ pini-meta 归档（最后）

@@ -218,7 +218,7 @@ pini/pini.toml       →  spec        = "0.1"
 > ② 「§8 待观察删两条」——那两条待观察项**主干上也不存在**（只写在本稿里）。
 > 教训：**清单条目要对着目标文件的实际内容核，不能对着记忆写。**
 
-### B. `pini-project-spec.md`（pini-meta）
+### B. `../pini-project-spec.md`（pini-meta）
 
 - [x] §4 `.gitignore` 基线：`.pini-build/` → `.pini/build/`，`.pini-cache/` → `.pini/cache/`
 - [x] **`.pini/resources/` 与 `.pini/toolchain/` 必须显式不进 `.gitignore`**
@@ -228,7 +228,7 @@ pini/pini.toml       →  spec        = "0.1"
 - [x] §2 `deps/` 边界性质：由「R1' 保留目录永不扫描」改为「只放 `require` 的模块，R1 自切」
 - [ ] §7 清单 schema：`resources.*` 增落点说明；`build.exclude` 标注为**测试收集**语义
 
-### C. `pini-spec-v0.md`（pini-meta）
+### C. `../pini-spec-v0.md`（pini-meta）
 
 - [x] §2.5 依赖图与跨模块访问：双通道判据改「目标**根**有无 `pini.toml`」；
       新增 resources 落点 `.pini/resources/<name>/`、R5–R6 落点与扫描、**R8 文件命名**三段

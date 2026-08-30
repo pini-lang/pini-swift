@@ -16,13 +16,13 @@
    ├── Pini草稿.md        ── 设计意图/理由（rationale），不可单独作为兼容性依据
    ├── README.md             ── 用户文档，必须 conform 本规范（修正其旧语法与失效引用）
    ├── examples/*.pini         ── 必须符合本规范，否则视为示例缺陷
-   ├── docs/pini-*.md     ── 分析文档（缺口/张力/路线），引用本规范
+   ├── pini-*.md     ── 分析文档（缺口/张力/路线），引用本规范
    ├── docs/diagnostic-codes.md ── 诊断错误码**人类可读派生视图**（迟维护，权威映射在 TOML 资源，见 §2.6）
    ├── docs/test-refactoring-principles.md ── 工程标准（测试规范），受本规范 §6 治理（细则见该文档）
-   └── docs/pini-comment-style-guide.md ── 工程标准（注释规范），受本规范 §7 治理（细则见该文档）
+   └── pini-comment-style-guide.md ── 工程标准（注释规范），受本规范 §7 治理（细则见该文档）
 ```
 
-> 注：`docs/diagnostic-codes.md` 在事实源层级中属**派生/低权威**——错误码的权威映射是 `Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml`（见 §2.6），本 md 可落后于 TOML 而不视为规范违规（迟维护）。
+> 注：`diagnostic-codes.md` 在事实源层级中属**派生/低权威**——错误码的权威映射是 `Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml`（见 §2.6），本 md 可落后于 TOML 而不视为规范违规（迟维护）。
 
 - 任何「草稿写了、本规范没写」的构造，以**本规范为准**；本规范未定义处按 §3 已知缺口处理（不臆测）。
 - README 中指向 `../.trae/Pini语言规范.md` 的失效引用，已重指向本文件（P0 快速胜出项之一，见 §5）。
@@ -58,11 +58,11 @@
 
 > spec 的权威性由**证据**支持（每处引用指向实现，以**符号定位为主**）；证据具有**时效性**——代码演进会使语义变更、符号迁移/删除、旧引用失效。本协议要求治理时维护**证据表**，把「某处 spec 声称有证据」与「证据当前是否可信」分开记账。
 
-- **证据表（TOML）**：存于 `docs/evidence-table.toml`（机器可管理/可 diff/可脚本过筛）。每条记录 = `{ assertion / spec_ref | code_ref（符号定位 + 软行号） | validated_at 时间戳 | status }`。状态为 `FRESH`（本次治理 ≤60 分钟内验证通过）或 `STALE`（未在 60 分钟内重新验证，或验证失败）。
+- **证据表（TOML）**：存于 `evidence-table.toml`（机器可管理/可 diff/可脚本过筛）。每条记录 = `{ assertion / spec_ref | code_ref（符号定位 + 软行号） | validated_at 时间戳 | status }`。状态为 `FRESH`（本次治理 ≤60 分钟内验证通过）或 `STALE`（未在 60 分钟内重新验证，或验证失败）。
 - **行号 = 软证据（软定位）**：`code_ref` 中的行号**仅作快速查看指导，不参与 FRESH/STALE 判定**。理由：① 注释/编辑会系统性移动行号（如本规范 §A 出处曾整体漂移 +120~180 行，语义完全未变）；② 一般引述（如「见 `Parser.parseFuncDecl`」）并不携带行号。证据的**权威判定键是符号名 + 语义**；行号漂移而符号仍在附近时，证据依然可信，治理时可顺手更新行号但不强制。
 - **粒度（60 分钟）**：证据自 `validated_at` 起 **60 分钟**内视为可信；超过 60 分钟未重新验证 → 自动降级 `STALE`（不可信）。
 - **过筛不成即不可信**：治理时对涉及证据重新过筛（grep/read 对应 `code_ref`）——**找不到符号、或语义不符** → 标 `STALE`，**不得**作为写入依据。机械过筛（行号存在/符号存在）≠ 可信；语义验证才算 FRESH。**行号对不上不自动降级**（见上「行号=软证据」）。
-- **刷新协议（MUST）**：刷新证据时——① 把待刷新的 `STALE` 条目**拷贝到新条目**（保留待验证痕迹）；② **移除旧条目**；③ 重新验证后写入新 `validated_at`。每次治理只保留一张当前证据表（`docs/evidence-table.toml`）。
+- **刷新协议（MUST）**：刷新证据时——① 把待刷新的 `STALE` 条目**拷贝到新条目**（保留待验证痕迹）；② **移除旧条目**；③ 重新验证后写入新 `validated_at`。每次治理只保留一张当前证据表（`evidence-table.toml`）。
 - **禁止**：以 `STALE` 证据作为写入 spec 的依据；凭记忆填符号/行号；复制他处引用未经重新验证。
 - **存疑证据显式化**：任何「非常早期设定、未按本协议重新验证」的证据必须标记为 `STALE（待刷新，早期设定）`，不得假装可信（如 §A.4 规则 3.2 方法缺省假定）。
 
@@ -216,7 +216,7 @@ match 值:
 
 ### 2.5 访问控制（约定制 4 级）
 
-> **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests`、`FieldVisibilityTests`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现待做**，详见 `issue-module-system-rules-2026-08-28.md`。
+> **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests`、`FieldVisibilityTests`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现待做**，详见 `issue/issue-module-system-rules-2026-08-28.md`。
 
 - **可见性四级（取三者最严格者为准）**：
 
@@ -265,16 +265,16 @@ match 值:
 > **状态**：已落地（T1/T11，v0.44.0 批次 A）。本小节为权威治理规则。稳定性 **Provisional**。
 
 - **权威映射（single source）**：错误码 → 消息/建议模板的**唯一权威映射在 TOML 资源**——`Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml`（经 `Bundle.module` 加载；`--lang zh|en` 切换，未覆盖码回退 zh）。代码侧 `DiagnosticProviding` 协议元数据（`Sources/PiniCore/Common/Diagnostic.swift`）与 `ErrorFormatter.formatDiagnostic` 渲染（`Error: <类型> [<code>]`）以 TOML 为文案源。
-- **登记规则（append-only）**：新增错误码**只须登记 TOML**（两语言资源同步登记；已分配的码不删除、不复用；新码追加段内编号）。**不得**以任何人类可读文档（含 `docs/diagnostic-codes.md`）作为登记入口——消除多重事实。
+- **登记规则（append-only）**：新增错误码**只须登记 TOML**（两语言资源同步登记；已分配的码不删除、不复用；新码追加段内编号）。**不得**以任何人类可读文档（含 `diagnostic-codes.md`）作为登记入口——消除多重事实。
 - **域段约定**：E0 通用 / E1 词法 / E2 语法 / E3 语义 / E4 类型 / E5 运行时 / E6 IR 生成；E7 警告段预留（warning 通道）。
-- **派生视图（低权威，迟维护）**：`docs/diagnostic-codes.md` 为人类可读**派生视图**（错误码→含义），**可落后于 TOML 而不视为规范违规**；其内容不具权威性，不一致时以 TOML 为准。同步为低优先级维护（随批次顺手更新，非强制）。
+- **派生视图（低权威，迟维护）**：`diagnostic-codes.md` 为人类可读**派生视图**（错误码→含义），**可落后于 TOML 而不视为规范违规**；其内容不具权威性，不一致时以 TOML 为准。同步为低优先级维护（随批次顺手更新，非强制）。
 - **一致性检查（建议）**：`tomllib` 可脚本比对 TOML 键集与 `Diagnostic.swift` 分发；派生 md 不纳入一致性门禁。
 
 ---
 
 ### 2.7 FFI 与 unsafe（Experimental，ADR-015）
 
-> **状态**：已实现（Phase 2a 解释器优先，2026-08-27 落地；稳定性 **Experimental**，v0.x 内可大改）。语义定义见本小节与 §A EBNF。实现策略（用户决策 D1）：**解释器优先（Phase 2a），LLVM 端暂缓**。落地规划见 `docs/pini-landing-plan-v048.md`。
+> **状态**：已实现（Phase 2a 解释器优先，2026-08-27 落地；稳定性 **Experimental**，v0.x 内可大改）。语义定义见本小节与 §A EBNF。实现策略（用户决策 D1）：**解释器优先（Phase 2a），LLVM 端暂缓**。落地规划见 `pini-landing-plan-v048.md`。
 
 Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操作原始内存。设计原则：**不安全范围最小化**、**与 ARC 隔离**、**严守 C ABI（spec §3.2，不得泄漏 Swift 类型）**。
 
@@ -330,9 +330,9 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.swift:347-384 / §A.4 3.0 |
 | G3 | `try`/`except` 返回元组错误传播（errors-as-data，非异常式） | 已定义（§2.4.4；错误位=元组第 2 元素，`^` 右值糖注入返回元组末槽） | Provisional | v0.43.0 | Interpreter.swift:1996 / 1383 / §2.4.4 |
 | G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**） | Stable | v0.43.0 | SuspendEvaluator.swift / SuspendScheduler.swift / Value.swift / §3.1 |
-| G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `docs/pini-roadmap-next.md` |
-| G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `docs/pini-roadmap-next.md` |
-| G42 | `Ref 系类型引用语义`（独立 Value case + class 承载、复制共享状态） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `docs/pini-roadmap-next.md` |
+| G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
+| G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
+| G42 | `Ref 系类型引用语义`（独立 Value case + class 承载、复制共享状态） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
 | G43 | FFI 与 unsafe 子系统（`foreign` 块 / `*T` 指针 / `&` 取址 / `unsafe` 表达式 / `|unsafe` 函数 / 与 ARC 隔离） | 已实现（Phase 2a 解释器优先 + Phase 2b 解释器 dlsym 动态加载：foreign 块 + 原生函数表 / `*T` C 兼容性校验 / `&`+unsafe 上下文 / `|unsafe` 函数 / `dlsym` 裸 C 绑定 + thunk 工厂 + `[ffi]` 配置 + `SystemDL`/`FFILoader`；LLVM 端 FFI 仍显式 unsupported，D1） | Experimental | v0.48.0（Phase 2a）/ v0.48.3（Phase 2b 解释器，ADR-017） | §2.7 / §A.2.2(`foreign-decl`)/§A.2.5(`&`/`unsafe`)/§A.2.6(`*T`) |
 | G44 | 控制流标签语法反转（`scope 块标签:` → `标签|控制流关键字`；`scope` 关键字转 reserved-error） | 已实现（ADR-014：parseStatement 标签分派 + parseIf/parseWhile/parseFor(label:)；`scope` 转 reserved-error） | Provisional | v0.48.0（Phase 1） | §A.4 规则 3.13 / ADR-014 |
 | G45 | 字符谓词 `is_letter`（UCD \p{L} 字母判定，`String -> Bool`；空串/首字符非字母 → false） | 已实现（解释器端；自举 lexer 前置，issue-lexer-gaps-2026-08-28 P1-A） | Provisional | v0.49.0 | §A.1.1 IDENT（`\p{L}` 实现原语）/ ADR-018 G1 |
@@ -351,7 +351,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 > **已闭环缺口索引**：正文引用的以下 G 号已随版本闭环（已定义 / 已落地 / 已采纳 / 候选），故不列入上表；对应落点：G8（trait 约束求解，Experimental，§2.4.1）、G9（ARC，见下 Optional 条）、G11（块标签 `scope 块标签:`，§2.4.1/ADR-013）、G13（注释 `;`/`#`，§A.1.4）、G14（文件 IO，§2.4.1）、**G15（模块系统边界，§2.5 残留 → 由 G52 收口）**、G17（数组/字典/集合字面量，§2.4.1）、G18/G24（泛型与运行时单态化，Experimental）、G28（match 子块 + `case _:`，§2.4.3）、G29（匿名函数，§2.4.1）、G30（nil，§2.4.1）、G31（`?T` 糖，§2.4.1）、G32（step，§2.4.1）、G34（COW 值语义，§2.4.1）、G35（`#` 文档注释，§2.4.1/§A.1.4）、G36（for-in，§2.4.1）、G37（扩展块，候选 §A.5.3）、G39（defer 语义，候选 §A.5.5）。
 
 > **已实现但运行语义未全钉定（Experimental，语义待定）**：以下构造已由解释器实现并被示例使用；其中语法若已在 §A 定义则标注出处，**运行语义未全钉定**者均按 Experimental 对待、不承诺兼容——这是「登记缺口」而非「反录入为事实」（避免「实现即规范」）：
-> - `defer`（块退出前 LIFO 清理）—— 草稿（`defer 块退出前清理:` 小节）已有 LIFO 语义意图（资源释放/清理）；示见 `examples/defer.pini`；**意图候选项 G39**（见 `docs/pini-roadmap-next.md`），若采纳拟 Experimental→Provisional。
+> - `defer`（块退出前 LIFO 清理）—— 草稿（`defer 块退出前清理:` 小节）已有 LIFO 语义意图（资源释放/清理）；示见 `examples/defer.pini`；**意图候选项 G39**（见 `pini-roadmap-next.md`），若采纳拟 Experimental→Provisional。
 > - 具名枚举关联值（`[E] case A(x: T)`）—— **已钉定并已实现**（2026-08-29，张力 T4 收口）：具名形参声明 / 标签实参构造（按名对位）/ match 具名绑定（`case A(x: v):`）全链路可用；位置形态并存（同一 case 声明内不可混用）；绑定数 ≠ 关联值数 → E4。宿主规则 3.15 的具名拒绝随之修订。
 > - 内嵌组合（结构体内首行裸父类型名）—— 语法检测已定义（§A.4 规则 3.9 / Parser.swift:497-515，草稿（`(结构块)` 组合示例））；运行语义（字段/方法嵌入复用）按张力 T5 待钉定（示见 `examples/composition.pini`）。
 > - 复合赋值（`+= -= *= /= %= &= \|= ^= <<= >>=`）—— 语法与折叠已定义（§A.2.4 assign-op / §A.4 规则 3.11）；溢出/符号运行语义未定，张力 T1·。
@@ -441,15 +441,15 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 - **输入**：`Pini草稿.md`（rationale）；早期 `pini-gap-analysis.md` / `pini-tensions.md` 已合并入本规范 §3 与路线图。
 - **下游**：`pini-roadmap-next.md` 以本规范为交付物。
 - **形式文法产物**：T5 的 EBNF（S2–S4）与候选产生式（S5）已并入本规范 **§A 附录**，为形式文法的唯一载体（原草案与事实基线文档已删除）。G1/G2/G3 已随 §A / §2.4.4 闭环（见 §3）。
-- **工程标准（测试）**：`docs/test-refactoring-principles.md` 为项目**强制测试规范**，受本规范 §6 治理（细则见该文档）。
-- **工程标准（注释）**：`docs/pini-comment-style-guide.md` 为项目**强制注释规范**，受本规范 §7 治理（细则见该文档）。与测试规范协和：测试规范要求「写意图」，注释规范约束「意图之外不叙事、不引易变外部」。
-- **诊断码派生视图**：`docs/diagnostic-codes.md` 为 `Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml` 的人类可读**派生视图**（迟维护，低权威；权威映射见 §2.6，不一致以 TOML 为准）。
+- **工程标准（测试）**：`test-refactoring-principles.md` 为项目**强制测试规范**，受本规范 §6 治理（细则见该文档）。
+- **工程标准（注释）**：`pini-comment-style-guide.md` 为项目**强制注释规范**，受本规范 §7 治理（细则见该文档）。与测试规范协和：测试规范要求「写意图」，注释规范约束「意图之外不叙事、不引易变外部」。
+- **诊断码派生视图**：`diagnostic-codes.md` 为 `Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml` 的人类可读**派生视图**（迟维护，低权威；权威映射见 §2.6，不一致以 TOML 为准）。
 
 ---
 
 ## 6. 测试规范（Testing Standards）
 
-> 本节将 `docs/test-refactoring-principles.md` 确立为项目**强制工程标准**，受本规范治理（与语言语义同源、同变更流程 §1.3）。测试是 v0.x 演进的 safety net——任何 Provisional/Experimental 构造的落地都必须伴随可回归测试（呼应 §1.1 演进策略）。完整细则（模板、示例代码、checklist）见该文档；本节给出权威摘要。
+> 本节将 `test-refactoring-principles.md` 确立为项目**强制工程标准**，受本规范治理（与语言语义同源、同变更流程 §1.3）。测试是 v0.x 演进的 safety net——任何 Provisional/Experimental 构造的落地都必须伴随可回归测试（呼应 §1.1 演进策略）。完整细则（模板、示例代码、checklist）见该文档；本节给出权威摘要。
 
 ### 6.1 三要素（每条测试必备）
 - **意图用例（Intent Case）**：测试名 `test[模块][行为]`，一眼可见验证目的；方法首行注释写明意图。
@@ -485,7 +485,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 ## 7. 注释规范（Comment Standards）
 
-> 本节将 `docs/pini-comment-style-guide.md` 确立为项目**强制工程标准**，受本规范治理（与语言语义同源、同变更流程 §1.3）。定位：把 §0「跨文件章节缩减」与 §1.4「行号=软证据、符号名+语义为权威」两条既有治理原则，操作化为代码注释的日常写法——不新增立场，只落地既有原则。完整细则（分级、正反样例、lint 正则、迁移批次）见该文档；本节给出权威摘要。
+> 本节将 `pini-comment-style-guide.md` 确立为项目**强制工程标准**，受本规范治理（与语言语义同源、同变更流程 §1.3）。定位：把 §0「跨文件章节缩减」与 §1.4「行号=软证据、符号名+语义为权威」两条既有治理原则，操作化为代码注释的日常写法——不新增立场，只落地既有原则。完整细则（分级、正反样例、lint 正则、迁移批次）见该文档；本节给出权威摘要。
 
 ### 7.1 寿命不对称（本规范为何要管注释）
 代码注释是**持久、慢维护**空间（改代码常忘改注释）；spec 段落 / ADR / issue / CHANGELOG / 行号是**半持久、快演进**空间。注释里指向快变外部的耦合必然腐化。故：**原因与来源进受版本治理的外部文档，注释只留自包含陈述 + 符号型稳定 ID**。

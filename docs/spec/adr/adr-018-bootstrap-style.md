@@ -31,7 +31,7 @@ Pini 语言启动**编译器自举**：以宿主 `pini-swift`（Swift 实现，�
 | **P3** | **全英文零中文标识符**（编译器代码；文档与注释同英文，见 D3）——中文友好的实证点落在 i18n 产品面 |
 | **差分骨架** | harness 放宿主 `pini-swift/Tests`（Swift 侧唯一能同时驱动两路径的中立位置：宿主直接执行 corpus vs 宿主加载 `pini/` 编译器再执行 corpus）；corpus = `examples/`，单一事实源在宿主 |
 | **工程纪律** | 继承 GIT_WORKFLOW（贡献者注册表 `agent:pini-dev`、分支命名、Conventional Commits、comment-lint pre-commit），各仓库复制 |
-| **术语词典** | `pini-glossary.toml`（TOML 载体）；术语条目挂稳定 ID，诊断消息/文档引用用 `{term:key}` 机器可追溯；条目 `en`/`zh`/`status`/`since` 必填，`alt_zh`/`pos`/`contexts` 可选（消歧） |
+| **术语词典** | `../pini-glossary.toml`（TOML 载体）；术语条目挂稳定 ID，诊断消息/文档引用用 `{term:key}` 机器可追溯；条目 `en`/`zh`/`status`/`since` 必填，`alt_zh`/`pos`/`contexts` 可选（消歧） |
 
 ### 基因层（代码组织 / 错误建模 / 格式）
 
@@ -74,10 +74,10 @@ pini-meta/（文档治理仓，可推远程）      pini-swift/（实现 A：Swi
 **变困难（代价）**：
 - 纯重述风险高于翻译驱动——行为保真无结构兜底，差分测试是唯一安全网，须严格按拓扑序 + 基线快照推进；
 - `pini/` 零中文标识符使 CJK 工具链（LSP/格式化/REPL 输入）支持降为宿主 examples 级验证；
-- 已知副作用（待治理）：① pini-swift 的 comment-lint L6（ADR 兑付）因登记表迁至 pini-meta 而跳过，需适配（豁免或跨仓库读表）；② `comment-lint.sh` 各仓库一份副本，防漂移（规则事实源在 pini-meta）；③ `Diagnostics.{en,zh}.toml` 注释中 `docs/diagnostic-codes.md` 文档名快照为既有内容，未动。
+- 已知副作用（待治理）：① pini-swift 的 comment-lint L6（ADR 兑付）因登记表迁至 pini-meta 而跳过，需适配（豁免或跨仓库读表）；② `comment-lint.sh` 各仓库一份副本，防漂移（规则事实源在 pini-meta）；③ `Diagnostics.{en,zh}.toml` 注释中 `../diagnostic-codes.md` 文档名快照为既有内容，未动。
 
 ## 相关
 
 - 前置：ADR-015 / ADR-017（FFI 与 unsafe 解释器端）；spec §3.2（C ABI shim 硬约束、阶段 3 自举北极星）
-- 产物：`pini-glossary.toml`（术语表）；`pini/` 脚手架（D2 布局）；差分 harness（宿主 Tests）
+- 产物：`../pini-glossary.toml`（术语表）；`pini/` 脚手架（D2 布局）；差分 harness（宿主 Tests）
 - 后续：G2 专门设计（AST 形态 + pass 组织，独立架构议题）

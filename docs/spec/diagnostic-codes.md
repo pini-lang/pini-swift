@@ -122,7 +122,7 @@
 |----|------|
 | E7-001 | 未使用变量 |
 
-> ⚠️ 本段演示派生滞后：E7-001 已在 `Diagnostics.en.toml`/`Diagnostics.zh.toml` 分配（warning 通道 v0.44.0 批次 B 已落地）；本表补登于此，但**权威与完整以 TOML 为准**（见文件头声明）。
+> ⚠️ 本段演示派生滞后：E7-001 已在 `Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml` 分配（warning 通道 v0.44.0 批次 B 已落地）；本表补登于此，但**权威与完整以 TOML 为准**（见文件头声明）。
 
 ## 待办（后续批次）
 

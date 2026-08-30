@@ -9,8 +9,8 @@
   - G51（import/export 块形式为唯一顶级形态；宿主裸语句为**已知偏差**，收敛待办）
   - ADR-017（`[ffi]` 模块配置，pini.toml 唯一已兑现的模块级语义）
   - ADR-018 D1（宿主 git 依赖）
-  - `pini-project-spec.md` §3（预留目录）/ §4（`.gitignore` 基线）/ §7（清单 schema）
-  - `pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
+  - `../pini-project-spec.md` §3（预留目录）/ §4（`.gitignore` 基线）/ §7（清单 schema）
+  - `../pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
 
 > **改名溯源（R8，2026-08-29）**：本工单原文使用 `module.toml` / `_summary.toml`，
 > 现统一为 **`pini.toml`** / **`pini-summary.toml`**（理由见 R8；过程见 `issue-pini-dir-namespace-2026-08-29`）。
@@ -168,7 +168,7 @@ fmt  = ">=2.0, <3.0"
 uni = "^3.0"
 ```
 
-- 版本约束语法复用 `pini-project-spec.md` §7.3 已定义的 `^1.2` / `~1.2.3` / `=1.2.3` / `">=1.0, <2.0"`；**未知写 `*`**，由 `pini mod refresh` 回填精确版本（D21）。
+- 版本约束语法复用 `../pini-project-spec.md` §7.3 已定义的 `^1.2` / `~1.2.3` / `=1.2.3` / `">=1.0, <2.0"`；**未知写 `*`**，由 `pini mod refresh` 回填精确版本（D21）。
 - **本节是 MVS 的输入**——MVS 在 `require` 的传递闭包上求解（R3）。
 - 生成命令 `pini mod tidy` **离线运行**（D21）：它只读本地 import 与既有 require，不联网。
 
@@ -444,10 +444,10 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 
 ### 6.1 治理（pini-meta，本工单随附）
 
-- [x] 工单落档 `docs/issue-module-system-rules-2026-08-28.md`
-- [ ] `pini-spec-v0.md`：登记 **G52** 决策行；§2.5 访问控制表按 §4.3 定稿（补"可被跨模块引入"列）；import/export 条款补"import 即依赖、依赖图禁环"
-- [ ] `pini-project-spec.md`：§3/§4 增加 `pini-summary.toml`「生成但必须提交」条款；§7 清单 schema 增 `[tap]` / `[require]` + `[require.<tap>]` / `[resources]` + `[resources.<tap>]` / `[replace]`，**移除 `[dependencies]`**（D17：职责拆分给 require + resources；无实现消费，硬切无共存期）
-- [ ] `pini-roadmap-next.md`：T2 状态更新（本工单已覆盖其"跨模块 import 真正可用 + `[dependencies]` 从占位到解析"目标，仅**宿主实现**仍待做）
+- [x] 工单落档 `issue-module-system-rules-2026-08-28.md`
+- [ ] `../pini-spec-v0.md`：登记 **G52** 决策行；§2.5 访问控制表按 §4.3 定稿（补"可被跨模块引入"列）；import/export 条款补"import 即依赖、依赖图禁环"
+- [ ] `../pini-project-spec.md`：§3/§4 增加 `pini-summary.toml`「生成但必须提交」条款；§7 清单 schema 增 `[tap]` / `[require]` + `[require.<tap>]` / `[resources]` + `[resources.<tap>]` / `[replace]`，**移除 `[dependencies]`**（D17：职责拆分给 require + resources；无实现消费，硬切无共存期）
+- [ ] `../pini-roadmap-next.md`：T2 状态更新（本工单已覆盖其"跨模块 import 真正可用 + `[dependencies]` 从占位到解析"目标，仅**宿主实现**仍待做）
 
 ### 6.2 宿主 pini-swift（待做，分支实现）
 
