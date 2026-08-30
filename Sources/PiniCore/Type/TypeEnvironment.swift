@@ -134,6 +134,35 @@ public final class TypeEnvironment {
  return typeMethods[typeName]?[methodName]
  }
 
+ /// 内建泛型类型（Array 等）的元素类型参数占位名。内建方法签名用它表达
+ /// 「与接收者元素类型相同」，查找时按接收者的类型实参代入。
+ private static let builtinElementParam = "T"
+
+ /// 成员方法签名查找的统一入口：先按**用户泛型**特化，再按**内建泛型**代入。
+ ///
+ /// 修复 H2（2026-08-30）：此前 `Array<Token>.append` 走 `lookupMethod` 直接返回
+ /// 登记的 `Array<Any>`，元素类型在返回处被擦除，类型化累积器无法存活。
+ ///
+ /// - Parameter typeArgs: 接收者的类型实参；`nil` = 接收者无类型实参（退化场景），
+ ///   此时占位 `T` 代入 `Any`，行为与修复前一致。
+ public func lookupMethodSignature(
+ typeName: String, typeArgs: [TypeAnnotation]?, methodName: String
+ ) -> FunctionSignature? {
+ if let args = typeArgs,
+ let sig = lookupSpecializedMethod(typeName: typeName, typeArgs: args, methodName: methodName) {
+ return sig
+ }
+ guard let sig = typeMethods[typeName]?[methodName] else { return nil }
+ // 代入用的是占位类型，位置无语义（仅用于构造 TypeAnnotation），取空位置即可。
+ let loc = SourceLocation(line: 0, column: 0, fileName: "")
+ let element = typeArgs?.first ?? .simple(name: "Any", location: loc)
+ let substitutor = TypeSubstitutor(bindings: [Self.builtinElementParam: element])
+ return FunctionSignature(
+ params: sig.params.map { substitutor.substitute(type: $0) },
+ returns: sig.returns.map { substitutor.substitute(type: $0) }
+ )
+ }
+
  // MARK: - Traits
 
  /// trait 声明注册表：traitName -> TraitDecl（含方法签名，body 非空即默认实现）。

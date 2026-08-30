@@ -349,4 +349,147 @@ main|func() -> ()
             }
         }
     }
+
+    // MARK: - 枚举值的类型归属（H3，2026-08-30）
+
+    /// 意图：枚举 case 构造值应推断为**父枚举类型**（spec「匹配值推断为枚举类型」），可作函数返回值。
+    /// 修复前推断为 case 名本身 → `expected Shape, got circle`。
+    /// 推进性测量：输出 3（经 match 解构取出载荷）。
+    func testEnumCaseValueAsReturnType() throws {
+        let source = """
+[Shape]
+circle(r: I32,)
+
+make|func() -> (Shape,)
+    return circle(r: 3,)
+
+main|func() -> ()
+    match make():
+        case circle(r,):
+            print(r)
+    return
+"""
+        XCTAssertNoThrow(try checkModule(source), "枚举 case 构造应推断为父枚举类型")
+        XCTAssertEqual(try runProgram(source), "3\n")
+    }
+
+    /// 意图：枚举 case 构造值可作实参传入期望父枚举类型的形参。
+    /// 推进性测量：输出 red。
+    func testEnumCaseValueAsArgument() throws {
+        let source = """
+[Color]
+red()
+blue()
+
+name_of|func(c: Color,) -> (String,)
+    match c:
+        case red():
+            return "red"
+        case blue():
+            return "blue"
+    return "?"
+
+main|func() -> ()
+    print(name_of(red()))
+    return
+"""
+        XCTAssertNoThrow(try checkModule(source), "枚举 case 构造应可传给父枚举形参")
+        XCTAssertEqual(try runProgram(source), "red\n")
+    }
+
+    /// 意图：枚举 case 值可作**另一个枚举 case 的关联值**（keyword 枚举化的前置）。
+    /// 推进性测量：输出 1（构造出 1 个 token）。
+    func testEnumCaseValueAsAssociatedValue() throws {
+        let source = """
+[keyword]
+kw_var()
+
+[Token]
+keyword(k: keyword, loc: I32,)
+
+main|func() -> ()
+    var ts = []
+    ts = ts.append(keyword(k: kw_var(), loc: 1,))
+    print(len(ts))
+    return
+"""
+        XCTAssertNoThrow(try checkModule(source), "枚举值应可作关联值")
+        XCTAssertEqual(try runProgram(source), "1\n")
+    }
+
+    /// 意图：无关联值 case 的调用形态 `red()` 与裸名 `red` 等价（裸名在求值期
+    /// 已折叠为 enumValue，空参调用须同样成立，否则报 notCallable）。
+    /// 推进性测量：两种写法都输出 red。
+    func testNoArgEnumCaseCallForm() throws {
+        let source = """
+[Color]
+red()
+blue()
+
+name_of|func(c: Color,) -> (String,)
+    match c:
+        case red():
+            return "red"
+        case blue():
+            return "blue"
+    return "?"
+
+main|func() -> ()
+    print(name_of(red()))
+    print(name_of(red))
+    return
+"""
+        XCTAssertEqual(try runProgram(source), "red\nred\n")
+    }
+
+    // MARK: - Array<T> 成员方法的元素类型传播（H2，2026-08-30）
+
+    /// 意图：类型化累积器 `var ts: [Token] = []` 在 append 之后仍应是 `[Token]`。
+    /// 修复前 `Array<T>.append` 返回 `Array<Any>`，元素类型被擦除 →
+    /// `expected Array<Token>, got Any`，类型化累积器无法存活。
+    /// 推进性测量：check 通过且输出 1。
+    func testTypedArrayAccumulatorSurvivesAppend() throws {
+        let source = """
+[Token]
+int_lit(value: I32,)
+
+main|func() -> ()
+    var ts: [Token] = []
+    ts = ts.append(int_lit(value: 1,))
+    print(len(ts))
+    return
+"""
+        XCTAssertNoThrow(try checkModule(source), "类型化累积器 append 后应仍为 [Token]")
+        XCTAssertEqual(try runProgram(source), "1\n")
+    }
+
+    /// 意图：退化场景（接收者无类型实参）行为不变——占位 T 代入 Any。
+    /// 推进性测量：check 通过且输出 1；不得因 H2 修复而破坏既有写法。
+    func testUntypedArrayAppendRegression() throws {
+        let source = """
+[Token]
+int_lit(value: I32,)
+
+main|func() -> ()
+    var ts = []
+    ts = ts.append(int_lit(value: 1,))
+    print(len(ts))
+    return
+"""
+        XCTAssertNoThrow(try checkModule(source), "无类型注解的累积器应保持旧行为")
+        XCTAssertEqual(try runProgram(source), "1\n")
+    }
+
+    /// 意图：`slice` 同样返回与接收者同元素类型的数组（同一代入机制）。
+    /// 推进性测量：输出 2（从 3 元素切出 2 个）。
+    func testArraySlicePreservesElementType() throws {
+        let source = """
+main|func() -> ()
+    var xs: [I32] = [1, 2, 3,]
+    var ys = xs.slice(0, 2,)
+    print(len(ys))
+    return
+"""
+        XCTAssertNoThrow(try checkModule(source), "slice 应保留元素类型")
+    }
 }
