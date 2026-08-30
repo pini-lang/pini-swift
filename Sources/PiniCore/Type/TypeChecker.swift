@@ -1846,9 +1846,9 @@ public final class TypeChecker {
  guard let objType = inference.infer(expression: object) else { return nil }
  switch objType {
  case .simple(let typeName, _):
- return typeEnv.lookupMethod(typeName: typeName, methodName: memberName)
+ return typeEnv.lookupMethodSignature(typeName: typeName, typeArgs: nil, methodName: memberName)
  case .generic(let typeName, let typeArgs, _):
- return typeEnv.lookupSpecializedMethod(typeName: typeName, typeArgs: typeArgs, methodName: memberName)
+ return typeEnv.lookupMethodSignature(typeName: typeName, typeArgs: typeArgs, methodName: memberName)
  default:
  return nil
  }

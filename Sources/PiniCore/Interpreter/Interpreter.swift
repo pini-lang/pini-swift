@@ -1522,6 +1522,11 @@ public class Interpreter {
 
  let calleeValue = try evaluateExpression(callee)
  guard case .function(let fv) = calleeValue else {
+ // 无关联值枚举 case 的调用形态 `red()`：裸名在上方已被折叠为 enumValue
+ // （与 `case red():` 的匹配形态对齐），空参调用等价于该值本身。
+ if arguments.isEmpty, case .enumValue = calleeValue {
+ return calleeValue
+ }
  throw RuntimeError.notCallable(location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
  
