@@ -15,6 +15,10 @@ func loadPiniFixture(_ name: String, filePath: String) throws -> String {
  let base = url.deletingPathExtension().lastPathComponent
  // `name` may already carry the .pini suffix
  let file = name.hasSuffix(".pini") ? name : name + ".pini"
- return try String(contentsOf: dir.appendingPathComponent(base).appendingPathComponent(file),
+ // when the test file itself lives inside its same-named directory, the
+ // fixtures are its siblings; otherwise they sit in <base>/ next to it
+ let fixtureDir = dir.lastPathComponent == base
+     ? dir : dir.appendingPathComponent(base)
+ return try String(contentsOf: fixtureDir.appendingPathComponent(file),
                    encoding: .utf8)
 }
