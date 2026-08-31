@@ -52,7 +52,7 @@ extension IRGenerator {
  ///
  /// D1–D3 的 `record*IfLiteral` 只在初始化器为字面量时记录元素类型，故 `var b = a` 后
  /// `b` 无类型记录，下标读/写与 `print(b)` 会抛
- /// `IRGenError.unsupportedFeature("LLVM 后端未记录变量 'b' 的数组元素类型…")`。
+ /// `IRGenError.unsupportedFeature(feature:"LLVM 后端未记录变量 'b' 的数组元素类型…")`。
  ///
  /// 别名共享同一不透明句柄（`%bk_array*` 等），元素类型必然与源变量一致，故直接复制记录条目。
  /// 仅处理 `.identifier` RHS（`b = a`）；表达式返回的容器（函数调用等）仍不记录，
@@ -258,7 +258,7 @@ extension IRGenerator {
  case .varDestructure(let names, _, let initializer, _, _):
  // 草稿 A1（批次 1）：元组解构在 LLVM 端 = 生成 tuple struct → 逐槽 extractvalue → store 到各变量 slot。
  guard let initExpr = initializer else {
- throw IRGenError.unsupportedFeature("解构声明缺少初始值", SourceLocation(line: 0, column: 0, fileName: ""))
+ throw IRGenError.unsupportedFeature(feature:"解构声明缺少初始值", SourceLocation(line: 0, column: 0, fileName: ""))
  }
  let result = try generateExpression(initExpr)
  for (i, name) in names.enumerated() where name != "_" {
@@ -276,7 +276,7 @@ extension IRGenerator {
  switch target {
  case .identifier(let name):
  guard let entry = symbolTable[name] else {
- throw IRGenError.unsupportedFeature("assign to undefined variable \(name)",
+ throw IRGenError.unsupportedFeature(feature:"assign to undefined variable \(name)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  // #46-D D4.2.1b：`b = a` 重绑别名同样补一份 share（所有权契约 ③）。
@@ -324,7 +324,7 @@ extension IRGenerator {
 
  case .breakStatement(let label, let loc):
  guard let frame = loopFrame(for: label) else {
- throw IRGenError.unsupportedStatement("break outside loop", loc)
+ throw IRGenError.unsupportedStatement(kind:"break outside loop", loc)
  }
  // D5 终止边精确释放：break 放弃目标帧体层及嵌套块（enclosingDepth+1..currentScopeDepth），
  // 结构化语言保证这些层变量在 break 点必已初始化 → 零 UAF；外层存活层不误伤。
@@ -339,7 +339,7 @@ extension IRGenerator {
 
  case .continueStatement(let label, let loc):
  guard let loop = loopFrame(for: label) else {
- throw IRGenError.unsupportedStatement("continue outside loop", loc)
+ throw IRGenError.unsupportedStatement(kind:"continue outside loop", loc)
  }
  // D5 终止边精确释放：continue 同样放弃本轮循环体层及嵌套块（语义同 break，避免本轮迭代尾部变量泄漏）。
  let abandonedC = (loop.enclosingDepth + 1)...currentScopeDepth
@@ -370,7 +370,7 @@ extension IRGenerator {
  case .detachStatement(_, let detachLoc):
  // 任务 #13：detach 语句为解释器级 fire-and-forget 出口；LLVM 后端（D1 暂缓 FFI）
  // 尚未实现对应运行时原语，显式 unsupported（可逆）。
- throw IRGenError.unsupportedStatement("detach 语句暂不支持 LLVM 后端（解释器已支持）", detachLoc)
+ throw IRGenError.unsupportedStatement(kind:"detach 语句暂不支持 LLVM 后端（解释器已支持）", detachLoc)
  case .deferStatement(let statement, _):
  // 记录注册作用域深度：块级 defer 在该块自然落入出口按 LIFO 刷新（#8）。
  deferredStatements.append(statement)
@@ -405,7 +405,7 @@ extension IRGenerator {
  }
  // 仅支持 String（ptr）错误槽：strlen==0 视为成功；其余类型显式报不支持（不臆造语义）。
  guard errFieldType == "ptr" else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端 try 仅支持 String 错误槽（收到 \(errFieldType)）；请改用解释器 `pini run`", sl())
  }
 
@@ -622,7 +622,7 @@ extension IRGenerator {
  let info = try forIterableInfo(iterable)
  let loc = SourceLocation(line: 0, column: 0, fileName: "")
  guard pattern.count == info.elemTAs.count else {
- throw IRGenError.unsupportedStatement(
+ throw IRGenError.unsupportedStatement(kind:
  "for 模式元组字段数（\(pattern.count)）须与集合元素字段数（\(info.elemTAs.count)）一一对应",
  loc)
  }
@@ -752,28 +752,28 @@ extension IRGenerator {
  switch iterable {
  case .arrayLiteral(let els, _):
  guard let first = els.first, let et = elementTypeOfLiteral(first) else {
- throw IRGenError.unsupportedStatement("无法推断 for-in 数组元素类型", loc)
+ throw IRGenError.unsupportedStatement(kind:"无法推断 for-in 数组元素类型", loc)
  }
  return ("array", [et])
  case .dictionaryLiteral(let entries, _):
  guard let first = entries.first,
  let kt = elementTypeOfLiteral(first.key),
  let vt = elementTypeOfLiteral(first.value) else {
- throw IRGenError.unsupportedStatement("无法推断 for-in 字典键值类型", loc)
+ throw IRGenError.unsupportedStatement(kind:"无法推断 for-in 字典键值类型", loc)
  }
  return ("dict", [kt, vt])
  case .setLiteral(let els, _):
  guard let first = els.first, let et = elementTypeOfLiteral(first) else {
- throw IRGenError.unsupportedStatement("无法推断 for-in 集合元素类型", loc)
+ throw IRGenError.unsupportedStatement(kind:"无法推断 for-in 集合元素类型", loc)
  }
  return ("set", [et])
  case .identifier(let name, _):
  if let et = arrayElementTypeByVar[name] { return ("array", [et]) }
  if let kt = dictKeyTypeByVar[name], let vt = dictValueTypeByVar[name] { return ("dict", [kt, vt]) }
  if let et = setElementTypeByVar[name] { return ("set", [et]) }
- throw IRGenError.unsupportedStatement("for-in 迭代目标无法推断集合元素类型（仅支持字面量或已登记集合变量）", loc)
+ throw IRGenError.unsupportedStatement(kind:"for-in 迭代目标无法推断集合元素类型（仅支持字面量或已登记集合变量）", loc)
  default:
- throw IRGenError.unsupportedStatement("for-in 迭代目标暂不支持该表达式形态（仅支持字面量或变量标识符）", loc)
+ throw IRGenError.unsupportedStatement(kind:"for-in 迭代目标暂不支持该表达式形态（仅支持字面量或变量标识符）", loc)
  }
  }
 
@@ -865,7 +865,7 @@ extension IRGenerator {
  // D3①：通配 case（case _:）由 switch 的 default 目标兜底，不入分支表。
  if case .wildcard = mc.pattern { continue }
  guard case .enumCase(let name) = mc.pattern else {
- throw IRGenError.unsupportedFeature("match 字面量模式暂不支持 IR 后端（HIGH-2 IR 路径待实现，仅解释器支持）", mc.location)
+ throw IRGenError.unsupportedFeature(feature:"match 字面量模式暂不支持 IR 后端（HIGH-2 IR 路径待实现，仅解释器支持）", mc.location)
  }
  if let (_, tag, _) = enumCaseTags["\(enumParentName).\(name)"] {
  arms.append((tag, "match_case_\(matchLabels)_\(i)"))
@@ -892,7 +892,7 @@ extension IRGenerator {
  scopeStack.append([])
  // 注入 payload 绑定：从 enum union 提取关联值并绑定到局部变量
  guard case .enumCase(let name) = mc.pattern else {
- throw IRGenError.unsupportedFeature("match 字面量模式暂不支持 IR 后端（HIGH-2 IR 路径待实现，仅解释器支持）", mc.location)
+ throw IRGenError.unsupportedFeature(feature:"match 字面量模式暂不支持 IR 后端（HIGH-2 IR 路径待实现，仅解释器支持）", mc.location)
  }
  if !mc.bindings.isEmpty, let (_, _, params) = enumCaseTags["\(enumParentName).\(name)"] {
  let isOptionalSome = (enumParentName == "Optional" && name == "some")
@@ -906,7 +906,7 @@ extension IRGenerator {
  let subjectType = ti.infer(expression: value),
  case .generic(_, let typeArgs, _) = subjectType,
  let elemType = typeArgs.first else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端 match Optional.some 需类型信息：请先经 TypeChecker（CLI 路径已注入 typeInference）", sl())
  }
  // 元素 concrete 类型；若无法映射（如 Optional<Any>，仅来自 none/nil），
@@ -1047,7 +1047,7 @@ extension IRGenerator {
  emitLine(" \(cmpT) = \(instr) \(matchVal.llvmType) \(matchVal.ssaName), \(operand)")
  cmp = cmpT
  } else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "match 字面量模式与值类型不匹配（\(mc.pattern) vs \(matchVal.llvmType)）", mc.location)
  }
  let nextL = ci + 1 < condLabels.count ? condLabels[ci + 1] : defaultLabel

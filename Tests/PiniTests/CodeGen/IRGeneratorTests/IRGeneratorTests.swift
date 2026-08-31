@@ -22,18 +22,18 @@ final class IRGeneratorTests: XCTestCase {
     func testIRGenErrorDescriptions() throws {
         let loc = SourceLocation(line: 1, column: 2, fileName: "test.pini")
         
-        let e1 = IRGenError.unsupportedType("String", loc)
+        let e1 = IRGenError.unsupportedType(name:"String", loc)
         XCTAssertTrue(e1.errorDescription.contains("String"))
         XCTAssertTrue(e1.errorDescription.contains("test.pini"))
         XCTAssertTrue(e1.errorDescription.contains("1:2"))
         
-        let e2 = IRGenError.unsupportedExpression("funcLiteral", loc)
+        let e2 = IRGenError.unsupportedExpression(kind:"funcLiteral", loc)
         XCTAssertTrue(e2.errorDescription.contains("funcLiteral"))
         
-        let e3 = IRGenError.unsupportedStatement("match", loc)
+        let e3 = IRGenError.unsupportedStatement(kind:"match", loc)
         XCTAssertTrue(e3.errorDescription.contains("match"))
         
-        let e4 = IRGenError.unsupportedFeature("async", loc)
+        let e4 = IRGenError.unsupportedFeature(feature:"async", loc)
         XCTAssertTrue(e4.errorDescription.contains("async"))
         
         let e5 = IRGenError.typeMismatch(expected: "i32", got: "double", loc)
@@ -154,7 +154,7 @@ final class IRGeneratorTests: XCTestCase {
         // 未注册的命名类型仍应抛 unsupportedType。
         let unknownType = TypeAnnotation.simple(name: "MyUnknownType", location: loc)
         XCTAssertThrowsError(try mapper.map(unknownType)) { error in
-            guard case IRGenError.unsupportedType(let name, _) = error else {
+            guard case IRGenError.unsupportedType(name:let name, _) = error else {
                 XCTFail("应为 unsupportedType 错误，实际: \(error)")
                 return
             }

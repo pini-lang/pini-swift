@@ -1,0 +1,7 @@
+contains|func(s: String, sub: String,) -> (Bool,):
+    return true
+
+main|func() -> ():
+    print(contains("abc", "b"))
+    print("abc".contains("b"))
+    return

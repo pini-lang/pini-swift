@@ -68,14 +68,14 @@ public struct IRTypeMapper {
  if knownEnums.contains(name) {
  return "%enum.\(enumIRName[name] ?? name)*"
  }
- throw IRGenError.unsupportedType(name, loc)
+ throw IRGenError.unsupportedType(name:name, loc)
  }
  case .generic(let name, _, let loc):
  if name == "Optional" {
  // 内建 Optional 在 IR 中以单一 tagged-union 表示（payload 槽预留，none 不读 payload）。
  return "%enum.Optional*"
  }
- throw IRGenError.unsupportedType("generic(\(name))", loc)
+ throw IRGenError.unsupportedType(name:"generic(\(name))", loc)
  case .tuple(_, let elements, _):
  let mapped = try elements.map { try map($0) }
  return "{ " + mapped.joined(separator: ", ") + " }"

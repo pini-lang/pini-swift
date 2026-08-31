@@ -1,10 +1,10 @@
 import Foundation
 
 public enum IRGenError: Error, LocalizedError {
- case unsupportedType(String, SourceLocation)
- case unsupportedExpression(String, SourceLocation)
- case unsupportedStatement(String, SourceLocation)
- case unsupportedFeature(String, SourceLocation)
+ case unsupportedType(name: String, SourceLocation)
+ case unsupportedExpression(kind: String, SourceLocation)
+ case unsupportedStatement(kind: String, SourceLocation)
+ case unsupportedFeature(feature: String, SourceLocation)
  case typeMismatch(expected: String, got: String, SourceLocation)
 
  public var errorDescription: String {

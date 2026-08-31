@@ -40,7 +40,7 @@ final class DiagnosticTests: XCTestCase {
         let loc = SourceLocation(line: 1, column: 1, fileName: "t.pini")
         XCTAssertEqual(ParserError.missingIndent(location: loc).diagnosticCode, "E2-003")
         XCTAssertEqual(TypeError.cannotInfer(location: loc).diagnosticCode, "E4-003")
-        XCTAssertEqual(IRGenError.unsupportedFeature("x", loc).diagnosticCode, "E6-004")
+        XCTAssertEqual(IRGenError.unsupportedFeature(feature:"x", loc).diagnosticCode, "E6-004")
         XCTAssertEqual(LexerError.unterminatedString(loc).diagnosticCode, "E1-002")
         XCTAssertEqual(PiniError.io(details: "x").diagnosticCode, "E0-106")
     }

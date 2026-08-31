@@ -47,19 +47,19 @@ extension IRGenerator {
  return try generateStringifyAggregate(val, isObject: true)
  case "%bk_array*":
  guard let ta, case .generic("Array", let params, _) = ta, let elemTA = params.first else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端无法推断数组元素类型以格式化（D3 范围：需可推断元素类型的数组字面量/变量/下标）", sl())
  }
  return try generateStringifyArray(val, elemTA: elemTA)
  case "%bk_dict*":
  guard let ta, case .generic("Dictionary", let params, _) = ta, params.count == 2 else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端无法推断字典键/值类型以格式化（D3 范围：需可推断类型的字典字面量/变量/下标）", sl())
  }
  return try generateStringifyDict(val, keyTA: params[0], valTA: params[1])
  case "%bk_set*":
  guard let ta, case .generic("Set", let params, _) = ta, let elemTA = params.first else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端无法推断集合元素类型以格式化（D3 范围：需可推断类型的集合字面量/变量/下标）", sl())
  }
  return try generateStringifySet(val, elemTA: elemTA)
@@ -68,7 +68,7 @@ extension IRGenerator {
  // 与 `[label: v0, ...]`（命名元组）。标签取自 `ta`；`ta` 为 nil 时退化为位置元组展示。
  return try generateStringifyTuple(val, ta)
  default:
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端暂不支持将类型 \(extractTypeName(from: val.llvmType)) 的值格式化为字符串（stringify）；请改用解释器 `pini run`",
  sl())
  }
@@ -146,7 +146,7 @@ extension IRGenerator {
  let aggName = String(ptrType.dropLast()) // e.g. "%enum.Shape"
  let enumName = extractTypeName(from: ptrType) // mangled, e.g. "Shape"
  guard let ed = enumDecls[enumName] else {
- throw IRGenError.unsupportedFeature("LLVM 后端 stringify 未知枚举类型 \(enumName)", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端 stringify 未知枚举类型 \(enumName)", sl())
  }
 
  // 加载 tag（GEP(0,0)）
@@ -208,12 +208,12 @@ extension IRGenerator {
  let typeName: String
  if isObject {
  guard let od = objectTypes[baseName] else {
- throw IRGenError.unsupportedFeature("LLVM 后端 stringify 未知 object 类型 \(baseName)", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端 stringify 未知 object 类型 \(baseName)", sl())
  }
  fields = od.fields; offset = 1; typeName = od.name
  } else {
  guard let sd = structTypes[baseName] else {
- throw IRGenError.unsupportedFeature("LLVM 后端 stringify 未知 struct 类型 \(baseName)", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端 stringify 未知 struct 类型 \(baseName)", sl())
  }
  fields = sd.fields; offset = 0; typeName = sd.name
  }
@@ -498,7 +498,7 @@ extension IRGenerator {
  /// 判定并输出字面量 "null"，对齐解释器 `stringify(.null)` → "null"。闭合 D2 遗留的「缺失键 LLVM 补零值」分歧。
  private func generatePrintDictSubscriptWithNull(_ expr: Expression) throws -> IRValue {
  guard case .subscript(let container, let index, _) = expr else {
- throw IRGenError.unsupportedExpression("internal: expected subscript in D3 print", sl())
+ throw IRGenError.unsupportedExpression(kind:"internal: expected subscript in D3 print", sl())
  }
  usesCollections = true
  let dictVal = try generateExpression(container) // %bk_dict*

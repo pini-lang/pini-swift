@@ -183,7 +183,7 @@ extension IRGenerator {
  func generateFuncLiteral(decl: FuncDecl, location: SourceLocation) throws -> IRValue {
  let key = "\(location.line):\(location.column)"
  guard var info = closures[key] else {
- throw IRGenError.unsupportedExpression("anonymous function not pre-registered", sl())
+ throw IRGenError.unsupportedExpression(kind:"anonymous function not pre-registered", sl())
  }
  if !info.computed {
  let used = collectIdentifiers(in: decl)

@@ -326,11 +326,11 @@ public final class IRGenerator {
  break
  case .foreignDecl:
  // Phase 2a（ADR-015 FFI）：LLVM 端 foreign 显式 unsupported（用户决策 D1，解释器优先）。
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`",
  SourceLocation(line: 0, column: 0, fileName: ""))
  case .varDecl, .statement, .importDecl, .exportDecl:
- throw IRGenError.unsupportedFeature("top-level statement/var",
+ throw IRGenError.unsupportedFeature(feature:"top-level statement/var",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  }

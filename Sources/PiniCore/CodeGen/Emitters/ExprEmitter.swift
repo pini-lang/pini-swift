@@ -54,7 +54,7 @@ extension IRGenerator {
  emitLine(builder.fmtStore(value: "\(tag)", type: "i32", ptr: tagPtr))
  return IRValue(llvmType: "\(typeName)*", ssaName: ptr)
  }
- throw IRGenError.unsupportedExpression("undefined identifier \(name)",
+ throw IRGenError.unsupportedExpression(kind:"undefined identifier \(name)",
  SourceLocation(line: 0, column: 0, fileName: ""))
 
  case .binary(let left, let op, let right, _):
@@ -72,7 +72,7 @@ extension IRGenerator {
  case .resultUnwrap:
  // 草稿 A2（批次 1.4，D2）：`^` 解包涉及 err 控制返回（注入返回元组末槽），
  // LLVM 后端暂不支持（明确报错，不静默；解释器路径已支持）。
- throw IRGenError.unsupportedFeature("LLVM 后端暂不支持 `^` 右值糖解包；请改用解释器 `pini run`", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端暂不支持 `^` 右值糖解包；请改用解释器 `pini run`", sl())
 
  case .member(let obj, let name, _):
  return try generateMemberAccess(base: obj, memberName: name)
@@ -92,7 +92,7 @@ extension IRGenerator {
  emitLine(builder.fmtLoad(name: tempName, type: entry.type, ptr: entry.slot))
  return IRValue(llvmType: entry.type, ssaName: tempName)
  }
- throw IRGenError.unsupportedExpression("self keyword without self parameter", sl())
+ throw IRGenError.unsupportedExpression(kind:"self keyword without self parameter", sl())
 
  case .genericConstruct(let typeName, let typeArgs, let callArgs, _):
  return try generateGenericCall(typeName: typeName, typeArgs: typeArgs, arguments: callArgs)
@@ -103,7 +103,7 @@ extension IRGenerator {
  var literalText = ""
  for seg in segments {
  guard case .literal(let text) = seg else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端暂不支持在表达式位置使用含表达式的字符串插值；请改用 print 的插值，或改用解释器 `pini run`",
  sl())
  }
@@ -122,7 +122,7 @@ extension IRGenerator {
  return try generateSubscriptRead(expr)
  case .unsafe, .addressOf:
  // Phase 2a（ADR-015 FFI）：LLVM 端 FFI/unsafe 显式 unsupported（用户决策 D1，解释器优先）。
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端暂不支持 FFI/unsafe 子系统（`unsafe`/`&`）；请改用解释器 `pini run`",
  sl())
  }
@@ -137,7 +137,7 @@ extension IRGenerator {
  /// 未来 LLVM 集合/字典复做时，按容器 IR 类型在此注册 codegen 策略即可，调用点零改动。
  func generateSubscriptRead(_ expr: Expression) throws -> IRValue {
  guard case .subscript(let container, let index, let loc) = expr else {
- throw IRGenError.unsupportedExpression(String(describing: expr), sl())
+ throw IRGenError.unsupportedExpression(kind:String(describing: expr), sl())
  }
  let containerVal = try generateExpression(container) // 任意表达式容器，非 identifier-only
  let indexVal = try generateExpression(index) // 产生 index IR（下标分派需消费）
@@ -145,7 +145,7 @@ extension IRGenerator {
  // ADR-008 / #46-D：数组经 opaque handle（%bk_array*）承载，下标读走运行时 shim。
  if containerVal.llvmType == "%bk_array*" {
  guard indexVal.llvmType == "i32" else {
- throw IRGenError.unsupportedFeature("LLVM 后端数组下标需 I32 索引（收到 \(indexVal.llvmType)）", loc)
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端数组下标需 I32 索引（收到 \(indexVal.llvmType)）", loc)
  }
  usesCollections = true
  // D1：解析元素 Pini 类型 → LLVM 类型（嵌套数组 → 内层 handle `%bk_array*`）。
@@ -202,9 +202,9 @@ extension IRGenerator {
  }
 
  if containerVal.llvmType.hasPrefix("[") {
- throw IRGenError.unsupportedFeature("LLVM 后端尚未实现定长数组下标访问（集合后端重做时接入）", loc)
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端尚未实现定长数组下标访问（集合后端重做时接入）", loc)
  }
- throw IRGenError.unsupportedFeature("LLVM 后端尚未实现该类型的下标访问: \(containerVal.llvmType)", loc)
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端尚未实现该类型的下标访问: \(containerVal.llvmType)", loc)
  }
 
  /// LLVM 端数组下标写（#46-D D1.5）：`a[i] = v` 经运行时 shim `@bk_array_set`。
@@ -230,7 +230,7 @@ extension IRGenerator {
  if containerVal.llvmType == "%bk_array*" {
  let indexVal = try generateExpression(index)
  guard indexVal.llvmType == "i32" else {
- throw IRGenError.unsupportedFeature("LLVM 后端数组下标写需 I32 索引（收到 \(indexVal.llvmType)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端数组下标写需 I32 索引（收到 \(indexVal.llvmType)）", sl())
  }
  // 解析元素 Pini 类型 → LLVM 类型（嵌套数组 → 内层 handle `%bk_array*`）。
  let elemTA = try resolveArrayElementType(container)
@@ -277,7 +277,7 @@ extension IRGenerator {
  // D4.2.1b（COW）：同数组分支——分裂后的副本句柄须写回变量槽。
  emitHandleWriteBack(newRaw: newRaw, handleType: "%bk_dict*", container: container)
  } else {
- throw IRGenError.unsupportedFeature("LLVM 后端仅支持数组/字典下标写（收到 \(containerVal.llvmType)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端仅支持数组/字典下标写（收到 \(containerVal.llvmType)）", sl())
  }
  }
 
@@ -381,11 +381,11 @@ extension IRGenerator {
  }
 
  guard case .identifier(let name, _) = left else {
- throw IRGenError.unsupportedExpression("assign to non-identifier",
+ throw IRGenError.unsupportedExpression(kind:"assign to non-identifier",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  guard let entry = symbolTable[name] else {
- throw IRGenError.unsupportedExpression("assign to undefined variable \(name)",
+ throw IRGenError.unsupportedExpression(kind:"assign to undefined variable \(name)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
 
@@ -586,13 +586,13 @@ extension IRGenerator {
  if methodName == "lower" { return try generateStringCase(isUpper: false, str: baseVal.ssaName) }
  if methodName == "substring" { return try generateStringSubstring(baseVal.ssaName, arguments) }
  if methodName == "split" { return try generateStringSplit(baseVal.ssaName, arguments) }
- throw IRGenError.unsupportedExpression("string method \(methodName) not yet supported in IR", sl())
+ throw IRGenError.unsupportedExpression(kind:"string method \(methodName) not yet supported in IR", sl())
  }
  // 内置数组方法
  if (baseVal.llvmType.hasPrefix("[") && baseVal.llvmType.hasSuffix("x ptr]"))
  || baseVal.llvmType == "%bk_array*" {
  if methodName == "join" { return try generateArrayJoin(baseVal, arguments) }
- throw IRGenError.unsupportedExpression("array method \(methodName) not yet supported in IR", sl())
+ throw IRGenError.unsupportedExpression(kind:"array method \(methodName) not yet supported in IR", sl())
  }
  // struct/object/enum 方法分派
  let funcName = methodName
@@ -619,7 +619,7 @@ extension IRGenerator {
  methodIRName = mangle(funcName)
  retType = traitRT
  } else {
- throw IRGenError.unsupportedExpression("undefined method \(funcName)", sl())
+ throw IRGenError.unsupportedExpression(kind:"undefined method \(funcName)", sl())
  }
  if retType == "void" {
  emitLine(" call void @\(methodIRName)(\(allArgs.joined(separator: ", ")))")
@@ -631,7 +631,7 @@ extension IRGenerator {
  }
 
  guard case .identifier(let funcName, _) = callee else {
- throw IRGenError.unsupportedExpression("non-identifier callee",
+ throw IRGenError.unsupportedExpression(kind:"non-identifier callee",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
 
@@ -696,7 +696,7 @@ extension IRGenerator {
 
  let retTemp = "%t\(nextTemp())"
  guard let retIRType = funcReturnIRTypes[mangle(funcName)] else {
- throw IRGenError.unsupportedExpression("unknown function \(funcName) — not pre-registered",
+ throw IRGenError.unsupportedExpression(kind:"unknown function \(funcName) — not pre-registered",
  sl())
  }
  if retIRType == "void" {
@@ -731,7 +731,7 @@ extension IRGenerator {
  /// 跨文件 extension 需要 internal（StmtEmitter 的 varDestructure 亦复用）。
  func tupleFieldIRTypes(_ structType: String) throws -> [String] {
  guard structType.hasPrefix("{ ") && structType.hasSuffix(" }") else {
- throw IRGenError.unsupportedFeature("LLVM 后端元组索引要求 struct 类型（收到 \(structType)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端元组索引要求 struct 类型（收到 \(structType)）", sl())
  }
  let inner = String(structType.dropFirst(2).dropLast(2))
  var depth = 0
@@ -759,7 +759,7 @@ extension IRGenerator {
  func tupleFieldIRType(_ structType: String, index: Int) throws -> String {
  let fields = try tupleFieldIRTypes(structType)
  guard index >= 0 && index < fields.count else {
- throw IRGenError.unsupportedFeature("LLVM 后端元组索引越界（index \(index)，字段数 \(fields.count)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端元组索引越界（index \(index)，字段数 \(fields.count)）", sl())
  }
  return fields[index]
  }
@@ -792,7 +792,7 @@ extension IRGenerator {
  default:
  // 其他具名指针类型（%struct.X* 等）按指针宽度 8 处理，避免误拒；非指针类型（如 { ... } 聚合）不支持。
  if irType.hasSuffix("*") { return (irType, 8) }
- throw IRGenError.unsupportedFeature("D1 暂仅支持 I32/F64/Bool/String 数组元素（收到 \(irType)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"D1 暂仅支持 I32/F64/Bool/String 数组元素（收到 \(irType)）", sl())
  }
  }
 
@@ -910,7 +910,7 @@ extension IRGenerator {
  let selfTA = try resolveSubscriptResultType(inner)
  let selfLLVM = try collectionAwareLLVMType(selfTA)
  guard isCollectionHandleType(selfLLVM) else {
- throw IRGenError.unsupportedFeature("嵌套下标写：中间层非集合句柄（收到 \(selfLLVM)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"嵌套下标写：中间层非集合句柄（收到 \(selfLLVM)）", sl())
  }
  usesCollections = true
  let parentRaw = builder.freshTemp()
@@ -920,7 +920,7 @@ extension IRGenerator {
  case "%bk_array*":
  let idxVal = try generateExpression(idxExpr)
  guard idxVal.llvmType == "i32" else {
- throw IRGenError.unsupportedFeature("LLVM 后端数组下标需 I32 索引（收到 \(idxVal.llvmType)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端数组下标需 I32 索引（收到 \(idxVal.llvmType)）", sl())
  }
  emitLine(" \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(idxVal.ssaName))")
  case "%bk_dict*":
@@ -932,7 +932,7 @@ extension IRGenerator {
  let keyTag = bkTagForLLVMType(keyVal.llvmType)
  emitLine(" \(childRaw) = call ptr @bk_dict_ensure_unique_at(ptr \(parentRaw), ptr \(keyBoxPtr), i32 \(keyWidth), i32 \(keyTag))")
  default:
- throw IRGenError.unsupportedFeature("嵌套下标写仅支持数组/字典中间层（收到 \(parent.llvmType)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"嵌套下标写仅支持数组/字典中间层（收到 \(parent.llvmType)）", sl())
  }
  let typed = builder.freshTemp()
  emitLine(" \(typed) = bitcast ptr \(childRaw) to \(selfLLVM)")
@@ -997,22 +997,22 @@ extension IRGenerator {
  switch container {
  case .dictionaryLiteral(let entries, _):
  guard let first = entries.first, let vt = elementTypeOfLiteral(first.value) else {
- throw IRGenError.unsupportedFeature("空字典无法解析值类型（D2 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"空字典无法解析值类型（D2 范围）", sl())
  }
  return vt
  case .identifier(let name, _):
  guard let ta = dictValueTypeByVar[name] else {
- throw IRGenError.unsupportedFeature("LLVM 后端未记录变量 '\(name)' 的字典值类型（D2 范围：仅 let/var 绑定字面量）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端未记录变量 '\(name)' 的字典值类型（D2 范围：仅 let/var 绑定字面量）", sl())
  }
  return ta
  case .subscript(let inner, _, _):
  let selfTA = try resolveSubscriptResultType(inner)
  guard case .generic("Dictionary", let params, _) = selfTA, params.count == 2 else {
- throw IRGenError.unsupportedFeature("嵌套字典下标：内层非 Dictionary 类型（D2 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"嵌套字典下标：内层非 Dictionary 类型（D2 范围）", sl())
  }
  return params[1]
  default:
- throw IRGenError.unsupportedFeature("LLVM 后端不支持该容器类型的字典值解析（D2 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端不支持该容器类型的字典值解析（D2 范围）", sl())
  }
  }
 
@@ -1025,25 +1025,25 @@ extension IRGenerator {
  switch container {
  case .arrayLiteral(let els, _):
  guard let first = els.first else {
- throw IRGenError.unsupportedFeature("空数组无法解析元素类型（D1 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"空数组无法解析元素类型（D1 范围）", sl())
  }
  guard let ta = elementTypeOfLiteral(first) else {
- throw IRGenError.unsupportedFeature("LLVM 后端无法推断字面量首元素类型（D1 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端无法推断字面量首元素类型（D1 范围）", sl())
  }
  return ta
  case .identifier(let name, _):
  guard let ta = arrayElementTypeByVar[name] else {
- throw IRGenError.unsupportedFeature("LLVM 后端未记录变量 '\(name)' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端未记录变量 '\(name)' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）", sl())
  }
  return ta
  case .subscript(let inner, _, _):
  let selfTA = try resolveSubscriptResultType(inner)
  guard case .generic("Array", let params, _) = selfTA, let elem = params.first else {
- throw IRGenError.unsupportedFeature("嵌套数组下标：内层非 Array 类型（D1 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"嵌套数组下标：内层非 Array 类型（D1 范围）", sl())
  }
  return elem
  default:
- throw IRGenError.unsupportedFeature("LLVM 后端不支持该容器类型的数组元素解析（D1 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端不支持该容器类型的数组元素解析（D1 范围）", sl())
  }
  }
 
@@ -1057,7 +1057,7 @@ extension IRGenerator {
  /// 现统一先解析 inner 自身的容器类型（`resolveExprTypeAnnotation`），再据其种类取元素/值类型。
  func resolveSubscriptResultType(_ inner: Expression) throws -> TypeAnnotation {
  guard let ta = resolveExprTypeAnnotation(inner) else {
- throw IRGenError.unsupportedFeature("LLVM 后端无法解析嵌套下标的内层容器类型（D4.2.2 范围）", sl())
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端无法解析嵌套下标的内层容器类型（D4.2.2 范围）", sl())
  }
  switch ta {
  case .generic("Array", let params, _) where !params.isEmpty:
@@ -1065,7 +1065,7 @@ extension IRGenerator {
  case .generic("Dictionary", let params, _) where params.count == 2:
  return params[1]
  default:
- throw IRGenError.unsupportedFeature("嵌套下标：内层非 Array / Dictionary 类型（收到 \(ta)）", sl())
+ throw IRGenError.unsupportedFeature(feature:"嵌套下标：内层非 Array / Dictionary 类型（收到 \(ta)）", sl())
  }
  }
 
@@ -1093,7 +1093,7 @@ extension IRGenerator {
  let elemType = elemVals[0].llvmType
  for ev in elemVals {
  guard ev.llvmType == elemType else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "heterogeneous array literal is not supported in LLVM IR (mixed \(ev.llvmType) and \(elemType))", sl())
  }
  }

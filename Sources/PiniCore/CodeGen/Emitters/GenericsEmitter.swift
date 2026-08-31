@@ -22,10 +22,10 @@ extension IRGenerator {
  return try generateGenericStructConstruct(typeName: typeName, typeArgs: typeArgs, arguments: arguments)
  }
  guard let template = genericTemplates[mangle(typeName)] else {
- throw IRGenError.unsupportedExpression("unknown generic function \(typeName)", sl())
+ throw IRGenError.unsupportedExpression(kind:"unknown generic function \(typeName)", sl())
  }
  guard template.genericParams.count == typeArgs.count else {
- throw IRGenError.unsupportedExpression(
+ throw IRGenError.unsupportedExpression(kind:
  "type arg count mismatch: \(typeName) expects \(template.genericParams.count), got \(typeArgs.count)", sl())
  }
 
@@ -106,7 +106,7 @@ extension IRGenerator {
  let irTypeStrings: [String] = try typeArgs.map { try typeMapper.map($0) }
  let specializedName = "\(typeName)_\(irTypeStrings.map { $0.replacingOccurrences(of: " ", with: "_") }.joined(separator: "_"))"
  guard let concrete = structTypes[mangle(specializedName)] else {
- throw IRGenError.unsupportedExpression("specialized struct \(specializedName) not registered", sl())
+ throw IRGenError.unsupportedExpression(kind:"specialized struct \(specializedName) not registered", sl())
  }
  return try generateStructConstruction(structDecl: concrete)
  }
@@ -119,7 +119,7 @@ extension IRGenerator {
  func registerGenericStructSpecialization(typeName: String, typeArgs: [TypeAnnotation]) throws {
  guard let template = structTypes[mangle(typeName)], !template.genericParams.isEmpty else { return }
  guard template.genericParams.count == typeArgs.count else {
- throw IRGenError.unsupportedExpression(
+ throw IRGenError.unsupportedExpression(kind:
  "type arg count mismatch: \(typeName) expects \(template.genericParams.count), got \(typeArgs.count)", sl())
  }
  var substitution: [String: TypeAnnotation] = [:]

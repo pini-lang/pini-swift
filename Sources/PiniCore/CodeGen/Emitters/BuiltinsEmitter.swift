@@ -11,9 +11,9 @@ extension IRGenerator {
  // MARK: - 内置数学函数（P6-4b）
 
  func generateBuiltinAbs(_ arguments: [CallArgument]) throws -> IRValue {
- guard let arg = arguments.first else { throw IRGenError.unsupportedExpression("abs requires 1 arg", sl()) }
+ guard let arg = arguments.first else { throw IRGenError.unsupportedExpression(kind:"abs requires 1 arg", sl()) }
  let val = try generateExpression(arg.expression)
- guard val.llvmType == "i32" else { throw IRGenError.unsupportedExpression("abs expects i32", sl()) }
+ guard val.llvmType == "i32" else { throw IRGenError.unsupportedExpression(kind:"abs expects i32", sl()) }
  let neg = "%t\(nextTemp())"
  emitLine(" \(neg) = sub i32 0, \(val.ssaName)")
  let cond = "%t\(nextTemp())"
@@ -24,10 +24,10 @@ extension IRGenerator {
  }
 
  func generateBuiltinMinMax(isMin: Bool, _ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 2 else { throw IRGenError.unsupportedExpression("min/max requires 2 args", sl()) }
+ guard arguments.count == 2 else { throw IRGenError.unsupportedExpression(kind:"min/max requires 2 args", sl()) }
  let a = try generateExpression(arguments[0].expression)
  let b = try generateExpression(arguments[1].expression)
- guard a.llvmType == "i32", b.llvmType == "i32" else { throw IRGenError.unsupportedExpression("min/max expects i32", sl()) }
+ guard a.llvmType == "i32", b.llvmType == "i32" else { throw IRGenError.unsupportedExpression(kind:"min/max expects i32", sl()) }
  let cond = "%t\(nextTemp())"
  let cmp = isMin ? "slt" : "sgt"
  emitLine(" \(cond) = icmp \(cmp) i32 \(a.ssaName), \(b.ssaName)")
@@ -57,18 +57,18 @@ extension IRGenerator {
  /// 消息缺省用模块级常量 "assert failed"；带消息参数时直接复用（字符串本就是 C 串 ptr）。
  func generateBuiltinAssert(_ arguments: [CallArgument]) throws -> IRValue {
  guard arguments.count >= 1, arguments.count <= 2 else {
- throw IRGenError.unsupportedExpression("assert requires 1 or 2 args (condition, message?)", sl())
+ throw IRGenError.unsupportedExpression(kind:"assert requires 1 or 2 args (condition, message?)", sl())
  }
  usesAssert = true
  let cond = try generateExpression(arguments[0].expression)
  guard cond.llvmType == "i1" else {
- throw IRGenError.unsupportedExpression("assert 参数 1 必须是 Bool（收到 \(cond.llvmType)）", sl())
+ throw IRGenError.unsupportedExpression(kind:"assert 参数 1 必须是 Bool（收到 \(cond.llvmType)）", sl())
  }
  let msg: IRValue
  if arguments.count == 2 {
  msg = try generateExpression(arguments[1].expression)
  guard msg.llvmType == "ptr" else {
- throw IRGenError.unsupportedExpression("assert 参数 2 必须是 String（收到 \(msg.llvmType)）", sl())
+ throw IRGenError.unsupportedExpression(kind:"assert 参数 2 必须是 String（收到 \(msg.llvmType)）", sl())
  }
  } else {
  msg = try generateStringLiteral("assert failed")
@@ -89,10 +89,10 @@ extension IRGenerator {
  /// `bk_lazyref_create(code, env, bytes, tag)` → `%bk_lazyref*` 句柄。
  func generateLazyRefConstruct(typeArgs: [TypeAnnotation], arguments: [CallArgument]) throws -> IRValue {
  guard typeArgs.count == 1 else {
- throw IRGenError.unsupportedExpression("LazyRef requires 1 type arg", sl())
+ throw IRGenError.unsupportedExpression(kind:"LazyRef requires 1 type arg", sl())
  }
  guard arguments.count == 1 else {
- throw IRGenError.unsupportedExpression("LazyRef requires 1 arg (initializer closure)", sl())
+ throw IRGenError.unsupportedExpression(kind:"LazyRef requires 1 arg (initializer closure)", sl())
  }
  let elemIR = try typeMapper.map(typeArgs[0])
  let (bytes, tag) = try lazyRefElemInfo(elemIR)
@@ -100,7 +100,7 @@ extension IRGenerator {
  // 闭包 fat pointer { code, env }
  let closure = try generateCallArgumentValue(arguments[0].expression)
  guard closure.llvmType == "{ ptr, ptr }" else {
- throw IRGenError.unsupportedExpression("LazyRef 参数必须是初始化闭包（函数值），收到 \(closure.llvmType)", sl())
+ throw IRGenError.unsupportedExpression(kind:"LazyRef 参数必须是初始化闭包（函数值），收到 \(closure.llvmType)", sl())
  }
  let code = "%t\(nextTemp())"
  emitLine(" \(code) = extractvalue { ptr, ptr } \(closure.ssaName), 0")
@@ -134,7 +134,7 @@ extension IRGenerator {
  case "i1": return (1, 2)
  case "ptr": return (8, 4)
  default:
- throw IRGenError.unsupportedExpression("LazyRef 暂不支持元素类型 \(irType)（支持 I32/F64/Bool/String）", sl())
+ throw IRGenError.unsupportedExpression(kind:"LazyRef 暂不支持元素类型 \(irType)（支持 I32/F64/Bool/String）", sl())
  }
  }
 
@@ -168,7 +168,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  }
 
  func generateBuiltinWriteFile(_ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 2 else { throw IRGenError.unsupportedExpression("writeFile requires 2 args (path, content)", sl()) }
+ guard arguments.count == 2 else { throw IRGenError.unsupportedExpression(kind:"writeFile requires 2 args (path, content)", sl()) }
  let path = try generateExpression(arguments[0].expression)
  let content = try generateExpression(arguments[1].expression)
  // fopen(path, "w")
@@ -189,7 +189,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  }
 
  func generateBuiltinReadFile(_ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 1 else { throw IRGenError.unsupportedExpression("readFile requires 1 arg (path)", sl()) }
+ guard arguments.count == 1 else { throw IRGenError.unsupportedExpression(kind:"readFile requires 1 arg (path)", sl()) }
  let path = try generateExpression(arguments[0].expression)
  // fopen(path, "r")
  let rMode = "%t\(nextTemp())"
@@ -217,18 +217,18 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  }
 
  func generateMathIntrinsic(_ name: String, _ arguments: [CallArgument]) throws -> IRValue {
- guard let arg = arguments.first else { throw IRGenError.unsupportedExpression("\(name) requires 1 arg", sl()) }
+ guard let arg = arguments.first else { throw IRGenError.unsupportedExpression(kind:"\(name) requires 1 arg", sl()) }
  let val = try generateExpression(arg.expression)
- guard val.llvmType == "double" else { throw IRGenError.unsupportedExpression("\(name) expects F64", sl()) }
+ guard val.llvmType == "double" else { throw IRGenError.unsupportedExpression(kind:"\(name) expects F64", sl()) }
  let res = "%t\(nextTemp())"
  emitLine(" \(res) = call double @llvm.\(name).f64(double \(val.ssaName))")
  return IRValue(llvmType: "double", ssaName: res)
  }
 
  func generateBuiltinTan(_ arguments: [CallArgument]) throws -> IRValue {
- guard let arg = arguments.first else { throw IRGenError.unsupportedExpression("tan requires 1 arg", sl()) }
+ guard let arg = arguments.first else { throw IRGenError.unsupportedExpression(kind:"tan requires 1 arg", sl()) }
  let val = try generateExpression(arg.expression)
- guard val.llvmType == "double" else { throw IRGenError.unsupportedExpression("tan expects F64", sl()) }
+ guard val.llvmType == "double" else { throw IRGenError.unsupportedExpression(kind:"tan expects F64", sl()) }
  let s = "%t\(nextTemp())"
  emitLine(" \(s) = call double @llvm.sin.f64(double \(val.ssaName))")
  let c = "%t\(nextTemp())"
@@ -239,7 +239,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  }
 
  func generateStringContains(_ haystack: String, _ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 1 else { throw IRGenError.unsupportedExpression("contains requires 1 arg", sl()) }
+ guard arguments.count == 1 else { throw IRGenError.unsupportedExpression(kind:"contains requires 1 arg", sl()) }
  let needle = try generateExpression(arguments[0].expression)
  let r = "%t\(nextTemp())"
  emitLine(" \(r) = call ptr @strstr(ptr \(haystack), ptr \(needle.ssaName))")
@@ -296,7 +296,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  }
 
  func generateStringSubstring(_ str: String, _ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 2 else { throw IRGenError.unsupportedExpression("substring requires 2 args", sl()) }
+ guard arguments.count == 2 else { throw IRGenError.unsupportedExpression(kind:"substring requires 2 args", sl()) }
  let start = try generateExpression(arguments[0].expression)
  let len = try generateExpression(arguments[1].expression)
  let sz = "%t\(nextTemp())"
@@ -319,7 +319,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
 
  /// IR: s.split(",") → strtok 循环构建 "[a, b, c]"
  func generateStringSplit(_ str: String, _ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 1 else { throw IRGenError.unsupportedExpression("split requires 1 arg (delimiter)", sl()) }
+ guard arguments.count == 1 else { throw IRGenError.unsupportedExpression(kind:"split requires 1 arg (delimiter)", sl()) }
  let delim = try generateExpression(arguments[0].expression)
  // 结果缓冲区
  let buf = "%t\(nextTemp())"
@@ -392,7 +392,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  /// - `%bk_array*` 不透明句柄（变量绑定数组，Phase 1 #7）：经 `@bk_array_len`/`@bk_array_get`
  /// 按运行时长度循环（对齐 `generateStringifyArray` 的迭代约定），元素解箱为 ptr 后 strcat。
  func generateArrayJoin(_ arr: IRValue, _ arguments: [CallArgument]) throws -> IRValue {
- guard arguments.count == 1 else { throw IRGenError.unsupportedExpression("join requires 1 arg (separator)", sl()) }
+ guard arguments.count == 1 else { throw IRGenError.unsupportedExpression(kind:"join requires 1 arg (separator)", sl()) }
  let sep = try generateExpression(arguments[0].expression)
  // 结果缓冲区
  let buf = "%t\(nextTemp())"
@@ -446,7 +446,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  let x = arr.llvmType.firstIndex(of: "x"),
  let rb = arr.llvmType.firstIndex(of: "]"),
  let count = Int(arr.llvmType[arr.llvmType.index(after: lb)..<x].trimmingCharacters(in: .whitespaces)) else {
- throw IRGenError.unsupportedExpression("join expects [N x ptr] array, got \(arr.llvmType)", sl())
+ throw IRGenError.unsupportedExpression(kind:"join expects [N x ptr] array, got \(arr.llvmType)", sl())
  }
  var idx = 0
  while idx < count {
@@ -476,7 +476,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  func generateLenCall(arguments: [CallArgument]) throws -> IRValue {
  let loc = SourceLocation(line: 0, column: 0, fileName: "")
  guard arguments.count == 1, let arg = arguments.first else {
- throw IRGenError.unsupportedExpression("len 需要恰好 1 个参数，实际 \(arguments.count) 个", loc)
+ throw IRGenError.unsupportedExpression(kind:"len 需要恰好 1 个参数，实际 \(arguments.count) 个", loc)
  }
 
  let val = try generateExpression(arg.expression)
@@ -571,7 +571,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
  return IRValue(llvmType: "i32", ssaName: result)
  }
 
- throw IRGenError.unsupportedExpression("len 不支持的 IR 类型：\(val.llvmType)", loc)
+ throw IRGenError.unsupportedExpression(kind:"len 不支持的 IR 类型：\(val.llvmType)", loc)
  }
 
  /// 解析定长数组类型 `[N x T]` 的元素个数 N；非数组类型返回 nil。

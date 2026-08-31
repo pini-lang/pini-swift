@@ -1,0 +1,9 @@
+((String))
+ contains|self(needle: String,) -> (Bool,):
+    return false
+
+main|func() -> ():
+    var s = "hello"
+    print(s.contains("ell"))
+    print(s.upper())
+    return

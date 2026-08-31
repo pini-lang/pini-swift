@@ -2041,11 +2041,26 @@ public class Interpreter {
  // ADR-020 步骤 B：成员派发表驱动（BuiltinRegistry.memberMethods，
  // 与 TypeChecker.defineMethod 共用同一张表）。未知成员 → undefinedVariable。
  // 步骤 C：语言内默认实现（Pini body）优先，缺失时回落宿主原生实现。
+ // H-3（2026-08-31）：三级派发——**用户扩展 > 语言内标准库 > 宿主原生**。
+ // 用户扩展按名匹配（非按签名），既可覆盖同名内建成员（不再被静默压过），
+ // 也可新增内建表没有的方法；内建表 guard 因此后移到用户查表之后。
+ let methodEnv = Environment(enclosing: currentEnv)
+ methodEnv.define(name: "self", value: .string(s), isMutable: false)
+ if let methods = extMethodsByType["String"],
+ let userMethod = methods.first(where: { $0.name == memberName }) {
+ let actualParams = userMethod.params.first?.name == "self" ? Array(userMethod.params.dropFirst()) : userMethod.params
+ return .function(FunctionValue(
+ name: userMethod.name,
+ params: actualParams,
+ returnTypes: userMethod.returnTypes,
+ body: userMethod.body,
+ decl: userMethod,
+ closure: methodEnv
+ ))
+ }
  guard let member = BuiltinRegistry.member(typeName: "String", name: memberName) else {
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
- let methodEnv = Environment(enclosing: globalEnv)
- methodEnv.define(name: "self", value: .string(s), isMutable: false)
  if let impl = stdlibMemberImpl(typeName: "String", name: memberName) {
  return .function(FunctionValue(
  name: impl.name,
@@ -2101,12 +2116,24 @@ public class Interpreter {
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
  case .array(let arr):
- // ADR-020 步骤 B：同 .string——成员派发表驱动 + Pini 实现优先。
+ // ADR-020 步骤 B：同 .string——H-3 三级派发（用户扩展 > 语言内标准库 > 宿主原生）。
+ let methodEnv = Environment(enclosing: currentEnv)
+ methodEnv.define(name: "self", value: .array(arr), isMutable: false)
+ if let methods = extMethodsByType["Array"],
+ let userMethod = methods.first(where: { $0.name == memberName }) {
+ let actualParams = userMethod.params.first?.name == "self" ? Array(userMethod.params.dropFirst()) : userMethod.params
+ return .function(FunctionValue(
+ name: userMethod.name,
+ params: actualParams,
+ returnTypes: userMethod.returnTypes,
+ body: userMethod.body,
+ decl: userMethod,
+ closure: methodEnv
+ ))
+ }
  guard let member = BuiltinRegistry.member(typeName: "Array", name: memberName) else {
  throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
- let methodEnv = Environment(enclosing: globalEnv)
- methodEnv.define(name: "self", value: .array(arr), isMutable: false)
  if let impl = stdlibMemberImpl(typeName: "Array", name: memberName) {
  return .function(FunctionValue(
  name: impl.name,

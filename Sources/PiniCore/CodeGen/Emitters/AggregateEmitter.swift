@@ -70,7 +70,7 @@ extension IRGenerator {
  func resolveMemberField(base: Expression, memberName: String) throws -> (fieldIRType: String, fldPtr: String) {
  let baseVal = try generateExpression(base)
  guard baseVal.llvmType.hasSuffix("*") else {
- throw IRGenError.unsupportedExpression(
+ throw IRGenError.unsupportedExpression(kind:
  "member access requires struct/object pointer, got \(baseVal.llvmType)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
@@ -82,7 +82,7 @@ extension IRGenerator {
  .replacingOccurrences(of: "%struct.", with: "")
  .replacingOccurrences(of: "*", with: "")
  guard let sd = structTypes[name] else {
- throw IRGenError.unsupportedExpression("unknown struct type \(name)",
+ throw IRGenError.unsupportedExpression(kind:"unknown struct type \(name)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  aggName = "%struct.\(name)"; fields = sd.fields; offset = 0
@@ -91,17 +91,17 @@ extension IRGenerator {
  .replacingOccurrences(of: "%object.", with: "")
  .replacingOccurrences(of: "*", with: "")
  guard let od = objectTypes[name] else {
- throw IRGenError.unsupportedExpression("unknown object type \(name)",
+ throw IRGenError.unsupportedExpression(kind:"unknown object type \(name)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  aggName = "%object.\(name)"; fields = od.fields; offset = 1
  } else {
- throw IRGenError.unsupportedExpression(
+ throw IRGenError.unsupportedExpression(kind:
  "member access requires struct/object pointer, got \(baseVal.llvmType)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  guard let idx = fields.firstIndex(where: { $0.name == memberName }) else {
- throw IRGenError.unsupportedExpression("no field `\(memberName)` on \(aggName)",
+ throw IRGenError.unsupportedExpression(kind:"no field `\(memberName)` on \(aggName)",
  SourceLocation(line: 0, column: 0, fileName: ""))
  }
  let fieldIRType = try typeMapper.map(fields[idx].typeAnnotation)
@@ -124,7 +124,7 @@ extension IRGenerator {
  if baseVal.llvmType == "%bk_lazyref*" {
  let box = try generateLazyRefValue(handle: baseVal)
  guard case .identifier(let baseName, _) = base, let elemIR = lazyRefValueTypeByVar[baseName] else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "LazyRef .value 需经变量访问（LLVM 端元素类型推断暂限标识符 base）", sl())
  }
  let val = builder.freshTemp()
@@ -177,7 +177,7 @@ extension IRGenerator {
  // 故元素为不透明指针（String 等，`val.llvmType == "ptr"`）时改用 `{ ptr }` 单字段 struct
  // 包裹（其内存布局与 `ptr` 兼容，解构 `load ptr` 即可取回），其余值类型用 `alloca T` + `bitcast T*→ptr`。
  guard let arg = arguments.first else {
- throw IRGenError.unsupportedFeature("Optional.some 缺少关联值实参", sl())
+ throw IRGenError.unsupportedFeature(feature:"Optional.some 缺少关联值实参", sl())
  }
  let val = try generateExpression(arg.expression)
  let boxAsPtr = builder.freshTemp()
@@ -213,7 +213,7 @@ extension IRGenerator {
  let val = try generateExpression(def)
  emitLine(builder.fmtStore(value: val.ssaName, type: val.llvmType, ptr: fldPtr))
  } else {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "枚举用例 \(enumName) 缺少第 \(i + 1) 个关联值实参且无默认值", sl())
  }
  }
@@ -228,7 +228,7 @@ extension IRGenerator {
  let keys = enumCaseUnqualified[caseName] ?? []
  if keys.isEmpty { return nil }
  if keys.count > 1 {
- throw IRGenError.unsupportedFeature(
+ throw IRGenError.unsupportedFeature(feature:
  "ambiguous unqualified enum construction \(caseName): qualify as Parent.\(caseName)", sl())
  }
  return keys[0]
