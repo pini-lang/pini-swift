@@ -665,8 +665,13 @@ top-level-decl  ::= import-decl | export-decl
                   | struct-decl | object-decl | object-decl-sugar | enum-decl | bare-func-decl
                   | trait-decl | extension-decl | foreign-decl;
 
-import-decl     ::= '[' 'import' '|' 'import' ']' NEWLINE { import-item };
-import-item     ::= IDENT '=' STRING;
+import-decl     ::= '[' IDENT '|' 'import' ']' NEWLINE { import-item };
+(* D-1 裁决（2026-08-31）：块头名 = **当前文件名**（去 `.pini` 后缀），解析器校验
+   一致——自识性标签，不进访问路径（R4）。修订理由：原 `[import|import]` 形态把
+   保留关键字 `import` 放进标签位（`import` 在 KEYWORD 保留字表内），照原样实现
+   必然与关键字保留冲突，属纸面自洽、落地即炸的产生式；且「两个 import」令人困惑。
+   块形式为本产生式唯一形态；宿主裸语句已裁决移除（G52 批 1，见
+   issue-module-batch1-2026-08-31.md）。 *)
 (* import/export 块形式是唯一顶级形态（G51，Pini草稿 §[名称|import]/§[类型名称|export]）；
    顶级裸 `import X`/`export X` 语句不属于本语言——宿主现行裸语句实现为已知偏差。
    **2026-08-31 裁决：移除裸语句实现**（用户拍板）。理由：本语言甚至未为全局变量留出裸
@@ -676,7 +681,8 @@ import-item     ::= IDENT '=' STRING;
    实现对齐，宿主收敛后须同步（见自举侧 host-gaps 台账）。
    import 绑定包路径，`_` 前缀别名 = 注入的隐式包调用别名；export 为可见性别名导出表（与 `_` 访问控制联动） *)
 
-export-decl     ::= '[' 'export' '|' 'export' ']' NEWLINE { export-item };
+export-decl     ::= '[' IDENT '|' 'export' ']' NEWLINE { export-item };
+(* 块头名 = 当前文件名（与 import-decl 同规则，D-1 裁决对称适用）。 *)
 export-item     ::= IDENT '=' IDENT                      (* 符号重命名 *)
                   | IDENT ':' type-annotation;           (* 类型别名声明 *)
 (* 类型别名禁止递归，暂不支持泛型 *)
