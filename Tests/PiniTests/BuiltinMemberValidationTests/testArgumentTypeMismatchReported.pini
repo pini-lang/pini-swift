@@ -1,0 +1,4 @@
+main|func() -> ()
+    var s = "Hello"
+    print(s.contains(42))
+    return

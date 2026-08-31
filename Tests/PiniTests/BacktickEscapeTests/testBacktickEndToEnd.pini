@@ -1,0 +1,8 @@
+f|func(a: I32,) -> (I32,)
+    return a
+
+main|func() -> ()
+    let `step` = 3
+    print(`step`)
+    print(f(`a`: 5,))
+    return

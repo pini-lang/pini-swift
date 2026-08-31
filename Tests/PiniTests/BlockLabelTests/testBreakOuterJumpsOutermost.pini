@@ -1,0 +1,6 @@
+main|func() -> ()
+    outer|while true:
+        while true:
+            break outer
+        print(42)
+    return

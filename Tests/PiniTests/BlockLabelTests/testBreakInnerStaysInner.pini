@@ -1,0 +1,9 @@
+main|func() -> ()
+    outer|while true:
+        var i = 0
+        inner|while true:
+            i = i + 1
+            break inner
+        print(i)
+        break outer
+    return

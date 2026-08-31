@@ -1,0 +1,4 @@
+main|func() -> ()
+    while true:
+        break
+    return

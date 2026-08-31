@@ -44,16 +44,7 @@ final class BacktickEscapeTests: XCTestCase {
     /// 推进性测量：程序运行输出 3 与 5
     /// 驳回性测量：解析/类型/运行错误均不合格
     func testBacktickEndToEnd() throws {
-        let source = """
-f|func(a: I32,) -> (I32,)
-    return a
-
-main|func() -> ()
-    let `step` = 3
-    print(`step`)
-    print(f(`a`: 5,))
-    return
-"""
+        let source = try loadPiniFixture("testBacktickEndToEnd", filePath: #filePath)
         let out = try runProgram(source)
         XCTAssertTrue(out.contains("3"), out)
         XCTAssertTrue(out.contains("5"), out)

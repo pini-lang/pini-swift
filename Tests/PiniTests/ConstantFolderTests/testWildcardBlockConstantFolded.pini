@@ -1,0 +1,14 @@
+[色彩]
+红
+绿
+
+f|func() -> ()
+    var c = 红
+    match c:
+        case 红:
+            pass
+        case 绿:
+            pass
+        case _:
+            var x = 1 + 2
+    return

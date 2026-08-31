@@ -1,0 +1,12 @@
+boom|func() => (I32,)
+    return err(Error("业务失败"))
+
+main|func() -> ()
+    var r = wait boom()
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(isCancel(e))
+            print(e.message)
+    return

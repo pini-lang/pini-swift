@@ -1,0 +1,15 @@
+task|func() => (I32,)
+    return ok(1)
+
+main|func() -> ()
+    var t = task()
+    t.cancel()
+    var r = wait t
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            if isCancel(e):
+                print("cancelled")
+            return
+    return

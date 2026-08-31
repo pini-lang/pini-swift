@@ -86,22 +86,7 @@ final class CancellationTests: XCTestCase {
     /// 意图：`t.cancel()` 后 join 该任务得到 `err`，且 `isCancel(e)` 为真。
     /// 推进性测量：输出精确为 "true"。
     func testCancelledTaskJoinsAsCancelError() throws {
-        let source = """
-        slow|func() => (I32,)
-            sleep(50)
-            return ok(1)
-
-        main|func() -> ()
-            var t = slow()
-            t.cancel()
-            var r = wait t
-            match r:
-                case ok(v):
-                    print("不应进入 ok 分支")
-                case err(e):
-                    print(isCancel(e))
-            return
-        """
+        let source = try loadPiniFixture("testCancelledTaskJoinsAsCancelError", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "true")
     }
@@ -109,22 +94,7 @@ final class CancellationTests: XCTestCase {
     /// 意图：取消错误自带可读 message，与业务错误共享 `.message` 读取形态。
     /// 推进性测量：输出精确为 "任务已被取消"。
     func testCancelErrorCarriesReadableMessage() throws {
-        let source = """
-        slow|func() => (I32,)
-            sleep(50)
-            return ok(1)
-
-        main|func() -> ()
-            var t = slow()
-            t.cancel()
-            var r = wait t
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print(e.message)
-            return
-        """
+        let source = try loadPiniFixture("testCancelErrorCarriesReadableMessage", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "任务已被取消")
     }
@@ -132,20 +102,7 @@ final class CancellationTests: XCTestCase {
     /// 意图：业务错误不得被误判为取消——`isCancel` 必须按类型判别而非「凡 err 皆取消」。
     /// 推进性测量：输出精确为 "false\n业务失败"。
     func testBusinessErrorIsNotCancel() throws {
-        let source = """
-        boom|func() => (I32,)
-            return err(Error("业务失败"))
-
-        main|func() -> ()
-            var r = wait boom()
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print(isCancel(e))
-                    print(e.message)
-            return
-        """
+        let source = try loadPiniFixture("testBusinessErrorIsNotCancel", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "false\n业务失败")
     }
@@ -154,19 +111,7 @@ final class CancellationTests: XCTestCase {
     /// 证明类型层把它当作 `Error` 位置的合法值（白名单子类型），而非只在运行时能用。
     /// 推进性测量：静态检查零错误，且运行时输出 "true"。
     func testUserConstructedCancelErrorIsAcceptedWhereErrorExpected() throws {
-        let source = """
-        aborted|func() => (I32,)
-            return err(CancelError("用户中止"))
-
-        main|func() -> ()
-            var r = wait aborted()
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print(isCancel(e))
-            return
-        """
+        let source = try loadPiniFixture("testUserConstructedCancelErrorIsAcceptedWhereErrorExpected", filePath: #filePath)
         XCTAssertTrue(checkCollecting(source).isEmpty,
                       "CancelError 应可出现在期望 Error 的位置；实际: \(checkCollecting(source))")
         let output = try runProgram(source)
@@ -177,24 +122,8 @@ final class CancellationTests: XCTestCase {
 
     /// 意图：`t.cancel()` 是 Future 的已知成员，不得报 unknownMember；
     /// 且 `isCancel(e)` 返回 Bool（可直接用于条件）。
-    func testCancelAndIsCancelAreStaticallyKnown() {
-        let source = """
-        task|func() => (I32,)
-            return ok(1)
-
-        main|func() -> ()
-            var t = task()
-            t.cancel()
-            var r = wait t
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    if isCancel(e):
-                        print("cancelled")
-                    return
-            return
-        """
+    func testCancelAndIsCancelAreStaticallyKnown() throws {
+        let source = try loadPiniFixture("testCancelAndIsCancelAreStaticallyKnown", filePath: #filePath)
         XCTAssertTrue(checkCollecting(source).isEmpty,
                       "cancel/isCancel 应已在类型层登记；实际: \(checkCollecting(source))")
     }

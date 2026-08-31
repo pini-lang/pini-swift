@@ -21,16 +21,7 @@ final class BuiltinMemberValidationTests: XCTestCase {
     /// 推进性测量：整个模块零类型错误。
     /// 驳回性测量：若 registerBuiltinTypes 未登记这些签名，调用点校验跳过——本测试不会失败（需其他测试覆盖漏报面）。
     func testValidStringMemberCalls() throws {
-        let source = """
-        main|func() -> ()
-            var s = "Hello, World"
-            print(s.upper())
-            print(s.lower())
-            print(s.contains("World"))
-            print(s.substring(0, 5))
-            print(s.split(","))
-            return
-        """
+        let source = try loadPiniFixture("testValidStringMemberCalls", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         XCTAssertTrue(diagnostics.isEmpty, "合法 String 成员调用应无类型错误，实际: \(diagnostics)")
     }
@@ -39,12 +30,7 @@ final class BuiltinMemberValidationTests: XCTestCase {
     /// 推进性测量：诊断含 substring 的 argumentCountMismatch（expected 2, got 1）。
     /// 驳回性测量：若调用点参数个数校验缺失，此测试会失败（漏报）。
     func testArgumentCountMismatchReported() throws {
-        let source = """
-        main|func() -> ()
-            var s = "Hello"
-            print(s.substring(0))
-            return
-        """
+        let source = try loadPiniFixture("testArgumentCountMismatchReported", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let hit = diagnostics.contains {
             if case .argumentCountMismatch(expected: 2, got: 1, _) = $0 { return true }
@@ -57,12 +43,7 @@ final class BuiltinMemberValidationTests: XCTestCase {
     /// 推进性测量：诊断含 contains 的 mismatch（expected String, got I32）。
     /// 驳回性测量：若调用点参数类型校验缺失，此测试会失败（漏报）。
     func testArgumentTypeMismatchReported() throws {
-        let source = """
-        main|func() -> ()
-            var s = "Hello"
-            print(s.contains(42))
-            return
-        """
+        let source = try loadPiniFixture("testArgumentTypeMismatchReported", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let hit = diagnostics.contains {
             if case .mismatch(expected: "String", got: "I32", _) = $0 { return true }
@@ -75,12 +56,7 @@ final class BuiltinMemberValidationTests: XCTestCase {
     /// 推进性测量：诊断含 (typeName: "String", memberName: "uppr") 的 unknownMember。
     /// 驳回性测量：若未知成员被静默跳过，此测试会失败（漏报）；用户自定义类型的未知成员不受影响（另测）。
     func testUnknownMemberReported() throws {
-        let source = """
-        main|func() -> ()
-            var s = "Hello"
-            print(s.uppr())
-            return
-        """
+        let source = try loadPiniFixture("testUnknownMemberReported", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let hit = diagnostics.contains {
             if case .unknownMember(typeName: "String", memberName: "uppr", _) = $0 { return true }
@@ -93,15 +69,7 @@ final class BuiltinMemberValidationTests: XCTestCase {
     /// 推进性测量：整个模块零类型错误。
     /// 驳回性测量：若 unknownMember 误伤用户类型，此测试会失败（误报）。
     func testUserTypeUnknownMemberNotReported() throws {
-        let source = """
-        (盒子)
-            内容: String = "x"
-
-        main|func() -> ()
-            var b = 盒子()
-            print(b)
-            return
-        """
+        let source = try loadPiniFixture("testUserTypeUnknownMemberNotReported", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let falsePositive = diagnostics.contains {
             if case .unknownMember(_, _, _) = $0 { return true }

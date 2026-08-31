@@ -1,0 +1,11 @@
+main|func() -> ()
+    var i = 0
+    outer|while i < 3:
+        var j = 0
+        while j < 5:
+            if j == 2:
+                break outer
+            print(j)
+            j = j + 1
+        i = i + 1
+    return

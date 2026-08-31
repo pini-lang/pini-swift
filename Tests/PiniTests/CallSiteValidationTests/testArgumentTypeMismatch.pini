@@ -1,0 +1,5 @@
+foo|func(a: I32,) -> ()
+    return
+main|func() -> ()
+    foo("hello")
+    return

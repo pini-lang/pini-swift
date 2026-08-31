@@ -12,19 +12,8 @@ final class AmbiguousCaseResolutionTests: XCTestCase {
     /// （ADR-026 D1 静态收敛版：运行期动态消歧已移除，2026-08-30 裁决）
     /// 推进性测量：check 期报错
     /// 驳回性测量：按实参类型静默解析均不合格
-    func testBareConstructionRequiresQualification() {
-        let source = """
-[ShpA]
-mk(v: I32,)
-
-[ShpB]
-mk(v: String,)
-
-main|func() -> ()
-    print(mk(v: 7))
-    print(mk(v: "s"))
-    return
-"""
+    func testBareConstructionRequiresQualification() throws {
+        let source = try loadPiniFixture("testBareConstructionRequiresQualification", filePath: #filePath)
         XCTAssertThrowsError(try runSource(source), "歧义裸名构造应被 check 拒绝")
     }
 
@@ -35,19 +24,8 @@ main|func() -> ()
     /// ADR-026 D1 静态收敛版，2026-08-30 裁决）
     /// 推进性测量：check 期报错
     /// 驳回性测量：按元数静默解析均不合格
-    func testAmbiguousArityRequiresQualification() {
-        let source = """
-[BoxA]
-foo(a: I32,)
-
-[BoxB]
-foo(x: String, y: String,)
-
-main|func() -> ()
-    print(foo(1))
-    print(foo("a", "b"))
-    return
-"""
+    func testAmbiguousArityRequiresQualification() throws {
+        let source = try loadPiniFixture("testAmbiguousArityRequiresQualification", filePath: #filePath)
         XCTAssertThrowsError(try runSource(source), "歧义裸名构造应被 check 拒绝")
     }
 
@@ -56,31 +34,7 @@ main|func() -> ()
     /// 推进性测量：两个 match 的解构绑定都成功并输出正确值
     /// 驳回性测量：E4-005 arity 报错或绑定错值均不合格
     func testMatchResolvesByScrutineeType() throws {
-        let source = """
-[BoxA]
-foo(a: I32,)
-
-[BoxB]
-foo(x: String, y: String,)
-
-describe_a|func(b: BoxA,) -> (I32,)
-    match b:
-        case foo(v,):
-            return v
-    return 0
-
-describe_b|func(b: BoxB,) -> (I32,)
-    match b:
-        case foo(x, y,):
-            if x == y:
-                return 7
-    return 0
-
-main|func() -> ()
-    print(describe_a(foo(a: 5)))
-    print(describe_b(foo(x: "k", y: "k")))
-    return
-"""
+        let source = try loadPiniFixture("testMatchResolvesByScrutineeType", filePath: #filePath)
         let out = try runSource(source)
         XCTAssertTrue(out.contains("5"), out)
         XCTAssertTrue(out.contains("7"), out)
@@ -91,20 +45,7 @@ main|func() -> ()
     /// 推进性测量：构造成功并输出正确字段值
     /// 驳回性测量：E2/E4 类型报错均不合格
     func testBareUniqueCaseConstructionInfersParentType() throws {
-        let source = """
-[Tok]
-int_lit(v: I32,)
-
-pick|func() -> (Tok,)
-    return int_lit(v: 9)
-
-main|func() -> ()
-    let t = pick()
-    match t:
-        case int_lit(v,):
-            print(v)
-    return
-"""
+        let source = try loadPiniFixture("testBareUniqueCaseConstructionInfersParentType", filePath: #filePath)
         let out = try runSource(source)
         XCTAssertTrue(out.contains("9"), out)
     }

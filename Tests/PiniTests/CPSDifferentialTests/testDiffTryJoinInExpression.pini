@@ -1,0 +1,9 @@
+child|func() => (I32, String,)
+    return (0, "",)
+
+main|func() => (I32,)
+    try (await child()):
+        print("try-ok")
+    except e:
+        print("except:", e)
+    return ok(0)

@@ -1,0 +1,11 @@
+child|func() => (I32,)
+    sleep(10)
+    return ok(7)
+
+main|func() => (I32,)
+    match (await child()):
+        case ok(v):
+            print("ok", v)
+        case err(e):
+            print("err")
+    return ok(0)

@@ -1,0 +1,23 @@
+[BinaryOperator]
+plus
+minus
+
+[Expr]
+integer((value: I32, loc: I32,),)
+binary((left: Expr, op: BinaryOperator, right: Expr,),)
+
+main|func() -> ()
+    var e = binary((left: integer((value: 1, loc: 0,)), op: plus, right: integer((value: 2, loc: 0,)),))
+    match e:
+        case binary(b):
+            match b.left:
+                case integer(li):
+                    print(li.value)
+                case binary(_):
+                    return
+            match b.right:
+                case integer(ri):
+                    print(ri.value)
+                case binary(_):
+                    return
+    return

@@ -1,0 +1,5 @@
+foo|func(a, b,) -> ()
+    return
+main|func() -> ()
+    foo(1, "x")
+    return

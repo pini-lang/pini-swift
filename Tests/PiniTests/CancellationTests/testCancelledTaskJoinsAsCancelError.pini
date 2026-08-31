@@ -1,0 +1,14 @@
+slow|func() => (I32,)
+    sleep(50)
+    return ok(1)
+
+main|func() -> ()
+    var t = slow()
+    t.cancel()
+    var r = wait t
+    match r:
+        case ok(v):
+            print("不应进入 ok 分支")
+        case err(e):
+            print(isCancel(e))
+    return

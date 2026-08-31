@@ -1,0 +1,14 @@
+slow|func() => (I32,)
+    sleep(50)
+    return ok(1)
+
+main|func() -> ()
+    var t = slow()
+    t.cancel()
+    var r = wait t
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e.message)
+    return

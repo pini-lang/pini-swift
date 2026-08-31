@@ -1,0 +1,11 @@
+aborted|func() => (I32,)
+    return err(CancelError("用户中止"))
+
+main|func() -> ()
+    var r = wait aborted()
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(isCancel(e))
+    return

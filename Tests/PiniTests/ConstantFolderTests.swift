@@ -128,22 +128,7 @@ final class ConstantFolderTests: XCTestCase {
     /// P4（D3①）：`case _:` 通配块的语句应参与常量折叠（与 case 块一致）。
     /// 意图：验证 `case _:` 通配块内 `var x = 1 + 2` 折叠为 integerLiteral(3)，与 case 块行为一致。
     func testWildcardBlockConstantFolded() throws {
-        let src = """
-[色彩]
-红
-绿
-
-f|func() -> ()
-    var c = 红
-    match c:
-        case 红:
-            pass
-        case 绿:
-            pass
-        case _:
-            var x = 1 + 2
-    return
-"""
+        let src = try loadPiniFixture("testWildcardBlockConstantFolded", filePath: #filePath)
         let m = try parse(src)
         guard case .integerLiteral(let v, _) = firstWildcardVarInit(m) else {
             XCTFail("case _: 块内 var x = 1 + 2 应折叠为 integerLiteral(3)")

@@ -1,0 +1,8 @@
+main|func() -> ()
+    var s = "Hello, World"
+    print(s.upper())
+    print(s.lower())
+    print(s.contains("World"))
+    print(s.substring(0, 5))
+    print(s.split(","))
+    return

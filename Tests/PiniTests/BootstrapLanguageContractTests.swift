@@ -40,31 +40,7 @@ final class BootstrapLanguageContractTests: XCTestCase {
     /// 推进性测量：输出 "1\n2\n"——依次命中 left/right 两棵子树的字面量值。
     /// 驳回性测量：输出缺失任一子树的 `.value` 即失败。
     func testRecursiveEnumWithNamedTupleAssociatedValues() throws {
-        let source = """
-[BinaryOperator]
-plus
-minus
-
-[Expr]
-integer((value: I32, loc: I32,),)
-binary((left: Expr, op: BinaryOperator, right: Expr,),)
-
-main|func() -> ()
-    var e = binary((left: integer((value: 1, loc: 0,)), op: plus, right: integer((value: 2, loc: 0,)),))
-    match e:
-        case binary(b):
-            match b.left:
-                case integer(li):
-                    print(li.value)
-                case binary(_):
-                    return
-            match b.right:
-                case integer(ri):
-                    print(ri.value)
-                case binary(_):
-                    return
-    return
-"""
+        let source = try loadPiniFixture("testRecursiveEnumWithNamedTupleAssociatedValues", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output, "1\n2\n", "递归枚举 + 命名元组字段访问应依次输出 1、2")
     }
