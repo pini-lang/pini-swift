@@ -1,0 +1,11 @@
+清理|func() -> ():
+    defer:
+        print("cleanup-1")
+        print("cleanup-2")
+    print("work")
+    return
+
+main|func() -> ():
+    清理()
+    print("after")
+    return

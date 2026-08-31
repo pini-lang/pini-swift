@@ -2373,6 +2373,17 @@ public class Parser {
  let loc = currentLocation
  advance() // 跳过 defer
  
+ // G51④/P0（2026-08-31）：defer 双形态——
+ // ①相邻单行：`defer 语句`（宿主现行）；
+ // ②块形式：`defer:` + 缩进体（草稿 §defer 块退出前清理）。
+ // 块形式 AST 复用 deferStatement(scopedBlock)：整个块作为**一个** defer 项入
+ // deferStack，包含块退出时按书写序执行（跨 defer 的 LIFO 由 deferStack 保证）。
+ if case .colon(_) = currentToken {
+ let body = try parseControlBlock()
+ let inner = Statement.scopedBlock(label: nil, body: body, location: loc)
+ return Statement.deferStatement(statement: inner, location: loc)
+ }
+ 
  // defer 后面可以跟赋值或表达式语句
  let stmt = try parseAssignOrExpr()
  

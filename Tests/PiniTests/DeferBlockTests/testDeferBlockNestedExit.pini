@@ -1,0 +1,8 @@
+main|func() -> ():
+    var log = ""
+    if true:
+        defer:
+            log = log + "inner-defer"
+        log = log + "inner-body"
+    print(log)
+    return
