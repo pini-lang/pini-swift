@@ -1,0 +1,7 @@
+(盒<T: 可比较>)
+值: T = 0
+
+main|func() -> ():
+    var b = 盒<I32>()
+    print(b.值)
+    return

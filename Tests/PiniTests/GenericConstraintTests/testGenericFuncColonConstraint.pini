@@ -1,0 +1,6 @@
+排序|func<T: 可比较>(xs: T,) -> (T,):
+    return xs
+
+main|func() -> ():
+    print(排序<I32>(xs: 3))
+    return

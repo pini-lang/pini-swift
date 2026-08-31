@@ -1,0 +1,6 @@
+身份|func<T>(x: T,) -> (v: T,):
+    return x
+
+main|func() -> ():
+    print(身份<String>(x: "泛型"))
+    return

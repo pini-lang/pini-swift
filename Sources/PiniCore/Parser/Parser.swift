@@ -3247,11 +3247,17 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  while true {
  let name = try parseIdentifier()
  
- // 可选的约束
+ // 可选的约束（H-2/A9 裁决，2026-08-31）：分隔符为 `:`，与扩展块特征约束
+ // `((块:特征))` 同形；旧 `|` 分隔废除（顶级 `|` 右侧是块形态关键字位）。
  var constraint: TypeAnnotation? = nil
- if case .pipe(_) = currentToken {
+ if case .colon(_) = currentToken {
  advance()
  constraint = try parseTypeAnnotation()
+ } else if case .pipe(_) = currentToken {
+ throw ParserError.invalidType(
+ reason: "泛型约束分隔符已改为 `:`（H-2/A9）：写作 `<T: 约束,>`",
+ location: currentLocation
+ )
  }
  
  params.append(GenericParam(name: name, constraint: constraint))

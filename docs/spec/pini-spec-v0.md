@@ -931,8 +931,11 @@ type-annotation ::= '?' type-annotation                          (* ?T ≡ Optio
                     [('->' | '=>') '(' [type-annotation {',' type-annotation}] ')']
                   | 'self' | 'own';
 
-generic-params  ::= IDENT ['|' type-annotation] {',' IDENT ['|' type-annotation]};
-(* 泛型约束使用 '|' 分隔，与声明修饰符语法一致 *)
+generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]};
+(* H-2（A9 裁决，2026-08-31 落地）：泛型约束分隔符为 `:`，与扩展块特征约束
+   `((块:特征))` 同形；草稿泛型函数块一行同用 `:`。旧 `|` 分隔废除——顶级声明中
+   `|` 右侧常为块形态关键字，两处 `|` 语义易混。约束的语义求解（trait 约束求解）
+   属 G8，未定义，不在本产生式语义内。 *)
 
 (* ======================================================================== *)
 (*  A.3  运算符优先级/结合性总表                                              *)
