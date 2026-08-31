@@ -120,10 +120,7 @@ final class LexerTests: XCTestCase {
 
     /// 意图：缩进块应产生 INDENT token，块结束应产生 DEDENT token
     func testTokenizeIndentDedent() throws {
-        let source = """
-main() -> ()
-    x
-"""
+        let source = try loadPiniFixture("testTokenizeIndentDedent", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
 

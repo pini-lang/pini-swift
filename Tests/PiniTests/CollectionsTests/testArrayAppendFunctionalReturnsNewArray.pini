@@ -1,0 +1,6 @@
+main|func() -> ()
+    var a = [1, 2, 3]
+    var b = a.append(4)
+    print(a)
+    print(b)
+    return

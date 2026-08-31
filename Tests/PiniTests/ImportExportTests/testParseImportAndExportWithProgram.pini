@@ -1,0 +1,5 @@
+import math
+export helper
+
+let helper = 1
+let main = 0

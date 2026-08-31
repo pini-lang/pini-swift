@@ -1,0 +1,6 @@
+bar|func() -> (I32,)
+    return 7
+
+main|func() -> ()
+    var x = wait bar()
+    return

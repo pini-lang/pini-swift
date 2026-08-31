@@ -1,0 +1,4 @@
+main|func() -> ()
+    print(len(""))
+    print(len([]))
+    return

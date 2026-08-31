@@ -1,0 +1,12 @@
+work|func() => (I32,)
+    return ok(1)
+
+main|func() -> ()
+    var a = work()
+    var r = wait joinAll([a])
+    match r:
+        case ok(vs):
+            print(vs)
+        case err(e):
+            print(e)
+    return

@@ -1,0 +1,11 @@
+fetch|func() => (I32,)
+    return ok(1)
+
+main|func() -> ()
+    var r = wait fetch()
+    match r:
+        case ok(v):
+            print(v + "abc")
+        case err(e):
+            print(e.message)
+    return

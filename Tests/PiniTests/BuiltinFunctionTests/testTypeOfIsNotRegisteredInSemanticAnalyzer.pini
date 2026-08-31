@@ -1,0 +1,3 @@
+main|func() -> ()
+    typeOf(42)
+    return

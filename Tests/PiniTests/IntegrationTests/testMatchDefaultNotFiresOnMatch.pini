@@ -1,0 +1,12 @@
+[形状]
+圆
+矩形
+
+main|func() -> ()
+    var s = 圆
+    match s:
+        case 圆:
+            print("命中")
+        case _:
+            print("默认")
+    return

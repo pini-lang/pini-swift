@@ -1,0 +1,5 @@
+main|func() -> ()
+    while 1 < 2:
+        defer undefinedVar = undefinedVar + 1
+        return
+    return

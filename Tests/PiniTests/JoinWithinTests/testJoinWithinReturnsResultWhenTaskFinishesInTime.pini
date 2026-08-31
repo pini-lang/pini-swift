@@ -1,0 +1,13 @@
+fast|func() => (I32,)
+    sleep(20)
+    return ok(7)
+
+main|func() -> ()
+    var t = fast()
+    var r = joinWithin(t, 1000)
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print("不应超时")
+    return

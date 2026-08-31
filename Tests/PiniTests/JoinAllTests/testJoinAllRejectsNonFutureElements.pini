@@ -1,0 +1,8 @@
+main|func() -> ()
+    var r = wait joinAll([1, 2])
+    match r:
+        case ok(vs):
+            print(vs)
+        case err(e):
+            print(e)
+    return

@@ -39,29 +39,14 @@ final class LazyRefTests: XCTestCase {
 
     /// 意图：显式 `LazyRef<I32>(闭包)` 构造 + `.value` 访问返回初始化结果（D1 显式优先）。
     func testLazyRefExplicitConstructValue() throws {
-        let source = """
-main|func() -> ()
-    var r = LazyRef<I32>(func () -> (I32,): return 42)
-    print(r.value)
-    return
-"""
+        let source = try loadPiniFixture("testLazyRefExplicitConstructValue", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42", "显式构造后 .value 应返回初始化结果")
     }
 
     /// 意图：`.value` 首访执行初始化闭包一次并缓存（D2）——副作用只打印一次，后续访问返回缓存。
     func testLazyRefValueCachesAfterFirstAccess() throws {
-        let source = """
-main|func() -> ()
-    var r = LazyRef<I32>(func () -> (I32,):
-        print("init")
-        return 42
-    )
-    print(r.value)
-    print(r.value)
-    print(r.value)
-    return
-"""
+        let source = try loadPiniFixture("testLazyRefValueCachesAfterFirstAccess", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.split(separator: "\n").map(String.init)
         XCTAssertEqual(lines, ["init", "42", "42", "42"], "初始化闭包只应执行一次（init 恰一次），后续 .value 返回缓存")
@@ -69,29 +54,14 @@ main|func() -> ()
 
     /// 意图：推断糖 `LazyRef(闭包)`（D1 语法糖）与显式构造同语义。
     func testLazyRefInferredSugar() throws {
-        let source = """
-main|func() -> ()
-    var r = LazyRef(func () -> (I32,): return 7)
-    print(r.value)
-    return
-"""
+        let source = try loadPiniFixture("testLazyRefInferredSugar", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "7", "推断糖构造后 .value 应返回初始化结果")
     }
 
     /// 意图：引用语义承载（G42）——`var b = a` 复制共享同一 box；初始化一次，b.value 与 a.value 一致。
     func testLazyRefAliasSharesCache() throws {
-        let source = """
-main|func() -> ()
-    var a = LazyRef<I32>(func () -> (I32,):
-        print("init")
-        return 5
-    )
-    var b = a
-    print(a.value)
-    print(b.value)
-    return
-"""
+        let source = try loadPiniFixture("testLazyRefAliasSharesCache", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.split(separator: "\n").map(String.init)
         XCTAssertEqual(lines, ["init", "5", "5"], "复制共享同一 box：初始化一次，a/b 读到同一缓存")
@@ -99,11 +69,7 @@ main|func() -> ()
 
     /// 意图：LazyRef 参数非闭包时报错（类型守卫）。
     func testLazyRefNonFunctionArgFails() throws {
-        let source = """
-main|func() -> ()
-    var r = LazyRef<I32>(42)
-    return
-"""
+        let source = try loadPiniFixture("testLazyRefNonFunctionArgFails", filePath: #filePath)
         XCTAssertThrowsError(try runProgram(source), "LazyRef 参数非闭包应报错") { error in
             XCTAssertTrue(error is RuntimeError, "应为 RuntimeError")
         }

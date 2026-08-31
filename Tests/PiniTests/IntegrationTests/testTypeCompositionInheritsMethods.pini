@@ -1,0 +1,19 @@
+(计数器)
+数值: I32 = 0
+
+((计数器))
+增加|self() -> ()
+    self.数值 = self.数值 + 1
+    return
+
+(命名计数器)
+计数器
+名称: String = "默认"
+
+main|func() -> ()
+    let c = 命名计数器()
+    c.增加()
+    c.增加()
+    print(c.数值)
+    print(c.名称)
+    return

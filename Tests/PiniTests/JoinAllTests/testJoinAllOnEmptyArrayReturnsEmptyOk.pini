@@ -1,0 +1,8 @@
+main|func() -> ()
+    var r = wait joinAll([])
+    match r:
+        case ok(vs):
+            print(vs)
+        case err(e):
+            print("不应失败")
+    return

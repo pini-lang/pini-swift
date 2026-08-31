@@ -1,0 +1,27 @@
+(框<T>)
+
+((框<T>))
+标识|self() -> (String,)
+    return "ok"
+make|func() => (String,)
+    let f = 框<I32>()
+    return ok(f.标识())
+main|func() -> ()
+    var f1 = make()
+    var f2 = make()
+    var f3 = make()
+    var f4 = make()
+    var f5 = make()
+    var f6 = make()
+    var f7 = make()
+    var f8 = make()
+    var j1 = wait f1
+    var j2 = wait f2
+    var j3 = wait f3
+    var j4 = wait f4
+    var j5 = wait f5
+    var j6 = wait f6
+    var j7 = wait f7
+    var j8 = wait f8
+    print("done")
+    return

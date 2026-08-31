@@ -1,0 +1,10 @@
+slow|func() => (I32,)
+    sleep(60)
+    return ok(1)
+
+main|func() -> ()
+    var a = slow()
+    var b = slow()
+    print(wait a)
+    print(wait b)
+    return

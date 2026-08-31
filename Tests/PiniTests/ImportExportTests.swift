@@ -27,14 +27,8 @@ final class ImportExportTests: XCTestCase {
     }
 
     /// 意图：验证 import/export 与普通顶层声明共存时互不干扰：imports/exports 正确暂存，普通声明仍在 declarations。
-    func testParseImportAndExportWithProgram() {
-        let src = """
-        import math
-        export helper
-
-        let helper = 1
-        let main = 0
-        """
+    func testParseImportAndExportWithProgram() throws {
+        let src = try loadPiniFixture("testParseImportAndExportWithProgram", filePath: #filePath)
         let result = parse(src)
         XCTAssertTrue(result.errors.isEmpty, "解析应无错误：\(result.errors)")
         XCTAssertEqual(result.module.imports.map { $0.moduleName }, ["math"])

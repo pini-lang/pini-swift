@@ -1,0 +1,4 @@
+main|func() -> ()
+    print(is_letter("h"))
+    print(is_letter("字"))
+    return

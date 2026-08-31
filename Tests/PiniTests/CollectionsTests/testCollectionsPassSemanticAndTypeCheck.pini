@@ -1,0 +1,9 @@
+main|func() -> ()
+    var a = [1, 2, 3]
+    var d = [1: "a", 2: "b"]
+    var s = {1, 2, 3}
+    var x = a[0]
+    var y = d[1]
+    print(x)
+    print(y)
+    return

@@ -1,0 +1,15 @@
+work|func(n: I32, ms: I32,) => (I32,)
+    sleep(ms)
+    return ok(n)
+
+main|func() -> ()
+    var a = work(1, 120)
+    var b = work(2, 20)
+    var c = work(3, 60)
+    var r = wait joinAll([a, b, c])
+    match r:
+        case ok(vs):
+            print(vs)
+        case err(e):
+            print("不应失败")
+    return

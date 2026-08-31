@@ -1,0 +1,12 @@
+[形状]
+矩形(F64, F64,)
+
+main|func() -> ()
+    var r = 矩形(3.0, 4.0,)
+    match r:
+        case 矩形(w, h,):
+            print(w)
+            print(h)
+        case _:
+            print(0.0)
+    return

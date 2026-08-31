@@ -1,0 +1,16 @@
+slow|func(n: I32,) => (I32,)
+    sleep(3000)
+    return ok(n)
+
+main|func() -> ()
+    var a = slow(1)
+    var b = slow(2)
+    var r = joinWithin(joinAll([a, b]), 120)
+    match r:
+        case ok(vs):
+            print("不应完成")
+        case err(e):
+            if isCancel(e):
+                print("批量超时")
+            return
+    return

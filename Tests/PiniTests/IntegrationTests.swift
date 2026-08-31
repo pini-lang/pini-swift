@@ -62,22 +62,7 @@ final class IntegrationTests: XCTestCase {
     /// 推进性测量：子类型实例应能访问父类型字段
     /// 驳回性测量：未继承的字段访问应报错
     func testTypeCompositionInheritsFields() throws {
-        let source = """
-(基础点)
-x: I32 = 10
-y: I32 = 20
-
-(颜色点)
-基础点
-颜色: String = "red"
-
-main|func() -> ()
-    let p = 颜色点()
-    print(p.x)
-    print(p.y)
-    print(p.颜色)
-    return
-"""
+        let source = try loadPiniFixture("testTypeCompositionInheritsFields", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n")
         XCTAssertEqual(lines, ["10", "20", "red"], "类型组合应继承父类型字段")
@@ -85,27 +70,7 @@ main|func() -> ()
 
     /// 意图：内嵌组合应继承父类型的方法
     func testTypeCompositionInheritsMethods() throws {
-        let source = """
-(计数器)
-数值: I32 = 0
-
-((计数器))
-增加|self() -> ()
-    self.数值 = self.数值 + 1
-    return
-
-(命名计数器)
-计数器
-名称: String = "默认"
-
-main|func() -> ()
-    let c = 命名计数器()
-    c.增加()
-    c.增加()
-    print(c.数值)
-    print(c.名称)
-    return
-"""
+        let source = try loadPiniFixture("testTypeCompositionInheritsMethods", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n")
         XCTAssertEqual(lines, ["2", "默认"], "类型组合应继承父类型方法")
@@ -113,19 +78,7 @@ main|func() -> ()
 
     /// 意图：子类型字段应覆盖父类型同名字段
     func testTypeCompositionOverridesFields() throws {
-        let source = """
-(父类)
-值: I32 = 100
-
-(子类)
-父类
-值: I32 = 200
-
-main|func() -> ()
-    let s = 子类()
-    print(s.值)
-    return
-"""
+        let source = try loadPiniFixture("testTypeCompositionOverridesFields", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "200", "子类型字段应覆盖父类型")
     }
@@ -134,43 +87,14 @@ main|func() -> ()
 
     /// 意图：match 未匹配任何 case 时应执行 default 分支
     func testMatchDefaultFiresOnNoMatch() throws {
-        let source = """
-[形状]
-圆
-矩形
-三角形
-
-main|func() -> ()
-    var s = 三角形
-    match s:
-        case 圆:
-            print("圆形")
-        case 矩形:
-            print("矩形")
-        case _:
-            print("未知形状")
-    return
-"""
+        let source = try loadPiniFixture("testMatchDefaultFiresOnNoMatch", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "未知形状", "未匹配时应执行 default")
     }
 
     /// 意图：match 匹配到 case 时不应执行 default 分支（驳回性测量）
     func testMatchDefaultNotFiresOnMatch() throws {
-        let source = """
-[形状]
-圆
-矩形
-
-main|func() -> ()
-    var s = 圆
-    match s:
-        case 圆:
-            print("命中")
-        case _:
-            print("默认")
-    return
-"""
+        let source = try loadPiniFixture("testMatchDefaultNotFiresOnMatch", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "命中", "匹配到 case 时不应执行 default")
     }
@@ -178,22 +102,7 @@ main|func() -> ()
     /// 意图（MED-1，P5）：match 无 default 且无匹配、且主体为枚举值时，运行期应抛
     /// `RuntimeError.matchNotExhaustive`（替代原静默跳过，提升可发现性、易调试）。
     func testMatchNoDefaultNoMatch() throws {
-        let source = """
-[形状]
-圆
-矩形
-三角形
-
-main|func() -> ()
-    var s = 三角形
-    match s:
-        case 圆:
-            print("圆形")
-        case 矩形:
-            print("矩形")
-    print("结束")
-    return
-"""
+        let source = try loadPiniFixture("testMatchNoDefaultNoMatch", filePath: #filePath)
         do {
             _ = try runProgram(source)
             XCTFail("无 default 且枚举值未匹配时应抛 matchNotExhaustive，而非静默跳过")
@@ -211,20 +120,8 @@ main|func() -> ()
     /// 意图：具名关联值决议（2026-08-29，推翻规则 3.15 具名拒绝）——具名形参声明
     /// `矩形(宽度: F64, 高度: F64,)` 合法，且 match 位置解构按位绑定。
     /// 推进性测量：check 零错误；运行输出 12.0（宽 3.0 × 高 4.0）。
-    func testEnumNamedParamDeclarationAccepted() {
-        let source = """
-[形状]
-矩形(宽度: F64, 高度: F64,)
-
-面积|func(s: 形状,) -> (F64,)
-    match s:
-        case 矩形(w, h):
-            return w * h
-
-main|func() -> ()
-    print(面积(矩形(3.0, 4.0,)))
-    return
-"""
+    func testEnumNamedParamDeclarationAccepted() throws {
+        let source = try loadPiniFixture("testEnumNamedParamDeclarationAccepted", filePath: #filePath)
         XCTAssertNoThrow(try checkModule(source), "具名形参声明应合法")
     }
 
@@ -232,28 +129,7 @@ main|func() -> ()
     ///（位置绑定 / 具名绑定 / `_` 占位）。
     /// 推进性测量：输出 "x\n7\ny\n8\n9\n"。
     func testNamedAssociatedValuesEndToEnd() throws {
-        let source = """
-[Token]
-identifier(text: String, loc: I32,)
-plus
-
-main|func() -> ()
-    var t = identifier(text: "x", loc: 7,)
-    match t:
-        case identifier(text, loc):
-            print(text)
-            print(loc)
-    var u = identifier(text: "y", loc: 8,)
-    match u:
-        case identifier(text: s, loc: l):
-            print(s)
-            print(l)
-    var v = identifier(text: "z", loc: 9,)
-    match v:
-        case identifier(_, l2):
-            print(l2)
-    return
-"""
+        let source = try loadPiniFixture("testNamedAssociatedValuesEndToEnd", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output, "x\n7\ny\n8\n9\n", "三种解构应依次输出 x/7、y/8、9")
     }
@@ -261,18 +137,8 @@ main|func() -> ()
     /// 意图：绑定数与关联值数不匹配应报 E4（argumentCountMismatch）——
     /// 此前静默错绑（首名绑整元组、其余 null）。
     /// 驳回性测量：3 绑定对 2 关联值必须报错。
-    func testMatchBindingArityMismatchRejected() {
-        let source = """
-[Token]
-identifier(text: String, loc: I32,)
-
-main|func() -> ()
-    var t = identifier("x", 7,)
-    match t:
-        case identifier(a, b, c):
-            print(a)
-    return
-"""
+    func testMatchBindingArityMismatchRejected() throws {
+        let source = try loadPiniFixture("testMatchBindingArityMismatchRejected", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "绑定数不匹配应报类型错误") { error in
             guard case TypeError.argumentCountMismatch(let expected, let got, _) = error else {
                 XCTFail("期望 argumentCountMismatch，得到 \(error)")
@@ -287,15 +153,8 @@ main|func() -> ()
     ///（解析期 `圆(半径: 5.0)` 与普通函数具名调用同形，故只能在 callee 解析为枚举 case 后拒绝）
     /// 推进性测量：位置声明 + `矩形(高度: 4.0, 宽度: 3.0,)` 抛出 TypeError.enumCaseArgumentLabel
     /// 驳回性测量：具名实参被接受（旧「命名参数顺序无关」行为已随 3.15 废除）
-    func testEnumNamedConstructionArgumentRejected() {
-        let source = """
-[形状]
-矩形(F64, F64,)
-
-main|func() -> ()
-    var r = 矩形(高度: 4.0, 宽度: 3.0,)
-    return
-"""
+    func testEnumNamedConstructionArgumentRejected() throws {
+        let source = try loadPiniFixture("testEnumNamedConstructionArgumentRejected", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "规则 3.15：枚举构造具名实参应报类型错误") { error in
             guard case TypeError.enumCaseArgumentLabel(let label, let caseName, _) = error else {
                 XCTFail("期望 TypeError.enumCaseArgumentLabel，得到 \(error)")
@@ -310,20 +169,7 @@ main|func() -> ()
     /// 推进性测量：`矩形(3.0, 4.0,)` 匹配 `case 矩形(w, h,)` 得 w=3.0 / h=4.0
     /// 驳回性测量：绑定错位或未命中
     func testEnumPositionalConstructionAndMatch() throws {
-        let source = """
-[形状]
-矩形(F64, F64,)
-
-main|func() -> ()
-    var r = 矩形(3.0, 4.0,)
-    match r:
-        case 矩形(w, h,):
-            print(w)
-            print(h)
-        case _:
-            print(0.0)
-    return
-"""
+        let source = try loadPiniFixture("testEnumPositionalConstructionAndMatch", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n")
         XCTAssertEqual(lines, ["3.0", "4.0"], "位置实参应按声明顺序逐位绑定")
@@ -335,13 +181,7 @@ main|func() -> ()
     /// 推进性测量：正确抛出 SemanticError.undefinedVariable
     /// 驳回性测量：未定义变量不报错或错误类型不对
     func testDeferWithUndefinedVariable() throws {
-        let source = """
-main|func() -> ()
-    while 1 < 2:
-        defer undefinedVar = undefinedVar + 1
-        return
-    return
-"""
+        let source = try loadPiniFixture("testDeferWithUndefinedVariable", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "defer 中使用未定义变量应报错") { error in
             guard case SemanticError.undefinedVariable = error else {
                 XCTFail("应为 SemanticError.undefinedVariable，实际: \(error)")

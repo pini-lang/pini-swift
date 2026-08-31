@@ -1,0 +1,5 @@
+identity|func<T>(x: T) -> (T,)
+    return x
+main|func() -> ()
+    var y = identity<I32>(x: 5)
+    return

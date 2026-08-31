@@ -1,0 +1,12 @@
+slow|func() => (I32,)
+    sleep(30)
+    return ok(5)
+
+main|func() -> ()
+    var r = wait slow()
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

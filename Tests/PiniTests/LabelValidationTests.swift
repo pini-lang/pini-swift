@@ -7,15 +7,8 @@ final class LabelValidationTests: XCTestCase {
     /// 意图：类型构造不接受实参（字段经初始化器/赋值设置）——此前位置实参被静默丢弃
     /// 推进性测量：运行期元数报错
     /// 驳回性测量：静默接受（无错）均不合格
-    func testTypeConstructorRejectsArguments() {
-        let source = """
-(pt)
-x: I32 = 0
-
-main|func() -> ()
-    var p = pt(7,)
-    return
-"""
+    func testTypeConstructorRejectsArguments() throws {
+        let source = try loadPiniFixture("testTypeConstructorRejectsArguments", filePath: #filePath)
         XCTAssertThrowsError(try buildAndRun(source), "类型构造传参应报元数错误")
     }
 
@@ -23,14 +16,7 @@ main|func() -> ()
     /// 推进性测量：check 期 E4 报错
     /// 驳回性测量：check 通过均不合格
     func testMismatchedArgLabelFailsCheck() throws {
-        let source = """
-f|func(a: I32,) -> (I32,)
-    return a
-
-main|func() -> ()
-    print(f(b: 3,))
-    return
-"""
+        let source = try loadPiniFixture("testMismatchedArgLabelFailsCheck", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "lv.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "lv.pini")
@@ -43,14 +29,7 @@ main|func() -> ()
     /// 推进性测量：运行输出 3
     /// 驳回性测量：误报均不合格
     func testMatchedLabelStillWorks() throws {
-        let source = """
-f|func(a: I32,) -> (I32,)
-    return a
-
-main|func() -> ()
-    print(f(a: 3,))
-    return
-"""
+        let source = try loadPiniFixture("testMatchedLabelStillWorks", filePath: #filePath)
         let out = try runProgram(source)
         XCTAssertTrue(out.contains("3"), out)
     }

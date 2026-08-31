@@ -1,0 +1,7 @@
+main|func() -> ()
+    var a = [1, 2, 3]
+    print(a.last())
+    var (b, top) = a.pop()
+    print(top)
+    print(b)
+    return

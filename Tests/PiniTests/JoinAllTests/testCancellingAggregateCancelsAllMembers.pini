@@ -1,0 +1,20 @@
+slow|func(n: I32,) => (I32,)
+    sleep(3000)
+    print("成员不该跑完")
+    return ok(n)
+
+main|func() -> ()
+    var a = slow(1)
+    var b = slow(2)
+    var agg = joinAll([a, b])
+    sleep(60)
+    agg.cancel()
+    var r = wait agg
+    match r:
+        case ok(vs):
+            print("不应成功")
+        case err(e):
+            if isCancel(e):
+                print("聚合已取消")
+            return
+    return

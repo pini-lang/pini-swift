@@ -160,12 +160,7 @@ final class GenericTypeTests: XCTestCase {
 
     /// 意图：用完整源码管线（词法→解析→类型检查）验证单类型参数泛型结构体「容器<T>」声明通过检查不抛错。
     func testTypeCheckerRegistersGenericStruct() throws {
-        let source = """
-(容器<T>)
-值: T = 默认值
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testTypeCheckerRegistersGenericStruct", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -177,13 +172,7 @@ main|func() -> ()
 
     /// 意图：用完整源码管线验证多类型参数泛型结构体「对<T, U>」声明通过检查不抛错。
     func testTypeCheckerGenericMultipleParams() throws {
-        let source = """
-(对<T, U>)
-左: T = 默认值
-右: U = 默认值
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testTypeCheckerGenericMultipleParams", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")

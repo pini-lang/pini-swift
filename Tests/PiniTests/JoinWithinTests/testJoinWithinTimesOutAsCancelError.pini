@@ -1,0 +1,15 @@
+slow|func() => (I32,)
+    sleep(3000)
+    return ok(1)
+
+main|func() -> ()
+    var t = slow()
+    var r = joinWithin(t, 100)
+    match r:
+        case ok(v):
+            print("不应完成")
+        case err(e):
+            if isCancel(e):
+                print("超时:", e)
+            return
+    return

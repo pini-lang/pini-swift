@@ -1,0 +1,5 @@
+main|func() -> ()
+    print(ord("A"))
+    print(ord("字"))
+    print(ord(""))
+    return

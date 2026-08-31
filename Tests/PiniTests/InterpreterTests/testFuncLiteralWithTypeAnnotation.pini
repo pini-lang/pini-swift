@@ -1,0 +1,4 @@
+main|func() -> ()
+    let g: (I32,)->(I32,) = func (x,) -> (I32,): return x + 1
+    print(g(41))
+    return

@@ -1,0 +1,9 @@
+(框<T>)
+
+((框<T>))
+标识|self() -> (String,)
+    return "ok"
+main|func() -> ()
+    let f = 框<I32>()
+    print(f.标识())
+    return

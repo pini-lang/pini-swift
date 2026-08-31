@@ -1,0 +1,5 @@
+main|func() -> ()
+    print(is_ascii_digit("0"))
+    print(is_ascii_digit("9"))
+    print(is_ascii_digit("5"))
+    return

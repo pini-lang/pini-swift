@@ -1,0 +1,11 @@
+main|func() -> ()
+    var x = 1
+    if x == 1:
+        print("外A",)
+        if x == 1:
+            print("内A",)
+        else:
+            print("内B",)
+    else:
+        print("外B",)
+    return

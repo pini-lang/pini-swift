@@ -1,0 +1,6 @@
+main|func() -> ()
+    print(is_number("字"))
+    print(is_number("a"))
+    print(is_number("_"))
+    print(is_number(""))
+    return

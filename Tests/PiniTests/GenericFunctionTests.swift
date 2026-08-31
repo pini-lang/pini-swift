@@ -16,28 +16,16 @@ final class GenericFunctionTests: XCTestCase {
 
     /// 意图：泛型函数 identity<T>(x: T) 在 identity<I32>(x: 5) 调用点，T 绑定 I32 后形参 I32 与实参 I32 结构等价。
     /// 推进性测量：check 不应抛错。
-    func testGenericFunctionCallWithMatchingType() {
-        let source = """
-        identity|func<T>(x: T) -> (T,)
-            return x
-        main|func() -> ()
-            var y = identity<I32>(x: 5)
-            return
-        """
+    func testGenericFunctionCallWithMatchingType() throws {
+        let source = try loadPiniFixture("testGenericFunctionCallWithMatchingType", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "identity<I32>(x: 5) 应通过类型检查（T 绑定 I32）")
     }
 
     /// 意图：调用点实参类型与特化后形参不符时，必须报 mismatch（T 占位通配后做精确比对）。
     /// 推进性测量：抛出 TypeError.mismatch。
     /// 驳回性测量：T 按精确名比较时（修复前语义）会误判为「通过」，本测试作为回归护栏。
-    func testGenericFunctionCallWithMismatchedType() {
-        let source = """
-        identity|func<T>(x: T) -> (T,)
-            return x
-        main|func() -> ()
-            var y = identity<I32>(x: "a")
-            return
-        """
+    func testGenericFunctionCallWithMismatchedType() throws {
+        let source = try loadPiniFixture("testGenericFunctionCallWithMismatchedType", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "identity<I32>(x: \"a\") 应报类型不匹配") { error in
             guard case TypeError.mismatch = error else {
                 XCTFail("应为 TypeError.mismatch，实际: \(error)")
@@ -48,14 +36,8 @@ final class GenericFunctionTests: XCTestCase {
 
     /// 意图：泛型函数类型实参个数与声明不符时，报错（genericArgumentCountMismatch）。
     /// 推进性测量：抛出 TypeError.genericArgumentCountMismatch(typeName: "identity", expected: 1, got: 2)。
-    func testGenericFunctionTypeArgumentCountMismatch() {
-        let source = """
-        identity|func<T>(x: T) -> (T,)
-            return x
-        main|func() -> ()
-            var y = identity<I32, I32>(x: 5)
-            return
-        """
+    func testGenericFunctionTypeArgumentCountMismatch() throws {
+        let source = try loadPiniFixture("testGenericFunctionTypeArgumentCountMismatch", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "泛型函数类型实参个数不符应抛错") { error in
             guard case TypeError.genericArgumentCountMismatch(typeName: "identity", expected: 1, got: 2, _) = error else {
                 XCTFail("应为 genericArgumentCountMismatch(typeName: \"identity\", expected: 1, got: 2)，实际: \(error)")

@@ -1,0 +1,8 @@
+main|func() -> ()
+    var r = joinWithin(1, 50)
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

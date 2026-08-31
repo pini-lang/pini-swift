@@ -1,0 +1,9 @@
+main|func() -> ()
+    var a = LazyRef<I32>(func () -> (I32,):
+        print("init")
+        return 5
+    )
+    var b = a
+    print(a.value)
+    print(b.value)
+    return

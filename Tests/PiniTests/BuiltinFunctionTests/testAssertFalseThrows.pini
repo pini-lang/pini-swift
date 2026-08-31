@@ -1,0 +1,3 @@
+main|func() -> ()
+    assert(false)
+    return

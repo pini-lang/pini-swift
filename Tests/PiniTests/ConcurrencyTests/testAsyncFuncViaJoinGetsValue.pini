@@ -1,0 +1,11 @@
+foo|func() => (I32,)
+    return ok(99)
+
+main|func() -> ()
+    var r = wait foo()
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

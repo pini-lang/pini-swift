@@ -1,0 +1,6 @@
+main|func() -> ()
+    if true:
+        print("A",)
+        elif false:
+            print("B",)
+    return

@@ -35,53 +35,28 @@ final class InterpreterTests: XCTestCase {
 
     /// 意图：带返回类型标注 (I32,) 的 func 字面量应可绑定到变量并调用，f(41) 正确输出 42
     func testFuncLiteralWithReturnType() throws {
-        let source = """
-main|func() -> ()
-    let f = func (x,) -> (I32,): return x + 1
-    print(f(41))
-    return
-"""
+        let source = try loadPiniFixture("testFuncLiteralWithReturnType", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
     /// 意图：显式标注函数类型 (I32,)->(I32,) 的变量应能接收 func 字面量，g(41) 正确输出 42
     func testFuncLiteralWithTypeAnnotation() throws {
-        let source = """
-main|func() -> ()
-    let g: (I32,)->(I32,) = func (x,) -> (I32,): return x + 1
-    print(g(41))
-    return
-"""
+        let source = try loadPiniFixture("testFuncLiteralWithTypeAnnotation", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
     /// 意图：if/else 应依条件选择分支，x=10 满足 x>5 时输出"大于5"
     func testIfElse() throws {
-        let source = """
-main|func() -> ()
-    var x = 10
-    if x > 5:
-        print("大于5")
-    else:
-        print("小于等于5")
-    return
-"""
+        let source = try loadPiniFixture("testIfElse", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "大于5")
     }
 
     /// 意图：while 循环应依条件重复执行，i 从 0 到 2 依次输出 0、1、2
     func testWhileLoop() throws {
-        let source = """
-main|func() -> ()
-    var i = 0
-    while i < 3:
-        print(i)
-        i = i + 1
-    return
-"""
+        let source = try loadPiniFixture("testWhileLoop", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
         XCTAssertEqual(lines, ["0", "1", "2"])
@@ -89,72 +64,35 @@ main|func() -> ()
 
     /// 意图：match 语句应命中与枚举值 s=圆 对应的 case 分支，输出"圆形"
     func testMatchCase() throws {
-        let source = """
-[形状]
-圆
-矩形
-
-main|func() -> ()
-    var s = 圆
-    match s:
-        case 圆:
-            print("圆形")
-        case 矩形:
-            print("矩形")
-        case _:
-            print("未知")
-    return
-"""
+        let source = try loadPiniFixture("testMatchCase", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "圆形")
     }
 
     /// 意图：前缀自增运算符应使变量加 1
     func testUnaryPrefixIncrement() throws {
-        let source = """
-main|func() -> ()
-    var x = 5
-    ++x
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testUnaryPrefixIncrement", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "6", "++x 应使 x 从 5 变为 6")
     }
 
     /// 意图：前缀自减运算符应使变量减 1
     func testUnaryPrefixDecrement() throws {
-        let source = """
-main|func() -> ()
-    var x = 5
-    --x
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testUnaryPrefixDecrement", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "4", "--x 应使 x 从 5 变为 4")
     }
 
     /// 意图：一元正号对正数无影响
     func testUnaryPlus() throws {
-        let source = """
-main|func() -> ()
-    var x = +5
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testUnaryPlus", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "5", "+5 应为 5")
     }
 
     /// 意图：按位取反应正确计算
     func testUnaryBitwiseNot() throws {
-        let source = """
-main|func() -> ()
-    var x = ~0
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testUnaryBitwiseNot", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "-1", "~0 应为 -1")
     }

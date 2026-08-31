@@ -1,0 +1,3 @@
+main|func() -> ()
+    print("a\\nb\\tc")
+    return

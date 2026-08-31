@@ -1,0 +1,14 @@
+[形状]
+圆
+矩形
+
+main|func() -> ()
+    var s = 圆
+    match s:
+        case 圆:
+            print("圆形")
+        case 矩形:
+            print("矩形")
+        case _:
+            print("未知")
+    return

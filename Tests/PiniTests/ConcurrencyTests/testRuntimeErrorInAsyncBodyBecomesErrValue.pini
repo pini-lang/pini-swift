@@ -1,0 +1,12 @@
+bad|func() => (I32,)
+    var z = 0
+    return ok(10 / z)
+
+main|func() -> ()
+    var r = wait bad()
+    match r:
+        case ok(v):
+            print("unexpected ok")
+        case err(e):
+            print(e)
+    return

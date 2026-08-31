@@ -1,0 +1,12 @@
+work|func() => (I32,)
+    return ok(1)
+
+main|func() -> ()
+    var t = work()
+    var r = joinWithin(t, 50)
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

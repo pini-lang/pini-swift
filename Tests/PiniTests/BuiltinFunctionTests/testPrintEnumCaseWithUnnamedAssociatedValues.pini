@@ -1,0 +1,7 @@
+[结果]
+成功(I32,)
+
+main|func() -> ()
+    var r = 成功(42)
+    print(r)
+    return

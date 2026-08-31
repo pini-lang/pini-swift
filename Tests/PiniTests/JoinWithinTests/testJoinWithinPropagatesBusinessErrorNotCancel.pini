@@ -1,0 +1,15 @@
+bad|func() => (I32,)
+    return err(Error("业务失败"))
+
+main|func() -> ()
+    var t = bad()
+    var r = joinWithin(t, 1000)
+    match r:
+        case ok(v):
+            print("不应成功")
+        case err(e):
+            if isCancel(e):
+                print("误判为取消")
+            print(e)
+            return
+    return

@@ -1,0 +1,5 @@
+bad|func() => (I32,)
+    return ok("x")
+
+main|func() -> ()
+    return

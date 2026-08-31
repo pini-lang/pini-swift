@@ -1,0 +1,20 @@
+inner|func(y: I32,) => (I32,)
+    return ok(y * 2)
+
+outer|func(x: I32,) => (I32,)
+    var r = await inner(x)
+    match r:
+        case ok(t):
+            return ok(t + 1)
+        case err(e):
+            return err(e)
+    return ok(0)
+
+main|func() -> ()
+    var r = wait outer(5)
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

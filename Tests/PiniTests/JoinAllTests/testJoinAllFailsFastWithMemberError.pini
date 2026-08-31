@@ -1,0 +1,16 @@
+good|func() => (I32,)
+    return ok(1)
+
+bad|func() => (I32,)
+    return err(Error("成员失败"))
+
+main|func() -> ()
+    var a = good()
+    var b = bad()
+    var r = wait joinAll([a, b])
+    match r:
+        case ok(vs):
+            print("不应成功")
+        case err(e):
+            print(e)
+    return

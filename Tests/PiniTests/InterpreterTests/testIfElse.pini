@@ -1,0 +1,7 @@
+main|func() -> ()
+    var x = 10
+    if x > 5:
+        print("大于5")
+    else:
+        print("小于等于5")
+    return

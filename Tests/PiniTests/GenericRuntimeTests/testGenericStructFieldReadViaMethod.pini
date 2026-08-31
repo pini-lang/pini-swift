@@ -1,0 +1,10 @@
+(计数器<T>)
+计数: I32 = 0
+
+((计数器<T>))
+读|self() -> (I32,)
+    return self.计数
+main|func() -> ()
+    let c = 计数器<String>()
+    print(c.读())
+    return

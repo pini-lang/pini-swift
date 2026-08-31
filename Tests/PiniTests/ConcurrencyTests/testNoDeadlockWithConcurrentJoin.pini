@@ -1,0 +1,14 @@
+ping|func() => (I32,)
+    sleep(20)
+    return ok(10)
+
+pong|func() => (I32,)
+    sleep(20)
+    return ok(20)
+
+main|func() -> ()
+    var a = ping()
+    var b = pong()
+    print(wait a)
+    print(wait b)
+    return

@@ -1,0 +1,3 @@
+main|func() -> ()
+    var r = LazyRef<I32>(42)
+    return

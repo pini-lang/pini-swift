@@ -1,0 +1,11 @@
+fetch|func() => (I32,)
+    return err(Error("网络超时"))
+
+main|func() -> ()
+    var r = wait fetch()
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print("失败: " + e.message)
+    return

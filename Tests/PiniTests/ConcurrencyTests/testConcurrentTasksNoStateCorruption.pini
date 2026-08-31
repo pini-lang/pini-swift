@@ -1,0 +1,14 @@
+make|func(n: I32,) => (I32,)
+    var s = 0
+    var i = 0
+    while i < n:
+        s = s + i
+        i = i + 1
+    return ok(s)
+
+main|func() -> ()
+    var a = make(100)
+    var b = make(7)
+    print(wait a)
+    print(wait b)
+    return

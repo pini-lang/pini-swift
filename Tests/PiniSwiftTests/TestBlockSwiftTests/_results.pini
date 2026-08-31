@@ -1,0 +1,10 @@
+加法测试|test() -> ()
+ assert(1 + 1 == 2, "加法错误")
+ return
+
+字符串测试|test() -> ()
+ assert(len("abc") == 3)
+ return
+
+main() -> ()
+ return

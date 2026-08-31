@@ -1,0 +1,6 @@
+(pt)
+x: I32 = 0
+
+main|func() -> ()
+    var p = pt(7,)
+    return
