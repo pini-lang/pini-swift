@@ -1,5 +1,0 @@
-main|func() -> ()
-    var f = func (n: String,) -> (I32,):
-        return n + 1
-    print(f("x"))
-    return

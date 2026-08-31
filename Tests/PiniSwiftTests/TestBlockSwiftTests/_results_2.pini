@@ -1,7 +1,0 @@
-应通过|test() -> ()
- assert(true)
- return
-
-应失败|test() -> ()
- assert(false, "boom")
- return

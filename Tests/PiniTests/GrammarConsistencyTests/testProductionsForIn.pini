@@ -1,7 +1,0 @@
-main() -> ()
-    var acc = 0
-    for (v,) in [1, 2, 3]:
-        acc = acc + v
-    step:
-        acc = acc + v
-    return

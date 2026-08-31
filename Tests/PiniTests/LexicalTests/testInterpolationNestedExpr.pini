@@ -1,3 +1,0 @@
-main|func() -> ()
-    print("sum=\(2*3+1)")
-    return

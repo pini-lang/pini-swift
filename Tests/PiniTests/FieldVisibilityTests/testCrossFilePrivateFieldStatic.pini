@@ -1,7 +1,0 @@
-{账户}
-余额: I32 = 0
-_owner: I32 = 1
-
-{{账户}}
-查主人|self() -> ()
-    return self._owner

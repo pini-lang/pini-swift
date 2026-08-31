@@ -1,4 +1,0 @@
-main|func() -> ()
-    let acc = 账户()
-    print(acc._owner)
-    return

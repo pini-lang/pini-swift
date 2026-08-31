@@ -1,5 +1,0 @@
-main|func() -> ()
-    var f = func (n: I32,) -> (I32,):
-        return "hello"
-    print(f(42))
-    return

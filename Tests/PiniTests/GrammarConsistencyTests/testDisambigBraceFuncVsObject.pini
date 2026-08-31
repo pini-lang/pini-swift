@@ -1,2 +1,0 @@
-{f|func}(x: I32) -> (I32,)
-    return x

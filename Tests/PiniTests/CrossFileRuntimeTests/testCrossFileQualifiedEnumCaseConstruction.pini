@@ -1,5 +1,0 @@
-main|func() -> ()
-    var xs = []
-    xs = xs.append(Shape.circle(r: 3,))
-    print(len(xs))
-    return

@@ -1,3 +1,0 @@
-main|func() -> ()
-    print("x=\(1+2)")
-    return

@@ -1,7 +1,0 @@
-main() -> ()
-    match v:
-        case 1:
-            pass
-        case _:
-            pass
-    return

@@ -1,4 +1,0 @@
-参数测试|test(名称: String, 计数: I32,) -> ()
- assert(len(名称) == 0, "String 注入空串")
- assert(计数 == 0, "I32 注入 0")
- return

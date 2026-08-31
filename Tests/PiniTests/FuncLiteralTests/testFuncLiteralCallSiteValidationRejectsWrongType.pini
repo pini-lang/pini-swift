@@ -1,5 +1,0 @@
-main|func() -> ()
-    var f = func (n: I32,) -> (I32,):
-        return n
-    print(f("should be rejected"))
-    return
