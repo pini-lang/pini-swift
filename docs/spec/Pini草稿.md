@@ -1,3 +1,10 @@
+> **DEPRECATED（2026-08-31）**：本文档正退出「设计意图通道」的角色。
+> 权威事实源是 `docs/spec/pini-spec-v0.md`（本仓规范）；与本文档冲突之处一律以规范为准，
+> 冲突与裁决记录在 `docs/spec/issue/issue-conflict-register-2026-08-31.md`。
+> 本文档仅作**历史设计意图与理由**参考，**不可单独作为兼容性依据**；
+> 已知表述问题（如 §`capture 标识符` 的用词歧义）不再就地订正，以裁决记录为准。
+> 后续处置：待授权后迁入规范或退场；在此之前保持原样，不做内容改写。
+
 # `核心语法`
 - 参考ini语法，行敏感，缩进敏感，组合式编程
 - 此语言语法顶级结构是，复合类型的单行标识符声明，和复合类型块的交替解释
@@ -196,6 +203,9 @@ main() -> (); 此顶级声明使同为顶级声明的"计数对象"声明结束
 ```
 
 ### `内建函数`
+> **DEPRECATED（2026-08-31）**：本节清单不作为依据。内建函数以规范与宿主
+> `BuiltinRegistry`（ADR-020 D3/D4）为唯一事实源——裁决见冲突登记册 A3 / A4 / A5。
+
 - 内建函数（18，签名未钉住、按 Experimental）：abs / cancel / contains / isCancel / join / joinAll / joinWithin / lower / max / min / readFile / readLine / sleep / split / sqrt / substring / upper / writeFile
 - 另含经典内建 `len`（容器长度）、`print`（输出） 
 
