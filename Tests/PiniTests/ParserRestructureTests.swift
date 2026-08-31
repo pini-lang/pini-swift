@@ -41,10 +41,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: 验证 `{name}` 形式的对象声明能被解析为 objectDecl，并正确读取字段
     func testObjectDeclWithBraces() throws {
-        let source = """
-        {计数器}
-        数值: I32 = 0
-        """
+        let source = try loadPiniFixture("testObjectDeclWithBraces", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -65,19 +62,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: 验证对象内容态中裸函数形式 `name|self(params,) -> (ret,)` 能被解析为方法
     func testObjectMethodBareSyntax() throws {
-        let source = """
-        {计数器}
-        数值: I32 = 0
-
-
-        {{计数器}}
-        增加|self() -> ()
-            self.数值 += 1
-            return
-
-        获取值|self() -> (I32,)
-            return self.数值
-        """
+        let source = try loadPiniFixture("testObjectMethodBareSyntax", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -106,13 +91,7 @@ final class ParserRestructureTests: XCTestCase {
     /// Intent: 验证顶级裸函数 `name(params,) -> (ret,)` 能被解析为 funcDecl，
     /// 且多个顶级裸函数不会互相吞并（parseTopLevelFunctionBody 正确终止）
     func testTopLevelBareFunctionDecl() throws {
-        let source = """
-        加法(a: I32, b: I32,) -> (I32,)
-            return a + b
-
-        main() -> ()
-            return
-        """
+        let source = try loadPiniFixture("testTopLevelBareFunctionDecl", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -140,18 +119,7 @@ final class ParserRestructureTests: XCTestCase {
     /// Intent: 验证枚举内容态中裸函数方法 `name|self(params,) -> (ret,)` 能被解析，
     /// 且枚举用例（如 `北`、`圆(F64,)`）不会被误判为方法
     func testEnumExtensionMethodBareSyntax() throws {
-        let source = """
-        [方向]
-        北
-        南
-        东
-        西
-
-
-        [[方向]]
-        描述|self() -> (字符串,)
-            return "方向"
-        """
+        let source = try loadPiniFixture("testEnumExtensionMethodBareSyntax", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -176,16 +144,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: 验证带关联值的枚举用例不会被误判为裸函数方法
     func testEnumCaseWithAssociatedValuesNotMisreadAsMethod() throws {
-        let source = """
-        [形状]
-        圆(F64,)
-        矩形(F64, F64,)
-
-
-        [[形状]]
-        描述|self() -> (字符串,)
-            return "形状"
-        """
+        let source = try loadPiniFixture("testEnumCaseWithAssociatedValuesNotMisreadAsMethod", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -213,16 +172,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: 验证结构内容态中裸函数方法能被解析
     func testStructMethodBareSyntax() throws {
-        let source = """
-        (点)
-        x: F64 = 0.0
-        y: F64 = 0.0
-
-
-        ((点))
-        距离到|self(其他: 点,) -> (F64,)
-            return 0.0
-        """
+        let source = try loadPiniFixture("testStructMethodBareSyntax", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -249,25 +199,7 @@ final class ParserRestructureTests: XCTestCase {
     /// Intent: 验证新语法能完整通过语义分析（不抛 SemanticError）
     /// 包含：花括号对象、裸函数方法、|func 顶级函数
     func testBareFunctionSemanticAnalysis() throws {
-        let source = """
-        {计数器}
-        数值: I32 = 0
-
-
-        {{计数器}}
-        增加|self() -> ()
-            self.数值 += 1
-            return
-
-        获取值|self() -> (I32,)
-            return self.数值
-
-        main|func() -> ()
-            let c = 计数器()
-            c.增加()
-            print(c.获取值())
-            return
-        """
+        let source = try loadPiniFixture("testBareFunctionSemanticAnalysis", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -283,15 +215,7 @@ final class ParserRestructureTests: XCTestCase {
     /// Intent: 验证新语法能完整通过类型检查（不抛 TypeError）
     /// 包含：顶级裸函数声明与调用
     func testBareFunctionTypeCheck() throws {
-        let source = """
-        加法(a: I32, b: I32,) -> (I32,)
-            return a + b
-
-        main() -> ()
-            let result = 加法(1, 2,)
-            print(result)
-            return
-        """
+        let source = try loadPiniFixture("testBareFunctionTypeCheck", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -306,26 +230,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: 验证新语法端到端运行正确：对象构造、方法调用、|func 顶级函数入口
     func testBareSyntaxObjectInterpreter() throws {
-        let source = """
-        {计数器}
-        数值: I32 = 0
-
-
-        {{计数器}}
-        增加|self() -> ()
-            self.数值 += 1
-            return
-
-        获取值|self() -> (I32,)
-            return self.数值
-
-        main|func() -> ()
-            let c = 计数器()
-            c.增加()
-            c.增加()
-            print(c.获取值())
-            return
-        """
+        let source = try loadPiniFixture("testBareSyntaxObjectInterpreter", filePath: #filePath)
         let output = try runProgram(source)
         // Advancing: 两次 增加 后获取值应输出 2
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "2")
@@ -335,10 +240,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: 验证 `[name|object]` 形式能被解析为 objectDecl（而非 structDecl）
     func testBracketObjectParsesAsObjectDecl() throws {
-        let source = """
-[计数器|object]
-值: I32 = 0
-"""
+        let source = try loadPiniFixture("testBracketObjectParsesAsObjectDecl", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -360,14 +262,7 @@ final class ParserRestructureTests: XCTestCase {
 
     /// Intent: `[name|object]` 实例化 + 字段访问 + 方法调用
     func testBracketObjectInstantiationAndFieldAccess() throws {
-        let source = """
-[计数器|object]
-值: I32 = 0
-main|func() -> ()
-    var c: 计数器 = 计数器()
-    c.值 = 42
-    print(c.值)
-"""
+        let source = try loadPiniFixture("testBracketObjectInstantiationAndFieldAccess", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
                        "ObjectDecl 字段访问应正确输出 42")
@@ -375,14 +270,7 @@ main|func() -> ()
 
     /// Intent: ObjectDecl 不可组合
     func testBracketObjectNotComposable() throws {
-        let source = """
-[计数器|object]
-值: I32 = 0
-
-(容器)
-计数器
-额外: I32 = 1
-"""
+        let source = try loadPiniFixture("testBracketObjectNotComposable", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")

@@ -1,0 +1,13 @@
+main|func() -> ()
+    var a = [1, 2, 3]
+    var b = a
+    a = [9, 8]
+    b[0] = 100
+    print(a)
+    print(b)
+    var m = ["x": 1]
+    var n = m
+    m = ["y": 2]
+    print(m)
+    print(n)
+    return

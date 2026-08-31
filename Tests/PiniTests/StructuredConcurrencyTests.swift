@@ -52,7 +52,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     }
 
     /// 意图：显式 join 过的子任务脱离父节点，此后不再受「父返回自动取消」约束。
-    func testDetachedChildSurvivesParentReturn() {
+    func testDetachedChildSurvivesParentReturn()  throws {
         let parent = FutureValue()
         let child = FutureValue()
         parent.addChild(child)
@@ -66,7 +66,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     }
 
     /// 意图：`<=` 消费（joinFuture）即视为「已 join」，解释器接缝上必须完成 detach。
-    func testJoinFutureDetachesChildFromParent() {
+    func testJoinFutureDetachesChildFromParent()  throws {
         let interpreter = Interpreter()
         let parent = FutureValue()
         let child = FutureValue()
@@ -83,7 +83,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     // MARK: - B2-3 检查点单元
 
     /// 意图：检查点在同步路径（owner == nil）必须完全无副作用——这是「主线程零开销」的前提。
-    func testCheckpointIsNoOpWithoutOwner() {
+    func testCheckpointIsNoOpWithoutOwner()  throws {
         let interpreter = Interpreter()
         XCTAssertNoThrow(try interpreter.checkCancellation(nil))
 
@@ -103,30 +103,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：取消能真正打断**运行中的循环**（循环头检查点），而不是等它自然跑完。
     /// 推进性测量：循环规模足以跑数秒，取消后整体应在 3s 内收敛，且任务体末尾的打印不得出现。
     func testCancelInterruptsRunningLoop() throws {
-        let source = """
-        spin|func() => (I32,)
-            var i = 0
-            while i < 200000000:
-                i = i + 1
-            print("循环跑完了")
-            return ok(i)
-
-        main|func() -> ()
-            var t = spin()
-            sleep(80)
-            t.cancel()
-            var r = wait t
-            match r:
-                case ok(v):
-                    print("完成")
-                case err(e):
-                    if isCancel(e):
-                        print("已取消")
-                    return
-            sleep(200)
-            print("主流程结束")
-            return
-        """
+        let source = try loadPiniFixture("testCancelInterruptsRunningLoop", filePath: #filePath)
         let start = Date()
         let output = try runProgram(source)
         let elapsed = Date().timeIntervalSince(start)
@@ -140,28 +117,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// （sleep 分片检查点）。这是「子生命周期不超出父」的端到端证明。
     /// 推进性测量：子任务自然耗时 3s，整体应在 3s 内结束，且子任务尾部打印不得出现。
     func testParentReturnCancelsUnjoinedChildTask() throws {
-        let source = """
-        child|func() => ()
-            sleep(3000)
-            print("子任务不该跑完")
-            return
-
-        parent|func() => (I32,)
-            var c = child()
-            return ok(1)
-
-        main|func() -> ()
-            var p = parent()
-            var r = wait p
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print(e)
-            sleep(300)
-            print("主流程结束")
-            return
-        """
+        let source = try loadPiniFixture("testParentReturnCancelsUnjoinedChildTask", filePath: #filePath)
         let start = Date()
         let output = try runProgram(source)
         let elapsed = Date().timeIntervalSince(start)
@@ -174,30 +130,7 @@ final class StructuredConcurrencyTests: XCTestCase {
 
     /// 意图：显式 join 过的子任务不受父返回自动取消影响——「已 join」意味着生命周期已被消费。
     func testJoinedChildIsNotCancelledByParentReturn() throws {
-        let source = """
-        child|func() => (I32,)
-            sleep(30)
-            return ok(42)
-
-        parent|func() => (I32,)
-            var c = child()
-            var r = await c
-            match r:
-                case ok(v):
-                    return ok(v)
-                case err(e):
-                    return err(e)
-            return ok(0)
-
-        main|func() -> ()
-            var r = wait parent()
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print("不应失败")
-            return
-        """
+        let source = try loadPiniFixture("testJoinedChildIsNotCancelledByParentReturn", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertTrue(output.contains("42"), "已 join 的子任务应正常返回结果，实际输出: \(output)")
         XCTAssertFalse(output.contains("不应失败"), "已 join 子任务的失败分支不应触发：实际输出: \(output)")
@@ -206,23 +139,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：取消走检查点抛出而非线程强杀，因此 `defer` 清理必须照常执行（资源不泄漏）。
     /// 这同时守住 executeFunctionBody 错误路径弹出 defer 作用域的修复。
     func testDeferStillRunsWhenTaskCancelled() throws {
-        let source = """
-        worker|func() => (I32,)
-            defer print("清理完成")
-            var i = 0
-            while i < 200000000:
-                i = i + 1
-            return ok(i)
-
-        main|func() -> ()
-            var t = worker()
-            sleep(80)
-            t.cancel()
-            var r = wait t
-            sleep(400)
-            print("主流程结束")
-            return
-        """
+        let source = try loadPiniFixture("testDeferStillRunsWhenTaskCancelled", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertTrue(output.contains("清理完成"), "取消是协作式的，defer 清理必须执行，实际输出: \(output)")
         XCTAssertTrue(output.contains("主流程结束"))
@@ -231,19 +148,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：纯同步程序（主线程 owner == nil）完全不受取消检查点影响——循环与函数调用行为
     /// 不变（推进性：同步求值照常出结果；驳回性：任何「已取消/检查点打断」副作用不得出现）。
     func testSynchronousProgramUnaffectedByCheckpoints() throws {
-        let source = """
-        sum|func(n: I32,) -> (I32,)
-            var total = 0
-            var i = 0
-            while i < n:
-                total = total + i
-                i = i + 1
-            return total
-
-        main|func() -> ()
-            print(sum(10))
-            return
-        """
+        let source = try loadPiniFixture("testSynchronousProgramUnaffectedByCheckpoints", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertTrue(output.contains("45"), "同步路径应完全不受取消检查点影响，实际输出: \(output)")
     }
@@ -282,7 +187,7 @@ final class StructuredConcurrencyTests: XCTestCase {
 
     /// 意图：`closeScope` 须区分 ok/err/未完成，只把「已完成且为 err」的子计入 leaked，
     /// 并取消未完成的子（B2-2）。
-    func testCloseScopeCollectsLeakedErrAndCancelsPending() {
+    func testCloseScopeCollectsLeakedErrAndCancelsPending()  throws {
         let parent = FutureValue()
         let okChild = FutureValue()
         let errChild = FutureValue()
@@ -305,20 +210,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：未 join 却失败（resolve 成 err）的子任务，在父 `return` 边界上浮为 `err` 值（甲）。
     /// 不直接断言精确形态，只验证「父结果从 ok 翻转为 err，且携带子错误」。
     func testLeakedChildErrorFloatsToCallerResult() throws {
-        let src = """
-        child|func() => (I32,)
-            return err(Error("boom"))
-
-        worker|func() => (I32,)
-            child()          ; 派发子任务但从不 `<=` join
-            sleep(50)        ; 留出子任务失败的时间窗
-            return ok(42)
-
-        main|func() -> ()
-            var r = wait worker()
-            print(r)
-            return
-        """
+        let src = try loadPiniFixture("testLeakedChildErrorFloatsToCallerResult", filePath: #filePath)
         let out = try runProgram(src)
         XCTAssertTrue(out.contains("err"), "父结果应翻转为 err：实际输出=\(out)")
         XCTAssertTrue(out.contains("boom"), "上浮的 err 应携带子任务错误：实际输出=\(out)")
@@ -328,21 +220,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：`detach(future)` 提供 escape hatch——主动退出 scope 所有权后，未 join 子失败
     /// 既不触发 leaked 上浮、也不被父返回取消（甲 与 detach 出口的衔接）。
     func testDetachEscapeHatchSuppressesLeak() throws {
-        let src = """
-        child|func() => (I32,)
-            return err(Error("boom"))
-
-        worker|func() => (I32,)
-            var c = child()
-            detach c        ; 显式退出 scope 所有权（语句形式，任务 #13）
-            sleep(50)
-            return ok(42)
-
-        main|func() -> ()
-            var r = wait worker()
-            print(r)
-            return
-        """
+        let src = try loadPiniFixture("testDetachEscapeHatchSuppressesLeak", filePath: #filePath)
         let out = try runProgram(src)
         XCTAssertTrue(out.contains("ok"), "detach 后父结果应保持 ok：实际输出=\(out)")
         XCTAssertTrue(out.contains("42"), "父局部结果 ok(42) 应保留：实际输出=\(out)")
@@ -351,16 +229,7 @@ final class StructuredConcurrencyTests: XCTestCase {
 
     /// 意图：`detach` 语句把子任务从父 scope 剪枝——之后父返回不再追踪其结局。
     func testDetachBuiltinPrunesChildFromParent() throws {
-        let src = """
-        child|func() => (I32,)
-            return ok(1)
-
-        main|func() -> ()
-            var c = child()
-            detach c
-            print("detached")
-            return
-        """
+        let src = try loadPiniFixture("testDetachBuiltinPrunesChildFromParent", filePath: #filePath)
         let out = try runProgram(src)
         XCTAssertTrue(out.contains("detached"))
     }

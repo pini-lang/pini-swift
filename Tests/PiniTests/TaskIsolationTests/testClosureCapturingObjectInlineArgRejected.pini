@@ -1,0 +1,17 @@
+{Counter}
+n: I32 = 0
+
+{{Counter}}
+inc|self() -> ()
+    self.n = self.n + 1
+    return
+
+go|func(task: () -> (),) => ()
+    task()
+    return
+
+main|func() -> ()
+    let c = Counter()
+    var a = go(func () -> (): return c.inc())
+    wait a
+    return

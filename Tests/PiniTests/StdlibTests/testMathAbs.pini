@@ -1,0 +1,4 @@
+main|func() -> ()
+    print(abs(-5))
+    print(abs(-2.5))
+    return

@@ -1,0 +1,5 @@
+main|func() -> ()
+    var (a, _, b) = (1, 2, 3)
+    print(a,)
+    print(b,)
+    return

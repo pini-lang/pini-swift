@@ -1,0 +1,12 @@
+double|func(n: I32,) => (I32,)
+    return ok(n * 2)
+
+main|func() -> ()
+    var t = double(21)
+    var r = wait t
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

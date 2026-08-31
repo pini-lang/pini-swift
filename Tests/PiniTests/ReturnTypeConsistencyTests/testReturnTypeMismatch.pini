@@ -1,0 +1,4 @@
+bad|func() -> (String,)
+    return 1
+main|func() -> ()
+    return

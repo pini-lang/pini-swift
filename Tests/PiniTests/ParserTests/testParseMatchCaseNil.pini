@@ -1,0 +1,6 @@
+main() -> ()
+    var a = Optional.none
+    match a:
+        case nil:
+            pass
+    return

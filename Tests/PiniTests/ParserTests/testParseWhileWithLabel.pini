@@ -1,0 +1,4 @@
+main() -> ()
+    outer|while x < 5:
+        print(x)
+    return

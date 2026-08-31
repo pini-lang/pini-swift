@@ -1,0 +1,6 @@
+main() -> ()
+    while x < 3:
+        print(x)
+    step:
+        print("step")
+    return

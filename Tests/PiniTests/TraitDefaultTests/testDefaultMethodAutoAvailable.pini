@@ -1,0 +1,12 @@
+<Greetable>
+    greet(self) -> (String,)
+        return "hello from trait"
+
+(Dog)
+名称: String = "Rex"
+实现: Greetable
+
+main|func() -> ()
+    var dog = Dog()
+    print(dog.greet())
+    return

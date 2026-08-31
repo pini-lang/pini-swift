@@ -1,0 +1,4 @@
+v|func() -> ()
+    return 1
+main|func() -> ()
+    return

@@ -1,0 +1,5 @@
+main|func() -> ()
+    var t = (a: 1, b: "x",)
+    print(t.a,)
+    print(t.b,)
+    return

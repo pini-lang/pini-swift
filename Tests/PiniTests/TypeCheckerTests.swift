@@ -12,12 +12,7 @@ final class SemanticAnalyzerTests: XCTestCase {
 
     /// 意图：分析器应正确接受无错误的简单程序
     func testAnalyzeValidProgram() throws {
-        let source = """
-main|func() -> ()
-    var x = 42
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeValidProgram", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -26,11 +21,7 @@ main|func() -> ()
 
     /// 意图：分析器应检测到未定义的变量引用
     func testAnalyzeUndefinedVariable() throws {
-        let source = """
-main|func() -> ()
-    print(undefinedVar)
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeUndefinedVariable", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -44,13 +35,7 @@ main|func() -> ()
 
     /// 意图：分析器应正确接受变量声明后使用
     func testAnalyzeVariableUsedAfterDeclaration() throws {
-        let source = """
-main|func() -> ()
-    var x = 10
-    var y = x + 1
-    print(y)
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeVariableUsedAfterDeclaration", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -59,12 +44,7 @@ main|func() -> ()
 
     /// 意图：分析器应检测到使用尚未声明的变量（前向引用）
     func testAnalyzeVariableUsedBeforeDeclaration() throws {
-        let source = """
-main|func() -> ()
-    print(x)
-    var x = 10
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeVariableUsedBeforeDeclaration", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -73,14 +53,7 @@ main|func() -> ()
 
     /// 意图：分析器应正确注册顶级函数并在 main 中可调用
     func testAnalyzeTopLevelFunctionCall() throws {
-        let source = """
-add(a, b,) -> ()
-    print(a + b)
-    return
-main|func() -> ()
-    add(1, 2)
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeTopLevelFunctionCall", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -89,11 +62,7 @@ main|func() -> ()
 
     /// 意图：分析器应检测到调用未定义的函数
     func testAnalyzeUndefinedFunctionCall() throws {
-        let source = """
-main|func() -> ()
-    undefinedFunc(1, 2)
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeUndefinedFunctionCall", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -107,15 +76,7 @@ main|func() -> ()
 
     /// 意图：分析器应正确接受结构块字段访问
     func testAnalyzeStructFieldAccess() throws {
-        let source = """
-(点)
-x: I32 = 0
-y: I32 = 0
-main|func() -> ()
-    var p = 点()
-    print(p.x)
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeStructFieldAccess", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -124,13 +85,7 @@ main|func() -> ()
 
     /// 意图：分析器应将已注册的类型名作为合法标识符
     func testAnalyzeRegisteredTypeAsConstructor() throws {
-        let source = """
-(点)
-x: I32 = 0
-main|func() -> ()
-    var p = 点()
-    return
-"""
+        let source = try loadPiniFixture("testAnalyzeRegisteredTypeAsConstructor", filePath: #filePath)
         let module = try parseModule(source)
         let analyzer = SemanticAnalyzer()
 
@@ -148,18 +103,14 @@ final class TypeCheckerTests: XCTestCase {
     }
 
     /// 意图：验证 TypeChecker 可无参构造且实例非 nil（初始化成功路径）。
-    func testTypeCheckerInitializes() {
+    func testTypeCheckerInitializes()  throws {
         let checker = TypeChecker()
         XCTAssertNotNil(checker)
     }
 
     /// 意图：类型检查器应正确接受类型一致的表达式
     func testCheckValidArithmetic() throws {
-        let source = """
-main|func() -> ()
-    var x = 1 + 2
-    return
-"""
+        let source = try loadPiniFixture("testCheckValidArithmetic", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -168,11 +119,7 @@ main|func() -> ()
 
     /// 意图：类型检查器应检测到整数与字符串的算术运算类型不匹配
     func testCheckTypeMismatchArithmetic() throws {
-        let source = """
-main|func() -> ()
-    var x = 1 + "hello"
-    return
-"""
+        let source = try loadPiniFixture("testCheckTypeMismatchArithmetic", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -190,14 +137,7 @@ main|func() -> ()
     /// 类型检查器须报 argumentCountMismatch，而非静默放行。
     /// 回归护栏：此前 `var c = 圆(5.0, 6.0,)` 会被静默接受、多余实参在运行时被丢弃。
     func testEnumCaseConstructionArityMismatch() throws {
-        let source = """
-[形状]
-圆(F64,)
-
-main|func() -> ()
-    var c = 圆(5.0, 6.0,)
-    return
-"""
+        let source = try loadPiniFixture("testEnumCaseConstructionArityMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertThrowsError(try checker.check(module: module), "圆只有 1 个关联值却传入 2 个实参应抛出类型错误") { error in
@@ -210,14 +150,7 @@ main|func() -> ()
 
     /// 意图：正确 arity 的枚举用例构造不报错（零回归护栏）。
     func testEnumCaseConstructionArityMatch() throws {
-        let source = """
-[形状]
-圆(F64,)
-
-main|func() -> ()
-    var c = 圆(5.0,)
-    return
-"""
+        let source = try loadPiniFixture("testEnumCaseConstructionArityMatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertNoThrow(try checker.check(module: module), "正确 arity 的枚举用例构造不应报错")
@@ -225,14 +158,7 @@ main|func() -> ()
 
     /// 意图：不依赖期望类型的路径上，枚举用例构造须做基础类型比对（非泛型枚举字段类型具体）。
     func testEnumCaseConstructionBasicTypeMismatch() throws {
-        let source = """
-[形状]
-圆(F64,)
-
-main|func() -> ()
-    var c = 圆("oops",)
-    return
-"""
+        let source = try loadPiniFixture("testEnumCaseConstructionBasicTypeMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertThrowsError(try checker.check(module: module), "圆(...) 关联值传入字符串应抛出类型错误") { error in
@@ -245,15 +171,8 @@ main|func() -> ()
 
     /// 意图：ADR-016 规则 3.15——关联值默认值特性已移除，`东(序: I32 = 0,)` 须在解析期报错。
     /// 回归护栏：此前 MED-3 容忍字面量默认（`东()` 全省略构造），3.15 起该写法不再合法。
-    func testEnumCaseDefaultValueRejectedAtParse() {
-        let source = """
-[方向]
-东(序: I32 = 0,)
-
-main|func() -> ()
-    var d = 东()
-    return
-"""
+    func testEnumCaseDefaultValueRejectedAtParse()  throws {
+        let source = try loadPiniFixture("testEnumCaseDefaultValueRejectedAtParse", filePath: #filePath)
         XCTAssertThrowsError(try parseModule(source), "规则 3.15：关联值具名/默认写法应在解析期报错") { error in
             guard case ParserError.invalidStatement = error else {
                 XCTFail("应为 ParserError.invalidStatement，实际: \(error)")
@@ -264,14 +183,7 @@ main|func() -> ()
 
     /// 意图：位置化后关联值无默认值，全省略构造须报 arity 不符（`expected: 1, got: 0`）。
     func testEnumCaseConstructionRejectsOmittedArgs() throws {
-        let source = """
-[方向]
-东(I32,)
-
-main|func() -> ()
-    var d = 东()
-    return
-"""
+        let source = try loadPiniFixture("testEnumCaseConstructionRejectsOmittedArgs", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertThrowsError(try checker.check(module: module), "3.15：无默认值后全省略构造应报 arity 不符") { error in
@@ -284,14 +196,7 @@ main|func() -> ()
 
     /// 意图：位置化用例须拒绝「超额」实参。
     func testEnumCaseConstructionRejectsExtraArgs() throws {
-        let source = """
-[方向]
-东(I32,)
-
-main|func() -> ()
-    var d = 东(1, 2,)
-    return
-"""
+        let source = try loadPiniFixture("testEnumCaseConstructionRejectsExtraArgs", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertThrowsError(try checker.check(module: module), "位置化用例传入超额实参应抛出类型错误") { error in
@@ -405,7 +310,7 @@ main|func() -> ()
     }
 
     /// 意图：类型环境应能注册和查找函数签名
-    func testTypeEnvFunctionDefineAndLookup() {
+    func testTypeEnvFunctionDefineAndLookup()  throws {
         let env = TypeEnvironment()
         let loc = SourceLocation(line: 1, column: 1, fileName: "test.pini")
         let returnType = TypeAnnotation.simple(name: "I32", location: loc)
@@ -424,7 +329,7 @@ main|func() -> ()
     }
 
     /// 意图：类型推断应能从类型环境中解析标识符的类型
-    func testTypeInferenceIdentifierFromEnvironment() {
+    func testTypeInferenceIdentifierFromEnvironment()  throws {
         let env = TypeEnvironment()
         let loc = SourceLocation(line: 1, column: 1, fileName: "test.pini")
         let intType = TypeAnnotation.simple(name: "I32", location: loc)
@@ -452,12 +357,7 @@ main|func() -> ()
 
     /// 意图：类型检查器应检测变量参与运算时的类型不匹配
     func testCheckVariableTypeMismatch() throws {
-        let source = """
-main|func() -> ()
-    var x = 42
-    var y = x + "hello"
-    return
-"""
+        let source = try loadPiniFixture("testCheckVariableTypeMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -472,12 +372,7 @@ main|func() -> ()
 
     /// 意图：变量类型一致的运算应通过检查
     func testCheckVariableTypeConsistent() throws {
-        let source = """
-main|func() -> ()
-    var x = 10
-    var y = x + 5
-    return
-"""
+        let source = try loadPiniFixture("testCheckVariableTypeConsistent", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -487,12 +382,7 @@ main|func() -> ()
 
     /// 意图：类型检查器应能通过函数参数类型检查运算
     func testCheckFunctionParamTypeMismatch() throws {
-        let source = """
-add(a: I32, b: I32,) -> (I32,)
-    return a + b
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testCheckFunctionParamTypeMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -502,13 +392,7 @@ main|func() -> ()
 
     /// 意图：函数返回类型应能推断，调用返回值参与运算时应做类型检查
     func testCheckFunctionCallReturnTypeMismatch() throws {
-        let source = """
-getNumber() -> (I32,)
-    return 42
-main|func() -> ()
-    var result = getNumber() + "hello"
-    return
-"""
+        let source = try loadPiniFixture("testCheckFunctionCallReturnTypeMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -523,13 +407,7 @@ main|func() -> ()
 
     /// 意图：带显式返回类型标注的函数应被正确注册
     func testCheckFunctionWithExplicitReturnType() throws {
-        let source = """
-add(a: I32, b: I32,) -> (I32,)
-    return a + b
-main|func() -> ()
-    var r: I32 = add(1, 2)
-    return
-"""
+        let source = try loadPiniFixture("testCheckFunctionWithExplicitReturnType", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -539,15 +417,7 @@ main|func() -> ()
 
     /// 意图：结构体字段访问应能推断类型，字段与字符串运算应报错
     func testCheckStructFieldTypeMismatch() throws {
-        let source = """
-(点)
-x: I32 = 0
-y: I32 = 0
-main|func() -> ()
-    var p = 点()
-    var z = p.x + "hello"
-    return
-"""
+        let source = try loadPiniFixture("testCheckStructFieldTypeMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -562,15 +432,7 @@ main|func() -> ()
 
     /// 意图：结构体字段类型正确的运算应通过检查
     func testCheckStructFieldTypeCorrect() throws {
-        let source = """
-(点)
-x: I32 = 0
-y: I32 = 0
-main|func() -> ()
-    var p = 点()
-    var z = p.x + p.y
-    return
-"""
+        let source = try loadPiniFixture("testCheckStructFieldTypeCorrect", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -580,13 +442,7 @@ main|func() -> ()
 
     /// 意图：函数中不同 return 的返回类型不一致应报错
     func testCheckInconsistentReturnTypes() throws {
-        let source = """
-getEither(flag: Bool,) -> (I32,)
-    if flag:
-        return 42
-    else:
-        return "hello"
-"""
+        let source = try loadPiniFixture("testCheckInconsistentReturnTypes", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -601,12 +457,7 @@ getEither(flag: Bool,) -> (I32,)
 
     /// 意图：赋值给变量的值类型不匹配应检测（变量已有类型时）
     func testCheckAssignmentTypeMismatch() throws {
-        let source = """
-main|func() -> ()
-    var x = 10
-    x = "hello"
-    return
-"""
+        let source = try loadPiniFixture("testCheckAssignmentTypeMismatch", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
 
@@ -620,7 +471,7 @@ main|func() -> ()
     }
 
     /// 意图：类型环境应能注册结构体字段并按名称查找
-    func testTypeEnvStructFieldDefineAndLookup() {
+    func testTypeEnvStructFieldDefineAndLookup()  throws {
         let env = TypeEnvironment()
         let loc = SourceLocation(line: 1, column: 1, fileName: "test.pini")
         let intType = TypeAnnotation.simple(name: "I32", location: loc)
@@ -658,17 +509,7 @@ main|func() -> ()
     /// 推进性测量：前向引用和后向引用都应能通过
     /// 驳回性测量：不存在的类型引用应报错
     func testTypeDeclOrderIndependence() throws {
-        let source = """
-(矩形)
-左上角: 点 = 点()
-右下角: 点 = 点()
-(点)
-x: F64 = 0
-y: F64 = 0
-main|func() -> ()
-    var r = 矩形()
-    return
-"""
+        let source = try loadPiniFixture("testTypeDeclOrderIndependence", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")

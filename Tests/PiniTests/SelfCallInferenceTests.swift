@@ -9,26 +9,7 @@ final class SelfCallInferenceTests: XCTestCase {
     /// 推进性测量：方法体内 self 调用绑定 + 字面量比较照常运行
     /// 驳回性测量：E4-001 expected-Any 类报错即不合格
     func testSelfMethodCallTypePropagates() throws {
-        let source = """
-{box}
-num: I32 = 0
-
-{{box}}
-get|self() -> (I32,)
-    return self.num
-
-probe|self() -> ()
-    let v = self.get()
-    if v == 0:
-        self.num = 1
-    return
-
-main|func() -> ()
-    let b = box()
-    b.probe()
-    print(b.get())
-    return
-"""
+        let source = try loadPiniFixture("testSelfMethodCallTypePropagates", filePath: #filePath)
         let out = try runSource(source)
         XCTAssertTrue(out.contains("1"), out)
     }
@@ -37,21 +18,7 @@ main|func() -> ()
     /// 推进性测量：同一对象的外部方法调用结果比较照常
     /// 驳回性测量：外部路径退化报错即不合格
     func testExternalReceiverStillWorks() throws {
-        let source = """
-{box}
-num: I32 = 0
-
-{{box}}
-get|self() -> (I32,)
-    return self.num
-
-main|func() -> ()
-    let b = box()
-    let v = b.get()
-    if v == 0:
-        print("zero")
-    return
-"""
+        let source = try loadPiniFixture("testExternalReceiverStillWorks", filePath: #filePath)
         let out = try runSource(source)
         XCTAssertTrue(out.contains("zero"), out)
     }
@@ -61,23 +28,7 @@ main|func() -> ()
     /// 推进性测量：check 通过并输出 y
     /// 驳回性测量：E4-001 expected-Any 报错均不合格
     func testFieldlessObjectSelfCallPropagates() throws {
-        let source = """
-{o}
-
-{{o}}
-k_at|self(k: I32,) -> (String,)
-    return "s"
-use1|self() -> (String,)
-    let k = self.k_at(0)
-    if k == "s":
-        return "y"
-    return "n"
-
-main|func() -> ()
-    var a = o()
-    print(a.use1())
-    return
-"""
+        let source = try loadPiniFixture("testFieldlessObjectSelfCallPropagates", filePath: #filePath)
         let out = try runSource(source)
         XCTAssertTrue(out.contains("y"), out)
     }

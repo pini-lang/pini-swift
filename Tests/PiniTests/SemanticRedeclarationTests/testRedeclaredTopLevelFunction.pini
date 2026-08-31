@@ -1,0 +1,4 @@
+foo|func() -> ()
+    return
+foo|func() -> ()
+    return

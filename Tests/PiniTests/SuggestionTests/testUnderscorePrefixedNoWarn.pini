@@ -1,0 +1,4 @@
+main|func() -> ()
+    var _tmp = 1
+    var _ = 2
+    return

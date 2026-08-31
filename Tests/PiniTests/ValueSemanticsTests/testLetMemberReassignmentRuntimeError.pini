@@ -1,0 +1,7 @@
+(点)
+    x: I32 = 0
+
+main|func() -> ()
+    let p = 点()
+    p.x = 9
+    return

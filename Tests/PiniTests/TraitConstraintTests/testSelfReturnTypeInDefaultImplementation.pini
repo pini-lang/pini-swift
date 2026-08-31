@@ -1,0 +1,12 @@
+<可克隆>
+    克隆(self) -> (own,)
+        return 点()
+
+(点)
+    x: I32 = 0
+    实现: 可克隆
+
+main|func() -> ()
+    var p = 点()
+    var q = p.克隆()
+    return

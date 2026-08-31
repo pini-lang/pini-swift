@@ -1,0 +1,4 @@
+bad|func() -> (I32, String,)
+    return (1, 2)
+main|func() -> ()
+    return

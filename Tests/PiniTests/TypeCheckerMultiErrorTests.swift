@@ -50,14 +50,7 @@ final class TypeCheckerMultiErrorTests: XCTestCase {
 
     /// 意图：验证收集模式对「跨多个顶级函数」的返回类型错误能一次性同报（而非遇第一个即退出）。
     func testCollectsMultipleReturnTypeErrorsAcrossFunctions() throws {
-        let source = """
-        f1|func() -> (I32,)
-            return
-        f2|func() -> (I32,)
-            return
-        main|func() -> ()
-            return
-        """
+        let source = try loadPiniFixture("testCollectsMultipleReturnTypeErrorsAcrossFunctions", filePath: #filePath)
         let errors = try collectErrors(source)
 
         // 推进性测量：应精确收集到 2 个错误，且均为裸 return 进入 I32 函数的 mismatch(expected: "I32", got: "()")。
@@ -77,13 +70,7 @@ final class TypeCheckerMultiErrorTests: XCTestCase {
 
     /// 意图：验证函数体内连续多条类型错误能被逐语句恢复并一次性收集（panic-mode），不中途退出。
     func testCollectsMultipleTypeErrorsWithinSingleFunction() throws {
-        let source = """
-        main|func() -> ()
-            var x: I32 = 0
-            x = "str"
-            x = 1.5
-            return
-        """
+        let source = try loadPiniFixture("testCollectsMultipleTypeErrorsWithinSingleFunction", filePath: #filePath)
         let errors = try collectErrors(source)
 
         // 推进性测量：应精确收集到 2 个赋值类型错误，依次为 (I32, String) 与 (I32, F64)。
@@ -101,14 +88,7 @@ final class TypeCheckerMultiErrorTests: XCTestCase {
 
     /// 意图：验证多个调用点的实参类型错误能被一次性收集（呼应 P2-1.2 调用点类型校验）。
     func testCollectsMultipleCallSiteErrors() throws {
-        let source = """
-        takesI32|func(p: I32,) -> ()
-            return
-        main|func() -> ()
-            takesI32(p: "str")
-            takesI32(p: 1.5)
-            return
-        """
+        let source = try loadPiniFixture("testCollectsMultipleCallSiteErrors", filePath: #filePath)
         let errors = try collectErrors(source)
 
         // 推进性测量：应精确收集到 2 个调用点类型错误，依次为 (I32, String) 与 (I32, F64)。
@@ -127,15 +107,7 @@ final class TypeCheckerMultiErrorTests: XCTestCase {
 
     /// 意图：验证合法源在收集模式下不产生任何类型错误（无假阳性）。
     func testNoTypeErrorsWhenValid() throws {
-        let source = """
-        takesI32|func(p: I32,) -> ()
-            return
-        main|func() -> ()
-            takesI32(p: 1)
-            var x: I32 = 0
-            x = 2
-            return
-        """
+        let source = try loadPiniFixture("testNoTypeErrorsWhenValid", filePath: #filePath)
         let errors = try collectErrors(source)
 
         // 推进性测量：合法源不应有任何类型错误。

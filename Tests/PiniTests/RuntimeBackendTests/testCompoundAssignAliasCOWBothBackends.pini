@@ -1,0 +1,7 @@
+main|func() -> ()
+    var a = [10, 20]
+    var b = a
+    b[0] += 5
+    print(a)
+    print(b)
+    return

@@ -1,0 +1,19 @@
+(袋子)
+    实现: collection
+
+((袋子))
+    len|self() -> (I32,)
+        return 0
+    contains|self(v: I32,) -> (Bool,)
+        return false
+    append|self(v: I32,) -> (I32,)
+        return 0
+    pop|self() -> (I32,)
+        return 0
+    slice|self(a: I32, b: I32,) -> (I32,)
+        return 0
+    join|self(sep: I32,) -> (I32,)
+        return 0
+
+main|func() -> ()
+    return

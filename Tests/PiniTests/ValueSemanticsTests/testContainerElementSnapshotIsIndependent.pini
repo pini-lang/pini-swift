@@ -1,0 +1,12 @@
+main|func() -> ()
+    var inner = [1, 2]
+    var outer = [inner]
+    inner[0] = 42
+    print(inner)
+    print(outer)
+    var arr = [1, 2]
+    var box = ["k": arr]
+    arr[0] = 8
+    print(arr)
+    print(box)
+    return

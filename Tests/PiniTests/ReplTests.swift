@@ -7,7 +7,7 @@ final class ReplTests: XCTestCase {
     // MARK: - 表达式 wrap
 
     /// 意图：验证表达式 wrap 进 main|func 后能解析出唯一函数声明。
-    func testExpressionWrap() {
+    func testExpressionWrap()  throws {
         let source = "main|func() -> ()\n    print(1 + 2)\n    return\n"
         let module = parseOrFail(source)
         XCTAssertEqual(module.declarations.count, 1)
@@ -16,19 +16,15 @@ final class ReplTests: XCTestCase {
     // MARK: - 续行检测
 
     /// 意图：验证以 : 结尾的函数头需触发续行，单行输入解析失败返回 nil。
-    func testFunctionHeaderWithoutBodyNeedsContinuation() {
+    func testFunctionHeaderWithoutBodyNeedsContinuation()  throws {
         // 以 `:` 结尾的行 → 应触发续行；单行解析应失败
         let result = tryParse("main|func() -> ():")
         XCTAssertNil(result, "仅有函数头应解析失败（需要续行）")
     }
 
     /// 意图：验证带缩进函数体的完整函数声明能解析成功（非 nil）。
-    func testFunctionWithBodyParses() {
-        let module = tryParse("""
-main|func() -> ()
-    print(1)
-    return
-""")
+    func testFunctionWithBodyParses()  throws {
+        let module = tryParse(try loadPiniFixture("testFunctionWithBodyParses", filePath: #filePath) as String)
         // 带 INDENT 块的完整函数应能解析
         XCTAssertNotNil(module, "完整函数声明应能解析成功")
     }

@@ -1,0 +1,5 @@
+main|func() -> ()
+    let a = [true, false, true]
+    print(a[0])
+    print(len(a))
+    return

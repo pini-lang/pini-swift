@@ -1,0 +1,17 @@
+{Counter}
+n: I32 = 0
+
+{{Counter}}
+inc|self() -> ()
+    self.n = self.n + 1
+    return
+
+bumpAll|func(cs: Array<Counter>,) => ()
+    return
+
+main|func() -> ()
+    let c = Counter()
+    var xs = [c]
+    var t = bumpAll(xs)
+    wait t
+    return

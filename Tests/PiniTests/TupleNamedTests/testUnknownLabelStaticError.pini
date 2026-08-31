@@ -1,0 +1,4 @@
+main|func() -> ()
+    var t: (a: I32, b: String,) = (1, "x")
+    print(t.不存在,)
+    return

@@ -1,0 +1,13 @@
+<可克隆>
+    克隆(self) -> (own,)
+
+(点)
+    x: I32 = 0
+    实现: 可克隆
+
+((点))
+    克隆|self() -> (String,)
+        return ""
+
+main|func() -> ()
+    return

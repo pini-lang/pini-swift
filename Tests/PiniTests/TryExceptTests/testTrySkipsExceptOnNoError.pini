@@ -1,0 +1,13 @@
+divide(a: I32, b: I32) -> (I32, String,)
+    if b == 0:
+        return (0, "division by zero",)
+    return (a / b, "",)
+
+main|func() -> ()
+    var result = 0
+    try divide(10, 2):
+        result = 1
+    except e:
+        result = 2
+    print(result)
+    return

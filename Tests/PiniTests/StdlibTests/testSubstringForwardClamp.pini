@@ -1,0 +1,4 @@
+main|func() -> ()
+    var s = "hello"
+    print(s.substring(2, 100))
+    return

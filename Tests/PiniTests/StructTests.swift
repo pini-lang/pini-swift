@@ -12,10 +12,7 @@ final class StructTests: XCTestCase {
 
     /// Intent: `(容器) 父类型` 内嵌组合 → composedType + 同名字段
     func testComposedFieldShorthandParser() throws {
-        let source = """
-        (容器)
-        元素类型
-        """
+        let source = try loadPiniFixture("testComposedFieldShorthandParser", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -38,11 +35,7 @@ final class StructTests: XCTestCase {
 
     /// Intent: 普通带类型标注和默认值的字段仍然正常解析（与简写不冲突）
     func testNormalStructFieldsStillWork() throws {
-        let source = """
-        (计数器)
-        名称: String = "秒表"
-        数值: I32 = 0
-        """
+        let source = try loadPiniFixture("testNormalStructFieldsStillWork", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -61,9 +54,7 @@ final class StructTests: XCTestCase {
 
     /// 意图：管道组合 `(容器|父类型)` 已被移除，解析应抛错
     func testInlinePipeCompositionRemoved() throws {
-        let source = """
-        (容器|元素类型)
-        """
+        let source = try loadPiniFixture("testInlinePipeCompositionRemoved", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -103,17 +94,7 @@ final class StructTests: XCTestCase {
 
     /// Intent: 组合字段运行时可访问 — 父类型字段经组合后可用
     func testComposedFieldRuntimeAccess() throws {
-        let source = """
-(点)
-x: I32 = 0
-
-(容器) 点
-额外: I32 = 1
-main|func() -> ()
-    var c: 容器 = 容器()
-    print(c.x)
-    print(c.额外)
-"""
+        let source = try loadPiniFixture("testComposedFieldRuntimeAccess", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
         XCTAssertTrue(lines.contains("0"), "应能访问父类型字段 x，包含 0；实际: \(lines)")

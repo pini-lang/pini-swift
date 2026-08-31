@@ -9,15 +9,7 @@ final class StackGuardTests: XCTestCase {
     /// 推进性测量：抛出 RuntimeError.invalidOperation 且原因含「调用深度」
     /// 驳回性测量：其他错误类型或无错误均不合格
     func testInfiniteRecursionRaisesDepthGuard() throws {
-        let source = """
-loop|func(n: I32,) -> (I32,)
-    return loop(n)
-
-main|func() -> ()
-    let r = loop(1)
-    print(r)
-    return
-"""
+        let source = try loadPiniFixture("testInfiniteRecursionRaisesDepthGuard", filePath: #filePath)
         XCTAssertThrowsError(try runSource(source)) { error in
             guard case RuntimeError.invalidOperation(let reason, _) = error else {
                 return XCTFail("expected invalidOperation, got \(error)")
@@ -30,16 +22,7 @@ main|func() -> ()
     /// 推进性测量：递归 60 层的求和照常完成
     /// 驳回性测量：护栏误伤合法递归（抛错或结果错误）均不合格
     func testNormalRecursionStillWorks() throws {
-        let source = """
-sum|func(n: I32,) -> (I32,)
-    if n == 0:
-        return 0
-    return n + sum(n - 1)
-
-main|func() -> ()
-    print(sum(60))
-    return
-"""
+        let source = try loadPiniFixture("testNormalRecursionStillWorks", filePath: #filePath)
         let out = try runSource(source)
         XCTAssertTrue(out.contains("1830"), out)
     }

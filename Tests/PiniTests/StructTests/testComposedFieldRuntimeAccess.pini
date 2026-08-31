@@ -1,0 +1,9 @@
+(点)
+x: I32 = 0
+
+(容器) 点
+额外: I32 = 1
+main|func() -> ()
+    var c: 容器 = 容器()
+    print(c.x)
+    print(c.额外)

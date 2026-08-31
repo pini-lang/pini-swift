@@ -1,0 +1,6 @@
+main|func() -> ()
+    var acc = 0
+    for (v,) in [1, 2, 3]:
+        var buf = [1, 2, 3]
+        acc = acc + buf[0]
+    print(acc)

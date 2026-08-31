@@ -53,24 +53,14 @@ final class ResultUnwrapTests: XCTestCase {
 
     /// 意图：`^ok(42)` 解包得载荷 42，运行输出 42。
     func testOkUnwrapValue() throws {
-        let source = """
-        main|func() -> ()
-            var r = ok(42)
-            print(^r,)
-            return
-        """
+        let source = try loadPiniFixture("testOkUnwrapValue", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
     /// 意图：`^` 可出现在表达式位置（print 实参内），且解包后参与后续运算。
     func testOkUnwrapInExpression() throws {
-        let source = """
-        main|func() -> ()
-            var r = ok(20)
-            print(^r + 22,)
-            return
-        """
+        let source = try loadPiniFixture("testOkUnwrapInExpression", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
@@ -80,33 +70,14 @@ final class ResultUnwrapTests: XCTestCase {
     /// 意图（D2）：`^err(e)` 触发控制返回——函数立即返回，错误 e 注入返回元组末槽，
     /// 其余槽为 null；调用方解构 `(v, e)` 取到错误。输出 boom。
     func testErrControlReturnToLastSlot() throws {
-        let source = """
-        尝试|func() -> (I32, Error,)
-            var r = err(Error("boom"))
-            ^r
-            return (1, nil)
-        main|func() -> ()
-            var (v, e) = 尝试()
-            print(e,)
-            return
-        """
+        let source = try loadPiniFixture("testErrControlReturnToLastSlot", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "boom")
     }
 
     /// 意图：err 控制返回后，函数体后续语句不执行（提前 return）。
     func testErrStopsFunctionBody() throws {
-        let source = """
-        尝试|func() -> (String, Error,)
-            var r = err(Error("提前失败"))
-            ^r
-            print("不应执行",)
-            return ("正常", nil)
-        main|func() -> ()
-            var (v, e) = 尝试()
-            print(v,)
-            return
-        """
+        let source = try loadPiniFixture("testErrStopsFunctionBody", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "null")
     }
@@ -114,12 +85,8 @@ final class ResultUnwrapTests: XCTestCase {
     // MARK: - 错误路径
 
     /// 意图：`^` 作用于非 Result 值（如 I32）应抛类型错误（运行时兜底）。
-    func testUnwrapNonResultThrows() {
-        let source = """
-        main|func() -> ()
-            print(^42,)
-            return
-        """
+    func testUnwrapNonResultThrows()  throws {
+        let source = try loadPiniFixture("testUnwrapNonResultThrows", filePath: #filePath)
         XCTAssertThrowsError(try runProgram(source), "非 Result 值解包应抛错") { error in
             guard case RuntimeError.typeMismatch(_, _, _) = error else {
                 XCTFail("应为 typeMismatch，实际: \(error)")
@@ -130,12 +97,7 @@ final class ResultUnwrapTests: XCTestCase {
 
     /// 意图：`^` 静态检查——作用于 Result 值不抛错。
     func testTypeCheckValidUnwrap() throws {
-        let source = """
-        main|func() -> ()
-            var r = ok(42)
-            print(^r,)
-            return
-        """
+        let source = try loadPiniFixture("testTypeCheckValidUnwrap", filePath: #filePath)
         XCTAssertNoThrow(try checkModule(source), "合法解包不应抛错")
     }
 }

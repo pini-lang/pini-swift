@@ -1,0 +1,4 @@
+ok|func() -> ( (I32, String), )
+    return (1, "x")
+main|func() -> ()
+    return

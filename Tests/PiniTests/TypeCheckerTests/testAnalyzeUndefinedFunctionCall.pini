@@ -1,0 +1,3 @@
+main|func() -> ()
+    undefinedFunc(1, 2)
+    return

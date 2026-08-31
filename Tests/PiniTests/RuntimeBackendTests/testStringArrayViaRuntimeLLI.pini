@@ -1,0 +1,5 @@
+main|func() -> ()
+    let a = ["hello", "world", "foo"]
+    print(a[1])
+    print(len(a))
+    return

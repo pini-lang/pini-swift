@@ -1,0 +1,12 @@
+go|func(task: () -> (),) => ()
+    task()
+    return
+
+main|func() -> ()
+    var base = 10
+    var f = func () -> ():
+        base = base + 1
+        return
+    var a = go(f)
+    wait a
+    return

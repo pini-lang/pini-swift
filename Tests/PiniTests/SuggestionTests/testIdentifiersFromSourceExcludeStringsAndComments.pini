@@ -1,0 +1,4 @@
+; 注释里的 counter 不应出现
+let s = "counter in string"
+var counter = 1
+print(s)

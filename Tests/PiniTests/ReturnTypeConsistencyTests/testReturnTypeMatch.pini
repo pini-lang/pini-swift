@@ -1,0 +1,4 @@
+ok|func() -> (I32,)
+    return 1
+main|func() -> ()
+    return

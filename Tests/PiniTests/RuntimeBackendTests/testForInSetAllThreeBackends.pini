@@ -1,0 +1,5 @@
+main|func() -> ()
+    var ssum = 0
+    for (v,) in {2, 3, 5}:
+        ssum = ssum + v
+    print(ssum)

@@ -51,34 +51,21 @@ final class SymbolDisambiguationTests: XCTestCase {
 
     /// 意图：验证 `<=` 作为中缀比较运算符时 1 <= 2 求值为 true（B1 前缀 join 落地前需锁定的前置不变量）
     func testLessThanOrEqualInfixComparisonTrue() throws {
-        let source = """
-        main|func() -> ()
-            print(1 <= 2)
-            return
-        """
+        let source = try loadPiniFixture("testLessThanOrEqualInfixComparisonTrue", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "true\n", "<= 应作为中缀比较返回 true")
     }
 
     /// 意图：验证 `<=` 作为中缀比较运算符时 3 <= 2 求值为 false，输出 "false"
     func testLessThanOrEqualInfixComparisonFalse() throws {
-        let source = """
-        main|func() -> ()
-            print(3 <= 2)
-            return
-        """
+        let source = try loadPiniFixture("testLessThanOrEqualInfixComparisonFalse", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "false\n", "<= 应作为中缀比较返回 false")
     }
 
     // MARK: - #155 `=>` 透明性：声明层即 async 标记（B1 透明糖的前置不变量）
 
     /// 意图：验证 `=>` 在声明层将函数标记为 async：`worker|func() => (I32,)` 解析后 isAsync 为 true
-    func testDoubleArrowMarksFuncAsync() {
-        let source = """
-        worker|func() => (I32,)
-            return 1
-        main|func() -> ()
-            return
-        """
+    func testDoubleArrowMarksFuncAsync()  throws {
+        let source = try loadPiniFixture("testDoubleArrowMarksFuncAsync", filePath: #filePath)
         let f = firstFuncDecl(source)
         XCTAssertNotNil(f, "应解析出函数声明")
         XCTAssertTrue(f?.isAsync ?? false, "=> 应标记函数为 async（声明层透明性）")

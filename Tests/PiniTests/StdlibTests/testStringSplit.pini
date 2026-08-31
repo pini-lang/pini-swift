@@ -1,0 +1,4 @@
+main|func() -> ()
+    var s = "a,b,c"
+    print(s.split(","))
+    return

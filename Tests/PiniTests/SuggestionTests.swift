@@ -7,14 +7,14 @@ final class SuggestionTests: XCTestCase {
     // MARK: - SuggestionEngine（B1）
 
     /// 意图：Levenshtein 距离正确（经典 kitten/sitting = 3）。
-    func testLevenshteinDistance() {
+    func testLevenshteinDistance()  throws {
         XCTAssertEqual(SuggestionEngine.levenshtein("kitten", "sitting"), 3)
         XCTAssertEqual(SuggestionEngine.levenshtein("counter", "contnr"), 2)
         XCTAssertEqual(SuggestionEngine.levenshtein("abc", "abc"), 0)
     }
 
     /// 意图：suggest 返回距离最短候选；排除完全相等；超阈值返回 nil。
-    func testSuggestPicksNearest() {
+    func testSuggestPicksNearest()  throws {
         let candidates = ["counter", "used", "total"]
         XCTAssertEqual(SuggestionEngine.suggest(target: "contnr", candidates: candidates), "counter")
         XCTAssertNil(SuggestionEngine.suggest(target: "counter", candidates: candidates), "与 target 相等应排除")
@@ -23,18 +23,13 @@ final class SuggestionTests: XCTestCase {
     }
 
     /// 意图：中文标识符同样按字符级编辑距离工作。
-    func testSuggestChineseIdentifiers() {
+    func testSuggestChineseIdentifiers()  throws {
         XCTAssertEqual(SuggestionEngine.suggest(target: "计数", candidates: ["计数器", "数值", "总量"]), "计数器")
     }
 
     /// 意图：标识符提取基于词法 token——排除字符串字面量与注释内容，去重。
-    func testIdentifiersFromSourceExcludeStringsAndComments() {
-        let source = """
-; 注释里的 counter 不应出现
-let s = "counter in string"
-var counter = 1
-print(s)
-"""
+    func testIdentifiersFromSourceExcludeStringsAndComments()  throws {
+        let source = try loadPiniFixture("testIdentifiersFromSourceExcludeStringsAndComments", filePath: #filePath)
         let ids = SuggestionEngine.identifiers(in: source)
         XCTAssertTrue(ids.contains("counter"), "真实变量应提取")
         XCTAssertTrue(ids.contains("s"))
@@ -44,7 +39,7 @@ print(s)
     }
 
     /// 意图：did-you-mean 集成——undefined 变量渲染含 `help: Did you mean`。
-    func testFormatDiagnosticIncludesSuggestion() {
+    func testFormatDiagnosticIncludesSuggestion()  throws {
         let source = "main|func() -> ()\n    var counter = 1\n    print(contnr)\n    return\n"
         let loc = SourceLocation(line: 3, column: 11, fileName: "t.pini")
         let err = SemanticError.undefinedVariable(name: "contnr", location: loc)
@@ -64,13 +59,8 @@ print(s)
     }
 
     /// 意图：未使用的局部 var 发 warning（E7-001）。
-    func testUnusedLocalVariableWarns() {
-        let source = """
-main|func() -> ()
-    var unused = 1
-    print("hi")
-    return
-"""
+    func testUnusedLocalVariableWarns()  throws {
+        let source = try loadPiniFixture("testUnusedLocalVariableWarns", filePath: #filePath)
         let warnings = analyzeWarnings(source)
         XCTAssertEqual(warnings.count, 1)
         guard case .unusedVariable(let name, _) = warnings[0] else {
@@ -82,57 +72,32 @@ main|func() -> ()
     }
 
     /// 意图：已使用的局部变量不警告。
-    func testUsedLocalVariableNoWarn() {
-        let source = """
-main|func() -> ()
-    var used = 1
-    print(used)
-    return
-"""
+    func testUsedLocalVariableNoWarn()  throws {
+        let source = try loadPiniFixture("testUsedLocalVariableNoWarn", filePath: #filePath)
         XCTAssertTrue(analyzeWarnings(source).isEmpty)
     }
 
     /// 意图：未使用的参数不警告（B2 排除参数）。
-    func testUnusedParameterNoWarn() {
-        let source = """
-加法|func(a: I32, b: I32) -> (I32,)
-    return 42
-"""
+    func testUnusedParameterNoWarn()  throws {
+        let source = try loadPiniFixture("testUnusedParameterNoWarn", filePath: #filePath)
         XCTAssertTrue(analyzeWarnings(source).isEmpty)
     }
 
     /// 意图：`_`/`_xxx` 前缀变量忽略（语言惯例）。
-    func testUnderscorePrefixedNoWarn() {
-        let source = """
-main|func() -> ()
-    var _tmp = 1
-    var _ = 2
-    return
-"""
+    func testUnderscorePrefixedNoWarn()  throws {
+        let source = try loadPiniFixture("testUnderscorePrefixedNoWarn", filePath: #filePath)
         XCTAssertTrue(analyzeWarnings(source).isEmpty)
     }
 
     /// 意图：for 模式绑定变量不警告（可能仅关心集合长度）。
-    func testForPatternVariableNoWarn() {
-        let source = """
-main|func() -> ()
-    for (i,) in [1, 2, 3]:
-        print("iter")
-    return
-"""
+    func testForPatternVariableNoWarn()  throws {
+        let source = try loadPiniFixture("testForPatternVariableNoWarn", filePath: #filePath)
         XCTAssertTrue(analyzeWarnings(source).isEmpty)
     }
 
     /// 意图：方法内字段/self 不警告（B2 排除字段；字段在函数作用域非 body 作用域）。
-    func testFieldAndSelfNoWarn() {
-        let source = """
-{计数器}
-值: I32 = 0
-
-递增|self(步长: I32) -> ()
-    self.值 += 步长
-    return
-"""
+    func testFieldAndSelfNoWarn()  throws {
+        let source = try loadPiniFixture("testFieldAndSelfNoWarn", filePath: #filePath)
         XCTAssertTrue(analyzeWarnings(source).isEmpty)
     }
 }

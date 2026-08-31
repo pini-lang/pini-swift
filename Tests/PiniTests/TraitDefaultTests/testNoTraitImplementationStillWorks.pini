@@ -1,0 +1,11 @@
+(Dog)
+名称: String = "Rex"
+
+((Dog))
+greet|self() -> (String,)
+    return "woof"
+
+main|func() -> ()
+    var dog = Dog()
+    print(dog.greet())
+    return

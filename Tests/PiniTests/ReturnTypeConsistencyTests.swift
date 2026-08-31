@@ -23,13 +23,8 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// 声明返回 String，实际返回 I32 → mismatch(expected: "String", got: "I32")
     /// 意图：验证声明返回 String 实际返回 I32 时抛 mismatch(expected: "String", got: "I32")。
-    func testReturnTypeMismatch() {
-        let source = """
-        bad|func() -> (String,)
-            return 1
-        main|func() -> ()
-            return
-        """
+    func testReturnTypeMismatch()  throws {
+        let source = try loadPiniFixture("testReturnTypeMismatch", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "返回类型不符应抛错") { error in
             guard case TypeError.mismatch(expected: "String", got: "I32", _) = error else {
                 XCTFail("应为 mismatch(expected: \"String\", got: \"I32\")，实际: \(error)")
@@ -40,13 +35,8 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// 反向：声明返回 I32，实际返回 I32 → 不抛错
     /// 意图：验证声明 I32 实际返回 I32 时类型吻合，不抛错。
-    func testReturnTypeMatch() {
-        let source = """
-        ok|func() -> (I32,)
-            return 1
-        main|func() -> ()
-            return
-        """
+    func testReturnTypeMatch()  throws {
+        let source = try loadPiniFixture("testReturnTypeMatch", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "返回类型吻合不应抛错")
     }
 
@@ -54,13 +44,8 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// 声明返回 I32，但函数体内是裸 return（无值）→ mismatch(expected: "I32", got: "()")
     /// 意图：验证非 void 函数内裸 return（无值）触发 mismatch(expected: "I32", got: "()")。
-    func testBareReturnInNonVoidFunction() {
-        let source = """
-        bad|func() -> (I32,)
-            return
-        main|func() -> ()
-            return
-        """
+    func testBareReturnInNonVoidFunction()  throws {
+        let source = try loadPiniFixture("testBareReturnInNonVoidFunction", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "非 void 函数裸 return 应抛错") { error in
             guard case TypeError.mismatch(expected: "I32", got: "()", _) = error else {
                 XCTFail("应为 mismatch(expected: \"I32\", got: \"()\")，实际: \(error)")
@@ -71,16 +56,8 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// 裸 return 出现在分支内也应被捕获（嵌套收集）
     /// 意图：验证裸 return 出现在 if/else 分支内同样被收集并报 mismatch(expected: "I32", got: "()")。
-    func testBareReturnInBranchOfNonVoidFunction() {
-        let source = """
-        bad|func() -> (I32,)
-            if true:
-                return 1
-            else:
-                return
-        main|func() -> ()
-            return
-        """
+    func testBareReturnInBranchOfNonVoidFunction()  throws {
+        let source = try loadPiniFixture("testBareReturnInBranchOfNonVoidFunction", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "分支内裸 return 应抛错") { error in
             guard case TypeError.mismatch(expected: "I32", got: "()", _) = error else {
                 XCTFail("应为 mismatch(expected: \"I32\", got: \"()\")，实际: \(error)")
@@ -93,25 +70,15 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// void 函数带值返回不卡（运行时允许，解释器 returnStatement 有值即返回）
     /// 意图：验证 void 函数带值返回不报错（运行时合法路径）。
-    func testVoidFunctionAllowsValueReturn() {
-        let source = """
-        v|func() -> ()
-            return 1
-        main|func() -> ()
-            return
-        """
+    func testVoidFunctionAllowsValueReturn()  throws {
+        let source = try loadPiniFixture("testVoidFunctionAllowsValueReturn", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "void 函数带值返回不应抛错")
     }
 
     /// 多返回（元组）推迟至 P2-2，本切片不应误报
     /// 意图：验证多返回类型比对推迟至 P2-2，本切片不误报。
-    func testMultiReturnDeferredToP2_2() {
-        let source = """
-        m|func() -> (I32, String,)
-            return (1, "x")
-        main|func() -> ()
-            return
-        """
+    func testMultiReturnDeferredToP2_2()  throws {
+        let source = try loadPiniFixture("testMultiReturnDeferredToP2_2", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "多返回比对属 P2-2，本切片不应报错")
     }
 
@@ -119,25 +86,15 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// 单返回为嵌套元组类型 (I32, String)（语法 -> ( (I32, String), )）；return (1, "x") 吻合 → 不抛错
     /// 意图：验证嵌套元组返回类型 (I32, String) 与 return (1, "x") 吻合时不抛错。
-    func testTupleReturnMatch() {
-        let source = """
-        ok|func() -> ( (I32, String), )
-            return (1, "x")
-        main|func() -> ()
-            return
-        """
+    func testTupleReturnMatch()  throws {
+        let source = try loadPiniFixture("testTupleReturnMatch", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "元组返回类型吻合不应抛错")
     }
 
     /// 元组返回第二分量不符 → mismatch(expected: "(I32, String)", got: "(I32, I32)")
     /// 意图：验证元组返回第二分量不符时抛 mismatch(expected: "(I32, String)", got: "(I32, I32)")。
-    func testTupleReturnMismatch() {
-        let source = """
-        bad|func() -> ( (I32, String), )
-            return (1, 2)
-        main|func() -> ()
-            return
-        """
+    func testTupleReturnMismatch()  throws {
+        let source = try loadPiniFixture("testTupleReturnMismatch", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "元组返回类型不符应抛错") { error in
             guard case TypeError.mismatch(expected: "(I32, String)", got: "(I32, I32)", _) = error else {
                 XCTFail("应为 mismatch(expected: \"(I32, String)\", got: \"(I32, I32)\")，实际: \(error)")
@@ -148,13 +105,8 @@ final class ReturnTypeConsistencyTests: XCTestCase {
 
     /// 多返回 (I32, String) 第二分量不符 → mismatch（实际 (I32, I32)）
     /// 意图：验证多返回 (I32, String) 第二分量不符时抛 mismatch。
-    func testMultiReturnTypeMismatch() {
-        let source = """
-        bad|func() -> (I32, String,)
-            return (1, 2)
-        main|func() -> ()
-            return
-        """
+    func testMultiReturnTypeMismatch()  throws {
+        let source = try loadPiniFixture("testMultiReturnTypeMismatch", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "多返回类型不符应抛错") { error in
             guard case TypeError.mismatch(_, _, _) = error else {
                 XCTFail("应为 mismatch，实际: \(error)")

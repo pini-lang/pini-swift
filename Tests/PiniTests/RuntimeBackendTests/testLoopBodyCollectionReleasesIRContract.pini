@@ -1,0 +1,8 @@
+main|func() -> ()
+    var acc = 0
+    var i = 0
+    while i < 3:
+        var buf = [1, 2, 3]
+        acc = acc + buf[0]
+        i = i + 1
+    print(acc)

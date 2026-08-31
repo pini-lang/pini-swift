@@ -1,0 +1,11 @@
+{Point}
+x: I32 = 0
+y: I32 = 0
+
+{{Point}}
+sum|self() -> ()
+    return self.x
+
+main|func() -> ()
+    print(1)
+    return

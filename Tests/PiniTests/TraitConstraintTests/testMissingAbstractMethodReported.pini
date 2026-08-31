@@ -1,0 +1,9 @@
+<Greetable>
+    greet(self) -> (String,)
+
+(Cat)
+    名称: String = "Tom"
+    实现: Greetable
+
+main|func() -> ()
+    return

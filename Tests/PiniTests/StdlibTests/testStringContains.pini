@@ -1,0 +1,7 @@
+main|func() -> ()
+    var s = "hello"
+    if s.contains("ell"):
+        print("yes")
+    if s.contains("xyz"):
+        print("no")
+    return

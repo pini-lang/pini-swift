@@ -1,0 +1,4 @@
+main|func() -> ()
+    var unused = 1
+    print("hi")
+    return

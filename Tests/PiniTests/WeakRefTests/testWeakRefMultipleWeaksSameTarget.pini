@@ -1,0 +1,9 @@
+{节点}
+值: I32 = 99
+main|func() -> ()
+    var obj = 节点()
+    var w1 = WeakRef(obj)
+    var w2 = WeakRef(obj)
+    print(w1.isAlive)
+    print(w2.isAlive)
+    return

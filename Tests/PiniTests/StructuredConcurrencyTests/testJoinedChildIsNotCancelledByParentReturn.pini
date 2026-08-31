@@ -1,0 +1,22 @@
+child|func() => (I32,)
+    sleep(30)
+    return ok(42)
+
+parent|func() => (I32,)
+    var c = child()
+    var r = await c
+    match r:
+        case ok(v):
+            return ok(v)
+        case err(e):
+            return err(e)
+    return ok(0)
+
+main|func() -> ()
+    var r = wait parent()
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print("不应失败")
+    return

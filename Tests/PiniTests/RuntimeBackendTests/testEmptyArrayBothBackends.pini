@@ -1,0 +1,4 @@
+main|func() -> ()
+    let a = []
+    print(len(a))
+    return

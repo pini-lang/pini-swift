@@ -1,0 +1,4 @@
+main|func() -> ()
+    var x = 42
+    var y = x + "hello"
+    return

@@ -1,0 +1,4 @@
+main|func() -> ()
+    var used = 1
+    print(used)
+    return

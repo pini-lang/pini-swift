@@ -1,0 +1,7 @@
+除余|func(a: I32, b: I32) -> (商: I32, 余: I32,)
+    return (a / b, a % b,)
+main|func() -> ()
+    var r = 除余(a: 7, b: 3)
+    print(r.商,)
+    print(r.余,)
+    return

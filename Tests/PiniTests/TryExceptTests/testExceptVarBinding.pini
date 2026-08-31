@@ -1,0 +1,6 @@
+main|func() -> ()
+    try (42, "my error msg",):
+        print("try")
+    except err:
+        print(err)
+    return

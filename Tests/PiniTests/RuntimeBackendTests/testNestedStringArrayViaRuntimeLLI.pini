@@ -1,0 +1,4 @@
+main|func() -> ()
+    let m = [["a", "b"], ["c", "d"]]
+    print(m[0][1])
+    return

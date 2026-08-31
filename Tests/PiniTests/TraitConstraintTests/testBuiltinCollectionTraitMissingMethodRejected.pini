@@ -1,0 +1,9 @@
+(袋子)
+    实现: collection
+
+((袋子))
+    contains|self(v: I32,) -> (Bool,)
+        return false
+
+main|func() -> ()
+    return

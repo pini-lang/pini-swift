@@ -1,0 +1,5 @@
+main|func() -> ()
+    var s = "Hello"
+    print(s.upper())
+    print(s.lower())
+    return

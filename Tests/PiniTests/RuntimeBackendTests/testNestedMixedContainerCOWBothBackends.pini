@@ -1,0 +1,25 @@
+main|func() -> ()
+    var a = [["k": 1], ["k": 2]]
+    var b = a
+    a[0]["k"] = 9
+    print(a)
+    print(b)
+    var t = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+    var u = t
+    t[0][1][0] = 77
+    print(t)
+    print(u)
+    var p = ["x": ["y": 1]]
+    var q = p
+    p["x"]["y"] = 5
+    print(p)
+    print(q)
+    var s = [[1, 2], [3, 4]]
+    s[1][1] = 40
+    print(s)
+    var c = [[10, 20]]
+    var g = c
+    c[0][0] += 5
+    print(c)
+    print(g)
+    return

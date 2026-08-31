@@ -1,0 +1,24 @@
+{Counter}
+n: I32 = 0
+
+{{Counter}}
+inc|self() -> ()
+    self.n = self.n + 1
+    return
+get|self() -> ()
+    return self.n
+
+work|func() => (I32,)
+    let c = Counter()
+    c.inc()
+    return ok(c.get())
+
+main|func() -> ()
+    var t = work()
+    var r = wait t
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    return

@@ -1,0 +1,16 @@
+<Greetable>
+    greet(self) -> (String,)
+        return "trait default"
+
+(Cat)
+名称: String = "Whiskers"
+实现: Greetable
+
+((Cat))
+greet|self() -> (String,)
+    return "meow from cat"
+
+main|func() -> ()
+    var cat = Cat()
+    print(cat.greet())
+    return

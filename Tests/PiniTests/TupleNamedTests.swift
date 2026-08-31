@@ -54,54 +54,28 @@ final class TupleNamedTests: XCTestCase {
 
     /// 意图：命名元组类型注解 `(a: I32, b: String,)` 绑定位置字面量，`.a` 按标签取首元素。
     func testNamedTypeAnnotationLabelAccess() throws {
-        let source = """
-        main|func() -> ()
-            var t: (a: I32, b: String,) = (1, "hello")
-            print(t.a,)
-            print(t.b,)
-            return
-        """
+        let source = try loadPiniFixture("testNamedTypeAnnotationLabelAccess", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1\nhello")
     }
 
     /// 意图：字面量命名元组 `(a: 1, b: "x",)` 自描述标签，`.b` 按标签取元素。
     func testNamedLiteralLabelAccess() throws {
-        let source = """
-        main|func() -> ()
-            var t = (a: 1, b: "x",)
-            print(t.a,)
-            print(t.b,)
-            return
-        """
+        let source = try loadPiniFixture("testNamedLiteralLabelAccess", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1\nx")
     }
 
     /// 意图：多返回值函数声明命名返回元组 `-> (商: I32, 余: I32,)`，`r.商` 取对应分量。
     func testNamedMultiReturnLabelAccess() throws {
-        let source = """
-        除余|func(a: I32, b: I32) -> (商: I32, 余: I32,)
-            return (a / b, a % b,)
-        main|func() -> ()
-            var r = 除余(a: 7, b: 3)
-            print(r.商,)
-            print(r.余,)
-            return
-        """
+        let source = try loadPiniFixture("testNamedMultiReturnLabelAccess", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "2\n1")
     }
 
     /// 意图：命名元组上 `.0` 位置访问与标签访问并存（标签是元数据的附加层，位置语义不变）。
     func testNamedTuplePositionalIndexStillWorks() throws {
-        let source = """
-        main|func() -> ()
-            var t = (a: 10, b: 20,)
-            print(t.0,)
-            print(t.1,)
-            return
-        """
+        let source = try loadPiniFixture("testNamedTuplePositionalIndexStillWorks", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "10\n20")
     }
@@ -109,13 +83,8 @@ final class TupleNamedTests: XCTestCase {
     // MARK: - 静态校验
 
     /// 意图：`.名称` 访问不存在的标签（`t.不存在`）应抛静态类型错误（unknownMember）。
-    func testUnknownLabelStaticError() {
-        let source = """
-        main|func() -> ()
-            var t: (a: I32, b: String,) = (1, "x")
-            print(t.不存在,)
-            return
-        """
+    func testUnknownLabelStaticError()  throws {
+        let source = try loadPiniFixture("testUnknownLabelStaticError", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "未知标签应抛静态错误") { error in
             // unknownMember 或 mismatch 均视为已拦截
             switch error {
@@ -128,13 +97,8 @@ final class TupleNamedTests: XCTestCase {
     }
 
     /// 意图：`.名称` 访问位置元组（无标签）应抛静态类型错误。
-    func testLabelAccessOnPositionalTupleStaticError() {
-        let source = """
-        main|func() -> ()
-            var t: (I32, String,) = (1, "x")
-            print(t.a,)
-            return
-        """
+    func testLabelAccessOnPositionalTupleStaticError()  throws {
+        let source = try loadPiniFixture("testLabelAccessOnPositionalTupleStaticError", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "位置元组上 .名称 应抛静态错误") { error in
             switch error {
             case is TypeError:

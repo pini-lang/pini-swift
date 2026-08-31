@@ -35,16 +35,7 @@ final class StepBlockTests: XCTestCase {
     /// step 在每个循环体正常结束后执行一次
     /// 意图：验证 step 在 while 每轮循环体正常结束后执行一次，3 轮各输出一次 "S"，得到 "0S1S2S"
     func testStepExecutesAfterEachIteration() throws {
-        let source = """
-main() -> ()
-    var i = 0
-    while i < 3:
-        print(i)
-        i = i + 1
-    step:
-        print("S")
-    return
-"""
+        let source = try loadPiniFixture("testStepExecutesAfterEachIteration", filePath: #filePath)
         let output = try runProgram(source).components(separatedBy: .whitespacesAndNewlines).joined()
         XCTAssertEqual(output, "0S1S2S", "step 应在每轮末尾执行一次")
     }
@@ -52,17 +43,7 @@ main() -> ()
     /// continue 后也应执行 step（类 C for 的步进语义）
     /// 意图：验证 continue 提前结束本轮后 step 仍照常执行（类 C for 步进语义），得到 "0C1C2C"
     func testStepExecutesOnContinue() throws {
-        let source = """
-main() -> ()
-    var i = 0
-    while i < 3:
-        print(i)
-        i = i + 1
-        continue
-    step:
-        print("C")
-    return
-"""
+        let source = try loadPiniFixture("testStepExecutesOnContinue", filePath: #filePath)
         let output = try runProgram(source).components(separatedBy: .whitespacesAndNewlines).joined()
         XCTAssertEqual(output, "0C1C2C", "continue 后也应执行 step")
     }
@@ -70,18 +51,7 @@ main() -> ()
     /// break 应跳过 step
     /// 意图：验证 break 跳出循环时跳过 step：i 等于 3 时中断，输出 "0B1B2" 而非再追加 "B"
     func testStepSkippedOnBreak() throws {
-        let source = """
-main() -> ()
-    var i = 0
-    while i < 5:
-        print(i)
-        i = i + 1
-        if i == 3:
-            break
-    step:
-        print("B")
-    return
-"""
+        let source = try loadPiniFixture("testStepSkippedOnBreak", filePath: #filePath)
         let output = try runProgram(source).components(separatedBy: .whitespacesAndNewlines).joined()
         XCTAssertEqual(output, "0B1B2", "break 应跳过 step")
     }

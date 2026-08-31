@@ -31,7 +31,7 @@ final class SuspendRuntimeTests: XCTestCase {
 
     /// 意图：已 resolved 的 fast-path——登记续体**立即同步回调**、不等待（推进性：回调值
     /// 正确；驳回性：登记后 `got` 不得仍为 nil，即不得延迟到未来某刻才唤醒）。
-    func testWhenResolvedFastPath() {
+    func testWhenResolvedFastPath()  throws {
         let fut = FutureValue()
         fut.resolve(Value.int(7))
         let exp = expectation(description: "resumed")
@@ -47,7 +47,7 @@ final class SuspendRuntimeTests: XCTestCase {
 
     /// 意图：reject 路径——future 以错误终结时，续体回调得到 `.failure`（错误经回调显式
     /// 上抛而非静默丢弃；推进性：failure 到达；驳回性：不得错误地以成功分支吞掉错误）。
-    func testWhenResolvedReject() {
+    func testWhenResolvedReject()  throws {
         let fut = FutureValue()
         let exp = expectation(description: "resumed")
         var failed = false
@@ -66,7 +66,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 意图：扇出非阻塞——从单一上下文登记 256 个续体并全部被唤醒（推进性：完成数=n；
     /// 驳回性：`whenResolved` 仅登记续体即返回、不阻塞占满线程——若阻塞则 GCD 池被等待者
     /// 占满、worker 抢不到线程而超时）。
-    func testFanOutNonBlocking() {
+    func testFanOutNonBlocking()  throws {
         let n = 256
         let exp = expectation(description: "all resumed")
         exp.expectedFulfillmentCount = n
@@ -90,16 +90,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 子 resolve 后父经续体恢复，得到正确结果。这是把 B-0 的 `whenResolved` 原语
     /// 真正接进 `.pini` 求值器（`runSuspendableBody` 可恢复执行器）的端到端证明。
     func testSuspendAwaitReleasesThread() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(20)
-            return ok(7)
-
-        main|func() => (I32,)
-            var c = child()
-            var r = await c
-            return r
-        """
+        let src = try loadPiniFixture("testSuspendAwaitReleasesThread", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "suspend.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "suspend.pini")
         let module = try parser.parseModule()
@@ -133,16 +124,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 若 `<=` 仍阻塞（未挂起），2 个线程会被占满等待子任务、而子任务永远抢不到线程 → 死锁；
     /// 挂起模式下线程被及时释放复用，100 组全部完成。这正是 B-2 的核心价值。
     func testBoundedPoolCompletesHighFanout() throws {
-        let src = """
-        worker|func() => (I32,)
-            sleep(10)
-            return ok(1)
-
-        main|func() => (I32,)
-            var w = worker()
-            var r = await w
-            return r
-        """
+        let src = try loadPiniFixture("testBoundedPoolCompletesHighFanout", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "fanout.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "fanout.pini")
         let module = try parser.parseModule()
@@ -182,24 +164,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 在 `<=` 恢复处看到取消；本测试断言 main 在 **400ms 内**拿到 `err(CancelError)`，即证明
     /// 取消在 resume 边界**即时**生效（时序差异是 B-3 与「只靠 awaited 未来驱动」的关键区别）。
     func testCancelSuspendedTaskTerminatesAtResumeBoundary() throws {
-        let src = """
-        leaf|func() => (I32,)
-            sleep(500)
-            return ok(9)
-
-        mid|func() => (I32,)
-            var l = leaf()
-            detach l
-            var r = await l
-            return r
-
-        main|func() => (I32,)
-            var m = mid()
-            sleep(30)
-            m.cancel()
-            var r = await m
-            return r
-        """
+        let src = try loadPiniFixture("testCancelSuspendedTaskTerminatesAtResumeBoundary", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "cancel-suspend.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "cancel-suspend.pini")
         let module = try parser.parseModule()
@@ -236,17 +201,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 意图：suspend 模式下「取消正在 sleep 的子任务」——sleep 分片检查点先于任何挂起生效。
     /// 子任务被取消后立即以 `err(CancelError)` 终结，父 `<=` 得到可 match 的错误值。
     func testCancelSleepingChildInSuspendMode() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(500)
-            return ok(7)
-
-        main|func() => (I32,)
-            var c = child()
-            c.cancel()
-            var r = await c
-            return r
-        """
+        let src = try loadPiniFixture("testCancelSleepingChildInSuspendMode", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "cancel-sleep.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "cancel-sleep.pini")
         let module = try parser.parseModule()
@@ -280,17 +235,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// push、终结（return）时 pop 执行；挂起-恢复全程经 `deferStack` 快照/还原，不再抛
     /// 「defer 必须在块作用域内使用」（探针版因未 push scope 而会抛）。
     func testDeferRunsAtFunctionExitInSuspendMode() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(20)
-            return ok(7)
-
-        main|func() => (I32,)
-            defer print("cleanup")
-            var c = child()
-            var r = await c
-            return r
-        """
+        let src = try loadPiniFixture("testDeferRunsAtFunctionExitInSuspendMode", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "defer-suspend.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "defer-suspend.pini")
         let module = try parser.parseModule()
@@ -333,17 +278,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// `deferStack` 跨挂起**每任务隔离**（线程复用时不串台）：若还原/快照有误，某任务会
     /// pop 到他人 scope 或抛「defer 必须在块作用域内使用」→ future 以 err 终结 → okCount 不齐。
     func testDeferPerTaskIsolatedInSuspendMode() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(10)
-            return ok(1)
-
-        main|func() => (I32,)
-            defer print("cleanup")
-            var c = child()
-            var r = await c
-            return r
-        """
+        let src = try loadPiniFixture("testDeferPerTaskIsolatedInSuspendMode", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "defer-many.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "defer-many.pini")
         let module = try parser.parseModule()
@@ -383,16 +318,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 断言 ≤ 2：自研池只创建 2 个专用线程，挂起/恢复全在这 2 个线程上轮转，
     /// 绝不额外借线程（若 `<=` 阻塞会死锁，若线程无界会 >2）。
     func testFixedPoolUsesBoundedThreadCount() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(10)
-            return ok(1)
-
-        main|func() => (I32,)
-            var c = child()
-            var r = await c
-            return r
-        """
+        let src = try loadPiniFixture("testFixedPoolUsesBoundedThreadCount", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "pool-threads.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "pool-threads.pini")
         let module = try parser.parseModule()
@@ -438,17 +364,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 语句游标重跑模型会把整条 `print(await child())` 重跑 → "before"/"after"/"ok(7)" 各打两遍；
     /// CPS 模型精确恢复，各恰一次。这是「任意表达式深度挂起 + 副作用零重复」的验收标准。
     func testJoinInsideCallArgumentRunsSideEffectOnce() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(20)
-            return ok(7)
-
-        main|func() => (I32,)
-            print("before")
-            print(await child())
-            print("after")
-            return ok(0)
-        """
+        let src = try loadPiniFixture("testJoinInsideCallArgumentRunsSideEffectOnce", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "cps-arg.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "cps-arg.pini")
         let module = try parser.parseModule()
@@ -465,27 +381,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 恢复后 `outer` 继续（不重跑已执行的 "outer-1"），`inner` 从挂起点精确续跑。
     /// 这是「同步子调用内部挂起」的验收标准（语句重跑模型会重跑整个 `inner()` 与 outer 语句）。
     func testSyncCallChainSuspendResumesExactly() throws {
-        let src = """
-        leaf|func() => (I32,)
-            sleep(20)
-            return ok(5)
-
-        inner|func() -> (I32,)
-            var l = leaf()
-            var r = wait l
-            return r
-
-        outer|func() => (I32,)
-            print("outer-1")
-            var v = inner()
-            print("outer-2")
-            return v
-
-        main|func() => (I32,)
-            var r = await outer()
-            print(r)
-            return ok(0)
-        """
+        let src = try loadPiniFixture("testSyncCallChainSuspendResumesExactly", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "cps-chain.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "cps-chain.pini")
         let module = try parser.parseModule()
@@ -504,20 +400,7 @@ final class SuspendRuntimeTests: XCTestCase {
     /// 后 sleep 400ms；worker1 空闲，必须**窃取** worker0 本地队列的任务才能推进。
     /// 若窃取未实现（单队列/各取各的），子任务会等 worker0 睡完才执行，或直接不执行。
     func testWorkStealingOccurs() throws {
-        let src = """
-        child|func() => (I32,)
-            sleep(10)
-            return ok(1)
-
-        main|func() => (I32,)
-            var c1 = child()
-            var c2 = child()
-            var c3 = child()
-            var c4 = child()
-            var c5 = child()
-            sleep(400)
-            return ok(0)
-        """
+        let src = try loadPiniFixture("testWorkStealingOccurs", filePath: #filePath)
         let lexer = Lexer(source: src, fileName: "steal.pini")
         let parser = Parser(tokens: try lexer.tokenize(), fileName: "steal.pini")
         let module = try parser.parseModule()

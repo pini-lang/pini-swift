@@ -1,0 +1,9 @@
+{盒子}
+    值: I32 = 0
+
+main|func() -> ()
+    var a = 盒子()
+    var b = a
+    b.值 = 9
+    print(a.值)
+    return

@@ -1,0 +1,19 @@
+leaf|func() => (I32,)
+    sleep(20)
+    return ok(5)
+
+inner|func() -> (I32,)
+    var l = leaf()
+    var r = wait l
+    return r
+
+outer|func() => (I32,)
+    print("outer-1")
+    var v = inner()
+    print("outer-2")
+    return v
+
+main|func() => (I32,)
+    var r = await outer()
+    print(r)
+    return ok(0)

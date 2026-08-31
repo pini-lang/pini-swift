@@ -1,0 +1,11 @@
+{Node}
+v: I32 = 0
+
+touch|func(n: Node,) => ()
+    return
+
+main|func() -> ()
+    let x = Node()
+    var t = touch(x)
+    wait t
+    return

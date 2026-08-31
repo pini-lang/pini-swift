@@ -41,26 +41,8 @@ final class TaskIsolationTests: XCTestCase {
     // MARK: - 拦截：引用类型跨 `=>` 边界
 
     /// 意图：直接把 object 实例传进 `=>` 进程 —— 正是探针里导致 SIGABRT 的写法，必须静态拒绝。
-    func testPassingObjectIntoAsyncFunctionIsRejected() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-
-        bump|func(c: Counter,) => ()
-            c.inc()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            var a = bump(c)
-            wait a
-            return
-        """)
+    func testPassingObjectIntoAsyncFunctionIsRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testPassingObjectIntoAsyncFunctionIsRejected", filePath: #filePath) as String)
         guard let (typeName, paramName, funcName) = isolationViolation(errors) else {
             return XCTFail("引用类型跨 => 传参应被拒绝，实际错误：\(errors)")
         }
@@ -71,20 +53,8 @@ final class TaskIsolationTests: XCTestCase {
 
     /// 意图：`object` 声明的类型即引用语义，跨 `=>` 边界传参被封死（不能只认特定类型名）。
     /// `referenceTypeNames` 收录该类型名，类型检查阶段即拦截。
-    func testPassingArbitraryObjectIntoAsyncFunctionIsRejected() {
-        let errors = typeErrors("""
-        {Node}
-        v: I32 = 0
-
-        touch|func(n: Node,) => ()
-            return
-
-        main|func() -> ()
-            let x = Node()
-            var t = touch(x)
-            wait t
-            return
-        """)
+    func testPassingArbitraryObjectIntoAsyncFunctionIsRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testPassingArbitraryObjectIntoAsyncFunctionIsRejected", filePath: #filePath) as String)
         guard let (typeName, paramName, funcName) = isolationViolation(errors) else {
             return XCTFail("引用类型跨 => 传参应被拒绝，实际错误：\(errors)")
         }
@@ -97,25 +67,8 @@ final class TaskIsolationTests: XCTestCase {
     /// NOTE：struct 构造语法待验证后补齐独立用例；当前用元组（`(I32, Counter,)`）等价验证
     /// 递归类型检查——`escapingReferenceType` 对 tuple/generic 与 struct 字段走同一递归路径，
     /// 元组穿透即能证明递归机制有效。
-    func testStructCarryingReferenceFieldIsRejected() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-
-        sendPair|func(p: (I32, Counter,),) => ()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            var t = sendPair((42, c,))
-            wait t
-            return
-        """)
+    func testStructCarryingReferenceFieldIsRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testStructCarryingReferenceFieldIsRejected", filePath: #filePath) as String)
         guard let (typeName, paramName, funcName) = isolationViolation(errors) else {
             return XCTFail("元组内引用类型跨 => 传参应被递归拦截，实际错误：\(errors)")
         }
@@ -126,137 +79,40 @@ final class TaskIsolationTests: XCTestCase {
 
     /// 意图：struct 字段递归检测的补充验证——值类型的 struct 放行，引用类型的 struct 字段拦截。
     /// 用 pair 容器（`[Counter]`）替代 array 测试，验证 generic param 递归路径。
-    func testTupleContainingReferenceIsRejected() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        sendPair|func(p: (I32, Counter,),) => ()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            var t = sendPair((42, c,))
-            wait t
-            return
-        """)
+    func testTupleContainingReferenceIsRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testTupleContainingReferenceIsRejected", filePath: #filePath) as String)
         XCTAssertNotNil(isolationViolation(errors), "元组内引用类型跨 => 传参应被递归拦截：\(errors)")
     }
 
     /// 意图：引用藏在容器泛型实参里（`[Counter]`）同样要拦。
-    func testArrayOfReferencesIsRejected() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-
-        bumpAll|func(cs: Array<Counter>,) => ()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            var xs = [c]
-            var t = bumpAll(xs)
-            wait t
-            return
-        """)
+    func testArrayOfReferencesIsRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testArrayOfReferencesIsRejected", filePath: #filePath) as String)
         XCTAssertNotNil(isolationViolation(errors), "容器内的引用类型跨 => 传参应被拒绝，实际错误：\(errors)")
     }
 
     // MARK: - 放行：不构成跨任务共享的写法（零回归）
 
     /// 意图：同步函数传引用完全合法 —— 隔离规则只约束 `=>` 边界，不得误伤既有同步代码。
-    func testPassingObjectIntoSyncFunctionIsAllowed() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-
-        bump|func(c: Counter,) -> ()
-            c.inc()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            bump(c)
-            return
-        """)
+    func testPassingObjectIntoSyncFunctionIsAllowed()  throws {
+        let errors = typeErrors(try loadPiniFixture("testPassingObjectIntoSyncFunctionIsAllowed", filePath: #filePath) as String)
         XCTAssertNil(isolationViolation(errors), "同步调用不应被隔离规则拦截：\(errors)")
     }
 
     /// 意图：值类型（struct）跨 `=>` 传参是安全的（拷贝语义，无共享），必须放行。
-    func testPassingStructIntoAsyncFunctionIsAllowed() {
-        let errors = typeErrors("""
-        {Point}
-        x: I32 = 0
-        y: I32 = 0
-
-        {{Point}}
-        sum|self() -> ()
-            return self.x
-
-        main|func() -> ()
-            print(1)
-            return
-        """)
+    func testPassingStructIntoAsyncFunctionIsAllowed()  throws {
+        let errors = typeErrors(try loadPiniFixture("testPassingStructIntoAsyncFunctionIsAllowed", filePath: #filePath) as String)
         XCTAssertNil(isolationViolation(errors), "值类型不应触发隔离错误：\(errors)")
     }
 
     /// 意图：任务**体内自建**的对象没有跨边界共享，必须放行（否则并发任务无法使用对象）。
-    func testAsyncTaskCreatingItsOwnObjectIsAllowed() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-        get|self() -> ()
-            return self.n
-
-        work|func() => (I32,)
-            let c = Counter()
-            c.inc()
-            return ok(c.get())
-
-        main|func() -> ()
-            var t = work()
-            var r = wait t
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print(e)
-            return
-        """)
+    func testAsyncTaskCreatingItsOwnObjectIsAllowed()  throws {
+        let errors = typeErrors(try loadPiniFixture("testAsyncTaskCreatingItsOwnObjectIsAllowed", filePath: #filePath) as String)
         XCTAssertNil(isolationViolation(errors), "任务体内自建对象不构成共享，应放行：\(errors)")
     }
 
     /// 意图：基本类型跨 `=>` 传参永远合法（最常见的并发写法，绝不能误伤）。
-    func testPassingPrimitiveIntoAsyncFunctionIsAllowed() {
-        let errors = typeErrors("""
-        double|func(n: I32,) => (I32,)
-            return ok(n * 2)
-
-        main|func() -> ()
-            var t = double(21)
-            var r = wait t
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print(e)
-            return
-        """)
+    func testPassingPrimitiveIntoAsyncFunctionIsAllowed()  throws {
+        let errors = typeErrors(try loadPiniFixture("testPassingPrimitiveIntoAsyncFunctionIsAllowed", filePath: #filePath) as String)
         XCTAssertTrue(errors.isEmpty, "基本类型跨 => 传参应无任何错误：\(errors)")
     }
 
@@ -265,28 +121,8 @@ final class TaskIsolationTests: XCTestCase {
     /// 意图：闭包体捕获外层 object `c`，闭包作为 `=>` 实参 —— 经闭包值（env）越过任务边界，
     /// 构成 R6 数据竞争通道；类型系统须静态拒绝。修复点：`.function` 携带 captured 集，
     /// `enforceTaskIsolation` 从实参实际类型取 captured 并入 `escapingReferenceType` 递归检测。
-    func testClosureCapturingObjectPassedToAsyncIsRejected() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-
-        go|func(task: () -> (),) => ()
-            task()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            var f = func () -> ():
-                return c.inc()
-            var a = go(f)
-            wait a
-            return
-        """)
+    func testClosureCapturingObjectPassedToAsyncIsRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testClosureCapturingObjectPassedToAsyncIsRejected", filePath: #filePath) as String)
         guard let (typeName, paramName, funcName) = isolationViolation(errors) else {
             return XCTFail("闭包捕获引用类型跨 => 应被拒绝，实际错误：\(errors)")
         }
@@ -295,26 +131,8 @@ final class TaskIsolationTests: XCTestCase {
     }
 
     /// 意图：闭包**直接**作为 `=>` 实参（内联匿名函数）同样须检测捕获的引用类型。
-    func testClosureCapturingObjectInlineArgRejected() {
-        let errors = typeErrors("""
-        {Counter}
-        n: I32 = 0
-
-        {{Counter}}
-        inc|self() -> ()
-            self.n = self.n + 1
-            return
-
-        go|func(task: () -> (),) => ()
-            task()
-            return
-
-        main|func() -> ()
-            let c = Counter()
-            var a = go(func () -> (): return c.inc())
-            wait a
-            return
-        """)
+    func testClosureCapturingObjectInlineArgRejected()  throws {
+        let errors = typeErrors(try loadPiniFixture("testClosureCapturingObjectInlineArgRejected", filePath: #filePath) as String)
         guard let (typeName, _, funcName) = isolationViolation(errors) else {
             return XCTFail("内联闭包捕获引用类型跨 => 应被拒绝，实际错误：\(errors)")
         }
@@ -324,21 +142,8 @@ final class TaskIsolationTests: XCTestCase {
 
     /// 意图（回归防护）：闭包捕获**值类型**不构成引用共享，必须放行（不误报）。
     /// 与 testClosureCapturingObjectPassedToAsyncIsRejected 成对，确保隔离只针对引用类型。
-    func testClosureCapturingValuePassedToAsyncIsAllowed() {
-        let errors = typeErrors("""
-        go|func(task: () -> (),) => ()
-            task()
-            return
-
-        main|func() -> ()
-            var base = 10
-            var f = func () -> ():
-                base = base + 1
-                return
-            var a = go(f)
-            wait a
-            return
-        """)
+    func testClosureCapturingValuePassedToAsyncIsAllowed()  throws {
+        let errors = typeErrors(try loadPiniFixture("testClosureCapturingValuePassedToAsyncIsAllowed", filePath: #filePath) as String)
         XCTAssertNil(isolationViolation(errors), "值类型捕获不应触发隔离错误：\(errors)")
     }
 }

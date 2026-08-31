@@ -1,0 +1,13 @@
+[形状]
+圆(点, F64,)
+
+(点)
+    x: I32 = 0
+
+main|func() -> ()
+    var c = 圆(点(), 1.0)
+    match c:
+        case 圆(p, r):
+            print(p.x + 1)
+            return
+    return

@@ -1,0 +1,4 @@
+main|func() -> ()
+    var t: (I32, String,) = (1, "x")
+    print(t.a,)
+    return

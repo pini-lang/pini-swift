@@ -5,57 +5,28 @@ final class WeakRefTests: XCTestCase {
 
     /// 意图：构造 WeakRef(obj) 后访问 isAlive 应输出 true，验证 WeakRef 初始引用有效。
     func testWeakRefConstruction() throws {
-        let source = """
-{测试对象}
-值: I32 = 42
-main|func() -> ()
-    var obj = 测试对象()
-    var weak = WeakRef(obj)
-    print(weak.isAlive)
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefConstruction", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "true", "WeakRef 初始时 isAlive 应为 true")
     }
 
     /// 意图：通过 weak.target 访问目标对象并打印其字段值，验证 target 可取得原对象（输出 42）。
     func testWeakRefTargetAccess() throws {
-        let source = """
-{测试对象}
-值: I32 = 42
-main|func() -> ()
-    var obj = 测试对象()
-    var weak = WeakRef(obj)
-    var target = weak.target
-    print(target.值)
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefTargetAccess", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42", "WeakRef.target 应能访问目标对象")
     }
 
     /// 意图：通过 weak.target.字段 链式访问目标字段，验证可读取字段值（输出 hello）。
     func testWeakRefTargetFieldAccess() throws {
-        let source = """
-{节点}
-数据: String = "hello"
-main|func() -> ()
-    var obj = 节点()
-    var weak = WeakRef(obj)
-    print(weak.target.数据)
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefTargetFieldAccess", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "hello", "通过 WeakRef.target.字段应能访问字段")
     }
 
     /// 意图：WeakRef 引用非对象字面量（42）应抛出 RuntimeError，验证非法参数被拒绝。
     func testWeakRefWithNonObjectFails() throws {
-        let source = """
-main|func() -> ()
-    var weak = WeakRef(42)
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefWithNonObjectFails", filePath: #filePath)
         XCTAssertThrowsError(try runProgram(source), "WeakRef 引用非对象应报错") { error in
             XCTAssertTrue(error is RuntimeError, "应为 RuntimeError")
         }
@@ -63,17 +34,7 @@ main|func() -> ()
 
     /// 意图：多个 WeakRef 指向同一对象时 isAlive 均应为 true，验证各自独立持有引用（输出 true、true）。
     func testWeakRefMultipleWeaksSameTarget() throws {
-        let source = """
-{节点}
-值: I32 = 99
-main|func() -> ()
-    var obj = 节点()
-    var w1 = WeakRef(obj)
-    var w2 = WeakRef(obj)
-    print(w1.isAlive)
-    print(w2.isAlive)
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefMultipleWeaksSameTarget", filePath: #filePath)
         let output = try runProgram(source)
         let lines = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n")
         XCTAssertEqual(lines, ["true", "true"], "多个 WeakRef 指向同一目标应都存活")
@@ -81,15 +42,7 @@ main|func() -> ()
 
     /// 意图：访问 WeakRef 目标上不存在的成员（weak.不存在）应抛出 RuntimeError，验证成员解析失败被拒绝。
     func testWeakRefInvalidMemberFails() throws {
-        let source = """
-{节点}
-值: I32 = 10
-main|func() -> ()
-    var obj = 节点()
-    var weak = WeakRef(obj)
-    var x = weak.不存在
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefInvalidMemberFails", filePath: #filePath)
         XCTAssertThrowsError(try runProgram(source), "访问 WeakRef 不存在的成员应报错") { error in
             XCTAssertTrue(error is RuntimeError, "应为 RuntimeError")
         }
@@ -99,16 +52,7 @@ main|func() -> ()
 
     /// 意图：语言级 `var w2 = w1`（WeakRef 复制）后 target 访问仍正常——引用语义下复制共享同一目标。
     func testWeakRefAliasSharesTarget() throws {
-        let source = """
-{节点}
-值: I32 = 7
-main|func() -> ()
-    var obj = 节点()
-    var w1 = WeakRef(obj)
-    var w2 = w1
-    print(w2.target.值)
-    return
-"""
+        let source = try loadPiniFixture("testWeakRefAliasSharesTarget", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "7", "别名复制后 target 访问应正常（共享目标）")
     }

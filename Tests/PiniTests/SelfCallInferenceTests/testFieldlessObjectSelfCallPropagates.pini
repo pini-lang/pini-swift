@@ -1,0 +1,15 @@
+{o}
+
+{{o}}
+k_at|self(k: I32,) -> (String,)
+    return "s"
+use1|self() -> (String,)
+    let k = self.k_at(0)
+    if k == "s":
+        return "y"
+    return "n"
+
+main|func() -> ()
+    var a = o()
+    print(a.use1())
+    return

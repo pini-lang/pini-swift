@@ -21,27 +21,7 @@ final class TraitConstraintTests: XCTestCase {
     /// verifyTraitConformance 严格校验（内建 String/Array 为标记式登记，不走此路径）。
     /// 推进性测量：整个模块零类型错误。
     func testBuiltinCollectionTraitConformanceSatisfied() throws {
-        let source = """
-(袋子)
-    实现: collection
-
-((袋子))
-    len|self() -> (I32,)
-        return 0
-    contains|self(v: I32,) -> (Bool,)
-        return false
-    append|self(v: I32,) -> (I32,)
-        return 0
-    pop|self() -> (I32,)
-        return 0
-    slice|self(a: I32, b: I32,) -> (I32,)
-        return 0
-    join|self(sep: I32,) -> (I32,)
-        return 0
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testBuiltinCollectionTraitConformanceSatisfied", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         XCTAssertTrue(diagnostics.isEmpty, "补齐 6 方法的类型应通过 collection 校验，实际: \(diagnostics)")
     }
@@ -50,17 +30,7 @@ main|func() -> ()
     /// traitRequirementNotSatisfied（与用户声明特征同语义）。
     /// 驳回性测量：缺 len 时应命中该方法缺失诊断。
     func testBuiltinCollectionTraitMissingMethodRejected() throws {
-        let source = """
-(袋子)
-    实现: collection
-
-((袋子))
-    contains|self(v: I32,) -> (Bool,)
-        return false
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testBuiltinCollectionTraitMissingMethodRejected", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let hit = diagnostics.contains {
             if case .traitRequirementNotSatisfied(typeName: "袋子", traitName: "collection", methodName: "len", _) = $0 {
@@ -75,24 +45,7 @@ main|func() -> ()
     /// 推进性测量：整个模块零类型错误。
     /// 驳回性测量：若 trait 方法未注册为可见方法，成员调用会落入不匹配分支而报错。
     func testConformanceSatisfiedAndMemberCallVisible() throws {
-        let source = """
-        <Greetable>
-            greet(self) -> (String,)
-                return "默认"
-
-        (Dog)
-            名称: String = "Rex"
-            实现: Greetable
-
-        ((Dog))
-            greet|self() -> (String,)
-                return "woof"
-
-        main|func() -> ()
-            var dog = Dog()
-            var g = dog.greet()
-            return
-        """
+        let source = try loadPiniFixture("testConformanceSatisfiedAndMemberCallVisible", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         XCTAssertTrue(diagnostics.isEmpty, "满足 trait 约束且成员调用应无类型错误，实际: \(diagnostics)")
     }
@@ -101,17 +54,7 @@ main|func() -> ()
     /// 推进性测量：诊断含 (typeName: "Cat", traitName: "Greetable", methodName: "greet")。
     /// 驳回性测量：若 verifyTraitConformance 不查抽象方法，此测试会失败（漏报）。
     func testMissingAbstractMethodReported() throws {
-        let source = """
-        <Greetable>
-            greet(self) -> (String,)
-
-        (Cat)
-            名称: String = "Tom"
-            实现: Greetable
-
-        main|func() -> ()
-            return
-        """
+        let source = try loadPiniFixture("testMissingAbstractMethodReported", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let hit = diagnostics.contains {
             if case .traitRequirementNotSatisfied(typeName: "Cat", traitName: "Greetable", methodName: "greet", _) = $0 {
@@ -126,23 +69,7 @@ main|func() -> ()
     /// 推进性测量：整个模块零类型错误（own 被正确替换为实现类型）。
     /// 驳回性测量：若 own 被当字面类型名比较，isAssignable(点, own) 失败会误报 mismatch。
     func testSelfReturnTypeConformance() throws {
-        let source = """
-        <可克隆>
-            克隆(self) -> (own,)
-
-        (点)
-            x: I32 = 0
-            实现: 可克隆
-
-        ((点))
-            克隆|self() -> (点,)
-                return 点()
-
-        main|func() -> ()
-            var p = 点()
-            var q = p.克隆()
-            return
-        """
+        let source = try loadPiniFixture("testSelfReturnTypeConformance", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         XCTAssertTrue(diagnostics.isEmpty, "own 返回类型约束应不误判，实际: \(diagnostics)")
     }
@@ -151,21 +78,7 @@ main|func() -> ()
     /// 推进性测量：诊断含 (typeName: "点", traitName: "可克隆", methodName: "克隆")。
     /// 驳回性测量：若返回类型比对缺失，此测试会失败（漏报）。
     func testReturnTypeMismatchReported() throws {
-        let source = """
-        <可克隆>
-            克隆(self) -> (own,)
-
-        (点)
-            x: I32 = 0
-            实现: 可克隆
-
-        ((点))
-            克隆|self() -> (String,)
-                return ""
-
-        main|func() -> ()
-            return
-        """
+        let source = try loadPiniFixture("testReturnTypeMismatchReported", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         let hit = diagnostics.contains {
             if case .traitMethodSignatureMismatch(typeName: "点", traitName: "可克隆", methodName: "克隆", _, _) = $0 {
@@ -181,20 +94,7 @@ main|func() -> ()
     /// 推进性测量：整个模块零类型错误。
     /// 驳回性测量：若默认实现的 own 未替换，成员调用会落「未注册方法」报错。
     func testSelfReturnTypeInDefaultImplementation() throws {
-        let source = """
-        <可克隆>
-            克隆(self) -> (own,)
-                return 点()
-
-        (点)
-            x: I32 = 0
-            实现: 可克隆
-
-        main|func() -> ()
-            var p = 点()
-            var q = p.克隆()
-            return
-        """
+        let source = try loadPiniFixture("testSelfReturnTypeInDefaultImplementation", filePath: #filePath)
         let diagnostics = checkCollecting(source)
         XCTAssertTrue(diagnostics.isEmpty, "默认实现返回 own 应经具体类型替换后注册，实际: \(diagnostics)")
     }

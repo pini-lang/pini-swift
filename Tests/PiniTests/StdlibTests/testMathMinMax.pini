@@ -1,0 +1,4 @@
+main|func() -> ()
+    print(min(3, 7))
+    print(max(3, 7))
+    return

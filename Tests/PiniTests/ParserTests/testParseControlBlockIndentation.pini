@@ -1,0 +1,4 @@
+main() -> ()
+    if x > 5:
+        print(x)
+    return

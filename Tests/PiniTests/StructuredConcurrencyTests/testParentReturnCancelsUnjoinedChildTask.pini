@@ -1,0 +1,20 @@
+child|func() => ()
+    sleep(3000)
+    print("子任务不该跑完")
+    return
+
+parent|func() => (I32,)
+    var c = child()
+    return ok(1)
+
+main|func() -> ()
+    var p = parent()
+    var r = wait p
+    match r:
+        case ok(v):
+            print(v)
+        case err(e):
+            print(e)
+    sleep(300)
+    print("主流程结束")
+    return

@@ -1,0 +1,8 @@
+main|func() -> ()
+    var result = 0
+    try (42, "something went wrong",):
+        result = 100
+    except e:
+        result = -1
+    print(result)
+    return

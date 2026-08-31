@@ -1,0 +1,5 @@
+main|func() -> ()
+    try (42, ""):
+        print("ok")
+    print("after")
+    return

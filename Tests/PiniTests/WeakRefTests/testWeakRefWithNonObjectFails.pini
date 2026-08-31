@@ -1,0 +1,3 @@
+main|func() -> ()
+    var weak = WeakRef(42)
+    return

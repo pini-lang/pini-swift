@@ -1,0 +1,4 @@
+[Bad1|notakw
+[Bad2|notakw
+main|func() -> ()
+    return

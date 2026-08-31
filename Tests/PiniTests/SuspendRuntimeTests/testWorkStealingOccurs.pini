@@ -1,0 +1,12 @@
+child|func() => (I32,)
+    sleep(10)
+    return ok(1)
+
+main|func() => (I32,)
+    var c1 = child()
+    var c2 = child()
+    var c3 = child()
+    var c4 = child()
+    var c5 = child()
+    sleep(400)
+    return ok(0)

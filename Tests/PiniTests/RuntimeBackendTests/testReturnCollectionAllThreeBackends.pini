@@ -1,0 +1,7 @@
+main|func() -> ()
+    var top = [1, 2, 3]
+    print(top)
+    if true:
+        var inner = [4, 5]
+        return
+    print("unreachable")

@@ -1,0 +1,15 @@
+[色彩]
+红
+绿
+蓝
+
+main|func() -> ()
+    var c = 红
+    match c:
+        case 红:
+            print("红")
+        case 绿:
+            print("绿")
+        case 蓝:
+            print("蓝")
+    return

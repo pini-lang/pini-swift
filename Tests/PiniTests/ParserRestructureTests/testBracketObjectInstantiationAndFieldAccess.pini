@@ -1,0 +1,6 @@
+[计数器|object]
+值: I32 = 0
+main|func() -> ()
+    var c: 计数器 = 计数器()
+    c.值 = 42
+    print(c.值)

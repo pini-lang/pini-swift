@@ -1,0 +1,6 @@
+main|func() -> ()
+    var top = [1, 2, 3]
+    var b = top
+    top = [4, 5]
+    print(top)
+    print(b)

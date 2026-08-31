@@ -18,10 +18,7 @@ final class ParserTests: XCTestCase {
 
     /// 意图：验证最小函数声明 main() -> () 解析成功：应得到唯一的、带函数体的 main 声明。
     func testParseSimpleFunction() throws {
-        let source = """
-main() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testParseSimpleFunction", filePath: #filePath)
         let module = try parse(source: source)
 
         XCTAssertEqual(module.declarations.count, 1, "应只有一个声明")
@@ -51,11 +48,7 @@ main() -> ()
 
     /// 意图：验证 ?I32 可选类型糖解析为 Optional<I32> 泛型标注（?T = Optional<T>）。
     func testParseQuestionTypeSimple() throws {
-        let module = try parse(source: """
-main() -> ()
-    var x: ?I32 = nil
-    return
-""")
+        let module = try parse(source: try loadPiniFixture("testParseQuestionTypeSimple", filePath: #filePath) as String)
         let type = try XCTUnwrap(varType(in: module, name: "x"),
                                 "应能从 main 函数体取到变量 x 的类型标注")
         guard case .generic(let name, let params, _) = type else {
@@ -72,11 +65,7 @@ main() -> ()
 
     /// 意图：验证嵌套 ??I32 解析为双层 Optional<Optional<I32>>，最内层为 I32。
     func testParseQuestionTypeNested() throws {
-        let module = try parse(source: """
-main() -> ()
-    var x: ??I32 = nil
-    return
-""")
+        let module = try parse(source: try loadPiniFixture("testParseQuestionTypeNested", filePath: #filePath) as String)
         let type = try XCTUnwrap(varType(in: module, name: "x"),
                                 "应能从 main 函数体取到变量 x 的类型标注")
         guard case .generic(let name, let params, _) = type else {
@@ -98,11 +87,7 @@ main() -> ()
     /// 意图：回归保护——验证手写 Optional<I32> 泛型仍按原样解析，不受 ? 糖影响。
     func testParseOptionalGenericUnchanged() throws {
         // 回归保护：手写 Optional<I32> 仍按原样解析，不受 ? 糖影响
-        let module = try parse(source: """
-main() -> ()
-    var x: Optional<I32> = nil
-    return
-""")
+        let module = try parse(source: try loadPiniFixture("testParseOptionalGenericUnchanged", filePath: #filePath) as String)
         let type = try XCTUnwrap(varType(in: module, name: "x"))
         guard case .generic(let name, let params, _) = type else {
             XCTFail("Optional<I32> 应解析为 generic，实际：\(type)"); return
@@ -122,11 +107,7 @@ main() -> ()
     /// 推进性测量：未缩进的 `main() -> ()` 体抛出 invalidStatement
     /// 驳回性测量：非缩进体被静默接受（旧内容态行为）
     func testParseTopLevelFunctionBodyWithoutIndentRejected() throws {
-        let source = """
-main() -> ()
-print("Hello")
-return
-"""
+        let source = try loadPiniFixture("testParseTopLevelFunctionBodyWithoutIndentRejected", filePath: #filePath)
         XCTAssertThrowsError(try parse(source: source), "函数体必须缩进至少一层") { error in
             guard case ParserError.invalidStatement(let reason, _) = error else {
                 XCTFail("应为 invalidStatement，实际: \(error)")
@@ -138,13 +119,7 @@ return
 
     /// 意图：缩进体顶级函数正确解析为独立声明（替代旧内容态多声明累积）
     func testParseTopLevelFunctionBodyWithMultipleDecls() throws {
-        let source = """
-main() -> ()
-    print("first")
-    return
-other() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testParseTopLevelFunctionBodyWithMultipleDecls", filePath: #filePath)
         let module = try parse(source: source)
 
         XCTAssertEqual(module.declarations.count, 2, "应有两个函数声明")
@@ -159,10 +134,7 @@ other() -> ()
 
     /// 意图：验证带尾逗号的参数列表 add(a, b,) 解析出 a、b 两个参数。
     func testParseFunctionWithParameters() throws {
-        let source = """
-add(a, b,) -> ()
-    return
-"""
+        let source = try loadPiniFixture("testParseFunctionWithParameters", filePath: #filePath)
         let module = try parse(source: source)
 
         if case .funcDecl(let funcDecl) = module.declarations[0] {
@@ -176,11 +148,7 @@ add(a, b,) -> ()
 
     /// 意图：验证 (名称) 结构体声明解析出名称与两个字段（x、y）。
     func testParseStructDecl() throws {
-        let source = """
-(点)
-x: I32 = 0
-y: I32 = 0
-"""
+        let source = try loadPiniFixture("testParseStructDecl", filePath: #filePath)
         let module = try parse(source: source)
 
         XCTAssertEqual(module.declarations.count, 1)
@@ -192,10 +160,7 @@ y: I32 = 0
 
     /// 意图：验证 {名称} 对象声明解析出名称与一个字段（数值）。
     func testParseObjectDecl() throws {
-        let source = """
-{计数对象}
-数值: I32 = 0
-"""
+        let source = try loadPiniFixture("testParseObjectDecl", filePath: #filePath)
         let module = try parse(source: source)
 
         XCTAssertEqual(module.declarations.count, 1)
@@ -207,11 +172,7 @@ y: I32 = 0
 
     /// 意图：验证 [名称] 枚举声明解析出名称与两个 case（圆、矩形）。
     func testParseEnumDecl() throws {
-        let source = """
-[形状]
-圆(点, F64,)
-矩形(点, 点,)
-"""
+        let source = try loadPiniFixture("testParseEnumDecl", filePath: #filePath)
         let module = try parse(source: source)
 
         XCTAssertEqual(module.declarations.count, 1)
@@ -223,16 +184,7 @@ y: I32 = 0
 
     /// 意图：验证对象方法（名称|self() -> ()）解析并归入 objectDecl.methods。
     func testParseMethodDefaultAssumption() throws {
-        let source = """
-{计数对象}
-数值: I32 = 0
-
-{{计数对象}}
-增加|self() -> ()
-    return
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testParseMethodDefaultAssumption", filePath: #filePath)
         let module = try parse(source: source)
 
         XCTAssertEqual(module.declarations.count, 3)
@@ -246,11 +198,7 @@ main|func() -> ()
 
     /// 意图：验证 x + y 解析为 binary 表达式：左右操作数分别为 x、y，运算符为 +。
     func testParseExpressionBinary() throws {
-        let source = """
-main() -> ()
-    x + y
-    return
-"""
+        let source = try loadPiniFixture("testParseExpressionBinary", filePath: #filePath)
         let module = try parse(source: source)
 
         if case .funcDecl(let funcDecl) = module.declarations[0], let body = funcDecl.body {
@@ -270,12 +218,7 @@ main() -> ()
 
     /// 意图：验证 if 块的缩进子块被解析，thenBlock 含一条语句。
     func testParseControlBlockIndentation() throws {
-        let source = """
-main() -> ()
-    if x > 5:
-        print(x)
-    return
-"""
+        let source = try loadPiniFixture("testParseControlBlockIndentation", filePath: #filePath)
         let module = try parse(source: source)
 
         if case .funcDecl(let funcDecl) = module.declarations[0], let body = funcDecl.body {
@@ -287,12 +230,7 @@ main() -> ()
 
     /// 意图：验证 `outer|while` 的标签解析到 whileStatement 的 label "outer"（ADR-014：标签语法逆转 ADR-013）。
     func testParseWhileWithLabel() throws {
-        let source = """
-main() -> ()
-    outer|while x < 5:
-        print(x)
-    return
-"""
+        let source = try loadPiniFixture("testParseWhileWithLabel", filePath: #filePath)
         let module = try parse(source: source)
 
         if case .funcDecl(let funcDecl) = module.declarations[0], let body = funcDecl.body {
@@ -307,14 +245,7 @@ main() -> ()
 
     /// 意图：验证 while 后的 step: 块被解析，且含一条 print 语句。
     func testParseWhileWithStep() throws {
-        let source = """
-main() -> ()
-    while x < 3:
-        print(x)
-    step:
-        print("step")
-    return
-"""
+        let source = try loadPiniFixture("testParseWhileWithStep", filePath: #filePath)
         let module = try parse(source: source)
 
         if case .funcDecl(let funcDecl) = module.declarations[0], let body = funcDecl.body {
@@ -331,12 +262,7 @@ main() -> ()
 
     /// 意图：验证无 step 语法时 while 的 step 字段保持为 nil。
     func testParseWhileWithoutStepKeepsNil() throws {
-        let source = """
-main() -> ()
-    while x < 3:
-        print(x)
-    return
-"""
+        let source = try loadPiniFixture("testParseWhileWithoutStepKeepsNil", filePath: #filePath)
         let module = try parse(source: source)
         if case .funcDecl(let funcDecl) = module.declarations[0], let body = funcDecl.body {
             if case .whileStatement(_, _, let step, _, _) = body.statements[0] {
@@ -351,11 +277,7 @@ main() -> ()
 
     /// 意图：验证带返回类型 (I32,) 的函数字面量表达式可解析，模块仅一个声明。
     func testParseFuncLiteralWithReturnType() throws {
-        let source = """
-main() -> ()
-    let f = func (x,) -> (I32,): return x + 1
-    return
-"""
+        let source = try loadPiniFixture("testParseFuncLiteralWithReturnType", filePath: #filePath)
         let module = try parse(source: source)
         XCTAssertEqual(module.declarations.count, 1)
     }
@@ -372,11 +294,7 @@ main() -> ()
     func testParseNilAsOptionalNoneMember() throws {
         // `nil` 在表达式位置应映射为与 `Optional.none` 完全同构的
         // `.member(.identifier("Optional"), "none")` AST（零新增 Expression case）。
-        let source = """
-        main() -> ()
-            var x = nil
-            return
-        """
+        let source = try loadPiniFixture("testParseNilAsOptionalNoneMember", filePath: #filePath)
         let module = try parse(source: source)
         guard case .funcDecl(let funcDecl) = module.declarations[0],
               let body = funcDecl.body else {
@@ -398,14 +316,7 @@ main() -> ()
     /// 意图：验证 match case nil: 映射为 .enumCase("none")，与 case none 同构。
     func testParseMatchCaseNil() throws {
         // `match case nil:` 应映射为 `.enumCase("none")`（与 `case none:` 同构）。
-        let source = """
-        main() -> ()
-            var a = Optional.none
-            match a:
-                case nil:
-                    pass
-            return
-        """
+        let source = try loadPiniFixture("testParseMatchCaseNil", filePath: #filePath)
         let module = try parse(source: source)
         guard case .funcDecl(let funcDecl) = module.declarations[0],
               let body = funcDecl.body else {

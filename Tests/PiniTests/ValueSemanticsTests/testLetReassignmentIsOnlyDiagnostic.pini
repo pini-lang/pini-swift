@@ -1,0 +1,6 @@
+main|func() -> ()
+    let a = 1
+    var b = 2
+    b = 3
+    a = 4
+    return

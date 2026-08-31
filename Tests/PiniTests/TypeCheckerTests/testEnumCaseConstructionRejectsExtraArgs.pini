@@ -1,0 +1,6 @@
+[方向]
+东(I32,)
+
+main|func() -> ()
+    var d = 东(1, 2,)
+    return

@@ -1,0 +1,5 @@
+(点)
+x: I32 = 0
+main|func() -> ()
+    var p = 点()
+    return

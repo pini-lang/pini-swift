@@ -1,0 +1,5 @@
+main|func() -> ()
+    var t: (a: I32, b: String,) = (1, "hello")
+    print(t.a,)
+    print(t.b,)
+    return
