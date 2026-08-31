@@ -1,0 +1,5 @@
+(Point)
+    x: I32 = 0
+
+main|func() -> ()
+    return

@@ -1,0 +1,7 @@
+main|func() -> ()
+    if x > 0:
+        a = 1
+        )bad
+        b = 2
+        ]bad
+    return

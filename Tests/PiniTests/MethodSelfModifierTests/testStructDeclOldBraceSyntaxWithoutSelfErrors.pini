@@ -1,0 +1,5 @@
+(点)
+x: I32 = 0
+{移动}(dx: I32) -> ()
+    self.x = self.x + dx
+    return

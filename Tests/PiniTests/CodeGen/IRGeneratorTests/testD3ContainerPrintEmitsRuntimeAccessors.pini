@@ -1,0 +1,9 @@
+main|func() -> ()
+    let a = [1, 2, 3]
+    let d = ["Alice": 30, "Bob": 25]
+    let s = {2, 3, 5}
+    print(a)
+    print(d)
+    print(s)
+    print(d["Zoe"])
+    return

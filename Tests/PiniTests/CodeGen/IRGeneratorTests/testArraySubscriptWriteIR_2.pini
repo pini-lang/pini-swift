@@ -1,0 +1,4 @@
+main|func() -> ()
+    var arr = [10]
+    arr[0] += 1
+    return

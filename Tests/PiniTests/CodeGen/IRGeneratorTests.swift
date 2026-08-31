@@ -44,12 +44,7 @@ final class IRGeneratorTests: XCTestCase {
     // TDD（G-IR-enum-print / T2）：聚合类型 print 现经递归 stringify 生成 IR，不再 fail-loud。
     // 断言：IR 生成成功（不抛错），且包含枚举 stringify 的 switch/merge 标签（证明走 stringify 路径）。
     func testAggregatePrintGeneratesStringifyIR() throws {
-        let src = """
-        [形状]
-        圆(I32,)
-        main|func() -> ()
-            print(形状.圆(2))
-        """
+        let src = try loadPiniFixture("testAggregatePrintGeneratesStringifyIR", filePath: #filePath)
         let ir = try generateIR(src)
         XCTAssertTrue(ir.contains("str_enum_merge_"),
                       "聚合 print 应生成枚举 stringify 的 switch/merge 块，IR:\n\(ir)")
@@ -62,10 +57,7 @@ final class IRGeneratorTests: XCTestCase {
     // `exit_block:` 标签会使 lli 报 "expected instruction opcode"。修复须在 exit_block:
     // 前补 `br label %exit_block` 终止当前块。
     func testPrintEndingFunctionEmitsTerminatingBranch() throws {
-        let ir = try generateIR("""
-        main|func() -> ()
-            print(1)
-        """)
+        let ir = try generateIR(try loadPiniFixture("testPrintEndingFunctionEmitsTerminatingBranch", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("br label %exit_block"),
                       "print 结尾函数必须补 br label %exit_block 终止指令，IR:\n\(ir)")
         if let brRange = ir.range(of: "br label %exit_block"),
@@ -76,12 +68,7 @@ final class IRGeneratorTests: XCTestCase {
     }
 
     func testIfEndingFunctionEmitsTerminatingBranch() throws {
-        let ir = try generateIR("""
-        main|func() -> ()
-            var x = 10
-            if x > 5:
-                print(1)
-        """)
+        let ir = try generateIR(try loadPiniFixture("testIfEndingFunctionEmitsTerminatingBranch", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("br label %exit_block"),
                       "if 结尾函数（合并块无后续语句）必须补 br label %exit_block，IR:\n\(ir)")
     }
@@ -89,10 +76,7 @@ final class IRGeneratorTests: XCTestCase {
     // Bug B（G-IR-len-str）：字符串 len 须统计字符数（与解释器 String.count 对齐），
     // 不再是 UTF-8 字节数。LLVM 侧生成「非续行字节(0x80-0xBF)计数」循环（len_loop_）。
     func testLenCountsCharactersNotBytes() throws {
-        let ir = try generateIR("""
-        main|func() -> ()
-            print(len("你好世界"))
-        """)
+        let ir = try generateIR(try loadPiniFixture("testLenCountsCharactersNotBytes", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("len_loop_"),
                       "len 字符串分支应生成字符计数循环，IR:\n\(ir)")
         // 旧实现用 @strlen 给字节数，len 逻辑中不应再出现该调用。
@@ -103,11 +87,7 @@ final class IRGeneratorTests: XCTestCase {
     // 空串 "" 在 IR 中解析为 stringInterpolation(segments:[])，
     // generateExpression 须按空字面量生成，而非抛 unsupportedExpression（否则 run-llvm 整段报废）。
     func testEmptyStringInterpolationSucceeds() throws {
-        let ir = try generateIR("""
-        main|func() -> ()
-            var s = ""
-            print(len(s))
-        """)
+        let ir = try generateIR(try loadPiniFixture("testEmptyStringInterpolationSucceeds", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("len_loop_"), "空串 len 应正常生成字符计数循环，IR:\n\(ir)")
     }
 
@@ -115,12 +95,7 @@ final class IRGeneratorTests: XCTestCase {
     // 「字面量默认」与「表达式默认（iota()）」一并在解析期拒绝——
     // 关联值默认值特性随 3.15 移除（此前 c2/方案 A 只删了 iota 宏，保留字面量默认）。
     func testLiteralEnumDefaultRejected() throws {
-        let src = """
-        [方]
-        东(I32 = 0,)
-        main|func() -> ()
-            pass
-        """
+        let src = try loadPiniFixture("testLiteralEnumDefaultRejected", filePath: #filePath)
         XCTAssertThrowsError(try generateIR(src)) { error in
             XCTAssertTrue("\(error)".contains("默认值"),
                           "规则 3.15：字面量默认应被解析期拒绝，实际: \(error)")
@@ -128,12 +103,7 @@ final class IRGeneratorTests: XCTestCase {
     }
 
     func testIotaEnumDefaultRejected() throws {
-        let src = """
-        [方]
-        东(iota(),)
-        main|func() -> ()
-            pass
-        """
+        let src = try loadPiniFixture("testIotaEnumDefaultRejected", filePath: #filePath)
         XCTAssertThrowsError(try generateIR(src)) { error in
             XCTAssertTrue("\(error)".contains("默认值") || "\(error)".contains("iota"),
                           "iota() 作为枚举关联值默认应被拒绝，实际: \(error)")
@@ -142,12 +112,7 @@ final class IRGeneratorTests: XCTestCase {
 
     /// 规则 3.15 正向面：位置类型注解的枚举用例正常生成 IR
     func testPositionalEnumCaseAccepted() throws {
-        let src = """
-        [方]
-        东(I32,)
-        main|func() -> ()
-            pass
-        """
+        let src = try loadPiniFixture("testPositionalEnumCaseAccepted", filePath: #filePath)
         XCTAssertNoThrow(try generateIR(src), "位置类型注解的枚举用例应正常解析并生成 IR")
     }
     
@@ -230,22 +195,14 @@ final class IRGeneratorTests: XCTestCase {
     // MARK: - P6-1c: 元组字面量 IR
 
     func testTupleLiteralIR() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var p = (3, 4)
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testTupleLiteralIR", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("{ i32, i32 }"), "应生成 struct 类型 { i32, i32 }")
         XCTAssertTrue(ir.contains("insertvalue { i32, i32 }"), "应通过 insertvalue 组装元组")
         XCTAssertTrue(ir.contains("store { i32, i32 }"), "元组应存入变量槽")
     }
 
     func testTupleMixedIR() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var p = (42, 3.14)
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testTupleMixedIR", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("{ i32, double }"), "混合类型元组应生成 { i32, double }")
         let count = ir.components(separatedBy: "insertvalue").count - 1
         XCTAssertEqual(count, 2, "两个元素应生成两个 insertvalue")
@@ -254,11 +211,7 @@ main|func() -> ()
     // MARK: - P6-1d: 数组字面量 IR
 
     func testArrayLiteralIR() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var arr = [10, 20, 30]
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testArrayLiteralIR", filePath: #filePath) as String)
         // ADR-008 / #46-D：数组经运行时 shim 的不透明句柄承载，不再是定长 [N x T]
         XCTAssertTrue(ir.contains("call ptr @bk_array_create(i32 3)"), "应调用运行时创建长度为 3 的数组")
         XCTAssertTrue(ir.contains("%bk_array = type { ptr }"), "应声明 %bk_array 不透明句柄类型")
@@ -269,11 +222,7 @@ main|func() -> ()
     }
 
     func testArraySingleElementIR() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var arr = [7]
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testArraySingleElementIR", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("call ptr @bk_array_create(i32 1)"), "单个元素应创建长度为 1 的数组")
         let setCount = ir.components(separatedBy: "call ptr @bk_array_set(ptr").count - 1
         XCTAssertEqual(setCount, 1, "单个元素应生成一个 @bk_array_set 调用（装箱-raw 模型）")
@@ -284,21 +233,11 @@ main|func() -> ()
     /// 结构断言：纯下标写 `arr[0] = 99` 应经 `@bk_array_set` 写回运行时句柄；
     /// 复合赋值 `arr[0] += 1` 应「读当前 @bk_array_get → 运算 → 写回 @bk_array_set」。
     func testArraySubscriptWriteIR() throws {
-        let pure = try generateIR("""
-main|func() -> ()
-    var arr = [10, 20, 30]
-    arr[0] = 99
-    return
-""")
+        let pure = try generateIR(try loadPiniFixture("testArraySubscriptWriteIR", filePath: #filePath) as String)
         XCTAssertTrue(pure.contains("call ptr @bk_array_set(ptr"), "纯下标写应生成 @bk_array_set 调用（装箱-raw 模型）")
         XCTAssertTrue(pure.contains("bitcast %bk_array*"), "写回前句柄应在 %bk_array* 与 ptr 间 bitcast")
 
-        let compound = try generateIR("""
-main|func() -> ()
-    var arr = [10]
-    arr[0] += 1
-    return
-""")
+        let compound = try generateIR(try loadPiniFixture("testArraySubscriptWriteIR_2", filePath: #filePath) as String)
         XCTAssertTrue(compound.contains("call ptr @bk_array_get(ptr"), "复合赋值应读当前值（@bk_array_get）")
         // 读-算-写：单元素字面量 1 次 set + 写回 1 次 set = 2
         let setCount = compound.components(separatedBy: "call ptr @bk_array_set(ptr").count - 1
@@ -308,14 +247,7 @@ main|func() -> ()
     // MARK: - #46-D D2：字典 / 集合 字面量 + 下标 + len（IR 结构断言）
 
     func testDictLiteralAndSubscriptIR() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var ages = ["Alice": 30, "Bob": 25]
-    print(ages["Bob"])
-    print(len(ages))
-    ages["Bob"] = 26
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testDictLiteralAndSubscriptIR", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("%bk_dict = type { ptr }"), "应声明 %bk_dict 句柄类型")
         XCTAssertTrue(ir.contains("call ptr @bk_dict_create()"), "应调用 @bk_dict_create 构造字典")
         let setCount = ir.components(separatedBy: "call ptr @bk_dict_set(ptr").count - 1
@@ -326,12 +258,7 @@ main|func() -> ()
     }
 
     func testSetLiteralIR() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var primes = {2, 3, 5, 7, 11}
-    print(len(primes))
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testSetLiteralIR", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("%bk_set = type { ptr }"), "应声明 %bk_set 句柄类型")
         XCTAssertTrue(ir.contains("call ptr @bk_set_create()"), "应调用 @bk_set_create 构造集合")
         let addCount = ir.components(separatedBy: "call ptr @bk_set_add(ptr").count - 1
@@ -342,17 +269,7 @@ main|func() -> ()
     // MARK: - #46-D D3: print(容器) 触发运行时稳定指针访问器声明
 
     func testD3ContainerPrintEmitsRuntimeAccessors() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    let a = [1, 2, 3]
-    let d = ["Alice": 30, "Bob": 25]
-    let s = {2, 3, 5}
-    print(a)
-    print(d)
-    print(s)
-    print(d["Zoe"])
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testD3ContainerPrintEmitsRuntimeAccessors", filePath: #filePath) as String)
         // D3 编码容器打印需运行时稳定指针访问器（_BkDictBox/_BkSetBox 元素存储改为稳定指针）；
         // 这些符号须经 usesCollections 门控在模块末尾声明。
         XCTAssertTrue(ir.contains("declare ptr @bk_dict_key_at(ptr, i32)"),
@@ -368,12 +285,7 @@ main|func() -> ()
     // MARK: - P6-1e: len 内置 + print bool 收口（结构断言）
 
     func testLenArrayCallsRuntime() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var arr = [10, 20, 30]
-    print(len(arr))
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testLenArrayCallsRuntime", filePath: #filePath) as String)
         // ADR-008 / #46-D：数组 len 不再折叠为编译期常量，而是经运行时 @bk_array_len
         XCTAssertTrue(ir.contains("%bk_array = type { ptr }"), "应声明 %bk_array 句柄类型")
         XCTAssertTrue(ir.contains("call i32 @bk_array_len(ptr"),
@@ -383,12 +295,7 @@ main|func() -> ()
     }
 
     func testLenTupleFoldsToConstant() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var t = (1, 2.5, 7)
-    print(len(t))
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testLenTupleFoldsToConstant", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("@printf(ptr @fmt_int, i32 3)"),
                       "len(元组) 应折叠为顶层字段数常量 3")
         XCTAssertFalse(ir.contains("call i64 @strlen"),
@@ -396,11 +303,7 @@ main|func() -> ()
     }
 
     func testPrintBoolUsesTrueFalseSelect() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    print(true)
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testPrintBoolUsesTrueFalseSelect", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("select i1"),
                       "print(bool) 应用 select 在 true/false 格式串间择一")
         XCTAssertTrue(ir.contains("ptr @fmt_bool_true, ptr @fmt_bool_false"),
@@ -410,12 +313,7 @@ main|func() -> ()
     }
 
     func testInterpolatedBoolUsesSelect() throws {
-        let ir = try generateIR("""
-main|func() -> ()
-    var flag = true
-    print("flag=\\(flag)")
-    return
-""")
+        let ir = try generateIR(try loadPiniFixture("testInterpolatedBoolUsesSelect", filePath: #filePath) as String)
         XCTAssertTrue(ir.contains("select i1"),
                       "插值内的 bool 也应 select 出 true/false 字符串指针")
         XCTAssertTrue(ir.contains("ptr @fmt_bool_true, ptr @fmt_bool_false"),
@@ -425,10 +323,7 @@ main|func() -> ()
     // MARK: - B2: IRGenerator 基础测试
     
     func testIRGlobals() throws {
-        let source = """
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testIRGlobals", filePath: #filePath)
         let ir = try generateIR(source)
         
         XCTAssertTrue(ir.contains("@printf"), "应包含 printf 声明")
@@ -439,13 +334,7 @@ main|func() -> ()
     }
     
     func testSimpleFunctionSignature() throws {
-        let source = """
-add(a: I32, b: I32,) -> (I32,)
-    return a + b
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testSimpleFunctionSignature", filePath: #filePath)
         let ir = try generateIR(source)
         
         XCTAssertTrue(ir.contains("define i32 @add(i32 %a, i32 %b)"),
@@ -453,10 +342,7 @@ main|func() -> ()
     }
     
     func testMainFunction() throws {
-        let source = """
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testMainFunction", filePath: #filePath)
         let ir = try generateIR(source)
         
         XCTAssertTrue(ir.contains("define i32 @main()"),
@@ -466,13 +352,7 @@ main|func() -> ()
     }
     
     func testFunctionWithF64Param() throws {
-        let source = """
-multiply(x: F64, y: F64,) -> (F64,)
-    return x * y
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testFunctionWithF64Param", filePath: #filePath)
         let ir = try generateIR(source)
         
         XCTAssertTrue(ir.contains("define double @multiply(double %x, double %y)"),
@@ -480,13 +360,7 @@ main|func() -> ()
     }
     
     func testFunctionWithBoolParam() throws {
-        let source = """
-negate(flag: Bool,) -> (Bool,)
-    return !flag
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testFunctionWithBoolParam", filePath: #filePath)
         let ir = try generateIR(source)
         
         XCTAssertTrue(ir.contains("define i1 @negate(i1 %flag)"),
@@ -494,13 +368,7 @@ main|func() -> ()
     }
     
     func testVoidFunctionNoReturn() throws {
-        let source = """
-doNothing() -> ()
-    return
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testVoidFunctionNoReturn", filePath: #filePath)
         let ir = try generateIR(source)
         
         XCTAssertTrue(ir.contains("define void @doNothing()"),
@@ -514,13 +382,7 @@ main|func() -> ()
     // IR 层当前为 MVP 同步降级：`<=` 透传其操作数，故 IR 形态与同步调用一致。
 
     func testAsyncFunctionIR() throws {
-        let source = """
-fetchData() => (I32,)
-    return 42
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testAsyncFunctionIR", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("; async function (MVP: synchronous)"),
@@ -532,15 +394,7 @@ main|func() -> ()
     }
 
     func testJoinExpressionIR() throws {
-        let source = """
-fetchData() => (I32,)
-    return 100
-
-main|func() -> ()
-    var x = wait fetchData()
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testJoinExpressionIR", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("define i32 @fetchData()"),
@@ -552,18 +406,7 @@ main|func() -> ()
     }
 
     func testAsyncVsSyncParityIR() throws {
-        let source = """
-computeAsync() => (I32,)
-    return 7
-
-computeSync() -> (I32,)
-    return 7
-
-main|func() -> ()
-    var a = wait computeAsync()
-    var b = computeSync()
-    return
-"""
+        let source = try loadPiniFixture("testAsyncVsSyncParityIR", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("; async function (MVP: synchronous)"),
@@ -575,13 +418,7 @@ main|func() -> ()
     }
     
     func testGenericFunctionSupported() throws {
-        let source = """
-identity<T>(x: T,) -> (T,)
-    return x
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testGenericFunctionSupported", filePath: #filePath)
         // P6-4b: 泛型函数模板应被接受（不抛 unsupportedFeature）
         XCTAssertNoThrow(try generateIR(source), "泛型函数模板应被接受")
     }
@@ -590,14 +427,7 @@ main|func() -> ()
 
     /// 验证：`identity<I32>(42)` 生成对特化函数 `@identity_i32` 的调用
     func testGenericConstruct_I32_CallsSpecializedFunction() throws {
-        let source = """
-identity<T>(x: T,) -> (T,)
-    return x
-
-main|func() -> ()
-    identity<I32>(42)
-    return
-"""
+        let source = try loadPiniFixture("testGenericConstruct_I32_CallsSpecializedFunction", filePath: #filePath)
         let ir = try generateIR(source)
         // 应该包含特化函数定义（IRTypeMapper 将 I32 映射为 i32）
         XCTAssertTrue(ir.contains("@identity_i32"), "IR 应包含特化函数 @identity_i32")
@@ -607,15 +437,7 @@ main|func() -> ()
 
     /// 验证：两个不同特化分别生成独立函数体
     func testGenericConstruct_TwoSpecializationsGenerateSeparateFunctions() throws {
-        let source = """
-identity<T>(x: T,) -> (T,)
-    return x
-
-main|func() -> ()
-    identity<I32>(42)
-    identity<F64>(3.14)
-    return
-"""
+        let source = try loadPiniFixture("testGenericConstruct_TwoSpecializationsGenerateSeparateFunctions", filePath: #filePath)
         let ir = try generateIR(source)
         // 两个特化版本都应存在（IRTypeMapper 将 F64 映射为 "double"）
         XCTAssertTrue(ir.contains("@identity_i32"), "应包含 @identity_i32")
@@ -628,14 +450,7 @@ main|func() -> ()
 
     /// 验证：参数无类型注解时，从返回类型推断为 I32
     func testParamWithoutTypeAnnotation_InferredFromReturnType() throws {
-        let source = """
-add(x, y) -> (I32,)
-    return x
-
-main|func() -> ()
-    add(1, 2)
-    return
-"""
+        let source = try loadPiniFixture("testParamWithoutTypeAnnotation_InferredFromReturnType", filePath: #filePath)
         let ir = try generateIR(source)
         // 参数 x, y 应被推断为 i32
         XCTAssertTrue(ir.contains("i32 %x"), "参数 x 应推断为 i32")
@@ -644,13 +459,7 @@ main|func() -> ()
 
     /// 验证：参数无类型注解 + 多返回类型时回退为 i32
     func testParamWithoutTypeAnnotation_FallbackToI32() throws {
-        let source = """
-swap(x, y) -> (I32, I32)
-    return (y, x)
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testParamWithoutTypeAnnotation_FallbackToI32", filePath: #filePath)
         let ir = try generateIR(source)
         // 多返回类型时回退为 i32
         XCTAssertTrue(ir.contains("i32 %x"), "参数 x 应回退为 i32")
@@ -659,36 +468,13 @@ main|func() -> ()
 
     /// 结构断言：含方法的 struct/object 声明不再抛 unsupportedFeature（self 主体访问待 refine）。
     func testMethodWithSelfModifierSupported() throws {
-        let source = """
-{Counter}
-value: I32 = 0
-
-{{Counter}}
-increment|self() -> ()
-    return
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testMethodWithSelfModifierSupported", filePath: #filePath)
         // 推进性：不应抛 unsupportedFeature
         XCTAssertNoThrow(try generateIR(source), "含方法的类型声明应被接受")
     }
 
     func testMethodSelfAccessEmitted() throws {
-        let source = """
-(Point)
-x: I32 = 0
-
-((Point))
-add|self() -> ()
-    self.x = 1
-    return
-
-main|func() -> ()
-    let p = Point()
-    p.add()
-    print(p.x)
-    return
-"""
+        let source = try loadPiniFixture("testMethodSelfAccessEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("define void @add") && ir.contains("%struct.Point* %self"),
                       "方法应含 self 参数，实际:\n\(ir)")
@@ -696,25 +482,14 @@ main|func() -> ()
     }
     
     func testStructDeclSupported() throws {
-        let source = """
-(Point)
-    x: I32 = 0
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testStructDeclSupported", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("%struct.Point = type { i32 }"),
                       "struct 声明现在应生成命名结构类型，实际:\n\(ir)")
     }
     
     func testEnumDeclSupported() throws {
-        let source = """
-[Shape]
-Circle
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testEnumDeclSupported", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("%enum.Shape = type { i32 }"),
                       "enum 声明现在应生成 tagged union 类型，实际:\n\(ir)")
@@ -723,12 +498,7 @@ main|func() -> ()
     // MARK: - B3: 赋值表达式测试
 
     func testAssignmentIR() throws {
-        let source = """
-main|func() -> ()
-    var x = 0
-    x = 42
-    return
-"""
+        let source = try loadPiniFixture("testAssignmentIR", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("store i32 0, ptr %x_slot"),
@@ -738,13 +508,7 @@ main|func() -> ()
     }
 
     func testAssignmentWithLoad() throws {
-        let source = """
-main|func() -> ()
-    var y = 10
-    var z = 20
-    y = z
-    return
-"""
+        let source = try loadPiniFixture("testAssignmentWithLoad", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("load i32, ptr %z_slot"),
@@ -754,12 +518,7 @@ main|func() -> ()
     }
 
     func testCompoundAssignPlus() throws {
-        let source = """
-main|func() -> ()
-    var a = 5
-    a += 3
-    return
-"""
+        let source = try loadPiniFixture("testCompoundAssignPlus", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("load i32, ptr %a_slot"),
@@ -771,12 +530,7 @@ main|func() -> ()
     }
 
     func testCompoundAssignMinus() throws {
-        let source = """
-main|func() -> ()
-    var b = 10
-    b -= 4
-    return
-"""
+        let source = try loadPiniFixture("testCompoundAssignMinus", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("sub i32"),
@@ -784,13 +538,7 @@ main|func() -> ()
     }
 
     func testAssignExpressionInPrint() throws {
-        let source = """
-main|func() -> ()
-    var x = 0
-    x = 42
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testAssignExpressionInPrint", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("store"),
@@ -802,15 +550,7 @@ main|func() -> ()
     // MARK: - B4: ifStatement 测试
 
     func testIfStatementIR() throws {
-        let source = """
-main|func() -> ()
-    var x = 10
-    if x > 5:
-        x = 1
-    else:
-        x = 0
-    return
-"""
+        let source = try loadPiniFixture("testIfStatementIR", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("if_cond_"),
@@ -826,13 +566,7 @@ main|func() -> ()
     }
 
     func testIfStatementNoElse() throws {
-        let source = """
-main|func() -> ()
-    var flag = 1
-    if flag > 0:
-        flag = 0
-    return
-"""
+        let source = try loadPiniFixture("testIfStatementNoElse", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("if_merge_"),
@@ -842,17 +576,7 @@ main|func() -> ()
     }
 
     func testIfStatementWithElif() throws {
-        let source = """
-main|func() -> ()
-    var x = 5
-    if x > 10:
-        x = 20
-    elif x == 5:
-        x = 10
-    else:
-        x = 0
-    return
-"""
+        let source = try loadPiniFixture("testIfStatementWithElif", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("elif_cond_"),
@@ -864,13 +588,7 @@ main|func() -> ()
     }
 
     func testIfOnlyNoBlockElse() throws {
-        let source = """
-main|func() -> ()
-    var v = 1
-    if v > 0:
-        v = 2
-    return
-"""
+        let source = try loadPiniFixture("testIfOnlyNoBlockElse", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("br i1"),
@@ -882,13 +600,7 @@ main|func() -> ()
     // MARK: - B4: whileStatement 测试
 
     func testWhileStatementIR() throws {
-        let source = """
-main|func() -> ()
-    var i = 0
-    while i < 3:
-        i = i + 1
-    return
-"""
+        let source = try loadPiniFixture("testWhileStatementIR", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("while_cond_"),
@@ -904,13 +616,7 @@ main|func() -> ()
     }
 
     func testWhileEmptyBody() throws {
-        let source = """
-main|func() -> ()
-    var i = 10
-    while i > 0:
-        i = i - 1
-    return
-"""
+        let source = try loadPiniFixture("testWhileEmptyBody", filePath: #filePath)
         let ir = try generateIR(source)
 
         let backEdgeCount = ir.components(separatedBy: "br label %while_cond_").count - 1
@@ -919,37 +625,21 @@ main|func() -> ()
     }
 
     func testBreakInWhile() throws {
-        let source = """
-main|func() -> ()
-    while true:
-        break
-    return
-"""
+        let source = try loadPiniFixture("testBreakInWhile", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("br label %while_exit_"),
                       "break 应生成跳转到 while_exit 的指令")
     }
 
     func testContinueInWhile() throws {
-        let source = """
-main|func() -> ()
-    var i = 0
-    while i < 5:
-        continue
-        i = i + 1
-    return
-"""
+        let source = try loadPiniFixture("testContinueInWhile", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("br label %while_cond_"),
                       "continue 应生成跳转到 while_cond 的指令")
     }
 
     func testBreakOutsideLoopUnsupported() throws {
-        let source = """
-main|func() -> ()
-    break
-    return
-"""
+        let source = try loadPiniFixture("testBreakOutsideLoopUnsupported", filePath: #filePath)
         XCTAssertThrowsError(try generateIR(source),
                               "循环外 break 应抛 unsupported")
     }
@@ -957,17 +647,7 @@ main|func() -> ()
     // MARK: - B4: 完整程序测试
 
     func testProgramWithControlFlow() throws {
-        let source = """
-main|func() -> ()
-    var x = 0
-    while x < 5:
-        if x == 3:
-            x = x + 2
-        else:
-            x = x + 1
-    print(x)
-    return
-"""
+        let source = try loadPiniFixture("testProgramWithControlFlow", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("while_cond_"),
@@ -983,14 +663,7 @@ main|func() -> ()
     }
 
     func testProgramPrintInLoop() throws {
-        let source = """
-main|func() -> ()
-    var i = 0
-    while i < 3:
-        print(i)
-        i = i + 1
-    return
-"""
+        let source = try loadPiniFixture("testProgramPrintInLoop", filePath: #filePath)
         let ir = try generateIR(source)
 
         let printfCount = ir.components(separatedBy: "@printf").count - 1
@@ -1001,14 +674,7 @@ main|func() -> ()
     }
 
     func testProgramArithmetic() throws {
-        let source = """
-main|func() -> ()
-    var a = 10
-    var b = 20
-    var c = a + b
-    print(c)
-    return
-"""
+        let source = try loadPiniFixture("testProgramArithmetic", filePath: #filePath)
         let ir = try generateIR(source)
 
         XCTAssertTrue(ir.contains("add i32"),
@@ -1022,12 +688,7 @@ main|func() -> ()
     // MARK: - B3/B4: 不支持特性仍正确抛错
 
     func testUnsupportedMemberAccess() throws {
-        let source = """
-main|func() -> ()
-    var x = 0
-    var y = x.field
-    return
-"""
+        let source = try loadPiniFixture("testUnsupportedMemberAccess", filePath: #filePath)
         XCTAssertThrowsError(try generateIR(source),
                               "成员访问应抛 unsupported") { error in
             guard case IRGenError.unsupportedExpression = error else {
@@ -1040,12 +701,7 @@ main|func() -> ()
     // 阶段 B 后 LLVM 后端已支持一等函数/闭包（捕获/高阶/间接调用），故匿名函数不再抛 unsupported。
     // 正向断言：closure 被提升为模块级 define（@__closure_N）且被间接调用，IR 成功生成。
     func testFuncLiteralSupportedInIR() throws {
-        let source = """
-main|func() -> ()
-    var f = func (x,) -> (I32,): return x * 2
-    print(f(21))
-    return
-"""
+        let source = try loadPiniFixture("testFuncLiteralSupportedInIR", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("@__closure_"),
                       "匿名函数应被提升为模块级 define（@__closure_N），实际:\n\(ir)")
@@ -1059,14 +715,7 @@ main|func() -> ()
 
     /// 结构断言：struct 声明应 emit 命名结构类型定义 `%struct.Name = type { ... }`。
     func testStructTypeDefinitionEmitted() throws {
-        let source = """
-(Point)
-    x: I32 = 1
-    y: I32 = 2
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testStructTypeDefinitionEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("%struct.Point = type { i32, i32 }"),
                       "应 emit struct 类型定义，实际:\n\(ir)")
@@ -1074,14 +723,7 @@ main|func() -> ()
 
     /// 结构断言：struct 构造应 alloca + 按字段默认值 store（对齐解释器 createInstance）。
     func testStructConstructionEmitted() throws {
-        let source = """
-(Point)
-    port: I32 = 8080
-
-main|func() -> ()
-    let c = Point()
-    return
-"""
+        let source = try loadPiniFixture("testStructConstructionEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("alloca %struct.Point"),
                       "应 alloca struct，实际:\n\(ir)")
@@ -1091,16 +733,7 @@ main|func() -> ()
 
     /// 结构断言：`.member` 字段访问应 getelementptr + load。
     func testStructMemberAccessEmitted() throws {
-        let source = """
-(Point)
-    x: I32 = 1
-    y: I32 = 2
-
-main|func() -> ()
-    let c = Point()
-    let v = c.x
-    return
-"""
+        let source = try loadPiniFixture("testStructMemberAccessEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("getelementptr %struct.Point"),
                       "字段访问应 getelementptr，实际:\n\(ir)")
@@ -1111,13 +744,7 @@ main|func() -> ()
     // MARK: - P6-2b: object 类型 IR
 
     func testObjectDeclSupported() throws {
-        let source = """
-{Counter}
-    count: I32 = 0
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testObjectDeclSupported", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("%object.Counter = type { i32, i32 }"),
                       "object 声明现在应生成命名类型（字段 0 为 i32 refcount 头），实际:\n\(ir)")
@@ -1125,14 +752,7 @@ main|func() -> ()
 
     /// 结构断言：object 构造应 alloca + refcount 头(i32 1) + 字段默认值 store。
     func testObjectConstructionEmitted() throws {
-        let source = """
-{Counter}
-    port: I32 = 8080
-
-main|func() -> ()
-    let c = Counter()
-    return
-"""
+        let source = try loadPiniFixture("testObjectConstructionEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("alloca %object.Counter"),
                       "应 alloca object，实际:\n\(ir)")
@@ -1144,16 +764,7 @@ main|func() -> ()
 
     /// 结构断言：`.member` 访问 object 字段应 GEP 偏移 +1（跳过 refcount 头）+ load。
     func testObjectMemberAccessEmitted() throws {
-        let source = """
-{Counter}
-    x: I32 = 1
-    y: I32 = 2
-
-main|func() -> ()
-    let c = Counter()
-    let v = c.x
-    return
-"""
+        let source = try loadPiniFixture("testObjectMemberAccessEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("getelementptr %object.Counter"),
                       "字段访问应 getelementptr，实际:\n\(ir)")
@@ -1168,16 +779,7 @@ main|func() -> ()
 
     /// 结构断言：enum case 构造器（标识符）应 alloca + store tag。
     func testEnumCaseConstructionEmitted() throws {
-        let source = """
-[Color]
-Red
-Green
-Blue
-
-main|func() -> ()
-    let c = Red
-    return
-"""
+        let source = try loadPiniFixture("testEnumCaseConstructionEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("alloca %enum.Color"),
                       "应 alloca enum，实际:\n\(ir)")
@@ -1187,22 +789,7 @@ main|func() -> ()
 
     /// 结构断言：match 应 emit `switch i32` LLVM 指令 + case/default 标签。
     func testEnumMatchEmitted() throws {
-        let source = """
-[Color]
-Red
-Green
-
-main|func() -> ()
-    let c = Red
-    match c:
-        case Red:
-            print("R")
-        case Green:
-            print("G")
-        case _:
-            print("?")
-    return
-"""
+        let source = try loadPiniFixture("testEnumMatchEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("switch i32"),
                       "match 应生成 switch i32 指令，实际:\n\(ir)")
@@ -1216,15 +803,7 @@ main|func() -> ()
 
     /// 结构断言：`c.x = v` 应生成 store 到 GEP 指针。
     func testStructFieldWriteEmitted() throws {
-        let source = """
-(Point)
-    x: I32 = 0
-
-main|func() -> ()
-    let c = Point()
-    c.x = 42
-    return
-"""
+        let source = try loadPiniFixture("testStructFieldWriteEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("getelementptr %struct.Point"),
                       "字段写入应 getelementptr，实际:\n\(ir)")
@@ -1234,15 +813,7 @@ main|func() -> ()
 
     /// 结构断言：object `c.count = v` 应 store 到偏移 +1 的指针。
     func testObjectFieldWriteEmitted() throws {
-        let source = """
-{Counter}
-    count: I32 = 0
-
-main|func() -> ()
-    let c = Counter()
-    c.count = 99
-    return
-"""
+        let source = try loadPiniFixture("testObjectFieldWriteEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("getelementptr %object.Counter"),
                       "object 字段写入应 getelementptr，实际:\n\(ir)")
@@ -1254,12 +825,7 @@ main|func() -> ()
 
     /// 结构断言：defer 不应生成立即代码，IR 仍应成功生成（语义由执行测试验证）。
     func testDeferNotEmittedInline() throws {
-        let source = """
-main|func() -> ()
-    defer print("late")
-    print("early")
-    return
-"""
+        let source = try loadPiniFixture("testDeferNotEmittedInline", filePath: #filePath)
         let ir = try generateIR(source)
         // 推进性：IR 成功生成
         XCTAssertTrue(ir.contains("@printf") && ir.contains("declare i32 @printf"),
@@ -1270,13 +836,7 @@ main|func() -> ()
 
     /// 结构断言：payload enum 布局应含 tag + payload 字段。
     func testEnumPayloadTypeEmitted() throws {
-        let source = """
-[Shape]
-Circle(I32,)
-Square
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testEnumPayloadTypeEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("%enum.Shape = type { i32, i32 }"),
                       "payload enum 应含 tag + 一个 i32 字段，实际:\n\(ir)")
@@ -1284,13 +844,7 @@ main|func() -> ()
 
     /// 结构断言：`Circle(42,)` 构造应 store tag + payload。
     func testEnumPayloadConstructionEmitted() throws {
-        let source = """
-[Shape]
-Circle(I32,)
-main|func() -> ()
-    let s = Circle(42,)
-    return
-"""
+        let source = try loadPiniFixture("testEnumPayloadConstructionEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("alloca %enum.Shape") && ir.contains("store i32 0"),
                       "case 构造应 alloca + store tag 0，实际:\n\(ir)")
@@ -1300,16 +854,7 @@ main|func() -> ()
 
     /// 结构断言：match `case Circle(x,)` 应 extract payload + bind to local var。
     func testEnumMatchBindingEmitted() throws {
-        let source = """
-[Shape]
-Circle(I32,)
-main|func() -> ()
-    let s = Circle(42,)
-    match s:
-        case Circle(x,):
-            print(x)
-    return
-"""
+        let source = try loadPiniFixture("testEnumMatchBindingEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("getelementptr %enum.Shape") && ir.contains("i32 0, i32 1"),
                       "match 绑定应从 payload 字段（GEP 偏移 1）load，实际:\n\(ir)")
@@ -1321,16 +866,7 @@ main|func() -> ()
     /// 证明限定键避免单值 case 名被覆盖串味。
     /// IR 类型名经 mangle：形状→%enum._u5F62_u72B6，几何→%enum._u51E0_u4F55。
     func testEnumQualifiedConstructionResolvesParent() throws {
-        let source = """
-        [形状]
-        圆(F64,)
-        [几何]
-        圆(F64, F64,)
-        main|func() -> ()
-            let a = 形状.圆(2.0)
-            let b = 几何.圆(0.0, 3.0)
-            return
-        """
+        let source = try loadPiniFixture("testEnumQualifiedConstructionResolvesParent", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("alloca %enum._u5F62_u72B6"),
                       "限定构造 形状.圆 应分配 %enum.形状（mangled），实际:\n\(ir)")
@@ -1341,21 +877,7 @@ main|func() -> ()
     /// 匹配值类型为 形状 时，match `case 圆` / `case 矩形` 须按值 IR 类型（%enum.形状）
     /// 反查父枚举生成 switch 分发，不串到同名的 几何.圆（MED-2 的 IR 侧落实）。
     func testEnumMatchQualifiedNoCollision() throws {
-        let source = """
-        [形状]
-        圆(F64,)
-        矩形(F64, F64,)
-        [几何]
-        圆(F64, F64,)
-        main|func() -> ()
-            let s = 形状.圆(2.0)
-            match s:
-                case 圆(r):
-                    return
-                case 矩形(w, h):
-                    return
-            return
-        """
+        let source = try loadPiniFixture("testEnumMatchQualifiedNoCollision", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("switch i32"),
                       "match 应按值父枚举 %enum.形状 生成 switch 分发，不串到 几何.圆，实际:\n\(ir)")
@@ -1365,13 +887,7 @@ main|func() -> ()
 
     /// 结构断言：多返回函数签名应映射为 LLVM struct 类型。
     func testMultiReturnSignatureEmitted() throws {
-        let source = """
-addAndSub(x: I32, y: I32,) -> (I32, I32,)
-    return (x + y, x - y,)
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testMultiReturnSignatureEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("define { i32, i32 } @addAndSub"),
                       "多返回签名应对应 LLVM struct 类型，实际:\n\(ir)")
@@ -1379,14 +895,7 @@ main|func() -> ()
 
     /// 结构断言：调用多返回函数应产生 struct 值。
     func testMultiReturnCallEmitted() throws {
-        let source = """
-addAndSub(x: I32, y: I32,) -> (I32, I32,)
-    return (x + y, x - y,)
-
-main|func() -> ()
-    let result = addAndSub(10, 5,)
-    return
-"""
+        let source = try loadPiniFixture("testMultiReturnCallEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("call { i32, i32 } @addAndSub"),
                       "多返回调用应对应 struct 返回类型，实际:\n\(ir)")
@@ -1398,19 +907,7 @@ main|func() -> ()
 
     /// 结构断言：trait 默认方法被调用时生成独立函数体。
     func testTraitDefaultMethod_GeneratesFunction() throws {
-        let source = """
-<Shape>
-    describe(self) -> (I32,)
-        return 42
-
-(Circle)
-    实现: Shape
-
-main|func() -> ()
-    var c = Circle()
-    print(c.describe())
-    return
-"""
+        let source = try loadPiniFixture("testTraitDefaultMethod_GeneratesFunction", filePath: #filePath)
         let ir = try generateIR(source)
         // trait 默认方法应生成独立函数
         XCTAssertTrue(ir.contains("define i32 @describe"),
@@ -1422,21 +919,7 @@ main|func() -> ()
 
     /// 结构断言：类型覆盖 trait 方法时，使用类型自身方法。
     func testTraitOverride_UsesTypeMethod() throws {
-        let source = """
-<Shape>
-    describe(self) -> (I32,)
-        return 42
-
-(Circle)
-    实现: Shape
-
-((Circle))
-    describe|self() -> (I32,)
-        return 99
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testTraitOverride_UsesTypeMethod", filePath: #filePath)
         let ir = try generateIR(source)
         // 类型自身方法应存在，且 trait 版本不应生成（类型覆盖了）
         XCTAssertTrue(ir.contains("define i32 @describe"),
@@ -1450,12 +933,7 @@ main|func() -> ()
 
     /// 结构断言：readLine() 应生成 fgets + @stdin 调用。
     func testReadLineEmitted() throws {
-        let source = """
-main|func() -> ()
-    let line = readLine()
-    print(line)
-    return
-"""
+        let source = try loadPiniFixture("testReadLineEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("@fgets") && ir.contains("__stdinp"),
                       "readLine 应生成 fgets + __stdinp 调用，实际:\n\(ir)")
@@ -1463,11 +941,7 @@ main|func() -> ()
 
     /// 边界断言：readLine 的结果是 ptr 类型，可直接传给 print %s。
     func testReadLineReturnsPtr() throws {
-        let source = """
-main|func() -> ()
-    print(readLine())
-    return
-"""
+        let source = try loadPiniFixture("testReadLineReturnsPtr", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("call ptr @fgets") && ir.contains("__stdinp"),
                       "readLine 调用应返回 ptr，实际:\n\(ir)")
@@ -1475,11 +949,7 @@ main|func() -> ()
 
     /// 结构断言：writeFile 应生成 fopen("w")/fwrite/fclose 链。
     func testWriteFileEmitted() throws {
-        let source = """
-main|func() -> ()
-    writeFile("/tmp/x", "data")
-    return
-"""
+        let source = try loadPiniFixture("testWriteFileEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("@fopen") && ir.contains("@fwrite") && ir.contains("@fclose"),
                       "writeFile 应生成 fopen/fwrite/fclose 调用链，实际:\n\(ir)")
@@ -1487,11 +957,7 @@ main|func() -> ()
 
     /// 结构断言：readFile 应生成 fopen("r")/fseek/ftell/malloc/fread/fclose 链。
     func testReadFileEmitted() throws {
-        let source = """
-main|func() -> ()
-    print(readFile("/tmp/x"))
-    return
-"""
+        let source = try loadPiniFixture("testReadFileEmitted", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("@fopen") && ir.contains("@fread"),
                       "readFile 应生成 fopen/fread 调用链，实际:\n\(ir)")
@@ -1500,23 +966,7 @@ main|func() -> ()
     /// P4：match 带通配子块时，IR 的 switch 兜底块（match_default_）应存在且承载 wildcard 块，
     /// 即 generateMatchStatement 的 `fallback = wildcardBlock ?? defaultCase` 已连通。
     func testWildcardMatchGeneratesFallbackBlock() throws {
-        let source = """
-[色彩]
-红
-绿
-蓝
-
-main|func() -> ()
-    var c = 蓝
-    match c:
-        case 红:
-            pass
-        case 绿:
-            pass
-        case 蓝:
-            pass
-    return
-"""
+        let source = try loadPiniFixture("testWildcardMatchGeneratesFallbackBlock", filePath: #filePath)
         let ir = try generateIR(source)
         XCTAssertTrue(ir.contains("match_default_"),
                       "wildcard 通配子块应生成兜底块（fallback = wildcardBlock），实际:\n\(ir)")

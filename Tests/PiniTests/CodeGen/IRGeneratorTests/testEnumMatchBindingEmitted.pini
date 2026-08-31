@@ -1,0 +1,8 @@
+[Shape]
+Circle(I32,)
+main|func() -> ()
+    let s = Circle(42,)
+    match s:
+        case Circle(x,):
+            print(x)
+    return

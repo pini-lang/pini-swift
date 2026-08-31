@@ -1,0 +1,7 @@
+main() -> ()
+    var a = Optional.none
+    match a:
+        case none:
+            print("none")
+    var b: Optional<I32> = Optional.none
+    return

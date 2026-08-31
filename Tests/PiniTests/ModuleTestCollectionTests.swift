@@ -26,32 +26,9 @@ final class ModuleTestCollectionTests: XCTestCase {
         try fm.createDirectory(atPath: root + "/tests", withIntermediateDirectories: true)
         try fm.createDirectory(atPath: root + "/examples", withIntermediateDirectories: true)
 
-        let manifest = """
-        [package]
-        name = "smoke"
-        version = "0.1.0"
-
-        [build]
-        exclude = ["examples"]
-
-        [[bin]]
-        name = "smoke"
-        entry = "src/main.pini"
-        """
-        let lib = """
-        加|func(a: I32, b: I32,) -> (I32,)
-            return a + b
-        """
-        let test1 = """
-        加法正确性|test() -> ()
-            assert(加(1, 2,) == 3, "1+2 must be 3")
-            assert(加(0, 0,) == 0)
-            return
-
-        字符串长度|test() -> ()
-            assert(len("abc") == 3)
-            return
-        """
+        let manifest = try! loadPiniFixture("_manifest", filePath: #filePath)
+        let lib = try! loadPiniFixture("_lib", filePath: #filePath)
+        let test1 = try! loadPiniFixture("_test1", filePath: #filePath)
         let garbage = "this is not valid pini !!! ==="
 
         try manifest.write(toFile: root + "/pini.toml", atomically: true, encoding: .utf8)
@@ -148,11 +125,7 @@ final class ModuleTestCollectionTests: XCTestCase {
         let (root, cleanup) = try makeFixtureModule()
         defer { cleanup() }
 
-        let extra = """
-        排除区测试|test() -> ()
-            assert(加(2, 3,) == 5, "add works in excluded dir too")
-            return
-        """
+        let extra = try loadPiniFixture("testExcludedDirAddBackViaLoadFile", filePath: #filePath)
         try extra.write(toFile: root + "/examples/excluded_test.pini",
                         atomically: true, encoding: .utf8)
 

@@ -11,25 +11,7 @@ final class ParseProjectionTests: XCTestCase {
     /// 推进性测量：三者均被 AST 持有
     /// 驳回性测量：任一缺失即不合格
     func testASTHoldsStepFieldInitAndImports() throws {
-        let source = """
-import std
-
-(pt)
-x: I32 = 5
-
-main|func() -> ()
-    var k = 0
-    while k < 3:
-        print(k)
-        k = k + 1
-    step:
-        print("s")
-    print(k)
-    return
-
-sub|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testASTHoldsStepFieldInitAndImports", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "gp7.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "gp7.pini")

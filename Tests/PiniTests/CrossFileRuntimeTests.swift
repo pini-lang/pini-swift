@@ -105,19 +105,7 @@ final class CrossFileRuntimeTests: XCTestCase {
     func testCrossFileUnqualifiedEnumCaseConstruction() throws {
         let out = try runPackage([
             ("shape.pini", "[Shape]\ncircle(r: I32,)\nsquare(s: I32,)\n"),
-            ("main.pini", """
-area|func(sh: Shape,) -> (I32,)
-    match sh:
-        case circle(r,):
-            return r
-        case square(s,):
-            return s
-    return 0
-
-main|func() -> ()
-    print(area(circle(r: 7,)))
-    return
-"""),
+            ("main.pini", try loadPiniFixture("testCrossFileUnqualifiedEnumCaseConstruction", filePath: #filePath) as String),
         ])
         XCTAssertTrue(out.contains("7"), "跨文件未限定构造 circle 应可用，实际输出：\(out)")
     }
@@ -127,13 +115,7 @@ main|func() -> ()
     func testCrossFileQualifiedEnumCaseConstruction() throws {
         let out = try runPackage([
             ("shape.pini", "[Shape]\ncircle(r: I32,)\n"),
-            ("main.pini", """
-main|func() -> ()
-    var xs = []
-    xs = xs.append(Shape.circle(r: 3,))
-    print(len(xs))
-    return
-"""),
+            ("main.pini", try loadPiniFixture("testCrossFileQualifiedEnumCaseConstruction", filePath: #filePath) as String),
         ])
         XCTAssertTrue(out.contains("1"), "跨文件限定构造应可用，实际输出：\(out)")
     }
@@ -143,17 +125,11 @@ main|func() -> ()
     /// 确定，不做运行期猜测；2026-08-30 设计讨论裁决）。
     /// 推进性测量：check 期报错。
     /// 驳回性测量：静默解析到任一父枚举均不合格。
-    func testCrossFileAmbiguousCaseRejectsUnqualified() {
+    func testCrossFileAmbiguousCaseRejectsUnqualified()  throws {
         XCTAssertThrowsError(try runPackage([
             ("a.pini", "[Shape]\ndup_case(r: I32,)\n"),
             ("b.pini", "[Other]\ndup_case(x: I32,)\n"),
-            ("main.pini", """
-main|func() -> ()
-    var xs = []
-    xs = xs.append(dup_case(r: 1,))
-    print(len(xs))
-    return
-"""),
+            ("main.pini", try loadPiniFixture("testCrossFileAmbiguousCaseRejectsUnqualified", filePath: #filePath) as String),
         ]), "歧义裸名构造应被 check 拒绝并要求限定形式")
     }
 
@@ -163,13 +139,7 @@ main|func() -> ()
         let out = try runPackage([
             ("a.pini", "[Shape]\ndup_case(r: I32,)\n"),
             ("b.pini", "[Other]\ndup_case(x: I32,)\n"),
-            ("main.pini", """
-main|func() -> ()
-    var xs = []
-    xs = xs.append(Other.dup_case(x: 1,))
-    print(len(xs))
-    return
-"""),
+            ("main.pini", try loadPiniFixture("testCrossFileAmbiguousCaseAllowsQualified", filePath: #filePath) as String),
         ])
         XCTAssertTrue(out.contains("1"), "同名跨枚举的限定构造应可用，实际输出：\(out)")
     }

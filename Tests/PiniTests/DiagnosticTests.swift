@@ -17,7 +17,7 @@ final class DiagnosticTests: XCTestCase {
     // MARK: - 诊断码映射
 
     /// 意图：语义错误的 code/severity 映射正确（E3 段）。
-    func testSemanticErrorDiagnosticCode() {
+    func testSemanticErrorDiagnosticCode()  throws {
         let loc = SourceLocation(line: 3, column: 11, fileName: "t.pini")
         let err = SemanticError.undefinedVariable(name: "contnr", location: loc)
         XCTAssertEqual(err.diagnosticCode, "E3-001")
@@ -27,7 +27,7 @@ final class DiagnosticTests: XCTestCase {
     }
 
     /// 意图：运行时错误映射到 E5 段；位置保留（含文件名）。
-    func testRuntimeErrorDiagnosticLocation() {
+    func testRuntimeErrorDiagnosticLocation()  throws {
         let loc = SourceLocation(line: 2, column: 5, fileName: "a.pini")
         let err = RuntimeError.divisionByZero(location: loc)
         XCTAssertEqual(err.diagnosticCode, "E5-004")
@@ -36,7 +36,7 @@ final class DiagnosticTests: XCTestCase {
     }
 
     /// 意图：语法/类型/IRGen 错误段前缀正确。
-    func testErrorDomainSegments() {
+    func testErrorDomainSegments()  throws {
         let loc = SourceLocation(line: 1, column: 1, fileName: "t.pini")
         XCTAssertEqual(ParserError.missingIndent(location: loc).diagnosticCode, "E2-003")
         XCTAssertEqual(TypeError.cannotInfer(location: loc).diagnosticCode, "E4-003")
@@ -48,7 +48,7 @@ final class DiagnosticTests: XCTestCase {
     // MARK: - 跨度
 
     /// 意图：SourceLocation 带 end 后，span 推导出多字符跨度；单点位置退化为 1。
-    func testSourceSpanFromLocation() {
+    func testSourceSpanFromLocation()  throws {
         let single = SourceLocation(line: 1, column: 5, fileName: "t.pini")
         XCTAssertEqual(SourceSpan(location: single).endColumn, 5, "单点位置 end 默认 = 起点")
 
@@ -61,12 +61,8 @@ final class DiagnosticTests: XCTestCase {
     // MARK: - ErrorFormatter 渲染
 
     /// 意图：语义错误渲染含错误码、源码行、下划线（单字符）、中文消息。
-    func testFormatDiagnosticSemanticError() {
-        let source = """
-main|func() -> ()
-    print(contnr)
-    return
-"""
+    func testFormatDiagnosticSemanticError()  throws {
+        let source = try loadPiniFixture("testFormatDiagnosticSemanticError", filePath: #filePath)
         let loc = SourceLocation(line: 2, column: 11, fileName: "t.pini")
         let err = SemanticError.undefinedVariable(name: "contnr", location: loc)
         let out = ErrorFormatter.formatDiagnostic(err, source: source)

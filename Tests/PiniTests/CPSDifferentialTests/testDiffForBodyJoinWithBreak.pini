@@ -1,0 +1,11 @@
+child|func() => (I32,)
+    sleep(10)
+    return ok(7)
+
+main|func() => (I32,)
+    for (v,) in [1, 2, 3, 4]:
+        var r = await child()
+        print(v, r)
+        if v == 2:
+            break
+    return ok(0)

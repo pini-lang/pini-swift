@@ -1,0 +1,6 @@
+add(x, y) -> (I32,)
+    return x
+
+main|func() -> ()
+    add(1, 2)
+    return

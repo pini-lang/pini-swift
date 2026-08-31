@@ -35,12 +35,7 @@ final class FuncLiteralTests: XCTestCase {
     /// L1：参数标注被消费——`func (n: I32,) -> (I32,): return n` 应推断 (I32) -> (I32)。
     /// 意图：验证参数标注被消费——`func (n: I32,)` 的推断结果应为 (I32) -> (I32) 而非回退通配。
     func testFuncLiteralParamAnnotationConsumed() throws {
-        let lit = try firstFuncLiteral(in: """
-        main|func() -> ()
-            var f = func (n: I32,) -> (I32,):
-                return n
-            return
-        """)
+        let lit = try firstFuncLiteral(in: try loadPiniFixture("testFuncLiteralParamAnnotationConsumed", filePath: #filePath) as String)
         let inferred = TypeInference().infer(expression: lit)
         XCTAssertEqual(inferred?.describe(), "(I32) -> (I32)", "参数标注 I32 应被消费，而非回退通配")
     }
@@ -48,40 +43,23 @@ final class FuncLiteralTests: XCTestCase {
     /// 无标注时自底向上：`func (n,) -> (I32,): return n + 1` 应推断 (I32) -> (I32)。
     /// 意图：验证无标注时自底向上推断——体 `n + 1` 经运算符定型，断言结果应为 (I32) -> (I32)。
     func testFuncLiteralBottomUpNoAnnotation() throws {
-        let lit = try firstFuncLiteral(in: """
-        main|func() -> ()
-            var f = func (n,) -> (I32,):
-                return n + 1
-            return
-        """)
+        let lit = try firstFuncLiteral(in: try loadPiniFixture("testFuncLiteralBottomUpNoAnnotation", filePath: #filePath) as String)
         let inferred = TypeInference().infer(expression: lit)
         XCTAssertEqual(inferred?.describe(), "(I32) -> (I32)", "无标注时运算符自底向上应推出 (I32) -> (I32)")
     }
 
     /// L1 核心：`func (n: I32,)` 传 String 实参，check 应报 type mismatch。
     /// 意图：验证调用点校验拒绝错误类型——I32 形参变量 f 传 String 实参，断言收集到 mismatch 诊断。
-    func testFuncLiteralCallSiteValidationRejectsWrongType() {
-        let diagnostics = checkCollecting("""
-        main|func() -> ()
-            var f = func (n: I32,) -> (I32,):
-                return n
-            print(f("should be rejected"))
-            return
-        """)
+    func testFuncLiteralCallSiteValidationRejectsWrongType()  throws {
+        let diagnostics = checkCollecting(try loadPiniFixture("testFuncLiteralCallSiteValidationRejectsWrongType", filePath: #filePath) as String)
         XCTAssertTrue(diagnostics.contains { if case .mismatch = $0 { return true } else { return false } },
                       "函数类型变量调用传错类型应报 mismatch，实际：\(diagnostics)")
     }
 
     /// L1 对照：传对类型应无诊断。
     /// 意图：验证调用点校验通过正确类型——f(42) 实参匹配 I32，断言无任何诊断。
-    func testFuncLiteralCallSiteValidationPassesCorrectType() {
-        let diagnostics = checkCollecting("""
-        main|func() -> ()
-            var f = func (n: I32,) -> (I32,):
-                return n
-            print(f(42))
-            return
-        """)
+    func testFuncLiteralCallSiteValidationPassesCorrectType()  throws {
+        let diagnostics = checkCollecting(try loadPiniFixture("testFuncLiteralCallSiteValidationPassesCorrectType", filePath: #filePath) as String)
         XCTAssertTrue(diagnostics.isEmpty, "传对类型应无诊断，实际：\(diagnostics)")
     }
 
@@ -131,42 +109,24 @@ final class FuncLiteralTests: XCTestCase {
 
     /// 体内部检查：参数标注 String 但体做 `n + 1`，应报类型不一致（标注权威）。
     /// 意图：验证体内部检查——参数标注 String 但体做 `n + 1` 算术，断言报类型不一致（标注权威）。
-    func testFuncLiteralBodyAnnotationConflict() {
-        let diagnostics = checkCollecting("""
-        main|func() -> ()
-            var f = func (n: String,) -> (I32,):
-                return n + 1
-            print(f("x"))
-            return
-        """)
+    func testFuncLiteralBodyAnnotationConflict()  throws {
+        let diagnostics = checkCollecting(try loadPiniFixture("testFuncLiteralBodyAnnotationConflict", filePath: #filePath) as String)
         XCTAssertTrue(diagnostics.contains { if case .mismatch = $0 { return true } else { return false } },
                       "标注 String 但体做算术应报类型不一致，实际：\(diagnostics)")
     }
 
     /// 体内部检查：返回类型标注 I32 但 `return "hello"`，应报返回类型不一致。
     /// 意图：验证返回类型不一致——体 `return "hello"` 与返回标注 (I32,) 冲突，断言报类型不一致。
-    func testFuncLiteralBodyReturnTypeMismatch() {
-        let diagnostics = checkCollecting("""
-        main|func() -> ()
-            var f = func (n: I32,) -> (I32,):
-                return "hello"
-            print(f(42))
-            return
-        """)
+    func testFuncLiteralBodyReturnTypeMismatch()  throws {
+        let diagnostics = checkCollecting(try loadPiniFixture("testFuncLiteralBodyReturnTypeMismatch", filePath: #filePath) as String)
         XCTAssertTrue(diagnostics.contains { if case .mismatch = $0 { return true } else { return false } },
                       "return String 与标注 I32 应报不一致，实际：\(diagnostics)")
     }
 
     /// 体内部检查：无标注参数靠推断，不应因 body 检查误报。
     /// 意图：回归验证无标注参数靠推断不误报——`n + 1` 推断成功且调用 f(41) 合法，断言无任何诊断。
-    func testFuncLiteralBodyNoAnnotationNoFalsePositive() {
-        let diagnostics = checkCollecting("""
-        main|func() -> ()
-            var f = func (n,) -> (I32,):
-                return n + 1
-            print(f(41))
-            return
-        """)
+    func testFuncLiteralBodyNoAnnotationNoFalsePositive()  throws {
+        let diagnostics = checkCollecting(try loadPiniFixture("testFuncLiteralBodyNoAnnotationNoFalsePositive", filePath: #filePath) as String)
         XCTAssertTrue(diagnostics.isEmpty, "无标注参数靠推断不应误报，实际：\(diagnostics)")
     }
 }

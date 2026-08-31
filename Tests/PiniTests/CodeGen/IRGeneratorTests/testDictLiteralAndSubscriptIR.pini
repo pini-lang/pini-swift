@@ -1,0 +1,6 @@
+main|func() -> ()
+    var ages = ["Alice": 30, "Bob": 25]
+    print(ages["Bob"])
+    print(len(ages))
+    ages["Bob"] = 26
+    return

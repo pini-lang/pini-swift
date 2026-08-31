@@ -1,0 +1,6 @@
+main() -> ()
+    var a: ?I32 = nil
+    var b: [String] = []
+    var c: [String: I32] = []
+    var d: {I32} = {}
+    return

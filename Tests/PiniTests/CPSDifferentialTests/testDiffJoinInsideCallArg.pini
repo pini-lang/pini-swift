@@ -1,0 +1,9 @@
+child|func() => (I32,)
+    sleep(10)
+    return ok(7)
+
+main|func() => (I32,)
+    print("before")
+    print(await child())
+    print("after")
+    return ok(0)

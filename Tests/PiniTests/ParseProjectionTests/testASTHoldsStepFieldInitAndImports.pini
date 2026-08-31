@@ -1,0 +1,17 @@
+import std
+
+(pt)
+x: I32 = 5
+
+main|func() -> ()
+    var k = 0
+    while k < 3:
+        print(k)
+        k = k + 1
+    step:
+        print("s")
+    print(k)
+    return
+
+sub|func() -> ()
+    return

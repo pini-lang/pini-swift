@@ -1,0 +1,7 @@
+Error: Type Mismatch
+  at test.pini:1:11
+
+  var x = 1 + "hello"
+            ~
+
+expected I32, got String

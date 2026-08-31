@@ -1,0 +1,10 @@
+child|func() => (I32,)
+    sleep(10)
+    return ok(7)
+
+main|func() => (I32,)
+    var r = await child()
+    var s = "hello"
+    print(s.upper())
+    print(r)
+    return ok(0)

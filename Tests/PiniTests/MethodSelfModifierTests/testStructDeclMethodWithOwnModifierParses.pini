@@ -1,0 +1,7 @@
+(点)
+x: I32 = 0
+
+((点))
+移动|own(dx: I32) -> ()
+    self.x = self.x + dx
+    return

@@ -21,18 +21,7 @@ struct TestBlockSwiftTests {
 
  @Test("收集并执行全部 |test，assert 全通过")
  func allPass() throws {
- let results = try runTests("""
-加法测试|test() -> ()
- assert(1 + 1 == 2, "加法错误")
- return
-
-字符串测试|test() -> ()
- assert(len("abc") == 3)
- return
-
-main() -> ()
- return
-""")
+ let results = try runTests(try! loadPiniFixture("_results", filePath: #filePath) as String)
  #expect(results.count == 2, "应收集到 2 个 |test 函数")
  let allPassed = results.allSatisfy { $0.passed }
  #expect(allPassed, "全部应通过，实际 \(results.map { ($0.name, $0.message) })")
@@ -40,15 +29,7 @@ main() -> ()
 
  @Test("断言失败被捕获为测试失败，其余测试不受影响")
  func failureCaptured() throws {
- let results = try runTests("""
-应通过|test() -> ()
- assert(true)
- return
-
-应失败|test() -> ()
- assert(false, "boom")
- return
-""")
+ let results = try runTests(try! loadPiniFixture("_results_2", filePath: #filePath) as String)
  #expect(results.count == 2)
  let failed = results.first { !$0.passed }
  #expect(failed != nil, "应存在失败测试")
@@ -60,13 +41,9 @@ main() -> ()
 
  @Test("R4 参数注入：带参数 |test 注入类型零值后可正常执行")
  func zeroValueParamInjection() throws {
- let results = try runTests("""
-参数测试|test(名称: String, 计数: I32,) -> ()
- assert(len(名称) == 0, "String 注入空串")
- assert(计数 == 0, "I32 注入 0")
- return
-""")
+ let results = try runTests(try! loadPiniFixture("_results_3", filePath: #filePath) as String)
  #expect(results.count == 1)
- #expect(results[0].passed, "零值注入后应通过，实际 \(results[0].message)")
+ let msg = results[0].message
+    #expect(results[0].passed, "零值注入后应通过，实际 \(msg)")
  }
 }

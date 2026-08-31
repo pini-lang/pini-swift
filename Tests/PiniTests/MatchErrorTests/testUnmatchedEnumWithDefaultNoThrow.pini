@@ -1,0 +1,13 @@
+[形状]
+圆
+矩形
+三角形
+
+main|func() -> ()
+    var s = 三角形
+    match s:
+        case 圆:
+            print("圆形")
+        case _:
+            print("默认")
+    return

@@ -1,0 +1,5 @@
+[Shape]
+Circle(I32,)
+main|func() -> ()
+    let s = Circle(42,)
+    return

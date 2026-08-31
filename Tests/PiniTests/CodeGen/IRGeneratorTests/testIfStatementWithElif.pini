@@ -1,0 +1,9 @@
+main|func() -> ()
+    var x = 5
+    if x > 10:
+        x = 20
+    elif x == 5:
+        x = 10
+    else:
+        x = 0
+    return

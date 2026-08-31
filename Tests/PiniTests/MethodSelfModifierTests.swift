@@ -13,13 +13,7 @@ final class MethodSelfModifierTests: XCTestCase {
     /// 意图：验证 StructDecl 内裸函数（无论有无 self 修饰符）一律抛 invalidStatement，
     /// 提示方法移至扩展块；错误位置 loc.line > 0。
     func testStructDeclMethodWithoutSelfModifierErrors() throws {
-        let source = """
-(点)
-x: I32 = 0
-移动(dx: I32) -> ()
-    self.x = self.x + dx
-    return
-"""
+        let source = try loadPiniFixture("testStructDeclMethodWithoutSelfModifierErrors", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -37,13 +31,7 @@ x: I32 = 0
     /// StructDecl 内旧花括号语法 {name} 也应报错（ADR-016 规则 3.2）
     /// 意图：验证 StructDecl 内旧花括号 {移动} 函数声明同样抛 invalidStatement（类型体禁函数）。
     func testStructDeclOldBraceSyntaxWithoutSelfErrors() throws {
-        let source = """
-(点)
-x: I32 = 0
-{移动}(dx: I32) -> ()
-    self.x = self.x + dx
-    return
-"""
+        let source = try loadPiniFixture("testStructDeclOldBraceSyntaxWithoutSelfErrors", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -59,15 +47,7 @@ x: I32 = 0
     /// StructDecl 内 |self 裸函数合法
     /// 意图：验证 StructDecl 内 `|self` 修饰方法可正常解析；应生成 .structDecl、方法名"移动"且 modifiers 含 "self"。
     func testStructDeclMethodWithSelfModifierParses() throws {
-        let source = """
-(点)
-x: I32 = 0
-
-((点))
-移动|self(dx: I32) -> ()
-    self.x = self.x + dx
-    return
-"""
+        let source = try loadPiniFixture("testStructDeclMethodWithSelfModifierParses", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -86,15 +66,7 @@ x: I32 = 0
     /// StructDecl 内 |own（G50 更名自 |Self）也合法
     /// 意图：验证 StructDecl 内 `|own` 本型方法修饰符同样合法；应生成 .structDecl 且方法 modifiers 含 "own"。
     func testStructDeclMethodWithOwnModifierParses() throws {
-        let source = """
-(点)
-x: I32 = 0
-
-((点))
-移动|own(dx: I32) -> ()
-    self.x = self.x + dx
-    return
-"""
+        let source = try loadPiniFixture("testStructDeclMethodWithOwnModifierParses", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -112,11 +84,7 @@ x: I32 = 0
     /// 顶级裸函数无需 self 修饰符
     /// 意图：验证顶级裸函数无需 `self` 修饰符即可解析；应生成 .funcDecl 且函数名为 main。
     func testTopLevelFuncDoesNotNeedSelf() throws {
-        let source = """
-main() -> ()
-    print("hello")
-    return
-"""
+        let source = try loadPiniFixture("testTopLevelFuncDoesNotNeedSelf", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -133,11 +101,7 @@ main() -> ()
     /// 顶级花括号函数 {name} 无需 self 修饰符
     /// 意图：验证顶级花括号函数 {main} 无需 `self` 修饰符即可解析；应生成 .funcDecl 且函数名为 main。
     func testTopLevelBraceFuncDoesNotNeedSelf() throws {
-        let source = """
-{main}() -> ()
-    print("hello")
-    return
-"""
+        let source = try loadPiniFixture("testTopLevelBraceFuncDoesNotNeedSelf", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -154,13 +118,7 @@ main() -> ()
     /// ObjectDecl 内函数声明应报错（ADR-016 规则 3.2 类型体禁函数）
     /// 意图：验证 ObjectDecl 内裸函数一律抛 invalidStatement（类型体禁函数）。
     func testObjectDeclMethodWithoutSelfErrors() throws {
-        let source = """
-{计数器}
-值: I32 = 0
-增加() -> ()
-    self.值 = self.值 + 1
-    return
-"""
+        let source = try loadPiniFixture("testObjectDeclMethodWithoutSelfErrors", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -176,13 +134,7 @@ main() -> ()
     /// ObjectDecl（[name|object] 括号形式）内函数声明应报错（ADR-016 规则 3.2）
     /// 意图：验证 ObjectDecl 括号形式 [计数器|object] 内函数声明同样抛 invalidStatement。
     func testObjectDeclBracketMethodWithoutSelfErrors() throws {
-        let source = """
-[计数器|object]
-值: I32 = 0
-增加() -> ()
-    self.值 = self.值 + 1
-    return
-"""
+        let source = try loadPiniFixture("testObjectDeclBracketMethodWithoutSelfErrors", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -198,15 +150,7 @@ main() -> ()
     /// ObjectDecl 内 |self 合法
     /// 意图：验证 ObjectDecl 内 `|self` 修饰方法可正常解析；应生成 .objectDecl、方法数 1 且 modifiers 含 "self"。
     func testObjectDeclMethodWithSelfParses() throws {
-        let source = """
-{计数器}
-值: I32 = 0
-
-{{计数器}}
-增加|self() -> ()
-    self.值 = self.值 + 1
-    return
-"""
+        let source = try loadPiniFixture("testObjectDeclMethodWithSelfParses", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")

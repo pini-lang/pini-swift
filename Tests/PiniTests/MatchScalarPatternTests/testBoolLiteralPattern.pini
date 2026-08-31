@@ -1,0 +1,8 @@
+main|func() -> ()
+    var f = true
+    match f:
+        case true:
+            print("真")
+        case false:
+            print("假")
+    return

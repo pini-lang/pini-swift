@@ -15,7 +15,7 @@ final class ErrorFormatterTests: XCTestCase {
     }
 
     /// 意图：格式化器应生成包含源码行和位置标记的错误报告
-    func testFormatErrorWithSourceLine() {
+    func testFormatErrorWithSourceLine()  throws {
         let source = "var x = 1 + \"hello\"\nvar y = 2\n"
         let loc = SourceLocation(line: 1, column: 11, fileName: "test.pini")
         let result = ErrorFormatter.format(
@@ -25,15 +25,7 @@ final class ErrorFormatterTests: XCTestCase {
             source: source
         )
 
-        let expected = """
-        Error: Type Mismatch
-          at test.pini:1:11
-
-          var x = 1 + "hello"
-                    ~
-
-        expected I32, got String
-        """
+        let expected = try loadPiniFixture("testFormatErrorWithSourceLine", filePath: #filePath)
 
         XCTAssertEqual(result, expected)
     }

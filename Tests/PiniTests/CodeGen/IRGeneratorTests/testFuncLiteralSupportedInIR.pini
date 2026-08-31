@@ -1,0 +1,4 @@
+main|func() -> ()
+    var f = func (x,) -> (I32,): return x * 2
+    print(f(21))
+    return

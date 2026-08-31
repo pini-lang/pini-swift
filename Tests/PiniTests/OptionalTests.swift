@@ -75,7 +75,7 @@ final class OptionalTests: XCTestCase {
     }
 
     /// 意图：验证对非 Optional 类型调用 .some(42)（`其它.some`）不会被当作 Optional 特例处理，推断结果为 nil。
-    func testNonOptionalMemberNotInferredAsOptional() {
+    func testNonOptionalMemberNotInferredAsOptional()  throws {
         let loc = SourceLocation(line: 1, column: 1, fileName: "test.pini")
         let env = TypeEnvironment()
         let inference = TypeInference(environment: env)
@@ -97,7 +97,7 @@ final class OptionalTests: XCTestCase {
     // MARK: - P2-2 `nil` 类型层（spec G30 / G30）
 
     /// 意图：验证 nil（解析为 Optional.none 成员）与 Optional.none 同样推断为 Optional<Any>（带一个类型参数）。
-    func testNilTypeInference() {
+    func testNilTypeInference()  throws {
         let loc = SourceLocation(line: 1, column: 1, fileName: "test.pini")
         let env = TypeEnvironment()
         let inference = TypeInference(environment: env)
@@ -122,11 +122,7 @@ final class OptionalTests: XCTestCase {
 
     /// 意图：验证带类型注解的 nil 赋值 var x: Optional<I32> = nil 能通过类型检查（不抛出）。
     func testNilWithTypeAnnotationTypeChecks() throws {
-        let source = """
-        main() -> ()
-            var x: Optional<I32> = nil
-            return
-        """
+        let source = try loadPiniFixture("testNilWithTypeAnnotationTypeChecks", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertNoThrow(try checker.check(module: module), "let x: Optional<I32> = nil 应通过类型检查")
@@ -136,11 +132,7 @@ final class OptionalTests: XCTestCase {
 
     /// 意图：验证糖语法类型注解 var x: ?I32 = nil 能通过类型检查（不抛出）。
     func testQuestionTypeAnnotationTypeChecks() throws {
-        let source = """
-        main() -> ()
-            var x: ?I32 = nil
-            return
-        """
+        let source = try loadPiniFixture("testQuestionTypeAnnotationTypeChecks", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertNoThrow(try checker.check(module: module), "let x: ?I32 = nil 应通过类型检查")
@@ -149,12 +141,7 @@ final class OptionalTests: XCTestCase {
     /// 意图：验证 ?I32 与 Optional<I32> 为同类型，将 Optional 值赋给 ? 变量应能通过类型检查。
     func testQuestionTypeEquivalentToOptionalForAssignment() throws {
         // ?I32 与 Optional<I32> 是同类型，应可互相赋值
-        let source = """
-        main() -> ()
-            var a: Optional<I32> = nil
-            var b: ?I32 = a
-            return
-        """
+        let source = try loadPiniFixture("testQuestionTypeEquivalentToOptionalForAssignment", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertNoThrow(try checker.check(module: module),
@@ -164,13 +151,7 @@ final class OptionalTests: XCTestCase {
     /// 意图：验证 Optional<I32> 与 ?I32 变量多次互赋（a→b→c）后类型保持一致，均能通过类型检查。
     func testQuestionTypeInferredFromOptionalValue() throws {
         // 将 Optional<I32> 值赋给 ?I32 变量，推断结果应等价
-        let source = """
-        main() -> ()
-            var a: Optional<I32> = nil
-            var b: ?I32 = a
-            var c: Optional<I32> = b
-            return
-        """
+        let source = try loadPiniFixture("testQuestionTypeInferredFromOptionalValue", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertNoThrow(try checker.check(module: module),
@@ -181,14 +162,7 @@ final class OptionalTests: XCTestCase {
 
     /// 意图：验证解释器下 ?I32 变量赋 nil 后 match case nil: 命中并输出 q-none。
     func testQuestionTypeInterpreterNilMatch() throws {
-        let source = """
-        main() -> ()
-            var x: ?I32 = nil
-            match x:
-                case nil:
-                    print("q-none")
-            return
-        """
+        let source = try loadPiniFixture("testQuestionTypeInterpreterNilMatch", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "q-none",
                        "?I32 变量赋 nil 应匹配 case nil:")
@@ -198,16 +172,7 @@ final class OptionalTests: XCTestCase {
     func testQuestionTypeInterpreterSomeDestruct() throws {
         // 解释器侧：?I32 接收 Optional.some(3) 并能解构
         // （some 的 LLVM IR 构造属已知延期缺口，本测试仅覆盖解释器）
-        let source = """
-        main() -> ()
-            var x: ?I32 = Optional.some(3)
-            match x:
-                case some(v,):
-                    print(v)
-                case none:
-                    print("none")
-            return
-        """
+        let source = try loadPiniFixture("testQuestionTypeInterpreterSomeDestruct", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "3",
                        "?I32 接收 Optional.some(3) 解构应得到 3")
@@ -216,15 +181,7 @@ final class OptionalTests: XCTestCase {
     /// 意图：验证解释器下 ?I32 值赋给 Optional<I32> 变量后 match 命中 case none: 并输出 ok。
     func testQuestionTypeEquivalentToOptionalInterpreter() throws {
         // ?I32 与 Optional<I32> 同类型，互赋后可独立 match
-        let source = """
-        main() -> ()
-            var a: ?I32 = nil
-            var b: Optional<I32> = a
-            match b:
-                case none:
-                    print("ok")
-            return
-        """
+        let source = try loadPiniFixture("testQuestionTypeEquivalentToOptionalInterpreter", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "ok",
                        "?I32 值赋给 Optional<I32> 变量后应能匹配 case none:")
@@ -241,48 +198,21 @@ final class OptionalTests: XCTestCase {
 
     /// 意图：验证解释器运行时 Optional.some(42) 经 match 解构输出 42。
     func testOptionalSomeRuntime() throws {
-        let source = """
-main() -> ()
-    var x = Optional.some(42)
-    match x:
-        case some(v,):
-            print(v)
-        case none:
-            print("none")
-    return
-"""
+        let source = try loadPiniFixture("testOptionalSomeRuntime", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42", "Optional.some(42) match 应得到 42")
     }
 
     /// 意图：验证解释器运行时 Optional.none 经 match 命中 case none: 输出 none。
     func testOptionalNoneRuntime() throws {
-        let source = """
-main() -> ()
-    var x = Optional.none
-    match x:
-        case some(v,):
-            print("some")
-        case none:
-            print("none")
-    return
-"""
+        let source = try loadPiniFixture("testOptionalNoneRuntime", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "none", "Optional.none match 应得到 none")
     }
 
     /// 意图：验证解释器运行时 Optional.some("hello") 字符串装箱经 match 解构输出 hello。
     func testOptionalSomeStringRuntime() throws {
-        let source = """
-main() -> ()
-    var x = Optional.some("hello")
-    match x:
-        case some(s,):
-            print(s)
-        case none:
-            print("空")
-    return
-"""
+        let source = try loadPiniFixture("testOptionalSomeStringRuntime", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "hello", "Optional.some(String) 应正确工作")
     }
@@ -291,14 +221,7 @@ main() -> ()
 
     /// 意图：验证 var a = nil 后 match case nil: 命中 Optional.none 并输出 nil-matched。
     func testNilMatchesViaMatchCaseNil() throws {
-        let source = """
-main() -> ()
-    var a = nil
-    match a:
-        case nil:
-            print("nil-matched")
-    return
-"""
+        let source = try loadPiniFixture("testNilMatchesViaMatchCaseNil", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "nil-matched",
                        "match case nil: 应命中 Optional.none")
@@ -306,16 +229,7 @@ main() -> ()
 
     /// 意图：验证 var x: Optional<I32> = nil 后 match 命中 case none: 并输出 none。
     func testNilAssignedToOptionalI32ThenMatchesNone() throws {
-        let source = """
-main() -> ()
-    var x: Optional<I32> = nil
-    match x:
-        case none:
-            print("none")
-        case some(v,):
-            print(v)
-    return
-"""
+        let source = try loadPiniFixture("testNilAssignedToOptionalI32ThenMatchesNone", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "none",
                        "let x: Optional<I32> = nil 应匹配 case none:")
@@ -324,24 +238,8 @@ main() -> ()
     /// 意图：验证 nil 与 Optional.none 在解释器下逐字节等价（同一路径），二者输出一致且均匹配 case none:。
     func testNilEquivalentToOptionalNone() throws {
         // nil 与 Optional.none 应逐字节等价（同一条解释器路径）
-        let withNil = """
-main() -> ()
-    var a = nil
-    match a:
-        case none:
-            print("none")
-    var b: Optional<I32> = nil
-    return
-"""
-        let withNone = """
-main() -> ()
-    var a = Optional.none
-    match a:
-        case none:
-            print("none")
-    var b: Optional<I32> = Optional.none
-    return
-"""
+        let withNil = try loadPiniFixture("testNilEquivalentToOptionalNone", filePath: #filePath)
+        let withNone = try loadPiniFixture("testNilEquivalentToOptionalNone_2", filePath: #filePath)
         let outNil = try runProgram(withNil).trimmingCharacters(in: .whitespacesAndNewlines)
         let outNone = try runProgram(withNone).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(outNil, outNone, "nil 与 Optional.none 输出应一致")
@@ -415,16 +313,7 @@ main() -> ()
     /// match Optional.some(v) 应通过类型检查（确认 type checker 支持解构绑定）
     /// 意图：验证含 Optional.some(42) 与 match some(v) 解构绑定的源码能通过类型检查（不抛出）。
     func testOptionalSomeMatchTypeChecks() throws {
-        let source = """
-        main() -> ()
-            var a = Optional.some(42)
-            match a:
-                case some(v,):
-                    print(v)
-                case none:
-                    print("none")
-            return
-        """
+        let source = try loadPiniFixture("testOptionalSomeMatchTypeChecks", filePath: #filePath)
         let module = try parseModule(source)
         let checker = TypeChecker()
         XCTAssertNoThrow(try checker.check(module: module), "match Optional.some(v) 应通过类型检查")
@@ -434,22 +323,7 @@ main() -> ()
     /// 意图：经 CLI 同款路径（parse→check→codegen→lli）验证 Optional.some(42)/none 在 run-llvm 与解释器下输出去换行后一致，且 LLVM 输出为 42none。
     func testOptionalSomeRunLLVMParity() throws {
         try XCTSkipIf(LLVMToolchain.lliPath == nil, "lli 不可用，跳过 run-llvm 验证")
-        let source = """
-        main() -> ()
-            var a = Optional.some(42)
-            match a:
-                case some(v,):
-                    print(v)
-                case none:
-                    print("none")
-            var b = Optional.none
-            match b:
-                case some(v,):
-                    print(v)
-                case none:
-                    print("none")
-            return
-        """
+        let source = try loadPiniFixture("testOptionalSomeRunLLVMParity", filePath: #filePath)
         let llvmOut = try runViaLLIWithTypeCheck(source).trimmingCharacters(in: .whitespacesAndNewlines)
         let interpOut = try runProgram(source).trimmingCharacters(in: .whitespacesAndNewlines)
         // LLVM 后端 print 不补换行（已知预存特征），解释器两 print 间有换行；比对时消除全部换行。
@@ -465,16 +339,7 @@ main() -> ()
     /// 意图：验证 Optional.some("hello") 的 ptr 元素装箱/解构在 run-llvm 与解释器下输出一致，且 LLVM 输出为 hello。
     func testOptionalSomeStringRunLLVMParity() throws {
         try XCTSkipIf(LLVMToolchain.lliPath == nil, "lli 不可用，跳过 run-llvm 验证")
-        let source = """
-        main() -> ()
-            var x = Optional.some("hello")
-            match x:
-                case some(s,):
-                    print(s)
-                case none:
-                    print("空")
-            return
-        """
+        let source = try loadPiniFixture("testOptionalSomeStringRunLLVMParity", filePath: #filePath)
         let llvmOut = try runViaLLIWithTypeCheck(source).trimmingCharacters(in: .whitespacesAndNewlines)
         let interpOut = try runProgram(source).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(llvmOut, interpOut, "run-llvm 与解释器对 Optional.some(String) 应输出一致")

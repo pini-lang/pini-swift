@@ -1,0 +1,8 @@
+main|func() -> ()
+    var y = 2.5
+    match y:
+        case 1.0:
+            print("一")
+        case 2.5:
+            print("二点五")
+    return

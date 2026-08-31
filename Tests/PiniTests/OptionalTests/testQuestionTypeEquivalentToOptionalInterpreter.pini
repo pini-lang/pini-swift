@@ -1,0 +1,7 @@
+main() -> ()
+    var a: ?I32 = nil
+    var b: Optional<I32> = a
+    match b:
+        case none:
+            print("ok")
+    return

@@ -1,0 +1,12 @@
+[方向]
+东
+南
+北
+main|func() -> ()
+    var d = 北
+    match d:
+        case 东:
+            print("东",)
+        case _:
+            print("兜底",)
+    return

@@ -1,0 +1,15 @@
+[方向]
+东
+南
+main|func() -> ()
+    var d = 东
+    match d:
+        case 东:
+            match d:
+                case 东:
+                    print("东内",)
+                case _:
+                    print("其他",)
+        case 南:
+            print("南",)
+    return

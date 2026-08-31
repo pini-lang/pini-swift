@@ -402,19 +402,13 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 规则 4：`{...}` 后跟 `(` → 函数块；否则对象块
     /// 意图：验证 {…} 块后跟 ( 解析为函数声明、否则为对象声明两种路径。
     func testDisambigBraceFuncVsObject() throws {
-        let funcModule = try parse("""
-        {f|func}(x: I32) -> (I32,)
-            return x
-        """)
+        let funcModule = try parse(try loadPiniFixture("testDisambigBraceFuncVsObject", filePath: #filePath) as String)
         guard case .funcDecl(let f) = funcModule.declarations[0] else {
             XCTFail("`{f|func}(...)` 应解析为 funcDecl，实际：\(funcModule.declarations[0])"); return
         }
         XCTAssertEqual(f.name, "f")
 
-        let objModule = try parse("""
-        {ob}
-        x: I32 = 0
-        """)
+        let objModule = try parse(try loadPiniFixture("testDisambigBraceFuncVsObject_2", filePath: #filePath) as String)
         guard case .objectDecl(let o) = objModule.declarations[0] else {
             XCTFail("`{ob}` + 字段应解析为 objectDecl，实际：\(objModule.declarations[0])"); return
         }
@@ -425,11 +419,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 规则 5：`[名称|...]` 无修饰符默认枚举；`|object` 为对象
     /// 意图：验证 [名称|…] 无修饰符时默认解析为枚举声明。
     func testDisambigBracketDefaultEnum() throws {
-        let enumModule = try parse("""
-        [形状]
-        圆
-        方
-        """)
+        let enumModule = try parse(try loadPiniFixture("testDisambigBracketDefaultEnum", filePath: #filePath) as String)
         guard case .enumDecl(let e) = enumModule.declarations[0] else {
             XCTFail("`[形状]` 无修饰符应默认枚举，实际：\(enumModule.declarations[0])"); return
         }
@@ -440,15 +430,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 注：case 缩进进 match 子块；`case _:` 为通配兜底（取代旧 default 特判与 pass 通配子块）。
     /// 意图：验证 `case _:` 解析为 wildcard 模式 case。
     func testDisambigMatchWildcard() throws {
-        let module = try parse("""
-        main() -> ()
-            match v:
-                case 1:
-                    pass
-                case _:
-                    pass
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testDisambigMatchWildcard", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .matchStatement(_, let cases, _) = body[0] else {
             XCTFail("应为 match 语句"); return
@@ -462,14 +444,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 规则 6：类型体内裸函数声明 vs 字段
     /// 意图：验证类型体内 `x: F64 = 0.0` 解析为字段、`距离|self() -> (F64,)` 解析为方法。
     func testDisambigBareFuncVsFieldInTypeBody() throws {
-        let module = try parse("""
-        {点}
-        x: F64 = 0.0
-
-        {{点}}
-        距离|self() -> (F64,)
-            return self.x
-        """)
+        let module = try parse(try loadPiniFixture("testDisambigBareFuncVsFieldInTypeBody", filePath: #filePath) as String)
         guard case .objectDecl(let o) = module.declarations[0] else { XCTFail("应为对象"); return }
         XCTAssertEqual(o.fields.count, 1, "`x: F64 = 0.0` 应为字段")
         XCTAssertEqual(o.methods.count, 0, "类型体内不再承载方法（ADR-016 规则 3.2）")
@@ -481,11 +456,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 规则 12（EBNF 9.2 语义）：nil ≡ Optional.none
     /// 意图：验证 nil 字面量按语义消歧为 Optional.none 成员访问表达式。
     func testDisambigNilAsOptionalNone() throws {
-        let module = try parse("""
-        main() -> ()
-            let x = nil
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testDisambigNilAsOptionalNone", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .varDecl(_, _, let initializer, _, _) = body[0], let initExpr = initializer else {
             XCTFail("应为带初始化器的变量声明"); return
@@ -497,14 +468,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 规则 3（9.2）：`|` 作方法修饰符（`名称|self(...)`）
     /// 意图：验证 | 作为方法修饰符：{移动|self} 的方法修饰符为 ["self"]。
     func testDisambigPipeAsMethodModifier() throws {
-        let module = try parse("""
-        {点}
-        x: F64 = 0.0
-
-        {{点}}
-        移动|self(dx: F64) -> ()
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testDisambigPipeAsMethodModifier", filePath: #filePath) as String)
         guard case .objectDecl(let o) = module.declarations[0] else { XCTFail("应为对象"); return }
         XCTAssertEqual(o.methods.count, 0, "类型体内不再承载方法（ADR-016 规则 3.2）")
         guard case .extensionDecl(let ext) = module.declarations[1] else { XCTFail("应为扩展块"); return }
@@ -518,14 +482,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// while 的 `outer|while` 标签与 `step` 步进子块（ADR-014：标签由 `scope 块标签:` 改 `标签|控制流关键字`）
     /// 意图：验证 while 支持标签前缀与 step 步进子块：whileStatement 的 label 为 outer、step 步进块被解析。
     func testProductionsWhileLabelAndStep() throws {
-        let module = try parse("""
-        main() -> ()
-            outer|while i < 10:
-                i += 1
-            step:
-                i += 1
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsWhileLabelAndStep", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .whileStatement(_, _, let step, let label, _) = body[0] else {
             XCTFail("应为带标签的 while 语句"); return
@@ -537,15 +494,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// for-in 语句产生式（G36，见 spec for-in 主题）：模式元组 + step + 标签（ADR-014，无标签时 label 为 nil）
     /// 意图：验证 for-in 产生式：模式元组 [v]、step 步进块解析，无标签时 label 为 nil，迭代目标为 3 元素数组。
     func testProductionsForIn() throws {
-        let module = try parse("""
-        main() -> ()
-            var acc = 0
-            for (v,) in [1, 2, 3]:
-                acc = acc + v
-            step:
-                acc = acc + v
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsForIn", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .forStatement(let pattern, let iterable, _, let step, let label, _) = body[1] else {
             XCTFail("应为 for 语句（body[1]，body[0] 为 var acc）"); return
@@ -562,17 +511,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// for-in `_` 占位与字典两字段模式（G36）
     /// 意图：验证 for-in 模式变体：`_` 占位保留为模式元素，字典迭代模式为 [k, v]。
     func testProductionsForInPatternVariants() throws {
-        let module = try parse("""
-        main() -> ()
-            var c = 0
-            for (_ ,) in [7, 8, 9]:
-                c = c + 1
-            let d = ["x": 1, "y": 2]
-            var t = 0
-            for (k, v,) in d:
-                t = t + v
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsForInPatternVariants", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .forStatement(let p1, _, _, _, _, _) = body[1] else { XCTFail("应为 for（body[1]）"); return }
         XCTAssertEqual(p1, ["_"], "`_` 占位应保留为模式元素")
@@ -584,19 +523,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 注：case 缩进进 match 子块（D3①/G28 更新）。
     /// 意图：验证 match 模式四类：整数字面量、通配 _、nil→enumCase none、枚举带参数绑定。
     func testProductionsMatchPatterns() throws {
-        let module = try parse("""
-        main() -> ()
-            match v:
-                case 1:
-                    pass
-                case _:
-                    pass
-                case nil:
-                    pass
-                case 圆(r,):
-                    pass
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsMatchPatterns", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .matchStatement(_, let cases, _) = body[0] else { XCTFail("应为 match"); return }
         XCTAssertEqual(cases.count, 4)
@@ -612,14 +539,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 类型注解糖：?T / [T] / [K: V] / {T}
     /// 意图：验证类型注解糖 ?T/[T]/[K: V]/{T} 分别映射为 Optional/Array/Dictionary/Set 泛型。
     func testProductionsTypeAnnotationSugar() throws {
-        let module = try parse("""
-        main() -> ()
-            var a: ?I32 = nil
-            var b: [String] = []
-            var c: [String: I32] = []
-            var d: {I32} = {}
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsTypeAnnotationSugar", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         let expected: [(String, TypeAnnotation)] = [
             ("a", .generic(name: "Optional", params: [.simple(name: "I32", location: .dummy)], location: .dummy)),
@@ -655,10 +575,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// trait 变量签名：`名称: 类型`
     /// 意图：验证 trait 变量签名「名称: 类型」解析为带返回类型的签名条目。
     func testProductionsTraitVarSignature() throws {
-        let module = try parse("""
-        <形状>
-        名称: String
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsTraitVarSignature", filePath: #filePath) as String)
         guard case .traitDecl(let t) = module.declarations[0] else { XCTFail("应为 trait"); return }
         XCTAssertEqual(t.signatures.count, 1)
         XCTAssertEqual(t.signatures[0].name, "名称")
@@ -669,10 +586,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// import / export 顶级声明
     /// 意图：验证 import/export 顶级声明分别暂存进 Module 的 imports 与 exports。
     func testProductionsImportExport() throws {
-        let module = try parse("""
-        import foo
-        export bar
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsImportExport", filePath: #filePath) as String)
         XCTAssertEqual(module.imports.count, 1)
         XCTAssertEqual(module.imports[0].moduleName, "foo")
         XCTAssertEqual(module.exports.count, 1)
@@ -683,11 +597,7 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 注：`(` 在行首位置是结构块声明，故分组须处于非行首（变量初始化器）。
     /// 意图：验证分组括号语义为零：(a + b) 直接展开为内层二元表达式，不构造 paren 节点。
     func testProductionsParenGroupingSemanticallyEmpty() throws {
-        let module = try parse("""
-        main() -> ()
-            let x = (a + b)
-            return
-        """)
+        let module = try parse(try loadPiniFixture("testProductionsParenGroupingSemanticallyEmpty", filePath: #filePath) as String)
         let body = try firstFuncBody(module)
         guard case .varDecl(_, _, let initializer, _, _) = body[0], let initExpr = initializer else {
             XCTFail("应为带初始化器的变量声明"); return

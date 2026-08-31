@@ -1,0 +1,11 @@
+[形状]
+圆(F64,)
+矩形(F64, F64,)
+main|func() -> ()
+    var s = 圆(2.0,)
+    match s:
+        case 圆(r,):
+            print(r * 3.0,)
+        case 矩形(w, h,):
+            print(w * h,)
+    return

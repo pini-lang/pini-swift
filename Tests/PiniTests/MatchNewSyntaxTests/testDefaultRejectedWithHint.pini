@@ -1,0 +1,8 @@
+main|func() -> ()
+    var x = 1
+    match x:
+        case 1:
+            print("一",)
+        default:
+            print("兜底",)
+    return

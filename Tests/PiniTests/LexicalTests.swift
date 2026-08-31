@@ -110,11 +110,7 @@ final class LexicalTests: XCTestCase {
     // Intent: 解释器应正确解释转义序列 \n \t（推进性测量：输出 "a\nb\tc"）
     func testEscapeSequences() throws {
         let output = try runProgram(
-            """
-            main|func() -> ()
-                print("a\\nb\\tc")
-                return
-            """
+            try loadPiniFixture("testEscapeSequences", filePath: #filePath) as String
         )
         XCTAssertEqual(output, "a\nb\tc\n")
     }
@@ -122,11 +118,7 @@ final class LexicalTests: XCTestCase {
     // Intent: 解释器应正确解释转义引号 \"（推进性测量：输出 q"q）
     func testEscapedQuote() throws {
         let output = try runProgram(
-            """
-            main|func() -> ()
-                print("q\\"q")
-                return
-            """
+            try loadPiniFixture("testEscapedQuote", filePath: #filePath) as String
         )
         XCTAssertEqual(output, "q\"q\n")
     }
@@ -165,11 +157,7 @@ final class LexicalTests: XCTestCase {
     // Intent: 解释器应正确求值基础插值 "x=\(1+2)"（推进性测量：x=3）
     func testInterpolationBasic() throws {
         let output = try runProgram(
-            """
-            main|func() -> ()
-                print("x=\\(1+2)")
-                return
-            """
+            try loadPiniFixture("testInterpolationBasic", filePath: #filePath) as String
         )
         XCTAssertEqual(output, "x=3\n")
     }
@@ -177,12 +165,7 @@ final class LexicalTests: XCTestCase {
     // Intent: 解释器应正确求值变量插值（推进性测量：hi Pini）
     func testInterpolationVariable() throws {
         let output = try runProgram(
-            """
-            main|func() -> ()
-                var name = "Pini"
-                print("hi \\(name)")
-                return
-            """
+            try loadPiniFixture("testInterpolationVariable", filePath: #filePath) as String
         )
         XCTAssertEqual(output, "hi Pini\n")
     }
@@ -190,11 +173,7 @@ final class LexicalTests: XCTestCase {
     // Intent: 解释器应正确求值嵌套算术插值（推进性测量：sum=7）
     func testInterpolationNestedExpr() throws {
         let output = try runProgram(
-            """
-            main|func() -> ()
-                print("sum=\\(2*3+1)")
-                return
-            """
+            try loadPiniFixture("testInterpolationNestedExpr", filePath: #filePath) as String
         )
         XCTAssertEqual(output, "sum=7\n")
     }
@@ -202,11 +181,7 @@ final class LexicalTests: XCTestCase {
     // Intent: 解释器应正确在插值中嵌入容器字面量（推进性测量：a=[1, 2, 3]）
     func testInterpolationContainer() throws {
         let output = try runProgram(
-            """
-            main|func() -> ()
-                print("a=\\([1, 2, 3])")
-                return
-            """
+            try loadPiniFixture("testInterpolationContainer", filePath: #filePath) as String
         )
         XCTAssertEqual(output, "a=[1, 2, 3]\n")
     }

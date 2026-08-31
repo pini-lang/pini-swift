@@ -18,19 +18,8 @@ final class MemberMethodCallTests: XCTestCase {
 
     /// 成员方法实参类型不符 → TypeError.mismatch（RED→GREEN）
     /// 意图：验证成员方法实参类型校验；传 String 给 I32 形参应抛 TypeError.mismatch(expected: I32, got: String)（RED→GREEN）。
-    func testMemberMethodArgumentTypeMismatch() {
-        let source = """
-        (点)
-        x: I32 = 0
-
-        ((点))
-        移动|self(dx: I32, dy: I32,) -> ()
-            return
-        main|func() -> ()
-            let p = 点()
-            p.移动(dx: "oops", dy: 2)
-            return
-        """
+    func testMemberMethodArgumentTypeMismatch()  throws {
+        let source = try loadPiniFixture("testMemberMethodArgumentTypeMismatch", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "成员方法实参类型不符应抛错") { error in
             guard case TypeError.mismatch(expected: "I32", got: "String", _) = error else {
                 XCTFail("应为 mismatch(expected: I32, got: String)，实际: \(error)")
@@ -41,19 +30,8 @@ final class MemberMethodCallTests: XCTestCase {
 
     /// 成员方法实参个数不符 → TypeError.argumentCountMismatch（RED→GREEN）
     /// 意图：验证成员方法实参个数校验；需 2 个实参只传 1 个应抛 TypeError.argumentCountMismatch(expected: 2, got: 1)（RED→GREEN）。
-    func testMemberMethodArgumentCountMismatch() {
-        let source = """
-        (点)
-        x: I32 = 0
-
-        ((点))
-        移动|self(dx: I32, dy: I32,) -> ()
-            return
-        main|func() -> ()
-            let p = 点()
-            p.移动(dx: 1)
-            return
-        """
+    func testMemberMethodArgumentCountMismatch()  throws {
+        let source = try loadPiniFixture("testMemberMethodArgumentCountMismatch", filePath: #filePath)
         XCTAssertThrowsError(try parseAndCheck(source), "成员方法实参个数不符应抛错") { error in
             guard case TypeError.argumentCountMismatch(expected: 2, got: 1, _) = error else {
                 XCTFail("应为 argumentCountMismatch(expected: 2, got: 1)，实际: \(error)")
@@ -65,36 +43,14 @@ final class MemberMethodCallTests: XCTestCase {
     // MARK: - 合法调用（GREEN 基线）
 
     /// 意图：验证合法 struct 成员方法调用（类型、个数均匹配）通过类型检查不抛错（GREEN 基线）。
-    func testMemberMethodCallValidNoError() {
-        let source = """
-        (点)
-        x: I32 = 0
-
-        ((点))
-        移动|self(dx: I32, dy: I32,) -> ()
-            return
-        main|func() -> ()
-            let p = 点()
-            p.移动(dx: 1, dy: 2)
-            return
-        """
+    func testMemberMethodCallValidNoError()  throws {
+        let source = try loadPiniFixture("testMemberMethodCallValidNoError", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "合法成员方法调用不应报错")
     }
 
     /// 意图：验证 object 无参成员方法合法调用通过类型检查不抛错（GREEN 基线）。
-    func testObjectMemberMethodCallValidNoError() {
-        let source = """
-        (计数器)
-        数值: I32 = 0
-
-        ((计数器))
-        增加|self() -> ()
-            return
-        main|func() -> ()
-            let c = 计数器()
-            c.增加()
-            return
-        """
+    func testObjectMemberMethodCallValidNoError()  throws {
+        let source = try loadPiniFixture("testObjectMemberMethodCallValidNoError", filePath: #filePath)
         XCTAssertNoThrow(try parseAndCheck(source), "object 成员方法调用不应报错")
     }
 

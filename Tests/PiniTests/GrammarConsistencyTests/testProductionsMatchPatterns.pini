@@ -1,0 +1,11 @@
+main() -> ()
+    match v:
+        case 1:
+            pass
+        case _:
+            pass
+        case nil:
+            pass
+        case 圆(r,):
+            pass
+    return

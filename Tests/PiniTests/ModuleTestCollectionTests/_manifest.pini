@@ -1,0 +1,10 @@
+[package]
+name = "smoke"
+version = "0.1.0"
+
+[build]
+exclude = ["examples"]
+
+[[bin]]
+name = "smoke"
+entry = "src/main.pini"

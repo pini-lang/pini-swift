@@ -1,0 +1,4 @@
+main|func() -> ()
+    defer print("late")
+    print("early")
+    return

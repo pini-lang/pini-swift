@@ -57,15 +57,8 @@ final class ParserBodyRecoveryTests: XCTestCase {
     /// INDENT 块体内两处坏语句（`)` / `]`）应被一次性收集，
     /// 且合法的 `main` 函数仍被解析进 module、不产生伪顶级声明（declarations == 1）。
     /// 意图：验证 INDENT 块体内两处坏语句被一次性收集（errors ≥ 2），且 main 函数被保全、无伪顶级声明。
-    func testCollectsMultipleStatementErrorsInIndentedBody() {
-        let source = """
-        main|func() -> ()
-            x = 1
-            )bad
-            y = 2
-            ]bad
-            return
-        """
+    func testCollectsMultipleStatementErrorsInIndentedBody()  throws {
+        let source = try loadPiniFixture("testCollectsMultipleStatementErrorsInIndentedBody", filePath: #filePath)
         let result = collect(source)
         XCTAssertGreaterThanOrEqual(
             result.errors.count, 2,
@@ -77,14 +70,8 @@ final class ParserBodyRecoveryTests: XCTestCase {
     /// 顶级函数内容态（无 INDENT，语句在顶格）体内两处坏语句也应被一次性收集，
     /// 且不得产生伪顶级声明。
     /// 意图：验证顶级函数内容态（无 INDENT）体内两处坏语句被一次性收集，且无伪顶级声明。
-    func testCollectsMultipleStatementErrorsInTopLevelBody() {
-        let source = """
-        main|func() -> ()
-            )bad
-            y = 2
-            ]bad
-            return
-        """
+    func testCollectsMultipleStatementErrorsInTopLevelBody()  throws {
+        let source = try loadPiniFixture("testCollectsMultipleStatementErrorsInTopLevelBody", filePath: #filePath)
         let result = collect(source)
         XCTAssertGreaterThanOrEqual(
             result.errors.count, 2,
@@ -95,16 +82,8 @@ final class ParserBodyRecoveryTests: XCTestCase {
 
     /// 控制块（if 体）内两处坏语句应被一次性收集，且 if 结构本身被解析进 module、无伪声明。
     /// 意图：验证控制块（if 体）内两处坏语句被一次性收集，且 if 结构被解析进 module、无伪声明。
-    func testCollectsMultipleStatementErrorsInControlBlock() {
-        let source = """
-        main|func() -> ()
-            if x > 0:
-                a = 1
-                )bad
-                b = 2
-                ]bad
-            return
-        """
+    func testCollectsMultipleStatementErrorsInControlBlock()  throws {
+        let source = try loadPiniFixture("testCollectsMultipleStatementErrorsInControlBlock", filePath: #filePath)
         let result = collect(source)
         XCTAssertGreaterThanOrEqual(
             result.errors.count, 2,
@@ -117,15 +96,8 @@ final class ParserBodyRecoveryTests: XCTestCase {
 
     /// 同一含函数体内错误的来源走旧 `parseModule()` 仍应在首个错误处抛出（行为不变）。
     /// 意图：验证同一含函数体内错误的来源走旧 parseModule() 仍应在首个错误处抛出 ParserError（回归防护）。
-    func testLegacyParseModuleThrowsFirstErrorInBody() {
-        let source = """
-        main|func() -> ()
-            x = 1
-            )bad
-            y = 2
-            ]bad
-            return
-        """
+    func testLegacyParseModuleThrowsFirstErrorInBody()  throws {
+        let source = try loadPiniFixture("testLegacyParseModuleThrowsFirstErrorInBody", filePath: #filePath)
         XCTAssertThrowsError(try legacyParse(source),
                              "旧 parseModule() 应在首个错误处抛出") { error in
             XCTAssertTrue(error is ParserError,

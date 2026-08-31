@@ -1,0 +1,4 @@
+[Shape]
+Circle
+main|func() -> ()
+    return

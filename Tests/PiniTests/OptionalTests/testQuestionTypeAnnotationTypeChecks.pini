@@ -1,0 +1,3 @@
+main() -> ()
+    var x: ?I32 = nil
+    return

@@ -1,0 +1,8 @@
+main() -> ()
+    var x = Optional.some("hello")
+    match x:
+        case some(s,):
+            print(s)
+        case none:
+            print("空")
+    return

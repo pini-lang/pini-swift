@@ -53,81 +53,28 @@ final class MatchNewSyntaxTests: XCTestCase {
 
     /// 意图：case 缩进进 match 子块（与 match 差一级），运行正常。
     func testCaseIndentedUnderMatchValid() throws {
-        let source = """
-        [方向]
-        东
-        南
-        main|func() -> ()
-            var d = 南
-            match d:
-                case 东:
-                    print("东",)
-                case 南:
-                    print("南",)
-            return
-        """
+        let source = try loadPiniFixture("testCaseIndentedUnderMatchValid", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "南")
     }
 
     /// 意图：`case _:` 通配兜底捕获未命中值（等价旧 default/pass 通配子块）。
     func testCaseWildcardFallback() throws {
-        let source = """
-        [方向]
-        东
-        南
-        北
-        main|func() -> ()
-            var d = 北
-            match d:
-                case 东:
-                    print("东",)
-                case _:
-                    print("兜底",)
-            return
-        """
+        let source = try loadPiniFixture("testCaseWildcardFallback", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "兜底")
     }
 
     /// 意图：枚举 case 绑定在新结构下仍工作（`case 圆(r,)`）。
     func testEnumCaseBindingsStillWork() throws {
-        let source = """
-        [形状]
-        圆(F64,)
-        矩形(F64, F64,)
-        main|func() -> ()
-            var s = 圆(2.0,)
-            match s:
-                case 圆(r,):
-                    print(r * 3.0,)
-                case 矩形(w, h,):
-                    print(w * h,)
-            return
-        """
+        let source = try loadPiniFixture("testEnumCaseBindingsStillWork", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "6.0")
     }
 
     /// 意图：case 块内可嵌套 match（新结构递归成立）。
     func testNestedMatchValid() throws {
-        let source = """
-        [方向]
-        东
-        南
-        main|func() -> ()
-            var d = 东
-            match d:
-                case 东:
-                    match d:
-                        case 东:
-                            print("东内",)
-                        case _:
-                            print("其他",)
-                case 南:
-                    print("南",)
-            return
-        """
+        let source = try loadPiniFixture("testNestedMatchValid", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "东内")
     }
@@ -135,32 +82,16 @@ final class MatchNewSyntaxTests: XCTestCase {
     // MARK: - 旧写法拒绝（R2=删除）
 
     /// 意图：case 与 match 同级（旧结构）应报错——case 必须缩进进 match 子块。
-    func testCaseSameLevelAsMatchRejected() {
-        let source = """
-        main|func() -> ()
-            var x = 1
-            match x:
-            case 1:
-                print("一",)
-            return
-        """
+    func testCaseSameLevelAsMatchRejected()  throws {
+        let source = try loadPiniFixture("testCaseSameLevelAsMatchRejected", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "case 与 match 同级应报错") { error in
             XCTAssertTrue(error is ParserError, "应为解析错误，实际: \(error)")
         }
     }
 
     /// 意图：`default:` 一次性移除——解析报「已废弃，用 case _:」专属提示。
-    func testDefaultRejectedWithHint() {
-        let source = """
-        main|func() -> ()
-            var x = 1
-            match x:
-                case 1:
-                    print("一",)
-                default:
-                    print("兜底",)
-            return
-        """
+    func testDefaultRejectedWithHint()  throws {
+        let source = try loadPiniFixture("testDefaultRejectedWithHint", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "default 应报已废弃") { error in
             guard case ParserError.invalidStatement(let reason, _) = error else {
                 XCTFail("应为 invalidStatement（专属提示），实际: \(error)")
@@ -171,34 +102,16 @@ final class MatchNewSyntaxTests: XCTestCase {
     }
 
     /// 意图：match 值后、case 前的 pass 通配子块一次性移除——报错。
-    func testPassWildcardRejected() {
-        let source = """
-        main|func() -> ()
-            var x = 1
-            match x:
-                pass
-                case 1:
-                    print("一",)
-            return
-        """
+    func testPassWildcardRejected()  throws {
+        let source = try loadPiniFixture("testPassWildcardRejected", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "pass 通配子块应报错") { error in
             XCTAssertTrue(error is ParserError, "应为解析错误，实际: \(error)")
         }
     }
 
     /// 意图：match 穷尽性——枚举缺变体且无 case _: → nonExhaustiveMatch（R1 总是开启）。
-    func testNonExhaustiveEnumMatchRejected() {
-        let source = """
-        [方向]
-        东
-        南
-        main|func() -> ()
-            var d = 东
-            match d:
-                case 东:
-                    print("东",)
-            return
-        """
+    func testNonExhaustiveEnumMatchRejected()  throws {
+        let source = try loadPiniFixture("testNonExhaustiveEnumMatchRejected", filePath: #filePath)
         XCTAssertThrowsError(try checkModule(source), "枚举覆盖不全应报 nonExhaustiveMatch") { error in
             guard case SemanticError.nonExhaustiveMatch(let missing, _) = error else {
                 XCTFail("应为 nonExhaustiveMatch，实际: \(error)")
@@ -210,17 +123,7 @@ final class MatchNewSyntaxTests: XCTestCase {
 
     /// 意图：字面量 match 未命中且无 case _: → 静态不检查（R3），运行时静默。
     func testLiteralMatchMissIsSilent() throws {
-        let source = """
-        main|func() -> ()
-            var x = 99
-            match x:
-                case 1:
-                    print("一",)
-                case 2:
-                    print("二",)
-            print("继续",)
-            return
-        """
+        let source = try loadPiniFixture("testLiteralMatchMissIsSilent", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "继续")
     }

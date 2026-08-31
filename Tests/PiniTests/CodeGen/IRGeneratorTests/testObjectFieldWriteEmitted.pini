@@ -1,0 +1,7 @@
+{Counter}
+    count: I32 = 0
+
+main|func() -> ()
+    let c = Counter()
+    c.count = 99
+    return

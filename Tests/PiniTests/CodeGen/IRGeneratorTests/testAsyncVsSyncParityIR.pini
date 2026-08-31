@@ -1,0 +1,10 @@
+computeAsync() => (I32,)
+    return 7
+
+computeSync() -> (I32,)
+    return 7
+
+main|func() -> ()
+    var a = wait computeAsync()
+    var b = computeSync()
+    return

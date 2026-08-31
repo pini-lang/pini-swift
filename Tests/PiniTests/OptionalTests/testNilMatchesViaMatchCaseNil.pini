@@ -1,0 +1,6 @@
+main() -> ()
+    var a = nil
+    match a:
+        case nil:
+            print("nil-matched")
+    return

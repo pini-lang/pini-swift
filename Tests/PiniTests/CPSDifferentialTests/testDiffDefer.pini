@@ -1,0 +1,9 @@
+child|func() => (I32,)
+    sleep(10)
+    return ok(7)
+
+main|func() => (I32,)
+    defer print("cleanup")
+    var r = await child()
+    print(r)
+    return ok(0)
