@@ -11,6 +11,15 @@ public class Lexer {
  /// 避免 `t.0.1` 中 `0.1` 被读成浮点字面量（`0.1` 本应拆为 `.0` `.1`）。
  private var prevTokenIsDot = false
 
+ /// 批 1.5（A12 方案 B / 路 C 裁决）：括号栈——每项记录开括号字符与是否「块携带」。
+ /// 块携带 = 开括号后同行紧跟块开启关键字 `func`（草稿「原地调用 IIFE」与实参位
+ /// 函数字面量的包裹括号形态）。布局抑制判据 = **栈顶（最内层开括号）为普通括号**：
+ /// 此时行尾不发 newline、行首旁路缩进处理（换行等同空白、缩进不参与，括号深度即结构）。
+ /// 栈顶为块携带括号时布局完全照常——IIFE / LazyRef 式块体的 token 流与抑制前逐字节相同。
+ /// 边界（已裁决）：`< >` 不参与深度跟踪；前瞻仅限同行；`` `func` `` 反引号转义不算
+ /// 块携带；未闭合括号到 EOF 宽松静默（ADR-021 契约）；不匹配 closer 一律 pop（限制级联）。
+ private var bracketStack: [(char: Character, blockCarrying: Bool)] = []
+
  public init(source: String, fileName: String) {
  self.source = source
  self.chars = Array(source)
@@ -33,10 +42,17 @@ public class Lexer {
  break
  }
 
+ // 批 1.5：栈顶为普通括号 → 布局抑制：前导空白仅消费、不触缩进栈（不发 INDENT/DEDENT）
+ if suppressesLayout {
+ while let c = currentChar, c == " " || c == "\t" {
+ _ = advance()
+ }
+ } else {
  let loc = currentLocation
  let indentCount = countLeadingWhitespace()
  let indentTokens = try indentTracker.processLineStart(whitespaceCount: indentCount, location: loc)
  tokens.append(contentsOf: indentTokens)
+ }
 
  while !isAtEnd && currentChar != "\n" {
  guard let char = currentChar else { break }
@@ -55,12 +71,19 @@ public class Lexer {
  let token = try nextToken()
  prevTokenIsDot = isDotToken(token)
  tokens.append(token)
+ updateBracketStack(with: token)
  }
 
+ // 批 1.5：栈顶为普通括号 → 行尾不发 newline（换行在括号内等同空白）。
+ // 在此时刻求值：若本行内括号已闭合，栈顶已变，newline 照常发射。
  if !isAtEnd && currentChar == "\n" {
+ if !suppressesLayout {
  let nlLoc = currentLocation
  _ = advance()
  tokens.append(.newline(nlLoc))
+ } else {
+ _ = advance()
+ }
  }
  }
 
@@ -72,6 +95,54 @@ public class Lexer {
 
  private var isAtEnd: Bool {
  return position >= chars.count
+ }
+
+ /// 批 1.5：布局抑制判据——栈顶（最内层未闭合括号）存在且为普通括号（非块携带）。
+ /// 栈为空（不在任何括号内）或栈顶为块携带括号 → 布局照常。
+ private var suppressesLayout: Bool {
+ return bracketStack.last?.blockCarrying == false
+ }
+
+ /// 批 1.5：token 发射点维护括号栈（唯一汇聚处——字符串/插值/反引号内部括号
+ /// 不经此处，天然不参与深度跟踪）。
+ /// closer 一律 pop（不校验种类匹配，D-7 裁决：宽松、限制级联）。
+ private func updateBracketStack(with token: Token) {
+ switch token {
+ case .leftParen:
+ bracketStack.append((char: "(", blockCarrying: isBlockCarryingOpen()))
+ case .leftBracket:
+ bracketStack.append((char: "[", blockCarrying: isBlockCarryingOpen()))
+ case .leftBrace:
+ bracketStack.append((char: "{", blockCarrying: isBlockCarryingOpen()))
+ case .rightParen, .rightBracket, .rightBrace:
+ if !bracketStack.isEmpty {
+ bracketStack.removeLast()
+ }
+ default:
+ break
+ }
+ }
+
+ /// 批 1.5：判断刚发射的开括号是否「块携带」——其后同行（仅跳过空格/制表符，
+ /// 不跨行）紧跟关键字 `func`（边界：后随字符不得为 IDENT 续字符）。
+ /// `` `func` `` 反引号转义在此处表现为反引号字符 → 不满足 → 不算块携带。
+ private func isBlockCarryingOpen() -> Bool {
+ var idx = position
+ while idx < chars.count, chars[idx] == " " || chars[idx] == "\t" {
+ idx += 1
+ }
+ guard idx + 4 <= chars.count else { return false }
+ guard chars[idx] == "f", chars[idx + 1] == "u", chars[idx + 2] == "n", chars[idx + 3] == "c" else {
+ return false
+ }
+ let end = idx + 4
+ if end < chars.count {
+ let next = chars[end]
+ if next.isLetter || next.isNumber || next == "_" {
+ return false
+ }
+ }
+ return true
  }
 
  private func isDotToken(_ token: Token) -> Bool {
