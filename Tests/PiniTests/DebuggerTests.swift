@@ -21,13 +21,7 @@ private func dbgParse(_ source: String, _ fileName: String) -> Module {
     return parser.parseModuleCollectingErrors().module
 }
 
-private let sampleProgram = """
-main|func() -> ()
-    let a = 10
-    let b = 20
-    let c = a + b
-    return
-"""
+private let sampleProgram = try! loadPiniFixture("_sampleProgram", filePath: #filePath)
 
 @Suite("P7-4 Debugger")
 struct DebuggerTests {
@@ -151,14 +145,7 @@ struct DebuggerTests {
 
     // MARK: - P7-4 P2：表达式语句断点 / 单步
 
-    private let exprStmtProgram = """
-main|func() -> ()
-    let x = 1
-    print(x)
-    let y = x + 2
-    print(y)
-    return
-"""
+    private let exprStmtProgram = try! loadPiniFixture("testStopAtEntry", filePath: #filePath)
 
     @Test("P2 表达式语句（print）可命中其行断点")
     /// 意图：验证表达式语句（print(x) 所在 line 3）可命中其行断点。
@@ -199,15 +186,7 @@ main|func() -> ()
     @Test("P2 函数体内表达式语句受断点控制（跨调用）")
     /// 意图：验证函数体内表达式语句受断点控制，跨调用命中 helper 内 print("hi") 所在行。
     func testExpressionStatementWithFunctionCall() throws {
-        let src = """
-helper|func() -> ()
-    print("hi")
-    return
-
-main|func() -> ()
-    helper()
-    return
-"""
+        let src = try loadPiniFixture("testExpressionStatementWithFunctionCall", filePath: #filePath)
         let module = dbgParse(src, "call.pini")
         let driver = RecordingDebugDriver([.continue])
         let dbg = Debugger(driver: driver)
@@ -227,16 +206,8 @@ main|func() -> ()
     @Test("P3 跨文件断点命中（run(package:)）")
     /// 意图：验证 run(package:) 下跨文件断点命中（helper.pini 的 line 2）。
     func testCrossFileBreakpoint() throws {
-        let mainSrc = """
-main|func() -> ()
-    helper()
-    return
-"""
-        let helperSrc = """
-helper|func() -> ()
-    let z = 5
-    return
-"""
+        let mainSrc = try loadPiniFixture("testCrossFileBreakpoint", filePath: #filePath)
+        let helperSrc = try loadPiniFixture("testCrossFileBreakpoint_2", filePath: #filePath)
         let mainMod = dbgParse(mainSrc, "main.pini")
         let helperMod = dbgParse(helperSrc, "helper.pini")
         let pkg = Package(name: "m", fileUnits: [
@@ -258,7 +229,7 @@ helper|func() -> ()
 
     @Test("P3 多文件 SourceMap 按文件名取行")
     /// 意图：验证多文件 SourceMap 按文件名取行正确，越界行返回 nil。
-    func testMultiFileSourceMap() {
+    func testMultiFileSourceMap()  throws {
         let sm = SourceMap(sources: [
             "main.pini": "main|func() -> ()\n    return\n",
             "helper.pini": "helper|func() -> ()\n    let z = 5\n    return\n",
@@ -287,7 +258,7 @@ helper|func() -> ()
 
     @Test("P4 DAPDebugDriver 阻塞直至 resume 唤醒")
     /// 意图：验证 DAPDebugDriver.nextCommand 阻塞直至 resume 唤醒，resume(.stepOver) 后返回 .stepOver。
-    func testDAPDebugDriverResume() {
+    func testDAPDebugDriverResume()  throws {
         let driver = DAPDebugDriver()
         let event = StopEvent(location: SourceLocation(line: 1, column: 1, fileName: "f.pini"),
                               depth: 1, callStack: ["main"], variables: [])
@@ -312,12 +283,7 @@ helper|func() -> ()
     func testDAPSessionEndToEnd() throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("dap_inproc_\(Int.random(in: 0..<1_000_000)).pini")
-        let src = """
-main|func() -> ()
-    let a = 1
-    let b = 2
-    return
-"""
+        let src = try loadPiniFixture("testDAPSessionEndToEnd", filePath: #filePath)
         try src.write(to: tmp, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
