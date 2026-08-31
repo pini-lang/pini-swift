@@ -1,0 +1,11 @@
+[形状]
+圆(F64,)
+矩形(F64, F64,)
+[几何]
+圆(F64, F64,)
+
+main|func() -> ()
+    match 形状.圆(1.0):
+        case 圆(r):
+            return
+    return

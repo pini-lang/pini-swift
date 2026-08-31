@@ -20,14 +20,8 @@ final class FrontendMultiErrorTests: XCTestCase {
     // MARK: - 解析阶段：多个语法错误一次性收集
 
     /// 意图：验证解析阶段一次性收集多个语法错误——源码含 3 处非法 token，断言 errors.count >= 3（CLI check/parse 收集链路依赖此行为）。
-    func testParsePhaseCollectsMultipleErrors() {
-        let source = """
-        [Bad1|notakw
-        [Bad2|notakw
-        [Bad3|notakw
-        main|func() -> ()
-            return
-        """
+    func testParsePhaseCollectsMultipleErrors() throws {
+        let source = try loadPiniFixture("testParsePhaseCollectsMultipleErrors", filePath: #filePath)
         let result = parse(source)
         XCTAssertGreaterThanOrEqual(result.errors.count, 3,
                                     "解析阶段应一次性收集多个错误，实际: \(result.errors)")
@@ -36,19 +30,8 @@ final class FrontendMultiErrorTests: XCTestCase {
     // MARK: - 语义阶段：多个重声明一次性收集（呼应 P2-3 同趟报告）
 
     /// 意图：验证语义阶段一次性收集多个重声明——foo/bar 各重复声明一次，断言解析无错且 semErrors >= 2，逐个断言均为 redeclaredSymbol（呼应 P2-3 同趟报告）。
-    func testSemanticPhaseCollectsMultipleRedeclarations() {
-        let source = """
-        foo|func() -> ()
-            return
-        foo|func() -> ()
-            return
-        bar|func() -> ()
-            return
-        bar|func() -> ()
-            return
-        main|func() -> ()
-            return
-        """
+    func testSemanticPhaseCollectsMultipleRedeclarations() throws {
+        let source = try loadPiniFixture("testSemanticPhaseCollectsMultipleRedeclarations", filePath: #filePath)
         let result = parse(source)
         XCTAssertTrue(result.errors.isEmpty, "重声明是合法语法，解析阶段不应报错")
         let semErrors = analyze(result.module)
@@ -65,13 +48,8 @@ final class FrontendMultiErrorTests: XCTestCase {
     // MARK: - 回归：无错误时两阶段皆空
 
     /// 意图：回归验证合法程序两阶段皆空——单函数 + main，断言解析错误为空且语义分析结果为空（防止误报）。
-    func testNoErrorsWhenValid() {
-        let source = """
-        foo|func() -> ()
-            return
-        main|func() -> ()
-            return
-        """
+    func testNoErrorsWhenValid() throws {
+        let source = try loadPiniFixture("testNoErrorsWhenValid", filePath: #filePath)
         let result = parse(source)
         XCTAssertTrue(result.errors.isEmpty)
         XCTAssertTrue(analyze(result.module).isEmpty)

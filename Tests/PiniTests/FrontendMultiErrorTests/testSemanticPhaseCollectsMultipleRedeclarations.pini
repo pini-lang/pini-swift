@@ -1,0 +1,10 @@
+foo|func() -> ()
+    return
+foo|func() -> ()
+    return
+bar|func() -> ()
+    return
+bar|func() -> ()
+    return
+main|func() -> ()
+    return

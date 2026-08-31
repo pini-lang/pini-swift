@@ -176,14 +176,7 @@ final class FFIModuleTests: XCTestCase {
  /// 推进性测量：运行抛错且报错含「未找到符号」/「symbol」。
  /// 驳回性测量：不应静默成功。
  func testUndefinedForeignSymbolRejected() throws {
- let source = """
- [libc|foreign]
- 不存在的符号(x: I32,) -> (I32,)
-
- main|func() -> ()
-  print("x")
-  return
- """
+ let source = try loadPiniFixture("testUndefinedForeignSymbolRejected", filePath: #filePath)
  XCTAssertThrowsError(try runProgram(source)) { error in
  let msg = "\(error)"
  XCTAssertTrue(msg.contains("未找到符号") || msg.contains("symbol") || msg.contains("E5-017"),
@@ -194,17 +187,7 @@ final class FFIModuleTests: XCTestCase {
  /// 意图：`*T` 元素禁 object（ARC 隔离）——`*计数器` 声明被类型检查拒绝。
  /// 推进性测量：analyzeErrors 返回非空且报错含「C 兼容」。
  func testPointerToObjectRejected() throws {
- let source = """
- {计数器}
- count: I32 = 0
-
- [libc|foreign]
- 写(p: *计数器,) -> ()
-
- main|func() -> ()
-  print("x")
-  return
- """
+ let source = try loadPiniFixture("testPointerToObjectRejected", filePath: #filePath)
  let err = analyzeErrors(source)
  guard let err else {
  XCTFail("`*object` 应被 C 兼容性校验拒绝"); return
@@ -215,13 +198,7 @@ final class FFIModuleTests: XCTestCase {
  /// 意图：`&` 取地址在非 unsafe 上下文（普通函数体）→ 类型检查拒绝。
  /// 推进性测量：analyzeErrors 返回非空且报错含「unsafe」。
  func testAddressOfOutsideUnsafeRejected() throws {
- let source = """
- main|func() -> ()
-  var x: I64 = 1
-  var p = &x
-  print("x")
-  return
- """
+ let source = try loadPiniFixture("testAddressOfOutsideUnsafeRejected", filePath: #filePath)
  let err = analyzeErrors(source)
  guard let err else {
  XCTFail("非 unsafe 上下文取地址应报错"); return

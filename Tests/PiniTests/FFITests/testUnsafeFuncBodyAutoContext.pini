@@ -1,0 +1,14 @@
+[libc|foreign]
+cstr(s: String,) -> (*U8,)
+strlen(s: *U8,) -> (U64,)
+free(p: *U8,) -> ()
+
+量长度|unsafe(s: String,) -> (U64,)
+    var p = cstr(s)
+    var n = strlen(p)
+    free(p)
+    return n
+
+main|func() -> ()
+    print(量长度("hello"))
+    return

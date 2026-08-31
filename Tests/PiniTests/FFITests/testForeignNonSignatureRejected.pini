@@ -1,0 +1,6 @@
+[libc|foreign]
+malloc(size: U64,) -> (*U8,)
+var x: I32 = 0
+
+main|func() -> ()
+    return

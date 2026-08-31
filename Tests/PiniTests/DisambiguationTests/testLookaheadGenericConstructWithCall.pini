@@ -1,0 +1,3 @@
+main() -> ()
+    var c = 容器<I32>()
+    return

@@ -1,0 +1,5 @@
+main|func() -> ()
+    var f = func (n,) -> (I32,):
+        return n + 1
+    print(f(41))
+    return

@@ -8,15 +8,7 @@ final class FloatValueTests: XCTestCase {
     /// 推进性测量：F64(3) + 0.5 输出 3.5
     /// 驳回性测量：E5-003 / 类型报错均不合格
     func testF64ConvertsIntAndJoinsFloatArithmetic() throws {
-        let source = """
-main|func() -> ()
-    var n = 3
-    var f = F64(n)
-    print(f + 0.5)
-    print(F64(7))
-    print(F64(2.5))
-    return
-"""
+        let source = try loadPiniFixture("testF64ConvertsIntAndJoinsFloatArithmetic", filePath: #filePath)
         let out = try runProgram(source)
         XCTAssertTrue(out.contains("3.5"), out)
         XCTAssertTrue(out.contains("7.0"), out)
@@ -26,13 +18,8 @@ main|func() -> ()
     /// 意图：非数值参数干净报错
     /// 推进性测量：抛 RuntimeError.invalidOperation
     /// 驳回性测量：静默返回或崩溃均不合格
-    func testF64RejectsNonNumeric() {
-        let source = """
-main|func() -> ()
-    var f = F64("x")
-    print(f)
-    return
-"""
+    func testF64RejectsNonNumeric() throws {
+        let source = try loadPiniFixture("testF64RejectsNonNumeric", filePath: #filePath)
         XCTAssertThrowsError(try runProgram(source), "F64 非数值参数应报错")
     }
 

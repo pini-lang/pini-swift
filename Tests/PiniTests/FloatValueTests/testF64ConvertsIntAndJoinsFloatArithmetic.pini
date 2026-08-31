@@ -1,0 +1,7 @@
+main|func() -> ()
+    var n = 3
+    var f = F64(n)
+    print(f + 0.5)
+    print(F64(7))
+    print(F64(2.5))
+    return

@@ -1,0 +1,8 @@
+{撬棍}
+
+{{撬棍}}
+撬|self(b: 保险箱) -> ()
+    print(b._密钥)
+    return
+main|func() -> ()
+    return

@@ -1,0 +1,9 @@
+[libc|foreign]
+malloc(size: U64,) -> (*U8,)
+free(p: *U8,) -> ()
+
+main|func() -> ()
+    var p = unsafe malloc(16)
+    print(p)
+    unsafe free(p)
+    return

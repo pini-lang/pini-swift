@@ -67,90 +67,32 @@ final class FFITests: XCTestCase {
 
     /// 意图：`[libc|foreign]` 声明 malloc 后可用 `unsafe malloc(n)` 调用，返回 `*U8` 指针值。
     func testForeignMallocReturnsPointer() throws {
-        let source = """
-[libc|foreign]
-malloc(size: U64,) -> (*U8,)
-free(p: *U8,) -> ()
-
-main|func() -> ()
-    var p = unsafe malloc(16)
-    print(p)
-    unsafe free(p)
-    return
-"""
+        let source = try loadPiniFixture("testForeignMallocReturnsPointer", filePath: #filePath)
         let out = try runProgram(source)
         XCTAssertTrue(out.hasPrefix("*U8@0x"), "malloc 应返回 `*U8@0x...` 指针，实际: \(out)")
     }
 
     /// 意图：store/load 指针原语按元素类型做写读往返，输出一致。
     func testStoreLoadRoundtrip() throws {
-        let source = """
-[libc|foreign]
-malloc(size: U64,) -> (*U8,)
-free(p: *U8,) -> ()
-
-main|func() -> ()
-    var p = unsafe malloc(16)
-    unsafe store(p, 42)
-    print(unsafe load(p))
-    unsafe store(p, 100)
-    print(unsafe load(p))
-    unsafe free(p)
-    return
-"""
+        let source = try loadPiniFixture("testStoreLoadRoundtrip", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "42\n100")
     }
 
     /// 意图：cstr 把 String 转 C 字符串，strlen 量出长度、puts 打印 C 字符串。
     func testForeignCstrStrlenPuts() throws {
-        let source = """
-[libc|foreign]
-cstr(s: String,) -> (*U8,)
-strlen(s: *U8,) -> (U64,)
-puts(s: *U8,) -> (I32,)
-free(p: *U8,) -> ()
-
-main|func() -> ()
-    var s = unsafe cstr("hello")
-    print(unsafe strlen(s))
-    unsafe puts(s)
-    unsafe free(s)
-    return
-"""
+        let source = try loadPiniFixture("testForeignCstrStrlenPuts", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "5\nhello")
     }
 
     /// 意图：memcpy 按字节拷贝，load 目标读出源值。
     func testForeignMemcpy() throws {
-        let source = """
-[libc|foreign]
-malloc(size: U64,) -> (*U8,)
-free(p: *U8,) -> ()
-memcpy(dst: *U8, src: *U8, n: U64,) -> (*U8,)
-
-main|func() -> ()
-    var a = unsafe malloc(8)
-    var b = unsafe malloc(8)
-    unsafe store(a, 7)
-    unsafe memcpy(b, a, 8)
-    print(unsafe load(b))
-    unsafe free(a)
-    unsafe free(b)
-    return
-"""
+        let source = try loadPiniFixture("testForeignMemcpy", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "7")
     }
 
     /// 意图：foreign 声明未注册的 C 函数 → 注册期 fail-fast（E5-015）。
     func testUndefinedNativeFunctionRejected() throws {
-        let source = """
-[libc|foreign]
-不存在的函数(x: I32,) -> (I32,)
-
-main|func() -> ()
-    print("x")
-    return
-"""
+        let source = try loadPiniFixture("testUndefinedNativeFunctionRejected", filePath: #filePath)
         do {
             _ = try runProgram(source)
             XCTFail("未注册原生函数应运行时报错")
@@ -163,83 +105,31 @@ main|func() -> ()
 
     /// 意图：`unsafe` 前缀是单次不安全消耗点；`unsafe load(p)` 可用。
     func testUnsafePrefixConsumptionPoint() throws {
-        let source = """
-[libc|foreign]
-malloc(size: U64,) -> (*U8,)
-free(p: *U8,) -> ()
-
-main|func() -> ()
-    var p = unsafe malloc(8)
-    unsafe store(p, 3)
-    print(unsafe load(p))
-    unsafe free(p)
-    return
-"""
+        let source = try loadPiniFixture("testUnsafePrefixConsumptionPoint", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "3")
     }
 
     /// 意图：`|unsafe` 函数体自动处于不安全上下文——内部 `&` 与 foreign 调用无需 `unsafe` 前缀。
     func testUnsafeFuncBodyAutoContext() throws {
-        let source = """
-[libc|foreign]
-cstr(s: String,) -> (*U8,)
-strlen(s: *U8,) -> (U64,)
-free(p: *U8,) -> ()
-
-量长度|unsafe(s: String,) -> (U64,)
-    var p = cstr(s)
-    var n = strlen(p)
-    free(p)
-    return n
-
-main|func() -> ()
-    print(量长度("hello"))
-    return
-"""
+        let source = try loadPiniFixture("testUnsafeFuncBodyAutoContext", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "5")
     }
 
     /// 意图：`&x` 快照取址（解释器限制）——store/load 自洽往返。
     func testAddressOfSnapshot() throws {
-        let source = """
-main|func() -> ()
-    var x: I64 = 42
-    var p = unsafe &x
-    print(unsafe load(p))
-    unsafe store(p, 99)
-    print(unsafe load(p))
-    return
-"""
+        let source = try loadPiniFixture("testAddressOfSnapshot", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "42\n99")
     }
 
     /// 意图：对指针值 `&` 返回自身（地址即值）。
     func testAddressOfPointerIsNoop() throws {
-        let source = """
-[libc|foreign]
-malloc(size: U64,) -> (*U8,)
-free(p: *U8,) -> ()
-
-main|func() -> ()
-    var p = unsafe malloc(8)
-    var q = unsafe &p
-    unsafe store(q, 5)
-    print(unsafe load(p))
-    unsafe free(p)
-    return
-"""
+        let source = try loadPiniFixture("testAddressOfPointerIsNoop", filePath: #filePath)
         XCTAssertEqual(try runProgram(source), "5")
     }
 
     /// 意图：`&` 在非 unsafe 上下文（普通函数体）→ 类型检查拒绝。
     func testAddressOfOutsideUnsafeRejected() throws {
-        let source = """
-main|func() -> ()
-    var x: I64 = 1
-    var p = &x
-    print("x")
-    return
-"""
+        let source = try loadPiniFixture("testAddressOfOutsideUnsafeRejected", filePath: #filePath)
         let err = analyzeErrors(source)
         guard let err else {
             XCTFail("非 unsafe 上下文取地址应报错")
@@ -252,17 +142,7 @@ main|func() -> ()
 
     /// 意图：`*T` 元素禁 object（ARC 隔离）——`*计数器` 声明被类型检查拒绝。
     func testPointerToObjectRejected() throws {
-        let source = """
-{计数器}
-count: I32 = 0
-
-[libc|foreign]
-写(p: *计数器,) -> ()
-
-main|func() -> ()
-    print("x")
-    return
-"""
+        let source = try loadPiniFixture("testPointerToObjectRejected", filePath: #filePath)
         let err = analyzeErrors(source)
         guard let err else {
             XCTFail("`*object` 应被 C 兼容性校验拒绝")
@@ -273,28 +153,13 @@ main|func() -> ()
 
     /// 意图：foreign 块内不允许字段声明等非签名行。
     func testForeignNonSignatureRejected() throws {
-        let source = """
-[libc|foreign]
-malloc(size: U64,) -> (*U8,)
-var x: I32 = 0
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testForeignNonSignatureRejected", filePath: #filePath)
         assertParseError(source, contains: "只允许外部 C 函数签名")
     }
 
     /// 意图：类型体内出现 `|unsafe` 修饰符被拒（规则 3.2 类型体禁函数）。
     func testUnsafeFuncNotTopLevelRejected() throws {
-        let source = """
-(点)
-x: I32 = 0
-移动|unsafe() -> ()
-    return
-
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testUnsafeFuncNotTopLevelRejected", filePath: #filePath)
         assertParseError(source, contains: "类型体内禁止函数声明")
     }
 }

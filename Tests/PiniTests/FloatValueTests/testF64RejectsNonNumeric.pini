@@ -1,0 +1,4 @@
+main|func() -> ()
+    var f = F64("x")
+    print(f)
+    return

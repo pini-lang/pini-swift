@@ -1,0 +1,6 @@
+[libc|foreign]
+不存在的函数(x: I32,) -> (I32,)
+
+main|func() -> ()
+    print("x")
+    return

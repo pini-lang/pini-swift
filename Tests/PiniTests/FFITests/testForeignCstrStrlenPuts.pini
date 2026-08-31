@@ -1,0 +1,12 @@
+[libc|foreign]
+cstr(s: String,) -> (*U8,)
+strlen(s: *U8,) -> (U64,)
+puts(s: *U8,) -> (I32,)
+free(p: *U8,) -> ()
+
+main|func() -> ()
+    var s = unsafe cstr("hello")
+    print(unsafe strlen(s))
+    unsafe puts(s)
+    unsafe free(s)
+    return

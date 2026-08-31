@@ -1,0 +1,6 @@
+[libc|foreign]
+不存在的符号(x: I32,) -> (I32,)
+
+main|func() -> ()
+ print("x")
+ return

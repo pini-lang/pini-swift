@@ -1,0 +1,14 @@
+[libc|foreign]
+malloc(size: U64,) -> (*U8,)
+free(p: *U8,) -> ()
+memcpy(dst: *U8, src: *U8, n: U64,) -> (*U8,)
+
+main|func() -> ()
+    var a = unsafe malloc(8)
+    var b = unsafe malloc(8)
+    unsafe store(a, 7)
+    unsafe memcpy(b, a, 8)
+    print(unsafe load(b))
+    unsafe free(a)
+    unsafe free(b)
+    return

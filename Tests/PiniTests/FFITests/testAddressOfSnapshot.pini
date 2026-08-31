@@ -1,0 +1,7 @@
+main|func() -> ()
+    var x: I64 = 42
+    var p = unsafe &x
+    print(unsafe load(p))
+    unsafe store(p, 99)
+    print(unsafe load(p))
+    return

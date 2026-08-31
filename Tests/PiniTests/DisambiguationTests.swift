@@ -40,11 +40,7 @@ final class DisambiguationTests: XCTestCase {
 
     /// 意图：前瞻判定应识别 容器<I32>() 为泛型构造调用
     func testLookaheadGenericConstructWithCall() throws {
-        let source = """
-main() -> ()
-    var c = 容器<I32>()
-    return
-"""
+        let source = try loadPiniFixture("testLookaheadGenericConstructWithCall", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0] else {
@@ -69,11 +65,7 @@ main() -> ()
 
     /// 意图：前瞻判定应将 a < b 识别为比较运算（非泛型构造）
     func testLookaheadComparisonNotGenericConstruct() throws {
-        let source = """
-main() -> ()
-    var r = a < b
-    return
-"""
+        let source = try loadPiniFixture("testLookaheadComparisonNotGenericConstruct", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0],
@@ -95,11 +87,7 @@ main() -> ()
 
     /// 意图：泛型构造调用应能带参数
     func testGenericConstructWithArguments() throws {
-        let source = """
-main() -> ()
-    var c = 容器<I32>(42,)
-    return
-"""
+        let source = try loadPiniFixture("testGenericConstructWithArguments", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0],
@@ -121,11 +109,7 @@ main() -> ()
 
     /// 意图：多类型参数的泛型构造调用
     func testGenericConstructMultipleTypeArgs() throws {
-        let source = """
-main() -> ()
-    var m = 映射<String, I32>()
-    return
-"""
+        let source = try loadPiniFixture("testGenericConstructMultipleTypeArgs", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0],
@@ -151,11 +135,7 @@ main() -> ()
 
     /// 意图：a < b > c 应识别为链式比较而非泛型构造
     func testChainedComparisonNotGenericConstruct() throws {
-        let source = """
-main() -> ()
-    var r = a < b > c
-    return
-"""
+        let source = try loadPiniFixture("testChainedComparisonNotGenericConstruct", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0],
@@ -178,11 +158,7 @@ main() -> ()
     /// 意图：容器<I32> 后跟非 ( 非 . 应回退为比较运算
     func testGenericLookaheadFallbackOnNoCallSuffix() throws {
         // 容器 < I32 > 5 —— > 后跟整数，不是 ( 或 .，应回退为比较
-        let source = """
-main() -> ()
-    var r = 容器 < I32 > 5
-    return
-"""
+        let source = try loadPiniFixture("testGenericLookaheadFallbackOnNoCallSuffix", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0],
@@ -199,11 +175,7 @@ main() -> ()
     /// 意图：未闭合的 < 应回退为比较运算
     func testUnclosedAngleBracketFallback() throws {
         // a < b + c —— < 后无 > 闭合，应回退为比较
-        let source = """
-main() -> ()
-    var r = a < b + c
-    return
-"""
+        let source = try loadPiniFixture("testUnclosedAngleBracketFallback", filePath: #filePath)
         let module = try parseModule(source)
 
         guard case .funcDecl(let funcDecl) = module.declarations[0],
@@ -219,13 +191,7 @@ main() -> ()
 
     /// 意图：类型标注位置的泛型类型应正确解析（var x: 容器<I32>）
     func testGenericInTypeAnnotation() throws {
-        let source = """
-(容器<T,>)
-值: T = 0
-main|func() -> ()
-    var c: 容器<I32> = 容器<I32>()
-    return
-"""
+        let source = try loadPiniFixture("testGenericInTypeAnnotation", filePath: #filePath)
         let module = try parseModule(source)
 
         // 第一个声明应为结构声明
@@ -263,14 +229,7 @@ main|func() -> ()
 
     /// 意图：字段声明的类型标注中的泛型应正确解析
     func testGenericInFieldTypeAnnotation() throws {
-        let source = """
-(容器<T,>)
-值: T = 0
-(包装器)
-内部: 容器<I32> = 容器<I32>()
-main|func() -> ()
-    return
-"""
+        let source = try loadPiniFixture("testGenericInFieldTypeAnnotation", filePath: #filePath)
         let module = try parseModule(source)
 
         // 第二个声明（包装器）的字段类型应为 generic
@@ -292,12 +251,7 @@ main|func() -> ()
 
     /// 意图：内容态中行首 ( 应被识别为新结构声明开始
     func testLineStartParenIsNewDecl() throws {
-        let source = """
-main() -> ()
-    return
-(计数器)
-数值: I32 = 0
-"""
+        let source = try loadPiniFixture("testLineStartParenIsNewDecl", filePath: #filePath)
         let module = try parseModule(source)
 
         // 应有两个声明：main 函数 + 计数器结构
@@ -315,12 +269,7 @@ main() -> ()
 
     /// 意图：内容态中行首 [ 应被识别为新枚举/对象声明开始
     func testLineStartBracketIsNewDecl() throws {
-        let source = """
-main() -> ()
-    return
-[形状]
-圆
-"""
+        let source = try loadPiniFixture("testLineStartBracketIsNewDecl", filePath: #filePath)
         let module = try parseModule(source)
 
         XCTAssertEqual(module.declarations.count, 2, "应有两个声明")
@@ -337,11 +286,7 @@ main() -> ()
 
     /// 意图：表达式中的 ( 不是声明头（函数调用）
     func testParenInExpressionNotDecl() throws {
-        let source = """
-main() -> ()
-    print(42)
-    return
-"""
+        let source = try loadPiniFixture("testParenInExpressionNotDecl", filePath: #filePath)
         let module = try parseModule(source)
 
         XCTAssertEqual(module.declarations.count, 1, "应只有一个声明")

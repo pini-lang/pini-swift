@@ -1,0 +1,14 @@
+[形状]
+圆(F64,)
+[几何]
+圆(F64, F64,)
+
+半径|func(s: 形状,) -> (F64,)
+    match s:
+        case 圆(r):
+            return r
+    return 0.0
+
+main|func() -> ()
+    print(半径(形状.圆(2.0)),)
+    return
