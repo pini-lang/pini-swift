@@ -1,0 +1,7 @@
+fetchData() => (I32,)
+    return 42
+
+main|func() -> ()
+    var result = wait fetchData()
+    print(result)
+    return

@@ -1,0 +1,9 @@
+读取文件(路径: String,) -> (内容: String, 错误: String,)
+    return ("", "模拟错误")
+
+main|func() -> ()
+    try 读取文件("data.txt"):
+        print("读取成功")
+    except 错误:
+        print("读取失败")
+    return

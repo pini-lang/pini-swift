@@ -1,0 +1,7 @@
+(Point)
+    port: I32 = 8080
+
+main|func() -> ()
+    let c = Point()
+    print(c.port)
+    return

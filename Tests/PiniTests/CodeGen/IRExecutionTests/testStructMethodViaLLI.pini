@@ -1,0 +1,13 @@
+(Point)
+x: I32 = 0
+
+((Point))
+add|self() -> ()
+    self.x = self.x + 1
+    return
+
+main|func() -> ()
+    let p = Point()
+    p.add()
+    print(p.x)
+    return

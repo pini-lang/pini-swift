@@ -1,0 +1,11 @@
+main|func() -> ()
+    var result = ""
+    var i = 0
+    while i < 1:
+        defer result = result + "last"
+        defer result = result + "middle"
+        defer result = result + "first"
+        result = result + "body"
+        i = i + 1
+    print(result)
+    return

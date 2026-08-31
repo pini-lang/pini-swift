@@ -1,0 +1,9 @@
+{Counter}
+    count: I32 = 0
+
+main|func() -> ()
+    let c1 = Counter()
+    let c2 = c1
+    c2.count = 100
+    print(c1.count)
+    return

@@ -1,0 +1,5 @@
+main|func() -> ()
+    print(sqrt(4.0))
+    print(sin(0.0))
+    print(cos(0.0))
+    return

@@ -1,0 +1,14 @@
+[Color]
+Red
+Green
+
+main|func() -> ()
+    let c = Red
+    match c:
+        case Red:
+            print("R")
+        case Green:
+            print("G")
+        case _:
+            print("?")
+    return

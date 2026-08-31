@@ -1,0 +1,10 @@
+main|func() -> ()
+    var s = "hi"
+    match s:
+        case "hi":
+            print("hello")
+        case "bye":
+            print("goodbye")
+        case _:
+            print("unknown")
+    return

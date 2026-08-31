@@ -1,0 +1,16 @@
+<可描述>
+    描述(self) -> (String,)
+        return "默认描述"
+
+(狗)
+    名字: String = "旺财"
+    实现: 可描述
+
+((狗))
+    描述|self() -> (String,)
+        return 名字
+
+main|func() -> ()
+    var d = 狗()
+    print(d.描述())
+    return

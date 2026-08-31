@@ -1,0 +1,15 @@
+<Shape>
+    describe(self) -> (I32,)
+        return 42
+
+(Circle)
+    实现: Shape
+
+((Circle))
+    describe|self() -> (I32,)
+        return 99
+
+main|func() -> ()
+    var c = Circle()
+    print(c.describe())
+    return

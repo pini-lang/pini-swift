@@ -1,0 +1,7 @@
+identity<T>(x: T,) -> (T,)
+    return x
+
+main|func() -> ()
+    print(identity<I32>(42))
+    print(identity<F64>(3.14))
+    return

@@ -1,0 +1,6 @@
+main|func() -> ()
+    var p = (商: 17, 余: 5)
+    print(p.商 - p.余)
+    print(p.商)
+    print(p.余)
+    return

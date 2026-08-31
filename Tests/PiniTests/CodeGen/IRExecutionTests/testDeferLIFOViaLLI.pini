@@ -1,0 +1,5 @@
+main|func() -> ()
+    defer print("C")
+    defer print("B")
+    print("A")
+    return

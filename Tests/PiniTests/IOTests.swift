@@ -58,12 +58,7 @@ final class IOTests: XCTestCase {
     /// 意图：print 接受多个参数，以空格连接输出，末尾换行；单参行为不变
     /// 推进性测量：print("a", "b", 3) == "a b 3\n"
     func testPrintMultipleArgs() throws {
-        let source = """
-main|func() -> ()
-    print("a", "b", 3)
-    print("single")
-    return
-"""
+        let source = try loadPiniFixture("testPrintMultipleArgs", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output, "a b 3\nsingle\n", "print 多参应以空格连接并换行")
         // 驳回性测量：末尾必须含换行，不得缺失
@@ -79,11 +74,7 @@ main|func() -> ()
         try "hello file".write(toFile: path, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        let source = """
-main|func() -> ()
-    print(readFile("\(path)"))
-    return
-"""
+        let source = try loadPiniFixture("testReadFile", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: path)
         let output = try runProgram(source)
         XCTAssertEqual(output, "hello file\n", "readFile 应返回文件全文")
         // 驳回性测量：不得返回空内容
@@ -98,11 +89,7 @@ main|func() -> ()
         let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("pini_write_\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        let source = """
-main|func() -> ()
-    writeFile("\(path)", "written by pini")
-    return
-"""
+        let source = try loadPiniFixture("testWriteFile", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: path)
         _ = try runProgram(source)
         let content = try String(contentsOfFile: path, encoding: .utf8)
         XCTAssertEqual(content, "written by pini", "writeFile 应将内容写入文件")
@@ -115,11 +102,7 @@ main|func() -> ()
     /// 意图：readLine() 从 stdin 读取一行（去除换行）返回 String
     /// 推进性测量：注入 "world\n"，print(readLine()) 输出 "world\n"
     func testReadLine() throws {
-        let source = """
-main|func() -> ()
-    print(readLine())
-    return
-"""
+        let source = try loadPiniFixture("testReadLine", filePath: #filePath)
         let output = try runProgram(source, stdin: "world\n")
         XCTAssertEqual(output, "world\n", "readLine 应读取 stdin 一行")
         // 驳回性测量：必须打印读取到的行，不得为空（此处 stdin 非空）
@@ -130,13 +113,9 @@ main|func() -> ()
 
     /// 意图：readFile 读取不存在的文件应抛出 RuntimeError.invalidOperation（不崩溃、不静默返回）
     /// 驳回性测量：错误类型必须精确匹配，而非其它错误
-    func testReadFileMissingPathThrows() {
+    func testReadFileMissingPathThrows()  throws {
         let missing = (NSTemporaryDirectory() as NSString).appendingPathComponent("pini_missing_\(UUID().uuidString).txt")
-        let source = """
-main|func() -> ()
-    print(readFile("\(missing)"))
-    return
-"""
+        let source = try loadPiniFixture("testReadFileMissingPathThrows", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: missing)
         XCTAssertThrowsError(try runProgram(source)) { error in
             guard case RuntimeError.invalidOperation = error else {
                 XCTFail("应为 RuntimeError.invalidOperation，实际: \(error)")
@@ -149,11 +128,7 @@ main|func() -> ()
     /// 推进性测量：注入空 stdin，输出 "\n"
     /// 驳回性测量：不得因 EOF 抛出运行时错误
     func testReadLineEOF() throws {
-        let source = """
-main|func() -> ()
-    print(readLine())
-    return
-"""
+        let source = try loadPiniFixture("testReadLineEOF", filePath: #filePath)
         let output = try runProgram(source, stdin: "")
         XCTAssertEqual(output, "\n", "readLine 在 EOF 时应返回空串")
     }

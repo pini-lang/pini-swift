@@ -1,0 +1,5 @@
+main|func() -> ()
+    var flag = true
+    var n = 3
+    print("flag=\(flag) n=\(n)")
+    return

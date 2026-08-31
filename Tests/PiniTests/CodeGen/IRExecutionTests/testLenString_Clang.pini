@@ -1,0 +1,4 @@
+main|func() -> ()
+    var s = "abcdefg"
+    print(len(s))
+    return

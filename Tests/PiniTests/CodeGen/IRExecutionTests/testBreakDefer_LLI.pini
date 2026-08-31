@@ -1,0 +1,10 @@
+main|func() -> ()
+    var result = ""
+    var i = 0
+    while i < 10:
+        defer result = result + "x"
+        if i == 2:
+            break
+        i = i + 1
+    print(result)
+    return

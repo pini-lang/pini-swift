@@ -1,0 +1,7 @@
+{Counter}
+    port: I32 = 8080
+
+main|func() -> ()
+    let c = Counter()
+    print(c.port)
+    return
