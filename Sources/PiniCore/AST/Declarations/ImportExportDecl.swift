@@ -1,32 +1,56 @@
 import Foundation
 
-/// `import` 声明（P4 模块化）：引入一个外部模块的公开 API。
+/// `import` 块声明（G52 批 1，2026-08-31）：引入一个外部模块，绑定到别名。
 ///
-/// 语法：`import <模块名>`。Phase 2 仅解析并暂存原始模块名，**不解析、不 enforce**；
-/// 真正的跨模块符号解析在 Phase 4（解释器模块加载）落地。
+/// 语法（唯一顶级形态；裸语句已移除）：
+/// ```
+/// [当前文件名|import]
+/// 别名 = "包路径"
+/// ```
+/// 块头名 = 当前文件名（去 `.pini` 后缀，解析器校验一致）——自识性标签，
+/// 不进访问路径（G52 R4）。别名是静态限定符：`别名.符号` 限定访问，
+/// 不参与运行时值命名空间（D-2 静态互斥：本地符号禁止与别名同名）。
 public struct ImportDecl: Equatable, ASTNode {
- /// 被引入的模块名（暂为单标识符；后续可扩展为点分路径）。
- public let moduleName: String
+ /// import 别名（静态限定符，`别名.符号` 的前缀）。
+ public let alias: String
+ /// 被引入模块的包路径（相对当前文件目录或绝对路径）。
+ public let packagePath: String
  public let location: SourceLocation
 
- public init(moduleName: String, location: SourceLocation) {
- self.moduleName = moduleName
+ public init(alias: String, packagePath: String, location: SourceLocation) {
+ self.alias = alias
+ self.packagePath = packagePath
  self.location = location
  }
 }
 
-/// `export` 声明（P4 模块化）：按符号覆盖默认可见性的逃生舱。
-///
-/// 语法：`export <符号名>`。在约定制 4 级模型下，绝大部分符号按文件 / 目录 `_` 前缀
-/// 自动判定可见性；`export` 用于把本应更窄（如位于 `_` 文件）的符号显式提升为对外导出。
-/// Phase 2 仅解析并暂存原始符号名，**不 enforce**；语义作用在 P4 后续阶段落地。
-public struct ExportDecl: Equatable, ASTNode {
- /// 被显式导出的符号名。
- public let symbolName: String
+/// `export` 块中的重命名导出项：`可见别名 = 原符号`。
+public struct ExportRename: Equatable, ASTNode {
+ public let alias: String
+ public let symbol: String
  public let location: SourceLocation
 
- public init(symbolName: String, location: SourceLocation) {
- self.symbolName = symbolName
+ public init(alias: String, symbol: String, location: SourceLocation) {
+ self.alias = alias
+ self.symbol = symbol
+ self.location = location
+ }
+}
+
+/// `export` 块声明（G52 批 1）：显式导出表（覆盖默认可见性规则的逃生舱，
+/// 语义 enforce 随可见性定稿表批次落地；本批解析并携带）。
+///
+/// 语法：
+/// ```
+/// [当前文件名|export]
+/// 可见别名 = 原符号
+/// ```
+public struct ExportDecl: Equatable, ASTNode {
+ public let renames: [ExportRename]
+ public let location: SourceLocation
+
+ public init(renames: [ExportRename], location: SourceLocation) {
+ self.renames = renames
  self.location = location
  }
 }

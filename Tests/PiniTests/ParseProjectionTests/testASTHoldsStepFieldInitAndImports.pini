@@ -1,4 +1,6 @@
-import std
+[testASTHoldsStepFieldInitAndImports|import]
+std = "./std"
+
 
 (pt)
 x: I32 = 5

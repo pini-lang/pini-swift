@@ -339,12 +339,19 @@ public class Parser {
  // MARK: - 顶级声明解析
  
  private func parseTopLevelDecl() throws -> TopLevelDecl {
- // P4 模块化：import / export 顶层声明（Phase 2 仅解析、暂存，不 enforce）
+ // G52 批 1（2026-08-31）：顶级裸 `import X` / `export X` 语句已移除——
+ // 块形式 `[当前文件名|import]` 是唯一顶级形态（本语言顶级无裸语句空间）。
  if checkKeyword(.import) {
- return .importDecl(try parseImportDecl())
+ throw ParserError.invalidDeclaration(
+ reason: "顶级裸 import 已移除（G52 批 1）：改用块形式 `[当前文件名|import]` 加 `别名 = 包路径字符串`",
+ location: currentLocation
+ )
  }
  if checkKeyword(.export) {
- return .exportDecl(try parseExportDecl())
+ throw ParserError.invalidDeclaration(
+ reason: "顶级裸 export 已移除（G52 批 1）：改用块形式 `[当前文件名|export]` + `可见别名 = 原符号`",
+ location: currentLocation
+ )
  }
 
  // 根据括号类型分派（ADR-016 规则 3.2/3.14：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块）
@@ -392,26 +399,77 @@ public class Parser {
 
  // MARK: - import / export 声明解析（P4 模块化，Phase 2 仅解析暂存）
 
- /// 解析 `import <模块名>`；模块名暂为单标识符。
- private func parseImportDecl() throws -> ImportDecl {
- let loc = currentLocation
- advance() // 跳过 import
- guard case .identifier(let name, _) = currentToken else {
- throw ParserError.invalidDeclaration(reason: "import 后应为模块名", location: loc)
- }
- advance()
- return ImportDecl(moduleName: name, location: loc)
+ /// 当前文件名（去 `.pini` 后缀）——import/export 块头名的校验基准（D-1）。
+ private var currentFileBaseName: String {
+ let base = (fileName as NSString).lastPathComponent
+ return base.hasSuffix(".pini") ? String(base.dropLast(5)) : base
  }
 
- /// 解析 `export <符号名>`。
- private func parseExportDecl() throws -> ExportDecl {
- let loc = currentLocation
- advance() // 跳过 export
- guard case .identifier(let name, _) = currentToken else {
- throw ParserError.invalidDeclaration(reason: "export 后应为符号名", location: loc)
+ /// 解析 `[当前文件名|import]` 块：`别名 = "包路径"` 项集（顶格块，下一顶级形态行闭合）。
+ private func parseImportBlock(headerName: String, location: SourceLocation) throws -> ImportDecl {
+ guard headerName == currentFileBaseName else {
+ throw ParserError.invalidDeclaration(
+ reason: "import 块头名须为当前文件名 `\(currentFileBaseName)`（D-1：自识性标签），实际 `\(headerName)`",
+ location: location
+ )
+ }
+ var items: [(alias: String, path: String)] = []
+ skipNewlines()
+ while !isEOF() {
+ // 项行形态：IDENT = STRING
+ guard case .identifier(let alias, _) = currentToken else { break }
+ guard case .assign(_) = peek() else { break }
+ advance() // 别名
+ advance() // =
+ guard case .stringLiteral(let path, _) = currentToken else {
+ throw ParserError.invalidDeclaration(
+ reason: "import 项须为 `别名 = 包路径字符串`", location: currentLocation)
  }
  advance()
- return ExportDecl(symbolName: name, location: loc)
+ items.append((alias: alias, path: path))
+ skipNewlines()
+ }
+ guard let first = items.first else {
+ throw ParserError.invalidDeclaration(reason: "import 块至少需要一项 `别名 = \"包路径\"`", location: location)
+ }
+ // 批 1 单项块（多别名引入多模块为批 3 模块树范围）——多项时报错提示
+ guard items.count == 1 else {
+ throw ParserError.invalidDeclaration(
+ reason: "import 块暂仅支持单项（多别名引入随批 3 模块树落地）", location: location)
+ }
+ return ImportDecl(alias: first.alias, packagePath: first.path, location: location)
+ }
+
+ /// 解析 `[当前文件名|export]` 块：`可见别名 = 原符号` 项集。
+ private func parseExportBlock(headerName: String, location: SourceLocation) throws -> ExportDecl {
+ guard headerName == currentFileBaseName else {
+ throw ParserError.invalidDeclaration(
+ reason: "export 块头名须为当前文件名 `\(currentFileBaseName)`（D-1：自识性标签），实际 `\(headerName)`",
+ location: location
+ )
+ }
+ var renames: [ExportRename] = []
+ skipNewlines()
+ while !isEOF() {
+ guard case .identifier(let alias, let itemLoc) = currentToken else { break }
+ advance()
+ guard case .assign(_) = currentToken else {
+ throw ParserError.invalidDeclaration(
+ reason: "export 项须为 `可见别名 = 原符号`", location: currentLocation)
+ }
+ advance()
+ guard case .identifier(let symbol, _) = currentToken else {
+ throw ParserError.invalidDeclaration(
+ reason: "export 项须为 `可见别名 = 原符号`", location: currentLocation)
+ }
+ advance()
+ renames.append(ExportRename(alias: alias, symbol: symbol, location: itemLoc))
+ skipNewlines()
+ }
+ guard !renames.isEmpty else {
+ throw ParserError.invalidDeclaration(reason: "export 块至少需要一项 `可见别名 = 原符号`", location: location)
+ }
+ return ExportDecl(renames: renames, location: location)
  }
 
  private func parseBracketDecl() throws -> TopLevelDecl {
@@ -444,6 +502,16 @@ public class Parser {
  advance()
  try expect(.rightBracket(loc))
  return .foreignDecl(try parseForeignDecl(name: name, location: loc))
+ } else if checkKeyword(.import) {
+ // G52 批 1（D-1 裁决）：`[当前文件名|import]` 块——引入外部模块。
+ advance()
+ try expect(.rightBracket(loc))
+ return .importDecl(try parseImportBlock(headerName: name, location: loc))
+ } else if checkKeyword(.export) {
+ // G52 批 1（D-1 裁决）：`[当前文件名|export]` 块——显式导出表。
+ advance()
+ try expect(.rightBracket(loc))
+ return .exportDecl(try parseExportBlock(headerName: name, location: loc))
  } else {
  throw ParserError.invalidDeclaration(reason: "无效的方括号声明修饰符", location: loc)
  }

@@ -1,5 +1,8 @@
-import math
-export helper
+[testParseImportAndExportWithProgram|import]
+math = "./math"
+
+[testParseImportAndExportWithProgram|export]
+helper = helper
 
 let helper = 1
 let main = 0

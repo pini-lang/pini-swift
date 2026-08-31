@@ -12,13 +12,13 @@ final class ParseProjectionTests: XCTestCase {
     /// 驳回性测量：任一缺失即不合格
     func testASTHoldsStepFieldInitAndImports() throws {
         let source = try loadPiniFixture("testASTHoldsStepFieldInitAndImports", filePath: #filePath)
-        let lexer = Lexer(source: source, fileName: "gp7.pini")
+        let lexer = Lexer(source: source, fileName: "testASTHoldsStepFieldInitAndImports.pini")
         let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "gp7.pini")
+        let parser = Parser(tokens: tokens, fileName: "testASTHoldsStepFieldInitAndImports.pini")
         let module = try parser.parseModule()
 
         XCTAssertFalse(module.imports.isEmpty, "import 应进入 Module.imports")
-        XCTAssertEqual(module.imports.first?.moduleName, "std")
+        XCTAssertEqual(module.imports.first?.alias, "std")
 
         let structDecl = module.declarations.first(where: { decl in
             if case .structDecl = decl { return true }

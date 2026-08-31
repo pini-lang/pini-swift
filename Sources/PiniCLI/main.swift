@@ -558,9 +558,15 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
  case .statement(let stmt):
  return describeStatement(stmt, indent: indent)
  case .importDecl(let importDecl):
- return "\(indent)import \(importDecl.moduleName)"
+ // G52 批 1：块形式 AST dump——`import 别名 = 路径`
+ return "\(indent)import \(importDecl.alias) = \(importDecl.packagePath)"
  case .exportDecl(let exportDecl):
- return "\(indent)export \(exportDecl.symbolName)"
+ // G52 批 1：块形式 AST dump——每个重命名项一行
+ var out = ""
+ for r in exportDecl.renames {
+ out += "\(indent)export \(r.alias) = \(r.symbol)\n"
+ }
+ return out.hasSuffix("\n") ? String(out.dropLast()) : out
  case .extensionDecl(let ext):
  var result = "\(indent)extension \(ext.targetType):\n"
  for m in ext.methods {

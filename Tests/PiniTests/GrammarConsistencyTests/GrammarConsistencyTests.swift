@@ -586,11 +586,14 @@ final class GrammarConsistencyTests: XCTestCase {
     /// import / export 顶级声明
     /// 意图：验证 import/export 顶级声明分别暂存进 Module 的 imports 与 exports。
     func testProductionsImportExport() throws {
-        let module = try parse(try loadPiniFixture("testProductionsImportExport", filePath: #filePath) as String)
+        let module = try parse(try loadPiniFixture("testProductionsImportExport", filePath: #filePath) as String,
+                               fileName: "testProductionsImportExport.pini")
         XCTAssertEqual(module.imports.count, 1)
-        XCTAssertEqual(module.imports[0].moduleName, "foo")
+        XCTAssertEqual(module.imports[0].alias, "foo")
+        XCTAssertEqual(module.imports[0].packagePath, "./foo")
         XCTAssertEqual(module.exports.count, 1)
-        XCTAssertEqual(module.exports[0].symbolName, "bar")
+        XCTAssertEqual(module.exports[0].renames.first?.alias, "bar")
+        XCTAssertEqual(module.exports[0].renames.first?.symbol, "bar")
     }
 
     /// 分组括号语义为零：`(a + b)` 直接返回内层表达式（不构造 paren 节点）。
