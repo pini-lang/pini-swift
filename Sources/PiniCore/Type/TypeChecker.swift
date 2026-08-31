@@ -1524,6 +1524,8 @@ public final class TypeChecker {
  break
  case .passStatement(_):
  break
+ case .captureStatement(_):
+ break
  }
  }
 

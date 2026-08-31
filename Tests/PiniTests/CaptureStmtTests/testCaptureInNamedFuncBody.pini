@@ -1,0 +1,6 @@
+foo|func() -> ():
+    capture x
+    return
+main|func() -> ():
+    foo()
+    return

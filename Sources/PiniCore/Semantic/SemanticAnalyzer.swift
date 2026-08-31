@@ -22,6 +22,11 @@ public final class SemanticAnalyzer {
  /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——首版接受，待符号表结构化（唯一 id）后升级。
  private var usedSymbols: Set<String> = []
 
+ /// H-1 capture 校验上下文栈：每个活跃匿名函数字面量一层
+ ///（boundary = 字面量体作用域边界；captured = 已先行声明的捕获名集合）。
+ /// ①引用外层局部未捕获 → captureWithoutDeclaration；嵌套字面量各持独立一层。
+ private var captureContexts: [(boundary: Scope, captured: Set<String>)] = []
+
  /// P4 Phase 3：多文件包分析时的包级符号索引与「当前正在分析的文件」。
  /// 单文件模式（`analyze(module:)`）下恒为 `nil`，故单文件行为零回归。
  private var packageContext: (index: PackageSymbolIndex, currentFileName: String)? = nil
@@ -106,7 +111,14 @@ public final class SemanticAnalyzer {
  // 内建 Optional 枚举类型标识符（裸 Optional / Optional.none 引用），静态层无需注册即可解析，
  // 与解释器对 Optional.some/Optional.none 的特判对齐（闭合 B2 静态缺口）。
  if name == "Optional" { return }
- if symbolTable.resolve(name) != nil {
+ if let hit = symbolTable.resolveWithScope(name) {
+ // H-1①：匿名函数体内引用外层局部变量，其 capture 声明须先于本使用出现
+ if let ctx = captureContexts.last,
+ !hit.scope.isWithin(ctx.boundary),
+ Self.isCapturableKind(hit.symbol.kind),
+ !ctx.captured.contains(name) {
+ throw SemanticError.captureWithoutDeclaration(name: name, location: location)
+ }
  usedSymbols.insert(name) // B2：记录读取引用（未使用检测依据）
  return
  }
@@ -337,6 +349,32 @@ public final class SemanticAnalyzer {
  // MARK: - 语句检查
 
  private func checkStatement(_ stmt: Statement) throws {
+ if case .captureStatement(let name, let location) = stmt {
+ // H-1：解析器已把 capture 限制在匿名函数体缩进体顶层；此处防御非常规构造路径
+ guard !captureContexts.isEmpty else {
+ throw SemanticError.invalidCaptureTarget(
+ name: name, reason: "capture 仅允许出现在匿名函数体顶层语句位", location: location)
+ }
+ // ②捕获一致性：目标必须是创建点外层的局部变量
+ if name == "self" {
+ throw SemanticError.invalidCaptureTarget(
+ name: name, reason: "self 由 |self 修饰符表达，不进 capture 列表（A2）", location: location)
+ }
+ if symbolTable.isDefinedInCurrentScope(name) {
+ throw SemanticError.invalidCaptureTarget(
+ name: name, reason: "已是本匿名函数的参数或体内已声明局部", location: location)
+ }
+ let boundary = captureContexts[captureContexts.count - 1].boundary
+ guard let hit = symbolTable.resolveWithScope(name),
+ Self.isCapturableKind(hit.symbol.kind),
+ !hit.scope.isWithin(boundary) else {
+ throw SemanticError.invalidCaptureTarget(
+ name: name, reason: "须是创建点外层的局部变量（参数/体内局部/内建函数/类型/不可见名不可捕获）", location: location)
+ }
+ captureContexts[captureContexts.count - 1].captured.insert(name)
+ usedSymbols.insert(name) // capture 即引用（B2 未使用判定）
+ return
+ }
  switch stmt {
  case .varDecl(let name, _, let initializer, let isMutable, let location):
  if let initExpr = initializer {
@@ -442,6 +480,8 @@ public final class SemanticAnalyzer {
  try checkStatement(statement)
  case .passStatement(_):
  break
+ case .captureStatement:
+ return
  }
  }
 
@@ -608,10 +648,16 @@ public final class SemanticAnalyzer {
  for param in decl.params {
  symbolTable.define(Symbol(name: param.name, kind: .parameter, location: decl.location))
  }
+ // H-1：作用域边界——此之后解析命中点若在边界之外，即为「外层局部」。
+ // captured 集**按语句序增量**填充（checkStatement 的 captureStatement 分支），
+ // 使「先用后 capture」（①）在语句序上可判定。
+ let captureBoundary = symbolTable.current
  if let body = decl.body {
+ captureContexts.append((boundary: captureBoundary, captured: []))
  for stmt in body.statements {
  try checkStatement(stmt)
  }
+ captureContexts.removeLast()
  }
  symbolTable.exitScope()
 
@@ -630,6 +676,15 @@ public final class SemanticAnalyzer {
  case .addressOf(let operand, _):
  // Phase 2a（ADR-015 FFI）：取地址——递归检查操作数。
  try checkExpression(operand)
+ }
+ }
+
+ /// H-1：可捕获的符号种类——外层局部变量（含外层函数参数）。
+ /// 函数/类型/枚举用例等按名字即可引用，不属于「捕获的外部对象」。
+ private static func isCapturableKind(_ kind: SymbolKind) -> Bool {
+ switch kind {
+ case .variable, .parameter: return true
+ default: return false
  }
  }
 }

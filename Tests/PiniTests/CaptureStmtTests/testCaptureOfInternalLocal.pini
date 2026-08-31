@@ -1,0 +1,7 @@
+main|func() -> ():
+    var f = func (x: I32,) -> (I32,):
+        var inner = 1
+        capture inner
+        return x + inner
+    print(f(5))
+    return

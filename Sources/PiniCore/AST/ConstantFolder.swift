@@ -105,6 +105,8 @@ public enum ConstantFolder {
  return .deferStatement(statement: fold(s), location: loc)
  case .passStatement(let loc):
  return .passStatement(location: loc)
+ case .captureStatement(let name, let loc):
+ return .captureStatement(name: name, location: loc)
  case .scopedBlock(let label, let body, let loc):
  return .scopedBlock(label: label, body: fold(body), location: loc)
  }

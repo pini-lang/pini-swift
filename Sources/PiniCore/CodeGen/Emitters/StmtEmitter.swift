@@ -364,6 +364,9 @@ extension IRGenerator {
  continueTarget: continueTarget)
  case .passStatement(_):
  return
+ case .captureStatement(_):
+ // H-1：静态纯度声明，IR 无形——闭包捕获由 ClosureEmitter 自 body 分析得出
+ return
  case .detachStatement(_, let detachLoc):
  // 任务 #13：detach 语句为解释器级 fire-and-forget 出口；LLVM 后端（D1 暂缓 FFI）
  // 尚未实现对应运行时原语，显式 unsupported（可逆）。

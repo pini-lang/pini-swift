@@ -166,6 +166,8 @@ extension SemanticError: DiagnosticProviding {
  case .inaccessibleSymbol: return "\(DiagnosticDomain.semantic.rawValue)-005"
  case .unknownMatchCase: return "\(DiagnosticDomain.semantic.rawValue)-006"
  case .nonExhaustiveMatch: return "\(DiagnosticDomain.semantic.rawValue)-007"
+ case .captureWithoutDeclaration: return "\(DiagnosticDomain.semantic.rawValue)-008"
+ case .invalidCaptureTarget: return "\(DiagnosticDomain.semantic.rawValue)-009"
  }
  }
  public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -183,7 +185,8 @@ extension SemanticError: DiagnosticProviding {
  case .undefinedVariable(_, let loc), .undefinedFunction(_, let loc),
  .undefinedType(_, let loc), .redeclaredSymbol(_, let loc),
  .inaccessibleSymbol(_, _, _, let loc), .unknownMatchCase(_, let loc),
- .nonExhaustiveMatch(_, let loc):
+ .nonExhaustiveMatch(_, let loc), .captureWithoutDeclaration(_, let loc),
+ .invalidCaptureTarget(_, _, let loc):
  return loc
  }
  }

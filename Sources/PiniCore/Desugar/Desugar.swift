@@ -77,7 +77,8 @@ public enum Desugar {
  returnLabels: f.returnLabels,
  isAsync: f.isAsync,
  body: f.body.map(desugar),
- location: f.location)
+ location: f.location,
+ captured: f.captured)
  }
 
  public static func desugar(_ s: StructDecl) -> StructDecl {
@@ -195,6 +196,8 @@ public enum Desugar {
  return .deferStatement(statement: desugar(inner), location: loc)
  case .passStatement(let loc):
  return .passStatement(location: loc)
+ case .captureStatement(let name, let loc):
+ return .captureStatement(name: name, location: loc)
  case .scopedBlock(let label, let body, let loc):
  return .scopedBlock(label: label, body: desugar(body), location: loc)
  }

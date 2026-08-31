@@ -761,6 +761,18 @@ func-literal    ::= 'func' '(' [param {',' param}] ')'
                     [('->' | '=>') '(' [ret-item {',' ret-item}] ')'] ':' func-body;
 (* 匿名函数必须使用 func 关键字 *)
 
+capture-stmt    ::= 'capture' IDENT ;
+(* H-1（A1 裁决，2026-08-31 落地）：capture 声明位于**匿名函数体内部**，每行恰一个
+   外部标识符；允许多条独立 capture 行散落分布、不要求集中。与元组解构模式的相似性
+   不构成本产生式的形态依据——capture 列的是已有外部标识符的名字而非绑定模式，故
+   不引入括号/模式形态，`_` 裸占位亦无绑定语义而不收（允许以 `_` 开头的具名标识符）。
+   不支持捕获表达式；self 由 |self 修饰符表达，不进 capture 列表（A2）。
+   语义（偏弱纯定位——闭包显式声明其捕获）：
+   ① 语句序上 capture 行须先于所列名字在体内的首次使用（E3-008）；
+   ② capture 目标须是创建点外层的局部变量——本匿名函数参数/体内已声明局部/
+      内建函数/类型/创建点不可见名不可捕获（E3-009）；
+   ③ 位置仅限匿名函数缩进体顶层语句位（E2-007，解析器强制）。 *)
+
 func-body       ::= INDENT { statement } DEDENT;
 (* 草稿意图（函数体必须按层次缩进且至少缩进一层）已采纳（任务 #13）：函数体强制缩进，
    不再允许顶级内容态顶格累积语句。空体 = `INDENT DEDENT`。 *)
@@ -770,7 +782,8 @@ func-body       ::= INDENT { statement } DEDENT;
 statement       ::= var-decl | assign-stmt | return-stmt | break-stmt | continue-stmt
                   | if-stmt | while-stmt | for-stmt | match-stmt | try-stmt
                   | defer-stmt | pass-stmt | expression-stmt
-                  | detach-expr-stmt;
+                  | detach-expr-stmt | capture-stmt;
+(* capture-stmt 仅在匿名函数体顶层语句位合法（见 A.2.3 capture-stmt 注记）。 *)
 
 var-decl        ::= ('var' | 'let') IDENT [':' type-annotation] ['=' expression];
 
@@ -903,7 +916,7 @@ builtin-call    ::= 'LazyRef' ['<' type-annotation '>'] '(' func-literal ')'
 (* LazyRef<T>(初始化闭包) / LazyRef(闭包)
    assert(条件) / assert(条件, 消息) *)
 
-(* capture 在匿名函数体内部：capture 标识符，多行列出，不支持捕获表达式 *)
+(* capture 产生式与语义见 A.2.3 capture-stmt（H-1 已落地：体内部、每行恰一、散落多条）。 *)
 
 (* ---- A.2.6  类型注解 -------------------------------------------------------- *)
 

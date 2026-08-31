@@ -223,6 +223,8 @@ public enum ErrorFormatter {
  case .inaccessibleSymbol(let name, let definedIn, let level, _): return "符号 '\(name)'（\(level.label)）定义于 '\(definedIn)'，从当前文件不可见"
  case .unknownMatchCase(let caseName, _): return "未知 match case '\(caseName)'"
  case .nonExhaustiveMatch(let missingCases, _): return "match 未穷尽覆盖枚举：缺少 case \(missingCases.joined(separator: ", "))（需覆盖全部 case，或用 `case _:` 兜底）"
+ case .captureWithoutDeclaration(let name, _): return "外层变量 '\(name)' 须经 capture 声明后使用（capture 行须先于首次使用）"
+ case .invalidCaptureTarget(let name, let reason, _): return "capture 目标无效：'\(name)' —— \(reason)"
  }
  }
 

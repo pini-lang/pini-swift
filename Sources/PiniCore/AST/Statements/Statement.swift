@@ -24,4 +24,8 @@ public indirect enum Statement: Equatable {
  case expressionStmt(expr: Expression, location: SourceLocation)
  case deferStatement(statement: Statement, location: SourceLocation)
  case passStatement(location: SourceLocation)
+ /// capture 声明（H-1/A1，2026-08-31）：匿名函数体内部、每行恰一个外部标识符。
+ /// 仅在匿名函数体顶层语句位合法（解析器强制）；语句序上须先于所列名字在
+ /// 体内的首次使用（语义层强制，偏弱纯定位：闭包显式声明其捕获）。
+ case captureStatement(name: String, location: SourceLocation)
 }

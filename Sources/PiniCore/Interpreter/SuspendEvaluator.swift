@@ -66,7 +66,7 @@ extension Interpreter {
  case .detachStatement(let e, _): return containsJoin(e)
  case .deferStatement(let d, _): return containsJoin(d)
  case .scopedBlock(_, let body, _): return containsJoin(body)
- case .breakStatement, .continueStatement, .passStatement: return false
+ case .breakStatement, .continueStatement, .passStatement, .captureStatement: return false
  }
  }
 
@@ -136,7 +136,7 @@ extension Interpreter {
  case .detachStatement(let e, _): return containsCall(e)
  case .deferStatement(let d, _): return containsCall(d)
  case .scopedBlock(_, let body, _): return containsCall(body)
- case .breakStatement, .continueStatement, .passStatement: return false
+ case .breakStatement, .continueStatement, .passStatement, .captureStatement: return false
  }
  }
 
@@ -690,6 +690,8 @@ extension Interpreter {
  deferStack[deferStack.count - 1].append(dstmt)
  try cont(.null)
  case .passStatement(_):
+ try cont(.null)
+ case .captureStatement:
  try cont(.null)
  case .forStatement(let pattern, let iterable, let body, let step, let label, let loc):
  // 迭代式先 CPS 求值（可含 `await`/`wait`（.join））；行展开同步（decomposePatternRow 复用），逐行 execBlockK。

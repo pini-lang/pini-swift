@@ -129,6 +129,8 @@ public struct DiagnosticPublisher {
  case .inaccessibleSymbol(_, _, _, let loc): return loc
  case .unknownMatchCase(_, let loc): return loc
  case .nonExhaustiveMatch(_, let loc): return loc
+ case .captureWithoutDeclaration(_, let loc): return loc
+ case .invalidCaptureTarget(_, _, let loc): return loc
  }
  }
 

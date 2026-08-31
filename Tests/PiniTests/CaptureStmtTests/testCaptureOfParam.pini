@@ -1,0 +1,6 @@
+main|func() -> ():
+    var f = func (x: I32,) -> (I32,):
+        capture x
+        return x
+    print(f(5))
+    return

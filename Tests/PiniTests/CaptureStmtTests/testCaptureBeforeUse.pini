@@ -1,0 +1,7 @@
+main|func() -> ():
+    var base = 10
+    var f = func (x: I32,) -> (I32,):
+        capture base
+        return x + base
+    print(f(5))
+    return

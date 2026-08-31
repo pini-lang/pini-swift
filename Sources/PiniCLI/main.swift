@@ -398,6 +398,8 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
  return String(result.dropLast())
  case .passStatement(_):
  return "\(indent)pass"
+ case .captureStatement(let name, _):
+ return "\(indent)capture \(name)"
  }
 }
 

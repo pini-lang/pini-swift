@@ -22,4 +22,15 @@ public final class Scope {
  }
  return parent?.resolve(name)
  }
+
+ /// self 是否位于 ancestor 之内（含相等）。供 H-1 判定解析命中点相对
+ /// 匿名函数体作用域边界的位置。
+ public func isWithin(_ ancestor: Scope) -> Bool {
+ var s: Scope? = self
+ while let cur = s {
+ if cur === ancestor { return true }
+ s = cur.parent
+ }
+ return false
+ }
 }

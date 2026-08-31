@@ -25,6 +25,7 @@ main|func() -> ():
     ; 2) 捕获：闭包按引用捕获外层变量 base（与解释器 currentEnv 共享语义一致）
     var base = 10
     var addBase = func (n,) -> (I32,):
+        capture base
         return n + base
     print(addBase(5))       ; 15
     base = 100

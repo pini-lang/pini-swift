@@ -1227,6 +1227,7 @@ public class Interpreter {
  case .expressionStmt(_, let l): loc = l
  case .deferStatement(_, let l): loc = l
  case .passStatement(let l): loc = l
+ case .captureStatement(_, let l): loc = l
  case .scopedBlock(_, _, let l): loc = l
  }
  let ctx = DebugContext(
@@ -1384,6 +1385,9 @@ public class Interpreter {
  }
  deferStack[deferStack.count - 1].append(statement)
  case .passStatement(_):
+ return
+ case .captureStatement:
+ // H-1：capture 是静态纯度声明，运行时无操作（捕获经环境链自然达成）
  return
  case .scopedBlock(let label, let body, _):
  try executeScope(label: label, body: body)

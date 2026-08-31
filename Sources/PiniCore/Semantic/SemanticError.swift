@@ -15,4 +15,10 @@ public enum SemanticError: Error, Equatable {
  /// validated 匹配模式（由 match 通配子块触发）下，所有 case 映射到同一枚举但覆盖不全，
  /// 且无通配子块/default 兜底。`missingCases` 为未覆盖的 case 名列表。
  case nonExhaustiveMatch(missingCases: [String], location: SourceLocation)
+ /// H-1①（2026-08-31）：匿名函数体内引用了外层局部变量，但其 `capture` 声明
+ /// 尚未在此前语句序上出现（偏弱纯定位：闭包显式声明捕获，先声明后使用）。
+ case captureWithoutDeclaration(name: String, location: SourceLocation)
+ /// H-1②：capture 的目标不是创建点外层的局部变量
+ ///（本匿名函数参数/体内已声明局部/内建或函数名/`self`/创建点不可见名）。
+ case invalidCaptureTarget(name: String, reason: String, location: SourceLocation)
 }

@@ -1182,27 +1182,27 @@ public class Parser {
  return (params, returnTypes, returnLabels, isAsync)
  }
 
+ /// H-1 capture 上下文：nil = 不在匿名函数体解析中；非 nil = 当前块嵌套深度
+ ///（0 = 正在解析字面量头与体之间，1 = 缩进体顶层语句位，≥2 = 嵌套块内）。
+ /// parseCaptureStmt 依据此判定「仅匿名函数体顶层语句位」。
+ private var anonCaptureDepth: Int? = nil
+
  /// 解析匿名函数字面量（spec G29）：`func (形式参数元组,) -> (返回元组,):` + 块体。
  /// `=> (返回元组,)` 为 async 形式。产出 `Expression.funcLiteral`（FuncDecl 同构表示）。
  private func parseFuncLiteral() throws -> Expression {
  let loc = currentLocation
  advance() // 跳过 func
 
- // D5：可选 capture 列表（匿名函数显式列出要捕获的外部标识符，含以 _ 开头的标识符）
- var captured: [String] = []
- if case .keyword(.capture, _) = currentToken {
- advance()
- while case .identifier(let capName, _) = currentToken {
- captured.append(capName)
- advance()
- }
- }
-
  let (params, returnTypes, returnLabels, isAsync) = try parseFunctionSignature(loc: loc)
 
  // 匿名函数是「引导子块关键字」，带 `:` 尾缀
  try expect(.colon(loc))
  skipNewlines()
+ // H-1：capture 声明的合法性上下文——仅本匿名函数缩进体的顶层语句位。
+ // 深度基准清零后，parseBlock 逐层 +1，parseCaptureStmt 要求深度恰为 1。
+ let savedCaptureDepth = anonCaptureDepth
+ anonCaptureDepth = 0
+ defer { anonCaptureDepth = savedCaptureDepth }
  let body: Block
  if case .indent(_) = currentToken {
  body = try parseBlock()
@@ -1212,6 +1212,11 @@ public class Parser {
  body = Block(statements: [stmt], location: loc)
  }
 
+ // H-1：capture 声明聚入 FuncDecl.captured（每行恰一个，体顶层语句序即声明序）
+ let captured = body.statements.compactMap { stmt -> String? in
+ if case .captureStatement(let n, _) = stmt { return n }
+ return nil
+ }
  let decl = FuncDecl(
  name: "<anon>",
  modifiers: [],
@@ -1713,8 +1718,45 @@ public class Parser {
  
  // MARK: - Block解析
  
+ /// H-1：capture 声明（A1 裁决：体内部、每行恰一个外部标识符、散落多条）。
+ /// 位置合法性在此由 `anonCaptureDepth` 强制：仅匿名函数缩进体的顶层语句位。
+ private func parseCaptureStmt() throws -> Statement {
+ // H-1 位置合法性：仅匿名函数缩进体的顶层语句位（深度恰为 1）
+ guard let depth = anonCaptureDepth, depth == 1 else {
+ throw ParserError.invalidStatement(
+ reason: "capture 仅允许出现在匿名函数体的缩进体顶层语句位（H-1）",
+ location: currentLocation
+ )
+ }
+ let loc = currentLocation
+ advance() // 跳过 capture
+ guard case .identifier(let name, let nameLoc) = currentToken else {
+ throw ParserError.invalidStatement(
+ reason: "capture 后须恰有一个标识符：`capture 名字`",
+ location: currentLocation
+ )
+ }
+ advance()
+ // 每行恰一个捕获：逗号清单与多余标识符均不合法
+ if isEOF() { return .captureStatement(name: name, location: nameLoc) }
+ switch currentToken {
+ case .newline, .dedent:
+ break
+ default:
+ throw ParserError.invalidStatement(
+ reason: "capture 每行仅允许一个标识符（多条捕获请分行书写）",
+ location: currentLocation
+ )
+ }
+ return .captureStatement(name: name, location: nameLoc)
+ }
+
  private func parseBlock() throws -> Block {
  let loc = currentLocation
+ // H-1：进入任何嵌套块都离开「体顶层」——深度 +1，退出恢复
+ let savedCaptureDepth = anonCaptureDepth
+ if savedCaptureDepth != nil { anonCaptureDepth = savedCaptureDepth! + 1 }
+ defer { anonCaptureDepth = savedCaptureDepth }
  
  // INDENT
  try expect(.indent(loc))
@@ -1758,6 +1800,10 @@ public class Parser {
  
  // INDENT 开始
  try expect(.indent(loc))
+ // H-1：控制块同样离开「匿名函数体顶层」——深度 +1，退出恢复
+ let savedCaptureDepth = anonCaptureDepth
+ if savedCaptureDepth != nil { anonCaptureDepth = savedCaptureDepth! + 1 }
+ defer { anonCaptureDepth = savedCaptureDepth }
  
  var statements: [Statement] = []
  
@@ -1784,6 +1830,11 @@ public class Parser {
  
  private func parseStatement() throws -> Statement {
  let loc = currentLocation
+
+ // H-1：capture 声明（合法性上下文见 parseCaptureStmt）
+ if case .keyword(.capture, _) = currentToken {
+ return try parseCaptureStmt()
+ }
 
  // ADR-014（规则 3.13）：`标签|控制流关键字` 前缀 → 带标签语句。
  // 仅当 `IDENT '|'` 后为控制流关键字（if/while/for）时才识别为标签；
