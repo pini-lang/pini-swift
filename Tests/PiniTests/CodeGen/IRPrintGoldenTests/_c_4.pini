@@ -1,0 +1,9 @@
+{计数}
+数值: I32 = 0
+名字: String = "n"
+
+main|func() -> ()
+    var c = 计数()
+    c.数值 = 42
+    print(c)
+    return

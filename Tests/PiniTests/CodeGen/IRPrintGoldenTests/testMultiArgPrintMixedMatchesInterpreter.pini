@@ -1,0 +1,8 @@
+(点)
+x: I32 = 0
+
+main|func() -> ()
+    var p = 点()
+    p.x = 7
+    print("s=", p, 42)
+    return

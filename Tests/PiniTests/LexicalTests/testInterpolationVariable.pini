@@ -1,4 +1,4 @@
 main|func() -> ()
     var name = "Pini"
-    print("hi \\(name)")
+    print("hi \(name)")
     return

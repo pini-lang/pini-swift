@@ -1,0 +1,3 @@
+helper|func() -> ()
+    let z = 5
+    return
