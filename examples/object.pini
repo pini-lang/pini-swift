@@ -5,13 +5,13 @@
 数值: I32 = 0
 
 {{计数对象}}
-增加|self() -> ()
+增加|self() -> ():
     self.数值 = self.数值 + 1
     return
-获取值|self() -> (I32,)
+获取值|self() -> (I32,):
     return self.数值
 
-main|func() -> ()
+main|func() -> ():
     let 计数器 = 计数对象()
     计数器.增加()
     计数器.增加()

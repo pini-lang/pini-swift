@@ -7,11 +7,11 @@
 ;   `joinAll([a, b, ...])` = 把多个 Future 聚合成一个 Future，
 ;       其结果为各任务 Result 的数组；用 `wait` 阻塞等待整体完成。
 
-任务|func(n: I32,) => (I32,)
+任务|func(n: I32,) => (I32,):
     sleep(20)
     return ok(n * 2)
 
-main|func() -> ()
+main|func() -> ():
     var a = 任务(1)
     var b = 任务(2)
     var all = joinAll([a, b])

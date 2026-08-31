@@ -9,7 +9,7 @@
 ;   - `step:` 与 `标签|控制流` 与 while 一致（break label 可跳出指定层，ADR-014）。
 ;   - 嵌套集合迭代：数组元素为数组时，集合型模式变量每轮 body 末精确释放。
 
-main|func() -> ()
+main|func() -> ():
     ; 1) 数组：单字段绑定元素值
     var acc = 0
     for (v,) in [1, 2, 3]:

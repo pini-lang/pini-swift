@@ -1,7 +1,7 @@
 ; 运算符：算术与比较
 ; 运行：pini run examples/operators.pini
 ; 预期：30 / 10 / 200 / 2
-main|func() -> ()
+main|func() -> ():
     print(10 + 20)
     print(30 - 20)
     print(10 * 20)

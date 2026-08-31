@@ -5,7 +5,7 @@
 ;       （与 generateStringLiteral 不为相同文本复用全局解耦，字符串键跨构造/读取稳定）；集合同理
 ;       （%bk_set* / @bk_set_*）。print(容器) 整体格式化见 D3。
 
-main|func() -> ()
+main|func() -> ():
     ; 字典：构造 / 键读 / len
     let ages = ["Alice": 30, "Bob": 25, "Carol": 41]
     print(ages["Bob"])

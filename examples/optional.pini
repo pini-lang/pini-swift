@@ -3,7 +3,7 @@
 ; 预期输出：
 ; 42
 ; none
-main|func() -> ()
+main|func() -> ():
     var a = Optional.some(42)
     match a:
         case some(v,):

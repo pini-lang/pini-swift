@@ -6,17 +6,17 @@
 ; 说明：阶乘与斐波那契均为递归经典示例；递归函数与普函一样用 名|func(...) 声明，
 ;       在 body 中直接调用自身即可（无特殊关键字）。
 
-阶乘|func(n: I32,) -> (I32,)
+阶乘|func(n: I32,) -> (I32,):
     if n <= 1:
         return 1
     return n * 阶乘(n - 1)
 
-斐波那契|func(n: I32,) -> (I32,)
+斐波那契|func(n: I32,) -> (I32,):
     if n < 2:
         return n
     return 斐波那契(n - 1) + 斐波那契(n - 2)
 
-main|func() -> ()
+main|func() -> ():
     print(阶乘(5))
     print(斐波那契(10))
     return

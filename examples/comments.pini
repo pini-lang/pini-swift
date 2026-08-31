@@ -2,7 +2,7 @@
 ; 运行：pini run examples/comments.pini
 ; 预期：Pini
 ; 顶级交替：声明与块内容交替；块边界由下一顶级声明隐式关闭
-main|func() -> ()
+main|func() -> ():
     var 名字 = "Pini"   ; 变量声明后跟注释
     print(名字)            ; 调用内置 print
     return

@@ -10,15 +10,15 @@
 ;   `t.cancel()` = 取消某个 Future（含其派生子任务）。
 ; 注：涉及真实线程调度；本示例仅演示取消语义，时限内整体会快速返回。
 
-慢任务|func() => (I32,)
+慢任务|func() => (I32,):
     sleep(3000)
     return ok(1)
 
-手动任务|func() => (I32,)
+手动任务|func() => (I32,):
     sleep(3000)
     return ok(99)
 
-main|func() -> ()
+main|func() -> ():
     ; 超时归约为取消：100ms 内未完成任务 → err(CancelError)
     var t = 慢任务()
     var r = joinWithin(t, 100)

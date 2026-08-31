@@ -6,7 +6,7 @@
 矩形(F64, F64,)
 三角形(F64, F64,)
 
-计算面积|func(s: 形状,) -> (F64,)
+计算面积|func(s: 形状,) -> (F64,):
     match s:
         case 圆(r,):
             return 3.14159 * r * r
@@ -17,7 +17,7 @@
         case _:
             return 0.0
 
-main|func() -> ()
+main|func() -> ():
     var c = 圆(5.0,)
     var r = 矩形(3.0, 4.0,)
     var t = 三角形(3.0, 4.0,)

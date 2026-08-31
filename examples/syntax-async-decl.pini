@@ -4,13 +4,13 @@
 ; 同步感来源：下面的 var / if / return 与普通同步函数毫无二致；
 ;            并发只在两处显式出现 ——「声明处的 =>」和「调用处的 wait」。
 
-加倍|func(n: I32,) => (I32,)
+加倍|func(n: I32,) => (I32,):
     var t = n + n          ; 纯同步算术
     if t > 100:            ; 纯同步分支
         return err(Error("太大"))
     return ok(t)           ; 用 ok/err 承载结果（errors-as-data）
 
-main|func() -> ()
+main|func() -> ():
     var r = wait 加倍(21)    ; 调用处用 wait 标记「在此等待结果」
     match r:
         case ok(v): print(v)   ; 普通同步解构，得到 42

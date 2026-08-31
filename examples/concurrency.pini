@@ -8,7 +8,7 @@
 ;   `wait` 前缀 = 同步阻塞 join（默认后端）；`await` 用于异步函数体内的挂起等待；
 ;               二者均返回 Result<T, Error>（错误即数据，不抛出）；suspend 模式释放 OS 线程、精确恢复（见 spec 3.1 / ADR-012）。
 
-workerA|func() => ()
+workerA|func() => ():
     var i = 0
     while i < 4:
         print("A")
@@ -16,7 +16,7 @@ workerA|func() => ()
         i = i + 1
     return
 
-workerB|func() => ()
+workerB|func() => ():
     var i = 0
     while i < 4:
         print("B")
@@ -25,12 +25,12 @@ workerB|func() => ()
     return
 
 ; 带返回值与错误的进程：正常路径 ok(v)，失败路径 err(Error("..."))
-compute|func(n: I32,) => (I32,)
+compute|func(n: I32,) => (I32,):
     if n < 0:
         return err(Error("n 必须非负"))
     return ok(n * 2)
 
-main|func() -> ()
+main|func() -> ():
     var a = workerA()
     var b = workerB()
     wait a

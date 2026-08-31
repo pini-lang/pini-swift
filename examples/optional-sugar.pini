@@ -7,7 +7,7 @@
 ; none
 ; q-none
 ; q-assign
-main|func() -> ()
+main|func() -> ():
     ; nil 等价于 Optional.none（表达式位置）
     var a = nil
     match a:

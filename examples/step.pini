@@ -17,7 +17,7 @@
 ;   - step: 紧跟 while 的缩进块，在每轮循环体正常结束后执行一次。
 ;   - 循环体内 continue 仍会触发 step；break 直接跳出，跳过 step。
 
-main|func() -> ()
+main|func() -> ():
     ; 基础：step 在每轮后执行
     var i = 0
     while i < 3:

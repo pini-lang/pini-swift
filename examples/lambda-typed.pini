@@ -7,10 +7,10 @@
 ; 6
 ; 5
 ; 10
-应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,)
+应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,):
     return f(x)
 
-main|func() -> ()
+main|func() -> ():
     var g = func (n,) -> (I32,):
         return n + 1
     print(应用(g, 5))                              ; 6：自底向上：n+1 推 n:I32, 返 I32

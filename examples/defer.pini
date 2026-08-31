@@ -2,7 +2,7 @@
 ; 运行：pini run examples/defer.pini
 ; 预期：bodyfirstmiddlelast
 ;       blockinnerouter
-main|func() -> ()
+main|func() -> ():
     var result = ""
 
     var i = 0

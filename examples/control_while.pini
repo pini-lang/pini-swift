@@ -13,7 +13,7 @@
 ;   - break 跳出最近的 while；continue 跳到循环头。
 ;   - 标签|控制流: 给控制流语句打标签（标签落在 while/for 上）；break 标签 / continue 标签 可跳出/续行到指定层（ADR-014）。
 
-main|func() -> ()
+main|func() -> ():
     ; 基础 while
     var i = 0
     while i < 3:

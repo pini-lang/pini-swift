@@ -5,16 +5,16 @@
 ; 10
 ; 21
 ; 36
-应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,)
+应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,):
     return f(x)
 
-加倍|func(n: I32) -> (I32,)
+加倍|func(n: I32) -> (I32,):
     return n * 2
 
-加一|func(n: I32) -> (I32,)
+加一|func(n: I32) -> (I32,):
     return n + 1
 
-main|func() -> ()
+main|func() -> ():
     print(应用(加倍, 5))      ; 10：传入具名函数
     print(应用(加一, 20))     ; 21：再传入另一个函数
     var g = func (n,) -> (I32,):

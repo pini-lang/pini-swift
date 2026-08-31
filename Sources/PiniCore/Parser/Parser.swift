@@ -561,10 +561,13 @@ public class Parser {
  }
  }
  }
- // 跳过换行，看是否 indent（函数体）
+ // 跳过换行与块引导冒号（H-4），看是否 indent（函数体）
  while offset < tokens.count {
  let tok = peek(offset: offset)
  if case .newline(_) = tok { offset += 1; continue }
+ // H-4（A8 选项 B）：带执行块的函数以 `:` 开块，前瞻须容忍它，否则
+ // foreign 块等依赖本判定的循环无法识别「下一个是带体函数」而退出。
+ if case .colon(_) = tok { offset += 1; continue }
  if case .indent(_) = tok { return true }
  return false
  }
@@ -1070,6 +1073,12 @@ public class Parser {
 
  // 解析函数体（Block）
  var body: Block? = nil
+ // H-4（A8 选项 B）：带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。
+ // 返回类型解析完成后，若下一个记号是 `:`，在此消费。迁移期内为**可选**
+ // （不带冒号仍合法），待存量迁移完成后转强制。
+ if case .colon(_) = currentToken {
+ advance()
+ }
  skipNewlines()
  if case .indent(_) = currentToken {
  body = try parseBlock()
@@ -1297,6 +1306,12 @@ public class Parser {
 
  // 解析方法体（Block）
  var body: Block? = nil
+ // H-4（A8 选项 B）：带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。
+ // 返回类型解析完成后，若下一个记号是 `:`，在此消费。迁移期内为**可选**
+ // （不带冒号仍合法），待存量迁移完成后转强制。
+ if case .colon(_) = currentToken {
+ advance()
+ }
  skipNewlines()
  if case .indent(_) = currentToken {
  body = try parseBlock()
@@ -1485,6 +1500,12 @@ public class Parser {
 
  // 解析函数体（Block）
  var body: Block? = nil
+ // H-4（A8 选项 B）：带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。
+ // 返回类型解析完成后，若下一个记号是 `:`，在此消费。迁移期内为**可选**
+ // （不带冒号仍合法），待存量迁移完成后转强制。
+ if case .colon(_) = currentToken {
+ advance()
+ }
  skipNewlines()
  if case .indent(_) = currentToken {
  body = try parseBlock()

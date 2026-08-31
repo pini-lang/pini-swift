@@ -4,11 +4,11 @@
 ; 同步感来源：var f = slow() 就是一次普通赋值；之后对 f 的各种操作都是
 ;            值上的函数调用，没有额外的并发关键字。
 
-slow|func() => (I32,)
+slow|func() => (I32,):
     sleep(50)
     return ok(1)
 
-main|func() -> ()
+main|func() -> ():
     ; 1) 句柄即普通值：赋值、传递都跟同步代码一样
     var f = slow()
 

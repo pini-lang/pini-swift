@@ -2,7 +2,7 @@
 ; 运行：pini run examples/io.pini
 ; 注意：SwiftPM 下须 --disable-sandbox 方可落盘写入文件
 
-main|func() -> ()
+main|func() -> ():
     ; 1. 格式化输出：print 多参，空格连接各项 + 末尾换行（单参行为不变）
     print("name:", "Pini", "v0.5")
     print("sum:", 1, 2, 3)

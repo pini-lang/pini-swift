@@ -1,7 +1,7 @@
 ; P1-4 标准库补全演示：字符串成员方法 + 数学自由函数
 ; 字符串方法以成员形式提供（s.upper()），数学库以自由函数形式提供（abs(x)）
 
-main|func() -> ()
+main|func() -> ():
     var s = "Hello, World"
     print(s.upper())
     print(s.lower())

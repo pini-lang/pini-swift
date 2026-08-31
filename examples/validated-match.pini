@@ -13,7 +13,7 @@
 西
 北
 
-main|func() -> ()
+main|func() -> ():
     var d = 北
     match d:
         case 东:

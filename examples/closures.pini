@@ -10,13 +10,13 @@
 ; 103
 
 ; 高阶函数：把函数类型参数 f 应用于 x
-应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,)
+应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,):
     return f(x)
 
-加倍|func(n: I32) -> (I32,)
+加倍|func(n: I32) -> (I32,):
     return n * 2
 
-main|func() -> ()
+main|func() -> ():
     ; 1) 闭包绑定 + 直接调用（无捕获）
     var sq = func (n,) -> (I32,):
         return n * n

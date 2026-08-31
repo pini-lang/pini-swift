@@ -18,13 +18,13 @@ cstr(s: String,) -> (*U8,)
 puts(s: *U8,) -> (I32,)
 
 ; |unsafe 自由函数：函数体自动处于不安全上下文，内部无需 unsafe 前缀
-量长度|unsafe(s: String,) -> (U64,)
+量长度|unsafe(s: String,) -> (U64,):
     var p = cstr(s)
     var n = strlen(p)
     free(p)
     return n
 
-main|func() -> ()
+main|func() -> ():
     ; 不安全消耗点：unsafe 前缀标记单次指针操作
     var buf = unsafe malloc(64)
 

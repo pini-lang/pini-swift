@@ -11,10 +11,10 @@
 
 
 ((计数器))
-获取周期|self() -> (I8,)
+获取周期|self() -> (I8,):
     return self.周期
 
-main|func() -> ()
+main|func() -> ():
     let c = 计数器()
     print(c.名称)        ; 字段访问
     print(c.周期)        ; 字段访问

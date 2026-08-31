@@ -7,11 +7,11 @@
 
 
 ((计数器))
-增加|self() -> ()
+增加|self() -> ():
     self.数值 = self.数值 + 1
     return
 
-描述|self() -> ()
+描述|self() -> ():
     print(self.标签)
     return
 
@@ -21,11 +21,11 @@
 
 
 ((倒计数))
-减少|self() -> ()
+减少|self() -> ():
     self.数值 = self.数值 - self.步长
     return
 
-main|func() -> ()
+main|func() -> ():
     let c = 倒计数()
     c.增加()
     c.增加()

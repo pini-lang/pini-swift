@@ -2,7 +2,7 @@
 ; 运行：pini run examples/hello.pini
 ; 预期：Hello, World!
 ;       欢迎使用Pini语言
-main|func() -> ()
+main|func() -> ():
     print("Hello, World!")
     print("欢迎使用Pini语言")
     return

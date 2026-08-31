@@ -10,10 +10,10 @@ y: F64 = 0.0
 
 
 ((点))
-距离原点|self() -> (F64,)
+距离原点|self() -> (F64,):
     return sqrt(self.x * self.x + self.y * self.y)
 
-main|func() -> ()
+main|func() -> ():
     var p = 点()
     p.x = 3.0
     p.y = 4.0

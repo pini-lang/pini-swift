@@ -1,7 +1,7 @@
 ; 匿名函数 func：绑定与调用（spec G29：lambda 已统一为 func）
 ; 运行：pini run examples/lambda.pini
 ; 预期：42
-main|func() -> ()
+main|func() -> ():
     var f = func (x,) -> (I32,):
         return x + 1
     print(f(41))

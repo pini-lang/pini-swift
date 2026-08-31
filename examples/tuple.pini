@@ -6,10 +6,10 @@
 ;       元素访问 .0 / .名称 与解构 var (a, b) = 已支持，
 ;       见 spec 元组解构/元素访问主题（此处示例保持整体使用以演示多返回值）。
 
-除余|func(a: I32, b: I32) -> ((I32, I32,),)
+除余|func(a: I32, b: I32) -> ((I32, I32,),):
     return (a / b, a % b)
 
-main|func() -> ()
+main|func() -> ():
     let r = 除余(17, 5)
     print(r)
     return

@@ -7,7 +7,7 @@
 ;       注意：F64 因 LLVM printf %f 格式（2.500000 vs 2.5）与解释器存在已知浮点打印差异（G-IR-enum-print），
 ;       其余类型（Int / Bool / String / 嵌套数组）双后端精确对齐。字典 / 集合见 examples/collections.pini。
 
-main|func() -> ()
+main|func() -> ():
     let a = [10, 20, 30]
     print(a[1])
     print(len(a))

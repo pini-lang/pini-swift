@@ -1,10 +1,10 @@
 ; 泛型函数：类型参数 T 真正参与返回
 ; 运行：pini run examples/generic-func.pini
 ; 预期：100 / 泛型函数
-身份|func<T>(x: T) -> (T,)
+身份|func<T>(x: T) -> (T,):
     return x
 
-main|func() -> ()
+main|func() -> ():
     print(身份<I32>(x: 100))
     print(身份<String>(x: "泛型函数"))
     return

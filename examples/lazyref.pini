@@ -10,7 +10,7 @@
 ;   - LazyRef<T>(初始化闭包)：引用语义（复制共享同一 box），首访执行闭包并缓存，后续返回缓存
 ;   - .value 同步阻塞获取（内部锁保证 once，多线程首访仅一个线程执行初始化）
 
-main|func() -> ()
+main|func() -> ():
     var r = LazyRef<I32>(func () -> (I32,):
         print("init")
         return 42
