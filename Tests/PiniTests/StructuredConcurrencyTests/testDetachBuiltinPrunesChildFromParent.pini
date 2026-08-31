@@ -1,7 +1,7 @@
-child|func() => (I32,)
+child|func() => (I32,):
     return ok(1)
 
-main|func() -> ()
+main|func() -> ():
     var c = child()
     detach c
     print("detached")

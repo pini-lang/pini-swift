@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var g = [[1, 2], [3, 4]]
     var h = g
     var gr = unsafe g[0]!

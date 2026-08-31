@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s = "中文"
     print(len(s))
     return

@@ -1,12 +1,12 @@
 <Greetable>
-    greet() -> (String,)
+    greet() -> (String,):
         return "no-self default"
 
 (Person)
 名称: String = "Alice"
 实现: Greetable
 
-main|func() -> ()
+main|func() -> ():
     var p = Person()
     print(p.greet())
     return

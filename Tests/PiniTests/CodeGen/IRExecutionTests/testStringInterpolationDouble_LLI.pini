@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var pi = 2.5
     print("pi=\(pi)")
     return

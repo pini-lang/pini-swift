@@ -1,8 +1,8 @@
-尝试|func() -> (I32, Error,)
+尝试|func() -> (I32, Error,):
     var r = err(Error("boom"))
     ^r
     return (1, nil)
-main|func() -> ()
+main|func() -> ():
     var (v, e) = 尝试()
     print(e,)
     return

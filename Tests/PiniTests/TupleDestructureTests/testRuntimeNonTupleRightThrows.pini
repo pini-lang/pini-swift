@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var (a, b) = 42
     print(a,)
     return

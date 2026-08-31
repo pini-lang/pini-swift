@@ -2,7 +2,7 @@
 ok(T)
 err(E)
 
-main|func() -> ()
+main|func() -> ():
     var a = ok<I32, String>(42)
     match a:
         case ok(v):

@@ -1,8 +1,8 @@
-sum|func(n: I32,) -> (I32,)
+sum|func(n: I32,) -> (I32,):
     if n == 0:
         return 0
     return n + sum(n - 1)
 
-main|func() -> ()
+main|func() -> ():
     print(sum(60))
     return

@@ -2,5 +2,5 @@
     x: I32 = 1
     y: I32 = 2
 
-main|func() -> ()
+main|func() -> ():
     return

@@ -1,2 +1,2 @@
-main|func() -> ()
+main|func() -> ():
     return

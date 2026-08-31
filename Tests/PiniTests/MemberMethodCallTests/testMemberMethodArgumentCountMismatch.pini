@@ -2,9 +2,9 @@
 x: I32 = 0
 
 ((点))
-移动|self(dx: I32, dy: I32,) -> ()
+移动|self(dx: I32, dy: I32,) -> ():
     return
-main|func() -> ()
+main|func() -> ():
     let p = 点()
     p.移动(dx: 1)
     return

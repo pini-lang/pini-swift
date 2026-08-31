@@ -1,4 +1,4 @@
-foo|func() -> ()
+foo|func() -> ():
     var x = 1
     var x = 2
     return

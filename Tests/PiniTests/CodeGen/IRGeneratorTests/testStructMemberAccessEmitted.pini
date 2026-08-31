@@ -2,7 +2,7 @@
     x: I32 = 1
     y: I32 = 2
 
-main|func() -> ()
+main|func() -> ():
     let c = Point()
     let v = c.x
     return

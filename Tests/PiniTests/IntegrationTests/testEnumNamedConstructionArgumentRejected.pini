@@ -1,6 +1,6 @@
 [形状]
 矩形(F64, F64,)
 
-main|func() -> ()
+main|func() -> ():
     var r = 矩形(高度: 4.0, 宽度: 3.0,)
     return

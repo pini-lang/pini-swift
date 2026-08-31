@@ -4,6 +4,6 @@
 (点)
 x: F64 = 0
 y: F64 = 0
-main|func() -> ()
+main|func() -> ():
     var r = 矩形()
     return

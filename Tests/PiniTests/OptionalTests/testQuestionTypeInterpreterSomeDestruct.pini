@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var x: ?I32 = Optional.some(3)
     match x:
         case some(v,):

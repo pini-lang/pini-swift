@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print(is_ascii_digit("三"))
     print(is_ascii_digit("a"))
     print(is_ascii_digit("_"))

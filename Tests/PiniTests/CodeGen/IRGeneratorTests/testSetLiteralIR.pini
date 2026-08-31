@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var primes = {2, 3, 5, 7, 11}
     print(len(primes))
     return

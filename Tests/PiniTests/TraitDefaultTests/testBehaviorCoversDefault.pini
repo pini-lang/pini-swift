@@ -1,5 +1,5 @@
 <Greetable>
-    greet(self) -> (String,)
+    greet(self) -> (String,):
         return "trait default"
 
 (Cat)
@@ -7,10 +7,10 @@
 实现: Greetable
 
 ((Cat))
-greet|self() -> (String,)
+greet|self() -> (String,):
     return "meow from cat"
 
-main|func() -> ()
+main|func() -> ():
     var cat = Cat()
     print(cat.greet())
     return

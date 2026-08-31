@@ -1,4 +1,4 @@
 [Shape]
 Circle
-main|func() -> ()
+main|func() -> ():
     return

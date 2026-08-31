@@ -2,7 +2,7 @@
 圆
 矩形
 
-main|func() -> ()
+main|func() -> ():
     var s = 圆
     match s:
         case 圆:

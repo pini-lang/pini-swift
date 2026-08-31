@@ -1,5 +1,5 @@
-multiply(x: F64, y: F64,) -> (F64,)
+multiply(x: F64, y: F64,) -> (F64,):
     return x * y
 
-main|func() -> ()
+main|func() -> ():
     return

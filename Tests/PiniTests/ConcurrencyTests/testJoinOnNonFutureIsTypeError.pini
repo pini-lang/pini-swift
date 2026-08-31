@@ -1,6 +1,6 @@
-bar|func() -> (I32,)
+bar|func() -> (I32,):
     return 7
 
-main|func() -> ()
+main|func() -> ():
     var x = wait bar()
     return

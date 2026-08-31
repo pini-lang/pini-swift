@@ -1,9 +1,9 @@
 (对<K, V>)
 
 ((对<K, V>))
-标记|self() -> (String,)
+标记|self() -> (String,):
     return "pair"
-main|func() -> ()
+main|func() -> ():
     let p = 对<I32, String>()
     print(p.标记())
     return

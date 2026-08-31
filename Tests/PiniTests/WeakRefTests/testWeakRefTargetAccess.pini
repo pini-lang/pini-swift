@@ -1,6 +1,6 @@
 {测试对象}
 值: I32 = 42
-main|func() -> ()
+main|func() -> ():
     var obj = 测试对象()
     var weak = WeakRef(obj)
     var target = weak.target

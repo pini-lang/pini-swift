@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var t = (a: 10, b: 20,)
     print(t.0,)
     print(t.1,)

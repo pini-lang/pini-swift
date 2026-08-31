@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     for (i,) in [1, 2, 3]:
         print("iter")
     return

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     let d = ["Alice": 30, "Bob": 25]
     print(d["Zoe"])
     return

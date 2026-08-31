@@ -1,2 +1,2 @@
-main|func() -> ()
+main|func() -> ():
     print(len("你好世界"))

@@ -1,7 +1,7 @@
 (点)
 x: I32 = 0
 y: I32 = 0
-main|func() -> ()
+main|func() -> ():
     var p = 点()
     var z = p.x + "hello"
     return

@@ -5,7 +5,7 @@
 (盒)
 内色: 色 = 红
 
-main|func() -> ()
+main|func() -> ():
     var b = 盒()
     b.内色 = 蓝
     print(b)

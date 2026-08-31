@@ -3,5 +3,5 @@
 _owner: I32 = 1
 
 {{账户}}
-查主人|self() -> ()
+查主人|self() -> ():
     return self._owner

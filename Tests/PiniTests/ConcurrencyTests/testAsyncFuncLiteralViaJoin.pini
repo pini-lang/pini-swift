@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var f = func () => (I32,): return 77
     var r = wait f()
     match r:

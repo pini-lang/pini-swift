@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     writeFile("__PATH__", "file_content")
     print(readFile("__PATH__"))
     return

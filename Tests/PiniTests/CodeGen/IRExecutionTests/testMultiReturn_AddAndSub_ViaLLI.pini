@@ -1,6 +1,6 @@
-addAndSub(x: I32, y: I32,) -> (I32, I32,)
+addAndSub(x: I32, y: I32,) -> (I32, I32,):
     return (x + y, x - y,)
 
-main|func() -> ()
+main|func() -> ():
     let r = addAndSub(10, 3)
     return

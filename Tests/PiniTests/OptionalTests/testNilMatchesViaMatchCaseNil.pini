@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var a = nil
     match a:
         case nil:

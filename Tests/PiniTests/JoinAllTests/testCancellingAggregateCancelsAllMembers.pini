@@ -1,9 +1,9 @@
-slow|func(n: I32,) => (I32,)
+slow|func(n: I32,) => (I32,):
     sleep(3000)
     print("成员不该跑完")
     return ok(n)
 
-main|func() -> ()
+main|func() -> ():
     var a = slow(1)
     var b = slow(2)
     var agg = joinAll([a, b])

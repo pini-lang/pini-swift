@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var x: Optional<I32> = nil
     match x:
         case none:

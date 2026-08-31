@@ -1,5 +1,5 @@
-bad|func() => (I32,)
+bad|func() => (I32,):
     return err(42)
 
-main|func() -> ()
+main|func() -> ():
     return

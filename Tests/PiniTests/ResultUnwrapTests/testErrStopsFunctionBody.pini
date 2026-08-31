@@ -1,9 +1,9 @@
-尝试|func() -> (String, Error,)
+尝试|func() -> (String, Error,):
     var r = err(Error("提前失败"))
     ^r
     print("不应执行",)
     return ("正常", nil)
-main|func() -> ()
+main|func() -> ():
     var (v, e) = 尝试()
     print(v,)
     return

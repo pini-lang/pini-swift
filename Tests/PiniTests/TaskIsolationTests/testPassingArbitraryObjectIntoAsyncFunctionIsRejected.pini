@@ -1,10 +1,10 @@
 {Node}
 v: I32 = 0
 
-touch|func(n: Node,) => ()
+touch|func(n: Node,) => ():
     return
 
-main|func() -> ()
+main|func() -> ():
     let x = Node()
     var t = touch(x)
     wait t

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var r = ok(42)
     print(^r,)
     return

@@ -2,7 +2,7 @@
 数值: I32 = 0
 
 {{计数对象}}
-增加|self() -> ()
+增加|self() -> ():
     return
-main|func() -> ()
+main|func() -> ():
     return

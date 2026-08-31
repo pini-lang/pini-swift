@@ -1,5 +1,5 @@
 {Counter}
     count: I32 = 0
 
-main|func() -> ()
+main|func() -> ():
     return

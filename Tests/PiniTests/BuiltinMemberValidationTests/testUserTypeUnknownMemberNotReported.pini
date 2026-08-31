@@ -1,7 +1,7 @@
 (盒子)
     内容: String = "x"
 
-main|func() -> ()
+main|func() -> ():
     var b = 盒子()
     print(b)
     return

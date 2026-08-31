@@ -2,7 +2,7 @@
 identifier(text: String, loc: I32,)
 plus
 
-main|func() -> ()
+main|func() -> ():
     var t = identifier(text: "x", loc: 7,)
     match t:
         case identifier(text, loc):

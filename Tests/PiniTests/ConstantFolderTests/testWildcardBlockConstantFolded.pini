@@ -2,7 +2,7 @@
 红
 绿
 
-f|func() -> ()
+f|func() -> ():
     var c = 红
     match c:
         case 红:

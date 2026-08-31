@@ -1,6 +1,6 @@
 (Pair<A, B,>)
 左: A = 0
 右: B = 0
-main|func() -> ()
+main|func() -> ():
     var p: Pair<I32> = Pair<I32>()
     return

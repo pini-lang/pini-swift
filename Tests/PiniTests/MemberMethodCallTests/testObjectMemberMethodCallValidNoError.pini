@@ -2,9 +2,9 @@
 数值: I32 = 0
 
 ((计数器))
-增加|self() -> ()
+增加|self() -> ():
     return
-main|func() -> ()
+main|func() -> ():
     let c = 计数器()
     c.增加()
     return

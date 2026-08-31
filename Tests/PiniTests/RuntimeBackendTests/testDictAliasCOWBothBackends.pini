@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var m1 = ["a": 1]
     var m2 = m1
     m1["a"] = 9

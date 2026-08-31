@@ -3,7 +3,7 @@ red
 green
 blue
 
-main|func() -> ()
+main|func() -> ():
     var c = red
     print(c)
     return

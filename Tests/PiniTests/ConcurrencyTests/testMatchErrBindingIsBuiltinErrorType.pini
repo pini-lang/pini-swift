@@ -1,7 +1,7 @@
-fetch|func() => (I32,)
+fetch|func() => (I32,):
     return err(Error("boom"))
 
-main|func() -> ()
+main|func() -> ():
     var r = wait fetch()
     match r:
         case ok(v):

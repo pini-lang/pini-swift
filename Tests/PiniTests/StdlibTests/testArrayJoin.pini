@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var arr = ["a", "b", "c"]
     print(arr.join("-"))
     return

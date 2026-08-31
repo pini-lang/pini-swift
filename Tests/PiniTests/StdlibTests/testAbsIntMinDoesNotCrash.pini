@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var x = -9223372036854775807
     var m = x - 1
     print(abs(m))

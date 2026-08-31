@@ -2,6 +2,6 @@
 ok(T)
 err(E)
 
-main|func() -> ()
+main|func() -> ():
     var a = ok<I32>(42)
     return

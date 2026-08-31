@@ -5,7 +5,7 @@
 父类
 值: I32 = 200
 
-main|func() -> ()
+main|func() -> ():
     let s = 子类()
     print(s.值)
     return

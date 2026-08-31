@@ -1,10 +1,10 @@
 {Counter}
 n: I32 = 0
 
-sendPair|func(p: (I32, Counter,),) => ()
+sendPair|func(p: (I32, Counter,),) => ():
     return
 
-main|func() -> ()
+main|func() -> ():
     let c = Counter()
     var t = sendPair((42, c,))
     wait t

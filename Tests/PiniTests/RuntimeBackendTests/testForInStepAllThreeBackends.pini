@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var t = 0
     for (v,) in [1, 2, 3]:
         t = t + 1

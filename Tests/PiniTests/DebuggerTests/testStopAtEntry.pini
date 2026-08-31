@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     let x = 1
     print(x)
     let y = x + 2

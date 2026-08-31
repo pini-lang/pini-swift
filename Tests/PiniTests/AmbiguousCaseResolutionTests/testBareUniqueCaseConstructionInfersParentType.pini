@@ -1,10 +1,10 @@
 [Tok]
 int_lit(v: I32,)
 
-pick|func() -> (Tok,)
+pick|func() -> (Tok,):
     return int_lit(v: 9)
 
-main|func() -> ()
+main|func() -> ():
     let t = pick()
     match t:
         case int_lit(v,):

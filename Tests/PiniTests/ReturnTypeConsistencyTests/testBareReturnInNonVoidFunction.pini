@@ -1,4 +1,4 @@
-bad|func() -> (I32,)
+bad|func() -> (I32,):
     return
-main|func() -> ()
+main|func() -> ():
     return

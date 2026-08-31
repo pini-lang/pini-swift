@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     try (42, "oops"):
         print("try")
     print("after")

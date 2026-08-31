@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var v = 1
     if v > 0:
         v = 2

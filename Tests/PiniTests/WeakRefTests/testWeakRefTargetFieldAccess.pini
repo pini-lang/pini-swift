@@ -1,6 +1,6 @@
 {节点}
 数据: String = "hello"
-main|func() -> ()
+main|func() -> ():
     var obj = 节点()
     var weak = WeakRef(obj)
     print(weak.target.数据)

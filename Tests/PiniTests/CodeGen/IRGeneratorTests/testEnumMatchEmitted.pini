@@ -2,7 +2,7 @@
 Red
 Green
 
-main|func() -> ()
+main|func() -> ():
     let c = Red
     match c:
         case Red:

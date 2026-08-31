@@ -2,7 +2,7 @@
 malloc(size: U64,) -> (*U8,)
 free(p: *U8,) -> ()
 
-main|func() -> ()
+main|func() -> ():
     var p = unsafe malloc(16)
     unsafe store(p, 42)
     print(unsafe load(p))

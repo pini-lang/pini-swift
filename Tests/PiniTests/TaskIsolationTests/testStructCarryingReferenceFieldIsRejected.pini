@@ -2,14 +2,14 @@
 n: I32 = 0
 
 {{Counter}}
-inc|self() -> ()
+inc|self() -> ():
     self.n = self.n + 1
     return
 
-sendPair|func(p: (I32, Counter,),) => ()
+sendPair|func(p: (I32, Counter,),) => ():
     return
 
-main|func() -> ()
+main|func() -> ():
     let c = Counter()
     var t = sendPair((42, c,))
     wait t

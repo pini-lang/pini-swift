@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print([].last())
     var (e, x) = [].pop()
     print(x)

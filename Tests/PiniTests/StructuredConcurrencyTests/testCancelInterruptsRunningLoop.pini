@@ -1,11 +1,11 @@
-spin|func() => (I32,)
+spin|func() => (I32,):
     var i = 0
     while i < 200000000:
         i = i + 1
     print("循环跑完了")
     return ok(i)
 
-main|func() -> ()
+main|func() -> ():
     var t = spin()
     sleep(80)
     t.cancel()

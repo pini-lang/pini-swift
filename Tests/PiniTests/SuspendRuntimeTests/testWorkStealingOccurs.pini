@@ -1,8 +1,8 @@
-child|func() => (I32,)
+child|func() => (I32,):
     sleep(10)
     return ok(1)
 
-main|func() => (I32,)
+main|func() => (I32,):
     var c1 = child()
     var c2 = child()
     var c3 = child()

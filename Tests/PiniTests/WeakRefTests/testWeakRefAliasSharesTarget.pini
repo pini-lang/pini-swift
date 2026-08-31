@@ -1,6 +1,6 @@
 {节点}
 值: I32 = 7
-main|func() -> ()
+main|func() -> ():
     var obj = 节点()
     var w1 = WeakRef(obj)
     var w2 = w1

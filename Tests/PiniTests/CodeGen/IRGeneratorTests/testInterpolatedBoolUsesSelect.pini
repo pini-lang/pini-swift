@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var flag = true
     print("flag=\(flag)")
     return

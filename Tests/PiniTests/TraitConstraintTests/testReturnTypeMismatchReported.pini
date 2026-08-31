@@ -6,8 +6,8 @@
     实现: 可克隆
 
 ((点))
-    克隆|self() -> (String,)
+    克隆|self() -> (String,):
         return ""
 
-main|func() -> ()
+main|func() -> ():
     return

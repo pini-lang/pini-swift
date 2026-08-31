@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var acc = 0
     for (row,) in [[1, 2], [3, 4]]:
         acc = acc + row[0] + row[1]

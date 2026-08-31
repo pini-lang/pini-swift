@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var x = 0
     var y = x.field
     return

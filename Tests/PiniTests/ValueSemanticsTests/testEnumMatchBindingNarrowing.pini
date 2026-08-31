@@ -4,7 +4,7 @@
 (点)
     x: I32 = 0
 
-main|func() -> ()
+main|func() -> ():
     var c = 圆(点(), 1.0)
     match c:
         case 圆(p, r):

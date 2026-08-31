@@ -5,5 +5,5 @@
     名称: String = "Tom"
     实现: Greetable
 
-main|func() -> ()
+main|func() -> ():
     return

@@ -1,5 +1,5 @@
-foo|func(a, b,) -> ()
+foo|func(a, b,) -> ():
     return
-main|func() -> ()
+main|func() -> ():
     foo(1, "x")
     return

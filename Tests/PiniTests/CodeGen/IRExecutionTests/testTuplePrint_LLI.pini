@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var p = (3, 2)
     print(p)
     return

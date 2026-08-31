@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s = "Hello"
     print(s.substring(0))
     return

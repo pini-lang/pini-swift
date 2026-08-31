@@ -1,12 +1,12 @@
 (框<T>)
 
 ((框<T>))
-标识|self() -> (String,)
+标识|self() -> (String,):
     return "ok"
-make|func() => (String,)
+make|func() => (String,):
     let f = 框<I32>()
     return ok(f.标识())
-main|func() -> ()
+main|func() -> ():
     var f1 = make()
     var f2 = make()
     var f3 = make()

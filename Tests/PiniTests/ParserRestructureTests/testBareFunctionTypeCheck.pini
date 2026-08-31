@@ -1,7 +1,7 @@
-加法(a: I32, b: I32,) -> (I32,)
+加法(a: I32, b: I32,) -> (I32,):
     return a + b
 
-main() -> ()
+main() -> ():
     let result = 加法(1, 2,)
     print(result)
     return

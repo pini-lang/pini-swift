@@ -1,7 +1,7 @@
 {Counter}
     count: I32 = 0
 
-main|func() -> ()
+main|func() -> ():
     let c1 = Counter()
     let c2 = c1
     c2.count = 100

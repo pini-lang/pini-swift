@@ -1,4 +1,4 @@
 (容器<T>)
 值: T = 默认值
-main|func() -> ()
+main|func() -> ():
     return

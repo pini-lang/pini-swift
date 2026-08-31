@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s: String = (42, "hello").1
     print(s,)
     return

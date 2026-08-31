@@ -1,8 +1,8 @@
-work|func(n: I32, ms: I32,) => (I32,)
+work|func(n: I32, ms: I32,) => (I32,):
     sleep(ms)
     return ok(n)
 
-main|func() -> ()
+main|func() -> ():
     var a = work(1, 120)
     var b = work(2, 20)
     var c = work(3, 60)

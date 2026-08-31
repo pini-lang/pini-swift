@@ -4,7 +4,7 @@ mk(v: I32,)
 [ShpB]
 mk(v: String,)
 
-main|func() -> ()
+main|func() -> ():
     print(mk(v: 7))
     print(mk(v: "s"))
     return

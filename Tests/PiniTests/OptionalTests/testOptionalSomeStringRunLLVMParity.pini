@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var x = Optional.some("hello")
     match x:
         case some(s,):

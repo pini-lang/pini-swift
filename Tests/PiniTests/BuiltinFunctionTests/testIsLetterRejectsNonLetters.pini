@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print(is_letter("1"))
     print(is_letter("_"))
     print(is_letter(""))

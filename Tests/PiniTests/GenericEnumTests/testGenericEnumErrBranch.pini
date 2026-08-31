@@ -2,7 +2,7 @@
 ok(T)
 err(E)
 
-main|func() -> ()
+main|func() -> ():
     var e = err<I32, String>("boom")
     match e:
         case err(m):

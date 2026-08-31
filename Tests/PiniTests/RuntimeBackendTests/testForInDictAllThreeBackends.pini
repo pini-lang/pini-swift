@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     let ages = ["Alice": 30, "Bob": 25]
     var total = 0
     for (k, v,) in ages:

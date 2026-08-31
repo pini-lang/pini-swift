@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var a = [10, 20, 30, 40]
     print(a[1:3])
     print(a[1:])

@@ -5,7 +5,7 @@
 圆(F64, F64,)
 线(F64,)
 
-取形状半径|func(s: 形状,) -> (F64,)
+取形状半径|func(s: 形状,) -> (F64,):
     match s:
         case 圆(r):
             return r
@@ -13,7 +13,7 @@
             return w
     return 0.0
 
-main|func() -> ()
+main|func() -> ():
     print(取形状半径(形状.圆(2.0)),)
     print(取形状半径(形状.矩形(3.0, 4.0)),)
     print(形状.圆(2.0),)

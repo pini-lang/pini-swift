@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var n = 10
     var a = 0
     var b = 1

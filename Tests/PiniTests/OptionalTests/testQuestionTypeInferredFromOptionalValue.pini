@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var a: Optional<I32> = nil
     var b: ?I32 = a
     var c: Optional<I32> = b

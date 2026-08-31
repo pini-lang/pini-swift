@@ -1,7 +1,7 @@
-除余|func(a: I32, b: I32) -> ((I32, I32,),)
+除余|func(a: I32, b: I32) -> ((I32, I32,),):
     return (a / b, a % b)
 
-main|func() -> ()
+main|func() -> ():
     let (商, 余) = 除余(17, 5)
     print(商)
     print(余)

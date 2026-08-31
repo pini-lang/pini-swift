@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var x = 7
     var s = "ok"
     print("result=\(x) status=\(s)")

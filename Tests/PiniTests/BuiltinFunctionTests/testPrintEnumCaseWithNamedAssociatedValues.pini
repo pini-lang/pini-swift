@@ -1,7 +1,7 @@
 [形状]
 圆(F64,)
 
-main|func() -> ()
+main|func() -> ():
     var c = 圆(5.0,)
     print(c)
     return

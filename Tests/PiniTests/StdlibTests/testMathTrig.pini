@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print(sin(0.0))
     print(cos(0.0))
     print(tan(0.0))

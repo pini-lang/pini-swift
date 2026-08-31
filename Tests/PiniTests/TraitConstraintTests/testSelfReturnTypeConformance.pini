@@ -6,10 +6,10 @@
     实现: 可克隆
 
 ((点))
-    克隆|self() -> (点,)
+    克隆|self() -> (点,):
         return 点()
 
-main|func() -> ()
+main|func() -> ():
     var p = 点()
     var q = p.克隆()
     return

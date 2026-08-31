@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     match v:
         case 1:
             pass

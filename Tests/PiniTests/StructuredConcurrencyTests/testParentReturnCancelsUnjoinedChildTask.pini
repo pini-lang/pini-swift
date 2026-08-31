@@ -1,13 +1,13 @@
-child|func() => ()
+child|func() => ():
     sleep(3000)
     print("子任务不该跑完")
     return
 
-parent|func() => (I32,)
+parent|func() => (I32,):
     var c = child()
     return ok(1)
 
-main|func() -> ()
+main|func() -> ():
     var p = parent()
     var r = wait p
     match r:

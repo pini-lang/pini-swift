@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var x: I64 = 42
     var p = unsafe &x
     print(unsafe load(p))

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     outer|while true:
         break outer
     return

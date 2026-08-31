@@ -1,7 +1,7 @@
 (点)
 x: I32 = 0
-移动|unsafe() -> ()
+移动|unsafe() -> ():
     return
 
-main|func() -> ()
+main|func() -> ():
     return

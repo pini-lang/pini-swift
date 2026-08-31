@@ -3,7 +3,7 @@ import std
 (pt)
 x: I32 = 5
 
-main|func() -> ()
+main|func() -> ():
     var k = 0
     while k < 3:
         print(k)
@@ -13,5 +13,5 @@ main|func() -> ()
     print(k)
     return
 
-sub|func() -> ()
+sub|func() -> ():
     return

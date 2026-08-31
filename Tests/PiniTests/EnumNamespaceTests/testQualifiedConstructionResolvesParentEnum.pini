@@ -6,7 +6,7 @@
 圆(F64, F64,)
 线(F64,)
 
-main|func() -> ()
+main|func() -> ():
     print(形状.圆(2.0),)
     print(几何.圆(0.0, 3.0),)
     return

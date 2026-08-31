@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print(x)
     var x = 10
     return

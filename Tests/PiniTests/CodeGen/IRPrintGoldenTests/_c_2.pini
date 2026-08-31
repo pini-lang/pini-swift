@@ -1,6 +1,6 @@
 [形状]
 矩形(I32, I32,)
 
-main|func() -> ()
+main|func() -> ():
     print(矩形(3, 4))
     return

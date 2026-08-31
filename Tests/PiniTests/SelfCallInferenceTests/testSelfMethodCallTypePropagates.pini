@@ -2,16 +2,16 @@
 num: I32 = 0
 
 {{box}}
-get|self() -> (I32,)
+get|self() -> (I32,):
     return self.num
 
-probe|self() -> ()
+probe|self() -> ():
     let v = self.get()
     if v == 0:
         self.num = 1
     return
 
-main|func() -> ()
+main|func() -> ():
     let b = box()
     b.probe()
     print(b.get())

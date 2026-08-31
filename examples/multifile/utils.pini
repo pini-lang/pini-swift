@@ -4,8 +4,8 @@
 x: I32 = 0
 y: I32 = 0
 
-add|func(a: I32, b: I32) -> (I32)
+add|func(a: I32, b: I32) -> (I32):
     return a + b
 
-square|func(n: I32) -> (I32)
+square|func(n: I32) -> (I32):
     return n * n

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var a = [10, 20, 30]
     print(a[-4])
     var s = "hi"

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var y = 2.5
     match y:
         case 1.0:

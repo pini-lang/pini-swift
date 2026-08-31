@@ -1,4 +1,4 @@
-bad|func() -> (String,)
+bad|func() -> (String,):
     return 1
-main|func() -> ()
+main|func() -> ():
     return

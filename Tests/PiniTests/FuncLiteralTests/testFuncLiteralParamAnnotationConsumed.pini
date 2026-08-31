@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var f = func (n: I32,) -> (I32,):
         return n
     return

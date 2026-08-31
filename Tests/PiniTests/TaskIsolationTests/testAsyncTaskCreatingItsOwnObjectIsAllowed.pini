@@ -2,18 +2,18 @@
 n: I32 = 0
 
 {{Counter}}
-inc|self() -> ()
+inc|self() -> ():
     self.n = self.n + 1
     return
-get|self() -> ()
+get|self() -> ():
     return self.n
 
-work|func() => (I32,)
+work|func() => (I32,):
     let c = Counter()
     c.inc()
     return ok(c.get())
 
-main|func() -> ()
+main|func() -> ():
     var t = work()
     var r = wait t
     match r:

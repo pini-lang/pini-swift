@@ -1,4 +1,4 @@
-ok|func() -> (I32,)
+ok|func() -> (I32,):
     return 1
-main|func() -> ()
+main|func() -> ():
     return

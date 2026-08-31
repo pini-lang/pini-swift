@@ -2,5 +2,5 @@
 圆(F64,)
 圆(F64,)
 
-main|func() -> ()
+main|func() -> ():
     return

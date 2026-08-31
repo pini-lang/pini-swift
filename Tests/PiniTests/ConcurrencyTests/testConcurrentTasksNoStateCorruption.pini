@@ -1,4 +1,4 @@
-make|func(n: I32,) => (I32,)
+make|func(n: I32,) => (I32,):
     var s = 0
     var i = 0
     while i < n:
@@ -6,7 +6,7 @@ make|func(n: I32,) => (I32,)
         i = i + 1
     return ok(s)
 
-main|func() -> ()
+main|func() -> ():
     var a = make(100)
     var b = make(7)
     print(wait a)

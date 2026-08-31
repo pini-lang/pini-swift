@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var c = 0
     match c:
         case foo:

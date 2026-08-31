@@ -3,6 +3,6 @@ Red
 Green
 Blue
 
-main|func() -> ()
+main|func() -> ():
     let c = Red
     return

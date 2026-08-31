@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     let f = func (x,) -> (I32,): return x + 1
     print(f(41))
     return

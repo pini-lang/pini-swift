@@ -1,6 +1,6 @@
-f|func(a: I32,) -> (I32,)
+f|func(a: I32,) -> (I32,):
     return a
 
-main|func() -> ()
+main|func() -> ():
     print(f(a: 3,))
     return

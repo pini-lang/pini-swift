@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var cs = chars("a圆b")
     print(len(cs))
     print(cs[0]!)

@@ -2,5 +2,5 @@
 值: T = 0
 (包装器)
 内部: 容器<I32> = 容器<I32>()
-main|func() -> ()
+main|func() -> ():
     return

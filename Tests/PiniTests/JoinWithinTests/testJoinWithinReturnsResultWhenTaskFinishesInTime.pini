@@ -1,8 +1,8 @@
-fast|func() => (I32,)
+fast|func() => (I32,):
     sleep(20)
     return ok(7)
 
-main|func() -> ()
+main|func() -> ():
     var t = fast()
     var r = joinWithin(t, 1000)
     match r:

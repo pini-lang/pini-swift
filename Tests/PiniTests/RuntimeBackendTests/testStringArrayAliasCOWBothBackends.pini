@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s1 = ["a", "b"]
     var s2 = s1
     s2[1] = "z"

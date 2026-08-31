@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print(is_number("0"))
     print(is_number("三"))
     print(is_number("〇"))

@@ -1,8 +1,8 @@
-child|func() => (I32,)
+child|func() => (I32,):
     sleep(30)
     return ok(42)
 
-parent|func() => (I32,)
+parent|func() => (I32,):
     var c = child()
     var r = await c
     match r:
@@ -12,7 +12,7 @@ parent|func() => (I32,)
             return err(e)
     return ok(0)
 
-main|func() -> ()
+main|func() -> ():
     var r = wait parent()
     match r:
         case ok(v):

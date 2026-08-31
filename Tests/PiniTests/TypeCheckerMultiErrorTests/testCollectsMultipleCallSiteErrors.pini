@@ -1,6 +1,6 @@
-takesI32|func(p: I32,) -> ()
+takesI32|func(p: I32,) -> ():
     return
-main|func() -> ()
+main|func() -> ():
     takesI32(p: "str")
     takesI32(p: 1.5)
     return

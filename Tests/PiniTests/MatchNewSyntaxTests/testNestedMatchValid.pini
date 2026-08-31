@@ -1,7 +1,7 @@
 [方向]
 东
 南
-main|func() -> ()
+main|func() -> ():
     var d = 东
     match d:
         case 东:

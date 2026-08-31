@@ -4,7 +4,7 @@ strlen(s: *U8,) -> (U64,)
 puts(s: *U8,) -> (I32,)
 free(p: *U8,) -> ()
 
-main|func() -> ()
+main|func() -> ():
     var s = unsafe cstr("hello")
     print(unsafe strlen(s))
     unsafe puts(s)

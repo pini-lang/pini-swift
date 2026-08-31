@@ -4,6 +4,6 @@ count: I32 = 0
 [libc|foreign]
 写(p: *计数器,) -> ()
 
-main|func() -> ()
+main|func() -> ():
     print("x")
     return

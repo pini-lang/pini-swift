@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     assert(true)
     assert(true, "应该通过")
     print("ok")

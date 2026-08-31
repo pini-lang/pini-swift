@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var d = ["a": [1, 2]]
     var e = d
     d["a"][0] = 7

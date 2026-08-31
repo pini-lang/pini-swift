@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var t = (1, 2.5, 7)
     print(len(t))
     return

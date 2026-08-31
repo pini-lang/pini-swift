@@ -2,15 +2,15 @@
 n: I32 = 0
 
 {{Counter}}
-inc|self() -> ()
+inc|self() -> ():
     self.n = self.n + 1
     return
 
-bump|func(c: Counter,) -> ()
+bump|func(c: Counter,) -> ():
     c.inc()
     return
 
-main|func() -> ()
+main|func() -> ():
     let c = Counter()
     bump(c)
     return

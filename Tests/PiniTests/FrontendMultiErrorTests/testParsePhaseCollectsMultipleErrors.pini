@@ -1,5 +1,5 @@
 [Bad1|notakw
 [Bad2|notakw
 [Bad3|notakw
-main|func() -> ()
+main|func() -> ():
     return

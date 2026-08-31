@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var x: I32 = 0
     x = "str"
     x = 1.5

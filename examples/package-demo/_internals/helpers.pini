@@ -2,7 +2,7 @@
 ; 「其他文件能访问公开字段」靠的就是这一级：目录 `_` 前缀 = package，而非 import
 
 ; （合法）package 函数：跨文件（main.pini）可调用
-包内辅助|func() -> (I32,)
+包内辅助|func() -> (I32,):
     return 42
 
 ; （合法）package 类型 {账户}：跨文件（main.pini）可实例化并访问其【公开】字段。
@@ -12,10 +12,10 @@
 _owner: I32 = 1
 
 {{账户}}
-存|self(额: I32) -> ()
+存|self(额: I32) -> ():
     self.余额 = self.余额 + 额
     return
-取|self() -> ()
+取|self() -> ():
     return self.余额
-查主人|self() -> ()
+查主人|self() -> ():
     return self._owner

@@ -3,7 +3,7 @@
 矩形(F64, F64,)
 [几何]
 圆(F64, F64,)
-main|func() -> ()
+main|func() -> ():
     let s = 形状.圆(2.0)
     match s:
         case 圆(r):

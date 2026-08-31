@@ -1,10 +1,10 @@
-good|func() => (I32,)
+good|func() => (I32,):
     return ok(1)
 
-bad|func() => (I32,)
+bad|func() => (I32,):
     return err(Error("成员失败"))
 
-main|func() -> ()
+main|func() -> ():
     var a = good()
     var b = bad()
     var r = wait joinAll([a, b])

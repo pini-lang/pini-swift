@@ -1,4 +1,4 @@
-v|func() -> ()
+v|func() -> ():
     return 1
-main|func() -> ()
+main|func() -> ():
     return

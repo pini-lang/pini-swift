@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     defer print("late")
     print("early")
     return

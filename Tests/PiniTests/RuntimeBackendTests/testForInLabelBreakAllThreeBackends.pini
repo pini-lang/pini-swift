@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s = 0
     outer|for (v,) in [1, 2, 3, 4]:
         if v == 3:

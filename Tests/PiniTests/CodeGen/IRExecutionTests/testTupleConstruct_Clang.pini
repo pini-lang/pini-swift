@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var a = 7
     var b = 8
     var p = (a, b)

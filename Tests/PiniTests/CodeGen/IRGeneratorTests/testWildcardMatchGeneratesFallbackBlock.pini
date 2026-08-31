@@ -3,7 +3,7 @@
 绿
 蓝
 
-main|func() -> ()
+main|func() -> ():
     var c = 蓝
     match c:
         case 红:

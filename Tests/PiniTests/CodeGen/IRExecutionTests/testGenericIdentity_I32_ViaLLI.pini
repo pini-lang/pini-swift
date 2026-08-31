@@ -1,7 +1,7 @@
-identity<T>(x: T,) -> (T,)
+identity<T>(x: T,) -> (T,):
     return x
 
-main|func() -> ()
+main|func() -> ():
     print(identity<I32>(42))
     print(identity<I32>(100))
     return

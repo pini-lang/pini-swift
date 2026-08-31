@@ -1,4 +1,4 @@
-getEither(flag: Bool,) -> (I32,)
+getEither(flag: Bool,) -> (I32,):
     if flag:
         return 42
     else:

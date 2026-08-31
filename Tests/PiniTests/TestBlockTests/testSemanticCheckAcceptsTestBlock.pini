@@ -1,5 +1,5 @@
-裸测试|test() -> ()
+裸测试|test() -> ():
     return
 
-main() -> ()
+main() -> ():
     return

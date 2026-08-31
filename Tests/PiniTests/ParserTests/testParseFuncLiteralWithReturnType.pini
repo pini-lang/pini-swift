@@ -1,3 +1,3 @@
-main() -> ()
+main() -> ():
     let f = func (x,) -> (I32,): return x + 1
     return

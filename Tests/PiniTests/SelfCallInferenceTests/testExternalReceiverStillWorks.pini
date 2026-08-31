@@ -2,10 +2,10 @@
 num: I32 = 0
 
 {{box}}
-get|self() -> (I32,)
+get|self() -> (I32,):
     return self.num
 
-main|func() -> ()
+main|func() -> ():
     let b = box()
     let v = b.get()
     if v == 0:

@@ -1,4 +1,4 @@
-foo|func() -> ()
+foo|func() -> ():
     return
-bar|func() -> ()
+bar|func() -> ():
     return

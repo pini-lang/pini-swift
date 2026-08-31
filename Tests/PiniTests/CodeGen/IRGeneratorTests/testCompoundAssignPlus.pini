@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var a = 5
     a += 3
     return

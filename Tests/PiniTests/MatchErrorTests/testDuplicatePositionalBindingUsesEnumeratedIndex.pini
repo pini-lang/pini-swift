@@ -3,7 +3,7 @@
 矩形(F64, F64,)
 三角形(F64, F64,)
 
-main|func() -> ()
+main|func() -> ():
     var r = 矩形(3.0, 4.0,)
     match r:
         case 矩形(a, a,):

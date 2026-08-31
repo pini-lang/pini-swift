@@ -2,5 +2,5 @@
 malloc(size: U64,) -> (*U8,)
 var x: I32 = 0
 
-main|func() -> ()
+main|func() -> ():
     return

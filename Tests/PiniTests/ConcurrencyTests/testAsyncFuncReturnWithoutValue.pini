@@ -1,7 +1,7 @@
-greet|func() => ()
+greet|func() => ():
     print("hi")
     return
 
-main|func() -> ()
+main|func() -> ():
     wait greet()
     return

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var result = 0
     try (42, "something went wrong",):
         result = 100

@@ -1,7 +1,7 @@
-child|func() => (I32, String,)
+child|func() => (I32, String,):
     return (0, "",)
 
-main|func() => (I32,)
+main|func() => (I32,):
     try (await child()):
         print("try-ok")
     except e:

@@ -2,5 +2,5 @@
 x: F64 = 0.0
 
 {{点}}
-距离|self() -> (F64,)
+距离|self() -> (F64,):
     return self.x

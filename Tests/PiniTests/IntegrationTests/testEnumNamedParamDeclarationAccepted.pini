@@ -1,11 +1,11 @@
 [形状]
 矩形(宽度: F64, 高度: F64,)
 
-面积|func(s: 形状,) -> (F64,)
+面积|func(s: 形状,) -> (F64,):
     match s:
         case 矩形(w, h):
             return w * h
 
-main|func() -> ()
+main|func() -> ():
     print(面积(矩形(3.0, 4.0,)))
     return

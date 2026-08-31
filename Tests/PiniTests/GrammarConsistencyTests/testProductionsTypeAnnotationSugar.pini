@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var a: ?I32 = nil
     var b: [String] = []
     var c: [String: I32] = []

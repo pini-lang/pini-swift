@@ -6,7 +6,7 @@ y: I32 = 20
 基础点
 颜色: String = "red"
 
-main|func() -> ()
+main|func() -> ():
     let p = 颜色点()
     print(p.x)
     print(p.y)

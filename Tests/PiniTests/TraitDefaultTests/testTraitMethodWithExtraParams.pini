@@ -1,12 +1,12 @@
 <Greeter>
-    sayHello(self, name: String) -> (String,)
+    sayHello(self, name: String) -> (String,):
         return "hello, " + name
 
 (Person)
 名称: String = "Alice"
 实现: Greeter
 
-main|func() -> ()
+main|func() -> ():
     var p = Person()
     print(p.sayHello(name: "Bob"))
     return

@@ -1,7 +1,7 @@
-task|func() => (I32,)
+task|func() => (I32,):
     return ok(1)
 
-main|func() -> ()
+main|func() -> ():
     var t = task()
     t.cancel()
     var r = wait t

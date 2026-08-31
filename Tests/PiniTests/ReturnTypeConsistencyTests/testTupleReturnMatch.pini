@@ -1,4 +1,4 @@
-ok|func() -> ( (I32, String), )
+ok|func() -> ( (I32, String), ):
     return (1, "x")
-main|func() -> ()
+main|func() -> ():
     return

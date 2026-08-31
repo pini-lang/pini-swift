@@ -1,5 +1,5 @@
-foo|func(a: I32, b: I32,) -> ()
+foo|func(a: I32, b: I32,) -> ():
     return
-main|func() -> ()
+main|func() -> ():
     foo(1)
     return

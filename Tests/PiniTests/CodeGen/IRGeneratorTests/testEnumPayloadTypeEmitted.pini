@@ -1,5 +1,5 @@
 [Shape]
 Circle(I32,)
 Square
-main|func() -> ()
+main|func() -> ():
     return

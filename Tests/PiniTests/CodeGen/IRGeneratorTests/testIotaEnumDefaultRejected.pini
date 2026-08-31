@@ -1,4 +1,4 @@
 [方]
 东(iota(),)
-main|func() -> ()
+main|func() -> ():
     pass

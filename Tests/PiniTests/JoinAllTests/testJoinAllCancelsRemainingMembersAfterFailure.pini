@@ -1,12 +1,12 @@
-bad|func() => (I32,)
+bad|func() => (I32,):
     return err(Error("先失败"))
 
-slow|func() => (I32,)
+slow|func() => (I32,):
     sleep(3000)
     print("慢成员不该跑完")
     return ok(9)
 
-main|func() -> ()
+main|func() -> ():
     var b = bad()
     var s = slow()
     var r = wait joinAll([b, s])

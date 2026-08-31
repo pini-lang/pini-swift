@@ -1,8 +1,8 @@
-worker|func() => (I32,)
+worker|func() => (I32,):
     sleep(10)
     return ok(1)
 
-main|func() => (I32,)
+main|func() => (I32,):
     var w = worker()
     var r = await w
     return r

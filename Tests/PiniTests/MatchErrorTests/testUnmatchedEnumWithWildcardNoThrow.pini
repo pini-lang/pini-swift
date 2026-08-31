@@ -3,7 +3,7 @@
 矩形
 三角形
 
-main|func() -> ()
+main|func() -> ():
     var s = 三角形
     match s:
         case 圆:

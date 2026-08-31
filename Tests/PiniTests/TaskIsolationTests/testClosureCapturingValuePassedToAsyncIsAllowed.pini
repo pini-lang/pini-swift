@@ -1,8 +1,8 @@
-go|func(task: () -> (),) => ()
+go|func(task: () -> (),) => ():
     task()
     return
 
-main|func() -> ()
+main|func() -> ():
     var base = 10
     var f = func () -> ():
         base = base + 1

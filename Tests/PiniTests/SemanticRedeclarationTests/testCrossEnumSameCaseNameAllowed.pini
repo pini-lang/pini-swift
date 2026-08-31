@@ -6,5 +6,5 @@
 圆(F64, F64,)
 线(F64,)
 
-main|func() -> ()
+main|func() -> ():
     return

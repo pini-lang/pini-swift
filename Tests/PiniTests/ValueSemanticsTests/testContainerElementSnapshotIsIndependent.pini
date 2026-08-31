@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var inner = [1, 2]
     var outer = [inner]
     inner[0] = 42

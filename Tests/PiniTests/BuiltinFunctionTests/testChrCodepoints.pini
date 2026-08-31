@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print(chr(65))
     print(chr(23383))
     print(chr(-1))

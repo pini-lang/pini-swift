@@ -1,10 +1,10 @@
-foo|func() -> ()
+foo|func() -> ():
     return
-foo|func() -> ()
+foo|func() -> ():
     return
-bar|func() -> ()
+bar|func() -> ():
     return
-bar|func() -> ()
+bar|func() -> ():
     return
-main|func() -> ()
+main|func() -> ():
     return

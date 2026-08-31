@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     elif false:
         print("B",)
     return

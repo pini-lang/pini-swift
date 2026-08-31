@@ -1,6 +1,6 @@
 {保险箱}
 _密钥: I32 = 0
-main|func() -> ()
+main|func() -> ():
     let b = 保险箱()
     print(b._密钥)
     return

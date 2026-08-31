@@ -3,7 +3,7 @@ x: I32 = 0
 label: String = "hi"
 ok: Bool = false
 
-main|func() -> ()
+main|func() -> ():
     var p = 点()
     p.x = 1
     p.ok = true

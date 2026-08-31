@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var r = LazyRef<I32>(func () -> (I32,): return 42)
     print(r.value)
     return

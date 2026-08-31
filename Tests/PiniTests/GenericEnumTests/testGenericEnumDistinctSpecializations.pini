@@ -2,7 +2,7 @@
 满(T)
 空()
 
-main|func() -> ()
+main|func() -> ():
     var x = 满<I32>(5)
     match x:
         case 满(v):

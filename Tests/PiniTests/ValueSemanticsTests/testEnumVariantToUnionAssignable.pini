@@ -4,10 +4,10 @@
 (点)
     x: I32 = 0
 
-取面积|func(s: 形状) -> ()
+取面积|func(s: 形状) -> ():
     return
 
-main|func() -> ()
+main|func() -> ():
     var c = 圆(点(), 1.0)
     取面积(c)
     return

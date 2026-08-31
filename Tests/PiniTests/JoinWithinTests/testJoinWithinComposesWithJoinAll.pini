@@ -1,8 +1,8 @@
-slow|func(n: I32,) => (I32,)
+slow|func(n: I32,) => (I32,):
     sleep(3000)
     return ok(n)
 
-main|func() -> ()
+main|func() -> ():
     var a = slow(1)
     var b = slow(2)
     var r = joinWithin(joinAll([a, b]), 120)

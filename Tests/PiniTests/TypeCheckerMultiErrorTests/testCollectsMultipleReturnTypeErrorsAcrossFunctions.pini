@@ -1,6 +1,6 @@
-f1|func() -> (I32,)
+f1|func() -> (I32,):
     return
-f2|func() -> (I32,)
+f2|func() -> (I32,):
     return
-main|func() -> ()
+main|func() -> ():
     return

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var d = [1: "x", 2: "y"]
     var r = d[9]
     print(r)

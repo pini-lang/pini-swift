@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var n = 3
     var f = F64(n)
     print(f + 0.5)

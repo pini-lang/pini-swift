@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var x: ?I32 = nil
     match x:
         case nil:

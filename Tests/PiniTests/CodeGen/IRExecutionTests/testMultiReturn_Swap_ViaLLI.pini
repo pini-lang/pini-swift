@@ -1,6 +1,6 @@
-swap(x: I32, y: I32,) -> (I32, I32,)
+swap(x: I32, y: I32,) -> (I32, I32,):
     return (y, x,)
 
-main|func() -> ()
+main|func() -> ():
     let result = swap(10, 20)
     return

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var top = [1, 2, 3]
     return
     print(top)

@@ -1,5 +1,5 @@
-fetchData() => (I32,)
+fetchData() => (I32,):
     return 42
 
-main|func() -> ()
+main|func() -> ():
     return

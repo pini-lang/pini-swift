@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var name = "World"
     var n = 5
     print("Hello \(name), count=\(n)")

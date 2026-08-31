@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s = "hello"
     if s.contains("ell"):
         print("yes")

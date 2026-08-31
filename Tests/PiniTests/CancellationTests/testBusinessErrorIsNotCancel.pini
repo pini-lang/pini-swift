@@ -1,7 +1,7 @@
-boom|func() => (I32,)
+boom|func() => (I32,):
     return err(Error("业务失败"))
 
-main|func() -> ()
+main|func() -> ():
     var r = wait boom()
     match r:
         case ok(v):

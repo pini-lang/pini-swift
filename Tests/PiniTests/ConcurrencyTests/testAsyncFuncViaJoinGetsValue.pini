@@ -1,7 +1,7 @@
-foo|func() => (I32,)
+foo|func() => (I32,):
     return ok(99)
 
-main|func() -> ()
+main|func() -> ():
     var r = wait foo()
     match r:
         case ok(v):

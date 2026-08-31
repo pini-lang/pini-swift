@@ -2,6 +2,6 @@
 圆(F64,)
 [几何]
 圆(F64, F64,)
-main|func() -> ()
+main|func() -> ():
     print(圆(2.0),)
     return

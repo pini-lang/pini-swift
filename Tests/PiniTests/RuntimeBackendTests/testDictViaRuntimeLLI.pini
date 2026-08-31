@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     let ages = ["Alice": 30, "Bob": 25, "Carol": 41]
     print(ages["Bob"])
     print(len(ages))

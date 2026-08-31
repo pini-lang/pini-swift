@@ -1,5 +1,5 @@
 <Greetable>
-    greet(self) -> (String,)
+    greet(self) -> (String,):
         return "default"
 
 (Dog)

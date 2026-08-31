@@ -1,5 +1,5 @@
-negate(flag: Bool,) -> (Bool,)
+negate(flag: Bool,) -> (Bool,):
     return !flag
 
-main|func() -> ()
+main|func() -> ():
     return

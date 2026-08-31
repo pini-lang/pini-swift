@@ -1,12 +1,12 @@
 <Named>
-    getName(self) -> (String,)
+    getName(self) -> (String,):
         return self.名称
 
 (Person)
 名称: String = "Alice"
 实现: Named
 
-main|func() -> ()
+main|func() -> ():
     var p = Person()
     print(p.getName())
     return

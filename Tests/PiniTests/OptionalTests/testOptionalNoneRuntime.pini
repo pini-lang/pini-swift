@@ -1,4 +1,4 @@
-main() -> ()
+main() -> ():
     var x = Optional.none
     match x:
         case some(v,):

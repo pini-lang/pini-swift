@@ -4,7 +4,7 @@ foo(a: I32,)
 [BoxB]
 foo(x: String, y: String,)
 
-main|func() -> ()
+main|func() -> ():
     print(foo(1))
     print(foo("a", "b"))
     return

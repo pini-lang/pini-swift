@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var s = "stored"
     print(s)
     return

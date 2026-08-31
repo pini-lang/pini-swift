@@ -4,10 +4,10 @@ y: I8 = 0.0
 
 
 ((点))
-距离原点|self() -> (I8,)
+距离原点|self() -> (I8,):
     return self.x + self.y
 
-main|func() -> ()
+main|func() -> ():
     var p = 点()
     p.x = 8
     p.y = 16

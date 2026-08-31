@@ -1,7 +1,7 @@
 [Token]
 identifier(text: String, loc: I32,)
 
-main|func() -> ()
+main|func() -> ():
     var t = identifier("x", 7,)
     match t:
         case identifier(a, b, c):

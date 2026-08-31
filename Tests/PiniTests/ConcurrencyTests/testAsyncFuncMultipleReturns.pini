@@ -1,10 +1,10 @@
-ten|func() => (I32,)
+ten|func() => (I32,):
     return ok(10)
 
-twenty|func() => (I32,)
+twenty|func() => (I32,):
     return ok(20)
 
-main|func() -> ()
+main|func() -> ():
     print(wait ten())
     print(wait twenty())
     return

@@ -1,7 +1,7 @@
-helper|func() -> ()
+helper|func() -> ():
     print("hi")
     return
 
-main|func() -> ()
+main|func() -> ():
     helper()
     return

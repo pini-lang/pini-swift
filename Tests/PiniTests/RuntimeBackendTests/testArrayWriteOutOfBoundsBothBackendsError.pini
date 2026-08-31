@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var a = [10, 20, 30]
     a[5] = 9
     return

@@ -46,18 +46,18 @@ ffi_strcmp(a: *U8, b: *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib �
 
 ; ── ② 安全封装层：unsafe 内核（|unsafe 自由函数，函数体自动不安全上下文）──
 ; 把 Pini String 转 C 串量长度后立即释放，调用方无需触碰指针（返回 U64，由 strlen 提供）。
-c串长度|unsafe(源: String,) -> (U64,)
+c串长度|unsafe(源: String,) -> (U64,):
  var p = cstr(源)
  var n = ffi_strlen(p)
  ffi_free(p)
  return n
 
 ; 分配 owned C 字符串副本并返回指针（调用方负责 free）。
-c串复制|unsafe(源: String,) -> (*U8,)
+c串复制|unsafe(源: String,) -> (*U8,):
  return cstr(源)
 
 ; 经 dlsym 裸 C 绑定把字符串解析为整数（返回 I32，调用方拿到的已是强类型值）。
-c整型|unsafe(源: String,) -> (I32,)
+c整型|unsafe(源: String,) -> (I32,):
  var p = cstr(源)
  var n = ffi_atoi(p)
  ffi_free(p)
@@ -65,14 +65,14 @@ c整型|unsafe(源: String,) -> (I32,)
 
 ; 堆字节分配 + 写入一个字节，返回 owned 缓冲（调用方在非 unsafe 上下文读取 / 释放）。
 ; 注：store 在 |unsafe 函数体内返回 ()，无需 load，故可正常收回 *U8 类型。
-堆字节|unsafe(值: U8,) -> (*U8,)
+堆字节|unsafe(值: U8,) -> (*U8,):
  var buf = ffi_malloc(8)
  store(buf, 值)
  return buf
 
 ; ── ③ 安全函数（非 unsafe 上下文）：检查前置条件，仅解引用那一行加 unsafe 前缀 ──
 ; 「最小不安全范围」推荐写法：函数本身不在 unsafe 上下文，出错也只在那一行。
-分配并写|func(值: I32,) -> (*U8,)
+分配并写|func(值: I32,) -> (*U8,):
  if 值 < 0:
   print("分配并写: 负值被钳为 0")
   值 = 0
@@ -85,12 +85,12 @@ c整型|unsafe(源: String,) -> (I32,)
 ; 当前解释器 `==` 仅对 I32 可靠（U64 / U8 结果无法参与 `==` 比较），故 |test 断言
 ; 聚焦于 I32 返回的绑定：dlsym 裸 C 绑定 atoi、strcmp。其余路径（shim cstr/strlen、
 ; store/load 指针原语、memcpy/memset）在 ⑤ main 经 golden 输出端到端验证。
-裸绑定测试|test() -> ()
+裸绑定测试|test() -> ():
  var n: I32 = c整型("123")
  assert(n == 123, "dlsym atoi(\"123\") 应为 123")
  return
 
-比较测试|test() -> ()
+比较测试|test() -> ():
  var a = unsafe cstr("abc")
  var b = unsafe cstr("abc")
  var c: I32 = ffi_strcmp(a, b)
@@ -100,7 +100,7 @@ c整型|unsafe(源: String,) -> (I32,)
  return
 
 ; ── ⑤ 演示入口：raw 调用（unsafe 消耗点）+ 安全封装调用（消费方零 unsafe）──
-main|func() -> ()
+main|func() -> ():
  ; 安全封装调用：消费方代码完全不出现 unsafe 关键字
  print("长度 =", c串长度("Pini FFI"))
  print("atoi =", c整型("4096"))

@@ -1,5 +1,5 @@
-参数测试|test(x: I32, 消息: String,) -> ()
+参数测试|test(x: I32, 消息: String,) -> ():
     return
 
-main() -> ()
+main() -> ():
     return

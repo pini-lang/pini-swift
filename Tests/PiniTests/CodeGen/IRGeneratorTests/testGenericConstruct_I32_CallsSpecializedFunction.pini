@@ -1,6 +1,6 @@
-identity<T>(x: T,) -> (T,)
+identity<T>(x: T,) -> (T,):
     return x
 
-main|func() -> ()
+main|func() -> ():
     identity<I32>(42)
     return

@@ -2,7 +2,7 @@
 Circle(I32,)
 Square
 
-main|func() -> ()
+main|func() -> ():
     let s = Circle(42,)
     match s:
         case Circle(x,):

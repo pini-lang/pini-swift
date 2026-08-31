@@ -2,7 +2,7 @@
     x: I32 = 0
     y: I32 = 0
 
-main|func() -> ()
+main|func() -> ():
     var p = 点()
     var q = p
     q.x = 9

@@ -1,5 +1,5 @@
-takesPair|func(p: (I32, String),) -> ()
+takesPair|func(p: (I32, String),) -> ():
     return
-main|func() -> ()
+main|func() -> ():
     takesPair(p: (1, 2, 3))
     return

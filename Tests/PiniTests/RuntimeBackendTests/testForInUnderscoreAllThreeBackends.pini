@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var cnt = 0
     for (_ ,) in [7, 8, 9]:
         cnt = cnt + 1

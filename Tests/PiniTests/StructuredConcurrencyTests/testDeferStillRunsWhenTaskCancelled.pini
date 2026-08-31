@@ -1,11 +1,11 @@
-worker|func() => (I32,)
+worker|func() => (I32,):
     defer print("清理完成")
     var i = 0
     while i < 200000000:
         i = i + 1
     return ok(i)
 
-main|func() -> ()
+main|func() -> ():
     var t = worker()
     sleep(80)
     t.cancel()

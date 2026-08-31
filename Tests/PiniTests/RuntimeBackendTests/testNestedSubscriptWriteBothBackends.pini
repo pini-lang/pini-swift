@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var m = [[1, 2], [3, 4]]
     m[0][0] = 99
     print(m)

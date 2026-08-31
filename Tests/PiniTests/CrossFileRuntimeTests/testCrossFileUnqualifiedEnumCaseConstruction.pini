@@ -1,4 +1,4 @@
-area|func(sh: Shape,) -> (I32,)
+area|func(sh: Shape,) -> (I32,):
     match sh:
         case circle(r,):
             return r
@@ -6,6 +6,6 @@ area|func(sh: Shape,) -> (I32,)
             return s
     return 0
 
-main|func() -> ()
+main|func() -> ():
     print(area(circle(r: 7,)))
     return

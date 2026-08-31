@@ -1,11 +1,11 @@
 ; 公开 API：无 `_` 前缀 ⇒ public，跨文件（如 main.pini）可调用
-公开API|func() -> (I32,)
+公开API|func() -> (I32,):
     ; （合法）同文件内可访问本文件的 hard-private 函数 _私有助手（同文件恒可见）
     let r = _私有助手()
     return r + 100
 
 ; hard-private：符号名 `_` 前缀 ⇒ 硬私有，仅本文件可见
-_私有助手|func() -> (I32,)
+_私有助手|func() -> (I32,):
     return 7
 
 ; ── 字段级可见性演示（边缘情况，spec 2.5）──
@@ -18,7 +18,7 @@ _私有助手|func() -> (I32,)
 _密码: I32 = 1234
 
 {{金库}}
-查余额|self() -> ()
+查余额|self() -> ():
     return self.余额
-验证|self() -> ()
+验证|self() -> ():
     return self._密码

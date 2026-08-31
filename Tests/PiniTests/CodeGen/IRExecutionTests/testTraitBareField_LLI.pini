@@ -1,5 +1,5 @@
 <可描述>
-    描述(self) -> (String,)
+    描述(self) -> (String,):
         return "默认描述"
 
 (狗)
@@ -7,10 +7,10 @@
     实现: 可描述
 
 ((狗))
-    描述|self() -> (String,)
+    描述|self() -> (String,):
         return 名字
 
-main|func() -> ()
+main|func() -> ():
     var d = 狗()
     print(d.描述())
     return

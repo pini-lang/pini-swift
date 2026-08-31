@@ -4,20 +4,20 @@ foo(a: I32,)
 [BoxB]
 foo(x: String, y: String,)
 
-describe_a|func(b: BoxA,) -> (I32,)
+describe_a|func(b: BoxA,) -> (I32,):
     match b:
         case foo(v,):
             return v
     return 0
 
-describe_b|func(b: BoxB,) -> (I32,)
+describe_b|func(b: BoxB,) -> (I32,):
     match b:
         case foo(x, y,):
             if x == y:
                 return 7
     return 0
 
-main|func() -> ()
+main|func() -> ():
     print(describe_a(foo(a: 5)))
     print(describe_b(foo(x: "k", y: "k")))
     return

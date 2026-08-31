@@ -1,5 +1,5 @@
-{加法测试|test}() -> ()
+{加法测试|test}() -> ():
     return
 
-main() -> ()
+main() -> ():
     return

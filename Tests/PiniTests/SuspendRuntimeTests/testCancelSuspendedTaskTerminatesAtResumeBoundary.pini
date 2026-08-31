@@ -1,14 +1,14 @@
-leaf|func() => (I32,)
+leaf|func() => (I32,):
     sleep(500)
     return ok(9)
 
-mid|func() => (I32,)
+mid|func() => (I32,):
     var l = leaf()
     detach l
     var r = await l
     return r
 
-main|func() => (I32,)
+main|func() => (I32,):
     var m = mid()
     sleep(30)
     m.cancel()

@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     var x = 99
     match x:
         case 1:

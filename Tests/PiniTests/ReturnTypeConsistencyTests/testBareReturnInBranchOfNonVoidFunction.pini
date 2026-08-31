@@ -1,7 +1,7 @@
-bad|func() -> (I32,)
+bad|func() -> (I32,):
     if true:
         return 1
     else:
         return
-main|func() -> ()
+main|func() -> ():
     return

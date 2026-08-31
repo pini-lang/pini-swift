@@ -1,4 +1,4 @@
 [形状]
 圆(I32,)
-main|func() -> ()
+main|func() -> ():
     print(形状.圆(2))

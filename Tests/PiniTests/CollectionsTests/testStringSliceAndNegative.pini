@@ -1,4 +1,4 @@
-main|func() -> ()
+main|func() -> ():
     print("hello"[1:4])
     print("hello"[1:])
     print("hello"[:-1])
