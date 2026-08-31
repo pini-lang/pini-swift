@@ -451,12 +451,10 @@ public class Parser {
  var renames: [ExportRename] = []
  skipNewlines()
  while !isEOF() {
+ // 项行形态：IDENT = IDENT（下一顶级形态的行首即闭合——先看后吃）
  guard case .identifier(let alias, let itemLoc) = currentToken else { break }
+ guard case .assign(_) = peek() else { break }
  advance()
- guard case .assign(_) = currentToken else {
- throw ParserError.invalidDeclaration(
- reason: "export 项须为 `可见别名 = 原符号`", location: currentLocation)
- }
  advance()
  guard case .identifier(let symbol, _) = currentToken else {
  throw ParserError.invalidDeclaration(

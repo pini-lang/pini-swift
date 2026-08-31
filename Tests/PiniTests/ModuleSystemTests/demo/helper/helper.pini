@@ -1,0 +1,8 @@
+[helper|export]
+加法 = 加法
+
+加法|func(a: I32, b: I32,) -> (I32,):
+    return a + b
+
+_内部校验|func(v: I32,) -> (Bool,):
+    return v > 0

@@ -22,6 +22,11 @@ public final class SemanticAnalyzer {
  /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——首版接受，待符号表结构化（唯一 id）后升级。
  private var usedSymbols: Set<String> = []
 
+ /// G52 批 1（2026-08-31）：import 别名登记表——
+ /// 别名 → (publicSymbols 跨模块可引入集, allSymbols 全部顶级符号)。
+ /// D-2 静态互斥：本地符号声明与别名同名 → 重声明错误。
+ private var importAliasInfos: [String: (publicSymbols: Set<String>, allSymbols: Set<String>)] = [:]
+
  /// H-1 capture 校验上下文栈：每个活跃匿名函数字面量一层
  ///（boundary = 字面量体作用域边界；captured = 已先行声明的捕获名集合）。
  /// ①引用外层局部未捕获 → captureWithoutDeclaration；嵌套字面量各持独立一层。
@@ -61,6 +66,12 @@ public final class SemanticAnalyzer {
  public func analyze(module: Module) throws {
  warnings = [] // B2：每次分析重置（实例可复用）
  usedSymbols = []
+ // G52 批 1：登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
+ for imp in module.imports {
+ let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+ let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
+ importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
+ }
  // 第一遍：预注册所有顶级声明
  for decl in module.declarations {
  try registerTopLevelDecl(decl)
@@ -144,6 +155,18 @@ public final class SemanticAnalyzer {
  warnings = [] // B2：收集模式同样重置（实例可复用）
  usedSymbols = []
  var errors: [SemanticError] = []
+ // G52 批 1：登记 import 别名（与 analyze(module:) 同规则）；加载失败收集为诊断
+ for imp in module.imports {
+ let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+ do {
+ let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
+ importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
+ } catch let e as SemanticError {
+ errors.append(e)
+ } catch {
+ errors.append(.moduleRootMissing(path: imp.packagePath))
+ }
+ }
 
  for decl in module.declarations {
  do {
@@ -258,6 +281,10 @@ public final class SemanticAnalyzer {
 
  private func defineUnique(name: String, kind: SymbolKind, location: SourceLocation) throws {
  if symbolTable.resolve(name) != nil {
+ throw SemanticError.redeclaredSymbol(name: name, location: location)
+ }
+ // G52 D-2 静态互斥：本地顶级符号不得与 import 别名同名
+ if importAliasInfos[name] != nil {
  throw SemanticError.redeclaredSymbol(name: name, location: location)
  }
  symbolTable.define(Symbol(name: name, kind: kind, location: location))
@@ -383,6 +410,7 @@ public final class SemanticAnalyzer {
  if symbolTable.isDefinedInCurrentScope(name) {
  throw SemanticError.redeclaredSymbol(name: name, location: location)
  }
+ try checkAliasNameConflict(name, location)
  symbolTable.define(Symbol(name: name, kind: .variable(isMutable: isMutable), location: location))
 
  case .varDestructure(let names, _, let initializer, let isMutable, let location):
@@ -394,6 +422,7 @@ public final class SemanticAnalyzer {
  if symbolTable.isDefinedInCurrentScope(name) {
  throw SemanticError.redeclaredSymbol(name: name, location: location)
  }
+ try checkAliasNameConflict(name, location)
  symbolTable.define(Symbol(name: name, kind: .variable(isMutable: isMutable), location: location))
  }
 
@@ -614,12 +643,26 @@ public final class SemanticAnalyzer {
  if case .identifier(let name, let location) = callee {
  try requireDefined(name, location, isFunction: true)
  }
+ // G52 批 1：`别名.符号(...)` 跨模块限定调用——符号存在性 + public 门槛
+ if case .member(let objExpr, let memberName, _) = callee,
+ case .identifier(let aliasName, let aliasLoc) = objExpr,
+ let info = importAliasInfos[aliasName] {
+ guard info.allSymbols.contains(memberName) else {
+ throw SemanticError.undefinedVariable(name: "\(aliasName).\(memberName)", location: aliasLoc)
+ }
+ guard info.publicSymbols.contains(memberName) else {
+ throw SemanticError.crossModuleAccessDenied(symbol: "\(aliasName).\(memberName)", location: aliasLoc)
+ }
+ }
  for arg in arguments {
  try checkExpression(arg.expression)
  }
 
  case .member(let object, _, _):
+ // G52 批 1：别名 base 不走本地 requireDefined（限定访问只走跨模块通道，D-2）
+ if case .identifier(let aliasName, _) = object, importAliasInfos[aliasName] == nil {
  try checkExpression(object)
+ }
 
  case .tupleIndex(let object, _, _):
  // 草稿 A2（批次 1）：`.0` 位置访问——递归检查 object 内的标识符定义。
@@ -685,6 +728,13 @@ public final class SemanticAnalyzer {
  switch kind {
  case .variable, .parameter: return true
  default: return false
+ }
+ }
+
+ /// G52 D-2 静态互斥：局部符号不得与 import 别名同名。
+ private func checkAliasNameConflict(_ name: String, _ location: SourceLocation) throws {
+ if importAliasInfos[name] != nil {
+ throw SemanticError.redeclaredSymbol(name: name, location: location)
  }
  }
 }

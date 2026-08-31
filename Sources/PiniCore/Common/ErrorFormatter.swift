@@ -225,6 +225,9 @@ public enum ErrorFormatter {
  case .nonExhaustiveMatch(let missingCases, _): return "match 未穷尽覆盖枚举：缺少 case \(missingCases.joined(separator: ", "))（需覆盖全部 case，或用 `case _:` 兜底）"
  case .captureWithoutDeclaration(let name, _): return "外层变量 '\(name)' 须经 capture 声明后使用（capture 行须先于首次使用）"
  case .invalidCaptureTarget(let name, let reason, _): return "capture 目标无效：'\(name)' —— \(reason)"
+ case .moduleDependencyCycle(let chain): return "模块依赖环（R2 禁环）：\(chain.joined(separator: " → "))"
+ case .moduleRootMissing(let path): return "模块根 '\(path)' 缺少 pini.toml 或 .pini 源文件（R1 物理边界）"
+ case .crossModuleAccessDenied(let symbol, _): return "符号 '\(symbol)' 非 public，不可跨模块引入（G52 D8：门槛 = 仅 public）"
  }
  }
 

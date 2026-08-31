@@ -21,4 +21,10 @@ public enum SemanticError: Error, Equatable {
  /// H-1②：capture 的目标不是创建点外层的局部变量
  ///（本匿名函数参数/体内已声明局部/内建或函数名/`self`/创建点不可见名）。
  case invalidCaptureTarget(name: String, reason: String, location: SourceLocation)
+ /// H-3/G52 批 1（2026-08-31）：模块依赖环（R2：import 即依赖，依赖图禁环）。
+ case moduleDependencyCycle(chain: [String])
+ /// G52 批 1：被引入模块的根目录缺失 `pini.toml` 或源文件（R1 物理边界）。
+ case moduleRootMissing(path: String)
+ /// G52 批 1（D8）：跨模块引入门槛 = 仅 public——非 public 符号经 `别名.符号` 访问被拒。
+ case crossModuleAccessDenied(symbol: String, location: SourceLocation)
 }

@@ -147,6 +147,15 @@ message = "FFI library '{library}' not found (searched: {searched})"
 [E5-017]
 message = "symbol '{symbol}' not found in FFI library '{library}'"
 
+[E3-010]
+message = "module dependency cycle (R2): '{chain}'"
+
+[E3-011]
+message = "module root '{path}' lacks pini.toml or .pini sources (R1)"
+
+[E3-012]
+message = "symbol '{symbol}' is not public and cannot be imported across modules (G52 D8)"
+
 [E6-001]
 message = "unsupported type '{name}'"
 [E6-002]

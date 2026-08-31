@@ -259,7 +259,12 @@ public final class TypeChecker {
  }
 
  /// 检查模块
+ /// G52 批 1：import 别名集——`别名.符号` 限定调用在类型层暂作不透明处理
+ /// （跨模块签名校验随批 3 类型系统深化；运行时由解释器限定派发保证）。
+ private var importAliasNames: Set<String> = []
+
  public func check(module: Module) throws {
+ importAliasNames = Set(module.imports.map { $0.alias })
  BareCaseResolutionRegistry.reset()
  // 预注册所有 trait 声明，确保后续类型声明（无论出现先后）都能解析其 `traits` 引用
  preregisterTraits(module)
@@ -410,6 +415,7 @@ public final class TypeChecker {
  /// 复用 `check` 的注册 + 检查逻辑；`report` 在收集态下累积并静默，
  /// 函数体内逐语句恢复（跨语句/跨方法/跨顶级声明均不中断），单文件可一次性报出多错。
  public func checkCollecting(module: Module) -> [TypeError] {
+ importAliasNames = Set(module.imports.map { $0.alias })
  diagnostics = []
  collecting = true
  defer { collecting = false }
@@ -1626,6 +1632,9 @@ public final class TypeChecker {
  if case .identifier(let parentName, _) = object,
  typeEnv.lookupEnumCase(enumName: parentName, caseName: memberName) != nil {
  try checkEnumCaseConstruction(parent: parentName, caseName: memberName, args: arguments, location: location)
+ } else if case .identifier(let aliasBase, _) = object, importAliasNames.contains(aliasBase) {
+ // G52 批 1：跨模块限定调用——类型层不透明（运行时限定派发），仅校验实参
+ for arg in arguments { try checkExpression(arg.expression) }
  } else if let sig = lookupMethodSignature(for: object, memberName: memberName) {
  try validateCallArguments(arguments: arguments, signature: sig, location: location)
  // B3-1：标了 `=>` 的方法与自由函数同等对待（方法也是并发进程的派发入口）

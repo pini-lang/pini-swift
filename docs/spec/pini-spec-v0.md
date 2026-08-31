@@ -146,7 +146,7 @@
 | `?` 可选类型糖（前缀 `?T` = `Optional<T>` 类型层缩写） | 已定义（v0.36.0，见 G31） | ✅ | Provisional | `Token.questionMark` / `Parser.parseTypeAnnotation` / Pini草稿.md（G31） |
 | `iota()` 枚举序位自增 | 已移除（v0.29） | ✗ | Removed | 违反无元编程原则；字面量默认亦随规则 3.15（ADR-016）移除——枚举关联参数仅位置类型 |
 | 异步 `=>` 派发 + `await`/`wait`（`await` 异步体挂起 / `wait` 同步阻塞 join；挂起模式经自建续体运行时释放 OS 线程、精确恢复；同步/阻塞 join 为默认路径） | 已定义（G12 / §3.1；v0.41.0 落地，v0.43.0 T7→Stable） | ✅ | Stable | `examples/concurrency.pini` / `SuspendEvaluator.swift`、`SuspendScheduler.swift` |
-| `import` / `export`（解析 + **跨模块** enforce） | 已定义（P4 v0.23；跨模块语义 **G52**） | **◐** | Provisional | `Parser.parseImportDecl`（**仅解析，语义零消费者**：`SemanticAnalyzer`/`TypeChecker`/`IRGenerator` 均 `break`）；现有「跨文件 enforce」实由 `_` 前缀完成，与 import/export 无关；跨模块 enforce 待 G52 落地 |
+| `import` / `export` 块（**唯一顶级形态**；解析 + 跨模块 enforce） | 已定义且已实现（**G52 批 1，2026-08-31**：块式解析（D-1 块头=当前文件名校验）+ 裸语句移除（破坏性）+ R2 依赖图禁环（E3-010）+ R4 `别名.符号` 限定访问（D-2 静态互斥 E3-004）+ public 门槛（E3-012）+ R1 物理边界（E3-011）；加载器递归预载全图。IR 后端不支持跨模块（后续批次）。MVS/`pini-summary`/`pini mod`/远程 = 批 3/4） | ✅（解释器） | Provisional | `Parser.parseImportBlock/parseExportBlock` / `ModuleDependencyLoader` / `SemanticAnalyzer` 限定校验 / `Interpreter` 限定派发 / `ModuleSystemTests` |
 | `pini.toml` 模块清单 | 已定义（P4 v0.23；边界细则见 **G52**） | **◐** | Provisional | `Package`/`FileLoader` 加载 + 跨文件符号 + 可见性 enforce **已实现**；`[dependencies]` 仅记录不解析、`spec`/`[[bin]].entry`/`[lib]`/`[tool.pini]` 不消费、跨模块依赖解析与 MVS **未实现**（G52） |
 | 标准库内建函数（29 个，按 ADR-020 D4 六组组织：collection/char/pointer/io/math/concurrency/value） | 部分（G14 文件 IO 已落地；字符谓词已定义 ADR-019；并发签名未钉） | ✅ | Provisional/Experimental | `BuiltinRegistry`（单点登记）/ `Interpreter` 内建分发 |
 | 内建成员方法派发（String/Array 值的成员调用，ADR-020 步骤 B 派发表驱动） | 已定义且已实现（**H-3，2026-08-31**：三级派发——**用户扩展 > 语言内标准库（StdlibPini）> 宿主原生**；用户扩展按名匹配（非按签名），既可**覆盖**同名内建成员（不再被静默压过），也可**新增**内建表没有的方法；未被覆盖的成员按原表派发。IR 后端对内建类型用户扩展不支持——既有 E6-002 边界，非本项引入，待 G18/G24 批次收口） | ✅（解释器） | Provisional | `BuiltinRegistry.memberMethods` / `Interpreter` `.string`/`.array` 派发 / `BuiltinOverrideTests` |
@@ -218,7 +218,7 @@ match 值:
 
 ### 2.5 访问控制（约定制 4 级）
 
-> **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests`、`FieldVisibilityTests`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现待做**，详见 `issue/issue-module-system-rules-2026-08-28.md`。
+> **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests`、`FieldVisibilityTests`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现：批 1 已落地**（2026-08-31，块式 import/export + 禁环 + `别名.符号` + public 门槛，见 `issue/issue-module-batch1-2026-08-31.md`）；MVS / `pini mod` 工具链 / 远程抓取待批 3/4。
 
 - **可见性四级（取三者最严格者为准）**：
 

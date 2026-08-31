@@ -89,6 +89,10 @@ public class Interpreter {
  private var typeTraits: [String: [String]] = [:]
  /// ADR-016 规则 3.2/3.14：扩展块方法（按目标类型名），供泛型特化复制合并。
  private var extMethodsByType: [String: [FuncDecl]] = [:]
+ // G52 批 1：import 别名 → 被引入模块的运行时命名空间与 public 符号集
+ private var importEnvs: [String: Environment] = [:]
+ private var importPublicSymbols: [String: Set<String>] = [:]
+ private var importAllSymbols: [String: Set<String>] = [:]
 
  /// Phase 2a（ADR-015 FFI）：原生函数表——`[名称|foreign]` 声明的 C 函数在此解析。
  /// 表为「预注册的 Swift 实现」（原生函数表方案，D1 解释器优先；dlsym 动态符号解析留后续）。
@@ -146,10 +150,54 @@ public class Interpreter {
  }
 
  public func run(module: Module) throws {
+ try prepare(module: module)
+ try executeMain()
+ }
+
+ /// G52 批 1（2026-08-31）：注册但不执行 main——被引入模块的准备入口。
+ /// 递归加载本模块的 import 块（R2 禁环由 ModuleDependencyLoader 保证）。
+ public func prepare(module: Module) throws {
  registerBuiltins()
+ try loadImports(of: module)
  collectEnumCaseNames(module: module)
  try registerDecls(module: module)
- try executeMain()
+ }
+
+ /// 加载本模块 import 块声明的依赖模块：每个别名绑定一个子解释器
+ /// （子模块自己的声明 + 递归加载其依赖），public 符号集用于跨模块门槛（D8）。
+ private func loadImports(of module: Module) throws {
+ let loader = ModuleDependencyLoader.shared
+ for imp in module.imports {
+ let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+ // R2：全图环检测（loadGraph 递归校验依赖链）
+ let loaded = try loader.load(packagePath: imp.packagePath, relativeTo: dir)
+ let child = Interpreter()
+ try child.prepare(loaded: loaded)
+ importEnvs[imp.alias] = child.globalEnv
+ importPublicSymbols[imp.alias] = loaded.publicSymbols
+ importAllSymbols[imp.alias] = loaded.allSymbols
+ // 传递性合并：被引入模块自身的别名环境上提（跨模块体可能引用孙模块符号）
+ for (a, env) in child.importEnvs where importEnvs[a] == nil {
+ importEnvs[a] = env
+ importPublicSymbols[a] = child.importPublicSymbols[a] ?? []
+ importAllSymbols[a] = child.importAllSymbols[a] ?? []
+ }
+ }
+ }
+
+ /// 供 loadImports 递归复用已加载模块（不重复执行其 main——本函数不执行 main）。
+ fileprivate func prepare(loaded: ModuleDependencyLoader.LoadedModule) throws {
+ registerBuiltins()
+ let loadedModule = try rebuildModule(from: loaded)
+ try loadImports(of: loadedModule)
+ collectEnumCaseNames(module: loadedModule)
+ try registerDecls(module: loadedModule)
+ }
+
+ /// 从 LoadedModule 重组 Module（声明表中已含子模块自身的 import 块声明）。
+ private func rebuildModule(from loaded: ModuleDependencyLoader.LoadedModule) throws -> Module {
+ return Module(declarations: loaded.declarations, imports: loaded.imports, exports: [],
+               location: SourceLocation(line: 0, column: 0, endLine: 0, endColumn: 0, fileName: loaded.rootPath))
  }
 
  // MARK: - #46-E G41（test 块，R1/R4）：pini test 的运行时执行入口
@@ -175,9 +223,7 @@ public class Interpreter {
  /// 继续执行其余测试；`runTests` 自身仅对「注册/执行框架错误」抛错。
  /// - 不执行 `main`（测试入口独立于程序入口）。
  public func runTests(module: Module) throws -> [TestRunResult] {
- registerBuiltins()
- collectEnumCaseNames(module: module)
- try registerDecls(module: module)
+ try prepare(module: module)
  var results: [TestRunResult] = []
  for decl in module.declarations {
  guard case .funcDecl(let f) = decl, f.modifiers.contains("test") else { continue }
@@ -1701,6 +1747,10 @@ public class Interpreter {
  }
  return try createInstance(typeName: specializedName, kind: kind)
  case .member(let object, let name, let loc):
+ // G52 批 1：`别名.符号` 跨模块限定访问（D-2：只走跨模块通道）
+ if case .identifier(let aliasName, _) = object, importEnvs[aliasName] != nil {
+ return try resolveQualified(alias: aliasName, symbol: name, location: loc)
+ }
  if case .identifier(let typeName, _) = object, typeName == "Optional" {
  if name == "none" {
  return .enumValue(EnumValue(caseName: "none", associatedValues: []))
@@ -2335,6 +2385,23 @@ public class Interpreter {
  /// `continueSignal(label)`（标签匹配）续行到 scope —— 重跑块体（语义同「续行到对应 scope 块」）；
  /// 非本 scope 标签的信号继续向上传播，交由外层循环 / scope 处理。
  /// 非 ControlSignal 的抛出（RuntimeError / 挂起 SuspendSignal 等）不在此捕获，直接向上传播。
+ /// G52 批 1：跨模块限定符号解析——存在性（运行时）+ public 门槛（D8）。
+ private func resolveQualified(alias: String, symbol: String, location: SourceLocation) throws -> Value {
+ guard let imported = importEnvs[alias] else {
+ throw RuntimeError.undefinedVariable(name: alias, location: location)
+ }
+ guard let all = importAllSymbols[alias] else {
+ throw RuntimeError.undefinedVariable(name: "\(alias).\(symbol)", location: location)
+ }
+ guard all.contains(symbol) else {
+ throw RuntimeError.undefinedVariable(name: "\(alias).\(symbol)", location: location)
+ }
+ guard let publicSet = importPublicSymbols[alias], publicSet.contains(symbol) else {
+ throw SemanticError.crossModuleAccessDenied(symbol: "\(alias).\(symbol)", location: location)
+ }
+ return try imported.get(name: symbol)
+ }
+
  private func executeScope(label: String?, body: Block) throws {
  while true {
  do {

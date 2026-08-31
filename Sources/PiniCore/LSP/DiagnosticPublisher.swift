@@ -131,7 +131,9 @@ public struct DiagnosticPublisher {
  case .nonExhaustiveMatch(_, let loc): return loc
  case .captureWithoutDeclaration(_, let loc): return loc
  case .invalidCaptureTarget(_, _, let loc): return loc
- }
+ case .crossModuleAccessDenied(_, let loc): return loc
+ case .moduleDependencyCycle, .moduleRootMissing:
+ return SourceLocation(line: 0, column: 0, endLine: 0, endColumn: 0, fileName: "未知文件") }
  }
 
  private func location(of err: TypeError) -> SourceLocation {

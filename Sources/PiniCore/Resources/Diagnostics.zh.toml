@@ -147,6 +147,15 @@ message = "FFI 库 '{library}' 未找到（已搜索：{searched}）"
 [E5-017]
 message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
 
+[E3-010]
+message = "模块依赖环（R2 禁环）：'{chain}'"
+
+[E3-011]
+message = "模块根 '{path}' 缺少 pini.toml 或 .pini 源文件（R1 物理边界）"
+
+[E3-012]
+message = "符号 '{symbol}' 非 public，不可跨模块引入（G52 D8：门槛 = 仅 public）"
+
 [E6-001]
 message = "不支持的类型 '{name}'"
 [E6-002]

@@ -79,7 +79,20 @@ main|func() -> ():
 3. 别名不占运行时值命名空间（R4 不变）——冲突检查发生在**静态声明登记期**；
 4. 类型位置 `别名.类型名` 同规则（typeEnv 跨模块查表，public 门槛一致）。
 
-## 3. 批 1 步骤表（预排）
+## 3. 批 1 步骤表（2026-08-31 执行完毕：步骤 1-7 全部落地）
+
+| # | 步骤 | 状态 |
+|---|---|---|
+| 1 | spec 产生式修订（D-1） | ✅ |
+| 2 | Parser 块式解析 + 裸语句移除 | ✅ |
+| 3 | AST 重塑（ImportDecl(alias,path)/ExportDecl(renames)）+ 语料迁移（5 文件） | ✅ |
+| 4 | SemanticAnalyzer：别名登记 + 限定校验 + D-2 静态互斥 + R2 禁环（E3-010/011/012 新码） | ✅ |
+| 5 | Interpreter：prepare/loadImports 递归 + `别名.符号` 限定派发（子解释器隔离命名空间） | ✅ |
+| 6 | 自举 parser 同步（ast/parser/format + 语料 + 测试） | ✅（自举 2eefa3c） |
+| 7 | 双模块演示（Tests/PiniTests/ModuleSystemTests/demo：app→helper）+ ModuleSystemTests 7 用例 | ✅ |
+| 8 | 基线重标定 + 登记册 | ✅ |
+
+实现备注：①加载器 `loadGraph` 递归预载全图，环检测先于缓存（缓存不得豁免环路径）；②canonical 必须**绝对化**（相对路径下 standardizingPath 不解析 `..`，链比较失明——实测教训）；③parseModule 将 importDecl 路由进 `module.imports` 侧表，加载器须单独收集（初版仅收 declarations 导致子模块依赖静默丢失）；④跨模块签名类型校验批 1b 为不透明处理，深化随批 3。
 
 | # | 步骤 | 验证 |
 |---|---|---|
