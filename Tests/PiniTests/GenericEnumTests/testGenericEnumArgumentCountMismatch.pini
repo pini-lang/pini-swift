@@ -1,0 +1,7 @@
+[结果<T, E>]
+ok(T)
+err(E)
+
+main|func() -> ()
+    var a = ok<I32>(42)
+    return

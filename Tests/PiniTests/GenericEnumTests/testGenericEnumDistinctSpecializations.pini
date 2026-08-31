@@ -1,0 +1,18 @@
+[盒子<T>]
+满(T)
+空()
+
+main|func() -> ()
+    var x = 满<I32>(5)
+    match x:
+        case 满(v):
+            print(v)
+        case 空:
+            print(0)
+    var y = 空<String>()
+    match y:
+        case 空:
+            print("none")
+        case 满(v):
+            print(v)
+    return

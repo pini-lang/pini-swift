@@ -1,0 +1,14 @@
+[结果<T, E>]
+ok(T)
+err(E)
+
+main|func() -> ()
+    var a = ok<I32, String>(42)
+    match a:
+        case ok(v):
+            print(v)
+            return
+        case err(e):
+            print(e)
+            return
+    return

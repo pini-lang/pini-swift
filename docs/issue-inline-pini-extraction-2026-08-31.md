@@ -70,11 +70,17 @@
 | 7 | 0 块函数（297 个，程序化构造源码） | 不受影响 |
 | 8 | 测试夹具 `.pini` 与 selfhost 门禁 | 夹具**不纳入**差分门禁 |
 | 9 | SPM 配置 | `#filePath` 方案无需改动；须确认测试目标未排除 `.pini` |
+| 10 | **非 `throws` 测试函数**调用 `try loadPiniFixture` 编译失败（试点命中 1/5） | 给该测试函数加 `throws`（比 `try!` 诚实：加载失败应失败测试） |
+| 11 | `#filePath` 的求值点 | 助手的 `filePath` 参数**不能给默认值**——默认值在定义处求值，会指向助手文件；必须由调用点显式传入 |
+| 12 | SwiftPM 对测试目录下的 `.pini` | 试点未触发警告或错误；若后续出现未处理文件告警，用测试 target 的 `exclude` 消解 |
 
 ## 执行序
 
-1. ✅ 保真基线（本轮）：抽取 819 块 + manifest（已完成，未改任何 Swift 代码）。
-2. 单文件试点：选一个中等规模文件，验证 `loadSource` 机制 + 该文件的测试全绿。
+1. ✅ 保真基线：抽取 819 块 + manifest（未改任何 Swift 代码）。
+2. ✅ 单文件试点（GenericEnumTests，5 块）：夹具目录 `Tests/PiniTests/GenericEnumTests/`、
+   共享助手 `Tests/PiniTests/PiniFixtureLoader.swift`（`loadPiniFixture(_:filePath:)`，
+   由 `#filePath` 推导同目录），5 处内联改为文件引用；夹具与原块**逐字节一致**，
+   该文件 5 测试全绿、全量 1048 测试 0 失败。命中边缘情况：1 个非 `throws` 测试函数需补 `throws`。
 3. 判定 4 处插值（人工，逐处）。
 4. 分批迁移：按文件分批（10–20 个一批），每批 `swift test`，红即回滚
    （沿用 H-4 的「先 `git add` 建索引快照，失败 `git checkout -- .`」做法）。
