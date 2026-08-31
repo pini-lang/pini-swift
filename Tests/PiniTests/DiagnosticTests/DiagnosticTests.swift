@@ -158,7 +158,7 @@ final class DiagnosticTests: XCTestCase {
 
     /// 意图：ErrorFormatter 消息经资源渲染（诊断驱动），与硬编码文案一致。
     func testFormatDiagnosticMessageFromResources() {
-        let source = "main|func() -> ()\n    print(contnr)\n"
+        let source = "main|func() -> ():\n    print(contnr)\n"
         let loc = SourceLocation(line: 2, column: 11, fileName: "t.pini")
         let err = SemanticError.undefinedVariable(name: "contnr", location: loc)
         let out = ErrorFormatter.formatDiagnostic(err, source: source)

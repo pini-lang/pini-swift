@@ -157,7 +157,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         // 字符串数组精确控制缩进，避免 Swift 多行字符串的缩进剥离破坏嵌套层级
         let source = [
-            "main() -> ()",
+            "main() -> ():",
             "    var i = 0",
             "    while i < 2:",
             "        var j = 0",
@@ -862,7 +862,7 @@ final class IRExecutionTests: XCTestCase {
     func testNilKeywordViaLLI() throws {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = [
-            "main|func() -> ()",
+            "main|func() -> ():",
             "    var a = nil",
             "    match a:",
             "        case none:",
@@ -891,7 +891,7 @@ final class IRExecutionTests: XCTestCase {
     func testNilKeywordLLVMVsInterpreterParity() throws {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = [
-            "main|func() -> ()",
+            "main|func() -> ():",
             "    var a = nil",
             "    match a:",
             "        case none:",
@@ -944,7 +944,7 @@ final class IRExecutionTests: XCTestCase {
     func testQuestionTypeViaLLI() throws {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = [
-            "main|func() -> ()",
+            "main|func() -> ():",
             "    var x: ?I32 = nil",
             "    match x:",
             "        case nil:",
@@ -961,7 +961,7 @@ final class IRExecutionTests: XCTestCase {
     func testQuestionTypeLLVMVsInterpreterParity() throws {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = [
-            "main|func() -> ()",
+            "main|func() -> ():",
             "    var e: ?I32 = nil",
             "    match e:",
             "        case nil:",
@@ -1008,7 +1008,7 @@ final class IRExecutionTests: XCTestCase {
             throw XCTSkip("PiniRuntime dylib not built")
         }
         let source = [
-            "main|func() -> ()",
+            "main|func() -> ():",
             "    let a = [1, 2, 3, 4, 5]",
             "    let nested = [[1, 2], [3, 4], [5, 6]]",
             "    let d = [\"Alice\": 30, \"Bob\": 25, \"Carol\": 41]",

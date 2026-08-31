@@ -17,7 +17,7 @@ enum StdlibPini {
  ; contains -- language-level default impl (ADR-020 D2 pilot).
  ; Semantics mirror the host native impl: empty needle -> true;
  ; grapheme-cluster substring match via len + subscript.
- contains|self(needle: String,) -> (Bool,)
+ contains|self(needle: String,) -> (Bool,):
      if len(needle) == 0:
          return true
      var i = 0
@@ -37,7 +37,7 @@ enum StdlibPini {
      return false
 
  ; substring -- negative tail-count, clamp to [0, len], hi < lo -> "".
- substring|self(start: I32, end: I32,) -> (String,)
+ substring|self(start: I32, end: I32,) -> (String,):
      var n = len(self)
      var lo = start
      var hi = end
@@ -64,7 +64,7 @@ enum StdlibPini {
 
  ; split -- mirror components(separatedBy:); empty separator yields
  ; grapheme chars (correct per ADR-019 D1; the native impl splits UTF-16).
- split|self(sep: String,) -> (Array,)
+ split|self(sep: String,) -> (Array,):
      var parts = []
      var cur = ""
      var n = len(self)
@@ -101,7 +101,7 @@ enum StdlibPini {
  ; int bounds may be negative (tail count); clamp; hi < lo -> "".
  ; (null-as-open is accepted by the native path only; the desugar never
  ; produces it.)
- slice|self(a: Any, b: Any,) -> (String,)
+ slice|self(a: Any, b: Any,) -> (String,):
      var n = len(self)
      var lo = 0
      var hi = n
@@ -141,7 +141,7 @@ enum StdlibPini {
  ((Array))
  ; slice -- same bound semantics as String.slice; elements via
  ; subscript unwrap; empty array for hi < lo.
- slice|self(a: Any, b: Any,) -> (Array,)
+ slice|self(a: Any, b: Any,) -> (Array,):
      var n = len(self)
      var lo = 0
      var hi = n

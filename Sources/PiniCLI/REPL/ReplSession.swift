@@ -82,7 +82,7 @@ final class ReplSession {
  } else {
  body = "print(\(trimmed))"
  }
- let wrapped = "main|func() -> ()\n \(body)\n return\n"
+ let wrapped = "main|func() -> ():\n \(body)\n return\n"
  let exprModule = try parseReplSource(wrapped)
  let runModule = Module(
  declarations: accumulatedDeclarations + exprModule.declarations,

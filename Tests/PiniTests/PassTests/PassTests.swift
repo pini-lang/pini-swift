@@ -45,7 +45,7 @@ final class PassTests: XCTestCase {
     // 占位：独立 pass 语句是无副作用 no-op
     /// 意图：验证独立 pass 语句是无副作用 no-op，运行不产生任何输出。
     func testPassStandaloneNoop() throws {
-        let out = try runProgram("main() -> ()\n    pass\n    return\n")
+        let out = try runProgram("main() -> ():\n    pass\n    return\n")
         XCTAssertEqual(out, "", "独立 pass 不产生任何输出")
     }
 
@@ -53,7 +53,7 @@ final class PassTests: XCTestCase {
     /// 意图：验证 pass 充当 if 分支占位不阻塞 else 分支，运行输出 else-branch。
     func testPassInIfElse() throws {
         let out = try runProgram(
-            "main() -> ()\n" +
+            "main() -> ():\n" +
             "    if 1 > 2:\n" +
             "        pass\n" +
             "    else:\n" +
@@ -67,7 +67,7 @@ final class PassTests: XCTestCase {
     /// 意图：验证 while 循环体内 pass 不破坏循环控制流，迭代完成后输出 3。
     func testPassInWhileBody() throws {
         let out = try runProgram(
-            "main() -> ()\n" +
+            "main() -> ():\n" +
             "    var i = 0\n" +
             "    while i < 3:\n" +
             "        i = i + 1\n" +
@@ -82,9 +82,9 @@ final class PassTests: XCTestCase {
     /// 意图：验证仅含 pass 的桩函数可被正常调用不崩溃，调用后继续输出 after-stub。
     func testPassStubFunction() throws {
         let out = try runProgram(
-            "空() -> ()\n" +
+            "空() -> ():\n" +
             "    pass\n" +
-            "main() -> ()\n" +
+            "main() -> ():\n" +
             "    空()\n" +
             "    print(\"after-stub\")\n" +
             "    return\n"

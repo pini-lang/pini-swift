@@ -8,7 +8,7 @@ final class ReplTests: XCTestCase {
 
     /// 意图：验证表达式 wrap 进 main|func 后能解析出唯一函数声明。
     func testExpressionWrap()  throws {
-        let source = "main|func() -> ()\n    print(1 + 2)\n    return\n"
+        let source = "main|func() -> ():\n    print(1 + 2)\n    return\n"
         let module = parseOrFail(source)
         XCTAssertEqual(module.declarations.count, 1)
     }
@@ -34,7 +34,7 @@ final class ReplTests: XCTestCase {
     /// 意图：验证非声明开头的输入按表达式模式识别，wrap 后能解析出至少一个声明。
     func testExpressionIsRecognized() {
         // 非声明开头 → 表达式模式
-        let source = "main|func() -> ()\n    print(1 + 2 * 3)\n    return\n"
+        let source = "main|func() -> ():\n    print(1 + 2 * 3)\n    return\n"
         let module = parseOrFail(source)
         XCTAssertGreaterThan(module.declarations.count, 0)
     }
@@ -43,7 +43,7 @@ final class ReplTests: XCTestCase {
     func testBareExpressionWrapper() {
         // 模拟 REPL 的表达式 wrap 逻辑
         let expr = "1 + 2 * 3"
-        let wrapped = "main|func() -> ()\n    print(\(expr))\n    return\n"
+        let wrapped = "main|func() -> ():\n    print(\(expr))\n    return\n"
         let module = parseOrFail(wrapped)
         XCTAssertEqual(module.declarations.count, 1)
     }

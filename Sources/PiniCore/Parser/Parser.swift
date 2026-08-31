@@ -1073,14 +1073,22 @@ public class Parser {
 
  // 解析函数体（Block）
  var body: Block? = nil
- // H-4（A8 选项 B）：带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。
- // 返回类型解析完成后，若下一个记号是 `:`，在此消费。迁移期内为**可选**
- // （不带冒号仍合法），待存量迁移完成后转强制。
+ // H-4（A8 选项 B，阶段 2 已强制）：带执行块的函数一律以 `:` 开块，与
+ // `if` / `while` 一致。记录冒号是否出现；下方见 indent（执行体）时若无
+ // 冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
+ var sawColon = false
  if case .colon(_) = currentToken {
  advance()
+ sawColon = true
  }
  skipNewlines()
  if case .indent(_) = currentToken {
+ guard sawColon else {
+  throw ParserError.invalidDeclaration(
+   reason: "带执行块的函数一律以 `:` 开块（H-4/A8 选项 B）：`\(name)` 的签名行需以冒号结尾",
+   location: currentLocation
+  )
+ }
  body = try parseBlock()
  } else {
  // 任务 #13（草稿意图已采纳）：函数体必须按层次缩进且至少缩进一层，
@@ -1306,14 +1314,22 @@ public class Parser {
 
  // 解析方法体（Block）
  var body: Block? = nil
- // H-4（A8 选项 B）：带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。
- // 返回类型解析完成后，若下一个记号是 `:`，在此消费。迁移期内为**可选**
- // （不带冒号仍合法），待存量迁移完成后转强制。
+ // H-4（A8 选项 B，阶段 2 已强制）：带执行块的函数一律以 `:` 开块，与
+ // `if` / `while` 一致。记录冒号是否出现；下方见 indent（执行体）时若无
+ // 冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
+ var sawColon = false
  if case .colon(_) = currentToken {
  advance()
+ sawColon = true
  }
  skipNewlines()
  if case .indent(_) = currentToken {
+ guard sawColon else {
+  throw ParserError.invalidDeclaration(
+   reason: "带执行块的函数一律以 `:` 开块（H-4/A8 选项 B）：`\(name)` 的签名行需以冒号结尾",
+   location: currentLocation
+  )
+ }
  body = try parseBlock()
  }
 
@@ -1500,14 +1516,22 @@ public class Parser {
 
  // 解析函数体（Block）
  var body: Block? = nil
- // H-4（A8 选项 B）：带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。
- // 返回类型解析完成后，若下一个记号是 `:`，在此消费。迁移期内为**可选**
- // （不带冒号仍合法），待存量迁移完成后转强制。
+ // H-4（A8 选项 B，阶段 2 已强制）：带执行块的函数一律以 `:` 开块，与
+ // `if` / `while` 一致。记录冒号是否出现；下方见 indent（执行体）时若无
+ // 冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
+ var sawColon = false
  if case .colon(_) = currentToken {
  advance()
+ sawColon = true
  }
  skipNewlines()
  if case .indent(_) = currentToken {
+ guard sawColon else {
+  throw ParserError.invalidDeclaration(
+   reason: "带执行块的函数一律以 `:` 开块（H-4/A8 选项 B）：`\(name)` 的签名行需以冒号结尾",
+   location: currentLocation
+  )
+ }
  body = try parseBlock()
  } else if !allowEmptyBody {
  // 任务 #13（草稿意图已采纳）：函数体必须按层次缩进且至少缩进一层，

@@ -231,11 +231,11 @@ struct DebuggerTests {
     /// 意图：验证多文件 SourceMap 按文件名取行正确，越界行返回 nil。
     func testMultiFileSourceMap()  throws {
         let sm = SourceMap(sources: [
-            "main.pini": "main|func() -> ()\n    return\n",
-            "helper.pini": "helper|func() -> ()\n    let z = 5\n    return\n",
+            "main.pini": "main|func() -> ():\n    return\n",
+            "helper.pini": "helper|func() -> ():\n    let z = 5\n    return\n",
         ])
         #expect(sm.line("helper.pini", 2) == "    let z = 5")
-        #expect(sm.line("main.pini", 1) == "main|func() -> ()")
+        #expect(sm.line("main.pini", 1) == "main|func() -> ():")
         #expect(sm.line("helper.pini", 99) == nil)
     }
 

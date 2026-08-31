@@ -61,7 +61,7 @@ final class StepBlockTests: XCTestCase {
     func testNestedWhileStepScoping() throws {
         // 使用字符串数组精确控制缩进，避免 Swift 多行字符串的缩进剥离破坏嵌套层级
         let source = [
-            "main() -> ()",
+            "main() -> ():",
             "    var i = 0",
             "    while i < 2:",
             "        var j = 0",
@@ -93,7 +93,7 @@ final class StepBlockTests: XCTestCase {
     /// 意图：验证 step 块内的类型错误（对 let 变量重新赋值）也会被 TypeChecker 捕获并出现在错误列表中
     func testStepBlockTypeErrorsAreChecked() throws {
         let source = [
-            "main() -> ()",
+            "main() -> ():",
             "    var i = 0",
             "    while i < 3:",
             "        print(i)",

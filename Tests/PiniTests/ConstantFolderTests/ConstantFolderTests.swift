@@ -103,7 +103,7 @@ final class ConstantFolderTests: XCTestCase {
 
     /// 意图：验证函数体内 return 表达式参与折叠，`return 2 + 3` 折叠为 integerLiteral(5)。
     func testFuncBodyReturnFolded() throws {
-        let m = try parse("g|func() -> (I32,)\n    return 2 + 3\n")
+        let m = try parse("g|func() -> (I32,):\n    return 2 + 3\n")
         guard case .integerLiteral(let v, _) = firstFuncReturn(m) else { XCTFail("expected integerLiteral in return"); return }
         XCTAssertEqual(v, 5)
     }

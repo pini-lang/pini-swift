@@ -743,7 +743,10 @@ foreign-signature ::= IDENT func-signature;
 
 func-signature  ::= ['<' generic-params '>'] '(' [param {',' param}] ')'
                     [('->' | '=>') '(' [ret-item {',' ret-item}] ')']
-                    [func-body];
+                    [':' func-body];
+(* A8 选项 B（H-4，2026-08-31 阶段 2 落地）：凡带执行块（func-body）的函数
+   一律以 `:` 引导块，与 if / while 的冒号开块规则统一——「有执行体即有冒号」。
+   无执行体的签名（trait 抽象方法 / foreign 声明）不带冒号。 *)
 
 param           ::= IDENT [':' type-annotation]
                   | IDENT '=' expression;              (* 默认参数 *)

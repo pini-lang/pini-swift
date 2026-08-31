@@ -46,8 +46,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证无 `_` 前缀的 public 函数跨文件引用在语义/类型层均无错误。
     func testPublicSymbolVisibleCrossFile() {
         let p = pkg([
-            ("lib.pini", "helper() -> ()\n    return\n"),
-            ("app.pini", "main() -> ()\n    helper()\n    return\n"),
+            ("lib.pini", "helper() -> ():\n    return\n"),
+            ("app.pini", "main() -> ():\n    helper()\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "public 跨文件引用应无语义错误")
         XCTAssertNil(typeError(p), "public 跨文件引用应无类型错误")
@@ -57,8 +57,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 `_` 目录内 package 级函数跨文件引用在语义/类型层均通过。
     func testPackageSymbolVisibleCrossFile() {
         let p = pkg([
-            ("_pkg/lib.pini", "helper() -> ()\n    return\n"),
-            ("app.pini", "main() -> ()\n    helper()\n    return\n"),
+            ("_pkg/lib.pini", "helper() -> ():\n    return\n"),
+            ("app.pini", "main() -> ():\n    helper()\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "package 跨文件引用应无语义错误")
         XCTAssertNil(typeError(p), "package 跨文件引用应无类型错误")
@@ -69,7 +69,7 @@ final class CrossFileVisibilityTests: XCTestCase {
     func testSameFilePrivateVisible() {
         let p = pkg([
             ("_secretfile.pini",
-             "_secret() -> ()\n    return\nmain() -> ()\n    _secret()\n    return\n"),
+             "_secret() -> ():\n    return\nmain() -> ():\n    _secret()\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "同文件内私有引用应可见")
         XCTAssertNil(typeError(p), "同文件内私有引用应可见")
@@ -78,7 +78,7 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 单文件包委托旧 analyse/check，与直接 analyze(module:) 行为完全一致（零回归）。
     /// 意图：验证单文件包委托旧 analyze/check 路径无异常（与直接 analyze(module:) 等价，零回归）。
     func testSingleFilePackageEquivalence() {
-        let src = "main() -> ()\n    print(\"hi\")\n    return\n"
+        let src = "main() -> ():\n    print(\"hi\")\n    return\n"
         let single = pkg([("app.pini", src)])
         XCTAssertNoThrow(try SemanticAnalyzer().analyze(package: single), "单文件包语义分析应无错")
         XCTAssertNoThrow(try TypeChecker().check(package: single), "单文件包类型检查应无错")
@@ -89,7 +89,7 @@ final class CrossFileVisibilityTests: XCTestCase {
     func testPublicVarVisibleCrossFile() {
         let p = pkg([
             ("lib.pini", "let greeting: String = \"hi\"\n"),
-            ("app.pini", "main() -> ()\n    print(greeting)\n    return\n"),
+            ("app.pini", "main() -> ():\n    print(greeting)\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "public 顶层变量跨文件引用应无语义错误")
         XCTAssertNil(typeError(p), "public 顶层变量跨文件引用应无类型错误")
@@ -101,8 +101,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 `_` 前缀 private 符号跨文件引用在语义/类型层均报 inaccessibleSymbol（错误路径）。
     func testPrivateSymbolNotVisibleCrossFile() {
         let p = pkg([
-            ("lib.pini", "_secret() -> ()\n    return\n"),
-            ("app.pini", "main() -> ()\n    _secret()\n    return\n"),
+            ("lib.pini", "_secret() -> ():\n    return\n"),
+            ("app.pini", "main() -> ():\n    _secret()\n    return\n"),
         ])
         if let e = semanticError(p) as? SemanticError {
             guard case .inaccessibleSymbol = e else {
@@ -124,8 +124,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 `_` 文件 internal 函数跨文件引用在语义/类型层均报 inaccessibleSymbol。
     func testInternalFileNotVisibleCrossFile() {
         let p = pkg([
-            ("_lib.pini", "helper() -> ()\n    return\n"),
-            ("app.pini", "main() -> ()\n    helper()\n    return\n"),
+            ("_lib.pini", "helper() -> ():\n    return\n"),
+            ("app.pini", "main() -> ():\n    helper()\n    return\n"),
         ])
         if let e = semanticError(p) as? SemanticError {
             guard case .inaccessibleSymbol = e else {
@@ -148,7 +148,7 @@ final class CrossFileVisibilityTests: XCTestCase {
     func testInternalVarNotVisibleCrossFile() {
         let p = pkg([
             ("_lib.pini", "let secret: String = \"x\"\n"),
-            ("app.pini", "main() -> ()\n    print(secret)\n    return\n"),
+            ("app.pini", "main() -> ():\n    print(secret)\n    return\n"),
         ])
         if let e = semanticError(p) as? SemanticError {
             guard case .inaccessibleSymbol = e else {
@@ -163,8 +163,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证跨文件同名顶级函数因包内命名空间共享在语义层报 redeclaredSymbol（错误路径）。
     func testCrossFileRedeclaration() {
         let p = pkg([
-            ("a.pini", "helper() -> ()\n    return\n"),
-            ("b.pini", "helper() -> ()\n    return\n"),
+            ("a.pini", "helper() -> ():\n    return\n"),
+            ("b.pini", "helper() -> ():\n    return\n"),
         ])
         if let e = semanticError(p) as? SemanticError {
             guard case .redeclaredSymbol = e else {
@@ -181,8 +181,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 public 类型跨文件作为函数参数类型注解在语义/类型层均无错误。
     func testPublicTypeVisibleCrossFile() {
         let p = pkg([
-            ("lib.pini", "{Point}\n数值: I32 = 0\n\n{{Point}}\n取数|self() -> (I32,)\n    return 数值\n\n"),
-            ("app.pini", "use|func(s: Point) -> ()\n    return\nmain|func() -> ()\n    return\n"),
+            ("lib.pini", "{Point}\n数值: I32 = 0\n\n{{Point}}\n取数|self() -> (I32,):\n    return 数值\n\n"),
+            ("app.pini", "use|func(s: Point) -> ():\n    return\nmain|func() -> ():\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "public 类型跨文件注解引用：语义层应无错")
         XCTAssertNil(typeError(p), "public 类型跨文件注解引用：类型层应无错")
@@ -192,8 +192,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 `_` 目录 package 类型跨文件作为参数类型注解在语义/类型层均通过。
     func testPackageTypeVisibleCrossFile() {
         let p = pkg([
-            ("_pkg/lib.pini", "{Tag}\n数值: I32 = 0\n\n{{Tag}}\n取数|self() -> (I32,)\n    return 数值\n\n"),
-            ("app.pini", "use|func(s: Tag) -> ()\n    return\nmain|func() -> ()\n    return\n"),
+            ("_pkg/lib.pini", "{Tag}\n数值: I32 = 0\n\n{{Tag}}\n取数|self() -> (I32,):\n    return 数值\n\n"),
+            ("app.pini", "use|func(s: Tag) -> ():\n    return\nmain|func() -> ():\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "package 类型跨文件注解引用：语义层应无错")
         XCTAssertNil(typeError(p), "package 类型跨文件注解引用：类型层应无错")
@@ -204,8 +204,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 `_` 文件 internal 类型跨文件作为参数注解在类型层报 inaccessibleSymbol，语义层不查类型注解故为 nil。
     func testInternalTypeNotVisibleCrossFile() {
         let p = pkg([
-            ("_lib.pini", "{Secret}\n数值: I32 = 0\n\n{{Secret}}\n取数|self() -> (I32,)\n    return 数值\n\n"),
-            ("app.pini", "use|func(s: Secret) -> ()\n    return\nmain|func() -> ()\n    return\n"),
+            ("_lib.pini", "{Secret}\n数值: I32 = 0\n\n{{Secret}}\n取数|self() -> (I32,):\n    return 数值\n\n"),
+            ("app.pini", "use|func(s: Secret) -> ():\n    return\nmain|func() -> ():\n    return\n"),
         ])
         XCTAssertNil(semanticError(p), "语义层不检查类型名注解，应为 nil")
         if let e = typeError(p) as? TypeError {
@@ -221,8 +221,8 @@ final class CrossFileVisibilityTests: XCTestCase {
     /// 意图：验证 internal 类型跨文件作为 object 字段类型注解在类型层报 inaccessibleSymbol，语义层为 nil。
     func testInternalTypeFieldNotVisibleCrossFile() {
         let p = pkg([
-            ("_lib.pini", "{Secret}\n数值: I32 = 0\n\n{{Secret}}\n取数|self() -> (I32,)\n    return 数值\n\n"),
-            ("app.pini", "{Holder}\n秘密: Secret\nmain|func() -> ()\n    return\n\n\n{{Holder}}\n取数|self() -> (I32,)\n    return 0\n"),
+            ("_lib.pini", "{Secret}\n数值: I32 = 0\n\n{{Secret}}\n取数|self() -> (I32,):\n    return 数值\n\n"),
+            ("app.pini", "{Holder}\n秘密: Secret\nmain|func() -> ():\n    return\n\n\n{{Holder}}\n取数|self() -> (I32,):\n    return 0\n"),
         ])
         XCTAssertNil(semanticError(p), "语义层不检查类型名注解，应为 nil")
         if let e = typeError(p) as? TypeError {

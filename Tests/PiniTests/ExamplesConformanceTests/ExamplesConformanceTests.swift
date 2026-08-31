@@ -96,13 +96,13 @@ final class ExamplesConformanceTests: XCTestCase {
     /// 驳回性测量：若合法片段（print(1)）被误报，则 XCTFail——护栏不应假阳性。
     func testConformanceGuardActuallyDetectsViolations() {
         // 推进：未定义函数 foo 必须被语义层报出。
-        let broken = "main() -> ()\n    foo(1)\n    return\n"
+        let broken = "main() -> ():\n    foo(1)\n    return\n"
         let diags = try? checkExampleSource(broken, fileName: "broken.pini")
         XCTAssertNotNil(diags)
         XCTAssertFalse(diags?.isEmpty ?? true, "护栏应检出未定义函数 foo，实际为空（校验被跳过？）")
 
         // 驳回：合法片段（仅调用内建 print）不应产生诊断。
-        let valid = "main() -> ()\n    print(1)\n    return\n"
+        let valid = "main() -> ():\n    print(1)\n    return\n"
         let validDiags = try? checkExampleSource(valid, fileName: "valid.pini")
         XCTAssertTrue(validDiags?.isEmpty ?? false, "合法片段不应被误报，实际：\(validDiags ?? [])")
     }

@@ -32,7 +32,7 @@ final class ErrorFormatterTests: XCTestCase {
 
     /// 意图：格式化器应正确处理多行源码中的错误定位
     func testFormatErrorInMiddleOfMultiLineSource() {
-        let source = "main() -> ()\n    print(x)\n    return\n"
+        let source = "main() -> ():\n    print(x)\n    return\n"
         let loc = SourceLocation(line: 2, column: 11, fileName: "test.pini")
         let result = ErrorFormatter.format(
             errorType: "Undefined Variable",

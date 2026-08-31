@@ -40,7 +40,7 @@ final class SuggestionTests: XCTestCase {
 
     /// 意图：did-you-mean 集成——undefined 变量渲染含 `help: Did you mean`。
     func testFormatDiagnosticIncludesSuggestion()  throws {
-        let source = "main|func() -> ()\n    var counter = 1\n    print(contnr)\n    return\n"
+        let source = "main|func() -> ():\n    var counter = 1\n    print(contnr)\n    return\n"
         let loc = SourceLocation(line: 3, column: 11, fileName: "t.pini")
         let err = SemanticError.undefinedVariable(name: "contnr", location: loc)
         let out = ErrorFormatter.formatDiagnostic(err, source: source, language: .en)

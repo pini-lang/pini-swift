@@ -133,10 +133,10 @@ final class CLIDirectoryTests: XCTestCase {
             toFile: (tmp as NSString).appendingPathComponent("pini.toml"),
             atomically: true, encoding: .utf8)
         // lib.pini 声明 hard-private 函数；main.pini 跨文件调用它。
-        try "_secret() -> ()\n    return\n".write(
+        try "_secret() -> ():\n    return\n".write(
             toFile: (tmp as NSString).appendingPathComponent("lib.pini"),
             atomically: true, encoding: .utf8)
-        try "main() -> ()\n    _secret()\n    return\n".write(
+        try "main() -> ():\n    _secret()\n    return\n".write(
             toFile: (tmp as NSString).appendingPathComponent("main.pini"),
             atomically: true, encoding: .utf8)
 
@@ -181,10 +181,10 @@ final class CLIDirectoryTests: XCTestCase {
             atPath: tmp, withIntermediateDirectories: true, attributes: nil)
         defer { try? FileManager.default.removeItem(atPath: tmp) }
 
-        try "main|func() -> ()\n    print(1)\n    return\n".write(
+        try "main|func() -> ():\n    print(1)\n    return\n".write(
             toFile: (tmp as NSString).appendingPathComponent("a.pini"),
             atomically: true, encoding: .utf8)
-        try "main|func() -> ()\n    print(2)\n    return\n".write(
+        try "main|func() -> ():\n    print(2)\n    return\n".write(
             toFile: (tmp as NSString).appendingPathComponent("b.pini"),
             atomically: true, encoding: .utf8)
 
@@ -278,14 +278,14 @@ final class CLIDirectoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: tmp) }
 
         // 正常源文件（应被聚合）。
-        try "main() -> ()\n    return\n".write(
+        try "main() -> ():\n    return\n".write(
             toFile: (tmp as NSString).appendingPathComponent("main.pini"),
             atomically: true, encoding: .utf8)
         // 嵌套在命名空间根下的 .pini（不应被聚合）。
         let nested = (tmp as NSString).appendingPathComponent(".pini/toolchain/host")
         try FileManager.default.createDirectory(
             atPath: nested, withIntermediateDirectories: true, attributes: nil)
-        try "nope() -> ()\n    return\n".write(
+        try "nope() -> ():\n    return\n".write(
             toFile: (nested as NSString).appendingPathComponent("buried.pini"),
             atomically: true, encoding: .utf8)
 

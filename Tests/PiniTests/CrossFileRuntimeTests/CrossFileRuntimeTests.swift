@@ -48,8 +48,8 @@ final class CrossFileRuntimeTests: XCTestCase {
     /// 意图：验证跨文件函数调用在运行时链接成功，lib.pini 的 helper 与 app.pini 的 main 输出均出现。
     func testCrossFileCallRuns() throws {
         let out = try runPackage([
-            ("lib.pini", "helper() -> ()\n    print(\"from-helper\")\n    return\n"),
-            ("app.pini", "main() -> ()\n    helper()\n    print(\"from-main\")\n    return\n"),
+            ("lib.pini", "helper() -> ():\n    print(\"from-helper\")\n    return\n"),
+            ("app.pini", "main() -> ():\n    helper()\n    print(\"from-main\")\n    return\n"),
         ])
         let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertTrue(trimmed.contains("from-helper"), "跨文件 helper 应在运行时被执行：\(trimmed)")
@@ -60,8 +60,8 @@ final class CrossFileRuntimeTests: XCTestCase {
     /// 意图：验证跨文件调用可携带实参，`greet("hi")` 参数跨文件传递后输出恰为 "hi"。
     func testCrossFileCallWithArgument() throws {
         let out = try runPackage([
-            ("lib.pini", "greet(name,) -> ()\n    print(name)\n    return\n"),
-            ("app.pini", "main() -> ()\n    greet(\"hi\")\n    return\n"),
+            ("lib.pini", "greet(name,) -> ():\n    print(name)\n    return\n"),
+            ("app.pini", "main() -> ():\n    greet(\"hi\")\n    return\n"),
         ])
         XCTAssertEqual(out.trimmingCharacters(in: .whitespacesAndNewlines), "hi")
     }
@@ -70,8 +70,8 @@ final class CrossFileRuntimeTests: XCTestCase {
     /// 意图：验证 `_` 目录下 package 级函数跨文件调用在运行时同样链接成功，输出含 "pkg-helper"。
     func testPackageLevelSymbolVisibleAtRuntime() throws {
         let out = try runPackage([
-            ("_pkg/lib.pini", "helper() -> ()\n    print(\"pkg-helper\")\n    return\n"),
-            ("app.pini", "main() -> ()\n    helper()\n    return\n"),
+            ("_pkg/lib.pini", "helper() -> ():\n    print(\"pkg-helper\")\n    return\n"),
+            ("app.pini", "main() -> ():\n    helper()\n    return\n"),
         ])
         XCTAssertTrue(out.contains("pkg-helper"), "package 级跨文件函数应在运行时链接：\(out)")
     }
@@ -80,7 +80,7 @@ final class CrossFileRuntimeTests: XCTestCase {
     /// 意图：验证单文件包委托旧 run(module:) 路径零回归，main 正常执行输出 "ok"。
     func testSingleFilePackageDelegates() throws {
         let out = try runPackage([
-            ("app.pini", "main() -> ()\n    print(\"ok\")\n    return\n"),
+            ("app.pini", "main() -> ():\n    print(\"ok\")\n    return\n"),
         ])
         XCTAssertEqual(out.trimmingCharacters(in: .whitespacesAndNewlines), "ok")
     }
@@ -89,7 +89,7 @@ final class CrossFileRuntimeTests: XCTestCase {
     /// 意图：验证无 main 的包运行时抛 RuntimeError（mainNotFound 错误路径）。
     func testMainNotFoundThrows() throws {
         let package = try buildPackage([
-            ("lib.pini", "helper() -> ()\n    return\n"),
+            ("lib.pini", "helper() -> ():\n    return\n"),
         ])
         XCTAssertThrowsError(try Interpreter().run(package: package)) { error in
             XCTAssertTrue(error is RuntimeError, "无 main 应抛 RuntimeError（mainNotFound），实际 \(error)")
