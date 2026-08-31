@@ -106,7 +106,7 @@
 | `var` / `let` 变量 | 已定义 | ✅ | Provisional | `Token.swift` `Keyword` |
 | `func` 函数声明 | 已定义 | ✅ | Provisional | `Parser.parseFuncDecl` |
 | 函数体强制缩进 ≥1 层（§A.2.3 `func-body` 仅 `INDENT { statement } DEDENT`；禁止顶级内容态顶格累积语句；trait 抽象方法豁免） | 已定义且已实现（任务 #13 草稿意图采纳） | ✅ | Provisional | `Parser.parseBareFuncDecl` 强制 INDENT / `ParserTests.testParseTopLevelFunctionBodyWithoutIndentRejected` |
-| 测试函数块 `|test`（`名称|test(参数元组,) -> (返回元组,)` / `{名称|test}(签名)`；`pini test [path]` 收集范围内顶级 `|test` 逐一执行——收集单位 = 模块（G49）：无参 = 模块根全量收集，显式 `<path>` 限定范围且可加回 `[build] exclude` 排除目录；参数按类型注入零值；`Interpreter.runTests` 为运行时入口） | 已定义（v0.42.0，见 G41；收集单位更正见 G49） | ✅ | Provisional | `pini test` 子命令 / `TestBlockTests` / `TestBlockSwiftTests` / `examples/test.pini` |
+| 测试函数块 `|test`（`名称|test(参数元组,) -> (返回元组,)` / `{名称|test}(签名)`；`pini test [path]` 收集范围内顶级 `|test` 逐一执行——收集单位 = 模块（G49）：无参 = 模块根全量收集，显式 `<path>` 限定范围且可加回 `[build] exclude` 排除目录；参数按类型注入零值；`Interpreter.runTests` 为运行时入口。**测试入口四项（H-5/A14 裁决，2026-08-31 明写；行为已符合）**：① 测试入口不直接暴露给用户——由工具对 `|test` 的处理交付；② 测试执行顺序不保证，测试之间不得有顺序依赖；③ 收集粒度三形态——默认模块根全量收集 / 显式路径限定收集 / 单文件收集；④ 测试入口与 main 入口互斥——`pini test` 不执行 main，`pini run` 不执行测试） | 已定义（v0.42.0，见 G41；收集单位更正见 G49） | ✅ | Provisional | `pini test` 子命令 / `TestBlockTests` / `TestBlockSwiftTests` / `examples/test.pini` |
 | `assert` 内建（`assert(条件: Bool,)` / `assert(条件: Bool, 消息: String,)`；条件 false 抛 `RuntimeError.assertionFailed`，LLVM 端经 `@bk_panic` 终止） | 已定义（v0.42.0，见 G41） | ✅ | Provisional | `BuiltinFunctionTests` / `PiniRuntime.pini_panic` |
 | 方法 `\|self` | 已定义 | ✅ | Provisional | `Keyword.self` |
 | 类型声明定界符 `( ) { } [ ] < >` | 已定义（§2.1） | ✅ | Provisional | `Parser.parseTopLevelDecl` |
