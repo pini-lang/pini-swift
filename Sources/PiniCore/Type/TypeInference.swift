@@ -228,16 +228,17 @@ public final class TypeInference {
  return nil
 
  case .subscript(let container, let index, let loc):
- // P2-E：安全通道下标返回可空 T?（越界/缺键 → nil，与运行时 .null 对齐）。
- // 仅当容器类型可静态解析时给出精确 Optional<元素>；否则回退 nil（未知），不报错。
+ // 批 2（G48 三通道）：下标是**安全断言通道**——静态类型 = 元素类型 `T`（越界 panic，
+ // E5-005），不再是 Optional<T>（旧 P2-E 行为）。容错通道为 `.get(i)`（Optional<T>）。
+ // 仅当容器类型可静态解析时给出精确元素类型；否则回退 nil（未知），不报错。
  guard let containerType = infer(expression: container, scopedParams: scopedParams) else { return nil }
  switch containerType {
  case .generic(let name, let params, _) where name == "Array":
- return .generic(name: "Optional", params: [params.first ?? .simple(name: "Any", location: loc)], location: loc)
+ return params.first ?? .simple(name: "Any", location: loc)
  case .generic(let name, let params, _) where name == "Dictionary":
- return .generic(name: "Optional", params: [params.last ?? .simple(name: "Any", location: loc)], location: loc)
+ return params.last ?? .simple(name: "Any", location: loc)
  case .simple(let name, _) where name == "String":
- return .generic(name: "Optional", params: [.simple(name: "String", location: loc)], location: loc)
+ return .simple(name: "String", location: loc)
  default:
  return nil
  }

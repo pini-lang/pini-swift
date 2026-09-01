@@ -33,13 +33,15 @@ enum SubscriptReadStrategy {
  }
  // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
  let idx = i < 0 ? arr.count + i : i
- // P2-C + 宿主修复（issue-host-optional-slice-2026-08-28）：安全通道越界返回 Optional.none，
- // 界内返回 Optional.some(元素)，与 P2-E 标注的 Optional<T> 静态类型对齐；
- // 使 `match a[i]: case some(x): case none:` 可正常工作（此前运行时未做 some/none 包装）。
+ // 批 2（G48 三通道，proposal-subscript-safety-channels-2026-09-01）：`a[i]` 是
+ // **安全断言通道**——返回元素本身（静态类型 `T`），越界 **panic**（E5-005）。
+ // 与 LLVM 运行时 `@bk_array_get` 的既有行为一致（越界 `bk_panic`），此前解释器返回
+ // Optional.none 造成双后端不一致（issue-host-optional-slice-2026-08-28）。
+ // 容错需求走 `.get(i)`（返回 Optional），性能敏感且已证明界内走 `unsafe .getUnchecked(i)`。
  guard idx >= 0, idx < arr.count else {
- return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ throw RuntimeError.indexOutOfRange(location: loc)
  }
- return .enumValue(EnumValue(caseName: "some", associatedValues: [arr[idx]]))
+ return arr[idx]
  }
 
  r[.string] = { container, index, loc in
@@ -48,23 +50,23 @@ enum SubscriptReadStrategy {
  }
  // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
  let idx = i < 0 ? s.count + i : i
- // P2-C + 宿主修复（issue-host-optional-slice-2026-08-28）：越界返回 Optional.none，界内返回 Optional.some(字符)。
+ // 批 2（G48 三通道）：字符串下标同为安全断言通道——越界 panic（E5-005），界内返回字符。
  guard idx >= 0, idx < s.count else {
- return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ throw RuntimeError.indexOutOfRange(location: loc)
  }
  let cidx = s.index(s.startIndex, offsetBy: idx)
- return .enumValue(EnumValue(caseName: "some", associatedValues: [.string(String(s[cidx]))]))
+ return .string(String(s[cidx]))
  }
 
  r[.dictionary] = { container, index, loc in
  guard case .dictionary(let entries) = container else {
  throw RuntimeError.invalidOperation(reason: "字典下标需字典容器: \(container)", location: loc)
  }
+ // 批 2（G48 三通道）：字典缺失键与下标越界**同义**（D-5 裁决）——同走 panic（E5-005）。
  for (k, v) in entries {
- if k == index { return .enumValue(EnumValue(caseName: "some", associatedValues: [v])) }
+ if k == index { return v }
  }
- // 缺失键返回 Optional.none（与 P2-E 标注的 Optional<T> 对齐）。
- return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ throw RuntimeError.indexOutOfRange(location: loc)
  }
 
  return r
@@ -81,11 +83,12 @@ enum SubscriptReadStrategy {
  }
 
  /// 执行下标读：查表分派，缺策略抛 unsupported。
+ ///
+ /// 批 2（G48 三通道）：下标读返回**元素值本身**（静态类型 `T`），越界/缺键抛
+ /// `RuntimeError.indexOutOfRange`（E5-005）。旧行为为返回 Optional 枚举 some/none，
+ /// 经 `!` 剥壳（须 unsafe 上下文）；现下标是「我断言存在」的通道，容错改走 `.get(i)`。
+ /// 嵌套下标因此可直接连写：`m[0][1]`（旧写法 `unsafe m[0]![1]!` 已失效且 `!` 会报错）。
  static func read(container: Value, index: Value, location: SourceLocation) throws -> Value {
- // 严格枚举语义（issue-host-optional-slice-2026-08-28）：下标读一律返回 Optional 枚举
- // some/none，不做任何 `some(x)` → `x` 透明解包。嵌套下标必须显式剥壳：
- // `a[i]![j]`（`!` 强制解包 `a[i]` 的 `some(array)` 取内层数组再下标），
- // 不再有隐式把 Optional 当裸值用的语法糖。
  guard let k = kind(of: container) else {
  throw RuntimeError.invalidOperation(reason: "不支持的下标容器类型: \(container)", location: location)
  }
