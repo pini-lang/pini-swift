@@ -2,7 +2,7 @@ main|func() -> ():
     var a = [1, 2, 3]
     a[0] = 10
     a[1] = 20
-    match a[1]:
+    match a.get(1):
         case some(v):
             a[1] = v + 5
         case none:
@@ -11,10 +11,10 @@ main|func() -> ():
     print(a[1])
     print(a[2])
     var m = [[1, 2], [3, 4]]
-    var mrow = unsafe m[0]!
+    var mrow = m[0]
     mrow[1] = 99
     m[0] = mrow
-    print(unsafe m[0]![1]!)
+    print(m[0][1])
     var s = ["a", "b"]
     s[0] = "z"
     print(s[0])

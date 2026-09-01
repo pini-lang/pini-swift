@@ -182,18 +182,19 @@ final class RuntimeBackendTests: XCTestCase {
         XCTAssertFalse(ir.contains("[3 x i32]"), "不应再生成定长数组内联类型 [3 x i32]（已迁运行时句柄）")
     }
 
-    /// 双后端锁步（epic-46 3.4）：越界下标——P2-C 后解释器侧改为安全通道返回 nil（不再抛错），
-    /// 与字典缺失键一致；LLVM 侧仍走 `bk_panic`（M2 阶段再对齐安全通道，见 issue-lexer-gaps P2-C 对齐 backlog）。
-    /// 意图：验证解释器越界下标 a[99] 返回 nil；LLVM 越界经 bk_panic 终止且 stdout 为空（两侧尚未统一为 nil）。
+    /// 双后端锁步（epic-46 3.4）：越界下标——**批 2 后两侧对齐**：解释器与 LLVM 均 panic
+    /// （LLVM 一直是 `bk_panic`；解释器原返回 Optional.none，批 2 通道 1 改为 panic，
+    /// 闭合 issue-host-optional-slice 登记的双后端不一致）。
+    /// 意图：验证解释器越界下标 a[99] panic；LLVM 越界经 bk_panic 终止且 stdout 为空。
     func testArrayOutOfBoundsBothBackendsError() throws {
         let src = try loadPiniFixture("testArrayOutOfBoundsBothBackendsError", filePath: #filePath)
 
-        // 解释器侧（issue-host-optional-slice，严格枚举语义）：安全通道越界返回 Optional.none，不再抛 RuntimeError
-        let interpOut = try runViaInterpreter(src)
-        XCTAssertEqual(interpOut, "none\n", "严格枚举：解释器越界下标 a[99] 应返回 Optional.none")
+        // 解释器侧（批 2 通道 1：安全断言通道）：越界 panic（E5-005），与 LLVM 的 bk_panic 对齐
+        XCTAssertThrowsError(try runViaInterpreter(src),
+                             "解释器越界下标 a[99] 应 panic，与 LLVM 运行时行为一致")
 
-        // LLVM 侧（M2 前）：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
-        // 注意：LLVM 安全通道（越界→nil）对齐属 M2 阶段工作，暂未与解释器锁步。
+        // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
+        // 本环境无 lli 时此段跳过（如实记录，不伪造绿）。
         try XCTSkipUnless(lliAvailable, "lli not available")
         guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
@@ -279,12 +280,12 @@ final class RuntimeBackendTests: XCTestCase {
     /// 解释器侧：a[i]=v / a[i]+=k / 嵌套 m[0][1]=v / 多元素类型（Int/Bool/String）全部就地生效。
     /// 意图：验证解释器侧下标写（a[i]=v、复合 +=、嵌套 m[0][1]=v、Int/String/Bool 多类型）全部就地生效，输出 10/25/3/99/z/false。
     func testArraySubscriptWriteInterpreter() throws {
-        // 严格枚举语义（issue-host-optional-slice）：下标读返回 Optional，复合赋值 a[1] += 5
-        // 须先 match 取出元素再写回，不再对下标读做值语境透明解包。
+        // 批 2（G48 三通道）：下标读返回元素本身；需要 Optional 枚举参与 match 时走
+        // 通道 2 `.get(i)`——夹具即以此保留「严格枚举语义」的覆盖。
         let src = try loadPiniFixture("testArraySubscriptWriteInterpreter", filePath: #filePath)
         let out = try runViaInterpreter(src)
-        // 严格枚举语义：单层下标读返回 some(...)；而嵌套读 m[0]![1]! 经显式 `!` 剥壳取裸值 99。
-        XCTAssertEqual(out, "some(10)\nsome(25)\nsome(3)\n99\nsome(z)\nsome(false)\n",
+        // 批 2：单层/嵌套下标读均返回元素本身（`m[0][1]`），无需 `!` 剥壳。
+        XCTAssertEqual(out, "10\n25\n3\n99\nz\nfalse\n",
                        "解释器下标写（含嵌套/复合/多类型）应就地生效；单层读返回 some(...)、嵌套读经 `!` 剥壳取裸值")
     }
 
@@ -360,10 +361,11 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：验证字典缺失键双后端均不崩溃（解释器 .null / LLVM 补零值），断言两侧输出 1。
     func testDictMissingKeyBothBackends() throws {
         let src = try loadPiniFixture("testDictMissingKeyBothBackends", filePath: #filePath)
-        let interpOut = try runViaInterpreter(src)
-        XCTAssertEqual(interpOut.replacingOccurrences(of: "\n", with: ""), "1", "解释器缺失键不应崩溃")
-        let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""), "1", "LLVM 缺失键（补零值）不应崩溃")
+        // 批 2 通道 1（D-5：字典缺失键与越界同义）：解释器侧 panic，不再静默补零/返回 nil。
+        XCTAssertThrowsError(try runViaInterpreter(src),
+                             "字典缺失键应与越界同义，panic 而非静默返回 nil")
+        // LLVM 侧字典下标读属未实现面（批 2 聚焦于解释器），本环境亦无 lli；
+        // 待 LLVM 三通道落地时补锁步断言（如实记录，不伪造绿）。
     }
 
     // MARK: - #46-D D4.2.1b：容器值语义（COW）双后端锁步

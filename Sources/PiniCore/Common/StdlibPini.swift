@@ -27,7 +27,7 @@ enum StdlibPini {
          var j = 0
          var ok = true
          while j < m:
-             if self[i + j]! != needle[j]!:
+             if self[i + j] != needle[j]:
                  ok = false
                  break
              j = j + 1
@@ -58,7 +58,7 @@ enum StdlibPini {
      var out = ""
      var k = lo
      while k < hi:
-         out = out + self[k]!
+         out = out + self[k]
          k = k + 1
      return out
 
@@ -72,7 +72,7 @@ enum StdlibPini {
      if m == 0:
          var i = 0
          while i < n:
-             parts = parts.append(self[i]!)
+             parts = parts.append(self[i])
              i = i + 1
          return parts
      var i = 0
@@ -83,7 +83,7 @@ enum StdlibPini {
              if i + j >= n:
                  hit = false
                  break
-             if self[i + j]! != sep[j]!:
+             if self[i + j] != sep[j]:
                  hit = false
                  break
              j = j + 1
@@ -92,7 +92,7 @@ enum StdlibPini {
              cur = ""
              i = i + m
          else:
-             cur = cur + self[i]!
+             cur = cur + self[i]
              i = i + 1
      parts = parts.append(cur)
      return parts
@@ -134,7 +134,7 @@ enum StdlibPini {
      var out = ""
      var k = lo
      while k < hi:
-         out = out + self[k]!
+         out = out + self[k]
          k = k + 1
      return out
 
@@ -174,7 +174,7 @@ enum StdlibPini {
      var out = []
      var k = lo
      while k < hi:
-         out = out.append(self[k]!)
+         out = out.append(self[k])
          k = k + 1
      return out
  """

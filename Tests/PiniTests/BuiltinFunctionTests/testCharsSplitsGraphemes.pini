@@ -1,6 +1,6 @@
 main|func() -> ():
     var cs = chars("a圆b")
     print(len(cs))
-    print(cs[0]!)
-    print(cs[0]! + cs[1]! + cs[2]! == "a圆b")
+    print(cs[0])
+    print(cs[0] + cs[1] + cs[2] == "a圆b")
     return

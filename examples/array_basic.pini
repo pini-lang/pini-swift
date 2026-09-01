@@ -18,13 +18,13 @@ main|func() -> ():
     print(b[0])
     print(len(b))
     let m = [["a", "b"], ["c", "d"]]
-    ; 严格枚举语义下嵌套读须显式强制解包 `!`（须 unsafe 上下文）：m[0] 是 some([...])，
-    ; `!` 剥出内层数组再下标；内层 [1] 读仍返回 some，故再 `!` 取裸值。
-    print(unsafe m[0]![1]!)
+    ; 批 2（G48 通道 1）：下标读返回元素本身，嵌套下标可直接连写（旧写法 `unsafe m[0]![1]!` 已失效）。
+    print(m[0][1])
     var w = [1, 2, 3]
     w[0] = 10
-    ; 严格枚举语义（issue-host-optional-slice）：下标读返回 Optional，复合赋值须先 match 取元素
-    match w[1]:
+    ; 批 2（G48 通道 2）：需要 Optional 参与 match 时走 `.get(i)`（越界返回 .none）；
+    ; 下标 `w[i]` 直接给元素，越界 panic。
+    match w.get(1):
         case some(v):
             w[1] = v + 5
         case none:

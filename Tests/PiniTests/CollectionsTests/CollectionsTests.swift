@@ -63,7 +63,7 @@ final class CollectionsTests: XCTestCase {
     // Intent: 验证数组下标读返回 Optional 包装（严格枚举语义，issue-host-optional-slice）：a[1] == some(20)
     func testArraySubscript() throws {
         let source = try loadPiniFixture("testArraySubscript", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "some(20)\n")
+        XCTAssertEqual(try runProgram(source), "20\n")
     }
 
     // Intent: 验证嵌套数组字面量正确打印（推进性测量：[[1, 2], [3, 4]]）
@@ -72,11 +72,24 @@ final class CollectionsTests: XCTestCase {
         XCTAssertEqual(try runProgram(source), "[[1, 2], [3, 4]]\n")
     }
 
-    // Intent: 验证数组下标越界返回 Optional.none（严格枚举语义，issue-host-optional-slice：
-    // 越界从 .null 改为 .enumValue(none)，与 nil 字面量同构，可被 match case none 命中）。
-    func testArraySubscriptOutOfRangeReturnsNull() throws {
-        let source = try loadPiniFixture("testArraySubscriptOutOfRangeReturnsNull", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "none\n")
+    // Intent: 批 2（G48 通道 1）——下标是安全断言通道：越界 panic（E5-005），不再返回 none。
+    // 与 LLVM 运行时 `@bk_array_get` 的既有越界行为一致（双后端不再分叉）。
+    func testArraySubscriptOutOfRangePanics() throws {
+        let source = try loadPiniFixture("testArraySubscriptOutOfRangePanics", filePath: #filePath)
+        XCTAssertThrowsError(try runProgram(source), "越界下标读应 panic 而非返回 none")
+    }
+
+    // Intent: 批 2（G48 通道 2）——容错取值走 `.get(i)`：越界返回 Optional.none（三类型一致）。
+    func testGetOutOfRangeReturnsNone() throws {
+        let source = try loadPiniFixture("testGetOutOfRangeReturnsNone", filePath: #filePath)
+        XCTAssertEqual(try runProgram(source), "none\nnone\nnone\n")
+    }
+
+    // Intent: 批 2（G48 通道 3）——`unsafe .getUnchecked(i)` 越界是 UB；解释器无法表达真 UB，
+    // 以「未定义行为陷阱」报错近似（可诊断、可测试），调用方前置条件义务不变。
+    func testGetUncheckedOutOfRangeTraps() throws {
+        let source = try loadPiniFixture("testGetUncheckedOutOfRangeTraps", filePath: #filePath)
+        XCTAssertThrowsError(try runProgram(source), "getUnchecked 越界应触发 UB 陷阱")
     }
 
     // MARK: - 字典
@@ -90,13 +103,13 @@ final class CollectionsTests: XCTestCase {
     // Intent: 验证字典下标读返回 Optional 包装（严格枚举语义）：d[2] == some(y)
     func testDictionarySubscript() throws {
         let source = try loadPiniFixture("testDictionarySubscript", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "some(y)\n")
+        XCTAssertEqual(try runProgram(source), "y\n")
     }
 
     // Intent: 验证字典缺失键下标返回 Optional.none（严格枚举语义，与数组越界一致）—— 驳回性测量
-    func testDictionarySubscriptMissingKeyReturnsNull() throws {
-        let source = try loadPiniFixture("testDictionarySubscriptMissingKeyReturnsNull", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "none\n")
+    func testDictionarySubscriptMissingKeyPanics() throws {
+        let source = try loadPiniFixture("testDictionarySubscriptMissingKeyPanics", filePath: #filePath)
+        XCTAssertThrowsError(try runProgram(source), "越界/缺键下标读应 panic 而非返回 none")
     }
 
     // MARK: - 集合
@@ -139,25 +152,25 @@ final class CollectionsTests: XCTestCase {
     // Intent: 验证字符串下标读返回 Optional 包装（严格枚举语义）："hello"[1] == some(e)
     func testStringSubscript() throws {
         let source = try loadPiniFixture("testStringSubscript", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "some(e)\n")
+        XCTAssertEqual(try runProgram(source), "e\n")
     }
 
     // Intent: 验证数组负索引尾部计数（P2-A）+ 严格枚举包装：a[-1]==some(30), a[-3]==some(10)
     func testArrayNegativeIndex() throws {
         let source = try loadPiniFixture("testArrayNegativeIndex", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "some(30)\nsome(10)\n")
+        XCTAssertEqual(try runProgram(source), "30\n10\n")
     }
 
     // Intent: 验证字符串负索引尾部计数（P2-A）+ 严格枚举包装：s[-1]==some(o), s[-5]==some(h)
     func testStringNegativeIndex() throws {
         let source = try loadPiniFixture("testStringNegativeIndex", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "some(o)\nsome(h)\n")
+        XCTAssertEqual(try runProgram(source), "o\nh\n")
     }
 
     // Intent: 验证越界下负索引返回 Optional.none（严格枚举语义，P2-A + P2-C：-k 超过长度即越界）—— 驳回性测量
-    func testNegativeIndexBeyondBoundsReturnsNull() throws {
-        let source = try loadPiniFixture("testNegativeIndexBeyondBoundsReturnsNull", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "none\nnone\n")
+    func testNegativeIndexBeyondBoundsPanics() throws {
+        let source = try loadPiniFixture("testNegativeIndexBeyondBoundsPanics", filePath: #filePath)
+        XCTAssertThrowsError(try runProgram(source), "越界/缺键下标读应 panic 而非返回 none")
     }
 
     // MARK: - 切片语法（P2-B）
@@ -181,9 +194,9 @@ final class CollectionsTests: XCTestCase {
     }
 
     // Intent: 验证字符串下标越界返回 Optional.none（严格枚举语义，P2-C 安全通道越界可空）—— 迁移性测量
-    func testStringSubscriptOutOfRangeReturnsNull() throws {
-        let source = try loadPiniFixture("testStringSubscriptOutOfRangeReturnsNull", filePath: #filePath)
-        XCTAssertEqual(try runProgram(source), "none\n")
+    func testStringSubscriptOutOfRangePanics() throws {
+        let source = try loadPiniFixture("testStringSubscriptOutOfRangePanics", filePath: #filePath)
+        XCTAssertThrowsError(try runProgram(source), "越界/缺键下标读应 panic 而非返回 none")
     }
 
     // MARK: - 类型检查放行

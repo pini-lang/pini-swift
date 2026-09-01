@@ -1,0 +1,8 @@
+main|func() -> ():
+    var a = [10, 20, 30]
+    print(a.get(99))
+    var s = "hello"
+    print(s.get(99))
+    var d = [1: "x", 2: "y"]
+    print(d.get(9))
+    return

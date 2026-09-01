@@ -12,7 +12,7 @@
 ;   - LLVM 后端：容器以不透明句柄承载，运行时维护显式 share count，
 ;     codegen 在别名点补 share、在写路径捕获分裂后的新句柄并写回变量槽；
 ;     嵌套写 `m[0][0] = v`：严格枚举下 `m[0]` 为 some([...])，`!` 是只读右值；
-;     先 `var x = unsafe m[0]!` 强制解包取内层、改本地副本、再 `m[0] = some(x)` 写回，
+;     先 `var x = m[0]` 强制解包取内层、改本地副本、再 `m[0] = some(x)` 写回，
 ;     自顶向下逐层独占化，外层与内层各自分裂。
 
 main|func() -> ():
@@ -39,11 +39,11 @@ main|func() -> ():
 
     ; 4) 嵌套写：只改目标内层槽，别名的内层快照不受污染
     ;    严格枚举语义下 `g[0]` 是 some([...])，`!` 是只读右值、不能作 lvalue；
-    ;    故先 `var row = unsafe g[0]!` 强制解包取内层数组（须 unsafe 上下文），
+    ;    故先 `var row = g[0]` 强制解包取内层数组（须 unsafe 上下文），
     ;    改本地副本后 `g[0] = some(row)` 显式写回外层槽。
     var g = [[1, 2], [3, 4]]
     var h = g
-    var row = unsafe g[0]!
+    var row = g[0]
     row[0] = 99
     g[0] = row
     print(g)
@@ -52,7 +52,7 @@ main|func() -> ():
     ; 5) 混合嵌套（数组套字典）同样递归分裂
     var p = [["k": 1], ["k": 2]]
     var q = p
-    var d0 = unsafe p[0]!
+    var d0 = p[0]
     d0["k"] = 9
     p[0] = d0
     print(p)

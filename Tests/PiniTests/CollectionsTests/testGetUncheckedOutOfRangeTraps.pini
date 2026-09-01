@@ -1,0 +1,4 @@
+main|func() -> ():
+    var a = [10, 20, 30]
+    print(unsafe a.getUnchecked(99))
+    return

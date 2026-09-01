@@ -27,11 +27,11 @@ main|func() -> ():
     print(a[1:100])
     print(a[100:])
     print(a[-1])
-    print(a[100])
+    print(a.get(100))
 
     var s = "hello"
     print(s[1:4])
     print(s[-3:])
     print(s[:-1])
-    print(s[100])
+    print(s.get(100))
     return
