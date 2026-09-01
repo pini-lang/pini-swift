@@ -32,6 +32,8 @@
 | ADR-024 | 治理级 | 规范治理归位——撤销元仓、三层规范模型与自举探针定位 | active | `adr-024-spec-governance-relocation.md` |
 | ADR-026 | 语言级 | 歧义 case 名消歧与类型传播（裸名构造按期望类型/实参类型消歧；match 按 scrutinee 解析；self 调用传播；作用域化类型变量；case 值完整身份） | active | `adr-026-ambiguous-case-resolution.md` |
 | ADR-027 | 语言级 | 反引号关键字转义（`名称` 整体产出 IDENT，关键字可作标识符/构造标签；自举探针 G-P5） | active | `adr-027-backtick-escape.md` |
+| ADR-028 | 语言级 | 集合下标三通道安全模型（G48 破坏性修订：`a[i]` 安全断言 panic / `.get(i)` 安全可选 `.none` / `unsafe .getUnchecked(i)` 不安全 UB；解释器向 LLVM 既有 panic 行为收敛；追溯补登记） | active | `adr-028-subscript-safety-channels.md` |
+| ADR-029 | 语言级 | 括号内记法收口——值的注入用 `=`（`=` 注入 / `:` 标注与取出；实参标签·字典条目·元组标签·枚举具名构造改 `=`，match 具名绑定保留 `:`；含 G54 构造位破坏性修订，追溯补登记） | active | `adr-029-paren-equals-binding.md` |
 
 ## 备注
 
