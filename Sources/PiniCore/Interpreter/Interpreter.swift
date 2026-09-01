@@ -2202,6 +2202,22 @@ public class Interpreter {
  decl: nil,
  closure: methodEnv
  ))
+ // 批 2（G48 通道 2/3）：字典此前无成员面（下标为语法级），随 D-5（三通道对三种
+ // 容器一致）补上成员派发通道，供 `d.get(k)` / `unsafe d.getUnchecked(k)` 使用。
+ case .dictionary(let entries):
+ let methodEnv = Environment(enclosing: currentEnv)
+ methodEnv.define(name: "self", value: .dictionary(entries), isMutable: false)
+ guard let member = BuiltinRegistry.member(typeName: "Dictionary", name: memberName) else {
+ throw RuntimeError.undefinedVariable(name: memberName, location: SourceLocation(line: 0, column: 0, fileName: ""))
+ }
+ return .function(FunctionValue(
+ name: member.name,
+ params: member.paramNames.map { Parameter(name: $0) },
+ returnTypes: [],
+ body: nil,
+ decl: nil,
+ closure: methodEnv
+ ))
  default:
  throw RuntimeError.invalidOperation(reason: "无法访问成员", location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
@@ -2626,6 +2642,19 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return a
  }
 
+ /// 批 2（G48 通道 2/3）：越界落点分派。
+ /// - `.get`：返回 `Optional.none`（安全可选通道，调用方显式解包）。
+ /// - `.getUnchecked`：调用方违反前置条件。真正的 UB 在解释器无法表达（Swift 越界直接
+ ///   trap，不可诊断也不可测试），故以「未定义行为陷阱」报错近似——与 LLVM 端的语义
+ ///   约定一致：调用方须证明界内，违反即未定义行为（此处表现为运行时错误）。
+ private func uncheckedOrNone(fv: FunctionValue, location: SourceLocation) throws -> Value {
+ if fv.name == "get" { return .enumValue(EnumValue(caseName: "none", associatedValues: [])) }
+ throw RuntimeError.invalidOperation(
+ reason: "getUnchecked 越界：调用方违反前置条件（解释器以 UB 陷阱近似；LLVM 端为真 UB）",
+ location: location
+ )
+ }
+
  // MARK: - 函数调用
 
  /// G40（LazyRef）：构造 `LazyRef<T>`——参数必须是初始化闭包（函数值），产出引用语义 box。
@@ -2938,6 +2967,36 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return .tuple(labels: [nil, nil], elements: [.array([]), .null])
  }
  return .tuple(labels: [nil, nil], elements: [.array(Array(arr.dropLast())), last])
+ }
+ // 批 2（G48 通道 2/3）：`.get(i)` 安全可选（越界 .none）；`.getUnchecked(i)` 不安全
+ // （跳过检查）。三者共用负索引尾部计数（与下标通道一致）。
+ // 注意：解释器无法提供真正的 UB——`getUnchecked` 越界在此以「未定义行为陷阱」
+ // 报错近似（可诊断、可测试）；LLVM 端若实现才为真 UB（签名语义不变）。
+ if fv.name == "get" || fv.name == "getUnchecked" {
+ let loc = SourceLocation(line: 0, column: 0, fileName: "")
+ guard case .int(let raw) = args[0] else {
+ throw RuntimeError.invalidOperation(reason: "\(fv.name) 的参数必须是整数索引", location: loc)
+ }
+ let receiver = try fv.closure.get(name: "self")
+ switch receiver {
+ case .array(let arr):
+ let idx = raw < 0 ? arr.count + raw : raw
+ guard idx >= 0, idx < arr.count else { return try uncheckedOrNone(fv: fv, location: loc) }
+ return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [arr[idx]])) : arr[idx]
+ case .string(let s):
+ let idx = raw < 0 ? s.count + raw : raw
+ guard idx >= 0, idx < s.count else { return try uncheckedOrNone(fv: fv, location: loc) }
+ let cidx = s.index(s.startIndex, offsetBy: idx)
+ let ch: Value = .string(String(s[cidx]))
+ return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [ch])) : ch
+ case .dictionary(let entries):
+ for (k, v) in entries where k == args[0] {
+ return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [v])) : v
+ }
+ return try uncheckedOrNone(fv: fv, location: loc)
+ default:
+ throw RuntimeError.invalidOperation(reason: "\(fv.name) 的接收者必须是数组/字符串/字典", location: loc)
+ }
  }
  if fv.name == "abs" {
  switch args[0] {

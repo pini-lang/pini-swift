@@ -191,6 +191,14 @@ public enum BuiltinRegistry {
  params: [t("String")], returns: [TypeAnnotation.generic(name: "Array", params: [t("String")], location: builtinLocation)], inTrait: false),
  MemberDecl(typeName: "String", name: "slice", paramNames: ["start", "end"],
  params: [t("Any"), t("Any")], returns: [t("String")], inTrait: true),
+ // 批 2（G48 三通道）：安全可选通道 `.get(i)` 与不安全通道 `.getUnchecked(i)`。
+ // 动因：下标 `a[i]` 已改为安全断言通道（越界 panic），需要容错取值的显式通道；
+ // `getUnchecked` 供已证明界内的热路径跳过检查（调用方以 `unsafe` 消耗点承担义务）。
+ // `inTrait = false`：不作为 collection 特征面，避免用户类型被要求实现这两个方法。
+ MemberDecl(typeName: "String", name: "get", paramNames: ["index"],
+ params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("String")], location: builtinLocation)], inTrait: false),
+ MemberDecl(typeName: "String", name: "getUnchecked", paramNames: ["index"],
+ params: [t("I32")], returns: [t("String")], inTrait: false),
  // Array（collection 子集：append/pop/slice/join；扩展面：last）
  MemberDecl(typeName: "Array", name: "join", paramNames: ["sep"],
  params: [t("String")], returns: [t("String")], inTrait: true),
@@ -202,6 +210,16 @@ public enum BuiltinRegistry {
  params: [], returns: [t("Any")], inTrait: false),
  MemberDecl(typeName: "Array", name: "pop", paramNames: [],
  params: [], returns: [t("Any")], inTrait: true),
+ MemberDecl(typeName: "Array", name: "get", paramNames: ["index"],
+ params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Any")], location: builtinLocation)], inTrait: false),
+ MemberDecl(typeName: "Array", name: "getUnchecked", paramNames: ["index"],
+ params: [t("I32")], returns: [t("Any")], inTrait: false),
+ // Dictionary：此前无成员面（下标为语法级）。批 2 依 D-5（三通道对三种容器一致）
+ // 补 `get`/`getUnchecked`——缺失键与越界同义。
+ MemberDecl(typeName: "Dictionary", name: "get", paramNames: ["key"],
+ params: [t("Any")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Any")], location: builtinLocation)], inTrait: false),
+ MemberDecl(typeName: "Dictionary", name: "getUnchecked", paramNames: ["key"],
+ params: [t("Any")], returns: [t("Any")], inTrait: false),
  ]
 
  public static func member(typeName: String, name: String) -> MemberDecl? {
