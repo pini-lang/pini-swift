@@ -304,7 +304,7 @@
 | ④`Pini草稿.md` rationale 同步 | N/A（草稿 DEPRECATED 声明「不做内容改写」，冲突改登记入 `issue-conflict-register` A15/A16） | 同左 | 同左 | 已按草稿自述机制清偿（2026-09-02） |
 | ④README / 示例 | ❌ 示例未加跨行用法 | ✅ | ✅ | 批 1.5 补示例 |
 | ④迁移说明 | 不需要（新增能力） | ✅ `migration-2026-09.md` §A | ✅ `migration-2026-09.md` §B | 已清偿（2026-09-02） |
-| ⑤证据登记（`evidence-table.toml`） | ❌ | ❌ | ❌ | 补登记（符号定位 + `validated_at`） |
+| ⑤证据登记（`evidence-table.toml`） | ✅ E-067..E-069 | ✅ E-070..E-076 | ✅ E-077..E-081 | 已清偿（2026-09-02，登记前现跑重筛，FRESH） |
 | 版本 bump（路线图条款：语义变更须 bump） | ❌ | ❌ | ❌ | 仍 `0.50.0`，待清偿后统一 bump |
 
 ### 8.4 变更规则（本轮起生效）
