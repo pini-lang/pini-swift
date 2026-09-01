@@ -2974,10 +2974,18 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  // 报错近似（可诊断、可测试）；LLVM 端若实现才为真 UB（签名语义不变）。
  if fv.name == "get" || fv.name == "getUnchecked" {
  let loc = SourceLocation(line: 0, column: 0, fileName: "")
+ let receiver = try fv.closure.get(name: "self")
+ // 字典键是任意值（字符串/整数…），数组与字符串下标才是整数索引——先按接收者
+ // 类型分流，再各自校验参数，避免把键误当索引（批 2 遗留缺陷，批 3 取证发现）。
+ if case .dictionary(let entries) = receiver {
+ for (k, v) in entries where k == args[0] {
+ return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [v])) : v
+ }
+ return try uncheckedOrNone(fv: fv, location: loc)
+ }
  guard case .int(let raw) = args[0] else {
  throw RuntimeError.invalidOperation(reason: "\(fv.name) 的参数必须是整数索引", location: loc)
  }
- let receiver = try fv.closure.get(name: "self")
  switch receiver {
  case .array(let arr):
  let idx = raw < 0 ? arr.count + raw : raw
@@ -2989,11 +2997,6 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  let cidx = s.index(s.startIndex, offsetBy: idx)
  let ch: Value = .string(String(s[cidx]))
  return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [ch])) : ch
- case .dictionary(let entries):
- for (k, v) in entries where k == args[0] {
- return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [v])) : v
- }
- return try uncheckedOrNone(fv: fv, location: loc)
  default:
  throw RuntimeError.invalidOperation(reason: "\(fv.name) 的接收者必须是数组/字符串/字典", location: loc)
  }

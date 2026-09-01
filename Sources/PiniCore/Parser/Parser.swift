@@ -2864,10 +2864,16 @@ public class Parser {
  var label: String? = nil
  if case .identifier(let possibleLabel, _) = firstTok {
  let nextTok = peek(offset: 1)
- if case .colon(_) = nextTok {
+ // 批 3（proposal-paren-equals-binding）：实参标签用 `=`（值的注入方向统一为 `=`）；
+ // 旧写法 `f(a: 1)` 已废弃（D-1）——此处给迁移提示后报错。
+ if case .assign(_) = nextTok {
  advance()
  advance()
  label = possibleLabel
+ } else if case .colon(_) = nextTok {
+ throw ParserError.invalidExpression(
+ reason: "实参标签须用 `=`（如 `f(\(possibleLabel) = 值)`）；旧写法 `f(\(possibleLabel): 值)` 已废弃",
+ location: currentLocation)
  }
  }
  let expr = try parseExpression()
@@ -2918,12 +2924,19 @@ public class Parser {
  var elements: [Expression] = []
 
  func parseElement() throws -> Expression {
+ // 批 3（D-4）：标签元组元素同样用 `=`（构造侧 = 值的注入方向）。
  if case .identifier(let name, _) = currentToken,
- case .colon(_) = peek(offset: 1) {
+ case .assign(_) = peek(offset: 1) {
  advance() // 消费标识符
- advance() // 消费冒号
+ advance() // 消费等号
  labels.append(name)
  return try parseExpression()
+ }
+ if case .identifier(let name, _) = currentToken,
+ case .colon(_) = peek(offset: 1) {
+ throw ParserError.invalidExpression(
+ reason: "元组标签须用 `=`（如 `(\(name) = 值,)`）；旧写法 `(\(name): 值,)` 已废弃",
+ location: currentLocation)
  }
  labels.append(nil)
  return try parseExpression()
@@ -2971,9 +2984,15 @@ public class Parser {
  }
 
  let first = try parseExpression()
+ // 批 3（D-2）：字典条目用 `=`（键 → 值的关联与实参绑定同记号）；`[:]` 全切片不受影响。
  if case .colon(_) = currentToken {
+ throw ParserError.invalidExpression(
+ reason: "字典条目须用 `=`（如 `[键 = 值]`）；旧写法 `[键: 值]` 已废弃（`[:]` 为全切片）",
+ location: loc)
+ }
+ if case .assign(_) = currentToken {
  // 字典
- advance() // 消费 :
+ advance() // 消费 =
  var entries: [DictEntry] = []
  let firstVal = try parseExpression()
  entries.append(DictEntry(key: first, value: firstVal))
@@ -2981,8 +3000,8 @@ public class Parser {
  advance()
  guard !check(.rightBracket(loc)) else { break }
  let k = try parseExpression()
- guard case .colon(_) = currentToken else {
- throw ParserError.invalidExpression(reason: "字典元素必须是 key: value", location: loc)
+ guard case .assign(_) = currentToken else {
+ throw ParserError.invalidExpression(reason: "字典元素必须是 键 = 值", location: loc)
  }
  advance()
  let v = try parseExpression()
@@ -3041,10 +3060,16 @@ public class Parser {
  var label: String? = nil
  if case .identifier(let possibleLabel, _) = firstTok {
  let nextTok = peek(offset: 1)
- if case .colon(_) = nextTok {
+ // 批 3（proposal-paren-equals-binding）：实参标签用 `=`（值的注入方向统一为 `=`）；
+ // 旧写法 `f(a: 1)` 已废弃（D-1）——此处给迁移提示后报错。
+ if case .assign(_) = nextTok {
  advance()
  advance()
  label = possibleLabel
+ } else if case .colon(_) = nextTok {
+ throw ParserError.invalidExpression(
+ reason: "实参标签须用 `=`（如 `f(\(possibleLabel) = 值)`）；旧写法 `f(\(possibleLabel): 值)` 已废弃",
+ location: currentLocation)
  }
  }
  let expr = try parseExpression()
