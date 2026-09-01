@@ -24,7 +24,7 @@ main|func() -> ():
     print(b)
 
     ; 2) 字典别名：改写已有键同样分裂
-    var m = ["a": 1]
+    var m = ["a"= 1]
     var n = m
     n["a"] = 9
     print(m)
@@ -50,7 +50,7 @@ main|func() -> ():
     print(h)
 
     ; 5) 混合嵌套（数组套字典）同样递归分裂
-    var p = [["k": 1], ["k": 2]]
+    var p = [["k"= 1], ["k"= 2]]
     var q = p
     var d0 = p[0]
     d0["k"] = 9

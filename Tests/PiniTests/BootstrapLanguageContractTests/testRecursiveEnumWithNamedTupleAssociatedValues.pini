@@ -7,7 +7,7 @@ integer((value: I32, loc: I32,),)
 binary((left: Expr, op: BinaryOperator, right: Expr,),)
 
 main|func() -> ():
-    var e = binary((left: integer((value: 1, loc: 0,)), op: plus, right: integer((value: 2, loc: 0,)),))
+    var e = binary((left= integer((value= 1, loc= 0,)), op= plus, right= integer((value= 2, loc= 0,)),))
     match e:
         case binary(b):
             match b.left:

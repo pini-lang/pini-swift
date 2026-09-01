@@ -2,7 +2,7 @@ main() -> ():
     var c = 0
     for (_ ,) in [7, 8, 9]:
         c = c + 1
-    let d = ["x": 1, "y": 2]
+    let d = ["x"= 1, "y"= 2]
     var t = 0
     for (k, v,) in d:
         t = t + v

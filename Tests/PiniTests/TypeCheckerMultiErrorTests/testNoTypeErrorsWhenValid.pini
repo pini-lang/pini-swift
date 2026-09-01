@@ -1,7 +1,7 @@
 takesI32|func(p: I32,) -> ():
     return
 main|func() -> ():
-    takesI32(p: 1)
+    takesI32(p= 1)
     var x: I32 = 0
     x = 2
     return

@@ -31,8 +31,8 @@ plus
     return -1
 
 main|func() -> ():
-    print(取文本(identifier(text: "x", loc: 1,)))
-    print(具名取文本(identifier(text: "y", loc: 2,)))
-    print(取位置(identifier(text: "z", loc: 3,)))
+    print(取文本(identifier(text= "x", loc= 1,)))
+    print(具名取文本(identifier(text= "y", loc= 2,)))
+    print(取位置(identifier(text= "z", loc= 3,)))
     print(取文本(plus))
     return

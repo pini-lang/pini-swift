@@ -4,7 +4,7 @@ main|func() -> ():
     m[0][0] = 99
     print(m)
     print(n)
-    var d = ["a": [1, 2]]
+    var d = ["a"= [1, 2]]
     var e = d
     d["a"][0] = 7
     print(d)

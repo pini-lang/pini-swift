@@ -18,7 +18,7 @@ main|func() -> ():
     print(matrix[2][0])
 
 ; 字典（key: value）
-    var ages = ["Alice": 30, "Bob": 25, "Carol": 41]
+    var ages = ["Alice"= 30, "Bob"= 25, "Carol"= 41]
     print(ages)
     print(ages["Bob"])
 

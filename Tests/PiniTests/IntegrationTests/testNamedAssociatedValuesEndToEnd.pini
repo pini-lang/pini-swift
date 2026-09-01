@@ -3,17 +3,17 @@ identifier(text: String, loc: I32,)
 plus
 
 main|func() -> ():
-    var t = identifier(text: "x", loc: 7,)
+    var t = identifier(text= "x", loc= 7,)
     match t:
         case identifier(text, loc):
             print(text)
             print(loc)
-    var u = identifier(text: "y", loc: 8,)
+    var u = identifier(text= "y", loc= 8,)
     match u:
         case identifier(text: s, loc: l):
             print(s)
             print(l)
-    var v = identifier(text: "z", loc: 9,)
+    var v = identifier(text= "z", loc= 9,)
     match v:
         case identifier(_, l2):
             print(l2)

@@ -5,7 +5,7 @@ main|func() -> ():
     var k = [[1, 2], [3, 4]]
     k[0][1] = 88
     print(k)
-    var d = ["a": [1, 2]]
+    var d = ["a"= [1, 2]]
     d["a"][0] = 7
     print(d)
     return

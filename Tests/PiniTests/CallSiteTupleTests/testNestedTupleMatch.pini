@@ -1,5 +1,5 @@
 f|func(p: ((I32, I32), String),) -> ():
     return
 main|func() -> ():
-    f(p: ((1, 2), "y"))
+    f(p= ((1, 2), "y"))
     return

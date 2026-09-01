@@ -7,11 +7,11 @@
 
 main|func() -> ():
     ; 字典：构造 / 键读 / len
-    let ages = ["Alice": 30, "Bob": 25, "Carol": 41]
+    let ages = ["Alice"= 30, "Bob"= 25, "Carol"= 41]
     print(ages["Bob"])
     print(len(ages))
     ; 字典键写：既有键替换 + 新增键
-    var scores = ["x": 1, "y": 2]
+    var scores = ["x"= 1, "y"= 2]
     scores["y"] = 26
     scores["z"] = 99
     print(scores["y"])

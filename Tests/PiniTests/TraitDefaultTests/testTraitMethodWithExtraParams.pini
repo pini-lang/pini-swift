@@ -8,5 +8,5 @@
 
 main|func() -> ():
     var p = Person()
-    print(p.sayHello(name: "Bob"))
+    print(p.sayHello(name= "Bob"))
     return

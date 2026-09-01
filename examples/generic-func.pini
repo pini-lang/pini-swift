@@ -5,6 +5,6 @@
     return x
 
 main|func() -> ():
-    print(身份<I32>(x: 100))
-    print(身份<String>(x: "泛型函数"))
+    print(身份<I32>(x = 100))
+    print(身份<String>(x = "泛型函数"))
     return

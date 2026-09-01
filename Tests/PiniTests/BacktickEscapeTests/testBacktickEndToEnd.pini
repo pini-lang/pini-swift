@@ -4,5 +4,5 @@ f|func(a: I32,) -> (I32,):
 main|func() -> ():
     let `step` = 3
     print(`step`)
-    print(f(`a`: 5,))
+    print(f(`a`= 5,))
     return

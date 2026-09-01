@@ -2,5 +2,5 @@
     return x
 
 main|func() -> ():
-    print(身份<String>(x: "泛型"))
+    print(身份<String>(x = "泛型"))
     return

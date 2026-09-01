@@ -5,6 +5,6 @@ mk(v: I32,)
 mk(v: String,)
 
 main|func() -> ():
-    print(mk(v: 7))
-    print(mk(v: "s"))
+    print(mk(v= 7))
+    print(mk(v= "s"))
     return

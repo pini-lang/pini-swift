@@ -2,5 +2,5 @@
     return xs
 
 main|func() -> ():
-    print(排序<I32>(xs: 3))
+    print(排序<I32>(xs = 3))
     return

@@ -5,9 +5,9 @@ main|func() -> ():
     b[0] = 100
     print(a)
     print(b)
-    var m = ["x": 1]
+    var m = ["x"= 1]
     var n = m
-    m = ["y": 2]
+    m = ["y"= 2]
     print(m)
     print(n)
     return

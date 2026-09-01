@@ -1,9 +1,9 @@
 main|func() -> ():
-    var d = ["x": 1]
+    var d = ["x"= 1]
     var s = {9}
     print(d)
     print(s)
     if true:
-        var nested = ["n": 2]
+        var nested = ["n"= 2]
         print(nested)
     print(d)

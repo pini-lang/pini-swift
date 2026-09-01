@@ -6,5 +6,5 @@ x: I32 = 0
     return
 main|func() -> ():
     let p = 点()
-    p.移动(dx: "oops", dy: 2)
+    p.移动(dx= "oops", dy= 2)
     return

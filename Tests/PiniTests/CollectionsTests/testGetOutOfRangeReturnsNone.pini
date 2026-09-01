@@ -3,6 +3,6 @@ main|func() -> ():
     print(a.get(99))
     var s = "hello"
     print(s.get(99))
-    var d = [1: "x", 2: "y"]
+    var d = [1= "x", 2= "y"]
     print(d.get(9))
     return

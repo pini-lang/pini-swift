@@ -1,5 +1,5 @@
 identity|func<T>(x: T) -> (T,):
     return x
 main|func() -> ():
-    var y = identity<I32>(x: "a")
+    var y = identity<I32>(x = "a")
     return

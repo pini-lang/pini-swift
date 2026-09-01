@@ -1,7 +1,7 @@
 除余|func(a: I32, b: I32) -> (I32, I32,):
     return (a / b, a % b,)
 main|func() -> ():
-    var r = 除余(a: 7, b: 3)
+    var r = 除余(a= 7, b= 3)
     print(r.0,)
     print(r.1,)
     return

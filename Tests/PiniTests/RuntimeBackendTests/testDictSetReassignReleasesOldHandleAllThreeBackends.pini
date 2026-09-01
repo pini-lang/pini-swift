@@ -1,7 +1,7 @@
 main|func() -> ():
-    var d = ["a": 1, "b": 2]
+    var d = ["a"= 1, "b"= 2]
     var e = d
-    d = ["c": 3]
+    d = ["c"= 3]
     print(d)
     print(e)
     var s = {1, 2, 3}

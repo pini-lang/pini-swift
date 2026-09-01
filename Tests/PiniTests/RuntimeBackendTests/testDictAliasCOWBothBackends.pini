@@ -1,10 +1,10 @@
 main|func() -> ():
-    var m1 = ["a": 1]
+    var m1 = ["a"= 1]
     var m2 = m1
     m1["a"] = 9
     print(m1)
     print(m2)
-    var n1 = ["p": 1, "q": 2]
+    var n1 = ["p"= 1, "q"= 2]
     var n2 = n1
     n2["r"] = 3
     print(len(n1))

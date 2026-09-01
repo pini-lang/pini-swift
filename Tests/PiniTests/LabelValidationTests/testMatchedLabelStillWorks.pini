@@ -2,5 +2,5 @@ f|func(a: I32,) -> (I32,):
     return a
 
 main|func() -> ():
-    print(f(a: 3,))
+    print(f(a= 3,))
     return

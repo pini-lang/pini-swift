@@ -1,5 +1,5 @@
 main|func() -> ():
     var xs = []
-    xs = xs.append(dup_case(r: 1,))
+    xs = xs.append(dup_case(r= 1,))
     print(len(xs))
     return

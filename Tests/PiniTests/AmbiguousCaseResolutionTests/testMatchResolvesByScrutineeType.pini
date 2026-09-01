@@ -18,6 +18,6 @@ describe_b|func(b: BoxB,) -> (I32,):
     return 0
 
 main|func() -> ():
-    print(describe_a(foo(a: 5)))
-    print(describe_b(foo(x: "k", y: "k")))
+    print(describe_a(foo(a= 5)))
+    print(describe_b(foo(x= "k", y= "k")))
     return

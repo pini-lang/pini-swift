@@ -7,5 +7,5 @@ area|func(sh: Shape,) -> (I32,):
     return 0
 
 main|func() -> ():
-    print(area(circle(r: 7,)))
+    print(area(circle(r= 7,)))
     return

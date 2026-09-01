@@ -9,7 +9,7 @@ main|func() -> ():
     c[1] = 7
     print(c)
     print(d)
-    var m = ["k": 1]
+    var m = ["k"= 1]
     var n = m
     n["k"] = 9
     print(m)

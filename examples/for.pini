@@ -17,7 +17,7 @@ main|func() -> ():
     print(acc)
 
     ; 2) 字典：(k, v) 两字段一一对应
-    let ages = ["Alice": 30, "Bob": 25]
+    let ages = ["Alice"= 30, "Bob"= 25]
     var total = 0
     for (k, v,) in ages:
         total = total + v
