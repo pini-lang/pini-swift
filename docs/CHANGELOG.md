@@ -3,6 +3,21 @@
 > 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（ADR）与 `spec/issue/`。
 > 版本号与 `pini version` 输出同源：`PiniCore/Common/Version.swift`。
 
+## v0.51.0 (2026-09-02)
+
+### Added
+- **下标三通道**（G48 破坏性修订，ADR-028）：`a[i]` 安全断言（越界 panic E5-005）；`.get(i)` 安全可选（越界 `.none`，Array/Dictionary/String 一致，字典键按任意值匹配）；`unsafe .getUnchecked(i)` 不安全（解释器以「UB 陷阱」E5-006 近似，LLVM 端未实现报 unsupported）
+- **跨行字面量**（G55，A12 方案 B / 路 C）：普通括号内 NEWLINE 等同空白、缩进不参与；块携带括号（开括号同行紧跟 `func`）布局照常——草稿「原地调用 IIFE」形态由此可用；自举 lexer 同步（差分 L0 MATCH 508）
+- **括号内 `=` 记法**（G57，ADR-029）：实参标签 / 字典条目 / 元组标签 / 枚举具名构造统一 `=`（注入方向）；自举 parser 同步
+
+### Changed
+- **破坏性**：下标读返回元素类型 `T`（原 `Optional<T>`），越界由「得 nil」改「panic」；`unsafe a[i]!` 类剥壳写法失效（迁移见 `docs/spec/migration-2026-09.md` §A）
+- **破坏性**：注入位旧 `:` 记法（`f(a: 1)`、`[k: v]`、`(a: 1,)`、`E(x: 1)`）废弃并报错（带迁移提示）；match 具名绑定 `case A(x: v):` 保留 `:`（§B）
+- 解释器下标语义向 LLVM 既有 panic 行为**收敛**（`@bk_array_get` 一直 `bk_panic`），闭合双后端不一致（`issue-host-optional-slice`）
+
+### Fixed
+- Dictionary `.get(key)` 误要求整数索引——键现按任意值匹配（批 2 缺陷，批 3 取证发现）
+
 ## v0.49.0 (2026-08-29)
 
 ### Added

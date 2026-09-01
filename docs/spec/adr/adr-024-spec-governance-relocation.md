@@ -100,7 +100,7 @@ ADR-018 的验收定义「差分全绿 + **能编译自身**」→ **当前阶�
 `.pini/version` → **`.pini/baseline`**，语义由「拉取指令」改为「标定记录」：
 
 ```
-host=<sha> version=0.50.0 spec=0.1 verified=<date>
+host=<sha> version=<version> spec=0.1 verified=<date>
 ```
 
 因宿主与语言规范同在 pini-swift 一仓，**单个 sha 同时钉住工具链与规范**，结构上**不可能不一致**（优于旧的双钉方案：submodule sha + version 字符串）。差分失败时可据此判定是宿主移动还是自举移动。

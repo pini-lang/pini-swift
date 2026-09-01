@@ -122,5 +122,5 @@
 ## D. 版本与兼容
 
 - 两项变更均为**破坏性**：旧源码需按本文迁移后才能在新版本下通过检查。
-- 版本 bump 属本轮治理债清偿项（见 `pini-roadmap-next.md` §8.3），清偿前 `Sources/PiniCore/Common/Version.swift` 仍为 `0.50.0`。
+- 两项变更随 **v0.51.0**（2026-09-02）落地：`Sources/PiniCore/Common/Version.swift` 已 bump，版本里程碑见两份 CHANGELOG。
 - 未提供的兼容层：**不保留旧记法的兼容开关**（裁决 D-1：不留双记法），以免规范面长期分叉。
