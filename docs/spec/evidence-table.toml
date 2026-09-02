@@ -471,7 +471,7 @@ spec_ref = "§A.4 规则 3.13"
 code_ref = "Sources/PiniCore/Parser/Parser.swift（parseStatement 标签|控制流分派；parseIf/parseWhile/parseFor(label:)）；Tests/PiniTests/BlockLabelTests/BlockLabelTests.swift；Tests/PiniTests/GrammarConsistencyTests/GrammarConsistencyTests.swift"
 validated_at = "2026-08-26T22:35:00+08:00"
 status = "FRESH"
-note = "ADR-014 已落地（commit a62aa21）：`scope 块标签:` 转 reserved-error（G44），标签语法改为 `标签|if/while/for`；配套测试与 examples/for.pini、examples/control_while.pini 已迁移。；2026-08-29 G50 随动刷新：声明位置修饰符 self/Self→self/own"
+note = "ADR-014 已落地（commit a62aa21）：`scope 块标签:` 转 reserved-error（G44），标签语法改为 `标签|if/while/for`；配套测试与 examples/for.pini、examples/control-while.pini 已迁移。；2026-08-29 G50 随动刷新：声明位置修饰符 self/Self→self/own"
 
 [[evidence]]
 id = "E-053"
@@ -872,7 +872,7 @@ note = "实测：两注入模块同名导出触发 E3-013（多项 import 必需
 [[evidence]]
 id = "E-097"
 assertion = "Def-1/2/3 消化：子进程 CLI 测试基建；注入跨模块传递；单文件 run 语义门禁 + 警告输出"
-spec_ref = "issue-d4-deferred-defects / §2.5 D-4"
+spec_ref = "issue-d4-deferred-defects（已归档 archive/） / §2.5 D-4"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift loadImports 合并段；Sources/PiniCLI/main.swift runRunPath 语义门禁；Tests/PiniTests/ImportInjectionTests runCLI harness"
 validated_at = "2026-09-02T21:50:00+08:00"
 status = "FRESH"

@@ -9,6 +9,19 @@
 
 ## 命名约定
 
+### 文件名（kebab-case，按特性族归组）
+
+- **一律小写 kebab-case**（`concurrency-cancel.pini`），**禁用下划线**。
+- **按特性族加前缀**：同一语言特性的多个示例共享前缀，使目录按族成组——
+  `concurrency.pini` / `concurrency-cancel.pini` / `concurrency-joinall.pini` / `concurrency-await.pini`。
+- **禁止表意模糊的横切前缀**（如 `syntax-` / `misc-` / `demo-`）：它们按「抽象层级」而非
+  「演示对象」归类，会与按特性族分的命名平行共存，制造伪分类。演示并发语义的文件就是
+  `concurrency-*`，不是 `syntax-*`。
+- 新增 / 改名示例**必须同步登记到下方映射表**。映射表手工维护，
+  `ExamplesConformanceTests` 只校验示例能跑通，**不校验文档覆盖度**。
+
+### 文件内
+
 - **类型 / 构造用中文**（契合语言定位）：`(点)` / `[形状]` / `{计数对象}` / `(盒<T>)`。
 - **函数 / 变量**可用中文或英文，但**同一文件内保持一致**。
 - 入口统一为 `main|func() -> ()`；顶级内容顶格，仅控制流子块才缩进。
@@ -21,11 +34,11 @@
 | `hello.pini` | 入门 Hello World | `Hello, World!` / `欢迎使用Pini语言` | Stable |
 | `comments.pini` | `;` 行注释 | `Pini` | Stable |
 | `lexical.pini` | 词法补全（数值进制 / 科学计数 / 字符串转义 / 插值 `\(...)`） | `255 / 10 / 15 / 1500` / 转义 / 插值 | Provisional |
-| `control_if.pini` | `if` / `elif` / `else` | `大于5` | Stable |
-| `control_while.pini` | `while` + `break`/`continue`/`scope 块标签` | `0 1 2` / `1 3 5` / `0 1` | Stable |
+| `control-if.pini` | `if` / `elif` / `else` | `大于5` | Stable |
+| `control-while.pini` | `while` + `break`/`continue`/`scope 块标签` | `0 1 2` / `1 3 5` / `0 1` | Stable |
 | `step.pini` | `while step` 步进块（每轮后执行 / `break` 跳过 / `continue` 仍触发） | `0 step 1 step 2 step` / `0 步进块 1 步进块 2` | Provisional |
 | `for.pini` | `for-in` 迭代（数组/字典/集合 + `_` 占位 + `step:` + `scope 块标签` + 嵌套集合，G36） | `6 / 55 / 10 / 3 / 9 / 3 / 10` | Provisional |
-| `compound_assign.pini` | 复合赋值 `+= -= *= /= %=` | `15 / 12 / 24 / 6 / 2 / 8 / 9 / 10 / 40 / 20` | Stable |
+| `compound-assign.pini` | 复合赋值 `+= -= *= /= %=` | `15 / 12 / 24 / 6 / 2 / 8 / 9 / 10 / 40 / 20` | Stable |
 | `operators.pini` | 算术 / 比较运算符 | `30 / 10 / 200 / 2` | Stable |
 | `defer.pini` | `defer` 延迟执行（LIFO） | `bodyfirstmiddlelast` / `blockinnerouter` | Stable |
 | `lambda.pini` | 匿名函数 `func (x,) -> (I32,): return …` 绑定与调用 | `42` | Stable |
@@ -35,15 +48,19 @@
 | `match.pini` | 模式匹配 `match`/`case`（标量·字面量·通配） | `78.53975 / 12.0 / 6.0` | Stable |
 | `composition.pini` | 内嵌组合 / 默认实现复用 | `2 / 1 / 默认` | Stable |
 | `object.pini` | 引用类型 `object`（ARC） | `3` | Stable |
+| `lazyref.pini` | `LazyRef` 懒加载引用（首访初始化一次 / 复制共享缓存 / `.value` 双后端一致，G40） | `init / 42 / 42 / 42` | Provisional |
 | `struct.pini` | 结构块值类型（字段+方法） | `3.0 / 4.0 / 5.0` | Stable |
 | `enum.pini` | 枚举 enum（关联值 + `match`） | `12.56636 / 12.0` | Stable |
+| `enum-named.pini` | 具名枚举关联值（声明 / 标签实参构造 / `match` 解构：位置 · 具名 · `_` 占位） | `x / y / 3 / plus` | Stable |
 | `generic.pini` | 泛型类型 `盒<T>` | `7 / 泛型值` | Stable |
 | `generic-func.pini` | 泛型函数 | `100 / 泛型函数` | Stable |
 | `trait.pini` | 特征 `trait`（默认实现） | `旺财` | Stable |
 | `collections.pini` | 数组 / 字典 / 集合、下标、`len` | `[1, 2, 3, 4, 5]` / `{Alice: 30, ...}` | Stable |
-| `array_basic.pini` | 数组基础（构造 / 下标读 / 下标写 / 复合写 `a[i]+=k`） | `20 3 world 3 true 3 b 10 7` | Stable |
+| `array-basic.pini` | 数组基础（构造 / 下标读 / 下标写 / 复合写 `a[i]+=k`） | `20 3 world 3 true 3 b 10 7` | Stable |
+| `slice.pini` | 切片 `a[i:j]` / `a[i:]` / `a[:j]` / `a[:]`（半开区间 / 开放边界 / 负索引 / 越界夹紧，G48） | `[20, 30]` … `none` | Provisional |
+| `multidim.pini` | 多维数组（下标读返回 `Optional<T>`、越界 `none`；强制解包 `!` 须处 unsafe 上下文） | 见文件 | Provisional |
 | `cow.pini` | 集合 COW 写时复制值语义（数组 / 字典 / 集合 / 嵌套写） | `[1, 2, 3] [99, 2, 3] {a: 1} {a: 9}` | Provisional |
-| `dict_set_d2.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
+| `dict-set-d2.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
 | `stdlib.pini` | 标准库 字符串方法 + 数学函数 | `HELLO, WORLD` / `42 / 3 / 9 / 5.0` | Stable |
 | `access.pini` | 字段访问 vs 方法访问 | `秒表 / 60 / 60` | Stable |
 | `try.pini` | 错误处理 `try`/`except`（返回元组） | `读取失败` | Stable |
@@ -55,13 +72,15 @@
 | `concurrency.pini` | 真并发 `=>` / `wait`（同步阻塞 join / 错误传播） | A/B 交错，`done` | Provisional |
 | `concurrency-cancel.pini` | `cancel` / `joinWithin` / `isCancel` | `已超时取消 / 已手动取消` | Provisional |
 | `concurrency-joinall.pini` | `joinAll` 聚合多 Future | `[2, 4]` | Provisional |
-| `syntax-async-decl.pini` | 语法点：`=>` 声明处标记异步、体内同步写法、`ok`/`err` 承载 | `42` | Provisional |
-| `syntax-await.pini` | 语法点：`wait` 值级等待（前缀） | `1 / 2` | Provisional |
-| `syntax-arrow-dual.pini` | 语法点：`=>`（异步声明）、`wait`（等待）与 `<=`（纯比较） | `true / 7` | Provisional |
-| `syntax-future-handle.pini` | 语法点：Future 句柄即普通值（cancel / joinWithin / detach / isCancel） | `已被取消 / 已超时` | Provisional |
-| `syntax-async-contagion-end.pini` | 语法点：异步传染性终点（同步函数也可 `wait` 落地） | `10` | Provisional |
+| `concurrency-async-decl.pini` | 语法点：`=>` 声明处标记异步、体内同步写法、`ok`/`err` 承载 | `42` | Provisional |
+| `concurrency-await.pini` | 语法点：`wait` 值级等待（前缀） | `1 / 2` | Provisional |
+| `concurrency-arrow-dual.pini` | 语法点：`=>`（异步声明）、`wait`（等待）与 `<=`（纯比较） | `true / 7` | Provisional |
+| `concurrency-future-handle.pini` | 语法点：Future 句柄即普通值（cancel / joinWithin / detach / isCancel） | `已被取消 / 已超时` | Provisional |
+| `concurrency-async-contagion-end.pini` | 语法点：异步传染性终点（同步函数也可 `wait` 落地） | `10` | Provisional |
 | `enum-namespacing.pini` | 跨枚举同名 case（命名空间化） | 见文件 | Stable |
 | `validated-match.pini` | match 穷尽性（D3①：case 缩进子块、`case _:` 通配兜底） | 见文件 | Stable |
+| `test.pini` | `|test` 测试块 + `assert` 内建（G41） | `全部测试通过` | Stable |
+| `ffi.pini` | FFI 与 unsafe（`[libc|foreign]` 块 / `unsafe` 消耗点 / `&x` 取地址 / `load`·`store`·`addressof`，ADR-015 Phase 2a） | 见文件 | Provisional |
 | `multifile/`（目录） | 多文件模块（跨文件共享命名空间） | `5 / 25 / 0` | Provisional |
 | `package-demo/`（目录） | 可见性 / 模块化（4 级约定制） | 见目录 | Provisional |
 

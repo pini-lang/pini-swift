@@ -36,7 +36,7 @@
 | **`Self` 在 trait = 扩展类型** | 草稿 + §2.4.1 片段 | `Token` 有 `Self`；大概率已实现，待验证 | 极小 |
 | **LazyRef** | 草稿 | **已实现**（G40 v0.42.0，引用语义 `.value`，`.valueFuture` 已弃） | 无（仅核对） |
 
-**迁移爆破面（标签反转）**：`examples/for.pini:48`、`examples/control_while.pini:33` + 7 测试文件（`BlockLabelTests`/`GrammarConsistencyTests`/`LSPTests`/`RuntimeBackendTests`/`SuspendRuntimeTests`/`ParserTests`/`StructuredConcurrencyTests`）。
+**迁移爆破面（标签反转）**：`examples/for.pini:48`、`examples/control-while.pini:33` + 7 测试文件（`BlockLabelTests`/`GrammarConsistencyTests`/`LSPTests`/`RuntimeBackendTests`/`SuspendRuntimeTests`/`ParserTests`/`StructuredConcurrencyTests`）。
 
 ## 4. 必须先解决的治理问题（blocker）
 
@@ -51,7 +51,7 @@
 ### ADR-014 · 控制流标签语法反转（`scope label:` → `标签|关键字`）
 - **上下文**：ADR-013(v0.41.0) 的 `scope 块标签:` 与草稿/§A 新模型 `标签|控制流关键字` 冲突；新模型把标签直接绑在 `if/while/for` 上，取消独立 `scope` 语句。
 - **决策**：采纳新模型。`scope` 关键字保留但**改为 reserved-error**（使用即报错）；`break/continue 标签` 按标签名定向不变。
-- **后果**：破坏性。codemod `examples/for.pini:48`、`examples/control_while.pini:33` + 7 测试文件。`Statement.scopedBlock` 停止产出（AST 节点暂留，消费者后续清理）。
+- **后果**：破坏性。codemod `examples/for.pini:48`、`examples/control-while.pini:33` + 7 测试文件。`Statement.scopedBlock` 停止产出（AST 节点暂留，消费者后续清理）。
 - **状态**：Proposed。
 
 ### ADR-015 · 采纳 FFI & unsafe 子系统

@@ -12,7 +12,7 @@
 - SHA-256 校验和（`manifest_sum` + `sum`；规范化遍历；TOFU；D6）
 - `pini mod {tidy, refresh, verify, graph}`（D23：无全局缓存、无 clean/add/get）
 - build 时 require↔import 漂移检查（每次 build，不符提示 `pini mod tidy`）
-- D-4 隐式别名注入（G52 批 1 推迟项）——**已于 2026-09-02 裁决并落地**（用户逐条裁决 #1~#6）：`_别名 = path` = 注入全导入（文件级裸名空间，裸调用或 `_别名.符号` 限定）；非 `_` 别名必须限定；三类冲突 → E3-013；别名≠目标名仅 E7-002 弱警告；前置缺口一并补齐（多项 import 块、R1 父扫描嵌套排除）。遗留 Def-1/2/3 见 `docs/spec/issue/issue-d4-deferred-defects-2026-09-02.md`
+- D-4 隐式别名注入（G52 批 1 推迟项）——**已于 2026-09-02 裁决并落地**（用户逐条裁决 #1~#6）：`_别名 = path` = 注入全导入（文件级裸名空间，裸调用或 `_别名.符号` 限定）；非 `_` 别名必须限定；三类冲突 → E3-013；别名≠目标名仅 E7-002 弱警告；前置缺口一并补齐（多项 import 块、R1 父扫描嵌套排除）。遗留 Def-1/2/3 见 `docs/spec/issue/archive/issue-d4-deferred-defects-2026-09-02.md`
 - 旧 `[dependencies]` 节：命中即报错并指引迁移到 `[require]`（本批 D-B）
 
 **OUT（明确排除）**：
