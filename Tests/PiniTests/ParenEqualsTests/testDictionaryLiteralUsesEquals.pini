@@ -1,0 +1,5 @@
+main|func() -> ():
+    var ages = ["Alice" = 30, "Bob" = 25]
+    print(ages["Alice"])
+    print(ages.get("ZZZ"))
+    return

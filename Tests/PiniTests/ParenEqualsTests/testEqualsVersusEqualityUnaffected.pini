@@ -1,0 +1,5 @@
+同|func(a: I32, b: I32,) -> (Bool,):
+    return a == b
+main|func() -> ():
+    print(同(a = 1, b = 2))
+    return

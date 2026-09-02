@@ -152,11 +152,7 @@ final class IOTests: XCTestCase {
         let base = try makeTempDir("base")
         try "模块资源".write(toFile: (base as NSString).appendingPathComponent("res.txt"),
                             atomically: true, encoding: .utf8)
-        let source = """
-        main|func() -> ():
-            print(readFile("res.txt"))
-            return
-        """
+        let source = try loadPiniFixture("testUnprefixedPathResolvesProgramBase.pini", filePath: #filePath)
         let output = try runProgram(source, programBase: base)
         XCTAssertEqual(output, "模块资源\n", "无前缀相对路径应相对程序基准解析")
     }
@@ -164,11 +160,7 @@ final class IOTests: XCTestCase {
     /// 意图：无前缀相对路径写入同样落程序基准（writeFile 与 readFile 同一基准）。
     func testUnprefixedWriteLandsInProgramBase() throws {
         let base = try makeTempDir("write")
-        let source = """
-        main|func() -> ():
-            writeFile("out.txt", "写入基准")
-            return
-        """
+        let source = try loadPiniFixture("testUnprefixedWriteLandsInProgramBase.pini", filePath: #filePath)
         _ = try runProgram(source, programBase: base)
         let landed = try String(contentsOfFile: (base as NSString).appendingPathComponent("out.txt"),
                                 encoding: .utf8)
@@ -189,11 +181,7 @@ final class IOTests: XCTestCase {
         XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(cwdDir))
         defer { FileManager.default.changeCurrentDirectoryPath(original) }
 
-        let source = """
-        main|func() -> ():
-            print(readFile("./f.txt"))
-            return
-        """
+        let source = try loadPiniFixture("testDotSlashResolvesRuntimeCWDNotBase.pini", filePath: #filePath)
         let output = try runProgram(source, programBase: base)
         XCTAssertEqual(output, "用户文件\n", "`./` 前缀应相对运行时 CWD，不得误用程序基准")
     }
@@ -204,11 +192,7 @@ final class IOTests: XCTestCase {
         let elsewhere = try makeTempDir("elsewhere")
         let target = (elsewhere as NSString).appendingPathComponent("abs.txt")
         try "绝对路径".write(toFile: target, atomically: true, encoding: .utf8)
-        let source = """
-        main|func() -> ():
-            print(readFile("\(target)"))
-            return
-        """
+        let source = try loadPiniFixture("testAbsolutePathUnaffectedByBase.pini", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: target)
         let output = try runProgram(source, programBase: base)
         XCTAssertEqual(output, "绝对路径\n", "绝对路径应原样解析")
     }

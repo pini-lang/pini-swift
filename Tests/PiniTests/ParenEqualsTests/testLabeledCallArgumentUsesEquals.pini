@@ -1,0 +1,5 @@
+取值|func(a: I32, b: I32) -> (I32,):
+    return a + b
+main|func() -> ():
+    print(取值(a = 1, b = 2))
+    return
