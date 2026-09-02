@@ -18,6 +18,17 @@ public final class SemanticAnalyzer {
  /// T1/B2（2026-08-24）：语义警告（非致命）。首版=未使用局部变量（`emitUnusedWarnings` 检测点=块作用域）。
  public private(set) var warnings: [SemanticWarning] = []
 
+ // 批 6 D-4：当前文件的注入导入（`_` 前缀别名 → 目标 public 符号集）与裸名集。
+ // 注入 = 全导入：目标 public 符号进入本文件裸名空间（文件级，#2）；冲突即 E3-013（#3）。
+ private struct InjectedImport {
+ let alias: String
+ let symbols: Set<String>
+ let location: SourceLocation
+ }
+ private var currentInjections: [InjectedImport] = []
+ private var currentInjectNames: Set<String> = []
+ private var deferredInjectConflict: SemanticError? = nil
+
  /// B2：已被读取引用的符号名集合（`requireDefined` 解析命中时记录）。
  /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——首版接受，待符号表结构化（唯一 id）后升级。
  private var usedSymbols: Set<String> = []
@@ -72,6 +83,9 @@ public final class SemanticAnalyzer {
  let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
  importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
  }
+
+ try setupInjections(for: module)
+ defer { teardownInjections() }
  // 第一遍：预注册所有顶级声明
  for decl in module.declarations {
  try registerTopLevelDecl(decl)
@@ -81,6 +95,7 @@ public final class SemanticAnalyzer {
  for decl in module.declarations {
  try checkTopLevelDecl(decl)
  }
+ if let c = deferredInjectConflict { throw c }
  }
 
  /// P4 Phase 3：分析包（多文件 / 单文件统一入口）。
@@ -103,6 +118,8 @@ public final class SemanticAnalyzer {
  resetSymbolTable()
  packageContext = (index: index, currentFileName: unit.fileName)
  defer { packageContext = nil }
+ try setupInjections(for: unit.module)
+ defer { teardownInjections() }
 
  // 第一遍：预注册当前文件自身的顶级声明（跨文件符号不入本表，防 private 泄漏）
  for decl in unit.module.declarations {
@@ -112,8 +129,84 @@ public final class SemanticAnalyzer {
  for decl in unit.module.declarations {
  try checkTopLevelDecl(decl)
  }
+ if let c = deferredInjectConflict { throw c }
  }
  }
+
+// MARK: - 批 6 D-4：隐式别名注入（全导入 + 裸调用，冲突即 E3-013）
+
+/// 收集本文件的注入导入并安装哨兵。语义（用户裁决 2026-09-02）：
+/// - `_别名 = path`（#1）：别名不必等于目标模块名——不一致仅发 E7-002 弱警告；
+/// - 注入的 public 符号进入**本文件**裸名空间（#2 文件级），可裸调用或 `_别名.符号` 限定；
+/// - 注入符号与本文件任何可裸引用名（顶级/局部声明、其他注入、显式别名、内建）相撞 → E3-013（#3），
+///   修复 = 改写显式别名并限定调用（不再裸调用）。
+private func setupInjections(for module: Module) throws {
+ currentInjections = []
+ currentInjectNames = []
+ var explicitAliasNames = Set<String>()
+ for imp in module.imports {
+ if imp.alias.hasPrefix("_") {
+ let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+ let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
+ currentInjections.append(InjectedImport(alias: imp.alias, symbols: loaded.publicSymbols,
+ location: imp.location))
+ // #1 弱警告：别名（去 `_`）与目标模块名不一致——检查但不强制
+ let canonical = ModuleDependencyLoader.shared.canonicalPath(packagePath: imp.packagePath,
+ relativeTo: dir)
+ if let m = try? FileLoader.loadManifest(directory: canonical), m.name != String(imp.alias.dropFirst()) {
+ warnings.append(.implicitAliasNameMismatch(alias: imp.alias, targetName: m.name,
+ location: imp.location))
+ }
+ } else {
+ explicitAliasNames.insert(imp.alias)
+ }
+ }
+ for inj in currentInjections { currentInjectNames.formUnion(inj.symbols) }
+
+ // (b) 注入 vs 注入：两个隐式模块导出同名符号
+ for i in 0..<currentInjections.count {
+ for j in (i + 1)..<currentInjections.count {
+ let a = currentInjections[i], b = currentInjections[j]
+ if let s = a.symbols.intersection(b.symbols).sorted().first {
+ throw SemanticError.injectedSymbolConflict(symbol: s,
+ holder: "注入别名 \(a.alias) 与 \(b.alias)（两模块均裸导出）",
+ location: b.location)
+ }
+ }
+ }
+ // (c) 注入 vs 显式别名 / 内建
+ let builtinNames = Set(BuiltinRegistry.decls.filter(\.definesSymbol).map(\.name))
+ for inj in currentInjections {
+ for s in inj.symbols.sorted() {
+ if explicitAliasNames.contains(s) {
+ throw SemanticError.injectedSymbolConflict(symbol: s,
+ holder: "注入别名 \(inj.alias) 与显式别名 \(s)", location: inj.location)
+ }
+ if builtinNames.contains(s) {
+ throw SemanticError.injectedSymbolConflict(symbol: s,
+ holder: "注入别名 \(inj.alias) 与内建 \(s)", location: inj.location)
+ }
+ }
+ }
+ // (a) 注入 vs 本文件顶级/局部声明：哨兵挂到符号表，define 命中即记录（两遍均生效）
+ symbolTable.forbiddenNames = currentInjectNames
+ symbolTable.onForbiddenDefine = { [weak self] name in
+ guard let self, self.deferredInjectConflict == nil else { return }
+ if let inj = self.currentInjections.first(where: { $0.symbols.contains(name) }) {
+ self.deferredInjectConflict = SemanticError.injectedSymbolConflict(
+ symbol: name,
+ holder: "注入别名 \(inj.alias) 与本文件声明 \(name)",
+ location: inj.location)
+ }
+ }
+}
+
+private func teardownInjections() {
+ symbolTable.forbiddenNames = []
+ symbolTable.onForbiddenDefine = nil
+ currentInjections = []
+ currentInjectNames = []
+}
 
  /// 引用点解析单点：先查当前文件作用域；未命中且处于多文件包时查包级索引，
  /// 按 spec enforce 可见性（private/internal 跨文件不可见 → `inaccessibleSymbol`）。
@@ -140,6 +233,8 @@ public final class SemanticAnalyzer {
  name: name, definedIn: entry.fileName, level: entry.visibility, location: location
  )
  }
+ // 批 6 D-4：未命中本地/包级时，注入的 public 符号可裸引用（文件级全导入；冲突已由哨兵排除）
+ if currentInjectNames.contains(name) { return }
  if isFunction {
  throw SemanticError.undefinedFunction(name: name, location: location)
  } else {

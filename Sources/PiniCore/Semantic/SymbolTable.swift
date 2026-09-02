@@ -19,7 +19,15 @@ public final class SymbolTable {
  }
  }
 
+ /// 批 6 D-4：注入冲突哨兵——分析器按文件设置「本文件注入符号名」；define 命中即回调
+ /// （本地顶级/局部声明与注入裸名相撞），由分析器记录为 E3-013。
+ public var forbiddenNames: Set<String> = []
+ public var onForbiddenDefine: ((String) -> Void)?
+
  public func define(_ symbol: Symbol) {
+ if !forbiddenNames.isEmpty, forbiddenNames.contains(symbol.name) {
+ onForbiddenDefine?(symbol.name)
+ }
  current.define(symbol)
  }
 
