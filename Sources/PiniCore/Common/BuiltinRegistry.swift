@@ -110,6 +110,9 @@ public enum BuiltinRegistry {
  // 批 5（G58，D-2）：程序基准查询——模块根（单文件=入口文件所在目录），绝对路径。
  BuiltinDecl(name: "moduleRoot", group: .io, paramNames: [],
  params: [], returns: [t("String")]),
+ // F6：命令行参数透传（脚本路径之后的裸参数；LLVM 端暂 unsupported）。
+ BuiltinDecl(name: "argv", group: .io, paramNames: [],
+ params: [], returns: [t("Array")]),
  BuiltinDecl(name: "readFile", group: .io, paramNames: ["path"],
  params: [t("String")], returns: [t("String")]),
  BuiltinDecl(name: "writeFile", group: .io, paramNames: ["path", "content"],

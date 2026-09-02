@@ -790,7 +790,7 @@ func absoluteProgramBase(_ path: String) -> String {
 /// - 文件 → 单文件运行（零回归）。
 /// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
 /// - 目录无 `pini.toml` → 无法定位单一入口，报错（运行一组独立程序无意义）。
-func runRunPath(_ path: String) {
+func runRunPath(_ path: String, argv: [String] = []) {
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
  printError("Error: 路径不存在：\(path)"); exit(1)
@@ -802,8 +802,18 @@ func runRunPath(_ path: String) {
  printError("Error: \(error.localizedDescription)"); exit(1)
  }
  let module = parseOrReport(source: source, fileName: path)
+ // 批 6 Def-3 消化：单文件 run 过语义门禁（此前 parse 即 run，语义错误漏到运行时）。
+ // 仅语义层（E3）；类型层维持单文件宽松现状（如实记录，不假装全检）。
+ do {
+ let analyzer = SemanticAnalyzer()
+ try analyzer.analyze(module: module)
+ emitSemanticWarnings(analyzer)
+ } catch {
+ printError(formatCLIError(error: error, source: source)); exit(1)
+ }
  // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。
  let interpreter = Interpreter(programBase: absoluteProgramBase(path))
+ interpreter.processArguments = argv
  do { try interpreter.run(module: module) }
  catch { printError(formatCLIError(error: error, source: source)); exit(1) }
  return
@@ -851,6 +861,7 @@ func runRunPath(_ path: String) {
  // 批 5（G58，D-1）：模块基准 = 模块根（含 pini.toml 的目录）。
  let interpreter = Interpreter(ffiConfig: manifest.ffi ?? .default,
  programBase: absoluteProgramBase(path))
+ interpreter.processArguments = argv
  do { try interpreter.run(package: pkg) }
  catch { printError(formatCLIError(error: error, source: nil)); exit(1) }
 }
@@ -995,6 +1006,20 @@ func checkSingleFileDiagnostics(source: String, fileName: String) -> [String] {
  let semanticErrors = analyzer.analyzeCollecting(module: module)
  var diagnostics: [String] = semanticErrors.map {
  ErrorFormatter.formatSemanticError($0, source: source)
+ }
+ // 批 6 D-4：语义警告随单文件 check 一并输出（E7 段，弱警告不阻断）。
+ for w in analyzer.warnings {
+ let wmsg: String
+ switch w {
+ case .implicitAliasNameMismatch(let alias, let target, _):
+ wmsg = "隐式别名 '" + alias + "' 与目标模块名 '" + target + "' 不一致（仅提醒）"
+ case .unusedVariable(let name, _):
+ wmsg = "未使用的变量 '" + name + "'"
+ }
+ diagnostics.append(ErrorFormatter.format(
+ errorType: "语义警告", message: wmsg,
+ location: w.diagnosticLocation, source: source,
+ code: w.diagnosticCode, severity: .warning, suggestion: w.suggestion))
  }
 
  // 类型检查阶段（P2-4 收尾）：收集模式一次性同报多错；
@@ -1519,7 +1544,7 @@ case "run":
  printError("Error: run command requires a file or directory path")
  exit(1)
  }
- runRunPath(args[2])
+ runRunPath(args[2], argv: Array(args.dropFirst(3)))
 case "mod":
  runModCommand(Array(args.dropFirst(2)))
 case "repl":

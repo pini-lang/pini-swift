@@ -662,6 +662,9 @@ extension IRGenerator {
  if funcName == "moduleRoot" {
  throw IRGenError.unsupportedExpression(kind:"moduleRoot 尚未在 LLVM 后端实现（解释器可用）；跟踪于 G58", sl())
  }
+ if funcName == "argv" {
+ throw IRGenError.unsupportedExpression(kind:"argv 尚未在 LLVM 后端实现（解释器可用）；跟踪于 F6", sl())
+ }
  if funcName == "assert" {
  return try generateBuiltinAssert(arguments)
  }

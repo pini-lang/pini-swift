@@ -145,6 +145,8 @@ public class Interpreter {
  /// 批 5（G58，方案 A）：程序基准——模块运行的模块根 / 单文件运行的入口文件所在目录（均为绝对路径）。
  /// IO 相对路径解析基准；nil = 未注入（退回进程 CWD，REPL / 直建解释器的兼容行为）。
  private var programBase: String?
+ /// F6：CLI 透传给程序的命令行参数（脚本路径之后的裸参数；REPL/直建为空）。
+ public var processArguments: [String] = []
  /// 批 6 D-4：文件 → 该文件 `_` 前缀注入导入（别名 + 目标 public 符号集）。
  /// 裸名兜底的运行时依据；v1 边界：主模块文件生效，被引入模块内部各自的注入
  /// 不跨模块传递（其函数体裸名解析沿闭包环境链，见 loadImports 注释）。
@@ -198,6 +200,24 @@ public class Interpreter {
  // 批 5（G58）：子解释器继承同一程序基准——被引入模块内 IO 相对路径仍相对主程序基准。
  let child = Interpreter(ffiConfig: ffiConfig, programBase: programBase)
  try child.prepare(loaded: loaded)
+ // 批 6 D-4 Def-2 消化：被引入模块内部的注入导入上提——其函数体裸名沿闭包环境链
+ // 解析，注入表须在本解释器可见。键冲突加 `@序号` 命名空间；孙模块经子模块的
+ // 合并结果传递（fileInjections 条目携带的已是子侧有效键）。
+ for (file, injList) in child.fileInjections {
+ var mapped: [(alias: String, symbols: Set<String>)] = []
+ for inj in injList {
+ var key = inj.alias
+ var n = 0
+ while importEnvs[key] != nil { n += 1; key = "\(inj.alias)@\(n)" }
+ if let env = child.importEnvs[inj.alias] {
+ importEnvs[key] = env
+ importPublicSymbols[key] = child.importPublicSymbols[inj.alias]
+ importAllSymbols[key] = child.importAllSymbols[inj.alias]
+ }
+ mapped.append((key, inj.symbols))
+ }
+ fileInjections[file, default: []].append(contentsOf: mapped)
+ }
  importEnvs[imp.alias] = child.globalEnv
  importPublicSymbols[imp.alias] = loaded.publicSymbols
  importAllSymbols[imp.alias] = loaded.allSymbols
@@ -3137,6 +3157,10 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return .string(base)
  }
 
+ // F6：命令行参数透传（脚本路径之后的裸参数，字符串数组）。
+ if fv.name == "argv" {
+ return .array(processArguments.map { .string($0) })
+ }
  if fv.name == "readFile" {
  guard case .string(let rawPath) = args[0] else {
  throw RuntimeError.invalidOperation(
