@@ -8,7 +8,7 @@ import Foundation
 /// （确定性环境——空串即 EOF，不依赖测试进程的真实 stdin，交互终端下也不会阻塞）。
 final class IOTests: XCTestCase {
 
-    private func runProgram(_ source: String, stdin: String = "") throws -> String {
+    private func runProgram(_ source: String, stdin: String = "", programBase: String? = nil) throws -> String {
         let lexer = Lexer(source: source, fileName: "io.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "io.pini")
@@ -33,7 +33,8 @@ final class IOTests: XCTestCase {
         }
 
         do {
-            let interpreter = Interpreter()
+            // 批 5（G58）：可选注入程序基准；nil 保持既有行为（CWD 兜底）。
+            let interpreter = Interpreter(programBase: programBase)
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)
@@ -131,5 +132,97 @@ final class IOTests: XCTestCase {
         let source = try loadPiniFixture("testReadLineEOF", filePath: #filePath)
         let output = try runProgram(source, stdin: "")
         XCTAssertEqual(output, "\n", "readLine 在 EOF 时应返回空串")
+    }
+
+    // MARK: - G58 IO 路径基准（批 5，方案 A 三段式 / ADR-030）
+
+    /// 临时目录辅助：唯一路径 + 清理。
+    private func makeTempDir(_ label: String) throws -> String {
+        let dir = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_g58_\(label)_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: dir) }
+        return dir
+    }
+
+    /// 意图：无前缀相对路径相对**程序基准**解析（模块根情形），而非 CWD——
+    /// 基准目录下有资源文件、CWD 下没有，读成功即证明走了基准。
+    /// 推进性测量：readFile("res.txt") == 基准目录文件内容。
+    func testUnprefixedPathResolvesProgramBase() throws {
+        let base = try makeTempDir("base")
+        try "模块资源".write(toFile: (base as NSString).appendingPathComponent("res.txt"),
+                            atomically: true, encoding: .utf8)
+        let source = """
+        main|func() -> ():
+            print(readFile("res.txt"))
+            return
+        """
+        let output = try runProgram(source, programBase: base)
+        XCTAssertEqual(output, "模块资源\n", "无前缀相对路径应相对程序基准解析")
+    }
+
+    /// 意图：无前缀相对路径写入同样落程序基准（writeFile 与 readFile 同一基准）。
+    func testUnprefixedWriteLandsInProgramBase() throws {
+        let base = try makeTempDir("write")
+        let source = """
+        main|func() -> ():
+            writeFile("out.txt", "写入基准")
+            return
+        """
+        _ = try runProgram(source, programBase: base)
+        let landed = try String(contentsOfFile: (base as NSString).appendingPathComponent("out.txt"),
+                                encoding: .utf8)
+        XCTAssertEqual(landed, "写入基准", "writeFile 无前缀应落程序基准目录")
+    }
+
+    /// 意图：`./` 前缀相对**运行时 CWD**（用户/shell 视角），即使基准目录存在同名文件也不得误用基准——
+    /// 这是 D-1 方案 A 的核心区分（CWD 通道与基准通道互不污染）。
+    func testDotSlashResolvesRuntimeCWDNotBase() throws {
+        let base = try makeTempDir("dotbase")
+        let cwdDir = try makeTempDir("dotcwd")
+        try "来自基准(不应读到)".write(toFile: (base as NSString).appendingPathComponent("f.txt"),
+                                    atomically: true, encoding: .utf8)
+        try "用户文件".write(toFile: (cwdDir as NSString).appendingPathComponent("f.txt"),
+                            atomically: true, encoding: .utf8)
+
+        let original = FileManager.default.currentDirectoryPath
+        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(cwdDir))
+        defer { FileManager.default.changeCurrentDirectoryPath(original) }
+
+        let source = """
+        main|func() -> ():
+            print(readFile("./f.txt"))
+            return
+        """
+        let output = try runProgram(source, programBase: base)
+        XCTAssertEqual(output, "用户文件\n", "`./` 前缀应相对运行时 CWD，不得误用程序基准")
+    }
+
+    /// 意图：绝对路径完全不受基准影响（三段式第一段）。
+    func testAbsolutePathUnaffectedByBase() throws {
+        let base = try makeTempDir("absbase")
+        let elsewhere = try makeTempDir("elsewhere")
+        let target = (elsewhere as NSString).appendingPathComponent("abs.txt")
+        try "绝对路径".write(toFile: target, atomically: true, encoding: .utf8)
+        let source = """
+        main|func() -> ():
+            print(readFile("\(target)"))
+            return
+        """
+        let output = try runProgram(source, programBase: base)
+        XCTAssertEqual(output, "绝对路径\n", "绝对路径应原样解析")
+    }
+
+    /// 意图：moduleRoot() 返回注入的程序基准（绝对路径）；未注入时如实返回 CWD（不伪造模块根）。
+    /// 推进性测量：moduleRoot() == 基准；nil 基准时 == 进程 CWD。
+    func testModuleRootBuiltin() throws {
+        let base = try makeTempDir("root")
+        let source = "main|func() -> ():\n    print(moduleRoot())\n    return\n"
+        let withBase = try runProgram(source, programBase: base)
+        XCTAssertEqual(withBase, base + "\n", "moduleRoot() 应返回注入的程序基准")
+
+        let withoutBase = try runProgram(source)
+        XCTAssertEqual(withoutBase, FileManager.default.currentDirectoryPath + "\n",
+                       "未注入基准时 moduleRoot() 应如实返回 CWD")
     }
 }
