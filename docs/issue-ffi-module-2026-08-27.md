@@ -2,7 +2,7 @@
 
 - **状态**：Open（部分已修复，部分待立项）
 - **提出视角**：测试工程师（examples/ffi_module 示例与 FFIModuleTests 门禁交付过程中发现）
-- **关联交付**：`examples/ffi_module/`、`Tests/PiniTests/FFIModuleTests.swift`
+- **关联交付**：`examples/ffi_module/`、`Tests/PiniTests/FFIModuleTests/FFIModuleTests.swift`
 - **范围**：本 issue 不拆分子工单，统一收录 FFI 示例独立性改造中遇到的全部缺陷、坑与建议。
 
 ---
