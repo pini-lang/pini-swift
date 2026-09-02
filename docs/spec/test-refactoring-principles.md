@@ -91,6 +91,53 @@ final class LexerTests: XCTestCase {
 }
 ```
 
+## Test Directory Layout
+
+### The Directory Unit (codified 2026-09-03 — the convention practice already settled on)
+
+Every test class lives in its own directory, named after the class. Fixtures read
+by that class live beside it, named after the test function that consumes them.
+
+```
+Tests/PiniTests/
+    PiniFixtureLoader.swift            <- shared loader; stays at the top level
+    <TestClassName>/
+        <TestClassName>.swift          <- the XCTestCase subclass
+        testXxxBehavior.pini           <- fixture, named after the consuming test func
+        testYyyBehavior.pini
+```
+
+Rules:
+
+- **One directory per test class**; directory name == class name == file name.
+- **Fixture name == the test function that consumes it.** `testReadFile.pini` is read
+  by `testReadFile()`. This is what makes a dead fixture detectable by inspection:
+  a `.pini` with no matching `func` is orphaned.
+- **Fixtures are located by path, not by bundle resource.** `PiniFixtureLoader` derives
+  the fixture directory from `#filePath`, so a directory can be relocated without
+  touching a single call site.
+- **Shared helpers stay at the `Tests/PiniTests/` top level** (today: `PiniFixtureLoader.swift`).
+  Per-class helpers belong inside the class.
+- **Fixture trees are not groups.** `ModuleSystemTests/demo/` is fixture data, not a
+  subject grouping.
+
+### Subject Groups (optional; precedent: `CodeGen/`)
+
+A directory may hold subject-related test classes instead of exactly one. The
+existing precedent:
+
+```
+Tests/PiniTests/CodeGen/                <- subject group (IR / LLVM)
+    IRGeneratorTests/
+    IRExecutionTests/
+    IRPrintGoldenTests/
+```
+
+Grouping is **by subject, not by compiler pass**. Measured 2026-09-03: 61 of 111 test
+files (55%) drive the whole Lexer → Parser → Interpreter pipeline and only 8 (7%) touch
+a single pass, so pass-based buckets collapse into one oversized bucket. See
+`docs/spec/test-dir-taxonomy-2026-09-03.md` for the measured proposal.
+
 ## Coverage Strategy
 
 ### Every Module Must Have At Least One Test

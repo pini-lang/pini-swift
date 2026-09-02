@@ -57,20 +57,33 @@
 - **原「顺序约束」作废**：此前以「819 块 / 102 文件」为前提论证「抽离必须先于 ④」，
   前提证伪后论证不成立。**④ 不再受 ③ 阻塞**，可按自身节奏立项。
 
-### ④ C 域 · 总结「测试目录单元」规范（待立）
+### ④ C 域 · 总结「测试目录单元」规范（**已落地 2026-09-03**）
 
-`Tests/PiniTests/` 下 108 个目录**已自发形成一个稳定单元结构**，但从未写成规范：
+`Tests/PiniTests/` 下 108 个目录**已自发形成一个稳定单元结构**，现已成文：
 
 ```
-<TestClassName>Tests/
-    <TestClassName>Tests.swift   ← 同名测试类
-    testXxxBehavior.pini         ← 供其读取的 fixture，与测试函数同名
+<TestClassName>/
+    <TestClassName>.swift      ← 同名测试类
+    testXxxBehavior.pini       ← 供其读取的 fixture，与测试函数同名
     testYyyBehavior.pini
 ```
 
-待办：把这一**已被实践验证**的模式提炼成规范，写进 `docs/spec/test-refactoring-principles.md`
-（该文件目前只覆盖测试三要素与注释风格，无目录/fixture 布局约定）。
-规模：一次文档增补，排在 ③ 完成之后。
+- **已写进** `docs/spec/test-refactoring-principles.md` 新增的 *Test Directory Layout* 节
+  （该文件此前只覆盖测试三要素与注释风格，无目录/fixture 布局约定）。
+- 同时成文的还有**二级分组的既有先例** `CodeGen/`（IRGenerator / IRExecution / IRPrintGolden），
+  以及「fixture 树不是分组」（`ModuleSystemTests/demo/`）。
+- **顺带修正的误判**：此前记「`CodeGen/` 无 .swift、疑为孤儿目录」系**单层 glob 的误判**——
+  实测 108 个顶层目录**无一缺 .swift**（110 个测试类 / 111 个 .swift / 861 个 .pini）。
+
+#### ④′ 目录分组：实测结论 + 待批方案（**未执行**）
+
+- **实测推翻了「按管线阶段分组」的原方案**：111 个测试 .swift 中 **61 个（55%）驱动完整
+  Lexer→Parser→Interpreter 管线**，仅 8 个（7%）触及单一 pass。按阶段分桶会把 55% 塞进同一个桶。
+- 改按**主题**聚类（17 簇 / 110 个类，脚本机器校验划分完整性：无重复、无无效名、无遗漏），
+  方案见 `docs/spec/test-dir-taxonomy-2026-09-03.md`，**待裁决后再搬目录**。
+- 本轮顺手修 `docs/issue-ffi-module-2026-08-27.md` 的悬空路径引用
+  （原写作 `Tests/PiniTests/FFIModuleTests.swift`，缺目录层；链接校验器不校验代码路径，
+  故一直未被抓到）。
 
 ---
 
