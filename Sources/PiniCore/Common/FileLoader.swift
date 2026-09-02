@@ -38,6 +38,22 @@ public struct FileLoader {
  guard rel.hasSuffix(LangConfig.sourceSuffix), !rel.contains("__MACOSX"),
        !FileLoader.isInsideDotPath(rel) else { continue }   // R5 点前缀不扫描
  if excludeEntries.contains(where: { rel == $0 || rel.hasPrefix($0 + "/") }) { continue }
+ // 批 6 D-4 前置（G52 ① R1 补全）：嵌套清单词法包含——相对路径上任一祖先目录含
+ // `pini.toml` 即属嵌套模块，其源码不进父包（此前仅在 import 加载侧实现，父扫描侧缺席；
+ // 由 D-4 冲突语义测试暴露：两个 deps 模块的同名顶级符号在父包相撞）。
+ var nested = false
+ var dirParts = (rel as NSString).deletingLastPathComponent
+ var checked = Set<String>()
+ while dirParts != "." && dirParts != "/" && !dirParts.isEmpty {
+ if checked.contains(dirParts) { break }
+ checked.insert(dirParts)
+ if fm.fileExists(atPath: (path as NSString).appendingPathComponent(dirParts + "/" + manifestFileName)) {
+ nested = true
+ break
+ }
+ dirParts = (dirParts as NSString).deletingLastPathComponent
+ }
+ if nested { continue }
  let full = (path as NSString).appendingPathComponent(rel)
  let source = try String(contentsOfFile: full, encoding: .utf8)
  units.append(try parseUnit(fileName: full, source: source))

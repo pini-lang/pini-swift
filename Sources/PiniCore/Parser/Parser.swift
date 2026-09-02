@@ -20,6 +20,8 @@ public class Parser {
  // 错误收集模式状态（P2-4.2 panic-mode 恢复）：收集模式下语句级错误就地记录并跳过恢复，
  // 而非向上冒泡导致整个声明体丢失并生成伪顶级声明。
  private var collectMode: Bool = false
+ /// 批 6 D-4 前置：多项 import 块的首项之后的余项缓冲（parseModuleImpl 逐位排干）。
+ private var pendingImportDecls: [ImportDecl] = []
  private var diagnostics: [ParserError] = []
  
  public init(tokens: [Token], fileName: String) {
@@ -238,6 +240,11 @@ public class Parser {
  default:
  declarations.append(decl)
  }
+ // 批 6 D-4 前置：排干多项 import 块的余项（保持书写顺序进 imports）
+ if !pendingImportDecls.isEmpty {
+ imports.append(contentsOf: pendingImportDecls)
+ pendingImportDecls = []
+ }
  } catch let error as ParserError {
  if !collectErrors {
  // 旧语义：遇首个错即抛
@@ -432,11 +439,11 @@ public class Parser {
  guard let first = items.first else {
  throw ParserError.invalidDeclaration(reason: "import 块至少需要一项 `别名 = \"包路径\"`", location: location)
  }
- // 批 1 单项块（多别名引入多模块为批 3 模块树范围）——多项时报错提示
- guard items.count == 1 else {
- throw ParserError.invalidDeclaration(
- reason: "import 块暂仅支持单项（多别名引入随批 3 模块树落地）", location: location)
- }
+ // 批 6 D-4 前置（原批 1 单项限制解除）：多项 `别名 = "包路径"` 各自成一条 ImportDecl；
+ // 首项照旧返回，余项入 pending 缓冲，由 parseModuleImpl 在本声明位排干（保持声明顺序）。
+ pendingImportDecls.append(contentsOf: items.dropFirst().map {
+ ImportDecl(alias: $0.alias, packagePath: $0.path, location: location)
+ })
  return ImportDecl(alias: first.alias, packagePath: first.path, location: location)
  }
 

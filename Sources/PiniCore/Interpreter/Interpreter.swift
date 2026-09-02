@@ -145,6 +145,10 @@ public class Interpreter {
  /// 批 5（G58，方案 A）：程序基准——模块运行的模块根 / 单文件运行的入口文件所在目录（均为绝对路径）。
  /// IO 相对路径解析基准；nil = 未注入（退回进程 CWD，REPL / 直建解释器的兼容行为）。
  private var programBase: String?
+ /// 批 6 D-4：文件 → 该文件 `_` 前缀注入导入（别名 + 目标 public 符号集）。
+ /// 裸名兜底的运行时依据；v1 边界：主模块文件生效，被引入模块内部各自的注入
+ /// 不跨模块传递（其函数体裸名解析沿闭包环境链，见 loadImports 注释）。
+ private var fileInjections: [String: [(alias: String, symbols: Set<String>)]] = [:]
 
  public init(ffiConfig: FFIConfig = .default, programBase: String? = nil) {
  self.ffiConfig = ffiConfig
@@ -186,6 +190,11 @@ public class Interpreter {
  let dir = (imp.location.fileName as NSString).deletingLastPathComponent
  // R2：全图环检测（loadGraph 递归校验依赖链）
  let loaded = try loader.load(packagePath: imp.packagePath, relativeTo: dir)
+ // 批 6 D-4：`_` 前缀别名 = 注入导入——记录文件级裸名表（#2 文件级；#4 可裸调用或 `_别名.符号`）
+ if imp.alias.hasPrefix("_") {
+ fileInjections[imp.location.fileName, default: []].append(
+ (alias: imp.alias, symbols: loaded.publicSymbols))
+ }
  // 批 5（G58）：子解释器继承同一程序基准——被引入模块内 IO 相对路径仍相对主程序基准。
  let child = Interpreter(ffiConfig: ffiConfig, programBase: programBase)
  try child.prepare(loaded: loaded)
@@ -1518,11 +1527,21 @@ public class Interpreter {
  }
  return .string(result)
  case .boolLiteral(let v, _): return .bool(v)
- case .identifier(let name, _):
+ case .identifier(let name, let identLoc):
  if name == "self" {
  return try currentEnv.get(name: "self")
  }
- let value = try currentEnv.get(name: name)
+ let value: Value
+ do {
+ value = try currentEnv.get(name: name)
+ } catch {
+ // 批 6 D-4：裸名兜底——本文件注入的 public 符号（全导入；冲突已在语义层排除）。
+ if let injected = try resolveInjectedBare(name, location: identLoc) {
+ value = injected
+ } else {
+ throw error
+ }
+ }
  if case .function(let fv) = value, fv.isEnumCaseConstructor, fv.params.isEmpty {
  return .enumValue(EnumValue(
  caseName: fv.enumCaseName,
@@ -2421,6 +2440,21 @@ public class Interpreter {
  /// `continueSignal(label)`（标签匹配）续行到 scope —— 重跑块体（语义同「续行到对应 scope 块」）；
  /// 非本 scope 标签的信号继续向上传播，交由外层循环 / scope 处理。
  /// 非 ControlSignal 的抛出（RuntimeError / 挂起 SuspendSignal 等）不在此捕获，直接向上传播。
+/// 批 6 D-4：裸名兜底——按当前文件查注入表；多模块同名 → 运行时歧义错（防御，
+/// 语义层哨兵已排除）；命中唯一 → 复用 resolveQualified（public 门槛照走，D8）。
+ private func resolveInjectedBare(_ name: String, location: SourceLocation) throws -> Value? {
+ guard let inj = fileInjections[location.fileName], !inj.isEmpty else { return nil }
+ let hits = inj.filter { $0.symbols.contains(name) }
+ if hits.isEmpty { return nil }
+ if hits.count > 1 {
+ throw RuntimeError.invalidOperation(
+ reason: "符号 '\(name)' 由多个注入模块同时导出（\(hits.map(\.alias).joined(separator: ", "))）——歧义，"
+ + "请改用显式别名并以 `别名.符号` 限定调用",
+ location: location)
+ }
+ return try resolveQualified(alias: hits[0].alias, symbol: name, location: location)
+ }
+
  /// G52 批 1：跨模块限定符号解析——存在性（运行时）+ public 门槛（D8）。
  private func resolveQualified(alias: String, symbol: String, location: SourceLocation) throws -> Value {
  guard let imported = importEnvs[alias] else {
