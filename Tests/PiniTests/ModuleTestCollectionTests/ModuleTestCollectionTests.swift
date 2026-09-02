@@ -40,6 +40,97 @@ final class ModuleTestCollectionTests: XCTestCase {
 
     // MARK: - 清单解析与包加载排除
 
+    // MARK: - 批 6：清单双通道解析（G52 批 3）
+
+    /// 临时清单模块辅助：写入给定 pini.toml 文本并返回模块根。
+    private func makeManifestModule(_ manifestText: String) throws -> (String, () -> Void) {
+        let root = NSTemporaryDirectory() + "pini_b6_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try manifestText.write(toFile: root + "/pini.toml", atomically: true, encoding: .utf8)
+        return (root, { try? FileManager.default.removeItem(atPath: root) })
+    }
+
+    /// 意图：双通道四节解析——[tap] 平表与 [require.X]/[resources.X] 子表、[replace]。
+    func testManifestParsesTwoChannelSections() throws {
+        let toml = """
+        [package]
+        name = "app"
+
+        [tap]
+        default = "github:pini-lang"
+        local   = "file:../vendor/<name>"
+
+        [require]
+        text = "1.2"
+
+        [require.core]
+        uni = "^3.0"
+
+        [resources]
+        corpus = "1.0"
+
+        [resources.local]
+        dataset = "*"
+
+        [replace]
+        text = "file:../text"
+        """
+        let (root, cleanup) = try makeManifestModule(toml)
+        defer { cleanup() }
+
+        let manifest = try FileLoader.loadManifest(directory: root)
+        let m = try XCTUnwrap(manifest)
+        XCTAssertEqual(m.taps["default"], "github:pini-lang")
+        XCTAssertEqual(m.taps["local"], "file:../vendor/<name>")
+        XCTAssertEqual(m.require["text"], "1.2")
+        XCTAssertEqual(m.requireTaps["core"]?["uni"], "^3.0")
+        XCTAssertEqual(m.resources["corpus"], "1.0")
+        XCTAssertEqual(m.resourcesTaps["local"]?["dataset"], "*")
+        XCTAssertEqual(m.replaces["text"], "file:../text")
+    }
+
+    /// 意图：旧 `[dependencies]` 节命中即报错（D-B），错误消息含迁移指引（[require]/[resources]/tidy）。
+    func testLegacyDependenciesSectionThrowsWithGuidance() throws {
+        let toml = """
+        [package]
+        name = "app"
+
+        [dependencies]
+        std = "0.1.0"
+        """
+        let (root, cleanup) = try makeManifestModule(toml)
+        defer { cleanup() }
+
+        XCTAssertThrowsError(try FileLoader.loadManifest(directory: root)) { error in
+            let msg = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            XCTAssertTrue(msg.contains("[require]"), "错误消息应指引 [require]，实际：\(msg)")
+            XCTAssertTrue(msg.contains("[resources]"), "错误消息应指引 [resources]")
+            XCTAssertTrue(msg.contains("pini mod tidy"), "错误消息应指引 tidy")
+        }
+    }
+
+    /// 意图：`[[name]]` 数组表可解析（G52 §5.1 连带决议）——批 6 阶段 3 锁文件
+    /// `[[module]]`/`[[resource]]` 复用同一机制；此处经未知数组表容错路径验证不炸。
+    func testArrayTableSectionsParseWithoutError() throws {
+        let toml = """
+        [package]
+        name = "app"
+
+        [[future]]
+        name = "x"
+        sum = "sha256:aa"
+
+        [[future]]
+        name = "y"
+        sum = "sha256:bb"
+        """
+        let (root, cleanup) = try makeManifestModule(toml)
+        defer { cleanup() }
+
+        let manifest = try FileLoader.loadManifest(directory: root)
+        XCTAssertNotNil(manifest, "未知数组表应容错忽略，不影响清单加载")
+    }
+
     /// 意图：`[build] exclude` 内联数组被解析进 `ModuleManifest.buildExclude`。
     func testManifestParsesBuildExclude() throws {
         let (root, cleanup) = try makeFixtureModule()

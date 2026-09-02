@@ -98,8 +98,7 @@ public struct FileLoader {
  }
  let normalized = FFIConfig(abi: ffi.abi, searchPaths: resolved, libs: ffi.libs)
  return ModuleManifest(name: manifest.name, version: manifest.version,
- dependencies: manifest.dependencies, ffi: normalized,
- buildExclude: manifest.buildExclude)
+ ffi: normalized, buildExclude: manifest.buildExclude)
  }
 
  /// G49（issue-tdd-module-blockers-2026-08-28）：自 `path`（文件或目录）向上定位所属模块根
@@ -171,23 +170,47 @@ public struct FFIConfig: Equatable {
 /// 模块清单（`pini.toml`）。
 ///
 /// Phase 5 解析 `[package] name`（必需，覆盖目录名作为模块身份）与 `version`、
-/// `[dependencies]`（记录但**不解析**——跨模块依赖加载属 P6+ 范畴，本阶段仅占位）。
-/// 依赖解析的硬约束（package 锚定 pini.toml 身份、非目录名）见 spec 。
+/// `[ffi]`、`[build] exclude`。
+/// 批 6（G52 批 3，2026-09-02）：双通道清单面——`[tap]`（从哪来）、`[require]`/`[require.<tap>]`
+/// （模块依赖，可 import、激活 MVS）、`[resources]`/`[resources.<tap>]`（资源，不可 import、
+/// 不参与 MVS）、`[replace]`（强制版本/本地/fork 替换，仅主模块生效）。
+/// 旧 `[dependencies]` 节已被 spec 移除：**命中即报错**并指引迁移（本批 D-B，与旧
+/// `module.toml` 命中即报错同风格——静默忽略等于复活已死语义）。
 public struct ModuleManifest: Equatable {
  public let name: String
  public let version: String?
- public let dependencies: [String: String]
+ /// 批 6：`[tap]` 源声明（名 → `github:org` / `git:url` / `file:path`）。
+ public let taps: [String: String]
+ /// 批 6：`[require]` 模块依赖（名 → 版本约束，未知写 `*` 由 refresh 回填）。
+ public let require: [String: String]
+ /// 批 6：`[require.<tap>]` 指定 tap 的依赖。
+ public let requireTaps: [String: [String: String]]
+ /// 批 6：`[resources]` 资源（不可 import、不参与 MVS）。
+ public let resources: [String: String]
+ /// 批 6：`[resources.<tap>]` 指定 tap 的资源。
+ public let resourcesTaps: [String: [String: String]]
+ /// 批 6：`[replace]` 强制版本 / 本地 / 换 fork（仅主模块生效，G52 D13）。
+ public let replaces: [String: String]
  /// Phase 2b（ADR-017）：`[ffi]` FFI 配置；无 `[ffi]` 表时为 `nil`（解释器回退 `FFIConfig.default`）。
  public let ffi: FFIConfig?
  /// G49（issue-tdd-module-blockers-2026-08-28）：`[build] exclude`——模块包加载排除路径
  /// （相对模块根；目录前缀匹配；`loadDirectory` 统一生效，`pini test` 显式路径可加回）。
  public let buildExclude: [String]
 
- public init(name: String, version: String? = nil, dependencies: [String: String] = [:],
+ public init(name: String, version: String? = nil,
+ taps: [String: String] = [:],
+ require: [String: String] = [:], requireTaps: [String: [String: String]] = [:],
+ resources: [String: String] = [:], resourcesTaps: [String: [String: String]] = [:],
+ replaces: [String: String] = [:],
  ffi: FFIConfig? = nil, buildExclude: [String] = []) {
  self.name = name
  self.version = version
- self.dependencies = dependencies
+ self.taps = taps
+ self.require = require
+ self.requireTaps = requireTaps
+ self.resources = resources
+ self.resourcesTaps = resourcesTaps
+ self.replaces = replaces
  self.ffi = ffi
  self.buildExclude = buildExclude
  }
@@ -200,6 +223,9 @@ public enum LoaderError: Error, Equatable {
  /// R8：命中旧名 `module.toml`。必须报错而非静默当作「无清单」——
  /// 否则该目录会从模块边界退化为普通文件，源码被父模块扫入。
  case legacyManifestName(path: String)
+ /// 批 6（D-B）：命中已移除的旧 `[dependencies]` 节。报错指引迁移到 `[require]`，
+ /// 不静默忽略——静默等于复活已死语义。
+ case legacyDependenciesSection(path: String)
  /// 单文件解析产生的多个错误（聚合一次性抛出，避免只报首个而吞没其余）。
  case parseErrors(file: String, errors: [ParserError])
 }
@@ -214,6 +240,9 @@ extension LoaderError: LocalizedError {
  case .legacyManifestName(let path):
  return "模块清单已由 module.toml 更名为 pini.toml，请将 \(path) 重命名为 pini.toml"
  + "（旧名不会被静默忽略：否则该目录将从模块边界退化为普通文件，其下源码被父模块扫入）"
+ case .legacyDependenciesSection(let path):
+ return "\(path)：`[dependencies]` 节已移除（G52）：模块依赖改用 `[require]`（条目集合由代码中的"
+ + " `import` 生成，人工只覆盖版本约束），非 Pini 资源改用 `[resources]`；随后 `pini mod tidy` 对齐集合"
  case .parseErrors(let file, let errors):
  let details = errors.map { " - \(String(describing: $0))" }.joined(separator: "\n")
  return "解析错误（\(file)）：\n\(details)"
@@ -221,28 +250,34 @@ extension LoaderError: LocalizedError {
  }
 }
 
-/// 最小 TOML 解析（覆盖 `[package]` + `[dependencies]` + `[ffi]` 的 `key = "value"` 表项；
-/// 值可为字符串或内联数组 `["a", "b"]`）。
-/// 设计取舍：不引入完整 TOML 文法（那是 P6+ 依赖加载才需要的复杂度）；
-/// 本阶段只需可靠提取模块名、依赖占位与 FFI 配置，故采用逐行扫描 + 区段的轻量实现。
-/// 行为：跳过空行与 `#` 注释；`[section]` 切换当前区段；`key = value` 按区段归类；
-/// 值支持可选双引号包裹与 `["a", "b"]` 内联数组。**未知 `[section]` 与未知 `key` 容错忽略**
-/// （缝 ⑦：写了尚未消费的 `[ffi]` 等表也不应导致解析失败）。
-/// `[package]` 缺 `name` 视为非法清单。
+/// 清单解析（批 6 重构）：先**通用两级收集**（普通表 `[x]` / `x.y` → `tables`；数组表
+/// `[[x]]` → `arrayTables`，G52 §5.1 连带决议，锁文件 `[[module]]`/`[[resource]]` 复用同一机制），
+/// 再按表名归类到 `ModuleManifest` 字段。行为：
+/// - 跳过空行与 `#` 注释；值支持双引号字符串与内联数组 `["a", "b"]`；
+/// - **未知表容错忽略**（写了尚未消费的表不应导致解析失败）；
+/// - `[package]` 缺 `name` 视为非法清单；**`[dependencies]` 命中即报错**（D-B）。
 private func parseManifest(_ text: String, path: String) throws -> ModuleManifest {
+ var tables: [String: [String: String]] = [:]
+ var arrayTables: [String: [[String: String]]] = [:]
  var currentSection: String? = nil
- var name: String? = nil
- var version: String? = nil
- var dependencies: [String: String] = [:]
- var ffiAbi: String? = nil
- var ffiSearchPaths: [String] = []
- var ffiLibs: [String] = []
- var buildExclude: [String] = []
+
+ func store(_ table: String, key: String, value: String) {
+ var t = tables[table] ?? [:]
+ t[key] = value
+ tables[table] = t
+ }
 
  for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
- var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+ let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
  if line.isEmpty || line.hasPrefix("#") { continue }
 
+ // 数组表 `[[name]]`（G52 §5.1）：每处开启一个新条目并置为当前表。
+ if line.hasPrefix("[["), line.hasSuffix("]]") {
+ let name = String(line.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+ arrayTables[name, default: []].append([:])
+ currentSection = name
+ continue
+ }
  if line.hasPrefix("["), line.hasSuffix("]") {
  currentSection = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
  continue
@@ -252,34 +287,65 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
  let key = line[..<eq].trimmingCharacters(in: .whitespacesAndNewlines)
  let value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespacesAndNewlines)
  let unquoted = value.stripQuotes()
+ guard let sec = currentSection else { continue }
 
- switch currentSection {
- case "package":
- if key == "name" { name = unquoted }
- else if key == "version" { version = unquoted }
- case "dependencies":
- dependencies[key] = unquoted
- case "ffi":
- // Phase 2b（ADR-017）：[ffi] 配置。abi 单值；search_paths/libs 内联数组。
- if key == "abi" { ffiAbi = unquoted }
- else if key == "search_paths" { ffiSearchPaths = parseTOMLArray(value) }
- else if key == "libs" { ffiLibs = parseTOMLArray(value) }
- case "build":
- // G49（issue-tdd-module-blockers-2026-08-28）：[build] exclude 内联数组（相对模块根路径）。
- if key == "exclude" { buildExclude = parseTOMLArray(value) }
- default:
- break
+ if sec.hasPrefix("[[") {
+ // 数组表条目：写入最近开启的条目（先拷出末条改完再写回，避免独占访问冲突）。
+ let name = String(sec.dropFirst(2).dropLast(2))
+ var list = arrayTables[name] ?? []
+ if !list.isEmpty {
+ var last = list.removeLast()
+ last[key] = unquoted
+ list.append(last)
+ arrayTables[name] = list
+ }
+ continue
+ }
+
+ // 批 6 双通道已知表（含 tap./require./resources. 子表）；[dependencies] 报错（D-B）；
+ // 其余未知表容错忽略。
+ let knownSections: Set<String> = ["package", "ffi", "build", "tap", "require", "resources", "replace"]
+ let isSubTable = sec.hasPrefix("tap.") || sec.hasPrefix("require.") || sec.hasPrefix("resources.")
+ if knownSections.contains(sec) || isSubTable {
+ store(sec, key: key, value: unquoted)
+ } else if sec == "dependencies" {
+ throw LoaderError.legacyDependenciesSection(path: path)
  }
  }
 
- guard let n = name, !n.isEmpty else {
+ func subTables(_ prefix: String) -> [String: [String: String]] {
+ var out: [String: [String: String]] = [:]
+ for (name, kv) in tables where name.hasPrefix(prefix + ".") {
+ out[String(name.dropFirst(prefix.count + 1))] = kv
+ }
+ return out
+ }
+ func plain(_ table: String) -> [String: String] { tables[table] ?? [:] }
+
+ guard let n = plain("package")["name"], !n.isEmpty else {
  throw LoaderError.invalidManifest(path: path)
  }
- let ffi: FFIConfig? = (ffiAbi != nil || !ffiSearchPaths.isEmpty || !ffiLibs.isEmpty)
- ? FFIConfig(abi: ffiAbi ?? "C", searchPaths: ffiSearchPaths, libs: ffiLibs)
+ let pkg = plain("package")
+ let ffiRaw = plain("ffi")
+ let ffi: FFIConfig? = (ffiRaw["abi"] != nil || !(ffiRaw["search_paths"] ?? "").isEmpty || !(ffiRaw["libs"] ?? "").isEmpty)
+ ? FFIConfig(abi: ffiRaw["abi"] ?? "C",
+ searchPaths: parseTOMLArray(ffiRaw["search_paths"] ?? "[]"),
+ libs: parseTOMLArray(ffiRaw["libs"] ?? "[]"))
  : nil
- return ModuleManifest(name: n, version: version, dependencies: dependencies, ffi: ffi,
- buildExclude: buildExclude)
+ // [tap.X] 子表：取其（单一）值的键值并入 taps（X → spec）；[tap] 平表条目同名优先。
+ var taps = plain("tap")
+ for (tapName, kv) in subTables("tap") where taps[tapName] == nil {
+ taps[tapName] = kv.values.first
+ }
+ let buildExclude = parseTOMLArray(plain("build")["exclude"] ?? "[]")
+
+ return ModuleManifest(
+ name: n, version: pkg["version"],
+ taps: taps,
+ require: plain("require"), requireTaps: subTables("require"),
+ resources: plain("resources"), resourcesTaps: subTables("resources"),
+ replaces: plain("replace"),
+ ffi: ffi, buildExclude: buildExclude)
 }
 
 /// 解析 TOML 内联数组字面量 `["a", "b"]` / `[ "a" ]` → 字符串数组；非数组原样返回单元素。

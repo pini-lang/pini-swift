@@ -4,6 +4,5 @@
 name = "demo"
 version = "0.1.0"
 
-# 跨模块依赖解析属 P6+ 范畴；此处仅占位记录，本阶段不解析。
-[dependencies]
-# std = "0.1.0"
+# 依赖通道（批 6，G52）：模块依赖用 [require]（由代码中的 import 生成，pini mod tidy 对齐），
+# 非 Pini 资源用 [resources]；旧 [dependencies] 节已移除，命中即报错。
