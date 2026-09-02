@@ -18,8 +18,8 @@
 [meta]
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
-last_refresh = "2026-09-02T01:40:00+08:00"
-refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。"
+last_refresh = "2026-09-02T18:32:00+08:00"
+refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。"
 
 [[evidence]]
 id = "E-001"
@@ -778,4 +778,40 @@ code_ref = "Sources/PiniCore/Lexer/Lexer.swift:203 skipBlankOrCommentLine；exam
 validated_at = "2026-09-02T01:40:00+08:00"
 status = "FRESH"
 note = "差分：字段块内含空行，宿主与自举 parse MATCH 253——门禁此前盲区（语料空行恰都后随块头）已由该探针段永久覆盖"
+
+[[evidence]]
+id = "E-087"
+assertion = "IO 相对路径按形态三段式解析：绝对原样；./ ../ 相对运行时 CWD；其余相对程序基准（模块=模块根 / 单文件=入口目录）"
+spec_ref = "§2.4.1 G14/G58 / ADR-030"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:147 programBase；:160 resolveIOPath；Sources/PiniCLI/main.swift:679 absoluteProgramBase"
+validated_at = "2026-09-02T18:32:00+08:00"
+status = "FRESH"
+note = "实测 18:30：从 /tmp 跑 /tmp/base_mod，readFile(res.txt) 读到模块根文件、./res.txt 按 CWD 找不到 panic（设计语义）"
+
+[[evidence]]
+id = "E-088"
+assertion = "moduleRoot() 内建返回程序基准；CLI 六执行入口注入基准；子解释器继承父基准"
+spec_ref = "§3 G58 / ADR-030"
+code_ref = "Sources/PiniCore/Common/BuiltinRegistry.swift:111；Sources/PiniCore/Interpreter/Interpreter.swift loadImports 子解释器传参；main.swift run/调试器/测试六入口"
+validated_at = "2026-09-02T18:32:00+08:00"
+status = "FRESH"
+note = "实测 18:30：moduleRoot() 从 /tmp 输出 /tmp/base_mod；未注入基准时如实返回 CWD"
+
+[[evidence]]
+id = "E-089"
+assertion = "LLVM 端无前缀相对路径字面量编译期烘焙基准；./ ../ 与绝对路径原样；非字面量路径不烘焙（v1 限制）；moduleRoot 在 LLVM 端显式 unsupported"
+spec_ref = "§3 G58 / ADR-030 / D-4"
+code_ref = "Sources/PiniCore/CodeGen/IRGenerator.swift:107 programBase；Sources/PiniCore/CodeGen/Emitters/BuiltinsEmitter.swift:173 generateIOPathArgument；Sources/PiniCore/CodeGen/Emitters/ExprEmitter.swift:663 unsupported"
+validated_at = "2026-09-02T18:32:00+08:00"
+status = "FRESH"
+note = "实测 18:35：emit IR 常量解码为 /tmp/base_mod/res.txt + NUL（22 字节），fopen 实参经 @.str0 GEP 引用"
+
+[[evidence]]
+id = "E-090"
+assertion = "自举测试从仓根直跑全绿（原 5 个 CWD 依赖假失败零改动修复）——IO 相对路径按模块根解析的终验"
+spec_ref = "§3 G58 / ADR-030 / 终验"
+code_ref = "探针实测：pini test examples/selfhost 从仓根直跑 70 通过 0 失败；IOTests（绝对路径注入兼容面）6/0"
+validated_at = "2026-09-02T18:32:00+08:00"
+status = "FRESH"
+note = "实测 18:37；测试文件零改动——语料中 readFile(examples/...) 相对模块根书写，新基准下语义自然正确"
 
