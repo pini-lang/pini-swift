@@ -1,0 +1,13 @@
+[形状]
+    圆(半径: F64,)
+    方(边长: F64,)
+取半径|func(s: 形状,) -> (F64,):
+    match s:
+        case 圆(半径: r):
+            return r
+        case 方(边长: _ ):
+            return 0
+    return 0
+main|func() -> ():
+    print(取半径(圆(半径 = 2)))
+    return

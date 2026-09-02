@@ -18,8 +18,8 @@
 [meta]
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
-last_refresh = "2026-09-02T21:50:00+08:00"
-refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。"
+last_refresh = "2026-09-03T00:13:09+08:00"
+refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。；2026-09-03 批（内联 Pini 源码抽离收口）：新增 E-099..E-101——E-099 规模实测（三引号块 23 = PINI 15 + TOML 8，推翻工单原记 819；单行串含换行者 6–40B 均为断言期望值，抽离无收益）、E-100 抽离落地与语义等价（15 fixture，目标 22/22、全量 1144/0）、E-101 H-4 已落地致『解锁 H-4 签名迁移』动因失效（工单末条耦合风险随之过期）。**本次仅新增并现跑重筛 E-099..E-101；存量条目未重新验证，按其自身 validated_at 判定。**"
 
 [[evidence]]
 id = "E-001"
@@ -887,3 +887,29 @@ validated_at = "2026-09-02T21:50:00+08:00"
 status = "FRESH"
 note = "实测：[甲, 乙] / [] / [X] 三形态输出；测试 testArgvPassthroughViaCLI"
 
+[[evidence]]
+id = "E-099"
+assertion = "内联 Pini 源码的真实规模为 15 块三引号源码（ParenEqualsTests 11 + IOTests 4），而非工单原记的 819；另有无抽离价值的 TOML 配置块 8 个（非 Pini 源码）"
+spec_ref = "docs/issue-inline-pini-extraction-2026-08-31.md 现状表（已据此修正）"
+code_ref = "Tests/PiniTests/ 全量扫描：三引号块 23 = PINI 15 + TOML 8（ModuleTestCollectionTests 3 / ModuleToolchainTests 5）；PINI 分布于 ParenEqualsTests 11、IOTests 4"
+validated_at = "2026-09-03T00:13:09+08:00"
+status = "FRESH"
+note = "实测：grep -ro 统计 Tests/PiniTests 下三引号共 46 次 = 23 对块；按 Pini 关键字（|func/main|/->/var/return…）与 TOML 关键字（[package/name =/version/dependencies…）打分分类。另扫得喂给 Pini 前端的单行串 290 个，其中含换行的字节数仅 6–40B（如 RuntimeBackendTests 的 7B、StdlibTests 的 6B），均为 XCTAssertEqual 的期望输出而非源码——抽离是负收益，已裁决不抽"
+
+[[evidence]]
+id = "E-100"
+assertion = "15 块内联 Pini 源码已抽离为 <测试函数名>.pini 夹具，经 loadPiniFixture(_:filePath:) 加载；Swift 多行字符串缩进剥离后与文件内容一致，测试语义等价"
+spec_ref = "docs/issue-inline-pini-extraction-2026-08-31.md 命名与路径规则 / 保真校验"
+code_ref = "Tests/PiniTests/ParenEqualsTests/*.pini（11）+ Tests/PiniTests/IOTests/*.pini（4）；Tests/PiniTests/PiniFixtureLoader.swift loadPiniFixture；IOTests testAbsolutePathUnaffectedByBase 用 __PATH__ 占位符"
+validated_at = "2026-09-03T00:13:09+08:00"
+status = "FRESH"
+note = "实测：目标测试 22/22（ParenEqualsTests 11 + IOTests 11）通过，全量 1144 tests / 0 failures / 20 skipped，与抽离前基线一致。剥离规则 = 去掉结束定界符缩进量并保留相对缩进，产物不以换行结尾（与既有 IOTests/testReadFile.pini 一致）。含 Swift 插值 1 块沿用既有 __PATH__ 占位符模式（file → .replacingOccurrences(of:_:with:)）。3 个原非 throws 测试函数补 throws 而非 try!（加载失败应使测试失败）"
+
+[[evidence]]
+id = "E-101"
+assertion = "H-4（带执行块的函数一律带冒号）已于 2026-08-31 阶段 2 落地，抽离工单中『解锁 H-4 的 862 处签名迁移』这一附带收益动因失效"
+spec_ref = "docs/spec/issue/issue-conflict-register-2026-08-31.md 收敛项 H-4"
+code_ref = "docs/spec/issue/issue-conflict-register-2026-08-31.md H-4 条目（状态：完成；2026-08-31 阶段 2，宿主三路径转强制 + 存量补冒号 1089 行/804 文件 + spec A.2.3 钉定 + 自举同步）"
+validated_at = "2026-09-03T00:13:09+08:00"
+status = "FRESH"
+note = "H-4 在抽离仅完成 0.6% 时即绕道落地，未依赖抽离。故抽离工单末条风险『与 H-4 的耦合：抽离完成后再执行冒号强制迁移，顺序不可颠倒』已过期；同批修正。抽离剩余动因回到首条：内联字符串对换行/缩进/转义的处理不受 Pini 自身约束"

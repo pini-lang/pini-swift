@@ -1,0 +1,11 @@
+(P)
+    x: I32
+main|func() -> ():
+    var n: I32 = 加(a = 4, b = 0)
+    if n > 1:
+        print(n)
+    else:
+        print(0)
+    return
+加|func(a: I32, b: I32,) -> (I32,):
+    return a + b

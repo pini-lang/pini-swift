@@ -48,151 +48,70 @@ final class ParenEqualsTests: XCTestCase {
 
     /// 意图：调用点带标签实参用 `=`
     func testLabeledCallArgumentUsesEquals() throws {
-        let src = """
-        取值|func(a: I32, b: I32) -> (I32,):
-            return a + b
-        main|func() -> ():
-            print(取值(a = 1, b = 2))
-            return
-        """
+        let src = try loadPiniFixture("testLabeledCallArgumentUsesEquals.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "3")
     }
 
     /// 意图：位置实参不受影响（混用标签与位置亦可）
     func testPositionalArgumentsUnaffected() throws {
-        let src = """
-        取值|func(a: I32, b: I32) -> (I32,):
-            return a + b
-        main|func() -> ():
-            print(取值(1, 2))
-            print(取值(b = 5, a = 1))
-            return
-        """
+        let src = try loadPiniFixture("testPositionalArgumentsUnaffected.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "3\n6")
     }
 
     /// 意图：字典字面量条目用 `=`（D-2 立场 A）
     func testDictionaryLiteralUsesEquals() throws {
-        let src = """
-        main|func() -> ():
-            var ages = ["Alice" = 30, "Bob" = 25]
-            print(ages["Alice"])
-            print(ages.get("ZZZ"))
-            return
-        """
+        let src = try loadPiniFixture("testDictionaryLiteralUsesEquals.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "30\nnone")
     }
 
     /// 意图：标签元组字面量用 `=`（D-4）
     func testLabeledTupleUsesEquals() throws {
-        let src = """
-        main|func() -> ():
-            var t = (x = 1, y = 2,)
-            print(t.x)
-            print(t.y)
-            return
-        """
+        let src = try loadPiniFixture("testLabeledTupleUsesEquals.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "1\n2")
     }
 
     /// 意图：枚举具名构造用 `=`（D-3；G54 具名关联的构造位）
     func testEnumNamedConstructionUsesEquals() throws {
-        let src = """
-        [形状]
-            圆(半径: F64,)
-            方(边长: F64,)
-        取半径|func(s: 形状,) -> (F64,):
-            match s:
-                case 圆(半径: r):
-                    return r
-                case 方(边长: _ ):
-                    return 0
-            return 0
-        main|func() -> ():
-            print(取半径(圆(半径 = 2)))
-            return
-        """
+        let src = try loadPiniFixture("testEnumNamedConstructionUsesEquals.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "2")
     }
 
     /// 意图（D-5 回归锁）：match 具名绑定**保留** `:`（取出方向）
     func testMatchNamedBindingKeepsColon() throws {
-        let src = """
-        [E]
-            值(v: I32,)
-        main|func() -> ():
-            match 值(v = 7):
-                case 值(v: x):
-                    print(x)
-            return
-        """
+        let src = try loadPiniFixture("testMatchNamedBindingKeepsColon.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "7")
     }
 
     // MARK: - 废弃（旧记法报错并提示）
 
     /// 意图：旧实参标签 `f(a: 1)` 报错并给出迁移提示（D-1）
-    func testDeprecatedColonArgumentRejected() {
-        let msg = parseError("""
-        f|func(a: I32,) -> (I32,):
-            return a
-        main|func() -> ():
-            print(f(a: 1))
-            return
-        """)
+    func testDeprecatedColonArgumentRejected() throws {
+        let msg = parseError(try loadPiniFixture("testDeprecatedColonArgumentRejected.pini", filePath: #filePath))
         XCTAssertNotNil(msg, "旧记法应报错")
         XCTAssertTrue(msg?.contains("实参标签须用") == true, "应给出迁移提示，实际：\(msg ?? "")")
     }
 
     /// 意图：旧字典条目 `[k: v]` 报错并给出迁移提示（D-2）
-    func testDeprecatedColonDictionaryRejected() {
-        let msg = parseError("""
-        main|func() -> ():
-            var d = ["a": 1]
-            print(d["a"])
-            return
-        """)
+    func testDeprecatedColonDictionaryRejected() throws {
+        let msg = parseError(try loadPiniFixture("testDeprecatedColonDictionaryRejected.pini", filePath: #filePath))
         XCTAssertTrue(msg?.contains("字典条目须用") == true, "应给出迁移提示，实际：\(msg ?? "")")
     }
 
     /// 意图：旧元组标签 `(a: 1,)` 报错并给出迁移提示（D-4）
-    func testDeprecatedColonTupleLabelRejected() {
-        let msg = parseError("""
-        main|func() -> ():
-            var t = (a: 1,)
-            print(t.a)
-            return
-        """)
+    func testDeprecatedColonTupleLabelRejected() throws {
+        let msg = parseError(try loadPiniFixture("testDeprecatedColonTupleLabelRejected.pini", filePath: #filePath))
         XCTAssertTrue(msg?.contains("元组标签须用") == true, "应给出迁移提示，实际：\(msg ?? "")")
     }
 
     /// 意图：类型标注与块开启的 `:` 不受影响（D-7 / H-4 回归锁）
     func testColonTypeAndBlockUnaffected() throws {
-        let src = """
-        (P)
-            x: I32
-        main|func() -> ():
-            var n: I32 = 加(a = 4, b = 0)
-            if n > 1:
-                print(n)
-            else:
-                print(0)
-            return
-        加|func(a: I32, b: I32,) -> (I32,):
-            return a + b
-        """
+        let src = try loadPiniFixture("testColonTypeAndBlockUnaffected.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "4")
     }
 
     /// 意图：`==`（相等）与 `=`（标签）在括号内不混淆
     func testEqualsVersusEqualityUnaffected() throws {
-        let src = """
-        同|func(a: I32, b: I32,) -> (Bool,):
-            return a == b
-        main|func() -> ():
-            print(同(a = 1, b = 2))
-            return
-        """
+        let src = try loadPiniFixture("testEqualsVersusEqualityUnaffected.pini", filePath: #filePath)
         XCTAssertEqual(try runProgram(src), "false")
     }
 }

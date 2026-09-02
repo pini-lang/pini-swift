@@ -1,0 +1,7 @@
+[E]
+    值(v: I32,)
+main|func() -> ():
+    match 值(v = 7):
+        case 值(v: x):
+            print(x)
+    return
