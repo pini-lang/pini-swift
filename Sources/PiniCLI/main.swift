@@ -674,6 +674,84 @@ func runParseCommand(source: String, fileName: String) throws {
  print(describeAST(module))
 }
 
+/// 批 6（G52 批 3，阶段 4）：`pini mod {tidy, refresh, verify, graph}`。
+/// - tidy：离线对齐 [require] ↔ 代码 import（D21；新增约束写 `*`）
+/// - refresh：重解版本 + 写 `pini-summary.toml`（批 6 仅本地 file: tap，远程报错退出= D-A）
+/// - verify：锁文件校验和比对（D6 执行点；只读）
+/// - graph [--cycles]：依赖图缩进树（D-C）/ 环路径列表（R2 诊断入口）
+func runModCommand(_ rest: [String]) {
+ guard let sub = rest.first else {
+ print("用法: pini mod {tidy|refresh|verify|graph} [--cycles] [模块根]")
+ exit(1)
+ }
+ let flags = Set(rest.dropFirst().filter { $0.hasPrefix("--") })
+ let pathArg = rest.dropFirst().first { !$0.hasPrefix("--") }
+
+ do {
+ let root: String
+ if let p = pathArg {
+ root = absoluteProgramBase(p)
+ } else {
+ let cwd = FileManager.default.currentDirectoryPath
+ guard let found = try FileLoader.locateModuleRoot(for: cwd) else {
+ printError("Error: \(cwd) 不属于任何模块（向上未找到清单）；请在模块内运行或显式指定模块根")
+ exit(1)
+ }
+ root = found
+ }
+ guard let manifest = try FileLoader.loadManifest(directory: root) else {
+ printError("Error: \(root) 不含 pini.toml")
+ exit(1)
+ }
+
+ switch sub {
+ case "tidy":
+ let pkg = try FileLoader.loadDirectory(path: root, manifest: manifest)
+ let report = try ModuleToolchain.tidy(rootDir: root, manifest: manifest, package: pkg)
+ if report.isEmpty {
+ print("tidy：[require] 已与 import 对齐（\(report.kept) 条），无改动")
+ } else {
+ if !report.added.isEmpty { print("tidy：新增 \(report.added.joined(separator: ", "))（约束 *，由 refresh 回填）") }
+ if !report.removed.isEmpty { print("tidy：移除 \(report.removed.joined(separator: ", "))（代码中已无 import）") }
+ print("tidy：保留 \(report.kept) 条既有约束。下一步：pini mod refresh")
+ }
+ case "refresh":
+ let text = try ModuleToolchain.refresh(rootDir: root, manifest: manifest,
+ toolchainVersion: "pini \(PiniVersion.current) (spec 0.1)")
+ print("refresh：pini-summary.toml 已生成（\(text.components(separatedBy: "\n").count) 行）。须提交进版本库（G52 R3）")
+ case "verify":
+ let report = try ModuleToolchain.verify(rootDir: root)
+ if report.isOK {
+ print("verify：\(report.checked) 项校验和全部匹配")
+ } else {
+ printError("verify：发现 \(report.mismatches.count) 处不符：")
+ for m in report.mismatches { FileHandle.standardError.write(Data((" - " + m + "\n").utf8)) }
+ exit(1)
+ }
+ case "graph":
+ let (tree, cycles) = try ModuleToolchain.graph(rootDir: root, manifest: manifest)
+ if flags.contains("--cycles") {
+ if cycles.isEmpty {
+ print("无环（require 图为 DAG）")
+ } else {
+ for c in cycles { print(c.joined(separator: " → ")) }
+ exit(1)
+ }
+ } else {
+ print(tree)
+ print("---")
+ print("环：\(cycles.isEmpty ? "无" : "\(cycles.count) 个（--cycles 查看）")")
+ }
+ default:
+ print("用法: pini mod {tidy|refresh|verify|graph} [--cycles] [模块根]")
+ exit(1)
+ }
+ } catch {
+ printError("Error: \(error.localizedDescription)")
+ exit(1)
+ }
+}
+
 /// 批 5（G58，D-1 方案 A）：程序基准——相对给定的文件/目录路径求**绝对**基准：
 /// 目录 → 自身；文件 → 所在目录。相对输入先按当前 CWD 绝对化并标准化。
 func absoluteProgramBase(_ path: String) -> String {
@@ -724,6 +802,21 @@ func runRunPath(_ path: String) {
  let pkg: Package
  do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)
+ }
+ // 批 6（G52 §4.3）：build 时 require ↔ import 一致性校验（与 verify 的防篡改是两个检查）。
+ // 仅对采用依赖通道的清单生效；不符报错并提示 pini mod tidy。
+ let driftResult = Result { try ModuleToolchain.checkRequireImportAlignment(
+ rootDir: absoluteProgramBase(path), manifest: manifest, package: pkg) }
+ if case .success(.some(let drift)) = driftResult, drift.hasDrift {
+ var parts: [String] = []
+ if !drift.missingInRequire.isEmpty {
+ parts.append("import 了但 [require] 缺失：\(drift.missingInRequire.joined(separator: ", "))")
+ }
+ if !drift.extraInRequire.isEmpty {
+ parts.append("[require] 有但未 import：\(drift.extraInRequire.joined(separator: ", "))")
+ }
+ printError("Error: 依赖清单与代码漂移——\(parts.joined(separator: "；"))。请运行 `pini mod tidy`")
+ exit(1)
  }
  // 与 runCheckPath 模块分支对齐：run 前先执行语义 + 类型层可见性 enforce，
  // 避免 `pini run` 绕过 4 级访问控制（P4 复审 HIGH：模块 run 路径此前不 enforce）。
@@ -1110,6 +1203,20 @@ func runCheckPath(_ path: String) {
  do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)
  }
+ // 批 6（G52 §4.3）：build 漂移检查（run 同款；仅对采用依赖通道的清单生效）。
+ let driftResult = Result { try ModuleToolchain.checkRequireImportAlignment(
+ rootDir: absoluteProgramBase(path), manifest: manifest, package: pkg) }
+ if case .success(.some(let drift)) = driftResult, drift.hasDrift {
+ var parts: [String] = []
+ if !drift.missingInRequire.isEmpty {
+ parts.append("import 了但 [require] 缺失：\(drift.missingInRequire.joined(separator: ", "))")
+ }
+ if !drift.extraInRequire.isEmpty {
+ parts.append("[require] 有但未 import：\(drift.extraInRequire.joined(separator: ", "))")
+ }
+ printError("Error: 依赖清单与代码漂移——\(parts.joined(separator: "；"))。请运行 `pini mod tidy`")
+ exit(1)
+ }
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
@@ -1391,6 +1498,8 @@ case "run":
  exit(1)
  }
  runRunPath(args[2])
+case "mod":
+ runModCommand(Array(args.dropFirst(2)))
 case "repl":
  ReplSession().run()
  exit(0)

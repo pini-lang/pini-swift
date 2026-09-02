@@ -440,3 +440,295 @@ extension ModuleToolchain.ToolchainError: LocalizedError {
  }
  }
 }
+
+// MARK: - 阶段 4：工具链命令核心（tidy / verify / graph）与 build 漂移检查
+
+extension ModuleToolchain {
+
+ /// 一次 import 的解析结果（tidy 与漂移检查共用）。
+ public struct ImportFacts {
+ public let alias: String
+ /// 依赖的模块名（目标根 pini.toml 的 [package] name）。
+ public let depName: String
+ /// 目标根目录（canonical）。
+ public let targetDir: String
+ public let sourceFile: String
+ }
+
+ public enum ToolchainFailure: Error, Equatable {
+ /// import 目标根无 pini.toml——不是 Pini 模块（R7 双向强制：资源应写 [resources]）。
+ case importTargetNotModule(packagePath: String, sourceFile: String)
+ }
+
+
+ /// 收集包内全部文件 import 的依赖模块名（tidy 与漂移检查共用；离线，只读本地清单）。
+ public static func collectImports(package: Package) throws -> [ImportFacts] {
+ var facts: [ImportFacts] = []
+ var seen = Set<String>()
+ for unit in package.fileUnits {
+ let dir = (unit.fileName as NSString).deletingLastPathComponent
+ for imp in unit.module.imports {
+ let target = ModuleDependencyLoader.shared.canonicalPath(packagePath: imp.packagePath,
+ relativeTo: dir)
+ guard FileManager.default.fileExists(atPath: target + "/pini.toml"),
+ let depManifest = try? FileLoader.loadManifest(directory: target),
+ let depName = Optional(depManifest.name) else {
+ throw ToolchainFailure.importTargetNotModule(packagePath: imp.packagePath,
+ sourceFile: unit.fileName)
+ }
+ let key = depName + "@" + target
+ if seen.insert(key).inserted {
+ facts.append(ImportFacts(alias: imp.alias, depName: depName,
+ targetDir: target, sourceFile: unit.fileName))
+ }
+ }
+ }
+ return facts
+ }
+
+ // MARK: tidy（离线；集合对齐）
+
+ public struct TidyReport: Equatable {
+ public let added: [String]
+ public let removed: [String]
+ public let kept: Int
+ public var isEmpty: Bool { added.isEmpty && removed.isEmpty }
+ }
+
+ /// `pini mod tidy`：令 [require]（含子表）条目集合与代码 import 一致（G52 §4.1，D21 离线）。
+ /// 新增条目约束写 `*`（回填由 refresh）；既有条目的约束与 tap 位置**原样保留**；
+ /// 多余条目删除。经文本段落替换写回（require 区段外的注释不受影响）。
+ @discardableResult
+ public static func tidy(rootDir: String, manifest: ModuleManifest, package: Package) throws -> TidyReport {
+ let facts = try collectImports(package: package)
+ let desired = Set(facts.map(\.depName))
+
+ // 既有条目：名 → (约束, tapName or nil)。replace 的非 file: 约束覆盖不算集合成员。
+ var existing: [String: (constraint: String, tap: String?)] = [:]
+ for (n, c) in manifest.require { existing[n] = (c, nil) }
+ for (tn, kv) in manifest.requireTaps { for (n, c) in kv { existing[n] = (c, tn) } }
+
+ let existingNames = Set(existing.keys)
+ let toAdd = desired.subtracting(existingNames).sorted()
+ let toRemove = existingNames.subtracting(desired).sorted()
+
+ guard !(toAdd.isEmpty && toRemove.isEmpty) else {
+ return TidyReport(added: [], removed: [], kept: existing.count)
+ }
+
+ var newEntries: [(name: String, constraint: String, tap: String?)] = []
+ for n in existing.keys.sorted() where !toRemove.contains(n) {
+ newEntries.append((n, existing[n]!.constraint, existing[n]!.tap))
+ }
+ for n in toAdd {
+ newEntries.append((n, "*", nil)) // D21：未知约束写 `*`
+ }
+
+ let manifestPath = rootDir + "/pini.toml"
+ let original = try String(contentsOfFile: manifestPath, encoding: .utf8)
+ let updated = replaceRequireSections(in: original, entries: newEntries)
+ try updated.write(toFile: manifestPath, atomically: true, encoding: .utf8)
+ return TidyReport(added: toAdd, removed: toRemove, kept: newEntries.count - toAdd.count)
+ }
+
+ /// 文本级替换 require 区段：平表 `[require]` 与各 `[require.<tap>]` 区段重写为排序后的条目；
+ /// 区段不存在则在文末追加。**非 require 区段的文本（含注释）不动**。
+ static func replaceRequireSections(in text: String,
+ entries: [(name: String, constraint: String, tap: String?)]) -> String {
+ var lines = text.components(separatedBy: "\n")
+ // 删除既有 require 区段体（保留其它区段）。
+ var i = 0
+ while i < lines.count {
+ let t = lines[i].trimmingCharacters(in: .whitespaces)
+ if t == "[require]" || t.hasPrefix("[require.") {
+ lines.remove(at: i)
+ while i < lines.count {
+ let l = lines[i].trimmingCharacters(in: .whitespaces)
+ if l.hasPrefix("[") { break } // 下一区段头
+ lines.remove(at: i)
+ }
+ } else {
+ i += 1
+ }
+ }
+
+ // 生成新区段文本：平表（tap == nil）一条 `[require]`；具名各一条 `[require.<tap>]`。
+ var blocks: [(header: String, rows: [String])] = []
+ let plainEntries = entries.filter { $0.tap == nil }.sorted { $0.name < $1.name }
+ if !plainEntries.isEmpty {
+ blocks.append(("[require]", plainEntries.map { "\($0.name) = \"\($0.constraint)\"" }))
+ }
+ for tap in Set(entries.compactMap(\.tap)).sorted() {
+ let rows = entries.filter { $0.tap == tap }.sorted { $0.name < $1.name }
+ .map { "\($0.name) = \"\($0.constraint)\"" }
+ blocks.append(("[require.\(tap)]", rows))
+ }
+ // 追加到文末（先补一个空行分隔）。
+ if !blocks.isEmpty && !(lines.last ?? "").isEmpty { lines.append("") }
+ for b in blocks {
+ lines.append(b.header)
+ lines.append(contentsOf: b.rows)
+ lines.append("")
+ }
+ // 去掉文末多余空行（保留单个换行结尾）。
+ while lines.count > 1 && lines.last == "" && lines[lines.count - 2] == "" {
+ lines.removeLast()
+ }
+ return lines.joined(separator: "\n")
+ }
+
+ // MARK: refresh（写锁文件）
+
+ /// `pini mod refresh` 的宿主侧：求解并写 `pini-summary.toml`（G52 §4.2；批 6 仅本地 tap）。
+ /// 返回写入的锁文件文本。
+ @discardableResult
+ public static func refresh(rootDir: String, manifest: ModuleManifest,
+ toolchainVersion: String) throws -> String {
+ let resolution = try resolve(rootDir: rootDir, manifest: manifest)
+ let text = renderSummary(resolution: resolution, toolchainVersion: toolchainVersion)
+ try text.write(toFile: rootDir + "/pini-summary.toml", atomically: true, encoding: .utf8)
+ return text
+ }
+
+ // MARK: verify（只读；校验和执行点）
+
+ public struct VerifyReport: Equatable {
+ public let checked: Int
+ public let mismatches: [String]
+ public var isOK: Bool { mismatches.isEmpty }
+ }
+
+ /// `pini mod verify`：落地内容与锁文件的 sum/manifest_sum 比对（G52 §4.3，D6 执行点）。
+ public static func verify(rootDir: String) throws -> VerifyReport {
+ let summaryPath = rootDir + "/pini-summary.toml"
+ guard FileManager.default.fileExists(atPath: summaryPath) else {
+ throw ToolchainError.summaryIdentityMismatch(path: summaryPath + "（不存在：请先运行 pini mod refresh）")
+ }
+ let summary = parseSummary(try String(contentsOfFile: summaryPath, encoding: .utf8))
+ var mismatches: [String] = []
+ for m in summary.modules {
+ let dir = (m.path.hasPrefix("/") ? m.path : rootDir + "/" + m.path)
+ let actualSum = treeSum(dir)
+ if actualSum != String(m.sum.dropPrefix("sha256:")) {
+ mismatches.append("模块 '\(m.name)' 内容与锁文件不符（\(m.path)）——可能被篡改或过期")
+ }
+ let manifestPath = dir + "/pini.toml"
+ let actualManifest = fileSum(manifestPath)
+ if actualManifest != String(m.manifestSum.dropPrefix("sha256:")) {
+ mismatches.append("模块 '\(m.name)' 的 pini.toml 与锁文件不符（\(m.path)）")
+ }
+ }
+ for r in summary.resources {
+ let dir = (r.path.hasPrefix("/") ? r.path : rootDir + "/" + r.path)
+ let actualSum = treeSum(dir)
+ if actualSum != String(r.sum.dropPrefix("sha256:")) {
+ mismatches.append("资源 '\(r.name)' 内容与锁文件不符（\(r.path)）")
+ }
+ }
+ return VerifyReport(checked: summary.modules.count + summary.resources.count,
+ mismatches: mismatches)
+ }
+
+ // MARK: graph（依赖图展示与环诊断）
+
+ /// `pini mod graph`：默认缩进树（D-C）；`--cycles` 输出环路径列表（R2 诊断入口）。
+ public static func graph(rootDir: String, manifest: ModuleManifest) throws
+ -> (tree: String, cycles: [[String]]) {
+ let resolution = try resolve(rootDir: rootDir, manifest: manifest)
+ let byName = Dictionary(uniqueKeysWithValues: resolution.modules.map { ($0.name, $0) })
+
+ // 树：从根出发按 importedBy 反查——直接用「谁 require 谁」更直观：按 importedBy 分组。
+ var children: [String: [String]] = [:] // requirer(去 <root>) → deps
+ for m in resolution.modules {
+ for by in m.importedBy where by != "<root>" {
+ children[by, default: []].append(m.name)
+ }
+ }
+ var lines: [String] = []
+ func render(_ name: String, prefix: String, isLast: Bool, depth: Int) {
+ let ver = byName[name].map { " \($0.version)" } ?? ""
+ let connector = depth == 0 ? "" : (isLast ? "└─ " : "├─ ")
+ lines.append(prefix + connector + name + ver)
+ let deps = (children[name] ?? []).sorted()
+ for (idx, d) in deps.enumerated() {
+ let childPrefix = depth == 0 ? "" : prefix + (isLast ? "   " : "│  ")
+ render(d, prefix: childPrefix, isLast: idx == deps.count - 1, depth: depth + 1)
+ }
+ }
+ let roots = resolution.modules.filter { ($0.importedBy.contains("<root>")) }.map(\.name).sorted()
+ if roots.isEmpty {
+ lines.append("（无依赖）")
+ } else {
+ for (idx, r) in roots.enumerated() {
+ render(r, prefix: "", isLast: idx == roots.count - 1, depth: 0)
+ }
+ }
+
+ // 环检测：require 图上 DFS（排除 <root>）。
+ var cycles: [[String]] = []
+ var state: [String: Int] = [:] // 0=未访 1=在栈 2=完成
+ var stack: [String] = []
+ func dfs(_ name: String) {
+ state[name] = 1
+ stack.append(name)
+ for d in (children[name] ?? []).sorted() {
+ switch state[d] ?? 0 {
+ case 0: dfs(d)
+ case 1:
+ if let start = stack.firstIndex(of: d) {
+ cycles.append(Array(stack[start...]) + [d])
+ }
+ default: break
+ }
+ }
+ stack.removeLast()
+ state[name] = 2
+ }
+ for n in resolution.modules.map(\.name).sorted() where (state[n] ?? 0) == 0 {
+ dfs(n)
+ }
+ return (lines.joined(separator: "\n"), cycles)
+ }
+
+ // MARK: build 漂移检查（G52 §4.3：每次 build；与 verify 是两个检查）
+
+ public struct Drift: Equatable {
+ public let missingInRequire: [String] // import 了但 require 没有
+ public let extraInRequire: [String] // require 了但没 import
+ public var hasDrift: Bool { !missingInRequire.isEmpty || !extraInRequire.isEmpty }
+ }
+
+ /// require ↔ import 集合一致性（**只读**；不符由调用方报错并提示 `pini mod tidy`）。
+ /// 仅对采用依赖通道的清单生效（[tap]/[require]/[replace] 任一存在）——
+ /// 批 1 落地的旧模块未采用通道，无 drift 概念，静默跳过（向后兼容，如实记录）。
+ public static func checkRequireImportAlignment(rootDir: String, manifest: ModuleManifest,
+ package: Package) throws -> Drift? {
+ let adopted = !manifest.taps.isEmpty || !manifest.require.isEmpty
+ || !manifest.requireTaps.isEmpty || !manifest.replaces.isEmpty
+ guard adopted else { return nil }
+ let imported = Set(try collectImports(package: package).map(\.depName))
+ var required = Set(manifest.require.keys)
+ for kv in manifest.requireTaps.values { required.formUnion(kv.keys) }
+ let missing = imported.subtracting(required).sorted()
+ let extra = required.subtracting(imported).sorted()
+ guard !missing.isEmpty || !extra.isEmpty else { return nil }
+ return Drift(missingInRequire: missing, extraInRequire: extra)
+ }
+}
+
+extension String {
+ /// 去掉前缀（若存在）；verify 比对用。
+ func dropPrefix(_ prefix: String) -> String {
+ hasPrefix(prefix) ? String(dropFirst(prefix.count)) : self
+ }
+}
+
+extension ModuleToolchain.ToolchainFailure: LocalizedError {
+ public var errorDescription: String? {
+ switch self {
+ case .importTargetNotModule(let packagePath, let sourceFile):
+ return "\(sourceFile)：import 目标 '\(packagePath)' 的根缺 pini.toml——不是 Pini 模块，"
+ + "不可 import（R7 双向强制）；若是语料/数据等资源，请改写到 [resources]"
+ }
+ }
+ }

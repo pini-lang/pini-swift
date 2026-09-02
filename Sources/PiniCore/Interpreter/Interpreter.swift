@@ -313,6 +313,10 @@ public class Interpreter {
  registerBuiltins()
  collectEnumCaseNames(package: package)
  for unit in package.fileUnits {
+ // 批 6 修复（批 1 缺口，由批 6 工具链全链路实测暴露）：包模式运行从不加载 import 块，
+ // `别名.符号` 在运行时因 importEnvs 为空而 E5-001。语义/类型检查各自加载（不受影响），
+ // 唯运行路径漏掉——现补齐（与 prepare(module:) 对齐）。
+ try loadImports(of: unit.module)
  try registerDecls(module: unit.module)
  }
  try executeMain()
