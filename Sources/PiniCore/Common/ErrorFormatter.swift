@@ -228,6 +228,7 @@ public enum ErrorFormatter {
  case .moduleDependencyCycle(let chain): return "模块依赖环（R2 禁环）：\(chain.joined(separator: " → "))"
  case .moduleRootMissing(let path): return "模块根 '\(path)' 缺少 pini.toml 或 .pini 源文件（R1 物理边界）"
  case .crossModuleAccessDenied(let symbol, _): return "符号 '\(symbol)' 非 public，不可跨模块引入（G52 D8：门槛 = 仅 public）"
+ case .injectedSymbolConflict(let symbol, let holder, _): return "注入符号 '\(symbol)' 与 \(holder) 冲突（D-4：裸名必须无歧义）；请改用显式别名并以 `别名.符号` 限定调用"
  }
  }
 

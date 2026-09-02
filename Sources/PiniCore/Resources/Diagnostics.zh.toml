@@ -19,6 +19,10 @@ general = "错误"
 message = "未使用变量 '{name}'"
 suggestion = "删除它；若有意保留，加 `_` 前缀"
 
+[E7-002]
+message = "隐式别名 '{alias}' 与目标模块名 '{targetName}' 不一致"
+suggestion = "重命名别名；若有意为之可忽略（仅提醒，不强制）"
+
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。
@@ -155,6 +159,10 @@ message = "模块根 '{path}' 缺少 pini.toml 或 .pini 源文件（R1 物理�
 
 [E3-012]
 message = "符号 '{symbol}' 非 public，不可跨模块引入（G52 D8：门槛 = 仅 public）"
+
+[E3-013]
+message = "注入符号 '{symbol}' 与 {holder} 冲突（D-4：裸名必须无歧义）"
+suggestion = "use an explicit alias `alias = \"path\"` and call qualified as `alias.symbol"
 
 [E6-001]
 message = "不支持的类型 '{name}'"

@@ -19,6 +19,10 @@ general = "Error"
 message = "unused variable '{name}'"
 suggestion = "remove it, or prefix with `_` if intentionally unused"
 
+[E7-002]
+message = "implicit alias '{alias}' does not match the target module name '{targetName}'"
+suggestion = "rename the alias, or ignore if intentional (advisory only)"
+
 [E2-001]
 message = "expected {expected}, got {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（无法提取参数名），走英文硬编码兜底。
@@ -155,6 +159,10 @@ message = "module root '{path}' lacks pini.toml or .pini sources (R1)"
 
 [E3-012]
 message = "symbol '{symbol}' is not public and cannot be imported across modules (G52 D8)"
+
+[E3-013]
+message = "injected symbol '{symbol}' conflicts with {holder} (D-4: bare names must be unambiguous)"
+suggestion = "use an explicit alias `alias = \"path\"` and call qualified as `alias.symbol"
 
 [E6-001]
 message = "unsupported type '{name}'"

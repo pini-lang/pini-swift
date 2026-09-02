@@ -171,6 +171,7 @@ extension SemanticError: DiagnosticProviding {
  case .moduleDependencyCycle: return "\(DiagnosticDomain.semantic.rawValue)-010"
  case .moduleRootMissing: return "\(DiagnosticDomain.semantic.rawValue)-011"
  case .crossModuleAccessDenied: return "\(DiagnosticDomain.semantic.rawValue)-012"
+ case .injectedSymbolConflict: return "\(DiagnosticDomain.semantic.rawValue)-013"
  }
  }
  public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -190,7 +191,8 @@ extension SemanticError: DiagnosticProviding {
  .inaccessibleSymbol(_, _, _, let loc), .unknownMatchCase(_, let loc),
  .nonExhaustiveMatch(_, let loc), .captureWithoutDeclaration(_, let loc),
  .invalidCaptureTarget(_, _, let loc), .captureWithoutDeclaration(_, let loc),
- .crossModuleAccessDenied(_, let loc):
+ .crossModuleAccessDenied(_, let loc),
+ .injectedSymbolConflict(_, _, let loc):
  return loc
  case .moduleDependencyCycle, .moduleRootMissing:
  return SourceLocation(line: 0, column: 0, endLine: 0, endColumn: 0, fileName: "未知文件")

@@ -27,4 +27,7 @@ public enum SemanticError: Error, Equatable {
  case moduleRootMissing(path: String)
  /// G52 批 1（D8）：跨模块引入门槛 = 仅 public——非 public 符号经 `别名.符号` 访问被拒。
  case crossModuleAccessDenied(symbol: String, location: SourceLocation)
+ /// 批 6 D-4：注入冲突——`_别名` 隐式注入的 public 符号与本文件既有可裸引用名相撞
+ /// （本地顶级/局部声明、其他注入、显式别名、内建）。`holder` 描述冲突双方。
+ case injectedSymbolConflict(symbol: String, holder: String, location: SourceLocation)
 }
