@@ -752,6 +752,25 @@ func runModCommand(_ rest: [String]) {
  }
 }
 
+/// 批 6 D-4：输出语义警告（E7 段，弱警告不阻断 run/check，exit 0）。
+/// 走 stderr——不污染 stdout（golden 测试按 stdout 对账）。
+func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
+ for w in analyzer.warnings {
+ let msg: String
+ switch w {
+ case .implicitAliasNameMismatch(let alias, let target, _):
+ msg = "隐式别名 '\(alias)' 与目标模块名 '\(target)' 不一致（仅提醒）"
+ case .unusedVariable(let name, _):
+ msg = "未使用的变量 '\(name)'"
+ }
+ FileHandle.standardError.write(Data((
+ ErrorFormatter.format(errorType: "语义警告", message: msg,
+ location: w.diagnosticLocation, source: "",
+ code: w.diagnosticCode, severity: .warning,
+ suggestion: w.suggestion) + "\n").utf8))
+ }
+}
+
 /// 批 5（G58，D-1 方案 A）：程序基准——相对给定的文件/目录路径求**绝对**基准：
 /// 目录 → 自身；文件 → 所在目录。相对输入先按当前 CWD 绝对化并标准化。
 func absoluteProgramBase(_ path: String) -> String {
@@ -823,6 +842,7 @@ func runRunPath(_ path: String) {
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
+ emitSemanticWarnings(analyzer)
  let checker = TypeChecker()
  try checker.check(package: pkg)
  } catch {
@@ -1098,6 +1118,7 @@ private func gateAndRunTests(pkg: Package, scope: ((String) -> Bool)?, scopeLabe
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
+ emitSemanticWarnings(analyzer)
  let checker = TypeChecker()
  try checker.check(package: pkg)
  } catch let err as SemanticError {
@@ -1220,6 +1241,7 @@ func runCheckPath(_ path: String) {
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
+ emitSemanticWarnings(analyzer)
  let checker = TypeChecker()
  try checker.check(package: pkg)
  print("检查通过（模块 \(pkg.name)，\(pkg.fileUnits.count) 个文件）：\(path)")
