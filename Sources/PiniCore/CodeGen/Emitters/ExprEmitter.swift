@@ -657,6 +657,11 @@ extension IRGenerator {
  if funcName == "readLine" {
  return try generateBuiltinReadLine()
  }
+ // 批 5（G58）：moduleRoot 在 LLVM 端未实现（需运行期 getcwd/基准传递），按 ADR-028
+ // 惯例显式 unsupported——不给静默错误， 待 LLVM 三通道批次一并落地。
+ if funcName == "moduleRoot" {
+ throw IRGenError.unsupportedExpression(kind:"moduleRoot 尚未在 LLVM 后端实现（解释器可用）；跟踪于 G58", sl())
+ }
  if funcName == "assert" {
  return try generateBuiltinAssert(arguments)
  }

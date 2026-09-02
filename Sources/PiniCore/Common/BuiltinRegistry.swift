@@ -107,6 +107,9 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "addressof", group: .pointer, paramNames: ["value"], definesRuntimeValue: false),
 
  // ---- io ----
+ // 批 5（G58，D-2）：程序基准查询——模块根（单文件=入口文件所在目录），绝对路径。
+ BuiltinDecl(name: "moduleRoot", group: .io, paramNames: [],
+ params: [], returns: [t("String")]),
  BuiltinDecl(name: "readFile", group: .io, paramNames: ["path"],
  params: [t("String")], returns: [t("String")]),
  BuiltinDecl(name: "writeFile", group: .io, paramNames: ["path", "content"],

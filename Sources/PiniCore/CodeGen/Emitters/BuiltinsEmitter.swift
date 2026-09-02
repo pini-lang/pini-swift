@@ -167,9 +167,21 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
 """
  }
 
+ /// 批 5（G58，D-4）：IO 路径实参处理——**无前缀相对路径的字面量**在编译期烘焙程序基准前缀
+ /// （`programBase + "/" + 路径`），与解释器三段式方案 A 一致；`./` `../` 开头与绝对路径原样
+ /// （运行时 CWD / 原样）；非字面量（变量/插值）无法烘焙，运行时按 CWD 解析（v1 已知限制）。
+ func generateIOPathArgument(_ arguments: [CallArgument], index: Int) throws -> IRValue {
+ if case .stringLiteral(let value, _) = arguments[index].expression,
+ let base = programBase,
+ !value.hasPrefix("/"), !value.hasPrefix("./"), !value.hasPrefix("../") {
+ return try generateStringLiteral(base + "/" + value)
+ }
+ return try generateExpression(arguments[index].expression)
+ }
+
  func generateBuiltinWriteFile(_ arguments: [CallArgument]) throws -> IRValue {
  guard arguments.count == 2 else { throw IRGenError.unsupportedExpression(kind:"writeFile requires 2 args (path, content)", sl()) }
- let path = try generateExpression(arguments[0].expression)
+ let path = try generateIOPathArgument(arguments, index: 0)
  let content = try generateExpression(arguments[1].expression)
  // fopen(path, "w")
  let wMode = "%t\(nextTemp())"
@@ -190,7 +202,7 @@ define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {
 
  func generateBuiltinReadFile(_ arguments: [CallArgument]) throws -> IRValue {
  guard arguments.count == 1 else { throw IRGenError.unsupportedExpression(kind:"readFile requires 1 arg (path)", sl()) }
- let path = try generateExpression(arguments[0].expression)
+ let path = try generateIOPathArgument(arguments, index: 0)
  // fopen(path, "r")
  let rMode = "%t\(nextTemp())"
  emitLine(builder.fmtGEP(name: rMode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]))

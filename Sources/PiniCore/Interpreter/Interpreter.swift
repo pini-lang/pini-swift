@@ -142,11 +142,26 @@ public class Interpreter {
  private var ffiConfig: FFIConfig = .default
  /// Phase 2b（ADR-017 FFI dlsym）：库名 → 句柄缓存 + 符号查找。
  private let ffiLoader = FFILoader()
+ /// 批 5（G58，方案 A）：程序基准——模块运行的模块根 / 单文件运行的入口文件所在目录（均为绝对路径）。
+ /// IO 相对路径解析基准；nil = 未注入（退回进程 CWD，REPL / 直建解释器的兼容行为）。
+ private var programBase: String?
 
- public init(ffiConfig: FFIConfig = .default) {
+ public init(ffiConfig: FFIConfig = .default, programBase: String? = nil) {
  self.ffiConfig = ffiConfig
+ self.programBase = programBase
  self.globalEnv = Environment()
  self.currentEnv = globalEnv
+ }
+
+ /// 批 5（G58，D-1 方案 A）：IO 路径按形态三段式解析。
+ /// - 绝对路径 → 原样；
+ /// - `./` `../` 开头 → 运行时 CWD（原样传给 Foundation，即用户/shell 视角）；
+ /// - 其余相对路径 → 程序基准（模块根 / 入口文件所在目录）；未注入基准时退回 CWD（兼容）。
+ func resolveIOPath(_ path: String) -> String {
+ if path.hasPrefix("/") { return path }
+ if path.hasPrefix("./") || path.hasPrefix("../") { return path }
+ guard let base = programBase else { return path }
+ return base + "/" + path
  }
 
  public func run(module: Module) throws {
@@ -171,7 +186,8 @@ public class Interpreter {
  let dir = (imp.location.fileName as NSString).deletingLastPathComponent
  // R2：全图环检测（loadGraph 递归校验依赖链）
  let loaded = try loader.load(packagePath: imp.packagePath, relativeTo: dir)
- let child = Interpreter()
+ // 批 5（G58）：子解释器继承同一程序基准——被引入模块内 IO 相对路径仍相对主程序基准。
+ let child = Interpreter(ffiConfig: ffiConfig, programBase: programBase)
  try child.prepare(loaded: loaded)
  importEnvs[imp.alias] = child.globalEnv
  importPublicSymbols[imp.alias] = loaded.publicSymbols
@@ -3076,13 +3092,22 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return .float(result)
  }
 
+ // 批 5（G58，D-2）：moduleRoot() —— 程序基准查询（模块根 / 单文件所在目录，绝对路径）。
+ // 未注入基准（REPL / 直建解释器）时返回进程 CWD——如实呈现当前基准，不伪造模块根。
+ if fv.name == "moduleRoot", args.isEmpty {
+ let base = programBase ?? FileManager.default.currentDirectoryPath
+ return .string(base)
+ }
+
  if fv.name == "readFile" {
- guard case .string(let path) = args[0] else {
+ guard case .string(let rawPath) = args[0] else {
  throw RuntimeError.invalidOperation(
  reason: "readFile 的参数必须是字符串路径",
  location: SourceLocation(line: 0, column: 0, fileName: "")
  )
  }
+ // 批 5（G58）：相对路径按三段式基准解析（方案 A）。
+ let path = resolveIOPath(rawPath)
  do {
  let content = try String(contentsOfFile: path, encoding: .utf8)
  return .string(content)
@@ -3094,12 +3119,14 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
  }
  if fv.name == "writeFile" {
- guard case .string(let path) = args[0], case .string(let content) = args[1] else {
+ guard case .string(let rawPath) = args[0], case .string(let content) = args[1] else {
  throw RuntimeError.invalidOperation(
  reason: "writeFile 的参数必须是 (路径: String, 内容: String)",
  location: SourceLocation(line: 0, column: 0, fileName: "")
  )
  }
+ // 批 5（G58）：相对路径按三段式基准解析（方案 A）。
+ let path = resolveIOPath(rawPath)
  do {
  try content.write(toFile: path, atomically: true, encoding: .utf8)
  return .null

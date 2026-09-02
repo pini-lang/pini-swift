@@ -100,6 +100,12 @@ public final class IRGenerator {
  /// golden IR 字节级不变；仅 CLI 与实际 run-llvm 测试注入后启用。
  public var typeInference: TypeInference? = nil
 
+ /// 批 5（G58，D-4）：程序基准——LLVM 端 IO 无前缀相对路径在**编译期烘焙**此前缀
+ /// （`programBase + "/" + 字面量路径`），与解释器运行时解析语义一致；`./` `../` 开头的
+ /// 路径原样保留（运行时 CWD）。默认 nil —— 既有测试直接 `IRGenerator().generate` 不受影响，
+ /// golden IR 字节级不变；CLI 与 run-llvm 注入后启用。跨机运行的路径不可移植为 v1 已知限制。
+ public var programBase: String? = nil
+
  // MARK: - 阶段 B：一等函数 + 闭包（匿名函数提升 / 间接调用 / 捕获环境）
  /// 闭包（funcLiteral）提升信息。每个匿名函数在模块预遍历中分配稳定 id；
  /// 首次被求值（创建点）时计算捕获变量并标记 computed，定义延迟到模块末尾发射。

@@ -674,6 +674,21 @@ func runParseCommand(source: String, fileName: String) throws {
  print(describeAST(module))
 }
 
+/// 批 5（G58，D-1 方案 A）：程序基准——相对给定的文件/目录路径求**绝对**基准：
+/// 目录 → 自身；文件 → 所在目录。相对输入先按当前 CWD 绝对化并标准化。
+func absoluteProgramBase(_ path: String) -> String {
+ var abs = path
+ if !abs.hasPrefix("/") {
+ abs = FileManager.default.currentDirectoryPath + "/" + abs
+ }
+ abs = (abs as NSString).standardizingPath
+ var isDir: ObjCBool = false
+ if FileManager.default.fileExists(atPath: abs, isDirectory: &isDir), !isDir.boolValue {
+ abs = (abs as NSString).deletingLastPathComponent
+ }
+ return abs
+}
+
 /// P4 Phase 5：run 接收文件或目录。
 /// - 文件 → 单文件运行（零回归）。
 /// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
@@ -690,7 +705,8 @@ func runRunPath(_ path: String) {
  printError("Error: \(error.localizedDescription)"); exit(1)
  }
  let module = parseOrReport(source: source, fileName: path)
- let interpreter = Interpreter()
+ // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。
+ let interpreter = Interpreter(programBase: absoluteProgramBase(path))
  do { try interpreter.run(module: module) }
  catch { printError(formatCLIError(error: error, source: source)); exit(1) }
  return
@@ -719,7 +735,9 @@ func runRunPath(_ path: String) {
  } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)
  }
- let interpreter = Interpreter(ffiConfig: manifest.ffi ?? .default)
+ // 批 5（G58，D-1）：模块基准 = 模块根（含 pini.toml 的目录）。
+ let interpreter = Interpreter(ffiConfig: manifest.ffi ?? .default,
+ programBase: absoluteProgramBase(path))
  do { try interpreter.run(package: pkg) }
  catch { printError(formatCLIError(error: error, source: nil)); exit(1) }
 }
@@ -795,7 +813,8 @@ private func runDebugFile(_ path: String) {
  }
  let module = parseOrReport(source: source, fileName: path)
  let sources = [path: source]
- startDebugger(module: module, sources: sources, primaryName: path)
+ startDebugger(module: module, sources: sources, primaryName: path,
+ programBase: absoluteProgramBase(path))
 }
 
 /// 目录/模块调试（P7-4 P3）：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，
@@ -812,14 +831,17 @@ private func runDebugDirectory(_ path: String) {
  sources[unit.fileName] = src
  }
  }
- startDebugger(package: pkg, sources: sources)
+ startDebugger(package: pkg, sources: sources,
+ programBase: absoluteProgramBase(path))
 }
 
-private func startDebugger(module: Module, sources: [String: String], primaryName: String) {
+private func startDebugger(module: Module, sources: [String: String], primaryName: String,
+ programBase: String? = nil) {
  let debugger = Debugger(driver: CLIDebugDriver())
  debugger.stopAtEntry = true
  debugger.sourceMap = SourceMap(sources: sources)
- let interpreter = Interpreter()
+ // 批 5（G58）：调试运行同样注入程序基准（与 run 单文件路径一致）。
+ let interpreter = Interpreter(programBase: programBase)
  interpreter.debugHook = { ctx in
  try debugger.consult(ctx)
  }
@@ -832,11 +854,13 @@ private func startDebugger(module: Module, sources: [String: String], primaryNam
  }
 }
 
-private func startDebugger(package: Package, sources: [String: String]) {
+private func startDebugger(package: Package, sources: [String: String],
+ programBase: String? = nil) {
  let debugger = Debugger(driver: CLIDebugDriver())
  debugger.stopAtEntry = true
  debugger.sourceMap = SourceMap(sources: sources)
- let interpreter = Interpreter()
+ // 批 5（G58）：调试运行同样注入程序基准（与 run 模块路径一致）。
+ let interpreter = Interpreter(programBase: programBase)
  interpreter.debugHook = { ctx in
  try debugger.consult(ctx)
  }
@@ -922,7 +946,8 @@ func runTestPath(_ path: String?) {
  if isDir.boolValue {
  // 模块外目录：聚合为包后全量收集（隐式根模块兜底）
  let pkg = try FileLoader.loadDirectory(path: abs)
- try gateAndRunTests(pkg: pkg, scope: nil, scopeLabel: nil, ffiConfig: .default)
+ try gateAndRunTests(pkg: pkg, scope: nil, scopeLabel: nil, ffiConfig: .default,
+ programBase: absoluteProgramBase(abs))
  return
  }
 
@@ -970,12 +995,13 @@ private func runModuleTests(moduleRoot: String, scopePath: String?) throws {
  }
 
  try gateAndRunTests(pkg: pkg, scope: scope, scopeLabel: scopeLabel,
- ffiConfig: manifest?.ffi ?? .default)
+ ffiConfig: manifest?.ffi ?? .default,
+ programBase: absoluteProgramBase(moduleRoot))
 }
 
 /// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级 runTests → 汇总报告。
 private func gateAndRunTests(pkg: Package, scope: ((String) -> Bool)?, scopeLabel: String?,
- ffiConfig: FFIConfig) throws {
+ ffiConfig: FFIConfig, programBase: String? = nil) throws {
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
@@ -987,7 +1013,8 @@ private func gateAndRunTests(pkg: Package, scope: ((String) -> Bool)?, scopeLabe
  handleTypeError(err); exit(1)
  }
 
- let interpreter = Interpreter(ffiConfig: ffiConfig)
+ // 批 5（G58）：测试运行注入程序基准（模块根 / 显式目录）——IO 相对路径与 run 一致。
+ let interpreter = Interpreter(ffiConfig: ffiConfig, programBase: programBase)
  let results = try interpreter.runTests(package: pkg, fileScope: scope)
 
  if let label = scopeLabel {
@@ -1026,7 +1053,9 @@ private func runSingleFileTests(path: String) throws {
  // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
  let dir = (path as NSString).deletingLastPathComponent
  let manifest = try? FileLoader.loadManifest(directory: dir)
- let interpreter = Interpreter(ffiConfig: manifest?.ffi ?? .default)
+ // 批 5（G58，D-3）：单文件测试基准 = 该文件所在目录。
+ let interpreter = Interpreter(ffiConfig: manifest?.ffi ?? .default,
+ programBase: absoluteProgramBase(path))
  let results = try interpreter.runTests(module: module)
  var passed = 0, failed = 0
  print("测试文件: \(path)")
@@ -1166,6 +1195,8 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
  }
  let generator = IRGenerator()
  generator.typeInference = checker.typeInference
+ // 批 5（G58，D-4）：LLVM 端无前缀相对路径字面量编译期烘焙程序基准（与解释器一致）。
+ generator.programBase = absoluteProgramBase(fileName)
  // #46-optional：开启持久表兜底，使 codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
  return try generator.generate(module: module)
