@@ -71,7 +71,7 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 
 ## 5. 防弹跳强制（可选启用，推荐）
 
-仓库提供 `hooks/pre-commit` 钩子，在每次提交时校验 author / committer 身份是否已在 §2 注册。
+仓库提供 `hooks/pre-commit` 钩子，在每次提交时依次执行：① 校验 author / committer 身份是否已在 §2 注册；② 注释风格门禁；③ 文档链接校验；④ 证据表自动清扫（§5.1）。
 启用（一次性，仅本地）：
 
 ```bash
@@ -80,6 +80,16 @@ git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
 
 钩子逻辑：若 `user.name` 或 `user.email` 不在注册表，打印已登记列表并**拒绝提交**。
 > 说明：必须用**绝对路径**（上例用 `git rev-parse --show-toplevel` 自动解析，兼容任一工作树），不要用相对路径 `hooks`——相对路径在链接工作树下会按当前工作树解析，易出错。设置后该目录取代默认 `.git/hooks`；若还需其他钩子，请一并放入 `hooks/` 目录。
+
+### 5.1 证据表自动清扫（随 pre-commit 一并启用）
+
+同一份 `hooks/pre-commit` 在以上校验通过后调用 `tools/evidence_sweep.py --hook`，按 spec §1.4「自动清扫」维护 `docs/spec/evidence-table.toml`：先删上一轮标记为 `PENDING_DELETE` 的条目，再重算存活条目的状态，最后把表 `git add` 回本次提交。
+
+- **最小间隔 24 小时**（记于 `meta.last_sweep`）：距上次清扫不足 24 小时直接跳过。该间隔同时是「标记待删 → 实际删除」的宽限下限。
+- **表有未暂存改动时跳过**：绝不在正在编辑的文件上重写。
+- **`python3` 缺 `tomllib`（< 3.11）时跳过并告警**：环境问题不阻断提交。
+- 清扫结果进入**本次提交**，故删除前的状态必存于父提交——`git show HEAD~1:docs/spec/evidence-table.toml` 可取回。
+- 临时绕过（不推荐）：`git commit --no-verify`。清扫幂等，下一次正常提交会补上。
 
 ---
 
