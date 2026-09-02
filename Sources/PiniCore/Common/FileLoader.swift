@@ -250,101 +250,39 @@ extension LoaderError: LocalizedError {
  }
 }
 
-/// 清单解析（批 6 重构）：先**通用两级收集**（普通表 `[x]` / `x.y` → `tables`；数组表
-/// `[[x]]` → `arrayTables`，G52 §5.1 连带决议，锁文件 `[[module]]`/`[[resource]]` 复用同一机制），
-/// 再按表名归类到 `ModuleManifest` 字段。行为：
-/// - 跳过空行与 `#` 注释；值支持双引号字符串与内联数组 `["a", "b"]`；
-/// - **未知表容错忽略**（写了尚未消费的表不应导致解析失败）；
-/// - `[package]` 缺 `name` 视为非法清单；**`[dependencies]` 命中即报错**（D-B）。
+/// 清单解析（批 6 重构）：通用两级收集委托给 `MiniTOML`，此处只做清单形状的归类：
+/// `[package]`（name 必需）、`[ffi]`、`[build]`、`[tap]`/`[require]`/`[resources]`/`[replace]`
+/// 及其点分子表；**`[dependencies]` 命中即报错**（D-B）；未知表容错忽略。
 private func parseManifest(_ text: String, path: String) throws -> ModuleManifest {
- var tables: [String: [String: String]] = [:]
- var arrayTables: [String: [[String: String]]] = [:]
- var currentSection: String? = nil
+ let doc = MiniTOML.parse(text)
 
- func store(_ table: String, key: String, value: String) {
- var t = tables[table] ?? [:]
- t[key] = value
- tables[table] = t
- }
-
- for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
- let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
- if line.isEmpty || line.hasPrefix("#") { continue }
-
- // 数组表 `[[name]]`（G52 §5.1）：每处开启一个新条目并置为当前表。
- if line.hasPrefix("[["), line.hasSuffix("]]") {
- let name = String(line.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
- arrayTables[name, default: []].append([:])
- currentSection = name
- continue
- }
- if line.hasPrefix("["), line.hasSuffix("]") {
- currentSection = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
- continue
- }
-
- guard let eq = line.firstIndex(of: "=") else { continue }
- let key = line[..<eq].trimmingCharacters(in: .whitespacesAndNewlines)
- let value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespacesAndNewlines)
- let unquoted = value.stripQuotes()
- guard let sec = currentSection else { continue }
-
- if sec.hasPrefix("[[") {
- // 数组表条目：写入最近开启的条目（先拷出末条改完再写回，避免独占访问冲突）。
- let name = String(sec.dropFirst(2).dropLast(2))
- var list = arrayTables[name] ?? []
- if !list.isEmpty {
- var last = list.removeLast()
- last[key] = unquoted
- list.append(last)
- arrayTables[name] = list
- }
- continue
- }
-
- // 批 6 双通道已知表（含 tap./require./resources. 子表）；[dependencies] 报错（D-B）；
- // 其余未知表容错忽略。
- let knownSections: Set<String> = ["package", "ffi", "build", "tap", "require", "resources", "replace"]
- let isSubTable = sec.hasPrefix("tap.") || sec.hasPrefix("require.") || sec.hasPrefix("resources.")
- if knownSections.contains(sec) || isSubTable {
- store(sec, key: key, value: unquoted)
- } else if sec == "dependencies" {
+ // [dependencies] 报错须在容错判断**之前**——该节已从 spec 移除，静默 = 复活已死语义（D-B）。
+ if doc.tables.keys.contains("dependencies") {
  throw LoaderError.legacyDependenciesSection(path: path)
  }
- }
-
- func subTables(_ prefix: String) -> [String: [String: String]] {
- var out: [String: [String: String]] = [:]
- for (name, kv) in tables where name.hasPrefix(prefix + ".") {
- out[String(name.dropFirst(prefix.count + 1))] = kv
- }
- return out
- }
- func plain(_ table: String) -> [String: String] { tables[table] ?? [:] }
-
- guard let n = plain("package")["name"], !n.isEmpty else {
+ guard let n = doc.plain("package")["name"], !n.isEmpty else {
  throw LoaderError.invalidManifest(path: path)
  }
- let pkg = plain("package")
- let ffiRaw = plain("ffi")
+ let pkg = doc.plain("package")
+ let ffiRaw = doc.plain("ffi")
  let ffi: FFIConfig? = (ffiRaw["abi"] != nil || !(ffiRaw["search_paths"] ?? "").isEmpty || !(ffiRaw["libs"] ?? "").isEmpty)
  ? FFIConfig(abi: ffiRaw["abi"] ?? "C",
- searchPaths: parseTOMLArray(ffiRaw["search_paths"] ?? "[]"),
- libs: parseTOMLArray(ffiRaw["libs"] ?? "[]"))
+ searchPaths: MiniTOML.parseArray(ffiRaw["search_paths"] ?? "[]"),
+ libs: MiniTOML.parseArray(ffiRaw["libs"] ?? "[]"))
  : nil
  // [tap.X] 子表：取其（单一）值的键值并入 taps（X → spec）；[tap] 平表条目同名优先。
- var taps = plain("tap")
- for (tapName, kv) in subTables("tap") where taps[tapName] == nil {
+ var taps = doc.plain("tap")
+ for (tapName, kv) in doc.subTables("tap") where taps[tapName] == nil {
  taps[tapName] = kv.values.first
  }
- let buildExclude = parseTOMLArray(plain("build")["exclude"] ?? "[]")
+ let buildExclude = MiniTOML.parseArray(doc.plain("build")["exclude"] ?? "[]")
 
  return ModuleManifest(
  name: n, version: pkg["version"],
  taps: taps,
- require: plain("require"), requireTaps: subTables("require"),
- resources: plain("resources"), resourcesTaps: subTables("resources"),
- replaces: plain("replace"),
+ require: doc.plain("require"), requireTaps: doc.subTables("require"),
+ resources: doc.plain("resources"), resourcesTaps: doc.subTables("resources"),
+ replaces: doc.plain("replace"),
  ffi: ffi, buildExclude: buildExclude)
 }
 
