@@ -49,7 +49,7 @@ swift build -c release --disable-sandbox
 .build/debug/pini run examples/hello.pini
 # 预期输出：Hello, World! / 欢迎使用Pini语言
 
-.build/debug/pini check examples/array_basic.pini
+.build/debug/pini check examples/array-basic.pini
 .build/debug/pini test .         # 全量 |test 块（当前 10/10）
 
 # release 构建冒烟（把 debug 换成 release）
