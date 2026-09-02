@@ -3,6 +3,24 @@
 > 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（ADR）与 `spec/issue/`。
 > 版本号与 `pini version` 输出同源：`PiniCore/Common/Version.swift`。
 
+## v0.52.0 (2026-09-02)
+
+### Added
+- **模块工具链 `pini mod`**（G52 批 3）：`tidy`（离线对齐 require↔import）/ `refresh`（本地 tap 重解版本 + 写 `pini-summary.toml`）/ `verify`（SHA-256 校验和执行点）/ `graph [--cycles]`
+- **清单双通道**：`[tap]`/`[require]`/`[resources]`/`[replace]` 及点分子表、`[[ ]]` 数组表（MiniTOML）；MVS v1（本地 `file:` tap）
+- **隐式别名注入**（D-4，ADR-029 后续裁决）：`_别名 = path` = 注入全导入（文件级裸调用或 `_别名.符号` 限定）；冲突 E3-013；名字不一致 E7-002 弱警告（E7 段首个发出的警告）
+- **argv 透传**（F6）：`argv()` 内建返回脚本路径之后的裸参数（LLVM 端暂 unsupported）
+- 多项 import 块；R1 嵌套清单父扫描排除补全
+
+### Changed
+- **破坏性**：旧 `[dependencies]` 清单节命中即报错（指引 `[require]`/`[resources]`）；单文件 `pini run` 现过语义门禁（E3 拒绝后才执行）
+
+### Fixed
+- `run(package:)` 补加载 import 块（跨模块限定调用运行时 E5-001，语义/类型检查不受影响）
+
+### Internal
+- MiniTOML 共享解析器、纯 Swift SHA-256（NIST 向量验证）、语义警告通道（E7 段）上 stderr、子进程 CLI 测试基建
+
 ## v0.51.0 (2026-09-02)
 
 ### Added

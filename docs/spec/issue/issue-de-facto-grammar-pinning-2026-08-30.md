@@ -123,6 +123,8 @@ n|own() -> ()
 
 ## F6 宿主 CLI 不向 `main` 透传 argv（宿主功能需求）
 
+> **已落地（2026-09-02，F6）**：`argv()` 内建（io 组）+ run 单文件/模块双形态透传；LLVM 端 unsupported。
+
 自举编译器需要接受输入路径（否则它无法编译任何指定文件）。当前宿主 CLI 无 argv 透传
 （`pini run <module>` 之外的参数无通路），也无 `argv`/`env` 内建可读取进程参数——
 S10 的驱动只能经「暂存通道」（门禁脚本把源写到 `/tmp/pini_in.pini`、把 pass 名写到
