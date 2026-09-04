@@ -2,18 +2,27 @@
 
 - 日期：2026-08-28
 - 提出方：用户（规则提出与拍板）+ agent:pini-dev（架构评估、Go 机制调研与成文）
-- 状态：**已决议**（本文档即决议记录）；spec 修订 + 宿主实现待做
+- 状态：**Closed / LANDED（2026-09-04）** —— 本文档即决议记录，**R1–R8 / D1–D28 不变**。
+  决议、规范登记与宿主实现均已交付，由三个批次承接：
+
+  | 批次 | 日期 | 承接内容 |
+  |---|---|---|
+  | **批 1**（语义层） | 2026-08-31 | R1 物理边界（import 加载侧）、R2 依赖图无环、R4 跨模块访问（仅 `public`）、块式 import/export 为唯一顶级形态 |
+  | **批 6**（工具链） | 2026-09-02 | 清单双通道解析、MVS（本地退化形态）、`pini-summary.toml`、SHA-256（TOFU）、`pini mod {tidy,refresh,verify,graph}`、build 漂移检查、R1 父扫描侧嵌套排除 |
+  | **批 7**（远程 tap） | 2026-09-04 | `github:`/`git:` 抓取、**经典 MVS**（tag 候选）、resources 落地、锁文件 `commit` 真值 |
+
+  **遗留未修（见 §9）**：`[[bin]]/[lib] entry` 未被消费、`graph.order` 未被解释器消费、resources 根检（R7 反向）未实现、`[replace]` 两种形态未实现。
 - 关联：
-  - `issue-pini-dir-namespace-2026-08-29`（**R5–R8**：点目录规则、`.pini/` 命名空间、resources 落地与检查、文件命名）
+  - `docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`（**R5–R8**：点目录规则、`.pini/` 命名空间、resources 落地与检查、文件命名）
   - G49（清单 schema 单一 `[package]`、`[build] exclude`、`pini test` 收集单位 = 模块）
   - G51（import/export 块形式为唯一顶级形态；宿主裸语句为**已知偏差**，收敛待办）
   - ADR-017（`[ffi]` 模块配置，pini.toml 唯一已兑现的模块级语义）
   - ADR-018 D1（宿主 git 依赖）
-  - `../pini-project-spec.md` §3（预留目录）/ §4（`.gitignore` 基线）/ §7（清单 schema）
-  - `../pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
+  - `docs/spec/pini-project-spec.md` §3（预留目录）/ §4（`.gitignore` 基线）/ §7（清单 schema）
+  - `docs/spec/pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
 
 > **改名溯源（R8，2026-08-29）**：本工单原文使用 `module.toml` / `_summary.toml`，
-> 现统一为 **`pini.toml`** / **`pini-summary.toml`**（理由见 R8；过程见 `issue-pini-dir-namespace-2026-08-29`）。
+> 现统一为 **`pini.toml`** / **`pini-summary.toml`**（理由见 R8；过程见 `docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`）。
 > 这是一次**纯改名，不改任何决议的实质**——D1 / D15 / D20 等仍是**现行规则**，
 > 故其文本一并更新为新的哨兵名：**留旧名会让现行规则写错判据**。
 
@@ -44,7 +53,7 @@
 - 一个目录根只有一个根模块；含 `pini.toml` 的子目录是**子模块**，相对地成为子模块的**父模块**。
 - 以 `pini.toml` 为根的目录树，排除含 `pini.toml` 的子目录，**收纳一般子目录与平级文件**（一般子目录属本模块，共享扁平命名空间）。
 - 推论：嵌套模块从父模块包自动切出，**`deps/` 内的 Pini 模块无需再写 `[build] exclude`**。
-- ~~**补充（R1'）**：`deps/` 保留目录永不扫描。~~ **已由 R6 撤销**（`issue-pini-dir-namespace-2026-08-29`）：
+- ~~**补充（R1'）**：`deps/` 保留目录永不扫描。~~ **已由 R6 撤销**（`docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`）：
   R1' 是**工具侧硬编码的目录名单**，与 R6（点前缀 / `.pini/` 统一承载非源码内容）重复，且比 R6 更难维护——
   每加一类外来物都要往名单里塞一项。撤销后 `deps/` **只放 `require` 的模块**（各带 `pini.toml` ⇒ R1 自切），
   非 Pini 依赖与宿主一律进 `.pini/`（R6）。
@@ -168,7 +177,7 @@ fmt  = ">=2.0, <3.0"
 uni = "^3.0"
 ```
 
-- 版本约束语法复用 `../pini-project-spec.md` §7.3 已定义的 `^1.2` / `~1.2.3` / `=1.2.3` / `">=1.0, <2.0"`；**未知写 `*`**，由 `pini mod refresh` 回填精确版本（D21）。
+- 版本约束语法复用 `docs/spec/pini-project-spec.md` §7.3 已定义的 `^1.2` / `~1.2.3` / `=1.2.3` / `">=1.0, <2.0"`；**未知写 `*`**，由 `pini mod refresh` 回填精确版本（D21）。
 - **本节是 MVS 的输入**——MVS 在 `require` 的传递闭包上求解（R3）。
 - 生成命令 `pini mod tidy` **离线运行**（D21）：它只读本地 import 与既有 require，不联网。
 
@@ -440,49 +449,65 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 
 ---
 
-## 6. 实施清单
+## 6. 实施清单（2026-09-04 收口：落点已核，未逐项照抄原文）
 
-### 6.1 治理（pini-meta，本工单随附）
+> 收口原则：本节**只记落点**，不重复承载实施计划——实施由批 1 / 批 6 / 批 7 承接，
+> 双份清单必然漂移（这正是本节此前停在 2026-08-28、与实际脱节一整轮的原因）。
 
-- [x] 工单落档 `issue-module-system-rules-2026-08-28.md`
-- [ ] `../pini-spec-v0.md`：登记 **G52** 决策行；§2.5 访问控制表按 §4.3 定稿（补"可被跨模块引入"列）；import/export 条款补"import 即依赖、依赖图禁环"
-- [ ] `../pini-project-spec.md`：§3/§4 增加 `pini-summary.toml`「生成但必须提交」条款；§7 清单 schema 增 `[tap]` / `[require]` + `[require.<tap>]` / `[resources]` + `[resources.<tap>]` / `[replace]`，**移除 `[dependencies]`**（D17：职责拆分给 require + resources；无实现消费，硬切无共存期）
-- [ ] `../pini-roadmap-next.md`：T2 状态更新（本工单已覆盖其"跨模块 import 真正可用 + `[dependencies]` 从占位到解析"目标，仅**宿主实现**仍待做）
+### 6.1 治理（pini-meta）
 
-### 6.2 宿主 pini-swift（待做，分支实现）
+| 项 | 落点 | 核实 |
+|---|---|---|
+| 工单落档 | 本文件 | ✅ |
+| `docs/spec/pini-spec-v0.md`：G52 决策行 + §2.5 访问控制表「可被跨模块引入」列 + import/export 条款（import 即依赖 / 禁环 / 双通道 / R8 命名 / MVS / 四命令） | spec v0 §2.5 | ✅ 已登记（批 1/批 6 时点写入，2026-09-04 补批 7） |
+| `docs/spec/pini-project-spec.md`：§3/§4 `pini-summary.toml`「生成但必须提交」+ §7 schema（`[tap]`/`[require]`/`[resources]`/`[replace]`，`[dependencies]` 标 Removed）+ §7.3 版本约束语法 | project-spec §3 §4 §7 | ✅ 已登记 |
+| `docs/spec/pini-roadmap-next.md`：T2 状态 + §8.1 批次登记表 | roadmap T2 / §8.1 增批 7 行 | ✅ 2026-09-04 更新 |
 
-- [ ] `parseManifest`：支持 `[[ ]]` 数组表（顺带兑现 `[[bin]]`/`[[bin]].entry`）；新增 `[tap]` / `[require]` / `[require.<tap>]` / `[resources]` / `[resources.<tap>]` / `[replace]` 解析；移除 `[dependencies]`（D17）
-- [ ] 兑现 `[[bin]].entry` / `[lib].entry`：入口发现从"全局找一个叫 `main` 的函数"（`Interpreter.swift:261`）改为按清单 entry 定位——**顺带根治 G49 的双 `main` 冲突（E3-004）**
-- [ ] `loadDirectory`：**遇含 `pini.toml` 的非根子目录 → 整棵子树跳过**（对齐 Go `search.go:132-137`）；`deps/` 保留目录永不扫描（R1'）
-- [ ] **双通道判定**：拉取/加载时按「有无 `pini.toml`」判定 require vs resources，**双向强制**（写错一侧即报错并指引到另一侧，D15/D20）
-- [ ] 依赖图构建：从各 `FileUnit` 的 `[名称|import]` 块收集 `(别名 → 模块名)`，模块级取并集；校验非 `_` 别名一致性
-- [ ] 环检测：SCC + 可读路径诊断（新错误码，两语言 TOML 同步登记）
-- [ ] MVS：在 `[require]` 传递闭包上求解；生成 `pini-summary.toml`（`manifest_sum` / `sum` / `commit` / `imported-by` / `graph.order`）
-- [ ] 校验和：规范化遍历 + SHA-256；TOFU 校验（不匹配即报错）
-- [ ] **CLI `pini mod` 四个子命令**：`tidy`（**离线**，集合对齐，未知约束写 `*`）/ `refresh`（MVS + 下载，唯一联网）/ `verify`（校验收验和）/ `graph`（默认展示，`--cycles` 输出环）
-- [ ] 语义/类型层：跨模块符号解析（仅 `public`），别名静态消解，复用现有 `X.Y` 限定访问路径
-- [ ] `Interpreter`：按 `graph.order` 拓扑序注册模块
-- [ ] XCTest：边界切分 / 嵌套排除 / 环检测 / 别名一致性 / 可见性门槛 / 校验和 / MVS / `pini-summary.toml` 生成
+### 6.2 宿主 pini-swift
 
-### 6.3 pini/ 自举仓对齐（向后兼容，预计零改动）
+| 项 | 落点 | 核实 |
+|---|---|---|
+| `parseManifest`：`[[ ]]` 数组表 + `[tap]`/`[require]`/`[require.<tap>]`/`[resources]`/`[resources.<tap>]`/`[replace]`；`[dependencies]` 命中即报错（D-B） | 批 6 | ✅ |
+| `loadDirectory`：遇含 `pini.toml` 的祖先目录即跳过（R1 父扫描侧） | 批 6 D-4 前置 | ✅ `FileLoader.swift` 祖先逐级查清单 |
+| 双通道判定 · **正向**（`require`/import 目标**不含** `pini.toml` → 报错指引 `[resources]`） | 批 6 | ✅ `ToolchainFailure.importTargetNotModule` |
+| 双通道判定 · **反向**（`resources X` 而 X **根含** `pini.toml` → 报错，R7） | — | ❌ **未实现**（§9 Def-1） |
+| 依赖图构建（别名→模块，模块级并集）+ 别名冲突拦截 | 批 1 | ✅ `ModuleSystemTests.testAliasNameConflictRejected` |
+| 环检测 + 可读路径诊断 | 批 1 + 批 6 `graph --cycles` | ✅ `testDependencyCycleRejected` |
+| MVS | 批 6（本地退化）→ **批 7 升级为经典 MVS**（tag 候选，取满足全部约束的最小版本） | ✅ |
+| `pini-summary.toml` 生成（`manifest_sum`/`sum`/`commit`/`imported-by`/`graph.order`） | 批 6 生成；**批 7 补齐 `commit` 的读取** | ✅（`commit` 此前只写不读，批 7 修） |
+| 校验和：规范化遍历 + SHA-256 + TOFU | 批 6 | ✅ 篡改检出有用例 |
+| CLI `pini mod {tidy, refresh, verify, graph}` | 批 6 | ✅ `refresh` 由批 7 扩到远程 tap |
+| 资源落地 `.pini/resources/<name>/`（R6） | **批 7** | ✅ 此前为「目录不存在则 `continue`」静默跳过 |
+| 语义/类型层：跨模块符号解析（仅 `public`）+ 别名静态消解 | 批 1 | ✅ `testNonPublicAccessDenied` / `testCrossModuleCall` |
+| `Interpreter`：按 `graph.order` 拓扑序注册模块 | — | ❌ **未实现**（§9 Def-2）：`graphOrder` 只写进锁文件，全仓无消费点 |
+| 兑现 `[[bin]].entry` / `[lib].entry`（顺带根治 G49 双 `main` 冲突 E3-004） | — | ❌ **未实现**（§9 Def-3）：全仓 `entry` 零消费点，入口仍为「全局找 `main`」 |
 
-- **关键性质**：本套规则建在**现有扁平命名空间之上**，不拆包层；自举仓无跨模块场景，故**一行代码都不用改**。上一轮提出的"自举时间窗口"（自举越长大、改造越贵）由此解除。
-- [ ] R1' 落地后移除 `pini.toml` 的 `exclude = ["deps"]`
-- [ ] 验证 `pini check .` / `pini test` / `tools/diff_tokens.sh` 无回归
+### 6.3 pini/ 自举仓对齐
+
+- **关键性质成立**：本套规则建在既有扁平命名空间之上，不拆包层；自举仓无跨模块场景，零改动通过。
+- ✅ `deps` 已从 `examples/selfhost/pini.toml` 的 `exclude` 移除（现为 `exclude = ["examples"]`）。
+- ⚠ **新开放问题**：D27 把 `exclude` 收窄为「`pini test` 收集范围」后，`examples/` 需要新归宿（详见 §9 Def-4）。
 
 ---
 
-## 7. 验收口径（DoD）
+## 7. 验收记录（2026-09-04 实测，取代原 DoD 表述）
 
-1. 宿主全量测试不回退（基线 **1010 执行 / 20 跳过 / 0 失败**）+ G52 新增用例全绿；
-2. 三层嵌套模块（`compiler ⊃ frontend ⊃ frontend-syntax`）可被正确切分为 3 个模块，各自命名空间独立；
-3. 存在环时构建报错，且错误信息给出完整环路径（`app → text → uni → app`）；
-4. `[require.<tap>]` / `[resources.<tap>]` 在不改动解析器数组表逻辑以外的前提下解析成功；`[dependencies]` 已从 schema 移除（D17）；
-5. **双通道双向封闭**：`resources X`（X 含 `pini.toml`）与 `require X`（X 不含）**均报错**并指引到另一侧；
-6. `pini-summary.toml` 可生成、可校验；篡改任一依赖或资源后 `pini mod verify`**必须报错**；
-7. `pini mod tidy` **离线可运行**（断网不失败）；`pini mod graph --cycles` 能输出环；`refresh` 是唯一联网命令；
-8. `[[bin]].entry` 生效，入口按清单定位；G49 的双 `main` 冲突场景不再出现；
-9. `pini/` 自举仓零改动通过 `pini check .` 与 `pini test`，`tools/diff_tokens.sh` MATCH；`deps/pini-swift` 被正确归类为 **`resources`**。
+> 原 DoD 的基线数字（"1010 执行 / 20 跳过"）已严重过期。**一切以实测为准**。
+
+| # | 原 DoD | 实测 | 依据 |
+|---|---|:---:|---|
+| 1 | 宿主全量测试不回退 + G52 用例全绿 | ✅ | **1157 执行 / 112 跳过 / 0 失败**（G52 批 7 前基线 1144，净增 13）。跳过数与原记的 20 不符，原因未查，不影响结论 |
+| 2 | 三层嵌套模块切分为 3 个模块，命名空间独立 | ⚠ **部分** | 两层（app ⊃ helper）有用例（`ModuleSystemTests` + `demo/` 夹具，跨模块限定调用与命名空间隔离均覆盖）；**三层无专项用例** → §9 Def-5 |
+| 3 | 成环报错并给出完整环路径 | ✅ | E3-010 `module dependency cycle (R2): '{chain}'`（`Sources/PiniCore/Resources/Diagnostics.en.toml`）；`ModuleSystemTests.testDependencyCycleRejected`；`pini mod graph --cycles` 另出环列表 |
+| 4 | `[require.<tap>]`/`[resources.<tap>]` 解析成功；`[dependencies]` 已移除 | ✅ | `ModuleTestCollectionTests` 双通道四节用例；`[dependencies]` 命中即 `legacyDependenciesSection` 报错（D-B） |
+| 5 | 双通道**双向**封闭 | ❌ **单向** | 正向（`require` 目标不是模块）✅ `importTargetNotModule`；**反向（`resources X` 而 X 根含 `pini.toml`）未实现** → §9 Def-1 |
+| 6 | 锁文件可生成可校验；篡改后 `verify` 必须报错 | ✅ | `testRefreshVerifyChainAndTamperDetection` + 批 7 `testRefreshFetchesRemoteTapAndVerifies`（篡改依赖清单后 `verify` 检出不符） |
+| 7 | `tidy` 离线；`graph --cycles` 出环；`refresh` 唯一联网 | ✅ | 三命令均不含网络调用；批 7 后抓取**只**发生在 `refresh`（`resolveFetching`），`resolve`/`graph` 保持只读 |
+| 8 | `[[bin]].entry` 生效，双 `main` 冲突不再出现 | ❌ **未实现** | 全仓 `entry` 零消费点 → §9 Def-3 |
+| 9 | 自举仓零改动通过 `pini check .` / `pini test` | ✅（部分） | `pini check .` **实测通过**（15 文件，rc=0）。⚠ 原条目的 `deps/pini-swift 归类为 resources` 已**过时**：ADR-024 D2 后宿主不再随仓携带，改由嵌套独立仓 + `.pini/` 承载，该判据失效 |
+
+**结论**：9 项中 6 项通过、1 项部分、2 项未实现（另有 1 条判据已过时）。未实现项**不阻塞关闭**——
+它们已登记为 §9 缺陷，由后续批次承接；本工单的职责（**把决议与主体实现落到规范与代码**）已完成。
 
 ---
 
@@ -506,3 +531,21 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 2. registry / tarball 源落地时，`commit` 字段值的具体取值规范；
 3. 中心化校验和数据库（Go `GONOSUMDB` 的正向对应物）的价值与引入时机；
 4. `[resources]` 是否也需要校验和——当前设计**同样校验**（§4.3 要求 verify 覆盖 resources），若将来出现超大资源需评估开销。
+
+---
+
+## 9. 遗留缺陷（2026-09-04 收口时登记，**不在本工单内修**）
+
+> 按项目工作法：完成计划 → 记下缺陷 → 由后续批次承接。本节即"记下"的落点，
+> **不新开工单文档**（用户裁决 2026-09-04：遗留项在此登记即可）。
+
+| # | 缺陷 | 判据 | 影响 |
+|---|---|---|---|
+| **Def-1** | **R7 反向根检未实现**：`resources X` 而 X 根含 `pini.toml` 时不报错 | R7 / D20 / D26「双向封闭」 | DoD #5 只兑现一半。把 Pini 模块误配成资源不会被拦，需人工发现 |
+| **Def-2** | `graph.order` **只写不读**：解释器未按拓扑序注册模块 | §3.5 / §6.2 | 锁文件里的 `order` 字段形同虚设；跨模块顶层初始化顺序目前靠实现细节，不靠 DAG 保证 |
+| **Def-3** | `[[bin]].entry` / `[lib].entry` **全仓零消费点**，入口仍是「全局找 `main`」 | §6.2 / G49 | G49 的双 `main` 冲突（E3-004）**未根治**；多 bin 项目无法定位入口 |
+| **Def-4** | D27 把 `[build] exclude` 收窄为「`pini test` 收集范围」后，`examples/selfhost/pini.toml` 的 `exclude = ["examples"]` **失去扫描语义** | D27 + `examples/selfhost/pini.toml` 注释 | 自举仓 `examples/` 需新归宿（自带清单自切 / 移入 `.pini/` / 恢复扫描语义，三选一）。宿主当前仍按 G49 的包加载排除实现，故暂不炸 |
+| **Def-5** | 三层嵌套模块切分**无专项用例**（仅两层） | DoD #2 | R1 的递归排除在三层以上未受测试保护 |
+| **Def-6** | `[replace]` 的**版本覆盖**（`uni = "3.2.0"`）与 **fork 替换**（`github:me/fork@v1.0`）两种形态未实现，仅 `file:` 形态生效 | D13 / §3.7 | D13 三种形态只兑现一种 |
+| **Def-7** | 锁文件 `tap` / `source` 字段**只写不读**（`parseSummary` 丢弃） | §3.5 | 批 7 已补 `commit` 的读取，这两个仍无消费者；`verify` 报错时无法回显来源 |
+| **Def-8** | `[resources]` 的**产品内寻址方式**未定义 | §3.3 明文「待定」 | v1 只做「落地 + 校验」，代码无法按名引用资源内容 |

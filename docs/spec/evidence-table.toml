@@ -19,10 +19,10 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md"]
-last_refresh = "2026-09-03T01:37+08:00"
+last_refresh = "2026-09-04T09:28+08:00"
 last_sweep = "2026-09-04T09:02:00+08:00"
 dangling_ids = ["E-035", "E-047"]
-refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。；2026-09-03 批（内联 Pini 源码抽离收口）：新增 E-099..E-101——E-099 规模实测（三引号块 23 = PINI 15 + TOML 8，推翻工单原记 819；单行串含换行者 6–40B 均为断言期望值，抽离无收益）、E-100 抽离落地与语义等价（15 fixture，目标 22/22、全量 1144/0）、E-101 H-4 已落地致『解锁 H-4 签名迁移』动因失效（工单末条耦合风险随之过期）。**本次仅新增并现跑重筛 E-099..E-101；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T00:50+08:00 批（证据表清理工单立项）：新增 E-102（表内现状实测：100 条 / 97 条 status 失真 / 65 条 >72h / 61 条零引用 / E-008 悬空）。**本次仅新增并现跑重筛 E-102；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T01:37+08:00 批（证据表自动清扫落地）：新增 E-103——清扫机制挂载提交节拍、首轮 mark-only 实测 65/101、声明态漂移 100 → 0、删除路径经 /tmp 副本实跑验证 101 → 36。**本次仅新增并现跑重筛 E-103；存量条目未重新验证，按其自身 validated_at 判定。**"
+refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。；2026-09-03 批（内联 Pini 源码抽离收口）：新增 E-099..E-101——E-099 规模实测（三引号块 23 = PINI 15 + TOML 8，推翻工单原记 819；单行串含换行者 6–40B 均为断言期望值，抽离无收益）、E-100 抽离落地与语义等价（15 fixture，目标 22/22、全量 1144/0）、E-101 H-4 已落地致『解锁 H-4 签名迁移』动因失效（工单末条耦合风险随之过期）。**本次仅新增并现跑重筛 E-099..E-101；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T00:50+08:00 批（证据表清理工单立项）：新增 E-102（表内现状实测：100 条 / 97 条 status 失真 / 65 条 >72h / 61 条零引用 / E-008 悬空）。**本次仅新增并现跑重筛 E-102；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T01:37+08:00 批（证据表自动清扫落地）：新增 E-103——清扫机制挂载提交节拍、首轮 mark-only 实测 65/101、声明态漂移 100 → 0、删除路径经 /tmp 副本实跑验证 101 → 36。**本次仅新增并现跑重筛 E-103；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T09:28+08:00 批（G52 工单收口 + 批 7 远程 tap）：新增 E-104..E-106——E-104 批 7 落地实测（TapFetcher + 经典 MVS + resources 落地 + commit 真值；全量 1157/112/0，离线全链路），E-105 G52 工单「未完成」为文本未跟上的实测取证与归档代价，E-106 三项未实施条目的全仓核实（entry / graphOrder / resources 根检）。**本次仅新增并现跑重筛 E-104..E-106；存量条目未重新验证，按其自身 validated_at 判定。**"
 
 [[evidence]]
 id = "E-067"
@@ -356,3 +356,30 @@ code_ref = "tools/evidence_sweep.py（--stats / --check / --apply / --hook）；
 validated_at = "2026-09-03T01:37+08:00"
 status = "STALE"
 note = "实测（现跑，非文本计数）：tomllib 解析得 101 条；计算态 FRESH 1 / STALE 35 / PENDING_DELETE 65；声明态漂移 100 条，首轮 --apply 后归 0（status 字段此前从未被执行，其记录的是『写入时有人声称』而非『现在可信』）。首轮为 mark-only：diff 校验仅 200 行 status + 2 行 meta（last_sweep、dangling_ids），assertion / code_ref / note 零改动。删除路径用 /tmp 副本 + --force 实跑：101 → 36，并报告 E-035×1（docs/issue-unicode-char-predicates-2026-08-29.md:41）与 E-047×3（docs/spec/pini-landing-plan-v048.md:45/46/87）将悬空、记入 meta.dangling_ids；仓内表未受影响。节流路径（swept 0:04:00 ago）与触发路径（副本 101 → 36）均已实跑。当前全仓悬空引用为 0：E-008 的两条废弃指令（pini-landing-plan-v048.md 旧 46/87 行）已删，工单自身对 ID 的讨论经 meta.scan_exclude 排除于扫描之外。教训（三轮内自犯三次）：在提交文档里写裸的未分配编号会自注册成伪引用，写作时用 E-NNN 占位符表述格式。"
+
+[[evidence]]
+id = "E-104"
+assertion = "批 7 已落地：github: / git: 远程 tap 由 TapFetcher 经 git 子进程抓取；MVS 为经典形态（tag 候选取满足全部约束的最小版本）；resources 由 refresh 落地到 .pini/resources/<name>/；锁文件 commit 成为真实来源定位符（不再恒为 -）"
+spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 7 节验收记录；docs/spec/pini-spec-v0.md §2.5 版本与命令"
+code_ref = "Sources/PiniCore/Module/TapFetcher.swift（expand / availableVersions / selectVersion / materialize / headCommit / runGit）；Sources/PiniCore/Module/ModuleToolchain.swift（FetchSession / ensureMaterialized / reconcileSelection / resolveFetching / refresh）；Tests/PiniTests/ModuleToolchainTests/TapFetcherTests.swift"
+validated_at = "2026-09-04T09:28+08:00"
+status = "FRESH"
+note = "实测：swift test --disable-sandbox --scratch-path /tmp/pini-build 全量 1157 执行 / 112 跳过 / 0 失败（批 7 前基线 1144，净增 13）。关键设计：git: 协议接受本地路径，故用 tmp 里的真实 git 仓库当远端，ls-remote 到 MVS 到 clone 到 checkout 到 rev-parse 全链路离线跑通，不发网络包。新增用例：refresh 端到端（落地 1.2.0 而非 2.0.0、commit 为 40 位 SHA-1、verify 通过、篡改后检出不符）、resources 落地、传递约束收敛（a 的 ^1.2 压过 root 的 * 回填，收敛到 1.2.0）。既有 testResolveRemoteTapErrorsOutPerDA 已改判为两例——批 6 的 D-A「远程一律报错」收窄为「未落地才报错」。本环境构建必须加 --scratch-path，否则 SwiftPM 卷内 .TemporaryItems 被沙箱拒（换 TMPDIR 无效）"
+
+[[evidence]]
+id = "E-105"
+assertion = "G52 工单的「未完成」是文本未跟上而非实现缺失：决议 R1–R8 / D1–D28、三处规范登记与宿主实现（批 1 / 批 6）均已交付；2026-09-04 收口并归档，遗留 8 项缺陷登记于其第 9 节"
+spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 6 节落点 / 第 7 节验收记录 / 第 9 节遗留"
+code_ref = "docs/spec/pini-spec-v0.md:281（版本与命令）与 :367（G52 决策行）；docs/spec/pini-project-spec.md 第 3/4 节（.gitignore 含 !pini-summary.toml）与第 7 节（tap / require / resources / replace，dependencies 标 Removed、§7.3 版本约束语法）；docs/spec/pini-roadmap-next.md T2 行与 §8.1 批次登记表"
+validated_at = "2026-09-04T09:28+08:00"
+status = "FRESH"
+note = "实测（逐项到代码与规范里找落点，不数复选框）：9 条 DoD 中 6 条通过、1 条部分、2 条未实现、1 条判据过时（deps/pini-swift 归类为 resources 因 ADR-024 D2 已失效）。治理教训：同一次会话里两次因 BSD grep 在 BRE 下不支持竖线分隔、静默返回空，误判「spec v0 未登记 G52」与「project-spec 第 7 节未更新 schema」——两者其实都已落地；判定「某项未做」前须先自测查询本身。归档代价：7 处入向引用全改（含 1 处裸文件名），工单自身 6 处相对链接因多一层目录改写为仓库相对路径；改完 check-doc-links 通过（240 引用）"
+
+[[evidence]]
+id = "E-106"
+assertion = "G52 三项实施条目经全仓搜索确认未实现：[[bin]]/[lib] entry 零消费点；graph.order 只写不读（解释器未按拓扑序注册模块）；resources 根检（R7 反向）未拦，双通道只兑现正向"
+spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 9 节 Def-1 / Def-2 / Def-3"
+code_ref = "Sources/ 全仓搜 entry（词边界）除注释外零命中；Sources/ 全仓搜 graphOrder 仅 ModuleToolchain.swift 的锁文件读写（定义 / 生成 / 渲染 / 解析），无解释器消费点；ModuleToolchain.swift 的 resources 循环无「目标根含 pini.toml 即拒」判定"
+validated_at = "2026-09-04T09:28+08:00"
+status = "FRESH"
+note = "全仓核实：entry 除注释外零出现，入口仍为「全局找 main」，故 G49 的双 main 冲突（E3-004）未根治。graphOrder 只在 renderSummary / parseSummary 出现，解释器不消费，锁文件 order 字段形同虚设。双通道仅兑现正向（import 目标不是模块 → ToolchainFailure.importTargetNotModule），反向未实现，DoD 第 5 条只过一半。三者均登记为第 9 节缺陷，按项目工作法不在本批修复"

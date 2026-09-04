@@ -1,7 +1,7 @@
 # 批 6 · 模块工具链落地（G52 批 3：`pini mod` + MVS + `pini-summary.toml` + 校验和）
 
 - 状态：**In progress**（2026-09-02 开工；语义面已由 G52 D1–D23 钉定，本批为宿主实现，无新语义裁决）
-- 依据：`docs/spec/issue/issue-module-system-rules-2026-08-28.md`（字段规范 §3 + 命令规范 §4）、spec §2.5（G52）、`issue-module-batch1-2026-08-31.md`（批 3 推迟项：D-4 隐式别名等）
+- 依据：`docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md`（字段规范 §3 + 命令规范 §4）、spec §2.5（G52）、`issue-module-batch1-2026-08-31.md`（批 3 推迟项：D-4 隐式别名等）
 - 前置：批 5（IO 路径基准）——`deps/` 落地与工具路径解析依赖程序基准语义
 
 ## 1. 范围（IN / OUT）
