@@ -14,6 +14,12 @@
   | **批 9**（收尾补修二） | 2026-09-04 | `[[bin]]/[lib].entry` 入口定位（Def-3）、`graph.order` 定为导出视图 + 三层链钉子（Def-2）、`examples/` R1 自切（Def-4）、`versionComponents` 剥 `v`（Def-9）、扫描策略按来源划分（Def-11）、锁文件取边规则（Def-12）、资源寻址 v1 不提供（Def-8）——**§9 全部闭环** |
 
   **无遗留**：原登记的 12 项缺陷（§9 Def-1..Def-12）全部处置完毕（修复 / 定性更正 / 明确不提供）。
+
+  **批 1 裁决收编（2026-09-04 自 `issue-module-batch1-2026-08-31.md` 合并，该工单随后删除）**：
+  - **D-1 块头名 = 当前文件名**（去 `.pini` 后缀，解析器校验一致；export 对称）。理由：原 `[import|import]` 把保留关键字 `import` 放进标签位，照原样实现必然与关键字保留冲突。
+  - **D-2 静态互斥**（别名 vs 本地符号）：① `别名.符号`（base 为已登记 import 别名）只走跨模块通道，**永不解析本地成员**；② 本地顶级符号/局部变量/参数与别名同名 → E3 重声明域报错；③ 别名不占运行时值命名空间，冲突检查在静态声明登记期；④ 类型位置 `别名.类型名` 同规则。三候选中「遮蔽式」否决（歧义随作用域变化，不可静态判定）、「顺序式」否决（静默遮蔽）。
+  - **D-4 隐式别名注入**（`_别名 = path`）推迟批 3 → 已于批 6 落地（见 `docs/spec/issue/archive/issue-d4-deferred-defects-2026-09-02.md`）。
+  - **实现备注（实测教训）**：① `loadGraph` 递归预载全图，环检测**先于**缓存（缓存不得豁免环路径）；② canonical 必须**绝对化**（相对路径下 standardizingPath 不解析 `..`，链比较失明）；③ `parseModule` 将 importDecl 路由进 `module.imports` 侧表，加载器须单独收集（初版仅收 declarations 导致子模块依赖静默丢失）；④ 跨模块签名类型校验批 1b 为不透明处理，深化随批 3。
 - 关联：
   - `docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`（**R5–R8**：点目录规则、`.pini/` 命名空间、resources 落地与检查、文件命名）
   - G49（清单 schema 单一 `[package]`、`[build] exclude`、`pini test` 收集单位 = 模块）
