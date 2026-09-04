@@ -296,8 +296,14 @@ return parts.isEmpty ? nil : parts
  // spec 在入队时按 **requirer 自己的清单**解析（平表 → 其 [tap] default，具名子表 → 对应 tap；
  // D11：缺 [tap] 即报错，带 requirer 信息）。
  var pending: [(name: String, from: String, constraint: String?, spec: String, tap: String)] = []
- var sourceByName: [String: String] = [:] // 首次落地时的来源（写进 summary）
+ // 写进 summary 的「谁声明了这个依赖」。G52 §9 Def-12：此前每条边都覆写，
+ // 多 requirer 时取到的是**最后遍历到的**边——遍历是 LIFO（`popLast`），
+ // 「最后遍历到」=「最先入队」，与「离根最近」恰好相反，且遍历策略一改（DFS→BFS）
+ // 锁文件就变 ⇒ 不可复现。
+ var sourceByName: [String: String] = [:]
  var tapNameByName: [String: String] = [:]
+ /// 上面两个字段取自哪条边（requirer 名），用于实现定序规则。
+ var sourceRequirerByName: [String: String] = [:]
  func enqueueDeps(of m: ModuleManifest, from: String) throws {
  let defaultSpec = m.taps["default"]
  for (n, c) in m.require.sorted(by: { $0.key < $1.key }) {
@@ -365,8 +371,16 @@ return parts.isEmpty ? nil : parts
         break // 只换版本，来源不变
       }
     }
-    sourceByName[name] = spec
-    tapNameByName[name] = tap
+    // Def-12 定序规则：**requirer 字典序最小者胜出**——`<root>` 的 `<`(0x3C) 小于任何
+    // 字母，故主模块的声明优先于任何依赖的声明；同为依赖时取字典序最小，任意但稳定。
+    // 选 requirer 而非「首次落地」：后者随遍历策略（LIFO/BFS）改变而改变，锁文件会漂移。
+    if let prev = sourceRequirerByName[name], prev <= from {
+      // 保留已有（更靠前的 requirer）——约束与 imported-by 仍逐边入账，不受影响。
+    } else {
+      sourceRequirerByName[name] = from
+      sourceByName[name] = spec
+      tapNameByName[name] = tap
+    }
     // 抓取（或复核已选版本）——约束可能在后续 requirer 出现后变严，故每次经过都要复核。
     try ensureMaterialized(name: name, spec: spec, dir: depDir,
                            constraints: (constraints[name] ?? []).map(\.0),

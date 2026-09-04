@@ -162,6 +162,83 @@ final class ModuleToolchainTests: XCTestCase {
  }
  }
 
+ /// 意图：Def-12——多 requirer 时锁文件的 `tap` / `source` 必须有**确定**规则：
+ /// requirer 字典序最小者胜出（`<root>` 的 `<`(0x3C) 小于任何字母 ⇒ 主模块声明优先）。
+ /// 反例（修复前）：每条边都覆写 ⇒ 取到「最后遍历到的」边；而遍历是 LIFO（`popLast`），
+ /// 「最后遍历到」实为「最先入队」，与「离根最近」恰好相反，且遍历策略一改锁文件就漂。
+ /// 本夹具里 `text` 由 `<root>`（tap `vendor`）与 `uni`（tap `default`）共同 require，
+ /// 两条边的 tap 名不同 ⇒ 恰好能区分两种规则。
+ func testSummarySourcePrefersLexicographicallyFirstRequirer() throws {
+ // ⚠ 夹具形状是本测试的**判据本身**，改形状即失去区分力：
+ // 旧规则（每边覆写 ⇒ 最后写入者胜）在 LIFO + 升序遍历下实际等价于
+ // 「**最浅** requirer 胜出」（最先入队的边最后才被 pop 到）；新规则是
+ // 「**字典序最小** requirer 胜出」。两者只有在「浅 requirer 的名字字典序更大」时才分岔，
+ // 故令浅层为 `z`、深层为 `a`（a 是 z 的依赖），二者共同 require `leaf`。
+ let (root, cleanup) = try makeDepthFixture()
+ defer { cleanup() }
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: root))
+ let resolution = try ModuleToolchain.resolve(rootDir: root, manifest: manifest)
+ let leaf = try XCTUnwrap(resolution.modules.first { $0.name == "leaf" })
+
+ XCTAssertEqual(Set(leaf.importedBy), ["a", "z"], "两个 requirer 都要入账")
+ XCTAssertEqual(leaf.tapName, "ta",
+ "requirer 字典序最小者胜出（`a` < `z`）；旧规则会取到浅层的 `tz`")
+ }
+
+ /// `z`（浅）与 `a`（深，`z` 的依赖）共同 require `leaf`，且两条边来自**不同 tap**。
+ private func makeDepthFixture() throws -> (root: String, cleanup: () -> Void) {
+ let base = NSTemporaryDirectory() + "pini_b9_\(UUID().uuidString)"
+ let fm = FileManager.default
+ func mkdir(_ p: String) throws { try fm.createDirectory(atPath: p, withIntermediateDirectories: true) }
+ for d in ["z", "a", "leaf"] { try mkdir(base + "/app/deps/" + d) }
+
+ try """
+ [package]
+ name = "app"
+
+ [tap]
+ vendor = "file:../vendor/<name>"
+
+ [require.vendor]
+ z = "*"
+ """.write(toFile: base + "/app/pini.toml", atomically: true, encoding: .utf8)
+
+ try """
+ [package]
+ name = "z"
+
+ [tap]
+ tz = "file:../vendor/<name>"
+ tza = "file:../vendor/<name>"
+
+ [require.tz]
+ leaf = "*"
+
+ [require.tza]
+ a = "*"
+ """.write(toFile: base + "/app/deps/z/pini.toml", atomically: true, encoding: .utf8)
+
+ try """
+ [package]
+ name = "a"
+
+ [tap]
+ ta = "file:../vendor/<name>"
+
+ [require.ta]
+ leaf = "*"
+ """.write(toFile: base + "/app/deps/a/pini.toml", atomically: true, encoding: .utf8)
+
+ try """
+ [package]
+ name = "leaf"
+ version = "1.0.0"
+ """.write(toFile: base + "/app/deps/leaf/pini.toml", atomically: true, encoding: .utf8)
+
+ return (base + "/app", { try? fm.removeItem(atPath: base) })
+ }
+
  func testResolveUnsatisfiableConstraintThrows() throws {
  let (root, cleanup) = try makeThreeModuleFixture()
  defer { cleanup() }
