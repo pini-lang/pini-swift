@@ -24,6 +24,9 @@ public enum ModuleToolchain {
  case remoteTapNotMaterialized(name: String, tap: String)
  /// 资源未落地（批 7 前是静默跳过，现改为显式报错）。
  case resourceNotMaterialized(name: String, path: String)
+ /// **R7 根检（D20/D26 反向）**：`resources X` 而 X 的根含 `pini.toml` ⇒ 它是 Pini 模块，
+ /// 应改用 `[require]`。只查根、不查深层。
+ case resourceTargetIsModule(name: String, path: String)
  /// 版本求解在限定迭代内未收敛（依赖的约束集随其版本而变）。
  case resolutionDidNotConverge(limit: Int)
  /// 约束不可满足：可用版本不满足某个（或多个）requirer 的约束。
@@ -362,6 +365,11 @@ public enum ModuleToolchain {
  }
  throw ToolchainError.resourceNotMaterialized(name: entry.name, path: dir)
  }
+ // R7 根检（D20/D26）——双通道分区的另一半：写错一侧即报错并指引到另一侧。
+ // **只查根**：`.pini/resources/` 不被扫描，深层清单物理上无害（R7 明定不查深层）。
+ if FileManager.default.fileExists(atPath: dir + "/pini.toml") {
+ throw ToolchainError.resourceTargetIsModule(name: entry.name, path: dir)
+ }
  resolvedResources.append(ResolvedResource(
  name: entry.name,
  version: entry.spec,
@@ -540,13 +548,13 @@ public enum ModuleToolchain {
  public struct Summary {
  public var toolchain: String = ""
  public var generated: String = ""
- /// ⚠ 批 7 补齐 `commit`：此前锁文件写了它、解析时却丢弃——批 7 前 `commit` 恒为 `"-"`，
- /// 故无人察觉；现在它是真实的来源定位符（G52 D12），读不回来等于该字段形同虚设。
- /// （`tap` / `source` 仍是只写不读，登记为遗留缺陷，不在本批范围。）
+ /// ⚠ 批 7 补齐 `commit` / `tap` / `source`：此前锁文件写了这三项、解析时全部丢弃——
+ /// 批 7 前 `commit` 恒为 `"-"`，故无人察觉；现在它是真实的来源定位符（G52 D12），
+ /// 读不回来等于字段形同虚设。`tap` / `source` 回读后供 `verify` 报错时回显来源。
  public var modules: [(name: String, version: String, sum: String, manifestSum: String, path: String,
- importedBy: [String], commit: String)] = []
+ importedBy: [String], commit: String, tap: String, source: String)] = []
  public var resources: [(name: String, version: String, sum: String, path: String,
- commit: String)] = []
+ commit: String, tap: String, source: String)] = []
  public var graphOrder: [String] = []
  }
 
@@ -559,11 +567,11 @@ public enum ModuleToolchain {
  s.modules.append((e["name"] ?? "", e["version"] ?? "", e["sum"] ?? "",
  e["manifest_sum"] ?? "", e["path"] ?? "",
  MiniTOML.parseArray(e["imported-by"] ?? "[]"),
- e["commit"] ?? "-"))
+ e["commit"] ?? "-", e["tap"] ?? "", e["source"] ?? ""))
  }
  for e in doc.arrayTables["resource"] ?? [] {
  s.resources.append((e["name"] ?? "", e["version"] ?? "", e["sum"] ?? "", e["path"] ?? "",
- e["commit"] ?? "-"))
+ e["commit"] ?? "-", e["tap"] ?? "", e["source"] ?? ""))
  }
  s.graphOrder = MiniTOML.parseArray(doc.plain("graph")["order"] ?? "[]")
  return s
@@ -588,6 +596,9 @@ extension ModuleToolchain.ToolchainError: LocalizedError {
  + "抓取只发生在 `pini mod refresh`；其余命令（含 graph）只读已落地的依赖"
  case .resourceNotMaterialized(let name, let path):
  return "资源 '\(name)' 尚未落地到 \(path)（file: 通道需手工放置，远程通道由 `pini mod refresh` 抓取）"
+ case .resourceTargetIsModule(let name, let path):
+ return "资源 '\(name)'（\(path)）的根含 pini.toml —— 它是 **Pini 模块**，应改用 [require]"
+ + "（G52 R7/D20：双通道以「有无 pini.toml」为判据，双向强制；本检查只看目标根，不查深层）"
  case .resolutionDidNotConverge(let limit):
  return "版本求解在 \(limit) 轮迭代内未收敛：依赖的约束随其版本变化，可能构成互相抬升的约束环。"
  + "请钉住其中一方的版本（[replace] 或精确约束）后重试"
@@ -773,7 +784,8 @@ extension ModuleToolchain {
  let dir = (m.path.hasPrefix("/") ? m.path : rootDir + "/" + m.path)
  let actualSum = treeSum(dir)
  if actualSum != String(m.sum.dropPrefix("sha256:")) {
- mismatches.append("模块 '\(m.name)' 内容与锁文件不符（\(m.path)）——可能被篡改或过期")
+ mismatches.append("模块 '\(m.name)' 内容与锁文件不符（\(m.path)）——可能被篡改或过期"
+ + Self.originSuffix(m.source))
  }
  let manifestPath = dir + "/pini.toml"
  let actualManifest = fileSum(manifestPath)
@@ -785,11 +797,16 @@ extension ModuleToolchain {
  let dir = (r.path.hasPrefix("/") ? r.path : rootDir + "/" + r.path)
  let actualSum = treeSum(dir)
  if actualSum != String(r.sum.dropPrefix("sha256:")) {
- mismatches.append("资源 '\(r.name)' 内容与锁文件不符（\(r.path)）")
+ mismatches.append("资源 '\(r.name)' 内容与锁文件不符（\(r.path)）" + Self.originSuffix(r.source))
  }
  }
  return VerifyReport(checked: summary.modules.count + summary.resources.count,
  mismatches: mismatches)
+ }
+
+ /// 报错里回显来源——锁文件的 `source` 此前只写不读，篡改时无法判断该去哪里核对。
+ private static func originSuffix(_ source: String) -> String {
+ source.isEmpty ? "" : "；来源 \(source)"
  }
 
  // MARK: graph（依赖图展示与环诊断）

@@ -307,4 +307,57 @@ final class TapFetcherTests: XCTestCase {
  XCTAssertEqual(versions["a"], "1.0.0")
  XCTAssertTrue(try ModuleToolchain.verify(rootDir: app).isOK)
  }
+
+ // MARK: - 收尾补修（Def-1 / Def-7）
+
+ /// **Def-1 · R7 根检（D20/D26 反向）**：`resources X` 而 X 的根含 `pini.toml`
+ /// ⇒ 它是 Pini 模块，应改用 `[require]`。此前双通道只兑现正向，这一半缺失。
+ func testResourceTargetThatIsAModuleIsRejected() throws {
+ let base = NSTemporaryDirectory() + "pini_b7_r7_\(UUID().uuidString)"
+ defer { try? FileManager.default.removeItem(atPath: base) }
+ // 目标**是**一个 Pini 模块（根有 pini.toml），却写进了 [resources]
+ try makeGitRepo(at: base + "/remote/demo", moduleName: "demo", versions: ["1.0.0"])
+ let app = base + "/app"
+ try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+ try "[package]\nname = \"app\"\n\n[tap]\nlocal = \"git:\(base)/remote/<name>\"\n\n[resources.local]\ndemo = \"1.0\"\n"
+ .write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+ XCTAssertThrowsError(try ModuleToolchain.refresh(rootDir: app, manifest: manifest,
+ toolchainVersion: "t")) { error in
+ guard case ModuleToolchain.ToolchainError.resourceTargetIsModule(let name, _) = error else {
+ return XCTFail("应为 resourceTargetIsModule（R7 根检），实际：\(error)")
+ }
+ XCTAssertEqual(name, "demo")
+ }
+ }
+
+ /// **Def-7 · 锁文件 `tap` / `source` 回读**：此前 `parseSummary` 丢弃这两个字段（只写不读），
+ /// 故 `verify` 报错时无法回显来源——篡改发生时不知道该去哪里核对。
+ func testSummaryRoundTripsTapSourceAndVerifyEchoesOrigin() throws {
+ let base = NSTemporaryDirectory() + "pini_b7_src_\(UUID().uuidString)"
+ defer { try? FileManager.default.removeItem(atPath: base) }
+ try makeGitRepo(at: base + "/remote/demo", moduleName: "demo", versions: ["1.0.0", "1.2.0"])
+ let app = base + "/app"
+ try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+ try "[package]\nname = \"app\"\n\n[tap]\nlocal = \"git:\(base)/remote/<name>\"\n\n[require.local]\ndemo = \">=1.2\"\n"
+ .write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+ let summary = try ModuleToolchain.refresh(rootDir: app, manifest: manifest,
+ toolchainVersion: "pini 0.51.0 (spec 0.1)")
+
+ let mod = try XCTUnwrap(ModuleToolchain.parseSummary(summary).modules.first)
+ XCTAssertEqual(mod.tap, "local", "tap 应可回读")
+ XCTAssertEqual(mod.source, base + "/remote/demo",
+ "source 应可回读，且 <name> 占位符已替换为模块名")
+
+ let target = app + "/deps/demo/pini.toml"
+ let text = try String(contentsOfFile: target, encoding: .utf8)
+ try (text + "\n# tampered\n").write(toFile: target, atomically: true, encoding: .utf8)
+ let bad = try ModuleToolchain.verify(rootDir: app)
+ XCTAssertFalse(bad.isOK)
+ XCTAssertTrue(bad.mismatches.contains { $0.contains("来源 \(base)/remote/demo") },
+ "verify 报错应回显来源，实际：\(bad.mismatches)")
+ }
 }
