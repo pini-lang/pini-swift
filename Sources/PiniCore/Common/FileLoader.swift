@@ -215,13 +215,18 @@ public struct ModuleManifest: Equatable {
  /// G49（issue-tdd-module-blockers-2026-08-28）：`[build] exclude`——模块包加载排除路径
  /// （相对模块根；目录前缀匹配；`loadDirectory` 统一生效，`pini test` 显式路径可加回）。
  public let buildExclude: [String]
+ /// G52 §9 Def-3：`[[bin]].entry` / `[lib].entry` 声明的入口文件（相对模块根）。
+ ///
+ /// 声明后，解释器要求 `main` 必须定义在其中之一（详见 `Interpreter.entryFiles`）。
+ /// **空数组 = 未声明** ⇒ 沿用「全局找 `main`」——`main` 是默认入口，本字段只收窄不替换。
+ public let entryPoints: [String]
 
  public init(name: String, version: String? = nil,
  taps: [String: String] = [:],
  require: [String: String] = [:], requireTaps: [String: [String: String]] = [:],
  resources: [String: String] = [:], resourcesTaps: [String: [String: String]] = [:],
  replaces: [String: String] = [:],
- ffi: FFIConfig? = nil, buildExclude: [String] = []) {
+ ffi: FFIConfig? = nil, buildExclude: [String] = [], entryPoints: [String] = []) {
  self.name = name
  self.version = version
  self.taps = taps
@@ -232,6 +237,7 @@ public struct ModuleManifest: Equatable {
  self.replaces = replaces
  self.ffi = ffi
  self.buildExclude = buildExclude
+ self.entryPoints = entryPoints
  }
 }
 
@@ -296,13 +302,22 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
  }
  let buildExclude = MiniTOML.parseArray(doc.plain("build")["exclude"] ?? "[]")
 
+ // Def-3：入口文件。`[[bin]]` 是数组表（可多个可执行目标），`[lib]` 是平表（至多一个）。
+ // 只取 `entry`，按出现顺序去重；`[[bin]]` 的 `name` 目前无消费者（v1 入口函数名恒为 `main`），
+ // 不因解析而默认它有意义。
+ var entryPoints: [String] = []
+ for entry in doc.arrayTables["bin"] ?? [] {
+ if let e = entry["entry"], !e.isEmpty, !entryPoints.contains(e) { entryPoints.append(e) }
+ }
+ if let e = doc.plain("lib")["entry"], !e.isEmpty, !entryPoints.contains(e) { entryPoints.append(e) }
+
  return ModuleManifest(
  name: n, version: pkg["version"],
  taps: taps,
  require: doc.plain("require"), requireTaps: doc.subTables("require"),
  resources: doc.plain("resources"), resourcesTaps: doc.subTables("resources"),
  replaces: doc.plain("replace"),
- ffi: ffi, buildExclude: buildExclude)
+ ffi: ffi, buildExclude: buildExclude, entryPoints: entryPoints)
 }
 
 /// 解析 TOML 内联数组字面量 `["a", "b"]` / `[ "a" ]` → 字符串数组；非数组原样返回单元素。

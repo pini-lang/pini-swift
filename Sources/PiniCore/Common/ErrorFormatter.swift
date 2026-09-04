@@ -280,6 +280,7 @@ public enum ErrorFormatter {
  case .undefinedNativeFunction(let name, let available, _): return "未注册的原生函数 '\(name)'（`[名称|foreign]` 声明的 C 函数须在原生函数表内）；可用：\(available.isEmpty ? "（无）" : available.joined(separator: ", "))"
  case .libraryNotFound(let library, let searched, _): return "FFI 库 '\(library)' 未找到（已搜索：\(searched.isEmpty ? "（无搜索路径）" : searched.joined(separator: ", "))）"
  case .symbolNotFound(let library, let symbol, _): return "FFI 库 '\(library)' 中未找到符号 '\(symbol)'"
+ case .entryMainMismatch(let entries, let declaredIn, _): return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，但 main 定义在 \(declaredIn)"
  }
  }
 

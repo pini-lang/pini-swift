@@ -31,6 +31,10 @@ public enum RuntimeError: Error, CustomStringConvertible {
  case indexOutOfRange(location: SourceLocation)
  case invalidOperation(reason: String, location: SourceLocation)
  case mainNotFound(location: SourceLocation)
+ /// G52 §9 Def-3：清单声明了 `[[bin]].entry` / `[lib].entry`，但 `main` 不在其中。
+ /// 声明入口即承诺「程序从这里开始」，故 `main` 落在别处是**配置与代码不一致**，
+ /// 不是「随便找一个 main 跑」——静默取全局 main 会让 entry 字段形同虚设。
+ case entryMainMismatch(entries: [String], declaredIn: String, location: SourceLocation)
  case notCallable(location: SourceLocation)
  case arityMismatch(expected: Int, got: Int, location: SourceLocation)
  /// 字段级 type-private 违规（P4.5）：访问了以 `_` 前缀声明的字段，
@@ -69,6 +73,9 @@ public enum RuntimeError: Error, CustomStringConvertible {
  return "无效操作: \(reason) at \(loc)"
  case .mainNotFound(let loc):
  return "未找到 main 函数 at \(loc)"
+ case .entryMainMismatch(let entries, let declaredIn, let loc):
+ return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，"
+ + "但 main 定义在 \(declaredIn)。请修正 entry，或删掉 entry 以回到「全局找 main」默认行为 at \(loc)"
  case .notCallable(let loc):
  return "不可调用 at \(loc)"
  case .arityMismatch(let expected, let got, let loc):
