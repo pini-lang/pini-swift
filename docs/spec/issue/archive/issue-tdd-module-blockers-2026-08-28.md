@@ -101,7 +101,7 @@ Error: 非法的 pini.toml：./pini.toml
 - 最小复现：模块内 `contains|unsafe(hay, needle,) -> (Bool,)` + `|test` 调用即触发；同名函数体改名 `c4_full` 后逐字不变则通过（实证为名字分派问题，非函数体问题）。
 - pini/ 侧 workaround：测试助手改名 `has_substr`。
 - 待决议（host-fix 候选，走独立工单/G 号）：自由函数与成员内建的**名字分派优先级**——用户显式定义的自由函数应优先于按名劫持的成员分支；或至少给出可定位的诊断。
-- **已立案**：登记于 `docs/spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` §宿主收敛待办清单第 4 项（「成员内建名劫持」），不在本工单展开。
+- **已立案**：登记于 `docs/spec/issue/archive/issue-spec-impl-syntax-audit-2026-08-28.md` §宿主收敛待办清单第 4 项（「成员内建名劫持」），不在本工单展开。
 
 ## 5. 验收口径（DoD）
 

@@ -8,6 +8,7 @@
 > 批 7（远程 tap）当时未登记，此处一并补上；批 8 为 G52 工单的收尾补修。
 
 ### Added
+- **字符谓词 LLVM 后端（批 C1）**：`is_ascii_digit` 实现（C 字节串首字节判 ASCII [0-9]，ASCII 域与解释器 grapheme 首字符一致，空串 NUL 自然 false）；`is_letter`/`is_number`/`chars` 显式 unsupported（E6-002——需运行时 Unicode 表 / grapheme 切分，v1 不入 C 字符串后端；对齐 moduleRoot/argv 惯例）——lexer-gap-closure §6「LLVM 端四内建」挂账以此收口
 - **远程 tap 抓取**（G52 批 7）：`TapFetcher` 支持 `github:<org>` / `git:<url>` / `file:<path>`（`git:` 接受本地路径 ⇒ 整条链路可离线端到端测试）；`git clone`/`fetch`+`checkout` + `rev-parse` 取 `commit`
 - **经典 MVS**：候选来自远端 tag，取满足全部约束的**最小**版本（`^1.0` → `1.0.0`，不是 `1.2.3`）；全约束为 `*` 时按 D21 回填取最新
 - **有界不动点迭代**：依赖的版本决定其自身的 `[require]`，故约束集随选择而变；上限 8 轮，不收敛即报错而非静默取某一轮

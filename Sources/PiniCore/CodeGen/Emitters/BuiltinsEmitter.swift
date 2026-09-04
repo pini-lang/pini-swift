@@ -36,6 +36,29 @@ extension IRGenerator {
  return IRValue(llvmType: "i32", ssaName: res)
  }
 
+ /// 批 C1：`is_ascii_digit(value: String,) -> Bool` 的 LLVM 发射。
+ /// 解释器语义（ADR-019 D4）= 首 grapheme 是否 ASCII [0-9]，空串 → false。
+ /// C 字符串后端取**首字节**判 0x30..0x39：ASCII 域内与 grapheme 首字符一致；
+ /// 空串首字节为 NUL（0x00），自然落入 false，无需特判。
+ func generateBuiltinIsAsciiDigit(_ arguments: [CallArgument]) throws -> IRValue {
+ guard arguments.count == 1 else {
+ throw IRGenError.unsupportedExpression(kind:"is_ascii_digit requires 1 arg", sl())
+ }
+ let val = try generateExpression(arguments[0].expression)
+ guard val.llvmType == "ptr" else {
+ throw IRGenError.unsupportedExpression(kind:"is_ascii_digit expects String (ptr), got \(val.llvmType)", sl())
+ }
+ let byte = "%t\(nextTemp())"
+ emitLine(builder.fmtLoad(name: byte, type: "i8", ptr: val.ssaName))
+ let ge = "%t\(nextTemp())"
+ emitLine(" \(ge) = icmp uge i8 \(byte), 48")
+ let le = "%t\(nextTemp())"
+ emitLine(" \(le) = icmp ule i8 \(byte), 57")
+ let res = "%t\(nextTemp())"
+ emitLine(" \(res) = and i1 \(ge), \(le)")
+ return IRValue(llvmType: "i1", ssaName: res)
+ }
+
  func generateBuiltinReadLine() throws -> IRValue {
  let bufSize = 256
  let buf = "%t\(nextTemp())"

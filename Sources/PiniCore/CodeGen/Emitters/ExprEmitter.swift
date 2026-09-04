@@ -666,6 +666,18 @@ extension IRGenerator {
  return try generateBuiltinAssert(arguments)
  }
 
+ // 批 C1（lexer-gap-closure §6 收口）：字符谓词 is_ascii_digit 走 C 字节串实现
+ //（ASCII [0-9] 首字节判定，与解释器 grapheme 首字符在 ASCII 域一致）。
+ if funcName == "is_ascii_digit" {
+ return try generateBuiltinIsAsciiDigit(arguments)
+ }
+ // is_letter（\p{L}）/ is_number（numeric property）/ chars（grapheme 切分）
+ // 需运行时 Unicode 表——C 字符串后端 v1 显式 unsupported（对齐 moduleRoot/argv
+ // 惯例，不给静默错误；解释器可用）。ADR-019 D4 挂账以此形态收口。
+ if funcName == "is_letter" || funcName == "is_number" || funcName == "chars" {
+ throw IRGenError.unsupportedExpression(kind:"\(funcName) 需 Unicode 运行时语义，LLVM 后端 v1 unsupported（解释器可用）", sl())
+ }
+
  if funcName == "len" {
  return try generateLenCall(arguments: arguments)
  }

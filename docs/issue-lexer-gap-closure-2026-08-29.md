@@ -50,7 +50,7 @@ G50 收敛后 `diff_tokens` 首次全绿，但**全绿处于门禁盲区**：`le
 - [ ] **last/pop 下沉**：前置 `.null` 表达式语义裁决（G30 张力）；
 - [ ] **插值体内嵌套字符串**：括号深度计数不跳过内层字符串（对齐宿主 `scanInterpolationExpression`，语料未覆盖）；
 - [ ] **缩进栈数组化**（可选）：`lexer.pini` 字符串编码栈 → Array 栈（append/pop/slice 已就绪）；
-- [ ] **G53 可变数组机制**（post-bootstrap + bench）；**LLVM 端四内建**（is_letter/is_ascii_digit/is_number/chars）；
+- [ ] **G53 可变数组机制**（post-bootstrap + bench）；~~**LLVM 端四内建**~~ **已收口（2026-09-04 批 C1）**：`is_ascii_digit` 已实现（C 字节串首字节判 ASCII [0-9]，编译执行实测通过）；`is_letter`/`is_number`/`chars` 需运行时 Unicode 表 / grapheme 切分，LLVM 端**显式 unsupported**（E6-002，对齐 moduleRoot/argv 惯例——不给静默错误）；
 - [ ] **`exit(code)` 内建**：进程退出码语义（ADR-021 D5 登记的已知限制闭环）；
 - [ ] **`is_digit` / `is_space` 字符谓词**（原 `issue-lexer-gaps-2026-08-28` P3-A，2026-09-04 该工单删除后残余移此）：宿主内建（`Character.isDigit`/`isWhitespace`），替代不可行的字符串大小比较。
 

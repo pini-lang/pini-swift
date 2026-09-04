@@ -6,7 +6,7 @@
   - **R-d**：已终结（草稿不入库，见 §三 2026-09-04 注）；
   - **R-b**（A6 默认参数 / A7 单类型返回糖 / A10 限定 case 解构 / A11 枚举扩展约束四项特性提案）：
     **用户裁决不另登记 proposal**——四项意图仅存于本归档件，将来若需立项以本稿为起点；
-  - **R-c**（名劫持缺陷）：登记于 `docs/spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md`
+  - **R-c**（名劫持缺陷）：登记于 `docs/spec/issue/archive/issue-spec-impl-syntax-audit-2026-08-28.md`
     宿主收敛待办 #4，仍开放。
 - 原承接：`issue-draft-impl-syntax-audit-2026-08-28.md`
   「处置选项（待拍板）」——**该审计工单已于 2026-09-04 内容收编后删除**：A1–A14 概要见本表 §二，

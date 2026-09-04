@@ -1,0 +1,9 @@
+main|func() -> ():
+    if is_ascii_digit("7"):
+        print(1)
+    if is_ascii_digit("x"):
+        print(2)
+    if is_ascii_digit(""):
+        print(3)
+    print(9)
+    return
