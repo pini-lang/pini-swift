@@ -1,0 +1,9 @@
+; 通配元素类型放行（[Any] 不拦）+ 无标注累积器语义零变更（D-β 契约保护）
+main|func() -> ():
+    var zs: [Any] = [1, "a"]
+    var ys = []
+    ys = ys.append(1)
+    ys = ys.append("b")
+    print(zs,)
+    print(ys,)
+    return

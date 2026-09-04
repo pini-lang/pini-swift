@@ -1,0 +1,6 @@
+; append 合规实参通过（ADR-020 契约不变：返回新数组须接收）
+main|func() -> ():
+    var xs: [I32] = []
+    xs = xs.append(7)
+    print(xs,)
+    return
