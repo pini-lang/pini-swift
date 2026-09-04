@@ -14,7 +14,7 @@ Accepted（2026-09-01 用户需求提出；2026-09-02 D-1~D-8 裁决并落地）
 
 **用户需求（2026-09-01）**：「括号内文法有变动：`func(a = 1, b = 2)`。实参用等号，顺便要展开想想词典如何写。」
 
-**取证（`docs/spec/issue/proposal-paren-equals-binding-2026-09-01.md` §2）**：
+**取证（`docs/spec/issue/archive/proposal-paren-equals-binding-2026-09-01.md` §2）**：
 
 1. **这不是纯新增**：`f(a: 1)` 带标签调用**当前可用**（实测输出 3）；`f(a = 1)` 当前是 **E2-001 解析错误**。→ 是**记法切换**。
 2. **`=` 在 Pini 里已是「值绑定」记号**：spec §A 产生式 `IDENT '=' expression; (* 默认参数 *)`。

@@ -26,7 +26,7 @@
 | # | 行为 | 影响 | 当前规避方式 |
 |---|---|---|---|
 | G1 | foreign 符号为**文件级作用域**，跨文件不可见（报错 E5-017 undefined function） | 多文件模块里 raw 调用必须与 `[X\|foreign]` 声明同文件 | 绑定层与消费方同文件，或单文件示例 |
-| G2 | `load` 返回动态 `Any`；仅在**非 unsafe 上下文**（main / `\|test` 块）用 `unsafe load(p)` 才能显式标注收回具体标量；`\|unsafe` 函数体内 `load` 恒为 `Any`，无法转具体类型 | 「读回指针值」的演示只能放在 main / `\|test`，unsafe 封装函数只能返回 `*U8`（由调用方读取） | 值读取移出 unsafe 函数体 |
+| G2 | `load` 返回动态 `Any`；仅在**非 unsafe 上下文**（main / `\|test` 块）用 `unsafe load(p)` 才能显式标注收回具体标量；`\|unsafe` 函数体内 `load` 恒为 `Any`，无法转具体类型 **〔时间线注记 2026-09-04〕本行为描述写于 ADR-015 Phase 2a 落地之前，已过时：现 load 按指针元素类型编解码返回类型化值（spec §2.7），实测 main 内裸 `load(p)` 不报 E4-001、正常解码（E-111）；§2.7 与本表 G2 语义以 spec 为准** | 「读回指针值」的演示只能放在 main / `\|test`，unsafe 封装函数只能返回 `*U8`（由调用方读取） | 值读取移出 unsafe 函数体 |
 | G3 | `==` 仅对 **I32** 可靠；U64/U8/指针比较在 `assert` 参数内报类型错，仅在 `if` 条件内对 foreign 直接返回值可用 | `\|test` 断言只能对 I32 返回（atoi/strcmp）用干净 `assert`，U64/U8 结果改用 `main` 经 golden 输出验证 | `if/else + assert(Bool)` 或 golden 比对 |
 | G4 | foreign C 调用（如 `puts`）直写真实 stdout，绕过解释器 `outputSink` | 进程内测试捕获不到该输出行，`pini run` 终端可见 | golden 测试排除 puts 行并在注释说明 |
 
@@ -47,8 +47,10 @@
 - **归属**：后端 / 类型系统。
 
 ### P3 — FFI 规范文档补全（spec §2.7）
+
 - **内容**：foreign 文件级作用域（G1）、`load→Any` 语义（G2）、libc 保留名跳过 `[ffi]` 配置、`search_paths` 相对模块目录解析（B2）等，目前散落示例注释，应进入规范正文，避免后人重复踩坑。
 - **归属**：文档 / spec。
+- **〔时间线注记 2026-09-04〕**大部分已被 spec §2.7 覆盖出账：`search_paths` 相对模块目录解析（B2）、解析顺序（shim 白名单 → 裸 C 绑定，即 libc 保留名语义）、`[ffi]` 配置语义均已入正文；G2 的 load 语义描述本身已过时（见上表注记）。**残余唯 G1（foreign 文件级作用域）未入 spec**，P3 收窄为「G1 钉定」。
 
 ### P4 — vendored 库跨平台工程化
 - **内容**：`examples/ffi_module/lib/libffilib.dylib` 为 macOS 专属二进制；CI 需在 Linux 用 `cc -shared -fPIC -o libffilib.so ffilib.c` 重建。建议加构建脚本或纳入 `.gitattributes` 标记二进制，避免 diff 膨胀。
