@@ -8,7 +8,7 @@ Partially Accepted（2026-08-30，自举探针 G-P6/G-P8/G-P2/G-P3 修复批次�
 
 ## Context
 
-自举 parser 阶段（S0–S4）以可执行探针实测出四个同根缺口（`examples/selfhost/docs/host-gaps.md` G-P6/G-P8/G-P2/G-P3，宿主侧落点 `docs/issue-bootstrap-gap-remediation-2026-08-30.md`）：
+自举 parser 阶段（S0–S4）以可执行探针实测出四个同根缺口（`examples/selfhost/docs/host-gaps.md` G-P6/G-P8/G-P2/G-P3，宿主侧落点 `docs/spec/issue/archive/issue-bootstrap-gap-remediation-2026-08-30.md`）：
 
 1. **歧义 case 名无路可走（G-P6）**：`TypeEnvironment.parentEnum(of:)` 以单值字典 `enumCaseToParent[caseName]` 反查父枚举，跨枚举同名 case 时后注册者覆盖前者；解释器预扫描将歧义名排除出全局函数表（迫使限定写法），但 ADR-023 已裁定**不加点式限定形式**——歧义名因此构造无门。实测：E4-005（按错误父枚举校验 arity）、E4-001（expected expr, got int_lit）。
 2. **self 调用类型丢失（G-P8）**：方法体内 `let x = self.f()` 绑定被推成 Any，后续与字面量比较即 E4-001；外部接收者 `a.f()` 保持类型（探针实证）。

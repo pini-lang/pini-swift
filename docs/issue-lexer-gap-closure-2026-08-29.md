@@ -51,4 +51,11 @@ G50 收敛后 `diff_tokens` 首次全绿，但**全绿处于门禁盲区**：`le
 - [ ] **插值体内嵌套字符串**：括号深度计数不跳过内层字符串（对齐宿主 `scanInterpolationExpression`，语料未覆盖）；
 - [ ] **缩进栈数组化**（可选）：`lexer.pini` 字符串编码栈 → Array 栈（append/pop/slice 已就绪）；
 - [ ] **G53 可变数组机制**（post-bootstrap + bench）；**LLVM 端四内建**（is_letter/is_ascii_digit/is_number/chars）；
-- [ ] **`exit(code)` 内建**：进程退出码语义（ADR-021 D5 登记的已知限制闭环）。
+- [ ] **`exit(code)` 内建**：进程退出码语义（ADR-021 D5 登记的已知限制闭环）；
+- [ ] **`is_digit` / `is_space` 字符谓词**（原 `issue-lexer-gaps-2026-08-28` P3-A，2026-09-04 该工单删除后残余移此）：宿主内建（`Character.isDigit`/`isWhitespace`），替代不可行的字符串大小比较。
+
+> **2026-09-04 收编注**：原 `docs/issue-lexer-gaps-2026-08-28.md`（Lexer 缺口总清单）经实测核验后删除——
+> P1-A/B/C 落地为 G45/G46/G47；P2-A/B/D 落地（`sliceBound` 负索引 + 切片）；P2-C/E 经用户 A15 裁决
+> **改判**（越界 = panic，ADR-028 三通道，非「返回 nil」原案）；P3-B 经 ADR-019 字素模型裁决；
+> P2-F（unsafe 单元素直接访问）被 ADR-015/A15 的 unsafe 设计取代，不再挂账。唯一残余即上条 P3-A。
+> 原文见 git 历史。

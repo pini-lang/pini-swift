@@ -34,7 +34,7 @@ let 元素 = unsafe 数组.getUnchecked(5) ; 不安全，越界 UB
 | `.get(i)` 成员方法 | **不存在** | `grep '"get"' Sources/PiniCore/` 零命中 |
 | `.getUnchecked(i)` | **不存在** | 全仓零命中 |
 | `unsafe <expr>` 消耗点 | **已存在且在用**（无需新增语法面） | ADR-020 D6 / ADR-015；`examples/array_basic.pini:23` `print(unsafe m[0]![1]!)`、`examples/collections.pini:18` |
-| P2-F（unsafe 单元素直接访问） | **搁置至 roadmap backlog**，原设想为「底层内建特征默认为集合派发不安全访问」 | `issue-lexer-gaps-2026-08-28.md:43,70` |
+| P2-F（unsafe 单元素直接访问） | **搁置至 roadmap backlog**，原设想为「底层内建特征默认为集合派发不安全访问」 | 原 `issue-lexer-gaps-2026-08-28.md`（2026-09-04 删除，见 git 历史） |
 | 规范现行表述 | G48 越界（读）返回可空 `nil`，「与字典缺失键一致」，调用者显式解包 | spec §2.4.1 行 346 |
 | 语料规模（粗估，待精测） | 26 个文件命中下标形态（含 examples 与测试夹具；grep 为宽松模式，迁移面须逐条实测） | 实测命令见 §5 |
 
