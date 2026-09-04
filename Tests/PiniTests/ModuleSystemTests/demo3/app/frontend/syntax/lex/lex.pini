@@ -1,0 +1,8 @@
+# 距最近的祖先清单**两层**深处（frontend/syntax/lex/）——用于验证 loadDirectory 的
+# 祖先清单回溯是**递归**的：中间层 lex/ 无 pini.toml，须继续向上找到 syntax/ 才判定为
+# 嵌套模块、从 app 包中剔除。
+#
+# ⚠ 本文件不是 syntax 模块的声明依赖（syntax.pini 不引用它）：ModuleDependencyLoader
+# 只扫模块根级 .pini，import 时不会加载它（见 G52 工单 §9 Def-11）。故本文件保持自包含。
+深层辅助|func() -> (I32,):
+    return 7

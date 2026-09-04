@@ -1,0 +1,5 @@
+[syntax|export]
+取值 = 取值
+
+取值|func() -> (I32,):
+    return 10

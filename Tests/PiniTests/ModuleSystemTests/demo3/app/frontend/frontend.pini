@@ -1,0 +1,10 @@
+[frontend|import]
+syntax = "./syntax"
+
+# 与 syntax 模块的同级 public 符号**同名**（取值）——三层命名空间独立的判据：
+# 若任一层被父模块扫入，此处即撞 E1 重复声明；若跨模块裸名串味，结果就不是 110。
+取值|func() -> (I32,):
+    return 100
+
+前端值|func() -> (I32,):
+    return 取值() + syntax.取值()

@@ -1,0 +1,6 @@
+[main|import]
+frontend = "./frontend"
+
+main|func() -> ():
+    print(frontend.前端值())
+    return
