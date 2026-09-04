@@ -1,6 +1,6 @@
 # Issue: Evidence-table cleanup sweep — automated, dual-trigger (2026-09-03)
 
-- Status: **§1.3 ①proposal + ②impact assessment complete; D-1 – D-5 decided by user 2026-09-03; implementation not started**
+- Status: **LANDED — implemented and wired (2026-09-04 verification).** D-1 – D-5 decided by user 2026-09-03; sweep implemented as `tools/evidence_sweep.py` and wired into `hooks/pre-commit` (dual-trigger: doc-change detection + T1/T2 cadence). Verified live: script implements the D-4 two-phase order (delete previous run's `PENDING_DELETE` first, then re-judge) and the D-2 72 h pending threshold (`PENDING_HOURS = 72`); the hook ran during the 2026-09-04 closeout commits ("evidence-sweep … next sweep in …").
 - Proposed by: AI; **D-1 – D-5 adjudicated by user** (D-1 "条数统计以 Python 字典载体为准"; D-2 "60 分钟留待刷新，72 小时标成待删"; D-3 "槽位是给 AI 代理或人工看的，基本遵守 0 到 999"; D-4 "先删除标记为待删除的条目，再判定现有条目"; D-5 "Python 脚本只是用来清理的，100 是它的另一个触发器")
 - Related: `docs/spec/pini-spec-v0.md` §1.4 (Evidence Freshness), `docs/spec/evidence-table.toml`, `docs/spec/pini-landing-plan-v048.md` (E-008 dangling: lines 46 and 87, both are *instructions* to retire E-008 — they are not evidence citations)
 
