@@ -1,7 +1,7 @@
 # Issue: Host Optional/Subscript runtime incoherence (P2-E incomplete)
 
 - Date: 2026-08-28
-- Status: INTERPRETER-FIXED / LLVM-M2-OPEN
+- Status: INTERPRETER-FIXED / LLVM-M2-CLEARED（2026-09-04 批 C2，见文末 M2 出清记录）
 - Related: P2-E (spec G48); issue-lexer-gaps-2026-08-28 (P2-E item); self-hosted lexer plan SHELVED pending this fix.
 
 ## Context
@@ -125,8 +125,19 @@ P2-C 既有 backlog）。两侧现存在系统性分歧：
 - 前述 `testNestedSubscriptWriteBothBackends` / `testNestedAliasCOWBothBackends` 因含 `!`+`unsafe` 嵌套写且 LLVM
   端不支持 FFI/unsafe 子系统，按决策标 M2 跳过（见上方清单），不计入红。
 
-**M2 待办**：在 LLVM codegen 与运行时 shim 中将下标读包装为 `Optional.some`/`none`，使双后端锁步；
-完成前上述 skip 保持生效。
+## M2 出清记录（2026-09-04 批 C2，实测核验）
+
+**本节所记分歧已被语义演进消解，20 个 M2 XCTSkip 全部移除**：
+
+1. 本仓下标语义后演进为**双通道**：`xs[i]` 下标语法 = 裸值 + 越界抛错（解释器 E5-005 / shim
+   `bk_panic`，**双后端天然对齐**）；`some/none` 严格枚举语义实挂于 `get(i)` 方法通道。
+   本节原拟的「下标读 some/none 分歧」前提不再成立。
+2. 实证：移除 skip 后 clang 通道（同 IR + 同 shim，本机唯一可执行通道）`testArrayViaRuntimeClang`
+   **真绿**；其余测试落到环境门（lli/clang 可用性，与 E-076 同惯例——本机与 CI 均无 lli）。
+3. **勘测副产品（新立案）**：LLVM 端 `get`/`unchecked` 内建方法零实现——
+   见 `docs/issue-llvm-get-unchecked-2026-09-04.md`（含 `Optional` IR ABI 已在位的有利条件与验收口径）。
+4. 嵌套容器 + `!` 剥壳 + `unsafe` 子系统相关测试（`testNestedSubscriptWriteBothBackends` /
+   `testNestedAliasCOWBothBackends` 等）依赖 LLVM 端 FFI/unsafe 能力，属后续独立能力项，不再挂本工单。
 
 ## Secondary item (lower priority)
 

@@ -127,7 +127,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// D0 冒烟：经运行时 shim 的数组字面量 / 下标 / len 在真实 lli JIT 下贯通。
     /// 意图：验证数组字面量/下标/len 经运行时 shim + lli --dlopen JIT 输出 203，且与解释器计算一致。
     func testArrayViaRuntimeLLI() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try XCTSkipUnless(lliAvailable, "lli not available")
         guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
 
@@ -151,7 +150,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// C-ABI 符号在 AOT 链接下可见（JIT/dlopen 容忍的可见性回归，静态链接会暴露）。
     /// 意图：验证数组经 clang -lPiniRuntime AOT 静态链接同样输出 203（C-ABI 符号静态链接下可见），且与解释器计算一致。
     func testArrayViaRuntimeClang() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try XCTSkipUnless(clangAvailable, "clang not available")
         guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
 
@@ -221,7 +219,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 字符串元素数组：LLVM（装箱-raw 模型）与解释器输出完全一致（字符串 print 格式一致）。
     /// 意图：验证字符串元素数组构造/下标/len 双后端归一化输出一致（装箱-raw 模型与解释器对齐）。
     func testStringArrayViaRuntimeLLI() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testStringArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -233,7 +230,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 嵌套字符串数组：内层 handle 经 box 透传，双层下标读双后端一致。
     /// 意图：验证嵌套字符串数组 m[0][1] 双层下标读经内层 handle box 透传，双后端归一化输出一致。
     func testNestedStringArrayViaRuntimeLLI() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testNestedStringArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -246,7 +242,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 非 D1 回归）；len 两侧一致。
     /// 意图：验证 F64 元素数组下标读 VALUE 双后端均读出 2.5（浮点格式差异属已知缺口）、len 均一致为 3。
     func testF64ArrayViaRuntimeLLI() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testF64ArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -260,7 +255,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// Bool 元素数组：LLVM 经 `select`+`%s` 打印 true/false（与解释器完全一致），双后端精确对齐。
     /// 意图：验证 Bool 元素数组构造/下标/len 双后端精确对齐（LLVM 经 select 打印 true/false 与解释器一致）。
     func testBoolArrayViaRuntimeLLI() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testBoolArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -292,7 +286,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 双后端锁步：下标写（含嵌套/复合/多元素类型）两侧 stdout 归一化后一致。
     /// 意图：验证下标写（含嵌套/复合/多元素类型）双后端归一化输出一致。
     func testArraySubscriptWriteBothBackends() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testArraySubscriptWriteBothBackends", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -323,7 +316,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 字符串键经 tag=str 按 C 串内容比较，与 generateStringLiteral 不为相同文本复用全局无关（解耦指针身份）。
     /// 意图：验证字典构造/键读/len 双后端归一化输出一致（字符串键按 tag=str 内容比较，与指针身份解耦）。
     func testDictViaRuntimeLLI() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testDictViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -336,7 +328,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 解释器值语义返回新字典重绑定；LLVM 原地改 handle，单绑定下观测一致（别名语义属 D4 COW 范畴）。
     /// 意图：验证字典键写（既有键替换 + 新增键）双后端归一化输出一致（单绑定下观测一致，别名语义属 D4 COW 范畴）。
     func testDictSubscriptWriteBothBackends() throws {
-        throw XCTSkip("M2: 下标读严格枚举 some/none 与 LLVM 后端未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         let src = try loadPiniFixture("testDictSubscriptWriteBothBackends", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
         let interpOut = try runViaInterpreter(src)
@@ -426,7 +417,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 复合赋值 `b[0] += 5` 走「读-算-写」路径，同样必须触发分裂（写回句柄不能丢）。
     /// 意图：验证复合赋值 b[0] += 5 走「读-算-写」路径同样触发分裂，源与别名互不污染。
     func testCompoundAssignAliasCOWBothBackends() throws {
-        throw XCTSkip("M2: 复合赋值 a[i] += k 与下标读严格枚举 some/none 的 LLVM 对齐未做，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertBackendsAgree(try loadPiniFixture("testCompoundAssignAliasCOWBothBackends", filePath: #filePath) as String, expected: "[10, 20][15, 20]", "复合赋值别名写入应分裂")
     }
 
@@ -450,7 +440,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 把内层值写进外层槽 → `[[99, [3, 4]], [3, 4]]` 这种结构错乱。本用例锁死修复。
     /// 意图：验证嵌套写 m[0][0]=v 只改内层对应槽（修复曾把内层值写进外层槽的结构错乱），期望 [[99,2],[3,4]] 等。
     func testNestedSubscriptWriteBothBackends() throws {
-        throw XCTSkip("M2: 严格枚举下嵌套写须 `!`+`unsafe`，而 LLVM 后端暂不支持 FFI/unsafe 子系统（见 docs/issue-host-optional-slice-2026-08-28.md）；解释器侧嵌套写范式见 examples/multidim.pini，双后端锁步待 M2 完成")
         try assertBackendsAgree(try loadPiniFixture("testNestedSubscriptWriteBothBackends", filePath: #filePath) as String, expected: "[[99, 2], [3, 4]][[1, 88], [3, 4]]{a: [7, 2]}",
         "嵌套下标写只应改内层目标槽，不得把内层值写进外层槽")
     }
@@ -462,7 +451,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// （`@bk_array_ensure_unique_at` / `@bk_dict_ensure_unique_at`），内层会被误判独占而原地改写，污染 `n`。
     /// 意图：验证嵌套别名 var n = m 后写 m[0][0] 须自顶向下递归分裂（先根后内层），别名 n 的内层快照不被污染。
     func testNestedAliasCOWBothBackends() throws {
-        throw XCTSkip("M2: 严格枚举下嵌套写须 `!`+`unsafe`，而 LLVM 后端暂不支持 FFI/unsafe 子系统（见 docs/issue-host-optional-slice-2026-08-28.md）；双后端锁步待 M2 完成")
         try assertBackendsAgree(try loadPiniFixture("testNestedAliasCOWBothBackends", filePath: #filePath) as String, expected: "[[99, 2], [3, 4]][[1, 2], [3, 4]]{a: [7, 2]}{a: [1, 2]}",
         "嵌套写须自顶向下递归分裂，别名的内层快照不得被污染")
     }
@@ -475,7 +463,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 「未记录变量 … 的数组元素类型 / 字典值类型」。现统一经 `resolveSubscriptResultType`。
     /// 意图：验证混合容器种类（数组套字典/字典套字典）、三层嵌套、嵌套复合赋值均递归分裂，且无别名时语义不变。
     func testNestedMixedContainerCOWBothBackends() throws {
-        throw XCTSkip("M2: 嵌套复合赋值 c[0][0] += 5 与下标读严格枚举 some/none 的 LLVM 对齐未做，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertBackendsAgree(try loadPiniFixture("testNestedMixedContainerCOWBothBackends", filePath: #filePath) as String, expected: "[{k: 9}, {k: 2}][{k: 1}, {k: 2}]"
             + "[[[1, 2], [77, 4]], [[5, 6], [7, 8]]][[[1, 2], [3, 4]], [[5, 6], [7, 8]]]"
             + "{x: {y: 5}}{x: {y: 1}}"
@@ -650,7 +637,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 本例是 P1 实证的直接回归——若块级释放在，长循环 RSS 不再线性增长；若泄漏，值语义仍正确但 RSS 膨胀。
     /// 意图：验证 1000 次循环体内创建集合三执行路径输出一致（6000）且进程不崩溃（P1 块级精确释放的直接回归，消除每轮泄漏）。
     func testLoopBodyCollectionAllThreeBackends() throws {
-        throw XCTSkip("M2: 循环体内 buf[0] 下标读现返回 some/none，LLVM 未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertTripleBackendsAgree(try loadPiniFixture("testLoopBodyCollectionAllThreeBackends", filePath: #filePath) as String, expected: "6000",
         "循环体内集合变量应块级精确释放（三执行路径一致、零崩溃、无每轮泄漏）")
     }
@@ -730,7 +716,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// （clang-AOT 对双重释放/UAF 零容忍，若终止边未释放导致泄漏不崩溃但语义须一致）。
     /// 意图：验证循环体内 break + 集合变量三执行路径输出一致（5）且进程不崩溃（终止边精确释放）。
     func testBreakCollectionAllThreeBackends() throws {
-        throw XCTSkip("M2: 循环体内 buf[0] 下标读现返回 some/none，LLVM 未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertTripleBackendsAgree(try loadPiniFixture("testBreakCollectionAllThreeBackends", filePath: #filePath) as String, expected: "5",
         "循环体内 break + 集合变量应终止边精确释放（三执行路径一致、零崩溃）")
     }
@@ -738,7 +723,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 三执行路径值语义 + 零 UAF：循环体内 continue + 集合，三臂输出一致（8）且进程不崩溃。
     /// 意图：验证循环体内 continue + 集合变量三执行路径输出一致（9）且进程不崩溃（终止边精确释放）。
     func testContinueCollectionAllThreeBackends() throws {
-        throw XCTSkip("M2: 循环体内 buf[0] 下标读现返回 some/none，LLVM 未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertTripleBackendsAgree(try loadPiniFixture("testContinueCollectionAllThreeBackends", filePath: #filePath) as String, expected: "9",
         "循环体内 continue + 集合变量应终止边精确释放（三执行路径一致、零崩溃）")
     }
@@ -813,7 +797,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 三执行路径：for 循环体内创建集合变量（generateBlock 块级释放复用）——值语义 + 零 UAF。
     /// 意图：验证 for 循环体内创建集合变量经块级释放（值语义 + 零 UAF）输出 3，三执行路径一致。
     func testForInBodyCollectionAllThreeBackends() throws {
-        throw XCTSkip("M2: for-in body 内 buf[0] 下标读现返回 some/none，LLVM 未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertTripleBackendsAgree(try loadPiniFixture("testForInBodyCollectionAllThreeBackends", filePath: #filePath) as String, expected: "3",
         "for-in 循环体内集合变量应块级精确释放（三执行路径一致、零崩溃）")
     }
@@ -821,7 +804,6 @@ final class RuntimeBackendTests: XCTestCase {
     /// 三执行路径：嵌套集合迭代（数组元素为数组）——集合型模式变量每轮 body 末精确释放，双后端一致。
     /// 意图：验证 for-in 嵌套集合迭代（数组元素为数组）集合型模式变量每轮 body 末精确释放，输出 10 且三执行路径一致。
     func testForInNestedArrayAllThreeBackends() throws {
-        throw XCTSkip("M2: for-in body 内 row[0] 下标读现返回 some/none，LLVM 未对齐，见 docs/issue-host-optional-slice-2026-08-28.md")
         try assertTripleBackendsAgree(try loadPiniFixture("testForInNestedArrayAllThreeBackends", filePath: #filePath) as String, expected: "10",
         "for-in 嵌套集合迭代（集合型模式变量每轮精确释放）三执行路径一致")
     }
