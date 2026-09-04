@@ -138,7 +138,10 @@ public struct FileLoader {
 
  // MARK: - 内部
 
- private static func parseUnit(fileName: String, source: String) throws -> FileUnit {
+ /// 解析单个源文件为 `FileUnit`。
+ /// 非 private：`ModuleDependencyLoader` 复用它，使两条加载路径共享**一份**解析实现
+ /// （G52 §9 Def-11——此前各写一遍词法/语法解析，行为随调用点漂移）。
+ static func parseUnit(fileName: String, source: String) throws -> FileUnit {
  let lexer = Lexer(source: source, fileName: fileName)
  let tokens = try lexer.tokenize()
  let parser = Parser(tokens: tokens, fileName: fileName)

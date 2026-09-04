@@ -107,6 +107,53 @@ final class ModuleSystemTests: XCTestCase {
                        "三层各持同名符号 取值 而不相撞：100 + 10")
     }
 
+    // MARK: - Def-11：扫描双策略（远程根级 / 本地递归）
+
+    /// 意图：**本地**被引入的模块走递归策略——自带 `src/` / `sub/` 布局的模块，
+    /// 其子目录源码必须被加载。
+    /// 反例（修复前）：划分轴是「主模块 vs 被引入」，被引入的一律只扫根级 ⇒
+    /// 子目录源码静默不加载（本夹具根层另有文件时），或根层无文件时直接抛 `moduleRootMissing`。
+    func testLocalImportedModuleScansSubdirectories() throws {
+        let (base, cleanup) = try makeScanFixture(remote: false)
+        defer { cleanup() }
+
+        let loaded = try ModuleDependencyLoader.shared
+            .load(packagePath: base + "/lib", relativeTo: base)
+        XCTAssertTrue(loaded.allSymbols.contains("深层"),
+                      "本地模块递归扫描：sub/ 下的符号应可见，实际：\(loaded.allSymbols)")
+    }
+
+    /// 意图：**远程落地**（D23 `<根>/deps/<name>/`）的模块走根级策略——`sub/` 下**不**加载。
+    /// ⚠ 这是**策略守卫**而非回归测试：修复前后都通过。它防的是将来有人把递归推广到
+    /// 全部路径，从而丢掉「远程清单省解析时间」这一动机本身。
+    func testRemoteLandedModuleScansRootLevelOnly() throws {
+        let (base, cleanup) = try makeScanFixture(remote: true)
+        defer { cleanup() }
+
+        let loaded = try ModuleDependencyLoader.shared
+            .load(packagePath: base + "/deps/rem", relativeTo: base)
+        XCTAssertTrue(loaded.allSymbols.contains("根层"))
+        XCTAssertFalse(loaded.allSymbols.contains("深层"),
+                       "远程落地只扫根级：sub/ 下的符号不应可见，实际：\(loaded.allSymbols)")
+    }
+
+    /// 判据是**路径形状**：`deps/<name>` 即远程落地，其余为本地目录。
+    private func makeScanFixture(remote: Bool) throws -> (base: String, cleanup: () -> Void) {
+        let base = NSTemporaryDirectory() + "pini_scan_\(UUID().uuidString)"
+        let fm = FileManager.default
+        let root = remote ? base + "/deps/rem" : base + "/lib"
+        try fm.createDirectory(atPath: root + "/sub", withIntermediateDirectories: true)
+
+        try "[package]\nname = \"\(remote ? "rem" : "lib")\"\n"
+            .write(toFile: root + "/pini.toml", atomically: true, encoding: .utf8)
+        try "根层|func() -> (I32,):\n    return 1\n"
+            .write(toFile: root + "/root.pini", atomically: true, encoding: .utf8)
+        try "深层|func() -> (I32,):\n    return 2\n"
+            .write(toFile: root + "/sub/deep.pini", atomically: true, encoding: .utf8)
+
+        return (base, { try? fm.removeItem(atPath: base) })
+    }
+
     // MARK: - D-1 块头校验
 
     /// 意图：块头名与当前文件名不一致 → E2-005（D-1 自识性标签）。

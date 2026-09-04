@@ -2,7 +2,9 @@
 # 祖先清单回溯是**递归**的：中间层 lex/ 无 pini.toml，须继续向上找到 syntax/ 才判定为
 # 嵌套模块、从 app 包中剔除。
 #
-# ⚠ 本文件不是 syntax 模块的声明依赖（syntax.pini 不引用它）：ModuleDependencyLoader
-# 只扫模块根级 .pini，import 时不会加载它（见 G52 工单 §9 Def-11）。故本文件保持自包含。
+# ⚠ 本文件不被 syntax.pini 引用，但**仍属于 syntax 模块**（G52 §9 Def-11 修复后）：
+# syntax 是本地目录 ⇒ 按递归策略扫描；lex/ 无自己的 pini.toml ⇒ 不是嵌套模块 ⇒ 被扫入。
+# 旧注释「import 时不会加载它」已作废——Def-11 把划分轴从「主模块 vs 被引入」
+# 改成了「远程 vs 本地」。故本文件保持自包含（不引用也不被引用），以免递归加载后撞符号。
 深层辅助|func() -> (I32,):
     return 7
