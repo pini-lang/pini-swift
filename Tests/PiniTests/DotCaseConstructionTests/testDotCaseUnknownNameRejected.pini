@@ -1,0 +1,5 @@
+; 点号构造的名字不是任何枚举用例 → check 期拒绝（成员意图落空）
+main|func() -> ():
+    let x = .nosuch
+    print(x)
+    return

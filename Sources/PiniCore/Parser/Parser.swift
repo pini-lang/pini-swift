@@ -2800,6 +2800,15 @@ public class Parser {
  return try parseCollectionLiteral()
  case .leftBrace(_):
  return try parseSetLiteral()
+ case .dot(_):
+ // 点号用例构造（proposal-dot-case-construction，D-1：与 Swift UnresolvedMemberExpr
+ // 同构）：前导点 = 成员意图标记，解析期仅携带名字的未解析节点，决议在类型检查
+ // 阶段按期望类型完成（期望类型命中 → 该枚举；唯一父枚举 → 回退；歧义/无 → 报错
+ // 要求限定或期望类型）。带实参形态 `.caseName(args)` 由 parsePrimarySuffix 的
+ // 调用后缀自然包裹为 .call(.dotCaseRef, args)——与 Swift 的实参挂外层 Apply 同构。
+ advance()
+ let name = try parseIdentifier()
+ return .dotCaseRef(name: name, location: loc)
  default:
  throw ParserError.invalidExpression(reason: "无效的表达式", location: loc)
  }

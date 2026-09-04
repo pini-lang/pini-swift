@@ -27,7 +27,7 @@ Partially Accepted（2026-08-30，自举探针 G-P6/G-P8/G-P2/G-P3 修复批次�
 2. **模块内恰好一个枚举声明该 case** → 该枚举；
 3. **歧义且无期望类型** → **编译错误**，要求限定形式 `枚举名.caseName(...)`（限定构造通道既有，`EnumName.caseName(...)` 恒可用）。
 
-spec 钉定点：enum-case 产生式小节（已钉）；match 小节见 D2。配套：`.caseName(...)` 点号构造语法立项为提案（见 `docs/spec/issue/proposal-dot-case-construction-2026-08-30.md`），择破坏窗口裁决。
+spec 钉定点：enum-case 产生式小节（已钉）；match 小节见 D2。配套：`.caseName(...)` 点号构造语法立项为提案（见 `docs/spec/issue/archive/proposal-dot-case-construction-2026-08-30.md`，2026-09-04 采纳并 LANDED），择破坏窗口裁决。
 
 ### D2 match 模式按 scrutinee 类型解析（G-P6②）
 
