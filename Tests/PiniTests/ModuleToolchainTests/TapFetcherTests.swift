@@ -355,9 +355,251 @@ final class TapFetcherTests: XCTestCase {
  let target = app + "/deps/demo/pini.toml"
  let text = try String(contentsOfFile: target, encoding: .utf8)
  try (text + "\n# tampered\n").write(toFile: target, atomically: true, encoding: .utf8)
- let bad = try ModuleToolchain.verify(rootDir: app)
- XCTAssertFalse(bad.isOK)
- XCTAssertTrue(bad.mismatches.contains { $0.contains("来源 \(base)/remote/demo") },
- "verify 报错应回显来源，实际：\(bad.mismatches)")
+  let bad = try ModuleToolchain.verify(rootDir: app)
+  XCTAssertFalse(bad.isOK)
+  XCTAssertTrue(bad.mismatches.contains { $0.contains("来源 \(base)/remote/demo") },
+  "verify 报错应回显来源，实际：\(bad.mismatches)")
+ }
+
+ // MARK: - Def-6：`[replace]` 三种形态（G52 D13）
+
+ /// 三形态归类（批 7 前只有 `file:` 生效，另两种静默落空）。
+ func testParseReplaceClassifiesThreeForms() {
+  func rep(_ raw: String) -> ModuleToolchain.Replacement {
+   ModuleToolchain.parseReplace(raw, name: "demo")
+  }
+  XCTAssertEqual(rep("1.2.0"), .version("1.2.0"), "裸版本 = 版本覆盖（来源不变）")
+  XCTAssertEqual(rep("^1.2"), .version("^1.2"), "约束写法同样只换版本")
+  XCTAssertEqual(rep("v2.0.0"), .version("2.0.0"),
+           "v 前缀必须剥掉：否则 versionComponents(\"v2.0.0\") 只剩 [0]（见 §9 Def-9）")
+  XCTAssertEqual(rep("file:../dev"), .local("../dev"))
+  XCTAssertEqual(rep("file:/abs/<name>"), .local("/abs/demo"), "<name> 占位符替换为模块名")
+  XCTAssertEqual(rep("github:me/fork@v1.0"), .fork(spec: "github:me/fork", pin: "1.0"))
+  XCTAssertEqual(rep("git:/srv/r.git"), .fork(spec: "git:/srv/r.git", pin: nil))
+  XCTAssertEqual(rep("git:https://u@host/r.git"), .fork(spec: "git:https://u@host/r.git", pin: nil),
+           "userinfo 里的 @ 不是版本分隔符")
+  XCTAssertEqual(rep("git:https://u@host/r.git@2.0"),
+           .fork(spec: "git:https://u@host/r.git", pin: "2.0"))
+ }
+
+ /// **版本覆盖**：`replace demo = "1.2.0"` 只抬下界、来源不变。
+ ///
+ /// 判据是「无 replace 时选中什么」——经典 MVS 取满足全部约束的**最低**版本，
+ /// 故 `^1.0` 单独会选中 1.0.0；`<replace>` 这条约束把下界抬到 1.2.0 后选中 1.2.0。
+ func testReplaceVersionOverrideRaisesSelection() throws {
+  let base = NSTemporaryDirectory() + "pini_b7_repv_\(UUID().uuidString)"
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  try makeGitRepo(at: base + "/remote/demo", moduleName: "demo",
+            versions: ["1.0.0", "1.2.0", "2.0.0"])
+  let app = base + "/app"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try """
+[package]
+name = "app"
+
+[tap]
+local = "git:\(base)/remote/<name>"
+
+[require.local]
+demo = "^1.0"
+
+[replace]
+demo = "1.2.0"
+""".write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+  let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+  let summary = try ModuleToolchain.refresh(rootDir: app, manifest: manifest, toolchainVersion: "t")
+  let mod = try XCTUnwrap(ModuleToolchain.parseSummary(summary).modules.first)
+  XCTAssertEqual(mod.version, "1.2.0", "版本覆盖把下界抬到 1.2.0（无 replace 时 ^1.0 选中 1.0.0）")
+  XCTAssertEqual(mod.tap, "local", "只换版本 ⇒ 来源不变，tap 仍是声明它的 tap")
+  XCTAssertEqual(mod.source, base + "/remote/demo")
+  XCTAssertTrue(try ModuleToolchain.verify(rootDir: app).isOK)
+ }
+
+ /// **版本覆盖到不存在的版本**：须报不可满足并带上被覆盖的版本串——
+ /// 否则「replace 被静默忽略」与「replace 生效但无解」无法区分。
+ func testReplaceVersionOverrideConflictSurfacesReplaceConstraint() throws {
+  let base = NSTemporaryDirectory() + "pini_b7_repc_\(UUID().uuidString)"
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  try makeGitRepo(at: base + "/remote/demo", moduleName: "demo", versions: ["1.0.0", "1.2.0"])
+  let app = base + "/app"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try """
+[package]
+name = "app"
+
+[tap]
+local = "git:\(base)/remote/<name>"
+
+[require.local]
+demo = "^1.0"
+
+[replace]
+demo = "3.0.0"
+""".write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+  let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+  XCTAssertThrowsError(try ModuleToolchain.refresh(rootDir: app, manifest: manifest,
+                         toolchainVersion: "t")) { error in
+   guard case ModuleToolchain.ToolchainError.unsatisfiable(let name, _, let conflicts) = error else {
+    return XCTFail("应为 unsatisfiable，实际：\(error)")
+   }
+   XCTAssertEqual(name, "demo")
+   XCTAssertTrue(conflicts.contains { $0.contains("3.0.0") },
+           "报错须带上 [replace] 指定的版本，实际：\(conflicts)")
+  }
+ }
+
+ /// **fork 替换**：换来源；锁文件 `tap` 记 `replace`（来源由 [replace] 声明，不是任何 tap）。
+ func testReplaceForkRedirectsSourceAndRecordsReplaceTap() throws {
+  let base = NSTemporaryDirectory() + "pini_b7_repf_\(UUID().uuidString)"
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  try makeGitRepo(at: base + "/remote/demo", moduleName: "demo", versions: ["1.0.0"])
+  try makeGitRepo(at: base + "/fork/demo", moduleName: "demo", versions: ["1.5.0"])
+  let app = base + "/app"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try """
+[package]
+name = "app"
+
+[tap]
+local = "git:\(base)/remote/<name>"
+
+[require.local]
+demo = "*"
+
+[replace]
+demo = "git:\(base)/fork/demo"
+""".write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+  let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+  let summary = try ModuleToolchain.refresh(rootDir: app, manifest: manifest, toolchainVersion: "t")
+  let mod = try XCTUnwrap(ModuleToolchain.parseSummary(summary).modules.first)
+  XCTAssertEqual(mod.version, "1.5.0", "upstream 只有 1.0.0，取到 1.5.0 说明内容来自 fork")
+  XCTAssertEqual(mod.source, base + "/fork/demo")
+  XCTAssertEqual(mod.tap, "replace",
+           "来源由 [replace] 声明，写回原 tap 名会让锁文件自相矛盾（tap=local 而 source 不是 local）")
+  XCTAssertTrue(try ModuleToolchain.verify(rootDir: app).isOK)
+ }
+
+ /// **fork 的 `@版本`**：并入 MVS 当下界（不绕过 MVS 精确钉）。
+ func testReplaceForkPinParticipatesInMVS() throws {
+  let base = NSTemporaryDirectory() + "pini_b7_repp_\(UUID().uuidString)"
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  try makeGitRepo(at: base + "/remote/demo", moduleName: "demo", versions: ["1.0.0"])
+  try makeGitRepo(at: base + "/fork/demo", moduleName: "demo",
+            versions: ["1.0.0", "1.5.0", "2.0.0"])
+  let app = base + "/app"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try """
+[package]
+name = "app"
+
+[tap]
+local = "git:\(base)/remote/<name>"
+
+[require.local]
+demo = "*"
+
+[replace]
+demo = "git:\(base)/fork/demo@v1.5"
+""".write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+  let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+  let summary = try ModuleToolchain.refresh(rootDir: app, manifest: manifest, toolchainVersion: "t")
+  let mod = try XCTUnwrap(ModuleToolchain.parseSummary(summary).modules.first)
+  XCTAssertEqual(mod.version, "1.5.0", "@v1.5 把下界抬到 1.5（单独 * 会回填到最新的 2.0.0）")
+ }
+
+ /// **本地形态不触发抓取**（批 7 引入的回归，见 §9 Def-10）。
+ ///
+ /// tap 是远程 git，但落地目录被 `[replace]` 换成了本地目录。抓取若只看 tap 的 spec，
+ /// 就会往用户的本地目录里 `fetch` + `checkout`——本地目录通常自带 `.git`，
+ /// `materialize` 恰会判定「已存在检出」而照做，直接改动开发工作区。
+ func testReplaceFileFormDoesNotFetchIntoLocalDirectory() throws {
+  let base = NSTemporaryDirectory() + "pini_b7_repl_\(UUID().uuidString)"
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  try makeGitRepo(at: base + "/remote/demo", moduleName: "demo", versions: ["1.0.0", "2.0.0"])
+  // 本地替换目录 = upstream 的克隆 + 一个**未打 tag** 的本地提交（模拟开发中的工作区）
+  try TapFetcher.runGit(["clone", "--quiet", base + "/remote/demo", base + "/dev/demo"])
+  for (k, v) in ["user.email": "dev@pini.local", "user.name": "Pini Dev"] {
+   try TapFetcher.runGit(["-C", base + "/dev/demo", "config", k, v])
+  }
+  try "[package]\nname = \"demo\"\nversion = \"3.0.0-local\"\n"
+   .write(toFile: base + "/dev/demo/pini.toml", atomically: true, encoding: .utf8)
+  try TapFetcher.runGit(["-C", base + "/dev/demo", "add", "-A"])
+  try TapFetcher.runGit(["-C", base + "/dev/demo", "commit", "-qm", "wip"])
+  let beforeHEAD = try TapFetcher.headCommit(base + "/dev/demo")
+
+  let app = base + "/app"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try """
+[package]
+name = "app"
+
+[tap]
+local = "git:\(base)/remote/<name>"
+
+[require.local]
+demo = "*"
+
+[replace]
+demo = "file:\(base)/dev/demo"
+""".write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+  let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+  let summary = try ModuleToolchain.refresh(rootDir: app, manifest: manifest, toolchainVersion: "t")
+  let mod = try XCTUnwrap(ModuleToolchain.parseSummary(summary).modules.first)
+  XCTAssertEqual(mod.version, "3.0.0-local", "内容取自本地替换目录（未打 tag 的 HEAD）")
+  XCTAssertEqual(mod.source, "file:\(base)/dev/demo", "锁文件须如实记录内容来自本地")
+  XCTAssertEqual(mod.commit, "-", "本地替换无来源定位符（G52 D12）")
+  XCTAssertEqual(try TapFetcher.headCommit(base + "/dev/demo"), beforeHEAD,
+           "本地替换目录不得被 fetch / checkout——否则用户的开发工作区被静默改动")
+ }
+
+ /// **D13 作用域**：依赖清单里的 `[replace]` 一律忽略——否则一个依赖就能劫持整个构建。
+ func testDependencyReplaceIsIgnored() throws {
+  let base = NSTemporaryDirectory() + "pini_b7_reps_\(UUID().uuidString)"
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  let remote = base + "/remote/<name>"
+  // a 想把 b 劫持到自己的 fork（evil）
+  try makeGitRepo(at: base + "/remote/a", moduleName: "a", versions: ["1.0.0"], manifestExtra: """
+
+[tap]
+default = "git:\(remote)"
+
+[require]
+b = "*"
+
+[replace]
+b = "git:\(base)/evil/<name>"
+""")
+  try makeGitRepo(at: base + "/remote/b", moduleName: "b", versions: ["1.0.0"])
+  try makeGitRepo(at: base + "/evil/b", moduleName: "b", versions: ["9.9.9"])
+
+  let app = base + "/app"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try """
+[package]
+name = "app"
+
+[tap]
+local = "git:\(remote)"
+
+[require.local]
+a = "*"
+b = "*"
+""".write(toFile: app + "/pini.toml", atomically: true, encoding: .utf8)
+
+  let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: app))
+  let summary = try ModuleToolchain.refresh(rootDir: app, manifest: manifest, toolchainVersion: "t")
+  let mods = Dictionary(uniqueKeysWithValues:
+   ModuleToolchain.parseSummary(summary).modules.map { ($0.name, $0) })
+  XCTAssertEqual(mods["b"]?.version, "1.0.0", "依赖的 [replace] 不得生效（evil fork 是 9.9.9）")
+  XCTAssertEqual(mods["b"]?.source, base + "/remote/b", "b 仍来自 tap 声明的 upstream")
+  // tap 字段取「最后遍历到的 requirer 边」——多 requirer 时本就无确定规则（§9 Def-12）。
+  // 这里唯一确定的信号是：它**不是** `replace`（依赖的 [replace] 一旦生效就会记成 replace）。
+  XCTAssertNotEqual(mods["b"]?.tap, "replace",
+           "tap=replace 意味着依赖的 [replace] 生效了（D13 明令禁止）")
  }
 }

@@ -12,6 +12,8 @@ import Foundation
 ///   经典 MVS 在其中取满足全部约束的最小版本（`TapFetcher.selectVersion`）。
 /// - 依赖的版本决定它自己的 `[require]` 内容 ⇒ 约束集随选择而变 ⇒ 求解须**迭代到不动点**
 ///   （`resolveFetching`，上限 `fetchIterationLimit`，不收敛即报错不静默取某一轮）。
+/// - `[replace]`（G52 D13）三种形态全部生效：`"<约束>"`（只换版本）/ `"file:<路径>"`（换本地目录）/
+///   `"github:<org>/<repo>[@<版本>]"`、`"git:<url>[@<版本>]"`（换 fork）。**仅主模块生效**。
 public enum ModuleToolchain {
 
  // MARK: - 错误
@@ -74,6 +76,60 @@ public enum ModuleToolchain {
 
  /// 不动点迭代上限。超过即报错——不静默取某一轮的结果。
  static let fetchIterationLimit = 8
+
+ /// fork 替换写进锁文件 `tap` 字段的值。
+ ///
+ /// 该模块的来源由 `[replace]` 声明，**不由任何 tap 声明**——写回原 tap 名会让锁文件
+ /// 自相矛盾（`tap = "vendor"` 但 `source` 并非 vendor 的展开结果），故显式记 `replace`。
+ static let replaceTapName = "replace"
+
+ // MARK: - [replace] 三种形态（G52 D13）
+
+ /// `[replace]` 值的形态（D13）。批 7 前只有 `file:` 生效，另两种**静默落空**。
+ ///
+ /// | 形态 | 用例 | 语义 |
+ /// |---|---|---|
+ /// | `.version` | `uni = "3.2.0"` | 只换版本，来源不变（等价 npm `overrides`） |
+ /// | `.local` | `dev = "file:../dev"` | 换来源为本地目录（不动远端，也不抓取） |
+ /// | `.fork` | `fork = "github:me/fork@v1.0"` | 换来源为 fork / 镜像，`@` 后为版本 |
+ enum Replacement: Equatable {
+ case version(String)
+ /// 已展开 `<name>` 占位符的路径（相对路径由调用方拼到模块根上）。
+ case local(String)
+ /// `pin` 已剥掉 `v` 前缀，与 `TapFetcher.availableVersions` 的候选形式一致。
+ case fork(spec: String, pin: String?)
+ }
+
+ /// `[replace]` 值 → 形态。
+ ///
+ /// 两种非本地形态的**版本都并入 MVS 约束**（requirer 记为 `<replace>`），而不是绕过
+ /// MVS 直接检出——理由：① 与 requirer 约束同路合成，冲突时能得到「谁要求什么」的完整
+ /// 诊断；② 不引入第二条选择路径。代价：`@1.0` 是**下界**而非精确钉（MVS 取满足全部
+ /// 约束的最低版本），fork 上若无 `1.0` 但有 `1.1`，会选中 `1.1` 而非报错。
+ static func parseReplace(_ raw: String, name: String) -> Replacement {
+ let s = raw.trimmingCharacters(in: .whitespaces)
+ if s.hasPrefix("file:") {
+ return .local(String(s.replacingOccurrences(of: "<name>", with: name).dropFirst("file:".count)))
+ }
+ if s.hasPrefix("github:") || s.hasPrefix("git:") {
+ // `@` 分隔版本。取**最后一个** `@`，且其后的串不含 `/` 与 `:`——
+ // 否则那不是版本分隔符，而是 URL 的 userinfo（如 `git:https://u@host/r.git`）。
+ if let at = s.lastIndex(of: "@") {
+ let pin = String(s[s.index(after: at)...])
+ if !pin.isEmpty, !pin.contains("/"), !pin.contains(":") {
+ return .fork(spec: String(s[..<at]), pin: stripVersionPrefix(pin))
+ }
+ }
+ return .fork(spec: s, pin: nil)
+ }
+ return .version(stripVersionPrefix(s))
+ }
+
+ /// 剥 `v` / `V` 前缀。**必须剥**：`Constraint.versionComponents("v1.0")` 会把 `v1` 丢掉
+ /// 只剩 `[0]`（见 G52 工单 §9 Def-9），带前缀的串当约束会得到完全错误的下界。
+ private static func stripVersionPrefix(_ s: String) -> String {
+ (s.hasPrefix("v") || s.hasPrefix("V")) ? String(s.dropFirst()) : s
+ }
 
  // MARK: - 版本约束（G52 §3.2：^ / ~ / = / 区间 / * / 裸版本）
 
@@ -243,30 +299,62 @@ public enum ModuleToolchain {
  }
  try enqueueDeps(of: manifest, from: "<root>")
 
+ // D13 作用域：`[replace]` **仅主模块生效**——`enqueueDeps` 只读依赖的 [require]，
+ // 依赖清单里的 [replace] 一概不进 `replacements`，故结构上无法劫持根构建（Go 同规则）。
+ let replacements: [String: Replacement] = manifest.replaces
+ .reduce(into: [:]) { $0[$1.key] = parseReplace($1.value, name: $1.key) }
+
+ // 版本类替换（版本覆盖 / fork 的 @pin）以 `<replace>` 这个 requirer **预先**入账约束。
+ // 必须在遍历前注入：`ensureMaterialized` 首抓只看当时已知的约束，靠事后复核兜底等于
+ // 白抓一次并多走一轮不动点迭代。
+ for (name, rep) in replacements.sorted(by: { $0.key < $1.key }) {
+ let raw: String?
+ switch rep {
+ case .version(let r): raw = r
+ case .fork(_, let pin): raw = pin
+ case .local: raw = nil
+ }
+ if let raw { constraints[name, default: []].append((raw, "<replace>")) }
+ }
+
  while let (name, from, constraint, specStr, edgeTap) = pending.popLast() {
  // 边与约束**无论首见与否都入账**（首见短路会丢多 requirer 的 imported-by 与约束）。
  constraints[name, default: []].append((constraint ?? "*", from))
  importedBy[name, default: []].append(from)
     edges[from, default: []].insert(name)
 
-    sourceByName[name] = specStr
-    tapNameByName[name] = edgeTap
     // v1 落地模型（D23）：依赖固定落 deps/<name>/。
     // - [replace] 的 file: 形式可把本地 fork 指为落地目录（批 6 已 Landed 语义）；
     // - file: tap 仍是「来源元数据 + 手工/submodule 落地」（批 7 不动）；
     // - 远程 tap（github:/git:）由 TapFetcher 抓取——仅当 session 存在（即 refresh）。
     var depDir = rootDir + "/deps/" + name
-    if let rep = manifest.replaces[name], rep.hasPrefix("file:") {
-      let expanded = rep.replacingOccurrences(of: "<name>", with: name)
-      let rel = String(expanded.dropFirst("file:".count))
-      let p = rel.hasPrefix("/") ? rel : rootDir + "/" + rel
-      guard FileManager.default.fileExists(atPath: p + "/pini.toml") else {
-        throw ToolchainError.replaceTargetMissing(name: name, path: p)
+    var spec = specStr   // requirer 侧 tap 展开的源
+    var tap = edgeTap    // 锁文件 tap 字段
+    if let rep = replacements[name] {
+      switch rep {
+      case .local(let rel):
+        let p = rel.hasPrefix("/") ? rel : rootDir + "/" + rel
+        guard FileManager.default.fileExists(atPath: p + "/pini.toml") else {
+          throw ToolchainError.replaceTargetMissing(name: name, path: p)
+        }
+        depDir = p
+        // ⚠ 来源一并改写为本地路径——**否则会往用户的本地目录里 git clone / checkout**
+        // （批 7 引入的回归：抓取只看 tap 的 spec，不看 depDir 已被替换）：
+        // 本地目录往往自带 `.git`，`materialize` 会判定「已存在检出」转而 fetch + checkout，
+        // 直接改动用户的开发工作区。锁文件的 `source` 也由此如实反映内容来自本地。
+        spec = "file:" + p
+        tap = Self.replaceTapName
+      case .fork(let forkSpec, _):
+        spec = forkSpec
+        tap = Self.replaceTapName
+      case .version:
+        break // 只换版本，来源不变
       }
-      depDir = p
     }
+    sourceByName[name] = spec
+    tapNameByName[name] = tap
     // 抓取（或复核已选版本）——约束可能在后续 requirer 出现后变严，故每次经过都要复核。
-    try ensureMaterialized(name: name, spec: specStr, dir: depDir,
+    try ensureMaterialized(name: name, spec: spec, dir: depDir,
                            constraints: (constraints[name] ?? []).map(\.0),
                            session: session)
     // 已解析过则不再重复读清单——但**抓取/复核已在上面发生**，故后到的更严约束仍会触发重新选择。
@@ -276,8 +364,8 @@ public enum ModuleToolchain {
     guard FileManager.default.fileExists(atPath: manifestPath),
           let depManifest = try FileLoader.loadManifest(directory: depDir) else {
       // 已落地的远程依赖（refresh 之后）可正常解析，故只读路径（graph）也能用。
-      guard specStr.hasPrefix("file:") else {
-        throw ToolchainError.remoteTapNotMaterialized(name: name, tap: edgeTap)
+      guard spec.hasPrefix("file:") else {
+        throw ToolchainError.remoteTapNotMaterialized(name: name, tap: tap)
       }
       throw ToolchainError.missingDependency(name: name, requirer: from, expectedPath: manifestPath)
     }

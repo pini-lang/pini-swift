@@ -63,6 +63,50 @@ final class ModuleSystemTests: XCTestCase {
                        "跨模块限定调用应命中被引入模块的 public 函数")
     }
 
+    // MARK: - 三层嵌套（G52 R1 / D-4；工单 DoD-2）
+
+    /// 三层嵌套夹具 `app ⊃ frontend ⊃ syntax`（各层一份 `pini.toml`）。
+    private var demo3Root: String {
+        ((#filePath as NSString).deletingLastPathComponent as NSString).appendingPathComponent("demo3")
+    }
+
+    /// 意图：三层嵌套切成 3 个模块，命名空间各自独立。
+    ///
+    /// 夹具刻意让 `frontend` 与 `syntax` 各自定义**同名** public 符号 `取值`（100 / 10）：
+    /// ① 只要任一层被父模块扫入，父包就会出现两个 `取值` ⇒ 重复声明；
+    /// ② 只要跨模块裸名串味，结果就不是 110。两条一起把「命名空间独立」钉死。
+    func testThreeLevelNestedModulesStaySeparate() throws {
+        let app = demo3Root + "/app"
+        let fm = FileManager.default
+        for p in ["", "/frontend", "/frontend/syntax"] {
+            XCTAssertTrue(fm.fileExists(atPath: app + p + "/pini.toml"), "三层各须一份清单，缺：\(p)")
+        }
+
+        // D-4 父扫描侧：嵌套模块源码不进父包——三层**逐层**剔除。
+        // `syntax/lex/lex.pini` 距其清单两层：回溯必须是递归的，否则会被误扫进 app 包。
+        let appPkg = try FileLoader.loadDirectory(path: app,
+                                                  manifest: FileLoader.loadManifest(directory: app))
+        XCTAssertEqual(appPkg.fileUnits.map { ($0.fileName as NSString).lastPathComponent },
+                       ["main.pini"],
+                       "app 包只含根级 main.pini；frontend/ 与其下的 syntax/ 都须被剔除")
+
+        let fePkg = try FileLoader.loadDirectory(
+            path: app + "/frontend", manifest: FileLoader.loadManifest(directory: app + "/frontend"))
+        XCTAssertEqual(fePkg.fileUnits.count, 1, "frontend 包只含 frontend.pini（syntax/ 已剔除）")
+
+        let synPkg = try FileLoader.loadDirectory(
+            path: app + "/frontend/syntax",
+            manifest: FileLoader.loadManifest(directory: app + "/frontend/syntax"))
+        XCTAssertEqual(Set(synPkg.fileUnits.map { ($0.fileName as NSString).lastPathComponent }),
+                       ["syntax.pini", "lex.pini"],
+                       "syntax 包含 syntax.pini 与深层 lex/lex.pini——lex/ 无清单，不切出新模块")
+
+        // 命名空间独立：frontend 的裸 `取值`(100) + syntax 的 `syntax.取值`(10) = 110。
+        let out = try runFile(app + "/main.pini")
+        XCTAssertEqual(out.trimmingCharacters(in: .whitespacesAndNewlines), "110",
+                       "三层各持同名符号 取值 而不相撞：100 + 10")
+    }
+
     // MARK: - D-1 块头校验
 
     /// 意图：块头名与当前文件名不一致 → E2-005（D-1 自识性标签）。

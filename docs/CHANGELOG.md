@@ -3,6 +3,25 @@
 > 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（ADR）与 `spec/issue/`。
 > 版本号与 `pini version` 输出同源：`PiniCore/Common/Version.swift`。
 
+## Unreleased
+
+> 批 7（远程 tap）当时未登记，此处一并补上；批 8 为 G52 工单的收尾补修。
+
+### Added
+- **远程 tap 抓取**（G52 批 7）：`TapFetcher` 支持 `github:<org>` / `git:<url>` / `file:<path>`（`git:` 接受本地路径 ⇒ 整条链路可离线端到端测试）；`git clone`/`fetch`+`checkout` + `rev-parse` 取 `commit`
+- **经典 MVS**：候选来自远端 tag，取满足全部约束的**最小**版本（`^1.0` → `1.0.0`，不是 `1.2.3`）；全约束为 `*` 时按 D21 回填取最新
+- **有界不动点迭代**：依赖的版本决定其自身的 `[require]`，故约束集随选择而变；上限 8 轮，不收敛即报错而非静默取某一轮
+- resources 由 `refresh` 落地到 `.pini/resources/<name>/`（此前目录不存在则静默跳过，资源永远不进锁文件）
+- **`[replace]` 三种形态**（G52 批 8 / D13）：版本覆盖（只换版本）、`file:`（换本地目录）、`github:`/`git:` fork（可带 `@版本`）；版本类替换并入 MVS 约束当下界；fork 与本地形态锁文件 `tap` 记 `replace`
+
+### Fixed
+- 锁文件 `commit` 此前恒为 `-`（只写不读），现为真实的来源定位符；`tap` / `source` 同样补上读取，`verify` 报错回显来源
+- **R7 双向封闭**：`resources X` 而 X 的根含 `pini.toml` → 报错指引改用 `[require]`（此前只兑现正向）
+- **`file:` 替换不再往用户本地目录抓取**（批 7 引入的回归）：落地目录被换成本地目录后，抓取仍按 tap 的 spec 执行，会在用户的开发工作区里 `fetch`+`checkout`
+
+### Internal
+- 三层嵌套模块夹具 `Tests/PiniTests/ModuleSystemTests/demo3/`（R1 递归排除此前只有两层覆盖）
+
 ## v0.52.0 (2026-09-02)
 
 ### Added
