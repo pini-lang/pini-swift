@@ -983,6 +983,12 @@ type-annotation ::= '?' type-annotation                          (* ?T ≡ Optio
                   | '(' [type-annotation {',' type-annotation}] ')'
                     [('->' | '=>') '(' [type-annotation {',' type-annotation}] ')']
                   | 'self' | 'own';
+(* 元素标注检查（proposal-array-element-annotation，2026-09-04 D-β 裁决落地）：
+   `[T]` / `[K: V]` / `{T}` 标注对集合字面量初始化、字面量赋值右值、Array.append
+   实参做逐元素类型检查（期望类型下推，通配 `_`/`Any` 放行）；标注**仅做检查**——
+   ADR-020 内建签名契约不动（append 仍返回新数组、签名不随元素标注特化）；
+   无标注累积器 `var ys = []` 语义零变更（元素身份必须显式声明，不得从用法推断）。
+   实施点：TypeChecker.refineCollectionLiteral + append 实参检查位。 *)
 
 generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]};
 (* H-2（A9 裁决，2026-08-31 落地）：泛型约束分隔符为 `:`，与扩展块特征约束

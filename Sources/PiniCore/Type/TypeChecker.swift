@@ -848,6 +848,57 @@ public final class TypeChecker {
  try checkEnumCaseConstruction(parent: nil, caseName: calleeName, args: args, location: location)
  }
 
+ /// 集合字面量的期望类型下推（[T] 元素标注，proposal-array-element-annotation D-β：
+ /// 标注仅做检查，ADR-020 签名契约不动）。与 refineEnumCaseConstruction 同轨——
+ /// 在期望类型站点调用：字面量形态与期望类型匹配时逐元素校验（推断 + isAssignable），
+ /// 元素类型不符报 mismatch 并返回 true（调用方跳过通用比对）；形态不匹配返回 false
+ /// 走原有路径（零回归）。通配元素类型（`_` / `Any`）放行——`var zs: [Any]` 不拦。
+ /// 覆盖三族：`[T]` 数组 / `[K: V]` 字典 / `{T}` 集合。
+ private func refineCollectionLiteral(expr: Expression, expected: TypeAnnotation, location: SourceLocation) throws -> Bool {
+ // 元素级校验助手：单值对期望元素类型
+ func checkElement(_ elem: Expression, expected elementType: TypeAnnotation) throws -> Bool {
+ guard let actual = inference.infer(expression: elem, expected: elementType) else { return true }
+ try noteBareCaseOutcome(elem, actual: actual, location: location)
+ if !isAssignable(actual: actual, expected: elementType) {
+ try report(TypeError.mismatch(
+ expected: elementType.describe(),
+ got: actual.describe(),
+ location: location
+ ))
+ return false
+ }
+ return true
+ }
+ // 通配元素类型放行（`_` / `Any`：内建签名通配与 Any 顶型语义）
+ func isWildcard(_ t: TypeAnnotation) -> Bool {
+ if case .simple(let n, _) = t { return n == "_" || n == "Any" }
+ return false
+ }
+ switch (expr, expected) {
+ case (.arrayLiteral(let elements, _), .generic(let name, let typeArgs, _))
+ where name == "Array" && typeArgs.count == 1 && !isWildcard(typeArgs[0]):
+ for elem in elements {
+ _ = try checkElement(elem, expected: typeArgs[0])
+ }
+ return true
+ case (.dictionaryLiteral(let entries, _), .generic(let name, let typeArgs, _))
+ where name == "Dictionary" && typeArgs.count == 2 && !isWildcard(typeArgs[0]) && !isWildcard(typeArgs[1]):
+ for entry in entries {
+ _ = try checkElement(entry.key, expected: typeArgs[0])
+ _ = try checkElement(entry.value, expected: typeArgs[1])
+ }
+ return true
+ case (.setLiteral(let elements, _), .generic(let name, let typeArgs, _))
+ where name == "Set" && typeArgs.count == 1 && !isWildcard(typeArgs[0]):
+ for elem in elements {
+ _ = try checkElement(elem, expected: typeArgs[0])
+ }
+ return true
+ default:
+ return false
+ }
+ }
+
  private func registerTopLevelDeclSignature(_ decl: TopLevelDecl) {
  let loc = SourceLocation(line: 0, column: 0, fileName: "")
  switch decl {
@@ -1406,7 +1457,11 @@ public final class TypeChecker {
  if let initExpr = initializer {
  try checkExpression(initExpr)
  if let annot = annot {
- if !(try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
+ if (try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
+ // 枚举用例构造已按期望类型下推校验
+ } else if try refineCollectionLiteral(expr: initExpr, expected: annot, location: location) {
+ // 集合字面量已按 [T]/[K: V]/{T} 逐元素校验（[T] 元素标注，D-β）
+ } else {
  if let actual = inference.infer(expression: initExpr, expected: annot) {
  try noteBareCaseOutcome(initExpr, actual: actual, location: location)
  if !isAssignable(actual: actual, expected: annot) {
@@ -1465,10 +1520,15 @@ public final class TypeChecker {
  if let mutable = typeEnv.lookupVariableMutability(name: name), !mutable {
  try report(TypeError.reassignmentToImmutable(variableName: name, location: location))
  }
- if let varType = typeEnv.lookupVariable(name: name),
- let valType = inference.infer(expression: value) {
+ if let varType = typeEnv.lookupVariable(name: name) {
+ // [T] 元素标注（D-β）：字面量右值按声明元素类型逐项校验（推断对数组字面量
+ // 返 nil，通用比对天然跳过——此处是字面量赋值位的唯一检查通道）
+ if try refineCollectionLiteral(expr: value, expected: varType, location: location) {
+ // 集合字面量已逐元素校验
+ } else if let valType = inference.infer(expression: value) {
  if !isAssignable(actual: valType, expected: varType) {
  try report(TypeError.mismatch(expected: typeName(from: varType), got: typeName(from: valType), location: location))
+ }
  }
  }
  case .member(let object, let name):
@@ -1496,10 +1556,14 @@ public final class TypeChecker {
  }
  // 字段类型校验：成员赋值须与字段声明类型一致（P3-3 加固——此前成员赋值完全不做类型检查）。
  // AssignTarget.member 为 (object, name) 二元组，需重组为 Expression.member(object, name, location) 再推断字段类型。
- if let fieldType = inference.infer(expression: .member(object: object, name: name, location: location)),
- let valType = inference.infer(expression: value),
+ // [T] 元素标注（D-β）：字面量右值按字段元素类型逐项校验（与 identifier target 同轨）。
+ if let fieldType = inference.infer(expression: .member(object: object, name: name, location: location)) {
+ if try refineCollectionLiteral(expr: value, expected: fieldType, location: location) {
+ // 集合字面量已逐元素校验
+ } else if let valType = inference.infer(expression: value),
  !isAssignable(actual: valType, expected: fieldType) {
  try report(TypeError.mismatch(expected: typeName(from: fieldType), got: typeName(from: valType), location: location))
+ }
  }
  case .subscript(let containerExpr, let indexExpr):
  // #46-D D1.5：数组下标写。元素级类型不进入类型系统（D1 决策），仅做索引检查 +
@@ -1730,6 +1794,24 @@ public final class TypeChecker {
  typeEnv.lookupMethod(typeName: typeName, methodName: memberName) == nil {
  try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
  }
+ }
+ // [T] 元素标注（D-β，proposal-array-element-annotation）：Array.append 的实参
+ // 按接收者声明元素类型检查。ADR-020 签名契约不动（append 仍返回新数组、内建
+ // 签名 `[any]` 不特化）——此处是纯检查通道，不改任何推断/运行时行为。
+ // 通配元素类型（`_` / `Any`）放行；`xs.append` 未应用形态不在此校验。
+ if memberName == "append",
+ case .generic(let recvName, let typeArgs, _) = inference.infer(expression: object),
+ recvName == "Array", typeArgs.count == 1,
+ case .simple(let elemName, _) = typeArgs[0],
+ elemName != "_", elemName != "Any",
+ arguments.count == 1,
+ let argType = inference.infer(expression: arguments[0].expression, expected: typeArgs[0]),
+ !isAssignable(actual: argType, expected: typeArgs[0]) {
+ try report(TypeError.mismatch(
+ expected: typeArgs[0].describe(),
+ got: argType.describe(),
+ location: location
+ ))
  }
  case .dotCaseRef(let caseName, _):
  // 点号用例构造（成员意图）：期望类型无关的 arity 校验与裸名同轨

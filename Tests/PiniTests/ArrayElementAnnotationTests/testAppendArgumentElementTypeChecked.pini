@@ -1,0 +1,7 @@
+; append 实参按接收者声明元素类型检查：类型不符静态拒绝
+main|func() -> ():
+    var xs: [I32] = []
+    xs = xs.append(1)
+    xs = xs.append("a")
+    print(xs,)
+    return
