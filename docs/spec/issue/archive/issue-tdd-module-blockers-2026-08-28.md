@@ -2,7 +2,7 @@
 
 - 日期：2026-08-28
 - 提出方：agent:pini-dev
-- 状态：已决议（本文档即决议记录），宿主实现待做
+- 状态：LANDED（决议 + 宿主实现 + 验收全部完成；2026-09-04 实测复核后归档）
 - 关联：G41（`|test` 测试函数块）、G49（本次决议登记）、ADR-018 D1（宿主 git 依赖）、pini-project-spec §7（清单 schema）
 
 ## 1. 背景
@@ -78,12 +78,12 @@ Error: 非法的 pini.toml：./pini.toml
 
 ### 4.2 宿主 pini-swift（待做，分支实现）
 
-- [ ] `parseManifest`：新增 `[build]` 区段解析（复用 `parseTOMLArray`）；`ModuleManifest` 增加 `buildExclude: [String]`
-- [ ] `loadDirectory`：跳过落在 exclude 条目下的相对路径文件
-- [ ] CLI `runTestPath` 模块化：向上定位清单；文件在模块内 → 模块模式（目录加载 + 显式路径收集范围 + exclude 加回）；模块外单文件 → 现行为
-- [ ] check/run 目录模式自然受益于 exclude（无需单独改）
-- [ ] XCTest：exclude 语义、模块模式 test 收集、模块外单文件回退、D2 无参行为
-- [ ] `pini help` 文案更新（`test <file.pini>` → `test [path]`）
+- [x] `parseManifest`：新增 `[build]` 区段解析（复用 `parseTOMLArray`）；`ModuleManifest` 增加 `buildExclude: [String]`
+- [x] `loadDirectory`：跳过落在 exclude 条目下的相对路径文件
+- [x] CLI `runTestPath` 模块化：向上定位清单；文件在模块内 → 模块模式（目录加载 + 显式路径收集范围 + exclude 加回）；模块外单文件 → 现行为
+- [x] check/run 目录模式自然受益于 exclude（无需单独改）
+- [x] XCTest：exclude 语义、模块模式 test 收集、模块外单文件回退、D2 无参行为（`ModuleTestCollectionTests`）
+- [x] `pini help` 文案更新（`test <file.pini>` → `test [path]`）
 
 ### 4.3 pini/ 脚手架对齐（已做，2026-08-28）
 
@@ -101,10 +101,11 @@ Error: 非法的 pini.toml：./pini.toml
 - 最小复现：模块内 `contains|unsafe(hay, needle,) -> (Bool,)` + `|test` 调用即触发；同名函数体改名 `c4_full` 后逐字不变则通过（实证为名字分派问题，非函数体问题）。
 - pini/ 侧 workaround：测试助手改名 `has_substr`。
 - 待决议（host-fix 候选，走独立工单/G 号）：自由函数与成员内建的**名字分派优先级**——用户显式定义的自由函数应优先于按名劫持的成员分支；或至少给出可定位的诊断。
+- **已立案**：登记于 `docs/spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` §宿主收敛待办清单第 4 项（「成员内建名劫持」），不在本工单展开。
 
 ## 5. 验收口径（DoD）
 
-1. 宿主全量测试绿（现基线 1004 执行 / 20 跳过 / 0 失败不回退）——**已达成：1010 执行 / 20 跳过 / 0 失败（+6 G49 用例）**；
-2. pini/ 根目录 `pini test` 无参 → 收集全部 `|test`——**已达成（8 通过；2 红为 L1 TDD 先行，见 4.3）**；
-3. pini/ 根目录 `pini check .` → 绿——**已达成**；
-4. 手工副本与 cat 拼接 workaround 移除后无回归——**已达成（`tools/diff_tokens.sh` MATCH 225 行）**。
+1. 宿主全量测试绿（现基线 1004 执行 / 20 跳过 / 0 失败不回退）——**已达成：2026-09-04 复核 1178 执行 / 20 跳过 / 0 失败**（落地时 1010 执行 / 20 跳过 / 0 失败，+6 G49 用例）；
+2. pini/ 根目录 `pini test` 无参 → 收集全部 `|test`——**已达成（落地时 8 通过 / 2 红，红为 L1 TDD 先行；2026-09-04 复核 70 通过 / 0 失败，L1 已实现全绿）**；
+3. pini/ 根目录 `pini check .` → 绿——**已达成（2026-09-04 复核：模块 pini，15 文件）**；
+4. 手工副本与 cat 拼接 workaround 移除后无回归——**已达成（`tools/diff_tokens.sh` MATCH；2026-09-04 复核 MATCH 508 行）**。复核时发现脚本自身缺陷：bootstrap 侧捕获 `2>&1` 把 stderr 诊断（E7-001 警告，随模块增长至 58 行）混入 diff 流——已修复（诊断走 stderr，不再合并）；宿主 `run` 警告流本身走 stderr，无缺陷。

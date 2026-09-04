@@ -93,10 +93,10 @@
 
 | 工单 | 行数 |
 |---|---|
-| `spec/issue/issue-draft-impl-syntax-audit-2026-08-28.md` | 95 |
+| `docs/spec/issue/issue-draft-impl-syntax-audit-2026-08-28.md` | 95 |
 | `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` | 508 |
 | `spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` | 94 |
-| `spec/issue/issue-tdd-module-blockers-2026-08-28.md` | 110 |
+| `docs/spec/issue/archive/issue-tdd-module-blockers-2026-08-28.md` | 111（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |
 | `spec/issue/issue-pini-dir-namespace-2026-08-29.md` | （有状态：已批准，落档进行中） |
 | `issue-bootstrap-gap-remediation-2026-08-30.md` | 104 |
 | `issue-ffi-module-2026-08-27.md` | 78（有状态：Open） |
