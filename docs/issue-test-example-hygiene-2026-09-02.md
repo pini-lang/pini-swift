@@ -93,7 +93,7 @@
 
 | 工单 | 行数 |
 |---|---|
-| `docs/spec/issue/issue-draft-impl-syntax-audit-2026-08-28.md` | 95（**已核实 2026-09-04：内容收编至 `docs/spec/issue/issue-draft-audit-disposition-2026-08-31.md`（§二 A1–A14 / §五 F1–F6）后删除**） |
+| `docs/spec/issue/issue-draft-impl-syntax-audit-2026-08-28.md` | 95（**已核实 2026-09-04：内容收编至 `docs/spec/issue/archive/issue-draft-audit-disposition-2026-08-31.md`（§二 A1–A14 / §五 F1–F6）后删除**） |
 | `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` | 508 |
 | `spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` | 94 |
 | `docs/spec/issue/archive/issue-tdd-module-blockers-2026-08-28.md` | 111（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |

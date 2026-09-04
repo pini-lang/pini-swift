@@ -45,7 +45,7 @@ fi
 # 文档链接校验（ADR-024 挂账 8）：引用失效即拦截 —— 补上 M1 当年结构性缺失的能力
 "$root/tools/check-doc-links.sh" || exit 1
 
-# 证据表自动清扫（spec §1.4「自动清扫」；工单 issue-evidence-table-sweep-2026-09-03）
+# 证据表自动清扫（spec §1.4「自动清扫」；工单 docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md）
 # 放最后：只有前面所有闸门都通过才动这张表。本仓第一个会改写文件的 hook。
 # 语义见 GIT_WORKFLOW.md §5.1 —— 24h 节流、未暂存则跳过、结果 git add 回本次提交。
 if command -v python3 >/dev/null 2>&1; then
