@@ -168,7 +168,7 @@
 | `pini.toml` 模块清单 | 已定义（P4 v0.23；边界细则见 **G52**） | **◐** | Provisional | `Package`/`FileLoader` 加载 + 跨文件符号 + 可见性 enforce **已实现**；**双通道清单已实现（批 6）**：`[tap]`/`[require]`/`[require.<tap>]`/`[resources]`/`[resources.<tap>]`/`[replace]` 解析 + `[[ ]]` 数组表（MiniTOML），旧 `[dependencies]` 命中即报错指引；`spec`/`[[bin]].entry`/`[lib]`/`[tool.pini]` 不消费；MVS 与 `pini-summary.toml` **已实现**（v1 每依赖单可用版本、仅本地 `file:` tap，远程下载批 7） |
 | 标准库内建函数（29 个，按 ADR-020 D4 六组组织：collection/char/pointer/io/math/concurrency/value） | 部分（G14 文件 IO 已落地；字符谓词已定义 ADR-019；并发签名未钉） | ✅ | Provisional/Experimental | `BuiltinRegistry`（单点登记）/ `Interpreter` 内建分发 |
 | 内建成员方法派发（String/Array 值的成员调用，ADR-020 步骤 B 派发表驱动） | 已定义且已实现（**H-3，2026-08-31**：三级派发——**用户扩展 > 语言内标准库（StdlibPini）> 宿主原生**；用户扩展按名匹配（非按签名），既可**覆盖**同名内建成员（不再被静默压过），也可**新增**内建表没有的方法；未被覆盖的成员按原表派发。IR 后端对内建类型用户扩展不支持——既有 E6-002 边界，非本项引入，待 G18/G24 批次收口） | ✅（解释器） | Provisional | `BuiltinRegistry.memberMethods` / `Interpreter` `.string`/`.array` 派发 / `BuiltinOverrideTests` |
-| 进程内建 `moduleRoot`/`argv`（批 6/F6；`moduleRoot` 返回程序基准、`argv` 返回脚本路径之后的裸参数数组——LLVM 端均 unsupported） + 文件 IO `readFile`/`writeFile`/`readLine` | 已落地（G14）；**路径基准已钉定（G58，批 5）**：绝对路径原样；`./` `../` 开头相对运行时 CWD（用户/shell 视角）；其余相对路径相对**程序基准**（模块运行=模块根 / 单文件=入口文件所在目录）；`moduleRoot()` 返回基准（LLVM 端 unsupported） | ✅ | Provisional | `examples/io.pini` / `docs/spec/issue/proposal-io-path-base-2026-09-02.md` / ADR-030 |
+| 进程内建 `moduleRoot`/`argv`（批 6/F6；`moduleRoot` 返回程序基准、`argv` 返回脚本路径之后的裸参数数组——LLVM 端均 unsupported） + 文件 IO `readFile`/`writeFile`/`readLine` | 已落地（G14）；**路径基准已钉定（G58，批 5）**：绝对路径原样；`./` `../` 开头相对运行时 CWD（用户/shell 视角）；其余相对路径相对**程序基准**（模块运行=模块根 / 单文件=入口文件所在目录）；`moduleRoot()` 返回基准（LLVM 端 unsupported） | ✅ | Provisional | `examples/io.pini` / `docs/spec/issue/archive/proposal-io-path-base-2026-09-02.md` / ADR-030 |
 | `[名称\|foreign]` 块（§A.2.2 foreign-decl：外部 C 函数签名，块内函数自动 `\|unsafe`；运行时经预注册原生函数表解析 `malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`；未注册函数注册期 fail-fast） | 已定义且已实现（ADR-015，Phase 2a 解释器优先；LLVM 端显式 unsupported） | ✅（解释器） | Experimental | `Parser.parseForeignDecl` / `Interpreter.registerNativeFunctions` / `FFITests` / `examples/ffi.pini` |
 | `unsafe <expr>` 消耗点 + `&` 取地址（§A.2.5：前缀一元；`unsafe` 标记单次不安全操作；`&` 仅 unsafe 上下文可用，非 unsafe 上下文报 E4-001；解释器 `&` 为快照取址） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Expression.unsafe`/`.addressOf` / `TypeChecker.unsafeContextDepth` / `FFITests` |
 | `\|unsafe` 函数修饰符（仅自由函数：顶层或 foreign 块签名；函数体自动不安全上下文；扩展块方法 / trait 签名标它报错） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Parser.parseBareFuncDecl`（`allowUnsafeModifier`）/ `TypeChecker.checkFuncBody` / `FFITests` |
@@ -370,7 +370,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | **G55** | **跨行集合 / 元组字面量（A12 方案 B，路 C）**：最内层未闭合括号为「普通括号」时，括号内 **NEWLINE 等同空白、缩进不参与**（行尾不发 newline 记号、行首不发 INDENT/DEDENT）；**块携带括号**（开括号后同行紧跟块开启关键字 `func`——草稿「原地调用 IIFE」及实参位函数字面量的包裹形态）内部布局**完全照常**。已裁边界：`< >` 不参与深度跟踪（比较 `a < b` 与泛型实参同形，词法层不可消歧）；未闭合括号到 EOF 宽松静默（ADR-021）；不匹配 closer 一律弹栈；`` `func` `` 反引号转义不构成块携带；块携带前瞻仅限同行 | 已定义**且已实现**（解释器 + 自举 lexer 同步；差分门禁 L0 MATCH 508）；纯新增能力，无破坏性 | Provisional | v0.50.0（批 1.5） | §2.2 括号内跨行 / `Lexer.bracketStack` + `isBlockCarryingOpen`（`Lexer.swift`）/ 自举 `lexer.pini` `bst_push` + `bst_top` / `docs/spec/issue/archive/issue-crossline-literals-2026-08-31.md` |
 | **G56** | **集合下标三通道安全模型（G48 破坏性修订，批 2）**：① **安全断言** `a[i]` → 元素类型 `T`，越界（读）**panic**（`RuntimeError.indexOutOfRange`，**E5-005**）；② **安全可选** `a.get(i)` → `Optional<T>`，越界 / 缺键 `.none`；③ **不安全** `unsafe a.getUnchecked(i)` → `T`，越界 **UB**（解释器无法表达真 UB，以「UB 陷阱」E5-006 近似）。Array / Dictionary / String 一致（**字典缺失键与越界同义**）；负索引尾部计数与切片语义不变 | 已定义**且已实现（解释器端）**；**LLVM 端通道 ②③ 未实现**（IR 生成报 unsupported，锁步断言在无 `lli` 环境跳过并如实记录）。**破坏性**：越界由 nil 改 panic、类型 `Optional<T>` → `T`，迁移见 `docs/spec/migration-2026-09.md` §A | Provisional | v0.50.0（批 2 修订；G48 原文 v0.49.0） | §2.2 / §2.4.1 G48 / `SubscriptReadStrategy.read`（`SubscriptStrategies.swift`）/ `TypeInference.infer` subscript 分支 / `BuiltinRegistry.memberMethods` 的 `get`、`getUnchecked` / `Interpreter.callFunctionValue` + `uncheckedOrNone` / `PiniRuntime.bk_array_get` / ADR-028 / `docs/spec/issue/archive/proposal-subscript-safety-channels-2026-09-01.md` |
 | **G57** | **括号内记法收口——值的注入用 `=`（批 3）**：总原则 **`=` = 值的注入方向**（实参标签 `f(a = 1)`、字典条目 `["k" = 1]`、元组标签 `(a = 1,)`、默认参数 `n: I32 = 1`），**`：= 标注与取出方向`**（类型标注、块开启、match 具名绑定 `case A(x: v):`）。旧记法 `f(a: 1)` / `[k: v]` / `(a: 1,)` / `E(x: 1)` **已废弃**，解析器给迁移提示。**空字典无字面量**（`[:]` 为全切片），走类型构造 `字典<键, 值>()` | 已定义**且已实现**（宿主 + 自举 parser 同步；parse 差分 MATCH 222 + 94）。**破坏性**：注入位旧记法全部报错；**触及 G54 已钉定面的构造位**（计划修正案 AM-2，G54 解构位保持 `:` 不变），迁移见 `docs/spec/migration-2026-09.md` §B | Provisional | v0.50.0（批 3） | §2.2 记法原则 / 规则 3.15 / `Parser.swift` 实参标签与泛型构造实参分支、`parseTupleOrParen` 标签元素、`parseCollectionLiteral` 字典条目（match 具名绑定分支保持 `colon`）/ 自举 `parser.pini` `parse_element` + 实参表 / ADR-029 / `docs/spec/issue/archive/proposal-paren-equals-binding-2026-09-01.md` |
-| **G58** | **IO 相对路径解析基准（批 5，方案 A 三段式）**：`readFile`/`writeFile` 的路径按形态解析——①绝对路径原样；②`./` `../` 开头相对**运行时 CWD**（用户/shell 视角，为 F6 argv 透传铺路）；③其余相对路径相对**程序基准**（模块运行=模块根、单文件=入口文件所在目录，均为绝对路径）——程序资源可复现，与 `import` 的模块根基准对齐（消除双基准）。`moduleRoot()` 内建返回基准（未注入基准时如实返回 CWD；LLVM 端 unsupported）。LLVM 端无前缀相对路径**字面量**在编译期烘焙基准（跨机运行不可移植为 v1 已知限制）；非字面量路径运行时按 CWD（v1 已知限制） | 已定义**且已实现**（解释器 + CLI 六入口注入 + LLVM 烘焙；自举测试从仓根直跑 70/0——原 5 个 CWD 依赖假失败零改动修复）。**破坏性**：无前缀相对路径由 CWD 改程序基准（现存用例受害数 0，G14 Provisional 窗口期）；出账 `issue-conflict-register` A13/P-path | Provisional | v0.51.0 | `docs/spec/issue/proposal-io-path-base-2026-09-02.md` / ADR-030 / `migration-2026-09.md` §E / `Sources/PiniCore/Interpreter/Interpreter.swift` resolveIOPath / `Sources/PiniCLI/main.swift` absoluteProgramBase |
+| **G58** | **IO 相对路径解析基准（批 5，方案 A 三段式）**：`readFile`/`writeFile` 的路径按形态解析——①绝对路径原样；②`./` `../` 开头相对**运行时 CWD**（用户/shell 视角，为 F6 argv 透传铺路）；③其余相对路径相对**程序基准**（模块运行=模块根、单文件=入口文件所在目录，均为绝对路径）——程序资源可复现，与 `import` 的模块根基准对齐（消除双基准）。`moduleRoot()` 内建返回基准（未注入基准时如实返回 CWD；LLVM 端 unsupported）。LLVM 端无前缀相对路径**字面量**在编译期烘焙基准（跨机运行不可移植为 v1 已知限制）；非字面量路径运行时按 CWD（v1 已知限制） | 已定义**且已实现**（解释器 + CLI 六入口注入 + LLVM 烘焙；自举测试从仓根直跑 70/0——原 5 个 CWD 依赖假失败零改动修复）。**破坏性**：无前缀相对路径由 CWD 改程序基准（现存用例受害数 0，G14 Provisional 窗口期）；出账 `issue-conflict-register` A13/P-path | Provisional | v0.51.0 | `docs/spec/issue/archive/proposal-io-path-base-2026-09-02.md` / ADR-030 / `migration-2026-09.md` §E / `Sources/PiniCore/Interpreter/Interpreter.swift` resolveIOPath / `Sources/PiniCLI/main.swift` absoluteProgramBase |
 
 
 
@@ -922,25 +922,27 @@ primary-atom    ::= IDENT [generic-construct]
                   | func-literal
                   | INT | FLOAT | STRING | INTERP | BOOL
                   | 'nil'
-                  | '(' [expression {',' expression}] ')'
+                  | '(' [tuple-element {',' tuple-element} [',']] ')'
                   | '[' collection-literal ']'
                   | '{' [expression {',' expression}] '}'
                   | builtin-call;
+
+tuple-element   ::= [IDENT '='] expression;
 (* 括号/元组消歧（F4，事实钉定）：`( ... )` 的形态由内容判定——
      1. `()`                  → 空元组；
      2. 单元素**无标签** `(e)` → 解包为该表达式本身（不是元组）；
-     3. 单元素**带标签** `(a: e)`（无尾逗号）→ 仍是元组；
-     4. 多元素（容忍尾逗号）  → 元组；元素标签由 `IDENT ':'` 前瞻判定。
-   宿主与自举均按此实现并测试覆盖。
-   ⚠ 本产生式尚未记载**带标签的元组元素**形态（`IDENT ':' expression`），与实现存在
-   偏差——随本条一并登记为待补产生式。 *)
+     3. 单元素**带标签** `(a = e)`（无尾逗号）→ 仍是元组；
+     4. 多元素（容忍尾逗号）  → 元组；元素标签由 `IDENT '='` 前瞻判定。
+   标签记号 = `=`（批 3，G57 值的注入方向；旧写法 `(a: e)` 已废弃，宿主报错并给迁移提示）。
+   宿主与自举均按此实现并测试覆盖（Parser.parseTupleOrParen / 自举 parser.pini）。 *)
 
 generic-construct ::= '<' type-annotation {',' type-annotation} '>'
                       ('(' [call-arg {',' call-arg}] ')' | '.');
 
 collection-literal ::= ']'
-                     | expression ':' expression {',' expression ':' expression} ']'
+                     | expression '=' expression {',' expression '=' expression} ']'
                      | expression {',' expression} ']';
+(* 字典条目记号 = `=`（批 3，G57；旧写法 `[k: v]` 已废弃；`[:]` 为全切片，不是空字典）。 *)
 
 builtin-call    ::= 'LazyRef' ['<' type-annotation '>'] '(' func-literal ')'
                   | 'assert' '(' expression [',' STRING] ')';
