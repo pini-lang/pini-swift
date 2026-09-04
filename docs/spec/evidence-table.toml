@@ -19,7 +19,7 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md"]
-last_refresh = "2026-09-04T11:20+08:00"
+last_refresh = "2026-09-04T17:55+08:00"
 last_sweep = "2026-09-04T09:02:00+08:00"
 dangling_ids = ["E-035", "E-047"]
 refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。；2026-09-03 批（内联 Pini 源码抽离收口）：新增 E-099..E-101——E-099 规模实测（三引号块 23 = PINI 15 + TOML 8，推翻工单原记 819；单行串含换行者 6–40B 均为断言期望值，抽离无收益）、E-100 抽离落地与语义等价（15 fixture，目标 22/22、全量 1144/0）、E-101 H-4 已落地致『解锁 H-4 签名迁移』动因失效（工单末条耦合风险随之过期）。**本次仅新增并现跑重筛 E-099..E-101；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T00:50+08:00 批（证据表清理工单立项）：新增 E-102（表内现状实测：100 条 / 97 条 status 失真 / 65 条 >72h / 61 条零引用 / E-008 悬空）。**本次仅新增并现跑重筛 E-102；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T01:37+08:00 批（证据表自动清扫落地）：新增 E-103——清扫机制挂载提交节拍、首轮 mark-only 实测 65/101、声明态漂移 100 → 0、删除路径经 /tmp 副本实跑验证 101 → 36。**本次仅新增并现跑重筛 E-103；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T09:28+08:00 批（G52 工单收口 + 批 7 远程 tap）：新增 E-104..E-106——E-104 批 7 落地实测（TapFetcher + 经典 MVS + resources 落地 + commit 真值；全量 1157/112/0，离线全链路），E-105 G52 工单「未完成」为文本未跟上的实测取证与归档代价，E-106 三项未实施条目的全仓核实（entry / graphOrder / resources 根检）。**本次仅新增并现跑重筛 E-104..E-106；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T09:35+08:00 批（G52 收尾补修）：新增 E-107——Def-1 resources 根检与 Def-7 锁文件 tap/source 回读，各带 1 个用例，全量 1159/112/0。**本次仅新增并现跑重筛 E-107；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T10:05+08:00 批（G52 第二批补修）：新增 E-108——**本次仅新增并现跑重筛 E-108；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T11:20+08:00 批 9（G52 全量收口）：新增 E-109——**本次仅新增并现跑重筛 E-109；存量条目未重新验证，按其自身 validated_at 判定。**"
@@ -410,3 +410,30 @@ code_ref = "Sources/PiniCore/Common/FileLoader.swift：ModuleManifest.entryPoint
 validated_at = "2026-09-04T11:20+08:00"
 status = "FRESH"
 note = "实测：全量 1178 执行 / 112 跳过 / 0 失败（批 8 收口 1167，净增 11 = Def-9 的 3 + Def-12 的 1 + Def-11 的 2 + Def-3 的 4 + Def-2 的 1；1167+11 与逐批实测吻合）。Def-3 判据：entry 四态 CLI 实测——无声明跑 42 不变 / 声明满足跑 42 / 声明指错 other.pini 报 entryMainMismatch 且 rc=1 / src/ 布局子目录 entry 跑 7；变异实验（checkEntryConsistency 改 no-op）使 mismatch 测试转红。Def-12 判据：夹具经两轮迭代才具区分力——旧规则（每边覆写 = 最后遍历者胜）等价于「最浅 requirer 胜出」，与字典序规则只在浅层 requirer 名字典序更大时分岔，夹具取 z（浅）/a（深）分得 tz vs ta；回退验证测试真转红。Def-2 判据：纯注册顺序无可观测副作用，钉的是「依赖环境先于依赖者可用」——三层 app ⊃ mid ⊃ leaf 链，mid 函数体解析 leaf 导出符号、app main 调 mid，输出 7；graphOrder 注释定性为导出视图。Def-8：规范侧关闭（v1 不提供 + 判据：零真实用例，待第二个用例再定型），无代码变更。自举仓 Def-4：examples/pini.toml 使 R1 自切，摘掉 exclude 实测 check 仍 15 文件 ⇒ 两机制独立；pini test . 70 通过不变。E3-004 更正：双 main 经实测上游已诊断为 redeclared symbol，工单原文「未根治」表述有误，已随 Def-3 行改写更正"
+
+[[evidence]]
+id = "E-110"
+assertion = "F5 缺陷实测复现并立案：安全上下文（main|func）内裸调 foreign 函数（ffi_malloc(16)）无 unsafe 消耗点，静态层与运行时均不拦截，返回裸指针；门禁位点定位——TypeChecker.checkExpression 中 .addressOf / .forceUnwrap 有 unsafeContextDepth 门禁、.unsafe 开上下文，foreign 调用分派位（.call → foreignDecl 符号）无对应门禁"
+spec_ref = "docs/issue-unsafe-gate-foreign-2026-09-04.md（立案全文：复现探针 + 门禁位点表 + 修复方向）；docs/spec/pini-spec-v0.md §A.2.2（块内函数自动 |unsafe）与 §2.7；docs/spec/issue/archive/issue-draft-audit-disposition-2026-08-31.md §五 F5 行（改指新工单）"
+code_ref = "Sources/PiniCore/Type/TypeChecker.swift：checkExpression 的 .addressOf / .unary(.forceUnwrap) 门禁（unsafeContextDepth）与 .unsafe 消耗点——foreign 调用位无门禁即本缺陷"
+validated_at = "2026-09-04T17:40+08:00"
+status = "FRESH"
+note = "探针实测：/tmp/f5probe（[ffilib|foreign] 声明 ffi_malloc(size: U64,) -> (*U8,)，vendored libffilib.dylib + search_paths=[\"lib\"] + libs），main|func 内裸调 let p = ffi_malloc(16) → pini run . 正常输出 *U8@0x...，无 E4-001/无运行时拦截。与 ADR-028 D-4（空 unsafe 消耗点无害）正交：本缺陷是『该消耗而未消耗』反向缺口"
+
+[[evidence]]
+id = "E-111"
+assertion = "ffi-module 工单 §二 G2 的『load 返回动态 Any，仅 unsafe load(p) 才能收回具体标量』为 ADR-015 落地前的旧观测，已过时——实测 main（非 |unsafe 函数体）内裸 load(p) 不报 E4-001，按指针元素类型编解码返回类型化值；examples/ffi_module/cstring.pini 头部同源注释同属过时陈述"
+spec_ref = "docs/spec/pini-spec-v0.md §2.7（指针原语 load/store/addressof 按元素类型编解码行）；docs/issue-ffi-module-2026-08-27.md §二 G2（时间线注记落点）"
+code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift：registerPointerBuiltins（load 按元素类型编解码）；Sources/PiniCore/Type/TypeChecker.swift：load 调用无 unsafe 上下文门禁（与 E-110 同位点族）"
+validated_at = "2026-09-04T17:40+08:00"
+status = "FRESH"
+note = "探针实测：/tmp/f5probe main|func 内 let v = load(p)（p: *U8）→ 正常输出 0（新分配内存清零，U8 解码），无 E4-001。工单处置：G2 加时间线注记而非改写历史观测；示例注释更新列为后续项"
+
+[[evidence]]
+id = "E-112"
+assertion = "de-facto-grammar-pinning F1（算符→opText 映射表 17 项）已被 spec 钉定落地——spec 投影主题载明完整映射表并声明『自举 parser 已按此表对齐，差分门禁以之为权威参考』；工单状态行此前仍写『其余四项仍 Proposed』为滞后（矛盾 B），F2/F3/F4 经查 spec 无对应钉定，仍 Proposed"
+spec_ref = "docs/spec/pini-spec-v0.md 投影主题（opText 映射表 + 自举对齐句，约 :886）；docs/spec/issue/issue-de-facto-grammar-pinning-2026-08-30.md §F1（补落地注记落点）"
+code_ref = "docs/spec/pini-spec-v0.md 投影主题（文档钉定类证据，无代码变更）；自举侧对齐实现见 examples/selfhost/src/parser/parser.pini（历史交付）"
+validated_at = "2026-09-04T17:40+08:00"
+status = "FRESH"
+note = "查证方式：spec 全文 grep opText 命中映射表与自举对齐声明；F2（logicalAnd/logicalOr/power 死面清理）/F3（前缀 ++/-- 语义）/F4（tuple-or-paren 四条）grep spec 无对应钉定条目，维持 Proposed；2026-09-04T17:55+08:00 批（工单整理·矛盾合并取证）：新增 E-110..E-112——E-110 F5 缺陷实测复现与立案（main|func 裸调 ffi_malloc 无 unsafe 不拦；门禁位点 = TypeChecker.checkExpression，foreign 调用位无 unsafeContextDepth）、E-111 ffi-module G2 语义过时实测（main 裸 load 按元素类型编解码返回 0，ADR-015 前旧观测）、E-112 pinning F1 opText 表已入 spec 钉定（矛盾 B 消解）。**本次仅新增并现跑重筛 E-110..E-112；存量条目未重新验证，按其自身 validated_at 判定。**"
