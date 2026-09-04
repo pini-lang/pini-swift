@@ -21,7 +21,7 @@
   - **D-4 隐式别名注入**（`_别名 = path`）推迟批 3 → 已于批 6 落地（见 `docs/spec/issue/archive/issue-d4-deferred-defects-2026-09-02.md`）。
   - **实现备注（实测教训）**：① `loadGraph` 递归预载全图，环检测**先于**缓存（缓存不得豁免环路径）；② canonical 必须**绝对化**（相对路径下 standardizingPath 不解析 `..`，链比较失明）；③ `parseModule` 将 importDecl 路由进 `module.imports` 侧表，加载器须单独收集（初版仅收 declarations 导致子模块依赖静默丢失）；④ 跨模块签名类型校验批 1b 为不透明处理，深化随批 3。
 - 关联：
-  - `docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`（**R5–R8**：点目录规则、`.pini/` 命名空间、resources 落地与检查、文件命名）
+  - `docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md`（**R5–R8**：点目录规则、`.pini/` 命名空间、resources 落地与检查、文件命名）
   - G49（清单 schema 单一 `[package]`、`[build] exclude`、`pini test` 收集单位 = 模块）
   - G51（import/export 块形式为唯一顶级形态；宿主裸语句为**已知偏差**，收敛待办）
   - ADR-017（`[ffi]` 模块配置，pini.toml 唯一已兑现的模块级语义）
@@ -30,7 +30,7 @@
   - `docs/spec/pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
 
 > **改名溯源（R8，2026-08-29）**：本工单原文使用 `module.toml` / `_summary.toml`，
-> 现统一为 **`pini.toml`** / **`pini-summary.toml`**（理由见 R8；过程见 `docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`）。
+> 现统一为 **`pini.toml`** / **`pini-summary.toml`**（理由见 R8；过程见 `docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md`）。
 > 这是一次**纯改名，不改任何决议的实质**——D1 / D15 / D20 等仍是**现行规则**，
 > 故其文本一并更新为新的哨兵名：**留旧名会让现行规则写错判据**。
 
@@ -61,7 +61,7 @@
 - 一个目录根只有一个根模块；含 `pini.toml` 的子目录是**子模块**，相对地成为子模块的**父模块**。
 - 以 `pini.toml` 为根的目录树，排除含 `pini.toml` 的子目录，**收纳一般子目录与平级文件**（一般子目录属本模块，共享扁平命名空间）。
 - 推论：嵌套模块从父模块包自动切出，**`deps/` 内的 Pini 模块无需再写 `[build] exclude`**。
-- ~~**补充（R1'）**：`deps/` 保留目录永不扫描。~~ **已由 R6 撤销**（`docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`）：
+- ~~**补充（R1'）**：`deps/` 保留目录永不扫描。~~ **已由 R6 撤销**（`docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md`）：
   R1' 是**工具侧硬编码的目录名单**，与 R6（点前缀 / `.pini/` 统一承载非源码内容）重复，且比 R6 更难维护——
   每加一类外来物都要往名单里塞一项。撤销后 `deps/` **只放 `require` 的模块**（各带 `pini.toml` ⇒ R1 自切），
   非 Pini 依赖与宿主一律进 `.pini/`（R6）。
