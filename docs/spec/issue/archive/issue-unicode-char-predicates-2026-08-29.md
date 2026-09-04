@@ -3,6 +3,7 @@
 > **决策依据**：ADR-019（`docs/spec/adr/adr-019-unicode-char-model.md`）。
 > **前置**：G45 `is_letter`（v0.49.0，issue-lexer-gaps-2026-08-28 P1-A）；ADR-018 自举契约（L0 差分门禁 `diff_tokens.sh`）。
 > **类型**：规范变更（§1.3，Provisional 语义放宽）+ 实现缺口闭环。
+> **状态**：**主体已收口（2026-08-29，P1 宿主 / P2 自举对拍 / P3 spec 修订与 G50 随动 + 性能闭环全部落地）**；唯一残余 P3 挂账（LLVM 端四内建、G53 可变数组）以 `docs/issue-lexer-gap-closure-2026-08-29.md` §6 为权威载体（原与本单重复登记，实测一致）。**2026-09-04 核验后归档。**
 
 ## 1. 背景与动机
 

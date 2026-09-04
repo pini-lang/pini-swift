@@ -1,6 +1,6 @@
 # Issue：前缀 `++`/`--` 求值语义钉定与三处宿主缺陷修复（F3）
 
-- 状态：**Open（2026-09-04 自 `docs/spec/issue/issue-de-facto-grammar-pinning-2026-08-30.md` F3 立案转入）**
+- 状态：**Open（2026-09-04 自 `docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md` F3 立案转入）**
 - 来源：自举 parser S5/S6 探针产出；2026-08-31 宿主实测（`pini run` 探针）
 - 关联：`docs/Pini草稿.md` 算术运算符表（草稿意图）；spec §A.3 一元算符层
 

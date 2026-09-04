@@ -2,7 +2,7 @@
 
 - 状态：**LANDED（2026-09-02 批 5 实施 = spec G58 + ADR-030 + migration §E；2026-09-04 提案检查中用户裁决确认 D-1~D-6 全部与落地实现一致，状态回填后归档）**
 - 提出方：AI（由用户指令「先检查既有问题的根因」的根因分析立项；用户确认 IO 为大事、要求详细规划）
-- 关联：G14（文件 IO，Provisional）、**G58**（本提案的落地条目，v0.51.0）、ADR-030、`docs/spec/issue/issue-de-facto-grammar-pinning-2026-08-30.md` **F6**（argv 已于 2026-09-02 独立落地，见下方时间线注记）、`issue-conflict-register` **A13**（本提案落地后 A13 出账，见 G58 条目）
+- 关联：G14（文件 IO，Provisional）、**G58**（本提案的落地条目，v0.51.0）、ADR-030、`docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md` **F6**（argv 已于 2026-09-02 独立落地，见下方时间线注记）、`issue-conflict-register` **A13**（本提案落地后 A13 出账，见 G58 条目）
 
 > **时间线注记（2026-09-04 补，历史记录）**：本文动机 §1.3 写于 F6 落地同日、称「未来 argv 落地后……否则 F6 无法立项」；
 > 实测 `argv()` 内建已于 2026-09-02 落地（`BuiltinRegistry.swift:114`，io 组，run 双形态透传）——

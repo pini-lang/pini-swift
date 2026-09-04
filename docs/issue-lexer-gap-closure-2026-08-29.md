@@ -1,7 +1,7 @@
 # Issue: Lexer 阶段自举欠账收口与宽松词法（2026-08-29）
 
 > **性质**：自举 L0 阶段收口（对拍门禁盲区暴露 → 宿主补齐 → 自举清账 → 语义决策）。
-> **关联**：ADR-019（字符模型与谓词）/ ADR-020（内建特征化）/ **ADR-021（宽松词法，本 issue 核心）** / G50 / G53 / issue-unicode-char-predicates-2026-08-29。
+> **关联**：ADR-019（字符模型与谓词）/ ADR-020（内建特征化）/ **ADR-021（宽松词法，本 issue 核心）** / G50 / G53  / `docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md`。
 
 ## 1. 背景与发现
 
