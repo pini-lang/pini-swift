@@ -1,0 +1,11 @@
+{计数器}
+x: I32 = 3
+
+main|func() -> ():
+    var o = 计数器()
+    ++o.x
+    print(o.x)
+    var arr = [7]
+    --arr[0]
+    print(arr[0])
+    return

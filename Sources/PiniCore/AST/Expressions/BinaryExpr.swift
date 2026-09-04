@@ -12,8 +12,6 @@ public enum BinaryOperator: Equatable {
  case greaterThan
  case lessThanOrEqual
  case greaterThanOrEqual
- case logicalAnd
- case logicalOr
  case bitwiseAnd
  case bitwiseOr
  case bitwiseXor
@@ -30,7 +28,6 @@ public enum BinaryOperator: Equatable {
  case xorAssign
  case leftShiftAssign
  case rightShiftAssign
- case power
  case and
  case or
 }

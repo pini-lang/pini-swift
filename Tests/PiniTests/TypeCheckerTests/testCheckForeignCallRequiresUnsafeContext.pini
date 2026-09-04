@@ -1,0 +1,6 @@
+[libc|foreign]
+malloc(size: U64,) -> (*U8,)
+
+main|func() -> ():
+    var p = malloc(8)
+    return

@@ -3435,6 +3435,10 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  // Phase 2a（ADR-015 FFI， modifier）：`[名称|foreign]` 块修饰符。
  advance()
  return "foreign"
+ case .keyword(.test, _):
+ // G51：`名称|test` 测试函数块修饰符（G41）——宿主词法对齐自举 kw_test。
+ advance()
+ return "test"
  default:
  throw ParserError.expectedToken(token: "identifier", location: currentLocation)
  }

@@ -22,10 +22,15 @@
 - 资源寻址：**v1 明确不提供**产品内 API（判据见 project-spec §3.3；此前为「待定」悬空项）
 
 ### Fixed
+- **前缀 `++`/`--` 语义钉定并修复三处缺陷（F3 / 批 A）**：表达式位与成员/下标目标现读-改-写回（此前表达式位、成员/下标不写回）；不可赋值目标（字面量等）为编译错误（此前 `++1` 求值为 2）；语句位与表达式位同轨（`Interpreter.evaluateIncDec`）
+- **foreign 调用 unsafe 门禁（F5 / 批 A）**：安全上下文裸调 `[X|foreign]` 函数报 E4-001（此前不拦，「该消耗而未消耗」反向缺口；与 ADR-028 D-4 正交）；`examples/ffi_module/cstring.pini` 1 处裸调已迁移加 `unsafe`
+- **BinaryOperator 死面删除（F2 / 批 A）**：`logicalAnd` / `logicalOr` / `power` 永不被构造（解析器在 and/or 层构造 `.and`/`.or`），删除无行为变化；assign 族「仅语句级」入 spec 规则 3.11
 - 锁文件 `commit` 此前恒为 `-`（只写不读），现为真实的来源定位符；`tap` / `source` 同样补上读取，`verify` 报错回显来源
 - **R7 双向封闭**：`resources X` 而 X 的根含 `pini.toml` → 报错指引改用 `[require]`（此前只兑现正向）
 - **`file:` 替换不再往用户本地目录抓取**（批 7 引入的回归）：落地目录被换成本地目录后，抓取仍按 tap 的 spec 执行，会在用户的开发工作区里 `fetch`+`checkout`
 
+### Changed
+- **`test` 收编为关键字（G51 / 批 A）**：宿主 lexer 对齐自举 `kw_test` 与 spec KEYWORD（共 34）；`名称|test` 修饰符经词法接出，`pini test` 收集路径不变
 ### Internal
 - 三层嵌套模块夹具 `Tests/PiniTests/ModuleSystemTests/demo3/`（R1 递归排除此前只有两层覆盖）
 

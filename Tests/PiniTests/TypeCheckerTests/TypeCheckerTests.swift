@@ -117,6 +117,44 @@ final class TypeCheckerTests: XCTestCase {
         XCTAssertNoThrow(try checker.check(module: module), "整数加法不应抛出类型错误")
     }
 
+    /// F5（issue-unsafe-gate-foreign）：安全上下文裸调 foreign 函数应报 mismatch
+    ///（该消耗而未消耗的反向缺口；`|unsafe` 函数体 / `unsafe (...)` 消耗点放行）
+    func testCheckForeignCallRequiresUnsafeContext() throws {
+        let source = try loadPiniFixture("testCheckForeignCallRequiresUnsafeContext", filePath: #filePath)
+        let module = try parseModule(source)
+        let checker = TypeChecker()
+
+        XCTAssertThrowsError(try checker.check(module: module), "安全上下文裸调 foreign 应报错") { error in
+            guard case TypeError.mismatch(_, _, _) = error else {
+                XCTFail("应为 mismatch 错误，实际: \(error)")
+                return
+            }
+        }
+    }
+
+    /// F3：前缀 ++/-- 作用于不可赋值目标（字面量）应为静态编译错误
+    func testCheckIncDecLiteralTargetRejected() throws {
+        let source = try loadPiniFixture("testCheckIncDecLiteralTargetRejected", filePath: #filePath)
+        let module = try parseModule(source)
+        let checker = TypeChecker()
+
+        XCTAssertThrowsError(try checker.check(module: module), "++1 应为编译错误") { error in
+            guard case TypeError.mismatch(_, _, _) = error else {
+                XCTFail("应为 mismatch 错误，实际: \(error)")
+                return
+            }
+        }
+    }
+
+    /// F3：前缀 ++/-- 作用于可赋值目标（变量）应通过类型检查
+    func testCheckIncDecIdentifierTargetAccepted() throws {
+        let source = try loadPiniFixture("testCheckIncDecIdentifierTargetAccepted", filePath: #filePath)
+        let module = try parseModule(source)
+        let checker = TypeChecker()
+
+        XCTAssertNoThrow(try checker.check(module: module), "++可赋值变量不应报错")
+    }
+
     /// 意图：类型检查器应检测到整数与字符串的算术运算类型不匹配
     func testCheckTypeMismatchArithmetic() throws {
         let source = try loadPiniFixture("testCheckTypeMismatchArithmetic", filePath: #filePath)

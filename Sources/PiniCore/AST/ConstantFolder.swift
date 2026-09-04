@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 在解析后、类型检查前对字面量二元/一元运算做编译期求值折叠，生成等价但更简单的 AST。
 /// 严格保持语义：仅折叠「两侧均为同类型字面量」的节点，不改变类型、不消除运行时错误
-/// （如除零）、不折叠可能含副作用/短路语义的 `&&`/`||`、不折叠函数调用、不折叠 `power`。
+/// （如除零）、不折叠可能含副作用/短路语义的 `&&`/`||`、不折叠函数调用。
 public enum ConstantFolder {
 
  public static func foldConstants(in module: Module) -> Module {
@@ -220,7 +220,7 @@ public enum ConstantFolder {
  case .leftShift: return .integerLiteral(value: a << b, location: loc)
  case .rightShift: return .integerLiteral(value: a >> b, location: loc)
  default:
- // logicalAnd / logicalOr / power / assign 族：保留原节点（短路/副作用/溢出风险）
+ // assign 族：保留原节点（副作用/溢出风险）
  return .binary(left: .integerLiteral(value: a, location: loc), op: op, right: .integerLiteral(value: b, location: loc), location: loc)
  }
  }
@@ -248,7 +248,7 @@ public enum ConstantFolder {
  switch op {
  case .equal: return .boolLiteral(value: a == b, location: loc)
  case .notEqual: return .boolLiteral(value: a != b, location: loc)
- // logicalAnd / logicalOr：保留原节点（短路/副作用）
+ // 短路语义由 `.and` / `.or` 承载：保留原节点（短路/副作用）
  default:
  return .binary(left: .boolLiteral(value: a, location: loc), op: op, right: .boolLiteral(value: b, location: loc), location: loc)
  }

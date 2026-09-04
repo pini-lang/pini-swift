@@ -28,3 +28,11 @@
 - 三处缺陷各有失败先行测试（修复前红、修复后绿）；
 - spec §A.3 载明语义；
 - CHANGELOG 迁移说明（行为变更：表达式位写回）。
+
+## 验收记录（2026-09-04 批 A）
+
+- spec：§A 前缀 `++`/`--` 注记更新为「已对齐」（去「三处偏离登记待修」段）。
+- 宿主：`Interpreter.evaluateIncDec` 统一语句位/表达式位读-改-写回（`runExpressionStatement` 标识符特例写回移除，防双写）；`TypeChecker` 静态拒绝不可赋值目标（spec「编译错误」）。
+- 探针实测：`var m = ++n` → m=6 且 **n=6**（旧缺陷 n=5 修复）；`++o.x` → 4；`--arr[0]` → 6；`++1` → 静态 mismatch。
+- 测试：testUnaryIncDecExpressionWriteback / testUnaryIncDecMemberSubscriptWriteback（InterpreterTests）+ testCheckIncDecLiteralTargetRejected / testCheckIncDecIdentifierTargetAccepted（TypeCheckerTests）。
+- CHANGELOG 迁移说明随批 A 提交。

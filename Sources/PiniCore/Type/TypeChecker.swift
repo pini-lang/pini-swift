@@ -55,6 +55,9 @@ public final class TypeChecker {
  /// Phase 2a（ADR-015 FFI）：不安全上下文深度。`|unsafe` 函数体或 `unsafe (...)` 消耗点内 > 0。
  /// `&` 取地址 / 指针解引用仅允许在此深度 > 0 时出现。
  private var unsafeContextDepth: Int = 0
+ // F5（issue-unsafe-gate-foreign）：foreign 函数名集——调用位门禁用。
+ // foreignDecl 注册进通用函数表时无 foreign 标记，故在此并行登记。
+ private var foreignFunctionNames: Set<String> = []
 
  private func registerBuiltinTypes() {
  let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -914,6 +917,7 @@ public final class TypeChecker {
  registerExtensionMethods(x)
  case .foreignDecl(let fd):
  // Phase 2a（ADR-015 FFI）：外部 C 函数签名注册为模块级函数（块内函数自动 |unsafe）。
+ foreignFunctionNames.formUnion(fd.funcs.map { $0.name })
  for f in fd.funcs {
  let paramTypes = f.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: f.location) }
  typeEnv.defineFunction(name: f.name, params: paramTypes, returns: f.returnTypes)
@@ -1545,6 +1549,19 @@ public final class TypeChecker {
  try checkBinaryOperandTypes(left: left, op: op, right: right, location: location)
 
  case .unary(let op, let operand, let location):
+ if op == .increment || op == .decrement {
+ // F3（spec「前缀 ++/--」注钉定）：目标须可赋值（变量/成员/下标）——
+ // 字面量等不可赋值目标为编译错误（静态拒绝，运行时 evaluateIncDec 兜底）。
+ switch operand {
+ case .identifier, .member, .subscript: break
+ default:
+ try report(TypeError.mismatch(
+ expected: "可赋值目标（变量 / 成员 / 下标）",
+ got: "不可赋值目标（`++`/`--` 仅前缀形态）",
+ location: location
+ ))
+ }
+ }
  if op == .forceUnwrap {
  // 强制解包 `!` 仅在 unsafe 上下文可用（与 `&` 取地址同构）。
  guard unsafeContextDepth > 0 else {
@@ -1599,6 +1616,17 @@ public final class TypeChecker {
  // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
  try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
  if let sig = typeEnv.lookupFunction(name: calleeName) {
+ // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
+ // 与 ADR-028 D-4（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
+ // `|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 |unsafe 放行。
+ if foreignFunctionNames.contains(calleeName), unsafeContextDepth == 0 {
+ try report(TypeError.mismatch(
+ expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
+ got: "foreign 调用 `\(calleeName)` 出现在非 unsafe 上下文",
+ location: location
+ ))
+ return
+ }
  try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])
  // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
  if let paramNames = asyncFunctionParamNames[calleeName] {
@@ -1831,11 +1859,11 @@ public final class TypeChecker {
  // 逻辑运算符 && || 要求 Bool 操作数，此处仅做左右一致性检查
  let needsConsistency: Bool
  switch op {
- case .plus, .minus, .multiply, .divide, .modulo, .power,
+ case .plus, .minus, .multiply, .divide, .modulo,
  .bitwiseAnd, .bitwiseOr, .bitwiseXor, .leftShift, .rightShift,
  .equal, .notEqual, .lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual:
  needsConsistency = true
- case .and, .or, .logicalAnd, .logicalOr,
+ case .and, .or,
  .assign, .plusAssign, .minusAssign, .multiplyAssign, .divideAssign,
  .moduloAssign, .andAssign, .orAssign, .xorAssign,
  .leftShiftAssign, .rightShiftAssign:

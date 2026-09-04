@@ -26,3 +26,9 @@
 - 死面处置落地（删或注记），全量测试 GREEN；
 - spec 载明 assign 族语句级语义；
 - 自举 parser 差分门禁维持 MATCH。
+
+## 验收记录（2026-09-04 批 A）
+
+- 宿主：`BinaryOperator` 删除 `logicalAnd` / `logicalOr` / `power` 三个死面 case；`ExprEmitter` / `TypeInference` / `TypeChecker` 对应分支与常量折叠注释同步清理；Tests 侧零引用（删除前实测）。
+- spec：规则 3.11 扩展——assign 族「仅语句级」钉定 + 死面删除记录。
+- 构建 + 全量测试通过（死面不可达性实证：删除无任何行为变化）。

@@ -93,7 +93,7 @@ c整型|unsafe(源: String,) -> (I32,):
 比较测试|test() -> ():
  var a = unsafe cstr("abc")
  var b = unsafe cstr("abc")
- var c: I32 = ffi_strcmp(a, b)
+ var c: I32 = unsafe ffi_strcmp(a, b)
  assert(c == 0, "ffi_strcmp 相等应返回 0")
  unsafe ffi_free(a)
  unsafe ffi_free(b)

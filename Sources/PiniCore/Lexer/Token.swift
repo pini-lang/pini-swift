@@ -307,7 +307,11 @@ public enum Keyword: String, CaseIterable {
  // 从内建函数升格为保留关键字——fire-and-forget 唯一合法出口。
  case `detach` = "detach"
  // Phase 2a（ADR-015 FFI）：`unsafe` 前缀表达式 / `|unsafe` 函数修饰符 + `foreign` 块声明。
- // 关键字集 31→33，对齐 spec 『共 33』。
+ // 关键字集 31→33（ADR-015）；34（G51 补 `test`，对齐 spec 『共 34』）。
  case `unsafe` = "unsafe"
  case `foreign` = "foreign"
+ // G51（spec KEYWORD 收口）：测试函数块修饰符关键字——宿主词法对齐自举
+ //（自举 lexer 关键字表本就含 kw_test）；`名称|test` 修饰符位经 parseIdentifier
+ // 白名单接出为修饰符串 "test"（Interpreter.runTests 收集路径不变）。
+ case `test` = "test"
 }

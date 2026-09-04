@@ -1384,17 +1384,14 @@ public class Interpreter {
  }
  }
 
- /// 执行一条表达式语句并求值其结果，统一处理后缀 `++`/`--`（标识符上）的回写。
+ /// 执行一条表达式语句并求值其结果。
  /// 被 `executeStatement` 与 `executeFunctionBody` 共用，避免内联逻辑重复，
  /// 保证函数体内裸表达式语句同样能命中调试钩子。
+ /// F3：前缀 `++`/`--` 的写回已统一在 `evaluateIncDec`（求值即写回，语句位与
+ /// 表达式位同轨），此处不再有标识符特例写回。
  @discardableResult
  func runExpressionStatement(_ expr: Expression) throws -> Value {
  let result = try evaluateExpression(expr)
- if case .unary(let op, let operand, _) = expr,
- case .identifier(let name, _) = operand,
- op == .increment || op == .decrement {
- try currentEnv.assign(name: name, value: result)
- }
  return result
  }
 
@@ -1636,6 +1633,11 @@ public class Interpreter {
  throw RuntimeError.invalidOperation(reason: "强制解包 `!` 命中 Optional.none（元素不存在）", location: location)
  }
  throw RuntimeError.invalidOperation(reason: "强制解包 `!` 的操作数不是 Optional 值: \(v)", location: location)
+ }
+ if op == .increment || op == .decrement {
+ // F3（de-facto-grammar-pinning 钉定）：前缀 `++`/`--` = 对可赋值目标
+ // 读-改-写回，表达式值 = 改写后值；不可赋值目标报错。无后缀形态。
+ return try evaluateIncDec(op: op, target: operand, location: location)
  }
  let v = try evaluateExpression(operand)
  return try evaluateUnaryOp(op, v)
@@ -1977,6 +1979,46 @@ public class Interpreter {
  case (.plus, .float(let a)): return .float(a)
  default:
  throw RuntimeError.invalidOperation(reason: "无效的一元运算", location: SourceLocation(line: 0, column: 0, fileName: ""))
+ }
+ }
+
+ /// F3（issue-prefix-increment-semantics / de-facto-grammar-pinning F3）：
+ /// 前缀 `++`/`--` 语义 = 对可赋值目标（变量 / 成员 / 下标）读-改-写回，
+ /// 表达式值取改写后值（Pini草稿意图，spec「前缀 ++/--」注钉定）。语句位与表达式位
+ /// 共用本路径，消除原「语句位写回、表达式位不写回、成员/下标不写回、
+ /// 不可赋值目标不报错」三处缺陷。字面量等不可赋值目标直接报错。
+ private func evaluateIncDec(op: UnaryOperator, target: Expression, location: SourceLocation) throws -> Value {
+ func apply(_ v: Value) throws -> Value {
+ switch (op, v) {
+ case (.increment, .int(let a)): return .int(a + 1)
+ case (.decrement, .int(let a)): return .int(a - 1)
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "前缀 `++`/`--` 目标须为可赋值的整型（变量 / 成员 / 下标），得到：\(v)",
+ location: location)
+ }
+ }
+ switch target {
+ case .identifier(let name, _):
+ let nv = try apply(try currentEnv.get(name: name))
+ try currentEnv.assign(name: name, value: nv)
+ return nv
+ case .member(let objExpr, let name, _):
+ let objValue = try evaluateExpression(objExpr)
+ let cur = try evaluateMember(objValue, memberName: name, location: location)
+ let nv = try apply(cur)
+ try performMemberAssign(objValue: objValue, objExpr: objExpr, name: name, value: nv, location: location)
+ return nv
+ case .subscript(let containerExpr, let indexExpr, _):
+ let cur = try evaluateExpression(target)
+ let nv = try apply(cur)
+ let idx = try evaluateExpression(indexExpr)
+ try writeSubscript(target: containerExpr, index: idx, newValue: nv, location: location)
+ return nv
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "前缀 `++`/`--` 的目标须为可赋值（变量 / 成员 / 下标）",
+ location: location)
  }
  }
 
