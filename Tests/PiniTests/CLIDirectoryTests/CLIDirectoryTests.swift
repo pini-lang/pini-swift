@@ -296,4 +296,108 @@ final class CLIDirectoryTests: XCTestCase {
             ($0.fileName as NSString).lastPathComponent == "main.pini"
         })
     }
+
+    // MARK: - G52 §9 Def-3：[[bin]].entry / [lib].entry 入口定位
+
+    /// 构造含 entry 声明的临时模块并加载（与 CLI 目录 run 路径同一组 API）。
+    private func makeEntryModule(entryLines: [String],
+                                 files: [String: String]) throws -> (dir: String, manifest: ModuleManifest) {
+        let tmp = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_entry_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            atPath: tmp, withIntermediateDirectories: true, attributes: nil)
+        // ⚠ 不在此 defer 清理——defer 会在本函数 return 前把目录删掉，
+        // 调用方还没来得及 loadDirectory。清理责任在调用方（defer { try? removeItem }）。
+        let manifestText = "[package]\nname = \"entrymod\"\n" + entryLines.joined(separator: "\n") + "\n"
+        try manifestText.write(
+            toFile: (tmp as NSString).appendingPathComponent("pini.toml"),
+            atomically: true, encoding: .utf8)
+        for (rel, source) in files {
+            let p = (tmp as NSString).appendingPathComponent(rel)
+            try FileManager.default.createDirectory(
+                atPath: (p as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true, attributes: nil)
+            try source.write(toFile: p, atomically: true, encoding: .utf8)
+        }
+        let manifest = try FileLoader.loadManifest(directory: tmp)
+        return (tmp, try XCTUnwrap(manifest))
+    }
+
+    /// 验收：清单声明 `[[bin]].entry` 且 main 确在其中 → 照常运行（entry 是合法声明路径）。
+    /// 意图：证明 entry 定位不是「报错专用」——声明满足时行为与无声明完全一致。
+    func testEntryDeclaredAndSatisfiedRunsNormally() throws {
+        let (dir, manifest) = try makeEntryModule(
+            entryLines: ["[[bin]]", "name = \"app\"", "entry = \"main.pini\""],
+            files: ["main.pini": "main() -> ():\n    print(42)\n    return\n",
+                    "other.pini": "helper() -> ():\n    return\n"])
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        XCTAssertEqual(manifest.entryPoints, ["main.pini"], "[[bin]].entry 应被解析")
+        let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
+        let out = try captureStdout {
+            let interpreter = Interpreter()
+            interpreter.entryFiles = Set(manifest.entryPoints.map { dir + "/" + $0 })
+            try interpreter.run(package: pkg)
+        }
+        XCTAssertEqual(out.split(separator: "\n").map(String.init), ["42"])
+    }
+
+    /// 验收：entry 声明在 `src/main.pini`（子目录）→ 照常运行。
+    /// 意图：src/ 布局是真实工程形态；entry 路径是相对模块根拼接，不限定根级文件。
+    func testEntryInSubdirectorySrcLayout() throws {
+        let (dir, manifest) = try makeEntryModule(
+            entryLines: ["[[bin]]", "entry = \"src/main.pini\""],
+            files: ["src/main.pini": "main() -> ():\n    print(7)\n    return\n",
+                    "src/util.pini": "util() -> ():\n    return\n"])
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
+        let out = try captureStdout {
+            let interpreter = Interpreter()
+            interpreter.entryFiles = Set(manifest.entryPoints.map { dir + "/" + $0 })
+            try interpreter.run(package: pkg)
+        }
+        XCTAssertEqual(out.split(separator: "\n").map(String.init), ["7"])
+    }
+
+    /// 验收：entry 指向的文件**不含** main（main 在别处）→ `entryMainMismatch`
+    /// （R-018），消息同时给出声明入口与 main 实际所在文件。
+    /// 意图：声明入口即承诺「程序从这里开始」——main 落在别处是配置与代码不一致，
+    /// 静默取全局 main 会让 entry 字段形同虚设（Def-3 的核心判据）。
+    func testEntryMismatchThrowsDiagnosticError() throws {
+        let (dir, manifest) = try makeEntryModule(
+            entryLines: ["[[bin]]", "entry = \"other.pini\""],
+            files: ["main.pini": "main() -> ():\n    print(42)\n    return\n",
+                    "other.pini": "helper() -> ():\n    return\n"])
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
+        XCTAssertThrowsError(try {
+            let interpreter = Interpreter()
+            interpreter.entryFiles = Set(manifest.entryPoints.map { dir + "/" + $0 })
+            try interpreter.run(package: pkg)
+        }()) { error in
+            guard case RuntimeError.entryMainMismatch(let entries, let declaredIn, _) = error else {
+                return XCTFail("应抛 entryMainMismatch，实际：\(error)")
+            }
+            XCTAssertEqual(entries, [dir + "/other.pini"])
+            XCTAssertTrue(declaredIn.hasSuffix("/main.pini"),
+                          "declaredIn 应指向 main 实际所在文件，实际：\(declaredIn)")
+        }
+    }
+
+    /// 验收：**未声明** entry（空集）→ 沿用「全局找 main」，声明入口的模块外的既有工程零行为变更。
+    /// 意图：用户裁决——`main` 必须是默认入口，entry 只**收窄**不替换查找方式；
+    /// 这是本特性以「增量」而非「替换」落地的回归屏障。
+    func testNoEntryKeepsGlobalMainLookup() throws {
+        let (dir, manifest) = try makeEntryModule(
+            entryLines: [],
+            files: ["main.pini": "main() -> ():\n    print(42)\n    return\n",
+                    "other.pini": "helper() -> ():\n    return\n"])
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        XCTAssertEqual(manifest.entryPoints, [], "无 entry 声明 ⇒ entryPoints 为空")
+        let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
+        let out = try captureStdout {
+            let interpreter = Interpreter()
+            try interpreter.run(package: pkg)
+        }
+        XCTAssertEqual(out.split(separator: "\n").map(String.init), ["42"])
+    }
 }

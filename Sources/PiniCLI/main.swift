@@ -862,6 +862,10 @@ func runRunPath(_ path: String, argv: [String] = []) {
  let interpreter = Interpreter(ffiConfig: manifest.ffi ?? .default,
  programBase: absoluteProgramBase(path))
  interpreter.processArguments = argv
+ // G52 §9 Def-3：注入清单声明的入口文件（`[[bin]].entry` / `[lib].entry`）。
+ // 拼接方式与 loadDirectory 构造 fileName 的基准一致（模块根原样拼接），
+ // 解释器侧 checkEntryConsistency 按相等/后缀比对。空集 = 未声明，不介入。
+ interpreter.entryFiles = Set(manifest.entryPoints.map { path + "/" + $0 })
  do { try interpreter.run(package: pkg) }
  catch { printError(formatCLIError(error: error, source: nil)); exit(1) }
 }

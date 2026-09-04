@@ -151,6 +151,14 @@ public class Interpreter {
  /// 裸名兜底的运行时依据；v1 边界：主模块文件生效，被引入模块内部各自的注入
  /// 不跨模块传递（其函数体裸名解析沿闭包环境链，见 loadImports 注释）。
  private var fileInjections: [String: [(alias: String, symbols: Set<String>)]] = [:]
+ /// G52 §9 Def-3：清单声明的入口文件（绝对路径；空 = 未声明）。
+ ///
+ /// **空集即不介入**——`main` 是默认入口，本字段只**收窄**入口的合法位置，不替换查找方式。
+ /// 用户裁决：不得把「声明 entry 才找得到入口」做成默认，那会牵动全仓既有工程。
+ public var entryFiles: Set<String> = []
+ /// `main` 声明所在的文件（`registerDecls` 时记录），供 entry 定位比对。
+ private var mainDeclaringFile: String?
+ private var mainDeclaringLocation: SourceLocation?
 
  public init(ffiConfig: FFIConfig = .default, programBase: String? = nil) {
  self.ffiConfig = ffiConfig
@@ -367,12 +375,43 @@ public class Interpreter {
  return fv
  }
 
+ /// G52 §9 Def-3：入口一致性校验。
+ ///
+ /// 清单声明了 `[[bin]].entry` / `[lib].entry`（`entryFiles` 非空）时，`main` 必须定义在
+ /// 其中之一——声明入口即承诺「程序从这里开始」，`main` 落在别处是**配置与代码不一致**，
+ /// 不是「随便找一个 main 跑」；静默取全局 main 会让 entry 字段形同虚设。
+ /// **空集 = 未声明 ⇒ 不介入**（`main` 是默认入口，沿用全局查找——用户裁决，见 Def-3）。
+ func checkEntryConsistency() throws {
+ guard !entryFiles.isEmpty, let declared = mainDeclaringFile else { return }
+ let declaredNorm = Self.normalizeEntryPath(declared)
+ let hit = entryFiles.contains { e in
+ let en = Self.normalizeEntryPath(e)
+ return declaredNorm == en || declaredNorm.hasSuffix("/" + en)
+ }
+ guard !hit else { return }
+ throw RuntimeError.entryMainMismatch(
+ entries: entryFiles.sorted(),
+ declaredIn: declared,
+ location: mainDeclaringLocation ?? SourceLocation(line: 0, column: 0, fileName: declared))
+ }
+
+ /// 归并重复分隔符、去前导 `./`，供 entry 路径比对。
+ /// 不做绝对化：声明端与记录端须以同一路径基准构造（CLI 以模块根原样拼接），
+ /// 比对同时接受「相等」与「后缀匹配」，容忍调用方一侧带绝对前缀。
+ static func normalizeEntryPath(_ p: String) -> String {
+ var s = p
+ while s.contains("//") { s = s.replacingOccurrences(of: "//", with: "/") }
+ if s.hasPrefix("./") { s = String(s.dropFirst(2)) }
+ return s
+ }
+
  /// B-2 探针：跑一个模块，返回顶层 main 的 Future（挂起模式，`await`/`wait` 真正释放 OS 线程）。
  func runSuspendable(module: Module) throws -> FutureValue {
  try prepareSuspend(module)
  guard let main = mainFunctionValue() else {
  throw RuntimeError.mainNotFound(location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
+ try checkEntryConsistency()
  return runSuspendableEntry(main)
  }
 
@@ -826,6 +865,13 @@ public class Interpreter {
  case .funcDecl(let f):
  // 同时登记到 typeDefs，供运行时 genericConstruct 识别泛型函数调用并单态化
  typeDefs[f.name] = .funcDecl(f)
+ // Def-3：记录 `main` 声明位置，供入口一致性校验（checkEntryConsistency）。
+ // 记录「本解释器 globalEnv 里实际生效的那个 main」——与 `globalEnv.get("main")`
+ // 的取值一致；被引入模块各自持独立解释器，其 main 不会写到这里。
+ if f.name == "main" {
+ mainDeclaringFile = f.location.fileName
+ mainDeclaringLocation = f.location
+ }
  let fv = FunctionValue(
  name: f.name,
  params: f.params,
@@ -1265,6 +1311,8 @@ public class Interpreter {
  guard let mainVal = try? globalEnv.get(name: "main") else {
  throw RuntimeError.mainNotFound(location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
+ // Def-3：清单声明 entry 时，main 必须落在声明的文件里（空集不介入）。
+ try checkEntryConsistency()
  guard case .function(let fv) = mainVal else {
  throw RuntimeError.notCallable(location: SourceLocation(line: 0, column: 0, fileName: ""))
  }

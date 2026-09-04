@@ -260,6 +260,7 @@ extension RuntimeError: DiagnosticProviding {
  case .undefinedNativeFunction: return "\(DiagnosticDomain.runtime.rawValue)-015"
  case .libraryNotFound: return "\(DiagnosticDomain.runtime.rawValue)-016"
  case .symbolNotFound: return "\(DiagnosticDomain.runtime.rawValue)-017"
+ case .entryMainMismatch: return "\(DiagnosticDomain.runtime.rawValue)-018"
  }
  }
  public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -279,7 +280,8 @@ extension RuntimeError: DiagnosticProviding {
  .argumentCountMismatch(_, _, _, let loc),
  .undefinedNativeFunction(_, _, let loc),
  .libraryNotFound(_, _, let loc),
- .symbolNotFound(_, _, let loc):
+ .symbolNotFound(_, _, let loc),
+ .entryMainMismatch(_, _, let loc):
  return loc
  }
  }

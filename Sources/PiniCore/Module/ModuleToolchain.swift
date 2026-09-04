@@ -125,9 +125,10 @@ public enum ModuleToolchain {
  return .version(stripVersionPrefix(s))
  }
 
- /// 剥 `v` / `V` 前缀。**必须剥**：`Constraint.versionComponents("v1.0")` 会把 `v1` 丢掉
- /// 只剩 `[0]`（见 G52 工单 §9 Def-9），带前缀的串当约束会得到完全错误的下界。
- private static func stripVersionPrefix(_ s: String) -> String {
+/// 剥 `v` / `V` 前缀——**规范化**，不是解析兜底：剥出的串会存进 `Constraint.raw`
+/// （进而出现在报错文本与锁文件里），故必须是 `1.0` 而非 `v1.0`。
+/// 解析侧的 v 前缀容忍由 `Constraint.versionComponents` 统一负责（G52 §9 Def-9）。
+private static func stripVersionPrefix(_ s: String) -> String {
  (s.hasPrefix("v") || s.hasPrefix("V")) ? String(s.dropFirst()) : s
  }
 
@@ -199,11 +200,24 @@ public enum ModuleToolchain {
  return true
  }
 
- /// 版本字符串 → 分量数组（`1.2` → [1,2]；非数字段忽略）。
- static func versionComponents(_ s: String) -> [Int]? {
- let parts = s.split(separator: ".").compactMap { Int($0) }
- return parts.isEmpty ? nil : parts
- }
+/// 版本字符串 → 分量数组（`1.2` → [1,2]；非数字段忽略）。
+///
+/// **容忍 `v` / `V` 前缀**（G52 §9 Def-9）：此前用 `compactMap { Int($0) }`，
+/// `Int("v1")` 为 nil 被**静默丢弃** ⇒ `"v1.0"` 只剩 `[0]`，带前缀的版本被当成**版本 0**，
+/// MVS 下界完全错误且无任何提示。逐分量剥而非整串剥，`"1.v0"` 这类畸形串同样能救回。
+///
+/// ⚠ 这里是**解析侧的健壮性**，与调用方的剥前缀是两回事：
+/// `TapFetcher.availableVersions` 与 `parseReplace` 剥前缀是**规范化**——它们剥掉后
+/// 得到的串会写进锁文件与 tag 名，故必须是 `1.0.0` 而非 `v1.0.0`。两处职责不同，
+/// 不要因为「已经有两处在剥」而撤掉本处的容忍。
+static func versionComponents(_ s: String) -> [Int]? {
+let parts = s.split(separator: ".").compactMap { comp -> Int? in
+var t = comp
+if t.first == "v" || t.first == "V" { t = t.dropFirst() }
+return Int(t)
+}
+return parts.isEmpty ? nil : parts
+}
 
  /// 补零逐段比较。
  static func compare(_ a: [Int], _ b: [Int]) -> Int {
@@ -255,6 +269,11 @@ public enum ModuleToolchain {
  public let modules: [ResolvedModule]
  public let resources: [ResolvedResource]
  /// 拓扑序（依赖在前，根最后；环已在批 1 的 R2 检测拦截）。
+ ///
+ /// G52 §9 Def-2（2026-09-04 裁决）：本字段是**导出视图**——供外部工具（build 调度 /
+ /// 诊断展示）读取，**不是解释器的输入**。解释器的跨模块注册顺序由
+ /// `Interpreter.loadImports` 的递归结构保证（依赖先于依赖者完全就绪），
+ /// 不消费此字段；两套解析合流属架构改动，不与该字段绑定。
  public let graphOrder: [String]
  }
 
@@ -282,8 +301,14 @@ public enum ModuleToolchain {
  // spec 在入队时按 **requirer 自己的清单**解析（平表 → 其 [tap] default，具名子表 → 对应 tap；
  // D11：缺 [tap] 即报错，带 requirer 信息）。
  var pending: [(name: String, from: String, constraint: String?, spec: String, tap: String)] = []
- var sourceByName: [String: String] = [:] // 首次落地时的来源（写进 summary）
+ // 写进 summary 的「谁声明了这个依赖」。G52 §9 Def-12：此前每条边都覆写，
+ // 多 requirer 时取到的是**最后遍历到的**边——遍历是 LIFO（`popLast`），
+ // 「最后遍历到」=「最先入队」，与「离根最近」恰好相反，且遍历策略一改（DFS→BFS）
+ // 锁文件就变 ⇒ 不可复现。
+ var sourceByName: [String: String] = [:]
  var tapNameByName: [String: String] = [:]
+ /// 上面两个字段取自哪条边（requirer 名），用于实现定序规则。
+ var sourceRequirerByName: [String: String] = [:]
  func enqueueDeps(of m: ModuleManifest, from: String) throws {
  let defaultSpec = m.taps["default"]
  for (n, c) in m.require.sorted(by: { $0.key < $1.key }) {
@@ -351,8 +376,16 @@ public enum ModuleToolchain {
         break // 只换版本，来源不变
       }
     }
-    sourceByName[name] = spec
-    tapNameByName[name] = tap
+    // Def-12 定序规则：**requirer 字典序最小者胜出**——`<root>` 的 `<`(0x3C) 小于任何
+    // 字母，故主模块的声明优先于任何依赖的声明；同为依赖时取字典序最小，任意但稳定。
+    // 选 requirer 而非「首次落地」：后者随遍历策略（LIFO/BFS）改变而改变，锁文件会漂移。
+    if let prev = sourceRequirerByName[name], prev <= from {
+      // 保留已有（更靠前的 requirer）——约束与 imported-by 仍逐边入账，不受影响。
+    } else {
+      sourceRequirerByName[name] = from
+      sourceByName[name] = spec
+      tapNameByName[name] = tap
+    }
     // 抓取（或复核已选版本）——约束可能在后续 requirer 出现后变严，故每次经过都要复核。
     try ensureMaterialized(name: name, spec: spec, dir: depDir,
                            constraints: (constraints[name] ?? []).map(\.0),
@@ -436,7 +469,9 @@ public enum ModuleToolchain {
  let dir = materializedResourceDir(rootDir: rootDir, name: entry.name)
  var commit = "-"
  var displaySource = specStr
- if let session = session, !specStr.hasPrefix("file:") {
+ // 仅 refresh（session 存在）时才抓取；只读路径（graph/resolve）不落盘。
+ // `file:` 源无远端可抓，其目录由用户手工/submodule 准备。
+ if session != nil, !specStr.hasPrefix("file:") {
  // 批 7：资源也由 refresh 落地（G52 §4.2「下载缺失的依赖与资源」）。
  // **不参与 MVS**（§3.3）：默认取 HEAD；仅当声明串本身就是一个已存在的 tag 时检出它
  // ——那是「显式指定」，不是「求解」。

@@ -46,6 +46,47 @@ final class ModuleToolchainTests: XCTestCase {
  XCTAssertNil(ModuleToolchain.Constraint.parse("abc"), "非版本串解析失败返回 nil（refresh 侧宁严勿纵）")
  }
 
+ // MARK: - Def-9：v 前缀容忍（G52 §9）
+
+ /// 意图：`versionComponents` 必须容忍 `v` / `V` 前缀。
+ /// 反例（修复前）：`Int("v1")` 为 nil 被 `compactMap` **静默丢弃** ⇒ `"v1.0"` → `[0]`，
+ /// 带前缀的版本被当成版本 **0**——MVS 下界全错且无任何提示。
+ func testVersionComponentsToleratesVersionPrefix() {
+ typealias C = ModuleToolchain.Constraint
+ XCTAssertEqual(C.versionComponents("1.0"), [1, 0])
+ XCTAssertEqual(C.versionComponents("v1.0"), [1, 0], "v 前缀不得被当成非数字段丢弃（Def-9）")
+ XCTAssertEqual(C.versionComponents("V2.3.4"), [2, 3, 4])
+ XCTAssertEqual(C.versionComponents("1.v0"), [1, 0], "逐分量剥：`1.v0` 同样救回")
+ XCTAssertNil(C.versionComponents("v"), "纯前缀无数字分量 → nil")
+ }
+
+ /// 意图：约束串本身带 v 前缀时也要解析正确——`[require]` 的值与 git tag 都可能出现。
+ func testConstraintParseToleratesVersionPrefix() {
+ typealias C = ModuleToolchain.Constraint
+ XCTAssertTrue(C.parse("v1.2")!.satisfies(C.versionComponents("1.2.9")!), "裸版本 v1.2 = >=1.2")
+ XCTAssertFalse(C.parse("v1.2")!.satisfies(C.versionComponents("1.1.0")!))
+ XCTAssertTrue(C.parse("^v1.0")!.satisfies(C.versionComponents("1.5.0")!), "^v1.0 = >=1.0 <2.0")
+ XCTAssertFalse(C.parse("^v1.0")!.satisfies(C.versionComponents("2.0.0")!))
+ }
+
+ /// 意图：清单 `version = "v1.0"` 不得被当成版本 0。
+ /// 这是 Def-9 **唯一没有本地规避**的暴露面：`TapFetcher` 剥 tag、`parseReplace` 剥 replace 值，
+ /// 但 `pini.toml` 的 `version` 直接进 MVS 校验（`ModuleToolchain.resolve`）。
+ /// 修复前 `^1.0` 对 `[0]` 不成立 ⇒ 抛 unsatisfiable，而真实版本其实是满足的。
+ func testManifestVersionWithVPrefixIsNotTreatedAsZero() throws {
+ let (root, cleanup) = try makeThreeModuleFixture()
+ defer { cleanup() }
+
+ try String(contentsOfFile: root + "/deps/uni/pini.toml", encoding: .utf8)
+ .replacingOccurrences(of: "version = \"1.2.0\"", with: "version = \"v1.2.0\"")
+ .write(toFile: root + "/deps/uni/pini.toml", atomically: true, encoding: .utf8)
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: root))
+ let resolution = try ModuleToolchain.resolve(rootDir: root, manifest: manifest)
+ let uni = try XCTUnwrap(resolution.modules.first { $0.name == "uni" })
+ XCTAssertEqual(uni.version, "v1.2.0", "清单原样保留（规范化是别处的事）")
+ }
+
  // MARK: - 本地夹具求解（MVS v1：每依赖一个可用版本）
 
  /// 构造三方夹具：app →（require）uni ^1.0 →（require）text ^1.0；app 与 uni 都 require text。
@@ -119,6 +160,83 @@ final class ModuleToolchainTests: XCTestCase {
  XCTAssertEqual(m.manifestSum.count, "sha256:".count + 64)
  XCTAssertEqual(m.commit, "-", "file: 源的 commit 为 `-`（G52 D12）")
  }
+ }
+
+ /// 意图：Def-12——多 requirer 时锁文件的 `tap` / `source` 必须有**确定**规则：
+ /// requirer 字典序最小者胜出（`<root>` 的 `<`(0x3C) 小于任何字母 ⇒ 主模块声明优先）。
+ /// 反例（修复前）：每条边都覆写 ⇒ 取到「最后遍历到的」边；而遍历是 LIFO（`popLast`），
+ /// 「最后遍历到」实为「最先入队」，与「离根最近」恰好相反，且遍历策略一改锁文件就漂。
+ /// 本夹具里 `text` 由 `<root>`（tap `vendor`）与 `uni`（tap `default`）共同 require，
+ /// 两条边的 tap 名不同 ⇒ 恰好能区分两种规则。
+ func testSummarySourcePrefersLexicographicallyFirstRequirer() throws {
+ // ⚠ 夹具形状是本测试的**判据本身**，改形状即失去区分力：
+ // 旧规则（每边覆写 ⇒ 最后写入者胜）在 LIFO + 升序遍历下实际等价于
+ // 「**最浅** requirer 胜出」（最先入队的边最后才被 pop 到）；新规则是
+ // 「**字典序最小** requirer 胜出」。两者只有在「浅 requirer 的名字字典序更大」时才分岔，
+ // 故令浅层为 `z`、深层为 `a`（a 是 z 的依赖），二者共同 require `leaf`。
+ let (root, cleanup) = try makeDepthFixture()
+ defer { cleanup() }
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: root))
+ let resolution = try ModuleToolchain.resolve(rootDir: root, manifest: manifest)
+ let leaf = try XCTUnwrap(resolution.modules.first { $0.name == "leaf" })
+
+ XCTAssertEqual(Set(leaf.importedBy), ["a", "z"], "两个 requirer 都要入账")
+ XCTAssertEqual(leaf.tapName, "ta",
+ "requirer 字典序最小者胜出（`a` < `z`）；旧规则会取到浅层的 `tz`")
+ }
+
+ /// `z`（浅）与 `a`（深，`z` 的依赖）共同 require `leaf`，且两条边来自**不同 tap**。
+ private func makeDepthFixture() throws -> (root: String, cleanup: () -> Void) {
+ let base = NSTemporaryDirectory() + "pini_b9_\(UUID().uuidString)"
+ let fm = FileManager.default
+ func mkdir(_ p: String) throws { try fm.createDirectory(atPath: p, withIntermediateDirectories: true) }
+ for d in ["z", "a", "leaf"] { try mkdir(base + "/app/deps/" + d) }
+
+ try """
+ [package]
+ name = "app"
+
+ [tap]
+ vendor = "file:../vendor/<name>"
+
+ [require.vendor]
+ z = "*"
+ """.write(toFile: base + "/app/pini.toml", atomically: true, encoding: .utf8)
+
+ try """
+ [package]
+ name = "z"
+
+ [tap]
+ tz = "file:../vendor/<name>"
+ tza = "file:../vendor/<name>"
+
+ [require.tz]
+ leaf = "*"
+
+ [require.tza]
+ a = "*"
+ """.write(toFile: base + "/app/deps/z/pini.toml", atomically: true, encoding: .utf8)
+
+ try """
+ [package]
+ name = "a"
+
+ [tap]
+ ta = "file:../vendor/<name>"
+
+ [require.ta]
+ leaf = "*"
+ """.write(toFile: base + "/app/deps/a/pini.toml", atomically: true, encoding: .utf8)
+
+ try """
+ [package]
+ name = "leaf"
+ version = "1.0.0"
+ """.write(toFile: base + "/app/deps/leaf/pini.toml", atomically: true, encoding: .utf8)
+
+ return (base + "/app", { try? fm.removeItem(atPath: base) })
  }
 
  func testResolveUnsatisfiableConstraintThrows() throws {
