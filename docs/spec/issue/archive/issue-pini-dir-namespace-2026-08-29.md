@@ -1,9 +1,12 @@
 # `.pini/` 命名空间、点目录规则与文件命名（G52 续）
 
-> **状态：已批准，落档进行中（2026-08-29）。**
+> **状态：LANDED——落档全部完成（2026-09-04 实测收口，逐项注记见 §6/§7）。**
+>
+> 收口核验（2026-09-04）：§7 A–D 各项实测确认落地；§7 E 三项实测确认已解决或被取代
+> （唯一例外：`pini-swift` **推送**属仓库所有者裁决事项，不阻塞本工单收口）。
 >
 > 本文件保留为**设计理由记录**——G52 工单只存规则正文与决议，本稿存「为什么」。
-> 承接 `archive/issue-module-system-rules-2026-08-28.md`（G52，D1–D23）；
+> 承接 `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md`（G52，D1–D23）；
 > 本稿的 **R5–R8 已入工单 §2**，对应决议 **D24–D28 已入工单 §3.8**。
 > 落档进度见 §7（已勾选项即已完成）。
 >
@@ -165,7 +168,7 @@ G52 定了 `require` / `resources` 双通道，但没解决「resources 落在�
 
 ## 6. 待定（本轮搁置）
 
-### ① 宿主版本 / spec pin 的归属 —— **用户裁决：搁置**
+### ① 宿主版本 / spec pin 的归属 —— **用户裁决：搁置**（2026-09-04 复核：仍搁置，原重复事实未变）
 
 已发现的重复事实（恢复讨论时的起点；路径按 R6/R8 已改名）：
 
@@ -181,7 +184,8 @@ pini/pini.toml       →  spec        = "0.1"
 一个能读纯文本的 bootstrapper）。对照 Cargo：`Cargo.toml` 的 `rust-version`（约束）
 与 `rust-toolchain.toml`（实际 pin）是分开的。
 
-### ② `examples/` `bench/` 的归属
+### ② `examples/` `bench/` 的归属 —— **已裁决（G52 §9 Def-4）**：选候选 **a**——
+`examples/` 自带 `pini.toml` 由 R1 自切（自举仓 `examples/selfhost/examples/` 已落地并实测验证）。
 
 `exclude` 不再管扫描后，模块**自己的**非源码目录没有机制。候选：
 
@@ -191,7 +195,8 @@ pini/pini.toml       →  spec        = "0.1"
 | b | 移入 `.pini/` 下 | 与 R6 统一；但示例通常希望可见 |
 | c | 保持现状，待观察 | 需先明确「不被扫描」的机制是什么 |
 
-### ③ resources 的寻址方式
+### ③ resources 的寻址方式 —— **已裁决（G52 §9 Def-8）**：**v1 明确不提供**
+（判据：零真实用例；待第二个用例出现再定型，注记见 project-spec §3.3）。
 
 不被扫描 ⇒ 不能 `import` ⇒ 只能按路径读写。
 **v1 只做「落地 + 校验」，寻址方式后定——但不在文档中假装已解决。**
@@ -200,7 +205,7 @@ pini/pini.toml       →  spec        = "0.1"
 
 ## 7. 落档清单（批准后执行）
 
-### A. `archive/issue-module-system-rules-2026-08-28.md`（pini-meta）
+### A. `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md`（pini-meta）
 
 - [x] §2 增 **R5 / R6 / R7 / R8**
 - [x] §3.3 `resources`：落点改 `.pini/resources/<name>/`；检查改「仅根检」，并按 R7 改写理由
@@ -218,7 +223,7 @@ pini/pini.toml       →  spec        = "0.1"
 > ② 「§8 待观察删两条」——那两条待观察项**主干上也不存在**（只写在本稿里）。
 > 教训：**清单条目要对着目标文件的实际内容核，不能对着记忆写。**
 
-### B. `../pini-project-spec.md`（pini-meta）
+### B. `docs/spec/pini-project-spec.md`（pini-meta）
 
 - [x] §4 `.gitignore` 基线：`.pini-build/` → `.pini/build/`，`.pini-cache/` → `.pini/cache/`
 - [x] **`.pini/resources/` 与 `.pini/toolchain/` 必须显式不进 `.gitignore`**
@@ -226,9 +231,13 @@ pini/pini.toml       →  spec        = "0.1"
       已成直觉。不显式豁免，`verify` 会在换机器后才报内容缺失。
       （与 `pini-summary.toml` 同类：生成物 / 外来物，但必须提交。）
 - [x] §2 `deps/` 边界性质：由「R1' 保留目录永不扫描」改为「只放 `require` 的模块，R1 自切」
-- [ ] §7 清单 schema：`resources.*` 增落点说明；`build.exclude` 标注为**测试收集**语义
+- [x] §7 清单 schema：`resources.*` 增落点说明；`build.exclude` 标注为**测试收集**语义
+      ✅ 2026-09-04 实测：`docs/spec/pini-project-spec.md` §7.2 `build.exclude` 行
+      （「`pini test` **收集范围**的排除……**不是**模块树扫描的排除」，G49 + D27）与
+      `resources.*` 行（「固定落 `.pini/resources/<name>/`（R6）……只查根、不查深层（R7）」）
+      均已落地。
 
-### C. `../pini-spec-v0.md`（pini-meta）
+### C. `docs/spec/pini-spec-v0.md`（pini-meta）
 
 - [x] §2.5 依赖图与跨模块访问：双通道判据改「目标**根**有无 `pini.toml`」；
       新增 resources 落点 `.pini/resources/<name>/`、R5–R6 落点与扫描、**R8 文件命名**三段
@@ -256,7 +265,8 @@ pini/pini.toml       →  spec        = "0.1"
 
 **同步顺序（避免断链）：**
 
-1. ~~`pini-swift` 改名 + `swift test` 全绿 + **推送**~~ ✅ 改名与测试已完成（`080023e`），**推送待做**
+1. ~~`pini-swift` 改名 + `swift test` 全绿 + **推送**~~ ✅ 改名与测试已完成（`080023e`）；
+   **推送**属仓库所有者裁决事项，不阻塞本工单收口（截至 2026-09-04 main 领先 origin 未推）
 2. ~~`pini/` 改名~~ ✅ 已完成（`b4f8405`）；~~更新 submodule 指针~~ ⏸ **暂缓**（见 E）
 3. ~~`pini-meta` 文档收尾~~ ✅ 进行中（本分支）
 
@@ -274,12 +284,19 @@ pini/pini.toml       →  spec        = "0.1"
 ### E. `pini/` 仓（其余）
 
 - [x] `.pini-version` → `.pini/version`（commit `227d269`）
-- [ ] `pini.toml`：**清 `[dependencies]`**（D17 已移除，此仓仍在用）
-- [ ] `.gitmodules`：`deps/pini-swift` → `.pini/toolchain/pini-swift`
-- [ ] `pini.toml`：`exclude = ["examples", "deps"]` → `["examples"]`
+- [x] `pini.toml`：**清 `[dependencies]`**（D17 已移除，此仓仍在用）
+      ✅ 2026-09-04 实测：清单已随 G49 收敛为单 `[package]` schema，`[dependencies]` 不复存在
+- [x] `.gitmodules`：`deps/pini-swift` → `.pini/toolchain/pini-swift`
+      **被取代**：`.gitmodules` 已删除——ADR-024 D2 裁决宿主不再 vendor，自举仓以嵌套独立仓
+      （`examples/selfhost/`）入树，宿主二进制从宿主树消费；`.pini/baseline` 记录校准状态
+- [x] `pini.toml`：`exclude = ["examples", "deps"]` → `["examples"]`
+      ✅ 已落地（注释含 D27 语义、R1 自切说明与 2026-09-04 no-op 实测注记）
 
 ⚠ **后三项必须按序执行，顺序错了会出事**：
 **先移宿主 → 再删 `exclude`**。反过来的话，宿主仍在 `deps/pini-swift` 而 `exclude` 已删
 ⇒ 其 **52 个散 `.pini`** 会被根模块扫入。
 而改 submodule path **需要 submodule 已检出**才能验证——本工作区未检出（`pini/deps` 为空，
 `git status` 显示 ` D deps/pini-swift`）。⇒ 需先 `git submodule update --init`。
+
+> **2026-09-04 注**：上述顺序约束随 ADR-024 D2 取消 vendor 模式而**整体失效**——
+> 宿主已不在 `deps/` 下，`.gitmodules` 不复存在，风险前提消失。原文保留作历史记录。
