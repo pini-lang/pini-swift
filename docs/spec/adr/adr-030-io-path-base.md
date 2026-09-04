@@ -1,7 +1,7 @@
 # ADR-030 · IO 相对路径解析基准——三段式方案 A（程序基准 / 运行时 CWD / 绝对）
 
 - 状态：active（2026-09-02 采纳并实现，批 5；**追溯补写**——裁决与实现同日完成，影响评估先于实现落档于提议文档 §5）
-- 关联：`docs/spec/issue/archive/proposal-io-path-base-2026-09-02.md`（①提议 + ②影响评估，D-1~D-6 裁决记录）、§3 G58、G14（文件 IO 行已钉入基准语义）、`docs/spec/issue/issue-conflict-register-2026-08-31.md` A13/P-path（由本 ADR 出账）、F6（argv 透传，本批仅铺路）、`docs/spec/migration-2026-09.md` §E
+- 关联：`docs/spec/issue/archive/proposal-io-path-base-2026-09-02.md`（①提议 + ②影响评估，D-1~D-6 裁决记录）、§3 G58、G14（文件 IO 行已钉入基准语义）、`docs/spec/issue/archive/issue-conflict-register-2026-08-31.md` A13/P-path（由本 ADR 出账）、F6（argv 透传，本批仅铺路）、`docs/spec/migration-2026-09.md` §E
 
 ## 背景（Context）
 

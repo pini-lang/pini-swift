@@ -108,7 +108,7 @@
 | `docs/issue-host-optional-slice-2026-08-28.md` | 136（**实测仍开放**：LLVM-M2 未落地，保留） |
 | `docs/issue-lexer-gap-closure-2026-08-29.md` | 54（**实测仍开放**：§6 残余挂账为活跃载体，保留；2026-09-04 收编 lexer-gaps 残余 P3-A） |
 | `issue-lexer-gaps-2026-08-28.md` | 99（**已核实 2026-09-04：P1/P2 落地、P2-C/E 被 ADR-028 改判、残余 P3-A 移入 lexer-gap-closure §6，按用户裁决删除，见 git 历史**） |
-| `docs/issue-unicode-char-predicates-2026-08-29.md` | 50（**实测仅余 LLVM 端挂账（与 lexer-gap-closure §6 重复登记，一致），保留**） |
+| `docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md` | 50（**实测仅余 LLVM 端挂账（与 lexer-gap-closure §6 重复登记，一致），保留**） |
 
 核实方式：逐个读结论段 → 判 Closed / 仍活跃 → 前者移 `archive/`，后者补状态字段。
 

@@ -1,6 +1,6 @@
 # Issue：BinaryOperator 枚举死面清理与 assign 族语句级语义钉定（F2）
 
-- 状态：**Open（2026-09-04 自 `docs/spec/issue/issue-de-facto-grammar-pinning-2026-08-30.md` F2 立案转入）**
+- 状态：**Open（2026-09-04 自 `docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md` F2 立案转入）**
 - 来源：自举 parser S5/S6 探针产出；2026-08-31 实测修正（逐 case 统计构造点）
 - 关联：ADR-020（BuiltinRegistry 契约先例——死面清理同属「宿主面收敛」）；spec §A.1.2 / §A.2.5
 

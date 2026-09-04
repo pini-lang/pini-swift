@@ -333,8 +333,8 @@ note = "实测：目标测试 22/22（ParenEqualsTests 11 + IOTests 11）通过�
 [[evidence]]
 id = "E-101"
 assertion = "H-4（带执行块的函数一律带冒号）已于 2026-08-31 阶段 2 落地，抽离工单中『解锁 H-4 的 862 处签名迁移』这一附带收益动因失效"
-spec_ref = "docs/spec/issue/issue-conflict-register-2026-08-31.md 收敛项 H-4"
-code_ref = "docs/spec/issue/issue-conflict-register-2026-08-31.md H-4 条目（状态：完成；2026-08-31 阶段 2，宿主三路径转强制 + 存量补冒号 1089 行/804 文件 + spec A.2.3 钉定 + 自举同步）"
+spec_ref = "docs/spec/issue/archive/issue-conflict-register-2026-08-31.md 收敛项 H-4"
+code_ref = "docs/spec/issue/archive/issue-conflict-register-2026-08-31.md H-4 条目（状态：完成；2026-08-31 阶段 2，宿主三路径转强制 + 存量补冒号 1089 行/804 文件 + spec A.2.3 钉定 + 自举同步）"
 validated_at = "2026-09-03T00:13:09+08:00"
 status = "STALE"
 note = "H-4 在抽离仅完成 0.6% 时即绕道落地，未依赖抽离。故抽离工单末条风险『与 H-4 的耦合：抽离完成后再执行冒号强制迁移，顺序不可颠倒』已过期；同批修正。抽离剩余动因回到首条：内联字符串对换行/缩进/转义的处理不受 Pini 自身约束"
@@ -355,7 +355,7 @@ spec_ref = "pini-spec-v0.md §1.4 自动清扫；工单 docs/spec/issue/issue-ev
 code_ref = "tools/evidence_sweep.py（--stats / --check / --apply / --hook）；hooks/pre-commit 末段清扫块"
 validated_at = "2026-09-03T01:37+08:00"
 status = "STALE"
-note = "实测（现跑，非文本计数）：tomllib 解析得 101 条；计算态 FRESH 1 / STALE 35 / PENDING_DELETE 65；声明态漂移 100 条，首轮 --apply 后归 0（status 字段此前从未被执行，其记录的是『写入时有人声称』而非『现在可信』）。首轮为 mark-only：diff 校验仅 200 行 status + 2 行 meta（last_sweep、dangling_ids），assertion / code_ref / note 零改动。删除路径用 /tmp 副本 + --force 实跑：101 → 36，并报告 E-035×1（docs/issue-unicode-char-predicates-2026-08-29.md:41）与 E-047×3（docs/spec/pini-landing-plan-v048.md:45/46/87）将悬空、记入 meta.dangling_ids；仓内表未受影响。节流路径（swept 0:04:00 ago）与触发路径（副本 101 → 36）均已实跑。当前全仓悬空引用为 0：E-008 的两条废弃指令（pini-landing-plan-v048.md 旧 46/87 行）已删，工单自身对 ID 的讨论经 meta.scan_exclude 排除于扫描之外。教训（三轮内自犯三次）：在提交文档里写裸的未分配编号会自注册成伪引用，写作时用 E-NNN 占位符表述格式。"
+note = "实测（现跑，非文本计数）：tomllib 解析得 101 条；计算态 FRESH 1 / STALE 35 / PENDING_DELETE 65；声明态漂移 100 条，首轮 --apply 后归 0（status 字段此前从未被执行，其记录的是『写入时有人声称』而非『现在可信』）。首轮为 mark-only：diff 校验仅 200 行 status + 2 行 meta（last_sweep、dangling_ids），assertion / code_ref / note 零改动。删除路径用 /tmp 副本 + --force 实跑：101 → 36，并报告 E-035×1（docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md:41）与 E-047×3（docs/spec/pini-landing-plan-v048.md:45/46/87）将悬空、记入 meta.dangling_ids；仓内表未受影响。节流路径（swept 0:04:00 ago）与触发路径（副本 101 → 36）均已实跑。当前全仓悬空引用为 0：E-008 的两条废弃指令（pini-landing-plan-v048.md 旧 46/87 行）已删，工单自身对 ID 的讨论经 meta.scan_exclude 排除于扫描之外。教训（三轮内自犯三次）：在提交文档里写裸的未分配编号会自注册成伪引用，写作时用 E-NNN 占位符表述格式。"
 
 [[evidence]]
 id = "E-104"
@@ -432,7 +432,7 @@ note = "探针实测：/tmp/f5probe main|func 内 let v = load(p)（p: *U8）→
 [[evidence]]
 id = "E-112"
 assertion = "de-facto-grammar-pinning F1（算符→opText 映射表 17 项）已被 spec 钉定落地——spec 投影主题载明完整映射表并声明『自举 parser 已按此表对齐，差分门禁以之为权威参考』；工单状态行此前仍写『其余四项仍 Proposed』为滞后（矛盾 B），F2/F3/F4 经查 spec 无对应钉定，仍 Proposed"
-spec_ref = "docs/spec/pini-spec-v0.md 投影主题（opText 映射表 + 自举对齐句，约 :886）；docs/spec/issue/issue-de-facto-grammar-pinning-2026-08-30.md §F1（补落地注记落点）"
+spec_ref = "docs/spec/pini-spec-v0.md 投影主题（opText 映射表 + 自举对齐句，约 :886）；docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md §F1（补落地注记落点）"
 code_ref = "docs/spec/pini-spec-v0.md 投影主题（文档钉定类证据，无代码变更）；自举侧对齐实现见 examples/selfhost/src/parser/parser.pini（历史交付）"
 validated_at = "2026-09-04T17:40+08:00"
 status = "FRESH"
@@ -441,7 +441,7 @@ note = "查证方式：spec 全文 grep opText 命中映射表与自举对齐声
 [[evidence]]
 id = "E-113"
 assertion = "de-facto-grammar-pinning F4（tuple-or-paren 四条消歧）spec 钉定已在位，但注记残留批 3 前记法（『IDENT ':' 前瞻判定』『(a: e)』）与现行实现矛盾；实测 Parser.parseTupleOrParen 标签判定用 .assign（=）、旧 : 写法报废弃迁移提示，字典条目同理（parseCollectionLiteral 用 =，: 报废弃）——本轮修正 spec 两处记号（F4 注记 : → =；collection-literal 产生式 : → =）并补全 tuple-element 产生式（原『待补产生式』警告消除）"
-spec_ref = "docs/spec/pini-spec-v0.md §A primary-atom / tuple-element / collection-literal 产生式（F4 消歧注记）；docs/spec/issue/issue-de-facto-grammar-pinning-2026-08-30.md §F4（落地注记）"
+spec_ref = "docs/spec/pini-spec-v0.md §A primary-atom / tuple-element / collection-literal 产生式（F4 消歧注记）；docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md §F4（落地注记）"
 code_ref = "Sources/PiniCore/Parser/Parser.swift parseTupleOrParen（:2918 起，parseElement 内 .assign 判定 + .colon 报废弃）与 parseCollectionLiteral（字典 .assign 判定 + .colon 报废弃）"
 validated_at = "2026-09-04T19:30+08:00"
 status = "FRESH"
