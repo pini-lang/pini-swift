@@ -11,7 +11,9 @@
   | **批 6**（工具链） | 2026-09-02 | 清单双通道解析、MVS（本地退化形态）、`pini-summary.toml`、SHA-256（TOFU）、`pini mod {tidy,refresh,verify,graph}`、build 漂移检查、R1 父扫描侧嵌套排除 |
   | **批 7**（远程 tap） | 2026-09-04 | `github:`/`git:` 抓取、**经典 MVS**（tag 候选）、resources 落地、锁文件 `commit` 真值 |
 
-  **遗留未修（见 §9）**：`[[bin]]/[lib] entry` 未被消费、`graph.order` 未被解释器消费、resources 根检（R7 反向）未实现、`[replace]` 两种形态未实现。
+  **遗留未修（见 §9）**：`[[bin]]/[lib] entry` 未被消费、`graph.order` 未被解释器消费、
+  D27 后自举仓 `examples/` 无归宿、资源产品内寻址未定义、锁文件 `tap` 取边规则未定、
+  模块边界扫描深度两处不一致、`versionComponents` 不剥 `v` 前缀。
 - 关联：
   - `docs/spec/issue/issue-pini-dir-namespace-2026-08-29.md`（**R5–R8**：点目录规则、`.pini/` 命名空间、resources 落地与检查、文件命名）
   - G49（清单 schema 单一 `[package]`、`[build] exclude`、`pini test` 收集单位 = 模块）
@@ -470,7 +472,8 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 | `parseManifest`：`[[ ]]` 数组表 + `[tap]`/`[require]`/`[require.<tap>]`/`[resources]`/`[resources.<tap>]`/`[replace]`；`[dependencies]` 命中即报错（D-B） | 批 6 | ✅ |
 | `loadDirectory`：遇含 `pini.toml` 的祖先目录即跳过（R1 父扫描侧） | 批 6 D-4 前置 | ✅ `FileLoader.swift` 祖先逐级查清单 |
 | 双通道判定 · **正向**（`require`/import 目标**不含** `pini.toml` → 报错指引 `[resources]`） | 批 6 | ✅ `ToolchainFailure.importTargetNotModule` |
-| 双通道判定 · **反向**（`resources X` 而 X **根含** `pini.toml` → 报错，R7） | — | ❌ **未实现**（§9 Def-1） |
+| 双通道判定 · **反向**（`resources X` 而 X **根含** `pini.toml` → 报错，R7） | 批 7 收尾补修 | ✅ `resourceTargetIsModule`（§9 Def-1） |
+| `[replace]` 三形态（版本覆盖 / `file:` 本地 / fork `@版本`）+ 仅主模块生效 | **批 7 第二批补修（2026-09-04）** | ✅ `ModuleToolchain.Replacement`；此前仅 `file:` 生效（§9 Def-6）。fork 与 `@版本` 并入 MVS 约束（下界），锁文件 `tap` 记 `replace` |
 | 依赖图构建（别名→模块，模块级并集）+ 别名冲突拦截 | 批 1 | ✅ `ModuleSystemTests.testAliasNameConflictRejected` |
 | 环检测 + 可读路径诊断 | 批 1 + 批 6 `graph --cycles` | ✅ `testDependencyCycleRejected` |
 | MVS | 批 6（本地退化）→ **批 7 升级为经典 MVS**（tag 候选，取满足全部约束的最小版本） | ✅ |
@@ -497,7 +500,7 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 | # | 原 DoD | 实测 | 依据 |
 |---|---|:---:|---|
 | 1 | 宿主全量测试不回退 + G52 用例全绿 | ✅ | **1157 执行 / 112 跳过 / 0 失败**（G52 批 7 前基线 1144，净增 13）。跳过数与原记的 20 不符，原因未查，不影响结论 |
-| 2 | 三层嵌套模块切分为 3 个模块，命名空间独立 | ⚠ **部分** | 两层（app ⊃ helper）有用例（`ModuleSystemTests` + `demo/` 夹具，跨模块限定调用与命名空间隔离均覆盖）；**三层无专项用例** → §9 Def-5 |
+| 2 | 三层嵌套模块切分为 3 个模块，命名空间独立 | ✅（2026-09-04 补） | `ModuleSystemTests.testThreeLevelNestedModulesStaySeparate` + `demo3/` 夹具（app ⊃ frontend ⊃ syntax）；三层各自定义**同名** public 符号 `取值`，逐层断言包内文件集合，输出 110 即命名空间独立。旧判据「三层无专项用例」已消解 |
 | 3 | 成环报错并给出完整环路径 | ✅ | E3-010 `module dependency cycle (R2): '{chain}'`（`Sources/PiniCore/Resources/Diagnostics.en.toml`）；`ModuleSystemTests.testDependencyCycleRejected`；`pini mod graph --cycles` 另出环列表 |
 | 4 | `[require.<tap>]`/`[resources.<tap>]` 解析成功；`[dependencies]` 已移除 | ✅ | `ModuleTestCollectionTests` 双通道四节用例；`[dependencies]` 命中即 `legacyDependenciesSection` 报错（D-B） |
 | 5 | 双通道**双向**封闭 | ❌ **单向** | 正向（`require` 目标不是模块）✅ `importTargetNotModule`；**反向（`resources X` 而 X 根含 `pini.toml`）未实现** → §9 Def-1 |
@@ -542,6 +545,9 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 > **2026-09-04 收尾更新**：**Def-1**（resources 根检）与 **Def-7**（锁文件 `tap`/`source` 回读）
 > 已在本日收尾补修（双通道至此双向封闭；`verify` 报错回显来源）。其余 Def-2/3/4/5/6/8 维持未修。
 > 本文件已归档、不再维护，此注仅为避免重复劳动。
+>
+> **2026-09-04 第二批补修**：**Def-5**（三层嵌套用例）与 **Def-6**（`[replace]` 三种形态）已补修；
+> 补修过程中新登记 **Def-9 ~ Def-12**（见下表）。Def-2/3/4/8 维持未修。
 
 | # | 缺陷 | 判据 | 影响 |
 |---|---|---|---|
@@ -549,7 +555,11 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 | **Def-2** | `graph.order` **只写不读**：解释器未按拓扑序注册模块 | §3.5 / §6.2 | 锁文件里的 `order` 字段形同虚设；跨模块顶层初始化顺序目前靠实现细节，不靠 DAG 保证 |
 | **Def-3** | `[[bin]].entry` / `[lib].entry` **全仓零消费点**，入口仍是「全局找 `main`」 | §6.2 / G49 | G49 的双 `main` 冲突（E3-004）**未根治**；多 bin 项目无法定位入口 |
 | **Def-4** | D27 把 `[build] exclude` 收窄为「`pini test` 收集范围」后，`examples/selfhost/pini.toml` 的 `exclude = ["examples"]` **失去扫描语义** | D27 + `examples/selfhost/pini.toml` 注释 | 自举仓 `examples/` 需新归宿（自带清单自切 / 移入 `.pini/` / 恢复扫描语义，三选一）。宿主当前仍按 G49 的包加载排除实现，故暂不炸 |
-| **Def-5** | 三层嵌套模块切分**无专项用例**（仅两层） | DoD #2 | R1 的递归排除在三层以上未受测试保护 |
-| **Def-6** | `[replace]` 的**版本覆盖**（`uni = "3.2.0"`）与 **fork 替换**（`github:me/fork@v1.0`）两种形态未实现，仅 `file:` 形态生效 | D13 / §3.7 | D13 三种形态只兑现一种 |
+| **Def-5** | ~~三层嵌套模块切分**无专项用例**（仅两层）~~ → **2026-09-04 已补** | DoD #2 | R1 的递归排除在三层以上未受测试保护 |
+| **Def-6** | ~~`[replace]` 的**版本覆盖**（`uni = "3.2.0"`）与 **fork 替换**（`github:me/fork@v1.0`）两种形态未实现，仅 `file:` 形态生效~~ → **2026-09-04 已补** | D13 / §3.7 | D13 三种形态只兑现一种 |
 | **Def-7** | 锁文件 `tap` / `source` 字段**只写不读**（`parseSummary` 丢弃） | §3.5 | 批 7 已补 `commit` 的读取，这两个仍无消费者；`verify` 报错时无法回显来源 |
 | **Def-8** | `[resources]` 的**产品内寻址方式**未定义 | §3.3 明文「待定」 | v1 只做「落地 + 校验」，代码无法按名引用资源内容 |
+| **Def-9** | `Constraint.versionComponents("v1.0")` 返回 `[0]`——`Int("v1")` 为 nil 被 `compactMap` 丢掉，只剩 `"0"` | §3.2 | 带 `v` 前缀的版本串（tag 与清单都可能出现）被当成版本 **0**，MVS 下界完全错误且静默。现状靠调用方各自剥前缀规避（`TapFetcher.availableVersions` 剥 tag、`parseReplace` 剥 replace 值），`pini.toml` 的 `version = "v1.0"` **无规避** |
+| **Def-10** | `[replace]` 的 `file:` 形态与远程 tap 并用时，抓取会**往用户的本地目录里 `fetch` + `checkout`** | D13 / §3.7 | 落地目录已被换成本地目录，而抓取只看 tap 的 spec；本地目录通常自带 `.git`，`materialize` 恰会判「已存在检出」而照做 ⇒ 静默改动开发工作区。**批 7 引入的回归**，已随 Def-6 一并修（来源改写为 `file:` ⇒ 不抓取） |
+| **Def-11** | 模块边界的**扫描深度两处不一致**：`FileLoader.loadDirectory` 递归扫子树（并按祖先清单剔除嵌套模块），`ModuleDependencyLoader.load` 只扫模块**根级** `.pini` | R1 | 同一模块作为「主模块」时子目录源码被加载，被 **import** 时不被加载 ⇒ 自带 `src/` 布局的模块只能在根位置工作 |
+| **Def-12** | 锁文件的 `tap` / `source` 取「最后遍历到的 requirer 边」（`tapNameByName` / `sourceByName` 每条边都覆写） | §3.5 | 多 requirer 时该字段无确定规则；「谁声明了这个依赖」不可复现。确定性修法（取首次落地的边 / 取字典序最小 tap 名）属设计选择，未定 |
