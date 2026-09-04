@@ -1,6 +1,10 @@
 # Issue: 测试与示例的命名/结构卫生（2026-09-02 收口批次）
 
-- 状态：**本批已落地 2/4；其余留作独立批次**（2026-09-02）
+- 状态：**LANDED——四项全部落地（2026-09-04 核验，归档）**。① examples 文件命名收口（2026-09-02）、
+  ② 工单台账维护（2026-09-02 起，并由 2026-09-04 两轮工单全量整理最终清账）、
+  ③ A 域内联 Pini 源码抽离（✅ 2026-09-03，见 `docs/spec/issue/archive/issue-inline-pini-extraction-2026-08-31.md`）、
+  ④ C 域「测试目录单元」规范总结（✅ 2026-09-03，落地为 `docs/spec/test-refactoring-principles.md`）。
+  §待核实的存量工单状态表随之完成使命：表内各工单已逐份实测处置（归档/删除/状态刷新），本表留作 2026-09-04 时点的台账快照。
 - 层级：宿主级（pini-swift 仓库内约定，不改语言契约；判据 ADR-024 D6）
 
 ---
@@ -8,12 +12,12 @@
 ## 诊断：不是随机劣化，是「在途迁移停在混合态」
 
 `Tests/PiniTests/` 昨日呈现「少数测试文件已文件化、其余仍内联 Pini 源码」的混合态。
-根因不是没规范，而是**迁移停在半路**：`docs/issue-inline-pini-extraction-2026-08-31.md`
+根因不是没规范，而是**迁移停在半路**：`docs/spec/issue/archive/issue-inline-pini-extraction-2026-08-31.md`
 已拍板方案并跑通试点。看起来像劣化，实际是半拉子工程。
 
 > **2026-09-03 更正**：该工单原记「819 块」经实测证伪——真 Pini 源码仅 **15 块**
 > （另有 TOML 配置块 8 个非源码、单行串 290 个抽离无收益）。**本批已完成全部 15 块抽离**，
-> 全量 1144 tests / 0 failures，见 `docs/issue-inline-pini-extraction-2026-08-31.md`。
+> 全量 1144 tests / 0 failures，见 `docs/spec/issue/archive/issue-inline-pini-extraction-2026-08-31.md`。
 > 教训：据以排期的量化现状，开工前须实测复核。
 
 结论：**不要另起炉灶发明新规范，续推既有工单即可。**
@@ -53,7 +57,7 @@
 
 - 15 块真 Pini 源码全部抽离为 `.pini` 夹具（ParenEqualsTests 11 + IOTests 4），
   全量 **1144 tests / 0 failures / 20 skipped**。细节见
-  `docs/issue-inline-pini-extraction-2026-08-31.md`。
+  `docs/spec/issue/archive/issue-inline-pini-extraction-2026-08-31.md`。
 - **原「顺序约束」作废**：此前以「819 块 / 102 文件」为前提论证「抽离必须先于 ④」，
   前提证伪后论证不成立。**④ 不再受 ③ 阻塞**，可按自身节奏立项。
 
@@ -89,21 +93,22 @@
 
 ## 待核实：10 个无状态字段的存量工单
 
-以下工单**没有状态字段**，无法判断是否完结。本批不逐个读内容核实（成本过高），登记待办：
+以下工单**没有状态字段**，无法判断是否完结。本批不逐个读内容核实（成本过高），登记待办。
+**【2026-09-04 收口注】本表核实待办已由 2026-09-04 两轮工单全量整理（`docs/spec/issue/` 9 份 + 本目录 8 份）全部清账**，各行括注为终态：
 
 | 工单 | 行数 |
 |---|---|
 | `docs/spec/issue/issue-draft-impl-syntax-audit-2026-08-28.md` | 95（**已核实 2026-09-04：内容收编至 `docs/spec/issue/archive/issue-draft-audit-disposition-2026-08-31.md`（§二 A1–A14 / §五 F1–F6）后删除**） |
 | `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` | 508 |
-| `spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` | 94 |
+| `docs/spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` | 94 |
 | `docs/spec/issue/archive/issue-tdd-module-blockers-2026-08-28.md` | 111（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |
 | `docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md` | （有状态：已批准，落档进行中）（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |
-| `issue-bootstrap-gap-remediation-2026-08-30.md` | 104 |
-| `issue-ffi-module-2026-08-27.md` | 78（有状态：Open） |
-| `issue-host-optional-slice-2026-08-28.md` | 136 |
-| `issue-lexer-gap-closure-2026-08-29.md` | 54 |
-| `issue-lexer-gaps-2026-08-28.md` | 99（有状态：Open） |
-| `issue-unicode-char-predicates-2026-08-29.md` | 50 |
+| `docs/spec/issue/archive/issue-bootstrap-gap-remediation-2026-08-30.md` | 104（**已核实 2026-09-04：对账 Drift Ledger 全 CLOSED（G-P2 MITIGATED=登记契约），补 LANDED 归档**） |
+| `docs/issue-ffi-module-2026-08-27.md` | 78（有状态：Open——**实测仍开放**：P1–P4 待办真实存在，保留） |
+| `docs/issue-host-optional-slice-2026-08-28.md` | 136（**实测仍开放**：LLVM-M2 未落地，保留） |
+| `docs/issue-lexer-gap-closure-2026-08-29.md` | 54（**实测仍开放**：§6 残余挂账为活跃载体，保留；2026-09-04 收编 lexer-gaps 残余 P3-A） |
+| `issue-lexer-gaps-2026-08-28.md` | 99（**已核实 2026-09-04：P1/P2 落地、P2-C/E 被 ADR-028 改判、残余 P3-A 移入 lexer-gap-closure §6，按用户裁决删除，见 git 历史**） |
+| `docs/issue-unicode-char-predicates-2026-08-29.md` | 50（**实测仅余 LLVM 端挂账（与 lexer-gap-closure §6 重复登记，一致），保留**） |
 
 核实方式：逐个读结论段 → 判 Closed / 仍活跃 → 前者移 `archive/`，后者补状态字段。
 

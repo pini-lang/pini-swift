@@ -1,5 +1,11 @@
 # Issue: 自举探针缺口修复方案——八项宿主缺口的规模评估与落地批次（2026-08-30）
 
+> **状态：LANDED——全部批次收口（2026-09-04 实测核验，归档）。**
+> 对账权威台账 `examples/selfhost/docs/host-gaps.md`：**G-P1 ~ G-P10 全部 CLOSED**，
+> 唯 **G-P2 = MITIGATED**（`append` 返回 `[any]` 是 ADR-020 登记签名契约，非缺陷；
+> 清账前提 = 「数组元素标注 `[T]`」语言提案落地，见附录 A 批次 1 收口修订）。
+> 附录 F.2 的 S5 Type-B findings 随 L1a Type-B 批次（自举侧，S5–S11 搁置中）处置。
+
 > **来源**：`examples/selfhost`（自举探针）parser 阶段 S0–S4 落地过程中发现，全部证据为可执行探针实测（`examples/selfhost/docs/host-gaps.md` 为权威台账，本 issue 为宿主侧落点，ADR-024 D7）。
 > **背景**：S5–S11 已搁置，待本方案的类型系统簇落地后折返（`examples/selfhost/docs/issue-bootstrap-parser-2026-08-30.md`）。
 > **治理**：批次 0 为宿主级 bug fix（D6，无需 ADR）；批次 1 需语言级 ADR + spec §1.3 流程（D5 双段落地）；批次 2–4 为 spec 修订 + 实现配套。
