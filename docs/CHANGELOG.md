@@ -14,6 +14,13 @@
 - resources 由 `refresh` 落地到 `.pini/resources/<name>/`（此前目录不存在则静默跳过，资源永远不进锁文件）
 - **`[replace]` 三种形态**（G52 批 8 / D13）：版本覆盖（只换版本）、`file:`（换本地目录）、`github:`/`git:` fork（可带 `@版本`）；版本类替换并入 MVS 约束当下界；fork 与本地形态锁文件 `tap` 记 `replace`
 
+### Changed
+- **`[[bin]].entry` / `[lib].entry` 生效**（G52 批 9 / Def-3）：声明后 `main` 必须定义在声明的入口文件，否则报 `entryMainMismatch`（runtime-018）；**未声明沿用「全局找 main」**，既有工程零行为变更
+- `graph.order` 定为**导出视图**（外部工具消费，非解释器输入）；解释器的依赖就绪顺序由 `loadImports` 递归结构保证，并以三层依赖链测试钉住
+- 模块扫描深度按**来源**划分：`deps/` 落地根只扫根级（远程清单省解析），其余目录递归（本地模块 `src/` 布局被 import 时正常加载）
+- 锁文件 `tap`/`source` 多 requirer 时取**字典序最小 requirer**（`<root>` 恒优先）；`versionComponents` 按分量剥 `v`/`V` 前缀
+- 资源寻址：**v1 明确不提供**产品内 API（判据见 project-spec §3.3；此前为「待定」悬空项）
+
 ### Fixed
 - 锁文件 `commit` 此前恒为 `-`（只写不读），现为真实的来源定位符；`tap` / `source` 同样补上读取，`verify` 报错回显来源
 - **R7 双向封闭**：`resources X` 而 X 的根含 `pini.toml` → 报错指引改用 `[require]`（此前只兑现正向）
