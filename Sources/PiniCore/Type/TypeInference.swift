@@ -36,14 +36,14 @@ public final class TypeInference {
  let leftType = infer(expression: left, scopedParams: scopedParams)
  // 算术运算符返回操作数类型
  switch op {
- case .plus, .minus, .multiply, .divide, .modulo, .power,
+ case .plus, .minus, .multiply, .divide, .modulo,
  .bitwiseAnd, .bitwiseOr, .bitwiseXor, .leftShift, .rightShift,
  .assign, .plusAssign, .minusAssign, .multiplyAssign, .divideAssign,
  .moduloAssign, .andAssign, .orAssign, .xorAssign,
  .leftShiftAssign, .rightShiftAssign:
  return leftType
  case .equal, .notEqual, .lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual,
- .and, .or, .logicalAnd, .logicalOr:
+ .and, .or:
  return .simple(name: "Bool", location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
 

@@ -1,6 +1,6 @@
 # Issue: 安全上下文调用 foreign 函数无 unsafe 门禁（F5 缺陷立案，2026-09-04）
 
-- **状态**：Open（缺陷复现实测在案，修复方案待排期）
+- **状态**：LANDED（2026-09-04 批 A 当批修复，见文末验收；原状态 Open）
 - **来源**：`docs/spec/issue/archive/issue-draft-impl-syntax-audit-2026-08-28.md` F5（2026-08-31 审计复检发现）；该工单于 2026-09-04 内容收编后删除，本文件为其唯一活跃落点（用户裁决：单列独立缺陷工单）。
 - **关联**：ADR-015（FFI Phase 2a：`unsafe <expr>` 消耗点 / `&` 取址门禁 / `|unsafe` 修饰符）、spec §2.7（FFI 与 unsafe）、spec §A.2.2（foreign-decl：**块内函数自动 `|unsafe`**）。
 
@@ -42,3 +42,11 @@ main|func() -> ():
 
 - 解释器端（Phase 2a/2b）全量受影响；LLVM 端 FFI 显式 unsupported（ADR-015 D1），不受影响。
 - 现有语料（examples/ffi_module、FFITests）均按安全封装模式书写（unsafe 内核 + 单消耗点），**未被本缺陷污染**；修复后预计无需大规模迁移，但须回归 `FFIModuleTests` 与 examples/ffi_module golden。
+
+## 验收记录（2026-09-04 批 A）
+
+- 门禁：`TypeChecker` 新增 `foreignFunctionNames`（foreignDecl 注册时并行登记）+ 调用位 `unsafeContextDepth == 0` 拦截，报错样式对齐 `&`/`!`（mismatch，E4-001）。
+- spec §2.7 新增「foreign 调用门禁（F5）」钉定行（含与 ADR-028 D-4 正交性声明）。
+- 迁移面：全仓实测仅 `examples/ffi_module/cstring.pini` 比较测试 1 行裸调 `ffi_strcmp` → 加 `unsafe` 消耗点（与该文件 §④ 注释自述的推荐写法一致）；`ffi.pini` 裸调全在 `|unsafe` 体内、不受影响（实测保持绿）。
+- 实测：E-110 复现件（main 裸调 ffi_malloc）现报 E4-001；`pini test examples/ffi_module/cstring.pini` 2/2；`pini run examples/ffi.pini` 正常。
+- 测试：testCheckForeignCallRequiresUnsafeContext（TypeCheckerTests）。

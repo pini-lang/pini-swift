@@ -1,0 +1,9 @@
+main|func() -> ():
+    var n = 5
+    var m = ++n
+    print(m)
+    print(n)
+    var k = --n
+    print(k)
+    print(n)
+    return

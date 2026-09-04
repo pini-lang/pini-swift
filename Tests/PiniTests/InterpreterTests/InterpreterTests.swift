@@ -76,6 +76,22 @@ final class InterpreterTests: XCTestCase {
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "6", "++x 应使 x 从 5 变为 6")
     }
 
+    /// F3：前缀 ++/-- 表达式位也写回（语句位与表达式位同轨），表达式值 = 改写后值
+    func testUnaryIncDecExpressionWriteback() throws {
+        let source = try loadPiniFixture("testUnaryIncDecExpressionWriteback", filePath: #filePath)
+        let output = try runProgram(source)
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "6\n6\n5\n5",
+                       "++n 表达式位应写回：m=6 且 n=6；--n 后 k=5 且 n=5")
+    }
+
+    /// F3：前缀 ++/-- 的成员/下标目标应写回（原缺陷：返回新值但不写回）
+    func testUnaryIncDecMemberSubscriptWriteback() throws {
+        let source = try loadPiniFixture("testUnaryIncDecMemberSubscriptWriteback", filePath: #filePath)
+        let output = try runProgram(source)
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "4\n6",
+                       "++o.x 应使字段变为 4；--arr[0] 应使元素变为 6")
+    }
+
     /// 意图：前缀自减运算符应使变量减 1
     func testUnaryPrefixDecrement() throws {
         let source = try loadPiniFixture("testUnaryPrefixDecrement", filePath: #filePath)
