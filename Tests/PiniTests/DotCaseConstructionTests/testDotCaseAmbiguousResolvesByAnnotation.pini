@@ -1,0 +1,21 @@
+; 歧义名点号构造按期望类型标注静态决议（varDecl 标注位 + 实参位）
+[形状]
+圆(F64,)
+矩形(F64, F64,)
+
+[几何]
+圆(F64, F64,)
+
+取半径|func(s: 形状,) -> (F64,):
+    match s:
+        case 圆(r,):
+            return r
+        case 矩形(w, h):
+            return w
+    return 0.0
+
+main|func() -> ():
+    let s: 形状 = .圆(3.0)
+    print(取半径(s),)
+    print(取半径(.圆(2.5)),)
+    return

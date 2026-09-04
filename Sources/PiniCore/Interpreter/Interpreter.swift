@@ -1652,6 +1652,14 @@ public class Interpreter {
  return try callFunctionValue(ctor, args: argValues)
  }
 
+ // 点号用例构造（成员意图，proposal-dot-case-construction，D-1：与 Swift
+ // UnresolvedMemberExpr 同构）：歧义名 → 静态决议表（与裸名 D1 同轨）；
+ // 用户枚举唯一父 → 直接构造（查构造器注册表，不经局部环境，不被同名变量
+ // 遮蔽）；内建 some/none → Optional 特判；非用例名报错（语义层已前置拦截）。
+ if case .dotCaseRef(let caseName, _) = callee {
+ return try evaluateDotCaseConstruction(caseName: caseName, arguments: arguments, location: loc)
+ }
+
  // ADR-026 D1（静态收敛版）：歧义 case 的裸名构造 → 查静态决议表。
  // checker 在期望类型命中的构造位记录父枚举；无记录 = 未静态解析 → 报错
  // 要求限定形式。运行期不做动态猜测（case 由复合类型确定，不由实参嗅探）。
@@ -1924,9 +1932,88 @@ public class Interpreter {
  // Phase 2a（ADR-015 FFI）：`&x` 不安全取地址——解释器快照语义：
  // 指针值返回自身；其它值分配内存写入 C 表示后返回指针（写回不更新原变量，文档化限制）。
  return try snapshotPointer(of: evaluateExpression(operand), location: loc)
+ case .dotCaseRef(let name, let loc):
+ // 点号用例构造（无实参形态）：零关联值用例直接构造；带关联值用例返回
+ // 构造器值（未应用形态，与裸名标识符的构造器值一致）。
+ return try evaluateDotCaseReference(name: name, location: loc)
  default:
  throw RuntimeError.invalidOperation(reason: "未实现的表达式类型", location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
+ }
+
+ // MARK: - 点号用例构造（proposal-dot-case-construction）
+
+ /// 点号构造的运行期反查：该 case 名在用户枚举构造器注册表中的全部父枚举。
+ /// （内建 Optional 的 some/none 不进此表——走特判通道。）
+ private func userEnumParents(of caseName: String) -> [String] {
+ return enumCaseConstructors.compactMap { $0.value[caseName] != nil ? $0.key : nil }.sorted()
+ }
+
+ /// `.caseName(args)`（带实参调用形态）：歧义名查静态决议表（D1 同轨）、
+ /// 用户枚举唯一父直接构造、内建 some/none 特判、其余报错。
+ private func evaluateDotCaseConstruction(caseName: String, arguments: [CallArgument], location loc: SourceLocation) throws -> Value {
+ let parents = userEnumParents(of: caseName)
+ if parents.count > 1 {
+ // ADR-026 D1 同轨：歧义名查 checker 静态决议表；无记录 = 未静态解析 → 报错
+ guard let parent = BareCaseResolutionRegistry.parent(at: loc),
+ let ctor = enumCaseConstructors[parent]?[caseName] else {
+ throw RuntimeError.invalidOperation(
+ reason: "点号构造 .\(caseName) 缺少可解析的期望类型，请标注期望类型或使用限定形式 枚举名.\(caseName)(...)",
+ location: loc
+ )
+ }
+ var argValues: [Value] = []
+ for arg in arguments { argValues.append(try evaluateExpression(arg.expression)) }
+ return try callFunctionValue(ctor, args: argValues)
+ }
+ if let parent = parents.first, let ctor = enumCaseConstructors[parent]?[caseName] {
+ var argValues: [Value] = []
+ for arg in arguments { argValues.append(try evaluateExpression(arg.expression)) }
+ return try callFunctionValue(ctor, args: argValues)
+ }
+ if caseName == "some" {
+ guard arguments.count == 1 else {
+ throw RuntimeError.invalidOperation(reason: "Optional.some 需要一个参数（.some(值)）", location: loc)
+ }
+ let value = try evaluateExpression(arguments[0].expression)
+ return .enumValue(EnumValue(caseName: "some", associatedValues: [value]))
+ }
+ if caseName == "none" {
+ guard arguments.isEmpty else {
+ throw RuntimeError.invalidOperation(reason: "Optional.none 无关联值", location: loc)
+ }
+ return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ }
+ throw RuntimeError.invalidOperation(reason: "点号构造 .\(caseName) 不是任何枚举用例", location: loc)
+ }
+
+ /// `.caseName`（无实参形态）：零关联值用例直接构造；带关联值用例返回构造器值。
+ private func evaluateDotCaseReference(name: String, location loc: SourceLocation) throws -> Value {
+ let parents = userEnumParents(of: name)
+ if parents.count > 1 {
+ guard let parent = BareCaseResolutionRegistry.parent(at: loc),
+ let ctor = enumCaseConstructors[parent]?[name] else {
+ throw RuntimeError.invalidOperation(
+ reason: "点号构造 .\(name) 缺少可解析的期望类型，请标注期望类型或使用限定形式 枚举名.\(name)(...)",
+ location: loc
+ )
+ }
+ return ctor.params.isEmpty
+ ? .enumValue(EnumValue(caseName: name, associatedValues: [], parentEnum: parent))
+ : .function(ctor)
+ }
+ if let parent = parents.first, let ctor = enumCaseConstructors[parent]?[name] {
+ return ctor.params.isEmpty
+ ? .enumValue(EnumValue(caseName: name, associatedValues: [], parentEnum: parent))
+ : .function(ctor)
+ }
+ if name == "none" {
+ return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+ }
+ throw RuntimeError.invalidOperation(
+ reason: name == "some" ? "Optional.some 需要实参（写 .some(值)）" : "点号构造 .\(name) 不是任何枚举用例",
+ location: loc
+ )
  }
  func evaluateBinaryOp(_ l: Value, _ op: BinaryOperator, _ r: Value) throws -> Value {
  switch (l, r, op) {

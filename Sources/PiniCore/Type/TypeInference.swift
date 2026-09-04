@@ -122,6 +122,35 @@ public final class TypeInference {
  return .simple(name: typeName, location: loc)
  }
 
+ // 点号用例构造（proposal-dot-case-construction，成员意图）：推断优先级为
+ // 期望类型命中候选 > 唯一父枚举（与裸名构造的唯一优先相反——前导点即声明
+ // 「这是某枚举的成员」）。期望不可知且歧义时返回例名占位，报错交 TypeChecker；
+ // 用户枚举候选为空时内建 some/none 直达 Optional（与 `nil` 的推断对齐）。
+ if case .dotCaseRef(let caseName, _) = callee, let env = environment {
+ let caseParents = env.parentEnums(of: caseName)
+ if let exp = expected {
+ switch exp {
+ case .simple(let en, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ case .generic(let en, _, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ default:
+ break
+ }
+ }
+ if caseParents.count == 1 {
+ return .simple(name: caseParents[0], location: loc)
+ }
+ if caseName == "some", !arguments.isEmpty,
+ let t = infer(expression: arguments[0].expression, scopedParams: scopedParams) {
+ return .generic(name: "Optional", params: [t], location: loc)
+ }
+ if caseName == "some" || caseName == "none" {
+ return .generic(name: "Optional", params: [.simple(name: "Any", location: loc)], location: loc)
+ }
+ return .simple(name: caseName, location: loc)
+ }
+
  // P2-1.4：成员方法调用返回类型推断（obj.method(args)）。
  // Optional.some / .none 已在上方特判并返回，此处仅处理普通成员方法。
  if case .member(let object, let memberName, _) = callee, let env = environment {
@@ -223,6 +252,29 @@ public final class TypeInference {
 
  case .selfTypeKeyword:
  return nil
+
+ case .dotCaseRef(let name, let loc):
+ // 点号用例构造（无实参形态，成员意图）：推断优先级 = 期望类型命中候选 > 唯一
+ // 父枚举；用户枚举候选为空时内建 none 直达 Optional<Any>（与 `nil` 对齐）。
+ guard let env = environment else { return nil }
+ let caseParents = env.parentEnums(of: name)
+ if let exp = expected {
+ switch exp {
+ case .simple(let en, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ case .generic(let en, _, _):
+ if caseParents.contains(en) { return .simple(name: en, location: loc) }
+ default:
+ break
+ }
+ }
+ if caseParents.count == 1 {
+ return .simple(name: caseParents[0], location: loc)
+ }
+ if name == "none" {
+ return .generic(name: "Optional", params: [.simple(name: "Any", location: loc)], location: loc)
+ }
+ return .simple(name: name, location: loc)
 
  case .arrayLiteral, .dictionaryLiteral, .setLiteral:
  return nil

@@ -71,4 +71,11 @@ public indirect enum Expression: Equatable {
  /// Phase 2a（ADR-015 FFI， `&`）：不安全取地址前缀。
  /// 仅在 unsafe 上下文可用（`|unsafe` 函数体或 `unsafe (...)` 消耗点内）。
  case addressOf(operand: Expression, location: SourceLocation)
+ /// 点号用例构造（proposal-dot-case-construction-2026-08-30，D-1 裁决采纳）：
+ /// 前导点 `.caseName` = 成员意图标记，与 Swift `UnresolvedMemberExpr` 同构——
+ /// 解析期专用未解析节点（仅携带名字），决议在类型检查阶段按期望类型完成
+ /// （期望类型命中 → 该枚举；唯一父枚举 → 回退；歧义/无 → 报错要求限定或期望类型）。
+ /// `.caseName(args)` 解析为 `.call(.dotCaseRef, args)`（实参挂外层 call，与 Swift 同构）；
+ /// `.caseName`（无实参）解析为裸 `dotCaseRef`（零关联值用例直接构造，带关联值则为构造器值）。
+ case dotCaseRef(name: String, location: SourceLocation)
 }

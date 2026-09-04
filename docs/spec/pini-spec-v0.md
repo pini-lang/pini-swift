@@ -763,7 +763,9 @@ enum-case       ::= IDENT ['(' type-annotation {',' type-annotation} [','] ')'];
    caseName(args) 按序解析——1) 期望类型唯一命中声明该用例的枚举 → 该枚举；
    2) 模块内恰好一个枚举声明该用例 → 该枚举；3) 歧义且无期望类型 → 编译
    错误，要求限定形式 枚举名.caseName(...)。case 由复合类型确定成员身份，
-   运行期不做动态猜测；match 模式恒按被匹配值类型解析（§2.4.3）。 *)
+   运行期不做动态猜测；match 模式恒按被匹配值类型解析（§2.4.3）。
+   点号构造 `.caseName` 为成员意图的语法化形态，决议规则见 primary-atom 注
+   （期望类型优先 + 唯一回退 + 歧义拒绝）。 *)
 
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
@@ -932,7 +934,18 @@ primary-atom    ::= IDENT [generic-construct]
                   | '(' [tuple-element {',' tuple-element} [',']] ')'
                   | '[' collection-literal ']'
                   | '{' [expression {',' expression}] '}'
+                  | '.' IDENT
                   | builtin-call;
+
+(* 点号用例构造（proposal-dot-case-construction，2026-09-04 采纳，D-1 与 Swift
+   UnresolvedMemberExpr 同构）：前导点 `.caseName` / `.caseName(args)` = 成员意图
+   标记。解析期为仅携带名字的未解析节点；决议在类型检查阶段完成，期望类型优先——
+   期望类型命中声明该用例的枚举 → 该枚举；否则唯一父枚举回退；歧义且无期望类型 →
+   编译错误（要求期望类型标注或限定形式 枚举名.caseName(...)）。带实参形态的实参
+   挂外层调用（与 Swift 实参挂外层 Apply 同构）。语义差异点：点号构造不受同作用域
+   局部变量遮蔽影响（前导点已声明成员归属）；内建 Optional 的 `.some` / `.none`
+   直达。LLVM 后端 v1 仅支持唯一名与内建 none/some（歧义名 unsupported，D-3 裁决
+   报错 + 立案）；match 模式位点号不在本期范围。 *)
 
 tuple-element   ::= [IDENT '='] expression;
 (* 括号/元组消歧（F4，事实钉定）：`( ... )` 的形态由内容判定——

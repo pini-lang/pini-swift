@@ -92,7 +92,7 @@ G-P1：`BuiltinRegistry` 新增 F64 转换（按 ADR-020 D3/D4 快速路径，�
 
 1. ADR-026 D1 收敛为三档**纯静态**规则（期望类型命中 → 模块唯一 → 编译错误要求限定形式），**移除运行期动态消歧**（实参嗅探决定成员身份违反原则）；静态决议经定位键决议表（`BareCaseResolutionRegistry`）交接运行期。
 2. spec 在 enum-case 产生式处钉定该规则；match（D2）不变，恒按被匹配值类型解析。
-3. **`.caseName(...)` 点号构造语法立项为提案**（`docs/spec/issue/proposal-dot-case-construction-2026-08-30.md`）——Swift 的关键洞察是点号把「成员意图」语法化，使上下文消歧安全无歧义；择 Provisional 破坏窗口裁决。
+3. **`.caseName(...)` 点号构造语法立项为提案**（`docs/spec/issue/archive/proposal-dot-case-construction-2026-08-30.md`，2026-09-04 采纳并 LANDED）——Swift 的关键洞察是点号把「成员意图」语法化，使上下文消歧安全无歧义；择 Provisional 破坏窗口裁决。
 4. 自举侧 Any 位构造改为限定形式（`token.int_lit(...)` 等 9 处）；checker 的 Any 接收者成员调用实参不下探的预存盲区另行挂账（与本提案无耦合）。
 
 验证：宿主全量 1047 测试 0 失败（4 个「动态消歧」测试翻转为「check 期拒绝」）；selfhost 33 测试 0 失败；L0 MATCH；audit GREEN。

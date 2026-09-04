@@ -125,6 +125,26 @@ extension IRGenerator {
  throw IRGenError.unsupportedFeature(feature:
  "LLVM 后端暂不支持 FFI/unsafe 子系统（`unsafe`/`&`）；请改用解释器 `pini run`",
  sl())
+
+ case .dotCaseRef(let name, _):
+ // 点号用例构造（无实参形态，proposal-dot-case-construction）：经反查表解析
+ // 未限定名（与裸名标识符同轨）；带关联值用例的未应用形态不构造（显式报错）；
+ // 歧义/未知名走 enumCaseQualifiedKey 的既有报错。
+ if let qKey = try enumCaseQualifiedKey(forUnqualified: name),
+ let (enumName, tag, params) = enumCaseTags[qKey] {
+ if !params.isEmpty {
+ throw IRGenError.unsupportedExpression(kind:
+ "点号构造 .\(name) 带关联值，未应用形态 LLVM 后端不支持（请加实参调用或改用解释器）", sl())
+ }
+ let typeName = "%enum.\(enumName)"
+ let ptr = builder.freshTemp()
+ emitLine(builder.fmtAlloca(name: ptr, type: typeName))
+ let tagPtr = builder.freshTemp()
+ emitLine(builder.fmtGEP(name: tagPtr, aggregate: typeName, base: ptr, indices: [0, 0]))
+ emitLine(builder.fmtStore(value: "\(tag)", type: "i32", ptr: tagPtr))
+ return IRValue(llvmType: "\(typeName)*", ssaName: ptr)
+ }
+ throw IRGenError.unsupportedExpression(kind:"undefined enum case .\(name)", sl())
  }
  }
 
@@ -625,6 +645,18 @@ extension IRGenerator {
  let retTemp = "%t\(nextTemp())"
  emitLine(" \(retTemp) = call \(retType) @\(methodIRName)(\(allArgs.joined(separator: ", ")))")
  return IRValue(llvmType: retType, ssaName: retTemp)
+ }
+
+ // 点号用例构造（成员意图，proposal-dot-case-construction）：LLVM 端无期望
+ // 类型线程——唯一名按未限定键解析构造（与裸名同轨）；歧义名经
+ // enumCaseQualifiedKey 的既有歧义报错（D-3 裁决：报错 + 立案，解释器通道完整可用）。
+ if case .dotCaseRef(let caseName, _) = callee {
+ if let qKey = try enumCaseQualifiedKey(forUnqualified: caseName),
+ let (enumName, tag, params) = enumCaseTags[qKey] {
+ return try generateEnumCaseConstruction(enumName: enumName, tag: tag, params: params, arguments: arguments)
+ }
+ throw IRGenError.unsupportedFeature(feature:
+ "LLVM 后端无法消解点号构造 .\(caseName)（歧义名需期望类型线程，未实现）；请使用限定形式 枚举名.\(caseName)(...) 或改用解释器 `pini run`", sl())
  }
 
  guard case .identifier(let funcName, _) = callee else {

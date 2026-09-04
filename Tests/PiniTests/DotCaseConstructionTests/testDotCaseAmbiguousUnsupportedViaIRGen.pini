@@ -1,0 +1,11 @@
+; LLVM 端歧义名点号构造显式 unsupported（D-3：报错 + 立案，解释器可用）
+[形状]
+圆(F64,)
+
+[几何]
+圆(F64,)
+
+main|func() -> ():
+    let s: 形状 = .圆(1.0)
+    print(s)
+    return

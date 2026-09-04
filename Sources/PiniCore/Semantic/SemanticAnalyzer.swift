@@ -37,6 +37,10 @@ public final class SemanticAnalyzer {
  /// 别名 → (publicSymbols 跨模块可引入集, allSymbols 全部顶级符号)。
  /// D-2 静态互斥：本地符号声明与别名同名 → 重声明错误。
  private var importAliasInfos: [String: (publicSymbols: Set<String>, allSymbols: Set<String>)] = [:]
+ /// 点号用例构造（成员意图）的名字登记集：全部已见枚举用例名（含内建 Optional 的
+ /// some/none）。与前导点解析配套——`.name` 只要求名字是某枚举的用例，不受本地位
+ /// 遮蔽影响（前导点已声明成员归属，期望类型决议在类型层完成）。
+ private var enumCaseNames: Set<String> = ["some", "none"]
 
  /// H-1 capture 校验上下文栈：每个活跃匿名函数字面量一层
  ///（boundary = 字面量体作用域边界；captured = 已先行声明的捕获名集合）。
@@ -299,6 +303,7 @@ private func teardownInjections() {
  symbolTable.define(Symbol(name: e.name, kind: .enum, location: e.location))
  for enumCase in e.cases {
  symbolTable.define(Symbol(name: enumCase.name, kind: .enumCase, location: enumCase.location))
+ enumCaseNames.insert(enumCase.name)
  }
  case .funcDecl(let f):
  symbolTable.define(Symbol(name: f.name, kind: .function, location: f.location))
@@ -334,6 +339,7 @@ private func teardownInjections() {
  }
  seenInEnum.insert(enumCase.name)
  symbolTable.define(Symbol(name: enumCase.name, kind: .enumCase, location: enumCase.location))
+ enumCaseNames.insert(enumCase.name)
  }
  // P3/P5-5：填充本模块枚举映射，供 validated 匹配模式做 best-effort 穷尽性校验。
  for enumCase in e.cases {
@@ -801,6 +807,13 @@ private func teardownInjections() {
 
  case .selfKeyword, .selfTypeKeyword:
  break
+
+ case .dotCaseRef(let name, let location):
+ // 点号用例构造（成员意图）：名字须为某枚举的用例；本地位遮蔽不影响成员解析
+ // （前导点已声明成员归属，期望类型决议在类型层完成，不经 requireDefined）。
+ if !enumCaseNames.contains(name) {
+ throw SemanticError.undefinedVariable(name: ".\(name)", location: location)
+ }
 
  case .genericConstruct:
  break

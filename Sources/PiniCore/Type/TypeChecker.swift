@@ -565,13 +565,24 @@ public final class TypeChecker {
  private func noteBareCaseOutcome(_ expr: Expression, actual: TypeAnnotation, location: SourceLocation) throws {
  let bareName: String?
  let callLoc: SourceLocation
+ let isDotForm: Bool
  switch expr {
  case .call(.identifier(let cn, _), _, let l):
  bareName = cn
  callLoc = l
+ isDotForm = false
  case .identifier(let cn, let l):
  bareName = cn
  callLoc = l
+ isDotForm = false
+ case .call(.dotCaseRef(let cn, _), _, let l):
+ bareName = cn
+ callLoc = l
+ isDotForm = true
+ case .dotCaseRef(let cn, let l):
+ bareName = cn
+ callLoc = l
+ isDotForm = true
  default:
  return
  }
@@ -583,11 +594,19 @@ public final class TypeChecker {
  return
  }
  if case .simple(let t, _) = actual, t == n {
+ if isDotForm {
+ try report(TypeError.mismatch(
+ expected: "期望类型标注或限定形式 枚举名.\(n)(...)（点号构造 .\(n) 同名用例歧义）",
+ got: ".\(n)",
+ location: location
+ ))
+ } else {
  try report(TypeError.mismatch(
  expected: "限定形式 枚举名.\(n)(...)（同名用例歧义）",
  got: n,
  location: location
  ))
+ }
  }
  }
 
@@ -687,6 +706,15 @@ public final class TypeChecker {
  guard typeEnv.lookupVariable(name: n) == nil else { return false }
  caseName = n
  location = loc
+ case .call(.dotCaseRef(let n, _), let arguments, let loc):
+ // 点号构造（成员意图）：不经局部环境——前导点已声明成员归属，
+ // 无同名变量遮蔽问题（与裸名构造的遮蔽守卫相反）。
+ caseName = n
+ args = arguments
+ location = loc
+ case .dotCaseRef(let n, let loc):
+ caseName = n
+ location = loc
  default:
  return false
  }
@@ -703,8 +731,14 @@ public final class TypeChecker {
  refinedParent = caseCandidates.count == 1 ? caseCandidates[0] : typeEnv.parentEnum(of: caseName)
  }
  guard let parent = refinedParent else { return false }
- if case .call = expr, caseCandidates.count > 1, refinedParent != nil {
+ if caseCandidates.count > 1, refinedParent != nil {
+ switch expr {
+ case .call, .dotCaseRef:
+ // .call 为既有行为；点号无实参形态同样登记——成员意图的期望决议须让运行期可见
  BareCaseResolutionRegistry.record(location, parent: parent)
+ default:
+ break // 裸标识符形态维持既有行为（不登记）
+ }
  }
 
  // arity（关联参数个数）已由 checkExpression → checkEnumCaseConstruction 统一校验（与期望类型无关），
@@ -1697,6 +1731,11 @@ public final class TypeChecker {
  try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
  }
  }
+ case .dotCaseRef(let caseName, _):
+ // 点号用例构造（成员意图）：期望类型无关的 arity 校验与裸名同轨
+ //（内建 some/none 经 parentEnum 反查为 nil 自然跳过）；期望类型决议
+ // 由 refineEnumCaseConstruction / noteBareCaseOutcome 下推位承担。
+ try checkEnumCaseConstruction(calleeName: caseName, args: arguments, location: location)
  default:
  // 函数类型变量调用（f(...)：高阶函数形参 / 匿名函数绑定变量）——按 callee
  // 推断的函数类型校验实参（闭合 L1：匿名函数参数标注 + 函数类型实参校验）。
@@ -1807,6 +1846,18 @@ public final class TypeChecker {
  case .integerLiteral, .floatLiteral, .stringLiteral, .boolLiteral, .stringInterpolation,
  .identifier, .selfKeyword, .selfTypeKeyword:
  break
+
+ case .dotCaseRef(let name, let location):
+ // 点号用例构造（成员意图标记）：期望类型决议在 refineEnumCaseConstruction /
+ // noteBareCaseOutcome 下推位承担；此处校验名字确为某枚举用例
+ //（内建 Optional 的 some/none 走特判通道，不经用户枚举注册表）。
+ if name != "some", name != "none", typeEnv.parentEnums(of: name).isEmpty {
+ try report(TypeError.mismatch(
+ expected: "枚举用例（点号构造 .\(name) 的成员意图）",
+ got: name,
+ location: location
+ ))
+ }
 
  case .join(let inner, let location):
  try checkExpression(inner)

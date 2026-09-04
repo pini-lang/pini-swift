@@ -224,7 +224,9 @@ public enum Desugar {
  public static func desugar(_ expr: Expression) -> Expression {
  switch expr {
  case .identifier, .integerLiteral, .floatLiteral, .stringLiteral,
- .boolLiteral, .selfKeyword, .selfTypeKeyword:
+ .boolLiteral, .selfKeyword, .selfTypeKeyword,
+ .dotCaseRef:
+ // dotCaseRef 为叶子节点（名字本身无子表达式）；决议在类型层/运行期完成，不在降层期去糖。
  return expr
 
  case .stringInterpolation(let segments, let loc):

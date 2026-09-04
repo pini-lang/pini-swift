@@ -1,0 +1,7 @@
+; 内建 Optional 的 .none / .some(7) 直达（用户枚举候选为空时）
+main|func() -> ():
+    let x: Optional<I32> = .none
+    let y: Optional<I32> = .some(7)
+    print(x)
+    print(y)
+    return
