@@ -3,7 +3,7 @@
 > **状态：已批准，落档进行中（2026-08-29）。**
 >
 > 本文件保留为**设计理由记录**——G52 工单只存规则正文与决议，本稿存「为什么」。
-> 承接 `issue-module-system-rules-2026-08-28.md`（G52，D1–D23）；
+> 承接 `archive/issue-module-system-rules-2026-08-28.md`（G52，D1–D23）；
 > 本稿的 **R5–R8 已入工单 §2**，对应决议 **D24–D28 已入工单 §3.8**。
 > 落档进度见 §7（已勾选项即已完成）。
 >
@@ -200,7 +200,7 @@ pini/pini.toml       →  spec        = "0.1"
 
 ## 7. 落档清单（批准后执行）
 
-### A. `issue-module-system-rules-2026-08-28.md`（pini-meta）
+### A. `archive/issue-module-system-rules-2026-08-28.md`（pini-meta）
 
 - [x] §2 增 **R5 / R6 / R7 / R8**
 - [x] §3.3 `resources`：落点改 `.pini/resources/<name>/`；检查改「仅根检」，并按 R7 改写理由

@@ -63,7 +63,7 @@
 - `std/` 与 spec v0 标准库最小契约联动：本地 `std/` 只能**扩充**契约，不能削弱保证 API。
 - `deps/` 的**边界性质（G52 R6 修订）**：它**只放 `require` 的 Pini 模块**——其下每个模块自带 `pini.toml`，由 **R1 自动切出**父模块的扫描，**无需任何排除配置**。
   ~~原 R1'「`deps/` 是保留目录，工具链永不扫描」**已撤销**~~：非 Pini 依赖与宿主一律落 `.pini/`（R6，点前缀目录不参与扫描），
-  目录级特例因此不再需要（撤销理由见 `issue/issue-module-system-rules-2026-08-28.md` R1 条）。
+  目录级特例因此不再需要（撤销理由见 `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` R1 条）。
   **宿主判定补注（ADR-024）**：判据按**清单类型**判定——宿主 pini-swift 根含 `Package.swift`（SwiftPM 清单）而非 `pini.toml`，不满足「Pini 模块」判据，故从不属 `deps/`。其承载方式：submodule 时代落 `.pini/toolchain/`；ADR-024 起为嵌套独立仓（见 §5）。
 
 ---

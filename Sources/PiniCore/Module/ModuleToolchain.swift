@@ -5,10 +5,13 @@ import Foundation
 /// 本文件只实现，不改语义。
 ///
 /// v1 边界（如实记录）：
-/// - 仅本地 tap（`file:`）；远程 tap（`github:`/`git:`）在收集期即报错（本批 D-A，批 7 解除）。
-/// - 依赖落地 `deps/<name>/` 由 git submodule / 手工拷贝管理（D23：无全局缓存）；
-///   每个依赖目录只有**一个**可用版本——MVS 退化为「校验全部约束是否被该版本满足」，
-///   冲突即报错；远程 registry 出现后这里升级为真正的多候选最小版本选择。
+/// - **批 7**：远程 tap（`github:`/`git:`）由 `TapFetcher` 抓取，抓取**只发生在 refresh**
+///   （`resolveFetching`）；`resolve` / `graph` 等只读路径不联网，只能读已落地的依赖。
+/// - `file:` tap 仍是「来源元数据 + git submodule / 手工拷贝落地」（批 6 已 Landed 语义，批 7 不动）。
+/// - 依赖落地 `deps/<name>/`（D23：无全局缓存）。远程依赖的候选版本来自 tag，
+///   经典 MVS 在其中取满足全部约束的最小版本（`TapFetcher.selectVersion`）。
+/// - 依赖的版本决定它自己的 `[require]` 内容 ⇒ 约束集随选择而变 ⇒ 求解须**迭代到不动点**
+///   （`resolveFetching`，上限 `fetchIterationLimit`，不收敛即报错不静默取某一轮）。
 public enum ModuleToolchain {
 
  // MARK: - 错误
@@ -16,8 +19,16 @@ public enum ModuleToolchain {
  public enum ToolchainError: Error, Equatable {
  /// 依赖目录缺失（deps/<name>/ 无 pini.toml）——v1 无下载，须先 submodule/手工落地。
  case missingDependency(name: String, requirer: String, expectedPath: String)
- /// 远程 tap（D-A：批 6 报错退出，不跳过）。
- case remoteTapUnsupported(tapName: String, spec: String, requiredBy: String)
+ /// 远程 tap 的依赖尚未落地，且本次解析不抓取（抓取只发生在 refresh）。
+ /// 批 6 的 D-A 是「远程一律不支持」，批 7 后收窄为这一种情形：依赖还没抓下来。
+ case remoteTapNotMaterialized(name: String, tap: String)
+ /// 资源未落地（批 7 前是静默跳过，现改为显式报错）。
+ case resourceNotMaterialized(name: String, path: String)
+ /// **R7 根检（D20/D26 反向）**：`resources X` 而 X 的根含 `pini.toml` ⇒ 它是 Pini 模块，
+ /// 应改用 `[require]`。只查根、不查深层。
+ case resourceTargetIsModule(name: String, path: String)
+ /// 版本求解在限定迭代内未收敛（依赖的约束集随其版本而变）。
+ case resolutionDidNotConverge(limit: Int)
  /// 约束不可满足：可用版本不满足某个（或多个）requirer 的约束。
  case unsatisfiable(name: String, available: String, conflicts: [String])
  /// 平表 [require] 条目但清单未声明 [tap] default（D11：org 显式书写）。
@@ -28,6 +39,41 @@ public enum ModuleToolchain {
  case summaryIdentityMismatch(path: String)
  }
 
+
+ // MARK: - 抓取会话（批 7）
+
+ /// 跨迭代缓存「已选版本 / 已取 commit」，并标记本轮是否发生过重新选择。
+ ///
+ /// 存在性即「本次解析允许抓取」的开关：`resolve` 传 `nil` 表示只读（refresh 之外的路径）。
+ final class FetchSession {
+ /// name → 选中的版本（无版本 tag 的仓库为 `nil`，表示取默认分支 HEAD）。
+ private(set) var selections: [String: String?] = [:]
+ /// name → 落地的 commit（G52 D12 来源定位符）。
+ private(set) var commits: [String: String] = [:]
+ /// name → 展开后的源（写进锁文件的 `source` 字段）。
+ private(set) var sources: [String: String] = [:]
+ /// 本轮是否发生过重新选择——不动点迭代的收敛判据。
+ private(set) var selectionChanged = false
+
+ func beginIteration() { selectionChanged = false }
+
+ func record(name: String, version: String?, commit: String, source: String) {
+ if let prev = selections[name] {
+ if prev != version { selectionChanged = true }
+ } else {
+ selectionChanged = true // 首见即变化（需要与「已存在但无需改动」区分）
+ }
+ selections[name] = version
+ commits[name] = commit
+ sources[name] = source
+ }
+
+ /// 是否已有选中记录（含「无版本 tag → 取 HEAD」这一 nil 选择）。
+ func hasSelection(_ name: String) -> Bool { selections.keys.contains(name) }
+ }
+
+ /// 不动点迭代上限。超过即报错——不静默取某一轮的结果。
+ static let fetchIterationLimit = 8
 
  // MARK: - 版本约束（G52 §3.2：^ / ~ / = / 区间 / * / 裸版本）
 
@@ -163,6 +209,13 @@ public enum ModuleToolchain {
  ///   - rootDir: 主模块根（绝对路径；deps/ 与 .pini/resources/ 相对它落定）。
  ///   - manifest: 主模块清单。
  public static func resolve(rootDir: String, manifest: ModuleManifest) throws -> Resolution {
+ try resolve(rootDir: rootDir, manifest: manifest, session: nil)
+ }
+
+ /// 带抓取会话的解析。`session == nil` = **只读**（refresh 之外的路径：已落地的依赖照常解析，
+ /// 未落地的远程依赖报 `remoteTapNotMaterialized`）；非 nil 则由 `TapFetcher` 抓取远程依赖。
+ static func resolve(rootDir: String, manifest: ModuleManifest,
+                     session: FetchSession?) throws -> Resolution {
  var moduleByName: [String: (manifest: ModuleManifest, dir: String)] = [:]
  var importedBy: [String: [String]] = [:]
  var edges: [String: Set<String>] = [:] // requirer → deps
@@ -194,38 +247,56 @@ public enum ModuleToolchain {
  // 边与约束**无论首见与否都入账**（首见短路会丢多 requirer 的 imported-by 与约束）。
  constraints[name, default: []].append((constraint ?? "*", from))
  importedBy[name, default: []].append(from)
- edges[from, default: []].insert(name)
- if moduleByName[name] != nil { continue }
+    edges[from, default: []].insert(name)
 
- // tap 校验（D-A：远程报错退出）。
- guard specStr.hasPrefix("file:") else {
- throw ToolchainError.remoteTapUnsupported(tapName: edgeTap, spec: specStr, requiredBy: from)
- }
- sourceByName[name] = specStr
- tapNameByName[name] = edgeTap
- // v1 落地模型（D23）：依赖固定落 deps/<name>/（git submodule / 手工拷贝管理），
- // tap 只作来源元数据（source 字段）；[replace] 的 file: 形式可把本地 fork 指为落地目录。
- var depDir = rootDir + "/deps/" + name
- if let rep = manifest.replaces[name], rep.hasPrefix("file:") {
- let expanded = rep.replacingOccurrences(of: "<name>", with: name)
- let rel = String(expanded.dropFirst("file:".count))
- let p = rel.hasPrefix("/") ? rel : rootDir + "/" + rel
- guard FileManager.default.fileExists(atPath: p + "/pini.toml") else {
- throw ToolchainError.replaceTargetMissing(name: name, path: p)
- }
- depDir = p
- }
- let manifestPath = depDir + "/pini.toml"
- guard FileManager.default.fileExists(atPath: manifestPath),
- let depManifest = try FileLoader.loadManifest(directory: depDir) else {
- throw ToolchainError.missingDependency(name: name, requirer: from, expectedPath: manifestPath)
- }
+    sourceByName[name] = specStr
+    tapNameByName[name] = edgeTap
+    // v1 落地模型（D23）：依赖固定落 deps/<name>/。
+    // - [replace] 的 file: 形式可把本地 fork 指为落地目录（批 6 已 Landed 语义）；
+    // - file: tap 仍是「来源元数据 + 手工/submodule 落地」（批 7 不动）；
+    // - 远程 tap（github:/git:）由 TapFetcher 抓取——仅当 session 存在（即 refresh）。
+    var depDir = rootDir + "/deps/" + name
+    if let rep = manifest.replaces[name], rep.hasPrefix("file:") {
+      let expanded = rep.replacingOccurrences(of: "<name>", with: name)
+      let rel = String(expanded.dropFirst("file:".count))
+      let p = rel.hasPrefix("/") ? rel : rootDir + "/" + rel
+      guard FileManager.default.fileExists(atPath: p + "/pini.toml") else {
+        throw ToolchainError.replaceTargetMissing(name: name, path: p)
+      }
+      depDir = p
+    }
+    // 抓取（或复核已选版本）——约束可能在后续 requirer 出现后变严，故每次经过都要复核。
+    try ensureMaterialized(name: name, spec: specStr, dir: depDir,
+                           constraints: (constraints[name] ?? []).map(\.0),
+                           session: session)
+    // 已解析过则不再重复读清单——但**抓取/复核已在上面发生**，故后到的更严约束仍会触发重新选择。
+    if moduleByName[name] != nil { continue }
 
- moduleByName[name] = (depManifest, depDir)
+    let manifestPath = depDir + "/pini.toml"
+    guard FileManager.default.fileExists(atPath: manifestPath),
+          let depManifest = try FileLoader.loadManifest(directory: depDir) else {
+      // 已落地的远程依赖（refresh 之后）可正常解析，故只读路径（graph）也能用。
+      guard specStr.hasPrefix("file:") else {
+        throw ToolchainError.remoteTapNotMaterialized(name: name, tap: edgeTap)
+      }
+      throw ToolchainError.missingDependency(name: name, requirer: from, expectedPath: manifestPath)
+    }
+
+    moduleByName[name] = (depManifest, depDir)
  try enqueueDeps(of: depManifest, from: name)
  }
 
- // MVS：v1 每依赖一个可用版本——全部约束必须被它满足（G52 R3 的本地退化形态）。
+ // 约束复核：遍历期只看到**部分**约束，故在约束齐全后按完整约束集重选一次。
+ // 这是不动点迭代的驱动点——重选发生 ⇒ 依赖清单内容改变 ⇒ 需再走一轮。
+ if let session = session {
+ for (name, entry) in moduleByName.sorted(by: { $0.key < $1.key }) {
+ try reconcileSelection(name: name, spec: sourceByName[name] ?? "", dir: entry.dir,
+ constraints: (constraints[name] ?? []).map(\.0),
+ session: session)
+ }
+ }
+
+ // MVS 校验：选中的版本必须满足**全部** requirer 的约束。
  var resolved: [ResolvedModule] = []
  for (name, entry) in moduleByName.sorted(by: { $0.key < $1.key }) {
  let available = entry.manifest.version ?? "0"
@@ -237,18 +308,21 @@ public enum ModuleToolchain {
  return !c.satisfies(comps)
  }
  if !failed.isEmpty {
+ // 本轮发生过重新选择 ⇒ 清单是**旧版本**的，约束集还在变——交给下一轮复核，
+ // 不能据此判「不可满足」（否则不动点迭代永远走不到第二轮）。
+ if session?.selectionChanged == true { continue }
  throw ToolchainError.unsatisfiable(name: name, available: available,
  conflicts: failed.map { "\($0.1) 要求 \($0.0)" })
  }
  let depDir = entry.dir
  let moduleTap = tapNameByName[name] ?? "default"
- let moduleSource = sourceByName[name] ?? "-"
+ let moduleSource = session?.sources[name] ?? sourceByName[name] ?? "-"
  resolved.append(ResolvedModule(
  name: name,
  version: available,
  tapName: moduleTap,
  source: moduleSource,
- commit: "-",
+ commit: session?.commits[name] ?? "-",
  manifestSum: "sha256:" + fileSum(depDir + "/pini.toml"),
  sum: "sha256:" + treeSum(depDir),
  path: depDir.hasPrefix(rootDir + "/") ? String(depDir.dropFirst(rootDir.count + 1)) : depDir,
@@ -271,17 +345,37 @@ public enum ModuleToolchain {
  guard let specStr = manifest.taps[tapName] else {
  throw ToolchainError.missingDefaultTap(name: entry.name)
  }
- guard specStr.hasPrefix("file:") else {
- throw ToolchainError.remoteTapUnsupported(tapName: tapName, spec: specStr, requiredBy: "<root>")
- }
  let dir = materializedResourceDir(rootDir: rootDir, name: entry.name)
- guard FileManager.default.fileExists(atPath: dir) else { continue } // 未落地资源不进 summary（refresh 落地后重跑即入）
+ var commit = "-"
+ var displaySource = specStr
+ if let session = session, !specStr.hasPrefix("file:") {
+ // 批 7：资源也由 refresh 落地（G52 §4.2「下载缺失的依赖与资源」）。
+ // **不参与 MVS**（§3.3）：默认取 HEAD；仅当声明串本身就是一个已存在的 tag 时检出它
+ // ——那是「显式指定」，不是「求解」。
+ let source = try TapFetcher.expand(spec: specStr, name: entry.name)
+ let declared = entry.spec.trimmingCharacters(in: .whitespaces)
+ let pinned = try TapFetcher.availableVersions(source).contains(declared) ? declared : nil
+ commit = try TapFetcher.materialize(source, version: pinned, into: dir)
+ displaySource = source.display
+ }
+ guard FileManager.default.fileExists(atPath: dir) else {
+ // 批 7 前是静默跳过——资源因此可能永远不进锁文件。改为显式报错。
+ guard specStr.hasPrefix("file:") else {
+ throw ToolchainError.remoteTapNotMaterialized(name: entry.name, tap: tapName)
+ }
+ throw ToolchainError.resourceNotMaterialized(name: entry.name, path: dir)
+ }
+ // R7 根检（D20/D26）——双通道分区的另一半：写错一侧即报错并指引到另一侧。
+ // **只查根**：`.pini/resources/` 不被扫描，深层清单物理上无害（R7 明定不查深层）。
+ if FileManager.default.fileExists(atPath: dir + "/pini.toml") {
+ throw ToolchainError.resourceTargetIsModule(name: entry.name, path: dir)
+ }
  resolvedResources.append(ResolvedResource(
  name: entry.name,
  version: entry.spec,
  tapName: tapName,
- source: specStr,
- commit: "-",
+ source: displaySource,
+ commit: commit,
  sum: "sha256:" + treeSum(dir),
  path: ".pini/resources/" + entry.name))
  }
@@ -305,6 +399,71 @@ public enum ModuleToolchain {
  try visit("<root>", &stack)
 
  return Resolution(modules: resolved, resources: resolvedResources, graphOrder: topo.filter { $0 != "<root>" })
+ }
+
+ // MARK: - 抓取与不动点迭代（批 7）
+
+ /// **首次**抓取一个远程依赖（遍历期调用）。
+ ///
+ /// ⚠ 这里**只看当时已知的约束**，因此绝不能在已选过之后再调用——
+ /// 后到的更严约束会把选择改小，下一轮遍历又从部分约束重新选大 ⇒ **振荡不收敛**。
+ /// 已选过的一律交给 `reconcileSelection`（在约束齐全后统一复核）。
+ ///
+ /// - `file:` tap 直接返回——批 6 的「元数据 + 手工/submodule 落地」语义批 7 不动。
+ /// - `session == nil` 时直接返回——只读路径不抓取，缺落地由调用方报错。
+ private static func ensureMaterialized(name: String, spec: String, dir: String,
+                                        constraints: [String],
+                                        session: FetchSession?) throws {
+ guard let session = session, !spec.hasPrefix("file:") else { return }
+ guard !session.hasSelection(name) else { return }
+ let source = try TapFetcher.expand(spec: spec, name: name)
+ let candidates = try TapFetcher.availableVersions(source)
+ // 无版本 tag 的仓库没有可解的版本图：取默认分支 HEAD，
+ // 由 resolve 里的「清单版本 vs 约束」校验把关（宁严勿纵）。
+ let picked = candidates.isEmpty
+ ? nil
+ : TapFetcher.selectVersion(candidates: candidates, constraints: constraints)
+ if !candidates.isEmpty, picked == nil {
+ throw ToolchainError.unsatisfiable(name: name, available: candidates.joined(separator: ", "),
+ conflicts: constraints)
+ }
+ let commit = try TapFetcher.materialize(source, version: picked, into: dir)
+ session.record(name: name, version: picked, commit: commit, source: source.display)
+ }
+
+ /// 约束齐全后统一复核选择（不动点迭代的驱动点）。
+ private static func reconcileSelection(name: String, spec: String, dir: String,
+                                        constraints: [String],
+                                        session: FetchSession) throws {
+ guard !spec.hasPrefix("file:") else { return }
+ let source = try TapFetcher.expand(spec: spec, name: name)
+ let candidates = try TapFetcher.availableVersions(source)
+ guard !candidates.isEmpty else { return } // 无版本 tag：保持 HEAD，由 MVS 校验把关
+ guard let picked = TapFetcher.selectVersion(candidates: candidates, constraints: constraints) else {
+ throw ToolchainError.unsatisfiable(name: name, available: candidates.joined(separator: ", "),
+ conflicts: constraints)
+ }
+ if let current = session.selections[name], current == picked { return }
+ let commit = try TapFetcher.materialize(source, version: picked, into: dir)
+ session.record(name: name, version: picked, commit: commit, source: source.display)
+ }
+
+ /// 抓取 + 求解到不动点。
+ ///
+ /// 依赖的版本决定它自己的 `[require]` 内容 ⇒ 约束集随选择而变 ⇒ 一轮不够。
+ /// 故重复「解析（顺带抓取 / 重新选择）」直到某轮不再发生重新选择。
+ /// 不收敛（超过 `fetchIterationLimit`）即报错——不静默取某一轮的结果。
+ public static func resolveFetching(rootDir: String, manifest: ModuleManifest) throws -> Resolution {
+ let session = FetchSession()
+ var last: Resolution?
+ for _ in 0..<fetchIterationLimit {
+ session.beginIteration()
+ let r = try resolve(rootDir: rootDir, manifest: manifest, session: session)
+ last = r
+ if !session.selectionChanged { return r }
+ }
+ _ = last
+ throw ToolchainError.resolutionDidNotConverge(limit: fetchIterationLimit)
  }
 
  // MARK: - 校验和（G52 §3.6：SHA-256；TOFU）
@@ -389,8 +548,13 @@ public enum ModuleToolchain {
  public struct Summary {
  public var toolchain: String = ""
  public var generated: String = ""
- public var modules: [(name: String, version: String, sum: String, manifestSum: String, path: String, importedBy: [String])] = []
- public var resources: [(name: String, version: String, sum: String, path: String)] = []
+ /// ⚠ 批 7 补齐 `commit` / `tap` / `source`：此前锁文件写了这三项、解析时全部丢弃——
+ /// 批 7 前 `commit` 恒为 `"-"`，故无人察觉；现在它是真实的来源定位符（G52 D12），
+ /// 读不回来等于字段形同虚设。`tap` / `source` 回读后供 `verify` 报错时回显来源。
+ public var modules: [(name: String, version: String, sum: String, manifestSum: String, path: String,
+ importedBy: [String], commit: String, tap: String, source: String)] = []
+ public var resources: [(name: String, version: String, sum: String, path: String,
+ commit: String, tap: String, source: String)] = []
  public var graphOrder: [String] = []
  }
 
@@ -402,10 +566,12 @@ public enum ModuleToolchain {
  for e in doc.arrayTables["module"] ?? [] {
  s.modules.append((e["name"] ?? "", e["version"] ?? "", e["sum"] ?? "",
  e["manifest_sum"] ?? "", e["path"] ?? "",
- MiniTOML.parseArray(e["imported-by"] ?? "[]")))
+ MiniTOML.parseArray(e["imported-by"] ?? "[]"),
+ e["commit"] ?? "-", e["tap"] ?? "", e["source"] ?? ""))
  }
  for e in doc.arrayTables["resource"] ?? [] {
- s.resources.append((e["name"] ?? "", e["version"] ?? "", e["sum"] ?? "", e["path"] ?? ""))
+ s.resources.append((e["name"] ?? "", e["version"] ?? "", e["sum"] ?? "", e["path"] ?? "",
+ e["commit"] ?? "-", e["tap"] ?? "", e["source"] ?? ""))
  }
  s.graphOrder = MiniTOML.parseArray(doc.plain("graph")["order"] ?? "[]")
  return s
@@ -424,13 +590,20 @@ extension ModuleToolchain.ToolchainError: LocalizedError {
  switch self {
  case .missingDependency(let name, let requirer, let expectedPath):
  return "依赖 '\(name)'（由 \(requirer) require）未落地：缺少 \(expectedPath)。"
- + "v1 不联网下载（批 7 前）：请用 git submodule 或手工拷贝落地到 deps/\(name)/"
- case .remoteTapUnsupported(let tapName, let spec, let requiredBy):
- return "tap '\(tapName)'（\(spec)，requiredBy \(requiredBy)）为远程源：批 6 仅支持 file: 本地 tap，"
- + "远程下载属批 7。请改用 [replace] 指向本地路径，或等待批 7"
+ + "file: 通道的依赖请用 git submodule 或手工拷贝落到 deps/\(name)/"
+ case .remoteTapNotMaterialized(let name, let tap):
+ return "依赖 '\(name)' 来自远程 tap '\(tap)'，但 deps/\(name)/ 尚未落地。"
+ + "抓取只发生在 `pini mod refresh`；其余命令（含 graph）只读已落地的依赖"
+ case .resourceNotMaterialized(let name, let path):
+ return "资源 '\(name)' 尚未落地到 \(path)（file: 通道需手工放置，远程通道由 `pini mod refresh` 抓取）"
+ case .resourceTargetIsModule(let name, let path):
+ return "资源 '\(name)'（\(path)）的根含 pini.toml —— 它是 **Pini 模块**，应改用 [require]"
+ + "（G52 R7/D20：双通道以「有无 pini.toml」为判据，双向强制；本检查只看目标根，不查深层）"
+ case .resolutionDidNotConverge(let limit):
+ return "版本求解在 \(limit) 轮迭代内未收敛：依赖的约束随其版本变化，可能构成互相抬升的约束环。"
+ + "请钉住其中一方的版本（[replace] 或精确约束）后重试"
  case .unsatisfiable(let name, let available, let conflicts):
  return "依赖 '\(name)' 可用版本 \(available) 不满足约束：\(conflicts.joined(separator: "；"))"
- + "（MVS 无多候选可解——v1 每个依赖目录只有一个版本）"
  case .missingDefaultTap(let name):
  return "依赖 '\(name)' 未指定 tap，且清单缺 [tap] default（G52 D11：org 须显式书写）"
  case .replaceTargetMissing(let name, let path):
@@ -579,12 +752,13 @@ extension ModuleToolchain {
 
  // MARK: refresh（写锁文件）
 
- /// `pini mod refresh` 的宿主侧：求解并写 `pini-summary.toml`（G52 §4.2；批 6 仅本地 tap）。
+ /// `pini mod refresh` 的宿主侧：抓取 → 求解 → 写 `pini-summary.toml`（G52 §4.2）。
+ /// 这是**唯一**会抓取 / 联网的路径（批 7 前只服务本地 tap，现覆盖 github:/git:）。
  /// 返回写入的锁文件文本。
  @discardableResult
  public static func refresh(rootDir: String, manifest: ModuleManifest,
  toolchainVersion: String) throws -> String {
- let resolution = try resolve(rootDir: rootDir, manifest: manifest)
+ let resolution = try resolveFetching(rootDir: rootDir, manifest: manifest)
  let text = renderSummary(resolution: resolution, toolchainVersion: toolchainVersion)
  try text.write(toFile: rootDir + "/pini-summary.toml", atomically: true, encoding: .utf8)
  return text
@@ -610,7 +784,8 @@ extension ModuleToolchain {
  let dir = (m.path.hasPrefix("/") ? m.path : rootDir + "/" + m.path)
  let actualSum = treeSum(dir)
  if actualSum != String(m.sum.dropPrefix("sha256:")) {
- mismatches.append("模块 '\(m.name)' 内容与锁文件不符（\(m.path)）——可能被篡改或过期")
+ mismatches.append("模块 '\(m.name)' 内容与锁文件不符（\(m.path)）——可能被篡改或过期"
+ + Self.originSuffix(m.source))
  }
  let manifestPath = dir + "/pini.toml"
  let actualManifest = fileSum(manifestPath)
@@ -622,11 +797,16 @@ extension ModuleToolchain {
  let dir = (r.path.hasPrefix("/") ? r.path : rootDir + "/" + r.path)
  let actualSum = treeSum(dir)
  if actualSum != String(r.sum.dropPrefix("sha256:")) {
- mismatches.append("资源 '\(r.name)' 内容与锁文件不符（\(r.path)）")
+ mismatches.append("资源 '\(r.name)' 内容与锁文件不符（\(r.path)）" + Self.originSuffix(r.source))
  }
  }
  return VerifyReport(checked: summary.modules.count + summary.resources.count,
  mismatches: mismatches)
+ }
+
+ /// 报错里回显来源——锁文件的 `source` 此前只写不读，篡改时无法判断该去哪里核对。
+ private static func originSuffix(_ source: String) -> String {
+ source.isEmpty ? "" : "；来源 \(source)"
  }
 
  // MARK: graph（依赖图展示与环诊断）

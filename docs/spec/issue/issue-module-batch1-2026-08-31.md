@@ -1,7 +1,7 @@
 # 工单：G52 批 1「边界与语义」预先立项（2026-08-31）
 
 - 状态：**Pre-approved 立项**（用户拍板合并规划：批 1 与块形式批次合并推进；本文为开工前置产出）
-- 上游：`issue-module-system-rules-2026-08-28.md`（G52 八规则，R1/R2/R4 为本批范围）
+- 上游：`archive/issue-module-system-rules-2026-08-28.md`（G52 八规则，R1/R2/R4 为本批范围）
 - 范围声明：本批 = **块式 import/export 解析 + 顶级裸语句移除（破坏性）+ R2 依赖图无环 + R4 跨模块访问**。
   MVS / `pini-summary.toml` / 校验和 / `pini mod` 工具链属批 3，远程抓取属批 4——**不在本批**。
 

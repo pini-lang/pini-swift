@@ -141,33 +141,47 @@ final class ModuleToolchainTests: XCTestCase {
  }
  }
 
- func testResolveRemoteTapErrorsOutPerDA() throws {
- let base = NSTemporaryDirectory() + "pini_b6_\(UUID().uuidString)"
- try FileManager.default.createDirectory(atPath: base + "/app/deps/uni", withIntermediateDirectories: true)
- try """
- [package]
- name = "app"
+ /// 批 7 把批 6 的 D-A（远程 tap 一律报错）**收窄**为这一种情形：远程依赖还没抓下来。
+ func testResolveRejectsUnmaterializedRemoteTap() throws {
+ let (root, cleanup) = try makeRemoteTapFixture(materialized: false)
+ defer { cleanup() }
 
- [tap]
- gh = "github:pini-lang"
-
- [require.gh]
- uni = "*"
- """.write(toFile: base + "/app/pini.toml", atomically: true, encoding: .utf8)
- try """
- [package]
- name = "uni"
- version = "1.0.0"
- """.write(toFile: base + "/app/deps/uni/pini.toml", atomically: true, encoding: .utf8)
- defer { try? FileManager.default.removeItem(atPath: base) }
-
- let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: base + "/app"))
- XCTAssertThrowsError(try ModuleToolchain.resolve(rootDir: base + "/app", manifest: manifest)) { error in
- guard case ModuleToolchain.ToolchainError.remoteTapUnsupported(let tap, _, _) = error else {
- return XCTFail("应为 remoteTapUnsupported（D-A），实际：\(error)")
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: root))
+ XCTAssertThrowsError(try ModuleToolchain.resolve(rootDir: root, manifest: manifest)) { error in
+ guard case ModuleToolchain.ToolchainError.remoteTapNotMaterialized(let name, let tap) = error else {
+ return XCTFail("应为 remoteTapNotMaterialized，实际：\(error)")
  }
+ XCTAssertEqual(name, "uni")
  XCTAssertEqual(tap, "gh")
  }
+ }
+
+ /// 远程依赖**已落地**时，只读解析（refresh 之外的路径，如 `graph`）必须能用——
+ /// 否则 refresh 之后 `pini mod graph` 反而会失败。
+ func testResolveReadsMaterializedRemoteDepWithoutFetching() throws {
+ let (root, cleanup) = try makeRemoteTapFixture(materialized: true)
+ defer { cleanup() }
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: root))
+ let resolution = try ModuleToolchain.resolve(rootDir: root, manifest: manifest)
+ XCTAssertEqual(resolution.modules.map(\.name), ["uni"])
+ XCTAssertEqual(resolution.modules.first?.version, "1.0.0")
+ XCTAssertEqual(resolution.modules.first?.commit, "-", "只读解析不抓取，故 commit 仍为占位符")
+ }
+
+ /// 远程 tap 夹具：`[tap] gh = "github:pini-lang"` + `[require.gh] uni = "*"`。
+ private func makeRemoteTapFixture(materialized: Bool) throws -> (root: String, cleanup: () -> Void) {
+ let base = NSTemporaryDirectory() + "pini_b6_\(UUID().uuidString)"
+ let fm = FileManager.default
+ try fm.createDirectory(atPath: base + "/app", withIntermediateDirectories: true)
+ try "[package]\nname = \"app\"\n\n[tap]\ngh = \"github:pini-lang\"\n\n[require.gh]\nuni = \"*\"\n"
+ .write(toFile: base + "/app/pini.toml", atomically: true, encoding: .utf8)
+ if materialized {
+ try fm.createDirectory(atPath: base + "/app/deps/uni", withIntermediateDirectories: true)
+ try "[package]\nname = \"uni\"\nversion = \"1.0.0\"\n"
+ .write(toFile: base + "/app/deps/uni/pini.toml", atomically: true, encoding: .utf8)
+ }
+ return (base + "/app", { try? fm.removeItem(atPath: base) })
  }
 
  // MARK: - 锁文件（G52 §3.5）
