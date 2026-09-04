@@ -100,7 +100,7 @@
 |---|---|
 | `docs/spec/issue/issue-draft-impl-syntax-audit-2026-08-28.md` | 95（**已核实 2026-09-04：内容收编至 `docs/spec/issue/archive/issue-draft-audit-disposition-2026-08-31.md`（§二 A1–A14 / §五 F1–F6）后删除**） |
 | `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` | 508 |
-| `docs/spec/issue/issue-spec-impl-syntax-audit-2026-08-28.md` | 94 |
+| `docs/spec/issue/archive/issue-spec-impl-syntax-audit-2026-08-28.md` | 94 |
 | `docs/spec/issue/archive/issue-tdd-module-blockers-2026-08-28.md` | 111（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |
 | `docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md` | （有状态：已批准，落档进行中）（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |
 | `docs/spec/issue/archive/issue-bootstrap-gap-remediation-2026-08-30.md` | 104（**已核实 2026-09-04：对账 Drift Ledger 全 CLOSED（G-P2 MITIGATED=登记契约），补 LANDED 归档**） |

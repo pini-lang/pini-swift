@@ -845,6 +845,31 @@ final class IRExecutionTests: XCTestCase {
                       "writeFile/readFile 往返应输出 file_content，实际: \(output)")
     }
 
+    /// 批 C1：is_ascii_digit 的 LLVM 后端实现——C 字节串首字节判 ASCII [0-9]；
+    /// 空串（NUL 首字节）自然为 false。'7'→真、'x'→假。
+    func testIsAsciiDigitViaLLI() throws {
+        try XCTSkipUnless(lliAvailable, "lli not available")
+        let output = try runViaLLI(try loadPiniFixture("testIsAsciiDigitViaLLI", filePath: #filePath) as String)
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1\n9",
+                       "is_ascii_digit: '7' 判真打印 1，'x' 首字节非数字判假，空串判假")
+    }
+
+    /// 批 C1：is_letter/is_number/chars 需 Unicode 运行时语义（\p{L}/numeric property/
+    /// grapheme 切分），LLVM C 字符串后端 v1 显式 unsupported——IR 生成期报错，无需执行。
+    func testIsLetterUnsupportedViaIRGen() throws {
+        let source = try loadPiniFixture("testIsLetterUnsupportedViaIRGen", filePath: #filePath)
+        let lexer = Lexer(source: source, fileName: "test.pini")
+        let tokens = try lexer.tokenize()
+        let parser = Parser(tokens: tokens, fileName: "test.pini")
+        let module = try parser.parseModule()
+        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
+            guard case IRGenError.unsupportedExpression = error else {
+                XCTFail("应为 unsupportedExpression，实际: \(error)")
+                return
+            }
+        }
+    }
+
     // MARK: - P6-4d: struct method
 
     func testStructMethodViaLLI() throws {
