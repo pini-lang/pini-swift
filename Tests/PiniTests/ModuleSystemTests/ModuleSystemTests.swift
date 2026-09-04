@@ -154,6 +154,44 @@ final class ModuleSystemTests: XCTestCase {
         return (base, { try? fm.removeItem(atPath: base) })
     }
 
+    // MARK: - Def-2：依赖先于依赖者就绪（拓扑序的可观测钉子）
+
+    /// 意图：`loadImports` 在 `registerDecls`/执行前递归备妥整条依赖链——
+    /// **依赖环境先于依赖者可用**。三层链 app ⊃ mid ⊃ leaf：app 的 main 调 mid 的函数，
+    /// mid 的函数体调 leaf 的符号；任何一层环境未就绪，运行即报未定义符号。
+    /// 这是注册顺序保证的可观测等价物（纯注册本身无求值副作用，无法直接观测顺序；
+    /// `graph.order` 已定性为导出视图、非解释器输入——见 Resolution.graphOrder 注释）。
+    func testDependencyChainIsReadyBeforeDependentRuns() throws {
+        let base = NSTemporaryDirectory() + "pini_chain_\(UUID().uuidString)"
+        let fm = FileManager.default
+        defer { try? fm.removeItem(atPath: base) }
+
+        // leaf：链尾，无依赖。
+        try fm.createDirectory(atPath: base + "/leaf", withIntermediateDirectories: true)
+        try "[package]\nname = \"leaflen\"\n"
+            .write(toFile: base + "/leaf/pini.toml", atomically: true, encoding: .utf8)
+        try "[leaf|export]\nleaf值 = leaf值\n\nleaf值|func() -> (I32,):\n    return 3\n"
+            .write(toFile: base + "/leaf/leaf.pini", atomically: true, encoding: .utf8)
+
+        // mid：依赖 leaf，函数体解析 leaf 的导出符号。
+        try fm.createDirectory(atPath: base + "/mid", withIntermediateDirectories: true)
+        try "[package]\nname = \"midlen\"\n"
+            .write(toFile: base + "/mid/pini.toml", atomically: true, encoding: .utf8)
+        try "[mid|import]\nleaflen = \"../leaf\"\n\n[mid|export]\nmid值 = mid值\n\nmid值|func() -> (I32,):\n    return leaflen.leaf值() + 4\n"
+            .write(toFile: base + "/mid/mid.pini", atomically: true, encoding: .utf8)
+
+        // app：主模块，main 执行时整条链必须已就绪。
+        try fm.createDirectory(atPath: base + "/app", withIntermediateDirectories: true)
+        try "[package]\nname = \"applen\"\n"
+            .write(toFile: base + "/app/pini.toml", atomically: true, encoding: .utf8)
+        try "[main|import]\nmidlen = \"../mid\"\n\nmain|func() -> ():\n    print(midlen.mid值())\n    return\n"
+            .write(toFile: base + "/app/main.pini", atomically: true, encoding: .utf8)
+
+        let out = try runFile(base + "/app/main.pini")
+        XCTAssertEqual(out.trimmingCharacters(in: .whitespacesAndNewlines), "7",
+                       "leaf(3) 经 mid(+4) 到 app：链上任何一层未先于依赖者就绪，此处即不是 7")
+    }
+
     // MARK: - D-1 块头校验
 
     /// 意图：块头名与当前文件名不一致 → E2-005（D-1 自识性标签）。

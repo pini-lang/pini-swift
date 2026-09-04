@@ -269,6 +269,11 @@ return parts.isEmpty ? nil : parts
  public let modules: [ResolvedModule]
  public let resources: [ResolvedResource]
  /// 拓扑序（依赖在前，根最后；环已在批 1 的 R2 检测拦截）。
+ ///
+ /// G52 §9 Def-2（2026-09-04 裁决）：本字段是**导出视图**——供外部工具（build 调度 /
+ /// 诊断展示）读取，**不是解释器的输入**。解释器的跨模块注册顺序由
+ /// `Interpreter.loadImports` 的递归结构保证（依赖先于依赖者完全就绪），
+ /// 不消费此字段；两套解析合流属架构改动，不与该字段绑定。
  public let graphOrder: [String]
  }
 
