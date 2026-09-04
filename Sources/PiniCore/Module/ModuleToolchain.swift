@@ -125,9 +125,10 @@ public enum ModuleToolchain {
  return .version(stripVersionPrefix(s))
  }
 
- /// 剥 `v` / `V` 前缀。**必须剥**：`Constraint.versionComponents("v1.0")` 会把 `v1` 丢掉
- /// 只剩 `[0]`（见 G52 工单 §9 Def-9），带前缀的串当约束会得到完全错误的下界。
- private static func stripVersionPrefix(_ s: String) -> String {
+/// 剥 `v` / `V` 前缀——**规范化**，不是解析兜底：剥出的串会存进 `Constraint.raw`
+/// （进而出现在报错文本与锁文件里），故必须是 `1.0` 而非 `v1.0`。
+/// 解析侧的 v 前缀容忍由 `Constraint.versionComponents` 统一负责（G52 §9 Def-9）。
+private static func stripVersionPrefix(_ s: String) -> String {
  (s.hasPrefix("v") || s.hasPrefix("V")) ? String(s.dropFirst()) : s
  }
 
@@ -199,11 +200,24 @@ public enum ModuleToolchain {
  return true
  }
 
- /// 版本字符串 → 分量数组（`1.2` → [1,2]；非数字段忽略）。
- static func versionComponents(_ s: String) -> [Int]? {
- let parts = s.split(separator: ".").compactMap { Int($0) }
- return parts.isEmpty ? nil : parts
- }
+/// 版本字符串 → 分量数组（`1.2` → [1,2]；非数字段忽略）。
+///
+/// **容忍 `v` / `V` 前缀**（G52 §9 Def-9）：此前用 `compactMap { Int($0) }`，
+/// `Int("v1")` 为 nil 被**静默丢弃** ⇒ `"v1.0"` 只剩 `[0]`，带前缀的版本被当成**版本 0**，
+/// MVS 下界完全错误且无任何提示。逐分量剥而非整串剥，`"1.v0"` 这类畸形串同样能救回。
+///
+/// ⚠ 这里是**解析侧的健壮性**，与调用方的剥前缀是两回事：
+/// `TapFetcher.availableVersions` 与 `parseReplace` 剥前缀是**规范化**——它们剥掉后
+/// 得到的串会写进锁文件与 tag 名，故必须是 `1.0.0` 而非 `v1.0.0`。两处职责不同，
+/// 不要因为「已经有两处在剥」而撤掉本处的容忍。
+static func versionComponents(_ s: String) -> [Int]? {
+let parts = s.split(separator: ".").compactMap { comp -> Int? in
+var t = comp
+if t.first == "v" || t.first == "V" { t = t.dropFirst() }
+return Int(t)
+}
+return parts.isEmpty ? nil : parts
+}
 
  /// 补零逐段比较。
  static func compare(_ a: [Int], _ b: [Int]) -> Int {
@@ -436,7 +450,9 @@ public enum ModuleToolchain {
  let dir = materializedResourceDir(rootDir: rootDir, name: entry.name)
  var commit = "-"
  var displaySource = specStr
- if let session = session, !specStr.hasPrefix("file:") {
+ // 仅 refresh（session 存在）时才抓取；只读路径（graph/resolve）不落盘。
+ // `file:` 源无远端可抓，其目录由用户手工/submodule 准备。
+ if session != nil, !specStr.hasPrefix("file:") {
  // 批 7：资源也由 refresh 落地（G52 §4.2「下载缺失的依赖与资源」）。
  // **不参与 MVS**（§3.3）：默认取 HEAD；仅当声明串本身就是一个已存在的 tag 时检出它
  // ——那是「显式指定」，不是「求解」。

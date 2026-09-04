@@ -46,6 +46,47 @@ final class ModuleToolchainTests: XCTestCase {
  XCTAssertNil(ModuleToolchain.Constraint.parse("abc"), "非版本串解析失败返回 nil（refresh 侧宁严勿纵）")
  }
 
+ // MARK: - Def-9：v 前缀容忍（G52 §9）
+
+ /// 意图：`versionComponents` 必须容忍 `v` / `V` 前缀。
+ /// 反例（修复前）：`Int("v1")` 为 nil 被 `compactMap` **静默丢弃** ⇒ `"v1.0"` → `[0]`，
+ /// 带前缀的版本被当成版本 **0**——MVS 下界全错且无任何提示。
+ func testVersionComponentsToleratesVersionPrefix() {
+ typealias C = ModuleToolchain.Constraint
+ XCTAssertEqual(C.versionComponents("1.0"), [1, 0])
+ XCTAssertEqual(C.versionComponents("v1.0"), [1, 0], "v 前缀不得被当成非数字段丢弃（Def-9）")
+ XCTAssertEqual(C.versionComponents("V2.3.4"), [2, 3, 4])
+ XCTAssertEqual(C.versionComponents("1.v0"), [1, 0], "逐分量剥：`1.v0` 同样救回")
+ XCTAssertNil(C.versionComponents("v"), "纯前缀无数字分量 → nil")
+ }
+
+ /// 意图：约束串本身带 v 前缀时也要解析正确——`[require]` 的值与 git tag 都可能出现。
+ func testConstraintParseToleratesVersionPrefix() {
+ typealias C = ModuleToolchain.Constraint
+ XCTAssertTrue(C.parse("v1.2")!.satisfies(C.versionComponents("1.2.9")!), "裸版本 v1.2 = >=1.2")
+ XCTAssertFalse(C.parse("v1.2")!.satisfies(C.versionComponents("1.1.0")!))
+ XCTAssertTrue(C.parse("^v1.0")!.satisfies(C.versionComponents("1.5.0")!), "^v1.0 = >=1.0 <2.0")
+ XCTAssertFalse(C.parse("^v1.0")!.satisfies(C.versionComponents("2.0.0")!))
+ }
+
+ /// 意图：清单 `version = "v1.0"` 不得被当成版本 0。
+ /// 这是 Def-9 **唯一没有本地规避**的暴露面：`TapFetcher` 剥 tag、`parseReplace` 剥 replace 值，
+ /// 但 `pini.toml` 的 `version` 直接进 MVS 校验（`ModuleToolchain.resolve`）。
+ /// 修复前 `^1.0` 对 `[0]` 不成立 ⇒ 抛 unsatisfiable，而真实版本其实是满足的。
+ func testManifestVersionWithVPrefixIsNotTreatedAsZero() throws {
+ let (root, cleanup) = try makeThreeModuleFixture()
+ defer { cleanup() }
+
+ try String(contentsOfFile: root + "/deps/uni/pini.toml", encoding: .utf8)
+ .replacingOccurrences(of: "version = \"1.2.0\"", with: "version = \"v1.2.0\"")
+ .write(toFile: root + "/deps/uni/pini.toml", atomically: true, encoding: .utf8)
+
+ let manifest = try XCTUnwrap(FileLoader.loadManifest(directory: root))
+ let resolution = try ModuleToolchain.resolve(rootDir: root, manifest: manifest)
+ let uni = try XCTUnwrap(resolution.modules.first { $0.name == "uni" })
+ XCTAssertEqual(uni.version, "v1.2.0", "清单原样保留（规范化是别处的事）")
+ }
+
  // MARK: - 本地夹具求解（MVS v1：每依赖一个可用版本）
 
  /// 构造三方夹具：app →（require）uni ^1.0 →（require）text ^1.0；app 与 uni 都 require text。

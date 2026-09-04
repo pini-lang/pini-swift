@@ -97,9 +97,12 @@ public enum TapFetcher {
  let tag = String(cols[1].dropFirst("refs/tags/".count))
  // 附注 tag 会多出一条 `^{}` 解引用行，指向同一对象——跳过，避免重复候选。
  if tag.hasSuffix("^{}") { continue }
- var v = tag
- if v.hasPrefix("v") { v = String(v.dropFirst()) }
- guard ModuleToolchain.Constraint.versionComponents(v) != nil else { continue }
+// 剥 `v` 前缀是**规范化**而非解析兜底：剥出的串既是 MVS 候选、也用于拼 `refs/tags/v<v>`、
+// 并写进锁文件，故必须是 `1.0.0` 而非 `v1.0.0`。解析侧的 v 前缀容忍由
+// `Constraint.versionComponents` 统一负责（G52 §9 Def-9）。
+var v = tag
+if v.hasPrefix("v") { v = String(v.dropFirst()) }
+guard ModuleToolchain.Constraint.versionComponents(v) != nil else { continue }
  if seen.insert(v).inserted { versions.append(v) }
  }
  return versions.sorted { lhs, rhs in
