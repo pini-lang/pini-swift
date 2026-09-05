@@ -361,7 +361,9 @@ public class Parser {
  )
  }
 
- // 根据括号类型分派（ADR-016 规则 3.2/3.14：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块）
+ // 根据括号类型分派（ADR-016 规则 3.2/3.14：行首 `((`/`{{`/`[[` 双定界符 → 扩展块；
+ // 旧 `<<` 特征扩展形态已于 2026-09-05 批③移除出 spec——词法层 `<<` 恒合并为移位
+ // token，下方 lessThan 位的双 `<` 分支实际不可达，仅兜底空格分隔的退化输入）
  switch currentToken {
  case .leftParen(_):
  if case .leftParen(_) = peek(offset: 1) {
@@ -377,14 +379,21 @@ public class Parser {
  if case .leftBrace(_) = peek(offset: 1) {
  return .extensionDecl(try parseExtensionDecl())
  }
- // 区分花括号函数声明 `{name}(...)` 与花括号对象声明 `{name}`
- if isBraceFuncDecl() {
- return .funcDecl(try parseFuncDecl(isTopLevel: true))
- } else {
- return .objectDecl(try parseObjectDecl())
+ // 花括号函数声明 `{名}(...)` 已按治理流程移除（G51② 裁决，2026-09-05 批③落地）：
+ // `{名}` 行首恒为对象声明糖（G51③）。唯一豁免：`{名|test}(签名)` 测试块形态
+ // （spec 测试函数块条目文档化，TestBlockTests 钉定）。
+ if let braceModifier = braceFuncDeclModifier() {
+ if braceModifier == "test" {
+ return .funcDecl(try parseTestBraceDecl())
  }
+ throw ParserError.invalidDeclaration(
+ reason: "花括号函数声明 `{名}(...)` 已移除（过时语法，G51② 裁决）：请改用裸声明 `名|func(...)`；类型方法移至扩展块并显式 `|self`",
+ location: currentLocation
+ )
+ }
+ return .objectDecl(try parseObjectDecl())
  case .lessThan(_):
- // 行首 `<<` → 特征扩展；`<名称>` → 特征声明
+ // 双 `<`（正常词法下不可达，仅兜底空格分隔的退化输入）；`<名称>` → 特征声明
  if case .lessThan(_) = peek(offset: 1) {
  return .extensionDecl(try parseExtensionDecl())
  }
@@ -662,9 +671,9 @@ public class Parser {
 
  // MARK: - 扩展块解析（ADR-016 规则 3.2/3.14， extension-decl）
 
- /// 解析扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`。
+ /// 解析扩展块 `((T))`/`{{T}}`/`[[T]]`（`<<T>>` 特征扩展已移除，2026-09-05 批③）。
  /// 数据与逻辑分离：类型体只含字段/用例，方法必须写在同文件扩展块并显式 `|self`/`|Self`；
- /// 扩展块内禁止自由函数（规则 3.14）。特征扩展 `<<T>>` 允许抽象方法签名（同 trait-body）。
+ /// 扩展块内禁止自由函数（规则 3.14）。
  private func parseExtensionDecl() throws -> ExtensionDecl {
  let loc = currentLocation
  let kind: ExtensionDecl.Kind
@@ -842,18 +851,19 @@ public class Parser {
  
  // MARK: - 对象块解析
 
- // 判断左花括号开头的是函数声明还是对象声明
- // 策略：预读 `{name}` 后，看下一个非换行 token 是不是 `(` —— 是则为函数，否则为对象
- private func isBraceFuncDecl() -> Bool {
+ // 检测旧花括号函数声明形态 `{name}(...)`（2026-09-05 批③ 移除；`|test` 测试块形态豁免）
+ // 返回：nil = 非旧形态（走对象糖）；否则返回 `|` 后修饰符名（无修饰符为空串）
+ private func braceFuncDeclModifier() -> String? {
  var offset = 1 // 跳过 {
  // 跳过标识符
- guard case .identifier(_) = peek(offset: offset) else { return false }
+ guard case .identifier(_) = peek(offset: offset) else { return nil }
  offset += 1
- // 跳过可选的 |修饰符（如 {name|func}、{name|self}、{name|Self}）
- // 注：func/self/Self 是关键字，需同时接受 identifier 与 keyword
+ // 可选 |修饰符（func/self/Self/test 是关键字，需同时接受 identifier 与 keyword）
+ var modifier = ""
  if case .pipe(_) = peek(offset: offset) {
  offset += 1
- if !isNameToken(peek(offset: offset)) { return false }
+ guard isNameToken(peek(offset: offset)) else { return nil }
+ if case .keyword(.test, _) = peek(offset: offset) { modifier = "test" }
  offset += 1
  }
  // 跳过可选的泛型参数 <T,>
@@ -868,9 +878,9 @@ public class Parser {
  }
  }
  // 期望 }
- guard case .rightBrace(_) = peek(offset: offset) else { return false }
+ guard case .rightBrace(_) = peek(offset: offset) else { return nil }
  offset += 1
- // } 之后第一个非换行 token 是 ( → 函数
+ // } 之后第一个非换行 token 是 ( → 旧函数形态
  while offset < tokens.count {
  let tok = peek(offset: offset)
  if case .newline(_) = tok {
@@ -878,11 +888,11 @@ public class Parser {
  continue
  }
  if case .leftParen(_) = tok {
- return true
+ return modifier
  }
- return false
+ return nil
  }
- return false
+ return nil
  }
 
  // 名称 token：identifier 或 keyword（用于修饰符位置，因为 func/self/Self 是关键字）
@@ -1115,15 +1125,17 @@ public class Parser {
  return FieldDecl(name: name, typeAnnotation: type, initializer: initializer, location: loc)
  }
  
- // MARK: - 函数块解析
- 
- private func parseFuncDecl(isTopLevel: Bool) throws -> FuncDecl {
+ // MARK: - 测试块花括号形态解析
+
+ /// 解析 `{名|test}(签名)` 测试块花括号形态——批③ 移除通用花括号函数声明后的
+ /// 唯一存续形态（spec 测试函数块条目文档化；通用名 `|func`/无修饰符已被上方迁移提示拦截）。
+ private func parseTestBraceDecl() throws -> FuncDecl {
  let loc = currentLocation
  advance() // 跳过 {
- 
+
  // 解析名称
  let name = try parseIdentifier()
- 
+
  // 解析修饰符
  var modifiers: [String] = []
  if case .pipe(_) = currentToken {
@@ -1131,16 +1143,16 @@ public class Parser {
  let modifier = try parseIdentifier()
  modifiers.append(modifier)
  }
- 
+
  // 期望 }
  try expect(.rightBrace(loc))
- 
+
  // 解析泛型参数（可选）
  var genericParams: [GenericParam] = []
  if case .lessThan = currentToken {
  genericParams = try parseGenericParams()
  }
- 
+
  // 参数元组 + 返回类型标注（具名函数与匿名函数共用）
  let (params, returnTypes, returnLabels, isAsync) = try parseFunctionSignature(loc: loc)
 
@@ -1185,8 +1197,10 @@ public class Parser {
  )
  }
 
+ // MARK: - 函数签名解析
+
  /// 解析「参数元组 + 返回类型标注」（`-> (返回,)` / `=> (返回,)`）。
- /// 具名函数（parseFuncDecl）与匿名函数（parseFuncLiteral）共用。
+ /// 裸声明函数（parseBareFuncDecl）与匿名函数（parseFuncLiteral）共用。
  private func parseFunctionSignature(loc: SourceLocation) throws -> (params: [Parameter], returnTypes: [TypeAnnotation], returnLabels: [String?], isAsync: Bool) {
  // 参数元组
  try expect(.leftParen(loc))
