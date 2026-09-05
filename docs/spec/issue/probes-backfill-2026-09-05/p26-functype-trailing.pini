@@ -1,0 +1,5 @@
+main|func() -> ():
+    let h: (I32,) -> (F64,) = func (a: I32,) -> (F64,):
+        return 1.5
+    print(h(1),)
+    return

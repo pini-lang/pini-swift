@@ -1,0 +1,2 @@
+[libc|foreign]
+malloc|unsafe(大小: I64) -> *I8

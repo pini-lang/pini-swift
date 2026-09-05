@@ -1,0 +1,9 @@
+<显示>
+描述|self() -> (String,)
+
+(盒<T>:显示)
+值: T? = nil
+
+((取值<T>:显示))
+取|self() -> (?T,):
+    return self.值

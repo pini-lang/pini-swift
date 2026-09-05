@@ -1,0 +1,4 @@
+main|func() -> ():
+    let v = unsafe (1 + 2)
+    print(v,)
+    return

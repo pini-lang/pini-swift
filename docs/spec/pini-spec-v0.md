@@ -129,7 +129,7 @@
 | 方法 `\|self` | 已定义 | ✅ | Provisional | `Keyword.self` |
 | 类型声明定界符 `( ) { } [ ] < >` | 已定义（§2.1） | ✅ | Provisional | `Parser.parseTopLevelDecl` |
 | 扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`（规则 3.2/3.14：类型体只含字段/用例，方法须移扩展块并显式 `\|self`/`\|own`；扩展块内禁自由函数；trait 扩展允许抽象签名） | 已定义且已实现（ADR-016，任务 #12） | ✅ | Provisional | `Parser.parseExtensionDecl` / `ExtensionDecl.swift` / `examples/struct.pini` 等 |
-| 内嵌组合（结构体内裸父类型名行） | 部分（检测已定义 §A.4 3.9；嵌入运行语义未定） | ✅ | Experimental | `examples/composition.pini`、`Parser.swift:497-515` |（嵌入，非并集）
+| 内嵌组合（结构体内裸父类型名行） | 部分（检测已定义 §A.4 3.9；嵌入运行语义未定） | ✅ | Experimental | `examples/composition.pini`、Parser.parseStructDecl（composition-line） |（嵌入，非并集）
 | 泛型 `<T>` + 运行时单态化 | 未定义（部分 G8/G18/G24） | ✅ | Experimental/Provisional | `examples/generic.pini`、`examples/generic-func.pini` |
 | trait 约束求解 | 未定义（G8） | ✅ | Experimental | `examples/trait.pini` |
 | `if` / `elif` / `else`（含同级缩进块匹配） | 已定义 | ✅ | Provisional | `Parser.parseIf` |
@@ -354,7 +354,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | 编号 | 主题 | 状态 | 稳定性 | 计划版本 | 关联 |
 |------|------|------|--------|----------|------|
 | G1 | 形式化 EBNF（声明/表达式/语句/类型） | 已定义（权威文法见 §A 附录；原草案降为历史） | Provisional | v0.43.0 | 缺口 1.1 / §A |
-| G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.swift:347-384 / §A.4 3.0 |
+| G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.parseTopLevelDecl / §A.4 3.0 |
 | G3 | `try`/`except` 返回元组错误传播（errors-as-data，非异常式） | 已定义（§2.4.4；错误位=元组第 2 元素，`^` 右值糖注入返回元组末槽） | Provisional | v0.43.0 | Interpreter.swift:1996 / 1383 / §2.4.4 |
 | G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**） | Stable | v0.43.0 | SuspendEvaluator.swift / SuspendScheduler.swift / Value.swift / §3.1 |
 | G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
@@ -384,7 +384,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 > **已实现但运行语义未全钉定（Experimental，语义待定）**：以下构造已由解释器实现并被示例使用；其中语法若已在 §A 定义则标注出处，**运行语义未全钉定**者均按 Experimental 对待、不承诺兼容——这是「登记缺口」而非「反录入为事实」（避免「实现即规范」）：
 > - `defer`（块退出前 LIFO 清理）—— 草稿（`defer 块退出前清理:` 小节）已有 LIFO 语义意图（资源释放/清理）；示见 `examples/defer.pini`；**意图候选项 G39**（见 `pini-roadmap-next.md`），若采纳拟 Experimental→Provisional。
 > - 具名枚举关联值（`[E] case A(x: T)`）—— **已钉定并已实现**（2026-08-29，张力 T4 收口）：具名形参声明 / 标签实参构造（按名对位）/ match 具名绑定（`case A(x: v):`）全链路可用；位置形态并存（同一 case 声明内不可混用）；绑定数 ≠ 关联值数 → E4。宿主规则 3.15 的具名拒绝随之修订。
-> - 内嵌组合（结构体内首行裸父类型名）—— 语法检测已定义（§A.4 规则 3.9 / Parser.swift:497-515，草稿（`(结构块)` 组合示例））；运行语义（字段/方法嵌入复用）按张力 T5 待钉定（示见 `examples/composition.pini`）。
+> - 内嵌组合（结构体内首行裸父类型名）—— 语法检测已定义（§A.4 规则 3.9 / Parser.parseStructDecl（composition-line），草稿（`(结构块)` 组合示例））；运行语义（字段/方法嵌入复用）按张力 T5 待钉定（示见 `examples/composition.pini`）。
 > - 复合赋值（`+= -= *= /= %= &= \|= ^= <<= >>=`）—— 语法与折叠已定义（§A.2.4 assign-op / §A.4 规则 3.11）；溢出/符号运行语义未定，张力 T1·。
 > - 位运算（`& ^ ~ << >>`）—— 语法与优先级已定义（§A.1.2 / §A.2.5 / §A.3 层 5）；溢出/符号运行语义未钉住。
 > - 内建函数全集（29 个，ADR-020 D4 归组，宿主 `BuiltinRegistry` 为唯一事实源）—— **collection**：len；**char**：is_letter / is_ascii_digit / is_number / chars；**pointer**：load / store / addressof；**io**：readFile / writeFile / readLine；**math**：abs / min / max / sqrt / sin / cos / tan；**concurrency**：sleep / isCancel / joinAll / joinWithin；**value**：print / assert / ok / err / Error / CancelError / F64（值构造：int→F64、float 原样；G-P1，自举探针批次 4）。字符谓词签名已钉住（G45 / ADR-019：String -> Bool，chars 为 String -> Array\<String\>）；字符串 `upper`/`lower`/`contains`/`substring`/`split` 为**成员方法**（非自由函数，§A.2.5）。其中并发原语签名未钉住（Experimental），其余签名随 ADR-019/ADR-020 逐步钉定。
@@ -400,13 +400,13 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 > **状态**：已定义、已落地（v0.41.0 落地 `=>` 派发 + `await`/`wait`；T7 异步语义正式化 v0.43.0 → **Stable**）。本小节为权威异步语义定义（结构化并发不变契约），具规范事实源地位。
 >
-> **术语（ADR-012，v0.41.0）**：异步 join 运算符为 `await`/`wait` **关键字前缀**（取代立场 B 的 `<=` 前缀）——`await` 用于异步函数体（`=>` 派发）内挂起等待，`wait` 用于同步上下文阻塞 join；二者均映射 `.join` AST 节点（`Parser.swift:2237-2246`）。`<=` 已回归**纯比较运算符**（中缀），无前缀 join 义（见 §A.4 规则 3.1）。
+> **术语（ADR-012，v0.41.0）**：异步 join 运算符为 `await`/`wait` **关键字前缀**（取代立场 B 的 `<=` 前缀）——`await` 用于异步函数体（`=>` 派发）内挂起等待，`wait` 用于同步上下文阻塞 join；二者均映射 `.join` AST 节点（Parser.parseUnary await/wait 前缀分支）。`<=` 已回归**纯比较运算符**（中缀），无前缀 join 义（见 §A.4 规则 3.1）。
 >
 > **证据**：`SuspendEvaluator.swift`（`evalK` CPS 求值 / `.join` 挂起分支 / 上下文五项还原）、`SuspendScheduler.swift`（挂起后端 work-stealing 池）、`Scheduler.swift`（`GCDScheduler` 默认阻塞后端）、`Interpreter.swift`（`joinFuture` / `joinWithin` / 并发原语 `cancel`/`isCancel`/`join`/`joinAll`）、`Value.swift`（`FutureValue` 取消树 / `closeScope`）。
 
 #### 3.1.1 `=>` 派发与 `await`/`wait` 挂起语义
 
-- **`=>` 派发**：函数签名以 `=>` 引入的函数体即异步函数（`Parser.parseFuncDecl` 识别 `doubleArrow`，产出 `Expression.funcLiteral`，`Parser.swift:945/965`）。
+- **`=>` 派发**：函数签名以 `=>` 引入的函数体即异步函数（`Parser.parseFuncDecl` 识别 `doubleArrow`，产出 `Expression.funcLiteral`）。
 - **`await`/`wait` 求值**：`await expr`（异步函数体内）/ `wait expr`（同步上下文）求值 `expr` 得 `Future`，经 `Result<T, Error>` 解构——**错误即数据，不抛出**（与 §2.4.4 errors-as-data 一致）。
 - **挂起模式**（`suspendMode`，`SuspendScheduler` 后端）：`Future` 未决时当前任务**挂起**——保存续体（精确恢复点）、释放当前 OS 线程（非阻塞），`Future` 决后经 executor 从精确恢复点续跑；CPS 求值器支持任意表达式深度挂起、已执行副作用**不重跑**（如 `print(await f())` 恰打印一次）。`Future` 已决则直接取 `ok/err` 值，不挂起（`SuspendEvaluator.swift:358-384` `evalK` 的 `.join` 分支；挂起判定 `suspendMode && !fut.isFinished` 于 `:374`）。
 - **同步/阻塞路径**（默认后端 `GCDScheduler`，`Interpreter.swift:25` `scheduler = GCDScheduler.shared`）：`wait` 为阻塞 join（占 worker 线程），语义与挂起等价——均经 `await`/`wait` 站点解构 `ok/err`。挂起模式是**新增能力**，默认行为不变（`Interpreter.swift:1377-1382`）。
@@ -733,10 +733,13 @@ trait-method    ::= IDENT ['|' ('self' | 'own')] func-signature [func-body];
    有体 = 默认实现（<<扩展特征块>>，G51/Pini草稿 §<特征块名>） *)
 
 (* 扩展块 *)
-extension-decl  ::= '((' IDENT [':' type-annotation] '))' method-body   (* 结构扩展 *)
-                  | '{{' IDENT [':' type-annotation] '}}' method-body   (* 对象扩展 *)
-                  | '[[' IDENT [':' type-annotation] ']]' method-body   (* 枚举扩展 *)
+extension-decl  ::= '((' IDENT ['<' generic-params '>'] [':' type-annotation] '))' method-body   (* 结构扩展 *)
+                  | '{{' IDENT ['<' generic-params '>'] [':' type-annotation] '}}' method-body   (* 对象扩展 *)
+                  | '[[' IDENT ['<' generic-params '>'] [':' type-annotation] ']]' method-body   (* 枚举扩展 *)
                   | '<<' IDENT '>>' trait-body;                         (* 特征扩展 *)
+(* 泛型扩展 `((盒<T>))`（2026-09-05 反录，探针 p08；规则 3.14 早有字样、产生式此前
+   未收编）。`: 类型` 约束形态解析层接受但仅解析存储、合并仍按 targetType 名称匹配
+   （parseExtensionDecl，探针 p21a）。 *)
 
 (* 外部函数块 *)
 foreign-decl    ::= '[' IDENT '|' 'foreign' ']' foreign-body;
@@ -774,9 +777,12 @@ foreign-signature ::= IDENT func-signature;
 
 (* ---- A.2.3  函数声明 ------------------------------------------------------ *)
 
-func-signature  ::= ['<' generic-params '>'] '(' [param {',' param}] ')'
-                    [('->' | '=>') '(' [ret-item {',' ret-item}] ')']
+func-signature  ::= ['<' generic-params '>'] '(' [param {',' param} [',']] ')'
+                    [('->' | '=>') '(' [ret-item {',' ret-item} [',']] ')']
                     [':' func-body];
+(* 尾逗号（2026-09-05 反录，勘测探针 probes-backfill-2026-09-05）：参数表、返回元组、
+   调用实参表、类型注解元组、数组/字典/集合字面量均容忍尾逗号——全代码库既成事实
+   （自举 parser 同轨），此前 EBNF 未收编。 *)
 (* A8 选项 B（H-4，2026-08-31 阶段 2 落地）：凡带执行块（func-body）的函数
    一律以 `:` 引导块，与 if / while 的冒号开块规则统一——「有执行体即有冒号」。
    无执行体的签名（trait 抽象方法 / foreign 声明）不带冒号。 *)
@@ -790,8 +796,8 @@ modifier        ::= 'func' | 'self' | 'own' | 'test' | 'unsafe' | 'foreign';
 
 bare-func-decl  ::= IDENT ['|' modifier] ['<' generic-params '>'] func-signature;
 
-func-literal    ::= 'func' '(' [param {',' param}] ')'
-                    [('->' | '=>') '(' [ret-item {',' ret-item}] ')'] ':' func-body;
+func-literal    ::= 'func' '(' [param {',' param} [',']] ')'
+                    [('->' | '=>') '(' [ret-item {',' ret-item} [',']] ')'] ':' func-body;
 (* 匿名函数必须使用 func 关键字 *)
 
 capture-stmt    ::= 'capture' IDENT ;
@@ -818,7 +824,12 @@ statement       ::= var-decl | assign-stmt | return-stmt | break-stmt | continue
                   | detach-expr-stmt | capture-stmt;
 (* capture-stmt 仅在匿名函数体顶层语句位合法（见 A.2.3 capture-stmt 注记）。 *)
 
-var-decl        ::= ('var' | 'let') IDENT [':' type-annotation] ['=' expression];
+var-decl        ::= ('var' | 'let') IDENT [':' type-annotation] ['=' expression]
+                  | ('var' | 'let') '(' pattern-tuple ')' [':' type-annotation] '=' expression;
+(* 元组解构（2026-09-05 反录；草稿「(元组,)」条目「把右值元组绑定到左值元组声明」
+   意图，宿主已交付）：左值模式元组与 for-in 模式同构（parsePatternTuple 共享，
+   `_` 占位忽略）；解构形态必须带初始化器（缺省报错「解构声明必须有初始值」，探针
+   p14/p17/p25）。 *)
 
 assign-stmt     ::= assign-target assign-op expression;
 assign-target   ::= IDENT | postfix-expression '.' IDENT | postfix-expression '[' expression ']';
@@ -841,8 +852,10 @@ pattern-tuple   ::= (IDENT | '_') { ',' (IDENT | '_') } [ ',' ];
 
 match-stmt      ::= 'match' expression ':' { match-case };
 match-case      ::= 'case' match-pattern control-block;
-match-pattern   ::= '_' | INT | FLOAT | STRING | BOOL | IDENT | 'nil'
-                  | IDENT '.' IDENT ['(' match-pattern {',' match-pattern} [','] ')'];
+match-pattern   ::= '_' | INT | FLOAT | STRING | BOOL | IDENT | 'nil';
+(* 限定解构 `case 枚举.用例(...)` 未实现（探针 p09 E2-001；草稿「用例(联合类型,)」
+   条目意图按 A10 登记提案、不反录进文法）；match 模式位点号 `.用例` 同为二期
+   （primary-atom 点号构造注）。 *)
 (* 枚举解构按位置绑定；'_' 占位忽略；支持 if 守卫 *)
 
 
@@ -908,9 +921,13 @@ unary-expr      ::= ('await' | 'wait' | '^' | '!' | '++' | '--' | '~' | '+' | '-
 
 primary-expr    ::= primary-atom postfix-suffix*;
 
-postfix-suffix  ::= '(' [call-arg {',' call-arg}] ')'
+postfix-suffix  ::= '(' [call-arg {',' call-arg} [',']] ')'
                   | '.' IDENT
-                  | '[' subscript ']';
+                  | '[' subscript ']'
+                  | '!';
+(* 后缀 '!' 强制解包（2026-09-05 反录；草稿「Optional」条目「强制解包语法糖」意图，
+   宿主已交付）：some(x) → x；none → trap（与严格枚举「强制取元素越界即崩溃」语义
+   一致）；操作数非 Optional 值 → 运行时错误（宿主 forceUnwrap 通道）。 *)
 
 subscript       ::= index | slice;
 index           ::= expression;
@@ -924,7 +941,10 @@ slice           ::= [expression] ':' [expression];
      开放边界以 nil（Optional.none）传递；运行时与集合 .slice 行为一致
      （见 G48 / SubscriptStrategies.swift / issue-lexer-gaps-2026-08-28 P2-B）。 *)
 
-call-arg        ::= [IDENT ':'] expression;
+call-arg        ::= [IDENT '='] expression;
+(* 标签记号 = `=`（与 tuple-element / 规则 3.15 同轨，G57）；旧写法 `f(a: 值)` 已废弃，
+   宿主报错并提示改 `=`（2026-09-05 反录对齐，探针 p02/p03——原产生式 `[IDENT ':']`
+   与实现矛盾，属笔误级漂移）。 *)
 
 primary-atom    ::= IDENT [generic-construct]
                   | 'self' | 'own'
@@ -933,7 +953,7 @@ primary-atom    ::= IDENT [generic-construct]
                   | 'nil'
                   | '(' [tuple-element {',' tuple-element} [',']] ')'
                   | '[' collection-literal ']'
-                  | '{' [expression {',' expression}] '}'
+                  | '{' [expression {',' expression} [',']] '}'
                   | '.' IDENT
                   | builtin-call;
 
@@ -957,11 +977,11 @@ tuple-element   ::= [IDENT '='] expression;
    宿主与自举均按此实现并测试覆盖（Parser.parseTupleOrParen / 自举 parser.pini）。 *)
 
 generic-construct ::= '<' type-annotation {',' type-annotation} '>'
-                      ('(' [call-arg {',' call-arg}] ')' | '.');
+                      ('(' [call-arg {',' call-arg} [',']] ')' | '.');
 
 collection-literal ::= ']'
-                     | expression '=' expression {',' expression '=' expression} ']'
-                     | expression {',' expression} ']';
+                     | expression '=' expression {',' expression '=' expression} [','] ']'
+                     | expression {',' expression} [','] ']';
 (* 字典条目记号 = `=`（批 3，G57；旧写法 `[k: v]` 已废弃；`[:]` 为全切片，不是空字典）。 *)
 
 builtin-call    ::= 'LazyRef' ['<' type-annotation '>'] '(' func-literal ')'
@@ -980,8 +1000,8 @@ type-annotation ::= '?' type-annotation                          (* ?T ≡ Optio
                   | '[' type-annotation ':' type-annotation ']'  (* [K: V] ≡ 字典 *)
                   | '{' type-annotation '}'                      (* {T} ≡ 集合 *)
                   | IDENT ['<' type-annotation {',' type-annotation} '>']
-                  | '(' [type-annotation {',' type-annotation}] ')'
-                    [('->' | '=>') '(' [type-annotation {',' type-annotation}] ')']
+                  | '(' [type-annotation {',' type-annotation} [',']] ')'
+                    [('->' | '=>') '(' [type-annotation {',' type-annotation} [',']] ')']
                   | 'self' | 'own';
 (* 元素标注检查（proposal-array-element-annotation，2026-09-04 D-β 裁决落地）：
    `[T]` / `[K: V]` / `{T}` 标注对集合字面量初始化、字面量赋值右值、Array.append
@@ -1020,21 +1040,25 @@ generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]
 
 EBNF 无法表达前瞻（lookahead），以下消歧规则是文法的**组成部分**，实现与未来解析器生成必须遵守：
 
+> 出处列约定（2026-09-05 反录批②修订）：一律使用**符号名锚点**（函数/方法名，可 grep
+> 兑付），禁止行号引用——行号随实现演进而腐烂，且违反本规范 §7.5 DoD；此前 11 条规则
+> 引用的 `Parser.swift:NNNN` 已全部实测腐烂，本次全部换锚。
+
 | # | 规则 | 说明 | 出处 |
 |---|------|------|------|
-| 3.0 | **行首定界符分派** | `'('` `'['` `'{'` `'<'` 在**行首**（NEWLINE 后）→ 顶级类型声明分派（`struct`/`object`/`enum`/`func`/`trait`）；同一 token 在表达式/类型位置（非行首）→ 字面量/元组/泛型/优先结合。本版本**固定「行首位置」单一锚点**为消歧算法 | §2.1 / §2.2 / Parser.swift:347-384 |
-| 3.1 | `await`/`wait` 前缀 join | `await`/`wait` 为关键字、仅作表达式起始位前缀 → 映射 `.join` AST（异步体挂起 / 同步阻塞，由 suspendMode 上下文决定）；`<=` 已回归**纯比较运算符**（中缀，无前缀 join 义） | Parser.swift:2237-2246 / §2.4.1 |
+| 3.0 | **行首定界符分派** | `'('` `'['` `'{'` `'<'` 在**行首**（NEWLINE 后）→ 顶级类型声明分派（`struct`/`object`/`enum`/`func`/`trait`）；同一 token 在表达式/类型位置（非行首）→ 字面量/元组/泛型/优先结合。本版本**固定「行首位置」单一锚点**为消歧算法 | §2.1 / §2.2 / Parser.parseTopLevelDecl |
+| 3.1 | `await`/`wait` 前缀 join | `await`/`wait` 为关键字、仅作表达式起始位前缀 → 映射 `.join` AST（异步体挂起 / 同步阻塞，由 suspendMode 上下文决定）；`<=` 已回归**纯比较运算符**（中缀，无前缀 join 义） | Parser.parseUnary（await/wait 前缀分支）/ §2.4.1 |
 | 3.2 | **类型体内禁止函数声明** | 类型体内只允许字段声明。解析器在类型体中遇到函数声明头（`IDENT '('` 或 `IDENT '|' modifier`）→ 报错：方法应移至同文件扩展块中，并显式使用 `\|self` 或 `\|own` | Parser.swift（已实现，ADR-016）：parseStructDecl/parseObjectDeclContent/parseEnumDeclContent 抛 invalidStatement（`name|func` 顶级函数除外）；methodDefaultAssumption 状态机已移除 |
-| 3.3 | `'<'` 泛型构造 vs 比较 | 表达式右值位置：`IDENT '<' type-annotation {',' type-annotation} '>'` 且 `>` 后跟 `'('`/`'.'` 才判定 `generic-construct`，否则回退比较；`'>>'`（rightShift）→ 回退（不支持嵌套） | Parser.swift:2380-2461 |
-| 3.4 | `'{...}'` 函数 vs 对象 | 预读 `'{' IDENT ('\|mod')? '<泛型>'? '}'` 后第一个非换行 token 是 `'('` → 函数块；否则对象块。无修饰符 `'{名称}'` 默认为对象 | Parser.swift:554-593 |
-| 3.5 | `'[名称\|...]'` 枚举 vs 对象 | `\|object` → 对象；`\|enum` → 枚举；**无修饰符默认枚举** | Parser.swift:427-441 |
-| 3.6 | 裸函数声明判定 | `IDENT ('\|mod')? '<泛型>'? '(' 参数 ')'` 后跟 `'->'`/`'=>'` → 裸函数声明；否则语句 | Parser.swift:1139-1184 |
-| 3.7 | match `'default'` 消歧 | `default` 是普通标识符；在 match 子块内出现 `default:` 被**显式报错**（提示改用 `case _:`），不再特判为默认分支 | Parser.swift:1911-1916 |
-| 3.8 | 泛型构造 lookahead 失败回退 | 任一环节不满足 → 恢复 position 回退为比较运算 | Parser.swift:2380-2461 |
-| 3.9 | 内嵌组合 | `'(' 类型 ')'` 后首行裸父类型名、非字段/裸函数 → 内嵌父类型 | Parser.swift:497-515 |
-| 3.10 | match 子块结构 | match 子块内**只允许 `case`**；`case _:` 为通配兜底；`default:`/裸 `pass` 通配子块已移除 | Parser.swift:1894-1921 |
-| 3.11 | 复合赋值折叠 | `x op= y` 语法上是 assign；语义 = `x = (x op y)`（Parser 折叠为 assign 内 binary）。assign 族（assign + 9 复合赋值）**仅语句级**（assign-stmt，§A.2.4），表达式链不可达。BinaryOperator 的 `logicalAnd`/`logicalOr`（解析器在 and/or 层构造 `.and`/`.or`，二者永不被构造）与 `power`（无词法记号、无产生式）为 AST 死面，已删除（2026-09-04，F2） | Parser.swift:1652-1690 |
-| 3.12 | `nil` 映射 | 表达式/匹配模式中 `nil` ≡ `Optional.none`（member / enumCase("none")） | Parser.swift:2359-2364、1945-1949 |
+| 3.3 | `'<'` 泛型构造 vs 比较 | 表达式右值位置：`IDENT '<' type-annotation {',' type-annotation} '>'` 且 `>` 后跟 `'('`/`'.'` 才判定 `generic-construct`，否则回退比较；`'>>'`（rightShift）→ 回退（不支持嵌套） | Parser.parseGenericConstructLookahead |
+| 3.4 | `'{...}'` 函数 vs 对象 | 预读 `'{' IDENT ('\|mod')? '<泛型>'? '}'` 后第一个非换行 token 是 `'('` → 函数块；否则对象块。无修饰符 `'{名称}'` 默认为对象 | Parser.parseTopLevelDecl（isBraceFuncDecl 预读） |
+| 3.5 | `'[名称\|...]'` 枚举 vs 对象 | `\|object` → 对象；`\|enum` → 枚举；**无修饰符默认枚举** | Parser.parseBracketDecl |
+| 3.6 | 裸函数声明判定 | `IDENT ('\|mod')? '<泛型>'? '(' 参数 ')'` 后跟 `'->'`/`'=>'` → 裸函数声明；否则语句 | Parser.isBareFunctionDeclStart / parseBareFuncDecl |
+| 3.7 | match `'default'` 消歧 | `default` 是普通标识符；在 match 子块内出现 `default:` 被**显式报错**（提示改用 `case _:`），不再特判为默认分支 | Parser.parseMatch（default: 报错分支） |
+| 3.8 | 泛型构造 lookahead 失败回退 | 任一环节不满足 → 恢复 position 回退为比较运算 | Parser.parseGenericConstructLookahead |
+| 3.9 | 内嵌组合 | `'(' 类型 ')'` 后首行裸父类型名、非字段/裸函数 → 内嵌父类型 | Parser.parseStructDecl（composition-line） |
+| 3.10 | match 子块结构 | match 子块内**只允许 `case`**；`case _:` 为通配兜底；`default:`/裸 `pass` 通配子块已移除 | Parser.parseMatch |
+| 3.11 | 复合赋值折叠 | `x op= y` 语法上是 assign；语义 = `x = (x op y)`（Parser 折叠为 assign 内 binary）。assign 族（assign + 9 复合赋值）**仅语句级**（assign-stmt，§A.2.4），表达式链不可达。BinaryOperator 的 `logicalAnd`/`logicalOr`（解析器在 and/or 层构造 `.and`/`.or`，二者永不被构造）与 `power`（无词法记号、无产生式）为 AST 死面，已删除（2026-09-04，F2） | Parser.parseAssignment |
+| 3.12 | `nil` 映射 | 表达式/匹配模式中 `nil` ≡ `Optional.none`（member / enumCase("none")） | Parser.parsePrimary（nil 分支）、Parser.parseMatch（模式 nil 分支） |
 | 3.13 | **标签语法消歧** | 语句位置遇到 `IDENT '|'`：若 `'|'` 后是 `'if'`/`'while'`/`'for'` → 解析为带标签语句（`标签\|if` / `标签\|while` / `标签\|for`）；若 `'|'` 后是其他 token → 回退为按位或表达式。声明位置（模块顶层/扩展块内）：`IDENT '|'` 后是 `'self'`/`'own'`/`'func'`/`'test'`/`'unsafe'`/`'foreign'` → 方法/函数声明修饰符 | Parser.swift（已实现，ADR-014）：parseStatement 标签分派 + parseIf/parseWhile/parseFor(label:)；`scope` 关键字转 reserved-error（G44） |
 | 3.14 | **扩展块内禁止自由函数** | 扩展块（`((...))`/`{{...}}`/`[[...]]`）内只允许带 `\|self` 或 `\|own` 的方法声明。遇到无这些修饰符的函数声明 → 报错：自由函数应移至模块顶层 | Parser.swift（已实现，ADR-016）：parseExtensionDecl（`((T))`/`{{T}}`/`[[T]]`/`<<T>>` 四种扩展，含泛型 `((盒<T>))`）校验 |
 | 3.15 | **枚举关联参数仅位置类型**（**2026-08-29 修订：具名部分解除**——用户裁决「枚举关联值需要具名就迭代宿主」；spec A.2.2 具名四形态随之收口） | 枚举用例括号内接受具名形参 `IDENT ':' type-annotation` 或位置 `type-annotation`（同一声明内不可混用）；不允许裸字面量。**构造实参（批 3 修订）用 `IDENT '=' expression`**（`E(text = "x", loc = 1,)`），旧记法 `IDENT ':'` 在构造位已废弃（宿主报错提示改 `=`）；声明位不接受 `=`（默认值另议）。match 解构支持位置绑定 / `_` 占位 / 具名绑定 `IDENT ':' IDENT`；绑定数 ≠ 关联值数 → E4-005 | Parser.parseEnumCase（具名解析）、match 模式绑定解析（具名/`_`）；Interpreter.executeMatch（按位/具名对位、arity 运行时校验、paramNames 入值）；TypeChecker.bindMatchCaseVariables（E4-005 arity）、具名声明标签实参放行 |
@@ -1091,7 +1115,7 @@ match-binding   ::= '(' [IDENT ':' IDENT | IDENT] {',' [IDENT ':' IDENT | IDENT]
 
 #### A.6.4 优先级表 ↔ Parser 调用链一致性
 
-`parseExpression → parseAssignment → parseOr → parseAnd → parseEquality → parseComparison → parseBitwise → parseTerm → parseFactor → parseUnary → parsePrimary`（Parser.swift:2053-2296）与 §A.3 总表 9 层**一一对应**，无缺层/无错序（S4 核对）。
+`parseExpression → parseAssignment → parseOr → parseAnd → parseEquality → parseComparison → parseBitwise → parseTerm → parseFactor → parseUnary → parsePrimary` 调用链与 §A.3 总表 9 层**一一对应**，无缺层/无错序（S4 核对）。
 
 #### A.6.5 回归门禁
 

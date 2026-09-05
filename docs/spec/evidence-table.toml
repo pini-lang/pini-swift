@@ -19,10 +19,10 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md"]
-last_refresh = "2026-09-04T21:40+08:00"
-last_sweep = "2026-09-04T09:02:00+08:00"
-dangling_ids = ["E-035", "E-047"]
-refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。；2026-09-03 批（内联 Pini 源码抽离收口）：新增 E-099..E-101——E-099 规模实测（三引号块 23 = PINI 15 + TOML 8，推翻工单原记 819；单行串含换行者 6–40B 均为断言期望值，抽离无收益）、E-100 抽离落地与语义等价（15 fixture，目标 22/22、全量 1144/0）、E-101 H-4 已落地致『解锁 H-4 签名迁移』动因失效（工单末条耦合风险随之过期）。**本次仅新增并现跑重筛 E-099..E-101；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T00:50+08:00 批（证据表清理工单立项）：新增 E-102（表内现状实测：100 条 / 97 条 status 失真 / 65 条 >72h / 61 条零引用 / E-008 悬空）。**本次仅新增并现跑重筛 E-102；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T01:37+08:00 批（证据表自动清扫落地）：新增 E-103——清扫机制挂载提交节拍、首轮 mark-only 实测 65/101、声明态漂移 100 → 0、删除路径经 /tmp 副本实跑验证 101 → 36。**本次仅新增并现跑重筛 E-103；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T09:28+08:00 批（G52 工单收口 + 批 7 远程 tap）：新增 E-104..E-106——E-104 批 7 落地实测（TapFetcher + 经典 MVS + resources 落地 + commit 真值；全量 1157/112/0，离线全链路），E-105 G52 工单「未完成」为文本未跟上的实测取证与归档代价，E-106 三项未实施条目的全仓核实（entry / graphOrder / resources 根检）。**本次仅新增并现跑重筛 E-104..E-106；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T09:35+08:00 批（G52 收尾补修）：新增 E-107——Def-1 resources 根检与 Def-7 锁文件 tap/source 回读，各带 1 个用例，全量 1159/112/0。**本次仅新增并现跑重筛 E-107；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T10:05+08:00 批（G52 第二批补修）：新增 E-108——**本次仅新增并现跑重筛 E-108；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T11:20+08:00 批 9（G52 全量收口）：新增 E-109——**本次仅新增并现跑重筛 E-109；存量条目未重新验证，按其自身 validated_at 判定。**"
+last_refresh = "2026-09-05T19:30+08:00"
+last_sweep = "2026-09-05T19:11:00+08:00"
+dangling_ids = ["E-001", "E-008", "E-035", "E-047"]
+refresh_note = "2026-08-25 00:26 文档治理（用户决策，第三轮）：spec 内部自相矛盾消除——依据 Pini草稿.md 意图：① 块标签统一为 `scope 块标签:`（§2.4 / §A.1.4 / §A.2.4 / §A.5.1，`#label` 与 `@` sigil 标注为历史）；② match 通配统一为 `case _:`（§A.2.4 wildcard-block 删除、规则 3.7/3.10 改写）；③ struct-decl 组合改为可选；④ `^` 右值糖补入 unary-expr/层 8；⑤ IDENT 改 Unicode 字符类；⑥ §3 清单条目标注『语法已定义（§A 出处）/运行语义未定』；⑦ 新增『已闭环缺口索引』。E-042/E-044/E-051 随 spec 修正转 FRESH。前两轮（00:15-00:20）结论保留：行号软证据化 + §2.6 诊断码权威映射落地；2026-08-26 Phase 0 治理（v0.48.0）：补 E-052/053/054（规则 3.13/3.14/3.15 待实现，STALE）；E-008 方法缺省假定随规则 3.2 逆转置 STALE；E-047 关键字数标注待 Phase 1/2 对齐（spec §A.1.1 称 33，代码现 lex 30）；2026-08-27 Phase 2b 解释器落地（ADR-017）：新增 E-057/E-058/E-059/E-060（SystemDL/FFILoader/ForeignThunk/FileLoader[ffi]），E-056 扩展（E5-015 注册期 fail-fast 被 dlsym E5-017 取代）；987 XCTest 0 失败。2026-09-02 批次治理（批 1.5 / 2 / 3 证据补登记）：新增 E-067..E-081——G55 跨行字面量的括号栈与块携带判定（宿主 + 自举镜像）、G56 下标三通道（读分派/E5-005/类型推断/成员登记/解释器分派与 UB 近似/字典键匹配/字典成员派发/LLVM bk_array_get）、G57 `=` 记法（实参/元组/字典/match 保留 `:`/自举同步）；全部于登记前现跑按符号重筛，status=FRESH。E-076 为源码级证据（本环境无 lli，未实跑，按 ADR-024 D9 如实标注）。2026-09-02 F5 钉定：新增 E-082..E-086（六探针实测 + 差分实验 + 记号层不可见性），并裁决 spec 维护注自相矛盾句为「空行透明」（F5 提议『空行闭块』假设被否定）。2026-09-02 批 5（G58 IO 路径基准）：新增 E-087..E-090——三段式解析、moduleRoot 与 CLI 注入、LLVM 烘焙（IR 常量解码验证）、自举终验（仓根直跑 70/0）；全部登记前现跑重筛，FRESH。；2026-09-03 批（内联 Pini 源码抽离收口）：新增 E-099..E-101——E-099 规模实测（三引号块 23 = PINI 15 + TOML 8，推翻工单原记 819；单行串含换行者 6–40B 均为断言期望值，抽离无收益）、E-100 抽离落地与语义等价（15 fixture，目标 22/22、全量 1144/0）、E-101 H-4 已落地致『解锁 H-4 签名迁移』动因失效（工单末条耦合风险随之过期）。**本次仅新增并现跑重筛 E-099..E-101；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-03T00:50+08:00 批（证据表清理工单立项）：新增 E-102（表内现状实测：100 条 / 97 条 status 失真 / 65 条 >72h / 61 条零引用 / E-008 悬空）。；2026-09-03T01:37+08:00 批（证据表自动清扫落地）：新增 E-103——清扫机制挂载提交节拍、首轮 mark-only 实测 65/101、声明态漂移 100 → 0、删除路径经 /tmp 副本实跑验证 101 → 36。；2026-09-04T09:28+08:00 批（G52 工单收口 + 批 7 远程 tap）：新增 E-104..E-106——E-104 批 7 落地实测（TapFetcher + 经典 MVS + resources 落地 + commit 真值；全量 1157/112/0，离线全链路），E-105 G52 工单「未完成」为文本未跟上的实测取证与归档代价，E-106 三项未实施条目的全仓核实（entry / graphOrder / resources 根检）。**本次仅新增并现跑重筛 E-104..E-106；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T09:35+08:00 批（G52 收尾补修）：新增 E-107——Def-1 resources 根检与 Def-7 锁文件 tap/source 回读，各带 1 个用例，全量 1159/112/0。；2026-09-04T10:05+08:00 批（G52 第二批补修）：新增 E-108——；2026-09-04T11:20+08:00 批 9（G52 全量收口）：新增 E-109——；2026-09-05T19:30+08:00 批（spec 反录入批①②）：新增 E-122/E-123——EBNF 对齐实现真值（尾逗号/调用标签 =/! 解包/元组解构/扩展泛型；match 限定形态移除）与全文行号锚点换符号名（17 处清零）。**本次仅新增并现跑重筛 E-123；存量条目未重新验证，按其自身 validated_at 判定。**"
 
 [[evidence]]
 id = "E-067"
@@ -30,7 +30,7 @@ assertion = "普通括号（最内层未闭合括号非块携带）内 NEWLINE �
 spec_ref = "§2.2 括号内跨行 / §3 G55"
 code_ref = "Sources/PiniCore/Lexer/Lexer.swift:21 bracketStack；:102 suppressesLayout"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：bracketStack 项含 blockCarrying 标志；suppressesLayout = 栈顶为普通括号；行首分支按此旁路 IndentTracker"
 
 [[evidence]]
@@ -39,7 +39,7 @@ assertion = "块携带括号判定：开括号后同行（仅跳空格/制表符
 spec_ref = "§2.2 块携带括号 / §3 G55"
 code_ref = "Sources/PiniCore/Lexer/Lexer.swift:129 isBlockCarryingOpen"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：先跳空格/制表，再比 f/u/n/c，末位边界用 isLetter||isNumber||_ 排除；`func` 因首字符为反引号不匹配"
 
 [[evidence]]
@@ -48,7 +48,7 @@ assertion = "自举 lexer 镜像同一抑制逻辑（字符串括号栈惯用法
 spec_ref = "§3 G55 / 自举探针"
 code_ref = "examples/selfhost/src/lexer/lexer.pini:751 bst_push；:755 bst_top；:814 行首旁路；:839 行尾 newline 条件化"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：四处落点与宿主一一对应；差分门禁 L0 MATCH 508"
 
 [[evidence]]
@@ -57,7 +57,7 @@ assertion = "下标读（安全断言通道）返回元素本身，越界抛 Run
 spec_ref = "§2.4.1 G48 / §3 G56 / ADR-028"
 code_ref = "Sources/PiniCore/Interpreter/SubscriptStrategies.swift:91 SubscriptReadStrategy.read；Sources/PiniCore/Interpreter/RuntimeError.swift:31 case indexOutOfRange；Sources/PiniCore/Resources/Diagnostics.en.toml:126 [E5-005]"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：越界程序报 Error: Runtime Error [E5-005]；E5-005 此前已在册且未被占用"
 
 [[evidence]]
@@ -66,7 +66,7 @@ assertion = "下标读的类型推断由 Optional<T> 改为元素类型 T"
 spec_ref = "§3 G56 / ADR-028"
 code_ref = "Sources/PiniCore/Type/TypeInference.swift:230 infer 的 .subscript 分支"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：Array→params.first、Dictionary→params.last、String→String；不再包 Optional"
 
 [[evidence]]
@@ -75,7 +75,7 @@ assertion = ".get(i) / .getUnchecked(i) 登记为内建成员方法（String/Arr
 spec_ref = "§3 G56 / ADR-028"
 code_ref = "Sources/PiniCore/Common/BuiltinRegistry.swift:198 get(String)；:213 get(Array)；:219 get(Dictionary)"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：三类型各有 get 与 getUnchecked 两条；inTrait=false 故不进 collection 特征面"
 
 [[evidence]]
@@ -84,7 +84,7 @@ assertion = "解释器单一分派点处理三类型；UB 以「未定义行为�
 spec_ref = "§3 G56 / ADR-028"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2650 uncheckedOrNone；callFunctionValue 内 get/getUnchecked 分支"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：get 越界→.enumValue(none)；getUnchecked 越界→抛 E5-006 并在消息中说明为 UB 近似"
 
 [[evidence]]
@@ -93,7 +93,7 @@ assertion = "字典 .get(key) 的键按任意值匹配（非整数索引）"
 spec_ref = "§3 G56 / ADR-028"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2980 字典分支先于索引校验分流"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：d.get(`x`) 正常；批 2 初版曾误要求整数索引，本轮修复"
 
 [[evidence]]
@@ -102,7 +102,7 @@ assertion = "字典成员方法派发路径（原无，为 .get 新增）"
 spec_ref = "§3 G56 / ADR-028"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:2207 evaluateMember 的 .dictionary 分支"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：d.get(k) / unsafe d.getUnchecked(k) 可解析并运行"
 
 [[evidence]]
@@ -111,7 +111,7 @@ assertion = "LLVM 运行时下标读越界 bk_panic（本批据此定性为「�
 spec_ref = "§3 G56 / ADR-028"
 code_ref = "Sources/PiniRuntime/PiniRuntime.swift:239 bk_array_get（OOB → bk_panic）"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测（源码级；本环境无 lli，未实跑，按 D9 如实标注）"
 
 [[evidence]]
@@ -120,7 +120,7 @@ assertion = "调用实参与泛型构造实参的标签用 `=`；旧 `:` 记法�
 spec_ref = "§2.2 记法原则 / §3 G57 / ADR-029"
 code_ref = "Sources/PiniCore/Parser/Parser.swift:2875（泛型构造）、:3071（调用）"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：identifier+assign 判为标签；identifier+colon 抛「实参标签须用 = …已废弃」"
 
 [[evidence]]
@@ -129,7 +129,7 @@ assertion = "标签元组元素用 `=`"
 spec_ref = "§2.2 / §3 G57 / ADR-029"
 code_ref = "Sources/PiniCore/Parser/Parser.swift:2911 parseTupleOrParen 内标签元素判定（:2938 迁移提示）"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：`(x = 1, y = 2,)` 可解析；(a: 1,) 抛「元组标签须用 =」"
 
 [[evidence]]
@@ -138,7 +138,7 @@ assertion = "字典字面量条目用 `=`（靠首个元素后是否 assign 消�
 spec_ref = "§2.2 / §3 G57 / ADR-029"
 code_ref = "Sources/PiniCore/Parser/Parser.swift:2977 parseCollectionLiteral（:2990 首条目提示、:3004 后续条目校验）"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：`[`Alice` = 30]` 成立；`[`a`: 1]` 抛「字典条目须用 =（`[:]` 为全切片）」"
 
 [[evidence]]
@@ -147,7 +147,7 @@ assertion = "match 具名绑定保留 `:`（取出方向，D-5）"
 spec_ref = "§3 G57 / ADR-029 / G54"
 code_ref = "Sources/PiniCore/Parser/Parser.swift:2348 colon 判定（ADR 具名关联值决议注释在案）"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：`case 值(v: x):` 正常；该分支未被本轮改动"
 
 [[evidence]]
@@ -156,7 +156,7 @@ assertion = "自举 parser 同步 `=` 标签（parse_element 与实参表）"
 spec_ref = "§3 G57 / 自举探针"
 code_ref = "examples/selfhost/src/parser/parser.pini parse_element 与实参表（assign 判定）"
 validated_at = "2026-09-02T01:15:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测：同步后 parse 差分重新 MATCH 222 + 94"
 
 [[evidence]]
@@ -165,7 +165,7 @@ assertion = "缩进函数体内空行透明（不闭块，语句跨空行连续�
 spec_ref = "§2.3 块文法 / F5"
 code_ref = "探针实测：main 体 print(1) 与 print(2) 以空行分隔，输出 1、2"
 validated_at = "2026-09-02T01:40:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "2026-09-02 01:20 探针；与自举 lexer『空行全透明、缩进栈不动』一致"
 
 [[evidence]]
@@ -174,7 +174,7 @@ assertion = "顶格与缩进的字段块内空行透明（字段跨空行存活�
 spec_ref = "§2.3 块文法 / F5"
 code_ref = "探针实测：`(P)` 体字段 x、y 以空行分隔，P() 后 p.x、p.y 均存在"
 validated_at = "2026-09-02T01:40:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "2026-09-02 01:20 探针；**推翻 F5 提议『空行闭块』假设**（S5/S6 时代产出，从未验证）"
 
 [[evidence]]
@@ -183,7 +183,7 @@ assertion = "顶格字段块闭合于下一顶级声明起点（无空行隔断�
 spec_ref = "§2.3 块文法 / F5"
 code_ref = "探针实测：字段块后紧随 `main|func`（无空行），main 正确解析且字段完整"
 validated_at = "2026-09-02T01:40:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "2026-09-02 01:20 探针"
 
 [[evidence]]
@@ -192,7 +192,7 @@ assertion = "字段块内裸语句被拒（字段块只接受字段行）"
 spec_ref = "§2.3 块文法 / F5"
 code_ref = "探针实测：字段后随 `print(1)` → Parse Error E2-001"
 validated_at = "2026-09-02T01:40:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "2026-09-02 01:20 探针"
 
 [[evidence]]
@@ -201,7 +201,7 @@ assertion = "空行在记号层结构上不可见：两套 lexer 均不产记号
 spec_ref = "§2.3 块文法 / F5 / 门禁盲区记录"
 code_ref = "Sources/PiniCore/Lexer/Lexer.swift:203 skipBlankOrCommentLine；examples/selfhost/src/lexer/lexer.pini blank-line 分支；语料探针段（parse_slice_corpus.pini 尾部 PP 块）"
 validated_at = "2026-09-02T01:40:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "差分：字段块内含空行，宿主与自举 parse MATCH 253——门禁此前盲区（语料空行恰都后随块头）已由该探针段永久覆盖"
 
 [[evidence]]
@@ -210,7 +210,7 @@ assertion = "IO 相对路径按形态三段式解析：绝对原样；./ ../ 相
 spec_ref = "§2.4.1 G14/G58 / ADR-030"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift:147 programBase；:160 resolveIOPath；Sources/PiniCLI/main.swift:679 absoluteProgramBase"
 validated_at = "2026-09-02T18:32:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测 18:30：从 /tmp 跑 /tmp/base_mod，readFile(res.txt) 读到模块根文件、./res.txt 按 CWD 找不到 panic（设计语义）"
 
 [[evidence]]
@@ -219,7 +219,7 @@ assertion = "moduleRoot() 内建返回程序基准；CLI 六执行入口注入�
 spec_ref = "§3 G58 / ADR-030"
 code_ref = "Sources/PiniCore/Common/BuiltinRegistry.swift:111；Sources/PiniCore/Interpreter/Interpreter.swift loadImports 子解释器传参；main.swift run/调试器/测试六入口"
 validated_at = "2026-09-02T18:32:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测 18:30：moduleRoot() 从 /tmp 输出 /tmp/base_mod；未注入基准时如实返回 CWD"
 
 [[evidence]]
@@ -228,7 +228,7 @@ assertion = "LLVM 端无前缀相对路径字面量编译期烘焙基准；./ ..
 spec_ref = "§3 G58 / ADR-030 / D-4"
 code_ref = "Sources/PiniCore/CodeGen/IRGenerator.swift:107 programBase；Sources/PiniCore/CodeGen/Emitters/BuiltinsEmitter.swift:173 generateIOPathArgument；Sources/PiniCore/CodeGen/Emitters/ExprEmitter.swift:663 unsupported"
 validated_at = "2026-09-02T18:32:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测 18:35：emit IR 常量解码为 /tmp/base_mod/res.txt + NUL（22 字节），fopen 实参经 @.str0 GEP 引用"
 
 [[evidence]]
@@ -237,7 +237,7 @@ assertion = "自举测试从仓根直跑全绿（原 5 个 CWD 依赖假失败�
 spec_ref = "§3 G58 / ADR-030 / 终验"
 code_ref = "探针实测：pini test examples/selfhost 从仓根直跑 70 通过 0 失败；IOTests（绝对路径注入兼容面）6/0"
 validated_at = "2026-09-02T18:32:00+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测 18:37；测试文件零改动——语料中 readFile(examples/...) 相对模块根书写，新基准下语义自然正确"
 
 [[evidence]]
@@ -363,7 +363,7 @@ assertion = "批 7 已落地：github: / git: 远程 tap 由 TapFetcher 经 git 
 spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 7 节验收记录；docs/spec/pini-spec-v0.md §2.5 版本与命令"
 code_ref = "Sources/PiniCore/Module/TapFetcher.swift（expand / availableVersions / selectVersion / materialize / headCommit / runGit）；Sources/PiniCore/Module/ModuleToolchain.swift（FetchSession / ensureMaterialized / reconcileSelection / resolveFetching / refresh）；Tests/PiniTests/ModuleToolchainTests/TapFetcherTests.swift"
 validated_at = "2026-09-04T09:28+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：swift test --disable-sandbox --scratch-path /tmp/pini-build 全量 1157 执行 / 112 跳过 / 0 失败（批 7 前基线 1144，净增 13）。关键设计：git: 协议接受本地路径，故用 tmp 里的真实 git 仓库当远端，ls-remote 到 MVS 到 clone 到 checkout 到 rev-parse 全链路离线跑通，不发网络包。新增用例：refresh 端到端（落地 1.2.0 而非 2.0.0、commit 为 40 位 SHA-1、verify 通过、篡改后检出不符）、resources 落地、传递约束收敛（a 的 ^1.2 压过 root 的 * 回填，收敛到 1.2.0）。既有 testResolveRemoteTapErrorsOutPerDA 已改判为两例——批 6 的 D-A「远程一律报错」收窄为「未落地才报错」。本环境构建必须加 --scratch-path，否则 SwiftPM 卷内 .TemporaryItems 被沙箱拒（换 TMPDIR 无效）"
 
 [[evidence]]
@@ -372,7 +372,7 @@ assertion = "G52 工单的「未完成」是文本未跟上而非实现缺失：
 spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 6 节落点 / 第 7 节验收记录 / 第 9 节遗留"
 code_ref = "docs/spec/pini-spec-v0.md:281（版本与命令）与 :367（G52 决策行）；docs/spec/pini-project-spec.md 第 3/4 节（.gitignore 含 !pini-summary.toml）与第 7 节（tap / require / resources / replace，dependencies 标 Removed、§7.3 版本约束语法）；docs/spec/pini-roadmap-next.md T2 行与 §8.1 批次登记表"
 validated_at = "2026-09-04T09:28+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测（逐项到代码与规范里找落点，不数复选框）：9 条 DoD 中 6 条通过、1 条部分、2 条未实现、1 条判据过时（deps/pini-swift 归类为 resources 因 ADR-024 D2 已失效）。治理教训：同一次会话里两次因 BSD grep 在 BRE 下不支持竖线分隔、静默返回空，误判「spec v0 未登记 G52」与「project-spec 第 7 节未更新 schema」——两者其实都已落地；判定「某项未做」前须先自测查询本身。归档代价：7 处入向引用全改（含 1 处裸文件名），工单自身 6 处相对链接因多一层目录改写为仓库相对路径；改完 check-doc-links 通过（240 引用）"
 
 [[evidence]]
@@ -381,7 +381,7 @@ assertion = "G52 三项实施条目经全仓搜索确认未实现：[[bin]]/[lib
 spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 9 节 Def-1 / Def-2 / Def-3"
 code_ref = "Sources/ 全仓搜 entry（词边界）除注释外零命中；Sources/ 全仓搜 graphOrder 仅 ModuleToolchain.swift 的锁文件读写（定义 / 生成 / 渲染 / 解析），无解释器消费点；ModuleToolchain.swift 的 resources 循环无「目标根含 pini.toml 即拒」判定"
 validated_at = "2026-09-04T09:28+08:00"
-status = "FRESH"
+status = "STALE"
 note = "全仓核实：entry 除注释外零出现，入口仍为「全局找 main」，故 G49 的双 main 冲突（E3-004）未根治。graphOrder 只在 renderSummary / parseSummary 出现，解释器不消费，锁文件 order 字段形同虚设。双通道仅兑现正向（import 目标不是模块 → ToolchainFailure.importTargetNotModule），反向未实现，DoD 第 5 条只过一半。三者均登记为第 9 节缺陷，按项目工作法不在本批修复"
 
 [[evidence]]
@@ -390,7 +390,7 @@ assertion = "G52 收尾补修两项：Def-1（resources 根检，双通道至此
 spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 9 节 Def-1 / Def-7；docs/spec/pini-spec-v0.md §2.5 与 G52 决策行"
 code_ref = "Sources/PiniCore/Module/ModuleToolchain.swift：ToolchainError.resourceTargetIsModule（resources 循环的根检）；Summary.modules / Summary.resources 元组增 tap 与 source，parseSummary 回读；verify 的 originSuffix 回显来源；Tests/.../TapFetcherTests.swift testResourceTargetThatIsAModuleIsRejected / testSummaryRoundTripsTapSourceAndVerifyEchoesOrigin"
 validated_at = "2026-09-04T09:35+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：全量 1159 执行 / 112 跳过 / 0 失败（补修前 1157，+2）。Def-1 判据 = 资源目标根含 pini.toml 即抛错并指引改用 [require]，只查根不查深层（R7 明定）。Def-7 的动机：此前 renderSummary 写 tap/source/commit 而 parseSummary 全丢弃——commit 恒为 - 时无人察觉，批 7 使其成真值后暴露；回读后 verify 报错形如「模块 X 内容与锁文件不符（deps/X）；来源 <url>」，篡改时才知道该去哪里核对。两项均带 1 个用例。剩余 Def-2/3/4/5/6/8 维持未修，按项目工作法由后续批次承接"
 
 [[evidence]]
@@ -399,7 +399,7 @@ assertion = "G52 第二批补修：Def-6（`[replace]` 三种形态全部生效 
 spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 第 3.7 节（D13）/ 第 9 节 Def-5 / Def-6 / Def-9..Def-12；docs/spec/pini-spec-v0.md §2.5 版本与命令、G52 决策行"
 code_ref = "Sources/PiniCore/Module/ModuleToolchain.swift：enum Replacement（version / local / fork）、parseReplace、stripVersionPrefix、replaceTapName、resolve 内的 replacements 预注入约束与 spec/tap 改写；Tests/PiniTests/ModuleToolchainTests/TapFetcherTests.swift testParseReplaceClassifiesThreeForms / testReplaceVersionOverrideRaisesSelection / testReplaceVersionOverrideConflictSurfacesReplaceConstraint / testReplaceForkRedirectsSourceAndRecordsReplaceTap / testReplaceForkPinParticipatesInMVS / testReplaceFileFormDoesNotFetchIntoLocalDirectory / testDependencyReplaceIsIgnored；Tests/PiniTests/ModuleSystemTests/ModuleSystemTests.swift testThreeLevelNestedModulesStaySeparate + demo3/ 夹具"
 validated_at = "2026-09-04T10:05+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：全量 1167 执行 / 112 跳过 / 0 失败（补修前 1159，+8：Def-6 的 7 个 + Def-5 的 1 个）。Def-6 判据：D13 三种形态此前只有 file: 生效（resolve 里 `rep.hasPrefix(\"file:\")` 单点判断），版本覆盖与 fork 静默落空；现由 parseReplace 归类，版本类（覆盖与 fork 的 @pin）以 requirer `<replace>` 预注入约束账本——必须在遍历前注入，否则 ensureMaterialized 首抓看不到、只能靠事后复核兜底（白抓一次 + 多走一轮迭代）。fork / local 形态锁文件 tap 记 replace。Def-5 判据：三层 app ⊃ frontend ⊃ syntax，frontend 与 syntax 各自定义同名 public 符号 取值（100 / 10），输出 110；lex.pini 距其清单两层，是唯一能验证 loadDirectory 祖先回溯递归性的位置。附带发现并新登记 Def-9（versionComponents(\"v1.0\") → [0]）/ Def-10（file: 替换 + 远程 tap 会往用户本地目录 fetch+checkout，批 7 回归，本次随 Def-6 一并修）/ Def-11（loadDirectory 递归扫子树 vs ModuleDependencyLoader 只扫模块根级）/ Def-12（锁文件 tap 取最后遍历到的 requirer 边，多 requirer 时无确定规则）——均未修，仅登记"
 
 [[evidence]]
@@ -408,7 +408,7 @@ assertion = "G52 批 9 全量收口：§9 全部 12 项缺陷闭环——Def-3�
 spec_ref = "docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md 状态块（五批次表）/ 第 9 节（全表改写）；docs/spec/pini-spec-v0.md G52 决策行（批 9 收口句）；docs/spec/pini-project-spec.md §3.3 资源寻址注记；docs/spec/pini-roadmap-next.md T2 与 §8.1 批 9 行"
 code_ref = "Sources/PiniCore/Common/FileLoader.swift：ModuleManifest.entryPoints（[[bin]].entry / [lib].entry 解析去重）；Sources/PiniCore/Interpreter/Interpreter.swift：entryFiles / mainDeclaringFile / checkEntryConsistency / normalizeEntryPath（executeMain 与 runSuspendable 双路接入）、registerDecls 的 funcDecl main 记录；Sources/PiniCore/Interpreter/RuntimeError.swift：entryMainMismatch（runtime-018）；Sources/PiniCLI/main.swift：目录 run 注入 entryFiles；Sources/PiniCore/Module/ModuleToolchain.swift：Resolution.graphOrder 导出视图定性；Sources/PiniCore/Module/ModuleDependencyLoader.swift + FileLoader.parseUnit：扫描按 deps 父目录划分；Tests/PiniTests/CLIDirectoryTests/CLIDirectoryTests.swift testEntryDeclaredAndSatisfiedRunsNormally / testEntryInSubdirectorySrcLayout / testEntryMismatchThrowsDiagnosticError / testNoEntryKeepsGlobalMainLookup；Tests/PiniTests/ModuleSystemTests/ModuleSystemTests.swift testDependencyChainIsReadyBeforeDependentRuns；Tests/PiniTests/ModuleToolchainTests/ModuleToolchainTests.swift testSummarySourcePrefersLexicographicallyFirstRequirer"
 validated_at = "2026-09-04T11:20+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：全量 1178 执行 / 112 跳过 / 0 失败（批 8 收口 1167，净增 11 = Def-9 的 3 + Def-12 的 1 + Def-11 的 2 + Def-3 的 4 + Def-2 的 1；1167+11 与逐批实测吻合）。Def-3 判据：entry 四态 CLI 实测——无声明跑 42 不变 / 声明满足跑 42 / 声明指错 other.pini 报 entryMainMismatch 且 rc=1 / src/ 布局子目录 entry 跑 7；变异实验（checkEntryConsistency 改 no-op）使 mismatch 测试转红。Def-12 判据：夹具经两轮迭代才具区分力——旧规则（每边覆写 = 最后遍历者胜）等价于「最浅 requirer 胜出」，与字典序规则只在浅层 requirer 名字典序更大时分岔，夹具取 z（浅）/a（深）分得 tz vs ta；回退验证测试真转红。Def-2 判据：纯注册顺序无可观测副作用，钉的是「依赖环境先于依赖者可用」——三层 app ⊃ mid ⊃ leaf 链，mid 函数体解析 leaf 导出符号、app main 调 mid，输出 7；graphOrder 注释定性为导出视图。Def-8：规范侧关闭（v1 不提供 + 判据：零真实用例，待第二个用例再定型），无代码变更。自举仓 Def-4：examples/pini.toml 使 R1 自切，摘掉 exclude 实测 check 仍 15 文件 ⇒ 两机制独立；pini test . 70 通过不变。E3-004 更正：双 main 经实测上游已诊断为 redeclared symbol，工单原文「未根治」表述有误，已随 Def-3 行改写更正"
 
 [[evidence]]
@@ -417,7 +417,7 @@ assertion = "F5 缺陷实测复现并立案：安全上下文（main|func）内�
 spec_ref = "docs/issue-unsafe-gate-foreign-2026-09-04.md（立案全文：复现探针 + 门禁位点表 + 修复方向）；docs/spec/pini-spec-v0.md §A.2.2（块内函数自动 |unsafe）与 §2.7；docs/spec/issue/archive/issue-draft-audit-disposition-2026-08-31.md §五 F5 行（改指新工单）"
 code_ref = "Sources/PiniCore/Type/TypeChecker.swift：checkExpression 的 .addressOf / .unary(.forceUnwrap) 门禁（unsafeContextDepth）与 .unsafe 消耗点——foreign 调用位无门禁即本缺陷"
 validated_at = "2026-09-04T17:40+08:00"
-status = "FRESH"
+status = "STALE"
 note = "探针实测：/tmp/f5probe（[ffilib|foreign] 声明 ffi_malloc(size: U64,) -> (*U8,)，vendored libffilib.dylib + search_paths=[\"lib\"] + libs），main|func 内裸调 let p = ffi_malloc(16) → pini run . 正常输出 *U8@0x...，无 E4-001/无运行时拦截。与 ADR-028 D-4（空 unsafe 消耗点无害）正交：本缺陷是『该消耗而未消耗』反向缺口"
 
 [[evidence]]
@@ -426,7 +426,7 @@ assertion = "ffi-module 工单 §二 G2 的『load 返回动态 Any，仅 unsafe
 spec_ref = "docs/spec/pini-spec-v0.md §2.7（指针原语 load/store/addressof 按元素类型编解码行）；docs/issue-ffi-module-2026-08-27.md §二 G2（时间线注记落点）"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift：registerPointerBuiltins（load 按元素类型编解码）；Sources/PiniCore/Type/TypeChecker.swift：load 调用无 unsafe 上下文门禁（与 E-110 同位点族）"
 validated_at = "2026-09-04T17:40+08:00"
-status = "FRESH"
+status = "STALE"
 note = "探针实测：/tmp/f5probe main|func 内 let v = load(p)（p: *U8）→ 正常输出 0（新分配内存清零，U8 解码），无 E4-001。工单处置：G2 加时间线注记而非改写历史观测；示例注释更新列为后续项"
 
 [[evidence]]
@@ -435,7 +435,7 @@ assertion = "de-facto-grammar-pinning F1（算符→opText 映射表 17 项）�
 spec_ref = "docs/spec/pini-spec-v0.md 投影主题（opText 映射表 + 自举对齐句，约 :886）；docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md §F1（补落地注记落点）"
 code_ref = "docs/spec/pini-spec-v0.md 投影主题（文档钉定类证据，无代码变更）；自举侧对齐实现见 examples/selfhost/src/parser/parser.pini（历史交付）"
 validated_at = "2026-09-04T17:40+08:00"
-status = "FRESH"
+status = "STALE"
 note = "查证方式：spec 全文 grep opText 命中映射表与自举对齐声明；F2（logicalAnd/logicalOr/power 死面清理）/F3（前缀 ++/-- 语义）/F4（tuple-or-paren 四条）grep spec 无对应钉定条目，维持 Proposed；2026-09-04T17:55+08:00 批（工单整理·矛盾合并取证）：新增 E-110..E-112——E-110 F5 缺陷实测复现与立案（main|func 裸调 ffi_malloc 无 unsafe 不拦；门禁位点 = TypeChecker.checkExpression，foreign 调用位无 unsafeContextDepth）、E-111 ffi-module G2 语义过时实测（main 裸 load 按元素类型编解码返回 0，ADR-015 前旧观测）、E-112 pinning F1 opText 表已入 spec 钉定（矛盾 B 消解）。**本次仅新增并现跑重筛 E-110..E-112；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T19:30+08:00 批（活跃提案检查与裁决转化）：新增 E-113——F4 tuple-or-paren 注记批 3 记号漂移实测（parseTupleOrParen 用 `=` 判定、旧 `:` 报废弃）与 spec 两处产生式修正（F4 注记 + collection-literal）、tuple-element 产生式补全；同批回填 io-path 提案 LANDED 状态（其批 5 落地先于状态行，E-087..E-090 在位）并归档。**本次仅新增并现跑重筛 E-113；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T19:45+08:00 批（批 A 小缺陷打包：F5/F3/F2/G51）：新增 E-114..E-116——E-114 F3 前缀 ++/-- 语义修复（表达式位/成员/下标写回 + 不可赋值静态拒绝）、E-115 F5 foreign 调用 unsafe 门禁（E-110 复现件转红，迁移面 1 行）、E-116 F2 死面删除 + G51 test 关键字收编（宿主对齐自举 kw_test）。全量 1183/112/0。**本次仅新增并现跑重筛 E-114..E-116；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T20:05+08:00 批（批 C1 字符谓词 LLVM）：新增 E-117——is_ascii_digit LLVM 实现（pini compile 实测）+ 三内建显式 unsupported 收口挂账；argv/moduleRoot 的 unsupported 声明经查批 5 已在位（又一次落地先于账本）。G51 审计工单全闭环归档。**本次仅新增并现跑重筛 E-117；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T20:20+08:00 批（批 D 设计级裁决）：新增 E-118——[T] 标注提案三阶段完成（形态 A 采纳 / 契约不动 / 构造形态否决）、FFI P2 转正式提案、G1 文件级作用域钉定入 spec §2.7（FFI P3 出账）。**本次仅新增并现跑重筛 E-118；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T20:25+08:00 批（批 C2 M2 出清）：新增 E-119——M2 分歧前提被语义演进证伪（下标=裸值双后端对齐、some/none 实挂 get 通道），20 个 M2 skip 移除（clang 通道实证绿），LLVM get/unchecked 零实现新立案。；2026-09-04T21:20+08:00 批（批 E dot-case 点号用例构造）：新增 E-120——dotCaseRef 未解析节点全链路落地（D-1 Swift 同构、期望类型优先决议、遮蔽豁免语义差异点、LLVM 唯一名可用歧名 D-3 报错+立案）。**本次仅新增并现跑重筛 E-120；存量条目未重新验证，按其自身 validated_at 判定。**；2026-09-04T21:40+08:00 批（批 F [T] 元素标注实施）：新增 E-121——refineCollectionLiteral 期望类型下推三族逐元素校验 + append 实参检查（D-β 仅检查契约不动），实施前混型静默通过缺口实测入档。**本次仅新增并现跑重筛 E-121；存量条目未重新验证，按其自身 validated_at 判定。**"
 
 [[evidence]]
@@ -444,7 +444,7 @@ assertion = "de-facto-grammar-pinning F4（tuple-or-paren 四条消歧）spec �
 spec_ref = "docs/spec/pini-spec-v0.md §A primary-atom / tuple-element / collection-literal 产生式（F4 消歧注记）；docs/spec/issue/archive/issue-de-facto-grammar-pinning-2026-08-30.md §F4（落地注记）"
 code_ref = "Sources/PiniCore/Parser/Parser.swift parseTupleOrParen（:2918 起，parseElement 内 .assign 判定 + .colon 报废弃）与 parseCollectionLiteral（字典 .assign 判定 + .colon 报废弃）"
 validated_at = "2026-09-04T19:30+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：parseTupleOrParen 内 `case .assign(_) = peek(offset: 1)` 为标签判定、`.colon` 分支 throw『元组标签须用 =』；spec 修正为纯文档变更（无代码改动），F2/F3 经裁决转宿主 issue（issue-binop-dead-cases / issue-prefix-increment-semantics，均 2026-09-04）。同批发现 io-path 提案状态『待裁决』滞后于其 2026-09-02 批 5 落地（spec G58 / ADR-030 / E-087..E-090 在位），已回填 LANDED 并归档"
 
 [[evidence]]
@@ -453,7 +453,7 @@ assertion = "F3 三处缺陷修复落地：前缀 ++/-- 语句位/表达式位�
 spec_ref = "docs/spec/pini-spec-v0.md §A 前缀 ++/-- 注记 / unary-expr；docs/spec/migration-2026-09.md §F；docs/issue-prefix-increment-semantics-2026-09-04.md（LANDED）"
 code_ref = "Sources/PiniCore/Interpreter/Interpreter.swift evaluateIncDec（runExpressionStatement 标识符特例写回移除防双写）；Sources/PiniCore/Type/TypeChecker.swift checkExpression .unary 静态门禁"
 validated_at = "2026-09-04T19:45+08:00"
-status = "FRESH"
+status = "STALE"
 note = "探针实测：var m = ++n → m=6 且 n=6（旧缺陷 n=5）；++o.x → 4；--arr[0] → 6；++1 → 静态 mismatch。测试 testUnaryIncDecExpressionWriteback / testUnaryIncDecMemberSubscriptWriteback / testCheckIncDecLiteralTargetRejected / testCheckIncDecIdentifierTargetAccepted。旧行为依赖全仓现存为零（F3 工单实测）"
 
 [[evidence]]
@@ -462,7 +462,7 @@ assertion = "F5 foreign 调用门禁落地：TypeChecker 新增 foreignFunctionN
 spec_ref = "docs/spec/pini-spec-v0.md §2.7 foreign 调用门禁行；docs/issue-unsafe-gate-foreign-2026-09-04.md（LANDED）；docs/spec/migration-2026-09.md §F"
 code_ref = "Sources/PiniCore/Type/TypeChecker.swift foreignFunctionNames + checkExpression .call 调用位门禁"
 validated_at = "2026-09-04T19:45+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：/tmp/f5probe main 裸调 ffi_malloc → E4-001（修复前不拦）；examples/ffi_module/cstring.pini 迁移 1 行（比较测试裸调 ffi_strcmp 加 unsafe）后 pini test 2/2；examples/ffi.pini 裸调全在 |unsafe 体内保持绿。测试 testCheckForeignCallRequiresUnsafeContext"
 
 [[evidence]]
@@ -471,7 +471,7 @@ assertion = "F2 死面删除 + G51 test 关键字对齐落地：BinaryOperator �
 spec_ref = "docs/spec/pini-spec-v0.md 规则 3.11 / §A.1 KEYWORD 注记；docs/issue-binop-dead-cases-2026-09-04.md（LANDED）；docs/spec/issue/archive/issue-spec-impl-syntax-audit-2026-08-28.md（收敛项 3 闭环）"
 code_ref = "Sources/PiniCore/AST/Expressions/BinaryExpr.swift（case 已删）；Sources/PiniCore/Lexer/Token.swift Keyword.test；Sources/PiniCore/Parser/Parser.swift parseIdentifier 白名单（keyword(.test) → 修饰符串 test）"
 validated_at = "2026-09-04T19:45+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：全量 1183 执行 / 112 跳过 / 0 失败（基线 1178 + 新增 5 测试）；pini test examples/ffi_module/cstring.pini 2/2 与 examples/test.pini 收集执行正常（G51 收集路径不变证据）；自举 lexer.pini 关键字表原注『host has pass, lacks test』——本批后宿主补齐，镜像达到一致"
 
 [[evidence]]
@@ -480,7 +480,7 @@ assertion = "批 C1：char 组 LLVM 挂账收口——is_ascii_digit 在 LLVM �
 spec_ref = "docs/spec/pini-spec-v0.md G45 行（补 LLVM 端状态）；docs/issue-lexer-gap-closure-2026-08-29.md §6；docs/CHANGELOG.md Unreleased"
 code_ref = "Sources/PiniCore/CodeGen/Emitters/BuiltinsEmitter.swift generateBuiltinIsAsciiDigit；Sources/PiniCore/CodeGen/Emitters/ExprEmitter.swift 内建分派（is_ascii_digit + 三 unsupported 分支）"
 validated_at = "2026-09-04T20:05+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：pini compile 探针——'7'→真打印 1、'x'→假跳过、''→假、'7x' 首字节 '7' 判真（与解释器 grapheme 首字符一致）、输出 1↙9 与 4↙5；is_letter 裸调 → E6-002。测试 testIsAsciiDigitViaLLI（本环境无 lli 随套件 skip，E-076 惯例）+ testIsLetterUnsupportedViaIRGen（IR 生成期断言，实跑通过）。M2（下标 some/none 对齐，~20 个 XCTSkip 恢复）体量大，拆为独立批次 C2 另行规划"
 
 [[evidence]]
@@ -489,7 +489,7 @@ assertion = "批 D 设计级四项裁决落地：① [T] 数组元素标注提�
 spec_ref = "docs/spec/pini-spec-v0.md §2.7 foreign 符号作用域行（G1）；docs/spec/issue/archive/proposal-array-element-annotation-2026-09-04.md（裁决后定稿，已归档）；docs/spec/issue/proposal-comparison-width-2026-09-04.md（新登记）；docs/issue-ffi-module-2026-08-27.md（P2 转出 / G1 钉定 / P3 收口注记）"
 code_ref = "Sources/PiniCore/Parser/Parser.swift parseTypeAnnotation（[I32]→Array<I32> / [K:V]→Dictionary / {T}→Set 三族已在）；append/pop 契约实测（Interpreter 内建）"
 validated_at = "2026-09-04T20:20+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：var xs: [I32] = [] 可解析可运行；xs = xs.append(1) → [1]；pop 空数组 → [[], null]、[7] 上 → [[], 7]（(剩余数组, 弹出值) tuple 打印形态）；var xs = [I32]() → E5-001 undefined variable 'I32'（字面量歧义实锤）。G-P2 清账路径确立（标注显式元素身份 + 契约惯用法保持）。语义检查层实施另立实现批次"
 
 [[evidence]]
@@ -498,7 +498,7 @@ assertion = "批 C2：M2 账面出清——20 个 M2 XCTSkip 全部移除。本�
 spec_ref = "docs/issue-host-optional-slice-2026-08-28.md（Status 改 LLVM-M2-CLEARED + M2 出清记录段）；docs/issue-llvm-get-unchecked-2026-09-04.md（新立案）"
 code_ref = "Tests/PiniTests/RuntimeBackendTests/RuntimeBackendTests.swift（18 skip 移除）；Tests/PiniTests/CodeGen/IRExecutionTests/IRExecutionTests.swift 与 IRPrintGoldenTests（各 1）；Sources/PiniCore/CodeGen/Emitters/AggregateEmitter.swift generateEnumCaseConstruction（Optional ABI 在位证据）；Sources/PiniCore/Interpreter/Interpreter.swift 内建分派 get/unchecked 双通道（:3146/:3157/:3163）"
 validated_at = "2026-09-04T20:25+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：print(xs[0]) → 7（裸值）、print(xs[5]) → E5-005（非 none）——直接证伪工单『下标读返回 some/none』前提；xs.get(i) → some(v)/none（uncheckedOrNone 分派）；var xs = [I32]() 类比验证 get 在 LLVM 端零分派（grep '\"get\"' Sources/PiniCore/CodeGen 零命中）。移除 skip 后三套件 0 failures；testArrayViaRuntimeClang passed (0.753s)"
 
 [[evidence]]
@@ -507,7 +507,7 @@ assertion = "批 E：dot-case 点号用例构造落地——新增 Expression.do
 spec_ref = "docs/spec/pini-spec-v0.md primary-atom 产生式新增 '.' IDENT + 点号构造注；enum-case D1 注补点号指针；docs/spec/issue/archive/proposal-dot-case-construction-2026-08-30.md（归档）"
 code_ref = "Sources/PiniCore/AST/Expressions/Expression.swift dotCaseRef；Sources/PiniCore/Parser/Parser.swift parsePrimaryAtom 前导点分支；Sources/PiniCore/Type/TypeInference.swift infer .call/.dotCaseRef 两臂；Sources/PiniCore/Type/TypeChecker.swift refineEnumCaseConstruction/noteBareCaseOutcome/checkExpression；Sources/PiniCore/Interpreter/Interpreter.swift evaluateDotCaseConstruction/evaluateDotCaseReference；Sources/PiniCore/CodeGen/Emitters/ExprEmitter.swift generateExpression/generateCall dotCaseRef 分支；Tests/PiniTests/DotCaseConstructionTests/（7 fixture）；examples/enum-dot-case.pini"
 validated_at = "2026-09-04T21:20+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：package 探针五场景全绿（唯一名/歧义+标注 varDecl/实参位/无实参歧义+标注/Optional none·some）；pini compile 唯一名端到端输出 1+轮子(4)，歧义名 E6-004。单文件 pini run 类型层宽松（既有行为，与裸名对称）故歧义 dot 运行期报错——example 注记说明；裸名歧义 return 位 E4-001 为 D1 第 3 档既有设计（dot 同轨继承）。LLVM 歧义期望类型线程缺位跟踪于 issue-llvm-dotcase-expected-type-2026-09-04"
 
 [[evidence]]
@@ -516,5 +516,24 @@ assertion = "批 F：[T] 元素标注语义检查落地（D-β：标注仅做检
 spec_ref = "docs/spec/pini-spec-v0.md type-annotation 产生式元素标注检查注；docs/spec/issue/archive/proposal-array-element-annotation-2026-09-04.md（归档，落地记录）"
 code_ref = "Sources/PiniCore/Type/TypeChecker.swift refineCollectionLiteral（:857）/ varDecl 标注位（:1462）/ assign identifier（:1526）与 member（:1561）target 位 / append 实参检查位；Tests/PiniTests/ArrayElementAnnotationTests/（6 fixture）"
 validated_at = "2026-09-04T21:40+08:00"
-status = "FRESH"
+status = "STALE"
 note = "实测：pini check 单文件 [1, \"x\"] 报 E4-001（expected I32, got String）；package run 同拦；append(\"a\") 报 E4-001；xs = [\"a\", \"b\"] 报 E4-001；[Any] 混型与无标注 var ys = [] 累积器通过（契约保护 testWildcardAndUnannotatedUnchanged）。注意：改动后首轮 package 探针撞陈旧二进制时序给出假阴性（pini run 在 build 后同命令执行仍见旧行为），复跑即拦——探针结论以 check 单文件 + 复跑双证为准"
+
+
+[[evidence]]
+id = "E-122"
+assertion = "批①（spec 反录入·会话特赦）：EBNF 对齐实现真值——收编尾逗号全形态（参数表/返回元组/调用实参/类型注解元组/数组·字典·集合字面量，探针 p01/04/05/06/07/20/26 全 PASS）、调用位标签 = （原 call-arg [IDENT ':'] 与实现矛盾，探针 p02 PASS/p03 拒）、后缀 ! 强制解包（探针 p15，AST forceUnwrap，none→trap）、元组解构 var/let (模式元组) = 初始化器必带（探针 p14/17/25）、扩展块泛型 ((盒<T>))（探针 p08）；match-pattern 限定形态 IDENT '.' IDENT 移除（探针 p09 E2-001，A10 提案登记不反录）。纯 spec/文档变更，零代码改动"
+spec_ref = "docs/spec/pini-spec-v0.md §A func-signature/func-literal/postfix-suffix/call-arg/generic-construct/type-annotation/collection-literal/primary-atom/extension-decl/var-decl/match-pattern 各产生式及注记；docs/spec/issue/issue-spec-backfill-survey-2026-09-05.md（勘测矩阵 15 面）"
+code_ref = "docs/spec/issue/probes-backfill-2026-09-05/（26 探针，pini parse 可重跑）；Parser.parseVarDecl（解构）/parsePatternTuple/parseExtensionDecl（泛型扩展）/parsePrimarySuffix（! 后缀）/parseIdentifier（实参标签报错提示）"
+validated_at = "2026-09-05T19:30+08:00"
+status = "FRESH"
+note = "实测：全部 26 探针 pini parse 逐项复跑；批① 为纯文档反录（用户授权仅限本会话，spec-first 纪律事后恢复）；草稿意图未实现项（A6 默认参数/A7 单类型返回糖/A10 限定解构/A13 path 枚举）一律登记不反录。副产品缺陷候选：trait 块终止性（p21/p23/p24），立案 docs/issue-trait-body-termination-2026-09-05.md"
+
+[[evidence]]
+id = "E-123"
+assertion = "批②（spec 反录入）：腐烂行号锚点清零——§A.4 出处列 11 条 + spec 全文 6 处（§2 组合表/G2 缺口行/嵌入组合注/await·wait 术语注/=> 派发注/A.6.4 调用链）共 17 处 Parser.swift:NNNN 全部换符号名锚点（parseTopLevelDecl/parseUnary/parseGenericConstructLookahead/parseBracketDecl/isBareFunctionDeclStart/parseBareFuncDecl/parseMatch/parseAssignment/parsePrimary/parseStructDecl/parseFuncDecl，均经 grep 验证存在）；§A.4 增出处列约定注（禁行号、符号名可 grep 兑付）。§7.5 DoD 第一条禁止行号引用的规范自违由此收口"
+spec_ref = "docs/spec/pini-spec-v0.md §A.4 出处列 + §2/§3.1 各锚点位；docs/spec/issue/issue-spec-backfill-survey-2026-09-05.md"
+code_ref = "Sources/PiniCore/Parser/Parser.swift（锚点符号所在：parseTopLevelDecl :348 / parseBracketDecl :480 / parseBareFuncDecl :1503 / parseMatch :2279 / parseAssignment :2472 / parseUnary :2645 / parsePrimary :2726 / parseTupleOrParen :2927 / parseGenericConstructLookahead :2820 / parsePrimarySuffix :3064）"
+validated_at = "2026-09-05T19:30+08:00"
+status = "FRESH"
+note = "实测：grep -cE Parser.swift:[0-9] pini-spec-v0.md = 0（清零）；11 个锚点符号名逐一 grep 确认在位。注意：code_ref 中行号为登记时点定位辅助（证据表自身属机器元数据豁免字段），spec 正文零行号"

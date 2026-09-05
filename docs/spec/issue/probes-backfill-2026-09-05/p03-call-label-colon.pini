@@ -1,0 +1,5 @@
+f|func(a: I32, b: I32,) -> (I32,):
+    return a
+main|func() -> ():
+    print(f(a: 1, b: 2),)
+    return

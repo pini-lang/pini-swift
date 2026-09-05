@@ -18,6 +18,7 @@
 - **`[replace]` 三种形态**（G52 批 8 / D13）：版本覆盖（只换版本）、`file:`（换本地目录）、`github:`/`git:` fork（可带 `@版本`）；版本类替换并入 MVS 约束当下界；fork 与本地形态锁文件 `tap` 记 `replace`
 
 ### Changed
+- **spec 反录入批①②（会话特赦，2026-09-05）**：EBNF 收编既成事实与修正笔误级漂移——尾逗号全形态（参数/返回/实参/类型元组/集合字面量）、调用位标签 `=`（原 `[IDENT ':']` 与实现矛盾）、后缀 `!` 强制解包、元组解构 `var (a, b) = rhs`、扩展块泛型 `((盒<T>))`；match-pattern 限定形态 `IDENT '.' IDENT` 移除（实现拒绝，A10 提案登记不反录）。批②：§A.4 及全文 17 处腐烂 `Parser.swift:NNNN` 行号全部换符号名锚点（grep 可兑付，符合 §7.5 DoD）。勘测矩阵与探针资产：`spec/issue/issue-spec-backfill-survey-2026-09-05.md` + `probes-backfill-2026-09-05/`（26 探针）；副产品立案 issue-trait-body-termination-2026-09-05（trait 块后接顶级声明解析失败，Open 不修）
 - **`[[bin]].entry` / `[lib].entry` 生效**（G52 批 9 / Def-3）：声明后 `main` 必须定义在声明的入口文件，否则报 `entryMainMismatch`（runtime-018）；**未声明沿用「全局找 main」**，既有工程零行为变更
 - `graph.order` 定为**导出视图**（外部工具消费，非解释器输入）；解释器的依赖就绪顺序由 `loadImports` 递归结构保证，并以三层依赖链测试钉住
 - 模块扫描深度按**来源**划分：`deps/` 落地根只扫根级（远程清单省解析），其余目录递归（本地模块 `src/` 布局被 import 时正常加载）
