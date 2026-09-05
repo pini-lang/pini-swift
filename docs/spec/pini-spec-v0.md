@@ -124,7 +124,7 @@
 | `var` / `let` 变量 | 已定义 | ✅ | Provisional | `Token.swift` `Keyword` |
 | `func` 函数声明 | 已定义 | ✅ | Provisional | `Parser.parseFuncDecl` |
 | 函数体强制缩进 ≥1 层（§A.2.3 `func-body` 仅 `INDENT { statement } DEDENT`；禁止顶级内容态顶格累积语句；trait 抽象方法豁免） | 已定义且已实现（任务 #13 草稿意图采纳） | ✅ | Provisional | `Parser.parseBareFuncDecl` 强制 INDENT / `ParserTests.testParseTopLevelFunctionBodyWithoutIndentRejected` |
-| 测试函数块 `|test`（`名称|test(参数元组,) -> (返回元组,)` / `{名称|test}(签名)`；`pini test [path]` 收集范围内顶级 `|test` 逐一执行——收集单位 = 模块（G49）：无参 = 模块根全量收集，显式 `<path>` 限定范围且可加回 `[build] exclude` 排除目录；参数按类型注入零值；`Interpreter.runTests` 为运行时入口。**测试入口四项（H-5/A14 裁决，2026-08-31 明写；行为已符合）**：① 测试入口不直接暴露给用户——由工具对 `|test` 的处理交付；② 测试执行顺序不保证，测试之间不得有顺序依赖；③ 收集粒度三形态——默认模块根全量收集 / 显式路径限定收集 / 单文件收集；④ 测试入口与 main 入口互斥——`pini test` 不执行 main，`pini run` 不执行测试） | 已定义（v0.42.0，见 G41；收集单位更正见 G49） | ✅ | Provisional | `pini test` 子命令 / `TestBlockTests` / `TestBlockSwiftTests` / `examples/test.pini` |
+| 测试函数块 `|test`（`名称\|test(参数元组,) -> (返回元组,)` 裸声明——2026-09-05 修正批勘误：`{名称\|test}(签名)` 花括号形态系宿主实现超售（TestBlockTests 扩展，与 `\|func` 同机制），草稿 §测试函数块仅要求显式 `\|test` 裸声明，花括号形态已随批③ E2-005 一并拒绝；`pini test [path]` 收集范围内顶级 `\|test` 逐一执行——收集单位 = 模块（G49）：无参 = 模块根全量收集，显式 `<path>` 限定范围且可加回 `[build] exclude` 排除目录；参数按类型注入零值；`Interpreter.runTests` 为运行时入口。**测试入口四项（H-5/A14 裁决，2026-08-31 明写；行为已符合）**：① 测试入口不直接暴露给用户——由工具对 `|test` 的处理交付；② 测试执行顺序不保证，测试之间不得有顺序依赖；③ 收集粒度三形态——默认模块根全量收集 / 显式路径限定收集 / 单文件收集；④ 测试入口与 main 入口互斥——`pini test` 不执行 main，`pini run` 不执行测试） | 已定义（v0.42.0，见 G41；收集单位更正见 G49） | ✅ | Provisional | `pini test` 子命令 / `TestBlockTests` / `TestBlockSwiftTests` / `examples/test.pini` |
 | `assert` 内建（`assert(条件: Bool,)` / `assert(条件: Bool, 消息: String,)`；条件 false 抛 `RuntimeError.assertionFailed`，LLVM 端经 `@bk_panic` 终止） | 已定义（v0.42.0，见 G41） | ✅ | Provisional | `BuiltinFunctionTests` / `PiniRuntime.pini_panic` |
 | 方法 `\|self` | 已定义 | ✅ | Provisional | `Keyword.self` |
 | 类型声明定界符 `( ) { } [ ] < >` | 已定义（§2.1） | ✅ | Provisional | `Parser.parseTopLevelDecl` |
@@ -734,11 +734,9 @@ trait-method    ::= IDENT ['|' ('self' | 'own')] func-signature [func-body];
 
 (* 扩展块 *)
 extension-decl  ::= '((' IDENT ['<' generic-params '>'] [':' type-annotation] '))' method-body   (* 结构扩展 *)
-                  | '{{' IDENT ['<' generic-params '>'] [':' type-annotation] '}}' method-body   (* 对象扩展 *)
-                  | '[[' IDENT ['<' generic-params '>'] [':' type-annotation] ']]' method-body;   (* 枚举扩展 *)
-(* 特征扩展无语法（2026-09-05 批③移除 `'<<' IDENT '>>'`）：词法层 `<<`/`>>` 恒合并为
-   移位 token（与 §A.2 二元移位互斥），该形态不可达（实测 E2-006）；宿主 dispatch 位
-   对应分支同为死面。特征扩展需求若再现，走 spec §1.3 另立记号提案。 *)
+                  | '{{' IDENT ['<' generic-params '>'] [:' type-annotation] '}}' method-body   (* 对象扩展 *)
+                  | '[[' IDENT ['<' generic-params '>'] [':' type-annotation] ']]' method-body   (* 枚举扩展 *)
+                  | '<<' IDENT '>>' trait-body;                         (* 特征扩展 *)
 (* 泛型扩展 `((盒<T>))`（2026-09-05 反录，探针 p08；规则 3.14 早有字样、产生式此前
    未收编）。`: 类型` 约束形态解析层接受但仅解析存储、合并仍按 targetType 名称匹配
    （parseExtensionDecl，探针 p21a）。 *)
@@ -1052,7 +1050,7 @@ EBNF 无法表达前瞻（lookahead），以下消歧规则是文法的**组成�
 | 3.1 | `await`/`wait` 前缀 join | `await`/`wait` 为关键字、仅作表达式起始位前缀 → 映射 `.join` AST（异步体挂起 / 同步阻塞，由 suspendMode 上下文决定）；`<=` 已回归**纯比较运算符**（中缀，无前缀 join 义） | Parser.parseUnary（await/wait 前缀分支）/ §2.4.1 |
 | 3.2 | **类型体内禁止函数声明** | 类型体内只允许字段声明。解析器在类型体中遇到函数声明头（`IDENT '('` 或 `IDENT '|' modifier`）→ 报错：方法应移至同文件扩展块中，并显式使用 `\|self` 或 `\|own` | Parser.swift（已实现，ADR-016）：parseStructDecl/parseObjectDeclContent/parseEnumDeclContent 抛 invalidStatement（`name|func` 顶级函数除外）；methodDefaultAssumption 状态机已移除 |
 | 3.3 | `'<'` 泛型构造 vs 比较 | 表达式右值位置：`IDENT '<' type-annotation {',' type-annotation} '>'` 且 `>` 后跟 `'('`/`'.'` 才判定 `generic-construct`，否则回退比较；`'>>'`（rightShift）→ 回退（不支持嵌套） | Parser.parseGenericConstructLookahead |
-| 3.4 | `'{名称}(...)'` 花括号函数已移除 | 行首 `'{名称}'` **恒为对象声明糖**（G51③）。旧花括号函数形态（object 糖引入前的函数声明办法）经治理流程移除（G51② 裁决 + 2026-09-05 批③落地）：宿主检测到 `'{…}'` 后随 `'('` 即报 E2-005 迁移提示——改裸声明 `名\|func(...)`，类型方法移扩展块显式 `\|self`。**唯一豁免**：`{名称\|test}(签名)` 测试块形态（测试函数块条目文档化）。原前瞻分派（函数 vs 对象）随之作废 | Parser.parseTopLevelDecl（braceFuncDeclModifier 迁移检测）/ Parser.parseTestBraceDecl |
+| 3.4 | `'{名称}(...)'` 花括号函数已移除 | 行首 `'{名称}'` **恒为对象声明糖**（G51③）。旧花括号函数形态（object 糖引入前的函数声明办法）经治理流程移除（G51② 裁决 + 2026-09-05 批③落地）：宿主检测到 `'{…}'` 后随 `'('` 即报 E2-005 迁移提示——改裸声明 `名\|func(...)`，类型方法移扩展块显式 `\|self`；`{名称\|test}(签名)` 花括号测试形态同属错误形态一并拒绝（2026-09-05 修正批撤销批③豁免；草稿仅要求显式 `\|test` 裸声明，见测试函数块条目）。原前瞻分派（函数 vs 对象）随之作废 | Parser.parseTopLevelDecl（isBraceFuncDecl 迁移检测） |
 | 3.5 | `'[名称\|...]'` 枚举 vs 对象 | `\|object` → 对象；`\|enum` → 枚举；**无修饰符默认枚举** | Parser.parseBracketDecl |
 | 3.6 | 裸函数声明判定 | `IDENT ('\|mod')? '<泛型>'? '(' 参数 ')'` 后跟 `'->'`/`'=>'` → 裸函数声明；否则语句 | Parser.isBareFunctionDeclStart / parseBareFuncDecl |
 | 3.7 | match `'default'` 消歧 | `default` 是普通标识符；在 match 子块内出现 `default:` 被**显式报错**（提示改用 `case _:`），不再特判为默认分支 | Parser.parseMatch（default: 报错分支） |

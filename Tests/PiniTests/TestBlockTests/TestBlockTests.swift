@@ -6,7 +6,9 @@ import Foundation
 ///
 /// 草稿：`测试函数块必须显示声明|test(形式参数元组,)->(返回元组,)`。
 /// 实现路径：test 块 = 函数声明带 `|test` 修饰符（modifiers 含 "test"），
-/// 花括号 `{名称|test}(签名)` 与裸函数 `名称|test(签名)` 两种形式（与 `|func` 同机制）。
+/// 仅裸函数 `名称|test(签名)` 一种形式。花括号 `{名称|test}(签名)` 系宿主实现
+/// 超售（与 `|func` 同机制顺手扩展），2026-09-05 修正批判定为错误形态并随
+/// 批③ E2-005 一并拒绝（草稿从未记载该形态）。
 ///
 /// 本文件只锁语法层 + 语义层接受性（R1 已拍板：pini test 子命令；
 /// R4 已拍板：允许参数注入——参数形态在子命令实现侧消费）。
@@ -37,12 +39,17 @@ final class TestBlockTests: XCTestCase {
         XCTAssertNotNil(f.body, "测试函数应有体")
     }
 
-    /// 意图：花括号形式 `{名称|test}(参数元组,) -> (返回元组,)` 同样解析出 modifiers 含 "test"。
-    func testParseTestBlockBraceForm() throws {
-        let module = try parse(source: try loadPiniFixture("testParseTestBlockBraceForm", filePath: #filePath) as String)
-        let f = try XCTUnwrap(firstTestFunc(in: module), "应解析出带 |test 修饰符的函数")
-        XCTAssertEqual(f.name, "加法测试")
-        XCTAssertTrue(f.modifiers.contains("test"))
+    /// 意图：花括号形式 `{名称|test}(签名)` 应被拒绝（错误形态，2026-09-05 修正批撤销
+    /// 批③豁免）——测试函数须用裸声明 `名称|test(...)`。
+    func testParseTestBlockBraceFormRejected() throws {
+        do {
+            _ = try parse(source: try loadPiniFixture("testParseTestBlockBraceForm", filePath: #filePath) as String)
+            XCTFail("`{名|test}(签名)` 应被拒绝（花括号测试形态属错误形态）")
+        } catch let error as ParserError {
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("已移除"), "报错应含迁移提示，实际：\(message)")
+            XCTAssertTrue(message.contains("test"), "报错应指向 `名|test(...)` 裸声明迁移路径，实际：\(message)")
+        }
     }
 
     /// 意图：`|test` 允许声明参数（R4 已拍板：允许参数注入）——参数照常解析进 params。
