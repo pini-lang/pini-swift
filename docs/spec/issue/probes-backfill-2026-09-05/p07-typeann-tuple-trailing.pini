@@ -1,0 +1,4 @@
+main|func() -> ():
+    let t: (I32, F64,) = (1, 2.5,)
+    print(t,)
+    return

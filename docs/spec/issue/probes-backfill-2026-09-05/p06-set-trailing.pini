@@ -1,0 +1,4 @@
+main|func() -> ():
+    var s: {I32} = {1, 2,}
+    print(s,)
+    return

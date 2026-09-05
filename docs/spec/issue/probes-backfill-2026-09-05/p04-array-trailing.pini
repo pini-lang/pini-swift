@@ -1,0 +1,4 @@
+main|func() -> ():
+    var xs: [I32] = [1, 2,]
+    print(xs,)
+    return

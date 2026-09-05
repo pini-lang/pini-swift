@@ -1,0 +1,4 @@
+main|func() -> ():
+    var d: [String: I32] = [x = 1, y = 2,]
+    print(d,)
+    return
