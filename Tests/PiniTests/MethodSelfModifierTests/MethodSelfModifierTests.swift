@@ -98,20 +98,20 @@ final class MethodSelfModifierTests: XCTestCase {
         }
     }
 
-    /// 顶级花括号函数 {name} 无需 self 修饰符
-    /// 意图：验证顶级花括号函数 {main} 无需 `self` 修饰符即可解析；应生成 .funcDecl 且函数名为 main。
-    func testTopLevelBraceFuncDoesNotNeedSelf() throws {
-        let source = try loadPiniFixture("testTopLevelBraceFuncDoesNotNeedSelf", filePath: #filePath)
+    /// 顶级花括号函数已移除（G51② 裁决，2026-09-05 批③落地）：`{main}(...)` 报迁移提示。
+    /// 意图：验证旧 `{main}` 函数形态被拒绝且报错指向裸声明迁移路径（钉住移除，防复活）。
+    func testTopLevelBraceFuncRejected() throws {
+        let source = try loadPiniFixture("testTopLevelBraceFuncRejected", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
 
-        XCTAssertEqual(module.declarations.count, 1)
-        if case .funcDecl(let fd) = module.declarations[0] {
-            XCTAssertEqual(fd.name, "main")
-        } else {
-            XCTFail("应为 .funcDecl")
+        do {
+            _ = try parser.parseModule()
+            XCTFail("`{main}() -> ():` 应被拒绝（花括号函数声明已移除）")
+        } catch let error as ParserError {
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("已移除"), "报错应含迁移提示，实际：\(message)")
         }
     }
 

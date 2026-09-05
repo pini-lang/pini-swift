@@ -17,6 +17,9 @@
 - resources 由 `refresh` 落地到 `.pini/resources/<name>/`（此前目录不存在则静默跳过，资源永远不进锁文件）
 - **`[replace]` 三种形态**（G52 批 8 / D13）：版本覆盖（只换版本）、`file:`（换本地目录）、`github:`/`git:` fork（可带 `@版本`）；版本类替换并入 MVS 约束当下界；fork 与本地形态锁文件 `tap` 记 `replace`
 
+### Removed
+- **花括号函数声明 `{名}(...)`（批③）**：object 语法糖引入前的古早函数声明形态，按治理流程移除（G51② 裁决 + 2026-09-05 用户确认；此前 spec 产生式已移除而宿主仍接受——G51② 行文「宿主已拒」当时与事实不符，本次落地后成立）。行首 `{名}` 恒为对象声明糖；检测到旧形态报 E2-005 迁移提示——改裸声明 `名|func(...)`，类型方法移扩展块显式 `|self`。**豁免**：`{名|test}(签名)` 测试块形态为 spec 文档化的现行形式，保留（`parseTestBraceDecl`）。语料零使用，`parseFuncDecl`（花括号通用形态）死面删除；两处钉定旧形态的测试改为拒绝断言。spec §A.4 规则 3.4 同步重写。详见 `docs/issue-remove-brace-function-decl-2026-09-05.md`
+
 ### Changed
 - **spec 反录入批①②（会话特赦，2026-09-05）**：EBNF 收编既成事实与修正笔误级漂移——尾逗号全形态（参数/返回/实参/类型元组/集合字面量）、调用位标签 `=`（原 `[IDENT ':']` 与实现矛盾）、后缀 `!` 强制解包、元组解构 `var (a, b) = rhs`、扩展块泛型 `((盒<T>))`；match-pattern 限定形态 `IDENT '.' IDENT` 移除（实现拒绝，A10 提案登记不反录）。批②：§A.4 及全文 17 处腐烂 `Parser.swift:NNNN` 行号全部换符号名锚点（grep 可兑付，符合 §7.5 DoD）。勘测矩阵与探针资产：`spec/issue/issue-spec-backfill-survey-2026-09-05.md` + `probes-backfill-2026-09-05/`（26 探针）；副产品立案 issue-trait-body-termination-2026-09-05（trait 块后接顶级声明解析失败，Open 不修）
 - **`[[bin]].entry` / `[lib].entry` 生效**（G52 批 9 / Def-3）：声明后 `main` 必须定义在声明的入口文件，否则报 `entryMainMismatch`（runtime-018）；**未声明沿用「全局找 main」**，既有工程零行为变更

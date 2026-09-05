@@ -399,16 +399,19 @@ final class GrammarConsistencyTests: XCTestCase {
                                              location: .dummy))
     }
 
-    /// 规则 4：`{...}` 后跟 `(` → 函数块；否则对象块
-    /// 意图：验证 {…} 块后跟 ( 解析为函数声明、否则为对象声明两种路径。
-    func testDisambigBraceFuncVsObject() throws {
-        let funcModule = try parse(try loadPiniFixture("testDisambigBraceFuncVsObject", filePath: #filePath) as String)
-        guard case .funcDecl(let f) = funcModule.declarations[0] else {
-            XCTFail("`{f|func}(...)` 应解析为 funcDecl，实际：\(funcModule.declarations[0])"); return
+    /// 花括号函数声明已移除（G51② 裁决，2026-09-05 批③落地）：`{name}(...)` 报迁移提示；
+    /// `{name}` 行首恒为对象声明糖。
+    func testBraceFuncDeclRejectedWithHint() throws {
+        do {
+            _ = try parse(try loadPiniFixture("testBraceFuncDeclRejected", filePath: #filePath) as String)
+            XCTFail("`{f|func}(...)` 应被拒绝（花括号函数声明已移除）")
+        } catch let error as ParserError {
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("已移除"), "报错应含迁移提示，实际：\(message)")
+            XCTAssertTrue(message.contains("裸声明"), "报错应指向裸声明迁移路径，实际：\(message)")
         }
-        XCTAssertEqual(f.name, "f")
 
-        let objModule = try parse(try loadPiniFixture("testDisambigBraceFuncVsObject_2", filePath: #filePath) as String)
+        let objModule = try parse(try loadPiniFixture("testBraceObjectSugar", filePath: #filePath) as String)
         guard case .objectDecl(let o) = objModule.declarations[0] else {
             XCTFail("`{ob}` + 字段应解析为 objectDecl，实际：\(objModule.declarations[0])"); return
         }
