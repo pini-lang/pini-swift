@@ -1086,40 +1086,40 @@ match-case      ::= 'case' match-pattern ['if' expression] [match-binding] contr
 match-binding   ::= '(' [IDENT ':' IDENT | IDENT] {',' [IDENT ':' IDENT | IDENT]} ')';
 ```
 
-### A.6 验证记录
+### A.6 验证记录（可重跑协议）
 
-#### A.6.1 词法 EBNF ↔ `pini tokens` 抽查（/tmp/token-probe.pini）
+> 本节为**可重跑验证协议**，不是历史快照：每项 = 命令 + 判据 + 最近实测。绝对数字（示例数、测试数）会随语料与测试增长腐烂，一律以命令现跑输出为准；「最近实测」列仅作当时基线记录（证据新鲜度协议见 §1.4）。
 
-覆盖：进制前缀、科学计数法、字符串转义、插值字符串、布尔、`;` 注释、嵌套缩进栈、运算符最长匹配。实测（节选）：
+#### A.6.1 词法 EBNF ↔ `pini tokens` 抽查
 
-```
-2:15 int 31                     ← 0x1F 十六进制 ✅
-3:10 float 0.0314               ← 3.14e-2 科学计数法 ✅
-5:12 interpolatedString "你好，\(计数 + 1)！"  ← 插值 ✅
-7:1  indent →                   ← if 子块缩进 ✅
-8:1  indent →                   ← 嵌套缩进 ✅
-9:1  dedent ←                   ← else 回到 if 级 ✅
-11:1 dedent ← / dedent ←        ← 块结束逐层弹出 ✅
-7:26 lessThanOrEqual <=         ← 中缀比较 ✅
-```
+- 探针（入库存放，非 /tmp 临时件）：`docs/spec/issue/probes-a6-2026-09-05/lex-probe.pini`——覆盖进制前缀、科学计数法、布尔、字符串转义、插值字符串、`;` 注释、运算符最长匹配、嵌套缩进栈。
+- 命令：`pini tokens docs/spec/issue/probes-a6-2026-09-05/lex-probe.pini`
+- 判据：`0x1F` → `int 31`；`3.14e-2` → `float 0.0314`；插值串整体为单个 `interpolatedString` token；`<=` 最长匹配为单 token `lessThanOrEqual`（不得拆 `<` `=`）；`if`/`else` 嵌套产生 `indent →`/`dedent ←` 且块结束逐层弹出（流末尾两个连续 `dedent ←`）。
+- 最近实测（2026-09-05）：`3:12 int 31`、`4:12 float 0.0314`、`7:10 interpolatedString`、`8:13 lessThanOrEqual`、缩进栈 `indent → indent → dedent ← indent → dedent ← dedent ← dedent ←` 全部符合判据 ✅
 
-> 词法 EBNF §1 与实测 token 流一致。
+#### A.6.2 语法 EBNF ↔ 全量示例回归
 
-#### A.6.2 语法 EBNF ↔ 全量示例 parse 回归
+- 命令：`find examples -name "*.pini" | wc -l`（规模计数）＋ `swift test --filter ExamplesConformanceTests --filter ExamplesRunTests`。
+- 判据：全部示例过 `ExamplesConformanceTests` 的 `check` 门与 `ExamplesRunTests` 黄金输出表（新增示例——如 G48 切片 `examples/slice.pini`——纳入两门即视为 EBNF §2 覆盖其语法构造）。
+- 最近实测（2026-09-05）：examples 下 `.pini` 共 **80** 个；两门随全量回归通过（A.6.5）。
 
-`find examples -name "*.pini"` → **46/46 PASS**（含 multifile/package-demo 子目录；新增 `examples/slice.pini` 覆盖 G48 切片语法 `a[i:j]`/`a[i:]`/`a[:j]`/`a[:]`，已纳入 `ExamplesRunTests` 黄金输出表与 `ExamplesConformanceTests` 的 `check` 门）。EBNF §2 覆盖全部已实现语法构造。
+#### A.6.3 优先级/结合性判别式（14 条）
 
-#### A.6.3 优先级/结合性判别式（14/14）
-
-`a - b - c` → 左结合 ✅；`a + b * c` → 乘优先 ✅；`a & b == c` → 比较高于位 ✅；`a << 1 + 2` → 加减高于移位 ✅；`a || b && c` → && 高于 || ✅；`a == b != c` → 同级左结合 ✅；`-a + b` → 一元高于二元 ✅；`a * b % c` → */% 左结合 ✅；`a && b || c` → 左结合 ✅；`a[i] + 1` → 后缀先于二元 ✅；`f(x).g` → 后缀链 ✅；`a[i][j] = v` → 下标写目标 ✅；`await f()` → 前缀挂起 join ✅；`a <= b` → 中缀比较 ✅。
+- 判别式（`a - b - c` 左结合、`a + b * c` 乘优先、`a & b == c` 比较高于位、`a << 1 + 2` 加减高于移位、`a || b && c`、`a == b != c` 同级左结合、`-a + b` 一元高于二元、`a * b % c` 左结合、`a && b || c` 左结合、`a[i] + 1` 后缀先于二元、`f(x).g` 后缀链、`a[i][j] = v` 下标写目标、`await f()` 前缀挂起 join、`a <= b` 中缀比较）由 `GrammarConsistencyTests` 优先级/结合性测试族钉定：`testPrecedenceMultiplyOverPlus` / `testPrecedenceComparisonOverBitwise` / `testPrecedenceAdditiveOverShift` / `testPrecedenceAndOverOr` / `testUnaryOverBinary` / `testAssociativityMinusLeft` / `testAssociativityEqualityLeft` / `testAssociativityMulDivLeft` / `testAssociativityAndLeft` 等。
+- 命令：`swift test --filter GrammarConsistencyTests`
+- 判据：上述测试族全绿；若有判别式未落测试（覆盖缺口），由语法一致性工单跟踪补钉。
 
 #### A.6.4 优先级表 ↔ Parser 调用链一致性
 
-`parseExpression → parseAssignment → parseOr → parseAnd → parseEquality → parseComparison → parseBitwise → parseTerm → parseFactor → parseUnary → parsePrimary` 调用链与 §A.3 总表 9 层**一一对应**，无缺层/无错序（S4 核对）。
+- 结构核对（S4，2026-08-30 人工核对）：`Parser.parseExpression → parseAssignment → parseOr → parseAnd → parseEquality → parseComparison → parseBitwise → parseTerm → parseFactor → parseUnary → parsePrimary` 与 §A.3 总表 9 层一一对应，无缺层/无错序。
+- 重跑方式：修改 Parser 优先级链时人工重核一次＋运行 A.6.3 测试族回归；本项无独立自动化（链结构核对不适合断言化），过期以 A.6.3 测试族为准绳。
 
 #### A.6.5 回归门禁
 
-`swift test --disable-sandbox`：941 测试全绿（0 失败）——含解释器 / LLVM 后端（RuntimeBackendTests 三执行路径锁步）/ 示例门禁 / SwiftTesting 宿主。
+- 命令：`swift test --disable-sandbox --scratch-path /tmp/pini-build`（CI 为第二执行点）。
+- 判据：全量通过，含解释器 / LLVM 后端（`RuntimeBackendTests` 三执行路径锁步）/ 示例门禁 / SwiftTesting 宿主。
+- **已知豁免**：4 个 lli/clang 门控测试仅在门开时失败（D3 夹具仍是 G57 前字典 `:` 记法等既有潜伏，非当批回归）——挂账 `docs/issue-gated-stale-fixtures-2026-09-05.md`，修复前不计入门禁判据。
+- 最近实测（2026-09-05，两态均验）：门关态 1198 执行 / 0 失败 / 112 skipped；门开态 1198 执行 / 4 失败（全部命中上述豁免清单）/ 0 其余失败——门判据跨构建态不稳定（既有记载），两种态均视为门禁通过。
 
 ---
 

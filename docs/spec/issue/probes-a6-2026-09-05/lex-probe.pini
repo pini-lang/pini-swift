@@ -1,0 +1,13 @@
+; §A.6.1 词法 EBNF 抽查探针（可重跑：pini tokens docs/spec/issue/probes-a6-2026-09-05/lex-probe.pini）
+; 覆盖：进制前缀 / 科学计数法 / 布尔 / 字符串转义 / 插值字符串 / `;` 注释 / 运算符最长匹配 / 嵌套缩进栈
+let 十六进制 = 0x1F
+let 科学计数 = 3.14e-2
+let 布尔真 = true
+let 转义 = "a\nb"
+let 插值 = "你好，\(计数 + 1)！"
+let 比较 = 计数 <= 10
+if 十六进制:
+    if 科学计数:
+        let 嵌套 = 1
+    else:
+        let 回退 = 2
