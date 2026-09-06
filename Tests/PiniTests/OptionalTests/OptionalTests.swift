@@ -326,13 +326,13 @@ final class OptionalTests: XCTestCase {
         let source = try loadPiniFixture("testOptionalSomeRunLLVMParity", filePath: #filePath)
         let llvmOut = try runViaLLIWithTypeCheck(source).trimmingCharacters(in: .whitespacesAndNewlines)
         let interpOut = try runProgram(source).trimmingCharacters(in: .whitespacesAndNewlines)
-        // LLVM 后端 print 不补换行（已知预存特征），解释器两 print 间有换行；比对时消除全部换行。
+        // print 各自补换行（2026-09-07 与解释器对齐）；比对时消除换行以吸尾部差异。
         let normalize = { (s: String) -> String in
             s.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
         }
         XCTAssertEqual(normalize(llvmOut), normalize(interpOut),
                        "run-llvm 与解释器对 Optional.some/none 应输出一致（去换行后）")
-        XCTAssertEqual(llvmOut, "42none", "Optional.some(42) 走 run-llvm 应输出 42，none 输出 none")
+        XCTAssertEqual(llvmOut, "42\nnone", "Optional.some(42) 走 run-llvm 应输出 42，none 输出 none（print 各自换行）")
     }
 
     /// run-llvm 与解释器对 Optional.some(String) 输出一致（验证 ptr 元素装箱/解构）。

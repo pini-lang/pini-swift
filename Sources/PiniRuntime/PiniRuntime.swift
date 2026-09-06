@@ -485,19 +485,20 @@ public func bk_dict_set(_ dict: UnsafeMutableRawPointer?,
 }
 
 /// 读取键对应的值 box（命中返回运行时拥有的稳定 `ptr`，调用方据此 `load T`）。
-/// 缺失返回 `nil`——`@_cdecl` 将 `UnsafeMutableRawPointer?` 降级为 C 可空 `void*`，
-/// 故 IR 侧收到 `null`，与 codegen 的 `icmp eq ptr %boxPtr, null` 契约一致；
-/// codegen 据值类型补零值（与解释器「缺失返回 `.null`」在既有键读取场景对齐；打印 `.null` 属 D3 范畴）。
+/// 缺失即 panic（G48 三通道：字典缺失键与越界同义，安全断言通道 panic——
+/// 与 `bk_array_get` 越界 panic 对齐，也消除与解释器缺键 panic 的分歧）。
 @_cdecl("bk_dict_get")
 public func bk_dict_get(_ dict: UnsafeMutableRawPointer?,
  _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32) -> UnsafeMutableRawPointer? {
  guard let dict else { bk_panic("Pini runtime error: dict handle is null") }
  let box = Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue()
- let kn = Int(keyBytes); guard kn > 0 else { return nil }
+ let kn = Int(keyBytes); guard kn > 0 else {
+ bk_panic("Pini runtime error: dict key not found (empty key)")
+ }
  guard let entry = box.entries.first(where: { stored in
  _bkBoxesEqual(key, keyTag, stored.key, stored.keyTag)
  }) else {
- return nil
+ bk_panic("Pini runtime error: dict key not found (missing key is out-of-bounds-equivalent, safe-assert channel)")
  }
  return entry.val
 }
@@ -638,8 +639,9 @@ public func bk_set_at(_ set: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMu
  return box.elems[i].ptr
 }
 
-/// 字典是否含指定键（与 `bk_dict_get` 同源的 `_bkBoxesEqual` 判定）。供 LLVM `print(d[k])` 在缺失键时
-/// 输出 `null`（对齐解释器 `stringify(.null)` → "null"），闭合 D2 遗留的「缺失键 LLVM 补零值」分歧。
+/// 字典是否含指定键（与 `bk_dict_get` 同源的 `_bkBoxesEqual` 判定）。
+/// （2026-09-07：LLVM `print(d[k])` 缺失键 null 特例已随 G48 三通道对齐移除，
+/// 本 shim 无 IR 调用点，保留供运行时内部/测试复用。）
 @_cdecl("bk_dict_contains")
 public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32) -> Int32 {
  guard let dict else { return 0 }

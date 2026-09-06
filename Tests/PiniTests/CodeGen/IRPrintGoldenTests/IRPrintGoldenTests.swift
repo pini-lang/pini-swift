@@ -107,9 +107,9 @@ final class IRPrintGoldenTests: XCTestCase {
 
         ("D3_集合打印", try! loadPiniFixture("_c_9", filePath: #filePath), "{2, 3, 5, 7, 11}"),
 
-        // 缺失键：解释器 stringify(.null) → "null"，LLVM 经 @bk_dict_contains + select 同样输出 "null"，
-        // 闭合 D2 遗留的「缺失键 LLVM 补零值」分歧。
-        ("D3_字典缺失键打印null", try! loadPiniFixture("_c_10", filePath: #filePath), "null"),
+        // 「D3_字典缺失键打印null」样例已移除（2026-09-07）：其编码的是 P2-E 三通道模型
+        // 之前的语义（缺键打 null）；现行语义缺键 = panic（解释器/LLVM 一致），
+        // panic 场景由 RuntimeBackendTests.testDictMissingKeyBothBackends 锁步覆盖。
     ]
 
     func testAggregatePrintMatchesInterpreter() throws {
