@@ -1625,14 +1625,19 @@ public class Parser {
  if case .identifier(_) = currentToken, isBareFunctionDeclStart() { break }
  }
 
- if case .leftBrace(_) = currentToken {
- let sig = try parseFuncDeclInTypeContext()
- signatures.append(sig)
- } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
- let sig = try parseBareFuncDecl(isTopLevel: false, allowEmptyBody: true)
- signatures.append(sig)
- } else {
- let sig = try parseTraitVarSignature()
+        if case .leftBrace(_) = currentToken {
+            let sig = try parseFuncDeclInTypeContext()
+            signatures.append(sig)
+        } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
+            let sig = try parseBareFuncDecl(isTopLevel: false, allowEmptyBody: true)
+            signatures.append(sig)
+        } else if isTopLevelDeclStart() {
+            // 顶级声明起始（结构块/扩展块/对象糖/import/export/后续特征块等）→ trait 体终止。
+            // 顶格方法与后续声明间无 dedent，故终止检查不能只挂在 justDedented 分支
+            // （issue-trait-body-termination：对齐扩展块循环的无条件收束）。
+            break
+        } else {
+            let sig = try parseTraitVarSignature()
  let funcSig = FuncDecl(
  name: sig.name,
  modifiers: [],

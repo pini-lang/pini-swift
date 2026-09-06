@@ -8,6 +8,7 @@
 > 批 7（远程 tap）当时未登记，此处一并补上；批 8 为 G52 工单的收尾补修。
 
 ### Added
+- **trait-body 终止性修复（2026-09-06）**：trait 块后接任何后续顶级声明（结构块/扩展块/对象糖/import/export/后续特征块）解析失败——终止检查 `isTopLevelDeclStart()` 被包在 `if justDedented` 门内，顶格方法（spec 合法形态）与后续声明间无 dedent 时检查被跳过。修复：`parseTraitDecl` 循环 else 分支前加无条件收束（对齐扩展块循环）。GCT 三钉（trait+结构块 / trait+扩展块 / 多带体方法回归）；spec trait-body 产生式加终止注记 + IDENT 同形歧义登记（trait 后跟顶级裸函数被吸收为 trait-method，spec 贪婪语义与宿主一致，规避法已注记）。详见 `docs/issue-trait-body-termination-2026-09-05.md`
 - **特征扩展块 `<<T>>` 重新引入（2026-09-06）**：批③曾以「词法不可达」移除 spec 产生式，经用户裁决推翻（行首 `<<` 可消歧）后按治理流程重新引入实现。词法消歧 = **行首 `<<` 拆为两个 `.lessThan` token**（Parser 顶层分派本就期望该 token 对 → traitExt 扩展块，主体零改动；行首作表达式起始位无前缀 `<<`，零歧义），行内 `<<` 维持移位合并；闭合 `>>` 行内恒合并为 `.rightShift`，traitExt 闭合位接受合并态与分离态（`<<T>>`/`<<T >>`）。GCT 双向钉：行首 `<<动物>>` → extensionDecl(kind: traitExt) + trait-body 方法、行内 `a << 2` 维持 binary(op: .leftShift)。spec §A extension-decl 产生式加落地注。详见 `docs/issue-trait-extension-reintroduce-2026-09-05.md`
 - **数组元素标注 `[T]` 语义检查（批 F）**：`[T]`/`[K: V]`/`{T}` 标注对集合字面量初始化、字面量赋值右值、Array.append 实参做逐元素类型检查（期望类型下推，通配 `_`/`Any` 放行）；标注仅做检查——ADR-020 签名契约不动（append 仍返回新数组），无标注累积器 `var ys = []` 语义零变更（实施前实测 `[1, "a"]` 混型与 `append("a")` 均静默通过）
 - **点号用例构造 `.caseName` / `.caseName(args)`（批 E）**：前导点 = 成员意图标记（D-1 与 Swift `UnresolvedMemberExpr` 同构：解析期专用未解析节点，决议在类型检查阶段期望类型优先——期望类型命中 > 唯一父枚举回退 > 歧义拒绝）；成员意图不受本地位遮蔽影响；内建 Optional `.some`/`.none` 直达；spec primary-atom 产生式同步入 §A。解释通道全量可用；LLVM 端唯一名可用、歧义名 unsupported（D-3 报错 + 立案，跟踪于 issue-llvm-dotcase-expected-type）
