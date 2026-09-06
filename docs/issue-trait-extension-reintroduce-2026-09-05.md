@@ -1,6 +1,6 @@
 # 特征扩展 `<<T>>` 重新引入提案（spec §1.3）
 
-- 状态：**Open（提案，待评审）**
+- 状态：**Closed（2026-09-06 用户裁决采纳，方案 B 行首双 token 对已落地）**
 - 提案日：2026-09-05（修正批）
 - 提案人：用户意见 + 勘测复核
 
@@ -32,3 +32,11 @@
 ## 处置
 
 - 待用户评审词法方案（traitExtensionOpen 专用 token vs 行首双 token 对）后落地。
+
+## 落地记录（2026-09-06）
+
+- 用户裁决：重新引入；词法方案二选一采纳 **B（行首双 token 对）**——Parser 顶层分派本就期望 lessThan 对（`parseTopLevelDecl` → `parseExtensionDecl` kind = traitExt），专用 token 方案的改动面优势不存在。
+- 改动面：Lexer 单点（行首 `<<` 只消费第一个 `<` 返回 `.lessThan`，第二个 `<` 由正常路径产出；`awaitingFirstTokenOfLine` 标志逐行置位/清除）+ Parser 闭合位一处（traitExt 闭合接受合并态 `.rightShift` 或分离态 `.greaterThan` ×2）。
+- spec：extension-decl `'<<' IDENT '>>' trait-body` 产生式加落地注（含词法消歧判据与闭合双态说明）；顺手修正批残留的 `[:' type-annotation]` 笔误（`{{` 行）。
+- 钉子：GCT `testProductionsTraitExtensionBlock`（词法 4-token 断言 + traitExt 扩展块断言）、`testProductionsInlineShiftStaysBinary`（行内 `a << 2` 维持 binary leftShift）；夹具只含扩展块本体，避开 trait 块终止性既有 Open 缺陷面。
+- 证据：E-128。

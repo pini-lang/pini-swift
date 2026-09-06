@@ -1,0 +1,5 @@
+main|func() -> ():
+    var a: I32 = 1
+    var b: I32 = a << 2
+    print(b,)
+    return
