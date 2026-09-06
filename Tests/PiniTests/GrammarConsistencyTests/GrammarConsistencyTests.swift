@@ -626,8 +626,8 @@ final class GrammarConsistencyTests: XCTestCase {
     /// 特征扩展块 `<<T>>` 产生式（2026-09-06 重新引入落地，issue-trait-extension-reintroduce）。
     /// 意图：验证行首 `<<` 经 Lexer 拆为 lessThan 对 → extensionDecl(kind: traitExt)，
     /// 且 token 流含合并态 `.rightShift` 闭合（行首消歧只覆盖开定界符）。
-    /// 注：夹具只含扩展块本体——trait 块后接后续顶级声明的终止性是既有 Open 缺陷
-    /// （issue-trait-body-termination-2026-09-05，立案不修），不在本钉范围。
+    /// 注：trait-body 终止性（trait 块 + 后续顶级声明）见下方
+    /// testProductionsTraitBodyTerminatedByStructDecl 等三钉。
     func testProductionsTraitExtensionBlock() throws {
         // 词法层：行首 `<<` 拆 token 对 + 行尾 `>>` 维持合并
         let tokens = try meaningfulTokens("<<动物>>")
@@ -667,7 +667,56 @@ final class GrammarConsistencyTests: XCTestCase {
         assertExpr(right, equals: .integerLiteral(value: 2, location: .dummy))
     }
 
-    // MARK: - 5. 反录勘测面补钉（2026-09-05 批⑤，勘测矩阵 row 1–7；探针源 docs/spec/issue/probes-backfill-2026-09-05/）    /// 矩阵 row 1：尾逗号七形态——形参/返回元组/调用/数组/字典/集合/类型元组（含函数类型标注）。
+    /// trait-body 终止性：trait 块后接结构块（探针源 p23-trait-terminate）。
+    /// 意图：验证顶格方法与后续顶级声明间无 dedent 时，trait 体循环仍能收束
+    /// （修复前终止检查挂在 justDedented 分支内，`(盒)` 掉进变量签名分支报错）。
+    func testProductionsTraitBodyTerminatedByStructDecl() throws {
+        let module = try parse(try loadPiniFixture("testProductionsTraitBodyTerminatedByStructDecl", filePath: #filePath) as String)
+        XCTAssertEqual(module.declarations.count, 2, "trait 应在结构块行终止，两声明都须解析出")
+        guard case .traitDecl(let trait) = module.declarations[0] else {
+            XCTFail("首声明应为 traitDecl，实际：\(module.declarations[0])"); return
+        }
+        XCTAssertEqual(trait.name, "显示")
+        XCTAssertEqual(trait.signatures.count, 1)
+        XCTAssertEqual(trait.signatures[0].name, "描述")
+        XCTAssertTrue(trait.signatures[0].modifiers.contains("self"))
+        guard case .structDecl(let structDecl) = module.declarations[1] else {
+            XCTFail("次声明应为 structDecl，实际：\(module.declarations[1])"); return
+        }
+        XCTAssertEqual(structDecl.name, "盒")
+    }
+
+    /// trait-body 终止性：trait 块后接扩展块（探针源 p21-ext-constraint，修复前报 E2-002）。
+    /// 意图：验证 `((类型:特征))` 行首双定界符同样收束 trait 体且扩展块正常解析。
+    func testProductionsTraitBodyTerminatedByExtensionDecl() throws {
+        let module = try parse(try loadPiniFixture("testProductionsTraitBodyTerminatedByExtensionDecl", filePath: #filePath) as String)
+        XCTAssertEqual(module.declarations.count, 2)
+        guard case .traitDecl(let trait) = module.declarations[0] else {
+            XCTFail("首声明应为 traitDecl，实际：\(module.declarations[0])"); return
+        }
+        XCTAssertEqual(trait.signatures.count, 1)
+        guard case .extensionDecl(let ext) = module.declarations[1] else {
+            XCTFail("次声明应为 extensionDecl，实际：\(module.declarations[1])"); return
+        }
+        XCTAssertEqual(ext.targetType, "盒")
+        XCTAssertEqual(ext.methods.count, 1)
+        XCTAssertEqual(ext.methods[0].name, "取")
+    }
+
+    /// trait 多方法带体回归钉（修复前即 PASS，锁定不回归：带体方法间 dedent 由
+    /// parseBlock 消费，第二方法以 justDedented=false 进入方法分支）。
+    func testProductionsTraitMultipleMethodsWithBodies() throws {
+        let module = try parse(try loadPiniFixture("testProductionsTraitMultipleMethodsWithBodies", filePath: #filePath) as String)
+        guard case .traitDecl(let trait) = module.declarations[0] else {
+            XCTFail("应为 traitDecl，实际：\(module.declarations[0])"); return
+        }
+        XCTAssertEqual(trait.signatures.count, 2, "两个带体方法都应收入 trait")
+        XCTAssertEqual(trait.signatures.map(\.name), ["描述", "叫声"])
+    }
+
+    // MARK: - 5. 反录勘测面补钉（2026-09-05 批⑤，勘测矩阵 row 1–7；探针源 docs/spec/issue/probes-backfill-2026-09-05/）
+
+    /// 矩阵 row 1：尾逗号七形态——形参/返回元组/调用/数组/字典/集合/类型元组（含函数类型标注）。
     /// 意图：验证全部尾逗号形态均解析通过（EBNF 各产生式未写尾逗号，实现为既成事实）。
     func testBackfillTrailingCommaSevenForms() throws {
         let module = try parse(try loadPiniFixture("testBackfillTrailingCommaSevenForms", filePath: #filePath) as String)

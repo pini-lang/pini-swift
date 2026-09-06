@@ -731,6 +731,12 @@ trait-method    ::= IDENT ['|' ('self' | 'own')] func-signature [func-body];
 (* 无修饰符签名 = 抽象方法（须被实现）；'|self' = 本身方法（实例方法，允许捕获 self 及其成员）；
    '|own' = 本型方法（类型级方法，own 指代实现特征的被扩展类型，禁止捕获外部对象）；
    有体 = 默认实现（<<扩展特征块>>，G51/Pini草稿 §<特征块名>） *)
+(* trait-body 终止（2026-09-06 落地，缺陷修复见 docs/issue-trait-body-termination-2026-09-05.md）：
+   后续顶级声明起始（行首 `(`/`((`/`{{`/`[[`/`{`/import/export/`<特征>`）终止 trait-body；
+   宿主 parseTraitDecl 循环以 isTopLevelDeclStart 无条件收束（对齐扩展块循环）。
+   已知歧义：IDENT 开头的顶级裸函数（`main|func(...)`）与 trait-method 词法同形——
+   trait 块后直接跟裸函数会被吸收为 trait-method（spec 本产生式的 `{ trait-method }`
+   亦为贪婪语义，两侧一致）；规避：裸函数置于 trait 块之前或以缩进块隔开 *)
 
 (* 扩展块 *)
 extension-decl  ::= '((' IDENT ['<' generic-params '>'] [':' type-annotation] '))' method-body   (* 结构扩展 *)
