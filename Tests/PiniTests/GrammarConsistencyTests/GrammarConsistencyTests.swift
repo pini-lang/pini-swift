@@ -623,9 +623,51 @@ final class GrammarConsistencyTests: XCTestCase {
                                              right: .identifier(name: "b", location: .dummy),
                                              location: .dummy))
     }
-    // MARK: - 5. 反录勘测面补钉（2026-09-05 批⑤，勘测矩阵 row 1–7；探针源 docs/spec/issue/probes-backfill-2026-09-05/）
+    /// 特征扩展块 `<<T>>` 产生式（2026-09-06 重新引入落地，issue-trait-extension-reintroduce）。
+    /// 意图：验证行首 `<<` 经 Lexer 拆为 lessThan 对 → extensionDecl(kind: traitExt)，
+    /// 且 token 流含合并态 `.rightShift` 闭合（行首消歧只覆盖开定界符）。
+    /// 注：夹具只含扩展块本体——trait 块后接后续顶级声明的终止性是既有 Open 缺陷
+    /// （issue-trait-body-termination-2026-09-05，立案不修），不在本钉范围。
+    func testProductionsTraitExtensionBlock() throws {
+        // 词法层：行首 `<<` 拆 token 对 + 行尾 `>>` 维持合并
+        let tokens = try meaningfulTokens("<<动物>>")
+        guard tokens.count == 4 else {
+            XCTFail("行首 `<<动物>>` 应为 4 个 token，实际 \(tokens.count)：\(tokens)"); return
+        }
+        guard case .lessThan = tokens[0], case .lessThan = tokens[1] else {
+            XCTFail("行首 `<<` 应拆为两个 .lessThan"); return
+        }
+        guard case .rightShift = tokens[3] else {
+            XCTFail("行尾 `>>` 应为合并态 .rightShift"); return
+        }
 
-    /// 矩阵 row 1：尾逗号七形态——形参/返回元组/调用/数组/字典/集合/类型元组（含函数类型标注）。
+        // 语法层：解析为 traitExt 扩展块 + trait-body 方法
+        let module = try parse(try loadPiniFixture("testProductionsTraitExtensionBlock", filePath: #filePath) as String)
+        guard case .extensionDecl(let ext) = module.declarations[0] else {
+            XCTFail("`<<动物>>` 应为 extensionDecl，实际：\(module.declarations[0])"); return
+        }
+        XCTAssertEqual(ext.kind, .traitExt)
+        XCTAssertEqual(ext.targetType, "动物")
+        XCTAssertEqual(ext.methods.count, 1)
+        XCTAssertEqual(ext.methods[0].name, "叫声")
+    }
+
+    /// 行内 `<<` 不受行首消歧影响：`a << 2` 维持移位二元表达式（与 §A.2 位运算互斥的另一半）。
+    /// 意图：验证行首消歧不外溢——非行首 `<<` 仍合并为 leftShift token 并解析为二元移位。
+    func testProductionsInlineShiftStaysBinary() throws {
+        let module = try parse(try loadPiniFixture("testProductionsInlineShiftStaysBinary", filePath: #filePath) as String)
+        let body = try funcBody(named: "main", in: module)
+        guard case .varDecl(_, _, let initializer, _, _) = body[1], let initExpr = initializer else {
+            XCTFail("`var b: I32 = a << 2` 应为带初始化器的变量声明"); return
+        }
+        guard case .binary(let left, let op, let right, _) = initExpr, op == .leftShift else {
+            XCTFail("行内 `a << 2` 应为 binary(op: .leftShift)，实际：\(initExpr)"); return
+        }
+        assertExpr(left, equals: .identifier(name: "a", location: .dummy))
+        assertExpr(right, equals: .integerLiteral(value: 2, location: .dummy))
+    }
+
+    // MARK: - 5. 反录勘测面补钉（2026-09-05 批⑤，勘测矩阵 row 1–7；探针源 docs/spec/issue/probes-backfill-2026-09-05/）    /// 矩阵 row 1：尾逗号七形态——形参/返回元组/调用/数组/字典/集合/类型元组（含函数类型标注）。
     /// 意图：验证全部尾逗号形态均解析通过（EBNF 各产生式未写尾逗号，实现为既成事实）。
     func testBackfillTrailingCommaSevenForms() throws {
         let module = try parse(try loadPiniFixture("testBackfillTrailingCommaSevenForms", filePath: #filePath) as String)

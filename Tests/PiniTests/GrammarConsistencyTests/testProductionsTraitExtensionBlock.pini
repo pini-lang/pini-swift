@@ -1,0 +1,3 @@
+<<动物>>
+叫声|func() -> (String,):
+    return "汪"

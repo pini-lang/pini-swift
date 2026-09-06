@@ -734,9 +734,15 @@ trait-method    ::= IDENT ['|' ('self' | 'own')] func-signature [func-body];
 
 (* 扩展块 *)
 extension-decl  ::= '((' IDENT ['<' generic-params '>'] [':' type-annotation] '))' method-body   (* 结构扩展 *)
-                  | '{{' IDENT ['<' generic-params '>'] [:' type-annotation] '}}' method-body   (* 对象扩展 *)
+                  | '{{' IDENT ['<' generic-params '>'] [':' type-annotation] '}}' method-body   (* 对象扩展 *)
                   | '[[' IDENT ['<' generic-params '>'] [':' type-annotation] ']]' method-body   (* 枚举扩展 *)
                   | '<<' IDENT '>>' trait-body;                         (* 特征扩展 *)
+(* 特征扩展 `<<T>>` 宿主可达（2026-09-06 重新引入落地，提案工单见
+   docs/issue-trait-extension-reintroduce-2026-09-05.md）：
+   词法消歧 = 行首 `<<` 拆为两个 lessThan token（Parser 顶层分派期望的 token 对），
+   行内 `<<` 维持移位合并——行首作表达式起始位本无前缀 `<<`，零歧义；闭合 `>>` 行内
+   恒合并为 rightShift，traitExt 闭合位接受合并态与分离态两形态（`<<T>>`/`<<T >>`）。
+   产生式无泛型位（其余三形态方有）。 *)
 (* 泛型扩展 `((盒<T>))`（2026-09-05 反录，探针 p08；规则 3.14 早有字样、产生式此前
    未收编）。`: 类型` 约束形态解析层接受但仅解析存储、合并仍按 targetType 名称匹配
    （parseExtensionDecl，探针 p21a）。 *)

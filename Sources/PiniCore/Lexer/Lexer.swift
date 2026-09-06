@@ -11,6 +11,12 @@ public class Lexer {
  /// 避免 `t.0.1` 中 `0.1` 被读成浮点字面量（`0.1` 本应拆为 `.0` `.1`）。
  private var prevTokenIsDot = false
 
+ /// 行首判定标志（`<<T>>` 特征扩展开的词法消歧判据，2026-09-06 重新引入落地）：
+ /// 本行尚未产出任何 token 时为 true——行首 `<<` 拆为两个 `.lessThan`（Parser
+ /// parseTopLevelDecl 分派期望的正是该 token 对 → traitExt 扩展块）；行内 `<<`
+ /// 维持移位合并。每行开工置位、产出 token 后清除；整行注释不发 token，不影响。
+ private var awaitingFirstTokenOfLine = true
+
  /// 批 1.5（A12 方案 B / 路 C 裁决）：括号栈——每项记录开括号字符与是否「块携带」。
  /// 块携带 = 开括号后同行紧跟块开启关键字 `func`（草稿「原地调用 IIFE」与实参位
  /// 函数字面量的包裹括号形态）。布局抑制判据 = **栈顶（最内层开括号）为普通括号**：
@@ -54,6 +60,7 @@ public class Lexer {
  tokens.append(contentsOf: indentTokens)
  }
 
+ awaitingFirstTokenOfLine = true
  while !isAtEnd && currentChar != "\n" {
  guard let char = currentChar else { break }
 
@@ -69,6 +76,7 @@ public class Lexer {
  }
 
  let token = try nextToken()
+ awaitingFirstTokenOfLine = false
  prevTokenIsDot = isDotToken(token)
  tokens.append(token)
  updateBracketStack(with: token)
@@ -177,6 +185,12 @@ public class Lexer {
  guard let char = currentChar, char == expected else { return false }
  _ = advance()
  return true
+ }
+
+ /// 不消费的前瞻：距当前位置 offset 个字符（越界为 nil）。
+ private func peekAfter(offset: Int) -> Character? {
+ let idx = position + offset
+ return idx < chars.count ? chars[idx] : nil
  }
 
  private func peek(offset: Int = 0) -> Character? {
@@ -357,6 +371,14 @@ public class Lexer {
  return .bitwiseXor(loc)
  case "<":
  _ = advance()
+ // 行首 `<<` → 特征扩展开（2026-09-06 重新引入落地，见提案工单）：
+ // 只消费第一个 `<` 返回 `.lessThan`，第二个 `<` 由下一轮正常路径产出 `.lessThan`——
+ // 恰为 Parser parseTopLevelDecl 分派期望的 lessThan 对；行内 `<<` 维持移位合并。
+ // 排除 `<<=`（行首 `<<=` 在合法语句中不可达，但保留其移位赋值读法——词法层
+ // 最长匹配契约不变，LexerTests.testTokenizeLongestMatchOperator 钉定）。
+ if awaitingFirstTokenOfLine, currentChar == "<", peekAfter(offset: 1) != "=" {
+ return .lessThan(loc)
+ }
  if match("<") {
  if match("=") { return .leftShiftAssign(loc) }
  return .leftShift(loc)

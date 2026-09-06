@@ -667,7 +667,8 @@ public class Parser {
 
  // MARK: - 扩展块解析（ADR-016 规则 3.2/3.14， extension-decl）
 
- /// 解析扩展块 `((T))`/`{{T}}`/`[[T]]`（`<<T>>` 特征扩展已移除，2026-09-05 批③）。
+ /// 解析扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`（traitExt 开定界符由 Lexer 行首
+ /// `<<` 拆 token 对送达，2026-09-06 重新引入落地）。
  /// 数据与逻辑分离：类型体只含字段/用例，方法必须写在同文件扩展块并显式 `|self`/`|Self`；
  /// 扩展块内禁止自由函数（规则 3.14）。
  private func parseExtensionDecl() throws -> ExtensionDecl {
@@ -708,7 +709,15 @@ public class Parser {
  case .enumExt:
  try expect(.rightBracket(loc)); try expect(.rightBracket(loc))
  case .traitExt:
- try expect(.greaterThan(loc)); try expect(.greaterThan(loc))
+ // `>>` 闭合双态（2026-09-06 重新引入落地）：词法合并态 `.rightShift`（`<<T>>`
+ // 紧邻形态，行内 `>>` 恒合并——行首消歧只覆盖开定界符）与分离态
+ // `.greaterThan` ×2（`<<T >>` 空格分隔）皆接受。
+ if case .rightShift(_) = currentToken {
+ advance()
+ } else {
+ try expect(.greaterThan(loc))
+ try expect(.greaterThan(loc))
+ }
  }
 
  // 方法体（method-body / trait-body）：扩展块头与方法签名同顶格（0 层），方法体缩进；
