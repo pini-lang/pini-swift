@@ -186,7 +186,9 @@ extension IRGenerator {
 
  // #46-D D2：字典经 opaque handle（%bk_dict*）承载，键读走运行时 shim @bk_dict_get。
  // 键按自身 IR 类型装箱（字符串键 → ptr box，运行时按 tag 做字节内容比较，与指针身份解耦）。
- // 命中返回稳定值 box ptr；缺失返回 NULL → 据值类型补零值（解释器缺失返回 .null，既有键读取场景一致）。
+ // G48 三通道对齐（2026-09-07）：缺失键与越界同义 → `bk_dict_get` 内直接 `bk_panic`
+ // （与 `bk_array_get` 越界 panic 同机制，消除与解释器缺键 panic 的分歧）；
+ // 旧的「NULL → 补零值」分支随之移除（原为 D2 时代与解释器 `.null` 对齐的残迹）。
  if containerVal.llvmType == "%bk_dict*" {
  usesCollections = true
  let (keyBoxPtr, keyWidth, keyTag) = try boxDictKey(indexVal)
@@ -198,27 +200,9 @@ extension IRGenerator {
 
  let valTA = try resolveDictValueType(container)
  let valLLVM = try collectionAwareLLVMType(valTA)
- let isNull = builder.freshTemp()
- emitLine(" \(isNull) = icmp eq ptr \(boxPtr), null")
- let loadB = "dict_load_\(nextLabel())"
- let nullB = "dict_null_\(nextLabel())"
- let mergeB = "dict_merge_\(nextLabel())"
- emitLine(builder.fmtCondBr(cond: isNull, thenLabelName: nullB, elseLabelName: loadB))
- emitLine("\(loadB):")
  let loaded = builder.freshTemp()
  emitLine(builder.fmtLoad(name: loaded, type: valLLVM, ptr: boxPtr))
- emitLine(builder.fmtBr(labelName: mergeB))
- emitLine("\(nullB):")
- let zeroPtr = builder.freshTemp()
- emitLine(builder.fmtAlloca(name: zeroPtr, type: valLLVM))
- emitLine(builder.fmtStore(value: zeroConst(valLLVM), type: valLLVM, ptr: zeroPtr))
- let zeroLoaded = builder.freshTemp()
- emitLine(builder.fmtLoad(name: zeroLoaded, type: valLLVM, ptr: zeroPtr))
- emitLine(builder.fmtBr(labelName: mergeB))
- emitLine("\(mergeB):")
- let result = builder.freshTemp()
- emitLine(" \(result) = phi \(valLLVM) [ \(loaded), %\(loadB) ], [ \(zeroLoaded), %\(nullB) ]")
- return IRValue(llvmType: valLLVM, ssaName: result)
+ return IRValue(llvmType: valLLVM, ssaName: loaded)
  }
 
  if containerVal.llvmType.hasPrefix("[") {

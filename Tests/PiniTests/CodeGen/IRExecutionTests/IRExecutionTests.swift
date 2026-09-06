@@ -485,8 +485,8 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testDeferBasicViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "AB",
-                      "defer 应在 return 前逆序执行：先 A 后 B（print 不带换行）")
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "A\nB",
+                      "defer 应在 return 前逆序执行：先 A 后 B（print 各自换行）")
     }
 
     /// 真实 clang/lli：多个 defer 按 LIFO 逆序执行。
@@ -494,8 +494,8 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testDeferLIFOViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "ABC",
-                      "defer LIFO：A→B→C（print 不带换行）")
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "A\nB\nC",
+                      "defer LIFO：A→B→C（print 各自换行）")
     }
 
     // MARK: - P6-3b: enum 关联值 + match 绑定真实执行
@@ -516,7 +516,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testTupleIndexAccess_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "22-12",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "22\n-12",
                       "位置访问 p.0=17 p.1=5 应得 22 与 -12")
     }
 
@@ -526,7 +526,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testTupleNamedAccess_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "12175",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "12\n17\n5",
                       "命名元组标签访问 商-余=12、商=17、余=5（LLVM 无换行拼接）")
     }
 
@@ -535,7 +535,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testTupleDestructure_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "32",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "3\n2",
                       "解构 (3, 2) 应分别绑定 商=3 余=2")
     }
 
@@ -569,12 +569,12 @@ final class IRExecutionTests: XCTestCase {
     }
 
     /// 真实 lli：I8 整型 primitive 字段访问（Phase 0）——struct 含 I8 字段，构造/赋值宽度截断/算术/方法返回/打印。
-    /// 预期输出 `p.x+p.y`=24 与 `p.距离原点()`=24（LLVM 每 print 不加换行 → "2424"）。
+    /// 预期输出 `p.x+p.y`=24 与 `p.距离原点()`=24（print 各自换行，trim 后两行 24）。
     func testI8StructField_LLI() throws {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testI8StructField_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "2424",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "24\n24",
                       "I8 字段加法与方法返回应各打印 24（LLVM 无换行拼接）")
     }
 
@@ -586,8 +586,8 @@ final class IRExecutionTests: XCTestCase {
         guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
         let source = try loadPiniFixture("testArrayJoin_LLI", filePath: #filePath)
         let output = try runViaLLI(source, dylib: dylib)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "a-b-cx+y",
-                      "变量数组 join(-)=a-b-c、字面量 join(+)=x+y（LLVM 无换行拼接）")
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "a-b-c\nx+y",
+                      "变量数组 join(-)=a-b-c、字面量 join(+)=x+y（print 各自换行，trim 后两行）")
     }
 
     /// 真实 lli：块级 defer（#8）——循环体内的 defer 在该块自然落入出口按 LIFO 刷新，
@@ -606,7 +606,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testHigherOrderFunctionValue_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1036",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "10\n36",
                       "加倍(5)=10、匿名 g(6)=36（LLVM 无换行拼接）")
     }
 
@@ -626,7 +626,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testStructComposition_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "21默认",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "2\n1\n默认",
                       "组合字段/方法：数值 2→1、标签 默认（LLVM 无换行拼接）")
     }
 
@@ -645,7 +645,7 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testGenericStruct_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "7泛型值",
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "7\n泛型值",
                       "盒<I32>.取()=7、盒<String>.取()=泛型值（LLVM 无换行拼接）")
     }
 
@@ -764,8 +764,8 @@ final class IRExecutionTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         let source = try loadPiniFixture("testBuiltinMathIntegersViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "537",
-                      "abs(-5)=5 min(3,7)=3 max(3,7)=7")
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "5\n3\n7",
+                      "abs(-5)=5 min(3,7)=3 max(3,7)=7（print 各自换行）")
     }
 
     /// 真实 clang/lli：sqrt / sin / cos / tan（F64 上走 LLVM intrinsic）。
@@ -1035,13 +1035,14 @@ final class IRExecutionTests: XCTestCase {
             "main|func() -> ():",
             "    let a = [1, 2, 3, 4, 5]",
             "    let nested = [[1, 2], [3, 4], [5, 6]]",
-            "    let d = [\"Alice\": 30, \"Bob\": 25, \"Carol\": 41]",
+            "    let d = [\"Alice\"= 30, \"Bob\"= 25, \"Carol\"= 41]",
             "    let s = {2, 3, 5, 7, 11}",
             "    print(a)",
             "    print(nested)",
             "    print(d)",
             "    print(s)",
-            "    print(d[\"Zoe\"])",
+            // 「print(d["Zoe"])」缺失键行已移除（2026-09-07）：三通道下缺键 = panic（非打 null），
+            // panic 场景由 RuntimeBackendTests.testDictMissingKeyBothBackends 锁步覆盖。
             "    return",
         ].joined(separator: "\n")
 
@@ -1069,7 +1070,8 @@ final class IRExecutionTests: XCTestCase {
             .components(separatedBy: .whitespacesAndNewlines).joined()
 
         // 归一化后三执行路径（解释器 / lli-JIT / clang-AOT）应逐 token 一致；黄金串为去空白后的容器展示。
-        let golden = "[1,2,3,4,5][[1,2],[3,4],[5,6]]{Alice:30,Bob:25,Carol:41}{2,3,5,7,11}null"
+        // 黄金串不含缺失键「null」尾巴（该行已随三通道语义移除，见上）。
+        let golden = "[1,2,3,4,5][[1,2],[3,4],[5,6]]{Alice:30,Bob:25,Carol:41}{2,3,5,7,11}"
         XCTAssertEqual(lliOut, clangOut, "lli 与 clang AOT 容器打印应一致")
         XCTAssertEqual(lliOut, interpOut, "LLVM 与解释器容器打印应逐 token 一致")
         XCTAssertEqual(lliOut, golden, "容器打印双后端归一化后应等于黄金串")

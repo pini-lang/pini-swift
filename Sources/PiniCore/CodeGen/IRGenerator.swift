@@ -385,7 +385,8 @@ public final class IRGenerator {
  ir += "declare ptr @bk_dict_key_at(ptr, i32)\n"
  ir += "declare ptr @bk_dict_val_at(ptr, i32)\n"
  ir += "declare ptr @bk_set_at(ptr, i32)\n"
- ir += "declare i32 @bk_dict_contains(ptr, ptr, i32, i32)\n"
+ // bk_dict_contains 声明已移除（2026-09-07 三通道对齐）：缺失键打 null 的特例删除，
+ // 缺失键语义统一为 bk_dict_get 内 bk_panic（与解释器 panic 一致）。
  // #46-D D4（COW）：显式 share count 与写时分裂原语（类型无关，见 PiniRuntime 所有权契约）。
  ir += "declare void @bk_handle_retain(ptr)\n"
  ir += "declare ptr @bk_handle_ensure_unique(ptr)\n"

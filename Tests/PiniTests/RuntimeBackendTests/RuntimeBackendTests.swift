@@ -133,8 +133,8 @@ final class RuntimeBackendTests: XCTestCase {
         let src = try loadPiniFixture("testArrayViaRuntimeLLI", filePath: #filePath)
 
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
-        // LLVM print 不补换行 → 归一化前原样为 "203"
-        XCTAssertEqual(llvmOut, "203", "数组经运行时 shim + lli --dlopen 应输出 20(a[1]) 与 3(len)，无换行")
+        // print 各自补换行 → 归一化前原样为 "20\n3\n"
+        XCTAssertEqual(llvmOut, "20\n3\n", "数组经运行时 shim + lli --dlopen 应输出 20(a[1]) 与 3(len)（print 各自换行）")
 
         let interpOut = try runViaInterpreter(src)
         XCTAssertEqual(interpOut, "20\n3\n", "解释器侧应输出 20 与 3（每条 print 补换行）")
@@ -156,7 +156,7 @@ final class RuntimeBackendTests: XCTestCase {
         let src = try loadPiniFixture("testArrayViaRuntimeClang", filePath: #filePath)
 
         let clangOut = try runViaClangWithRuntime(src, dylib: dylib)
-        XCTAssertEqual(clangOut, "203", "数组经 clang -lPiniRuntime AOT 应输出 20(a[1]) 与 3(len)，无换行")
+        XCTAssertEqual(clangOut, "20\n3\n", "数组经 clang -lPiniRuntime AOT 应输出 20(a[1]) 与 3(len)（print 各自换行）")
 
         let interpOut = try runViaInterpreter(src)
         XCTAssertEqual(clangOut.replacingOccurrences(of: "\n", with: ""),
@@ -211,7 +211,7 @@ final class RuntimeBackendTests: XCTestCase {
         try XCTSkipUnless(lliAvailable, "lli not available")
         guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
-        XCTAssertEqual(llvmOut, "0", "LLVM 空数组 len 应为 0（print 不补换行）")
+        XCTAssertEqual(llvmOut, "0\n", "LLVM 空数组 len 应为 0（print 补换行，与解释器一致）")
     }
 
     // MARK: - #46-D D1：数组元素类型扩展（Int 之外支持 F64/Bool/String），双后端对齐
@@ -285,13 +285,21 @@ final class RuntimeBackendTests: XCTestCase {
 
     /// 双后端锁步：下标写（含嵌套/复合/多元素类型）两侧 stdout 归一化后一致。
     /// 意图：验证下标写（含嵌套/复合/多元素类型）双后端归一化输出一致。
+    /// D1 能力边界负向钉（2026-09-07 由双后端对拍改为负向断言）：
+    /// LLVM 后端未记录非字面量绑定数组变量的元素类型（D1 范围：仅 let/var 绑定字面量），
+    /// 下标写目标为变量绑定的「字面量外数组」（append 构造等）在 IR 生成期显式 unsupported。
+    /// 意图：钉定 D1 边界——不给静默错误，也不伪造绿；能力扩展时此钉翻转为正向断言。
     func testArraySubscriptWriteBothBackends() throws {
         let src = try loadPiniFixture("testArraySubscriptWriteBothBackends", filePath: #filePath)
-        let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
-        XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""),
-                       interpOut.replacingOccurrences(of: "\n", with: ""),
-                       "数组下标写（嵌套/复合/多类型）双后端归一化输出应一致")
+        // IR 生成期即抛错（先于 lli 调用），故无需 lli/dylib 门控——D1 边界钉恒可执行。
+        XCTAssertThrowsError(try runViaLLIWithRuntime(src, dylib: locateRuntimeDylib() ?? "unused")) { error in
+            guard case IRGenError.unsupportedFeature(let feature, _) = error else {
+                XCTFail("应为 unsupportedFeature（D1 边界），实际: \(error)")
+                return
+            }
+            XCTAssertTrue(feature.contains("数组元素类型"),
+                          "D1 边界消息应提及数组元素类型，实际: \(feature)")
+        }
     }
 
     /// 双后端锁步（epic-46 3.4）：越界下标写两侧均报错。
@@ -347,22 +355,30 @@ final class RuntimeBackendTests: XCTestCase {
         XCTAssertEqual(interpOut.replacingOccurrences(of: "\n", with: ""), "5", "解释器集合 len 应为去重后 5")
     }
 
-    /// 字典缺失键：解释器返回 .null（打印 "null"），LLVM 经 @bk_dict_get 返回 NULL 后补零值（Int 值类型 → 0）。
-    /// 二者存在已知分歧（print(.null) 属 D3 范畴，D2 仅覆盖既有键读取 / len / 写），此处仅断言两侧均不崩溃。
-    /// 意图：验证字典缺失键双后端均不崩溃（解释器 .null / LLVM 补零值），断言两侧输出 1。
+    /// 字典缺失键：G48 三通道（批 2 通道 1，D-5：缺失键与越界同义）→ 双后端均 panic。
+    /// 解释器抛 RuntimeError；LLVM 经运行时 `bk_dict_get` 内 `bk_panic` 终止进程（stdout 空）。
+    /// 意图：验证字典缺失键双后端均 panic——解释器抛错，LLVM 经 bk_panic 终止且 stdout 为空。
+    /// （2026-09-07 补齐 LLVM 侧锁步：此前「LLVM 缺键补零值」残迹已随三通道对齐移除。）
     func testDictMissingKeyBothBackends() throws {
         let src = try loadPiniFixture("testDictMissingKeyBothBackends", filePath: #filePath)
-        // 批 2 通道 1（D-5：字典缺失键与越界同义）：解释器侧 panic，不再静默补零/返回 nil。
+        // 解释器侧：缺键应与越界同义，panic 而非静默返回 nil。
         XCTAssertThrowsError(try runViaInterpreter(src),
                              "字典缺失键应与越界同义，panic 而非静默返回 nil")
-        // LLVM 侧字典下标读属未实现面（批 2 聚焦于解释器），本环境亦无 lli；
-        // 待 LLVM 三通道落地时补锁步断言（如实记录，不伪造绿）。
+        // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
+        try XCTSkipUnless(lliAvailable, "lli not available")
+        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
+        XCTAssertTrue(llvmOut.isEmpty,
+                      "LLVM 缺键应经 bk_panic 终止，stdout 应为空（实际：'\(llvmOut)'）")
     }
 
     // MARK: - #46-D D4.2.1b：容器值语义（COW）双后端锁步
 
-    /// 双后端锁步断言：同一源码在解释器与 `lli --dlopen` 运行时下**输出逐字节一致**（剥离换行，
-    /// 因 LLVM 单参 print 不补换行属预存缺口），且等于期望值。
+    /// 双后端锁步断言：同一源码在解释器与 `lli --dlopen` 运行时下**输出逐字节一致**（剥离换行以吸收
+    /// 潜在尾部差异），且等于期望值。
+    ///
+    /// 注：LLVM 单参 print 不补换行的预存缺口已于 2026-09-07 修复（`@fmt_newline` 补发，
+    /// 与解释器/多参 print 对齐）；此处剥离换行保留为对尾部差异的吸收层。
     ///
     /// COW 场景必须双向断言：既要「写别名不污染源」，也要「写源不污染别名」，
     /// 否则 share 记账方向错误（漏 retain / 多 release）仍可能单向偶然通过。

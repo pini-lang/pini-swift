@@ -278,8 +278,10 @@ final class IRGeneratorTests: XCTestCase {
                       "打印字典应声明 @bk_dict_val_at 访问器")
         XCTAssertTrue(ir.contains("declare ptr @bk_set_at(ptr, i32)"),
                       "打印集合应声明 @bk_set_at 访问器")
-        XCTAssertTrue(ir.contains("declare i32 @bk_dict_contains(ptr, ptr, i32, i32)"),
-                      "打印字典缺失键闭合应声明 @bk_dict_contains 访问器")
+        // bk_dict_contains 声明已随「缺失键打 null」特例移除（2026-09-07 三通道对齐）：
+        // 缺失键经 bk_dict_get 内 bk_panic 终止，不再有 contains + select 路径。
+        XCTAssertFalse(ir.contains("bk_dict_contains"),
+                       "缺失键 null 特例已移除，IR 不应再引用 @bk_dict_contains")
     }
 
     // MARK: - P6-1e: len 内置 + print bool 收口（结构断言）

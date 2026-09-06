@@ -434,6 +434,7 @@ extension IRGenerator {
  func generatePrintCall(arguments: [CallArgument]) throws -> IRValue {
  guard !arguments.isEmpty else {
  emitLine(" call i32 (ptr, ...) @printf(ptr @fmt_int, i32 0)")
+ emitPrintNewline()
  return IRValue(llvmType: "void", ssaName: "")
  }
 
@@ -447,12 +448,9 @@ extension IRGenerator {
  return try generateInterpolationPrint(segments)
  }
 
- // #46-D D3：缺失键闭合——`print(d[k])` 键缺失时 LLVM 输出 "null"，对齐解释器 `stringify(.null)` → "null"。
- // 既有键场景仍走下方正常 stringify（命中返回值 / 缺失补零值的分歧在此统一为 "null"）。
- if case .subscript(let dContainer, _, _) = arg.expression,
- (try? resolveDictValueType(dContainer)) != nil {
- return try generatePrintDictSubscriptWithNull(arg.expression)
- }
+ // #46-D D3 缺失键「null」特例已移除（2026-09-07）：G48 三通道下缺失键 = 越界同义
+ // （解释器 panic），LLVM 侧 `bk_dict_get` 同步 panic（见 PiniRuntime）；
+ // 命中键走下方正常读取 + stringify 路径。
 
  var result = try generateExpression(arg.expression)
 
@@ -469,6 +467,7 @@ extension IRGenerator {
  let sel = "%t\(nextTemp())"
  emitLine(" \(sel) = select i1 \(result.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false")
  emitLine(" call i32 (ptr, ...) @printf(ptr \(sel))")
+ emitPrintNewline()
  return IRValue(llvmType: "void", ssaName: "")
  }
 
@@ -491,33 +490,15 @@ extension IRGenerator {
  }
 
  emitLine(" call i32 (ptr, ...) @printf(ptr \(fmtVar), \(result.llvmType) \(result.ssaName))")
+ emitPrintNewline()
  return IRValue(llvmType: "void", ssaName: "")
  }
 
- /// `print(d[k])` 缺失键闭合（#46-D D3）：键命中走正常 stringify（返回值），键缺失经 `@bk_dict_contains`
- /// 判定并输出字面量 "null"，对齐解释器 `stringify(.null)` → "null"。闭合 D2 遗留的「缺失键 LLVM 补零值」分歧。
- private func generatePrintDictSubscriptWithNull(_ expr: Expression) throws -> IRValue {
- guard case .subscript(let container, let index, _) = expr else {
- throw IRGenError.unsupportedExpression(kind:"internal: expected subscript in D3 print", sl())
- }
- usesCollections = true
- let dictVal = try generateExpression(container) // %bk_dict*
- let raw = "%t\(nextTemp())"
- emitLine(" \(raw) = bitcast %bk_dict* \(dictVal.ssaName) to ptr")
- let indexVal = try generateExpression(index)
- let (keyBoxPtr, keyWidth, keyTag) = try boxDictKey(indexVal)
- let presentI32 = "%t\(nextTemp())"
- emitLine(" \(presentI32) = call i32 @bk_dict_contains(ptr \(raw), ptr \(keyBoxPtr), i32 \(keyWidth), i32 \(keyTag))")
- let present = "%t\(nextTemp())"
- emitLine(" \(present) = icmp ne i32 \(presentI32), 0")
- // 正常生成读（缺失补零值），再 stringify；命中取之，缺失取 "null"。
- let val = try generateExpression(expr)
- let valStr = try generateStringify(val, resolveExprTypeAnnotation(expr))
- let nullStr = try generateStringLiteral("null")
- let sel = "%t\(nextTemp())"
- emitLine(" \(sel) = select i1 \(present), ptr \(valStr.ssaName), ptr \(nullStr.ssaName)")
- emitLine(" call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(sel))")
- return IRValue(llvmType: "void", ssaName: "")
+ /// 单参 print 补发尾部换行（对齐解释器与多参 print 的既有意图）。
+ /// 此前仅多参 print 带换行、单参/插值缺失，双后端 stdout 分歧被测试的空白归一化掩盖
+ /// （门开演练暴露：testIsAsciiDigitViaLLI 期望 "1\n9" 实得 "19"）。
+ private func emitPrintNewline() {
+ emitLine(" call i32 (ptr, ...) @printf(ptr @fmt_newline)")
  }
 
  func generateMultiArgPrint(_ arguments: [CallArgument]) throws -> IRValue {
@@ -646,6 +627,7 @@ extension IRGenerator {
  }
  let argList = callArgs.isEmpty ? "" : ", " + callArgs.joined(separator: ", ")
  emitLine(" call i32 (ptr, ...) @printf(ptr \(gep)\(argList))")
+ emitPrintNewline()
  return IRValue(llvmType: "void", ssaName: "")
  }
 }

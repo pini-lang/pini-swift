@@ -55,6 +55,7 @@ extension IRGenerator {
  ir += "@fmt_bool_true = private constant [6 x i8] c\"true\\00\\00\"\n"
  ir += "@fmt_bool_false = private constant [7 x i8] c\"false\\00\\00\"\n"
  ir += "@fmt_string = private constant [3 x i8] c\"%s\\00\"\n"
+ ir += "@fmt_newline = private constant [2 x i8] c\"\\0A\\00\"\n"
  ir += "@.fopen_w = private constant [2 x i8] c\"w\\00\"\n"
  ir += "@.fopen_r = private constant [2 x i8] c\"r\\00\"\n"
  ir += "@.split_lbr = private constant [2 x i8] c\"[\\00\"\n"
