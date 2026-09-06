@@ -63,6 +63,16 @@ final class GrammarConsistencyTests: XCTestCase {
         throw ConsistencyError.noFuncBody
     }
 
+    /// 按名取函数体（模块内首个 funcDecl 不是目标函数时使用，如 `f` 声明先于 `main`）。
+    private func funcBody(named name: String, in module: Module) throws -> [Statement] {
+        for decl in module.declarations {
+            if case .funcDecl(let f) = decl, f.name == name, let body = f.body {
+                return body.statements
+            }
+        }
+        throw ConsistencyError.noFuncBody
+    }
+
     private func firstStmt(_ module: Module) throws -> Statement {
         let body = try firstFuncBody(module)
         guard let first = body.first else { throw ConsistencyError.noStatement }
@@ -612,6 +622,133 @@ final class GrammarConsistencyTests: XCTestCase {
                                              op: .plus,
                                              right: .identifier(name: "b", location: .dummy),
                                              location: .dummy))
+    }
+    // MARK: - 5. 反录勘测面补钉（2026-09-05 批⑤，勘测矩阵 row 1–7；探针源 docs/spec/issue/probes-backfill-2026-09-05/）
+
+    /// 矩阵 row 1：尾逗号七形态——形参/返回元组/调用/数组/字典/集合/类型元组（含函数类型标注）。
+    /// 意图：验证全部尾逗号形态均解析通过（EBNF 各产生式未写尾逗号，实现为既成事实）。
+    func testBackfillTrailingCommaSevenForms() throws {
+        let module = try parse(try loadPiniFixture("testBackfillTrailingCommaSevenForms", filePath: #filePath) as String)
+        guard case .funcDecl(let f) = module.declarations[0] else {
+            XCTFail("应为函数声明 f"); return
+        }
+        XCTAssertEqual(f.params.count, 2, "形参尾逗号 `b: I32,` 不应吞参")
+        XCTAssertEqual(f.returnTypes.count, 2, "返回元组尾逗号 `F64,` 不应吞返回类型")
+        let body = try funcBody(named: "main", in: module)
+        // main 体共 12 条语句（5 条 var/let + 6 个 print + 尾部 return）。
+        // 第 6 条 `print(f(1, 2,),)`：print 1 参，内层 f 调用 2 参（调用尾逗号不吞参）。
+        guard body.count == 12 else {
+            XCTFail("main 体应为 12 条语句，实际 \(body.count) 条：尾逗号可能吞语句"); return
+        }
+        guard case .expressionStmt(let printCall, _) = body[5],
+              case .call(_, let printArgs, _) = printCall,
+              printArgs.count == 1,
+              case .call(_, let fArgs, _) = printArgs[0].expression,
+              fArgs.count == 2 else {
+            XCTFail("调用尾逗号形态应解析为两层调用且参数数不变，实际：\(body[5])"); return
+        }
+        // 函数类型标注尾逗号：`let h: (I32,) -> (F64,) = ...` 只须解析通过（第 5 条语句）。
+        guard case .varDecl(_, _, _, _, _) = body[4] else {
+            XCTFail("函数类型标注尾逗号应为变量声明，实际：\(body[4])"); return
+        }
+    }
+
+    /// 矩阵 row 2（双向）：调用位标签 PASS 面——`f(a = 1, b = 2)` 解析出 label。
+    /// 意图：验证调用位标签用 `=` 且 label 落入 AST（规则 3.15/G57）。
+    func testBackfillCallLabelEq() throws {
+        let module = try parse(try loadPiniFixture("testBackfillCallLabelEq", filePath: #filePath) as String)
+        let body = try funcBody(named: "main", in: module)
+        guard case .expressionStmt(let printCall, _) = body[0],
+              case .call(_, let printArgs, _) = printCall,
+              printArgs.count == 1,
+              case .call(_, let fArgs, _) = printArgs[0].expression else {
+            XCTFail("应为 print(f(...)) 调用链"); return
+        }
+        XCTAssertEqual(fArgs.map(\.label), ["a", "b"], "标签须以 `=` 传入并落入 AST")
+    }
+
+    /// 矩阵 row 2（双向）：调用位标签拒绝面——`f(a: 1)` 报错并提示改用 `=`。
+    /// 意图：验证旧写法 `f(a: 值)` 被拒绝且报错指向 `=` 迁移路径。
+    func testBackfillCallLabelColonRejected() throws {
+        do {
+            _ = try parse(try loadPiniFixture("testBackfillCallLabelColon", filePath: #filePath) as String)
+            XCTFail("`f(a: 1)` 应被拒绝（调用位标签须用 `=`）")
+        } catch let error as ParserError {
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("实参标签须用 `=`"), "报错应含 `=` 迁移提示，实际：\(message)")
+        }
+    }
+
+    /// 矩阵 row 3：后缀 `!` 强制解包 → `Expression.unary(op: .forceUnwrap)`。
+    /// 意图：验证后缀 `!` 落 AST 节点（前缀 `!` 为 .not，位置消歧）。
+    func testBackfillForceUnwrap() throws {
+        let module = try parse(try loadPiniFixture("testBackfillForceUnwrap", filePath: #filePath) as String)
+        let body = try firstFuncBody(module)
+        guard case .varDecl(_, _, let initializer, _, _) = body[1], let initExpr = initializer else {
+            XCTFail("`let v = x!` 应为带初始化器的变量声明"); return
+        }
+        guard case .unary(let op, let operand, _) = initExpr, op == .forceUnwrap else {
+            XCTFail("后缀 `!` 应为 unary(op: .forceUnwrap)，实际：\(initExpr)"); return
+        }
+        assertExpr(operand, equals: .identifier(name: "x", location: .dummy))
+    }
+
+    /// 矩阵 row 4（双向形态）：元组解构 var 与 let → `Statement.varDestructure`。
+    /// 意图：验证 `var (t, e) = rhs` / `let (t, e) = rhs` 均解析为解构声明且 isMutable 正确。
+    func testBackfillTupleDestructureVarAndLet() throws {
+        let varModule = try parse(try loadPiniFixture("testBackfillTupleDestructureVar", filePath: #filePath) as String)
+        let varBody = try funcBody(named: "main", in: varModule)
+        guard case .varDestructure(let varNames, _, _, let varMutable, _) = varBody[0] else {
+            XCTFail("`var (t, e)` 应为 varDestructure，实际：\(varBody[0])"); return
+        }
+        XCTAssertEqual(varNames, ["t", "e"])
+        XCTAssertTrue(varMutable, "var 解构 isMutable 应为 true")
+
+        let letModule = try parse(try loadPiniFixture("testBackfillTupleDestructureLet", filePath: #filePath) as String)
+        let letBody = try funcBody(named: "main", in: letModule)
+        guard case .varDestructure(let letNames, _, _, let letMutable, _) = letBody[0] else {
+            XCTFail("`let (t, e)` 应为 varDestructure，实际：\(letBody[0])"); return
+        }
+        XCTAssertEqual(letNames, ["t", "e"])
+        XCTAssertFalse(letMutable, "let 解构 isMutable 应为 false")
+    }
+
+    /// 矩阵 row 5：扩展块泛型 `((取值<T>))`。
+    /// 意图：验证泛型扩展解析通过（泛型参数被消费校验；合并按 targetType 名称匹配，不落 AST）。
+    func testBackfillExtensionGeneric() throws {
+        let module = try parse(try loadPiniFixture("testBackfillExtensionGeneric", filePath: #filePath) as String)
+        guard module.declarations.count == 2 else {
+            XCTFail("应为 结构声明 + 扩展块 两个顶级声明，实际 \(module.declarations.count) 个"); return
+        }
+        guard case .extensionDecl(let ext) = module.declarations[1] else {
+            XCTFail("`((取值<T>))` 应为 extensionDecl，实际：\(module.declarations[1])"); return
+        }
+        XCTAssertEqual(ext.targetType, "取值")
+        XCTAssertEqual(ext.methods.count, 1)
+        XCTAssertEqual(ext.methods[0].modifiers, ["self"])
+    }
+
+    /// 矩阵 row 6（拒绝面）：限定 case 解构 `case 形状.圆(r):` 报 E2-001 拒绝。
+    /// 意图：验证 match 模式位点号限定形态被拒（spec match-pattern 无限定形态；点号 match 模式为二期提案）。
+    /// 断言只锁「拒绝」这一态——将来点号 match 模式若引入，本测试须随提案同步改写。
+    func testBackfillQualifiedCasePatternRejected() throws {
+        do {
+            _ = try parse(try loadPiniFixture("testBackfillQualifiedCasePatternRejected", filePath: #filePath) as String)
+            XCTFail("`case 形状.圆(r):` 应被拒绝（match 模式位无限定形态，E2-001）")
+        } catch is ParserError {
+            // 拒绝即通过；报错形态为 E2-001 expectedToken（期朢单左括号/右括号类），不锁文案。
+        }
+    }
+
+    /// 矩阵 row 7（拒绝面，防将来误引入）：单类型返回糖 `-> I32` 拒绝。
+    /// 意图：验证返回位只接受元组 `-> (I32,)`（草稿 A7 提案池意图未实现，spec 与实现一致）。
+    func testBackfillSingleReturnSugarRejected() throws {
+        do {
+            _ = try parse(try loadPiniFixture("testBackfillSingleReturnSugarRejected", filePath: #filePath) as String)
+            XCTFail("`-> I32` 单类型返回糖应被拒绝（返回位须为元组 `-> (I32,)`）")
+        } catch is ParserError {
+            // 拒绝即通过。
+        }
     }
 }
 
