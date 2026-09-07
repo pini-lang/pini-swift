@@ -2041,10 +2041,19 @@ public class Interpreter {
  case (.int(let a), .int(let b), .lessThanOrEqual): return .bool(a <= b)
  case (.int(let a), .int(let b), .greaterThan): return .bool(a > b)
  case (.int(let a), .int(let b), .greaterThanOrEqual): return .bool(a >= b)
- case (.float(let a), .float(let b), .plus): return .float(a + b)
- case (.float(let a), .float(let b), .minus): return .float(a - b)
- case (.float(let a), .float(let b), .multiply): return .float(a * b)
- case (.float(let a), .float(let b), .divide): return .float(a / b)
+        case (.float(let a), .float(let b), .plus): return .float(a + b)
+        case (.float(let a), .float(let b), .minus): return .float(a - b)
+        case (.float(let a), .float(let b), .multiply): return .float(a * b)
+        case (.float(let a), .float(let b), .divide): return .float(a / b)
+        // F64 同型比较六算符（与 int 分派形态一致）：原缺失导致 float 比较
+        // 落 default 抛 typeMismatch，解释器通道 F64 只能算不能比
+        // （issue-interpreter-float-compare-2026-09-07 收口）。
+        case (.float(let a), .float(let b), .equal): return .bool(a == b)
+        case (.float(let a), .float(let b), .notEqual): return .bool(a != b)
+        case (.float(let a), .float(let b), .lessThan): return .bool(a < b)
+        case (.float(let a), .float(let b), .lessThanOrEqual): return .bool(a <= b)
+        case (.float(let a), .float(let b), .greaterThan): return .bool(a > b)
+        case (.float(let a), .float(let b), .greaterThanOrEqual): return .bool(a >= b)
  case (.string(let a), .string(let b), .plus): return .string(a + b)
  case (.string(let a), .string(let b), .equal): return .bool(a == b)
  // ADR-020 D2 试点发现：String 缺 notEqual 分派（语言内 contains 需要）——补齐。

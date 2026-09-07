@@ -76,6 +76,16 @@ final class InterpreterTests: XCTestCase {
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "6", "++x 应使 x 从 5 变为 6")
     }
 
+    /// F64 同型比较六算符（工单 issue-interpreter-float-compare 收口）：
+    /// evaluateBinaryOp 原只有 int 比较分支，float 比较落 default 抛
+    /// typeMismatch——补齐后应与 int 同型语义一致，输出 true/false 六行。
+    func testFloatCompare() throws {
+        let source = try loadPiniFixture("testFloatCompare", filePath: #filePath)
+        let output = try runProgram(source)
+        let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        XCTAssertEqual(lines, ["true", "false", "true", "false", "false", "true"])
+    }
+
     /// F3：前缀 ++/-- 表达式位也写回（语句位与表达式位同轨），表达式值 = 改写后值
     func testUnaryIncDecExpressionWriteback() throws {
         let source = try loadPiniFixture("testUnaryIncDecExpressionWriteback", filePath: #filePath)

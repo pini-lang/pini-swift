@@ -6,12 +6,11 @@ import XCTest
 /// for every slice fixture. Lockstep harness mirrors IRExecutionTests.
 ///
 /// Excluded surface (tracked, not silently skipped):
-/// - print(F64): %f vs the interpreter's shortest repr — pre-existing legacy
-///   backend divergence, parked for the parity grid.
-/// - F64 comparisons: the interpreter has no float comparison cases at all
-///   (evaluateBinaryOp throws typeMismatch) — host defect, registered as
-///   issue-interpreter-float-compare-2026-09-07. Until it lands, float
-///   fixtures cannot run through both channels and are absent here.
+/// - print(F64): %f vs the interpreter's shortest repr — LR-8 adjudicated to
+///   shortest round-trip; lands with bk_double_to_string (batch B of the
+///   pre-M5 float mini batch, issue-print-f64-format-parity-2026-09-07).
+///   F64 *comparisons* are covered since the interpreter fix landed
+///   (issue-interpreter-float-compare-2026-09-07, testDiffFloatCompare).
 final class HIRDifferentialTests: XCTestCase {
 
     private func runNewPipeline(_ source: String) throws -> String {
@@ -101,4 +100,5 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffCJKFunctionName() throws { try assertParity(fixtureName: "testDiffCJKFunctionName") }
     func testDiffNoTrailingReturn() throws { try assertParity(fixtureName: "testDiffNoTrailingReturn") }
     func testDiffComparisonSet() throws { try assertParity(fixtureName: "testDiffComparisonSet") }
+    func testDiffFloatCompare() throws { try assertParity(fixtureName: "testDiffFloatCompare") }
 }
