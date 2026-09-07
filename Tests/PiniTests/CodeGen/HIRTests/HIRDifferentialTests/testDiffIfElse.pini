@@ -1,0 +1,12 @@
+main|func() -> ():
+    var x = 5
+    if x > 3:
+        print("big")
+    else:
+        print("small")
+    x = 1
+    if x > 3:
+        print("big")
+    else:
+        print("small")
+    return

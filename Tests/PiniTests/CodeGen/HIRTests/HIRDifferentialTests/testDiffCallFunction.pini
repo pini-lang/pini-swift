@@ -1,0 +1,10 @@
+main|func() -> ():
+    print(add(3, 4))
+    print(half(10))
+    return
+
+add|func(x: I32, y: I32,) -> (I32,):
+    return x + y
+
+half|func(n: I32,) -> (I32,):
+    return n / 2
