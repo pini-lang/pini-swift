@@ -1,0 +1,6 @@
+加倍|func(x: I32,) -> (I32,):
+    return x * 2
+
+main|func() -> ():
+    print(加倍(21))
+    return

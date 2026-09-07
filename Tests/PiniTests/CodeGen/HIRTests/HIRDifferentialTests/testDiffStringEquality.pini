@@ -1,0 +1,7 @@
+main|func() -> ():
+    let a: String = "ab"
+    let b: String = "ab"
+    let c: String = "cd"
+    print(a == b)
+    print(a != c)
+    return

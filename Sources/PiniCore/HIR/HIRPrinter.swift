@@ -1,0 +1,96 @@
+import Foundation
+
+/// Human-readable dump of a lowered HIR module. Debug aid for differential
+/// troubleshooting: when the new pipeline and the interpreter disagree, this
+/// dump shows exactly what the lowerer produced before emission.
+public enum HIRPrinter {
+
+    public static func dump(module: HIRModule) -> String {
+        var out: [String] = []
+        for function in module.functions {
+            out.append(signatureLine(of: function))
+            out.append(contentsOf: dumpBody(function.body, indent: 1))
+            out.append("")
+        }
+        return out.joined(separator: "\n")
+    }
+
+    private static func signatureLine(of function: HIRFunction) -> String {
+        let params = function.params
+            .map { "\($0.name): \($0.type.llvmSpelling)" }
+            .joined(separator: ", ")
+        let ret = function.returnType.map { " -> \($0.llvmSpelling)" } ?? ""
+        return "func \(function.name)(\(params))\(ret):"
+    }
+
+    private static func dumpBody(_ body: [HIRStmt], indent: Int) -> [String] {
+        body.flatMap { dumpStmt($0, indent: indent) }
+    }
+
+    private static func indent(_ level: Int) -> String {
+        String(repeating: "    ", count: level)
+    }
+
+    private static func dumpStmt(_ statement: HIRStmt, indent level: Int) -> [String] {
+        let pad = indent(level)
+        switch statement {
+        case .allocVar(let name, let type, let mutable, let initializer):
+            let kw = mutable ? "var" : "let"
+            let initPart = initializer.map { " = \(exprText($0))" } ?? ""
+            return ["\(pad)\(kw) \(name): \(type.llvmSpelling)\(initPart)"]
+        case .storeVar(let name, _, let value):
+            return ["\(pad)\(name) = \(exprText(value))"]
+        case .ifStmt(let condition, let thenBody, let elseBody):
+            var lines = ["\(pad)if \(exprText(condition)):"]
+            lines.append(contentsOf: dumpBody(thenBody, indent: level + 1))
+            if let elseBody = elseBody {
+                lines.append("\(pad)else:")
+                lines.append(contentsOf: dumpBody(elseBody, indent: level + 1))
+            }
+            return lines
+        case .whileStmt(let condition, let body):
+            var lines = ["\(pad)while \(exprText(condition)):"]
+            lines.append(contentsOf: dumpBody(body, indent: level + 1))
+            return lines
+        case .returnStmt(let value):
+            return ["\(pad)return\(value.map { " " + exprText($0) } ?? "")"]
+        case .exprStmt(let expression):
+            return ["\(pad)\(exprText(expression))"]
+        }
+    }
+
+    private static func exprText(_ expression: HIRExpr) -> String {
+        switch expression {
+        case .intConst(let value, _): return "\(value)"
+        case .floatConst(let value): return "\(value)"
+        case .boolConst(let value): return value ? "true" : "false"
+        case .stringConst(let value): return "\"\(value)\""
+        case .load(let name, let type): return "\(name)@\(type.llvmSpelling)"
+        case .binary(let op, let lhs, let rhs, _):
+            return "(\(exprText(lhs)) \(symbol(of: op)) \(exprText(rhs)))"
+        case .unary(let op, let operand, _):
+            return "(\(op == .negate ? "-" : "!")\(exprText(operand)))"
+        case .call(let function, let arguments, _):
+            let args = arguments.map(exprText).joined(separator: ", ")
+            return "\(function)(\(args))"
+        case .printCall(let argument):
+            return "print(\(exprText(argument)))"
+        }
+    }
+
+    private static func symbol(of op: HIRBinaryOp) -> String {
+        switch op {
+        case .add: return "+"
+        case .subtract: return "-"
+        case .multiply: return "*"
+        case .divide: return "/"
+        case .modulo: return "%"
+        case .equal: return "=="
+        case .notEqual: return "!="
+        case .lessThan: return "<"
+        case .lessThanOrEqual: return "<="
+        case .greaterThan: return ">"
+        case .greaterThanOrEqual: return ">="
+        }
+    }
+}

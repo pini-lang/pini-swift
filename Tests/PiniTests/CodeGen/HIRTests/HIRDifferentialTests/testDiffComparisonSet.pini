@@ -1,0 +1,10 @@
+main|func() -> ():
+    let a: I32 = 17
+    let b: I32 = 5
+    print(a > b)
+    print(a < b)
+    print(a >= 17)
+    print(a <= 4)
+    print(a != b)
+    print(a == 17)
+    return

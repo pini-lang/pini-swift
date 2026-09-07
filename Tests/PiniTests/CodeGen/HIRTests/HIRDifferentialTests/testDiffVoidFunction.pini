@@ -1,0 +1,8 @@
+main|func() -> ():
+    greet()
+    greet()
+    return
+
+greet|func() -> ():
+    print("hi")
+    return

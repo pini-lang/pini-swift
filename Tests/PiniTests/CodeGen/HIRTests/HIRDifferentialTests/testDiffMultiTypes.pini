@@ -1,0 +1,10 @@
+describe|func(name: String, count: I32,) -> (String,):
+    return name
+
+flag|func(b: Bool,) -> (Bool,):
+    return !b
+
+main|func() -> ():
+    print(describe("box", 3))
+    print(flag(false))
+    return

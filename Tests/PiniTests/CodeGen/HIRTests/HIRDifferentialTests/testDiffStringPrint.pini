@@ -1,0 +1,5 @@
+main|func() -> ():
+    print("Hello, HIR!")
+    let name: String = "Pini"
+    print(name)
+    return

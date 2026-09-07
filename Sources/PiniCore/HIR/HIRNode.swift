@@ -1,0 +1,106 @@
+import Foundation
+
+/// High-level intermediate representation for the LLVM backend (LR-2/LR-3).
+///
+/// The HIR is a **typed tree**: every expression node carries its resolved
+/// scalar type, every variable access carries the declared type of the
+/// variable. All type decisions live in `HIRLowerer`; consumers (the
+/// emitters) translate nodes to IR text mechanically and never re-derive
+/// types. This is the structural replacement for the old IRGenerator's
+/// shadow type tables.
+///
+/// Scope note: this is the M4 vertical-slice node set (scalars, arithmetic,
+/// control flow, function calls). Aggregate / closure / concurrency / FFI /
+/// generics nodes are added grid-by-grid in M5; anything outside the
+/// current set is rejected by the single capability gate in `HIRLowerer`.
+
+/// Resolved scalar types carried by HIR nodes (slice set).
+public enum HIRType: Equatable {
+    case i32
+    case i64
+    case f64
+    case boolean
+    case string
+
+    /// LLVM type spelling used by the emitters.
+    public var llvmSpelling: String {
+        switch self {
+        case .i32: return "i32"
+        case .i64: return "i64"
+        case .f64: return "double"
+        case .boolean: return "i1"
+        case .string: return "i8*"
+        }
+    }
+
+    public var isNumeric: Bool {
+        switch self {
+        case .i32, .i64, .f64: return true
+        case .boolean, .string: return false
+        }
+    }
+}
+
+/// Binary operators in the slice set.
+public enum HIRBinaryOp: Equatable {
+    case add, subtract, multiply, divide, modulo
+    case equal, notEqual, lessThan, lessThanOrEqual, greaterThan, greaterThanOrEqual
+
+    /// Comparison operators produce `boolean`; the rest produce the operand type.
+    public var isComparison: Bool {
+        switch self {
+        case .equal, .notEqual, .lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var llvmPredicate: String? {
+        switch self {
+        case .equal: return "eq"
+        case .notEqual: return "ne"
+        case .lessThan: return "slt"
+        case .lessThanOrEqual: return "sle"
+        case .greaterThan: return "sgt"
+        case .greaterThanOrEqual: return "sge"
+        default: return nil
+        }
+    }
+}
+
+/// Unary operators in the slice set.
+public enum HIRUnaryOp: Equatable {
+    case negate
+    case logicalNot
+}
+
+/// Typed expression tree (slice set).
+public indirect enum HIRExpr: Equatable {
+    case intConst(value: Int, type: HIRType)
+    case floatConst(value: Double)
+    case boolConst(value: Bool)
+    case stringConst(value: String)
+    /// Load a variable's value; `type` is the declared type of the variable.
+    case load(name: String, type: HIRType)
+    case binary(op: HIRBinaryOp, lhs: HIRExpr, rhs: HIRExpr, type: HIRType)
+    case unary(op: HIRUnaryOp, operand: HIRExpr, type: HIRType)
+    /// Call to a module-level function; `returnType` is nil for void calls.
+    case call(function: String, arguments: [HIRExpr], returnType: HIRType?)
+    /// Intrinsic `print(expr)` — one scalar argument, void result.
+    case printCall(argument: HIRExpr)
+}
+
+/// Typed statement tree (slice set).
+public indirect enum HIRStmt: Equatable {
+    /// Variable slot. Emitting allocates the slot; a non-nil initializer
+    /// stores into it right after allocation.
+    case allocVar(name: String, type: HIRType, mutable: Bool, initializer: HIRExpr?)
+    /// Store into an existing variable; `type` is the declared variable type.
+    case storeVar(name: String, type: HIRType, value: HIRExpr)
+    case ifStmt(condition: HIRExpr, thenBody: [HIRStmt], elseBody: [HIRStmt]?)
+    case whileStmt(condition: HIRExpr, body: [HIRStmt])
+    /// Slice set: single-value return; nil for void functions.
+    case returnStmt(value: HIRExpr?)
+    case exprStmt(HIRExpr)
+}

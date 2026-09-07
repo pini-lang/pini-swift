@@ -1,0 +1,8 @@
+main|func() -> ():
+    print(true)
+    print(false)
+    let flag: Bool = 1 < 2
+    print(flag)
+    print(!flag)
+    print(1 == 2)
+    return
