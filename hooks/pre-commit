@@ -48,10 +48,21 @@ fi
 # 证据表自动清扫（spec §1.4「自动清扫」；工单 docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md）
 # 放最后：只有前面所有闸门都通过才动这张表。本仓第一个会改写文件的 hook。
 # 语义见 GIT_WORKFLOW.md §5.1 —— 24h 节流、未暂存则跳过、结果 git add 回本次提交。
-if command -v python3 >/dev/null 2>&1; then
+# 解释器择优（2026-09-07）：evidence_sweep.py 依赖 tomllib（python >= 3.11）。
+# 系统 python3 可能是 3.9（无 tomllib，--hook 模式硬失败曾阻塞提交）。按候选序
+# 选第一个能 import tomllib 的解释器；全部不可用则警告跳过——与「python3 不存在」
+# 同语义：清扫是维护节拍而非正确性闸门，解释器残缺不应阻塞提交。
+ev_py=""
+for cand in python3 python3.13 python3.12 python3.11; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import tomllib' >/dev/null 2>&1; then
+    ev_py="$cand"
+    break
+  fi
+done
+if [ -n "$ev_py" ]; then
   if git diff --quiet -- docs/spec/evidence-table.toml; then
     ev_before="$(git hash-object docs/spec/evidence-table.toml 2>/dev/null || true)"
-    python3 "$root/tools/evidence_sweep.py" --hook || exit 1
+    "$ev_py" "$root/tools/evidence_sweep.py" --hook || exit 1
     ev_after="$(git hash-object docs/spec/evidence-table.toml 2>/dev/null || true)"
     # 只在清扫真的改了文件时才暂存——否则会把与本次提交无关的既有改动捎带进来
     if [ "$ev_before" != "$ev_after" ]; then
@@ -61,7 +72,7 @@ if command -v python3 >/dev/null 2>&1; then
     echo "    evidence sweep: skipped, table has unstaged edits" >&2
   fi
 else
-  echo "    evidence sweep: skipped, python3 not found" >&2
+  echo "    evidence sweep: skipped, no python3 with tomllib (>= 3.11) found" >&2
 fi
 
 exit 0
