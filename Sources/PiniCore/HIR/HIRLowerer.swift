@@ -484,10 +484,16 @@ public enum HIRLowerer {
 
         case .subscript(let container, let index, let location):
             // Array subscript read (G2): safe-assert channel — out of bounds
-            // panics at runtime, matching the interpreter. The tolerant
-            // `.get` channel (Optional) is a later grid.
+            // panics at runtime, matching the interpreter. String subscript
+            // read (G2b) yields the single character as a String, same
+            // panic channel. Negative indices tail-count in both. The
+            // tolerant `.get` channel (Optional) is the member-call path.
             let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
-            guard let elementType = loweredContainer.type.arrayElementType else {
+            let elementType: HIRType
+            switch loweredContainer.type {
+            case .array(let element): elementType = element
+            case .string: elementType = .string
+            default:
                 throw unsupported(
                     "subscript on non-array type '\(loweredContainer.type)'",
                     at: location
@@ -571,11 +577,24 @@ public enum HIRLowerer {
                 )
             }
 
+        case .member(let object, let name, let location):
+            // The slice-sugar open bound arrives as `Optional.none` (a member
+            // on the Optional type name) — lower it to the none literal.
+            // Any other member access is a later grid.
+            if case .identifier("Optional", _) = object, name == "none" {
+                return LoweredExpr(
+                    node: .optionalConstruct(isSome: false, payload: nil, type: .optional(wrapped: .i32)),
+                    type: .optional(wrapped: .i32)
+                )
+            }
+            throw unsupported("member access '.\(name)' outside the slice", at: location)
+
         case .call(let callee, let arguments, let location):
-            // Tolerant read channel `arr.get(i)` (G2): the only member call
-            // wired this grid; all other method calls stay gated.
+            // Member calls: the tolerant read channel `arr.get(i)` (G2) and
+            // the slice channel `base.slice(start, end)` (G2b, the slice-
+            // sugar desugaring). All other method calls stay gated.
             if case .member(let object, let memberName, _) = callee {
-                return try lowerMemberGet(
+                return try lowerMemberCall(
                     object: object, memberName: memberName, arguments: arguments,
                     at: location, into: &context
                 )
@@ -602,18 +621,6 @@ public enum HIRLowerer {
                 }
                 if case .result = loweredArgs[0].type {
                     throw unsupported("printing a Result value is outside the slice", at: location)
-                }
-                if case .array = loweredArgs[0].type {
-                    throw unsupported(
-                        "printing an array value is a later grid (value formatting, G2b)",
-                        at: location
-                    )
-                }
-                if case .optional = loweredArgs[0].type {
-                    throw unsupported(
-                        "printing an Optional value is a later grid (value formatting)",
-                        at: location
-                    )
                 }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
             }
@@ -693,38 +700,80 @@ public enum HIRLowerer {
 
     // MARK: - Member .get & match (G2 batch 3)
 
-    /// `arr.get(i)` — the tolerant read channel: out of bounds yields none
-    /// (the language-level nil), in bounds some(value). Only Array is wired;
-    /// String/Dictionary `.get` join through the same node when their
-    /// optional-read grids land.
-    private static func lowerMemberGet(
+    /// Member calls on built-in receivers. `.get(i)`: the tolerant read
+    /// channel — out of bounds yields none (the language-level nil), in
+    /// bounds some(value); negative indices tail-count (G2b fix: batch 3
+    /// missed the tail count). `.slice(s, e)`: the slice-sugar desugaring;
+    /// bounds are ints or the none literal. Only Array/String receivers are
+    /// wired; Dictionary and other methods join their own grids.
+    private static func lowerMemberCall(
         object: Expression,
         memberName: String,
         arguments: [CallArgument],
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
-        guard memberName == "get" else {
-            throw unsupported("method '\(memberName)' calls are later grids", at: location)
-        }
-        guard arguments.count == 1 else {
-            throw unsupported("get expects exactly one argument", at: location)
-        }
         let loweredObject = try lowerExpr(object, expected: nil, into: &context)
-        guard let elementType = loweredObject.type.arrayElementType else {
-            throw unsupported(".get on non-array type '\(loweredObject.type)'", at: location)
+        let objectType = loweredObject.type
+
+        if memberName == "get" {
+            guard arguments.count == 1 else {
+                throw unsupported("get expects exactly one argument", at: location)
+            }
+            let wrapped: HIRType
+            switch objectType {
+            case .array(let element): wrapped = element
+            case .string: wrapped = .string
+            default:
+                throw unsupported(".get on type '\(objectType)' outside this grid (Array/String)", at: location)
+            }
+            let loweredIndex = try lowerExpr(arguments[0].expression, expected: .i32, into: &context)
+            guard loweredIndex.type == .i32 else {
+                throw unsupported("get index must be I32", at: location)
+            }
+            return LoweredExpr(
+                node: .optionalGet(
+                    container: loweredObject.node, index: loweredIndex.node,
+                    type: .optional(wrapped: wrapped)
+                ),
+                type: .optional(wrapped: wrapped)
+            )
         }
-        let loweredIndex = try lowerExpr(arguments[0].expression, expected: .i32, into: &context)
-        guard loweredIndex.type == .i32 else {
-            throw unsupported("get index must be I32", at: location)
+
+        if memberName == "slice" {
+            guard arguments.count == 2 else {
+                throw unsupported("slice expects exactly two arguments", at: location)
+            }
+            guard objectType.isArray || objectType == .string else {
+                throw unsupported(".slice on type '\(objectType)' outside this grid (Array/String)", at: location)
+            }
+            var loweredBounds: [HIRExpr] = []
+            for argument in arguments {
+                let lowered = try lowerExpr(argument.expression, expected: nil, into: &context)
+                let boundIsValid: Bool
+                if case .optionalConstruct(let isSome, _, _) = lowered.node {
+                    boundIsValid = !isSome
+                } else {
+                    boundIsValid = lowered.type == .i32
+                }
+                guard boundIsValid else {
+                    throw unsupported(
+                        "slice bounds must be integers or the open-bound none literal",
+                        at: location
+                    )
+                }
+                loweredBounds.append(lowered.node)
+            }
+            return LoweredExpr(
+                node: .sliceCall(
+                    container: loweredObject.node, start: loweredBounds[0], end: loweredBounds[1],
+                    type: objectType
+                ),
+                type: objectType
+            )
         }
-        return LoweredExpr(
-            node: .optionalGet(
-                container: loweredObject.node, index: loweredIndex.node,
-                type: .optional(wrapped: elementType)
-            ),
-            type: .optional(wrapped: elementType)
-        )
+
+        throw unsupported("method '\(memberName)' calls are later grids", at: location)
     }
 
     /// `match scrutinee: case name(binding): body ...` — the general case

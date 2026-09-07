@@ -555,12 +555,240 @@ public final class IREmitter {
 
         case .optionalGet(let container, let index, let type):
             return emitOptionalGet(container: container, index: index, type: type)
+
+        case .optionalConstruct(let isSome, let payload, let type):
+            guard case .optional = type else {
+                fatalError("IREmitter: optionalConstruct type is not Optional (HIRLowerer guarantees)")
+            }
+            let aggregate = type.llvmSpelling
+            let withTag = builder.freshTemp()
+            bodyIR += " \(withTag) = insertvalue \(aggregate) undef, i64 \(isSome ? 0 : 1), 0\n"
+            guard isSome, let payload = payload else {
+                return IRValue(llvmType: aggregate, ssaName: withTag)
+            }
+            let p = emitExpr(payload)
+            let filled = builder.freshTemp()
+            bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
+            return IRValue(llvmType: aggregate, ssaName: filled)
+
+        case .sliceCall(let container, let start, let end, let type):
+            return emitSliceCall(container: container, start: start, end: end, type: type)
         }
     }
 
-    /// `arr.get(i)` — tolerant read: bounds-check via `bk_array_len`, then
-    /// some(payload) or none. The aggregate flows through a stack slot
-    /// (alloca + store + load) so the branch join needs no phi node.
+    /// `container.slice(start, end)` (G2b). Bound semantics mirror the sunk
+    /// stdlib slice: an `optionalConstruct(isSome: false)` bound takes its
+    /// default (start → 0, end → len); an integer bound is tail-counted when
+    /// negative; both bounds clamp to [0, len]; hi < lo yields the empty
+    /// value. Arrays build a new handle with an inline copy loop (nested
+    /// handle elements retain one share — the source array still holds its
+    /// own); strings copy bytes into a fresh stack buffer with a NUL
+    /// terminator (byte semantics — the documented ASCII limitation, same
+    /// as the legacy len(string) gap).
+    private func emitSliceCall(container: HIRExpr, start: HIRExpr, end: HIRExpr, type: HIRType) -> IRValue {
+        let containerValue = emitExpr(container)
+
+        switch type {
+        case .array(let elementType):
+            let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            let lo = resolveSliceBound(start, count: count, defaultValue: "0")
+            let hi = resolveSliceBound(end, count: count, defaultValue: count)
+            let length = builder.freshTemp()
+            bodyIR += " \(length) = sub i32 \(hi), \(lo)\n"
+
+            let create = builder.freshTemp()
+            bodyIR += " \(create) = call ptr @bk_array_create(i32 \(length))\n"
+            let handleSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
+            let createHandle = builder.freshTemp()
+            bodyIR += " \(createHandle) = bitcast ptr \(create) to %bk_array*\n"
+            bodyIR += builder.fmtStore(value: createHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+
+            let kSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
+            let id = builder.freshLabel()
+            let condLabel = "slice.cond.\(id)"
+            let bodyLabel = "slice.body.\(id)"
+            let incLabel = "slice.inc.\(id)"
+            let endLabel = "slice.end.\(id)"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+            bodyIR += "\(condLabel):\n"
+            let k = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(length)\n"
+            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+
+            bodyIR += "\(bodyLabel):\n"
+            let current = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: current, type: "%bk_array*", ptr: handleSlot) + "\n"
+            let currentRaw = builder.freshTemp()
+            bodyIR += " \(currentRaw) = bitcast %bk_array* \(current) to ptr\n"
+            let srcIndex = builder.freshTemp()
+            bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
+            let boxPtr = builder.freshTemp()
+            bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(srcIndex))\n"
+            if elementType.llvmSpelling == "%bk_array*" {
+                // Nested handle element: the source array still holds its
+                // share, so the copy retains one (ownership contract 3).
+                let inner = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: inner, type: "%bk_array*", ptr: boxPtr) + "\n"
+                let innerRaw = builder.freshTemp()
+                bodyIR += " \(innerRaw) = bitcast %bk_array* \(inner) to ptr\n"
+                bodyIR += " call void @bk_handle_retain(ptr \(innerRaw))\n"
+            }
+            let newRaw = builder.freshTemp()
+            bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+            let newHandle = builder.freshTemp()
+            bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %bk_array*\n"
+            bodyIR += builder.fmtStore(value: newHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+
+            bodyIR += "\(incLabel):\n"
+            let kValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
+            let kNext = builder.freshTemp()
+            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
+            bodyIR += "\(endLabel):\n"
+            let result = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: result, type: "%bk_array*", ptr: handleSlot) + "\n"
+            return IRValue(llvmType: "%bk_array*", ssaName: result)
+
+        case .string:
+            // Length: inline byte scan (strlen semantics — ASCII parity with
+            // the interpreter's character count holds for the corpus).
+            let count = emitStringLength(containerValue)
+            let lo = resolveSliceBound(start, count: count, defaultValue: "0")
+            let hi = resolveSliceBound(end, count: count, defaultValue: count)
+            let length = builder.freshTemp()
+            bodyIR += " \(length) = sub i32 \(hi), \(lo)\n"
+            let bufferBytes = builder.freshTemp()
+            bodyIR += " \(bufferBytes) = add i32 \(length), 1\n"
+            let buffer = builder.freshTemp()
+            bodyIR += " \(buffer) = alloca i8, i32 \(bufferBytes)\n"
+            let kSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
+            let id = builder.freshLabel()
+            let condLabel = "strslice.cond.\(id)"
+            let bodyLabel = "strslice.body.\(id)"
+            let incLabel = "strslice.inc.\(id)"
+            let endLabel = "strslice.end.\(id)"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+            bodyIR += "\(condLabel):\n"
+            let k = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(length)\n"
+            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+
+            bodyIR += "\(bodyLabel):\n"
+            let srcIndex = builder.freshTemp()
+            bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
+            let srcByte = builder.freshTemp()
+            bodyIR += " \(srcByte) = getelementptr i8, ptr \(containerValue.ssaName), i32 \(srcIndex)\n"
+            let byte = builder.freshTemp()
+            bodyIR += " \(byte) = load i8, ptr \(srcByte)\n"
+            let dstByte = builder.freshTemp()
+            bodyIR += " \(dstByte) = getelementptr i8, ptr \(buffer), i32 \(k)\n"
+            bodyIR += builder.fmtStore(value: byte, type: "i8", ptr: dstByte) + "\n"
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+
+            bodyIR += "\(incLabel):\n"
+            let kValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
+            let kNext = builder.freshTemp()
+            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
+            bodyIR += "\(endLabel):\n"
+            let terminatorSlot = builder.freshTemp()
+            bodyIR += " \(terminatorSlot) = getelementptr i8, ptr \(buffer), i32 \(length)\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: terminatorSlot) + "\n"
+            return IRValue(llvmType: "i8*", ssaName: buffer)
+
+        default:
+            fatalError("IREmitter: slice on non-array/string type '\(type)' (HIRLowerer gates)")
+        }
+    }
+
+    /// One slice bound: `none` (optionalConstruct isSome=false) takes the
+    /// default (start → "0", end → the runtime count); an integer is
+    /// tail-counted when negative, then clamped into [0, count] — all via
+    /// select chains, no branches (sunk-stdlib parity).
+    private func resolveSliceBound(_ bound: HIRExpr, count: String, defaultValue: String) -> String {
+        if case .optionalConstruct(let isSome, _, _) = bound, !isSome {
+            return defaultValue
+        }
+        let raw = emitExpr(bound)
+        let isNegative = builder.freshTemp()
+        bodyIR += " \(isNegative) = icmp slt i32 \(raw.ssaName), 0\n"
+        let adjusted = builder.freshTemp()
+        bodyIR += " \(adjusted) = add i32 \(count), \(raw.ssaName)\n"
+        let tailCounted = builder.freshTemp()
+        bodyIR += " \(tailCounted) = select i1 \(isNegative), i32 \(adjusted), i32 \(raw.ssaName)\n"
+        let belowZero = builder.freshTemp()
+        bodyIR += " \(belowZero) = icmp slt i32 \(tailCounted), 0\n"
+        let floored = builder.freshTemp()
+        bodyIR += " \(floored) = select i1 \(belowZero), i32 0, i32 \(tailCounted)\n"
+        let aboveCount = builder.freshTemp()
+        bodyIR += " \(aboveCount) = icmp sgt i32 \(floored), \(count)\n"
+        let clamped = builder.freshTemp()
+        bodyIR += " \(clamped) = select i1 \(aboveCount), i32 \(count), i32 \(floored)\n"
+        return clamped
+    }
+
+    /// Inline byte-scan length for an `i8*` string value.
+    private func emitStringLength(_ value: IRValue) -> String {
+        let counterSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: counterSlot) + "\n"
+        let id = builder.freshLabel()
+        let condLabel = "strlen.cond.\(id)"
+        let bodyLabel = "strlen.body.\(id)"
+        let incLabel = "strlen.inc.\(id)"
+        let endLabel = "strlen.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+        bodyIR += "\(condLabel):\n"
+        let k = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: counterSlot) + "\n"
+        let bytePtr = builder.freshTemp()
+        bodyIR += " \(bytePtr) = getelementptr i8, ptr \(value.ssaName), i32 \(k)\n"
+        let byte = builder.freshTemp()
+        bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
+        let notEnd = builder.freshTemp()
+        bodyIR += " \(notEnd) = icmp ne i8 \(byte), 0\n"
+        bodyIR += builder.fmtCondBr(cond: notEnd, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+        bodyIR += "\(bodyLabel):\n"
+        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+        bodyIR += "\(incLabel):\n"
+        let kValue = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: counterSlot) + "\n"
+        let kNext = builder.freshTemp()
+        bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+        bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: counterSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+        bodyIR += "\(endLabel):\n"
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: "i32", ptr: counterSlot) + "\n"
+        return result
+    }
+
+    /// `arr.get(i)` — tolerant read: tail-counted negative index, then a
+    /// bounds check; some(payload) or none. Arrays go through the runtime
+    /// handle; strings scan bytes inline (ASCII parity with the interpreter's
+    /// character count) and wrap the byte in a fresh 2-byte buffer. The
+    /// aggregate flows through a stack slot (alloca + store + load) so the
+    /// branch join needs no phi node.
     private func emitOptionalGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
         guard case .optional(let wrapped) = type else {
             fatalError("IREmitter: optionalGet type is not Optional (HIRLowerer guarantees)")
@@ -568,12 +796,20 @@ public final class IREmitter {
         let aggregate = type.llvmSpelling
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
-        let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
-        let count = builder.freshTemp()
-        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
-        let inBounds = builder.freshTemp()
-        bodyIR += " \(inBounds) = icmp slt i32 \(indexValue.ssaName), \(count)\n"
+
+        let isStringReceiver = hirType(of: container) == .string
+        let count: String
+        var arrayRaw: String? = nil
+        if isStringReceiver {
+            count = emitStringLength(containerValue)
+        } else {
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+            arrayRaw = raw
+            count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        }
+        let effective = tailCountIndex(index: indexValue.ssaName, count: count)
 
         let slot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
@@ -581,13 +817,37 @@ public final class IREmitter {
         let someLabel = "get.some.\(id)"
         let noneLabel = "get.none.\(id)"
         let endLabel = "get.end.\(id)"
-        bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: someLabel, elseLabelName: noneLabel) + "\n"
+        let inBounds = builder.freshTemp()
+        bodyIR += " \(inBounds) = icmp slt i32 \(effective), \(count)\n"
+        let notNegative = builder.freshTemp()
+        bodyIR += " \(notNegative) = icmp sge i32 \(effective), 0\n"
+        let ok = builder.freshTemp()
+        bodyIR += " \(ok) = and i1 \(inBounds), \(notNegative)\n"
+        bodyIR += builder.fmtCondBr(cond: ok, thenLabelName: someLabel, elseLabelName: noneLabel) + "\n"
 
         bodyIR += "\(someLabel):\n"
-        let boxPtr = builder.freshTemp()
-        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(indexValue.ssaName))\n"
-        let value = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: value, type: wrapped.llvmSpelling, ptr: boxPtr) + "\n"
+        let value: String
+        if isStringReceiver {
+            let bytePtr = builder.freshTemp()
+            bodyIR += " \(bytePtr) = getelementptr i8, ptr \(containerValue.ssaName), i32 \(effective)\n"
+            let byte = builder.freshTemp()
+            bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
+            let buffer = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: buffer, type: "[2 x i8]") + "\n"
+            let byteSlot = builder.freshTemp()
+            bodyIR += " \(byteSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 0\n"
+            bodyIR += builder.fmtStore(value: byte, type: "i8", ptr: byteSlot) + "\n"
+            let zeroSlot = builder.freshTemp()
+            bodyIR += " \(zeroSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 1\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: zeroSlot) + "\n"
+            value = buffer
+        } else {
+            let boxPtr = builder.freshTemp()
+            bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(arrayRaw!), i32 \(effective))\n"
+            let loaded = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: loaded, type: wrapped.llvmSpelling, ptr: boxPtr) + "\n"
+            value = loaded
+        }
         let some0 = builder.freshTemp()
         bodyIR += " \(some0) = insertvalue \(aggregate) undef, i64 0, 0\n"
         let some1 = builder.freshTemp()
@@ -605,6 +865,18 @@ public final class IREmitter {
         let result = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: result, type: aggregate, ptr: slot) + "\n"
         return IRValue(llvmType: aggregate, ssaName: result)
+    }
+
+    /// Tail-counted index resolution (G48): `i < 0 ? count + i : i` as a
+    /// select — the caller applies its own bounds policy afterwards.
+    private func tailCountIndex(index: String, count: String) -> String {
+        let isNegative = builder.freshTemp()
+        bodyIR += " \(isNegative) = icmp slt i32 \(index), 0\n"
+        let adjusted = builder.freshTemp()
+        bodyIR += " \(adjusted) = add i32 \(count), \(index)\n"
+        let effective = builder.freshTemp()
+        bodyIR += " \(effective) = select i1 \(isNegative), i32 \(adjusted), i32 \(index)\n"
+        return effective
     }
 
     // MARK: - Array family (G2)
@@ -668,10 +940,57 @@ public final class IREmitter {
     private func emitSubscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
+
+        if hirType(of: container) == .string {
+            // String subscript: tail-counted index, inline strlen, OOB panics
+            // (safe-assert channel, E5-005 parity); returns a 1-char string.
+            let count = emitStringLength(containerValue)
+            let effective = tailCountIndex(index: indexValue.ssaName, count: count)
+            let id = builder.freshLabel()
+            let okLabel = "strsub.ok.\(id)"
+            let failLabel = "strsub.fail.\(id)"
+            let endLabel = "strsub.end.\(id)"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(effective), \(count)\n"
+            let notNegative = builder.freshTemp()
+            bodyIR += " \(notNegative) = icmp sge i32 \(effective), 0\n"
+            let ok = builder.freshTemp()
+            bodyIR += " \(ok) = and i1 \(inBounds), \(notNegative)\n"
+            bodyIR += builder.fmtCondBr(cond: ok, thenLabelName: okLabel, elseLabelName: failLabel) + "\n"
+
+            bodyIR += "\(okLabel):\n"
+            let bytePtr = builder.freshTemp()
+            bodyIR += " \(bytePtr) = getelementptr i8, ptr \(containerValue.ssaName), i32 \(effective)\n"
+            let byte = builder.freshTemp()
+            bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
+            let buffer = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: buffer, type: "[2 x i8]") + "\n"
+            let byteSlot = builder.freshTemp()
+            bodyIR += " \(byteSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 0\n"
+            bodyIR += builder.fmtStore(value: byte, type: "i8", ptr: byteSlot) + "\n"
+            let zeroSlot = builder.freshTemp()
+            bodyIR += " \(zeroSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 1\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: zeroSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+            bodyIR += "\(failLabel):\n"
+            let message = emitStringConstant("Pini runtime error: string index out of range")
+            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " unreachable\n"
+
+            bodyIR += "\(endLabel):\n"
+            return IRValue(llvmType: "i8*", ssaName: buffer)
+        }
+
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        // Negative indices tail-count (G48); out-of-range still panics inside
+        // bk_array_get — the safe-assert channel, matching E5-005.
+        let effective = tailCountIndex(index: indexValue.ssaName, count: count)
         let boxPtr = builder.freshTemp()
-        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(indexValue.ssaName))\n"
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(effective))\n"
         let value = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: value, type: type.llvmSpelling, ptr: boxPtr) + "\n"
         return IRValue(llvmType: type.llvmSpelling, ssaName: value)
@@ -794,13 +1113,46 @@ public final class IREmitter {
         return "icmp \(predicate) \(operandType) \(lhs.ssaName), \(rhs.ssaName)"
     }
 
-    /// Intrinsic print: printf by operand type, then a newline (interpreter
-    /// print semantics). F64 goes through the runtime's bk_double_to_string
-    /// (shortest round-trip, spec "value display semantics" note, LR-8) so
-    /// both backends render identically; the malloc'd C string is freed
-    /// right after printf consumes it.
+    /// Intrinsic print: value + newline (interpreter print semantics).
+    /// Aggregates (arrays / optionals) print recursively with the
+    /// interpreter's rendering: `[e1, e2]` with raw string elements,
+    /// `some(payload)` / `none`. F64 goes through the runtime's
+    /// bk_double_to_string (shortest round-trip, spec "value display
+    /// semantics" note, LR-8); the malloc'd C string is freed right after
+    /// printf consumes it.
     private func emitPrint(_ argument: HIRExpr) -> IRValue {
+        let type = hirType(of: argument)
         let value = emitExpr(argument)
+        emitValuePrint(value: value, type: type)
+        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// Resolved HIR type of a lowered expression node (every case carries
+    /// its type — the typed-tree contract).
+    private func hirType(of expr: HIRExpr) -> HIRType {
+        switch expr {
+        case .intConst(_, let type): return type
+        case .floatConst: return .f64
+        case .boolConst: return .boolean
+        case .stringConst: return .string
+        case .load(_, let type): return type
+        case .binary(_, _, _, let type): return type
+        case .unary(_, _, let type): return type
+        case .call(_, _, let returnType): return returnType ?? .i32
+        case .printCall: return .i32
+        case .resultConstruct(_, _, let type): return type
+        case .arrayLiteral(_, let type): return type
+        case .subscriptGet(_, _, let type): return type
+        case .lenCall: return .i32
+        case .optionalGet(_, _, let type): return type
+        case .optionalConstruct(_, _, let type): return type
+        case .sliceCall(_, _, _, let type): return type
+        }
+    }
+
+    /// Print one scalar value by its IR spelling (no newline).
+    private func emitScalarPrint(_ value: IRValue) {
         switch value.llvmType {
         case "i1":
             let sel = builder.freshTemp()
@@ -822,8 +1174,108 @@ public final class IREmitter {
         default:
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_int, \(value.llvmType) \(value.ssaName))\n"
         }
-        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
-        return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// Print a value of any slice type (no newline). Arrays iterate the
+    /// runtime handle (bk_array_len/get loop, induction via a stack slot —
+    /// no phi); optionals branch on the tag. Literal formatting pieces come
+    /// from emitStringConstant (deduped module constants).
+    private func emitValuePrint(value: IRValue, type: HIRType) {
+        switch type {
+        case .array(let elementType):
+            let open = emitStringConstant("[")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            let kSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
+            let id = builder.freshLabel()
+            let condLabel = "fmt.cond.\(id)"
+            let bodyLabel = "fmt.body.\(id)"
+            let sepLabel = "fmt.sep.\(id)"
+            let elemLabel = "fmt.elem.\(id)"
+            let incLabel = "fmt.inc.\(id)"
+            let endLabel = "fmt.end.\(id)"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+            bodyIR += "\(condLabel):\n"
+            let k = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(count)\n"
+            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+
+            bodyIR += "\(bodyLabel):\n"
+            let isFirst = builder.freshTemp()
+            bodyIR += " \(isFirst) = icmp eq i32 \(k), 0\n"
+            bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
+
+            bodyIR += "\(sepLabel):\n"
+            let separator = emitStringConstant(", ")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
+
+            bodyIR += "\(elemLabel):\n"
+            let boxPtr = builder.freshTemp()
+            bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(k))\n"
+            let element = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
+            emitValuePrint(
+                value: IRValue(llvmType: elementType.llvmSpelling, ssaName: element),
+                type: elementType
+            )
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+
+            bodyIR += "\(incLabel):\n"
+            let kValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
+            let kNext = builder.freshTemp()
+            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
+            bodyIR += "\(endLabel):\n"
+            let close = emitStringConstant("]")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
+
+        case .optional(let wrapped):
+            let aggregate = type.llvmSpelling
+            let tag = builder.freshTemp()
+            bodyIR += " \(tag) = extractvalue \(aggregate) \(value.ssaName), 0\n"
+            let isSome = builder.freshTemp()
+            bodyIR += " \(isSome) = icmp eq i64 \(tag), 0\n"
+            let id = builder.freshLabel()
+            let someLabel = "fmt.some.\(id)"
+            let noneLabel = "fmt.none.\(id)"
+            let endLabel = "fmt.opt.end.\(id)"
+            bodyIR += builder.fmtCondBr(cond: isSome, thenLabelName: someLabel, elseLabelName: noneLabel) + "\n"
+
+            bodyIR += "\(someLabel):\n"
+            let someText = emitStringConstant("some(")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(someText.ssaName))\n"
+            let payload = builder.freshTemp()
+            bodyIR += " \(payload) = extractvalue \(aggregate) \(value.ssaName), 1\n"
+            emitValuePrint(
+                value: IRValue(llvmType: wrapped.llvmSpelling, ssaName: payload),
+                type: wrapped
+            )
+            let closeParen = emitStringConstant(")")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(closeParen.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+            bodyIR += "\(noneLabel):\n"
+            let noneText = emitStringConstant("none")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(noneText.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+            bodyIR += "\(endLabel):\n"
+            terminated = false
+
+        default:
+            emitScalarPrint(value)
+        }
     }
 
     private func emitStringConstant(_ value: String) -> IRValue {

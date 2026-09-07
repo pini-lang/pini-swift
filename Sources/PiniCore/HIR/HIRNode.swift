@@ -64,6 +64,12 @@ public indirect enum HIRType: Equatable {
         return nil
     }
 
+    /// Whether this is an Array type (any element).
+    public var isArray: Bool {
+        if case .array = self { return true }
+        return false
+    }
+
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
@@ -137,6 +143,16 @@ public indirect enum HIRExpr: Equatable {
     /// yields `none` (the language-level nil), in bounds `some(value)`.
     /// Emitted as a bounds-checked inline branch around `bk_array_len/get`.
     case optionalGet(container: HIRExpr, index: HIRExpr, type: HIRType)
+    /// `Optional` construction (G2b): `isSome=false` is the `none` literal
+    /// (the slice-sugar open bound arrives as `Optional.none`); `isSome=true`
+    /// carries the wrapped payload. Mirrors `resultConstruct`.
+    case optionalConstruct(isSome: Bool, payload: HIRExpr?, type: HIRType)
+    /// `container.slice(start, end)` (G2b) — the slice-sugar desugaring.
+    /// `type` is `.array(element:)` or `.string`; open bounds arrive as
+    /// `optionalConstruct(isSome: false, ...)`. Semantics are the sunk
+    /// stdlib slice: tail-counted negative bounds, clamp to [0, len],
+    /// empty result when hi < lo.
+    case sliceCall(container: HIRExpr, start: HIRExpr, end: HIRExpr, type: HIRType)
 }
 
 /// One match arm (G2 general case skeleton). `caseName` is the enum-case
