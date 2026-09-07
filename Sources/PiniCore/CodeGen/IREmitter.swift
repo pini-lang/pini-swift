@@ -164,6 +164,61 @@ public final class IREmitter {
 
         case .exprStmt(let expr):
             _ = emitExpr(expr)
+
+        case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
+            emitTry(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget, type: type)
+        }
+    }
+
+    /// `try operand else errorVar: handler` — the err slot of the Result
+    /// aggregate is a type-erased machine word (LR-12); the ok slot carries
+    /// the payload type exactly. The error binding's slot is allocated at the
+    /// try site and the handler runs as its own block scope; when the handler
+    /// does not terminate (statement position / pass), control falls into the
+    /// ok label, which stores the payload when this is expression position.
+    private func emitTry(operand: HIRExpr, errorVar: String, handler: [HIRStmt], okTarget: String?, type: HIRType) {
+        let errSlot = freshSlot(for: errorVar)
+        bodyIR += builder.fmtAlloca(name: errSlot, type: "i64") + "\n"
+        scopes[scopes.count - 1][errorVar] = errSlot
+
+        let resultValue = emitExpr(operand)
+        let aggregate = resultValue.llvmType
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = extractvalue \(aggregate) \(resultValue.ssaName), 0\n"
+        let isOk = builder.freshTemp()
+        bodyIR += " \(isOk) = icmp eq i64 \(tag), 0\n"
+        let id = builder.freshLabel()
+        let okLabel = "try.ok.\(id)"
+        let errLabel = "try.err.\(id)"
+        bodyIR += builder.fmtCondBr(cond: isOk, thenLabelName: okLabel, elseLabelName: errLabel) + "\n"
+
+        bodyIR += "\(errLabel):\n"
+        scopes.append([:])
+        terminated = false
+        let errWord = builder.freshTemp()
+        bodyIR += " \(errWord) = extractvalue \(aggregate) \(resultValue.ssaName), 2\n"
+        bodyIR += builder.fmtStore(value: errWord, type: "i64", ptr: errSlot) + "\n"
+        emitBlock(handler)
+        let handlerTerminated = terminated
+        if !handlerTerminated {
+            bodyIR += builder.fmtBr(labelName: okLabel) + "\n"
+        }
+        scopes.removeLast()
+
+        bodyIR += "\(okLabel):\n"
+        if let okTarget = okTarget {
+            guard let okSlot = lookupSlot(okTarget) else {
+                fatalError("IREmitter: try ok target '\(okTarget)' undeclared (HIRLowerer guarantees the allocation)")
+            }
+            guard case .result(let okType) = type else {
+                fatalError("IREmitter: tryStmt type is not a Result (HIRLowerer guarantees)")
+            }
+            terminated = false
+            let payload = builder.freshTemp()
+            bodyIR += " \(payload) = extractvalue \(aggregate) \(resultValue.ssaName), 1\n"
+            bodyIR += builder.fmtStore(value: payload, type: okType.llvmSpelling, ptr: okSlot) + "\n"
+        } else {
+            terminated = false
         }
     }
 
@@ -291,6 +346,50 @@ public final class IREmitter {
 
         case .printCall(let argument):
             return emitPrint(argument)
+
+        case .resultConstruct(let isOk, let payload, let type):
+            guard case .result = type else {
+                fatalError("IREmitter: resultConstruct type is not a Result (HIRLowerer guarantees)")
+            }
+            let p = emitExpr(payload)
+            let aggregate = type.llvmSpelling
+            let withTag = builder.freshTemp()
+            bodyIR += " \(withTag) = insertvalue \(aggregate) undef, i64 \(isOk ? 0 : 1), 0\n"
+            let filled = builder.freshTemp()
+            if isOk {
+                bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
+            } else {
+                let word = widenToWord(p)
+                bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
+            }
+            return IRValue(llvmType: aggregate, ssaName: filled)
+        }
+    }
+
+    /// Widen any scalar payload to the type-erased error word (i64): sign /
+    /// zero extension, pointer-to-int, or bitcast for doubles.
+    private func widenToWord(_ value: IRValue) -> IRValue {
+        switch value.llvmType {
+        case "i64":
+            return value
+        case "i32":
+            let t = builder.freshTemp()
+            bodyIR += " \(t) = sext i32 \(value.ssaName) to i64\n"
+            return IRValue(llvmType: "i64", ssaName: t)
+        case "i1":
+            let t = builder.freshTemp()
+            bodyIR += " \(t) = zext i1 \(value.ssaName) to i64\n"
+            return IRValue(llvmType: "i64", ssaName: t)
+        case "i8*":
+            let t = builder.freshTemp()
+            bodyIR += " \(t) = ptrtoint ptr \(value.ssaName) to i64\n"
+            return IRValue(llvmType: "i64", ssaName: t)
+        case "double":
+            let t = builder.freshTemp()
+            bodyIR += " \(t) = bitcast double \(value.ssaName) to i64\n"
+            return IRValue(llvmType: "i64", ssaName: t)
+        default:
+            fatalError("IREmitter: no word widening for '\(value.llvmType)' (HIRLowerer gates non-scalar payloads)")
         }
     }
 

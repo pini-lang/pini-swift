@@ -1340,10 +1340,17 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
  let checker = TypeChecker()
  let typeErrors = checker.checkCollecting(module: module)
  if !typeErrors.isEmpty {
- for e in typeErrors {
- FileHandle.standardError.write(Data((ErrorFormatter.formatTypeError(e, source: source) + "\n").utf8))
+  for e in typeErrors {
+   FileHandle.standardError.write(Data((ErrorFormatter.formatTypeError(e, source: source) + "\n").utf8))
+  }
+  exit(1)
  }
- exit(1)
+ // Migration-stage backend selection (LR-5 note): the HIR pipeline is
+ // selectable via env for the M5 capability sweep; the legacy generator
+ // remains the default until the M6 flip deletes it along with this branch.
+ if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1" {
+  let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+  return IREmitter().emit(module: hirModule)
  }
  let generator = IRGenerator()
  generator.typeInference = checker.typeInference

@@ -121,4 +121,10 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffComparisonSet() throws { try assertParity(fixtureName: "testDiffComparisonSet") }
     func testDiffFloatCompare() throws { try assertParity(fixtureName: "testDiffFloatCompare") }
     func testDiffFloatPrint() throws { try assertParity(fixtureName: "testDiffFloatPrint") }
+
+    // MARK: - G1 try-else (Result explicit propagation, ADR-032)
+
+    func testDiffTryElse() throws { try assertParity(fixtureName: "testDiffTryElse") }
+    func testDiffTryElseOk() throws { try assertParity(fixtureName: "testDiffTryElseOk") }
+    func testDiffTryElseSugar() throws { try assertParity(fixtureName: "testDiffTryElseSugar") }
 }

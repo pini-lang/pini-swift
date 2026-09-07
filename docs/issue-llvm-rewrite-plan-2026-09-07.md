@@ -42,6 +42,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 | LR-7 | float 比较补齐形态 | **A 全量六分支**（用户裁决，2026-09-08）：解释器补 == != < <= > >= 六个 `(.float, .float, op)` 分支照 int 形态；混合 int/float 比较维持 checker 拒绝（E4-001），非解释器缺口 |
 | LR-8 | print(F64) 展示语义 | **A 最短往返**（用户裁决，2026-09-08；A/B/%g 三方案调研后定）：spec 钉四条形态规则（§2.8 值展示语义），两后端委托宿主标准库 `String(Double)`；LLVM 侧经运行时 `bk_double_to_string`（只新增符号，bk_* 现有签名零改动）；%g 方案否决（指数阈值第三形态，工程量同 A 且语义不净） |
 | LR-10 | 旧后端 i64 print sext 处置 | **wontfix**（用户裁决，2026-09-08）：旧后端冻结 + M6 整体删除自然消亡，新管线已 trunc 修正；工单关闭，M5 期间出现硬需求再翻案 |
+| LR-11 | 并发语料（8 文件）在 M5 的处置 | **A 除名立案**（用户裁决「按建议来」，2026-09-08）：并发语料真身是 `=>`/wait/await/Future 真并发执行模型，非「注册两个内建」；立案 `docs/issue-llvm-concurrency-runtime-2026-09-08.md`，M6 后独立里程碑启动；M5 格序顺移（数组方法升 G2） |
+| LR-12 | Result 的 IR ABI（G1） | **A 定长 tagged 三字聚合**（用户裁决「按建议来」，2026-09-08）：`{ i64 tag, <T> ok, i64 err }`；Pini 的 `^T` 书写面只钉 T 不钉 E（checker 实测 `err(42)` 放行）→ err 槽类型擦除为机器字（构造位加宽、try 位绑字）；ok/err 构造与解包全内联 IR，运行时零改动 |
 
 ## ADR-031 连带修订（随 M0 落地）
 
@@ -154,3 +156,19 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     Closed（LR-10 wontfix）。证据 E-140 / E-141。
   - 全量回归零回归后合 main。下一步 M5 分格扩张批（G1 try-else 起）待点名，
     开工前先出细化步骤。
+- **M5 分格扩张批进行中（2026-09-08，细化步骤经用户批准；LR-11=除名立案 /
+  LR-12=Result 内联 tagged ABI；每格一次提交 + 一次 sweep 刷新；两波合 main：
+  波① G1–G3，波② G4–G7）**：
+  - **G1 try-else（本提交）**：LR-12 Result ABI —— `HIRType.result(ok:)`
+    （`^T` 注解映射；err 槽类型擦除为机器字）、`HIRExpr.resultConstruct`
+    （ok/err 构造，err 载荷加宽 sext/zext/ptrtoint/bitcast→i64）、
+    `HIRStmt.tryStmt`（tag 提取 + condbr 双臂；err 臂绑定类型擦除错误字、
+    ok 臂按 T 精确载荷）；表达式位 try-else 降为 allocVar + tryStmt
+    （okTarget）；`^e` 糖 ok 路径同型。差分 +3 fixture（22/22）。
+    **探针发现 2 件**：①`^T` checker 对 E 不设约束（`err(42)` 放行）→
+    err 槽只能类型擦除（LR-12 依据）；②handler 内 `return err` 解释器流出
+    **裸错误载荷**（非 re-box，返回位类型洞）→ LLVM 管线非 void 位门控 +
+    立案 `issue-try-else-raw-err-return-2026-09-08`。CLI 加迁移期选择点
+    `PINI_HIR_PIPELINE=1`（M6 翻转时与旧管线一并消亡）；sweep 加 hir-emit
+    通道（HIR 6/59：M4 切片 + try.pini）。并发除名立案
+    `issue-llvm-concurrency-runtime-2026-09-08`（LR-11）。
