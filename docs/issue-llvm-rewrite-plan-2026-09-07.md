@@ -38,6 +38,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 | LR-4 | 解释器是否走 HIR | **本次否**——迁移中无法做到；单独立案
 `docs/issue-interpreter-hir-unification-2026-09-07.md`，LLVM 迁移完成后解释器与 LLVM 后端共同依赖 HIR |
 | LR-5 | 兼容开关 | **无任何 CLI 开关，直接替换**——已有解释器后端，项目未进 1.0.0 不考虑兼容；回退手段 = 提交边界 git revert（用户裁决） |
+| LR-6 | M3 决策门：路线判定 | **重写**（用户裁决「按倾向来」，2026-09-07）。判定依据 = M2 能力清单：缺口成簇（8/19 并发内建单簇）、emit 通过者端到端 40/40、抛点持续增长 100→108、泛型等需全局类型视野的能力在 god class 结构下不可做；增量路线为 8 次外科手术 × 共享状态回归风险，重写为 1 次架构 + 8 次填格 |
 
 ## ADR-031 连带修订（随 M0 落地）
 
@@ -97,3 +98,14 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   泛型 1 / 对象方法 1 / try-else 1 / 可延后 2）；108 抛点分「特征门（能力缺口）」
   与「防御性错误路径（永久 fail-loud）」两性质；分格顺序草案 G1–G8 已定。
   数据交 M3 决策门，本批不做路线判断。下一步 M3（决策门，分叉点必须停）待点名。
+- **M3 完成（2026-09-07，决策门通过）**：路线定案 **LR-6 = 重写**（用户裁决）。
+  重写展开已向用户陈述并获倾向确认：HIR 四件（HIRNode 类型化树 / HIRModule
+  内存布局与 vtable / HIRLowerer 唯一能力门 / HIRPrinter 调试 dump）+
+  CodeGen 原址重建（IREmitter 无共享状态 + Emit/ 分域，IRBuilder /
+  IRGenError / LLVMToolchain / PiniRuntime ABI 四块保留复用）。
+  执行序 M4 垂直切片（最小子集差分绿，同时验证 LR-3 树形表达力）→
+  M5 按 G1–G8 逐格（每格一次提交 + 一次 sweep 刷新）→ M6 一次性翻转
+  （删旧 9 文件 5622 行 + 149 处 IR 文本断言同批删 + 文档终版）。
+  止损判据沿用 ADR-031（影子表 ≥7 / 单次回归 >5 测试且 >1h /
+  收敛扩散 >4 emitter），新增「新实现长影子表 = 决策未收拢，停」。
+  下一步 M4（HIR 垂直切片批）待点名，开工前先出细化步骤。
