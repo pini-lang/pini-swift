@@ -189,3 +189,28 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     处置建议：①按族重估后继续，sweep hir-emit 通道（现 6/59）为唯一进度
     度量；②M5 改为「按族推进、可分会话」的滚动批，完成一族合一次 main。
     待用户裁决后继续。
+  - **G2 数组族完成（2026-09-08，用户裁决 A=按族滚动后执行）**：三批 +
+    收口，分支 `agent/pini-dev/llvm-m5-g2-array`：
+    - **批1 读路径**（3bc6c08）：`HIRType.array(element:)`（`%bk_array*`
+      句柄拼写）、`arrayLiteral/subscriptGet/lenCall` 降载（同构性检查；
+      checker 不推断集合字面量 → 无注解变量「降值取型」兜底，契约同旧
+      codegen 侧推断）；发射经 `bk_array_create/get/len` + 逐元素装箱
+      `bk_array_set`（tag 与旧 `bkTagForLLVMType` 逐值对齐，运行时零改动）。
+    - **批2 写路径 + COW**（a7a8a19）：`subscriptStore`（嵌套写自顶向下
+      ensure-unique 链：根 `bk_handle_ensure_unique` → 逐层
+      `bk_array_ensure_unique_at`，顺序为运行时硬约束）+ 复合赋值读改写
+      （语句位 binary op 钩子）+ 别名位 retain 四处（所有权契约 ③）+
+      分裂句柄写回持有槽。无注解变量取型推广为「推断失败即降值取型」。
+      门控边界测试翻转：数组入列、字典字面量成为新记录边界。
+    - **批3 Optional + match + break**（97b40f7）：`optional(wrapped:)`
+      tagged 聚合 `{ i64, T }`（some=0/none=1；none=语言级 nil，用户裁决
+      D-G2-1）；`arr.get(i)` = `bk_array_len` 边界内联分支 + 栈槽汇流
+      （无 phi）；`matchStmt` 通用 case 骨架（caseName + 单位置绑定，
+      Optional scrutinee 先接线，enum 后续族复用同节点；未命中 panic =
+      matchNotExhaustive 对齐）；break 指向最近 while，无循环裸 break 降
+      `bk_panic`（探针实证解释器顶层报错 → fail-loud 对齐，非静默 skip）；
+      `bk_panic` 调用位补 `unreachable`（noreturn call 非 terminator）。
+    - **验收**：差分 +3 fixture（25/25）；全量回归 1257/0/0；端到端锚点
+      `examples/array-basic.pini` 双管线逐字节一致；sweep hir-emit
+      **6/59 → 8/59**（array-basic、step 进列）。array-basic 头注 %f 差异
+      说明已更新（LR-8 收敛态）。G2b（切片/格式化）与 enum match 留后续族。
