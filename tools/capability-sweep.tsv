@@ -1,0 +1,59 @@
+examples/access.pini	PASS	PASS	PASS	
+examples/array-basic.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method get not yet supported in IR' 
+examples/closures.pini	PASS	PASS	PASS	
+examples/collections.pini	PASS	PASS	PASS	
+examples/comments.pini	PASS	PASS	PASS	
+examples/composition.pini	PASS	PASS	PASS	
+examples/compound-assign.pini	PASS	PASS	PASS	
+examples/concurrency-arrow-dual.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/concurrency-async-contagion-end.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/concurrency-async-decl.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function Error — not pre-registered' 
+examples/concurrency-await.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/concurrency-cancel.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/concurrency-future-handle.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/concurrency-joinall.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/concurrency.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered' 
+examples/control-if.pini	PASS	PASS	PASS	
+examples/control-while.pini	PASS	PASS	PASS	
+examples/cow.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端未记录变量 'row' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）' 
+examples/defer.pini	PASS	PASS	PASS	
+examples/dict-set-d2.pini	PASS	PASS	PASS	
+examples/enum-dot-case.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-001]   unsupported type 'generic(T)' 
+examples/enum-named.pini	PASS	PASS	PASS	
+examples/enum-namespacing.pini	PASS	PASS	PASS	
+examples/enum.pini	PASS	PASS	PASS	
+examples/ffi.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`' 
+examples/ffi_module/cstring.pini	FAIL	SKIP	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`' 
+examples/for.pini	PASS	PASS	PASS	
+examples/generic-func.pini	PASS	PASS	PASS	
+examples/generic.pini	PASS	PASS	PASS	
+examples/hello.pini	PASS	PASS	PASS	
+examples/higher-order.pini	PASS	PASS	PASS	
+examples/io.pini	PASS	PASS	PASS	
+examples/lambda-typed.pini	PASS	PASS	PASS	
+examples/lambda.pini	PASS	PASS	PASS	
+examples/lazyref.pini	PASS	PASS	PASS	
+examples/lexical.pini	PASS	PASS	PASS	
+examples/match.pini	PASS	PASS	PASS	
+examples/multidim.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined identifier row' 
+examples/multifile/main.pini	FAIL	SKIP	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 向量 — not pre-registered' 
+examples/multifile/utils.pini	PASS	PASS	FAIL	
+examples/object.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined method 增加' 
+examples/operators.pini	PASS	PASS	PASS	
+examples/optional-sugar.pini	PASS	PASS	PASS	
+examples/optional.pini	PASS	PASS	PASS	
+examples/package-demo/_internals/helpers.pini	PASS	PASS	FAIL	
+examples/package-demo/_私密文件.pini	PASS	PASS	FAIL	
+examples/package-demo/api.pini	PASS	PASS	FAIL	
+examples/package-demo/main.pini	FAIL	SKIP	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 公开API — not pre-registered' 
+examples/package-demo/secrettypes.pini	PASS	PASS	FAIL	
+examples/recursion.pini	PASS	PASS	PASS	
+examples/slice.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method slice not yet supported in IR' 
+examples/stdlib.pini	PASS	PASS	PASS	
+examples/step.pini	PASS	PASS	PASS	
+examples/struct.pini	PASS	PASS	PASS	
+examples/test.pini	PASS	PASS	PASS	
+examples/trait.pini	PASS	PASS	PASS	
+examples/try.pini	FAIL	SKIP	PASS	Error: IRGen Error [E6-001]   at /Volumes/ZWTPSSD/Projects/Pini语言语法与Swift-Package实现_20260827/pini-swift/examples/try.pini:4:28   unsupported type 
+examples/tuple.pini	PASS	PASS	PASS	
+examples/validated-match.pini	PASS	PASS	PASS	

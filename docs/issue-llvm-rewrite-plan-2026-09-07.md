@@ -88,3 +88,12 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   三象限实测：完整环境 1226/0/0 skip（全绿面不变）；假 `PINI_LLVM_BIN` + 剥 PATH
   → 51 中 37 硬失败（修复前为静默 skip——两次假「门关」的根因关闭）；剥 PATH
   未配置 → 37 skip 全部带单行说明。证据 E-137。下一步 M2（能力清单批）待点名。
+- **M2 完成（2026-09-07）**：能力清单批落地。`tools/capability-sweep.sh`
+  （可复跑）+ `tools/capability-sweep.tsv` + `docs/llvm-capability-matrix.md`。
+  **两处勘误**：语料实为 59 个 `.pini`（非 1010，工单 M2 节原记数是早期勘察噪声）；
+  fail-loud 抛点实为 108 处 `throw IRGenError`（非 129，旧数为未过滤 grep 噪声）。
+  核心数据：emit 40/59（67.8%），emit 通过者 run-llvm **40/40 全通**；
+  19 个 emit 失败聚成 9 簇（并发内建 8 / 跨文件 2 / foreign 2 / 数组方法 2 /
+  泛型 1 / 对象方法 1 / try-else 1 / 可延后 2）；108 抛点分「特征门（能力缺口）」
+  与「防御性错误路径（永久 fail-loud）」两性质；分格顺序草案 G1–G8 已定。
+  数据交 M3 决策门，本批不做路线判断。下一步 M3（决策门，分叉点必须停）待点名。
