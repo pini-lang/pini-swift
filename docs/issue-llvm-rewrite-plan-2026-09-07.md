@@ -81,3 +81,10 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   指针；`docs/BUILDING.md` 补「LLVM 门控测试的环境判据」节（约束 6 落地：
   `source ~/.zshrc` 判据、自动化 PATH 无效、工作树/自定义 scratch 测量无效）。
   零代码改动。下一步 M1（LR-1 门控硬化）待点名。
+- **M1 完成（2026-09-07）**：`Tests/PiniTests/CodeGen/LLVMGate.swift` 门控单点
+  落地（LR-1 折中：环境已配置但工具/动态库缺失或失配 → 硬失败并报因；环境未配置
+  → 保留 skip 且单行明示缘由与开启方式）；三文件 101 处静默 skip 点统一改走门控
+  （IRExecutionTests 83 / RuntimeBackendTests 15 / IRPrintGoldenTests 2）。
+  三象限实测：完整环境 1226/0/0 skip（全绿面不变）；假 `PINI_LLVM_BIN` + 剥 PATH
+  → 51 中 37 硬失败（修复前为静默 skip——两次假「门关」的根因关闭）；剥 PATH
+  未配置 → 37 skip 全部带单行说明。证据 E-137。下一步 M2（能力清单批）待点名。
