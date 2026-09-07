@@ -219,10 +219,11 @@ match 值:
 
 ### 2.4.4 `try-else` 错误传播模型（errors-as-data，非异常式）（G3）
 
-> **状态**：已定义（迁移批 M1 反录，ADR-032；宿主实现落地待迁移批 M2——迁移窗口内
-> 本节与宿主现状暂不一致，属迁移批预期状态，非漂移）。稳定性 **Provisional**。
-> **证据**：迁移完成前旧记载 `Interpreter.executeTry` / `ResultUnwrap` / `UnwrapErrSignal`
-> （元组模型 + 信号机制，v0.43）标记 **STALE（迁移批 M2 刷新）**；本节语义权威 = ADR-032。
+> **状态**：已定义且已落地（迁移批 M1 反录、M2 宿主实现、M3 selfhost 同步，ADR-032；
+> M5 收口——本节与宿主现状一致）。稳定性 **Provisional**。
+> **证据**：`Parser.parseTry` / `Expression.tryExpression`（证据表 E-132..E-134，FRESH）；
+> 旧记载 `Interpreter.executeTry` / `ResultUnwrap` / `UnwrapErrSignal`（元组模型 +
+> 信号机制，v0.43）已随迁移退役（E-133 零残留实证）；本节语义权威 = ADR-032。
 
 **唯一原语 try-else**（语句位与表达式位同形）：
 
