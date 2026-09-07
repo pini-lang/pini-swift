@@ -1,5 +1,0 @@
-main|func() -> ():
-    var x = 40
-    x = x + 2
-    print(x)
-    return

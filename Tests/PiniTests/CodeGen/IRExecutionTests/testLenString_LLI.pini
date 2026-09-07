@@ -1,4 +1,0 @@
-main|func() -> ():
-    var s = "hello"
-    print(len(s))
-    return

@@ -1,5 +1,0 @@
-[Shape]
-Circle(I32,)
-Square
-main|func() -> ():
-    return

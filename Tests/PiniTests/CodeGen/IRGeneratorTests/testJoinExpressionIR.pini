@@ -1,7 +1,0 @@
-fetchData() => (I32,):
-    return 100
-
-main|func() -> ():
-    var x = wait fetchData()
-    print(x)
-    return

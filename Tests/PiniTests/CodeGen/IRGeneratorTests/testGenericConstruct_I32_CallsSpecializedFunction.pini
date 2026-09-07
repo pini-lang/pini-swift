@@ -1,6 +1,0 @@
-identity<T>(x: T,) -> (T,):
-    return x
-
-main|func() -> ():
-    identity<I32>(42)
-    return

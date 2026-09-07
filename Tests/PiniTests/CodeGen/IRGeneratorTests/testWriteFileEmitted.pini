@@ -1,3 +1,0 @@
-main|func() -> ():
-    writeFile("/tmp/x", "data")
-    return

@@ -1,7 +1,0 @@
-add(x, y) -> ():
-    print(x + y)
-    return
-
-main|func() -> ():
-    add(10, 20)
-    return

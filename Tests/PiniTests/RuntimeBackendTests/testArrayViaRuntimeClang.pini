@@ -1,5 +1,0 @@
-main|func() -> ():
-    let a = [10, 20, 30]
-    print(a[1])
-    print(len(a))
-    return
