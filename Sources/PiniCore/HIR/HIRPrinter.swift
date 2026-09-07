@@ -103,6 +103,13 @@ public enum HIRPrinter {
             return "len(\(exprText(argument)))"
         case .optionalGet(let container, let index, _):
             return "\(exprText(container)).get(\(exprText(index)))"
+        case .optionalConstruct(let isSome, let payload, _):
+            if isSome, let payload = payload {
+                return "some(\(exprText(payload)))"
+            }
+            return "none"
+        case .sliceCall(let container, let start, let end, _):
+            return "\(exprText(container)).slice(\(exprText(start)), \(exprText(end)))"
         }
     }
 

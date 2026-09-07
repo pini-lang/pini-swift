@@ -134,4 +134,9 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffArrayRead() throws { try assertParity(fixtureName: "testDiffArrayRead") }
     func testDiffArrayWrite() throws { try assertParity(fixtureName: "testDiffArrayWrite") }
     func testDiffArrayGetMatch() throws { try assertParity(fixtureName: "testDiffArrayGetMatch") }
+
+    // MARK: - G2b slice & value formatting family
+
+    func testDiffValueFormat() throws { try assertParity(fixtureName: "testDiffValueFormat") }
+    func testDiffSlice() throws { try assertParity(fixtureName: "testDiffSlice") }
 }

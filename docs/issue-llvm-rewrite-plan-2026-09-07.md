@@ -214,3 +214,26 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       `examples/array-basic.pini` 双管线逐字节一致；sweep hir-emit
       **6/59 → 8/59**（array-basic、step 进列）。array-basic 头注 %f 差异
       说明已更新（LR-8 收敛态）。G2b（切片/格式化）与 enum match 留后续族。
+  - **G2b 切片与值格式化族完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g2b-slice-format`）**：单批落地（8c09b78）+ 收口。
+    - **值格式化**：print(array) 经运行时 `bk_array_len/get` 循环递归渲染
+      `[e1, e2]`（字符串裸排、", " 分隔、bool/F64 按「值展示语义」注），
+      栈槽 induction 无 phi；print(optional) tag 分支 `some(payload)`/`none`。
+    - **none 字面量**：切片糖开放边界脱糖为 `Optional.none` 成员表达式 →
+      降为 `optionalConstruct(isSome: false, ...)`（镜像 resultConstruct）。
+    - **负索引**：下标读与 `.get` 经 select 链尾部计数（G48 语义）。**本批
+      修复批3 潜伏缺口**：负 `.get` 原本通过 slt 边界检查、会在
+      `bk_array_get` 内 panic（与解释器 some(尾计数) 分叉）——勘测探针发现，
+      同批修复并记入差分。
+    - **String 通道**：`s.get(i)` → `Optional<String>`、`s[i]` 裸字符
+      （panic 通道）、`s.slice` —— 内联 strlen 扫描 + 字节拷贝（**字节
+      语义 = 既有 len(string) ASCII 局限**，多字节字符与解释器 Character
+      计数分叉，工单级已知项非静默）。
+    - **切片**：数组建新句柄 + 内联拷贝循环（嵌套句柄元素 retain 一份，
+      所有权契约 3）；字符串拷贝进动态 alloca 缓冲 + NUL 终止；边界钳制
+      [0, len]、hi < lo → 空值——与 StdlibPini 下沉实现逐语义对齐，
+      运行时零改动。
+    - **验收**：差分 +2 fixture（27/27）；全量回归 1260/0/0；sweep
+      hir-emit **8/59 → 9/59**（slice.pini 进列）；slice.pini 头注
+      some(50) 过时行就地修正（实测 50，负下标走 panic 通道）。
+      裸空数组字面量 `print([])` 维持门控（元素类型不可解析，登记边界）。

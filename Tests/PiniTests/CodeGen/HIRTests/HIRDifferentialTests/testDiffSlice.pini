@@ -1,0 +1,27 @@
+; G2b batch 2+3: negative indices (subscript tail-count raw element,
+; .get tail-count -> none when still out of range), array/string slices
+; with open bounds (Optional.none sugar), tail counts, clamping, empty
+; results, and string element .get. Interpreter parity.
+main|func() -> ():
+    var a = [10, 20, 30, 40, 50]
+    print(a[1:3])
+    print(a[:2])
+    print(a[3:])
+    print(a[:])
+    print(a[-2:])
+    print(a[:-1])
+    print(a[1:100])
+    print(a[100:])
+    print(a[-1])
+    print(a.get(100))
+    print(a.get(-1))
+    print(a.get(-100))
+
+    var s = "hello"
+    print(s[1:4])
+    print(s[-3:])
+    print(s[:-1])
+    print(s.get(100))
+    print(s.get(1))
+    print(s[-1])
+    return

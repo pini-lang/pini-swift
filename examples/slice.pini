@@ -9,12 +9,12 @@
 ;   [10, 20, 30, 40]    a[:-1]   负末尾尾部计数
 ;   [20, 30, 40, 50]    a[1:100] 越界夹紧
 ;   []                  a[100:]  起始越界 → 空
-;   some(50)            a[-1]    负索引单元素（严格枚举：下标读返回 Optional）
-;   none                a[100]   越界读返回 Optional.none
+;   50                  a[-1]    负索引尾部计数（panic 通道，返回裸元素）
+;   none                a[100]   —— 越界读走 .get 通道返回 Optional.none
 ;   ell                 s[1:4]   字符串切片
 ;   llo                 s[-3:]   字符串负起始
 ;   hell                s[:-1]   字符串负末尾
-;   none                s[100]   字符串越界读返回 Optional.none
+;   none                s.get(100) 字符串越界读返回 Optional.none
 
 main|func() -> ():
     var a = [10, 20, 30, 40, 50]
