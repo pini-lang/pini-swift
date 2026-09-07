@@ -30,6 +30,11 @@ public final class IREmitter {
     /// are invalid IR).
     private var terminated = false
 
+    /// Enclosing while-loop exit labels, innermost last. `break` targets
+    /// loopStack.last; with an empty stack it lowers to a runtime panic
+    /// (interpreter parity: a bare break escaping to the top level errors).
+    private var loopStack: [String] = []
+
     private var currentIsMain = false
     private var currentReturnType: HIRType? = nil
 
@@ -56,6 +61,18 @@ public final class IREmitter {
         header += "@fmt_bool_false = private constant [7 x i8] c\"false\\00\\00\"\n"
         header += "@fmt_string = private constant [3 x i8] c\"%s\\00\"\n"
         header += "@fmt_newline = private constant [2 x i8] c\"\\0A\\00\"\n"
+        // Array family (G2): opaque handle type + runtime C ABI declares.
+        // Forward references are legal in LLVM IR modules (same contract as
+        // the legacy IRGenerator header), so declares are unconditional.
+        header += "%bk_array = type { ptr }\n"
+        header += "declare ptr @bk_array_create(i32)\n"
+        header += "declare i32 @bk_array_len(ptr)\n"
+        header += "declare ptr @bk_array_get(ptr, i32)\n"
+        header += "declare ptr @bk_array_set(ptr, i32, ptr, i32, i32)\n"
+        header += "declare void @bk_handle_retain(ptr)\n"
+        header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
+        header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
+        header += "declare void @bk_panic(ptr) noreturn\n"
         header += "\n"
 
         bodyIR = ""
@@ -82,6 +99,7 @@ public final class IREmitter {
         builder.reset()
         scopes = [[:]]
         slotCounters = [:]
+        loopStack = []
         terminated = false
         currentIsMain = function.name == "main"
         currentReturnType = function.returnType
@@ -136,6 +154,7 @@ public final class IREmitter {
             if let initializer = initializer {
                 let value = emitExpr(initializer)
                 bodyIR += builder.fmtStore(value: value.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+                emitRetainIfAliased(initializer, value)
             }
 
         case .storeVar(let name, let type, let value):
@@ -144,6 +163,7 @@ public final class IREmitter {
             }
             let lowered = emitExpr(value)
             bodyIR += builder.fmtStore(value: lowered.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+            emitRetainIfAliased(value, lowered)
 
         case .ifStmt(let condition, let thenBody, let elseBody):
             emitIf(condition: condition, thenBody: thenBody, elseBody: elseBody)
@@ -167,6 +187,164 @@ public final class IREmitter {
 
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
             emitTry(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget, type: type)
+
+        case .subscriptStore(let container, let index, let value, let elementType):
+            emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
+
+        case .breakStmt:
+            emitBreak()
+
+        case .matchStmt(let scrutinee, let cases, let scrutineeType):
+            emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
+        }
+    }
+
+    /// `break`: nearest enclosing while loop; without one, a runtime panic —
+    /// the interpreter errors when a bare break escapes to the top level
+    /// (probe-verified), so this is fail-loud parity, not a silent skip.
+    private func emitBreak() {
+        if let exitLabel = loopStack.last {
+            bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
+        } else {
+            let message = emitStringConstant("Pini runtime error: break outside loop")
+            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " unreachable\n"
+        }
+        terminated = true
+    }
+
+    /// `match scrutinee: case name(binding): body ...` — Optional scrutinee
+    /// ABI: tagged aggregate `{ i64, T }`, some = 0, none = 1. Arms are a
+    /// comparison chain; a scrutinee matching no arm reaches the panic block
+    /// (interpreter matchNotExhaustive parity). `break` inside an arm is NOT
+    /// caught by the match — the interpreter propagates the signal outward.
+    private func emitMatch(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType) {
+        guard case .optional(let wrapped) = scrutineeType else {
+            fatalError("IREmitter: match scrutinee is not Optional (HIRLowerer gates the slice)")
+        }
+        let aggregate = scrutineeType.llvmSpelling
+        let scrutineeValue = emitExpr(scrutinee)
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = extractvalue \(aggregate) \(scrutineeValue.ssaName), 0\n"
+        let id = builder.freshLabel()
+        let endLabel = "match.end.\(id)"
+        let panicLabel = "match.fail.\(id)"
+        for (caseIndex, matchCase) in cases.enumerated() {
+            let tagValue: Int
+            switch matchCase.caseName {
+            case "some": tagValue = 0
+            case "none": tagValue = 1
+            default:
+                fatalError("IREmitter: match case '\(matchCase.caseName)' outside the Optional ABI (HIRLowerer gates)")
+            }
+            let comparison = builder.freshTemp()
+            bodyIR += " \(comparison) = icmp eq i64 \(tag), \(tagValue)\n"
+            let armLabel = "match.arm.\(id).\(caseIndex)"
+            let fallthroughLabel = caseIndex + 1 < cases.count
+                ? "match.next.\(id).\(caseIndex)"
+                : panicLabel
+            bodyIR += builder.fmtCondBr(cond: comparison, thenLabelName: armLabel, elseLabelName: fallthroughLabel) + "\n"
+
+            bodyIR += "\(armLabel):\n"
+            scopes.append([:])
+            terminated = false
+            if let binding = matchCase.binding {
+                let payload = builder.freshTemp()
+                bodyIR += " \(payload) = extractvalue \(aggregate) \(scrutineeValue.ssaName), 1\n"
+                let slot = freshSlot(for: binding)
+                bodyIR += builder.fmtAlloca(name: slot, type: wrapped.llvmSpelling) + "\n"
+                bodyIR += builder.fmtStore(value: payload, type: wrapped.llvmSpelling, ptr: slot) + "\n"
+                scopes[scopes.count - 1][binding] = slot
+            }
+            emitBlock(matchCase.body)
+            if !terminated {
+                bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+            }
+            scopes.removeLast()
+            if caseIndex + 1 < cases.count {
+                bodyIR += "match.next.\(id).\(caseIndex):\n"
+                terminated = false
+            }
+        }
+        bodyIR += "\(panicLabel):\n"
+        let message = emitStringConstant("Pini runtime error: match value matched no case")
+        bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+        bodyIR += " unreachable\n"
+        bodyIR += "\(endLabel):\n"
+        terminated = false
+    }
+
+    /// Subscript store `container[index] = value` (G2 batch 2), mirroring the
+    /// legacy emitter's COW contract:
+    /// - nested containers (`m[0][1] = v`) take the top-down ensure-unique
+    ///   chain first (`bk_handle_ensure_unique` at the root, then
+    ///   `bk_array_ensure_unique_at` per level — order is mandatory: the
+    ///   runtime requires an exclusive parent before splitting the child);
+    /// - plain variable containers keep the legacy shape (bk_array_set's own
+    ///   ensure_unique plus the slot write-back below);
+    /// - a `.load` value (aliasing an existing array variable) retains one
+    ///   share before the box move (ownership contract 3);
+    /// - the split handle returned by `bk_array_set` is written back to the
+    ///   owning variable slot, or the write would be silently lost.
+    private func emitSubscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType) {
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let containerValue: IRValue
+        if case .subscriptGet = container {
+            containerValue = emitUniqueContainerHandle(container)
+        } else {
+            containerValue = emitExpr(container)
+        }
+        let indexValue = emitExpr(index)
+        let loweredValue = emitExpr(value)
+        emitRetainIfAliased(value, loweredValue)
+        let boxPtr = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+        bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let newRaw = builder.freshTemp()
+        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(raw), i32 \(indexValue.ssaName), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_array*" {
+            guard let slot = lookupSlot(name) else {
+                fatalError("IREmitter: subscript store to undeclared container '\(name)' (HIRLowerer guarantees declarations)")
+            }
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
+            bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+        }
+    }
+
+    /// Top-down COW split for nested container writes (`m[0][1] = v`).
+    /// Returns the exclusive innermost handle. The root variable's split
+    /// handle is written back to its slot; intermediate levels are rewritten
+    /// in place by `bk_array_ensure_unique_at` (which deliberately does not
+    /// release the old child handle — see the runtime's UAF note).
+    private func emitUniqueContainerHandle(_ container: HIRExpr) -> IRValue {
+        switch container {
+        case .load(let name, _):
+            let value = emitExpr(container)
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            let newRaw = builder.freshTemp()
+            bodyIR += " \(newRaw) = call ptr @bk_handle_ensure_unique(ptr \(raw))\n"
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
+            if let slot = lookupSlot(name) {
+                bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+            }
+            return IRValue(llvmType: "%bk_array*", ssaName: typed)
+        case .subscriptGet(let inner, let index, _):
+            let parent = emitUniqueContainerHandle(inner)
+            let parentRaw = builder.freshTemp()
+            bodyIR += " \(parentRaw) = bitcast %bk_array* \(parent.ssaName) to ptr\n"
+            let indexValue = emitExpr(index)
+            let childRaw = builder.freshTemp()
+            bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(childRaw) to %bk_array*\n"
+            return IRValue(llvmType: "%bk_array*", ssaName: typed)
+        default:
+            return emitExpr(container)
         }
     }
 
@@ -276,9 +454,11 @@ public final class IREmitter {
         bodyIR += builder.fmtCondBr(cond: cond.ssaName, thenLabelName: bodyLabel, elseLabelName: exitLabel) + "\n"
 
         bodyIR += "\(bodyLabel):\n"
+        loopStack.append(exitLabel)
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
+        loopStack.removeLast()
         if !terminated {
             bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
         }
@@ -363,7 +543,147 @@ public final class IREmitter {
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
             }
             return IRValue(llvmType: aggregate, ssaName: filled)
+
+        case .arrayLiteral(let elements, let type):
+            return emitArrayLiteral(elements: elements, type: type)
+
+        case .subscriptGet(let container, let index, let type):
+            return emitSubscriptGet(container: container, index: index, type: type)
+
+        case .lenCall(let argument):
+            return emitLen(argument)
+
+        case .optionalGet(let container, let index, let type):
+            return emitOptionalGet(container: container, index: index, type: type)
         }
+    }
+
+    /// `arr.get(i)` — tolerant read: bounds-check via `bk_array_len`, then
+    /// some(payload) or none. The aggregate flows through a stack slot
+    /// (alloca + store + load) so the branch join needs no phi node.
+    private func emitOptionalGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
+        guard case .optional(let wrapped) = type else {
+            fatalError("IREmitter: optionalGet type is not Optional (HIRLowerer guarantees)")
+        }
+        let aggregate = type.llvmSpelling
+        let containerValue = emitExpr(container)
+        let indexValue = emitExpr(index)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        let inBounds = builder.freshTemp()
+        bodyIR += " \(inBounds) = icmp slt i32 \(indexValue.ssaName), \(count)\n"
+
+        let slot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
+        let id = builder.freshLabel()
+        let someLabel = "get.some.\(id)"
+        let noneLabel = "get.none.\(id)"
+        let endLabel = "get.end.\(id)"
+        bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: someLabel, elseLabelName: noneLabel) + "\n"
+
+        bodyIR += "\(someLabel):\n"
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(indexValue.ssaName))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: wrapped.llvmSpelling, ptr: boxPtr) + "\n"
+        let some0 = builder.freshTemp()
+        bodyIR += " \(some0) = insertvalue \(aggregate) undef, i64 0, 0\n"
+        let some1 = builder.freshTemp()
+        bodyIR += " \(some1) = insertvalue \(aggregate) \(some0), \(wrapped.llvmSpelling) \(value), 1\n"
+        bodyIR += builder.fmtStore(value: some1, type: aggregate, ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+        bodyIR += "\(noneLabel):\n"
+        let none0 = builder.freshTemp()
+        bodyIR += " \(none0) = insertvalue \(aggregate) undef, i64 1, 0\n"
+        bodyIR += builder.fmtStore(value: none0, type: aggregate, ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+        bodyIR += "\(endLabel):\n"
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: aggregate, ptr: slot) + "\n"
+        return IRValue(llvmType: aggregate, ssaName: result)
+    }
+
+    // MARK: - Array family (G2)
+
+    /// Element boxing ABI against the runtime `_BkTag` values: the tag lets
+    /// the runtime distinguish raw scalars from nested container handles
+    /// (release / COW semantics). Strings mirror the legacy emitter exactly:
+    /// their `i8*` spelling carries the handle tag (the boxed slot owns a
+    /// refcounted box, not the string bytes).
+    private func arrayElementABI(_ type: HIRType) -> (spelling: String, width: Int, tag: Int32) {
+        switch type {
+        case .i32: return ("i32", 4, 0)
+        case .f64: return ("double", 8, 1)
+        case .boolean: return ("i1", 1, 2)
+        case .string: return ("i8*", 8, 4)
+        case .array: return ("%bk_array*", 8, 4)
+        default:
+            fatalError("IREmitter: no array element ABI for '\(type)' (HIRLowerer gates element types)")
+        }
+    }
+
+    /// Alias-point retain (ownership contract 3): a `.load` value node means
+    /// the source variable still holds its share, so copying it into a new
+    /// holder requires one extra share. Temporaries (literals, subscript
+    /// reads, call results) transfer ownership and must NOT retain.
+    private func emitRetainIfAliased(_ valueNode: HIRExpr, _ value: IRValue) {
+        guard case .load(_, let valueType) = valueNode, valueType.llvmSpelling == "%bk_array*" else {
+            return
+        }
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+        bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+    }
+
+    private func emitArrayLiteral(elements: [HIRExpr], type: HIRType) -> IRValue {
+        guard case .array(let elementType) = type else {
+            fatalError("IREmitter: arrayLiteral type is not an array (HIRLowerer guarantees)")
+        }
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let createTemp = builder.freshTemp()
+        bodyIR += " \(createTemp) = call ptr @bk_array_create(i32 \(elements.count))\n"
+        // The construction handle is always unique (create starts at shares==1),
+        // but the set calls are threaded anyway so construction and write-back
+        // share one shape (legacy emitter contract).
+        var curRaw = createTemp
+        for (index, element) in elements.enumerated() {
+            let value = emitExpr(element)
+            let boxPtr = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+            bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
+            emitRetainIfAliased(element, value)
+            let nextRaw = builder.freshTemp()
+            bodyIR += " \(nextRaw) = call ptr @bk_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+            curRaw = nextRaw
+        }
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_array*\n"
+        return IRValue(llvmType: "%bk_array*", ssaName: handle)
+    }
+
+    private func emitSubscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
+        let containerValue = emitExpr(container)
+        let indexValue = emitExpr(index)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(indexValue.ssaName))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: type.llvmSpelling, ptr: boxPtr) + "\n"
+        return IRValue(llvmType: type.llvmSpelling, ssaName: value)
+    }
+
+    private func emitLen(_ argument: HIRExpr) -> IRValue {
+        let value = emitExpr(argument)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        return IRValue(llvmType: "i32", ssaName: count)
     }
 
     /// Widen any scalar payload to the type-erased error word (i64): sign /

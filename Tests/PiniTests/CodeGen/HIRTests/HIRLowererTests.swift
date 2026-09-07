@@ -109,10 +109,13 @@ final class HIRLowererTests: XCTestCase {
         XCTAssertEqual(args.count, 2)
     }
 
-    func testGateRejectsArrayLiteral() {
+    func testGateRejectsDictionaryLiteral() {
+        // G2 moved array literals inside the slice (read path batch 1);
+        // dictionary / set literals remain outside it. The boundary gate
+        // tracks the current grid, not the M4 snapshot.
         XCTAssertThrowsError(try lower("""
         main|func() -> ():
-            let a = [1, 2]
+            let d = ["k" = 1]
         """)) { error in
             XCTAssertTrue(
                 String(describing: error).contains("HIR lowering error"),

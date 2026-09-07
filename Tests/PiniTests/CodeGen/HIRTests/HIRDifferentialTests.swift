@@ -127,4 +127,11 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffTryElse() throws { try assertParity(fixtureName: "testDiffTryElse") }
     func testDiffTryElseOk() throws { try assertParity(fixtureName: "testDiffTryElseOk") }
     func testDiffTryElseSugar() throws { try assertParity(fixtureName: "testDiffTryElseSugar") }
+
+    // MARK: - G2 array family (read path batch 1, write path batch 2,
+    // optional/match/break batch 3)
+
+    func testDiffArrayRead() throws { try assertParity(fixtureName: "testDiffArrayRead") }
+    func testDiffArrayWrite() throws { try assertParity(fixtureName: "testDiffArrayWrite") }
+    func testDiffArrayGetMatch() throws { try assertParity(fixtureName: "testDiffArrayGetMatch") }
 }

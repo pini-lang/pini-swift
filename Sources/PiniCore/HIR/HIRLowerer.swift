@@ -160,9 +160,16 @@ public enum HIRLowerer {
             )
 
         case .assign(let target, let value, let location):
+            // Subscript stores are the G2 write path (array family); member
+            // stores remain a later grid.
+            if case .subscript(let container, let index) = target {
+                return [try lowerSubscriptStore(
+                    container: container, index: index, value: value, at: location, into: &context
+                )]
+            }
             guard case .identifier(let name) = target else {
                 throw unsupported(
-                    "assignment to a non-identifier target (member/subscript stores are later grids)",
+                    "assignment to a non-identifier target (member stores are later grids)",
                     at: location
                 )
             }
@@ -237,12 +244,30 @@ public enum HIRLowerer {
             let bodyStmts = try lowerBlock(body, into: &context)
             return [.whileStmt(condition: cond.node, body: bodyStmts)]
 
+        case .breakStatement(let label, let location):
+            guard label == nil else {
+                throw unsupported("labeled break is a later grid", at: location)
+            }
+            return [.breakStmt]
+
+        case .matchStatement(let value, let cases, let location):
+            return [try lowerMatch(value: value, cases: cases, at: location, into: &context)]
+
         case .expressionStmt(let expr, let location):
             // Statement-position try-else: ok value discarded (ADR-032).
             if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
                 return [try lowerTry(
                     operand: operand, errorVar: errorVar, handler: handler,
                     okTarget: nil, at: location, into: &context
+                )]
+            }
+            // Compound assignment (`a[i] += k` / `x += 1`) parses as a binary
+            // expression; statement position lowers it to a store (G2).
+            if case .binary(let left, let op, let right, let binaryLocation) = expr,
+               let baseOp = HIRBinaryOp(compound: op) {
+                return [try lowerCompoundAssign(
+                    left: left, baseOp: baseOp, right: right,
+                    at: binaryLocation, into: &context
                 )]
             }
             return [.exprStmt(try lowerExpr(expr, expected: nil, into: &context).node)]
@@ -309,15 +334,17 @@ public enum HIRLowerer {
             }
             declaredType = type
         } else if let initializer = initializer {
-            // No annotation: resolve from the checker.
-            guard let inferred = context.inferType(of: initializer),
-                  let type = HIRType(from: inferred) else {
-                throw unsupported(
-                    "variable '\(name)' lacks annotation and its initializer type is not a scalar",
-                    at: location
-                )
+            if let inferred = context.inferType(of: initializer),
+               let type = HIRType(from: inferred) {
+                declaredType = type
+            } else {
+                // Checker inference miss (collection literals, checker-untracked
+                // identifiers): derive the type by lowering the initializer
+                // without an expectation — same fallback contract as the
+                // legacy codegen (G2). The result is discarded; the real
+                // lowering below re-lowers with the resolved expectation.
+                declaredType = try lowerExpr(initializer, expected: nil, into: &context).type
             }
-            declaredType = type
         } else {
             throw unsupported(
                 "variable '\(name)' has neither annotation nor initializer",
@@ -452,6 +479,29 @@ public enum HIRLowerer {
         case .stringLiteral(let value, _):
             return LoweredExpr(node: .stringConst(value: value), type: .string)
 
+        case .arrayLiteral(let elements, let location):
+            return try lowerArrayLiteral(elements, expected: expected, at: location, into: &context)
+
+        case .subscript(let container, let index, let location):
+            // Array subscript read (G2): safe-assert channel — out of bounds
+            // panics at runtime, matching the interpreter. The tolerant
+            // `.get` channel (Optional) is a later grid.
+            let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
+            guard let elementType = loweredContainer.type.arrayElementType else {
+                throw unsupported(
+                    "subscript on non-array type '\(loweredContainer.type)'",
+                    at: location
+                )
+            }
+            let loweredIndex = try lowerExpr(index, expected: .i32, into: &context)
+            guard loweredIndex.type == .i32 else {
+                throw unsupported("array subscript needs an I32 index", at: location)
+            }
+            return LoweredExpr(
+                node: .subscriptGet(container: loweredContainer.node, index: loweredIndex.node, type: elementType),
+                type: elementType
+            )
+
         case .identifier(let name, let location):
             guard let type = context.variableTypes[name] else {
                 throw unsupported("reference to undeclared variable '\(name)'", at: location)
@@ -522,6 +572,14 @@ public enum HIRLowerer {
             }
 
         case .call(let callee, let arguments, let location):
+            // Tolerant read channel `arr.get(i)` (G2): the only member call
+            // wired this grid; all other method calls stay gated.
+            if case .member(let object, let memberName, _) = callee {
+                return try lowerMemberGet(
+                    object: object, memberName: memberName, arguments: arguments,
+                    at: location, into: &context
+                )
+            }
             guard case .identifier(let functionName, _) = callee else {
                 throw unsupported(
                     "call to a non-identifier callee (method calls are later grids)",
@@ -545,7 +603,33 @@ public enum HIRLowerer {
                 if case .result = loweredArgs[0].type {
                     throw unsupported("printing a Result value is outside the slice", at: location)
                 }
+                if case .array = loweredArgs[0].type {
+                    throw unsupported(
+                        "printing an array value is a later grid (value formatting, G2b)",
+                        at: location
+                    )
+                }
+                if case .optional = loweredArgs[0].type {
+                    throw unsupported(
+                        "printing an Optional value is a later grid (value formatting)",
+                        at: location
+                    )
+                }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
+            }
+            // Intrinsic len: arrays go through the runtime handle (bk_array_len);
+            // other operand kinds are later grids.
+            if functionName == "len" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("len expects exactly one argument", at: location)
+                }
+                guard case .array = loweredArgs[0].type else {
+                    throw unsupported(
+                        "len on '\(loweredArgs[0].type)' is outside this grid (arrays only)",
+                        at: location
+                    )
+                }
+                return LoweredExpr(node: .lenCall(argument: loweredArgs[0].node), type: .i32)
             }
             // Result case construction (ok/err): requires a Result-typed
             // context (return position, Result-typed assignment) so the
@@ -605,6 +689,223 @@ public enum HIRLowerer {
                 at: expressionLocation(expression)
             )
         }
+    }
+
+    // MARK: - Member .get & match (G2 batch 3)
+
+    /// `arr.get(i)` — the tolerant read channel: out of bounds yields none
+    /// (the language-level nil), in bounds some(value). Only Array is wired;
+    /// String/Dictionary `.get` join through the same node when their
+    /// optional-read grids land.
+    private static func lowerMemberGet(
+        object: Expression,
+        memberName: String,
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard memberName == "get" else {
+            throw unsupported("method '\(memberName)' calls are later grids", at: location)
+        }
+        guard arguments.count == 1 else {
+            throw unsupported("get expects exactly one argument", at: location)
+        }
+        let loweredObject = try lowerExpr(object, expected: nil, into: &context)
+        guard let elementType = loweredObject.type.arrayElementType else {
+            throw unsupported(".get on non-array type '\(loweredObject.type)'", at: location)
+        }
+        let loweredIndex = try lowerExpr(arguments[0].expression, expected: .i32, into: &context)
+        guard loweredIndex.type == .i32 else {
+            throw unsupported("get index must be I32", at: location)
+        }
+        return LoweredExpr(
+            node: .optionalGet(
+                container: loweredObject.node, index: loweredIndex.node,
+                type: .optional(wrapped: elementType)
+            ),
+            type: .optional(wrapped: elementType)
+        )
+    }
+
+    /// `match scrutinee: case name(binding): body ...` — the general case
+    /// skeleton, with the Optional scrutinee wired this grid (some/none;
+    /// `none` is the language-level nil, user adjudication D-G2-1). Literal
+    /// / wildcard patterns and user enums join through the same node later.
+    private static func lowerMatch(
+        value: Expression,
+        cases: [MatchCase],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        let loweredValue = try lowerExpr(value, expected: nil, into: &context)
+        guard case .optional(let wrapped) = loweredValue.type else {
+            throw unsupported(
+                "match scrutinee type '\(loweredValue.type)' outside this grid (Optional only; enum match is a later grid)",
+                at: location
+            )
+        }
+        var hirCases: [HIRMatchCase] = []
+        for matchCase in cases {
+            switch matchCase.pattern {
+            case .enumCase(let caseName):
+                guard caseName == "some" || caseName == "none" else {
+                    throw unsupported(
+                        "match case '\(caseName)' outside this grid (Optional scrutinee: some/none)",
+                        at: matchCase.location
+                    )
+                }
+                var bindingName: String? = nil
+                if !matchCase.bindings.isEmpty {
+                    guard caseName == "some", matchCase.bindings.count == 1,
+                          matchCase.bindings[0].paramName == nil,
+                          matchCase.bindings[0].varName != "_" else {
+                        throw unsupported(
+                            "match case bindings outside this grid (single positional binding on some)",
+                            at: matchCase.location
+                        )
+                    }
+                    bindingName = matchCase.bindings[0].varName
+                }
+                let previousType = bindingName.flatMap { context.variableTypes[$0] }
+                if let bindingName = bindingName {
+                    context.variableTypes[bindingName] = wrapped
+                }
+                let body = try lowerBlock(matchCase.block, into: &context)
+                if let bindingName = bindingName {
+                    context.variableTypes[bindingName] = previousType
+                }
+                hirCases.append(HIRMatchCase(caseName: caseName, binding: bindingName, body: body))
+            default:
+                throw unsupported(
+                    "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
+                    at: matchCase.location
+                )
+            }
+        }
+        return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+    }
+
+    // MARK: - Array stores & compound assignment (G2 batch 2)
+
+    /// Lower `container[index] = value` for array containers. The read path
+    /// gates the container type; the value adopts the element type.
+    private static func lowerSubscriptStore(
+        container: Expression,
+        index: Expression,
+        value: Expression,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
+        guard let elementType = loweredContainer.type.arrayElementType else {
+            throw unsupported(
+                "subscript store on non-array type '\(loweredContainer.type)'",
+                at: location
+            )
+        }
+        let loweredIndex = try lowerExpr(index, expected: .i32, into: &context)
+        guard loweredIndex.type == .i32 else {
+            throw unsupported("array subscript needs an I32 index", at: location)
+        }
+        let loweredValue = try lowerExpr(value, expected: elementType, into: &context)
+        try requireAssignable(loweredValue.type, to: elementType, at: location)
+        return .subscriptStore(
+            container: loweredContainer.node, index: loweredIndex.node,
+            value: loweredValue.node, elementType: elementType
+        )
+    }
+
+    /// Lower `target op= value` in statement position: read-modify-write.
+    /// Subscript targets reuse the read's container/index nodes so the
+    /// container is emitted exactly twice (read + write), matching the
+    /// legacy emitter's evaluation shape.
+    private static func lowerCompoundAssign(
+        left: Expression,
+        baseOp: HIRBinaryOp,
+        right: Expression,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        if case .identifier(let name, _) = left {
+            guard let varType = context.variableTypes[name] else {
+                throw unsupported("assignment to undeclared variable '\(name)'", at: location)
+            }
+            guard varType.isNumeric else {
+                throw unsupported("compound assignment on non-numeric variable '\(name)'", at: location)
+            }
+            let rhs = try lowerExpr(right, expected: varType, into: &context)
+            let combined = HIRExpr.binary(
+                op: baseOp, lhs: .load(name: name, type: varType), rhs: rhs.node, type: varType
+            )
+            return .storeVar(name: name, type: varType, value: combined)
+        }
+        if case .subscript(let container, let index, _) = left {
+            let read = try lowerExpr(left, expected: nil, into: &context)
+            guard read.type.isNumeric else {
+                throw unsupported(
+                    "compound assignment on non-numeric element type '\(read.type)'",
+                    at: location
+                )
+            }
+            let rhs = try lowerExpr(right, expected: read.type, into: &context)
+            let combined = HIRExpr.binary(op: baseOp, lhs: read.node, rhs: rhs.node, type: read.type)
+            guard case .subscriptGet(let containerNode, let indexNode, _) = read.node else {
+                throw unsupported("subscript read did not produce a subscript node", at: location)
+            }
+            return .subscriptStore(
+                container: containerNode, index: indexNode,
+                value: combined, elementType: read.type
+            )
+        }
+        throw unsupported(
+            "compound assignment target outside this grid (identifier or array subscript)",
+            at: location
+        )
+    }
+
+    // MARK: - Array literals (G2)
+
+    /// Lower an array literal. The checker does not infer collection literal
+    /// types, so the element type is derived from the lowered elements
+    /// (homogeneity required — same contract as the legacy codegen fallback).
+    /// An expected `.array(element:)` context (annotation / nested literal)
+    /// drives empty-literal and integer-literal adoption.
+    private static func lowerArrayLiteral(
+        _ elements: [Expression],
+        expected: HIRType?,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        let elementExpected = expected?.arrayElementType
+        guard !elements.isEmpty || elementExpected != nil else {
+            throw unsupported(
+                "empty array literal needs an element type (annotate the variable)",
+                at: location
+            )
+        }
+        var loweredElements: [HIRExpr] = []
+        var elementType: HIRType? = elementExpected
+        for element in elements {
+            let lowered = try lowerExpr(element, expected: elementType, into: &context)
+            if let known = elementType {
+                guard lowered.type == known else {
+                    throw unsupported(
+                        "heterogeneous array literal (\(lowered.type) vs \(known))",
+                        at: location
+                    )
+                }
+            } else {
+                elementType = lowered.type
+            }
+            loweredElements.append(lowered.node)
+        }
+        guard let resolvedElement = elementType else {
+            throw unsupported("array literal has no resolvable element type", at: location)
+        }
+        return LoweredExpr(
+            node: .arrayLiteral(elements: loweredElements, type: .array(element: resolvedElement)),
+            type: .array(element: resolvedElement)
+        )
     }
 
     // MARK: - Type conformance
@@ -675,9 +976,17 @@ extension HIRType {
         case .generic(let name, let params, _):
             // `^T` surface form (Result type sugar, ADR-032): pins the ok
             // payload; the error slot is type-erased in the IR ABI (LR-12).
-            guard name == "Result", let first = params.first,
-                  let ok = HIRType(from: first) else { return nil }
-            self = .result(ok: ok)
+            if name == "Result", let first = params.first,
+               let ok = HIRType(from: first) {
+                self = .result(ok: ok)
+                return
+            }
+            // `Array<T>` (G2): nested generics recurse through the element.
+            if name == "Array", params.count == 1, let element = HIRType(from: params[0]) {
+                self = .array(element: element)
+                return
+            }
+            return nil
         default:
             return nil
         }
@@ -692,6 +1001,19 @@ extension TypeAnnotation {
 }
 
 extension HIRBinaryOp {
+    /// Map a compound-assign AST operator onto its base HIR operator; nil for
+    /// operators outside the slice (bitwise/shift compounds are later grids).
+    init?(compound op: BinaryOperator) {
+        switch op {
+        case .plusAssign: self = .add
+        case .minusAssign: self = .subtract
+        case .multiplyAssign: self = .multiply
+        case .divideAssign: self = .divide
+        case .moduloAssign: self = .modulo
+        default: return nil
+        }
+    }
+
     /// Map an AST binary operator onto the slice set; nil for operators the
     /// slice does not carry (bitwise/shift/compound-assign are later grids).
     init?(from op: BinaryOperator) {

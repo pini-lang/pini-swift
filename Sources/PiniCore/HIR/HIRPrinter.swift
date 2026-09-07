@@ -61,6 +61,18 @@ public enum HIRPrinter {
             var lines = ["\(pad)try \(exprText(operand)) else \(errorVar)\(bind):"]
             lines.append(contentsOf: dumpBody(handler, indent: level + 1))
             return lines
+        case .subscriptStore(let container, let index, let value, _):
+            return ["\(pad)\(exprText(container))[\(exprText(index))] = \(exprText(value))"]
+        case .breakStmt:
+            return ["\(pad)break"]
+        case .matchStmt(let scrutinee, let cases, _):
+            var lines = ["\(pad)match \(exprText(scrutinee)):"]
+            for matchCase in cases {
+                let bind = matchCase.binding.map { "(\($0))" } ?? ""
+                lines.append("\(pad)    case \(matchCase.caseName)\(bind):")
+                lines.append(contentsOf: dumpBody(matchCase.body, indent: level + 2))
+            }
+            return lines
         }
     }
 
@@ -82,6 +94,15 @@ public enum HIRPrinter {
             return "print(\(exprText(argument)))"
         case .resultConstruct(let isOk, let payload, _):
             return "\(isOk ? "ok" : "err")(\(exprText(payload)))"
+        case .arrayLiteral(let elements, _):
+            let items = elements.map(exprText).joined(separator: ", ")
+            return "[\(items)]"
+        case .subscriptGet(let container, let index, _):
+            return "\(exprText(container))[\(exprText(index))]"
+        case .lenCall(let argument):
+            return "len(\(exprText(argument)))"
+        case .optionalGet(let container, let index, _):
+            return "\(exprText(container)).get(\(exprText(index)))"
         }
     }
 

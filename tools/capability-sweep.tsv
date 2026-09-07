@@ -1,5 +1,5 @@
 examples/access.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/array-basic.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method get not yet supported in IR'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/array-basic.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method get not yet supported in IR' 
 examples/closures.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/collections.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/comments.pini	PASS	PASS	PASS	PASS	
@@ -50,7 +50,7 @@ examples/package-demo/secrettypes.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The op
 examples/recursion.pini	PASS	PASS	PASS	PASS	
 examples/slice.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method slice not yet supported in IR'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/stdlib.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/step.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/step.pini	PASS	PASS	PASS	PASS	
 examples/struct.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/test.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/trait.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
