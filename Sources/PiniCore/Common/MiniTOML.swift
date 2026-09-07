@@ -3,9 +3,27 @@
 ///
 /// 覆盖面：`[a]` / `[a.b]` 平表（点分即嵌套路径，按字符串键保存）、`[[a]]` 数组表（G52 §5.1，
 /// 锁文件 `[[module]]`/`[[resource]]` 用）、`key = "value"` / `key = ["a", "b"]` 内联数组、
-/// `#` 注释。**不做**：多行字符串、类型系统（一切值皆字符串）、转义序列。
+/// `#` 注释（整行与行内，引号感知——行内剥离修复见
+/// 工单 issue-minitoml-inline-comment-2026-09-07）。**不做**：多行字符串、类型系统（一切值皆字符串）、转义序列。
 /// 未知表**容错保留**（调用方自行取舍——清单解析忽略未知表，锁文件解析全量消费）。
-internal enum MiniTOML {
+ internal enum MiniTOML {
+
+ /// 引号感知地剥离一行内的行内注释：首个「未处于引号串内」的 `#` 起截断。
+ /// MiniTOML 不支持转义序列——`"` 简单翻转引号态即可。整行注释剥空后由调用方按
+ /// 空行跳过（工单 issue-minitoml-inline-comment-2026-09-07：原实现只跳
+ /// 整行注释，行内残片污染值致 G52 Def-3 入口校验误报 E5-018）。
+ static func strippingInlineComment(_ line: String) -> String {
+ var inQuote = false
+ for (offset, ch) in line.enumerated() {
+ if ch == "\"" {
+ inQuote.toggle()
+ } else if ch == "#", !inQuote {
+ return String(line[line.startIndex..<line.index(line.startIndex, offsetBy: offset)])
+ .trimmingCharacters(in: .whitespacesAndNewlines)
+ }
+ }
+ return line
+ }
 
  internal struct Document {
  var tables: [String: [String: String]] = [:]
@@ -31,7 +49,7 @@ internal enum MiniTOML {
  var current: String? = nil
 
  for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
- let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+ let line = strippingInlineComment(rawLine.trimmingCharacters(in: .whitespacesAndNewlines))
  if line.isEmpty || line.hasPrefix("#") { continue }
 
  if line.hasPrefix("[["), line.hasSuffix("]]") {
