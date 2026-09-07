@@ -1,0 +1,4 @@
+main|func() -> ():
+    if is_letter("a"):
+        print(1)
+    return

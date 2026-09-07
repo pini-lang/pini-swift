@@ -35,7 +35,8 @@
 | ADR-028 | 语言级 | 集合下标三通道安全模型（G48 破坏性修订：`a[i]` 安全断言 panic / `.get(i)` 安全可选 `.none` / `unsafe .getUnchecked(i)` 不安全 UB；解释器向 LLVM 既有 panic 行为收敛；追溯补登记） | active | `adr-028-subscript-safety-channels.md` |
 | ADR-029 | 语言级 | 括号内记法收口——值的注入用 `=`（`=` 注入 / `:` 标注与取出；实参标签·字典条目·元组标签·枚举具名构造改 `=`，match 具名绑定保留 `:`；含 G54 构造位破坏性修订，追溯补登记） | active | `adr-029-paren-equals-binding.md` |
 | ADR-030 | 语言级 | IO 相对路径解析基准——三段式方案 A（绝对原样 / `./` 运行时 CWD / 其余相对程序基准；`moduleRoot()`；LLVM 字面量烘焙；出账 A13/P-path） | active | `adr-030-io-path-base.md` |
-| ADR-031 | 宿主级 | LLVM 后端重写与假测试先行清除（后端由演进改重写 / 新旧并存开关切换 / Emitter 禁类型决策 / 能力检查单点化 / `bk_*` ABI 冻结 / 测试禁静默跳过 / 锁死实现细节的断言不作回归保护；含止损判据 S-1～S-4） | active | `adr-031-llvm-backend-rewrite.md` |
+| ADR-031 | 宿主级 | LLVM 后端重写（后端由演进改重写 / 新旧并存开关切换 / Emitter 禁类型决策 / 能力检查单点化 / `bk_*` ABI 冻结 / 测试禁静默跳过；含止损判据 S-1～S-4）**§4 步骤 1、§6 及 §2 的 N-2/N-3 已被 ADR-032 撤回** | superseded-in-part | `adr-031-llvm-backend-rewrite.md` |
+| ADR-032 | 宿主级 | 撤回「假测试清除」并规定门控测试的环境判据（门控结论须在完整登录 shell 下实测 / 「恒跳过」不构成删除理由 / 门控缺失须显式失败 / 锁实现细节的断言退役前不得先行删除 / 工作树与自定义 scratch 路径下的测量不作判据） | active | `adr-032-retract-false-test-removal.md` |
 
 ## 备注
 
