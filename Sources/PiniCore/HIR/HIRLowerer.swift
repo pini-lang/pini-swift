@@ -244,6 +244,15 @@ public enum HIRLowerer {
             let bodyStmts = try lowerBlock(body, into: &context)
             return [.whileStmt(condition: cond.node, body: bodyStmts)]
 
+        case .breakStatement(let label, let location):
+            guard label == nil else {
+                throw unsupported("labeled break is a later grid", at: location)
+            }
+            return [.breakStmt]
+
+        case .matchStatement(let value, let cases, let location):
+            return [try lowerMatch(value: value, cases: cases, at: location, into: &context)]
+
         case .expressionStmt(let expr, let location):
             // Statement-position try-else: ok value discarded (ADR-032).
             if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
@@ -563,6 +572,14 @@ public enum HIRLowerer {
             }
 
         case .call(let callee, let arguments, let location):
+            // Tolerant read channel `arr.get(i)` (G2): the only member call
+            // wired this grid; all other method calls stay gated.
+            if case .member(let object, let memberName, _) = callee {
+                return try lowerMemberGet(
+                    object: object, memberName: memberName, arguments: arguments,
+                    at: location, into: &context
+                )
+            }
             guard case .identifier(let functionName, _) = callee else {
                 throw unsupported(
                     "call to a non-identifier callee (method calls are later grids)",
@@ -589,6 +606,12 @@ public enum HIRLowerer {
                 if case .array = loweredArgs[0].type {
                     throw unsupported(
                         "printing an array value is a later grid (value formatting, G2b)",
+                        at: location
+                    )
+                }
+                if case .optional = loweredArgs[0].type {
+                    throw unsupported(
+                        "printing an Optional value is a later grid (value formatting)",
                         at: location
                     )
                 }
@@ -666,6 +689,100 @@ public enum HIRLowerer {
                 at: expressionLocation(expression)
             )
         }
+    }
+
+    // MARK: - Member .get & match (G2 batch 3)
+
+    /// `arr.get(i)` — the tolerant read channel: out of bounds yields none
+    /// (the language-level nil), in bounds some(value). Only Array is wired;
+    /// String/Dictionary `.get` join through the same node when their
+    /// optional-read grids land.
+    private static func lowerMemberGet(
+        object: Expression,
+        memberName: String,
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard memberName == "get" else {
+            throw unsupported("method '\(memberName)' calls are later grids", at: location)
+        }
+        guard arguments.count == 1 else {
+            throw unsupported("get expects exactly one argument", at: location)
+        }
+        let loweredObject = try lowerExpr(object, expected: nil, into: &context)
+        guard let elementType = loweredObject.type.arrayElementType else {
+            throw unsupported(".get on non-array type '\(loweredObject.type)'", at: location)
+        }
+        let loweredIndex = try lowerExpr(arguments[0].expression, expected: .i32, into: &context)
+        guard loweredIndex.type == .i32 else {
+            throw unsupported("get index must be I32", at: location)
+        }
+        return LoweredExpr(
+            node: .optionalGet(
+                container: loweredObject.node, index: loweredIndex.node,
+                type: .optional(wrapped: elementType)
+            ),
+            type: .optional(wrapped: elementType)
+        )
+    }
+
+    /// `match scrutinee: case name(binding): body ...` — the general case
+    /// skeleton, with the Optional scrutinee wired this grid (some/none;
+    /// `none` is the language-level nil, user adjudication D-G2-1). Literal
+    /// / wildcard patterns and user enums join through the same node later.
+    private static func lowerMatch(
+        value: Expression,
+        cases: [MatchCase],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        let loweredValue = try lowerExpr(value, expected: nil, into: &context)
+        guard case .optional(let wrapped) = loweredValue.type else {
+            throw unsupported(
+                "match scrutinee type '\(loweredValue.type)' outside this grid (Optional only; enum match is a later grid)",
+                at: location
+            )
+        }
+        var hirCases: [HIRMatchCase] = []
+        for matchCase in cases {
+            switch matchCase.pattern {
+            case .enumCase(let caseName):
+                guard caseName == "some" || caseName == "none" else {
+                    throw unsupported(
+                        "match case '\(caseName)' outside this grid (Optional scrutinee: some/none)",
+                        at: matchCase.location
+                    )
+                }
+                var bindingName: String? = nil
+                if !matchCase.bindings.isEmpty {
+                    guard caseName == "some", matchCase.bindings.count == 1,
+                          matchCase.bindings[0].paramName == nil,
+                          matchCase.bindings[0].varName != "_" else {
+                        throw unsupported(
+                            "match case bindings outside this grid (single positional binding on some)",
+                            at: matchCase.location
+                        )
+                    }
+                    bindingName = matchCase.bindings[0].varName
+                }
+                let previousType = bindingName.flatMap { context.variableTypes[$0] }
+                if let bindingName = bindingName {
+                    context.variableTypes[bindingName] = wrapped
+                }
+                let body = try lowerBlock(matchCase.block, into: &context)
+                if let bindingName = bindingName {
+                    context.variableTypes[bindingName] = previousType
+                }
+                hirCases.append(HIRMatchCase(caseName: caseName, binding: bindingName, body: body))
+            default:
+                throw unsupported(
+                    "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
+                    at: matchCase.location
+                )
+            }
+        }
+        return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
     }
 
     // MARK: - Array stores & compound assignment (G2 batch 2)

@@ -1,0 +1,34 @@
+; G2 batch 3: Optional read channel (.get -> some/none), match with the
+; general case skeleton, and break. Interpreter parity.
+; - match w.get(1) takes the some arm (the none arm's bare break is
+;   never reached — the interpreter errors on a bare break outside a
+;   loop, so the IR lowers it to a runtime panic: faithful fail-loud).
+; - the while loop exercises break THROUGH the match arm + if (signal
+;   propagation), printing 99 then leaving i at 2.
+main|func() -> ():
+    var w = [1, 2, 3]
+    w[0] = 10
+    match w.get(1):
+        case some(v):
+            w[1] = v + 5
+        case none:
+            break
+    print(w[0])
+    print(w[1])
+    var i = 0
+    while i < len(w):
+        match w.get(i):
+            case some(v):
+                if v == 3:
+                    print(99)
+                    break
+            case none:
+                break
+        i = i + 1
+    print(i)
+    match w.get(1):
+        case some(v):
+            print(v)
+        case none:
+            break
+    return

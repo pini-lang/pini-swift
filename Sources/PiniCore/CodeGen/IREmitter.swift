@@ -30,6 +30,11 @@ public final class IREmitter {
     /// are invalid IR).
     private var terminated = false
 
+    /// Enclosing while-loop exit labels, innermost last. `break` targets
+    /// loopStack.last; with an empty stack it lowers to a runtime panic
+    /// (interpreter parity: a bare break escaping to the top level errors).
+    private var loopStack: [String] = []
+
     private var currentIsMain = false
     private var currentReturnType: HIRType? = nil
 
@@ -67,6 +72,7 @@ public final class IREmitter {
         header += "declare void @bk_handle_retain(ptr)\n"
         header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
         header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
+        header += "declare void @bk_panic(ptr) noreturn\n"
         header += "\n"
 
         bodyIR = ""
@@ -93,6 +99,7 @@ public final class IREmitter {
         builder.reset()
         scopes = [[:]]
         slotCounters = [:]
+        loopStack = []
         terminated = false
         currentIsMain = function.name == "main"
         currentReturnType = function.returnType
@@ -183,7 +190,88 @@ public final class IREmitter {
 
         case .subscriptStore(let container, let index, let value, let elementType):
             emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
+
+        case .breakStmt:
+            emitBreak()
+
+        case .matchStmt(let scrutinee, let cases, let scrutineeType):
+            emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
         }
+    }
+
+    /// `break`: nearest enclosing while loop; without one, a runtime panic —
+    /// the interpreter errors when a bare break escapes to the top level
+    /// (probe-verified), so this is fail-loud parity, not a silent skip.
+    private func emitBreak() {
+        if let exitLabel = loopStack.last {
+            bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
+        } else {
+            let message = emitStringConstant("Pini runtime error: break outside loop")
+            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " unreachable\n"
+        }
+        terminated = true
+    }
+
+    /// `match scrutinee: case name(binding): body ...` — Optional scrutinee
+    /// ABI: tagged aggregate `{ i64, T }`, some = 0, none = 1. Arms are a
+    /// comparison chain; a scrutinee matching no arm reaches the panic block
+    /// (interpreter matchNotExhaustive parity). `break` inside an arm is NOT
+    /// caught by the match — the interpreter propagates the signal outward.
+    private func emitMatch(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType) {
+        guard case .optional(let wrapped) = scrutineeType else {
+            fatalError("IREmitter: match scrutinee is not Optional (HIRLowerer gates the slice)")
+        }
+        let aggregate = scrutineeType.llvmSpelling
+        let scrutineeValue = emitExpr(scrutinee)
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = extractvalue \(aggregate) \(scrutineeValue.ssaName), 0\n"
+        let id = builder.freshLabel()
+        let endLabel = "match.end.\(id)"
+        let panicLabel = "match.fail.\(id)"
+        for (caseIndex, matchCase) in cases.enumerated() {
+            let tagValue: Int
+            switch matchCase.caseName {
+            case "some": tagValue = 0
+            case "none": tagValue = 1
+            default:
+                fatalError("IREmitter: match case '\(matchCase.caseName)' outside the Optional ABI (HIRLowerer gates)")
+            }
+            let comparison = builder.freshTemp()
+            bodyIR += " \(comparison) = icmp eq i64 \(tag), \(tagValue)\n"
+            let armLabel = "match.arm.\(id).\(caseIndex)"
+            let fallthroughLabel = caseIndex + 1 < cases.count
+                ? "match.next.\(id).\(caseIndex)"
+                : panicLabel
+            bodyIR += builder.fmtCondBr(cond: comparison, thenLabelName: armLabel, elseLabelName: fallthroughLabel) + "\n"
+
+            bodyIR += "\(armLabel):\n"
+            scopes.append([:])
+            terminated = false
+            if let binding = matchCase.binding {
+                let payload = builder.freshTemp()
+                bodyIR += " \(payload) = extractvalue \(aggregate) \(scrutineeValue.ssaName), 1\n"
+                let slot = freshSlot(for: binding)
+                bodyIR += builder.fmtAlloca(name: slot, type: wrapped.llvmSpelling) + "\n"
+                bodyIR += builder.fmtStore(value: payload, type: wrapped.llvmSpelling, ptr: slot) + "\n"
+                scopes[scopes.count - 1][binding] = slot
+            }
+            emitBlock(matchCase.body)
+            if !terminated {
+                bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+            }
+            scopes.removeLast()
+            if caseIndex + 1 < cases.count {
+                bodyIR += "match.next.\(id).\(caseIndex):\n"
+                terminated = false
+            }
+        }
+        bodyIR += "\(panicLabel):\n"
+        let message = emitStringConstant("Pini runtime error: match value matched no case")
+        bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+        bodyIR += " unreachable\n"
+        bodyIR += "\(endLabel):\n"
+        terminated = false
     }
 
     /// Subscript store `container[index] = value` (G2 batch 2), mirroring the
@@ -366,9 +454,11 @@ public final class IREmitter {
         bodyIR += builder.fmtCondBr(cond: cond.ssaName, thenLabelName: bodyLabel, elseLabelName: exitLabel) + "\n"
 
         bodyIR += "\(bodyLabel):\n"
+        loopStack.append(exitLabel)
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
+        loopStack.removeLast()
         if !terminated {
             bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
         }
@@ -462,7 +552,59 @@ public final class IREmitter {
 
         case .lenCall(let argument):
             return emitLen(argument)
+
+        case .optionalGet(let container, let index, let type):
+            return emitOptionalGet(container: container, index: index, type: type)
         }
+    }
+
+    /// `arr.get(i)` — tolerant read: bounds-check via `bk_array_len`, then
+    /// some(payload) or none. The aggregate flows through a stack slot
+    /// (alloca + store + load) so the branch join needs no phi node.
+    private func emitOptionalGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
+        guard case .optional(let wrapped) = type else {
+            fatalError("IREmitter: optionalGet type is not Optional (HIRLowerer guarantees)")
+        }
+        let aggregate = type.llvmSpelling
+        let containerValue = emitExpr(container)
+        let indexValue = emitExpr(index)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        let inBounds = builder.freshTemp()
+        bodyIR += " \(inBounds) = icmp slt i32 \(indexValue.ssaName), \(count)\n"
+
+        let slot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
+        let id = builder.freshLabel()
+        let someLabel = "get.some.\(id)"
+        let noneLabel = "get.none.\(id)"
+        let endLabel = "get.end.\(id)"
+        bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: someLabel, elseLabelName: noneLabel) + "\n"
+
+        bodyIR += "\(someLabel):\n"
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(indexValue.ssaName))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: wrapped.llvmSpelling, ptr: boxPtr) + "\n"
+        let some0 = builder.freshTemp()
+        bodyIR += " \(some0) = insertvalue \(aggregate) undef, i64 0, 0\n"
+        let some1 = builder.freshTemp()
+        bodyIR += " \(some1) = insertvalue \(aggregate) \(some0), \(wrapped.llvmSpelling) \(value), 1\n"
+        bodyIR += builder.fmtStore(value: some1, type: aggregate, ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+        bodyIR += "\(noneLabel):\n"
+        let none0 = builder.freshTemp()
+        bodyIR += " \(none0) = insertvalue \(aggregate) undef, i64 1, 0\n"
+        bodyIR += builder.fmtStore(value: none0, type: aggregate, ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+        bodyIR += "\(endLabel):\n"
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: aggregate, ptr: slot) + "\n"
+        return IRValue(llvmType: aggregate, ssaName: result)
     }
 
     // MARK: - Array family (G2)

@@ -30,6 +30,10 @@ public indirect enum HIRType: Equatable {
     /// (`%bk_array*`, ADR-008); elements are boxed through the `bk_array_*`
     /// C ABI. Nested arrays recurse via the element type.
     case array(element: HIRType)
+    /// `Optional<T>` (G2). Tagged aggregate `{ i64, T }` — tag 0 = some,
+    /// 1 = none. The interpreter models Optional as an enum with `some` /
+    /// `none` cases; `none` is the language-level nil (user adjudication).
+    case optional(wrapped: HIRType)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -43,6 +47,8 @@ public indirect enum HIRType: Equatable {
             return "{ i64, \(ok.llvmSpelling), i64 }"
         case .array:
             return "%bk_array*"
+        case .optional(let wrapped):
+            return "{ i64, \(wrapped.llvmSpelling) }"
         }
     }
 
@@ -61,7 +67,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array: return false
+        case .boolean, .string, .result, .array, .optional: return false
         }
     }
 }
@@ -127,6 +133,27 @@ public indirect enum HIRExpr: Equatable {
     case subscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType)
     /// Intrinsic `len(array)` — runtime `bk_array_len`, i32 result.
     case lenCall(argument: HIRExpr)
+    /// Tolerant read channel `container.get(index)` (G2): out of bounds
+    /// yields `none` (the language-level nil), in bounds `some(value)`.
+    /// Emitted as a bounds-checked inline branch around `bk_array_len/get`.
+    case optionalGet(container: HIRExpr, index: HIRExpr, type: HIRType)
+}
+
+/// One match arm (G2 general case skeleton). `caseName` is the enum-case
+/// name the scrutinee's tag is compared against ("some" / "none" for an
+/// Optional scrutinee; user enum cases join through the same node when the
+/// enum grid lands). `binding` is the single positional associated-value
+/// binding (`case some(v)`), typed by the scrutinee's payload type.
+public struct HIRMatchCase: Equatable {
+    public let caseName: String
+    public let binding: String?
+    public let body: [HIRStmt]
+
+    public init(caseName: String, binding: String?, body: [HIRStmt]) {
+        self.caseName = caseName
+        self.binding = binding
+        self.body = body
+    }
 }
 
 /// Typed statement tree (slice set).
@@ -152,4 +179,15 @@ public indirect enum HIRStmt: Equatable {
     /// compound assignment (`a[i] += k`) lowers to read-modify-write with the
     /// same node. `elementType` is the boxed element's static type.
     case subscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType)
+    /// `break` (G2). The emitter targets the nearest enclosing while loop;
+    /// with no enclosing loop it lowers to a runtime panic — the interpreter
+    /// errors on a bare break that escapes to the top level (probe-verified),
+    /// so this is fail-loud parity, not a silent skip.
+    case breakStmt
+    /// `match scrutinee: case name(binding): body ...` (G2 general skeleton).
+    /// The scrutinee type decides the tag ABI: Optional arms compare the
+    /// `{ i64, T }` tag (some=0, none=1); enum scrutinees join their own grid
+    /// through the same node. Unmatched scrutinee values panic at runtime
+    /// (interpreter matchNotExhaustive parity).
+    case matchStmt(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType)
 }
