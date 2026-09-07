@@ -274,6 +274,42 @@ final class OptionalTests: XCTestCase {
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
 
+    // MARK: - #46-optional：LLVM 后端 Optional.some 构造/解构（G33 闭合）
+
+    /// 经 CLI 同款路径：parse → TypeChecker.check → IRGenerator(typeInference) → lli。
+    /// 验证 Optional.some 的装箱构造 + match 解构在 run-llvm 与解释器对齐。
+    private func runViaLLIWithTypeCheck(_ source: String) throws -> String {
+        let lexer = Lexer(source: source, fileName: "test.pini")
+        let tokens = try lexer.tokenize()
+        let parser = Parser(tokens: tokens, fileName: "test.pini")
+        let module = try parser.parseModule()
+        let checker = TypeChecker()
+        try checker.check(module: module)
+        // #46-optional：开启持久表兜底，codegen 重推 match scrutinee 类型不受 check 后作用域 pop 影响。
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let generator = IRGenerator()
+        generator.typeInference = checker.typeInference
+        let ir = try generator.generate(module: module)
+
+        let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_opt_\(UUID().uuidString).ll"
+        defer { try? FileManager.default.removeItem(atPath: tmpIR) }
+        try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
+
+        guard let lli = LLVMToolchain.lliPath else {
+            throw NSError(domain: "LLIUnavailable", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "lli not available"])
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: lli)
+        process.arguments = [tmpIR]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    }
+
     /// match Optional.some(v) 应通过类型检查（确认 type checker 支持解构绑定）
     /// 意图：验证含 Optional.some(42) 与 match some(v) 解构绑定的源码能通过类型检查（不抛出）。
     func testOptionalSomeMatchTypeChecks() throws {
@@ -283,4 +319,30 @@ final class OptionalTests: XCTestCase {
         XCTAssertNoThrow(try checker.check(module: module), "match Optional.some(v) 应通过类型检查")
     }
 
+    /// run-llvm 与解释器对 Optional.some(42)/none 输出一致（trim 后）。
+    /// 意图：经 CLI 同款路径（parse→check→codegen→lli）验证 Optional.some(42)/none 在 run-llvm 与解释器下输出去换行后一致，且 LLVM 输出为 42none。
+    func testOptionalSomeRunLLVMParity() throws {
+        try XCTSkipIf(LLVMToolchain.lliPath == nil, "lli 不可用，跳过 run-llvm 验证")
+        let source = try loadPiniFixture("testOptionalSomeRunLLVMParity", filePath: #filePath)
+        let llvmOut = try runViaLLIWithTypeCheck(source).trimmingCharacters(in: .whitespacesAndNewlines)
+        let interpOut = try runProgram(source).trimmingCharacters(in: .whitespacesAndNewlines)
+        // print 各自补换行（2026-09-07 与解释器对齐）；比对时消除换行以吸尾部差异。
+        let normalize = { (s: String) -> String in
+            s.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
+        }
+        XCTAssertEqual(normalize(llvmOut), normalize(interpOut),
+                       "run-llvm 与解释器对 Optional.some/none 应输出一致（去换行后）")
+        XCTAssertEqual(llvmOut, "42\nnone", "Optional.some(42) 走 run-llvm 应输出 42，none 输出 none（print 各自换行）")
+    }
+
+    /// run-llvm 与解释器对 Optional.some(String) 输出一致（验证 ptr 元素装箱/解构）。
+    /// 意图：验证 Optional.some("hello") 的 ptr 元素装箱/解构在 run-llvm 与解释器下输出一致，且 LLVM 输出为 hello。
+    func testOptionalSomeStringRunLLVMParity() throws {
+        try XCTSkipIf(LLVMToolchain.lliPath == nil, "lli 不可用，跳过 run-llvm 验证")
+        let source = try loadPiniFixture("testOptionalSomeStringRunLLVMParity", filePath: #filePath)
+        let llvmOut = try runViaLLIWithTypeCheck(source).trimmingCharacters(in: .whitespacesAndNewlines)
+        let interpOut = try runProgram(source).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(llvmOut, interpOut, "run-llvm 与解释器对 Optional.some(String) 应输出一致")
+        XCTAssertEqual(llvmOut, "hello", "Optional.some(\"hello\") 走 run-llvm 应输出 hello")
+    }
 }

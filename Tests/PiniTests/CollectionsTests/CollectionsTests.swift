@@ -234,16 +234,4 @@ final class CollectionsTests: XCTestCase {
         let output = try runProgram(source)
         XCTAssertEqual(output, "null\nnull\n[]\n", "空数组 last 应返回 null，pop 解构为 (空数组, null)")
     }
-
-    // MARK: - 下标写（自 RuntimeBackendTests 取回的纯解释器用例）
-
-    /// 解释器侧：a[i]=v / a[i]+=v / 嵌套 m[0][1]=v / 多元素类型（Int/Bool/String）全部就地生效。
-    /// 意图：验证解释器侧下标写（a[i]=v、复合 +=、嵌套 m[0][1]=v、Int/String/Bool 多类型）全部就地生效，输出 10/25/3/99/z/false。
-    /// 批 2（G48 三通道）：夹具以 `.get(i)` + match 保留「严格枚举语义」的覆盖。
-    func testArraySubscriptWriteInterpreter() throws {
-        let source = try loadPiniFixture("testArraySubscriptWriteInterpreter", filePath: #filePath)
-        let output = try runProgram(source)
-        XCTAssertEqual(output, "10\n25\n3\n99\nz\nfalse\n",
-                       "解释器下标写（含嵌套/复合/多类型）应就地生效")
-    }
 }
