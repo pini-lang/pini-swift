@@ -697,3 +697,19 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
  guard n > 0 else { return }
  memcpy(p.advanced(by: Int(offsetBytes)), src, n)
 }
+
+// MARK: - LR-8：F64 最短往返展示（spec「值展示语义」节）
+
+/// `print(F64)` 的文本展示（spec「值展示语义」注的四条形态规则）。
+///
+/// 单源方式 = 委托宿主标准库：`String(Double)` 即最短往返表示（往返恒等、
+/// 定点/指数切换阈值、定点恒带小数点、`e±NN` 两位指数均由标准库保证），
+/// 解释器通道 stringify 同样走 `String(Double)`——两后端委托同一语义，
+/// 规范权威是 spec 的四条规则，实现零漂移空间。
+///
+/// 返回 malloc 分配的 NUL 结尾 C 串，**调用方负责 free**（发射的 IR 在
+/// printf 消费后调 `@free` 释放；单值即用即弃，无别名）。
+@_cdecl("bk_double_to_string")
+public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
+    return strdup(String(v))
+}

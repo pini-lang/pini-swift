@@ -13,8 +13,27 @@ import XCTest
 ///   (issue-interpreter-float-compare-2026-09-07, testDiffFloatCompare).
 final class HIRDifferentialTests: XCTestCase {
 
+    /// Locates the runtime dylib (swift build product in the repo-local
+    /// .build/debug). Required since print(F64) routes through
+    /// bk_double_to_string (LR-8).
+    private func locateRuntimeDylib() -> String? {
+        var url = URL(fileURLWithPath: #file)
+        while url.path != "/" {
+            let pkg = url.appendingPathComponent("Package.swift").path
+            if FileManager.default.fileExists(atPath: pkg) { break }
+            url = url.deletingLastPathComponent()
+        }
+        let buildDir = (url.path as NSString).appendingPathComponent(".build/debug")
+        for ext in ["dylib", "so"] {
+            let cand = (buildDir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+            if FileManager.default.fileExists(atPath: cand) { return cand }
+        }
+        return nil
+    }
+
     private func runNewPipeline(_ source: String) throws -> String {
         try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let fileName = "test.pini"
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
@@ -35,7 +54,7 @@ final class HIRDifferentialTests: XCTestCase {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: lli)
-        process.arguments = [tmpIR]
+        process.arguments = ["--dlopen=\(dylib)", tmpIR]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -101,4 +120,5 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffNoTrailingReturn() throws { try assertParity(fixtureName: "testDiffNoTrailingReturn") }
     func testDiffComparisonSet() throws { try assertParity(fixtureName: "testDiffComparisonSet") }
     func testDiffFloatCompare() throws { try assertParity(fixtureName: "testDiffFloatCompare") }
+    func testDiffFloatPrint() throws { try assertParity(fixtureName: "testDiffFloatPrint") }
 }

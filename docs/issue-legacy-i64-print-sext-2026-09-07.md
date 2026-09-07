@@ -1,10 +1,10 @@
 # Issue：旧后端 print(I64) 发射非法 IR（sext i64 -> i32）
 
-- 状态：**Open（2026-09-07，M4 差分 fixture 设计中由探针发现）**
-- 排期：**建议不修（wontfix，待用户确认后关闭）**（LLVM 计划工单 M4 批③
-  登记）——旧后端已冻结功能新增（ADR-031 约束 1），M6 翻转批将整体删除旧
-  CodeGen（本缺陷随之自然消亡），新管线 `IREmitter` 已用 `trunc` 修正。
-  若 M5 期间需要旧管线维持 i64 print 可用再翻案。
+- 状态：**Closed（2026-09-08 关单，LR-10 裁决 = wontfix）**
+- 关单记录：旧后端已冻结功能新增（ADR-031 约束 1），M6 翻转批将整体删除旧
+  CodeGen（本缺陷随之自然消亡）；新管线 `IREmitter` 已用 `trunc` 修正
+  （M4 批②，差分绿）。不做修复，本单按 wontfix 关闭；若 M5 期间出现
+  「旧管线必须维持 i64 print 可用」的需求再翻案重开。
 - 发现渠道：HIR 差分测试先以旧后端同款 `sext` 发射 i64 print，lli 报
   `invalid cast opcode for cast from 'i64' to 'i32'`；回查旧发射器确认同病。
 
