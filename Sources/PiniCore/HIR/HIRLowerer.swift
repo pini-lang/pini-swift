@@ -160,9 +160,16 @@ public enum HIRLowerer {
             )
 
         case .assign(let target, let value, let location):
+            // Subscript stores are the G2 write path (array family); member
+            // stores remain a later grid.
+            if case .subscript(let container, let index) = target {
+                return [try lowerSubscriptStore(
+                    container: container, index: index, value: value, at: location, into: &context
+                )]
+            }
             guard case .identifier(let name) = target else {
                 throw unsupported(
-                    "assignment to a non-identifier target (member/subscript stores are later grids)",
+                    "assignment to a non-identifier target (member stores are later grids)",
                     at: location
                 )
             }
@@ -245,6 +252,15 @@ public enum HIRLowerer {
                     okTarget: nil, at: location, into: &context
                 )]
             }
+            // Compound assignment (`a[i] += k` / `x += 1`) parses as a binary
+            // expression; statement position lowers it to a store (G2).
+            if case .binary(let left, let op, let right, let binaryLocation) = expr,
+               let baseOp = HIRBinaryOp(compound: op) {
+                return [try lowerCompoundAssign(
+                    left: left, baseOp: baseOp, right: right,
+                    at: binaryLocation, into: &context
+                )]
+            }
             return [.exprStmt(try lowerExpr(expr, expected: nil, into: &context).node)]
 
         case .passStatement:
@@ -312,15 +328,13 @@ public enum HIRLowerer {
             if let inferred = context.inferType(of: initializer),
                let type = HIRType(from: inferred) {
                 declaredType = type
-            } else if case .arrayLiteral = initializer {
-                // The checker does not infer collection literals; derive the
-                // variable's type from the literal shape (G2).
-                declaredType = try lowerArrayLiteralElements(of: initializer, into: context)
             } else {
-                throw unsupported(
-                    "variable '\(name)' lacks annotation and its initializer type is not a scalar",
-                    at: location
-                )
+                // Checker inference miss (collection literals, checker-untracked
+                // identifiers): derive the type by lowering the initializer
+                // without an expectation — same fallback contract as the
+                // legacy codegen (G2). The result is discarded; the real
+                // lowering below re-lowers with the resolved expectation.
+                declaredType = try lowerExpr(initializer, expected: nil, into: &context).type
             }
         } else {
             throw unsupported(
@@ -654,24 +668,85 @@ public enum HIRLowerer {
         }
     }
 
-    // MARK: - Array literals (G2)
+    // MARK: - Array stores & compound assignment (G2 batch 2)
 
-    /// Type-only pass over an array literal initializer (no annotation on the
-    /// variable): derives `.array(element:)` from the lowered element types.
-    private static func lowerArrayLiteralElements(
-        of initializer: Expression,
-        into context: FunctionContext
-    ) throws -> HIRType {
-        guard case .arrayLiteral(let elements, let location) = initializer else {
+    /// Lower `container[index] = value` for array containers. The read path
+    /// gates the container type; the value adopts the element type.
+    private static func lowerSubscriptStore(
+        container: Expression,
+        index: Expression,
+        value: Expression,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
+        guard let elementType = loweredContainer.type.arrayElementType else {
             throw unsupported(
-                "initializer is not an array literal",
-                at: SourceLocation(line: 0, column: 0, fileName: "")
+                "subscript store on non-array type '\(loweredContainer.type)'",
+                at: location
             )
         }
-        var contextCopy = context
-        let lowered = try lowerArrayLiteral(elements, expected: nil, at: location, into: &contextCopy)
-        return lowered.type
+        let loweredIndex = try lowerExpr(index, expected: .i32, into: &context)
+        guard loweredIndex.type == .i32 else {
+            throw unsupported("array subscript needs an I32 index", at: location)
+        }
+        let loweredValue = try lowerExpr(value, expected: elementType, into: &context)
+        try requireAssignable(loweredValue.type, to: elementType, at: location)
+        return .subscriptStore(
+            container: loweredContainer.node, index: loweredIndex.node,
+            value: loweredValue.node, elementType: elementType
+        )
     }
+
+    /// Lower `target op= value` in statement position: read-modify-write.
+    /// Subscript targets reuse the read's container/index nodes so the
+    /// container is emitted exactly twice (read + write), matching the
+    /// legacy emitter's evaluation shape.
+    private static func lowerCompoundAssign(
+        left: Expression,
+        baseOp: HIRBinaryOp,
+        right: Expression,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        if case .identifier(let name, _) = left {
+            guard let varType = context.variableTypes[name] else {
+                throw unsupported("assignment to undeclared variable '\(name)'", at: location)
+            }
+            guard varType.isNumeric else {
+                throw unsupported("compound assignment on non-numeric variable '\(name)'", at: location)
+            }
+            let rhs = try lowerExpr(right, expected: varType, into: &context)
+            let combined = HIRExpr.binary(
+                op: baseOp, lhs: .load(name: name, type: varType), rhs: rhs.node, type: varType
+            )
+            return .storeVar(name: name, type: varType, value: combined)
+        }
+        if case .subscript(let container, let index, _) = left {
+            let read = try lowerExpr(left, expected: nil, into: &context)
+            guard read.type.isNumeric else {
+                throw unsupported(
+                    "compound assignment on non-numeric element type '\(read.type)'",
+                    at: location
+                )
+            }
+            let rhs = try lowerExpr(right, expected: read.type, into: &context)
+            let combined = HIRExpr.binary(op: baseOp, lhs: read.node, rhs: rhs.node, type: read.type)
+            guard case .subscriptGet(let containerNode, let indexNode, _) = read.node else {
+                throw unsupported("subscript read did not produce a subscript node", at: location)
+            }
+            return .subscriptStore(
+                container: containerNode, index: indexNode,
+                value: combined, elementType: read.type
+            )
+        }
+        throw unsupported(
+            "compound assignment target outside this grid (identifier or array subscript)",
+            at: location
+        )
+    }
+
+    // MARK: - Array literals (G2)
 
     /// Lower an array literal. The checker does not infer collection literal
     /// types, so the element type is derived from the lowered elements
@@ -809,6 +884,19 @@ extension TypeAnnotation {
 }
 
 extension HIRBinaryOp {
+    /// Map a compound-assign AST operator onto its base HIR operator; nil for
+    /// operators outside the slice (bitwise/shift compounds are later grids).
+    init?(compound op: BinaryOperator) {
+        switch op {
+        case .plusAssign: self = .add
+        case .minusAssign: self = .subtract
+        case .multiplyAssign: self = .multiply
+        case .divideAssign: self = .divide
+        case .moduloAssign: self = .modulo
+        default: return nil
+        }
+    }
+
     /// Map an AST binary operator onto the slice set; nil for operators the
     /// slice does not carry (bitwise/shift/compound-assign are later grids).
     init?(from op: BinaryOperator) {

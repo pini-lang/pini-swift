@@ -147,6 +147,7 @@ public final class IREmitter {
             if let initializer = initializer {
                 let value = emitExpr(initializer)
                 bodyIR += builder.fmtStore(value: value.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+                emitRetainIfAliased(initializer, value)
             }
 
         case .storeVar(let name, let type, let value):
@@ -155,6 +156,7 @@ public final class IREmitter {
             }
             let lowered = emitExpr(value)
             bodyIR += builder.fmtStore(value: lowered.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+            emitRetainIfAliased(value, lowered)
 
         case .ifStmt(let condition, let thenBody, let elseBody):
             emitIf(condition: condition, thenBody: thenBody, elseBody: elseBody)
@@ -178,6 +180,83 @@ public final class IREmitter {
 
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
             emitTry(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget, type: type)
+
+        case .subscriptStore(let container, let index, let value, let elementType):
+            emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
+        }
+    }
+
+    /// Subscript store `container[index] = value` (G2 batch 2), mirroring the
+    /// legacy emitter's COW contract:
+    /// - nested containers (`m[0][1] = v`) take the top-down ensure-unique
+    ///   chain first (`bk_handle_ensure_unique` at the root, then
+    ///   `bk_array_ensure_unique_at` per level — order is mandatory: the
+    ///   runtime requires an exclusive parent before splitting the child);
+    /// - plain variable containers keep the legacy shape (bk_array_set's own
+    ///   ensure_unique plus the slot write-back below);
+    /// - a `.load` value (aliasing an existing array variable) retains one
+    ///   share before the box move (ownership contract 3);
+    /// - the split handle returned by `bk_array_set` is written back to the
+    ///   owning variable slot, or the write would be silently lost.
+    private func emitSubscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType) {
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let containerValue: IRValue
+        if case .subscriptGet = container {
+            containerValue = emitUniqueContainerHandle(container)
+        } else {
+            containerValue = emitExpr(container)
+        }
+        let indexValue = emitExpr(index)
+        let loweredValue = emitExpr(value)
+        emitRetainIfAliased(value, loweredValue)
+        let boxPtr = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+        bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let newRaw = builder.freshTemp()
+        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(raw), i32 \(indexValue.ssaName), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_array*" {
+            guard let slot = lookupSlot(name) else {
+                fatalError("IREmitter: subscript store to undeclared container '\(name)' (HIRLowerer guarantees declarations)")
+            }
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
+            bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+        }
+    }
+
+    /// Top-down COW split for nested container writes (`m[0][1] = v`).
+    /// Returns the exclusive innermost handle. The root variable's split
+    /// handle is written back to its slot; intermediate levels are rewritten
+    /// in place by `bk_array_ensure_unique_at` (which deliberately does not
+    /// release the old child handle — see the runtime's UAF note).
+    private func emitUniqueContainerHandle(_ container: HIRExpr) -> IRValue {
+        switch container {
+        case .load(let name, _):
+            let value = emitExpr(container)
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            let newRaw = builder.freshTemp()
+            bodyIR += " \(newRaw) = call ptr @bk_handle_ensure_unique(ptr \(raw))\n"
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
+            if let slot = lookupSlot(name) {
+                bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+            }
+            return IRValue(llvmType: "%bk_array*", ssaName: typed)
+        case .subscriptGet(let inner, let index, _):
+            let parent = emitUniqueContainerHandle(inner)
+            let parentRaw = builder.freshTemp()
+            bodyIR += " \(parentRaw) = bitcast %bk_array* \(parent.ssaName) to ptr\n"
+            let indexValue = emitExpr(index)
+            let childRaw = builder.freshTemp()
+            bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(childRaw) to %bk_array*\n"
+            return IRValue(llvmType: "%bk_array*", ssaName: typed)
+        default:
+            return emitExpr(container)
         }
     }
 
@@ -409,13 +488,12 @@ public final class IREmitter {
     /// the source variable still holds its share, so copying it into a new
     /// holder requires one extra share. Temporaries (literals, subscript
     /// reads, call results) transfer ownership and must NOT retain.
-    private func emitRetainIfAliased(_ valueNode: HIRExpr) {
+    private func emitRetainIfAliased(_ valueNode: HIRExpr, _ value: IRValue) {
         guard case .load(_, let valueType) = valueNode, valueType.llvmSpelling == "%bk_array*" else {
             return
         }
-        let slotValue = emitExpr(valueNode)
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(slotValue.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
         bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
     }
 
@@ -435,7 +513,7 @@ public final class IREmitter {
             let boxPtr = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
             bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
-            emitRetainIfAliased(element)
+            emitRetainIfAliased(element, value)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw

@@ -61,6 +61,8 @@ public enum HIRPrinter {
             var lines = ["\(pad)try \(exprText(operand)) else \(errorVar)\(bind):"]
             lines.append(contentsOf: dumpBody(handler, indent: level + 1))
             return lines
+        case .subscriptStore(let container, let index, let value, _):
+            return ["\(pad)\(exprText(container))[\(exprText(index))] = \(exprText(value))"]
         }
     }
 

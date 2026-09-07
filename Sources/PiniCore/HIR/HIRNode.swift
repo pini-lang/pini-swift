@@ -147,4 +147,9 @@ public indirect enum HIRStmt: Equatable {
     /// position (the ok payload is stored into that variable); nil for
     /// statement position.
     case tryStmt(operand: HIRExpr, errorVar: String, handler: [HIRStmt], okTarget: String?, type: HIRType)
+    /// Subscript store `container[index] = value` (G2). The container may be
+    /// a nested subscript chain (the emitter walks the COW split chain);
+    /// compound assignment (`a[i] += k`) lowers to read-modify-write with the
+    /// same node. `elementType` is the boxed element's static type.
+    case subscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType)
 }
