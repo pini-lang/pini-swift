@@ -113,7 +113,7 @@ final class IRPrintGoldenTests: XCTestCase {
     ]
 
     func testAggregatePrintMatchesInterpreter() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
 
         for c in Self.goldenCases {
             let llvmOut = (try runViaLLI(c.source)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -129,7 +129,7 @@ final class IRPrintGoldenTests: XCTestCase {
     /// 多参 print 混排（标量 + 聚合 + 标量）：仅对拍解释器 vs run-llvm，不强绑硬编码黄金，
     /// 以吸收多参 join 的空格/换行差异（两后端均应 `join(separator: " ")`）。
     func testMultiArgPrintMixedMatchesInterpreter() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
 
         let source = try loadPiniFixture("testMultiArgPrintMixedMatchesInterpreter", filePath: #filePath)
 
