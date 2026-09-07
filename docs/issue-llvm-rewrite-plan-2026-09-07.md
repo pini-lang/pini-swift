@@ -172,3 +172,20 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     `PINI_HIR_PIPELINE=1`（M6 翻转时与旧管线一并消亡）；sweep 加 hir-emit
     通道（HIR 6/59：M4 切片 + try.pini）。并发除名立案
     `issue-llvm-concurrency-runtime-2026-09-08`（LR-11）。
+  - **G2 勘测触发止损（2026-09-08，停待裁决）**：能力矩阵的格粒度按「旧后端
+    缺口 delta」估格（G2 = get/slice 2 文件），但新管线从 M4 最小切片起步，
+    每格语料需要的是**整个特性族的新建**而非 delta——实测：
+    - array-basic（矩阵记「仅 get 缺口」）对新管线缺：数组字面量、下标读写、
+      len、嵌套数组、`.get`→Optional、match some/none、break——**整个数组族
+      + Optional + match + break**；
+    - slice.pini（矩阵记「仅 slice 缺口」）另需：负索引、半开/开放切片、
+      越界夹紧、数组/Optional 的 print 格式化（`[20, 30]` / `some(50)` /
+      `none`）、字符串切片——旧后端 bk_array_* 之外还需新运行时符号。
+    M2 矩阵的「8 文件并发 = 一格」同源于此估法（LR-11 已实证除名）。
+    **G2–G7 全部按族重估**：G2 = 数组族（核心：字面量/下标/len/嵌套 + Optional
+    + match + break；切片/格式化建议拆 G2b），G3 = 对象族（布局/方法/self），
+    G4 = 泛型单态化族，G5 = foreign + clang 通道，G6 = 跨文件符号表，
+    G7 = 零散。工程量每族 ≈ 数百行 + fixture，非「一格一提交日」粒度。
+    处置建议：①按族重估后继续，sweep hir-emit 通道（现 6/59）为唯一进度
+    度量；②M5 改为「按族推进、可分会话」的滚动批，完成一族合一次 main。
+    待用户裁决后继续。
