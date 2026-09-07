@@ -1,6 +1,10 @@
 # Issue：print(F64) 双后端展示格式分歧（%f vs 最短表示）
 
 - 状态：**Open（2026-09-07，M4 差分 fixture 设计中确认为前置语义决策）**
+- 排期：**M5 首格（G1）开工前需用户裁决**（LLVM 计划工单 M4 批③登记）——
+  print(F64) 属语言语义面，裁决采纳形态（最短表示 / %f 固定六位 / 其他）后
+  与 issue-interpreter-float-compare 同批落地；差分套件 float fixture 的
+  期望值取决于本裁决结果。
 - 性质：不是单侧 bug，是「print 浮点的语言语义」未单源——哪一侧是规范形态
   需要 spec 裁决。
 

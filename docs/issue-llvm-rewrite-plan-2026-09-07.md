@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（2026-09-07 架构经用户确认，M0 待点名；本工单为 LLVM 重写的常驻计划载体，各批收口在此回填）**
+- 状态：**Open（常驻计划载体；M0–M4 已完成并回填，下一步 M5 分格扩张批待点名——开工前先处理 float 前置小批，见批次回填末的排期登记）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -109,3 +109,32 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   止损判据沿用 ADR-031（影子表 ≥7 / 单次回归 >5 测试且 >1h /
   收敛扩散 >4 emitter），新增「新实现长影子表 = 决策未收拢，停」。
   下一步 M4（HIR 垂直切片批）待点名，开工前先出细化步骤。
+- **M4 完成（2026-09-07，三批收口）**：
+  - **批①**（`4e550ed`）：`HIR/` 四件落地（LR-3 类型化树）——`HIRNode`
+    （类型化节点 + LoweredExpr{node, type} 包装统一携带决策）、`HIRModule`
+    （单值返回布局）、`HIRLowerer`（AST+类型信息 → HIR，模块预签名 pre-pass
+    支持前向调用，唯一能力门 unsupported 单点，elif 降嵌套 if）、`HIRPrinter`
+    （调试 dump）。HIRLowererTests 6 用例绿，验证 LR-3 树形表达力
+    （while+if 嵌套 / 跨函数预签名 / 能力门拒绝）。
+  - **批②**（`429b649`）：`CodeGen/IREmitter.swift`（HIR→IR 文本，机械翻译
+    零类型推导，每模块新实例与旧 IRGenerator 零共享状态）+ HIRDifferentialTests
+    17 fixture（解释器 vs 新管线 stdout 逐字节一致，锁步 harness）。关键发射
+    决策：块嵌套 slot 栈解析遮蔽、i64 print 用 trunc（旧后端 sext 为非法 IR）、
+    字符串比较 strcmp、CJK hex-mangle。HIR 全套 23/23 绿。
+  - **探针发现三件**（差分设计的直接产出，已立工单并排期，见下）：
+    解释器无 float 比较分支（issue-interpreter-float-compare）、旧后端
+    print(I64) 非法 sext（issue-legacy-i64-print-sext）、print(F64) 双后端
+    格式分歧（issue-print-f64-format-parity）。
+  - **批③**（本提交）：计划工单回填 + E-139 证据登记 + 全量回归零回归验证 +
+    合 main。
+  - **排期登记（避免跨会话遗失）**：
+    - issue-interpreter-float-compare → **M5 首格（G1）开工前的前置小批**：
+      解释器补六个 float 比较分支 + 单测，随即为差分套件补 float fixture；
+      与 issue-print-f64-format-parity 的格式裁决联动（fixture 期望值取决于
+      print(F64) 格式裁决结果）。
+    - issue-print-f64-format-parity → **M5 G1 前需用户裁决** print(F64)
+      语义格式（最短表示 vs 定点），属语言语义面；裁决后与上一条同批落地。
+    - issue-legacy-i64-print-sext → **建议不修（wontfix）**：旧后端已冻结
+      功能新增（ADR-031 约束 1），M6 翻转批将整体删除旧 CodeGen，新管线
+      已用 trunc 修正；随 M6 自然消亡，待用户确认后关闭。
+  下一步 M5（分格扩张批，G1 try-else 起）待点名；M5 开工前先处理上述前置小批。
