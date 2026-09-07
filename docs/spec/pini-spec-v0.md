@@ -111,7 +111,7 @@
 - 变量：`var`（可变）/ `let`（不可变）。
 - 函数签名：`名(形式参数元组,)->(返回元组,)`；方法显式 `|self`；单返回糖 `(T,)`；空返回 `()`。
 - 控制流：`if/elif/else`、`while`（可带 `step:` 步进块；带标签跳出经 `标签|控制流关键字` 定向，如 `outer|while 条件:`——标签为裸标识符、无 sigil，见 §2.4.1）、`match/case`（case 缩进进 match 子块；通配 `case _:`，D3①）。**实现状态：标签语法已落地（ADR-014）；旧 `scope 块标签:` 已转 reserved-error。**
-- 错误：`try/except` 基于**返回元组**显式传播（非异常式）；约定细节见 §3 G3。
+- 错误：`try-else` 基于 `Result` 显式传播（非异常式；`^e` 右值前缀为定义性脱糖）；约定细节见 §2.4.4 / §3 G3 / ADR-032。
 
 #### 2.4.1 语言表面与实现状态（构造级索引）
 
@@ -146,7 +146,7 @@
 | 元组 `(a, b)` | 已定义 | ✅ | Provisional | `TupleExpr` |
 | 元组解构 `var (t, e) = rhs`（模式元组绑定，复用 for-in 模式元组产生式） | 已定义（v0.42.0） | ✅ | Provisional | `TupleDestructureTests` |
 | 元组元素访问 `.0` / `.名称`（含命名元组标签） | 已定义（v0.42.0） | ✅ | Provisional | `.tupleIndex` / tuple labels / `TupleIndexTests` / `TupleNamedTests` |
-| `^` 右值糖（解包 / err 控制返回；与中缀位异或、类型糖 `^T` 三重身份消歧） | 已定义（v0.42.0） | ✅ | Provisional | `ResultUnwrapTests` |
+| `^` 右值糖（≡ `try X else err: return err` 定义性脱糖，ADR-032；与中缀位异或、类型糖 `^T` 三重身份消歧） | 已定义（v0.42.0；语义重定义见迁移批） | ✅ | Provisional | `ResultUnwrapTests` |
 | 字符串插值 `\(...)` | 已定义（G13） | ✅ | Provisional | `examples/lexical.pini`、`Token.interpolatedString` |
 | 复合赋值 `+= -= *= /= %= &= \|= ^= <<= >>=` | 部分（语法与折叠已定义 §A.2.4/§A.4 3.11；溢出/符号语义未定） | ✅ | Experimental | `Token.*Assign`、`Interpreter.evaluateBinaryOp`（Parser 折叠为 `.assign` 内 binary） |
 | 位运算 `& ^ ~ << >>` | 部分（语法与优先级已定义 §A.1.2/§A.2.5/§A.3 层 5；溢出/符号语义未钉住） | ✅ | Experimental | `Token.bitwise*`、`BinaryExpr`/`UnaryExpr` |
@@ -185,7 +185,7 @@
 
 1. **占位空块（结构占位）**：语法要求块体但当前无操作——`if/elif/else/while` 后接 `pass`，保留控制结构骨架、避免「空块非法」，语义明确「我有意不做事」。
 2. **match/case 分支占位（防御性 no-op）**：`case 已读: pass`，比空块更清楚「我知道这个分支、故意不做」。（match 通配兜底用 `case _:`，见 §2.4.3。）
-3. **显式吞掉错误（try/except）**：`try f(): except e: pass` 表示「已知该错误可安全忽略」，比空 `except` 块更显式。
+3. **显式吞掉错误（try-else）**：`try f() else e: pass` 表示「已知该错误可安全忽略」（错误绑定后显式 pass；ADR-032）。
 4. **桩函数 / 待实现接口（stub）**：`func 尚未实现(): pass` 作为接口/trait 默认实现的占位，便于增量开发与编译期占位。
 5. **trait 默认方法空实现**：trait 提供「默认什么都不做」的方法，`object`/struct 未覆盖即沿用 `pass`。
 6. **显式「已处理」分支标记（防御性 no-op）**：`match`/`case` 中某分支确实无需动作时 `case 已读: pass`，比空块更清楚「我知道这个分支、故意不做」。
@@ -217,22 +217,46 @@ match 值:
 - 匹配值为字面量（int/float/string/bool）：静态不检查（值域无限），运行时未命中且无 `case _:` 时静默（R3）。
 - `case _:` 为通配兜底，与 `default`/pass 通配子块语义等价；运行时捕获一切未命中值。
 
-### 2.4.4 `try`/`except` 错误传播模型（errors-as-data，非异常式）（G3）
+### 2.4.4 `try-else` 错误传播模型（errors-as-data，非异常式）（G3）
 
-> **状态**：已定义、已落地（v0 现状；G3 闭环）。本小节为权威语义定义。稳定性 **Provisional**。
-> **证据**：`Interpreter.executeTry`（Interpreter.swift:1996）、`^` 右值糖 `ResultUnwrap`（Interpreter.swift:1385/1393，`throw UnwrapErrSignal`；`UnwrapErrSignal` 由函数边界 Interpreter.swift:2536-2538 捕获注入返回元组末槽）、`examples/` 并发与错误示例。
+> **状态**：已定义（迁移批 M1 反录，ADR-032；宿主实现落地待迁移批 M2——迁移窗口内
+> 本节与宿主现状暂不一致，属迁移批预期状态，非漂移）。稳定性 **Provisional**。
+> **证据**：迁移完成前旧记载 `Interpreter.executeTry` / `ResultUnwrap` / `UnwrapErrSignal`
+> （元组模型 + 信号机制，v0.43）标记 **STALE（迁移批 M2 刷新）**；本节语义权威 = ADR-032。
 
-`try expr` 将 `expr` 求值为 `(值, 错误)` 元组，**错误位 = 元组第 2 元素**（`elements[1]`，Interpreter.swift:2002-2005）；`^` 右值糖（`^T` ≡ `Result<T>`）把 `Result` 解包：`ok(v)` → `v`，`err(e)` → 抛 `UnwrapErrSignal`，由函数边界捕获并注入**返回元组末槽**——错误始终是值，不在调用栈上抛异常（errors-as-data）。
+**唯一原语 try-else**（语句位与表达式位同形）：
 
-**成功 / 错误判定**（`executeTry`，Interpreter.swift:2007-2035）：
-- 错误位为 `.null` 或空字符串 → 视为**无错误**，执行 `try` 块（成功路径）。
-- 错误位非空 → 执行 `except` 子句：将错误值绑定到 `except` 变量（`clause.errorVar`），执行首个 `except` 子句体后返回。
+```
+try 表达式 else 错误绑定名: 控制流语句
+try 表达式 else 错误绑定名:
+    控制流语句块
+```
 
-**与异步错误的关系**：`await`/`wait` join 得到的 `Future` 经 `Result` 解构后，其 `CancelError` 同样落在 `(值, 错误)` 元组的错误位中，**经 `except` 正常捕获、不穿透 `try`/`except`**（与 §2.4.1 异步行一致）；`CancelError` 不绕过 errors-as-data 模型。
+- 操作数**静态要求** `Result<T, E>`（类型层拦截，非 Result → E4 类型错）。
+- 成功路径：`ok(v)` → 解包值 `v`（表达式位的值；语句位丢弃）。
+- 失败路径：`err(e)` → 错误值 `e` 绑定到错误绑定名，执行控制流语句——错误始终是值，
+  不在调用栈上抛异常（errors-as-data）。
+- **表达式位形态**：`let x = try f() else err: return err`——整个 try-else 是表达式，
+  值 = 成功路径解包值（D1=B，ADR-032）；错误路径经控制流语句提前退出，不产生值。
+- 单行 handler 仅限控制流语句（`return` / `break` / `continue`）与 `pass`
+  （`pass` 仅语句位合法——「显式吞掉错误」惯用法，表达式位无值故拒绝）；
+  块形式须以控制流语句终止（静态校验随迁移批 M2 落地）。
+
+**`^` 右值糖重定义为脱糖**：`^e` ≡ `try e else err: return err`（定义性脱糖——规范
+语义以 try-else 表达式位给出）。宿主的 `UnwrapErrSignal` 信号机制与「函数边界捕获
+注入返回元组末槽」随迁移批 M2 退役。`^T` 类型糖（`^T` ≡ `Result<T>`）、中缀位异或
+`^`、复合赋值 `^=` **不受影响**。
+
+**`(值, 错误)` 元组错误位约定退役**（D3=B，ADR-032）：`try` 不再接受任意二元元组，
+不存在「错误位 = 第 2 元素」约定；多返回值与错误传播彻底分离。
+
+**与异步错误的关系**：`await`/`wait` join 得到的 `Future` 求值为 `Result`，
+其 `CancelError` 落在 `err` 用例中，**经 try-else 正常捕获、不穿透**（与 §2.4.1
+异步行一致）；`CancelError` 不绕过 errors-as-data 模型。
 
 **已知限制（Provisional 显式登记）**：
-- 单 `except` 子句，**不按错误类型分派**：多个 `except` 时仅首条被匹配（Interpreter.swift:2020-2034 取首个 clause）；类型化多分支 `except` 为后续增强。
-- 成功路径的「值」不自动绑定到名字：`try` 块内默认不可直接引用被 `try` 表达式的成功值（须另行 `let` 捕获）。
+- 单错误绑定名，**不按错误类型分派**；类型化多分支捕获为后续增强。
+- 嵌套 try-else 的作用域与错误绑定名遮蔽规则随迁移批 M2 钉定。
 
 ### 2.5 访问控制（约定制 4 级）
 
@@ -355,7 +379,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 |------|------|------|--------|----------|------|
 | G1 | 形式化 EBNF（声明/表达式/语句/类型） | 已定义（权威文法见 §A 附录；原草案降为历史） | Provisional | v0.43.0 | 缺口 1.1 / §A |
 | G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.parseTopLevelDecl / §A.4 3.0 |
-| G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，ADR-032） | 迁移已受理（ADR-032：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；§2.4.4 重写与落地待迁移批 M1–M4） | Provisional | v0.50.0（迁移批） | Interpreter.swift `executeTry` / `ResultUnwrap` / §2.4.4 / ADR-032 |
+| G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，ADR-032） | 已定义（§2.4.4 迁移版已反录：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；宿主落地待迁移批 M2） | Provisional | v0.53.0（迁移批） | Interpreter.swift `executeTry` / `ResultUnwrap`（STALE，M2 刷新）/ §2.4.4 / ADR-032 |
 | G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**） | Stable | v0.43.0 | SuspendEvaluator.swift / SuspendScheduler.swift / Value.swift / §3.1 |
 | G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
 | G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
@@ -421,7 +445,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 #### 3.1.3 协作式取消与上下文还原
 
-- **协作式取消**：取消不强杀线程，于下一个挂起 / resume 边界生效——挂起模式在 **resume 边界统一检查点**（任务被取消经 `onCancel` 即时唤醒、resume 入口 `checkCancellation` 见 cancelled 即抛 `CancelError` 终结；即使挂起等待的 `Future` 永不 resolve / 已 `detach`，取消也即时生效，`SuspendEvaluator.swift:227` `onCancel` / `:262` `checkCancellation`）；同步/阻塞路径检查点位于循环头 / 函数入口 / 睡眠分片。**非挂起即不可中断**（同 Swift）：紧循环不挂起则循环中不可被打断，循环头/回边检查仍保留。`CancelError` 经 `Result` 显式传播，不穿透 `try`/`except`（与 §2.4.4 一致）。
+- **协作式取消**：取消不强杀线程，于下一个挂起 / resume 边界生效——挂起模式在 **resume 边界统一检查点**（任务被取消经 `onCancel` 即时唤醒、resume 入口 `checkCancellation` 见 cancelled 即抛 `CancelError` 终结；即使挂起等待的 `Future` 永不 resolve / 已 `detach`，取消也即时生效，`SuspendEvaluator.swift:227` `onCancel` / `:262` `checkCancellation`）；同步/阻塞路径检查点位于循环头 / 函数入口 / 睡眠分片。**非挂起即不可中断**（同 Swift）：紧循环不挂起则循环中不可被打断，循环头/回边检查仍保留。`CancelError` 经 `Result` 显式传播，经 try-else 的 `err` 路径正常捕获、不穿透（与 §2.4.4 一致）。
 - **挂起模式上下文还原（MUST）**：挂起/恢复跨线程（work-stealing 复用 OS 线程）时，continuation 必须捕获并还原解释器线程上下文 `{currentEnv, currentFuture, deferStack, debugDepth, callStackNames}`，否则上下文串台（类比 Swift `Executor` 上下文 / Kotlin `CoroutineContext`）。已落地（`SuspendTaskCPS`，`SuspendEvaluator.swift:164`；保存-还原于 `:237-258`）。
 
 #### 3.1.4 探针边界（显式报错，不静默错）
@@ -615,11 +639,14 @@ NUMERIC      ::= (* Unicode numeric property 字符（Numeric_Type ≠ None）�
 KEYWORD      ::= 'var' | 'let' | 'func' | 'enum' | 'object'
                | 'if' | 'elif' | 'else' | 'match' | 'case'
                | 'while' | 'step' | 'for' | 'in'
-               | 'try' | 'except' | 'return' | 'break' | 'continue'
+               | 'try' | 'return' | 'break' | 'continue'
                | 'self' | 'own' | 'defer' | 'import' | 'export'
                | 'nil' | 'capture' | 'await' | 'wait'
                | 'unsafe' | 'test' | 'foreign' | 'detach'
                | 'scope' | 'pass';
+
+(* 'except' 已随 try-else 迁移自文法移除（ADR-032，迁移批 M1）；宿主词法/解析层
+   的 `except` 处理随迁移批 M2 落地——遇 `except` 报常规解析错误（D2：无迁移提示）。 *)
 (* 共 34 个。scope 保留但不再使用；test 为测试函数块修饰符关键字（宿主已词法对齐，2026-09-04 G51 收口，自举 kw_test 本就一致）；pass 为空语句关键字 *)
 
 INT          ::= [0-9]+ | '0x' [0-9a-fA-F]+ | '0b' [01]+ | '0o' [0-7]+;
@@ -652,7 +679,7 @@ OPERATOR ::= '+' | '-' | '*' | '/' | '%'                    (* 算术 *)
 (* ⚠️ 多重角色：
    - '|' : 按位或（表达式） / 声明修饰分隔符（行首/声明）
    - '&' : 按位与（表达式） / 取地址前缀（unsafe）
-   - '^' : 按位异或（表达式） / 结果类型糖（类型） / 右值解包前缀（表达式）
+   - '^' : 按位异或（表达式） / 结果类型糖（类型） / 右值解包前缀（表达式；≡ try-expr 定义性脱糖，ADR-032）
 *)
 
 (* ---- A.1.3  分隔符与布局 token ------------------------------------------ *)
@@ -871,7 +898,17 @@ match-pattern   ::= '_' | INT | FLOAT | STRING | BOOL | IDENT | 'nil';
 (* 枚举解构按位置绑定；'_' 占位忽略；支持 if 守卫 *)
 
 
-try-stmt        ::= 'try' expression control-block { 'except' IDENT control-block };
+try-stmt        ::= try-expr;
+try-expr        ::= 'try' expression 'else' IDENT try-handler;
+try-handler     ::= ':' (return-stmt | break-stmt | continue-stmt | pass-stmt)
+                  | ':' INDENT { statement } DEDENT;
+(* ADR-032（迁移批 M1 反录）：try-else 取代 try-except——操作数静态要求
+   Result<T, E>；成功路径解包值为表达式位的值（语句位丢弃）；失败路径将错误值
+   绑定 IDENT 后执行 handler。单行 handler 仅控制流语句（return/break/continue）
+   与 pass（仅语句位合法——「显式吞掉错误」惯用法）；块形式须以控制流语句终止
+   （静态校验随迁移批 M2）。表达式位：`let x = try f() else err: return err`。
+   `except` 关键字与 (值,错误) 元组错误位约定一步退役（D2：无迁移提示）；
+   `^e` 右值前缀 ≡ `try e else err: return err`（定义性脱糖，见 unary-expr 注）。 *)
 defer-stmt      ::= 'defer' (assign-stmt | expression-stmt)
                   | 'defer' ':' func-body;
 (* G51④/P0（2026-08-31 宿主落地）：defer 双形态——相邻单行语句 + `:` 块形式
@@ -903,7 +940,7 @@ factor          ::= unary-expr { ('*' | '/' | '%') unary-expr };
 unary-expr      ::= ('await' | 'wait' | '^' | '!' | '++' | '--' | '~' | '+' | '-' | '&' | 'unsafe') unary-expr
                   | primary-expr;
 (* await/wait: join 挂起等待
-   ^: 右值解包前缀
+   ^: 右值解包前缀（纯糖 ≡ try-expr `try X else err: return err`，定义性脱糖；ADR-032）
    &: 不安全取地址
    unsafe: 不安全消耗点
    ++/--: 前缀自增/自减，语义见下「前缀 ++/--」注 *)
@@ -931,7 +968,11 @@ unary-expr      ::= ('await' | 'wait' | '^' | '!' | '++' | '--' | '~' | '+' | '-
    其余一元形态（`await` / `wait` / `^` 解包 / `&` 取地址 / `unsafe`）的投影文本待
    L1b 覆盖时补齐，不在本表内。 *)
 
-primary-expr    ::= primary-atom postfix-suffix*;
+primary-expr    ::= primary-atom postfix-suffix*
+                  | try-expr;
+(* try-expr 为 primary 位独立形态（不占优先级层）：操作数为完整 expression，
+   `'else'` 关键字天然终止操作数解析，无贪婪歧义；handler 终止于语句边界，
+   不参与后续二元运算结合（ADR-032）。 *)
 
 postfix-suffix  ::= '(' [call-arg {',' call-arg} [',']] ')'
                   | '.' IDENT
