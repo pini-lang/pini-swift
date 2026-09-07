@@ -37,7 +37,7 @@ Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏
 | **块标签（ADR-014）** | `标签\|if`/`标签\|while`/`标签\|for` 定向 `break 标签`/`continue 标签`（旧 `scope 块标签:` 已转 reserved-error） |
 | **懒加载 `LazyRef<T>`（G40，v0.42.0）** | 引用语义懒加载包装：`.value` 同步 once 获取（多线程首访仅一个线程执行初始化）、复制共享缓存；`LazyRef<T>(闭包)` / `LazyRef(闭包)` 双形态构造；解释器 + LLVM 双后端 |
 | **语言级测试 `\|test` + `assert`（G41，v0.42.0）** | 测试函数块 `名称\|test()` 显式声明；`assert(条件)` / `assert(条件, 消息)` 判定；`pini test` 子命令收集执行；SwiftTesting 宿主驱动 |
-| **FFI 与 unsafe（ADR-015，Phase 2a）** | `[名称\|foreign]` 块声明外部 C 函数（`malloc`/`free`/`memcpy`/`strlen`/`puts`/`cstr` 等原生函数表）；`*T` 原始指针 + C 兼容性（禁 object，ARC 隔离）；`unsafe` 消耗点 / `&` 取地址 / `\|unsafe` 自由函数；`load`/`store`/`addressof` 指针原语（解释器优先，LLVM 端 unsupported） |
+| **FFI 与 unsafe（ADR-015，Phase 2a）** | `[名称\|foreign]` 块声明外部 C 函数（`malloc`/`free`/`memcpy`/`strlen`/`puts`/`cstr` 等原生函数表）；`*T` 原始指针 + C 兼容性（禁 object，ARC 隔离）；`unsafe` 消耗点 / `&` 取地址 / `\|unsafe` 自由函数；`load`/`store`/`addressof` 指针原语（解释器优先；LLVM 端按能力清单逐格补齐，见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`） |
 
 > [!tip] 设计哲学
 > Pini 追求**平坦编码风格**——不鼓励多重嵌套，鼓励通过类型组合和方法声明构建清晰的代码结构。
@@ -256,7 +256,8 @@ graph TD
     F --> G[Interpreter 解释执行]
     G --> H[Output]
 
-    F --> I[IRGenerator LLVM IR 生成]
+    F --> HIR[HIRLowerer AST+类型 → HIR]
+    HIR --> I[LLVM Emitters HIR → IR 文本]
     I --> J[clang / lli 编译执行]
     J --> K[PiniRuntime C ABI shim]
     K --> H
@@ -266,6 +267,8 @@ graph TD
 ```
 
 > 双后端：解释器（`pini run`，始终可用）与 LLVM 后端（`emit`/`compile`/`run-llvm`，需 LLVM 工具链；运行时经 `PiniRuntime` 动态库 C ABI shim 提供服务）。`RuntimeBackendTests` 保证两后端逐字节一致。
+>
+> LLVM 后端正按 ADR-031 重写：新增 `HIR` 中间层（类型决策单点），旧发射路径冻结功能新增；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### 目录结构
 
@@ -281,7 +284,8 @@ Pini/
 │   │   ├── Semantic/         # 语义分析
 │   │   ├── Type/             # 类型系统
 │   │   ├── Interpreter/      # 解释器（含 SuspendScheduler 并发运行时）
-│   │   ├── CodeGen/          # LLVM IR 生成（含 RuntimeBackendTests 契约）
+│   │   ├── HIR/              # 高级中间表示（类型化树；HIRLowerer 类型决策单点）
+│   │   ├── CodeGen/          # LLVM IR 生成（只消费 HIR，纯机械发射）
 │   │   ├── LSP/              # 语言服务器
 │   │   ├── Debugger/         # 源码级调试器 / DAP
 │   │   └── Common/           # 公共组件

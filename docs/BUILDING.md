@@ -89,6 +89,18 @@ export PATH="$PATH:$HOME/.local/bin"
 | `PINI_RUNTIME_LIB` | 显式指定 `libPiniRuntime.{dylib,so}` 路径 | 可执行文件同级目录 |
 | `PINI_LLVM_BIN` | LLVM 工具（clang/lli）所在目录 | 系统 `PATH` |
 
+### LLVM 门控测试的环境判据（ADR-031 约束 6）
+
+凡以「某个外部命令是否可用」为前提的测试结论（跳过率、失败数、通过基线），
+必须在**完整登录 shell 环境**下实测：
+
+- 判据：执行 `source ~/.zshrc` 后 `command -v lli`（及 `clang`）有输出，
+  才算该工具存在；自动化/代理环境的默认 PATH **不得**作为依据（本机 `lli`
+  经 homebrew keg 路径进入默认 PATH，残缺环境下会被误判为不存在——已两次
+  造出假「门关」结论）。
+- 运行时 dylib 由仓内 `.build/debug` 定位：`git worktree` 与自定义
+  `--scratch-path` 下的测量**一律无效**（dylib 定位失效会伪造额外跳过与失败）。
+
 ## 6. 子命令速览
 
 | 命令 | 用途 |
