@@ -1,10 +1,12 @@
 # Issue：解释器 evaluateBinaryOp 缺失 float 比较分支
 
-- 状态：**Open（2026-09-07，M4 差分 fixture 设计中由探针发现）**
-- 排期：**M5 首格（G1）开工前的前置小批**（LLVM 计划工单 M4 批③登记）——
-  解释器补六个 float 比较分支 + 单测，随即为差分套件补 float fixture；
-  fixture 期望值依赖 issue-print-f64-format-parity 的 print(F64) 格式裁决，
-  两件联动同批处理。
+- 状态：**Closed（2026-09-08 收口）**
+- 收口记录：LR-7 裁决补齐六分支。`evaluateBinaryOp` 新增
+  `(.float, .float, op)` 六个比较分支（== != < <= > >=，照 int 分派形态，
+  返回 `.bool`）；混合 int/float 比较维持 TypeChecker 拒绝（E4-001 实测，
+  非解释器层缺口）。TDD：`testFloatCompare` 红（E5-003 复现）→ 绿；
+  差分套件补 `testDiffFloatCompare`（18→19 fixture 中的第一个）。
+  证据 E-140。
 - 发现渠道：HIR 差分测试批②——fixture `print(sum == 3.0)`（两个 F64 相等比较）
   在解释器通道直接抛 RuntimeError，LLVM 通道 fcmp 正常。
 

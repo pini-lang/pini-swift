@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 已完成并回填，下一步 M5 分格扩张批待点名——开工前先处理 float 前置小批，见批次回填末的排期登记）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 前置小批已完成并回填，活跃 Open 工单清零，下一步 M5 分格扩张批待点名——开工前先出细化步骤）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -39,6 +39,9 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 `docs/issue-interpreter-hir-unification-2026-09-07.md`，LLVM 迁移完成后解释器与 LLVM 后端共同依赖 HIR |
 | LR-5 | 兼容开关 | **无任何 CLI 开关，直接替换**——已有解释器后端，项目未进 1.0.0 不考虑兼容；回退手段 = 提交边界 git revert（用户裁决） |
 | LR-6 | M3 决策门：路线判定 | **重写**（用户裁决「按倾向来」，2026-09-07）。判定依据 = M2 能力清单：缺口成簇（8/19 并发内建单簇）、emit 通过者端到端 40/40、抛点持续增长 100→108、泛型等需全局类型视野的能力在 god class 结构下不可做；增量路线为 8 次外科手术 × 共享状态回归风险，重写为 1 次架构 + 8 次填格 |
+| LR-7 | float 比较补齐形态 | **A 全量六分支**（用户裁决，2026-09-08）：解释器补 == != < <= > >= 六个 `(.float, .float, op)` 分支照 int 形态；混合 int/float 比较维持 checker 拒绝（E4-001），非解释器缺口 |
+| LR-8 | print(F64) 展示语义 | **A 最短往返**（用户裁决，2026-09-08；A/B/%g 三方案调研后定）：spec 钉四条形态规则（§2.8 值展示语义），两后端委托宿主标准库 `String(Double)`；LLVM 侧经运行时 `bk_double_to_string`（只新增符号，bk_* 现有签名零改动）；%g 方案否决（指数阈值第三形态，工程量同 A 且语义不净） |
+| LR-10 | 旧后端 i64 print sext 处置 | **wontfix**（用户裁决，2026-09-08）：旧后端冻结 + M6 整体删除自然消亡，新管线已 trunc 修正；工单关闭，M5 期间出现硬需求再翻案 |
 
 ## ADR-031 连带修订（随 M0 落地）
 
@@ -138,3 +141,16 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       功能新增（ADR-031 约束 1），M6 翻转批将整体删除旧 CodeGen，新管线
       已用 trunc 修正；随 M6 自然消亡，待用户确认后关闭。
   下一步 M5（分格扩张批，G1 try-else 起）待点名；M5 开工前先处理上述前置小批。
+- **M5 前置小批完成（2026-09-08，两批 + 三工单收口）**：
+  - **批A（LR-7，`9497557`）**：`evaluateBinaryOp` 补六 float 比较分支
+    （TDD 红→绿）；差分套件补 `testDiffFloatCompare`。
+  - **批B（LR-8，本提交）**：spec §2.8「值展示语义」钉最短往返四条形态规则；
+    PiniRuntime 新增 `bk_double_to_string`（委托 `String(Double)`，strdup +
+    IR 侧 free 契约）；IREmitter F64 print 切 helper（`@fmt_double` 移除）；
+    差分 harness 加 `--dlopen` 运行时加载；补 `testDiffFloatPrint` 边界
+    fixture（1e15/1e16、1e-4/1e-5 阈值等），19/19 逐字节一致。
+  - **工单收口**：float-compare Closed（LR-7）；print-f64-format-parity
+    Closed（LR-8，旧后端 %f 遗留随 M6 消亡）；legacy-i64-print-sext
+    Closed（LR-10 wontfix）。证据 E-140 / E-141。
+  - 全量回归零回归后合 main。下一步 M5 分格扩张批（G1 try-else 起）待点名，
+    开工前先出细化步骤。

@@ -1,0 +1,10 @@
+main|func() -> ():
+    let a: F64 = 2.5
+    let b: F64 = 1.5
+    print(a > b)
+    print(a < b)
+    print(a >= b)
+    print(a <= b)
+    print(a == b)
+    print(a != b)
+    return

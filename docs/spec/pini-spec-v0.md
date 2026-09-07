@@ -387,6 +387,20 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 > **已知限制（Experimental 显式登记）**：解释器端 FFI 已落地（Phase 2a + Phase 2b 解释器，2026-08-27）——原生函数表为**预注册 Swift 实现**（malloc/free/memcpy/memset/strlen/puts/strcmp/cstr），**裸 C 绑定经 `dlsym` 动态加载**（库未找到 E5-016 / 符号未找到 E5-017）。LLVM 端 FFI 仍显式 unsupported（D1，留 Phase 2b-LLVM）。解释器 `&` 为**快照取址**（写回不更新原变量），与 LLVM 端真引用语义不同——见 CHANGELOG。by-value 结构体 ABI 属 **Phase 2c（可选，未实现）**；`Char` 不纳入 FFI 标量集（与解释器指针原语按 I8/U8 编解码一致）。变参函数（`printf`）、回调/函数指针参数（`qsort` 比较器）、`errno`/线程局部访问、非 C 的 ABI 均 out-of-scope（Phase 2b 不支持）。
 
+### 2.8 值展示语义（print 与 stringify）
+
+`print` 对 `F64` 值的文本展示采用**最短往返表示**（shortest round-trippable decimal representation），并遵守以下形态规则：
+
+1. **往返恒等**：展示串解析回 `F64` 后与原值逐位相等（读回恒等）；
+2. **定点/指数切换**：值域 `[1e-4, 1e16)` 内用定点形态，越界用指数形态——
+   `1000000000000000.0`（=1e15）为定点、`1e+16` 为指数、`0.0001` 为定点、`1e-05` 为指数；
+3. **定点恒带小数点**：整数值浮点展示为 `1000000.0` 形态（小数点后恒至少一位）；
+4. **指数形态**：`e±NN` 两位指数（`1e-05`、`1e+21`）。
+
+该语义与 Swift `Double.description` 一致（两后端实现均委托宿主标准库同一函数，规范权威为本节四条规则）。**双通道一致性是硬约束**：解释器通道（stringify）与 LLVM 通道（`print` 的 F64 分派经运行时 `bk_double_to_string`）必须逐字节一致；HIR 差分套件以边界值 fixture 锁定（`testDiffFloatPrint`）。`Bool` 展示为 `true`/`false`；`I32`/`I64` 展示为十进制整数字面形态。
+
+> 来源：M4 差分测试发现双后端 print(F64) 分歧（`%f` 定点六位 vs 最短表示），LR-8 裁决取最短往返（2026-09-08）；修复前既有测试的空白归一化断言掩盖过该分歧。
+
 ## 3. 已知缺口登记（Known Gaps Register）—— 「不完善」的显式清单
 
 > 凡列入下表者，本规范**明确声明 unspecified**，读者不得视为已承诺行为。每项随演进在对应版本填补或收敛。

@@ -49,8 +49,9 @@ public final class IREmitter {
     public func emit(module: HIRModule) -> String {
         var header = "; Pini LLVM IR (HIR pipeline, M4 slice)\n"
         header += "declare i32 @printf(ptr, ...)\n"
+        header += "declare ptr @bk_double_to_string(double)\n"
+        header += "declare ptr @free(ptr)\n"
         header += "@fmt_int = private constant [3 x i8] c\"%d\\00\"\n"
-        header += "@fmt_double = private constant [4 x i8] c\"%f\\00\\00\"\n"
         header += "@fmt_bool_true = private constant [6 x i8] c\"true\\00\\00\"\n"
         header += "@fmt_bool_false = private constant [7 x i8] c\"false\\00\\00\"\n"
         header += "@fmt_string = private constant [3 x i8] c\"%s\\00\"\n"
@@ -375,9 +376,10 @@ public final class IREmitter {
     }
 
     /// Intrinsic print: printf by operand type, then a newline (interpreter
-    /// print semantics). Known F64 divergence: %f ("2.500000") vs the
-    /// interpreter's shortest repr ("2.5") — pre-existing backend behavior,
-    /// tracked in the rewrite plan's parity grid.
+    /// print semantics). F64 goes through the runtime's bk_double_to_string
+    /// (shortest round-trip, spec "value display semantics" note, LR-8) so
+    /// both backends render identically; the malloc'd C string is freed
+    /// right after printf consumes it.
     private func emitPrint(_ argument: HIRExpr) -> IRValue {
         let value = emitExpr(argument)
         switch value.llvmType {
@@ -392,7 +394,10 @@ public final class IREmitter {
             bodyIR += " \(narrow) = trunc i64 \(value.ssaName) to i32\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_int, i32 \(narrow))\n"
         case "double":
-            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_double, double \(value.ssaName))\n"
+            let rendered = builder.freshTemp()
+            bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
+            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered))\n"
+            bodyIR += " call ptr @free(ptr \(rendered))\n"
         case "i8*":
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(value.ssaName))\n"
         default:

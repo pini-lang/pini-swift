@@ -1,10 +1,16 @@
 # Issue：print(F64) 双后端展示格式分歧（%f vs 最短表示）
 
-- 状态：**Open（2026-09-07，M4 差分 fixture 设计中确认为前置语义决策）**
-- 排期：**M5 首格（G1）开工前需用户裁决**（LLVM 计划工单 M4 批③登记）——
-  print(F64) 属语言语义面，裁决采纳形态（最短表示 / %f 固定六位 / 其他）后
-  与 issue-interpreter-float-compare 同批落地；差分套件 float fixture 的
-  期望值取决于本裁决结果。
+- 状态：**Closed（2026-09-08 收口，LR-8 裁决 = A 最短往返）**
+- 收口记录：spec 新增「值展示语义」节（§2.8）钉四条形态规则（最短往返 /
+  定点指数切换阈值 [1e-4, 1e16) / 定点恒带小数点 / e±NN 两位指数），两后端
+  均委托宿主标准库 `String(Double)`（委托即单源，规范权威是 spec 四条规则）。
+  落地：PiniRuntime 新增 `bk_double_to_string`（`@_cdecl`，strdup 契约、
+  发射的 IR printf 消费后 `@free` 释放，现有 bk_* 35 符号签名零改动）；
+  IREmitter 的 F64 print 分派改经 helper（`@fmt_double`/`%f` 常量移除）；
+  解释器侧零改动（现状即规范形态）。差分套件补 `testDiffFloatPrint`
+  边界值 fixture（2.5 / 0.1+0.2 / 1e15 / 1e16 / 1e21 / 1e-5 / 0.0001），
+  19/19 逐字节一致。**遗留**：旧后端（IRGenerator）print(F64) 仍为 %f，
+  不修（冻结约束），随 M6 翻转批删除自然消亡。证据 E-141。
 - 性质：不是单侧 bug，是「print 浮点的语言语义」未单源——哪一侧是规范形态
   需要 spec 裁决。
 
