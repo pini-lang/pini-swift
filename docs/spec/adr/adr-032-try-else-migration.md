@@ -55,7 +55,7 @@
 ### 2026-09-07（立项，M0）
 
 - 裁决记录：D1=B（try-else 表达式位形态）、D2（一步删除、无迁移提示）、D3=B（元组错误位约定退役）、D4（LLVM 重写前置收敛，ADR-031 P3 前不开工）。
-- 实测基线（2026-09-07）：`^` 真实 rvalue 使用 0 处；try/except 语料 3 文件（`examples/try.pini`、`examples/selfhost/src/ast/ast.pini`、`examples/selfhost/src/main.pini`）；Tests 无 `.pini` 夹具，内嵌代码集中于 `TryExceptTests.swift` / `CPSDifferentialTests` / `IRExecutionTests`。
+- 实测基线（2026-09-07，**M3 批勘误**）：`^` 真实 rvalue 使用 0 处；try/except 语料实足迹为 `examples/try.pini` 与 selfhost 仓 `src/lexer/lexer.pini`（关键字表镜像）+ `examples/lex_corpus.pini`（L0 语料 2 行）——立项时记的「`examples/selfhost/src/ast/ast.pini`、`examples/selfhost/src/main.pini`」系普查口径粗糙的误记（子串误命中），M3 精查推翻，勘误于此（原论证撤回）。Tests 无 `.pini` 夹具，内嵌代码集中于 `TryExceptTests.swift` / `CPSDifferentialTests` / `IRExecutionTests`；**另漏列 `ResultUnwrapTests`**（`^` 语义测试文件，M2 实测补齐）。
 - 本批产出：本 ADR、spec §3 G3 状态登记、工作区 LLVM 方案稿（`LLVM后端重写方案-2026-09-07.md`，未入仓）时序段。spec §2.4.4 / EBNF 正文重写待 M1，本批不动实现代码。
 
 ### 2026-09-07（M1 反录）
@@ -74,3 +74,16 @@
 - **收口件**：`docs/spec/CHANGELOG.md` v0.53.0 迁移说明；spec §3 G3 证据行 STALE 刷新（`executeTry`/`ResultUnwrap` → `Parser.parseTry`/`Expression.tryExpression`）。
 - **实测规范点（转 M5 工单）**：返回位只接受元组 ⇒ 函数返回 `Result` 须以 `^T` 类型糖嵌入元组（`-> (^T,)`），spec §2.4.4 未明说此写法。
 - 全量测试基线以本批实测为准（79 项相关类先行全绿，全量见提交记录）。
+
+### 2026-09-07（M3 selfhost 同步）
+
+- selfhost 仓（嵌套独立仓，two-track 提交）commit `bbf1b91` → merge `104d31b`：`src/lexer/lexer.pini` 删 `kw_except` case 与 `is_keyword` except 分支（关键词表对齐宿主 33 个）；`examples/lex_corpus.pini` 删裸 `except:` 探针行（裁决：L0 语料只载现役关键字面）；`pini.toml` spec 兼容锚 0.1 → 0.2；`.pini/baseline` 第 20 次重校准（host=`6485609`，version=0.53.0，spec=0.2）。
+- 六门 GREEN：L0 MATCH 505 / parse MATCH 253+94 / check 15 文件 / test 70/0 / audit GREEN（改前红态：L0 唯一差分 = 语料 L17 `except`，宿主 IDENT vs bootstrap keyword）。
+- 宿主侧缺陷（M3 发现，已立工单）：宿主 `MiniTOML` 不剥值行行内注释 → G52 Def-3 入口一致性校验 E5-018 误报（`docs/issue-minitoml-inline-comment-2026-09-07.md`）；selfhost 清单值行注释改独立行规避，宿主根因待工单修复。
+
+### 2026-09-07（M5 收口——迁移批次关闭）
+
+- 证据登记：E-132（try-else 唯一原语落地：双形态/`^` 脱糖/CPS 对齐/LLVM fail-loud；全量 1220/0/113，GCT 7 断言红→绿）/ E-133（旧模型七符号零残留，S-2 归零）/ E-134（selfhost 第 20 次重校准六门绿）——全部现跑重筛 FRESH。
+- 工单兑付：`docs/issue-caret-type-sugar-tuple-return-2026-09-07.md` 立案（M2 预告的「规范点转 M5 工单」）。
+- spec §2.4.4 状态注迁移窗口标注解除（「STALE 待 M2 刷新」→「已落地」，M2 刷新的遗留残留清零）。
+- 迁移状态：M0-M3 完成、M4 并入 M2（阶段撤销）、M5 收口——**本迁移批次关闭**。LLVM 侧遗留两项已由工单承接（try-else fail-loud 发射待 ADR-031 后端批；`-> (^T,)` spec 明文化），不在本 ADR 范围内连续修复。
