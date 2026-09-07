@@ -13,16 +13,6 @@ public struct ErrorSignal {
  }
 }
 
-/// 草稿 A2（批次 1.4，D2）：`^` 右值糖解包 `err(e)` 时的控制返回信号。
-/// 由最近函数边界（executeFunctionBody）捕获，错误 e 注入返回元组末槽
-/// （errors-as-data，错误即数据、可被 `await`/`wait` 取 `Result` 后 `match` 解构，不穿透异常路径）。
-public final class UnwrapErrSignal: Error {
- public let error: Value
- public init(error: Value) {
- self.error = error
- }
-}
-
 public enum RuntimeError: Error, CustomStringConvertible {
  case undefinedVariable(name: String, location: SourceLocation)
  case immutableVariable(name: String, location: SourceLocation)

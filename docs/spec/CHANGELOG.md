@@ -2,6 +2,13 @@
 
 > 版本里程碑归档：只记录**公开版本**的变更摘要。规范正文描述现况（`pini-spec-v0.md`）；历次公开版本的变更事实集中归档于此。
 
+## v0.53.0（2026-09-07）
+
+- **try-else 错误传播**（G3 迁移落地，ADR-032 / spec §2.4.4）：`try <expr> else <e> <handler>` 为错误传播唯一原语，语句位与表达式位双形态（表达式位挂 primary 位）；操作数静态要求 `Result<T, E>`，handler 限控制流（return/break/continue/pass，pass 仅语句位吞错；块形式须控制流终止）。
+- **`^` 右值糖重定义**：`^e` ≡ `try e else err: return err`（Parser 层定义性脱糖），不再注入返回元组末槽；`^T` 类型糖（≡ `Result<T>`）不变。
+- **破坏性（D2 一步删，无迁移提示）**：`try`/`except` 块语法移除（`except` 退出关键字表）；`(值, 错误)` 元组错误位约定退役（错误传播只经 `Result`；`err("")` 亦为错误，无空串特判）；LLVM 后端 try-else 表达式暂 fail-loud（提示改用解释器）。
+- 语料迁移：`examples/try.pini`、TryExceptTests/CPS 夹具改写；`testTryStatement_LLI` 删除（LLVM 发射待后端批）。
+
 ## v0.52.0（2026-09-02）
 
 - **模块工具链**（G52 批 3 落地，ADR-024 治理面）：`pini mod {tidy, refresh, verify, graph}`；清单双通道（require/resources/tap/replace）；MVS + `pini-summary.toml` + SHA-256 校验和（TOFU）；build 漂移检查（采用门控）。v1 边界：仅本地 `file:` tap。

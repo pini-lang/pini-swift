@@ -197,7 +197,7 @@ extension IRGenerator {
  for a in args { precollectGenericStructUses(in: a.expression) }
  case .member(let base, _, _): precollectGenericStructUses(in: base)
  case .tupleIndex(let base, _, _): precollectGenericStructUses(in: base)
- case .resultUnwrap(let operand, _): precollectGenericStructUses(in: operand)
+ case .tryExpression(let operand, _, _, _): precollectGenericStructUses(in: operand)
  case .tuple(_, let els, _): for e in els { precollectGenericStructUses(in: e) }
  case .arrayLiteral(let els, _): for e in els { precollectGenericStructUses(in: e) }
  case .join(let inner, _): precollectGenericStructUses(in: inner)

@@ -1,0 +1,4 @@
+; ADR-032：try-else 表达式位 ok 路径求值为 Result 载荷（内联 ok 构造）。
+main|func() -> ():
+    print(try ok(5) else e: return)
+    return

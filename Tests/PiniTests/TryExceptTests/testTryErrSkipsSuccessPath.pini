@@ -1,0 +1,6 @@
+; ADR-032：err 路径经 handler 控制流转移，成功路径语句不执行。
+main|func() -> ():
+    try err("boom") else e:
+        return
+    print("unreachable")
+    return

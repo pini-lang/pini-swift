@@ -593,13 +593,6 @@ private func teardownInjections() {
  // `case _:` 通配兜底豁免；default:/pass 通配子块已随字段删除。
  try checkMatchExhaustive(value: value, cases: cases, location: location)
 
- case .tryStatement(let expression, let tryBlock, let exceptClauses, _):
- try checkExpression(expression)
- try checkBlock(tryBlock)
- for except in exceptClauses {
- try checkBlock(except.body)
- }
-
  case .expressionStmt(let expr, _):
  try checkExpression(expr)
 
@@ -735,9 +728,13 @@ private func teardownInjections() {
  case .unary(_, let operand, _):
  try checkExpression(operand)
 
- case .resultUnwrap(let operand, _):
- // 草稿 A2（批次 1.4，D2）：递归检查被解包表达式。
+ case .tryExpression(let operand, let errorVar, let handler, _):
+ // ADR-032 迁移批 M2：递归检查 operand；handler 内 errorVar 绑定到子作用域。
  try checkExpression(operand)
+ symbolTable.enterScope(name: "try-handler")
+ symbolTable.define(Symbol(name: errorVar, kind: .variable(isMutable: true), location: handler.location))
+ try checkBlock(handler)
+ symbolTable.exitScope()
 
  case .call(let callee, let arguments, _):
  // 检查是否是未定义的函数调用

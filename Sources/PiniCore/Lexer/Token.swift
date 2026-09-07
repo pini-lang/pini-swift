@@ -278,7 +278,7 @@ public enum Keyword: String, CaseIterable {
  case `case` = "case"
  case `while` = "while"
  case `try` = "try"
- case `except` = "except"
+ // ADR-032 迁移批 M2：`except` 随 try-else 迁移退出关键字表（D2 一步删，降级普通标识符）。
  case `return` = "return"
  case `break` = "break"
  case `continue` = "continue"

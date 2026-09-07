@@ -28,7 +28,7 @@ extension Interpreter {
  case .call(let c, let args, _): return containsJoin(c) || args.contains { containsJoin($0.expression) }
  case .member(let o, _, _): return containsJoin(o)
  case .tupleIndex(let o, _, _): return containsJoin(o)
- case .resultUnwrap(let o, _): return containsJoin(o)
+ case .tryExpression(let o, _, let h, _): return containsJoin(o) || containsJoin(h)
  case .subscript(let e, let i, _): return containsJoin(e) || containsJoin(i)
  case .tuple(_, let els, _): return els.contains { containsJoin($0) }
  case .arrayLiteral(let els, _): return els.contains { containsJoin($0) }
@@ -60,8 +60,6 @@ extension Interpreter {
  return containsJoin(it) || containsJoin(b) || s.map { containsJoin($0) } ?? false
  case .matchStatement(let v, let cases, _):
  return containsJoin(v) || cases.contains { containsJoin($0.block) }
- case .tryStatement(let e, let tb, let excepts, _):
- return containsJoin(e) || containsJoin(tb) || excepts.contains { containsJoin($0.body) }
  case .expressionStmt(let e, _): return containsJoin(e)
  case .detachStatement(let e, _): return containsJoin(e)
  case .deferStatement(let d, _): return containsJoin(d)
@@ -98,7 +96,7 @@ extension Interpreter {
  case .unary(_, let o, _): return containsCall(o)
  case .member(let o, _, _): return containsCall(o)
  case .tupleIndex(let o, _, _): return containsCall(o)
- case .resultUnwrap(let o, _): return containsCall(o)
+ case .tryExpression(let o, _, let h, _): return containsCall(o) || containsCall(h)
  case .subscript(let e, let i, _): return containsCall(e) || containsCall(i)
  case .tuple(_, let els, _): return els.contains { containsCall($0) }
  case .arrayLiteral(let els, _): return els.contains { containsCall($0) }
@@ -130,8 +128,6 @@ extension Interpreter {
  return containsCall(it) || containsCall(b) || s.map { containsCall($0) } ?? false
  case .matchStatement(let v, let cases, _):
  return containsCall(v) || cases.contains { containsCall($0.block) }
- case .tryStatement(let e, let tb, let excepts, _):
- return containsCall(e) || containsCall(tb) || excepts.contains { containsCall($0.body) }
  case .expressionStmt(let e, _): return containsCall(e)
  case .detachStatement(let e, _): return containsCall(e)
  case .deferStatement(let d, _): return containsCall(d)
@@ -411,14 +407,21 @@ extension Interpreter {
  try evalK(task, object) { ov in
  try cont(try self.evaluateTupleIndex(ov, index: index, location: loc))
  }
- case .resultUnwrap(let operand, let loc):
- // 草稿 A2（批次 1.4，D2）：`^` 解包进入 CPS 仅当 operand 含挂起/调用；
- // 含 `await`/`wait` 的组合暂不支持（探针边界，与泛型构造一致）；否则同步求值（无挂起则结果相同）。
- if containsJoin(operand) {
+ case .tryExpression(let operand, let errorVar, let handler, let loc):
+ // ADR-032 迁移批 M2：try-else 进入 CPS 仅当 operand 含挂起；handler 限控制流
+ // 语句（不含 await/wait），含挂起时显式报错（探针边界，不静默）。
+ if containsJoin(handler) {
  throw RuntimeError.invalidOperation(
- reason: "挂起模式暂不支持 `^` 解包内含有 `await`/`wait`",
+ reason: "挂起模式暂不支持 try-else 处理器内含有 `await`/`wait`",
  location: loc
  )
+ }
+ if containsJoin(operand) {
+ try evalK(task, operand) { ov in
+ try cont(try self.evaluateTryExpressionSync(
+ operandValue: ov, errorVar: errorVar, handler: handler, location: loc))
+ }
+ return
  }
  try cont(try evaluateExpression(expr))
  case .subscript(let containerExpr, let indexExpr, let loc):
@@ -702,10 +705,6 @@ extension Interpreter {
  try evalK(task, value) { matchValue in
  try self.execMatchK(task, matchValue: matchValue, cases: cases, location: loc, cont)
  }
- case .tryStatement(let expression, let tryBlock, let exceptClauses, _):
- try evalK(task, expression) { result in
- try self.execTryK(task, result: result, tryBlock: tryBlock, exceptClauses: exceptClauses, cont)
- }
  default:
  // break/continue 无表达式（maySuspend=false → 走同步路径），不会到这儿；兜底显式报错。
  throw RuntimeError.invalidOperation(
@@ -812,36 +811,26 @@ extension Interpreter {
  try cont(.null)
  }
 
- /// try：expression 已 CPS 求值；错误元组提取同步；成功 → tryBlock，错误 → 首个 except 子句。
- private func execTryK(_ task: SuspendTaskCPS, result: Value, tryBlock: Block, exceptClauses: [ExceptClause], _ cont: @escaping EvalK) throws {
- var errorValue: Value = .null
- var hasErrorTuple = false
- if case .tuple(_, let elements) = result, elements.count >= 2 {
- hasErrorTuple = true
- errorValue = elements[1]
+ /// ADR-032 迁移批 M2：try-else 的 err/ok 分支同步完成（operand 已 CPS 求值完毕）。
+ /// handler 限控制流语句（return/break/continue 经 ControlSignal 自然冒泡），
+ /// 无挂起点——与同步路径语义逐字节一致。
+ private func evaluateTryExpressionSync(operandValue: Value, errorVar: String, handler: Block, location: SourceLocation) throws -> Value {
+ guard case .enumValue(let ev) = operandValue, ev.parentEnum == "Result" else {
+ throw RuntimeError.typeMismatch(expected: "Result", got: describeValueKind(operandValue), location: location)
  }
- if case .null = errorValue {
- try execBlockK(task, tryBlock.statements, 0, .null) { _ in try cont(.null) }
- return
+ if ev.caseName == "ok" {
+ return ev.associatedValues.first ?? .null
  }
- if case .string(let s) = errorValue, s.isEmpty {
- try execBlockK(task, tryBlock.statements, 0, .null) { _ in try cont(.null) }
- return
- }
- if hasErrorTuple || !exceptClauses.isEmpty {
- if let clause = exceptClauses.first {
- let exceptEnv = Environment(enclosing: currentEnv)
- exceptEnv.define(name: clause.errorVar, value: errorValue, isMutable: true)
+ let errValue = ev.associatedValues.first ?? .null
+ let handlerEnv = Environment(enclosing: currentEnv)
+ handlerEnv.define(name: errorVar, value: errValue, isMutable: true)
  let savedEnv = currentEnv
- currentEnv = exceptEnv
- try execBlockK(task, clause.body.statements, 0, .null) { _ in
- self.currentEnv = savedEnv
- try cont(.null)
+ currentEnv = handlerEnv
+ defer { currentEnv = savedEnv }
+ for stmt in handler.statements {
+ try executeStatement(stmt)
  }
- return
- }
- }
- try cont(.null)
+ return .null
  }
 
  private func evalIfBranchesK(_ task: SuspendTaskCPS, _ elifs: [ElifBranch], _ elseBlock: Block?, _ cont: @escaping EvalK) throws {

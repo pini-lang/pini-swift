@@ -1,12 +1,12 @@
-; 错误处理 try / except：基于返回元组显式传播
-; 运行：pini run examples/try.pini
+; 错误处理 try-else：Result 显式传播（ADR-032，spec『try-else 错误传播』节）
+; `^String` = Result(String)（类型糖）；运行：pini run examples/try.pini
 ; 预期：读取失败
-读取文件(路径: String,) -> (内容: String, 错误: String,):
-    return ("", "模拟错误")
+读取文件|func(路径: String,) -> (^String,):
+    return err("模拟错误")
 
 main|func() -> ():
-    try 读取文件("data.txt"):
-        print("读取成功")
-    except 错误:
+    try 读取文件("data.txt") else 错误:
         print("读取失败")
+        return
+    print("读取成功")
     return

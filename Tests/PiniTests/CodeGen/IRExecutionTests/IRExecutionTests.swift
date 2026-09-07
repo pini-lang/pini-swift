@@ -658,15 +658,8 @@ final class IRExecutionTests: XCTestCase {
                       "加倍(5)=10、匿名 g(6)=36（LLVM 无换行拼接）")
     }
 
-    /// 真实 lli：try 语句（#5，返回元组显式传播错误模型）——错误槽非空走 except，空串走 tryBlock。
-    /// 形参用中文名（`路径`），同时锁定 CJK 形参的 IR 标识符引号发射（`%"路径"`）。
-    func testTryStatement_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        let source = try loadPiniFixture("testTryStatement_LLI", filePath: #filePath)
-        let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "读取失败",
-                      "错误槽非空应进入 except 分支")
-    }
+    // ADR-032 迁移批 M2：旧 testTryStatement_LLI（元组错误槽模型 IR，#5）随 try-else
+    // 迁移删除——try-else 表达式在 LLVM 侧为 fail-loud（见 ExprEmitter），发射待后端批。
 
     /// 真实 lli：结构体内嵌组合（R1.1）——子类型组合父类型，字段经合并布局、
     /// 方法经接收者特化名分派（父/子同名方法各自按自身布局编译）。

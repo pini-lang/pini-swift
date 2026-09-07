@@ -1,9 +1,10 @@
-尝试|func() -> (String, Error,):
-    var r = err(Error("提前失败"))
-    ^r
-    print("不应执行",)
-    return ("正常", nil)
+; ADR-032：err 路径经 handler 控制流转移，函数体后续语句不执行。
+尝试|func() -> (String,):
+    try err("提前失败") else e:
+        return e
+    print("不应执行")
+    return "正常"
+
 main|func() -> ():
-    var (v, e) = 尝试()
-    print(v,)
+    print(尝试())
     return

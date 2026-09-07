@@ -181,13 +181,6 @@ public enum Desugar {
  block: desugar($0.block),
  location: $0.location) },
  location: loc)
- case .tryStatement(let expr, let tryBlock, let exceptClauses, let loc):
- return .tryStatement(expression: desugar(expr),
- tryBlock: desugar(tryBlock),
- exceptClauses: exceptClauses.map { ExceptClause(errorVar: $0.errorVar,
- body: desugar($0.body),
- location: $0.location) },
- location: loc)
  case .expressionStmt(let expr, let loc):
  return .expressionStmt(expr: desugar(expr), location: loc)
  case .detachStatement(let expr, let loc):
@@ -248,9 +241,10 @@ public enum Desugar {
  location: loc)
  case .member(let obj, let name, let loc):
  return .member(object: desugar(obj), name: name, location: loc)
- case .resultUnwrap(let operand, let loc):
- // 草稿 A2（批次 1.4，D2）：递归降层被解包表达式。
- return .resultUnwrap(operand: desugar(operand), location: loc)
+ case .tryExpression(let operand, let errorVar, let handler, let loc):
+ // ADR-032 迁移批 M2：递归降层 operand 与 handler 块。
+ return .tryExpression(operand: desugar(operand), errorVar: errorVar,
+ handler: desugar(handler), location: loc)
  case .tupleIndex(let obj, let index, let loc):
  // 草稿 A2（批次 1）：递归降层 object，索引为常量不动。
  return .tupleIndex(object: desugar(obj), index: index, location: loc)

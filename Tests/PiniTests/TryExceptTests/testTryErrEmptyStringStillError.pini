@@ -1,0 +1,7 @@
+; ADR-032：err("") 也是 err——Result 语义无「空串视为成功」的特判（旧元组模型行为退役）。
+main|func() -> ():
+    try err("") else e:
+        print("handler")
+        return
+    print("success-path")
+    return

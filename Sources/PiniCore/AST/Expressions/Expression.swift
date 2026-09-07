@@ -61,10 +61,12 @@ public indirect enum Expression: Equatable {
  /// `join` 运算符：由 `await`/`wait` 关键字前缀产生（ADR-012 逆转，取代旧 `<=` 前缀写法）。
  /// 阻塞当前线程直至操作数 Future 完成，求值为 `Result<T, Error>`（错误即数据，不抛出）。
  case join(Expression, SourceLocation)
- /// 草稿 A2（批次 1.4，D2）：`^` 右值糖——对 `Result<T, E>` 值解包。
- /// `ok(v)` → 得 v；`err(e)` → 控制返回当前函数，错误 e 注入返回元组末槽（errors-as-data）。
- /// 与类型糖 `^T`（= Result<T>，parseTypeAnnotation）及中缀位异或 `^` 靠位置消歧（前缀一元）。
- case resultUnwrap(operand: Expression, location: SourceLocation)
+ /// try-else（ADR-032 迁移批 M2，取代旧 `try`/`except` 语句与 `^` 右值糖，spec『try-else 错误传播』节）：
+ /// 错误传播唯一原语，语句位与表达式位双形态（语句位由 Parser 包装为 expressionStmt）。
+ /// operand 静态要求 `Result<T, E>`：`ok(v)` → 表达式值为 v；`err(e)` → 绑定 errorVar
+ /// 后执行 handler（限控制流：return/break/continue/pass，pass 仅语句位吞错）。
+ /// `^` 右值糖为定义性脱糖：`^e` ≡ `try e else err: return err`（Parser 层展开）。
+ case tryExpression(operand: Expression, errorVar: String, handler: Block, location: SourceLocation)
  /// Phase 2a（ADR-015 FFI， `unsafe`）：不安全消耗点前缀。
  /// 标记紧随其后的单次函数调用或指针操作；复合表达式须括号 `unsafe (加载(p) + 1)`。
  case unsafe(operand: Expression, location: SourceLocation)

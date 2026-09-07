@@ -1,9 +1,0 @@
-divide(a: I32, b: I32) -> (I32, String,):
-    if b == 0:
-        return (0, "division by zero",)
-    return (a / b, "",)
-
-main|func() -> ():
-    var result = divide(10, 2)
-    print(result)
-    return

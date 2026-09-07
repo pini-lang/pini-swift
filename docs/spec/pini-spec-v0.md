@@ -379,7 +379,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 |------|------|------|--------|----------|------|
 | G1 | 形式化 EBNF（声明/表达式/语句/类型） | 已定义（权威文法见 §A 附录；原草案降为历史） | Provisional | v0.43.0 | 缺口 1.1 / §A |
 | G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.parseTopLevelDecl / §A.4 3.0 |
-| G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，ADR-032） | 已定义（§2.4.4 迁移版已反录：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；宿主落地待迁移批 M2） | Provisional | v0.53.0（迁移批） | Interpreter.swift `executeTry` / `ResultUnwrap`（STALE，M2 刷新）/ §2.4.4 / ADR-032 |
+| G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，ADR-032） | 已定义且已实现（§2.4.4：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；迁移批 M2 落地，`except` 关键字与 `UnwrapErrSignal` 已退役；LLVM 侧 try-else 表达式 fail-loud 待后端批） | Provisional | v0.53.0 | `Parser.parseTry` / `Expression.tryExpression` / `Interpreter` tryExpression 求值 / §2.4.4 / ADR-032 |
 | G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**） | Stable | v0.43.0 | SuspendEvaluator.swift / SuspendScheduler.swift / Value.swift / §3.1 |
 | G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
 | G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |

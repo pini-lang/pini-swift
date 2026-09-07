@@ -72,7 +72,9 @@ extension IRGenerator {
  for a in args { collectFuncLiterals(in: a.expression) }
  case .member(let base, _, _): collectFuncLiterals(in: base)
  case .tupleIndex(let base, _, _): collectFuncLiterals(in: base)
- case .resultUnwrap(let operand, _): collectFuncLiterals(in: operand)
+ case .tryExpression(let operand, _, let handler, _):
+ collectFuncLiterals(in: operand)
+ for s in handler.statements { collectFuncLiterals(in: s) }
  case .tuple(_, let els, _): for e in els { collectFuncLiterals(in: e) }
  case .arrayLiteral(let els, _): for e in els { collectFuncLiterals(in: e) }
  case .join(let inner, _): collectFuncLiterals(in: inner)
@@ -156,7 +158,10 @@ extension IRGenerator {
  return s
  case .member(let base, _, _): return collectIdentifiers(in: base)
  case .tupleIndex(let base, _, _): return collectIdentifiers(in: base)
- case .resultUnwrap(let operand, _): return collectIdentifiers(in: operand)
+ case .tryExpression(let operand, _, let handler, _):
+ var ids = collectIdentifiers(in: operand)
+ for s in handler.statements { ids.formUnion(collectIdentifiers(in: s)) }
+ return ids
  case .tuple(_, let els, _): return els.reduce(into: Set<String>()) { $0.formUnion(collectIdentifiers(in: $1)) }
  case .arrayLiteral(let els, _): return els.reduce(into: Set<String>()) { $0.formUnion(collectIdentifiers(in: $1)) }
  case .join(let inner, _): return collectIdentifiers(in: inner)

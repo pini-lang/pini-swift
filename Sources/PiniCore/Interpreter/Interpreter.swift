@@ -1365,7 +1365,6 @@ public class Interpreter {
  case .whileStatement(_, _, _, _, let l): loc = l
  case .forStatement(_, _, _, _, _, let l): loc = l
  case .matchStatement(_, _, let l): loc = l
- case .tryStatement(_, _, _, let l): loc = l
  case .detachStatement(_, let l): loc = l
  case .expressionStmt(_, let l): loc = l
  case .deferStatement(_, let l): loc = l
@@ -1513,8 +1512,6 @@ public class Interpreter {
  try executeFor(pattern: pattern, iterable: iterable, body: body, step: step, label: label, location: location)
  case .matchStatement(let value, let cases, let location):
  try executeMatch(value: value, cases: cases, location: location)
- case .tryStatement(let expression, let tryBlock, let exceptClauses, _):
- try executeTry(expression: expression, tryBlock: tryBlock, exceptClauses: exceptClauses)
  case .breakStatement(let label, _):
  throw ControlSignal.breakSignal(label: label)
  case .continueStatement(let label, _):
@@ -1913,9 +1910,11 @@ public class Interpreter {
  throw SuspendSignal(future: fut)
  }
  return joinFuture(fut)
- case .resultUnwrap(let operand, let loc):
- // 草稿 A2（批次 1.4，D2）：`^expr` 解包 Result 值——`ok(v)` → v；
- // `err(e)` → 抛 UnwrapErrSignal 交函数边界捕获（错误注入返回元组末槽）。
+ case .tryExpression(let operand, let errorVar, let handler, let loc):
+ // ADR-032 迁移批 M2（spec『try-else 错误传播』节）：错误传播唯一原语。
+ // operand 静态要求 Result<T, E>：ok(v) → 表达式值为 v；
+ // err(e) → 绑定 errorVar 后执行 handler（return/break/continue 经 ControlSignal
+ // 自然冒泡由函数/循环边界捕获；pass 落空 → 表达式值为 null）。
  let v = try evaluateExpression(operand)
  guard case .enumValue(let ev) = v, ev.parentEnum == "Result" else {
  throw RuntimeError.typeMismatch(expected: "Result", got: describeValueKind(v), location: loc)
@@ -1923,7 +1922,17 @@ public class Interpreter {
  if ev.caseName == "ok" {
  return ev.associatedValues.first ?? .null
  }
- throw UnwrapErrSignal(error: ev.associatedValues.first ?? .null)
+ let errValue = ev.associatedValues.first ?? .null
+ let handlerEnv = Environment(enclosing: currentEnv)
+ handlerEnv.define(name: errorVar, value: errValue, isMutable: true)
+ let previousEnv = currentEnv
+ currentEnv = handlerEnv
+ defer { currentEnv = previousEnv }
+ for stmt in handler.statements {
+ try executeStatement(stmt)
+ }
+ // handler 未转移控制流（如纯 pass 之外被误放进普通语句）→ 表达式值 null。
+ return .null
  case .unsafe(let operand, _):
  // Phase 2a（ADR-015 FFI）：`unsafe expr` 不安全消耗点——求值操作数即可
  // （不安全上下文对解释器无运行时屏障；静态约束由 TypeChecker 承载）。
@@ -2163,18 +2172,6 @@ public class Interpreter {
  guard !labels.isEmpty else { return value }
  guard case .tuple(_, let elements) = value, elements.count == labels.count else { return value }
  return .tuple(labels: labels, elements: elements)
- }
-
- /// 草稿 A2（批次 1.4，D2）：`^` 解包 err 的控制返回值——
- /// 返回元组（分量数 = 函数返回类型数）末槽注入错误、其余槽 null；
- /// 单返回/无返回（returnTypes.count < 2）时返回 `err(e)` 值（Result 语义，调用方可 `await`/`wait` 取 `Result` 后 `match`）。
- func makeUnwrapErrorReturn(_ error: Value, returnTypes: [TypeAnnotation]) -> Value {
- if returnTypes.count >= 2 {
- var elements = Array(repeating: Value.null, count: returnTypes.count)
- elements[returnTypes.count - 1] = error
- return .tuple(labels: [], elements: elements)
- }
- return Interpreter.makeResult(caseName: "err", payload: error)
  }
 
  func evaluateMember(_ objValue: Value, memberName: String, location: SourceLocation) throws -> Value {
@@ -2789,47 +2786,8 @@ public class Interpreter {
  }
  }
 
- private func executeTry(expression: Expression, tryBlock: Block, exceptClauses: [ExceptClause]) throws {
- let result = try evaluateExpression(expression)
-
- // 尝试从结果中提取错误值（元组第二个元素）
- var errorValue: Value = .null
- var hasErrorTuple = false
- if case .tuple(_, let elements) = result, elements.count >= 2 {
- hasErrorTuple = true
- errorValue = elements[1]
- }
-
- // 错误值为空 → 执行 tryBlock（成功路径）
- // null 或空字符串均视为"无错误"
- if case .null = errorValue {
- try executeBlock(tryBlock)
- return
- }
- if case .string(let s) = errorValue, s.isEmpty {
- try executeBlock(tryBlock)
- return
- }
-
- // 错误值非空 → 执行 except 子句
- // 仅当结果为元组形式时才视为错误；否则无 except 可匹配则直接返回
- if hasErrorTuple || !exceptClauses.isEmpty {
- for clause in exceptClauses {
- let exceptEnv = Environment(enclosing: currentEnv)
- exceptEnv.define(name: clause.errorVar, value: errorValue, isMutable: true)
- let previousEnv = currentEnv
- currentEnv = exceptEnv
- do {
- try executeBlock(clause.body)
- } catch let signal as ControlSignal {
- currentEnv = previousEnv
- throw signal
- }
- currentEnv = previousEnv
- return
- }
- }
- }
+ // ADR-032 迁移批 M2：旧 executeTry（(值,错误) 元组错误位模型）已随 try-else
+ // 迁移整体退役——错误传播唯一原语为 Expression.tryExpression（表达式求值路径）。
 
  // MARK: - Defer 栈管理
 
@@ -3488,9 +3446,6 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  try executeStatement(stmt)
  }
  }
- } catch let signal as UnwrapErrSignal {
- // 草稿 A2（批次 1.4，D2）：`^` 解包 err 的控制返回——错误注入返回元组末槽。
- return makeUnwrapErrorReturn(signal.error, returnTypes: fv.returnTypes)
  } catch let signal as ControlSignal {
  if case .returnSignal(let value) = signal {
  // 草稿 A2（批次 1.3，D1）：命名返回元组给结果值补写标签，`.名称` 访问才可命中。

@@ -1,0 +1,4 @@
+; ADR-032 M2：单行 handler 白名单（return/break/continue/pass）——其余语句拒绝。
+main|func() -> ():
+    try r else e: print(e)
+    return

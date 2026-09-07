@@ -1,0 +1,5 @@
+; ADR-032 M2：语句位 try-else——解析为 expressionStmt(tryExpression)，
+; 单行 handler 限 return/break/continue/pass（pass = 显式吞掉错误惯用法，仅语句位）。
+main|func() -> ():
+    try r else e: pass
+    return
