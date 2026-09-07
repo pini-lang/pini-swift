@@ -56,6 +56,17 @@ public final class IREmitter {
         header += "@fmt_bool_false = private constant [7 x i8] c\"false\\00\\00\"\n"
         header += "@fmt_string = private constant [3 x i8] c\"%s\\00\"\n"
         header += "@fmt_newline = private constant [2 x i8] c\"\\0A\\00\"\n"
+        // Array family (G2): opaque handle type + runtime C ABI declares.
+        // Forward references are legal in LLVM IR modules (same contract as
+        // the legacy IRGenerator header), so declares are unconditional.
+        header += "%bk_array = type { ptr }\n"
+        header += "declare ptr @bk_array_create(i32)\n"
+        header += "declare i32 @bk_array_len(ptr)\n"
+        header += "declare ptr @bk_array_get(ptr, i32)\n"
+        header += "declare ptr @bk_array_set(ptr, i32, ptr, i32, i32)\n"
+        header += "declare void @bk_handle_retain(ptr)\n"
+        header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
+        header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
         header += "\n"
 
         bodyIR = ""
@@ -363,7 +374,96 @@ public final class IREmitter {
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
             }
             return IRValue(llvmType: aggregate, ssaName: filled)
+
+        case .arrayLiteral(let elements, let type):
+            return emitArrayLiteral(elements: elements, type: type)
+
+        case .subscriptGet(let container, let index, let type):
+            return emitSubscriptGet(container: container, index: index, type: type)
+
+        case .lenCall(let argument):
+            return emitLen(argument)
         }
+    }
+
+    // MARK: - Array family (G2)
+
+    /// Element boxing ABI against the runtime `_BkTag` values: the tag lets
+    /// the runtime distinguish raw scalars from nested container handles
+    /// (release / COW semantics). Strings mirror the legacy emitter exactly:
+    /// their `i8*` spelling carries the handle tag (the boxed slot owns a
+    /// refcounted box, not the string bytes).
+    private func arrayElementABI(_ type: HIRType) -> (spelling: String, width: Int, tag: Int32) {
+        switch type {
+        case .i32: return ("i32", 4, 0)
+        case .f64: return ("double", 8, 1)
+        case .boolean: return ("i1", 1, 2)
+        case .string: return ("i8*", 8, 4)
+        case .array: return ("%bk_array*", 8, 4)
+        default:
+            fatalError("IREmitter: no array element ABI for '\(type)' (HIRLowerer gates element types)")
+        }
+    }
+
+    /// Alias-point retain (ownership contract 3): a `.load` value node means
+    /// the source variable still holds its share, so copying it into a new
+    /// holder requires one extra share. Temporaries (literals, subscript
+    /// reads, call results) transfer ownership and must NOT retain.
+    private func emitRetainIfAliased(_ valueNode: HIRExpr) {
+        guard case .load(_, let valueType) = valueNode, valueType.llvmSpelling == "%bk_array*" else {
+            return
+        }
+        let slotValue = emitExpr(valueNode)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(slotValue.ssaName) to ptr\n"
+        bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+    }
+
+    private func emitArrayLiteral(elements: [HIRExpr], type: HIRType) -> IRValue {
+        guard case .array(let elementType) = type else {
+            fatalError("IREmitter: arrayLiteral type is not an array (HIRLowerer guarantees)")
+        }
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let createTemp = builder.freshTemp()
+        bodyIR += " \(createTemp) = call ptr @bk_array_create(i32 \(elements.count))\n"
+        // The construction handle is always unique (create starts at shares==1),
+        // but the set calls are threaded anyway so construction and write-back
+        // share one shape (legacy emitter contract).
+        var curRaw = createTemp
+        for (index, element) in elements.enumerated() {
+            let value = emitExpr(element)
+            let boxPtr = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+            bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
+            emitRetainIfAliased(element)
+            let nextRaw = builder.freshTemp()
+            bodyIR += " \(nextRaw) = call ptr @bk_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+            curRaw = nextRaw
+        }
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_array*\n"
+        return IRValue(llvmType: "%bk_array*", ssaName: handle)
+    }
+
+    private func emitSubscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
+        let containerValue = emitExpr(container)
+        let indexValue = emitExpr(index)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(indexValue.ssaName))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: type.llvmSpelling, ptr: boxPtr) + "\n"
+        return IRValue(llvmType: type.llvmSpelling, ssaName: value)
+    }
+
+    private func emitLen(_ argument: HIRExpr) -> IRValue {
+        let value = emitExpr(argument)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        return IRValue(llvmType: "i32", ssaName: count)
     }
 
     /// Widen any scalar payload to the type-erased error word (i64): sign /

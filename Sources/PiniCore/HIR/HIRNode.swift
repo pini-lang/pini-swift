@@ -26,6 +26,10 @@ public indirect enum HIRType: Equatable {
     /// (the checker accepts any err payload), so the error slot is
     /// type-erased to a machine word in the IR ABI (LR-12).
     case result(ok: HIRType)
+    /// `Array<T>` (G2). The array itself is an opaque runtime handle
+    /// (`%bk_array*`, ADR-008); elements are boxed through the `bk_array_*`
+    /// C ABI. Nested arrays recurse via the element type.
+    case array(element: HIRType)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -37,6 +41,8 @@ public indirect enum HIRType: Equatable {
         case .string: return "i8*"
         case .result(let ok):
             return "{ i64, \(ok.llvmSpelling), i64 }"
+        case .array:
+            return "%bk_array*"
         }
     }
 
@@ -46,10 +52,16 @@ public indirect enum HIRType: Equatable {
         return nil
     }
 
+    /// The element type when this is an Array type.
+    public var arrayElementType: HIRType? {
+        if case .array(let element) = self { return element }
+        return nil
+    }
+
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string, .result: return false
+        case .boolean, .string, .result, .array: return false
         }
     }
 }
@@ -105,6 +117,16 @@ public indirect enum HIRExpr: Equatable {
     /// `ok(v)` / `err(e)` Result case construction. The err payload is
     /// widened to a machine word at emission (type-erased ABI, LR-12).
     case resultConstruct(isOk: Bool, payload: HIRExpr, type: HIRType)
+    /// Array literal `[e1, e2, ...]` (G2). `type` is `.array(element:)`; the
+    /// emitter builds the handle via `bk_array_create` + per-element
+    /// `bk_array_set` (boxed through the C ABI).
+    case arrayLiteral(elements: [HIRExpr], type: HIRType)
+    /// Subscript read `container[index]` (G2). Out-of-bounds panics in the
+    /// runtime (`bk_array_get`), matching the interpreter's safe-assert
+    /// channel; the tolerant channel (`.get` -> Optional) is a later grid.
+    case subscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType)
+    /// Intrinsic `len(array)` — runtime `bk_array_len`, i32 result.
+    case lenCall(argument: HIRExpr)
 }
 
 /// Typed statement tree (slice set).

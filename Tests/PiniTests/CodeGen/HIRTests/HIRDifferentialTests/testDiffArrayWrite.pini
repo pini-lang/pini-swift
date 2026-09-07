@@ -1,0 +1,18 @@
+; G2 batch 2 (array write path): subscript store, compound store, COW value
+; semantics (alias via retain + split on write). Interpreter parity.
+main|func() -> ():
+    var w = [1, 2, 3]
+    w[0] = 10
+    print(w[0])
+    w[1] += 5
+    print(w[1])
+    var m = [["a", "b"], ["c", "d"]]
+    m[0][1] = "B"
+    print(m[0][1])
+    print(m[1][0])
+    var n = [7, 8]
+    var alias = n
+    alias[0] = 99
+    print(n[0])
+    print(alias[0])
+    return

@@ -82,6 +82,13 @@ public enum HIRPrinter {
             return "print(\(exprText(argument)))"
         case .resultConstruct(let isOk, let payload, _):
             return "\(isOk ? "ok" : "err")(\(exprText(payload)))"
+        case .arrayLiteral(let elements, _):
+            let items = elements.map(exprText).joined(separator: ", ")
+            return "[\(items)]"
+        case .subscriptGet(let container, let index, _):
+            return "\(exprText(container))[\(exprText(index))]"
+        case .lenCall(let argument):
+            return "len(\(exprText(argument)))"
         }
     }
 

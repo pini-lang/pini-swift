@@ -309,15 +309,19 @@ public enum HIRLowerer {
             }
             declaredType = type
         } else if let initializer = initializer {
-            // No annotation: resolve from the checker.
-            guard let inferred = context.inferType(of: initializer),
-                  let type = HIRType(from: inferred) else {
+            if let inferred = context.inferType(of: initializer),
+               let type = HIRType(from: inferred) {
+                declaredType = type
+            } else if case .arrayLiteral = initializer {
+                // The checker does not infer collection literals; derive the
+                // variable's type from the literal shape (G2).
+                declaredType = try lowerArrayLiteralElements(of: initializer, into: context)
+            } else {
                 throw unsupported(
                     "variable '\(name)' lacks annotation and its initializer type is not a scalar",
                     at: location
                 )
             }
-            declaredType = type
         } else {
             throw unsupported(
                 "variable '\(name)' has neither annotation nor initializer",
@@ -452,6 +456,29 @@ public enum HIRLowerer {
         case .stringLiteral(let value, _):
             return LoweredExpr(node: .stringConst(value: value), type: .string)
 
+        case .arrayLiteral(let elements, let location):
+            return try lowerArrayLiteral(elements, expected: expected, at: location, into: &context)
+
+        case .subscript(let container, let index, let location):
+            // Array subscript read (G2): safe-assert channel — out of bounds
+            // panics at runtime, matching the interpreter. The tolerant
+            // `.get` channel (Optional) is a later grid.
+            let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
+            guard let elementType = loweredContainer.type.arrayElementType else {
+                throw unsupported(
+                    "subscript on non-array type '\(loweredContainer.type)'",
+                    at: location
+                )
+            }
+            let loweredIndex = try lowerExpr(index, expected: .i32, into: &context)
+            guard loweredIndex.type == .i32 else {
+                throw unsupported("array subscript needs an I32 index", at: location)
+            }
+            return LoweredExpr(
+                node: .subscriptGet(container: loweredContainer.node, index: loweredIndex.node, type: elementType),
+                type: elementType
+            )
+
         case .identifier(let name, let location):
             guard let type = context.variableTypes[name] else {
                 throw unsupported("reference to undeclared variable '\(name)'", at: location)
@@ -545,7 +572,27 @@ public enum HIRLowerer {
                 if case .result = loweredArgs[0].type {
                     throw unsupported("printing a Result value is outside the slice", at: location)
                 }
+                if case .array = loweredArgs[0].type {
+                    throw unsupported(
+                        "printing an array value is a later grid (value formatting, G2b)",
+                        at: location
+                    )
+                }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
+            }
+            // Intrinsic len: arrays go through the runtime handle (bk_array_len);
+            // other operand kinds are later grids.
+            if functionName == "len" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("len expects exactly one argument", at: location)
+                }
+                guard case .array = loweredArgs[0].type else {
+                    throw unsupported(
+                        "len on '\(loweredArgs[0].type)' is outside this grid (arrays only)",
+                        at: location
+                    )
+                }
+                return LoweredExpr(node: .lenCall(argument: loweredArgs[0].node), type: .i32)
             }
             // Result case construction (ok/err): requires a Result-typed
             // context (return position, Result-typed assignment) so the
@@ -605,6 +652,68 @@ public enum HIRLowerer {
                 at: expressionLocation(expression)
             )
         }
+    }
+
+    // MARK: - Array literals (G2)
+
+    /// Type-only pass over an array literal initializer (no annotation on the
+    /// variable): derives `.array(element:)` from the lowered element types.
+    private static func lowerArrayLiteralElements(
+        of initializer: Expression,
+        into context: FunctionContext
+    ) throws -> HIRType {
+        guard case .arrayLiteral(let elements, let location) = initializer else {
+            throw unsupported(
+                "initializer is not an array literal",
+                at: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        var contextCopy = context
+        let lowered = try lowerArrayLiteral(elements, expected: nil, at: location, into: &contextCopy)
+        return lowered.type
+    }
+
+    /// Lower an array literal. The checker does not infer collection literal
+    /// types, so the element type is derived from the lowered elements
+    /// (homogeneity required — same contract as the legacy codegen fallback).
+    /// An expected `.array(element:)` context (annotation / nested literal)
+    /// drives empty-literal and integer-literal adoption.
+    private static func lowerArrayLiteral(
+        _ elements: [Expression],
+        expected: HIRType?,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        let elementExpected = expected?.arrayElementType
+        guard !elements.isEmpty || elementExpected != nil else {
+            throw unsupported(
+                "empty array literal needs an element type (annotate the variable)",
+                at: location
+            )
+        }
+        var loweredElements: [HIRExpr] = []
+        var elementType: HIRType? = elementExpected
+        for element in elements {
+            let lowered = try lowerExpr(element, expected: elementType, into: &context)
+            if let known = elementType {
+                guard lowered.type == known else {
+                    throw unsupported(
+                        "heterogeneous array literal (\(lowered.type) vs \(known))",
+                        at: location
+                    )
+                }
+            } else {
+                elementType = lowered.type
+            }
+            loweredElements.append(lowered.node)
+        }
+        guard let resolvedElement = elementType else {
+            throw unsupported("array literal has no resolvable element type", at: location)
+        }
+        return LoweredExpr(
+            node: .arrayLiteral(elements: loweredElements, type: .array(element: resolvedElement)),
+            type: .array(element: resolvedElement)
+        )
     }
 
     // MARK: - Type conformance
@@ -675,9 +784,17 @@ extension HIRType {
         case .generic(let name, let params, _):
             // `^T` surface form (Result type sugar, ADR-032): pins the ok
             // payload; the error slot is type-erased in the IR ABI (LR-12).
-            guard name == "Result", let first = params.first,
-                  let ok = HIRType(from: first) else { return nil }
-            self = .result(ok: ok)
+            if name == "Result", let first = params.first,
+               let ok = HIRType(from: first) {
+                self = .result(ok: ok)
+                return
+            }
+            // `Array<T>` (G2): nested generics recurse through the element.
+            if name == "Array", params.count == 1, let element = HIRType(from: params[0]) {
+                self = .array(element: element)
+                return
+            }
+            return nil
         default:
             return nil
         }
