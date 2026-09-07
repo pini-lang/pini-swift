@@ -222,15 +222,23 @@ extension IRGenerator {
 
  // MARK: - P5-5 B4：枚举构造限定名解析
 
- /// 未限定构造 `圆(...)` 的反查：返回唯一所属枚举的「限定键」；多父歧义时抛不支持
- /// （迫使改用 `Parent.圆`）；无登记则返 nil（非枚举构造，回退到函数调用路径）。
- func enumCaseQualifiedKey(forUnqualified caseName: String) throws -> String? {
- let keys = enumCaseUnqualified[caseName] ?? []
- if keys.isEmpty { return nil }
- if keys.count > 1 {
- throw IRGenError.unsupportedFeature(feature:
- "ambiguous unqualified enum construction \(caseName): qualify as Parent.\(caseName)", sl())
- }
- return keys[0]
- }
+    /// 未限定构造 `圆(...)` 的反查：返回唯一所属枚举的「限定键」；多父歧义时
+    /// 先查 checker 静态决议表（ADR-026 D1：期望类型命中位记录「调用点位置 → 父枚举」，
+    /// LLVM 管线先 check 后 IRGen，registry 生命周期成立）——命中即返回该父枚举的
+    /// 限定键，对齐解释器通道；未命中维持既有报错（fail-open，行为不劣化）。
+    /// 位置键与 checker 侧对齐：call 形态传外层 call 的 loc，无实参形态传表达式自身 loc。
+    /// 无登记则返 nil（非枚举构造，回退到函数调用路径）。
+    func enumCaseQualifiedKey(forUnqualified caseName: String, at loc: SourceLocation) throws -> String? {
+        let keys = enumCaseUnqualified[caseName] ?? []
+        if keys.isEmpty { return nil }
+        if keys.count > 1 {
+            if let parent = BareCaseResolutionRegistry.parent(at: loc),
+               let hit = keys.first(where: { $0 == "\(mangle(parent)).\(caseName)" }) {
+                return hit
+            }
+            throw IRGenError.unsupportedFeature(feature:
+                "ambiguous unqualified enum construction \(caseName): qualify as Parent.\(caseName)", sl())
+        }
+        return keys[0]
+    }
 }

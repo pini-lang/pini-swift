@@ -29,7 +29,7 @@ extension IRGenerator {
  case .arrayLiteral(let elements, _):
  return try generateArrayLiteral(elements)
 
- case .identifier(let name, _):
+ case .identifier(let name, let identLoc):
  if let entry = symbolTable[name] {
  let tempName = builder.freshTemp()
  emitLine(builder.fmtLoad(name: tempName, type: entry.type, ptr: entry.slot))
@@ -44,7 +44,7 @@ extension IRGenerator {
  }
  // 枚举 case 构造器（无参数）：分配 tagged union 并 store tag
  // （P5-5 B4：经反查表解析未限定名；跨枚举同名且歧义时回退到下方未定义标识符报错）
- if let qKey = try enumCaseQualifiedKey(forUnqualified: name),
+ if let qKey = try enumCaseQualifiedKey(forUnqualified: name, at: identLoc),
  let (enumName, tag, _) = enumCaseTags[qKey] {
  let typeName = "%enum.\(enumName)"
  let ptr = builder.freshTemp()
@@ -63,8 +63,8 @@ extension IRGenerator {
  case .unary(let op, let operand, _):
  return try generateUnary(op: op, operand: operand)
 
- case .call(let callee, let arguments, _):
- return try generateCall(callee: callee, arguments: arguments)
+    case .call(let callee, let arguments, let loc):
+        return try generateCall(callee: callee, arguments: arguments, at: loc)
 
  case .join(let inner, _):
  return try generateExpression(inner)
@@ -126,11 +126,11 @@ extension IRGenerator {
  "LLVM 后端暂不支持 FFI/unsafe 子系统（`unsafe`/`&`）；请改用解释器 `pini run`",
  sl())
 
- case .dotCaseRef(let name, _):
+ case .dotCaseRef(let name, let dotLoc):
  // 点号用例构造（无实参形态，proposal-dot-case-construction）：经反查表解析
  // 未限定名（与裸名标识符同轨）；带关联值用例的未应用形态不构造（显式报错）；
- // 歧义/未知名走 enumCaseQualifiedKey 的既有报错。
- if let qKey = try enumCaseQualifiedKey(forUnqualified: name),
+ // 歧义名经 enumCaseQualifiedKey 查 checker 静态决议表，未命中走既有报错。
+ if let qKey = try enumCaseQualifiedKey(forUnqualified: name, at: dotLoc),
  let (enumName, tag, params) = enumCaseTags[qKey] {
  if !params.isEmpty {
  throw IRGenError.unsupportedExpression(kind:
@@ -560,7 +560,7 @@ extension IRGenerator {
  }
  }
 
- func generateCall(callee: Expression, arguments: [CallArgument]) throws -> IRValue {
+ func generateCall(callee: Expression, arguments: [CallArgument], at callLoc: SourceLocation) throws -> IRValue {
  // 阶段 B：直接调用匿名函数字面量（立即调用闭包）。
  if case .funcLiteral(let decl, let loc) = callee {
  let cv = try generateFuncLiteral(decl: decl, location: loc)
@@ -631,11 +631,11 @@ extension IRGenerator {
  return IRValue(llvmType: retType, ssaName: retTemp)
  }
 
- // 点号用例构造（成员意图，proposal-dot-case-construction）：LLVM 端无期望
- // 类型线程——唯一名按未限定键解析构造（与裸名同轨）；歧义名经
- // enumCaseQualifiedKey 的既有歧义报错（D-3 裁决：报错 + 立案，解释器通道完整可用）。
+ // 点号用例构造（成员意图，proposal-dot-case-construction）：唯一名按未限定键
+ // 解析构造（与裸名同轨）；歧义名经 enumCaseQualifiedKey 查 checker 静态决议表
+ // （期望类型线程的静态决议交接，对齐解释器通道），未命中维持既有报错。
  if case .dotCaseRef(let caseName, _) = callee {
- if let qKey = try enumCaseQualifiedKey(forUnqualified: caseName),
+ if let qKey = try enumCaseQualifiedKey(forUnqualified: caseName, at: callLoc),
  let (enumName, tag, params) = enumCaseTags[qKey] {
  return try generateEnumCaseConstruction(enumName: enumName, tag: tag, params: params, arguments: arguments)
  }
@@ -714,8 +714,9 @@ extension IRGenerator {
  return try generateObjectConstruction(objectDecl: od)
  }
 
- // 枚举 case 构造（含关联值）；按「限定键」解析未限定名（P5-5 B4）
- if let qKey = try enumCaseQualifiedKey(forUnqualified: funcName),
+ // 枚举 case 构造（含关联值）；按「限定键」解析未限定名（P5-5 B4）；
+ // 歧义名查 checker 静态决议表（ADR-026 D1 静态决议交接）
+ if let qKey = try enumCaseQualifiedKey(forUnqualified: funcName, at: callLoc),
  let (enumName, tag, params) = enumCaseTags[qKey], !params.isEmpty {
  return try generateEnumCaseConstruction(enumName: enumName, tag: tag, params: params, arguments: arguments)
  }

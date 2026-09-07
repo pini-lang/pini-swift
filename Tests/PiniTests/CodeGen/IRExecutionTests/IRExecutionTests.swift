@@ -25,11 +25,15 @@ final class IRExecutionTests: XCTestCase {
         return nil
     }
 
-    private func runViaLLI(_ source: String, fileName: String = "test.pini", dylib: String? = nil) throws -> String {
+    private func runViaLLI(_ source: String, fileName: String = "test.pini", dylib: String? = nil, typeCheck: Bool = false) throws -> String {
         let lexer = Lexer(source: source, fileName: fileName)
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: fileName)
         let module = try parser.parseModule()
+
+        // ADR-026 D1：checker 先行变体（对齐 CLI 顺序）——期望类型命中位写入
+        // BareCaseResolutionRegistry，IRGen 对歧义 case 构造查表消歧。
+        if typeCheck { try TypeChecker().check(module: module) }
 
         let generator = IRGenerator()
         let ir = try generator.generate(module: module)
@@ -507,6 +511,50 @@ final class IRExecutionTests: XCTestCase {
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
                       "match 绑定应提取 payload=42")
+    }
+
+    // MARK: - ADR-026 D1: 歧义 case 构造的期望类型静态决议（LLVM 通道）
+
+    /// 真实 clang/lli：跨枚举同名 case 的点号构造 + 期望类型 → checker 静态决议表
+    /// 消歧（issue-llvm-dotcase-expected-type 验收判据①，对齐解释器通道）。
+    func testDotCaseAmbiguousExpectedTypeViaLLI() throws {
+        try XCTSkipUnless(lliAvailable, "lli not available")
+        let source = try loadPiniFixture("testDotCaseAmbiguousExpectedTypeViaLLI", filePath: #filePath)
+        let output = try runViaLLI(source, typeCheck: true)
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
+                      "歧义点号构造应经期望类型解析为 Shape.Circle 并打印 42")
+    }
+
+    /// 裸名形态：checker 记录外层 call 位置，IRGen generateCall 查表命中同一键。
+    func testBareCaseAmbiguousExpectedTypeViaLLI() throws {
+        try XCTSkipUnless(lliAvailable, "lli not available")
+        let source = try loadPiniFixture("testBareCaseAmbiguousExpectedTypeViaLLI", filePath: #filePath)
+        let output = try runViaLLI(source, typeCheck: true)
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
+                      "歧义裸名构造应经期望类型解析为 Shape.Circle 并打印 42")
+    }
+
+    /// fail-open 守卫：无 checker（registry 空）时歧义名维持 IRGen 层拒绝，
+    /// 不静默按错误父枚举构造。
+    func testAmbiguousCaseWithoutResolutionRejected() throws {
+        let source = """
+        [Shape]
+        Circle(I32,)
+        [Color]
+        Circle(I32,)
+
+        main|func() -> ():
+            let s = .Circle(42,)
+            return
+        """
+        let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
+        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
+        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
+            guard case IRGenError.unsupportedFeature = error else {
+                XCTFail("应为 unsupportedFeature，实际: \(error)")
+                return
+            }
+        }
     }
 
     // MARK: - 批次 1：元组索引 / 解构 / 命名元组 / 元组打印（LLVM 执行）
