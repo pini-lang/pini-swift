@@ -251,6 +251,23 @@ try 表达式 else 错误绑定名:
 **`(值, 错误)` 元组错误位约定退役**（D3=B，ADR-032）：`try` 不再接受任意二元元组，
 不存在「错误位 = 第 2 元素」约定；多返回值与错误传播彻底分离。
 
+**函数返回 `Result` 的标注写法**（迁移批实测反录，工单收口
+`docs/issue-caret-type-sugar-tuple-return-2026-09-07.md`）：返回位文法**只接受元组**
+（§A.2.3 `func-signature` 返回元组产生式），因此函数返回 `Result` 的官方写法是把
+`^T` 类型糖（`^T` ≡ `Result<T>`，§A.2.6 type-annotation）嵌为返回元组字段：
+
+```
+读取文件|func(路径: String,) -> (^String,):
+    return err("模拟错误")
+```
+
+- `-> (^T,)` 中 `^T` 展开呈现为 `Result<T>`：单字段返回元组 ≡ 返回一个 `Result` 值；
+  调用方拿到该字段后以 try-else / `^e` 消费。
+- `-> Result(T,)` 直写形态**不合法**：返回位产生式仅接受返回元组，非元组返回标注
+  在解析层拒绝。不做语言面增强；如需重新引入直写形态，走 §1.3 提议流程另行立项。
+- 带形参的裸声明不带返回标注无法消歧（§A.4 规则 3.6），返回 `Result` 的函数**必须**
+  显式写 `-> (^T,)`。规范样例与 `examples/try.pini` 一致。
+
 **与异步错误的关系**：`await`/`wait` join 得到的 `Future` 求值为 `Result`，
 其 `CancelError` 落在 `err` 用例中，**经 try-else 正常捕获、不穿透**（与 §2.4.1
 异步行一致）；`CancelError` 不绕过 errors-as-data 模型。
