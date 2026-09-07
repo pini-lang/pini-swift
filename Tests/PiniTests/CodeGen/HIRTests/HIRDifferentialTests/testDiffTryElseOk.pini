@@ -1,0 +1,11 @@
+; try-else expression position: ok payload unwrapped into the variable;
+; ok(21) constructs with an exact I32 payload slot.
+成功|func() -> (^I32,):
+    return ok(21)
+
+main|func() -> ():
+    let v = try 成功() else e:
+        return
+    print(v)
+    print(v + 1)
+    return

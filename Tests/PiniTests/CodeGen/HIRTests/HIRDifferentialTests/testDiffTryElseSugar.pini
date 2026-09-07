@@ -1,0 +1,11 @@
+; ^e sugar (try e else err: return err), ok path only: the err path is
+; gated in the LLVM pipeline because the interpreter returns the RAW error
+; payload from `return err` (registered semantic hole — raw-err-return);
+; differential parity therefore covers the well-defined ok path.
+成功|func() -> (^I32,):
+    return ok(21)
+
+main|func() -> ():
+    let v = ^成功()
+    print(v)
+    return

@@ -1,16 +1,18 @@
 # LLVM 后端能力清单（M2 批产出）
 
-> 状态：**数据快照（2026-09-07）**，由 `tools/capability-sweep.sh` 实测生成，
-> 是 LLVM 重写计划（`docs/issue-llvm-rewrite-plan-2026-09-07.md`）M3 决策门的输入。
-> M5 每落一格重跑一次 sweep，刷新本表。
+> 状态：**数据快照（2026-09-08，M5 G1 后刷新）**，由 `tools/capability-sweep.sh`
+> 实测生成，是 LLVM 重写计划（`docs/issue-llvm-rewrite-plan-2026-09-07.md`）
+> M3 决策门的输入。M5 每落一格重跑一次 sweep，刷新本表。
+> **M5 起新增 `hir-emit` 通道**（`PINI_HIR_PIPELINE=1`，迁移期选择点）：
+> 记录新管线（HIRLowerer→IREmitter）的 emit 通过率；M6 翻转后该通道转正为唯一 emit。
 
 ## 方法
 
 - 语料：`examples/` 全部 `.pini` 文件（剔除 selfhost 嵌套仓），共 **59 个**。
-- 通道：对每文件依次实测 `pini emit`（IR 生成）→ `pini run-llvm`（JIT 执行，仅对 emit 通过者）
-  → `pini run`（解释器基线）。
+- 通道：对每文件依次实测 `pini emit`（旧管线 IR 生成）→ `pini run-llvm`（JIT 执行，仅对 emit 通过者）
+  → `PINI_HIR_PIPELINE=1 pini emit`（新管线）→ `pini run`（解释器基线）。
 - 工具：`tools/capability-sweep.sh`（可复跑），逐行结果
-  `tools/capability-sweep.tsv`（文件 / emit / llvm / interp / 失败原因首行）。
+  `tools/capability-sweep.tsv`（文件 / emit / llvm / hir-emit / interp / 失败原因首行）。
 - 二进制：`/tmp/pini-build` scratch 的 debug `pini`（与全量测试同源）。
 
 ## 勘误（对计划工单 M2 节）

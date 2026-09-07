@@ -15,12 +15,17 @@ import Foundation
 /// current set is rejected by the single capability gate in `HIRLowerer`.
 
 /// Resolved scalar types carried by HIR nodes (slice set).
-public enum HIRType: Equatable {
+public indirect enum HIRType: Equatable {
     case i32
     case i64
     case f64
     case boolean
     case string
+    /// `Result<T, E>` (ADR-032). Only the ok payload type is statically
+    /// carried: Pini's surface form `^T` pins T but leaves E unconstrained
+    /// (the checker accepts any err payload), so the error slot is
+    /// type-erased to a machine word in the IR ABI (LR-12).
+    case result(ok: HIRType)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -30,13 +35,21 @@ public enum HIRType: Equatable {
         case .f64: return "double"
         case .boolean: return "i1"
         case .string: return "i8*"
+        case .result(let ok):
+            return "{ i64, \(ok.llvmSpelling), i64 }"
         }
+    }
+
+    /// The ok payload type when this is a Result type.
+    public var resultOkType: HIRType? {
+        if case .result(let ok) = self { return ok }
+        return nil
     }
 
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string: return false
+        case .boolean, .string, .result: return false
         }
     }
 }
@@ -89,6 +102,9 @@ public indirect enum HIRExpr: Equatable {
     case call(function: String, arguments: [HIRExpr], returnType: HIRType?)
     /// Intrinsic `print(expr)` — one scalar argument, void result.
     case printCall(argument: HIRExpr)
+    /// `ok(v)` / `err(e)` Result case construction. The err payload is
+    /// widened to a machine word at emission (type-erased ABI, LR-12).
+    case resultConstruct(isOk: Bool, payload: HIRExpr, type: HIRType)
 }
 
 /// Typed statement tree (slice set).
@@ -103,4 +119,10 @@ public indirect enum HIRStmt: Equatable {
     /// Slice set: single-value return; nil for void functions.
     case returnStmt(value: HIRExpr?)
     case exprStmt(HIRExpr)
+    /// `try operand else errorVar: handler` (ADR-032). The operand's type is
+    /// `result(ok:)`; the error path binds the type-erased error word to
+    /// `errorVar` and runs `handler`. `okTarget` is set for expression
+    /// position (the ok payload is stored into that variable); nil for
+    /// statement position.
+    case tryStmt(operand: HIRExpr, errorVar: String, handler: [HIRStmt], okTarget: String?, type: HIRType)
 }

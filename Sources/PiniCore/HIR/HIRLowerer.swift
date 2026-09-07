@@ -138,17 +138,20 @@ public enum HIRLowerer {
     ) throws -> [HIRStmt] {
         var statements: [HIRStmt] = []
         for statement in block.statements {
-            statements.append(try lowerStatement(statement, into: &context))
+            statements.append(contentsOf: try lowerStatement(statement, into: &context))
         }
         return statements
     }
 
     // MARK: - Statements
 
+    /// Returns the lowered statements for one source statement. Most cases
+    /// produce exactly one; a try-else variable initializer produces the
+    /// allocation plus the try statement.
     private static func lowerStatement(
         _ statement: Statement,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> [HIRStmt] {
         switch statement {
         case .varDecl(let name, let annotation, let initializer, let isMutable, let location):
             return try lowerVarDecl(
@@ -168,10 +171,25 @@ public enum HIRLowerer {
             }
             let lowered = try lowerExpr(value, expected: varType, into: &context)
             try requireAssignable(lowered.type, to: varType, at: location)
-            return .storeVar(name: name, type: varType, value: lowered.node)
+            return [.storeVar(name: name, type: varType, value: lowered.node)]
 
         case .returnStatement(let value, let location):
             if let value = value {
+                // A bare error binding (`return err` in a handler, the `^e`
+                // sugar shape): the interpreter flows the RAW error payload
+                // out (a type hole — issue-try-else-raw-err-return-2026-09-08).
+                // Void functions drop the value (interpreter-faithful: silent
+                // return); non-void returns are gated — the type-erased err
+                // word cannot flow out as a typed payload without guessing.
+                if case .identifier(let name, _) = value, context.errorBindings.contains(name) {
+                    if context.returnType == nil {
+                        return [.returnStmt(value: nil)]
+                    }
+                    throw unsupported(
+                        "returning a bare error binding from '\(context.functionName)' is gated this grid: the interpreter returns the raw error payload (unboxed), which is a registered semantic hole",
+                        at: location
+                    )
+                }
                 guard let returnType = context.returnType else {
                     throw unsupported(
                         "return with a value from void function '\(context.functionName)'",
@@ -180,7 +198,7 @@ public enum HIRLowerer {
                 }
                 let lowered = try lowerExpr(value, expected: returnType, into: &context)
                 try requireAssignable(lowered.type, to: returnType, at: location)
-                return .returnStmt(value: lowered.node)
+                return [.returnStmt(value: lowered.node)]
             }
             guard context.returnType == nil else {
                 throw unsupported(
@@ -188,7 +206,7 @@ public enum HIRLowerer {
                     at: location
                 )
             }
-            return .returnStmt(value: nil)
+            return [.returnStmt(value: nil)]
 
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, _, _):
             let cond = try lowerExpr(condition, expected: .boolean, into: &context)
@@ -209,7 +227,7 @@ public enum HIRLowerer {
                 let branchBody = try lowerBlock(branch.block, into: &context)
                 chain = [.ifStmt(condition: branchCond.node, thenBody: branchBody, elseBody: chain)]
             }
-            return .ifStmt(condition: cond.node, thenBody: thenBody, elseBody: chain)
+            return [.ifStmt(condition: cond.node, thenBody: thenBody, elseBody: chain)]
 
         case .whileStatement(let condition, let body, _, _, _):
             let cond = try lowerExpr(condition, expected: .boolean, into: &context)
@@ -217,15 +235,22 @@ public enum HIRLowerer {
                 throw unsupported("while condition is not Bool", at: conditionLocation(condition))
             }
             let bodyStmts = try lowerBlock(body, into: &context)
-            return .whileStmt(condition: cond.node, body: bodyStmts)
+            return [.whileStmt(condition: cond.node, body: bodyStmts)]
 
-        case .expressionStmt(let expr, _):
-            return .exprStmt(try lowerExpr(expr, expected: nil, into: &context).node)
+        case .expressionStmt(let expr, let location):
+            // Statement-position try-else: ok value discarded (ADR-032).
+            if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
+                return [try lowerTry(
+                    operand: operand, errorVar: errorVar, handler: handler,
+                    okTarget: nil, at: location, into: &context
+                )]
+            }
+            return [.exprStmt(try lowerExpr(expr, expected: nil, into: &context).node)]
 
         case .passStatement:
             // pass is a pure no-op; lower to a side-effect-free constant
             // expression statement so HIRStmt stays total without a new case.
-            return .exprStmt(.intConst(value: 0, type: .i32))
+            return [.exprStmt(.intConst(value: 0, type: .i32))]
 
         default:
             throw unsupported(
@@ -242,7 +267,38 @@ public enum HIRLowerer {
         isMutable: Bool,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> [HIRStmt] {
+        // `let x = try f() else ...`: the try unwraps the ok payload into x,
+        // so x's type is the Result's payload type, not a Result itself.
+        if case .tryExpression(let operand, let errorVar, let handler, _) = initializer {
+            if let annotation = annotation {
+                guard let declared = HIRType(from: annotation), !isResultAnnotation(annotation) else {
+                    throw unsupported(
+                        "variable '\(name)': a try-else initializer unwraps the payload — annotate with the payload type, not a Result type",
+                        at: location
+                    )
+                }
+                let operandType = try resultType(of: operand, into: context)
+                guard let okType = operandType.resultOkType, declared == okType else {
+                    throw unsupported(
+                        "variable '\(name)': annotation does not match the try operand's ok payload type",
+                        at: location
+                    )
+                }
+            }
+            let operandType = try resultType(of: operand, into: context)
+            guard let okType = operandType.resultOkType else {
+                throw unsupported("try operand is not a Result", at: location)
+            }
+            let alloc = HIRStmt.allocVar(name: name, type: okType, mutable: isMutable, initializer: nil)
+            let tryStmt = try lowerTry(
+                operand: operand, errorVar: errorVar, handler: handler,
+                okTarget: name, at: location, into: &context
+            )
+            context.variableTypes[name] = okType
+            return [alloc, tryStmt]
+        }
+
         let declaredType: HIRType?
         if let annotation = annotation {
             guard let type = HIRType(from: annotation) else {
@@ -278,7 +334,99 @@ public enum HIRLowerer {
             loweredInit = nil
         }
         context.variableTypes[name] = varType
-        return .allocVar(name: name, type: varType, mutable: isMutable, initializer: loweredInit)
+        return [.allocVar(name: name, type: varType, mutable: isMutable, initializer: loweredInit)]
+    }
+
+    // MARK: - Try-else (ADR-032, G1)
+
+    /// The static Result type of a try operand: annotation-derived when
+    /// resolvable, otherwise via the checker's inference (Result -> params[0]).
+    private static func resultType(of operand: Expression, into context: FunctionContext) throws -> HIRType {
+        if let inferred = context.inferType(of: operand), let type = HIRType(from: inferred) {
+            return type
+        }
+        throw unsupported(
+            "try operand type is not statically a Result (annotate the operand's source with ^T)",
+            at: expressionLocation(operand)
+        )
+    }
+
+    private static func isResultAnnotation(_ annotation: TypeAnnotation) -> Bool {
+        if case .generic(let name, _, _) = annotation { return name == "Result" }
+        return false
+    }
+
+    /// Lower `try operand else errorVar: handler`.
+    ///
+    /// Error binding: the ABI type-erases the err slot to a machine word
+    /// (LR-12 — Pini's `^T` surface leaves E unconstrained, so no static err
+    /// type exists), so the bound name carries type i64. The binding scopes
+    /// to the handler only; shadowing an existing variable is rejected this
+    /// grid. Handler statements are restricted to return/pass (break/continue
+    /// need the labeled-control-flow grid); expression position (okTarget)
+    /// additionally requires the handler to end in return.
+    private static func lowerTry(
+        operand: Expression,
+        errorVar: String,
+        handler: Block,
+        okTarget: String?,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        let loweredOperand = try lowerExpr(operand, expected: nil, into: &context)
+        guard case .result(let okType) = loweredOperand.type else {
+            throw unsupported("try operand is not a Result", at: expressionLocation(operand))
+        }
+        guard !handler.statements.isEmpty else {
+            throw unsupported("try-else handler is empty", at: location)
+        }
+        guard context.variableTypes[errorVar] == nil else {
+            throw unsupported(
+                "try-else error binding '\(errorVar)' shadows an existing variable",
+                at: location
+            )
+        }
+        let previousType = context.variableTypes[errorVar]
+        context.variableTypes[errorVar] = .i64
+        context.errorBindings.insert(errorVar)
+        defer {
+            if let previousType = previousType {
+                context.variableTypes[errorVar] = previousType
+            } else {
+                context.variableTypes[errorVar] = nil
+            }
+            context.errorBindings.remove(errorVar)
+        }
+
+        var handlerStmts: [HIRStmt] = []
+        for statement in handler.statements {
+            handlerStmts.append(contentsOf: try lowerStatement(statement, into: &context))
+        }
+        // Block form must terminate with a control-flow statement (spec
+        // "try-else error propagation" note); expression position (okTarget)
+        // additionally forbids the pass terminator (no value).
+        if let last = handler.statements.last {
+            switch last {
+            case .returnStatement:
+                break
+            case .passStatement:
+                guard okTarget == nil else {
+                    throw unsupported(
+                        "expression-position try-else handler cannot terminate with pass (no value)",
+                        at: location
+                    )
+                }
+            default:
+                throw unsupported(
+                    "try-else handler block must terminate with a control-flow statement (return this grid)",
+                    at: location
+                )
+            }
+        }
+        return .tryStmt(
+            operand: loweredOperand.node, errorVar: errorVar,
+            handler: handlerStmts, okTarget: okTarget, type: .result(ok: okType)
+        )
     }
 
     // MARK: - Expressions
@@ -388,7 +536,38 @@ public enum HIRLowerer {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("print expects exactly one argument", at: location)
                 }
+                if case .load(let name, _) = loweredArgs[0].node, context.errorBindings.contains(name) {
+                    throw unsupported(
+                        "printing an error binding is not supported by the LLVM Result ABI this grid (the err slot is type-erased)",
+                        at: location
+                    )
+                }
+                if case .result = loweredArgs[0].type {
+                    throw unsupported("printing a Result value is outside the slice", at: location)
+                }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
+            }
+            // Result case construction (ok/err): requires a Result-typed
+            // context (return position, Result-typed assignment) so the
+            // static Result type is known — Pini's `^T` surface leaves the
+            // error type unconstrained, so `err(e)` adopts the context.
+            if functionName == "ok" || functionName == "err" {
+                guard let contextType = expected, case .result(let okType) = contextType else {
+                    throw unsupported(
+                        "'\(functionName)' construction requires a Result-typed context this grid",
+                        at: location
+                    )
+                }
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("'\(functionName)' expects exactly one argument", at: location)
+                }
+                if functionName == "ok" {
+                    try requireAssignable(loweredArgs[0].type, to: okType, at: location)
+                }
+                return LoweredExpr(
+                    node: .resultConstruct(isOk: functionName == "ok", payload: loweredArgs[0].node, type: contextType),
+                    type: contextType
+                )
             }
             guard let signature = context.moduleSignatures[functionName] else {
                 throw unsupported(
@@ -412,6 +591,12 @@ public enum HIRLowerer {
                     returnType: signature.returnType
                 ),
                 type: signature.returnType ?? .i32
+            )
+
+        case .tryExpression(_, _, _, let location):
+            throw unsupported(
+                "try-else is only supported as a statement or a variable initializer this grid",
+                at: location
             )
 
         default:
@@ -487,6 +672,12 @@ extension HIRType {
             case "String": self = .string
             default: return nil
             }
+        case .generic(let name, let params, _):
+            // `^T` surface form (Result type sugar, ADR-032): pins the ok
+            // payload; the error slot is type-erased in the IR ABI (LR-12).
+            guard name == "Result", let first = params.first,
+                  let ok = HIRType(from: first) else { return nil }
+            self = .result(ok: ok)
         default:
             return nil
         }
@@ -588,12 +779,15 @@ struct HIRLowererSignatureInfo {
 
 /// Per-function lowering context: variable slot types, the enclosing
 /// function's return type, and the module-wide signatures from the pre-pass.
+/// `errorBindings` tracks names currently bound to a try-else error word so
+/// `return err` can re-box and print can gate on the type-erased ABI.
 private struct FunctionContext {
     let functionName: String
     let returnType: HIRType?
     let typeInference: TypeInference?
     var variableTypes: [String: HIRType]
     let moduleSignatures: [String: HIRLowererSignatureInfo]
+    var errorBindings: Set<String> = []
 
     init(
         functionName: String,

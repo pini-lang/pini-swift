@@ -42,6 +42,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 | LR-7 | float 比较补齐形态 | **A 全量六分支**（用户裁决，2026-09-08）：解释器补 == != < <= > >= 六个 `(.float, .float, op)` 分支照 int 形态；混合 int/float 比较维持 checker 拒绝（E4-001），非解释器缺口 |
 | LR-8 | print(F64) 展示语义 | **A 最短往返**（用户裁决，2026-09-08；A/B/%g 三方案调研后定）：spec 钉四条形态规则（§2.8 值展示语义），两后端委托宿主标准库 `String(Double)`；LLVM 侧经运行时 `bk_double_to_string`（只新增符号，bk_* 现有签名零改动）；%g 方案否决（指数阈值第三形态，工程量同 A 且语义不净） |
 | LR-10 | 旧后端 i64 print sext 处置 | **wontfix**（用户裁决，2026-09-08）：旧后端冻结 + M6 整体删除自然消亡，新管线已 trunc 修正；工单关闭，M5 期间出现硬需求再翻案 |
+| LR-11 | 并发语料（8 文件）在 M5 的处置 | **A 除名立案**（用户裁决「按建议来」，2026-09-08）：并发语料真身是 `=>`/wait/await/Future 真并发执行模型，非「注册两个内建」；立案 `docs/issue-llvm-concurrency-runtime-2026-09-08.md`，M6 后独立里程碑启动；M5 格序顺移（数组方法升 G2） |
+| LR-12 | Result 的 IR ABI（G1） | **A 定长 tagged 三字聚合**（用户裁决「按建议来」，2026-09-08）：`{ i64 tag, <T> ok, i64 err }`；Pini 的 `^T` 书写面只钉 T 不钉 E（checker 实测 `err(42)` 放行）→ err 槽类型擦除为机器字（构造位加宽、try 位绑字）；ok/err 构造与解包全内联 IR，运行时零改动 |
 
 ## ADR-031 连带修订（随 M0 落地）
 
@@ -154,3 +156,36 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     Closed（LR-10 wontfix）。证据 E-140 / E-141。
   - 全量回归零回归后合 main。下一步 M5 分格扩张批（G1 try-else 起）待点名，
     开工前先出细化步骤。
+- **M5 分格扩张批进行中（2026-09-08，细化步骤经用户批准；LR-11=除名立案 /
+  LR-12=Result 内联 tagged ABI；每格一次提交 + 一次 sweep 刷新；两波合 main：
+  波① G1–G3，波② G4–G7）**：
+  - **G1 try-else（本提交）**：LR-12 Result ABI —— `HIRType.result(ok:)`
+    （`^T` 注解映射；err 槽类型擦除为机器字）、`HIRExpr.resultConstruct`
+    （ok/err 构造，err 载荷加宽 sext/zext/ptrtoint/bitcast→i64）、
+    `HIRStmt.tryStmt`（tag 提取 + condbr 双臂；err 臂绑定类型擦除错误字、
+    ok 臂按 T 精确载荷）；表达式位 try-else 降为 allocVar + tryStmt
+    （okTarget）；`^e` 糖 ok 路径同型。差分 +3 fixture（22/22）。
+    **探针发现 2 件**：①`^T` checker 对 E 不设约束（`err(42)` 放行）→
+    err 槽只能类型擦除（LR-12 依据）；②handler 内 `return err` 解释器流出
+    **裸错误载荷**（非 re-box，返回位类型洞）→ LLVM 管线非 void 位门控 +
+    立案 `issue-try-else-raw-err-return-2026-09-08`。CLI 加迁移期选择点
+    `PINI_HIR_PIPELINE=1`（M6 翻转时与旧管线一并消亡）；sweep 加 hir-emit
+    通道（HIR 6/59：M4 切片 + try.pini）。并发除名立案
+    `issue-llvm-concurrency-runtime-2026-09-08`（LR-11）。
+  - **G2 勘测触发止损（2026-09-08，停待裁决）**：能力矩阵的格粒度按「旧后端
+    缺口 delta」估格（G2 = get/slice 2 文件），但新管线从 M4 最小切片起步，
+    每格语料需要的是**整个特性族的新建**而非 delta——实测：
+    - array-basic（矩阵记「仅 get 缺口」）对新管线缺：数组字面量、下标读写、
+      len、嵌套数组、`.get`→Optional、match some/none、break——**整个数组族
+      + Optional + match + break**；
+    - slice.pini（矩阵记「仅 slice 缺口」）另需：负索引、半开/开放切片、
+      越界夹紧、数组/Optional 的 print 格式化（`[20, 30]` / `some(50)` /
+      `none`）、字符串切片——旧后端 bk_array_* 之外还需新运行时符号。
+    M2 矩阵的「8 文件并发 = 一格」同源于此估法（LR-11 已实证除名）。
+    **G2–G7 全部按族重估**：G2 = 数组族（核心：字面量/下标/len/嵌套 + Optional
+    + match + break；切片/格式化建议拆 G2b），G3 = 对象族（布局/方法/self），
+    G4 = 泛型单态化族，G5 = foreign + clang 通道，G6 = 跨文件符号表，
+    G7 = 零散。工程量每族 ≈ 数百行 + fixture，非「一格一提交日」粒度。
+    处置建议：①按族重估后继续，sweep hir-emit 通道（现 6/59）为唯一进度
+    度量；②M5 改为「按族推进、可分会话」的滚动批，完成一族合一次 main。
+    待用户裁决后继续。

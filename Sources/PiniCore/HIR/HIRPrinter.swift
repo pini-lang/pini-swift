@@ -56,6 +56,11 @@ public enum HIRPrinter {
             return ["\(pad)return\(value.map { " " + exprText($0) } ?? "")"]
         case .exprStmt(let expression):
             return ["\(pad)\(exprText(expression))"]
+        case .tryStmt(let operand, let errorVar, let handler, let okTarget, _):
+            let bind = okTarget.map { " -> \($0)" } ?? ""
+            var lines = ["\(pad)try \(exprText(operand)) else \(errorVar)\(bind):"]
+            lines.append(contentsOf: dumpBody(handler, indent: level + 1))
+            return lines
         }
     }
 
@@ -75,6 +80,8 @@ public enum HIRPrinter {
             return "\(function)(\(args))"
         case .printCall(let argument):
             return "print(\(exprText(argument)))"
+        case .resultConstruct(let isOk, let payload, _):
+            return "\(isOk ? "ok" : "err")(\(exprText(payload)))"
         }
     }
 
