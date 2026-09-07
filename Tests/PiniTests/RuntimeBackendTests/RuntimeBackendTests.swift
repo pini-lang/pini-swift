@@ -127,8 +127,8 @@ final class RuntimeBackendTests: XCTestCase {
     /// D0 冒烟：经运行时 shim 的数组字面量 / 下标 / len 在真实 lli JIT 下贯通。
     /// 意图：验证数组字面量/下标/len 经运行时 shim + lli --dlopen JIT 输出 203，且与解释器计算一致。
     func testArrayViaRuntimeLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
 
         let src = try loadPiniFixture("testArrayViaRuntimeLLI", filePath: #filePath)
 
@@ -150,8 +150,8 @@ final class RuntimeBackendTests: XCTestCase {
     /// C-ABI 符号在 AOT 链接下可见（JIT/dlopen 容忍的可见性回归，静态链接会暴露）。
     /// 意图：验证数组经 clang -lPiniRuntime AOT 静态链接同样输出 203（C-ABI 符号静态链接下可见），且与解释器计算一致。
     func testArrayViaRuntimeClang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireClang()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
 
         let src = try loadPiniFixture("testArrayViaRuntimeClang", filePath: #filePath)
 
@@ -193,8 +193,8 @@ final class RuntimeBackendTests: XCTestCase {
 
         // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
         // 本环境无 lli 时此段跳过（如实记录，不伪造绿）。
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
         XCTAssertTrue(llvmOut.isEmpty,
                       "LLVM 越界应经 bk_panic 终止，stdout 应为空（实际：'\(llvmOut)'）")
@@ -208,8 +208,8 @@ final class RuntimeBackendTests: XCTestCase {
         let interpOut = try runViaInterpreter(src)
         XCTAssertEqual(interpOut, "0\n", "解释器空数组 len 应为 0")
 
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
         XCTAssertEqual(llvmOut, "0\n", "LLVM 空数组 len 应为 0（print 补换行，与解释器一致）")
     }
@@ -264,8 +264,8 @@ final class RuntimeBackendTests: XCTestCase {
     }
 
     private func requireDylib() throws -> String {
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         return dylib
     }
 
@@ -311,8 +311,8 @@ final class RuntimeBackendTests: XCTestCase {
         XCTAssertThrowsError(try runViaInterpreter(src), "解释器越界下标写 a[5]=9 应抛 RuntimeError")
 
         // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
         XCTAssertTrue(llvmOut.isEmpty,
                       "LLVM 越界写应经 bk_panic 终止，stdout 应为空（实际：'\(llvmOut)'）")
@@ -365,8 +365,8 @@ final class RuntimeBackendTests: XCTestCase {
         XCTAssertThrowsError(try runViaInterpreter(src),
                              "字典缺失键应与越界同义，panic 而非静默返回 nil")
         // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib)
         XCTAssertTrue(llvmOut.isEmpty,
                       "LLVM 缺键应经 bk_panic 终止，stdout 应为空（实际：'\(llvmOut)'）")
@@ -398,7 +398,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// AOT 臂专用于捕获「静态链接才暴露」的运行时 C-ABI 符号可见性回归（如 `bk_*_destroy` 漏 `@_cdecl`）。
     /// 无 lli/clang 时 `XCTSkip`（不红），与既有工具链缺失跳过策略一致。
     private func assertTripleBackendsAgree(_ src: String, expected: String, _ message: String) throws {
-        try XCTSkipUnless(lliAvailable && clangAvailable, "lli/clang not available")
+        try LLVMGate.requireLLI(); try LLVMGate.requireClang()
         let dylib = try requireDylib()
         let interpOut = try runViaInterpreter(src).replacingOccurrences(of: "\n", with: "")
         XCTAssertEqual(interpOut, expected, "解释器：\(message)")

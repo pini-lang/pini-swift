@@ -117,14 +117,14 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - lli execution tests
 
     func testSimpleArithmetic_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testSimpleArithmetic_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
     func testWhileLoopSum_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testWhileLoopSum_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "15")
@@ -134,7 +134,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// step 块经 LLVM 后端执行：每轮循环体正常结束后执行一次 step。
     func testStepExecutesAfterEachIteration_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStepExecutesAfterEachIteration_LLI", filePath: #filePath)
         let output = try runViaLLI(source).components(separatedBy: .whitespacesAndNewlines).joined()
         XCTAssertEqual(output, "0S1S2S", "LLVM 后端 step 应在每轮末尾执行一次")
@@ -142,7 +142,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// step 块经 LLVM 后端执行：continue 后也应执行 step（类 C for 的步进语义）。
     func testStepExecutesOnContinue_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStepExecutesOnContinue_LLI", filePath: #filePath)
         let output = try runViaLLI(source).components(separatedBy: .whitespacesAndNewlines).joined()
         XCTAssertEqual(output, "0C1C2C", "LLVM 后端 continue 后也应执行 step")
@@ -150,7 +150,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// step 块经 LLVM 后端执行：break 应跳过 step。
     func testStepSkippedOnBreak_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStepSkippedOnBreak_LLI", filePath: #filePath)
         let output = try runViaLLI(source).components(separatedBy: .whitespacesAndNewlines).joined()
         XCTAssertEqual(output, "0B1B2", "LLVM 后端 break 应跳过 step")
@@ -158,7 +158,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 嵌套 while 的 step 经 LLVM 后端执行：内层 step 就近匹配内层 while，外层匹配外层。
     func testNestedWhileStepScoping_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         // 字符串数组精确控制缩进，避免 Swift 多行字符串的缩进剥离破坏嵌套层级
         let source = [
             "main() -> ():",
@@ -181,35 +181,35 @@ final class IRExecutionTests: XCTestCase {
     }
 
     func testFibonacci_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testFibonacci_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "55")
     }
 
     func testIfElseBranching_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testIfElseBranching_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1")
     }
 
     func testBreakInLoop_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBreakInLoop_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "10")
     }
 
     func testStringPrint_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStringPrint_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "Hello, LLVM!")
     }
 
     func testStringVariablePrint_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStringVariablePrint_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "stored")
@@ -218,28 +218,28 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - 字符串插值 IR 执行测试（P6-1b）
 
     func testStringInterpolation_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStringInterpolation_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "x=42")
     }
 
     func testStringInterpolationMixed_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStringInterpolationMixed_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "Hello World, count=5")
     }
 
     func testStringInterpolationDouble_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStringInterpolationDouble_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "pi=2.500000")
     }
 
     func testStringInterpolation_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
+        try LLVMGate.requireClang()
         let source = try loadPiniFixture("testStringInterpolation_Clang", filePath: #filePath)
         let output = try runViaClang(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "result=7 status=ok")
@@ -248,14 +248,14 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - 元组字面量 IR 执行测试（P6-1c）
 
     func testTupleConstruct_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTupleConstruct_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "30")
     }
 
     func testTupleConstruct_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
+        try LLVMGate.requireClang()
         let source = try loadPiniFixture("testTupleConstruct_Clang", filePath: #filePath)
         let output = try runViaClang(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "56")
@@ -264,16 +264,16 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - 数组字面量 IR 执行测试（P6-1d）
 
     func testArrayConstruct_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let source = try loadPiniFixture("testArrayConstruct_LLI", filePath: #filePath)
         let output = try runViaLLI(source, dylib: dylib)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "60")
     }
 
     func testArrayConstruct_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireClang()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let source = try loadPiniFixture("testArrayConstruct_Clang", filePath: #filePath)
         let output = try runViaClang(source, dylib: dylib)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "10")
@@ -282,29 +282,29 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - P6-1e: len 内置 + print bool 收口（真实执行）
 
     func testLenArray_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let source = try loadPiniFixture("testLenArray_LLI", filePath: #filePath)
         let output = try runViaLLI(source, dylib: dylib)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "3")
     }
 
     func testLenTuple_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testLenTuple_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "3")
     }
 
     func testLenString_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testLenString_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "5")
     }
 
     func testLenString_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
+        try LLVMGate.requireClang()
         let source = try loadPiniFixture("testLenString_Clang", filePath: #filePath)
         let output = try runViaClang(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "7")
@@ -314,7 +314,7 @@ final class IRExecutionTests: XCTestCase {
     /// IR 后端统计「非 UTF-8 续行字节」得 Unicode 标量数，与解释器 `String.count` 对齐，
     /// 常见文本（含 CJK）下二者一致（"中文" → 2）。
     func testLenCJKString_IsCharCount_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testLenCJKString_IsCharCount_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "2",
@@ -322,7 +322,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     func testPrintBoolTrue_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testPrintBoolTrue_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "true",
@@ -330,7 +330,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     func testPrintBoolFalse_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testPrintBoolFalse_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "false",
@@ -338,7 +338,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     func testInterpolatedBool_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testInterpolatedBool_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "flag=true n=3")
@@ -347,21 +347,21 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - async/await MVP execution tests
 
     func testAsyncFunction_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testAsyncFunction_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
     func testAwaitConsumption_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testAwaitConsumption_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "12")
     }
 
     func testAsyncVsSyncParity_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
 
         let asyncSource = try loadPiniFixture("testAsyncVsSyncParity_LLI", filePath: #filePath)
         let syncSource = try loadPiniFixture("testAsyncVsSyncParity_LLI_2", filePath: #filePath)
@@ -373,7 +373,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     func testStringPrint_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
+        try LLVMGate.requireClang()
         let source = try loadPiniFixture("testStringPrint_Clang", filePath: #filePath)
         let output = try runViaClang(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "Hello from clang")
@@ -382,14 +382,14 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - clang execution tests
 
     func testSimpleArithmetic_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
+        try LLVMGate.requireClang()
         let source = try loadPiniFixture("testSimpleArithmetic_Clang", filePath: #filePath)
         let output = try runViaClang(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
     func testFibonacci_Clang() throws {
-        try XCTSkipUnless(clangAvailable, "clang not available")
+        try LLVMGate.requireClang()
         let source = try loadPiniFixture("testFibonacci_Clang", filePath: #filePath)
         let output = try runViaClang(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "55")
@@ -398,7 +398,7 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - Interpreter vs LLVM parity
 
     func testLLVMVsInterpreterParity() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testLLVMVsInterpreterParity", filePath: #filePath)
         let lliOutput = try runViaLLI(source).trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -433,7 +433,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli 执行：struct 构造（字段取默认值）+ 字段访问打印，应与解释器一致。
     func testStructFieldAccessViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStructFieldAccessViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "8080",
@@ -444,7 +444,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli 执行：object 构造（refcount 头 + 字段默认值）+ 字段访问打印，应与解释器一致。
     func testObjectFieldAccessViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testObjectFieldAccessViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "8080",
@@ -455,7 +455,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli 执行：enum 构造 + match 分发（两 case + default）。
     func testEnumMatchDispatchViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testEnumMatchDispatchViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "R",
@@ -466,7 +466,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：struct 字段写入后读取，验证 GEP+store 链路完整。
     func testStructFieldWriteViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStructFieldWriteViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "10",
@@ -475,7 +475,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：object 引用共享——`let p2 = p1` 后通过 p2 改写字段，p1 应可见（引用语义）。
     func testObjectReferenceSharingViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testObjectReferenceSharingViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "100",
@@ -486,7 +486,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：defer 在 return 前执行（LIFO）。
     func testDeferBasicViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testDeferBasicViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "A\nB",
@@ -495,7 +495,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：多个 defer 按 LIFO 逆序执行。
     func testDeferLIFOViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testDeferLIFOViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "A\nB\nC",
@@ -506,7 +506,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：enum 关联值构造 + match 绑定量取 payload。
     func testEnumPayloadMatchBindingViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testEnumPayloadMatchBindingViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
@@ -518,7 +518,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 clang/lli：跨枚举同名 case 的点号构造 + 期望类型 → checker 静态决议表
     /// 消歧（issue-llvm-dotcase-expected-type 验收判据①，对齐解释器通道）。
     func testDotCaseAmbiguousExpectedTypeViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testDotCaseAmbiguousExpectedTypeViaLLI", filePath: #filePath)
         let output = try runViaLLI(source, typeCheck: true)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
@@ -527,7 +527,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 裸名形态：checker 记录外层 call 位置，IRGen generateCall 查表命中同一键。
     func testBareCaseAmbiguousExpectedTypeViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBareCaseAmbiguousExpectedTypeViaLLI", filePath: #filePath)
         let output = try runViaLLI(source, typeCheck: true)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
@@ -561,7 +561,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：元组位置访问 `.0` / `.1`（草稿 A2，批次 1.1）。
     func testTupleIndexAccess_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTupleIndexAccess_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "22\n-12",
@@ -571,7 +571,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：命名元组标签访问 `.名称`（D1，批次 1.3，Phase 1）。
     /// 标签访问经 `tupleTypeByVar` 查「标签→下标」后复用 extractvalue，输出与解释器一致。
     func testTupleNamedAccess_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTupleNamedAccess_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "12\n17\n5",
@@ -580,7 +580,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：元组解构 `var (a, b) = rhs`（草稿 A1，批次 1.2）+ 函数返回元组整体绑定。
     func testTupleDestructure_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTupleDestructure_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "3\n2",
@@ -589,7 +589,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：元组整体打印（对齐解释器 `stringify` 的 `[v0, v1]`，批次 1 修复 StringifyEmitter 缺元组分支）。
     func testTuplePrint_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTuplePrint_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "[3, 2]",
@@ -598,7 +598,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：命名元组整体打印（对齐解释器 `[label: v0, ...]`，D1 标签经 tupleTypeByVar 注入）。
     func testNamedTuplePrint_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testNamedTuplePrint_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "[商: 3, 余: 2]",
@@ -609,7 +609,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：if/elif/else 同级块分支（批次 2 契约）。
     func testIfElifElse_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testIfElifElse_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "b",
@@ -619,7 +619,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：I8 整型 primitive 字段访问（Phase 0）——struct 含 I8 字段，构造/赋值宽度截断/算术/方法返回/打印。
     /// 预期输出 `p.x+p.y`=24 与 `p.距离原点()`=24（print 各自换行，trim 后两行 24）。
     func testI8StructField_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testI8StructField_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "24\n24",
@@ -629,9 +629,9 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：数组 join（Phase 1 #7）——变量绑定数组（%bk_array* 运行时长度循环）
     /// 与字面量数组均按分隔符拼接字符串元素。
     func testArrayJoin_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         // 数组字面量走 %bk_array* 运行时句柄，须加载集合运行时动态库。
-        guard let dylib = locateRuntimeDylib() else { throw XCTSkip("PiniRuntime dylib not built") }
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let source = try loadPiniFixture("testArrayJoin_LLI", filePath: #filePath)
         let output = try runViaLLI(source, dylib: dylib)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "a-b-c\nx+y",
@@ -641,7 +641,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：块级 defer（#8）——循环体内的 defer 在该块自然落入出口按 LIFO 刷新，
     /// 在后续 print 前已生效（对齐解释器 deferStack 逐块语义，而非仅函数出口）。
     func testDeferBlockScope_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testDeferBlockScope_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "bodyfirstmiddlelast",
@@ -651,7 +651,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：具名函数作为值（#8 higher-order）——经 env 忽略适配器对齐闭包 ABI，
     /// 间接调用 `f(x)` 不再实参错位。
     func testHigherOrderFunctionValue_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testHigherOrderFunctionValue_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "10\n36",
@@ -664,7 +664,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：结构体内嵌组合（R1.1）——子类型组合父类型，字段经合并布局、
     /// 方法经接收者特化名分派（父/子同名方法各自按自身布局编译）。
     func testStructComposition_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStructComposition_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "2\n1\n默认",
@@ -673,7 +673,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：break/continue 终止边的块级 defer（R1.2）——break 放弃被放弃层时按 LIFO 发射 defer。
     func testBreakDefer_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBreakDefer_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "xxx",
@@ -683,7 +683,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：泛型 struct 类型单态化（R2）——`盒<T>` → `盒_I32`/`盒_String`，
     /// 字段类型与方法按具体类型特化（接收者特化名分派）。
     func testGenericStruct_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testGenericStruct_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "7\n泛型值",
@@ -693,7 +693,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：trait 结构体方法 + 裸字段引用（R3）——方法体 `return 名字` 等价 `self.名字`
     /// （对齐解释器 bindInstanceFields；写仍须 `self.字段`）。
     func testTraitBareField_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTraitBareField_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "旺财",
@@ -703,7 +703,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli：标量/字面量 match（R4，HIGH-2 IR 路径）——整数 literal + `case _:` 通配兜底。
     /// 逐 case 生成 icmp 比较链，顺序匹配首中即止；通配兜底。
     func testScalarMatch_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testScalarMatch_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "two",
@@ -712,7 +712,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：标量 match 字符串字面量（R4）——`match s: case "hi":` 经 strcmp==0 判定。
     func testScalarStringMatch_LLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testScalarStringMatch_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "hello",
@@ -723,7 +723,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：`add(x, y) -> I32`（无类型注解），参数从返回类型推断为 i32。
     func testParamWithoutAnnotation_InferredI32_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testParamWithoutAnnotation_InferredI32_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         // add(3,4)=7, add(100,200)=300
@@ -733,7 +733,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：`add(x, y) -> ()`（无类型注解、void 返回），参数回退为 i32。
     func testParamWithoutAnnotation_FallbackI32_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testParamWithoutAnnotation_FallbackI32_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         // add(10,20) → print(30)
@@ -744,7 +744,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：`identity<I32>(42)` 特化后正确执行。
     func testGenericIdentity_I32_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testGenericIdentity_I32_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertTrue(output.contains("42"), "identity(42) 应输出 42，实际: \(output)")
@@ -753,7 +753,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：两个不同特化在同一模块中正确共存。
     func testGenericIdentity_TwoTypes_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testGenericIdentity_TwoTypes_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertTrue(output.contains("42"), "identity<I32> 应输出 42，实际: \(output)")
@@ -764,7 +764,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：多返回值函数调用（签名 + return 打包验证）。
     func testMultiReturn_Swap_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testMultiReturn_Swap_ViaLLI", filePath: #filePath)
         // 仅验证能生成有效 IR 并执行成功（无 lli 错误）
         let output = try runViaLLI(source)
@@ -774,7 +774,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：多返回值函数 — return 语句的 insertvalue 打包验证。
     func testMultiReturn_AddAndSub_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testMultiReturn_AddAndSub_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         _ = output  // 程序正常退出即为成功
@@ -784,7 +784,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：trait 默认实现分派——类型不覆盖方法时用 trait 默认。
     func testTraitDefaultMethod_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTraitDefaultMethod_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertTrue(output.contains("42"), "应输出 42，实际: \(output)")
@@ -792,7 +792,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：trait 方法被类型覆盖时用类型自己的实现。
     func testTraitOverrideMethod_ViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testTraitOverrideMethod_ViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertTrue(output.contains("99"), "应输出 99（覆盖实现），实际: \(output)")
@@ -802,7 +802,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：abs / min / max（i32 上用 select+icmp）。
     func testBuiltinMathIntegersViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBuiltinMathIntegersViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "5\n3\n7",
@@ -811,7 +811,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 clang/lli：sqrt / sin / cos / tan（F64 上走 LLVM intrinsic）。
     func testBuiltinMathFloatsViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBuiltinMathFloatsViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
         // sqrt(4)=2.000000 sin(0)=0.000000 cos(0)=1.000000
@@ -824,7 +824,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli 执行：readLine 从 stdin 读取（macOS __stdinp 兼容）。
     func testReadLineViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testReadLineViaLLI", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
@@ -857,7 +857,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// 真实 lli：writeFile + readFile 往返——写入字符串、读回比对。
     func testWriteReadFileViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let tmpPath = FileManager.default.temporaryDirectory.path
             + "/pini_io_\(UUID().uuidString).txt"
         defer { try? FileManager.default.removeItem(atPath: tmpPath) }
@@ -889,7 +889,7 @@ final class IRExecutionTests: XCTestCase {
     /// 批 C1：is_ascii_digit 的 LLVM 后端实现——C 字节串首字节判 ASCII [0-9]；
     /// 空串（NUL 首字节）自然为 false。'7'→真、'x'→假。
     func testIsAsciiDigitViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let output = try runViaLLI(try loadPiniFixture("testIsAsciiDigitViaLLI", filePath: #filePath) as String)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1\n9",
                        "is_ascii_digit: '7' 判真打印 1，'x' 首字节非数字判假，空串判假")
@@ -914,7 +914,7 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - P6-4d: struct method
 
     func testStructMethodViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let output = try runViaLLI(try loadPiniFixture("testStructMethodViaLLI", filePath: #filePath) as String)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1",
                       "方法 add 应将 x 从 0 增至 1")
@@ -926,7 +926,7 @@ final class IRExecutionTests: XCTestCase {
     /// 输出应与解释器逐 token 一致。LLVM 后端 print 不带换行（既有行为），
     /// 故用 `.components(separatedBy: .whitespacesAndNewlines).joined()` 归一化后比对。
     func testNilKeywordViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = [
             "main|func() -> ():",
             "    var a = nil",
@@ -955,7 +955,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// lli 与解释器对 nil 关键字产出逐 token 一致（过滤掉既有 print 无换行差异）。
     func testNilKeywordLLVMVsInterpreterParity() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = [
             "main|func() -> ():",
             "    var a = nil",
@@ -1008,7 +1008,7 @@ final class IRExecutionTests: XCTestCase {
     /// 真实 lli 执行：?I32（= Optional<I32>）经 LLVM 后端构造 nil / match case nil，
     /// 输出应与解释器逐 token 一致。复用 P2-6 已启用的 Optional.none/nil 构造路径。
     func testQuestionTypeViaLLI() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = [
             "main|func() -> ():",
             "    var x: ?I32 = nil",
@@ -1025,7 +1025,7 @@ final class IRExecutionTests: XCTestCase {
 
     /// lli 与解释器对 ?T 可选糖产出逐 token 一致（覆盖 ?T↔Optional<I32> 互赋路径）。
     func testQuestionTypeLLVMVsInterpreterParity() throws {
-        try XCTSkipUnless(lliAvailable, "lli not available")
+        try LLVMGate.requireLLI()
         let source = [
             "main|func() -> ():",
             "    var e: ?I32 = nil",
@@ -1068,10 +1068,8 @@ final class IRExecutionTests: XCTestCase {
     // MARK: - #46-D D3: print(容器) 双后端（lli + clang AOT）与解释器对拍
 
     func testD3ContainerPrintBothBackendsMatch() throws {
-        try XCTSkipUnless(lliAvailable && clangAvailable, "lli/clang not available")
-        guard let dylib = locateRuntimeDylib() else {
-            throw XCTSkip("PiniRuntime dylib not built")
-        }
+        try LLVMGate.requireLLI(); try LLVMGate.requireClang()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let source = [
             "main|func() -> ():",
             "    let a = [1, 2, 3, 4, 5]",
