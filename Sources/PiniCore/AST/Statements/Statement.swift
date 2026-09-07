@@ -17,7 +17,8 @@ public indirect enum Statement: Equatable {
  /// defaultCase/wildcardBlock 已随 default:/pass 通配子块移除（R2=删除）。
  case matchStatement(value: Expression, cases: [MatchCase], location: SourceLocation)
  case scopedBlock(label: String?, body: Block, location: SourceLocation)
- case tryStatement(expression: Expression, tryBlock: Block, exceptClauses: [ExceptClause], location: SourceLocation)
+ /// ADR-032 迁移批 M2：旧 `try`/`except` 语句已移除，错误传播由
+ /// Expression.tryExpression 承载（语句位 = expressionStmt 包装，spec『try-else 错误传播』节）。
  /// detach 语句（任务 #13， detach-expr-stmt）：`detach <expr>` 把子任务
  /// 从父 scope 剪枝、主动退出所有权（fire-and-forget 唯一合法出口）。expr 求值为 Future。
  case detachStatement(expression: Expression, location: SourceLocation)

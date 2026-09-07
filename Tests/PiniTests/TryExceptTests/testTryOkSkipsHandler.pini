@@ -1,0 +1,9 @@
+; ADR-032：ok 路径跳过 handler，顺序执行后续语句。
+main|func() -> ():
+    var result = 0
+    try ok(1) else e:
+        result = 2
+        return
+    result = 1
+    print(result)
+    return

@@ -1385,6 +1385,17 @@ public final class TypeChecker {
  }
  }
 
+ /// ADR-032 迁移批 M2：try-else handler 内的 return 语句计入返回完整性收集
+ /// （handler 是表达式内嵌块，语句级 switch 不会自然递归到它）。
+ private func collectReturnFindingsInTryExpression(_ expr: Expression, into result: inout [ReturnFinding]) throws {
+ switch expr {
+ case .tryExpression(_, _, let handler, _):
+ try collectReturnFindings(in: handler, into: &result)
+ default:
+ break
+ }
+ }
+
  private func collectReturnFindings(in block: Block, into result: inout [ReturnFinding]) throws {
  for stmt in block.statements {
  switch stmt {
@@ -1423,11 +1434,14 @@ public final class TypeChecker {
  }
  }
  // D3①：`case _:` 通配已作为 case 进入 cases（case 循环覆盖），无独立 default/wildcard 块。
- case .tryStatement(_, let tryBlock, let exceptClauses, _):
- try collectReturnFindings(in: tryBlock, into: &result)
- for exc in exceptClauses {
- try collectReturnFindings(in: exc.body, into: &result)
+ case .varDecl(_, _, let initializer, _, _), .varDestructure(_, _, let initializer, _, _):
+ // ADR-032：try-else 常驻 let 初始化式（`let x = try f() else e: return err`），
+ // handler 内 return 亦计入返回完整性收集。
+ if let initExpr = initializer {
+ try collectReturnFindingsInTryExpression(initExpr, into: &result)
  }
+ case .expressionStmt(let expr, _):
+ try collectReturnFindingsInTryExpression(expr, into: &result)
  default:
  break
  }
@@ -1612,13 +1626,6 @@ public final class TypeChecker {
  }
  // D3①：`case _:` 通配已作为 case 进入 cases（case 循环覆盖），无独立 default/wildcard 块。
 
- case .tryStatement(let expression, let tryBlock, let exceptClauses, _):
- try checkExpression(expression)
- for s in tryBlock.statements { try checkStatement(s) }
- for exc in exceptClauses {
- for s in exc.body.statements { try checkStatement(s) }
- }
-
  case .expressionStmt(let expr, _):
  try checkExpression(expr)
 
@@ -1688,8 +1695,8 @@ public final class TypeChecker {
  }
  try checkExpression(operand)
 
- case .resultUnwrap(let operand, let location):
- // 草稿 A2（批次 1.4，D2）：`^expr` 要求操作数推断为 Result<T, E>（静态拦截）；
+ case .tryExpression(let operand, let errorVar, let handler, let location):
+ // ADR-032 迁移批 M2（spec『try-else 错误传播』节）：try-else 操作数静态要求 Result<T, E>（静态拦截）；
  // `ok(...)`/`err(...)` 为 Result 的用例构造（推断为 case 名），同样放行；推断不可达时由运行时兜底。
  try checkExpression(operand)
  if let t = inference.infer(expression: operand) {
@@ -1703,6 +1710,11 @@ public final class TypeChecker {
  try report(TypeError.mismatch(expected: "Result<T, E>", got: t.describe(), location: location))
  }
  }
+ // handler：errorVar 绑定子作用域 + 块校验；块形式须以控制流语句终止（spec 附录 try-stmt 产生式）。
+ typeEnv.pushScope()
+ typeEnv.defineVariable(name: errorVar, type: .simple(name: "Any", location: location))
+ for s in handler.statements { try checkStatement(s) }
+ typeEnv.popScope()
 
  case .call(let callee, let arguments, let location):
  try checkExpression(callee)

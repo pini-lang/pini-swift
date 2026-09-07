@@ -2,8 +2,8 @@ import XCTest
 import PiniCore
 import Foundation
 
-/// `^` 右值糖：解包或控制返回错误（草稿「Result<结果类型>」，2026-08-23 批次 1 · 1.4，决策 D2=err 注入返回元组末槽）。
-/// 覆盖：`^ok(v)` 解包得 v、`^err(e)` 控制返回（错误注入返回元组末槽）、非 Result 值报错。
+/// `^` 右值糖（ADR-032：定义性脱糖 `^e` ≡ `try e else err: return err`）。
+/// 覆盖：`^ok(v)` 解包得 v、`^err(e)` 经 handler return 把错误值作为函数返回值带出、非 Result 值报错。
 final class ResultUnwrapTests: XCTestCase {
 
     // MARK: - Helpers
@@ -65,21 +65,21 @@ final class ResultUnwrapTests: XCTestCase {
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42")
     }
 
-    // MARK: - err 控制返回
+    // MARK: - err 控制返回（ADR-032：脱糖至 try-else，错误值经 handler return 带出）
 
-    /// 意图（D2）：`^err(e)` 触发控制返回——函数立即返回，错误 e 注入返回元组末槽，
-    /// 其余槽为 null；调用方解构 `(v, e)` 取到错误。输出 boom。
+    /// 意图（ADR-032）：`^err(e)` ≡ `try err(e) else err: return err`——错误值作为
+    /// 函数返回值带出（旧「注入返回元组末槽」机制已退役）。输出 boom。
     func testErrControlReturnToLastSlot() throws {
         let source = try loadPiniFixture("testErrControlReturnToLastSlot", filePath: #filePath)
         let output = try runProgram(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "boom")
     }
 
-    /// 意图：err 控制返回后，函数体后续语句不执行（提前 return）。
+    /// 意图（ADR-032）：err 路径经 handler 控制流转移，函数体后续语句不执行。
     func testErrStopsFunctionBody() throws {
         let source = try loadPiniFixture("testErrStopsFunctionBody", filePath: #filePath)
         let output = try runProgram(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "null")
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "提前失败")
     }
 
     // MARK: - 错误路径

@@ -375,69 +375,9 @@ extension IRGenerator {
  // 记录注册作用域深度：块级 defer 在该块自然落入出口按 LIFO 刷新（#8）。
  deferredStatements.append(statement)
  deferDepths.append(currentScopeDepth)
- case .tryStatement(let expression, let tryBlock, let exceptClauses, _):
- try generateTryStatement(expression: expression, tryBlock: tryBlock,
- exceptClauses: exceptClauses,
- functionReturnType: functionReturnType, isMain: isMain)
+ // ADR-032 迁移批 M2：旧 try 语句 IR（#5，返回元组错误槽模型）随 try-else 迁移退役；
+ // try-else 表达式经 expressionStmt 走 ExprEmitter fail-loud（表达式内控制流转移）。
  }
- }
-
- /// try 语句 IR（#5）：基于**返回元组显式传播**的错误模型，对齐解释器 `executeTry`。
- ///
- /// 语义：求值 `expression`（通常为返回 `(值, 错误,)` 元组的调用）→ 取第 2 字段作错误槽；
- /// 空串/null → 成功路径执行 tryBlock；非空 → 执行第一个 except 子句（绑定 `errorVar` 到错误值）。
- /// LLVM 仅支持 String（ptr）错误槽（文档化模式）；非元组结果恒走成功路径；其他错误槽类型 fail-loud。
- func generateTryStatement(expression: Expression, tryBlock: Block, exceptClauses: [ExceptClause],
- functionReturnType: String, isMain: Bool) throws {
- let result = try generateExpression(expression)
- // 元组（匿名 struct，≥2 字段）才有错误槽；否则恒成功（对齐解释器：非元组 errorValue 为 null）。
- let errFieldType: String?
- if result.llvmType.hasPrefix("{ ") && result.llvmType.hasSuffix(" }") {
- let fields = try tupleFieldIRTypes(result.llvmType)
- errFieldType = fields.count >= 2 ? fields[1] : nil
- } else {
- errFieldType = nil
- }
-
- guard let errFieldType else {
- _ = try generateBlock(tryBlock, functionReturnType: functionReturnType, isMain: isMain)
- return
- }
- // 仅支持 String（ptr）错误槽：strlen==0 视为成功；其余类型显式报不支持（不臆造语义）。
- guard errFieldType == "ptr" else {
- throw IRGenError.unsupportedFeature(feature:
- "LLVM 后端 try 仅支持 String 错误槽（收到 \(errFieldType)）；请改用解释器 `pini run`", sl())
- }
-
- let label = nextLabel()
- let successL = "try_success_\(label)", errL = "try_err_\(label)", endL = "try_end_\(label)"
- let errVal = "%t\(nextTemp())"
- emitLine(" \(errVal) = extractvalue \(result.llvmType) \(result.ssaName), 1")
- let len = "%t\(nextTemp())"
- emitLine(" \(len) = call i64 @strlen(ptr \(errVal))")
- let isEmpty = "%t\(nextTemp())"
- emitLine(" \(isEmpty) = icmp eq i64 \(len), 0")
- emitLine(builder.fmtCondBr(cond: isEmpty, thenLabelName: successL, elseLabelName: errL))
-
- emitLine("\(successL):")
- if !tryBlock.statements.isEmpty {
- let terminated = try generateBlock(tryBlock, functionReturnType: functionReturnType, isMain: isMain)
- if !terminated { emitLine(builder.fmtBr(labelName: endL)) }
- } else {
- emitLine(builder.fmtBr(labelName: endL))
- }
-
- emitLine("\(errL):")
- // 仅执行第一个 except 子句（对齐解释器：命中首个子句后 return）。
- if let clause = exceptClauses.first {
- let slot = "%\(mangle(clause.errorVar))_slot"
- emitLine(builder.fmtAlloca(name: slot, type: "ptr"))
- emitLine(builder.fmtStore(value: errVal, type: "ptr", ptr: slot))
- symbolTable[clause.errorVar] = (slot, "ptr")
- _ = try generateBlock(clause.body, functionReturnType: functionReturnType, isMain: isMain)
- }
- emitLine(builder.fmtBr(labelName: endL))
- emitLine("\(endL):")
  }
 
  // MARK: - 控制流生成

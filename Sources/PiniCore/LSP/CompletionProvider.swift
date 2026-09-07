@@ -83,7 +83,6 @@ private let keywords: [CompletionItem] = [
  CompletionItem(label: "break", kind: .keyword, detail: "跳出"),
  CompletionItem(label: "continue", kind: .keyword, detail: "继续"),
  CompletionItem(label: "try", kind: .keyword, detail: "尝试"),
- CompletionItem(label: "except", kind: .keyword, detail: "异常处理"),
  CompletionItem(label: "lambda", kind: .keyword, detail: "匿名函数"),
  CompletionItem(label: "import", kind: .keyword, detail: "导入"),
  CompletionItem(label: "export", kind: .keyword, detail: "导出"),

@@ -69,10 +69,10 @@ extension IRGenerator {
  case .join(let inner, _):
  return try generateExpression(inner)
 
- case .resultUnwrap:
- // 草稿 A2（批次 1.4，D2）：`^` 解包涉及 err 控制返回（注入返回元组末槽），
- // LLVM 后端暂不支持（明确报错，不静默；解释器路径已支持）。
- throw IRGenError.unsupportedFeature(feature:"LLVM 后端暂不支持 `^` 右值糖解包；请改用解释器 `pini run`", sl())
+ case .tryExpression:
+ // ADR-032 迁移批 M2：try-else 表达式的 err 分支涉及控制流转移（表达式内分支），
+ // LLVM 后端暂不支持（明确报错，不静默；解释器路径已支持）。旧 `^` 右值糖同此边界。
+ throw IRGenError.unsupportedFeature(feature:"LLVM 后端暂不支持 try-else 表达式；请改用解释器 `pini run`", sl())
 
  case .member(let obj, let name, _):
  return try generateMemberAccess(base: obj, memberName: name)

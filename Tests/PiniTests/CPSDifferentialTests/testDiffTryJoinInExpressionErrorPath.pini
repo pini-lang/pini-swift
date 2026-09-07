@@ -1,9 +1,9 @@
-child|func() => (I32, String,):
-    return (0, "boom",)
+; ADR-032：try-else 表达式位 + operand 内 await（CPS 挂起对齐）——err 路径经 handler 转移。
+child|func() => (I32,):
+    return err("boom")
 
 main|func() => (I32,):
-    try (await child()):
-        print("try-ok")
-    except e:
+    try (await child()) else e:
         print("except:", e)
+        return ok(1)
     return ok(0)

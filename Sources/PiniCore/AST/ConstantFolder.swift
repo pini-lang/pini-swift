@@ -94,9 +94,6 @@ public enum ConstantFolder {
  return .matchStatement(value: fold(val),
  cases: cases.map { MatchCase(pattern: $0.pattern, bindings: $0.bindings, block: fold($0.block), location: $0.location) },
  location: loc)
- case .tryStatement(let expr, let tryB, let excepts, let loc):
- return .tryStatement(expression: fold(expr), tryBlock: fold(tryB),
- exceptClauses: excepts.map { ExceptClause(errorVar: $0.errorVar, body: fold($0.body), location: $0.location) }, location: loc)
  case .expressionStmt(let expr, let loc):
  return .expressionStmt(expr: fold(expr), location: loc)
  case .detachStatement(let expr, let loc):
@@ -139,9 +136,11 @@ public enum ConstantFolder {
  return .call(callee: fold(callee), arguments: args.map { CallArgument(label: $0.label, expression: fold($0.expression)) }, location: loc)
  case .member(let obj, let name, let loc):
  return .member(object: fold(obj), name: name, location: loc)
- case .resultUnwrap(let operand, let loc):
- // 草稿 A2（批次 1.4，D2）：递归折叠被解包表达式。
- return .resultUnwrap(operand: fold(operand), location: loc)
+ case .tryExpression(let operand, let errorVar, let handler, let loc):
+ // ADR-032 迁移批 M2：递归折叠 operand 与 handler 块（handler 限控制流语句，
+ // 含调用则折叠自然跳过）。
+ return .tryExpression(operand: fold(operand), errorVar: errorVar,
+ handler: fold(handler), location: loc)
  case .tupleIndex(let obj, let index, let loc):
  // 草稿 A2（批次 1）：递归折叠 object；常量元组字面量可折叠为对应字面量。
  let folded = fold(obj)

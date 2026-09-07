@@ -132,9 +132,15 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
  return result
  case .join(let inner, _):
  return "\(indent)join(await/wait):\n" + describeExpression(inner, indent: indent + " ")
- case .resultUnwrap(let operand, _):
- // 草稿 A2（批次 1.4，D2）：`^` 右值糖描述。
- return "\(indent)resultUnwrap(^):\n" + describeExpression(operand, indent: indent + " ")
+ case .tryExpression(let operand, let errorVar, let handler, _):
+ // ADR-032 迁移批 M2：try-else 表达式描述。
+ var result = "\(indent)tryExpression(try-else, errorVar=\(errorVar)):\n"
+ result += describeExpression(operand, indent: indent + " ") + "\n"
+ result += "\(indent) handler:\n"
+ for s in handler.statements {
+ result += describeStatement(s, indent: indent + " ") + "\n"
+ }
+ return String(result.dropLast())
  case .selfKeyword:
  return "\(indent)self"
  case .selfTypeKeyword:
@@ -364,21 +370,7 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
  }
  // D3①：`case _:` 通配已作为 case 进入 cases（case 列表覆盖），无独立 default/wildcard 块。
  return String(result.dropLast())
- case .tryStatement(let expression, let tryBlock, let exceptClauses, _):
- var result = "\(indent)try:\n"
- result += "\(indent) expr:\n"
- result += describeExpression(expression, indent: indent + " ") + "\n"
- result += "\(indent) tryBlock:\n"
- for s in tryBlock.statements {
- result += describeStatement(s, indent: indent + " ") + "\n"
- }
- for exc in exceptClauses {
- result += "\(indent) except \(exc.errorVar):\n"
- for s in exc.body.statements {
- result += describeStatement(s, indent: indent + " ") + "\n"
- }
- }
- return String(result.dropLast())
+ // ADR-032 迁移批 M2：旧 try 语句描述随节点删除；语句位 try-else 经 expressionStmt。
  case .expressionStmt(let expr, _):
  return "\(indent)exprStmt:\n" + describeExpression(expr, indent: indent + " ")
  case .detachStatement(let expr, _):

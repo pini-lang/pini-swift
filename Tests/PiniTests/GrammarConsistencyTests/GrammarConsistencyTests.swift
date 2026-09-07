@@ -841,6 +841,126 @@ final class GrammarConsistencyTests: XCTestCase {
             // 拒绝即通过。
         }
     }
+
+    // MARK: - try-else（ADR-032 迁移批 M2：语句位+表达式位双形态，`^` 定义性脱糖）
+
+    /// 语句位 try-else：`try r else e: pass` → expressionStmt(tryExpression)；
+    /// errorVar 绑定 e，单行 handler 限 pass（显式吞掉错误惯用法，仅语句位）。
+    func testTryElseStatementPosition() throws {
+        let module = try parse(try loadPiniFixture("testTryElseStatementPosition", filePath: #filePath) as String)
+        let body = try firstFuncBody(module)
+        guard body.count == 2,
+              case .expressionStmt(let expr, _) = body[0],
+              case .tryExpression(let operand, let errorVar, let handler, _) = expr else {
+            XCTFail("语句位 try-else 应解析为 expressionStmt(tryExpression)")
+            return
+        }
+        guard case .identifier(let name, _) = operand else {
+            XCTFail("operand 应为标识符 r")
+            return
+        }
+        XCTAssertEqual(name, "r")
+        XCTAssertEqual(errorVar, "e")
+        XCTAssertEqual(handler.statements.count, 1, "单行 handler 应为单条语句")
+        guard case .passStatement = handler.statements[0] else {
+            XCTFail("单行 handler 应为 pass 语句")
+            return
+        }
+    }
+
+    /// 表达式位 try-else：`let x = try f() else e: return e` → varDecl.initializer 为 tryExpression。
+    func testTryElseExpressionPosition() throws {
+        let module = try parse(try loadPiniFixture("testTryElseExpressionPosition", filePath: #filePath) as String)
+        let body = try firstFuncBody(module)
+        guard case .varDecl(_, _, let initializer, _, _) = body[0],
+              case .tryExpression(let operand, let errorVar, let handler, _) = initializer! else {
+            XCTFail("let 初始化式应为 tryExpression")
+            return
+        }
+        guard case .call(let callee, _, _) = operand else {
+            XCTFail("operand 应为调用 f()")
+            return
+        }
+        guard case .identifier(let fnName, _) = callee else {
+            XCTFail("被调应为标识符 f")
+            return
+        }
+        XCTAssertEqual(fnName, "f")
+        XCTAssertEqual(errorVar, "e")
+        XCTAssertEqual(handler.statements.count, 1)
+        guard case .returnStatement(.some(let retVal), _) = handler.statements[0],
+              case .identifier(let errName, _) = retVal else {
+            XCTFail("handler 应为 `return e`")
+            return
+        }
+        XCTAssertEqual(errName, "e")
+    }
+
+    /// `^` 定义性脱糖：`^f()` ≡ `try f() else err: return err`（合成名 err，单条 return err）。
+    func testCaretDesugarsToTryElse() throws {
+        let module = try parse(try loadPiniFixture("testCaretDesugarsToTryElse", filePath: #filePath) as String)
+        let body = try firstFuncBody(module)
+        guard case .varDecl(_, _, let initializer, _, _) = body[0],
+              case .tryExpression(let operand, let errorVar, let handler, _) = initializer! else {
+            XCTFail("`^f()` 应脱糖为 tryExpression")
+            return
+        }
+        XCTAssertEqual(errorVar, "err", "`^` 脱糖的 errorVar 应为合成名 err")
+        XCTAssertEqual(handler.statements.count, 1)
+        guard case .returnStatement(.some(let retVal), _) = handler.statements[0],
+              case .identifier(let errName, _) = retVal else {
+            XCTFail("`^` 脱糖 handler 应为 `return err`")
+            return
+        }
+        XCTAssertEqual(errName, "err")
+        _ = operand
+    }
+
+    /// 块形式 handler：冒号后换行 + 缩进块，handler 为完整块。
+    func testTryElseBlockHandler() throws {
+        let module = try parse(try loadPiniFixture("testTryElseBlockHandler", filePath: #filePath) as String)
+        let body = try firstFuncBody(module)
+        guard case .varDecl(_, _, let initializer, _, _) = body[0],
+              case .tryExpression(_, _, let handler, _) = initializer! else {
+            XCTFail("块形式 handler 应解析为 tryExpression")
+            return
+        }
+        XCTAssertEqual(handler.statements.count, 1)
+        guard case .returnStatement = handler.statements[0] else {
+            XCTFail("块形式 handler 须以控制流语句终止（return）")
+            return
+        }
+    }
+
+    /// 拒绝面（D2 一步删）：旧 try 块语法 `try expr:` 无 else → 常规解析错误，无迁移提示。
+    func testTryWithoutElseRejected() throws {
+        do {
+            _ = try parse(try loadPiniFixture("testTryWithoutElseRejected", filePath: #filePath) as String)
+            XCTFail("旧 try 块语法（无 else）应被拒绝（ADR-032 D2 一步删）")
+        } catch is ParserError {
+            // 拒绝即通过。
+        }
+    }
+
+    /// 拒绝面：单行 handler 白名单（return/break/continue/pass）——其余语句拒绝。
+    func testTryElseSingleLineHandlerRestricted() throws {
+        do {
+            _ = try parse(try loadPiniFixture("testTryElseSingleLineHandlerRestricted", filePath: #filePath) as String)
+            XCTFail("单行 handler `print(e)` 应被拒绝（白名单外）")
+        } catch is ParserError {
+            // 拒绝即通过。
+        }
+    }
+
+    /// 词法面（D2）：`except` 退出关键字表，降级为普通标识符。
+    func testExceptKeywordRetired() throws {
+        let tokens = try meaningfulTokens("except")
+        guard tokens.count == 1, case .identifier(let name, _) = tokens[0] else {
+            XCTFail("`except` 应词法为普通标识符（不再是关键字）")
+            return
+        }
+        XCTAssertEqual(name, "except")
+    }
 }
 
 extension SourceLocation {

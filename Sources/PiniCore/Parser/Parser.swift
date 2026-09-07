@@ -2361,37 +2361,79 @@ public class Parser {
  )
  }
  
+ /// ADR-032 迁移批 M2（spec『try-else 错误传播』节 / EBNF try-stmt ::= try-expr）：
+ /// 语句位 try-else——`try <expr> else <IDENT> <handler>`，包装为 expressionStmt。
+ /// 旧 try 块/except 已一步删除（D2）：缺 else 报常规解析错误，无迁移提示。
  private func parseTry() throws -> Statement {
  let loc = currentLocation
  advance() // 跳过 try
- 
- // 表达式
- let expr = try parseExpression()
- 
- // try块
- let tryBlock = try parseControlBlock()
- 
- // except块
- var exceptClauses: [ExceptClause] = []
- skipNewlines()
- while checkKeyword(.except) {
- advance()
+
+ let operand = try parseExpression()
+
+ try expectKeyword(.else)
  let errorVar = try parseIdentifier()
- let exceptBlock = try parseControlBlock()
- exceptClauses.append(ExceptClause(
- errorVar: errorVar,
- body: exceptBlock,
- location: currentLocation
- ))
- skipNewlines()
- }
- 
- return Statement.tryStatement(
- expression: expr,
- tryBlock: tryBlock,
- exceptClauses: exceptClauses,
+ let handler = try parseTryHandler()
+
+ return Statement.expressionStmt(
+ expr: Expression.tryExpression(
+ operand: operand, errorVar: errorVar, handler: handler, location: loc
+ ),
  location: loc
  )
+ }
+
+ /// try-handler（ADR-032）：
+ /// ①单行形式——冒号后同行直接跟控制流语句，白名单限 return/break/continue/pass
+ ///   （pass 仅语句位"显式吞掉错误"惯用法）；
+ /// ②块形式——冒号后换行 + 缩进块（复用 parseControlBlock），块须以控制流语句
+ ///   终止（终止性校验在 TypeChecker，解析层只收结构）。
+ private func parseTryHandler() throws -> Block {
+ guard case .colon(_) = currentToken else {
+ throw ParserError.unexpectedToken(
+ expected: ":", actual: tokenDescription(currentToken), location: currentLocation)
+ }
+ // 冒号后同行（非换行/缩进）→ 单行 handler；否则块形式。
+ let colonFollowedByStatement: Bool
+ switch peek(offset: 1) {
+ case .newline, .indent, .dedent, .eof: colonFollowedByStatement = false
+ default: colonFollowedByStatement = true
+ }
+
+ if !colonFollowedByStatement {
+ return try parseControlBlock()
+ }
+
+ advance() // 消费冒号
+ let loc = currentLocation
+ let singleLine: Statement
+ if checkKeyword(.return) {
+ advance()
+ // 裸 return：行尾 / 块尾 / 实参·下标收尾符（handler 可内嵌实参位，如
+ // `print(try ok(5) else e: return)`）。
+ let value: Expression?
+ switch currentToken {
+ case .newline, .dedent, .eof, .rightParen, .rightBracket, .rightBrace, .comma:
+ value = nil
+ default:
+ value = try parseExpression()
+ }
+ singleLine = .returnStatement(value: value, location: loc)
+ } else if checkKeyword(.break) {
+ advance()
+ singleLine = .breakStatement(label: nil, location: loc)
+ } else if checkKeyword(.continue) {
+ advance()
+ singleLine = .continueStatement(label: nil, location: loc)
+ } else if checkKeyword(.pass) {
+ advance()
+ singleLine = .passStatement(location: loc)
+ } else {
+ throw ParserError.unexpectedToken(
+ expected: "return/break/continue/pass",
+ actual: tokenDescription(currentToken),
+ location: loc)
+ }
+ return Block(statements: [singleLine], location: loc)
  }
  
  private func parseDefer() throws -> Statement {
@@ -2597,6 +2639,19 @@ public class Parser {
  private func parseUnary() throws -> Expression {
  let loc = currentLocation
 
+ // ADR-032 迁移批 M2（spec 附录表达式文法）：表达式位 try-expr——挂 primary 位，
+ // 不占优先级层（`else` 关键字天然终止操作数，无贪婪歧义）。语句位 try 由
+ // parseStatement 派发到 parseTry（包装 expressionStmt），二者共用 handler 解析。
+ if checkKeyword(.try) {
+ advance()
+ let operand = try parseExpression()
+ try expectKeyword(.else)
+ let errorVar = try parseIdentifier()
+ let handler = try parseTryHandler()
+ return Expression.tryExpression(
+ operand: operand, errorVar: errorVar, handler: handler, location: loc)
+ }
+
  // ADR-012：`await`/`wait` 前缀 = join / 挂起 await，取代立场 B 的 `<=` 前缀。
  // `await` 用于异步函数体（=>` 派发）内的挂起等待；`wait` 用于同步上下文的阻塞 join；
  // 二者均映射到既有 `.join` AST 节点（运行时按 suspendMode 上下文敏感，与立场 B 的 `<=` 行为一致）。
@@ -2648,13 +2703,18 @@ public class Parser {
  return Expression.unary(op: .minus, operand: operand, location: loc)
  }
 
- // 草稿 A2（批次 1.4，D2）：`^` 前缀右值糖——`^expr` 解包 Result 值。
- // 仅在操作数起始位（parseUnary 在取得左操作数后被 parseFactor 调用，
- // 中缀位异或 `^` 由 parseBitwise 消费），与类型糖 `^T` 上下文分离。
+ // ADR-032 迁移批 M2：`^` 右值糖定义性脱糖（spec『try-else 错误传播』节）——
+ // `^expr` ≡ `try expr else err: return err`（合成名 err 遮蔽外层同名绑定，
+ // 语义与手写嵌套 try-else 一致）。仅在操作数起始位（parseUnary 在取得左操作数后
+ // 被 parseFactor 调用，中缀位异或 `^` 由 parseBitwise 消费），与类型糖 `^T` 上下文分离。
  if case .bitwiseXor(_) = currentToken {
  advance()
  let operand = try parseUnary()
- return Expression.resultUnwrap(operand: operand, location: loc)
+ let errRef = Expression.identifier(name: "err", location: loc)
+ let handler = Block(
+ statements: [.returnStatement(value: errRef, location: loc)],
+ location: loc)
+ return Expression.tryExpression(operand: operand, errorVar: "err", handler: handler, location: loc)
  }
 
  // Phase 2a（ADR-015 FFI）：`unsafe` 不安全消耗点前缀。

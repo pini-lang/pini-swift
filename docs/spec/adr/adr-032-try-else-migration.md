@@ -64,3 +64,13 @@
 - **计划修正（就地修订约束 7，同日裁决授权）**：①原 M1 含「GrammarConsistencyTests 先红」——实测该测试族无任何 try/except 断言、亦不 grep spec 正文，前提不成立；先红改为 M2 首步（增补 try-else 断言红 → 实现转绿同批），迁移窗口不挂红基线。②「CHANGELOG 迁移说明」移至 M2 收口——`docs/spec/CHANGELOG.md` 只记公开版本，版本号随实现落地时定。
 - 本批零代码改动；全量测试基线不受影响（spec 文本无自动化断言）。
 - 迁移窗口标记：§2.4.4 状态注已声明「宿主现状与本节暂不一致属迁移批预期状态，非漂移」；G3 证据行标 STALE（M2 刷新）。
+
+### 2026-09-07（M2 实现落地）
+
+- **GrammarConsistencyTests 先红→绿同批**：增补 7 断言（语句位/表达式位结构、`^` 脱糖形态、块形式、旧 try 块拒绝、单行 handler 白名单拒绝、`except` 词法降级 IDENT）。
+- **实现落地**（`Expression.tryExpression` 取代 `Statement.tryStatement`/`ExceptClause`/`Expression.resultUnwrap`，编译器穷尽性驱动全部消费者更新）：`Parser.parseTry` 重写 + `parseTryHandler`（单行白名单四语句，块形式复用 parseControlBlock）+ parseUnary 挂表达式位 try + `^` 前缀 Parser 层脱糖；`Interpreter` tryExpression 求值（ok→载荷；err→绑定 errorVar 执行 handler，ControlSignal 自然冒泡）；`SuspendEvaluator` CPS 对齐（operand 含 join 时挂起，handler 含 join 显式拒绝）；`UnwrapErrSignal`/`makeUnwrapErrorReturn`/`executeTry` 全删（S-2 归零达成）；`ExprEmitter` try-else fail-loud（同旧 `^` 边界）；`StmtEmitter.generateTryStatement` 退役；`Token` 关键字表移除 `except`；LSP 补全同步。
+- **测试/语料迁移**：TryExceptTests 8 用例全部改写为 Result 语义（err("") 无空串特判、pass 吞错惯用法、`^` 脱糖行为面 2 例）；CPS 两夹具改写；`testTryStatement_LLI` 删除（LLVM 发射待后端批）；`examples/try.pini` 迁移（解释器自验「读取失败」）。
+- **计划修正（就地修订约束 7）**：M2 内已含 `^` 脱糖落地（原 M4 范围），M4 并入 M2；M3 剩 selfhost 仓 two-track 迁移；M4 阶段撤销。
+- **收口件**：`docs/spec/CHANGELOG.md` v0.53.0 迁移说明；spec §3 G3 证据行 STALE 刷新（`executeTry`/`ResultUnwrap` → `Parser.parseTry`/`Expression.tryExpression`）。
+- **实测规范点（转 M5 工单）**：返回位只接受元组 ⇒ 函数返回 `Result` 须以 `^T` 类型糖嵌入元组（`-> (^T,)`），spec §2.4.4 未明说此写法。
+- 全量测试基线以本批实测为准（79 项相关类先行全绿，全量见提交记录）。
