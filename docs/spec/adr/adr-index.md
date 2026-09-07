@@ -36,6 +36,7 @@
 | ADR-029 | 语言级 | 括号内记法收口——值的注入用 `=`（`=` 注入 / `:` 标注与取出；实参标签·字典条目·元组标签·枚举具名构造改 `=`，match 具名绑定保留 `:`；含 G54 构造位破坏性修订，追溯补登记） | active | `adr-029-paren-equals-binding.md` |
 | ADR-030 | 语言级 | IO 相对路径解析基准——三段式方案 A（绝对原样 / `./` 运行时 CWD / 其余相对程序基准；`moduleRoot()`；LLVM 字面量烘焙；出账 A13/P-path） | active | `adr-030-io-path-base.md` |
 | ADR-031 | 宿主级 | LLVM 后端重写 + 测试资产处置判据（后端由演进改重写 / 新旧并存开关切换 / Emitter 禁类型决策 / 能力检查单点化 / `bk_*` ABI 冻结 / 测试禁静默跳过 / **门控结论须在完整登录 shell 实测** / **「恒跳过」不构成删除理由** / **锁实现细节的断言退役前不得先行删除**；含止损判据 S-1～S-4） | active | `adr-031-llvm-backend-rewrite.md` |
+| ADR-032 | 语言级 | try-else 迁移与 `^` 右值糖脱糖（try-else 取代 try-except 且具语句位+表达式位双形态 / `except` 一步删除无迁移提示 / try-else 只接受 `Result`、`(值,错误)` 元组错误位约定退役 / `^e` 重定义脱糖 `try e else err: return err`、`UnwrapErrSignal` 退役 / LLVM 重写的前置前端收敛时序） | active | `adr-032-try-else-migration.md` |
 
 ## 备注
 
