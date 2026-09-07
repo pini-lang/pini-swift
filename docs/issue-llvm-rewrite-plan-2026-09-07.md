@@ -72,3 +72,12 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 
 不做范围：PiniRuntime / `bk_*` 35 符号 ABI 改动；解释器行为变更（LR-4 已另立
 工单）；spec 语言面改动；LR-4 统一改造（等 LLVM 迁移完成后另行立项）。
+
+## 批次回填
+
+- **M0 完成（2026-09-07）**：ADR-031 约束 1 / S-4 / §4 步骤 6 / §5 首条就地修订
+  （LR-5 直接替换）；README 架构图加 HIR 节点 + 目录结构节加 `HIR/` +
+  FFI 特性行「LLVM 端 unsupported」改「按能力清单逐格补齐」+ 双后端说明加重写
+  指针；`docs/BUILDING.md` 补「LLVM 门控测试的环境判据」节（约束 6 落地：
+  `source ~/.zshrc` 判据、自动化 PATH 无效、工作树/自定义 scratch 测量无效）。
+  零代码改动。下一步 M1（LR-1 门控硬化）待点名。
