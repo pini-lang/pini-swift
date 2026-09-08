@@ -49,6 +49,11 @@ public indirect enum HIRType: Equatable {
     /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
     /// member access via extractvalue by label index.
     case tuple(labels: [String?], fieldTypes: [HIRType])
+    /// Function value (G6): closures / lambdas / named functions used as
+    /// values. Unified fat-pointer ABI `{ ptr, ptr }` = { code, env }; the
+    /// param/return shapes are carried for parity checking only — the IR
+    /// call protocol is fixed (first arg is always the env pointer).
+    case function(params: [HIRType], returnType: HIRType?)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -74,6 +79,8 @@ public indirect enum HIRType: Equatable {
             return "%bk_set*"
         case .tuple(_, let fieldTypes):
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
+        case .function:
+            return "{ ptr, ptr }"
         }
     }
 
@@ -114,7 +121,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple:
+        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function:
             return false
         }
     }
@@ -218,6 +225,27 @@ public indirect enum HIRExpr: Equatable {
     /// Tuple member read `base.label` (G5) — extractvalue by field index.
     case tupleIndexGet(base: HIRExpr, index: Int, type: HIRType)
 
+    // MARK: G6 closures / higher-order functions
+
+    /// A closure value (G6): the lowered body of a `func` literal plus its
+    /// creation-point capture list. Captures are reference-captured (the env
+    /// field holds a pointer to the captured variable's storage slot, sharing
+    /// semantics with the interpreter's currentEnv); `captures` is ordered by
+    /// first use in the body and carries each captured variable's declared
+    /// type. `paramNames` parallels `paramTypes` (body references go through
+    /// these names); an unannotated param adopts the return-annotation
+    /// fallback, matching the checker's G29 inference.
+    case closureLiteral(id: Int, paramNames: [String], paramTypes: [HIRType], returnType: HIRType?,
+                        captures: [HIRCapture], body: [HIRStmt], type: HIRType)
+    /// A named top-level function used as a value (G6): emitted through an
+    /// env-ignoring adapter fat pointer (`@__adapter_<mangled>`) so direct
+    /// and indirect call sites share one calling convention.
+    case functionValue(functionName: String, type: HIRType)
+    /// Indirect call through a function value (G6): always the closure ABI
+    /// `call ret code(ptr env, args...)` — `callee` is a closureLiteral /
+    /// functionValue / function-typed variable load.
+    case indirectCall(callee: HIRExpr, arguments: [HIRExpr], returnType: HIRType?)
+
     // MARK: G9 string deepening
 
     /// `s.upper()` / `s.lower()` (G9) — byte-wise toupper/tolower over a
@@ -284,6 +312,20 @@ public struct HIRDictEntry: Equatable {
     }
 }
 
+/// One reference capture of a closure (G6): the captured outer variable's
+/// name and declared type. The env field stores a pointer to the variable's
+/// storage slot (reference capture — later writes to the outer variable are
+/// visible through the closure, interpreter currentEnv parity).
+public struct HIRCapture: Equatable {
+    public let name: String
+    public let type: HIRType
+
+    public init(name: String, type: HIRType) {
+        self.name = name
+        self.type = type
+    }
+}
+
 /// One match arm (G2 general case skeleton). `caseName` is the enum-case
 /// name the scrutinee's tag is compared against ("some" / "none" for an
 /// Optional scrutinee; user enum cases via the same node — G4). `bindings`
@@ -343,4 +385,10 @@ public indirect enum HIRStmt: Equatable {
     /// Nominal field store `base.field = value` (G3). GEP + store through
     /// the base pointer; objects offset past the refcount header.
     case fieldStore(base: HIRExpr, field: String, value: HIRExpr, fieldType: HIRType)
+    /// `capture name` (G6): a marker statement inside a closure body. The
+    /// capture itself is resolved at the closure-literal creation point
+    /// (HIRLowerer free-variable analysis mirrors the checker's G29 set),
+    /// so this lowers to nothing — it exists so the statement kind is
+    /// accepted inside lowered closure bodies rather than gated.
+    case captureMarker(name: String)
 }

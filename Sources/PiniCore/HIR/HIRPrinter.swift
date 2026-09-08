@@ -80,6 +80,8 @@ public enum HIRPrinter {
             return lines
         case .fieldStore(let base, let field, let value, _):
             return ["\(pad)\(exprText(base)).\(field) = \(exprText(value))"]
+        case .captureMarker(let name):
+            return ["\(pad)capture \(name)"]
         }
     }
 
@@ -156,6 +158,14 @@ public enum HIRPrinter {
                 return "{\(exprText(part))}"
             }.joined()
             return "\"\(joined)\""
+        case .closureLiteral(let id, _, _, _, let captures, _, _):
+            let names = captures.map { $0.name }.joined(separator: ", ")
+            return "closure#\(id)(capture: \(names))"
+        case .functionValue(let functionName, _):
+            return "func@\(functionName)"
+        case .indirectCall(let callee, let arguments, _):
+            let args = arguments.map(exprText).joined(separator: ", ")
+            return "\(exprText(callee))(\(args))"
         }
     }
 

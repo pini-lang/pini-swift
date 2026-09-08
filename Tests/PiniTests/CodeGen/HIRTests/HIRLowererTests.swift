@@ -109,21 +109,26 @@ final class HIRLowererTests: XCTestCase {
         XCTAssertEqual(args.count, 2)
     }
 
-    func testGateRejectsLambda() {
-        // G5 moved dictionary / set literals inside the slice (dict/set
-        // batch); lambdas remain outside it (G6 closure family). The
-        // boundary gate tracks the current grid, not the M4 snapshot.
-        XCTAssertThrowsError(try lower("""
+    func testLambdaLowersToClosureLiteral() throws {
+        // G6 moved lambdas inside the slice (closure family): a bound lambda
+        // lowers to a closure literal and its call site to an indirect call.
+        // The boundary gate tracks the current grid, not the M4 snapshot.
+        let hir = try lower("""
         main|func() -> ():
             var f = func (x,) -> (I32,):
                 return x + 1
             print(f(41))
-        """)) { error in
-            XCTAssertTrue(
-                String(describing: error).contains("HIR lowering error"),
-                "expected capability gate error, got: \(error)"
-            )
+        """)
+        guard let alloc = hir.mainFunction?.body.first,
+              case .allocVar(_, let varType, _, .closureLiteral(_, let paramNames, let paramTypes, _, let captures, _, _)) = alloc else {
+            return XCTFail("expected a closure-literal variable allocation")
         }
+        guard case .function = varType else {
+            return XCTFail("expected function-typed variable, got \(varType)")
+        }
+        XCTAssertEqual(paramNames, ["x"])
+        XCTAssertEqual(paramTypes, [.i32])
+        XCTAssertTrue(captures.isEmpty, "no captures in this corpus")
     }
 
     func testGateRejectsUnknownFunctionCall() {
