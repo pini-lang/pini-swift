@@ -108,6 +108,24 @@ public enum HIRLowerer {
             }
         }
 
+        // G6 pre-pass: assign every funcLiteral a stable closure id (source
+        // order, keyed by "行:列" — legacy ClosureEmitter registry contract).
+        var closureIds: [String: Int] = [:]
+        var closureCounter = 0
+        for decl in module.declarations {
+            switch decl {
+            case .funcDecl(let fd):
+                precollectClosureIds(in: fd.body?.statements ?? [], counter: &closureCounter, into: &closureIds)
+            case .structDecl(let sd):
+                for m in sd.methods { precollectClosureIds(in: m.body?.statements ?? [], counter: &closureCounter, into: &closureIds) }
+            case .objectDecl(let od):
+                for m in od.methods { precollectClosureIds(in: m.body?.statements ?? [], counter: &closureCounter, into: &closureIds) }
+            case .extensionDecl(let ext):
+                for m in ext.methods { precollectClosureIds(in: m.body?.statements ?? [], counter: &closureCounter, into: &closureIds) }
+            default: break
+            }
+        }
+
         // G10 pre-pass: monomorphization. Scan the whole module for generic
         // construction / call sites (`盒<I32>()`, `身份<I32>(...)`), register
         // a specialized nominal (fields substituted) or function decl per
@@ -264,7 +282,7 @@ public enum HIRLowerer {
                 functions.append(
                     try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
                                       nominalTypes: nominals, userTypes: userTypes, enums: enums,
-                                      genericFuncTemplates: genericFuncTemplates)
+                                      genericFuncTemplates: genericFuncTemplates, closureIds: closureIds)
                 )
             case .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below.
@@ -281,7 +299,7 @@ public enum HIRLowerer {
             functions.append(
                 try lowerFunction(specialized, typeInference: typeInference, moduleSignatures: signatures,
                                   nominalTypes: nominals, userTypes: userTypes, enums: enums,
-                                  genericFuncTemplates: genericFuncTemplates)
+                                  genericFuncTemplates: genericFuncTemplates, closureIds: closureIds)
             )
         }
         guard functions.contains(where: { $0.name == "main" }) else {
@@ -302,14 +320,16 @@ public enum HIRLowerer {
                     name: sd.name, isObject: false, fields: sd.fields,
                     methods: nominals[sd.name]!.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
+                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                    closureIds: closureIds
                 ))
             case .objectDecl(let od):
                 typeDecls.append(try lowerNominal(
                     name: od.name, isObject: true, fields: od.fields,
                     methods: nominals[od.name]!.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
+                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                    closureIds: closureIds
                 ))
             default:
                 break
@@ -325,7 +345,8 @@ public enum HIRLowerer {
                 name: specializedName, isObject: false, fields: sd.fields,
                 methods: info.methods,
                 typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
+                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                closureIds: closureIds
             ))
         }
         return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values))
@@ -699,7 +720,8 @@ public enum HIRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
-        genericFuncTemplates: [String: FuncDecl] = [:]
+        genericFuncTemplates: [String: FuncDecl] = [:],
+        closureIds: [String: Int] = [:]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -744,7 +766,8 @@ public enum HIRLowerer {
             nominalTypes: nominalTypes,
             userTypes: userTypes,
             enums: enums,
-            genericFuncTemplates: genericFuncTemplates
+            genericFuncTemplates: genericFuncTemplates,
+            closureIds: closureIds
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: decl.name, params: params, returnType: returnType, body: body)
@@ -781,13 +804,14 @@ public enum HIRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
-        genericFuncTemplates: [String: FuncDecl] = [:]
+        genericFuncTemplates: [String: FuncDecl] = [:],
+        closureIds: [String: Int] = [:]
     ) throws -> HIRTypeDecl {
         let selfType = HIRType.nominal(name: name, isObject: isObject)
         var scratch = FunctionContext(
             functionName: "<field-default:\(name)>", returnType: nil, paramTypes: [:],
             typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
-            userTypes: userTypes, enums: enums
+            userTypes: userTypes, enums: enums, closureIds: closureIds
         )
         var loweredFields: [HIRTypeDecl.Field] = []
         for field in fields {
@@ -810,7 +834,8 @@ public enum HIRLowerer {
             loweredMethods.append(try lowerMethod(
                 method, typeName: name, selfType: selfType,
                 typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
-                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
+                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                closureIds: closureIds
             ))
         }
         return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
@@ -826,7 +851,8 @@ public enum HIRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
-        genericFuncTemplates: [String: FuncDecl] = [:]
+        genericFuncTemplates: [String: FuncDecl] = [:],
+        closureIds: [String: Int] = [:]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("method '\(decl.name)' of '\(typeName)' has no body", at: decl.location)
@@ -870,7 +896,8 @@ public enum HIRLowerer {
             nominalTypes: nominalTypes,
             userTypes: userTypes,
             enums: enums,
-            genericFuncTemplates: genericFuncTemplates
+            genericFuncTemplates: genericFuncTemplates,
+            closureIds: closureIds
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: irName, params: params, returnType: returnType, body: body)
@@ -1046,6 +1073,12 @@ public enum HIRLowerer {
             // pass is a pure no-op; lower to a side-effect-free constant
             // expression statement so HIRStmt stays total without a new case.
             return [.exprStmt(.intConst(value: 0, type: .i32))]
+
+        case .captureStatement(let name, _):
+            // G6: marker only — the capture set is resolved at the enclosing
+            // closure literal's creation point (free-variable analysis); the
+            // statement itself carries no runtime effect.
+            return [.captureMarker(name: name)]
 
         default:
             throw unsupported(
@@ -1323,6 +1356,13 @@ public enum HIRLowerer {
             // `取文本(plus)` — unique unqualified reverse lookup.
             if let constructed = try lowerBareEnumCase(name, at: location, into: &context) {
                 return constructed
+            }
+            // Named top-level function used as a value (G6): `应用(加倍, 21)`.
+            // The type comes from the pre-pass signature table; emission goes
+            // through an env-ignoring adapter fat pointer at the use site.
+            if let signature = context.moduleSignatures[name] {
+                let type = HIRType.function(params: signature.paramTypes, returnType: signature.returnType)
+                return LoweredExpr(node: .functionValue(functionName: name, type: type), type: type)
             }
             throw unsupported("reference to undeclared variable '\(name)'", at: location)
 
@@ -1726,6 +1766,58 @@ public enum HIRLowerer {
                     type: contextType
                 )
             }
+            // Indirect call through a function value (G6): the callee is a
+            // variable holding a closure / named-function value (function-
+            // typed parameter `f(x)` or closure variable `sq(6)`). Named
+            // top-level functions resolve through the signature table below;
+            // a bare `加倍(x)` call never reaches this branch.
+            if let signature = context.variableTypes[functionName],
+               case .function(let paramTypes, let functionReturn) = signature {
+                guard loweredArgs.count == paramTypes.count else {
+                    throw unsupported(
+                        "indirect call through '\(functionName)' expects \(paramTypes.count) arguments, got \(loweredArgs.count)",
+                        at: location
+                    )
+                }
+                for (index, argument) in loweredArgs.enumerated() {
+                    try requireAssignable(argument.type, to: paramTypes[index], at: location)
+                }
+                return LoweredExpr(
+                    node: .indirectCall(
+                        callee: .load(name: functionName, type: signature),
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: functionReturn
+                    ),
+                    type: functionReturn ?? .i32
+                )
+            }
+            // Direct call on an immediate closure literal `sq(6)` where sq
+            // was just created inline — `f(...)` with a funcLiteral callee.
+            if case .funcLiteral(let literalDecl, let literalLocation) = callee {
+                let loweredCallee = try lowerFuncLiteral(
+                    decl: literalDecl, expected: nil, at: literalLocation, into: &context
+                )
+                guard case .function(let literalParams, let literalReturn) = loweredCallee.type else {
+                    throw unsupported("inline anonymous function resolved to a non-function type", at: location)
+                }
+                guard loweredArgs.count == literalParams.count else {
+                    throw unsupported(
+                        "anonymous function call expects \(literalParams.count) arguments, got \(loweredArgs.count)",
+                        at: location
+                    )
+                }
+                for (index, argument) in loweredArgs.enumerated() {
+                    try requireAssignable(argument.type, to: literalParams[index], at: location)
+                }
+                return LoweredExpr(
+                    node: .indirectCall(
+                        callee: loweredCallee.node,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: literalReturn
+                    ),
+                    type: literalReturn ?? .i32
+                )
+            }
             // Enum case construction `圆(2.0)` / `identifier(text= "x")` (G4):
             // resolved before the function-signature table — case names share
             // the identifier namespace with functions.
@@ -1781,11 +1873,328 @@ public enum HIRLowerer {
                 at: location
             )
 
+        case .funcLiteral(let decl, let location):
+            return try lowerFuncLiteral(decl: decl, expected: expected, at: location, into: &context)
+
         default:
             throw unsupported(
                 "expression '\(expression.kindName)' outside the M4 slice",
                 at: expressionLocation(expression)
             )
+        }
+    }
+
+    // MARK: - Closures / higher-order functions (G6)
+
+    /// Collect funcLiteral ids in source order (module pre-pass). Mirrors the
+    /// legacy registry: every literal gets a stable id keyed by "行:列", even
+    /// nested ones — traversal must not descend into funcLiteral bodies for
+    /// id assignment of the nested literal itself... it must: nested closure
+    /// ids are assigned outer-first, inner-after (same contract as the legacy
+    /// collector which visits the literal node then returns).
+    private static func precollectClosureIds(
+        in statements: [Statement],
+        counter: inout Int,
+        into ids: inout [String: Int]
+    ) {
+        for statement in statements {
+            precollectClosureIds(in: statement, counter: &counter, into: &ids)
+        }
+    }
+
+    private static func precollectClosureIds(
+        in statement: Statement,
+        counter: inout Int,
+        into ids: inout [String: Int]
+    ) {
+        switch statement {
+        case .varDecl(_, _, let initializer, _, _):
+            if let initializer = initializer {
+                precollectClosureIds(in: initializer, counter: &counter, into: &ids)
+            }
+        case .assign(let target, let value, _):
+            if case .identifier = target {} // identifier targets carry no literals
+            precollectClosureIds(in: value, counter: &counter, into: &ids)
+        case .expressionStmt(let expr, _):
+            precollectClosureIds(in: expr, counter: &counter, into: &ids)
+        case .returnStatement(let expr, _):
+            if let expr = expr { precollectClosureIds(in: expr, counter: &counter, into: &ids) }
+        case .ifStatement(let cond, let thenBlock, let elifs, let elseBlock, _, _):
+            precollectClosureIds(in: cond, counter: &counter, into: &ids)
+            precollectClosureIds(in: thenBlock.statements, counter: &counter, into: &ids)
+            for elif in elifs {
+                precollectClosureIds(in: elif.condition, counter: &counter, into: &ids)
+                precollectClosureIds(in: elif.block.statements, counter: &counter, into: &ids)
+            }
+            if let elseBlock = elseBlock {
+                precollectClosureIds(in: elseBlock.statements, counter: &counter, into: &ids)
+            }
+        case .whileStatement(let cond, let body, _, _, _):
+            precollectClosureIds(in: cond, counter: &counter, into: &ids)
+            precollectClosureIds(in: body.statements, counter: &counter, into: &ids)
+        case .deferStatement(let inner, _):
+            precollectClosureIds(in: inner, counter: &counter, into: &ids)
+        case .matchStatement(let scrutinee, let cases, _):
+            precollectClosureIds(in: scrutinee, counter: &counter, into: &ids)
+            for matchCase in cases {
+                precollectClosureIds(in: matchCase.block.statements, counter: &counter, into: &ids)
+            }
+        default:
+            break
+        }
+    }
+
+    private static func precollectClosureIds(
+        in expression: Expression,
+        counter: inout Int,
+        into ids: inout [String: Int]
+    ) {
+        if case .funcLiteral(let decl, let location) = expression {
+            let key = "\(location.line):\(location.column)"
+            if ids[key] == nil {
+                ids[key] = counter
+                counter += 1
+            }
+            // Nested literals inside the body get ids too (deferred in source
+            // order). The body is a Block; walk its statements.
+            precollectClosureIds(in: decl.body?.statements ?? [], counter: &counter, into: &ids)
+            return
+        }
+        switch expression {
+        case .binary(let lhs, _, let rhs, _):
+            precollectClosureIds(in: lhs, counter: &counter, into: &ids)
+            precollectClosureIds(in: rhs, counter: &counter, into: &ids)
+        case .unary(_, let operand, _):
+            precollectClosureIds(in: operand, counter: &counter, into: &ids)
+        case .call(let callee, let arguments, _):
+            precollectClosureIds(in: callee, counter: &counter, into: &ids)
+            for argument in arguments {
+                precollectClosureIds(in: argument.expression, counter: &counter, into: &ids)
+            }
+        case .member(let base, _, _):
+            precollectClosureIds(in: base, counter: &counter, into: &ids)
+        case .tupleIndex(let base, _, _):
+            precollectClosureIds(in: base, counter: &counter, into: &ids)
+        case .tuple(_, let elements, _):
+            for element in elements { precollectClosureIds(in: element, counter: &counter, into: &ids) }
+        case .arrayLiteral(let elements, _):
+            for element in elements { precollectClosureIds(in: element, counter: &counter, into: &ids) }
+        case .tryExpression(let operand, _, let handler, _):
+            precollectClosureIds(in: operand, counter: &counter, into: &ids)
+            precollectClosureIds(in: handler.statements, counter: &counter, into: &ids)
+        case .genericConstruct(_, _, let arguments, _):
+            for argument in arguments {
+                precollectClosureIds(in: argument.expression, counter: &counter, into: &ids)
+            }
+        default:
+            break
+        }
+    }
+
+    /// Lower a `func` literal (G6): capture analysis at the creation point,
+    /// body lowered with the closure's own scope (captures pre-seeded into
+    /// variableTypes so free references resolve; `capture` marker statements
+    /// inside the body drop out). The param types adopt the checker's G29
+    /// fallback chain through the annotation mapping — an unannotated param
+    /// falls back to the return annotation (single concrete return), then
+    /// the expected function type, then I32 (matching the legacy emitter's
+    /// final fallback).
+    private static func lowerFuncLiteral(
+        decl: FuncDecl,
+        expected: HIRType?,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        let key = "\(location.line):\(location.column)"
+        guard let closureId = context.closureIds[key] else {
+            throw unsupported("anonymous function was not pre-registered", at: location)
+        }
+        guard decl.body != nil else {
+            throw unsupported("anonymous function has no body", at: location)
+        }
+
+        // Resolve the literal's function type: the checker's inference
+        // (G29 bidirectional: annotations > body inversion > expected >
+        // return-annotation fallback > wildcard) mapped through the same
+        // annotation conversion as declared signatures.
+        let inferredAnnotation = context.inferType(of: .funcLiteral(decl: decl, location: location))
+        let functionType: HIRType
+        if let annotation = inferredAnnotation, let mapped = HIRType(from: annotation),
+           case .function = mapped {
+            functionType = mapped
+        } else if case .function(let expectedParams, let expectedReturn) = expected {
+            functionType = .function(params: expectedParams, returnType: expectedReturn)
+        } else {
+            throw unsupported(
+                "anonymous function type could not be resolved (annotate the parameter or the variable)",
+                at: location
+            )
+        }
+        guard case .function(let paramTypes, let returnType) = functionType else {
+            throw unsupported("anonymous function resolved to a non-function type", at: location)
+        }
+        guard decl.params.count == paramTypes.count else {
+            throw unsupported(
+                "anonymous function declares \(decl.params.count) parameters but resolves to \(paramTypes.count)",
+                at: location
+            )
+        }
+
+        // Capture analysis (creation point): identifiers used in the body,
+        // minus the literal's own params and block-declared vars, minus
+        // function-typed references that are named top-level functions
+        // (those become adapters at their use site, not captures). Captures
+        // are reference-captured: the env field holds the variable's slot
+        // pointer. Only variables visible in the creation-point scope are
+        // captured (declared but out-of-scope names cannot occur through
+        // the checker).
+        let used = collectBodyIdentifiers(in: decl)
+        let localBound = Set(decl.params.map { $0.name })
+            .union(declaredLocalVars(in: decl.body?.statements ?? []))
+        var captures: [HIRCapture] = []
+        var captureIndex: [String: Int] = [:]
+        for name in used.sorted() where !localBound.contains(name) {
+            // Named top-level functions are function values, not captures
+            // (their adapters are emitted at the use site).
+            if context.moduleSignatures[name] != nil { continue }
+            guard let type = context.variableTypes[name] else { continue }
+            guard captureIndex[name] == nil else { continue }
+            captureIndex[name] = captures.count
+            captures.append(HIRCapture(name: name, type: type))
+        }
+
+        // Lower the body in a fresh scope: params + captures pre-seeded so
+        // free references resolve. The enclosing function's variableTypes
+        // must NOT leak in (a same-named outer var would shadow the param).
+        var closureContext = FunctionContext(
+            functionName: context.functionName,
+            returnType: returnType,
+            paramTypes: Dictionary(uniqueKeysWithValues: zip(decl.params.map { $0.name }, paramTypes)),
+            typeInference: context.typeInference,
+            moduleSignatures: context.moduleSignatures,
+            nominalTypes: context.nominalTypes,
+            userTypes: context.userTypes,
+            enums: context.enums,
+            genericFuncTemplates: context.genericFuncTemplates,
+            closureIds: context.closureIds
+        )
+        for capture in captures {
+            closureContext.variableTypes[capture.name] = capture.type
+        }
+        let body = try lowerBlock(decl.body!, into: &closureContext)
+
+        return LoweredExpr(
+            node: .closureLiteral(
+                id: closureId, paramNames: decl.params.map { $0.name },
+                paramTypes: paramTypes, returnType: returnType,
+                captures: captures, body: body, type: functionType
+            ),
+            type: functionType
+        )
+    }
+
+    /// Identifiers referenced by a closure body (including callee names);
+    /// funcLiteral sub-expressions are opaque — their own captures are
+    /// resolved at their own creation point (legacy collector contract).
+    private static func collectBodyIdentifiers(in decl: FuncDecl) -> Set<String> {
+        collectBodyIdentifiers(in: decl.body?.statements ?? [])
+    }
+
+    private static func collectBodyIdentifiers(in statements: [Statement]) -> Set<String> {
+        statements.reduce(into: Set<String>()) { $0.formUnion(collectBodyIdentifiers(in: $1)) }
+    }
+
+    private static func collectBodyIdentifiers(in statement: Statement) -> Set<String> {
+        switch statement {
+        case .varDecl(let name, _, let initializer, _, _):
+            var ids = initializer.map { collectBodyIdentifiers(in: $0) } ?? []
+            ids.insert(name)
+            return ids
+        case .varDestructure(let names, _, let initializer, _, _):
+            var ids = initializer.map { collectBodyIdentifiers(in: $0) } ?? []
+            ids.formUnion(names.filter { $0 != "_" })
+            return ids
+        case .assign(let target, let value, _):
+            var ids = collectBodyIdentifiers(in: value)
+            switch target {
+            case .identifier(let name): ids.insert(name)
+            case .member(let object, _): ids.formUnion(collectBodyIdentifiers(in: object))
+            case .subscript(let container, let index):
+                ids.formUnion(collectBodyIdentifiers(in: container))
+                ids.formUnion(collectBodyIdentifiers(in: index))
+            }
+            return ids
+        case .expressionStmt(let expr, _):
+            return collectBodyIdentifiers(in: expr)
+        case .returnStatement(let expr, _):
+            return expr.map { collectBodyIdentifiers(in: $0) } ?? []
+        case .ifStatement(let cond, let thenBlock, let elifs, let elseBlock, _, _):
+            var ids = collectBodyIdentifiers(in: cond)
+            ids.formUnion(collectBodyIdentifiers(in: thenBlock.statements))
+            for elif in elifs {
+                ids.formUnion(collectBodyIdentifiers(in: elif.condition))
+                ids.formUnion(collectBodyIdentifiers(in: elif.block.statements))
+            }
+            if let elseBlock = elseBlock {
+                ids.formUnion(collectBodyIdentifiers(in: elseBlock.statements))
+            }
+            return ids
+        case .whileStatement(let cond, let body, _, _, _):
+            var ids = collectBodyIdentifiers(in: cond)
+            ids.formUnion(collectBodyIdentifiers(in: body.statements))
+            return ids
+        case .matchStatement(let scrutinee, let cases, _):
+            var ids = collectBodyIdentifiers(in: scrutinee)
+            for matchCase in cases {
+                ids.formUnion(collectBodyIdentifiers(in: matchCase.block.statements))
+            }
+            return ids
+        case .deferStatement(let inner, _):
+            return collectBodyIdentifiers(in: inner)
+        case .captureStatement(let name, _):
+            return [name]
+        default:
+            return []
+        }
+    }
+
+    private static func collectBodyIdentifiers(in expression: Expression) -> Set<String> {
+        switch expression {
+        case .identifier(let name, _):
+            return [name]
+        case .binary(let lhs, _, let rhs, _):
+            return collectBodyIdentifiers(in: lhs).union(collectBodyIdentifiers(in: rhs))
+        case .unary(_, let operand, _):
+            return collectBodyIdentifiers(in: operand)
+        case .call(let callee, let arguments, _):
+            var ids = collectBodyIdentifiers(in: callee)
+            for argument in arguments {
+                ids.formUnion(collectBodyIdentifiers(in: argument.expression))
+            }
+            return ids
+        case .member(let base, _, _):
+            return collectBodyIdentifiers(in: base)
+        case .tupleIndex(let base, _, _):
+            return collectBodyIdentifiers(in: base)
+        case .tuple(_, let elements, _):
+            return elements.reduce(into: Set<String>()) { $0.formUnion(collectBodyIdentifiers(in: $1)) }
+        case .arrayLiteral(let elements, _):
+            return elements.reduce(into: Set<String>()) { $0.formUnion(collectBodyIdentifiers(in: $1)) }
+        case .tryExpression(let operand, _, let handler, _):
+            var ids = collectBodyIdentifiers(in: operand)
+            ids.formUnion(collectBodyIdentifiers(in: handler.statements))
+            return ids
+        default:
+            return []
+        }
+    }
+
+    /// Variables block-declared by a statement list (their names are local
+    /// definitions, never captures).
+    private static func declaredLocalVars(in statements: [Statement]) -> Set<String> {
+        statements.reduce(into: Set<String>()) {
+            if case .varDecl(let name, _, _, _, _) = $1 { $0.insert(name) }
+            if case .varDestructure(let names, _, _, _, _) = $1 { $0.formUnion(names.filter { $0 != "_" }) }
         }
     }
 
@@ -2532,6 +2941,22 @@ extension HIRType {
                 fieldTypes.append(fieldType)
             }
             self = .tuple(labels: labels, fieldTypes: fieldTypes)
+        case .function(let params, let returns, _, _):
+            // `(I32,) -> (I32,)` (G6): the fat-pointer ABI is uniform, the
+            // shapes ride along for parity checks. A single return is the
+            // slice surface; zero returns = void.
+            guard returns.count <= 1 else { return nil }
+            var paramTypes: [HIRType] = []
+            for param in params {
+                guard let paramType = HIRType(from: param) else { return nil }
+                paramTypes.append(paramType)
+            }
+            var returnType: HIRType?
+            if let firstReturn = returns.first {
+                guard let resolved = HIRType(from: firstReturn) else { return nil }
+                returnType = resolved
+            }
+            self = .function(params: paramTypes, returnType: returnType)
         default:
             return nil
         }
@@ -2663,6 +3088,10 @@ private struct FunctionContext {
     /// dispatch of `身份<I32>(...)` (the specialization itself is
     /// pre-registered during the monomorphization pre-pass).
     let genericFuncTemplates: [String: FuncDecl]
+    /// G6: closure literal ids keyed by `funcLiteral.location` "行:列"
+    /// (stable AST-node identity, legacy ClosureEmitter contract). Assigned
+    /// by a module-level pre-pass so emission order is source-order stable.
+    let closureIds: [String: Int]
     var errorBindings: Set<String> = []
 
     init(
@@ -2674,7 +3103,8 @@ private struct FunctionContext {
         nominalTypes: [String: HIRLowerer.NominalInfo] = [:],
         userTypes: [String: HIRType] = [:],
         enums: [String: HIREnumDecl] = [:],
-        genericFuncTemplates: [String: FuncDecl] = [:]
+        genericFuncTemplates: [String: FuncDecl] = [:],
+        closureIds: [String: Int] = [:]
     ) {
         self.functionName = functionName
         self.returnType = returnType
@@ -2685,6 +3115,7 @@ private struct FunctionContext {
         self.userTypes = userTypes
         self.enums = enums
         self.genericFuncTemplates = genericFuncTemplates
+        self.closureIds = closureIds
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {

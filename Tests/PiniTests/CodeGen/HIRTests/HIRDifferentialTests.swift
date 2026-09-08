@@ -174,4 +174,12 @@ final class HIRDifferentialTests: XCTestCase {
 
     func testDiffGenericStruct() throws { try assertParity(fixtureName: "testDiffGenericStruct") }
     func testDiffGenericFunc() throws { try assertParity(fixtureName: "testDiffGenericFunc") }
+
+    // MARK: - G6 closures / higher-order functions (fat pointer ABI,
+    // reference-capture env, named-function value adapters)
+
+    func testDiffLambda() throws { try assertParity(fixtureName: "testDiffLambda") }
+    func testDiffLambdaTyped() throws { try assertParity(fixtureName: "testDiffLambdaTyped") }
+    func testDiffHigherOrder() throws { try assertParity(fixtureName: "testDiffHigherOrder") }
+    func testDiffClosures() throws { try assertParity(fixtureName: "testDiffClosures") }
 }

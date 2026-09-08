@@ -1,6 +1,6 @@
 examples/access.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/array-basic.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method get not yet supported in IR' 
-examples/closures.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/closures.pini	PASS	PASS	PASS	PASS	
 examples/collections.pini	PASS	PASS	PASS	PASS	
 examples/comments.pini	PASS	PASS	PASS	PASS	
 examples/composition.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
@@ -28,10 +28,10 @@ examples/for.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be
 examples/generic-func.pini	PASS	PASS	PASS	PASS	
 examples/generic.pini	PASS	PASS	PASS	PASS	
 examples/hello.pini	PASS	PASS	PASS	PASS	
-examples/higher-order.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/higher-order.pini	PASS	PASS	PASS	PASS	
 examples/io.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/lambda-typed.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/lambda.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/lambda-typed.pini	PASS	PASS	PASS	PASS	
+examples/lambda.pini	PASS	PASS	PASS	PASS	
 examples/lazyref.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/lexical.pini	PASS	PASS	PASS	PASS	
 examples/match.pini	PASS	PASS	PASS	PASS	

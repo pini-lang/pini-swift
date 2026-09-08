@@ -391,3 +391,39 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       豁免理由）。
     - **验收**：差分 41/41（+2：generic/generic-func 语料直用）；全量
       回归 **1274/0/0**；sweep hir-emit **26/59 → 28/59**。
+
+  - **G6 闭包/高阶族完成（2026-09-09，分支
+    `agent/pini-dev/llvm-m5-g6-closures`，closures / lambda /
+    lambda-typed / higher-order ×4）**：
+    - **HIR 节点**：`HIRType.function(params:returnType:)`（fat pointer
+      `{ ptr, ptr }` ABI spelling）；`HIRExpr.closureLiteral`（id +
+      paramNames/paramTypes + captures + body）、`.functionValue`（具名
+      函数作为值）、`.indirectCall`；`HIRStmt.captureMarker`（`capture`
+      语句降为标记，捕获集在字面量创建点解析）。
+    - **降载**：`HIRType(from:)` 映射函数类型注解；模块预扫
+      `precollectClosureIds` 按「行:列」分配稳定闭包 id（legacy 注册表
+      契约）；`lowerFuncLiteral` 创建点自由变量分析（体引用 − 参数 −
+      本块声明 − 顶层函数名），按引用捕获（env 字段 = 被捕获变量存储槽
+      指针，与解释器 currentEnv 共享语义一致）；闭包体在独立
+      FunctionContext 降载（参数/捕获预播种，外层变量不渗入）。
+    - **调用点分派**：函数类型变量 callee `f(x)` → indirectCall（签名
+      比对实参）；内联字面量直接调用同通道；值位具名函数 →
+      functionValue。
+    - **发射**：创建点 malloc env + 逐捕获 GEP/store 槽指针 +
+      insertvalue fat pointer；闭包 define 缓冲至模块末尾拼接
+      （`@__closure_N(ptr %env, args...)`，env GEP 取回槽指针注册为
+      局部符号）；具名函数作为值走 env 忽略适配器
+      `@__adapter_<mangled>`（#8 语义：直接传 code 会实参错位）；间接
+      调用恒按闭包 ABI extractvalue code/env。**勘测钉定**：env 结构
+      类型声明必须进模块头——创建点 GEP 在 main 体内先于尾部声明，
+      lli 报 `base element of getelementptr must be sized`（首版放尾部
+      被差分拦住）。
+    - **lazyref.pini 维持豁免**：`LazyRef<T>(...)` 是泛型构造但模板未
+      在语料内声明（实测：`unknown generic 'LazyRef'`），依赖跨文件/
+      内建泛型（G13 域），G6 解除不了该格（E-149 豁免理由更新）。
+    - **测试维护**：`testGateRejectsLambda` 边界断言过期（lambda 已进
+      slice），改为正向 `testLambdaLowersToClosureLiteral`（闭包字面量
+      形态断言）。
+    - **验收**：差分 **45/45**（+4：四语料直用）；全量回归
+      **1278/0/0**；sweep hir-emit **28/59 → 32/59**（closures /
+      lambda / lambda-typed / higher-order 进列）。

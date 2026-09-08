@@ -55,6 +55,28 @@ public final class IREmitter {
     private var stringConstants: [String: (name: String, length: Int)] = [:]
     private var usesStrCmp = false
 
+    // MARK: G6 closure / higher-order state
+
+    /// Deferred closure `define` bodies (legacy `closureDefsIR` contract):
+    /// buffered during function emission, appended at module end so the SSA
+    /// namespace of the main body stays intact.
+    private var closureDefs: [String] = []
+    /// Deferred env struct type declarations, referenced by creation-point
+    /// GEPs before the closure bodies are appended (forward refs legal).
+    private var closureEnvTypeDecls: [String] = []
+    /// Env-ignoring adapter definitions for named functions used as values
+    /// (`@__adapter_<mangled>`), deduplicated by mangled name.
+    private var adapterDefs: [String] = []
+    private var adapterNames: Set<String> = []
+    /// Captured-variable slot pointers active inside the closure body being
+    /// emitted: capture name -> register holding the variable's slot pointer.
+    /// Registered like scope slots so `load`/`storeVar` inside the body are
+    /// slot-based (reference capture: all accesses go through the slot).
+    private var captureSlots: [String: String] = [:]
+    /// Module function registry by mangled IR name (G6): adapter generation
+    /// reads the original ABI (params/return) from here.
+    private var moduleFunctions: [String: HIRFunction] = [:]
+
     public init() {}
 
     // MARK: - Module
@@ -116,6 +138,17 @@ public final class IREmitter {
         usesStrCmp = false
         moduleTypes = module.types
         moduleEnums = module.enums
+        // G6: record every top-level function's ABI by mangled IR name so
+        // adapter generation can mirror the original signature.
+        moduleFunctions = [:]
+        for function in module.functions {
+            moduleFunctions[Self.mangle(function.name)] = function
+        }
+        for typeDecl in module.types {
+            for method in typeDecl.methods {
+                moduleFunctions[Self.mangle(method.name)] = method
+            }
+        }
         // Nominal type definitions (G3): `%struct.X = type { ... }` /
         // `%object.X = type { i32 (refcount), ... }` come first so field GEPs
         // verify against complete types. Enums (G4): tagged unions —
@@ -151,7 +184,25 @@ public final class IREmitter {
         if usesStrCmp {
             tail += "declare i32 @strcmp(ptr, ptr)\n"
         }
-        return header + tail + "\n" + bodyIR
+        // G6: env struct type declarations must precede their uses — the
+        // creation-point GEPs live in the function bodies, and lli requires
+        // a sized base element at the GEP (the legacy emitter also placed
+        // these in the header). Closure/adapter defines trail the module.
+        var closureTail = ""
+        for def in closureDefs {
+            closureTail += def
+        }
+        for def in adapterDefs {
+            closureTail += def
+        }
+        var envHeader = ""
+        for envDecl in closureEnvTypeDecls {
+            envHeader += envDecl + "\n"
+        }
+        if !closureEnvTypeDecls.isEmpty {
+            envHeader += "\n"
+        }
+        return header + envHeader + tail + "\n" + bodyIR + closureTail
     }
 
     // MARK: - Functions
@@ -286,6 +337,11 @@ public final class IREmitter {
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
             bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
+
+        case .captureMarker:
+            // Marker only — captures are materialized by the closure literal
+            // emission (env slot pointers), nothing to emit here.
+            break
         }
     }
 
@@ -715,6 +771,18 @@ public final class IREmitter {
 
         case .printCall(let argument):
             return emitPrint(argument)
+
+        case .closureLiteral(let id, let paramNames, let paramTypes, let returnType, let captures, let body, let type):
+            return emitClosureLiteral(
+                id: id, paramNames: paramNames, paramTypes: paramTypes,
+                returnType: returnType, captures: captures, body: body, type: type
+            )
+
+        case .functionValue(let functionName, _):
+            return emitFunctionValue(functionName: functionName)
+
+        case .indirectCall(let callee, let arguments, let returnType):
+            return emitIndirectCall(callee: callee, arguments: arguments, returnType: returnType)
 
         case .resultConstruct(let isOk, let payload, let type):
             guard case .result = type else {
@@ -1637,6 +1705,9 @@ public final class IREmitter {
         case .arrayJoin: return .string
         case .stringConcat: return .string
         case .interpString: return .string
+        case .closureLiteral(_, _, _, _, _, _, let type): return type
+        case .functionValue(_, let type): return type
+        case .indirectCall(_, _, let returnType): return returnType ?? .i32
         }
     }
 
@@ -2041,6 +2112,231 @@ public final class IREmitter {
     /// for both pipelines since G3; HIRType spellings mangle through it too).
     static func mangle(_ name: String) -> String {
         IRName.mangle(name)
+    }
+
+    // MARK: - G6 closures / higher-order functions
+
+    /// Closure value construction at the creation point: malloc the env, fill
+    /// each field with a pointer to the captured variable's storage slot
+    /// (reference capture — later writes to the outer variable are visible),
+    /// and build the `{ code, env }` fat pointer. The closure's `define` body
+    /// is buffered and appended at module end (legacy contract).
+    ///
+    /// Emission order note: this runs while emitting the enclosing function,
+    /// so the buffered closure body must not disturb the current body state —
+    /// emitClosureBody swaps the per-function state out and back.
+    private func emitClosureLiteral(
+        id: Int,
+        paramNames: [String],
+        paramTypes: [HIRType],
+        returnType: HIRType?,
+        captures: [HIRCapture],
+        body: [HIRStmt],
+        type: HIRType
+    ) -> IRValue {
+        let mangled = "@__closure_\(id)"
+        let envPtr: String
+        if captures.isEmpty {
+            envPtr = "null"
+        } else {
+            let envTypeName = "%__closure_env_\(id)"
+            closureEnvTypeDecls.append("\(envTypeName) = type { " +
+                captures.map { _ in "ptr" }.joined(separator: ", ") + " }")
+            let mallocTemp = builder.freshTemp()
+            bodyIR += " \(mallocTemp) = call ptr @malloc(i64 \(captures.count * 8))\n"
+            for (index, capture) in captures.enumerated() {
+                guard let slot = lookupSlot(capture.name) ?? captureSlots[capture.name] else {
+                    fatalError("IREmitter: capture '\(capture.name)' has no visible slot (HIRLowerer guarantees)")
+                }
+                let gepTemp = builder.freshTemp()
+                bodyIR += builder.fmtGEP(name: gepTemp, aggregate: envTypeName, base: mallocTemp, indices: [0, index]) + "\n"
+                bodyIR += builder.fmtStore(value: slot, type: "ptr", ptr: gepTemp) + "\n"
+            }
+            envPtr = mallocTemp
+        }
+
+        let codeTemp = builder.freshTemp()
+        bodyIR += " \(codeTemp) = insertvalue { ptr, ptr } { ptr \(mangled), ptr null }, ptr \(mangled), 0\n"
+        let closureTemp = builder.freshTemp()
+        bodyIR += " \(closureTemp) = insertvalue { ptr, ptr } \(codeTemp), ptr \(envPtr), 1\n"
+
+        emitClosureDefine(
+            id: id, mangled: mangled, paramNames: paramNames, paramTypes: paramTypes,
+            returnType: returnType, captures: captures, body: body
+        )
+        return IRValue(llvmType: "{ ptr, ptr }", ssaName: closureTemp)
+    }
+
+    /// A named top-level function used as a value: an env-ignoring adapter
+    /// fat pointer. Indirect calls always use the closure ABI
+    /// `code(ptr env, args...)`; a bare function's ABI lacks the env slot,
+    /// so passing its code pointer directly would shift arguments (the #8
+    /// higher-order bug: `加倍(null, 5)` -> 0). The adapter bridges the two.
+    private func emitFunctionValue(functionName: String) -> IRValue {
+        let mangled = Self.mangle(functionName)
+        emitAdapter(mangled: mangled)
+        let codeTemp = builder.freshTemp()
+        bodyIR += " \(codeTemp) = insertvalue { ptr, ptr } { ptr @__adapter_\(mangled), ptr null }, ptr @__adapter_\(mangled), 0\n"
+        let closureTemp = builder.freshTemp()
+        bodyIR += " \(closureTemp) = insertvalue { ptr, ptr } \(codeTemp), ptr null, 1\n"
+        return IRValue(llvmType: "{ ptr, ptr }", ssaName: closureTemp)
+    }
+
+    /// Indirect call through a function value: extractvalue code + env, then
+    /// `call ret code(ptr env, args...)` (uniform closure ABI).
+    private func emitIndirectCall(
+        callee: HIRExpr,
+        arguments: [HIRExpr],
+        returnType: HIRType?
+    ) -> IRValue {
+        let closure = emitExpr(callee)
+        let code = builder.freshTemp()
+        bodyIR += " \(code) = extractvalue { ptr, ptr } \(closure.ssaName), 0\n"
+        let env = builder.freshTemp()
+        bodyIR += " \(env) = extractvalue { ptr, ptr } \(closure.ssaName), 1\n"
+        var argList = ["ptr \(env)"]
+        for argument in arguments {
+            let value = emitExpr(argument)
+            argList.append("\(value.llvmType) \(value.ssaName)")
+        }
+        if let returnType = returnType {
+            let retTemp = builder.freshTemp()
+            bodyIR += " \(retTemp) = call \(returnType.llvmSpelling) \(code)(\(argList.joined(separator: ", ")))\n"
+            return IRValue(llvmType: returnType.llvmSpelling, ssaName: retTemp)
+        }
+        bodyIR += " call void \(code)(\(argList.joined(separator: ", ")))\n"
+        return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// Buffer (deduplicated) the env-ignoring adapter for a named function:
+    /// slot each formparam, reload, tail-call the original with plain ABI.
+    private func emitAdapter(mangled: String) {
+        guard !adapterNames.contains(mangled) else { return }
+        adapterNames.insert(mangled)
+        // The adapter's signature comes from the original function define,
+        // which lives in bodyIR; parse its param types out of the recorded
+        // function signatures at emit time is complex — instead the adapter
+        // is generated lazily against the module function registry passed
+        // through moduleFunctions (set during emit(module:)).
+        guard let function = moduleFunctions[mangled] else {
+            fatalError("IREmitter: adapter for unknown function '\(mangled)' (HIRLowerer guarantees)")
+        }
+        var body = ""
+        var callArgs: [String] = []
+        for (index, param) in function.params.enumerated() {
+            let spelling = param.type.llvmSpelling
+            let argName = "%arg\(index)"
+            let slotName = "%arg\(index)_slot"
+            body += " \(slotName) = alloca \(spelling)\n"
+            body += " store \(spelling) \(argName), ptr \(slotName)\n"
+            let loadName = "%v\(index)"
+            body += " \(loadName) = load \(spelling), ptr \(slotName)\n"
+            callArgs.append("\(spelling) \(loadName)")
+        }
+        let returnType = function.returnType?.llvmSpelling ?? "void"
+        var paramsIR = ["ptr %env"]
+        for (index, param) in function.params.enumerated() {
+            paramsIR.append("\(param.type.llvmSpelling) %arg\(index)")
+        }
+        var def = "define \(returnType) @__adapter_\(mangled)(\(paramsIR.joined(separator: ", "))) {\n"
+        def += body
+        if function.returnType == nil {
+            def += " call void @\(mangled)(\(callArgs.joined(separator: ", ")))\n"
+            def += " ret void\n"
+        } else {
+            def += " %r = call \(returnType) @\(mangled)(\(callArgs.joined(separator: ", ")))\n"
+            def += " ret \(returnType) %r\n"
+        }
+        def += "}\n\n"
+        adapterDefs.append(def)
+    }
+
+    /// Swap in a clean per-function state, emit the closure body into a
+    /// private buffer, and record the buffered `define` for module-end
+    /// assembly. Captures enter as slot pointers (reference capture: loads
+    /// and stores go through the same slot the outer variable uses).
+    private func emitClosureDefine(
+        id: Int,
+        mangled: String,
+        paramNames: [String],
+        paramTypes: [HIRType],
+        returnType: HIRType?,
+        captures: [HIRCapture],
+        body: [HIRStmt]
+    ) {
+        let savedScopes = scopes
+        let savedSlotCounters = slotCounters
+        let savedTerminated = terminated
+        let savedLoopStack = loopStack
+        let savedReturnType = currentReturnType
+        let savedIsMain = currentIsMain
+        let savedBodyIR = bodyIR
+        let savedBuilder = builder
+        let savedCaptureSlots = captureSlots
+
+        scopes = [[:]]
+        slotCounters = [:]
+        terminated = false
+        loopStack = []
+        currentReturnType = returnType
+        currentIsMain = false
+        builder = IRBuilder()
+        bodyIR = ""
+        captureSlots = [:]
+
+        let envTypeName = "%__closure_env_\(id)"
+        for (index, capture) in captures.enumerated() {
+            // The env field holds the outer variable's slot pointer; load it
+            // into a local register and register it as the capture's slot so
+            // every body access reads/writes the outer storage.
+            let gepTemp = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: gepTemp, aggregate: envTypeName, base: "%env", indices: [0, index]) + "\n"
+            let slotTemp = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: slotTemp, type: "ptr", ptr: gepTemp) + "\n"
+            scopes[scopes.count - 1][capture.name] = slotTemp
+            captureSlots[capture.name] = slotTemp
+        }
+        for (index, paramType) in paramTypes.enumerated() {
+            let spelling = paramType.llvmSpelling
+            let slot = "%arg\(index)_slot"
+            bodyIR += builder.fmtAlloca(name: slot, type: spelling) + "\n"
+            bodyIR += builder.fmtStore(value: "%arg\(index)", type: spelling, ptr: slot) + "\n"
+            // Body statements reference params by source name; decl order
+            // parallels paramTypes (HIRLowerer contract).
+            let name = index < paramNames.count ? paramNames[index] : "param\(index)"
+            scopes[scopes.count - 1][name] = slot
+        }
+
+        emitBlock(body)
+
+        if !terminated {
+            bodyIR += builder.fmtBr(labelName: "exit_block") + "\n"
+            bodyIR += "exit_block:\n"
+            if let returnType = returnType {
+                bodyIR += " ret \(returnType.llvmSpelling) undef\n"
+            } else {
+                bodyIR += " ret void\n"
+            }
+        }
+
+        var paramsIR = ["ptr %env"]
+        for (index, paramType) in paramTypes.enumerated() {
+            paramsIR.append("\(paramType.llvmSpelling) %arg\(index)")
+        }
+        let returnSpelling = returnType?.llvmSpelling ?? "void"
+        closureDefs.append("define \(returnSpelling) \(mangled)(\(paramsIR.joined(separator: ", "))) {\n")
+        closureDefs.append(bodyIR)
+        closureDefs.append("}\n\n")
+
+        scopes = savedScopes
+        slotCounters = savedSlotCounters
+        terminated = savedTerminated
+        loopStack = savedLoopStack
+        currentReturnType = savedReturnType
+        currentIsMain = savedIsMain
+        bodyIR = savedBodyIR
+        builder = savedBuilder
+        captureSlots = savedCaptureSlots
     }
 
     // MARK: - G9 string deepening

@@ -19,7 +19,7 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md"]
-last_refresh = "2026-09-08T10:55+08:00"
+last_refresh = "2026-09-09T00:45+08:00"
 last_sweep = "2026-09-08T23:33:00+08:00"
 dangling_ids = ["E-001", "E-008", "E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-102", "E-110", "E-111", "E-112", "E-120", "E-121"]
 [[evidence]]
@@ -276,3 +276,20 @@ validated_at = "2026-09-08T23:35+08:00"
 status = "FRESH"
 note = "实测（两处勘测钉定修正首版实现，差分+编译器双通道拦截）：① ((盒<T>)) 扩展块 parser 产出 targetType=盒（剥 <T>、ann=nil，探针实测），特化方法匹配须按 specializedName.hasPrefix(targetType + _) 反向判定——首版按 ext.targetType == specialized.name 正向匹配全空，差分捕获 undefined method 取 on 盒_I32 后修复；② 身份<I32>(x = 100) 产出独立 .genericConstruct 表达式（实参内含），非 .call 包裹 callee——首版分派位写错位，编译器 no-member 拦截后移入 lowerExpr 专属 case + lowerGenericFuncCall；泛型模板跳过签名预扫描/函数发射/typeDecl，特化 struct 补发 typeDecl（方法 IR 名 方法__盒_I32）；G10SpecializationState 幂等去重，特化名 mangling 镜像 legacy GenericsEmitter（盒_I32，与 方法__类型 双下划线不混叠）；lazyref.pini 依赖闭包 fat pointer（G6 能力）跨格豁免，维持 FAIL，非静默"
 
+
+[[evidence]]
+id = "E-150"
+claim = "M5 G6 closure/higher-order family (fat pointer ABI, reference-capture env, named-function value adapters) lands on the HIR pipeline with interpreter parity; lazyref stays exempt (unknown generic, cross-file domain)"
+artifacts = [
+  "pini-swift/Sources/PiniCore/HIR/HIRNode.swift",
+  "pini-swift/Sources/PiniCore/HIR/HIRLowerer.swift",
+  "pini-swift/Sources/PiniCore/CodeGen/IREmitter.swift",
+  "pini-swift/docs/issue-llvm-rewrite-plan-2026-09-07.md",
+  "pini-swift/Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffClosures.pini",
+  "pini-swift/tools/capability-sweep.tsv",
+]
+command = "swift test --package-path pini-swift --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && bash tools/capability-sweep.sh"
+output = "HIR differential 45/45 (new: testDiffLambda/testDiffLambdaTyped/testDiffHigherOrder/testDiffClosures red->green); full regression 1278/0/0; capability-sweep hir-emit 28/59 -> 32/59 (closures/lambda/lambda-typed/higher-order); lazyref.pini stays FAIL (unknown generic LazyRef, cross-file domain G13)"
+validated_at = "2026-09-09T00:45+08:00"
+status = "FRESH"
+note = "实测钉定：funcLiteral 在 varDecl initializer 为 Expression.funcLiteral(decl:location:)，capture 语句在闭包体内为 Statement.captureStatement(name:location:)，函数类型注解走 TypeAnnotation.function(params:returns:captured:location:)（探针实测后写分派位）；HIR 新增 HIRType.function（fat pointer ABI）+ closureLiteral/functionValue/indirectCall 表达式 + captureMarker 语句；lowerFuncLiteral 创建点自由变量分析（体引用-参数-本块声明-顶层函数名），按引用捕获（env 字段=被捕获变量存储槽指针，解释器 currentEnv 共享语义）；发射侧闭包 define 缓冲模块末尾拼接，env 结构类型声明必须进模块头——首版放尾部，创建点 GEP 先于声明，lli 报 base element of getelementptr must be sized，差分拦截后修正；具名函数作为值走 env 忽略适配器 @__adapter_<mangled>（legacy #8 语义）；testGateRejectsLambda 边界断言过期改为正向 testLambdaLowersToClosureLiteral；lazyref 实测 unknown generic LazyRef（模板未在语料内声明，跨文件域 G13），维持 FAIL 豁免非静默"
