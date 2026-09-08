@@ -524,6 +524,11 @@ public enum HIRLowerer {
         case .matchStatement(let value, let cases, let location):
             return [try lowerMatch(value: value, cases: cases, at: location, into: &context)]
 
+        case .deferStatement(let wrapped, _):
+            // G9: defer runs at the enclosing block scope's normal end,
+            // LIFO across the defers of that scope (emitter block protocol).
+            return [.deferStmt(body: try lowerStatement(wrapped, into: &context))]
+
         case .expressionStmt(let expr, let location):
             // Statement-position try-else: ok value discarded (ADR-032).
             if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
@@ -750,6 +755,30 @@ public enum HIRLowerer {
         case .stringLiteral(let value, _):
             return LoweredExpr(node: .stringConst(value: value), type: .string)
 
+        case .stringInterpolation(let segments, let location):
+            // G9: each expression part goes through the value display
+            // pipeline at emission (stringify parity, interpreter channel).
+            var parts: [HIRExpr] = []
+            for segment in segments {
+                switch segment {
+                case .literal(let text):
+                    if !text.isEmpty {
+                        parts.append(.stringConst(value: text))
+                    }
+                case .expression(let inner):
+                    parts.append(try lowerExpr(inner, expected: nil, into: &context).node)
+                }
+            }
+            if parts.allSatisfy({ if case .stringConst = $0 { return true } else { return false } }) {
+                // All-literal: fold to a single constant.
+                let folded = parts.compactMap { part -> String? in
+                    if case .stringConst(let v) = part { return v }
+                    return nil
+                }
+                return LoweredExpr(node: .stringConst(value: folded.joined()), type: .string)
+            }
+            return LoweredExpr(node: .interpString(parts: parts), type: .string)
+
         case .arrayLiteral(let elements, let location):
             return try lowerArrayLiteral(elements, expected: expected, at: location, into: &context)
 
@@ -827,6 +856,14 @@ public enum HIRLowerer {
                     type: .boolean
                 )
             }
+            // String concatenation `s1 + s2` (G9): defer semantics build
+            // strings incrementally; concat joins the two C strings.
+            if hirOp == .add, lhs.type == .string, rhs.type == .string {
+                return LoweredExpr(
+                    node: .stringConcat(lhs: lhs.node, rhs: rhs.node),
+                    type: .string
+                )
+            }
             guard lhs.type == rhs.type, lhs.type.isNumeric else {
                 throw unsupported(
                     "operator '\(op)' operand types differ (\(lhs.type) vs \(rhs.type))",
@@ -864,6 +901,10 @@ public enum HIRLowerer {
                     node: .unary(op: .logicalNot, operand: lowered.node, type: .boolean),
                     type: .boolean
                 )
+            case .abs:
+                // Constructed only by the abs intrinsic handler (G9); the
+                // AST unary-operator path never produces it.
+                fatalError("HIRLowerer: .abs outside the abs intrinsic handler")
             }
 
         case .selfKeyword(let location):
@@ -1060,12 +1101,6 @@ public enum HIRLowerer {
                         at: location
                     )
                 }
-                if case .tuple = loweredArgs[0].type {
-                    throw unsupported(
-                        "printing a tuple value is a later grid (value formatting)",
-                        at: location
-                    )
-                }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
             }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
@@ -1077,6 +1112,49 @@ public enum HIRLowerer {
                 return LoweredExpr(
                     node: .call(function: "sqrt", arguments: loweredArgs.map { $0.node }, returnType: .f64),
                     type: .f64
+                )
+            }
+            // Math intrinsics (G9, stdlib.pini corpus): sin/cos via llvm
+            // intrinsics, tan = sin/cos (legacy parity), abs/min/max on I32.
+            if functionName == "sin" || functionName == "cos" {
+                guard loweredArgs.count == 1, loweredArgs[0].type == .f64 else {
+                    throw unsupported("\(functionName) expects exactly one F64 argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(function: "llvm.\(functionName).f64", arguments: loweredArgs.map { $0.node }, returnType: .f64),
+                    type: .f64
+                )
+            }
+            if functionName == "tan" {
+                guard loweredArgs.count == 1, loweredArgs[0].type == .f64 else {
+                    throw unsupported("tan expects exactly one F64 argument", at: location)
+                }
+                let arg = loweredArgs[0].node
+                return LoweredExpr(
+                    node: .binary(op: .divide,
+                        lhs: .call(function: "llvm.sin.f64", arguments: [arg], returnType: .f64),
+                        rhs: .call(function: "llvm.cos.f64", arguments: [arg], returnType: .f64),
+                        type: .f64),
+                    type: .f64
+                )
+            }
+            if functionName == "abs" {
+                guard loweredArgs.count == 1, loweredArgs[0].type == .i32 else {
+                    throw unsupported("abs expects exactly one I32 argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .unary(op: .abs, operand: loweredArgs[0].node, type: .i32),
+                    type: .i32
+                )
+            }
+            if functionName == "min" || functionName == "max" {
+                guard loweredArgs.count == 2, loweredArgs[0].type == .i32, loweredArgs[1].type == .i32 else {
+                    throw unsupported("\(functionName) expects exactly two I32 arguments", at: location)
+                }
+                return LoweredExpr(
+                    node: .binary(op: functionName == "min" ? .minOf : .maxOf,
+                        lhs: loweredArgs[0].node, rhs: loweredArgs[1].node, type: .i32),
+                    type: .i32
                 )
             }
             // Intrinsic len: arrays/dicts/sets through the runtime handles,
@@ -1309,6 +1387,59 @@ public enum HIRLowerer {
     /// missed the tail count). `.slice(s, e)`: the slice-sugar desugaring;
     /// bounds are ints or the none literal. Only Array/String receivers are
     /// wired; Dictionary and other methods join their own grids.
+    /// String member methods (G9): the five corpus surface forms. `split`
+    /// produces a real `Array<String>` (interpreter parity — the legacy
+    /// emitter renders a formatted string instead, a recorded divergence).
+    private static func lowerStringMethod(
+        receiver: LoweredExpr,
+        memberName: String,
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        switch memberName {
+        case "upper", "lower":
+            guard arguments.isEmpty else {
+                throw unsupported("\(memberName) expects no arguments", at: location)
+            }
+            return LoweredExpr(
+                node: .stringCase(isUpper: memberName == "upper", receiver: receiver.node),
+                type: .string
+            )
+        case "contains":
+            guard arguments.count == 1 else {
+                throw unsupported("contains expects exactly one argument", at: location)
+            }
+            let needle = try lowerExpr(arguments[0].expression, expected: .string, into: &context)
+            return LoweredExpr(
+                node: .stringContains(receiver: receiver.node, needle: needle.node),
+                type: .boolean
+            )
+        case "substring":
+            guard arguments.count == 2 else {
+                throw unsupported("substring expects exactly two arguments", at: location)
+            }
+            let start = try lowerExpr(arguments[0].expression, expected: .i32, into: &context)
+            let length = try lowerExpr(arguments[1].expression, expected: .i32, into: &context)
+            return LoweredExpr(
+                node: .stringSubstring(receiver: receiver.node, start: start.node, length: length.node),
+                type: .string
+            )
+        case "split":
+            guard arguments.count == 1 else {
+                throw unsupported("split expects exactly one argument", at: location)
+            }
+            let delim = try lowerExpr(arguments[0].expression, expected: .string, into: &context)
+            let arrayType = HIRType.array(element: .string)
+            return LoweredExpr(
+                node: .stringSplit(receiver: receiver.node, delim: delim.node, type: arrayType),
+                type: arrayType
+            )
+        default:
+            throw unsupported("string method '\(memberName)' is outside this grid", at: location)
+        }
+    }
+
     private static func lowerMemberCall(
         object: Expression,
         memberName: String,
@@ -1348,6 +1479,27 @@ public enum HIRLowerer {
 
         let loweredObject = try lowerExpr(object, expected: nil, into: &context)
         let objectType = loweredObject.type
+
+        // String member methods (G9): upper/lower/contains/substring/split.
+        // `slice`/`get` fall through to the G2/G2b tolerant-read channels.
+        if case .string = objectType,
+           ["upper", "lower", "contains", "substring", "split"].contains(memberName) {
+            return try lowerStringMethod(
+                receiver: loweredObject, memberName: memberName, arguments: arguments,
+                at: location, into: &context
+            )
+        }
+        // Array member methods (G9): join on Array<String>.
+        if case .array(let joinElem) = objectType, joinElem == .string, memberName == "join" {
+            guard arguments.count == 1 else {
+                throw unsupported("join expects exactly one argument", at: location)
+            }
+            let loweredSep = try lowerExpr(arguments[0].expression, expected: .string, into: &context)
+            return LoweredExpr(
+                node: .arrayJoin(receiver: loweredObject.node, separator: loweredSep.node),
+                type: .string
+            )
+        }
 
         // Nominal method dispatch (G3): the receiver is the implicit first
         // argument; the callee is the mangled IR name `方法__类型`.
@@ -1841,6 +1993,14 @@ extension HIRType {
                 return
             }
             return nil
+        case .tuple(let labels, let elements, _):
+            // `(a: I32, b: F64,)` (G8): fields recurse, labels carry over.
+            var fieldTypes: [HIRType] = []
+            for element in elements {
+                guard let fieldType = HIRType(from: element) else { return nil }
+                fieldTypes.append(fieldType)
+            }
+            self = .tuple(labels: labels, fieldTypes: fieldTypes)
         default:
             return nil
         }

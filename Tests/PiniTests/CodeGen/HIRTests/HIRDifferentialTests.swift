@@ -159,4 +159,14 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffDictSet() throws { try assertParity(fixtureName: "testDiffDictSet") }
     func testDiffCow() throws { try assertParity(fixtureName: "testDiffCow") }
     func testDiffCollections() throws { try assertParity(fixtureName: "testDiffCollections") }
+
+    // MARK: - G8 tuple returns
+
+    func testDiffTupleReturn() throws { try assertParity(fixtureName: "testDiffTupleReturn") }
+
+    // MARK: - G9 string deepening (stdlib methods, defer, interpolation)
+
+    func testDiffStdlib() throws { try assertParity(fixtureName: "testDiffStdlib") }
+    func testDiffDefer() throws { try assertParity(fixtureName: "testDiffDefer") }
+    func testDiffLexical() throws { try assertParity(fixtureName: "testDiffLexical") }
 }
