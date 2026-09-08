@@ -56,6 +56,10 @@ public enum HIRPrinter {
             return ["\(pad)return\(value.map { " " + exprText($0) } ?? "")"]
         case .exprStmt(let expression):
             return ["\(pad)\(exprText(expression))"]
+        case .deferStmt(let body):
+            var lines = ["\(pad)defer:"]
+            lines.append(contentsOf: dumpBody(body, indent: level + 1))
+            return lines
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, _):
             let bind = okTarget.map { " -> \($0)" } ?? ""
             var lines = ["\(pad)try \(exprText(operand)) else \(errorVar)\(bind):"]
@@ -134,6 +138,24 @@ public enum HIRPrinter {
             return "\(exprText(base)).#\(index)"
         case .fieldGet(let base, let field, let type):
             return "\(exprText(base)).\(field)@\(type.llvmSpelling)"
+        case .stringCase(let isUpper, let receiver):
+            return "\(exprText(receiver)).\(isUpper ? "upper" : "lower")()"
+        case .stringContains(let receiver, let needle):
+            return "\(exprText(receiver)).contains(\(exprText(needle)))"
+        case .stringSubstring(let receiver, let start, let length):
+            return "\(exprText(receiver)).substring(\(exprText(start)), \(exprText(length)))"
+        case .stringSplit(let receiver, let delim, _):
+            return "\(exprText(receiver)).split(\(exprText(delim)))"
+        case .arrayJoin(let receiver, let separator):
+            return "\(exprText(receiver)).join(\(exprText(separator)))"
+        case .stringConcat(let lhs, let rhs):
+            return "\(exprText(lhs)) + \(exprText(rhs))"
+        case .interpString(let parts):
+            let joined = parts.map { part in
+                if case .stringConst(let text) = part { return text }
+                return "{\(exprText(part))}"
+            }.joined()
+            return "\"\(joined)\""
         }
     }
 
@@ -150,6 +172,8 @@ public enum HIRPrinter {
         case .lessThanOrEqual: return "<="
         case .greaterThan: return ">"
         case .greaterThanOrEqual: return ">="
+        case .minOf: return "min"
+        case .maxOf: return "max"
         }
     }
 }

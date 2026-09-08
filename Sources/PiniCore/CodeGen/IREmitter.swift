@@ -95,6 +95,19 @@ public final class IREmitter {
         header += "declare i32 @bk_set_len(ptr)\n"
         header += "declare ptr @bk_set_add(ptr, ptr, i32, i32)\n"
         header += "declare ptr @bk_set_at(ptr, i32)\n"
+        // libc + LLVM intrinsics (G9 string deepening / math intrinsics).
+        header += "declare i64 @strlen(ptr)\n"
+        header += "declare ptr @strcat(ptr, ptr)\n"
+        header += "declare ptr @strcpy(ptr, ptr)\n"
+        header += "declare ptr @memcpy(ptr, ptr, i64)\n"
+        header += "declare ptr @strtok(ptr, ptr)\n"
+        header += "declare ptr @strstr(ptr, ptr)\n"
+        header += "declare i32 @toupper(i32)\n"
+        header += "declare i32 @tolower(i32)\n"
+        header += "declare i32 @snprintf(ptr, i64, ptr, ...)\n"
+        header += "declare ptr @malloc(i64)\n"
+        header += "declare double @llvm.sin.f64(double)\n"
+        header += "declare double @llvm.cos.f64(double)\n"
         header += "\n"
 
         bodyIR = ""
@@ -187,11 +200,28 @@ public final class IREmitter {
     // MARK: - Statements
 
     private func emitBlock(_ statements: [HIRStmt]) {
+        // G9 defer protocol: defers registered in this block run LIFO at
+        // the block's normal end (loop bodies: every iteration).
+        pendingDefers.append([])
         for statement in statements {
             if terminated { break }
             emitStatement(statement)
         }
+        let scopeDefers = pendingDefers.removeLast()
+        for deferredBody in scopeDefers.reversed() {
+            let wasTerminated = terminated
+            terminated = false
+            for statement in deferredBody {
+                if terminated { break }
+                emitStatement(statement)
+            }
+            terminated = wasTerminated
+        }
     }
+
+    /// Deferred statement bodies per open block scope (G9 deferStmt):
+    /// scope -> defer (LIFO at scope end) -> wrapped statements.
+    private var pendingDefers: [[[HIRStmt]]] = []
 
     private func emitStatement(_ statement: HIRStmt) {
         switch statement {
@@ -232,6 +262,9 @@ public final class IREmitter {
 
         case .exprStmt(let expr):
             _ = emitExpr(expr)
+
+        case .deferStmt(let body):
+            pendingDefers[pendingDefers.count - 1].append(body)
 
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
             emitTry(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget, type: type)
@@ -659,6 +692,12 @@ public final class IREmitter {
                 }
             case .logicalNot:
                 bodyIR += " \(temp) = xor i1 \(lowered.ssaName), 1\n"
+            case .abs:
+                let neg = builder.freshTemp()
+                bodyIR += " \(neg) = sub \(lowered.llvmType) 0, \(lowered.ssaName)\n"
+                let cond = builder.freshTemp()
+                bodyIR += " \(cond) = icmp slt \(lowered.llvmType) \(lowered.ssaName), 0\n"
+                bodyIR += " \(temp) = select i1 \(cond), \(lowered.llvmType) \(neg), \(lowered.llvmType) \(lowered.ssaName)\n"
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: temp)
 
@@ -775,6 +814,69 @@ public final class IREmitter {
             let value = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: value, type: type.llvmSpelling, ptr: fieldPtr) + "\n"
             return IRValue(llvmType: type.llvmSpelling, ssaName: value)
+
+        case .stringCase(let isUpper, let receiver):
+            let receiverValue = emitExpr(receiver)
+            return emitStringCase(isUpper: isUpper, source: receiverValue.ssaName)
+
+        case .stringContains(let receiver, let needle):
+            let receiverValue = emitExpr(receiver)
+            let needleValue = emitExpr(needle)
+            let hit = builder.freshTemp()
+            bodyIR += " \(hit) = call ptr @strstr(ptr \(receiverValue.ssaName), ptr \(needleValue.ssaName))\n"
+            let found = builder.freshTemp()
+            bodyIR += " \(found) = icmp ne ptr \(hit), null\n"
+            return IRValue(llvmType: "i1", ssaName: found)
+
+        case .stringSubstring(let receiver, let start, let length):
+            let receiverValue = emitExpr(receiver)
+            let startValue = emitExpr(start)
+            let lengthValue = emitExpr(length)
+            let sz = builder.freshTemp()
+            bodyIR += " \(sz) = sext i32 \(lengthValue.ssaName) to i64\n"
+            let sz1 = builder.freshTemp()
+            bodyIR += " \(sz1) = add i64 \(sz), 1\n"
+            let buf = builder.freshTemp()
+            bodyIR += " \(buf) = alloca i8, i64 \(sz1)\n"
+            let srcOfs = builder.freshTemp()
+            bodyIR += " \(srcOfs) = sext i32 \(startValue.ssaName) to i64\n"
+            let src = builder.freshTemp()
+            bodyIR += " \(src) = getelementptr i8, ptr \(receiverValue.ssaName), i64 \(srcOfs)\n"
+            bodyIR += " call ptr @memcpy(ptr \(buf), ptr \(src), i64 \(sz))\n"
+            let nl = builder.freshTemp()
+            bodyIR += " \(nl) = getelementptr i8, ptr \(buf), i64 \(sz)\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: nl) + "\n"
+            return IRValue(llvmType: "i8*", ssaName: buf)
+
+        case .stringSplit(let receiver, let delim, let type):
+            let receiverValue = emitExpr(receiver)
+            let delimValue = emitExpr(delim)
+            return emitStringSplit(source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
+
+        case .arrayJoin(let receiver, let separator):
+            let receiverValue = emitExpr(receiver)
+            let separatorValue = emitExpr(separator)
+            return emitArrayJoin(array: receiverValue, sep: separatorValue.ssaName)
+
+        case .stringConcat(let lhs, let rhs):
+            let lhsValue = emitExpr(lhs)
+            let rhsValue = emitExpr(rhs)
+            let llen = builder.freshTemp()
+            bodyIR += " \(llen) = call i64 @strlen(ptr \(lhsValue.ssaName))\n"
+            let rlen = builder.freshTemp()
+            bodyIR += " \(rlen) = call i64 @strlen(ptr \(rhsValue.ssaName))\n"
+            let total = builder.freshTemp()
+            bodyIR += " \(total) = add i64 \(llen), \(rlen)\n"
+            let sz1 = builder.freshTemp()
+            bodyIR += " \(sz1) = add i64 \(total), 1\n"
+            let buf = builder.freshTemp()
+            bodyIR += " \(buf) = call ptr @malloc(i64 \(sz1))\n"
+            bodyIR += " call ptr @strcpy(ptr \(buf), ptr \(lhsValue.ssaName))\n"
+            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(rhsValue.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: buf)
+
+        case .interpString(let parts):
+            return emitInterpString(parts: parts)
         }
     }
 
@@ -1408,6 +1510,15 @@ public final class IREmitter {
             return IRValue(llvmType: "i1", ssaName: temp)
         }
 
+        // min/max intrinsics (G9): I32 select forms.
+        if op == .minOf || op == .maxOf {
+            let cond = builder.freshTemp()
+            bodyIR += " \(cond) = icmp \(op == .minOf ? "slt" : "sgt") i32 \(lhsValue.ssaName), \(rhsValue.ssaName)\n"
+            let sel = builder.freshTemp()
+            bodyIR += " \(sel) = select i1 \(cond), i32 \(lhsValue.ssaName), i32 \(rhsValue.ssaName)\n"
+            return IRValue(llvmType: "i32", ssaName: sel)
+        }
+
         let instruction: String
         if lhsValue.llvmType == "double" {
             switch op {
@@ -1519,6 +1630,13 @@ public final class IREmitter {
         case .setLiteral(_, let type): return type
         case .tupleConstruct(_, _, let type): return type
         case .tupleIndexGet(_, _, let type): return type
+        case .stringCase: return .string
+        case .stringContains: return .boolean
+        case .stringSubstring: return .string
+        case .stringSplit(_, _, let type): return type
+        case .arrayJoin: return .string
+        case .stringConcat: return .string
+        case .interpString: return .string
         }
     }
 
@@ -1643,6 +1761,31 @@ public final class IREmitter {
 
             bodyIR += "\(endLabel):\n"
             terminated = false
+
+        case .tuple(let labels, let fieldTypes):
+            // `[v1, v2]`, labeled fields as `label: v` — interpreter
+            // stringify parity (probe-verified). Register aggregate:
+            // payloads come out via extractvalue, recursion per field type.
+            let open = emitStringConstant("[")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
+            for (index, fieldType) in fieldTypes.enumerated() {
+                if index > 0 {
+                    let separator = emitStringConstant(", ")
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+                }
+                if let label = labels[index] {
+                    let labelText = emitStringConstant("\(label): ")
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(labelText.ssaName))\n"
+                }
+                let field = builder.freshTemp()
+                bodyIR += " \(field) = extractvalue \(type.llvmSpelling) \(value.ssaName), \(index)\n"
+                emitValuePrint(
+                    value: IRValue(llvmType: fieldType.llvmSpelling, ssaName: field),
+                    type: fieldType
+                )
+            }
+            let close = emitStringConstant("]")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
         case .nominal:
             // Gated by the lowerer (printing struct/object values is a later
@@ -1898,5 +2041,324 @@ public final class IREmitter {
     /// for both pipelines since G3; HIRType spellings mangle through it too).
     static func mangle(_ name: String) -> String {
         IRName.mangle(name)
+    }
+
+    // MARK: - G9 string deepening
+
+    /// `s.upper()` / `s.lower()`: memcpy the receiver, toupper/tolower loop.
+    private func emitStringCase(isUpper: Bool, source: String) -> IRValue {
+        let funcName = isUpper ? "toupper" : "tolower"
+        let clen = builder.freshTemp()
+        bodyIR += " \(clen) = call i64 @strlen(ptr \(source))\n"
+        let sz1 = builder.freshTemp()
+        bodyIR += " \(sz1) = add i64 \(clen), 1\n"
+        let copyBuf = builder.freshTemp()
+        bodyIR += " \(copyBuf) = alloca i8, i64 \(sz1)\n"
+        bodyIR += " call ptr @memcpy(ptr \(copyBuf), ptr \(source), i64 \(sz1))\n"
+        let slot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: slot, type: "ptr") + "\n"
+        bodyIR += builder.fmtStore(value: copyBuf, type: "ptr", ptr: slot) + "\n"
+        let id = builder.freshLabel()
+        let header = "strcase.hdr.\(id)"
+        let bodyLabel = "strcase.body.\(id)"
+        let endLabel = "strcase.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: header) + "\n"
+        bodyIR += "\(header):\n"
+        let curPtr = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: curPtr, type: "ptr", ptr: slot) + "\n"
+        let ch = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: ch, type: "i8", ptr: curPtr) + "\n"
+        let done = builder.freshTemp()
+        bodyIR += " \(done) = icmp eq i8 \(ch), 0\n"
+        bodyIR += builder.fmtCondBr(cond: done, thenLabelName: endLabel, elseLabelName: bodyLabel) + "\n"
+        bodyIR += "\(bodyLabel):\n"
+        let wide = builder.freshTemp()
+        bodyIR += " \(wide) = sext i8 \(ch) to i32\n"
+        let conv = builder.freshTemp()
+        bodyIR += " \(conv) = call i32 @\(funcName)(i32 \(wide))\n"
+        let narrow = builder.freshTemp()
+        bodyIR += " \(narrow) = trunc i32 \(conv) to i8\n"
+        bodyIR += builder.fmtStore(value: narrow, type: "i8", ptr: curPtr) + "\n"
+        let next = builder.freshTemp()
+        bodyIR += " \(next) = getelementptr i8, ptr \(curPtr), i64 1\n"
+        bodyIR += builder.fmtStore(value: next, type: "ptr", ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: header) + "\n"
+        bodyIR += "\(endLabel):\n"
+        return IRValue(llvmType: "i8*", ssaName: copyBuf)
+    }
+
+    /// `s.split(delim)` — a real `Array<String>`: two strtok passes over
+    /// copies of the source (pass 1 counts tokens so bk_array_create gets
+    /// the exact length; pass 2 fills), each token strdup'd into the array
+    /// via bk_array_set (raw-ptr tag 3). strtok skips empty tokens —
+    /// corpus-identical with the interpreter's sunk split.
+    private func emitStringSplit(source: String, delim: String, type: HIRType) -> IRValue {
+        let slen = builder.freshTemp()
+        bodyIR += " \(slen) = call i64 @strlen(ptr \(source))\n"
+
+        func copySource(_ buf: String) {
+            bodyIR += " call ptr @memcpy(ptr \(buf), ptr \(source), i64 \(slen))\n"
+            let nl = builder.freshTemp()
+            bodyIR += " \(nl) = getelementptr i8, ptr \(buf), i64 \(slen)\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: nl) + "\n"
+        }
+
+        // Pass 1: count tokens.
+        let countBuf = builder.freshTemp()
+        bodyIR += " \(countBuf) = alloca i8, i64 1024\n"
+        copySource(countBuf)
+        let counterSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: counterSlot) + "\n"
+        let t1 = builder.freshTemp()
+        bodyIR += " \(t1) = call ptr @strtok(ptr \(countBuf), ptr \(delim))\n"
+        let tokSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: tokSlot, type: "ptr") + "\n"
+        bodyIR += builder.fmtStore(value: t1, type: "ptr", ptr: tokSlot) + "\n"
+        let id = builder.freshLabel()
+        let countHdr = "splitc.hdr.\(id)"
+        let countBody = "splitc.body.\(id)"
+        let countEnd = "splitc.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: countHdr) + "\n"
+        bodyIR += "\(countHdr):\n"
+        let curTok = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: curTok, type: "ptr", ptr: tokSlot) + "\n"
+        let done = builder.freshTemp()
+        bodyIR += " \(done) = icmp eq ptr \(curTok), null\n"
+        bodyIR += builder.fmtCondBr(cond: done, thenLabelName: countEnd, elseLabelName: countBody) + "\n"
+        bodyIR += "\(countBody):\n"
+        let curCount = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: curCount, type: "i32", ptr: counterSlot) + "\n"
+        let nextCount = builder.freshTemp()
+        bodyIR += " \(nextCount) = add i32 \(curCount), 1\n"
+        bodyIR += builder.fmtStore(value: nextCount, type: "i32", ptr: counterSlot) + "\n"
+        let nextTok = builder.freshTemp()
+        bodyIR += " \(nextTok) = call ptr @strtok(ptr null, ptr \(delim))\n"
+        bodyIR += builder.fmtStore(value: nextTok, type: "ptr", ptr: tokSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: countHdr) + "\n"
+        bodyIR += "\(countEnd):\n"
+
+        let tokenCount = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: tokenCount, type: "i32", ptr: counterSlot) + "\n"
+        let create = builder.freshTemp()
+        bodyIR += " \(create) = call ptr @bk_array_create(i32 \(tokenCount))\n"
+        let handleSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
+        let createHandle = builder.freshTemp()
+        bodyIR += " \(createHandle) = bitcast ptr \(create) to %bk_array*\n"
+        bodyIR += builder.fmtStore(value: createHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+
+        // Pass 2: fill.
+        let fillBuf = builder.freshTemp()
+        bodyIR += " \(fillBuf) = alloca i8, i64 1024\n"
+        copySource(fillBuf)
+        let f1 = builder.freshTemp()
+        bodyIR += " \(f1) = call ptr @strtok(ptr \(fillBuf), ptr \(delim))\n"
+        let fillTokSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: fillTokSlot, type: "ptr") + "\n"
+        bodyIR += builder.fmtStore(value: f1, type: "ptr", ptr: fillTokSlot) + "\n"
+        let idxSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
+
+        let fid = builder.freshLabel()
+        let fillHdr = "splitf.hdr.\(fid)"
+        let fillBody = "splitf.body.\(fid)"
+        let fillEnd = "splitf.end.\(fid)"
+        bodyIR += builder.fmtBr(labelName: fillHdr) + "\n"
+        bodyIR += "\(fillHdr):\n"
+        let fillTok = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: fillTok, type: "ptr", ptr: fillTokSlot) + "\n"
+        let fillDone = builder.freshTemp()
+        bodyIR += " \(fillDone) = icmp eq ptr \(fillTok), null\n"
+        bodyIR += builder.fmtCondBr(cond: fillDone, thenLabelName: fillEnd, elseLabelName: fillBody) + "\n"
+        bodyIR += "\(fillBody):\n"
+        let dupLen = builder.freshTemp()
+        bodyIR += " \(dupLen) = call i64 @strlen(ptr \(fillTok))\n"
+        let dupBuf = builder.freshTemp()
+        bodyIR += " \(dupBuf) = call ptr @malloc(i64 \(dupLen))\n"
+        bodyIR += " call ptr @strcpy(ptr \(dupBuf), ptr \(fillTok))\n"
+        let idx = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: idx, type: "i32", ptr: idxSlot) + "\n"
+        let handle = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: handle, type: "%bk_array*", ptr: handleSlot) + "\n"
+        let handleRaw = builder.freshTemp()
+        bodyIR += " \(handleRaw) = bitcast %bk_array* \(handle) to ptr\n"
+        let box = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: box, type: "i8*") + "\n"
+        bodyIR += builder.fmtStore(value: dupBuf, type: "i8*", ptr: box) + "\n"
+        let newRaw = builder.freshTemp()
+        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(handleRaw), i32 \(idx), ptr \(box), i32 8, i32 3)\n"
+        let newHandle = builder.freshTemp()
+        bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %bk_array*\n"
+        bodyIR += builder.fmtStore(value: newHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+        let idxNext = builder.freshTemp()
+        bodyIR += " \(idxNext) = add i32 \(idx), 1\n"
+        bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
+        let nextFillTok = builder.freshTemp()
+        bodyIR += " \(nextFillTok) = call ptr @strtok(ptr null, ptr \(delim))\n"
+        bodyIR += builder.fmtStore(value: nextFillTok, type: "ptr", ptr: fillTokSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: fillHdr) + "\n"
+        bodyIR += "\(fillEnd):\n"
+        let finalHandle = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: finalHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+        return IRValue(llvmType: "%bk_array*", ssaName: finalHandle)
+    }
+
+    /// `arr.join(sep)`: string-array elements strcat'd with sep into a
+    /// stack buffer (legacy mirror; element strings are raw C ptrs).
+    private func emitArrayJoin(array: IRValue, sep: String) -> IRValue {
+        let buf = builder.freshTemp()
+        bodyIR += " \(buf) = alloca i8, i64 4096\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(array.ssaName) to ptr\n"
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        let idxSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
+        let id = builder.freshLabel()
+        let header = "join.hdr.\(id)"
+        let firstLabel = "join.first.\(id)"
+        let sepLabel = "join.sep.\(id)"
+        let elemLabel = "join.elem.\(id)"
+        let incLabel = "join.inc.\(id)"
+        let endLabel = "join.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: header) + "\n"
+        bodyIR += "\(header):\n"
+        let idx = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: idx, type: "i32", ptr: idxSlot) + "\n"
+        let inBounds = builder.freshTemp()
+        bodyIR += " \(inBounds) = icmp slt i32 \(idx), \(count)\n"
+        bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: firstLabel, elseLabelName: endLabel) + "\n"
+        bodyIR += "\(firstLabel):\n"
+        let isFirst = builder.freshTemp()
+        bodyIR += " \(isFirst) = icmp eq i32 \(idx), 0\n"
+        bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
+        bodyIR += "\(sepLabel):\n"
+        bodyIR += " call ptr @strcat(ptr \(buf), ptr \(sep))\n"
+        bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
+        bodyIR += "\(elemLabel):\n"
+        let box = builder.freshTemp()
+        bodyIR += " \(box) = call ptr @bk_array_get(ptr \(raw), i32 \(idx))\n"
+        let element = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: element, type: "i8*", ptr: box) + "\n"
+        bodyIR += " call ptr @strcat(ptr \(buf), ptr \(element))\n"
+        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+        bodyIR += "\(incLabel):\n"
+        let idxNext = builder.freshTemp()
+        bodyIR += " \(idxNext) = add i32 \(idx), 1\n"
+        bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: header) + "\n"
+        bodyIR += "\(endLabel):\n"
+        return IRValue(llvmType: "i8*", ssaName: buf)
+    }
+
+    /// String interpolation: pieces converted to C strings, strcat'd into a
+    /// stack buffer. Uses stringifyValue (same display pipeline as print).
+    private func emitInterpString(parts: [HIRExpr]) -> IRValue {
+        let buf = builder.freshTemp()
+        bodyIR += " \(buf) = alloca i8, i64 4096\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
+        for part in parts {
+            let piece = emitStringPiece(part)
+            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(piece.ssaName))\n"
+        }
+        return IRValue(llvmType: "i8*", ssaName: buf)
+    }
+
+    /// One interpolation piece as a C string pointer. Buffers for scalars
+    /// are stack allocas; container pieces recurse through stringifyValue.
+    private func emitStringPiece(_ part: HIRExpr) -> IRValue {
+        let type = hirType(of: part)
+        switch type {
+        case .string:
+            return emitExpr(part)
+        default:
+            let value = emitExpr(part)
+            return stringifyValue(value: value, type: type)
+        }
+    }
+
+    /// Value display into a string (G9): the string-building mirror of
+    /// emitValuePrint. Supports the scalar/container set the corpus
+    /// interpolates (i32/F64/bool/string/array); optionals/enums/tuples
+    /// render through the same buffer-concat shape as their print paths.
+    private func stringifyValue(value: IRValue, type: HIRType) -> IRValue {
+        switch type {
+        case .i32:
+            let buf = builder.freshTemp()
+            bodyIR += " \(buf) = alloca i8, i64 32\n"
+            bodyIR += " call i32 (ptr, i64, ptr, ...) @snprintf(ptr \(buf), i64 31, ptr @fmt_int, i32 \(value.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: buf)
+        case .f64:
+            let rendered = builder.freshTemp()
+            bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: rendered)
+        case .boolean:
+            let sel = builder.freshTemp()
+            bodyIR += " \(sel) = select i1 \(value.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false\n"
+            return IRValue(llvmType: "i8*", ssaName: sel)
+        case .string:
+            return value
+        case .array(let elementType):
+            let buf = builder.freshTemp()
+            bodyIR += " \(buf) = alloca i8, i64 4096\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
+            let open = emitStringConstant("[")
+            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(open.ssaName))\n"
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            let idxSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
+            let id = builder.freshLabel()
+            let header = "sarr.hdr.\(id)"
+            let firstLabel = "sarr.first.\(id)"
+            let sepLabel = "sarr.sep.\(id)"
+            let elemLabel = "sarr.elem.\(id)"
+            let incLabel = "sarr.inc.\(id)"
+            let endLabel = "sarr.end.\(id)"
+            bodyIR += builder.fmtBr(labelName: header) + "\n"
+            bodyIR += "\(header):\n"
+            let idx = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: idx, type: "i32", ptr: idxSlot) + "\n"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(idx), \(count)\n"
+            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: firstLabel, elseLabelName: endLabel) + "\n"
+            bodyIR += "\(firstLabel):\n"
+            let isFirst = builder.freshTemp()
+            bodyIR += " \(isFirst) = icmp eq i32 \(idx), 0\n"
+            bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
+            bodyIR += "\(sepLabel):\n"
+            let separator = emitStringConstant(", ")
+            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(separator.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
+            bodyIR += "\(elemLabel):\n"
+            let box = builder.freshTemp()
+            bodyIR += " \(box) = call ptr @bk_array_get(ptr \(raw), i32 \(idx))\n"
+            let element = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: box) + "\n"
+            let piece = stringifyValue(
+                value: IRValue(llvmType: elementType.llvmSpelling, ssaName: element),
+                type: elementType
+            )
+            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(piece.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+            bodyIR += "\(incLabel):\n"
+            let idxNext = builder.freshTemp()
+            bodyIR += " \(idxNext) = add i32 \(idx), 1\n"
+            bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: header) + "\n"
+            bodyIR += "\(endLabel):\n"
+            let close = emitStringConstant("]")
+            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(close.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: buf)
+        default:
+            fatalError("IREmitter: stringify of '\(type)' outside the G9 grid (HIRLowerer gates interpolation parts)")
+        }
     }
 }

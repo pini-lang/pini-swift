@@ -124,6 +124,8 @@ public indirect enum HIRType: Equatable {
 public enum HIRBinaryOp: Equatable {
     case add, subtract, multiply, divide, modulo
     case equal, notEqual, lessThan, lessThanOrEqual, greaterThan, greaterThanOrEqual
+    /// `min(a, b)` / `max(a, b)` intrinsics (G9) — I32 select forms.
+    case minOf, maxOf
 
     /// Comparison operators produce `boolean`; the rest produce the operand type.
     public var isComparison: Bool {
@@ -152,6 +154,8 @@ public enum HIRBinaryOp: Equatable {
 public enum HIRUnaryOp: Equatable {
     case negate
     case logicalNot
+    /// `abs(v)` (G9) — I32 select(0-v, v<0).
+    case abs
 }
 
 /// Typed expression tree (slice set).
@@ -213,6 +217,31 @@ public indirect enum HIRExpr: Equatable {
     case tupleConstruct(labels: [String?], elements: [HIRExpr], type: HIRType)
     /// Tuple member read `base.label` (G5) — extractvalue by field index.
     case tupleIndexGet(base: HIRExpr, index: Int, type: HIRType)
+
+    // MARK: G9 string deepening
+
+    /// `s.upper()` / `s.lower()` (G9) — byte-wise toupper/tolower over a
+    /// memcpy'd copy (the receiver stays untouched).
+    case stringCase(isUpper: Bool, receiver: HIRExpr)
+    /// `s.contains(needle)` (G9) — `strstr != null`, byte semantics.
+    case stringContains(receiver: HIRExpr, needle: HIRExpr)
+    /// `s.substring(start, length)` (G9) — memcpy out of the receiver.
+    case stringSubstring(receiver: HIRExpr, start: HIRExpr, length: HIRExpr)
+    /// `s.split(delim)` (G9) — a REAL `Array<String>` (interpreter parity,
+    /// unlike the legacy emitter which renders a formatted string): strtok
+    /// loop feeding bk_array_create/set with strdup'd tokens.
+    case stringSplit(receiver: HIRExpr, delim: HIRExpr, type: HIRType)
+    /// `arr.join(sep)` (G9) — string-array elements strcat'd with sep.
+    case arrayJoin(receiver: HIRExpr, separator: HIRExpr)
+    /// `s1 + s2` string concatenation (G9) — malloc'd join of the two
+    /// C strings (byte semantics, matching the sunk concat channel).
+    case stringConcat(lhs: HIRExpr, rhs: HIRExpr)
+    /// String interpolation `"x=\(expr)"` (G9): parts are already-lowered
+    /// expressions of scalar/string/array types; each converts to a C
+    /// string and pieces strcat into a stack buffer. F64 renders via
+    /// bk_double_to_string (shortest round-trip — LR-8; the legacy emitter
+    /// still uses %f here and diverges from the interpreter).
+    case interpString(parts: [HIRExpr])
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +
@@ -284,6 +313,11 @@ public indirect enum HIRStmt: Equatable {
     /// Slice set: single-value return; nil for void functions.
     case returnStmt(value: HIRExpr?)
     case exprStmt(HIRExpr)
+    /// `defer stmt` (G9): the wrapped statements run LIFO when the
+    /// enclosing block scope exits (each loop-iteration end included).
+    /// Emission runs them at normal block end; break/return interplay is
+    /// not in the corpus (unexercised = ungated surface, recorded).
+    case deferStmt(body: [HIRStmt])
     /// `try operand else errorVar: handler` (ADR-032). The operand's type is
     /// `result(ok:)`; the error path binds the type-erased error word to
     /// `errorVar` and runs `handler`. `okTarget` is set for expression
