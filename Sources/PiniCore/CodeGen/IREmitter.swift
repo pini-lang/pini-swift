@@ -41,6 +41,10 @@ public final class IREmitter {
     private var builder = IRBuilder()
     private var bodyIR = ""
 
+    /// Nominal type declarations of the module being emitted (G3) — field
+    /// layouts for constructor / field-access GEPs.
+    private var moduleTypes: [HIRTypeDecl] = []
+
     // MARK: - Module-level collected pieces
 
     private var stringConstantDefs: [String] = []
@@ -56,6 +60,7 @@ public final class IREmitter {
         header += "declare i32 @printf(ptr, ...)\n"
         header += "declare ptr @bk_double_to_string(double)\n"
         header += "declare ptr @free(ptr)\n"
+        header += "declare double @sqrt(double)\n"
         header += "@fmt_int = private constant [3 x i8] c\"%d\\00\"\n"
         header += "@fmt_bool_true = private constant [6 x i8] c\"true\\00\\00\"\n"
         header += "@fmt_bool_false = private constant [7 x i8] c\"false\\00\\00\"\n"
@@ -79,8 +84,26 @@ public final class IREmitter {
         stringConstantDefs = []
         stringConstants = [:]
         usesStrCmp = false
+        moduleTypes = module.types
+        // Nominal type definitions (G3): `%struct.X = type { ... }` /
+        // `%object.X = type { i32 (refcount), ... }` come first so field GEPs
+        // verify against complete types.
+        for typeDecl in module.types {
+            let aggregate = "%\(typeDecl.isObject ? "object" : "struct").\(IRName.mangle(typeDecl.name))"
+            var fieldTypes = typeDecl.isObject ? ["i32"] : []
+            fieldTypes.append(contentsOf: typeDecl.fields.map { $0.type.llvmSpelling })
+            bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
+        }
+        if !module.types.isEmpty {
+            bodyIR += "\n"
+        }
         for function in module.functions {
             emitFunction(function)
+        }
+        for typeDecl in module.types {
+            for method in typeDecl.methods {
+                emitFunction(method)
+            }
         }
 
         var tail = ""
@@ -196,6 +219,15 @@ public final class IREmitter {
 
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
+
+        case .fieldStore(let base, let field, let value, let fieldType):
+            let baseValue = emitExpr(base)
+            let loweredValue = emitExpr(value)
+            emitRetainIfAliased(value, loweredValue)
+            let (aggregate, _, fieldIndex) = fieldLayout(of: base, field: field)
+            let fieldPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
+            bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
         }
     }
 
@@ -573,6 +605,72 @@ public final class IREmitter {
 
         case .sliceCall(let container, let start, let end, let type):
             return emitSliceCall(container: container, start: start, end: end, type: type)
+
+        case .construct(let type):
+            return emitConstruct(type: type)
+
+        case .fieldGet(let base, let field, let type):
+            let baseValue = emitExpr(base)
+            let (aggregate, _, fieldIndex) = fieldLayout(of: base, field: field)
+            let fieldPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
+            let value = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: value, type: type.llvmSpelling, ptr: fieldPtr) + "\n"
+            return IRValue(llvmType: type.llvmSpelling, ssaName: value)
+        }
+    }
+
+    // MARK: - Nominal types (G3)
+
+    /// Field layout resolution for a nominal base expression: aggregate
+    /// spelling, the field's type, and its GEP index (objects offset past
+    /// the refcount header at field 0).
+    private func fieldLayout(of base: HIRExpr, field: String) -> (aggregate: String, fieldType: HIRType, index: Int) {
+        let baseType = hirType(of: base)
+        guard case .nominal(let name, let isObject) = baseType else {
+            fatalError("IREmitter: field access on non-nominal base (HIRLowerer guarantees)")
+        }
+        guard let decl = moduleTypes.first(where: { $0.name == name }),
+              let index = decl.fields.firstIndex(where: { $0.name == field }) else {
+            fatalError("IREmitter: unknown nominal field '\(name).\(field)' (HIRLowerer guarantees)")
+        }
+        let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
+        return (aggregate, decl.fields[index].type, index + (isObject ? 1 : 0))
+    }
+
+    private func emitConstruct(type: HIRType) -> IRValue {
+        guard case .nominal(let name, let isObject) = type,
+              let aggregate = type.nominalAggregateSpelling,
+              let decl = moduleTypes.first(where: { $0.name == name }) else {
+            fatalError("IREmitter: construct of unknown nominal type (HIRLowerer guarantees)")
+        }
+        let ptr = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: ptr, type: aggregate) + "\n"
+        let zero = zeroConst(for:)
+        if isObject {
+            let refcountPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: refcountPtr, aggregate: aggregate, base: ptr, indices: [0, 0]) + "\n"
+            bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: refcountPtr) + "\n"
+        }
+        for (index, field) in decl.fields.enumerated() {
+            let fieldPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + (isObject ? 1 : 0)]) + "\n"
+            if let defaultValue = field.defaultValue {
+                let value = emitExpr(defaultValue)
+                bodyIR += builder.fmtStore(value: value.ssaName, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
+            } else {
+                bodyIR += builder.fmtStore(value: zeroConst(for: field.type), type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
+            }
+        }
+        return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
+    }
+
+    /// Zero constant per field spelling (legacy zeroConst mirror).
+    private func zeroConst(for type: HIRType) -> String {
+        switch type {
+        case .i32, .i64, .boolean: return "0"
+        case .f64: return "0.0"
+        default: return "null"
         }
     }
 
@@ -1148,6 +1246,8 @@ public final class IREmitter {
         case .optionalGet(_, _, let type): return type
         case .optionalConstruct(_, _, let type): return type
         case .sliceCall(_, _, _, let type): return type
+        case .construct(let type): return type
+        case .fieldGet(_, _, let type): return type
         }
     }
 
@@ -1273,6 +1373,11 @@ public final class IREmitter {
             bodyIR += "\(endLabel):\n"
             terminated = false
 
+        case .nominal:
+            // Gated by the lowerer (printing struct/object values is a later
+            // grid); kept here only to make the switch total.
+            fatalError("IREmitter: printing a nominal value is gated (HIRLowerer)")
+
         default:
             emitScalarPrint(value)
         }
@@ -1330,23 +1435,9 @@ public final class IREmitter {
     }
 
     /// Hex-encode non-ASCII identifiers into LLVM-safe names (`点` -> `_u70B9`).
-    /// Same scheme as the legacy IRGenerator mangle; duplicated here so the
-    /// new pipeline shares zero mutable state with the old one.
+    /// Delegates to the shared `IRName.mangle` (single implementation source
+    /// for both pipelines since G3; HIRType spellings mangle through it too).
     static func mangle(_ name: String) -> String {
-        var needs = false
-        for byte in name.utf8 where byte > 127 {
-            needs = true
-            break
-        }
-        if !needs { return name }
-        var result = ""
-        for scalar in name.unicodeScalars {
-            if scalar.value < 128 {
-                result.append(Character(scalar))
-            } else {
-                result += "_u" + String(format: "%04X", scalar.value)
-            }
-        }
-        return result
+        IRName.mangle(name)
     }
 }

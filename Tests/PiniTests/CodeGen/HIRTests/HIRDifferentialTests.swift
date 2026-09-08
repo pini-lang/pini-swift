@@ -139,4 +139,9 @@ final class HIRDifferentialTests: XCTestCase {
 
     func testDiffValueFormat() throws { try assertParity(fixtureName: "testDiffValueFormat") }
     func testDiffSlice() throws { try assertParity(fixtureName: "testDiffSlice") }
+
+    // MARK: - G3 nominal types (struct value layout / object reference + methods + self)
+
+    func testDiffObjectReference() throws { try assertParity(fixtureName: "testDiffObjectReference") }
+    func testDiffStructValue() throws { try assertParity(fixtureName: "testDiffStructValue") }
 }

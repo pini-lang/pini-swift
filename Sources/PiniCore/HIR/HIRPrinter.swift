@@ -73,6 +73,8 @@ public enum HIRPrinter {
                 lines.append(contentsOf: dumpBody(matchCase.body, indent: level + 2))
             }
             return lines
+        case .fieldStore(let base, let field, let value, _):
+            return ["\(pad)\(exprText(base)).\(field) = \(exprText(value))"]
         }
     }
 
@@ -110,6 +112,10 @@ public enum HIRPrinter {
             return "none"
         case .sliceCall(let container, let start, let end, _):
             return "\(exprText(container)).slice(\(exprText(start)), \(exprText(end)))"
+        case .construct(let type):
+            return "\(type.llvmSpelling)()"
+        case .fieldGet(let base, let field, let type):
+            return "\(exprText(base)).\(field)@\(type.llvmSpelling)"
         }
     }
 

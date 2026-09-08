@@ -34,6 +34,10 @@ public indirect enum HIRType: Equatable {
     /// 1 = none. The interpreter models Optional as an enum with `some` /
     /// `none` cases; `none` is the language-level nil (user adjudication).
     case optional(wrapped: HIRType)
+    /// User nominal type (G3): struct (value layout carried as a stack
+    /// pointer, legacy ABI `%struct.<mangled>*`) or object (reference,
+    /// `%object.<mangled>*` with an i32 refcount header at field 0).
+    case nominal(name: String, isObject: Bool)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -49,7 +53,15 @@ public indirect enum HIRType: Equatable {
             return "%bk_array*"
         case .optional(let wrapped):
             return "{ i64, \(wrapped.llvmSpelling) }"
+        case .nominal(let name, let isObject):
+            return isObject ? "%object.\(IRName.mangle(name))*" : "%struct.\(IRName.mangle(name))*"
         }
+    }
+
+    /// Unpointed aggregate spelling for alloca / GEP (nominal types only).
+    public var nominalAggregateSpelling: String? {
+        guard case .nominal(_, _) = self else { return nil }
+        return String(llvmSpelling.dropLast())
     }
 
     /// The ok payload type when this is a Result type.
@@ -73,7 +85,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array, .optional: return false
+        case .boolean, .string, .result, .array, .optional, .nominal: return false
         }
     }
 }
@@ -153,6 +165,40 @@ public indirect enum HIRExpr: Equatable {
     /// stdlib slice: tail-counted negative bounds, clamp to [0, len],
     /// empty result when hi < lo.
     case sliceCall(container: HIRExpr, start: HIRExpr, end: HIRExpr, type: HIRType)
+    /// Nominal constructor `名()` (G3). Fields take their declared defaults
+    /// (or zero); constructor arguments are not part of the slice surface.
+    /// Objects additionally write the refcount header (= 1).
+    case construct(type: HIRType)
+    /// Nominal field read `base.field` (G3). `type` is the field's type.
+    case fieldGet(base: HIRExpr, field: String, type: HIRType)
+}
+
+/// One nominal type declaration (G3): layout + lowered field defaults +
+/// methods (each already self-parameterized, IR name mangled).
+public struct HIRTypeDecl: Equatable {
+    public struct Field: Equatable {
+        public let name: String
+        public let type: HIRType
+        public let defaultValue: HIRExpr?
+
+        public init(name: String, type: HIRType, defaultValue: HIRExpr?) {
+            self.name = name
+            self.type = type
+            self.defaultValue = defaultValue
+        }
+    }
+
+    public let name: String
+    public let isObject: Bool
+    public let fields: [Field]
+    public let methods: [HIRFunction]
+
+    public init(name: String, isObject: Bool, fields: [Field], methods: [HIRFunction]) {
+        self.name = name
+        self.isObject = isObject
+        self.fields = fields
+        self.methods = methods
+    }
 }
 
 /// One match arm (G2 general case skeleton). `caseName` is the enum-case
@@ -206,4 +252,7 @@ public indirect enum HIRStmt: Equatable {
     /// through the same node. Unmatched scrutinee values panic at runtime
     /// (interpreter matchNotExhaustive parity).
     case matchStmt(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType)
+    /// Nominal field store `base.field = value` (G3). GEP + store through
+    /// the base pointer; objects offset past the refcount header.
+    case fieldStore(base: HIRExpr, field: String, value: HIRExpr, fieldType: HIRType)
 }

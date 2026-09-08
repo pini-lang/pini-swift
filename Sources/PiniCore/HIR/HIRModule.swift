@@ -25,13 +25,17 @@ public struct HIRFunction: Equatable {
     }
 }
 
-/// A lowered module: the ordered list of functions. The entry function is
-/// `main` (required by the slice emitter).
+/// A lowered module: the ordered list of functions plus the nominal type
+/// declarations (G3). The entry function is `main` (required by the slice
+/// emitter); methods live inside their `HIRTypeDecl` and are emitted as
+/// regular functions by the emitter.
 public struct HIRModule: Equatable {
     public let functions: [HIRFunction]
+    public let types: [HIRTypeDecl]
 
-    public init(functions: [HIRFunction]) {
+    public init(functions: [HIRFunction], types: [HIRTypeDecl] = []) {
         self.functions = functions
+        self.types = types
     }
 
     public func function(named name: String) -> HIRFunction? {
