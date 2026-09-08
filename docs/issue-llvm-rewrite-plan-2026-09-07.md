@@ -323,6 +323,24 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - match：通用骨架增枚举路径（i32 tag 分派、GEP+load 载荷，Optional
       走 extractvalue 双路），具名/_ 绑定、通配末臂、未知 tag panic；
       print(枚举值) 运行期 tag 分派渲染 caseName(p1, p2)。
-    - **验收**：差分 +2 fixture（32/32）；全量回归 1266/0/0；sweep
       hir-emit **13/59 → 19/59**（枚举 ×5 + 连带解锁 1）；枚举五语料
       双管线逐字节一致（CLI 实测）。
+  - **G5 字典/集合族完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g5-dict-set`，e6cdd15）**：
+    - `HIRType.dict(key:value:)` / `.set(element:)` / `.tuple(labels:
+      fieldTypes:)`（collections 语料所需的最小带标签元组切片：构造
+      insertvalue + 标签读 extractvalue；完整元组返回/解构仍归 G8）。
+    - 字典/集合字面量经 `bk_dict_create/set`、`bk_set_create/add` 构造
+      （元素按各自 tag 装箱、句柄线程化）；字典下标读/写经
+      `bk_dict_get/set`（缺键 panic，G48 三通道对齐）；len 扩展到
+      dict/set/string（内联 strlen，字节语义 = 既有 ASCII 局限）。
+    - **两个语义修复（连带 legacy 缺陷）**：①别名点 retain 扩展到
+      dict/set 句柄 + 嵌套容器下标读——`var row = g[0]` 后父容器仍持有
+      内层句柄，下次写必须分裂（legacy 漏此 retain，正是 legacy 过不了
+      cow.pini 的原因之一）；②字符串元素 tag 从 handle(4) 改 raw-ptr(3)
+      ——不可变 C 串无 share count，handle tag 使 dict cowCopy 对只读
+      常量字节做 retain（dict 别名分裂时 segv）。
+    - **验收**：差分 +3 fixture（35/35，cow/collections/dict-set-d2 语料
+      直用）；全量回归 1268/0/0；sweep hir-emit **19/59 → 22/59**
+      （collections / cow / dict-set-d2 / validated-match 进列）；门控
+      边界再翻：lambda 为下一记录边界（G6 闭包族）。

@@ -153,4 +153,10 @@ final class HIRDifferentialTests: XCTestCase {
 
     func testDiffEnum() throws { try assertParity(fixtureName: "testDiffEnum") }
     func testDiffEnumNamed() throws { try assertParity(fixtureName: "testDiffEnumNamed") }
+
+    // MARK: - G5 dict / set / minimal tuple family
+
+    func testDiffDictSet() throws { try assertParity(fixtureName: "testDiffDictSet") }
+    func testDiffCow() throws { try assertParity(fixtureName: "testDiffCow") }
+    func testDiffCollections() throws { try assertParity(fixtureName: "testDiffCollections") }
 }
