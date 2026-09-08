@@ -18,10 +18,10 @@ examples/control-while.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation cou
 examples/cow.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端未记录变量 'row' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/defer.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/dict-set-d2.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/enum-dot-case.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-001]   unsupported type 'generic(T)'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/enum-named.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/enum-namespacing.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/enum.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/enum-dot-case.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   unsupported type 'generic(T)' 
+examples/enum-named.pini	PASS	PASS	PASS	PASS	
+examples/enum-namespacing.pini	PASS	PASS	PASS	PASS	
+examples/enum.pini	PASS	PASS	PASS	PASS	
 examples/ffi.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/ffi_module/cstring.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/for.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
@@ -34,7 +34,7 @@ examples/lambda-typed.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation coul
 examples/lambda.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/lazyref.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/lexical.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/match.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/match.pini	PASS	PASS	PASS	PASS	
 examples/multidim.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined identifier row'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/multifile/main.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 向量 — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/multifile/utils.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
@@ -56,4 +56,4 @@ examples/test.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t b
 examples/trait.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/try.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   at /Volumes/ZWTPSSD/Projects/Pini语言语法与Swift-Package实现_20260827/pini-swift/examples/try.pini:4:28   unsupported type 
 examples/tuple.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/validated-match.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/validated-match.pini	PASS	PASS	PASS	PASS	

@@ -312,3 +312,17 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - `case nil:` 在降载位归一为 `case none:`（D-G2-1：none 即 nil）。
     - **验收**：差分 +1 fixture（30/30）；全量回归 1263/0/0；sweep
       hir-emit **11/59 → 13/59**（optional ×2 进列）。
+  - **G4 枚举族完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g4-enum`，24b1a9a）**：tagged union 镜像
+    legacy ABI（`%enum.X* = { i32 tag, max-arity 案载荷类型 }`，按值槽存）。
+    - 注解解析增用户类型表（struct/object/enum，穿透函数/方法/字段/变量）。
+    - 构造：裸零载荷标识符（plus）、位置调用 圆(2.0)、具名标签调用
+      identifier(text= x)、限定 形状.圆(...)（类型名接收者）、dot-case
+      .圆(...) / .none，跨枚举同名经 checker BareCaseResolutionRegistry
+      静态决议（E-131 对齐）。
+    - match：通用骨架增枚举路径（i32 tag 分派、GEP+load 载荷，Optional
+      走 extractvalue 双路），具名/_ 绑定、通配末臂、未知 tag panic；
+      print(枚举值) 运行期 tag 分派渲染 caseName(p1, p2)。
+    - **验收**：差分 +2 fixture（32/32）；全量回归 1266/0/0；sweep
+      hir-emit **13/59 → 19/59**（枚举 ×5 + 连带解锁 1）；枚举五语料
+      双管线逐字节一致（CLI 实测）。
