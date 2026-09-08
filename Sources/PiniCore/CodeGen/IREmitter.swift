@@ -82,6 +82,19 @@ public final class IREmitter {
         header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
         header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
         header += "declare void @bk_panic(ptr) noreturn\n"
+        // Dict / set family (G5): opaque handles + runtime C ABI declares.
+        header += "%bk_dict = type { ptr }\n"
+        header += "%bk_set = type { ptr }\n"
+        header += "declare ptr @bk_dict_create()\n"
+        header += "declare i32 @bk_dict_len(ptr)\n"
+        header += "declare ptr @bk_dict_get(ptr, ptr, i32, i32)\n"
+        header += "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)\n"
+        header += "declare ptr @bk_dict_key_at(ptr, i32)\n"
+        header += "declare ptr @bk_dict_val_at(ptr, i32)\n"
+        header += "declare ptr @bk_set_create()\n"
+        header += "declare i32 @bk_set_len(ptr)\n"
+        header += "declare ptr @bk_set_add(ptr, ptr, i32, i32)\n"
+        header += "declare ptr @bk_set_at(ptr, i32)\n"
         header += "\n"
 
         bodyIR = ""
@@ -399,6 +412,31 @@ public final class IREmitter {
     /// - the split handle returned by `bk_array_set` is written back to the
     ///   owning variable slot, or the write would be silently lost.
     private func emitSubscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType) {
+        // Dictionary store (G5): keys/values boxed by their own types; the
+        // returned handle is written back to the owning slot (COW parity).
+        if case .dict(let keyType, let valueType) = hirType(of: container) {
+            let containerValue = emitExpr(container)
+            let indexValue = emitExpr(index)
+            let loweredValue = emitExpr(value)
+            emitRetainIfAliased(value, loweredValue)
+            let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
+            let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
+            let keyBox = boxValue(indexValue, spelling: keySpelling)
+            let valueBox = boxValue(loweredValue, spelling: valueSpelling)
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_dict* \(containerValue.ssaName) to ptr\n"
+            let newRaw = builder.freshTemp()
+            bodyIR += " \(newRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
+            if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_dict*" {
+                guard let slot = lookupSlot(name) else {
+                    fatalError("IREmitter: dict store to undeclared container '\(name)' (HIRLowerer guarantees)")
+                }
+                let typed = builder.freshTemp()
+                bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_dict*\n"
+                bodyIR += builder.fmtStore(value: typed, type: "%bk_dict*", ptr: slot) + "\n"
+            }
+            return
+        }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
         let containerValue: IRValue
         if case .subscriptGet = container {
@@ -705,6 +743,29 @@ public final class IREmitter {
                 bodyIR += builder.fmtStore(value: value.ssaName, type: payloadTypes[index].llvmSpelling, ptr: fieldPtr) + "\n"
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
+
+        case .dictLiteral(let entries, let type):
+            return emitDictLiteral(entries: entries, type: type)
+
+        case .setLiteral(let elements, let type):
+            return emitSetLiteral(elements: elements, type: type)
+
+        case .tupleConstruct(let labels, let elements, let type):
+            let aggregate = type.llvmSpelling
+            var assembled = "undef"
+            for (index, element) in elements.enumerated() {
+                let value = emitExpr(element)
+                let next = builder.freshTemp()
+                bodyIR += " \(next) = insertvalue \(aggregate) \(assembled), \(value.llvmType) \(value.ssaName), \(index)\n"
+                assembled = next
+            }
+            return IRValue(llvmType: aggregate, ssaName: assembled)
+
+        case .tupleIndexGet(let base, let index, let type):
+            let baseValue = emitExpr(base)
+            let value = builder.freshTemp()
+            bodyIR += " \(value) = extractvalue \(baseValue.llvmType) \(baseValue.ssaName), \(index)\n"
+            return IRValue(llvmType: type.llvmSpelling, ssaName: value)
 
         case .fieldGet(let base, let field, let type):
             let baseValue = emitExpr(base)
@@ -1078,31 +1139,48 @@ public final class IREmitter {
 
     /// Element boxing ABI against the runtime `_BkTag` values: the tag lets
     /// the runtime distinguish raw scalars from nested container handles
-    /// (release / COW semantics). Strings mirror the legacy emitter exactly:
-    /// their `i8*` spelling carries the handle tag (the boxed slot owns a
-    /// refcounted box, not the string bytes).
+    /// (release / COW semantics). Strings use the raw ptr tag (3), NOT the
+    /// handle tag: they are immutable C strings with no share count — the
+    /// handle tag makes dict cowCopy retain read-only constant bytes (a
+    /// legacy bug that surfaces only on dict alias splits).
     private func arrayElementABI(_ type: HIRType) -> (spelling: String, width: Int, tag: Int32) {
         switch type {
         case .i32: return ("i32", 4, 0)
         case .f64: return ("double", 8, 1)
         case .boolean: return ("i1", 1, 2)
-        case .string: return ("i8*", 8, 4)
+        case .string: return ("i8*", 8, 3)
         case .array: return ("%bk_array*", 8, 4)
+        case .dict: return ("%bk_dict*", 8, 4)
+        case .set: return ("%bk_set*", 8, 4)
         default:
             fatalError("IREmitter: no array element ABI for '\(type)' (HIRLowerer gates element types)")
         }
     }
 
-    /// Alias-point retain (ownership contract 3): a `.load` value node means
-    /// the source variable still holds its share, so copying it into a new
-    /// holder requires one extra share. Temporaries (literals, subscript
-    /// reads, call results) transfer ownership and must NOT retain.
+    /// Alias-point retain (ownership contract 3). Two node shapes mean the
+    /// source still holds its share, so the copy retains one:
+    /// - `.load` of a container-typed variable (variable alias);
+    /// - `.subscriptGet` / nested read whose RESULT is a container handle —
+    ///   the parent container's slot still references the inner handle, so
+    ///   `var row = g[0]` shares with `g` and the next write must split
+    ///   (the legacy emitter skipped this retain, which is one reason it
+    ///   could not pass cow.pini). True temporaries (literals, scalars,
+    ///   fresh constructions) transfer ownership and must NOT retain.
     private func emitRetainIfAliased(_ valueNode: HIRExpr, _ value: IRValue) {
-        guard case .load(_, let valueType) = valueNode, valueType.llvmSpelling == "%bk_array*" else {
-            return
+        let containerSpellings = ["%bk_array*", "%bk_dict*", "%bk_set*"]
+        guard containerSpellings.contains(value.llvmType) else { return }
+        let aliased: Bool
+        switch valueNode {
+        case .load:
+            aliased = true
+        case .subscriptGet:
+            aliased = true
+        default:
+            aliased = false
         }
+        guard aliased else { return }
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
         bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
     }
 
@@ -1135,6 +1213,20 @@ public final class IREmitter {
     private func emitSubscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
+
+        // Dictionary read (G5): the key is boxed by its own type; a missing
+        // key panics inside bk_dict_get (G48 three-channel alignment).
+        if case .dict(let keyType, let valueType) = hirType(of: container) {
+            let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
+            let keyBox = boxValue(indexValue, spelling: keySpelling)
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_dict* \(containerValue.ssaName) to ptr\n"
+            let valueBox = builder.freshTemp()
+            bodyIR += " \(valueBox) = call ptr @bk_dict_get(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
+            let value = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: value, type: valueType.llvmSpelling, ptr: valueBox) + "\n"
+            return IRValue(llvmType: valueType.llvmSpelling, ssaName: value)
+        }
 
         if hirType(of: container) == .string {
             // String subscript: tail-counted index, inline strlen, OOB panics
@@ -1193,11 +1285,88 @@ public final class IREmitter {
 
     private func emitLen(_ argument: HIRExpr) -> IRValue {
         let value = emitExpr(argument)
-        let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
-        let count = builder.freshTemp()
-        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
-        return IRValue(llvmType: "i32", ssaName: count)
+        switch hirType(of: argument) {
+        case .dict:
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_dict* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_dict_len(ptr \(raw))\n"
+            return IRValue(llvmType: "i32", ssaName: count)
+        case .set:
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_set* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
+            return IRValue(llvmType: "i32", ssaName: count)
+        case .string:
+            return IRValue(llvmType: "i32", ssaName: emitStringLength(value))
+        default:
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            return IRValue(llvmType: "i32", ssaName: count)
+        }
+    }
+
+    /// Box a scalar/handle value into a runtime box (alloca + store), for
+    /// dict keys/values and set elements (C ABI passes boxes by pointer).
+    private func boxValue(_ value: IRValue, spelling: String) -> String {
+        let boxPtr = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: boxPtr, type: spelling) + "\n"
+        bodyIR += builder.fmtStore(value: value.ssaName, type: spelling, ptr: boxPtr) + "\n"
+        return boxPtr
+    }
+
+    private func emitDictLiteral(entries: [HIRDictEntry], type: HIRType) -> IRValue {
+        guard case .dict(let keyType, let valueType) = type else {
+            fatalError("IREmitter: dictLiteral type is not a dict (HIRLowerer guarantees)")
+        }
+        let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
+        let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
+        let create = builder.freshTemp()
+        bodyIR += " \(create) = call ptr @bk_dict_create()\n"
+        var curRaw = create
+        for entry in entries {
+            let keyNode = entry.key
+            let valueNode = entry.value
+            let keyValue = emitExpr(keyNode)
+            let keyBox = boxValue(keyValue, spelling: keySpelling)
+            emitRetainIfAliased(keyNode, keyValue)
+            let dictValue = IRValue(llvmType: "%bk_dict*", ssaName: curRaw)
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_dict* \(dictValue.ssaName) to ptr\n"
+            let value = emitExpr(valueNode)
+            let valueBox = boxValue(value, spelling: valueSpelling)
+            emitRetainIfAliased(valueNode, value)
+            let nextRaw = builder.freshTemp()
+            bodyIR += " \(nextRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
+            curRaw = nextRaw
+        }
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_dict*\n"
+        return IRValue(llvmType: "%bk_dict*", ssaName: handle)
+    }
+
+    private func emitSetLiteral(elements: [HIRExpr], type: HIRType) -> IRValue {
+        guard case .set(let elementType) = type else {
+            fatalError("IREmitter: setLiteral type is not a set (HIRLowerer guarantees)")
+        }
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let create = builder.freshTemp()
+        bodyIR += " \(create) = call ptr @bk_set_create()\n"
+        var curRaw = create
+        for element in elements {
+            let value = emitExpr(element)
+            let box = boxValue(value, spelling: elemSpelling)
+            emitRetainIfAliased(element, value)
+            let nextRaw = builder.freshTemp()
+            bodyIR += " \(nextRaw) = call ptr @bk_set_add(ptr \(curRaw), ptr \(box), i32 \(width), i32 \(elemTag))\n"
+            curRaw = nextRaw
+        }
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_set*\n"
+        return IRValue(llvmType: "%bk_set*", ssaName: handle)
     }
 
     /// Widen any scalar payload to the type-erased error word (i64): sign /
@@ -1346,6 +1515,10 @@ public final class IREmitter {
         case .construct(let type): return type
         case .fieldGet(_, _, let type): return type
         case .enumConstruct(_, _, _, _, _, let type): return type
+        case .dictLiteral(_, let type): return type
+        case .setLiteral(_, let type): return type
+        case .tupleConstruct(_, _, let type): return type
+        case .tupleIndexGet(_, _, let type): return type
         }
     }
 
@@ -1534,6 +1707,135 @@ public final class IREmitter {
             bodyIR += " unreachable\n"
             bodyIR += "\(endLabel):\n"
             terminated = false
+
+        case .dict(let keyType, let valueType):
+            // Dict rendering (interpreter stringify parity): `{k: v, ...}`
+            // via the index accessors, keys/values printed by their types.
+            let open = emitStringConstant("{")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_dict* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_dict_len(ptr \(raw))\n"
+            let kSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
+            let id = builder.freshLabel()
+            let condLabel = "fmtd.cond.\(id)"
+            let bodyLabel = "fmtd.body.\(id)"
+            let sepLabel = "fmtd.sep.\(id)"
+            let elemLabel = "fmtd.elem.\(id)"
+            let incLabel = "fmtd.inc.\(id)"
+            let endLabel = "fmtd.end.\(id)"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+            bodyIR += "\(condLabel):\n"
+            let k = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(count)\n"
+            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+
+            bodyIR += "\(bodyLabel):\n"
+            let isFirst = builder.freshTemp()
+            bodyIR += " \(isFirst) = icmp eq i32 \(k), 0\n"
+            bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
+
+            bodyIR += "\(sepLabel):\n"
+            let separator = emitStringConstant(", ")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
+
+            bodyIR += "\(elemLabel):\n"
+            let keyBox = builder.freshTemp()
+            bodyIR += " \(keyBox) = call ptr @bk_dict_key_at(ptr \(raw), i32 \(k))\n"
+            let keyValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: keyValue, type: keyType.llvmSpelling, ptr: keyBox) + "\n"
+            emitValuePrint(
+                value: IRValue(llvmType: keyType.llvmSpelling, ssaName: keyValue),
+                type: keyType
+            )
+            let colon = emitStringConstant(": ")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(colon.ssaName))\n"
+            let valueBox = builder.freshTemp()
+            bodyIR += " \(valueBox) = call ptr @bk_dict_val_at(ptr \(raw), i32 \(k))\n"
+            let dictValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: dictValue, type: valueType.llvmSpelling, ptr: valueBox) + "\n"
+            emitValuePrint(
+                value: IRValue(llvmType: valueType.llvmSpelling, ssaName: dictValue),
+                type: valueType
+            )
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+
+            bodyIR += "\(incLabel):\n"
+            let kValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
+            let kNext = builder.freshTemp()
+            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
+            bodyIR += "\(endLabel):\n"
+            let close = emitStringConstant("}")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
+
+        case .set(let elementType):
+            // Set rendering: `{e1, e2, ...}` via bk_set_at index accessors.
+            let open = emitStringConstant("{")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast %bk_set* \(value.ssaName) to ptr\n"
+            let count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
+            let kSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
+            let id = builder.freshLabel()
+            let condLabel = "fmts.cond.\(id)"
+            let bodyLabel = "fmts.body.\(id)"
+            let sepLabel = "fmts.sep.\(id)"
+            let elemLabel = "fmts.elem.\(id)"
+            let incLabel = "fmts.inc.\(id)"
+            let endLabel = "fmts.end.\(id)"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+            bodyIR += "\(condLabel):\n"
+            let k = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
+            let inBounds = builder.freshTemp()
+            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(count)\n"
+            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+
+            bodyIR += "\(bodyLabel):\n"
+            let isFirst = builder.freshTemp()
+            bodyIR += " \(isFirst) = icmp eq i32 \(k), 0\n"
+            bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
+
+            bodyIR += "\(sepLabel):\n"
+            let separator = emitStringConstant(", ")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+            bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
+
+            bodyIR += "\(elemLabel):\n"
+            let boxPtr = builder.freshTemp()
+            bodyIR += " \(boxPtr) = call ptr @bk_set_at(ptr \(raw), i32 \(k))\n"
+            let element = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
+            emitValuePrint(
+                value: IRValue(llvmType: elementType.llvmSpelling, ssaName: element),
+                type: elementType
+            )
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+
+            bodyIR += "\(incLabel):\n"
+            let kValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
+            let kNext = builder.freshTemp()
+            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
+            bodyIR += "\(endLabel):\n"
+            let close = emitStringConstant("}")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
         default:
             emitScalarPrint(value)

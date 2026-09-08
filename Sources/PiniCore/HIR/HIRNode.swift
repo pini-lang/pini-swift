@@ -41,6 +41,14 @@ public indirect enum HIRType: Equatable {
     /// User enum (G4): tagged union `%enum.<mangled>*` — i32 tag at field 0,
     /// payload slots typed by the max-arity case (direct by-value store).
     case enumeration(name: String)
+    /// `Dictionary<K, V>` (G5): opaque handle `%bk_dict*`, keys/values boxed
+    /// through the `bk_dict_*` C ABI.
+    case dict(key: HIRType, value: HIRType)
+    /// `Set<T>` (G5): opaque handle `%bk_set*`, ordered unique elements.
+    case set(element: HIRType)
+    /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
+    /// member access via extractvalue by label index.
+    case tuple(labels: [String?], fieldTypes: [HIRType])
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -60,6 +68,12 @@ public indirect enum HIRType: Equatable {
             return isObject ? "%object.\(IRName.mangle(name))*" : "%struct.\(IRName.mangle(name))*"
         case .enumeration(let name):
             return "%enum.\(IRName.mangle(name))*"
+        case .dict:
+            return "%bk_dict*"
+        case .set:
+            return "%bk_set*"
+        case .tuple(_, let fieldTypes):
+            return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         }
     }
 
@@ -100,7 +114,8 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration: return false
+        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple:
+            return false
         }
     }
 }
@@ -190,6 +205,14 @@ public indirect enum HIRExpr: Equatable {
     case enumConstruct(enumName: String, caseName: String, tag: Int, payloads: [HIRExpr], payloadTypes: [HIRType], type: HIRType)
     /// Nominal field read `base.field` (G3). `type` is the field's type.
     case fieldGet(base: HIRExpr, field: String, type: HIRType)
+    /// Dictionary / set literal (G5). Entries carry pre-lowered key/value
+    /// pairs; construction goes through the runtime C ABI.
+    case dictLiteral(entries: [HIRDictEntry], type: HIRType)
+    case setLiteral(elements: [HIRExpr], type: HIRType)
+    /// Labeled tuple construction (G5 minimal slice).
+    case tupleConstruct(labels: [String?], elements: [HIRExpr], type: HIRType)
+    /// Tuple member read `base.label` (G5) — extractvalue by field index.
+    case tupleIndexGet(base: HIRExpr, index: Int, type: HIRType)
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +
@@ -217,6 +240,18 @@ public struct HIRTypeDecl: Equatable {
         self.isObject = isObject
         self.fields = fields
         self.methods = methods
+    }
+}
+
+/// One dictionary literal entry (G5). A struct because Swift tuples cannot
+/// carry conditional Equatable conformance for the HIR tree.
+public struct HIRDictEntry: Equatable {
+    public let key: HIRExpr
+    public let value: HIRExpr
+
+    public init(key: HIRExpr, value: HIRExpr) {
+        self.key = key
+        self.value = value
     }
 }
 

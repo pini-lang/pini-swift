@@ -763,16 +763,29 @@ public enum HIRLowerer {
             let elementType: HIRType
             switch loweredContainer.type {
             case .array(let element): elementType = element
+            case .dict(_, let value): elementType = value
             case .string: elementType = .string
             default:
                 throw unsupported(
-                    "subscript on non-array type '\(loweredContainer.type)'",
+                    "subscript on non-container type '\(loweredContainer.type)'",
                     at: location
                 )
             }
-            let loweredIndex = try lowerExpr(index, expected: .i32, into: &context)
-            guard loweredIndex.type == .i32 else {
-                throw unsupported("array subscript needs an I32 index", at: location)
+            // Dict keys carry the declared key type; array/string indices
+            // are I32 (tail-counted on the negative side).
+            let indexExpectation: HIRType?
+            var requireI32Index = false
+            switch loweredContainer.type {
+            case .dict(let keyType, _): indexExpectation = keyType
+            case .array: indexExpectation = .i32; requireI32Index = true
+            case .string: indexExpectation = .i32; requireI32Index = true
+            default: indexExpectation = nil
+            }
+            let loweredIndex = try lowerExpr(index, expected: indexExpectation, into: &context)
+            if requireI32Index {
+                guard loweredIndex.type == .i32 else {
+                    throw unsupported("subscript needs an I32 index", at: location)
+                }
             }
             return LoweredExpr(
                 node: .subscriptGet(container: loweredContainer.node, index: loweredIndex.node, type: elementType),
@@ -870,7 +883,17 @@ public enum HIRLowerer {
                 )
             }
             // Nominal field read (G3): `base.field` / `self.field`.
+            // Tuple label read (G5 minimal slice): extractvalue by index.
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
+            if case .tuple(let labels, let fieldTypes) = loweredBase.type {
+                guard let index = labels.firstIndex(where: { $0 == name }) else {
+                    throw unsupported("tuple has no field '\(name)'", at: location)
+                }
+                return LoweredExpr(
+                    node: .tupleIndexGet(base: loweredBase.node, index: index, type: fieldTypes[index]),
+                    type: fieldTypes[index]
+                )
+            }
             guard case .nominal = loweredBase.type else {
                 throw unsupported("member access '.\(name)' outside the slice", at: location)
             }
@@ -909,6 +932,62 @@ public enum HIRLowerer {
                 )
             }
             throw unsupported("undefined enum case '.\(caseName)'", at: location)
+
+        case .dictionaryLiteral(let entries, let location):
+            // G5: dict literal — key/value types derived from the lowered
+            // first entry (homogeneity required, checker does not infer).
+            var loweredEntries: [HIRDictEntry] = []
+            var keyType: HIRType? = nil
+            var valueType: HIRType? = nil
+            for entry in entries {
+                let loweredKey = try lowerExpr(entry.key, expected: keyType, into: &context)
+                if let known = keyType {
+                    try requireAssignable(loweredKey.type, to: known, at: location)
+                } else {
+                    keyType = loweredKey.type
+                }
+                let loweredValue = try lowerExpr(entry.value, expected: valueType, into: &context)
+                if let known = valueType {
+                    try requireAssignable(loweredValue.type, to: known, at: location)
+                } else {
+                    valueType = loweredValue.type
+                }
+                loweredEntries.append(HIRDictEntry(key: loweredKey.node, value: loweredValue.node))
+            }
+            guard let key = keyType, let value = valueType else {
+                throw unsupported("empty dictionary literal needs an entry (annotate the variable)", at: location)
+            }
+            let dictType = HIRType.dict(key: key, value: value)
+            return LoweredExpr(node: .dictLiteral(entries: loweredEntries, type: dictType), type: dictType)
+
+        case .setLiteral(let elements, let location):
+            var loweredElements: [HIRExpr] = []
+            var elementType: HIRType? = nil
+            for element in elements {
+                let lowered = try lowerExpr(element, expected: elementType, into: &context)
+                if let known = elementType {
+                    try requireAssignable(lowered.type, to: known, at: location)
+                } else {
+                    elementType = lowered.type
+                }
+                loweredElements.append(lowered.node)
+            }
+            guard let resolvedElement = elementType else {
+                throw unsupported("empty set literal needs an element (annotate the variable)", at: location)
+            }
+            let setType = HIRType.set(element: resolvedElement)
+            return LoweredExpr(node: .setLiteral(elements: loweredElements, type: setType), type: setType)
+
+        case .tuple(let labels, let elements, let location):
+            var loweredElements: [HIRExpr] = []
+            var fieldTypes: [HIRType] = []
+            for element in elements {
+                let lowered = try lowerExpr(element, expected: nil, into: &context)
+                loweredElements.append(lowered.node)
+                fieldTypes.append(lowered.type)
+            }
+            let tupleType = HIRType.tuple(labels: labels, fieldTypes: fieldTypes)
+            return LoweredExpr(node: .tupleConstruct(labels: labels, elements: loweredElements, type: tupleType), type: tupleType)
 
         case .call(let callee, let arguments, let location):
             // Member calls: the tolerant read channel `arr.get(i)` (G2) and
@@ -981,6 +1060,12 @@ public enum HIRLowerer {
                         at: location
                     )
                 }
+                if case .tuple = loweredArgs[0].type {
+                    throw unsupported(
+                        "printing a tuple value is a later grid (value formatting)",
+                        at: location
+                    )
+                }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
             }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
@@ -994,19 +1079,21 @@ public enum HIRLowerer {
                     type: .f64
                 )
             }
-            // Intrinsic len: arrays go through the runtime handle (bk_array_len);
-            // other operand kinds are later grids.
+            // Intrinsic len: arrays/dicts/sets through the runtime handles,
+            // strings via the inline strlen scan.
             if functionName == "len" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("len expects exactly one argument", at: location)
                 }
-                guard case .array = loweredArgs[0].type else {
+                switch loweredArgs[0].type {
+                case .array, .dict, .set, .string:
+                    return LoweredExpr(node: .lenCall(argument: loweredArgs[0].node), type: .i32)
+                default:
                     throw unsupported(
-                        "len on '\(loweredArgs[0].type)' is outside this grid (arrays only)",
+                        "len on '\(loweredArgs[0].type)' is outside this grid",
                         at: location
                     )
                 }
-                return LoweredExpr(node: .lenCall(argument: loweredArgs[0].node), type: .i32)
             }
             // Result case construction (ok/err): requires a Result-typed
             // context (return position, Result-typed assignment) so the
@@ -1535,15 +1622,28 @@ public enum HIRLowerer {
         into context: inout FunctionContext
     ) throws -> HIRStmt {
         let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
-        guard let elementType = loweredContainer.type.arrayElementType else {
+        let elementType: HIRType
+        switch loweredContainer.type {
+        case .array(let element): elementType = element
+        case .dict(_, let value): elementType = value
+        default:
             throw unsupported(
-                "subscript store on non-array type '\(loweredContainer.type)'",
+                "subscript store on non-container type '\(loweredContainer.type)'",
                 at: location
             )
         }
-        let loweredIndex = try lowerExpr(index, expected: .i32, into: &context)
-        guard loweredIndex.type == .i32 else {
-            throw unsupported("array subscript needs an I32 index", at: location)
+        let indexExpectation: HIRType?
+        var requireI32Index = false
+        switch loweredContainer.type {
+        case .dict(let keyType, _): indexExpectation = keyType
+        case .array: indexExpectation = .i32; requireI32Index = true
+        default: indexExpectation = .i32; requireI32Index = true
+        }
+        let loweredIndex = try lowerExpr(index, expected: indexExpectation, into: &context)
+        if requireI32Index {
+            guard loweredIndex.type == .i32 else {
+                throw unsupported("subscript needs an I32 index", at: location)
+            }
         }
         let loweredValue = try lowerExpr(value, expected: elementType, into: &context)
         try requireAssignable(loweredValue.type, to: elementType, at: location)

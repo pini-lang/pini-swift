@@ -118,6 +118,20 @@ public enum HIRPrinter {
         case .enumConstruct(_, let caseName, _, let payloads, _, _):
             let items = payloads.map(exprText).joined(separator: ", ")
             return "\(caseName)(\(items))"
+        case .dictLiteral(let entries, _):
+            let items = entries.map { "\(exprText($0.key)) = \(exprText($0.value))" }.joined(separator: ", ")
+            return "[\(items)]"
+        case .setLiteral(let elements, _):
+            let items = elements.map(exprText).joined(separator: ", ")
+            return "{\(items)}"
+        case .tupleConstruct(let labels, let elements, _):
+            let items = elements.enumerated().map { index, element in
+                let label = labels[index].map { "\($0) = " } ?? ""
+                return label + exprText(element)
+            }.joined(separator: ", ")
+            return "(\(items))"
+        case .tupleIndexGet(let base, let index, _):
+            return "\(exprText(base)).#\(index)"
         case .fieldGet(let base, let field, let type):
             return "\(exprText(base)).\(field)@\(type.llvmSpelling)"
         }
