@@ -26,6 +26,32 @@ public enum HIRLowerer {
         let type: HIRType
     }
 
+    /// G3 nominal registry entry: the AST declaration of a struct/object
+    /// plus methods merged in from `((T))`/`{{T}}` extension blocks
+    /// (data/logic separation — the parser puts methods in extensions).
+    fileprivate struct NominalInfo {
+        let name: String
+        let isObject: Bool
+        let decl: TopLevelDecl
+        var extensionMethods: [FuncDecl] = []
+
+        var fields: [FieldDecl] {
+            switch decl {
+            case .structDecl(let sd): return sd.fields
+            case .objectDecl(let od): return od.fields
+            default: return []
+            }
+        }
+
+        var methods: [FuncDecl] {
+            switch decl {
+            case .structDecl(let sd): return sd.methods + extensionMethods
+            case .objectDecl(let od): return od.methods + extensionMethods
+            default: return extensionMethods
+            }
+        }
+    }
+
     /// Lower a checked module. `typeInference` is the TypeChecker's inference
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
@@ -60,16 +86,37 @@ public enum HIRLowerer {
             }
         }
 
+        // G3 pre-pass: nominal type registry (structs/objects), with methods
+        // merged in from extension blocks ((T)) / {{T}}.
+        var nominals: [String: NominalInfo] = [:]
+        for decl in module.declarations {
+            switch decl {
+            case .structDecl(let sd): nominals[sd.name] = NominalInfo(name: sd.name, isObject: false, decl: decl)
+            case .objectDecl(let od): nominals[od.name] = NominalInfo(name: od.name, isObject: true, decl: decl)
+            default: break
+            }
+        }
+        for decl in module.declarations {
+            if case .extensionDecl(let ext) = decl, ext.kind == .structExt || ext.kind == .objectExt,
+               nominals[ext.targetType] != nil {
+                nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
+            }
+        }
+
         var functions: [HIRFunction] = []
         for decl in module.declarations {
             switch decl {
             case .funcDecl(let funcDecl):
                 functions.append(
-                    try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures)
+                    try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
+                                      nominalTypes: nominals)
                 )
+            case .structDecl, .objectDecl, .extensionDecl:
+                // Handled by the nominal-type pass below.
+                continue
             default:
                 throw unsupported(
-                    "top-level construct outside the M4 slice (only named functions)",
+                    "top-level construct outside the slice (named functions + struct/object types)",
                     at: module.location
                 )
             }
@@ -77,7 +124,30 @@ public enum HIRLowerer {
         guard functions.contains(where: { $0.name == "main" }) else {
             throw unsupported("no 'main' function found", at: module.location)
         }
-        return HIRModule(functions: functions)
+
+        // G3: lower nominal type declarations (field defaults via a scratch
+        // context; methods as self-parameterized functions with mangled IR
+        // names `方法__类型` so they cannot collide with top-level functions).
+        var typeDecls: [HIRTypeDecl] = []
+        for decl in module.declarations {
+            switch decl {
+            case .structDecl(let sd):
+                typeDecls.append(try lowerNominal(
+                    name: sd.name, isObject: false, fields: sd.fields,
+                    methods: nominals[sd.name]!.methods,
+                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals
+                ))
+            case .objectDecl(let od):
+                typeDecls.append(try lowerNominal(
+                    name: od.name, isObject: true, fields: od.fields,
+                    methods: nominals[od.name]!.methods,
+                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals
+                ))
+            default:
+                break
+            }
+        }
+        return HIRModule(functions: functions, types: typeDecls)
     }
 
     // MARK: - Functions
@@ -85,7 +155,8 @@ public enum HIRLowerer {
     private static func lowerFunction(
         _ decl: FuncDecl,
         typeInference: TypeInference?,
-        moduleSignatures: [String: HIRLowererSignatureInfo]
+        moduleSignatures: [String: HIRLowererSignatureInfo],
+        nominalTypes: [String: NominalInfo]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -126,10 +197,111 @@ public enum HIRLowerer {
             returnType: returnType,
             paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
             typeInference: typeInference,
-            moduleSignatures: moduleSignatures
+            moduleSignatures: moduleSignatures,
+            nominalTypes: nominalTypes
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: decl.name, params: params, returnType: returnType, body: body)
+    }
+
+    // MARK: - Nominal types (G3)
+
+    /// Lower one struct/object declaration: field defaults via a scratch
+    /// context, methods as self-parameterized HIRFunctions with IR names
+    /// `方法__类型` (double-underscore separator cannot collide with
+    /// mangle output, which never emits underscores for ASCII names).
+    private static func lowerNominal(
+        name: String,
+        isObject: Bool,
+        fields: [FieldDecl],
+        methods: [FuncDecl],
+        typeInference: TypeInference?,
+        moduleSignatures: [String: HIRLowererSignatureInfo],
+        nominalTypes: [String: NominalInfo]
+    ) throws -> HIRTypeDecl {
+        let selfType = HIRType.nominal(name: name, isObject: isObject)
+        var scratch = FunctionContext(
+            functionName: "<field-default:\(name)>", returnType: nil, paramTypes: [:],
+            typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes
+        )
+        var loweredFields: [HIRTypeDecl.Field] = []
+        for field in fields {
+            guard let fieldType = HIRType(from: field.typeAnnotation) else {
+                throw unsupported(
+                    "field '\(field.name)' of '\(name)' lacks a resolvable type",
+                    at: field.location
+                )
+            }
+            var defaultValue: HIRExpr? = nil
+            if let initializer = field.initializer {
+                let lowered = try lowerExpr(initializer, expected: fieldType, into: &scratch)
+                try requireAssignable(lowered.type, to: fieldType, at: field.location)
+                defaultValue = lowered.node
+            }
+            loweredFields.append(HIRTypeDecl.Field(name: field.name, type: fieldType, defaultValue: defaultValue))
+        }
+        var loweredMethods: [HIRFunction] = []
+        for method in methods {
+            loweredMethods.append(try lowerMethod(
+                method, typeName: name, selfType: selfType,
+                typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes
+            ))
+        }
+        return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
+    }
+
+    /// Lower one method: IR name `方法__类型`, params = [self] + declared.
+    private static func lowerMethod(
+        _ decl: FuncDecl,
+        typeName: String,
+        selfType: HIRType,
+        typeInference: TypeInference?,
+        moduleSignatures: [String: HIRLowererSignatureInfo],
+        nominalTypes: [String: NominalInfo]
+    ) throws -> HIRFunction {
+        guard decl.body != nil else {
+            throw unsupported("method '\(decl.name)' of '\(typeName)' has no body", at: decl.location)
+        }
+        guard decl.genericParams.isEmpty else {
+            throw unsupported("generic method '\(decl.name)'", at: decl.location)
+        }
+        guard decl.returnTypes.count <= 1 else {
+            throw unsupported(
+                "method '\(decl.name)' returns \(decl.returnTypes.count) values (tuple returns are a later grid)",
+                at: decl.location
+            )
+        }
+        let returnType: HIRType? = try decl.returnTypes.first.map { annotation in
+            guard let type = HIRType(from: annotation) else {
+                throw unsupported(
+                    "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(decl.name)'",
+                    at: decl.location
+                )
+            }
+            return type
+        }
+        var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
+        for param in decl.params {
+            guard let annotation = param.typeAnnotation,
+                  let type = HIRType(from: annotation) else {
+                throw unsupported(
+                    "parameter '\(param.name)' of method '\(decl.name)' lacks a resolvable type",
+                    at: decl.location
+                )
+            }
+            params.append(HIRFunction.HIRParam(name: param.name, type: type))
+        }
+        let irName = "\(IRName.mangle(decl.name))__\(IRName.mangle(typeName))"
+        var context = FunctionContext(
+            functionName: irName,
+            returnType: returnType,
+            paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
+            typeInference: typeInference,
+            moduleSignatures: moduleSignatures,
+            nominalTypes: nominalTypes
+        )
+        let body = try lowerBlock(decl.body!, into: &context)
+        return HIRFunction(name: irName, params: params, returnType: returnType, body: body)
     }
 
     private static func lowerBlock(
@@ -161,10 +333,31 @@ public enum HIRLowerer {
 
         case .assign(let target, let value, let location):
             // Subscript stores are the G2 write path (array family); member
-            // stores remain a later grid.
+            // stores are the G3 write path (nominal field store).
             if case .subscript(let container, let index) = target {
                 return [try lowerSubscriptStore(
                     container: container, index: index, value: value, at: location, into: &context
+                )]
+            }
+            if case .member(let base, let fieldName) = target {
+                let loweredBase = try lowerExpr(base, expected: nil, into: &context)
+                guard case .nominal = loweredBase.type else {
+                    throw unsupported(
+                        "field store on non-nominal base type '\(loweredBase.type)'",
+                        at: location
+                    )
+                }
+                guard let fieldType = nominalFieldType(of: loweredBase.type, field: fieldName, in: context) else {
+                    throw unsupported(
+                        "no field '\(fieldName)' on '\(loweredBase.type)'",
+                        at: location
+                    )
+                }
+                let loweredValue = try lowerExpr(value, expected: fieldType, into: &context)
+                try requireAssignable(loweredValue.type, to: fieldType, at: location)
+                return [.fieldStore(
+                    base: loweredBase.node, field: fieldName,
+                    value: loweredValue.node, fieldType: fieldType
                 )]
             }
             guard case .identifier(let name) = target else {
@@ -577,17 +770,34 @@ public enum HIRLowerer {
                 )
             }
 
+        case .selfKeyword(let location):
+            // Methods carry self as their first HIR param (G3).
+            guard let type = context.variableTypes["self"] else {
+                throw unsupported("self outside a method body", at: location)
+            }
+            return LoweredExpr(node: .load(name: "self", type: type), type: type)
+
         case .member(let object, let name, let location):
             // The slice-sugar open bound arrives as `Optional.none` (a member
             // on the Optional type name) — lower it to the none literal.
-            // Any other member access is a later grid.
             if case .identifier("Optional", _) = object, name == "none" {
                 return LoweredExpr(
                     node: .optionalConstruct(isSome: false, payload: nil, type: .optional(wrapped: .i32)),
                     type: .optional(wrapped: .i32)
                 )
             }
-            throw unsupported("member access '.\(name)' outside the slice", at: location)
+            // Nominal field read (G3): `base.field` / `self.field`.
+            let loweredBase = try lowerExpr(object, expected: nil, into: &context)
+            guard case .nominal = loweredBase.type else {
+                throw unsupported("member access '.\(name)' outside the slice", at: location)
+            }
+            guard let fieldType = nominalFieldType(of: loweredBase.type, field: name, in: context) else {
+                throw unsupported("no field '\(name)' on '\(loweredBase.type)'", at: location)
+            }
+            return LoweredExpr(
+                node: .fieldGet(base: loweredBase.node, field: name, type: fieldType),
+                type: fieldType
+            )
 
         case .call(let callee, let arguments, let location):
             // Member calls: the tolerant read channel `arr.get(i)` (G2) and
@@ -622,7 +832,24 @@ public enum HIRLowerer {
                 if case .result = loweredArgs[0].type {
                     throw unsupported("printing a Result value is outside the slice", at: location)
                 }
+                if case .nominal = loweredArgs[0].type {
+                    throw unsupported(
+                        "printing a struct/object value is a later grid (value formatting)",
+                        at: location
+                    )
+                }
                 return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
+            }
+            // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
+            // corpus dependency. Other math intrinsics join their own grid.
+            if functionName == "sqrt" {
+                guard loweredArgs.count == 1, loweredArgs[0].type == .f64 else {
+                    throw unsupported("sqrt expects exactly one F64 argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(function: "sqrt", arguments: loweredArgs.map { $0.node }, returnType: .f64),
+                    type: .f64
+                )
             }
             // Intrinsic len: arrays go through the runtime handle (bk_array_len);
             // other operand kinds are later grids.
@@ -659,6 +886,18 @@ public enum HIRLowerer {
                     node: .resultConstruct(isOk: functionName == "ok", payload: loweredArgs[0].node, type: contextType),
                     type: contextType
                 )
+            }
+            // Nominal constructor `名()` (G3): fields take declared defaults;
+            // constructor arguments are not part of this grid's surface.
+            if let info = context.nominalTypes[functionName] {
+                guard loweredArgs.isEmpty else {
+                    throw unsupported(
+                        "constructor '\(functionName)' arguments are not supported this grid",
+                        at: location
+                    )
+                }
+                let type = HIRType.nominal(name: functionName, isObject: info.isObject)
+                return LoweredExpr(node: .construct(type: type), type: type)
             }
             guard let signature = context.moduleSignatures[functionName] else {
                 throw unsupported(
@@ -715,6 +954,51 @@ public enum HIRLowerer {
     ) throws -> LoweredExpr {
         let loweredObject = try lowerExpr(object, expected: nil, into: &context)
         let objectType = loweredObject.type
+
+        // Nominal method dispatch (G3): the receiver is the implicit first
+        // argument; the callee is the mangled IR name `方法__类型`.
+        if case .nominal(let typeName, _) = objectType {
+            guard let info = context.nominalTypes[typeName],
+                  let method = info.methods.first(where: { $0.name == memberName }) else {
+                throw unsupported(
+                    "undefined method '\(memberName)' on '\(objectType)'",
+                    at: location
+                )
+            }
+            guard arguments.count == method.params.count else {
+                throw unsupported(
+                    "method '\(memberName)' expects \(method.params.count) arguments, got \(arguments.count)",
+                    at: location
+                )
+            }
+            let returnType = try method.returnTypes.first.map { annotation -> HIRType in
+                guard let type = HIRType(from: annotation) else {
+                    throw unsupported(
+                        "return type of '\(memberName)' is not resolvable",
+                        at: location
+                    )
+                }
+                return type
+            }
+            var arguments_ir = [loweredObject.node]
+            for (index, argument) in arguments.enumerated() {
+                guard let annotation = method.params[index].typeAnnotation,
+                      let paramType = HIRType(from: annotation) else {
+                    throw unsupported(
+                        "parameter '\(method.params[index].name)' of '\(memberName)' lacks a resolvable type",
+                        at: location
+                    )
+                }
+                let loweredArg = try lowerExpr(argument.expression, expected: paramType, into: &context)
+                try requireAssignable(loweredArg.type, to: paramType, at: location)
+                arguments_ir.append(loweredArg.node)
+            }
+            let irName = "\(IRName.mangle(memberName))__\(IRName.mangle(typeName))"
+            return LoweredExpr(
+                node: .call(function: irName, arguments: arguments_ir, returnType: returnType),
+                type: returnType ?? .i32
+            )
+        }
 
         if memberName == "get" {
             guard arguments.count == 1 else {
@@ -959,6 +1243,16 @@ public enum HIRLowerer {
 
     // MARK: - Type conformance
 
+    /// The HIR type of a nominal field, resolved through the registry (G3).
+    private static func nominalFieldType(of type: HIRType, field: String, in context: FunctionContext) -> HIRType? {
+        guard case .nominal(let name, _) = type,
+              let info = context.nominalTypes[name],
+              let fieldDecl = info.fields.first(where: { $0.name == field }) else {
+            return nil
+        }
+        return HIRType(from: fieldDecl.typeAnnotation)
+    }
+
     /// Slice set: exact match only. Widening (I32 literal into I64 slot) is
     /// already handled at the literal level via `expected`; non-matching
     /// composite/implicit coercions are later grids.
@@ -1149,7 +1443,8 @@ struct HIRLowererSignatureInfo {
 }
 
 /// Per-function lowering context: variable slot types, the enclosing
-/// function's return type, and the module-wide signatures from the pre-pass.
+/// function's return type, the module-wide signatures from the pre-pass,
+/// and the nominal type registry (G3).
 /// `errorBindings` tracks names currently bound to a try-else error word so
 /// `return err` can re-box and print can gate on the type-erased ABI.
 private struct FunctionContext {
@@ -1158,6 +1453,7 @@ private struct FunctionContext {
     let typeInference: TypeInference?
     var variableTypes: [String: HIRType]
     let moduleSignatures: [String: HIRLowererSignatureInfo]
+    let nominalTypes: [String: HIRLowerer.NominalInfo]
     var errorBindings: Set<String> = []
 
     init(
@@ -1165,13 +1461,15 @@ private struct FunctionContext {
         returnType: HIRType?,
         paramTypes: [String: HIRType],
         typeInference: TypeInference?,
-        moduleSignatures: [String: HIRLowererSignatureInfo]
+        moduleSignatures: [String: HIRLowererSignatureInfo],
+        nominalTypes: [String: HIRLowerer.NominalInfo] = [:]
     ) {
         self.functionName = functionName
         self.returnType = returnType
         self.variableTypes = paramTypes
         self.typeInference = typeInference
         self.moduleSignatures = moduleSignatures
+        self.nominalTypes = nominalTypes
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {

@@ -2,6 +2,28 @@ import Foundation
 
 // MARK: - SSA 值（从 IRGenerator 提升为共享值类型）
 
+/// IR 标识符 mangle（HIR 管线与遗留管线共享的唯一实现源）：
+/// 非 ASCII 标量 hex 编码为下划线前缀形式（`点` → `_u70B9`）。
+public enum IRName {
+    public static func mangle(_ name: String) -> String {
+        var needs = false
+        for byte in name.utf8 where byte > 127 {
+            needs = true
+            break
+        }
+        if !needs { return name }
+        var result = ""
+        for scalar in name.unicodeScalars {
+            if scalar.value < 128 {
+                result.append(Character(scalar))
+            } else {
+                result += "_u" + String(format: "%04X", scalar.value)
+            }
+        }
+        return result
+    }
+}
+
 /// LLVM IR 中的 SSA 值：类型 + 名字（`%tN` / 全局名 / 标签）。
 /// #46-A 起作为 codegen 各层（IRGenerator 及未来的 Emitters）共享的值类型，
 /// 取代原先散落在 IRGenerator 内的私有 `struct IRValue`。

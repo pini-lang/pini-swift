@@ -1,0 +1,19 @@
+; G3: value-type struct — constructor, field stores in statement position,
+; field reads, method call with libc sqrt. Interpreter parity
+; (expected: 3.0 / 4.0 / 5.0).
+(点)
+x: F64 = 0.0
+y: F64 = 0.0
+
+((点))
+距离原点|self() -> (F64,):
+    return sqrt(self.x * self.x + self.y * self.y)
+
+main|func() -> ():
+    var p = 点()
+    p.x = 3.0
+    p.y = 4.0
+    print(p.x)
+    print(p.y)
+    print(p.距离原点())
+    return
