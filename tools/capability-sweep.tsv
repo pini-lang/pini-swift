@@ -1,7 +1,7 @@
 examples/access.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/array-basic.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method get not yet supported in IR' 
 examples/closures.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/collections.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/collections.pini	PASS	PASS	PASS	PASS	
 examples/comments.pini	PASS	PASS	PASS	PASS	
 examples/composition.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/compound-assign.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
@@ -15,9 +15,9 @@ examples/concurrency-joinall.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002
 examples/concurrency.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/control-if.pini	PASS	PASS	PASS	PASS	
 examples/control-while.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/cow.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端未记录变量 'row' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/cow.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端未记录变量 'row' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）' 
 examples/defer.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/dict-set-d2.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/dict-set-d2.pini	PASS	PASS	PASS	PASS	
 examples/enum-dot-case.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   unsupported type 'generic(T)' 
 examples/enum-named.pini	PASS	PASS	PASS	PASS	
 examples/enum-namespacing.pini	PASS	PASS	PASS	PASS	
