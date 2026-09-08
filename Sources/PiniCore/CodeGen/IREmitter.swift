@@ -45,6 +45,10 @@ public final class IREmitter {
     /// layouts for constructor / field-access GEPs.
     private var moduleTypes: [HIRTypeDecl] = []
 
+    /// Enum declarations of the module being emitted (G4) — case tags and
+    /// payload types for construction and match dispatch.
+    private var moduleEnums: [HIREnumDecl] = []
+
     // MARK: - Module-level collected pieces
 
     private var stringConstantDefs: [String] = []
@@ -85,16 +89,24 @@ public final class IREmitter {
         stringConstants = [:]
         usesStrCmp = false
         moduleTypes = module.types
+        moduleEnums = module.enums
         // Nominal type definitions (G3): `%struct.X = type { ... }` /
         // `%object.X = type { i32 (refcount), ... }` come first so field GEPs
-        // verify against complete types.
+        // verify against complete types. Enums (G4): tagged unions —
+        // `%enum.X = type { i32, <max-arity case payload types> }`.
         for typeDecl in module.types {
             let aggregate = "%\(typeDecl.isObject ? "object" : "struct").\(IRName.mangle(typeDecl.name))"
             var fieldTypes = typeDecl.isObject ? ["i32"] : []
             fieldTypes.append(contentsOf: typeDecl.fields.map { $0.type.llvmSpelling })
             bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
         }
-        if !module.types.isEmpty {
+        for enumDecl in module.enums {
+            let aggregate = "%enum.\(IRName.mangle(enumDecl.name))"
+            var fieldTypes = ["i32"]
+            fieldTypes.append(contentsOf: enumDecl.slotTypes.map { $0.llvmSpelling })
+            bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
+        }
+        if !module.types.isEmpty || !module.enums.isEmpty {
             bodyIR += "\n"
         }
         for function in module.functions {
@@ -245,48 +257,116 @@ public final class IREmitter {
         terminated = true
     }
 
-    /// `match scrutinee: case name(binding): body ...` — Optional scrutinee
-    /// ABI: tagged aggregate `{ i64, T }`, some = 0, none = 1. Arms are a
-    /// comparison chain; a scrutinee matching no arm reaches the panic block
-    /// (interpreter matchNotExhaustive parity). `break` inside an arm is NOT
-    /// caught by the match — the interpreter propagates the signal outward.
+    /// `match scrutinee: case name(binding): body ...` — dispatch by the
+    /// scrutinee's kind: Optional arms compare the `{ i64, T }` tag
+    /// (some=0, none=1) with payloads via extractvalue (the aggregate is a
+    /// register value); enum arms compare the i32 tag of the tagged union
+    /// (`%enum.X*` pointer) with payloads via GEP + load. Unmatched
+    /// scrutinee values panic at runtime (interpreter matchNotExhaustive
+    /// parity). `break` inside an arm is NOT caught by the match — the
+    /// interpreter propagates the signal outward.
     private func emitMatch(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType) {
-        guard case .optional(let wrapped) = scrutineeType else {
-            fatalError("IREmitter: match scrutinee is not Optional (HIRLowerer gates the slice)")
+        switch scrutineeType {
+        case .optional(let wrapped):
+            let aggregate = scrutineeType.llvmSpelling
+            emitTaggedMatch(
+                scrutinee: scrutinee, cases: cases, aggregate: aggregate, tagType: "i64",
+                tagFor: { $0.caseName == "some" ? "0" : "1" },
+                payloadSpelling: { _, _ in wrapped.llvmSpelling },
+                loadTag: { [self] base in
+                    let value = builder.freshTemp()
+                    bodyIR += " \(value) = extractvalue \(aggregate) \(base), 0\n"
+                    return IRValue(llvmType: "i64", ssaName: value)
+                },
+                loadPayload: { [self] base, slot, spelling in
+                    let value = builder.freshTemp()
+                    bodyIR += " \(value) = extractvalue \(aggregate) \(base), \(slot + 1)\n"
+                    return IRValue(llvmType: spelling, ssaName: value)
+                }
+            )
+        case .enumeration(let enumName):
+            guard let aggregate = scrutineeType.nominalAggregateSpelling,
+                  let enumDecl = moduleEnums.first(where: { $0.name == enumName }) else {
+                fatalError("IREmitter: match on unregistered enum (HIRLowerer guarantees)")
+            }
+            emitTaggedMatch(
+                scrutinee: scrutinee, cases: cases, aggregate: aggregate, tagType: "i32",
+                tagFor: { arm in
+                    guard let enumCase = enumDecl.cases.first(where: { $0.name == arm.caseName }) else {
+                        fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (HIRLowerer guarantees)")
+                    }
+                    return String(enumCase.tag)
+                },
+                payloadSpelling: { (arm, slot) in
+                    guard let enumCase = enumDecl.cases.first(where: { $0.name == arm.caseName }) else {
+                        fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (HIRLowerer guarantees)")
+                    }
+                    return enumCase.payloadTypes[slot].llvmSpelling
+                },
+                loadTag: { [self] base in
+                    let tagPtr = builder.freshTemp()
+                    bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: base, indices: [0, 0]) + "\n"
+                    let value = builder.freshTemp()
+                    bodyIR += builder.fmtLoad(name: value, type: "i32", ptr: tagPtr) + "\n"
+                    return IRValue(llvmType: "i32", ssaName: value)
+                },
+                loadPayload: { [self] base, slot, spelling in
+                    let fieldPtr = builder.freshTemp()
+                    bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: base, indices: [0, slot + 1]) + "\n"
+                    let value = builder.freshTemp()
+                    bodyIR += builder.fmtLoad(name: value, type: spelling, ptr: fieldPtr) + "\n"
+                    return IRValue(llvmType: spelling, ssaName: value)
+                }
+            )
+        default:
+            fatalError("IREmitter: match scrutinee kind not wired (HIRLowerer gates)")
         }
-        let aggregate = scrutineeType.llvmSpelling
+    }
+
+    /// Shared tag-dispatch skeleton for Optional and enum scrutinees.
+    /// Arms chain by tag comparison; each arm's bindings become scoped
+    /// variables; a scrutinee matching no arm reaches the panic block.
+    private func emitTaggedMatch(
+        scrutinee: HIRExpr,
+        cases: [HIRMatchCase],
+        aggregate: String,
+        tagType: String,
+        tagFor: (HIRMatchCase) -> String,
+        payloadSpelling: (HIRMatchCase, Int) -> String,
+        loadTag: (String) -> IRValue,
+        loadPayload: (String, Int, String) -> IRValue
+    ) {
         let scrutineeValue = emitExpr(scrutinee)
-        let tag = builder.freshTemp()
-        bodyIR += " \(tag) = extractvalue \(aggregate) \(scrutineeValue.ssaName), 0\n"
+        let tag = loadTag(scrutineeValue.ssaName)
         let id = builder.freshLabel()
         let endLabel = "match.end.\(id)"
         let panicLabel = "match.fail.\(id)"
         for (caseIndex, matchCase) in cases.enumerated() {
-            let tagValue: Int
-            switch matchCase.caseName {
-            case "some": tagValue = 0
-            case "none": tagValue = 1
-            default:
-                fatalError("IREmitter: match case '\(matchCase.caseName)' outside the Optional ABI (HIRLowerer gates)")
-            }
-            let comparison = builder.freshTemp()
-            bodyIR += " \(comparison) = icmp eq i64 \(tag), \(tagValue)\n"
             let armLabel = "match.arm.\(id).\(caseIndex)"
             let fallthroughLabel = caseIndex + 1 < cases.count
                 ? "match.next.\(id).\(caseIndex)"
                 : panicLabel
-            bodyIR += builder.fmtCondBr(cond: comparison, thenLabelName: armLabel, elseLabelName: fallthroughLabel) + "\n"
+            if matchCase.caseName == "_" {
+                // Wildcard arm: matches unconditionally (the lowerer enforces
+                // it is the last arm, mirroring the interpreter scan order).
+                bodyIR += builder.fmtBr(labelName: armLabel) + "\n"
+            } else {
+                let comparison = builder.freshTemp()
+                bodyIR += " \(comparison) = icmp eq \(tagType) \(tag.ssaName), \(tagFor(matchCase))\n"
+                bodyIR += builder.fmtCondBr(cond: comparison, thenLabelName: armLabel, elseLabelName: fallthroughLabel) + "\n"
+            }
 
             bodyIR += "\(armLabel):\n"
             scopes.append([:])
             terminated = false
-            if let binding = matchCase.binding {
-                let payload = builder.freshTemp()
-                bodyIR += " \(payload) = extractvalue \(aggregate) \(scrutineeValue.ssaName), 1\n"
-                let slot = freshSlot(for: binding)
-                bodyIR += builder.fmtAlloca(name: slot, type: wrapped.llvmSpelling) + "\n"
-                bodyIR += builder.fmtStore(value: payload, type: wrapped.llvmSpelling, ptr: slot) + "\n"
-                scopes[scopes.count - 1][binding] = slot
+            for (slot, bindingName) in matchCase.bindings.enumerated() {
+                guard let bindingName = bindingName else { continue }
+                let spelling = payloadSpelling(matchCase, slot)
+                let value = loadPayload(scrutineeValue.ssaName, slot, spelling)
+                let slotName = freshSlot(for: bindingName)
+                bodyIR += builder.fmtAlloca(name: slotName, type: spelling) + "\n"
+                bodyIR += builder.fmtStore(value: value.ssaName, type: spelling, ptr: slotName) + "\n"
+                scopes[scopes.count - 1][bindingName] = slotName
             }
             emitBlock(matchCase.body)
             if !terminated {
@@ -608,6 +688,23 @@ public final class IREmitter {
 
         case .construct(let type):
             return emitConstruct(type: type)
+
+        case .enumConstruct(let enumName, _, let tag, let payloads, let payloadTypes, let type):
+            guard let aggregate = type.nominalAggregateSpelling else {
+                fatalError("IREmitter: enumConstruct on non-enum type (HIRLowerer guarantees)")
+            }
+            let ptr = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: ptr, type: aggregate) + "\n"
+            let tagPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, 0]) + "\n"
+            bodyIR += builder.fmtStore(value: String(tag), type: "i32", ptr: tagPtr) + "\n"
+            for (index, payload) in payloads.enumerated() {
+                let value = emitExpr(payload)
+                let fieldPtr = builder.freshTemp()
+                bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 1]) + "\n"
+                bodyIR += builder.fmtStore(value: value.ssaName, type: payloadTypes[index].llvmSpelling, ptr: fieldPtr) + "\n"
+            }
+            return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
 
         case .fieldGet(let base, let field, let type):
             let baseValue = emitExpr(base)
@@ -1248,6 +1345,7 @@ public final class IREmitter {
         case .sliceCall(_, _, _, let type): return type
         case .construct(let type): return type
         case .fieldGet(_, _, let type): return type
+        case .enumConstruct(_, _, _, _, _, let type): return type
         }
     }
 
@@ -1377,6 +1475,65 @@ public final class IREmitter {
             // Gated by the lowerer (printing struct/object values is a later
             // grid); kept here only to make the switch total.
             fatalError("IREmitter: printing a nominal value is gated (HIRLowerer)")
+
+        case .enumeration(let name):
+            // Enum value rendering (interpreter stringify parity):
+            // `caseName(p1, p2)` — runtime tag dispatch, payloads printed
+            // recursively by their declared types.
+            guard let enumDecl = moduleEnums.first(where: { $0.name == name }),
+                  let aggregate = type.nominalAggregateSpelling else {
+                fatalError("IREmitter: printing unregistered enum (HIRLowerer guarantees)")
+            }
+            let tagPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: value.ssaName, indices: [0, 0]) + "\n"
+            let tag = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: tag, type: "i32", ptr: tagPtr) + "\n"
+            let id = builder.freshLabel()
+            let endLabel = "fmt.enum.end.\(id)"
+            for (caseIndex, enumCase) in enumDecl.cases.enumerated() {
+                let matchesTag = builder.freshTemp()
+                bodyIR += " \(matchesTag) = icmp eq i32 \(tag), \(enumCase.tag)\n"
+                let armLabel = "fmt.enum.arm.\(id).\(caseIndex)"
+                let nextLabel = caseIndex + 1 < enumDecl.cases.count
+                    ? "fmt.enum.next.\(id).\(caseIndex)"
+                    : "fmt.enum.fail.\(id)"
+                bodyIR += builder.fmtCondBr(cond: matchesTag, thenLabelName: armLabel, elseLabelName: nextLabel) + "\n"
+
+                bodyIR += "\(armLabel):\n"
+                if enumCase.payloadTypes.isEmpty {
+                    let caseText = emitStringConstant(enumCase.name)
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(caseText.ssaName))\n"
+                } else {
+                    let openText = emitStringConstant("\(enumCase.name)(")
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(openText.ssaName))\n"
+                    for (slot, payloadType) in enumCase.payloadTypes.enumerated() {
+                        if slot > 0 {
+                            let separator = emitStringConstant(", ")
+                            bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+                        }
+                        let fieldPtr = builder.freshTemp()
+                        bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: value.ssaName, indices: [0, slot + 1]) + "\n"
+                        let element = builder.freshTemp()
+                        bodyIR += builder.fmtLoad(name: element, type: payloadType.llvmSpelling, ptr: fieldPtr) + "\n"
+                        emitValuePrint(
+                            value: IRValue(llvmType: payloadType.llvmSpelling, ssaName: element),
+                            type: payloadType
+                        )
+                    }
+                    let closeText = emitStringConstant(")")
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(closeText.ssaName))\n"
+                }
+                bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+                if caseIndex + 1 < enumDecl.cases.count {
+                    bodyIR += "fmt.enum.next.\(id).\(caseIndex):\n"
+                }
+            }
+            bodyIR += "fmt.enum.fail.\(id):\n"
+            let failText = emitStringConstant("Pini runtime error: enum value has unknown tag")
+            bodyIR += " call void @bk_panic(ptr \(failText.ssaName))\n"
+            bodyIR += " unreachable\n"
+            bodyIR += "\(endLabel):\n"
+            terminated = false
 
         default:
             emitScalarPrint(value)

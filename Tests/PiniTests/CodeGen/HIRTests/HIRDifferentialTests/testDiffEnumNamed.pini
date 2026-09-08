@@ -1,0 +1,37 @@
+; G4 batch 2: named associated values — labeled construction (text= "x"),
+; named match bindings (text: s), _ placeholder, zero-payload case as a
+; bare identifier value. Interpreter parity (x / y / 3 / plus).
+[Token]
+identifier(text: String, loc: I32,)
+plus
+
+取文本|func(t: Token,) -> (String,):
+    match t:
+        case identifier(text, loc):
+            return text
+        case plus:
+            return "plus"
+    return "?"
+
+具名取文本|func(t: Token,) -> (String,):
+    match t:
+        case identifier(text: s, loc: l):
+            return s
+        case plus:
+            return "plus"
+    return "?"
+
+取位置|func(t: Token,) -> (I32,):
+    match t:
+        case identifier(_, l):
+            return l
+        case plus:
+            return 0
+    return -1
+
+main|func() -> ():
+    print(取文本(identifier(text= "x", loc= 1,)))
+    print(具名取文本(identifier(text= "y", loc= 2,)))
+    print(取位置(identifier(text= "z", loc= 3,)))
+    print(取文本(plus))
+    return

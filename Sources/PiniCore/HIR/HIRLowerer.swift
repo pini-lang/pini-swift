@@ -56,36 +56,6 @@ public enum HIRLowerer {
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
     public static func lower(module: Module, typeInference: TypeInference?) throws -> HIRModule {
-        // Pre-pass: capture every declared function's signature so bodies can
-        // call functions declared later in the file.
-        var signatures: [String: HIRLowererSignatureInfo] = [:]
-        for decl in module.declarations {
-            if case .funcDecl(let funcDecl) = decl {
-                let paramTypes = try funcDecl.params.map { parameter -> HIRType in
-                    guard let annotation = parameter.typeAnnotation,
-                          let type = HIRType(from: annotation) else {
-                        throw unsupported(
-                            "parameter '\(parameter.name)' of '\(funcDecl.name)' lacks a resolvable scalar type",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
-                let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
-                    guard let type = HIRType(from: annotation) else {
-                        throw unsupported(
-                            "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(funcDecl.name)'",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
-                signatures[funcDecl.name] = HIRLowererSignatureInfo(
-                    paramTypes: paramTypes, returnType: returnType
-                )
-            }
-        }
-
         // G3 pre-pass: nominal type registry (structs/objects), with methods
         // merged in from extension blocks ((T)) / {{T}}.
         var nominals: [String: NominalInfo] = [:]
@@ -103,16 +73,95 @@ public enum HIRLowerer {
             }
         }
 
+        // G4 pre-pass: enum registry + the user-type name table (structs,
+        // objects, enums) used for annotation resolution. Names collect
+        // first; payload annotations resolve second (they may reference
+        // other user types).
+        var enums: [String: HIREnumDecl] = [:]
+        var userTypes: [String: HIRType] = [:]
+        for decl in module.declarations {
+            switch decl {
+            case .enumDecl(let ed):
+                enums[ed.name] = HIREnumDecl(
+                    name: ed.name,
+                    cases: ed.cases.enumerated().map { index, ec in
+                        HIREnumCase(name: ec.name, tag: index,
+                                    paramNames: ec.associatedParams.map { $0.name },
+                                    payloadTypes: [])
+                    }
+                )
+                userTypes[ed.name] = .enumeration(name: ed.name)
+            default: break
+            }
+        }
+        for (name, info) in nominals {
+            userTypes[name] = .nominal(name: name, isObject: info.isObject)
+        }
+        for decl in module.declarations {
+            if case .enumDecl(let ed) = decl {
+                var resolvedCases: [HIREnumCase] = []
+                for (index, ec) in ed.cases.enumerated() {
+                    var payloadTypes: [HIRType] = []
+                    for param in ec.associatedParams {
+                        guard let payloadType = resolveAnnotationType(param.type, userTypes: userTypes) else {
+                            throw unsupported(
+                                "associated value '\(param.name ?? "?")' of case '\(ec.name)' lacks a resolvable type",
+                                at: ed.location
+                            )
+                        }
+                        payloadTypes.append(payloadType)
+                    }
+                    resolvedCases.append(HIREnumCase(
+                        name: ec.name, tag: index,
+                        paramNames: ec.associatedParams.map { $0.name },
+                        payloadTypes: payloadTypes
+                    ))
+                }
+                enums[ed.name] = HIREnumDecl(name: ed.name, cases: resolvedCases)
+            }
+        }
+
+        // Signature pre-pass (after type registries so enum/struct/object
+        // parameter annotations resolve): captures every declared function's
+        // signature so bodies can call functions declared later in the file.
+        var signatures: [String: HIRLowererSignatureInfo] = [:]
+        for decl in module.declarations {
+            if case .funcDecl(let funcDecl) = decl {
+                let paramTypes = try funcDecl.params.map { parameter -> HIRType in
+                    guard let annotation = parameter.typeAnnotation,
+                          let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                        throw unsupported(
+                            "parameter '\(parameter.name)' of '\(funcDecl.name)' lacks a resolvable scalar type",
+                            at: funcDecl.location
+                        )
+                    }
+                    return type
+                }
+                let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
+                    guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                        throw unsupported(
+                            "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(funcDecl.name)'",
+                            at: funcDecl.location
+                        )
+                    }
+                    return type
+                }
+                signatures[funcDecl.name] = HIRLowererSignatureInfo(
+                    paramTypes: paramTypes, returnType: returnType
+                )
+            }
+        }
+
         var functions: [HIRFunction] = []
         for decl in module.declarations {
             switch decl {
             case .funcDecl(let funcDecl):
                 functions.append(
                     try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
-                                      nominalTypes: nominals)
+                                      nominalTypes: nominals, userTypes: userTypes, enums: enums)
                 )
-            case .structDecl, .objectDecl, .extensionDecl:
-                // Handled by the nominal-type pass below.
+            case .structDecl, .objectDecl, .extensionDecl, .enumDecl:
+                // Handled by the nominal-type / enum passes below.
                 continue
             default:
                 throw unsupported(
@@ -135,19 +184,21 @@ public enum HIRLowerer {
                 typeDecls.append(try lowerNominal(
                     name: sd.name, isObject: false, fields: sd.fields,
                     methods: nominals[sd.name]!.methods,
-                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals
+                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                    userTypes: userTypes, enums: enums
                 ))
             case .objectDecl(let od):
                 typeDecls.append(try lowerNominal(
                     name: od.name, isObject: true, fields: od.fields,
                     methods: nominals[od.name]!.methods,
-                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals
+                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                    userTypes: userTypes, enums: enums
                 ))
             default:
                 break
             }
         }
-        return HIRModule(functions: functions, types: typeDecls)
+        return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values))
     }
 
     // MARK: - Functions
@@ -156,7 +207,9 @@ public enum HIRLowerer {
         _ decl: FuncDecl,
         typeInference: TypeInference?,
         moduleSignatures: [String: HIRLowererSignatureInfo],
-        nominalTypes: [String: NominalInfo]
+        nominalTypes: [String: NominalInfo],
+        userTypes: [String: HIRType],
+        enums: [String: HIREnumDecl]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -171,7 +224,7 @@ public enum HIRLowerer {
             )
         }
         let returnType: HIRType? = try decl.returnTypes.first.map { annotation in
-            guard let type = HIRType(from: annotation) else {
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(decl.name)'",
                     at: decl.location
@@ -183,7 +236,7 @@ public enum HIRLowerer {
         var params: [HIRFunction.HIRParam] = []
         for param in decl.params {
             guard let annotation = param.typeAnnotation,
-                  let type = HIRType(from: annotation) else {
+                  let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "parameter '\(param.name)' of '\(decl.name)' lacks a resolvable scalar type",
                     at: decl.location
@@ -198,10 +251,27 @@ public enum HIRLowerer {
             paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
             typeInference: typeInference,
             moduleSignatures: moduleSignatures,
-            nominalTypes: nominalTypes
+            nominalTypes: nominalTypes,
+            userTypes: userTypes,
+            enums: enums
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: decl.name, params: params, returnType: returnType, body: body)
+    }
+
+    // MARK: - Annotation resolution (G3/G4 user types)
+
+    /// Resolve a type annotation: the built-in slice set first, then the
+    /// module's user types (structs / objects / enums) by simple name.
+    private static func resolveAnnotationType(
+        _ annotation: TypeAnnotation,
+        userTypes: [String: HIRType]
+    ) -> HIRType? {
+        if let builtin = HIRType(from: annotation) { return builtin }
+        if case .simple(let name, _) = annotation {
+            return userTypes[name]
+        }
+        return nil
     }
 
     // MARK: - Nominal types (G3)
@@ -217,16 +287,19 @@ public enum HIRLowerer {
         methods: [FuncDecl],
         typeInference: TypeInference?,
         moduleSignatures: [String: HIRLowererSignatureInfo],
-        nominalTypes: [String: NominalInfo]
+        nominalTypes: [String: NominalInfo],
+        userTypes: [String: HIRType],
+        enums: [String: HIREnumDecl]
     ) throws -> HIRTypeDecl {
         let selfType = HIRType.nominal(name: name, isObject: isObject)
         var scratch = FunctionContext(
             functionName: "<field-default:\(name)>", returnType: nil, paramTypes: [:],
-            typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes
+            typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
+            userTypes: userTypes, enums: enums
         )
         var loweredFields: [HIRTypeDecl.Field] = []
         for field in fields {
-            guard let fieldType = HIRType(from: field.typeAnnotation) else {
+            guard let fieldType = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes) else {
                 throw unsupported(
                     "field '\(field.name)' of '\(name)' lacks a resolvable type",
                     at: field.location
@@ -244,7 +317,8 @@ public enum HIRLowerer {
         for method in methods {
             loweredMethods.append(try lowerMethod(
                 method, typeName: name, selfType: selfType,
-                typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes
+                typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
+                userTypes: userTypes, enums: enums
             ))
         }
         return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
@@ -257,7 +331,9 @@ public enum HIRLowerer {
         selfType: HIRType,
         typeInference: TypeInference?,
         moduleSignatures: [String: HIRLowererSignatureInfo],
-        nominalTypes: [String: NominalInfo]
+        nominalTypes: [String: NominalInfo],
+        userTypes: [String: HIRType],
+        enums: [String: HIREnumDecl]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("method '\(decl.name)' of '\(typeName)' has no body", at: decl.location)
@@ -272,7 +348,7 @@ public enum HIRLowerer {
             )
         }
         let returnType: HIRType? = try decl.returnTypes.first.map { annotation in
-            guard let type = HIRType(from: annotation) else {
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(decl.name)'",
                     at: decl.location
@@ -283,7 +359,7 @@ public enum HIRLowerer {
         var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
         for param in decl.params {
             guard let annotation = param.typeAnnotation,
-                  let type = HIRType(from: annotation) else {
+                  let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "parameter '\(param.name)' of method '\(decl.name)' lacks a resolvable type",
                     at: decl.location
@@ -298,7 +374,9 @@ public enum HIRLowerer {
             paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
             typeInference: typeInference,
             moduleSignatures: moduleSignatures,
-            nominalTypes: nominalTypes
+            nominalTypes: nominalTypes,
+            userTypes: userTypes,
+            enums: enums
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: irName, params: params, returnType: returnType, body: body)
@@ -519,7 +597,7 @@ public enum HIRLowerer {
 
         let declaredType: HIRType?
         if let annotation = annotation {
-            guard let type = HIRType(from: annotation) else {
+            guard let type = resolveAnnotationType(annotation, userTypes: context.userTypes) else {
                 throw unsupported(
                     "variable '\(name)' has non-scalar annotation '\(annotation.simpleName ?? "(non-scalar)")'",
                     at: location
@@ -702,10 +780,15 @@ public enum HIRLowerer {
             )
 
         case .identifier(let name, let location):
-            guard let type = context.variableTypes[name] else {
-                throw unsupported("reference to undeclared variable '\(name)'", at: location)
+            if let type = context.variableTypes[name] {
+                return LoweredExpr(node: .load(name: name, type: type), type: type)
             }
-            return LoweredExpr(node: .load(name: name, type: type), type: type)
+            // Zero-payload enum case as a bare identifier value (G4):
+            // `取文本(plus)` — unique unqualified reverse lookup.
+            if let constructed = try lowerBareEnumCase(name, at: location, into: &context) {
+                return constructed
+            }
+            throw unsupported("reference to undeclared variable '\(name)'", at: location)
 
         case .binary(let left, let op, let right, let location):
             guard let hirOp = HIRBinaryOp(from: op) else {
@@ -799,10 +882,71 @@ public enum HIRLowerer {
                 type: fieldType
             )
 
+        case .dotCaseRef(let caseName, let location):
+            // Zero-payload case as a dot-case value (`.plus`); cases with
+            // payloads are constructed through the call form. `.none` on the
+            // built-in Optional is the nil literal.
+            if caseName == "none" {
+                return LoweredExpr(
+                    node: .optionalConstruct(isSome: false, payload: nil, type: .optional(wrapped: .i32)),
+                    type: .optional(wrapped: .i32)
+                )
+            }
+            if let (enumDecl, enumCase) = try resolveEnumCase(caseName, at: location, in: context) {
+                if enumCase.payloadTypes.isEmpty {
+                    return LoweredExpr(
+                        node: .enumConstruct(
+                            enumName: enumDecl.name, caseName: enumCase.name, tag: enumCase.tag,
+                            payloads: [], payloadTypes: [],
+                            type: .enumeration(name: enumDecl.name)
+                        ),
+                        type: .enumeration(name: enumDecl.name)
+                    )
+                }
+                throw unsupported(
+                    "dot-case '.\(caseName)' carries associated values — use the call form with arguments",
+                    at: location
+                )
+            }
+            throw unsupported("undefined enum case '.\(caseName)'", at: location)
+
         case .call(let callee, let arguments, let location):
             // Member calls: the tolerant read channel `arr.get(i)` (G2) and
             // the slice channel `base.slice(start, end)` (G2b, the slice-
             // sugar desugaring). All other method calls stay gated.
+            // Dot-case construction `.Case(args)` (G4, proposal-dot-case-
+            // construction): member-intent marker resolved by unique case
+            // name or the checker's expected-type registry (E-131).
+            // `.none` / `.some` resolve to the built-in Optional first.
+            if case .dotCaseRef(let dotName, _) = callee {
+                if dotName == "none" {
+                    return LoweredExpr(
+                        node: .optionalConstruct(isSome: false, payload: nil, type: .optional(wrapped: .i32)),
+                        type: .optional(wrapped: .i32)
+                    )
+                }
+                if dotName == "some" {
+                    guard arguments.count == 1 else {
+                        throw unsupported("Optional.some expects exactly one argument", at: location)
+                    }
+                    let loweredPayload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
+                    let type = HIRType.optional(wrapped: loweredPayload.type)
+                    return LoweredExpr(
+                        node: .optionalConstruct(isSome: true, payload: loweredPayload.node, type: type),
+                        type: type
+                    )
+                }
+                if let (enumDecl, enumCase) = try resolveEnumCase(dotName, at: location, in: context) {
+                    return try lowerEnumCaseConstructor(
+                        enumDecl: enumDecl, enumCase: enumCase, arguments: arguments,
+                        at: location, into: &context
+                    )
+                }
+                throw unsupported(
+                    "dot-case construction '.\(dotName)' has no resolvable enum case",
+                    at: location
+                )
+            }
             if case .member(let object, let memberName, _) = callee {
                 return try lowerMemberCall(
                     object: object, memberName: memberName, arguments: arguments,
@@ -830,8 +974,7 @@ public enum HIRLowerer {
                     )
                 }
                 if case .result = loweredArgs[0].type {
-                    throw unsupported("printing a Result value is outside the slice", at: location)
-                }
+                    throw unsupported("printing a Result value is outside the slice", at: location)                }
                 if case .nominal = loweredArgs[0].type {
                     throw unsupported(
                         "printing a struct/object value is a later grid (value formatting)",
@@ -887,6 +1030,19 @@ public enum HIRLowerer {
                     type: contextType
                 )
             }
+            // Enum case construction `圆(2.0)` / `identifier(text= "x")` (G4):
+            // resolved before the function-signature table — case names share
+            // the identifier namespace with functions.
+            if case .identifier(let caseName, _) = callee,
+               let (enumDecl, enumCase) = try resolveEnumCase(caseName, at: location, in: context) {
+                if enumCase.payloadTypes.isEmpty && arguments.isEmpty {
+                    return try lowerBareEnumCase(caseName, at: location, into: &context)!
+                }
+                return try lowerEnumCaseConstructor(
+                    enumDecl: enumDecl, enumCase: enumCase, arguments: arguments,
+                    at: location, into: &context
+                )
+            }
             // Nominal constructor `名()` (G3): fields take declared defaults;
             // constructor arguments are not part of this grid's surface.
             if let info = context.nominalTypes[functionName] {
@@ -937,6 +1093,127 @@ public enum HIRLowerer {
         }
     }
 
+    // MARK: - Enum family (G4)
+
+    /// Resolve a case name to (enum decl, case) — exact qualified
+    /// `Enum.case` first, then unique unqualified fallback; ambiguous
+    /// unqualified names resolve through the checker's static registry
+    /// (ADR-026 D1: call-site location → parent enum, E-131) and are gated
+    /// when unresolved.
+    private static func resolveEnumCase(
+        _ caseName: String,
+        at location: SourceLocation?,
+        in context: FunctionContext
+    ) throws -> (HIREnumDecl, HIREnumCase)? {
+        if let dotIndex = caseName.firstIndex(of: ".") {
+            let enumName = String(caseName[..<dotIndex])
+            let caseLeaf = String(caseName[caseName.index(after: dotIndex)...])
+            guard let enumDecl = context.enums[enumName],
+                  let enumCase = enumDecl.cases.first(where: { $0.name == caseLeaf }) else {
+                return nil
+            }
+            return (enumDecl, enumCase)
+        }
+        let matches = context.enums.values.compactMap { enumDecl -> (HIREnumDecl, HIREnumCase)? in
+            guard let enumCase = enumDecl.cases.first(where: { $0.name == caseName }) else {
+                return nil
+            }
+            return (enumDecl, enumCase)
+        }
+        guard matches.count > 1 else { return matches.first }
+        // Cross-enum same-name case (P5-5): static resolution via the
+        // checker's expected-type registry.
+        if let location = location,
+           let parent = BareCaseResolutionRegistry.parent(at: location),
+           let hit = matches.first(where: { $0.0.name == parent }) {
+            return hit
+        }
+        throw unsupported(
+            "ambiguous enum case '\(caseName)' needs the qualified form (use \(caseName) under its enum namespace)",
+            at: location ?? SourceLocation(line: 0, column: 0, fileName: "")
+        )
+    }
+
+    /// Zero-payload enum case as a bare identifier (`plus`); nil when the
+    /// name is not a unique zero-payload case.
+    private static func lowerBareEnumCase(
+        _ name: String,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr? {
+        guard let (enumDecl, enumCase) = try resolveEnumCase(name, at: location, in: context),
+              enumCase.payloadTypes.isEmpty else {
+            return nil
+        }
+        return LoweredExpr(
+            node: .enumConstruct(
+                enumName: enumDecl.name, caseName: enumCase.name, tag: enumCase.tag,
+                payloads: [], payloadTypes: [],
+                type: .enumeration(name: enumDecl.name)
+            ),
+            type: .enumeration(name: enumDecl.name)
+        )
+    }
+
+    /// Enum case construction with associated values: positional or labeled
+    /// (`text= "x"`) arguments, resolved against the case's parameter names.
+    /// Missing arguments fall back to declared default expressions
+    /// (legacy createInstance parity).
+    private static func lowerEnumCaseConstructor(
+        enumDecl: HIREnumDecl,
+        enumCase: HIREnumCase,
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard arguments.count <= enumCase.payloadTypes.count else {
+            throw unsupported(
+                "case '\(enumCase.name)' expects at most \(enumCase.payloadTypes.count) associated values",
+                at: location
+            )
+        }
+        var payloads: [HIRExpr?] = Array(repeating: nil, count: enumCase.payloadTypes.count)
+        for (index, argument) in arguments.enumerated() {
+            var slot = index
+            if let label = argument.label {
+                guard let namedIndex = enumCase.paramNames.firstIndex(where: { $0 == label }) else {
+                    throw unsupported(
+                        "case '\(enumCase.name)' has no associated value labeled '\(label)'",
+                        at: location
+                    )
+                }
+                slot = namedIndex
+            }
+            guard payloads[slot] == nil else {
+                throw unsupported(
+                    "duplicate associated value at position \(slot + 1) of '\(enumCase.name)'",
+                    at: location
+                )
+            }
+            let lowered = try lowerExpr(argument.expression, expected: enumCase.payloadTypes[slot], into: &context)
+            try requireAssignable(lowered.type, to: enumCase.payloadTypes[slot], at: location)
+            payloads[slot] = lowered.node
+        }
+        var loweredPayloads: [HIRExpr] = []
+        for (index, slot) in payloads.enumerated() {
+            guard let node = slot else {
+                throw unsupported(
+                    "case '\(enumCase.name)' is missing associated value \(index + 1) (declared defaults are a later grid)",
+                    at: location
+                )
+            }
+            loweredPayloads.append(node)
+        }
+        return LoweredExpr(
+            node: .enumConstruct(
+                enumName: enumDecl.name, caseName: enumCase.name, tag: enumCase.tag,
+                payloads: loweredPayloads, payloadTypes: enumCase.payloadTypes,
+                type: .enumeration(name: enumDecl.name)
+            ),
+            type: .enumeration(name: enumDecl.name)
+        )
+    }
+
     // MARK: - Member .get & match (G2 batch 3)
 
     /// Member calls on built-in receivers. `.get(i)`: the tolerant read
@@ -953,6 +1230,16 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
+        // Qualified case constructor `Enum.Case(args)` (G4, P5-5): the
+        // receiver is a user TYPE name, not a variable.
+        if case .identifier(let typeName, _) = object, let enumDecl = context.enums[typeName],
+           let enumCase = enumDecl.cases.first(where: { $0.name == memberName }) {
+            return try lowerEnumCaseConstructor(
+                enumDecl: enumDecl, enumCase: enumCase, arguments: arguments,
+                at: location, into: &context
+            )
+        }
+
         // Member calls on the Optional type name (G7): `Optional.some(v)` is
         // the direct some construction; `Optional.none` (no call) is handled
         // in the .member case above.
@@ -1091,18 +1378,35 @@ public enum HIRLowerer {
         into context: inout FunctionContext
     ) throws -> HIRStmt {
         let loweredValue = try lowerExpr(value, expected: nil, into: &context)
-        guard case .optional(let wrapped) = loweredValue.type else {
+        switch loweredValue.type {
+        case .optional(let wrapped):
+            let hirCases = try lowerOptionalCases(cases, wrapped: wrapped, into: &context)
+            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+        case .enumeration(let enumName):
+            guard let enumDecl = context.enums[enumName] else {
+                throw unsupported("match scrutinee enum '\(enumName)' not registered", at: location)
+            }
+            let hirCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
+            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+        default:
             throw unsupported(
-                "match scrutinee type '\(loweredValue.type)' outside this grid (Optional only; enum match is a later grid)",
+                "match scrutinee type '\(loweredValue.type)' outside this grid (Optional/enum only)",
                 at: location
             )
         }
+    }
+
+    /// Optional scrutinee arms: some/none (nil alias), single positional
+    /// binding typed by the wrapped payload.
+    private static func lowerOptionalCases(
+        _ cases: [MatchCase],
+        wrapped: HIRType,
+        into context: inout FunctionContext
+    ) throws -> [HIRMatchCase] {
         var hirCases: [HIRMatchCase] = []
         for matchCase in cases {
             switch matchCase.pattern {
             case .enumCase(let rawCaseName):
-                // `case nil:` is the language-level alias of `case none:`
-                // (user adjudication D-G2-1: none IS nil).
                 let caseName = rawCaseName == "nil" ? "none" : rawCaseName
                 guard caseName == "some" || caseName == "none" else {
                     throw unsupported(
@@ -1130,7 +1434,7 @@ public enum HIRLowerer {
                 if let bindingName = bindingName {
                     context.variableTypes[bindingName] = previousType
                 }
-                hirCases.append(HIRMatchCase(caseName: caseName, binding: bindingName, body: body))
+                hirCases.append(HIRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
             default:
                 throw unsupported(
                     "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
@@ -1138,7 +1442,85 @@ public enum HIRLowerer {
                 )
             }
         }
-        return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+        return hirCases
+    }
+
+    /// Enum scrutinee arms (G4): tag dispatch through the general skeleton;
+    /// bindings are positional per the case's payload list, `_` placeholders
+    /// skip, named labels (`text: s`) resolve through the declared names.
+    private static func lowerEnumCases(
+        _ cases: [MatchCase],
+        enumDecl: HIREnumDecl,
+        into context: inout FunctionContext
+    ) throws -> [HIRMatchCase] {
+        var hirCases: [HIRMatchCase] = []
+        for (caseOrder, matchCase) in cases.enumerated() {
+            // Wildcard `case _:` matches everything — last arm only.
+            if case .wildcard = matchCase.pattern {
+                guard caseOrder == cases.count - 1 else {
+                    throw unsupported(
+                        "wildcard case must be the last case this grid",
+                        at: matchCase.location
+                    )
+                }
+                hirCases.append(HIRMatchCase(caseName: "_", bindings: [], body: try lowerBlock(matchCase.block, into: &context)))
+                continue
+            }
+            guard case .enumCase(let rawCaseName) = matchCase.pattern else {
+                throw unsupported(
+                    "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
+                    at: matchCase.location
+                )
+            }
+            let leafName = rawCaseName.contains(".")
+                ? String(rawCaseName.split(separator: ".").last!)
+                : rawCaseName
+            guard let enumCase = enumDecl.cases.first(where: { $0.name == leafName }) else {
+                throw unsupported(
+                    "match case '\(rawCaseName)' is not a case of '\(enumDecl.name)'",
+                    at: matchCase.location
+                )
+            }
+            guard matchCase.bindings.count == enumCase.payloadTypes.count else {
+                throw unsupported(
+                    "case '\(enumCase.name)' expects \(enumCase.payloadTypes.count) bindings, got \(matchCase.bindings.count)",
+                    at: matchCase.location
+                )
+            }
+            var bindingNames: [String?] = []
+            var scoped: [(String, HIRType, HIRType?)] = []
+            for (index, binding) in matchCase.bindings.enumerated() {
+                if binding.varName == "_" {
+                    bindingNames.append(nil)
+                    continue
+                }
+                if let paramName = binding.paramName {
+                    guard let declaredIndex = enumCase.paramNames.firstIndex(where: { $0 == paramName }) else {
+                        throw unsupported(
+                            "case '\(enumCase.name)' has no associated value labeled '\(paramName)'",
+                            at: matchCase.location
+                        )
+                    }
+                    guard declaredIndex == index else {
+                        throw unsupported(
+                            "labeled binding '\(paramName)' out of order in '\(enumCase.name)'",
+                            at: matchCase.location
+                        )
+                    }
+                }
+                bindingNames.append(binding.varName)
+                scoped.append((binding.varName, enumCase.payloadTypes[index], context.variableTypes[binding.varName]))
+            }
+            for (bindingName, bindingType, _) in scoped {
+                context.variableTypes[bindingName] = bindingType
+            }
+            let body = try lowerBlock(matchCase.block, into: &context)
+            for (bindingName, _, previousType) in scoped {
+                context.variableTypes[bindingName] = previousType
+            }
+            hirCases.append(HIRMatchCase(caseName: enumCase.name, bindings: bindingNames, body: body))
+        }
+        return hirCases
     }
 
     // MARK: - Array stores & compound assignment (G2 batch 2)
@@ -1473,7 +1855,8 @@ struct HIRLowererSignatureInfo {
 
 /// Per-function lowering context: variable slot types, the enclosing
 /// function's return type, the module-wide signatures from the pre-pass,
-/// and the nominal type registry (G3).
+/// the nominal type registry (G3), the user-type name table and enum
+/// registry (G4).
 /// `errorBindings` tracks names currently bound to a try-else error word so
 /// `return err` can re-box and print can gate on the type-erased ABI.
 private struct FunctionContext {
@@ -1483,6 +1866,8 @@ private struct FunctionContext {
     var variableTypes: [String: HIRType]
     let moduleSignatures: [String: HIRLowererSignatureInfo]
     let nominalTypes: [String: HIRLowerer.NominalInfo]
+    let userTypes: [String: HIRType]
+    let enums: [String: HIREnumDecl]
     var errorBindings: Set<String> = []
 
     init(
@@ -1491,7 +1876,9 @@ private struct FunctionContext {
         paramTypes: [String: HIRType],
         typeInference: TypeInference?,
         moduleSignatures: [String: HIRLowererSignatureInfo],
-        nominalTypes: [String: HIRLowerer.NominalInfo] = [:]
+        nominalTypes: [String: HIRLowerer.NominalInfo] = [:],
+        userTypes: [String: HIRType] = [:],
+        enums: [String: HIREnumDecl] = [:]
     ) {
         self.functionName = functionName
         self.returnType = returnType
@@ -1499,6 +1886,8 @@ private struct FunctionContext {
         self.typeInference = typeInference
         self.moduleSignatures = moduleSignatures
         self.nominalTypes = nominalTypes
+        self.userTypes = userTypes
+        self.enums = enums
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {

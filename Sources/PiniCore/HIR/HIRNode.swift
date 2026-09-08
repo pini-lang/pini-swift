@@ -38,6 +38,9 @@ public indirect enum HIRType: Equatable {
     /// pointer, legacy ABI `%struct.<mangled>*`) or object (reference,
     /// `%object.<mangled>*` with an i32 refcount header at field 0).
     case nominal(name: String, isObject: Bool)
+    /// User enum (G4): tagged union `%enum.<mangled>*` — i32 tag at field 0,
+    /// payload slots typed by the max-arity case (direct by-value store).
+    case enumeration(name: String)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -55,13 +58,19 @@ public indirect enum HIRType: Equatable {
             return "{ i64, \(wrapped.llvmSpelling) }"
         case .nominal(let name, let isObject):
             return isObject ? "%object.\(IRName.mangle(name))*" : "%struct.\(IRName.mangle(name))*"
+        case .enumeration(let name):
+            return "%enum.\(IRName.mangle(name))*"
         }
     }
 
-    /// Unpointed aggregate spelling for alloca / GEP (nominal types only).
+    /// Unpointed aggregate spelling for alloca / GEP (nominal and enum types).
     public var nominalAggregateSpelling: String? {
-        guard case .nominal(_, _) = self else { return nil }
-        return String(llvmSpelling.dropLast())
+        switch self {
+        case .nominal, .enumeration:
+            return String(llvmSpelling.dropLast())
+        default:
+            return nil
+        }
     }
 
     /// The ok payload type when this is a Result type.
@@ -91,7 +100,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array, .optional, .nominal: return false
+        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration: return false
         }
     }
 }
@@ -175,6 +184,10 @@ public indirect enum HIRExpr: Equatable {
     /// (or zero); constructor arguments are not part of the slice surface.
     /// Objects additionally write the refcount header (= 1).
     case construct(type: HIRType)
+    /// Enum case construction `Case(p1, p2, ...)` (G4): tag is the case's
+    /// declaration-order index; payloads store by value into the typed
+    /// slots of the tagged union.
+    case enumConstruct(enumName: String, caseName: String, tag: Int, payloads: [HIRExpr], payloadTypes: [HIRType], type: HIRType)
     /// Nominal field read `base.field` (G3). `type` is the field's type.
     case fieldGet(base: HIRExpr, field: String, type: HIRType)
 }
@@ -209,17 +222,17 @@ public struct HIRTypeDecl: Equatable {
 
 /// One match arm (G2 general case skeleton). `caseName` is the enum-case
 /// name the scrutinee's tag is compared against ("some" / "none" for an
-/// Optional scrutinee; user enum cases join through the same node when the
-/// enum grid lands). `binding` is the single positional associated-value
-/// binding (`case some(v)`), typed by the scrutinee's payload type.
+/// Optional scrutinee; user enum cases via the same node — G4). `bindings`
+/// are the per-payload variable names (`nil` = `_` placeholder), positional
+/// by payload index; the arm body sees them as scoped variables.
 public struct HIRMatchCase: Equatable {
     public let caseName: String
-    public let binding: String?
+    public let bindings: [String?]
     public let body: [HIRStmt]
 
-    public init(caseName: String, binding: String?, body: [HIRStmt]) {
+    public init(caseName: String, bindings: [String?], body: [HIRStmt]) {
         self.caseName = caseName
-        self.binding = binding
+        self.bindings = bindings
         self.body = body
     }
 }

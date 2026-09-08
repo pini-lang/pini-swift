@@ -148,4 +148,9 @@ final class HIRDifferentialTests: XCTestCase {
     // MARK: - G7 Optional direct construction (some/nil literal, ?T sugar)
 
     func testDiffOptionalDirect() throws { try assertParity(fixtureName: "testDiffOptionalDirect") }
+
+    // MARK: - G4 enum family (tagged union, case construction, enum match)
+
+    func testDiffEnum() throws { try assertParity(fixtureName: "testDiffEnum") }
+    func testDiffEnumNamed() throws { try assertParity(fixtureName: "testDiffEnumNamed") }
 }
