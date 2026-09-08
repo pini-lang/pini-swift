@@ -344,3 +344,23 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       直用）；全量回归 1268/0/0；sweep hir-emit **19/59 → 22/59**
       （collections / cow / dict-set-d2 / validated-match 进列）；门控
       边界再翻：lambda 为下一记录边界（G6 闭包族）。
+
+  - **G8 元组返回 + G9 字符串深化完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g8-tuple-return`，68ade52，两格同批）**：
+    - G8：`HIRType(from:)` 映射元组注解（`((I32, I32,),)` 尾逗号语料
+      形态覆盖，标签递归）；函数返回定长聚合；print(tuple) 渲染
+      `[v1, v2]` / `[label: v]`（探针钉定：无标签方括号、有标签
+      `label: ` 前缀，与解释器 stringify 逐字节对齐）。
+    - G9 stdlib：upper/lower（memcpy + toupper/tolower 循环）、contains
+      （strstr）、substring（memcpy 外拷）、**split 两遍 strtok（先计数
+      后填充，产真 `Array<String>`**——legacy 走格式化字符串捷径，与解
+      释器类型语义分叉，新管线取解释器通道）、join；abs/min/max I32
+      select、sin/cos llvm 内接、tan = sin/cos（legacy 对齐）。
+    - G9 defer：`deferStmt` 在块作用域正常结束位 LIFO 执行（循环体每
+      轮末尾含内）；break/return 与 defer 交互语料未触达，不设门控面。
+    - G9 lexical：插值各部件经值展示管线写入栈缓冲（F64 走
+      bk_double_to_string 最短往返——**修复 legacy 在此路径的 %f 分叉**
+      ；数组部件递归渲染）；`s1 + s2` 串接接通（malloc 拼接，defer 语
+      料增量建串依赖）。
+    - **验收**：差分 39/39（+4：tuple/stdlib/defer/lexical）；全量回归
+      **1272/0/0**；sweep hir-emit **22/59 → 26/59**。
