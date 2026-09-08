@@ -806,7 +806,7 @@ public enum HIRLowerer {
             if case .member(let object, let memberName, _) = callee {
                 return try lowerMemberCall(
                     object: object, memberName: memberName, arguments: arguments,
-                    at: location, into: &context
+                    expected: expected, at: location, into: &context
                 )
             }
             guard case .identifier(let functionName, _) = callee else {
@@ -949,9 +949,29 @@ public enum HIRLowerer {
         object: Expression,
         memberName: String,
         arguments: [CallArgument],
+        expected: HIRType?,
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
+        // Member calls on the Optional type name (G7): `Optional.some(v)` is
+        // the direct some construction; `Optional.none` (no call) is handled
+        // in the .member case above.
+        if case .identifier("Optional", _) = object, memberName == "some" {
+            guard arguments.count == 1 else {
+                throw unsupported("Optional.some expects exactly one argument", at: location)
+            }
+            let payloadExpected = expected?.optionalWrapped
+            let loweredPayload = try lowerExpr(arguments[0].expression, expected: payloadExpected, into: &context)
+            let type = HIRType.optional(wrapped: loweredPayload.type)
+            if let payloadExpected = payloadExpected {
+                try requireAssignable(loweredPayload.type, to: payloadExpected, at: location)
+            }
+            return LoweredExpr(
+                node: .optionalConstruct(isSome: true, payload: loweredPayload.node, type: type),
+                type: type
+            )
+        }
+
         let loweredObject = try lowerExpr(object, expected: nil, into: &context)
         let objectType = loweredObject.type
 
@@ -1080,7 +1100,10 @@ public enum HIRLowerer {
         var hirCases: [HIRMatchCase] = []
         for matchCase in cases {
             switch matchCase.pattern {
-            case .enumCase(let caseName):
+            case .enumCase(let rawCaseName):
+                // `case nil:` is the language-level alias of `case none:`
+                // (user adjudication D-G2-1: none IS nil).
+                let caseName = rawCaseName == "nil" ? "none" : rawCaseName
                 guard caseName == "some" || caseName == "none" else {
                     throw unsupported(
                         "match case '\(caseName)' outside this grid (Optional scrutinee: some/none)",
@@ -1327,6 +1350,12 @@ extension HIRType {
             // `Array<T>` (G2): nested generics recurse through the element.
             if name == "Array", params.count == 1, let element = HIRType(from: params[0]) {
                 self = .array(element: element)
+                return
+            }
+            // `Optional<T>` (G7): covers the `?T` sugar too — the parser maps
+            // `?T` to the same Optional generic annotation.
+            if name == "Optional", params.count == 1, let wrapped = HIRType(from: params[0]) {
+                self = .optional(wrapped: wrapped)
                 return
             }
             return nil

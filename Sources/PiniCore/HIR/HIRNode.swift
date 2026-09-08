@@ -70,6 +70,12 @@ public indirect enum HIRType: Equatable {
         return nil
     }
 
+    /// The wrapped type when this is an Optional type.
+    public var optionalWrapped: HIRType? {
+        if case .optional(let wrapped) = self { return wrapped }
+        return nil
+    }
+
     /// The element type when this is an Array type.
     public var arrayElementType: HIRType? {
         if case .array(let element) = self { return element }

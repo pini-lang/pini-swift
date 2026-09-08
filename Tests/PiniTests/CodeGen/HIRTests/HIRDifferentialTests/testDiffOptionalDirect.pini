@@ -1,0 +1,42 @@
+; G7: Optional direct construction — Optional.some(v) / Optional.none,
+; the nil keyword (parsed as Optional.none), case nil: pattern alias,
+; Optional<T> and ?T annotations, and Optional-to-Optional assignment.
+; Interpreter parity.
+main|func() -> ():
+    var a = Optional.some(42)
+    match a:
+        case some(v,):
+            print(v)
+        case none:
+            print("none")
+    var b = Optional.none
+    match b:
+        case some(v,):
+            print(v)
+        case none:
+            print("none")
+    var a2 = nil
+    match a2:
+        case none:
+            print("none")
+    var b2 = Optional.none
+    match b2:
+        case nil:
+            print("none")
+    var c: Optional<I32> = nil
+    match c:
+        case nil:
+            print("matched-nil")
+    var d: Optional<I32> = nil
+    match d:
+        case none:
+            print("none")
+    var e: ?I32 = nil
+    match e:
+        case nil:
+            print("q-none")
+    var f: Optional<I32> = e
+    match f:
+        case none:
+            print("q-assign")
+    return

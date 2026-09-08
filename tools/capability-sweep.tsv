@@ -40,8 +40,8 @@ examples/multifile/main.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-002]   u
 examples/multifile/utils.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/object.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined method 增加' 
 examples/operators.pini	PASS	PASS	PASS	PASS	
-examples/optional-sugar.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/optional.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/optional-sugar.pini	PASS	PASS	PASS	PASS	
+examples/optional.pini	PASS	PASS	PASS	PASS	
 examples/package-demo/_internals/helpers.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/package-demo/_私密文件.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/package-demo/api.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
