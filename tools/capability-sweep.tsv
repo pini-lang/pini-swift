@@ -25,8 +25,8 @@ examples/enum.pini	PASS	PASS	PASS	PASS
 examples/ffi.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/ffi_module/cstring.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/for.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/generic-func.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/generic.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/generic-func.pini	PASS	PASS	PASS	PASS	
+examples/generic.pini	PASS	PASS	PASS	PASS	
 examples/hello.pini	PASS	PASS	PASS	PASS	
 examples/higher-order.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/io.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 

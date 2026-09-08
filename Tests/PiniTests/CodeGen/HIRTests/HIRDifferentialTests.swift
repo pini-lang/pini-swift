@@ -169,4 +169,9 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffStdlib() throws { try assertParity(fixtureName: "testDiffStdlib") }
     func testDiffDefer() throws { try assertParity(fixtureName: "testDiffDefer") }
     func testDiffLexical() throws { try assertParity(fixtureName: "testDiffLexical") }
+
+    // MARK: - G10 generic monomorphization
+
+    func testDiffGenericStruct() throws { try assertParity(fixtureName: "testDiffGenericStruct") }
+    func testDiffGenericFunc() throws { try assertParity(fixtureName: "testDiffGenericFunc") }
 }

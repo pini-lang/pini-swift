@@ -364,3 +364,30 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       料增量建串依赖）。
     - **验收**：差分 39/39（+4：tuple/stdlib/defer/lexical）；全量回归
       **1272/0/0**；sweep hir-emit **22/59 → 26/59**。
+
+  - **G10 泛型单态化族完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g10-generics`，泛型 struct + 泛型函数，lazyref
+    跨格豁免）**：
+    - **预扫描单态化**：模块级预-pass 收集泛型 struct/函数模板，
+      `precollectGenericUses` 全模块扫 `.genericConstruct` 使用点，按
+      「模板名 + `_` + 类型实参名拼接」注册特化（`盒<I32>` → `盒_I32`，
+      镜像 legacy GenericsEmitter mangling；幂等去重）。
+    - **struct 特化**：字段类型替换 + `((盒<T>))` 扩展方法重特化（实测
+      钉定：parser 对 `((盒<T>))` 产出 targetType=`盒`（剥 `<T>`），
+      特化匹配按 `specializedName.hasPrefix("\(ext.targetType)_")` 反向
+      判定——首版按 `ext.targetType == specialized.name` 正向匹配全空，
+      差分测试拦住）。
+    - **函数特化**：`身份<T>` → `身份_I32` 参数/返回注解替换；特化体经
+      `lowerGenericFuncCall` 在 `.genericConstruct` 表达式位分发（实测
+      钉定：parser 对 `身份<I32>(x = 100)` 产出**独立** genericConstruct
+      节点实参内含，非 `.call` 包裹 callee——首版分派位写错，编译器与
+      差分双通道拦截）。
+    - **发射接线**：泛型模板跳过签名预扫描/函数发射/typeDecl 发射；
+      特化 struct 补发 typeDecl（字段 + 重特化方法，IR 名
+      `方法__盒_I32`）；`FunctionContext` 增 `genericFuncTemplates`
+      供调用点分发。
+    - **lazyref.pini 跨格豁免**：`LazyRef<T>(闭包)` 依赖闭包 fat
+      pointer（G6 能力），本格不实现，维持 hir-emit FAIL（E-149 登记
+      豁免理由）。
+    - **验收**：差分 41/41（+2：generic/generic-func 语料直用）；全量
+      回归 **1274/0/0**；sweep hir-emit **26/59 → 28/59**。

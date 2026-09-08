@@ -26,6 +26,32 @@ public enum HIRLowerer {
         let type: HIRType
     }
 
+    /// G10 monomorphization scratch: one specialization per concrete
+    /// type-argument combination, keyed by the specialized source name
+    /// (`盒_I32`, `身份_I32`). Struct specializations carry the substitution
+    /// map so extension methods can be re-specialized per instance.
+    fileprivate struct G10SpecializationState {
+        var structSpecializations: [String: StructDecl] = [:]
+        var funcSpecializations: [String: FuncDecl] = [:]
+        /// Specialized-name -> substitution used for that struct instance
+        /// (generic param name -> concrete annotation).
+        var structSubstitutions: [String: [String: TypeAnnotation]] = [:]
+    }
+
+    /// Specialized source name for a generic instantiation: `盒` + ["I32"]
+    /// -> `盒_I32`. Distinct from the `方法__类型` method separator so the
+    /// two manglings never alias.
+    fileprivate static func specializedSourceName(_ base: String, typeArgs: [TypeAnnotation]) -> String {
+        let argNames = typeArgs.map { arg -> String in
+            switch arg {
+            case .simple(let name, _): return name
+            case .generic(let name, _, _): return name
+            default: return "T"
+            }
+        }
+        return "\(base)_\(argNames.joined(separator: "_"))"
+    }
+
     /// G3 nominal registry entry: the AST declaration of a struct/object
     /// plus methods merged in from `((T))`/`{{T}}` extension blocks
     /// (data/logic separation — the parser puts methods in extensions).
@@ -59,10 +85,19 @@ public enum HIRLowerer {
         // G3 pre-pass: nominal type registry (structs/objects), with methods
         // merged in from extension blocks ((T)) / {{T}}.
         var nominals: [String: NominalInfo] = [:]
+        var genericStructTemplates: [String: StructDecl] = [:]
+        var genericFuncTemplates: [String: FuncDecl] = [:]
         for decl in module.declarations {
             switch decl {
-            case .structDecl(let sd): nominals[sd.name] = NominalInfo(name: sd.name, isObject: false, decl: decl)
+            case .structDecl(let sd):
+                if sd.genericParams.isEmpty {
+                    nominals[sd.name] = NominalInfo(name: sd.name, isObject: false, decl: decl)
+                } else {
+                    genericStructTemplates[sd.name] = sd
+                }
             case .objectDecl(let od): nominals[od.name] = NominalInfo(name: od.name, isObject: true, decl: decl)
+            case .funcDecl(let fd) where !fd.genericParams.isEmpty:
+                genericFuncTemplates[fd.name] = fd
             default: break
             }
         }
@@ -70,6 +105,43 @@ public enum HIRLowerer {
             if case .extensionDecl(let ext) = decl, ext.kind == .structExt || ext.kind == .objectExt,
                nominals[ext.targetType] != nil {
                 nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
+            }
+        }
+
+        // G10 pre-pass: monomorphization. Scan the whole module for generic
+        // construction / call sites (`盒<I32>()`, `身份<I32>(...)`), register
+        // a specialized nominal (fields substituted) or function decl per
+        // type-argument combination, and merge the specializations into the
+        // registries so the rest of lowering sees only concrete types.
+        var specializationState = G10SpecializationState()
+        for decl in module.declarations {
+            precollectGenericUses(in: decl,
+                                  genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates,
+                                  nominals: &nominals,
+                                  state: &specializationState)
+        }
+        for (specializedName, specialized) in specializationState.structSpecializations {
+            nominals[specializedName] = NominalInfo(name: specializedName, isObject: false, decl: .structDecl(specialized))
+            let substitution = specializationState.structSubstitutions[specializedName] ?? [:]
+            // `((盒<T>))` parses with targetType `盒` (type params stripped);
+            // the specialized instance is `盒_I32`, so match the template by
+            // prefix `盒_` / exact name `盒` (non-generic extensions on a
+            // concrete struct of the same name cannot exist alongside it).
+            for decl in module.declarations {
+                if case .extensionDecl(let ext) = decl, ext.kind == .structExt,
+                   specializedName == ext.targetType || specializedName.hasPrefix("\(ext.targetType)_") {
+                    // Methods of a generic struct template arrive through
+                    // ((盒<T>)) extensions; re-specialize them per instance.
+                    for method in ext.methods {
+                        let specializedMethod = specializeMethodForGenericStruct(
+                            method, structTemplate: specialized,
+                            substitution: substitution,
+                            specializedName: specializedName
+                        )
+                        nominals[specializedName]!.extensionMethods.append(specializedMethod)
+                    }
+                }
             }
         }
 
@@ -127,6 +199,10 @@ public enum HIRLowerer {
         var signatures: [String: HIRLowererSignatureInfo] = [:]
         for decl in module.declarations {
             if case .funcDecl(let funcDecl) = decl {
+                // Generic templates never lower directly — only their
+                // specializations do (G10). Template param annotations
+                // reference type parameters and would not resolve here.
+                guard funcDecl.genericParams.isEmpty else { continue }
                 let paramTypes = try funcDecl.params.map { parameter -> HIRType in
                     guard let annotation = parameter.typeAnnotation,
                           let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
@@ -151,14 +227,44 @@ public enum HIRLowerer {
                 )
             }
         }
+        // G10: specialized generic functions join the signature table (their
+        // bodies reference only concrete types now).
+        for (_, specialized) in specializationState.funcSpecializations {
+            let paramTypes = try specialized.params.map { parameter -> HIRType in
+                guard let annotation = parameter.typeAnnotation,
+                      let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                    throw unsupported(
+                        "parameter '\(parameter.name)' of '\(specialized.name)' lacks a resolvable type",
+                        at: specialized.location
+                    )
+                }
+                return type
+            }
+            let returnType: HIRType? = try specialized.returnTypes.first.map { annotation in
+                guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                    throw unsupported(
+                        "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(specialized.name)'",
+                        at: specialized.location
+                    )
+                }
+                return type
+            }
+            signatures[specialized.name] = HIRLowererSignatureInfo(
+                paramTypes: paramTypes, returnType: returnType
+            )
+        }
 
         var functions: [HIRFunction] = []
         for decl in module.declarations {
             switch decl {
             case .funcDecl(let funcDecl):
+                // Generic templates are not emitted — only their
+                // specializations are (G10 monomorphization).
+                guard funcDecl.genericParams.isEmpty else { continue }
                 functions.append(
                     try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
-                                      nominalTypes: nominals, userTypes: userTypes, enums: enums)
+                                      nominalTypes: nominals, userTypes: userTypes, enums: enums,
+                                      genericFuncTemplates: genericFuncTemplates)
                 )
             case .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below.
@@ -169,6 +275,14 @@ public enum HIRLowerer {
                     at: module.location
                 )
             }
+        }
+        // G10: emit the specialized generic function bodies.
+        for (_, specialized) in specializationState.funcSpecializations {
+            functions.append(
+                try lowerFunction(specialized, typeInference: typeInference, moduleSignatures: signatures,
+                                  nominalTypes: nominals, userTypes: userTypes, enums: enums,
+                                  genericFuncTemplates: genericFuncTemplates)
+            )
         }
         guard functions.contains(where: { $0.name == "main" }) else {
             throw unsupported("no 'main' function found", at: module.location)
@@ -181,24 +295,399 @@ public enum HIRLowerer {
         for decl in module.declarations {
             switch decl {
             case .structDecl(let sd):
+                // Generic templates emit no typeDecl — specializations do
+                // (registered as nominals, emitted below from the registry).
+                guard sd.genericParams.isEmpty else { continue }
                 typeDecls.append(try lowerNominal(
                     name: sd.name, isObject: false, fields: sd.fields,
                     methods: nominals[sd.name]!.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums
+                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
                 ))
             case .objectDecl(let od):
                 typeDecls.append(try lowerNominal(
                     name: od.name, isObject: true, fields: od.fields,
                     methods: nominals[od.name]!.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums
+                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
                 ))
             default:
                 break
             }
         }
+
+        // G10: emit typeDecls for specialized struct instances (fields +
+        // re-specialized extension methods, both registered in `nominals`).
+        for specializedName in specializationState.structSpecializations.keys {
+            let info = nominals[specializedName]!
+            guard case .structDecl(let sd) = info.decl else { continue }
+            typeDecls.append(try lowerNominal(
+                name: specializedName, isObject: false, fields: sd.fields,
+                methods: info.methods,
+                typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
+            ))
+        }
         return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values))
+    }
+
+    // MARK: - G10 monomorphization
+
+    /// Whole-module scan for generic construction / call sites, registering
+    /// specializations (legacy precollectGenericStructUses mirror, extended
+    /// to generic functions). Idempotent: the state deduplicates by the
+    /// specialized source name.
+    private static func precollectGenericUses(
+        in decl: TopLevelDecl,
+        genericStructTemplates: [String: StructDecl],
+        genericFuncTemplates: [String: FuncDecl],
+        nominals: inout [String: NominalInfo],
+        state: inout G10SpecializationState
+    ) {
+        switch decl {
+        case .funcDecl(let fd):
+            precollectGenericUses(in: fd.body?.statements ?? [],
+                                  genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates,
+                                  state: &state)
+        case .structDecl(let sd):
+            for m in sd.methods {
+                precollectGenericUses(in: m.body?.statements ?? [],
+                                      genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates,
+                                      state: &state)
+            }
+        case .objectDecl(let od):
+            for m in od.methods {
+                precollectGenericUses(in: m.body?.statements ?? [],
+                                      genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates,
+                                      state: &state)
+            }
+        case .enumDecl(let ed):
+            for m in ed.methods {
+                precollectGenericUses(in: m.body?.statements ?? [],
+                                      genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates,
+                                      state: &state)
+            }
+        case .extensionDecl(let ext):
+            for m in ext.methods {
+                precollectGenericUses(in: m.body?.statements ?? [],
+                                      genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates,
+                                      state: &state)
+            }
+        default:
+            break
+        }
+    }
+
+    private static func precollectGenericUses(
+        in statements: [Statement],
+        genericStructTemplates: [String: StructDecl],
+        genericFuncTemplates: [String: FuncDecl],
+        state: inout G10SpecializationState
+    ) {
+        for statement in statements {
+            precollectGenericUses(in: statement,
+                                  genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates,
+                                  state: &state)
+        }
+    }
+
+    private static func precollectGenericUses(
+        in statement: Statement,
+        genericStructTemplates: [String: StructDecl],
+        genericFuncTemplates: [String: FuncDecl],
+        state: inout G10SpecializationState
+    ) {
+        switch statement {
+        case .varDecl(_, _, let initializer, _, _):
+            if let e = initializer {
+                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .assign(let target, let value, _):
+            if case .member(let base, _) = target {
+                precollectGenericUses(in: base, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+            precollectGenericUses(in: value, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .expressionStmt(let e, _):
+            precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .returnStatement(let e, _):
+            if let e = e {
+                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, _, _):
+            precollectGenericUses(in: condition, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(in: thenBlock.statements, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            for branch in elifs {
+                precollectGenericUses(in: branch.condition, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(in: branch.block.statements, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+            if let elseBlock = elseBlock {
+                precollectGenericUses(in: elseBlock.statements, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .whileStatement(let condition, let body, _, _, _):
+            precollectGenericUses(in: condition, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(in: body.statements, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .matchStatement(let value, let cases, _):
+            precollectGenericUses(in: value, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            for matchCase in cases {
+                precollectGenericUses(in: matchCase.block.statements, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .deferStatement(let wrapped, _):
+            precollectGenericUses(in: wrapped, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        default:
+            break
+        }
+    }
+
+    private static func precollectGenericUses(
+        in expr: Expression,
+        genericStructTemplates: [String: StructDecl],
+        genericFuncTemplates: [String: FuncDecl],
+        state: inout G10SpecializationState
+    ) {
+        switch expr {
+        case .genericConstruct(let typeName, let typeArgs, _, _):
+            if let template = genericStructTemplates[typeName] {
+                registerStructSpecialization(
+                    template, typeArgs: typeArgs, state: &state
+                )
+            }
+            if genericFuncTemplates[typeName] != nil {
+                registerFuncSpecialization(
+                    genericFuncTemplates[typeName]!, typeArgs: typeArgs, state: &state
+                )
+            }
+        case .call(let callee, let arguments, _):
+            precollectGenericUses(in: callee, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            // `身份<I32>(...)` arrives as a genericConstruct callee inside a
+            // call — the callee scan above already registers it.
+            for argument in arguments {
+                precollectGenericUses(in: argument.expression, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .binary(let lhs, _, let rhs, _):
+            precollectGenericUses(in: lhs, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(in: rhs, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .unary(_, let operand, _):
+            precollectGenericUses(in: operand, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .member(let base, _, _):
+            precollectGenericUses(in: base, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .subscript(let container, let index, _):
+            precollectGenericUses(in: container, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(in: index, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .tupleIndex(let base, _, _):
+            precollectGenericUses(in: base, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .tryExpression(let operand, _, _, _):
+            precollectGenericUses(in: operand, genericStructTemplates: genericStructTemplates,
+                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+        case .tuple(_, let elements, _):
+            for e in elements {
+                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .arrayLiteral(let elements, _):
+            for e in elements {
+                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
+                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+            }
+        case .stringInterpolation(let segments, _):
+            for segment in segments {
+                if case .expression(let e) = segment {
+                    precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
+                                          genericFuncTemplates: genericFuncTemplates, state: &state)
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    /// Register a specialized function decl (`身份<I32>` -> `身份_I32`)
+    /// with type parameters substituted in params/returns. Idempotent.
+    private static func registerFuncSpecialization(
+        _ template: FuncDecl,
+        typeArgs: [TypeAnnotation],
+        state: inout G10SpecializationState
+    ) {
+        let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
+        guard state.funcSpecializations[specializedName] == nil else { return }
+        var substitution: [String: TypeAnnotation] = [:]
+        for (index, genericParam) in template.genericParams.enumerated() {
+            substitution[genericParam.name] = typeArgs[index]
+        }
+        let resolveType: (TypeAnnotation?) -> TypeAnnotation? = { annotation in
+            guard let annotation = annotation else { return nil }
+            if case .simple(let name, _) = annotation, let sub = substitution[name] {
+                return sub
+            }
+            return annotation
+        }
+        let newParams = template.params.map { param in
+            Parameter(name: param.name, typeAnnotation: resolveType(param.typeAnnotation))
+        }
+        let newReturns = template.returnTypes.map(resolveType).compactMap { $0 }
+        state.funcSpecializations[specializedName] = FuncDecl(
+            name: specializedName,
+            modifiers: template.modifiers,
+            genericParams: [],
+            params: newParams,
+            returnTypes: newReturns,
+            returnLabels: template.returnLabels,
+            isAsync: template.isAsync,
+            body: template.body,
+            location: template.location
+        )
+    }
+
+    /// Register a specialized struct decl (fields substituted) if this
+    /// type-argument combination has not been seen yet.
+    private static func registerStructSpecialization(
+        _ template: StructDecl,
+        typeArgs: [TypeAnnotation],
+        state: inout G10SpecializationState
+    ) {
+        let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
+        guard state.structSpecializations[specializedName] == nil else { return }
+        var substitution: [String: TypeAnnotation] = [:]
+        for (index, genericParam) in template.genericParams.enumerated() {
+            substitution[genericParam.name] = typeArgs[index]
+        }
+        let resolveType: (TypeAnnotation?) -> TypeAnnotation? = { annotation in
+            guard let annotation = annotation else { return nil }
+            if case .simple(let name, _) = annotation, let sub = substitution[name] {
+                return sub
+            }
+            return annotation
+        }
+        let newFields = template.fields.map { field in
+            FieldDecl(
+                name: field.name,
+                typeAnnotation: resolveType(field.typeAnnotation) ?? field.typeAnnotation,
+                initializer: field.initializer,
+                location: field.location
+            )
+        }
+        let specialized = StructDecl(
+            name: specializedName,
+            genericParams: [],
+            fields: newFields,
+            methods: [],
+            composedType: template.composedType,
+            traits: template.traits,
+            location: template.location
+        )
+        state.structSpecializations[specializedName] = specialized
+        state.structSubstitutions[specializedName] = substitution
+    }
+
+    /// Re-specialize one ((盒<T>)) extension method for a concrete instance:
+    /// type parameters substituted, name kept (the nominal dispatch binds it
+    /// to the specialized type through the receiver).
+    fileprivate static func specializeMethodForGenericStruct(
+        _ method: FuncDecl,
+        structTemplate: StructDecl,
+        substitution: [String: TypeAnnotation],
+        specializedName: String
+    ) -> FuncDecl {
+        _ = structTemplate
+        _ = specializedName
+        let resolveType: (TypeAnnotation?) -> TypeAnnotation? = { annotation in
+            guard let annotation = annotation else { return nil }
+            if case .simple(let name, _) = annotation, let sub = substitution[name] {
+                return sub
+            }
+            return annotation
+        }
+        let newParams = method.params.map { param in
+            Parameter(name: param.name, typeAnnotation: resolveType(param.typeAnnotation))
+        }
+        let newReturns = method.returnTypes.map(resolveType).compactMap { $0 }
+        return FuncDecl(
+            name: method.name,
+            modifiers: method.modifiers,
+            genericParams: [],
+            params: newParams,
+            returnTypes: newReturns,
+            returnLabels: method.returnLabels,
+            isAsync: method.isAsync,
+            body: method.body,
+            location: method.location
+        )
+    }
+
+    /// Dispatch `身份<I32>(x = 100)` to the pre-registered specialization
+    /// `身份_I32`. Type-argument count must match the template; argument
+    /// types are checked against the specialized signature.
+    private static func lowerGenericFuncCall(
+        template: FuncDecl,
+        typeArgs: [TypeAnnotation],
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard template.genericParams.count == typeArgs.count else {
+            throw unsupported(
+                "type arg count mismatch: \(template.name) expects \(template.genericParams.count), got \(typeArgs.count)",
+                at: location
+            )
+        }
+        let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
+        guard let signature = context.moduleSignatures[specializedName] else {
+            throw unsupported(
+                "generic call '\(specializedName)' has no registered specialization",
+                at: location
+            )
+        }
+        // Argument lowering: positional order first (labels were already
+        // validated by the parser against the parameter names).
+        let loweredArgs = try arguments.map { argument in
+            try lowerExpr(argument.expression, expected: nil, into: &context)
+        }
+        guard loweredArgs.count == signature.paramTypes.count else {
+            throw unsupported(
+                "call to '\(specializedName)' expects \(signature.paramTypes.count) arguments, got \(loweredArgs.count)",
+                at: location
+            )
+        }
+        for (index, argument) in loweredArgs.enumerated() {
+            try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
+        }
+        return LoweredExpr(
+            node: .call(
+                function: specializedName,
+                arguments: loweredArgs.map { $0.node },
+                returnType: signature.returnType
+            ),
+            type: signature.returnType ?? .i32
+        )
     }
 
     // MARK: - Functions
@@ -209,7 +698,8 @@ public enum HIRLowerer {
         moduleSignatures: [String: HIRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
-        enums: [String: HIREnumDecl]
+        enums: [String: HIREnumDecl],
+        genericFuncTemplates: [String: FuncDecl] = [:]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -253,7 +743,8 @@ public enum HIRLowerer {
             moduleSignatures: moduleSignatures,
             nominalTypes: nominalTypes,
             userTypes: userTypes,
-            enums: enums
+            enums: enums,
+            genericFuncTemplates: genericFuncTemplates
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: decl.name, params: params, returnType: returnType, body: body)
@@ -289,7 +780,8 @@ public enum HIRLowerer {
         moduleSignatures: [String: HIRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
-        enums: [String: HIREnumDecl]
+        enums: [String: HIREnumDecl],
+        genericFuncTemplates: [String: FuncDecl] = [:]
     ) throws -> HIRTypeDecl {
         let selfType = HIRType.nominal(name: name, isObject: isObject)
         var scratch = FunctionContext(
@@ -318,7 +810,7 @@ public enum HIRLowerer {
             loweredMethods.append(try lowerMethod(
                 method, typeName: name, selfType: selfType,
                 typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
-                userTypes: userTypes, enums: enums
+                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates
             ))
         }
         return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
@@ -333,7 +825,8 @@ public enum HIRLowerer {
         moduleSignatures: [String: HIRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
-        enums: [String: HIREnumDecl]
+        enums: [String: HIREnumDecl],
+        genericFuncTemplates: [String: FuncDecl] = [:]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("method '\(decl.name)' of '\(typeName)' has no body", at: decl.location)
@@ -376,7 +869,8 @@ public enum HIRLowerer {
             moduleSignatures: moduleSignatures,
             nominalTypes: nominalTypes,
             userTypes: userTypes,
-            enums: enums
+            enums: enums,
+            genericFuncTemplates: genericFuncTemplates
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: irName, params: params, returnType: returnType, body: body)
@@ -946,6 +1440,40 @@ public enum HIRLowerer {
                 type: fieldType
             )
 
+        case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
+            // G10 monomorphization call site: `盒<I32>()` (struct template ->
+            // nominal construction of the specialized instance) or
+            // `身份<I32>(x = 100)` (function template -> call to the
+            // pre-registered specialization). The pre-pass has already
+            // registered both; here we only dispatch.
+            if let template = context.genericFuncTemplates[typeName] {
+                return try lowerGenericFuncCall(
+                    template: template, typeArgs: typeArgs, arguments: arguments,
+                    at: location, into: &context
+                )
+            }
+            if let info = context.nominalTypes[specializedSourceName(typeName, typeArgs: typeArgs)] {
+                guard arguments.isEmpty else {
+                    throw unsupported(
+                        "constructor '\(typeName)<...>' arguments are not supported this grid",
+                        at: location
+                    )
+                }
+                let specializedName = specializedSourceName(typeName, typeArgs: typeArgs)
+                let type = HIRType.nominal(name: specializedName, isObject: info.isObject)
+                return LoweredExpr(node: .construct(type: type), type: type)
+            }
+            if context.nominalTypes[typeName] != nil {
+                throw unsupported(
+                    "generic struct '\(typeName)' has no registered specialization for this use site",
+                    at: location
+                )
+            }
+            throw unsupported(
+                "unknown generic '\(typeName)' (register a struct or function template)",
+                at: location
+            )
+
         case .dotCaseRef(let caseName, let location):
             // Zero-payload case as a dot-case value (`.plus`); cases with
             // payloads are constructed through the call form. `.none` on the
@@ -1073,6 +1601,9 @@ public enum HIRLowerer {
                     expected: expected, at: location, into: &context
                 )
             }
+            // Generic calls `身份<I32>(...)` / struct constructions `盒<I32>()`
+            // arrive as the dedicated `.genericConstruct` expression node
+            // (parser lookahead) — handled in its own case below.
             guard case .identifier(let functionName, _) = callee else {
                 throw unsupported(
                     "call to a non-identifier callee (method calls are later grids)",
@@ -2128,6 +2659,10 @@ private struct FunctionContext {
     let nominalTypes: [String: HIRLowerer.NominalInfo]
     let userTypes: [String: HIRType]
     let enums: [String: HIREnumDecl]
+    /// G10: generic function templates by source name, for call-site
+    /// dispatch of `身份<I32>(...)` (the specialization itself is
+    /// pre-registered during the monomorphization pre-pass).
+    let genericFuncTemplates: [String: FuncDecl]
     var errorBindings: Set<String> = []
 
     init(
@@ -2138,7 +2673,8 @@ private struct FunctionContext {
         moduleSignatures: [String: HIRLowererSignatureInfo],
         nominalTypes: [String: HIRLowerer.NominalInfo] = [:],
         userTypes: [String: HIRType] = [:],
-        enums: [String: HIREnumDecl] = [:]
+        enums: [String: HIREnumDecl] = [:],
+        genericFuncTemplates: [String: FuncDecl] = [:]
     ) {
         self.functionName = functionName
         self.returnType = returnType
@@ -2148,6 +2684,7 @@ private struct FunctionContext {
         self.nominalTypes = nominalTypes
         self.userTypes = userTypes
         self.enums = enums
+        self.genericFuncTemplates = genericFuncTemplates
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {
