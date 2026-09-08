@@ -302,3 +302,13 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **M6 flip 门槛建议（待裁决）**：G4–G15 全绿（hir-emit = 51/59，
       模块成员文件 6 个按 legacy SKIP 同义豁免）+ 并发豁免清单，方可执行
       旧后端删除。门槛此前为空定义，本批补全。
+  - **G7 Optional 直写族完成（2026-09-08，先于依赖序点名执行，分支
+    `agent/pini-dev/llvm-m5-g7-optional-direct`，7543a84）**：
+    - `HIRType(from:)` 映射 `Optional<T>` 泛型注解——`?T` 糖在解析层归一
+      为同一形态，一处映射双覆盖。
+    - `Optional.some(v)` 降为 `optionalConstruct(isSome: true)`，载荷在
+      有注解上下文时采用包裹类型（宽度对齐）；`Optional.none` / `nil`
+      字面量已在 G2b/G3 就位。
+    - `case nil:` 在降载位归一为 `case none:`（D-G2-1：none 即 nil）。
+    - **验收**：差分 +1 fixture（30/30）；全量回归 1263/0/0；sweep
+      hir-emit **11/59 → 13/59**（optional ×2 进列）。
