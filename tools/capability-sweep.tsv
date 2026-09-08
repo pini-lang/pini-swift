@@ -38,7 +38,7 @@ examples/match.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t 
 examples/multidim.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined identifier row'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/multifile/main.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 向量 — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/multifile/utils.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/object.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined method 增加'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/object.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined method 增加' 
 examples/operators.pini	PASS	PASS	PASS	PASS	
 examples/optional-sugar.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/optional.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
@@ -51,7 +51,7 @@ examples/recursion.pini	PASS	PASS	PASS	PASS
 examples/slice.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method slice not yet supported in IR' 
 examples/stdlib.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/step.pini	PASS	PASS	PASS	PASS	
-examples/struct.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/struct.pini	PASS	PASS	PASS	PASS	
 examples/test.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/trait.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/try.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   at /Volumes/ZWTPSSD/Projects/Pini语言语法与Swift-Package实现_20260827/pini-swift/examples/try.pini:4:28   unsupported type 

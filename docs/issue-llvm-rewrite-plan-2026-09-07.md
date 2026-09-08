@@ -237,3 +237,25 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       hir-emit **8/59 → 9/59**（slice.pini 进列）；slice.pini 头注
       some(50) 过时行就地修正（实测 50，负下标走 panic 通道）。
       裸空数组字面量 `print([])` 维持门控（元素类型不可解析，登记边界）。
+  - **G3 名义类型族完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g2b-slice-format` 续批 12b45ec）**：struct 值布局
+    + object 引用 + 方法/self。
+    - **类型注册表**：模块预-pass 收集 structDecl/objectDecl；方法块
+      `((T))`/`{{T}}` 在解析层是 extensionDecl（数据与逻辑分离），
+      预-pass 将 extension 方法合并进注册表后降载。
+    - **HIR 形态**：`HIRType.nominal(name:isObject:)`（`%struct.X*` 栈承载
+      / `%object.X*` 含 i32 refcount 头、字段偏移 +1，镜像 legacy ABI）；
+      `HIRModule.types`（HIRTypeDecl：字段含降载默认值 + 方法 HIRFunction）；
+      `construct` / `fieldGet` / `fieldStore` 节点。
+    - **方法**：降为 self 参数化的普通函数，IR 名 `方法__类型`
+      （双下划线分隔不与 mangle 输出冲突）；`self` 首参（.selfKeyword 降
+      load）；成员调用把接收者作隐式首参。
+    - **构造**：`名()` 忽略实参（legacy createInstance 对齐），字段取声明
+      默认值（zeroConst 镜像），object 写 refcount=1；ARC 不递减
+      （v0.x 与 legacy 同界，已记录）。
+    - **sqrt**：F64 libc 内接（struct.pini 语料依赖），头声明无条件发射。
+    - **记录边界**：struct 赋值为指针别名（legacy ABI 同构，与解释器值拷贝
+      语义的分叉未被语料触达）；print(名义值) 维持门控（格式化后续族）。
+    - **验收**：差分 +2 fixture（29/29）；全量回归 1262/0/0；sweep
+      hir-emit **9/59 → 11/59**（object.pini、struct.pini 进列）。
+      mangle 提升为共享 IRName（双管线单源）。
