@@ -259,3 +259,46 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 +2 fixture（29/29）；全量回归 1262/0/0；sweep
       hir-emit **9/59 → 11/59**（object.pini、struct.pini 进列）。
       mangle 提升为共享 IRName（双管线单源）。
+  - **规划补全批（2026-09-08，纯规划不动源码，分支
+    `agent/pini-dev/llvm-m5-plan-backfill`）**：对现存 48 个 hir-emit FAIL
+    文件逐文件取证 gate 错误（一次性探针测试，用后即删；CLI 诊断丢失缺陷
+    另立 `issue-hir-cli-diagnostic-loss-2026-09-08.md`），归簇后重排剩余
+    格序。**stop-loss 时的 G4–G7 命名粒度不足以覆盖语料**：枚举、闭包、
+    字典/集合、Optional 直写、tuple、字符串深化、struct 深化等簇无格可归。
+    重排后剩余格序（格号沿用至 M6）：
+    - **G4 枚举族**（enum / enum-named / enum-namespacing / enum-dot-case /
+      match ×5）：enum 声明注册 + tagged union ABI（legacy `%enum.X =
+      { i32, payload... }` 镜像）+ match 通用骨架接 enum scrutinee + enum
+      类型注解映射。match 骨架为 G2 预留接口，接线即用。
+    - **G5 字典/集合族**（collections / dict-set-d2 / cow ×3）：
+      `bk_dict_*` / `bk_set_*` 运行时 ABI 现成，构造/下标读写同 G2 打法；
+      cow 的 COW 语义经既有 ensure_unique 通道。
+    - **G6 闭包/高阶族**（closures / lambda / lambda-typed / higher-order
+      ×4）：函数类型参数注解 + lambda 字面量降载 + 捕获环境（legacy
+      ClosureEmitter 381 行可镜像）。
+    - **G7 Optional 直写族**（optional / optional-sugar ×2）：
+      `.some(v)` / `Optional.none` 裸名构造 + `?T` 注解糖映射。
+    - **G8 元组返回**（tuple ×1）：定长聚合返回 ABI（LR-12 tagged 模式
+      同族扩展，`{ T1, T2 }`）。
+    - **G9 字符串深化**（stdlib / defer / lexical ×3）：字符串方法链
+      （upper 等）+ 字符串插值 print 路径。
+    - **G10 泛型单态化族**（generic / generic-func / lazyref ×3）：
+      构造点单态化（legacy genericTemplates 模式镜像）。
+    - **G11 struct 深化族**（composition / access / multidim ×3）：
+      组合类型方法名分派（R1.1 composedMethodSuffix 镜像）+ 访问控制
+      语义 + 多维数组（enum-match 通用化后自然解锁）。
+    - **G12 trait 族**（trait / validated-match ×2）：trait 默认实现
+      分派（legacy tryTraitMethodDispatch 镜像）；依赖 G4 枚举。
+    - **G13 跨文件族**（multifile ×2 + package-demo ×4，原 G6）：
+      import/export 符号表入 HIR（`unknown function 向量` gate）。
+      模块成员文件无 main 的 FAIL 与 legacy SKIP 同义，不计门槛。
+    - **G14 foreign/FFI 族**（ffi ×2，原 G5）：foreign 声明块 + U64 等
+      无符号类型映射（gate：`return type 'U64'`）+ clang 通道。
+    - **G15 控制流与内建零散**（for / control-while / compound-assign /
+      io / test ×5，原 G7 拆实）：for-in、continue、位运算符族
+      （bitwiseAnd 等）、print 多实参、assert 内建。
+    - **依赖序建议**：G4 → G5 → G7 → G8 → G9 → G6 → G10 → G11 → G12 →
+      G13 → G14 → G15（小格前置杠杆后置；并发 ×8 不占格，独立里程碑）。
+    - **M6 flip 门槛建议（待裁决）**：G4–G15 全绿（hir-emit = 51/59，
+      模块成员文件 6 个按 legacy SKIP 同义豁免）+ 并发豁免清单，方可执行
+      旧后端删除。门槛此前为空定义，本批补全。
