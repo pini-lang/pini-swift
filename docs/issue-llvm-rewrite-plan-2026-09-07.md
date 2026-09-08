@@ -302,3 +302,27 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **M6 flip 门槛建议（待裁决）**：G4–G15 全绿（hir-emit = 51/59，
       模块成员文件 6 个按 legacy SKIP 同义豁免）+ 并发豁免清单，方可执行
       旧后端删除。门槛此前为空定义，本批补全。
+  - **G7 Optional 直写族完成（2026-09-08，先于依赖序点名执行，分支
+    `agent/pini-dev/llvm-m5-g7-optional-direct`，7543a84）**：
+    - `HIRType(from:)` 映射 `Optional<T>` 泛型注解——`?T` 糖在解析层归一
+      为同一形态，一处映射双覆盖。
+    - `Optional.some(v)` 降为 `optionalConstruct(isSome: true)`，载荷在
+      有注解上下文时采用包裹类型（宽度对齐）；`Optional.none` / `nil`
+      字面量已在 G2b/G3 就位。
+    - `case nil:` 在降载位归一为 `case none:`（D-G2-1：none 即 nil）。
+    - **验收**：差分 +1 fixture（30/30）；全量回归 1263/0/0；sweep
+      hir-emit **11/59 → 13/59**（optional ×2 进列）。
+  - **G4 枚举族完成（2026-09-08，分支
+    `agent/pini-dev/llvm-m5-g4-enum`，24b1a9a）**：tagged union 镜像
+    legacy ABI（`%enum.X* = { i32 tag, max-arity 案载荷类型 }`，按值槽存）。
+    - 注解解析增用户类型表（struct/object/enum，穿透函数/方法/字段/变量）。
+    - 构造：裸零载荷标识符（plus）、位置调用 圆(2.0)、具名标签调用
+      identifier(text= x)、限定 形状.圆(...)（类型名接收者）、dot-case
+      .圆(...) / .none，跨枚举同名经 checker BareCaseResolutionRegistry
+      静态决议（E-131 对齐）。
+    - match：通用骨架增枚举路径（i32 tag 分派、GEP+load 载荷，Optional
+      走 extractvalue 双路），具名/_ 绑定、通配末臂、未知 tag panic；
+      print(枚举值) 运行期 tag 分派渲染 caseName(p1, p2)。
+    - **验收**：差分 +2 fixture（32/32）；全量回归 1266/0/0；sweep
+      hir-emit **13/59 → 19/59**（枚举 ×5 + 连带解锁 1）；枚举五语料
+      双管线逐字节一致（CLI 实测）。

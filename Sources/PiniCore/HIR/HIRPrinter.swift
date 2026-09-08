@@ -68,7 +68,8 @@ public enum HIRPrinter {
         case .matchStmt(let scrutinee, let cases, _):
             var lines = ["\(pad)match \(exprText(scrutinee)):"]
             for matchCase in cases {
-                let bind = matchCase.binding.map { "(\($0))" } ?? ""
+                let binds = matchCase.bindings.map { $0 ?? "_" }.joined(separator: ", ")
+                let bind = binds.isEmpty ? "" : "(\(binds))"
                 lines.append("\(pad)    case \(matchCase.caseName)\(bind):")
                 lines.append(contentsOf: dumpBody(matchCase.body, indent: level + 2))
             }
@@ -114,6 +115,9 @@ public enum HIRPrinter {
             return "\(exprText(container)).slice(\(exprText(start)), \(exprText(end)))"
         case .construct(let type):
             return "\(type.llvmSpelling)()"
+        case .enumConstruct(_, let caseName, _, let payloads, _, _):
+            let items = payloads.map(exprText).joined(separator: ", ")
+            return "\(caseName)(\(items))"
         case .fieldGet(let base, let field, let type):
             return "\(exprText(base)).\(field)@\(type.llvmSpelling)"
         }
