@@ -195,4 +195,9 @@ final class HIRDifferentialTests: XCTestCase {
 
     func testDiffTrait() throws { try assertParity(fixtureName: "testDiffTrait") }
     func testDiffValidatedMatch() throws { try assertParity(fixtureName: "testDiffValidatedMatch") }
+
+    // MARK: - G13 batch 1: LazyRef (builtin generic wrapper, once-cache +
+    // reference-semantics box; unlocks the G10 lazyref exemption)
+
+    func testDiffLazyRef() throws { try assertParity(fixtureName: "testDiffLazyRef") }
 }
