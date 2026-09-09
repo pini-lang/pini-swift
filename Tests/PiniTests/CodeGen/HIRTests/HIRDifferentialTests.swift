@@ -100,6 +100,89 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertFalse(llvmOutput.isEmpty, "\(fixtureName): expected non-empty output", file: file, line: line)
     }
 
+    // MARK: - G13 batch 2: multi-file package differential
+
+    /// Loads an examples/ corpus directory as a `Package` (same entry as the
+    /// CLI's directory branch: manifest + recursive scan + deterministic sort).
+    private func loadPackageCorpus(_ relPath: String) throws -> Package {
+        var url = URL(fileURLWithPath: #file)
+        while url.path != "/" {
+            let pkg = url.appendingPathComponent("Package.swift").path
+            if FileManager.default.fileExists(atPath: pkg) { break }
+            url = url.deletingLastPathComponent()
+        }
+        let dir = url.appendingPathComponent(relPath).path
+        let manifest = try FileLoader.loadManifest(directory: dir)
+        return try FileLoader.loadDirectory(path: dir, manifest: manifest)
+    }
+
+    /// Interpreter channel for a package: mirrors `Interpreter.run(package:)`
+    /// (single-file delegate inside).
+    private func runPackageInterpreter(_ package: Package) throws -> String {
+        let pipe = Pipe()
+        let originalStdout = dup(STDOUT_FILENO)
+        setvbuf(stdout, nil, _IONBF, 0)
+        dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
+
+        let interpreter = Interpreter()
+        try interpreter.run(package: package)
+
+        fflush(stdout)
+        dup2(originalStdout, STDOUT_FILENO)
+        close(originalStdout)
+        pipe.fileHandleForWriting.closeFile()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// HIR channel for a package: package semantic + type-check, then
+    /// `HIRLowerer.lower(package:)` -> IREmitter -> lli (D3 in-process driver).
+    private func runPackageNewPipeline(_ package: Package) throws -> String {
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
+        let semantic = SemanticAnalyzer()
+        try semantic.analyze(package: package)
+        let checker = TypeChecker()
+        try checker.check(package: package)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(package: package, typeInference: checker.typeInference)
+        let ir = IREmitter().emit(module: hir)
+
+        let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_hir_diff_\(UUID().uuidString).ll"
+        defer { try? FileManager.default.removeItem(atPath: tmpIR) }
+        try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
+
+        guard let lli = LLVMToolchain.lliPath else {
+            throw NSError(domain: "LLIUnavailable", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "lli not available"])
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: lli)
+        process.arguments = ["--dlopen=\(dylib)", tmpIR]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            XCTFail("lli exited \(process.terminationStatus) for IR:\n\(ir)")
+            return ""
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func assertPackageParity(_ relPath: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let package = try loadPackageCorpus(relPath)
+        let interpreterOutput = try runPackageInterpreter(package)
+        let llvmOutput = try runPackageNewPipeline(package)
+        XCTAssertEqual(llvmOutput, interpreterOutput,
+                       "\(relPath): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+                       file: file, line: line)
+        XCTAssertFalse(llvmOutput.isEmpty, "\(relPath): expected non-empty output", file: file, line: line)
+    }
+
     // MARK: - Slice fixtures
 
     func testDiffArithmeticI32() throws { try assertParity(fixtureName: "testDiffArithmeticI32") }
@@ -195,4 +278,14 @@ final class HIRDifferentialTests: XCTestCase {
 
     func testDiffTrait() throws { try assertParity(fixtureName: "testDiffTrait") }
     func testDiffValidatedMatch() throws { try assertParity(fixtureName: "testDiffValidatedMatch") }
+
+    // MARK: - G13 batch 1: LazyRef (builtin generic wrapper, once-cache +
+    // reference-semantics box; unlocks the G10 lazyref exemption)
+
+    func testDiffLazyRef() throws { try assertParity(fixtureName: "testDiffLazyRef") }
+
+    // MARK: - G13 batch 2: cross-file packages (multi-file HIR lowering)
+
+    func testDiffPackageMultiFile() throws { try assertPackageParity("examples/multifile") }
+    func testDiffPackageDemo() throws { try assertPackageParity("examples/package-demo") }
 }

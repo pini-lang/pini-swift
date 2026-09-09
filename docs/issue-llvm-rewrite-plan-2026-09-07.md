@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，活跃 Open 工单清零，下一格 G13 跨文件待点名——开工前先出细化步骤）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，G13 全族完成（批 1 lazyref + 批 2 跨文件），差分 53/53、回归 1286/0/0、sweep 44/59——下一格 G11/G12/G14/G15 待点名）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -488,3 +488,54 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 **48→50**（+2：trait / validated-match）；全量
       回归 **1283/0/0**（基线 1281 + 新增 2）；sweep hir-emit
       **35/59 → 36/59**（trait 进列；validated-match 本为 PASS）。
+
+  - **G13 批 1（lazyref）完成（2026-09-09，分支
+    `agent/pini-dev/llvm-m5-g13-crossfile-lazyref`，跨文件族的
+    LazyRef 先行小格）**：
+    - **HIR 三件套新增**：`HIRType.lazyRef(element:)`
+      （`%bk_lazyref*`）；`lazyRefConstruct(closure:type:)` /
+      `lazyRefValue(handle:type:)` 两 HIRExpr case。
+    - **降载分派**：`HIRType(from:)` 注解映射收 `LazyRef<T>`；
+      `.genericConstruct` case **模板分派前**特判 `typeName ==
+      "LazyRef"`（内建优先，用户同名模板不可遮蔽——legacy
+      builtin-first 契约对齐）；`.member` 与 `lowerMemberCall`
+      双入口收 `.value`（字段形态 + 零参调用形态）。
+    - **发射**：`usesLazyRef` flag 条件头声明（不触碰无 LazyRef
+      模块的 golden IR）；`@__lazyref_wrapper_<T>` 按元素 IR 拼写
+      去重缓冲（统一 ptr ABI，运行时分配输出 box——wrapper 内
+      alloca 逃逸 UB 由 runtime 侧规避）；元素 bytes/tag 表对齐
+      legacy `lazyRefElemInfo`（**string 用 raw-ptr tag 4**，非
+      array 族 share-counted tag 3——常量字节无 share count）。
+    - **勘测钉定**：`LazyRef<I32>(闭包)` 解析为
+      `.genericConstruct(typeName:"LazyRef", ...)`（非 .call 包裹）；
+      闭包 id 由 precollectClosureIds 经 genericConstruct 实参遍历
+      预注册（G6 链路复用，无需新预扫）。
+    - **验收**：差分 **50→51**（+1：testDiffLazyRef，once 缓存 +
+      复制共享语义 parity）；全量回归 **1284/0/0**；sweep hir-emit
+      **36/59 → 37/59**（lazyref.pini 进列，G6/G10 期跨格豁免解除）。
+    - **G13 批 2（跨文件大头）完成（2026-09-09，分支
+      `agent/pini-dev/llvm-m5-g13-crossfile-package`）**：
+    - **HIRLowerer.lower(package:)（D1）**：全包 declarations 合并为
+      虚拟模块，跑既有单模块 pre-pass 链——trait/nominal/enum 注册表、
+      签名表、闭包预收集、单态化全部免费升级为全局预扫；跨文件引用
+      与同文件前向引用同路解析。可见性不重复 enforce（D4，checker
+      package context 已 enforce）。
+    - **closureId 键修正**：键从 `行:列` 扩为 `文件:行:列`——合并包内
+      两文件可有同行列字面量，旧键会合并二者的捕获（legacy
+      ClosureEmitter 契约的文件分量在单文件世界是隐式的）。
+    - **effective return type**：void 声明但体中带值 return 的函数/
+      方法，在定义侧、签名表、调用点三处统一升级为返回值类型——
+      解释器运行时真把值流出去（package-demo 语料活文档明载「void，
+      返回值运行时照常返回」），LLVM ABI 需静态单返回类型。
+    - **CLI emit 自动切换（D2）**：`PINI_HIR_PIPELINE=1` 下文件属于
+      清单模块即走 package 管线；裸文件维持单文件行为；模块根经
+      locateModuleRoot 向上解析（嵌套 `_` 目录 helpers.pini 因此进道）。
+    - **进程内 Package 差分驱动（D3）**：HIRDifferentialTests 增
+      loadPackageCorpus（FileLoader.loadDirectory 同款入口）+
+      runPackageInterpreter/runPackageNewPipeline 双通道；语料直引
+      examples/multifile 与 examples/package-demo（零 fixture 副本）。
+    - **验收**：差分 **51→53**（+2：testDiffPackageMultiFile /
+      testDiffPackageDemo）；全量回归 **1286/0/0**（基线 1284 + 新增 2）；
+      sweep hir-emit **37/59 → 44/59**（跨文件 7 行全 PASS）。
+    - **下一格候选**：G11（struct 深化收尾）/ G12（trait）/ G14（FFI）/
+      G15（控制流零散）；M6 flip 门槛 = 51/59 + 豁免清单。

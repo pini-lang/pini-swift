@@ -1365,9 +1365,43 @@ func runEmitCommand(source: String, fileName: String, outputPath: String?) throw
  let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
 
  if let out = outputPath {
- try ir.write(toFile: out, atomically: true, encoding: .utf8)
+  try ir.write(toFile: out, atomically: true, encoding: .utf8)
  } else {
- print(ir)
+  print(ir)
+ }
+}
+
+/// G13 batch 2 (D2): if `path` sits inside a manifest module (a `pini.toml`
+/// at or above its directory), load that whole module as a `Package` — the
+/// same entry `pini run <dir>` uses. Returns nil when the file is outside
+/// any module (bare single-file mode) or the path itself is a directory.
+/// Nested dirs (`_internals/`) resolve upward via locateModuleRoot, matching
+/// the checker's visibility anchoring.
+private func loadOwningPackageIfModule(path: String) throws -> Package? {
+ var isDir: ObjCBool = false
+ guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
+       !isDir.boolValue else { return nil }
+ guard let moduleRoot = try FileLoader.locateModuleRoot(for: path) else { return nil }
+ let manifest = try FileLoader.loadManifest(directory: moduleRoot)
+ return try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
+}
+
+/// G13 batch 2: package-level HIR emit — package semantic + type-check,
+/// then `HIRLowerer.lower(package:)` -> IREmitter. Visibility was already
+/// enforced by the checker (D4); the HIR channel re-enforces nothing.
+private func runHIRPackageEmit(package: Package, outputPath: String?) throws {
+ let analyzer = SemanticAnalyzer()
+ try analyzer.analyze(package: package)
+ let checker = TypeChecker()
+ try checker.check(package: package)
+ // #46-optional: same persistent-table fallback as the single-file pipeline.
+ checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+ let hirModule = try HIRLowerer.lower(package: package, typeInference: checker.typeInference)
+ let ir = IREmitter().emit(module: hirModule)
+ if let out = outputPath {
+  try ir.write(toFile: out, atomically: true, encoding: .utf8)
+ } else {
+  print(ir)
  }
 }
 
@@ -1570,9 +1604,19 @@ case "emit":
  exit(1)
  }
  do {
- let source = try readFile(args[2])
- try runEmitCommand(source: source, fileName: args[2],
- outputPath: args.count >= 4 ? args[3] : nil)
+ // G13 batch 2 (D2, sweep auto-switch): a file inside a manifest module
+ // runs through the package pipeline (HIR channel lowers the whole
+ // package; legacy channel keeps single-file behavior). A bare file
+ // outside any module is unchanged. Directory arguments were never
+ // accepted here, so no directory branch is added.
+ if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1",
+    let package = try loadOwningPackageIfModule(path: args[2]) {
+  try runHIRPackageEmit(package: package, outputPath: args.count >= 4 ? args[3] : nil)
+ } else {
+  let source = try readFile(args[2])
+  try runEmitCommand(source: source, fileName: args[2],
+                     outputPath: args.count >= 4 ? args[3] : nil)
+ }
  } catch {
  printError(formatCLIError(error: error, source: nil))
  exit(1)

@@ -49,6 +49,10 @@ public indirect enum HIRType: Equatable {
     /// `Dictionary<K, V>` (G5): opaque handle `%bk_dict*`, keys/values boxed
     /// through the `bk_dict_*` C ABI.
     case dict(key: HIRType, value: HIRType)
+    /// `LazyRef<T>` (G13 batch 1): opaque handle `%bk_lazyref*` — once-evaluated
+    /// lazy reference with shared (reference) copy semantics; the element rides
+    /// along for the boxing ABI (bytes/tag) and the `.value` load type.
+    case lazyRef(element: HIRType)
     /// `Set<T>` (G5): opaque handle `%bk_set*`, ordered unique elements.
     case set(element: HIRType)
     /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
@@ -83,6 +87,8 @@ public indirect enum HIRType: Equatable {
             return "%bk_dict*"
         case .set:
             return "%bk_set*"
+        case .lazyRef:
+            return "%bk_lazyref*"
         case .tuple(_, let fieldTypes):
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         case .function:
@@ -127,7 +133,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function:
+        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef:
             return false
         }
     }
@@ -276,6 +282,17 @@ public indirect enum HIRExpr: Equatable {
     /// bk_double_to_string (shortest round-trip — LR-8; the legacy emitter
     /// still uses %f here and diverges from the interpreter).
     case interpString(parts: [HIRExpr])
+
+    // MARK: G13 batch 1 — LazyRef
+
+    /// `LazyRef<T>(closure)` (G13): creates the once-evaluated handle via
+    /// `bk_lazyref_create(wrapper, code, env, bytes, tag)`. `closure` is the
+    /// lowered initializer fat pointer; the wrapper (per element type,
+    /// deduplicated) is buffered at module end by the emitter.
+    case lazyRefConstruct(closure: HIRExpr, type: HIRType)
+    /// `handle.value` (G13): `bk_lazyref_value(handle)` returns the cached
+    /// element box; the caller loads the element type out of it.
+    case lazyRefValue(handle: HIRExpr, type: HIRType)
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +

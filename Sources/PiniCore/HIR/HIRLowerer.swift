@@ -159,6 +159,38 @@ public enum HIRLowerer {
         }
     }
 
+    /// G13 batch 2: lower a checked multi-file package. Callers must run the
+    /// package-level semantic + type-check passes first (same contract as
+    /// `check(package:)`). The checker's package context has already enforced
+    /// cross-file visibility (D4: the HIR channel re-enforces nothing).
+    ///
+    /// D1 implementation: merge every file's declarations into one virtual
+    /// module and run the existing single-module pre-pass chain on the
+    /// union. All pre-passes (trait/nominal/enum registries, signature
+    /// table, closure pre-collection, monomorphization) become global
+    /// pre-scans for free — cross-file references resolve exactly like
+    /// same-file forward references. No redeclaration risk: the semantic
+    /// layer's `PackageSymbolIndex.build` already rejects cross-file
+    /// duplicate top-level names.
+    ///
+    /// File ordering follows `FileLoader.loadDirectory`'s deterministic sort
+    /// (fileName ascending), so pre-pass registration order is stable.
+    public static func lower(package: Package, typeInference: TypeInference?) throws -> HIRModule {
+        guard package.fileUnits.count > 1 else {
+            let module = package.fileUnits.first?.module
+                ?? Module(declarations: [], imports: [], exports: [],
+                          location: SourceLocation(line: 0, column: 0, fileName: package.name))
+            return try lower(module: module, typeInference: typeInference)
+        }
+        let merged = Module(
+            declarations: package.fileUnits.flatMap { $0.module.declarations },
+            imports: package.fileUnits.flatMap { $0.module.imports },
+            exports: package.fileUnits.flatMap { $0.module.exports },
+            location: package.location
+        )
+        return try lower(module: merged, typeInference: typeInference)
+    }
+
     /// Lower a checked module. `typeInference` is the TypeChecker's inference
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
@@ -384,8 +416,15 @@ public enum HIRLowerer {
                     }
                     return type
                 }
+                // G13 batch 2: effective return for void-declared top-level
+                // functions that return a value (interpreter-faithful; the
+                // signature table drives call sites, so it must agree with
+                // the definition side's upgrade).
+                let effectiveReturn = try effectiveReturnType(
+                    decl: funcDecl, userTypes: userTypes, nominals: nominals
+                ) ?? returnType
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
-                    paramTypes: paramTypes, returnType: returnType
+                    paramTypes: paramTypes, returnType: effectiveReturn
                 )
             default: break
             }
@@ -903,6 +942,12 @@ public enum HIRLowerer {
             }
             return type
         }
+        // G13 batch 2: effective return for void-declared functions that
+        // return a value (must match the signature-table upgrade so call
+        // sites and the definition agree).
+        let effectiveReturn = try effectiveReturnType(
+            decl: decl, userTypes: userTypes, nominals: nominalTypes
+        ) ?? returnType
 
         var params: [HIRFunction.HIRParam] = []
         for param in decl.params {
@@ -918,7 +963,7 @@ public enum HIRLowerer {
 
         var context = FunctionContext(
             functionName: decl.name,
-            returnType: returnType,
+            returnType: effectiveReturn,
             paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
             typeInference: typeInference,
             moduleSignatures: moduleSignatures,
@@ -931,7 +976,7 @@ public enum HIRLowerer {
             traitDefaultsCollector: traitDefaultsCollector
         )
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(name: decl.name, params: params, returnType: returnType, body: body)
+        return HIRFunction(name: decl.name, params: params, returnType: effectiveReturn, body: body)
     }
 
     // MARK: - Annotation resolution (G3/G4 user types)
@@ -1041,6 +1086,14 @@ public enum HIRLowerer {
             }
             return type
         }
+        // G13 batch 2: a void-declared method whose body returns a value
+        // (package-demo corpus documents the interpreter flows it out)
+        // upgrades to the effective return type — body returns and call
+        // sites both use it.
+        let effectiveReturn = try effectiveReturnType(
+            decl: decl, userTypes: userTypes, nominals: nominalTypes,
+            selfTypeName: typeName
+        ) ?? returnType
         var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
         for param in decl.params {
             guard let annotation = param.typeAnnotation,
@@ -1055,7 +1108,7 @@ public enum HIRLowerer {
         let irName = "\(IRName.mangle(decl.name))__\(IRName.mangle(typeName))"
         var context = FunctionContext(
             functionName: irName,
-            returnType: returnType,
+            returnType: effectiveReturn,
             paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
             typeInference: typeInference,
             moduleSignatures: moduleSignatures,
@@ -1084,7 +1137,7 @@ public enum HIRLowerer {
             context.selfIsObjectLowered = selfIsObject
         }
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(name: irName, params: params, returnType: returnType, body: body)
+        return HIRFunction(name: irName, params: params, returnType: effectiveReturn, body: body)
     }
 
     private static func lowerBlock(
@@ -1655,6 +1708,14 @@ public enum HIRLowerer {
             // Nominal field read (G3): `base.field` / `self.field`.
             // Tuple label read (G5 minimal slice): extractvalue by index.
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
+            // LazyRef `.value` read (G13 batch 1): `bk_lazyref_value(handle)`
+            // returns the cached element box; the caller loads the element.
+            if case .lazyRef(let element) = loweredBase.type, name == "value" {
+                return LoweredExpr(
+                    node: .lazyRefValue(handle: loweredBase.node, type: element),
+                    type: element
+                )
+            }
             if case .tuple(let labels, let fieldTypes) = loweredBase.type {
                 guard let index = labels.firstIndex(where: { $0 == name }) else {
                     throw unsupported("tuple has no field '\(name)'", at: location)
@@ -1676,6 +1737,27 @@ public enum HIRLowerer {
             )
 
         case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
+            // G13 batch 1: `LazyRef<T>(closure)` — built-in lazy reference,
+            // not a user generic template. Checked before the template
+            // dispatch so a user `LazyRef` template cannot shadow it
+            // (parity with the legacy emitter's builtin-first contract).
+            if typeName == "LazyRef" {
+                guard typeArgs.count == 1, let element = HIRType(from: typeArgs[0]) else {
+                    throw unsupported("LazyRef requires 1 resolvable type arg", at: location)
+                }
+                guard arguments.count == 1 else {
+                    throw unsupported("LazyRef requires 1 argument (initializer closure)", at: location)
+                }
+                let loweredClosure = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
+                guard case .function = loweredClosure.type else {
+                    throw unsupported("LazyRef argument must be an initializer closure", at: location)
+                }
+                let type = HIRType.lazyRef(element: element)
+                return LoweredExpr(
+                    node: .lazyRefConstruct(closure: loweredClosure.node, type: type),
+                    type: type
+                )
+            }
             // G10 monomorphization call site: `盒<I32>()` (struct template ->
             // nominal construction of the specialized instance) or
             // `身份<I32>(x = 100)` (function template -> call to the
@@ -2152,7 +2234,10 @@ public enum HIRLowerer {
         into ids: inout [String: Int]
     ) {
         if case .funcLiteral(let decl, let location) = expression {
-            let key = "\(location.line):\(location.column)"
+            // G13 batch 2: key includes the source file — in a merged
+            // multi-file package, two files can hold literals at the same
+            // line:column, and one shared id would merge their captures.
+            let key = closureIdKey(location)
             if ids[key] == nil {
                 ids[key] = counter
                 counter += 1
@@ -2207,7 +2292,7 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
-        let key = "\(location.line):\(location.column)"
+        let key = closureIdKey(location)
         guard let closureId = context.closureIds[key] else {
             throw unsupported("anonymous function was not pre-registered", at: location)
         }
@@ -2643,6 +2728,19 @@ public enum HIRLowerer {
             )
         }
 
+        // LazyRef `.value` in call form (G13 batch 1): `r.value()` — same
+        // node as the field form; the zero-arg call is the only accepted
+        // arity (parity with the interpreter's property-style read).
+        if case .lazyRef(let element) = objectType, memberName == "value" {
+            guard arguments.isEmpty else {
+                throw unsupported("LazyRef .value takes no arguments", at: location)
+            }
+            return LoweredExpr(
+                node: .lazyRefValue(handle: loweredObject.node, type: element),
+                type: element
+            )
+        }
+
         // Nominal method dispatch (G3): the receiver is the implicit first
         // argument; the callee is the mangled IR name `方法__类型`.
         // G12: when the nominal has no own/extension method of that name,
@@ -2657,7 +2755,14 @@ public enum HIRLowerer {
                         at: location
                     )
                 }
-                let returnType = try method.returnTypes.first.map { annotation -> HIRType in
+                // G13 batch 2: the call site uses the method's EFFECTIVE
+                // return type (void-declared value-returning methods upgrade
+                // to the body's returned type — same computation as the
+                // definition side, so body and calls agree).
+                let returnType = try effectiveReturnType(
+                    decl: method, userTypes: context.userTypes,
+                    nominals: context.nominalTypesMap, selfTypeName: typeName
+                ) ?? method.returnTypes.first.map { annotation -> HIRType in
                     guard let type = HIRType(from: annotation) else {
                         throw unsupported(
                             "return type of '\(memberName)' is not resolvable",
@@ -3190,6 +3295,100 @@ public enum HIRLowerer {
         HIRLoweringError(message: message, location: location)
     }
 
+    /// Stable funcLiteral identity: file + line + column. The legacy
+    /// ClosureEmitter registry contract was "行:列"; the file component was
+    /// implicit (single-file world). G13 batch 2 makes it explicit so a
+    /// merged multi-file package cannot collide two files' literals.
+    private static func closureIdKey(_ location: SourceLocation) -> String {
+        "\(location.fileName):\(location.line):\(location.column)"
+    }
+
+    // MARK: - Effective return type (G13 batch 2, package-demo parity)
+
+    /// Scans a body for `return <expr>` statements and returns the type of
+    /// the first returned value expression, resolved without a full
+    /// lowering pass. Only the narrow slice the corpus exercises (field
+    /// reads / calls / literals through annotations) is supported; anything
+    /// else fails the full lowering later with the ordinary gate error.
+    ///
+    /// Why this exists: the interpreter flows a void-declared method's
+    /// returned value out at runtime (the package-demo corpus documents
+    /// this as "void, 返回值运行时照常返回"), while the LLVM ABI needs one
+    /// concrete return type at definition. The effective type upgrades the
+    /// declared-void signature for both the body's return statements and
+    /// the call sites — interpreter-faithful, statically decided.
+    private static func effectiveReturnType(
+        decl: FuncDecl,
+        userTypes: [String: HIRType],
+        nominals: [String: NominalInfo],
+        selfTypeName: String? = nil
+    ) throws -> HIRType? {
+        // Declared non-void: nothing to upgrade.
+        if decl.returnTypes.first != nil { return nil }
+        for statement in decl.body?.statements ?? [] {
+            guard case .returnStatement(let value, _) = statement, let value = value else {
+                continue
+            }
+            // Error-binding returns were already dropped before this point
+            // for void functions (returnStmt(value: nil)); a plain return
+            // with a value upgrades the type.
+            switch inferHIRType(of: value, userTypes: userTypes, nominals: nominals,
+                                selfTypeName: selfTypeName) {
+            case .some(let type):
+                return type
+            case .none:
+                throw unsupported(
+                    "void function '\(decl.name)' returns a value whose type is not statically resolvable",
+                    at: decl.location
+                )
+            }
+        }
+        return nil
+    }
+
+    /// Type resolution for the effective-return pre-scan. Mirrors the
+    /// annotation resolver plus the nominal field-read / zero-arg method
+    /// call shapes the corpus uses; literals resolve directly.
+    private static func inferHIRType(
+        of expression: Expression,
+        userTypes: [String: HIRType],
+        nominals: [String: NominalInfo],
+        selfTypeName: String? = nil
+    ) -> HIRType? {
+        switch expression {
+        case .integerLiteral: return .i32
+        case .floatLiteral: return .f64
+        case .stringLiteral: return .string
+        case .boolLiteral: return .boolean
+        case .identifier(let name, _):
+            return userTypes[name]
+        case .selfKeyword:
+            return selfTypeName.flatMap { userTypes[$0] }
+        case .member(let object, let fieldName, _):
+            guard let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
+                  case .nominal(let typeName, _) = baseType,
+                  let info = nominals[typeName],
+                  let field = info.fields.first(where: { $0.name == fieldName }) else {
+                return nil
+            }
+            return HIRType(from: field.typeAnnotation)
+        case .call(let callee, let arguments, _):
+            // Zero-arg method call: `self.方法()` — the method's declared
+            // return annotation is the effective value type.
+            guard arguments.isEmpty,
+                  case .member(let object, let methodName, _) = callee,
+                  let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
+                  case .nominal(let typeName, _) = baseType,
+                  let info = nominals[typeName],
+                  let method = info.methods.first(where: { $0.name == methodName }) else {
+                return nil
+            }
+            return method.returnTypes.first.flatMap { HIRType(from: $0) }
+        default:
+            return nil
+        }
+    }
+
     // MARK: - Location helpers (best-effort source points for gate errors)
 
     private static func conditionLocation(_ expression: Expression) -> SourceLocation {
@@ -3258,6 +3457,12 @@ extension HIRType {
             // `?T` to the same Optional generic annotation.
             if name == "Optional", params.count == 1, let wrapped = HIRType(from: params[0]) {
                 self = .optional(wrapped: wrapped)
+                return
+            }
+            // `LazyRef<T>` (G13 batch 1): opaque once-evaluated handle;
+            // element rides along for the boxing ABI / `.value` load.
+            if name == "LazyRef", params.count == 1, let element = HIRType(from: params[0]) {
+                self = .lazyRef(element: element)
                 return
             }
             return nil
@@ -3434,6 +3639,10 @@ private struct FunctionContext {
     var selfTypeNameLowered: String?
     var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
+
+    /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,
+    /// shorter name at call sites).
+    fileprivate var nominalTypesMap: [String: HIRLowerer.NominalInfo] { nominalTypes }
 
     init(
         functionName: String,

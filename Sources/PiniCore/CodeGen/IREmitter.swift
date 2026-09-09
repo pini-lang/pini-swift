@@ -76,6 +76,15 @@ public final class IREmitter {
     /// Module function registry by mangled IR name (G6): adapter generation
     /// reads the original ABI (params/return) from here.
     private var moduleFunctions: [String: HIRFunction] = [:]
+    /// G13 batch 1: `%bk_lazyref` handle type + `bk_lazyref_*` C ABI used —
+    /// the header declares are appended conditionally (legacy
+    /// `usesLazyRef` contract, golden-IR stability for modules that
+    /// never touch LazyRef).
+    private var usesLazyRef = false
+    /// G13 batch 1: type-specialized `@__lazyref_wrapper_<T>` define buffer,
+    /// deduplicated by element IR spelling; appended after the adapter defs.
+    private var lazyrefWrappers: [String] = []
+    private var lazyrefWrapperNames: Set<String> = []
 
     public init() {}
 
@@ -136,6 +145,9 @@ public final class IREmitter {
         stringConstantDefs = []
         stringConstants = [:]
         usesStrCmp = false
+        usesLazyRef = false
+        lazyrefWrappers = []
+        lazyrefWrapperNames = []
         moduleTypes = module.types
         moduleEnums = module.enums
         // G6: record every top-level function's ABI by mangled IR name so
@@ -184,6 +196,14 @@ public final class IREmitter {
         if usesStrCmp {
             tail += "declare i32 @strcmp(ptr, ptr)\n"
         }
+        // G13 batch 1: LazyRef handle type + C ABI declares, appended only
+        // when the module actually creates/reads a lazy reference (the
+        // legacy emitter's conditional-header contract).
+        if usesLazyRef {
+            tail += "%bk_lazyref = type { ptr }\n"
+            tail += "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)\n"
+            tail += "declare ptr @bk_lazyref_value(ptr)\n"
+        }
         // G6: env struct type declarations must precede their uses — the
         // creation-point GEPs live in the function bodies, and lli requires
         // a sized base element at the GEP (the legacy emitter also placed
@@ -193,6 +213,9 @@ public final class IREmitter {
             closureTail += def
         }
         for def in adapterDefs {
+            closureTail += def
+        }
+        for def in lazyrefWrappers {
             closureTail += def
         }
         var envHeader = ""
@@ -951,7 +974,96 @@ public final class IREmitter {
 
         case .interpString(let parts):
             return emitInterpString(parts: parts)
+
+        case .lazyRefConstruct(let closure, let type):
+            return emitLazyRefConstruct(closure: closure, type: type)
+
+        case .lazyRefValue(let handle, let type):
+            return emitLazyRefValue(handle: handle, element: type)
         }
+    }
+
+    // MARK: - G13 batch 1 (LazyRef)
+
+    /// `LazyRef<T>(closure)` (G13 batch 1): extract the initializer's fat
+    /// pointer { code, env }, ensure the type-specialized boxing wrapper,
+    /// and call `bk_lazyref_create(wrapper, code, env, bytes, tag)`. The
+    /// handle is kept as an opaque `%bk_lazyref*` (legacy bitcast mirror).
+    private func emitLazyRefConstruct(closure: HIRExpr, type: HIRType) -> IRValue {
+        guard case .lazyRef(let element) = type else {
+            fatalError("IREmitter: lazyRefConstruct type is not a lazyRef (HIRLowerer guarantees)")
+        }
+        let (elemSpelling, bytes, tag) = lazyRefElemABI(element)
+        usesLazyRef = true
+        let closureValue = emitExpr(closure)
+        guard closureValue.llvmType == "{ ptr, ptr }" else {
+            fatalError("IREmitter: LazyRef initializer is not a closure (HIRLowerer guarantees)")
+        }
+        let code = builder.freshTemp()
+        bodyIR += " \(code) = extractvalue { ptr, ptr } \(closureValue.ssaName), 0\n"
+        let env = builder.freshTemp()
+        bodyIR += " \(env) = extractvalue { ptr, ptr } \(closureValue.ssaName), 1\n"
+        let wrapperName = ensureLazyRefWrapper(element: element, elemSpelling: elemSpelling)
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = call ptr @bk_lazyref_create(ptr @\(wrapperName), ptr \(code), ptr \(env), i32 \(bytes), i32 \(tag))\n"
+        let typed = builder.freshTemp()
+        bodyIR += " \(typed) = bitcast ptr \(handle) to %bk_lazyref*\n"
+        return IRValue(llvmType: "%bk_lazyref*", ssaName: typed)
+    }
+
+    /// `handle.value` (G13 batch 1): `bk_lazyref_value(handle)` yields the
+    /// cached element box; the element value is loaded out of it.
+    private func emitLazyRefValue(handle: HIRExpr, element: HIRType) -> IRValue {
+        usesLazyRef = true
+        let handleValue = emitExpr(handle)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast \(handleValue.llvmType) \(handleValue.ssaName) to ptr\n"
+        let box = builder.freshTemp()
+        bodyIR += " \(box) = call ptr @bk_lazyref_value(ptr \(raw))\n"
+        let spelling = element.llvmSpelling
+        let value = builder.freshTemp()
+        bodyIR += " \(value) = load \(spelling), ptr \(box)\n"
+        return IRValue(llvmType: spelling, ssaName: value)
+    }
+
+    /// LazyRef element boxing ABI (bytes/tag): aligned with the legacy
+    /// `lazyRefElemInfo` table — string uses the raw-ptr tag (4), NOT the
+    /// array-family tag 3 (strings are immutable C bytes with no share
+    /// count; boxing them as share-counted handles would corrupt cleanup).
+    private func lazyRefElemABI(_ type: HIRType) -> (spelling: String, bytes: Int, tag: Int32) {
+        switch type {
+        case .i32: return ("i32", 4, 0)
+        case .f64: return ("double", 8, 1)
+        case .boolean: return ("i1", 1, 2)
+        case .string: return ("i8*", 8, 4)
+        default:
+            fatalError("IREmitter: no LazyRef element ABI for '\(type)' (HIRLowerer gates element types)")
+        }
+    }
+
+    /// Buffer (deduplicated) the type-specialized boxing wrapper:
+    /// `ptr @__lazyref_wrapper_<T>(ptr code, ptr env, ptr out)` — calls the
+    /// initializer code, stores the element into the runtime-provided heap
+    /// box, and returns it (uniform ptr ABI sidesteps per-type return
+    /// register differences; the runtime owns the box allocation).
+    private func ensureLazyRefWrapper(element: HIRType, elemSpelling: String) -> String {
+        let suffix: String
+        switch element {
+        case .i32: suffix = "i32"
+        case .f64: suffix = "f64"
+        case .boolean: suffix = "i1"
+        case .string: suffix = "ptr"
+        default: suffix = elemSpelling.replacingOccurrences(of: " ", with: "_")
+        }
+        guard !lazyrefWrapperNames.contains(suffix) else { return "__lazyref_wrapper_\(suffix)" }
+        lazyrefWrapperNames.insert(suffix)
+        var def = "define ptr @__lazyref_wrapper_\(suffix)(ptr %code, ptr %env, ptr %out) {\n"
+        def += " %val = call \(elemSpelling) %code(ptr %env)\n"
+        def += " store \(elemSpelling) %val, ptr %out\n"
+        def += " ret ptr %out\n"
+        def += "}\n\n"
+        lazyrefWrappers.append(def)
+        return "__lazyref_wrapper_\(suffix)"
     }
 
     // MARK: - Nominal types (G3)
@@ -1714,6 +1826,8 @@ public final class IREmitter {
         case .closureLiteral(_, _, _, _, _, _, let type): return type
         case .functionValue(_, let type): return type
         case .indirectCall(_, _, let returnType): return returnType ?? .i32
+        case .lazyRefConstruct(_, let type): return type
+        case .lazyRefValue(_, let type): return type
         }
     }
 
