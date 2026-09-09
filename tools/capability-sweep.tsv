@@ -32,7 +32,7 @@ examples/higher-order.pini	PASS	PASS	PASS	PASS
 examples/io.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/lambda-typed.pini	PASS	PASS	PASS	PASS	
 examples/lambda.pini	PASS	PASS	PASS	PASS	
-examples/lazyref.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/lazyref.pini	PASS	PASS	PASS	PASS	
 examples/lexical.pini	PASS	PASS	PASS	PASS	
 examples/match.pini	PASS	PASS	PASS	PASS	
 examples/multidim.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined identifier row' 

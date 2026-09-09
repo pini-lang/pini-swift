@@ -1655,6 +1655,14 @@ public enum HIRLowerer {
             // Nominal field read (G3): `base.field` / `self.field`.
             // Tuple label read (G5 minimal slice): extractvalue by index.
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
+            // LazyRef `.value` read (G13 batch 1): `bk_lazyref_value(handle)`
+            // returns the cached element box; the caller loads the element.
+            if case .lazyRef(let element) = loweredBase.type, name == "value" {
+                return LoweredExpr(
+                    node: .lazyRefValue(handle: loweredBase.node, type: element),
+                    type: element
+                )
+            }
             if case .tuple(let labels, let fieldTypes) = loweredBase.type {
                 guard let index = labels.firstIndex(where: { $0 == name }) else {
                     throw unsupported("tuple has no field '\(name)'", at: location)
@@ -1676,6 +1684,27 @@ public enum HIRLowerer {
             )
 
         case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
+            // G13 batch 1: `LazyRef<T>(closure)` — built-in lazy reference,
+            // not a user generic template. Checked before the template
+            // dispatch so a user `LazyRef` template cannot shadow it
+            // (parity with the legacy emitter's builtin-first contract).
+            if typeName == "LazyRef" {
+                guard typeArgs.count == 1, let element = HIRType(from: typeArgs[0]) else {
+                    throw unsupported("LazyRef requires 1 resolvable type arg", at: location)
+                }
+                guard arguments.count == 1 else {
+                    throw unsupported("LazyRef requires 1 argument (initializer closure)", at: location)
+                }
+                let loweredClosure = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
+                guard case .function = loweredClosure.type else {
+                    throw unsupported("LazyRef argument must be an initializer closure", at: location)
+                }
+                let type = HIRType.lazyRef(element: element)
+                return LoweredExpr(
+                    node: .lazyRefConstruct(closure: loweredClosure.node, type: type),
+                    type: type
+                )
+            }
             // G10 monomorphization call site: `盒<I32>()` (struct template ->
             // nominal construction of the specialized instance) or
             // `身份<I32>(x = 100)` (function template -> call to the
@@ -2643,6 +2672,19 @@ public enum HIRLowerer {
             )
         }
 
+        // LazyRef `.value` in call form (G13 batch 1): `r.value()` — same
+        // node as the field form; the zero-arg call is the only accepted
+        // arity (parity with the interpreter's property-style read).
+        if case .lazyRef(let element) = objectType, memberName == "value" {
+            guard arguments.isEmpty else {
+                throw unsupported("LazyRef .value takes no arguments", at: location)
+            }
+            return LoweredExpr(
+                node: .lazyRefValue(handle: loweredObject.node, type: element),
+                type: element
+            )
+        }
+
         // Nominal method dispatch (G3): the receiver is the implicit first
         // argument; the callee is the mangled IR name `方法__类型`.
         // G12: when the nominal has no own/extension method of that name,
@@ -3258,6 +3300,12 @@ extension HIRType {
             // `?T` to the same Optional generic annotation.
             if name == "Optional", params.count == 1, let wrapped = HIRType(from: params[0]) {
                 self = .optional(wrapped: wrapped)
+                return
+            }
+            // `LazyRef<T>` (G13 batch 1): opaque once-evaluated handle;
+            // element rides along for the boxing ABI / `.value` load.
+            if name == "LazyRef", params.count == 1, let element = HIRType(from: params[0]) {
+                self = .lazyRef(element: element)
                 return
             }
             return nil

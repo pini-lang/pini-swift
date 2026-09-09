@@ -166,6 +166,10 @@ public enum HIRPrinter {
         case .indirectCall(let callee, let arguments, _):
             let args = arguments.map(exprText).joined(separator: ", ")
             return "\(exprText(callee))(\(args))"
+        case .lazyRefConstruct(let closure, _):
+            return "LazyRef(\(exprText(closure)))"
+        case .lazyRefValue(let handle, _):
+            return "\(exprText(handle)).value"
         }
     }
 
