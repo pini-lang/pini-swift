@@ -159,6 +159,28 @@ public enum HIRLowerer {
         }
     }
 
+    /// G13 batch 2: lower a checked multi-file package. Callers must run the
+    /// package-level semantic + type-check passes first (same contract as
+    /// `check(package:)`). The checker's package context has already enforced
+    /// cross-file visibility; the HIR channel re-enforces nothing.
+    ///
+    /// Red-light stub (S5): the cross-file corpus lands before the
+    /// implementation (S6). Throws for any multi-file package; single-file
+    /// packages delegate to `lower(module:)` so the entry point is safe to
+    /// wire before the real pre-scan lands.
+    public static func lower(package: Package, typeInference: TypeInference?) throws -> HIRModule {
+        guard package.fileUnits.count > 1 else {
+            let module = package.fileUnits.first?.module
+                ?? Module(declarations: [], imports: [], exports: [],
+                          location: SourceLocation(line: 0, column: 0, fileName: package.name))
+            return try lower(module: module, typeInference: typeInference)
+        }
+        throw unsupported(
+            "G13 batch 2: multi-file package lowering not implemented yet",
+            at: package.location
+        )
+    }
+
     /// Lower a checked module. `typeInference` is the TypeChecker's inference
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
