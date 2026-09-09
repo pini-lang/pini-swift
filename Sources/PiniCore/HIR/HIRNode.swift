@@ -18,6 +18,11 @@ import Foundation
 public indirect enum HIRType: Equatable {
     case i32
     case i64
+    /// `I8` (G11): 8-bit signed integer. Struct fields / method returns /
+    /// field reads are the in-slice surface; arithmetic on i8 widens to i32
+    /// at emission (the interpreter models all integers as one int value,
+    /// so no i8-specific arithmetic exists to mirror).
+    case i8
     case f64
     case boolean
     case string
@@ -58,6 +63,7 @@ public indirect enum HIRType: Equatable {
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
         switch self {
+        case .i8: return "i8"
         case .i32: return "i32"
         case .i64: return "i64"
         case .f64: return "double"
@@ -120,7 +126,7 @@ public indirect enum HIRType: Equatable {
 
     public var isNumeric: Bool {
         switch self {
-        case .i32, .i64, .f64: return true
+        case .i8, .i32, .i64, .f64: return true
         case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function:
             return false
         }

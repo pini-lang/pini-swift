@@ -58,7 +58,7 @@ public enum HIRLowerer {
     fileprivate struct NominalInfo {
         let name: String
         let isObject: Bool
-        let decl: TopLevelDecl
+        var decl: TopLevelDecl
         var extensionMethods: [FuncDecl] = []
 
         var fields: [FieldDecl] {
@@ -75,6 +75,66 @@ public enum HIRLowerer {
             case .objectDecl(let od): return od.methods + extensionMethods
             default: return extensionMethods
             }
+        }
+
+        var composedParent: String? {
+            switch decl {
+            case .structDecl(let sd): return sd.composedType
+            default: return nil
+            }
+        }
+
+        /// Rebuild this entry with merged fields/methods (composition
+        /// flattening result). The full merged method list (own + extension
+        /// + inherited) is stored back as extension methods so `methods`
+        /// keeps its "own + extension" shape and mangling stays child-side.
+        func replacing(fields: [FieldDecl], methods: [FuncDecl]) -> NominalInfo {
+            var copy = self
+            switch decl {
+            case .structDecl(let sd):
+                copy.decl = .structDecl(StructDecl(
+                    name: sd.name, genericParams: sd.genericParams,
+                    fields: fields, methods: [],
+                    composedType: sd.composedType, traits: sd.traits, location: sd.location
+                ))
+            case .objectDecl(let od):
+                copy.decl = .objectDecl(ObjectDecl(
+                    name: od.name, genericParams: od.genericParams,
+                    fields: fields, methods: [], traits: od.traits, location: od.location
+                ))
+            default: break
+            }
+            copy.extensionMethods = methods
+            return copy
+        }
+    }
+
+    /// G11: resolve struct composition by merging the composed parent's
+    /// fields/methods into the child nominal — child members first, then the
+    /// parent's non-overridden ones (interpreter mergeComposedType parity).
+    /// Nested composition recurses; `visited` breaks cycles. Object parents
+    /// are rejected (interpreter checkComposedTypeAllowed parity).
+    private static func flattenComposedNominals(_ nominals: inout [String: NominalInfo]) {
+        func merged(_ info: NominalInfo, _ visited: inout Set<String>) -> NominalInfo {
+            guard let parentName = info.composedParent,
+                  let parent = nominals[parentName] else {
+                return info
+            }
+            guard !visited.contains(parentName) else { return info }
+            visited.insert(parentName)
+            let resolvedParent = merged(parent, &visited)
+            let childFields = info.fields
+            let childMethods = info.methods
+            let childFieldNames = Set(childFields.map { $0.name })
+            let childMethodNames = Set(childMethods.map { $0.name })
+            let fields = childFields + resolvedParent.fields.filter { !childFieldNames.contains($0.name) }
+            let methods = childMethods + resolvedParent.methods.filter { !childMethodNames.contains($0.name) }
+            return info.replacing(fields: fields, methods: methods)
+        }
+        for name in Array(nominals.keys) {
+            guard nominals[name]?.composedParent != nil else { continue }
+            var visited: Set<String> = [name]
+            nominals[name] = merged(nominals[name]!, &visited)
         }
     }
 
@@ -107,6 +167,17 @@ public enum HIRLowerer {
                 nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
             }
         }
+
+        // G11: struct composition flattening (mirror of the interpreter's
+        // mergeComposedType / legacy mergeComposedStructTypes). A struct body
+        // whose first line is a bare parent type name (`计数器`) embeds that
+        // parent: the child keeps its own fields/methods first, then the
+        // parent's non-overridden ones are appended (child overrides same-name
+        // parent members). Nested composition recurses with cycle guard.
+        // Parent methods are re-lowered with the child's self type (the
+        // interpreter shares the receiver environment; the flattened method
+        // mangles to `方法__子类型` and dispatches through the child nominal).
+        flattenComposedNominals(&nominals)
 
         // G6 pre-pass: assign every funcLiteral a stable closure id (source
         // order, keyed by "行:列" — legacy ClosureEmitter registry contract).
@@ -309,6 +380,8 @@ public enum HIRLowerer {
         // G3: lower nominal type declarations (field defaults via a scratch
         // context; methods as self-parameterized functions with mangled IR
         // names `方法__类型` so they cannot collide with top-level functions).
+        // Fields come from the registry, not the raw declaration: G11
+        // composition flattening has already merged inherited members there.
         var typeDecls: [HIRTypeDecl] = []
         for decl in module.declarations {
             switch decl {
@@ -316,17 +389,19 @@ public enum HIRLowerer {
                 // Generic templates emit no typeDecl — specializations do
                 // (registered as nominals, emitted below from the registry).
                 guard sd.genericParams.isEmpty else { continue }
+                let info = nominals[sd.name]!
                 typeDecls.append(try lowerNominal(
-                    name: sd.name, isObject: false, fields: sd.fields,
-                    methods: nominals[sd.name]!.methods,
+                    name: sd.name, isObject: false, fields: info.fields,
+                    methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
                     userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
                 ))
             case .objectDecl(let od):
+                let info = nominals[od.name]!
                 typeDecls.append(try lowerNominal(
-                    name: od.name, isObject: true, fields: od.fields,
-                    methods: nominals[od.name]!.methods,
+                    name: od.name, isObject: true, fields: info.fields,
+                    methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
                     userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
@@ -1876,6 +1951,13 @@ public enum HIRLowerer {
         case .funcLiteral(let decl, let location):
             return try lowerFuncLiteral(decl: decl, expected: expected, at: location, into: &context)
 
+        case .unsafe(let operand, _):
+            // G11 multidim corpus: the zero-scatter `unsafe (...)` context
+            // marker is a parse/check-level concept only — the wrapped
+            // expression lowers identically (the safe-assert subscript
+            // channel needs no unsafe distinction at emission).
+            return try lowerExpr(operand, expected: expected, into: &context)
+
         default:
             throw unsupported(
                 "expression '\(expression.kindName)' outside the M4 slice",
@@ -2568,11 +2650,44 @@ public enum HIRLowerer {
             let hirCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         default:
-            throw unsupported(
-                "match scrutinee type '\(loweredValue.type)' outside this grid (Optional/enum only)",
-                at: location
-            )
+            // G11 multidim corpus: the interpreter's direct subscript read
+            // yields a bare value (the Optional-returning read channel is a
+            // separate, not-yet-landed semantic), so some/none arms never
+            // fire and the match falls through silently (probe-verified —
+            // applies at any scrutinee depth: outer `match m[1]` on
+            // array(I32), inner `match row[2]` on I32). Parity: lower every
+            // arm body with its binding typed by the scrutinee itself (the
+            // value a live some-arm would bind), but drop the dispatch.
+            var hirCases: [HIRMatchCase] = []
+            for matchCase in cases {
+                let body = try lowerDeadArmBody(matchCase, bindingType: loweredValue.type, into: &context)
+                hirCases.append(HIRMatchCase(caseName: matchCase.pattern.description, bindings: matchCase.bindings.map { $0.varName }, body: body))
+            }
+            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         }
+    }
+
+    /// G11: one dead-arm body of a match whose scrutinee is neither Optional
+    /// nor enum — the arm is never dispatched at emission (probe-verified
+    /// silent fall-through in the interpreter); the body still lowers so its
+    /// bindings scope-resolve. Each binding adopts the scrutinee type (the
+    /// value a live some-arm would bind), wildcard/none arms bind nothing.
+    private static func lowerDeadArmBody(
+        _ matchCase: MatchCase,
+        bindingType: HIRType,
+        into context: inout FunctionContext
+    ) throws -> [HIRStmt] {
+        let bindingNames = matchCase.bindings.map { $0.varName }
+        let previousTypes = bindingNames.map { context.variableTypes[$0] }
+        for (index, name) in bindingNames.enumerated() where name != "_" {
+            context.variableTypes[name] = bindingType
+        }
+        defer {
+            for (index, name) in bindingNames.enumerated() where name != "_" {
+                context.variableTypes[name] = previousTypes[index]
+            }
+        }
+        return try lowerBlock(matchCase.block, into: &context)
     }
 
     /// Optional scrutinee arms: some/none (nil alias), single positional
@@ -2906,6 +3021,7 @@ extension HIRType {
         switch annotation {
         case .simple(let name, _):
             switch name {
+            case "I8": self = .i8
             case "I32": self = .i32
             case "I64": self = .i64
             case "F64": self = .f64
