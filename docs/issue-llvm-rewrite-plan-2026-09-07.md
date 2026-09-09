@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G11 已完成并回填，活跃 Open 工单清零，下一格 G12 trait 待点名——开工前先出细化步骤）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，活跃 Open 工单清零，下一格 G13 跨文件待点名——开工前先出细化步骤）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -453,3 +453,38 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 **45→48**（+3：三语料直用）；全量回归
       **1281/0/0**；sweep hir-emit **32/59 → 35/59**（composition /
       access / multidim 进列；multidim legacy FAIL E6-002 属既有）。
+
+  - **G12 trait 族完成（2026-09-09，分支
+    `agent/pini-dev/llvm-m5-g12-trait-validated-match`，trait /
+    validated-match ×2）**：
+    - **TraitRegistry 预扫**：`lower()` G12 pre-pass 收集 traitDecl →
+      traits 字典、struct/object 带 traits → typeTraits 字典，组装
+      `HIRLowerer.TraitRegistry`；traitDecl 签名预扫进 signatures 表
+      （`traitSignatureInfo` 剥首 self 参数，供后声明函数解析）。
+    - **默认体特化收集**：`TraitDefaultCollector`（class，跨嵌套
+      FunctionContext 传播，seen 去重）；主循环 traitDecl 放行
+      （default 体不在声明点发射）；模块组装前
+      `functions.append(contentsOf:)` 注入。
+    - **dispatch fallback**：`lowerMemberCall` own/ext method 未命中
+      → 按 typeTraits 顺序找 trait 的 `signatures.first(where: { 名
+      == memberName && body != nil })` → `lowerTraitDefaultCall` 剥
+      self 首参、`resolveAnnotationType` 解析类型（支持 user
+      types）、`lowerMethod` 特化为 `方法__类型` IR 名、返回
+      `.call(function: irName, [receiver] + args, ...)`。
+    - **裸字段注入（bindInstanceFields parity）**：lowerMethod 中
+      selfType 为 nominal 时从 nominalTypes 取字段表进
+      `context.selfFieldTypes`（+ selfTypeNameLowered /
+      selfIsObjectLowered）；identifier case variableTypes miss 后
+      fallback → `.fieldGet(base: .load("self"), ...)`，解释器方法
+      体裸字段名可直接读的语义在 HIR 对齐。
+    - **勘测钉定**：解释器 member 分派序 typeFields → typeMethods
+      （own+ext）→ typeTraits 默认体；trait sig 首参 `("self", nil)`
+      与 ext method `params=[] modifiers=["self"]` 两种 self 形态；
+      legacy `tryTraitMethodDispatch` 剥 self 首参挂
+      receiverIRType 进 pendingSpecializations。**run-llvm 与解释器
+      已知语义分歧**：纯 default 场景 legacy trait 方法名 mangle 无
+      接收者特化（两类型撞同名函数，猫调狗的覆盖版）；HIR 通道按接
+      收者类型特化 `方法__类型`，行为与解释器一致，属修正而非回归。
+    - **验收**：差分 **48→50**（+2：trait / validated-match）；全量
+      回归 **1283/0/0**（基线 1281 + 新增 2）；sweep hir-emit
+      **35/59 → 36/59**（trait 进列；validated-match 本为 PASS）。

@@ -19,7 +19,7 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md"]
-last_refresh = "2026-09-09T02:05+08:00"
+last_refresh = "2026-09-09T11:27+08:00"
 last_sweep = "2026-09-08T23:33:00+08:00"
 dangling_ids = ["E-001", "E-008", "E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-102", "E-110", "E-111", "E-112", "E-120", "E-121"]
 [[evidence]]
@@ -311,3 +311,18 @@ output = "HIR differential 45->48 (new: testDiffStructComposition/testDiffStruct
 validated_at = "2026-09-09T02:05+08:00"
 status = "FRESH"
 note = "实测钉定：死臂绑定类型 = scrutinee 类型本身（外层 match m[1] 绑 row = array(i32)、内层 match row[2] 绑 v = i32，scrutinee 即绑定值非 element——首版走 arrayElementType 与 typeInference.infer 双双被探针否证，checker 环境 check 结束后已 pop match 臂作用域，infer 返 nil，~90 行 firstIdentifierUse 辅助全废删除）；composition 展平 flattenComposedNominals 对齐解释器 mergeComposedType（子前父后同名子覆盖防环），typeDecls 循环 fields 也须从展平 registry 取——首版只换 methods，emitter unknown nominal field 被差分拦住；emitter emitMatch default 由 fatalError 改 emitExpr(scrutinee) 跳全部臂；探针实证 multidim 语料宣称的下标读返回 Optional 语义解释器也未实现（match some/none 静默不命中），立 docs/issue-multidim-optional-subscript-semantics-2026-09-09.md，不在本格修"
+[[evidence]]
+id = "E-152"
+claim = "M5 G12 trait family (trait default dispatch via TraitRegistry pre-pass + bare-field parity in method bodies) lands on the HIR pipeline with interpreter parity; HIR specializes default methods per receiver type, fixing a legacy name-only mangling collision"
+artifacts = [
+  "pini-swift/Sources/PiniCore/HIR/HIRLowerer.swift",
+  "pini-swift/docs/issue-llvm-rewrite-plan-2026-09-07.md",
+  "pini-swift/Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffTrait.pini",
+  "pini-swift/Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffValidatedMatch.pini",
+  "pini-swift/tools/capability-sweep.tsv",
+]
+command = "swift test --package-path pini-swift --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && bash tools/capability-sweep.sh"
+output = "HIR differential 48->50 (new: testDiffTrait/testDiffValidatedMatch red->green); full regression 1283/0/0 (baseline 1281 + 2 new); capability-sweep hir-emit 35/59 -> 36/59 (trait green; validated-match already PASS)"
+validated_at = "2026-09-09T00:20+08:00"
+status = "FRESH"
+note = "实测钉定：解释器 member 分派序 typeFields -> typeMethods(own+ext) -> typeTraits 默认体；trait sig 首参 (self, nil) 与 ext method params=[] modifiers=[self] 两种 self 形态并存；legacy tryTraitMethodDispatch 名-only mangle 两类型撞同名函数（纯 default 场景 run-llvm 输出覆盖版而解释器输出默认体），HIR 按接收者类型特化 方法__类型 属修正非回归（探针 /tmp/probe_trait2.pini 实证）；lowerTraitDefaultCall 类型解析用 resolveAnnotationType 非 HIRType(from:) 以支持 user types；裸字段注入 = bindInstanceFields parity（方法体裸字段名 -> .fieldGet(base: .load(self))），identifier case 在 variableTypes miss 后 fallback；FunctionContext 增 traitRegistry/traitDefaultsCollector/selfFieldTypes 三组字段，lowerFunction/lowerNominal/lowerMethod 三签名尾参穿线全部 7 个调用点"

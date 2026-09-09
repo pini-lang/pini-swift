@@ -189,4 +189,10 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffStructComposition() throws { try assertParity(fixtureName: "testDiffStructComposition") }
     func testDiffStructI8Fields() throws { try assertParity(fixtureName: "testDiffStructI8Fields") }
     func testDiffMultidimArray() throws { try assertParity(fixtureName: "testDiffMultidimArray") }
+
+    // MARK: - G12 trait family (trait default-implementation dispatch,
+    // exhaustive enum match)
+
+    func testDiffTrait() throws { try assertParity(fixtureName: "testDiffTrait") }
+    func testDiffValidatedMatch() throws { try assertParity(fixtureName: "testDiffValidatedMatch") }
 }

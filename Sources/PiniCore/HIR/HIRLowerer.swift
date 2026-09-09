@@ -138,10 +138,47 @@ public enum HIRLowerer {
         }
     }
 
+    /// G12: module-level trait registry. Trait default bodies lower once
+    /// per implementing type at the dispatch site; abstract signatures are
+    /// skipped (conformance is the checker's contract).
+    struct TraitRegistry {
+        let traits: [String: TraitDecl]
+        let typeTraits: [String: [String]]
+    }
+
+    /// G12: collector for trait default bodies specialized at dispatch
+    /// sites. Reference type — appends from nested contexts (function bodies
+    /// inside main) reach the module assembly in `lower()`.
+    final class TraitDefaultCollector {
+        private(set) var functions: [HIRFunction] = []
+        private var seen: Set<String> = []
+
+        func add(_ function: HIRFunction) {
+            guard seen.insert(function.name).inserted else { return }
+            functions.append(function)
+        }
+    }
+
     /// Lower a checked module. `typeInference` is the TypeChecker's inference
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
     public static func lower(module: Module, typeInference: TypeInference?) throws -> HIRModule {
+        // G12 pre-pass: trait registry. Trait default-implementation bodies
+        // (signatures with a body) join the signature table like any named
+        // function; abstract signatures (body == nil) are skipped — the type
+        // checker already verified conformance (verifyTraitConformance).
+        var traits: [String: TraitDecl] = [:]
+        var typeTraits: [String: [String]] = [:]
+        for decl in module.declarations {
+            switch decl {
+            case .traitDecl(let td): traits[td.name] = td
+            case .structDecl(let sd) where !sd.traits.isEmpty: typeTraits[sd.name] = sd.traits
+            case .objectDecl(let od) where !od.traits.isEmpty: typeTraits[od.name] = od.traits
+            default: break
+            }
+        }
+        let traitRegistry = TraitRegistry(traits: traits, typeTraits: typeTraits)
+        let traitDefaultsCollector = TraitDefaultCollector()
         // G3 pre-pass: nominal type registry (structs/objects), with methods
         // merged in from extension blocks ((T)) / {{T}}.
         var nominals: [String: NominalInfo] = [:]
@@ -286,8 +323,44 @@ public enum HIRLowerer {
         // parameter annotations resolve): captures every declared function's
         // signature so bodies can call functions declared later in the file.
         var signatures: [String: HIRLowererSignatureInfo] = [:]
+
+        /// G12: signature info for a trait default implementation. The
+        /// leading `self` parameter (annotation nil — trait bodies do not
+        /// annotate it) is stripped; remaining parameters resolve normally.
+        func traitSignatureInfo(_ sig: FuncDecl, userTypes: [String: HIRType]) throws -> HIRLowererSignatureInfo {
+            let bodyParams = sig.params.first?.name == "self" ? Array(sig.params.dropFirst()) : sig.params
+            let paramTypes = try bodyParams.map { parameter -> HIRType in
+                guard let annotation = parameter.typeAnnotation,
+                      let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                    throw unsupported(
+                        "parameter '\(parameter.name)' of trait default '\(sig.name)' lacks a resolvable scalar type",
+                        at: sig.location
+                    )
+                }
+                return type
+            }
+            let returnType: HIRType? = try sig.returnTypes.first.map { annotation in
+                guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                    throw unsupported(
+                        "return type '\(annotation.simpleName ?? "(non-scalar)")' of trait default '\(sig.name)'",
+                        at: sig.location
+                    )
+                }
+                return type
+            }
+            return HIRLowererSignatureInfo(paramTypes: paramTypes, returnType: returnType)
+        }
+
         for decl in module.declarations {
-            if case .funcDecl(let funcDecl) = decl {
+            switch decl {
+            case .traitDecl(let td):
+                // G12: default-implementation bodies enter the signature
+                // table (bodies may call top-level functions declared
+                // later); abstract signatures are skipped.
+                for sig in td.signatures where sig.body != nil && sig.genericParams.isEmpty {
+                    signatures[sig.name] = try traitSignatureInfo(sig, userTypes: userTypes)
+                }
+            case .funcDecl(let funcDecl):
                 // Generic templates never lower directly — only their
                 // specializations do (G10). Template param annotations
                 // reference type parameters and would not resolve here.
@@ -314,6 +387,7 @@ public enum HIRLowerer {
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
                     paramTypes: paramTypes, returnType: returnType
                 )
+            default: break
             }
         }
         // G10: specialized generic functions join the signature table (their
@@ -353,10 +427,12 @@ public enum HIRLowerer {
                 functions.append(
                     try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
                                       nominalTypes: nominals, userTypes: userTypes, enums: enums,
-                                      genericFuncTemplates: genericFuncTemplates, closureIds: closureIds)
+                                      genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
+                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
                 )
-            case .structDecl, .objectDecl, .extensionDecl, .enumDecl:
-                // Handled by the nominal-type / enum passes below.
+            case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
+                // Handled by the nominal-type / enum passes below; trait
+                // default bodies specialize at their dispatch sites (G12).
                 continue
             default:
                 throw unsupported(
@@ -370,7 +446,8 @@ public enum HIRLowerer {
             functions.append(
                 try lowerFunction(specialized, typeInference: typeInference, moduleSignatures: signatures,
                                   nominalTypes: nominals, userTypes: userTypes, enums: enums,
-                                  genericFuncTemplates: genericFuncTemplates, closureIds: closureIds)
+                                  genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
+                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
             )
         }
         guard functions.contains(where: { $0.name == "main" }) else {
@@ -395,7 +472,8 @@ public enum HIRLowerer {
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
                     userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
-                    closureIds: closureIds
+                    closureIds: closureIds,
+                    traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                 ))
             case .objectDecl(let od):
                 let info = nominals[od.name]!
@@ -404,7 +482,8 @@ public enum HIRLowerer {
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
                     userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
-                    closureIds: closureIds
+                    closureIds: closureIds,
+                    traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                 ))
             default:
                 break
@@ -424,6 +503,9 @@ public enum HIRLowerer {
                 closureIds: closureIds
             ))
         }
+        // G12: trait default bodies specialized at dispatch sites join the
+        // function list (dedup by IR name already applied at the dispatch).
+        functions.append(contentsOf: traitDefaultsCollector.functions)
         return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values))
     }
 
@@ -796,7 +878,9 @@ public enum HIRLowerer {
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
         genericFuncTemplates: [String: FuncDecl] = [:],
-        closureIds: [String: Int] = [:]
+        closureIds: [String: Int] = [:],
+        traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
+        traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector()
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -842,7 +926,9 @@ public enum HIRLowerer {
             userTypes: userTypes,
             enums: enums,
             genericFuncTemplates: genericFuncTemplates,
-            closureIds: closureIds
+            closureIds: closureIds,
+            traitRegistry: traitRegistry,
+            traitDefaultsCollector: traitDefaultsCollector
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: decl.name, params: params, returnType: returnType, body: body)
@@ -880,7 +966,9 @@ public enum HIRLowerer {
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
         genericFuncTemplates: [String: FuncDecl] = [:],
-        closureIds: [String: Int] = [:]
+        closureIds: [String: Int] = [:],
+        traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
+        traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector()
     ) throws -> HIRTypeDecl {
         let selfType = HIRType.nominal(name: name, isObject: isObject)
         var scratch = FunctionContext(
@@ -910,7 +998,8 @@ public enum HIRLowerer {
                 method, typeName: name, selfType: selfType,
                 typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
                 userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
-                closureIds: closureIds
+                closureIds: closureIds, traitRegistry: traitRegistry,
+                traitDefaultsCollector: traitDefaultsCollector
             ))
         }
         return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
@@ -927,7 +1016,9 @@ public enum HIRLowerer {
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
         genericFuncTemplates: [String: FuncDecl] = [:],
-        closureIds: [String: Int] = [:]
+        closureIds: [String: Int] = [:],
+        traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
+        traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector()
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("method '\(decl.name)' of '\(typeName)' has no body", at: decl.location)
@@ -972,8 +1063,26 @@ public enum HIRLowerer {
             userTypes: userTypes,
             enums: enums,
             genericFuncTemplates: genericFuncTemplates,
-            closureIds: closureIds
+            closureIds: closureIds,
+            traitRegistry: traitRegistry,
+            traitDefaultsCollector: traitDefaultsCollector
         )
+        // G12: bare field names resolve against the receiver's fields inside
+        // method bodies (interpreter bindInstanceFields parity — trait.pini's
+        // default body reads `名字` without a `self.` prefix). Emission goes
+        // through an explicit self load + fieldGet at the identifier site.
+        if case .nominal(let selfTypeName, let selfIsObject) = selfType,
+           let info = nominalTypes[selfTypeName] {
+            var fieldTypes: [String: HIRType] = [:]
+            for field in info.fields {
+                if let fieldType = HIRType(from: field.typeAnnotation) {
+                    fieldTypes[field.name] = fieldType
+                }
+            }
+            context.selfFieldTypes = fieldTypes
+            context.selfTypeNameLowered = selfTypeName
+            context.selfIsObjectLowered = selfIsObject
+        }
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(name: irName, params: params, returnType: returnType, body: body)
     }
@@ -1426,6 +1535,17 @@ public enum HIRLowerer {
         case .identifier(let name, let location):
             if let type = context.variableTypes[name] {
                 return LoweredExpr(node: .load(name: name, type: type), type: type)
+            }
+            // G12: bare field name inside a method body (interpreter
+            // bindInstanceFields parity) — lower as `self.<field>`.
+            if let fieldType = context.selfFieldTypes[name] {
+                let selfType = HIRType.nominal(
+                    name: context.selfTypeNameLowered ?? "", isObject: context.selfIsObjectLowered
+                )
+                return LoweredExpr(
+                    node: .fieldGet(base: .load(name: "self", type: selfType), field: name, type: fieldType),
+                    type: fieldType
+                )
             }
             // Zero-payload enum case as a bare identifier value (G4):
             // `取文本(plus)` — unique unqualified reverse lookup.
@@ -2525,53 +2645,73 @@ public enum HIRLowerer {
 
         // Nominal method dispatch (G3): the receiver is the implicit first
         // argument; the callee is the mangled IR name `方法__类型`.
+        // G12: when the nominal has no own/extension method of that name,
+        // fall back to an implemented trait's default body, specialized to
+        // the receiver type (legacy tryTraitMethodDispatch mirror).
         if case .nominal(let typeName, _) = objectType {
-            guard let info = context.nominalTypes[typeName],
-                  let method = info.methods.first(where: { $0.name == memberName }) else {
-                throw unsupported(
-                    "undefined method '\(memberName)' on '\(objectType)'",
-                    at: location
-                )
-            }
-            guard arguments.count == method.params.count else {
-                throw unsupported(
-                    "method '\(memberName)' expects \(method.params.count) arguments, got \(arguments.count)",
-                    at: location
-                )
-            }
-            let returnType = try method.returnTypes.first.map { annotation -> HIRType in
-                guard let type = HIRType(from: annotation) else {
+            let dispatchInfo = context.nominalTypes[typeName]
+            if let method = dispatchInfo?.methods.first(where: { $0.name == memberName }) {
+                guard arguments.count == method.params.count else {
                     throw unsupported(
-                        "return type of '\(memberName)' is not resolvable",
+                        "method '\(memberName)' expects \(method.params.count) arguments, got \(arguments.count)",
                         at: location
                     )
                 }
-                return type
-            }
-            var arguments_ir = [loweredObject.node]
-            for (index, argument) in arguments.enumerated() {
-                guard let annotation = method.params[index].typeAnnotation,
-                      let paramType = HIRType(from: annotation) else {
-                    throw unsupported(
-                        "parameter '\(method.params[index].name)' of '\(memberName)' lacks a resolvable type",
-                        at: location
-                    )
+                let returnType = try method.returnTypes.first.map { annotation -> HIRType in
+                    guard let type = HIRType(from: annotation) else {
+                        throw unsupported(
+                            "return type of '\(memberName)' is not resolvable",
+                            at: location
+                        )
+                    }
+                    return type
                 }
-                let loweredArg = try lowerExpr(argument.expression, expected: paramType, into: &context)
-                try requireAssignable(loweredArg.type, to: paramType, at: location)
-                arguments_ir.append(loweredArg.node)
+                var arguments_ir = [loweredObject.node]
+                for (index, argument) in arguments.enumerated() {
+                    guard let annotation = method.params[index].typeAnnotation,
+                          let paramType = HIRType(from: annotation) else {
+                        throw unsupported(
+                            "parameter '\(method.params[index].name)' of '\(memberName)' lacks a resolvable type",
+                            at: location
+                        )
+                    }
+                    let loweredArg = try lowerExpr(argument.expression, expected: paramType, into: &context)
+                    try requireAssignable(loweredArg.type, to: paramType, at: location)
+                    arguments_ir.append(loweredArg.node)
+                }
+                let irName = "\(IRName.mangle(memberName))__\(IRName.mangle(typeName))"
+                return LoweredExpr(
+                    node: .call(function: irName, arguments: arguments_ir, returnType: returnType),
+                    type: returnType ?? .i32
+                )
             }
-            let irName = "\(IRName.mangle(memberName))__\(IRName.mangle(typeName))"
-            return LoweredExpr(
-                node: .call(function: irName, arguments: arguments_ir, returnType: returnType),
-                type: returnType ?? .i32
+            // G12 trait-default fallback: own/extension method missed — walk
+            // the receiver type's trait list for a default body of this name.
+            // The default body is re-lowered with the receiver's nominal as
+            // self (parity with the interpreter: own methods first, then
+            // trait defaults; the body sees the receiver's fields).
+            if let traitNames = context.traitRegistry.typeTraits[typeName] {
+                for traitName in traitNames {
+                    guard let trait = context.traitRegistry.traits[traitName],
+                          let defaultMethod = trait.signatures.first(where: {
+                              $0.name == memberName && $0.body != nil
+                          }) else { continue }
+                    let loweredCall = try lowerTraitDefaultCall(
+                        defaultMethod, receiver: loweredObject.node, receiverType: objectType,
+                        arguments: arguments, at: location, into: &context
+                    )
+                    return loweredCall                }
+            }
+            throw unsupported(
+                "undefined method '\(memberName)' on '\(objectType)'",
+                at: location
             )
         }
 
         if memberName == "get" {
             guard arguments.count == 1 else {
                 throw unsupported("get expects exactly one argument", at: location)
-            }
+            } 
             let wrapped: HIRType
             switch objectType {
             case .array(let element): wrapped = element
@@ -2953,6 +3093,78 @@ public enum HIRLowerer {
         )
     }
 
+    // MARK: - G12 trait default dispatch
+
+    /// Lower a member call through an implemented trait's default body
+    /// (legacy tryTraitMethodDispatch mirror): the body is specialized to
+    /// the receiver type as a method `方法__类型` (self = receiver), queued
+    /// in `pendingTraitDefaults` for module emission, and the call site
+    /// invokes it with the receiver as the implicit first argument.
+    private static func lowerTraitDefaultCall(
+        _ defaultMethod: FuncDecl,
+        receiver: HIRExpr,
+        receiverType: HIRType,
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard case .nominal(let typeName, _) = receiverType else {
+            throw unsupported(
+                "trait default dispatch requires a nominal receiver, got '\(receiverType)'",
+                at: location
+            )
+        }
+        let bodyParams = defaultMethod.params.first?.name == "self"
+            ? Array(defaultMethod.params.dropFirst()) : defaultMethod.params
+        guard arguments.count == bodyParams.count else {
+            throw unsupported(
+                "trait default '\(defaultMethod.name)' expects \(bodyParams.count) arguments, got \(arguments.count)",
+                at: location
+            )
+        }
+        let returnType = try defaultMethod.returnTypes.first.map { annotation -> HIRType in
+            guard let type = resolveAnnotationType(annotation, userTypes: context.userTypes) else {
+                throw unsupported(
+                    "return type of trait default '\(defaultMethod.name)' is not resolvable",
+                    at: location
+                )
+            }
+            return type
+        }
+        var loweredArgs: [LoweredExpr] = []
+        for (index, argument) in arguments.enumerated() {
+            guard let annotation = bodyParams[index].typeAnnotation,
+                  let paramType = resolveAnnotationType(annotation, userTypes: context.userTypes) else {
+                throw unsupported(
+                    "parameter '\(bodyParams[index].name)' of trait default '\(defaultMethod.name)' lacks a resolvable type",
+                    at: location
+                )
+            }
+            let loweredArg = try lowerExpr(argument.expression, expected: paramType, into: &context)
+            try requireAssignable(loweredArg.type, to: paramType, at: location)
+            loweredArgs.append(loweredArg)
+        }
+        // Specialize the default body for this receiver type (same shape as
+        // lowerMethod: self = receiver nominal + declared params). Dedup by
+        // IR name so repeated call sites share one function.
+        let irName = "\(IRName.mangle(defaultMethod.name))__\(IRName.mangle(typeName))"
+        context.traitDefaultsCollector.add(try lowerMethod(
+                defaultMethod, typeName: typeName, selfType: receiverType,
+                typeInference: context.typeInference, moduleSignatures: context.moduleSignatures,
+                nominalTypes: context.nominalTypes, userTypes: context.userTypes,
+                enums: context.enums, genericFuncTemplates: context.genericFuncTemplates,
+                closureIds: context.closureIds
+            ))
+        return LoweredExpr(
+            node: .call(
+                function: irName,
+                arguments: [receiver] + loweredArgs.map { $0.node },
+                returnType: returnType
+            ),
+            type: returnType ?? .i32
+        )
+    }
+
     // MARK: - Type conformance
 
     /// The HIR type of a nominal field, resolved through the registry (G3).
@@ -3208,6 +3420,19 @@ private struct FunctionContext {
     /// (stable AST-node identity, legacy ClosureEmitter contract). Assigned
     /// by a module-level pre-pass so emission order is source-order stable.
     let closureIds: [String: Int]
+    /// G12: trait registry — trait bodies by name plus per-type trait lists.
+    /// Read-only at lowering time; drives the member-call trait-default
+    /// fallback (legacy tryTraitMethodDispatch mirror).
+    let traitRegistry: HIRLowerer.TraitRegistry
+    /// G12: trait default bodies specialized at dispatch sites (IR name
+    /// `方法__类型`), collected here for module emission. Reference type so
+    /// appends from nested FunctionContexts propagate to `lower()`.
+    let traitDefaultsCollector: HIRLowerer.TraitDefaultCollector
+    /// G12: receiver field types for bare-name resolution inside method
+    /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
+    var selfFieldTypes: [String: HIRType] = [:]
+    var selfTypeNameLowered: String?
+    var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
 
     init(
@@ -3220,7 +3445,9 @@ private struct FunctionContext {
         userTypes: [String: HIRType] = [:],
         enums: [String: HIREnumDecl] = [:],
         genericFuncTemplates: [String: FuncDecl] = [:],
-        closureIds: [String: Int] = [:]
+        closureIds: [String: Int] = [:],
+        traitRegistry: HIRLowerer.TraitRegistry = HIRLowerer.TraitRegistry(traits: [:], typeTraits: [:]),
+        traitDefaultsCollector: HIRLowerer.TraitDefaultCollector = HIRLowerer.TraitDefaultCollector()
     ) {
         self.functionName = functionName
         self.returnType = returnType
@@ -3232,6 +3459,8 @@ private struct FunctionContext {
         self.enums = enums
         self.genericFuncTemplates = genericFuncTemplates
         self.closureIds = closureIds
+        self.traitRegistry = traitRegistry
+        self.traitDefaultsCollector = traitDefaultsCollector
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {
