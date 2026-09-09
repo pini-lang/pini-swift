@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 前置小批已完成并回填，活跃 Open 工单清零，下一步 M5 分格扩张批待点名——开工前先出细化步骤）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G11 已完成并回填，活跃 Open 工单清零，下一格 G12 trait 待点名——开工前先出细化步骤）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -427,3 +427,29 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 **45/45**（+4：四语料直用）；全量回归
       **1278/0/0**；sweep hir-emit **28/59 → 32/59**（closures /
       lambda / lambda-typed / higher-order 进列）。
+  - **G11 struct 深化族完成（2026-09-09，分支
+    `agent/pini-dev/llvm-m5-g11-struct-deepening`，composition / access
+    / multidim ×3）**：
+    - **i8 标量进 slice**：`HIRType.i8` 新 case（llvmSpelling `i8`、
+      isNumeric）；`HIRType(from:)` .simple 增 `I8` 映射；字段/方法
+      返回/字段读全通道可用，算术发射拓宽至 i32（与解释器语义对齐）。
+    - **composition 展平**：模块预扫后 `flattenComposedNominals` 对齐
+      解释器 `mergeComposedType`（子前父后、同名子覆盖、visited 防
+      环）；`NominalInfo.decl` 改 var、增 `composedParent` 与
+      `replacing(fields:methods:)`；typeDecls 循环的 fields 与
+      methods 均从展平后 registry 取（首版只换 methods → emitter
+      `unknown nominal field`，差分拦住）；合并方法存回
+      extensionMethods，mangling 保持子侧 `方法__子类型`。
+    - **unsafe 恒等降载**：`lowerExpr` 增 `.unsafe` 恒等透传。
+    - **死臂 match parity**：match 非 Optional/enum scrutinee → 死臂
+      （发射不派发）；`lowerMatch` default 分支 `lowerDeadArmBody`
+      按「绑定类型 = scrutinee 类型本身」注册绑定（外层绑 row =
+      array(i32)、内层绑 v = i32，scrutinee 即绑定值非 element）；emitter
+      `emitMatch` default 由 fatalError 改 `emitExpr(scrutinee)` 后跳
+      过全部臂。**勘测钉定**：解释器裸下标读返回裸值
+      （`print(m[1])` → row），match some/none 静默不命中——语料头宣
+      称的「下标读返回 Optional」语义解释器也未实现，宿主级语义缺口
+      立工单（不在本格修）。
+    - **验收**：差分 **45→48**（+3：三语料直用）；全量回归
+      **1281/0/0**；sweep hir-emit **32/59 → 35/59**（composition /
+      access / multidim 进列；multidim legacy FAIL E6-002 属既有）。

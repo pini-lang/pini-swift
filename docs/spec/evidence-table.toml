@@ -19,7 +19,7 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md"]
-last_refresh = "2026-09-09T00:45+08:00"
+last_refresh = "2026-09-09T02:05+08:00"
 last_sweep = "2026-09-08T23:33:00+08:00"
 dangling_ids = ["E-001", "E-008", "E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-102", "E-110", "E-111", "E-112", "E-120", "E-121"]
 [[evidence]]
@@ -293,3 +293,21 @@ output = "HIR differential 45/45 (new: testDiffLambda/testDiffLambdaTyped/testDi
 validated_at = "2026-09-09T00:45+08:00"
 status = "FRESH"
 note = "实测钉定：funcLiteral 在 varDecl initializer 为 Expression.funcLiteral(decl:location:)，capture 语句在闭包体内为 Statement.captureStatement(name:location:)，函数类型注解走 TypeAnnotation.function(params:returns:captured:location:)（探针实测后写分派位）；HIR 新增 HIRType.function（fat pointer ABI）+ closureLiteral/functionValue/indirectCall 表达式 + captureMarker 语句；lowerFuncLiteral 创建点自由变量分析（体引用-参数-本块声明-顶层函数名），按引用捕获（env 字段=被捕获变量存储槽指针，解释器 currentEnv 共享语义）；发射侧闭包 define 缓冲模块末尾拼接，env 结构类型声明必须进模块头——首版放尾部，创建点 GEP 先于声明，lli 报 base element of getelementptr must be sized，差分拦截后修正；具名函数作为值走 env 忽略适配器 @__adapter_<mangled>（legacy #8 语义）；testGateRejectsLambda 边界断言过期改为正向 testLambdaLowersToClosureLiteral；lazyref 实测 unknown generic LazyRef（模板未在语料内声明，跨文件域 G13），维持 FAIL 豁免非静默"
+
+[[evidence]]
+id = "E-151"
+claim = "M5 G11 struct deepening family (composition flattening, i8 scalar, unsafe identity, dead-arm match parity) lands on the HIR pipeline with interpreter parity; multidim Optional-subscript semantics gap filed as a separate issue"
+artifacts = [
+  "pini-swift/Sources/PiniCore/HIR/HIRNode.swift",
+  "pini-swift/Sources/PiniCore/HIR/HIRLowerer.swift",
+  "pini-swift/Sources/PiniCore/CodeGen/IREmitter.swift",
+  "pini-swift/docs/issue-llvm-rewrite-plan-2026-09-07.md",
+  "pini-swift/docs/issue-multidim-optional-subscript-semantics-2026-09-09.md",
+  "pini-swift/Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStructComposition.pini",
+  "pini-swift/tools/capability-sweep.tsv",
+]
+command = "swift test --package-path pini-swift --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && bash tools/capability-sweep.sh"
+output = "HIR differential 45->48 (new: testDiffStructComposition/testDiffStructI8Fields/testDiffMultidimArray red->green); full regression 1281/0/0; capability-sweep hir-emit 32/59 -> 35/59 (composition/access/multidim); multidim legacy stays FAIL (E6-002, pre-existing)"
+validated_at = "2026-09-09T02:05+08:00"
+status = "FRESH"
+note = "实测钉定：死臂绑定类型 = scrutinee 类型本身（外层 match m[1] 绑 row = array(i32)、内层 match row[2] 绑 v = i32，scrutinee 即绑定值非 element——首版走 arrayElementType 与 typeInference.infer 双双被探针否证，checker 环境 check 结束后已 pop match 臂作用域，infer 返 nil，~90 行 firstIdentifierUse 辅助全废删除）；composition 展平 flattenComposedNominals 对齐解释器 mergeComposedType（子前父后同名子覆盖防环），typeDecls 循环 fields 也须从展平 registry 取——首版只换 methods，emitter unknown nominal field 被差分拦住；emitter emitMatch default 由 fatalError 改 emitExpr(scrutinee) 跳全部臂；探针实证 multidim 语料宣称的下标读返回 Optional 语义解释器也未实现（match some/none 静默不命中），立 docs/issue-multidim-optional-subscript-semantics-2026-09-09.md，不在本格修"

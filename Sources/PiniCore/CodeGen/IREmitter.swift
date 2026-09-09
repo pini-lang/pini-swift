@@ -421,7 +421,13 @@ public final class IREmitter {
                 }
             )
         default:
-            fatalError("IREmitter: match scrutinee kind not wired (HIRLowerer gates)")
+            // G11 multidim parity: bare-value scrutinees (direct subscript
+            // reads — the Optional-returning channel is a separate semantic)
+            // never fire some/none arms in the interpreter either; the match
+            // falls through silently (probe-verified). Emit the scrutinee
+            // for its side effects, then skip every arm — the dead-arm
+            // bodies were lowered only for scope resolution.
+            _ = emitExpr(scrutinee)
         }
     }
 
