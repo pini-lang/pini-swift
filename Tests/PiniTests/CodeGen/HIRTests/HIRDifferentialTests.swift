@@ -182,4 +182,11 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffLambdaTyped() throws { try assertParity(fixtureName: "testDiffLambdaTyped") }
     func testDiffHigherOrder() throws { try assertParity(fixtureName: "testDiffHigherOrder") }
     func testDiffClosures() throws { try assertParity(fixtureName: "testDiffClosures") }
+
+    // MARK: - G11 struct deepening (composition flattening, i8 fields,
+    // nested arrays with unsafe subscript reads)
+
+    func testDiffStructComposition() throws { try assertParity(fixtureName: "testDiffStructComposition") }
+    func testDiffStructI8Fields() throws { try assertParity(fixtureName: "testDiffStructI8Fields") }
+    func testDiffMultidimArray() throws { try assertParity(fixtureName: "testDiffMultidimArray") }
 }
