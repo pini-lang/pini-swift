@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，活跃 Open 工单清零，下一格 G13 跨文件待点名——开工前先出细化步骤）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，G13 批 1（lazyref）完成，下一格 G13 批 2 跨文件待点名——开工前先出细化步骤）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -488,3 +488,33 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 **48→50**（+2：trait / validated-match）；全量
       回归 **1283/0/0**（基线 1281 + 新增 2）；sweep hir-emit
       **35/59 → 36/59**（trait 进列；validated-match 本为 PASS）。
+
+  - **G13 批 1（lazyref）完成（2026-09-09，分支
+    `agent/pini-dev/llvm-m5-g13-crossfile-lazyref`，跨文件族的
+    LazyRef 先行小格）**：
+    - **HIR 三件套新增**：`HIRType.lazyRef(element:)`
+      （`%bk_lazyref*`）；`lazyRefConstruct(closure:type:)` /
+      `lazyRefValue(handle:type:)` 两 HIRExpr case。
+    - **降载分派**：`HIRType(from:)` 注解映射收 `LazyRef<T>`；
+      `.genericConstruct` case **模板分派前**特判 `typeName ==
+      "LazyRef"`（内建优先，用户同名模板不可遮蔽——legacy
+      builtin-first 契约对齐）；`.member` 与 `lowerMemberCall`
+      双入口收 `.value`（字段形态 + 零参调用形态）。
+    - **发射**：`usesLazyRef` flag 条件头声明（不触碰无 LazyRef
+      模块的 golden IR）；`@__lazyref_wrapper_<T>` 按元素 IR 拼写
+      去重缓冲（统一 ptr ABI，运行时分配输出 box——wrapper 内
+      alloca 逃逸 UB 由 runtime 侧规避）；元素 bytes/tag 表对齐
+      legacy `lazyRefElemInfo`（**string 用 raw-ptr tag 4**，非
+      array 族 share-counted tag 3——常量字节无 share count）。
+    - **勘测钉定**：`LazyRef<I32>(闭包)` 解析为
+      `.genericConstruct(typeName:"LazyRef", ...)`（非 .call 包裹）；
+      闭包 id 由 precollectClosureIds 经 genericConstruct 实参遍历
+      预注册（G6 链路复用，无需新预扫）。
+    - **验收**：差分 **50→51**（+1：testDiffLazyRef，once 缓存 +
+      复制共享语义 parity）；全量回归 **1284/0/0**；sweep hir-emit
+      **36/59 → 37/59**（lazyref.pini 进列，G6/G10 期跨格豁免解除）。
+    - **G13 批 2（跨文件大头）待开工**：multifile ×2 +
+      package-demo ×5 依赖 `HIRLowerer.lower` 的 package 级入口
+      （checker/interpreter/semantic 均已有），D1=逐文件 lower +
+      全局预扫 / D2=sweep 入口自动切换 / D3=进程内 Package 驱动差分 /
+      D4=HIR 不重复 enforce 可见性。
