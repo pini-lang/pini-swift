@@ -1,6 +1,6 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，G13 批 1（lazyref）完成，下一格 G13 批 2 跨文件待点名——开工前先出细化步骤）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，G13 全族完成（批 1 lazyref + 批 2 跨文件），差分 53/53、回归 1286/0/0、sweep 44/59——下一格 G11/G12/G14/G15 待点名）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -513,8 +513,29 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 **50→51**（+1：testDiffLazyRef，once 缓存 +
       复制共享语义 parity）；全量回归 **1284/0/0**；sweep hir-emit
       **36/59 → 37/59**（lazyref.pini 进列，G6/G10 期跨格豁免解除）。
-    - **G13 批 2（跨文件大头）待开工**：multifile ×2 +
-      package-demo ×5 依赖 `HIRLowerer.lower` 的 package 级入口
-      （checker/interpreter/semantic 均已有），D1=逐文件 lower +
-      全局预扫 / D2=sweep 入口自动切换 / D3=进程内 Package 驱动差分 /
-      D4=HIR 不重复 enforce 可见性。
+    - **G13 批 2（跨文件大头）完成（2026-09-09，分支
+      `agent/pini-dev/llvm-m5-g13-crossfile-package`）**：
+    - **HIRLowerer.lower(package:)（D1）**：全包 declarations 合并为
+      虚拟模块，跑既有单模块 pre-pass 链——trait/nominal/enum 注册表、
+      签名表、闭包预收集、单态化全部免费升级为全局预扫；跨文件引用
+      与同文件前向引用同路解析。可见性不重复 enforce（D4，checker
+      package context 已 enforce）。
+    - **closureId 键修正**：键从 `行:列` 扩为 `文件:行:列`——合并包内
+      两文件可有同行列字面量，旧键会合并二者的捕获（legacy
+      ClosureEmitter 契约的文件分量在单文件世界是隐式的）。
+    - **effective return type**：void 声明但体中带值 return 的函数/
+      方法，在定义侧、签名表、调用点三处统一升级为返回值类型——
+      解释器运行时真把值流出去（package-demo 语料活文档明载「void，
+      返回值运行时照常返回」），LLVM ABI 需静态单返回类型。
+    - **CLI emit 自动切换（D2）**：`PINI_HIR_PIPELINE=1` 下文件属于
+      清单模块即走 package 管线；裸文件维持单文件行为；模块根经
+      locateModuleRoot 向上解析（嵌套 `_` 目录 helpers.pini 因此进道）。
+    - **进程内 Package 差分驱动（D3）**：HIRDifferentialTests 增
+      loadPackageCorpus（FileLoader.loadDirectory 同款入口）+
+      runPackageInterpreter/runPackageNewPipeline 双通道；语料直引
+      examples/multifile 与 examples/package-demo（零 fixture 副本）。
+    - **验收**：差分 **51→53**（+2：testDiffPackageMultiFile /
+      testDiffPackageDemo）；全量回归 **1286/0/0**（基线 1284 + 新增 2）；
+      sweep hir-emit **37/59 → 44/59**（跨文件 7 行全 PASS）。
+    - **下一格候选**：G11（struct 深化收尾）/ G12（trait）/ G14（FFI）/
+      G15（控制流零散）；M6 flip 门槛 = 51/59 + 豁免清单。
