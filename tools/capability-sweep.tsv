@@ -36,17 +36,17 @@ examples/lazyref.pini	PASS	PASS	PASS	PASS
 examples/lexical.pini	PASS	PASS	PASS	PASS	
 examples/match.pini	PASS	PASS	PASS	PASS	
 examples/multidim.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined identifier row' 
-examples/multifile/main.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 向量 — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/multifile/utils.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/multifile/main.pini	FAIL	SKIP	PASS	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 向量 — not pre-registered' 
+examples/multifile/utils.pini	PASS	PASS	PASS	FAIL	
 examples/object.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'undefined method 增加' 
 examples/operators.pini	PASS	PASS	PASS	PASS	
 examples/optional-sugar.pini	PASS	PASS	PASS	PASS	
 examples/optional.pini	PASS	PASS	PASS	PASS	
-examples/package-demo/_internals/helpers.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/package-demo/_私密文件.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/package-demo/api.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/package-demo/main.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 公开API — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/package-demo/secrettypes.pini	PASS	PASS	FAIL	FAIL	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/package-demo/_internals/helpers.pini	PASS	PASS	PASS	FAIL	
+examples/package-demo/_私密文件.pini	PASS	PASS	PASS	FAIL	
+examples/package-demo/api.pini	PASS	PASS	PASS	FAIL	
+examples/package-demo/main.pini	FAIL	SKIP	PASS	FAIL	Error: IRGen Error [E6-002]   unsupported expression 'unknown function 公开API — not pre-registered' 
+examples/package-demo/secrettypes.pini	PASS	PASS	PASS	FAIL	
 examples/recursion.pini	PASS	PASS	PASS	PASS	
 examples/slice.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupported expression 'array method slice not yet supported in IR' 
 examples/stdlib.pini	PASS	PASS	PASS	PASS	
