@@ -31,7 +31,12 @@ final class HIRDifferentialTests: XCTestCase {
         return nil
     }
 
-    private func runNewPipeline(_ source: String) throws -> String {
+    /// `stdin` is injected identically on both channels when non-nil. Without
+    /// it a fixture that reads stdin compares two different streams (the
+    /// interpreter reads the test process's stdin, lli inherits its own), so
+    /// the parity claim would be vacuous. The bytes carry no trailing newline
+    /// for the `readLine` fixture — see `assertParityWithStdin`.
+    private func runNewPipeline(_ source: String, stdin: String? = nil) throws -> String {
         try LLVMGate.requireLLI()
         let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let fileName = "test.pini"
@@ -58,7 +63,13 @@ final class HIRDifferentialTests: XCTestCase {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
+        let inputPipe = stdin.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        if let stdin, let inputPipe {
+            inputPipe.fileHandleForWriting.write(Data(stdin.utf8))
+            inputPipe.fileHandleForWriting.closeFile()
+        }
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             XCTFail("lli exited \(process.terminationStatus) for IR:\n\(ir)")
@@ -68,7 +79,7 @@ final class HIRDifferentialTests: XCTestCase {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    private func runInterpreter(_ source: String) throws -> String {
+    private func runInterpreter(_ source: String, stdin inputText: String? = nil) throws -> String {
         let fileName = "test.pini"
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
@@ -78,12 +89,27 @@ final class HIRDifferentialTests: XCTestCase {
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
+        // Unbuffered stdin so the injected fd is what `readLine()` sees.
+        var originalStdin: Int32 = -1
+        if let inputText {
+            let inputPipe = Pipe()
+            originalStdin = dup(STDIN_FILENO)
+            setvbuf(stdin, nil, _IONBF, 0)
+            dup2(inputPipe.fileHandleForReading.fileDescriptor, STDIN_FILENO)
+            inputPipe.fileHandleForWriting.write(Data(inputText.utf8))
+            inputPipe.fileHandleForWriting.closeFile()
+        }
+
         let interpreter = Interpreter()
         try interpreter.run(module: module)
 
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
         close(originalStdout)
+        if originalStdin >= 0 {
+            dup2(originalStdin, STDIN_FILENO)
+            close(originalStdin)
+        }
         pipe.fileHandleForWriting.closeFile()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -117,6 +143,26 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertTrue(interpreterOutput.isEmpty,
                       "\(fixtureName): this fixture is declared output-free; use assertParity instead",
                       file: file, line: line)
+    }
+
+    /// Parity for fixtures that read stdin. Both channels must see the SAME
+    /// bytes — the interpreter reads the test process's stdin and lli
+    /// inherits its own — so the input is injected explicitly. Callers pass
+    /// input WITHOUT a trailing newline: the interpreter's `readLine()`
+    /// strips it while both LLVM channels hand `fgets`' buffer straight to
+    /// `print` (`%s`), trailing newline included. That difference is a
+    /// pre-existing legacy/interpreter divergence the M6 flip preserves
+    /// (registered in the rewrite plan, same class as print(F64)); the
+    /// newline-free input is the slice on which byte parity actually holds.
+    private func assertParityWithStdin(fixtureName: String, stdin: String,
+                                       file: StaticString = #filePath, line: UInt = #line) throws {
+        let source = try loadPiniFixture(fixtureName, filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source, stdin: stdin)
+        let llvmOutput = try runNewPipeline(source, stdin: stdin)
+        XCTAssertEqual(llvmOutput, interpreterOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+                       file: file, line: line)
+        XCTAssertFalse(llvmOutput.isEmpty, "\(fixtureName): expected non-empty output", file: file, line: line)
     }
 
     // MARK: - G13 batch 2: multi-file package differential
@@ -381,4 +427,19 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffTupleLen() throws { try assertParity(fixtureName: "testDiffTupleLen") }
     func testDiffTupleConstruct() throws { try assertParity(fixtureName: "testDiffTupleConstruct") }
     func testDiffTupleConstructClang() throws { try assertParity(fixtureName: "testDiffTupleConstructClang") }
+
+    // MARK: - M6a G17 builtins and type repair (fixtures inherited from the
+    // LLVM-driven suites: readLine, is_ascii_digit, I8 field defaults,
+    // unannotated-parameter fallback)
+
+    /// `readLine()` — stdin injected on both channels (input without a
+    /// trailing newline; see `assertParityWithStdin`).
+    func testDiffReadLine() throws {
+        try assertParityWithStdin(fixtureName: "testDiffReadLine", stdin: "hello_stdin")
+    }
+
+    func testDiffIsAsciiDigit() throws { try assertParity(fixtureName: "testDiffIsAsciiDigit") }
+    func testDiffI8StructField() throws { try assertParity(fixtureName: "testDiffI8StructField") }
+    func testDiffParamNoAnnotationVoid() throws { try assertParity(fixtureName: "testDiffParamNoAnnotationVoid") }
+    func testDiffParamNoAnnotationReturn() throws { try assertParity(fixtureName: "testDiffParamNoAnnotationReturn") }
 }
