@@ -103,6 +103,26 @@ public final class IREmitter {
     private var lazyrefWrappers: [String] = []
     private var lazyrefWrapperNames: Set<String> = []
 
+    /// Program base for compile-time IO path baking — the new-pipeline
+    /// counterpart of the legacy generator's knob of the same name, which
+    /// fed its own IO emitter. An unprefixed relative path *literal* is
+    /// written into the IR as `base + "/" + path`; absolute paths and `./`
+    /// `../` prefixed ones stay as written (the runtime CWD resolves those),
+    /// exactly mirroring both the legacy emitter and the interpreter's
+    /// runtime resolution rule.
+    ///
+    /// Default nil, so an emitter without a configured base — every
+    /// pre-existing test that drives the pipeline directly — behaves as
+    /// before and its golden IR is unchanged. Code generation needs the base
+    /// because the emitted program has no runtime notion of where its source
+    /// lived; a non-literal path expression cannot be baked either way and
+    /// keeps resolving against the CWD (known v1 limitation).
+    ///
+    /// This sits in the emitter rather than in the HIR tree on purpose: it is
+    /// a code-generation environment input, not a language-semantics
+    /// decision, and the HIR tree stays a pure lowering of the source.
+    public var programBase: String?
+
     public init() {}
 
     // MARK: - Module
@@ -1249,13 +1269,27 @@ public final class IREmitter {
         }
     }
 
+    /// Bake a path *literal* against the program base (see `programBase`).
+    /// Non-literals and paths that the rule exempts come back untouched, so
+    /// every caller can route its path argument through this unconditionally.
+    private func bakedIOPath(_ path: HIRExpr) -> HIRExpr {
+        guard let base = programBase,
+              case .stringConst(let value) = path,
+              !value.hasPrefix("/"),
+              !value.hasPrefix("./"),
+              !value.hasPrefix("../") else {
+            return path
+        }
+        return .stringConst(value: base + "/" + value)
+    }
+
     /// `writeFile(path, content)` (G15): fopen(path, "w") / strlen /
     /// fwrite / fclose. Mirrors the legacy emitter byte for byte — no
     /// trailing newline is appended, matching the interpreter's
     /// `String.write(toFile:)`. Yields the fclose i32 as the value.
     private func emitFileWrite(path: HIRExpr, content: HIRExpr) -> IRValue {
         usesFileIO = true
-        let pathValue = emitExpr(path)
+        let pathValue = emitExpr(bakedIOPath(path))
         let contentValue = emitExpr(content)
         let mode = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_w", indices: [0, 0]) + "\n"
@@ -1277,7 +1311,7 @@ public final class IREmitter {
     /// stays far below it.
     private func emitFileRead(path: HIRExpr) -> IRValue {
         usesFileIO = true
-        let pathValue = emitExpr(path)
+        let pathValue = emitExpr(bakedIOPath(path))
         let mode = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]) + "\n"
         let handle = builder.freshTemp()

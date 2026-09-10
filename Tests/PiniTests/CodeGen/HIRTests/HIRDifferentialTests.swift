@@ -36,7 +36,15 @@ final class HIRDifferentialTests: XCTestCase {
     /// interpreter reads the test process's stdin, lli inherits its own), so
     /// the parity claim would be vacuous. The bytes carry no trailing newline
     /// for the `readLine` fixture — see `assertParityWithStdin`.
-    private func runNewPipeline(_ source: String, stdin: String? = nil) throws -> String {
+    /// `programBase` mirrors the CLI's program-base input (nil = the pre-G58
+    /// behavior every earlier fixture relies on); `workingDirectory` sets the
+    /// directory the lli process starts in. Both default to the old shape, so
+    /// existing callers are unaffected. The pair exists so a fixture can
+    /// prove the base is honored *while* the CWD points somewhere else — the
+    /// only configuration in which base baking is observable.
+    private func runNewPipeline(_ source: String, stdin: String? = nil,
+                                programBase: String? = nil,
+                                workingDirectory: String? = nil) throws -> String {
         try LLVMGate.requireLLI()
         let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let fileName = "test.pini"
@@ -47,7 +55,9 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertTrue(errors.isEmpty, "slice sources must typecheck: \(errors)")
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-        let ir = IREmitter().emit(module: hir)
+        let emitter = IREmitter()
+        emitter.programBase = programBase
+        let ir = emitter.emit(module: hir)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_hir_diff_\(UUID().uuidString).ll"
         defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -60,6 +70,9 @@ final class HIRDifferentialTests: XCTestCase {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: lli)
         process.arguments = ["--dlopen=\(dylib)", tmpIR]
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -79,7 +92,8 @@ final class HIRDifferentialTests: XCTestCase {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    private func runInterpreter(_ source: String, stdin inputText: String? = nil) throws -> String {
+    private func runInterpreter(_ source: String, stdin inputText: String? = nil,
+                                programBase: String? = nil) throws -> String {
         let fileName = "test.pini"
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
@@ -100,7 +114,7 @@ final class HIRDifferentialTests: XCTestCase {
             inputPipe.fileHandleForWriting.closeFile()
         }
 
-        let interpreter = Interpreter()
+        let interpreter = Interpreter(programBase: programBase)
         try interpreter.run(module: module)
 
         fflush(stdout)
@@ -457,4 +471,102 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffTraitDefaultMethod() throws { try assertParity(fixtureName: "testDiffTraitDefaultMethod") }
     func testDiffEmptyArray() throws { try assertParity(fixtureName: "testDiffEmptyArray") }
     func testDiffEnumTypedField() throws { try assertParity(fixtureName: "testDiffEnumTypedField") }
+
+    // MARK: - M6a G19 program base baking (CWD differs from the script directory)
+
+    /// Unique temp directory, torn down when the test ends (the same shape
+    /// IOTests uses for its base-rule fixtures, kept local so this file stays
+    /// self-contained).
+    private func makeTempDir(_ label: String) throws -> String {
+        let dir = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_hir_base_\(label)_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: dir) }
+        return dir
+    }
+
+    /// Legacy channel: the type-check -> IRGenerator -> lli sequence the CLI
+    /// still uses by default, including the generator's own program-base
+    /// input. The legacy emitter is the reference implementation the HIR
+    /// emitter has to match, so routing one fixture through all three
+    /// channels pins the rule itself instead of only agreement with the
+    /// interpreter.
+    private func runLegacyPipeline(_ source: String, programBase: String,
+                                   workingDirectory: String) throws -> String {
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
+        let fileName = "test.pini"
+        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
+        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        XCTAssertTrue(errors.isEmpty, "slice sources must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let generator = IRGenerator()
+        generator.typeInference = checker.typeInference
+        generator.programBase = programBase
+        let ir = try generator.generate(module: module)
+
+        let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_legacy_diff_\(UUID().uuidString).ll"
+        defer { try? FileManager.default.removeItem(atPath: tmpIR) }
+        try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
+
+        guard let lli = LLVMToolchain.lliPath else {
+            throw NSError(domain: "LLIUnavailable", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "lli not available"])
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: lli)
+        process.arguments = ["--dlopen=\(dylib)", tmpIR]
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            XCTFail("lli exited \(process.terminationStatus) for legacy IR:\n\(ir)")
+            return ""
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// The program base is a code-generation input on all three channels: an
+    /// unprefixed relative path *literal* is baked against the directory the
+    /// script lives in, so a program started from an unrelated CWD still finds
+    /// its resource. `res.txt` deliberately exists in both directories with
+    /// different contents — a channel that ignored the base would not fail
+    /// loudly, it would silently read the decoy, and the byte comparison is
+    /// what catches it. Before the base reached the HIR emitter, that channel
+    /// resolved `res.txt` against lli's CWD and printed the decoy; the write
+    /// half of the fixture fails the same way by landing in the CWD.
+    func testDiffIoProgramBase() throws {
+        let base = try makeTempDir("base")
+        let cwd = try makeTempDir("cwd")
+        try "base-resource".write(toFile: (base as NSString).appendingPathComponent("res.txt"),
+                                  atomically: true, encoding: .utf8)
+        try "cwd-decoy".write(toFile: (cwd as NSString).appendingPathComponent("res.txt"),
+                              atomically: true, encoding: .utf8)
+
+        let source = try loadPiniFixture("testDiffIoProgramBase", filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source, programBase: base)
+        XCTAssertEqual(interpreterOutput, "base-resource\nwritten-to-base\n",
+                       "the interpreter resolves an unprefixed path against the program base")
+
+        let legacyOutput = try runLegacyPipeline(source, programBase: base, workingDirectory: cwd)
+        XCTAssertEqual(legacyOutput, interpreterOutput,
+                       "the legacy generator bakes the base into the literal, so its CWD cannot matter\n--- interpreter ---\n\(interpreterOutput)--- legacy ---\n\(legacyOutput)")
+
+        let hirOutput = try runNewPipeline(source, programBase: base, workingDirectory: cwd)
+        XCTAssertEqual(hirOutput, interpreterOutput,
+                       "the HIR emitter must bake the base too, or lli reads the CWD decoy\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+
+        XCTAssertEqual(try String(contentsOfFile: (base as NSString).appendingPathComponent("out.txt"),
+                                  encoding: .utf8),
+                       "written-to-base", "an unprefixed writeFile must land in the program base")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: (cwd as NSString).appendingPathComponent("out.txt")),
+                       "an unprefixed writeFile must not land in the runtime CWD")
+    }
 }

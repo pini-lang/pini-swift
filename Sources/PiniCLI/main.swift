@@ -1351,7 +1351,10 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
  if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1" {
   checker.typeInference.environment?.persistAcrossScopesForCodegen = true
   let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-  return IREmitter().emit(module: hirModule)
+  let emitter = IREmitter()
+  // 批 5（G58，D-4）：HIR 端同样注入程序基准，与解释器、旧生成器同规则。
+  emitter.programBase = absoluteProgramBase(fileName)
+  return emitter.emit(module: hirModule)
  }
  let generator = IRGenerator()
  generator.typeInference = checker.typeInference
@@ -1377,20 +1380,26 @@ func runEmitCommand(source: String, fileName: String, outputPath: String?) throw
 /// same entry `pini run <dir>` uses. Returns nil when the file is outside
 /// any module (bare single-file mode) or the path itself is a directory.
 /// Nested dirs (`_internals/`) resolve upward via locateModuleRoot, matching
-/// the checker's visibility anchoring.
-private func loadOwningPackageIfModule(path: String) throws -> Package? {
+/// the checker's visibility anchoring. The module root comes back alongside
+/// the package so a caller can derive the program base the way the module
+/// run/test paths do; `Package` itself carries no root.
+private func loadOwningPackageIfModule(path: String) throws -> (package: Package, moduleRoot: String)? {
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
        !isDir.boolValue else { return nil }
  guard let moduleRoot = try FileLoader.locateModuleRoot(for: path) else { return nil }
  let manifest = try FileLoader.loadManifest(directory: moduleRoot)
- return try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
+ return try (FileLoader.loadDirectory(path: moduleRoot, manifest: manifest), moduleRoot)
 }
 
 /// G13 batch 2: package-level HIR emit — package semantic + type-check,
 /// then `HIRLowerer.lower(package:)` -> IREmitter. Visibility was already
 /// enforced by the checker (D4); the HIR channel re-enforces nothing.
-private func runHIRPackageEmit(package: Package, outputPath: String?) throws {
+/// `moduleRoot` is the package's own directory: the module run and test
+/// paths anchor the program base there, and the HIR channel follows them
+/// rather than the entry file's directory, because the whole package is
+/// lowered as one unit.
+private func runHIRPackageEmit(package: Package, moduleRoot: String, outputPath: String?) throws {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: package)
  let checker = TypeChecker()
@@ -1398,7 +1407,10 @@ private func runHIRPackageEmit(package: Package, outputPath: String?) throws {
  // #46-optional: same persistent-table fallback as the single-file pipeline.
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
  let hirModule = try HIRLowerer.lower(package: package, typeInference: checker.typeInference)
- let ir = IREmitter().emit(module: hirModule)
+ let emitter = IREmitter()
+ // 批 5（G58，D-1）：模块基准 = 模块根，与解释器模块路径一致。
+ emitter.programBase = absoluteProgramBase(moduleRoot)
+ let ir = emitter.emit(module: hirModule)
  if let out = outputPath {
   try ir.write(toFile: out, atomically: true, encoding: .utf8)
  } else {
@@ -1611,8 +1623,9 @@ case "emit":
  // outside any module is unchanged. Directory arguments were never
  // accepted here, so no directory branch is added.
  if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1",
-    let package = try loadOwningPackageIfModule(path: args[2]) {
-  try runHIRPackageEmit(package: package, outputPath: args.count >= 4 ? args[3] : nil)
+    let loaded = try loadOwningPackageIfModule(path: args[2]) {
+  try runHIRPackageEmit(package: loaded.package, moduleRoot: loaded.moduleRoot,
+                        outputPath: args.count >= 4 ? args[3] : nil)
  } else {
   let source = try readFile(args[2])
   try runEmitCommand(source: source, fileName: args[2],

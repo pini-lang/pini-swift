@@ -1,0 +1,8 @@
+main|func() -> ():
+    ; program base: unprefixed relative paths resolve against the directory the
+    ; script lives in, not the process CWD. Driven by testDiffIoProgramBase,
+    ; which plants a decoy of the same name in the CWD.
+    print(readFile("res.txt"))
+    writeFile("out.txt", "written-to-base")
+    print(readFile("out.txt"))
+    return
