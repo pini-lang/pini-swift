@@ -866,3 +866,38 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     悬空集合（20 项）的延续——同源问题已由 G-09 记录，非本批引入的新缺陷类，故仅登记
     不追修；此处不写裸编号，以免为下一次扫描新增悬空引用。
 
+- **M6a a6 完成：横切② 诊断面与 `fopen` 判空（2026-09-10）**：
+
+  - **背景**：HIR 门控错误此前只有 `LocalizedError`（G15 红灯基线时为让 CLI 可读而加），
+    CLI 面因此**丢错误码、丢文件名、丢源码位置**，与其它诊断类型形态不同；同时
+    `emitFileRead`／`emitFileWrite` 把 `fopen` 的 NULL 直接交给 `fread`／`fwrite`，
+    缺文件时在 libc 内无消息地崩（legacy 同病）。
+  - **落点（4 处，无一处触 ADR-031 §4 止损）**：
+    1. **`HIRLoweringError.code`（默认 E6-004）**：全部门控共用一个码——它们报的是同一件
+       事「该构造尚未降载」，逐个分类只会造出一批无人消费的码。
+    2. **`DiagnosticProviding` 扩展**：复用 legacy 生成器的 E6 码域，与
+       `IRGenError.unsupportedFeature` 同码，使管线切换不改变码域。
+    3. **`ErrorFormatter.diagnosticArgs` 结构体兜底**：门控错误是「自由文本 + 位置」的
+       struct，`Mirror` 反射取不到 `String` 载荷，故显式落到模板需要的槽；并给该类型补
+       `irgen` 标签，否则渲染成重复的通用文案。
+    4. **`IREmitter.emitFopenNullGuard`**：读／写两处 `fopen` 后立刻判 NULL，走
+       `bk_panic` 并**具名内建**（`readFile`／`writeFile`）。刻意不插入路径实参——非字面量
+       实参在此折不成常量，只覆盖部分调用形态的消息比不覆盖更坏。
+  - **红证据形态（用变异，与 a5 同类）**：摘掉协议的符合点即复现 a6 前形态——CLI 输出
+    `Error: HIR lowering error at …`（无码、无文件名、无源码行）。单测在该态下 **4 项断言
+    失败**且**仅「消息文本」项通过**，正是修前特征：消息还在，码／标签／位置全丢。
+    还原后 CLI 给出 `Error: IRGen Error [E6-004]` ＋ `at …:15:14` ＋模板消息；
+    显式 `--lang zh` 时为 `Error: IR 生成错误 [E6-004]` ＋ `不支持的特性 '…'`。
+  - **`fopen` 判空实测**：读路径 `lli` 退出 134、首行
+    `Pini runtime error: readFile could not open the file`（此前是无消息段错误）；
+    写路径同形态具名 `writeFile`。**legacy 通道对照**：同一程序直接落 LLVM 崩溃转储、
+    无任何具名消息，证实注释里「legacy 无判空」的分歧陈述为真。
+  - **验证**：差分 **76/0/0**（与 a5 持平：判空块不在黄金 IR 路径上）；全量回归
+    **1310 / 0 / 0**（原 1309 / 0 / 0，新增 1 枚门控渲染测试）。
+  - **工单**：`docs/issue-hir-cli-diagnostic-loss-2026-09-08.md` 的验收达成，待 a8 统一归档。
+  - **本批立案（不追修）**：诊断面虽已带码与位置，但 `emit` 系命令仍以 `source: nil` 调
+    格式化器，**源码行与下划线标记缺失**，而同命令的类型错误路径是带的——两条路径质量
+    不一致，且源码本就在调用点手边。另附观察：资源层初始语言为 en，与 CLI 注释「默认 zh」
+    不符。两项合并立为 `docs/issue-emit-diagnostic-source-snippet-2026-09-10.md`，
+    交治理流程裁决，不在本批动手。
+
