@@ -1723,7 +1723,7 @@ public final class IREmitter {
         case .string:
             // Length: inline byte scan (strlen semantics — ASCII parity with
             // the interpreter's character count holds for the corpus).
-            let count = emitStringLength(containerValue)
+            let count = emitStringByteLength(containerValue)
             let lo = resolveSliceBound(start, count: count, defaultValue: "0")
             let hi = resolveSliceBound(end, count: count, defaultValue: count)
             let length = builder.freshTemp()
@@ -1805,8 +1805,10 @@ public final class IREmitter {
         return clamped
     }
 
-    /// Inline byte-scan length for an `i8*` string value.
-    private func emitStringLength(_ value: IRValue) -> String {
+    /// Inline byte-scan length for an `i8*` string value: counts bytes up to the
+    /// NUL terminator. Used for slice arithmetic, which indexes bytes — see
+    /// `emitStringCharCount` for the value `len` reports.
+    private func emitStringByteLength(_ value: IRValue) -> String {
         let counterSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
         bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: counterSlot) + "\n"
@@ -1841,6 +1843,63 @@ public final class IREmitter {
         return result
     }
 
+    /// Character count for an `i8*` string value: the number of Unicode
+    /// scalars, obtained by counting every byte that is not a UTF-8
+    /// continuation byte (`byte & 0xC0 == 0x80`). This is what `len` reports
+    /// on a string, and mirrors the byte-skipping loop the retired emitter
+    /// emitted — the interpreter counts grapheme clusters, which is the same
+    /// number for CJK and ordinary text; ZWJ and skin-tone sequences are a
+    /// known edge.
+    private func emitStringCharCount(_ value: IRValue) -> String {
+        let countSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: countSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: countSlot) + "\n"
+        let cursorSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: cursorSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: cursorSlot) + "\n"
+        let id = builder.freshLabel()
+        let loopLabel = "strcount.loop.\(id)"
+        let bodyLabel = "strcount.body.\(id)"
+        let countLabel = "strcount.count.\(id)"
+        let incLabel = "strcount.inc.\(id)"
+        let endLabel = "strcount.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: loopLabel) + "\n"
+        bodyIR += "\(loopLabel):\n"
+        let cursor = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: cursor, type: "i32", ptr: cursorSlot) + "\n"
+        let bytePtr = builder.freshTemp()
+        bodyIR += " \(bytePtr) = getelementptr i8, ptr \(value.ssaName), i32 \(cursor)\n"
+        let byte = builder.freshTemp()
+        bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
+        let isEnd = builder.freshTemp()
+        bodyIR += " \(isEnd) = icmp eq i8 \(byte), 0\n"
+        bodyIR += builder.fmtCondBr(cond: isEnd, thenLabelName: endLabel, elseLabelName: bodyLabel) + "\n"
+        bodyIR += "\(bodyLabel):\n"
+        let leadBits = builder.freshTemp()
+        bodyIR += " \(leadBits) = and i8 \(byte), 192\n"
+        let isContinuation = builder.freshTemp()
+        bodyIR += " \(isContinuation) = icmp eq i8 \(leadBits), 128\n"
+        bodyIR += builder.fmtCondBr(cond: isContinuation, thenLabelName: incLabel, elseLabelName: countLabel) + "\n"
+        bodyIR += "\(countLabel):\n"
+        let current = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: current, type: "i32", ptr: countSlot) + "\n"
+        let bumped = builder.freshTemp()
+        bodyIR += " \(bumped) = add i32 \(current), 1\n"
+        bodyIR += builder.fmtStore(value: bumped, type: "i32", ptr: countSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+        bodyIR += "\(incLabel):\n"
+        let cursorValue = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: cursorValue, type: "i32", ptr: cursorSlot) + "\n"
+        let cursorNext = builder.freshTemp()
+        bodyIR += " \(cursorNext) = add i32 \(cursorValue), 1\n"
+        bodyIR += builder.fmtStore(value: cursorNext, type: "i32", ptr: cursorSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: loopLabel) + "\n"
+        bodyIR += "\(endLabel):\n"
+        let total = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: total, type: "i32", ptr: countSlot) + "\n"
+        return total
+    }
+
     /// `arr.get(i)` — tolerant read: tail-counted negative index, then a
     /// bounds check; some(payload) or none. Arrays go through the runtime
     /// handle; strings scan bytes inline (ASCII parity with the interpreter's
@@ -1859,7 +1918,7 @@ public final class IREmitter {
         let count: String
         var arrayRaw: String? = nil
         if isStringReceiver {
-            count = emitStringLength(containerValue)
+            count = emitStringByteLength(containerValue)
         } else {
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
@@ -2033,7 +2092,7 @@ public final class IREmitter {
         if hirType(of: container) == .string {
             // String subscript: tail-counted index, inline strlen, OOB panics
             // (safe-assert channel, E5-005 parity); returns a 1-char string.
-            let count = emitStringLength(containerValue)
+            let count = emitStringByteLength(containerValue)
             let effective = tailCountIndex(index: indexValue.ssaName, count: count)
             let id = builder.freshLabel()
             let okLabel = "strsub.ok.\(id)"
@@ -2101,7 +2160,7 @@ public final class IREmitter {
             bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
             return IRValue(llvmType: "i32", ssaName: count)
         case .string:
-            return IRValue(llvmType: "i32", ssaName: emitStringLength(value))
+            return IRValue(llvmType: "i32", ssaName: emitStringCharCount(value))
         default:
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
