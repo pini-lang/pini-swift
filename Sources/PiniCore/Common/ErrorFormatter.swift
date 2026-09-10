@@ -108,6 +108,9 @@ public enum ErrorFormatter {
  case is TypeError: key = "type"; fallback = "类型错误"
  case is RuntimeError: key = "runtime"; fallback = "运行时错误"
  case is IRGenError: key = "irgen"; fallback = "IR 生成错误"
+ // The HIR pipeline's capability gate reuses the legacy generator's E6 code
+ // face, so it carries that domain's label instead of the generic fallback.
+ case is HIRLowerer.HIRLoweringError: key = "irgen"; fallback = "IR 生成错误"
  case let e as PiniError:
  switch e {
  case .lexer: key = "lexer"; fallback = "词法错误"
@@ -142,7 +145,10 @@ public enum ErrorFormatter {
 
  /// 从错误 case 关联值提取模板参数（label → String）。位置参数不入参。
  static func diagnosticArgs(of error: Error) -> [String: String] {
- guard let child = Mirror(reflecting: error).children.first else { return [:] }
+  // HIR 门控错误是「自由文本消息 + 位置」的结构体，反射走查取不到带标签的
+  // 载荷（String 无镜像子节点），故显式落到其码面模板需要的那一槽。
+  if let e = error as? HIRLowerer.HIRLoweringError { return ["feature": e.message] }
+  guard let child = Mirror(reflecting: error).children.first else { return [:] }
  var args: [String: String] = [:]
  for case let (label?, value) in Mirror(reflecting: child.value).children where label != "location" {
  args[label] = String(describing: value)

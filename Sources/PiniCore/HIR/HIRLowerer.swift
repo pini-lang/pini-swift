@@ -8,12 +8,24 @@ import Foundation
 /// scattered ~108 such decisions across emitters; they consolidate here.
 public enum HIRLowerer {
 
-    /// The single capability-gate error for the new pipeline. `LocalizedError`
-    /// routes the message through `localizedDescription` so CLI surfaces
-    /// ("HIRLoweringError error 1") keep the line:column + detail text.
+    /// The single capability-gate error for the new pipeline: free-form
+    /// English detail plus the source position of the construct that gate
+    /// rejected. The CLI renders it through the diagnostic resource layer,
+    /// which dispatches on a code and a position rather than on the message
+    /// text, so the type carries both (see the `DiagnosticProviding`
+    /// conformance in the common diagnostic layer).
+    ///
+    /// Every gate reports the same thing — "this construct is not lowered
+    /// yet" — so they share one code from the legacy E6 surface rather than
+    /// being classified one by one. `LocalizedError` is kept because the
+    /// description is the only text a caller without the resource layer gets.
     public struct HIRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
+        /// Diagnostic code, defaulted to the E6 unsupported-feature bucket.
+        /// The domain enum is the same source the legacy generator's codes
+        /// come from, so switching pipelines does not change the code domain.
+        public var code: String = "\(DiagnosticDomain.irgen.rawValue)-004"
 
         public var description: String {
             "HIR lowering error at \(location.line):\(location.column): \(message)"
@@ -375,15 +387,9 @@ public enum HIRLowerer {
                 }
                 return type
             }
-            let returnType: HIRType? = try sig.returnTypes.first.map { annotation in
-                guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                    throw unsupported(
-                        "return type '\(annotation.simpleName ?? "(non-scalar)")' of trait default '\(sig.name)'",
-                        at: sig.location
-                    )
-                }
-                return type
-            }
+            let returnType = try resolveReturnType(
+                sig, userTypes: userTypes, subject: "trait default '\(sig.name)'"
+            )
             return HIRLowererSignatureInfo(paramTypes: paramTypes, returnType: returnType)
         }
 
@@ -401,25 +407,10 @@ public enum HIRLowerer {
                 // specializations do (G10). Template param annotations
                 // reference type parameters and would not resolve here.
                 guard funcDecl.genericParams.isEmpty else { continue }
-                let paramTypes = try funcDecl.params.map { parameter -> HIRType in
-                    guard let annotation = parameter.typeAnnotation,
-                          let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                        throw unsupported(
-                            "parameter '\(parameter.name)' of '\(funcDecl.name)' lacks a resolvable scalar type",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
-                let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
-                    guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                        throw unsupported(
-                            "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(funcDecl.name)'",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
+                let paramTypes = try resolveParamTypes(funcDecl, userTypes: userTypes)
+                let returnType = try resolveReturnType(
+                    funcDecl, userTypes: userTypes, subject: "'\(funcDecl.name)'"
+                )
                 // G13 batch 2: effective return for void-declared top-level
                 // functions that return a value (interpreter-faithful; the
                 // signature table drives call sites, so it must agree with
@@ -444,15 +435,9 @@ public enum HIRLowerer {
                         }
                         return type
                     }
-                    let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
-                        guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                            throw unsupported(
-                                "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(funcDecl.name)'",
-                                at: funcDecl.location
-                            )
-                        }
-                        return type
-                    }
+                    let returnType = try resolveReturnType(
+                        funcDecl, userTypes: userTypes, subject: "foreign '\(funcDecl.name)'"
+                    )
                     signatures[funcDecl.name] = HIRLowererSignatureInfo(
                         paramTypes: paramTypes, returnType: returnType
                     )
@@ -463,25 +448,10 @@ public enum HIRLowerer {
         // G10: specialized generic functions join the signature table (their
         // bodies reference only concrete types now).
         for (_, specialized) in specializationState.funcSpecializations {
-            let paramTypes = try specialized.params.map { parameter -> HIRType in
-                guard let annotation = parameter.typeAnnotation,
-                      let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                    throw unsupported(
-                        "parameter '\(parameter.name)' of '\(specialized.name)' lacks a resolvable type",
-                        at: specialized.location
-                    )
-                }
-                return type
-            }
-            let returnType: HIRType? = try specialized.returnTypes.first.map { annotation in
-                guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                    throw unsupported(
-                        "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(specialized.name)'",
-                        at: specialized.location
-                    )
-                }
-                return type
-            }
+            let paramTypes = try resolveParamTypes(specialized, userTypes: userTypes)
+            let returnType = try resolveReturnType(
+                specialized, userTypes: userTypes, subject: "'\(specialized.name)'"
+            )
             signatures[specialized.name] = HIRLowererSignatureInfo(
                 paramTypes: paramTypes, returnType: returnType
             )
@@ -996,21 +966,11 @@ public enum HIRLowerer {
         guard decl.genericParams.isEmpty else {
             throw unsupported("generic function '\(decl.name)'", at: decl.location)
         }
-        guard decl.returnTypes.count <= 1 else {
-            throw unsupported(
-                "function '\(decl.name)' returns \(decl.returnTypes.count) values (tuple returns are a later grid)",
-                at: decl.location
-            )
-        }
-        let returnType: HIRType? = try decl.returnTypes.first.map { annotation in
-            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                throw unsupported(
-                    "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(decl.name)'",
-                    at: decl.location
-                )
-            }
-            return type
-        }
+        // Multiple return slots collapse into a tuple value (D7) — see
+        // resolveReturnType.
+        let returnType = try resolveReturnType(
+            decl, userTypes: userTypes, subject: "'\(decl.name)'"
+        )
         // G13 batch 2: effective return for void-declared functions that
         // return a value (must match the signature-table upgrade so call
         // sites and the definition agree).
@@ -1018,16 +978,9 @@ public enum HIRLowerer {
             decl: decl, userTypes: userTypes, nominals: nominalTypes
         ) ?? returnType
 
-        var params: [HIRFunction.HIRParam] = []
-        for param in decl.params {
-            guard let annotation = param.typeAnnotation,
-                  let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                throw unsupported(
-                    "parameter '\(param.name)' of '\(decl.name)' lacks a resolvable scalar type",
-                    at: decl.location
-                )
-            }
-            params.append(HIRFunction.HIRParam(name: param.name, type: type))
+        let paramTypes = try resolveParamTypes(decl, userTypes: userTypes)
+        let params: [HIRFunction.HIRParam] = zip(decl.params, paramTypes).map { param, type in
+            HIRFunction.HIRParam(name: param.name, type: type)
         }
 
         var context = FunctionContext(
@@ -1061,6 +1014,83 @@ public enum HIRLowerer {
             return userTypes[name]
         }
         return nil
+    }
+
+    /// Resolve a function definition's parameter types, applying the
+    /// unannotated-parameter fallback the legacy emitter established (P6-4a):
+    /// a parameter that carries no annotation adopts the function's single
+    /// declared return type when there is exactly one, and I32 otherwise (the
+    /// interpreter's default numeric type). Both corpus shapes are covered by
+    /// the two branches — `f(x, y) -> ()` and `f(x, y) -> (I32,)` both land on
+    /// I32. Annotated parameters resolve as before, and an annotation that
+    /// does not resolve stays a gate error.
+    ///
+    /// Used by both ends of a definition: the signature pre-pass (so call
+    /// sites see the fallback) and the body lowering (so the definition
+    /// agrees). `foreign` and trait-default declarations keep their own
+    /// resolution — neither surface allows an unannotated parameter.
+    private static func resolveParamTypes(
+        _ decl: FuncDecl,
+        userTypes: [String: HIRType]
+    ) throws -> [HIRType] {
+        let fallback: HIRType
+        if decl.returnTypes.count == 1,
+           let single = resolveAnnotationType(decl.returnTypes[0], userTypes: userTypes) {
+            fallback = single
+        } else {
+            fallback = .i32
+        }
+        return try decl.params.map { parameter in
+            guard let annotation = parameter.typeAnnotation else { return fallback }
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                throw unsupported(
+                    "parameter '\(parameter.name)' of '\(decl.name)' lacks a resolvable scalar type",
+                    at: decl.location
+                )
+            }
+            return type
+        }
+    }
+
+    /// Declared return type in HIR terms.
+    ///
+    /// Several return slots (`-> (I32, I32,)`) collapse into ONE tuple value —
+    /// the representation the single-slot tuple form (`-> ((I32, I32,),)`)
+    /// already uses. Call sites, the return statement and the IR ABI therefore
+    /// need no second path: the call's value type is the tuple, exactly as if
+    /// the declaration had written the tuple annotation directly. The elements
+    /// are positional, so their labels are all nil — the same label shape the
+    /// call-site inference produces for a multi-value call (HIRType's tuple
+    /// branch normalises the annotation layer's empty label list to all-nil).
+    ///
+    /// `subject` names the declaration kind for diagnostics ("'f'", "foreign
+    /// 'f'", "trait default 'f'", "method 'f'").
+    private static func resolveReturnType(
+        _ decl: FuncDecl,
+        userTypes: [String: HIRType],
+        subject: String
+    ) throws -> HIRType? {
+        func resolve(_ annotation: TypeAnnotation) throws -> HIRType {
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                throw unsupported(
+                    "return type '\(annotation.simpleName ?? "(non-scalar)")' of \(subject)",
+                    at: decl.location
+                )
+            }
+            return type
+        }
+        switch decl.returnTypes.count {
+        case 0:
+            return nil
+        case 1:
+            return try resolve(decl.returnTypes[0])
+        default:
+            let fieldTypes = try decl.returnTypes.map(resolve)
+            return .tuple(
+                labels: Array(repeating: nil, count: fieldTypes.count),
+                fieldTypes: fieldTypes
+            )
+        }
     }
 
     // MARK: - Nominal types (G3)
@@ -1140,21 +1170,11 @@ public enum HIRLowerer {
         guard decl.genericParams.isEmpty else {
             throw unsupported("generic method '\(decl.name)'", at: decl.location)
         }
-        guard decl.returnTypes.count <= 1 else {
-            throw unsupported(
-                "method '\(decl.name)' returns \(decl.returnTypes.count) values (tuple returns are a later grid)",
-                at: decl.location
-            )
-        }
-        let returnType: HIRType? = try decl.returnTypes.first.map { annotation in
-            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                throw unsupported(
-                    "return type '\(annotation.simpleName ?? "(non-scalar)")' of '\(decl.name)'",
-                    at: decl.location
-                )
-            }
-            return type
-        }
+        // Multiple return slots collapse into a tuple value (D7) — same
+        // contract as a top-level function.
+        let returnType = try resolveReturnType(
+            decl, userTypes: userTypes, subject: "'\(decl.name)'"
+        )
         // G13 batch 2: a void-declared method whose body returns a value
         // (package-demo corpus documents the interpreter flows it out)
         // upgrades to the effective return type — body returns and call
@@ -1164,7 +1184,14 @@ public enum HIRLowerer {
             selfTypeName: typeName
         ) ?? returnType
         var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
-        for param in decl.params {
+        // The receiver may also be written as an explicit leading `self`
+        // parameter (trait default bodies are written that way). It is the
+        // receiver marker rather than a parameter: the interpreter, the type
+        // checker and the trait signature pre-pass all drop it. Lowering it
+        // as an ordinary parameter made it look like an unannotated one.
+        let declaredParams = decl.params.first?.name == "self"
+            ? Array(decl.params.dropFirst()) : decl.params
+        for param in declaredParams {
             guard let annotation = param.typeAnnotation,
                   let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
@@ -1197,7 +1224,7 @@ public enum HIRLowerer {
            let info = nominalTypes[selfTypeName] {
             var fieldTypes: [String: HIRType] = [:]
             for field in info.fields {
-                if let fieldType = HIRType(from: field.typeAnnotation) {
+                if let fieldType = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes) {
                     fieldTypes[field.name] = fieldType
                 }
             }
@@ -1233,6 +1260,12 @@ public enum HIRLowerer {
         case .varDecl(let name, let annotation, let initializer, let isMutable, let location):
             return try lowerVarDecl(
                 name: name, annotation: annotation, initializer: initializer,
+                isMutable: isMutable, at: location, into: &context
+            )
+
+        case .varDestructure(let names, _, let initializer, let isMutable, let location):
+            return try lowerVarDestructure(
+                names: names, initializer: initializer,
                 isMutable: isMutable, at: location, into: &context
             )
 
@@ -1575,6 +1608,57 @@ public enum HIRLowerer {
         return [.allocVar(name: name, type: varType, mutable: isMutable, initializer: loweredInit)]
     }
 
+    /// Lower `let (a, b) = tupleExpr` (M6a D7).
+    ///
+    /// Interpreter semantics: evaluate the initializer ONCE, require a tuple,
+    /// require the name count to equal the arity, then bind each non-`_` name.
+    /// Lowering mirrors that literally — the initializer goes into a synthetic
+    /// slot (so a call with side effects still runs exactly once) and each name
+    /// is bound to an extractvalue off that slot. `_` placeholders still occupy
+    /// a position but bind nothing, matching the interpreter's
+    /// `where name != "_"` filter. A destructure with no static tuple shape is
+    /// not resolvable here (the interpreter's arity error is a run-time one).
+    private static func lowerVarDestructure(
+        names: [String],
+        initializer: Expression?,
+        isMutable: Bool,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> [HIRStmt] {
+        guard let initializer = initializer else {
+            throw unsupported("destructure declaration lacks an initializer", at: location)
+        }
+        let lowered = try lowerExpr(initializer, expected: nil, into: &context)
+        guard case .tuple(_, let fieldTypes) = lowered.type else {
+            throw unsupported(
+                "destructuring needs a tuple value, got '\(lowered.type)'",
+                at: location
+            )
+        }
+        guard names.count == fieldTypes.count else {
+            throw unsupported(
+                "destructure pattern has \(names.count) name(s) but the value has \(fieldTypes.count) field(s)",
+                at: location
+            )
+        }
+        let tempName = "$destructure\(context.tempCounter)"
+        context.tempCounter += 1
+        var statements: [HIRStmt] = [
+            .allocVar(name: tempName, type: lowered.type, mutable: false, initializer: lowered.node)
+        ]
+        let base = HIRExpr.load(name: tempName, type: lowered.type)
+        for (index, name) in names.enumerated() where name != "_" {
+            context.variableTypes[name] = fieldTypes[index]
+            let element = HIRExpr.tupleIndexGet(
+                base: base, index: index, type: fieldTypes[index]
+            )
+            statements.append(
+                .allocVar(name: name, type: fieldTypes[index], mutable: isMutable, initializer: element)
+            )
+        }
+        return statements
+    }
+
     // MARK: - Try-else (ADR-032, G1)
 
     /// The static Result type of a try operand: annotation-derived when
@@ -1682,6 +1766,19 @@ public enum HIRLowerer {
             return LoweredExpr(node: .intConst(value: value, type: type), type: type)
 
         case .floatLiteral(let value, _):
+            // Declaration width alignment (the legacy emitter's convertNumeric
+            // contract): a float literal sitting in an integer-typed slot
+            // folds to the truncated integer constant — the constant form of
+            // the legacy `fptosi`. Out-of-range or non-finite literals fall
+            // through to the float path, where requireAssignable reports the
+            // mismatch as an ordinary gate error instead of trapping here.
+            // Non-literal float expressions in integer slots stay fail-loud.
+            if let expected, expected.isIntegerNumeric, value.isFinite,
+               value >= -9.223372036854776e18, value <= 9.223372036854776e18 {
+                return LoweredExpr(
+                    node: .intConst(value: Int(value), type: expected), type: expected
+                )
+            }
             return LoweredExpr(node: .floatConst(value: value), type: .f64)
 
         case .boolLiteral(let value, _):
@@ -1905,6 +2002,28 @@ public enum HIRLowerer {
             return LoweredExpr(
                 node: .fieldGet(base: loweredBase.node, field: name, type: fieldType),
                 type: fieldType
+            )
+
+        case .tupleIndex(let object, let index, let location):
+            // `.0` positional read (M6a D7): the numeric counterpart of the
+            // labelled member read above — same extractvalue node, index taken
+            // from the syntax instead of a label lookup. The interpreter
+            // resolves out-of-range indices by raising a runtime error; a
+            // statically known index outside the arity is unresolvable at
+            // lowering time, so it fails loud here.
+            let loweredBase = try lowerExpr(object, expected: nil, into: &context)
+            guard case .tuple(_, let fieldTypes) = loweredBase.type else {
+                throw unsupported("tuple index '.\(index)' on '\(loweredBase.type)'", at: location)
+            }
+            guard index >= 0 && index < fieldTypes.count else {
+                throw unsupported(
+                    "tuple index '.\(index)' is out of range for arity \(fieldTypes.count)",
+                    at: location
+                )
+            }
+            return LoweredExpr(
+                node: .tupleIndexGet(base: loweredBase.node, index: index, type: fieldTypes[index]),
+                type: fieldTypes[index]
             )
 
         case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
@@ -2239,7 +2358,8 @@ public enum HIRLowerer {
                 )
             }
             // Intrinsic len: arrays/dicts/sets through the runtime handles,
-            // strings via the inline strlen scan.
+            // strings via the inline strlen scan. A tuple's arity is a static
+            // property of its type, so len(tuple) folds to a constant.
             if functionName == "len" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("len expects exactly one argument", at: location)
@@ -2247,6 +2367,10 @@ public enum HIRLowerer {
                 switch loweredArgs[0].type {
                 case .array, .dict, .set, .string:
                     return LoweredExpr(node: .lenCall(argument: loweredArgs[0].node), type: .i32)
+                case .tuple(_, let fieldTypes):
+                    return LoweredExpr(
+                        node: .intConst(value: fieldTypes.count, type: .i32), type: .i32
+                    )
                 default:
                     throw unsupported(
                         "len on '\(loweredArgs[0].type)' is outside this grid",
@@ -2278,6 +2402,22 @@ public enum HIRLowerer {
                     throw unsupported("readFile expects a String path", at: location)
                 }
                 return LoweredExpr(node: .fileRead(path: loweredArgs[0].node), type: .string)
+            }
+            // G17: the two remaining corpus builtins below the intrinsic
+            // gate — `readLine()` (no arguments) and `is_ascii_digit(s)`.
+            if functionName == "readLine" {
+                guard loweredArgs.isEmpty else {
+                    throw unsupported("readLine expects no arguments", at: location)
+                }
+                return LoweredExpr(node: .readLine, type: .string)
+            }
+            if functionName == "is_ascii_digit" {
+                guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
+                    throw unsupported("is_ascii_digit expects one String argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .isAsciiDigit(argument: loweredArgs[0].node), type: .boolean
+                )
             }
             // Result case construction (ok/err): requires a Result-typed
             // context (return position, Result-typed assignment) so the
@@ -3453,10 +3593,16 @@ public enum HIRLowerer {
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
         let elementExpected = expected?.arrayElementType
-        guard !elements.isEmpty || elementExpected != nil else {
-            throw unsupported(
-                "empty array literal needs an element type (annotate the variable)",
-                at: location
+        // An empty literal with no expected element type adopts I32. Runtime
+        // construction is element-type free — `[]` lowers to an empty handle
+        // (the legacy contract), so the choice only fixes the static element
+        // type for later reads and writes. I32 is the language's default
+        // numeric type, the same fallback an unannotated parameter uses.
+        if elements.isEmpty {
+            let element = elementExpected ?? .i32
+            return LoweredExpr(
+                node: .arrayLiteral(elements: [], type: .array(element: element)),
+                type: .array(element: element)
             )
         }
         var loweredElements: [HIRExpr] = []
@@ -3565,7 +3711,7 @@ public enum HIRLowerer {
               let fieldDecl = info.fields.first(where: { $0.name == field }) else {
             return nil
         }
-        return HIRType(from: fieldDecl.typeAnnotation)
+        return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
     }
 
     /// Slice set: exact match only. Widening (I32 literal into I64 slot) is
@@ -3766,7 +3912,15 @@ extension HIRType {
                 guard let fieldType = HIRType(from: element) else { return nil }
                 fieldTypes.append(fieldType)
             }
-            self = .tuple(labels: labels, fieldTypes: fieldTypes)
+            // The annotation layer writes `labels: []` for element lists whose
+            // members are all positional (the multi-value producers: call-site
+            // inference and the checker's payload shape). HIR keeps labels
+            // index-aligned with fieldTypes, so expand the empty list to
+            // all-nil; a genuinely partial label list is passed through as-is.
+            let resolvedLabels = labels.isEmpty && !fieldTypes.isEmpty
+                ? [String?](repeating: nil, count: fieldTypes.count)
+                : labels
+            self = .tuple(labels: resolvedLabels, fieldTypes: fieldTypes)
         case .function(let params, let returns, _, _):
             // `(I32,) -> (I32,)` (G6): the fat-pointer ABI is uniform, the
             // shapes ride along for parity checks. A single return is the
@@ -3949,6 +4103,13 @@ private struct FunctionContext {
     /// Drives labeled break/continue depth resolution (ADR-014): a label
     /// matches the nearest enclosing loop carrying that label.
     var loopLabels: [String?] = []
+
+    /// M6a D7: counter for synthetic slot names (`$destructureN`) so several
+    /// destructures in one function cannot share a slot. `$` is not a
+    /// source-identifier character (identifiers are letters/digits/`_`), so
+    /// these never collide with user names — and unlike angle brackets it is
+    /// legal in an unquoted LLVM local name, which mangling leaves untouched.
+    var tempCounter: Int = 0
 
     /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,
     /// shorter name at call sites).

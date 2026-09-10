@@ -1,9 +1,10 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G15 全部完成并回填，
-  差分 60/60、回归 1293/0/0、sweep hir-emit 51/59——剩余 8 行全为并发族豁免
-  （独立立案 issue-llvm-concurrency-runtime-2026-09-08），M6 flip 门槛达成，
-  待点名执行旧后端删除与迁移开关退役）**
+- 状态：**Open（常驻计划载体；M0–M4、M5 分格扩张批 G1–G15、M6a 准备批 a1–a8 全部
+  完成并回填。M6a 终值：差分 76/76、回归 1310/0/0、sweep hir-emit 51/59
+  （剩余 8 行全为并发族豁免，独立立案 issue-llvm-concurrency-runtime-2026-09-08）；
+  双分母真 flip 阻塞 **0**——examples 59 为 0，四套 LLVM 驱动夹具 222 为 3 且全为
+  D8 已裁决豁免的聚合值打印。下一步 M6b 翻转批（一次性、不可逆）待点名执行）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -73,8 +74,14 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   为基线语料）。
 - **M5 分格扩张批**：按能力矩阵逐格推进，每格一次提交 + 一次差分验证；单格失败不
   回滚已完成格。
-- **M6 翻转批（一次性）**：删旧 CodeGen 9 文件 → CLI 接新管线 → `IRGeneratorTests`
+- **M6a 准备批（零删除，可停）**：按双分母补齐缺口——G16 元组族 / G17 内建与类型
+  修补 / G18 trait self 与空数组，加三项横切（`programBase` 烘焙、诊断面接
+  `DiagnosticProviding` ＋ `fopen` 判空、口径重扫）。验收 = 双分母全绿且真 flip
+  阻塞清零。
+- **M6b 翻转批（一次性）**：迁移 LLVM 驱动测试套（补 typecheck 对齐 CLI）→ 删旧
+  CodeGen 9 文件 → CLI 去 `PINI_HIR_PIPELINE` 门恒走新管线 → `IRGeneratorTests`
   149 处 IR 文本断言同批删除（约束 8）→ README 终版更新。
+  顺序硬约束：**迁移测试必须先于删源码**。
 
 止损判据：ADR-031 §4 原文四条（影子类型表 ≥7 张；单次回归 >5 测试且 >1 小时；单次
 收敛扩散 >4 个 emitter；单项核心能力需改 >3 个 emitter）——任一触发即停并回 M3。
@@ -265,7 +272,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   - **规划补全批（2026-09-08，纯规划不动源码，分支
     `agent/pini-dev/llvm-m5-plan-backfill`）**：对现存 48 个 hir-emit FAIL
     文件逐文件取证 gate 错误（一次性探针测试，用后即删；CLI 诊断丢失缺陷
-    另立 `issue-hir-cli-diagnostic-loss-2026-09-08.md`），归簇后重排剩余
+    另立 `docs/spec/issue/archive/issue-hir-cli-diagnostic-loss-2026-09-08.md`，
+    a6 已落地、a8 归档），归簇后重排剩余
     格序。**stop-loss 时的 G4–G7 命名粒度不足以覆盖语料**：枚举、闭包、
     字典/集合、Optional 直写、tuple、字符串深化、struct 深化等簇无格可归。
     重排后剩余格序（格号沿用至 M6）：
@@ -629,3 +637,317 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       M6 flip 门槛达成，待点名执行旧后端删除与 `PINI_HIR_PIPELINE` 开关退役。
       另有两条独立立案线未启动：解释器统一 HIR（`docs/issue-interpreter-hir-unification-2026-09-07.md`）、
       并发运行时（`docs/issue-llvm-concurrency-runtime-2026-09-08.md`）。
+
+- **M6 前置勘测完成（2026-09-10，仅勘测与规划，零代码改动）**：
+
+  - **口径修正（本批最重要的结论）**：M6 flip 门槛原定义的分母是 `examples/` 59 个
+    文件，但翻转要删的 `IRGenerator` **同时是 4 个测试套的驱动**（`IRGeneratorTests`
+    / `IRExecutionTests` / `RuntimeBackendTests` / `IRPrintGoldenTests`，共 222 个
+    用例、149 处 IR 文本断言、128 个夹具）。这批夹具**不在那条分母里**——门槛达标
+    不等于翻转安全。故门槛改**双分母**：`examples/` 59 + LLVM 驱动测试套夹具 128。
+  - **实测缺口（判据：legacy emit 通过 且 HIR emit 失败）**：
+    `IRExecutionTests` 13 个 + `RuntimeBackendTests` 1 个 = **14 个真 flip 阻塞**；
+    另有 5 个在 CLI 口径下**两条管线都失败**（前端/checker 本就拒绝，非后端缺口）。
+    整个 `Tests/` 目录 965 个 `.pini` 中 HIR 不通过 434 个，其中 325 个属此类低价值项
+    ——口径按「该夹具是否由 LLVM 后端驱动」收窄，不做全量覆盖。
+    **订正（a2 实测，2026-09-10）**：14 中 2 个（`testTupleConstruct_LLI` /
+    `_Clang`）是**通道假阳性**而非后端缺口——CLI 单文件 HIR 分支在此行之后返回，
+    漏掉了 legacy 分支与差分 Harness 都设的持久作用域表；补该行后二者即通过。
+    真缺口 **12**（`IRExecutionTests` 11 + `RuntimeBackendTests` 1）。
+  - **12 夹具收敛为 3 格**（按同一 `HIRLowerer` 落点聚簇，非按测试套分）：
+    - **G16 元组族（7）**：多槽返回（2）／`.0` 位置索引（1）／解构声明（1）／
+      `len(tuple)`（1）／无标签元组构造（2，即上条订正的 2 个假阳性）。
+    - **G17 内建与类型修补（5）**：`readLine`／`is_ascii_digit`／i8 struct 字段写／
+      无注解参数回退 I32（2）。`is_letter` 保持 fail-loud（Unicode 语义，非缺口）。
+    - **G18 trait self 与空数组（2）**：trait 默认方法 `self` 类型解析／
+      `let a = []` 元素类型推导。
+  - **横切三项**：`programBase` 烘焙补入 HIR；`HIRLoweringError` 接
+    `DiagnosticProviding`（复用 E6 码面）＋ `fopen` 判空；口径重扫。
+  - **新增探针** `tools/m6-triage-probe.sh`（与 `capability-sweep.sh` 并列）：
+    两遍扫描——① 全部 `Tests/**.pini` 的 HIR 发射；② 按 legacy 通道把失败分为
+    「真 flip 阻塞」与「前端本就拒绝」。产出 `/tmp/hir-fixture-sweep.tsv`
+    与 `/tmp/m6-blockers.tsv`。
+  - **决策（D1–D7，用户 2026-09-10 裁决「按你的倾向来」）**：
+    - **D1** 门槛口径 = 双分母（见上）。
+    - **D2** 测试判据统一 = 迁移时补 typecheck（对齐 CLI）。现状
+      `IRExecutionTests.runViaLLI` 默认 `typeCheck: false`（81 例仅 2 例显式开），
+      而 HIR 的类型决策单点要求 checker 先行——故 18/1 是上界估计。
+    - **D3a** COW 的 IR 文本契约改行为断言（差分），不移植文本断言。
+    - **D3b** `IRPrintGoldenTests`：翻转动工时先读 2 例断言内容再定。
+    - **D4** `programBase` 烘焙补入 HIR（**必做**）。现状 HIR 侧缺失，
+      `readFile("data.txt")` 在 CWD≠脚本目录时 **lli 段错误**，而解释器与 legacy
+      均正常（legacy 经 `BuiltinsEmitter.generateIOPathArgument` 编译期烘焙）。
+      旧后端运行期基准语义只覆盖字面量路径，非字面量路径的运行期基准为**已知限制**，
+      不在本批闭环。
+    - **D5** `HIRLoweringError` 实现 `DiagnosticProviding` 复用 E6-001…E6-005 码面
+      ——翻转会静默退役 5 个已登记错误码，接续比退役代价低。
+    - **D6** HIR 侧 `fopen` 返回 NULL 判空转 `bk_panic`（限一行级，不展开为完整
+      IO 错误模型）。
+    - **D7** 多槽返回 `-> (I32, I32,)` 与单槽元组 `-> ((I32, I32,),)` 是**不同构造**：
+      G8 只覆盖后者（`examples/tuple.pini` 形态），前者在 HIR 侧门控
+      （`decl.returnTypes.count <= 1`）。`examples/` 59 文件**零使用**多槽返回，
+      故该缺口在原门槛里完全不可见。裁决 = **补齐（A）带止损**：若实测需改动
+      >3 个发射路径（触 ADR-031 §4 的 S-4）立即转立案。
+  - **M6 拆两批**：**M6a 准备批**（零删除、可停：3 格 + 3 横切）→ 点名 →
+    **M6b 翻转批**（8 步一次性：迁移测试 → 删测试 → 删 9 文件 → CLI 去 env 门
+    → 文档终版 → 冒烟 → 证据 → 合 main）。顺序硬约束：**b2 迁移测试必须先于
+    b4 删源码**，否则迁移与删除同时失败时无法定位。
+  - **顺带发现的既知不一致**（登记不改）：`examples/tuple.pini` 的注释宣称
+    `.0`／`.名称`／解构 `var (a, b) =` 已支持，但该文件只演示整体元组，而
+    `.0` 与解构在 HIR 侧均被门控——该行的 hir-emit PASS 高估实际能力
+    （性质同 G15 的 step 假绿）。
+
+- **M6a a1 完成（2026-09-10）**：分支 `agent/pini-dev/llvm-m6a-prep`；探针
+  `tools/m6-triage-probe.sh` 入库（含 `REPO_ROOT` 自推断与二进制缺失提示）；
+  口径勘测结论回填至上一节。零删除、零源码改动。
+
+- **M6a a2 完成：G16 元组族（2026-09-10）**：
+
+  - **红灯基线**：7 个夹具（源自 LLVM 驱动套的既有夹具）入差分套件，
+    差分 **60 → 67**。实测仅 **5 红**——两个元组构造夹具在 Harness 下本就通过
+    （Harness 设了持久作用域表），故「7」里含 2 个通道假阳性（见上一节订正）。
+    新增 `assertParityAllowingEmptyOutput`：多槽返回夹具不打印，断言的是
+    「降载 + 执行不 trap」；该变体仍断言夹具确为空输出，避免退化成 `"" == ""`。
+  - **落点（5 处，无一处触 ADR-031 §4 止损）**：
+    1. **多槽返回折叠为单个元组值**（`resolveReturnType` 单点）：与单槽元组形态
+       `-> ((I32, I32,),)` 走同一表示，调用位／return 语句／IR ABI 均无需第二通路。
+       顺带修掉签名预扫描此前**把多返回值函数截断为其第一个返回类型**的隐患
+       （调用位类型与定义位不一致）。
+    2. `.0` 位置读：与 `.名称` 读同一个 `tupleIndexGet` 节点，下标取自语法；
+       越界下标 fail-loud。
+    3. `let (a, b) = expr`：初值求值一次存入合成槽（`$destructureN`，`$` 非
+       源码标识符字符、且是 LLVM 未引用局部名的合法字符），逐名绑定，
+       `_` 占位跳过——与解释器的「求值一次 + 元数校验 + 逐分量绑定」等价。
+    4. `len(tuple)` 折叠为静态元数。
+    5. `HIRType` 元组分支把注解层的**空标签列表**展开为全 nil，使多值调用推断与
+       签名表一致（注解层产出违反自身不变量的值 → 另立工单，见下）。
+  - **通道一致性修正（1 行）**：CLI 单文件 HIR 分支补
+    `persistAcrossScopesForCodegen = true`（legacy 分支与差分 Harness 都有）。
+    这是上节两个假阳性的唯一根因，属**通道缺行**而非后端能力缺口。
+  - **新立工单** `docs/issue-tuple-annotation-arity-mismatch-2026-09-10.md`：
+    元组注解标签数与分量数不一致（`TypeInference.infer` 元组字面量分支静默跳过
+    推断失败的分量；另有三处生产点写 `labels: []` 配非空分量，与
+    `Type.swift` 写明的配对不变量冲突）。实现层已在 HIR 边界归一化，
+    注解层未改——归属待判定（语言级 / 宿主级），**未判定前不动源码**。
+  - **验证**：差分 **67/67**（原 60/60）；全量回归 **1300 / 0 / 0**（原 1293 / 0 / 0）；
+    探针真 flip 阻塞 **112 → 88**，其中受门槛的测试套降至
+    `IRExecutionTests` 6 + `RuntimeBackendTests` 1 = **7**，恰为 G17（5）+ G18（2）。
+  - **能力表述订正**：`examples/tuple.pini` 宣称的 `.0`／解构现已真正实现，
+    该行注释与实现不再脱节（原登记项就此闭合）。
+
+- **M6a a3 完成：G17 内建与类型修补（2026-09-10）**：
+
+  - **红灯基线**：5 个既有夹具的差分副本入套件，差分 **67 → 72**，实测 **5/5 红**。
+    报错与 M6 勘测逐字一致（`unknown function` × 2、`type mismatch: f64 is not i8`、
+    `lacks a resolvable scalar type` × 2），且类型检查器对五例**全部放行**——
+    确认属后端能力缺口，非前端拒绝。源夹具：
+    `Tests/PiniTests/CodeGen/IRExecutionTests/testReadLineViaLLI.pini`、
+    `testIsAsciiDigitViaLLI.pini`、`testI8StructField_LLI.pini`、
+    `testParamWithoutAnnotation_FallbackI32_ViaLLI.pini`、
+    `testParamWithoutAnnotation_InferredI32_ViaLLI.pini`。
+  - **落点（6 处，无一处触 ADR-031 §4 止损）**：
+    1. **整型槽位折叠浮点字面量**，按 legacy 宽度对齐契约做截断（`x: I8 = 0.0`）。
+    2. **内建分派**：`readLine` 与 `is_ascii_digit` 各走专用节点；
+       `is_letter` 维持 fail-loud（Unicode 语义，非缺口）。
+    3. **无注解参数回退归一**：单一返回类型则回退该类型，否则 `I32`——即 legacy
+       的 P6-4a 契约。此前签名预扫描、泛型特化、函数体三处参数解析各自为政，
+       现收敛到单点，顺带消除三处不一致。
+    4. **`readLine` 发射**：`fgets` 入栈缓冲返回 `i8*`；`fgets` 与 `@__stdinp`
+       声明**按需发射**（未使用该内建的模块 IR 文本不变）。
+    5. **`is_ascii_digit` 发射**：取首字节做闭区间判定。
+    6. **窄整型打印**：`i8` 经符号扩展到 `i32` 再走整型格式化（varargs 对实参
+       宽度的要求）。
+  - **Harness 语义修正（本批两条关键发现）**：
+    - **`readLine` 三通道语义分歧（既存，非本轮引入）**：解释器剥离行终止符，
+      legacy 与 HIR 均经 `fgets` 加格式化打印而**保留**换行。三端实测：无换行输入
+      三端同为 12 字节；带换行输入 legacy/HIR 13 字节、解释器 12 字节。
+      故差分夹具注入**无换行** stdin，并在断言注释中写明理由，避免把既存三通道
+      分歧误报成后端缺口。
+    - **stdin EOF 标志跨用例泄漏**：差分 Harness 用 `dup2` 接管标准输入读到 EOF 后，
+      即使还原描述符，进程级标准输入流的 EOF 标志仍然保持，同进程后续注入式读取
+      会立即 EOF。症状是**测试顺序依赖的红**：单独执行 IOTests 为 11/0/0，
+      与差分套件同进程则为 83 中 2 红。修法为还原描述符后清除该流的 EOF 标志。
+  - **验证**：差分 **72/0/0**（原 67/67）；全量回归 **1305 / 0 / 0**（原 1300 / 0 / 0）；
+    探针 output `total=977 pass=577 fail=400`，真 flip 阻塞 **75**、两边都失败 **325**。
+    a3 的 5 个目标夹具已全部转 PASS（逐条复核）。
+  - **门槛口径订正（实测，影响 a4 与 a7 验收）**：
+    - D1=B 把门槛分母定义为「`examples/` 59 + LLVM 驱动测试套夹具」，plan 记该夹具数
+      为 **128**。实测四个套件的夹具目录（`Tests/PiniTests/CodeGen/IRGeneratorTests`、
+      `Tests/PiniTests/CodeGen/IRExecutionTests`、
+      `Tests/PiniTests/CodeGen/IRPrintGoldenTests`、
+      `Tests/PiniTests/RuntimeBackendTests`）共 **222** 个 `.pini`，非 128
+      ——「222」与 plan 记的「用例数」同值，系当时把夹具数与用例数混算。
+      其中 legacy 可编译 **209**，前端本就拒绝 **13**（后者按勘测口径不入分母）。
+    - 按**四套**口径，门槛内真阻塞 **a2 时实为 11 项、a3 后降至 6 项**（本批消掉 5）。
+      a2 收口记录的「7」只覆盖 `IRExecutionTests` 与 `RuntimeBackendTests` 两个目录，
+      窄于 D1=B 的四套定义；该差异此前未被发现，此处更正。
+    - **a3 后门槛内阻塞 6 项明细**（探针明细表可复现）：
+      1. trait 默认方法 `self` 类型不可解析（`IRExecutionTests` 一例）——G18，a4 计划内。
+      2. 空数组字面量缺元素类型（`RuntimeBackendTests` 一例）——G18，a4 计划内。
+      3. **同一 trait 根因**，落在 `IRGeneratorTests`（一例）——不在 a4 原计划清单内；
+        该套件属 A-删除类，须裁决「删除前是否也要求转绿」。
+      4. 打印 struct/object 值（`IRPrintGoldenTests` 两例）——错误文本自述「later grid」。
+      5. 非对象名义类型上的字段查找失败（`IRPrintGoldenTests` 一例）。
+      第 4–5 条同属 A-删除类套件（整体待删或对 HIR 重定基线，即裁决点 D3b）；
+      它们与第 3 条是否计入门槛，并作 a4 的**新增裁决点 D8** 一并裁决。
+  - **未动**：源码删除面（零）、`IRGeneratorTests` 与 `IRPrintGoldenTests` 的既有断言。
+
+- **M6a a4 完成：G18 trait 接收者与空数组字面量（2026-09-10）**：
+
+  - **红灯基线**：3 个差分夹具入套件，差分 **72 → 75**，实测 **3/3 红**，报错与勘测一致。
+    其中 2 个源自计划内目标（`IRExecutionTests/testTraitDefaultMethod_ViaLLI.pini`、
+    `RuntimeBackendTests/testEmptyArrayBothBackends.pini`），第 3 个
+    （`testDiffEnumTypedField`）为本批新发现的字段解析缺口。
+  - **落点（4 处，无一处触 ADR-031 §4 止损）**：
+    1. **方法接收者标记**：形参表首参名为 `self` 者是**接收者标记**而非参数。
+       解释器、类型检查器、trait 签名预扫描都这样处理，只有方法降载把它当普通参数，
+       于是显式写 `self` 的 trait 默认方法体被判定为「参数缺类型注解」而无法特化。
+       现三处对齐（`lowerMethod` 与默认派发调用位的参数表一致）。
+    2. **空数组字面量**：无期望元素类型时取 **I32**。运行时构造本就与元素类型无关
+       （`[]` 降为空句柄，即旧后端契约），该选择只钉静态元素类型；I32 是本语言的
+       默认数值类型，与无注解参数回退同源。
+    3. **字段类型解析走注解解析器**（`nominalFieldType`）：此前用只认内建类型的映射，
+       凡字段声明类型是**用户类型**（枚举或名义）即返回 nil，字段被报成「不存在」——
+       错误指向与根因偏离。嵌套名义字段同受此映射影响。
+    4. **方法体内裸字段名注册**（同根因，同一批修）：该处使用同一映射记录接收者字段表，
+       一并改为注解解析器。
+  - **诊断面改善（可验证）**：`_c_5` 的报错由误导性的
+    「no field … on nominal(盒)」变为准确的聚合打印门控、且定位到 `print` 行；
+    即字段确实存在，缺的是值格式化能力（见下）。
+  - **验证**：差分 **75/0/0**（原 72/0/0）；全量回归 **1308 / 0 / 0**（原 1305 / 0 / 0）；
+    探针 output `total=980 pass=588 fail=392`，真 flip 阻塞 **75 → 68**。
+    **门槛内阻塞 6 → 3**，且 3 项同属一个能力差（聚合值打印）。
+    计划内两项与「同一根因的 `IRGeneratorTests` 一例」均已转 PASS（逐条复核）。
+  - **裁决点 D8 结果（逐项）**：
+    1. `IRGeneratorTests` 的 trait 一例——**实现顺带覆盖**（零额外成本），已转绿。
+    2. `IRPrintGoldenTests` 两例（`_c_3` / `_c_4`）与 `_c_5`——**除名立案，裁决豁免**。
+       理由三条：该能力面在能力矩阵与门控文案中已被显式划为后续格（能力声明与实现
+       **一致**，不属假绿）；它属 a3 口径订正**新暴露**的范围（从未进入 M6a 的
+       14 夹具聚类，非原计划欠账）；把它拉进 M6a 会使准备批失去「零删除、可停」的形状，
+       而 a7 的验收口径本身允许「全部转已裁决豁免」。立案
+       `docs/issue-hir-aggregate-value-print-2026-09-10.md`（含解释器格式契约、
+       估工未知项、以及「若估工很低可在 a7 复扫点重新纳入」的入口）。
+    3. 该裁决同时在 `docs/llvm-capability-matrix.md` 新增「HIR 迁移期已知限制」节，
+       把豁免写成**已声明**的限制而非未记载的差距（该节同时复核四套夹具数与
+       两处口径订正）。
+  - **未动**：源码删除面（零）、`IRGeneratorTests` 与 `IRPrintGoldenTests` 的既有断言；
+    聚合值打印能力（按 D8 裁决豁免）。
+
+- **M6a a5 完成：横切① `programBase` 烘焙补入 HIR（2026-09-10）**：
+
+  - **背景**：legacy 后端经 `BuiltinsEmitter.generateIOPathArgument` 在**编译期**把无前缀
+    相对路径字面量烘焙为「程序基准 + 路径」（绝对路径与 `./`／`../` 前缀原样），解释器
+    `Interpreter.resolveIOPath` 同规则；HIR 侧缺失该环节，故 CWD≠脚本目录时同一程序
+    读到不同文件（`lli` 甚至因未判空的 `fopen` 而段错误，后者归 a6）。
+  - **落点（4 处，无一处触 ADR-031 §4 止损）**：
+    1. **`IREmitter.programBase`（默认 nil）＋ `bakedIOPath`**：仅对字面量路径生效，
+       三种豁免前缀原样返回，故调用方无条件路由。默认 nil 使既有 golden IR 逐字节不变。
+    2. **`emitFileRead`／`emitFileWrite` 统一路由**：读写同一规则，与解释器三段式一致。
+    3. **CLI 单文件 `emit` 分支**注入 `absoluteProgramBase(fileName)`（入口文件所在目录，
+       与 legacy 分支同一表达式）。
+    4. **CLI 包分支**注入 `absoluteProgramBase(moduleRoot)`：`loadOwningPackageIfModule`
+       改为回传它已解析出的模块根（`Package` 结构无 rootPath 字段），使包通道的基准与
+       `run`／`test` 的模块路径同源，而非入口文件所在目录。
+  - **落点位置裁决**：烘焙放在 emitter 而非 HIR 树——它是**代码生成的环境输入**，
+    不是语言语义决策；HIR 树保持「源码的纯降载」。这也让默认 nil 自然保住既有 IR 基线。
+  - **红证据形态（本批与 a2–a4 不同，需记录）**：新差分夹具调用 `IREmitter.programBase`
+    这一新 API，故「修复前」的工作树**不可编译**，无法构成「编译通过但断言失败」的
+    红灯基线提交。改用**变异探针**：保留 API、把烘焙短路为恒等，实测 **2 红**——
+    HIR 读到 CWD 诱饵 `cwd-decoy`，且 `out.txt` 落进 CWD；还原后全绿。
+    该变异态顺带反证 legacy 通道确实烘焙基准（其断言在变异态下仍绿）。
+  - **验证**：差分 **76/0/0**（原 75/0/0，新增 1 枚三通道夹具）；全量回归
+    **1309 / 0 / 0**（原 1308 / 0 / 0）。
+  - **三通道 CLI 端到端探针**（CWD 放同名诱饵 `res.txt`）：
+    解释器 `pini run <脚本>`、legacy `pini emit` + `lli`、HIR `PINI_HIR_PIPELINE=1 pini emit`
+    + `lli` 三端输出一致（`base-resource` / `written-to-base`），读写均落基准目录；
+    包分支基准实测为**模块根**（IR 字面量即模块根下的绝对路径，36 字节）。
+  - **已知限制（v1，与 legacy 同）**：非字面量路径表达式无法编译期烘焙，仍按运行时 CWD
+    解析；与 legacy 契约一致，不在本批闭环。
+  - **遗留（本批观察，不追修）**：pre-commit 的 `evidence-sweep` 钩子本次删除 3 条过期
+    证据条目，其中 2 条仍被两份 trait 相关工单引用，删除后**引用悬空**。该状态属既有
+    悬空集合（20 项）的延续——同源问题已由 G-09 记录，非本批引入的新缺陷类，故仅登记
+    不追修；此处不写裸编号，以免为下一次扫描新增悬空引用。
+
+- **M6a a6 完成：横切② 诊断面与 `fopen` 判空（2026-09-10）**：
+
+  - **背景**：HIR 门控错误此前只有 `LocalizedError`（G15 红灯基线时为让 CLI 可读而加），
+    CLI 面因此**丢错误码、丢文件名、丢源码位置**，与其它诊断类型形态不同；同时
+    `emitFileRead`／`emitFileWrite` 把 `fopen` 的 NULL 直接交给 `fread`／`fwrite`，
+    缺文件时在 libc 内无消息地崩（legacy 同病）。
+  - **落点（4 处，无一处触 ADR-031 §4 止损）**：
+    1. **`HIRLoweringError.code`（默认 E6-004）**：全部门控共用一个码——它们报的是同一件
+       事「该构造尚未降载」，逐个分类只会造出一批无人消费的码。
+    2. **`DiagnosticProviding` 扩展**：复用 legacy 生成器的 E6 码域，与
+       `IRGenError.unsupportedFeature` 同码，使管线切换不改变码域。
+    3. **`ErrorFormatter.diagnosticArgs` 结构体兜底**：门控错误是「自由文本 + 位置」的
+       struct，`Mirror` 反射取不到 `String` 载荷，故显式落到模板需要的槽；并给该类型补
+       `irgen` 标签，否则渲染成重复的通用文案。
+    4. **`IREmitter.emitFopenNullGuard`**：读／写两处 `fopen` 后立刻判 NULL，走
+       `bk_panic` 并**具名内建**（`readFile`／`writeFile`）。刻意不插入路径实参——非字面量
+       实参在此折不成常量，只覆盖部分调用形态的消息比不覆盖更坏。
+  - **红证据形态（用变异，与 a5 同类）**：摘掉协议的符合点即复现 a6 前形态——CLI 输出
+    `Error: HIR lowering error at …`（无码、无文件名、无源码行）。单测在该态下 **4 项断言
+    失败**且**仅「消息文本」项通过**，正是修前特征：消息还在，码／标签／位置全丢。
+    还原后 CLI 给出 `Error: IRGen Error [E6-004]` ＋ `at …:15:14` ＋模板消息；
+    显式 `--lang zh` 时为 `Error: IR 生成错误 [E6-004]` ＋ `不支持的特性 '…'`。
+  - **`fopen` 判空实测**：读路径 `lli` 退出 134、首行
+    `Pini runtime error: readFile could not open the file`（此前是无消息段错误）；
+    写路径同形态具名 `writeFile`。**legacy 通道对照**：同一程序直接落 LLVM 崩溃转储、
+    无任何具名消息，证实注释里「legacy 无判空」的分歧陈述为真。
+  - **验证**：差分 **76/0/0**（与 a5 持平：判空块不在黄金 IR 路径上）；全量回归
+    **1310 / 0 / 0**（原 1309 / 0 / 0，新增 1 枚门控渲染测试）。
+  - **工单**：`docs/spec/issue/archive/issue-hir-cli-diagnostic-loss-2026-09-08.md`
+    的验收达成，已于 a8 收口时归档（状态转 Closed；a8 复验见该单「落地记录」节）。
+  - **本批立案（不追修）**：诊断面虽已带码与位置，但 `emit` 系命令仍以 `source: nil` 调
+    格式化器，**源码行与下划线标记缺失**，而同命令的类型错误路径是带的——两条路径质量
+    不一致，且源码本就在调用点手边。另附观察：资源层初始语言为 en，与 CLI 注释「默认 zh」
+    不符。两项合并立为 `docs/issue-emit-diagnostic-source-snippet-2026-09-10.md`，
+    交治理流程裁决，不在本批动手。
+
+- **M6a a7 完成：夹具语料重扫与阻塞清零核验（2026-09-11）**：
+
+  - **判据**：真 flip 阻塞 = `legacy emit PASS ∧ HIR emit FAIL`；两边都失败属前端本就拒绝
+    （夹具是负例或能力尚未到），不计入翻转代价。
+  - **examples（59）**：HIR PASS **51** / FAIL 8。交叉表 **FAIL/FAIL 8、FAIL/PASS 11、
+    PASS/PASS 40、PASS/FAIL 0** → **真阻塞 = 0**。8 项 FAIL 全为并发族且 legacy 同 FAIL
+    （LR-11 已立案豁免）；另外 HIR 比 legacy **多覆盖 11 个文件**——就这套语料而言，
+    翻转不是收缩而是净增益。
+  - **四套 LLVM 驱动夹具（222）**：真阻塞 **3**，全部落在 `IRPrintGoldenTests`，门控消息均为
+    `printing a struct/object value is a later grid (value formatting)`（聚合值打印），
+    即 D8 已裁决豁免的项；三项本身也在 b3 的处置范围内。
+  - **分母完备性反查（本轮新增）**：除四套外，`BuiltinOverrideTests`（6 夹具）／
+    `DotCaseConstructionTests`（7）／`OptionalTests`（17）同样引用发射器或 `lli`。
+    逐套核验真阻塞 = **0**，故分母即便放宽到 252，结论不变（仍只有那 3 项）。
+  - **验收口径订正**：M6a 步骤表原先给 a8 写的「sweep hir-emit ≥ 55/59（其余为并发豁免）」
+    自相矛盾——8 项并发豁免意味着可达上限就是 51。正确判据是 **`PASS/FAIL = 0`**
+    （不存在 legacy 能做而 HIR 做不了的样本）**且 HIR PASS ≥ legacy PASS**（实测 51 ≥ 40）；
+    a8 按此验收，不按 55 这个数。
+  - **工单影响已消解**：诊断面接上之后，sweep 的 note 列对门控行给出
+    `IRGen Error [E6-004]` + `at <文件>:行:列` + 门控明细（此前只有一条无位置的裸消息），
+    即工单所述「note 列拿不到逐文件 gate 明细」这一影响已消除。
+  - **产物**：`tools/capability-sweep.tsv` 已刷新（差异仅 8 个并发行的 note 列）；
+    夹具扫描由 `tools/m6-triage-probe.sh` 承担，其 TSV 落在临时目录（可随时重跑再生，
+    故不入库），上面的逐项结论已写进本段作为持久证据。
+
+- **M6a a8 完成：收口（2026-09-11，M6a 批终）**：
+
+  - **门禁与回归**：`check-doc-links` 通过；全量回归 **1310 / 0 / 0**（a8 只动文档与
+    工单归属，代码零改动，与 a6 / a7 基线一致）。
+  - **状态行刷新**：本文档顶部状态行由 M5 终值（差分 60、回归 1293、「M6 门槛达成
+    待点名」）更新为 **M6a 终值**（差分 76、回归 1310/0/0、双分母真阻塞 0）。
+  - **证据登记**：`docs/spec/evidence-table.toml` 新增 **E-155**（`status = FRESH`），
+    覆盖三格 + 三横切的双分母实测、红证据形态（变异探针）、`fopen` 判空实测、
+    验收口径订正与环境事实。登记校验四件事全过：条目数 25 → 26；**存量条目零改动**
+    （E-148 仅随批尾注刷新）；`refresh_note` 尾句为「本次仅新增并现跑重筛 E-155；
+    存量条目未重新验证」；status 分布 STALE 13 / PENDING_DELETE 12 / FRESH 1。
+  - **工单归档（本批唯一关闭项）**：诊断面工单验收达成——a8 复验
+    `PINI_HIR_PIPELINE=1 pini emit examples/concurrency.pini` 给出
+    `IRGen Error [E6-004]` + 相对路径行号 + 具名门控文本（修复前为 `error 1`，无码
+    无位置）。状态转 **Closed**，由 `docs/` 顶层移入 `docs/spec/issue/archive/`。
+  - **归档连带修引用**：三处入向引用同批改为归档路径（本计划两处、元组注解工单
+    一处）。判据来自 `check-doc-links` 的规则——目标不存在但 basename 仍在仓内即判
+    「路径过时」，故**移动与引用修正必须同批**，否则门禁必红。
+  - **本批范围外（仅登记，未动手）**：`docs/` 顶层另有 **10 张已 Closed / LANDED
+    但未归档**的工单，属独立的归档卫生批，**不并入** M6a 收口——M6a 的范围定义只含
+    上述诊断面一张。
+

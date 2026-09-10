@@ -152,6 +152,16 @@ public indirect enum HIRType: Equatable {
             return false
         }
     }
+
+    /// Whether this is an integer numeric type (every numeric except F64).
+    /// Drives declaration width alignment: a float literal in an
+    /// integer-typed slot folds to the truncated integer constant.
+    public var isIntegerNumeric: Bool {
+        switch self {
+        case .i8, .u8, .i32, .i64, .u64: return true
+        default: return false
+        }
+    }
 }
 
 /// Binary operators in the slice set.
@@ -313,6 +323,23 @@ public indirect enum HIRExpr: Equatable {
     /// buffer size cap is the legacy emitter's (LLI's JIT makes
     /// fseek/ftell/fstat unreliable), so the corpus stays well under it.
     case fileRead(path: HIRExpr)
+
+    // MARK: G17 builtins
+
+    /// `readLine()` (G17) — one stdin line, yielded as a String. Mirrors the
+    /// legacy emitter byte for byte: `fgets` into a 256-byte stack buffer and
+    /// the buffer pointer as the value, so a trailing newline is NOT stripped.
+    /// The interpreter's `readLine()` does strip it; that divergence predates
+    /// this grid (the flip preserves the legacy behaviour) and is registered
+    /// in the rewrite plan — the differential fixture injects newline-free
+    /// stdin, the slice on which byte parity holds.
+    case readLine
+    /// `is_ascii_digit(s)` (G17) — first byte in ASCII [0-9]. C-string
+    /// semantics: the empty string reads its NUL terminator and is false,
+    /// matching the interpreter's "first grapheme" rule inside the ASCII
+    /// domain (outside it the interpreter's grapheme model takes over and the
+    /// remaining Unicode predicates stay fail-loud, ADR-019 D4).
+    case isAsciiDigit(argument: HIRExpr)
 
     // MARK: G9 string deepening
 

@@ -94,10 +94,34 @@ public final class IREmitter {
     /// mode-string constants. Conditional for the same golden-IR reason
     /// as the other optional headers.
     private var usesFileIO = false
+    /// G17: `readLine` pulls in the `fgets` declare and the stdin stream
+    /// global. Conditional for the same golden-IR reason as the other
+    /// optional headers.
+    private var usesReadLine = false
     /// G13 batch 1: type-specialized `@__lazyref_wrapper_<T>` define buffer,
     /// deduplicated by element IR spelling; appended after the adapter defs.
     private var lazyrefWrappers: [String] = []
     private var lazyrefWrapperNames: Set<String> = []
+
+    /// Program base for compile-time IO path baking — the new-pipeline
+    /// counterpart of the legacy generator's knob of the same name, which
+    /// fed its own IO emitter. An unprefixed relative path *literal* is
+    /// written into the IR as `base + "/" + path`; absolute paths and `./`
+    /// `../` prefixed ones stay as written (the runtime CWD resolves those),
+    /// exactly mirroring both the legacy emitter and the interpreter's
+    /// runtime resolution rule.
+    ///
+    /// Default nil, so an emitter without a configured base — every
+    /// pre-existing test that drives the pipeline directly — behaves as
+    /// before and its golden IR is unchanged. Code generation needs the base
+    /// because the emitted program has no runtime notion of where its source
+    /// lived; a non-literal path expression cannot be baked either way and
+    /// keeps resolving against the CWD (known v1 limitation).
+    ///
+    /// This sits in the emitter rather than in the HIR tree on purpose: it is
+    /// a code-generation environment input, not a language-semantics
+    /// decision, and the HIR tree stays a pure lowering of the source.
+    public var programBase: String?
 
     public init() {}
 
@@ -176,6 +200,7 @@ public final class IREmitter {
         stringConstants = [:]
         usesStrCmp = false
         usesLazyRef = false
+        usesReadLine = false
         lazyrefWrappers = []
         lazyrefWrapperNames = []
         moduleTypes = module.types
@@ -243,6 +268,12 @@ public final class IREmitter {
             tail += "declare i32 @fclose(ptr)\n"
             tail += "@.fopen_w = private constant [2 x i8] c\"w\\00\"\n"
             tail += "@.fopen_r = private constant [2 x i8] c\"r\\00\"\n"
+        }
+        // G17: `readLine` pulls in the libc line reader and the stdin stream
+        // global (macOS `__stdinp`, the legacy module header's spelling).
+        if usesReadLine {
+            tail += "declare ptr @fgets(ptr, i32, ptr)\n"
+            tail += "@__stdinp = external global ptr\n"
         }
         // G6: env struct type declarations must precede their uses — the
         // creation-point GEPs live in the function bodies, and lli requires
@@ -1229,21 +1260,65 @@ public final class IREmitter {
 
         case .fileRead(let path):
             return emitFileRead(path: path)
+
+        case .readLine:
+            return emitReadLine()
+
+        case .isAsciiDigit(let argument):
+            return emitIsAsciiDigit(argument)
         }
+    }
+
+    /// Bake a path *literal* against the program base (see `programBase`).
+    /// Non-literals and paths that the rule exempts come back untouched, so
+    /// every caller can route its path argument through this unconditionally.
+    private func bakedIOPath(_ path: HIRExpr) -> HIRExpr {
+        guard let base = programBase,
+              case .stringConst(let value) = path,
+              !value.hasPrefix("/"),
+              !value.hasPrefix("./"),
+              !value.hasPrefix("../") else {
+            return path
+        }
+        return .stringConst(value: base + "/" + value)
+    }
+
+    /// `fopen` yields NULL whenever the file cannot be opened, and the legacy
+    /// emitter hands that NULL straight to `fread`/`fwrite`, which traps
+    /// inside libc with no message at all. Fail loud through the same panic
+    /// channel the other runtime guards use, so the failure names the builtin
+    /// instead of surfacing as an opaque crash. The path is deliberately not
+    /// interpolated: a non-literal argument cannot be folded into a constant
+    /// here, and a message that only covers some call shapes would be worse
+    /// than one that covers none.
+    private func emitFopenNullGuard(handle: String, builtin: String) {
+        let failed = builder.freshTemp()
+        bodyIR += " \(failed) = icmp eq ptr \(handle), null\n"
+        let id = builder.freshLabel()
+        let failLabel = "io.fail.\(id)"
+        let openLabel = "io.open.\(id)"
+        bodyIR += builder.fmtCondBr(cond: failed, thenLabelName: failLabel, elseLabelName: openLabel) + "\n"
+        bodyIR += "\(failLabel):\n"
+        let message = emitStringConstant("Pini runtime error: \(builtin) could not open the file")
+        bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+        bodyIR += " unreachable\n"
+        bodyIR += "\(openLabel):\n"
     }
 
     /// `writeFile(path, content)` (G15): fopen(path, "w") / strlen /
     /// fwrite / fclose. Mirrors the legacy emitter byte for byte — no
     /// trailing newline is appended, matching the interpreter's
-    /// `String.write(toFile:)`. Yields the fclose i32 as the value.
+    /// `String.write(toFile:)`. Yields the fclose i32 as the value. The one
+    /// deliberate divergence is the NULL guard: the legacy emitter has none.
     private func emitFileWrite(path: HIRExpr, content: HIRExpr) -> IRValue {
         usesFileIO = true
-        let pathValue = emitExpr(path)
+        let pathValue = emitExpr(bakedIOPath(path))
         let contentValue = emitExpr(content)
         let mode = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_w", indices: [0, 0]) + "\n"
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
+        emitFopenNullGuard(handle: handle, builtin: "writeFile")
         let length = builder.freshTemp()
         bodyIR += " \(length) = call i64 @strlen(ptr \(contentValue.ssaName))\n"
         let written = builder.freshTemp()
@@ -1257,14 +1332,17 @@ public final class IREmitter {
     /// 64 KiB stack buffer / NUL-terminate / fclose. Yields the buffer
     /// pointer as a String. The fixed cap is the legacy emitter's —
     /// LLI's JIT makes fseek/ftell/fstat unreliable — and the IO corpus
-    /// stays far below it.
+    /// stays far below it. The NULL guard is the second divergence from the
+    /// legacy emitter, and the one that matters most here: a missing file is
+    /// reachable from ordinary source, unlike the write path's.
     private func emitFileRead(path: HIRExpr) -> IRValue {
         usesFileIO = true
-        let pathValue = emitExpr(path)
+        let pathValue = emitExpr(bakedIOPath(path))
         let mode = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]) + "\n"
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
+        emitFopenNullGuard(handle: handle, builtin: "readFile")
         let buffer = freshSlot(for: "file.buffer")
         bodyIR += builder.fmtAlloca(name: buffer, type: "[65536 x i8]") + "\n"
         let base = builder.freshTemp()
@@ -1280,6 +1358,46 @@ public final class IREmitter {
         // C string; a bare `ptr` falls into the %d default and prints the
         // address.
         return IRValue(llvmType: "i8*", ssaName: base)
+    }
+
+    /// `readLine()` (G17): a 256-byte stack buffer filled by `fgets` from the
+    /// stdin stream, yielded as a String. Mirrors the legacy emitter
+    /// instruction for instruction — including the fact that the newline is
+    /// left in place when stdin has one (the interpreter strips it; the
+    /// divergence is registered, and this grid preserves the legacy
+    /// behaviour rather than changing the flip's observable output).
+    private func emitReadLine() -> IRValue {
+        usesReadLine = true
+        let bufferSize = 256
+        let buffer = freshSlot(for: "readline.buffer")
+        bodyIR += builder.fmtAlloca(name: buffer, type: "[\(bufferSize) x i8]") + "\n"
+        let base = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: base, aggregate: "[\(bufferSize) x i8]", base: buffer, indices: [0, 0]) + "\n"
+        let stream = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: stream, type: "ptr", ptr: "@__stdinp") + "\n"
+        let line = builder.freshTemp()
+        bodyIR += " \(line) = call ptr @fgets(ptr \(base), i32 \(bufferSize), ptr \(stream))\n"
+        // "i8*" for the same reason emitFileRead returns it: that is the
+        // spelling emitScalarPrint routes to %s.
+        return IRValue(llvmType: "i8*", ssaName: line)
+    }
+
+    /// `is_ascii_digit(s)` (G17): the first byte of the C string tested
+    /// against [0x30, 0x39]. The empty string loads its NUL terminator and is
+    /// false without a length check — the same shape the legacy emitter uses,
+    /// and the same answer the interpreter's first-grapheme rule gives in the
+    /// ASCII domain.
+    private func emitIsAsciiDigit(_ argument: HIRExpr) -> IRValue {
+        let subject = emitExpr(argument)
+        let byte = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: byte, type: "i8", ptr: subject.ssaName) + "\n"
+        let lowerBound = builder.freshTemp()
+        bodyIR += " \(lowerBound) = icmp uge i8 \(byte), 48\n"
+        let upperBound = builder.freshTemp()
+        bodyIR += " \(upperBound) = icmp ule i8 \(byte), 57\n"
+        let isDigit = builder.freshTemp()
+        bodyIR += " \(isDigit) = and i1 \(lowerBound), \(upperBound)\n"
+        return IRValue(llvmType: "i1", ssaName: isDigit)
     }
 
     /// `assert(cond, msg?)`: branch on the condition; the false edge
@@ -1510,7 +1628,7 @@ public final class IREmitter {
     /// Zero constant per field spelling (legacy zeroConst mirror).
     private func zeroConst(for type: HIRType) -> String {
         switch type {
-        case .i32, .i64, .boolean: return "0"
+        case .i8, .u8, .i32, .i64, .u64, .boolean: return "0"
         case .f64: return "0.0"
         default: return "null"
         }
@@ -2240,6 +2358,8 @@ public final class IREmitter {
         case .assertCall: return .i32
         case .fileWrite: return .i32
         case .fileRead: return .string
+        case .readLine: return .string
+        case .isAsciiDigit: return .boolean
         }
     }
 
@@ -2250,6 +2370,13 @@ public final class IREmitter {
             let sel = builder.freshTemp()
             bodyIR += " \(sel) = select i1 \(value.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(sel))\n"
+        case "i8":
+            // Narrow integers widen to i32 for %d — varargs demand it, and
+            // the interpreter models every integer as one signed value (the
+            // same sign-extending read emitPointerLoad uses for U8).
+            let extended = builder.freshTemp()
+            bodyIR += " \(extended) = sext i8 \(value.ssaName) to i32\n"
+            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_int, i32 \(extended))\n"
         case "i64":
             // Narrow to i32 for %d; `sext i64 -> i32` is an invalid cast (the
             // legacy emitter has this same bug — registered separately).

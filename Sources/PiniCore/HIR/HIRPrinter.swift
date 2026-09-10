@@ -208,6 +208,10 @@ public enum HIRPrinter {
             return "writeFile(\(exprText(path)), \(exprText(content)))"
         case .fileRead(let path):
             return "readFile(\(exprText(path)))"
+        case .readLine:
+            return "readLine()"
+        case .isAsciiDigit(let argument):
+            return "is_ascii_digit(\(exprText(argument)))"
         }
     }
 

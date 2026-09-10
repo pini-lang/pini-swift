@@ -31,7 +31,20 @@ final class HIRDifferentialTests: XCTestCase {
         return nil
     }
 
-    private func runNewPipeline(_ source: String) throws -> String {
+    /// `stdin` is injected identically on both channels when non-nil. Without
+    /// it a fixture that reads stdin compares two different streams (the
+    /// interpreter reads the test process's stdin, lli inherits its own), so
+    /// the parity claim would be vacuous. The bytes carry no trailing newline
+    /// for the `readLine` fixture — see `assertParityWithStdin`.
+    /// `programBase` mirrors the CLI's program-base input (nil = the pre-G58
+    /// behavior every earlier fixture relies on); `workingDirectory` sets the
+    /// directory the lli process starts in. Both default to the old shape, so
+    /// existing callers are unaffected. The pair exists so a fixture can
+    /// prove the base is honored *while* the CWD points somewhere else — the
+    /// only configuration in which base baking is observable.
+    private func runNewPipeline(_ source: String, stdin: String? = nil,
+                                programBase: String? = nil,
+                                workingDirectory: String? = nil) throws -> String {
         try LLVMGate.requireLLI()
         let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let fileName = "test.pini"
@@ -42,7 +55,9 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertTrue(errors.isEmpty, "slice sources must typecheck: \(errors)")
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-        let ir = IREmitter().emit(module: hir)
+        let emitter = IREmitter()
+        emitter.programBase = programBase
+        let ir = emitter.emit(module: hir)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_hir_diff_\(UUID().uuidString).ll"
         defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -55,10 +70,19 @@ final class HIRDifferentialTests: XCTestCase {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: lli)
         process.arguments = ["--dlopen=\(dylib)", tmpIR]
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
+        let inputPipe = stdin.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        if let stdin, let inputPipe {
+            inputPipe.fileHandleForWriting.write(Data(stdin.utf8))
+            inputPipe.fileHandleForWriting.closeFile()
+        }
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             XCTFail("lli exited \(process.terminationStatus) for IR:\n\(ir)")
@@ -68,7 +92,8 @@ final class HIRDifferentialTests: XCTestCase {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    private func runInterpreter(_ source: String) throws -> String {
+    private func runInterpreter(_ source: String, stdin inputText: String? = nil,
+                                programBase: String? = nil) throws -> String {
         let fileName = "test.pini"
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
@@ -78,12 +103,33 @@ final class HIRDifferentialTests: XCTestCase {
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
-        let interpreter = Interpreter()
+        // Unbuffered stdin so the injected fd is what `readLine()` sees.
+        var originalStdin: Int32 = -1
+        if let inputText {
+            let inputPipe = Pipe()
+            originalStdin = dup(STDIN_FILENO)
+            setvbuf(stdin, nil, _IONBF, 0)
+            dup2(inputPipe.fileHandleForReading.fileDescriptor, STDIN_FILENO)
+            inputPipe.fileHandleForWriting.write(Data(inputText.utf8))
+            inputPipe.fileHandleForWriting.closeFile()
+        }
+
+        let interpreter = Interpreter(programBase: programBase)
         try interpreter.run(module: module)
 
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
         close(originalStdout)
+        if originalStdin >= 0 {
+            dup2(originalStdin, STDIN_FILENO)
+            close(originalStdin)
+            // The run above read stdin to EOF, which latches the EOF flag on
+            // the process-global stream. Restoring the descriptor alone is not
+            // enough: every later reader in this process (IOTests injects its
+            // own stdin the same way) would otherwise see an immediate EOF and
+            // the suite would pass or fail by test ordering.
+            clearerr(stdin)
+        }
         pipe.fileHandleForWriting.closeFile()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -94,6 +140,45 @@ final class HIRDifferentialTests: XCTestCase {
         let source = try loadPiniFixture(fixtureName, filePath: #filePath)
         let interpreterOutput = try runInterpreter(source)
         let llvmOutput = try runNewPipeline(source)
+        XCTAssertEqual(llvmOutput, interpreterOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+                       file: file, line: line)
+        XCTAssertFalse(llvmOutput.isEmpty, "\(fixtureName): expected non-empty output", file: file, line: line)
+    }
+
+    /// Parity for fixtures whose program legitimately prints nothing (the
+    /// multi-slot return fixtures only bind the result; nothing is emitted).
+    /// The pre-fix failure mode is not a wrong value but a lowering throw or
+    /// an lli trap, so empty output is the expected contract. The final
+    /// assertion guards the assumption: if someone adds a print to such a
+    /// fixture, this fails loudly and points at `assertParity` instead of
+    /// silently weakening the check to "" == "".
+    private func assertParityAllowingEmptyOutput(fixtureName: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let source = try loadPiniFixture(fixtureName, filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source)
+        let llvmOutput = try runNewPipeline(source)
+        XCTAssertEqual(llvmOutput, interpreterOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+                       file: file, line: line)
+        XCTAssertTrue(interpreterOutput.isEmpty,
+                      "\(fixtureName): this fixture is declared output-free; use assertParity instead",
+                      file: file, line: line)
+    }
+
+    /// Parity for fixtures that read stdin. Both channels must see the SAME
+    /// bytes — the interpreter reads the test process's stdin and lli
+    /// inherits its own — so the input is injected explicitly. Callers pass
+    /// input WITHOUT a trailing newline: the interpreter's `readLine()`
+    /// strips it while both LLVM channels hand `fgets`' buffer straight to
+    /// `print` (`%s`), trailing newline included. That difference is a
+    /// pre-existing legacy/interpreter divergence the M6 flip preserves
+    /// (registered in the rewrite plan, same class as print(F64)); the
+    /// newline-free input is the slice on which byte parity actually holds.
+    private func assertParityWithStdin(fixtureName: String, stdin: String,
+                                       file: StaticString = #filePath, line: UInt = #line) throws {
+        let source = try loadPiniFixture(fixtureName, filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source, stdin: stdin)
+        let llvmOutput = try runNewPipeline(source, stdin: stdin)
         XCTAssertEqual(llvmOutput, interpreterOutput,
                        "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
                        file: file, line: line)
@@ -346,4 +431,143 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffBitwiseCompound() throws { try assertParity(fixtureName: "testDiffBitwiseCompound") }
     func testDiffIoFile() throws { try assertParity(fixtureName: "testDiffIoFile") }
     func testDiffStep() throws { try assertParity(fixtureName: "testDiffStep") }
+
+    // MARK: - M6a G16 tuple family (fixtures inherited from the LLVM-driven
+    // suites: multi-slot returns, positional index, destructuring, len(tuple),
+    // unlabelled tuple construction)
+
+    /// Multi-slot return (`-> (I32, I32,)`): distinct from the single-slot
+    /// tuple return covered by G8 (the two are different declarations). The
+    /// fixture prints nothing, hence the empty-output variant.
+    func testDiffMultiReturnAddAndSub() throws { try assertParityAllowingEmptyOutput(fixtureName: "testDiffMultiReturnAddAndSub") }
+    func testDiffMultiReturnSwap() throws { try assertParityAllowingEmptyOutput(fixtureName: "testDiffMultiReturnSwap") }
+
+    func testDiffTupleIndexAccess() throws { try assertParity(fixtureName: "testDiffTupleIndexAccess") }
+    func testDiffTupleDestructure() throws { try assertParity(fixtureName: "testDiffTupleDestructure") }
+    func testDiffTupleLen() throws { try assertParity(fixtureName: "testDiffTupleLen") }
+    func testDiffTupleConstruct() throws { try assertParity(fixtureName: "testDiffTupleConstruct") }
+    func testDiffTupleConstructClang() throws { try assertParity(fixtureName: "testDiffTupleConstructClang") }
+
+    // MARK: - M6a G17 builtins and type repair (fixtures inherited from the
+    // LLVM-driven suites: readLine, is_ascii_digit, I8 field defaults,
+    // unannotated-parameter fallback)
+
+    /// `readLine()` — stdin injected on both channels (input without a
+    /// trailing newline; see `assertParityWithStdin`).
+    func testDiffReadLine() throws {
+        try assertParityWithStdin(fixtureName: "testDiffReadLine", stdin: "hello_stdin")
+    }
+
+    func testDiffIsAsciiDigit() throws { try assertParity(fixtureName: "testDiffIsAsciiDigit") }
+    func testDiffI8StructField() throws { try assertParity(fixtureName: "testDiffI8StructField") }
+    func testDiffParamNoAnnotationVoid() throws { try assertParity(fixtureName: "testDiffParamNoAnnotationVoid") }
+    func testDiffParamNoAnnotationReturn() throws { try assertParity(fixtureName: "testDiffParamNoAnnotationReturn") }
+
+    // MARK: - M6a G18 trait default receiver and empty array literal
+    // (fixtures inherited from the LLVM-driven suites, plus one fixture for a
+    // field-resolution gap the probe exposed: a field declared with a user
+    // type resolved only for built-in annotations, so the field read as absent)
+
+    func testDiffTraitDefaultMethod() throws { try assertParity(fixtureName: "testDiffTraitDefaultMethod") }
+    func testDiffEmptyArray() throws { try assertParity(fixtureName: "testDiffEmptyArray") }
+    func testDiffEnumTypedField() throws { try assertParity(fixtureName: "testDiffEnumTypedField") }
+
+    // MARK: - M6a cross-cutting item a5: program base baking (the CWD differs
+    // from the script directory, so a channel that ignores the base is visible)
+
+    /// Unique temp directory, torn down when the test ends (the same shape
+    /// IOTests uses for its base-rule fixtures, kept local so this file stays
+    /// self-contained).
+    private func makeTempDir(_ label: String) throws -> String {
+        let dir = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("pini_hir_base_\(label)_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: dir) }
+        return dir
+    }
+
+    /// Legacy channel: the type-check -> IRGenerator -> lli sequence the CLI
+    /// still uses by default, including the generator's own program-base
+    /// input. The legacy emitter is the reference implementation the HIR
+    /// emitter has to match, so routing one fixture through all three
+    /// channels pins the rule itself instead of only agreement with the
+    /// interpreter.
+    private func runLegacyPipeline(_ source: String, programBase: String,
+                                   workingDirectory: String) throws -> String {
+        try LLVMGate.requireLLI()
+        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
+        let fileName = "test.pini"
+        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
+        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        XCTAssertTrue(errors.isEmpty, "slice sources must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let generator = IRGenerator()
+        generator.typeInference = checker.typeInference
+        generator.programBase = programBase
+        let ir = try generator.generate(module: module)
+
+        let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_legacy_diff_\(UUID().uuidString).ll"
+        defer { try? FileManager.default.removeItem(atPath: tmpIR) }
+        try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
+
+        guard let lli = LLVMToolchain.lliPath else {
+            throw NSError(domain: "LLIUnavailable", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "lli not available"])
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: lli)
+        process.arguments = ["--dlopen=\(dylib)", tmpIR]
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            XCTFail("lli exited \(process.terminationStatus) for legacy IR:\n\(ir)")
+            return ""
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// The program base is a code-generation input on all three channels: an
+    /// unprefixed relative path *literal* is baked against the directory the
+    /// script lives in, so a program started from an unrelated CWD still finds
+    /// its resource. `res.txt` deliberately exists in both directories with
+    /// different contents — a channel that ignored the base would not fail
+    /// loudly, it would silently read the decoy, and the byte comparison is
+    /// what catches it. Before the base reached the HIR emitter, that channel
+    /// resolved `res.txt` against lli's CWD and printed the decoy; the write
+    /// half of the fixture fails the same way by landing in the CWD.
+    func testDiffIoProgramBase() throws {
+        let base = try makeTempDir("base")
+        let cwd = try makeTempDir("cwd")
+        try "base-resource".write(toFile: (base as NSString).appendingPathComponent("res.txt"),
+                                  atomically: true, encoding: .utf8)
+        try "cwd-decoy".write(toFile: (cwd as NSString).appendingPathComponent("res.txt"),
+                              atomically: true, encoding: .utf8)
+
+        let source = try loadPiniFixture("testDiffIoProgramBase", filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source, programBase: base)
+        XCTAssertEqual(interpreterOutput, "base-resource\nwritten-to-base\n",
+                       "the interpreter resolves an unprefixed path against the program base")
+
+        let legacyOutput = try runLegacyPipeline(source, programBase: base, workingDirectory: cwd)
+        XCTAssertEqual(legacyOutput, interpreterOutput,
+                       "the legacy generator bakes the base into the literal, so its CWD cannot matter\n--- interpreter ---\n\(interpreterOutput)--- legacy ---\n\(legacyOutput)")
+
+        let hirOutput = try runNewPipeline(source, programBase: base, workingDirectory: cwd)
+        XCTAssertEqual(hirOutput, interpreterOutput,
+                       "the HIR emitter must bake the base too, or lli reads the CWD decoy\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+
+        XCTAssertEqual(try String(contentsOfFile: (base as NSString).appendingPathComponent("out.txt"),
+                                  encoding: .utf8),
+                       "written-to-base", "an unprefixed writeFile must land in the program base")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: (cwd as NSString).appendingPathComponent("out.txt")),
+                       "an unprefixed writeFile must not land in the runtime CWD")
+    }
 }
