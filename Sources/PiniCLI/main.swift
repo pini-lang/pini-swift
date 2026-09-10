@@ -1349,6 +1349,7 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
  // selectable via env for the M5 capability sweep; the legacy generator
  // remains the default until the M6 flip deletes it along with this branch.
  if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1" {
+  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
   let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
   return IREmitter().emit(module: hirModule)
  }
