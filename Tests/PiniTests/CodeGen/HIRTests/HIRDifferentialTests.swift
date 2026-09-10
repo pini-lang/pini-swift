@@ -152,7 +152,7 @@ final class HIRDifferentialTests: XCTestCase {
 
     /// HIR channel for a package: package semantic + type-check, then
     /// `HIRLowerer.lower(package:)` -> IREmitter -> lli (D3 in-process driver).
-    private func runPackageNewPipeline(_ package: Package) throws -> String {
+    private func runPackageNewPipeline(_ package: Package, extraDlopens: [String] = []) throws -> String {
         try LLVMGate.requireLLI()
         let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
         let semantic = SemanticAnalyzer()
@@ -173,7 +173,10 @@ final class HIRDifferentialTests: XCTestCase {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: lli)
-        process.arguments = ["--dlopen=\(dylib)", tmpIR]
+        // G14 (D-C=C1): foreign search-path libraries ride along as extra
+        // --dlopen entries so dlsym-resolved symbols (ffi_atoi, ...) link
+        // under lli exactly like the interpreter's FFILoader.
+        process.arguments = extraDlopens.map { "--dlopen=\($0)" } + ["--dlopen=\(dylib)", tmpIR]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -190,7 +193,16 @@ final class HIRDifferentialTests: XCTestCase {
     private func assertPackageParity(_ relPath: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let (package, manifest) = try loadPackageCorpus(relPath)
         let interpreterOutput = try runPackageInterpreter(package, ffiConfig: manifest?.ffi ?? .default)
-        let llvmOutput = try runPackageNewPipeline(package)
+        // G14: resolve the manifest's foreign search-path libraries for the
+        // extra --dlopen pass (lib<name>.dylib inside each search path).
+        let ffi = manifest?.ffi
+        let extraDlopens = (ffi?.libs ?? []).flatMap { lib -> [String] in
+            (ffi?.searchPaths ?? []).compactMap { sp in
+                let dylibPath = (sp as NSString).appendingPathComponent("lib\(lib).dylib")
+                return FileManager.default.fileExists(atPath: dylibPath) ? dylibPath : nil
+            }
+        }
+        let llvmOutput = try runPackageNewPipeline(package, extraDlopens: extraDlopens)
         XCTAssertEqual(llvmOutput, interpreterOutput,
                        "\(relPath): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
                        file: file, line: line)

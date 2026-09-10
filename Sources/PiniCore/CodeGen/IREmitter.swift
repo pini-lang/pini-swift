@@ -139,6 +139,23 @@ public final class IREmitter {
         header += "declare ptr @malloc(i64)\n"
         header += "declare double @llvm.sin.f64(double)\n"
         header += "declare double @llvm.cos.f64(double)\n"
+        // G14: foreign blocks declare their external signatures. Symbols
+        // resolve at JIT link time (libc via the process image inside lli;
+        // dlopened libraries via lli --dlopen=... in the test harness).
+        // Symbols already declared by the fixed header (malloc/free/strlen)
+        // are skipped — LLVM rejects redefinition.
+        let predeclared: Set<String> = ["printf", "malloc", "free", "strlen", "memcpy"]
+        // Runtime-provided shims: not libc, resolved from the runtime dylib
+        // (--dlopen in the harness). Emit the bk_ symbol declare.
+        let runtimeShims: Set<String> = ["cstr"]
+        for foreignBlock in module.foreigns {
+            for func_ in foreignBlock.funcs where !predeclared.contains(func_.name) {
+                let symbol = runtimeShims.contains(func_.name) ? "bk_\(func_.name)" : IRName.mangle(func_.name)
+                let params = func_.paramTypes.map { $0.llvmSpelling }.joined(separator: ", ")
+                let ret = func_.returnType?.llvmSpelling ?? "void"
+                header += "declare \(ret) @\(symbol)(\(params))\n"
+            }
+        }
         header += "\n"
 
         bodyIR = ""
@@ -789,7 +806,15 @@ public final class IREmitter {
         case .call(let function, let arguments, let returnType):
             let args = arguments.map { emitExpr($0) }
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
-            let callee = "@\(Self.mangle(function))"
+            // G14: runtime-shimmed foreign symbols call their bk_ name
+            // (the declare pass emits the matching bk_ symbol).
+            let symbolName: String
+            if function == "cstr" {
+                symbolName = "bk_cstr"
+            } else {
+                symbolName = Self.mangle(function)
+            }
+            let callee = "@\(symbolName)"
             if let returnType = returnType {
                 let temp = builder.freshTemp()
                 bodyIR += " \(temp) = call \(returnType.llvmSpelling) \(callee)(\(argList))\n"
@@ -980,7 +1005,119 @@ public final class IREmitter {
 
         case .lazyRefValue(let handle, let type):
             return emitLazyRefValue(handle: handle, element: type)
+
+        case .pointerLoad(let pointer, let type):
+            return emitPointerLoad(pointer: pointer, element: type)
+
+        case .pointerStore(let pointer, let value, let type):
+            return emitPointerStore(pointer: pointer, value: value, element: type)
+
+        case .addressOfVar(let name, let type):
+            return emitAddressOfVar(name: name, type: type)
+
+        case .printMulti(let arguments):
+            return emitPrintMulti(arguments: arguments)
+
+        case .assertCall(let condition, let message):
+            return emitAssertCall(condition: condition, message: message)
         }
+    }
+
+    /// `assert(cond, msg?)`: branch on the condition; the false edge
+    /// prints the message (or a default) and calls the noreturn panic.
+    /// Passing asserts fall through — a failing assert never appears in a
+    /// parity baseline (test blocks are not executed by the harness).
+    private func emitAssertCall(condition: HIRExpr, message: HIRExpr?) -> IRValue {
+        let cond = emitExpr(condition)
+        let passLabel = "assert.pass.\(builder.freshLabel())"
+        let failLabel = "assert.fail.\(builder.freshLabel())"
+        let endLabel = "assert.end.\(builder.freshLabel())"
+        bodyIR += builder.fmtCondBr(cond: cond.ssaName, thenLabelName: passLabel, elseLabelName: failLabel) + "\n"
+        bodyIR += "\(failLabel):\n"
+        let msg = message ?? .stringConst(value: "assert failed")
+        let rendered = emitExpr(msg)
+        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered.ssaName))\n"
+        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        bodyIR += " call ptr @bk_panic(ptr null)\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        bodyIR += "\(passLabel):\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        bodyIR += "\(endLabel):\n"
+        return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    // MARK: - G14 FFI pointer primitives
+
+    /// `load(p)`: typed load through the pointer, then widen to the
+    /// unified int value the rest of the pipeline prints with (mirrors the
+    /// interpreter's decodePointer — U8 sign-extends, U64 loads 8 bytes).
+    private func emitPointerLoad(pointer: HIRExpr, element: HIRType) -> IRValue {
+        let p = emitExpr(pointer)
+        let loaded = builder.freshTemp()
+        bodyIR += " \(loaded) = load \(element.llvmSpelling), ptr \(p.ssaName)\n"
+        if element.llvmSpelling == "i8" {
+            let widened = builder.freshTemp()
+            bodyIR += " \(widened) = sext i8 \(loaded) to i64\n"
+            return IRValue(llvmType: "i64", ssaName: widened)
+        }
+        return IRValue(llvmType: element.llvmSpelling, ssaName: loaded)
+    }
+
+    /// `store(p, v)`: truncating store for narrow elements (mirrors the
+    /// interpreter's encode — Int8(truncatingIfNeeded:)). The value's own
+    /// IR type drives the narrowing chain (a declared I32 into a *U8 slot
+    /// truncates i32 -> i8); the element type is the ABI authority.
+    private func emitPointerStore(pointer: HIRExpr, value: HIRExpr, element: HIRType) -> IRValue {
+        let p = emitExpr(pointer)
+        var v = emitExpr(value)
+        let target = element.llvmSpelling
+        if v.llvmType != target {
+            if v.llvmType == "i64" {
+                if target == "i32" {
+                    let narrowed = builder.freshTemp()
+                    bodyIR += " \(narrowed) = trunc i64 \(v.ssaName) to i32\n"
+                    v = IRValue(llvmType: "i32", ssaName: narrowed)
+                } else if target == "i8" {
+                    let narrowed = builder.freshTemp()
+                    bodyIR += " \(narrowed) = trunc i64 \(v.ssaName) to i8\n"
+                    v = IRValue(llvmType: "i8", ssaName: narrowed)
+                }
+            } else if v.llvmType == "i32" && target == "i8" {
+                let narrowed = builder.freshTemp()
+                bodyIR += " \(narrowed) = trunc i32 \(v.ssaName) to i8\n"
+                v = IRValue(llvmType: "i8", ssaName: narrowed)
+            } else {
+                fatalError("IREmitter: pointerStore cannot shrink \(v.llvmType) to \(target)")
+            }
+        }
+        bodyIR += " store \(v.llvmType) \(v.ssaName), ptr \(p.ssaName)\n"
+        return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// `&x`: the variable's alloca slot address (D-B true pointer
+    /// semantics). Opaque ptr typed by the pointee for load/store use.
+    private func emitAddressOfVar(name: String, type: HIRType) -> IRValue {
+        guard let slot = lookupSlot(name) else {
+            fatalError("IREmitter: addressOf of undeclared variable '\(name)' (HIRLowerer guarantees declarations)")
+        }
+        return IRValue(llvmType: "ptr", ssaName: slot)
+    }
+
+    /// `print(a, b, ...)`: per-argument value print separated by single
+    /// spaces, one trailing newline (D-A=A1 — mirrors the interpreter's
+    /// stringify-join byte stream). No newline after each argument, unlike
+    /// the single-argument print path.
+    private func emitPrintMulti(arguments: [HIRExpr]) -> IRValue {
+        for (index, argument) in arguments.enumerated() {
+            if index > 0 {
+                let space = emitStringConstant(" ")
+                bodyIR += " call i32 (ptr, ...) @printf(ptr \(space.ssaName))\n"
+            }
+            let printed = emitExpr(argument)
+            emitScalarPrint(printed)
+        }
+        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        return IRValue(llvmType: "void", ssaName: "")
     }
 
     // MARK: - G13 batch 1 (LazyRef)
@@ -1828,6 +1965,11 @@ public final class IREmitter {
         case .indirectCall(_, _, let returnType): return returnType ?? .i32
         case .lazyRefConstruct(_, let type): return type
         case .lazyRefValue(_, let type): return type
+        case .pointerLoad(_, let type): return type
+        case .pointerStore: return .i32
+        case .addressOfVar(_, let type): return .pointer(element: type)
+        case .printMulti: return .i32
+        case .assertCall: return .i32
         }
     }
 

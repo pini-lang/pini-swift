@@ -273,6 +273,32 @@ public indirect enum HIRExpr: Equatable {
     /// functionValue / function-typed variable load.
     case indirectCall(callee: HIRExpr, arguments: [HIRExpr], returnType: HIRType?)
 
+    // MARK: G14 FFI pointer primitives
+
+    /// `load(p)` (G14): read the element value through a `*T` pointer.
+    /// `type` is the element HIRType (mirrors the interpreter's
+    /// decodePointer: U8 loads sign-extend into one unified int value).
+    case pointerLoad(pointer: HIRExpr, type: HIRType)
+    /// `store(p, v)` (G14): write the value through a `*T` pointer using
+    /// the pointer's element type (mirrors the interpreter's encode:
+    /// truncating store for narrow elements). Value expression.
+    case pointerStore(pointer: HIRExpr, value: HIRExpr, type: HIRType)
+    /// `&x` (G14, D-B adjudication: true pointer semantics): the address of
+    /// a variable's alloca slot. The interpreter's snapshot aliasing gap
+    /// (write-back does not update the original) is the documented
+    /// divergence covered by the read-only corpus.
+    case addressOfVar(name: String, type: HIRType)
+    /// `print(a, b, ...)` multi-argument form (G14, D-A=A1): the
+    /// interpreter's semantics are per-argument stringify joined with a
+    /// single space on one line; the emitter realizes the same byte stream
+    /// (value, space, value, ..., newline).
+    case printMulti(arguments: [HIRExpr])
+    /// `assert(cond)` / `assert(cond, message)` (G41 surface): boolean
+    /// trap — false raises the runtime panic with the message. Only needed
+    /// so `|test` blocks lower; the differential harness never executes
+    /// them.
+    case assertCall(condition: HIRExpr, message: HIRExpr?)
+
     // MARK: G9 string deepening
 
     /// `s.upper()` / `s.lower()` (G9) — byte-wise toupper/tolower over a

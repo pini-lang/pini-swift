@@ -1995,26 +1995,88 @@ public enum HIRLowerer {
             let loweredArgs = try arguments.map { argument in
                 try lowerExpr(argument.expression, expected: nil, into: &context)
             }
-            // Intrinsic print: exactly one argument.
+            // G14 pointer builtins: load/store mirror the interpreter's
+            // registerPointerBuiltins surface (signature-agnostic — the
+            // pointer's element type drives decode/encode).
+            if functionName == "load" {
+                guard loweredArgs.count == 1, case .pointer(let element) = loweredArgs[0].type else {
+                    throw unsupported("load expects exactly one *T pointer argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .pointerLoad(pointer: loweredArgs[0].node, type: element),
+                    type: element
+                )
+            }
+            if functionName == "store" {
+                guard arguments.count == 2,
+                      case .pointer(let element) = loweredArgs[0].type else {
+                    throw unsupported("store expects (pointer, value) arguments", at: location)
+                }
+                // The value re-lowers against the pointer's element type so
+                // untyped literals adopt it (store(p, 42) on *U8 → u8).
+                // A declared-typed value keeps its own type — the encode
+                // semantics are truncating (interpreter parity: store of an
+                // I32 into *U8 writes the low byte).
+                let value = try lowerExpr(arguments[1].expression, expected: element, into: &context)
+                return LoweredExpr(
+                    node: .pointerStore(pointer: loweredArgs[0].node, value: value.node, type: element),
+                    type: .i32
+                )
+            }
+            // Intrinsic assert (G41 surface, needed by |test blocks in the
+            // FFI corpus): assert(cond) / assert(cond, message). The cond
+            // must be boolean; false traps via the runtime's panic path —
+            // a failing assert is outside the differential baseline anyway
+            // (assert only fires in test blocks, which the harness never
+            // runs, but the lowering must still exist).
+            if functionName == "assert" {
+                guard loweredArgs.count == 1 || loweredArgs.count == 2 else {
+                    throw unsupported("assert expects (condition) or (condition, message)", at: location)
+                }
+                guard loweredArgs[0].type == .boolean else {
+                    throw unsupported("assert condition must be Bool", at: location)
+                }
+                if loweredArgs.count == 2 {
+                    guard loweredArgs[1].type == .string else {
+                        throw unsupported("assert message must be String", at: location)
+                    }
+                }
+                return LoweredExpr(
+                    node: .assertCall(
+                        condition: loweredArgs[0].node,
+                        message: loweredArgs.count == 2 ? loweredArgs[1].node : nil
+                    ),
+                    type: .i32
+                )
+            }
+            // Intrinsic print: single-argument form keeps the existing
+            // gates; the multi-argument form (G14, D-A=A1) joins the
+            // stringified arguments with spaces on one line — no Result /
+            // nominal gates there yet (the FFI corpus only prints scalars,
+            // strings, and pointers).
             if functionName == "print" {
-                guard loweredArgs.count == 1 else {
-                    throw unsupported("print expects exactly one argument", at: location)
+                guard !loweredArgs.isEmpty else {
+                    throw unsupported("print expects at least one argument", at: location)
                 }
-                if case .load(let name, _) = loweredArgs[0].node, context.errorBindings.contains(name) {
-                    throw unsupported(
-                        "printing an error binding is not supported by the LLVM Result ABI this grid (the err slot is type-erased)",
-                        at: location
-                    )
+                if loweredArgs.count == 1 {
+                    if case .load(let name, _) = loweredArgs[0].node, context.errorBindings.contains(name) {
+                        throw unsupported(
+                            "printing an error binding is not supported by the LLVM Result ABI this grid (the err slot is type-erased)",
+                            at: location
+                        )
+                    }
+                    if case .result = loweredArgs[0].type {
+                        throw unsupported("printing a Result value is outside the slice", at: location)
+                    }
+                    if case .nominal = loweredArgs[0].type {
+                        throw unsupported(
+                            "printing a struct/object value is a later grid (value formatting)",
+                            at: location
+                        )
+                    }
+                    return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
                 }
-                if case .result = loweredArgs[0].type {
-                    throw unsupported("printing a Result value is outside the slice", at: location)                }
-                if case .nominal = loweredArgs[0].type {
-                    throw unsupported(
-                        "printing a struct/object value is a later grid (value formatting)",
-                        at: location
-                    )
-                }
-                return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
+                return LoweredExpr(node: .printMulti(arguments: loweredArgs.map { $0.node }), type: .i32)
             }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
             // corpus dependency. Other math intrinsics join their own grid.
@@ -2232,6 +2294,26 @@ public enum HIRLowerer {
             // expression lowers identically (the safe-assert subscript
             // channel needs no unsafe distinction at emission).
             return try lowerExpr(operand, expected: expected, into: &context)
+
+        case .addressOf(let operand, let location):
+            // G14 (D-B adjudication: true pointer semantics): `&x` yields
+            // the variable's storage address. Only the identifier form is
+            // in the corpus slice — `&expr.value` and friends are later
+            // grids. The pointer element type mirrors the variable's type
+            // (the interpreter labels the snapshot with the value's type).
+            guard case .identifier(let name, _) = operand else {
+                throw unsupported(
+                    "address-of supports only a plain variable this grid",
+                    at: location
+                )
+            }
+            guard let varType = context.variableTypes[name] else {
+                throw unsupported("address-of on unknown variable '\(name)'", at: location)
+            }
+            return LoweredExpr(
+                node: .addressOfVar(name: name, type: varType),
+                type: .pointer(element: varType)
+            )
 
         default:
             throw unsupported(

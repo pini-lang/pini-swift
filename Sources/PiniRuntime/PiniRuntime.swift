@@ -713,3 +713,17 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
 public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
     return strdup(String(v))
 }
+
+// MARK: - G14 FFI: Pini String -> C string (interpreter "cstr" shim parity)
+
+/// Materializes a Swift String as a NUL-terminated, malloc-allocated C
+/// string (UTF-8 bytes). Mirrors the interpreter's `cstr` shim exactly:
+/// same allocation contract (caller frees), same UTF-8 encoding, same
+/// null terminator. The emitted IR calls this for foreign-declared
+/// `cstr` symbols — libc has no such function, so it must come from the
+/// runtime dylib.
+@_cdecl("bk_cstr")
+public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return nil }
+    return strdup(s)
+}
