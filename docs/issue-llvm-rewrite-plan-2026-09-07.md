@@ -648,9 +648,13 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     另有 5 个在 CLI 口径下**两条管线都失败**（前端/checker 本就拒绝，非后端缺口）。
     整个 `Tests/` 目录 965 个 `.pini` 中 HIR 不通过 434 个，其中 325 个属此类低价值项
     ——口径按「该夹具是否由 LLVM 后端驱动」收窄，不做全量覆盖。
-  - **14 夹具收敛为 3 格**（按同一 `HIRLowerer` 落点聚簇，非按测试套分）：
+    **订正（a2 实测，2026-09-10）**：14 中 2 个（`testTupleConstruct_LLI` /
+    `_Clang`）是**通道假阳性**而非后端缺口——CLI 单文件 HIR 分支在此行之后返回，
+    漏掉了 legacy 分支与差分 Harness 都设的持久作用域表；补该行后二者即通过。
+    真缺口 **12**（`IRExecutionTests` 11 + `RuntimeBackendTests` 1）。
+  - **12 夹具收敛为 3 格**（按同一 `HIRLowerer` 落点聚簇，非按测试套分）：
     - **G16 元组族（7）**：多槽返回（2）／`.0` 位置索引（1）／解构声明（1）／
-      `len(tuple)`（1）／无标签元组构造（2）。
+      `len(tuple)`（1）／无标签元组构造（2，即上条订正的 2 个假阳性）。
     - **G17 内建与类型修补（5）**：`readLine`／`is_ascii_digit`／i8 struct 字段写／
       无注解参数回退 I32（2）。`is_letter` 保持 fail-loud（Unicode 语义，非缺口）。
     - **G18 trait self 与空数组（2）**：trait 默认方法 `self` 类型解析／
@@ -690,3 +694,42 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     `.0`／`.名称`／解构 `var (a, b) =` 已支持，但该文件只演示整体元组，而
     `.0` 与解构在 HIR 侧均被门控——该行的 hir-emit PASS 高估实际能力
     （性质同 G15 的 step 假绿）。
+
+- **M6a a1 完成（2026-09-10）**：分支 `agent/pini-dev/llvm-m6a-prep`；探针
+  `tools/m6-triage-probe.sh` 入库（含 `REPO_ROOT` 自推断与二进制缺失提示）；
+  口径勘测结论回填至上一节。零删除、零源码改动。
+
+- **M6a a2 完成：G16 元组族（2026-09-10）**：
+
+  - **红灯基线**：7 个夹具（源自 LLVM 驱动套的既有夹具）入差分套件，
+    差分 **60 → 67**。实测仅 **5 红**——两个元组构造夹具在 Harness 下本就通过
+    （Harness 设了持久作用域表），故「7」里含 2 个通道假阳性（见上一节订正）。
+    新增 `assertParityAllowingEmptyOutput`：多槽返回夹具不打印，断言的是
+    「降载 + 执行不 trap」；该变体仍断言夹具确为空输出，避免退化成 `"" == ""`。
+  - **落点（5 处，无一处触 ADR-031 §4 止损）**：
+    1. **多槽返回折叠为单个元组值**（`resolveReturnType` 单点）：与单槽元组形态
+       `-> ((I32, I32,),)` 走同一表示，调用位／return 语句／IR ABI 均无需第二通路。
+       顺带修掉签名预扫描此前**把多返回值函数截断为其第一个返回类型**的隐患
+       （调用位类型与定义位不一致）。
+    2. `.0` 位置读：与 `.名称` 读同一个 `tupleIndexGet` 节点，下标取自语法；
+       越界下标 fail-loud。
+    3. `let (a, b) = expr`：初值求值一次存入合成槽（`$destructureN`，`$` 非
+       源码标识符字符、且是 LLVM 未引用局部名的合法字符），逐名绑定，
+       `_` 占位跳过——与解释器的「求值一次 + 元数校验 + 逐分量绑定」等价。
+    4. `len(tuple)` 折叠为静态元数。
+    5. `HIRType` 元组分支把注解层的**空标签列表**展开为全 nil，使多值调用推断与
+       签名表一致（注解层产出违反自身不变量的值 → 另立工单，见下）。
+  - **通道一致性修正（1 行）**：CLI 单文件 HIR 分支补
+    `persistAcrossScopesForCodegen = true`（legacy 分支与差分 Harness 都有）。
+    这是上节两个假阳性的唯一根因，属**通道缺行**而非后端能力缺口。
+  - **新立工单** `docs/issue-tuple-annotation-arity-mismatch-2026-09-10.md`：
+    元组注解标签数与分量数不一致（`TypeInference.infer` 元组字面量分支静默跳过
+    推断失败的分量；另有三处生产点写 `labels: []` 配非空分量，与
+    `Type.swift` 写明的配对不变量冲突）。实现层已在 HIR 边界归一化，
+    注解层未改——归属待判定（语言级 / 宿主级），**未判定前不动源码**。
+  - **验证**：差分 **67/67**（原 60/60）；全量回归 **1300 / 0 / 0**（原 1293 / 0 / 0）；
+    探针真 flip 阻塞 **112 → 88**，其中受门槛的测试套降至
+    `IRExecutionTests` 6 + `RuntimeBackendTests` 1 = **7**，恰为 G17（5）+ G18（2）。
+  - **能力表述订正**：`examples/tuple.pini` 宣称的 `.0`／解构现已真正实现，
+    该行注释与实现不再脱节（原登记项就此闭合）。
+
