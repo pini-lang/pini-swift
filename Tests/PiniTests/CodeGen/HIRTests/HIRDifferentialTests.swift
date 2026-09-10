@@ -472,7 +472,8 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffEmptyArray() throws { try assertParity(fixtureName: "testDiffEmptyArray") }
     func testDiffEnumTypedField() throws { try assertParity(fixtureName: "testDiffEnumTypedField") }
 
-    // MARK: - M6a G19 program base baking (CWD differs from the script directory)
+    // MARK: - M6a cross-cutting item a5: program base baking (the CWD differs
+    // from the script directory, so a channel that ignores the base is visible)
 
     /// Unique temp directory, torn down when the test ends (the same shape
     /// IOTests uses for its base-rule fixtures, kept local so this file stays

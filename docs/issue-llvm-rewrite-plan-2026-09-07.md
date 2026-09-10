@@ -831,3 +831,38 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   - **未动**：源码删除面（零）、`IRGeneratorTests` 与 `IRPrintGoldenTests` 的既有断言；
     聚合值打印能力（按 D8 裁决豁免）。
 
+- **M6a a5 完成：横切① `programBase` 烘焙补入 HIR（2026-09-10）**：
+
+  - **背景**：legacy 后端经 `BuiltinsEmitter.generateIOPathArgument` 在**编译期**把无前缀
+    相对路径字面量烘焙为「程序基准 + 路径」（绝对路径与 `./`／`../` 前缀原样），解释器
+    `Interpreter.resolveIOPath` 同规则；HIR 侧缺失该环节，故 CWD≠脚本目录时同一程序
+    读到不同文件（`lli` 甚至因未判空的 `fopen` 而段错误，后者归 a6）。
+  - **落点（4 处，无一处触 ADR-031 §4 止损）**：
+    1. **`IREmitter.programBase`（默认 nil）＋ `bakedIOPath`**：仅对字面量路径生效，
+       三种豁免前缀原样返回，故调用方无条件路由。默认 nil 使既有 golden IR 逐字节不变。
+    2. **`emitFileRead`／`emitFileWrite` 统一路由**：读写同一规则，与解释器三段式一致。
+    3. **CLI 单文件 `emit` 分支**注入 `absoluteProgramBase(fileName)`（入口文件所在目录，
+       与 legacy 分支同一表达式）。
+    4. **CLI 包分支**注入 `absoluteProgramBase(moduleRoot)`：`loadOwningPackageIfModule`
+       改为回传它已解析出的模块根（`Package` 结构无 rootPath 字段），使包通道的基准与
+       `run`／`test` 的模块路径同源，而非入口文件所在目录。
+  - **落点位置裁决**：烘焙放在 emitter 而非 HIR 树——它是**代码生成的环境输入**，
+    不是语言语义决策；HIR 树保持「源码的纯降载」。这也让默认 nil 自然保住既有 IR 基线。
+  - **红证据形态（本批与 a2–a4 不同，需记录）**：新差分夹具调用 `IREmitter.programBase`
+    这一新 API，故「修复前」的工作树**不可编译**，无法构成「编译通过但断言失败」的
+    红灯基线提交。改用**变异探针**：保留 API、把烘焙短路为恒等，实测 **2 红**——
+    HIR 读到 CWD 诱饵 `cwd-decoy`，且 `out.txt` 落进 CWD；还原后全绿。
+    该变异态顺带反证 legacy 通道确实烘焙基准（其断言在变异态下仍绿）。
+  - **验证**：差分 **76/0/0**（原 75/0/0，新增 1 枚三通道夹具）；全量回归
+    **1309 / 0 / 0**（原 1308 / 0 / 0）。
+  - **三通道 CLI 端到端探针**（CWD 放同名诱饵 `res.txt`）：
+    解释器 `pini run <脚本>`、legacy `pini emit` + `lli`、HIR `PINI_HIR_PIPELINE=1 pini emit`
+    + `lli` 三端输出一致（`base-resource` / `written-to-base`），读写均落基准目录；
+    包分支基准实测为**模块根**（IR 字面量即模块根下的绝对路径，36 字节）。
+  - **已知限制（v1，与 legacy 同）**：非字面量路径表达式无法编译期烘焙，仍按运行时 CWD
+    解析；与 legacy 契约一致，不在本批闭环。
+  - **遗留（本批观察，不追修）**：pre-commit 的 `evidence-sweep` 钩子本次删除 3 条过期
+    证据条目，其中 2 条仍被两份 trait 相关工单引用，删除后**引用悬空**。该状态属既有
+    悬空集合（20 项）的延续——同源问题已由 G-09 记录，非本批引入的新缺陷类，故仅登记
+    不追修；此处不写裸编号，以免为下一次扫描新增悬空引用。
+
