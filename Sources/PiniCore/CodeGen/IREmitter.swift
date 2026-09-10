@@ -1283,10 +1283,33 @@ public final class IREmitter {
         return .stringConst(value: base + "/" + value)
     }
 
+    /// `fopen` yields NULL whenever the file cannot be opened, and the legacy
+    /// emitter hands that NULL straight to `fread`/`fwrite`, which traps
+    /// inside libc with no message at all. Fail loud through the same panic
+    /// channel the other runtime guards use, so the failure names the builtin
+    /// instead of surfacing as an opaque crash. The path is deliberately not
+    /// interpolated: a non-literal argument cannot be folded into a constant
+    /// here, and a message that only covers some call shapes would be worse
+    /// than one that covers none.
+    private func emitFopenNullGuard(handle: String, builtin: String) {
+        let failed = builder.freshTemp()
+        bodyIR += " \(failed) = icmp eq ptr \(handle), null\n"
+        let id = builder.freshLabel()
+        let failLabel = "io.fail.\(id)"
+        let openLabel = "io.open.\(id)"
+        bodyIR += builder.fmtCondBr(cond: failed, thenLabelName: failLabel, elseLabelName: openLabel) + "\n"
+        bodyIR += "\(failLabel):\n"
+        let message = emitStringConstant("Pini runtime error: \(builtin) could not open the file")
+        bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+        bodyIR += " unreachable\n"
+        bodyIR += "\(openLabel):\n"
+    }
+
     /// `writeFile(path, content)` (G15): fopen(path, "w") / strlen /
     /// fwrite / fclose. Mirrors the legacy emitter byte for byte — no
     /// trailing newline is appended, matching the interpreter's
-    /// `String.write(toFile:)`. Yields the fclose i32 as the value.
+    /// `String.write(toFile:)`. Yields the fclose i32 as the value. The one
+    /// deliberate divergence is the NULL guard: the legacy emitter has none.
     private func emitFileWrite(path: HIRExpr, content: HIRExpr) -> IRValue {
         usesFileIO = true
         let pathValue = emitExpr(bakedIOPath(path))
@@ -1295,6 +1318,7 @@ public final class IREmitter {
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_w", indices: [0, 0]) + "\n"
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
+        emitFopenNullGuard(handle: handle, builtin: "writeFile")
         let length = builder.freshTemp()
         bodyIR += " \(length) = call i64 @strlen(ptr \(contentValue.ssaName))\n"
         let written = builder.freshTemp()
@@ -1308,7 +1332,9 @@ public final class IREmitter {
     /// 64 KiB stack buffer / NUL-terminate / fclose. Yields the buffer
     /// pointer as a String. The fixed cap is the legacy emitter's —
     /// LLI's JIT makes fseek/ftell/fstat unreliable — and the IO corpus
-    /// stays far below it.
+    /// stays far below it. The NULL guard is the second divergence from the
+    /// legacy emitter, and the one that matters most here: a missing file is
+    /// reachable from ordinary source, unlike the write path's.
     private func emitFileRead(path: HIRExpr) -> IRValue {
         usesFileIO = true
         let pathValue = emitExpr(bakedIOPath(path))
@@ -1316,6 +1342,7 @@ public final class IREmitter {
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]) + "\n"
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
+        emitFopenNullGuard(handle: handle, builtin: "readFile")
         let buffer = freshSlot(for: "file.buffer")
         bodyIR += builder.fmtAlloca(name: buffer, type: "[65536 x i8]") + "\n"
         let base = builder.freshTemp()

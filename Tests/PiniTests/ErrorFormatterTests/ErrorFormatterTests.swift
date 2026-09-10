@@ -1,5 +1,5 @@
 import XCTest
-import PiniCore
+@testable import PiniCore
 
 /// 错误格式化器测试
 final class ErrorFormatterTests: XCTestCase {
@@ -102,5 +102,26 @@ final class ErrorFormatterTests: XCTestCase {
         XCTAssertTrue(result.contains("语法错误"))
         XCTAssertTrue(result.contains("无效表达式：expected expression"))
         XCTAssertTrue(result.contains("parse.bk:1:7"))
+    }
+
+    /// Intent: the HIR pipeline's capability gate must reach the same
+    /// diagnostic surface as the legacy generator, so a gated construct is
+    /// readable as code + position + detail instead of a bare Swift error.
+    func testFormatHIRLoweringErrorKeepsCodeLabelAndPosition() {
+        let source = "main|func() -> ():\n    print(x)\n    return\n"
+        let loc = SourceLocation(line: 2, column: 11, fileName: "gate.pini")
+        let error = HIRLowerer.HIRLoweringError(
+            message: "dictionary literal is not lowered yet",
+            location: loc
+        )
+        let result = ErrorFormatter.formatDiagnostic(error, source: source)
+
+        XCTAssertTrue(result.contains("[E6-004]"), "gate must carry the reused E6 code face")
+        XCTAssertTrue(result.contains("IR 生成错误"), "label must follow the reused code domain")
+        XCTAssertTrue(result.contains("gate.pini:2:11"), "position must reach the rendered output")
+        XCTAssertTrue(result.contains("dictionary literal is not lowered yet"),
+                      "gate detail must fill the template argument")
+        XCTAssertFalse(result.contains("HIR lowering error at"),
+                       "the outer description must not leak once the resource layer renders")
     }
 }

@@ -59,7 +59,7 @@ extension DiagnosticProviding {
  }
 }
 
-// MARK: - 8 类错误枚举的 DiagnosticProviding 扩展（A1）
+// MARK: - 9 类错误枚举的 DiagnosticProviding 扩展（A1）
 
 extension PiniError: DiagnosticProviding {
  public var diagnosticCode: String {
@@ -307,4 +307,15 @@ extension IRGenError: DiagnosticProviding {
  return loc
  }
  }
+}
+
+/// The HIR pipeline's capability gate inherits the legacy generator's code
+/// domain: the gate is the successor of the legacy "unsupported feature"
+/// decisions, and reusing its code keeps registered codes alive across the
+/// pipeline switch instead of retiring them by accident.
+extension HIRLowerer.HIRLoweringError: DiagnosticProviding {
+ public var diagnosticCode: String { code }
+ public var diagnosticSeverity: DiagnosticSeverity { .error }
+ public var suggestion: String? { nil }
+ public var diagnosticLocation: SourceLocation { location }
 }

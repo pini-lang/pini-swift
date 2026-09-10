@@ -8,12 +8,24 @@ import Foundation
 /// scattered ~108 such decisions across emitters; they consolidate here.
 public enum HIRLowerer {
 
-    /// The single capability-gate error for the new pipeline. `LocalizedError`
-    /// routes the message through `localizedDescription` so CLI surfaces
-    /// ("HIRLoweringError error 1") keep the line:column + detail text.
+    /// The single capability-gate error for the new pipeline: free-form
+    /// English detail plus the source position of the construct that gate
+    /// rejected. The CLI renders it through the diagnostic resource layer,
+    /// which dispatches on a code and a position rather than on the message
+    /// text, so the type carries both (see the `DiagnosticProviding`
+    /// conformance in the common diagnostic layer).
+    ///
+    /// Every gate reports the same thing — "this construct is not lowered
+    /// yet" — so they share one code from the legacy E6 surface rather than
+    /// being classified one by one. `LocalizedError` is kept because the
+    /// description is the only text a caller without the resource layer gets.
     public struct HIRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
+        /// Diagnostic code, defaulted to the E6 unsupported-feature bucket.
+        /// The domain enum is the same source the legacy generator's codes
+        /// come from, so switching pipelines does not change the code domain.
+        public var code: String = "\(DiagnosticDomain.irgen.rawValue)-004"
 
         public var description: String {
             "HIR lowering error at \(location.line):\(location.column): \(message)"
