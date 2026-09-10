@@ -59,6 +59,35 @@ public struct HIREnumDecl: Equatable {
     }
 }
 
+/// One foreign function binding (G14, ADR-015 FFI): a signature-only entry
+/// from a `[库|foreign]` block. The emitter forwards its declare; the call
+/// site is a plain `.call` resolved through the signature table.
+public struct HIRForeignFunction: Equatable {
+    public let name: String
+    public let paramTypes: [HIRType]
+    public let returnType: HIRType?
+
+    public init(name: String, paramTypes: [HIRType], returnType: HIRType?) {
+        self.name = name
+        self.paramTypes = paramTypes
+        self.returnType = returnType
+    }
+}
+
+/// A lowered foreign block (G14): the group name (`[libc|foreign]` 的 `libc`)
+/// plus its signature-only bindings. Note: symbol resolution happens on the
+/// interpreter/ffi side (shim whitelist first, then dlsym); the HIR layer
+/// only carries the declare surface.
+public struct HIRForeignBlock: Equatable {
+    public let name: String
+    public let funcs: [HIRForeignFunction]
+
+    public init(name: String, funcs: [HIRForeignFunction]) {
+        self.name = name
+        self.funcs = funcs
+    }
+}
+
 /// A lowered module: the ordered list of functions plus the nominal type
 /// declarations (G3) and enum declarations (G4). The entry function is
 /// `main` (required by the slice emitter); methods live inside their
@@ -67,11 +96,15 @@ public struct HIRModule: Equatable {
     public let functions: [HIRFunction]
     public let types: [HIRTypeDecl]
     public let enums: [HIREnumDecl]
+    /// Foreign blocks (G14): declare-only surface, no bodies.
+    public let foreigns: [HIRForeignBlock]
 
-    public init(functions: [HIRFunction], types: [HIRTypeDecl] = [], enums: [HIREnumDecl] = []) {
+    public init(functions: [HIRFunction], types: [HIRTypeDecl] = [], enums: [HIREnumDecl] = [],
+                foreigns: [HIRForeignBlock] = []) {
         self.functions = functions
         self.types = types
         self.enums = enums
+        self.foreigns = foreigns
     }
 
     public func function(named name: String) -> HIRFunction? {

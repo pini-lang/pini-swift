@@ -18,6 +18,13 @@ import Foundation
 public indirect enum HIRType: Equatable {
     case i32
     case i64
+    /// `U64` (G14): 64-bit unsigned integer. LLVM has no separate unsigned
+    /// spelling — same `i64` as I64; signedness rides on the operations.
+    /// Printing mirrors the interpreter (one unified int value, `%d`).
+    case u64
+    /// `U8` (G14): 8-bit unsigned integer — same `i8` spelling as I8;
+    /// signedness rides on the operations.
+    case u8
     /// `I8` (G11): 8-bit signed integer. Struct fields / method returns /
     /// field reads are the in-slice surface; arithmetic on i8 widens to i32
     /// at emission (the interpreter models all integers as one int value,
@@ -63,13 +70,19 @@ public indirect enum HIRType: Equatable {
     /// param/return shapes are carried for parity checking only — the IR
     /// call protocol is fixed (first arg is always the env pointer).
     case function(params: [HIRType], returnType: HIRType?)
+    /// `*T` (G14, ADR-015 FFI): raw pointer. Opaque `ptr` in LLVM IR —
+    /// load/store take the element type; address-of produces it from an
+    /// alloca. Element rides along for load/store typing (mirrors the
+    /// interpreter's snapshot/decode semantics: `*U8` loads sign-extend to
+    /// one int value).
+    case pointer(element: HIRType)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
         switch self {
-        case .i8: return "i8"
+        case .i8, .u8: return "i8"
         case .i32: return "i32"
-        case .i64: return "i64"
+        case .i64, .u64: return "i64"
         case .f64: return "double"
         case .boolean: return "i1"
         case .string: return "i8*"
@@ -93,6 +106,8 @@ public indirect enum HIRType: Equatable {
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         case .function:
             return "{ ptr, ptr }"
+        case .pointer:
+            return "ptr"
         }
     }
 
@@ -132,8 +147,8 @@ public indirect enum HIRType: Equatable {
 
     public var isNumeric: Bool {
         switch self {
-        case .i8, .i32, .i64, .f64: return true
-        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef:
+        case .i8, .u8, .i32, .i64, .u64, .f64: return true
+        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
             return false
         }
     }
@@ -257,6 +272,32 @@ public indirect enum HIRExpr: Equatable {
     /// `call ret code(ptr env, args...)` — `callee` is a closureLiteral /
     /// functionValue / function-typed variable load.
     case indirectCall(callee: HIRExpr, arguments: [HIRExpr], returnType: HIRType?)
+
+    // MARK: G14 FFI pointer primitives
+
+    /// `load(p)` (G14): read the element value through a `*T` pointer.
+    /// `type` is the element HIRType (mirrors the interpreter's
+    /// decodePointer: U8 loads sign-extend into one unified int value).
+    case pointerLoad(pointer: HIRExpr, type: HIRType)
+    /// `store(p, v)` (G14): write the value through a `*T` pointer using
+    /// the pointer's element type (mirrors the interpreter's encode:
+    /// truncating store for narrow elements). Value expression.
+    case pointerStore(pointer: HIRExpr, value: HIRExpr, type: HIRType)
+    /// `&x` (G14, D-B adjudication: true pointer semantics): the address of
+    /// a variable's alloca slot. The interpreter's snapshot aliasing gap
+    /// (write-back does not update the original) is the documented
+    /// divergence covered by the read-only corpus.
+    case addressOfVar(name: String, type: HIRType)
+    /// `print(a, b, ...)` multi-argument form (G14, D-A=A1): the
+    /// interpreter's semantics are per-argument stringify joined with a
+    /// single space on one line; the emitter realizes the same byte stream
+    /// (value, space, value, ..., newline).
+    case printMulti(arguments: [HIRExpr])
+    /// `assert(cond)` / `assert(cond, message)` (G41 surface): boolean
+    /// trap — false raises the runtime panic with the message. Only needed
+    /// so `|test` blocks lower; the differential harness never executes
+    /// them.
+    case assertCall(condition: HIRExpr, message: HIRExpr?)
 
     // MARK: G9 string deepening
 

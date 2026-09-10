@@ -170,6 +170,18 @@ public enum HIRPrinter {
             return "LazyRef(\(exprText(closure)))"
         case .lazyRefValue(let handle, _):
             return "\(exprText(handle)).value"
+        case .pointerLoad(let pointer, _):
+            return "load(\(exprText(pointer)))"
+        case .pointerStore(let pointer, let value, _):
+            return "store(\(exprText(pointer)), \(exprText(value)))"
+        case .addressOfVar(let name, _):
+            return "&\(name)"
+        case .printMulti(let arguments):
+            let items = arguments.map(exprText).joined(separator: ", ")
+            return "print(\(items))"
+        case .assertCall(let condition, let message):
+            let msg = message.map { ", \(exprText($0))" } ?? ""
+            return "assert(\(exprText(condition))\(msg))"
         }
     }
 
