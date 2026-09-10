@@ -901,3 +901,28 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     不符。两项合并立为 `docs/issue-emit-diagnostic-source-snippet-2026-09-10.md`，
     交治理流程裁决，不在本批动手。
 
+- **M6a a7 完成：夹具语料重扫与阻塞清零核验（2026-09-11）**：
+
+  - **判据**：真 flip 阻塞 = `legacy emit PASS ∧ HIR emit FAIL`；两边都失败属前端本就拒绝
+    （夹具是负例或能力尚未到），不计入翻转代价。
+  - **examples（59）**：HIR PASS **51** / FAIL 8。交叉表 **FAIL/FAIL 8、FAIL/PASS 11、
+    PASS/PASS 40、PASS/FAIL 0** → **真阻塞 = 0**。8 项 FAIL 全为并发族且 legacy 同 FAIL
+    （LR-11 已立案豁免）；另外 HIR 比 legacy **多覆盖 11 个文件**——就这套语料而言，
+    翻转不是收缩而是净增益。
+  - **四套 LLVM 驱动夹具（222）**：真阻塞 **3**，全部落在 `IRPrintGoldenTests`，门控消息均为
+    `printing a struct/object value is a later grid (value formatting)`（聚合值打印），
+    即 D8 已裁决豁免的项；三项本身也在 b3 的处置范围内。
+  - **分母完备性反查（本轮新增）**：除四套外，`BuiltinOverrideTests`（6 夹具）／
+    `DotCaseConstructionTests`（7）／`OptionalTests`（17）同样引用发射器或 `lli`。
+    逐套核验真阻塞 = **0**，故分母即便放宽到 252，结论不变（仍只有那 3 项）。
+  - **验收口径订正**：M6a 步骤表原先给 a8 写的「sweep hir-emit ≥ 55/59（其余为并发豁免）」
+    自相矛盾——8 项并发豁免意味着可达上限就是 51。正确判据是 **`PASS/FAIL = 0`**
+    （不存在 legacy 能做而 HIR 做不了的样本）**且 HIR PASS ≥ legacy PASS**（实测 51 ≥ 40）；
+    a8 按此验收，不按 55 这个数。
+  - **工单影响已消解**：诊断面接上之后，sweep 的 note 列对门控行给出
+    `IRGen Error [E6-004]` + `at <文件>:行:列` + 门控明细（此前只有一条无位置的裸消息），
+    即工单所述「note 列拿不到逐文件 gate 明细」这一影响已消除。
+  - **产物**：`tools/capability-sweep.tsv` 已刷新（差异仅 8 个并发行的 note 列）；
+    夹具扫描由 `tools/m6-triage-probe.sh` 承担，其 TSV 落在临时目录（可随时重跑再生，
+    故不入库），上面的逐项结论已写进本段作为持久证据。
+
