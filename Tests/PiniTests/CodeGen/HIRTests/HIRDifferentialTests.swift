@@ -448,4 +448,13 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffI8StructField() throws { try assertParity(fixtureName: "testDiffI8StructField") }
     func testDiffParamNoAnnotationVoid() throws { try assertParity(fixtureName: "testDiffParamNoAnnotationVoid") }
     func testDiffParamNoAnnotationReturn() throws { try assertParity(fixtureName: "testDiffParamNoAnnotationReturn") }
+
+    // MARK: - M6a G18 trait default receiver and empty array literal
+    // (fixtures inherited from the LLVM-driven suites, plus one fixture for a
+    // field-resolution gap the probe exposed: a field declared with a user
+    // type resolved only for built-in annotations, so the field read as absent)
+
+    func testDiffTraitDefaultMethod() throws { try assertParity(fixtureName: "testDiffTraitDefaultMethod") }
+    func testDiffEmptyArray() throws { try assertParity(fixtureName: "testDiffEmptyArray") }
+    func testDiffEnumTypedField() throws { try assertParity(fixtureName: "testDiffEnumTypedField") }
 }

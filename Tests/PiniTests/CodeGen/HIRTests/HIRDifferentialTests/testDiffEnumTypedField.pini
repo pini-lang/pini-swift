@@ -1,0 +1,17 @@
+[色]
+红
+蓝
+
+(盒)
+内色: 色 = 红
+
+main|func() -> ():
+    var b = 盒()
+    b.内色 = 蓝
+    var c = b.内色
+    match c:
+        case 红:
+            print(1)
+        case 蓝:
+            print(2)
+    return
