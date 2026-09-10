@@ -345,4 +345,5 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffContinueBreakLabel() throws { try assertParity(fixtureName: "testDiffContinueBreakLabel") }
     func testDiffBitwiseCompound() throws { try assertParity(fixtureName: "testDiffBitwiseCompound") }
     func testDiffIoFile() throws { try assertParity(fixtureName: "testDiffIoFile") }
+    func testDiffStep() throws { try assertParity(fixtureName: "testDiffStep") }
 }

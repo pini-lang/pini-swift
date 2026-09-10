@@ -11,8 +11,8 @@ main|func() -> ():
     print(x)
     x %= 4
     print(x)
-    ; bitwise operators (single-pipe `|` bitwise-or is not parseable —
-    ; host gap: `|` only lexes as pipe/orAssign/logicalOr, tracked separately)
+    ; bitwise operators (single-pipe `|` bitwise-or has no infix parse path,
+    ; tracked as the bitwise-or parse gap; `|=` below works)
     var a = 12
     print(a & 10)
     print(a ^ 7)

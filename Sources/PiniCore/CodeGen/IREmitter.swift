@@ -30,10 +30,19 @@ public final class IREmitter {
     /// are invalid IR).
     private var terminated = false
 
-    /// Enclosing while-loop exit labels, innermost last. `break` targets
-    /// loopStack.last; with an empty stack it lowers to a runtime panic
-    /// (interpreter parity: a bare break escaping to the top level errors).
-    private var loopStack: [String] = []
+    /// Enclosing loop labels, innermost last. `break` targets `exit`;
+    /// `continue` targets `continueTarget` (the step entry when the loop has
+    /// a step block, else the header) — labeled forms (depth > 1, ADR-014)
+    /// target the depth-th frame's `header`. With an empty stack both lower
+    /// to a runtime panic (interpreter parity: a bare break/continue
+    /// escaping to the top level errors).
+    private struct LoopFrame {
+        let exit: String
+        let header: String
+        let continueTarget: String
+    }
+
+    private var loopStack: [LoopFrame] = []
 
     private var currentIsMain = false
     private var currentReturnType: HIRType? = nil
@@ -81,6 +90,10 @@ public final class IREmitter {
     /// `usesLazyRef` contract, golden-IR stability for modules that
     /// never touch LazyRef).
     private var usesLazyRef = false
+    /// G15: `writeFile`/`readFile` pull in the stdio declares and the
+    /// mode-string constants. Conditional for the same golden-IR reason
+    /// as the other optional headers.
+    private var usesFileIO = false
     /// G13 batch 1: type-specialized `@__lazyref_wrapper_<T>` define buffer,
     /// deduplicated by element IR spelling; appended after the adapter defs.
     private var lazyrefWrappers: [String] = []
@@ -221,6 +234,16 @@ public final class IREmitter {
             tail += "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)\n"
             tail += "declare ptr @bk_lazyref_value(ptr)\n"
         }
+        // G15: file IO declares + mode-string constants, appended only for
+        // modules that actually call writeFile/readFile.
+        if usesFileIO {
+            tail += "declare ptr @fopen(ptr, ptr)\n"
+            tail += "declare i64 @fwrite(ptr, i64, i64, ptr)\n"
+            tail += "declare i64 @fread(ptr, i64, i64, ptr)\n"
+            tail += "declare i32 @fclose(ptr)\n"
+            tail += "@.fopen_w = private constant [2 x i8] c\"w\\00\"\n"
+            tail += "@.fopen_r = private constant [2 x i8] c\"r\\00\"\n"
+        }
         // G6: env struct type declarations must precede their uses — the
         // creation-point GEPs live in the function bodies, and lli requires
         // a sized base element at the GEP (the legacy emitter also placed
@@ -337,8 +360,14 @@ public final class IREmitter {
         case .ifStmt(let condition, let thenBody, let elseBody):
             emitIf(condition: condition, thenBody: thenBody, elseBody: elseBody)
 
-        case .whileStmt(let condition, let loopBody):
-            emitWhile(condition: condition, loopBody: loopBody)
+        case .whileStmt(let condition, let loopBody, let step):
+            emitWhile(condition: condition, loopBody: loopBody, step: step)
+
+        case .forInStmt(let pattern, let elementTypes, let kind, let iterable, let body, let step):
+            emitForIn(
+                pattern: pattern, elementTypes: elementTypes, kind: kind,
+                iterable: iterable, body: body, step: step
+            )
 
         case .returnStmt(let value):
             if let value = value {
@@ -363,8 +392,17 @@ public final class IREmitter {
         case .subscriptStore(let container, let index, let value, let elementType):
             emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
 
-        case .breakStmt:
-            emitBreak()
+        case .breakStmt(let depth):
+            emitBreak(depth: depth)
+
+        case .continueStmt(let depth):
+            emitContinue(depth: depth)
+
+        case .panicStmt(let message):
+            let rendered = emitStringConstant(message)
+            bodyIR += " call void @bk_panic(ptr \(rendered.ssaName))\n"
+            bodyIR += " unreachable\n"
+            terminated = true
 
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
@@ -385,14 +423,34 @@ public final class IREmitter {
         }
     }
 
-    /// `break`: nearest enclosing while loop; without one, a runtime panic —
-    /// the interpreter errors when a bare break escapes to the top level
-    /// (probe-verified), so this is fail-loud parity, not a silent skip.
-    private func emitBreak() {
-        if let exitLabel = loopStack.last {
+    /// `break`: the depth-th enclosing loop's exit (1 = innermost); without
+    /// enough enclosing loops, a runtime panic — the interpreter errors when
+    /// a break escapes to the top level (probe-verified), so this is
+    /// fail-loud parity, not a silent skip.
+    private func emitBreak(depth: Int) {
+        if loopStack.count >= depth {
+            let exitLabel = loopStack[loopStack.count - depth].exit
             bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: break outside loop")
+            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " unreachable\n"
+        }
+        terminated = true
+    }
+
+    /// `continue` (G15): unlabeled jumps to the innermost frame's
+    /// continue-target (step entry when present, else the header); a labeled
+    /// form (depth > 1) jumps to the depth-th frame's header (interpreter
+    /// parity: a matching label resumes that loop). The checker rejects a
+    /// continue outside any loop, so the panic here is fail-loud parity.
+    private func emitContinue(depth: Int) {
+        if loopStack.count >= depth {
+            let frame = loopStack[loopStack.count - depth]
+            let target = depth == 1 ? frame.continueTarget : frame.header
+            bodyIR += builder.fmtBr(labelName: target) + "\n"
+        } else {
+            let message = emitStringConstant("Pini runtime error: continue outside loop")
             bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
             bodyIR += " unreachable\n"
         }
@@ -727,10 +785,19 @@ public final class IREmitter {
         }
     }
 
-    private func emitWhile(condition: HIRExpr, loopBody: [HIRStmt]) {
+    /// `while cond: body [step: block]` (step: G15, ADR-014).
+    ///
+    /// Layout — the step block sits between body and the back edge, so an
+    /// unlabeled `continue` inside the body lands on the **step entry**
+    /// (interpreter parity: `shouldRunStep = true` on continue), while a
+    /// `continue` inside the step lands on the step's end. `break` targets
+    /// the loop exit from either block and skips the step.
+    private func emitWhile(condition: HIRExpr, loopBody: [HIRStmt], step: [HIRStmt]?) {
         let id = builder.freshLabel()
         let condLabel = "while.cond.\(id)"
         let bodyLabel = "while.body.\(id)"
+        let stepLabel = "while.step.\(id)"
+        let stepEndLabel = "while.step.end.\(id)"
         let exitLabel = "while.end.\(id)"
 
         bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
@@ -739,18 +806,154 @@ public final class IREmitter {
         bodyIR += builder.fmtCondBr(cond: cond.ssaName, thenLabelName: bodyLabel, elseLabelName: exitLabel) + "\n"
 
         bodyIR += "\(bodyLabel):\n"
-        loopStack.append(exitLabel)
+        let continueTarget = step != nil ? stepLabel : condLabel
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget))
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
         loopStack.removeLast()
         if !terminated {
-            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+            bodyIR += builder.fmtBr(labelName: step != nil ? stepLabel : condLabel) + "\n"
         }
         scopes.removeLast()
 
+        if let step = step {
+            bodyIR += "\(stepLabel):\n"
+            // Inside the step, an unlabeled continue goes to its own end
+            // (interpreter: continue in the step block → next iteration).
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel))
+            scopes.append([:])
+            terminated = false
+            emitBlock(step)
+            loopStack.removeLast()
+            if !terminated {
+                bodyIR += builder.fmtBr(labelName: stepEndLabel) + "\n"
+            }
+            scopes.removeLast()
+            bodyIR += "\(stepEndLabel):\n"
+            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+        }
+
         // A loop's exit is always reachable (zero iterations), so control
         // flow resumes there regardless of body termination.
+        bodyIR += "\(exitLabel):\n"
+        terminated = false
+    }
+
+    /// `for (pattern,) in iterable: body [step: block]` (G15).
+    ///
+    /// Mirrors the legacy `generateForStatement` shape: the iterable is
+    /// evaluated once, its length read via the kind's runtime accessor, and
+    /// the loop walks a hidden i32 index slot. Each iteration re-evaluates
+    /// the element accessor and re-binds the pattern variables in a fresh
+    /// loop scope (the interpreter's per-iteration Environment). Step and
+    /// break/continue follow the whileStmt contract.
+    private func emitForIn(
+        pattern: [String],
+        elementTypes: [HIRType],
+        kind: HIRForIterableKind,
+        iterable: HIRExpr,
+        body: [HIRStmt],
+        step: [HIRStmt]?
+    ) {
+        let id = builder.freshLabel()
+        let condLabel = "for.cond.\(id)"
+        let bodyLabel = "for.body.\(id)"
+        let stepLabel = "for.step.\(id)"
+        let stepEndLabel = "for.step.end.\(id)"
+        let incLabel = "for.inc.\(id)"
+        let exitLabel = "for.end.\(id)"
+
+        let iterableValue = emitExpr(iterable)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast \(iterableValue.llvmType) \(iterableValue.ssaName) to ptr\n"
+        let lenFn: String
+        switch kind {
+        case .array: lenFn = "bk_array_len"
+        case .set: lenFn = "bk_set_len"
+        case .dict: lenFn = "bk_dict_len"
+        }
+        let len = builder.freshTemp()
+        bodyIR += " \(len) = call i32 @\(lenFn)(ptr \(raw))\n"
+
+        let indexSlot = freshSlot(for: "for.index")
+        bodyIR += builder.fmtAlloca(name: indexSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: indexSlot) + "\n"
+
+        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+        bodyIR += "\(condLabel):\n"
+        let indexValue = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: indexValue, type: "i32", ptr: indexSlot) + "\n"
+        let inBounds = builder.freshTemp()
+        bodyIR += " \(inBounds) = icmp slt i32 \(indexValue), \(len)\n"
+        bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: exitLabel) + "\n"
+
+        bodyIR += "\(bodyLabel):\n"
+        let continueTarget = step != nil ? stepLabel : incLabel
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget))
+        scopes.append([:])
+        terminated = false
+        // Pattern bindings: a fresh slot per iteration (the loop scope makes
+        // the previous iteration's binding unreachable, matching the
+        // interpreter's per-iteration Environment).
+        let indexForBind = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: indexForBind, type: "i32", ptr: indexSlot) + "\n"
+        for (position, name) in pattern.enumerated() {
+            guard name != "_" else { continue }
+            let elementType = elementTypes[position]
+            let accessor: String
+            switch kind {
+            case .array: accessor = "bk_array_get"
+            case .set: accessor = "bk_set_at"
+            case .dict: accessor = position == 0 ? "bk_dict_key_at" : "bk_dict_val_at"
+            }
+            let box = builder.freshTemp()
+            bodyIR += " \(box) = call ptr @\(accessor)(ptr \(raw), i32 \(indexForBind))\n"
+            let spelling = elementType.llvmSpelling
+            let loaded = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: loaded, type: spelling, ptr: box) + "\n"
+            let slot = freshSlot(for: name)
+            bodyIR += " \(slot) = alloca \(spelling)\n"
+            bodyIR += builder.fmtStore(value: loaded, type: spelling, ptr: slot) + "\n"
+            scopes[scopes.count - 1][name] = slot
+        }
+        // The step block shares the loop environment in the interpreter
+        // (executeFor runs it with currentEnv = loopEnv), so the pattern
+        // variables stay visible there — a bare `v` in `step:` resolves to
+        // the body's slot. Hand the same bindings to the step scope.
+        let patternBindings = scopes[scopes.count - 1]
+        emitBlock(body)
+        loopStack.removeLast()
+        if !terminated {
+            bodyIR += builder.fmtBr(labelName: step != nil ? stepLabel : incLabel) + "\n"
+        }
+        scopes.removeLast()
+
+        if let step = step {
+            bodyIR += "\(stepLabel):\n"
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel))
+            scopes.append(patternBindings)
+            terminated = false
+            emitBlock(step)
+            loopStack.removeLast()
+            if !terminated {
+                bodyIR += builder.fmtBr(labelName: stepEndLabel) + "\n"
+            }
+            scopes.removeLast()
+            bodyIR += "\(stepEndLabel):\n"
+            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+        }
+
+        // Index increment: every back edge (body tail / continue / step tail)
+        // funnels through here before re-testing the condition.
+        bodyIR += "\(incLabel):\n"
+        let current = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: current, type: "i32", ptr: indexSlot) + "\n"
+        let next = builder.freshTemp()
+        bodyIR += " \(next) = add i32 \(current), 1\n"
+        bodyIR += builder.fmtStore(value: next, type: "i32", ptr: indexSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
         bodyIR += "\(exitLabel):\n"
         terminated = false
     }
@@ -1020,7 +1223,63 @@ public final class IREmitter {
 
         case .assertCall(let condition, let message):
             return emitAssertCall(condition: condition, message: message)
+
+        case .fileWrite(let path, let content):
+            return emitFileWrite(path: path, content: content)
+
+        case .fileRead(let path):
+            return emitFileRead(path: path)
         }
+    }
+
+    /// `writeFile(path, content)` (G15): fopen(path, "w") / strlen /
+    /// fwrite / fclose. Mirrors the legacy emitter byte for byte — no
+    /// trailing newline is appended, matching the interpreter's
+    /// `String.write(toFile:)`. Yields the fclose i32 as the value.
+    private func emitFileWrite(path: HIRExpr, content: HIRExpr) -> IRValue {
+        usesFileIO = true
+        let pathValue = emitExpr(path)
+        let contentValue = emitExpr(content)
+        let mode = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_w", indices: [0, 0]) + "\n"
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
+        let length = builder.freshTemp()
+        bodyIR += " \(length) = call i64 @strlen(ptr \(contentValue.ssaName))\n"
+        let written = builder.freshTemp()
+        bodyIR += " \(written) = call i64 @fwrite(ptr \(contentValue.ssaName), i64 1, i64 \(length), ptr \(handle))\n"
+        let closed = builder.freshTemp()
+        bodyIR += " \(closed) = call i32 @fclose(ptr \(handle))\n"
+        return IRValue(llvmType: "i32", ssaName: closed)
+    }
+
+    /// `readFile(path)` (G15): fopen(path, "r") / fread into a fixed
+    /// 64 KiB stack buffer / NUL-terminate / fclose. Yields the buffer
+    /// pointer as a String. The fixed cap is the legacy emitter's —
+    /// LLI's JIT makes fseek/ftell/fstat unreliable — and the IO corpus
+    /// stays far below it.
+    private func emitFileRead(path: HIRExpr) -> IRValue {
+        usesFileIO = true
+        let pathValue = emitExpr(path)
+        let mode = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]) + "\n"
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
+        let buffer = freshSlot(for: "file.buffer")
+        bodyIR += builder.fmtAlloca(name: buffer, type: "[65536 x i8]") + "\n"
+        let base = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: base, aggregate: "[65536 x i8]", base: buffer, indices: [0, 0]) + "\n"
+        let read = builder.freshTemp()
+        bodyIR += " \(read) = call i64 @fread(ptr \(base), i64 1, i64 65536, ptr \(handle))\n"
+        let terminator = builder.freshTemp()
+        bodyIR += builder.fmtGEPByteOffset(name: terminator, base: base, offset: read, offsetType: "i64") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: terminator) + "\n"
+        let closed = builder.freshTemp()
+        bodyIR += " \(closed) = call i32 @fclose(ptr \(handle))\n"
+        // "i8*" (not "ptr"): that is the spelling emitScalarPrint treats as a
+        // C string; a bare `ptr` falls into the %d default and prints the
+        // address.
+        return IRValue(llvmType: "i8*", ssaName: base)
     }
 
     /// `assert(cond, msg?)`: branch on the condition; the false edge
@@ -1859,6 +2118,15 @@ public final class IREmitter {
             case .multiply: instruction = "mul"
             case .divide: instruction = "sdiv"
             case .modulo: instruction = "srem"
+            // Bitwise family (G15): LLVM integer instructions, 1:1 with the
+            // interpreter's int×int eval table (bitwiseAnd/Or/Xor/leftShift/
+            // rightShift). Shifts are arithmetic (ashr) matching Swift's `>>`
+            // on signed ints; `shl`/`shr` keep the operand type.
+            case .bitwiseAnd: instruction = "and"
+            case .bitwiseOr: instruction = "or"
+            case .bitwiseXor: instruction = "xor"
+            case .leftShift: instruction = "shl"
+            case .rightShift: instruction = "ashr"
             default: instruction = "add"
             }
         }
@@ -1970,6 +2238,8 @@ public final class IREmitter {
         case .addressOfVar(_, let type): return .pointer(element: type)
         case .printMulti: return .i32
         case .assertCall: return .i32
+        case .fileWrite: return .i32
+        case .fileRead: return .string
         }
     }
 
