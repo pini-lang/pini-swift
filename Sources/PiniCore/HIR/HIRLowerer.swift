@@ -8,14 +8,18 @@ import Foundation
 /// scattered ~108 such decisions across emitters; they consolidate here.
 public enum HIRLowerer {
 
-    /// The single capability-gate error for the new pipeline.
-    public struct HIRLoweringError: Error, CustomStringConvertible {
+    /// The single capability-gate error for the new pipeline. `LocalizedError`
+    /// routes the message through `localizedDescription` so CLI surfaces
+    /// ("HIRLoweringError error 1") keep the line:column + detail text.
+    public struct HIRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
 
         public var description: String {
             "HIR lowering error at \(location.line):\(location.column): \(message)"
         }
+
+        public var errorDescription: String? { description }
     }
 
     /// A lowered expression plus its resolved type. The HIR nodes already
@@ -1330,19 +1334,37 @@ public enum HIRLowerer {
             }
             return [.ifStmt(condition: cond.node, thenBody: thenBody, elseBody: chain)]
 
-        case .whileStatement(let condition, let body, _, _, _):
+        case .whileStatement(let condition, let body, let step, let label, _):
             let cond = try lowerExpr(condition, expected: .boolean, into: &context)
             guard cond.type == .boolean else {
                 throw unsupported("while condition is not Bool", at: conditionLocation(condition))
             }
+            context.loopLabels.append(label)
+            defer { context.loopLabels.removeLast() }
             let bodyStmts = try lowerBlock(body, into: &context)
-            return [.whileStmt(condition: cond.node, body: bodyStmts)]
+            let stepStmts = try step.map { try lowerBlock($0, into: &context) }
+            return [.whileStmt(condition: cond.node, body: bodyStmts, step: stepStmts)]
 
-        case .breakStatement(let label, let location):
-            guard label == nil else {
-                throw unsupported("labeled break is a later grid", at: location)
+        case .forStatement(let pattern, let iterable, let body, let step, let label, let location):
+            return [try lowerForIn(
+                pattern: pattern, iterable: iterable, body: body, step: step,
+                label: label, at: location, into: &context
+            )]
+
+        case .breakStatement(let label, _):
+            // Unresolvable target: fail-loud at run time, exactly like the
+            // interpreter (the signal escapes to the top level). Lowering it
+            // hard here would reject programs the interpreter accepts.
+            guard let depth = resolveLoopDepth(label: label, into: &context) else {
+                return [.panicStmt(message: "Pini runtime error: break outside loop")]
             }
-            return [.breakStmt]
+            return [.breakStmt(depth: depth)]
+
+        case .continueStatement(let label, _):
+            guard let depth = resolveLoopDepth(label: label, into: &context) else {
+                return [.panicStmt(message: "Pini runtime error: continue outside loop")]
+            }
+            return [.continueStmt(depth: depth)]
 
         case .matchStatement(let value, let cases, let location):
             return [try lowerMatch(value: value, cases: cases, at: location, into: &context)]
@@ -1388,6 +1410,90 @@ public enum HIRLowerer {
                 at: statementLocation(statement)
             )
         }
+    }
+
+    /// G15: lower `for (pattern,) in iterable: body [step:]`. The iterable is
+    /// lowered once; its HIR type decides the container kind and the
+    /// per-field element types, which must line up with the pattern arity
+    /// (`_` placeholders included — the interpreter requires an exact
+    /// field-count match, decomposePatternRow).
+    private static func lowerForIn(
+        pattern: [String],
+        iterable: Expression,
+        body: Block,
+        step: Block?,
+        label: String?,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> HIRStmt {
+        let lowered = try lowerExpr(iterable, expected: nil, into: &context)
+        let kind: HIRForIterableKind
+        let elementTypes: [HIRType]
+        switch lowered.type {
+        case .array(let element):
+            kind = .array
+            elementTypes = [element]
+        case .set(let element):
+            kind = .set
+            elementTypes = [element]
+        case .dict(let key, let value):
+            kind = .dict
+            elementTypes = [key, value]
+        default:
+            throw unsupported(
+                "for-in over '\(lowered.type)' (iterable must be a collection)",
+                at: location
+            )
+        }
+        guard pattern.count == elementTypes.count else {
+            throw unsupported(
+                "for pattern has \(pattern.count) field(s) but the element has \(elementTypes.count)",
+                at: location
+            )
+        }
+        context.loopLabels.append(label)
+        defer { context.loopLabels.removeLast() }
+        // Pattern variables are in scope for body AND step (mirroring the
+        // emitter's loop scope and the interpreter's per-iteration
+        // Environment). `_` placeholders bind nothing.
+        let boundNames = pattern.enumerated().filter { $0.element != "_" }.map { $0.element }
+        let previousTypes = boundNames.map { context.variableTypes[$0] }
+        for (position, name) in pattern.enumerated() where name != "_" {
+            context.variableTypes[name] = elementTypes[position]
+        }
+        defer {
+            for (index, name) in boundNames.enumerated() {
+                context.variableTypes[name] = previousTypes[index]
+            }
+        }
+        let bodyStmts = try lowerBlock(body, into: &context)
+        let stepStmts = try step.map { try lowerBlock($0, into: &context) }
+        return .forInStmt(
+            pattern: pattern, elementTypes: elementTypes, kind: kind,
+            iterable: lowered.node, body: bodyStmts, step: stepStmts
+        )
+    }
+
+    /// G15: resolve a break/continue to its unwind depth (ADR-014 labeled
+    /// control flow). `nil` label = innermost loop (depth 1); a labeled
+    /// target matches the nearest enclosing loop carrying that label.
+    /// Unresolvable targets (no enclosing loop, unmatched label) return `nil`
+    /// — the caller lowers those to a runtime panic, matching the
+    /// interpreter's escape-to-top-level error.
+    private static func resolveLoopDepth(
+        label: String?,
+        into context: inout FunctionContext
+    ) -> Int? {
+        guard let label = label else {
+            return context.loopLabels.isEmpty ? nil : 1
+        }
+        // Innermost-first scan: depth = number of loop frames unwound.
+        for (index, frameLabel) in context.loopLabels.enumerated().reversed() {
+            if frameLabel == label {
+                return context.loopLabels.count - index
+            }
+        }
+        return nil
     }
 
     private static func lowerVarDecl(
@@ -2147,6 +2253,31 @@ public enum HIRLowerer {
                         at: location
                     )
                 }
+            }
+            // File IO intrinsics (G15): writeFile/readFile. Absolute and
+            // relative literal paths both lower as-is — the legacy emitter's
+            // programBase baking only matters when the harness changes CWD,
+            // and the IO corpus uses absolute paths.
+            if functionName == "writeFile" {
+                guard loweredArgs.count == 2 else {
+                    throw unsupported("writeFile expects (path, content)", at: location)
+                }
+                guard loweredArgs[0].type == .string, loweredArgs[1].type == .string else {
+                    throw unsupported("writeFile expects two String arguments", at: location)
+                }
+                return LoweredExpr(
+                    node: .fileWrite(path: loweredArgs[0].node, content: loweredArgs[1].node),
+                    type: .i32
+                )
+            }
+            if functionName == "readFile" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("readFile expects (path)", at: location)
+                }
+                guard loweredArgs[0].type == .string else {
+                    throw unsupported("readFile expects a String path", at: location)
+                }
+                return LoweredExpr(node: .fileRead(path: loweredArgs[0].node), type: .string)
             }
             // Result case construction (ok/err): requires a Result-typed
             // context (return position, Result-typed assignment) so the
@@ -3675,12 +3806,19 @@ extension HIRBinaryOp {
         case .multiplyAssign: self = .multiply
         case .divideAssign: self = .divide
         case .moduloAssign: self = .modulo
+        case .andAssign: self = .bitwiseAnd
+        case .orAssign: self = .bitwiseOr
+        case .xorAssign: self = .bitwiseXor
+        case .leftShiftAssign: self = .leftShift
+        case .rightShiftAssign: self = .rightShift
         default: return nil
         }
     }
 
     /// Map an AST binary operator onto the slice set; nil for operators the
-    /// slice does not carry (bitwise/shift/compound-assign are later grids).
+    /// slice does not carry. Bitwise/shift joined in G15 (the `&`, `^`, `<<`,
+    /// `>>` spellings; single-pipe `|` bitwise-or has no parse path — host
+    /// gap, `|` lexes as pipe/orAssign/logicalOr only).
     init?(from op: BinaryOperator) {
         switch op {
         case .plus: self = .add
@@ -3694,6 +3832,11 @@ extension HIRBinaryOp {
         case .lessThanOrEqual: self = .lessThanOrEqual
         case .greaterThan: self = .greaterThan
         case .greaterThanOrEqual: self = .greaterThanOrEqual
+        case .bitwiseAnd: self = .bitwiseAnd
+        case .bitwiseOr: self = .bitwiseOr
+        case .bitwiseXor: self = .bitwiseXor
+        case .leftShift: self = .leftShift
+        case .rightShift: self = .rightShift
         default: return nil
         }
     }
@@ -3801,6 +3944,11 @@ private struct FunctionContext {
     var selfTypeNameLowered: String?
     var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
+
+    /// G15: enclosing loop labels, innermost last (`nil` = unlabeled loop).
+    /// Drives labeled break/continue depth resolution (ADR-014): a label
+    /// matches the nearest enclosing loop carrying that label.
+    var loopLabels: [String?] = []
 
     /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,
     /// shorter name at call sites).

@@ -1,6 +1,9 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G12 已完成并回填，G13 全族完成（批 1 lazyref + 批 2 跨文件），差分 53/53、回归 1286/0/0、sweep 44/59——下一格 G11/G12/G14/G15 待点名）**
+- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G15 全部完成并回填，
+  差分 60/60、回归 1293/0/0、sweep hir-emit 51/59——剩余 8 行全为并发族豁免
+  （独立立案 issue-llvm-concurrency-runtime-2026-09-08），M6 flip 门槛达成，
+  待点名执行旧后端删除与迁移开关退役）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -537,5 +540,92 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - **验收**：差分 **51→53**（+2：testDiffPackageMultiFile /
       testDiffPackageDemo）；全量回归 **1286/0/0**（基线 1284 + 新增 2）；
       sweep hir-emit **37/59 → 44/59**（跨文件 7 行全 PASS）。
-    - **下一格候选**：G11（struct 深化收尾）/ G12（trait）/ G14（FFI）/
-      G15（控制流零散）；M6 flip 门槛 = 51/59 + 豁免清单。
+    - **G14 foreign/FFI 族完成（2026-09-09 落地，2026-09-10 回填；分支
+      `agent/pini-dev/llvm-m5-g14-ffi`，合并 b08ceb4 / 提交 ea9c5b2）**：
+    - **HIR 表达式面（S3c）**：新增 `pointerLoad` / `pointerStore` /
+      `addressOfVar` 三 case。load/store **以指针的元素类型重降载值实参**
+      （无注解字面量采纳该类型）；store 在值已声明时保留值自身类型，
+      编码为**截断**（解释器 parity）。
+    - **`&x` 语义（D-B 裁决，真指针）**：降为变量的 alloca 地址。解释器
+      的**快照别名缺口**（写回不回写原变量）为已记录分歧，语料限定只读
+      路径（`ffi.pini` 只读指针）。
+    - **发射（S3d）**：有类型 load 把 i8 经 `sext` 加宽到 i64（对齐解释器
+      统一整数表示）；store 按值的 IR 类型截断。
+    - **print 多实参（D-A=A1）**：逐实参 stringify、空格分隔、末尾单个
+      换行——`examples/io.pini` 三行形态与解释器逐字节一致。
+    - **foreign 块**：按声明的外部签名发 `declare`；libc 已预声明符号
+      （printf/malloc/free/strlen/memcpy）跳过；Pini 专有 `cstr` 垫片映射
+      到新运行时导出 `bk_cstr`（与解释器垫片 strdup parity）。
+    - **`assert(cond, msg?)` 最小降载**：使 `|test` 块可编译；false 边打印
+      后 `bk_panic`。harness 不执行 `|test` 块（不参与差分基线）。
+    - **Harness（D-C=C1）**：package 管线把 foreign 的 search-path 库作为
+      额外 `--dlopen` 传入，镜像解释器 FFILoader；`examples/ffi_module` 的
+      cstring 语料因此可跑。
+    - **改动面**：IREmitter +144 / HIRLowerer +206 / HIRModule +35 /
+      HIRNode +49 / HIRPrinter +12 / PiniRuntime +14 /
+      HIRDifferentialTests +69。
+    - **验收**：差分 **53→55**（+2：ffi.pini、ffi_module/cstring.pini
+      双管线逐字节一致）；全量回归 **1288/0/0**；sweep hir-emit
+      **44/59 → 47/59**（+3：ffi / ffi_module/cstring / test）。**该批
+      当次未刷新 capability-sweep.tsv**，47/59 由矩阵历史比对复原
+      （见 G15 回填的归因表）。
+    - **G15 控制流与内建零散完成（2026-09-10；分支
+      `agent/pini-dev/llvm-m5-g15-control-flow`，红灯基线 bee4a2f）**：
+    - **for-in**：新增 `HIRStmt.forInStmt(pattern:elementTypes:kind:iterable:body:step:)`
+      + `HIRForIterableKind`。iterable 的 HIR 类型决定容器种类与逐字段
+      元素类型（array/set = 1 字段、dict = 2 字段 `(k, v)`）；模式元组字段
+      数与元素字段数**严格相等**（`_` 占位计入 arity——解释器
+      `decomposePatternRow` 契约）。发射镜像 legacy `generateForStatement`：
+      bitcast → len → 隐藏 i32 索引槽 → cond/body/step/inc/exit，按 kind 选
+      accessor（`bk_array_get` / `bk_set_at` / `bk_dict_key_at|val_at`），
+      每轮 fresh slot 重绑模式变量。
+    - **step 块（while + for-in）**：`whileStmt` 加 `step:` 关联值，发射
+      cond/body/step/step.end/end 布局，body 回边指向 step；`break` 跳过
+      step，`continue` 触发 step。**模式变量在 for-in 的 step 中仍可见**
+      （解释器以 `currentEnv = loopEnv` 执行 step）——首版给 step 开新作用域
+      致 `examples/for.pini` 撞 `load of undeclared variable` 硬崩，差分
+      fixture 补钉后修复。
+    - **continue / 标签 break·continue（ADR-014）**：`loopLabels: [String?]`
+      栈（innermost last）+ `resolveLoopDepth` 把标签解析为展开深度；
+      `breakStmt`/`continueStmt` 由裸形态改为携带 `depth: Int`，发射侧用
+      `LoopFrame(exit:header:continueTarget:)` 栈按 `count-depth` 取目标。
+    - **不可解析目标恢复 fail-loud**：循环外裸 break / 无匹配标签的 break
+      降为新增的 `HIRStmt.panicStmt(message:)`（`bk_panic` + `unreachable`），
+      而非降载期硬报错——解释器只让信号逃逸到顶层报错，硬报错会拒掉解释器
+      接受的程度（实测：该做法曾使 `testDiffArrayGetMatch` /
+      `testDiffMultidimArray` 两个既有 fixture 红）。
+    - **位运算符族与复合赋值**：`HIRBinaryOp` 补
+      `bitwiseAnd/bitwiseOr/bitwiseXor/leftShift/rightShift`；`init?(compound:)`
+      补 `andAssign/orAssign/xorAssign/leftShiftAssign/rightShiftAssign`；
+      发射侧指令选择 `and`/`or`/`xor`/`shl`/`ashr`。
+    - **文件 IO 内建**：新增 `fileWrite(path:content:)` / `fileRead(path:)`
+      两 HIRExpr case；发射 fopen/fwrite/fclose 与 fopen/fread(64 KiB 栈缓冲)/
+      NUL 终止/fclose。`usesFileIO` flag 条件声明 + 模式串常量（不触碰无 IO
+      模块的 golden IR）。`readFile` 返回值拼写必须是 `i8*` 而非 `ptr`——
+      `emitScalarPrint` 只把 `i8*` 当 C 串，`ptr` 落进 `%d` 默认分支把地址
+      当整数打印（首版实测输出 `1832249304`）。
+    - **诊断透出**：`HIRLoweringError` 加 `LocalizedError` + `errorDescription`，
+      CLI 侧由 `HIRLoweringError error 1` 变为带 `行:列` 与细节文本——本格
+      五个语料死点因此可定位。
+    - **发现并顺带修复**：`examples/step.pini` 在旧矩阵里 hir-emit 标 PASS 是
+      **假绿**——capability-sweep 只测「发射是否成功」，而 HIR 管道**静默丢弃
+      step 块**。本格实现 step 后该行 PASS 由假转真（计数不变，语义变化），
+      并以 `testDiffStep` 差分 fixture 钉住（含 for-in step 引用模式变量、
+      break 跳过 step 两个判别性形态）。
+    - **验收**：差分 **55→60**（+5：testDiffForIn / testDiffContinueBreakLabel /
+      testDiffBitwiseCompound / testDiffIoFile / testDiffStep）；全量回归
+      **1293/0/0**（基线 1288 + 新增 5）；sweep hir-emit **47/59 → 51/59**。
+    - **归因表（G14+G15 共 +7 行，由 `capability-sweep.tsv` 历史比对复原）**：
+      G13 收口 44/59 → G14 +3（ffi、ffi_module/cstring、test）→ G15 +4
+      （for、control-while、compound-assign、io）。剩余 8 行全为并发族
+      （`concurrency*`），属 `docs/issue-llvm-concurrency-runtime-2026-09-08.md`
+      的 M6 豁免清单，不占格。
+    - **新立工单**：`docs/issue-bitwise-or-parse-2026-09-10.md`——单竖线 `|`
+      位或表达式无解析通道，且 **spec 自身矛盾**（`bitwise-expr` 产生式含
+      `'|'`、§A.4 规则 3.13 称回退为按位或表达式，但记号转换表无 `'|'` 行、
+      同节记事句称「仅经 `|=` 去糖」）。语言级欠定义，需 spec §1.3 决策
+      （补通道 A / 收敛规范 B），**未决策前不动源码**。
+    - **下一格**：M5 分格 G1–G15 全部完成（51/59，剩 8 行并发豁免）——
+      M6 flip 门槛达成，待点名执行旧后端删除与 `PINI_HIR_PIPELINE` 开关退役。
+      另有两条独立立案线未启动：解释器统一 HIR（`docs/issue-interpreter-hir-unification-2026-09-07.md`）、
+      并发运行时（`docs/issue-llvm-concurrency-runtime-2026-09-08.md`）。

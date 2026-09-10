@@ -1,0 +1,33 @@
+main|func() -> ():
+    ; arithmetic compound assign
+    var x = 10
+    x += 5
+    print(x)
+    x -= 3
+    print(x)
+    x *= 2
+    print(x)
+    x /= 4
+    print(x)
+    x %= 4
+    print(x)
+    ; bitwise operators (single-pipe `|` bitwise-or has no infix parse path,
+    ; tracked as the bitwise-or parse gap; `|=` below works)
+    var a = 12
+    print(a & 10)
+    print(a ^ 7)
+    print(a << 2)
+    print(a >> 1)
+    ; bitwise compound assign
+    var b = 12
+    b &= 10
+    print(b)
+    b |= 1
+    print(b)
+    b ^= 3
+    print(b)
+    b <<= 2
+    print(b)
+    b >>= 1
+    print(b)
+    return

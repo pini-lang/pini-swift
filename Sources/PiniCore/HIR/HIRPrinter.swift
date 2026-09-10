@@ -48,9 +48,27 @@ public enum HIRPrinter {
                 lines.append(contentsOf: dumpBody(elseBody, indent: level + 1))
             }
             return lines
-        case .whileStmt(let condition, let body):
+        case .whileStmt(let condition, let body, let step):
             var lines = ["\(pad)while \(exprText(condition)):"]
             lines.append(contentsOf: dumpBody(body, indent: level + 1))
+            if let step = step {
+                lines.append("\(pad)step:")
+                lines.append(contentsOf: dumpBody(step, indent: level + 1))
+            }
+            return lines
+        case .forInStmt(let pattern, let elementTypes, let kind, let iterable, let body, let step):
+            let bindings = pattern.enumerated()
+                .map { index, name in
+                    let type = index < elementTypes.count ? elementTypes[index].llvmSpelling : "?"
+                    return "\(name): \(type)"
+                }
+                .joined(separator: ", ")
+            var lines = ["\(pad)for (\(bindings)) in \(kind) \(exprText(iterable)):"]
+            lines.append(contentsOf: dumpBody(body, indent: level + 1))
+            if let step = step {
+                lines.append("\(pad)step:")
+                lines.append(contentsOf: dumpBody(step, indent: level + 1))
+            }
             return lines
         case .returnStmt(let value):
             return ["\(pad)return\(value.map { " " + exprText($0) } ?? "")"]
@@ -67,8 +85,12 @@ public enum HIRPrinter {
             return lines
         case .subscriptStore(let container, let index, let value, _):
             return ["\(pad)\(exprText(container))[\(exprText(index))] = \(exprText(value))"]
-        case .breakStmt:
-            return ["\(pad)break"]
+        case .breakStmt(let depth):
+            return ["\(pad)break\(depth > 1 ? " (x\(depth))" : "")"]
+        case .continueStmt(let depth):
+            return ["\(pad)continue\(depth > 1 ? " (x\(depth))" : "")"]
+        case .panicStmt(let message):
+            return ["\(pad)panic(\"\(message)\")"]
         case .matchStmt(let scrutinee, let cases, _):
             var lines = ["\(pad)match \(exprText(scrutinee)):"]
             for matchCase in cases {
@@ -182,6 +204,10 @@ public enum HIRPrinter {
         case .assertCall(let condition, let message):
             let msg = message.map { ", \(exprText($0))" } ?? ""
             return "assert(\(exprText(condition))\(msg))"
+        case .fileWrite(let path, let content):
+            return "writeFile(\(exprText(path)), \(exprText(content)))"
+        case .fileRead(let path):
+            return "readFile(\(exprText(path)))"
         }
     }
 
@@ -198,6 +224,11 @@ public enum HIRPrinter {
         case .lessThanOrEqual: return "<="
         case .greaterThan: return ">"
         case .greaterThanOrEqual: return ">="
+        case .bitwiseAnd: return "&"
+        case .bitwiseOr: return "|"
+        case .bitwiseXor: return "^"
+        case .leftShift: return "<<"
+        case .rightShift: return ">>"
         case .minOf: return "min"
         case .maxOf: return "max"
         }

@@ -4,17 +4,17 @@ examples/closures.pini	PASS	PASS	PASS	PASS
 examples/collections.pini	PASS	PASS	PASS	PASS	
 examples/comments.pini	PASS	PASS	PASS	PASS	
 examples/composition.pini	PASS	PASS	PASS	PASS	
-examples/compound-assign.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-arrow-dual.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-async-contagion-end.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-async-decl.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function Error — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-await.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-cancel.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-future-handle.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency-joinall.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/concurrency.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/compound-assign.pini	PASS	PASS	PASS	PASS	
+examples/concurrency-arrow-dual.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 7:10: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
+examples/concurrency-async-contagion-end.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 17:10: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
+examples/concurrency-async-decl.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function Error — not pre-registered'  | hir: Error: HIR lowering error at 10:25: call to unknown function 'Error' (intrinsics beyond print are later grids) 
+examples/concurrency-await.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 7:10: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
+examples/concurrency-cancel.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 14:10: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
+examples/concurrency-future-handle.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 8:10: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
+examples/concurrency-joinall.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 11:10: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
+examples/concurrency.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-002]   unsupported expression 'unknown function sleep — not pre-registered'  | hir: Error: HIR lowering error at 15:14: call to unknown function 'sleep' (intrinsics beyond print are later grids) 
 examples/control-if.pini	PASS	PASS	PASS	PASS	
-examples/control-while.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/control-while.pini	PASS	PASS	PASS	PASS	
 examples/cow.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端未记录变量 'row' 的数组元素类型（D1 范围：仅 let/var 绑定字面量）' 
 examples/defer.pini	PASS	PASS	PASS	PASS	
 examples/dict-set-d2.pini	PASS	PASS	PASS	PASS	
@@ -22,14 +22,14 @@ examples/enum-dot-case.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   un
 examples/enum-named.pini	PASS	PASS	PASS	PASS	
 examples/enum-namespacing.pini	PASS	PASS	PASS	PASS	
 examples/enum.pini	PASS	PASS	PASS	PASS	
-examples/ffi.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/ffi_module/cstring.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/for.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/ffi.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`' 
+examples/ffi_module/cstring.pini	FAIL	SKIP	PASS	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`' 
+examples/for.pini	PASS	PASS	PASS	PASS	
 examples/generic-func.pini	PASS	PASS	PASS	PASS	
 examples/generic.pini	PASS	PASS	PASS	PASS	
 examples/hello.pini	PASS	PASS	PASS	PASS	
 examples/higher-order.pini	PASS	PASS	PASS	PASS	
-examples/io.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/io.pini	PASS	PASS	PASS	PASS	
 examples/lambda-typed.pini	PASS	PASS	PASS	PASS	
 examples/lambda.pini	PASS	PASS	PASS	PASS	
 examples/lazyref.pini	PASS	PASS	PASS	PASS	
@@ -52,7 +52,7 @@ examples/slice.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupporte
 examples/stdlib.pini	PASS	PASS	PASS	PASS	
 examples/step.pini	PASS	PASS	PASS	PASS	
 examples/struct.pini	PASS	PASS	PASS	PASS	
-examples/test.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/test.pini	PASS	PASS	PASS	PASS	
 examples/trait.pini	PASS	PASS	PASS	PASS	
 examples/try.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   at /Volumes/ZWTPSSD/Projects/Pini语言语法与Swift-Package实现_20260827/pini-swift/examples/try.pini:4:28   unsupported type 
 examples/tuple.pini	PASS	PASS	PASS	PASS	

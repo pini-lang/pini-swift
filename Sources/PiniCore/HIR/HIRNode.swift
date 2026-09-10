@@ -158,6 +158,10 @@ public indirect enum HIRType: Equatable {
 public enum HIRBinaryOp: Equatable {
     case add, subtract, multiply, divide, modulo
     case equal, notEqual, lessThan, lessThanOrEqual, greaterThan, greaterThanOrEqual
+    /// Bitwise family (G15): integer operands; `and`/`or`/`xor`/`shl`/`ashr`
+    /// map 1:1 onto LLVM integer instructions. Interpreter parity: int×int
+    /// only (bool operands are rejected by the interpreter's eval table).
+    case bitwiseAnd, bitwiseOr, bitwiseXor, leftShift, rightShift
     /// `min(a, b)` / `max(a, b)` intrinsics (G9) — I32 select forms.
     case minOf, maxOf
 
@@ -299,6 +303,17 @@ public indirect enum HIRExpr: Equatable {
     /// them.
     case assertCall(condition: HIRExpr, message: HIRExpr?)
 
+    // MARK: G15 file IO
+
+    /// `writeFile(path, content)` (G15) — fopen("w") / fwrite / fclose.
+    /// Value expression; the legacy emitter yields the fclose i32 result.
+    case fileWrite(path: HIRExpr, content: HIRExpr)
+    /// `readFile(path)` (G15) — fopen("r") / fread into a 64 KiB stack
+    /// buffer / fclose, yielding the buffer pointer as a String. The
+    /// buffer size cap is the legacy emitter's (LLI's JIT makes
+    /// fseek/ftell/fstat unreliable), so the corpus stays well under it.
+    case fileRead(path: HIRExpr)
+
     // MARK: G9 string deepening
 
     /// `s.upper()` / `s.lower()` (G9) — byte-wise toupper/tolower over a
@@ -407,6 +422,13 @@ public struct HIRMatchCase: Equatable {
     }
 }
 
+/// for-in iterable family (G15): the container kind decides which runtime
+/// accessor reads element `i` — `bk_array_get` / `bk_set_at` for 1-field
+/// patterns, `bk_dict_key_at` / `bk_dict_val_at` for 2-field `(k, v)`.
+public enum HIRForIterableKind: Equatable {
+    case array, set, dict
+}
+
 /// Typed statement tree (slice set).
 public indirect enum HIRStmt: Equatable {
     /// Variable slot. Emitting allocates the slot; a non-nil initializer
@@ -415,7 +437,23 @@ public indirect enum HIRStmt: Equatable {
     /// Store into an existing variable; `type` is the declared variable type.
     case storeVar(name: String, type: HIRType, value: HIRExpr)
     case ifStmt(condition: HIRExpr, thenBody: [HIRStmt], elseBody: [HIRStmt]?)
-    case whileStmt(condition: HIRExpr, body: [HIRStmt])
+    /// `while cond: body [step: block]`. The step block (ADR-014) runs once
+    /// per iteration after the body — on normal completion *and* on
+    /// unlabeled `continue` (interpreter parity); `break` skips it.
+    case whileStmt(condition: HIRExpr, body: [HIRStmt], step: [HIRStmt]?)
+    /// `for (pattern,) in iterable: body [step: block]` (G15).
+    /// `kind` selects the runtime accessor family; `elementTypes` are
+    /// parallel to `pattern` (`"_"` entries still occupy a slot and carry
+    /// the slot's type). Break/continue follow the same step contract as
+    /// whileStmt.
+    case forInStmt(
+        pattern: [String],
+        elementTypes: [HIRType],
+        kind: HIRForIterableKind,
+        iterable: HIRExpr,
+        body: [HIRStmt],
+        step: [HIRStmt]?
+    )
     /// Slice set: single-value return; nil for void functions.
     case returnStmt(value: HIRExpr?)
     case exprStmt(HIRExpr)
@@ -435,11 +473,22 @@ public indirect enum HIRStmt: Equatable {
     /// compound assignment (`a[i] += k`) lowers to read-modify-write with the
     /// same node. `elementType` is the boxed element's static type.
     case subscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType)
-    /// `break` (G2). The emitter targets the nearest enclosing while loop;
-    /// with no enclosing loop it lowers to a runtime panic — the interpreter
-    /// errors on a bare break that escapes to the top level (probe-verified),
-    /// so this is fail-loud parity, not a silent skip.
-    case breakStmt
+    /// `break` (G2; labeled form G15). `depth` = how many enclosing loops to
+    /// unwind (1 = innermost). Labeled `break outer` lowers to the depth the
+    /// lowerer resolved from the label stack (ADR-014). An *unresolvable*
+    /// target (bare break with no enclosing loop, or a label that matches no
+    /// enclosing loop) lowers to `panicStmt` instead — the interpreter lets
+    /// the signal escape and errors at the top level, so this is fail-loud
+    /// parity, not a silent skip.
+    case breakStmt(depth: Int)
+    /// `continue` (G15). `depth` mirrors breakStmt: 1 = innermost loop's
+    /// condition re-test; N = the depth-th enclosing loop's header (labeled
+    /// continue, ADR-014). Unresolvable targets panic like break.
+    case continueStmt(depth: Int)
+    /// Unconditional runtime trap with a fixed message (G15). Emitted for
+    /// control-flow escapes the interpreter only detects at run time
+    /// (break/continue outside any loop). The block is terminated.
+    case panicStmt(message: String)
     /// `match scrutinee: case name(binding): body ...` (G2 general skeleton).
     /// The scrutinee type decides the tag ABI: Optional arms compare the
     /// `{ i64, T }` tag (some=0, none=1); enum scrutinees join their own grid

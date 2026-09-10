@@ -337,4 +337,13 @@ final class HIRDifferentialTests: XCTestCase {
     /// the manifest's [ffi] search_paths). The ffi_module directory holds a
     /// single .pini source, so the package channel is safe here.
     func testDiffPackageFFIModule() throws { try assertPackageParity("examples/ffi_module") }
+
+    // MARK: - G15 control flow & builtins odds-and-ends family (for-in,
+    // continue/labeled break, bitwise + compound-assign operators, io builtins)
+
+    func testDiffForIn() throws { try assertParity(fixtureName: "testDiffForIn") }
+    func testDiffContinueBreakLabel() throws { try assertParity(fixtureName: "testDiffContinueBreakLabel") }
+    func testDiffBitwiseCompound() throws { try assertParity(fixtureName: "testDiffBitwiseCompound") }
+    func testDiffIoFile() throws { try assertParity(fixtureName: "testDiffIoFile") }
+    func testDiffStep() throws { try assertParity(fixtureName: "testDiffStep") }
 }

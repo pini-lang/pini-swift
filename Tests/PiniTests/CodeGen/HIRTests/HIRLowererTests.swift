@@ -64,7 +64,7 @@ final class HIRLowererTests: XCTestCase {
         """)
         let body = hir.mainFunction?.body ?? []
         XCTAssertEqual(body.count, 2)
-        guard case .whileStmt(let cond, let loopBody)? = body.last else {
+        guard case .whileStmt(let cond, let loopBody, _)? = body.last else {
             return XCTFail("expected while statement")
         }
         guard case .binary(let op, _, _, .boolean) = cond else {
