@@ -3433,8 +3433,10 @@ extension HIRType {
         case .simple(let name, _):
             switch name {
             case "I8": self = .i8
+            case "U8": self = .u8
             case "I32": self = .i32
             case "I64": self = .i64
+            case "U64": self = .u64
             case "F64": self = .f64
             case "Bool": self = .boolean
             case "String": self = .string
@@ -3466,6 +3468,11 @@ extension HIRType {
                 return
             }
             return nil
+        case .pointer(let element, _):
+            // `*T` (G14, ADR-015 FFI): element recurses; the pointer itself
+            // is an opaque `ptr` in the IR ABI.
+            guard let elementType = HIRType(from: element) else { return nil }
+            self = .pointer(element: elementType)
         case .tuple(let labels, let elements, _):
             // `(a: I32, b: F64,)` (G8): fields recurse, labels carry over.
             var fieldTypes: [HIRType] = []
