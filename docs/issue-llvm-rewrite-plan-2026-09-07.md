@@ -733,3 +733,60 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   - **能力表述订正**：`examples/tuple.pini` 宣称的 `.0`／解构现已真正实现，
     该行注释与实现不再脱节（原登记项就此闭合）。
 
+- **M6a a3 完成：G17 内建与类型修补（2026-09-10）**：
+
+  - **红灯基线**：5 个既有夹具的差分副本入套件，差分 **67 → 72**，实测 **5/5 红**。
+    报错与 M6 勘测逐字一致（`unknown function` × 2、`type mismatch: f64 is not i8`、
+    `lacks a resolvable scalar type` × 2），且类型检查器对五例**全部放行**——
+    确认属后端能力缺口，非前端拒绝。源夹具：
+    `Tests/PiniTests/CodeGen/IRExecutionTests/testReadLineViaLLI.pini`、
+    `testIsAsciiDigitViaLLI.pini`、`testI8StructField_LLI.pini`、
+    `testParamWithoutAnnotation_FallbackI32_ViaLLI.pini`、
+    `testParamWithoutAnnotation_InferredI32_ViaLLI.pini`。
+  - **落点（6 处，无一处触 ADR-031 §4 止损）**：
+    1. **整型槽位折叠浮点字面量**，按 legacy 宽度对齐契约做截断（`x: I8 = 0.0`）。
+    2. **内建分派**：`readLine` 与 `is_ascii_digit` 各走专用节点；
+       `is_letter` 维持 fail-loud（Unicode 语义，非缺口）。
+    3. **无注解参数回退归一**：单一返回类型则回退该类型，否则 `I32`——即 legacy
+       的 P6-4a 契约。此前签名预扫描、泛型特化、函数体三处参数解析各自为政，
+       现收敛到单点，顺带消除三处不一致。
+    4. **`readLine` 发射**：`fgets` 入栈缓冲返回 `i8*`；`fgets` 与 `@__stdinp`
+       声明**按需发射**（未使用该内建的模块 IR 文本不变）。
+    5. **`is_ascii_digit` 发射**：取首字节做闭区间判定。
+    6. **窄整型打印**：`i8` 经符号扩展到 `i32` 再走整型格式化（varargs 对实参
+       宽度的要求）。
+  - **Harness 语义修正（本批两条关键发现）**：
+    - **`readLine` 三通道语义分歧（既存，非本轮引入）**：解释器剥离行终止符，
+      legacy 与 HIR 均经 `fgets` 加格式化打印而**保留**换行。三端实测：无换行输入
+      三端同为 12 字节；带换行输入 legacy/HIR 13 字节、解释器 12 字节。
+      故差分夹具注入**无换行** stdin，并在断言注释中写明理由，避免把既存三通道
+      分歧误报成后端缺口。
+    - **stdin EOF 标志跨用例泄漏**：差分 Harness 用 `dup2` 接管标准输入读到 EOF 后，
+      即使还原描述符，进程级标准输入流的 EOF 标志仍然保持，同进程后续注入式读取
+      会立即 EOF。症状是**测试顺序依赖的红**：单独执行 IOTests 为 11/0/0，
+      与差分套件同进程则为 83 中 2 红。修法为还原描述符后清除该流的 EOF 标志。
+  - **验证**：差分 **72/0/0**（原 67/67）；全量回归 **1305 / 0 / 0**（原 1300 / 0 / 0）；
+    探针 output `total=977 pass=577 fail=400`，真 flip 阻塞 **75**、两边都失败 **325**。
+    a3 的 5 个目标夹具已全部转 PASS（逐条复核）。
+  - **门槛口径订正（实测，影响 a4 与 a7 验收）**：
+    - D1=B 把门槛分母定义为「`examples/` 59 + LLVM 驱动测试套夹具」，plan 记该夹具数
+      为 **128**。实测四个套件的夹具目录（`Tests/PiniTests/CodeGen/IRGeneratorTests`、
+      `Tests/PiniTests/CodeGen/IRExecutionTests`、
+      `Tests/PiniTests/CodeGen/IRPrintGoldenTests`、
+      `Tests/PiniTests/RuntimeBackendTests`）共 **222** 个 `.pini`，非 128
+      ——「222」与 plan 记的「用例数」同值，系当时把夹具数与用例数混算。
+      其中 legacy 可编译 **209**，前端本就拒绝 **13**（后者按勘测口径不入分母）。
+    - 按**四套**口径，门槛内真阻塞 **a2 时实为 11 项、a3 后降至 6 项**（本批消掉 5）。
+      a2 收口记录的「7」只覆盖 `IRExecutionTests` 与 `RuntimeBackendTests` 两个目录，
+      窄于 D1=B 的四套定义；该差异此前未被发现，此处更正。
+    - **a3 后门槛内阻塞 6 项明细**（探针明细表可复现）：
+      1. trait 默认方法 `self` 类型不可解析（`IRExecutionTests` 一例）——G18，a4 计划内。
+      2. 空数组字面量缺元素类型（`RuntimeBackendTests` 一例）——G18，a4 计划内。
+      3. **同一 trait 根因**，落在 `IRGeneratorTests`（一例）——不在 a4 原计划清单内；
+        该套件属 A-删除类，须裁决「删除前是否也要求转绿」。
+      4. 打印 struct/object 值（`IRPrintGoldenTests` 两例）——错误文本自述「later grid」。
+      5. 非对象名义类型上的字段查找失败（`IRPrintGoldenTests` 一例）。
+      第 4–5 条同属 A-删除类套件（整体待删或对 HIR 重定基线，即裁决点 D3b）；
+      它们与第 3 条是否计入门槛，并作 a4 的**新增裁决点 D8** 一并裁决。
+  - **未动**：源码删除面（零）、`IRGeneratorTests` 与 `IRPrintGoldenTests` 的既有断言。
+
