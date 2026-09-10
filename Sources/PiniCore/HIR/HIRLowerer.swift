@@ -426,6 +426,33 @@ public enum HIRLowerer {
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
                     paramTypes: paramTypes, returnType: effectiveReturn
                 )
+            case .foreignDecl(let foreignDecl):
+                // G14: foreign block signatures join the shared table so
+                // call sites resolve them like any top-level function.
+                for funcDecl in foreignDecl.funcs {
+                    let paramTypes = try funcDecl.params.map { parameter -> HIRType in
+                        guard let annotation = parameter.typeAnnotation,
+                              let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                            throw unsupported(
+                                "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
+                                at: funcDecl.location
+                            )
+                        }
+                        return type
+                    }
+                    let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
+                        guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                            throw unsupported(
+                                "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(funcDecl.name)'",
+                                at: funcDecl.location
+                            )
+                        }
+                        return type
+                    }
+                    signatures[funcDecl.name] = HIRLowererSignatureInfo(
+                        paramTypes: paramTypes, returnType: returnType
+                    )
+                }
             default: break
             }
         }
@@ -472,6 +499,10 @@ public enum HIRLowerer {
             case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below; trait
                 // default bodies specialize at their dispatch sites (G12).
+                continue
+            case .foreignDecl:
+                // G14: declare-only surface — lowered into `foreigns` below,
+                // no function body to emit.
                 continue
             default:
                 throw unsupported(
@@ -545,7 +576,41 @@ public enum HIRLowerer {
         // G12: trait default bodies specialized at dispatch sites join the
         // function list (dedup by IR name already applied at the dispatch).
         functions.append(contentsOf: traitDefaultsCollector.functions)
-        return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values))
+
+        // G14: lower foreign blocks into the declare-only surface.
+        var foreigns: [HIRForeignBlock] = []
+        for decl in module.declarations {
+            guard case .foreignDecl(let foreignDecl) = decl else { continue }
+            var foreignFuncs: [HIRForeignFunction] = []
+            for funcDecl in foreignDecl.funcs {
+                let paramTypes = try funcDecl.params.map { parameter -> HIRType in
+                    guard let annotation = parameter.typeAnnotation,
+                          let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                        throw unsupported(
+                            "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
+                            at: funcDecl.location
+                        )
+                    }
+                    return type
+                }
+                let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
+                    guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                        throw unsupported(
+                            "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(funcDecl.name)'",
+                            at: funcDecl.location
+                        )
+                    }
+                    return type
+                }
+                foreignFuncs.append(HIRForeignFunction(
+                    name: funcDecl.name, paramTypes: paramTypes, returnType: returnType
+                ))
+            }
+            foreigns.append(HIRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
+        }
+
+        return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values),
+                         foreigns: foreigns)
     }
 
     // MARK: - G10 monomorphization
@@ -2126,19 +2191,27 @@ public enum HIRLowerer {
                     at: location
                 )
             }
-            guard loweredArgs.count == signature.paramTypes.count else {
+            // G14: lower arguments with each parameter type as the expected
+            // context so untyped integer literals adopt non-I32 parameter
+            // slots (U64 param → literal 64 is u64) — mirroring the checker's
+            // bidirectional literal propagation and the interpreter's
+            // untyped-int world.
+            guard arguments.count == signature.paramTypes.count else {
                 throw unsupported(
-                    "call to '\(functionName)' expects \(signature.paramTypes.count) arguments, got \(loweredArgs.count)",
+                    "call to '\(functionName)' expects \(signature.paramTypes.count) arguments, got \(arguments.count)",
                     at: location
                 )
             }
-            for (index, argument) in loweredArgs.enumerated() {
+            let retypedArgs = try zip(arguments, signature.paramTypes).map { argument, paramType in
+                try lowerExpr(argument.expression, expected: paramType, into: &context)
+            }
+            for (index, argument) in retypedArgs.enumerated() {
                 try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
             }
             return LoweredExpr(
                 node: .call(
                     function: functionName,
-                    arguments: loweredArgs.map { $0.node },
+                    arguments: retypedArgs.map { $0.node },
                     returnType: signature.returnType
                 ),
                 type: signature.returnType ?? .i32
