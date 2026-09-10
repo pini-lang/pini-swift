@@ -100,6 +100,25 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertFalse(llvmOutput.isEmpty, "\(fixtureName): expected non-empty output", file: file, line: line)
     }
 
+    /// Parity for fixtures whose program legitimately prints nothing (the
+    /// multi-slot return fixtures only bind the result; nothing is emitted).
+    /// The pre-fix failure mode is not a wrong value but a lowering throw or
+    /// an lli trap, so empty output is the expected contract. The final
+    /// assertion guards the assumption: if someone adds a print to such a
+    /// fixture, this fails loudly and points at `assertParity` instead of
+    /// silently weakening the check to "" == "".
+    private func assertParityAllowingEmptyOutput(fixtureName: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let source = try loadPiniFixture(fixtureName, filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source)
+        let llvmOutput = try runNewPipeline(source)
+        XCTAssertEqual(llvmOutput, interpreterOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+                       file: file, line: line)
+        XCTAssertTrue(interpreterOutput.isEmpty,
+                      "\(fixtureName): this fixture is declared output-free; use assertParity instead",
+                      file: file, line: line)
+    }
+
     // MARK: - G13 batch 2: multi-file package differential
 
     /// Loads an examples/ corpus directory as a `Package` (same entry as the
@@ -346,4 +365,20 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffBitwiseCompound() throws { try assertParity(fixtureName: "testDiffBitwiseCompound") }
     func testDiffIoFile() throws { try assertParity(fixtureName: "testDiffIoFile") }
     func testDiffStep() throws { try assertParity(fixtureName: "testDiffStep") }
+
+    // MARK: - M6a G16 tuple family (fixtures inherited from the LLVM-driven
+    // suites: multi-slot returns, positional index, destructuring, len(tuple),
+    // unlabelled tuple construction)
+
+    /// Multi-slot return (`-> (I32, I32,)`): distinct from the single-slot
+    /// tuple return covered by G8 (the two are different declarations). The
+    /// fixture prints nothing, hence the empty-output variant.
+    func testDiffMultiReturnAddAndSub() throws { try assertParityAllowingEmptyOutput(fixtureName: "testDiffMultiReturnAddAndSub") }
+    func testDiffMultiReturnSwap() throws { try assertParityAllowingEmptyOutput(fixtureName: "testDiffMultiReturnSwap") }
+
+    func testDiffTupleIndexAccess() throws { try assertParity(fixtureName: "testDiffTupleIndexAccess") }
+    func testDiffTupleDestructure() throws { try assertParity(fixtureName: "testDiffTupleDestructure") }
+    func testDiffTupleLen() throws { try assertParity(fixtureName: "testDiffTupleLen") }
+    func testDiffTupleConstruct() throws { try assertParity(fixtureName: "testDiffTupleConstruct") }
+    func testDiffTupleConstructClang() throws { try assertParity(fixtureName: "testDiffTupleConstructClang") }
 }
