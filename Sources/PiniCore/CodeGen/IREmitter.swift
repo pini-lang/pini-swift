@@ -550,13 +550,113 @@ public final class IREmitter {
                 }
             )
         default:
-            // G11 multidim parity: bare-value scrutinees (direct subscript
-            // reads — the Optional-returning channel is a separate semantic)
-            // never fire some/none arms in the interpreter either; the match
-            // falls through silently (probe-verified). Emit the scrutinee
-            // for its side effects, then skip every arm — the dead-arm
-            // bodies were lowered only for scope resolution.
-            _ = emitExpr(scrutinee)
+            // Bare scrutinee — neither Optional nor enum (a direct subscript
+            // read yields a plain value there). Literal arms (`case 1:`,
+            // `case "hi":`) compare by value and need real dispatch; enum-case
+            // arms cannot match a bare value, so when no literal arm is
+            // present there is nothing to dispatch on and every arm is dead
+            // (G11 multidim parity: the match falls through silently — the
+            // interpreter reports a non-exhaustive match for enum values
+            // only). In that case emit the scrutinee for its side effects and
+            // skip the arms; their bodies were lowered only for scope
+            // resolution.
+            if cases.contains(where: { $0.literal != nil }) {
+                emitScalarMatch(scrutinee: scrutinee, cases: cases)
+            } else {
+                _ = emitExpr(scrutinee)
+            }
+        }
+    }
+
+    /// Bare-scrutinee match carrying literal arms: a source-ordered chain of
+    /// value comparisons (the interpreter's `executeMatch` scans arms in
+    /// order and the first match wins). Strings compare via strcmp, floats via
+    /// ordered fcmp, integers and bools via icmp. Enum-case arms cannot match
+    /// a bare value and are skipped; the wildcard arm is the fallback.
+    /// Falling off the chain with no wildcard arm is a silent no-op
+    /// (interpreter parity: a non-exhaustive match is an error for enum values
+    /// only), so the default block simply branches to the end label.
+    private func emitScalarMatch(scrutinee: HIRExpr, cases: [HIRMatchCase]) {
+        let scrutineeValue = emitExpr(scrutinee)
+        let id = builder.freshLabel()
+        let endLabel = "match.end.\(id)"
+        let defaultLabel = "match.default.\(id)"
+        func checkLabel(_ index: Int) -> String { "match.check.\(id).\(index)" }
+
+        let literalArms = cases.enumerated().filter { $0.element.literal != nil }
+        let wildcardArm = cases.first { $0.caseName == "_" }
+
+        bodyIR += builder.fmtBr(labelName: checkLabel(literalArms[0].offset)) + "\n"
+
+        for (position, entry) in literalArms.enumerated() {
+            let (index, matchCase) = entry
+            let armLabel = "match.arm.\(id).\(index)"
+            let nextLabel = position + 1 < literalArms.count
+                ? checkLabel(literalArms[position + 1].offset)
+                : defaultLabel
+            bodyIR += "\(checkLabel(index)):\n"
+            guard let literal = matchCase.literal,
+                  let comparison = emitLiteralComparison(literal, scrutinee: scrutineeValue) else {
+                // The operand does not fit the scrutinee's value type — the
+                // interpreter never matches such an arm either, so skip it
+                // rather than fabricate an operand.
+                bodyIR += builder.fmtBr(labelName: nextLabel) + "\n"
+                continue
+            }
+            bodyIR += builder.fmtCondBr(cond: comparison, thenLabelName: armLabel, elseLabelName: nextLabel) + "\n"
+            bodyIR += "\(armLabel):\n"
+            terminated = false
+            scopes.append([:])
+            emitBlock(matchCase.body)
+            if !terminated {
+                bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+            }
+            scopes.removeLast()
+        }
+
+        bodyIR += "\(defaultLabel):\n"
+        terminated = false
+        scopes.append([:])
+        if let wildcardArm = wildcardArm {
+            emitBlock(wildcardArm.body)
+        }
+        if !terminated {
+            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        }
+        scopes.removeLast()
+        bodyIR += "\(endLabel):\n"
+        terminated = false
+    }
+
+    /// One literal arm's comparison against the bare scrutinee value. Returns
+    /// the i1 temp, or nil when the operand does not fit the scrutinee's value
+    /// type (the caller skips such an arm — the interpreter never matches it
+    /// either, and inventing an operand would emit invalid IR).
+    private func emitLiteralComparison(_ literal: HIRMatchLiteral, scrutinee: IRValue) -> String? {
+        switch (scrutinee.llvmType, literal) {
+        case ("i8*", .string(let value)):
+            usesStrCmp = true
+            let literalValue = emitStringConstant(value)
+            let ordering = builder.freshTemp()
+            bodyIR += " \(ordering) = call i32 @strcmp(ptr \(scrutinee.ssaName), ptr \(literalValue.ssaName))\n"
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = icmp eq i32 \(ordering), 0\n"
+            return result
+        case (let spelling, .int(let value))
+            where spelling == "i8" || spelling == "i32" || spelling == "i64":
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = icmp eq \(spelling) \(scrutinee.ssaName), \(value)\n"
+            return result
+        case ("double", .float(let value)):
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = fcmp oeq double \(scrutinee.ssaName), \(doubleLiteral(value))\n"
+            return result
+        case ("i1", .boolean(let value)):
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = icmp eq i1 \(scrutinee.ssaName), \(value ? "true" : "false")\n"
+            return result
+        default:
+            return nil
         }
     }
 

@@ -3321,29 +3321,53 @@ public enum HIRLowerer {
             let hirCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         default:
-            // G11 multidim corpus: the interpreter's direct subscript read
-            // yields a bare value (the Optional-returning read channel is a
-            // separate, not-yet-landed semantic), so some/none arms never
-            // fire and the match falls through silently (probe-verified —
-            // applies at any scrutinee depth: outer `match m[1]` on
-            // array(I32), inner `match row[2]` on I32). Parity: lower every
-            // arm body with its binding typed by the scrutinee itself (the
-            // value a live some-arm would bind), but drop the dispatch.
+            // Bare scrutinee — neither Optional nor enum (a direct subscript
+            // read: the interpreter yields a plain value there, verified).
+            // Two arm families share this node:
+            //   · enum-case arms (`some` / `none`) never match a bare value —
+            //     the interpreter's matchCaseMatches compares an enum case
+            //     only against an enum value — so those arms never fire and
+            //     the match falls through silently (G11 multidim corpus,
+            //     probe-verified at any scrutinee depth: outer `match m[1]`
+            //     on array(I32), inner `match row[2]` on I32).
+            //   · literal arms (`case 1:`) DO compare by value and must
+            //     dispatch; the operand rides along as `HIRMatchLiteral` so
+            //     the emitter never re-parses rendered pattern text.
+            // Either way each body lowers with its binding typed by the
+            // scrutinee itself (the value a live some-arm would bind).
             var hirCases: [HIRMatchCase] = []
             for matchCase in cases {
-                let body = try lowerDeadArmBody(matchCase, bindingType: loweredValue.type, into: &context)
-                hirCases.append(HIRMatchCase(caseName: matchCase.pattern.description, bindings: matchCase.bindings.map { $0.varName }, body: body))
+                let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
+                hirCases.append(HIRMatchCase(
+                    caseName: matchCase.pattern.description,
+                    literal: literalOperand(of: matchCase.pattern),
+                    bindings: matchCase.bindings.map { $0.varName },
+                    body: body
+                ))
             }
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         }
     }
 
-    /// G11: one dead-arm body of a match whose scrutinee is neither Optional
-    /// nor enum — the arm is never dispatched at emission (probe-verified
-    /// silent fall-through in the interpreter); the body still lowers so its
-    /// bindings scope-resolve. Each binding adopts the scrutinee type (the
-    /// value a live some-arm would bind), wildcard/none arms bind nothing.
-    private static func lowerDeadArmBody(
+    /// Literal-pattern operand handed to the emitter; nil for enum-case and
+    /// wildcard patterns, whose dispatch is not value-based.
+    private static func literalOperand(of pattern: MatchPattern) -> HIRMatchLiteral? {
+        switch pattern {
+        case .intLiteral(let n): return .int(n)
+        case .floatLiteral(let f): return .float(f)
+        case .stringLiteral(let s): return .string(s)
+        case .boolLiteral(let b): return .boolean(b)
+        case .enumCase, .wildcard: return nil
+        }
+    }
+
+    /// One arm body of a match whose scrutinee is neither Optional nor enum
+    /// (the bare-value family, see `lowerMatch`). The body lowers so its
+    /// bindings scope-resolve; whether the arm actually dispatches at emission
+    /// follows from its pattern — literal arms do, enum-case arms cannot.
+    /// Each binding adopts the scrutinee type (the value a live some-arm would
+    /// bind), wildcard/none arms bind nothing.
+    private static func lowerBareScrutineeArmBody(
         _ matchCase: MatchCase,
         bindingType: HIRType,
         into context: inout FunctionContext

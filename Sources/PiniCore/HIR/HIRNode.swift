@@ -439,14 +439,30 @@ public struct HIRCapture: Equatable {
 /// by payload index; the arm body sees them as scoped variables.
 public struct HIRMatchCase: Equatable {
     public let caseName: String
+    /// Literal-pattern operand of a bare-scrutinee arm, nil for enum-case and
+    /// wildcard arms (those live in `caseName`). See `HIRMatchLiteral`.
+    public let literal: HIRMatchLiteral?
     public let bindings: [String?]
     public let body: [HIRStmt]
 
-    public init(caseName: String, bindings: [String?], body: [HIRStmt]) {
+    public init(caseName: String, literal: HIRMatchLiteral? = nil, bindings: [String?], body: [HIRStmt]) {
         self.caseName = caseName
+        self.literal = literal
         self.bindings = bindings
         self.body = body
     }
+}
+
+/// Literal-pattern operand of a match arm over a bare (neither Optional nor
+/// enum) scrutinee — `case 1:` / `case "hi":` / `case 1.5:` / `case true:`.
+/// The interpreter compares such an arm by value (`matchCaseMatches`), so the
+/// emitter must dispatch on it; the operand is carried structurally rather
+/// than re-parsed out of `caseName`'s rendered text.
+public enum HIRMatchLiteral: Equatable {
+    case int(Int)
+    case float(Double)
+    case string(String)
+    case boolean(Bool)
 }
 
 /// for-in iterable family (G15): the container kind decides which runtime
