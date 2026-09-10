@@ -1,9 +1,10 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4 与 M5 分格扩张批 G1–G15 全部完成并回填，
-  差分 60/60、回归 1293/0/0、sweep hir-emit 51/59——剩余 8 行全为并发族豁免
-  （独立立案 issue-llvm-concurrency-runtime-2026-09-08），M6 flip 门槛达成，
-  待点名执行旧后端删除与迁移开关退役）**
+- 状态：**Open（常驻计划载体；M0–M4、M5 分格扩张批 G1–G15、M6a 准备批 a1–a8 全部
+  完成并回填。M6a 终值：差分 76/76、回归 1310/0/0、sweep hir-emit 51/59
+  （剩余 8 行全为并发族豁免，独立立案 issue-llvm-concurrency-runtime-2026-09-08）；
+  双分母真 flip 阻塞 **0**——examples 59 为 0，四套 LLVM 驱动夹具 222 为 3 且全为
+  D8 已裁决豁免的聚合值打印。下一步 M6b 翻转批（一次性、不可逆）待点名执行）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -271,7 +272,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   - **规划补全批（2026-09-08，纯规划不动源码，分支
     `agent/pini-dev/llvm-m5-plan-backfill`）**：对现存 48 个 hir-emit FAIL
     文件逐文件取证 gate 错误（一次性探针测试，用后即删；CLI 诊断丢失缺陷
-    另立 `issue-hir-cli-diagnostic-loss-2026-09-08.md`），归簇后重排剩余
+    另立 `docs/spec/issue/archive/issue-hir-cli-diagnostic-loss-2026-09-08.md`，
+    a6 已落地、a8 归档），归簇后重排剩余
     格序。**stop-loss 时的 G4–G7 命名粒度不足以覆盖语料**：枚举、闭包、
     字典/集合、Optional 直写、tuple、字符串深化、struct 深化等簇无格可归。
     重排后剩余格序（格号沿用至 M6）：
@@ -894,7 +896,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     无任何具名消息，证实注释里「legacy 无判空」的分歧陈述为真。
   - **验证**：差分 **76/0/0**（与 a5 持平：判空块不在黄金 IR 路径上）；全量回归
     **1310 / 0 / 0**（原 1309 / 0 / 0，新增 1 枚门控渲染测试）。
-  - **工单**：`docs/issue-hir-cli-diagnostic-loss-2026-09-08.md` 的验收达成，待 a8 统一归档。
+  - **工单**：`docs/spec/issue/archive/issue-hir-cli-diagnostic-loss-2026-09-08.md`
+    的验收达成，已于 a8 收口时归档（状态转 Closed；a8 复验见该单「落地记录」节）。
   - **本批立案（不追修）**：诊断面虽已带码与位置，但 `emit` 系命令仍以 `source: nil` 调
     格式化器，**源码行与下划线标记缺失**，而同命令的类型错误路径是带的——两条路径质量
     不一致，且源码本就在调用点手边。另附观察：资源层初始语言为 en，与 CLI 注释「默认 zh」
@@ -925,4 +928,26 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   - **产物**：`tools/capability-sweep.tsv` 已刷新（差异仅 8 个并发行的 note 列）；
     夹具扫描由 `tools/m6-triage-probe.sh` 承担，其 TSV 落在临时目录（可随时重跑再生，
     故不入库），上面的逐项结论已写进本段作为持久证据。
+
+- **M6a a8 完成：收口（2026-09-11，M6a 批终）**：
+
+  - **门禁与回归**：`check-doc-links` 通过；全量回归 **1310 / 0 / 0**（a8 只动文档与
+    工单归属，代码零改动，与 a6 / a7 基线一致）。
+  - **状态行刷新**：本文档顶部状态行由 M5 终值（差分 60、回归 1293、「M6 门槛达成
+    待点名」）更新为 **M6a 终值**（差分 76、回归 1310/0/0、双分母真阻塞 0）。
+  - **证据登记**：`docs/spec/evidence-table.toml` 新增 **E-155**（`status = FRESH`），
+    覆盖三格 + 三横切的双分母实测、红证据形态（变异探针）、`fopen` 判空实测、
+    验收口径订正与环境事实。登记校验四件事全过：条目数 25 → 26；**存量条目零改动**
+    （E-148 仅随批尾注刷新）；`refresh_note` 尾句为「本次仅新增并现跑重筛 E-155；
+    存量条目未重新验证」；status 分布 STALE 13 / PENDING_DELETE 12 / FRESH 1。
+  - **工单归档（本批唯一关闭项）**：诊断面工单验收达成——a8 复验
+    `PINI_HIR_PIPELINE=1 pini emit examples/concurrency.pini` 给出
+    `IRGen Error [E6-004]` + 相对路径行号 + 具名门控文本（修复前为 `error 1`，无码
+    无位置）。状态转 **Closed**，由 `docs/` 顶层移入 `docs/spec/issue/archive/`。
+  - **归档连带修引用**：三处入向引用同批改为归档路径（本计划两处、元组注解工单
+    一处）。判据来自 `check-doc-links` 的规则——目标不存在但 basename 仍在仓内即判
+    「路径过时」，故**移动与引用修正必须同批**，否则门禁必红。
+  - **本批范围外（仅登记，未动手）**：`docs/` 顶层另有 **10 张已 Closed / LANDED
+    但未归档**的工单，属独立的归档卫生批，**不并入** M6a 收口——M6a 的范围定义只含
+    上述诊断面一张。
 

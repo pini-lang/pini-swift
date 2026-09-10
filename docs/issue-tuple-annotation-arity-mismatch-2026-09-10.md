@@ -4,7 +4,8 @@
 - 发现来源：LLVM 重写 M6a G16 格勘测（`.0` / 解构 / 多槽返回语料差分 fixture
   编写时踩中；先表现为 HIR 降载的 `requireAssignable` 类型不匹配）
 - 关联：`docs/issue-llvm-rewrite-plan-2026-09-07.md`（M6a 准备批 D7）；
-  同族工单 `docs/issue-hir-cli-diagnostic-loss-2026-09-08.md`（HIR 侧诊断面）
+  同族工单 `docs/spec/issue/archive/issue-hir-cli-diagnostic-loss-2026-09-08.md`
+  （HIR 侧诊断面，已关闭归档）
 
 ## 不变量与实测差异
 
