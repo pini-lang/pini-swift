@@ -1172,7 +1172,14 @@ public enum HIRLowerer {
             selfTypeName: typeName
         ) ?? returnType
         var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
-        for param in decl.params {
+        // The receiver may also be written as an explicit leading `self`
+        // parameter (trait default bodies are written that way). It is the
+        // receiver marker rather than a parameter: the interpreter, the type
+        // checker and the trait signature pre-pass all drop it. Lowering it
+        // as an ordinary parameter made it look like an unannotated one.
+        let declaredParams = decl.params.first?.name == "self"
+            ? Array(decl.params.dropFirst()) : decl.params
+        for param in declaredParams {
             guard let annotation = param.typeAnnotation,
                   let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
@@ -1205,7 +1212,7 @@ public enum HIRLowerer {
            let info = nominalTypes[selfTypeName] {
             var fieldTypes: [String: HIRType] = [:]
             for field in info.fields {
-                if let fieldType = HIRType(from: field.typeAnnotation) {
+                if let fieldType = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes) {
                     fieldTypes[field.name] = fieldType
                 }
             }
@@ -3574,10 +3581,16 @@ public enum HIRLowerer {
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
         let elementExpected = expected?.arrayElementType
-        guard !elements.isEmpty || elementExpected != nil else {
-            throw unsupported(
-                "empty array literal needs an element type (annotate the variable)",
-                at: location
+        // An empty literal with no expected element type adopts I32. Runtime
+        // construction is element-type free — `[]` lowers to an empty handle
+        // (the legacy contract), so the choice only fixes the static element
+        // type for later reads and writes. I32 is the language's default
+        // numeric type, the same fallback an unannotated parameter uses.
+        if elements.isEmpty {
+            let element = elementExpected ?? .i32
+            return LoweredExpr(
+                node: .arrayLiteral(elements: [], type: .array(element: element)),
+                type: .array(element: element)
             )
         }
         var loweredElements: [HIRExpr] = []
@@ -3686,7 +3699,7 @@ public enum HIRLowerer {
               let fieldDecl = info.fields.first(where: { $0.name == field }) else {
             return nil
         }
-        return HIRType(from: fieldDecl.typeAnnotation)
+        return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
     }
 
     /// Slice set: exact match only. Widening (I32 literal into I64 slot) is
