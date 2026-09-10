@@ -8,14 +8,18 @@ import Foundation
 /// scattered ~108 such decisions across emitters; they consolidate here.
 public enum HIRLowerer {
 
-    /// The single capability-gate error for the new pipeline.
-    public struct HIRLoweringError: Error, CustomStringConvertible {
+    /// The single capability-gate error for the new pipeline. `LocalizedError`
+    /// routes the message through `localizedDescription` so CLI surfaces
+    /// ("HIRLoweringError error 1") keep the line:column + detail text.
+    public struct HIRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
 
         public var description: String {
             "HIR lowering error at \(location.line):\(location.column): \(message)"
         }
+
+        public var errorDescription: String? { description }
     }
 
     /// A lowered expression plus its resolved type. The HIR nodes already

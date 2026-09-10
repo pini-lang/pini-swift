@@ -1,0 +1,6 @@
+main|func() -> ():
+    ; file write + read back (non-interactive io)
+    var path = "/tmp/pini-hir-diff-io.txt"
+    writeFile(path, "hello from pini")
+    print(readFile(path))
+    return

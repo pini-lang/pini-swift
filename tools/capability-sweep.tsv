@@ -22,8 +22,8 @@ examples/enum-dot-case.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   un
 examples/enum-named.pini	PASS	PASS	PASS	PASS	
 examples/enum-namespacing.pini	PASS	PASS	PASS	PASS	
 examples/enum.pini	PASS	PASS	PASS	PASS	
-examples/ffi.pini	FAIL	SKIP	FAIL	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
-examples/ffi_module/cstring.pini	FAIL	SKIP	FAIL	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`'  | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/ffi.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`' 
+examples/ffi_module/cstring.pini	FAIL	SKIP	PASS	FAIL	Error: IRGen Error [E6-004]   unsupported feature 'LLVM 后端暂不支持 `[名称|foreign]` 块；请改用解释器 `pini run`' 
 examples/for.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
 examples/generic-func.pini	PASS	PASS	PASS	PASS	
 examples/generic.pini	PASS	PASS	PASS	PASS	
@@ -52,7 +52,7 @@ examples/slice.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-002]   unsupporte
 examples/stdlib.pini	PASS	PASS	PASS	PASS	
 examples/step.pini	PASS	PASS	PASS	PASS	
 examples/struct.pini	PASS	PASS	PASS	PASS	
-examples/test.pini	PASS	PASS	FAIL	PASS	 | hir: Error: The operation couldn’t be completed. (PiniCore.HIRLowerer.HIRLoweringError error 1.) 
+examples/test.pini	PASS	PASS	PASS	PASS	
 examples/trait.pini	PASS	PASS	PASS	PASS	
 examples/try.pini	FAIL	SKIP	PASS	PASS	Error: IRGen Error [E6-001]   at /Volumes/ZWTPSSD/Projects/Pini语言语法与Swift-Package实现_20260827/pini-swift/examples/try.pini:4:28   unsupported type 
 examples/tuple.pini	PASS	PASS	PASS	PASS	
