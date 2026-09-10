@@ -73,8 +73,14 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   为基线语料）。
 - **M5 分格扩张批**：按能力矩阵逐格推进，每格一次提交 + 一次差分验证；单格失败不
   回滚已完成格。
-- **M6 翻转批（一次性）**：删旧 CodeGen 9 文件 → CLI 接新管线 → `IRGeneratorTests`
+- **M6a 准备批（零删除，可停）**：按双分母补齐缺口——G16 元组族 / G17 内建与类型
+  修补 / G18 trait self 与空数组，加三项横切（`programBase` 烘焙、诊断面接
+  `DiagnosticProviding` ＋ `fopen` 判空、口径重扫）。验收 = 双分母全绿且真 flip
+  阻塞清零。
+- **M6b 翻转批（一次性）**：迁移 LLVM 驱动测试套（补 typecheck 对齐 CLI）→ 删旧
+  CodeGen 9 文件 → CLI 去 `PINI_HIR_PIPELINE` 门恒走新管线 → `IRGeneratorTests`
   149 处 IR 文本断言同批删除（约束 8）→ README 终版更新。
+  顺序硬约束：**迁移测试必须先于删源码**。
 
 止损判据：ADR-031 §4 原文四条（影子类型表 ≥7 张；单次回归 >5 测试且 >1 小时；单次
 收敛扩散 >4 个 emitter；单项核心能力需改 >3 个 emitter）——任一触发即停并回 M3。
@@ -629,3 +635,58 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       M6 flip 门槛达成，待点名执行旧后端删除与 `PINI_HIR_PIPELINE` 开关退役。
       另有两条独立立案线未启动：解释器统一 HIR（`docs/issue-interpreter-hir-unification-2026-09-07.md`）、
       并发运行时（`docs/issue-llvm-concurrency-runtime-2026-09-08.md`）。
+
+- **M6 前置勘测完成（2026-09-10，仅勘测与规划，零代码改动）**：
+
+  - **口径修正（本批最重要的结论）**：M6 flip 门槛原定义的分母是 `examples/` 59 个
+    文件，但翻转要删的 `IRGenerator` **同时是 4 个测试套的驱动**（`IRGeneratorTests`
+    / `IRExecutionTests` / `RuntimeBackendTests` / `IRPrintGoldenTests`，共 222 个
+    用例、149 处 IR 文本断言、128 个夹具）。这批夹具**不在那条分母里**——门槛达标
+    不等于翻转安全。故门槛改**双分母**：`examples/` 59 + LLVM 驱动测试套夹具 128。
+  - **实测缺口（判据：legacy emit 通过 且 HIR emit 失败）**：
+    `IRExecutionTests` 13 个 + `RuntimeBackendTests` 1 个 = **14 个真 flip 阻塞**；
+    另有 5 个在 CLI 口径下**两条管线都失败**（前端/checker 本就拒绝，非后端缺口）。
+    整个 `Tests/` 目录 965 个 `.pini` 中 HIR 不通过 434 个，其中 325 个属此类低价值项
+    ——口径按「该夹具是否由 LLVM 后端驱动」收窄，不做全量覆盖。
+  - **14 夹具收敛为 3 格**（按同一 `HIRLowerer` 落点聚簇，非按测试套分）：
+    - **G16 元组族（7）**：多槽返回（2）／`.0` 位置索引（1）／解构声明（1）／
+      `len(tuple)`（1）／无标签元组构造（2）。
+    - **G17 内建与类型修补（5）**：`readLine`／`is_ascii_digit`／i8 struct 字段写／
+      无注解参数回退 I32（2）。`is_letter` 保持 fail-loud（Unicode 语义，非缺口）。
+    - **G18 trait self 与空数组（2）**：trait 默认方法 `self` 类型解析／
+      `let a = []` 元素类型推导。
+  - **横切三项**：`programBase` 烘焙补入 HIR；`HIRLoweringError` 接
+    `DiagnosticProviding`（复用 E6 码面）＋ `fopen` 判空；口径重扫。
+  - **新增探针** `tools/m6-triage-probe.sh`（与 `capability-sweep.sh` 并列）：
+    两遍扫描——① 全部 `Tests/**.pini` 的 HIR 发射；② 按 legacy 通道把失败分为
+    「真 flip 阻塞」与「前端本就拒绝」。产出 `/tmp/hir-fixture-sweep.tsv`
+    与 `/tmp/m6-blockers.tsv`。
+  - **决策（D1–D7，用户 2026-09-10 裁决「按你的倾向来」）**：
+    - **D1** 门槛口径 = 双分母（见上）。
+    - **D2** 测试判据统一 = 迁移时补 typecheck（对齐 CLI）。现状
+      `IRExecutionTests.runViaLLI` 默认 `typeCheck: false`（81 例仅 2 例显式开），
+      而 HIR 的类型决策单点要求 checker 先行——故 18/1 是上界估计。
+    - **D3a** COW 的 IR 文本契约改行为断言（差分），不移植文本断言。
+    - **D3b** `IRPrintGoldenTests`：翻转动工时先读 2 例断言内容再定。
+    - **D4** `programBase` 烘焙补入 HIR（**必做**）。现状 HIR 侧缺失，
+      `readFile("data.txt")` 在 CWD≠脚本目录时 **lli 段错误**，而解释器与 legacy
+      均正常（legacy 经 `BuiltinsEmitter.generateIOPathArgument` 编译期烘焙）。
+      旧后端运行期基准语义只覆盖字面量路径，非字面量路径的运行期基准为**已知限制**，
+      不在本批闭环。
+    - **D5** `HIRLoweringError` 实现 `DiagnosticProviding` 复用 E6-001…E6-005 码面
+      ——翻转会静默退役 5 个已登记错误码，接续比退役代价低。
+    - **D6** HIR 侧 `fopen` 返回 NULL 判空转 `bk_panic`（限一行级，不展开为完整
+      IO 错误模型）。
+    - **D7** 多槽返回 `-> (I32, I32,)` 与单槽元组 `-> ((I32, I32,),)` 是**不同构造**：
+      G8 只覆盖后者（`examples/tuple.pini` 形态），前者在 HIR 侧门控
+      （`decl.returnTypes.count <= 1`）。`examples/` 59 文件**零使用**多槽返回，
+      故该缺口在原门槛里完全不可见。裁决 = **补齐（A）带止损**：若实测需改动
+      >3 个发射路径（触 ADR-031 §4 的 S-4）立即转立案。
+  - **M6 拆两批**：**M6a 准备批**（零删除、可停：3 格 + 3 横切）→ 点名 →
+    **M6b 翻转批**（8 步一次性：迁移测试 → 删测试 → 删 9 文件 → CLI 去 env 门
+    → 文档终版 → 冒烟 → 证据 → 合 main）。顺序硬约束：**b2 迁移测试必须先于
+    b4 删源码**，否则迁移与删除同时失败时无法定位。
+  - **顺带发现的既知不一致**（登记不改）：`examples/tuple.pini` 的注释宣称
+    `.0`／`.名称`／解构 `var (a, b) =` 已支持，但该文件只演示整体元组，而
+    `.0` 与解构在 HIR 侧均被门控——该行的 hir-emit PASS 高估实际能力
+    （性质同 G15 的 step 假绿）。
