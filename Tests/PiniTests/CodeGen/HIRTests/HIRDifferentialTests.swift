@@ -109,6 +109,12 @@ final class HIRDifferentialTests: XCTestCase {
         if originalStdin >= 0 {
             dup2(originalStdin, STDIN_FILENO)
             close(originalStdin)
+            // The run above read stdin to EOF, which latches the EOF flag on
+            // the process-global stream. Restoring the descriptor alone is not
+            // enough: every later reader in this process (IOTests injects its
+            // own stdin the same way) would otherwise see an immediate EOF and
+            // the suite would pass or fail by test ordering.
+            clearerr(stdin)
         }
         pipe.fileHandleForWriting.closeFile()
 

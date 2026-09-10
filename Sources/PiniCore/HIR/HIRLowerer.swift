@@ -395,16 +395,7 @@ public enum HIRLowerer {
                 // specializations do (G10). Template param annotations
                 // reference type parameters and would not resolve here.
                 guard funcDecl.genericParams.isEmpty else { continue }
-                let paramTypes = try funcDecl.params.map { parameter -> HIRType in
-                    guard let annotation = parameter.typeAnnotation,
-                          let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                        throw unsupported(
-                            "parameter '\(parameter.name)' of '\(funcDecl.name)' lacks a resolvable scalar type",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
+                let paramTypes = try resolveParamTypes(funcDecl, userTypes: userTypes)
                 let returnType = try resolveReturnType(
                     funcDecl, userTypes: userTypes, subject: "'\(funcDecl.name)'"
                 )
@@ -445,16 +436,7 @@ public enum HIRLowerer {
         // G10: specialized generic functions join the signature table (their
         // bodies reference only concrete types now).
         for (_, specialized) in specializationState.funcSpecializations {
-            let paramTypes = try specialized.params.map { parameter -> HIRType in
-                guard let annotation = parameter.typeAnnotation,
-                      let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                    throw unsupported(
-                        "parameter '\(parameter.name)' of '\(specialized.name)' lacks a resolvable type",
-                        at: specialized.location
-                    )
-                }
-                return type
-            }
+            let paramTypes = try resolveParamTypes(specialized, userTypes: userTypes)
             let returnType = try resolveReturnType(
                 specialized, userTypes: userTypes, subject: "'\(specialized.name)'"
             )
@@ -984,16 +966,9 @@ public enum HIRLowerer {
             decl: decl, userTypes: userTypes, nominals: nominalTypes
         ) ?? returnType
 
-        var params: [HIRFunction.HIRParam] = []
-        for param in decl.params {
-            guard let annotation = param.typeAnnotation,
-                  let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                throw unsupported(
-                    "parameter '\(param.name)' of '\(decl.name)' lacks a resolvable scalar type",
-                    at: decl.location
-                )
-            }
-            params.append(HIRFunction.HIRParam(name: param.name, type: type))
+        let paramTypes = try resolveParamTypes(decl, userTypes: userTypes)
+        let params: [HIRFunction.HIRParam] = zip(decl.params, paramTypes).map { param, type in
+            HIRFunction.HIRParam(name: param.name, type: type)
         }
 
         var context = FunctionContext(
@@ -1027,6 +1002,42 @@ public enum HIRLowerer {
             return userTypes[name]
         }
         return nil
+    }
+
+    /// Resolve a function definition's parameter types, applying the
+    /// unannotated-parameter fallback the legacy emitter established (P6-4a):
+    /// a parameter that carries no annotation adopts the function's single
+    /// declared return type when there is exactly one, and I32 otherwise (the
+    /// interpreter's default numeric type). Both corpus shapes are covered by
+    /// the two branches — `f(x, y) -> ()` and `f(x, y) -> (I32,)` both land on
+    /// I32. Annotated parameters resolve as before, and an annotation that
+    /// does not resolve stays a gate error.
+    ///
+    /// Used by both ends of a definition: the signature pre-pass (so call
+    /// sites see the fallback) and the body lowering (so the definition
+    /// agrees). `foreign` and trait-default declarations keep their own
+    /// resolution — neither surface allows an unannotated parameter.
+    private static func resolveParamTypes(
+        _ decl: FuncDecl,
+        userTypes: [String: HIRType]
+    ) throws -> [HIRType] {
+        let fallback: HIRType
+        if decl.returnTypes.count == 1,
+           let single = resolveAnnotationType(decl.returnTypes[0], userTypes: userTypes) {
+            fallback = single
+        } else {
+            fallback = .i32
+        }
+        return try decl.params.map { parameter in
+            guard let annotation = parameter.typeAnnotation else { return fallback }
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                throw unsupported(
+                    "parameter '\(parameter.name)' of '\(decl.name)' lacks a resolvable scalar type",
+                    at: decl.location
+                )
+            }
+            return type
+        }
     }
 
     /// Declared return type in HIR terms.
@@ -1736,6 +1747,19 @@ public enum HIRLowerer {
             return LoweredExpr(node: .intConst(value: value, type: type), type: type)
 
         case .floatLiteral(let value, _):
+            // Declaration width alignment (the legacy emitter's convertNumeric
+            // contract): a float literal sitting in an integer-typed slot
+            // folds to the truncated integer constant — the constant form of
+            // the legacy `fptosi`. Out-of-range or non-finite literals fall
+            // through to the float path, where requireAssignable reports the
+            // mismatch as an ordinary gate error instead of trapping here.
+            // Non-literal float expressions in integer slots stay fail-loud.
+            if let expected, expected.isIntegerNumeric, value.isFinite,
+               value >= -9.223372036854776e18, value <= 9.223372036854776e18 {
+                return LoweredExpr(
+                    node: .intConst(value: Int(value), type: expected), type: expected
+                )
+            }
             return LoweredExpr(node: .floatConst(value: value), type: .f64)
 
         case .boolLiteral(let value, _):
@@ -2359,6 +2383,22 @@ public enum HIRLowerer {
                     throw unsupported("readFile expects a String path", at: location)
                 }
                 return LoweredExpr(node: .fileRead(path: loweredArgs[0].node), type: .string)
+            }
+            // G17: the two remaining corpus builtins below the intrinsic
+            // gate — `readLine()` (no arguments) and `is_ascii_digit(s)`.
+            if functionName == "readLine" {
+                guard loweredArgs.isEmpty else {
+                    throw unsupported("readLine expects no arguments", at: location)
+                }
+                return LoweredExpr(node: .readLine, type: .string)
+            }
+            if functionName == "is_ascii_digit" {
+                guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
+                    throw unsupported("is_ascii_digit expects one String argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .isAsciiDigit(argument: loweredArgs[0].node), type: .boolean
+                )
             }
             // Result case construction (ok/err): requires a Result-typed
             // context (return position, Result-typed assignment) so the

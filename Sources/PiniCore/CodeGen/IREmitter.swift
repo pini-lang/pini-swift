@@ -94,6 +94,10 @@ public final class IREmitter {
     /// mode-string constants. Conditional for the same golden-IR reason
     /// as the other optional headers.
     private var usesFileIO = false
+    /// G17: `readLine` pulls in the `fgets` declare and the stdin stream
+    /// global. Conditional for the same golden-IR reason as the other
+    /// optional headers.
+    private var usesReadLine = false
     /// G13 batch 1: type-specialized `@__lazyref_wrapper_<T>` define buffer,
     /// deduplicated by element IR spelling; appended after the adapter defs.
     private var lazyrefWrappers: [String] = []
@@ -176,6 +180,7 @@ public final class IREmitter {
         stringConstants = [:]
         usesStrCmp = false
         usesLazyRef = false
+        usesReadLine = false
         lazyrefWrappers = []
         lazyrefWrapperNames = []
         moduleTypes = module.types
@@ -243,6 +248,12 @@ public final class IREmitter {
             tail += "declare i32 @fclose(ptr)\n"
             tail += "@.fopen_w = private constant [2 x i8] c\"w\\00\"\n"
             tail += "@.fopen_r = private constant [2 x i8] c\"r\\00\"\n"
+        }
+        // G17: `readLine` pulls in the libc line reader and the stdin stream
+        // global (macOS `__stdinp`, the legacy module header's spelling).
+        if usesReadLine {
+            tail += "declare ptr @fgets(ptr, i32, ptr)\n"
+            tail += "@__stdinp = external global ptr\n"
         }
         // G6: env struct type declarations must precede their uses — the
         // creation-point GEPs live in the function bodies, and lli requires
@@ -1229,6 +1240,12 @@ public final class IREmitter {
 
         case .fileRead(let path):
             return emitFileRead(path: path)
+
+        case .readLine:
+            return emitReadLine()
+
+        case .isAsciiDigit(let argument):
+            return emitIsAsciiDigit(argument)
         }
     }
 
@@ -1280,6 +1297,46 @@ public final class IREmitter {
         // C string; a bare `ptr` falls into the %d default and prints the
         // address.
         return IRValue(llvmType: "i8*", ssaName: base)
+    }
+
+    /// `readLine()` (G17): a 256-byte stack buffer filled by `fgets` from the
+    /// stdin stream, yielded as a String. Mirrors the legacy emitter
+    /// instruction for instruction — including the fact that the newline is
+    /// left in place when stdin has one (the interpreter strips it; the
+    /// divergence is registered, and this grid preserves the legacy
+    /// behaviour rather than changing the flip's observable output).
+    private func emitReadLine() -> IRValue {
+        usesReadLine = true
+        let bufferSize = 256
+        let buffer = freshSlot(for: "readline.buffer")
+        bodyIR += builder.fmtAlloca(name: buffer, type: "[\(bufferSize) x i8]") + "\n"
+        let base = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: base, aggregate: "[\(bufferSize) x i8]", base: buffer, indices: [0, 0]) + "\n"
+        let stream = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: stream, type: "ptr", ptr: "@__stdinp") + "\n"
+        let line = builder.freshTemp()
+        bodyIR += " \(line) = call ptr @fgets(ptr \(base), i32 \(bufferSize), ptr \(stream))\n"
+        // "i8*" for the same reason emitFileRead returns it: that is the
+        // spelling emitScalarPrint routes to %s.
+        return IRValue(llvmType: "i8*", ssaName: line)
+    }
+
+    /// `is_ascii_digit(s)` (G17): the first byte of the C string tested
+    /// against [0x30, 0x39]. The empty string loads its NUL terminator and is
+    /// false without a length check — the same shape the legacy emitter uses,
+    /// and the same answer the interpreter's first-grapheme rule gives in the
+    /// ASCII domain.
+    private func emitIsAsciiDigit(_ argument: HIRExpr) -> IRValue {
+        let subject = emitExpr(argument)
+        let byte = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: byte, type: "i8", ptr: subject.ssaName) + "\n"
+        let lowerBound = builder.freshTemp()
+        bodyIR += " \(lowerBound) = icmp uge i8 \(byte), 48\n"
+        let upperBound = builder.freshTemp()
+        bodyIR += " \(upperBound) = icmp ule i8 \(byte), 57\n"
+        let isDigit = builder.freshTemp()
+        bodyIR += " \(isDigit) = and i1 \(lowerBound), \(upperBound)\n"
+        return IRValue(llvmType: "i1", ssaName: isDigit)
     }
 
     /// `assert(cond, msg?)`: branch on the condition; the false edge
@@ -1510,7 +1567,7 @@ public final class IREmitter {
     /// Zero constant per field spelling (legacy zeroConst mirror).
     private func zeroConst(for type: HIRType) -> String {
         switch type {
-        case .i32, .i64, .boolean: return "0"
+        case .i8, .u8, .i32, .i64, .u64, .boolean: return "0"
         case .f64: return "0.0"
         default: return "null"
         }
@@ -2240,6 +2297,8 @@ public final class IREmitter {
         case .assertCall: return .i32
         case .fileWrite: return .i32
         case .fileRead: return .string
+        case .readLine: return .string
+        case .isAsciiDigit: return .boolean
         }
     }
 
@@ -2250,6 +2309,13 @@ public final class IREmitter {
             let sel = builder.freshTemp()
             bodyIR += " \(sel) = select i1 \(value.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(sel))\n"
+        case "i8":
+            // Narrow integers widen to i32 for %d — varargs demand it, and
+            // the interpreter models every integer as one signed value (the
+            // same sign-extending read emitPointerLoad uses for U8).
+            let extended = builder.freshTemp()
+            bodyIR += " \(extended) = sext i8 \(value.ssaName) to i32\n"
+            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_int, i32 \(extended))\n"
         case "i64":
             // Narrow to i32 for %d; `sext i64 -> i32` is an invalid cast (the
             // legacy emitter has this same bug — registered separately).
