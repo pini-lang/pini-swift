@@ -27,22 +27,51 @@ final class RuntimeBackendTests: XCTestCase {
         return url.path
     }
 
-    /// 定位集合运行时动态库（swift build 产物）：`.build/debug/libPiniRuntime.{dylib,so}`。
+    /// Locates the collection runtime dynamic library.
+    ///
+    /// Order matters. The freshly built library belongs to the binary under
+    /// test, so the running bundle's own directory comes first; a stale
+    /// `.build/debug` copy in the working tree (tests normally build into a
+    /// separate scratch path) would otherwise be linked silently. The
+    /// environment variable stays the explicit override and the working-tree
+    /// copy is the last resort for a plain `swift build`.
     private func locateRuntimeDylib() -> String? {
-        let root = packageRoot()
-        let buildDir = (root as NSString).appendingPathComponent(".build/debug")
-        for ext in ["dylib", "so"] {
-            let cand = (buildDir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
-            if FileManager.default.fileExists(atPath: cand) { return cand }
+        if let env = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
+           !env.isEmpty, FileManager.default.fileExists(atPath: env) {
+            return env
+        }
+        let dirs = [
+            (Bundle(for: RuntimeBackendTests.self).bundlePath as NSString).deletingLastPathComponent,
+            (packageRoot() as NSString).appendingPathComponent(".build/debug"),
+        ]
+        for dir in dirs {
+            for ext in ["dylib", "so"] {
+                let cand = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+                if FileManager.default.fileExists(atPath: cand) { return cand }
+            }
         }
         return nil
     }
 
-    /// 经 `lli --dlopen=<dylib>` JIT 执行源码，返回 stdout（不含任何换行归一化）。
-    private func runViaLLIWithRuntime(_ source: String, dylib: String, fileName: String = "test.pini") throws -> String {
+    /// The single code-generation entry this suite goes through.
+    ///
+    /// The checker is mandatory: HIR lowering consumes the scope-persistent
+    /// inference environment, and bare-case resolution needs the registry the
+    /// checker fills, which is the order the CLI uses.
+    private func emitHIR(_ source: String, fileName: String = "test.pini") throws -> String {
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        XCTAssertTrue(errors.isEmpty, "sources must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return IREmitter().emit(module: hir)
+    }
+
+    /// 经 `lli --dlopen=<dylib>` JIT 执行源码，返回 stdout（不含任何换行归一化）。
+    private func runViaLLIWithRuntime(_ source: String, dylib: String, fileName: String = "test.pini") throws -> String {
+        let ir = try emitHIR(source, fileName: fileName)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_rt_\(UUID().uuidString).ll"
         defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -70,9 +99,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 此臂专门捕获 JIT/dlopen 容忍、但静态链接会暴露的运行时 C-ABI 符号可见性回归
     /// （例如 D4.2.3 新增的 `bk_*_destroy` 若漏 `@_cdecl` 导出，clang 链接期即失败）。
     private func runViaClangWithRuntime(_ source: String, dylib: String, fileName: String = "test.pini") throws -> String {
-        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
-        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(source, fileName: fileName)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_clang_\(UUID().uuidString).ll"
         let tmpBin = FileManager.default.temporaryDirectory.path + "/pini_clang_\(UUID().uuidString)"
@@ -168,9 +195,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言数组 IR 走 ADR-008 不透明句柄路径（%bk_array 类型 + @bk_array_create/@bk_array_set/@bk_array_len），且旧的内联 [3 x i32] 表示已移除。
     func testArrayIRUsesRuntimeHandle() throws {
         let src = try loadPiniFixture("testArrayIRUsesRuntimeHandle", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         XCTAssertTrue(ir.contains("%bk_array = type { ptr }"), "应声明 %bk_array 不透明句柄类型")
         XCTAssertTrue(ir.contains("call ptr @bk_array_create(i32 3)"), "应调用运行时创建长度为 3 的数组")
@@ -283,23 +308,16 @@ final class RuntimeBackendTests: XCTestCase {
                        "解释器下标写（含嵌套/复合/多类型）应就地生效；单层读返回 some(...)、嵌套读经 `!` 剥壳取裸值")
     }
 
-    /// 双后端锁步：下标写（含嵌套/复合/多元素类型）两侧 stdout 归一化后一致。
-    /// 意图：验证下标写（含嵌套/复合/多元素类型）双后端归一化输出一致。
-    /// D1 能力边界负向钉（2026-09-07 由双后端对拍改为负向断言）：
-    /// LLVM 后端未记录非字面量绑定数组变量的元素类型（D1 范围：仅 let/var 绑定字面量），
-    /// 下标写目标为变量绑定的「字面量外数组」（append 构造等）在 IR 生成期显式 unsupported。
-    /// 意图：钉定 D1 边界——不给静默错误，也不伪造绿；能力扩展时此钉翻转为正向断言。
+    /// 三执行路径锁步：下标写（含嵌套/复合/多元素类型）三路径 stdout 归一化后一致。
+    /// 意图：验证下标写（含嵌套/复合/多元素类型）三执行路径归一化输出一致。
+    ///
+    /// D1 能力边界钉，本轮**翻转为正向**（2026-09-07 曾由双后端对拍改为负向断言）：
+    /// 旧后端 IR 生成期不记录「下标绑定」变量的元素类型（D1 范围仅 let/var 绑定字面量），
+    /// 故 `var mrow = m[0]` 这一路径在旧后端是显式 unsupported；HIR 已无此限制。
+    /// 钉子按既定约定翻转（能力扩展即翻回正向），不再依赖抛错路径。
     func testArraySubscriptWriteBothBackends() throws {
-        let src = try loadPiniFixture("testArraySubscriptWriteBothBackends", filePath: #filePath)
-        // IR 生成期即抛错（先于 lli 调用），故无需 lli/dylib 门控——D1 边界钉恒可执行。
-        XCTAssertThrowsError(try runViaLLIWithRuntime(src, dylib: locateRuntimeDylib() ?? "unused")) { error in
-            guard case IRGenError.unsupportedFeature(let feature, _) = error else {
-                XCTFail("应为 unsupportedFeature（D1 边界），实际: \(error)")
-                return
-            }
-            XCTAssertTrue(feature.contains("数组元素类型"),
-                          "D1 边界消息应提及数组元素类型，实际: \(feature)")
-        }
+        try assertTripleBackendsAgree(try loadPiniFixture("testArraySubscriptWriteBothBackends", filePath: #filePath) as String, expected: "1025399zfalse",
+        "下标绑定（var mrow = m[0]）由 HIR 支持，三执行路径输出应一致")
     }
 
     /// 双后端锁步（epic-46 3.4）：越界下标写两侧均报错。
@@ -492,9 +510,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言嵌套写 IR 发射「根 @bk_handle_ensure_unique → 中间层 @bk_array_ensure_unique_at/@bk_dict_ensure_unique_at」独占化链，且非嵌套写不发射该链（IR 不膨胀）。
     func testNestedCOWIRContract() throws {
         func irOf(_ src: String) throws -> String {
-            let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-            let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-            return try IRGenerator().generate(module: module)
+            return try emitHIR(src)
         }
 
         let nestedIR = try irOf(try loadPiniFixture("testNestedCOWIRContract", filePath: #filePath) as String)
@@ -523,9 +539,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言 COW 两个 codegen 契约——别名绑定 var b = a 发射 @bk_handle_retain，写路径捕获 @bk_array_set 返回句柄并 store 回变量槽。
     func testCOWIRContract() throws {
         let src = try loadPiniFixture("testCOWIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         XCTAssertTrue(ir.contains("declare void @bk_handle_retain(ptr)"), "应声明 @bk_handle_retain")
         XCTAssertTrue(ir.contains("call void @bk_handle_retain(ptr"), "别名绑定 var b = a 应补一份 share")
@@ -562,9 +576,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言重赋值 + fall-through 出口的 @bk_array_destroy 调用数恰为 3（1 重赋值旧句柄 + 2 出口顶层 top/b），多/少均意味过释放或漏释放。
     func testD423ReassignAndScopeCleanupIRContract() throws {
         let src = try loadPiniFixture("testD423ReassignAndScopeCleanupIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         XCTAssertTrue(ir.contains("declare void @bk_array_destroy(ptr)"), "应声明 @bk_array_destroy 原语")
         XCTAssertTrue(ir.contains("exit_block:"), "无尾随 return 应生成 fall-through exit_block（emitScopeCleanup 入口）")
@@ -587,9 +599,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言块级精确释放契约——嵌套块集合在 then 块末释放、全模块 destroy 恰 2 次，且出口块只释顶层 top、不含 nested（零 UAF）。
     func testD423NestedCollectionNotOverReleasedIRContract() throws {
         let src = try loadPiniFixture("testD423NestedCollectionNotOverReleasedIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         let destroyCount = ir.components(separatedBy: "call void @bk_array_destroy").count - 1
         XCTAssertEqual(destroyCount, 2, "顶层 top（出口）+ 嵌套 nested（then 块末块级释放）各 1 次；块级精确释放消除嵌套块泄漏（P1 修复）")
@@ -628,17 +638,15 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言 while 体内集合变量在块末（backedge 前）经 emitBlockCleanup 释放（每轮执行一次），destroy 恰 1 次且在 while_body 块内、exit_block 不含集合释放（消除 P1 每轮泄漏）。
     func testLoopBodyCollectionReleasesIRContract() throws {
         let src = try loadPiniFixture("testLoopBodyCollectionReleasesIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         let destroyCount = ir.components(separatedBy: "call void @bk_array_destroy").count - 1
         XCTAssertEqual(destroyCount, 1, "while_body 块末应 emit 1 次 bk_array_destroy（运行时每轮执行 → 消除 P1 每轮泄漏）")
-        // 块级释放须位于 while_body 块内（标签定义之后、backedge br 之前）：取最后一个 `while_body_` 出现
-        // （块标签定义，而非 cond 块里 `br ... label %while_body_1` 的目标），避免锚点误匹配。
-        guard let bodyRange = ir.range(of: "while_body_", options: .backwards),
+        // 块级释放须位于 while.body 块内（标签定义之后、backedge br 之前）：取最后一个 `while.body.` 出现
+        // （块标签定义，而非 cond 块里 `br ... label %while.body.1` 的目标），避免锚点误匹配。
+        guard let bodyRange = ir.range(of: "while.body.", options: .backwards),
               let destroyRange = ir.range(of: "call void @bk_array_destroy") else {
-            XCTFail("IR 须含 while_body 块标签与 bk_array_destroy 调用")
+            XCTFail("IR 须含 while.body 块标签与 bk_array_destroy 调用")
             return
         }
         XCTAssertLessThan(bodyRange.lowerBound, destroyRange.lowerBound,
@@ -659,30 +667,28 @@ final class RuntimeBackendTests: XCTestCase {
 
     // MARK: - #46-D D5：终止边精确释放（break / continue / return）
 
-    /// IR 契约：循环体内 `break` 须在「break 分支（if_then）跳出口」前释放被放弃的循环体集合变量，
+    /// IR 契约：循环体内 `break` 须在「break 分支（if.then）跳出口」前释放被放弃的循环体集合变量，
     /// 且 `if_then` 块须为**单终结指令**——D5 前 `isTerminatingStatement` 不含 break，导致
     /// `br exit` 后紧跟 `br merge` 的**非法 IR**（双重终结指令）。
     /// 变异反证锚点：禁用 break 清理（`if d in (ld+1)...currentScopeDepth` 段）→ if_then 不再含 destroy、本断言红灯。
     /// 意图：断言循环体内 break 分支在跳出口前释放被放弃的集合变量，且 if_then 为单终结指令（修复 D5 前双重终结的非法 IR），destroy 恰 2 次。
     func testBreakCollectionReleasesIRContract() throws {
         let src = try loadPiniFixture("testBreakCollectionReleasesIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         let destroyCount = ir.components(separatedBy: "call void @bk_array_destroy").count - 1
-        XCTAssertEqual(destroyCount, 2, "break 路径(if_then)与非 break 路径(if_merge)各释放 buf 1 次")
+        XCTAssertEqual(destroyCount, 2, "break 路径(if.then)与非 break 路径(if.end)各释放 buf 1 次")
 
-        guard let thenStart = ir.range(of: "if_then_2:"),
-              let elseStart = ir.range(of: "if_else_2:") else {
-            XCTFail("IR 须含 if_then_2 / if_else_2 块"); return
+        guard let thenStart = ir.range(of: "if.then.2:"),
+              let elseStart = ir.range(of: "if.end.2:") else {
+            XCTFail("IR 须含 if.then.2 / if.end.2 块"); return
         }
         let thenRegion = String(ir[thenStart.lowerBound..<elseStart.lowerBound])
         XCTAssertTrue(thenRegion.contains("call void @bk_array_destroy"),
                       "break 分支须释放被放弃的循环体集合变量 buf（终止边精确释放）")
-        XCTAssertTrue(thenRegion.contains("br label %while_exit_1"),
+        XCTAssertTrue(thenRegion.contains("br label %while.end.1"),
                       "break 分支须跳至循环出口")
-        XCTAssertFalse(thenRegion.contains("br label %if_merge_2"),
+        XCTAssertFalse(thenRegion.contains("br label %if.end.2"),
                        "D5 前非法 IR：break 分支不应再出现 `br if_merge`（双重终结指令）")
     }
 
@@ -690,21 +696,19 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言循环体内 continue 分支在跳回条件前释放被放弃的集合变量（语义同 break），destroy 恰 2 次。
     func testContinueCollectionReleasesIRContract() throws {
         let src = try loadPiniFixture("testContinueCollectionReleasesIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         let destroyCount = ir.components(separatedBy: "call void @bk_array_destroy").count - 1
-        XCTAssertEqual(destroyCount, 2, "continue 路径(if_then)与非 continue 路径(if_merge)各释放 buf 1 次")
+        XCTAssertEqual(destroyCount, 2, "continue 路径(if.then)与非 continue 路径(if.end)各释放 buf 1 次")
 
-        guard let thenStart = ir.range(of: "if_then_2:"),
-              let elseStart = ir.range(of: "if_else_2:") else {
-            XCTFail("IR 须含 if_then_2 / if_else_2 块"); return
+        guard let thenStart = ir.range(of: "if.then.2:"),
+              let elseStart = ir.range(of: "if.end.2:") else {
+            XCTFail("IR 须含 if.then.2 / if.end.2 块"); return
         }
         let thenRegion = String(ir[thenStart.lowerBound..<elseStart.lowerBound])
         XCTAssertTrue(thenRegion.contains("call void @bk_array_destroy"),
                       "continue 分支须释放被放弃的循环体集合变量 buf（终止边精确释放）")
-        XCTAssertTrue(thenRegion.contains("br label %while_cond_1"),
+        XCTAssertTrue(thenRegion.contains("br label %while.cond.1"),
                       "continue 分支须跳回循环条件（无 step）")
     }
 
@@ -713,9 +717,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 意图：断言函数内 return 在 ret 前经 emitScopeCleanup 释放顶层集合（destroy 恰 1 次且位于 ret 之前），且不生成 exit_block 避免双重释放。
     func testReturnCollectionReleasesIRContract() throws {
         let src = try loadPiniFixture("testReturnCollectionReleasesIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         let destroyCount = ir.components(separatedBy: "call void @bk_array_destroy").count - 1
         XCTAssertEqual(destroyCount, 1, "return 前须释放顶层 top 一份 share（消除每次调用泄漏）")
@@ -795,17 +797,15 @@ final class RuntimeBackendTests: XCTestCase {
         "标签|for + break label（单层退出）三执行路径一致")
     }
 
-    /// IR 契约：for-in 循环结构（for_body 块 + bk_array_len/get + 索引 < 长度条件 + 索引递增）。
-    /// 意图：断言 for-in IR 契约——for_body 块标签 + @bk_array_get/@bk_array_len 调用 + icmp slt 索引<长度条件 + add 索引递增。
+    /// IR 契约：for-in 循环结构（for.body 块 + bk_array_len/get + 索引 < 长度条件 + 索引递增）。
+    /// 意图：断言 for-in IR 契约——for.body 块标签 + @bk_array_get/@bk_array_len 调用 + icmp slt 索引<长度条件 + add 索引递增。
     func testForInIRContract() throws {
         let src = try loadPiniFixture("testForInIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
 
         XCTAssertTrue(ir.contains("call ptr @bk_array_get"), "for-in IR 应经 bk_array_get 取元素")
         XCTAssertTrue(ir.contains("call i32 @bk_array_len"), "for-in IR 应经 bk_array_len 取长度")
-        XCTAssertTrue(ir.contains("for_body_"), "IR 应含 for_body 块标签")
+        XCTAssertTrue(ir.contains("for.body."), "IR 应含 for.body 块标签")
         XCTAssertTrue(ir.contains("icmp slt i32"), "for-in 条件应为索引 < 长度")
         XCTAssertTrue(ir.contains("add i32"), "for-in 每轮应递增索引")
     }
@@ -825,17 +825,15 @@ final class RuntimeBackendTests: XCTestCase {
     }
 
     /// IR 契约：嵌套集合模式变量（%bk_array*）登记进 body 层 → 每轮 body 末 bk_array_destroy（非仅函数出口）。
-    /// 意图：断言嵌套集合模式变量（%bk_array*）登记进 body 层，每轮 for_body 末发射 @bk_array_destroy（非仅函数出口）。
+    /// 意图：断言嵌套集合模式变量（%bk_array*）登记进 body 层，每轮 for.body 末发射 @bk_array_destroy（非仅函数出口）。
     func testForInNestedCollectionIRContract() throws {
         let src = try loadPiniFixture("testForInNestedCollectionIRContract", filePath: #filePath)
-        let tokens = try Lexer(source: src, fileName: "test.pini").tokenize()
-        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(src)
         let destroyCount = ir.components(separatedBy: "call void @bk_array_destroy").count - 1
         XCTAssertGreaterThanOrEqual(destroyCount, 1, "嵌套集合模式变量应每轮 body 末释放（bk_array_destroy）")
-        guard let bodyRange = ir.range(of: "for_body_", options: .backwards),
+        guard let bodyRange = ir.range(of: "for.body.", options: .backwards),
               let destroyRange = ir.range(of: "call void @bk_array_destroy") else {
-            XCTFail("IR 须含 for_body 块标签与 bk_array_destroy"); return
+            XCTFail("IR 须含 for.body 块标签与 bk_array_destroy"); return
         }
         XCTAssertLessThan(bodyRange.lowerBound, destroyRange.lowerBound,
                           "bk_array_destroy 须出现在 for_body 块内（每轮块级释放）")
