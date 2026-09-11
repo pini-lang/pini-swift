@@ -365,7 +365,12 @@ main|func() -> ()
 }
 ```
 
-### CodeGen 结构断言（IRGeneratorTests）
+### CodeGen 结构断言（IRGeneratorTests，**已于 M6 翻转退役**）
+
+> M6 翻转（2026-09-12）删除了旧生成器，本节所示套件随之退役（88 例 + 83 夹具）。
+> 本节保留作**反例**：断言 IR 文本形状与实现强耦合 —— 换一条管线，整批断言即失效，
+> 且失效方式是「测试对象消失」而非「行为回归」，无法迁移。
+> 能力与行为的覆盖改由执行层、差分与运行时契约三类承担（见本节后续各段）。
 
 ```swift
 final class IRGeneratorTests: XCTestCase {

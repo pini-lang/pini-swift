@@ -98,8 +98,10 @@ export PATH="$PATH:$HOME/.local/bin"
   才算该工具存在；自动化/代理环境的默认 PATH **不得**作为依据（本机 `lli`
   经 homebrew keg 路径进入默认 PATH，残缺环境下会被误判为不存在——已两次
   造出假「门关」结论）。
-- 运行时 dylib 由仓内 `.build/debug` 定位：`git worktree` 与自定义
-  `--scratch-path` 下的测量**一律无效**（dylib 定位失效会伪造额外跳过与失败）。
+- 运行时 dylib 的解析顺序：`PINI_RUNTIME_LIB` → **运行中测试 bundle 的同目录**
+  （即当前 scratch 产物）→ 仓内 `.build/debug` 兜底。故**自定义 `--scratch-path`
+  下的测量是有效的**；仓内 `.build` 常是陈旧副本，只作最后兜底。
+  （2026-09-12 订正：此前记「自定义 `--scratch-path` 下一律无效」，那是修复前的实况。）
 
 ## 6. 子命令速览
 

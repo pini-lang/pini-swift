@@ -1,6 +1,7 @@
 # Issue：解释器后端迁移至 HIR（解释器与 LLVM 后端共同依赖 HIR）
 
-- 状态：**Open（2026-09-07 LR-4 裁决单独立案；LLVM 重写迁移完成后方可启动）**
+- 状态：**Open（2026-09-07 LR-4 裁决单独立案；**前置已满足** —— LLVM 重写迁移于
+  2026-09-12 M6b 翻转批收尾（旧后端整体删除，HIR 成为唯一发射路径），本单可启动，待点名）**
 - 关联：`docs/issue-llvm-rewrite-plan-2026-09-07.md`（LR-4 决策记录）；`docs/spec/adr/adr-031-llvm-backend-rewrite.md`
 
 ## 背景与裁决

@@ -287,10 +287,10 @@ extension RuntimeError: DiagnosticProviding {
  }
 }
 
-/// The HIR pipeline's capability gate inherits the legacy generator's code
-/// domain: the gate is the successor of the legacy "unsupported feature"
-/// decisions, and reusing its code keeps registered codes alive across the
-/// pipeline switch instead of retiring them by accident.
+/// The capability gate uses the irgen code domain for its "unsupported
+/// feature" bucket. Those codes are registered in the diagnostic catalogue,
+/// and keeping the domain means they survive the change of producer instead
+/// of being retired by accident.
 extension HIRLowerer.HIRLoweringError: DiagnosticProviding {
  public var diagnosticCode: String { code }
  public var diagnosticSeverity: DiagnosticSeverity { .error }
