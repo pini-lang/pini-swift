@@ -47,5 +47,5 @@ main|func() -> ():
 
 - `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M4 批②；LR-3 类型化树已携带
   F64 比较节点，发射侧就绪、解释器侧缺口）
-- `docs/issue-print-f64-format-parity-2026-09-07.md`（F64 print 格式分歧，
+- `docs/spec/issue/archive/issue-print-f64-format-parity-2026-09-07.md`（F64 print 格式分歧，
   float fixture 补齐的另一半前置）

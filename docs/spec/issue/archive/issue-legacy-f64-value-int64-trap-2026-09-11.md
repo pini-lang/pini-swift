@@ -4,8 +4,8 @@
   本缺陷随之消亡。冻结先例见 ADR-031 约束 1）**
 - 发现来源：M6c 横切项 X2（`CHANGE_F64` 预期重基线核验）抽查 `testDiffFloatPrint` 时
   观察到旧通道非零退出
-- 关联：`docs/issue-print-f64-format-parity-2026-09-07.md`（同一夹具的来源）、
-  `docs/issue-legacy-i64-print-sext-2026-09-07.md`（同类「旧后端 print 面缺陷、冻结待删」先例）、
+- 关联：`docs/spec/issue/archive/issue-print-f64-format-parity-2026-09-07.md`（同一夹具的来源）、
+  `docs/spec/issue/archive/issue-legacy-i64-print-sext-2026-09-07.md`（同类「旧后端 print 面缺陷、冻结待删」先例）、
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`
 
 ## 现象
