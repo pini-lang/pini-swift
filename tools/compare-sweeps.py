@@ -12,7 +12,7 @@ Usage: python3 tools/compare-sweeps.py <before.tsv> <after.tsv>
 import collections
 import sys
 
-BLOCKERS = ("GAP_EXEC", "GAP_IR", "GAP_BEHAVIOR", "GAP_UNKNOWN")
+BLOCKERS = ("GAP_EXEC", "GAP_IR", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG")
 
 
 def load(path):

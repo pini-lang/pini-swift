@@ -975,11 +975,17 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     | C4 | 嵌套字典写 → 降级为显式拒绝（取 C） | 3 | `b977545` |
     | C5 | 多参数打印聚合值 → 运行期陷阱（取 C） | 4 | `7885186` |
 
-  - **归因表**：真阻塞 **13 → 7**（C3 2 + C2 2 + C1 4 = 8 例转 OK）；余 7 例中
-    C4 3 例 + C5 4 例由 **取 C** 处置——**不减少计数**，收益是「静默错 → 显式错」：
-    C4 的 3 例是非法 IR（`'%t105' defined with type 'ptr' but expected 'i32'`）+
-    1 例静默别名污染；C5 的 3 例是既有降级期拒绝 + 1 例多参数打印静默输出裸地址
+  - **归因表**：真阻塞实测 **8**（F4 嵌套容器 COW 4 + F5 聚合打印 4）。C3 2 + C2 2 +
+    C1 4 = 8 例转 OK；余 8 例中 C4 4 例 + C5 4 例由 **取 C** 处置——**不减少计数**，
+    收益是「静默错 → 显式错」：C4 的 4 例是 3 例非法 IR（
+    `'%t105' defined with type 'ptr' but expected 'i32'`）+ 1 例静默别名污染；
+    C5 的 4 例是 3 例既有降级期拒绝 + 1 例多参数打印静默输出裸地址
     （`s= 1841436880 42` 对黄金 `s= 点{x: 7} 42`，且地址每次运行都不同）。
+    （**订正（2026-09-11 判据批）**：本行原记「13 → 7」。「13」是**判据修正前**、
+    分母只覆盖四根时的基线，与本值不可直接相减——`testNestedCOWIRContract_2` 从未计入
+    该基线，是判据补入 stderr 形状后才从 `OK_HARNESS` 暴露的；C4 的提交说明明写
+    「4 change, all intended」并列出该例，即**实现按 4 例改动、计数仍写 3 例**。详见
+    `docs/issue-hir-probe-containment-2026-09-11.md`。）
   - **隔离证明**：C4 影响面 18 夹具 → 4 变 / 14 不变；C5 影响面 11 文件 19 处多参数
     print 调用 → 仅目标 1 处变。两份影响面都含 `examples/` 语料且逐条不变。
   - **门禁与回归**：`check-doc-links` 通过；全量回归 **1310 / 0 / 0**（与 M6a 终值一致）。
@@ -1011,4 +1017,40 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     probe-harness-inputs 已随 X1 关闭，不再单独立案。
   - **未做（按纪律）**：未 push；不跑全量 sweep（沿用既有裁决）；未改 legacy 源码；
     未删任何测试；M6b 的 b2-1 仍在 `stash@{0}`。
+
+- **M6c 判据批完成（2026-09-11，探针围堵修复 + 同一把尺重测基线）**：
+
+  - **起因**：收口后复核真阻塞清单时，针对 `IRGeneratorTests` + `HIRTests` 的定向 sweep
+    **卡死不再返回**（用户提示 lli 进程未正常结束）。追查发现是探针自身的缺陷，
+    而非被测对象——立案 `docs/issue-hir-probe-containment-2026-09-11.md`（同批 Closed）。
+  - **三层缺陷**：① 超时后的第二次排空调用**无界**，而组杀不保证杀掉 lli
+    （实测 `pini` 已死、`lli` 仍在自己的进程组里，持有继承来的管道）→ 永久阻塞、
+    零输出、零错误；② 挂死通道退出码 124 被「旧后端也拒绝 → 前端拒绝」规则先行吞掉
+    → **挂死看起来像前端问题**，不进阻塞计数（指纹取证显示更早的 sweep 早已发生同类
+    挂死，全部躺在 `FRONTEND_FAIL` 桶里）；③ 本会话沙箱**拒绝执行 `/bin/ps`**，
+    若收割器按 `ps` 写会静默返回空集、「成功收割 0 个」。
+  - **修复**：有界排空；经 `pgrep -fl` 按 argv（`/tmp/pini_*.ll`）收割孤儿 lli 并删除
+    对应 IR；超时判定前移至前端拒绝之前，新增 `TIMEOUT_ALL` / `TIMEOUT_INTERP` /
+    `TIMEOUT_LEGACY` / `GAP_HANG`（后者计入阻塞）；收尾复查存活 lli，有则打印
+    `STILL ALIVE` 且以退出码 1 结束（存活进程是工具失败，不是夹具结论）；
+    自清理本轮杂散 IR。`tools/compare-sweeps.py` 的 `BLOCKERS` 补入 `GAP_HANG`。
+  - **A/B 证据**（夹具 `Tests/PiniTests/CodeGen/IRGeneratorTests/testContinueInWhile.pini`，
+    该程序按自身语义即设计内死循环）：修复前**永不返回**、1 个 lli 持续空转、
+    孤儿 IR +1、判定 `FRONTEND_FAIL`（假）；修复后 **41s**、0 存活、0 孤儿、
+    判定 `TIMEOUT_ALL`（真）、退出码 0。
+  - **全量重测（7 根 / 389 夹具）**：**763s，退出码 0**，收尾复查 0 存活 lli / 0 孤儿。
+    OK 289 / OK_HARNESS 5 / PACKAGE_MEMBER 27 / FRONTEND_FAIL 42 / HARNESS_DEPENDENT 1 /
+    GAP_EXEC 7 / GAP_IR 1 / TIMEOUT_ALL 1 / CHANGE_F64 15 / CHANGE_OTHER 1 →
+    **真阻塞 8**，全部为**显式信号**（C4 的 `E6-004` ×4、C5 的降级期拒绝 ×3、
+    C5 的运行期 panic ×1）；**无 `GAP_HANG`、无静默错**。
+  - **数字订正**：上一条 M6c 条目所记「13 → 7」订正为 **8**（F4 4 + F5 4）；
+    `FRONTEND_FAIL` 由 43 降为 42，正是「1 例隐藏挂死搬出假桶」的直接证据。
+  - **隔离证明**：在 **234** 个新旧两把尺都量过的夹具上 verdict 变动 **0 例**——
+    围堵改动除打开此前不可达的根之外未扰动任何既有结论。新覆盖 **155** 例
+    （`IRGeneratorTests` / `HIRTests` 此前因死锁从未被探针跑通）。
+  - **X2 清单闭合**：`CHANGE_F64` **15** 例 + `CHANGE_OTHER` 1 例 = 早先所记 16 项，
+    已逐条枚举（打印黄金/_c_3 一族的另 3 例属阻塞不属此类）。重刷仍与翻转同批：
+    期望值内嵌于 `Tests/PiniTests/CodeGen/IRPrintGoldenTests/IRPrintGoldenTests.swift`
+    的 `goldenCases`，而该套件当前跑旧管线，提前改期望会立刻变红。
+  - **未做（按纪律）**：未 push；**未进 M6b**（翻转批待点名确认）；未改宿主源码。
 
