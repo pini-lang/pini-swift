@@ -56,9 +56,22 @@ VERDICTS
                        interpreter — needs manual triage
     HARNESS_DEPENDENT  legacy does not run cleanly standalone, so the
                        standalone channel cannot judge the fixture
+    TIMEOUT_ALL        all three channels hit the wall clock — the fixture
+                       loops by design (a `continue` before the loop's
+                       increment, say); a property of the program, not a gap
+    TIMEOUT_INTERP     only the interpreter hit the wall clock — the reference
+                       semantics itself does not terminate, so there is nothing
+                       to compare; excluded
+    TIMEOUT_LEGACY     legacy hangs but HIR terminates — a legacy defect, not
+                       something the flip introduces
+    GAP_HANG           legacy terminated, HIR did not — the flip would turn a
+                       terminating program into a hang; an emit-only judge can
+                       never see this, and stdout gives no warning
 
-BLOCKERS for the flip = GAP_EXEC + GAP_IR + GAP_BEHAVIOR + GAP_UNKNOWN.
-CHANGE_* are expectation updates, not implementation work.
+BLOCKERS for the flip = GAP_EXEC + GAP_IR + GAP_BEHAVIOR + GAP_HANG
+                        + GAP_UNKNOWN.
+CHANGE_* are expectation updates, not implementation work. TIMEOUT_* (other
+than GAP_HANG) describe the fixture, not the implementation.
 
 STDERR IS PART OF THE JUDGEMENT
 -------------------------------
@@ -71,11 +84,44 @@ The parity test therefore requires the same stderr *shape* as well as equal
 stdout, and anything that falls through is classified by the ordered rules
 below — a lone HIR-side stderr reaches GAP_IR, not OK.
 
+PROCESS CONTAINMENT
+-------------------
+`pini run-llvm` writes `/tmp/pini_<uuid>.ll` and then blocks in
+`Process.waitUntilExit`, so a fixture that loops by design produces a
+two-level tree: probe -> pini -> lli. Killing only the probe's direct child
+is not enough, and two failure modes were measured on 2026-09-11:
+
+  * a SIGKILLed `pini` never runs the `defer` that removes the temp .ll, so
+    the file is left behind — one pair of files per hang (same source, legacy
+    and HIR emitter, so two distinct md5s), about 30 s apart;
+  * an `lli` that outlives the group kill still holds the inherited
+    stdout/stderr pipe, so an *unbounded* post-kill `communicate()` blocks
+    forever. That deadlock is silent: the sweep simply stops — no timeout
+    verdict, no error, one spinning `lli` — and six such hangs from an earlier
+    sweep were only found by fingerprinting the stray .ll files afterwards.
+    Worse, those hangs were filed as FRONTEND_FAIL because a hung channel
+    reports rc 124, so they were invisible in the verdict table too.
+
+A timeout therefore does three things: kill the process group, drain the pipes
+with a BOUNDED wait (never unbounded), and reap every `lli` that appeared
+during the sweep by reading the process table for argv carrying
+`/tmp/pini_*.ll` — survivors are killed and their stray .ll removed, and the
+count is reported. Stray .ll files created during the run are cleaned at exit.
+
+The process table is read through `pgrep -fl`, NOT through `/bin/ps`: the
+sandbox this tool runs under refuses to execute `ps` (measured 2026-09-11 —
+"Operation not permitted" from both bash and python), so a reaper built on it
+silently becomes a no-op and the leak looks fixed while nothing was killed.
+When even `pgrep` is unavailable the sweep says containment is unavailable and
+reports the stray .ll files instead of claiming success.
+
 Usage:  python3 tools/hir-parity-probe.py [--root DIR]... [--filter SUBSTR]
+                                        [--timeout SECONDS]
 Output: /tmp/hir-parity-sweep.tsv  (+ summary on stdout)
 """
 
 import argparse
+import glob
 import os
 import re
 import shutil
@@ -94,6 +140,12 @@ BIN = os.environ.get(
 LLVM_BIN = "/opt/homebrew/opt/llvm/bin"
 OUT = "/tmp/hir-parity-sweep.tsv"
 RUN_TIMEOUT = 10
+# Second, bounded wait after the group kill. Only a pipe still held open by a
+# surviving grandchild can keep the drain from finishing.
+DRAIN_TIMEOUT = 5
+# Where `pini run-llvm` puts the temp module; the token identifies an lli that
+# belongs to us rather than one a human started.
+LLI_IR_PREFIX = "/tmp/pini_"
 
 DEFAULT_ROOTS = [
     "Tests/PiniTests/CodeGen/IRExecutionTests",
@@ -109,6 +161,138 @@ F64_SIX = re.compile(r"\d+\.\d{6}")
 
 # Scratch root for isolated runs; created on first use, removed at the end.
 _scratch_root = [None]
+# lli processes alive when the sweep started; anything newer is ours to reap.
+_lli_baseline = set()
+# Stray .ll files present before the sweep; anything newer is our litter.
+_stray_baseline = set()
+# Every .ll removed by a reaper, including the per-timeout ones. The final
+# pass usually finds nothing left, so reporting only its result would print
+# "0 killed" for a sweep that killed several — a number that contradicts the
+# clean /tmp next to it.
+_reaped = []
+
+
+def strays():
+    return set(glob.glob(LLI_IR_PREFIX + "*.ll"))
+
+
+def lli_argv_rows():
+    """[(pid, argv)] for live lli processes, or None when we cannot look.
+
+    `/bin/ps` is unusable here: the sandbox denies executing it, so a reaper
+    built on `ps` would silently become a no-op — the false green this tool
+    exists to delete. `pgrep -fl` is permitted and prints the full command
+    line, so `None` means "containment unavailable" and is reported as such.
+    """
+    try:
+        res = subprocess.run(["pgrep", "-fl", "lli"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rows = []
+    for line in res.stdout.decode("utf-8", "replace").splitlines():
+        pid_text, _, cmd = line.strip().partition(" ")
+        parts = cmd.split()
+        # `pgrep -f` also matches any shell whose text mentions lli, so the
+        # program name — not the pattern — decides membership.
+        if not parts or not os.path.basename(parts[0]).startswith("lli"):
+            continue
+        try:
+            rows.append((int(pid_text), parts))
+        except ValueError:
+            continue
+    return rows
+
+
+def live_lli_pids():
+    """{pid: temp .ll} for the lli processes pini started; {} if unavailable."""
+    found = {}
+    for pid, parts in lli_argv_rows() or []:
+        for token in parts:
+            if token.startswith(LLI_IR_PREFIX) and token.endswith(".ll"):
+                found[pid] = token
+                break
+    return found
+
+
+def kill_pid(pid, ir):
+    """SIGKILL by pid, falling back to pkill by unique argv when refused."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+        return True
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        try:
+            subprocess.run(["pkill", "-9", "-f", ir], timeout=15,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+
+def reap_orphans(baseline):
+    """Kill lli processes newer than `baseline` and delete their .ll files.
+
+    Called after every timeout and once at exit. Membership is decided by the
+    `/tmp/pini_*.ll` token in argv, so an unrelated lli can never be touched.
+    Returns the list of removed .ll files, or None when the process table
+    cannot be read at all.
+    """
+    rows = lli_argv_rows()
+    if rows is None:
+        return None
+    killed = []
+    for pid, parts in rows:
+        if pid in baseline:
+            continue
+        ir = next((t for t in parts
+                   if t.startswith(LLI_IR_PREFIX) and t.endswith(".ll")), None)
+        if ir is None or not kill_pid(pid, ir):
+            continue
+        killed.append(ir)
+    for ir in killed:
+        try:
+            os.remove(ir)
+        except OSError:
+            pass
+    _reaped.extend(killed)
+    return killed
+
+
+def clean_new_strays():
+    """Remove temp .ll files this sweep created and nobody owns any more."""
+    if lli_argv_rows() is None:
+        # Cannot tell which file a live lli is still reading; leave them be.
+        return []
+    alive = set(live_lli_pids().values())
+    removed = []
+    for path in strays() - _stray_baseline - alive:
+        try:
+            os.remove(path)
+            removed.append(path)
+        except OSError:
+            pass
+    return removed
+
+
+def drain(proc):
+    """Close the pipes and reap the child without ever blocking forever."""
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        proc.wait(timeout=DRAIN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def run(argv, env_extra=None, cwd=None):
@@ -116,10 +300,11 @@ def run(argv, env_extra=None, cwd=None):
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
     if env_extra:
         env.update(env_extra)
-    # Own process group: `pini run-llvm` spawns lli as a child, and a plain
-    # subprocess timeout kills only the direct child — lli would survive and
-    # spin forever (observed: a continue-before-increment fixture loops on
-    # purpose, one leaked lli per sweep). Killing the group takes both down.
+    # Own process group: `pini run-llvm` spawns lli as a child, so a plain
+    # subprocess timeout would kill only the direct child. The group kill is a
+    # first attempt, NOT a guarantee — measured 2026-09-11: pini dies and lli
+    # survives in a group of its own (Foundation's Process gives the child
+    # one), still holding the inherited pipe. The reaper is what contains it.
     proc = subprocess.Popen(
         argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -133,9 +318,17 @@ def run(argv, env_extra=None, cwd=None):
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
-        proc.communicate()
+        # BOUNDED drain. The group kill is not guaranteed to reach lli, and a
+        # surviving lli holds the inherited pipe open, so the unbounded
+        # communicate() this replaces deadlocked the whole sweep with no
+        # diagnostic at all.
+        try:
+            proc.communicate(timeout=DRAIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            drain(proc)
+        reap_orphans(_lli_baseline)
         return 124, "", "TIMEOUT after %ss" % RUN_TIMEOUT
 
 
@@ -202,10 +395,23 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err,
     # 1. A file inside a module cannot run standalone at all.
     if in_module(rel):
         return "PACKAGE_MEMBER", ""
-    # 2. Legacy rejects it too -> not a backend gap.
+    # 2. Wall-clock verdicts come FIRST, ahead of the front-end rule. A hung
+    #    channel reports rc 124, which the front-end rule would file as
+    #    FRONTEND_FAIL and drop out of the blocker count entirely — measured:
+    #    six hangs from an earlier sweep hid in that bucket and were only
+    #    found by fingerprinting the stray .ll files they left behind.
+    if h_rc == 124 and l_rc != 124:
+        return "GAP_HANG", "legacy terminated in time, HIR did not"
+    if l_rc == 124 and h_rc == 124:
+        return "TIMEOUT_ALL", "loops by design; all three channels hit the wall clock"
+    if l_rc == 124:
+        return "TIMEOUT_LEGACY", "legacy hangs, HIR terminates"
+    if i_rc == 124:
+        return "TIMEOUT_INTERP", "interpreter does not terminate; nothing to compare"
+    # 3. Legacy rejects it too -> not a backend gap.
     if l_rc != 0:
         return "FRONTEND_FAIL", first_line(l_err)
-    # 3. Equal stdout is parity only when the two channels are equally loud.
+    # 4. Equal stdout is parity only when the two channels are equally loud.
     #    A silent-stdout crash on one side and a silent-stdout success on the
     #    other compare equal on stdout alone, which would file a genuinely
     #    rejected module as OK_HARNESS — the stderr shape breaks the tie, and
@@ -216,14 +422,14 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err,
             # (the test substitutes paths / supplies a program base).
             return "OK_HARNESS", first_line(h_err or l_err)
         return "OK", ""
-    # 4. Legacy ran, HIR could not.
+    # 5. Legacy ran, HIR could not.
     if h_rc != 0:
         return "GAP_EXEC", first_line(h_err)
-    # 5. Legacy did not run cleanly either -> the standalone channel cannot
+    # 6. Legacy did not run cleanly either -> the standalone channel cannot
     #    judge this fixture; excluding it is honest, not lenient.
     if l_err.strip():
         return "HARNESS_DEPENDENT", first_line(l_err)
-    # 6. HIR emitted IR that lli refused. (`run-llvm` ignores lli's exit
+    # 7. HIR emitted IR that lli refused. (`run-llvm` ignores lli's exit
     #    status, so this looks like a clean run with missing output.)
     if h_err.strip():
         return "GAP_IR", first_line(h_err)
@@ -237,17 +443,27 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err,
 
 
 def main():
+    global RUN_TIMEOUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", action="append", default=None)
     ap.add_argument("--filter", default=None,
                     help="only fixtures whose repo-relative path contains this")
+    ap.add_argument("--timeout", type=int, default=RUN_TIMEOUT,
+                    help="per-channel wall clock, seconds (default %d)" % RUN_TIMEOUT)
     args = ap.parse_args()
     roots = args.root or DEFAULT_ROOTS
+    RUN_TIMEOUT = args.timeout
 
     if not os.access(BIN, os.X_OK):
         print("pini binary missing at %s\n  swift build --disable-sandbox "
               "--scratch-path /tmp/pini-build --product pini" % BIN, file=sys.stderr)
         return 1
+
+    _lli_baseline.update(live_lli_pids())
+    _stray_baseline.update(strays())
+    if _lli_baseline:
+        print("note: %d lli process(es) already running before the sweep; "
+              "left untouched" % len(_lli_baseline))
 
     fixtures = collect(roots, args.filter)
     print("sweeping %d fixtures over %d roots" % (len(fixtures), len(roots)))
@@ -274,6 +490,8 @@ def main():
                 print("  %d/%d  (%.0fs)" % (n, len(fixtures), time.time() - t0),
                       flush=True)
     finally:
+        leaks = reap_orphans(_lli_baseline)
+        removed = clean_new_strays()
         if _scratch_root[0] and os.path.isdir(_scratch_root[0]):
             shutil.rmtree(_scratch_root[0], ignore_errors=True)
 
@@ -286,20 +504,35 @@ def main():
 
     order = ["OK", "OK_HARNESS", "PACKAGE_MEMBER", "FRONTEND_FAIL",
              "HARNESS_DEPENDENT", "GAP_EXEC", "GAP_IR", "GAP_BEHAVIOR",
-             "GAP_UNKNOWN", "CHANGE_F64", "CHANGE_OTHER"]
+             "GAP_UNKNOWN", "GAP_HANG", "TIMEOUT_ALL", "TIMEOUT_INTERP",
+             "TIMEOUT_LEGACY", "CHANGE_F64", "CHANGE_OTHER"]
     print("\n=== summary ===")
     for v in order:
         n = sum(1 for r in rows if r["verdict"] == v)
         if n:
             print("  %-15s %d" % (v, n))
-    blockers = [r for r in rows if r["verdict"].startswith(("GAP_",))
-                and r["verdict"] != "GAP_UNKNOWN"]
+    blockers = [r for r in rows if r["verdict"] in
+                ("GAP_EXEC", "GAP_IR", "GAP_BEHAVIOR", "GAP_HANG")]
     unknown = [r for r in rows if r["verdict"] == "GAP_UNKNOWN"]
     print("  %-15s %d" % ("FLIP BLOCKERS", len(blockers) + len(unknown)))
+    left = []
+    if leaks is None:
+        print("  %-15s containment UNAVAILABLE (pgrep not callable); "
+              "%d stray .ll removed" % ("process leaks", len(removed)))
+    else:
+        print("  %-15s %d lli killed in total, %d of them at exit; "
+              "%d stray .ll removed"
+              % ("process leaks", len(_reaped), len(leaks), len(removed)))
+        left = sorted(live_lli_pids())
+        if left:
+            print("  %-15s STILL ALIVE: %s"
+                  % ("process leaks", ", ".join(str(p) for p in left)))
 
     for label, group in [("blockers", blockers + unknown),
                          ("behaviour changes", [r for r in rows
-                                                if r["verdict"].startswith("CHANGE_")])]:
+                                                if r["verdict"].startswith("CHANGE_")]),
+                         ("non-terminating fixtures", [r for r in rows
+                                                       if r["verdict"].startswith("TIMEOUT_")])]:
         print("\n=== %s ===" % label)
         for r in group:
             print("  %-14s %s" % (r["verdict"], r["fixture"]))
@@ -308,7 +541,9 @@ def main():
             elif r["verdict"].startswith("GAP_"):
                 print("        legacy=%r  hir=%r" % (r["l_out"][:60], r["h_out"][:60]))
     print("\ndetail -> %s" % OUT)
-    return 0
+    # A surviving lli is a tool failure, not a fixture verdict: exit non-zero
+    # so a sweep can never be read as clean while a process is still spinning.
+    return 1 if left else 0
 
 
 if __name__ == "__main__":
