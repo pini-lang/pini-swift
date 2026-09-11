@@ -40,9 +40,22 @@ public final class IREmitter {
         let exit: String
         let header: String
         let continueTarget: String
+        /// Index of the loop BODY's defer frame in `pendingDefers` (the
+        /// frame pushed after this loop frame was pushed). A break/continue
+        /// out of this loop flushes defer frames from the innermost one down
+        /// to this index, both included — leaving the loop's body block runs
+        /// its defers (interpreter: the signal unwinds through
+        /// executeBlock's own popDeferScope).
+        let deferBase: Int
     }
 
     private var loopStack: [LoopFrame] = []
+
+    /// Index in `pendingDefers` where the current function's (or closure's)
+    /// defer frames begin. A `return` flushes defer frames down to this
+    /// base and no further — a return inside a closure must not run the
+    /// enclosing function's defers.
+    private var deferScopeBase = 0
 
     private var currentIsMain = false
     private var currentReturnType: HIRType? = nil
@@ -306,6 +319,8 @@ public final class IREmitter {
         scopes = [[:]]
         slotCounters = [:]
         loopStack = []
+        deferScopeBase = 0
+        pendingDefers.removeAll()
         terminated = false
         currentIsMain = function.name == "main"
         currentReturnType = function.returnType
@@ -346,22 +361,52 @@ public final class IREmitter {
 
     private func emitBlock(_ statements: [HIRStmt]) {
         // G9 defer protocol: defers registered in this block run LIFO at
-        // the block's normal end (loop bodies: every iteration).
+        // the block's normal end (loop bodies: every iteration). When the
+        // block ends in a terminator the defers have already run — the
+        // terminator's emitter flushed them right before emitting the jump —
+        // or must not run at all (a runtime panic skips defers). A
+        // return/break/continue flush pops the frames of every block it
+        // unwinds through, so this block's own frame may already be gone;
+        // only drop it here when it is still on the stack.
+        let frameBase = pendingDefers.count
         pendingDefers.append([])
         for statement in statements {
             if terminated { break }
             emitStatement(statement)
         }
-        let scopeDefers = pendingDefers.removeLast()
-        for deferredBody in scopeDefers.reversed() {
-            let wasTerminated = terminated
-            terminated = false
-            for statement in deferredBody {
-                if terminated { break }
-                emitStatement(statement)
-            }
-            terminated = wasTerminated
+        if terminated {
+            // A panic never runs defers — drop the frame. A return/break/
+            // continue already flushed copies of the frames it unwound
+            // through before its jump, and the block tail is unreachable.
+            _ = pendingDefers.removeLast()
+        } else {
+            flushDefers(downTo: frameBase)
+            _ = pendingDefers.removeLast()
         }
+    }
+
+    /// Emit one copy of the defer frames from the innermost one down to
+    /// `base` (both included), each frame's bodies in LIFO order, at the
+    /// current insertion point — WITHOUT popping the frames. A terminator
+    /// and a block tail are separate runtime paths over the same statically
+    /// emitted code, so each may need its own copy of the same defer bodies:
+    /// a `break` inside a loop body flushes the loop's defers before its
+    /// jump, while the body block's tail emits the same defers again for
+    /// iterations that end normally. Frame ownership stays with the
+    /// `emitBlock` that pushed it; a runtime panic is the one exit that
+    /// never flushes (its frame is dropped instead).
+    private func flushDefers(downTo base: Int) {
+        let wasTerminated = terminated
+        terminated = false
+        for frame in pendingDefers[base...].reversed() {
+            for deferredBody in frame.reversed() {
+                for statement in deferredBody {
+                    if terminated { break }
+                    emitStatement(statement)
+                }
+            }
+        }
+        terminated = wasTerminated
     }
 
     /// Deferred statement bodies per open block scope (G9 deferStmt):
@@ -401,6 +446,10 @@ public final class IREmitter {
             )
 
         case .returnStmt(let value):
+            // Defers of every open block of this function run before the
+            // return (interpreter: the signal unwinds through each
+            // executeBlock's popDeferScope, innermost first).
+            flushDefers(downTo: deferScopeBase)
             if let value = value {
                 let lowered = emitExpr(value)
                 bodyIR += " ret \(lowered.llvmType) \(lowered.ssaName)\n"
@@ -457,11 +506,14 @@ public final class IREmitter {
     /// `break`: the depth-th enclosing loop's exit (1 = innermost); without
     /// enough enclosing loops, a runtime panic — the interpreter errors when
     /// a break escapes to the top level (probe-verified), so this is
-    /// fail-loud parity, not a silent skip.
+    /// fail-loud parity, not a silent skip. Leaving the loop also leaves its
+    /// body block, so the defer frames down to the loop body's own frame run
+    /// before the jump.
     private func emitBreak(depth: Int) {
         if loopStack.count >= depth {
-            let exitLabel = loopStack[loopStack.count - depth].exit
-            bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
+            let frame = loopStack[loopStack.count - depth]
+            flushDefers(downTo: frame.deferBase)
+            bodyIR += builder.fmtBr(labelName: frame.exit) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: break outside loop")
             bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
@@ -475,9 +527,12 @@ public final class IREmitter {
     /// form (depth > 1) jumps to the depth-th frame's header (interpreter
     /// parity: a matching label resumes that loop). The checker rejects a
     /// continue outside any loop, so the panic here is fail-loud parity.
+    /// Ending the iteration leaves the loop's body block, so the defer
+    /// frames down to that block's frame run before the jump.
     private func emitContinue(depth: Int) {
         if loopStack.count >= depth {
             let frame = loopStack[loopStack.count - depth]
+            flushDefers(downTo: frame.deferBase)
             let target = depth == 1 ? frame.continueTarget : frame.header
             bodyIR += builder.fmtBr(labelName: target) + "\n"
         } else {
@@ -938,7 +993,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : condLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget))
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count))
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
@@ -952,7 +1007,7 @@ public final class IREmitter {
             bodyIR += "\(stepLabel):\n"
             // Inside the step, an unlabeled continue goes to its own end
             // (interpreter: continue in the step block → next iteration).
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel))
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count))
             scopes.append([:])
             terminated = false
             emitBlock(step)
@@ -1021,7 +1076,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : incLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget))
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count))
         scopes.append([:])
         terminated = false
         // Pattern bindings: a fresh slot per iteration (the loop scope makes
@@ -1062,7 +1117,7 @@ public final class IREmitter {
 
         if let step = step {
             bodyIR += "\(stepLabel):\n"
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel))
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count))
             scopes.append(patternBindings)
             terminated = false
             emitBlock(step)
@@ -3086,6 +3141,7 @@ public final class IREmitter {
         let savedSlotCounters = slotCounters
         let savedTerminated = terminated
         let savedLoopStack = loopStack
+        let savedDeferScopeBase = deferScopeBase
         let savedReturnType = currentReturnType
         let savedIsMain = currentIsMain
         let savedBodyIR = bodyIR
@@ -3096,6 +3152,9 @@ public final class IREmitter {
         slotCounters = [:]
         terminated = false
         loopStack = []
+        // A return inside the closure must not run the enclosing function's
+        // defers: defer frames opened by the closure live above this base.
+        deferScopeBase = pendingDefers.count
         currentReturnType = returnType
         currentIsMain = false
         builder = IRBuilder()
@@ -3150,6 +3209,7 @@ public final class IREmitter {
         slotCounters = savedSlotCounters
         terminated = savedTerminated
         loopStack = savedLoopStack
+        deferScopeBase = savedDeferScopeBase
         currentReturnType = savedReturnType
         currentIsMain = savedIsMain
         bodyIR = savedBodyIR
