@@ -1,4 +1,0 @@
-main|func() -> ():
-    let line = readLine()
-    print(line)
-    return

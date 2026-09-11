@@ -1,3 +1,0 @@
-main|func() -> ():
-    var s = ""
-    print(len(s))

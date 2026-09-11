@@ -18,13 +18,23 @@ final class IRPrintGoldenTests: XCTestCase {
 
     private var lliAvailable: Bool { LLVMToolchain.lliPath != nil }
 
+    /// The single code-generation entry this suite goes through: parse,
+    /// type-check, lower to HIR, emit. The checker is mandatory because HIR
+    /// lowering consumes the scope-persistent inference environment.
+    private func emitHIR(_ source: String, fileName: String = "test.pini") throws -> String {
+        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
+        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        XCTAssertTrue(errors.isEmpty, "sources must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return IREmitter().emit(module: hir)
+    }
+
     /// 通过 `lli` JIT 执行单文件源码，返回 stdout。
     private func runViaLLI(_ source: String, fileName: String = "test.pini") throws -> String {
-        let lexer = Lexer(source: source, fileName: fileName)
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: fileName)
-        let module = try parser.parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(source, fileName: fileName)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_golden_\(UUID().uuidString).ll"
         defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -45,27 +55,51 @@ final class IRPrintGoldenTests: XCTestCase {
         args.append(tmpIR)
         process.arguments = args
         let pipe = Pipe()
+        let errorPipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = errorPipe
         try process.run()
         process.waitUntilExit()
+        // A non-zero exit means the JIT itself failed (unresolved runtime
+        // symbol, malformed IR). Returning stdout there yields an empty string
+        // that reads exactly like an empty program.
+        guard process.terminationStatus == 0 else {
+            let err = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "LLIExit", code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "lli exited \(process.terminationStatus); stderr: \(err)"]
+            )
+        }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    /// 定位集合运行时动态库（swift build 产物）：`.build/debug/libPiniRuntime.{dylib,so}`。
+    /// Locates the collection runtime dynamic library.
+    ///
+    /// Same ordering rule as the other execution suites: environment override
+    /// first, then the running bundle's directory (that library belongs to the
+    /// binary under test), then the working-tree build as a last resort.
     private func locateRuntimeDylib() -> String? {
+        if let env = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
+           !env.isEmpty, FileManager.default.fileExists(atPath: env) {
+            return env
+        }
         var url = URL(fileURLWithPath: #file)
         while url.path != "/" {
             let pkg = url.appendingPathComponent("Package.swift").path
             if FileManager.default.fileExists(atPath: pkg) { break }
             url = url.deletingLastPathComponent()
         }
-        let buildDir = (url.path as NSString).appendingPathComponent(".build/debug")
-        for ext in ["dylib", "so"] {
-            let cand = (buildDir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
-            if FileManager.default.fileExists(atPath: cand) { return cand }
+        let dirs = [
+            (Bundle(for: IRPrintGoldenTests.self).bundlePath as NSString).deletingLastPathComponent,
+            (url.path as NSString).appendingPathComponent(".build/debug"),
+        ]
+        for dir in dirs {
+            for ext in ["dylib", "so"] {
+                let cand = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+                if FileManager.default.fileExists(atPath: cand) { return cand }
+            }
         }
         return nil
     }

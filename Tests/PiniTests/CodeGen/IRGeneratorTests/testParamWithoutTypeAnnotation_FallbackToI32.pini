@@ -1,5 +1,0 @@
-swap(x, y) -> (I32, I32):
-    return (y, x)
-
-main|func() -> ():
-    return

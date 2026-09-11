@@ -152,7 +152,6 @@ DEFAULT_ROOTS = [
     "Tests/PiniTests/RuntimeBackendTests",
     "Tests/PiniTests/OptionalTests",
     "Tests/PiniTests/CodeGen/IRPrintGoldenTests",
-    "Tests/PiniTests/CodeGen/IRGeneratorTests",
     "Tests/PiniTests/CodeGen/HIRTests",
     "examples",
 ]
