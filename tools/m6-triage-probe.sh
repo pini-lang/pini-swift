@@ -39,7 +39,7 @@ total=0; pass=0; fail=0
 while IFS= read -r -d '' f; do
   total=$((total + 1))
   rel="${f#"$REPO_ROOT"/}"
-  if PINI_HIR_PIPELINE=1 "$BIN" emit "$f" > /dev/null 2> /tmp/m6t.err; then
+  if "$BIN" emit "$f" > /dev/null 2> /tmp/m6t.err; then
     pass=$((pass + 1))
     printf '%s\tPASS\t\n' "$rel" >> "$SWEEP"
   else

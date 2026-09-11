@@ -15,7 +15,7 @@ run, and does it behave the same". Three channels per fixture:
 
     interpreter  `pini run <file>`                         (reference semantics)
     legacy       `pini run-llvm <file>`                    (implementation today)
-    hir          `PINI_HIR_PIPELINE=1 pini run-llvm <file>` (implementation after flip)
+    hir          `pini run-llvm <file>` (same pipeline as legacy after the flip)
 
 All three typecheck first, which is what the CLI does, so a front-end reject
 fails all three and is correctly classified as "not a backend gap".
@@ -474,9 +474,7 @@ def main():
             cwd, run_path = scratch_copy(rel)
             i_rc, i_out, _ = run([BIN, "run", run_path], cwd=cwd)
             l_rc, l_out, l_err = run([BIN, "run-llvm", run_path], cwd=cwd)
-            h_rc, h_out, h_err = run([BIN, "run-llvm", run_path],
-                                     env_extra={"PINI_HIR_PIPELINE": "1"},
-                                     cwd=cwd)
+            h_rc, h_out, h_err = run([BIN, "run-llvm", run_path], cwd=cwd)
             verdict, note = classify(rel, l_rc, l_out, l_err, h_rc, h_out,
                                      h_err, i_rc, i_out)
             rows.append({
