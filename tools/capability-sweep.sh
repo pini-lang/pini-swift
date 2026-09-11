@@ -5,8 +5,8 @@
 # Output: TSV at tools/capability-sweep.tsv
 #   (file \t emit \t llvm \t hir-emit \t interp \t note)
 # Re-run after each grid lands (LLVM rewrite M5) to refresh the matrix.
-# The HIR channel is selected via PINI_HIR_PIPELINE=1 (migration-stage switch,
-# dies with the M6 flip).
+# Every channel now runs the same pipeline: the M6 flip removed the
+# migration switch along with the legacy generator.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,7 +45,7 @@ while IFS= read -r -d '' f; do
     llvm="SKIP"
   fi
 
-  if PINI_HIR_PIPELINE=1 "$BIN" emit "$f" > /dev/null 2> /tmp/cap-hir.err; then
+  if "$BIN" emit "$f" > /dev/null 2> /tmp/cap-hir.err; then
     hir="PASS"
   else
     hir="FAIL"

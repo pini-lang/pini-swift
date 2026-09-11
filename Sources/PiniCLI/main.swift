@@ -1332,7 +1332,7 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
  return false
 }
 
-/// #46-optional / Task #2：LLVM 管线先类型检查，再注入 typeInference 给 IRGenerator。
+/// #46-optional / Task #2：LLVM 管线先类型检查，再以类型推断结果降载到 HIR。
 /// 与解释器对齐做静态校验（零类型信息的 codegen 无法解构 Optional.some，需此前提）。
 /// 类型错误一次性同报并退出（沿用 `runCheckCommand` 的收集模式风格）。
 private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
@@ -1345,24 +1345,13 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
   }
   exit(1)
  }
- // Migration-stage backend selection (LR-5 note): the HIR pipeline is
- // selectable via env for the M5 capability sweep; the legacy generator
- // remains the default until the M6 flip deletes it along with this branch.
- if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1" {
-  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-  let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-  let emitter = IREmitter()
-  // 批 5（G58，D-4）：HIR 端同样注入程序基准，与解释器、旧生成器同规则。
-  emitter.programBase = absoluteProgramBase(fileName)
-  return emitter.emit(module: hirModule)
- }
- let generator = IRGenerator()
- generator.typeInference = checker.typeInference
- // 批 5（G58，D-4）：LLVM 端无前缀相对路径字面量编译期烘焙程序基准（与解释器一致）。
- generator.programBase = absoluteProgramBase(fileName)
  // #46-optional：开启持久表兜底，使 codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
- return try generator.generate(module: module)
+ let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+ let emitter = IREmitter()
+ // 批 5（G58，D-4）：注入程序基准，与解释器同规则。
+ emitter.programBase = absoluteProgramBase(fileName)
+ return emitter.emit(module: hirModule)
 }
 
 func runEmitCommand(source: String, fileName: String, outputPath: String?) throws {
@@ -1617,13 +1606,11 @@ case "emit":
  exit(1)
  }
  do {
- // G13 batch 2 (D2, sweep auto-switch): a file inside a manifest module
- // runs through the package pipeline (HIR channel lowers the whole
- // package; legacy channel keeps single-file behavior). A bare file
- // outside any module is unchanged. Directory arguments were never
+ // G13 batch 2 (D2): a file inside a manifest module runs through the
+ // package pipeline, which lowers the whole package. A bare file outside
+ // any module keeps single-file behavior. Directory arguments were never
  // accepted here, so no directory branch is added.
- if ProcessInfo.processInfo.environment["PINI_HIR_PIPELINE"] == "1",
-    let loaded = try loadOwningPackageIfModule(path: args[2]) {
+ if let loaded = try loadOwningPackageIfModule(path: args[2]) {
   try runHIRPackageEmit(package: loaded.package, moduleRoot: loaded.moduleRoot,
                         outputPath: args.count >= 4 ? args[3] : nil)
  } else {

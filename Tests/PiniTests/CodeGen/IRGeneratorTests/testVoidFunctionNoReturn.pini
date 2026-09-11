@@ -1,5 +1,0 @@
-doNothing() -> ():
-    return
-
-main|func() -> ():
-    return

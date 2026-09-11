@@ -1,8 +1,0 @@
-{Counter}
-value: I32 = 0
-
-{{Counter}}
-increment|self() -> ():
-    return
-main|func() -> ():
-    return

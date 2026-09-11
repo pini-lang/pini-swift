@@ -1,8 +1,0 @@
-[Color]
-Red
-Green
-Blue
-
-main|func() -> ():
-    let c = Red
-    return

@@ -1439,7 +1439,7 @@ public enum HIRLowerer {
 
         default:
             throw unsupported(
-                "statement '\(statement.kindName)' outside the M4 slice",
+                "statement '\(statement.kindName)' is not yet lowered to HIR",
                 at: statementLocation(statement)
             )
         }
@@ -1885,7 +1885,7 @@ public enum HIRLowerer {
         case .binary(let left, let op, let right, let location):
             guard let hirOp = HIRBinaryOp(from: op) else {
                 throw unsupported(
-                    "binary operator '\(op)' outside the M4 slice",
+                    "binary operator '\(op)' is not yet lowered to HIR",
                     at: location
                 )
             }
@@ -1931,7 +1931,7 @@ public enum HIRLowerer {
             case .minus: hirOp = .negate
             case .logicalNot, .not: hirOp = .logicalNot
             default:
-                throw unsupported("unary operator '\(op)' outside the M4 slice", at: location)
+                throw unsupported("unary operator '\(op)' is not yet lowered to HIR", at: location)
             }
             let lowered = try lowerExpr(operand, expected: nil, into: &context)
             switch hirOp {
@@ -2582,7 +2582,7 @@ public enum HIRLowerer {
 
         default:
             throw unsupported(
-                "expression '\(expression.kindName)' outside the M4 slice",
+                "expression '\(expression.kindName)' is not yet lowered to HIR",
                 at: expressionLocation(expression)
             )
         }

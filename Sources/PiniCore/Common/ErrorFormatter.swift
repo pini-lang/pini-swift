@@ -107,9 +107,8 @@ public enum ErrorFormatter {
  case is SemanticWarning: key = "semanticWarning"; fallback = "语义警告"
  case is TypeError: key = "type"; fallback = "类型错误"
  case is RuntimeError: key = "runtime"; fallback = "运行时错误"
- case is IRGenError: key = "irgen"; fallback = "IR 生成错误"
- // The HIR pipeline's capability gate reuses the legacy generator's E6 code
- // face, so it carries that domain's label instead of the generic fallback.
+ // The capability gate reuses the irgen domain's E6 code face, so it carries
+ // that domain's label instead of the generic fallback.
  case is HIRLowerer.HIRLoweringError: key = "irgen"; fallback = "IR 生成错误"
  case let e as PiniError:
  switch e {
@@ -173,8 +172,6 @@ public enum ErrorFormatter {
  return typeMessage(e)
  case let e as RuntimeError:
  return runtimeMessage(e)
- case let e as IRGenError:
- return irgenMessage(e)
  case let e as PiniError:
  switch e {
  case .lexer(let d, _): return d
@@ -254,16 +251,6 @@ public enum ErrorFormatter {
  case .inaccessibleField(let typeName, let fieldName, _): return "字段 '\(typeName).\(fieldName)' 为 type-private（仅 \(typeName) 类型自身的方法可访问）"
  case .sharedReferenceAcrossTasks(let typeName, let paramName, let functionName, _): return "不能把引用类型 '\(typeName)' 传给并发进程 '\(functionName)' 的形参 '\(paramName)'：跨任务共享可变引用不安全。改传值类型（struct），或让 '\(functionName)' 返回结果后用 `joinAll` 汇合"
  case .enumCaseArgumentLabel(let label, let caseName, _): return "枚举用例 '\(caseName)' 的构造为位置式，不允许具名实参 '\(label):'（请改为位置实参，如 `\(caseName)(值)`）"
- }
- }
-
- private static func irgenMessage(_ error: IRGenError) -> String {
- switch error {
- case .unsupportedType(let name, _): return "不支持的类型 '\(name)'"
- case .unsupportedExpression(let kind, _): return "不支持的表达式 '\(kind)'"
- case .unsupportedStatement(let kind, _): return "不支持的语句 '\(kind)'"
- case .unsupportedFeature(let feature, _): return "不支持的特性 '\(feature)'"
- case .typeMismatch(let expected, let got, _): return "类型不匹配：期望 '\(expected)'，实际 '\(got)'"
  }
  }
 

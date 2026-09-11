@@ -1,3 +1,0 @@
-main|func() -> ():
-    var arr = [7]
-    return

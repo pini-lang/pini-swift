@@ -287,32 +287,10 @@ extension RuntimeError: DiagnosticProviding {
  }
 }
 
-extension IRGenError: DiagnosticProviding {
- public var diagnosticCode: String {
- switch self {
- case .unsupportedType: return "\(DiagnosticDomain.irgen.rawValue)-001"
- case .unsupportedExpression: return "\(DiagnosticDomain.irgen.rawValue)-002"
- case .unsupportedStatement: return "\(DiagnosticDomain.irgen.rawValue)-003"
- case .unsupportedFeature: return "\(DiagnosticDomain.irgen.rawValue)-004"
- case .typeMismatch: return "\(DiagnosticDomain.irgen.rawValue)-005"
- }
- }
- public var diagnosticSeverity: DiagnosticSeverity { .error }
- public var suggestion: String? { nil }
- public var diagnosticLocation: SourceLocation {
- switch self {
- case .unsupportedType(_, let loc), .unsupportedExpression(_, let loc),
- .unsupportedStatement(_, let loc), .unsupportedFeature(_, let loc),
- .typeMismatch(_, _, let loc):
- return loc
- }
- }
-}
-
-/// The HIR pipeline's capability gate inherits the legacy generator's code
-/// domain: the gate is the successor of the legacy "unsupported feature"
-/// decisions, and reusing its code keeps registered codes alive across the
-/// pipeline switch instead of retiring them by accident.
+/// The capability gate uses the irgen code domain for its "unsupported
+/// feature" bucket. Those codes are registered in the diagnostic catalogue,
+/// and keeping the domain means they survive the change of producer instead
+/// of being retired by accident.
 extension HIRLowerer.HIRLoweringError: DiagnosticProviding {
  public var diagnosticCode: String { code }
  public var diagnosticSeverity: DiagnosticSeverity { .error }

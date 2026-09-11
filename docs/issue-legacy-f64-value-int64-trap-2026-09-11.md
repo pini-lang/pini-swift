@@ -1,6 +1,7 @@
 # Issue：旧后端 F64 值处理对超大浮点触发 Int64 溢出陷阱
 
-- 状态：**Open（2026-09-11 立案；旧后端缺陷，随 M6 翻转批删除旧 CodeGen 自然消亡）**
+- 状态：**Closed（2026-09-11 立案；2026-09-12 M6b 翻转完成，旧 CodeGen 已整体删除，
+  本缺陷随之消亡。冻结先例见 ADR-031 约束 1）**
 - 发现来源：M6c 横切项 X2（`CHANGE_F64` 预期重基线核验）抽查 `testDiffFloatPrint` 时
   观察到旧通道非零退出
 - 关联：`docs/issue-print-f64-format-parity-2026-09-07.md`（同一夹具的来源）、

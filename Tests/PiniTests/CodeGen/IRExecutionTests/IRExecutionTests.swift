@@ -56,18 +56,27 @@ final class IRExecutionTests: XCTestCase {
         return args
     }
 
-    private func runViaLLI(_ source: String, fileName: String = "test.pini", dylib: String? = nil, typeCheck: Bool = false) throws -> String {
-        let lexer = Lexer(source: source, fileName: fileName)
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: fileName)
-        let module = try parser.parseModule()
+    /// The single code-generation entry every execution channel in this file
+    /// goes through. Only one implementation remains, so the pipeline is
+    /// fixed: parse, type-check, HIR lowering, IR emission.
+    ///
+    /// The checker is mandatory rather than optional (it used to be a flag):
+    /// HIR lowering consumes the scope-persistent inference environment, and
+    /// bare-case resolution needs the registry the checker fills, which is the
+    /// same order the CLI uses.
+    private func emitHIR(_ source: String, fileName: String = "test.pini") throws -> String {
+        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
+        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        XCTAssertTrue(errors.isEmpty, "sources must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return IREmitter().emit(module: hir)
+    }
 
-        // ADR-026 D1：checker 先行变体（对齐 CLI 顺序）——期望类型命中位写入
-        // BareCaseResolutionRegistry，IRGen 对歧义 case 构造查表消歧。
-        if typeCheck { try TypeChecker().check(module: module) }
-
-        let generator = IRGenerator()
-        let ir = try generator.generate(module: module)
+    private func runViaLLI(_ source: String, fileName: String = "test.pini", dylib: String? = nil) throws -> String {
+        let ir = try emitHIR(source, fileName: fileName)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_exec_\(UUID().uuidString).ll"
         defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -108,13 +117,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     private func runViaClang(_ source: String, fileName: String = "test.pini", dylib: String? = nil) throws -> String {
-        let lexer = Lexer(source: source, fileName: fileName)
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: fileName)
-        let module = try parser.parseModule()
-
-        let generator = IRGenerator()
-        let ir = try generator.generate(module: module)
+        let ir = try emitHIR(source, fileName: fileName)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_exec_\(UUID().uuidString).ll"
         let tmpBin = FileManager.default.temporaryDirectory.path + "/pini_exec_\(UUID().uuidString)"
@@ -290,7 +293,7 @@ final class IRExecutionTests: XCTestCase {
         try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testStringInterpolationDouble_LLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "pi=2.500000")
+        XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "pi=2.5")
     }
 
     func testStringInterpolation_Clang() throws {
@@ -586,7 +589,7 @@ final class IRExecutionTests: XCTestCase {
     func testDotCaseAmbiguousExpectedTypeViaLLI() throws {
         try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testDotCaseAmbiguousExpectedTypeViaLLI", filePath: #filePath)
-        let output = try runViaLLI(source, typeCheck: true)
+        let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
                       "歧义点号构造应经期望类型解析为 Shape.Circle 并打印 42")
     }
@@ -595,7 +598,7 @@ final class IRExecutionTests: XCTestCase {
     func testBareCaseAmbiguousExpectedTypeViaLLI() throws {
         try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBareCaseAmbiguousExpectedTypeViaLLI", filePath: #filePath)
-        let output = try runViaLLI(source, typeCheck: true)
+        let output = try runViaLLI(source)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "42",
                       "歧义裸名构造应经期望类型解析为 Shape.Circle 并打印 42")
     }
@@ -615,11 +618,14 @@ final class IRExecutionTests: XCTestCase {
         """
         let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
         let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
-            guard case IRGenError.unsupportedFeature = error else {
-                XCTFail("应为 unsupportedFeature，实际: \(error)")
+        // 消歧登记为空（不经 checker）→ 歧义名必须在 lower 层被拦下，不得静默择一。
+        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
+            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
+                XCTFail("应为 HIRLoweringError，实际: \(error)")
                 return
             }
+            XCTAssertTrue(hirError.message.contains("ambiguous"),
+                          "守卫消息应说明歧义，实际: \(hirError.message)")
         }
     }
 
@@ -880,10 +886,10 @@ final class IRExecutionTests: XCTestCase {
         try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testBuiltinMathFloatsViaLLI", filePath: #filePath)
         let output = try runViaLLI(source)
-        // sqrt(4)=2.000000 sin(0)=0.000000 cos(0)=1.000000
-        XCTAssertTrue(output.contains("2.000000"), "sqrt(4) 应输出 2.0，实际: \(output)")
-        XCTAssertTrue(output.contains("0.000000"), "sin(0) 应输出 0.0，实际: \(output)")
-        XCTAssertTrue(output.contains("1.000000"), "cos(0) 应输出 1.0，实际: \(output)")
+        // sqrt(4)=2.0 sin(0)=0.0 cos(0)=1.0
+        XCTAssertTrue(output.contains("2.0"), "sqrt(4) 应输出 2.0，实际: \(output)")
+        XCTAssertTrue(output.contains("0.0"), "sin(0) 应输出 0.0，实际: \(output)")
+        XCTAssertTrue(output.contains("1.0"), "cos(0) 应输出 1.0，实际: \(output)")
     }
 
     // MARK: - P6-4c: readLine
@@ -892,12 +898,7 @@ final class IRExecutionTests: XCTestCase {
     func testReadLineViaLLI() throws {
         try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testReadLineViaLLI", filePath: #filePath)
-        let lexer = Lexer(source: source, fileName: "test.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
-        let generator = IRGenerator()
-        let ir = try generator.generate(module: module)
+        let ir = try emitHIR(source)
 
         let tmpDir = FileManager.default.temporaryDirectory.path
         let irPath = tmpDir + "/pini_rl_\(UUID().uuidString).ll"
@@ -929,11 +930,7 @@ final class IRExecutionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: tmpPath) }
 
         let source = try loadPiniFixture("testWriteReadFileViaLLI", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: tmpPath)
-        let lexer = Lexer(source: source, fileName: "test.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
-        let ir = try IRGenerator().generate(module: module)
+        let ir = try emitHIR(source)
 
         let irPath = FileManager.default.temporaryDirectory.path
             + "/pini_io_\(UUID().uuidString).ll"
@@ -965,15 +962,15 @@ final class IRExecutionTests: XCTestCase {
     /// grapheme 切分），LLVM C 字符串后端 v1 显式 unsupported——IR 生成期报错，无需执行。
     func testIsLetterUnsupportedViaIRGen() throws {
         let source = try loadPiniFixture("testIsLetterUnsupportedViaIRGen", filePath: #filePath)
-        let lexer = Lexer(source: source, fileName: "test.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
-        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
-            guard case IRGenError.unsupportedExpression = error else {
-                XCTFail("应为 unsupportedExpression，实际: \(error)")
+        let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
+        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
+        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
+            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
+                XCTFail("应为 HIRLoweringError，实际: \(error)")
                 return
             }
+            XCTAssertTrue(hirError.code.hasSuffix("-004"),
+                          "应落在 E6 未支持特征桶，实际: \(hirError.code)")
         }
     }
 

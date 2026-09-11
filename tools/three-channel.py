@@ -8,7 +8,7 @@ did each channel print for this file".
 Channels (same as the probe):
     interp  `pini run <file>`                            reference semantics
     legacy  `pini run-llvm <file>`                       implementation today
-    hir     `PINI_HIR_PIPELINE=1 pini run-llvm <file>`   implementation after flip
+    hir     `pini run-llvm <file>`                       same pipeline as legacy after the flip
 
 Usage: python3 tools/three-channel.py <fixture.pini> [more.pini ...]
 """
@@ -71,8 +71,7 @@ def probe(path):
         shutil.copy(path, copy)
         show("interp", *run([BIN, "run", copy], cwd=scratch))
         show("legacy", *run([BIN, "run-llvm", copy], cwd=scratch))
-        show("hir   ", *run([BIN, "run-llvm", copy],
-                            {"PINI_HIR_PIPELINE": "1"}, cwd=scratch))
+        show("hir   ", *run([BIN, "run-llvm", copy], cwd=scratch))
     print()
 
 

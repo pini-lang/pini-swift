@@ -64,20 +64,21 @@ final class DotCaseConstructionTests: XCTestCase {
         XCTAssertTrue(out.contains("轮子(4)"), out)
     }
 
-    /// 意图：LLVM 端歧义名点号构造显式 unsupported（D-3 裁决：报错 + 立案，解释器可用）
-    /// 推进性测量：IR 生成期报 unsupportedFeature（E6-004 通路）
+    /// 意图：歧义名点号构造在**无消歧登记**时于 lower 层显式拒绝（D-3 裁决：报错不静默，解释器可用）
+    /// 推进性测量：lower 期报未支持特征（E6-004 桶）
     /// 驳回性测量：静默解析到任一父枚举均不合格
     func testDotCaseAmbiguousUnsupportedViaIRGen() throws {
         let source = try loadPiniFixture("testDotCaseAmbiguousUnsupportedViaIRGen", filePath: #filePath)
-        let lexer = Lexer(source: source, fileName: "dotcase.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "dotcase.pini")
-        let module = try parser.parseModule()
-        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
-            guard case IRGenError.unsupportedFeature = error else {
-                XCTFail("应为 unsupportedFeature，实际: \(error)")
+        let tokens = try Lexer(source: source, fileName: "dotcase.pini").tokenize()
+        let module = try Parser(tokens: tokens, fileName: "dotcase.pini").parseModule()
+        // 消歧登记为空（不经 checker）→ 歧义名必须在 lower 层被拦下，不得静默择一。
+        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
+            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
+                XCTFail("应为 HIRLoweringError，实际: \(error)")
                 return
             }
+            XCTAssertTrue(hirError.message.contains("ambiguous"),
+                          "守卫消息应说明歧义，实际: \(hirError.message)")
         }
     }
 

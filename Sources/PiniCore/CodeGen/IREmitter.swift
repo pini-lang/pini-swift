@@ -147,7 +147,7 @@ public final class IREmitter {
     // MARK: - Module
 
     public func emit(module: HIRModule) -> String {
-        var header = "; Pini LLVM IR (HIR pipeline, M4 slice)\n"
+        var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += "declare ptr @bk_double_to_string(double)\n"
         header += "declare ptr @free(ptr)\n"

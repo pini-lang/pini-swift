@@ -276,20 +276,47 @@ final class OptionalTests: XCTestCase {
 
     // MARK: - #46-optional：LLVM 后端 Optional.some 构造/解构（G33 闭合）
 
-    /// 经 CLI 同款路径：parse → TypeChecker.check → IRGenerator(typeInference) → lli。
+    /// Locates the collection runtime dynamic library.
+    ///
+    /// Same ordering rule as the other execution suites: the environment
+    /// variable is the explicit override, the running bundle's directory comes
+    /// next because that library belongs to the binary under test, and the
+    /// working-tree build is the last resort.
+    private func locateRuntimeDylib() -> String? {
+        if let env = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
+           !env.isEmpty, FileManager.default.fileExists(atPath: env) {
+            return env
+        }
+        var url = URL(fileURLWithPath: #file)
+        while url.path != "/" {
+            let pkg = url.appendingPathComponent("Package.swift").path
+            if FileManager.default.fileExists(atPath: pkg) { break }
+            url = url.deletingLastPathComponent()
+        }
+        let dirs = [
+            (Bundle(for: OptionalTests.self).bundlePath as NSString).deletingLastPathComponent,
+            (url.path as NSString).appendingPathComponent(".build/debug"),
+        ]
+        for dir in dirs {
+            for ext in ["dylib", "so"] {
+                let cand = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+                if FileManager.default.fileExists(atPath: cand) { return cand }
+            }
+        }
+        return nil
+    }
+
+    /// 经 CLI 同款路径：parse → TypeChecker.check → HIR lowering → IR emission → lli。
     /// 验证 Optional.some 的装箱构造 + match 解构在 run-llvm 与解释器对齐。
     private func runViaLLIWithTypeCheck(_ source: String) throws -> String {
-        let lexer = Lexer(source: source, fileName: "test.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
+        let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
+        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
         let checker = TypeChecker()
         try checker.check(module: module)
         // #46-optional：开启持久表兜底，codegen 重推 match scrutinee 类型不受 check 后作用域 pop 影响。
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let generator = IRGenerator()
-        generator.typeInference = checker.typeInference
-        let ir = try generator.generate(module: module)
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let ir = IREmitter().emit(module: hir)
 
         let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_opt_\(UUID().uuidString).ll"
         defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -301,12 +328,26 @@ final class OptionalTests: XCTestCase {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: lli)
-        process.arguments = [tmpIR]
+        var lliArgs: [String] = []
+        if let runtime = locateRuntimeDylib() { lliArgs.append("--dlopen=\(runtime)") }
+        lliArgs.append(tmpIR)
+        process.arguments = lliArgs
         let pipe = Pipe()
+        let errorPipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = errorPipe
         try process.run()
         process.waitUntilExit()
+        // Without the runtime library the JIT fails to resolve the collection
+        // symbols and exits non-zero with empty stdout, which no caller can
+        // tell apart from a program that printed nothing.
+        guard process.terminationStatus == 0 else {
+            let err = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "LLIExit", code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "lli exited \(process.terminationStatus); stderr: \(err)"]
+            )
+        }
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
 
