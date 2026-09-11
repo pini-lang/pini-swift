@@ -47,6 +47,12 @@ public final class IREmitter {
         /// its defers (interpreter: the signal unwinds through
         /// executeBlock's own popDeferScope).
         let deferBase: Int
+        /// Index of the loop BODY's release frame in `pendingReleases`, the
+        /// counterpart of `deferBase`: a break/continue out of this loop
+        /// releases the collection handles registered in every frame from the
+        /// innermost one down to this index, both included. Leaving the body
+        /// block abandons those handles, and the runtime has no other holder.
+        let releaseBase: Int
     }
 
     private var loopStack: [LoopFrame] = []
@@ -177,6 +183,11 @@ public final class IREmitter {
         header += "declare i32 @bk_set_len(ptr)\n"
         header += "declare ptr @bk_set_add(ptr, ptr, i32, i32)\n"
         header += "declare ptr @bk_set_at(ptr, i32)\n"
+        // Collection release: the runtime owns the share count, so a destroy
+        // on a handle that is still aliased only drops this holder's share.
+        header += "declare void @bk_array_destroy(ptr)\n"
+        header += "declare void @bk_dict_destroy(ptr)\n"
+        header += "declare void @bk_set_destroy(ptr)\n"
         // libc + LLVM intrinsics (G9 string deepening / math intrinsics).
         header += "declare i64 @strlen(ptr)\n"
         header += "declare ptr @strcat(ptr, ptr)\n"
@@ -322,6 +333,10 @@ public final class IREmitter {
         loopStack = []
         deferScopeBase = 0
         pendingDefers.removeAll()
+        // Frame 0 of this function is its body block, pushed by the
+        // `emitBlock` call below; `emitBlock` leaves that frame to the exit
+        // paths here (see `emitReleases` in the fall-through tail).
+        pendingReleases.removeAll()
         terminated = false
         currentIsMain = function.name == "main"
         currentReturnType = function.returnType
@@ -347,6 +362,10 @@ public final class IREmitter {
         if !terminated {
             bodyIR += builder.fmtBr(labelName: "exit_block") + "\n"
             bodyIR += "exit_block:\n"
+            // H1-B: the top-level scope's handles are released here, on the
+            // fall-through edge. A `return` emits its own copy before its
+            // `ret`, so the two paths never both run.
+            emitReleases(downTo: 0)
             if currentIsMain {
                 bodyIR += " ret i32 0\n"
             } else if let returnType = function.returnType {
@@ -360,7 +379,13 @@ public final class IREmitter {
 
     // MARK: - Statements
 
-    private func emitBlock(_ statements: [HIRStmt]) {
+    ///
+    /// `seedingReleases` prepopulates the block's release frame with handles
+    /// whose declaration code was emitted *before* the block opened — the
+    /// `for … in` element bindings are alloca'd ahead of their body, so they
+    /// belong to the body block's frame even though they are not statements
+    /// inside it.
+    private func emitBlock(_ statements: [HIRStmt], seedingReleases seed: [ReleasedHandle] = []) {
         // G9 defer protocol: defers registered in this block run LIFO at
         // the block's normal end (loop bodies: every iteration). When the
         // block ends in a terminator the defers have already run — the
@@ -371,6 +396,8 @@ public final class IREmitter {
         // only drop it here when it is still on the stack.
         let frameBase = pendingDefers.count
         pendingDefers.append([])
+        let releaseBase = pendingReleases.count
+        pendingReleases.append(seed)
         for statement in statements {
             if terminated { break }
             emitStatement(statement)
@@ -379,9 +406,26 @@ public final class IREmitter {
             // A panic never runs defers — drop the frame. A return/break/
             // continue already flushed copies of the frames it unwound
             // through before its jump, and the block tail is unreachable.
+            // The root frame (releaseBase == 0) outlives its block: it
+            // represents the function's top-level scope and is owned by the
+            // function's exit paths, not by this call.
+            if releaseBase > 0 {
+                _ = pendingReleases.removeLast()
+            }
             _ = pendingDefers.removeLast()
         } else {
             flushDefers(downTo: frameBase)
+            // H1-B: a block's own handles drop their shares as control falls
+            // out of it, before the caller emits its jump (a loop body runs
+            // this every iteration). The function body's own frame is the one
+            // exception — its handles belong to the top-level scope and are
+            // released at the function exit, so `exit_block` (or the `return`
+            // path) is where they are cleaned up, not the body's last
+            // statement.
+            if releaseBase > 0 {
+                emitReleases(downTo: releaseBase)
+                _ = pendingReleases.removeLast()
+            }
             _ = pendingDefers.removeLast()
         }
     }
@@ -414,6 +458,86 @@ public final class IREmitter {
     /// scope -> defer (LIFO at scope end) -> wrapped statements.
     private var pendingDefers: [[[HIRStmt]]] = []
 
+    /// A local holding one share of a refcounted collection handle, whose
+    /// share this block must drop when it exits (H1-B, `pendingDefers`'
+    /// sibling). `slot` and `typeSpelling` are snapshotted at registration so
+    /// a later same-name redeclaration cannot release through the wrong slot.
+    private struct ReleasedHandle {
+        let slot: String
+        let typeSpelling: String
+        let destroySymbol: String
+    }
+
+    /// Collection handles to release per open block scope, in declaration
+    /// order (release runs in reverse). Frames are pushed by `emitBlock`, so
+    /// the frame stack tracks block scopes exactly; the function body's own
+    /// frame is left to the function exit, matching the legacy emitter's
+    /// top-level scope handling.
+    private var pendingReleases: [[ReleasedHandle]] = []
+
+    /// The `bk_*_destroy` symbol that drops one share of an opaque collection
+    /// handle, or nil when the spelling is not one of the three refcounted
+    /// families. Other handle-like types (lazyref pointers, foreign pointers)
+    /// have no share count and are not tracked here.
+    private static func collectionDestroySymbol(for typeSpelling: String) -> String? {
+        switch typeSpelling {
+        case "%bk_array*": return "bk_array_destroy"
+        case "%bk_dict*": return "bk_dict_destroy"
+        case "%bk_set*": return "bk_set_destroy"
+        default: return nil
+        }
+    }
+
+    /// Register a freshly declared local so its block exit drops its share of
+    /// the handle. Same-slot duplicates within one frame are skipped: a
+    /// shadowing redeclaration reuses the name, and releasing twice would drop
+    /// two shares for one holder (over-release → use-after-free).
+    private func registerReleasedHandle(slot: String, typeSpelling: String) {
+        guard let symbol = Self.collectionDestroySymbol(for: typeSpelling) else { return }
+        guard !pendingReleases.isEmpty else { return }
+        let frame = pendingReleases.count - 1
+        guard !pendingReleases[frame].contains(where: { $0.slot == slot }) else { return }
+        pendingReleases[frame].append(
+            ReleasedHandle(slot: slot, typeSpelling: typeSpelling, destroySymbol: symbol)
+        )
+    }
+
+    /// Emit one `bk_*_destroy` per registered handle in frames `base...`
+    /// (innermost frame first, and within a frame the reverse of declaration
+    /// order), WITHOUT popping the frames. A terminator and a block tail are
+    /// separate runtime paths over the same statically emitted code, so each
+    /// emits its own copy — the same contract `flushDefers` follows.
+    private func emitReleases(downTo base: Int) {
+        guard base < pendingReleases.count else { return }
+        for frame in pendingReleases[base...].reversed() {
+            for handle in frame.reversed() {
+                let loaded = builder.freshTemp()
+                bodyIR += builder.fmtLoad(
+                    name: loaded, type: handle.typeSpelling, ptr: handle.slot
+                ) + "\n"
+                bodyIR += " call void @\(handle.destroySymbol)(ptr \(loaded))\n"
+            }
+        }
+    }
+
+    /// Drop the share held by `slot` before it is overwritten by a new value
+    /// (reassignment is a release point, not just a store). Only slots that
+    /// were registered for release are eligible, so a variable of a non-handle
+    /// type is never touched.
+    private func emitReassignRelease(slot: String) {
+        guard pendingReleases.contains(where: { frame in
+            frame.contains(where: { $0.slot == slot })
+        }) else { return }
+        guard let registered = pendingReleases
+            .flatMap({ $0 })
+            .first(where: { $0.slot == slot }) else { return }
+        let loaded = builder.freshTemp()
+        bodyIR += builder.fmtLoad(
+            name: loaded, type: registered.typeSpelling, ptr: slot
+        ) + "\n"
+        bodyIR += " call void @\(registered.destroySymbol)(ptr \(loaded))\n"
+    }
+
     private func emitStatement(_ statement: HIRStmt) {
         switch statement {
         case .allocVar(let name, let type, _, let initializer):
@@ -425,12 +549,19 @@ public final class IREmitter {
                 bodyIR += builder.fmtStore(value: value.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
                 emitRetainIfAliased(initializer, value)
             }
+            // H1-B: the fresh local holds one share of its handle; drop it
+            // when the declaring block exits.
+            registerReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling)
 
         case .storeVar(let name, let type, let value):
             guard let slot = lookupSlot(name) else {
                 fatalError("IREmitter: store to undeclared variable '\(name)' (HIRLowerer guarantees declarations)")
             }
             let lowered = emitExpr(value)
+            // H1-B: overwriting a handle-typed local drops the share it held
+            // before the store replaces it. The runtime only decrements, so an
+            // alias still holding the old handle keeps it alive.
+            emitReassignRelease(slot: slot)
             bodyIR += builder.fmtStore(value: lowered.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
             emitRetainIfAliased(value, lowered)
 
@@ -451,6 +582,10 @@ public final class IREmitter {
             // return (interpreter: the signal unwinds through each
             // executeBlock's popDeferScope, innermost first).
             flushDefers(downTo: deferScopeBase)
+            // H1-B: returning leaves the function outright, abandoning every
+            // open scope; the fall-through `exit_block` cleanup is only
+            // reached when control does NOT return, so the two never both run.
+            emitReleases(downTo: 0)
             if let value = value {
                 let lowered = emitExpr(value)
                 bodyIR += " ret \(lowered.llvmType) \(lowered.ssaName)\n"
@@ -514,6 +649,12 @@ public final class IREmitter {
         if loopStack.count >= depth {
             let frame = loopStack[loopStack.count - depth]
             flushDefers(downTo: frame.deferBase)
+            // H1-B: breaking abandons the loop body's scope (and every scope
+            // nested inside it) before the jump, so their handles are released
+            // here. Iterations that end normally release the same handles at
+            // the body block's tail — separate runtime paths, separate copies
+            // of the same release code.
+            emitReleases(downTo: frame.releaseBase)
             bodyIR += builder.fmtBr(labelName: frame.exit) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: break outside loop")
@@ -534,6 +675,9 @@ public final class IREmitter {
         if loopStack.count >= depth {
             let frame = loopStack[loopStack.count - depth]
             flushDefers(downTo: frame.deferBase)
+            // H1-B: ending the iteration early abandons the scopes it held;
+            // release them before the jump (same contract as emitBreak).
+            emitReleases(downTo: frame.releaseBase)
             let target = depth == 1 ? frame.continueTarget : frame.header
             bodyIR += builder.fmtBr(labelName: target) + "\n"
         } else {
@@ -1020,7 +1164,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : condLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count))
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
@@ -1034,7 +1178,7 @@ public final class IREmitter {
             bodyIR += "\(stepLabel):\n"
             // Inside the step, an unlabeled continue goes to its own end
             // (interpreter: continue in the step block → next iteration).
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count))
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
             scopes.append([:])
             terminated = false
             emitBlock(step)
@@ -1103,7 +1247,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : incLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count))
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
         scopes.append([:])
         terminated = false
         // Pattern bindings: a fresh slot per iteration (the loop scope makes
@@ -1111,6 +1255,9 @@ public final class IREmitter {
         // interpreter's per-iteration Environment).
         let indexForBind = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: indexForBind, type: "i32", ptr: indexSlot) + "\n"
+        // H1-B: element bindings that are collection handles hold one share
+        // for the iteration; collect them for the body block's release frame.
+        var patternReleases: [ReleasedHandle] = []
         for (position, name) in pattern.enumerated() {
             guard name != "_" else { continue }
             let elementType = elementTypes[position]
@@ -1129,13 +1276,18 @@ public final class IREmitter {
             bodyIR += " \(slot) = alloca \(spelling)\n"
             bodyIR += builder.fmtStore(value: loaded, type: spelling, ptr: slot) + "\n"
             scopes[scopes.count - 1][name] = slot
+            if let symbol = Self.collectionDestroySymbol(for: spelling) {
+                patternReleases.append(
+                    ReleasedHandle(slot: slot, typeSpelling: spelling, destroySymbol: symbol)
+                )
+            }
         }
         // The step block shares the loop environment in the interpreter
         // (executeFor runs it with currentEnv = loopEnv), so the pattern
         // variables stay visible there — a bare `v` in `step:` resolves to
         // the body's slot. Hand the same bindings to the step scope.
         let patternBindings = scopes[scopes.count - 1]
-        emitBlock(body)
+        emitBlock(body, seedingReleases: patternReleases)
         loopStack.removeLast()
         if !terminated {
             bodyIR += builder.fmtBr(labelName: step != nil ? stepLabel : incLabel) + "\n"
@@ -1144,7 +1296,7 @@ public final class IREmitter {
 
         if let step = step {
             bodyIR += "\(stepLabel):\n"
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count))
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
             scopes.append(patternBindings)
             terminated = false
             emitBlock(step)
@@ -3252,6 +3404,12 @@ public final class IREmitter {
         let savedBodyIR = bodyIR
         let savedBuilder = builder
         let savedCaptureSlots = captureSlots
+        // A closure is its own release scope: its body block is frame 0 of a
+        // fresh stack, exactly like a function body. Without this the closure
+        // would inherit the enclosing function's frames, and a `return` inside
+        // it (which releases down to frame 0) would drop the enclosing
+        // function's top-level handles — an over-release.
+        let savedPendingReleases = pendingReleases
 
         scopes = [[:]]
         slotCounters = [:]
@@ -3265,6 +3423,7 @@ public final class IREmitter {
         builder = IRBuilder()
         bodyIR = ""
         captureSlots = [:]
+        pendingReleases = []
 
         let envTypeName = "%__closure_env_\(id)"
         for (index, capture) in captures.enumerated() {
@@ -3294,6 +3453,9 @@ public final class IREmitter {
         if !terminated {
             bodyIR += builder.fmtBr(labelName: "exit_block") + "\n"
             bodyIR += "exit_block:\n"
+            // H1-B: drop the closure's own top-level handles on the
+            // fall-through edge (a `return` emits its own copy before its ret).
+            emitReleases(downTo: 0)
             if let returnType = returnType {
                 bodyIR += " ret \(returnType.llvmSpelling) undef\n"
             } else {
@@ -3320,6 +3482,7 @@ public final class IREmitter {
         bodyIR = savedBodyIR
         builder = savedBuilder
         captureSlots = savedCaptureSlots
+        pendingReleases = savedPendingReleases
     }
 
     // MARK: - G9 string deepening
