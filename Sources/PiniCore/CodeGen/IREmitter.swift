@@ -1639,7 +1639,30 @@ public final class IREmitter {
     /// spaces, one trailing newline (D-A=A1 — mirrors the interpreter's
     /// stringify-join byte stream). No newline after each argument, unlike
     /// the single-argument print path.
+    ///
+    /// This path renders through the scalar printer, which carries no case
+    /// for aggregate or handle spellings: such an argument reaches its
+    /// fallback and is handed to `printf` as an integer, so the statement
+    /// prints the value's bits where its formatted value belongs — silently
+    /// wrong output with no diagnostic. Aggregate arguments therefore trap
+    /// at run time instead (`bk_panic` is noreturn), keeping the gap
+    /// observable; the formatting that would render them is a later grid.
+    /// The single-argument path already gates the same shapes, at lowering
+    /// time.
     private func emitPrintMulti(arguments: [HIRExpr]) -> IRValue {
+        if arguments.contains(where: { Self.hasNoScalarRendering(hirType(of: $0)) }) {
+            let message = emitStringConstant(
+                "Pini runtime error: printing an aggregate value is a later grid (value formatting)"
+            )
+            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " unreachable\n"
+            // Resume on a fresh block so the statement stream keeps a
+            // well-formed block structure. Control never reaches it: the
+            // panic does not return.
+            bodyIR += "print.multi.resume.\(builder.freshLabel()):\n"
+            terminated = false
+            return IRValue(llvmType: "void", ssaName: "")
+        }
         for (index, argument) in arguments.enumerated() {
             if index > 0 {
                 let space = emitStringConstant(" ")
@@ -1650,6 +1673,21 @@ public final class IREmitter {
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// True for the types the scalar print path cannot render — it falls
+    /// back to printing the value's spelling as an integer, so aggregates
+    /// (`{ ... }` registers) and runtime handles (`%bk_*`) would come out as
+    /// their bits. Scalars, strings and raw pointers keep the existing
+    /// scalar spelling.
+    private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer:
+            return false
+        case .result, .array, .optional, .nominal, .enumeration, .dict,
+             .lazyRef, .set, .tuple, .function:
+            return true
+        }
     }
 
     // MARK: - G13 batch 1 (LazyRef)
