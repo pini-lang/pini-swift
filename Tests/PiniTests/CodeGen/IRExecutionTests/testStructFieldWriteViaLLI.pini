@@ -2,7 +2,7 @@
     x: I32 = 0
 
 main|func() -> ():
-    let c = Point()
+    var c = Point()
     c.x = 10
     print(c.x)
     return
