@@ -9,20 +9,51 @@ final class IRExecutionTests: XCTestCase {
     private var lliAvailable: Bool { lliPath != nil }
     private var clangAvailable: Bool { clangPath != nil }
 
-    /// 定位集合运行时动态库（swift build 产物）：`.build/debug/libPiniRuntime.{dylib,so}`。
+    /// Locates the collection runtime dynamic library.
+    ///
+    /// Order matters. The freshly built library is the one that belongs to the
+    /// binary currently under test, so it is resolved from the running test
+    /// bundle's own directory first; a stale `.build/debug` copy in the working
+    /// tree (the normal case, since tests build into a separate scratch path)
+    /// would otherwise be picked and linked against silently. The environment
+    /// variable stays the explicit override, and the working-tree copy is the
+    /// last resort for a plain `swift build`.
     private func locateRuntimeDylib() -> String? {
+        if let env = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
+           !env.isEmpty, FileManager.default.fileExists(atPath: env) {
+            return env
+        }
+        var dirs = [
+            (Bundle(for: IRExecutionTests.self).bundlePath as NSString).deletingLastPathComponent
+        ]
         var url = URL(fileURLWithPath: #file)
         while url.path != "/" {
             let pkg = url.appendingPathComponent("Package.swift").path
             if FileManager.default.fileExists(atPath: pkg) { break }
             url = url.deletingLastPathComponent()
         }
-        let buildDir = (url.path as NSString).appendingPathComponent(".build/debug")
-        for ext in ["dylib", "so"] {
-            let cand = (buildDir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
-            if FileManager.default.fileExists(atPath: cand) { return cand }
+        dirs.append((url.path as NSString).appendingPathComponent(".build/debug"))
+        for dir in dirs {
+            for ext in ["dylib", "so"] {
+                let cand = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+                if FileManager.default.fileExists(atPath: cand) { return cand }
+            }
         }
         return nil
+    }
+
+    /// Arguments for running an emitted `.ll` under the JIT.
+    ///
+    /// Emitted IR calls into the collection runtime, so the library has to be
+    /// on the search path. Without it the JIT reports unresolved symbols and
+    /// exits with empty stdout, which reads exactly like a program that printed
+    /// nothing — a silent false negative. Every lli invocation in this file
+    /// goes through here so that the policy cannot drift per call site.
+    private func lliArguments(forIRAt path: String, dylib: String? = nil) -> [String] {
+        var args: [String] = []
+        if let runtime = dylib ?? locateRuntimeDylib() { args.append("--dlopen=\(runtime)") }
+        args.append(path)
+        return args
     }
 
     private func runViaLLI(_ source: String, fileName: String = "test.pini", dylib: String? = nil, typeCheck: Bool = false) throws -> String {
@@ -48,20 +79,31 @@ final class IRExecutionTests: XCTestCase {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: lli)
-        var args: [String] = []
-        if let dylib { args.append("--dlopen=\(dylib)") }
-        args.append(tmpIR)
-        process.arguments = args
+        process.arguments = lliArguments(forIRAt: tmpIR, dylib: dylib)
 
         let pipe = Pipe()
+        let errorPipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = errorPipe
 
         try process.run()
         process.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
+        // A non-zero exit means the JIT itself failed — unresolved runtime
+        // symbol, malformed IR. Returning stdout there reports an empty string,
+        // which no caller can tell apart from "the program printed nothing".
+        // Surface the status and stderr instead.
+        guard process.terminationStatus == 0 else {
+            let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let err = String(data: errData, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "LLIExit", code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey:
+                    "lli exited \(process.terminationStatus); stderr: \(err); stdout: \(output)"]
+            )
+        }
         return output
     }
 
@@ -87,8 +129,8 @@ final class IRExecutionTests: XCTestCase {
                           userInfo: [NSLocalizedDescriptionKey: "clang not available"])
         }
         var clangArgs: [String] = []
-        if let dylib {
-            let dir = URL(fileURLWithPath: dylib).deletingLastPathComponent().path
+        if let runtime = dylib ?? locateRuntimeDylib() {
+            let dir = URL(fileURLWithPath: runtime).deletingLastPathComponent().path
             clangArgs += ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"]
         }
         clangArgs += ["-o", tmpBin, tmpIR]
@@ -105,13 +147,26 @@ final class IRExecutionTests: XCTestCase {
         let run = Process()
         run.executableURL = URL(fileURLWithPath: tmpBin)
         let pipe = Pipe()
+        let errorPipe = Pipe()
         run.standardOutput = pipe
-        run.standardError = Pipe()
+        run.standardError = errorPipe
         try run.run()
         run.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
+        let output = String(data: data, encoding: .utf8) ?? ""
+        // Same reasoning as the JIT path: a non-zero exit is a failure to
+        // report, not an empty program.
+        guard run.terminationStatus == 0 else {
+            let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let err = String(data: errData, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "AOTExit", code: Int(run.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey:
+                    "aot binary exited \(run.terminationStatus); stderr: \(err); stdout: \(output)"]
+            )
+        }
+        return output
     }
 
     // MARK: - lli execution tests
@@ -844,7 +899,7 @@ final class IRExecutionTests: XCTestCase {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: LLVMToolchain.lliPath!)
-        proc.arguments = [irPath]
+        proc.arguments = lliArguments(forIRAt: irPath)
         proc.standardInput = inputPipe
         let outPipe = Pipe(); proc.standardOutput = outPipe
         proc.standardError = Pipe()
@@ -876,7 +931,7 @@ final class IRExecutionTests: XCTestCase {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: LLVMToolchain.lliPath!)
-        proc.arguments = [irPath]
+        proc.arguments = lliArguments(forIRAt: irPath)
         let outPipe = Pipe(); proc.standardOutput = outPipe
         proc.standardError = Pipe()
         try proc.run(); proc.waitUntilExit()
