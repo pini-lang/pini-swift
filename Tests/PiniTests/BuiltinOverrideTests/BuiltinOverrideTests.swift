@@ -78,18 +78,19 @@ final class BuiltinOverrideTests: XCTestCase {
                        "自由函数通道与成员通道互不影响")
     }
 
-    /// 意图：IR 后端对内建类型用户扩展维持不支持（E6-002，既有 Experimental 边界——回归锁）。
+    /// 意图：IR 后端对内建类型用户扩展维持不支持（既有 Experimental 边界——回归锁）。
+    /// 门码随管线收敛：HIR 的各个未实现门共用一个 E6 未支持特征码，见 HIRLoweringError 注释。
     func testIRUnsupportedForBuiltinExtension() throws {
         let source = try loadPiniFixture("testIRUnsupportedForBuiltinExtension", filePath: #filePath)
-        let lexer = Lexer(source: source, fileName: "test.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
-        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
-            guard case IRGenError.unsupportedExpression = error else {
-                XCTFail("应为 unsupportedExpression（E6-002），实际: \(error)")
+        let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
+        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
+        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
+            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
+                XCTFail("应为 HIRLoweringError，实际: \(error)")
                 return
             }
+            XCTAssertTrue(hirError.code.hasSuffix("-004"),
+                          "应落在 E6 未支持特征桶，实际: \(hirError.code)")
         }
     }
 }

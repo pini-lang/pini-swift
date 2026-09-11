@@ -618,11 +618,14 @@ final class IRExecutionTests: XCTestCase {
         """
         let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
         let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
-            guard case IRGenError.unsupportedFeature = error else {
-                XCTFail("应为 unsupportedFeature，实际: \(error)")
+        // 消歧登记为空（不经 checker）→ 歧义名必须在 lower 层被拦下，不得静默择一。
+        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
+            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
+                XCTFail("应为 HIRLoweringError，实际: \(error)")
                 return
             }
+            XCTAssertTrue(hirError.message.contains("ambiguous"),
+                          "守卫消息应说明歧义，实际: \(hirError.message)")
         }
     }
 
@@ -959,15 +962,15 @@ final class IRExecutionTests: XCTestCase {
     /// grapheme 切分），LLVM C 字符串后端 v1 显式 unsupported——IR 生成期报错，无需执行。
     func testIsLetterUnsupportedViaIRGen() throws {
         let source = try loadPiniFixture("testIsLetterUnsupportedViaIRGen", filePath: #filePath)
-        let lexer = Lexer(source: source, fileName: "test.pini")
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: "test.pini")
-        let module = try parser.parseModule()
-        XCTAssertThrowsError(try IRGenerator().generate(module: module)) { error in
-            guard case IRGenError.unsupportedExpression = error else {
-                XCTFail("应为 unsupportedExpression，实际: \(error)")
+        let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
+        let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
+        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
+            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
+                XCTFail("应为 HIRLoweringError，实际: \(error)")
                 return
             }
+            XCTAssertTrue(hirError.code.hasSuffix("-004"),
+                          "应落在 E6 未支持特征桶，实际: \(hirError.code)")
         }
     }
 
