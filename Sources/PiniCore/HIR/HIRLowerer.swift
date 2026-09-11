@@ -3514,89 +3514,6 @@ public enum HIRLowerer {
 
     // MARK: - Array stores & compound assignment (G2 batch 2)
 
-    /// Nested writes (`m[i][j] = v`) whose chain passes through a dictionary at
-    /// any level.
-    ///
-    /// The emitter's top-down copy-on-write split chain is array-only: every
-    /// level is split with `bk_array_ensure_unique_at` and typed `%bk_array*`.
-    /// A dictionary root or intermediate level therefore either feeds a string
-    /// key into the split call's `i32` slot (lli rejects the module outright)
-    /// or skips the split entirely and leaves an aliased snapshot sharing the
-    /// box that was written. Until the chain dispatches on the container type,
-    /// the shape is rejected loudly: an explicit unsupported-feature error is
-    /// strictly better than emitting IR that dies in lli or silently corrupts
-    /// a value-type snapshot.
-    private static func nestedWriteChainHasDict(
-        _ container: Expression, in context: FunctionContext
-    ) -> Bool {
-        // A plain variable target is the flat write path. Both the array and
-        // the dictionary store split the handle they hand to the runtime and
-        // write the returned handle back to the owning slot, so a dictionary
-        // container is correct here and must stay allowed.
-        guard case .subscript(let inner, _, _) = container else { return false }
-        // `a[0]["k"] = v` — the container itself is a dictionary. The
-        // dictionary store path reads it plainly, so nothing is split and an
-        // aliased snapshot keeps sharing the written box.
-        if let type = containerChainType(container, in: context), case .dict = type {
-            return true
-        }
-        // `d["a"][0] = v` — the array store path does walk the split chain, but
-        // that walk is array-only, and a dictionary level above the target puts
-        // a string key into the split call's `i32` slot.
-        return chainHasDictContainer(inner, in: context)
-    }
-
-    /// Walk up a subscript chain looking for a dictionary level. Stops at the
-    /// first element whose static type is unknown.
-    private static func chainHasDictContainer(
-        _ container: Expression, in context: FunctionContext
-    ) -> Bool {
-        var cursor = container
-        while let type = containerChainType(cursor, in: context) {
-            if case .dict = type { return true }
-            guard case .subscript(let inner, _, _) = cursor else { return false }
-            cursor = inner
-        }
-        return false
-    }
-
-    /// Static type of a container expression when it is a plain variable or a
-    /// subscript chain rooted at one. Anything else (literals, calls) yields
-    /// `nil`, which the nested-write guard reads as "not a dictionary" — an
-    /// unknown shape is never rejected on suspicion.
-    private static func containerChainType(
-        _ expr: Expression, in context: FunctionContext
-    ) -> HIRType? {
-        switch expr {
-        case .identifier(let name, _):
-            return context.variableTypes[name]
-        case .subscript(let inner, _, _):
-            guard let containerType = containerChainType(inner, in: context) else {
-                return nil
-            }
-            switch containerType {
-            case .array(let element): return element
-            case .dict(_, let value): return value
-            default: return nil
-            }
-        default:
-            return nil
-        }
-    }
-
-    /// Gate a nested write on `nestedWriteChainHasDict`. Plain array chains
-    /// (any depth) pass through untouched — they are already correct.
-    private static func requireArrayOnlyNestedWriteChain(
-        _ container: Expression, in context: FunctionContext, at location: SourceLocation
-    ) throws {
-        guard nestedWriteChainHasDict(container, in: context) else { return }
-        throw unsupported(
-            "nested subscript write through a dictionary is a later grid "
-                + "(the copy-on-write split chain is array-only)",
-            at: location
-        )
-    }
-
     /// Lower `container[index] = value` for array containers. The read path
     /// gates the container type; the value adopts the element type.
     private static func lowerSubscriptStore(
@@ -3606,7 +3523,6 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> HIRStmt {
-        try requireArrayOnlyNestedWriteChain(container, in: context, at: location)
         let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
         let elementType: HIRType
         switch loweredContainer.type {
@@ -3663,8 +3579,7 @@ public enum HIRLowerer {
             )
             return .storeVar(name: name, type: varType, value: combined)
         }
-        if case .subscript(let container, let index, _) = left {
-            try requireArrayOnlyNestedWriteChain(container, in: context, at: location)
+        if case .subscript = left {
             let read = try lowerExpr(left, expected: nil, into: &context)
             guard read.type.isNumeric else {
                 throw unsupported(

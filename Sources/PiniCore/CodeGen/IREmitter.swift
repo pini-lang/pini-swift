@@ -170,6 +170,7 @@ public final class IREmitter {
         header += "declare i32 @bk_dict_len(ptr)\n"
         header += "declare ptr @bk_dict_get(ptr, ptr, i32, i32)\n"
         header += "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)\n"
+        header += "declare ptr @bk_dict_ensure_unique_at(ptr, ptr, i32, i32)\n"
         header += "declare ptr @bk_dict_key_at(ptr, i32)\n"
         header += "declare ptr @bk_dict_val_at(ptr, i32)\n"
         header += "declare ptr @bk_set_create()\n"
@@ -794,7 +795,17 @@ public final class IREmitter {
         // Dictionary store (G5): keys/values boxed by their own types; the
         // returned handle is written back to the owning slot (COW parity).
         if case .dict(let keyType, let valueType) = hirType(of: container) {
-            let containerValue = emitExpr(container)
+            // A nested dict target (`a["k"]["j"] = v`) joins the same top-down
+            // chain the array branch below uses. Handing bk_dict_set a bare
+            // emitExpr handle would let it write through a shared box and
+            // silently mutate every alias — the failure the legacy emitter
+            // avoids by splitting here too.
+            let containerValue: IRValue
+            if case .subscriptGet = container {
+                containerValue = emitUniqueContainerHandle(container)
+            } else {
+                containerValue = emitExpr(container)
+            }
             let indexValue = emitExpr(index)
             let loweredValue = emitExpr(value)
             emitRetainIfAliased(value, loweredValue)
@@ -846,32 +857,48 @@ public final class IREmitter {
     /// Top-down COW split for nested container writes (`m[0][1] = v`).
     /// Returns the exclusive innermost handle. The root variable's split
     /// handle is written back to its slot; intermediate levels are rewritten
-    /// in place by `bk_array_ensure_unique_at` (which deliberately does not
-    /// release the old child handle — see the runtime's UAF note).
+    /// in place by `bk_array_ensure_unique_at` / `bk_dict_ensure_unique_at`
+    /// (which deliberately do not release the old child handle — see the
+    /// runtime's UAF note).
+    ///
+    /// Handles are typed per level: the array and dict families are distinct
+    /// opaque aggregates, and the dict split additionally takes the key boxed
+    /// with its width and tag. The legacy emitter dispatches on those same
+    /// three pieces, so both chains stay step-for-step equivalent.
     private func emitUniqueContainerHandle(_ container: HIRExpr) -> IRValue {
         switch container {
-        case .load(let name, _):
+        case .load(let name, let slotType):
+            let handleSpelling = slotType.llvmSpelling
             let value = emitExpr(container)
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast \(handleSpelling) \(value.ssaName) to ptr\n"
             let newRaw = builder.freshTemp()
             bodyIR += " \(newRaw) = call ptr @bk_handle_ensure_unique(ptr \(raw))\n"
             let typed = builder.freshTemp()
-            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to \(handleSpelling)\n"
             if let slot = lookupSlot(name) {
-                bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+                bodyIR += builder.fmtStore(value: typed, type: handleSpelling, ptr: slot) + "\n"
             }
-            return IRValue(llvmType: "%bk_array*", ssaName: typed)
-        case .subscriptGet(let inner, let index, _):
+            return IRValue(llvmType: handleSpelling, ssaName: typed)
+        case .subscriptGet(let inner, let index, let resultType):
             let parent = emitUniqueContainerHandle(inner)
             let parentRaw = builder.freshTemp()
-            bodyIR += " \(parentRaw) = bitcast %bk_array* \(parent.ssaName) to ptr\n"
-            let indexValue = emitExpr(index)
+            bodyIR += " \(parentRaw) = bitcast \(parent.llvmType) \(parent.ssaName) to ptr\n"
             let childRaw = builder.freshTemp()
-            bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+            switch parent.llvmType {
+            case "%bk_dict*":
+                let keyValue = emitExpr(index)
+                let (keySpelling, keyWidth, keyTag) = arrayElementABI(hirType(of: index))
+                let keyBox = boxValue(keyValue, spelling: keySpelling)
+                bodyIR += " \(childRaw) = call ptr @bk_dict_ensure_unique_at(ptr \(parentRaw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
+            default:
+                let indexValue = emitExpr(index)
+                bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+            }
+            let childSpelling = resultType.llvmSpelling
             let typed = builder.freshTemp()
-            bodyIR += " \(typed) = bitcast ptr \(childRaw) to %bk_array*\n"
-            return IRValue(llvmType: "%bk_array*", ssaName: typed)
+            bodyIR += " \(typed) = bitcast ptr \(childRaw) to \(childSpelling)\n"
+            return IRValue(llvmType: childSpelling, ssaName: typed)
         default:
             return emitExpr(container)
         }
