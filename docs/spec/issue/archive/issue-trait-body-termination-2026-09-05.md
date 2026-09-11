@@ -1,7 +1,7 @@
 # 缺陷候选：trait 块终止性——trait 块后接任何后续顶级声明解析失败
 
 - 状态：**Closed（2026-09-06 修复落地，见文末落地记录）**
-- 发现来源：spec 反录入勘测（`docs/spec/issue/issue-spec-backfill-survey-2026-09-05.md` 矩阵 #13）
+- 发现来源：spec 反录入勘测（`docs/spec/issue/archive/issue-spec-backfill-survey-2026-09-05.md` 矩阵 #13）
 
 ## 复现（探针见 `probes-backfill-2026-09-05/`）
 

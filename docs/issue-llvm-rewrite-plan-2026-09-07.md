@@ -12,7 +12,11 @@
   （字典接上独占化入口），D2 实现名义值格式化（struct / object 打印）。
   探针全量重跑：**FLIP BLOCKERS 8 → 0**；双分母（`examples/` 78 + LLVM 驱动套 311）
   双双零阻塞，唯一 `TIMEOUT_ALL` 是设计内死循环夹具。
-  下一步 M6b 翻转批（一次性、不可逆）待点名执行）**
+  **M6b 翻转批（2026-09-12，一次性、不可逆）已完成**：b0 收口阻碍解决批 → b2 测试驱动全量迁移
+  → b3 退役旧生成器单测套件 → b4+b5 删除旧后端并去迁移开关 → b6/b7/b8 收口。
+  终值：回归 1222/3 skip/0 fail；全量探针 6 根 306 夹具 FLIP BLOCKERS 0。
+  后续里程碑另行规划：**LR-4 解释器统一 HIR**（前置已满足）、**LR-11 并发运行时**
+  ——后者于 2026-09-12 裁决**搁置**，重启条件 = **selfhost 探针完成解释器端**）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -40,6 +44,11 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 - `CodeGen/` 只依赖 HIR；目录内 grep `AST` 引用 / `PiniType` 判断分支 = 0
 - `unsupported` 能力抛点全仓 = 1（HIRLowerer 内）；发射器内 = 0
 
+> **实况订正（2026-09-12，M6b 翻转后实测）**：落地形态与上表有两处差异 ——
+> ① 发射器**未按 `Emit/` 分域拆分**，收敛为单文件 `Sources/PiniCore/CodeGen/IREmitter.swift`
+> （配 `IRBuilder`）；② `IRGenError` 已随旧后端删除，能力门统一抛 `HIRLoweringError` 的 E6-004 桶。
+> 上述依赖规则（`CodeGen/` 只依赖 HIR、`unsupported` 抛点单点收敛）实测成立。
+
 ## 决策记录（LR-* 编号，全仓唯一前缀）
 
 | ID | 决策点 | 裁决（2026-09-07） |
@@ -55,6 +64,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 | LR-8 | print(F64) 展示语义 | **A 最短往返**（用户裁决，2026-09-08；A/B/%g 三方案调研后定）：spec 钉四条形态规则（§2.8 值展示语义），两后端委托宿主标准库 `String(Double)`；LLVM 侧经运行时 `bk_double_to_string`（只新增符号，bk_* 现有签名零改动）；%g 方案否决（指数阈值第三形态，工程量同 A 且语义不净） |
 | LR-10 | 旧后端 i64 print sext 处置 | **wontfix**（用户裁决，2026-09-08）：旧后端冻结 + M6 整体删除自然消亡，新管线已 trunc 修正；工单关闭，M5 期间出现硬需求再翻案 |
 | LR-11 | 并发语料（8 文件）在 M5 的处置 | **A 除名立案**（用户裁决「按建议来」，2026-09-08）：并发语料真身是 `=>`/wait/await/Future 真并发执行模型，非「注册两个内建」；立案 `docs/issue-llvm-concurrency-runtime-2026-09-08.md`，M6 后独立里程碑启动；M5 格序顺移（数组方法升 G2） |
+| LR-13 | 并发运行时（LR-11 立案）的推进时机 | **搁置**（用户裁决，2026-09-12）：重启条件 = **selfhost 探针完成解释器端**；在那之前不开 LLVM 并发运行时里程碑 |
 | LR-12 | Result 的 IR ABI（G1） | **A 定长 tagged 三字聚合**（用户裁决「按建议来」，2026-09-08）：`{ i64 tag, <T> ok, i64 err }`；Pini 的 `^T` 书写面只钉 T 不钉 E（checker 实测 `err(42)` 放行）→ err 槽类型擦除为机器字（构造位加宽、try 位绑字）；ok/err 构造与解包全内联 IR，运行时零改动 |
 
 ## ADR-031 连带修订（随 M0 落地）
@@ -89,6 +99,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 - **M6b 翻转批（一次性）**：迁移 LLVM 驱动测试套（补 typecheck 对齐 CLI）→ 删旧
   CodeGen 9 文件 → CLI 去 `PINI_HIR_PIPELINE` 门恒走新管线 → `IRGeneratorTests`
   149 处 IR 文本断言同批删除（约束 8）→ README 终版更新。
+  **实测订正（2026-09-12）**：旧 CodeGen 实删 **11 文件 5443 行**（含 `IRGenError`）；
+  旧套件实为 **88 例 + 83 夹具**（「149 处」系按断言行计的旧估值）；README 终版更新当时漏做，已补。
   顺序硬约束：**迁移测试必须先于删源码**。
 
 止损判据：ADR-031 §4 原文四条（影子类型表 ≥7 张；单次回归 >5 测试且 >1 小时；单次
@@ -833,7 +845,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
        **一致**，不属假绿）；它属 a3 口径订正**新暴露**的范围（从未进入 M6a 的
        14 夹具聚类，非原计划欠账）；把它拉进 M6a 会使准备批失去「零删除、可停」的形状，
        而 a7 的验收口径本身允许「全部转已裁决豁免」。立案
-       `docs/issue-hir-aggregate-value-print-2026-09-10.md`（含解释器格式契约、
+       `docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md`（含解释器格式契约、
        估工未知项、以及「若估工很低可在 a7 复扫点重新纳入」的入口）。
     3. 该裁决同时在 `docs/llvm-capability-matrix.md` 新增「HIR 迁移期已知限制」节，
        把豁免写成**已声明**的限制而非未记载的差距（该节同时复核四套夹具数与
@@ -989,7 +1001,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     分母只覆盖四根时的基线，与本值不可直接相减——`testNestedCOWIRContract_2` 从未计入
     该基线，是判据补入 stderr 形状后才从 `OK_HARNESS` 暴露的；C4 的提交说明明写
     「4 change, all intended」并列出该例，即**实现按 4 例改动、计数仍写 3 例**。详见
-    `docs/issue-hir-probe-containment-2026-09-11.md`。）
+    `docs/spec/issue/archive/issue-hir-probe-containment-2026-09-11.md`。）
   - **隔离证明**：C4 影响面 18 夹具 → 4 变 / 14 不变；C5 影响面 11 文件 19 处多参数
     print 调用 → 仅目标 1 处变。两份影响面都含 `examples/` 语料且逐条不变。
   - **门禁与回归**：`check-doc-links` 通过；全量回归 **1310 / 0 / 0**（与 M6a 终值一致）。
@@ -1006,14 +1018,14 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     「本次仅新增并现跑重筛 E-156；存量条目未重新验证」；status 分布
     STALE 13 / PENDING_DELETE 12 / FRESH 2。
   - **新立工单（5 张，均只登记不动手，见 `docs/` 顶层）**：
-    `docs/issue-legacy-f64-value-int64-trap-2026-09-11.md`（旧后端 `Int64(value)` 先于
+    `docs/spec/issue/archive/issue-legacy-f64-value-int64-trap-2026-09-11.md`（旧后端 `Int64(value)` 先于
     范围守卫求值，超大 F64 触发 Swift trap；建议 wontfix 随旧 CodeGen 删除）、
-    `docs/issue-hir-collection-release-observability-2026-09-11.md`（集合释放唯一信号是
+    `docs/spec/issue/archive/issue-hir-collection-release-observability-2026-09-11.md`（集合释放唯一信号是
     24 条 IR 文本断言，执行等价判据失明；X3 触发止损点）、
     `docs/issue-hir-defer-block-form-2026-09-11.md`（`defer:` 块形式报 E6-004：AST 包成
     `scopedBlock`，降级期无该分支）、
     `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（`s[1:3]` 对 CJK 按字节切出
-    非法 UTF-8）、`docs/issue-hir-aggregate-value-print-2026-09-10.md`（按 C5 更新，
+    非法 UTF-8）、`docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md`（按 C5 更新，
     多参数形态已堵）。
   - **横切项**：X1 完成（探针转正 + 两处修复）；X2 完成性质核验（`CHANGE_F64` = 旧后端
     `%f` 六位小数 vs 新通道最短往返，承载工单已 Closed；完整 16 例清单的重基线归翻转批，
@@ -1026,7 +1038,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 
   - **起因**：收口后复核真阻塞清单时，针对 `IRGeneratorTests` + `HIRTests` 的定向 sweep
     **卡死不再返回**（用户提示 lli 进程未正常结束）。追查发现是探针自身的缺陷，
-    而非被测对象——立案 `docs/issue-hir-probe-containment-2026-09-11.md`（同批 Closed）。
+    而非被测对象——立案 `docs/spec/issue/archive/issue-hir-probe-containment-2026-09-11.md`（同批 Closed）。
   - **三层缺陷**：① 超时后的第二次排空调用**无界**，而组杀不保证杀掉 lli
     （实测 `pini` 已死、`lli` 仍在自己的进程组里，持有继承来的管道）→ 永久阻塞、
     零输出、零错误；② 挂死通道退出码 124 被「旧后端也拒绝 → 前端拒绝」规则先行吞掉
@@ -1089,8 +1101,8 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - 围堵自证：全量 21m26s，超时当场收割 2 个 lli，收尾 **0 存活 / 0 孤儿 / 0 残留 scratch**。
   - **能力矩阵同步**：迁移期已知限制表移除两条（嵌套 COW、聚合打印），
     只剩并发族一条已立案限制；本节终值写入「阻塞清零」段。
-  - **工单**：`docs/issue-hir-nested-dict-write-2026-09-11.md` 与
-    `docs/issue-hir-aggregate-value-print-2026-09-10.md` 均转 **Closed**，
+  - **工单**：`docs/spec/issue/archive/issue-hir-nested-dict-write-2026-09-11.md` 与
+    `docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md` 均转 **Closed**，
     各自追加「D1 落地 / D2 落地」节（含验收表与作废声明）。
   - **未做（按纪律）**：未 push；**未进 M6b**（翻转批待点名）；未改 legacy 源码
     （仅当参考实现读）；未扩多参数陷阱的其余类型范围；未修 `CHANGE_F64`（与翻转同批）。

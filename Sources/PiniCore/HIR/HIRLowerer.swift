@@ -2171,7 +2171,7 @@ public enum HIRLowerer {
             // sugar desugaring). All other method calls stay gated.
             // Dot-case construction `.Case(args)` (G4, proposal-dot-case-
             // construction): member-intent marker resolved by unique case
-            // name or the checker's expected-type registry (E-131).
+            // name or the checker's expected-type registry.
             // `.none` / `.some` resolve to the built-in Optional first.
             if case .dotCaseRef(let dotName, _) = callee {
                 if dotName == "none" {
@@ -2910,7 +2910,7 @@ public enum HIRLowerer {
     /// Resolve a case name to (enum decl, case) — exact qualified
     /// `Enum.case` first, then unique unqualified fallback; ambiguous
     /// unqualified names resolve through the checker's static registry
-    /// (ADR-026 D1: call-site location → parent enum, E-131) and are gated
+    /// (ADR-026 D1: call-site location → parent enum) and are gated
     /// when unresolved.
     private static func resolveEnumCase(
         _ caseName: String,

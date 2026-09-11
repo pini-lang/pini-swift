@@ -19,6 +19,7 @@
 spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
+dangling_policy = "引用已清理的 ID 属预期：归档件、已关闭工单、ADR 与 spec 的**历史登记行**保留其当时的编号（不追改）；**活跃断言与源码注释不得引用当前表外的 ID**（2026-09-12 口径，依据见 docs/spec/adr/adr-032-try-else-migration.md 同日节）"
 last_refresh = "2026-09-12T01:12+08:00"
 last_sweep = "2026-09-12T00:27:00+08:00"
 dangling_ids = ["E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-110", "E-111", "E-112", "E-120", "E-121", "E-124", "E-128", "E-129", "E-130", "E-131", "E-132", "E-133", "E-134", "E-135", "E-136", "E-137", "E-139", "E-140", "E-141"]

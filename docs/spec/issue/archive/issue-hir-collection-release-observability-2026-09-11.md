@@ -5,7 +5,7 @@
   释放实现已成为唯一发射路径，48 条 IR 契约断言在翻转后全部保持绿色）**
 - 发现来源：M6c 判据升级过程中暴露的判据盲区（执行等价探针对集合释放**结构性失明**）
 - 关联：`docs/issue-llvm-rewrite-plan-2026-09-07.md`（翻转批 b3 的删除范围）、
-  `docs/issue-legacy-i64-print-sext-2026-09-07.md`（旧后端冻结先例）
+  `docs/spec/issue/archive/issue-legacy-i64-print-sext-2026-09-07.md`（旧后端冻结先例）
 
 ## 现状（实测）
 

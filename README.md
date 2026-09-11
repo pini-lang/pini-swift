@@ -257,7 +257,7 @@ graph TD
     G --> H[Output]
 
     F --> HIR[HIRLowerer AST+类型 → HIR]
-    HIR --> I[LLVM Emitters HIR → IR 文本]
+    HIR --> I[IREmitter HIR → IR 文本]
     I --> J[clang / lli 编译执行]
     J --> K[PiniRuntime C ABI shim]
     K --> H
@@ -268,7 +268,7 @@ graph TD
 
 > 双后端：解释器（`pini run`，始终可用）与 LLVM 后端（`emit`/`compile`/`run-llvm`，需 LLVM 工具链；运行时经 `PiniRuntime` 动态库 C ABI shim 提供服务）。`RuntimeBackendTests` 保证两后端逐字节一致。
 >
-> LLVM 后端正按 ADR-031 重写：新增 `HIR` 中间层（类型决策单点），旧发射路径冻结功能新增；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
+> LLVM 后端已于 2026-09-12 完成重写（ADR-031）：`HIR` 中间层（类型决策单点）成为**唯一代码生成路径**，旧的直接发射后端已整体删除；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### 目录结构
 
@@ -323,8 +323,8 @@ swift test
 ## ⚠️ 已知限制
 
 > [!warning] 当前版本限制
-> - **LLVM 后端（P6）**：已交付。`emit`/`compile`/`run-llvm` 可生成并运行 LLVM IR，但需本机安装 LLVM 工具链（`clang`/`lli`，或设置 `PINI_LLVM_BIN`）。纯解释器执行请用 `pini run`（始终可用，无需 LLVM）。`LazyRef.valueFuture` 已抛弃（仅同步 `.value`）。**FFI/unsafe 构造（`foreign` 块/`*T`/`&`/`unsafe`）在 LLVM 端显式 unsupported**——请用 `pini run`（用户决策 D1，解释器优先）。
-> - **模式匹配**：已支持枚举关联值绑定与元组/多返回值 `match`（`case` 子块缩进 + `case _:` 通配）；`try`/`catch` 不在语言中（错误经 `return ok/err` + `match ok/err` 收口）。
+> - **LLVM 后端（P6）**：已交付。`emit`/`compile`/`run-llvm` 可生成并运行 LLVM IR，但需本机安装 LLVM 工具链（`clang`/`lli`，或设置 `PINI_LLVM_BIN`）。纯解释器执行请用 `pini run`（始终可用，无需 LLVM）。`LazyRef.valueFuture` 已抛弃（仅同步 `.value`）。**FFI/unsafe 构造（`foreign` 块/`*T`/`&`/`unsafe`）已由 LLVM 通道支持**（示例 `examples/ffi.pini` 在 `run-llvm` 与 `pini run` 输出一致）——解释器端 `&` 为快照取址（写回不更新原变量），与 LLVM 端真引用语义不同，见下方 FFI 条。
+> - **模式匹配**：已支持枚举关联值绑定与元组/多返回值 `match`（`case` 子块缩进 + `case _:` 通配）；错误经 `try <表达式> else <错误绑定名>:`（ADR-032，含 `^T` 糖）或 `return ok/err` + `match ok/err` 收口，无 `catch` 子句。
 > - **迭代（v0.39.0+）**：`for-in` 已实现（spec G36）——`for (模式元组,) in 集合值:`，支持 `step:` 与 `标签\|for`（ADR-014）；`while + len()` 仍可用。
 > - **块标签（ADR-014，v0.48.1）**：`标签\|if`/`标签\|while`/`标签\|for` 模型——`break 标签` / `continue 标签` 按标签名定向（无 sigil）；旧 `scope 块标签:` 已转 reserved-error；`#` 文档注释（行首到行尾，与 `;` 行注释并存）。
 > - **继承**：当前无继承语法（方法沿继承链静态校验已移出 P3，单列排期）。

@@ -94,8 +94,8 @@
 
 | 限制 | 夹具 | 处置 | 记载 |
 |---|---|---|---|
-| 嵌套容器 COW（写链经过字典） | `RuntimeBackendTests` 4 例 | **已实现**（D1，2026-09-11），非限制 | `docs/issue-hir-nested-dict-write-2026-09-11.md` |
-| 聚合值（struct / object）打印 | `IRPrintGoldenTests` 3 例 + 多参数形态 1 例 | **已实现**（D2，2026-09-11），非限制 | `docs/issue-hir-aggregate-value-print-2026-09-10.md` |
+| 嵌套容器 COW（写链经过字典） | `RuntimeBackendTests` 4 例 | **已实现**（D1，2026-09-11），非限制 | `docs/spec/issue/archive/issue-hir-nested-dict-write-2026-09-11.md` |
+| 聚合值（struct / object）打印 | `IRPrintGoldenTests` 3 例 + 多参数形态 1 例 | **已实现**（D2，2026-09-11），非限制 | `docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md` |
 | 并发族（8 文件语料） | `examples/` 并发语料 | **除名立案**（LR-11）；M6 后独立里程碑 | `docs/issue-llvm-concurrency-runtime-2026-09-08.md` |
 | 多槽返回 `-> (I32, I32,)` | `IRExecutionTests` 2 例 | 已实现（M6a a2 / D7=A），非限制 | 计划工单 M6a a2 节 |
 

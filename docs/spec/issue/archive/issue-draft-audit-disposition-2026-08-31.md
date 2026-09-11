@@ -73,9 +73,9 @@ spec v0 性质声明处已加去向注记。文中对草稿的段落引用仅作
 | F2 | 草稿修订引入的新内部矛盾：`|unsafe` 函数签名一处带开块冒号、一处不带 | 并入 **A8**（同类：实现取无冒号） |
 | F3 | foreign 块内签名不接受 `\|unsafe` 修饰符（E2-001 拒） | **行为合理**：块内函数本就自动 unsafe，修饰符冗余；无遗留 |
 | F4 | 点前缀枚举字面量 `.some(x)`/`.ok(x)` 全部 E2-006 拒；实现用裸构造 `ok(1)`/`err("bad")` | 诉求源随草稿移除；若未来需要点前缀形态，按 R-b 走提案池（G54 具名关联值已另行落地） |
-| F5 | **安全上下文调用 foreign 无门禁**：`main|func` 内 `malloc(16)` 无 `unsafe` 消耗点，静态层与运行时均不拦 | **已立案**（2026-09-04，用户裁决单列独立工单）：`docs/issue-unsafe-gate-foreign-2026-09-04.md`（含实测复现探针与门禁位点定位） |
+| F5 | **安全上下文调用 foreign 无门禁**：`main|func` 内 `malloc(16)` 无 `unsafe` 消耗点，静态层与运行时均不拦 | **已立案**（2026-09-04，用户裁决单列独立工单）：`docs/spec/issue/archive/issue-unsafe-gate-foreign-2026-09-04.md`（含实测复现探针与门禁位点定位） |
 | F6 | `defer:` 块形式当时被拒 | **已落地**（2026-08-31，见 spec v0 G51 行）——闭环 |
 
 ## 勘误（2026-09-05 批③）
 
-- **A13 处置对象有误**：草稿原文 `[路径枚举|关键字]` 并非提出一个 `path` 关键字——该节说的是**把包路径绑定到用例标识符的 import 全导入 / export 例外表**（即 P4 已实现的 import/export 块，spec「P4 落地」与 G52 批 1 记载属实）。审计将其误读为「`path` 关键字未实现（仅 `enum`）」，该误读又传染至勘测工单 `docs/spec/issue/issue-spec-backfill-survey-2026-09-05.md` row 9 与探针 p18（已重写为 `p18_import_draft_form.pini`，实测 PASS）。A13 原行按勘误理解：**无 `path` 特性存在，无需订正草稿该处，也无需提案**。
+- **A13 处置对象有误**：草稿原文 `[路径枚举|关键字]` 并非提出一个 `path` 关键字——该节说的是**把包路径绑定到用例标识符的 import 全导入 / export 例外表**（即 P4 已实现的 import/export 块，spec「P4 落地」与 G52 批 1 记载属实）。审计将其误读为「`path` 关键字未实现（仅 `enum`）」，该误读又传染至勘测工单 `docs/spec/issue/archive/issue-spec-backfill-survey-2026-09-05.md` row 9 与探针 p18（已重写为 `p18_import_draft_form.pini`，实测 PASS）。A13 原行按勘误理解：**无 `path` 特性存在，无需订正草稿该处，也无需提案**。

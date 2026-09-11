@@ -34,7 +34,7 @@
 
 ## 关联
 
-- `docs/issue-interpreter-float-compare-2026-09-07.md`（float 差分覆盖的
+- `docs/spec/issue/archive/issue-interpreter-float-compare-2026-09-07.md`（float 差分覆盖的
   另一前置：解释器缺比较分支）
 - `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M4 批②；G 格推进时顺带
   评审）

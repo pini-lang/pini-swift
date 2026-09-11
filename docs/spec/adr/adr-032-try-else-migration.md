@@ -79,11 +79,20 @@
 
 - selfhost 仓（嵌套独立仓，two-track 提交）commit `bbf1b91` → merge `104d31b`：`src/lexer/lexer.pini` 删 `kw_except` case 与 `is_keyword` except 分支（关键词表对齐宿主 33 个）；`examples/lex_corpus.pini` 删裸 `except:` 探针行（裁决：L0 语料只载现役关键字面）；`pini.toml` spec 兼容锚 0.1 → 0.2；`.pini/baseline` 第 20 次重校准（host=`6485609`，version=0.53.0，spec=0.2）。
 - 六门 GREEN：L0 MATCH 505 / parse MATCH 253+94 / check 15 文件 / test 70/0 / audit GREEN（改前红态：L0 唯一差分 = 语料 L17 `except`，宿主 IDENT vs bootstrap keyword）。
-- 宿主侧缺陷（M3 发现，已立工单）：宿主 `MiniTOML` 不剥值行行内注释 → G52 Def-3 入口一致性校验 E5-018 误报（`docs/issue-minitoml-inline-comment-2026-09-07.md`）；selfhost 清单值行注释改独立行规避，宿主根因待工单修复。
+- 宿主侧缺陷（M3 发现，已立工单）：宿主 `MiniTOML` 不剥值行行内注释 → G52 Def-3 入口一致性校验 E5-018 误报（`docs/spec/issue/archive/issue-minitoml-inline-comment-2026-09-07.md`）；selfhost 清单值行注释改独立行规避，宿主根因待工单修复。
 
 ### 2026-09-07（M5 收口——迁移批次关闭）
 
 - 证据登记：E-132（try-else 唯一原语落地：双形态/`^` 脱糖/CPS 对齐/LLVM fail-loud；全量 1220/0/113，GCT 7 断言红→绿）/ E-133（旧模型七符号零残留，S-2 归零）/ E-134（selfhost 第 20 次重校准六门绿）——全部现跑重筛 FRESH。
-- 工单兑付：`docs/issue-caret-type-sugar-tuple-return-2026-09-07.md` 立案（M2 预告的「规范点转 M5 工单」）。
+- 工单兑付：`docs/spec/issue/archive/issue-caret-type-sugar-tuple-return-2026-09-07.md` 立案（M2 预告的「规范点转 M5 工单」）。
 - spec §2.4.4 状态注迁移窗口标注解除（「STALE 待 M2 刷新」→「已落地」，M2 刷新的遗留残留清零）。
 - 迁移状态：M0-M3 完成、M4 并入 M2（阶段撤销）、M5 收口——**本迁移批次关闭**。LLVM 侧遗留两项已由工单承接（try-else fail-loud 发射待 ADR-031 后端批；`-> (^T,)` spec 明文化），不在本 ADR 范围内连续修复。
+
+### 2026-09-12（证据表滚动清理核实）
+
+- 上文「2026-09-07」节登记的三条证据（E-132 / E-133 / E-134）**不在当前 `docs/spec/evidence-table.toml` 内**：
+  该表为滚动表，`tools/evidence_sweep.py` 按条目状态清理，本次清理发生在 M6b 翻转批的表刷新。
+- 处置（本 ADR 只增不改）：登记行**保留为历史记录**，条目本体见对应提交历史；spec §2.4.4 的两个
+  证据引用已同步改为指向本 ADR（原文断言「证据表 E-132..E-134，FRESH」在条目清理后不可核验）。
+- 口径（待固化为规则）：**归档件、已关闭工单、ADR 与 spec 的历史登记行允许引用已清理的证据 ID**；
+  活跃文档与源码注释不应引用当前表外的 ID。
