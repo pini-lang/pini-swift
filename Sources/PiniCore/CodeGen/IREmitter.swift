@@ -170,6 +170,7 @@ public final class IREmitter {
         header += "declare i32 @bk_dict_len(ptr)\n"
         header += "declare ptr @bk_dict_get(ptr, ptr, i32, i32)\n"
         header += "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)\n"
+        header += "declare ptr @bk_dict_ensure_unique_at(ptr, ptr, i32, i32)\n"
         header += "declare ptr @bk_dict_key_at(ptr, i32)\n"
         header += "declare ptr @bk_dict_val_at(ptr, i32)\n"
         header += "declare ptr @bk_set_create()\n"
@@ -794,7 +795,17 @@ public final class IREmitter {
         // Dictionary store (G5): keys/values boxed by their own types; the
         // returned handle is written back to the owning slot (COW parity).
         if case .dict(let keyType, let valueType) = hirType(of: container) {
-            let containerValue = emitExpr(container)
+            // A nested dict target (`a["k"]["j"] = v`) joins the same top-down
+            // chain the array branch below uses. Handing bk_dict_set a bare
+            // emitExpr handle would let it write through a shared box and
+            // silently mutate every alias — the failure the legacy emitter
+            // avoids by splitting here too.
+            let containerValue: IRValue
+            if case .subscriptGet = container {
+                containerValue = emitUniqueContainerHandle(container)
+            } else {
+                containerValue = emitExpr(container)
+            }
             let indexValue = emitExpr(index)
             let loweredValue = emitExpr(value)
             emitRetainIfAliased(value, loweredValue)
@@ -846,32 +857,48 @@ public final class IREmitter {
     /// Top-down COW split for nested container writes (`m[0][1] = v`).
     /// Returns the exclusive innermost handle. The root variable's split
     /// handle is written back to its slot; intermediate levels are rewritten
-    /// in place by `bk_array_ensure_unique_at` (which deliberately does not
-    /// release the old child handle — see the runtime's UAF note).
+    /// in place by `bk_array_ensure_unique_at` / `bk_dict_ensure_unique_at`
+    /// (which deliberately do not release the old child handle — see the
+    /// runtime's UAF note).
+    ///
+    /// Handles are typed per level: the array and dict families are distinct
+    /// opaque aggregates, and the dict split additionally takes the key boxed
+    /// with its width and tag. The legacy emitter dispatches on those same
+    /// three pieces, so both chains stay step-for-step equivalent.
     private func emitUniqueContainerHandle(_ container: HIRExpr) -> IRValue {
         switch container {
-        case .load(let name, _):
+        case .load(let name, let slotType):
+            let handleSpelling = slotType.llvmSpelling
             let value = emitExpr(container)
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast \(handleSpelling) \(value.ssaName) to ptr\n"
             let newRaw = builder.freshTemp()
             bodyIR += " \(newRaw) = call ptr @bk_handle_ensure_unique(ptr \(raw))\n"
             let typed = builder.freshTemp()
-            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to \(handleSpelling)\n"
             if let slot = lookupSlot(name) {
-                bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+                bodyIR += builder.fmtStore(value: typed, type: handleSpelling, ptr: slot) + "\n"
             }
-            return IRValue(llvmType: "%bk_array*", ssaName: typed)
-        case .subscriptGet(let inner, let index, _):
+            return IRValue(llvmType: handleSpelling, ssaName: typed)
+        case .subscriptGet(let inner, let index, let resultType):
             let parent = emitUniqueContainerHandle(inner)
             let parentRaw = builder.freshTemp()
-            bodyIR += " \(parentRaw) = bitcast %bk_array* \(parent.ssaName) to ptr\n"
-            let indexValue = emitExpr(index)
+            bodyIR += " \(parentRaw) = bitcast \(parent.llvmType) \(parent.ssaName) to ptr\n"
             let childRaw = builder.freshTemp()
-            bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+            switch parent.llvmType {
+            case "%bk_dict*":
+                let keyValue = emitExpr(index)
+                let (keySpelling, keyWidth, keyTag) = arrayElementABI(hirType(of: index))
+                let keyBox = boxValue(keyValue, spelling: keySpelling)
+                bodyIR += " \(childRaw) = call ptr @bk_dict_ensure_unique_at(ptr \(parentRaw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
+            default:
+                let indexValue = emitExpr(index)
+                bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+            }
+            let childSpelling = resultType.llvmSpelling
             let typed = builder.freshTemp()
-            bodyIR += " \(typed) = bitcast ptr \(childRaw) to %bk_array*\n"
-            return IRValue(llvmType: "%bk_array*", ssaName: typed)
+            bodyIR += " \(typed) = bitcast ptr \(childRaw) to \(childSpelling)\n"
+            return IRValue(llvmType: childSpelling, ssaName: typed)
         default:
             return emitExpr(container)
         }
@@ -1640,15 +1667,12 @@ public final class IREmitter {
     /// stringify-join byte stream). No newline after each argument, unlike
     /// the single-argument print path.
     ///
-    /// This path renders through the scalar printer, which carries no case
-    /// for aggregate or handle spellings: such an argument reaches its
-    /// fallback and is handed to `printf` as an integer, so the statement
-    /// prints the value's bits where its formatted value belongs — silently
-    /// wrong output with no diagnostic. Aggregate arguments therefore trap
-    /// at run time instead (`bk_panic` is noreturn), keeping the gap
-    /// observable; the formatting that would render them is a later grid.
-    /// The single-argument path already gates the same shapes, at lowering
-    /// time.
+    /// Every argument renders through the shared recursive printer, which
+    /// covers the slice shapes and falls back to the scalar path, so a mixed
+    /// call matches the single-argument form byte for byte. Types that still
+    /// have no rendering at all trap at run time instead (`bk_panic` is
+    /// noreturn), keeping the remaining gap observable rather than letting
+    /// the scalar fallback print a handle's bits.
     private func emitPrintMulti(arguments: [HIRExpr]) -> IRValue {
         if arguments.contains(where: { Self.hasNoScalarRendering(hirType(of: $0)) }) {
             let message = emitStringConstant(
@@ -1669,22 +1693,24 @@ public final class IREmitter {
                 bodyIR += " call i32 (ptr, ...) @printf(ptr \(space.ssaName))\n"
             }
             let printed = emitExpr(argument)
-            emitScalarPrint(printed)
+            emitValuePrint(value: printed, type: hirType(of: argument))
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
-    /// True for the types the scalar print path cannot render — it falls
-    /// back to printing the value's spelling as an integer, so aggregates
-    /// (`{ ... }` registers) and runtime handles (`%bk_*`) would come out as
-    /// their bits. Scalars, strings and raw pointers keep the existing
-    /// scalar spelling.
+    /// True for the types neither print path can render — the scalar path
+    /// falls back to printing the value's spelling as an integer, so
+    /// aggregates (`{ ... }` registers) and runtime handles (`%bk_*`) would
+    /// come out as their bits. Scalars, strings and raw pointers keep the
+    /// existing scalar spelling. Nominal values are no longer in this set:
+    /// they render through the shared recursive printer.
     private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
         switch type {
-        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer:
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer,
+             .nominal:
             return false
-        case .result, .array, .optional, .nominal, .enumeration, .dict,
+        case .result, .array, .optional, .enumeration, .dict,
              .lazyRef, .set, .tuple, .function:
             return true
         }
@@ -2769,10 +2795,51 @@ public final class IREmitter {
             let close = emitStringConstant("]")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
-        case .nominal:
-            // Gated by the lowerer (printing struct/object values is a later
-            // grid); kept here only to make the switch total.
-            fatalError("IREmitter: printing a nominal value is gated (HIRLowerer)")
+        case .nominal(let name, _):
+            // Struct / object value rendering (interpreter stringify parity):
+            // `Name{field: value, ...}` with the fields ordered by name.
+            //
+            // The display order is resolved here, not at run time: the
+            // aggregate's field positions are static, so an ordered view over
+            // the declared fields can still read each field's original slot.
+            // Objects carry a refcount word ahead of the first field, which
+            // shifts every field index by one — the same offset the
+            // constructor applies.
+            guard let decl = moduleTypes.first(where: { $0.name == name }),
+                  let aggregate = type.nominalAggregateSpelling else {
+                fatalError("IREmitter: printing unregistered nominal (HIRLowerer guarantees)")
+            }
+            let open = emitStringConstant("\(name){")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
+            let fieldBase = decl.isObject ? 1 : 0
+            let orderedFields = decl.fields.enumerated().sorted {
+                $0.element.name < $1.element.name
+            }
+            for (position, entry) in orderedFields.enumerated() {
+                if position > 0 {
+                    let separator = emitStringConstant(", ")
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+                }
+                let label = emitStringConstant("\(entry.element.name): ")
+                bodyIR += " call i32 (ptr, ...) @printf(ptr \(label.ssaName))\n"
+                let fieldPtr = builder.freshTemp()
+                bodyIR += builder.fmtGEP(
+                    name: fieldPtr, aggregate: aggregate, base: value.ssaName,
+                    indices: [0, fieldBase + entry.offset]
+                ) + "\n"
+                let fieldValue = builder.freshTemp()
+                bodyIR += builder.fmtLoad(
+                    name: fieldValue, type: entry.element.type.llvmSpelling, ptr: fieldPtr
+                ) + "\n"
+                emitValuePrint(
+                    value: IRValue(
+                        llvmType: entry.element.type.llvmSpelling, ssaName: fieldValue
+                    ),
+                    type: entry.element.type
+                )
+            }
+            let close = emitStringConstant("}")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
         case .enumeration(let name):
             // Enum value rendering (interpreter stringify parity):

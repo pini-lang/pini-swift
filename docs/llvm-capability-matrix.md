@@ -94,13 +94,19 @@
 
 | 限制 | 夹具 | 处置 | 记载 |
 |---|---|---|---|
-| 聚合值（struct / object）打印 | `IRPrintGoldenTests` 3 例 | **已裁决豁免**（M6a a4 裁决点 D8）；翻转后为带位置的 fail-loud | `docs/issue-hir-aggregate-value-print-2026-09-10.md` |
+| 嵌套容器 COW（写链经过字典） | `RuntimeBackendTests` 4 例 | **已实现**（D1，2026-09-11），非限制 | `docs/issue-hir-nested-dict-write-2026-09-11.md` |
+| 聚合值（struct / object）打印 | `IRPrintGoldenTests` 3 例 + 多参数形态 1 例 | **已实现**（D2，2026-09-11），非限制 | `docs/issue-hir-aggregate-value-print-2026-09-10.md` |
 | 并发族（8 文件语料） | `examples/` 并发语料 | **除名立案**（LR-11）；M6 后独立里程碑 | `docs/issue-llvm-concurrency-runtime-2026-09-08.md` |
 | 多槽返回 `-> (I32, I32,)` | `IRExecutionTests` 2 例 | 已实现（M6a a2 / D7=A），非限制 | 计划工单 M6a a2 节 |
 
-除上述三项外，四个套件内**无其他**「旧后端通过、HIR 拒绝」的夹具（2026-09-10 探针实测，
-a4 收尾状态）。全套件夹具扫描（`Tests/` 全量 980 个 `.pini`）另有 68 个同类差，
-分布在未被 LLVM 驱动的套件中，按既定口径不入门槛。
+**阻塞清零（D 批终值，2026-09-11）**：探针全量重跑（7 根 389 夹具），
+`examples/` 78 例与 LLVM 驱动套 311 例**双双零阻塞**，本表只剩并发族一条已立案限制。
+唯一非终止项 `IRGeneratorTests/testContinueInWhile.pini` 判 `TIMEOUT_ALL`——
+该程序按自身语义即设计内死循环（递增语句在 `continue` 之后），非缺口。
+
+上表的原始记载（2026-09-10 探针实测，a4 收尾状态）为「除上述三项外，四个套件内
+**无其他**『旧后端通过、HIR 拒绝』的夹具」。全套件夹具扫描（`Tests/` 全量 980 个 `.pini`）
+另有 68 个同类差，分布在未被 LLVM 驱动的套件中，按既定口径不入门槛。
 
 ### 本节口径的两处订正（相对计划工单早期记录）
 
