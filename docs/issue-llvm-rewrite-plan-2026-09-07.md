@@ -1,10 +1,14 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
-- 状态：**Open（常驻计划载体；M0–M4、M5 分格扩张批 G1–G15、M6a 准备批 a1–a8 全部
-  完成并回填。M6a 终值：差分 76/76、回归 1310/0/0、sweep hir-emit 51/59
-  （剩余 8 行全为并发族豁免，独立立案 issue-llvm-concurrency-runtime-2026-09-08）；
-  双分母真 flip 阻塞 **0**——examples 59 为 0，四套 LLVM 驱动夹具 222 为 3 且全为
-  D8 已裁决豁免的聚合值打印。下一步 M6b 翻转批（一次性、不可逆）待点名执行）**
+- 状态：**Open（常驻计划载体；M0–M4、M5 分格扩张批 G1–G15、M6a 准备批 a1–a8、
+  M6c 收敛批 C1–C5 全部完成并回填。M6a 终值：差分 76/76、回归 1310/0/0、
+  sweep hir-emit 51/59（剩余 8 行全为并发族豁免，独立立案
+  issue-llvm-concurrency-runtime-2026-09-08）；双分母真 flip 阻塞 **0**。
+  M6b 翻转批开工即触发 S-3 止损并中止（b2-1 在分支 stash），用户裁决转 **C → A**：
+  M6c 把判据从「emit 成功」升级为「执行结果等价」（三通道探针，全景 389 fixture），
+  真阻塞 **13 → 7**，其中 C4/C5 取 C 把 4 例从静默错转为显式信号（计数不变）；
+  探针三件转正入仓 `tools/`。M6c 终值：回归 1310/0/0、能力扫描与入库版本零差异。
+  下一步 M6b 翻转批（一次性、不可逆）待点名执行）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
@@ -950,4 +954,61 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   - **本批范围外（仅登记，未动手）**：`docs/` 顶层另有 **10 张已 Closed / LANDED
     但未归档**的工单，属独立的归档卫生批，**不并入** M6a 收口——M6a 的范围定义只含
     上述诊断面一张。
+
+- **M6c 收敛批完成（2026-09-11，判据升级 + 分格 C1–C5 + 横切 X1–X4）**：
+
+  - **背景（M6b 的止损与转向）**：M6b 翻转批开工即触发 S-3 止损——b2-1（`IRExecutionTests`
+    的 HIR 驱动）落地后 81 用例 26 失败，横跨 **7 个能力族**（> S-3 的 4），翻转中止，
+    b2-1 留在分支 stash（有 patch 落盘备份）。用户裁决转 **C → A**：先升级判据，
+    再按分格收敛能力面。
+  - **判据升级（本批核心交付）**：原判据问「能否 emit 出 IR」，对「emit 成功但执行错」
+    整类缺口结构性失明（实测：对 11 个真阻塞全判 PASS）。新判据问「运行结果是否等价」，
+    三通道逐夹具比对（解释器 / 旧后端 / HIR）。全景 **389 fixture** 重新分类后，
+    判据分母内真阻塞 **13**。
+  - **分格落地**（每格一次提交 + 影响面全集逐个验证 + 全量回归）：
+
+    | 格 | 能力 | 阻塞 | 提交 |
+    |---|---|---|---|
+    | C3 | `len(String)` 字符计数（非字节） | 2 | `5bb0181` |
+    | C2 | 裸值 match 的字面量臂分派 | 2 | `13cfb6e` |
+    | C1 | defer 在 return / break / continue 路径执行（LIFO） | 4 | `776e81e` |
+    | C4 | 嵌套字典写 → 降级为显式拒绝（取 C） | 3 | `b977545` |
+    | C5 | 多参数打印聚合值 → 运行期陷阱（取 C） | 4 | `7885186` |
+
+  - **归因表**：真阻塞 **13 → 7**（C3 2 + C2 2 + C1 4 = 8 例转 OK）；余 7 例中
+    C4 3 例 + C5 4 例由 **取 C** 处置——**不减少计数**，收益是「静默错 → 显式错」：
+    C4 的 3 例是非法 IR（`'%t105' defined with type 'ptr' but expected 'i32'`）+
+    1 例静默别名污染；C5 的 3 例是既有降级期拒绝 + 1 例多参数打印静默输出裸地址
+    （`s= 1841436880 42` 对黄金 `s= 点{x: 7} 42`，且地址每次运行都不同）。
+  - **隔离证明**：C4 影响面 18 夹具 → 4 变 / 14 不变；C5 影响面 11 文件 19 处多参数
+    print 调用 → 仅目标 1 处变。两份影响面都含 `examples/` 语料且逐条不变。
+  - **门禁与回归**：`check-doc-links` 通过；全量回归 **1310 / 0 / 0**（与 M6a 终值一致）。
+  - **能力扫描**：`tools/capability-sweep.tsv` 刷新后与入库版本**零差异**（58 行 /
+    PASS 50 / FAIL 8）——C1–C5 改的形态不在 examples 语料中，构成隔离旁证。
+  - **探针转正**：`tools/hir-parity-probe.py`（+ `tools/three-channel.py` /
+    `tools/compare-sweeps.py`）入仓，结束「验收工具暂存在工作区」的状态；转正时一并
+    修两处——harness 输入污染（pini 的相对 I/O 基准是源文件目录而非 cwd，改为每例
+    复制到临时目录连同同目录 `.pini` 兄弟一起跑）与判据第 3 条假阴性（parity 须
+    stderr 形状也相同；`testNestedCOWIRContract_2` 因此从 `OK_HARNESS` 重分类为
+    `GAP_EXEC`，缺口可见）。新增 `--filter` 便于定向复核。
+  - **证据登记**：`docs/spec/evidence-table.toml` 新增 **E-156**（`status = FRESH`）。
+    校验四件事全过：条目数 26 → 27；存量条目零改动；`refresh_note` 尾句为
+    「本次仅新增并现跑重筛 E-156；存量条目未重新验证」；status 分布
+    STALE 13 / PENDING_DELETE 12 / FRESH 2。
+  - **新立工单（5 张，均只登记不动手，见 `docs/` 顶层）**：
+    `docs/issue-legacy-f64-value-int64-trap-2026-09-11.md`（旧后端 `Int64(value)` 先于
+    范围守卫求值，超大 F64 触发 Swift trap；建议 wontfix 随旧 CodeGen 删除）、
+    `docs/issue-hir-collection-release-observability-2026-09-11.md`（集合释放唯一信号是
+    24 条 IR 文本断言，执行等价判据失明；X3 触发止损点）、
+    `docs/issue-hir-defer-block-form-2026-09-11.md`（`defer:` 块形式报 E6-004：AST 包成
+    `scopedBlock`，降级期无该分支）、
+    `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（`s[1:3]` 对 CJK 按字节切出
+    非法 UTF-8）、`docs/issue-hir-aggregate-value-print-2026-09-10.md`（按 C5 更新，
+    多参数形态已堵）。
+  - **横切项**：X1 完成（探针转正 + 两处修复）；X2 完成性质核验（`CHANGE_F64` = 旧后端
+    `%f` 六位小数 vs 新通道最短往返，承载工单已 Closed；完整 16 例清单的重基线归翻转批，
+    因需全量探针且当前套件跑旧管线）；X3 触发止损点并立案；X4 完成。本计划早先记录的
+    probe-harness-inputs 已随 X1 关闭，不再单独立案。
+  - **未做（按纪律）**：未 push；不跑全量 sweep（沿用既有裁决）；未改 legacy 源码；
+    未删任何测试；M6b 的 b2-1 仍在 `stash@{0}`。
 
