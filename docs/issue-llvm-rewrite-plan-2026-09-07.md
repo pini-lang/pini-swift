@@ -1,13 +1,17 @@
 # Issue：LLVM 后端重写——执行计划与 LR-* 决策登记（ADR-031 落地）
 
 - 状态：**Open（常驻计划载体；M0–M4、M5 分格扩张批 G1–G15、M6a 准备批 a1–a8、
-  M6c 收敛批 C1–C5 全部完成并回填。M6a 终值：差分 76/76、回归 1310/0/0、
-  sweep hir-emit 51/59（剩余 8 行全为并发族豁免，独立立案
-  issue-llvm-concurrency-runtime-2026-09-08）；双分母真 flip 阻塞 **0**。
+  M6c 收敛批 C1–C5 + 判据批、D 批（阻塞清零）D1–D2 全部完成并回填。
+  M6a 终值：差分 76/76、回归 1310/0/0、sweep hir-emit 51/59（剩余 8 行全为并发族豁免，
+  独立立案 issue-llvm-concurrency-runtime-2026-09-08）。
   M6b 翻转批开工即触发 S-3 止损并中止（b2-1 在分支 stash），用户裁决转 **C → A**：
-  M6c 把判据从「emit 成功」升级为「执行结果等价」（三通道探针，全景 389 fixture），
-  真阻塞 **13 → 7**，其中 C4/C5 取 C 把 4 例从静默错转为显式信号（计数不变）；
-  探针三件转正入仓 `tools/`。M6c 终值：回归 1310/0/0、能力扫描与入库版本零差异。
+  M6c 把判据从「emit 成功」升级为「执行结果等价」（三通道探针，全景 389 fixture）；
+  判据批又修掉三处工具自缺陷（超时后静默死锁 / 挂死被记成前端拒绝 / 收割器按被拒工具
+  会静默返回空集），并把真阻塞订正为 **8**（原记 7 漏计一例）。
+  **D 批（阻塞清零，用户裁决取甲「真实现」）**：D1 让嵌套写的 COW 链按容器类型分派
+  （字典接上独占化入口），D2 实现名义值格式化（struct / object 打印）。
+  探针全量重跑：**FLIP BLOCKERS 8 → 0**；双分母（`examples/` 78 + LLVM 驱动套 311）
+  双双零阻塞，唯一 `TIMEOUT_ALL` 是设计内死循环夹具。
   下一步 M6b 翻转批（一次性、不可逆）待点名执行）**
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
@@ -1053,4 +1057,41 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     期望值内嵌于 `Tests/PiniTests/CodeGen/IRPrintGoldenTests/IRPrintGoldenTests.swift`
     的 `goldenCases`，而该套件当前跑旧管线，提前改期望会立刻变红。
   - **未做（按纪律）**：未 push；**未进 M6b**（翻转批待点名确认）；未改宿主源码。
+
+- **D 批（阻塞清零）完成：D1 嵌套 COW 字典分派 + D2 名义值打印（2026-09-11）**：
+
+  - **口径裁决**：「阻塞清零」有两解——甲 = 真实现（阻塞真降 0、能力恢复）；
+    乙 = 转已声明豁免（计数清零、能力不恢复）。用户裁决取 **甲**。
+    规划载于 `.workbuddy/artifacts/blocker-clearance-plan-2026-09-11.md`（出稿时零源码改动）。
+  - **D1 · F4 嵌套容器 COW（4 例）**：缺口是「发射层少接一半入口」而非缺机制——
+    运行时 `bk_dict_ensure_unique_at` 早已存在，legacy 同族函数是逐行可抄的参考实现。
+    落点 **1 文件 3 处**（`Sources/PiniCore/CodeGen/IREmitter.swift`）：补字典版 declare；
+    COW 独占化链按层类型定型（字典层带键装箱三件套）；字典写链接入同一条链
+    （这正是静默别名污染的来源）；撤 `HIRLowerer` 的降级门控及其两个辅助函数。
+    **不触 S-4**。提交 `6ce557f`。
+  - **D2 · F5 名义值打印（4 例）**：`emitValuePrint` 此前已覆盖 array / optional / tuple /
+    enum / dict / set，**唯一缺口是 `case .nominal` 为 `fatalError`**。落点 **2 文件 3 处**
+    （恰在 S-4 边界内 =3）：实现该分支（查声明表 + 逐字段 GEP/load/递归）；
+    多参数路径改走同一递归打印器并从陷阱集合移除 nominal；撤单参门控
+    （`.result` 门控按规划保留）。**字段定序在编译期完成**——工单原文把它列为
+    估工关键未知项，实测 IR 聚合位置静态已知，显示序与索引序可解耦，无需运行时排序；
+    对象多一个 refcount 前导字，字段索引偏移 1。提交 `265ef18`。
+  - **实测终值**：
+    - 全量探针（7 根 389 夹具，前后同分母可比）：**FLIP BLOCKERS 8 → 0**；
+      verdict 变动 **恰为 8 例**（4 + 4），**其余 381 例零改动**——隔离证明成立。
+    - 双分母：`examples/` 78 例 + LLVM 驱动套 311 例，**双双零阻塞**。
+    - 唯一非终止项 `IRGeneratorTests/testContinueInWhile.pini` 判 `TIMEOUT_ALL`，
+      系设计内死循环（递增语句在 `continue` 之后），非缺口。
+    - 值语义手验：`print(b)` 恢复 `[{k: 1}, {k: 2}]`（原静默污染为 `[{k: 9}, ...]`）；
+      黄金串 `点{label: hi, ok: true, x: 1}` / `计数{名字: n, 数值: 42}` / `盒{内色: 蓝}`
+      与多参数 `s= 点{x: 7} 42`，三通道逐字节一致。
+    - 回归 **1310 / 0 / 0**（D1、D2 各一次）。
+    - 围堵自证：全量 21m26s，超时当场收割 2 个 lli，收尾 **0 存活 / 0 孤儿 / 0 残留 scratch**。
+  - **能力矩阵同步**：迁移期已知限制表移除两条（嵌套 COW、聚合打印），
+    只剩并发族一条已立案限制；本节终值写入「阻塞清零」段。
+  - **工单**：`docs/issue-hir-nested-dict-write-2026-09-11.md` 与
+    `docs/issue-hir-aggregate-value-print-2026-09-10.md` 均转 **Closed**，
+    各自追加「D1 落地 / D2 落地」节（含验收表与作废声明）。
+  - **未做（按纪律）**：未 push；**未进 M6b**（翻转批待点名）；未改 legacy 源码
+    （仅当参考实现读）；未扩多参数陷阱的其余类型范围；未修 `CHANGE_F64`（与翻转同批）。
 
