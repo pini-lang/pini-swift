@@ -40,9 +40,22 @@ public final class IREmitter {
         let exit: String
         let header: String
         let continueTarget: String
+        /// Index of the loop BODY's defer frame in `pendingDefers` (the
+        /// frame pushed after this loop frame was pushed). A break/continue
+        /// out of this loop flushes defer frames from the innermost one down
+        /// to this index, both included — leaving the loop's body block runs
+        /// its defers (interpreter: the signal unwinds through
+        /// executeBlock's own popDeferScope).
+        let deferBase: Int
     }
 
     private var loopStack: [LoopFrame] = []
+
+    /// Index in `pendingDefers` where the current function's (or closure's)
+    /// defer frames begin. A `return` flushes defer frames down to this
+    /// base and no further — a return inside a closure must not run the
+    /// enclosing function's defers.
+    private var deferScopeBase = 0
 
     private var currentIsMain = false
     private var currentReturnType: HIRType? = nil
@@ -306,6 +319,8 @@ public final class IREmitter {
         scopes = [[:]]
         slotCounters = [:]
         loopStack = []
+        deferScopeBase = 0
+        pendingDefers.removeAll()
         terminated = false
         currentIsMain = function.name == "main"
         currentReturnType = function.returnType
@@ -346,22 +361,52 @@ public final class IREmitter {
 
     private func emitBlock(_ statements: [HIRStmt]) {
         // G9 defer protocol: defers registered in this block run LIFO at
-        // the block's normal end (loop bodies: every iteration).
+        // the block's normal end (loop bodies: every iteration). When the
+        // block ends in a terminator the defers have already run — the
+        // terminator's emitter flushed them right before emitting the jump —
+        // or must not run at all (a runtime panic skips defers). A
+        // return/break/continue flush pops the frames of every block it
+        // unwinds through, so this block's own frame may already be gone;
+        // only drop it here when it is still on the stack.
+        let frameBase = pendingDefers.count
         pendingDefers.append([])
         for statement in statements {
             if terminated { break }
             emitStatement(statement)
         }
-        let scopeDefers = pendingDefers.removeLast()
-        for deferredBody in scopeDefers.reversed() {
-            let wasTerminated = terminated
-            terminated = false
-            for statement in deferredBody {
-                if terminated { break }
-                emitStatement(statement)
-            }
-            terminated = wasTerminated
+        if terminated {
+            // A panic never runs defers — drop the frame. A return/break/
+            // continue already flushed copies of the frames it unwound
+            // through before its jump, and the block tail is unreachable.
+            _ = pendingDefers.removeLast()
+        } else {
+            flushDefers(downTo: frameBase)
+            _ = pendingDefers.removeLast()
         }
+    }
+
+    /// Emit one copy of the defer frames from the innermost one down to
+    /// `base` (both included), each frame's bodies in LIFO order, at the
+    /// current insertion point — WITHOUT popping the frames. A terminator
+    /// and a block tail are separate runtime paths over the same statically
+    /// emitted code, so each may need its own copy of the same defer bodies:
+    /// a `break` inside a loop body flushes the loop's defers before its
+    /// jump, while the body block's tail emits the same defers again for
+    /// iterations that end normally. Frame ownership stays with the
+    /// `emitBlock` that pushed it; a runtime panic is the one exit that
+    /// never flushes (its frame is dropped instead).
+    private func flushDefers(downTo base: Int) {
+        let wasTerminated = terminated
+        terminated = false
+        for frame in pendingDefers[base...].reversed() {
+            for deferredBody in frame.reversed() {
+                for statement in deferredBody {
+                    if terminated { break }
+                    emitStatement(statement)
+                }
+            }
+        }
+        terminated = wasTerminated
     }
 
     /// Deferred statement bodies per open block scope (G9 deferStmt):
@@ -401,6 +446,10 @@ public final class IREmitter {
             )
 
         case .returnStmt(let value):
+            // Defers of every open block of this function run before the
+            // return (interpreter: the signal unwinds through each
+            // executeBlock's popDeferScope, innermost first).
+            flushDefers(downTo: deferScopeBase)
             if let value = value {
                 let lowered = emitExpr(value)
                 bodyIR += " ret \(lowered.llvmType) \(lowered.ssaName)\n"
@@ -457,11 +506,14 @@ public final class IREmitter {
     /// `break`: the depth-th enclosing loop's exit (1 = innermost); without
     /// enough enclosing loops, a runtime panic — the interpreter errors when
     /// a break escapes to the top level (probe-verified), so this is
-    /// fail-loud parity, not a silent skip.
+    /// fail-loud parity, not a silent skip. Leaving the loop also leaves its
+    /// body block, so the defer frames down to the loop body's own frame run
+    /// before the jump.
     private func emitBreak(depth: Int) {
         if loopStack.count >= depth {
-            let exitLabel = loopStack[loopStack.count - depth].exit
-            bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
+            let frame = loopStack[loopStack.count - depth]
+            flushDefers(downTo: frame.deferBase)
+            bodyIR += builder.fmtBr(labelName: frame.exit) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: break outside loop")
             bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
@@ -475,9 +527,12 @@ public final class IREmitter {
     /// form (depth > 1) jumps to the depth-th frame's header (interpreter
     /// parity: a matching label resumes that loop). The checker rejects a
     /// continue outside any loop, so the panic here is fail-loud parity.
+    /// Ending the iteration leaves the loop's body block, so the defer
+    /// frames down to that block's frame run before the jump.
     private func emitContinue(depth: Int) {
         if loopStack.count >= depth {
             let frame = loopStack[loopStack.count - depth]
+            flushDefers(downTo: frame.deferBase)
             let target = depth == 1 ? frame.continueTarget : frame.header
             bodyIR += builder.fmtBr(labelName: target) + "\n"
         } else {
@@ -550,13 +605,113 @@ public final class IREmitter {
                 }
             )
         default:
-            // G11 multidim parity: bare-value scrutinees (direct subscript
-            // reads — the Optional-returning channel is a separate semantic)
-            // never fire some/none arms in the interpreter either; the match
-            // falls through silently (probe-verified). Emit the scrutinee
-            // for its side effects, then skip every arm — the dead-arm
-            // bodies were lowered only for scope resolution.
-            _ = emitExpr(scrutinee)
+            // Bare scrutinee — neither Optional nor enum (a direct subscript
+            // read yields a plain value there). Literal arms (`case 1:`,
+            // `case "hi":`) compare by value and need real dispatch; enum-case
+            // arms cannot match a bare value, so when no literal arm is
+            // present there is nothing to dispatch on and every arm is dead
+            // (G11 multidim parity: the match falls through silently — the
+            // interpreter reports a non-exhaustive match for enum values
+            // only). In that case emit the scrutinee for its side effects and
+            // skip the arms; their bodies were lowered only for scope
+            // resolution.
+            if cases.contains(where: { $0.literal != nil }) {
+                emitScalarMatch(scrutinee: scrutinee, cases: cases)
+            } else {
+                _ = emitExpr(scrutinee)
+            }
+        }
+    }
+
+    /// Bare-scrutinee match carrying literal arms: a source-ordered chain of
+    /// value comparisons (the interpreter's `executeMatch` scans arms in
+    /// order and the first match wins). Strings compare via strcmp, floats via
+    /// ordered fcmp, integers and bools via icmp. Enum-case arms cannot match
+    /// a bare value and are skipped; the wildcard arm is the fallback.
+    /// Falling off the chain with no wildcard arm is a silent no-op
+    /// (interpreter parity: a non-exhaustive match is an error for enum values
+    /// only), so the default block simply branches to the end label.
+    private func emitScalarMatch(scrutinee: HIRExpr, cases: [HIRMatchCase]) {
+        let scrutineeValue = emitExpr(scrutinee)
+        let id = builder.freshLabel()
+        let endLabel = "match.end.\(id)"
+        let defaultLabel = "match.default.\(id)"
+        func checkLabel(_ index: Int) -> String { "match.check.\(id).\(index)" }
+
+        let literalArms = cases.enumerated().filter { $0.element.literal != nil }
+        let wildcardArm = cases.first { $0.caseName == "_" }
+
+        bodyIR += builder.fmtBr(labelName: checkLabel(literalArms[0].offset)) + "\n"
+
+        for (position, entry) in literalArms.enumerated() {
+            let (index, matchCase) = entry
+            let armLabel = "match.arm.\(id).\(index)"
+            let nextLabel = position + 1 < literalArms.count
+                ? checkLabel(literalArms[position + 1].offset)
+                : defaultLabel
+            bodyIR += "\(checkLabel(index)):\n"
+            guard let literal = matchCase.literal,
+                  let comparison = emitLiteralComparison(literal, scrutinee: scrutineeValue) else {
+                // The operand does not fit the scrutinee's value type — the
+                // interpreter never matches such an arm either, so skip it
+                // rather than fabricate an operand.
+                bodyIR += builder.fmtBr(labelName: nextLabel) + "\n"
+                continue
+            }
+            bodyIR += builder.fmtCondBr(cond: comparison, thenLabelName: armLabel, elseLabelName: nextLabel) + "\n"
+            bodyIR += "\(armLabel):\n"
+            terminated = false
+            scopes.append([:])
+            emitBlock(matchCase.body)
+            if !terminated {
+                bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+            }
+            scopes.removeLast()
+        }
+
+        bodyIR += "\(defaultLabel):\n"
+        terminated = false
+        scopes.append([:])
+        if let wildcardArm = wildcardArm {
+            emitBlock(wildcardArm.body)
+        }
+        if !terminated {
+            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        }
+        scopes.removeLast()
+        bodyIR += "\(endLabel):\n"
+        terminated = false
+    }
+
+    /// One literal arm's comparison against the bare scrutinee value. Returns
+    /// the i1 temp, or nil when the operand does not fit the scrutinee's value
+    /// type (the caller skips such an arm — the interpreter never matches it
+    /// either, and inventing an operand would emit invalid IR).
+    private func emitLiteralComparison(_ literal: HIRMatchLiteral, scrutinee: IRValue) -> String? {
+        switch (scrutinee.llvmType, literal) {
+        case ("i8*", .string(let value)):
+            usesStrCmp = true
+            let literalValue = emitStringConstant(value)
+            let ordering = builder.freshTemp()
+            bodyIR += " \(ordering) = call i32 @strcmp(ptr \(scrutinee.ssaName), ptr \(literalValue.ssaName))\n"
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = icmp eq i32 \(ordering), 0\n"
+            return result
+        case (let spelling, .int(let value))
+            where spelling == "i8" || spelling == "i32" || spelling == "i64":
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = icmp eq \(spelling) \(scrutinee.ssaName), \(value)\n"
+            return result
+        case ("double", .float(let value)):
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = fcmp oeq double \(scrutinee.ssaName), \(doubleLiteral(value))\n"
+            return result
+        case ("i1", .boolean(let value)):
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = icmp eq i1 \(scrutinee.ssaName), \(value ? "true" : "false")\n"
+            return result
+        default:
+            return nil
         }
     }
 
@@ -838,7 +993,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : condLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget))
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count))
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
@@ -852,7 +1007,7 @@ public final class IREmitter {
             bodyIR += "\(stepLabel):\n"
             // Inside the step, an unlabeled continue goes to its own end
             // (interpreter: continue in the step block → next iteration).
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel))
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count))
             scopes.append([:])
             terminated = false
             emitBlock(step)
@@ -921,7 +1076,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : incLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget))
+        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count))
         scopes.append([:])
         terminated = false
         // Pattern bindings: a fresh slot per iteration (the loop scope makes
@@ -962,7 +1117,7 @@ public final class IREmitter {
 
         if let step = step {
             bodyIR += "\(stepLabel):\n"
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel))
+            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count))
             scopes.append(patternBindings)
             terminated = false
             emitBlock(step)
@@ -1484,7 +1639,30 @@ public final class IREmitter {
     /// spaces, one trailing newline (D-A=A1 — mirrors the interpreter's
     /// stringify-join byte stream). No newline after each argument, unlike
     /// the single-argument print path.
+    ///
+    /// This path renders through the scalar printer, which carries no case
+    /// for aggregate or handle spellings: such an argument reaches its
+    /// fallback and is handed to `printf` as an integer, so the statement
+    /// prints the value's bits where its formatted value belongs — silently
+    /// wrong output with no diagnostic. Aggregate arguments therefore trap
+    /// at run time instead (`bk_panic` is noreturn), keeping the gap
+    /// observable; the formatting that would render them is a later grid.
+    /// The single-argument path already gates the same shapes, at lowering
+    /// time.
     private func emitPrintMulti(arguments: [HIRExpr]) -> IRValue {
+        if arguments.contains(where: { Self.hasNoScalarRendering(hirType(of: $0)) }) {
+            let message = emitStringConstant(
+                "Pini runtime error: printing an aggregate value is a later grid (value formatting)"
+            )
+            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " unreachable\n"
+            // Resume on a fresh block so the statement stream keeps a
+            // well-formed block structure. Control never reaches it: the
+            // panic does not return.
+            bodyIR += "print.multi.resume.\(builder.freshLabel()):\n"
+            terminated = false
+            return IRValue(llvmType: "void", ssaName: "")
+        }
         for (index, argument) in arguments.enumerated() {
             if index > 0 {
                 let space = emitStringConstant(" ")
@@ -1495,6 +1673,21 @@ public final class IREmitter {
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// True for the types the scalar print path cannot render — it falls
+    /// back to printing the value's spelling as an integer, so aggregates
+    /// (`{ ... }` registers) and runtime handles (`%bk_*`) would come out as
+    /// their bits. Scalars, strings and raw pointers keep the existing
+    /// scalar spelling.
+    private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer:
+            return false
+        case .result, .array, .optional, .nominal, .enumeration, .dict,
+             .lazyRef, .set, .tuple, .function:
+            return true
+        }
     }
 
     // MARK: - G13 batch 1 (LazyRef)
@@ -1723,7 +1916,7 @@ public final class IREmitter {
         case .string:
             // Length: inline byte scan (strlen semantics — ASCII parity with
             // the interpreter's character count holds for the corpus).
-            let count = emitStringLength(containerValue)
+            let count = emitStringByteLength(containerValue)
             let lo = resolveSliceBound(start, count: count, defaultValue: "0")
             let hi = resolveSliceBound(end, count: count, defaultValue: count)
             let length = builder.freshTemp()
@@ -1805,8 +1998,10 @@ public final class IREmitter {
         return clamped
     }
 
-    /// Inline byte-scan length for an `i8*` string value.
-    private func emitStringLength(_ value: IRValue) -> String {
+    /// Inline byte-scan length for an `i8*` string value: counts bytes up to the
+    /// NUL terminator. Used for slice arithmetic, which indexes bytes — see
+    /// `emitStringCharCount` for the value `len` reports.
+    private func emitStringByteLength(_ value: IRValue) -> String {
         let counterSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
         bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: counterSlot) + "\n"
@@ -1841,6 +2036,63 @@ public final class IREmitter {
         return result
     }
 
+    /// Character count for an `i8*` string value: the number of Unicode
+    /// scalars, obtained by counting every byte that is not a UTF-8
+    /// continuation byte (`byte & 0xC0 == 0x80`). This is what `len` reports
+    /// on a string, and mirrors the byte-skipping loop the retired emitter
+    /// emitted — the interpreter counts grapheme clusters, which is the same
+    /// number for CJK and ordinary text; ZWJ and skin-tone sequences are a
+    /// known edge.
+    private func emitStringCharCount(_ value: IRValue) -> String {
+        let countSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: countSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: countSlot) + "\n"
+        let cursorSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: cursorSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: cursorSlot) + "\n"
+        let id = builder.freshLabel()
+        let loopLabel = "strcount.loop.\(id)"
+        let bodyLabel = "strcount.body.\(id)"
+        let countLabel = "strcount.count.\(id)"
+        let incLabel = "strcount.inc.\(id)"
+        let endLabel = "strcount.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: loopLabel) + "\n"
+        bodyIR += "\(loopLabel):\n"
+        let cursor = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: cursor, type: "i32", ptr: cursorSlot) + "\n"
+        let bytePtr = builder.freshTemp()
+        bodyIR += " \(bytePtr) = getelementptr i8, ptr \(value.ssaName), i32 \(cursor)\n"
+        let byte = builder.freshTemp()
+        bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
+        let isEnd = builder.freshTemp()
+        bodyIR += " \(isEnd) = icmp eq i8 \(byte), 0\n"
+        bodyIR += builder.fmtCondBr(cond: isEnd, thenLabelName: endLabel, elseLabelName: bodyLabel) + "\n"
+        bodyIR += "\(bodyLabel):\n"
+        let leadBits = builder.freshTemp()
+        bodyIR += " \(leadBits) = and i8 \(byte), 192\n"
+        let isContinuation = builder.freshTemp()
+        bodyIR += " \(isContinuation) = icmp eq i8 \(leadBits), 128\n"
+        bodyIR += builder.fmtCondBr(cond: isContinuation, thenLabelName: incLabel, elseLabelName: countLabel) + "\n"
+        bodyIR += "\(countLabel):\n"
+        let current = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: current, type: "i32", ptr: countSlot) + "\n"
+        let bumped = builder.freshTemp()
+        bodyIR += " \(bumped) = add i32 \(current), 1\n"
+        bodyIR += builder.fmtStore(value: bumped, type: "i32", ptr: countSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+        bodyIR += "\(incLabel):\n"
+        let cursorValue = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: cursorValue, type: "i32", ptr: cursorSlot) + "\n"
+        let cursorNext = builder.freshTemp()
+        bodyIR += " \(cursorNext) = add i32 \(cursorValue), 1\n"
+        bodyIR += builder.fmtStore(value: cursorNext, type: "i32", ptr: cursorSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: loopLabel) + "\n"
+        bodyIR += "\(endLabel):\n"
+        let total = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: total, type: "i32", ptr: countSlot) + "\n"
+        return total
+    }
+
     /// `arr.get(i)` — tolerant read: tail-counted negative index, then a
     /// bounds check; some(payload) or none. Arrays go through the runtime
     /// handle; strings scan bytes inline (ASCII parity with the interpreter's
@@ -1859,7 +2111,7 @@ public final class IREmitter {
         let count: String
         var arrayRaw: String? = nil
         if isStringReceiver {
-            count = emitStringLength(containerValue)
+            count = emitStringByteLength(containerValue)
         } else {
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
@@ -2033,7 +2285,7 @@ public final class IREmitter {
         if hirType(of: container) == .string {
             // String subscript: tail-counted index, inline strlen, OOB panics
             // (safe-assert channel, E5-005 parity); returns a 1-char string.
-            let count = emitStringLength(containerValue)
+            let count = emitStringByteLength(containerValue)
             let effective = tailCountIndex(index: indexValue.ssaName, count: count)
             let id = builder.freshLabel()
             let okLabel = "strsub.ok.\(id)"
@@ -2101,7 +2353,7 @@ public final class IREmitter {
             bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
             return IRValue(llvmType: "i32", ssaName: count)
         case .string:
-            return IRValue(llvmType: "i32", ssaName: emitStringLength(value))
+            return IRValue(llvmType: "i32", ssaName: emitStringCharCount(value))
         default:
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
@@ -2927,6 +3179,7 @@ public final class IREmitter {
         let savedSlotCounters = slotCounters
         let savedTerminated = terminated
         let savedLoopStack = loopStack
+        let savedDeferScopeBase = deferScopeBase
         let savedReturnType = currentReturnType
         let savedIsMain = currentIsMain
         let savedBodyIR = bodyIR
@@ -2937,6 +3190,9 @@ public final class IREmitter {
         slotCounters = [:]
         terminated = false
         loopStack = []
+        // A return inside the closure must not run the enclosing function's
+        // defers: defer frames opened by the closure live above this base.
+        deferScopeBase = pendingDefers.count
         currentReturnType = returnType
         currentIsMain = false
         builder = IRBuilder()
@@ -2991,6 +3247,7 @@ public final class IREmitter {
         slotCounters = savedSlotCounters
         terminated = savedTerminated
         loopStack = savedLoopStack
+        deferScopeBase = savedDeferScopeBase
         currentReturnType = savedReturnType
         currentIsMain = savedIsMain
         bodyIR = savedBodyIR

@@ -3321,29 +3321,53 @@ public enum HIRLowerer {
             let hirCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         default:
-            // G11 multidim corpus: the interpreter's direct subscript read
-            // yields a bare value (the Optional-returning read channel is a
-            // separate, not-yet-landed semantic), so some/none arms never
-            // fire and the match falls through silently (probe-verified —
-            // applies at any scrutinee depth: outer `match m[1]` on
-            // array(I32), inner `match row[2]` on I32). Parity: lower every
-            // arm body with its binding typed by the scrutinee itself (the
-            // value a live some-arm would bind), but drop the dispatch.
+            // Bare scrutinee — neither Optional nor enum (a direct subscript
+            // read: the interpreter yields a plain value there, verified).
+            // Two arm families share this node:
+            //   · enum-case arms (`some` / `none`) never match a bare value —
+            //     the interpreter's matchCaseMatches compares an enum case
+            //     only against an enum value — so those arms never fire and
+            //     the match falls through silently (G11 multidim corpus,
+            //     probe-verified at any scrutinee depth: outer `match m[1]`
+            //     on array(I32), inner `match row[2]` on I32).
+            //   · literal arms (`case 1:`) DO compare by value and must
+            //     dispatch; the operand rides along as `HIRMatchLiteral` so
+            //     the emitter never re-parses rendered pattern text.
+            // Either way each body lowers with its binding typed by the
+            // scrutinee itself (the value a live some-arm would bind).
             var hirCases: [HIRMatchCase] = []
             for matchCase in cases {
-                let body = try lowerDeadArmBody(matchCase, bindingType: loweredValue.type, into: &context)
-                hirCases.append(HIRMatchCase(caseName: matchCase.pattern.description, bindings: matchCase.bindings.map { $0.varName }, body: body))
+                let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
+                hirCases.append(HIRMatchCase(
+                    caseName: matchCase.pattern.description,
+                    literal: literalOperand(of: matchCase.pattern),
+                    bindings: matchCase.bindings.map { $0.varName },
+                    body: body
+                ))
             }
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         }
     }
 
-    /// G11: one dead-arm body of a match whose scrutinee is neither Optional
-    /// nor enum — the arm is never dispatched at emission (probe-verified
-    /// silent fall-through in the interpreter); the body still lowers so its
-    /// bindings scope-resolve. Each binding adopts the scrutinee type (the
-    /// value a live some-arm would bind), wildcard/none arms bind nothing.
-    private static func lowerDeadArmBody(
+    /// Literal-pattern operand handed to the emitter; nil for enum-case and
+    /// wildcard patterns, whose dispatch is not value-based.
+    private static func literalOperand(of pattern: MatchPattern) -> HIRMatchLiteral? {
+        switch pattern {
+        case .intLiteral(let n): return .int(n)
+        case .floatLiteral(let f): return .float(f)
+        case .stringLiteral(let s): return .string(s)
+        case .boolLiteral(let b): return .boolean(b)
+        case .enumCase, .wildcard: return nil
+        }
+    }
+
+    /// One arm body of a match whose scrutinee is neither Optional nor enum
+    /// (the bare-value family, see `lowerMatch`). The body lowers so its
+    /// bindings scope-resolve; whether the arm actually dispatches at emission
+    /// follows from its pattern — literal arms do, enum-case arms cannot.
+    /// Each binding adopts the scrutinee type (the value a live some-arm would
+    /// bind), wildcard/none arms bind nothing.
+    private static func lowerBareScrutineeArmBody(
         _ matchCase: MatchCase,
         bindingType: HIRType,
         into context: inout FunctionContext
@@ -3490,6 +3514,89 @@ public enum HIRLowerer {
 
     // MARK: - Array stores & compound assignment (G2 batch 2)
 
+    /// Nested writes (`m[i][j] = v`) whose chain passes through a dictionary at
+    /// any level.
+    ///
+    /// The emitter's top-down copy-on-write split chain is array-only: every
+    /// level is split with `bk_array_ensure_unique_at` and typed `%bk_array*`.
+    /// A dictionary root or intermediate level therefore either feeds a string
+    /// key into the split call's `i32` slot (lli rejects the module outright)
+    /// or skips the split entirely and leaves an aliased snapshot sharing the
+    /// box that was written. Until the chain dispatches on the container type,
+    /// the shape is rejected loudly: an explicit unsupported-feature error is
+    /// strictly better than emitting IR that dies in lli or silently corrupts
+    /// a value-type snapshot.
+    private static func nestedWriteChainHasDict(
+        _ container: Expression, in context: FunctionContext
+    ) -> Bool {
+        // A plain variable target is the flat write path. Both the array and
+        // the dictionary store split the handle they hand to the runtime and
+        // write the returned handle back to the owning slot, so a dictionary
+        // container is correct here and must stay allowed.
+        guard case .subscript(let inner, _, _) = container else { return false }
+        // `a[0]["k"] = v` — the container itself is a dictionary. The
+        // dictionary store path reads it plainly, so nothing is split and an
+        // aliased snapshot keeps sharing the written box.
+        if let type = containerChainType(container, in: context), case .dict = type {
+            return true
+        }
+        // `d["a"][0] = v` — the array store path does walk the split chain, but
+        // that walk is array-only, and a dictionary level above the target puts
+        // a string key into the split call's `i32` slot.
+        return chainHasDictContainer(inner, in: context)
+    }
+
+    /// Walk up a subscript chain looking for a dictionary level. Stops at the
+    /// first element whose static type is unknown.
+    private static func chainHasDictContainer(
+        _ container: Expression, in context: FunctionContext
+    ) -> Bool {
+        var cursor = container
+        while let type = containerChainType(cursor, in: context) {
+            if case .dict = type { return true }
+            guard case .subscript(let inner, _, _) = cursor else { return false }
+            cursor = inner
+        }
+        return false
+    }
+
+    /// Static type of a container expression when it is a plain variable or a
+    /// subscript chain rooted at one. Anything else (literals, calls) yields
+    /// `nil`, which the nested-write guard reads as "not a dictionary" — an
+    /// unknown shape is never rejected on suspicion.
+    private static func containerChainType(
+        _ expr: Expression, in context: FunctionContext
+    ) -> HIRType? {
+        switch expr {
+        case .identifier(let name, _):
+            return context.variableTypes[name]
+        case .subscript(let inner, _, _):
+            guard let containerType = containerChainType(inner, in: context) else {
+                return nil
+            }
+            switch containerType {
+            case .array(let element): return element
+            case .dict(_, let value): return value
+            default: return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// Gate a nested write on `nestedWriteChainHasDict`. Plain array chains
+    /// (any depth) pass through untouched — they are already correct.
+    private static func requireArrayOnlyNestedWriteChain(
+        _ container: Expression, in context: FunctionContext, at location: SourceLocation
+    ) throws {
+        guard nestedWriteChainHasDict(container, in: context) else { return }
+        throw unsupported(
+            "nested subscript write through a dictionary is a later grid "
+                + "(the copy-on-write split chain is array-only)",
+            at: location
+        )
+    }
+
     /// Lower `container[index] = value` for array containers. The read path
     /// gates the container type; the value adopts the element type.
     private static func lowerSubscriptStore(
@@ -3499,6 +3606,7 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> HIRStmt {
+        try requireArrayOnlyNestedWriteChain(container, in: context, at: location)
         let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
         let elementType: HIRType
         switch loweredContainer.type {
@@ -3556,6 +3664,7 @@ public enum HIRLowerer {
             return .storeVar(name: name, type: varType, value: combined)
         }
         if case .subscript(let container, let index, _) = left {
+            try requireArrayOnlyNestedWriteChain(container, in: context, at: location)
             let read = try lowerExpr(left, expected: nil, into: &context)
             guard read.type.isNumeric else {
                 throw unsupported(
