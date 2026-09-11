@@ -1667,15 +1667,12 @@ public final class IREmitter {
     /// stringify-join byte stream). No newline after each argument, unlike
     /// the single-argument print path.
     ///
-    /// This path renders through the scalar printer, which carries no case
-    /// for aggregate or handle spellings: such an argument reaches its
-    /// fallback and is handed to `printf` as an integer, so the statement
-    /// prints the value's bits where its formatted value belongs — silently
-    /// wrong output with no diagnostic. Aggregate arguments therefore trap
-    /// at run time instead (`bk_panic` is noreturn), keeping the gap
-    /// observable; the formatting that would render them is a later grid.
-    /// The single-argument path already gates the same shapes, at lowering
-    /// time.
+    /// Every argument renders through the shared recursive printer, which
+    /// covers the slice shapes and falls back to the scalar path, so a mixed
+    /// call matches the single-argument form byte for byte. Types that still
+    /// have no rendering at all trap at run time instead (`bk_panic` is
+    /// noreturn), keeping the remaining gap observable rather than letting
+    /// the scalar fallback print a handle's bits.
     private func emitPrintMulti(arguments: [HIRExpr]) -> IRValue {
         if arguments.contains(where: { Self.hasNoScalarRendering(hirType(of: $0)) }) {
             let message = emitStringConstant(
@@ -1696,22 +1693,24 @@ public final class IREmitter {
                 bodyIR += " call i32 (ptr, ...) @printf(ptr \(space.ssaName))\n"
             }
             let printed = emitExpr(argument)
-            emitScalarPrint(printed)
+            emitValuePrint(value: printed, type: hirType(of: argument))
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
-    /// True for the types the scalar print path cannot render — it falls
-    /// back to printing the value's spelling as an integer, so aggregates
-    /// (`{ ... }` registers) and runtime handles (`%bk_*`) would come out as
-    /// their bits. Scalars, strings and raw pointers keep the existing
-    /// scalar spelling.
+    /// True for the types neither print path can render — the scalar path
+    /// falls back to printing the value's spelling as an integer, so
+    /// aggregates (`{ ... }` registers) and runtime handles (`%bk_*`) would
+    /// come out as their bits. Scalars, strings and raw pointers keep the
+    /// existing scalar spelling. Nominal values are no longer in this set:
+    /// they render through the shared recursive printer.
     private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
         switch type {
-        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer:
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer,
+             .nominal:
             return false
-        case .result, .array, .optional, .nominal, .enumeration, .dict,
+        case .result, .array, .optional, .enumeration, .dict,
              .lazyRef, .set, .tuple, .function:
             return true
         }
@@ -2796,10 +2795,51 @@ public final class IREmitter {
             let close = emitStringConstant("]")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
-        case .nominal:
-            // Gated by the lowerer (printing struct/object values is a later
-            // grid); kept here only to make the switch total.
-            fatalError("IREmitter: printing a nominal value is gated (HIRLowerer)")
+        case .nominal(let name, _):
+            // Struct / object value rendering (interpreter stringify parity):
+            // `Name{field: value, ...}` with the fields ordered by name.
+            //
+            // The display order is resolved here, not at run time: the
+            // aggregate's field positions are static, so an ordered view over
+            // the declared fields can still read each field's original slot.
+            // Objects carry a refcount word ahead of the first field, which
+            // shifts every field index by one — the same offset the
+            // constructor applies.
+            guard let decl = moduleTypes.first(where: { $0.name == name }),
+                  let aggregate = type.nominalAggregateSpelling else {
+                fatalError("IREmitter: printing unregistered nominal (HIRLowerer guarantees)")
+            }
+            let open = emitStringConstant("\(name){")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
+            let fieldBase = decl.isObject ? 1 : 0
+            let orderedFields = decl.fields.enumerated().sorted {
+                $0.element.name < $1.element.name
+            }
+            for (position, entry) in orderedFields.enumerated() {
+                if position > 0 {
+                    let separator = emitStringConstant(", ")
+                    bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
+                }
+                let label = emitStringConstant("\(entry.element.name): ")
+                bodyIR += " call i32 (ptr, ...) @printf(ptr \(label.ssaName))\n"
+                let fieldPtr = builder.freshTemp()
+                bodyIR += builder.fmtGEP(
+                    name: fieldPtr, aggregate: aggregate, base: value.ssaName,
+                    indices: [0, fieldBase + entry.offset]
+                ) + "\n"
+                let fieldValue = builder.freshTemp()
+                bodyIR += builder.fmtLoad(
+                    name: fieldValue, type: entry.element.type.llvmSpelling, ptr: fieldPtr
+                ) + "\n"
+                emitValuePrint(
+                    value: IRValue(
+                        llvmType: entry.element.type.llvmSpelling, ssaName: fieldValue
+                    ),
+                    type: entry.element.type
+                )
+            }
+            let close = emitStringConstant("}")
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
         case .enumeration(let name):
             // Enum value rendering (interpreter stringify parity):

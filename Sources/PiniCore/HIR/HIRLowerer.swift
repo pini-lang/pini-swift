@@ -2293,12 +2293,6 @@ public enum HIRLowerer {
                     if case .result = loweredArgs[0].type {
                         throw unsupported("printing a Result value is outside the slice", at: location)
                     }
-                    if case .nominal = loweredArgs[0].type {
-                        throw unsupported(
-                            "printing a struct/object value is a later grid (value formatting)",
-                            at: location
-                        )
-                    }
                     return LoweredExpr(node: .printCall(argument: loweredArgs[0].node), type: .i32)
                 }
                 return LoweredExpr(node: .printMulti(arguments: loweredArgs.map { $0.node }), type: .i32)
