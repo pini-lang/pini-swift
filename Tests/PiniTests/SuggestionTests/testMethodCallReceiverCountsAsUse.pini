@@ -1,0 +1,4 @@
+main|func() -> ():
+    var words = ["a", "b", "c"]
+    print(words.join("-"))
+    return

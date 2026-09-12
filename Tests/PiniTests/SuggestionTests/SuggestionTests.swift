@@ -83,6 +83,29 @@ final class SuggestionTests: XCTestCase {
         XCTAssertTrue(analyzeWarnings(source).isEmpty)
     }
 
+    /// 意图：成员调用的**接收者**计入「已使用」——只作为接收者被读的变量不得误报 E7-001。
+    func testMethodCallReceiverCountsAsUse()  throws {
+        let source = try loadPiniFixture("testMethodCallReceiverCountsAsUse", filePath: #filePath)
+        XCTAssertTrue(analyzeWarnings(source).isEmpty)
+    }
+
+    /// 意图：反向对照——接收者确实被检查，未定义接收者须报错。
+    /// 没有这一条，「不再误报」也可以靠**跳过**该检查路径达成。
+    func testMethodCallReceiverIsChecked()  throws {
+        let source = try loadPiniFixture("testMethodCallReceiverIsChecked", filePath: #filePath)
+        let errors = analyzeErrors(source)
+        XCTAssertTrue(errors.contains { $0.diagnosticCode == "E3-001" },
+                      "未定义接收者应报 E3-001，实际：\(errors)")
+    }
+
+    private func analyzeErrors(_ source: String) -> [SemanticError] {
+        let tokens = (try? Lexer(source: source, fileName: "t.pini").tokenize()) ?? []
+        let parser = Parser(tokens: tokens, fileName: "t.pini")
+        let result = parser.parseModuleCollectingErrors()
+        let analyzer = SemanticAnalyzer()
+        return analyzer.analyzeCollecting(module: result.module)
+    }
+
     /// 意图：`_`/`_xxx` 前缀变量忽略（语言惯例）。
     func testUnderscorePrefixedNoWarn()  throws {
         let source = try loadPiniFixture("testUnderscorePrefixedNoWarn", filePath: #filePath)
