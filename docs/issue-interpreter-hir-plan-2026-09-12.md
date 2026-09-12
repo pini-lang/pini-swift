@@ -126,7 +126,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 > - **IO 语义**拆为一格（`readLine` / `readFile` / `writeFile`，同族）；
 > - **`stringSplit` 空 token 取舍**：量小，随 IO 格或单列皆可；
 > - **String 文本模型**：**不再需要裁决**（`ADR-019 D1` 已裁），改为**实现对齐**——
->   其规范产出 = `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Proposed 草案**）。
+>   其规范产出 = `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Accepted 2026-09-12**）。
 >   这是本批最关键的一处**性质变化**：**从「立新规范」变成「补实现缺口」**。
 >
 > 另：`stringSubstring` 的 `(start, length)` vs 注册表已裁决的 `(start, end)` 属**实现缺陷**

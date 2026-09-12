@@ -6,7 +6,8 @@
   `docs/issue-interpreter-hir-unification-2026-09-07.md`（立案背景）；
   `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（同根因族工单，本批回答其遗留未知项）；
   `docs/spec/adr/adr-019-unicode-char-model.md`（**字符模型裁决出处——P0c 复审的关键依据**）；
-  `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，Proposed 草案）
+  `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Accepted 2026-09-12**）
+- 实施工单：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`（P0d 前置，`Char` 腾名）
 - 基线：main `361ec2c`，分支 `agent/pini-dev/hir-hub-p0`
 - 台账口径：**行号为 2026-09-12 实测快照**；实现改动后一律改用符号检索重新定位，勿复用行号
 - **⚠️ 读前必看**：本文件 §5.3.1 的**初稿根因结论已被 P0c 复审推翻**（初稿误判为「规范空白」，
@@ -489,7 +490,7 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
 - **三项待点名事项的裁决结果（2026-09-12）**：
   1. **§7.1 拆项方案 → 判据已订正**：字符家族**不需要裁决**（`ADR-019 D1` 已裁 grapheme），
      改判为实现缺陷；甲类裁决表收窄到 **4 项**（3 项 IO 语义 + `stringSplit` 空 token 取舍）。
-     规范产出载体 = `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Proposed 草案**）。
+     规范产出载体 = `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Accepted 2026-09-12**）。
   2. **§6 CPS / AST 走查路线 → `R2`**（用户裁决：单独留一格把 CPS 迁到 HIR）。
      ⇒ `HIRLowerer` 须为 `.join` 增加节点面，**P0b 的节点语义须预留挂起语义**。
   3. 之后进 **P0b**（HIR 规范 ADR + 节点语义 + 裁决落地）。
