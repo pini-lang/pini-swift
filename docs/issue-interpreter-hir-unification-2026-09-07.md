@@ -17,7 +17,9 @@
   **P1-4（探针扩三实通道）已交付**（`tools/hir-parity-probe.py` +196、`tools/three-channel.py` +25、
   新语料 `testDiffArrayJoin.pini`；基准 73 夹具 `OK 23`/`HIR_ENGINE_TODO 50`/**`FLIP BLOCKERS 0`**、
   变异反证 5/5；`arrayJoin` 补探针实测推翻契约的「B 组实现偏离」）；
-  **下一格 = P1-5（调试·REPL 接口预留），待点名**）**
+  **P1-5（调试面接口预留）S1 已交付 2026-09-13、S2 登记为 P4 前置工单；P1-6（收口）已交付 2026-09-13
+  ⇒ P1 六步全部完成（同期订正：REPL 与调试面是两条独立接缝；位置工单归 P4 前置）。
+  下一格 = P2 第一格（标量与算术族），待点名**）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（**执行计划载体**，D-B1…D-B12 决策登记）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）；
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（判据与约束权威）
