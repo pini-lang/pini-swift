@@ -361,6 +361,11 @@ final class HIRDifferentialTests: XCTestCase {
     // MARK: - G9 string deepening (stdlib methods, defer, interpolation)
 
     func testDiffStdlib() throws { try assertParity(fixtureName: "testDiffStdlib") }
+    /// Contract entry 40 (`arrayJoin`) had no probe of its own: `testDiffStdlib`
+    /// reached `join` among a dozen other features, so its result could not be
+    /// attributed to this node. Added in P1-4 to settle the entry's "behaviour
+    /// not measured this round" note.
+    func testDiffArrayJoin() throws { try assertParity(fixtureName: "testDiffArrayJoin") }
     func testDiffDefer() throws { try assertParity(fixtureName: "testDiffDefer") }
     func testDiffLexical() throws { try assertParity(fixtureName: "testDiffLexical") }
 

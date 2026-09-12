@@ -26,9 +26,13 @@ Accepted（2026-08-29）
 
 **边界**：LLVM 端字符串下标/谓词在补齐前保持显式 unsupported（与 FFI Phase 2a 同策略），不得静默给出与解释器不一致的结果。
 
+**边界状态更新（2026-09-12，由 `ADR-033` 触发）**：本边界成立的**前提已失效** —— 它假定单后端心态（解释器为主、LLVM 可挂 unsupported），但 **HIR 统合（LR-4）+ M6b 翻转**后 LLVM 升为并列一等后端、HIR 成为两侧共用枢纽，枢纽契约要求两侧同语义。且实测 LLVM 端**并未**保持 unsupported，而是**静默给出了不一致结果**（`len` 取码点 / 切片与 `substring` 取字节），即**违反本边界**。处置见 `ADR-033`（引入 `Char` 类型 + LLVM 端 grapheme 走 `bk_string_grapheme_*` shim），实施载体为 `docs/issue-hir-string-slice-byte-based-2026-09-11.md`。
+
 ### D2: 不引入 `Char` 类型（两阶段，可逆）
 
 当前阶段谓词签名统一为 `(String,) -> (Bool,)`，`s[i]` 继续返回 `Optional<String>`。真 `Char` 标量类型 + 字符字面量 `'c'` 为远期独立 RFC——其迁移面（AST/类型层/解释器/LLVM/序列化）当前不值得为 lexer 闭环预付。本决策可逆：迁移面收敛在谓词签名与 `s[i]` 返回类型两处。
+
+**状态更新（2026-09-12）**：本决策的**第二阶段已启动** —— `ADR-033`（Accepted 2026-09-12）裁决：`Char` 表示 = 与 `String` 同构（方案 A，零新 ABI、零性能回归）、FFI 既有单字节 `Char` 改名 `CChar`、字符字面量 `'c'` **拆格**（类型先行）。另**订正本段一处事实漂移**：「`s[i]` 继续返回 `Optional<String>`」已被 `ADR-028`（2026-09-01）取代 —— `s[i]` 现走 panic 通道（安全断言），实测返回单字符 String（`.string`）。**「迁移面收敛在两处」的判断不受影响**（实测迁移面为 3+6+2 处，见 `ADR-033` D4，仍属小面）。
 
 ### D3: spec §A.1.1 IDENT 续字符放宽为 Unicode numeric property（裁决漂移）
 

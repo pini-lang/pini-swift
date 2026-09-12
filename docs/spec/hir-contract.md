@@ -1,0 +1,263 @@
+# HIR 节点语义契约（HIR Node Semantic Contract）
+
+- 性质：**宿主级规范**。HIR 节点语义的**唯一权威载体**。
+- 依据：`docs/spec/adr/adr-034-hir-contract.md`（ADR-034，Accepted 2026-09-12）。
+- 版本：v1（2026-09-12，随 P0b 首次落地）。
+- 变更：走 `pini-spec-v0.md` §1.3 五步治理；条目一经落地**不得随实现漂移**（ADR-034 D5）。
+
+## 0. 定位与判读规则
+
+### 0.1 权威次序（ADR-034 D1）
+
+1. **语言面语义**（用户可见行为）以 `pini-spec-v0.md` 为准 —— 本契约**不得与之冲突**；
+2. **HIR 节点语义**（后端间契约）以**本契约**为准；
+3. 各后端实现（解释器 / LLVM / 未来 WASM）**与本契约一致**；**任一后端都不是定义处**。
+
+### 0.2 本契约的表述纪律（强制）
+
+- **语义列**只写后端无关的行为约定。**不得**出现 `bk_*`、`alloca`、`fgets`、`strtok`、
+  `memcpy`、GEP、refcount 布局、fat pointer 形状等实现细节；
+- 实现细节只能出现在**「LLVM 侧实现注记」**列，且其地位是「一种实现」，不是语义；
+- **禁止**以 `bk_*` 行为定义语义 —— 否则等于把某一后端的实现选择升格为全体后端的义务
+  （ADR-034 D1、WASM 约束）。
+
+> **反例（本契约立此存照）**：`HIRNode.swift` 原注释写 `fileRead`「fread into a 64 KiB
+> stack buffer」——把缓冲尺寸写成了节点语义。本契约的表述为「读取整文件内容；上限见
+> §2.8 注记」，尺寸降为实现注记。
+
+### 0.3 三方对照核验（P1 脚本化的对象）
+
+```
+本契约条目  ↔  HIRNode.swift 的节点集  ↔  各后端实现锚点
+```
+
+核验须能双向报缺口：**有节点无契约条目** / **有契约条目无实现锚点**（计划 §8 第 2 层判据）。
+
+### 0.4 计数基线
+
+**44 表达式节点 + 16 语句节点 = 60**（2026-09-12 逐个复核，与计划一致）。
+
+> **首轮核验订正（2026-09-12，P1-1 前哨）**：首次机械对照（本契约 ↔ `HIRNode.swift` 节点集）
+> 报出三处缺陷，已当场订正：
+> ① **漏 `printMulti` 条目** —— 代码 44 个 `HIRExpr` case 含它，契约只列 43 条；
+> ② **两条语句位指针（`tryStmt` / `matchStmt`）占用了表达式条目号** —— 致 §2 实列 45 行
+>    与「44 条」声明不符；已移出编号，改为节内指针注记；
+> ③ **引用静默位错** —— `pointerLoad` 的半语义引用原写作旧条目号 26，而该节点的旧条目号
+>    实为 30（§6 汇总表自身写的就是 30，同一文件内两说）。
+>
+> 订正后条目号重排为 **1–44 连续无缺口**，节内引用随之更新：半语义两项现为 17 与 29、
+> `addressOfVar` 为 31、B 组六项为 22/23/36/37/38/40。**本条为订正记载，非新规范内容。**
+
+## 1. 类型层（HIRType，20 case）
+
+| 类型 | 语义（后端无关） | LLVM 侧实现注记 |
+|---|---|---|
+| `i32` / `i64` | 32 / 64 位有符号整数 | `i32` / `i64` |
+| `u64` / `u8` | 64 / 8 位无符号整数 | 与 `i64` / `i8` 同拼写，符号性由运算承载 |
+| `i8` | 8 位有符号整数 | `i8`；算术在发射期拓宽到 `i32` |
+| `f64` | 64 位 IEEE-754 浮点 | `double` |
+| `boolean` | 布尔 | `i1` |
+| `string` | 字节串值 | `i8*` |
+| `result(ok:)` | `Result<ok, E>`；**错误槽类型擦除** | `{ i64, ok, i64 }` — 三槽是**布局约定** |
+| `array(element:)` | 有序、可重复、值语义集合 | 不透明句柄（`%bk_array*`） |
+| `optional(wrapped:)` | 有/无二态容器 | `{ i64, T }` 带 tag（**tag 取值是布局约定**） |
+| `nominal(name:isObject:)` | 用户具名类型；`isObject=true` 为**引用语义**、`false` 为**值语义** | `%object.*` / `%struct.*`；**refcount 头是实现** |
+| `enumeration(name:)` | 用户枚举（带关联值的 tagged union） | `%enum.*`；**tag 位置与槽宽是实现** |
+| `dict(key:value:)` | 键到值的映射；**键唯一** | 不透明句柄（`%bk_dict*`） |
+| `set(element:)` | 唯一元素集合 | 不透明句柄（`%bk_set*`） |
+| `lazyRef(element:)` | **一次求值**、共享（引用）拷贝语义的惰性引用 | 不透明句柄（`%bk_lazyref*`） |
+| `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 聚合值；**按标签序取成员** |
+| `function(params:returnType:)` | 函数是一等值 | fat pointer `{ptr, ptr}`；**首参恒为 env 是调用协议** |
+| `pointer(element:)` | `*T` 原始指针（FFI） | 不透明 `ptr`；**load/store 按元素类型解码**（半语义，见 §2.29） |
+
+> **乙类纪律**（ADR-034 D3 E 组）：上表「布局约定」字样者为**后端约定**，WASM 端可另择
+> 表示；标「语义」者为**必须实现的行为**。半语义两项见 §2.17（`optionalGet` 的 panic 面）
+> 与 §2.29（`pointerLoad` 的符号扩展）。
+
+## 2. 表达式节点（44 条）
+
+> 每条的「语义」列为**规范表述**；「注记」列记差异、偏离与待办。
+
+### 2.1 标量常量
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 1 | `intConst(value:type:)` | 整数字面量，类型由 `type` 给定 | — |
+| 2 | `floatConst(value:)` | 浮点字面量（`F64`） | — |
+| 3 | `boolConst(value:)` | 布尔字面量 | — |
+| 4 | `stringConst(value:)` | 字符串字面量（字节串） | — |
+
+### 2.2 变量与运算
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 5 | `load(name:type:)` | 读变量当前值；`type` 为变量**声明类型** | 不改变变量状态 |
+| 6 | `binary(op:lhs:rhs:type:)` | 二元运算：算术 / 比较 / 逻辑 / 位运算（`HIRBinaryOp`）；关系运算结果为 `boolean` | 运算语义**由语言定义**，不由后端指令集定义 |
+| 7 | `unary(op:operand:type:)` | 一元运算：`negate` / `logicalNot` / `abs` | `abs` 为选择式取绝对值 |
+
+### 2.3 调用
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 8 | `call(function:arguments:returnType:)` | 调用**模块级**具名函数；`returnType=nil` 表示返回空 | 实参求值序与错误传播同语言定义 |
+| 9 | `printCall(argument:)` | 内建 `print`：单标量实参，**逐字展示后随一个行终止符**，结果为空 | 值展示规则见 `pini-spec-v0.md` §2.8（**含 F64 最短往返**） |
+| 10 | `printMulti(arguments:)` | 内建 `print` 多参形式：**逐参展示，以单个空格连接，末尾一个行终止符**，结果为空 | ✅ C 组：两侧字节序一致（G14 D-A=A1）；「以空格连接」是语义，拼接方式是实现 |
+| 11 | `indirectCall(callee:arguments:returnType:)` | 经函数值间接调用；`callee` 为闭包 / 具名函数值 / 函数类型变量 | **调用协议**（env 首参）是约定；「函数是一等值」是语义 |
+| 12 | `functionValue(functionName:type:)` | 具名顶层函数作为值使用 | 与 `closureLiteral` **共用调用协议** |
+| 13 | `closureLiteral(id:paramNames:paramTypes:returnType:captures:body:type:)` | 闭包值：体 + **创建点捕获表**；捕获为**引用捕获**（与环境槽共享） | `captures` 按体内首次使用排序；未标注参数走返回标注回退（G29） |
+| 14 | `assertCall(condition:message:)` | 断言：条件为假 → **运行时陷阱**并带消息 | 仅 `\|test` 块使用；差分夹具从不执行 |
+
+### 2.4 Result 与 Optional
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 15 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；**错误载荷类型擦除为一个机器字** | 擦除是 ABI 约定；「错误可为任意类型」是语言语义 |
+| 16 | `optionalConstruct(isSome:payload:type:)` | `Optional` 构造：`isSome=false` 为 `none`（语言级 nil）；`true` 携带载荷 | 切片语法开放边界到达时为 `none` |
+| 17 | `optionalGet(container:index:type:)` | **宽容读通道** `container.get(i)`：越界 → `none`；界内 → `some(v)` | ⚠️ **半语义**：越界返回 `none` 是语义；边界检查方式是约定（E 组，ADR-034 D3） |
+> **语句位指针（不占编号）**：`tryStmt` 见 §3.9。
+
+### 2.5 集合
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 18 | `arrayLiteral(elements:type:)` | 数组字面量，**元素保序** | — |
+| 19 | `dictLiteral(entries:type:)` | 字典字面量，键值对预降级 | — |
+| 20 | `setLiteral(elements:type:)` | 集合字面量，**元素唯一** | — |
+| 21 | `subscriptGet(container:index:type:)` | **安全断言读** `c[i]`：越界（读）→ panic（`E5-005`） | 负索引尾部计数；三通道语义见 ADR-028 |
+| 22 | `lenCall(argument:)` | 容器长度 | ⚠️ **B 组缺陷**：`String` 的「字符」定义两侧不同（契约 = **字素簇**，`ADR-019 D1`；LLVM 侧现为码点，**偏离**） |
+| 23 | `sliceCall(container:start:end:type:)` | 切片：**负界尾部计数**，夹到 `[0, len]`，`hi < lo` 得空 | ⚠️ **B 组缺陷**：`String` 切片契约 = 字素簇；LLVM 侧现为**字节**，偏离 |
+| 24 | `tupleConstruct(labels:elements:type:)` | 带标签元组构造 | — |
+| 25 | `tupleIndexGet(base:index:type:)` | 元组成员读，按**字段序** | — |
+
+### 2.6 具名类型与枚举
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 26 | `construct(type:)` | 具名类型构造；字段取**声明默认值**（无默认则零值）；对象类型的**对象同一性**（引用语义） | refcount 初值是实现 |
+| 27 | `enumConstruct(enumName:caseName:tag:payloads:payloadTypes:type:)` | 枚举 case 构造；`tag` = case **声明序索引** | 载荷按值存入 tagged union |
+| 28 | `fieldGet(base:field:type:)` | 具名字段读 | 按**声明序**取字段；布局是约定 |
+> **语句位指针（不占编号）**：`matchStmt` 见 §3.14。
+
+### 2.7 指针与取址
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 29 | `pointerLoad(pointer:type:)` | 经 `*T` 读元素值；**按元素类型解码** | ⚠️ **半语义**：解码是语义；`*U8` 的**符号扩展规则**须上提或标注为约定（E 组） |
+| 30 | `pointerStore(pointer:value:type:)` | 经 `*T` 写值，按元素类型编码 | 窄元素为**截断写**（与解释器一致） |
+| 31 | `addressOfVar(name:type:)` | `&x` —— 变量**存储槽的地址**（**真指针**语义） | ✅ **A/D1 裁决：统一到本方（真引用）**。解释器现为快照，属**偏离**，须修 |
+
+### 2.8 IO（G15/G17）
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 32 | `fileWrite(path:content:)` | 写文件；返回**写操作的整型结果码** | ✅ **A3 裁决：统一到本方**（返回整型码）。解释器现返回 nil，**须改**。裸整型码泄入语言层已立案（见注记末） |
+| 33 | `fileRead(path:)` | 读取文件的**全部内容**并作为 `String` 返回 | ✅ **A2 裁决：统一到本方** —— **上限 64 KiB，超出静默截断**。⚠️ 该上限源于发射器缓冲尺寸，**已立案**：`docs/issue-io-limit-from-emitter-2026-09-12.md` |
+| 34 | `readLine` | 从标准输入读**一行**，作为 `String` 返回 | ✅ **A1 裁决：统一到本方** —— **行终止符不剥离**；**上限 256 字节**。⚠️ 同上已立案。受害面：`Tests/PiniTests/IOTests/testReadLine.pini` 期望须改 |
+
+> **A 组裁决的共同性质**（ADR-034 D3/D4）：三项均按判准**统一到 LLVM 侧**；上限本身
+> 的合理性**不在本次裁量范围**，已另立工单。落地见「IO 语义格」。
+
+### 2.9 字符串与内建
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 35 | `isAsciiDigit(argument:)` | 首字符是否 ASCII `[0-9]`；空串 → 假 | ASCII 域内与解释器「首字素」规则重合；域外由 `ADR-019 D4` 管辖（显式 unsupported，fail-loud） |
+| 36 | `stringCase(isUpper:receiver:)` | 大小写转换，**接收者不变**，返回新串 | ⚠️ **B 组缺陷**：契约 = **Unicode 感知**（`ADR-019 D1`）；LLVM 侧现为**逐字节 ASCII-only**，偏离（实测 `"café".upper()` → `CAFé`） |
+| 37 | `stringContains(receiver:needle:)` | 子串包含判定 | ⚠️ **B 组缺陷**：契约 = **字素**语义；LLVM 侧现为**字节查找**，偏离（分解式 Unicode 下分歧） |
+| 38 | `stringSubstring(receiver:start:length:)` | 取子串 | ⚠️ **B 组缺陷**：注册表与测试已裁 **`(start, end)`**；LLVM 侧现为 `(start, length)`，**偏离** |
+| 39 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。解释器现保留空段（3 段），**须改** |
+| 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ✅ **P1-4 补探针，已实测（2026-09-12）**：`interp-ast` 与 `llvm-hir` 在**五类接收者形态**（普通 / 字面量 / 空分隔符 / 单元素 / **空数组**）与**非 ASCII 分隔符 + 非 ASCII 元素**上**逐字节一致** ⇒ **本节点测量不到字符语义偏离**。原「B 组」标注系**按邻近归类**（未经实测）给出，**测量未予支持**；**正式移出 B 组属规范内容变更，本处不擅自改判**（见 `docs/issue-hir-string-slice-byte-based-2026-09-11.md` 名下本项，待裁决）。`interp-hir` 侧未实现（`arrayLiteral` 更早拦截）⇒ P2 格。探针载体：`Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffArrayJoin.pini` |
+| 41 | `stringConcat(lhs:rhs:)` | 字符串拼接（**字节语义**） | ✅ C 组：两侧结果一致，仅分配方式不同 |
+| 42 | `interpString(parts:)` | 字符串插值：各部分转 C 串后拼接 | ✅ C 组：纯组装。F64 渲染走**最短往返**（`§2.8` / LR-8） |
+
+### 2.10 LazyRef
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 43 | `lazyRefConstruct(closure:type:)` | 创建**一次求值**的惰性引用 | 求值时机是语义；wrapper 去重是发射实现 |
+| 44 | `lazyRefValue(handle:type:)` | 读惰性引用的值（**触发首次求值**并缓存） | — |
+
+> 注：§2.1–§2.10 的编号连续，共 **44 条**；**上表编号即契约条目号**，下游文档与工单以 `§2.N` 形式引用它。
+> 语句位指针（`tryStmt` → §3.9、`matchStmt` → §3.14）**不占编号**，故编号与条目数严格相等。
+
+## 3. 语句节点（16 条）
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 1 | `allocVar(name:type:mutable:initializer:)` | 声明变量槽；有初值则在分配后立即存入 | 可变性 `mutable` 是语言约束，不靠后端 |
+| 2 | `storeVar(name:type:value:)` | 向既有变量写值 | — |
+| 3 | `ifStmt(condition:thenBody:elseBody:)` | 条件分支 | 条件为布尔 |
+| 4 | `whileStmt(condition:body:step:)` | `while` 循环；**`step` 块每轮体后执行一次** —— 正常完成**与**无标签 `continue` 时均执行，`break` 跳过 | `step` 契约见 `ADR-014`；**这是常被误实现的点** |
+| 5 | `forInStmt(pattern:elementTypes:kind:iterable:body:step:)` | `for` 遍历；`kind` 决定元素读取方式；`"_"` 占位仍占槽位并带类型 | `break`/`continue` 的 `step` 契约同 `whileStmt` |
+| 6 | `returnStmt(value:)` | 返回值；`nil` 表示空返回 | — |
+| 7 | `exprStmt(HIRExpr)` | 表达式求值并丢弃结果 | — |
+| 8 | `deferStmt(body:)` | 语句块**离开作用域时按 LIFO 执行**（含每轮循环结束） | ⚠️ `break`/`return` 交互**未入语料 = 未门控面**（如实登记） |
+| 9 | `tryStmt(operand:errorVar:handler:okTarget:type:)` | `try e else err: ...`（`ADR-032`）；操作数为 `result(ok:)`；错误路径绑定**类型擦除错误字**到 `errorVar` 并运行 handler；表达式位把 ok 载荷存入 `okTarget` | `nil` 的 `okTarget` = 语句位 |
+| 10 | `subscriptStore(container:index:value:elementType:)` | 下标写 `c[i] = v`；可嵌套链；复合赋值降级为读改写 | 越界写报错（不得经赋值扩容） |
+| 11 | `breakStmt(depth:)` | 跳出 `depth` 层循环（1 = 最内层）；标签 break 已解析为深度 | **不可解析目标 → 降级为 `panicStmt`**（fail-loud 对齐，非静默跳过） |
+| 12 | `continueStmt(depth:)` | 继续 `depth` 层循环；1 = 重测最内层条件 | 同 `breakStmt` 的不可解析处置 |
+| 13 | `panicStmt(message:)` | 无条件运行时陷阱，固定消息；块终止 | 用于解释器仅运行时才发现的逃逸 |
+| 14 | `matchStmt(scrutinee:cases:scrutineeType:)` | `match` 分派；可分派于枚举、Optional 与**裸值字面量**（`HIRMatchLiteral`） | **未匹配 → 运行时 panic**（`matchNotExhaustive` 对齐） |
+| 15 | `fieldStore(base:field:value:fieldType:)` | 具名字段写 | 对象需越过引用头（实现细节） |
+| 16 | `captureMarker(name:)` | 闭包体内的 `capture` 标记语句；**捕获在闭包创建点解析**，本节点**降级为无操作** | 存在意义是让该语句种类在闭包体内被接受而非被门控 |
+
+## 4. 预留位（已裁未实施，两条）
+
+### 4.1 `char` 节点（待 P0d 落地）
+
+- **依据**：`ADR-033`（Char 类型引入，Accepted 2026-09-12），排期 **P0d**。
+- **契约预留**：`char` 的语义 = **extended grapheme cluster 标量**；表示**与 `String` 同构**
+  （`ADR-033 D1`），不变式由类型系统承担。
+- **现状**：`HIRType` **无 `char` case**（20 case 已核）。落地时须同步三处类型表示
+  （`Value` / `HIRType` / `TypeAnnotation`）与本契约 §1。
+- **命名注意**：FFI 既有单字节 `Char` 改名 `CChar` 是**前置**（`ADR-033 D2`），
+  否则一名两义。工单：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`。
+
+### 4.2 `.join` 挂起语义（待 CPS 格落地）
+
+- **依据**：CPS 路线已裁 **R2** —— 单列一格迁到 HIR（见计划 §13）。
+- **契约预留**：`await` / `wait` 的**挂起与恢复语义**须有节点面承载；`HIRLowerer` 须为
+  `.join` 增加节点面（副产物约束，计划 §6）。
+- **现状**：`SuspendEvaluator`（890 行）为 `extension Interpreter`，建立在 AST 走查上，
+  **不在 HIR 节点集内**（44 + 16 计数不含它）。
+- **本契约不实现**，仅预留位置与命名口径。
+
+## 5. 冻结纪律与 `bk_*` 清单
+
+### 5.1 冻结纪律（照搬 `bk_*` 范本，`ADR-034 D5`）
+
+- 契约条目一经落地，**变更须走 §1.3**；不得为迁就某后端实现而漂移；
+- `bk_*` 是 **LLVM 后端的实现面，不是语义定义处**；其 ABI 冻结（`ADR-031` 约束 4）继续有效；
+- **每个后端须能自备 shim** —— 既有的「shim 边界必须是 C ABI」MUST 得到强化
+  （`pini-spec-v0.md` §3.2），因为多后端下每个后端都需要自己的值层实现面。
+
+### 5.2 `bk_*` 权威清单（37 个，2026-09-12 实测）
+
+> **口径订正**：`ADR-031` 两处写「35 个」，`@_cdecl` 实测 **37 个**。本清单为该面的
+> 单一权威来源，`ADR-031` 同步订正（`ADR-034 D6`）。
+
+| 族 | 符号 | 数 |
+|---|---|---|
+| 数组 | `bk_array_create` `bk_array_destroy` `bk_array_ensure_unique_at` `bk_array_get` `bk_array_len` `bk_array_set` | 6 |
+| 字典 | `bk_dict_contains` `bk_dict_create` `bk_dict_destroy` `bk_dict_ensure_unique_at` `bk_dict_get` `bk_dict_key_at` `bk_dict_len` `bk_dict_set` `bk_dict_val_at` | 9 |
+| 集合 | `bk_set_add` `bk_set_at` `bk_set_create` `bk_set_destroy` `bk_set_len` | 5 |
+| 句柄 / COW | `bk_handle_ensure_unique` `bk_handle_release` `bk_handle_retain` `bk_handle_shares` | 4 |
+| LazyRef | `bk_lazyref_create` `bk_lazyref_destroy` `bk_lazyref_value` | 3 |
+| 指针 | `bk_ptr_load_f32` `bk_ptr_load_f64` `bk_ptr_load_i32` `bk_ptr_load_i64` `bk_ptr_load_i8` `bk_ptr_store` | 6 |
+| 展示 / 陷阱 | `bk_cstr` `bk_double_to_string` `bk_panic` | 3 |
+| 运行时 | `bk_runtime_cleanup` | 1 |
+| **合计** | | **37** |
+
+## 6. 待办与已知偏离汇总
+
+| 项 | 类别 | 载体 |
+|---|---|---|
+| B 组 6 项字符语义偏离（§2.22/23/36/37/38/40） | **实现缺陷**，修实现对齐 `ADR-019 D1`；**其中 §2.40 经 P1-4 实测未复现偏离（2026-09-12）⇒ 待裁决后应减为 5 项** | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` |
+| A1/A2 上限（§2.8 注记） | **有害默认**，须 §1.3 反向修订 | `docs/issue-io-limit-from-emitter-2026-09-12.md` |
+| `addressOfVar` 解释器快照（§2.31） | **A/D1 裁决**：解释器须改为真引用 | 本契约 + 计划 IO/指针格 |
+| `assoc` 等半语义两项（§2.17 / §2.29） | **规范表述**：须写成语义 | 本契约 |
+| D2 路径基准 | **允许差异**（明文登记） | `ADR-034` D3；spec G58「v1 已知限制」 |
+| D3 警告通道 | 缺口 | `docs/issue-diagnostic-channel-parity-2026-09-12.md` |
+| `deferStmt` break/return 交互 | **未门控面** | 本契约（如实登记） |
+| `HIRNode.swift` 头部「for the LLVM backend」 | **错误陈述**，须订正 | 计划 §7 P5 |
+| `char` 节点 / `.join` 挂起语义 | **预留位** | §4；`ADR-033` / CPS 格 |

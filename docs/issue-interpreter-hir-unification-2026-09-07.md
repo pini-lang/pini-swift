@@ -3,7 +3,21 @@
 - 状态：**Open（2026-09-07 LR-4 裁决单独立案；前置已满足 —— LLVM 重写迁移于 2026-09-12 M6b 翻转批
   收尾（旧后端整体删除，HIR 成为唯一发射路径）。**规划已完成**（2026-09-12）：主决策「HIR 升为
   两后端共用枢纽」＋「单一 IR 多后端 / 分层信任」推导，执行计划与 D-B* 决策登记见
-  `docs/issue-interpreter-hir-plan-2026-09-12.md`；**待点名开工 P0（只读缺口审计）**）**
+  `docs/issue-interpreter-hir-plan-2026-09-12.md`。
+  **进度（2026-09-12）：P0（只读缺口审计）已交付并收口** —— 产出见
+  `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 + 乙类后端无关性
+  审查 + 耦合面 + E3 实测 M0–M8）；**P0c（复审订正）与 P0b（枢纽规范落地）亦已交付** ——
+  P0b 产出 = `docs/spec/adr/adr-034-hir-contract.md`（HIR 契约，判准与 A/B/C/D/E 组裁决）+
+  `docs/spec/hir-contract.md`（60 节点语义权威清单）+ spec §2.8 表述对象改造 + `bk_*` 口径订正；
+  **P1（通道与判据基建）已开工（2026-09-12）**：**P1-1（规范一致性核验脚本）已交付**
+  （`tools/hir-contract-check.py`，实测报出真缺口、自身变异测试 7/7）；**P1-2（HIR 引擎骨架）
+  已交付**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + 9 测试全绿 + 变异反证 4/4，
+  核验脚本 `interp-hir` 锚点转为 `covers 60/60`）；**P1-3（引擎开关）已交付**（`PINI_INTERP_ENGINE`
+  环境变量，`ast` 默认 | `hir`；CLI 级 15/15 + 变异反证 3/3；`Sources/PiniCLI/main.swift` +75 行）；
+  **P1-4（探针扩三实通道）已交付**（`tools/hir-parity-probe.py` +196、`tools/three-channel.py` +25、
+  新语料 `testDiffArrayJoin.pini`；基准 73 夹具 `OK 23`/`HIR_ENGINE_TODO 50`/**`FLIP BLOCKERS 0`**、
+  变异反证 5/5；`arrayJoin` 补探针实测推翻契约的「B 组实现偏离」）；
+  **下一格 = P1-5（调试·REPL 接口预留），待点名**）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（**执行计划载体**，D-B1…D-B12 决策登记）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）；
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（判据与约束权威）

@@ -780,11 +780,74 @@ func absoluteProgramBase(_ path: String) -> String {
  return abs
 }
 
+// MARK: - 解释器引擎开关（LR-4 P1-3）
+
+/// `pini run` 用哪个引擎执行。
+///
+/// `ast` = AST 解释器（`Interpreter`），默认；`hir` = HIR 执行引擎（`HIRExecutor`），
+/// 即 LR-4 统合的目标形态。两者是同一语义的**两份独立实现**——三通道探针因此比的是
+/// 两个真实实现，而不是让一条管线与自己比对（M6b 翻转后第三通道正是这种情况）。
+enum InterpreterEngine {
+ case ast
+ case hir
+}
+
+/// 从环境变量 `PINI_INTERP_ENGINE` 读引擎开关。
+///
+/// 用环境变量而非 CLI 选项，两条理由。其一，`pini run` 把路径之后的参数**原样**交给
+/// 脚本（`argv` 内建），是位置式、无 flag 解析——加 `--engine` 会与脚本参数歧义。其二，
+/// LR-5 已裁本项目**不设 CLI 兼容开关**。形态沿用 `PINI_HIR_PIPELINE` 先例：那个开关同样
+/// 用于选择发射管线，并在 M6b 翻转时随旧管线一并删除；本开关在解释器翻转（P4）时按同一
+/// 方式退役。
+///
+/// 取值非法时**报错而非静默回退**：静默回退会让 AST 引擎跑出结果，而调用方以为测的是
+/// HIR——那次运行的每一个读数都是假绿。
+func selectedInterpreterEngine() -> InterpreterEngine {
+ guard let raw = ProcessInfo.processInfo.environment["PINI_INTERP_ENGINE"],
+ !raw.isEmpty else {
+ return .ast
+ }
+ switch raw.lowercased() {
+ case "ast": return .ast
+ case "hir": return .hir
+ default:
+ printError("Error: PINI_INTERP_ENGINE='\(raw)' 无效；可选 ast | hir。")
+ exit(1)
+ }
+}
+
+/// 单文件走 HIR 执行引擎（LR-4 P1-3）。
+///
+/// 前段与 `typeCheckThenGenerate` 一致，理由也相同：lowering 需要 checker 的
+/// `typeInference`，故本路径**必须跑类型检查**。而 AST 通道的单文件路径只跑语义门禁
+/// （沿用既有宽松口径），于是一个带类型错误的程序会在一侧运行、在另一侧被拒。该差异是
+/// **固有的**——HIR 是类型化树，没有推断出的类型就 lower 不出来——故如实登记，不在此处抹平。
+///
+/// 目录/模块运行**刻意不接**：整包 lower 再执行是更大的面，而等价探针驱动的是单文件。
+/// 该开关下遇到目录**明确报错**，不静默回落到 AST 引擎。
+private func runHIREngine(module: Module, source: String) throws {
+ let checker = TypeChecker()
+ let typeErrors = checker.checkCollecting(module: module)
+ if !typeErrors.isEmpty {
+ for e in typeErrors {
+ printError(ErrorFormatter.formatTypeError(e, source: source))
+ }
+ exit(1)
+ }
+ // 与 emit / compile / run-llvm 同款：lowering 会在 checker 弹出作用域之后重推
+ // match scrutinee 的类型，需持久表兜底。
+ checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+ let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+ try HIRExecutor().run(module: hirModule)
+}
+
 /// P4 Phase 5：run 接收文件或目录。
 /// - 文件 → 单文件运行（零回归）。
 /// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
 /// - 目录无 `pini.toml` → 无法定位单一入口，报错（运行一组独立程序无意义）。
 func runRunPath(_ path: String, argv: [String] = []) {
+ // LR-4 P1-3：引擎在共享前端之后才选定，故两条通道看到同一份「已接受」的程序。
+ let engine = selectedInterpreterEngine()
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
  printError("Error: 路径不存在：\(path)"); exit(1)
@@ -805,6 +868,12 @@ func runRunPath(_ path: String, argv: [String] = []) {
  } catch {
  printError(formatCLIError(error: error, source: source)); exit(1)
  }
+ // LR-4 P1-3：语义门禁之前是共享前端，之后按开关分派执行引擎。
+ if engine == .hir {
+ do { try runHIREngine(module: module, source: source) }
+ catch { printError(formatCLIError(error: error, source: source)); exit(1) }
+ return
+ }
  // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。
  let interpreter = Interpreter(programBase: absoluteProgramBase(path))
  interpreter.processArguments = argv
@@ -814,6 +883,12 @@ func runRunPath(_ path: String, argv: [String] = []) {
  }
 
  // 目录
+ // LR-4 P1-3：HIR 引擎当前只接单文件。不静默回落到 AST 引擎——那会让调用方
+ // 以为自己在看 HIR 通道的结果。
+ if engine == .hir {
+ printError("Error: PINI_INTERP_ENGINE=hir 暂不支持目录/模块运行，当前仅支持单文件。")
+ exit(1)
+ }
  let manifest: ModuleManifest?
  do { manifest = try FileLoader.loadManifest(directory: path) } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)

@@ -1,0 +1,17 @@
+; Minimal probe for arrayJoin (contract entry 40): the corpus previously
+; reached `join` only inside a multi-feature fixture, so a failure there could
+; not be attributed to this node. One node, five receiver shapes: a named
+; array, a literal, an empty separator, a single element, and the empty
+; receiver. The empty case is an "empty receiver policy" question (empty
+; string vs panic), not the grapheme-vs-byte axis the contract's B group is
+; about, which is why it is spelled out here rather than left implied.
+
+main|func() -> ():
+    var words = ["a", "b", "c"]
+    print(words.join("-"))
+    print(["x", "y"].join("+"))
+    print(words.join(""))
+    print(["solo"].join("-"))
+    var empty: [String] = []
+    print(empty.join("-"))
+    return

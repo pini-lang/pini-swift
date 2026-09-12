@@ -6,9 +6,17 @@ probe answers "how does the whole corpus classify", this answers "what exactly
 did each channel print for this file".
 
 Channels (same as the probe):
-    interp  `pini run <file>`                            reference semantics
-    legacy  `pini run-llvm <file>`                       implementation today
-    hir     `pini run-llvm <file>`                       same pipeline as legacy after the flip
+    interp-ast  `PINI_INTERP_ENGINE=ast pini run <file>`   frozen reference
+    interp-hir  `PINI_INTERP_ENGINE=hir pini run <file>`   HIR execution engine
+    llvm-hir    `pini run-llvm <file>`                     HIR -> LLVM
+
+Before the P1-4 wiring the last two channels were the same command (`run-llvm`
+twice), a leftover of the M6b flip, so "three channels" really meant two.
+
+PINI_INTERP_ENGINE is set explicitly on each channel and never inherited. `pini
+run` selects the AST engine by default today, but P4 flips that default, and an
+inherited value would silently turn the frozen reference into a second HIR arm
+— a sweep that still reports three channels while measuring two.
 
 Usage: python3 tools/three-channel.py <fixture.pini> [more.pini ...]
 """
@@ -30,6 +38,9 @@ RUN_TIMEOUT = 10
 def run(args, extra_env=None, cwd=None):
     env = dict(os.environ)
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
+    # Drop any inherited engine: every channel states its engine explicitly, so
+    # a value in the caller's shell cannot relabel a channel.
+    env.pop("PINI_INTERP_ENGINE", None)
     if extra_env:
         env.update(extra_env)
     # Own process group so a timeout takes down lli (pini's child) too —
@@ -69,9 +80,11 @@ def probe(path):
     with tempfile.TemporaryDirectory() as scratch:
         copy = os.path.join(scratch, os.path.basename(path))
         shutil.copy(path, copy)
-        show("interp", *run([BIN, "run", copy], cwd=scratch))
-        show("legacy", *run([BIN, "run-llvm", copy], cwd=scratch))
-        show("hir   ", *run([BIN, "run-llvm", copy], cwd=scratch))
+        show("interp-ast", *run([BIN, "run", copy],
+                                {"PINI_INTERP_ENGINE": "ast"}, cwd=scratch))
+        show("interp-hir", *run([BIN, "run", copy],
+                                {"PINI_INTERP_ENGINE": "hir"}, cwd=scratch))
+        show("llvm-hir  ", *run([BIN, "run-llvm", copy], cwd=scratch))
     print()
 
 

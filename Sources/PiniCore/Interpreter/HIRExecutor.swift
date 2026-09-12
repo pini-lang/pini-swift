@@ -1,0 +1,469 @@
+import Foundation
+
+/// Runs a lowered `HIRModule` directly — the third live channel of the LR-4
+/// unification, alongside the AST interpreter and HIR → LLVM.
+///
+/// WHY THIS EXISTS
+///
+/// The HIR was built to serve the LLVM backend alone (LR-2/LR-3). LR-4 makes it
+/// the single IR for *every* backend, so that "the same program means the same
+/// thing on every channel" stops being an assumption and becomes testable: this
+/// engine and the AST interpreter run the same source, and their output is
+/// compared byte for byte. Structure-level trust comes from the HIR contract
+/// (ADR-034); execution-level trust comes from that
+/// cross-check. Neither replaces the other.
+///
+/// SCOPE — P1-2 SKELETON
+///
+/// Two properties, deliberately kept apart:
+///
+/// 1. **Coverage is a compile-time fact.** Every node in the contract is
+///    *dispatched* here, with no `default:`. Adding a case to `HIRExpr` or
+///    `HIRStmt` breaks this file until the node is acknowledged, which is what
+///    `tools/hir-contract-check.py` asserts from the outside.
+/// 2. **Only the minimal core is *implemented*.** The four scalar constants,
+///    `load`, `binary`, `unary`, `call`, `printCall`, and the statements
+///    `allocVar` / `storeVar` / `ifStmt` / `whileStmt` / `returnStmt` /
+///    `exprStmt`. Everything else fails loud (`notImplemented`) naming the node.
+///    A silent `.null` would make this engine look finished and let the
+///    differential probes compare against a fiction.
+///
+/// SEMANTIC PARITY
+///
+/// Value rendering and operator semantics are **not** re-implemented here: they
+/// are `Interpreter.stringifyValue` / `binaryValue` / `unaryValue`, extracted to
+/// statics in P1-2 for exactly this reuse. There is one place where "what `+`
+/// does" and "what a value prints as" are decided, so the channels cannot drift.
+/// What stays here is the HIR's own knowledge: which interpreter operator an
+/// `HIRBinaryOp` corresponds to (`operatorFor`).
+///
+/// Execution shape mirrors the interpreter's statement layer as well:
+///
+/// - Block bodies do **not** push a variable scope — the interpreter's
+///   `executeBlock` does not either, so a `let` inside an `if` body leaks to the
+///   enclosing function body on both channels. Copied, not fixed: parity first,
+///   adjudication later.
+/// - A function body that runs off its end yields the value of its last
+///   expression statement (`.null` if it has none) — the interpreter's
+///   `lastValue` rule in `executeFunctionBody`.
+/// - `while`'s step block runs after the body on normal completion *and* on an
+///   unlabeled `continue`; an unlabeled `break` returns without running it
+///   (ADR-014, `Interpreter.executeWhile`).
+///
+/// REGISTERED GAPS AT THIS STAGE
+///
+/// - **No positions.** HIR nodes carry no `SourceLocation` (the type is
+///   position-free by design; the LLVM path reports positions at *lowering*
+///   time). Every `RuntimeError` case requires one, so diagnostics from here
+///   point at `noLocation` — a placeholder, not a line number.
+/// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method,
+///   so `allocVar` does not apply the struct copy rule yet. No struct node is
+///   implemented here, so nothing observable depends on it yet.
+/// - **No scoped blocks / defer.** P1-2 has no block-scope or defer-stack
+///   concept; the statements that need them fail loud.
+///
+/// This is grid P1-2 of the LR-4 interpreter unification: the HIR (ADR-034)
+/// gains an execution engine that is not the LLVM emitter.
+public final class HIRExecutor {
+
+    // MARK: - Host surface
+
+    /// Line output channel. Mirrors `Interpreter.outputSink` so a caller can
+    /// redirect both engines' stdout through the same funnel and diff them.
+    public var outputSink: (String) -> Void = { line in print(line) }
+
+    // MARK: - Module state
+
+    /// Module-level functions by name. The HIR carries no closures at module
+    /// level: `main` and its peers are the only callables (G6 closure values are
+    /// a separate node family, not implemented yet).
+    private var functions: [String: HIRFunction] = [:]
+    private var types: [String: HIRTypeDecl] = [:]
+    private var enums: [String: HIREnumDecl] = [:]
+
+    private let globalEnv: Environment
+    private var currentEnv: Environment
+
+    /// Call-depth guard, same value as the interpreter's (`Interpreter.maxCallDepth`).
+    ///
+    /// Unbounded recursion must end in a diagnosable error, not in a thread-stack
+    /// smash with no output — that failure mode is exactly G-P9 (SIGSEGV,
+    /// unbounded recursion) and a new execution path must not reintroduce it.
+    private var callDepth = 0
+    private static let maxCallDepth = 120
+
+    public init() {
+        let env = Environment()
+        self.globalEnv = env
+        self.currentEnv = env
+    }
+
+    // MARK: - Entry points
+
+    /// Register a module without running it. Mirrors
+    /// `Interpreter.prepare(module:)`; lower-then-run is *not* folded into one
+    /// call on purpose — lowering stays the caller's explicit step
+    /// (`HIRLowerer.lower(module:typeInference:)`), same split as the
+    /// interpreter taking an already-checked AST.
+    public func prepare(module: HIRModule) {
+        for function in module.functions { functions[function.name] = function }
+        for decl in module.types { types[decl.name] = decl }
+        for decl in module.enums { enums[decl.name] = decl }
+    }
+
+    /// Run a module's `main`, mirroring `Interpreter.run(module:)`.
+    public func run(module: HIRModule) throws {
+        prepare(module: module)
+        try executeMain()
+    }
+
+    private func executeMain() throws {
+        guard let main = functions["main"] else {
+            throw RuntimeError.mainNotFound(location: HIRExecutor.noLocation)
+        }
+        _ = try call(main, args: [])
+    }
+
+    // MARK: - Diagnostics
+
+    /// Placeholder position for every diagnostic out of this engine.
+    ///
+    /// The file name says `<hir>` rather than `""` so that a diagnostic cannot be
+    /// mistaken for one with a real (if empty) file attached. See the class
+    /// header's "no positions" gap.
+    static let noLocation = SourceLocation(line: 0, column: 0, fileName: "<hir>")
+
+    /// Fail loud on a node that is dispatched but not executed yet.
+    ///
+    /// The node's name is in the message because visibility *is* the feature:
+    /// this is how a probe run tells "the engine cannot do this yet" apart from
+    /// "the engine did this and got it wrong".
+    private func notImplemented(_ node: String) -> RuntimeError {
+        RuntimeError.invalidOperation(
+            reason: "HIR executor: node '\(node)' is dispatched but not implemented yet "
+                + "(P1-2 skeleton)",
+            location: HIRExecutor.noLocation
+        )
+    }
+
+    // MARK: - Expressions
+
+    private func evaluate(_ expr: HIRExpr) throws -> Value {
+        switch expr {
+
+        // MARK: Scalar constants
+        // All integer widths collapse onto one runtime `int`, exactly as the
+        // interpreter models them (HIRType.u8/i8/u64 are ABI widths, not runtime
+        // distinctions) — so `intConst` ignores its carried type here.
+
+        case .intConst(let value, _):
+            return .int(value)
+
+        case .floatConst(let value):
+            return .float(value)
+
+        case .boolConst(let value):
+            return .bool(value)
+
+        case .stringConst(let value):
+            return .string(value)
+
+        case .load(let name, _):
+            return try currentEnv.get(name: name)
+
+        case .binary(let op, let lhs, let rhs, _):
+            guard let mapped = HIRExecutor.operatorFor(op) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: binary operator '\(op)' has no interpreter "
+                        + "counterpart (min/max are builtin calls on the AST channel)",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            let left = try evaluate(lhs)
+            let right = try evaluate(rhs)
+            return try Interpreter.binaryValue(left, mapped, right)
+
+        case .unary(let op, let operand, _):
+            guard let mapped = HIRExecutor.operatorFor(op) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: unary operator '\(op)' has no interpreter "
+                        + "counterpart (`abs` is a builtin call on the AST channel)",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return try Interpreter.unaryValue(mapped, try evaluate(operand))
+
+        case .call(let name, let arguments, _):
+            guard let target = functions[name] else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: no module-level function named '\(name)' "
+                        + "(stdlib methods are resolved through the interpreter's Pini-source "
+                        + "member table and have no HIR surface yet)",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            let args = try arguments.map { try evaluate($0) }
+            return try call(target, args: args)
+
+        case .printCall(let argument):
+            // Mirrors the interpreter's `print` funnel for the one-argument form:
+            // stringify, then hand the whole line to the sink at once.
+            outputSink(Interpreter.stringifyValue(try evaluate(argument)))
+            return .null
+
+        // MARK: Not implemented yet — fail loud, named.
+
+        case .resultConstruct: throw notImplemented("resultConstruct")
+        case .arrayLiteral: throw notImplemented("arrayLiteral")
+        case .subscriptGet: throw notImplemented("subscriptGet")
+        case .lenCall: throw notImplemented("lenCall")
+        case .optionalGet: throw notImplemented("optionalGet")
+        case .optionalConstruct: throw notImplemented("optionalConstruct")
+        case .sliceCall: throw notImplemented("sliceCall")
+        case .construct: throw notImplemented("construct")
+        case .enumConstruct: throw notImplemented("enumConstruct")
+        case .fieldGet: throw notImplemented("fieldGet")
+        case .dictLiteral: throw notImplemented("dictLiteral")
+        case .setLiteral: throw notImplemented("setLiteral")
+        case .tupleConstruct: throw notImplemented("tupleConstruct")
+        case .tupleIndexGet: throw notImplemented("tupleIndexGet")
+        case .closureLiteral: throw notImplemented("closureLiteral")
+        case .functionValue: throw notImplemented("functionValue")
+        case .indirectCall: throw notImplemented("indirectCall")
+        case .pointerLoad: throw notImplemented("pointerLoad")
+        case .pointerStore: throw notImplemented("pointerStore")
+        case .addressOfVar: throw notImplemented("addressOfVar")
+        case .printMulti: throw notImplemented("printMulti")
+        case .assertCall: throw notImplemented("assertCall")
+        case .fileWrite: throw notImplemented("fileWrite")
+        case .fileRead: throw notImplemented("fileRead")
+        case .readLine: throw notImplemented("readLine")
+        case .isAsciiDigit: throw notImplemented("isAsciiDigit")
+        case .stringCase: throw notImplemented("stringCase")
+        case .stringContains: throw notImplemented("stringContains")
+        case .stringSubstring: throw notImplemented("stringSubstring")
+        case .stringSplit: throw notImplemented("stringSplit")
+        case .arrayJoin: throw notImplemented("arrayJoin")
+        case .stringConcat: throw notImplemented("stringConcat")
+        case .interpString: throw notImplemented("interpString")
+        case .lazyRefConstruct: throw notImplemented("lazyRefConstruct")
+        case .lazyRefValue: throw notImplemented("lazyRefValue")
+        }
+    }
+
+    /// `HIRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the
+    /// operation through a builtin call instead of an operator.
+    ///
+    /// This mapping is HIR vocabulary and lives here; the *meaning* of each
+    /// operator lives in `Interpreter.binaryValue`, so the two channels cannot
+    /// drift into two semantics.
+    static func operatorFor(_ op: HIRBinaryOp) -> BinaryOperator? {
+        switch op {
+        case .add: return .plus
+        case .subtract: return .minus
+        case .multiply: return .multiply
+        case .divide: return .divide
+        case .modulo: return .modulo
+        case .equal: return .equal
+        case .notEqual: return .notEqual
+        case .lessThan: return .lessThan
+        case .lessThanOrEqual: return .lessThanOrEqual
+        case .greaterThan: return .greaterThan
+        case .greaterThanOrEqual: return .greaterThanOrEqual
+        case .bitwiseAnd: return .bitwiseAnd
+        case .bitwiseOr: return .bitwiseOr
+        case .bitwiseXor: return .bitwiseXor
+        case .leftShift: return .leftShift
+        case .rightShift: return .rightShift
+        // G9 min/max lower to LLVM selects; the interpreter reaches them as
+        // builtin function calls, so there is no operator to map onto.
+        case .minOf, .maxOf: return nil
+        }
+    }
+
+    /// `HIRUnaryOp` → `UnaryOperator`; see `operatorFor(_ op: HIRBinaryOp)`.
+    static func operatorFor(_ op: HIRUnaryOp) -> UnaryOperator? {
+        switch op {
+        case .negate: return .minus
+        case .logicalNot: return .not
+        // G9 `abs` is a builtin call on the AST channel, not a unary operator.
+        case .abs: return nil
+        }
+    }
+
+    // MARK: - Statements
+
+    /// Runs a statement list in order, yielding the value of the last expression
+    /// statement (`.null` when there is none).
+    ///
+    /// This is the interpreter's `lastValue` rule from `executeFunctionBody`, and
+    /// it is why control-flow bodies and function bodies can share one runner: a
+    /// body that is not a function body simply discards the result.
+    @discardableResult
+    private func executeStatements(_ statements: [HIRStmt]) throws -> Value {
+        var lastValue: Value = .null
+        for statement in statements {
+            if case .exprStmt(let expr) = statement {
+                lastValue = try evaluate(expr)
+            } else {
+                try execute(statement)
+            }
+        }
+        return lastValue
+    }
+
+    private func execute(_ statement: HIRStmt) throws {
+        switch statement {
+
+        case .allocVar(let name, _, let mutable, let initializer):
+            // Registered even without an initializer, as `.null` — the
+            // interpreter's `varDecl` does the same, so an uninitialized read is
+            // a value, not an "undefined variable" error, on both channels.
+            let value = try initializer.map { try evaluate($0) } ?? .null
+            currentEnv.define(name: name, value: value, isMutable: mutable)
+
+        case .storeVar(let name, _, let value):
+            try currentEnv.assign(name: name, value: try evaluate(value))
+
+        case .ifStmt(let condition, let thenBody, let elseBody):
+            if try evaluateCondition(condition) {
+                try executeStatements(thenBody)
+            } else if let elseBody = elseBody {
+                try executeStatements(elseBody)
+            }
+
+        case .whileStmt(let condition, let body, let step):
+            try executeWhile(condition: condition, body: body, step: step)
+
+        case .returnStmt(let value):
+            throw ControlSignal.returnSignal(try value.map { try evaluate($0) })
+
+        case .exprStmt(let expr):
+            // Dropped here; `executeStatements` is what captures it as the body's
+            // result value on the path where that matters.
+            _ = try evaluate(expr)
+
+        case .captureMarker(let name):
+            // Not "unimplemented": the contract says this node lowers to nothing.
+            // Captures are resolved at the closure-literal creation point by
+            // free-variable analysis, and the interpreter's `captureStatement` is
+            // likewise a no-op (H-1: `capture` is a static purity declaration).
+            // Failing loud here would misreport a defined no-op as a gap.
+            _ = name
+
+        // MARK: Not implemented yet — fail loud, named.
+
+        case .forInStmt: throw notImplemented("forInStmt")
+        case .deferStmt: throw notImplemented("deferStmt")
+        case .tryStmt: throw notImplemented("tryStmt")
+        case .subscriptStore: throw notImplemented("subscriptStore")
+        case .breakStmt: throw notImplemented("breakStmt")
+        case .continueStmt: throw notImplemented("continueStmt")
+        case .panicStmt: throw notImplemented("panicStmt")
+        case .matchStmt: throw notImplemented("matchStmt")
+        case .fieldStore: throw notImplemented("fieldStore")
+        }
+    }
+
+    /// Evaluate a condition and insist on `Bool`, mirroring the interpreter's
+    /// `guard case .bool` at both `executeIfBody` and `executeWhile` (a non-bool
+    /// condition is a `typeMismatch`, not a truthiness coercion).
+    private func evaluateCondition(_ expr: HIRExpr) throws -> Bool {
+        let value = try evaluate(expr)
+        guard case .bool(let flag) = value else {
+            throw RuntimeError.typeMismatch(
+                expected: "bool",
+                got: "\(value)",
+                location: HIRExecutor.noLocation
+            )
+        }
+        return flag
+    }
+
+    /// Mirrors `Interpreter.executeWhile` (ADR-014 step contract):
+    ///
+    /// - body completes normally → step runs;
+    /// - unlabeled `continue` → step runs;
+    /// - unlabeled `break` → return without running step;
+    /// - a labeled signal or a `return` propagates unchanged (this skeleton has
+    ///   no labeled loops, but propagating rather than swallowing keeps the
+    ///   shape ready for them).
+    private func executeWhile(condition: HIRExpr, body: [HIRStmt], step: [HIRStmt]?) throws {
+        while true {
+            if try !evaluateCondition(condition) { break }
+
+            do {
+                try executeStatements(body)
+            } catch let signal as ControlSignal {
+                switch signal {
+                case .breakSignal(let label) where label == nil:
+                    return
+                case .continueSignal(let label) where label == nil:
+                    break
+                default:
+                    throw signal
+                }
+            }
+
+            if let step = step {
+                do {
+                    try executeStatements(step)
+                } catch let signal as ControlSignal {
+                    switch signal {
+                    case .breakSignal(let label) where label == nil:
+                        return
+                    case .continueSignal(let label) where label == nil:
+                        continue
+                    default:
+                        throw signal
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Calls
+
+    /// Call a module-level function.
+    ///
+    /// Argument binding mirrors `Interpreter.executeFunctionBody`: a fresh
+    /// environment hanging off `globalEnv`, parameters bound mutable, `return`
+    /// caught here and unwrapped to the returned value (`nil` → `.null`).
+    private func call(_ function: HIRFunction, args: [Value]) throws -> Value {
+        guard function.params.count == args.count else {
+            throw RuntimeError.arityMismatch(
+                expected: function.params.count,
+                got: args.count,
+                location: HIRExecutor.noLocation
+            )
+        }
+
+        guard callDepth < HIRExecutor.maxCallDepth else {
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: call depth exceeded \(HIRExecutor.maxCallDepth) "
+                    + "(runaway recursion)",
+                location: HIRExecutor.noLocation
+            )
+        }
+        callDepth += 1
+        defer { callDepth -= 1 }
+
+        let callEnv = Environment(enclosing: globalEnv)
+        for (index, param) in function.params.enumerated() {
+            callEnv.define(name: param.name, value: args[index], isMutable: true)
+        }
+
+        let previousEnv = currentEnv
+        currentEnv = callEnv
+        defer { currentEnv = previousEnv }
+
+        do {
+            return try executeStatements(function.body)
+        } catch let signal as ControlSignal {
+            if case .returnSignal(let value) = signal {
+                return value ?? .null
+            }
+            throw signal
+        }
+    }
+}
