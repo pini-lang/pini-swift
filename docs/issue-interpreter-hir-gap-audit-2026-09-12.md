@@ -2,7 +2,10 @@
 
 - 状态：**P0 已收口（2026-09-12）** —— P0 与 P0c 的产出**全部交付**，无实质缺口；
   收口动作 = 清过期标注 + 遗留缺陷立案 + 状态回填。**全过程未改任何源码**（含测试与夹具）。
-  **下一格 = P0b（枢纽规范落地），待点名**。
+  **P0b 已交付（2026-09-12）**：本审计是 P0b 的**证据来源**，其裁决落点见
+  `docs/spec/adr/adr-034-hir-contract.md`（判准与 A/B/C/D/E 组结论）与
+  `docs/spec/hir-contract.md`（60 节点语义，含本审计 §5.1–§5.3 各项的契约侧表述）。
+  **下一格 = P1（通道与判据基建），待点名**。
 - 订正记录：P0c 复审订正 §5.3.1 / §5.5 / §7.1；P0 收口订正 §1（E3 状态）/ §5.3（标题）/
   §7（标题）/ §7.5（编号错位）。
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（常驻计划载体，P0 一格）；
@@ -10,8 +13,10 @@
   `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（同根因族工单，本批回答其遗留未知项）；
   `docs/spec/adr/adr-019-unicode-char-model.md`（**字符模型裁决出处——P0c 复审的关键依据**）；
   `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Accepted 2026-09-12**）；
+  `docs/spec/adr/adr-034-hir-contract.md`（**HIR 契约，Accepted 2026-09-12——本审计的裁决落点**）；
   `docs/issue-e7-001-false-unused-warning-2026-09-12.md`（收口期立案，§7.4 观察 1）
-- 实施工单：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`（P0d 前置，`Char` 腾名）
+- 实施工单：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`（P0d 前置，`Char` 腾名）；
+  `docs/issue-io-limit-from-emitter-2026-09-12.md`（P0b 立案，§5.2 A1/A2 上限的对齐后果）
 - 基线：main `361ec2c`，分支 `agent/pini-dev/hir-hub-p0`
 - 台账口径：**行号为 2026-09-12 实测快照**；实现改动后一律改用符号检索重新定位，勿复用行号
 - **⚠️ 读前必看**：本文件 §5.3.1 的**初稿根因结论已被 P0c 复审推翻**（初稿误判为「规范空白」，

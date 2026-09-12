@@ -6,7 +6,10 @@
   `docs/issue-interpreter-hir-plan-2026-09-12.md`。
   **进度（2026-09-12）：P0（只读缺口审计）已交付并收口** —— 产出见
   `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 + 乙类后端无关性
-  审查 + 耦合面 + E3 实测 M0–M8）；**下一格 = P0b（枢纽规范落地），待点名**）**
+  审查 + 耦合面 + E3 实测 M0–M8）；**P0c（复审订正）与 P0b（枢纽规范落地）亦已交付** ——
+  P0b 产出 = `docs/spec/adr/adr-034-hir-contract.md`（HIR 契约，判准与 A/B/C/D/E 组裁决）+
+  `docs/spec/hir-contract.md`（60 节点语义权威清单）+ spec §2.8 表述对象改造 + `bk_*` 口径订正；
+  **下一格 = P1（通道与判据基建），待点名**）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（**执行计划载体**，D-B1…D-B12 决策登记）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）；
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（判据与约束权威）
