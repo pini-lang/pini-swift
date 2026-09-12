@@ -1,6 +1,8 @@
 # P1-5 勘测：调试/REPL 接口接缝（2026-09-13）
 
-- 状态：**勘测完成（只读，未写代码）**；接缝方案待点名
+- 状态：**勘测完成（只读）；其产出已处置完毕 ⇒ 本件可归档**
+  （S1 已落地并交付，见 §9；S2 已另立 P4 前置工单
+  `docs/issue-hir-engine-abstraction-2026-09-13.md`；口径订正待 P1-6 收口同步，见 §7）
 - 层级：**宿主级** —— 引擎接口形态；不涉语言契约（层级判据见 `ADR-024 D6`）
 - 隶属：`docs/issue-interpreter-hir-plan-2026-09-12.md` 的 **P1-5**（调试·REPL 接口预留）
 - 关联：`docs/issue-hir-node-source-position-2026-09-12.md`（位置基准；**实测为 P4 前置、非本步前置**）
@@ -97,7 +99,7 @@ AST 侧仅多 `Statement` 后缀）。
 牵动 P1-3 的 `PINI_INTERP_ENGINE` 现状与 P2 的实现进度。
 **判断**：这是**真架构改动**，宜并入 P2/P3（届时 HIR 侧的执行面已成形），**不在 P1-5 做**。
 
-## 5. 倾向（供裁决，非结论）
+## 5. 倾向（**已裁 2026-09-13**：用户授权「按你的倾向来」⇒ 采纳）
 
 **S1 现在做，S2 登记为 P4 前置工单。** 理由：
 
@@ -124,11 +126,40 @@ AST 侧仅多 `Statement` 后缀）。
 ⇒ **REPL 与调试面是两条独立接缝**。REPL 迁移的真实前置是「每次求值新建实例」这一形态
 （对齐 P4 的引擎选择），**不在 S1 范围**。此订正记于此，供 P1-6 收口时同步口径。
 
-## 8. 不确定项（下一步须查）
+## 8. 不确定项（S1 落地时逐条处理，2026-09-13）
 
-- `HIRExecutor` 补 `debugHook` 后，**有钩子但永不命中**这一状态是否需要显式断言钉住
-  （防它在位置落地后静默变成「会命中但位置是 0」）。倾向：加一条断言测试。
-- `Interpreter` 的 `run(package:)` 与 `run(module:)` 是否可在协议外保持现状，
-  或需在 S2 时统一为单一入口 —— 本步不裁。
-- 测试侧 12 处装配是否随协议一并改造（倾向：只改生产侧三处，测试侧保持直连具体类型，
-  以免把测试变成协议的二次验证面）。
+- **① 休眠态是否需要显式断言** —— **是，已加且已变异自证**。
+  `HIRExecutorTests.testDebugHookIsDeclaredButDormantUntilPositionsExist` 装一个「一旦被咨询就记录位置」
+  的钩子，再真跑到程序结束，断言**位置记录为空**。变异实测：在语句循环里加一处咨询后该用例**立即变红**，
+  失败信息正好打印 `line: 0 / fileName: "<hir>"` —— 即它拦的正是「会命中但位置是 0」这一态，
+  **断言确有载荷**（不是恒绿的装饰）。
+- **② `run(package:)` / `run(module:)` 是否统一** —— **本步不裁，随 S2 一并处理**
+  ⇒ 已登记 `docs/issue-hir-engine-abstraction-2026-09-13.md`（P4 前置）。
+- **③ 测试侧 12 处装配是否随协议改造** —— **结论比预设更保守：生产侧三处一处未改，测试侧既有用例一处未改。**
+  原设想的「三处装配改为面向协议」在本步**不可行也不必要**：三处都还要用具体类型调 `run(...)`
+  （执行入口不进协议），改写成 `any DebugHookHost` 后仍须另留具体引用，净增复杂度。
+  改为：**协议 + 两台引擎符合**（类型层接缝）+ **一条新用例**证明「仅持协议面即可装配」
+  （`DebuggerTests.testDebugSurfaceIsEngineAgnostic`），既有 15 例保持直连具体类型。
+  另：勘测 §4 写「`DebuggerTests` 12 用例」为实数误记，**实为 15 例**（订正）。
+
+## 9. S1 落地实录（2026-09-13，提交于本报告同批）
+
+**产出**：`Sources/PiniCore/Debugger/DebugHookHost.swift`（新）+ `Interpreter.swift` +
+`HIRExecutor.swift` + `HIRExecutorTests.swift` + `DebuggerTests.swift`。
+
+| 勘测 §4 原计划 | 实际落地 | 偏离理由 |
+|---|---|---|
+| 抽协议（只含 `debugHook` + `outputSink`） | ✅ 按原样落 | —— |
+| `Interpreter` / `HIRExecutor` 各自符合 | ✅ 符合写在类声明上（`public class Interpreter: DebugHookHost`） | 符合须与协议同可见性，写在类型声明处最不易漂 |
+| `HIRExecutor` 补 `debugHook`（恒不命中） | ✅ 属性已加、**暂停点不接**、休眠由会变红的断言钉住 | —— |
+| `debugPause(_ stmt:)` → `debugPause(at loc:)` | ⚠️ **两者并存**：`debugPause(at:)` 为位置驱动的核心，`debugPause(_ stmt:)` 保留为「先判钩子再取位置」的薄包装 | 直接替换会让 16 分支 switch 在**每次语句执行**上跑，破掉既有的「无调试器零运行时开销」明示契约；包装保留该快路径，且两处调用点**字节未改** |
+| 16 分支 switch 提为 AST 侧私有函数 | ✅ `private static func statementLocation(_:)` | —— |
+| `Debugger` / `DAPServer` / CLI 三处装配改面向协议 | ⚠️ **三处均未改**；接缝改由「协议符合 + 一条经协议装配的用例」承载 | 三处仍须具体类型调 `run(...)`；见 §8 ③ |
+
+**验证**：`DebuggerTests` 16/16 绿（含既有 15 例，AST 行为零变更）+ `HIRExecutorTests` 10/10 绿；
+全量 **XCTest 1235 / 3 skipped / 0 failures + swift-testing 45**；基线实测 1234 + 44 ⇒ **增量 +2
+精确对应本步两例**（记忆快照里的 1222 为过时数，已订正）；`comment-lint` 全绿；
+`tools/hir-contract-check.py` clean（60/60，三锚点齐全）。
+
+**未做（按纪律登记，不在本步补）**：S2 引擎抽象层（⇒ P4 前置工单）；HIR 侧暂停点接线
+（⇒ 等位置工单落地）；REPL 接缝（⇒ P1-6 收口时同步口径，见 §7）。

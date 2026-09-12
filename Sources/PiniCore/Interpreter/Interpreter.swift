@@ -13,7 +13,8 @@ struct SuspendSignal: Error {
  let future: FutureValue
 }
 
-public class Interpreter {
+/// 调试面（`debugHook` / `outputSink`）经 `DebugHookHost` 对外；HIR 执行引擎与之同形。
+public class Interpreter: DebugHookHost {
  private var globalEnv: Environment
  // P5 Phase 2：currentEnv / deferStack 改为线程本地，使并发任务互不污染解释器可变状态。
  // 每个异步任务在独立 worker 线程执行，线程本地存储自然隔离各自求值环境；
@@ -1350,38 +1351,53 @@ public class Interpreter {
 
  // MARK: 调试钩子辅助
 
- /// 在每条语句执行前咨询调试器；命中时由 `Debugger` 驱动交互，返回 `.quit` 抛错终止。
- private func debugPause(_ stmt: Statement) throws {
- guard let hook = debugHook else { return }
- let loc: SourceLocation
- switch stmt {
- case .varDecl(_, _, _, _, let l): loc = l
- case .varDestructure(_, _, _, _, let l): loc = l
- case .assign(_, _, let l): loc = l
- case .returnStatement(_, let l): loc = l
- case .breakStatement(_, let l): loc = l
- case .continueStatement(_, let l): loc = l
- case .ifStatement(_, _, _, _, _, let l): loc = l
- case .whileStatement(_, _, _, _, let l): loc = l
- case .forStatement(_, _, _, _, _, let l): loc = l
- case .matchStatement(_, _, let l): loc = l
- case .detachStatement(_, let l): loc = l
- case .expressionStmt(_, let l): loc = l
- case .deferStatement(_, let l): loc = l
- case .passStatement(let l): loc = l
- case .captureStatement(_, let l): loc = l
- case .scopedBlock(_, _, let l): loc = l
- }
- let ctx = DebugContext(
- location: loc,
- depth: debugDepth,
- callStack: callStackNames,
- variables: currentEnv.listBindings().map { ($0.name, stringify($0.value)) }
- )
- if try hook(ctx) == .quit {
- throw DebuggerError.quit
- }
- }
+/// 在每条语句执行前咨询调试器；命中时由 `Debugger` 驱动交互，返回 `.quit` 抛错终止。
+///
+/// 位置分支留在 AST 侧：只有 AST 引擎能回答「这条语句在哪」。暂停动作本身
+/// （`debugPause(at:)`）只依赖位置、与语句形态无关 —— 该半面即调试面可引擎无关的部分。
+/// 未挂调试器时先判 `debugHook` 再取位置，保住「无调试器零运行时开销」。
+private func debugPause(_ stmt: Statement) throws {
+    guard debugHook != nil else { return }
+    try debugPause(at: Interpreter.statementLocation(stmt))
+}
+
+/// AST 语句携带的位置。`Statement` 全部 16 个 case 均带位置，故此处无 `default:`：
+/// 新增语句 case 会在此处编译失败，不存在「语句到了调试器却没有位置可报」的路径。
+private static func statementLocation(_ stmt: Statement) -> SourceLocation {
+    switch stmt {
+    case .varDecl(_, _, _, _, let l): return l
+    case .varDestructure(_, _, _, _, let l): return l
+    case .assign(_, _, let l): return l
+    case .returnStatement(_, let l): return l
+    case .breakStatement(_, let l): return l
+    case .continueStatement(_, let l): return l
+    case .ifStatement(_, _, _, _, _, let l): return l
+    case .whileStatement(_, _, _, _, let l): return l
+    case .forStatement(_, _, _, _, _, let l): return l
+    case .matchStatement(_, _, let l): return l
+    case .detachStatement(_, let l): return l
+    case .expressionStmt(_, let l): return l
+    case .deferStatement(_, let l): return l
+    case .passStatement(let l): return l
+    case .captureStatement(_, let l): return l
+    case .scopedBlock(_, _, let l): return l
+    }
+}
+
+/// 按给定位置咨询调试钩子；`.quit` 抛 `DebuggerError.quit` 终止程序。
+/// 位置由调用方给出（而非从语句取），使暂停动作不依赖 AST 语句形态。
+private func debugPause(at loc: SourceLocation) throws {
+    guard let hook = debugHook else { return }
+    let ctx = DebugContext(
+        location: loc,
+        depth: debugDepth,
+        callStack: callStackNames,
+        variables: currentEnv.listBindings().map { ($0.name, stringify($0.value)) }
+    )
+    if try hook(ctx) == .quit {
+        throw DebuggerError.quit
+    }
+}
 
  /// 执行一条表达式语句并求值其结果。
  /// 被 `executeStatement` 与 `executeFunctionBody` 共用，避免内联逻辑重复，

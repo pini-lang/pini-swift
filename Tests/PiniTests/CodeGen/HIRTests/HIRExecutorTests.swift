@@ -293,6 +293,41 @@ final class HIRExecutorTests: XCTestCase {
         XCTAssertNoThrow(try executor.run(module: module))
     }
 
+    // MARK: - Debug surface
+
+    /// The engine carries the debug surface (`DebugHookHost`) but has no pause
+    /// site, because the HIR carries no source position. A pause wired today
+    /// would report `noLocation`, and the debugger matches a breakpoint by line
+    /// equality — so no breakpoint could ever fire, while entry-stop and
+    /// stepping would stop at a line that does not exist.
+    ///
+    /// Asserted by running, not by reading the property back: the hook is
+    /// installed to fail loudly if consulted, and a real program is then run to
+    /// its end. Wiring a pause site before positions land turns this red, and
+    /// that is the point — this test is the one place that says "not yet, and
+    /// here is why", so the wiring cannot happen by accident.
+    func testDebugHookIsDeclaredButDormantUntilPositionsExist() throws {
+        let hir = try lowerOnly("""
+        main|func() -> ():
+            print(1)
+            return
+        """)
+
+        let executor = HIRExecutor()
+        var consulted: [SourceLocation] = []
+        executor.debugHook = { ctx in
+            consulted.append(ctx.location)
+            return .quit
+        }
+
+        XCTAssertNoThrow(try executor.run(module: hir))
+        XCTAssertTrue(
+            consulted.isEmpty,
+            "the HIR engine must not consult the debug hook before positions exist; "
+                + "it reported \(consulted)"
+        )
+    }
+
     // MARK: - Guards
 
     /// Runaway recursion must end in a diagnosable error rather than a

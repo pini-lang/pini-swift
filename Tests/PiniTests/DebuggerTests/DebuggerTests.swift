@@ -354,6 +354,35 @@ struct DebuggerTests {
         inCond.lock(); inClosed = true; inCond.signal(); inCond.unlock()
         _ = group.wait(timeout: .now() + 2)
     }
+
+    // MARK: - P1-5：调试面接缝
+
+    @Test("调试面接缝：两台引擎同形，装配不提及具体类型")
+    /// 意图：验证 `DebugHookHost` 同时被 AST 与 HIR 两台引擎符合，且仅持协议面即可装配调试器；
+    /// AST 侧具备暂停点故断点真命中，HIR 侧装配成功但无暂停点（休眠态由 HIR 执行引擎侧用例断言）。
+    func testDebugSurfaceIsEngineAgnostic() throws {
+        let interpreter = Interpreter()
+        let executor = HIRExecutor()
+        // 两台引擎唯一的共同点就是协议面本身 —— 以下全程不出现任何一种引擎的具体调试类型。
+        let hosts: [any DebugHookHost] = [interpreter, executor]
+
+        let driver = RecordingDebugDriver([.continue])
+        let dbg = Debugger(driver: driver)
+        dbg.output = { _ in }
+        dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
+        // 同一个动作装到两台引擎上：装配只认协议面，不认引擎。
+        for host in hosts {
+            host.debugHook = { ctx in try dbg.consult(ctx) }
+        }
+
+        // AST 侧有暂停点 ⇒ 断点命中，行为与直连具体类型时逐字一致。
+        try interpreter.run(module: dbgParse(sampleProgram, "sample.pini"))
+        #expect(driver.stops.count == 1)
+        #expect(driver.stops.first?.location.line == 2)
+
+        // HIR 侧的「同形可装配」在本用例内即可确认；「尚未接暂停点」属引擎侧事实。
+        #expect(executor.debugHook != nil)
+    }
 }
 
 // MARK: - DAP 测试辅助（内存流分帧解析）
