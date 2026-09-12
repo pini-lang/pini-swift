@@ -4,8 +4,10 @@
   2026-09-12）；`ADR-033` 三项已裁并转 `Accepted`（2026-09-12）；
   **P0b（枢纽规范落地）已交付**（`ADR-034` + HIR 契约 + 裁决表 + spec 表述改造 + `bk_*` 口径订正，
   2026-09-12）；**P1 已开工（2026-09-12）**：**P1-1（规范一致性核验脚本）已交付**、
-  **P1-2（HIR 引擎骨架）已交付**、**P1-3（引擎开关）已交付**，
-  下一步 = **P1-4（探针扩三实通道）**，**待点名**。
+  **P1-2（HIR 引擎骨架）已交付**、**P1-3（引擎开关）已交付**、
+  **P1-4（探针扩三实通道）已交付**，
+  下一步 = **P1-5（调试·REPL 接口预留）**，**待点名**（其硬前置 =
+  `docs/issue-hir-node-source-position-2026-09-12.md`，P1-2 已立案）。
   本计划为 v2，含 2026-09-12 用户主决策「HIR 升为两后端共用枢纽」与「单一 IR 多后端 / 分层信任」
   两轮推导的登记）**
 - P0 产出载体：`docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 +
@@ -209,7 +211,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 | **P0d** | **Char 类型落地**（`ADR-033` **已裁 2026-09-12**）：**前置** = `docs/issue-ffi-char-rename-cchar-2026-09-12.md`（腾名：3 处代码 + spec §2.7 增补）；**主体** = 三处类型表示加 `char` case；6 谓词签名 + 2 处返回类型迁移；LLVM 端 grapheme 走 `bk_string_grapheme_*` shim。**不含字符字面量 `'c'`**（`ADR-033 D3` **已裁拆格**，紧随其后另立一格） | 两实通道 `s[i]` / `chars` / 谓词等值；三处枚举穷尽性通过 | 提交级回退（**面较大，须按 `ADR-033` 止损条款**） |
 | **P0b** ✅ | **枢纽规范落地**：① 新立 **ADR（HIR 规范）**；② 60 条节点语义规范（**须含 `char` 节点与 `.join` 挂起语义**）；③ §5 裁决表逐项裁决（**现为 4 项**：3 项 IO + `stringSplit` 空 token），取「统一」者走 spec §1.3；④ 同步修改 spec 中「双通道一致性」表述对象；⑤ 顺带订正 `bk_*` 清单 —— **已交付 2026-09-12**：`ADR-034`（Accepted，含判准与三类边界）+ `docs/spec/hir-contract.md`（60 节点语义权威清单，44 expr + 16 stmt，含 `char` 节点与 `.join` 挂起语义**预留位**）+ §5 裁决全落（**A 组 4 项统一到 LLVM 侧**，判准 = 优先兼容 LLVM）+ spec §2.8 表述对象改造（「双通道」→「各后端与 HIR 契约一致」，**零行为变更**）+ `bk_*` 口径 35→**37** | ADR + 契约 + 裁决记录 + spec 变更；**不写代码** —— **已交付 2026-09-12** | 提交级回退 |
 | **P1** | **通道与判据基建**：HIR 引擎骨架 + 引擎开关 + 探针扩为三实通道（`interp-ast` 冻结参照 / `interp-hir` / `llvm-hir`）；**建立规范一致性核验脚本**；**为 Debugger/REPL 预留细粒度接口**（逐语句 / 求值 / 输出重定向 / 断点上下文）<br>**分六步**：P1-1 核验脚本 → P1-2 引擎骨架 → P1-3 引擎开关 → P1-4 探针扩三实通道（含 `arrayJoin` 补探针）→ P1-5 调试/REPL 接口预留 → P1-6 收口 | 探针可跑；核验脚本能报出「有节点无规范」「有规范条目无实现锚点」<br>**P1-1 ✅ 已交付 2026-09-12**（`tools/hir-contract-check.py`，**已实测报出真缺口**、变异测试 7/7）；
-**P1-2 ✅ 已交付 2026-09-12**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + `Tests/PiniTests/CodeGen/HIRTests/HIRExecutorTests.swift`）：60 节点**全分派、无 `default:`**（新增节点必编译失败直到被认领）；15 节点实现（expr 9 + stmt 6）＋ `captureMarker` 显式 no-op；**44 缺口具名 fail-loud**；值展示与算子语义**提取为 `Interpreter` 的 static 单源**（`stringifyValue` / `binaryValue` / `unaryValue`，纯搬移）；9 测试全绿；**变异反证两级 4/4 精确捕获、零挂死**；核验脚本 `interp-hir` 锚点由 `note` 转为 **`covers 60/60`**<br>**P1-3 ✅ 已交付 2026-09-12**（`Sources/PiniCLI/main.swift` +75 行）：引擎开关形态 = **环境变量 `PINI_INTERP_ENGINE`**（`ast` 默认 | `hir`），理由 = `pini run` 位置式无 flag 解析 + **LR-5 不设 CLI 兼容开关**（沿用 `PINI_HIR_PIPELINE` 先例，P4 翻转时同法退役）；**非法值与目录一律报错、不静默回落**（静默回退＝假绿）；开关在**共享前端之后**选定，两条通道看到同一份「已接受」程序；**CLI 级 15/15**（in-range 6 夹具逐字节一致 / out-of-range 5 夹具经 AST 阳性对照后具名 fail-loud 且零 stdout / switch 契约 4 项，含**可运行包在 hir 下被拒且零 stdout**）；**变异反证 3/3、零 stray** | 提交级回退 |
+**P1-2 ✅ 已交付 2026-09-12**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + `Tests/PiniTests/CodeGen/HIRTests/HIRExecutorTests.swift`）：60 节点**全分派、无 `default:`**（新增节点必编译失败直到被认领）；15 节点实现（expr 9 + stmt 6）＋ `captureMarker` 显式 no-op；**44 缺口具名 fail-loud**；值展示与算子语义**提取为 `Interpreter` 的 static 单源**（`stringifyValue` / `binaryValue` / `unaryValue`，纯搬移）；9 测试全绿；**变异反证两级 4/4 精确捕获、零挂死**；核验脚本 `interp-hir` 锚点由 `note` 转为 **`covers 60/60`**<br>**P1-3 ✅ 已交付 2026-09-12**（`Sources/PiniCLI/main.swift` +75 行）：引擎开关形态 = **环境变量 `PINI_INTERP_ENGINE`**（`ast` 默认 | `hir`），理由 = `pini run` 位置式无 flag 解析 + **LR-5 不设 CLI 兼容开关**（沿用 `PINI_HIR_PIPELINE` 先例，P4 翻转时同法退役）；**非法值与目录一律报错、不静默回落**（静默回退＝假绿）；开关在**共享前端之后**选定，两条通道看到同一份「已接受」程序；**CLI 级 15/15**（in-range 6 夹具逐字节一致 / out-of-range 5 夹具经 AST 阳性对照后具名 fail-loud 且零 stdout / switch 契约 4 项，含**可运行包在 hir 下被拒且零 stdout**）；**变异反证 3/3、零 stray**<br>**P1-4 ✅ 已交付 2026-09-12**（`tools/hir-parity-probe.py` +196、`tools/three-channel.py` +25、新语料 `testDiffArrayJoin.pini` + 显式测试方法）：**两工具的第三通道此前都是 `run-llvm` 的复制**（M6b 翻转遗留）⇒ 「三通道」实为两通道；本步把 `interp-hir` 接为**独立的 HIR 执行引擎**（`PINI_INTERP_ENGINE=hir`），并**显式指定、绝不继承**（`env.pop` + `env_extra` 两层防御：P4 会翻转默认值，继承会让冻结参照静默变成第二个 HIR 臂——sweep 仍报三通道而实际只测两臂）。新增判据 **`HIR_ENGINE_TODO`**（具名报未实现节点 ⇒ **P2 工作清单，不计入 `FLIP BLOCKERS`**），按节点聚合输出；`GAP_IR`（**P1-4 前即已死**）退役为 `GAP_HIR_ENGINE`；`TIMEOUT_*` 按新臂语义重命名。**基准（73 夹具）：`OK 23` / `HIR_ENGINE_TODO 50` / `FLIP BLOCKERS 0` / 零 stray**。**`arrayJoin` 补探针实测推翻契约的「B 组实现偏离」**——五类接收者形态 + 非 ASCII 分隔符/元素上两实通道**逐字节一致**。**变异反证 5/5**（含两级 + 参照漂移组）| 提交级回退 |
 | **P2** | **分格实现**（9 格，按节点族）：① 标量与算术 ② 控制流 ③ 函数与调用 ④ 闭包与间接调用 ⑤ 集合与下标 ⑥ 枚举/Optional/Result/try-else ⑦ 具名类型与字段/方法 ⑧ 字符串/内建/IO ⑨ FFI/unsafe/指针（**并发不做**） | 每格：三通道逐字等值 + 该族夹具全绿 + 全量回归 + 变异反证两级 | 逐格可回退 |
 | **P3** | **判据升级**：三层判据（§8）落地；制度化「AST 走查冻结」；Debugger/REPL 接口双引擎并行验证 | 三层判据可跑；口径文档化 | 提交级回退 |
 | **P4** | **翻转**：默认引擎切 HIR；**Debugger/REPL 一并迁到 HIR 引擎**；**删除 AST 走查**（D-B3=A 末态退役） | 全量回归 + 全量探针 0 阻塞 + 763 个解释器用例全绿 + 调试/DAP/REPL 用例全绿 | **不可逆面（等点名）** |
@@ -236,6 +238,9 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 ## 8. 判据（三层）
 
 1. **执行等值层**：三通道逐字等值 + 全量回归 + 变异反证两级（全禁用某族 → 该族全红；只禁单路径 → 只有对应用例红；变异后必须 diff 校验已还原）。
+   **P1-4 注**：「三通道」**自 P1-4 起才成立**——此前两工具的第三通道均为 `run-llvm` 的复制。
+   且等值层需**分层读数**：`OK` 之外的 `HIR_ENGINE_TODO`（P2 工作清单）与 `FLIP BLOCKERS`
+   **不可合并成一个数**，见 §13「P1-4 交付」第 4、9 条。
 2. **规范一致性层**（本项新增，机械可核验）：**节点清单 ↔ 规范条目 ↔ 两侧实现锚点** 三方对照，脚本双向报缺口。
 3. **spec 断言层**：语言面已钉死的语义（值展示、错误传播、切片边界、`for` 的 step 契约、标签语义…）编成**独立于两实现**的断言集，作为「共同误解规范」的检测网（共享层唯一防线）。
 
@@ -299,7 +304,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 ## 13. 停止点与开工顺序
 
 - **本轮（规划 + P0c + `ADR-033` 裁决落地 + P0 收口）未改任何源码**；计划已持久化为本文件，交由新会话接手。
-- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1（已开工：P1-1 ✅，P1-2 ✅，P1-3 ✅，P1-4 待点名）** → P2 → P3 → P4（不可逆，等点名）→ P5。
+- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1（已开工：P1-1 ✅，P1-2 ✅，P1-3 ✅，P1-4 ✅，P1-5 待点名）** → P2 → P3 → P4（不可逆，等点名）→ P5。
 - **P0 收口（2026-09-12）**：P0 一格**内容产出已全部达成、无实质缺口**（60 节点台账 / 四分级对账 /
   乙类后端无关性审查 / 耦合面 / 止损重算 / E3 实测 M0–M8）。收口动作 =
   ① 清过期标注 4 处（审计 §1 的 E3 状态、§5.3 标题、§7 标题、§7.5 编号错位）；
@@ -426,4 +431,77 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
      ③ `abs`/`minOf`/`maxOf` 在 AST 通道是**内建调用**、HIR 侧是**算子**（映射缺口已写在
      `operatorFor` 返回 `nil` 的注释里）；`copyIfStruct` 未提取；`HIRExecutor` 无块作用域 / defer 栈。
      均在 P2 各格内兑现。
+- **P1-4 交付（2026-09-12）** —— 探针扩为三实通道，**基准 `FLIP BLOCKERS 0`、变异反证 5/5**：
+  1. **交付物**：`tools/hir-parity-probe.py`（+196）、`tools/three-channel.py`（+25）、
+     新语料 `Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffArrayJoin.pini`
+     + `HIRDifferentialTests.swift` 显式加一条测试方法（**该套件是逐条列举，不是目录扫描**
+     ⇒ 新语料不加方法就不进 `swift test`）。
+  2. **本步的实质**：两个工具的第三通道**此前都是 `run-llvm` 的复制**（M6b 翻转后两臂同管线的
+     遗留）⇒ 所谓「三通道」实为**两通道**。本步把 `interp-hir` 接为**独立的 HIR 执行引擎**
+     （`PINI_INTERP_ENGINE=hir`），自此才是两个独立实现互证。
+  3. **显式指定引擎、绝不继承**（**两层防御**：`run()` 内 `env.pop("PINI_INTERP_ENGINE")`
+     ＋ 每个通道在 `env_extra` 里显式指定）。理由：**P4 会翻转默认值**，若继承，冻结参照
+     `interp-ast` 会静默变成第二个 HIR 臂，而 sweep 仍报「三通道」——**读数退化为两臂却看不出来**。
+  4. **新增判据 `HIR_ENGINE_TODO`**（`interp-hir` 具名报未实现节点）⇒ 这些节点是
+     **P2 工作清单，不是缺陷**，**不计入 `FLIP BLOCKERS`**。理由：否则每次 sweep 都带同一个
+     不动的数字，而不动的数字最终没人看。输出**按节点聚合**（node → 计数 + 前 3 个夹具）。
+     **判定顺序在 parity 规则之前**：否则两臂因无关原因同样安静时会被误判为 parity——
+     该理由有实证，见第 9 条 M2 的 `testDiffIoProgramBase`。
+  5. **`GAP_IR` 退役为 `GAP_HIR_ENGINE`（诚实记录）**：该槽位在 P1-4 前**就已死**
+     （旧 rule 7 的 `l_err` 检查把它遮蔽，且 `run-llvm` 忽略 lli 退出码）。接线**没有移除任何
+     可用检查**，只是让遮蔽显式化；区分「harness 产物」与「IR 被拒」需要 stderr 文本
+     ⇒ 归 **P3 判据升级格**。`TIMEOUT_LEGACY`/`TIMEOUT_INTERP` → **`TIMEOUT_LLVM`/`TIMEOUT_AST`**
+     按新臂语义重命名。
+  6. **`arrayJoin` 补探针，实测推翻契约的「B 组实现偏离」**：契约 §2.40 原文自述「本轮**未实测
+     行为**」「**差异缺探针**（P1 补）」，`ADR-034` 亦将其列入 B 组 6 项。补探针后，
+     **五类接收者形态**（普通 / 字面量 / 空分隔符 / 单元素 / **空数组**）＋**非 ASCII 分隔符与
+     非 ASCII 元素**上，`interp-ast` 与 `llvm-hir` **逐字节一致** ⇒ **测量不到偏离**。
+     已回填 §2.40 与 `ADR-034`（**只记测量，不擅自改判**：正式移出 B 组是规范内容变更，
+     待裁后 B 组应为 5 项）。`interp-hir` 侧未实现（`arrayLiteral` 更早拦截）⇒ P2 格。
+     **方法教训（本步第三次兑现）**：契约的 B 组标签是**按邻近归类**给出的，与「已实测」在文档里
+     长得一样——**证据级必须写清**；另：原语料只在 `testDiffStdlib` 的多特性夹具里触及 `join`，
+     失败无法归因，新语料最小化到单节点四形态。
+  7. **基准读数（`--root Tests/PiniTests/CodeGen/HIRTests`，73 夹具）**：`OK 23` /
+     `HIR_ENGINE_TODO 50` / **`FLIP BLOCKERS 0`** / 进程零残留。P2 工作清单按节点聚合已出
+     （`arrayLiteral` 10 / `construct` 9 / `tupleConstruct` 8 / `closureLiteral`·`enumConstruct`·
+     `tryStmt` 各 3 …）。
+  8. **变异反证 5/5**（分步执行，每步独立进程 + 无缓冲写出 + 还原后 md5 逐字节对账）：
+
+     | 组 | 变异 | 期望 | 实测 |
+     |---|---|---|---|
+     | control A | 干净树 + 导出 `PINI_INTERP_ENGINE=hir` | `interp-ast rc=0`（显式引擎覆盖继承值） | ✅ `ast=0 / hir=1 / llvm=0` |
+     | M3c | 仅去 `env.pop`（显式引擎保留） | 仍 `rc=0`（第二层防御独立守住） | ✅ |
+     | **M3+M3b** | **两层防御全去 + 导出 hir** | 参照漂移到 HIR ⇒ `rc≠0` | ✅ `ast=1 / hir=1 / llvm=0`，**参照与 HIR 臂完全同形** |
+     | M1 | `interp-hir` 臂回退 `run-llvm`（**接线撤销**） | `HIR_ENGINE_TODO` 50→0 | ✅ 50→0，`OK` 23→**72** |
+     | M2 | `HIR_TODO` 正则改为永不匹配 | TODO 0 且阻塞非零 | ✅ 0→0、阻塞 **0→49** |
+
+     M3+M3b 是**第一级**（整体失效路径）：两层防御全去后冻结参照与 HIR 臂输出**完全同形**
+     （都 `rc=1`、都空 stdout），即「两通道伪装成三通道」的失效形态。
+  9. **M1 的副产品（判据纪律结论）**：接线撤销后 **`FLIP BLOCKERS` 仍是 0** ⇒
+     **只看这一个数字检测不到接线撤销**，是 `HIR_ENGINE_TODO` 计数抓住了它。
+     ⇒ 探针的读数必须**分层看**，单一数字不足以守门。
+     **M2 的副产品**：`HIR_ENGINE_TODO` 50 项中 49 项落入 `GAP_EXEC`、**1 项
+     （`testDiffIoProgramBase`）落入 `OK_HARNESS`**（该夹具 `l_rc=0 / h_rc=1 / a_rc=1`、
+     三臂 stdout 全空）。这**反向证明**第 4 条的「判定顺序在 parity 之前」不是防御性冗余：
+     没有该前置，该夹具会被读成 **parity**。**首轮该步断言写成「阻塞数 == 基线 TODO 数」
+     判为 NOT CAUGHT**——机制成立而断言错，已把断言改为机制级（TODO 归零 ∧ 阻塞非零）。
+  10. **遗留（登记不修，各自路由）**：
+      ① **`E7-001` 假阳性根因已验证**（P1-4 顺带取得 E1 证据）：`SemanticAnalyzer.swift:741`
+      的 `.call` 分支不检查 `.member` callee 的**对象表达式**（对照 `:759` 的 `.member` 分支**有**
+      `checkExpression(object)`）⇒ 成员调用接收者从不进 `requireDefined` ⇒
+      `usedSymbols` 不登记 ⇒ 假告警。**已回填 `docs/issue-e7-001-false-unused-warning-2026-09-12.md`**
+      （假设 → 已验证根因，待验证项 1/2 结清，仅余阳性对照）。**不修**。
+      ② **探针判据 `GAP_HIR_ENGINE` 过宽**：`run-llvm` 对警告**静默**而 `run` **打印**
+      （通道奇偶差异），叠加本步新槽位 ⇒ 存在「HIR 侧仅一条警告却被计为**翻转阻塞**」的
+      可达路径；**当前不可达（实测 0）**，因为带该形态的夹具全部更早被「节点未实现」拦下，
+      **P2 每实现一个节点这层屏蔽就薄一分**。已回填
+      `docs/issue-diagnostic-channel-parity-2026-09-12.md`（含修正方向），**路由 P3**。
+      ③ **规则 5 的 tie-break 可产生空洞 parity**：规则 5 排在规则 6（`h_rc != 0`）**之前** ⇒
+      `l_rc=0 / h_rc≠0` 且 stdout 皆空、两臂皆吵时判 `OK_HARNESS`，此时「逐字等值」是
+      **空串比空串**。既有规则，非本步引入（且第 4 条的 TODO 前置已使实际夹具落回正确 verdict）。
+      属**判据设计**，**路由 P3**。
+      ④ **契约 §6 汇总行与字符串工单的范围错位**：契约 §6 把 B 组写为 §2.22/23/36/37/38/**40**，
+      而 `docs/issue-hir-string-slice-byte-based-2026-09-11.md` 自述范围为
+      `len`/切片/`substring`/`contains`/**`split`**/`case`（即 §2.**39**）⇒ `stringSplit` 与
+      `arrayJoin` 两边错位，可能误导修复者。**登记不修**（文档一致性，非本步范围）。
 - **WASM 端与 selfhost 均不在本项范围内**（前者不排期，后者冻结）。

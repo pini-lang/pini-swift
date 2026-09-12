@@ -166,7 +166,7 @@
 | 37 | `stringContains(receiver:needle:)` | 子串包含判定 | ⚠️ **B 组缺陷**：契约 = **字素**语义；LLVM 侧现为**字节查找**，偏离（分解式 Unicode 下分歧） |
 | 38 | `stringSubstring(receiver:start:length:)` | 取子串 | ⚠️ **B 组缺陷**：注册表与测试已裁 **`(start, end)`**；LLVM 侧现为 `(start, length)`，**偏离** |
 | 39 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。解释器现保留空段（3 段），**须改** |
-| 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ⚠️ **B 组**：本轮**未实测行为**，仅归类改判入甲类；**差异缺探针**（P1 补） |
+| 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ✅ **P1-4 补探针，已实测（2026-09-12）**：`interp-ast` 与 `llvm-hir` 在**五类接收者形态**（普通 / 字面量 / 空分隔符 / 单元素 / **空数组**）与**非 ASCII 分隔符 + 非 ASCII 元素**上**逐字节一致** ⇒ **本节点测量不到字符语义偏离**。原「B 组」标注系**按邻近归类**（未经实测）给出，**测量未予支持**；**正式移出 B 组属规范内容变更，本处不擅自改判**（见 `docs/issue-hir-string-slice-byte-based-2026-09-11.md` 名下本项，待裁决）。`interp-hir` 侧未实现（`arrayLiteral` 更早拦截）⇒ P2 格。探针载体：`Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffArrayJoin.pini` |
 | 41 | `stringConcat(lhs:rhs:)` | 字符串拼接（**字节语义**） | ✅ C 组：两侧结果一致，仅分配方式不同 |
 | 42 | `interpString(parts:)` | 字符串插值：各部分转 C 串后拼接 | ✅ C 组：纯组装。F64 渲染走**最短往返**（`§2.8` / LR-8） |
 
@@ -252,7 +252,7 @@
 
 | 项 | 类别 | 载体 |
 |---|---|---|
-| B 组 6 项字符语义偏离（§2.22/23/36/37/38/40） | **实现缺陷**，修实现对齐 `ADR-019 D1` | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` |
+| B 组 6 项字符语义偏离（§2.22/23/36/37/38/40） | **实现缺陷**，修实现对齐 `ADR-019 D1`；**其中 §2.40 经 P1-4 实测未复现偏离（2026-09-12）⇒ 待裁决后应减为 5 项** | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` |
 | A1/A2 上限（§2.8 注记） | **有害默认**，须 §1.3 反向修订 | `docs/issue-io-limit-from-emitter-2026-09-12.md` |
 | `addressOfVar` 解释器快照（§2.31） | **A/D1 裁决**：解释器须改为真引用 | 本契约 + 计划 IO/指针格 |
 | `assoc` 等半语义两项（§2.17 / §2.29） | **规范表述**：须写成语义 | 本契约 |

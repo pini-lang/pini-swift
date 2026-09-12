@@ -105,6 +105,12 @@ HIR 后出现，故照解释器塑形。HIR 统合后，两侧都是枢纽的消
 切片 / `arrayJoin` —— `ADR-019 D1` 已钉 grapheme 模型、`stringSubstring` 的注册表已定
 `(start, end)`，属**规范已裁决、实现偏离**，走修实现对齐规范，**不占裁决额度**。
 
+> **P1-4 订正记载（2026-09-12，非新规范内容）**：`arrayJoin` 的 B 组归属**系按邻近归类给出，
+> 当时未经实测**（`docs/spec/hir-contract.md` §2.40 原文自述「本轮未实测行为」「差异缺探针」）。
+> P1-4 补探针实测后，`interp-ast` 与 `llvm-hir` 在五类接收者形态与非 ASCII 输入上**逐字节一致**
+> ⇒ 该节点的「实现偏离」**测量未予支持**。**正式移出 B 组属规范内容变更，本 ADR 不擅自改判**；
+> 待裁后 B 组应为 **5 项**。证据落 `docs/spec/hir-contract.md` §2.40。
+
 **C 组（4 项）**：`stringConcat` / `interpString` / `isAsciiDigit` / `printMulti` —— 差异在
 「怎么实现」不在「结果是什么」，**规范改写即可，零行为变更**。
 

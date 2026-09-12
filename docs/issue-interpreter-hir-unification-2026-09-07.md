@@ -14,7 +14,10 @@
   已交付**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + 9 测试全绿 + 变异反证 4/4，
   核验脚本 `interp-hir` 锚点转为 `covers 60/60`）；**P1-3（引擎开关）已交付**（`PINI_INTERP_ENGINE`
   环境变量，`ast` 默认 | `hir`；CLI 级 15/15 + 变异反证 3/3；`Sources/PiniCLI/main.swift` +75 行）；
-  **下一格 = P1-4（探针扩三实通道），待点名**）**
+  **P1-4（探针扩三实通道）已交付**（`tools/hir-parity-probe.py` +196、`tools/three-channel.py` +25、
+  新语料 `testDiffArrayJoin.pini`；基准 73 夹具 `OK 23`/`HIR_ENGINE_TODO 50`/**`FLIP BLOCKERS 0`**、
+  变异反证 5/5；`arrayJoin` 补探针实测推翻契约的「B 组实现偏离」）；
+  **下一格 = P1-5（调试·REPL 接口预留），待点名**）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（**执行计划载体**，D-B1…D-B12 决策登记）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）；
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（判据与约束权威）
