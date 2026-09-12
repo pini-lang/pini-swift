@@ -3,7 +3,9 @@
 
 ## Status
 
-**Proposed（草案，2026-09-12）** —— 待裁决项见文末「待裁决」节。
+**Accepted（2026-09-12）** —— D1 / D2 / D3 全部裁决；实施排期为 **P0d**
+（见 `docs/issue-interpreter-hir-plan-2026-09-12.md`），实施载体见 `docs/issue-ffi-char-rename-cchar-2026-09-12.md`
+（D2 前置）与 `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（字符语义对齐）。
 
 本 ADR 落实 `ADR-019 D2` 的**第二阶段**（其原文：「真 `Char` 标量类型 + 字符字面量 `'c'`
 为远期独立 RFC」）。它不是新增需求，而是**偿还一笔因架构变更而到期的债**（见 Context §1）。
@@ -93,17 +95,17 @@ between small and large representations.」
 
 ## Decision
 
-（草案：下列决策项中 **D2 已由用户裁决（2026-09-12）**，其余待裁。）
+（下列决策项均已裁决：**D1/D2/D3 见各节**。）
 
-### D1【待裁】`Char` 的运行时表示
+### D1: `Char` 的运行时表示 = 与 `String` 同构（方案 A，已裁 2026-09-12）
 
-| 方案 | 表示 | 硬件特征 | 新 ABI | 与现状的性能差 | 判断 |
+| 方案 | 表示 | 硬件特征 | 新 ABI | 与现状的性能差 | 裁决 |
 |---|---|---|---|---|---|
-| **A 与 `String` 同构（newtype）** | 复用 `String` 表示（LLVM 侧 `ptr`） | 与 `String` 同等（可能堆分配） | **零** | **零回归**（现状 `s[i]` 已返回 `.string`） | **推荐** |
-| B 单字 tagged union | `{ inline ≤15 B ; ptr overflow }`，16 B 值类型 | 定长、可内联、常见情形免堆 | **大**（新 16 B 值类型须穿透数组/结构体/字典/参数/返回） | 须先给 `String` 加 small-string 优化 | 长期路线 |
+| **A 与 `String` 同构（newtype）** | 复用 `String` 表示（LLVM 侧 `ptr`） | 与 `String` 同等（可能堆分配） | **零** | **零回归**（现状 `s[i]` 已返回 `.string`） | **采纳** |
+| B 单字 tagged union | `{ inline ≤15 B ; ptr overflow }`，16 B 值类型 | 定长、可内联、常见情形免堆 | **大**（新 16 B 值类型须穿透数组/结构体/字典/参数/返回） | 须先给 `String` 加 small-string 优化 | 长期路线（挂账） |
 | C 4 字节码点 | `i32` | 最廉价、O(1)、免堆 | 小 | 无 | **违反 `ADR-019 D1`，排除** |
 
-**推荐 A 的理由**：
+**采纳 A 的理由**：
 
 1. **与权威一致**：Swift（同一宿主语言）的 `Character` 就是「a String under the covers」。
 2. **零新 ABI**：`Char` 的 LLVM 表示 = `String` 的表示（`ptr`），无需新值类型穿透
@@ -121,7 +123,7 @@ small-string 优化 —— 那属 String 存储模型变更，**超出本 ADR �
 （触发条件：bench 证据表明 grapheme 逐字符场景成为瓶颈；与 `ADR-019` Consequences 已登记的
 「grapheme 索引 O(i)」缺口同族）。
 
-### D2【已裁 2026-09-12】FFI 的 `Char` 改名为 `CChar`
+### D2: FFI 的 `Char` 改名为 `CChar`（已裁 2026-09-12）
 
 用户裁决：现有 FFI 单字节 `Char` **改名 `CChar`**，`Char` 之名腾给 grapheme 类型。
 
@@ -129,15 +131,25 @@ small-string 优化 —— 那属 String 存储模型变更，**超出本 ADR �
   意图（字节缓冲用 `I8`/`U8`，不占用 `Char`）。
 - 落点：`Sources/PiniCore/Type/TypeChecker.swift`（`isCScalarType`）、
   `Sources/PiniCore/Interpreter/Interpreter.swift`（指针 `load`/`store` 分派）。
+- **实施载体**：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`（本项是 P0d 的前置——须先腾名）。
 
-### D3【待裁】字符字面量 `'c'` 的阶段归属
+### D3: 字符字面量 `'c'` 拆格（类型先行，字面量随后）（已裁 2026-09-12）
 
-`ADR-019 D2` 把「真 `Char` 标量类型 **+** 字符字面量 `'c'`」列为同一 RFC。需裁决：
+`ADR-019 D2` 把「真 `Char` 标量类型 **+** 字符字面量 `'c'`」列为同一 RFC。**裁决：拆格**
+—— 本 ADR 只落**类型**，字面量作为紧随其后的一格（排 P0d 之后）。
 
-- **同批**：类型立即有构造语法，`Char` 可被直接写出；代价是 lexer/parser 改动增大。
-- **拆格**：类型先落地（`s[i]` / `chars` / `chr` 已是构造点，已够 lexer 闭环），字面量后续。
+**理由**：
 
-**影响面提示**：`'c'` 与 `String` 的双引号区分、转义规则、以及 `'ab'` 应如何报错。
+1. **构造点已存在，不必等字面量**：`s[i]` / `chars` / `chr` 三个路径**已经是** `Char` 的构造点
+   ⇒ 类型落地即可闭环，字面量不是解锁条件。
+2. **二者是不同风险面**：类型层迁移（D4 三类）动的是 `Value`/`HIRType`/`TypeAnnotation` 与谓词签名；
+   字面量动的是 **lexer/parser**（单引号消歧、转义规则、`'ab'` 诊断、与 `String` 双引号的分工）。
+   **同批 = 把两个独立风险叠在一格**，一处失败会拖住另一处的已验证部分。
+3. **规模控制**：D4 的迁移面已足量一格；拆格使两侧都能独立验证与独立回退。
+
+**代价（诚实登记）**：P0d 交付后 `Char` **无法直接书写**，测试须经 `s[0]` / `chars(..)[0]` /
+`chr(n)` 构造 —— 这是刻意的取舍，由紧随的字面量格消除。字面量格须处理的影响面：
+`'c'` 与 `"..."` 的双引号区分、转义规则、`'ab'` 报错形态。
 
 ### D4 迁移面（实测清单，三类）
 
@@ -172,13 +184,16 @@ small-string 优化 —— 那属 String 存储模型变更，**超出本 ADR �
 **止损**：若实施中发现迁移面显著超出 D4 清单（例如波及序列化 / DAP / 字典 key 哈希 /
 FFI thunk），**立即停并重新拆项**，不把扩散项塞进同一批。
 
-## 待裁决
+## 裁决记录（2026-09-12）
 
-| # | 项 | 说明 |
-|---|---|---|
-| 1 | **D1 表示方案**（A 推荐 / B / C） | C 违反 `ADR-019 D1`；A 与 B 的取舍见上 |
-| 2 | **D3 字面量阶段** | 同批 / 拆格 |
-| 3 | 本 ADR 是否随裁决转 `Accepted` | 并回填 `ADR-019 D2` 的「已实施」状态 |
+| # | 项 | 裁决 | 依据 / 后果 |
+|---|---|---|---|
+| 1 | **D1 表示方案** | **A（与 `String` 同构）** | 零新 ABI + 零性能回归（现状 `s[i]` 已分配单字符 String）；C 因违反 `ADR-019 D1` 排除；B 挂账为长期路线 |
+| 2 | **D2 FFI 命名** | **`Char` 改名 `CChar`** | 回归 spec §2.7 意图；腾出 `Char` 名 |
+| 3 | **D3 字面量阶段** | **拆格**（类型先行，字面量随后） | 构造点已存在，不必等；避免叠加 lexer/parser 风险 |
+| 4 | 本 ADR 状态 | **转 `Accepted`** | 已回填 `ADR-019 D2` / D1 边界的状态 |
+
+**后续排期**：D2 改名（工单）→ P0d 类型落地 → 字面量格。D1 方案 B 的触发条件见「Consequences」。
 
 ## 引用
 
@@ -187,3 +202,5 @@ FFI thunk），**立即停并重新拆项**，不把扩散项塞进同一批。
 - `docs/spec/pini-spec-v0.md` —— FFI 白名单（`Char` 不进标量集）、§3.2 单一 `@bk_*` ABI 边界
 - `docs/issue-interpreter-hir-plan-2026-09-12.md` —— LR-4 执行计划（本 ADR 为其 P0b 规范产出的前置）
 - `docs/issue-interpreter-hir-gap-audit-2026-09-12.md` —— P0 审计与 E3 实测
+- `docs/issue-ffi-char-rename-cchar-2026-09-12.md` —— D2 的实施载体（P0d 前置）
+- `docs/issue-hir-string-slice-byte-based-2026-09-11.md` —— 字符语义六处对齐的实施载体
