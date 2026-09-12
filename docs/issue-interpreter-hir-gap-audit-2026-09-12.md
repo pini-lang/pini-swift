@@ -1,11 +1,16 @@
 # P0 审计：解释器统一 HIR 的枢纽缺口台账
 
-- 状态：**Open（P0 批产出；只读审计 + 一次 debug 构建的三通道实测；未改任何源码）**
+- 状态：**Open（P0 批产出；只读审计 + 一次 debug 构建的三通道实测；未改任何源码）
+  —— 2026-09-12 经 P0c 复审订正（§5.3.1 / §5.5 / §7.1）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（常驻计划载体，P0 一格）；
   `docs/issue-interpreter-hir-unification-2026-09-07.md`（立案背景）；
-  `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（同根因族工单，本批回答其遗留未知项）
+  `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（同根因族工单，本批回答其遗留未知项）；
+  `docs/spec/adr/adr-019-unicode-char-model.md`（**字符模型裁决出处——P0c 复审的关键依据**）；
+  `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，Proposed 草案）
 - 基线：main `361ec2c`，分支 `agent/pini-dev/hir-hub-p0`
 - 台账口径：**行号为 2026-09-12 实测快照**；实现改动后一律改用符号检索重新定位，勿复用行号
+- **⚠️ 读前必看**：本文件 §5.3.1 的**初稿根因结论已被 P0c 复审推翻**（初稿误判为「规范空白」，
+  实为「规范已裁、实现偏离」）。请以订正块与 §7.1 现行口径为准。
 
 ---
 
@@ -262,8 +267,7 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
 | HIR/LLVM | **2** | **码点**（UTF-8 解码后的 code point 数） |
 
 对 ASCII 与 CJK（`你好世界` 两侧均 `4`）二者**恰好重合**，故此前不可见。
-⇒ **字符串「字符」的定义在语言层未裁决，而两侧各取一义**；再加上 HIR 内部
-`sliceCall` / `stringSubstring` 走的是**字节**，实际**三义并存**：
+再加上 HIR 内部 `sliceCall` / `stringSubstring` 走的是**字节**，实际**三义并存**：
 
 | 位置 | 偏移/长度单位 |
 |---|---|
@@ -271,7 +275,28 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
 | HIR `lenCall`（`emitStringCharCount`） | **码点** |
 | HIR `sliceCall` / `stringSubstring` | **字节** |
 
-这是「String 家族」问题簇的**真正根因**：缺的不是某一处对齐，而是**语言层的字符模型裁决**。
+> **⚠️ 订正（2026-09-12 复审，推翻本节初稿的根因结论）**
+>
+> 本节初稿写「**字符串「字符」的定义在语言层未裁决**……缺的是**语言层的字符模型裁决**」，
+> 并据此把字符家族 5 项计入止损 6。**该结论错误，现予推翻。**
+>
+> **裁决早已存在**：`ADR-019 D1`（Accepted **2026-08-29**，
+> `docs/spec/adr/adr-019-unicode-char-model.md`）钉定字符模型 = **Grapheme Cluster**，
+> 并明文「**不采用 Unicode scalar 或 UTF-8 byte 模型**」；同文 D2 更已把
+> 「真 `Char` 类型」立为远期 RFC。
+>
+> **正确的判据切分**：这是「**规范已裁决**（grapheme），而 HIR 侧的
+> 码点 / 字节实现**偏离**了裁决」——按 §7.1 的判据表，属**实现缺陷，不计入止损 6**。
+> 连带：初稿据此计入止损的字符家族各项须改判（见 §7.1 重算节）。
+>
+> **另一后果**：初稿曾推荐「以**码点**为统一基准」，**该方案已被 `ADR-019 D1` 明文排除**。
+> 字符模型**不再有裁决余地**，后续工作转入 **`ADR-019 D2` 的第二阶段（引入 `Char` 类型）**，
+> 草案见 `docs/spec/adr/adr-033-char-type.md`。
+>
+> **初稿出错的成因（留档）**：初稿只在**实现层**（`Interpreter` / `HIR` / `IREmitter`）
+> 横向比对三义，**未回查规范层的既有裁决**——即「先看代码、后看规范」的顺序反了。
+> 这与本仓既有教训同族：**同名搜索/单层取证会造出缺失与空白假结论**，
+> 规范空白类结论必须先在 `docs/spec/adr/` 做阳性对照。
 
 ### 5.4 耦合面实测（E1，支撑 P4 边界）
 
@@ -282,6 +307,31 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
 | DAP/Debugger | `private var interpreter: Interpreter?` + `outputSink` 重定向 + `debugHook` | ✅ 一致 |
 | `SuspendEvaluator` | **890 行**，`extension Interpreter`，遍历 **AST**，121 处 `case .X` | ⚠️ **计划未载**（见 §6） |
 | HIR 自述的「以解释器为准」 | `interpreter` 提及 HIRNode/Lowerer/Emitter = 23/36/38 次 | ✅ 印证计划 §2 |
+
+### 5.5 【E1 新发现】`Char` 名称被 FFI 单字节占用，与 spec 冲突（P0c 登记）
+
+`Char` **已作为类型名存在于代码中**，但其语义是 **C 的单字节 char**，而非 Unicode 字符：
+
+| 位置 | 实测 | 语义 |
+|---|---|---|
+| `Sources/PiniCore/Type/TypeChecker.swift`（`isCScalarType`） | `"Char"` 被列为 **C 标量** | FFI 合法标量 |
+| `Sources/PiniCore/Interpreter/Interpreter.swift`（指针 `load`） | `case "Char": return .int(Int(rp.pointer.load(as: UInt8.self)))` | **单字节读** |
+| `Sources/PiniCore/Interpreter/Interpreter.swift`（指针 `store`） | `case "Char": … storeBytes(of: UInt8(truncatingIfNeeded: i), as: UInt8.self)` | **单字节写** |
+
+而 `docs/spec/pini-spec-v0.md` 的 FFI 类型白名单明文：
+
+> **`Char` 不进入 FFI 标量集**：C `char` 符号性由实现定义，字节缓冲统一用 `I8`/`U8`；
+> `Char` 保留为**一般语言类型**，不出现在 FFI 签名。
+
+⇒ **两处问题**：
+
+1. **规范/实现漂移**：代码把 `Char` 当 C 标量（且是带符号性歧义的 `char`），规范明文排除 ——
+   这是规范已裁、实现偏离，属**实现缺陷**（同 §7.1 的判据切分）。
+2. **名称抢占（更关键）**：`ADR-019 D2` 拟引入的 `Char` 是 **grapheme 字符**，
+   与现有的「FFI 单字节 `Char`」**同名两义**。若不清腾，字节语义会污染字符语义。
+
+**处置**（用户裁决 2026-09-12）：FFI 的 `Char` **改名 `CChar`**，`Char` 之名腾给 grapheme 类型。
+登记落点：`docs/spec/adr/adr-033-char-type.md` 的 D2（已裁）。
 
 ---
 
@@ -329,34 +379,40 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
 | 口径 | 计入止损的真差异 | 触发？ |
 |---|---|---|
 | 计划原判 | 3（`readLine` / `readFile` / `writeFile`）——均属「规范未裁决」 | 否（恰在门槛内） |
-| 本轮 E1 新增（**规范未裁决**，待 E3 确认） | + `stringCase`（ASCII vs Unicode 大小写）+ `stringContains`（字节 vs 字符匹配）+ `stringSplit`（空 token 取舍）= 最多 **6** | **是（若 E3 确认）** |
+| 本轮初稿（**判据错误，已推翻**） | 曾把字符家族 5 项计入，得 7 项 | ~~是~~ → 见下 |
+| **本轮复审（现行口径）** | `readLine` / `fileRead` / `writeFile` / `stringSplit`（空 token 取舍）= **4** | **是（4 > 3）** |
 | `stringSubstring` | **不计入** —— 注册表已定 `["start","end"]`、测试已断言 `[start,end)` ⇒ 规范**已裁决**，HIR 侧是偏离方 | 否 |
+| `stringCase` / `len` / `contains` | **不计入** —— `ADR-019 D1` 已钉 grapheme 且要求「与宿主一致」，HIR 侧的码点/字节属**偏离** | 否 |
 
-⇒ **结论（E3 实测后定论）**：
+⇒ **结论（2026-09-12 复审重算后定论）**：
 
-1. `stringSubstring` 的 `(start, length)` 属**实现缺陷**（注册表与测试已裁决为 `(start, end)`），
-   不占用止损额度 —— 它比甲类项**更紧急**（是 bug），但**不改变甲类的裁决负担**。
-2. **止损 6 已触发 —— 实测确认。** 甲类中「规范未裁决、需改用户可见行为」的项实测为：
+1. **判据订正**：初稿计入止损的字符家族 5 项中，**4 项改判为实现缺陷**。
+   `ADR-019 D1`（Accepted 2026-08-29）早已钉定 grapheme 模型，故
+   `stringCase` / `len` / `contains` 的差异是**实现偏离**，`stringSubstring` 亦然
+   （注册表与测试已裁 `(start, end)`）。这可参见 §5.3.1 的订正块。
+2. **止损 6 仍触发，但压力从 7 项降到 4 项。** 真正「规范未裁决、需改用户可见行为」的项为：
 
-| # | 项 | 实测（§7.3） | 需改用户可见行为？ |
+| # | 项 | 实测（§7.3） | 性质 |
 |---|---|---|---|
-| 1 | `readLine` | 剥换行 vs 不剥 + 256 B 上限 | 是 |
-| 2 | `fileRead` | 无上限 vs 64 KiB | 是 |
-| 3 | `fileWrite` | `.null` vs `fclose` i32 | 是 |
-| 4 | `stringCase` | `CAFÉ` vs `CAFé` | 是 |
-| 5 | `stringSplit` | 保留空段 vs 跳过（3 段 vs 2 段） | 是 |
-| 6 | `len` 的字符定义 | 字素簇 vs 码点 | 是 |
-| 7 | `contains`（分解式 Unicode） | `false` vs `true` | 是（窄） |
+| 1 | `readLine` | 剥换行 vs 不剥 + 256 B 上限 | IO 语义未裁 |
+| 2 | `fileRead` | 无上限 vs 64 KiB | IO 语义未裁 |
+| 3 | `fileWrite` | `.null` vs `fclose` i32 | IO 语义未裁 |
+| 4 | `stringSplit`（空 token 取舍） | 保留空段 vs 跳过（3 段 vs 2 段） | 分隔符语义未裁 |
 
-   合计 **7 项 > 3** → 按计划 §9「说明兼容面超出本项承载，应**拆项**」处置。
-3. **建议的拆项（不是「逐项修」，是先立规范再对齐）**：把 **String 文本模型**整体拆为
-   独立一格 —— 其内容是**一个语言层裁决**（Pini 的「字符」是字素簇、码点、还是字节？），
-   裁决落定后 `len` / 切片 / `substring` / `contains` / `split` / `case` 六处的对齐
-   都是**该裁决的实现落地**。这样甲类裁决表回到 3 项（第 1–3 项，均属 IO 语义）。
-   落点：与既有工单 `issue-hir-string-slice-byte-based-2026-09-11.md` 合并（见 §7.4）。
+   合计 **4 项 > 3** → 仍按计划 §9「说明兼容面超出本项承载，应**拆项**」处置。
+3. **拆项方案（据复审更新）**：
+   - **IO 语义**拆为一格（第 1–3 项，同族）；
+   - **`stringSplit` 空 token 取舍**：量小，随 IO 格或单列皆可；
+   - **String 文本模型**：**不再需要「裁决」**（`ADR-019 D1` 已裁 grapheme），
+     改为**实现对齐**；其规范产出 = `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，草案）。
+     这是本批最重要的一处**性质变化**：从「立新规范」变成「补实现缺口」。
 
 > ⚠️ **止损的读法**：止损 6 触发**不等于**本项要停 —— 它的处置是「拆项」，
-> 而拆项正是 P0 的产出。真正会被止损拦住的是「把 7 项塞进一批逐项裁决」。
+> 而拆项正是 P0 的产出。真正会被止损拦住的是「把 4 项塞进一批逐项裁决」。
+>
+> ⚠️ **本轮订正的教训**：止损判定的分母**完全取决于判据切分是否准确**。
+> 初稿未回查规范层，把 4 项实现缺陷误计为裁决负担，虚增了 3 项压力（7 项 vs 真实的 4 项）。
+> **判据切分必须先于止损计算**——顺序颠倒会得出错误的「压力更高」结论。
 
 ### 7.2 P0 实测项（**已执行**，见 §7.3）
 
@@ -419,11 +475,15 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
   `helpers.py` / `ledger.py` / `bk.py` / `probe.py` / `probe2.py` / `fx/*.pini`），
   **均不入仓**（一次性审计工具；夹具形态已在 §7.3 表内以文字完整记录，可重建）。
 - **构建产物**：`/tmp/pini-build/debug/`（本次重建，08:24–08:25），可复用至下次 `/tmp` 清理。
-- **下一步待点名**：
-  1. **§7.1 拆项方案** —— 是否把「String 文本模型」整体拆为独立一格（前置 = 语言层
-     字符模型裁决），并把甲类裁决表收窄到 3 项 IO 语义；
-  2. **§6 的 CPS / AST 走查路线**（R1 退役 / **R2 留一格迁到 HIR（我倾向）** / R3 双引擎）；
+- **三项待点名事项的裁决结果（2026-09-12）**：
+  1. **§7.1 拆项方案 → 判据已订正**：字符家族**不需要裁决**（`ADR-019 D1` 已裁 grapheme），
+     改判为实现缺陷；甲类裁决表收窄到 **4 项**（3 项 IO 语义 + `stringSplit` 空 token 取舍）。
+     规范产出载体 = `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Proposed 草案**）。
+  2. **§6 CPS / AST 走查路线 → `R2`**（用户裁决：单独留一格把 CPS 迁到 HIR）。
+     ⇒ `HIRLowerer` 须为 `.join` 增加节点面，**P0b 的节点语义须预留挂起语义**。
   3. 之后进 **P0b**（HIR 规范 ADR + 节点语义 + 裁决落地）。
+- **P0c 产出（2026-09-12）**：本文件的 §5.3.1 / §5.5 / §7.1 订正 + `adr-033` 草案；
+  **未改任何源码**。
 - 未合 main、未 push。
 
 ### 7.5 与既有工单的关系（本批的工单动作）
