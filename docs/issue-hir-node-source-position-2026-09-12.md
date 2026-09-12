@@ -41,6 +41,10 @@ Error: ... node 'arrayLiteral' is dispatched but not implemented yet (P1-2 skele
    **语句级 `SourceLocation`**（`Breakpoint(fileName:line:)` 与 `StopEvent.location`）。
    HIR 语句无位置 ⇒ 迁移后 `debugHook` 无从判定「现在停在第几行」。
    **故 P4 开工前必须先解本单**（或另立等价的位置供给方案）。
+   > 2026-09-13 补（P1-5 S1 落地后）：调试面已抽象为 `DebugHookHost`、两台引擎同形
+   > ⇒ P4 迁移**不再另需改调试器子系统**，本单成为其**唯一位置缺口**。
+   > 另注：HIR 侧 `debugHook` 已声明但**未接暂停点** —— 位置落地前接线会报占位位置，
+   > 断点（按行号相等匹配）永不命中而入口停/单步停在虚构行；该休眠态有断言钉住。
 3. **P3 的三层判据**：spec 断言层与「逐语句」粒度若需定位到源行，同样依赖本项。
 
 ## 处置选项（未裁决，立项时展开）

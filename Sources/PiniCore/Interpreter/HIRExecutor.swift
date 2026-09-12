@@ -64,13 +64,35 @@ import Foundation
 ///
 /// This is grid P1-2 of the LR-4 interpreter unification: the HIR (ADR-034)
 /// gains an execution engine that is not the LLVM emitter.
-public final class HIRExecutor {
+///
+/// Its debug surface conforms to `DebugHookHost`, the same shape the AST
+/// interpreter exposes — see the `debugHook` property for why that surface is
+/// declared while still unwired.
+public final class HIRExecutor: DebugHookHost {
 
     // MARK: - Host surface
 
     /// Line output channel. Mirrors `Interpreter.outputSink` so a caller can
     /// redirect both engines' stdout through the same funnel and diff them.
     public var outputSink: (String) -> Void = { line in print(line) }
+
+    /// Debug pause hook — the other half of the surface `DebugHookHost` names,
+    /// and the same type the interpreter exposes.
+    ///
+    /// **Declared but not wired** (P1-5 S1). Nothing in this engine consults it,
+    /// because the HIR carries no source position — see the class header's "no
+    /// positions" gap. A pause site here today would have to report
+    /// `noLocation`, and the debugger matches a breakpoint by line equality, so
+    /// no breakpoint could ever fire while entry-stop and stepping would stop at
+    /// a line that does not exist. That is a debugger lying about where the
+    /// program is, which is worse than a debugger that is not there yet.
+    ///
+    /// The surface is declared now so that the debugger subsystem is already
+    /// engine-agnostic when positions land: wiring this becomes a call at the
+    /// statement loop plus nothing else. The dormancy is asserted by
+    /// `HIRExecutorTests`, so adding that call before positions exist fails a
+    /// test instead of shipping silently.
+    public var debugHook: ((DebugContext) throws -> DebugAction)? = nil
 
     // MARK: - Module state
 
