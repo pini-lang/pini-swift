@@ -9,7 +9,11 @@
   审查 + 耦合面 + E3 实测 M0–M8）；**P0c（复审订正）与 P0b（枢纽规范落地）亦已交付** ——
   P0b 产出 = `docs/spec/adr/adr-034-hir-contract.md`（HIR 契约，判准与 A/B/C/D/E 组裁决）+
   `docs/spec/hir-contract.md`（60 节点语义权威清单）+ spec §2.8 表述对象改造 + `bk_*` 口径订正；
-  **下一格 = P1（通道与判据基建），待点名**）**
+  **P1（通道与判据基建）已开工（2026-09-12）**：**P1-1（规范一致性核验脚本）已交付**
+  （`tools/hir-contract-check.py`，实测报出真缺口、自身变异测试 7/7）；**P1-2（HIR 引擎骨架）
+  已交付**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + 9 测试全绿 + 变异反证 4/4，
+  核验脚本 `interp-hir` 锚点转为 `covers 60/60`）；
+  **下一格 = P1-3（引擎开关），待点名**）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（**执行计划载体**，D-B1…D-B12 决策登记）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）；
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（判据与约束权威）

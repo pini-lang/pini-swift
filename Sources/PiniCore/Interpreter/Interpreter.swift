@@ -2024,7 +2024,17 @@ public class Interpreter {
  location: loc
  )
  }
+ /// 二元运算求值（保留给实例调用点的转发形式）。
  func evaluateBinaryOp(_ l: Value, _ op: BinaryOperator, _ r: Value) throws -> Value {
+ return try Interpreter.binaryValue(l, op, r)
+ }
+
+ /// 二元运算的**唯一事实源**（P1-2 / LR-4 提取，纯搬移，行为零变化）。
+ ///
+ /// 提取理由与 `stringifyValue` 同：HIR 执行引擎（`HIRExecutor`）执行同一个算子时
+ /// 必须得到与 AST 解释器完全相同的值（含 `divisionByZero` / `typeMismatch` 的抛出时机），
+ /// 否则「单 IR 多后端互证」会退化成两份各自漂移的语义表。本函数只读参数，不读实例状态。
+ static func binaryValue(_ l: Value, _ op: BinaryOperator, _ r: Value) throws -> Value {
  switch (l, r, op) {
  case (.int(let a), .int(let b), .plus): return .int(a + b)
  case (.int(let a), .int(let b), .minus): return .int(a - b)
@@ -2072,7 +2082,14 @@ public class Interpreter {
  }
  }
 
+ /// 一元运算求值（保留给实例调用点的转发形式）。
  func evaluateUnaryOp(_ op: UnaryOperator, _ v: Value) throws -> Value {
+ return try Interpreter.unaryValue(op, v)
+ }
+
+ /// 一元运算的**唯一事实源**（P1-2 / LR-4 提取，纯搬移，行为零变化）。
+ /// 提取理由同 `binaryValue`：两侧后端对同一算子必须给出同一值与同一抛出。
+ static func unaryValue(_ op: UnaryOperator, _ v: Value) throws -> Value {
  switch (op, v) {
  case (.minus, .int(let a)): return .int(-a)
  case (.plus, .int(let a)): return .int(a)
@@ -3496,8 +3513,19 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
  }
 
- /// 将运行时值格式化为展示字符串，作为值→字符串的唯一事实源（供 `print` 与字符串插值求值复用）。
+ /// 将运行时值格式化为展示字符串（保留给实例调用点的转发形式）。
  func stringify(_ value: Value) -> String {
+ return Interpreter.stringifyValue(value)
+ }
+
+ /// 将运行时值格式化为展示字符串，作为值→字符串的**唯一事实源**
+ /// （供 `print`、字符串插值求值，以及 HIR 执行引擎复用）。
+ ///
+ /// P1-2（LR-4）提取为 `static`：AST 解释器与 HIR 执行引擎必须对同一值渲染出
+ /// **逐字节一致**的展示串——这是差分探针的比较基准，故展示语义只允许存在一份。
+ /// 本函数只引用静态常量（`builtinErrorTypeName` / `builtinCancelErrorTypeName`），
+ /// 不读任何实例状态，故提取不改变行为。
+ static func stringifyValue(_ value: Value) -> String {
  switch value {
  case .int(let v): return String(v)
  case .float(let v): return String(v)
@@ -3508,14 +3536,14 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  // 草稿 A2（批次 1.3，D1）：命名元组显示 `[商: 2, 余: 1]`，位置元组保持 `[2, 1]`。
  return "[" + vs.enumerated().map { i, v in
  let prefix = (labels.indices.contains(i) && labels[i] != nil) ? "\(labels[i]!): " : ""
- return (i > 0 ? ", " : "") + prefix + stringify(v)
+ return (i > 0 ? ", " : "") + prefix + stringifyValue(v)
  }.joined() + "]"
  case .array(let vs):
- return "[" + vs.enumerated().map { i, v in (i > 0 ? ", " : "") + stringify(v) }.joined() + "]"
+ return "[" + vs.enumerated().map { i, v in (i > 0 ? ", " : "") + stringifyValue(v) }.joined() + "]"
  case .dictionary(let entries):
- return "{" + entries.enumerated().map { i, kv in (i > 0 ? ", " : "") + stringify(kv.0) + ": " + stringify(kv.1) }.joined() + "}"
+ return "{" + entries.enumerated().map { i, kv in (i > 0 ? ", " : "") + stringifyValue(kv.0) + ": " + stringifyValue(kv.1) }.joined() + "}"
  case .set(let vs):
- return "{" + vs.enumerated().map { i, v in (i > 0 ? ", " : "") + stringify(v) }.joined() + "}"
+ return "{" + vs.enumerated().map { i, v in (i > 0 ? ", " : "") + stringifyValue(v) }.joined() + "}"
  case .weakRef(let box):
  // G42：WeakRef 引用语义承载——打印为 `WeakRef(目标类型)`（不展开内部状态）。
  return "WeakRef(\(box.target.typeName))"
@@ -3533,22 +3561,22 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  // 字段按名排序输出：Dictionary 迭代顺序非声明序，非确定性；排序保证解释器与
  // LLVM 后端 `generateStringifyAggregate` 的展示顺序逐字节一致（T2 对齐）。
  let sorted = si.fields.sorted { $0.key < $1.key }
- return "\(si.typeName){" + sorted.enumerated().map { i, kv in (i > 0 ? ", " : "") + "\(kv.key): " + stringify(kv.value) }.joined() + "}"
+ return "\(si.typeName){" + sorted.enumerated().map { i, kv in (i > 0 ? ", " : "") + "\(kv.key): " + stringifyValue(kv.value) }.joined() + "}"
  case .objectReference(let oref):
  let sorted = oref.fields.sorted { $0.key < $1.key }
- return "\(oref.typeName){" + sorted.enumerated().map { i, kv in (i > 0 ? ", " : "") + "\(kv.key): " + stringify(kv.value) }.joined() + "}"
+ return "\(oref.typeName){" + sorted.enumerated().map { i, kv in (i > 0 ? ", " : "") + "\(kv.key): " + stringifyValue(kv.value) }.joined() + "}"
  case .enumValue(let ev):
  if ev.associatedValues.isEmpty {
  return "\(ev.caseName)"
  }
  // 渲染不带关联值名（项目契约：`圆(5.0)` 而非 `圆(r: 5.0)`——paramNames
  // 仅供 match 具名绑定按名对位，不进渲染；2026-08-29 具名关联值决议）。
- let inner = ev.associatedValues.map { stringify($0) }.joined(separator: ", ")
+ let inner = ev.associatedValues.map { stringifyValue($0) }.joined(separator: ", ")
  return "\(ev.caseName)(\(inner))"
  case .function(let fv): return "<\(fv.name)>"
  case .future(let fv):
  if fv.isResolved, let result = fv.result {
- return "Future(\(stringify(result)))"
+ return "Future(\(stringifyValue(result)))"
  }
  return "<pending Future>"
  case .rawPointer(let rp):
