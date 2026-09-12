@@ -37,7 +37,8 @@ Error: ... node 'arrayLiteral' is dispatched but not implemented yet (P1-2 skele
    与 LLVM 侧对比：LLVM 路径在 **lowering 期**报位置，故门控错误仍有 `at 文件:行:列`；
    执行期错误两侧都拿不到位置——本单只覆盖执行侧的 HIR 面。
 2. **P4 的调试器/REPL 迁移（真前置）**：执行计划 P4 要求
-   「Debugger/REPL 一并迁到 HIR 引擎」。断点与单步事件的判据是
+   「Debugger 与 REPL 一并迁到 HIR 引擎」（**两条接缝、路径不同**；本单只覆盖调试面那条）。
+   断点与单步事件的判据是
    **语句级 `SourceLocation`**（`Breakpoint(fileName:line:)` 与 `StopEvent.location`）。
    HIR 语句无位置 ⇒ 迁移后 `debugHook` 无从判定「现在停在第几行」。
    **故 P4 开工前必须先解本单**（或另立等价的位置供给方案）。
