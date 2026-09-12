@@ -13,11 +13,21 @@ public final class TypeEnvironment {
  public let params: [TypeAnnotation]
  public let returns: [TypeAnnotation]
  public let isVariadic: Bool
+ /// 多值返回各分量的**声明标签**（`-> (商: I32, 余: I32,)` 的 `["商", "余"]`）；
+ /// 位置返回为 `[]`。调用点据此构造带标签的元组类型——标签既决定 `.名称` 能否
+ /// 命中，也决定 `print` 是否呈现它，丢在这里等于静态层读不到自己签名里写过的名字。
+ public let returnLabels: [String?]
 
- public init(params: [TypeAnnotation], returns: [TypeAnnotation], isVariadic: Bool = false) {
+ public init(
+ params: [TypeAnnotation],
+ returns: [TypeAnnotation],
+ isVariadic: Bool = false,
+ returnLabels: [String?] = []
+ ) {
  self.params = params
  self.returns = returns
  self.isVariadic = isVariadic
+ self.returnLabels = returnLabels
  }
  }
 
@@ -86,8 +96,17 @@ public final class TypeEnvironment {
 
  // MARK: - Functions
 
- public func defineFunction(name: String, params: [TypeAnnotation], returns: [TypeAnnotation], isVariadic: Bool = false) {
- let sig = FunctionSignature(params: params, returns: returns, isVariadic: isVariadic)
+ public func defineFunction(
+  name: String,
+  params: [TypeAnnotation],
+  returns: [TypeAnnotation],
+  isVariadic: Bool = false,
+  returnLabels: [String?] = []
+ ) {
+ let sig = FunctionSignature(
+  params: params, returns: returns, isVariadic: isVariadic,
+  returnLabels: returnLabels
+ )
  scopes[scopes.count - 1].functions[name] = sig
  }
 
@@ -122,8 +141,16 @@ public final class TypeEnvironment {
  return fields.sorted { $0.key < $1.key }.map { $0.value }
  }
 
- public func defineMethod(typeName: String, methodName: String, params: [TypeAnnotation], returns: [TypeAnnotation]) {
- let sig = FunctionSignature(params: params, returns: returns)
+ public func defineMethod(
+  typeName: String,
+  methodName: String,
+  params: [TypeAnnotation],
+  returns: [TypeAnnotation],
+  returnLabels: [String?] = []
+ ) {
+ let sig = FunctionSignature(
+  params: params, returns: returns, returnLabels: returnLabels
+ )
  if typeMethods[typeName] == nil {
  typeMethods[typeName] = [:]
  }
@@ -231,6 +258,11 @@ public final class TypeEnvironment {
  if method.name == methodName {
  let subParams = method.params.map { substitutor.substitute(type: $0) }
  let subReturns = method.returns.map { substitutor.substitute(type: $0) }
+ // Generic *method* templates store their methods as plain
+ // `(name:params:returns:)` tuples, so there are no declared labels to
+ // carry here — a specialised generic method's named returns stay
+ // positional. Recorded, not fixed: no measured case, and closing it
+ // means widening the template tuple type in `defineGenericStruct`.
  return FunctionSignature(params: subParams, returns: subReturns)
  }
  }

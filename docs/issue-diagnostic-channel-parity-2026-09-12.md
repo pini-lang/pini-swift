@@ -1,6 +1,8 @@
 # Issue：语义警告只在解释器通道产生（LLVM 通道静默）
 
 - 状态：**Open（2026-09-12 立案；M6b 翻转批冒烟时实测发现，未裁决处置方向）**
+  - **2026-09-13 补记**：本单预言的「假阻塞」**已实测出现 4 例**（`FLIP BLOCKERS 4`），
+    屏蔽不再存在；计数器的收窄时机成为决策点，见 §「对探针判据的后果」末段。
 - 发现渠道：M6b 翻转批 b4/b5 冒烟——8 个样例做三通道 stdout 对比时，发现解释器额外向
   **stderr** 输出语义警告，而 LLVM 通道（`run-llvm` / `compile` / `emit`）不输出。
 - 归属：诊断通道（诊断面），非代码生成面。
@@ -51,10 +53,30 @@ P1-4「探针扩三实通道」在 `tools/hir-parity-probe.py` 新增判据
 `docs/issue-e7-001-false-unused-warning-2026-09-12.md`（成员调用接收者不计入使用），
 而成员调用是常见形态 ⇒ 这条路径不罕见。
 
-**当前不可达（实测，非推断）**：以 `--root Tests/PiniTests/CodeGen/HIRTests`（73 夹具）
-全量 sweep 得 `FLIP BLOCKERS 0` —— 因为带该形态的夹具全部**更早**被
-「节点未实现」拦下（`arrayLiteral` / `stringCase` / `arrayJoin` …，即 P2 工作清单）。
-**P2 每实现一个节点，这层屏蔽就薄一分**：屏蔽消失之日，假阻塞才开始出现。
+**当前不再不可达（2026-09-13 实测证伪，LR-4 P2a G2 取得）**：立案时以
+`--root Tests/PiniTests/CodeGen/HIRTests`（73 夹具）全量 sweep 得 `FLIP BLOCKERS 0`，
+并记为「带该形态的夹具全部**更早**被『节点未实现』拦下（`arrayLiteral` / `stringCase` /
+`arrayJoin` …，即 P2 工作清单）⇒ **P2 每实现一个节点，这层屏蔽就薄一分**」。
+G2（元组族）实现 `tupleConstruct` 后**屏蔽确实薄穿了一层**，预言命中：
+
+```
+OK 34 / HIR_ENGINE_TODO 36 / GAP_HIR_ENGINE 4 / FLIP BLOCKERS 4
+```
+
+四个具名夹具（三者 `l_rc=0 / h_rc=0 / a_rc=0`，**stdout 逐字一致**，`note` 均为
+`Warning: 语义警告 [E7-001]`）：
+
+| 夹具 | 三臂 rc | 差异面 |
+|---|---|---|
+| `testDiffMultiReturnAddAndSub` | 0 / 0 / 0 | 仅 stderr |
+| `testDiffMultiReturnSwap` | 0 / 0 / 0 | 仅 stderr |
+| `testDiffTupleConstruct` | 0 / 0 / 0 | 仅 stderr |
+| `testDiffTupleConstructClang` | 0 / 0 / 0 | 仅 stderr |
+
+按本单第 5 节的既有结论（`rc == 0` 时 stderr 的内容**不构成缺陷证据**），这四个是
+**判据产物、不是缺陷**：计数里它们是 `FLIP BLOCKERS`，实质上**没有任何一条三通道行为分歧**。
+⇒ 「P2a 的 `FLIP BLOCKERS 0`」在**实质**上仍成立（分歧数为 0），**不成立的是那个计数器**。
+该计数器何时收窄（本单即改 / 按既有路由留 P3），已作为决策点上交，未在本格自行改动。
 
 **判据修正方向（供 P3 判据升级格取材，本单不实施）**：`rc == 0` 时 stderr 的内容
 **不构成缺陷证据**（警告是前端的非致命通道，且两条解释器臂共用前端 ⇒ 警告本就该两边都有）。

@@ -164,7 +164,9 @@ G7 字符串与内建(10) · G8 指针与 LazyRef(5) · G9 IO(3)
 - 本轮交付 = **本规划件 + 主计划载体的 P2 行指针**，**未动任何源码**。
 - ~~**下一步 = P2a 第一格（G4 集合与下标的容器侧），待点名**~~ ⇒ **已点名并交付（2026-09-13，
   实录见 §8.1）**。第一格开工前按五步模板第 1 步实测了该格夹具面，结论与偏差均记在 §8.1。
-- **下一步 = P2a 第二格（G2 元组：`tupleConstruct` `tupleIndexGet`），待点名**。
+- ~~**下一步 = P2a 第二格（G2 元组：`tupleConstruct` `tupleIndexGet`），待点名**~~ ⇒
+  **已点名并交付（2026-09-13）**，范围经 `D-P2-6` 扩为**含标签模型的整个元组族**，实录见 §8.2。
+- **下一步 = P2a 第三格（G1 控制流，5 缺口），待点名**。P2a 六格已交付两格（G4 / G2），余 G1 / G3 / G5 / G6。
 - 完整交付日志与后续各格实录**回填至主计划载体 §13** 与本件 §8。
 
 ## 8. 分格交付实录
@@ -204,6 +206,97 @@ G7 字符串与内建(10) · G8 指针与 LazyRef(5) · G9 IO(3)
 - **记缺陷**：**无新增工单**。覆盖洞属格内验证、已就地补齐；AST 侧 `sliceBound` 死代码沿用既有登记。
 - **未做**：未改 AST / LLVM 任一侧实现；未动契约与节点集；未 push。
 
+### 8.2 G2 元组族（P2a 第 2 格，2026-09-13，分支 `agent/pini-dev/hir-p2a-g2-tuples`）
+
+**范围（`D-P2-6`，用户裁决）**：格内两节点之外，把 **F1/F2 一并修** ⇒ 本格交付 =
+**元组节点实现** + **含标签模型的整个元组族**。
+
+**节点面**：`tupleConstruct`（分量名随**值**走）· `tupleIndexGet`（位置读取）——
+后者的规则本体提为 `Interpreter.tupleElement`（**唯一事实源**，纯搬移），
+`evaluateTupleIndex` 变薄包装，否则「元组下标是什么」会出现第二个定义处。
+
+**标签模型（F1 / F2）**：解释器只在两处补写分量名，引擎在同址复刻，规则本体不复制：
+
+| 规则 | 解释器落点（既有） | 引擎落点（本格） |
+|---|---|---|
+| ① 显式 `return` 出口补写声明名 | `applyReturnLabels` | `HIRExecutor.call` 的 `returnSignal` 路径，喂入 `HIRFunction.returnType` 的声明标签（E4） |
+| ② 带元组注解的绑定 | `applyTypeAnnotationLabels` | `HIRExecutor.allocVar`（E5）+ 降载侧 `HIRLowerer.slotType` |
+
+配套改动六项：`resolveReturnType` default 分支携带 `decl.returnLabels`（E1）·
+`TypeEnvironment.FunctionSignature.returnLabels` + `TypeChecker.signatureReturnLabels` 与 5 处注册点 ·
+`TypeInference` 两处多槽调用返回类型改用 `sig.returnLabels`（E6）· `HIRExecutor.declaredReturnLabels` ·
+`slotType`（把「声明不比初始化器多说名字」编码为**全 nil**）+ `allocVar` 判据**收窄**为
+`labels.contains(where: { $0 != nil })` · `Interpreter.relabelled`（**纯搬移**，两臂共用）。
+
+| 面 | 前 | 后 |
+|---|---|---|
+| HIR 探针（全根） | 73 夹具 `OK 33` / `TODO 36` / `GAP_HIR_ENGINE 4` | **74 夹具 `OK 34`** / `TODO 36` / `GAP_HIR_ENGINE 4` |
+| 格内 `--filter Tuple` | —— | **7 夹具：`OK 5` / `GAP_HIR_ENGINE 2`**（后两者为假阻塞，见下） |
+| 既有 73 夹具判定 | —— | **逐夹具对账：零变化**（唯一差异是新夹具 `testDiffTupleLabels` 本身） |
+| `FLIP BLOCKERS` | 0（G4 交付时） | **4（全部为判据产物，实质分歧 0）** |
+| 全量回归 | 1236 / 3 skipped / 0 + 45 | **1240 / 3 skipped / 0 + 45**（+4） |
+| 契约核验 | `clean` 60/60 | `clean` 60/60（**预期恒定**：只增实现不增节点） |
+| 门禁 | —— | comment-lint L1–L6 全绿；doc-links 491 引用通过 |
+
+**+4 用例逐条对账**（`npm` 式账目，全在本分支）：`HIRDifferentialTests.testDiffTupleLabels` ·
+`HIRExecutorTests.testNamedReturnLabelsFollowTheInterpretersTwoRules` ·
+`HIRLowererTests.testNamedReturnTypeCarriesItsComponentLabels` ·
+`HIRExecutorTests.testTupleLabelsAreCarriedIntoTheValue`（属**节点实现**那半，非 F1/F2 那半）。
+
+**结构发现一（最重要的那条）：标签模型在 HEAD 上静态不完整。**
+`let r = 除余(17, 5)` 之后 `r.商` 在 HEAD 上是 **`unknownMember` 类型错误**——解释器运行期
+却会补写这个名字。⇒ F1/F2 不只是「让引擎对齐参照」，而是把**静态视图**与**运行期值**对齐
+（证据：L1 整族禁用轮的日志里，该用例的第一条失败就是 `test sources must typecheck`）。
+
+**结构发现二：本格把标签模型收敛成两臂共用一份实现**（`Interpreter.relabelled`），
+于是逐字节等价看不见「共同源被删」。曾据此加一条字面期望值钉子，**变异实测证明其冗余并撤回**
+（见下"判据纪律"）。
+
+**变异反证两级**（七轮，每轮锚点唯一性断言 + md5 逐字节核验还原；器械经修正后使用）：
+
+| 轮 | 禁用的路径 | 实测（`control` 为 `testTupleLabelsAreCarriedIntoTheValue`） |
+|---|---|---|
+| L1 | 整族（stash 全部 `Sources/`） | **5/5 全红**（含 control：节点实现与标签改动一并回退） |
+| M2 | 引擎返回点改写（E4） | `exec_labels` · `corpus` |
+| M3 | 绑定判据放宽回 `!labels.isEmpty`（E5 条件） | `exec_labels` · `corpus` · **`control`** |
+| M4 | `slotType` 剥离（`return declared`） | `exec_labels`（**唯一只红一个用例的一轮**） |
+| M5 | 声明返回标签（E1） | `exec_labels` · `corpus` · `lowerer` · `diff` |
+| M6 | 推断侧标签（E6，两处同时） | `exec_labels` · `corpus` · `diff`（**以类型检查失败形式**） |
+| M7 | 共享的 `relabelled`（**两臂**） | `exec_labels` · `corpus` · `diff`（**以两臂同时抛错形式**：`未定义变量: 商`） |
+
+**两处与事先预测不符，如实记录**：
+1. **`control` 不是中性对照** —— 事先断言它免疫 M3/M4；M3 实测把它打红，日志给出确切红因：
+   HIR 臂输出 `["[3, 2]", "3", "3", "[1, 2.5]"]`，即 `let t = (商 = 3, 余 = 2,)` 的标签被**洗掉**。
+   ⇒ `slotType` 的全 nil 输出对**普通具名字面量绑定**同样承重。它也不是"既有 G5 用例"，
+   而是**本分支节点实现那半新增的用例**（`git diff` 核对），**骑在绑定路径上**。
+2. **M4 可观测** —— 事先预测它不可观测（误以为 `slotType` 与收窄后的判据是冗余对）；
+   实测它是唯一只红一个用例的一轮，红因正是促使 `slotType` 出现的形状：
+   隐式尾表达式 `let s = 其余(17, 5)` 被误加分量名（第 4 行 `[商: 3, 余: 2]` vs 参照 `[3, 2]`）。
+
+**判据纪律（本格第二条结论）：撤回了自己刚加的字面期望值钉子。**
+M7 表明「共享源被删」**不会**造成两臂静默一致，而是**两臂同时抛错**（读 `r.商` 需要标签才能解析），
+本器械本就会失败；而「只改渲染」的共享变异只会打到解释器臂，由 LLVM 差分臂抓住
+（M2/M3/M4 的 `diff` 全绿 + M5/M6 的 `diff` 转红，正说明两个器械是**分工**而非冗余）。
+⇒ 该钉子**无独占区分力**，按「不添加未证实区分力的判据」撤回；撤回后单跑 M7 读数**逐项不变**（已实测）。
+
+**记缺陷（3 张，均按判准只登记不修）**：
+- `docs/issue-llvm-trailing-expression-return-2026-09-13.md`（**新建**）：v1–v6 六夹具完整表征 ——
+  **凡非 void 函数以尾表达式返回值，LLVM 通道返回的是返回槽残留**（有参得第一参数、无参得 `1`），
+  **静默错误结果**；基线逐字复现；根因源码级定位到 `IREmitter` 唯一的 `.exprStmt` 分支
+  （丢弃表达式值，全文无「尾表达式写返回槽」规则）；**语料零覆盖**（73 夹具中无该形状，
+  `testDiffNoTrailingReturn.pini` 名不副实）。两条 HIR 后端都实现了这条规则，只有发射器没有。
+- `docs/issue-tuple-label-binding-rule-2026-09-13.md`（**新建**）：§1 位置式注解盖住具名值
+  （解释器与 llvm 两臂一致、只有引擎分叉，**语料不可达**，含两套精确修法及代价）·
+  §2 泛型方法/函数特化丢标签（两处就地注明「Recorded, not fixed」）·
+  §3 **spec 级待裁**：具名返回的**隐式**尾表达式是否带分量名（前置 = 先修值）。
+- `docs/issue-diagnostic-channel-parity-2026-09-12.md`（**维护**）：本格兑现其预言 ——
+  「当前不可达」被**实测证伪**，`FLIP BLOCKERS 4` 全部是 `E7-001` 假阳性造成的**假阻塞**
+  （四夹具三臂 `rc` 全 0、stdout 逐字一致）；计数器的收窄时机**上交为决策点**，本格不自改。
+
+**未做**：未改 AST 侧渲染与 LLVM 侧实现；未动契约与节点集；未收窄探针 `GAP_HIR_ENGINE`；
+未修两张新工单任何一项；未 push。
+⇒ **下一格 = P2a 第三格（G1 控制流），待点名**。
+
 ## 9. 决策记录
 
 | 编号 | 决策点 | 裁决（2026-09-13，用户） |
@@ -213,3 +306,4 @@ G7 字符串与内建(10) · G8 指针与 LazyRef(5) · G9 IO(3)
 | **D-P2-3** | 第一格 | **G4 集合与下标的容器侧** |
 | D-P2-4 | P2 判据形态 | **三态**（`OK` / `CHANGE_*` / 阻塞槽）；分层读数，不合并成单一数字（§2.1–2.2） |
 | **D-P2-5** | G4 的 `lenCall`/`sliceCall` 是否随其 `String` 侧后置 | **不后置**：两节点在 P2a **整节点**实现（镜像解释器 = 契约的 grapheme 语义），其 `String` 侧分歧仍作为**已登记的 B 组差异**保留，P2a 验收对这两节点在非 ASCII 语料上记 `CHANGE_*`（D-P2-3 的「容器侧」由此**扩展为整族 7 节点**） |
+| **D-P2-6** | G2 的范围：格内两节点之外，F1/F2 两个既有缺陷是否随格修 | **都修，扩为「含标签模型的整个元组族」**（F1 执行侧 `call` 丢返回标签 / F2 降载侧拒绝注解标签绑定与返回类型标签），接受更大范围及其额外的变异证伪要求（实录 §8.2） |

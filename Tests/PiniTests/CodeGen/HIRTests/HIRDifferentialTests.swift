@@ -358,6 +358,16 @@ final class HIRDifferentialTests: XCTestCase {
 
     func testDiffTupleReturn() throws { try assertParity(fixtureName: "testDiffTupleReturn") }
 
+    /// The named-return label model (P2a grid 2, F1+F2).
+    ///
+    /// `-> (商: I32, 余: I32,)` writes component names the interpreter
+    /// attaches at exactly two points (an explicit `return`, and a binding
+    /// with a tuple annotation). Both arms have to render them the same way,
+    /// and the direct call in the fixture is the control: labels ride on the
+    /// *value*, so travelling through a binding must not change the rendering
+    /// either way.
+    func testDiffTupleLabels() throws { try assertParity(fixtureName: "testDiffTupleLabels") }
+
     // MARK: - G9 string deepening (stdlib methods, defer, interpolation)
 
     func testDiffStdlib() throws { try assertParity(fixtureName: "testDiffStdlib") }

@@ -153,4 +153,28 @@ final class HIRLowererTests: XCTestCase {
         XCTAssertTrue(text.contains("func main():"))
         XCTAssertTrue(text.contains("let a: i32 = 1"))
     }
+
+    /// G2 label model: the component names a signature declares for a
+    /// multi-value return have to survive lowering.
+    ///
+    /// Both HIR arms need them off this type — the executor relabels the
+    /// returned value with them (the interpreter's own return-site rule) and
+    /// the emitter prints a tuple's labels straight from the type it is
+    /// handed — so a label-less `returnType` silently un-names the value while
+    /// the AST engine keeps the names.
+    func testNamedReturnTypeCarriesItsComponentLabels() throws {
+        let hir = try lower("""
+        除余|func(a: I32, b: I32,) -> (商: I32, 余: I32,):
+            return (a / b, a % b)
+
+        main|func() -> ():
+            return
+        """)
+        let dump = HIRPrinter.dump(module: hir)
+        XCTAssertEqual(
+            hir.function(named: "除余")?.returnType,
+            .tuple(labels: ["商", "余"], fieldTypes: [.i32, .i32]),
+            "declared return labels lost in lowering\n\(dump)"
+        )
+    }
 }

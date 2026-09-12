@@ -1169,7 +1169,7 @@ public class Interpreter: DebugHookHost {
  guard case .array(let items) = argument else {
  throw RuntimeError.typeMismatch(
  expected: "Array<Future<T, Error>>",
- got: describeValueKind(argument),
+ got: Interpreter.describeValueKind(argument),
  location: Interpreter.builtinLocation
  )
  }
@@ -1178,7 +1178,7 @@ public class Interpreter: DebugHookHost {
  guard case .future(let fut) = item else {
  throw RuntimeError.typeMismatch(
  expected: "Future<T, Error>",
- got: describeValueKind(item),
+ got: Interpreter.describeValueKind(item),
  location: Interpreter.builtinLocation
  )
  }
@@ -1227,8 +1227,9 @@ public class Interpreter: DebugHookHost {
  return .future(aggregate)
  }
 
- // 跨文件 extension（SuspendEvaluator）复用，访问级别由 private 放宽为 internal。
- func describeValueKind(_ value: Value) -> String {
+ // 跨文件 extension（SuspendEvaluator）与 HIR 执行引擎共用：G2 起为 static，
+ // 因为它描述的是值本身，不依赖任何实例状态。
+ static func describeValueKind(_ value: Value) -> String {
  switch value {
  case .int: return "I32"
  case .float: return "F64"
@@ -1472,7 +1473,7 @@ private func debugPause(at loc: SourceLocation) throws {
  }
  let value = copyIfStruct(try evaluateExpression(initializer))
  guard case .tuple(_, let elements) = value else {
- throw RuntimeError.typeMismatch(expected: "tuple", got: describeValueKind(value), location: location)
+ throw RuntimeError.typeMismatch(expected: "tuple", got: Interpreter.describeValueKind(value), location: location)
  }
  guard names.count == elements.count else {
  throw RuntimeError.invalidOperation(
@@ -1497,7 +1498,7 @@ private func debugPause(at loc: SourceLocation) throws {
  guard case .future(let fut) = value else {
  throw RuntimeError.typeMismatch(
  expected: "Future<T, Error>",
- got: describeValueKind(value),
+ got: Interpreter.describeValueKind(value),
  location: detachLoc
  )
  }
@@ -1916,7 +1917,7 @@ private func debugPause(at loc: SourceLocation) throws {
  // （静态期已由 TypeChecker 拦截，此处为运行时兜底，覆盖类型不可推断的路径）。
  throw RuntimeError.typeMismatch(
  expected: "Future<T, Error>",
- got: describeValueKind(v),
+ got: Interpreter.describeValueKind(v),
  location: loc
  )
  }
@@ -1933,7 +1934,7 @@ private func debugPause(at loc: SourceLocation) throws {
  // 自然冒泡由函数/循环边界捕获；pass 落空 → 表达式值为 null）。
  let v = try evaluateExpression(operand)
  guard case .enumValue(let ev) = v, ev.parentEnum == "Result" else {
- throw RuntimeError.typeMismatch(expected: "Result", got: describeValueKind(v), location: loc)
+ throw RuntimeError.typeMismatch(expected: "Result", got: Interpreter.describeValueKind(v), location: loc)
  }
  if ev.caseName == "ok" {
  return ev.associatedValues.first ?? .null
@@ -2211,11 +2212,17 @@ private func debugPause(at loc: SourceLocation) throws {
  }
  }
 
- /// 元组位置访问求值（草稿 A2，批次 1）：`.0` / `.1` 取元组第 index 个元素。
- /// 非元组对象或索引越界均报运行错误（类型层另有静态拦截）。
- func evaluateTupleIndex(_ objValue: Value, index: Int, location: SourceLocation) throws -> Value {
- guard case .tuple(_, let elements) = objValue else {
- throw RuntimeError.typeMismatch(expected: "tuple", got: describeValueKind(objValue), location: location)
+ /// `tuple[index]` 的**唯一事实源**（G2 提取，纯搬移，行为零变化）。
+ ///
+ /// 提取理由同 `containerLength` / `stringifyValue` / `binaryValue`：HIR 侧的
+ /// `tupleIndexGet` 节点必须复用本函数，否则「元组下标是什么」会出现第二个定义处，
+ /// 两引擎可静默漂移。
+ ///
+ /// 两处诊断**文本原样保留**（越界为中文、类型不符经 `describeValueKind` 取名），
+ /// 因为 stderr 形状已进入三通道判据。
+ static func tupleElement(_ value: Value, index: Int, location: SourceLocation) throws -> Value {
+ guard case .tuple(_, let elements) = value else {
+ throw RuntimeError.typeMismatch(expected: "tuple", got: Interpreter.describeValueKind(value), location: location)
  }
  guard index >= 0 && index < elements.count else {
  throw RuntimeError.invalidOperation(
@@ -2226,20 +2233,37 @@ private func debugPause(at loc: SourceLocation) throws {
  return elements[index]
  }
 
- /// 草稿 A2（批次 1.3，D1）：命名元组类型注解给值补写标签——位置字面量绑定到命名类型时，
- /// 值的 labels 以类型注解为准，`.名称` 标签访问才能命中；非命名元组类型或值原样返回。
- func applyTypeAnnotationLabels(_ typeAnnotation: TypeAnnotation?, to value: Value) -> Value {
- guard let ta = typeAnnotation, case .tuple(let labels, _, _) = ta else { return value }
+ /// 元组位置访问求值（草稿 A2，批次 1）：`.0` / `.1` 取元组第 index 个元素。
+ /// 规则本体在 `tupleElement`（HIR 侧共用），此处只补真实位置。
+ func evaluateTupleIndex(_ objValue: Value, index: Int, location: SourceLocation) throws -> Value {
+ try Interpreter.tupleElement(objValue, index: index, location: location)
+ }
+
+ /// 标签改写的**唯一事实源**（G2 提取，纯搬移）：把 `labels` 铺到元组值上。
+ /// 两个调用点的守卫不同（绑定点不校验元数、返回点校验），差异留在各自包装里，
+ /// 「铺标签」这个动作本身只有这一处定义——否则两引擎的标签模型会各写一份。
+ static func relabelled(_ value: Value, with labels: [String?]) -> Value {
  guard case .tuple(_, let elements) = value else { return value }
  return .tuple(labels: labels, elements: elements)
  }
 
+ /// 草稿 A2（批次 1.3，D1）：命名元组类型注解给值补写标签——位置字面量绑定到命名类型时，
+ /// 值的 labels 以类型注解为准，`.名称` 标签访问才能命中；非命名元组类型或值原样返回。
+ func applyTypeAnnotationLabels(_ typeAnnotation: TypeAnnotation?, to value: Value) -> Value {
+ guard let ta = typeAnnotation, case .tuple(let labels, _, _) = ta else { return value }
+ return Interpreter.relabelled(value, with: labels)
+ }
+
  /// 草稿 A2（批次 1.3，D1）：函数命名返回元组给结果值补写标签——函数体 `return (a, b)` 为位置
  /// 元组，声明 `-> (商: I32, 余: I32,)` 的 returnLabels 补写后 `.名称` 访问才可命中。
- func applyReturnLabels(_ labels: [String?], to value: Value) -> Value {
+ ///
+ /// G2：改 `static`，因为 HIR 执行引擎要在**同一个位置**（调用返回）施加同一条规则。
+ /// 引擎手上只有 HIR 类型而没有 `TypeAnnotation`，所以由它在调用点把类型里的 labels
+ /// 取出来，规则本体仍在这里——不复制。
+ static func applyReturnLabels(_ labels: [String?], to value: Value) -> Value {
  guard !labels.isEmpty else { return value }
  guard case .tuple(_, let elements) = value, elements.count == labels.count else { return value }
- return .tuple(labels: labels, elements: elements)
+ return Interpreter.relabelled(value, with: labels)
  }
 
  func evaluateMember(_ objValue: Value, memberName: String, location: SourceLocation) throws -> Value {
@@ -3009,7 +3033,7 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  guard case .string(let message) = args[0] else {
  throw RuntimeError.typeMismatch(
  expected: "String",
- got: describeValueKind(args[0]),
+ got: Interpreter.describeValueKind(args[0]),
  location: Interpreter.builtinLocation
  )
  }
@@ -3021,7 +3045,7 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  guard case .string(let message) = args[0] else {
  throw RuntimeError.typeMismatch(
  expected: "String",
- got: describeValueKind(args[0]),
+ got: Interpreter.describeValueKind(args[0]),
  location: Interpreter.builtinLocation
  )
  }
@@ -3045,14 +3069,14 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  guard case .future(let fut) = args[0] else {
  throw RuntimeError.typeMismatch(
  expected: "Future<T, Error>",
- got: describeValueKind(args[0]),
+ got: Interpreter.describeValueKind(args[0]),
  location: Interpreter.builtinLocation
  )
  }
  guard case .int(let ms) = args[1] else {
  throw RuntimeError.typeMismatch(
  expected: "I32",
- got: describeValueKind(args[1]),
+ got: Interpreter.describeValueKind(args[1]),
  location: Interpreter.builtinLocation
  )
  }
@@ -3506,7 +3530,7 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  } catch let signal as ControlSignal {
  if case .returnSignal(let value) = signal {
  // 草稿 A2（批次 1.3，D1）：命名返回元组给结果值补写标签，`.名称` 访问才可命中。
- return applyReturnLabels(fv.decl?.returnLabels ?? [], to: value ?? .null)
+ return Interpreter.applyReturnLabels(fv.decl?.returnLabels ?? [], to: value ?? .null)
  }
  throw signal
  }

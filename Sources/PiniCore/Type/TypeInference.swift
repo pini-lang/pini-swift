@@ -177,7 +177,7 @@ public final class TypeInference {
  } else if sig.returns.isEmpty {
  return nil
  } else {
- return .tuple(labels: [], elements: sig.returns, location: loc)
+ return .tuple(labels: sig.returnLabels, elements: sig.returns, location: loc)
  }
  }
  // 高阶函数：被调者是函数类型参数/变量（f(x)）——返回其声明返回类型。
@@ -331,7 +331,7 @@ public final class TypeInference {
  } else if sig.returns.isEmpty {
  return nil
  } else {
- return .tuple(labels: [], elements: sig.returns, location: loc)
+ return .tuple(labels: sig.returnLabels, elements: sig.returns, location: loc)
  }
  }
 
