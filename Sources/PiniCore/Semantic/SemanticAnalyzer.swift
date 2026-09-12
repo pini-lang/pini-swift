@@ -736,25 +736,30 @@ private func teardownInjections() {
  try checkBlock(handler)
  symbolTable.exitScope()
 
- case .call(let callee, let arguments, _):
- // 检查是否是未定义的函数调用
- if case .identifier(let name, let location) = callee {
- try requireDefined(name, location, isFunction: true)
- }
- // G52 批 1：`别名.符号(...)` 跨模块限定调用——符号存在性 + public 门槛
- if case .member(let objExpr, let memberName, _) = callee,
- case .identifier(let aliasName, let aliasLoc) = objExpr,
- let info = importAliasInfos[aliasName] {
- guard info.allSymbols.contains(memberName) else {
- throw SemanticError.undefinedVariable(name: "\(aliasName).\(memberName)", location: aliasLoc)
- }
- guard info.publicSymbols.contains(memberName) else {
- throw SemanticError.crossModuleAccessDenied(symbol: "\(aliasName).\(memberName)", location: aliasLoc)
- }
- }
- for arg in arguments {
- try checkExpression(arg.expression)
- }
+        case .call(let callee, let arguments, _):
+            // 检查是否是未定义的函数调用
+            if case .identifier(let name, let location) = callee {
+                try requireDefined(name, location, isFunction: true)
+            }
+            // G52 批 1：`别名.符号(...)` 跨模块限定调用——符号存在性 + public 门槛
+            if case .member(let objExpr, let memberName, _) = callee,
+               case .identifier(let aliasName, let aliasLoc) = objExpr,
+               let info = importAliasInfos[aliasName] {
+                guard info.allSymbols.contains(memberName) else {
+                    throw SemanticError.undefinedVariable(name: "\(aliasName).\(memberName)", location: aliasLoc)
+                }
+                guard info.publicSymbols.contains(memberName) else {
+                    throw SemanticError.crossModuleAccessDenied(symbol: "\(aliasName).\(memberName)", location: aliasLoc)
+                }
+            } else if case .member(let receiver, _, _) = callee {
+                // E7-001 假阳性根因：成员调用的**接收者**此前不被检查，于是「只作为
+                // 接收者被读」的变量不会被登记为已使用，误报未使用变量。非限定的接收者
+                // 是本文件内的表达式，须与独立成员表达式走同一条检查路径。
+                try checkExpression(receiver)
+            }
+            for arg in arguments {
+                try checkExpression(arg.expression)
+            }
 
  case .member(let object, _, _):
  // G52 批 1：别名 base 不走本地 requireDefined（限定访问只走跨模块通道，D-2）
