@@ -233,20 +233,60 @@ public final class HIRExecutor: DebugHookHost {
             outputSink(Interpreter.stringifyValue(try evaluate(argument)))
             return .null
 
+        // MARK: Collections (grid G4)
+
+        case .arrayLiteral(let elements, _):
+            // Source order, one fresh array. No `copyIfStruct` here: the
+            // interpreter applies it at the *binding* sites (`varDecl`, member
+            // assignment), not while building a literal.
+            return .array(try elements.map { try evaluate($0) })
+
+        case .dictLiteral(let entries, _):
+            // Entry order as written; the formatting of `print(dict)` follows it.
+            return .dictionary(try entries.map { entry in
+                (try evaluate(entry.key), try evaluate(entry.value))
+            })
+
+        case .setLiteral(let elements, _):
+            // Insertion order, first occurrence wins, compared by value — copied
+            // from the interpreter's `setLiteral` rather than "improved", because
+            // the printed order of `{2, 3, 3, 5}` is an observable result.
+            var unique: [Value] = []
+            for element in elements {
+                let value = try evaluate(element)
+                if !unique.contains(value) { unique.append(value) }
+            }
+            return .set(unique)
+
+        case .subscriptGet(let container, let index, _):
+            // The read rules (negative tail-count, out-of-range panics) live in
+            // one place only — the interpreter's strategy table. Re-deciding
+            // them here is how the two engines would drift apart.
+            return try SubscriptReadStrategy.read(
+                container: try evaluate(container),
+                index: try evaluate(index),
+                location: HIRExecutor.noLocation
+            )
+
+        case .lenCall(let argument):
+            // Shared with the interpreter's `len` builtin — see the note there.
+            return try Interpreter.containerLength(try evaluate(argument))
+
+        case .sliceCall(let container, let start, let end, _):
+            return try sliceValue(
+                container: try evaluate(container),
+                start: try evaluate(start),
+                end: try evaluate(end)
+            )
+
         // MARK: Not implemented yet — fail loud, named.
 
         case .resultConstruct: throw notImplemented("resultConstruct")
-        case .arrayLiteral: throw notImplemented("arrayLiteral")
-        case .subscriptGet: throw notImplemented("subscriptGet")
-        case .lenCall: throw notImplemented("lenCall")
         case .optionalGet: throw notImplemented("optionalGet")
         case .optionalConstruct: throw notImplemented("optionalConstruct")
-        case .sliceCall: throw notImplemented("sliceCall")
         case .construct: throw notImplemented("construct")
         case .enumConstruct: throw notImplemented("enumConstruct")
         case .fieldGet: throw notImplemented("fieldGet")
-        case .dictLiteral: throw notImplemented("dictLiteral")
-        case .setLiteral: throw notImplemented("setLiteral")
         case .tupleConstruct: throw notImplemented("tupleConstruct")
         case .tupleIndexGet: throw notImplemented("tupleIndexGet")
         case .closureLiteral: throw notImplemented("closureLiteral")
@@ -271,6 +311,65 @@ public final class HIRExecutor: DebugHookHost {
         case .lazyRefConstruct: throw notImplemented("lazyRefConstruct")
         case .lazyRefValue: throw notImplemented("lazyRefValue")
         }
+    }
+
+    /// `container.slice(start, end)` — the slice-sugar semantics.
+    ///
+    /// The AST channel does **not** implement this in Swift: `slice` sank to the
+    /// language-level stdlib (`StdlibPini.source`, the `((String))` and
+    /// `((Array))` blocks, ADR-020 D2), so its reference implementation is Pini
+    /// source this engine cannot run. The bodies below are a native mirror of
+    /// that source, and the two are held together by the differential probe
+    /// rather than by shared code:
+    ///
+    /// - an open bound (`none`, or `.null`) means "the whole container" on that
+    ///   side, which is how the slice sugar spells `a[:2]` / `a[3:]` / `a[:]`;
+    /// - an integer bound is tail-counted when negative;
+    /// - both bounds are clamped to `[0, len]`, and `hi < lo` yields empty;
+    /// - `String` walks **grapheme clusters** (the AST channel's `self[k]` is a
+    ///   grapheme subscript), which is the contract (`ADR-019 D1`). The LLVM side
+    ///   still slices bytes — the registered B-group deviation, and not something
+    ///   to "align" from this engine.
+    private func sliceValue(container: Value, start: Value, end: Value) throws -> Value {
+        switch container {
+        case .array(let elements):
+            let lower = try sliceBound(start, count: elements.count, defaultWhenOpen: 0)
+            let upper = try sliceBound(end, count: elements.count, defaultWhenOpen: elements.count)
+            let lo = Swift.max(0, Swift.min(lower, elements.count))
+            let hi = Swift.max(0, Swift.min(upper, elements.count))
+            return .array(lo < hi ? Array(elements[lo..<hi]) : [])
+
+        case .string(let text):
+            let characters = Array(text)
+            let lower = try sliceBound(start, count: characters.count, defaultWhenOpen: 0)
+            let upper = try sliceBound(end, count: characters.count, defaultWhenOpen: characters.count)
+            let lo = Swift.max(0, Swift.min(lower, characters.count))
+            let hi = Swift.max(0, Swift.min(upper, characters.count))
+            return .string(lo < hi ? String(characters[lo..<hi]) : "")
+
+        default:
+            throw RuntimeError.invalidOperation(
+                reason: "slice needs an Array or String receiver, got \(container)",
+                location: HIRExecutor.noLocation
+            )
+        }
+    }
+
+    /// One slice bound: `none` / `.null` is the open form; an integer is
+    /// tail-counted when negative; anything else is rejected. Mirrors
+    /// `StdlibPini`'s per-bound `match` and the interpreter's `sliceBound`.
+    private func sliceBound(_ bound: Value, count: Int, defaultWhenOpen: Int) throws -> Int {
+        if case .enumValue(let optional) = bound, optional.caseName == "none" {
+            return defaultWhenOpen
+        }
+        if case .null = bound { return defaultWhenOpen }
+        guard case .int(let offset) = bound else {
+            throw RuntimeError.invalidOperation(
+                reason: "slice bound must be an integer or the open-bound none, got \(bound)",
+                location: HIRExecutor.noLocation
+            )
+        }
+        return offset < 0 ? count + offset : offset
     }
 
     /// `HIRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the
@@ -373,17 +472,78 @@ public final class HIRExecutor: DebugHookHost {
             // Failing loud here would misreport a defined no-op as a gap.
             _ = name
 
+        case .subscriptStore(let container, let index, let value, _):
+            // Order copied from the interpreter's `.assign` on a subscript target:
+            // the VALUE is evaluated first, then the index, then the container
+            // chain. Side-effecting subexpressions (a call that prints) can
+            // observe the order, so it is mirrored rather than chosen.
+            let newValue = try evaluate(value)
+            let targetIndex = try evaluate(index)
+            try storeSubscript(target: container, index: targetIndex, newValue: newValue)
+
         // MARK: Not implemented yet — fail loud, named.
 
         case .forInStmt: throw notImplemented("forInStmt")
         case .deferStmt: throw notImplemented("deferStmt")
         case .tryStmt: throw notImplemented("tryStmt")
-        case .subscriptStore: throw notImplemented("subscriptStore")
         case .breakStmt: throw notImplemented("breakStmt")
         case .continueStmt: throw notImplemented("continueStmt")
         case .panicStmt: throw notImplemented("panicStmt")
         case .matchStmt: throw notImplemented("matchStmt")
         case .fieldStore: throw notImplemented("fieldStore")
+        }
+    }
+
+    /// `target[index] = newValue`, with the container value semantics the
+    /// interpreter uses: containers are values, so one write yields a **new**
+    /// container that is rebound at every level of the chain.
+    ///
+    /// Mirrors `Interpreter.writeSubscript` arm for arm:
+    ///
+    /// - variable target → rebind through `Environment.assign`, so an immutable
+    ///   binding is rejected here for the same reason and with the same error;
+    /// - nested target → write into the inner container, then recursively store
+    ///   that new inner value at the enclosing level. The inner index is
+    ///   evaluated *before* the inner container and therefore twice in total —
+    ///   that double evaluation is the interpreter's shape, kept as-is.
+    ///
+    /// The LLVM side reaches the same observable state by a different mechanism
+    /// (top-down COW: `bk_handle_ensure_unique` on the root slot, in-place
+    /// `*_ensure_unique_at` for the intermediate levels). The two chains are
+    /// compared on the output, not on the mechanism.
+    private func storeSubscript(target: HIRExpr, index: Value, newValue: Value) throws {
+        switch target {
+        case .load(let name, _):
+            let current = try currentEnv.get(name: name)
+            let updated = try SubscriptWriteStrategy.write(
+                container: current,
+                index: index,
+                newValue: newValue,
+                location: HIRExecutor.noLocation
+            )
+            try currentEnv.assign(name: name, value: updated)
+
+        case .subscriptGet(let inner, let innerIndex, _):
+            let innerIndexValue = try evaluate(innerIndex)
+            let innerContainer = try evaluate(target)
+            let updated = try SubscriptWriteStrategy.write(
+                container: innerContainer,
+                index: index,
+                newValue: newValue,
+                location: HIRExecutor.noLocation
+            )
+            try storeSubscript(target: inner, index: innerIndexValue, newValue: updated)
+
+        default:
+            // `obj.field[i] = v` needs a field write-back, which the interpreter
+            // reaches through its `.member` arm. That is the named-field grid's
+            // job (`fieldStore`), so it fails loud here instead of silently
+            // writing into a copy.
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: subscript store target is neither a variable nor a "
+                    + "nested subscript (field targets arrive with fieldStore)",
+                location: HIRExecutor.noLocation
+            )
         }
     }
 

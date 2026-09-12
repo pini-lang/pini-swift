@@ -90,7 +90,7 @@ final class HIRExecutorTests: XCTestCase {
 
     // MARK: - Corpus parity
 
-    /// Fixtures that stay inside the P1-2 node set.
+    /// Fixtures that stay inside the implemented node set.
     ///
     /// A whitelist, not a discovery rule: a fixture is not *assumed* to be in
     /// range, it is *declared* to be. Adding a name here is the assertion that
@@ -103,6 +103,11 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffCallFunction",
         "testDiffComparisonSet",
         "testDiffFloatPrint",
+        "testDiffArrayRead",
+        "testDiffArrayWrite",
+        "testDiffCow",
+        "testDiffDictSet",
+        "testDiffEmptyArray",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -178,6 +183,34 @@ final class HIRExecutorTests: XCTestCase {
         """, label: "while-step")
     }
 
+    /// The slice sugar, both bounds spelled as integers.
+    ///
+    /// `testDiffSlice` is the only corpus fixture that reaches the slice node,
+    /// and it also uses open bounds — `a[:2]`, `a[3:]`, `a[:]` — which the
+    /// lowerer builds as optional constructors. That fixture therefore stops at
+    /// the enum family before any bound is consumed, and the integer-bound path
+    /// would ship **executed but never compared**: the run fails, so no output is
+    /// checked. The parser desugars the subscript form into a `slice` member
+    /// call, so this source reaches the same node the fixture does.
+    ///
+    /// Clamping (`1:100`), the fully out-of-range pair (`100:200`) and the
+    /// negative tail count (`-2:-1`) are all covered here, on both `Array` and
+    /// `String`.
+    func testSliceSugarWithIntegerBoundsAgreesWithTheInterpreter() throws {
+        try assertParity("""
+        main|func() -> ():
+            var a = [10, 20, 30, 40, 50]
+            print(a[1:3])
+            print(a[1:100])
+            print(a[100:200])
+            print(a[-2:-1])
+            var s = "hello"
+            print(s[1:4])
+            print(s[-3:-1])
+            return
+        """, label: "slice-sugar")
+    }
+
     /// A function body that runs off its end yields the value of its last
     /// expression statement — the interpreter's `lastValue` rule.
     func testFallingOffTheEndReturnsTheLastExpressionValue() throws {
@@ -196,14 +229,6 @@ final class HIRExecutorTests: XCTestCase {
     /// One probe per gap. Each probe is a *single* node, so "the error names this
     /// node" cannot be satisfied by a neighbouring gap speaking up instead.
     private static let expressionGaps: [(node: String, expr: HIRExpr)] = [
-        ("arrayLiteral", .arrayLiteral(
-            elements: [.intConst(value: 1, type: .i32)],
-            type: .array(element: .i32))),
-        ("subscriptGet", .subscriptGet(
-            container: .intConst(value: 0, type: .i32),
-            index: .intConst(value: 0, type: .i32),
-            type: .i32)),
-        ("lenCall", .lenCall(argument: .intConst(value: 0, type: .i32))),
         ("printMulti", .printMulti(arguments: [.intConst(value: 1, type: .i32)])),
         ("stringConcat", .stringConcat(
             lhs: .stringConst(value: "a"),
@@ -227,11 +252,6 @@ final class HIRExecutorTests: XCTestCase {
         ("tryStmt", .tryStmt(
             operand: .intConst(value: 0, type: .i32), errorVar: "e",
             handler: [], okTarget: nil, type: .i32)),
-        ("subscriptStore", .subscriptStore(
-            container: .intConst(value: 0, type: .i32),
-            index: .intConst(value: 0, type: .i32),
-            value: .intConst(value: 1, type: .i32),
-            elementType: .i32)),
         ("breakStmt", .breakStmt(depth: 1)),
         ("continueStmt", .continueStmt(depth: 1)),
         ("panicStmt", .panicStmt(message: "boom")),
