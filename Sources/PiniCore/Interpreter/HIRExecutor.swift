@@ -279,7 +279,31 @@ public final class HIRExecutor: DebugHookHost {
                 end: try evaluate(end)
             )
 
+        // MARK: Tuples (grid G2)
+
+        case .tupleConstruct(let labels, let elements, _):
+            // Source order, labels passed through verbatim. A positional literal
+            // keeps its `nil` labels — relabelling from a declared annotation is
+            // the binding site's rule and is not applied at the literal.
+            var values: [Value] = []
+            for element in elements { values.append(try evaluate(element)) }
+            return .tuple(labels: labels, elements: values)
+
+        case .tupleIndexGet(let base, let index, _):
+            // The bound is resolved statically by the lowerer — `.0` and the
+            // labelled `.name` form both arrive here as an integer — so this arm
+            // only has to agree with the interpreter on what indexing a tuple
+            // *means*. It does that by calling the interpreter's rule instead of
+            // restating it, which is also what keeps the interpreter's own
+            // diagnostic for a base the static type called a tuple and is not.
+            return try Interpreter.tupleElement(
+                try evaluate(base),
+                index: index,
+                location: HIRExecutor.noLocation
+            )
+
         // MARK: Not implemented yet — fail loud, named.
+
 
         case .resultConstruct: throw notImplemented("resultConstruct")
         case .optionalGet: throw notImplemented("optionalGet")
@@ -287,8 +311,6 @@ public final class HIRExecutor: DebugHookHost {
         case .construct: throw notImplemented("construct")
         case .enumConstruct: throw notImplemented("enumConstruct")
         case .fieldGet: throw notImplemented("fieldGet")
-        case .tupleConstruct: throw notImplemented("tupleConstruct")
-        case .tupleIndexGet: throw notImplemented("tupleIndexGet")
         case .closureLiteral: throw notImplemented("closureLiteral")
         case .functionValue: throw notImplemented("functionValue")
         case .indirectCall: throw notImplemented("indirectCall")
@@ -436,11 +458,33 @@ public final class HIRExecutor: DebugHookHost {
     private func execute(_ statement: HIRStmt) throws {
         switch statement {
 
-        case .allocVar(let name, _, let mutable, let initializer):
+        case .allocVar(let name, let type, let mutable, let initializer):
             // Registered even without an initializer, as `.null` — the
             // interpreter's `varDecl` does the same, so an uninitialized read is
             // a value, not an "undefined variable" error, on both channels.
-            let value = try initializer.map { try evaluate($0) } ?? .null
+            var value = try initializer.map { try evaluate($0) } ?? .null
+            // G2: binding-site relabel — the second of the interpreter's two
+            // label rules (`applyTypeAnnotationLabels`, which its `varDecl`
+            // calls). A value bound to a slot type that names components
+            // adopts those names; the declaration is the only thing that can
+            // supply them, since the literal wrote `(3, 2)` and meant it.
+            //
+            // The test is "the slot type names at least one component", not
+            // "the label array is non-empty": an unlabelled tuple type still
+            // carries one entry per field (`[nil, nil]`), and relabelling with
+            // those nils would *wipe* names the value already had. Which slot
+            // types arrive here named is decided at lowering time
+            // (`HIRLowerer.slotType`), because only there is the initializer's
+            // static type still visible — the deciding fact is whether the
+            // declaration names more than the value-producing expression's own
+            // type does, and two bindings otherwise identical can differ on it.
+            //
+            // Synthetic allocVars (destructure slots, loop variables, try
+            // targets) carry types derived from the value itself, so their
+            // labels already agree and this is a no-op for them.
+            if case .tuple(let labels, _) = type, labels.contains(where: { $0 != nil }) {
+                value = Interpreter.relabelled(value, with: labels)
+            }
             currentEnv.define(name: name, value: value, isMutable: mutable)
 
         case .storeVar(let name, _, let value):
@@ -611,6 +655,15 @@ public final class HIRExecutor: DebugHookHost {
     /// Argument binding mirrors `Interpreter.executeFunctionBody`: a fresh
     /// environment hanging off `globalEnv`, parameters bound mutable, `return`
     /// caught here and unwrapped to the returned value (`nil` → `.null`).
+    /// The component names a declared return type carries, when it is a named
+    /// tuple (`-> (商: I32, 余: I32,)`). A scalar, a positional tuple and a
+    /// void return all yield nothing, and `applyReturnLabels` then leaves the
+    /// value untouched.
+    private static func declaredReturnLabels(_ type: HIRType?) -> [String?] {
+        guard let type = type, case .tuple(let labels, _) = type else { return [] }
+        return labels
+    }
+
     private func call(_ function: HIRFunction, args: [Value]) throws -> Value {
         guard function.params.count == args.count else {
             throw RuntimeError.arityMismatch(
@@ -643,7 +696,16 @@ public final class HIRExecutor: DebugHookHost {
             return try executeStatements(function.body)
         } catch let signal as ControlSignal {
             if case .returnSignal(let value) = signal {
-                return value ?? .null
+                // G2: the interpreter's return-site rule, fed from the declared
+                // return type instead of the AST's `returnLabels` (the engine
+                // has no AST). Only the explicit `return` path is relabelled:
+                // an implicit trailing expression is left alone because the
+                // interpreter leaves it alone too, and relabelling it here
+                // would invent a difference rather than remove one.
+                return Interpreter.applyReturnLabels(
+                    HIRExecutor.declaredReturnLabels(function.returnType),
+                    to: value ?? .null
+                )
             }
             throw signal
         }

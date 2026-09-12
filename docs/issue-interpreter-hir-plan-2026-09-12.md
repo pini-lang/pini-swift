@@ -25,7 +25,12 @@
   归「函数与调用」、IO 并入字符串格）。
   **P2a 第一格已交付（2026-09-13，G4 集合与下标的，7 节点整族）** —— 探针 `OK 23 → 28` /
   `HIR_ENGINE_TODO 50 → 45` / 阻塞恒 0，全量 1236/3/0 + 45，契约核验仍 `clean`；实录见 §13。
-  **下一格 = P2a 第二格（G2 元组：`tupleConstruct` `tupleIndexGet`），待点名**。
+  **P2a 第二格已交付（2026-09-13，G2 元组族；范围经 `D-P2-6` 扩为「含标签模型的整个元组族」）** ——
+  探针 74 夹具 `OK 34`（**既有 73 夹具逐夹具零判定变化**）/ 全量 **1240**/3/0 + 45 / 契约仍 `clean`；
+  **`FLIP BLOCKERS` 由 0 变 4 —— 四个全为假阻塞**（`E7-001` 假阳性；三臂 `rc` 全 0、stdout 逐字一致，
+  **实质分歧 0**），已回填 `docs/issue-diagnostic-channel-parity-2026-09-12.md`，
+  计数器收窄时机**上交为决策点**；实录见 §13 与细目件 §8.2。
+  **下一格 = P2a 第三格（G1 控制流），待点名**（P2a 六格已交付两格 G4/G2，余 G1/G3/G5/G6）。
   另有一处裁决订正：`lenCall`/`sliceCall` **不随字符串侧后置**，随 G4 整节点在 P2a 实现
   （D-P2-5；其 `String` 侧仍为已登记的 B 组差异，验收对这两节点记 `CHANGE_*` 而非 `OK`）。
   位置工单本体见 `docs/issue-hir-node-source-position-2026-09-12.md`（P1-2 已立案；S1 落地后
@@ -43,7 +48,11 @@
 - 实施工单：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`（P0d 前置）、
   `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（字符语义六处对齐）、
   `docs/issue-io-limit-from-emitter-2026-09-12.md`（A1/A2 上限，P0b 立案）、
-  `docs/issue-hir-node-source-position-2026-09-12.md`（HIR 节点无位置，**P1-2 立案；P4 前置**）
+  `docs/issue-hir-node-source-position-2026-09-12.md`（HIR 节点无位置，**P1-2 立案；P4 前置**）、
+  `docs/issue-llvm-trailing-expression-return-2026-09-13.md`（**P2a G2 立案**：LLVM 尾表达式返回
+  **返回槽残留**、静默错误结果、语料零覆盖；其"是否并入 G1 格"待规划 G1 时判断）、
+  `docs/issue-tuple-label-binding-rule-2026-09-13.md`（**P2a G2 立案**：标签模型残留角，
+  §3 为 spec 级待裁、前置=先修值）
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（LLVM 侧重写，判据与约束权威）；
   `docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 立案与背景）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）
@@ -237,7 +246,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 | **P0b** ✅ | **枢纽规范落地**：① 新立 **ADR（HIR 规范）**；② 60 条节点语义规范（**须含 `char` 节点与 `.join` 挂起语义**）；③ §5 裁决表逐项裁决（**现为 4 项**：3 项 IO + `stringSplit` 空 token），取「统一」者走 spec §1.3；④ 同步修改 spec 中「双通道一致性」表述对象；⑤ 顺带订正 `bk_*` 清单 —— **已交付 2026-09-12**：`ADR-034`（Accepted，含判准与三类边界）+ `docs/spec/hir-contract.md`（60 节点语义权威清单，44 expr + 16 stmt，含 `char` 节点与 `.join` 挂起语义**预留位**）+ §5 裁决全落（**A 组 4 项统一到 LLVM 侧**，判准 = 优先兼容 LLVM）+ spec §2.8 表述对象改造（「双通道」→「各后端与 HIR 契约一致」，**零行为变更**）+ `bk_*` 口径 35→**37** | ADR + 契约 + 裁决记录 + spec 变更；**不写代码** —— **已交付 2026-09-12** | 提交级回退 |
 | **P1** | **通道与判据基建**：HIR 引擎骨架 + 引擎开关 + 探针扩为三实通道（`interp-ast` 冻结参照 / `interp-hir` / `llvm-hir`）；**建立规范一致性核验脚本**；**为 Debugger 预留细粒度接口**（逐语句 / 求值 / 输出重定向 / 断点上下文；**REPL 不在本接缝内** —— 实测它不消费 `debugHook`，是独立接缝，见 P1-5 勘测 §7，其迁移前置是「每次求值新建实例」这一形态）<br>**分六步**：P1-1 核验脚本 → P1-2 引擎骨架 → P1-3 引擎开关 → P1-4 探针扩三实通道（含 `arrayJoin` 补探针）→ P1-5 调试面接口预留 → P1-6 收口 | 探针可跑；核验脚本能报出「有节点无规范」「有规范条目无实现锚点」<br>**P1-1 ✅ 已交付 2026-09-12**（`tools/hir-contract-check.py`，**已实测报出真缺口**、变异测试 7/7）；
 **P1-2 ✅ 已交付 2026-09-12**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + `Tests/PiniTests/CodeGen/HIRTests/HIRExecutorTests.swift`）：60 节点**全分派、无 `default:`**（新增节点必编译失败直到被认领）；15 节点实现（expr 9 + stmt 6）＋ `captureMarker` 显式 no-op；**44 缺口具名 fail-loud**；值展示与算子语义**提取为 `Interpreter` 的 static 单源**（`stringifyValue` / `binaryValue` / `unaryValue`，纯搬移）；9 测试全绿；**变异反证两级 4/4 精确捕获、零挂死**；核验脚本 `interp-hir` 锚点由 `note` 转为 **`covers 60/60`**<br>**P1-3 ✅ 已交付 2026-09-12**（`Sources/PiniCLI/main.swift` +75 行）：引擎开关形态 = **环境变量 `PINI_INTERP_ENGINE`**（`ast` 默认 | `hir`），理由 = `pini run` 位置式无 flag 解析 + **LR-5 不设 CLI 兼容开关**（沿用 `PINI_HIR_PIPELINE` 先例，P4 翻转时同法退役）；**非法值与目录一律报错、不静默回落**（静默回退＝假绿）；开关在**共享前端之后**选定，两条通道看到同一份「已接受」程序；**CLI 级 15/15**（in-range 6 夹具逐字节一致 / out-of-range 5 夹具经 AST 阳性对照后具名 fail-loud 且零 stdout / switch 契约 4 项，含**可运行包在 hir 下被拒且零 stdout**）；**变异反证 3/3、零 stray**<br>**P1-4 ✅ 已交付 2026-09-12**（`tools/hir-parity-probe.py` +196、`tools/three-channel.py` +25、新语料 `testDiffArrayJoin.pini` + 显式测试方法）：**两工具的第三通道此前都是 `run-llvm` 的复制**（M6b 翻转遗留）⇒ 「三通道」实为两通道；本步把 `interp-hir` 接为**独立的 HIR 执行引擎**（`PINI_INTERP_ENGINE=hir`），并**显式指定、绝不继承**（`env.pop` + `env_extra` 两层防御：P4 会翻转默认值，继承会让冻结参照静默变成第二个 HIR 臂——sweep 仍报三通道而实际只测两臂）。新增判据 **`HIR_ENGINE_TODO`**（具名报未实现节点 ⇒ **P2 工作清单，不计入 `FLIP BLOCKERS`**），按节点聚合输出；`GAP_IR`（**P1-4 前即已死**）退役为 `GAP_HIR_ENGINE`；`TIMEOUT_*` 按新臂语义重命名。**基准（73 夹具）：`OK 23` / `HIR_ENGINE_TODO 50` / `FLIP BLOCKERS 0` / 零 stray**。**`arrayJoin` 补探针实测推翻契约的「B 组实现偏离」**——五类接收者形态 + 非 ASCII 分隔符/元素上两实通道**逐字节一致**。**变异反证 5/5**（含两级 + 参照漂移组）<br>**P1-5 S1 ✅ 已交付 2026-09-13**（`Sources/PiniCore/Debugger/DebugHookHost.swift` + `Interpreter.swift` + `HIRExecutor.swift` + 两侧测试）：调试面协议落成，**两台引擎同形符合**；`debugPause` 拆为「按位置暂停」（引擎无关的那半面）+「AST 位置分支」（AST 私有）；`HIRExecutor` 补 `debugHook` 但**不接暂停点** —— HIR 无位置，接了就必然报 `noLocation`，而断点按行号相等匹配 ⇒ 断点永不命中、入口停/单步停在虚构行（比「调试器还不在」更坏）。该休眠态由**会变红的断言**钉住（变异实测：加上暂停点后立即红，失败信息正好打印 `line: 0 / fileName: "<hir>"`）；AST 路径行为**零变更**（两处调用点字节未改、15 例既有调试器用例全绿）；**P1-6 ✅ 已交付 2026-09-13**（纯文档收口：两处口径订正 + 勘测件归档 + 状态回填 ⇒ **P1 六步全部完成**） | 提交级回退 |
-| **P2** | **分格实现**（**九格，族边界以契约 §2/§3 分节为准** ⇒ 细目见 `docs/issue-interpreter-hir-p2-plan-2026-09-13.md`）：G1 控制流 · G2 元组 · G3 闭包与函数值 · G4 集合与下标（**整族 7 节点，随 P2a 交付**） · G5 具名类型与字段 · G6 枚举/Optional/Result/try · G7 字符串与内建 · G8 指针与 LazyRef · G9 IO（**并发不做**）。**分批：P2a 无分歧面 26 缺口先行；P2b 分歧面 18 缺口后置，前置 = 两侧裁齐**（`D-P2-5`：G4 **整族 7 节点**随 P2a；原条目把 `len`/`slice` 划入 P2b，与标题里的 26/18 总数矛盾 —— **取总数**，逐格相加才自洽）。订正：原手写首格「① 标量与算术」**实测 0 缺口**（P1-2 已实现）⇒ **不占一格** | 每格：三通道**分层读数**（`OK` / `HIR_ENGINE_TODO` / `CHANGE_*` / `FLIP BLOCKERS`，**不可合并成一个数**）+ 该族夹具全绿 + 全量回归 + 变异反证两级。**P2a 判 `OK`；含非 ASCII 语料时 B 组节点（`len`/`slice` 的 `String` 侧）判 `CHANGE_*`**（非阻塞，登记为已知差异） | 逐格可回退，**已完成格序：G4 ✅** |
+| **P2** | **分格实现**（**九格，族边界以契约 §2/§3 分节为准** ⇒ 细目见 `docs/issue-interpreter-hir-p2-plan-2026-09-13.md`）：G1 控制流 · G2 元组 · G3 闭包与函数值 · G4 集合与下标（**整族 7 节点，随 P2a 交付**） · G5 具名类型与字段 · G6 枚举/Optional/Result/try · G7 字符串与内建 · G8 指针与 LazyRef · G9 IO（**并发不做**）。**分批：P2a 无分歧面 26 缺口先行；P2b 分歧面 18 缺口后置，前置 = 两侧裁齐**（`D-P2-5`：G4 **整族 7 节点**随 P2a；原条目把 `len`/`slice` 划入 P2b，与标题里的 26/18 总数矛盾 —— **取总数**，逐格相加才自洽）。订正：原手写首格「① 标量与算术」**实测 0 缺口**（P1-2 已实现）⇒ **不占一格** | 每格：三通道**分层读数**（`OK` / `HIR_ENGINE_TODO` / `CHANGE_*` / `FLIP BLOCKERS`，**不可合并成一个数**）+ 该族夹具全绿 + 全量回归 + 变异反证两级。**P2a 判 `OK`；含非 ASCII 语料时 B 组节点（`len`/`slice` 的 `String` 侧）判 `CHANGE_*`**（非阻塞，登记为已知差异） | 逐格可回退，**已完成格序：G4 ✅ → G2 ✅**（**G2 后 `FLIP BLOCKERS` 计数为 4，全为假阻塞、实质分歧 0** —— 见 §13 的 G2 条目） |
 | **P3** | **判据升级**：三层判据（§8）落地；制度化「AST 走查冻结」；调试面接口双引擎并行验证（**REPL 是另一条接缝**，随其形态对齐一并验证） | 三层判据可跑；口径文档化 | 提交级回退 |
 | **P4** | **翻转**：默认引擎切 HIR；**Debugger 与 REPL 一并迁到 HIR 引擎**（两条接缝、路径不同：调试面走已备好的协议，REPL 走「每次求值新建实例」的形态对齐）；**删除 AST 走查**（D-B3=A 末态退役） | 全量回归 + 全量探针 0 阻塞 + 763 个解释器用例全绿 + 调试/DAP/REPL 用例全绿 | **不可逆面（等点名）** |
 | **P5** | **收口**：文档 / ADR 落地记录 / 证据登记 / 工单 / 探针口径；订正 `HIRLowerer`/`HIRNode` 自述里的「for the LLVM backend」；**记「selfhost 基线待重校」** | 门禁全绿 | 提交级回退 |
@@ -329,7 +338,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 ## 13. 停止点与开工顺序
 
 - **本轮（规划 + P0c + `ADR-033` 裁决落地 + P0 收口）未改任何源码**；计划已持久化为本文件，交由新会话接手。
-- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1 ✅（六步全部完成 2026-09-13：P1-1、P1-2、P1-3、P1-4、P1-5 S1、P1-6）** → **P2a 进行中（规划 ✅ 2026-09-13；第 1 格 G4 ✅ 已交付 2026-09-13，余 G1/G2/G3/G5/G6 五格待点名）** → P2b → P3 → P4（不可逆，等点名）→ P5。
+- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1 ✅（六步全部完成 2026-09-13：P1-1、P1-2、P1-3、P1-4、P1-5 S1、P1-6）** → **P2a 进行中（规划 ✅ 2026-09-13；第 1 格 G4 ✅、第 2 格 G2 ✅ 均已交付 2026-09-13，余 G1/G3/G5/G6 四格待点名）** → P2b → P3 → P4（不可逆，等点名）→ P5。
 - **P1-5 S1 落地（2026-09-13）**：`DebugHookHost` 协议（只含 `debugHook` + `outputSink`）+ 两台引擎
   各自符合；`Interpreter.debugPause` 拆为「AST 位置分支」+「按位置暂停」两半；`HIRExecutor` 补
   `debugHook`（**声明但未接线**，位置未落地前不接暂停点）。落地实录与三处实现偏离见勘测报告 §9。
@@ -413,6 +422,45 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
      `sliceBound` 在 AST 侧为死代码（`slice` 已下沉 Pini 源）—— 沿用既有登记，不在 P2a 范围。
   7. **未做范围**：未改 AST / LLVM 任一侧实现；未动契约与节点集；未 push。
   ⇒ **下一格 = P2a 第二格（G2 元组），待点名**。
+- **P2a 第二格 G2 元组族（2026-09-13；分支 `agent/pini-dev/hir-p2a-g2-tuples`）** ——
+  **范围经 `D-P2-6` 扩为「含标签模型的整个元组族」**（用户裁决：F1+F2 都修）。
+  完整实录见细目件 §8.2（含七轮变异明细表），此处存读数、结构与工单三条：
+  1. **交付内容**：节点 `tupleConstruct`（分量名随**值**走）· `tupleIndexGet`（规则本体提为
+     `Interpreter.tupleElement` **唯一事实源**，纯搬移）；标签模型两条规则**同址复刻**——
+     ① 显式 `return` 出口（`HIRExecutor.call` 的 `returnSignal` 路径喂声明标签）② 带元组注解的绑定
+     （`HIRExecutor.allocVar` + 降载侧 `HIRLowerer.slotType`）。配套六项：`resolveReturnType` 携带
+     `decl.returnLabels` · `FunctionSignature.returnLabels` 与 5 处注册点 · `TypeInference` 两处改用
+     `sig.returnLabels` · `declaredReturnLabels` · `slotType`（**全 nil 编码「无需改写」**）+
+     `allocVar` 判据收窄为 `labels.contains(where: { $0 != nil })` · `Interpreter.relabelled` 纯搬移。
+  2. **验证读数**：全根探针由 73 夹具 `OK 33 / TODO 36 / GAP_HIR_ENGINE 4` 变为 **74 夹具 `OK 34` /
+     `TODO 36` / `GAP_HIR_ENGINE 4`**（既有 73 夹具**逐夹具零变化**，唯一差异是新夹具本身）；
+     格内 `--filter Tuple` 7 夹具 `OK 5 / GAP_HIR_ENGINE 2`；全量 **XCTest 1240 / 3 skipped / 0 failures
+     + swift-testing 45**（较 G4 基线 1236 **+4，四处在册用例全在本分支**）；
+     `tools/hir-contract-check.py` 仍 `clean` 三锚点 60/60；comment-lint L1–L6 全绿、doc-links 491 通过。
+     ⚠️ **`FLIP BLOCKERS` 由 G4 交付时的 0 变为 4** —— 四个全为**假阻塞**（见第 4 条）。
+  3. **结构发现两条**：① **标签模型在 HEAD 上静态不完整** —— `let r = 除余(17, 5)` 之后 `r.商`
+     是 **`unknownMember` 类型错误**（解释器运行期却会补写该名）⇒ 本格把**静态视图**与**运行期值**
+     对齐，不只是"让引擎对齐参照"；② 标签模型自此**两臂共用一份实现**，逐字节等价看不见
+     「共同源被删」——曾据此加字面期望值钉子，**变异实测证明其冗余并已撤回**（M7 是**两臂同时抛错**
+     `未定义变量: 商` 而非静默一致；只改渲染的共享变异会打到解释器臂、由 LLVM 差分臂抓住）。
+  4. **假阻塞实测出现（本单预言的兑现）**：`GAP_HIR_ENGINE 4` = `testDiffMultiReturnAddAndSub` ·
+     `testDiffMultiReturnSwap` · `testDiffTupleConstruct` · `testDiffTupleConstructClang`，
+     **三者 `l_rc/h_rc/a_rc` 全 0、stdout 逐字一致**，差异仅在 stderr 的 `E7-001` 假阳性警告。
+     按已登记分析（`rc == 0` 时 stderr 内容**不构成缺陷证据**），**实质分歧为 0**
+     —— 不成立的是那个计数器。已回填 `docs/issue-diagnostic-channel-parity-2026-09-12.md`
+     （其「当前不可达」被**实测证伪**）；**计数器收窄时机上交为决策点**，本格未自改探针。
+  5. **记缺陷（3 张，只登记不修）**：
+     `docs/issue-llvm-trailing-expression-return-2026-09-13.md`（**新**：LLVM 尾表达式返回
+     **返回槽残留**、静默错误结果，v1–v6 完整表征 + 根因定位 `IREmitter` 唯一 `.exprStmt` 分支 +
+     语料零覆盖）·
+     `docs/issue-tuple-label-binding-rule-2026-09-13.md`（**新**：§1 位置式注解盖具名值——
+     两臂一致只有引擎分叉、语料不可达；§2 泛型特化丢标签；§3 **spec 级待裁**：具名返回的隐式
+     尾表达式是否带名，前置=先修值）·
+     `docs/issue-diagnostic-channel-parity-2026-09-12.md`（**维护**，见第 4 条）。
+     `docs/issue-tuple-annotation-arity-mismatch-2026-09-10.md` 补记（`persistAcrossScopesForCodegen`
+     漏网范围比原记更宽：`runBothChannels` 是本格补齐的第 6 处器械）。
+  6. **未做**：未改 AST 侧渲染与 LLVM 侧实现；未动契约与节点集；未收窄探针判据；未 push。
+  ⇒ **下一格 = P2a 第三格（G1 控制流），待点名**。
 - **P0 收口（2026-09-12）**：P0 一格**内容产出已全部达成、无实质缺口**（60 节点台账 / 四分级对账 /
   乙类后端无关性审查 / 耦合面 / 止损重算 / E3 实测 M0–M8）。收口动作 =
   ① 清过期标注 4 处（审计 §1 的 E3 状态、§5.3 标题、§7 标题、§7.5 编号错位）；

@@ -46,9 +46,19 @@ case .tuple(let labels, let elements, let loc):
 |---|---|
 | 差分 Harness（checker 先行 + 作用域表持久） | ✅ 通过 |
 | CLI `emit` 单文件（checker 先行，但 HIR 分支此前未开持久表） | ❌ `type mismatch: tuple(labels: [nil,nil], fieldTypes: [i32,i32]) is not tuple(labels: [nil,nil], fieldTypes: [])` |
+| **HIR 执行器一致性 Harness（`HIRExecutorTests.runBothChannels`，2026-09-13 补测）** | ❌ **同一条错误**——本条即本表第二列的最后一处漏网点 |
 
 第二列的根因是该分支丢弃了分量类型，下游得到 `fieldTypes: []`。
 （CLI 通道自身的作用域表缺行已在 M6a a2 单独修正，与本工单的两件事独立。）
+
+**2026-09-13 补记（LR-4 P2a G2）**：`persistAcrossScopesForCodegen` 的漏网范围比本单原记更宽——
+会 `HIRLowerer.lower` 的器械共 5 处（`HIRDifferentialTests.runNewPipeline` ×2 调用点、
+`IRExecutionTests`、`IRPrintGoldenTests`、`RuntimeBackendTests`）与生产路径 3 处
+（CLI 的 `run`（HIR 引擎）/ `emit` / `compile` / `run-llvm`）**都已设置**，唯独
+`HIRExecutorTests.runBothChannels` 未设；该器械的 ast↔hir 白名单因此在扩充到 17 项元组夹具时
+暴露本单第 1 条（`testDiffTupleConstruct` / `...Clang` 无法降载）。已就地补上该 flag
+（补后 13 用例全绿、白名单 18 项全跑通）。⇒ 本单第 1 条的**触发面**修正为「任何未设该 flag
+的降载入口」，而非仅 CLI 早年那处；该 flag 是事实上的降载前置约定，新增降载入口必须带上。
 
 ### 2. 空标签列表的消费歧义
 

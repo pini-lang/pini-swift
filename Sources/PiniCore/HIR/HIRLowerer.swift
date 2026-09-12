@@ -1086,8 +1086,24 @@ public enum HIRLowerer {
             return try resolve(decl.returnTypes[0])
         default:
             let fieldTypes = try decl.returnTypes.map(resolve)
+            // G2: the declared component names ride along. `-> (商: I32, 余:
+            // I32,)` is not decoration — the interpreter relabels the returned
+            // value from `decl.returnLabels` at the function boundary, the
+            // executor does the same off this type, and the emitter prints a
+            // tuple's labels straight from the type it was handed. Dropping
+            // them here un-names the value on *both* HIR arms while the AST
+            // engine keeps the names: measured, `print(r)` gave `[3, 2]` on
+            // both arms and `[商: 3, 余: 2]` on the reference.
+            //
+            // Only a genuinely named signature switches this on. A positional
+            // multi-return keeps the all-nil list it had before, which matters
+            // because `HIRType(from: annotation)` reads an *empty* label list
+            // as "positional" and expands it to all-nil.
+            let named = decl.returnLabels.contains { $0 != nil }
             return .tuple(
-                labels: Array(repeating: nil, count: fieldTypes.count),
+                labels: named && decl.returnLabels.count == fieldTypes.count
+                    ? decl.returnLabels
+                    : Array(repeating: nil, count: fieldTypes.count),
                 fieldTypes: fieldTypes
             )
         }
@@ -1597,15 +1613,65 @@ public enum HIRLowerer {
         }
         let varType = declaredType!
         let loweredInit: HIRExpr?
+        var initializerType: HIRType?
         if let initializer = initializer {
             let lowered = try lowerExpr(initializer, expected: varType, into: &context)
             try requireAssignable(lowered.type, to: varType, at: location)
             loweredInit = lowered.node
+            initializerType = lowered.type
         } else {
             loweredInit = nil
         }
+        // The static view keeps the declared names (member reads resolve
+        // against it); the slot itself stores the type computed below.
         context.variableTypes[name] = varType
-        return [.allocVar(name: name, type: varType, mutable: isMutable, initializer: loweredInit)]
+        return [.allocVar(
+            name: name,
+            type: slotType(declared: varType, initializer: initializerType),
+            mutable: isMutable,
+            initializer: loweredInit
+        )]
+    }
+
+    /// The type a binding's slot actually stores.
+    ///
+    /// The interpreter attaches tuple component names at exactly two points:
+    /// an explicit `return` (the engine mirrors it at its own return site, fed
+    /// from the declared return type), and an explicit tuple annotation on a
+    /// binding (`applyTypeAnnotationLabels`). A declaration that names no more
+    /// than the initializer's type already names is therefore the annotation
+    /// case only when it names *something else* — a named declaration sitting
+    /// over an initializer of the very same named type adds nothing, and the
+    /// engine's binding-site relabel (which fires on a slot type that names a
+    /// component) must not fire on it.
+    ///
+    /// "Do not relabel" is encoded as an all-`nil` label list rather than an
+    /// empty one: the arity of the label list is load-bearing for the emitter's
+    /// tuple rendering, so the field count is preserved and only the names go.
+    ///
+    /// The case that makes this observable: a function whose declared return
+    /// type is a named tuple, entered through its implicit trailing
+    /// expression. The interpreter's implicit path returns the last value
+    /// untouched — it relabels on the `return` statement only — so an inferred
+    /// binding over such a call holds an unlabelled value, even though the
+    /// call's static type is labelled.
+    ///
+    /// A positional annotation over an initializer of the same arity but a
+    /// named type (`let t: (I32, I32,) = namedCall()`) keeps the declared
+    /// names, which is the one shape where this test and the interpreter's
+    /// syntactic rule can disagree — registered as an open issue (tuple label
+    /// binding rule, 2026-09-13) rather than papered over here.
+    private static func slotType(declared: HIRType, initializer: HIRType?) -> HIRType {
+        guard case .tuple(let labels, let fieldTypes) = declared, !labels.isEmpty else {
+            return declared
+        }
+        guard case .tuple(let valueLabels, _) = initializer, valueLabels == labels else {
+            return declared
+        }
+        return .tuple(
+            labels: Array(repeating: nil, count: fieldTypes.count),
+            fieldTypes: fieldTypes
+        )
     }
 
     /// Lower `let (a, b) = tupleExpr` (M6a D7).
@@ -3735,10 +3801,33 @@ public enum HIRLowerer {
     /// Slice set: exact match only. Widening (I32 literal into I64 slot) is
     /// already handled at the literal level via `expected`; non-matching
     /// composite/implicit coercions are later grids.
+    ///
+    /// G2 exception, tuples only: component *names* are not part of the shape.
+    /// A positional literal `(3, 2)` satisfies `(商: I32, 余: I32,)`. The
+    /// checker's own tuple assignability already reads labels that way, and a
+    /// tuple's LLVM spelling is `{ i32, i32 }` with the names nowhere in it, so
+    /// a label-only difference is not an ABI difference either. The names are
+    /// reconciled where the language says they are: the executor stamps the
+    /// declared labels onto the value, exactly as the interpreter does at the
+    /// two same sites.
     private static func requireAssignable(_ from: HIRType, to: HIRType, at location: SourceLocation) throws {
-        guard from == to else {
+        guard labelInsensitiveEqual(from, to) else {
             throw unsupported("type mismatch: \(from) is not \(to)", at: location)
         }
+    }
+
+    /// `==` everywhere except inside a tuple, where the label dimension is
+    /// dropped and the element types still have to match one by one (nesting
+    /// included).
+    private static func labelInsensitiveEqual(_ from: HIRType, _ to: HIRType) -> Bool {
+        if case .tuple(_, let fromFields) = from, case .tuple(_, let toFields) = to {
+            guard fromFields.count == toFields.count else { return false }
+            for (a, b) in zip(fromFields, toFields) where !labelInsensitiveEqual(a, b) {
+                return false
+            }
+            return true
+        }
+        return from == to
     }
 
     private static func unsupported(_ message: String, at location: SourceLocation) -> HIRLoweringError {

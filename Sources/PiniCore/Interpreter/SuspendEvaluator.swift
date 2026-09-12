@@ -597,7 +597,7 @@ extension Interpreter {
  guard case .tuple(_, let elements) = v else {
  throw RuntimeError.typeMismatch(
  expected: "tuple",
- got: self.describeValueKind(v),
+ got: Interpreter.describeValueKind(v),
  location: location
  )
  }
@@ -620,7 +620,7 @@ extension Interpreter {
  guard case .future(let fut) = v else {
  throw RuntimeError.typeMismatch(
  expected: "Future<T, Error>",
- got: self.describeValueKind(v),
+ got: Interpreter.describeValueKind(v),
  location: detachLoc
  )
  }
@@ -816,7 +816,7 @@ extension Interpreter {
  /// 无挂起点——与同步路径语义逐字节一致。
  private func evaluateTryExpressionSync(operandValue: Value, errorVar: String, handler: Block, location: SourceLocation) throws -> Value {
  guard case .enumValue(let ev) = operandValue, ev.parentEnum == "Result" else {
- throw RuntimeError.typeMismatch(expected: "Result", got: describeValueKind(operandValue), location: location)
+ throw RuntimeError.typeMismatch(expected: "Result", got: Interpreter.describeValueKind(operandValue), location: location)
  }
  if ev.caseName == "ok" {
  return ev.associatedValues.first ?? .null

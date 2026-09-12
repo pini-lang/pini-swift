@@ -72,6 +72,14 @@ final class HIRExecutorTests: XCTestCase {
         interpreter.outputSink = { astLines.append($0) }
         try interpreter.run(module: module)
 
+        // The interpreter has run; lower the same module the way every shipping
+        // path does. `persistAcrossScopesForCodegen` is what the CLI's `run`
+        // (HIR engine), `emit`, `compile` and `run-llvm` each set before
+        // lowering, and every other lowering harness in the suite sets it too —
+        // without it a tuple literal's element types are gone once the checker
+        // pops its scope, and lowering rejects a program that runs fine. This
+        // harness was the only one that left it off.
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
         let executor = HIRExecutor()
         var hirLines: [String] = []
@@ -108,6 +116,13 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffCow",
         "testDiffDictSet",
         "testDiffEmptyArray",
+        "testDiffTupleConstruct",
+        "testDiffTupleConstructClang",
+        "testDiffTupleDestructure",
+        "testDiffTupleIndexAccess",
+        "testDiffTupleLabels",
+        "testDiffTupleLen",
+        "testDiffTupleReturn",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -209,6 +224,86 @@ final class HIRExecutorTests: XCTestCase {
             print(s[-3:-1])
             return
         """, label: "slice-sugar")
+    }
+
+    /// Tuple labels are part of the value, not decoration: `print` renders
+    /// `[商: 3, 余: 2]` for a labelled literal and `[3, 2]` for a positional one.
+    ///
+    /// No corpus fixture reaches this. Every one of the six tuple fixtures builds
+    /// a positional tuple, so two things would ship uncompared: the labels
+    /// `tupleConstruct` carries through to the value, and the labelled member
+    /// read `t.商`, which is a *different* lowering path from the positional
+    /// `t.0` (the lowerer resolves a label to an index at lowering time, so both
+    /// arrive at the same node with a different provenance). The positional form
+    /// is asserted here too, as the negative half of the pair — a case that only
+    /// proved labels are present would pass just as well if labels were always
+    /// fabricated.
+    func testTupleLabelsAreCarriedIntoTheValue() throws {
+        try assertParity("""
+        main|func() -> ():
+            let t = (商 = 3, 余 = 2,)
+            print(t)
+            print(t.商)
+            print(t.0)
+            var u = (1, 2.5)
+            print(u)
+            return
+        """, label: "tuple-labels")
+    }
+
+    /// The named-return label model, arm against arm (P2a grid 2, F1+F2).
+    ///
+    /// The interpreter attaches the component names a signature declares at
+    /// exactly two points, and the engine has to mirror both:
+    ///
+    /// 1. an explicit `return` (the value leaving the body adopts the declared
+    ///    names — this is the half that was missing);
+    /// 2. a binding whose slot type names components the initializer's own type
+    ///    does not (`let t: (商: I32, 余: I32,) = ...`).
+    ///
+    /// The cases are chosen to be mutually discriminating rather than merely
+    /// positive: `其余`'s implicit trailing expression is returned untouched by
+    /// the interpreter, so an engine that relabels on *every* way out of a
+    /// function, or on every tuple-typed binding, prints names here that the
+    /// reference does not — the assertion is what holds that line.
+    ///
+    /// WHAT THE SECOND MUTATION RUN TAUGHT THIS CASE (2026-09-13)
+    ///
+    /// The rule now has one implementation shared by both engines
+    /// (`Interpreter.relabelled`), so byte equality between the arms cannot see
+    /// that implementation being removed — and a literal pin on the expected
+    /// bytes was written here to cover it. The mutation run then showed the pin
+    /// was **redundant**, and it was removed rather than kept as unexercised
+    /// code: neutering the shared helper does not make the arms agree silently,
+    /// it makes both of them *throw* (`未定义变量: 商` — a name read needs the
+    /// label to resolve), which this harness already fails on; and a mutation
+    /// that changes only the rendering hits the interpreter arm alone, which the
+    /// differential judge against the LLVM arm already catches.
+    func testNamedReturnLabelsFollowTheInterpretersTwoRules() throws {
+        try assertParity("""
+        除余|func(a: I32, b: I32,) -> (商: I32, 余: I32,):
+            return (a / b, a % b)
+
+        其余|func(a: I32, b: I32,) -> (商: I32, 余: I32,):
+            (a / b, a % b)
+
+        位置|func(a: I32, b: I32,) -> ((I32, I32,),):
+            return (a / b, a % b)
+
+        main|func() -> ():
+            let r = 除余(17, 5)
+            print(r)
+            print(r.商)
+            print(除余(17, 5))
+            let s = 其余(17, 5)
+            print(s)
+            let t: (商: I32, 余: I32,) = (3, 2)
+            print(t)
+            print(t.商)
+            let u: (商: I32, 余: I32,) = 位置(17, 5)
+            print(u)
+            return
+        """, label: "named-return labels")
     }
 
     /// A function body that runs off its end yields the value of its last

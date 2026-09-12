@@ -241,6 +241,12 @@ public final class TypeChecker {
  return [.generic(name: "Future", params: asyncPayloadAndError(of: f), location: f.location)]
  }
 
+ /// `signatureReturns(of:)` 的标签伴生。`=>` 签名被改写为 `Future<T, Error>`，
+ /// 不再对应源码写下的分量名，故取空；其余情况原样带上声明标签。
+ private static func signatureReturnLabels(of f: FuncDecl) -> [String?] {
+ f.isAsync ? [] : f.returnLabels
+ }
+
  /// `=>` 函数**体内 return 的期望类型**为 `Result<T, Error>`（`return ok(v)` / `return err(e)`）。
  /// `=> ()`（无返回值的并发进程）返回空数组，沿用现有 void 放行路径。
  private static func bodyReturns(of f: FuncDecl) -> [TypeAnnotation] {
@@ -921,7 +927,10 @@ public final class TypeChecker {
  returns: returnTypes
  )
  } else {
- typeEnv.defineFunction(name: f.name, params: paramTypes, returns: returnTypes)
+ typeEnv.defineFunction(
+ name: f.name, params: paramTypes, returns: returnTypes,
+ returnLabels: TypeChecker.signatureReturnLabels(of: f)
+ )
  }
  case .structDecl(let s):
  typeFieldsByName[s.name] = s.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
@@ -943,7 +952,10 @@ public final class TypeChecker {
  typeEnv.defineStruct(name: s.name, fields: fieldInfos)
  for method in s.methods {
  let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
- typeEnv.defineMethod(typeName: s.name, methodName: method.name, params: paramTypes, returns: method.returnTypes)
+ typeEnv.defineMethod(
+  typeName: s.name, methodName: method.name, params: paramTypes,
+  returns: method.returnTypes, returnLabels: method.returnLabels
+ )
  if method.isAsync { asyncMethodParamNames["\(s.name).\(method.name)"] = method.params.map { $0.name } }
  }
  registerTraitMethods(for: s.name, traits: s.traits, location: loc)
@@ -969,7 +981,10 @@ public final class TypeChecker {
  typeEnv.defineStruct(name: o.name, fields: fieldInfos)
  for method in o.methods {
  let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
- typeEnv.defineMethod(typeName: o.name, methodName: method.name, params: paramTypes, returns: method.returnTypes)
+ typeEnv.defineMethod(
+  typeName: o.name, methodName: method.name, params: paramTypes,
+  returns: method.returnTypes, returnLabels: method.returnLabels
+ )
  if method.isAsync { asyncMethodParamNames["\(o.name).\(method.name)"] = method.params.map { $0.name } }
  }
  registerTraitMethods(for: o.name, traits: o.traits, location: loc)
@@ -1120,7 +1135,10 @@ public final class TypeChecker {
  private func registerExtensionMethods(_ x: ExtensionDecl) {
  for method in x.methods {
  let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: method.location) }
- typeEnv.defineMethod(typeName: x.targetType, methodName: method.name, params: paramTypes, returns: method.returnTypes)
+ typeEnv.defineMethod(
+  typeName: x.targetType, methodName: method.name, params: paramTypes,
+  returns: method.returnTypes, returnLabels: method.returnLabels
+ )
  if method.isAsync { asyncMethodParamNames["\(x.targetType).\(method.name)"] = method.params.map { $0.name } }
  }
  // trait 扩展（<<T>>）：方法追加进 trait 签名，供后续 conformance 校验可见。
