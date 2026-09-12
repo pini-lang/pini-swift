@@ -3,7 +3,10 @@
 - 状态：**Open（2026-09-07 LR-4 裁决单独立案；前置已满足 —— LLVM 重写迁移于 2026-09-12 M6b 翻转批
   收尾（旧后端整体删除，HIR 成为唯一发射路径）。**规划已完成**（2026-09-12）：主决策「HIR 升为
   两后端共用枢纽」＋「单一 IR 多后端 / 分层信任」推导，执行计划与 D-B* 决策登记见
-  `docs/issue-interpreter-hir-plan-2026-09-12.md`；**待点名开工 P0（只读缺口审计）**）**
+  `docs/issue-interpreter-hir-plan-2026-09-12.md`。
+  **进度（2026-09-12）：P0（只读缺口审计）已交付并收口** —— 产出见
+  `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 + 乙类后端无关性
+  审查 + 耦合面 + E3 实测 M0–M8）；**下一格 = P0b（枢纽规范落地），待点名**）**
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（**执行计划载体**，D-B1…D-B12 决策登记）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）；
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（判据与约束权威）
