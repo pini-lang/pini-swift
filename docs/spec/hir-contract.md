@@ -37,6 +37,17 @@
 
 **44 表达式节点 + 16 语句节点 = 60**（2026-09-12 逐个复核，与计划一致）。
 
+> **首轮核验订正（2026-09-12，P1-1 前哨）**：首次机械对照（本契约 ↔ `HIRNode.swift` 节点集）
+> 报出三处缺陷，已当场订正：
+> ① **漏 `printMulti` 条目** —— 代码 44 个 `HIRExpr` case 含它，契约只列 43 条；
+> ② **两条语句位指针（`tryStmt` / `matchStmt`）占用了表达式条目号** —— 致 §2 实列 45 行
+>    与「44 条」声明不符；已移出编号，改为节内指针注记；
+> ③ **引用静默位错** —— `pointerLoad` 的半语义引用原写作旧条目号 26，而该节点的旧条目号
+>    实为 30（§6 汇总表自身写的就是 30，同一文件内两说）。
+>
+> 订正后条目号重排为 **1–44 连续无缺口**，节内引用随之更新：半语义两项现为 17 与 29、
+> `addressOfVar` 为 31、B 组六项为 22/23/36/37/38/40。**本条为订正记载，非新规范内容。**
+
 ## 1. 类型层（HIRType，20 case）
 
 | 类型 | 语义（后端无关） | LLVM 侧实现注记 |
@@ -57,10 +68,11 @@
 | `lazyRef(element:)` | **一次求值**、共享（引用）拷贝语义的惰性引用 | 不透明句柄（`%bk_lazyref*`） |
 | `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 聚合值；**按标签序取成员** |
 | `function(params:returnType:)` | 函数是一等值 | fat pointer `{ptr, ptr}`；**首参恒为 env 是调用协议** |
-| `pointer(element:)` | `*T` 原始指针（FFI） | 不透明 `ptr`；**load/store 按元素类型解码**（半语义，见 §2.26） |
+| `pointer(element:)` | `*T` 原始指针（FFI） | 不透明 `ptr`；**load/store 按元素类型解码**（半语义，见 §2.29） |
 
 > **乙类纪律**（ADR-034 D3 E 组）：上表「布局约定」字样者为**后端约定**，WASM 端可另择
-> 表示；标「语义」者为**必须实现的行为**。半语义两项见 §2.26 与 §3.10。
+> 表示；标「语义」者为**必须实现的行为**。半语义两项见 §2.17（`optionalGet` 的 panic 面）
+> 与 §2.29（`pointerLoad` 的符号扩展）。
 
 ## 2. 表达式节点（44 条）
 
@@ -89,19 +101,20 @@
 |---|---|---|---|
 | 8 | `call(function:arguments:returnType:)` | 调用**模块级**具名函数；`returnType=nil` 表示返回空 | 实参求值序与错误传播同语言定义 |
 | 9 | `printCall(argument:)` | 内建 `print`：单标量实参，**逐字展示后随一个行终止符**，结果为空 | 值展示规则见 `pini-spec-v0.md` §2.8（**含 F64 最短往返**） |
-| 10 | `indirectCall(callee:arguments:returnType:)` | 经函数值间接调用；`callee` 为闭包 / 具名函数值 / 函数类型变量 | **调用协议**（env 首参）是约定；「函数是一等值」是语义 |
-| 11 | `functionValue(functionName:type:)` | 具名顶层函数作为值使用 | 与 `closureLiteral` **共用调用协议** |
-| 12 | `closureLiteral(id:paramNames:paramTypes:returnType:captures:body:type:)` | 闭包值：体 + **创建点捕获表**；捕获为**引用捕获**（与环境槽共享） | `captures` 按体内首次使用排序；未标注参数走返回标注回退（G29） |
-| 13 | `assertCall(condition:message:)` | 断言：条件为假 → **运行时陷阱**并带消息 | 仅 `\|test` 块使用；差分夹具从不执行 |
+| 10 | `printMulti(arguments:)` | 内建 `print` 多参形式：**逐参展示，以单个空格连接，末尾一个行终止符**，结果为空 | ✅ C 组：两侧字节序一致（G14 D-A=A1）；「以空格连接」是语义，拼接方式是实现 |
+| 11 | `indirectCall(callee:arguments:returnType:)` | 经函数值间接调用；`callee` 为闭包 / 具名函数值 / 函数类型变量 | **调用协议**（env 首参）是约定；「函数是一等值」是语义 |
+| 12 | `functionValue(functionName:type:)` | 具名顶层函数作为值使用 | 与 `closureLiteral` **共用调用协议** |
+| 13 | `closureLiteral(id:paramNames:paramTypes:returnType:captures:body:type:)` | 闭包值：体 + **创建点捕获表**；捕获为**引用捕获**（与环境槽共享） | `captures` 按体内首次使用排序；未标注参数走返回标注回退（G29） |
+| 14 | `assertCall(condition:message:)` | 断言：条件为假 → **运行时陷阱**并带消息 | 仅 `\|test` 块使用；差分夹具从不执行 |
 
 ### 2.4 Result 与 Optional
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 14 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；**错误载荷类型擦除为一个机器字** | 擦除是 ABI 约定；「错误可为任意类型」是语言语义 |
-| 15 | `optionalConstruct(isSome:payload:type:)` | `Optional` 构造：`isSome=false` 为 `none`（语言级 nil）；`true` 携带载荷 | 切片语法开放边界到达时为 `none` |
-| 16 | `optionalGet(container:index:type:)` | **宽容读通道** `container.get(i)`：越界 → `none`；界内 → `some(v)` | ⚠️ **半语义**：越界返回 `none` 是语义；边界检查方式是约定（E 组，ADR-034 D3） |
-| 17 | `tryStmt(...)` | 见 §3.9（语句位） | — |
+| 15 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；**错误载荷类型擦除为一个机器字** | 擦除是 ABI 约定；「错误可为任意类型」是语言语义 |
+| 16 | `optionalConstruct(isSome:payload:type:)` | `Optional` 构造：`isSome=false` 为 `none`（语言级 nil）；`true` 携带载荷 | 切片语法开放边界到达时为 `none` |
+| 17 | `optionalGet(container:index:type:)` | **宽容读通道** `container.get(i)`：越界 → `none`；界内 → `some(v)` | ⚠️ **半语义**：越界返回 `none` 是语义；边界检查方式是约定（E 组，ADR-034 D3） |
+> **语句位指针（不占编号）**：`tryStmt` 见 §3.9。
 
 ### 2.5 集合
 
@@ -123,23 +136,23 @@
 | 26 | `construct(type:)` | 具名类型构造；字段取**声明默认值**（无默认则零值）；对象类型的**对象同一性**（引用语义） | refcount 初值是实现 |
 | 27 | `enumConstruct(enumName:caseName:tag:payloads:payloadTypes:type:)` | 枚举 case 构造；`tag` = case **声明序索引** | 载荷按值存入 tagged union |
 | 28 | `fieldGet(base:field:type:)` | 具名字段读 | 按**声明序**取字段；布局是约定 |
-| 29 | `matchStmt(...)` | 见 §3.14（语句位） | — |
+> **语句位指针（不占编号）**：`matchStmt` 见 §3.14。
 
 ### 2.7 指针与取址
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 30 | `pointerLoad(pointer:type:)` | 经 `*T` 读元素值；**按元素类型解码** | ⚠️ **半语义**：解码是语义；`*U8` 的**符号扩展规则**须上提或标注为约定（E 组） |
-| 31 | `pointerStore(pointer:value:type:)` | 经 `*T` 写值，按元素类型编码 | 窄元素为**截断写**（与解释器一致） |
-| 32 | `addressOfVar(name:type:)` | `&x` —— 变量**存储槽的地址**（**真指针**语义） | ✅ **A/D1 裁决：统一到本方（真引用）**。解释器现为快照，属**偏离**，须修 |
+| 29 | `pointerLoad(pointer:type:)` | 经 `*T` 读元素值；**按元素类型解码** | ⚠️ **半语义**：解码是语义；`*U8` 的**符号扩展规则**须上提或标注为约定（E 组） |
+| 30 | `pointerStore(pointer:value:type:)` | 经 `*T` 写值，按元素类型编码 | 窄元素为**截断写**（与解释器一致） |
+| 31 | `addressOfVar(name:type:)` | `&x` —— 变量**存储槽的地址**（**真指针**语义） | ✅ **A/D1 裁决：统一到本方（真引用）**。解释器现为快照，属**偏离**，须修 |
 
 ### 2.8 IO（G15/G17）
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 33 | `fileWrite(path:content:)` | 写文件；返回**写操作的整型结果码** | ✅ **A3 裁决：统一到本方**（返回整型码）。解释器现返回 nil，**须改**。裸整型码泄入语言层已立案（见注记末） |
-| 34 | `fileRead(path:)` | 读取文件的**全部内容**并作为 `String` 返回 | ✅ **A2 裁决：统一到本方** —— **上限 64 KiB，超出静默截断**。⚠️ 该上限源于发射器缓冲尺寸，**已立案**：`docs/issue-io-limit-from-emitter-2026-09-12.md` |
-| 35 | `readLine` | 从标准输入读**一行**，作为 `String` 返回 | ✅ **A1 裁决：统一到本方** —— **行终止符不剥离**；**上限 256 字节**。⚠️ 同上已立案。受害面：`Tests/PiniTests/IOTests/testReadLine.pini` 期望须改 |
+| 32 | `fileWrite(path:content:)` | 写文件；返回**写操作的整型结果码** | ✅ **A3 裁决：统一到本方**（返回整型码）。解释器现返回 nil，**须改**。裸整型码泄入语言层已立案（见注记末） |
+| 33 | `fileRead(path:)` | 读取文件的**全部内容**并作为 `String` 返回 | ✅ **A2 裁决：统一到本方** —— **上限 64 KiB，超出静默截断**。⚠️ 该上限源于发射器缓冲尺寸，**已立案**：`docs/issue-io-limit-from-emitter-2026-09-12.md` |
+| 34 | `readLine` | 从标准输入读**一行**，作为 `String` 返回 | ✅ **A1 裁决：统一到本方** —— **行终止符不剥离**；**上限 256 字节**。⚠️ 同上已立案。受害面：`Tests/PiniTests/IOTests/testReadLine.pini` 期望须改 |
 
 > **A 组裁决的共同性质**（ADR-034 D3/D4）：三项均按判准**统一到 LLVM 侧**；上限本身
 > 的合理性**不在本次裁量范围**，已另立工单。落地见「IO 语义格」。
@@ -148,23 +161,24 @@
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 36 | `isAsciiDigit(argument:)` | 首字符是否 ASCII `[0-9]`；空串 → 假 | ASCII 域内与解释器「首字素」规则重合；域外由 `ADR-019 D4` 管辖（显式 unsupported，fail-loud） |
-| 37 | `stringCase(isUpper:receiver:)` | 大小写转换，**接收者不变**，返回新串 | ⚠️ **B 组缺陷**：契约 = **Unicode 感知**（`ADR-019 D1`）；LLVM 侧现为**逐字节 ASCII-only**，偏离（实测 `"café".upper()` → `CAFé`） |
-| 38 | `stringContains(receiver:needle:)` | 子串包含判定 | ⚠️ **B 组缺陷**：契约 = **字素**语义；LLVM 侧现为**字节查找**，偏离（分解式 Unicode 下分歧） |
-| 39 | `stringSubstring(receiver:start:length:)` | 取子串 | ⚠️ **B 组缺陷**：注册表与测试已裁 **`(start, end)`**；LLVM 侧现为 `(start, length)`，**偏离** |
-| 40 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。解释器现保留空段（3 段），**须改** |
-| 41 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ⚠️ **B 组**：本轮**未实测行为**，仅归类改判入甲类；**差异缺探针**（P1 补） |
-| 42 | `stringConcat(lhs:rhs:)` | 字符串拼接（**字节语义**） | ✅ C 组：两侧结果一致，仅分配方式不同 |
-| 43 | `interpString(parts:)` | 字符串插值：各部分转 C 串后拼接 | ✅ C 组：纯组装。F64 渲染走**最短往返**（`§2.8` / LR-8） |
+| 35 | `isAsciiDigit(argument:)` | 首字符是否 ASCII `[0-9]`；空串 → 假 | ASCII 域内与解释器「首字素」规则重合；域外由 `ADR-019 D4` 管辖（显式 unsupported，fail-loud） |
+| 36 | `stringCase(isUpper:receiver:)` | 大小写转换，**接收者不变**，返回新串 | ⚠️ **B 组缺陷**：契约 = **Unicode 感知**（`ADR-019 D1`）；LLVM 侧现为**逐字节 ASCII-only**，偏离（实测 `"café".upper()` → `CAFé`） |
+| 37 | `stringContains(receiver:needle:)` | 子串包含判定 | ⚠️ **B 组缺陷**：契约 = **字素**语义；LLVM 侧现为**字节查找**，偏离（分解式 Unicode 下分歧） |
+| 38 | `stringSubstring(receiver:start:length:)` | 取子串 | ⚠️ **B 组缺陷**：注册表与测试已裁 **`(start, end)`**；LLVM 侧现为 `(start, length)`，**偏离** |
+| 39 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。解释器现保留空段（3 段），**须改** |
+| 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ⚠️ **B 组**：本轮**未实测行为**，仅归类改判入甲类；**差异缺探针**（P1 补） |
+| 41 | `stringConcat(lhs:rhs:)` | 字符串拼接（**字节语义**） | ✅ C 组：两侧结果一致，仅分配方式不同 |
+| 42 | `interpString(parts:)` | 字符串插值：各部分转 C 串后拼接 | ✅ C 组：纯组装。F64 渲染走**最短往返**（`§2.8` / LR-8） |
 
 ### 2.10 LazyRef
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 44 | `lazyRefConstruct(closure:type:)` | 创建**一次求值**的惰性引用 | 求值时机是语义；wrapper 去重是发射实现 |
-| 45 | `lazyRefValue(handle:type:)` | 读惰性引用的值（**触发首次求值**并缓存） | — |
+| 43 | `lazyRefConstruct(closure:type:)` | 创建**一次求值**的惰性引用 | 求值时机是语义；wrapper 去重是发射实现 |
+| 44 | `lazyRefValue(handle:type:)` | 读惰性引用的值（**触发首次求值**并缓存） | — |
 
-> 注：§2.10 两条与 §2.1–2.8 的编号连续计入 44 条；上表编号即契约条目号。
+> 注：§2.1–§2.10 的编号连续，共 **44 条**；**上表编号即契约条目号**，下游文档与工单以 `§2.N` 形式引用它。
+> 语句位指针（`tryStmt` → §3.9、`matchStmt` → §3.14）**不占编号**，故编号与条目数严格相等。
 
 ## 3. 语句节点（16 条）
 
@@ -238,10 +252,10 @@
 
 | 项 | 类别 | 载体 |
 |---|---|---|
-| B 组 6 项字符语义偏离（§2.22/23/37/38/39/41） | **实现缺陷**，修实现对齐 `ADR-019 D1` | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` |
+| B 组 6 项字符语义偏离（§2.22/23/36/37/38/40） | **实现缺陷**，修实现对齐 `ADR-019 D1` | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` |
 | A1/A2 上限（§2.8 注记） | **有害默认**，须 §1.3 反向修订 | `docs/issue-io-limit-from-emitter-2026-09-12.md` |
-| `addressOfVar` 解释器快照（§2.32） | **A/D1 裁决**：解释器须改为真引用 | 本契约 + 计划 IO/指针格 |
-| `assoc` 等半语义两项（§2.16 / §2.30） | **规范表述**：须写成语义 | 本契约 |
+| `addressOfVar` 解释器快照（§2.31） | **A/D1 裁决**：解释器须改为真引用 | 本契约 + 计划 IO/指针格 |
+| `assoc` 等半语义两项（§2.17 / §2.29） | **规范表述**：须写成语义 | 本契约 |
 | D2 路径基准 | **允许差异**（明文登记） | `ADR-034` D3；spec G58「v1 已知限制」 |
 | D3 警告通道 | 缺口 | `docs/issue-diagnostic-channel-parity-2026-09-12.md` |
 | `deferStmt` break/return 交互 | **未门控面** | 本契约（如实登记） |
