@@ -91,6 +91,35 @@ git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
 - 清扫结果进入**本次提交**，故删除前的状态必存于父提交——`git show HEAD~1:docs/spec/evidence-table.toml` 可取回。
 - 临时绕过（不推荐）：`git commit --no-verify`。清扫幂等，下一次正常提交会补上。
 
+### 5.2 注释门禁的后端选择（`PINI_RG`）
+
+`hooks/comment-lint.sh` 优先用 ripgrep，缺失时回退 `grep -E`。**两个后端的判据等价**
+（已在真仓与变异树上比对为逐行一致），差异只在速度，以及「哪一端实际跑了哪条路径」：
+
+| 端 | 实际后端 | 说明 |
+|---|---|---|
+| GitHub Actions（Ubuntu 容器） | `grep` | 容器不装 ripgrep；GNU grep 快，无感知 |
+| macOS + Homebrew | `ripgrep` | 经绝对路径候选命中（brew bin 可能不在 `PATH`） |
+| 其他环境 | 视 `PATH` | 探测顺序见下 |
+
+探测顺序：`PINI_RG` → `PATH` 中的 `rg` → 绝对路径候选
+（`/opt/homebrew/bin/rg`、`/usr/local/bin/rg`、`/usr/bin/rg`）。
+候选的**作用域只有一种情形**：macOS 装了 ripgrep 但 brew bin 未进 `PATH`。
+Linux 上经 apt/snap 安装的 rg 必在 `PATH`（`command -v` 先命中），候选不会生效 ——
+它是 macOS 例外通道，不是跨平台兜底。
+
+> ⚠️ **为什么不能只查 `PATH`**：本仓对「工具装着但 `PATH` 里看不见」有明确规定
+> （ADR-031 约束 6：`command -v lli` 曾两次造出假「门关」结论，并规定自动化/代理
+> 环境的默认 `PATH` 不得作为依据）。只在 `PATH` 里找 rg，会让脚本**静默回退**到
+> 最慢后端；若该后端的 `grep` 又被代理存根接管，7 趟全树扫描会从 1 秒膨胀到约 9 分钟。
+> 未找到 ripgrep 时脚本会打印一行 `[后端]` 提示，便于从 CI 日志判断实际走了哪条。
+
+指定后端（CI 或非常规安装位置）：
+
+```bash
+PINI_RG=/path/to/rg git commit -m "..."
+```
+
 ---
 
 ## 6. 新会话快速上手

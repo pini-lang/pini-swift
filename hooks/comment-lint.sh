@@ -49,11 +49,17 @@ if [ -f .gitignore ]; then
   done < <(grep -vE '^[[:space:]]*(#|$)' .gitignore 2>/dev/null)
 fi
 
-# ripgrep 探测。不能只查 PATH：rg 已安装却不在 PATH 时，脚本会静默回退到 grep，
-# 而那在「grep 被沙箱代理存根接管」的环境里慢约 80 倍（每文件一次 IPC）。实测同一棵树、
-# 同一模式：rg 0 秒 / 存根 grep 79 秒，7 趟 scan 即 ~9 分钟 vs 1 秒。
-# 探测顺序：PINI_RG（显式指定，供 CI 与非常规安装位置）→ PATH → 常见绝对路径。
-# 若最终仍无 rg，探测结果为空 ⇒ has_rg=0 ⇒ 回退 grep（功能不变，仅慢）。
+# ripgrep 探测。不能只查 PATH：「工具装着但 PATH 里看不见」在本仓已有前科 ——
+# ADR-031 约束 6 记载 `command -v lli` 曾两次造出假「门关」结论，并规定
+# 「自动化/代理环境的默认 PATH 不得作为依据」。此处同族：rg 装着却不在 PATH ⇒
+# 静默回退 grep，而本机 PATH 的 grep 是沙箱代理存根（每文件一次 IPC）⇒ 慢约 80 倍。
+# 实测同一棵树、同一模式：rg 0 秒 / 存根 grep 79 秒，7 趟 scan 即 ~9 分钟 vs 1 秒。
+# 探测顺序：PINI_RG（显式指定，见 GIT_WORKFLOW §5.2）→ PATH → 绝对路径候选。
+# ⚠️ 候选表的**作用域只有一种情形**：macOS Homebrew 装了 rg 但 brew bin 未进 PATH。
+# Linux 上经 apt/snap 安装的 rg 必在 PATH（command -v 先命中），候选不会生效 ——
+# 它是 macOS 例外通道，不是跨平台兜底。各端实况：CI 的 Ubuntu 容器不装 rg ⇒
+# 走 grep 后端，候选路径全不存在 ⇒ 行为与加候选之前一致（不引入新的失败面）。
+# 若最终仍无 rg，探测结果为空 ⇒ has_rg=0 ⇒ 回退 grep（判据等价，仅慢）。
 rg_bin=""
 if [ -n "${PINI_RG:-}" ] && [ -x "${PINI_RG}" ]; then
   rg_bin="$PINI_RG"
@@ -70,6 +76,13 @@ fi
 
 has_rg=0
 [ -n "$rg_bin" ] && has_rg=1
+
+# 后端选择要**可见**：多端下走的后端不同（CI 无 rg ⇒ grep；macOS+Homebrew ⇒ rg），
+# 静默回退会让「哪端实际跑了哪条路径」只能靠推理 —— 出问题时无从判断。判据已比对等价，
+# 故这里只提示、不阻断。两后端各有真实执行点：rg 分支 = 本机提交，grep 分支 = CI。
+if [ "$has_rg" -eq 0 ]; then
+  echo "ℹ️  [后端] 未找到 ripgrep，回退 grep -E（判据等价，仅速度不同；PINI_RG=<path> 可指定）"
+fi
 
 # 两个后端须**判据等价**（否则换后端就换结论）。差异有二：
 #   1. 隐藏目录：rg 默认跳过，grep 无此概念 ⇒ rg 侧补 --hidden 对齐。
