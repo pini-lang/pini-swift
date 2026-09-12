@@ -2120,6 +2120,32 @@ private func debugPause(at loc: SourceLocation) throws {
  }
  }
 
+ /// `len(x)` 的**唯一事实源**（P2 / G4 提取，纯搬移，行为零变化）。
+ ///
+ /// 提取理由同 `stringifyValue` / `binaryValue`：HIR 侧的 `lenCall` 节点必须
+ /// 复用本函数，否则「`len` 是什么」会出现第二个定义处，两引擎可静默漂移。
+ ///
+ /// `String` 按**字素簇**计数（`Character` 视图），这是契约（`ADR-019 D1`）；
+ /// LLVM 侧现存按码点计数，属已登记的 B 组偏离，不在本函数内「对齐」
+ /// ——判准要求改的是 LLVM 侧。
+ ///
+ /// 错误位置沿用原内联实现的 `fileName: ""`（而非 `<builtin>`）：本删除是纯搬移，
+ /// 改动诊断文本会改变 stderr，而 stderr 形状已进入三通道判据。
+ static func containerLength(_ value: Value) throws -> Value {
+ switch value {
+ case .tuple(_, let elements): return .int(elements.count)
+ case .array(let elements): return .int(elements.count)
+ case .dictionary(let entries): return .int(entries.count)
+ case .set(let elements): return .int(elements.count)
+ case .string(let text): return .int(text.count)
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "len 不支持的类型: \(value)",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
  /// F3（issue-prefix-increment-semantics / de-facto-grammar-pinning F3）：
  /// 前缀 `++`/`--` 语义 = 对可赋值目标（变量 / 成员 / 下标）读-改-写回，
  /// 表达式值取改写后值（Pini草稿意图，spec「前缀 ++/--」注钉定）。语句位与表达式位
@@ -3094,18 +3120,7 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  throw RuntimeError.arityMismatch(expected: fv.params.count, got: args.count, location: SourceLocation(line: 0, column: 0, fileName: ""))
  }
  if fv.name == "len" {
- switch args[0] {
- case .tuple(_, let v): return .int(v.count)
- case .array(let v): return .int(v.count)
- case .dictionary(let v): return .int(v.count)
- case .set(let v): return .int(v.count)
- case .string(let v): return .int(v.count)
- default:
- throw RuntimeError.invalidOperation(
- reason: "len 不支持的类型: \(args[0])",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ return try Interpreter.containerLength(args[0])
  }
 
  if fv.name == "is_letter" {
