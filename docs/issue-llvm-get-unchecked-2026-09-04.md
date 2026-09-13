@@ -1,8 +1,25 @@
 # Issue: LLVM 端 `get` / `unchecked` 内建方法零实现
 
-- **状态**：Open（2026-09-04 批 C2 勘测新立案，自 M2 账面拆出）
+- **状态**：Open（2026-09-04 批 C2 勘测新立案，自 M2 账面拆出；**2026-09-13 工单整理批勘误并刷新** —— 见下「勘误与刷新」节，开放面收窄为 `Dictionary.get`；证据 E-161）
 - **归属**：LLVM 后端 / 内建方法
-- **关联**：`docs/issue-host-optional-slice-2026-08-28.md`（M2 账面已出清；本缺陷为其勘测副产品）/ ADR-008（C-ABI 运行时）/ `Optional` 枚举 IR ABI（`%enum.Optional`，AggregateEmitter 已具备）
+- **关联**：`docs/spec/issue/archive/issue-host-optional-slice-2026-08-28.md`（M2 账面已出清；本缺陷为其勘测副产品）/ ADR-008（C-ABI 运行时）/ `Optional` 枚举 IR ABI（`%enum.Optional`，AggregateEmitter 已具备）
+
+## 勘误与刷新（2026-09-13 工单整理批）
+
+- **命名**：正文写的 `unchecked(i)` 是旧名。`ADR-028` D-1 表定名为 **`getUnchecked`**
+  （`Sources/PiniCore/Common/BuiltinRegistry.swift` 的注册名同此）。
+- **越界语义**：正文写「越界保持 panic」不再成立 —— `ADR-028` D-1 表把 `getUnchecked`
+  的越界定为 **UB**。
+- **验收面收窄**：`ADR-028` D-6 明示第三通道（`getUnchecked`）为**解释器专用**，
+  LLVM 端沿用 unsupported ⇒ 本单验收口径第 2 条**不再适用**，
+  「有利条件」段与「备注」段所据的旧前提随之作废。
+- **所指文件已删**：正文引用的 `Sources/PiniCore/CodeGen/Emitters/`
+  （含 `AggregateEmitter` / `StmtEmitter`）已随 M6b 翻转批整体删除；
+  现唯一发射路径为 `Sources/PiniCore/HIR/` 加 `Sources/PiniCore/CodeGen/IREmitter.swift`。
+- **已出账部分**：`xs.get(i)` / `s.get(i)`（Array / String 通道）在 HIR 侧已落地
+  （`HIRLowerer` 的成员分派 + `IREmitter.emitOptionalGet`）。
+- **剩余开放项**：`d.get(k)`（Dictionary 通道）在 HIR 侧仍抛 unsupported；
+  而契约条目 `optionalGet` 未限定类型 ⇒ 二选一：补实现，或明文缩小契约的类型范围。
 
 ## 缺陷描述
 
@@ -22,8 +39,9 @@
 
 ## 验收口径
 
-- [ ] `xs.get(i)` / `s.get(i)` / `d.get(k)` 在 LLVM 端产出与解释器一致的 `some(v)` / `none`（含 print 与 match 解构）。
-- [ ] `unchecked(i)` 裸值语义对齐，越界 panic 与解释器抛错等价。
+- [x] Array / String 通道（`xs.get(i)` / `s.get(i)`）已出账。
+- [ ] **Dictionary 通道（`d.get(k)`）仍开放** —— HIR 侧抛 unsupported。
+- [x] `getUnchecked` 条目不适用（`ADR-028` D-6：第三通道为解释器专用，LLVM 端沿用 unsupported）；本条原写的「越界保持 panic」语义亦被 `ADR-028` D-1 表改为 **UB**。
 - [ ] 双后端对比测试（clang 通道本机可验证；LLI 通道随环境）。
 
 ## 备注

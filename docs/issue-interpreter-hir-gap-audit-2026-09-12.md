@@ -26,7 +26,7 @@
   `docs/spec/adr/adr-019-unicode-char-model.md`（**字符模型裁决出处——P0c 复审的关键依据**）；
   `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Accepted 2026-09-12**）；
   `docs/spec/adr/adr-034-hir-contract.md`（**HIR 契约，Accepted 2026-09-12——本审计的裁决落点**）；
-  `docs/issue-e7-001-false-unused-warning-2026-09-12.md`（收口期立案，§7.4 观察 1）
+  `docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md`（收口期立案，§7.4 观察 1）
 - 实施工单：`docs/issue-ffi-char-rename-cchar-2026-09-12.md`（P0d 前置，`Char` 腾名）；
   `docs/issue-io-limit-from-emitter-2026-09-12.md`（P0b 立案，§5.2 A1/A2 上限的对齐后果）
 - 基线：main `361ec2c`，分支 `agent/pini-dev/hir-hub-p0`
@@ -516,7 +516,7 @@ interpreter's sunk split」——**作者知道差异存在并判为语料内一
 | 1 | **并入**（P0） | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` | 本批把证据并入既有同根因族工单，并在其中**回答该工单遗留的关键未知项**（切片与 `substring` 是否共用发射代码）。工单标题所限的「切片」范围已不足以承载实测结论（实际是 `len` / 切片 / `substring` / `contains` / `split` 五处），故**扩写范围与证据而不改文件名**（改名会破坏入向引用） |
 | 2 | **维护**（P0c） | 同上 | 订正被推翻的根因结论、移除「待语言层裁决」前置 |
 | 3 | **新建**（P0c） | `docs/issue-ffi-char-rename-cchar-2026-09-12.md` | P0d 前置（`Char` 腾名） |
-| 4 | **新建**（收口，2026-09-12） | `docs/issue-e7-001-false-unused-warning-2026-09-12.md` | §7.4 观察 1 —— **本批立案，仍不修** |
+| 4 | **新建**（收口，2026-09-12） | `docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md` | §7.4 观察 1 —— **本批立案，仍不修** |
 | 5 | **无需新立** | `docs/issue-diagnostic-channel-parity-2026-09-12.md` | §7.4 观察 2 已被该工单覆盖 |
 
 **未实施任何缺陷修复** —— 按「制定计划 → 完成计划 → 记下缺陷 → 提出工单 → 维护/删除工单」的

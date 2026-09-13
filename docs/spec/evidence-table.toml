@@ -20,7 +20,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 dangling_policy = "引用已清理的 ID 属预期：归档件、已关闭工单、ADR 与 spec 的**历史登记行**保留其当时的编号（不追改）；**活跃断言与源码注释不得引用当前表外的 ID**（2026-09-12 口径，依据见 docs/spec/adr/adr-032-try-else-migration.md 同日节）"
-last_refresh = "2026-09-12T01:12+08:00"
+last_refresh = "2026-09-13T10:00+08:00"
+refresh_note = "2026-09-13 工单整理批：新增并现跑重筛 E-161（doc-links 489 引用全绿 · comment-lint L1–L6 全绿 · evidence_sweep --check 通过）；**存量条目未重新验证，按其自身 validated_at 判定**。"
 last_sweep = "2026-09-13T00:35:00+08:00"
 dangling_ids = ["E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-110", "E-111", "E-112", "E-120", "E-121", "E-124", "E-128", "E-129", "E-130", "E-131", "E-132", "E-133", "E-134", "E-135", "E-136", "E-137", "E-139", "E-140", "E-141", "E-148", "E-149"]
 [[evidence]]
@@ -212,3 +213,29 @@ output = "Build clean. Eleven files and 5443 lines removed: the generator, the t
 validated_at = "2026-09-12T01:12+08:00"
 status = "STALE"
 note = "删除面先做只读盘点：待删目录仅被待删面自身引用（HIRLowerer 里出现的 ClosureEmitter 全是注释中的历史指代，非类型依赖），保留侧 IRBuilder 归 IREmitter、LLVMToolchain 与 IREmitter 归 CLI。顺序上 CLI 去门必须先于删源码，否则遗留分支引用旧生成器。b3-4（清 IRGenError 死面）按上一轮订正并入本批——该类型的生产者全在待删面内（40+ 处 throw），先删类型会编译不过。**探针分母与语义均发生变化，读历史数据时必须知道**：分母 389 → 306（b3 删掉的 83 个夹具属该套件专属输入，根列表已同批移除，否则会静默扫一根不存在的目录）；CHANGE_* 类归零，因为翻转后两臂是同一条管线，不再存在「两臂行为不同」这一分类——不得把 CHANGE 类消失读成缺口清零；FRONTEND_FAIL 41 → 12，原先「旧后端拒、新管线过」的 22 例扩张现在同管线判 OK。文本面同批订正：IR header 去掉已无对照对象的管线名，诊断门码与错误格式化去掉 legacy 指代。**遗留登记（不在本批修）**：D17 evidence-sweep 删除 12 条后 33 个证据 ID 悬空引用（hook 既定行为，建议独立卫生批）；D18 循环外 break 的运行期 fail-loud 失去断言级回归钉；D19 警告通道差异——解释器把语义警告写 stderr 而 LLVM 通道完全不输出。**未做**：未 push；未启动 LR-4（解释器统一 HIR，翻转后解锁）；未处理 docs/ 根下 12 张已 Closed 未归档工单；未改归档件与证据表历史记录。"
+[[evidence]]
+id = "E-161"
+claim = "Ticket-sweep batch: every host-level ticket and the one spec-level proposal is re-verified against source, registry and ADR evidence; the five that are substantively complete are archived to docs/spec/issue/archive with their status lines backfilled, four in-place status lines that had drifted are refreshed, and sixteen stay open with their open items enumerated"
+artifacts = [
+  "docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md",
+  "docs/spec/issue/archive/issue-binop-dead-cases-2026-09-04.md",
+  "docs/spec/issue/archive/issue-prefix-increment-semantics-2026-09-04.md",
+  "docs/spec/issue/archive/issue-host-optional-slice-2026-08-28.md",
+  "docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md",
+  "docs/issue-ffi-module-2026-08-27.md",
+  "docs/issue-tuple-annotation-arity-mismatch-2026-09-10.md",
+  "docs/issue-llvm-get-unchecked-2026-09-04.md",
+  "docs/issue-lexer-gap-closure-2026-08-29.md",
+  "Sources/PiniCore/Semantic/SemanticAnalyzer.swift",
+  "Sources/PiniCore/AST/Expressions/BinaryExpr.swift",
+  "Sources/PiniCore/Interpreter/Interpreter.swift",
+  "Sources/PiniCore/Type/TypeInference.swift",
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "docs/spec/evidence-table.toml",
+]
+command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check"
+output = "31 documents triaged (29 host-level tickets, 1 spec-level proposal, plus the plan and audit carriers held by design): 5 archived, 16 kept open, 9 untouched by design. doc-links: 489 references checked, all pass. comment-lint: L1-L6 all green (L6 adjudicates every ADR ID cited by the new status lines). evidence_sweep --check: parse plus schema ok, entries 10 -> 11, status drift 0, advisory cap 100 within, and E-161 stops being reported as a dangling citation."
+validated_at = "2026-09-13T10:00+08:00"
+status = "FRESH"
+note = "核验方式 = 5 个只读核验单元并行（全程未编译、未跑探针），每条结论都落到「文件路径 + 符号名」，并标注证据级别。① 归档 5 张：`issue-e7-001-false-unused-warning`（`SemanticAnalyzer` 的成员调用接收者分支，提交 3ce97c0）、`issue-binop-dead-cases`（`BinaryExpr.swift` 三个死面 case 已删，spec 规则 3.11 已钉定，b6fe569）、`issue-prefix-increment-semantics`（统一读-改-写回 + 静态拒不可赋值目标 + 四测试 + CHANGELOG）、`issue-host-optional-slice`（解释器三通道下标语义落地，文中 20 个 M2 XCTSkip 全仓已无痕）、`issue-gated-stale-fixtures`（四夹具与后端语义修复落地，门判据由 LLVMGate 运行期化，66b0c9c）。② 时间线矛盾合并 1 处：`issue-gated-stale-fixtures` 头部并存 Open 与 Closed 两行状态，合并为一行并注明末句属文本滞后。③ 状态刷新 4 张（留原位）：`issue-ffi-module`（B1-B3 与 P3 已出账、P2 已转出，真开放项只剩 P1/P4）、`issue-tuple-annotation-arity-mismatch`（「源码未改」失真，G2 已改 TypeInference 两处而三处空标签生产点仍在）、`issue-llvm-get-unchecked`（命名 unchecked 应为 getUnchecked、越界语义已由 ADR-028 D-1 改为 UB、D-6 把该通道划为解释器专用、正文所指 CodeGen/Emitters 已随 M6b 删除，开放面收窄为 Dictionary.get）、`issue-lexer-gap-closure`（补记状态行：核心 LANDED / 六节残余八项实测仍成立）。④ 入向引用 18 处 / 11 文件重定向到 archive 新位置；源码注释与 CHANGELOG 里的裸名溯源标签按判据保留（加路径会撞注释门禁的文档名字面规则）。⑤ 判为仍开放的 16 张逐张给出开放项，头部状态行均未滞后。⑥ 未做：未 push；未改动 Sources/Tests/examples 的任何内容；未处理非 .md 形态的死引用（经裁决按历史标签保留）；`issue-selfhost-comment-lint-defects` 漏记其一（宿主二次加固引入的 PINI_RG 探测差异），本轮未并入，留待下一批。"
+

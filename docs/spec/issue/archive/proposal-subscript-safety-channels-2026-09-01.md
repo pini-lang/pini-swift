@@ -30,7 +30,7 @@ let 元素 = unsafe 数组.getUnchecked(5) ; 不安全，越界 UB
 | 项 | 现状 | 证据 |
 |---|---|---|
 | 下标读越界 | **返回 `Optional.none`（nil）**，不是 panic | `Interpreter/SubscriptStrategies.swift:36,51,124`：「安全通道越界返回 Optional.none」「读通道越界返回 nil（P2-C），读写不对称是有意设计」 |
-| 下标读类型 | 类型层推断为 `Optional<T>`（P2-E） | `TypeInference`；`docs/issue-host-optional-slice-2026-08-28.md:16` |
+| 下标读类型 | 类型层推断为 `Optional<T>`（P2-E） | `TypeInference`；`docs/spec/issue/archive/issue-host-optional-slice-2026-08-28.md:16` |
 | `.get(i)` 成员方法 | **不存在** | `grep '"get"' Sources/PiniCore/` 零命中 |
 | `.getUnchecked(i)` | **不存在** | 全仓零命中 |
 | `unsafe <expr>` 消耗点 | **已存在且在用**（无需新增语法面） | ADR-020 D6 / ADR-015；`examples/array_basic.pini:23` `print(unsafe m[0]![1]!)`、`examples/collections.pini:18` |

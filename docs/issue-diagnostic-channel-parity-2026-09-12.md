@@ -50,7 +50,7 @@ P1-4「探针扩三实通道」在 `tools/hir-parity-probe.py` 新增判据
 
 即：一个 **HIR 侧仅有一条（且很可能是假阳性）警告、执行完全正确**的夹具，
 会被登记为**翻转阻塞**。`E7-001` 的假阳性面见
-`docs/issue-e7-001-false-unused-warning-2026-09-12.md`（成员调用接收者不计入使用），
+`docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md`（成员调用接收者不计入使用），
 而成员调用是常见形态 ⇒ 这条路径不罕见。
 
 **当前不再不可达（2026-09-13 实测证伪，LR-4 P2a G2 取得）**：立案时以
