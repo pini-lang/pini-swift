@@ -238,4 +238,25 @@ output = "31 documents triaged (29 host-level tickets, 1 spec-level proposal, pl
 validated_at = "2026-09-13T10:00+08:00"
 status = "FRESH"
 note = "核验方式 = 5 个只读核验单元并行（全程未编译、未跑探针），每条结论都落到「文件路径 + 符号名」，并标注证据级别。① 归档 5 张：`issue-e7-001-false-unused-warning`（`SemanticAnalyzer` 的成员调用接收者分支，提交 3ce97c0）、`issue-binop-dead-cases`（`BinaryExpr.swift` 三个死面 case 已删，spec 规则 3.11 已钉定，b6fe569）、`issue-prefix-increment-semantics`（统一读-改-写回 + 静态拒不可赋值目标 + 四测试 + CHANGELOG）、`issue-host-optional-slice`（解释器三通道下标语义落地，文中 20 个 M2 XCTSkip 全仓已无痕）、`issue-gated-stale-fixtures`（四夹具与后端语义修复落地，门判据由 LLVMGate 运行期化，66b0c9c）。② 时间线矛盾合并 1 处：`issue-gated-stale-fixtures` 头部并存 Open 与 Closed 两行状态，合并为一行并注明末句属文本滞后。③ 状态刷新 4 张（留原位）：`issue-ffi-module`（B1-B3 与 P3 已出账、P2 已转出，真开放项只剩 P1/P4）、`issue-tuple-annotation-arity-mismatch`（「源码未改」失真，G2 已改 TypeInference 两处而三处空标签生产点仍在）、`issue-llvm-get-unchecked`（命名 unchecked 应为 getUnchecked、越界语义已由 ADR-028 D-1 改为 UB、D-6 把该通道划为解释器专用、正文所指 CodeGen/Emitters 已随 M6b 删除，开放面收窄为 Dictionary.get）、`issue-lexer-gap-closure`（补记状态行：核心 LANDED / 六节残余八项实测仍成立）。④ 入向引用 18 处 / 11 文件重定向到 archive 新位置；源码注释与 CHANGELOG 里的裸名溯源标签按判据保留（加路径会撞注释门禁的文档名字面规则）。⑤ 判为仍开放的 16 张逐张给出开放项，头部状态行均未滞后。⑥ 未做：未 push；未改动 Sources/Tests/examples 的任何内容；未处理非 .md 形态的死引用（经裁决按历史标签保留）；`issue-selfhost-comment-lint-defects` 漏记其一（宿主二次加固引入的 PINI_RG 探测差异），本轮未并入，留待下一批。"
+[[evidence]]
+id = "E-162"
+claim = "Two live ADR-021 contract violations in host string scanning are confirmed by measurement and pinned to symbol. The regular-string path implements 'implicit terminate at line end' in code (Lexer.swift:571-576, the comment cites ADR-021) while the interpolation scanner throws on the same condition (:673-675), so one discipline landed on one branch and was missed on its neighbour: H1 is the backslash-then-EOF guard at :580, H2 is the interpolation path's three throw sites at :639/:674/:679. The E1 diagnostic domain (E1-001/002/003) is documented in docs/spec/diagnostic-codes.md but absent from Diagnostics.en.toml (70 sections, E2 through E7 only), so E1 text is rendered by a hardcoded fallback in ErrorFormatter.swift. Filed as one open ticket with the E1 gap registered as a rider; no source, corpus or spec text changed"
+artifacts = [
+  "docs/issue-lexer-string-eof-boundary-2026-09-13.md",
+  "Sources/PiniCore/Lexer/Lexer.swift",
+  "Sources/PiniCore/Common/ErrorFormatter.swift",
+  "Sources/PiniCore/Resources/Diagnostics.en.toml",
+  "Sources/PiniCore/Resources/Diagnostics.zh.toml",
+  "docs/spec/diagnostic-codes.md",
+  "docs/issue-lexer-gap-closure-2026-08-29.md",
+  "docs/issue-selfhost-probe-plan-2026-09-13.md",
+  "examples/selfhost/examples/lex_corpus.pini",
+  "examples/selfhost/.pini/baseline",
+  "docs/spec/evidence-table.toml",
+]
+command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check"
+output = "Probe fixtures run through .build/debug/pini and /tmp/pini-build/debug/pini, both agreeing: unterminated interpolation and backslash-then-EOF exit 1 with E1-002, while the unterminated plain string, a lone invalid character, an unclosed block comment and five malformed numeric literals all exit 0. Lexer.swift carries six throw sites in total; three of them sit inside scanInterpolationExpression. Diagnostics.en.toml resolves to 70 sections split E2 23 / E3 11 / E4 14 / E5 15 / E6 5 / E7 2, with no E1 section, and the E1-002 message resolves to a hardcoded case in ErrorFormatter.swift. doc-links: 520 references checked, all pass, after the selfhost plan's two bare relative paths were disambiguated (that gate had been red on an untracked document). comment-lint: L1-L6 all green. evidence_sweep --check: parse plus schema ok, entries 11 -> 12, status drift 3, advisory cap 100 within."
+validated_at = "2026-09-13T22:49+08:00"
+status = "FRESH"
+note = "违例面收窄到两条同族路径，均已定位到符号：H1 = 常规字符串路径的反斜杠后 EOF 守卫（Lexer.swift:580）；H2 = scanInterpolationExpression()（:622-681）体内三处 throw（:639 内层字符串反斜杠后 EOF / :674 遇换行且 depth>0 / :679 循环退出即 EOF）。本单的诊断价值在**结构**而非计数：相邻代码在同一契约上分叉 —— :571-576 明文实现了 ADR-021（注释直引 ADR-021，换行即 break），而 :673-675 同一情形却 throw。并列登记未违反项以免把 ADR-021 读成普遍失效：:539/:545 的 invalidCharacter 在实测输入上不可达（0x / 0b / 1e / 1.2.3 / 0xZZ 全部 rc=0 且按 D1 回退）。**订正两条既有记录**（本批实测推翻）：① 2026-09-13 L5 日志记该插值函数 4 处 throw，源码实测为 3 处；② 同日志记 tokens 对词法错误恒 exit 0，实测为多数成立、H1/H2 是反例（该断言过度概括）。盲区三重：语料 123 行仅 1 处插值且闭合（:93）、门禁只对拍双侧都能出 token 的输入、rc 语义在两条路径上不一致。**语料刻意未落**：落未闭合用例会使 L0 立刻转红，而 red-window 红名单机制（selfhost 计划 §6.1）尚未获裁 ⇒ 落语料即要么违 ADR-024 D9 要么开未授权红窗口，故语料随修复一起落。修复侧留一条待裁：插值路径若照 :575 隐式终止会产生语义歧义（插值体为不完整表达式），三路线 A 降级为普通 string token（本单倾向，与 ADR-021 D1 自述理由一致）/ B 隐式补右括号（触 D9）/ C 在 ADR-021 内开显式例外（契约级，走 spec §1.3）。**未做**：未改任何源码与语料、未跑构建、未跑全量回归、未改任何 ADR 或 spec 正文；H1/H2 的修复归属格未定。"
 
