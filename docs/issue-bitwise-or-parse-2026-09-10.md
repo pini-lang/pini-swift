@@ -4,7 +4,7 @@
 - 发现来源：LLVM 重写 M5 G15 格（compound-assign 语料差分 fixture 编写时踩中，
   原记录为「宿主级解析器缺陷」）
 - 关联：spec §A.1.2（词法记号表）/ §A.2.5（表达式层 5）/ §A.4 规则 3.13；
-  同族工单 `docs/issue-binop-dead-cases-2026-09-04.md`（运算符面收敛）
+  同族工单 `docs/spec/issue/archive/issue-binop-dead-cases-2026-09-04.md`（运算符面收敛）
 
 ## 复现（实测，2026-09-10）
 

@@ -1211,7 +1211,7 @@ match-binding   ::= '(' [IDENT ':' IDENT | IDENT] {',' [IDENT ':' IDENT | IDENT]
 
 - 命令：`swift test --disable-sandbox --scratch-path /tmp/pini-build`（CI 为第二执行点）。
 - 判据：全量通过，含解释器 / LLVM 后端（`RuntimeBackendTests` 三执行路径锁步）/ 示例门禁 / SwiftTesting 宿主。
-- **已知豁免**：4 个 lli/clang 门控测试仅在门开时失败（D3 夹具仍是 G57 前字典 `:` 记法等既有潜伏，非当批回归）——挂账 `docs/issue-gated-stale-fixtures-2026-09-05.md`，修复前不计入门禁判据。
+- **已知豁免**：4 个 lli/clang 门控测试仅在门开时失败（D3 夹具仍是 G57 前字典 `:` 记法等既有潜伏，非当批回归）——挂账 `docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md`，修复前不计入门禁判据。
 - 最近实测（2026-09-05，两态均验）：门关态 1198 执行 / 0 失败 / 112 skipped；门开态 1198 执行 / 4 失败（全部命中上述豁免清单）/ 0 其余失败——门判据跨构建态不稳定（既有记载），两种态均视为门禁通过。
 
 ---

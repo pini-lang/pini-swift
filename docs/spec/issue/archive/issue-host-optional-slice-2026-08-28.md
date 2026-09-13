@@ -1,7 +1,7 @@
 # Issue: Host Optional/Subscript runtime incoherence (P2-E incomplete)
 
 - Date: 2026-08-28
-- Status: INTERPRETER-FIXED / LLVM-M2-CLEARED（2026-09-04 批 C2，见文末 M2 出清记录）
+- Status: INTERPRETER-FIXED / LLVM-M2-CLEARED → **LANDED / 已归档**（2026-09-04 批 C2 落地，见文末 M2 出清记录；2026-09-13 工单整理批核验归档，证据 E-161）。两处子项去向：LLVM-M2 分歧面已由 `docs/spec/adr/adr-028-subscript-safety-channels.md` 取代；次要件 `and` / `or` / `not` 经规范判定**不登记** —— Pini 逻辑运算符为 `&&` / `||` / `!`（`docs/spec/pini-spec-v0.md` 运算符表与关键字表同此）
 - Related: P2-E (spec G48); issue-lexer-gaps-2026-08-28 (P2-E item); self-hosted lexer plan SHELVED pending this fix.
 
 ## Context

@@ -1,6 +1,6 @@
 # Issue: FFI 模块示例专项 — 缺陷与待办收录
 
-- **状态**：Open（部分已修复，部分待立项）
+- **状态**：Open（**2026-09-13 工单整理批刷新**：B1–B3 与 P3 已出账、P2 已转出为提案，真开放项只剩 **P1**（foreign 输出绕过 `outputSink`）与 **P4**（vendored 库跨平台工程化）；证据 E-161）
 - **提出视角**：测试工程师（examples/ffi_module 示例与 FFIModuleTests 门禁交付过程中发现）
 - **关联交付**：`examples/ffi_module/`、`Tests/PiniTests/FFIModuleTests/FFIModuleTests.swift`
 - **范围**：本 issue 不拆分子工单，统一收录 FFI 示例独立性改造中遇到的全部缺陷、坑与建议。
@@ -61,8 +61,8 @@
 
 - [x] B1/B2/B3 已修复并验证
 - [ ] P1 决定修复方案（接回 outputSink 或 spec 明确）并落代码/文档
-- [ ] P2 形成类型系统设计提案（ADR 或 spec 修订）
-- [ ] P3 规范 §2.7 补全上述 G1/G2/libc 保留名/search_paths 语义
+- [x] P2 已转出为正式提案（`docs/spec/issue/proposal-comparison-width-2026-09-04.md`），本工单不再承载设计内容
+- [x] P3 已出账（spec §2.7 已载 G1 / G2 / libc 保留名 / search_paths 语义；见 §三 P3 收口注记）
 - [ ] P4 提供跨平台构建脚本或 `.gitattributes` 标记
 
 ---

@@ -2,7 +2,7 @@
 
 - 状态：Accepted（2026-09-07；**同日就地修订**：初版包含基于错误测量的「假测试先行清除」，
   该部分已撤回并从历史中删除，详见 §6 与 §2.3）
-- 关联：集合后端运行时（`bk_*` C ABI 由来）、`docs/issue-gated-stale-fixtures-2026-09-05.md`
+- 关联：集合后端运行时（`bk_*` C ABI 由来）、`docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md`
 - 影响面：`Sources/PiniCore/CodeGen`（5677 行）、`Tests/PiniTests`（测试资产）
 
 > 本 ADR 记**约束与判据**，不记操作细节。论证部分全部为实测值，可复现；

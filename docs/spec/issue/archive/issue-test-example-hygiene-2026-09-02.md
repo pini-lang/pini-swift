@@ -105,7 +105,7 @@
 | `docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md` | （有状态：已批准，落档进行中）（**已核实 2026-09-04：补状态 LANDED，由 `spec/issue/` 归档至 `archive/`**） |
 | `docs/spec/issue/archive/issue-bootstrap-gap-remediation-2026-08-30.md` | 104（**已核实 2026-09-04：对账 Drift Ledger 全 CLOSED（G-P2 MITIGATED=登记契约），补 LANDED 归档**） |
 | `docs/issue-ffi-module-2026-08-27.md` | 78（有状态：Open——**实测仍开放**：P1–P4 待办真实存在，保留） |
-| `docs/issue-host-optional-slice-2026-08-28.md` | 136（**实测仍开放**：LLVM-M2 未落地，保留） |
+| `docs/spec/issue/archive/issue-host-optional-slice-2026-08-28.md` | 136（**2026-09-04 记「实测仍开放：LLVM-M2 未落地」→ 2026-09-13 沿革订正**：LLVM-M2 分歧面已由 `docs/spec/adr/adr-028-subscript-safety-channels.md` 取代，该单已 LANDED 并归档；本行保留为当批核验留档） |
 | `docs/issue-lexer-gap-closure-2026-08-29.md` | 54（**实测仍开放**：§6 残余挂账为活跃载体，保留；2026-09-04 收编 lexer-gaps 残余 P3-A） |
 | `issue-lexer-gaps-2026-08-28.md` | 99（**已核实 2026-09-04：P1/P2 落地、P2-C/E 被 ADR-028 改判、残余 P3-A 移入 lexer-gap-closure §6，按用户裁决删除，见 git 历史**） |
 | `docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md` | 50（**实测仅余 LLVM 端挂账（与 lexer-gap-closure §6 重复登记，一致），保留**） |

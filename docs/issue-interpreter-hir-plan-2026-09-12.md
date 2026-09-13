@@ -496,7 +496,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 - **记缺陷（累计 5 张，均不即修）**：
   `docs/issue-ffi-char-rename-cchar-2026-09-12.md`（P0c 立案，P0d 前置，实测影响面 =
   3 处代码 + 1 注释，零语料零测试）；
-  `docs/issue-e7-001-false-unused-warning-2026-09-12.md`（**收口期立案**，诊断假阳性，
+  `docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md`（**收口期立案**，诊断假阳性，
   根因**未验证**仅登记假设）；
   `docs/issue-io-limit-from-emitter-2026-09-12.md`（**P0b 立案**，A1/A2 上限源于发射器尺寸、
   其中 A2 为静默数据丢失；当前**零用户受害**，故立案而不急修）；
@@ -645,7 +645,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
       ① **`E7-001` 假阳性根因已验证**（P1-4 顺带取得 E1 证据）：`SemanticAnalyzer.swift:741`
       的 `.call` 分支不检查 `.member` callee 的**对象表达式**（对照 `:759` 的 `.member` 分支**有**
       `checkExpression(object)`）⇒ 成员调用接收者从不进 `requireDefined` ⇒
-      `usedSymbols` 不登记 ⇒ 假告警。**已回填 `docs/issue-e7-001-false-unused-warning-2026-09-12.md`**
+      `usedSymbols` 不登记 ⇒ 假告警。**已回填 `docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md`**
       （假设 → 已验证根因，待验证项 1/2 结清，仅余阳性对照）。**不修**。
       ② **探针判据 `GAP_HIR_ENGINE` 过宽**：`run-llvm` 对警告**静默**而 `run` **打印**
       （通道奇偶差异），叠加本步新槽位 ⇒ 存在「HIR 侧仅一条警告却被计为**翻转阻塞**」的
