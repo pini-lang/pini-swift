@@ -1190,3 +1190,123 @@ swift-testing 45 tests / 14 suites 通过；`comment-lint L1–L6 全绿`。
 
 未重跑全量验证（读数同树、0.0 天新鲜，重跑无增量）· 不做 P2b 任何实现 ·
 未碰契约与节点集 · 未改 AST / LLVM 侧 · **未修任何缺陷**（只归因登记）· 未收窄探针计数器 · 未 push。
+
+---
+
+## 11. P2b 收尾批（IO 语义格 → G9）：规划与本步实测（2026-09-14）
+
+> 本批 = **两格连做**：先 **IO 语义格**（改解释器，对齐契约已裁的三项 IO 语义），
+> 再 **G9**（HIR 实现三节点）。分支 `agent/pini-dev/hir-io-semantics-g9`（基点 `3a11cbf`）。
+> **用户三项裁定（2026-09-14）**：**上限照裁复刻**（接受「已知缺陷固化到两侧」这一代价，
+> 上限合理性另案）· **EOF 并入本格一并钉死** · **两格连做**（同分支、两个独立提交、各自独立验收）。
+
+### 11.1 为什么 IO 语义格必须先于 G9（三条理由，第三条为本批新发现）
+
+1. **语义源冲突**：HIR 铁律 = 镜像解释器（不造第二份语义源）；而契约已裁「统一到 LLVM 侧」、
+   偏离方是解释器（三项实测确认未改）⇒ 先做 G9 只能二选一，两条都错：
+   照当前解释器 ⇒ 复刻**待弃**语义、**返工**；照契约 ⇒ 两侧仍不一致 ⇒ 直接落 `FLIP BLOCKER`（§2.2 机制）。
+2. **顺序本身即修复**：先改解释器 ⇒ 两侧语义同一 ⇒ 才能补出**有区分力**的夹具并让它们两侧都绿。
+3. ⭐ **判据结构性失明（本批实测，见 §11.3）**：现有**全部** IO 夹具都落在「分歧不可观测」的切片上
+   ⇒ 若先做 G9，三项的**变异反证会全绿而实为假绿**（同「裸 `break` 用例」那一族的机制）。
+
+### 11.2 S0 起点实测（2026-09-14，可复现）
+
+| 项 | 实测值 | 对账结论 |
+|---|---|---|
+| 打靶点（权威源 = 源码**调用形态**，非词频） | **3**：`fileWrite` / `fileRead` / `readLine` | 与 `state-readings.json` 一致 |
+| 探针全量基线 | 316 夹具：`OK 241` / `PACKAGE_MEMBER 27` / `GAP_HIR_ENGINE 20` / `FRONTEND_FAIL 12` / `GAP_EXEC 7` / `HIR_ENGINE_TODO 6` / `OK_HARNESS 3`；**FLIP BLOCKERS 27**（= 20 + 7） | 与 G8 收口条**逐槽吻合** |
+| 基线冻结 | 探针产物另存为 `g9-pre-full-3a11cbf.tsv`，md5 `516a9d0e0626b78bcb85dd8111c5490b` | 探针默认路径**每次运行都会覆盖** ⇒ 跑完立即冻结改名（G6 曾因此静默丢失一份全量基线） |
+| 二进制同态 | 二进制报出的未实现节点集 = `{fileRead, fileWrite, readLine}`，**恰等于**源码打靶点集（反向差集为空） | ⇒ 二进制与当前源码树**同态**，本步读数有效 |
+| 全量测试基线 | 1265 tests / 3 skipped / 0 failures（at `f44bf70`） | 本步未重跑（读数同树、0.0 天新鲜；全量只在收口批跑） |
+
+### 11.3 S1 夹具面实测（⚠️ 两处覆盖盲区）
+
+**(a) 探针面 6 份 —— 「三项差异」6/6 全部不可观测**：
+
+| 夹具 | 首缺口 | 为何不可观测 |
+|---|---|---|
+| `HIRDifferentialTests/testDiffReadLine.pini` | `readLine` | stdin 注入 `"hello_stdin"`，**无行终止符** ⇒ 剥 / 不剥**同形** |
+| `IRExecutionTests/testReadLineViaLLI.pini` | `readLine` | 同上（无换行） |
+| `HIRDifferentialTests/testDiffIoFile.pini` | `fileWrite` | `writeFile` 为**裸语句**、返回值未使用 ⇒ `.null` vs 整型码**同形** |
+| `IRExecutionTests/testWriteReadFileViaLLI.pini` | `fileWrite` | 同上裸语句；读回的**内容短** ⇒ 上限**同形** |
+| `HIRDifferentialTests/testDiffIoProgramBase.pini` | `fileRead` | 断言只比 stdout；`writeFile` 亦为裸语句；文件短 |
+| `examples/io.pini` | `fileWrite` | 裸语句；`readLine` 为**注释态** |
+
+**(b) 探针面外：`Tests/PiniTests/IOTests` 不在探针的 6 根内**
+（根集见 `tools/hir-parity-probe.py`）⇒ 该目录的夹具对探针**结构性不可见**，
+只有全量测试能守。而**两个可观测者恰在此目录**：
+`testReadLine`（断言 `"world\n"`，不剥换行后应为 `"world\n\n"`）与
+`testReadLineEOF`（EOF ⇒ 空串，断言 `"\n"`）。
+⇒ **受害面必须靠全量测试守；探针读数不能代替它**（判据的粒度决定它看不见什么）。
+
+### 11.4 `readLine` 在 EOF 处的语义（外部调研 → 裁定）
+
+- **表达分三派**（16 种语言）：**空值派**（Swift `String?` → nil · Kotlin null ·
+  Java `BufferedReader` null · C# null · Ruby nil · Perl undef · Rust `lines()` → None ·
+  C `fgets` → NULL）· **空串派**（仅 Python `f.readline()` / `sys.stdin.readline()`）·
+  **异常派**（Python `input()` EOFError · Ada `End_Error` · Java `Scanner` NoSuchElementException）；
+  另有**计数派**（Rust `read_line` → `Ok(0)` · Go `ReadString` → `(部分数据, io.EOF)`）。
+- ⭐ **Python 空串派成立的前提**（其官方文档原话）：**行终止符保留在返回值里** ⇒
+  「空行 = `'\n'`、EOF = `''`」**不同形**；**剥掉换行则退化为歧义**（该 API 的经典坑）。
+- ⭐⭐ **本格要做的改造（契约已裁「行终止符不剥离」）恰好补上了这个前提**：
+
+  | 状态 | 空行 | EOF | 可区分？ |
+  |---|---|---|---|
+  | 现状（剥换行） | `""` | `""` | ❌ 歧义 |
+  | 改造后（不剥） | `"\n"` | `""` | ✅ 无歧义 |
+
+  ⇒ Pini 与 Python 模型**同构**，空串**唯一指示** EOF。这不是巧合，是同一设计。
+- **LLVM 侧现状不是「另一种语义」而是 UB**：`IREmitter` 的 `readLine` 发射直接把 `fgets`
+  返回的 `i8*` 交出，NULL 亦照走 `%s` ⇒ **没有可统一之物** ⇒ 判准在**本点上不适用**
+  （其「一侧无定义」边界）⇒ 按最佳实践另定，并在契约写明。
+- **裁定（2026-09-14）：并入本格一并钉死** —— 契约补写 EOF 语义 + LLVM 侧加 NULL 守卫
+  （NULL → 空串）；解释器侧**不动**（现状即正确）。
+- **代价实测很小**：一处 emitter 守卫；`readLine` **不在 golden IR 覆盖内**
+  （实测无任何 golden / `.ll` 文件含 `fgets`）⇒ **不动 golden**。
+
+### 11.5 计划（两格步骤）
+
+**格 1 · IO 语义格**：
+S0 起点实测 ✅ → S1 夹具面实测 ✅ →
+**S2** 改解释器三项（`readLine` 不剥 + 256 B 上限 · `readFile` 64 KiB 静默截断 ·
+`writeFile` 返整型码）+ **两处尺寸常量单源化**（256 / 65536 与 emitter 共享，避免两个数字各自漂）✅ →
+**S3** LLVM 侧 EOF 守卫 ✅ → **S4** 受害测试同步 ✅ →
+**S5** spec §1.3 落地（写 `docs/CHANGELOG.md` 迁移说明 —— 实测**目前零记载**；
+契约 A 组三项状态「须改」→「已对齐」；补写 EOF 语义）✅ →
+**S6** 验证（全量 + 三通道 + 契约 `clean`）✅ → **S7** 证据登记 + 提交。
+
+S6 三项实测（2026-09-14，二进制 md5 `038844789ce20435ef2c161a31998bd9`）：
+全量 **1267 tests / 3 skipped / 0 failures**（G8 基线 1265，+2 = 本格新增两测试）·
+契约 `clean`（三锚点 60/60）· 三通道全量重跑 **316 夹具、verdict 零漂移**
+（`OK` 241 / `PACKAGE_MEMBER` 27 / `GAP_HIR_ENGINE` 20 / `FRONTEND_FAIL` 12 / `GAP_EXEC` 7 /
+`HIR_ENGINE_TODO` 6 / `OK_HARNESS` 3，`FLIP BLOCKERS` 27 持稳、进程残留 0），
+逐列对账后全表**仅 2 行 1 列**变化 —— `testReadLineViaLLI` 与 `testDiffReadLine` 的 `l_len`
+**7 → 1**，即 LLVM 臂从打印 `(null)`（7 字节）改为空串换行，与冻结参照臂的 `a_len=1` 对齐；
+两行的 `h_rc=1`（`readLine` 未实现）**未变** ⇒ 格 2 的 G9 面未被本格动过。
+
+**格 2 · G9**：S0 起点实测 → S1 夹具面实测 + **补有区分力的夹具** →
+S2 实现三节点（镜像解释器，照格 1 落地后的新语义）→ S3 验证（族转绿 + **闭合账目** +
+全量回归 + 契约 `clean`）→ S4 **变异反证两级** → S5 收口批。
+
+### 11.8 格 2 开工检查项（由格 1 实证带出）
+
+**差分 harness 的两个 stdout 捕获点都有「先绑管道、待程序结束才排空」的定长管道，
+容量 = macOS 的 64 KiB，恰与本格对齐的 `readFile` 上限同值** ⇒ 夹具若把超限内容
+**打印出来**断言，会在**两条通道同时死锁**（本次实测症状：测试挂住、测试日志因块缓冲
+停在上一行不动、采样栈叶子停在 `fwrite`→`__write_nocancel`）。两处：`IOTests.runProgram`、
+`HIRDifferentialTests.runNewPipeline` 与 `runInterpreter`。
+**格 2 写法**：要断言大输出的**长度**就用 `len(...)`，不要把内容打出来（格 1 的
+`testReadFileLen` 即此形态）。`IOTests.runProgram` 已就地写入该注记；差分侧留待格 2 自行补。
+
+**本批验收判据**：打靶点 **3 → 0** · P2b 三格全绿（**17 缺口消化完**）· 闭合账目成立 ·
+阻塞槽**零新增** · 全量 0 失败 + 契约 `clean` + 探针零进程残留。
+
+### 11.6 不做范围（本批）
+
+不碰**路径基准**（AOT 模型依赖，属判准的第三类边界，停损 7）· 不裁决 **IO 上限本身的合理性**
+（另案 `docs/issue-io-limit-from-emitter-2026-09-12.md`；本格**只做对齐**）·
+不做 `stringSplit` 格 / 字符串字节语义格 / 取址格 · 不重新设计 `fileWrite` 的返回类型 · 未 push。
+
+### 11.7 本步未做
+
+未改任何源码 · 未碰契约 · 未跑全量（读数新鲜）· 未提交（本节与实现同批提交）。

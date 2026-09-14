@@ -8,6 +8,7 @@
 > 批 7（远程 tap）当时未登记，此处一并补上；批 8 为 G52 工单的收尾补修。
 
 ### Breaking
+- **IO 三项语义对齐到 HIR 契约（2026-09-14，P2b「IO 语义格」）**：`ADR-034` D3 的 A 组三项由「已裁、解释器未改」落地为两侧一致——**改的是解释器侧**，LLVM 侧维持不变。用户可见变化三条：① **`readLine` 不再剥离行终止符**（输入 `"line\n"` 现返回 `"line\n"`，此前返回 `"line"`），且超 **255 字节**的行被截断；② **`readFile` 上限 65536 字节、超出静默截断**（此前无上限——读大文件会返回不完整内容而无任何提示）；③ **`writeFile` 返回写操作整型结果码**（成功 `0`），不再是 void/`null`。另修 LLVM 侧 `readLine` 在输入耗尽时的未定义行为：`fgets` 的 NULL 此前被直接交给 `%s`，实测打印 `(null)`（7 字节）而解释器输出空串（1 字节），现两侧一致为空串。两处尺寸常量单源化为 `Sources/PiniCore/Common/IOLimits.swift`（解释器与发射器共用，防各自漂）。**迁移面实测零受害**：全仓无超 64 KiB 的 `.pini`、selfhost 语料均 ~2 KiB，受害测试期望值已随改（`Tests/PiniTests/IOTests/`）。上限本身的合理性**未裁**、另案：`docs/issue-io-limit-from-emitter-2026-09-12.md`（含**超长行流位置语义**补记——该分歧仍存在）。证据 E-165。
 - **LLVM 后端整体替换为 HIR 管线（2026-09-12，M6b 翻转批）**：旧的直接发射后端（`IRGenerator` / `IRTypeMapper` / `IRGenError` / `Emit/` 族，共 11 文件 5443 行）与迁移期开关 `PINI_HIR_PIPELINE` 一并删除，`emit` / `compile` / `run-llvm` 恒走 `HIRLowerer → IREmitter`，`HIR` 成为唯一代码生成路径。用户可见变化三条：① `emit` 对模块成员文件**恒输出包级 IR**（此前取决于迁移开关是否置位）；② LLVM 通道 `f64` 打印**不再补足 6 位小数**（`3.000000` → `3.0`，与解释器一致）；③ LLVM 通道**字符串相等判定修正**（夹具 `testDiffStringEquality` 在旧后端输出 `false`，现与解释器一致输出 `true`）。此外 **22 个旧后端拒绝的样例现可由 LLVM 通道运行**（含 `cow` / `array-basic` / `multidim` / `slice` / `try` / `ffi` / `object` / `enum-dot-case` 八个示例），1 例旧后端崩溃（`testDiffFloatPrint`）随之消失。证据 E-159 / E-160；计划与完成记录见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### Added
