@@ -642,22 +642,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .function(let function) = calleeValue else {
                 throw RuntimeError.notCallable(location: HIRExecutor.noLocation)
             }
-            guard let callable = callableBodies[ObjectIdentifier(function)] else {
-                throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: a function value with no registered body "
-                        + "(hand-built, or carried in from another run) cannot be called",
-                    location: HIRExecutor.noLocation
-                )
-            }
-            // The parent environment is the value's own, not the global one —
-            // this is the single rule that separates a closure call from a
-            // module-level one, and the reason the call path had to be
-            // parameterised rather than copied.
-            return try invoke(
-                callable,
-                parent: function.closure,
-                args: try arguments.map { try evaluate($0) }
-            )
+            return try callFunctionValue(function, args: try arguments.map { try evaluate($0) })
 
         // MARK: Strings and builtins (P2b grid G7)
 
@@ -847,14 +832,75 @@ public final class HIRExecutor: DebugHookHost {
 
         // MARK: Not implemented yet — fail loud, named.
 
-        case .pointerLoad: throw notImplemented("pointerLoad")
-        case .pointerStore: throw notImplemented("pointerStore")
-        case .addressOfVar: throw notImplemented("addressOfVar")
+        // MARK: Pointers and LazyRef (P2b grid G8)
+
+        case .pointerLoad(let pointer, _):
+            // Mirrors the interpreter's `load` builtin. The element type comes
+            // from the pointer value rather than this node's own `type`
+            // payload: the lowerer derives that payload from the same argument,
+            // so the pointer stays the single source and the two cannot drift.
+            guard case .rawPointer(let raw) = try evaluate(pointer) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "pointerLoad expects a *T pointer operand",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return try Interpreter.decodePointer(raw)
+
+        case .pointerStore(let pointer, let value, _):
+            // Mirrors the interpreter's `store` builtin: encode by the pointer's
+            // element type, truncating for narrow elements.
+            guard case .rawPointer(let raw) = try evaluate(pointer) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "pointerStore expects a *T pointer operand",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            try Interpreter.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
+            return .null
+
+        case .addressOfVar(let name, _):
+            // Interpreter parity: `&x` snapshots the value into fresh memory, so
+            // writing through the pointer does not reach the variable. The
+            // contract's true-reference semantics is the address-of grid's
+            // delivery and is deliberately not taken here — taking it would put
+            // this arm in disagreement with the frozen AST arm and turn a
+            // non-blocking slot into a flip blocker.
+            return try Interpreter.snapshotPointer(
+                of: try currentEnv.get(name: name),
+                location: HIRExecutor.noLocation
+            )
+
+        case .lazyRefConstruct(let closure, _):
+            // Mirrors `Interpreter.makeLazyRefBox`: the argument is the
+            // initialiser closure, and the box itself carries the once-only rule.
+            guard case .function(let function) = try evaluate(closure) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "lazyRefConstruct expects an initialiser closure",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return .lazyRef(LazyRefBox(initializer: function))
+
+        case .lazyRefValue(let handle, _):
+            // Mirrors the interpreter's `.value` member access. The box owns
+            // "evaluate once, then cache", so this arm supplies only the compute
+            // step — the same division of labour the AST side uses.
+            guard case .lazyRef(let box) = try evaluate(handle) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "lazyRefValue expects a LazyRef handle",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return try box.value { function in
+                try self.callFunctionValue(function, args: [])
+            }
+
+        // MARK: Not implemented yet — fail loud, named.
+
         case .fileWrite: throw notImplemented("fileWrite")
         case .fileRead: throw notImplemented("fileRead")
         case .readLine: throw notImplemented("readLine")
-        case .lazyRefConstruct: throw notImplemented("lazyRefConstruct")
-        case .lazyRefValue: throw notImplemented("lazyRefValue")
         }
     }
 
@@ -1736,6 +1782,29 @@ public final class HIRExecutor: DebugHookHost {
     /// bound mutable, `return` caught here and unwrapped to the returned value
     /// (`nil` → `.null`). The one deliberate difference from the module-level
     /// case is *where the parent comes from*, and that is the caller's argument.
+    /// Calls a function value the engine holds a body for.
+    ///
+    /// The body is keyed by identity rather than by name: the parser gives every
+    /// anonymous `func` the name `<anon>`, so a name index would let two
+    /// closures overwrite each other. The parent environment is the value's own,
+    /// not the global one — that is the single rule separating a closure call
+    /// from a module-level one, and the reason the call path is parameterised
+    /// rather than copied.
+    ///
+    /// Shared by the indirect-call arm and `lazyRefValue`: the latter is the
+    /// same operation with a different trigger, so giving it its own copy would
+    /// create a second place for the rule to be got wrong.
+    private func callFunctionValue(_ function: FunctionValue, args: [Value]) throws -> Value {
+        guard let callable = callableBodies[ObjectIdentifier(function)] else {
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: a function value with no registered body "
+                    + "(hand-built, or carried in from another run) cannot be called",
+                location: HIRExecutor.noLocation
+            )
+        }
+        return try invoke(callable, parent: function.closure, args: args)
+    }
+
     private func invoke(
         _ callable: HIRCallableBody,
         parent: Environment,
