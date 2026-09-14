@@ -379,6 +379,54 @@ final class HIRDifferentialTests: XCTestCase {
     func testDiffDefer() throws { try assertParity(fixtureName: "testDiffDefer") }
     func testDiffLexical() throws { try assertParity(fixtureName: "testDiffLexical") }
 
+    /// Contract entries 36/37/38/39 (`stringCase`, `stringContains`,
+    /// `stringSubstring`, `stringSplit`). Same reason as `testDiffArrayJoin`
+    /// above: `testDiffStdlib` is the only fixture in the corpus that reaches
+    /// any of the four, and it reaches all four at once, so a failure there is
+    /// unattributable -- and as of grid G7 it fails later still (on the math
+    /// builtins, `abs` first), which means it cannot serve as these nodes'
+    /// evidence at all. Each node therefore gets a fixture of its own.
+    ///
+    /// Each of the four carries a comment about what it deliberately does *not*
+    /// cover: the B-group deviations these nodes are filed under part company
+    /// with the interpreter only on inputs this harness cannot host, because the
+    /// harness asserts the two channels agree and the deviations are exactly
+    /// where they do not.
+    func testDiffStringCase() throws { try assertParity(fixtureName: "testDiffStringCase") }
+    func testDiffStringContains() throws { try assertParity(fixtureName: "testDiffStringContains") }
+    func testDiffStringSubstring() throws { try assertParity(fixtureName: "testDiffStringSubstring") }
+    func testDiffStringSplit() throws { try assertParity(fixtureName: "testDiffStringSplit") }
+
+    /// The other two G7 nodes had **no corpus coverage at all** before these,
+    /// and that is a different failure from the four above. `testDiffStdlib` at
+    /// least reached its four nodes; nothing reached these two.
+    ///
+    /// `printMulti` is reached only by a `print(...)` carrying two or more
+    /// arguments — one argument lowers to `printCall` — and every pre-existing
+    /// fixture prints a single value. `assertCall` is reached only by `assert`,
+    /// which no fixture in this directory called at all.
+    ///
+    /// Both were previously "covered" by a synthetic single-node gap probe in
+    /// `HIRExecutorTests.expressionGaps`. Grid G7 deleted those three entries
+    /// when it implemented the nodes, and deleting them without adding a fixture
+    /// would have swapped a probe that misreports for a silence that reads like
+    /// coverage. These two fixtures are what closes that.
+    ///
+    /// Scope limits, stated so they are not mistaken for omissions:
+    /// `testDiffPassingAssert` covers the **passing** path only — a failing
+    /// assert aborts the LLVM arm, and `assertParity` requires `lli` to exit 0.
+    /// The failing path is a hand-written case in `HIRExecutorTests`
+    /// (`testAssertCallFailureIsAssertionFailedNotAGap`), which is also the only
+    /// place that can assert the error is *not* the not-implemented gap.
+    /// `testDiffPrintMultiArgs` covers arity and separator only; the per-value
+    /// rendering rule belongs to `stringifyValue`, which `testDiffValueFormat`
+    /// already owns. It is scalar-operand only — an aggregate operand is a
+    /// **closed** deferral on the emitter (`emitPrintMulti` traps on a type with
+    /// no scalar rendering), registered as a design boundary rather than a live
+    /// defect, so it is a scope statement and not an omission.
+    func testDiffPrintMultiArgs() throws { try assertParity(fixtureName: "testDiffPrintMultiArgs") }
+    func testDiffPassingAssert() throws { try assertParity(fixtureName: "testDiffPassingAssert") }
+
     // MARK: - G10 generic monomorphization
 
     func testDiffGenericStruct() throws { try assertParity(fixtureName: "testDiffGenericStruct") }

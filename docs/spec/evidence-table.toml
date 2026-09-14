@@ -226,3 +226,32 @@ validated_at = "2026-09-13T22:49+08:00"
 status = "STALE"
 note = "违例面收窄到两条同族路径，均已定位到符号：H1 = 常规字符串路径的反斜杠后 EOF 守卫（Lexer.swift:580）；H2 = scanInterpolationExpression()（:622-681）体内三处 throw（:639 内层字符串反斜杠后 EOF / :674 遇换行且 depth>0 / :679 循环退出即 EOF）。本单的诊断价值在**结构**而非计数：相邻代码在同一契约上分叉 —— :571-576 明文实现了 ADR-021（注释直引 ADR-021，换行即 break），而 :673-675 同一情形却 throw。并列登记未违反项以免把 ADR-021 读成普遍失效：:539/:545 的 invalidCharacter 在实测输入上不可达（0x / 0b / 1e / 1.2.3 / 0xZZ 全部 rc=0 且按 D1 回退）。**订正两条既有记录**（本批实测推翻）：① 2026-09-13 L5 日志记该插值函数 4 处 throw，源码实测为 3 处；② 同日志记 tokens 对词法错误恒 exit 0，实测为多数成立、H1/H2 是反例（该断言过度概括）。盲区三重：语料 123 行仅 1 处插值且闭合（:93）、门禁只对拍双侧都能出 token 的输入、rc 语义在两条路径上不一致。**语料刻意未落**：落未闭合用例会使 L0 立刻转红，而 red-window 红名单机制（selfhost 计划 §6.1）尚未获裁 ⇒ 落语料即要么违 ADR-024 D9 要么开未授权红窗口，故语料随修复一起落。修复侧留一条待裁：插值路径若照 :575 隐式终止会产生语义歧义（插值体为不完整表达式），三路线 A 降级为普通 string token（本单倾向，与 ADR-021 D1 自述理由一致）/ B 隐式补右括号（触 D9）/ C 在 ADR-021 内开显式例外（契约级，走 spec §1.3）。**未做**：未改任何源码与语料、未跑构建、未跑全量回归、未改任何 ADR 或 spec 正文；H1/H2 的修复归属格未定。"
 
+
+[[evidence]]
+id = "E-163"
+claim = "LR-4 P2b grid G7 (strings and builtins) is delivered: the nine stub target points (stringCase, stringContains, stringSubstring, stringSplit, arrayJoin, interpString, isAsciiDigit, printMulti, assertCall) become interpreter-mirroring implementations in HIRExecutor, and the probe accounting closes by fixture rather than by total. Stub target points fall 17 -> 8 and the remaining eight are exactly the P2b remainder (G8 five plus G9 three). Fifteen fixtures leave HIR_ENGINE_TODO: thirteen arrive at OK and two at GAP_EXEC, which is the two-filed builtin-callee fixtures moving outward rather than a regression. Two further findings are recorded as scope statements rather than defects: printMulti and assertCall had no corpus coverage at all once their synthetic probes were deleted, so the grid added two fixtures plus one hand-written case for the failing-assert half a fixture cannot host; and an aggregate operand in a multi-argument print is a closed emitter deferral, not a defect"
+artifacts = [
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRExecutorTests.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStringCase.pini",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStringContains.pini",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStringSubstring.pini",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStringSplit.pini",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffPrintMultiArgs.pini",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffPassingAssert.pini",
+  "docs/issue-interpreter-hir-p2-plan-2026-09-13.md",
+  "docs/issue-interpreter-hir-plan-2026-09-12.md",
+  "docs/issue-concurrency-timing-test-fragile-2026-09-14.md",
+  "docs/issue-hir-builtin-callee-unowned-2026-09-14.md",
+  "docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md",
+  "tools/hir-parity-probe.py",
+  "tools/hir-contract-check.py",
+  "docs/spec/hir-contract.md",
+  "docs/spec/evidence-table.toml",
+]
+command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check && python3 tools/hir-contract-check.py && python3 tools/hir-parity-probe.py && swift test --disable-sandbox --scratch-path /tmp/pini-build"
+output = "Full-sweep accounting closes per fixture over the six newly added files: corpus 308 -> 314, OK 217 -> 236 (+19 = 13 pre-existing fixtures arriving at OK plus 6 new fixtures all OK), HIR_ENGINE_TODO 24 -> 9 (-15 = 13 to OK plus 2 to GAP_EXEC), GAP_EXEC 5 -> 7, and FRONTEND_FAIL / GAP_HIR_ENGINE / OK_HARNESS / PACKAGE_MEMBER all unchanged at 0 delta. No fixture disappeared. Stub target points 17 -> 8, named: pointerLoad, pointerStore, addressOfVar, lazyRefConstruct, lazyRefValue (G8) and fileRead, fileWrite, readLine (G9). The two GAP_EXEC arrivals both report E5-006 (invalidOperation), i.e. the unowned-builtin-callee rule, and the transition HIR_ENGINE_TODO -> GAP_EXEC with that code is what the existing builtin-callee ticket pre-announced. hir-contract-check: clean, three anchors at 60/60. Full regression: 1263 tests, 3 skipped, 0 failures (plus swift-testing 45 passed). One flaky wall-clock assertion in ConcurrencyTests appeared in the first of two full runs (0.112s against a 0.11s bound) and passed 35/35 when run alone; filed separately, unrelated to this grid. Mutation counter-proof: family-level stub of all nine nodes and single-node stubs of each of the nine, each round preceded by an md5 self-check that the mutation took effect and followed by a restore verified byte-identical"
+validated_at = "2026-09-14T21:55+08:00"
+status = "FRESH"
+note = "格属性：P2b 首格，也是**第一次执行分歧面单元**（此前 P2a 六格全部是无分歧面）。判据形态的后果在本格首次显形：B 组节点照契约实现后仍不落 OK，因为契约要求改的是 LLVM 侧 —— 本格因此把 B 组的「未落 OK」当作**预期**而非缺陷，并逐条记下哪些偏离在本 harness 里结构性不可见（harness 断言两通道一致，而偏离恰在两通道不一致处）。**本格最重要的方法层收获**：`printMulti` 与 `assertCall` 零语料覆盖。二者此前唯一的证据是本格为实现而必须删除的两条合成探针（`expressionGaps` 里实现后必红的条目）⇒ **「删除探针」与「建立覆盖」是两件不同的事**，只删不补会把判据悄悄抽空 —— 这条与 G5 的「归档自我声明必须复核」同族，但方向相反（那条是**声称有**而实无，这条是**删掉后默认仍有**）。发现方式 = 逐节点追问「到底有什么可达它」，而不是相信删除动作本身。**聚合值多参 print 的定性**（二分实测：String+I32 / Bool / F64 均通，`[1, 2]` 触 lli abort）：LLVM 臂 `emitPrintMulti` 对 `hasNoScalarRendering` 的类型主动 `bk_panic` + `unreachable`，且已有归档件 `issue-hir-aggregate-value-print-2026-09-10` 覆盖 ⇒ **已关闭的设计边界，非缺陷、不立单**；写进夹具注释是为免除下次重复勘测。**刻意不动解释器侧**：`stringSplit` 的空 token 语义按契约 §2.39 A4 实现在 HIR 侧，而解释器侧的对齐载体（`stringSplit` 格）已在册待排期、语言 spec 未钉该语义 ⇒ 留给该格（D-P2-10）。**未做**：未修任何非阻塞缺陷；未改探针的阻塞/缺口计数器判据（收窄时机仍为上交给决策点）；未动契约节点集；未改 AST 侧与 LLVM 侧（本格零 LLVM 改动）；未 push。**本格零新增缺陷**；连带发现另立一单（测试时序脆弱，与本项无关）。"

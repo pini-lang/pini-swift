@@ -1,0 +1,35 @@
+; Minimal probe for stringSplit (contract entry 39): one node, four receivers.
+;
+; **No fixture here contains an empty token, and that is the point of this
+; note.** Contract §2.39 (A4) adjudicates `split` to skip empty tokens, which is
+; what the LLVM arm's `strtok` loop already does; the interpreter still keeps
+; them, because `StdlibPini.split` appends its accumulator unconditionally. The
+; interpreter-side alignment is the `stringSplit` grid's job and is registered
+; there, so the two channels disagree about `"a,,b"` today.
+;
+; This harness asserts the channels agree. A fixture holding an empty token would
+; therefore fail -- not because this node is wrong, but because the disagreement
+; is real and filed elsewhere. So the empty-token case cannot live in the corpus
+; until that grid lands, and its absence is a known blind spot rather than
+; coverage. Consequence worth stating plainly: the corpus cannot tell a correct
+; `split` from one with the opposite empty-token rule.
+;
+; What is covered: a multi-part split, a single-part split (no delimiter
+; present), the element count, and a delimiter that does appear but only once.
+; The array shape is as much a part of this node as the text is.
+
+main|func() -> ():
+    var s = "Hello, World"
+    var parts = s.split(",")
+    print(parts)
+    print(len(parts))
+    var more = "a-b-c".split("-")
+    print(more)
+    print(len(more))
+    var none = "abc".split("-")
+    print(none)
+    print(len(none))
+    var once = "a-b".split("-")
+    print(once)
+    print(len(once))
+    return
