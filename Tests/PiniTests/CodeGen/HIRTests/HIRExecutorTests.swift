@@ -1059,110 +1059,38 @@ final class HIRExecutorTests: XCTestCase {
 
     // MARK: - Fail-loud gaps
 
-    /// One probe per gap. Each probe is a *single* node, so "the error names this
-    /// node" cannot be satisfied by a neighbouring gap speaking up instead.
+    /// **No gaps are left, and the tables are gone rather than empty.**
     ///
-    /// `closureLiteral` left this table with grid G3, which implemented it: a
-    /// probe for a node that runs asserts the opposite of the truth. What holds
-    /// the three G3 nodes up instead is the corpus — the grid's four fixtures
-    /// reach all three — plus the hand-written cases further down, which pin the
-    /// one rule a fixture cannot settle on its own: that a capture is a
-    /// *reference* to the creating environment rather than a copy taken at
-    /// creation time. Their absence from this table is safe to read as coverage,
-    /// not as a silence, and the rule that keeps it that way is the usual one —
-    /// the list shrinks only when the node runs and something else fails loud
-    /// about it being wrong.
-    ///
-    /// Three more left with grid G7, for the same reason: `printMulti`,
-    /// `stringCase` and `interpString` now run. Keeping them would have made the
-    /// grid report three failures that are not failures — which is what happened
-    /// on the first G7 regression run, and what this comment records.
-    ///
-    /// What holds G7's nine nodes up instead — and the reason deleting those
-    /// three entries was not enough on its own. Seven of the nine were already
-    /// reached by something: the grid's four new single-node differential
-    /// fixtures (`testDiffStringCase`, `testDiffStringContains`,
-    /// `testDiffStringSubstring`, `testDiffStringSplit`, each narrowed to
-    /// exactly one operator) cover four, and three more came to the in-range
-    /// list for the first time because the corpus entries naming them
-    /// (`testDiffArrayJoin`, `testDiffIsAsciiDigit`, `testDiffLexical`) used to
-    /// stop at a G7 node first.
-    ///
-    /// The other **two had no corpus coverage at all** — `printMulti`, which is
-    /// only reached by a `print` carrying two or more arguments, and
-    /// `assertCall`, which no fixture in the corpus called. Their sole evidence
-    /// had been the probes deleted above. Found by asking what reached each
-    /// node rather than by trusting the deletion, and closed by two fixtures
-    /// written for them (`testDiffPrintMultiArgs`, `testDiffPassingAssert`) plus
-    /// `testAssertCallFailureIsAssertionFailedNotAGap` below for the half a
-    /// fixture cannot host. That is the same lesson the G5 grid taught about
-    /// archive self-declarations, applied one level down: *deleting* a probe
+    /// This section held one probe per unimplemented node — a *single* node each,
+    /// so "the error names this node" could not be satisfied by a neighbouring
+    /// gap speaking up instead. Entries left it one grid at a time as the node
+    /// landed, and each exit needed something else to take over the coverage:
+    /// `closureLiteral` with G3, `printMulti` / `stringCase` / `interpString`
+    /// with G7 — where the two nodes that had no corpus coverage at all got
+    /// fixtures written for them (`testDiffPrintMultiArgs`,
+    /// `testDiffPassingAssert`) — and `pointerLoad` with G8, whose pointer
+    /// fixtures check it against the interpreter in process. The rule those
+    /// grids applied one entry at a time is always the same: *deleting* a probe
     /// and *covering* the node are different claims.
     ///
-    /// The entry left is the one still unimplemented: `readLine` (G9). Grid G8
-    /// deleted `pointerLoad` from this table, and the deletion is covered rather
-    /// than merely subtracted — the pointer nodes carry their own fixtures on
-    /// `inRangeFixtures` (`testDiffPointerLoad` / `testDiffPointerStore`), which
-    /// check the node against the interpreter **in process**. Same rule G7
-    /// applied one entry at a time: *deleting* a probe and *covering* the node
-    /// are different claims.
-    private static let expressionGaps: [(node: String, expr: HIRExpr)] = [
-        ("readLine", .readLine),
-    ]
-
-    /// The statement side of the contract is **complete** as of grid G5, and the
-    /// table that used to live here (`statementGaps`) is gone rather than empty.
+    /// The statement side reached empty first: `fieldStore` was its last entry
+    /// and left with G5. The expression side outlived it by four grids and was
+    /// down to `readLine` when P2b G9 implemented the three IO nodes, so the
+    /// last entry went the way of the rest — with the node.
     ///
-    /// It had one entry left, `fieldStore`, which G5 implemented — and a loop
-    /// over an empty table passes while asserting nothing, which is the failure
-    /// mode this whole file is built to avoid (`assertGapSpeaks` below is still
-    /// used, by the expression side, where gaps remain). `tryStmt` / `matchStmt`
-    /// (G6) and the control-flow family (G1) had already left for the same
-    /// reason: a probe for a node that runs asserts the opposite of the truth.
-    ///
-    /// What holds the statement side up instead: the dispatch switch has no
+    /// The table, the loop over it and its `assertGapSpeaks` helper are all
+    /// deleted rather than left standing: a loop over an empty table passes
+    /// while asserting nothing, which is the failure mode this whole file is
+    /// built to avoid. Nothing in this engine now fails loud *by design*, and
+    /// what holds it up instead is four things: the dispatch switch has no
     /// `default:` arm, so a missing case is a compile error rather than a silent
     /// hole; `tools/hir-contract-check.py` counts the anchors from outside
     /// (60/60, and it judges existence, not behaviour); the corpus parity run
-    /// exercises every statement shape the language has; and the two control
-    /// statements that could not be covered by a gap probe got their own tests
-    /// instead — with the stronger form the G1 grid's mutation round forced
-    /// (asserting the failure mode by name, because "it threw" and "nothing ran
-    /// after" are both satisfied by a node that was never implemented).
-    ///
-    /// A combined `testEscapingControlFlowAndPanicTrapStayLoud` arrived with the
-    /// G5 draft and covered these same two nodes. It was dropped in the merge
-    /// rather than kept next to them: the break half rebuilt exactly the weak
-    /// shape above (throw + no output, both of which a skeleton node satisfies),
-    /// and the panic half's "must not continue" claim is already structural — a
-    /// throw out of `run` cannot leave a later statement executing.
-    private func assertGapSpeaks(_ node: String, body: [HIRStmt]) {
-        let executor = HIRExecutor()
-        var lines: [String] = []
-        executor.outputSink = { lines.append($0) }
-        let module = HIRModule(functions: [
-            HIRFunction(name: "main", params: [], returnType: nil, body: body)
-        ])
-
-        XCTAssertThrowsError(try executor.run(module: module), "node '\(node)' must not run silently") { error in
-            let text = String(describing: error)
-            XCTAssertTrue(
-                text.contains("node '\(node)'") && text.contains("not implemented yet"),
-                "expected a named gap for '\(node)', got: \(text)"
-            )
-            XCTAssertTrue(
-                text.contains("<hir>"),
-                "diagnostics from this engine carry the placeholder position, got: \(text)"
-            )
-        }
-        XCTAssertTrue(lines.isEmpty, "node '\(node)' must produce no output before failing")
-    }
-
-    func testUnimplementedExpressionNodesFailLoudAndNameTheNode() {
-        for probe in HIRExecutorTests.expressionGaps {
-            assertGapSpeaks(probe.node, body: [.exprStmt(probe.expr)])
-        }
-    }
+    /// exercises every node the language can reach, with G9's three new fixtures
+    /// covering behaviour the earlier ones could not observe at all; and each
+    /// rule a fixture cannot settle has its own test below, asserting the
+    /// failure mode *by name*, because "it threw" and "nothing ran after" are
+    /// both satisfied by a node that was never implemented.
 
     /// `assertCall`'s two paths, neither of which a fixture can settle.
     ///

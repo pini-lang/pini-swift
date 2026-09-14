@@ -172,12 +172,25 @@ public class Interpreter: DebugHookHost {
  /// - 绝对路径 → 原样；
  /// - `./` `../` 开头 → 运行时 CWD（原样传给 Foundation，即用户/shell 视角）；
  /// - 其余相对路径 → 程序基准（模块根 / 入口文件所在目录）；未注入基准时退回 CWD（兼容）。
- func resolveIOPath(_ path: String) -> String {
- if path.hasPrefix("/") { return path }
- if path.hasPrefix("./") || path.hasPrefix("../") { return path }
- guard let base = programBase else { return path }
- return base + "/" + path
- }
+    /// The **single source** for IO path resolution, shared with the HIR
+    /// executor (extracted per the G9 grid: two engines resolving the same
+    /// program's bare relative path is exactly where they can silently read two
+    /// different files).
+    ///
+    /// The rule: an absolute path and an explicitly relative one pass through,
+    /// anything else is taken against the program base, and with no base the
+    /// path is used as given — the CWD then decides, which is the historical
+    /// behaviour and stays reachable.
+    static func resolveIOPath(_ path: String, programBase: String?) -> String {
+        if path.hasPrefix("/") { return path }
+        if path.hasPrefix("./") || path.hasPrefix("../") { return path }
+        guard let base = programBase else { return path }
+        return base + "/" + path
+    }
+
+    func resolveIOPath(_ path: String) -> String {
+        Interpreter.resolveIOPath(path, programBase: programBase)
+    }
 
  public func run(module: Module) throws {
  try prepare(module: module)

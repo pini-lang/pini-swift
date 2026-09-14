@@ -105,9 +105,10 @@ private struct HIRCallableBody {
 ///    path (`invoke`) rather than adding a second one, and gave function values
 ///    somewhere to keep a lowered body — `Value.function` holds an AST `Block?`,
 ///    which is not a shape a lowered body fits into.
-///    Everything else fails loud (`notImplemented`) naming the node. A silent
-///    `.null` would make this engine look finished and let the differential
-///    probes compare against a fiction.
+///    Everything else failed loud, naming the node, until P2b G9 implemented the
+///    last three (`fileWrite` / `fileRead` / `readLine`) and that mechanism went
+///    with them. A silent `.null` would have made this engine look finished and
+///    let the differential probes compare against a fiction.
 ///
 /// SEMANTIC PARITY
 ///
@@ -282,10 +283,21 @@ public final class HIRExecutor: DebugHookHost {
     /// is the worst time to find it.
     private var deferStack: [[[HIRStmt]]] = []
 
-    public init() {
+    /// Directory an unprefixed relative IO path resolves against, mirroring
+    /// `Interpreter.programBase`. The emitter already carries this base; the
+    /// engine needs it too, or the two channels disagree about which file a
+    /// program named with a bare relative path means — and they would disagree
+    /// silently, by reading the CWD copy instead of failing.
+    ///
+    /// Defaulted to nil so an executor that never touches IO behaves exactly as
+    /// before, and so the many test hosts that construct one bare keep working.
+    private let programBase: String?
+
+    public init(programBase: String? = nil) {
         let env = Environment()
         self.globalEnv = env
         self.currentEnv = env
+        self.programBase = programBase
     }
 
     // MARK: - Entry points
@@ -326,19 +338,6 @@ public final class HIRExecutor: DebugHookHost {
     /// mistaken for one with a real (if empty) file attached. See the class
     /// header's "no positions" gap.
     static let noLocation = SourceLocation(line: 0, column: 0, fileName: "<hir>")
-
-    /// Fail loud on a node that is dispatched but not executed yet.
-    ///
-    /// The node's name is in the message because visibility *is* the feature:
-    /// this is how a probe run tells "the engine cannot do this yet" apart from
-    /// "the engine did this and got it wrong".
-    private func notImplemented(_ node: String) -> RuntimeError {
-        RuntimeError.invalidOperation(
-            reason: "HIR executor: node '\(node)' is dispatched but not implemented yet "
-                + "(P1-2 skeleton)",
-            location: HIRExecutor.noLocation
-        )
-    }
 
     // MARK: - Expressions
 
@@ -896,11 +895,50 @@ public final class HIRExecutor: DebugHookHost {
                 try self.callFunctionValue(function, args: [])
             }
 
-        // MARK: Not implemented yet — fail loud, named.
+        case .fileWrite(let pathExpr, let contentExpr):
+            // Mirrors the interpreter's `writeFile` arm: the path resolves
+            // against the program base, and the value is the write's integer
+            // result code. A failed write raises here, so a successful return is
+            // the only reachable one and zero is its code.
+            let rawWritePath = try requireString(evaluate(pathExpr), for: "writeFile")
+            let content = try requireString(evaluate(contentExpr), for: "writeFile")
+            let writePath = Interpreter.resolveIOPath(rawWritePath, programBase: programBase)
+            do {
+                try content.write(toFile: writePath, atomically: true, encoding: .utf8)
+                return .int(0)
+            } catch {
+                throw RuntimeError.invalidOperation(
+                    reason: "IO 错误: 无法写入文件 \(writePath): \(error.localizedDescription)",
+                    location: HIRExecutor.noLocation
+                )
+            }
 
-        case .fileWrite: throw notImplemented("fileWrite")
-        case .fileRead: throw notImplemented("fileRead")
-        case .readLine: throw notImplemented("readLine")
+        case .fileRead(let pathExpr):
+            // Mirrors the interpreter's arm, cap included: the contract fixes the
+            // read limit and the channel that deviates is named there, so this
+            // side takes the same `IOLimits` truncation rather than restating the
+            // number.
+            let rawReadPath = try requireString(evaluate(pathExpr), for: "readFile")
+            let readPath = Interpreter.resolveIOPath(rawReadPath, programBase: programBase)
+            do {
+                let content = try String(contentsOfFile: readPath, encoding: .utf8)
+                return .string(IOLimits.truncateToFileLimit(content))
+            } catch {
+                throw RuntimeError.invalidOperation(
+                    reason: "IO 错误: 无法读取文件 \(readPath): \(error.localizedDescription)",
+                    location: HIRExecutor.noLocation
+                )
+            }
+
+        case .readLine:
+            // Mirrors the interpreter's arm: the terminator is kept and the line
+            // is capped at the contract's byte limit. EOF is the empty string,
+            // which is distinguishable from an empty line precisely because the
+            // terminator is no longer stripped.
+            guard let line = readLine(strippingNewline: false) else {
+                return .string("")
+            }
+            return .string(IOLimits.truncateToLineLimit(line))
         }
     }
 

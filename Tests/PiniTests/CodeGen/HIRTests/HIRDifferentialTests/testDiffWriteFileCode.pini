@@ -1,0 +1,9 @@
+main|func() -> ():
+    ; writeFile reports the integer result code of the write. Every inherited
+    ; IO fixture calls it as a bare statement, so the code is discarded and a
+    ; channel returning the wrong integer still matches byte-for-byte. Here it
+    ; is printed, together with the length of the round-trip.
+    var path = "/tmp/pini-hir-diff-writecode.txt"
+    print(writeFile(path, "payload"))
+    print(len(readFile(path)))
+    return
