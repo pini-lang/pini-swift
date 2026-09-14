@@ -1,9 +1,11 @@
 # Issue：解释器统一 HIR —— P2（分格实现）执行规划
 
-- 状态：**P2a 进行中 —— 已交付 3 格**（G4 集合与下标的 7 节点 · G2 元组族 · G1 控制流 6 节点）；
-  **下一格 = P2a 第四格（G6 枚举 · Optional · Result · try，6 缺口），待点名**。
+- 状态：**P2a 进行中 —— 已交付 4 格**（G4 集合与下标的 7 节点 · G2 元组族 · G1 控制流 6 节点 ·
+  **G6 枚举 · Optional · Result · try 6 节点（2026-09-14 重放交付）**）；
+  **下一格 = P2a 第五格（G5 具名类型与字段，3 缺口：`construct` / `fieldGet` / `fieldStore`），待点名**。
   规划轮（2026-09-13 早些时候）**只读勘测 + 落盘规划，未改任何源码**；
-  G4 实录见 §8.1（范围订正 `D-P2-5`）· G2 见 §8.2（范围 `D-P2-6`）· G1 见 §8.3。
+  G4 实录见 §8.1（范围订正 `D-P2-5`）· G2 见 §8.2（范围 `D-P2-6`）· G1 见 §8.3 · **G6 见 §8.4（重放）**。
+  ⚠️ 本行与主计划载体的同型指针此前在 G1 收口时**漏改**，已由 G6 重放批一并订正（详见 §8.4 末条）。
 - 隶属：`docs/issue-interpreter-hir-plan-2026-09-12.md` 的 **P2**（常驻主计划载体；
   本件是 P2 一格的细目载体，参照 P0 审计件与 P1-5 勘测件的先例另立）。
 - 前置：**P1 ✅ 六步全部完成**（2026-09-13 收口）—— 三实通道探针、契约核验脚本、HIR 引擎骨架、
@@ -170,8 +172,13 @@ G7 字符串与内建(10) · G8 指针与 LazyRef(5) · G9 IO(3)
 - ~~**下一步 = P2a 第三格（G1 控制流，5 缺口），待点名**~~ ⇒ **已点名并交付（2026-09-13）**，
   实录见 §8.3。**实测该格缺口为 6 个而非规划的 5 个** —— 规划表的 G1 行漏了 `stringConcat`
   （它被列在 G7 行），而**契约把字符串连接归控制流侧语句族**；格内按契约口径实现，见 §8.3「范围订正」。
-- **下一步 = P2a 第四格（G6 枚举 · Optional · Result · try，6 缺口），待点名**。
-  P2a 六格已交付三格（G4 / G2 / G1），余 G6 / G5 / G3。
+- ~~**下一步 = P2a 第四格（G6 枚举 · Optional · Result · try，6 缺口），待点名**~~ ⇒
+  **已点名并交付（2026-09-14 **重放交付**，实录见 §8.4）**。该格曾于 2026-09-13 完整交付过
+  （归档提交 `647b218`，合并点 `8089c0b`），随后 main 被硬回退而离开主线；本次按「重放批」
+  在新基准上重建（勘测结论 = **复用而非重写**）。重放实测**两处器械侧缺陷**
+  （M1 打靶结构性不可观测 / `slice` 对照选错）与归档结论一致，均归 **P3**，不阻塞本格。
+- **下一步 = P2a 第五格（G5 具名类型与字段，3 缺口：`construct` / `fieldGet` / `fieldStore`），待点名**。
+  P2a 六格已交付四格（G4 / G2 / G1 / G6），余 **G5 / G3**。
 - 完整交付日志与后续各格实录**回填至主计划载体 §13** 与本件 §8。
 
 ## 8. 分格交付实录
@@ -300,7 +307,8 @@ M7 表明「共享源被删」**不会**造成两臂静默一致，而是**两�
 
 **未做**：未改 AST 侧渲染与 LLVM 侧实现；未动契约与节点集；未收窄探针 `GAP_HIR_ENGINE`；
 未修两张新工单任何一项；未 push。
-⇒ **下一格 = P2a 第三格（G1 控制流），待点名**。
+⇒ ~~**下一格 = P2a 第三格（G1 控制流），待点名**~~ ⇒ **已点名并交付，见 §8.3**
+（此指针在 G1 收口时漏改，由 G6 重放批订正）。
 
 ### 8.3 G1 控制流（P2a 第 3 格，2026-09-13，分支 `agent/pini-dev/hir-p2a-g1-control-flow`）
 
@@ -394,6 +402,197 @@ defer 夹具**需要字符串拼接来构造其期望输出**，缺它则本格�
 
 **未做**：未改 AST / LLVM 任一侧实现；未动契约与节点集；未收窄探针 `GAP_HIR_ENGINE` 判据
 （该计数器收窄时机仍为上交给决策点）；未修缩进工单（排期 P4 后）；未 push。
+
+### 8.4 G6 枚举 · Optional · Result · try（P2a 第 4 格，2026-09-14 **重放交付**，分支 `agent/pini-dev/hir-p2a-g6-enums-replay`）
+
+> **本格是重放，不是首次实现。** 原交付 = 归档提交 `647b218`（合并点 `8089c0b`），其父是**旧 G1 的
+> 合并点 `3f98079`**；main 随后被硬回退至 `9d9ab4e`，该交付离开主线。回退**因由是程序性的**
+> （锚点由用户选定、回漂移整备期回稳定点），**并非因技术缺陷被丢弃** ⇒ 归档件可信、按**复用**处置。
+> 勘测五条判据（回退因由 / 逐文件 `git apply --check` / 三方合并定冲突面 / 符号层验无实依赖 /
+> 契约是否变过）的实测见当日记忆日志；结论 = **可执行代码零冲突**（冲突全在文件头 docstring）。
+> ⇒ **本节读数全部为本格在重放基准上重测**，归档自己的读数（`OK 38→49` / 全量 `1249` /
+> 分支名 `hir-p2a-g6-enums`）**一律不沿用**；凡与归档不一致处，**本节的数即当前数**。
+
+**范围**：格内 **6 节点**，**无跨格依赖** —— 与 G1（§8.3，需借 G7 的 `stringConcat`）不同，
+本格两个「夹具撞到别的节点」的情形（`testDiffSlice` 撞 `optionalConstruct`、`testDiffValueFormat` 撞
+`optionalGet`）**都在本格节点面内**，故**不产生**新的 `D-P2-*` 决策，只需按 `D-P2-5`「不留验证空档」
+随格实现。这是分格时「按节点分族、夹具按能力组合」在**同格内部**的一次兑现。
+
+**节点面（6）**：
+
+| 节点 | 实现要点 |
+|---|---|
+| `resultConstruct` | 转发 `Interpreter.makeResult` ⇒ ok/err 值构造**单源**。err 载荷在 LLVM 侧是一个类型擦除的机器字（`LR-12`），本侧绑**真实载荷**——已登记的 ABI 边界（打印错误绑定在 LLVM 侧 fail-loud `E6-004`），不是分歧 |
+| `optionalConstruct` | Optional 的运行时形态就是 `some` / `none` 两用例（无 `parentEnum`）。`isSome` 却无载荷 ⇒ **fail-loud**（不静默造值） |
+| `optionalGet` | 规则提为 `Interpreter.builtinGet`（**static 单源**）：负索引尾部计数 + 字典键相等匹配 + 越界落点。解释器的 `.get` / `.getUnchecked` 成员块改为调用它，私有方法 `uncheckedOrNone` **并入该单源**（3 处调用点 → 1） |
+| `enumConstruct` | 关联值名取**声明**（`HIREnumCase.paramNames`），与解释器构造器的 `fv.params.map { $0.name }` 同源同序；查不到声明 ⇒ **fail-loud**（不静默造空载荷） |
+| `tryStmt` | operand 必为 `Result`（否则 `typeMismatch`）；ok → 写 `okTarget`；err → 新环境绑 `errorVar` 后跑 handler。handler 语句**就地跑、不另起块**，故 `return` / `break` / `continue` 以信号自然冒泡，`pass` 只是结束语句（解释器 `tryExpression` 同形） |
+| `matchStmt` | 命中判定提为 `Interpreter.matchArmMatches`（**static 单源**，字面量按值 / `_` 通配 / case 名）；每臂一个 case 环境 + `executeBlock`（臂内 defer 在**臂末** LIFO）；未命中尾部规则照抄（见结构发现二） |
+
+**结构发现一：「声明处的一次初始化」是语言里客观存在的第三种写，`Environment` 之前没有 API 表达它。**
+降载器把 `let x = try f() else e: ...` 拆成 `allocVar(x, initializer: nil)` + `tryStmt(okTarget: x)` ⇒
+ok 臂必须写进**已经声明**的槽。两条现成 API 都不对：`assign` 会被「`let` 不可变」拒绝（**合法程序被拒**），
+`define` 则覆盖且需重造可变性（可能把 `let` 悄悄变 `var`）。⇒ 新增 `Environment.initialize(name:value:)`：
+不做可变性检查、**保留原可变性**。它命名的不是「更宽松的 `assign`」，而是**声明处初始化**。
+变异 M6（`initialize` → `assign`）实测红 `corpus` ⇒ 该区分被语料门控，不是纸面洁癖。
+
+**结构发现二：`match` 的「怎么命中」与「未命中怎么办」是两件事，后者由值类型决定、不由静态类型决定。**
+命中判定可直接落在值上（字面量 / `_` / case 名），故三通道共用一份 `matchArmMatches`；
+而未命中的尾部规则照抄解释器只有一条：**运行时值是枚举值 ⇒ 抛 `matchNotExhaustive`，否则静默落空**。
+这一条**统一覆盖三个臂族**（Optional / 枚举 / 裸值）⇒ 引擎**不读** `scrutineeType`：静态类型的工作在
+降载期已做完（选哪个臂族），在此再分派一次就是第二个可能不一致的判定源。
+`testDiffMultidimArray` 是这条静默规则的语料证据——它的 scrutinee 是**裸下标读**，`case some(row)` 臂永不命中。
+另有一处**订正**：`match` 穷尽性是**类型检查器**职责（`E3-007`，静态拒绝），引擎只承担**运行时未命中**处置。
+
+**结构发现三：同一份语义写两遍的代价是实测出来的，不是假设的。**
+本格提了**两个** static 单源（`matchArmMatches` / `builtinGet`），都属「解释器里已经有了、HIR 需要复用」。
+`builtinGet` 的提取还**净删**了一个私有方法（`uncheckedOrNone`）⇒ 单源化不等于加代码。
+两个单源的**被打过靶的分支**均有变异轮次证明其被门控（M1b 打 `matchArmMatches` 的字面量值比较、M2 打通配、
+M9 打 `builtinGet` 的越界落点）；**未被单独打靶的分支、以及 M1 这个反例见文末「变异反证」**——账写窄，不复述。
+
+**判据缺口补齐 6 项**（动手前**无任何断言**）：裸值字面量 match 的**值分派**与 `case _` **通配兜底** ·
+臂内 `defer` 在**臂末** LIFO · try handler 以 `pass` 终止（**语句位**；表达式位被降载器拒，两半的分界此前无断言）·
+`resultConstruct` **节点级**行为与 **`Result` 作 scrutinee** 的 match（无任何夹具）·
+枚举未命中 ⇒ `matchNotExhaustive`（**源不可达**，须以节点构造）· 裸值未命中 ⇒ **静默**（方向相反，同样源不可达）。
+
+**重放落盘与结构自检**：三方合并（`git merge-file -p <新基准> <旧前驱> <归档版>`）解 2 处冲突，
+**全在 `HIRExecutor.swift` 的文件头 docstring** —— ①「已实现节点清单」取**新基准骨架 + 并入本格子句**；
+②「边界声明清单」取**两侧并集**（G1 的 `panicStmt` 条 + 本格 `try` 类型擦除 `E6-004` 条 + `match` 穷尽性条）。
+`HIRExecutorTests.swift` 亦 2 处冲突，按「双方各自追加用例 ⇒ 取并集」处置（**已删的 2 个旧 G1 用例不取回**，
+两处用例名无撞车）。合并后自检：**0 残留标记 · 大括号平衡 · 恰 6 个本格节点退出 fail-loud 表**。
+⚠️ 最后一条要数**打靶点**而不是**词频**：裸 `grep -c notImplemented` 会把函数定义与注释里的一处复述
+一起数进去（实测得 25），而 `notImplemented("<node>")` 调用形态实测 **29 → 23**，
+前/后差集**恰好等于本格六节点名、反方向为空** —— 差集比计数更强，它同时证明「没有多退出、也没有少退出」。
+
+| 面 | 前 | 后 |
+|---|---|---|
+| HIR 探针（**全量 6 根 / 308 夹具**） | `OK 137` · `TODO 112` · `GAP_HIR_ENGINE 14` · `GAP_EXEC 3` · `FLIP BLOCKERS 17` | **`OK 181` · `TODO 62` · `GAP_HIR_ENGINE 20` · `GAP_EXEC 3` · `FLIP BLOCKERS 23`** |
+| HIR 探针（**HIRTests 单根 / 74 夹具**，台账可比口径） | `OK 38` / `TODO 32` / `GAP_HIR_ENGINE 4` | **`OK 49` / `TODO 21` / `GAP_HIR_ENGINE 4`** |
+| `TODO` 按节点聚合（**单根口径**） | 32 夹具 / **16 节点** | 21 夹具 / **11 节点**（`construct` 9 · `closureLiteral` 3 · 其余 **9 个各 1**）；**G6 六节点全部从清单消失** |
+| `TODO` 按节点聚合（**全量口径**） | 141 夹具 / 22 节点（pre-G1） | 62 夹具 / **13 节点** |
+| 逐夹具判定变化 | —— | **79 个 = G1 面 29 + 本格面 50**，**零未归因**；余 229 个零变化 |
+| `CHANGE_*` / `GAP_BEHAVIOR` | 0 | **0** |
+| 全量回归 | 1246 / 3 skipped / 0 + 45 | **1251 / 3 skipped / 0 failures（0 unexpected）+ swift-testing 45**（+5） |
+| 契约核验 | `clean` 60/60 | `clean` 60/60（三锚点 llvm / printer / interp-hir **各 60/60**） |
+| 门禁 | —— | comment-lint L1–L6 全绿；doc-links **525** 引用通过；`hir-contract-check` clean |
+
+**夹具面对账（第 1 步实证价值，重放复验）**：动手前基线「首缺口属 G6 六节点」的夹具恰为 **11 个**
+（`enumConstruct` 3 · `tryStmt` 3 · `matchStmt` 2 · `optionalConstruct` 2 · `optionalGet` 1 = 11）——
+**无一遗漏、无一多出**，与归档清单**逐字重合**；复扫后 74 夹具里**只有这 11 个判定变化**（另加
+`resultConstruct` **零夹具**首缺口：被 `tryStmt` 遮蔽 ⇒ 转由节点级用例覆盖，见上「判据缺口补齐」第 4 项）。
+两条跨格线索按 `D-P2-5` 落定：① `testDiffSlice` 撞 `optionalConstruct`（同型于 G1 的 `stringConcat`，
+但落在**本格内**）；② `testDiffValueFormat` 同时覆盖 `optionalGet` 的**命中与未命中两支**
+（`w.get(1)` → `some(2)`、`w.get(9)` → `none`）。
+
+**全量面 Δ 的归因（逐夹具，不看总数）**：`OK +44` · `TODO −50` · `GAP_HIR_ENGINE +6`，三者自洽
+（50 个离场夹具里 44 转 `OK`、6 转阻塞槽）。相对 **pre-G1** 冻结基线共 79 处变化，
+按**基线 `note` 列的首缺口节点名**归因 = **G1 面 29 + 本格面 50 = 79**，**未归因 0 处**；
+夹具集合**零增删**（`仅在基线 0 / 仅在本格 0`），`sum(各 verdict) = 308` 两侧成立。
+⇒ 与 G1 收口的记账**严格相加**（G1 的 28 TODO→OK + 本格 44 = 72 = 109→181 ✓）。
+
+**+5 用例逐条对账**（全在本分支，全为 `HIRExecutorTests`）：
+`.testBareScrutineeMatchDispatchesOnLiteralsAndWildcard` ·
+`.testDeferInsideAMatchArmRunsAtArmExit` · `.testTryHandlerMayEndInPassAtStatementPosition` ·
+`.testResultConstructorValueDispatchesThroughMatch`（节点构造：`Result` 值 + `Result` 作 scrutinee）·
+`.testMatchFallThroughIsLoudForEnumsAndSilentForBareValues`（一条用例钉住**两个方向相反**的尾部规则）。
+另：`inRangeFixtures` **+11**（全部为实测转绿者，逐名核对）、`statementGaps` **−2**（`tryStmt` / `matchStmt` 退场，余 `fieldStore`）。
+
+**阻塞槽的 +6 已归因，且经逐字复验为假阳性**：新增 7 个阻塞面 = 本格 6 个（`OptionalTests` 六个夹具）
++ G1 遗留 1 个（`testBreakCollectionReleasesIRContract`）。**全部 20 个 `GAP_HIR_ENGINE`** 的机制由探针
+rule 8 明载：「`interp-hir` 未失败但往 stderr 写了话」——`run` 打印 `E7-001` 语义警告而 `run-llvm` 吞掉，
+于是 `bool(l_err) != bool(h_err)` 使 rule 5 的 parity 判不成立，落进阻塞槽。
+⚠️ 探针只记 stdout **长度**，而「长度相同」不等于「字节相同」⇒ 本格对新增的 7 个面**另行逐字复验**：
+`rc(l,h,a) = 0/0/0`、三条臂 stdout **逐字节一致（7/7）**，且 `E7-001` 同一段文本在 **`interp-ast` 冻结参照臂上
+同样出现** ⇒ 该告警与 HIR 实现无关，是**既有**的两通道诊断面差异。
+⇒ **实质分歧 0**；`FLIP BLOCKERS` 的绝对数增大是「**每实现一个节点，这层屏蔽就薄一分**」的第 N 个实例，
+**非本格引入的缺陷**（机制与收窄时机登记在 `docs/issue-diagnostic-channel-parity-2026-09-12.md`，路由 P3）。
+
+**变异反证（两级：重放复跑归档的 2 基线 + 12 轮打靶；器械 `/tmp/g6-replay-mutation-falsify.py`，
+日志 `/tmp/g6-replay-mutation-out.txt`）**
+
+`L0` 未变异基线 **8/8 全绿** ⇒ 前置闸门成立；`L1`（`git stash push -- Sources/`：整族关闭、测试留在树上）
+**6/6 族用例全红、两对照恒绿** ⇒ 那 11 个夹具的转绿确系本格 `Sources/` 改动所致，不是测试侧造绿。
+每轮还原均 md5 对账通过；**全轮结束后另做一次独立复核**：4 个文件 md5 与变异前备份**逐字节一致**、
+`git diff` 补丁 md5 一致、`git stash list` 为空 ⇒ **13 次 `restore OK` / 0 MISMATCH**。
+
+| 轮 | 打掉的规则 | 观测 | 红者 |
+|---|---|---|---|
+| M1 | 字面量臂尾部 `return false`→`true`（**异类型**字面量臂恒真） | **否** | ——（缺陷一） |
+| M1b | `.int` 字面量分支恒真（**同类型**字面量臂对任意值恒真） | 是 | `fall` |
+| M2 | `case _` 永不成真 | 是 | `corpus` · **`slice`**（缺陷二） |
+| M3 | 臂体不另起块（`executeBlock`→`executeStatements`） | 是 | `armdefer` |
+| M4 | 载荷绑定倒序（`reversed()[index]`） | 是 | `corpus` |
+| M5 | try 处 ok/err 互换 | 是 | `trypass` · `corpus` |
+| M6 | ok 槽经 `assign` 而非 `initialize` | 是 | `corpus` |
+| M7 | `resultConstruct` 恒造 ok | 是 | `trypass` · `corpus` |
+| M8 | `optionalConstruct` 的 none → `some(null)` | 是 | `corpus` |
+| M9 | `optionalGet` 去掉边界检查 | 是 | `corpus` |
+| M10 | 枚举未命中不再响亮 | 是 | `fall` |
+| M11 | 裸值未命中改为响亮（**方向相反**的规则） | 是 | `fall` · `corpus` |
+
+不变量：① `L1` 全族红 ✅；② 每轮至少一项非对照红 —— **11/12**（M1 例外）；③ 两对照恒绿 —— **11/12**（M2 例外）。
+⇒ **重放复跑与归档读数逐字一致**（同一套变异、同一组用例、同样的两处例外）。
+
+**缺陷一（判据盲区 + 器械的结构性上限；已实测，归 P3）：M1 打靶不可观测，且原因不止「语料少一个夹具」。**
+
+① **语料无「异类型字面量臂」**：74 夹具中 `case <字面量>:` 零命中；手写 `fall` 的裸值半边是
+`intConst(4)` vs `literal: .int(1)`（**同类型、值不等**），走不到被变异的尾部 ⇒ M1 在本仓**无靶点**。
+
+② **更根本：`matchArmMatches` 是两条解释器通道共用的谓词，而单测 parity 只比这两条通道。**
+`HIRExecutorTests` 的 `assertParity` = `XCTAssertEqual(hir, ast)`，**不接 LLVM 通道**；
+共用代码的变异在两条通道里**同时生效、相互抵消** ⇒ **二通道 parity 结构上看不见这一类变异**。
+
+⇒ 结论：**「两通道共用谓词」这类变异只能靠 ①绝对断言（`fall` 的静默断言正是由此观测到 M1b）或
+②三通道探针**；单测 parity 不足以证伪它们。归属 **P3（判据升级）**，本格只登记不修。
+（归档曾以一份 6 行、`pini check` rc=0 的临时夹具走三通道探针取证判 `CHANGE_OTHER` ⇒ 第三通道是唯一见证者；
+该取证件**未入仓**，本格**不重做该取证**——见「未做」条。）
+
+**缺陷二（对照选错，机制已定）：`slice` 不是有效对照。**
+M2 让它红了，而这不是对照失效造成的假红 —— 机制 = **同一个内建方法，两通道走不同路线**：
+AST 通道的 `slice` 走 **Pini 标准库**（`Common/StdlibPini.swift`，体内就是 `match a: case none: / case _:`），
+HIR 通道走**原生 `.sliceCall` 节点**（`HIRLowerer`）⇒ 共用谓词的变异在此**可被见证**，
+故 `slice` 在 M2 轮实为「第二个可观测者」；`corpus` 红的是同一机制的 `testDiffSlice`。
+教训（供后续格）：**对照必须与变异面正交** —— 选不触碰 match / optional / try / 字面量的纯算术 parity 用例；
+`gaps` 12 轮恒绿，合格。
+
+**单源门控的账要写窄**：只有**被打过靶的分支**才可称「由测量门控」——
+`matchArmMatches` 的字面量值比较（M1b ✅）· `case _` 通配（M2 ✅）· `builtinGet` 的越界落点（M9 ✅）。
+**未单独打靶者**：`matchArmMatches` 的 case 名比较（无轮次）· `builtinGet` 的负索引与字典键相等（无轮次）·
+**异类型尾部（M1 ❌ 结构性不可见）**。⇒ 上述未打靶项并入 P3 的判据缺口清单，本格**不补轮次**（规模控制）。
+
+**重放专有的两处口径事故（如实登记，非缺陷但影响证据链）**
+
+① **基线 TSV 被覆盖**：探针明细**恒写死** `/tmp/hir-parity-sweep.tsv`（无 `--out`），而单根 `--filter`
+探针与全量探针**共用同一路径** ⇒ 本格动手前那一次单根基线探针把**上一格（G1 收口）留下的全量 308 行
+TSV 静默覆盖**。处置 = 回退到**更早一格**的冻结全量基线（`819bac2`），并**按基线 `note` 列的首缺口
+节点名逐夹具归因**（上表 79 = 29 + 50 即此法所得）。**已验证该法可信**：把 early 全量基线里
+`HIRTests` 子集抽出来是 `OK 34 / TODO 36 / GAP 4`，与 G1 记账的**单根读数逐字相等**
+⇒ **子集抽取 ≡ 单根探针**（夹具独立执行，互不影响），故本格**不再补跑单根**，单根读数直接取自全量产物。
+已把「跑完立刻改名冻结」写进收口技能。
+
+② **重放基准已变**：归档件的父是**旧 G1 合并点 `3f98079`**，而本格基准是**新 G1 的合并点 `d92f982`**
+⇒ 归档的 `git apply --check` 结论**不可迁移**，两处 docstring 冲突即由此而来（已按定式解开）。
+
+**门禁插曲（零语义变更，重放复现）**：本格往 `inRangeFixtures` 上方写的说明段里复述了探针判定名
+`HIR_ENGINE_TODO`，被 comment-lint **L5「裸待办」**拦下。原因是 L5 的 pattern 与 L1–L4 不同 ——
+**它没有注释锚点**，在 `.swift` / `.pini` 的任意行上匹配 `TODO|FIXME|HACK|XXX`；
+该判定名本来只活在 Python 工具里（不被扫），写进 Swift 注释即命中。处置 = 改散文描述
+（"engine has not implemented this node yet"），复跑 L1–L6 全绿。
+
+**替上两格补的账（2026-09-14，共 4 处）**：G1 收口时**只往主计划 §13 追加了本格条目**，
+全篇的「下一格」指针**一处未扫** ⇒ 四处陈旧（③ 的本件 §8.2 那条，G1 收口改过一条同型的却漏了它；
+④ 是 G2 收口的同型遗漏）：
+① 主计划载体**顶部「状态」行**仍写「下一格 = P2a 第三格（G1 控制流）」（与 §13 里的「下一格 = G6」互相矛盾）；
+② 本件**顶部「状态」行**仍写「已交付 3 格 / 下一格 = G6」；③ 本件 **§8.2 末尾**仍写「下一格 = G1」；
+④ 主计划 **§13 的 G4 条目末尾**仍写「下一格 = G2」。
+四处均已于本格订正为当前值，并在主计划顶部显式留痕。**教训**：收口回填**不是只写新条目**，
+「下一格 / 已交付格数」这类**状态指针散落在多份载体的多处**，必须用 `grep -n '下一格 = '` **全篇扫**再逐条改；
+已写进收口技能（§3 plan 回填）。
+
+**未做**：未改 AST / LLVM 侧实现（缺陷一只登记不修）；未补语料夹具（归档的取证件不入仓，本格不重做该取证）；
+未补变异轮次（未打靶分支转 P3）；未动契约节点集；未收窄探针 `GAP_HIR_ENGINE` 判据
+（该计数器收窄时机仍为上交给决策点）；未修 G6 之外任何节点；未 push。
+⇒ **下一格 = P2a 第五格（G5 具名类型与字段，3 缺口：`construct` / `fieldGet` / `fieldStore`）**。
 
 ## 9. 决策记录
 

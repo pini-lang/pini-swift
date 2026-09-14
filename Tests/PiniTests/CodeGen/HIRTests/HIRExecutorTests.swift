@@ -131,6 +131,27 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffDefer",
         "testDiffForIn",
         "testDiffStep",
+        // Grid G6 (enum / Optional / Result / try). Each of these was the grid's
+        // own evidence that a node ran: the eleven are exactly the fixtures whose
+        // first gap was one of the six G6 nodes, so the probe's verdict on them
+        // moved from "engine has not implemented this node yet" to `OK`, and
+        // nothing else moved with it.
+        // `testDiffSlice` and `testDiffValueFormat` are here because the grid
+        // implemented `optionalConstruct` / `optionalGet` rather than deferring
+        // them — without that, both fixtures would have stayed in the pending
+        // list while silently covering less than they look like they cover
+        // (`D-P2-5`).
+        "testDiffArrayGetMatch",
+        "testDiffEnum",
+        "testDiffEnumNamed",
+        "testDiffMultidimArray",
+        "testDiffOptionalDirect",
+        "testDiffSlice",
+        "testDiffTryElse",
+        "testDiffTryElseOk",
+        "testDiffTryElseSugar",
+        "testDiffValidatedMatch",
+        "testDiffValueFormat",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -493,6 +514,186 @@ final class HIRExecutorTests: XCTestCase {
         """, label: "fall-off-the-end value")
     }
 
+    /// A `match` over a **bare** scrutinee dispatches on literal arms, and
+    /// `case _:` is the wildcard that makes the fall-through explicit.
+    ///
+    /// Why this needs a case of its own: every corpus fixture that reaches
+    /// `matchStmt` is either Optional-typed or enum-typed, so the bare-value
+    /// family — the one the lowerer routes through `HIRMatchLiteral` — would ship
+    /// unasserted. Two facts are pinned at once: a literal arm fires on value
+    /// equality, and the wildcard fires for everything else. The rule being
+    /// mirrored is `Interpreter.matchArmMatches`, the shared value-level core.
+    func testBareScrutineeMatchDispatchesOnLiteralsAndWildcard() throws {
+        try assertParity("""
+        main|func() -> ():
+            var x = 2
+            match x:
+                case 1:
+                    print("one")
+                case 2:
+                    print("two")
+                case _:
+                    print("other")
+            var y = 9
+            match y:
+                case 1:
+                    print("one")
+                case _:
+                    print("yes")
+            return
+        """, label: "bare-scrutinee literal match and wildcard")
+    }
+
+    /// A `defer` written inside a `match` arm runs when that arm's block ends,
+    /// before anything after the `match`.
+    ///
+    /// No fixture covers it: `testDiffDefer` exercises `while` and `for-in` bodies
+    /// only. The arm body is a block scope of its own (`Interpreter.executeMatch`
+    /// calls `executeBlock` per arm), so its defers fire at arm exit, LIFO, while
+    /// the arm's own bindings and the scrutinee binding are still in scope. The
+    /// ordering of the two defers is the point — a flattened reversal would print
+    /// `100` before `200`.
+    func testDeferInsideAMatchArmRunsAtArmExit() throws {
+        try assertParity("""
+        main|func() -> ():
+            var x = 5
+            match x:
+                case 5:
+                    defer print(200)
+                    defer print(100)
+                    print(x)
+                case _:
+                    print("other")
+            print("after")
+            return
+        """, label: "defer inside a match arm")
+    }
+
+    /// A `try` handler may end in `pass` at **statement** position.
+    ///
+    /// The lowerer rejects a `pass`-terminated handler in expression position (it
+    /// can yield no value) but allows it in statement position, where the handler
+    /// simply falls out and control continues after the `try`. Every `try`
+    /// fixture terminates its handler with `return`, so that second half of the
+    /// rule would otherwise be unexercised — and the two halves are easy to
+    /// conflate into "handlers always jump".
+    func testTryHandlerMayEndInPassAtStatementPosition() throws {
+        try assertParity("""
+        失败|func(flag: Bool,) -> (^String,):
+            if flag:
+                return err("boom")
+            return ok("fine")
+
+        main|func() -> ():
+            try 失败(true) else 错误:
+                print("caught")
+                pass
+            print("after")
+            return
+        """, label: "try handler terminating with pass")
+    }
+
+    /// `resultConstruct` at node level, through the one consumer a fixture cannot
+    /// give it.
+    ///
+    /// No corpus fixture fails at `resultConstruct` first — a `try` operand
+    /// evaluates it one node earlier — so the node that *builds* a Result value
+    /// has no gap probe of its own. It is built here instead, together with the
+    /// only cover for a **`Result` scrutinee**: the lowerer routes that through
+    /// the bare-value family (a `Result` is neither an Optional nor a declared
+    /// enum at that point), and no fixture matches on one. So this pins three
+    /// things at once: `ok` produces the interpreter's `Result` value, a `match`
+    /// dispatches over it by case name, and the arm binds the payload it carries.
+    func testResultConstructorValueDispatchesThroughMatch() throws {
+        let result: HIRType = .result(ok: .i32)
+        let module = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .allocVar(
+                    name: "r", type: result, mutable: false,
+                    initializer: .resultConstruct(
+                        isOk: true, payload: .intConst(value: 7, type: .i32), type: result
+                    )
+                ),
+                .matchStmt(
+                    scrutinee: .load(name: "r", type: result),
+                    cases: [
+                        HIRMatchCase(
+                            caseName: "ok", bindings: ["v"],
+                            body: [.exprStmt(.printCall(argument: .load(name: "v", type: .i32)))]
+                        ),
+                        HIRMatchCase(
+                            caseName: "err", bindings: ["e"],
+                            body: [.exprStmt(.printCall(argument: .stringConst(value: "err")))]
+                        ),
+                    ],
+                    scrutineeType: result
+                ),
+                .returnStmt(value: nil),
+            ])
+        ])
+
+        let executor = HIRExecutor()
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
+        XCTAssertNoThrow(try executor.run(module: module))
+        XCTAssertEqual(lines, ["7"], "the ok arm must bind the payload the value carries")
+    }
+
+    /// The two ways a `match` falls off its end, both mirrored from the
+    /// interpreter and both unreachable from source:
+    ///
+    /// - an **enum value** no arm names → `matchNotExhaustive`. Source cannot
+    ///   reach it (the checker rejects a non-exhaustive enum match statically,
+    ///   `E3-007`), which is exactly why the node is built here;
+    /// - a **bare value** no literal arm matches → silent, no output. A literal's
+    ///   value space is infinite, so falling through is the interpreter's rule
+    ///   (R3) and not an oversight; a later "tidy-up" that turned it into a panic
+    ///   would diverge from the AST channel, so it is asserted rather than left to
+    ///   the reading of the code.
+    func testMatchFallThroughIsLoudForEnumsAndSilentForBareValues() {
+        let uncovered = HIRModule(
+            functions: [HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .matchStmt(
+                    scrutinee: .enumConstruct(
+                        enumName: "E", caseName: "a", tag: 0, payloads: [], payloadTypes: [],
+                        type: .enumeration(name: "E")
+                    ),
+                    cases: [HIRMatchCase(caseName: "b", bindings: [], body: [])],
+                    scrutineeType: .enumeration(name: "E")
+                ),
+            ])],
+            enums: [HIREnumDecl(name: "E", cases: [
+                HIREnumCase(name: "a", tag: 0, paramNames: [], payloadTypes: []),
+                HIREnumCase(name: "b", tag: 1, paramNames: [], payloadTypes: []),
+            ])]
+        )
+        XCTAssertThrowsError(try HIRExecutor().run(module: uncovered)) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("match 未穷尽"),
+                "an unmatched enum value must report the match as non-exhaustive, got: \(error)"
+            )
+        }
+
+        let bareMiss = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .matchStmt(
+                    scrutinee: .intConst(value: 4, type: .i32),
+                    cases: [HIRMatchCase(caseName: "1", literal: .int(1), bindings: [], body: [
+                        .exprStmt(.printCall(argument: .stringConst(value: "one")))
+                    ])],
+                    scrutineeType: .i32
+                ),
+            ])
+        ])
+        let executor = HIRExecutor()
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
+        XCTAssertNoThrow(try executor.run(module: bareMiss))
+        XCTAssertTrue(
+            lines.isEmpty, "a bare value with no matching literal arm falls through silently"
+        )
+    }
+
     // MARK: - Fail-loud gaps
 
     /// One probe per gap. Each probe is a *single* node, so "the error names this
@@ -514,13 +715,18 @@ final class HIRExecutorTests: XCTestCase {
     /// implemented, never by being tolerated — G1 removed `forInStmt`,
     /// `deferStmt`, `breakStmt`, `continueStmt` and `panicStmt`, and the two
     /// control statements that could not be covered here (a bare `break` escapes
-    /// as an unwind rather than an error) got their own tests instead.
+    /// as an unwind rather than an error) got their own tests instead. The try /
+    /// match family left in the G6 grid; what remains is the nominal field store
+    /// (G5).
+    ///
+    /// `tryStmt` and `matchStmt` were the two nodes whose *every* corpus fixture
+    /// fails here first, so the entries could not outlive the grid that
+    /// implemented them — a probe for a node that runs would now be asserting the
+    /// opposite of the truth. `resultConstruct`, by contrast, never had an entry:
+    /// no fixture fails at it first (a `try` operand masks it), so it is covered
+    /// by the corpus rather than by a gap probe, and the container case below
+    /// pins it at node level.
     private static let statementGaps: [(node: String, stmt: HIRStmt)] = [
-        ("tryStmt", .tryStmt(
-            operand: .intConst(value: 0, type: .i32), errorVar: "e",
-            handler: [], okTarget: nil, type: .i32)),
-        ("matchStmt", .matchStmt(
-            scrutinee: .intConst(value: 1, type: .i32), cases: [], scrutineeType: .i32)),
         ("fieldStore", .fieldStore(
             base: .intConst(value: 0, type: .i32), field: "f",
             value: .intConst(value: 1, type: .i32), fieldType: .i32)),
