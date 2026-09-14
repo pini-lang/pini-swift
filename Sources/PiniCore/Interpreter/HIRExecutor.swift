@@ -1,5 +1,23 @@
 import Foundation
 
+/// How a `break` / `continue` / `return` leaves the statement layer.
+///
+/// The HIR carries an unwind **depth** (`breakStmt(depth:)`), never a label: the
+/// lowerer resolves labels to depths (ADR-014) and turns a target it cannot
+/// resolve into a `panicStmt`. So this engine's control vocabulary is depths, and
+/// it deliberately does *not* reuse the AST channel's `ControlSignal`, whose
+/// vocabulary is labels — squeezing a depth into a label field would mean
+/// re-deciding the mapping inside every loop, which is how two channels drift
+/// apart while both look correct.
+enum HIRControlSignal: Error {
+    /// Leave the enclosing function with this value; `nil` = void return.
+    case returnSignal(Value?)
+    /// Unwind `depth` enclosing loops; 1 = the innermost.
+    case breakSignal(depth: Int)
+    /// Resume the `depth`-th enclosing loop's header; 1 = the innermost.
+    case continueSignal(depth: Int)
+}
+
 /// Runs a lowered `HIRModule` directly — the third live channel of the LR-4
 /// unification, alongside the AST interpreter and HIR → LLVM.
 ///
@@ -21,12 +39,16 @@ import Foundation
 ///    *dispatched* here, with no `default:`. Adding a case to `HIRExpr` or
 ///    `HIRStmt` breaks this file until the node is acknowledged, which is what
 ///    `tools/hir-contract-check.py` asserts from the outside.
-/// 2. **Only the minimal core is *implemented*.** The four scalar constants,
-///    `load`, `binary`, `unary`, `call`, `printCall`, and the statements
-///    `allocVar` / `storeVar` / `ifStmt` / `whileStmt` / `returnStmt` /
-///    `exprStmt`. Everything else fails loud (`notImplemented`) naming the node.
-///    A silent `.null` would make this engine look finished and let the
-///    differential probes compare against a fiction.
+/// 2. **Only the delivered node set is *implemented*.** Grids land here a family
+///    at a time: P1-2 (the scalar core — the four constants, `load`, `binary`,
+///    `unary`, `call`, `printCall`, and `allocVar` / `storeVar` / `ifStmt` /
+///    `whileStmt` / `returnStmt` / `exprStmt`), G4 (collections and subscripts),
+///    G2 (tuples and their label model), G1 (control flow — `forInStmt`,
+///    `deferStmt`, `breakStmt`, `continueStmt`, `panicStmt`, plus the
+///    `stringConcat` the defer fixtures need to build their expected string).
+///    Everything else fails loud (`notImplemented`) naming the node. A silent
+///    `.null` would make this engine look finished and let the differential
+///    probes compare against a fiction.
 ///
 /// SEMANTIC PARITY
 ///
@@ -49,6 +71,15 @@ import Foundation
 /// - `while`'s step block runs after the body on normal completion *and* on an
 ///   unlabeled `continue`; an unlabeled `break` returns without running it
 ///   (ADR-014, `Interpreter.executeWhile`).
+/// - Control-flow bodies and both `if` branches run through `executeBlock`,
+///   which opens a **defer scope** exactly where the interpreter's `executeBlock`
+///   does; a function body opens one too, mirroring `executeFunctionBody`. Block
+///   bodies still push no *variable* scope — the two are separate on both
+///   channels, and only the defer one is new here.
+/// - `break` / `continue` carry an unwind **depth**, not a label. This engine
+///   consumes depth 1 and rethrows `depth - 1` with the current loop's step
+///   skipped — which is exactly what a label mismatch does on the AST channel,
+///   so the depth is the same contract expressed in the vocabulary the HIR has.
 ///
 /// REGISTERED GAPS AT THIS STAGE
 ///
@@ -59,11 +90,17 @@ import Foundation
 /// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method,
 ///   so `allocVar` does not apply the struct copy rule yet. No struct node is
 ///   implemented here, so nothing observable depends on it yet.
-/// - **No scoped blocks / defer.** P1-2 has no block-scope or defer-stack
-///   concept; the statements that need them fail loud.
+/// - **`panicStmt`'s text has no cross-channel counterpart.** The node is
+///   compiler-generated (an unresolvable `break`/`continue`), and on the AST
+///   channel the same program ends in an escaped `ControlSignal` whose top-level
+///   rendering is Foundation's, not the language's — so no byte-equality claim
+///   is made for it, and the corpus never reaches it (`panic` occurs in the
+///   fixtures only inside comments). Gated for "fails loud with its message",
+///   registered as an unexercised parity surface.
 ///
-/// This is grid P1-2 of the LR-4 interpreter unification: the HIR (ADR-034)
-/// gains an execution engine that is not the LLVM emitter.
+/// This is grid P1-2 of the LR-4 interpreter unification, extended by grids G4
+/// (collections), G2 (tuples) and G1 (control flow): the HIR (ADR-034) gains an
+/// execution engine that is not the LLVM emitter.
 ///
 /// Its debug surface conforms to `DebugHookHost`, the same shape the AST
 /// interpreter exposes — see the `debugHook` property for why that surface is
@@ -113,6 +150,17 @@ public final class HIRExecutor: DebugHookHost {
     /// unbounded recursion) and a new execution path must not reintroduce it.
     private var callDepth = 0
     private static let maxCallDepth = 120
+
+    /// Open defer scopes, innermost last: a scope holds its `defer` statements in
+    /// registration order, and each `defer` holds the **group** of statements it
+    /// wraps.
+    ///
+    /// The grouping is what keeps LIFO honest. Popping runs the *groups* in
+    /// reverse and, inside one group, its statements in source order; a flat
+    /// reversed list would also invert a defer whose body lowered to more than
+    /// one node — a difference that only shows up once such a body exists, which
+    /// is the worst time to find it.
+    private var deferStack: [[[HIRStmt]]] = []
 
     public init() {
         let env = Environment()
@@ -302,8 +350,23 @@ public final class HIRExecutor: DebugHookHost {
                 location: HIRExecutor.noLocation
             )
 
-        // MARK: Not implemented yet — fail loud, named.
+        // MARK: Strings
 
+        case .stringConcat(let lhs, let rhs):
+            // `s1 + s2` has one meaning, and it is the interpreter's: this arm
+            // routes through the same `binaryValue` the `.binary` arm uses, so
+            // "what `+` does to two strings" is decided in one place.
+            //
+            // The node exists separately from `.binary` because the contract
+            // sinks concatenation to a byte-semantics channel (contract row 41,
+            // group C — same results, different allocation). It is in *this*
+            // grid because the defer fixtures build their expected string by
+            // concatenating, so G1's fixtures cannot flip without it.
+            return try Interpreter.binaryValue(
+                try evaluate(lhs), .plus, try evaluate(rhs)
+            )
+
+        // MARK: Not implemented yet — fail loud, named.
 
         case .resultConstruct: throw notImplemented("resultConstruct")
         case .optionalGet: throw notImplemented("optionalGet")
@@ -328,7 +391,6 @@ public final class HIRExecutor: DebugHookHost {
         case .stringSubstring: throw notImplemented("stringSubstring")
         case .stringSplit: throw notImplemented("stringSplit")
         case .arrayJoin: throw notImplemented("arrayJoin")
-        case .stringConcat: throw notImplemented("stringConcat")
         case .interpString: throw notImplemented("interpString")
         case .lazyRefConstruct: throw notImplemented("lazyRefConstruct")
         case .lazyRefValue: throw notImplemented("lazyRefValue")
@@ -434,6 +496,47 @@ public final class HIRExecutor: DebugHookHost {
         }
     }
 
+    // MARK: - Defer scopes
+
+    /// Mirror of `Interpreter.pushDeferScope`.
+    private func pushDeferScope() {
+        deferStack.append([])
+    }
+
+    /// Mirror of `Interpreter.popDeferScope`: run this scope's defers LIFO.
+    ///
+    /// Two details are copied rather than chosen, because both are observable.
+    /// The scope is removed *before* its defers run, so a `defer` inside a
+    /// deferred statement registers in the scope that encloses this one (or
+    /// errors, if there is none). And the caller swallows whatever the defers
+    /// throw — see `executeBlock`.
+    private func popDeferScope() throws {
+        guard !deferStack.isEmpty else { return }
+        let groups = deferStack.removeLast()
+        for group in groups.reversed() {
+            for statement in group { try execute(statement) }
+        }
+    }
+
+    /// Run a statement list as a **block**: open a defer scope, run, close it on
+    /// every exit path.
+    ///
+    /// This is the interpreter's `executeBlock`, and it is called at exactly the
+    /// same boundaries — `if` / `else` branches, and `while` and `for-in` bodies
+    /// and steps. The function-body path does *not* come through here: it opens
+    /// its own scope inline, as `executeFunctionBody` does, because that path also
+    /// owns the `lastValue` rule and the environment restore.
+    ///
+    /// The `try?` on the close is deliberate. It is what the interpreter does, and
+    /// what it means is: a signal thrown by a deferred statement is discarded, and
+    /// whatever error is already unwinding keeps unwinding. "Fixing" this into a
+    /// propagated error would invent a divergence rather than remove one.
+    private func executeBlock(_ statements: [HIRStmt]) throws {
+        pushDeferScope()
+        defer { try? popDeferScope() }
+        try executeStatements(statements)
+    }
+
     // MARK: - Statements
 
     /// Runs a statement list in order, yielding the value of the last expression
@@ -491,17 +594,22 @@ public final class HIRExecutor: DebugHookHost {
             try currentEnv.assign(name: name, value: try evaluate(value))
 
         case .ifStmt(let condition, let thenBody, let elseBody):
+            // Each branch is its own defer scope. The HIR folds `elif` chains
+            // into a nested `ifStmt` in `elseBody`, so a chain of three branches
+            // is three scopes here for the same reason it is three on the AST
+            // channel — the interpreter reaches each `Block` through
+            // `executeBlock` too.
             if try evaluateCondition(condition) {
-                try executeStatements(thenBody)
+                try executeBlock(thenBody)
             } else if let elseBody = elseBody {
-                try executeStatements(elseBody)
+                try executeBlock(elseBody)
             }
 
         case .whileStmt(let condition, let body, let step):
             try executeWhile(condition: condition, body: body, step: step)
 
         case .returnStmt(let value):
-            throw ControlSignal.returnSignal(try value.map { try evaluate($0) })
+            throw HIRControlSignal.returnSignal(try value.map { try evaluate($0) })
 
         case .exprStmt(let expr):
             // Dropped here; `executeStatements` is what captures it as the body's
@@ -525,14 +633,48 @@ public final class HIRExecutor: DebugHookHost {
             let targetIndex = try evaluate(index)
             try storeSubscript(target: container, index: targetIndex, newValue: newValue)
 
+        // MARK: Control flow (grid G1)
+
+        case .forInStmt(let pattern, _, let kind, let iterable, let body, let step):
+            // `elementTypes` is lowering-time information only. The contract's
+            // "`_` still occupies a slot and carries its type" is about the
+            // lowerer's arity check; at run time the row decomposition is the
+            // interpreter's, reused rather than restated.
+            try executeForIn(
+                pattern: pattern, kind: kind, iterable: iterable,
+                body: body, step: step
+            )
+
+        case .deferStmt(let body):
+            // Registered, not run: LIFO order belongs to the scope
+            // (`popDeferScope`). The guard is the interpreter's — a `defer` with
+            // no enclosing block scope is an error, not a silent no-op — and it
+            // cannot fire for lowered source, since a function body is a scope.
+            guard !deferStack.isEmpty else {
+                throw RuntimeError.invalidOperation(
+                    reason: "defer 必须在块作用域内使用",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            deferStack[deferStack.count - 1].append(body)
+
+        case .breakStmt(let depth):
+            throw HIRControlSignal.breakSignal(depth: depth)
+
+        case .continueStmt(let depth):
+            throw HIRControlSignal.continueSignal(depth: depth)
+
+        case .panicStmt(let message):
+            // The message is the lowerer's — it names the escape the interpreter
+            // only discovers at run time — and is passed through verbatim.
+            throw RuntimeError.invalidOperation(
+                reason: message,
+                location: HIRExecutor.noLocation
+            )
+
         // MARK: Not implemented yet — fail loud, named.
 
-        case .forInStmt: throw notImplemented("forInStmt")
-        case .deferStmt: throw notImplemented("deferStmt")
         case .tryStmt: throw notImplemented("tryStmt")
-        case .breakStmt: throw notImplemented("breakStmt")
-        case .continueStmt: throw notImplemented("continueStmt")
-        case .panicStmt: throw notImplemented("panicStmt")
         case .matchStmt: throw notImplemented("matchStmt")
         case .fieldStore: throw notImplemented("fieldStore")
         }
@@ -606,45 +748,162 @@ public final class HIRExecutor: DebugHookHost {
         return flag
     }
 
-    /// Mirrors `Interpreter.executeWhile` (ADR-014 step contract):
+    /// Mirrors `Interpreter.executeWhile` (ADR-014 step contract), with the
+    /// unwind spoken in depths instead of labels:
     ///
     /// - body completes normally → step runs;
-    /// - unlabeled `continue` → step runs;
-    /// - unlabeled `break` → return without running step;
-    /// - a labeled signal or a `return` propagates unchanged (this skeleton has
-    ///   no labeled loops, but propagating rather than swallowing keeps the
-    ///   shape ready for them).
+    /// - `continue` for this loop → step runs;
+    /// - `break` for this loop → return without running step;
+    /// - a `break`/`continue` aimed at an **outer** loop → rethrown one level
+    ///   shallower, and this loop's step is skipped. That skip is not an
+    ///   oversight: on the AST channel such a signal arrives with a label this
+    ///   loop does not match, and a mismatched label is rethrown from the body
+    ///   or the step without the step ever running.
+    /// - a `return` propagates unchanged, depths being a loop affair only.
     private func executeWhile(condition: HIRExpr, body: [HIRStmt], step: [HIRStmt]?) throws {
         while true {
             if try !evaluateCondition(condition) { break }
 
+            var shouldRunStep = true
             do {
-                try executeStatements(body)
-            } catch let signal as ControlSignal {
+                try executeBlock(body)
+            } catch let signal as HIRControlSignal {
                 switch signal {
-                case .breakSignal(let label) where label == nil:
-                    return
-                case .continueSignal(let label) where label == nil:
-                    break
+                case .breakSignal(let depth):
+                    if depth == 1 { return }
+                    throw HIRControlSignal.breakSignal(depth: depth - 1)
+                case .continueSignal(let depth):
+                    if depth == 1 {
+                        shouldRunStep = true
+                    } else {
+                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                    }
                 default:
+                    throw signal
+                }
+            }
+
+            if shouldRunStep, let step = step {
+                do {
+                    try executeBlock(step)
+                } catch let signal as HIRControlSignal {
+                    switch signal {
+                    case .breakSignal(let depth):
+                        if depth == 1 { return }
+                        throw HIRControlSignal.breakSignal(depth: depth - 1)
+                    case .continueSignal(let depth):
+                        if depth == 1 { continue }
+                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                    default:
+                        throw signal
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mirrors `Interpreter.executeFor`:
+    ///
+    /// - the whole iterable is decomposed **before** the first iteration, so a
+    ///   pattern/element arity mismatch is an error even over an empty
+    ///   collection (that is why `decomposePatternRow` is shared, not restated);
+    /// - a dictionary row is `(key, value)` positionally and is *not* run
+    ///   through the per-element decomposition, so its 2-field guard is the only
+    ///   arity check on that path;
+    /// - each iteration gets a fresh `Environment` chained onto the current one,
+    ///   with `_` slots binding nothing and pattern names bound mutable;
+    /// - the step block runs **inside that same environment**, so a pattern name
+    ///   is still visible there (`testDiffStep` pins it);
+    /// - `break` skips the step of the loop being left, `continue` runs it, and
+    ///   an outer-aimed signal is rethrown shallower with this step skipped —
+    ///   the same rule as `executeWhile`, so the two loops are one contract.
+    private func executeForIn(
+        pattern: [String],
+        kind: HIRForIterableKind,
+        iterable: HIRExpr,
+        body: [HIRStmt],
+        step: [HIRStmt]?
+    ) throws {
+        let iterValue = try evaluate(iterable)
+        var rows: [[Value]] = []
+        // `kind` is the contract's ("`kind` decides how elements are read") and
+        // the runtime shape is the interpreter's check; requiring them to agree
+        // is what keeps this from being a second, looser, semantics.
+        switch (kind, iterValue) {
+        case (.array, .array(let elements)), (.set, .set(let elements)):
+            rows = try elements.map {
+                try Interpreter.decomposePatternRow(
+                    $0, patternCount: pattern.count, location: HIRExecutor.noLocation
+                )
+            }
+        case (.dict, .dictionary(let pairs)):
+            guard pattern.count == 2 else {
+                throw RuntimeError.typeMismatch(
+                    expected: "字典迭代需 2 字段模式元组 (k, v)",
+                    got: "\(pattern.count) 字段",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            rows = pairs.map { [$0.0, $0.1] }
+        default:
+            throw RuntimeError.typeMismatch(
+                expected: "可迭代集合（数组/字典/集合）",
+                got: "\(iterValue)",
+                location: HIRExecutor.noLocation
+            )
+        }
+
+        for row in rows {
+            let loopEnv = Environment(enclosing: currentEnv)
+            for (index, name) in pattern.enumerated() where name != "_" {
+                loopEnv.define(name: name, value: row[index], isMutable: true)
+            }
+            let previousEnv = currentEnv
+            currentEnv = loopEnv
+
+            do {
+                try executeBlock(body)
+            } catch let signal as HIRControlSignal {
+                switch signal {
+                case .breakSignal(let depth):
+                    currentEnv = previousEnv
+                    if depth == 1 { return }
+                    throw HIRControlSignal.breakSignal(depth: depth - 1)
+                case .continueSignal(let depth):
+                    if depth > 1 {
+                        currentEnv = previousEnv
+                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                    }
+                    // Aimed at this loop: the step still runs, and it runs in
+                    // the loop environment — so `currentEnv` deliberately stays
+                    // on `loopEnv` across this catch.
+                default:
+                    currentEnv = previousEnv
                     throw signal
                 }
             }
 
             if let step = step {
                 do {
-                    try executeStatements(step)
-                } catch let signal as ControlSignal {
+                    try executeBlock(step)
+                } catch let signal as HIRControlSignal {
                     switch signal {
-                    case .breakSignal(let label) where label == nil:
-                        return
-                    case .continueSignal(let label) where label == nil:
-                        continue
+                    case .breakSignal(let depth):
+                        currentEnv = previousEnv
+                        if depth == 1 { return }
+                        throw HIRControlSignal.breakSignal(depth: depth - 1)
+                    case .continueSignal(let depth):
+                        currentEnv = previousEnv
+                        if depth == 1 { continue }
+                        throw HIRControlSignal.continueSignal(depth: depth - 1)
                     default:
+                        currentEnv = previousEnv
                         throw signal
                     }
                 }
             }
+
+            currentEnv = previousEnv
         }
     }
 
@@ -692,9 +951,18 @@ public final class HIRExecutor: DebugHookHost {
         currentEnv = callEnv
         defer { currentEnv = previousEnv }
 
+        // A function body is a defer scope of its own — the interpreter opens one
+        // in `executeFunctionBody` rather than routing through `executeBlock`,
+        // because it also owns the `lastValue` rule. Registration order is the
+        // interpreter's and is load-bearing: this `defer` is declared *after* the
+        // environment restore, so on the way out the defers run first and still
+        // see the function's own environment.
+        pushDeferScope()
+        defer { try? popDeferScope() }
+
         do {
             return try executeStatements(function.body)
-        } catch let signal as ControlSignal {
+        } catch let signal as HIRControlSignal {
             if case .returnSignal(let value) = signal {
                 // G2: the interpreter's return-site rule, fed from the declared
                 // return type instead of the AST's `returnLabels` (the engine

@@ -22,42 +22,8 @@ scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.m
 dangling_policy = "引用已清理的 ID 属预期：归档件、已关闭工单、ADR 与 spec 的**历史登记行**保留其当时的编号（不追改）；**活跃断言与源码注释不得引用当前表外的 ID**（2026-09-12 口径，依据见 docs/spec/adr/adr-032-try-else-migration.md 同日节）"
 last_refresh = "2026-09-13T10:00+08:00"
 refresh_note = "2026-09-13 工单整理批：新增并现跑重筛 E-161（doc-links 489 引用全绿 · comment-lint L1–L6 全绿 · evidence_sweep --check 通过）；**存量条目未重新验证，按其自身 validated_at 判定**。"
-last_sweep = "2026-09-13T00:35:00+08:00"
-dangling_ids = ["E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-110", "E-111", "E-112", "E-120", "E-121", "E-124", "E-128", "E-129", "E-130", "E-131", "E-132", "E-133", "E-134", "E-135", "E-136", "E-137", "E-139", "E-140", "E-141", "E-148", "E-149"]
-[[evidence]]
-id = "E-150"
-claim = "M5 G6 closure/higher-order family (fat pointer ABI, reference-capture env, named-function value adapters) lands on the HIR pipeline with interpreter parity; lazyref stays exempt (unknown generic, cross-file domain)"
-artifacts = [
-  "pini-swift/Sources/PiniCore/HIR/HIRNode.swift",
-  "pini-swift/Sources/PiniCore/HIR/HIRLowerer.swift",
-  "pini-swift/Sources/PiniCore/CodeGen/IREmitter.swift",
-  "pini-swift/docs/issue-llvm-rewrite-plan-2026-09-07.md",
-  "pini-swift/Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffClosures.pini",
-  "pini-swift/tools/capability-sweep.tsv",
-]
-command = "swift test --package-path pini-swift --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && bash tools/capability-sweep.sh"
-output = "HIR differential 45/45 (new: testDiffLambda/testDiffLambdaTyped/testDiffHigherOrder/testDiffClosures red->green); full regression 1278/0/0; capability-sweep hir-emit 28/59 -> 32/59 (closures/lambda/lambda-typed/higher-order); lazyref.pini stays FAIL (unknown generic LazyRef, cross-file domain G13)"
-validated_at = "2026-09-09T00:45+08:00"
-status = "PENDING_DELETE"
-note = "实测钉定：funcLiteral 在 varDecl initializer 为 Expression.funcLiteral(decl:location:)，capture 语句在闭包体内为 Statement.captureStatement(name:location:)，函数类型注解走 TypeAnnotation.function(params:returns:captured:location:)（探针实测后写分派位）；HIR 新增 HIRType.function（fat pointer ABI）+ closureLiteral/functionValue/indirectCall 表达式 + captureMarker 语句；lowerFuncLiteral 创建点自由变量分析（体引用-参数-本块声明-顶层函数名），按引用捕获（env 字段=被捕获变量存储槽指针，解释器 currentEnv 共享语义）；发射侧闭包 define 缓冲模块末尾拼接，env 结构类型声明必须进模块头——首版放尾部，创建点 GEP 先于声明，lli 报 base element of getelementptr must be sized，差分拦截后修正；具名函数作为值走 env 忽略适配器 @__adapter_<mangled>（legacy #8 语义）；testGateRejectsLambda 边界断言过期改为正向 testLambdaLowersToClosureLiteral；lazyref 实测 unknown generic LazyRef（模板未在语料内声明，跨文件域 G13），维持 FAIL 豁免非静默"
-
-[[evidence]]
-id = "E-151"
-claim = "M5 G11 struct deepening family (composition flattening, i8 scalar, unsafe identity, dead-arm match parity) lands on the HIR pipeline with interpreter parity; multidim Optional-subscript semantics gap filed as a separate issue"
-artifacts = [
-  "pini-swift/Sources/PiniCore/HIR/HIRNode.swift",
-  "pini-swift/Sources/PiniCore/HIR/HIRLowerer.swift",
-  "pini-swift/Sources/PiniCore/CodeGen/IREmitter.swift",
-  "pini-swift/docs/issue-llvm-rewrite-plan-2026-09-07.md",
-  "pini-swift/docs/issue-multidim-optional-subscript-semantics-2026-09-09.md",
-  "pini-swift/Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStructComposition.pini",
-  "pini-swift/tools/capability-sweep.tsv",
-]
-command = "swift test --package-path pini-swift --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && bash tools/capability-sweep.sh"
-output = "HIR differential 45->48 (new: testDiffStructComposition/testDiffStructI8Fields/testDiffMultidimArray red->green); full regression 1281/0/0; capability-sweep hir-emit 32/59 -> 35/59 (composition/access/multidim); multidim legacy stays FAIL (E6-002, pre-existing)"
-validated_at = "2026-09-09T02:05+08:00"
-status = "PENDING_DELETE"
-note = "实测钉定：死臂绑定类型 = scrutinee 类型本身（外层 match m[1] 绑 row = array(i32)、内层 match row[2] 绑 v = i32，scrutinee 即绑定值非 element——首版走 arrayElementType 与 typeInference.infer 双双被探针否证，checker 环境 check 结束后已 pop match 臂作用域，infer 返 nil，~90 行 firstIdentifierUse 辅助全废删除）；composition 展平 flattenComposedNominals 对齐解释器 mergeComposedType（子前父后同名子覆盖防环），typeDecls 循环 fields 也须从展平 registry 取——首版只换 methods，emitter unknown nominal field 被差分拦住；emitter emitMatch default 由 fatalError 改 emitExpr(scrutinee) 跳全部臂；探针实证 multidim 语料宣称的下标读返回 Optional 语义解释器也未实现（match some/none 静默不命中），立 docs/issue-multidim-optional-subscript-semantics-2026-09-09.md，不在本格修"
+last_sweep = "2026-09-14T08:28:00+08:00"
+dangling_ids = ["E-035", "E-047", "E-067", "E-069", "E-070", "E-076", "E-077", "E-081", "E-087", "E-089", "E-090", "E-099", "E-100", "E-101", "E-110", "E-111", "E-112", "E-120", "E-121", "E-124", "E-128", "E-129", "E-130", "E-131", "E-132", "E-133", "E-134", "E-135", "E-136", "E-137", "E-139", "E-140", "E-141", "E-148", "E-149", "E-151"]
 [[evidence]]
 id = "E-153"
 claim = "M5 G14 foreign/FFI family (pointer load/store/addressOf, print multi-argument, foreign block declares with the bk_cstr shim, minimal assert lowering, package-pipeline --dlopen wiring) lands on the HIR pipeline with interpreter parity"
@@ -75,7 +41,7 @@ artifacts = [
 command = "swift test --package-path . --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && bash tools/capability-sweep.sh"
 output = "HIR differential 53->55 (new: examples/ffi.pini and examples/ffi_module/cstring.pini byte-for-byte vs the interpreter); full regression 1288/0/0 (baseline 1286 + 2 new); capability-sweep hir-emit 44/59 -> 47/59 (+3: ffi.pini, ffi_module/cstring.pini, test.pini)"
 validated_at = "2026-09-10T19:04+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "路径为本仓根相对（表内早期条目的 pini-swift/ 前缀系迁移前残留记法）。本批落地于 2026-09-09 分支 agent/pini-dev/llvm-m5-g14-ffi（提交 ea9c5b2，合并 b08ceb4），当次未做收口（plan 回填 / 证据登记 / tsv 刷新），2026-09-10 一并补齐。增量由 matrix 历史比对复原：git show e8bab89:tools/capability-sweep.tsv 为 44/59，与 b08ceb4 的 tsv 逐字节相同（证实该批未刷新），当前 51/59 中 +3 行的归属为 ffi.pini / ffi_module/cstring.pini / test.pini——test.pini 的解锁来自本批的 assert(cond, msg?) 最小降载（|test 块可编译），ffi 两行来自 foreign declare + bk_cstr + --dlopen 通道。&x 走真指针语义（D-B 裁决），解释器快照别名缺口为已记录分歧，语料限定只读路径。"
 
 [[evidence]]
@@ -99,7 +65,7 @@ artifacts = [
 command = "swift test --package-path . --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && swift test --package-path . --disable-sandbox --scratch-path /tmp/pini-build && bash tools/capability-sweep.sh"
 output = "HIR differential 55->60 (new: testDiffForIn, testDiffContinueBreakLabel, testDiffBitwiseCompound, testDiffIoFile, testDiffStep red->green); full regression 1293/0/0 (baseline 1288 + 5 new); capability-sweep hir-emit 47/59 -> 51/59 (+4: for.pini, control-while.pini, compound-assign.pini, io.pini); the remaining 8 FAIL rows are all the concurrency family, covered by the M6 exemption issue"
 validated_at = "2026-09-10T19:04+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "实测钉定六则。① for-in 的 pattern 变量须同时进 lowerer 的 variableTypes 与 emitter 的 scopes，且 for-in 的 step 块共享该绑定（解释器 executeFor 以 currentEnv = loopEnv 执行 step）——首版给 step 开新作用域，致 examples/for.pini 撞 IREmitter 的 load-of-undeclared-variable 硬崩，fixture 补钉后修复。② 循环外裸 break / 无匹配标签的 break 不可降为降载期硬报错（会拒掉解释器接受的程度；实测打红 testDiffArrayGetMatch 与 testDiffMultidimArray 两个既有 fixture），改为新增 HIRStmt.panicStmt 落 bk_panic + unreachable，维持 fail-loud parity。③ readFile 返回值的 IR 拼写必须是 i8* 而非 ptr——emitScalarPrint 仅把 i8* 当 C 串，ptr 落进 %d 默认分支把地址当整数打印（首版实测输出 1832249304）。④ examples/step.pini 旧 tsv 的 hir-emit PASS 系假绿（sweep 只测发射是否成功，HIR 管道静默丢弃 step 块），本格实现后该行 PASS 由假转真、计数不变而语义变化，并以 testDiffStep 覆盖 for-in step 引用模式变量与 break 跳过 step 两个判别形态。⑤ 单竖线位或 a | b 无中缀解析通道（E2-001 / E2-006），而 |= / || / & ^ << >> 均可用——spec 自身矛盾（bitwise-expr 产生式含 |、§A.4 规则 3.13 称回退为按位或表达式，但记号转换表无 | 行且同节记事句称仅经 |= 去糖），语言级欠定义，立 docs/issue-bitwise-or-parse-2026-09-10.md 待 spec §1.3 决策，不在本格修（fixture 就地注记绕开）。⑥ meta.scan_exclude 指向的 docs/spec/issue/issue-evidence-table-sweep-2026-09-03.md 已随归档失效（实际在 docs/spec/issue/archive/），本次修正；该字段当前无代码消费者。"
 
 [[evidence]]
@@ -121,7 +87,7 @@ artifacts = [
 command = "swift test --package-path . --disable-sandbox --scratch-path /tmp/pini-build --filter HIRDifferentialTests && swift test --package-path . --disable-sandbox --scratch-path /tmp/pini-build && bash tools/capability-sweep.sh && bash tools/m6-triage-probe.sh"
 output = "HIR differential 60->76; full regression 1310/0/0 (baseline 1293 + 17); capability-sweep hir-emit 51/59 with the blocker cross tab FAIL/FAIL 8, FAIL/PASS 11, PASS/PASS 40, PASS/FAIL 0; fixture triage over the four LLVM-driven suites leaves 3 true blockers, all the aggregate print gate that D8 exempted"
 validated_at = "2026-09-11T01:06+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "双分母实测。① examples（59）真阻塞 = 0：交叉表 FAIL/FAIL 8、FAIL/PASS 11、PASS/PASS 40、PASS/FAIL 0，八项 HIR FAIL 全为并发族且 legacy 同 FAIL（LR-11 豁免），而 HIR 反而比 legacy 多覆盖 11 个文件。② 四套 LLVM 驱动夹具（222）真阻塞 = 3，全在 IRPrintGoldenTests，全为 D8 已豁免的聚合值打印门控。③ 分母完备性反查：BuiltinOverrideTests（6）、DotCaseConstructionTests（7）、OptionalTests（17）同样引用发射器或 lli，三套共 30 夹具真阻塞 = 0，故分母放宽到 252 结论不变。④ 红证据形态（a5、a6 均用变异探针）：a5 短路烘焙实测 2 红；a6 摎掉协议符合点后 CLI 回到无码无文件形态，单测 4 项断言失败而「消息文本」项仍过。⑤ fopen 判空实测：读路径 lli 退出 134 且首行具名 readFile，写路径同形态具名 writeFile；legacy 通道对照为无消息的 LLVM 崩溃转储。⑥ 验收口径订正：步骤表原写 hir-emit ≥ 55/59 与「8 项并发豁免」自相矛盾（上限即 51），改为 PASS/FAIL = 0 且 HIR PASS ≥ legacy PASS。⑦ 工单：issue-hir-cli-diagnostic-loss 验收达成（待归档）；新立 issue-emit-diagnostic-source-snippet（emit 系命令诊断缺源码片段；资源层初始语言为 en 而 CLI 注释称「默认 zh」）。⑧ 环境事实：pre-commit 的注释门禁无 rg 时回退 grep，在本卷上单次全扫约 100s（Tests 单根 73s），7 次扫描超十分钟会打断提交；把 ripgrep 所在目录放进 PATH 即秒级通过。"
 
 [[evidence]]
@@ -236,7 +202,7 @@ artifacts = [
 command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check"
 output = "31 documents triaged (29 host-level tickets, 1 spec-level proposal, plus the plan and audit carriers held by design): 5 archived, 16 kept open, 9 untouched by design. doc-links: 489 references checked, all pass. comment-lint: L1-L6 all green (L6 adjudicates every ADR ID cited by the new status lines). evidence_sweep --check: parse plus schema ok, entries 10 -> 11, status drift 0, advisory cap 100 within, and E-161 stops being reported as a dangling citation."
 validated_at = "2026-09-13T10:00+08:00"
-status = "FRESH"
+status = "STALE"
 note = "核验方式 = 5 个只读核验单元并行（全程未编译、未跑探针），每条结论都落到「文件路径 + 符号名」，并标注证据级别。① 归档 5 张：`issue-e7-001-false-unused-warning`（`SemanticAnalyzer` 的成员调用接收者分支，提交 3ce97c0）、`issue-binop-dead-cases`（`BinaryExpr.swift` 三个死面 case 已删，spec 规则 3.11 已钉定，b6fe569）、`issue-prefix-increment-semantics`（统一读-改-写回 + 静态拒不可赋值目标 + 四测试 + CHANGELOG）、`issue-host-optional-slice`（解释器三通道下标语义落地，文中 20 个 M2 XCTSkip 全仓已无痕）、`issue-gated-stale-fixtures`（四夹具与后端语义修复落地，门判据由 LLVMGate 运行期化，66b0c9c）。② 时间线矛盾合并 1 处：`issue-gated-stale-fixtures` 头部并存 Open 与 Closed 两行状态，合并为一行并注明末句属文本滞后。③ 状态刷新 4 张（留原位）：`issue-ffi-module`（B1-B3 与 P3 已出账、P2 已转出，真开放项只剩 P1/P4）、`issue-tuple-annotation-arity-mismatch`（「源码未改」失真，G2 已改 TypeInference 两处而三处空标签生产点仍在）、`issue-llvm-get-unchecked`（命名 unchecked 应为 getUnchecked、越界语义已由 ADR-028 D-1 改为 UB、D-6 把该通道划为解释器专用、正文所指 CodeGen/Emitters 已随 M6b 删除，开放面收窄为 Dictionary.get）、`issue-lexer-gap-closure`（补记状态行：核心 LANDED / 六节残余八项实测仍成立）。④ 入向引用 18 处 / 11 文件重定向到 archive 新位置；源码注释与 CHANGELOG 里的裸名溯源标签按判据保留（加路径会撞注释门禁的文档名字面规则）。⑤ 判为仍开放的 16 张逐张给出开放项，头部状态行均未滞后。⑥ 未做：未 push；未改动 Sources/Tests/examples 的任何内容；未处理非 .md 形态的死引用（经裁决按历史标签保留）；`issue-selfhost-comment-lint-defects` 漏记其一（宿主二次加固引入的 PINI_RG 探测差异），本轮未并入，留待下一批。"
 [[evidence]]
 id = "E-162"
@@ -257,6 +223,6 @@ artifacts = [
 command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check"
 output = "Probe fixtures run through .build/debug/pini and /tmp/pini-build/debug/pini, both agreeing: unterminated interpolation and backslash-then-EOF exit 1 with E1-002, while the unterminated plain string, a lone invalid character, an unclosed block comment and five malformed numeric literals all exit 0. Lexer.swift carries six throw sites in total; three of them sit inside scanInterpolationExpression. Diagnostics.en.toml resolves to 70 sections split E2 23 / E3 11 / E4 14 / E5 15 / E6 5 / E7 2, with no E1 section, and the E1-002 message resolves to a hardcoded case in ErrorFormatter.swift. doc-links: 520 references checked, all pass, after the selfhost plan's two bare relative paths were disambiguated (that gate had been red on an untracked document). comment-lint: L1-L6 all green. evidence_sweep --check: parse plus schema ok, entries 11 -> 12, status drift 3, advisory cap 100 within."
 validated_at = "2026-09-13T22:49+08:00"
-status = "FRESH"
+status = "STALE"
 note = "违例面收窄到两条同族路径，均已定位到符号：H1 = 常规字符串路径的反斜杠后 EOF 守卫（Lexer.swift:580）；H2 = scanInterpolationExpression()（:622-681）体内三处 throw（:639 内层字符串反斜杠后 EOF / :674 遇换行且 depth>0 / :679 循环退出即 EOF）。本单的诊断价值在**结构**而非计数：相邻代码在同一契约上分叉 —— :571-576 明文实现了 ADR-021（注释直引 ADR-021，换行即 break），而 :673-675 同一情形却 throw。并列登记未违反项以免把 ADR-021 读成普遍失效：:539/:545 的 invalidCharacter 在实测输入上不可达（0x / 0b / 1e / 1.2.3 / 0xZZ 全部 rc=0 且按 D1 回退）。**订正两条既有记录**（本批实测推翻）：① 2026-09-13 L5 日志记该插值函数 4 处 throw，源码实测为 3 处；② 同日志记 tokens 对词法错误恒 exit 0，实测为多数成立、H1/H2 是反例（该断言过度概括）。盲区三重：语料 123 行仅 1 处插值且闭合（:93）、门禁只对拍双侧都能出 token 的输入、rc 语义在两条路径上不一致。**语料刻意未落**：落未闭合用例会使 L0 立刻转红，而 red-window 红名单机制（selfhost 计划 §6.1）尚未获裁 ⇒ 落语料即要么违 ADR-024 D9 要么开未授权红窗口，故语料随修复一起落。修复侧留一条待裁：插值路径若照 :575 隐式终止会产生语义歧义（插值体为不完整表达式），三路线 A 降级为普通 string token（本单倾向，与 ADR-021 D1 自述理由一致）/ B 隐式补右括号（触 D9）/ C 在 ADR-021 内开显式例外（契约级，走 spec §1.3）。**未做**：未改任何源码与语料、未跑构建、未跑全量回归、未改任何 ADR 或 spec 正文；H1/H2 的修复归属格未定。"
 

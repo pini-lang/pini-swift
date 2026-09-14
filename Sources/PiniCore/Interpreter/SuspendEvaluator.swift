@@ -721,9 +721,9 @@ extension Interpreter {
  var rows: [[Value]] = []
  switch iterValue {
  case .array(let els):
- rows = try els.map { try decomposePatternRow($0, patternCount: pattern.count, location: location) }
+ rows = try els.map { try Interpreter.decomposePatternRow($0, patternCount: pattern.count, location: location) }
  case .set(let els):
- rows = try els.map { try decomposePatternRow($0, patternCount: pattern.count, location: location) }
+ rows = try els.map { try Interpreter.decomposePatternRow($0, patternCount: pattern.count, location: location) }
  case .dictionary(let pairs):
  guard pattern.count == 2 else {
  throw RuntimeError.typeMismatch(expected: "字典迭代需 2 字段模式元组 (k, v)", got: "\(pattern.count) 字段", location: location)

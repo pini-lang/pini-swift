@@ -338,7 +338,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 ## 13. 停止点与开工顺序
 
 - **本轮（规划 + P0c + `ADR-033` 裁决落地 + P0 收口）未改任何源码**；计划已持久化为本文件，交由新会话接手。
-- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1 ✅（六步全部完成 2026-09-13：P1-1、P1-2、P1-3、P1-4、P1-5 S1、P1-6）** → **P2a 进行中（规划 ✅ 2026-09-13；第 1 格 G4 ✅、第 2 格 G2 ✅ 均已交付 2026-09-13，余 G1/G3/G5/G6 四格待点名）** → P2b → P3 → P4（不可逆，等点名）→ P5。
+- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1 ✅（六步全部完成 2026-09-13：P1-1、P1-2、P1-3、P1-4、P1-5 S1、P1-6）** → **P2a 进行中（规划 ✅ 2026-09-13；第 1 格 G4 ✅、第 2 格 G2 ✅、第 3 格 G1 ✅ 均已交付 2026-09-13，余 G6/G5/G3 三格待点名）** → P2b → P3 → P4（不可逆，等点名）→ P5。
 - **P1-5 S1 落地（2026-09-13）**：`DebugHookHost` 协议（只含 `debugHook` + `outputSink`）+ 两台引擎
   各自符合；`Interpreter.debugPause` 拆为「AST 位置分支」+「按位置暂停」两半；`HIRExecutor` 补
   `debugHook`（**声明但未接线**，位置未落地前不接暂停点）。落地实录与三处实现偏离见勘测报告 §9。
@@ -460,7 +460,50 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
      `docs/issue-tuple-annotation-arity-mismatch-2026-09-10.md` 补记（`persistAcrossScopesForCodegen`
      漏网范围比原记更宽：`runBothChannels` 是本格补齐的第 6 处器械）。
   6. **未做**：未改 AST 侧渲染与 LLVM 侧实现；未动契约与节点集；未收窄探针判据；未 push。
-  ⇒ **下一格 = P2a 第三格（G1 控制流），待点名**。
+  ⇒ ~~**下一格 = P2a 第三格（G1 控制流），待点名**~~ ⇒ **已点名并交付，见下条**。
+- **P2a 第三格 G1 控制流（2026-09-13；分支 `agent/pini-dev/hir-p2a-g1-control-flow`）** ——
+  **6 节点**（`forInStmt` `breakStmt` `continueStmt` `deferStmt` `panicStmt` + `stringConcat`；
+  范围判定 `D-P2-7` **非用户裁决**）。完整实录见细目件 §8.3，此处存读数、结构发现与工单：
+  1. **交付内容**：`forInStmt` 三形态（数组 / 字典 / `_` 与带标签）· `breakStmt` / `continueStmt`
+     的展开深度语义（`continue` 跨块种类时的 step 契约）· `deferStmt` 的 **LIFO 栈**（块作用域
+     在**每条退出路径**上闭合，不只正常退出）· `panicStmt` 保 **fail-loud parity** ·
+     `stringConcat`（**契约 §2.9 #41**，纳入理由是**夹具依赖** —— defer 夹具需拼接构造期望输出）。
+  2. **验证读数（全量 6 根 / 308 夹具，逐夹具对账）**：`OK 109 → 137` · `HIR_ENGINE_TODO 141 → 112` ·
+     `GAP_HIR_ENGINE 13 → 14` · `GAP_EXEC 3`（不变）· **`FLIP BLOCKERS 16 → 17`**。
+     **29 处 verdict 变化全部可解释**：28 `TODO→OK`（按首缺口节点分解 `forInStmt` 12 · `deferStmt` 6 ·
+     `breakStmt` 6 · `continueStmt` 5，与 −29 逐项吻合）+ 1 `TODO→GAP_HIR_ENGINE`。
+     HIRTests 单根（74 夹具，台账可比口径）：`OK 34 → 38` / `TODO 36 → 32` / `GAP 4` 不变 /
+     首缺口节点 `20 → 16`。**零新增、零消失夹具**；进程零残留（`lli` 0 / stray `.ll` 0）。
+  3. **`FLIP BLOCKERS` 的 +1 已归因**：`tests/…/RuntimeBackendTests/testBreakCollectionReleasesIRContract.pini`
+     原被「`breakStmt` 未实现」拦下，实现后**屏蔽变薄**，露出 stderr 的 `E7-001` 假阳性
+     ⇒ 落进假阻塞桶。三臂 `rc` 全 0、stdout 逐字一致，**实质分歧 0**；
+     14 个 `GAP_HIR_ENGINE` **全部**为 `E7-001` 假阳性。⇒ 已登记机制「**P2 每实现一个节点这层屏蔽就薄一分**」
+     的又一实例，**非本格引入的缺陷**。
+  4. **覆盖洞（本格最重要一条）**：`panicStmt` 与 `stringConcat` **从未作为首缺口出现**（被更早节点遮蔽）
+     ⇒ 再次实证「**首缺口分布 ≠ 夹具覆盖**」；两者的区分力改由**手写单通道用例**承担。
+  5. **判据补强（弱判据当场修）**：`testBreakWithoutAnEnclosingLoopDoesNotRunOnSilently` 在
+     **全部 6 次变异下均不红** —— 根因是「**节点未实现**」也抛错、也停输出，与「实现正确（按契约硬报错）」
+     **在断言层不可区分**。处置 = 加「不得报 `not implemented`」断言；**复验实测**补强后族 19 绿 / 0 红，
+     单点变异 `breakStmt` 下该用例**转红**（其余仍绿）⇒ 区分力自证。
+     **如实记录**：第①级（整族禁用）期望「全部相关用例红」在补强**前**未完全满足（7 个中第 7 个不红）。
+  6. **编译缺陷（当场修）**：`HIRExecutorTests.swift` 写 `.printCall(...)`（`printCall` 属 `HIRExpr`，
+     语句侧须经 `exprStmt`）⇒ **60 条编译错误**。改 `.exprStmt(.printCall(...))`，语义未动。
+     ⇒ 手则 §4 新增条「**『用例写了』≠『用例能编译』**」（`Sources/` 与 `Tests/` 是两个编译单元）。
+  7. **判据陷阱查实**：`(N unexpected)` **不是红数** —— 6 次观测一致二分（测试方法抛错 → `unexpected`；
+     `XCTAssert*` 失败 → `expected`）。全仓 `XCTExpectFailure|withKnownIssue|Issue.record` **0 处**
+     ⇒ **判红必须读失败清单**。
+  8. **验证面**：全量回归 **XCTest 1246 / 3 skipped / 0 failures（0 unexpected）· EXIT=0**
+     （基线 1240 ⇒ **+6**，恰为本格新增用例；白名单 +4 件夹具入范围）；
+     `tools/hir-contract-check.py` 仍 `clean` 三锚点 60/60（**预期恒定**）；
+     comment-lint L1–L6 全绿 · doc-links **523 引用**通过（上格 491）。
+  9. **记缺陷（1 张新工单，只登记不修）**：`docs/issue-swift-source-indent-2026-09-13.md`（**新**）——
+     **全仓旧文件源码缩进被压平成 1 空格**（可回溯到建仓首提交 `d96d0c1`，四个旧文件当时即 100% 压平；
+     建仓后新增文件正常）。**排期 P4 之后**（`D-P2-9`，用户裁决）。本格连带教训：
+     我改前**未量文件缩进** ⇒ 违反手则 §2 既有规则（**该条第二次失效**），已升级为机械复查条
+     （`git diff --stat` 与 `git diff -w --stat` 行数必须相等）。
+  10. **未做**：未改 AST / LLVM 任一侧实现；未动契约与节点集；未收窄探针 `GAP_HIR_ENGINE`
+      （该计数器收窄时机仍为上交的决策点）；未修缩进工单；未 push。
+  ⇒ **下一格 = P2a 第四格（G6 枚举 · Optional · Result · try，6 缺口），待点名**。
 - **P0 收口（2026-09-12）**：P0 一格**内容产出已全部达成、无实质缺口**（60 节点台账 / 四分级对账 /
   乙类后端无关性审查 / 耦合面 / 止损重算 / E3 实测 M0–M8）。收口动作 =
   ① 清过期标注 4 处（审计 §1 的 E3 状态、§5.3 标题、§7 标题、§7.5 编号错位）；
