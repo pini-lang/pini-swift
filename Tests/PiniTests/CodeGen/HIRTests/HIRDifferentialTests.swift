@@ -480,6 +480,18 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertFalse(llvmOutput.isEmpty, "examples/ffi.pini: expected non-empty output")
     }
 
+    /// The pointer nodes' own fixtures, written by grid G8. They exist because
+    /// the G14 witness above stops before any pointer node: `ffi.pini` dies on
+    /// its first `unsafe malloc(64)`. `load` / `store` / `&x` lower to dedicated
+    /// nodes rather than through callee resolution, so a fixture built from them
+    /// alone reaches what the witness never did.
+    ///
+    /// Scope: I64 only, and `x` is never printed after a write through the
+    /// pointer. The `inRangeFixtures` note in `HIRExecutorTests` says why both
+    /// restrictions are the same boundary rather than two separate omissions.
+    func testDiffPointerLoad() throws { try assertParity(fixtureName: "testDiffPointerLoad") }
+    func testDiffPointerStore() throws { try assertParity(fixtureName: "testDiffPointerStore") }
+
     /// cstring.pini needs libffilib.dylib dlopened alongside the runtime
     /// (project-internal dependency resolved from examples/ffi_module/lib via
     /// the manifest's [ffi] search_paths). The ffi_module directory holds a

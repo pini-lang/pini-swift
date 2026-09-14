@@ -266,6 +266,32 @@ final class HIRExecutorTests: XCTestCase {
         // nodes' evidence: a fixture that fails for a reason filed elsewhere is
         // not evidence about this grid. Same shape as `testDiffStructValue` above,
         // and the same owner: the builtin-callee rule.
+        //
+        // Grid G8 (pointers and LazyRef). `testDiffLazyRef` was already in the
+        // corpus; the probe's verdict on it moved from its engine-gap verdict
+        // naming `lazyRefConstruct` to `OK` when the grid landed, and nothing
+        // else moved with it.
+        //
+        // The two pointer fixtures are the grid's own, and they exist because the
+        // grid's three pointer nodes had **no reachable fixture at all**. The two
+        // `GAP_EXEC` witnesses named in the P2a acceptance sweep
+        // (`examples/ffi.pini`, `examples/struct.pini`) both stop before any
+        // pointer node: `ffi.pini` dies on its first `unsafe malloc(64)` and
+        // `struct.pini` on `sqrt`, both unresolvable builtin callees filed as
+        // their own boundary. `load` / `store` / `&x` lower to dedicated nodes
+        // instead of going through callee resolution, so a fixture built from
+        // them alone reaches nodes the two witnesses never reached.
+        //
+        // The scope is narrowed rather than left loose: I64 only, and `x` is
+        // never printed after a write through the pointer. Both restrictions are
+        // the same boundary — the AST arm snapshots where the LLVM arm may take a
+        // true reference, so the two disagree only if the fixture reads the
+        // variable after writing through the pointer. That split is the
+        // address-of grid's, and keeping it out means these fixtures measure the
+        // pointer nodes rather than the split.
+        "testDiffLazyRef",
+        "testDiffPointerLoad",
+        "testDiffPointerStore",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -1073,13 +1099,15 @@ final class HIRExecutorTests: XCTestCase {
     /// archive self-declarations, applied one level down: *deleting* a probe
     /// and *covering* the node are different claims.
     ///
-    /// The two entries left are the ones still unimplemented — `readLine` (G9)
-    /// and `pointerLoad` (G8).
+    /// The entry left is the one still unimplemented: `readLine` (G9). Grid G8
+    /// deleted `pointerLoad` from this table, and the deletion is covered rather
+    /// than merely subtracted — the pointer nodes carry their own fixtures on
+    /// `inRangeFixtures` (`testDiffPointerLoad` / `testDiffPointerStore`), which
+    /// check the node against the interpreter **in process**. Same rule G7
+    /// applied one entry at a time: *deleting* a probe and *covering* the node
+    /// are different claims.
     private static let expressionGaps: [(node: String, expr: HIRExpr)] = [
         ("readLine", .readLine),
-        ("pointerLoad", .pointerLoad(
-            pointer: .intConst(value: 0, type: .i32),
-            type: .i32)),
     ]
 
     /// The statement side of the contract is **complete** as of grid G5, and the

@@ -508,7 +508,7 @@ public class Interpreter: DebugHookHost {
  loadFunc.nativeImpl = { [weak self] args in
  guard let self else { throw RuntimeError.invalidOperation(reason: "load：解释器已销毁", location: loc) }
  let rp = try Self.ptrArg(args, name: "load", self: self)
- return try self.decodePointer(rp)
+ return try Self.decodePointer(rp)
  }
  globalEnv.define(name: "load", value: .function(loadFunc), isMutable: false)
 
@@ -520,12 +520,12 @@ public class Interpreter: DebugHookHost {
  body: nil, decl: nil, closure: globalEnv
  )
  storeFunc.nativeImpl = { [weak self] args in
- guard let self else { throw RuntimeError.invalidOperation(reason: "store：解释器已销毁", location: loc) }
+ guard self != nil else { throw RuntimeError.invalidOperation(reason: "store：解释器已销毁", location: loc) }
  guard args.count >= 2 else { throw RuntimeError.argumentCountMismatch(name: "store", expected: 2, got: args.count, location: loc) }
  guard case .rawPointer(let rp) = args[0] else {
  throw RuntimeError.invalidOperation(reason: "store 的第一个参数必须是 `*T` 指针", location: loc)
  }
- try self.encode(args[1], to: rp.pointer, type: rp.elemType)
+ try Self.encode(args[1], to: rp.pointer, type: rp.elemType)
  return .null
  }
  globalEnv.define(name: "store", value: .function(storeFunc), isMutable: false)
@@ -538,9 +538,9 @@ public class Interpreter: DebugHookHost {
  body: nil, decl: nil, closure: globalEnv
  )
  addrFunc.nativeImpl = { [weak self] args in
- guard let self else { throw RuntimeError.invalidOperation(reason: "addressof：解释器已销毁", location: loc) }
+ guard self != nil else { throw RuntimeError.invalidOperation(reason: "addressof：解释器已销毁", location: loc) }
  guard args.count >= 1 else { throw RuntimeError.argumentCountMismatch(name: "addressof", expected: 1, got: args.count, location: loc) }
- return try self.snapshotPointer(of: args[0], location: loc)
+ return try Self.snapshotPointer(of: args[0], location: loc)
  }
  globalEnv.define(name: "addressof", value: .function(addrFunc), isMutable: false)
  }
@@ -643,7 +643,10 @@ public class Interpreter: DebugHookHost {
 
  /// `&v` 快照取址（解释器限制）：分配内存写入值的 C 表示并返回指针。
  /// 与 LLVM 端的真引用不同——写回不更新原变量（文档化限制，见 CHANGELOG）。
- private func snapshotPointer(of value: Value, location: SourceLocation) throws -> Value {
+ /// `static` + internal 是刻意的单源化：`HIRExecutor` 也走这条路径承载
+ /// `addressOfVar`。`&` 的「值 ↔ 内存」编解码就是指针语义本身，让两个引擎
+ /// 各写一份等于造第二个语义源（P2b G8）。
+ static func snapshotPointer(of value: Value, location: SourceLocation) throws -> Value {
  switch value {
  case .rawPointer(let rp):
  // 指针取址：返回自身（地址即值；`*T` 的 T 保持元素类型不变）。
@@ -652,13 +655,15 @@ public class Interpreter: DebugHookHost {
  let elem = RawPointerValue.elemType(for: value) ?? .simple(name: "U8", location: location)
  let stride = RawPointerValue.stride(of: elem) ?? 1
  let ptr = UnsafeMutableRawPointer.allocate(byteCount: stride, alignment: 1)
- try encode(value, to: ptr, type: elem)
+ try Self.encode(value, to: ptr, type: elem)
  return .rawPointer(RawPointerValue(pointer: ptr, elemType: elem, ownsMemory: true))
  }
  }
 
  /// 从指针读出一个值（load 语义）。
- private func decodePointer(_ rp: RawPointerValue) throws -> Value {
+ /// `static` + internal：同 `snapshotPointer`，供 `HIRExecutor` 的
+ /// `pointerLoad` 复用（单源化，P2b G8）。
+ static func decodePointer(_ rp: RawPointerValue) throws -> Value {
  let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
  guard let elem = rp.elemType else {
  throw RuntimeError.invalidOperation(reason: "load：指针元素类型未知（`&` 快照 / malloc 未标注 `*T` 元素）", location: loc)
@@ -686,7 +691,9 @@ public class Interpreter: DebugHookHost {
  }
 
  /// 把一个值按元素类型编码写入指针（store 语义）。
- private func encode(_ value: Value, to ptr: UnsafeMutableRawPointer, type: TypeAnnotation?) throws {
+ /// `static` + internal：同 `snapshotPointer`，供 `HIRExecutor` 的
+ /// `pointerStore` 复用（单源化，P2b G8）。
+ static func encode(_ value: Value, to ptr: UnsafeMutableRawPointer, type: TypeAnnotation?) throws {
  let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
  guard let elem = type else {
  throw RuntimeError.invalidOperation(reason: "store：指针元素类型未知", location: loc)
@@ -1957,7 +1964,7 @@ private func debugPause(at loc: SourceLocation) throws {
  case .addressOf(let operand, let loc):
  // Phase 2a（ADR-015 FFI）：`&x` 不安全取地址——解释器快照语义：
  // 指针值返回自身；其它值分配内存写入 C 表示后返回指针（写回不更新原变量，文档化限制）。
- return try snapshotPointer(of: evaluateExpression(operand), location: loc)
+ return try Self.snapshotPointer(of: evaluateExpression(operand), location: loc)
  case .dotCaseRef(let name, let loc):
  // 点号用例构造（无实参形态）：零关联值用例直接构造；带关联值用例返回
  // 构造器值（未应用形态，与裸名标识符的构造器值一致）。
