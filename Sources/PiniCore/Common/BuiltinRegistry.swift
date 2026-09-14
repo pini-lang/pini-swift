@@ -115,8 +115,10 @@ public enum BuiltinRegistry {
  params: [], returns: [t("Array")]),
  BuiltinDecl(name: "readFile", group: .io, paramNames: ["path"],
  params: [t("String")], returns: [t("String")]),
+ // 契约已裁：writeFile 返回写操作的整型结果码（成功为 0）。此前登记为
+ // void 是解释器侧未对齐；发射器侧本就以整型返回该码。
  BuiltinDecl(name: "writeFile", group: .io, paramNames: ["path", "content"],
- params: [t("String"), t("String")], returns: []),
+ params: [t("String"), t("String")], returns: [t("I32")]),
  BuiltinDecl(name: "readLine", group: .io, paramNames: [],
  params: [], returns: [t("String")]),
 

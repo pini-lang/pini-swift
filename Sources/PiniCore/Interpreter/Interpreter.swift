@@ -3441,7 +3441,8 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  let path = resolveIOPath(rawPath)
  do {
  let content = try String(contentsOfFile: path, encoding: .utf8)
- return .string(content)
+ // A2：契约规定上限 64 KiB、超出静默截断（对齐 LLVM 侧的定长缓冲语义）。
+ return .string(IOLimits.truncateToFileLimit(content))
  } catch {
  throw RuntimeError.invalidOperation(
  reason: "IO 错误: 无法读取文件 \(path): \(error.localizedDescription)",
@@ -3460,7 +3461,9 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  let path = resolveIOPath(rawPath)
  do {
  try content.write(toFile: path, atomically: true, encoding: .utf8)
- return .null
+ // A3：契约规定返回写操作的整型结果码（成功为 0），对齐发射器侧的
+ // fclose 结果码。写失败在此抛错，故可达的返回值只有成功码。
+ return .int(0)
  } catch {
  throw RuntimeError.invalidOperation(
  reason: "IO 错误: 无法写入文件 \(path): \(error.localizedDescription)",
@@ -3469,10 +3472,12 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
  }
  if fv.name == "readLine" {
- if let line = readLine() {
- return .string(line)
- }
+ // A1：契约规定「行终止符不剥离 + 上限 256 字节」（对齐 LLVM 侧的定长缓冲语义）。
+ guard let line = readLine(strippingNewline: false) else {
+ // EOF：不剥行终止符后空串与空行可区分，空串因而唯一指示 EOF。
  return .string("")
+ }
+ return .string(IOLimits.truncateToLineLimit(line))
  }
  if fv.name == "sleep" {
  guard case .int(let ms) = args[0] else {

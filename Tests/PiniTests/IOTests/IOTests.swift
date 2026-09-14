@@ -8,6 +8,12 @@ import Foundation
 /// （确定性环境——空串即 EOF，不依赖测试进程的真实 stdin，交互终端下也不会阻塞）。
 final class IOTests: XCTestCase {
 
+    /// 跑一段程序并返回它写到 stdout 的全部字节。
+    ///
+    /// ⚠️ **stdout 走 `Pipe`，且要等程序结束才开始排空** ⇒ 程序输出一旦**超过管道容量
+    /// （macOS = 64 KiB）**，写端先阻塞、读端还在等程序结束，形成**双向死锁**。症状是测试
+    /// 挂住、测试日志停在上一行不动、采样栈叶子停在 `fwrite`。要断言大输出的**长度**时
+    /// 不要把内容打出来 —— 用 `len(...)`（夹具 `testReadFileLen` 即此用法）。
     private func runProgram(_ source: String, stdin: String = "", programBase: String? = nil) throws -> String {
         let lexer = Lexer(source: source, fileName: "io.pini")
         let tokens = try lexer.tokenize()
@@ -82,9 +88,27 @@ final class IOTests: XCTestCase {
         XCTAssertNotEqual(output, "\n", "readFile 不应返回空内容")
     }
 
+    /// 意图：readFile 的上限是 64 KiB（A2 裁定：对齐发射器侧定长缓冲，超出静默截断）
+    /// 推进性测量：写入 64 KiB + 100 字节，print(len(readFile(...))) 输出 65536
+    ///
+    /// 断言的是**长度**而非内容：既得到精确值（改前为全长的 65636），也避开 harness 的
+    /// stdout 管道容量上限（见 `runProgram` 的注记）。
+    func testReadFileTruncatesAtLimit() throws {
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("pini_big_\(UUID().uuidString).txt")
+        let payload = String(repeating: "a", count: 65_536 + 100)
+        try payload.write(toFile: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let source = try loadPiniFixture("testReadFileLen", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: path)
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "65536\n", "readFile 应在 64 KiB 上限处静默截断")
+        // 驳回性测量：不得返回全文（超出上限的部分必须被丢弃）
+        XCTAssertNotEqual(output, "\(payload.count)\n", "readFile 不得返回超过上限的内容")
+    }
+
     // MARK: - TDD#3 文件写入 writeFile
 
-    /// 意图：writeFile(path, content) 将文本写入文件（返回 null）
+    /// 意图：writeFile(path, content) 将文本写入文件，返回写操作结果码（成功为 0）
     /// 推进性测量：Pini 写文件后，Swift 侧读回内容一致
     func testWriteFile() throws {
         let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("pini_write_\(UUID().uuidString).txt")
@@ -98,16 +122,30 @@ final class IOTests: XCTestCase {
         XCTAssertNotEqual(content, "", "writeFile 不得写入空内容")
     }
 
+    /// 意图：writeFile 的返回值是写操作结果码（A3 裁定：对齐发射器侧，成功为 0）
+    /// 推进性测量：print(writeFile(...)) 输出 "0\n"
+    func testWriteFileReturnsResultCode() throws {
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("pini_writecode_\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let source = try loadPiniFixture("testWriteFileReturnCode", filePath: #filePath).replacingOccurrences(of: "__PATH__", with: path)
+        let output = try runProgram(source)
+        XCTAssertEqual(output, "0\n", "writeFile 成功时应返回结果码 0")
+        // 驳回性测量：不得再返回 null（登记为 void 的旧行为返回 null）
+        XCTAssertNotEqual(output, "null\n", "writeFile 不应返回 null")
+    }
+
     // MARK: - TDD#4 标准输入 readLine
 
-    /// 意图：readLine() 从 stdin 读取一行（去除换行）返回 String
-    /// 推进性测量：注入 "world\n"，print(readLine()) 输出 "world\n"
+    /// 意图：readLine() 从 stdin 读取一行返回 String，**保留行终止符**（A1 裁定）
+    /// 推进性测量：注入 "world\n"，print(readLine()) 输出 "world\n\n"——
+    /// 首个换行是 stdin 的行终止符本身，第二个来自 print。
     func testReadLine() throws {
         let source = try loadPiniFixture("testReadLine", filePath: #filePath)
         let output = try runProgram(source, stdin: "world\n")
-        XCTAssertEqual(output, "world\n", "readLine 应读取 stdin 一行")
-        // 驳回性测量：必须打印读取到的行，不得为空（此处 stdin 非空）
-        XCTAssertNotEqual(output, "\n", "readLine 不得返回空输出")
+        XCTAssertEqual(output, "world\n\n", "readLine 应读取 stdin 一行并保留行终止符")
+        // 驳回性测量：不得剥离行终止符（剥离时输出恰为一个换行）
+        XCTAssertNotEqual(output, "\n", "readLine 不得剥离行终止符")
     }
 
     // MARK: - TDD#5 错误与边界路径

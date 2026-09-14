@@ -167,13 +167,11 @@ final class HIRDifferentialTests: XCTestCase {
 
     /// Parity for fixtures that read stdin. Both channels must see the SAME
     /// bytes — the interpreter reads the test process's stdin and lli
-    /// inherits its own — so the input is injected explicitly. Callers pass
-    /// input WITHOUT a trailing newline: the interpreter's `readLine()`
-    /// strips it while both LLVM channels hand `fgets`' buffer straight to
-    /// `print` (`%s`), trailing newline included. That difference is a
-    /// pre-existing legacy/interpreter divergence the M6 flip preserves
-    /// (registered in the rewrite plan, same class as print(F64)); the
-    /// newline-free input is the slice on which byte parity actually holds.
+    /// inherits its own — so the input is injected explicitly. A trailing
+    /// newline in the input no longer matters: the interpreter keeps the
+    /// line terminator, which is what `fgets`' buffer already carries into
+    /// `print`. The fixture below still passes newline-free input, from when
+    /// the interpreter stripped it.
     private func assertParityWithStdin(fixtureName: String, stdin: String,
                                        file: StaticString = #filePath, line: UInt = #line) throws {
         let source = try loadPiniFixture(fixtureName, filePath: #filePath)
