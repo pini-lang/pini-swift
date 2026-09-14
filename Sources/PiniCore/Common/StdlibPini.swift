@@ -62,8 +62,19 @@ enum StdlibPini {
          k = k + 1
      return out
 
- ; split -- mirror components(separatedBy:); empty separator yields
- ; grapheme chars (correct per ADR-019 D1; the native impl splits UTF-16).
+ ; split -- Contract §2.39 (A4): empty tokens are skipped, so "a,,b" yields two
+ ; parts rather than three. This is a contract-level ruling about what all
+ ; backends must agree on, not a preference of one of them; before it the
+ ; accumulator went in unconditionally and every empty segment survived. Doubled,
+ ; leading and trailing separators therefore all contribute no element, and an
+ ; empty receiver yields zero parts.
+ ; An empty separator yields one element per grapheme (ADR-019 D1; the native
+ ; impl splits UTF-16). Two neighbouring behaviours are deliberately NOT settled
+ ; here: the LLVM arm carries no guard for the empty separator, and it reads the
+ ; separator as a character *set* rather than a substring, so a multi-character
+ ; separator parts company with this rule on inputs such as "a:b" split by "::".
+ ; Both divergences are registered against their own grid and are not touched by
+ ; this one.
  split|self(sep: String,) -> (Array,):
      var parts = []
      var cur = ""
@@ -88,13 +99,15 @@ enum StdlibPini {
                  break
              j = j + 1
          if hit:
-             parts = parts.append(cur)
+             if len(cur) > 0:
+                 parts = parts.append(cur)
              cur = ""
              i = i + m
          else:
              cur = cur + self[i]
              i = i + 1
-     parts = parts.append(cur)
+     if len(cur) > 0:
+         parts = parts.append(cur)
      return parts
 
  ; slice -- sliceBound semantics: none open bounds default to [0, len);
