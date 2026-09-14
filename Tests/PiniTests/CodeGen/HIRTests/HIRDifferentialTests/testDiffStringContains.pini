@@ -1,0 +1,26 @@
+; Minimal probe for stringContains (contract entry 37): one node, five needle
+; shapes. `testDiffStdlib` already calls `contains` once, but buried behind two
+; `stringCase` calls, so it could not be attributed.
+;
+; ASCII-only, for the same structural reason as `testDiffStringCase`: the
+; contract's reading is grapheme-wise, the LLVM emitter's is a `strstr` byte
+; search, and the two part company only under decomposed or multi-scalar
+; Unicode -- which this harness cannot host, because it asserts the channels
+; agree.
+;
+; The empty needle is called out because the two readings have to agree about
+; it as well: `StdlibPini` returns true before searching, and `strstr` also
+; matches an empty needle at offset 0. An empty receiver is here to pin that
+; the answer is false rather than an error.
+
+main|func() -> ():
+    var s = "Hello, World"
+    print(s.contains("World"))
+    print(s.contains("world"))
+    print(s.contains(""))
+    print(s.contains("Hello, World"))
+    print(s.contains("Hello, World!"))
+    print(s.contains("lo, W"))
+    print("".contains(""))
+    print("".contains("x"))
+    return

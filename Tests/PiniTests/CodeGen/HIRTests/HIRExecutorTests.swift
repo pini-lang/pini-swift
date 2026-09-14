@@ -213,6 +213,59 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffHigherOrder",
         "testDiffLambda",
         "testDiffLambdaTyped",
+        // Grid G7 (strings and builtins). Note what this list looked like before
+        // the grid: **none** of the string fixtures were on it, because every one
+        // of them stopped at an unimplemented G7 node and so was never a candidate.
+        // The four `testDiffString*` fixtures were written by the grid itself, one
+        // node each, for exactly the reason `testDiffArrayJoin` exists — the only
+        // pre-existing fixture that reached any of these four reached all four at
+        // once, and it no longer reaches them first (see the held-back note below).
+        //
+        // `testDiffArrayJoin` / `testDiffIsAsciiDigit` / `testDiffLexical` were
+        // already in the corpus; the probe's verdict on each moved from its
+        // engine-gap verdict to `OK` when the grid landed, and nothing else moved
+        // with them. They come onto this list now for the first time, which is a
+        // real coverage gain rather than a bookkeeping one: this harness runs the
+        // two channels **in process**, without `lli` in the middle, so until now
+        // no G7 node had been checked against the interpreter by anything except
+        // the probe's subprocess comparison.
+        "testDiffStringCase",
+        "testDiffStringContains",
+        "testDiffStringSubstring",
+        "testDiffStringSplit",
+        "testDiffArrayJoin",
+        "testDiffIsAsciiDigit",
+        "testDiffLexical",
+        "testDiffPrintMultiArgs",
+        "testDiffPassingAssert",
+        // The last two are the grid's answer to a coverage hole it found in its
+        // own first pass: `printMulti` and `assertCall` were the two G7 nodes no
+        // fixture reached, and their only evidence was a synthetic single-node
+        // probe in `expressionGaps` — the same table this grid had to delete
+        // three entries from, because a probe for a node that runs asserts the
+        // opposite of the truth. Deleting without replacing would have traded a
+        // probe that misreports for a silence that reads like coverage. These two
+        // files are the replacement, and they are on this list so the harness
+        // checks them in process rather than only through the probe's subprocess
+        // comparison.
+        //
+        // `testDiffPassingAssert` covers only the passing path — a failing assert
+        // aborts the LLVM arm and this harness requires `lli` to exit 0. That half
+        // belongs to `HIRExecutorTests.testAssertCallFailureIsAssertionFailedNotAGap`,
+        // which is also the only place that can assert the error is not a gap.
+        //
+        // Held back, and named here so the omission is a decision: both of the
+        // fixtures that carry the whole G9 string surface with the math builtins
+        // (`testDiffStdlib`, and its `examples/stdlib.pini` twin) end in `abs`.
+        // A builtin callee is not resolved on this channel — the grid chose not to
+        // delegate builtins to the interpreter, and the note on `call` says why —
+        // so after G7 both fixtures stop at the call node rather than at a string
+        // node. Their string half runs correctly in both cases (the interpreter
+        // arms print the expected `HELLO, WORLD` / `[Hello,  World]` / `a-b-c`
+        // before the failure), which is precisely why they cannot be the four
+        // nodes' evidence: a fixture that fails for a reason filed elsewhere is
+        // not evidence about this grid. Same shape as `testDiffStructValue` above,
+        // and the same owner: the builtin-callee rule.
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -993,10 +1046,36 @@ final class HIRExecutorTests: XCTestCase {
     /// not as a silence, and the rule that keeps it that way is the usual one —
     /// the list shrinks only when the node runs and something else fails loud
     /// about it being wrong.
+    ///
+    /// Three more left with grid G7, for the same reason: `printMulti`,
+    /// `stringCase` and `interpString` now run. Keeping them would have made the
+    /// grid report three failures that are not failures — which is what happened
+    /// on the first G7 regression run, and what this comment records.
+    ///
+    /// What holds G7's nine nodes up instead — and the reason deleting those
+    /// three entries was not enough on its own. Seven of the nine were already
+    /// reached by something: the grid's four new single-node differential
+    /// fixtures (`testDiffStringCase`, `testDiffStringContains`,
+    /// `testDiffStringSubstring`, `testDiffStringSplit`, each narrowed to
+    /// exactly one operator) cover four, and three more came to the in-range
+    /// list for the first time because the corpus entries naming them
+    /// (`testDiffArrayJoin`, `testDiffIsAsciiDigit`, `testDiffLexical`) used to
+    /// stop at a G7 node first.
+    ///
+    /// The other **two had no corpus coverage at all** — `printMulti`, which is
+    /// only reached by a `print` carrying two or more arguments, and
+    /// `assertCall`, which no fixture in the corpus called. Their sole evidence
+    /// had been the probes deleted above. Found by asking what reached each
+    /// node rather than by trusting the deletion, and closed by two fixtures
+    /// written for them (`testDiffPrintMultiArgs`, `testDiffPassingAssert`) plus
+    /// `testAssertCallFailureIsAssertionFailedNotAGap` below for the half a
+    /// fixture cannot host. That is the same lesson the G5 grid taught about
+    /// archive self-declarations, applied one level down: *deleting* a probe
+    /// and *covering* the node are different claims.
+    ///
+    /// The two entries left are the ones still unimplemented — `readLine` (G9)
+    /// and `pointerLoad` (G8).
     private static let expressionGaps: [(node: String, expr: HIRExpr)] = [
-        ("printMulti", .printMulti(arguments: [.intConst(value: 1, type: .i32)])),
-        ("stringCase", .stringCase(isUpper: true, receiver: .stringConst(value: "a"))),
-        ("interpString", .interpString(parts: [.stringConst(value: "x")])),
         ("readLine", .readLine),
         ("pointerLoad", .pointerLoad(
             pointer: .intConst(value: 0, type: .i32),
@@ -1054,6 +1133,76 @@ final class HIRExecutorTests: XCTestCase {
     func testUnimplementedExpressionNodesFailLoudAndNameTheNode() {
         for probe in HIRExecutorTests.expressionGaps {
             assertGapSpeaks(probe.node, body: [.exprStmt(probe.expr)])
+        }
+    }
+
+    /// `assertCall`'s two paths, neither of which a fixture can settle.
+    ///
+    /// The passing half has a differential fixture (`testDiffPassingAssert`), but
+    /// that compares the HIR arm against the interpreter — agreement between two
+    /// arms, not proof that this node ran. The failing half cannot be a fixture
+    /// at all: a failing assert aborts, and the differential harness requires
+    /// `lli` to exit 0.
+    ///
+    /// Both halves are asserted against the error *name*, not merely "something
+    /// threw". A node still sitting on `notImplemented` throws as well, and
+    /// before grid G7 `assertCall` did exactly that — so "it threw" would have
+    /// been satisfied by the gap as readily as by the implementation. That is
+    /// the weak-judgement shape the G1 mutation round found and `D-P2-8`
+    /// records; the fix is an assertion the gap cannot satisfy.
+    func testAssertCallFailureIsAssertionFailedNotAGap() throws {
+        // Passing: control must come back, so the statement after it runs.
+        // (These are `exprStmt`-wrapped because `printMulti` is a `HIRExpr` —
+        // `Sources/` and `Tests/` are separate compilation units and the
+        // statement-side spellings do not exist on this one.)
+        let passing = HIRExecutor()
+        var passingLines: [String] = []
+        passing.outputSink = { passingLines.append($0) }
+        XCTAssertNoThrow(try passing.run(module: HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .exprStmt(.printMulti(arguments: [.intConst(value: 1, type: .i32)])),
+                .exprStmt(.assertCall(
+                    condition: .boolConst(value: true),
+                    message: .stringConst(value: "unused"))),
+                .exprStmt(.printMulti(arguments: [.intConst(value: 2, type: .i32)])),
+            ])
+        ])))
+        XCTAssertEqual(
+            passingLines, ["1", "2"],
+            "a passing assert must return rather than divert control"
+        )
+
+        // Failing, two-argument form: the runtime assertion, carrying the
+        // message the source gave it.
+        let failing = HIRExecutor()
+        XCTAssertThrowsError(try failing.run(module: HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .exprStmt(.assertCall(
+                    condition: .boolConst(value: false),
+                    message: .stringConst(value: "boom"))),
+            ])
+        ]))) { error in
+            guard case .assertionFailed(let message, _)? = error as? RuntimeError else {
+                return XCTFail("a failing assert must be assertionFailed, got: \(error)")
+            }
+            XCTAssertEqual(message, "boom")
+            XCTAssertFalse(
+                String(describing: error).contains("not implemented"),
+                "assertCall is implemented; a gap report here means the node was never reached"
+            )
+        }
+
+        // Failing, one-argument form: the default message the interpreter uses.
+        let defaulted = HIRExecutor()
+        XCTAssertThrowsError(try defaulted.run(module: HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .exprStmt(.assertCall(condition: .boolConst(value: false), message: nil)),
+            ])
+        ]))) { error in
+            guard case .assertionFailed(let message, _)? = error as? RuntimeError else {
+                return XCTFail("expected assertionFailed, got: \(error)")
+            }
+            XCTAssertEqual(message, "assert failed")
         }
     }
 

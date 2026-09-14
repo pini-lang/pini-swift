@@ -659,26 +659,232 @@ public final class HIRExecutor: DebugHookHost {
                 args: try arguments.map { try evaluate($0) }
             )
 
+        // MARK: Strings and builtins (P2b grid G7)
+
+        case .interpString(let parts):
+            // Mirrors the interpreter's `.stringInterpolation` arm. The lowerer
+            // has already flattened the segment list: literal segments arrive as
+            // `stringConst`, expression segments as their own node, and an
+            // all-literal run was folded into one constant before it got here.
+            // `stringifyValue` is the interpreter's own rendering, and a string
+            // value renders verbatim, so a literal segment contributes its text
+            // unchanged — which is what the interpreter's `.literal` branch does.
+            var text = ""
+            for part in parts {
+                text += Interpreter.stringifyValue(try evaluate(part))
+            }
+            return .string(text)
+
+        case .isAsciiDigit(let argument):
+            // Mirrors `Interpreter`'s `is_ascii_digit` arm verbatim, including
+            // its non-fail-loud behaviour outside the ASCII domain: `Character`
+            // comparison puts every non-ASCII scalar above "9", so the predicate
+            // is effectively ASCII-only without a second range check. The empty
+            // string is false, not an error.
+            let s = try requireString(try evaluate(argument), for: "is_ascii_digit")
+            guard let first = s.first else { return .bool(false) }
+            return .bool(first >= "0" && first <= "9")
+
+        case .printMulti(let arguments):
+            // The interpreter's multi-argument `print`: every value rendered,
+            // joined with a single space, handed to the sink as one line (so a
+            // concurrent task cannot interleave inside it). Arguments are
+            // evaluated left to right — their evaluation is observable.
+            let values = try arguments.map { try evaluate($0) }
+            outputSink(values.map { Interpreter.stringifyValue($0) }.joined(separator: " "))
+            return .null
+
+        case .assertCall(let condition, let message):
+            // Mirrors the interpreter's `assert` arm. Both operands are
+            // evaluated before the condition is judged, because that is what the
+            // interpreter does — argument evaluation happens at the call site,
+            // and only then does the arm look at the values.
+            let conditionValue = try evaluate(condition)
+            let messageValue = try message.map { try evaluate($0) }
+            guard case .bool(let passed) = conditionValue else {
+                throw RuntimeError.invalidOperation(
+                    reason: "assert 的参数 1 必须是 Bool（条件）",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            guard !passed else { return .null }
+            let text: String
+            if let messageValue = messageValue {
+                guard case .string(let m) = messageValue else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "assert 的参数 2 必须是 String（消息）",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                text = m
+            } else {
+                text = "assert failed"
+            }
+            throw RuntimeError.assertionFailed(message: text, location: HIRExecutor.noLocation)
+
+        case .arrayJoin(let receiver, let separator):
+            // Mirrors the interpreter's `join` arm: `stringify` each element and
+            // interpose the separator. Elements are stringified with the shared
+            // renderer rather than assumed to be strings — `[String]` is what the
+            // lowerer requires, but the value that arrives is whatever the array
+            // holds, and the interpreter stringifies unconditionally.
+            guard case .array(let elements) = try evaluate(receiver) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "join needs an Array receiver",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            let sep = try requireString(try evaluate(separator), for: "join")
+            return .string(elements.map { Interpreter.stringifyValue($0) }.joined(separator: sep))
+
+        case .stringCase(let isUpper, let receiver):
+            // Contract §2.36: **Unicode-aware**, and the receiver is unchanged.
+            // The authority is the interpreter's `upper`/`lower` arms
+            // (`Interpreter.swift`, the `fv.name == "upper"` / `"lower"`
+            // branches), which are `String.uppercased()` / `.lowercased()`; the
+            // LLVM emitter's byte-wise ASCII-only pass is the deviating side and
+            // is filed as a B-group defect. Mirroring the contract here is
+            // therefore mirroring the interpreter, not choosing a third reading.
+            let text = try requireString(try evaluate(receiver), for: "upper/lower")
+            return .string(isUpper ? text.uppercased() : text.lowercased())
+
+        case .stringContains(let receiver, let needle):
+            // The AST channel serves `contains` from `StdlibPini`'s Pini source
+            // (ADR-020 D2 sank it), so *that* file is the authority, not a Swift
+            // arm — the interpreter's native chain has a standing instruction not
+            // to reintroduce a by-name branch for a sunk method. The loop below is
+            // the same algorithm over `[Character]` (graphemes, ADR-019 D1):
+            // empty needle is true, otherwise scan for a grapheme-wise match.
+            //
+            // This is the structural cost of a sunk method: the authority is Pini
+            // source, which cannot be called from here without a cross-engine
+            // call, so the grid carries a second copy of the algorithm. The copy
+            // is guarded by `HIRExecutorTests`' both-channel fixtures, which fail
+            // the moment the two readings drift. Same shape as G4's `sliceCall`.
+            let haystack = Array(try requireString(try evaluate(receiver), for: "contains"))
+            let needleChars = Array(try requireString(try evaluate(needle), for: "contains"))
+            if needleChars.isEmpty { return .bool(true) }
+            var i = 0
+            while i + needleChars.count <= haystack.count {
+                var j = 0
+                var matched = true
+                while j < needleChars.count {
+                    if haystack[i + j] != needleChars[j] {
+                        matched = false
+                        break
+                    }
+                    j += 1
+                }
+                if matched { return .bool(true) }
+                i += 1
+            }
+            return .bool(false)
+
+        case .stringSubstring(let receiver, let start, let end):
+            // Contract §2.38: the second argument is an **end**, not a length —
+            // the registry declares `paramNames: ["start", "end"]` and the
+            // contract's note records that the emitter still reads it as a length
+            // (a filed B-group deviation). The enum's label is the misleading
+            // one; the binding is named `end` so the rule below is readable.
+            //
+            // Authority is `StdlibPini.substring`: negative bounds tail-count,
+            // both bounds clamp into `[0, len]`, and `hi < lo` yields the empty
+            // string. `len` is the grapheme count.
+            let characters = Array(try requireString(try evaluate(receiver), for: "substring"))
+            let n = characters.count
+            var lo = try requireInt(try evaluate(start), for: "substring start")
+            var hi = try requireInt(try evaluate(end), for: "substring end")
+            if lo < 0 { lo = n + lo }
+            if hi < 0 { hi = n + hi }
+            if lo < 0 { lo = 0 }
+            if lo > n { lo = n }
+            if hi < 0 { hi = 0 }
+            if hi > n { hi = n }
+            guard hi > lo else { return .string("") }
+            return .string(String(characters[lo..<hi]))
+
+        case .stringSplit(let receiver, let delim, _):
+            // Contract §2.39 (A4): the result is a **real `Array<String>`** and
+            // **empty tokens are skipped**, which is what the LLVM arm's `strtok`
+            // loop already does. Stated as a decision, not a preference: the
+            // interpreter-side alignment (it currently keeps the empty segments —
+            // `StdlibPini.split` appends unconditionally) is the `stringSplit`
+            // grid's job and is registered there. This node follows the contract,
+            // which is where the authority sits.
+            //
+            // An empty separator yields one element per grapheme, mirroring
+            // `StdlibPini`'s explicit `m == 0` branch.
+            let text = try requireString(try evaluate(receiver), for: "split")
+            let characters = Array(text)
+            let delimChars = Array(try requireString(try evaluate(delim), for: "split"))
+            var parts: [Value] = []
+            if delimChars.isEmpty {
+                return .array(characters.map { .string(String($0)) })
+            }
+            var current = ""
+            var i = 0
+            while i < characters.count {
+                var j = 0
+                var hit = true
+                while j < delimChars.count {
+                    if i + j >= characters.count || characters[i + j] != delimChars[j] {
+                        hit = false
+                        break
+                    }
+                    j += 1
+                }
+                if hit {
+                    if !current.isEmpty { parts.append(.string(current)) }
+                    current = ""
+                    i += delimChars.count
+                } else {
+                    current.append(characters[i])
+                    i += 1
+                }
+            }
+            if !current.isEmpty { parts.append(.string(current)) }
+            return .array(parts)
+
         // MARK: Not implemented yet — fail loud, named.
 
         case .pointerLoad: throw notImplemented("pointerLoad")
         case .pointerStore: throw notImplemented("pointerStore")
         case .addressOfVar: throw notImplemented("addressOfVar")
-        case .printMulti: throw notImplemented("printMulti")
-        case .assertCall: throw notImplemented("assertCall")
         case .fileWrite: throw notImplemented("fileWrite")
         case .fileRead: throw notImplemented("fileRead")
         case .readLine: throw notImplemented("readLine")
-        case .isAsciiDigit: throw notImplemented("isAsciiDigit")
-        case .stringCase: throw notImplemented("stringCase")
-        case .stringContains: throw notImplemented("stringContains")
-        case .stringSubstring: throw notImplemented("stringSubstring")
-        case .stringSplit: throw notImplemented("stringSplit")
-        case .arrayJoin: throw notImplemented("arrayJoin")
-        case .interpString: throw notImplemented("interpString")
         case .lazyRefConstruct: throw notImplemented("lazyRefConstruct")
         case .lazyRefValue: throw notImplemented("lazyRefValue")
         }
+    }
+
+    // MARK: - G7 operand helpers
+
+    /// One `String` operand, or a loud error naming the caller.
+    ///
+    /// The AST channel reaches these as builtin/member calls that typecheck the
+    /// argument before the arm reads it; this engine only has the value. A wrong
+    /// type is a genuine inconsistency (a module not produced by the lowerer),
+    /// so it fails loud rather than coercing.
+    private func requireString(_ value: Value, for what: String) throws -> String {
+        guard case .string(let text) = value else {
+            throw RuntimeError.invalidOperation(
+                reason: "\(what) expects a String operand, got \(value)",
+                location: HIRExecutor.noLocation
+            )
+        }
+        return text
+    }
+
+    /// One `I32` operand, or a loud error naming the caller. See `requireString`.
+    private func requireInt(_ value: Value, for what: String) throws -> Int {
+        guard case .int(let number) = value else {
+            throw RuntimeError.invalidOperation(
+                reason: "\(what) expects an integer operand, got \(value)",
+                location: HIRExecutor.noLocation
+            )
+        }
+        return number
     }
 
     /// The declaration an `enumConstruct` names, by case name with the tag as a
