@@ -30,11 +30,13 @@ import XCTest
 /// instead of "the gap stayed silent"). Hand-built nodes keep each probe down to
 /// exactly one gap, so the assertion can only mean what it says.
 ///
-/// The list is a representative sample per node family, not all 44 expression
-/// nodes: the *existence* of an anchor for every contract node is
+/// The list is a representative sample per node family, not every node still
+/// missing: the *existence* of an anchor for every contract node is
 /// `tools/hir-contract-check.py`'s job (it counts 60/60 from the outside), while
 /// this file's job is proving the fail-loud *behaviour* on real examples of it.
-/// Each implemented grid deletes entries from here as the engine grows.
+/// Each implemented grid deletes entries from here as the engine grows — and the
+/// statement side of the list emptied out entirely in grid G5, at which point the
+/// table itself went away.
 ///
 /// The third live channel (HIR → LLVM) is not exercised here; extending the
 /// corpus to all three channels is P1-4.
@@ -152,6 +154,35 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffTryElseSugar",
         "testDiffValidatedMatch",
         "testDiffValueFormat",
+        // Grid G5 (nominal types and fields). These eight are exactly the
+        // fixtures whose first gap was `construct`, so the probe's verdict on
+        // each moved from "engine has not implemented this node yet" to `OK` and
+        // nothing else moved with it.
+        //
+        // The ninth of that group, `testDiffStructValue`, is **held back**: its
+        // method body ends in `sqrt`, and a builtin callee is not resolved on
+        // this channel — the grid chose not to delegate builtins to the
+        // interpreter (the note on `call` says why), so the fixture now stops at
+        // the call node instead of the field node it used to stop at. It stays
+        // out until the builtin callee rule has an owner; naming it here as
+        // "in range" would be the declaration this list exists to prevent.
+        //
+        // They carry the whole nominal family between them:
+        // the struct shapes (`testDiffStruct*`, `testDiffI8StructField`), the
+        // reference-type object (`testDiffObjectReference`), the generic struct
+        // whose type argument the lowerer specialises rather than splitting the
+        // node (`testDiffGenericStruct`), the embedded-parent shape whose methods
+        // dispatch by receiver type (`testDiffStructComposition`), and the two
+        // trait shapes whose method bodies are ordinary calls with the receiver
+        // as the first argument (`testDiffTrait*`).
+        "testDiffEnumTypedField",
+        "testDiffGenericStruct",
+        "testDiffI8StructField",
+        "testDiffObjectReference",
+        "testDiffStructComposition",
+        "testDiffStructI8Fields",
+        "testDiffTrait",
+        "testDiffTraitDefaultMethod",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -694,6 +725,96 @@ final class HIRExecutorTests: XCTestCase {
         )
     }
 
+    /// A reference-type object, aliased through a second binding, then written and
+    /// read through a **plain variable base** rather than through `self`.
+    ///
+    /// The corpus reaches objects only through their methods, whose bodies write
+    /// `self.字段` — so the two arms where the receiver is an ordinary variable,
+    /// the read and the write of `fieldGet` / `fieldStore`, have no fixture. The
+    /// shape matters because it is where the value/reference split becomes
+    /// observable: `var b = a` **aliases** an object and must keep aliasing, so
+    /// the write through `a` is read back through `b`.
+    ///
+    /// The output is asserted absolutely as well as by parity. Two channels that
+    /// both failed to alias would agree with each other while being wrong, and
+    /// this is exactly the rule whose absence shows up as a wrong number rather
+    /// than as a divergence — so parity alone would be a hollow judge here.
+    ///
+    /// This test uses an object on purpose. The struct analogue of the same shape
+    /// (`var b = a` where `a` is a struct) is the engine's one known semantic
+    /// hole — `Interpreter.copyIfStruct` is not applied at this engine's binding
+    /// sites — and the two channels would **diverge** on it today. It is filed as
+    /// a defect with its own ticket rather than asserted here, because a test that
+    /// pins a known-wrong answer is worse than no test.
+    func testObjectAliasingThroughASecondBindingAndAPlainVariableBase() throws {
+        let (ast, hir) = try runBothChannels("""
+        {计数对象}
+        数值: I32 = 0
+
+        {{计数对象}}
+        增加|self() -> ():
+            self.数值 = self.数值 + 1
+            return
+
+        main|func() -> ():
+            var a = 计数对象()
+            var b = a
+            b.增加()
+            b.增加()
+            a.数值 = 10
+            print(a.数值)
+            print(b.数值)
+            return
+        """)
+
+        XCTAssertEqual(ast, ["10", "10"], "an object binding aliases, it does not copy")
+        XCTAssertEqual(hir, ast, "channel output diverged for object aliasing")
+    }
+
+    /// The two nominal paths a *typechecking* program cannot reach, kept loud.
+    ///
+    /// Both are closed off before this engine runs rather than merely absent from
+    /// the corpus: a read of a field the receiver's type does not declare is
+    /// refused by the lowerer's static field resolution (`no field …`), and a field
+    /// write whose receiver is not nominal is refused by the same `guard case
+    /// .nominal`. So these nodes only ever arrive from a module and an engine that
+    /// disagree, and the only acceptable answer to that is an error that says so.
+    ///
+    /// Each guards against a silent alternative — `.null` for the missing field, a
+    /// no-op for the write that went nowhere — and both of those would look like a
+    /// working program. That is why they are built as nodes and *run* instead of
+    /// being left to a reading of the code.
+    func testUnreachableNominalPathsFailLoudInsteadOfGoingSilent() {
+        let missingField = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .exprStmt(.fieldGet(
+                    base: .construct(type: .nominal(name: "点", isObject: false)),
+                    field: "nope",
+                    type: .i32)),
+            ])
+        ])
+        XCTAssertThrowsError(try HIRExecutor().run(module: missingField)) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("no field 'nope'"),
+                "a field the type does not carry must be reported, not read as null, got: \(error)"
+            )
+        }
+
+        let nonNominalReceiver = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .fieldStore(
+                    base: .intConst(value: 0, type: .i32), field: "f",
+                    value: .intConst(value: 1, type: .i32), fieldType: .i32),
+            ])
+        ])
+        XCTAssertThrowsError(try HIRExecutor().run(module: nonNominalReceiver)) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("无法赋值的对象类型"),
+                "a write through a non-nominal receiver must be reported, got: \(error)"
+            )
+        }
+    }
+
     // MARK: - Fail-loud gaps
 
     /// One probe per gap. Each probe is a *single* node, so "the error names this
@@ -711,27 +832,32 @@ final class HIRExecutorTests: XCTestCase {
             captures: [], body: [], type: .function(params: [], returnType: nil))),
     ]
 
-    /// One probe per *remaining* gap. A node leaves this table by being
-    /// implemented, never by being tolerated — G1 removed `forInStmt`,
-    /// `deferStmt`, `breakStmt`, `continueStmt` and `panicStmt`, and the two
-    /// control statements that could not be covered here (a bare `break` escapes
-    /// as an unwind rather than an error) got their own tests instead. The try /
-    /// match family left in the G6 grid; what remains is the nominal field store
-    /// (G5).
+    /// The statement side of the contract is **complete** as of grid G5, and the
+    /// table that used to live here (`statementGaps`) is gone rather than empty.
     ///
-    /// `tryStmt` and `matchStmt` were the two nodes whose *every* corpus fixture
-    /// fails here first, so the entries could not outlive the grid that
-    /// implemented them — a probe for a node that runs would now be asserting the
-    /// opposite of the truth. `resultConstruct`, by contrast, never had an entry:
-    /// no fixture fails at it first (a `try` operand masks it), so it is covered
-    /// by the corpus rather than by a gap probe, and the container case below
-    /// pins it at node level.
-    private static let statementGaps: [(node: String, stmt: HIRStmt)] = [
-        ("fieldStore", .fieldStore(
-            base: .intConst(value: 0, type: .i32), field: "f",
-            value: .intConst(value: 1, type: .i32), fieldType: .i32)),
-    ]
-
+    /// It had one entry left, `fieldStore`, which G5 implemented — and a loop
+    /// over an empty table passes while asserting nothing, which is the failure
+    /// mode this whole file is built to avoid (`assertGapSpeaks` below is still
+    /// used, by the expression side, where gaps remain). `tryStmt` / `matchStmt`
+    /// (G6) and the control-flow family (G1) had already left for the same
+    /// reason: a probe for a node that runs asserts the opposite of the truth.
+    ///
+    /// What holds the statement side up instead: the dispatch switch has no
+    /// `default:` arm, so a missing case is a compile error rather than a silent
+    /// hole; `tools/hir-contract-check.py` counts the anchors from outside
+    /// (60/60, and it judges existence, not behaviour); the corpus parity run
+    /// exercises every statement shape the language has; and the two control
+    /// statements that could not be covered by a gap probe got their own tests
+    /// instead — with the stronger form the G1 grid's mutation round forced
+    /// (asserting the failure mode by name, because "it threw" and "nothing ran
+    /// after" are both satisfied by a node that was never implemented).
+    ///
+    /// A combined `testEscapingControlFlowAndPanicTrapStayLoud` arrived with the
+    /// G5 draft and covered these same two nodes. It was dropped in the merge
+    /// rather than kept next to them: the break half rebuilt exactly the weak
+    /// shape above (throw + no output, both of which a skeleton node satisfies),
+    /// and the panic half's "must not continue" claim is already structural — a
+    /// throw out of `run` cannot leave a later statement executing.
     private func assertGapSpeaks(_ node: String, body: [HIRStmt]) {
         let executor = HIRExecutor()
         var lines: [String] = []
@@ -757,12 +883,6 @@ final class HIRExecutorTests: XCTestCase {
     func testUnimplementedExpressionNodesFailLoudAndNameTheNode() {
         for probe in HIRExecutorTests.expressionGaps {
             assertGapSpeaks(probe.node, body: [.exprStmt(probe.expr)])
-        }
-    }
-
-    func testUnimplementedStatementNodesFailLoudAndNameTheNode() {
-        for probe in HIRExecutorTests.statementGaps {
-            assertGapSpeaks(probe.node, body: [probe.stmt])
         }
     }
 

@@ -50,7 +50,14 @@ enum HIRControlSignal: Error {
 ///    `optionalConstruct`, `optionalGet`, `enumConstruct`, `tryStmt`,
 ///    `matchStmt`, which also carried the two Optional nodes the slice and
 ///    value-format fixtures reach through, so those fixtures keep corpus
-///    coverage rather than validating nothing — decision `D-P2-5`).
+///    coverage rather than validating nothing — decision `D-P2-5`),
+///    and G5 (nominal types and fields — `construct`, `fieldGet`, `fieldStore`).
+///    G5 is what makes a struct or object method call observable at all: method
+///    dispatch is itself an ordinary `call` whose receiver travels as the first
+///    argument (the lowerer mangles `接收者.方法(…)` into `call(方法__类型, …)`),
+///    so the grid also had to teach `call` to consult a type-method table after
+///    the module-level one. That widening is a **range correction** of the same
+///    shape as the `stringConcat` grid G1 turned up.
 ///    Everything else fails loud (`notImplemented`) naming the node. A silent
 ///    `.null` would make this engine look finished and let the differential
 ///    probes compare against a fiction.
@@ -101,9 +108,16 @@ enum HIRControlSignal: Error {
 ///   position-free by design; the LLVM path reports positions at *lowering*
 ///   time). Every `RuntimeError` case requires one, so diagnostics from here
 ///   point at `noLocation` — a placeholder, not a line number.
-/// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method,
-///   so `allocVar` does not apply the struct copy rule yet. No struct node is
-///   implemented here, so nothing observable depends on it yet.
+/// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method
+///   and this engine does not apply the struct copy rule at its binding and
+///   storing sites (`allocVar` / `storeVar` / `fieldStore` / `subscriptStore`).
+///   Before grid G5 no struct was reachable here, so the rule was dormant; G5
+///   makes structs reachable, so it is now a real difference rather than a
+///   dormant one — but no fixture stores a struct value into another slot, so
+///   neither channel's observable output moves today. Filed as its own issue
+///   (the struct-copy hole) instead of being
+///   implemented unverified: an implementation with no fixture to judge it is
+///   exactly the kind of change this repository does not accept.
 /// - **`panicStmt`'s text has no cross-channel counterpart.** The node is
 ///   compiler-generated (an unresolvable `break`/`continue`), and on the AST
 ///   channel the same program ends in an escaped `ControlSignal` whose top-level
@@ -159,7 +173,25 @@ public final class HIRExecutor: DebugHookHost {
     /// Module-level functions by name. The HIR carries no closures at module
     /// level: `main` and its peers are the only callables (closure values are a
     /// separate node family, grid G3, not implemented yet).
+    ///
+    /// Trait default bodies arrive here too: the lowerer materialises them into
+    /// module-level functions rather than into a type's method list.
     private var functions: [String: HIRFunction] = [:]
+
+    /// Type methods by **lowered** name (`方法__类型`), flattened out of every
+    /// `HIRTypeDecl`.
+    ///
+    /// A method is not a module-level function and is kept in its own table for
+    /// that reason — but a call to one is an ordinary `.call`, because the
+    /// lowerer mangles `接收者.方法(…)` into `call(方法__类型, [接收者, …])` and
+    /// the receiver travels as the first argument. So this table exists to answer
+    /// the question the call node asks, and the two are consulted in that order.
+    ///
+    /// Keys come from each `HIRFunction.name` as lowered, never re-derived here:
+    /// a generic type's methods live under its specialised name (`盒_I32`), and
+    /// re-mangling on this side would be a second, drifting source of truth.
+    private var methods: [String: HIRFunction] = [:]
+
     private var types: [String: HIRTypeDecl] = [:]
     private var enums: [String: HIREnumDecl] = [:]
 
@@ -200,7 +232,10 @@ public final class HIRExecutor: DebugHookHost {
     /// interpreter taking an already-checked AST.
     public func prepare(module: HIRModule) {
         for function in module.functions { functions[function.name] = function }
-        for decl in module.types { types[decl.name] = decl }
+        for decl in module.types {
+            types[decl.name] = decl
+            for method in decl.methods { methods[method.name] = method }
+        }
         for decl in module.enums { enums[decl.name] = decl }
     }
 
@@ -287,16 +322,42 @@ public final class HIRExecutor: DebugHookHost {
             return try Interpreter.unaryValue(mapped, try evaluate(operand))
 
         case .call(let name, let arguments, _):
-            guard let target = functions[name] else {
-                throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: no module-level function named '\(name)' "
-                        + "(stdlib methods are resolved through the interpreter's Pini-source "
-                        + "member table and have no HIR surface yet)",
-                    location: HIRExecutor.noLocation
-                )
+            // The callee is resolved **before** the arguments are evaluated, so an
+            // unknown name is reported without running any argument expression —
+            // the same order the interpreter uses.
+            //
+            // Three kinds of callee reach this node, and the HIR does not
+            // distinguish them (the lowerer emits one node shape):
+            //
+            // - a module-level function, including the trait default bodies the
+            //   lowerer materialises into that table;
+            // - a type method, mangled into `方法__类型` with the receiver
+            //   prepended to the arguments;
+            // - a registered builtin (`sqrt`, `abs`, `argv`, the file IO …),
+            //   whose bodies live in the interpreter's `if fv.name == …` chain
+            //   rather than anywhere in the HIR.
+            //
+            // The first two are executed here. The third is **not answered, on
+            // purpose** — a scope decision of this grid, not an oversight:
+            // delegating the callee to a live `Interpreter` would run genuine
+            // builtin semantics, file IO included, inside a channel whose own IO
+            // semantics are still one of the four unsettled decision grids; and
+            // reimplementing a builtin here would be a second definition of it.
+            // Two fixtures need a bare builtin (a `sqrt` call) and stay pending
+            // because of this — recorded at closeout as a boundary that **no grid
+            // of P2a owns**, since the nine grids are divided by node families and
+            // this is a callee-resolution rule.
+            if let target = functions[name] ?? methods[name] {
+                return try call(target, args: try arguments.map { try evaluate($0) })
             }
-            let args = try arguments.map { try evaluate($0) }
-            return try call(target, args: args)
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: no module-level function named '\(name)' and no "
+                    + "type method lowered under that name. Builtin callees are not "
+                    + "answered by this engine (no delegation to the interpreter — see "
+                    + "the note on `call`), and stdlib methods are resolved through the "
+                    + "interpreter's Pini-source member table with no HIR surface yet",
+                location: HIRExecutor.noLocation
+            )
 
         case .printCall(let argument):
             // Mirrors the interpreter's `print` funnel for the one-argument form:
@@ -450,10 +511,19 @@ public final class HIRExecutor: DebugHookHost {
                 parentEnum: enumName
             ))
 
+        // MARK: Nominal instances and their fields (grid G5)
+
+        case .construct(let type):
+            return try constructValue(type)
+
+        case .fieldGet(let base, let field, _):
+            // The static type travels in the node and is dropped here: the
+            // receiver's own value kind decides which field table is read, the
+            // way `Interpreter.evaluateMember` decides it.
+            return try fieldRead(from: try evaluate(base), field: field)
+
         // MARK: Not implemented yet — fail loud, named.
 
-        case .construct: throw notImplemented("construct")
-        case .fieldGet: throw notImplemented("fieldGet")
         case .closureLiteral: throw notImplemented("closureLiteral")
         case .functionValue: throw notImplemented("functionValue")
         case .indirectCall: throw notImplemented("indirectCall")
@@ -489,6 +559,150 @@ public final class HIRExecutor: DebugHookHost {
         if let named = decl.cases.first(where: { $0.name == caseName }) { return named }
         guard decl.cases.indices.contains(tag) else { return nil }
         return decl.cases[tag]
+    }
+
+    // MARK: - Nominal instances (grid G5)
+
+    /// The implicit constructor `名()`: one fresh instance whose fields hold
+    /// their declared defaults, and `.null` where a field declares none.
+    ///
+    /// Mirrors `Interpreter.createInstance` — including *where* the default
+    /// expressions run: the interpreter evaluates a field initializer against
+    /// the environment current at the construction site, so this does too. (The
+    /// lowerer compiles every field default in a scratch context with no
+    /// parameters, so a default can only be a closed expression; the site is
+    /// still the mirror of the interpreter's, not a free choice.)
+    ///
+    /// The value/reference split comes from the declaration: `isObject` picks
+    /// `ObjectReference` (whose refcount starts at 1) over `StructInstance`.
+    /// The interpreter registers such an object with its ARC manager so that
+    /// `WeakRef.isAlive` has something to answer; this engine has no ARC
+    /// surface at all (`weakRef` nodes are not implemented), so nothing here
+    /// reads that registry and nothing is registered in it. Recorded with the
+    /// grid rather than guessed at.
+    ///
+    /// A nominal with no declaration in this module yields an instance with no
+    /// fields — the interpreter's behaviour when its type registry has no entry
+    /// either, not a silent success invented here.
+    private func constructValue(_ type: HIRType) throws -> Value {
+        guard case .nominal(let name, let isObject) = type else {
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: construct needs a nominal type, got '\(type)'",
+                location: HIRExecutor.noLocation
+            )
+        }
+        var fieldValues: [String: Value] = [:]
+        if let declaration = types[name] {
+            for field in declaration.fields {
+                if let defaultValue = field.defaultValue {
+                    fieldValues[field.name] = try evaluate(defaultValue)
+                } else {
+                    fieldValues[field.name] = .null
+                }
+            }
+        }
+        if isObject || types[name]?.isObject == true {
+            return .objectReference(ObjectReference(typeName: name, fields: fieldValues))
+        }
+        return .structInstance(StructInstance(typeName: name, fields: fieldValues))
+    }
+
+    /// `base.field` — the read half of `Interpreter.evaluateMember`'s member
+    /// branch, for the two receivers that carry fields.
+    ///
+    /// A read of a field the receiver does not carry is *unreachable from Pini
+    /// source*: the lowerer resolves the field statically and refuses to build
+    /// this node when the nominal declares no such field. Reaching it here
+    /// therefore means the module and the engine disagree, and it says so
+    /// instead of yielding `.null` — a silently wrong value is the one outcome
+    /// this engine must never produce.
+    ///
+    /// Two interpreter rules are deliberately NOT mirrored, and both are
+    /// unreachable from a program that *typechecks* — not merely absent from the
+    /// corpus:
+    ///
+    /// - the type-private gate on `_`-prefixed names
+    ///   (`RuntimeError.inaccessibleField`): the checker already enforces it on
+    ///   **both** sides of the member rule (`TypeChecker.enforceFieldVisibility`,
+    ///   read and write), reporting `E3-012`, so mirroring it here would be a
+    ///   duplicate of a static rejection. The checker skips the gate when it
+    ///   cannot infer the receiver's static type, which is the one slit through
+    ///   which a program could still reach this node — recorded with the grid's
+    ///   judging gaps rather than implemented unverified.
+    /// - the bound-method fallback (reading a method as a value): the lowerer
+    ///   rejects a method outside call position, so no such node is ever built.
+    private func fieldRead(from base: Value, field: String) throws -> Value {
+        switch base {
+        case .structInstance(let instance):
+            guard let value = instance.fields[field] else {
+                throw missingField(field, on: instance.typeName)
+            }
+            return value
+        case .objectReference(let object):
+            guard let value = object.fields[field] else {
+                throw missingField(field, on: object.typeName)
+            }
+            return value
+        default:
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: field read '.\(field)' needs a nominal receiver, got "
+                    + "\(Interpreter.describeValueKind(base))",
+                location: HIRExecutor.noLocation
+            )
+        }
+    }
+
+    /// `base.field = value` — the write half of the interpreter's
+    /// `performMemberAssign`, arm for arm.
+    ///
+    /// The `let`-bound struct rule is here with the interpreter's own trigger:
+    /// only a receiver written as an identifier other than `self`. `self` is
+    /// exempt on purpose — a method body exists to write its receiver's fields,
+    /// and its binding is immutable by construction.
+    ///
+    /// The interpreter does two more things on this path and neither is
+    /// mirrored here, both recorded with the grid:
+    ///
+    /// - it deep-copies the incoming value (`copyIfStruct`). No differential
+    ///   fixture stores a struct into a field, so the rule has no observable
+    ///   consequence *today* on either channel; it is a real hole the moment
+    ///   HIR replaces the AST engine, which is why it is filed as a defect
+    ///   instead of either implemented blind or left unmentioned.
+    /// - it applies the type-private gate to `_`-prefixed names — unreachable
+    ///   for the reason `fieldRead` records (the checker rejects it statically,
+    ///   `E3-012`), so it is not duplicated here.
+    ///
+    /// This node is only ever reached for the nominal family: the lowerer
+    /// resolves the base and refuses non-nominal receivers, so the trailing
+    /// branch reports an internal inconsistency with the interpreter's own
+    /// wording, not a new rule.
+    private func storeField(base: HIRExpr, field: String, value: Value) throws {
+        let receiver = try evaluate(base)
+        if case .load(let rootName, _) = base, rootName != "self",
+           case .structInstance = receiver,
+           let mutable = currentEnv.isMutable(name: rootName), !mutable {
+            throw RuntimeError.immutableVariable(name: rootName, location: HIRExecutor.noLocation)
+        }
+        switch receiver {
+        case .structInstance(let instance):
+            instance.fields[field] = value
+        case .objectReference(let object):
+            object.fields[field] = value
+        default:
+            throw RuntimeError.invalidOperation(
+                reason: "无法赋值的对象类型",
+                location: HIRExecutor.noLocation
+            )
+        }
+    }
+
+    private func missingField(_ field: String, on typeName: String) -> RuntimeError {
+        RuntimeError.invalidOperation(
+            reason: "HIR executor: '\(typeName)' carries no field '\(field)' "
+                + "(the lowerer resolves fields statically, so this is an internal "
+                + "inconsistency, not a gap in this engine)",
+            location: HIRExecutor.noLocation
+        )
     }
 
     /// `container.slice(start, end)` — the slice-sugar semantics.
@@ -834,9 +1048,14 @@ public final class HIRExecutor: DebugHookHost {
                 )
             }
 
-        // MARK: Not implemented yet — fail loud, named.
+        // MARK: Nominal field store (grid G5)
 
-        case .fieldStore: throw notImplemented("fieldStore")
+        case .fieldStore(let base, let field, let value, _):
+            // Right-hand side first, receiver second — the order the interpreter's
+            // assignment path uses (it evaluates the value, then the member base).
+            // Observable only when both have effects, which is exactly when a
+            // mirror that guessed would be caught late.
+            try storeField(base: base, field: field, value: try evaluate(value))
         }
     }
 
