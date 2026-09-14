@@ -72,6 +72,13 @@
 ⇒ 结论：本表此前的 26/18/5/10 **是旧条目分解的残留**（`D-P2-5` 只修了 G4 那一处，
 未回改 G1/G7 行），而非另一种合理口径。
 
+**账目更新（2026-09-14 G7 交付后，实测闭合 ⇒ P2b 由 17 改 8）**：G7 行 **9 → 0**（九项全交付，实录 §8.7）；
+**P2b 17 → 8**（= G8 5 + G9 3），**总账 44 = 27（P2a 已交付）+ 8（P2b 未交付）+ 9（G7 已交付）不变**。
+依据 = 打靶点口径实测：**17 → 8**，且剩余 8 项逐条落名 —— `pointerLoad` `pointerStore` `addressOfVar`
+`lazyRefConstruct` `lazyRefValue`（G8）；`fileRead` `fileWrite` `readLine`（G9），**与上表两行完全重合**。
+⚠️ **本表上方段落里的「当前 17 个 `notImplemented` 打靶点」是从 P2a 收尾时点看去的读数**，G7 交付后应读 8；
+保留原文不改，以免抹掉当时那次对账的证据链（读数一律现测，见 §11）。
+
 ### 1.2 语料面（夹具）
 
 - 差分夹具 **73 个**，位于 `Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/`。
@@ -840,6 +847,100 @@ E2-006 `invalid expression`，三通道一致）。经查 **spec 既定**（`名
 未改 AST / LLVM 侧实现（LLVM 侧三节点**本就已完整实现**，本格零改动）；
 未补语料夹具；未做「节点级变异判别」的可选加强；未 push。
 
+### 8.7 G7 字符串与内建（P2b 第 1 格，2026-09-14，分支 `agent/pini-dev/hir-p2b-g7-strings`）
+
+> **本格是 P2b 的第一格，也是第一次执行「分歧面」单元。** 与 P2a 六格的最大差别不在规模，而在
+> **判据的可达性**：九节点里有的照契约实现即落 `OK`，有的（B 组）照契约实现**也落不进 `OK`** ——
+> 契约要求改的是 LLVM 侧。这一区分在 §2.2 已立，本格是它的首次执行，实测结果见 ④。
+
+**① 起点实测（五步第 1 步，不拿上一格清单做加减）**
+
+独立重跑全量探针，产物 `/tmp/g7-before.tsv` 与冻结件 `/tmp/g3-post-full.tsv` **md5 逐字节一致**
+（`ee91b12fafd80edaa177786dba68d58b`）⇒ 冻结件有效、结论可复现。本格基准：**308 夹具**，
+`OK 217` / `HIR_ENGINE_TODO 24` / `GAP_EXEC 5` / `FLIP BLOCKERS 25`；打靶点（`throw notImplemented`）
+**17**，其中 G7 占 **9**。
+
+**② 夹具面（五步第 2 步）—— 实测与原估有一处实质差异，且发现两处零覆盖**
+
+- 新建 4 个**单节点**夹具：`testDiffStringCase` / `testDiffStringContains` / `testDiffStringSubstring` /
+  `testDiffStringSplit`。各恰一种算子（实测 `upper`×3 `lower`×3 / `contains`×8 / `substring`×5 / `split`×4，
+  四者互不叠）。
+- 一项已可达：`interpString` ← `testDiffLexical`；`arrayJoin` ← `testDiffArrayJoin`（5 处 `join`）；
+  `isAsciiDigit` ← `testDiffIsAsciiDigit`（3 处）—— ⚠️ 后者是**自由函数形式** `is_ascii_digit(s)`，
+  不是方法调用；按 `.is_ascii_digit(` 检索会得到零命中并**误判为无覆盖**（本格实测踩到）。
+- ⚠️ **两项零覆盖（本格最重要的发现）**：`printMulti` 与 `assertCall`。前者仅由 **≥2 参** `print` 下沉
+  （单参走 `printCall`），而全差分语料**每一条都是单参**；后者全差分语料**一次都没调用** `assert`。
+  二者此前唯一的证据是 `expressionGaps` 里那两条**合成单节点探针** —— 也就是本格为实现而必须删掉的条目。
+  ⇒ **「删除探针」与「建立覆盖」是两件不同的事**：若只删不补，红变绿的同时**判据被悄悄抽空**
+  （探针「误报」换成静默「看起来像覆盖」）。已补 `testDiffPrintMultiArgs` + `testDiffPassingAssert`
+  两份夹具，并把 `assertCall` 的失败态放到 Swift 侧手写用例（下述）。
+
+**③ 实现（五步第 3 步）**
+
+九个打靶点替换为**镜像解释器**的实现（`HIRExecutor.swift`，约 +230 行），并提两个私有 helper
+（`requireString` / `requireInt`）。语义决定：
+- `stringSubstring` 按**契约 §2.38** 取 `(start, end)`；节点侧枚举标签写作 `length` 是**误导侧**，照契约；
+- `stringSplit` 按**契约 §2.39 A4**：**跳过空 token**、空分隔符 → 逐 grapheme；
+- `printMulti` 分隔符取**空格**、`outputSink` 收**内容不含换行**（与解释器 `args.map { stringify($0) }
+  .joined(separator: " ")` 同源同形）；
+- **刻意不动解释器侧**：`stringSplit` 的空 token 语义在语言 spec 尚未钉死，且其对齐载体
+  （`stringSplit` 格）**已在册待排期** ⇒ 按「不顺手改」纪律，解释器侧留给该格，本格只在 HIR 侧照契约实现。
+
+**④ 验证（五步第 4 步）—— 闭合账目（逐夹具，非总数）**
+
+| 判定 | before | after | Δ | 归因 |
+|---|---|---|---|---|
+| `OK` | 217 | 236 | **+19** | 13 份既有夹具 `HIR_ENGINE_TODO → OK` + 6 份新夹具全 `OK` |
+| `HIR_ENGINE_TODO` | 24 | 9 | **−15** | 13 → `OK`，2 → `GAP_EXEC`（见下） |
+| `GAP_EXEC` | 5 | 7 | **+2** | `testDiffStdlib` + `examples/stdlib.pini`，**由缺口外移，非本格引入** |
+| 其余五类（`FRONTEND_FAIL` / `GAP_HIR_ENGINE` / `OK_HARNESS` / `PACKAGE_MEMBER` / `FLIP BLOCKERS` 的分项） | — | — | **全部 0** | — |
+
+**闭合等式成立**：离开 `HIR_ENGINE_TODO` 的 15 份 = 13 入 `OK` + 2 入 `GAP_EXEC`，无余项、无失衡。
+夹具面 308 → **314**（+6：4 份字符串 + 2 份补覆盖）= 300 pre-existing unchanged + 6 new + ... 逐条可对上，
+无夹具消失。**打靶点 17 → 8**，剩余 8 = G8 五项（`pointerLoad` `pointerStore` `addressOfVar`
+`lazyRefConstruct` `lazyRefValue`）+ G9 三项（`fileRead` `fileWrite` `readLine`），**与 P2b 定义完全重合**。
+
+**`J1` 零孤儿**：剩余 9 份 `HIR_ENGINE_TODO` 夹具命名的 4 个节点（`fileWrite` 3 / `lazyRefConstruct` 3 /
+`readLine` 2 / `fileRead` 1）**全部属 P2b**。
+**`J4` 契约恒定**：`hir-contract-check.py` 仍 `clean`，`llvm` / `printer` / `interp-hir` 三锚点 **60/60**。
+
+**⑤ 阻塞槽复核（`FLIP BLOCKERS` 25 → 27）**
+
+20 个 `GAP_HIR_ENGINE` **零变动**（仍全部为 `E7-001` 假阳性）⇒ 本格**未新增**该类槽，无需新的逐字复验。
+新增的 2 个在 `GAP_EXEC` 侧，错误码 **`E5-006`（invalidOperation）**，即**「裸内建 callee 无主」**：
+`testDiffStdlib` / `examples/stdlib.pini` 的字符串部分**实测正确输出**（`HELLO, WORLD` / `hello, world` /
+`Hello` / `[Hello,  World]` / `a-b-c`）后才死在 `abs`。该迁移（`HIR_ENGINE_TODO → GAP_EXEC`，`E5-006`）
+**已被既有工单 `docs/issue-hir-builtin-callee-unowned-2026-09-14.md` 明文预言**，且该单已裁决
+**不排期、不并入 G7** ⇒ **本格零新增缺陷**。
+⚠️ 口径提醒：该单自记 `FLIP BLOCKERS 23 → 25`，本格实测 `25 → 27` —— **绝对数在不同快照间会漂，
+可对账的是增量（都是 +2）**（与 §11 的「总数自己也会漂」同型）。
+
+**顺带处置（零语义变更）**
+
+- `expressionGaps` 表**删除** `printMulti` / `stringCase` / `interpString` 三条（实现后该断言必红，
+  首次全量回归的 4 个失败**全部出自这一个测试**），并在同处补说明「删了为何仍算覆盖」+ 记录零覆盖发现；
+- `inRangeFixtures` 白名单**净增 9**（4 份字符串 + `testDiffArrayJoin` / `testDiffIsAsciiDigit` /
+  `testDiffLexical` + 2 份补覆盖），并就地记下**搁置**的 `testDiffStdlib` / `examples/stdlib.pini`
+  与搁置理由（同样是内建 callee 归属）；
+- 新增 `HIRExecutorTests.testAssertCallFailureIsAssertionFailedNotAGap`：断言失败态是
+  `RuntimeError.assertionFailed`、携带源码消息、**且不是 `notImplemented`**（后者是弱判据的反面 ——
+  「未实现」也抛错，只断言「抛了」等于没断言，`D-P2-8` 同型）。
+
+**两条范围声明（写成范围，不写成遗漏）**
+
+- `testDiffPassingAssert` **只覆盖通过态**：失败态在 LLVM 臂会 abort，而 `assertParity` 要求 `lli` 退出 0
+  ⇒ 该半**结构性地**放不进差分语料，归 Swift 手写用例（与 G3「夹具覆盖不了的那条规则由手写用例钉」同型）。
+- `testDiffMultiArgPrint` **只取标量操作数**：多参 print 里的**聚合值**是 LLVM 臂的**已关闭设计边界**
+  （`emitPrintMulti` 对 `hasNoScalarRendering` 的类型直接 `bk_panic` + `unreachable`），
+  有归档件 `docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md` ⇒ **非缺陷、不立单**。
+  本格为此做了二分实测（String+I32 / Bool / F64 均通，`[1, 2]` 触 `lli` abort）后才定为范围。
+
+**本格未做**：未修任何非阻塞缺陷；未改探针的阻塞/缺口计数器判据（**收窄时机仍为上交给决策点**）；
+未动契约节点集；未改 AST 侧实现；未动 LLVM 侧（本格零 LLVM 改动）；未 push。
+**本格新发现（只登记不修）**：`ConcurrencyTests.testConcurrentTasksOverlapInTime` 的墙钟断言
+（阈值 0.11 s）在**全量并行负载**下实测 0.112 s 而红，**单独复跑 35/35 全绿** ⇒ 时序脆弱，与本格无关，
+立单 `docs/issue-concurrency-timing-test-fragile-2026-09-14.md`。
+
 ## 9. 决策记录
 
 | 编号 | 决策点 | 裁决（2026-09-13，用户） |
@@ -853,6 +954,8 @@ E2-006 `invalid expression`，三通道一致）。经查 **spec 既定**（`名
 | **D-P2-7** | G1 的缺口数是 5 还是 6（`stringConcat` 归属） | **格内范围判定（非用户裁决）：取 6**。纳入理由 = **夹具依赖**（defer 夹具需字符串拼接构造期望输出），**非契约分类**（契约实归 §2.9「字符串与内建」#41）。**偏离**规划表 §1.1（G1 记 5 / `stringConcat` 列 G7）⇒ 账目后果 P2a 26→27、P2b 18→17。✅ **已于 P2a 收尾全扫正式确认并落表**（§1.1 改数 5→6 / 10→9，依据 = 判据 `J1`/`J2`；原「待确认」状态解除，见 §10） |
 | **D-P2-8** | 变异反证暴露的弱判据（用例在全部 6 次变异下均不红）怎么处置 | **就地补强断言并复验**（加「不得报 not implemented」断言），不接受「红因正确即放过」（实录 §8.3） |
 | **D-P2-9** | 全仓缩进压平（本格连带发现） | **立工单 + 排期 P4 之后**（整仓重排须冻结其他改动）；本格只落 `executeFor` 整函数体 8 空格（实录 §8.3，工单 `docs/issue-swift-source-indent-2026-09-13.md`） |
+| D-P2-10 | G7 的 `stringSplit` 空 token 语义：HIR 侧照契约实现后，是否顺手把解释器侧一并对齐 | **不顺手改**（**格内范围判定，非用户裁决**）：解释器侧的对齐载体 = 已在册待排期的 **`stringSplit` 格**，且语言 spec 未钉该语义 ⇒ 留在该格，本格只在 HIR 侧照契约 §2.39 A4 实现（实录 §8.7 ③） |
+| D-P2-11 | G7 的实现批次划分（原拟「批 1 五项无分歧 / 批 2 三项 B 组」） | **不拆批，一次落齐**（**格内范围判定**）：实测九节点同属一条编辑面、构建一次通过，拆批只增往返而无判据收益；且「B 组需另批」的前提不成立 —— B 组的分歧**不在 HIR 侧**（契约要求改的是 LLVM 侧），本节无待裁项（实录 §8.7 ④） |
 
 ## 10. P2a 整体验收（收尾全扫，2026-09-14）
 
