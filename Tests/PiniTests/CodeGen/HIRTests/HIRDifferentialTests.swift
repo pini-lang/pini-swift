@@ -167,13 +167,11 @@ final class HIRDifferentialTests: XCTestCase {
 
     /// Parity for fixtures that read stdin. Both channels must see the SAME
     /// bytes — the interpreter reads the test process's stdin and lli
-    /// inherits its own — so the input is injected explicitly. Callers pass
-    /// input WITHOUT a trailing newline: the interpreter's `readLine()`
-    /// strips it while both LLVM channels hand `fgets`' buffer straight to
-    /// `print` (`%s`), trailing newline included. That difference is a
-    /// pre-existing legacy/interpreter divergence the M6 flip preserves
-    /// (registered in the rewrite plan, same class as print(F64)); the
-    /// newline-free input is the slice on which byte parity actually holds.
+    /// inherits its own — so the input is injected explicitly. A trailing
+    /// newline in the input no longer matters: the interpreter keeps the
+    /// line terminator, which is what `fgets`' buffer already carries into
+    /// `print`. The fixture below still passes newline-free input, from when
+    /// the interpreter stripped it.
     private func assertParityWithStdin(fixtureName: String, stdin: String,
                                        file: StaticString = #filePath, line: UInt = #line) throws {
         let source = try loadPiniFixture(fixtureName, filePath: #filePath)
@@ -593,5 +591,61 @@ final class HIRDifferentialTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: (cwd as NSString).appendingPathComponent("out.txt")),
                        "an unprefixed writeFile must not land in the runtime CWD")
+    }
+
+    // MARK: - P2b G9: the observation gaps the inherited IO fixtures left
+
+    /// Three IO fixtures came in with the M6a batch and each one passed across
+    /// the channels while leaving one of the three semantics unobserved:
+    /// `writeFile` returning a result code, `readLine` keeping its line
+    /// terminator, and `readFile` capping a read. A channel pair agreeing on
+    /// bytes it never varied is not evidence, so each new fixture makes the
+    /// value *observable* and asserts it outright — a two-channel comparison
+    /// cannot catch a defect both channels share, and the emitter and the
+    /// interpreter read the same size constants.
+
+    /// `writeFile` reports the integer result code of the write. The inherited
+    /// fixtures call it as a bare statement, which discards the code (and a
+    /// channel returning an unrelated integer matches them byte for byte).
+    /// Expected bytes are asserted, not just compared across channels.
+    func testDiffWriteFileCode() throws {
+        let source = try loadPiniFixture("testDiffWriteFileCode", filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source)
+        XCTAssertEqual(interpreterOutput, "0\n7\n",
+                       "writeFile must report a success code and the payload must read back")
+        let hirOutput = try runNewPipeline(source)
+        XCTAssertEqual(hirOutput, interpreterOutput,
+                       "the HIR pipeline must report the same result code\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+    }
+
+    /// `readLine` keeps the line terminator, so the length includes it. The
+    /// inherited fixture feeds newline-free input, from when the interpreter
+    /// stripped it: there a stripping channel and a keeping channel print the
+    /// same bytes, and the semantics are unobservable. This one ends the input
+    /// with a newline and asserts 6 (a stripped line would report 5).
+    func testDiffReadLineKeepsTerminator() throws {
+        let source = try loadPiniFixture("testDiffReadLineKeepsTerminator", filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source, stdin: "hello\n")
+        XCTAssertEqual(interpreterOutput, "6\n",
+                       "readLine must keep the line terminator; 5 would mean it was stripped")
+        let hirOutput = try runNewPipeline(source, stdin: "hello\n")
+        XCTAssertEqual(hirOutput, interpreterOutput,
+                       "the HIR pipeline must keep the terminator too\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+    }
+
+    /// `readFile` caps a single read at 64 KiB. Every inherited file fixture
+    /// uses a body far below the cap, where a capped read and an uncapped one
+    /// are indistinguishable. The fixture builds a 131072-byte file itself and
+    /// prints only its length, so 65536 separates the cap from no cap — and
+    /// printing the body instead would fill the harness pipe on both channels,
+    /// which deadlocks rather than fails.
+    func testDiffReadFileTruncates() throws {
+        let source = try loadPiniFixture("testDiffReadFileTruncates", filePath: #filePath)
+        let interpreterOutput = try runInterpreter(source)
+        XCTAssertEqual(interpreterOutput, "65536\n",
+                       "readFile must silently truncate a 128 KiB body at 64 KiB")
+        let hirOutput = try runNewPipeline(source)
+        XCTAssertEqual(hirOutput, interpreterOutput,
+                       "the HIR pipeline must truncate at the same limit\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
     }
 }

@@ -825,7 +825,11 @@ func selectedInterpreterEngine() -> InterpreterEngine {
 ///
 /// 目录/模块运行**刻意不接**：整包 lower 再执行是更大的面，而等价探针驱动的是单文件。
 /// 该开关下遇到目录**明确报错**，不静默回落到 AST 引擎。
-private func runHIREngine(module: Module, source: String) throws {
+///
+/// `programBase` 与 AST 通道取同一个值（入口文件所在目录）：IO 节点的非前缀相对路径
+/// 必须两通道解析到同一份文件。否则同一程序在两条通道上读到的不是同一个文件，而且不会
+/// 报错——只会静默读到 CWD 里的同名文件。
+private func runHIREngine(module: Module, source: String, programBase: String?) throws {
  let checker = TypeChecker()
  let typeErrors = checker.checkCollecting(module: module)
  if !typeErrors.isEmpty {
@@ -838,7 +842,7 @@ private func runHIREngine(module: Module, source: String) throws {
  // match scrutinee 的类型，需持久表兜底。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
  let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
- try HIRExecutor().run(module: hirModule)
+ try HIRExecutor(programBase: programBase).run(module: hirModule)
 }
 
 /// P4 Phase 5：run 接收文件或目录。
@@ -869,13 +873,15 @@ func runRunPath(_ path: String, argv: [String] = []) {
  printError(formatCLIError(error: error, source: source)); exit(1)
  }
  // LR-4 P1-3：语义门禁之前是共享前端，之后按开关分派执行引擎。
+ // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。两条通道传同一个值，
+ // 否则非前缀相对路径会在 HIR 侧静默读到 CWD 的同名文件。
+ let programBase = absoluteProgramBase(path)
  if engine == .hir {
- do { try runHIREngine(module: module, source: source) }
+ do { try runHIREngine(module: module, source: source, programBase: programBase) }
  catch { printError(formatCLIError(error: error, source: source)); exit(1) }
  return
  }
- // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。
- let interpreter = Interpreter(programBase: absoluteProgramBase(path))
+ let interpreter = Interpreter(programBase: programBase)
  interpreter.processArguments = argv
  do { try interpreter.run(module: module) }
  catch { printError(formatCLIError(error: error, source: source)); exit(1) }

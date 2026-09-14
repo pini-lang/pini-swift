@@ -1664,13 +1664,16 @@ public final class IREmitter {
 
     /// `readFile(path)` (G15): fopen(path, "r") / fread into a fixed
     /// 64 KiB stack buffer / NUL-terminate / fclose. Yields the buffer
-    /// pointer as a String. The fixed cap is the legacy emitter's —
-    /// LLI's JIT makes fseek/ftell/fstat unreliable — and the IO corpus
-    /// stays far below it. The NULL guard is the second divergence from the
+    /// pointer as a String. The cap comes from the shared limit and is the
+    /// interpreter's cap too — bytes past it are dropped on both sides.
+    /// The magnitude is inherited from the legacy emitter, which sized the
+    /// buffer this way because LLI's JIT makes fseek/ftell/fstat
+    /// unreliable. The NULL guard is the second divergence from the
     /// legacy emitter, and the one that matters most here: a missing file is
     /// reachable from ordinary source, unlike the write path's.
     private func emitFileRead(path: HIRExpr) -> IRValue {
         usesFileIO = true
+        let bufferSize = IOLimits.fileBufferSize
         let pathValue = emitExpr(bakedIOPath(path))
         let mode = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]) + "\n"
@@ -1678,11 +1681,11 @@ public final class IREmitter {
         bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
         emitFopenNullGuard(handle: handle, builtin: "readFile")
         let buffer = freshSlot(for: "file.buffer")
-        bodyIR += builder.fmtAlloca(name: buffer, type: "[65536 x i8]") + "\n"
+        bodyIR += builder.fmtAlloca(name: buffer, type: "[\(bufferSize) x i8]") + "\n"
         let base = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: base, aggregate: "[65536 x i8]", base: buffer, indices: [0, 0]) + "\n"
+        bodyIR += builder.fmtGEP(name: base, aggregate: "[\(bufferSize) x i8]", base: buffer, indices: [0, 0]) + "\n"
         let read = builder.freshTemp()
-        bodyIR += " \(read) = call i64 @fread(ptr \(base), i64 1, i64 65536, ptr \(handle))\n"
+        bodyIR += " \(read) = call i64 @fread(ptr \(base), i64 1, i64 \(bufferSize), ptr \(handle))\n"
         let terminator = builder.freshTemp()
         bodyIR += builder.fmtGEPByteOffset(name: terminator, base: base, offset: read, offsetType: "i64") + "\n"
         bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: terminator) + "\n"
@@ -1694,15 +1697,23 @@ public final class IREmitter {
         return IRValue(llvmType: "i8*", ssaName: base)
     }
 
-    /// `readLine()` (G17): a 256-byte stack buffer filled by `fgets` from the
-    /// stdin stream, yielded as a String. Mirrors the legacy emitter
-    /// instruction for instruction — including the fact that the newline is
-    /// left in place when stdin has one (the interpreter strips it; the
-    /// divergence is registered, and this grid preserves the legacy
-    /// behaviour rather than changing the flip's observable output).
+    /// `readLine()` (G17): a fixed-size stack buffer filled by `fgets` from the
+    /// stdin stream, yielded as a String.
+    ///
+    /// The cap and the retained line terminator are the interpreter's answer
+    /// too — the A-group ruling kept both, and the interpreter was moved onto
+    /// that behaviour rather than the other way round. The buffer size comes
+    /// from the shared limit so neither side can drift.
+    ///
+    /// The end-of-input guard is this emitter's own addition: `fgets` yields
+    /// NULL when the stream is exhausted, and the print path's `%s`
+    /// conversion is then handed a pointer that is not a string — undefined
+    /// behaviour instead of the language's answer. Substituting the empty
+    /// string gives both channels the answer the interpreter already has at
+    /// end of input.
     private func emitReadLine() -> IRValue {
         usesReadLine = true
-        let bufferSize = 256
+        let bufferSize = IOLimits.lineBufferSize
         let buffer = freshSlot(for: "readline.buffer")
         bodyIR += builder.fmtAlloca(name: buffer, type: "[\(bufferSize) x i8]") + "\n"
         let base = builder.freshTemp()
@@ -1711,9 +1722,14 @@ public final class IREmitter {
         bodyIR += builder.fmtLoad(name: stream, type: "ptr", ptr: "@__stdinp") + "\n"
         let line = builder.freshTemp()
         bodyIR += " \(line) = call ptr @fgets(ptr \(base), i32 \(bufferSize), ptr \(stream))\n"
+        let exhausted = builder.freshTemp()
+        bodyIR += " \(exhausted) = icmp eq ptr \(line), null\n"
+        let empty = emitStringConstant("")
+        let text = builder.freshTemp()
+        bodyIR += " \(text) = select i1 \(exhausted), ptr \(empty.ssaName), ptr \(line)\n"
         // "i8*" for the same reason emitFileRead returns it: that is the
         // spelling emitScalarPrint routes to %s.
-        return IRValue(llvmType: "i8*", ssaName: line)
+        return IRValue(llvmType: "i8*", ssaName: text)
     }
 
     /// `is_ascii_digit(s)` (G17): the first byte of the C string tested
