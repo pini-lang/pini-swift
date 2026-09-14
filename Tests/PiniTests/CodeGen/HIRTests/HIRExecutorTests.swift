@@ -183,6 +183,36 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffStructI8Fields",
         "testDiffTrait",
         "testDiffTraitDefaultMethod",
+        // Grid G3 (closures and function values). Two of the grid's three nodes
+        // appear here as the fixtures' own first gap: the probe's verdict on
+        // `testDiffClosures` / `testDiffLambda` / `testDiffLambdaTyped` moved
+        // from its engine-gap verdict naming `closureLiteral` to `OK`, and on
+        // `testDiffHigherOrder` from `functionValue` to `OK`. Nothing else moved
+        // with them.
+        //
+        // The third node, `indirectCall`, is covered by the same four fixtures —
+        // each calls a function-valued variable or parameter — but it is not
+        // what the probe's *baseline* run named, and the difference is worth
+        // stating precisely because the first draft of this note got it wrong.
+        //
+        // Before this grid, a fixture that builds a closure and calls it was
+        // reported as `closureLiteral`: the callee's node spoke first and the
+        // call node behind it was never reached. Reading that as structural —
+        // "an indirect call cannot be a first gap, because its callee must be
+        // built first" — was a mistake, and the mutation round disproved it:
+        // disabling `indirectCall` alone reddens all eight fixtures, each now
+        // reporting `indirectCall` as its first gap. Nothing changed about the
+        // programs; only the implementation progress did.
+        //
+        // So the masking is **relative to the implemented node set**, not a
+        // property of programs: a node is invisible to the probe exactly as long
+        // as every fixture that reaches it reaches an unimplemented node first.
+        // That is a fact about the work queue (and about how many gaps a fixture
+        // crosses), not a reason to distrust the probe.
+        "testDiffClosures",
+        "testDiffHigherOrder",
+        "testDiffLambda",
+        "testDiffLambdaTyped",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -815,10 +845,154 @@ final class HIRExecutorTests: XCTestCase {
         }
     }
 
+    // MARK: - Closures and function values (grid G3)
+
+    /// A closure sees the environment it was **created** in, not the one it is
+    /// called from.
+    ///
+    /// This is the grid's sharpest single assertion, and it is aimed at the one
+    /// implementation gap the grid had to close: the engine built every callee's
+    /// environment off the global one, which is right for a module-level
+    /// function and wrong for a closure. The source is written so that both
+    /// wrong answers are observably wrong rather than merely absent — `base` is
+    /// not reachable from the global environment at all (a global parent fails
+    /// loudly), and `main` binds its own `base = 1000` (a call-site parent
+    /// yields 1005). Only the creating environment yields 15.
+    func testAClosureSeesItsCreatingEnvironmentNotItsCallSite() throws {
+        let hir = try lowerOnly("""
+        造加法器|func(base: I32,) -> ((I32,) -> (I32,),):
+            return func (n,) -> (I32,):
+                capture base
+                return n + base
+
+        main|func() -> ():
+            var base = 1000
+            var add = 造加法器(10)
+            print(add(5))
+            return
+        """)
+
+        let executor = HIRExecutor()
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
+        try executor.run(module: hir)
+
+        XCTAssertEqual(lines, ["15"], "the closure must read the environment it was created in")
+    }
+
+    /// A capture is a **reference**, so a write to the captured variable after
+    /// the closure was built stays visible through it.
+    ///
+    /// Asserted against literal output rather than through the two-channel
+    /// comparison, because both channels share the value layer and the
+    /// environment model: a mutation that turned captures into snapshots would
+    /// have to move the interpreter's model with it, and a comparison is blind
+    /// to a rule the two of them hold jointly. The second number is the whole
+    /// test — a snapshot yields 15 twice.
+    func testACaptureIsAReferenceNotASnapshot() throws {
+        let hir = try lowerOnly("""
+        main|func() -> ():
+            var base = 10
+            var addBase = func (n,) -> (I32,):
+                capture base
+                return n + base
+            print(addBase(5))
+            base = 100
+            print(addBase(5))
+            return
+        """)
+
+        let executor = HIRExecutor()
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
+        try executor.run(module: hir)
+
+        XCTAssertEqual(
+            lines, ["15", "105"],
+            "the capture must follow the variable, not its value at creation time"
+        )
+    }
+
+    /// Two closures in one program keep two bodies.
+    ///
+    /// The engine's body table is keyed by value identity, and this is the test
+    /// that says why it has to be: the parser gives every anonymous `func` the
+    /// same name (`<anon>`), so a table keyed by name would hold one entry where
+    /// the program has two, and the second closure would quietly run the first's
+    /// body. The output makes that failure visible rather than subtle — the two
+    /// closures compute different things from the same argument.
+    ///
+    /// The same rule holds for the corpus fixtures, which each build several
+    /// closures; this case exists because a *pair* differing only in their bodies
+    /// is the smallest program that isolates the key.
+    func testTwoClosuresDoNotShareOneBody() throws {
+        let hir = try lowerOnly("""
+        main|func() -> ():
+            var 加一 = func (x,) -> (I32,):
+                return x + 1
+            var 乘百 = func (x,) -> (I32,):
+                return x * 100
+            print(加一(1))
+            print(乘百(1))
+            return
+        """)
+
+        let executor = HIRExecutor()
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
+        try executor.run(module: hir)
+
+        XCTAssertEqual(lines, ["2", "100"], "each closure must keep its own body")
+    }
+
+    /// An indirect call whose callee is not a function value is a diagnosable
+    /// error, not a `.null`.
+    ///
+    /// Hand-built, and unreachable from checked source — the checker rejects a
+    /// call on a non-function before lowering ever sees it. It is here because
+    /// the indirect-call arm is the one place this engine resolves a callee out
+    /// of a *value* rather than out of a name, and a value-shaped lookup is
+    /// exactly where "not found" can quietly become "nothing to do".
+    ///
+    /// Asserted on the error **case**, not on its rendering: the text a
+    /// `RuntimeError` prints as is `ErrorFormatter`'s business and has changed
+    /// before, while the case is the contract this arm owes. Matching the case
+    /// also makes the test say which failure it is — a neighbouring arm's error
+    /// would satisfy a substring check but not this one.
+    func testIndirectCallThroughANonFunctionFailsLoud() throws {
+        let module = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .exprStmt(.indirectCall(
+                    callee: .intConst(value: 1, type: .i32),
+                    arguments: [],
+                    returnType: nil)),
+            ])
+        ])
+
+        XCTAssertThrowsError(try HIRExecutor().run(module: module)) { error in
+            guard let runtime = error as? RuntimeError, case .notCallable = runtime else {
+                return XCTFail(
+                    "an indirect call on a non-function must be notCallable, got: \(error)"
+                )
+            }
+        }
+    }
+
     // MARK: - Fail-loud gaps
 
     /// One probe per gap. Each probe is a *single* node, so "the error names this
     /// node" cannot be satisfied by a neighbouring gap speaking up instead.
+    ///
+    /// `closureLiteral` left this table with grid G3, which implemented it: a
+    /// probe for a node that runs asserts the opposite of the truth. What holds
+    /// the three G3 nodes up instead is the corpus — the grid's four fixtures
+    /// reach all three — plus the hand-written cases further down, which pin the
+    /// one rule a fixture cannot settle on its own: that a capture is a
+    /// *reference* to the creating environment rather than a copy taken at
+    /// creation time. Their absence from this table is safe to read as coverage,
+    /// not as a silence, and the rule that keeps it that way is the usual one —
+    /// the list shrinks only when the node runs and something else fails loud
+    /// about it being wrong.
     private static let expressionGaps: [(node: String, expr: HIRExpr)] = [
         ("printMulti", .printMulti(arguments: [.intConst(value: 1, type: .i32)])),
         ("stringCase", .stringCase(isUpper: true, receiver: .stringConst(value: "a"))),
@@ -827,9 +1001,6 @@ final class HIRExecutorTests: XCTestCase {
         ("pointerLoad", .pointerLoad(
             pointer: .intConst(value: 0, type: .i32),
             type: .i32)),
-        ("closureLiteral", .closureLiteral(
-            id: 0, paramNames: [], paramTypes: [], returnType: nil,
-            captures: [], body: [], type: .function(params: [], returnType: nil))),
     ]
 
     /// The statement side of the contract is **complete** as of grid G5, and the
