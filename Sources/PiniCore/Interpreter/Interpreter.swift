@@ -2858,27 +2858,50 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  }
  }
 
- /// 模式匹配谓词（P5-4 HIGH-2）：枚举 case 名 / 整数字面量 / 浮点 / 字符串 / 布尔 / 通配 `_`
- func matchCaseMatches(_ pattern: MatchPattern, _ value: Value) -> Bool {
- switch pattern {
- case .enumCase(let name):
- if case .enumValue(let ev) = value { return ev.caseName == name }
- return false
- case .intLiteral(let n):
- if case .int(let v) = value { return v == n }
- return false
- case .floatLiteral(let f):
- if case .float(let v) = value { return v == f }
- return false
- case .stringLiteral(let s):
- if case .string(let v) = value { return v == s }
- return false
- case .boolLiteral(let b):
- if case .bool(let v) = value { return v == b }
- return false
- case .wildcard:
- return true
+ /// 模式命中判定的值层核心（P5-4 HIGH-2）——**单源**，不依赖实例状态，故为 static：
+ /// AST 通道的 `matchCaseMatches`、CPS 求值器与 HIR 执行引擎的 `matchStmt` 共用同一份
+ /// 「这一臂是否命中」规则，三处不可能各自演化。
+ ///
+ /// - `literal` 非 nil：按值比较（整/浮/字符串/布尔），类型不同即不中；
+ /// - `literal` 为 nil：`_` 通配恒真，其余按枚举 case 名比较（HIR 的枚举/Optional 族
+ ///   与 AST 的 `enumCase` 模式同路）。
+ static func matchArmMatches(caseName: String?, literal: HIRMatchLiteral?, value: Value) -> Bool {
+  if let literal = literal {
+   switch literal {
+   case .int(let n):
+    if case .int(let v) = value { return v == n }
+   case .float(let f):
+    if case .float(let v) = value { return v == f }
+   case .string(let s):
+    if case .string(let v) = value { return v == s }
+   case .boolean(let b):
+    if case .bool(let v) = value { return v == b }
+   }
+   return false
+  }
+  if caseName == "_" { return true }
+  guard let caseName = caseName else { return false }
+  if case .enumValue(let ev) = value { return ev.caseName == caseName }
+  return false
  }
+
+ /// 模式匹配谓词（P5-4 HIGH-2）：枚举 case 名 / 整数字面量 / 浮点 / 字符串 / 布尔 / 通配 `_`
+ /// ——AST 模式到值层核心的适配（判定本体见 `matchArmMatches`）。
+ func matchCaseMatches(_ pattern: MatchPattern, _ value: Value) -> Bool {
+  switch pattern {
+  case .enumCase(let name):
+   return Interpreter.matchArmMatches(caseName: name, literal: nil, value: value)
+  case .intLiteral(let n):
+   return Interpreter.matchArmMatches(caseName: nil, literal: .int(n), value: value)
+  case .floatLiteral(let f):
+   return Interpreter.matchArmMatches(caseName: nil, literal: .float(f), value: value)
+  case .stringLiteral(let s):
+   return Interpreter.matchArmMatches(caseName: nil, literal: .string(s), value: value)
+  case .boolLiteral(let b):
+   return Interpreter.matchArmMatches(caseName: nil, literal: .boolean(b), value: value)
+  case .wildcard:
+   return Interpreter.matchArmMatches(caseName: "_", literal: nil, value: value)
+  }
  }
 
  // ADR-032 迁移批 M2：旧 executeTry（(值,错误) 元组错误位模型）已随 try-else
@@ -2946,17 +2969,57 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return a
  }
 
- /// 批 2（G48 通道 2/3）：越界落点分派。
- /// - `.get`：返回 `Optional.none`（安全可选通道，调用方显式解包）。
- /// - `.getUnchecked`：调用方违反前置条件。真正的 UB 在解释器无法表达（Swift 越界直接
+ /// `.get(i)` / `.getUnchecked(i)` 的落地判定（批 2，G48 通道 2/3）——**单源**，
+ /// 不依赖实例状态，故为 static：HIR 执行引擎的 `optionalGet` 与此处的成员调用共用
+ /// 同一份规则（负索引尾部计数、字典键相等匹配、越界落点），引擎不能另立一份。
+ ///
+ /// 越界落点分派：
+ /// - `checked`（`.get`）：返回 `Optional.none`（安全可选通道，调用方显式解包）。
+ /// - `!checked`（`.getUnchecked`）：调用方违反前置条件。真正的 UB 在解释器无法表达（Swift 越界直接
  ///   trap，不可诊断也不可测试），故以「未定义行为陷阱」报错近似——与 LLVM 端的语义
  ///   约定一致：调用方须证明界内，违反即未定义行为（此处表现为运行时错误）。
- private func uncheckedOrNone(fv: FunctionValue, location: SourceLocation) throws -> Value {
- if fv.name == "get" { return .enumValue(EnumValue(caseName: "none", associatedValues: [])) }
- throw RuntimeError.invalidOperation(
- reason: "getUnchecked 越界：调用方违反前置条件（解释器以 UB 陷阱近似；LLVM 端为真 UB）",
- location: location
- )
+ static func builtinGet(
+  receiver: Value,
+  index: Value,
+  checked: Bool,
+  location: SourceLocation
+ ) throws -> Value {
+  let name = checked ? "get" : "getUnchecked"
+  let some: (Value) -> Value = { .enumValue(EnumValue(caseName: "some", associatedValues: [$0])) }
+  func outOfRange() throws -> Value {
+   guard checked else {
+    throw RuntimeError.invalidOperation(
+     reason: "getUnchecked 越界：调用方违反前置条件（解释器以 UB 陷阱近似；LLVM 端为真 UB）",
+     location: location
+    )
+   }
+   return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+  }
+  // 字典键是任意值（字符串/整数…），数组与字符串下标才是整数索引——先按接收者
+  // 类型分流，再各自校验参数，避免把键误当索引（批 2 遗留缺陷，批 3 取证发现）。
+  if case .dictionary(let entries) = receiver {
+   for (k, v) in entries where k == index {
+    return checked ? some(v) : v
+   }
+   return try outOfRange()
+  }
+  guard case .int(let raw) = index else {
+   throw RuntimeError.invalidOperation(reason: "\(name) 的参数必须是整数索引", location: location)
+  }
+  switch receiver {
+  case .array(let arr):
+   let idx = raw < 0 ? arr.count + raw : raw
+   guard idx >= 0, idx < arr.count else { return try outOfRange() }
+   return checked ? some(arr[idx]) : arr[idx]
+  case .string(let s):
+   let idx = raw < 0 ? s.count + raw : raw
+   guard idx >= 0, idx < s.count else { return try outOfRange() }
+   let cidx = s.index(s.startIndex, offsetBy: idx)
+   let ch: Value = .string(String(s[cidx]))
+   return checked ? some(ch) : ch
+  default:
+   throw RuntimeError.invalidOperation(reason: "\(name) 的接收者必须是数组/字符串/字典", location: location)
+  }
  }
 
  // MARK: - 函数调用
@@ -3262,37 +3325,17 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  return .tuple(labels: [nil, nil], elements: [.array(Array(arr.dropLast())), last])
  }
  // 批 2（G48 通道 2/3）：`.get(i)` 安全可选（越界 .none）；`.getUnchecked(i)` 不安全
- // （跳过检查）。三者共用负索引尾部计数（与下标通道一致）。
+ // （跳过检查）。规则本体已提为 `Interpreter.builtinGet` 的 static 单源（负索引尾部
+ // 计数、字典键匹配、越界落点三处都只在那里决定），HIR 执行引擎复用同一份。
  // 注意：解释器无法提供真正的 UB——`getUnchecked` 越界在此以「未定义行为陷阱」
  // 报错近似（可诊断、可测试）；LLVM 端若实现才为真 UB（签名语义不变）。
  if fv.name == "get" || fv.name == "getUnchecked" {
- let loc = SourceLocation(line: 0, column: 0, fileName: "")
- let receiver = try fv.closure.get(name: "self")
- // 字典键是任意值（字符串/整数…），数组与字符串下标才是整数索引——先按接收者
- // 类型分流，再各自校验参数，避免把键误当索引（批 2 遗留缺陷，批 3 取证发现）。
- if case .dictionary(let entries) = receiver {
- for (k, v) in entries where k == args[0] {
- return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [v])) : v
- }
- return try uncheckedOrNone(fv: fv, location: loc)
- }
- guard case .int(let raw) = args[0] else {
- throw RuntimeError.invalidOperation(reason: "\(fv.name) 的参数必须是整数索引", location: loc)
- }
- switch receiver {
- case .array(let arr):
- let idx = raw < 0 ? arr.count + raw : raw
- guard idx >= 0, idx < arr.count else { return try uncheckedOrNone(fv: fv, location: loc) }
- return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [arr[idx]])) : arr[idx]
- case .string(let s):
- let idx = raw < 0 ? s.count + raw : raw
- guard idx >= 0, idx < s.count else { return try uncheckedOrNone(fv: fv, location: loc) }
- let cidx = s.index(s.startIndex, offsetBy: idx)
- let ch: Value = .string(String(s[cidx]))
- return fv.name == "get" ? .enumValue(EnumValue(caseName: "some", associatedValues: [ch])) : ch
- default:
- throw RuntimeError.invalidOperation(reason: "\(fv.name) 的接收者必须是数组/字符串/字典", location: loc)
- }
+  return try Interpreter.builtinGet(
+   receiver: try fv.closure.get(name: "self"),
+   index: args[0],
+   checked: fv.name == "get",
+   location: SourceLocation(line: 0, column: 0, fileName: "")
+  )
  }
  if fv.name == "abs" {
  switch args[0] {

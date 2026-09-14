@@ -45,7 +45,12 @@ enum HIRControlSignal: Error {
 ///    `whileStmt` / `returnStmt` / `exprStmt`), G4 (collections and subscripts),
 ///    G2 (tuples and their label model), G1 (control flow — `forInStmt`,
 ///    `deferStmt`, `breakStmt`, `continueStmt`, `panicStmt`, plus the
-///    `stringConcat` the defer fixtures need to build their expected string).
+///    `stringConcat` the defer fixtures need to build their expected string),
+///    G6 (enums, Optional, Result and try — `resultConstruct`,
+///    `optionalConstruct`, `optionalGet`, `enumConstruct`, `tryStmt`,
+///    `matchStmt`, which also carried the two Optional nodes the slice and
+///    value-format fixtures reach through, so those fixtures keep corpus
+///    coverage rather than validating nothing — decision `D-P2-5`).
 ///    Everything else fails loud (`notImplemented`) naming the node. A silent
 ///    `.null` would make this engine look finished and let the differential
 ///    probes compare against a fiction.
@@ -58,6 +63,15 @@ enum HIRControlSignal: Error {
 /// does" and "what a value prints as" are decided, so the channels cannot drift.
 /// What stays here is the HIR's own knowledge: which interpreter operator an
 /// `HIRBinaryOp` corresponds to (`operatorFor`).
+///
+/// Grid G6 added two more shared semantics rather than restating them:
+/// `Interpreter.matchArmMatches` ("does this arm fire on this value" — the
+/// value-level core the AST pattern predicate, the CPS evaluator and this engine
+/// all call) and `Interpreter.builtinGet` (the Optional read rules: negative
+/// tail-count, dictionary key equality, out-of-range → `none`). What the HIR
+/// knows on its own is only the *shape*: an arm is "literal, wildcard, or case
+/// name" and a `match` scrutinee's static type, both of which the lowerer
+/// resolved already.
 ///
 /// Execution shape mirrors the interpreter's statement layer as well:
 ///
@@ -97,6 +111,15 @@ enum HIRControlSignal: Error {
 ///   is made for it, and the corpus never reaches it (`panic` occurs in the
 ///   fixtures only inside comments). Gated for "fails loud with its message",
 ///   registered as an unexercised parity surface.
+/// - **The `try` error binding is type-erased on the other channel.** `err` binds
+///   the error *payload* here — what the interpreter binds — while the LLVM
+///   emitter stores an `i64` word in the err slot and fails loud if it is printed
+///   (`E6-004`). Byte-for-byte parity therefore covers every use except printing
+///   it. That is the emitter's ABI boundary (LR-12), not a difference to align
+///   away from this side.
+/// - **`match` exhaustiveness is a checker duty.** A run-time miss on an enum
+///   value is `matchNotExhaustive` (the interpreter's rule, and the emitter's
+///   `bk_panic`); the engine does not try to prove coverage statically.
 ///
 /// This is grid P1-2 of the LR-4 interpreter unification, extended by grids G4
 /// (collections), G2 (tuples) and G1 (control flow): the HIR (ADR-034) gains an
@@ -134,8 +157,8 @@ public final class HIRExecutor: DebugHookHost {
     // MARK: - Module state
 
     /// Module-level functions by name. The HIR carries no closures at module
-    /// level: `main` and its peers are the only callables (G6 closure values are
-    /// a separate node family, not implemented yet).
+    /// level: `main` and its peers are the only callables (closure values are a
+    /// separate node family, grid G3, not implemented yet).
     private var functions: [String: HIRFunction] = [:]
     private var types: [String: HIRTypeDecl] = [:]
     private var enums: [String: HIREnumDecl] = [:]
@@ -366,13 +389,70 @@ public final class HIRExecutor: DebugHookHost {
                 try evaluate(lhs), .plus, try evaluate(rhs)
             )
 
+        // MARK: Optional / Result / enum values (grid G6)
+
+        case .resultConstruct(let isOk, let payload, _):
+            // Same value the interpreter's `ok` / `err` builtins build — the one
+            // `makeResult`, so the two channels cannot disagree on what a Result
+            // *is*. The err payload is one type-erased machine word on the LLVM
+            // side (LR-12); see the class header's G6 boundary note.
+            return Interpreter.makeResult(
+                caseName: isOk ? "ok" : "err",
+                payload: try evaluate(payload)
+            )
+
+        case .optionalConstruct(let isSome, let payload, _):
+            // The runtime form of an Optional *is* the two cases `some` / `none`
+            // (no parent enum), the same value the interpreter builds for a `nil`
+            // literal, for `Optional.none`, and for `.get` falling off the end.
+            // The open-bound spelling in slice syntax arrives here as `none` too.
+            guard isSome else {
+                return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+            }
+            guard let payload = payload else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: optionalConstruct says some but carries no payload",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return .enumValue(EnumValue(caseName: "some", associatedValues: [try evaluate(payload)]))
+
+        case .optionalGet(let container, let index, _):
+            // The rule lives in the interpreter (`builtinGet`): negative tail-count,
+            // dictionary key equality, out-of-range → `none`. This node is the
+            // *named* spelling of `.get(i)` and the lowerer emits it for Array and
+            // String only, always the checked arm — hence `checked: true`.
+            return try Interpreter.builtinGet(
+                receiver: try evaluate(container),
+                index: try evaluate(index),
+                checked: true,
+                location: HIRExecutor.noLocation
+            )
+
+        case .enumConstruct(let enumName, let caseName, let tag, let payloads, _, _):
+            // Associated-value names come from the declaration, matching what the
+            // interpreter writes on the constructor value
+            // (`fv.params.map { $0.name }`) — the same declaration order, and the
+            // same single reader (`match` named bindings; rendering never looks at
+            // them, per the project's naming decision).
+            guard let enumCase = resolveEnumCase(enumName: enumName, caseName: caseName, tag: tag)
+            else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: enum construct '\(enumName).\(caseName)' has no "
+                        + "declaration in this module (the lowerer registers it at lowering time)",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return .enumValue(EnumValue(
+                caseName: enumCase.name,
+                associatedValues: try payloads.map { try evaluate($0) },
+                paramNames: enumCase.paramNames,
+                parentEnum: enumName
+            ))
+
         // MARK: Not implemented yet — fail loud, named.
 
-        case .resultConstruct: throw notImplemented("resultConstruct")
-        case .optionalGet: throw notImplemented("optionalGet")
-        case .optionalConstruct: throw notImplemented("optionalConstruct")
         case .construct: throw notImplemented("construct")
-        case .enumConstruct: throw notImplemented("enumConstruct")
         case .fieldGet: throw notImplemented("fieldGet")
         case .closureLiteral: throw notImplemented("closureLiteral")
         case .functionValue: throw notImplemented("functionValue")
@@ -395,6 +475,20 @@ public final class HIRExecutor: DebugHookHost {
         case .lazyRefConstruct: throw notImplemented("lazyRefConstruct")
         case .lazyRefValue: throw notImplemented("lazyRefValue")
         }
+    }
+
+    /// The declaration an `enumConstruct` names, by case name with the tag as a
+    /// fallback.
+    ///
+    /// The lowerer carries both because they come from the same declaration; a
+    /// miss on both is a real inconsistency (a module assembled by hand, or a
+    /// declaration dropped between lowering and execution), so the caller fails
+    /// loud rather than inventing an empty associated-value list.
+    private func resolveEnumCase(enumName: String, caseName: String, tag: Int) -> HIREnumCase? {
+        guard let decl = enums[enumName] else { return nil }
+        if let named = decl.cases.first(where: { $0.name == caseName }) { return named }
+        guard decl.cases.indices.contains(tag) else { return nil }
+        return decl.cases[tag]
     }
 
     /// `container.slice(start, end)` — the slice-sugar semantics.
@@ -672,12 +766,114 @@ public final class HIRExecutor: DebugHookHost {
                 location: HIRExecutor.noLocation
             )
 
+        // MARK: Try / match (grid G6)
+
+        case .tryStmt(let operand, let errorVar, let handler, let okTarget, _):
+            // Mirrors the interpreter's `Expression.tryExpression` — the sole error
+            // propagation primitive since the try-else migration: the operand is
+            // statically a `Result`; `ok` yields its payload, `err` binds the
+            // payload and runs the handler. The handler statements run *here*
+            // (not as a block), so `return` / `break` / `continue` inside it leave
+            // as signals for the enclosing function or loop to catch, and their
+            // bare `pass` terminator just ends the statement — both are the
+            // interpreter's shape.
+            let result = try evaluate(operand)
+            guard case .enumValue(let ev) = result,
+                  ev.parentEnum == Interpreter.builtinResultEnumName else {
+                throw RuntimeError.typeMismatch(
+                    expected: "Result",
+                    got: Interpreter.describeValueKind(result),
+                    location: HIRExecutor.noLocation
+                )
+            }
+            let payload = ev.associatedValues.first ?? .null
+
+            if ev.caseName == "ok" {
+                // Expression position (`let x = try f() else e: return`) arrives as
+                // `allocVar(x, initializer: nil)` followed by this node with
+                // `okTarget: x`, so this write is the *initialization* of an
+                // already-declared slot. `assign` would misread it as assigning to
+                // a `let` and reject a legal program.
+                if let okTarget = okTarget {
+                    try currentEnv.initialize(name: okTarget, value: payload)
+                }
+                return
+            }
+
+            let handlerEnv = Environment(enclosing: currentEnv)
+            handlerEnv.define(name: errorVar, value: payload, isMutable: true)
+            let previousEnv = currentEnv
+            currentEnv = handlerEnv
+            defer { currentEnv = previousEnv }
+            for statement in handler { try execute(statement) }
+
+        case .matchStmt(let scrutinee, let cases, _):
+            // The carried `scrutineeType` is deliberately not consulted: the
+            // interpreter's rule is value-based (what the value *is* decides which
+            // arm fires), and the static type has already done its work in the
+            // lowerer, where it chose which arm family to build. Reading it here
+            // would create a second dispatch that could disagree with the value.
+            let scrutineeValue = try evaluate(scrutinee)
+            for arm in cases {
+                guard Interpreter.matchArmMatches(
+                    caseName: arm.caseName, literal: arm.literal, value: scrutineeValue
+                ) else { continue }
+                try executeArm(arm, scrutinee: scrutineeValue)
+                return
+            }
+            // No arm fired — the interpreter's tail rule (D3①, R3): an enum value
+            // means the match was not exhaustive *at run time*, and says so with
+            // the case name; a bare value keeps the silent fall-through, because a
+            // literal's value space is infinite and `case _:` is how the language
+            // spells "everything else". Exhaustiveness itself is a checker duty
+            // (E3-007), so a shape that reaches here with an enum was not
+            // statically coverable.
+            if case .enumValue(let ev) = scrutineeValue {
+                throw RuntimeError.matchNotExhaustive(
+                    value: ev.caseName, location: HIRExecutor.noLocation
+                )
+            }
+
         // MARK: Not implemented yet — fail loud, named.
 
-        case .tryStmt: throw notImplemented("tryStmt")
-        case .matchStmt: throw notImplemented("matchStmt")
         case .fieldStore: throw notImplemented("fieldStore")
         }
+    }
+
+    /// One `match` arm, run the way `Interpreter.executeMatch` runs one: the arm's
+    /// bindings live in a fresh environment chained to the current one, the body
+    /// is a *block* (its defers run LIFO when it ends), and the arm environment is
+    /// dropped on **every** exit path — normal end, `return`, and the loop
+    /// signals, which is why the restore is a `defer` and not a trailing
+    /// statement.
+    ///
+    /// Bindings are positional by payload index: the lowerer already resolved
+    /// `case c(名: x)` to declaration order and rejected the out-of-order forms,
+    /// so the interpreter's run-time name lookup has no counterpart here. `nil` is
+    /// the `_` placeholder — it holds a position without binding anything.
+    private func executeArm(_ arm: HIRMatchCase, scrutinee value: Value) throws {
+        let caseEnv = Environment(enclosing: currentEnv)
+        if case .enumValue(let ev) = value {
+            // The interpreter's arity gate, kept: bindings that do not line up with
+            // the associated values are a run-time error, not a silent `.null`
+            // (ADR named-associated-value decision, 2026-08-29). An arm with no
+            // bindings (a zero-payload case, a literal, a wildcard) is exempt.
+            guard arm.bindings.isEmpty || arm.bindings.count == ev.associatedValues.count else {
+                throw RuntimeError.arityMismatch(
+                    expected: ev.associatedValues.count,
+                    got: arm.bindings.count,
+                    location: HIRExecutor.noLocation
+                )
+            }
+            for (index, name) in arm.bindings.enumerated() {
+                guard let name = name else { continue }
+                caseEnv.define(name: name, value: ev.associatedValues[index], isMutable: true)
+            }
+        }
+        let previousEnv = currentEnv
+        currentEnv = caseEnv
+        defer { currentEnv = previousEnv }
+        try executeBlock(arm.body)
     }
 
     /// `target[index] = newValue`, with the container value semantics the
