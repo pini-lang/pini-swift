@@ -18,6 +18,26 @@ enum HIRControlSignal: Error {
     case continueSignal(depth: Int)
 }
 
+/// The half of a callable that a function *value* cannot carry.
+///
+/// `Value.function` holds a `FunctionValue`, and a `FunctionValue` holds an AST
+/// `Block?` — it has no room for the lowered `[HIRStmt]` a closure body is. So
+/// the body lives beside the value, in a table on the executor, and the value
+/// keeps only what it is good for here: identity, the environment it closes
+/// over, and the name a `print` shows.
+///
+/// No environment field: a closure's environment is fixed at the moment the
+/// closure is created, so it belongs with the value rather than with the body,
+/// and two closures over the same body must not share one.
+private struct HIRCallableBody {
+    /// Parameter names in declaration order — the order the arguments bind in.
+    let paramNames: [String]
+    let body: [HIRStmt]
+    /// Component labels of a declared named-tuple return; empty when the return
+    /// carries none, which is what the return-site rule reads.
+    let returnLabels: [String?]
+}
+
 /// Runs a lowered `HIRModule` directly — the third live channel of the LR-4
 /// unification, alongside the AST interpreter and HIR → LLVM.
 ///
@@ -31,6 +51,23 @@ enum HIRControlSignal: Error {
 /// (ADR-034); execution-level trust comes from that
 /// cross-check. Neither replaces the other.
 ///
+/// GRID NUMBERS — TWO SCHEMES, ONE LETTER
+///
+/// The grids named in this file are the **P2 plan's** node-family grids (G1…G9,
+/// the ones P2a and P2b work through in order). They are *not* the grid numbers
+/// of the LLVM rewrite plan, which use the same letters for different work, and
+/// the two schemes collide head-on: `G2` is "tuples" here and "Array / Optional"
+/// there, `G3` is "closures" here and "named types" there, `G6` is the enum
+/// family here and the closure family there.
+///
+/// This file carries 25 grid references. 23 of them mean the P2 scheme; 2 — the
+/// `min` / `max` and `abs` notes beside the operator mapping — mean the LLVM
+/// one, because they say what the *emitter* does with an operator this engine
+/// reaches through a shared interpreter helper. Every reference here now says
+/// which scheme it means. The LLVM-side files are deliberately left alone: that
+/// scheme has its own home in the rewrite plan, and relabelling it from here
+/// would be one file's opinion about another file's plan.
+///
 /// SCOPE — P1-2 SKELETON
 ///
 /// Two properties, deliberately kept apart:
@@ -42,22 +79,32 @@ enum HIRControlSignal: Error {
 /// 2. **Only the delivered node set is *implemented*.** Grids land here a family
 ///    at a time: P1-2 (the scalar core — the four constants, `load`, `binary`,
 ///    `unary`, `call`, `printCall`, and `allocVar` / `storeVar` / `ifStmt` /
-///    `whileStmt` / `returnStmt` / `exprStmt`), G4 (collections and subscripts),
-///    G2 (tuples and their label model), G1 (control flow — `forInStmt`,
-///    `deferStmt`, `breakStmt`, `continueStmt`, `panicStmt`, plus the
-///    `stringConcat` the defer fixtures need to build their expected string),
-///    G6 (enums, Optional, Result and try — `resultConstruct`,
+///    `whileStmt` / `returnStmt` / `exprStmt`), P2a G4 (collections and
+///    subscripts), P2a G2 (tuples and their label model), P2a G1 (control flow —
+///    `forInStmt`, `deferStmt`, `breakStmt`, `continueStmt`, `panicStmt`, plus
+///    the `stringConcat` the defer fixtures need to build their expected string),
+///    P2a G6 (enums, Optional, Result and try — `resultConstruct`,
 ///    `optionalConstruct`, `optionalGet`, `enumConstruct`, `tryStmt`,
 ///    `matchStmt`, which also carried the two Optional nodes the slice and
 ///    value-format fixtures reach through, so those fixtures keep corpus
 ///    coverage rather than validating nothing — decision `D-P2-5`),
-///    and G5 (nominal types and fields — `construct`, `fieldGet`, `fieldStore`).
-///    G5 is what makes a struct or object method call observable at all: method
-///    dispatch is itself an ordinary `call` whose receiver travels as the first
-///    argument (the lowerer mangles `接收者.方法(…)` into `call(方法__类型, …)`),
+///    P2a G5 (nominal types and fields — `construct`, `fieldGet`, `fieldStore`),
+///    and P2a G3 (closures and function values — `closureLiteral`,
+///    `functionValue`, `indirectCall`).
+///    That grid is what makes a struct or object method call observable at all:
+///    method dispatch is itself an ordinary `call` whose receiver travels as the
+///    first argument (the lowerer mangles `接收者.方法(…)` into `call(方法__类型, …)`),
 ///    so the grid also had to teach `call` to consult a type-method table after
 ///    the module-level one. That widening is a **range correction** of the same
-///    shape as the `stringConcat` grid G1 turned up.
+///    shape as the `stringConcat` grid P2a G1 turned up.
+///    P2a G3 is what makes a *function* a value: until it landed every callable
+///    this engine could reach was a declaration it looked up by name, so the call
+///    engine could reach was a declaration it looked up by name, so the call
+///    path could assume its callee's environment was the global one. A closure
+///    carries the environment it was created in, so the grid parameterised that
+///    path (`invoke`) rather than adding a second one, and gave function values
+///    somewhere to keep a lowered body — `Value.function` holds an AST `Block?`,
+///    which is not a shape a lowered body fits into.
 ///    Everything else fails loud (`notImplemented`) naming the node. A silent
 ///    `.null` would make this engine look finished and let the differential
 ///    probes compare against a fiction.
@@ -71,7 +118,7 @@ enum HIRControlSignal: Error {
 /// What stays here is the HIR's own knowledge: which interpreter operator an
 /// `HIRBinaryOp` corresponds to (`operatorFor`).
 ///
-/// Grid G6 added two more shared semantics rather than restating them:
+/// P2a grid G6 added two more shared semantics rather than restating them:
 /// `Interpreter.matchArmMatches` ("does this arm fire on this value" — the
 /// value-level core the AST pattern predicate, the CPS evaluator and this engine
 /// all call) and `Interpreter.builtinGet` (the Optional read rules: negative
@@ -111,10 +158,11 @@ enum HIRControlSignal: Error {
 /// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method
 ///   and this engine does not apply the struct copy rule at its binding and
 ///   storing sites (`allocVar` / `storeVar` / `fieldStore` / `subscriptStore`).
-///   Before grid G5 no struct was reachable here, so the rule was dormant; G5
-///   makes structs reachable, so it is now a real difference rather than a
-///   dormant one — but no fixture stores a struct value into another slot, so
-///   neither channel's observable output moves today. Filed as its own issue
+///   Before P2a grid G5 no struct was reachable here, so the rule was dormant;
+///   that grid makes structs reachable, so it is now a real difference rather
+///   than a dormant one — but no fixture stores a struct value into another
+///   slot, so neither channel's observable output moves today. Filed as its own
+///   issue
 ///   (the struct-copy hole) instead of being
 ///   implemented unverified: an implementation with no fixture to judge it is
 ///   exactly the kind of change this repository does not accept.
@@ -135,9 +183,11 @@ enum HIRControlSignal: Error {
 ///   value is `matchNotExhaustive` (the interpreter's rule, and the emitter's
 ///   `bk_panic`); the engine does not try to prove coverage statically.
 ///
-/// This is grid P1-2 of the LR-4 interpreter unification, extended by grids G4
-/// (collections), G2 (tuples) and G1 (control flow): the HIR (ADR-034) gains an
-/// execution engine that is not the LLVM emitter.
+/// This is grid P1-2 of the LR-4 interpreter unification, extended by
+/// P2a G4 (collections), P2a G2 (tuples), P2a G1 (control flow), P2a G6 (enums
+/// and the error model), P2a G5 (nominal types and fields) and P2a G3 (closures
+/// and function values): the HIR (ADR-034) gains an execution engine that is not
+/// the LLVM emitter.
 ///
 /// Its debug surface conforms to `DebugHookHost`, the same shape the AST
 /// interpreter exposes — see the `debugHook` property for why that surface is
@@ -171,8 +221,8 @@ public final class HIRExecutor: DebugHookHost {
     // MARK: - Module state
 
     /// Module-level functions by name. The HIR carries no closures at module
-    /// level: `main` and its peers are the only callables (closure values are a
-    /// separate node family, grid G3, not implemented yet).
+    /// level: `main` and its peers are the only callables. Closure values are
+    /// their own node family and live in `callableBodies` instead.
     ///
     /// Trait default bodies arrive here too: the lowerer materialises them into
     /// module-level functions rather than into a type's method list.
@@ -194,6 +244,21 @@ public final class HIRExecutor: DebugHookHost {
 
     private var types: [String: HIRTypeDecl] = [:]
     private var enums: [String: HIREnumDecl] = [:]
+
+    /// Bodies of the function *values* built while running, keyed by value
+    /// identity — see `HIRCallableBody` for why the body cannot travel inside
+    /// the value itself.
+    ///
+    /// Identity is the key, not the name: a closure literal has no name of its
+    /// own (`<anon>` is what the parser gives every one of them), so a program
+    /// with three closures would have three entries under one key and two of
+    /// them would silently call the third's body. Identity is also what this
+    /// codebase already means by "the same function value" — `Value.==` decides
+    /// two function values are equal exactly when they are the same reference.
+    ///
+    /// Per-run state, not module state: the values in it are created during
+    /// execution, so `prepare` clears it and nothing here survives a run.
+    private var callableBodies: [ObjectIdentifier: HIRCallableBody] = [:]
 
     private let globalEnv: Environment
     private var currentEnv: Environment
@@ -231,6 +296,7 @@ public final class HIRExecutor: DebugHookHost {
     /// (`HIRLowerer.lower(module:typeInference:)`), same split as the
     /// interpreter taking an already-checked AST.
     public func prepare(module: HIRModule) {
+        callableBodies.removeAll()
         for function in module.functions { functions[function.name] = function }
         for decl in module.types {
             types[decl.name] = decl
@@ -365,7 +431,7 @@ public final class HIRExecutor: DebugHookHost {
             outputSink(Interpreter.stringifyValue(try evaluate(argument)))
             return .null
 
-        // MARK: Collections (grid G4)
+        // MARK: Collections (P2a grid G4)
 
         case .arrayLiteral(let elements, _):
             // Source order, one fresh array. No `copyIfStruct` here: the
@@ -411,7 +477,7 @@ public final class HIRExecutor: DebugHookHost {
                 end: try evaluate(end)
             )
 
-        // MARK: Tuples (grid G2)
+        // MARK: Tuples (P2a grid G2)
 
         case .tupleConstruct(let labels, let elements, _):
             // Source order, labels passed through verbatim. A positional literal
@@ -445,18 +511,18 @@ public final class HIRExecutor: DebugHookHost {
             // sinks concatenation to a byte-semantics channel (contract row 41,
             // group C — same results, different allocation). It is in *this*
             // grid because the defer fixtures build their expected string by
-            // concatenating, so G1's fixtures cannot flip without it.
+            // concatenating, so the P2a G1 fixtures cannot flip without it.
             return try Interpreter.binaryValue(
                 try evaluate(lhs), .plus, try evaluate(rhs)
             )
 
-        // MARK: Optional / Result / enum values (grid G6)
+        // MARK: Optional / Result / enum values (P2a grid G6)
 
         case .resultConstruct(let isOk, let payload, _):
             // Same value the interpreter's `ok` / `err` builtins build — the one
             // `makeResult`, so the two channels cannot disagree on what a Result
             // *is*. The err payload is one type-erased machine word on the LLVM
-            // side (LR-12); see the class header's G6 boundary note.
+            // side (LR-12); see the class header's P2a G6 boundary note.
             return Interpreter.makeResult(
                 caseName: isOk ? "ok" : "err",
                 payload: try evaluate(payload)
@@ -511,7 +577,7 @@ public final class HIRExecutor: DebugHookHost {
                 parentEnum: enumName
             ))
 
-        // MARK: Nominal instances and their fields (grid G5)
+        // MARK: Nominal instances and their fields (P2a grid G5)
 
         case .construct(let type):
             return try constructValue(type)
@@ -522,11 +588,79 @@ public final class HIRExecutor: DebugHookHost {
             // way `Interpreter.evaluateMember` decides it.
             return try fieldRead(from: try evaluate(base), field: field)
 
+        // MARK: Closures and function values (P2a grid G3)
+
+        case .closureLiteral(_, let paramNames, _, _, _, let body, _):
+            // The node's own closure id and capture list are deliberately unused
+            // here, and neither is an oversight. The id is the compiled side's
+            // registry key. The capture list describes the env struct a compiled
+            // closure carries — but an environment on this side *is* a reference,
+            // so hanging the value off the environment current at this point
+            // captures every name in scope, by reference, with nothing copied:
+            // exactly what `Interpreter`'s own func-literal arm does, and what
+            // makes a write to a captured variable after creation stay visible
+            // through the closure. Building a capture list into a fresh
+            // environment instead would be a second, snapshot-shaped model of
+            // the same thing.
+            return makeFunctionValue(
+                name: "<anon>",
+                paramNames: paramNames,
+                body: body,
+                returnLabels: [],
+                closure: currentEnv
+            )
+
+        case .functionValue(let name, _):
+            // The lowerer builds this node only for a name it resolved in the
+            // module's signature table, so a miss here means the module and the
+            // engine disagree — not a program error to be tolerated quietly.
+            guard let target = functions[name] else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: function value '\(name)' names no module-level "
+                        + "function in this module",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            // A named function closes over nothing: the interpreter registers
+            // its value against the global environment, and this mirrors that
+            // rather than inventing a creation-point environment there is none
+            // of.
+            return makeFunctionValue(
+                name: name,
+                paramNames: target.params.map { $0.name },
+                body: target.body,
+                returnLabels: HIRExecutor.declaredReturnLabels(target.returnType),
+                closure: globalEnv
+            )
+
+        case .indirectCall(let callee, let arguments, _):
+            // Callee before arguments, which is the interpreter's order at its
+            // own indirect-call arm; argument evaluation is observable, so the
+            // order is part of the semantics rather than an implementation
+            // detail.
+            let calleeValue = try evaluate(callee)
+            guard case .function(let function) = calleeValue else {
+                throw RuntimeError.notCallable(location: HIRExecutor.noLocation)
+            }
+            guard let callable = callableBodies[ObjectIdentifier(function)] else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: a function value with no registered body "
+                        + "(hand-built, or carried in from another run) cannot be called",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            // The parent environment is the value's own, not the global one —
+            // this is the single rule that separates a closure call from a
+            // module-level one, and the reason the call path had to be
+            // parameterised rather than copied.
+            return try invoke(
+                callable,
+                parent: function.closure,
+                args: try arguments.map { try evaluate($0) }
+            )
+
         // MARK: Not implemented yet — fail loud, named.
 
-        case .closureLiteral: throw notImplemented("closureLiteral")
-        case .functionValue: throw notImplemented("functionValue")
-        case .indirectCall: throw notImplemented("indirectCall")
         case .pointerLoad: throw notImplemented("pointerLoad")
         case .pointerStore: throw notImplemented("pointerStore")
         case .addressOfVar: throw notImplemented("addressOfVar")
@@ -561,7 +695,7 @@ public final class HIRExecutor: DebugHookHost {
         return decl.cases[tag]
     }
 
-    // MARK: - Nominal instances (grid G5)
+    // MARK: - Nominal instances (P2a grid G5)
 
     /// The implicit constructor `名()`: one fresh instance whose fields hold
     /// their declared defaults, and `.null` where a field declares none.
@@ -788,8 +922,8 @@ public final class HIRExecutor: DebugHookHost {
         case .bitwiseXor: return .bitwiseXor
         case .leftShift: return .leftShift
         case .rightShift: return .rightShift
-        // G9 min/max lower to LLVM selects; the interpreter reaches them as
-        // builtin function calls, so there is no operator to map onto.
+        // LLVM grid G9: min/max lower to LLVM selects; the interpreter reaches
+        // them as builtin function calls, so there is no operator to map onto.
         case .minOf, .maxOf: return nil
         }
     }
@@ -799,7 +933,8 @@ public final class HIRExecutor: DebugHookHost {
         switch op {
         case .negate: return .minus
         case .logicalNot: return .not
-        // G9 `abs` is a builtin call on the AST channel, not a unary operator.
+        // LLVM grid G9: `abs` is a builtin call on the AST channel, not a unary
+        // operator.
         case .abs: return nil
         }
     }
@@ -874,7 +1009,7 @@ public final class HIRExecutor: DebugHookHost {
             // interpreter's `varDecl` does the same, so an uninitialized read is
             // a value, not an "undefined variable" error, on both channels.
             var value = try initializer.map { try evaluate($0) } ?? .null
-            // G2: binding-site relabel — the second of the interpreter's two
+            // P2a G2: binding-site relabel — the second of the interpreter's two
             // label rules (`applyTypeAnnotationLabels`, which its `varDecl`
             // calls). A value bound to a slot type that names components
             // adopts those names; the declaration is the only thing that can
@@ -941,7 +1076,7 @@ public final class HIRExecutor: DebugHookHost {
             let targetIndex = try evaluate(index)
             try storeSubscript(target: container, index: targetIndex, newValue: newValue)
 
-        // MARK: Control flow (grid G1)
+        // MARK: Control flow (P2a grid G1)
 
         case .forInStmt(let pattern, _, let kind, let iterable, let body, let step):
             // `elementTypes` is lowering-time information only. The contract's
@@ -980,7 +1115,7 @@ public final class HIRExecutor: DebugHookHost {
                 location: HIRExecutor.noLocation
             )
 
-        // MARK: Try / match (grid G6)
+        // MARK: Try / match (P2a grid G6)
 
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, _):
             // Mirrors the interpreter's `Expression.tryExpression` — the sole error
@@ -1048,7 +1183,7 @@ public final class HIRExecutor: DebugHookHost {
                 )
             }
 
-        // MARK: Nominal field store (grid G5)
+        // MARK: Nominal field store (P2a grid G5)
 
         case .fieldStore(let base, let field, let value, _):
             // Right-hand side first, receiver second — the order the interpreter's
@@ -1324,11 +1459,33 @@ public final class HIRExecutor: DebugHookHost {
 
     // MARK: - Calls
 
-    /// Call a module-level function.
+    /// Build the value half of a callable and register its body half beside it.
     ///
-    /// Argument binding mirrors `Interpreter.executeFunctionBody`: a fresh
-    /// environment hanging off `globalEnv`, parameters bound mutable, `return`
-    /// caught here and unwrapped to the returned value (`nil` → `.null`).
+    /// The one place a function value is created, so the two halves cannot be
+    /// built apart: every `.function` that reaches the engine's own lookup was
+    /// registered here, and the lookup failing therefore means the value came
+    /// from somewhere else (a hand-built module) rather than from a missing
+    /// `make` call somewhere.
+    private func makeFunctionValue(
+        name: String,
+        paramNames: [String],
+        body: [HIRStmt],
+        returnLabels: [String?],
+        closure: Environment
+    ) -> Value {
+        let function = FunctionValue(
+            name: name,
+            params: paramNames.map { Parameter(name: $0) },
+            closure: closure
+        )
+        callableBodies[ObjectIdentifier(function)] = HIRCallableBody(
+            paramNames: paramNames,
+            body: body,
+            returnLabels: returnLabels
+        )
+        return .function(function)
+    }
+
     /// The component names a declared return type carries, when it is a named
     /// tuple (`-> (商: I32, 余: I32,)`). A scalar, a positional tuple and a
     /// void return all yield nothing, and `applyReturnLabels` then leaves the
@@ -1338,10 +1495,49 @@ public final class HIRExecutor: DebugHookHost {
         return labels
     }
 
+    /// Call a module-level function by its declaration.
+    ///
+    /// A module-level function is an ordinary case of the call path: its parent
+    /// environment is the global one and its labels come from its declared
+    /// return type. Together with the function-value case in `evaluate` this is
+    /// the whole of "how a call happens" — see `invoke` for why that matters.
     private func call(_ function: HIRFunction, args: [Value]) throws -> Value {
-        guard function.params.count == args.count else {
+        try invoke(
+            HIRCallableBody(
+                paramNames: function.params.map { $0.name },
+                body: function.body,
+                returnLabels: HIRExecutor.declaredReturnLabels(function.returnType)
+            ),
+            parent: globalEnv,
+            args: args
+        )
+    }
+
+    /// Run a lowered body against an argument list — the single call path,
+    /// shared by module-level functions and by function values.
+    ///
+    /// This was `call` until P2a grid G3, and it could be `call` because every
+    /// callable was a module-level function and its parent environment could be
+    /// written down as the global one. A closure's parent is the environment it
+    /// closed over instead, so the parent became a parameter. Extracting the
+    /// path rather than writing a second one is the point: the arity check, the
+    /// depth guard, the defer scope, the return-label rule and the trailing
+    /// expression rule are each a rule that two call paths would otherwise be
+    /// free to disagree about, and the disagreement would show up as one channel
+    /// computing something the other cannot.
+    ///
+    /// Argument binding mirrors `Interpreter.executeFunctionBody`: parameters
+    /// bound mutable, `return` caught here and unwrapped to the returned value
+    /// (`nil` → `.null`). The one deliberate difference from the module-level
+    /// case is *where the parent comes from*, and that is the caller's argument.
+    private func invoke(
+        _ callable: HIRCallableBody,
+        parent: Environment,
+        args: [Value]
+    ) throws -> Value {
+        guard callable.paramNames.count == args.count else {
             throw RuntimeError.arityMismatch(
-                expected: function.params.count,
+                expected: callable.paramNames.count,
                 got: args.count,
                 location: HIRExecutor.noLocation
             )
@@ -1357,9 +1553,9 @@ public final class HIRExecutor: DebugHookHost {
         callDepth += 1
         defer { callDepth -= 1 }
 
-        let callEnv = Environment(enclosing: globalEnv)
-        for (index, param) in function.params.enumerated() {
-            callEnv.define(name: param.name, value: args[index], isMutable: true)
+        let callEnv = Environment(enclosing: parent)
+        for (index, name) in callable.paramNames.enumerated() {
+            callEnv.define(name: name, value: args[index], isMutable: true)
         }
 
         let previousEnv = currentEnv
@@ -1376,19 +1572,21 @@ public final class HIRExecutor: DebugHookHost {
         defer { try? popDeferScope() }
 
         do {
-            return try executeStatements(function.body)
+            return try executeStatements(callable.body)
         } catch let signal as HIRControlSignal {
             if case .returnSignal(let value) = signal {
-                // G2: the interpreter's return-site rule, fed from the declared
+                // P2a G2: the interpreter's return-site rule, fed from the declared
                 // return type instead of the AST's `returnLabels` (the engine
                 // has no AST). Only the explicit `return` path is relabelled:
                 // an implicit trailing expression is left alone because the
                 // interpreter leaves it alone too, and relabelling it here
                 // would invent a difference rather than remove one.
-                return Interpreter.applyReturnLabels(
-                    HIRExecutor.declaredReturnLabels(function.returnType),
-                    to: value ?? .null
-                )
+                //
+                // A closure passes no labels, and that is a mirror rather than a
+                // shortcut: the interpreter builds a closure's `FunctionValue`
+                // with no declaration attached, so its return-label list is empty
+                // and the rule has nothing to apply there either.
+                return Interpreter.applyReturnLabels(callable.returnLabels, to: value ?? .null)
             }
             throw signal
         }
