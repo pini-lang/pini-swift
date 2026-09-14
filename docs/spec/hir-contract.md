@@ -168,7 +168,7 @@
 | 36 | `stringCase(isUpper:receiver:)` | 大小写转换，**接收者不变**，返回新串 | ⚠️ **B 组缺陷**：契约 = **Unicode 感知**（`ADR-019 D1`）；LLVM 侧现为**逐字节 ASCII-only**，偏离（实测 `"café".upper()` → `CAFé`） |
 | 37 | `stringContains(receiver:needle:)` | 子串包含判定 | ⚠️ **B 组缺陷**：契约 = **字素**语义；LLVM 侧现为**字节查找**，偏离（分解式 Unicode 下分歧） |
 | 38 | `stringSubstring(receiver:start:length:)` | 取子串 | ⚠️ **B 组缺陷**：注册表与测试已裁 **`(start, end)`**；LLVM 侧现为 `(start, length)`，**偏离** |
-| 39 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。解释器现保留空段（3 段），**须改** |
+| 39 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。**已对齐（2026-09-15，`stringSplit` 格）**：偏离方是解释器，已由 `StdlibPini.split` 的两处 `len(cur) > 0` 守卫对齐；三通道在 `"a,,b"` / `",a"` / `"a,"` / `",,"` / `""` 上**逐字节一致**。⚠️ **本条只裁「空 token」**：**分隔符语义本身（子串 vs 字符集）与空分隔符语义均未裁**，LLVM 侧现按 `@strtok` 的**字符集**解释、且空分隔符无守卫 ⇒ **两处实测偏离不在本条裁决范围内，已另立工单**（`docs/issue-hir-stringsplit-delimiter-semantics-2026-09-15.md`，登记不修） |
 | 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ✅ **P1-4 补探针，已实测（2026-09-12）**：`interp-ast` 与 `llvm-hir` 在**五类接收者形态**（普通 / 字面量 / 空分隔符 / 单元素 / **空数组**）与**非 ASCII 分隔符 + 非 ASCII 元素**上**逐字节一致** ⇒ **本节点测量不到字符语义偏离**。原「B 组」标注系**按邻近归类**（未经实测）给出，**测量未予支持**；**正式移出 B 组属规范内容变更，本处不擅自改判**（见 `docs/issue-hir-string-slice-byte-based-2026-09-11.md` 名下本项，待裁决）。`interp-hir` 侧**已实现**（2026-09-14，G7 交付）——原文「未实现（`arrayLiteral` 更早拦截）⇒ P2 格」系 P1-4（2026-09-12）时点的**掩蔽**描述（本节点及其前的 `arrayLiteral` 当时均为打靶点），随该格落地失效；2026-09-14 复测本节点探针夹具三臂输出**逐字节一致**。探针载体：`Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffArrayJoin.pini` |
 | 41 | `stringConcat(lhs:rhs:)` | 字符串拼接（**字节语义**） | ✅ C 组：两侧结果一致，仅分配方式不同 |
 | 42 | `interpString(parts:)` | 字符串插值：各部分转 C 串后拼接 | ✅ C 组：纯组装。F64 渲染走**最短往返**（`§2.8` / LR-8） |
@@ -255,7 +255,8 @@
 
 | 项 | 类别 | 载体 |
 |---|---|---|
-| A 组 4 项统一裁决（§2.32/33/34/39） | **已裁**；偏离方 = **解释器**。**§2.32/33/34 已对齐**（2026-09-14，IO 语义格，E-165），**§2.39 仍待对齐** | §2.8 注记：IO 三项 = **IO 语义格**（已落地）；§2.39 的 `split` 空 token → **`stringSplit` 格**（待排期） |
+| A 组 4 项统一裁决（§2.32/33/34/39） | **已裁**；偏离方 = **解释器**。**§2.32/33/34 已对齐**（2026-09-14，IO 语义格，E-165）；**§2.39 已对齐**（2026-09-15，`stringSplit` 格，E-167）⇒ **A 组四项全部对齐** | §2.8 注记：IO 三项 = **IO 语义格**（已落地）；§2.39 的 `split` 空 token = **`stringSplit` 格**（**已落地**，窄读：只对齐空 token） |
+| `stringSplit` 分隔符语义（§2.39 的**未裁部分**） | **缺口**：LLVM 侧 `@strtok` ⇒ 分隔符按**字符集**解释 + 空分隔符无守卫；契约**未裁**「子串 vs 字符集」 ⇒ 须走 spec §1.3 | `docs/issue-hir-stringsplit-delimiter-semantics-2026-09-15.md`（登记不修） |
 | B 组 6 项字符语义偏离（§2.22/23/36/37/38/40） | **实现缺陷**，修实现对齐 `ADR-019 D1`；**其中 §2.40 经 P1-4 实测未复现偏离（2026-09-12）⇒ 待裁决后应减为 5 项** | `docs/issue-hir-string-slice-byte-based-2026-09-11.md` |
 | A1/A2 上限（§2.8 注记） | **有害默认**，须 §1.3 反向修订；**对齐已落地，但上限本身的合理性仍未裁** | `docs/issue-io-limit-from-emitter-2026-09-12.md`（含超长行流位置补记） |
 | `addressOfVar` 解释器快照（§2.31） | **A/D1 裁决**：解释器须改为真引用 | 本契约 + 计划 IO/指针格 |

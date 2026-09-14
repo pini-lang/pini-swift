@@ -88,3 +88,61 @@ OK 34 / HIR_ENGINE_TODO 36 / GAP_HIR_ENGINE 4 / FLIP BLOCKERS 4
 ## 不做范围
 
 本单不修。M6b 翻转批刚收口，诊断通道对齐未列入当前批；启动需点名。
+## 判据结构性失明的**第二形态**：三通道被切成「每条器械只覆盖一对」的并集（2026-09-15 实测）
+
+> 本节由 `stringSplit` 格（LR-4，P2b 之后的实现对齐格）的 **⑤ 变异反证**实测产出。
+> 与上文「对探针判据的后果」同族，但**受害对象不同**：上文是**计数器虚高**（假阻塞），
+> 本节是**真分歧被判绿**（假绿）。
+
+### 现象一：探针的 `OK` 槽位不收参照臂，且文档与实现不符
+
+`tools/hir-parity-probe.py` 规则 5 写成：
+
+```
+if l_out == h_out and bool(l_err.strip()) == bool(h_err.strip()):
+```
+
+—— 即 `OK` 只要求 **`l_out == h_out`（`llvm-hir` vs `interp-hir`）**，
+**`a_out`（`interp-ast`，冻结参照臂）不参与**（`a_out` 只在规则 8 之后的
+`CHANGE_F64` / `CHANGE_OTHER` / `GAP_BEHAVIOR` 兜底里出现）。
+而探针自身的 verdict 说明把 `OK` 写作 **「all three agree」** ⇒ **文档与实现不符**（本项须改一处）。
+
+### 现象二：两条「两面器械」的通道对恰好互补，但各自单独都不完备
+
+变异反证的两级在**两个面**上都实测了一遍（`stringSplit` 格单格，语料
+`Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStringSplit.pini`）：
+
+| 器械（覆盖面） | 比较的通道对 | **变异 A**：把解释器侧实现回退到本格之前 | **变异 B**：单独禁用 HIR 引擎的 `stringSplit` 节点 |
+|---|---|---|---|
+| 探针 `hir-parity-probe.py`（6 根 / 319 夹具） | `llvm-hir` ⇄ `interp-hir`（**缺 `interp-ast`**） | ❌ **`OK`**（长度 78/78/**88**，verdict **不变**）⇒ 真分歧判绿 | ✅ `GAP_EXEC`（**1** 夹具，**0 溢出** / 85） |
+| XCTest `HIRDifferentialTests`（89 例） | `interp-ast` ⇄ **LLVM 管线**（**缺 `interp-hir`**） | ✅ red（`testDiffStringSplit`，`EXIT=1`） | ❌ **89 tests / 0 failures** |
+| XCTest `HIRExecutorTests.testCorpusFixturesAgreeWithTheInterpreter` | `interp-hir` ⇄ `interp-ast`（**缺 `llvm-hir`**） | ✅ red | ✅ red |
+| XCTest **全量**（1269 例） | 三者并集 | ✅ **2 failures** | ✅ **1 failure** |
+
+（两个变异的红集合均**零溢出**：变异 A = 1269 里恰 2 红，变异 B = 恰 1 红。）
+
+### 结论（本节的实质，三条）
+
+1. **三通道没有被任何一个器械整体覆盖**，而是被切成三条「一次只覆盖一对」的边 ——
+   `llvm⇄hir`（探针）· `ast⇄llvm`（差分套件）· `hir⇄ast`（语料用例）。
+   三条边恰好凑齐三个通道对的**全图** ⇒ **并集完备，单条不完备**。
+   ⇒ **「探针绿」与「测试绿」不可互相替代，两处都看才算判据。**
+2. **`HIRDifferentialTests` 这一条边对 HIR 引擎缺口完全失明** ——
+   它比的是 AST 解释器 vs LLVM **管线**，**根本不经过 HIR 解释器**；
+   覆盖 HIR 引擎的是**另一个**用例（语料遍历型的 `testCorpusFixturesAgreeWithTheInterpreter`）。
+   ⇒ **不可把「某个套件绿」当成「该面已覆盖」**：套件名（`HIRDifferentialTests`）会给人
+   「HIR 已被差分覆盖」的错觉。
+3. ⚠️ **过程留档（本节的第一个结论是订正后的）**：我起初只跑了差分套件、见到 0 failures，
+   便写成「XCTest 面对 HIR 节点缺口失明」，**随后跑全量测试当场推翻**（全量在变异 B 下 1 failure）。
+   ⇒ **「跑过某个子集」不能升级为「知道该面的覆盖面」**；覆盖面要**按通道对逐条追问**，
+   不能按套件名猜。
+
+### 供 P3 判据升级格取材的修正方向（本单不实施）
+
+1. **探针规则 5 与文档注释必须改一处**：纳入 `a_out`（与「all three agree」一致），
+   或订正注释（承认这是「两实臂一致」而非「三臂一致」）。
+2. 若纳入 `a_out`，须同时裁 **「参照臂本身偏离」** 的处置 —— 本次变异 A 实测中
+   `a_out` **正是偏离的一方**（AST 臂保留了空段、HIR 臂与 LLVM 臂一致），
+   ⇒ **参照臂不是天然正确**，硬比会把「参照臂对、另两臂错」与「参照臂错、另两臂对」
+   压成同一个红，故需要一个**独立槽位**而不是塞进 `OK`。
+3. 三条边的**并集**应固化为**单一可复跑的判据**（避免依赖「记得两处都跑」这一人工纪律）。
