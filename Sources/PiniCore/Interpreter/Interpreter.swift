@@ -2659,75 +2659,75 @@ private func debugPause(at loc: SourceLocation) throws {
  /// 模式元组 ↔ 集合元素一一对应：数组/集合=1 字段（元素为元组则逐字段）、字典=2 字段 (k,v)；`_` 占位忽略。
  /// break/continue 语义与 while 一致（step 在 body 正常结束/continue 后执行，break 跳过）。
  private func executeFor(pattern: [String], iterable: Expression, body: Block, step: Block?, label: String?, location: SourceLocation) throws {
- let iterValue = try evaluateExpression(iterable)
- var rows: [[Value]] = []
- switch iterValue {
- case .array(let els):
- rows = try els.map { try decomposePatternRow($0, patternCount: pattern.count, location: location) }
- case .set(let els):
- rows = try els.map { try decomposePatternRow($0, patternCount: pattern.count, location: location) }
- case .dictionary(let pairs):
- guard pattern.count == 2 else {
- throw RuntimeError.typeMismatch(expected: "字典迭代需 2 字段模式元组 (k, v)", got: "\(pattern.count) 字段", location: location)
- }
- rows = pairs.map { [$0.0, $0.1] }
- default:
- throw RuntimeError.typeMismatch(expected: "可迭代集合（数组/字典/集合）", got: "\(iterValue)", location: location)
- }
+        let iterValue = try evaluateExpression(iterable)
+        var rows: [[Value]] = []
+        switch iterValue {
+        case .array(let els):
+        rows = try els.map { try Interpreter.decomposePatternRow($0, patternCount: pattern.count, location: location) }
+        case .set(let els):
+        rows = try els.map { try Interpreter.decomposePatternRow($0, patternCount: pattern.count, location: location) }
+        case .dictionary(let pairs):
+        guard pattern.count == 2 else {
+        throw RuntimeError.typeMismatch(expected: "字典迭代需 2 字段模式元组 (k, v)", got: "\(pattern.count) 字段", location: location)
+        }
+        rows = pairs.map { [$0.0, $0.1] }
+        default:
+        throw RuntimeError.typeMismatch(expected: "可迭代集合（数组/字典/集合）", got: "\(iterValue)", location: location)
+        }
 
- for row in rows {
- let loopEnv = Environment(enclosing: currentEnv)
- for (idx, name) in pattern.enumerated() where name != "_" {
- loopEnv.define(name: name, value: row[idx], isMutable: true)
- }
- let previousEnv = currentEnv
- currentEnv = loopEnv
- var shouldRunStep = true
- do {
- try executeBlock(body)
- } catch let signal as ControlSignal {
- switch signal {
- case .breakSignal(let bLabel):
- currentEnv = previousEnv
- if bLabel == nil || bLabel == label { return }
- throw signal
- case .continueSignal(let cLabel):
- if cLabel == nil || cLabel == label { shouldRunStep = true } else { currentEnv = previousEnv; throw signal }
- default:
- currentEnv = previousEnv
- throw signal
- }
- }
- if shouldRunStep, let step = step {
- do {
- try executeBlock(step)
- } catch let signal as ControlSignal {
- switch signal {
- case .breakSignal(let bLabel):
- currentEnv = previousEnv
- if bLabel == nil || bLabel == label { return }
- throw signal
- case .continueSignal(let cLabel):
- currentEnv = previousEnv
- if cLabel == nil || cLabel == label { continue }
- throw signal
- default:
- currentEnv = previousEnv
- throw signal
- }
- }
- }
- currentEnv = previousEnv
- }
- }
+        for row in rows {
+        let loopEnv = Environment(enclosing: currentEnv)
+        for (idx, name) in pattern.enumerated() where name != "_" {
+        loopEnv.define(name: name, value: row[idx], isMutable: true)
+        }
+        let previousEnv = currentEnv
+        currentEnv = loopEnv
+        var shouldRunStep = true
+        do {
+        try executeBlock(body)
+        } catch let signal as ControlSignal {
+        switch signal {
+        case .breakSignal(let bLabel):
+        currentEnv = previousEnv
+        if bLabel == nil || bLabel == label { return }
+        throw signal
+        case .continueSignal(let cLabel):
+        if cLabel == nil || cLabel == label { shouldRunStep = true } else { currentEnv = previousEnv; throw signal }
+        default:
+        currentEnv = previousEnv
+        throw signal
+        }
+        }
+        if shouldRunStep, let step = step {
+        do {
+        try executeBlock(step)
+        } catch let signal as ControlSignal {
+        switch signal {
+        case .breakSignal(let bLabel):
+        currentEnv = previousEnv
+        if bLabel == nil || bLabel == label { return }
+        throw signal
+        case .continueSignal(let cLabel):
+        currentEnv = previousEnv
+        if cLabel == nil || cLabel == label { continue }
+        throw signal
+        default:
+        currentEnv = previousEnv
+        throw signal
+        }
+        }
+        }
+        currentEnv = previousEnv
+        }
+        }
 
- /// ADR-013：执行带标签无条件子块 `scope 块标签:`。
- /// 块体默认执行一次；内部抛出的 `breakSignal(label)`（标签匹配）终止 scope（正常返回）；
- /// `continueSignal(label)`（标签匹配）续行到 scope —— 重跑块体（语义同「续行到对应 scope 块」）；
- /// 非本 scope 标签的信号继续向上传播，交由外层循环 / scope 处理。
- /// 非 ControlSignal 的抛出（RuntimeError / 挂起 SuspendSignal 等）不在此捕获，直接向上传播。
-/// 批 6 D-4：裸名兜底——按当前文件查注入表；多模块同名 → 运行时歧义错（防御，
-/// 语义层哨兵已排除）；命中唯一 → 复用 resolveQualified（public 门槛照走，D8）。
+        /// ADR-013：执行带标签无条件子块 `scope 块标签:`。
+        /// 块体默认执行一次；内部抛出的 `breakSignal(label)`（标签匹配）终止 scope（正常返回）；
+        /// `continueSignal(label)`（标签匹配）续行到 scope —— 重跑块体（语义同「续行到对应 scope 块」）；
+        /// 非本 scope 标签的信号继续向上传播，交由外层循环 / scope 处理。
+        /// 非 ControlSignal 的抛出（RuntimeError / 挂起 SuspendSignal 等）不在此捕获，直接向上传播。
+        /// 批 6 D-4：裸名兜底——按当前文件查注入表；多模块同名 → 运行时歧义错（防御，
+        /// 语义层哨兵已排除）；命中唯一 → 复用 resolveQualified（public 门槛照走，D8）。
  private func resolveInjectedBare(_ name: String, location: SourceLocation) throws -> Value? {
  guard let inj = fileInjections[location.fileName], !inj.isEmpty else { return nil }
  let hits = inj.filter { $0.symbols.contains(name) }
@@ -2778,8 +2778,11 @@ private func debugPause(at loc: SourceLocation) throws {
  }
  }
 
- /// 模式元组 ↔ 集合元素一一对应：元素为元组 → 逐字段；否则单字段（标量/容器值）。字段数须与模式元组一致。
- func decomposePatternRow(_ element: Value, patternCount: Int, location: SourceLocation) throws -> [Value] {
+/// 模式元组 ↔ 集合元素一一对应：元素为元组 → 逐字段；否则单字段（标量/容器值）。字段数须与模式元组一致。
+///
+/// `static`（G1 提级）：HIR 执行器要用**同一条**字段数校验，提级后可直接复用，
+/// 不必在两侧各写一份 —— 两份判据会被「谁改了谁没改」拉开。
+static func decomposePatternRow(_ element: Value, patternCount: Int, location: SourceLocation) throws -> [Value] {
  let fields: [Value]
  switch element {
  case .tuple(_, let t): fields = t

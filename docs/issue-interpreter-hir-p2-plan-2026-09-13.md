@@ -1,8 +1,9 @@
 # Issue：解释器统一 HIR —— P2（分格实现）执行规划
 
-- 状态：**P2a 进行中 —— 第 1 格（G4 集合与下标的，7 节点）已交付并合入 main**；
-  **下一格 = P2a 第二格（G2 元组），待点名**。规划轮（2026-09-13 早些时候）**只读勘测 + 落盘规划，
-  未改任何源码**；G4 的交付实录见 §8.1，其范围订正见 `D-P2-5`。
+- 状态：**P2a 进行中 —— 已交付 3 格**（G4 集合与下标的 7 节点 · G2 元组族 · G1 控制流 6 节点）；
+  **下一格 = P2a 第四格（G6 枚举 · Optional · Result · try，6 缺口），待点名**。
+  规划轮（2026-09-13 早些时候）**只读勘测 + 落盘规划，未改任何源码**；
+  G4 实录见 §8.1（范围订正 `D-P2-5`）· G2 见 §8.2（范围 `D-P2-6`）· G1 见 §8.3。
 - 隶属：`docs/issue-interpreter-hir-plan-2026-09-12.md` 的 **P2**（常驻主计划载体；
   本件是 P2 一格的细目载体，参照 P0 审计件与 P1-5 勘测件的先例另立）。
 - 前置：**P1 ✅ 六步全部完成**（2026-09-13 收口）—— 三实通道探针、契约核验脚本、HIR 引擎骨架、
@@ -166,7 +167,11 @@ G7 字符串与内建(10) · G8 指针与 LazyRef(5) · G9 IO(3)
   实录见 §8.1）**。第一格开工前按五步模板第 1 步实测了该格夹具面，结论与偏差均记在 §8.1。
 - ~~**下一步 = P2a 第二格（G2 元组：`tupleConstruct` `tupleIndexGet`），待点名**~~ ⇒
   **已点名并交付（2026-09-13）**，范围经 `D-P2-6` 扩为**含标签模型的整个元组族**，实录见 §8.2。
-- **下一步 = P2a 第三格（G1 控制流，5 缺口），待点名**。P2a 六格已交付两格（G4 / G2），余 G1 / G3 / G5 / G6。
+- ~~**下一步 = P2a 第三格（G1 控制流，5 缺口），待点名**~~ ⇒ **已点名并交付（2026-09-13）**，
+  实录见 §8.3。**实测该格缺口为 6 个而非规划的 5 个** —— 规划表的 G1 行漏了 `stringConcat`
+  （它被列在 G7 行），而**契约把字符串连接归控制流侧语句族**；格内按契约口径实现，见 §8.3「范围订正」。
+- **下一步 = P2a 第四格（G6 枚举 · Optional · Result · try，6 缺口），待点名**。
+  P2a 六格已交付三格（G4 / G2 / G1），余 G6 / G5 / G3。
 - 完整交付日志与后续各格实录**回填至主计划载体 §13** 与本件 §8。
 
 ## 8. 分格交付实录
@@ -297,6 +302,99 @@ M7 表明「共享源被删」**不会**造成两臂静默一致，而是**两�
 未修两张新工单任何一项；未 push。
 ⇒ **下一格 = P2a 第三格（G1 控制流），待点名**。
 
+### 8.3 G1 控制流（P2a 第 3 格，2026-09-13，分支 `agent/pini-dev/hir-p2a-g1-control-flow`）
+
+**范围（`D-P2-7`；**格内范围判定，非用户裁决**）**：本格交付 **6 节点** ——
+`forInStmt` `breakStmt` `continueStmt` `deferStmt` `panicStmt` `stringConcat`
+（E1 证据：`HIRExecutor.swift` 的 `git diff` 恰好移除这 6 条 `notImplemented`）。
+
+⚠️ **这与规划表 §1.1 的排列不一致，订正须记录**：
+§1.1 的 **G1 行记「5 缺口」**（`forInStmt` `deferStmt` `breakStmt` `continueStmt` `panicStmt`），
+而把 `stringConcat` 列在 **G7 行**（10 节点）。契约的确切归属是 **§2.9「字符串与内建」第 41 条**
+（注记为「C 组：两侧结果一致，仅分配方式不同」）—— **不是控制流侧**。
+本格把 `stringConcat` 纳入 G1 的**理由是夹具依赖，不是契约分类**：
+defer 夹具**需要字符串拼接来构造其期望输出**，缺它则本格无法闭合（出处 = `HIRExecutor.swift`
+的节点清单 docstring：「plus the `stringConcat` the defer fixtures need to build their expected string」）。
+
+**由此产生的账目后果（登记，待确认）**：`stringConcat` 自 G7 移入 G1 后，
+**P2a 26 → 27 缺口、P2b 18 → 17 缺口**（总 44 不变）。本件**不自行改写** §1.1/§3 的既有数字
+（该两处已有「条目分解与总数脱节」的前科，教训见 §3 的 ⚠️），仅在此登记该回归项，待点名下格时一并厘清。
+
+| 面 | 前 | 后 |
+|---|---|---|
+| HIR 探针（6 根 / 308 夹具） | `OK 109` / `TODO 141` / `GAP_HIR_ENGINE 13` / `GAP_EXEC 3` / **`FLIP BLOCKERS 16`** | **`OK 137`** / **`TODO 112`** / **`GAP_HIR_ENGINE 14`** / `GAP_EXEC 3` / **`FLIP BLOCKERS 17`** |
+| HIR 探针（HIRTests 单根 / 74 夹具，台账可比口径） | `OK 34` / `TODO 36` / `GAP 4` / 首缺口节点 **20** | **`OK 38`** / **`TODO 32`** / `GAP 4` / 首缺口节点 **16** |
+| 逐夹具对账（308 夹具） | —— | **29 处变化，全部可解释**：28 `TODO→OK` + 1 `TODO→GAP_HIR_ENGINE`；**零新增/零消失夹具** |
+| 全量回归 | 1240 / 3 skipped / 0 failures + swift-testing 45 | **1246 / 3 skipped / 0 failures（0 unexpected）· EXIT=0**（+6，恰为本格新增用例） |
+| 契约核验 | `clean` 60/60 | `clean` 60/60（**预期恒定**：只增实现不增节点） |
+| 门禁 | —— | comment-lint L1–L6 全绿；doc-links **523 引用**通过（上格 491） |
+| 进程残留 | —— | **零**：`lli` 0 / `pini` 0 / 探针 0 / stray `.ll` 0（探针自报 same） |
+
+**逐夹具对账（本格最重要的一条纪律动作：不看总数看差集）**
+
+- **28 处 `TODO→OK`** 按首缺口节点分解：`forInStmt` 12 · `deferStmt` 6 · `breakStmt` 6 · `continueStmt` 5
+  = **28**，与 `HIR_ENGINE_TODO 141→112`（−29）**逐项吻合**（差的 1 个见下条）。
+- **1 处 `TODO→GAP_HIR_ENGINE`** = `tests/…/RuntimeBackendTests/testBreakCollectionReleasesIRContract.pini`
+  —— 该夹具原被「`breakStmt` 未实现」拦下，本格实现后**这层屏蔽变薄**，露出 stderr 的 `E7-001` 假阳性
+  ⇒ 落进假阻塞桶。**这是已登记机制（「P2 每实现一个节点这层屏蔽就薄一分」）的又一实例**，
+  不是本格引入的缺陷：三臂 `l_rc/h_rc/a_rc` 全 0、stdout 逐字一致，**实质分歧 0**。
+- **`FLIP BLOCKERS 16 → 17` 的 +1 就是上一条**（定义 = `GAP_EXEC + GAP_HIR_ENGINE + GAP_BEHAVIOR + GAP_HANG`，
+  后两者为 0）。两处阻塞槽**身份已核**：`GAP_EXEC` 3 个与基线**完全相同**
+  （`testBuiltinMathFloatsViaLLI` / `testBuiltinMathIntegersViaLLI` / `examples/ffi.pini`，
+  均为 `l=0 h=1 a=0` 的 `E5-006`，属既有 HIR 侧缺口 + FFI 未实现，不在本格范围）；
+  `GAP_HIR_ENGINE` **14 个全部是 `E7-001` 假阳性**（基线 13 个亦然，`13 + 新增 1 = 14`）。
+- **`G1` 六节点在「后」的 `HIR_ENGINE_TODO` 里出现 0 次**（全部归零）。
+  ⚠️ `panicStmt` 与 `stringConcat` **从未作为首缺口出现**（被更早的节点遮蔽）
+  —— 再次实证「**首缺口分布 ≠ 夹具覆盖**」；两者的区分力由**手写单通道用例**承担（见下）。
+
+**覆盖洞与判据补强（本格第二条结论：「未实现」与「实现正确」在抛错形态下不可区分）**
+
+- `testBreakWithoutAnEnclosingLoopDoesNotRunOnSilently`（循环外裸 `break` 的 fail-loud 用例）在
+  **全部 6 次变异下均不红**（含整族禁用、含 `breakStmt` 单点禁用）—— 根因：**「节点未实现」恰好也抛错、
+  也停输出**，与「实现正确（按契约硬报错）」在断言层**完全无法区分**，故该用例当时是**弱判据**。
+- 处置（`D-P2-8`，用户裁决「就地补强断言并复验」）：断言加
+  `XCTAssertFalse(text.contains("not implemented"), …)` —— 把「必须是**处理了**这个 break」与
+  「**根本没实现**」分开。**复验实测**：补强后族 **19 绿 / 0 红**；单点变异 `breakStmt` 下该用例
+  **转红**（`TARGET 是否变红: YES`），且其余控制流用例仍绿 ⇒ 补强有效、区分力自证。
+- **一级判据的历史状态（如实记录）**：本格第①级（整族禁用）的期望「相关用例**全部**转红」在补强
+  **之前**未完全满足（7 个相关用例中第 7 个不红）；补强后该缺口闭合。第②级（单点禁用）判据通过。
+
+**变异反证两级（六次独立观测，每轮锚点唯一性预检 + 还原后 md5 逐字节对账）**
+
+| 变异 | 红集 | 计数 |
+|---|---|---|
+| ① 整族禁用（stash 全部 `Sources/`） | 4 新增 parity + corpus + panic = 6 | 5 unexpected |
+| ② `forInStmt` | corpus · defer · ForInIterableFamilies · ForInStep · UnwindDepth | 5 |
+| ② `breakStmt` | corpus · defer · ForInStep · UnwindDepth（**补强后 + 裸 break 用例**） | 4（补强后 5） |
+| ② `continueStmt` | corpus · UnwindDepth | 2 |
+| ② `deferStmt` | corpus · DeferRunsWhenBreakOrReturn… | 2（与预测逐条吻合） |
+| ② `panicStmt` | PanicStmtFailsLoud… | 1 |
+
+还原校验：第①级 `stash pop` 后 5 文件 md5 **逐字节相同**；第②级每轮起终点均 md5 断言；
+还原后族回绿（104 用例 / 0 失败 / 0 错误），复跑 `breakStmt` 轮后二进制重建
+（md5 `862101265d…` == 冻结基线）。
+
+**判据陷阱查实（`(N unexpected)` 不是红数）**：6 次观测一致二分 —— **测试方法抛错计入 `unexpected`**、
+`XCTAssert*` 失败计入 `expected`。全仓无 `XCTExpectFailure|withKnownIssue|Issue.record`
+（机制未证、反例 0）⇒ **判红必须读失败清单，不能读 `(N unexpected)`**。
+
+**记缺陷（2 张，均已在计划内当场处置或立案）**
+
+- **编译缺陷（当场修）**：`HIRExecutorTests.swift:353/355` 写成 `.printCall(...)` ⇒ **60 条编译错误**
+  （`printCall` 属 `HIRExpr`，语句侧须经 `exprStmt`）。改为 `.exprStmt(.printCall(...))`，未动语义。
+  教训 = 手则 §4 新增条「**『用例写了』≠『用例能编译』**」（`Sources/` 与 `Tests/` 是两个编译单元，
+  `swift build` 全绿不代表测试目标能编译）。
+- **弱判据（当场补强）**：见上「覆盖洞与判据补强」；并已在手则 §4 登记同型陷阱。
+- **《Swift 源码缩进被全仓压平成 1 空格》（新工单，`docs/issue-swift-source-indent-2026-09-13.md`）**：
+  本格改 `Interpreter.swift` 时出现无法解释的空白变更 ⇒ 量缩进直方图确认是**全仓性历史残留**
+  （可回溯到建仓首提交 `d96d0c1`，四个旧文件当时即 100% 压平；`HIRExecutor.swift` 首提交 0%）。
+  **排期 P4 之后**（`D-P2-9`，用户裁决）。本格只落 `executeFor` 整函数体（裁 A）。
+  ⚠️ **连带教训**：我改前**未量文件缩进**，违反手则 §2 既有规则（**该条第二次失效**）⇒ 已把
+  「`git diff --stat` 与 `git diff -w --stat` **行数必须相等**」写为机械复查条。
+
+**未做**：未改 AST / LLVM 任一侧实现；未动契约与节点集；未收窄探针 `GAP_HIR_ENGINE` 判据
+（该计数器收窄时机仍为上交给决策点）；未修缩进工单（排期 P4 后）；未 push。
+
 ## 9. 决策记录
 
 | 编号 | 决策点 | 裁决（2026-09-13，用户） |
@@ -307,3 +405,6 @@ M7 表明「共享源被删」**不会**造成两臂静默一致，而是**两�
 | D-P2-4 | P2 判据形态 | **三态**（`OK` / `CHANGE_*` / 阻塞槽）；分层读数，不合并成单一数字（§2.1–2.2） |
 | **D-P2-5** | G4 的 `lenCall`/`sliceCall` 是否随其 `String` 侧后置 | **不后置**：两节点在 P2a **整节点**实现（镜像解释器 = 契约的 grapheme 语义），其 `String` 侧分歧仍作为**已登记的 B 组差异**保留，P2a 验收对这两节点在非 ASCII 语料上记 `CHANGE_*`（D-P2-3 的「容器侧」由此**扩展为整族 7 节点**） |
 | **D-P2-6** | G2 的范围：格内两节点之外，F1/F2 两个既有缺陷是否随格修 | **都修，扩为「含标签模型的整个元组族」**（F1 执行侧 `call` 丢返回标签 / F2 降载侧拒绝注解标签绑定与返回类型标签），接受更大范围及其额外的变异证伪要求（实录 §8.2） |
+| **D-P2-7** | G1 的缺口数是 5 还是 6（`stringConcat` 归属） | **格内范围判定（非用户裁决）：取 6**。纳入理由 = **夹具依赖**（defer 夹具需字符串拼接构造期望输出），**非契约分类**（契约实归 §2.9「字符串与内建」#41）。**偏离**规划表 §1.1（G1 记 5 / `stringConcat` 列 G7）⇒ 账目后果 P2a 26→27、P2b 18→17，**已登记待确认**（实录 §8.3） |
+| **D-P2-8** | 变异反证暴露的弱判据（用例在全部 6 次变异下均不红）怎么处置 | **就地补强断言并复验**（加「不得报 not implemented」断言），不接受「红因正确即放过」（实录 §8.3） |
+| **D-P2-9** | 全仓缩进压平（本格连带发现） | **立工单 + 排期 P4 之后**（整仓重排须冻结其他改动）；本格只落 `executeFor` 整函数体 8 空格（实录 §8.3，工单 `docs/issue-swift-source-indent-2026-09-13.md`） |

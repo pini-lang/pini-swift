@@ -502,8 +502,9 @@ public indirect enum HIRStmt: Equatable {
     case exprStmt(HIRExpr)
     /// `defer stmt` (G9): the wrapped statements run LIFO when the
     /// enclosing block scope exits (each loop-iteration end included).
-    /// Emission runs them at normal block end; break/return interplay is
-    /// not in the corpus (unexercised = ungated surface, recorded).
+    /// `break`/`return` interplay **is** gated as of grid G1: both channels
+    /// run the defers on the unwinding path too, because a block's scope
+    /// closes on every exit, not only the normal one.
     case deferStmt(body: [HIRStmt])
     /// `try operand else errorVar: handler` (ADR-032). The operand's type is
     /// `result(ok:)`; the error path binds the type-erased error word to

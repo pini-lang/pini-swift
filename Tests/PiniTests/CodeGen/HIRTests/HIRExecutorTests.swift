@@ -123,6 +123,14 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffTupleLabels",
         "testDiffTupleLen",
         "testDiffTupleReturn",
+        // G1: the four fixtures that stay inside the control-flow node set once
+        // it lands. `testDiffArrayGetMatch` and `testDiffMultidimArray` also use
+        // control flow but stop earlier, at the match/Optional family; that is a
+        // later grid's job, not a reason to hold these back.
+        "testDiffContinueBreakLabel",
+        "testDiffDefer",
+        "testDiffForIn",
+        "testDiffStep",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -164,10 +172,12 @@ final class HIRExecutorTests: XCTestCase {
 
     /// `while`'s step block (ADR-014) runs once per iteration, after the body.
     ///
-    /// No existing in-range fixture covers it (`testDiffStep` also uses `break`,
-    /// which the skeleton does not implement), so the step contract would have
-    /// shipped unguarded. The interpreter-side rule being mirrored is
-    /// `Interpreter.executeWhile`.
+    /// Written while `testDiffStep` was out of range (it also uses `break`, which
+    /// the skeleton did not implement). G1 brought that fixture in, so this case
+    /// now overlaps it — deliberately kept, because it isolates one thing: the
+    /// step runs on normal completion of the body, with no `break`, no `for-in`
+    /// and no pattern variable in the picture. The interpreter-side rule being
+    /// mirrored is `Interpreter.executeWhile`.
     ///
     /// WHY THE LOOP IS DRIVEN BY A BOOLEAN, NOT BY A COUNTER
     ///
@@ -196,6 +206,170 @@ final class HIRExecutorTests: XCTestCase {
                 print(i)
             return
         """, label: "while-step")
+    }
+
+    /// Every `for-in` iterable family and pattern shape in one source.
+    ///
+    /// `testDiffForIn` covers array, dictionary, `_` and labeled break, but not
+    /// sets and not a nested row read — and its dictionary arm is the one place
+    /// where a row is built **positionally** instead of through
+    /// `decomposePatternRow`, so the two paths deserve to be compared apart.
+    /// Termination is structural here (the loops run over literals), which is why
+    /// this case can carry a mutation that breaks an operator without hanging.
+    func testForInIterableFamiliesAgreeWithTheInterpreter() throws {
+        try assertParity("""
+        main|func() -> ():
+            for (v,) in [1, 2, 3]:
+                print(v)
+            for (_ ,) in [7, 8, 9]:
+                print("slot")
+            for (k, v,) in ["a"= 1, "b"= 2]:
+                print(k)
+                print(v)
+            for (n,) in {5, 5, 6}:
+                print(n)
+            for (row,) in [[1, 2], [3, 4], [5, 6]]:
+                print(row[0] + row[1])
+            return
+        """, label: "for-in families")
+    }
+
+    /// The `for-in` step block runs in the **loop** environment, and `break`
+    /// skips it — the ADR-014 contract, stated for `for` rather than `while`.
+    ///
+    /// `testDiffStep` pins the environment half for a normal iteration; what is
+    /// added here is the pair of exits that decide *whether* the step runs at
+    /// all: a `break` aimed at this loop must skip it, and a `break` aimed at an
+    /// outer loop must skip it too. Both are rethrown-or-consumed paths, so a
+    /// wrong depth rule changes the output rather than merely the timing.
+    func testForInStepFollowsTheBreakContract() throws {
+        try assertParity("""
+        main|func() -> ():
+            for (v,) in [1, 2, 3, 4]:
+                print(v)
+                if v == 2:
+                    break
+            step:
+                print("inner-step")
+            print("after-break")
+            return
+        """, label: "for-in step and break")
+    }
+
+    /// `defer` runs when the block is left **by `break` or `return`**, not only
+    /// by falling off its end.
+    ///
+    /// This is the line the contract used to carry as an ungated surface
+    /// (`deferStmt` × break/return interplay: "not in the corpus"). It is gated
+    /// now because both channels close a block's scope on *every* exit; the two
+    /// exits that a normal-completion test cannot reach are exercised here, one
+    /// through a loop and one through a function return.
+    func testDeferRunsWhenBreakOrReturnLeavesTheBlock() throws {
+        try assertParity("""
+        main|func() -> ():
+            print(helper(1))
+            for (v,) in [1, 2]:
+                defer print("loop-defer")
+                if v == 1:
+                    break
+            print("after")
+            return
+
+        helper|func(n: I32,) -> (I32,):
+            defer print("before-return")
+            if n > 0:
+                return n + 10
+            return 0
+        """, label: "defer on break/return")
+    }
+
+    /// Depth is what the HIR carries, so depth is what has to be right: an
+    /// unwind aimed at an outer loop must cross the inner one **without running
+    /// its step**, and must run the outer one's step for `continue`.
+    ///
+    /// Both loops are single-level in the corpus (`testDiffContinueBreakLabel`
+    /// breaks two levels of `while`); what is only visible here is the *step*
+    /// asymmetry the interpreter's label-mismatch rethrow produces, and the same
+    /// rule holding when the two levels are different loop kinds.
+    func testUnwindDepthCrossesMixedLoopKinds() throws {
+        try assertParity("""
+        main|func() -> ():
+            row|for (a,) in [1, 2]:
+                for (b,) in [1, 2]:
+                    if b == 1:
+                        continue row
+                    print(a * 10 + b)
+                step:
+                    print("inner-step")
+            step:
+                print("outer-step")
+            print("done")
+
+            var keep = true
+            tag|while keep:
+                for (c,) in [1, 2]:
+                    if c == 2:
+                        break tag
+                    print(c)
+                keep = false
+            print("end")
+            return
+        """, label: "unwind depth")
+    }
+
+    // MARK: - Control flow that cannot be compared
+
+    /// `panicStmt` is compiler-generated and has no byte-comparable counterpart:
+    /// on the AST channel the same program ends in an escaped `ControlSignal`,
+    /// whose top-level text is Foundation's, not the language's. So the claim
+    /// stops where it honestly can — it fails loud, carrying the lowerer's
+    /// message and this engine's placeholder position.
+    func testPanicStmtFailsLoudWithTheLowerersMessage() {
+        let executor = HIRExecutor()
+        let module = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil,
+                        body: [.panicStmt(message: "Pini runtime error: break outside loop")])
+        ])
+        XCTAssertThrowsError(try executor.run(module: module)) { error in
+            let text = String(describing: error)
+            XCTAssertTrue(text.contains("break outside loop"), "got: \(text)")
+            XCTAssertTrue(text.contains("<hir>"), "got: \(text)")
+        }
+    }
+
+    /// A `break` with no enclosing loop must not run on as if it had worked.
+    ///
+    /// The lowerer normally turns this into a `panicStmt`; the guarantee asserted
+    /// here is the one that does not depend on the lowerer — a raw `breakStmt`
+    /// reaching the executor leaves it by unwinding. On the AST channel the same
+    /// program never gets this far, so this is asserted on one channel only, and
+    /// says so.
+    ///
+    /// WHY THE ERROR TEXT IS PART OF THE CLAIM
+    ///
+    /// G1's mutation round ran this case against a disabled engine and it **passed**:
+    /// a skeleton `breakStmt` throws too, and it stops the output too, so "it threw"
+    /// and "nothing was printed after" are both satisfied by a node that was never
+    /// implemented. Two assertions that a broken engine also satisfies are not a
+    /// guard. The failure mode therefore has to be named — the call must leave on the
+    /// unwind path, not on the "dispatched but not implemented" path.
+    func testBreakWithoutAnEnclosingLoopDoesNotRunOnSilently() {
+        let executor = HIRExecutor()
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
+        let module = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil,
+                        body: [.exprStmt(.printCall(argument: .stringConst(value: "before"))),
+                               .breakStmt(depth: 1),
+                               .exprStmt(.printCall(argument: .stringConst(value: "after")))])
+        ])
+        XCTAssertThrowsError(try executor.run(module: module)) { error in
+            let text = String(describing: error)
+            XCTAssertFalse(
+                text.contains("not implemented"),
+                "the break must be handled, not reported as an unimplemented node: \(text)")
+        }
+        XCTAssertEqual(lines, ["before"], "execution must stop at the break")
     }
 
     /// The slice sugar, both bounds spelled as integers.
@@ -325,9 +499,6 @@ final class HIRExecutorTests: XCTestCase {
     /// node" cannot be satisfied by a neighbouring gap speaking up instead.
     private static let expressionGaps: [(node: String, expr: HIRExpr)] = [
         ("printMulti", .printMulti(arguments: [.intConst(value: 1, type: .i32)])),
-        ("stringConcat", .stringConcat(
-            lhs: .stringConst(value: "a"),
-            rhs: .stringConst(value: "b"))),
         ("stringCase", .stringCase(isUpper: true, receiver: .stringConst(value: "a"))),
         ("interpString", .interpString(parts: [.stringConst(value: "x")])),
         ("readLine", .readLine),
@@ -339,17 +510,15 @@ final class HIRExecutorTests: XCTestCase {
             captures: [], body: [], type: .function(params: [], returnType: nil))),
     ]
 
+    /// One probe per *remaining* gap. A node leaves this table by being
+    /// implemented, never by being tolerated — G1 removed `forInStmt`,
+    /// `deferStmt`, `breakStmt`, `continueStmt` and `panicStmt`, and the two
+    /// control statements that could not be covered here (a bare `break` escapes
+    /// as an unwind rather than an error) got their own tests instead.
     private static let statementGaps: [(node: String, stmt: HIRStmt)] = [
-        ("forInStmt", .forInStmt(
-            pattern: ["v"], elementTypes: [.i32], kind: .array,
-            iterable: .intConst(value: 0, type: .i32), body: [], step: nil)),
-        ("deferStmt", .deferStmt(body: [])),
         ("tryStmt", .tryStmt(
             operand: .intConst(value: 0, type: .i32), errorVar: "e",
             handler: [], okTarget: nil, type: .i32)),
-        ("breakStmt", .breakStmt(depth: 1)),
-        ("continueStmt", .continueStmt(depth: 1)),
-        ("panicStmt", .panicStmt(message: "boom")),
         ("matchStmt", .matchStmt(
             scrutinee: .intConst(value: 1, type: .i32), cases: [], scrutineeType: .i32)),
         ("fieldStore", .fieldStore(
