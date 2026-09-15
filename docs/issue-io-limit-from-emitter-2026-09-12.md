@@ -4,7 +4,7 @@
 - 级别：宿主级
 - 发现于：LR-4 / P0b（`ADR-034` D3 裁决的对齐后果）
 - 关联：`docs/spec/adr/adr-034-hir-contract.md`（D3 A1/A2、D4 缺陷立案）、
-  `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（E3 实测来源）、
+  `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（E3 实测来源）、
   `docs/spec/hir-contract.md`（受影响节点条目）
 
 ## 现象

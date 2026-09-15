@@ -4,7 +4,7 @@
 - 层级：**宿主级** —— 实施 `ADR-033 D2` 的**语言级已裁决策**（契约变更本身已经 `ADR-033` 治理），
   本工单只承载 pini-swift 侧落地。层级判据见 `ADR-024 D6`；目录约定见 `docs/README.md`。
 - 发现来源：P0c 复审期间的命名冲突勘查
-  （见 `docs/issue-interpreter-hir-gap-audit-2026-09-12.md` §5.5）
+  （见 `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md` §5.5）
 - 关联：`docs/spec/adr/adr-033-char-type.md`（**D2 裁决来源**）；
   `docs/spec/pini-spec-v0.md` §2.7（FFI 白名单：「`Char` 不进入 FFI 标量集」）；
   `docs/issue-interpreter-hir-plan-2026-09-12.md`（**P0d 前置于本工单** —— 须先腾名才能引入 grapheme `Char`）
@@ -48,7 +48,7 @@
 - **CodeGen 侧无 `Char` 处理**：`Sources/PiniCore/CodeGen/` 内 `\bChar\b` **零命中** ⇒
   LLVM 侧遇到 `*Char` / `Char` 类型注解时的行为**未经验证**（可能被通用指针路径吸收，
   也可能静默降级）。**须先设计探针再判定**，本工单不预设结论
-  ——「没搜到」不等于「没实现」（方法教训见 `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`）。
+  ——「没搜到」不等于「没实现」（方法教训见 `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`）。
 - **覆盖缺口**：该类型「有类型检查器支持、零语料覆盖」，与「能力矩阵语料数 59 vs 实测 78」
   同族。属覆盖问题，**不由本工单承担**（本工单只补 1 例冒烟，见处置 3）。
 

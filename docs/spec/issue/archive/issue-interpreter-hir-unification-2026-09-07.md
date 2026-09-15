@@ -1,11 +1,12 @@
 # Issue：解释器后端迁移至 HIR（解释器与 LLVM 后端共同依赖 HIR）
 
-- 状态：**Open（2026-09-07 LR-4 裁决单独立案；前置已满足 —— LLVM 重写迁移于 2026-09-12 M6b 翻转批
-  收尾（旧后端整体删除，HIR 成为唯一发射路径）。**规划已完成**（2026-09-12）：主决策「HIR 升为
+- 状态：**SUPERSEDED / 已结案（2026-09-15 归档）** —— LR-4 裁决「**解释器后端不迁移至 HIR**」（见本件 §背景与裁决）：HIR 仅作为 LLVM 后端发射路径，解释器留在 AST/LLVM 通道。原立案目标因该裁决不再成立，故归档；后续以 P3 判据升级承接。归档位置 `docs/spec/issue/archive/`。
+
+  （历史背景：LLVM 重写迁移已于 2026-09-12 M6b 翻转批收尾——旧后端整体删除，HIR 成为唯一发射路径；原规划「HIR 升为两后端共用枢纽」因上述裁决不再适用。）
   两后端共用枢纽」＋「单一 IR 多后端 / 分层信任」推导，执行计划与 D-B* 决策登记见
   `docs/issue-interpreter-hir-plan-2026-09-12.md`。
   **进度（2026-09-12）：P0（只读缺口审计）已交付并收口** —— 产出见
-  `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 + 乙类后端无关性
+  `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 + 乙类后端无关性
   审查 + 耦合面 + E3 实测 M0–M8）；**P0c（复审订正）与 P0b（枢纽规范落地）亦已交付** ——
   P0b 产出 = `docs/spec/adr/adr-034-hir-contract.md`（HIR 契约，判准与 A/B/C/D/E 组裁决）+
   `docs/spec/hir-contract.md`（60 节点语义权威清单）+ spec §2.8 表述对象改造 + `bk_*` 口径订正；

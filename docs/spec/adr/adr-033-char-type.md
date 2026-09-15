@@ -201,6 +201,6 @@ FFI thunk），**立即停并重新拆项**，不把扩散项塞进同一批。
 - `docs/spec/adr/adr-028-subscript-safety-channels.md` —— `s[i]` panic 通道（`ADR-019 D2` 事实漂移来源）
 - `docs/spec/pini-spec-v0.md` —— FFI 白名单（`Char` 不进标量集）、§3.2 单一 `@bk_*` ABI 边界
 - `docs/issue-interpreter-hir-plan-2026-09-12.md` —— LR-4 执行计划（本 ADR 为其 P0b 规范产出的前置）
-- `docs/issue-interpreter-hir-gap-audit-2026-09-12.md` —— P0 审计与 E3 实测
+- `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md` —— P0 审计与 E3 实测
 - `docs/issue-ffi-char-rename-cchar-2026-09-12.md` —— D2 的实施载体（P0d 前置）
 - `docs/issue-hir-string-slice-byte-based-2026-09-11.md` —— 字符语义六处对齐的实施载体

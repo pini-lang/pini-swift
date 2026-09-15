@@ -22,7 +22,7 @@
 | 3 | selfhost 解释器**打 AST 还是打 HIR**，**推迟到 LR 完成** | §7 排序分析；M9 门控于 LR；`src/{interpreter,hir}/` 占位符**长期**保留 |
 | 4 | 现有代码处置方式 = **打 tag 即可** | M0 打 `selfhost-pre-rebuild`（实测：现仓 **14 分支 / 零 tag**） |
 | 5 | 计划落点 = **宿主侧** | 本件 |
-| **6** | **之前的止损已被自举的需要反对** ⇒ **LR 应当继续**，**坚定「HIR 统合全后端」** | **§7 排序因此重导（原建议「甲」作废）**；LR-4 定义的唯一出处落 `docs/issue-interpreter-hir-unification-2026-09-07.md` 末节；`auth-1` 恢复为 `active` |
+| **6** | **之前的止损已被自举的需要反对** ⇒ **LR 应当继续**，**坚定「HIR 统合全后端」** | **§7 排序因此重导（原建议「甲」作废）**；LR-4 定义的唯一出处落 `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md` 末节；`auth-1` 恢复为 `active` |
 | **7** | `lexer.pini` **移植**（非重写） | §3.1 的「例外待裁」结案；§6.2 的 M2 改为移植步 |
 | **8** | `SuspendEvaluator`（890 行，`extension Interpreter`，承载 `await`/`wait` **用户可见能力**）的**归属** = **并入 R2 那一格** | §7.5-1 的**归属侧**结案。**R1/R2 本体取舍仍待**（裁决 6 已排除 R3；保能力则只剩 R2）—— 该取舍是 **P4（删除 AST 走查）的前置**，本件不代裁 |
 | **9** | LR-4 恢复后的**下一格** = **重放 G1/G6** | §10 第 9 项结案。格序 = G4 → G2 → **G1 → G6** → G5 → G3（与 P2a 自然格序一致，故不另立裁决）。属 LR 载体格序问题，本件只登记结论 |
@@ -248,7 +248,7 @@ Acceptance / Structural / Differential·形状 **全部是表层投影**。
 **V4 的判据强度变化（裁决 6 后新增，**含一条弱化，如实登记**）**：
 `ADR-034` 明写，HIR 统合后宿主差分测试**从「独立实现互证」变为「同一表示的两种执行策略互证」**
 ⇒ **宿主内部那一层的证明力下降，漂移面收窄到执行层**。
-本件立案原稿（`docs/issue-interpreter-hir-unification-2026-09-07.md` §背景）也已记下该代价：
+本件立案原稿（`docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md` §背景）也已记下该代价：
 「解释器是差分测试的独立参照实现……两条路径同源化，差分绿将失去证明力」。
 **⇒ 该反对意见本身没有错，裁决 6 是把它作为代价接受下来。**
 
@@ -378,7 +378,7 @@ Acceptance / Structural / Differential·形状 **全部是表层投影**。
 | 前置 | 交付物 |
 |---|---|
 | ① 重新点名 | 裁决 6（`auth-1`：`withdrawn → active`，登记 `resumed_at` / `resume_basis`） |
-| ② 定义收敛为单一出处 | **唯一出处** = `docs/issue-interpreter-hir-unification-2026-09-07.md` 末节「定义收敛与恢复登记（2026-09-13）」+ `ADR-034`；`docs/issue-llvm-rewrite-plan-2026-09-07.md` 的 `LR-4` 历史行**不改写**，后加**指针行** |
+| ② 定义收敛为单一出处 | **唯一出处** = `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md` 末节「定义收敛与恢复登记（2026-09-13）」+ `ADR-034`；`docs/issue-llvm-rewrite-plan-2026-09-07.md` 的 `LR-4` 历史行**不改写**，后加**指针行** |
 
 **「本次否 vs 统合全后端」的澄清**：「本次否」是**时机**裁决，「统合全后端」是**定义**；
 二者此前被读成矛盾，是因为**写在同一行的同一格里、未做维度切分**。
@@ -478,7 +478,7 @@ LLVM 后端（裁决 1）· 包管理（MVS / 远程抓取 / 锁文件 ≈1270 �
 
 - **未改任何 `src/` 源码**、未建分支、未打 tag、未跑全量测试。
 - **本件第二版（2026-09-13，裁决 6/7 后）新增的项目仓写入**（仅文档，不涉源码）：
-  - `docs/issue-interpreter-hir-unification-2026-09-07.md` 末节 = LR-4 **定义的唯一出处**；
+  - `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md` 末节 = LR-4 **定义的唯一出处**；
   - `docs/issue-llvm-rewrite-plan-2026-09-07.md` 的 `LR-4` 历史行**后加指针行**（历史行不改写）。
 - **未落 ADR**：文中 `ADR-SH-x` 为占位提法，正式编号须走 `docs/spec/adr/` 治理序。
 - **L1a 的 `D1`–`D8` 尚未逐条对宿主架构重裁**（不自动继承）。已知需重裁者：
