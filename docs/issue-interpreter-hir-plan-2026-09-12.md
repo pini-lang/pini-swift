@@ -89,7 +89,7 @@
   调试面已就绪，其缺口收窄为「HIR 节点无位置」一项）。
   本计划为 v2，含 2026-09-12 用户主决策「HIR 升为两后端共用枢纽」与「单一 IR 多后端 / 分层信任」
   两轮推导的登记）**
-- P0 产出载体：`docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 +
+- P0 产出载体：`docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账 + 四分级对账 +
   乙类后端无关性审查 + 耦合面 + 三项待实测项）
 - **P0b 产出载体**：`docs/spec/adr/adr-034-hir-contract.md`（HIR 契约 ADR，**Accepted 2026-09-12**）
   + `docs/spec/hir-contract.md`（60 节点语义权威清单）；裁决表见下方 §5（含判准与边界）
@@ -106,7 +106,7 @@
   `docs/issue-tuple-label-binding-rule-2026-09-13.md`（**P2a G2 立案**：标签模型残留角，
   §3 为 spec 级待裁、前置=先修值）
 - 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（LLVM 侧重写，判据与约束权威）；
-  `docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 立案与背景）；
+  `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 立案与背景）；
   `docs/issue-llvm-rewrite-plan-2026-09-07.md`（M 系列计划载体，已于 2026-09-12 收口）
 
 ---
@@ -415,8 +415,8 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
      （原在 `docs/` 下）状态转 **LANDED**，
      迁至 `docs/spec/issue/archive/`，两处入向引用改为归档后路径。
   3. **状态回填**（承载处全清）：计划载体（头部状态块 / §7 P1·P3·P4 行 / 本节 / 开工顺序）+
-     立案单 `docs/issue-interpreter-hir-unification-2026-09-07.md` + 审计载体
-     `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（其状态行原滞后两格）+ 两处关联工单。
+     立案单 `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md` + 审计载体
+     `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（其状态行原滞后两格）+ 两处关联工单。
   4. **登记不修（本格路由）**：证据表「悬空 ID 口径」—— 挂钩轮删条目后报出 `E-148` / `E-149`
      仍被引用，二者位于**常驻计划载体的历史批尾日志**；表 meta 的 `dangling_policy` 所列三类
      （归档件 / 已关闭工单 / ADR 与 spec 历史登记行）**未含此类** ⇒ 口径待裁，本格不动表。

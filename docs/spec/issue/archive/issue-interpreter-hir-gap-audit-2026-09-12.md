@@ -1,6 +1,6 @@
 # P0 审计：解释器统一 HIR 的枢纽缺口台账
 
-- 状态：**P0 已收口（2026-09-12）** —— P0 与 P0c 的产出**全部交付**，无实质缺口；
+- 状态：**P0 已收口（2026-09-12）** —— P0 与 P0c 的产出**全部交付**，无实质缺口；**2026-09-15 归档**：P2 九格（P2a 六格 + P2b 三格）已全部交付，主线推进至 P3 判据升级；本审计随 P0 收口归档至 `docs/spec/issue/archive/`，其 P0 缺口台账结论仍有效。
   收口动作 = 清过期标注 + 遗留缺陷立案 + 状态回填。**全过程未改任何源码**（含测试与夹具）。
   **P0b 已交付（2026-09-12）**：本审计是 P0b 的**证据来源**，其裁决落点见
   `docs/spec/adr/adr-034-hir-contract.md`（判准与 A/B/C/D/E 组结论）与
@@ -27,7 +27,7 @@
 - 订正记录：P0c 复审订正 §5.3.1 / §5.5 / §7.1；P0 收口订正 §1（E3 状态）/ §5.3（标题）/
   §7（标题）/ §7.5（编号错位）。
 - 关联：`docs/issue-interpreter-hir-plan-2026-09-12.md`（常驻计划载体，P0 一格）；
-  `docs/issue-interpreter-hir-unification-2026-09-07.md`（立案背景）；
+  `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`（立案背景）；
   `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（同根因族工单，本批回答其遗留未知项）；
   `docs/spec/adr/adr-019-unicode-char-model.md`（**字符模型裁决出处——P0c 复审的关键依据**）；
   `docs/spec/adr/adr-033-char-type.md`（Char 类型引入，**Accepted 2026-09-12**）；

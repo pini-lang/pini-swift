@@ -17,7 +17,7 @@
   终值：回归 1222/3 skip/0 fail；全量探针 6 根 306 夹具 FLIP BLOCKERS 0。
   后续里程碑另行规划：**LR-4 解释器统一 HIR**（前置已满足）、**LR-11 并发运行时**
   ——后者于 2026-09-12 裁决**搁置**，重启条件 = **selfhost 探针完成解释器端**）**
-- 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
+- 关联：`docs/spec/adr/adr-031-llvm-backend-rewrite.md`（约束与判据权威）；`docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`（LR-4 单独立案）
 
 ## 架构（用户确认版，2026-09-07）
 
@@ -57,7 +57,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 | LR-2 | 新实现落点与命名 | `CodeGenV2/` 提案被用户驳回；定案 = `HIR/` 新顶层 + `CodeGen/` 原址重建（架构确认） |
 | LR-3 | HIR 形态 | **类型化树**（HIR 节点带已解析类型，控制流保持树形，发射器遍历时自管标签/phi） |
 | LR-4 | 解释器是否走 HIR | **本次否**——迁移中无法做到；单独立案
-`docs/issue-interpreter-hir-unification-2026-09-07.md`，LLVM 迁移完成后解释器与 LLVM 后端共同依赖 HIR |
+`docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`，LLVM 迁移完成后解释器与 LLVM 后端共同依赖 HIR |
 | LR-4（指针） | ↑ 该行为 **2026-09-07 当时**的时序裁决，**不改写** | 定义已于 **2026-09-13 由用户裁决固定为「HIR 统合全后端」**。**唯一出处 = 立案件末节「定义收敛与恢复登记（2026-09-13）」+ `ADR-034`**；「本次否」是**时机**、非定义。读本条请以那一处为准 |
 | LR-5 | 兼容开关 | **无任何 CLI 开关，直接替换**——已有解释器后端，项目未进 1.0.0 不考虑兼容；回退手段 = 提交边界 git revert（用户裁决） |
 | LR-6 | M3 决策门：路线判定 | **重写**（用户裁决「按倾向来」，2026-09-07）。判定依据 = M2 能力清单：缺口成簇（8/19 并发内建单簇）、emit 通过者端到端 40/40、抛点持续增长 100→108、泛型等需全局类型视野的能力在 god class 结构下不可做；增量路线为 8 次外科手术 × 共享状态回归风险，重写为 1 次架构 + 8 次填格 |
@@ -656,7 +656,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       （补通道 A / 收敛规范 B），**未决策前不动源码**。
     - **下一格**：M5 分格 G1–G15 全部完成（51/59，剩 8 行并发豁免）——
       M6 flip 门槛达成，待点名执行旧后端删除与 `PINI_HIR_PIPELINE` 开关退役。
-      另有两条独立立案线未启动：解释器统一 HIR（`docs/issue-interpreter-hir-unification-2026-09-07.md`）、
+      另有两条独立立案线未启动：解释器统一 HIR（`docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`）、
       并发运行时（`docs/issue-llvm-concurrency-runtime-2026-09-08.md`）。
 
 - **M6 前置勘测完成（2026-09-10，仅勘测与规划，零代码改动）**：
@@ -1163,5 +1163,5 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 ### 未做（按纪律）
 
 未 push；**D17 未修**（规模控制，建议独立批）；未启动 LR-4（解释器统一 HIR —— 翻转后解锁，
-见 `docs/issue-interpreter-hir-unification-2026-09-07.md`）；未处理 `docs/` 根下
+见 `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`）；未处理 `docs/` 根下
 **12 张已 Closed 未归档**工单（独立卫生批）；未改归档件与证据表的历史记录。

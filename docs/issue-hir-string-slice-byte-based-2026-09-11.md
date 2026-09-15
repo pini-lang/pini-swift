@@ -4,7 +4,7 @@
   2026-09-12 由 P0c 复审订正根因结论——去掉「待语言层裁决」这一前置，实施路径已解锁；未实施）**
 - 发现来源：M6c 的 C3 格（`len(String)` 字符计数）勘测期间的伴生发现
 - 关联：`docs/issue-llvm-rewrite-plan-2026-09-07.md`（M6c 的 C3 格）；
-  `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（P0 审计，本次证据来源）；
+  `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（P0 审计，本次证据来源）；
   `docs/spec/adr/adr-019-unicode-char-model.md`（D1 grapheme 裁决，**权威依据**）；
   `docs/spec/adr/adr-033-char-type.md`（`Char` 类型引入，本工单为其 D5 的落地面）
 

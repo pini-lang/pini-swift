@@ -8,7 +8,7 @@
 
 本 ADR 是 **LR-4（解释器统一 HIR）** 的规范载体。LR-4 此前只有计划与审计载体
 （`docs/issue-interpreter-hir-plan-2026-09-12.md`、
-`docs/issue-interpreter-hir-gap-audit-2026-09-12.md`），**没有 ADR**——即「枢纽」的契约
+`docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`），**没有 ADR**——即「枢纽」的契约
 本身没有规范落点（见 Context §2）。本 ADR 补上该落点，并把「语义权威归属」从
 **事实现状**（以解释器为准）扳回**目标形态**（以 HIR 契约为准）。
 
@@ -184,9 +184,9 @@ A 组 4 项均改用户可见行为，且按 D-B6「无兼容开关」先例**�
 ## 引用
 
 - 计划载体：`docs/issue-interpreter-hir-plan-2026-09-12.md`（P0b 定义、甲类裁决表、停损点）
-- 审计载体：`docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账、四分级对账、
+- 审计载体：`docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（60 节点台账、四分级对账、
   E3 实测 M0–M8、乙类后端无关性审查）
-- LR-4 立案：`docs/issue-interpreter-hir-unification-2026-09-07.md`
+- LR-4 立案：`docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md`
 - 相关 ADR：`docs/spec/adr/adr-019-unicode-char-model.md`（字符模型 D1/D2）、
   `docs/spec/adr/adr-031-llvm-backend-rewrite.md`（`bk_*` 冻结范本）、
   `docs/spec/adr/adr-033-char-type.md`（`char` 节点预留位的依据）

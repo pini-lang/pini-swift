@@ -6,7 +6,7 @@
   该格只消费契约 §2.39 的**空 token** 一项，本单两处偏离在**同一节点**上、但**不在该格范围内**。
 - 关联：`docs/spec/hir-contract.md`（条目 39 与 §6 A 组行，语义权威）；
   `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（B 组字符语义，**明文排除 `split`**）；
-  `docs/issue-interpreter-hir-gap-audit-2026-09-12.md`（P0 审计，line 113 曾记本节点为「C strtok 两趟」）；
+  `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（P0 审计，line 113 曾记本节点为「C strtok 两趟」）；
   `docs/issue-diagnostic-channel-parity-2026-09-12.md`（判据类缺陷，本单实测的两面失明机制另挂该单）。
 
 ## 性质

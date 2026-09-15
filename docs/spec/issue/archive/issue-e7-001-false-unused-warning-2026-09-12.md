@@ -4,7 +4,7 @@
 - 层级：**宿主级** —— 诊断实现的假阳性，非语言契约变更（层级判据见 `ADR-024 D6`；
   目录约定见 `docs/README.md`）
 - 发现来源：P0 审计的 E3 实测顺带观察
-  （`docs/issue-interpreter-hir-gap-audit-2026-09-12.md` §7.4 观察 1）
+  （`docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md` §7.4 观察 1）
 - 关联：`docs/spec/diagnostic-codes.md`（E7-001 定义；注意该表自述「权威以
   `Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml` 为准」）；
   `docs/issue-diagnostic-channel-parity-2026-09-12.md`（**另一回事**：那条工单管
