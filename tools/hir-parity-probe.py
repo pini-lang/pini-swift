@@ -215,8 +215,11 @@ When even `pgrep` is unavailable the sweep says containment is unavailable and
 reports the stray .ll files instead of claiming success.
 
 Usage:  python3 tools/hir-parity-probe.py [--root DIR]... [--filter SUBSTR]
-                                        [--timeout SECONDS]
-Output: /tmp/hir-parity-sweep.tsv  (+ summary on stdout)
+                                        [--timeout SECONDS] [--out FILE]
+Output: /tmp/hir-parity-sweep.tsv by default; --out redirects it.
+        (A fixed destination made a mutation sweep overwrite the frozen
+        baseline silently -- measured 2026-09-15. Callers that run a
+        mutation must now point --out somewhere of their own.)
 """
 
 import argparse
@@ -605,16 +608,19 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
 
 
 def main():
-    global RUN_TIMEOUT
+    global RUN_TIMEOUT, OUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", action="append", default=None)
     ap.add_argument("--filter", default=None,
                     help="only fixtures whose repo-relative path contains this")
     ap.add_argument("--timeout", type=int, default=RUN_TIMEOUT,
                     help="per-channel wall clock, seconds (default %d)" % RUN_TIMEOUT)
+    ap.add_argument("--out", default=OUT,
+                    help="per-fixture TSV destination (default %s)" % OUT)
     args = ap.parse_args()
     roots = args.root or DEFAULT_ROOTS
     RUN_TIMEOUT = args.timeout
+    OUT = args.out
 
     if not os.access(BIN, os.X_OK):
         print("pini binary missing at %s\n  swift build --disable-sandbox "
