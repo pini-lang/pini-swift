@@ -1,6 +1,6 @@
 # Issue: LLVM 端 `get` / `unchecked` 内建方法零实现
 
-- **状态**：Open（2026-09-04 批 C2 勘测新立案，自 M2 账面拆出；**2026-09-13 工单整理批勘误并刷新** —— 见下「勘误与刷新」节，开放面收窄为 `Dictionary.get`；证据 E-161）
+- **状态**：Open（2026-09-04 批 C2 勘测新立案，自 M2 账面拆出；**2026-09-13 工单整理批勘误并刷新** —— 见下「勘误与刷新」节，开放面收窄为 `Dictionary.get`）
 - **归属**：LLVM 后端 / 内建方法
 - **关联**：`docs/spec/issue/archive/issue-host-optional-slice-2026-08-28.md`（M2 账面已出清；本缺陷为其勘测副产品）/ ADR-008（C-ABI 运行时）/ `Optional` 枚举 IR ABI（`%enum.Optional`，AggregateEmitter 已具备）
 

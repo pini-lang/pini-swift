@@ -1,6 +1,6 @@
 # Issue：元组类型注解的标签数与分量数不一致（推断静默跳过 + 三处空标签生产点）
 
-- 状态：**Open（2026-09-10 立案；非 M6a 阻塞项。**2026-09-13 工单整理批订正**：原写「源码未改」已失真 —— P2a 第 2 格 G2 已改 `Sources/PiniCore/Type/TypeInference.swift` 两处（调用推断分支 `:180` 与方法返回推断分支 `:334`，`.tuple(labels: [], elements: sig.returns, ...)` → `.tuple(labels: sig.returnLabels, elements: sig.returns, ...)`），本单「不变量与实测差异」表中**仍有三处空标签生产点**：高阶被调者分支 `:191`、元组字面量分支的静默跳过、以及 `Sources/PiniCore/Type/TypeChecker.swift` payload 形状处。证据 E-161）**
+- 状态：**Open（2026-09-10 立案；非 M6a 阻塞项。**2026-09-13 工单整理批订正**：原写「源码未改」已失真 —— P2a 第 2 格 G2 已改 `Sources/PiniCore/Type/TypeInference.swift` 两处（调用推断分支 `:180` 与方法返回推断分支 `:334`，`.tuple(labels: [], elements: sig.returns, ...)` → `.tuple(labels: sig.returnLabels, elements: sig.returns, ...)`），本单「不变量与实测差异」表中**仍有三处空标签生产点**：高阶被调者分支 `:191`、元组字面量分支的静默跳过、以及 `Sources/PiniCore/Type/TypeChecker.swift` payload 形状处）**
 - 发现来源：LLVM 重写 M6a G16 格勘测（`.0` / 解构 / 多槽返回语料差分 fixture
   编写时踩中；先表现为 HIR 降载的 `requireAssignable` 类型不匹配）
 - 关联：`docs/issue-llvm-rewrite-plan-2026-09-07.md`（M6a 准备批 D7）；

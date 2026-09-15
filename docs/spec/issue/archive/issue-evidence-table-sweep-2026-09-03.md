@@ -197,3 +197,25 @@ User decision, against the tentative proposal in the previous draft. Deletion is
 - No ID renumbering or migration — withdrawn under D-3.
 - No C-domain test-directory regrouping (separate issue; `docs/spec/test-dir-taxonomy-2026-09-03.md`).
 - No change to the `assertion` / `spec_ref` / `code_ref` / `note` field semantics — §1.4's symbol-over-line rule stands unchanged.
+
+---
+
+## 8. Superseded (appended 2026-09-15; the body above is kept verbatim)
+
+D-3's ID space (`E-NNN`, three digits) is retired. Table ids are now a date prefix
+plus a self-describing phrase, and spec §1.4 forbids citing a table id from any
+other carrier — a rolling table makes every external citation dangle, so the rule
+is "do not cite", not "cite carefully". What replaced the dangling-debt record is
+a gate: `tools/evidence_sweep.py --check` reports every number outside the table
+that carries no `（源已删除）` mark and exits non-zero, and `hooks/pre-commit` runs
+it on every commit.
+
+Two parts of this document survive unchanged, and both matter for reading it:
+
+- Its `meta.scan_exclude` entry stays. This issue **measures** the citation
+  surface; without the exemption it would be reported as violating itself.
+- D-3's "the script does not manage IDs" still holds in full — the script
+  allocates nothing, renumbers nothing, and never rejects an entry by its id.
+  Only the *shape* of an id changed.
+
+Registration: `docs/spec/issue/issue-evidence-id-retype-2026-09-15.md`.

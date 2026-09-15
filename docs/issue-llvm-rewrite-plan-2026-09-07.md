@@ -124,7 +124,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
   （IRExecutionTests 83 / RuntimeBackendTests 15 / IRPrintGoldenTests 2）。
   三象限实测：完整环境 1226/0/0 skip（全绿面不变）；假 `PINI_LLVM_BIN` + 剥 PATH
   → 51 中 37 硬失败（修复前为静默 skip——两次假「门关」的根因关闭）；剥 PATH
-  未配置 → 37 skip 全部带单行说明。证据 E-137。下一步 M2（能力清单批）待点名。
+  未配置 → 37 skip 全部带单行说明。证据 E-137（源已删除）。下一步 M2（能力清单批）待点名。
 - **M2 完成（2026-09-07）**：能力清单批落地。`tools/capability-sweep.sh`
   （可复跑）+ `tools/capability-sweep.tsv` + `docs/llvm-capability-matrix.md`。
   **两处勘误**：语料实为 59 个 `.pini`（非 1010，工单 M2 节原记数是早期勘察噪声）；
@@ -161,7 +161,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     解释器无 float 比较分支（issue-interpreter-float-compare）、旧后端
     print(I64) 非法 sext（issue-legacy-i64-print-sext）、print(F64) 双后端
     格式分歧（issue-print-f64-format-parity）。
-  - **批③**（本提交）：计划工单回填 + E-139 证据登记 + 全量回归零回归验证 +
+  - **批③**（本提交）：计划工单回填 + E-139（源已删除） 证据登记 + 全量回归零回归验证 +
     合 main。
   - **排期登记（避免跨会话遗失）**：
     - issue-interpreter-float-compare → **M5 首格（G1）开工前的前置小批**：
@@ -184,7 +184,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     fixture（1e15/1e16、1e-4/1e-5 阈值等），19/19 逐字节一致。
   - **工单收口**：float-compare Closed（LR-7）；print-f64-format-parity
     Closed（LR-8，旧后端 %f 遗留随 M6 消亡）；legacy-i64-print-sext
-    Closed（LR-10 wontfix）。证据 E-140 / E-141。
+    Closed（LR-10 wontfix）。证据 E-140 / E-141（源已删除）。
   - 全量回归零回归后合 main。下一步 M5 分格扩张批（G1 try-else 起）待点名，
     开工前先出细化步骤。
 - **M5 分格扩张批进行中（2026-09-08，细化步骤经用户批准；LR-11=除名立案 /
@@ -351,7 +351,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     - 构造：裸零载荷标识符（plus）、位置调用 圆(2.0)、具名标签调用
       identifier(text= x)、限定 形状.圆(...)（类型名接收者）、dot-case
       .圆(...) / .none，跨枚举同名经 checker BareCaseResolutionRegistry
-      静态决议（E-131 对齐）。
+      静态决议（E-131（源已删除） 对齐）。
     - match：通用骨架增枚举路径（i32 tag 分派、GEP+load 载荷，Optional
       走 extractvalue 双路），具名/_ 绑定、通配末臂、未知 tag panic；
       print(枚举值) 运行期 tag 分派渲染 caseName(p1, p2)。
@@ -419,7 +419,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       `方法__盒_I32`）；`FunctionContext` 增 `genericFuncTemplates`
       供调用点分发。
     - **lazyref.pini 跨格豁免**：`LazyRef<T>(闭包)` 依赖闭包 fat
-      pointer（G6 能力），本格不实现，维持 hir-emit FAIL（E-149 登记
+      pointer（G6 能力），本格不实现，维持 hir-emit FAIL（E-149（源已删除） 登记
       豁免理由）。
     - **验收**：差分 41/41（+2：generic/generic-func 语料直用）；全量
       回归 **1274/0/0**；sweep hir-emit **26/59 → 28/59**。
@@ -452,7 +452,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
       被差分拦住）。
     - **lazyref.pini 维持豁免**：`LazyRef<T>(...)` 是泛型构造但模板未
       在语料内声明（实测：`unknown generic 'LazyRef'`），依赖跨文件/
-      内建泛型（G13 域），G6 解除不了该格（E-149 豁免理由更新）。
+      内建泛型（G13 域），G6 解除不了该格（E-149（源已删除） 豁免理由更新）。
     - **测试维护**：`testGateRejectsLambda` 边界断言过期（lambda 已进
       slice），改为正向 `testLambdaLowersToClosureLiteral`（闭包字面量
       形态断言）。
@@ -956,10 +956,10 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     工单归属，代码零改动，与 a6 / a7 基线一致）。
   - **状态行刷新**：本文档顶部状态行由 M5 终值（差分 60、回归 1293、「M6 门槛达成
     待点名」）更新为 **M6a 终值**（差分 76、回归 1310/0/0、双分母真阻塞 0）。
-  - **证据登记**：`docs/spec/evidence-table.toml` 新增 **E-155**（`status = FRESH`），
+  - **证据登记**：`docs/spec/evidence-table.toml` 新增 **E-155**（源已删除；`status = FRESH`），
     覆盖三格 + 三横切的双分母实测、红证据形态（变异探针）、`fopen` 判空实测、
     验收口径订正与环境事实。登记校验四件事全过：条目数 25 → 26；**存量条目零改动**
-    （E-148 仅随批尾注刷新）；`refresh_note` 尾句为「本次仅新增并现跑重筛 E-155；
+    （E-148（源已删除） 仅随批尾注刷新）；`refresh_note` 尾句为「本次仅新增并现跑重筛 E-155（源已删除）；
     存量条目未重新验证」；status 分布 STALE 13 / PENDING_DELETE 12 / FRESH 1。
   - **工单归档（本批唯一关闭项）**：诊断面工单验收达成——a8 复验
     `PINI_HIR_PIPELINE=1 pini emit examples/concurrency.pini` 给出
@@ -1014,9 +1014,9 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     复制到临时目录连同同目录 `.pini` 兄弟一起跑）与判据第 3 条假阴性（parity 须
     stderr 形状也相同；`testNestedCOWIRContract_2` 因此从 `OK_HARNESS` 重分类为
     `GAP_EXEC`，缺口可见）。新增 `--filter` 便于定向复核。
-  - **证据登记**：`docs/spec/evidence-table.toml` 新增 **E-156**（`status = FRESH`）。
+  - **证据登记**：`docs/spec/evidence-table.toml` 新增本批条目（`status = FRESH`）。
     校验四件事全过：条目数 26 → 27；存量条目零改动；`refresh_note` 尾句为
-    「本次仅新增并现跑重筛 E-156；存量条目未重新验证」；status 分布
+    「本次仅新增并现跑重筛本批条目；存量条目未重新验证」；status 分布
     STALE 13 / PENDING_DELETE 12 / FRESH 2。
   - **新立工单（5 张，均只登记不动手，见 `docs/` 顶层）**：
     `docs/spec/issue/archive/issue-legacy-f64-value-int64-trap-2026-09-11.md`（旧后端 `Int64(value)` 先于

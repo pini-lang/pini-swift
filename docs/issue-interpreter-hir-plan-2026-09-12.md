@@ -417,9 +417,13 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   3. **状态回填**（承载处全清）：计划载体（头部状态块 / §7 P1·P3·P4 行 / 本节 / 开工顺序）+
      立案单 `docs/spec/issue/archive/issue-interpreter-hir-unification-2026-09-07.md` + 审计载体
      `docs/spec/issue/archive/issue-interpreter-hir-gap-audit-2026-09-12.md`（其状态行原滞后两格）+ 两处关联工单。
-  4. **登记不修（本格路由）**：证据表「悬空 ID 口径」—— 挂钩轮删条目后报出 `E-148` / `E-149`
+  4. **登记不修（本格路由）**：证据表「悬空 ID 口径」—— 挂钩轮删条目后报出 `E-148（源已删除）` / `E-149（源已删除）`
      仍被引用，二者位于**常驻计划载体的历史批尾日志**；表 meta 的 `dangling_policy` 所列三类
      （归档件 / 已关闭工单 / ADR 与 spec 历史登记行）**未含此类** ⇒ 口径待裁，本格不动表。
+     **【2026-09-15 补】** 该口径**已作废**：`dangling_policy` 与 `dangling_ids` 于 2026-09-15 废除
+     （该次裁定的结论是「表 ID 本就不允许被外部引用」，故无需再按载体分类给口子），改为
+     「表外出现编号须带「（源已删除）」标注，否则器械报错并拦提交」；登记见
+     `docs/spec/issue/issue-evidence-id-retype-2026-09-15.md`。**本条保留为当时记载**，不再作为现行口径。
   ⇒ **下一格 = P2 第一格（当时写作「标量与算术族」，P2 规划已订正为 G4 容器侧）**。
 - **P2 规划交付（2026-09-13，只读勘测 + 落盘规划，未改任何源码）** ——
   细目载体 `docs/issue-interpreter-hir-p2-plan-2026-09-13.md`（§7 的 P2 行仍为纲要，**冲突以细目件为准**）：
@@ -1078,7 +1082,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   而真值 **319** ⇒ 读数不实；另修其 docstring 的列名（`i_rc` → `a_rc`）。
   **本格零新增缺陷、未立新工单**（4 个假阻塞与 2 个 `CHANGE_REFERENCE` 均由在册载体承载）。
   **范围声明**：**未动 `Sources/` / `Tests/`**（零源码改动）· 未落 G2 判据缺口清单（属下一单元）·
-  未动 G3 / G4 · 未 push。详见 `docs/spec/evidence-table.toml` 的 **`E-168`** 与
+  未动 G3 / G4 · 未 push。详见本批记载与
   `docs/issue-diagnostic-channel-parity-2026-09-12.md` 的「P3-G1 落地记录」节。
 
 - **P3 第二格 G2（判据缺口台账落件）收口（2026-09-15）** —— **P3 拆格 G1–G4 之二**，
@@ -1137,7 +1141,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   9. **零新增缺陷、未立新工单**（13 条全部由在册载体或本件承载）。
  10. **范围声明**：**未改任何 `Sources/` 与 `Tests/` 文件**（零源码、零测试改动）·
    未修台账内任何条目（`CG-13` 当时待裁、`CG-10` 建议随 G3）· 未 push。
-   详见 `docs/spec/evidence-table.toml` 的 **`E-169`** 与台账本体。
+   详见本批记载与台账本体。
 ### P3 附属批（非独立格）：`CG-13` 规范一致性收口（2026-09-15）
 
 **为什么单列一批**：`CG-13` 是 P3-G2 台账里**唯一「需裁决」**的条目，裁决对象是**规范文字**而非代码；
@@ -1192,7 +1196,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 **判据面补充（本批最终读数）**：全量回归 **1269 / 3 skipped / 0 failures**、`exit 0` + swift-testing
 **45 / 14 suites** —— 与基线**逐项相同** ⇒ **零测试位移**（本批只改 `docs/` 与一份**本就 `OK`** 的夹具）·
 doc-links **601** 引用（G2 为 586，**+15 = 本批新增交叉引用**）· comment-lint **L1–L6 全绿** ·
-evidence_sweep `--check` **通过**（drift **1** = `E-168` 陈述 `FRESH`、而按 `validated_at` 已过 1h 变 `STALE`，
+evidence_sweep `--check` **通过**（drift **1** = 上一条（探针判据收窄）陈述 `FRESH`、而按 `validated_at` 已过 1h 变 `STALE`，
 属**时龄漂移、非本批引入**）。
 
 **可复现性**：探针**第二次独立全量重跑**（写到另一个 `--out`，避免污染冻结件）与冻结件
@@ -1200,7 +1204,7 @@ evidence_sweep `--check` **通过**（drift **1** = `E-168` 陈述 `FRESH`、而
 `process leaks 0 lli killed in total, 0 of them at exit; 0 stray .ll removed`、
 `non-terminating fixtures` 段为空 ⇒ 器械可复现、无残留。
 
-**证据登记**：`E-170`（表内 **14 → 15** 条）。⚠️ 登记**之前**器械如实报出 `E-170` **悬空**
+**证据登记**：本条（表内 **14 → 15** 条）。⚠️ 登记**之前**器械如实报出本条**悬空**
 （「文档已引用、表内尚无」），登记后即消除 —— 不是故障，是器械在起作用。
 
 **登记不修（本批新发现，两者都在本批之前就存在）**：新增的表格 lint 在 **124 个 md 文件**中查出 **2 处孤儿行** ——
@@ -1208,5 +1212,5 @@ evidence_sweep `--check` **通过**（drift **1** = `E-168` 陈述 `FRESH`、而
 `docs/issue-llvm-rewrite-plan-2026-09-07.md` **L60**。本批**只登记不修**（与「修字符串」不是同一件事）。
 
 **范围声明**：**未动 `Sources/`**（零源码改动）· 未做 B 组 5 项的**实现**对齐（那是「字符串字节语义格」）·
-未动取址格 · 未做证据表 ID 改型（用户已裁为**第二批**）· 未 push。证据 = `docs/spec/evidence-table.toml` 的 `E-170`。
+未动取址格 · 未做证据表 ID 改型（用户已裁为**第二批**）· 未 push。证据 = 本条。
 

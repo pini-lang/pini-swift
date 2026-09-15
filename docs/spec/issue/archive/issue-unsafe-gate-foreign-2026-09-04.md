@@ -48,5 +48,5 @@ main|func() -> ():
 - 门禁：`TypeChecker` 新增 `foreignFunctionNames`（foreignDecl 注册时并行登记）+ 调用位 `unsafeContextDepth == 0` 拦截，报错样式对齐 `&`/`!`（mismatch，E4-001）。
 - spec §2.7 新增「foreign 调用门禁（F5）」钉定行（含与 ADR-028 D-4 正交性声明）。
 - 迁移面：全仓实测仅 `examples/ffi_module/cstring.pini` 比较测试 1 行裸调 `ffi_strcmp` → 加 `unsafe` 消耗点（与该文件 §④ 注释自述的推荐写法一致）；`ffi.pini` 裸调全在 `|unsafe` 体内、不受影响（实测保持绿）。
-- 实测：E-110 复现件（main 裸调 ffi_malloc）现报 E4-001；`pini test examples/ffi_module/cstring.pini` 2/2；`pini run examples/ffi.pini` 正常。
+- 实测：E-110（源已删除） 复现件（main 裸调 ffi_malloc）现报 E4-001；`pini test examples/ffi_module/cstring.pini` 2/2；`pini run examples/ffi.pini` 正常。
 - 测试：testCheckForeignCallRequiresUnsafeContext（TypeCheckerTests）。

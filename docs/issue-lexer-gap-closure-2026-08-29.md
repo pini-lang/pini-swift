@@ -3,7 +3,7 @@
 > **性质**：自举 L0 阶段收口（对拍门禁盲区暴露 → 宿主补齐 → 自举清账 → 语义决策）。
 > **关联**：ADR-019（字符模型与谓词）/ ADR-020（内建特征化）/ **ADR-021（宽松词法，本 issue 核心）** / G50 / G53  / `docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md`。
 
-- **状态**：**核心 LANDED / §6 残余 OPEN（2026-09-13 工单整理批补记状态行，证据 E-161）** —— §1–§5：七项落地清单全勾、2026-08-29 验收记录全绿（1024 XCTest + 44 SwiftTesting、0 失败）；§6「残余挂账」八项经源码实测**仍逐条成立**，故本单**留在活跃目录**，继续作为该批残余的权威载体（归档件 `docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md` 明示以本节为准）。
+- **状态**：**核心 LANDED / §6 残余 OPEN（2026-09-13 工单整理批补记状态行）** —— §1–§5：七项落地清单全勾、2026-08-29 验收记录全绿（1024 XCTest + 44 SwiftTesting、0 失败）；§6「残余挂账」八项经源码实测**仍逐条成立**，故本单**留在活跃目录**，继续作为该批残余的权威载体（归档件 `docs/spec/issue/archive/issue-unicode-char-predicates-2026-08-29.md` 明示以本节为准）。
 
 ## 1. 背景与发现
 

@@ -2,7 +2,7 @@
 
 - 状态：**LANDED（2026-09-04 批 F）**（2026-09-04 批 D 裁决采纳；同日批 F 实施落地——语义检查层，全量 1198/112/0）
 - 提出方：AI（依 ADR-026 修订指示与 bootstrap-gap-remediation 收口修订转正式提案）
-- 关联：ADR-026 修订（2026-08-30）/ `docs/spec/issue/archive/issue-bootstrap-gap-remediation-2026-08-30.md` 附录 A（G-P2 清账前提）/ ADR-020（`append` 返回 `[any]` 签名契约）；E-121
+- 关联：ADR-026 修订（2026-08-30）/ `docs/spec/issue/archive/issue-bootstrap-gap-remediation-2026-08-30.md` 附录 A（G-P2 清账前提）/ ADR-020（`append` 返回 `[any]` 签名契约）；E-121（源已删除）
 
 ## 动机（指针，不重复论证）
 
@@ -70,5 +70,5 @@
   （元素类型完全不参与检查）——落地后均报 E4-001。
 - **范围外（记录不实施）**：return 位对称检查（D-β 范围仅字面量初始化 / 赋值 /
   append 参数）；`数组<I32>()` 构造形态（D-α 已否决 `[I32]()`，同理由）。
-- spec：type-annotation 产生式新增「元素标注检查」注；E-121；全量 1198/112/0
+- spec：type-annotation 产生式新增「元素标注检查」注；E-121（源已删除）；全量 1198/112/0
   （新增 6 测试，含 `[Any]` / 无标注累积器契约保护）。
