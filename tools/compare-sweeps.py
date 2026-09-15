@@ -6,17 +6,30 @@ fixtures the grid targets and nothing else. This prints the per-verdict deltas
 and the per-fixture verdict changes, flagging blockers resolved and newly
 introduced.
 
+This tuple must track the probe's own blocker set. It had drifted: it still
+named GAP_IR, which P1-4 retired in favour of GAP_HIR_ENGINE, and therefore
+omitted GAP_HIR_ENGINE from its total — so its TRUE BLOCKERS line silently
+undercounted by however many fixtures sat in that slot. Fixed 2026-09-15 (P3-G1).
+WARN_CHANNEL_ASYMMETRY and CHANGE_REFERENCE are deliberately absent: the probe
+keeps them out of its total too.
+
 Usage: python3 tools/compare-sweeps.py <before.tsv> <after.tsv>
 """
 
 import collections
 import sys
 
-BLOCKERS = ("GAP_EXEC", "GAP_IR", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG")
+BLOCKERS = ("GAP_EXEC", "GAP_HIR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG")
 
 
 def load(path):
-    """Read a sweep TSV: verdict, root, fixture, l_rc, h_rc, i_rc, lens, note."""
+    """Read a sweep TSV: verdict, root, fixture, l_rc, h_rc, a_rc, l_len, h_len, a_len, note.
+
+    Skip the header by name, not by position: it is not '#'-prefixed, so it was
+    parsed as a fixture and inflated the corpus total by one (320 for a 319-fixture
+    corpus) until 2026-09-15 (P3-G1). Verdict totals were unaffected, but a wrong
+    fixture count is exactly the kind of reading this tool exists to get right.
+    """
     rows = {}
     with open(path, encoding="utf-8") as handle:
         for line in handle:
@@ -24,7 +37,7 @@ def load(path):
             if not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
-            if len(parts) < 3:
+            if len(parts) < 3 or parts[0] == "verdict":
                 continue
             rows[parts[2]] = parts[0]
     return rows
