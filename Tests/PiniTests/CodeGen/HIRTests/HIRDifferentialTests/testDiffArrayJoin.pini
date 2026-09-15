@@ -5,6 +5,12 @@
 ; receiver. The empty case is an "empty receiver policy" question (empty
 ; string vs panic), not the grapheme-vs-byte axis the contract's B group is
 ; about, which is why it is spelled out here rather than left implied.
+;
+; Non-ASCII extension (2026-09-15, B-group closeout): the five shapes above
+; were pure ASCII, so the grapheme-vs-byte axis this node was suspected of was
+; never actually exercised on disk. The payloads below are chosen to break
+; byte-counting: multi-byte elements, a multi-byte separator, an emoji ZWJ
+; sequence, and a separator wider than one byte on its own.
 
 main|func() -> ():
     var words = ["a", "b", "c"]
@@ -14,4 +20,10 @@ main|func() -> ():
     print(["solo"].join("-"))
     var empty: [String] = []
     print(empty.join("-"))
+    var cjk = ["你好", "世界"]
+    print(cjk.join("-"))
+    print(["日本語", "한국어"].join("‖"))
+    print(["👨‍👩‍👧", "👍"].join("·"))
+    print(cjk.join(""))
+    print(["孤"].join("‖"))
     return
