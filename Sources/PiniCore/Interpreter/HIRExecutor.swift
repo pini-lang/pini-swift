@@ -365,6 +365,16 @@ public final class HIRExecutor: DebugHookHost {
             return try currentEnv.get(name: name)
 
         case .binary(let op, let lhs, let rhs, _):
+            let left = try evaluate(lhs)
+            let right = try evaluate(rhs)
+            // P4-0: min/max lower to HIR operators but reach the interpreter as
+            // builtin calls, so they have no operator to map onto. Call the
+            // shared builtin instead of failing.
+            switch op {
+            case .minOf: return try Interpreter.builtinMin(left, right)
+            case .maxOf: return try Interpreter.builtinMax(left, right)
+            default: break
+            }
             guard let mapped = HIRExecutor.operatorFor(op) else {
                 throw RuntimeError.invalidOperation(
                     reason: "HIR executor: binary operator '\(op)' has no interpreter "
@@ -372,11 +382,14 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            let left = try evaluate(lhs)
-            let right = try evaluate(rhs)
             return try Interpreter.binaryValue(left, mapped, right)
 
         case .unary(let op, let operand, _):
+            // P4-0: same reason as min/max above -- abs lowers to a HIR unary
+            // operator but is a builtin call on the interpreter channel.
+            if case .abs = op {
+                return try Interpreter.builtinAbs(try evaluate(operand))
+            }
             guard let mapped = HIRExecutor.operatorFor(op) else {
                 throw RuntimeError.invalidOperation(
                     reason: "HIR executor: unary operator '\(op)' has no interpreter "
@@ -414,6 +427,20 @@ public final class HIRExecutor: DebugHookHost {
             // this is a callee-resolution rule.
             if let target = functions[name] ?? methods[name] {
                 return try call(target, args: try arguments.map { try evaluate($0) })
+            }
+            // P4-0: sqrt is intrinsic on this channel -- the LLVM side declares
+            // @sqrt and the interpreter answers it as a builtin. Call the shared
+            // builtin rather than delegating the callee to a live interpreter,
+            // which is what the note above rules out.
+            if name == "sqrt" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: sqrt expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                return try Interpreter.builtinSqrt(args[0])
             }
             throw RuntimeError.invalidOperation(
                 reason: "HIR executor: no module-level function named '\(name)' and no "

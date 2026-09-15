@@ -3358,36 +3358,12 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
   )
  }
  if fv.name == "abs" {
- switch args[0] {
- case .int(let v):
- // Int.min 的绝对值超出 Int 表示范围，必须显式拦截，否则 abs(Int.min) 触发整数溢出 trap
- if v == .min {
- throw RuntimeError.invalidOperation(
- reason: "abs 整数溢出: \(v) 超出 Int 表示范围",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- return .int(abs(v))
- case .float(let v): return .float(abs(v))
- default:
- throw RuntimeError.invalidOperation(
- reason: "abs 的参数必须是数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ return try Interpreter.builtinAbs(args[0])
  }
  if fv.name == "min" || fv.name == "max" {
- switch (args[0], args[1]) {
- case (.int(let a), .int(let b)):
- return fv.name == "min" ? .int(Swift.min(a, b)) : .int(Swift.max(a, b))
- case (.float(let a), .float(let b)):
- return fv.name == "min" ? .float(Swift.min(a, b)) : .float(Swift.max(a, b))
- default:
- throw RuntimeError.invalidOperation(
- reason: "min/max 的参数必须是同类型数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ return try (fv.name == "min"
+ ? Interpreter.builtinMin(args[0], args[1])
+ : Interpreter.builtinMax(args[0], args[1]))
  }
  if fv.name == "F64" {
  // G-P1：值构造（见 BuiltinRegistry 同名条目注释）
@@ -3402,15 +3378,7 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
  }
  if fv.name == "sqrt" {
- switch args[0] {
- case .int(let v): return .float(sqrt(Double(v)))
- case .float(let v): return .float(sqrt(v))
- default:
- throw RuntimeError.invalidOperation(
- reason: "sqrt 的参数必须是数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ return try Interpreter.builtinSqrt(args[0])
  }
  if ["sin", "cos", "tan"].contains(fv.name) {
  let v: Double
@@ -3651,6 +3619,72 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  /// **逐字节一致**的展示串——这是差分探针的比较基准，故展示语义只允许存在一份。
  /// 本函数只引用静态常量（`builtinErrorTypeName` / `builtinCancelErrorTypeName`），
  /// 不读任何实例状态，故提取不改变行为。
+ // MARK: - P4-0: static single sources for the math builtins
+ //
+ // abs / min / max / sqrt used to be inlined in the builtin dispatch chain
+ // below. The HIR engine needs them too: abs/min/max lower to operators and
+ // sqrt lowers to a call, so without a shared source the two channels would
+ // each define them. Lifted here so both call one implementation, boundaries
+ // included -- notably the Int.min guard in abs, which would otherwise be
+ // re-derived (and is easy to get wrong) on the HIR side.
+
+ static func builtinAbs(_ value: Value) throws -> Value {
+ switch value {
+ case .int(let v):
+ // Int.min has no representable absolute value; without this guard
+ // abs(Int.min) traps on integer overflow.
+ if v == .min {
+ throw RuntimeError.invalidOperation(
+ reason: "abs 整数溢出: \(v) 超出 Int 表示范围",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ return .int(abs(v))
+ case .float(let v): return .float(abs(v))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "abs 的参数必须是数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ static func builtinMin(_ a: Value, _ b: Value) throws -> Value {
+ switch (a, b) {
+ case (.int(let x), .int(let y)): return .int(Swift.min(x, y))
+ case (.float(let x), .float(let y)): return .float(Swift.min(x, y))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "min/max 的参数必须是同类型数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ static func builtinMax(_ a: Value, _ b: Value) throws -> Value {
+ switch (a, b) {
+ case (.int(let x), .int(let y)): return .int(Swift.max(x, y))
+ case (.float(let x), .float(let y)): return .float(Swift.max(x, y))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "min/max 的参数必须是同类型数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ static func builtinSqrt(_ value: Value) throws -> Value {
+ switch value {
+ case .int(let v): return .float(sqrt(Double(v)))
+ case .float(let v): return .float(sqrt(v))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "sqrt 的参数必须是数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
  static func stringifyValue(_ value: Value) -> String {
  switch value {
  case .int(let v): return String(v)
