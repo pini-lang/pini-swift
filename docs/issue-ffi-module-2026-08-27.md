@@ -1,6 +1,6 @@
 # Issue: FFI 模块示例专项 — 缺陷与待办收录
 
-- **状态**：Open（**2026-09-13 工单整理批刷新**：B1–B3 与 P3 已出账、P2 已转出为提案，真开放项只剩 **P1**（foreign 输出绕过 `outputSink`）与 **P4**（vendored 库跨平台工程化）；证据 E-161）
+- **状态**：Open（**2026-09-13 工单整理批刷新**：B1–B3 与 P3 已出账、P2 已转出为提案，真开放项只剩 **P1**（foreign 输出绕过 `outputSink`）与 **P4**（vendored 库跨平台工程化））
 - **提出视角**：测试工程师（examples/ffi_module 示例与 FFIModuleTests 门禁交付过程中发现）
 - **关联交付**：`examples/ffi_module/`、`Tests/PiniTests/FFIModuleTests/FFIModuleTests.swift`
 - **范围**：本 issue 不拆分子工单，统一收录 FFI 示例独立性改造中遇到的全部缺陷、坑与建议。
@@ -26,7 +26,7 @@
 | # | 行为 | 影响 | 当前规避方式 |
 |---|---|---|---|
 | G1 | foreign 符号为**文件级作用域**，跨文件不可见（报错 E5-017 undefined function） | 多文件模块里 raw 调用必须与 `[X\|foreign]` 声明同文件 | **已钉定（2026-09-04 批 D）**：文件级作用域入 spec §2.7（最小暴露原则），残余清零 |
-| G2 | `load` 返回动态 `Any`；仅在**非 unsafe 上下文**（main / `\|test` 块）用 `unsafe load(p)` 才能显式标注收回具体标量；`\|unsafe` 函数体内 `load` 恒为 `Any`，无法转具体类型 **〔时间线注记 2026-09-04〕本行为描述写于 ADR-015 Phase 2a 落地之前，已过时：现 load 按指针元素类型编解码返回类型化值（spec §2.7），实测 main 内裸 `load(p)` 不报 E4-001、正常解码（E-111）；§2.7 与本表 G2 语义以 spec 为准** | 「读回指针值」的演示只能放在 main / `\|test`，unsafe 封装函数只能返回 `*U8`（由调用方读取） | 值读取移出 unsafe 函数体 |
+| G2 | `load` 返回动态 `Any`；仅在**非 unsafe 上下文**（main / `\|test` 块）用 `unsafe load(p)` 才能显式标注收回具体标量；`\|unsafe` 函数体内 `load` 恒为 `Any`，无法转具体类型 **〔时间线注记 2026-09-04〕本行为描述写于 ADR-015 Phase 2a 落地之前，已过时：现 load 按指针元素类型编解码返回类型化值（spec §2.7），实测 main 内裸 `load(p)` 不报 E4-001、正常解码（E-111）（源已删除）；§2.7 与本表 G2 语义以 spec 为准** | 「读回指针值」的演示只能放在 main / `\|test`，unsafe 封装函数只能返回 `*U8`（由调用方读取） | 值读取移出 unsafe 函数体 |
 | G3 | `==` 仅对 **I32** 可靠；U64/U8/指针比较在 `assert` 参数内报类型错，仅在 `if` 条件内对 foreign 直接返回值可用 | `\|test` 断言只能对 I32 返回（atoi/strcmp）用干净 `assert`，U64/U8 结果改用 `main` 经 golden 输出验证 | `if/else + assert(Bool)` 或 golden 比对 |
 | G4 | foreign C 调用（如 `puts`）直写真实 stdout，绕过解释器 `outputSink` | 进程内测试捕获不到该输出行，`pini run` 终端可见 | golden 测试排除 puts 行并在注释说明 |
 

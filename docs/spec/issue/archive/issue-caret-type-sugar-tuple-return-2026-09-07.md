@@ -58,4 +58,4 @@ DoD 核验：
   §A.2.3 在案），仅文档反录。
 - `examples/try.pini` 与 spec 样例一致 ✅（样例即取自该文件实测形态）。
 
-证据登记：E-135（FRESH，`docs/spec/evidence-table.toml`）。
+证据登记：E-135（源已删除；FRESH，`docs/spec/evidence-table.toml`）。

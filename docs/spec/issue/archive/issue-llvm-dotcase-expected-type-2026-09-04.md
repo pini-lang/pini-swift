@@ -1,7 +1,7 @@
 # Issue：LLVM 端点号构造的期望类型线程缺位
 
 - 状态：**Closed**（2026-09-07 落地：复用 checker 静态决议表，单点修改覆盖全部构造形态）
-- 关联：proposal-dot-case-construction-2026-08-30（已 LANDED 归档）；E-120、E-131
+- 关联：proposal-dot-case-construction-2026-08-30（已 LANDED 归档）；E-120、E-131（源已删除）
 
 ## 现状
 
@@ -49,7 +49,7 @@ LLVM 端若要支持「歧义 case + 期望类型」的点号构造，需给 `ge
   `BareCaseResolutionRegistry.reset()` 仅在 `check()` 开头——IRGen 查表时数据完好。
 - 唯一名路径不进歧义分支，golden IR 字节级不变。
 
-**验证**（E-131）：
+**验证**（E-131）（源已删除）：
 
 - CLI 冒烟三态：点号歧义 + 期望类型 = 42（Shape.Circle 正确构造）；裸名歧义 + 期望类型 = 42；
   无期望类型 checker 层 E4-001 拒绝（fail-open 守卫）。
@@ -57,6 +57,6 @@ LLVM 端若要支持「歧义 case + 期望类型」的点号构造，需给 `ge
   （checker 先行 harness 变体）、`testAmbiguousCaseWithoutResolutionRejected`（无 checker 时
   IRGen 层维持拒绝，无门控恒执行）。
 - 门开全量 1214 / 0 失败；真门关 1214 / 0 / 114 skipped（+2 门控 skip）。
-- **勘误**：E-130 所记「门关 112 skipped」实为门开假象——`which lli` 命中
+- **勘误**：E-130（源已删除） 所记「门关 112 skipped」实为门开假象——`which lli` 命中
   `/opt/homebrew/opt/llvm/bin`（llvm keg 路径在默认 PATH 可见），门判据 PATH 漂移再现；
   运行期统一判据仍未落地（遗留，见活跃账本）。

@@ -60,6 +60,15 @@ for cand in python3 python3.13 python3.12 python3.11; do
   fi
 done
 if [ -n "$ev_py" ]; then
+  # 证据编号引用门禁（spec §1.4「ID 不得被外部引用」；2026-09-15 口径）
+  # 表内 ID 是滚动清扫的，外部载体引用它必然悬空 ⇒ 表外出现 E-NNN 而没带
+  # 「（源已删除）」标注即违例。这是正确性闸门，与下面的清扫（维护节拍、可跳过）
+  # 分开：本段在解释器可用时**不跳**。
+  "$ev_py" "$root/tools/evidence_sweep.py" --check --quiet || {
+    echo "⛔ pre-commit: 证据编号引用违规（见上）：表外编号须带「（源已删除）」标注或去掉编号。" >&2
+    exit 1
+  }
+
   if git diff --quiet -- docs/spec/evidence-table.toml; then
     ev_before="$(git hash-object docs/spec/evidence-table.toml 2>/dev/null || true)"
     "$ev_py" "$root/tools/evidence_sweep.py" --hook || exit 1

@@ -1,7 +1,7 @@
 # Issue: Host Optional/Subscript runtime incoherence (P2-E incomplete)
 
 - Date: 2026-08-28
-- Status: INTERPRETER-FIXED / LLVM-M2-CLEARED → **LANDED / 已归档**（2026-09-04 批 C2 落地，见文末 M2 出清记录；2026-09-13 工单整理批核验归档，证据 E-161）。两处子项去向：LLVM-M2 分歧面已由 `docs/spec/adr/adr-028-subscript-safety-channels.md` 取代；次要件 `and` / `or` / `not` 经规范判定**不登记** —— Pini 逻辑运算符为 `&&` / `||` / `!`（`docs/spec/pini-spec-v0.md` 运算符表与关键字表同此）
+- Status: INTERPRETER-FIXED / LLVM-M2-CLEARED → **LANDED / 已归档**（2026-09-04 批 C2 落地，见文末 M2 出清记录；2026-09-13 工单整理批核验归档）。两处子项去向：LLVM-M2 分歧面已由 `docs/spec/adr/adr-028-subscript-safety-channels.md` 取代；次要件 `and` / `or` / `not` 经规范判定**不登记** —— Pini 逻辑运算符为 `&&` / `||` / `!`（`docs/spec/pini-spec-v0.md` 运算符表与关键字表同此）
 - Related: P2-E (spec G48); issue-lexer-gaps-2026-08-28 (P2-E item); self-hosted lexer plan SHELVED pending this fix.
 
 ## Context
@@ -133,7 +133,7 @@ P2-C 既有 backlog）。两侧现存在系统性分歧：
    `bk_panic`，**双后端天然对齐**）；`some/none` 严格枚举语义实挂于 `get(i)` 方法通道。
    本节原拟的「下标读 some/none 分歧」前提不再成立。
 2. 实证：移除 skip 后 clang 通道（同 IR + 同 shim，本机唯一可执行通道）`testArrayViaRuntimeClang`
-   **真绿**；其余测试落到环境门（lli/clang 可用性，与 E-076 同惯例——本机与 CI 均无 lli）。
+   **真绿**；其余测试落到环境门（lli/clang 可用性，与 E-076（源已删除） 同惯例——本机与 CI 均无 lli）。
 3. **勘测副产品（新立案）**：LLVM 端 `get`/`unchecked` 内建方法零实现——
    见 `docs/issue-llvm-get-unchecked-2026-09-04.md`（含 `Optional` IR ABI 已在位的有利条件与验收口径）。
 4. 嵌套容器 + `!` 剥壳 + `unsafe` 子系统相关测试（`testNestedSubscriptWriteBothBackends` /

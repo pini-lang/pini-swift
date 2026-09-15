@@ -25,4 +25,4 @@ parseTraitDecl 的方法体循环终止条件需对齐 parseExtensionDecl 的同
 - 实测：p23/p24/p21 三探针 PASS；双带体方法回归 PASS（该路径 dedent 由 parseBlock 消费、justDedented=false 进方法分支，与修复无交集）；双抽象方法+结构块 PASS。
 - GCT 三钉：testProductionsTraitBodyTerminatedByStructDecl / testProductionsTraitBodyTerminatedByExtensionDecl / testProductionsTraitMultipleMethodsWithBodies（回归钉）；夹具同名入库。
 - spec：trait-body 产生式加终止注记；**IDENT 同形歧义登记**（trait 后直接跟顶级裸函数会被吸收为 trait-method——spec `{ trait-method }` 贪婪语义与宿主一致，属语法设计欠定义而非本缺陷，规避法已注记；若需消除须 spec §1.3 立项）。
-- 证据：E-129。
+- 证据：E-129（源已删除）。

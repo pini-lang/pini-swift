@@ -72,4 +72,4 @@ DoD 核验：
 - 六门回归证明 ✅（行内注释恢复后 GREEN，baseline 未动）；
 - shell 脚本稳健化：按裁决①不做，「baseline 键值行禁尾注」约定维持文字记载 ✅。
 
-证据登记：E-136（FRESH，`docs/spec/evidence-table.toml`）。
+证据登记：E-136（源已删除；FRESH，`docs/spec/evidence-table.toml`）。

@@ -6,7 +6,7 @@
   返回 `.bool`）；混合 int/float 比较维持 TypeChecker 拒绝（E4-001 实测，
   非解释器层缺口）。TDD：`testFloatCompare` 红（E5-003 复现）→ 绿；
   差分套件补 `testDiffFloatCompare`（18→19 fixture 中的第一个）。
-  证据 E-140。
+  证据 E-140（源已删除）。
 - 发现渠道：HIR 差分测试批②——fixture `print(sum == 3.0)`（两个 F64 相等比较）
   在解释器通道直接抛 RuntimeError，LLVM 通道 fcmp 正常。
 

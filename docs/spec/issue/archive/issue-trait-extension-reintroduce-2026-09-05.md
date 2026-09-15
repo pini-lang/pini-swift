@@ -39,4 +39,4 @@
 - 改动面：Lexer 单点（行首 `<<` 只消费第一个 `<` 返回 `.lessThan`，第二个 `<` 由正常路径产出；`awaitingFirstTokenOfLine` 标志逐行置位/清除）+ Parser 闭合位一处（traitExt 闭合接受合并态 `.rightShift` 或分离态 `.greaterThan` ×2）。
 - spec：extension-decl `'<<' IDENT '>>' trait-body` 产生式加落地注（含词法消歧判据与闭合双态说明）；顺手修正批残留的 `[:' type-annotation]` 笔误（`{{` 行）。
 - 钉子：GCT `testProductionsTraitExtensionBlock`（词法 4-token 断言 + traitExt 扩展块断言）、`testProductionsInlineShiftStaysBinary`（行内 `a << 2` 维持 binary leftShift）；夹具只含扩展块本体，避开 trait 块终止性既有 Open 缺陷面。
-- 证据：E-128。
+- 证据：E-128（源已删除）。

@@ -191,7 +191,7 @@ if l_out == h_out and bool(l_err.strip()) == bool(h_err.strip()):
 ### 本单仍未做的（保持 Open 的理由）
 
 诊断通道本身的对齐（A / B / C）· 三条边并集的单一判据（③）· 任何 `run-llvm` 侧改动。
-详见主计划 §13 的 P3-G1 条目与 `docs/spec/evidence-table.toml` 的 `E-168`。
+详见主计划 §13 的 P3-G1 条目。
 
 ## P3-G2 补记（2026-09-15）：本单派生的**判据**后果已收敛进台账
 
