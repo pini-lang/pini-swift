@@ -101,15 +101,24 @@ HIR 后出现，故照解释器塑形。HIR 统合后，两侧都是枢纽的消
 | A3 | `fileWrite` | 返回 `fclose` 的 **i32** | 裸 i32 泄入语言层 |
 | A4 | `stringSplit` | **跳过空 token**（`"a,,b"` → 2 段） | 与 Swift/Python/JS 主流相反；`len` 同步为 2 |
 
-**B 组（6 项）不受判准影响**：`stringSubstring` / `stringCase` / `len` / `contains` /
-切片 / `arrayJoin` —— `ADR-019 D1` 已钉 grapheme 模型、`stringSubstring` 的注册表已定
+**B 组（5 项）不受判准影响**：`stringSubstring` / `stringCase` / `len` / `contains` /
+切片 —— `ADR-019 D1` 已钉 grapheme 模型、`stringSubstring` 的注册表已定
 `(start, end)`，属**规范已裁决、实现偏离**，走修实现对齐规范，**不占裁决额度**。
+（`arrayJoin` 已于 2026-09-15 移出本组，见下方订正记载。）
 
 > **P1-4 订正记载（2026-09-12，非新规范内容）**：`arrayJoin` 的 B 组归属**系按邻近归类给出，
 > 当时未经实测**（`docs/spec/hir-contract.md` §2.40 原文自述「本轮未实测行为」「差异缺探针」）。
-> P1-4 补探针实测后，`interp-ast` 与 `llvm-hir` 在五类接收者形态与非 ASCII 输入上**逐字节一致**
-> ⇒ 该节点的「实现偏离」**测量未予支持**。**正式移出 B 组属规范内容变更，本 ADR 不擅自改判**；
-> 待裁后 B 组应为 **5 项**。证据落 `docs/spec/hir-contract.md` §2.40。
+> P1-4 补探针实测后，`interp-ast` 与 `llvm-hir` 在五类接收者形态上**逐字节一致**
+> ⇒ 该节点的「实现偏离」**测量未予支持**。
+>
+> **移出裁决记载（2026-09-15，用户裁决 + 本批落地）**：**`arrayJoin` 正式移出 B 组，
+> B 组为 5 项**（`§2.22` / `§2.23` / `§2.36` / `§2.37` / `§2.38`）；规范文字已同步
+> （`docs/spec/hir-contract.md` §0.4 / §2.40 / §6）。⚠️ 执行前提是**先补非 ASCII 测试** ——
+> 原文「与非 ASCII 输入上逐字节一致」的断言此前**无落地载体**（指明载体为 **752 字节纯 ASCII 文本**，
+> 非 ASCII 字符数 = 0）；本批已补测并补入夹具（`testDiffArrayJoin.pini`，三臂各 **49** 字节、
+> `FLIP BLOCKERS 0`）⇒ 断言现可核验。补测中的**伴生发现**（同字形不同码点的字符串字面量碰撞）
+> 与本次裁决**无关**，已另立工单 `docs/issue-hir-string-literal-grapheme-collision-2026-09-15.md`
+> （登记不修）。
 
 **C 组（4 项）**：`stringConcat` / `interpString` / `isAsciiDigit` / `printMulti` —— 差异在
 「怎么实现」不在「结果是什么」，**规范改写即可，零行为变更**。

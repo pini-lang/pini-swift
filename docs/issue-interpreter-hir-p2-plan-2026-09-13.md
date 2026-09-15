@@ -140,7 +140,7 @@ l_out == a_out  →  GAP_BEHAVIOR  （阻塞）
 |---|---|---|---|
 | **B 组**（`len` `slice` `stringCase` `stringContains` `stringSubstring`） | **LLVM 侧**（解释器已合契约） | 落 `CHANGE_*` | **不阻塞，但也不转 `OK`** ⇒ 该格验收判据须写成 `CHANGE_*` |
 | **A 组 + 取址**（`fileWrite` `fileRead` `readLine` `stringSplit` `addressOfVar`） | **解释器** | **落 `GAP_UNKNOWN` = FLIP BLOCKER** | ⇒ **必须先把两侧裁齐再做 HIR**，不能靠「照规范写」绕过 |
-| `arrayJoin` | 待裁（P1-4 实测未复现偏离） | —— | B 组正式应为 **5 项** |
+| `arrayJoin` | **已裁、已移出 B 组**（P1-4 实测未复现偏离；2026-09-15 补非 ASCII 测试后正式移出，`ADR-034` / 契约 §2.40 + §6 已同步） | —— | B 组现为 **5 项** |
 
 ⇒ **P2b 的前置 = 先裁齐两侧**（IO 语义格 / `stringSplit` 格 / 字符串字节语义格 / 取址格）。
 它们**均有既有登记**，不需新裁决：IO 与 `stringSplit` 由 P0b 停损 6 拆项并已排期；
@@ -260,7 +260,7 @@ G7 字符串与内建(9) · G8 指针与 LazyRef(5) · G9 IO(3)
 - **下一步 = P3**（需点名）。⚠️ **四张前置格里已做掉两张**（IO 语义格 ✅ 2026-09-14 ·
   **`stringSplit` 格 ✅ 2026-09-15，窄读：只对齐空 token**），其余两张**仍在册未做**
   （与 P2b 无关、不阻塞 P3 之外的面）：**字符串字节语义格**
-  （B 组 6 项 → 实测未复现 `arrayJoin` ⇒ 待裁后应减为 5）· **取址格**（`addressOfVar` 快照 → 真引用）。
+  （B 组 6 项 → 实测未复现 `arrayJoin` ⇒ **已于 2026-09-15 裁移出、现为 5 项**）· **取址格**（`addressOfVar` 快照 → 真引用）。
   ⚠️ **`stringSplit` 的「分隔符语义」不在该格内、已另立新单**（LLVM 侧 `@strtok` ⇒ 分隔符按
   **字符集**解释 + 空分隔符无守卫；待 spec §1.3 裁「子串还是字符集」）—— 见 §8.10 末段。
   更后面：`P0d`（Char 落地）· 字符字面量 `'c'` 格 · 并发 / CPS 格（R2）—— 全景见 §10.4 与本件末。
