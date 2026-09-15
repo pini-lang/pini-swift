@@ -306,7 +306,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 | **P1** | **通道与判据基建**：HIR 引擎骨架 + 引擎开关 + 探针扩为三实通道（`interp-ast` 冻结参照 / `interp-hir` / `llvm-hir`）；**建立规范一致性核验脚本**；**为 Debugger 预留细粒度接口**（逐语句 / 求值 / 输出重定向 / 断点上下文；**REPL 不在本接缝内** —— 实测它不消费 `debugHook`，是独立接缝，见 P1-5 勘测 §7，其迁移前置是「每次求值新建实例」这一形态）<br>**分六步**：P1-1 核验脚本 → P1-2 引擎骨架 → P1-3 引擎开关 → P1-4 探针扩三实通道（含 `arrayJoin` 补探针）→ P1-5 调试面接口预留 → P1-6 收口 | 探针可跑；核验脚本能报出「有节点无规范」「有规范条目无实现锚点」<br>**P1-1 ✅ 已交付 2026-09-12**（`tools/hir-contract-check.py`，**已实测报出真缺口**、变异测试 7/7）；
 **P1-2 ✅ 已交付 2026-09-12**（`Sources/PiniCore/Interpreter/HIRExecutor.swift` + `Tests/PiniTests/CodeGen/HIRTests/HIRExecutorTests.swift`）：60 节点**全分派、无 `default:`**（新增节点必编译失败直到被认领）；15 节点实现（expr 9 + stmt 6）＋ `captureMarker` 显式 no-op；**44 缺口具名 fail-loud**；值展示与算子语义**提取为 `Interpreter` 的 static 单源**（`stringifyValue` / `binaryValue` / `unaryValue`，纯搬移）；9 测试全绿；**变异反证两级 4/4 精确捕获、零挂死**；核验脚本 `interp-hir` 锚点由 `note` 转为 **`covers 60/60`**<br>**P1-3 ✅ 已交付 2026-09-12**（`Sources/PiniCLI/main.swift` +75 行）：引擎开关形态 = **环境变量 `PINI_INTERP_ENGINE`**（`ast` 默认 | `hir`），理由 = `pini run` 位置式无 flag 解析 + **LR-5 不设 CLI 兼容开关**（沿用 `PINI_HIR_PIPELINE` 先例，P4 翻转时同法退役）；**非法值与目录一律报错、不静默回落**（静默回退＝假绿）；开关在**共享前端之后**选定，两条通道看到同一份「已接受」程序；**CLI 级 15/15**（in-range 6 夹具逐字节一致 / out-of-range 5 夹具经 AST 阳性对照后具名 fail-loud 且零 stdout / switch 契约 4 项，含**可运行包在 hir 下被拒且零 stdout**）；**变异反证 3/3、零 stray**<br>**P1-4 ✅ 已交付 2026-09-12**（`tools/hir-parity-probe.py` +196、`tools/three-channel.py` +25、新语料 `testDiffArrayJoin.pini` + 显式测试方法）：**两工具的第三通道此前都是 `run-llvm` 的复制**（M6b 翻转遗留）⇒ 「三通道」实为两通道；本步把 `interp-hir` 接为**独立的 HIR 执行引擎**（`PINI_INTERP_ENGINE=hir`），并**显式指定、绝不继承**（`env.pop` + `env_extra` 两层防御：P4 会翻转默认值，继承会让冻结参照静默变成第二个 HIR 臂——sweep 仍报三通道而实际只测两臂）。新增判据 **`HIR_ENGINE_TODO`**（具名报未实现节点 ⇒ **P2 工作清单，不计入 `FLIP BLOCKERS`**），按节点聚合输出；`GAP_IR`（**P1-4 前即已死**）退役为 `GAP_HIR_ENGINE`；`TIMEOUT_*` 按新臂语义重命名。**基准（73 夹具）：`OK 23` / `HIR_ENGINE_TODO 50` / `FLIP BLOCKERS 0` / 零 stray**。**`arrayJoin` 补探针实测推翻契约的「B 组实现偏离」**——五类接收者形态 + 非 ASCII 分隔符/元素上两实通道**逐字节一致**。**变异反证 5/5**（含两级 + 参照漂移组）<br>**P1-5 S1 ✅ 已交付 2026-09-13**（`Sources/PiniCore/Debugger/DebugHookHost.swift` + `Interpreter.swift` + `HIRExecutor.swift` + 两侧测试）：调试面协议落成，**两台引擎同形符合**；`debugPause` 拆为「按位置暂停」（引擎无关的那半面）+「AST 位置分支」（AST 私有）；`HIRExecutor` 补 `debugHook` 但**不接暂停点** —— HIR 无位置，接了就必然报 `noLocation`，而断点按行号相等匹配 ⇒ 断点永不命中、入口停/单步停在虚构行（比「调试器还不在」更坏）。该休眠态由**会变红的断言**钉住（变异实测：加上暂停点后立即红，失败信息正好打印 `line: 0 / fileName: "<hir>"`）；AST 路径行为**零变更**（两处调用点字节未改、15 例既有调试器用例全绿）；**P1-6 ✅ 已交付 2026-09-13**（纯文档收口：两处口径订正 + 勘测件归档 + 状态回填 ⇒ **P1 六步全部完成**） | 提交级回退 |
 | **P2** | **分格实现**（**九格，族边界以契约 §2/§3 分节为准** ⇒ 细目见 `docs/issue-interpreter-hir-p2-plan-2026-09-13.md`）：G1 控制流 · G2 元组 · G3 闭包与函数值 · G4 集合与下标（**整族 7 节点，随 P2a 交付**） · G5 具名类型与字段 · G6 枚举/Optional/Result/try · G7 字符串与内建 · G8 指针与 LazyRef · G9 IO（**并发不做**）。**分批：P2a 无分歧面 27 缺口先行；P2b 分歧面 17 缺口后置，前置 = 两侧裁齐**（`D-P2-5`：G4 **整族 7 节点**随 P2a；原条目把 `len`/`slice` 划入 P2b，与当时的 26/18 总数矛盾 —— 取总数。⚠️ **2026-09-14 P2a 收尾全扫改定：实为 27/17** —— `D-P2-5` 只回改了 G4 一处、未跟 G1 行 5 与 G7 行 10，随后 `D-P2-7` 又把 `stringConcat` 从 G7 移入 G1，总数与条目至此都不自洽；改定依据 = 实测**闭合账目**（逐格缺口减少数之和 27 = 44 − 17），细目件 §1.1 与 §10）。订正：原手写首格「① 标量与算术」**实测 0 缺口**（P1-2 已实现）⇒ **不占一格** | 每格：三通道**分层读数**（`OK` / `HIR_ENGINE_TODO` / `CHANGE_*` / `FLIP BLOCKERS`，**不可合并成一个数**）+ 该族夹具全绿 + 全量回归 + 变异反证两级。**P2a 判 `OK`；含非 ASCII 语料时 B 组节点（`len`/`slice` 的 `String` 侧）判 `CHANGE_*`**（非阻塞，登记为已知差异） | 逐格可回退，**已完成格序：G4 ✅ → G2 ✅ → G1 ✅ → G6 ✅ → G5 ✅ → G3 ✅（P2a 六格全部交付 2026-09-14；**收尾全扫 ✅ 2026-09-14 ⇒ P2a 验收完毕**）→ G7 ✅ → G8 ✅ → G9 ✅（**P2b 三格全部交付 2026-09-14 ⇒ P2 九格全交付、打靶点 3 → 0、`Sources/` 无 `notImplemented` 残留；格内实录见 §13 与细目件 §8.7–§8.9**）**（**G2 后 `FLIP BLOCKERS` 计数为 4，全为假阻塞、实质分歧 0** —— 见 §13 的 G2 条目；此后因**实质失败新增 2 面**，见 §13 的 G5 条目） |
-| **P3** | **判据升级**：三层判据（§8）落地；制度化「AST 走查冻结」；调试面接口双引擎并行验证（**REPL 是另一条接缝**，随其形态对齐一并验证） | 三层判据可跑；口径文档化 | 提交级回退 |
+| **P3** | **判据升级**：三层判据（§8）落地；制度化「AST 走查冻结」；调试面接口双引擎并行验证（**REPL 是另一条接缝**，随其形态对齐一并验证）<br>**2026-09-15 已点名并拆格**（用户裁定范围为**窄**）：**G1 器械收窄** ✅ **已交付 2026-09-15**（探针 `classify()` 判据重排 + 两个新槽位 + 同族器械 `compare-sweeps.py` 修正；**`FLIP BLOCKERS 27 → 11`**，其中 **7 真（全 `E5-006`、全有在册工单）+ 4 为按决策① 明示接受的已登记假阳性**；实录见 §13 末条）· **G2 判据缺口清单落件**（9 条；含本格实测结果）· **G3 spec 断言层**（用户裁定载体 = **手写 `.expected` 侧车**：语料仍 `.pini`、期望值**人读 spec 手写** + runner 脚本；本批只出设计 + 最小可跑骨架）· **G4 口径冻结**（「AST 走查冻结」的过渡期变更纪律 + 调试面**可验那半面**清单）。⚠️ **③ 调试面的断点/单步半面不占本批**，随 `docs/issue-hir-node-source-position-2026-09-12.md` 走；**REPL 只登记** | 三层判据可跑；口径文档化 | 提交级回退，**G1 可逆性 = 提交级回退**（本格只改 `tools/*.py`、`Sources`/`Tests` 零改动 ⇒ 实测**零测试位移**） |
 | **P4** | **翻转**：默认引擎切 HIR；**Debugger 与 REPL 一并迁到 HIR 引擎**（两条接缝、路径不同：调试面走已备好的协议，REPL 走「每次求值新建实例」的形态对齐）；**删除 AST 走查**（D-B3=A 末态退役） | 全量回归 + 全量探针 0 阻塞 + 763 个解释器用例全绿 + 调试/DAP/REPL 用例全绿 | **不可逆面（等点名）** |
 | **P5** | **收口**：文档 / ADR 落地记录 / 证据登记 / 工单 / 探针口径；订正 `HIRLowerer`/`HIRNode` 自述里的「for the LLVM backend」；**记「selfhost 基线待重校」** | 门禁全绿 | 提交级回退 |
 
@@ -397,7 +397,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
 ## 13. 停止点与开工顺序
 
 - **本轮（规划 + P0c + `ADR-033` 裁决落地 + P0 收口）未改任何源码**；计划已持久化为本文件，交由新会话接手。
-- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1 ✅（六步全部完成 2026-09-13：P1-1、P1-2、P1-3、P1-4、P1-5 S1、P1-6）** → **P2a ✅ 验收完毕（规划 ✅ 2026-09-13；G4 ✅、G2 ✅、G1 ✅、G6 ✅、G5 ✅、G3 ✅ 2026-09-14；**收尾全扫 ✅ 2026-09-14，整体验收判据 `J1`–`J4` 全通过**）** → **P2b（三格：G7 / G8 / G9；前置 = 四张裁决格两侧裁齐）**：**G7 ✅ 2026-09-14（交付 + 收口；实录 = P2 细目件 §8.7）**、**G8 ✅ 2026-09-14（交付 + 收口；实录 = P2 细目件 §8.8）**、**G9 ✅ 2026-09-14（交付 + 收口；实录 = P2 细目件 §8.9）** ⇒ **P2b 三格清空、打靶点清零、P2 无余量** → **P3（判据升级；需点名）** → P4（不可逆，等点名）→ P5。
+- **开工顺序**：**P0 ✅（已收口）** → P0c ✅ → **`ADR-033` 裁决 ✅** → **P0b ✅（已交付 2026-09-12）** → **P1 ✅（六步全部完成 2026-09-13：P1-1、P1-2、P1-3、P1-4、P1-5 S1、P1-6）** → **P2a ✅ 验收完毕（规划 ✅ 2026-09-13；G4 ✅、G2 ✅、G1 ✅、G6 ✅、G5 ✅、G3 ✅ 2026-09-14；**收尾全扫 ✅ 2026-09-14，整体验收判据 `J1`–`J4` 全通过**）** → **P2b（三格：G7 / G8 / G9；前置 = 四张裁决格两侧裁齐）**：**G7 ✅ 2026-09-14（交付 + 收口；实录 = P2 细目件 §8.7）**、**G8 ✅ 2026-09-14（交付 + 收口；实录 = P2 细目件 §8.8）**、**G9 ✅ 2026-09-14（交付 + 收口；实录 = P2 细目件 §8.9）** ⇒ **P2b 三格清空、打靶点清零、P2 无余量** → **P3 ✅ 进行中（2026-09-15 点名；拆 G1–G4）**：**G1 器械收窄 ✅ 2026-09-15**（实录见本 §13 末条）· G2 / G3 / G4 待做 → P4（不可逆，等点名）→ P5。
 - **P1-5 S1 落地（2026-09-13）**：`DebugHookHost` 协议（只含 `debugHook` + `outputSink`）+ 两台引擎
   各自符合；`Interpreter.debugPause` 拆为「AST 位置分支」+「按位置暂停」两半；`HIRExecutor` 补
   `debugHook`（**声明但未接线**，位置未落地前不接暂停点）。落地实录与三处实现偏离见勘测报告 §9。
@@ -1013,3 +1013,68 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   实参报错用词、基准解析未提为单源、`readLine` 的 EOF 分支无夹具覆盖）。
   **P2b 三格至此清空** ⇒ 剩余 = 四张前置裁决格的「两侧裁齐」。详见 P2 细目件 §8.9（实录）、
   §1.1（账目更新）、§9（`D-P2-16`/`D-P2-17`）、§11.5（步骤回填）。
+- **P3 首格 G1（器械收窄）收口（2026-09-15）** —— **P3 已点名，本格为拆格 G1–G4 之首**。
+  对象 = `tools/hir-parity-probe.py` 的 `classify()` 判据面，连同**同族器械** `tools/compare-sweeps.py`。
+  **起点读数**：319 夹具 `OK 249 / OK_HARNESS 4 / PACKAGE_MEMBER 27 / FRONTEND_FAIL 12 /
+  GAP_EXEC 7 / GAP_HIR_ENGINE 20`；`FLIP BLOCKERS 27`。
+  ⭐ **本格最重要的实测判定：`27` = 20 假 + 7 真** —— 20 个 `GAP_HIR_ENGINE` **逐字实测**
+  全为**诊断通道奇偶**（20/20 参照臂 `interp-ast` 同样告警、20/20 LLVM 臂静默，`note` 全 `E7-001`、
+  三臂 stdout 逐字相等、`h_rc=0`），7 个 `GAP_EXEC` 全为 `E5-006` 且**全有在册工单**。
+  ⇒ 该槽位此前把**通道奇偶**记成了「HIR 引擎缺口」，是本格要拆的核心误分类。
+  **用户四项裁定**：① **前移规则 6**（`h_rc != 0` 先于 parity 判定；**明示接受 4 个假阻塞**
+  换取「『HIR 臂失败』再也不能因两侧 stdout 皆空而被报成 parity」）· ② **parity 纳入 `a_out`**，
+  且「参照臂本身偏离」**须给独立槽位**（不塞进 `OK`）· ③ 通道奇偶**落新槽位、非阻塞** ·
+  ④ `compare-sweeps.py` 的**过时阻塞集本格一并修**。
+  **实现面**：`classify()` 签名补 `a_err`（此前在调用点被丢弃 ⇒ 「参照臂说了什么」不可答）、
+  规则 5 前移、规则 6 纳入 `a_out`、`GAP_HIR_ENGINE` **收窄为残差**（不是删除 —— 删了会让
+  「HIR 臂告警而参照臂静默」这一真缺口类失明）、新增 `WARN_CHANNEL_ASYMMETRY`（非阻塞）
+  与 `CHANGE_REFERENCE`（非阻塞）两槽；摘要段新增**诊断通道奇偶独立段**（按错误码聚合，
+  目的是让「不计入总数」成为**可读的决定**而不是一次消失）。文档面同步落 **TIE-BREAK ORDER** 段，
+  写上两组实测数字。
+  **读数（全部本次实测，闭合账目逐槽位守恒：前 319 = 后 319）**：
+  `GAP_HIR_ENGINE 20 → 0`（**全部 20** 入 `WARN_CHANNEL_ASYMMETRY`）、`OK_HARNESS 4 → 0`
+  （4 份**全**入 `GAP_EXEC`）、`OK 249 → 247`（−2 = 2 份入 `CHANGE_REFERENCE`）、
+  `GAP_EXEC 7 → 11`（+4 = 上述 4 份负向测试）、`CHANGE_REFERENCE 0 → 2`、
+  `WARN_CHANNEL_ASYMMETRY 0 → 20`、`FRONTEND_FAIL 12` 与 `PACKAGE_MEMBER 27` **Δ 0**；
+  逐夹具判定变化**恰 26 行**；⭐ **`FLIP BLOCKERS 27 → 11`**。
+  **11 个阻塞逐条（7 真 + 4 假）**：7 真全 `E5-006` —— `testBuiltinMathFloatsViaLLI` /
+  `testBuiltinMathIntegersViaLLI` / `testDiffStdlib` / `examples/stdlib.pini`
+  （→ `docs/issue-hir-builtin-callee-unowned-2026-09-14.md`）+ `testDiffStructValue` /
+  `examples/struct.pini` / `examples/ffi.pini`（→ `docs/issue-hir-struct-copy-missing-2026-09-14.md`）；
+  4 假 = **负向测试** `testArrayOutOfBoundsBothBackendsError`（`E5-005`）·
+  `testArrayWriteOutOfBoundsBothBackendsError`（`E5-006`）· `testDictMissingKeyBothBackends`（`E7-001`）·
+  `testDiffIoProgramBase`（`E5-006`）—— **三臂均如实报错**，`run-llvm` 报 `rc=0` 仅因其
+  **忽略 `lli` 退出码**（不是「LLVM 臂成功」）。
+  ⚠️ **一处必须按两个度量读的口径**：`FLIP BLOCKERS` 只降到 **11**、**不是计划预期的 7**，
+  差值**不是残留缺陷**、而是决策① 明示接受的代价；两个度量不可互相抵消陈述 ——
+  「**集合内假阳性**」由 **20 降到 4**，「**集合总数**」由 **27 降到 11**。
+  **`CHANGE_REFERENCE` 2 例**：`testBareCaseAmbiguousExpectedTypeViaLLI` /
+  `testDotCaseAmbiguousExpectedTypeViaLLI` —— 参照臂 `rc=1` 失败、两实臂各输出 `42`
+  ⇒ ⭐ **「`a_out` 不参与 parity」的真实盲区只有 2 个，不是 20 个**（此前的 20 个属**另一成因**：
+  stderr 形状 tie-break 失配）。这是本格对既有估计的一次**实测订正**。
+  契约 `hir-contract-check.py` 仍 `clean`（三锚点 `covers 60/60`；**判据 `J4`**）；
+  全量回归 **1269 tests / 3 skipped / 0 failures + swift-testing 45 tests / 14 suites**，
+  与基线**逐项相同** ⇒ **零测试位移**（本格只改 `tools/*.py`、`Sources`/`Tests` 零改动）；
+  探针零进程残留、零 stray `.ll`。
+  **变异反证三级（每步先验源码 md5、还原后再验一次）**：**M3 捕获**（去掉 `a_out` ⇒
+  2 夹具 `CHANGE_REFERENCE → OK`）· **M4 捕获**（规则 6 回退到 parity 之后 ⇒
+  4 夹具 `GAP_EXEC → OK_HARNESS`，带 `[BLOCKER-RESOLVED]` 标记）·
+  ⚠️ **M2 未捕获，如实记录**（去掉规则 8 的 `a_err` 守卫 ⇒ **Δ 0** —— 语料中**不存在**
+  「HIR 臂告警而参照臂静默」的形态 ⇒ 该守卫**当前不被行使、无判别力**）。
+  **该结论已写进 `GAP_HIR_ENGINE` 的 docstring（「Reachable but currently UNEXERCISED」），
+  不假装有判别力** —— 这正是本项一直在记的「规则在册 ≠ 规则被行使」。
+  还原后源码 md5 = `c2f0cb1a4759509fa19fa3e6d7214707`（探针）·
+  `460000c0df3893ae143b0868db369e5d`（`compare-sweeps.py`）；并用**最终源码重跑探针**，
+  其 TSV 与冻结件**逐字节相同**（md5 `053637aa988b2482c3d299a42d2859e7`）⇒
+  **注释改动行为中性**的实证。起点基线 TSV md5 = `9981413b8878c814b82819c9f6d4c81e`
+  （与 `stringSplit` 格 / P2b 冻结件**逐字节相同** ⇒ 器械可复现、可对照）。
+  ⭐ **器械侧两处翻车（本格实测并修，属决策④ 同族）**：
+  ① **探针的输出路径 `OUT` 是固定的 `/tmp/hir-parity-sweep.tsv`**，而**变异反证也跑探针**
+  ⇒ 该路径会**残留变异件**（本格实测残留的正是 M4 产物：4 夹具仍为 `OK_HARNESS`）
+  ⇒ 任何人把它当「收窄后读数」读都会得到错的阻塞数；**收口前以最终源码重跑覆盖**并把冻结件另存稳定名。
+  ② `compare-sweeps.py` 的**表头行不是 `#` 前缀**、被当成夹具计入 ⇒ 打印 `fixtures=320`
+  而真值 **319** ⇒ 读数不实；另修其 docstring 的列名（`i_rc` → `a_rc`）。
+  **本格零新增缺陷、未立新工单**（4 个假阻塞与 2 个 `CHANGE_REFERENCE` 均由在册载体承载）。
+  **范围声明**：**未动 `Sources/` / `Tests/`**（零源码改动）· 未落 G2 判据缺口清单（属下一单元）·
+  未动 G3 / G4 · 未 push。详见 `docs/spec/evidence-table.toml` 的 **`E-168`** 与
+  `docs/issue-diagnostic-channel-parity-2026-09-12.md` 的「P3-G1 落地记录」节。
