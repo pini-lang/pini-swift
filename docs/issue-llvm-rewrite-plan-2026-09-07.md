@@ -1075,7 +1075,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
 
   - **口径裁决**：「阻塞清零」有两解——甲 = 真实现（阻塞真降 0、能力恢复）；
     乙 = 转已声明豁免（计数清零、能力不恢复）。用户裁决取 **甲**。
-    规划载于 `.workbuddy/artifacts/blocker-clearance-plan-2026-09-11.md`（出稿时零源码改动）。
+    规划载于 `.workbuddy/artifacts/archive/blocker-clearance-plan-2026-09-11.md`（出稿时零源码改动）。
   - **D1 · F4 嵌套容器 COW（4 例）**：缺口是「发射层少接一半入口」而非缺机制——
     运行时 `bk_dict_ensure_unique_at` 早已存在，legacy 同族函数是逐行可抄的参考实现。
     落点 **1 文件 3 处**（`Sources/PiniCore/CodeGen/IREmitter.swift`）：补字典版 declare；
