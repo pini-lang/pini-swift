@@ -212,12 +212,27 @@ public enum HIRLowerer {
     ///
     /// 传递性：依赖自身的 `import` 一并递归（`pending` 队列），环由加载器的 R2 检测兜住。
     /// 只并入 **public** 符号的声明（跨模块可引入门槛与解释器一致）。
-    private static func mergedWithImports(_ module: Module) throws -> (Module, [String: Set<String>]) {
+    /// Public because the single-module run path needs it too: a lone file may
+    /// carry `[main|import] helper = "../helper"` and then call
+    /// `helper.加法(1, 2)`. The package path merged imports for it; the module
+    /// path did not, so the alias had nothing to key off and was read as a
+    /// variable. One merge, both paths.
+    public static func mergedWithImports(_ module: Module) throws -> (Module, [String: Set<String>]) {
         guard !module.imports.isEmpty else { return (module, [:]) }
         let loader = ModuleDependencyLoader.shared
         var aliasMap: [String: Set<String>] = [:]
         var extraDecls: [TopLevelDecl] = []
         var seenRoots = Set<String>()
+        // Which module supplied each merged top-level name.
+        //
+        // Flat merging gives every imported module one shared namespace, so two
+        // modules exporting the same public name would collapse into whichever
+        // arrived last -- a *wrong value* rather than a missing one, which is
+        // the worse failure of the two. The three-level fixture exists to pin
+        // exactly this (frontend and syntax both export 取值, 100 and 10): with
+        // the collapse the program prints 20 instead of 110. Tracking the
+        // supplier lets the merge refuse instead.
+        var supplier: [String: String] = [:]
         var pending = module.imports
         var index = 0
         while index < pending.count {
@@ -227,6 +242,18 @@ public enum HIRLowerer {
             let loaded = try loader.load(packagePath: imp.packagePath, relativeTo: dir)
             aliasMap[imp.alias] = loaded.publicSymbols
             guard seenRoots.insert(loaded.rootPath).inserted else { continue }
+            for decl in loaded.declarations {
+                guard let name = topLevelName(of: decl) else { continue }
+                if let previous = supplier[name], previous != loaded.rootPath {
+                    throw HIRLoweringError(
+                        message: "imported modules '\(previous)' and '\(loaded.rootPath)' both "
+                            + "export the top-level name '\(name)': this channel merges import "
+                            + "targets into one module, so it cannot keep their namespaces apart",
+                        location: imp.location
+                    )
+                }
+                supplier[name] = loaded.rootPath
+            }
             extraDecls.append(contentsOf: loaded.declarations)
             pending.append(contentsOf: loaded.imports)
         }
@@ -4179,6 +4206,25 @@ public enum HIRLowerer {
             return true
         }
         return from == to
+    }
+
+    /// The top-level name a declaration binds, for the import merge's
+    /// duplicate check. Cases that bind nothing (imports, exports) return nil;
+    /// extensions attach to a type that is named elsewhere.
+    private static func topLevelName(of decl: TopLevelDecl) -> String? {
+        switch decl {
+        case .funcDecl(let funcDecl): return funcDecl.name
+        case .structDecl(let structDecl): return structDecl.name
+        case .objectDecl(let objectDecl): return objectDecl.name
+        case .enumDecl(let enumDecl): return enumDecl.name
+        case .traitDecl(let traitDecl): return traitDecl.name
+        case .foreignDecl(let foreignDecl): return foreignDecl.name
+        case .extensionDecl(let extensionDecl): return extensionDecl.targetType
+        case .varDecl(let statement), .statement(let statement):
+            if case .varDecl(let name, _, _, _, _) = statement { return name }
+            return nil
+        case .importDecl, .exportDecl: return nil
+        }
     }
 
     private static func unsupported(_ message: String, at location: SourceLocation) -> HIRLoweringError {

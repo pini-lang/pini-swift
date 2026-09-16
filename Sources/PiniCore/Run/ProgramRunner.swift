@@ -91,7 +91,18 @@ public final class ProgramRunner: DebugHookHost {
         // scrutinees after the checker popped its scopes, so the table that
         // inference built has to outlive them.
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        // Import declarations live in the module itself, so a single file can
+        // be a cross-module caller: `[main|import] helper = "../helper"` then
+        // `helper.加法(1, 2)`. The package path merges the import targets
+        // before lowering; this path used to go straight to the module
+        // lowering, leaving the alias unresolved -- the alias name was then
+        // read as a variable and reported as "reference to undeclared
+        // variable 'helper'". Same merge, same entry, so the two paths cannot
+        // disagree about what an import brings in.
+        let (merged, aliasMap) = try HIRLowerer.mergedWithImports(module)
+        let lowered = try HIRLowerer.lower(
+            module: merged, typeInference: checker.typeInference, moduleAliases: aliasMap
+        )
         try execute(lowered)
     }
 
