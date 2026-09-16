@@ -718,7 +718,7 @@ TSV 静默覆盖**。处置 = 回退到**更早一格**的冻结全量基线（`
 ③ **可逆性** —— 纯增量，G7/G3 再加成本一样、不返工；
 ④ **单源**：在引擎里重写 `sqrt` 会是它的第二份定义。
 ⇒ 那 2 个夹具**不解析**，**归属缺口已立独立工单**
-（`docs/issue-hir-builtin-callee-unowned-2026-09-14.md`）：本项是**被调者解析规则**而**非节点族**，
+（`docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md`）：本项是**被调者解析规则**而**非节点族**，
 九格按节点族切 ⇒ **无一格天然拥有它**，故**不塞给任何一格**，留作独立边界待裁。
 
 ⚠️ **代价比开工预测更糟（如实登记）**：开工时预期这 2 个夹具「仍停在待办列表」。实测是它们
@@ -956,7 +956,7 @@ E2-006 `invalid expression`，三通道一致）。经查 **spec 既定**（`名
 新增的 2 个在 `GAP_EXEC` 侧，错误码 **`E5-006`（invalidOperation）**，即**「裸内建 callee 无主」**：
 `testDiffStdlib` / `examples/stdlib.pini` 的字符串部分**实测正确输出**（`HELLO, WORLD` / `hello, world` /
 `Hello` / `[Hello,  World]` / `a-b-c`）后才死在 `abs`。该迁移（`HIR_ENGINE_TODO → GAP_EXEC`，`E5-006`）
-**已被既有工单 `docs/issue-hir-builtin-callee-unowned-2026-09-14.md` 明文预言**，且该单已裁决
+**已被既有工单 `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md` 明文预言**，且该单已裁决
 **不排期、不并入 G7** ⇒ **本格零新增缺陷**。
 ⚠️ 口径提醒：该单自记 `FLIP BLOCKERS 23 → 25`，本格实测 `25 → 27` —— **绝对数在不同快照间会漂，
 可对账的是增量（都是 +2）**（与 §11 的「总数自己也会漂」同型）。
@@ -1090,7 +1090,7 @@ swift-testing 45 tests / 14 suites 通过；`comment-lint L1–L6 全绿`。
 
 1. **归属订正（非缺陷）**：§10.3 把 2 个 `GAP_EXEC` 记为「**G8 指针/取址面**」= **误归属**。实测两者
    错误码均为 **`E5-006`（裸内建 callee 无主）**，**到不了指针节点**；`struct.pini` 已被既有工单
-   `docs/issue-hir-builtin-callee-unowned-2026-09-14.md` 明文列入 ⇒ **非缺陷、不新立单**，只需订正 §10.3
+   `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md` 明文列入 ⇒ **非缺陷、不新立单**，只需订正 §10.3
    （**订正已随本格落地**）。
 2. **G8 指针半是「零覆盖」而非「低覆盖」**：与 G7 的 `printMulti` / `assertCall` 同族（**「删除探针」≠
    「建立覆盖」**），但更强 —— 那两个是**删掉探针后**才无覆盖，这三个是**从来没有过**可达夹具。
@@ -1447,7 +1447,7 @@ comment-lint L1–L6 · evidence-sweep `check ok` · 契约 `clean`）全绿。
 |---|---|---|---|
 | `HIR_ENGINE_TODO` | **24 夹具 / 10 节点** | **P2b（G7/G8/G9）** | 工作清单，非阻塞 |
 | `GAP_HIR_ENGINE` | **20** | `E7-001` **假阳性族** | 计数器过宽的既有登记项（收窄时机仍待裁） |
-| `GAP_EXEC` | **5** | ~~2 内建数学 / 2 G8 指针 / 1 G5 内建 callee~~ ⇒ **订正：5 个全部同属一条规则（`E5-006` 裸内建 callee 无主），不属任何格** | **实质失败**，归属 = 既有工单 `docs/issue-hir-builtin-callee-unowned-2026-09-14.md` |
+| `GAP_EXEC` | **5** | ~~2 内建数学 / 2 G8 指针 / 1 G5 内建 callee~~ ⇒ **订正：5 个全部同属一条规则（`E5-006` 裸内建 callee 无主），不属任何格** | **实质失败**，归属 = 既有工单 `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md` |
 | `FRONTEND_FAIL` | **12** | 11 并发-async + 1 刻意 unsupported | **§6 不做范围**，与 HIR 无关 |
 | 其余 | 247 | —— | `OK` / `PACKAGE_MEMBER` / `OK_HARNESS` |
 | **合计** | **308** | —— | ⚠️ **分母为 P2a 收尾时点值**（本表整表都是那个时点的读数，不是当前值）；当前读数见 §8.8 ④ / §1.1 |

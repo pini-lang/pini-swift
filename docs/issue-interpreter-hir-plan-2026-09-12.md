@@ -44,7 +44,7 @@
   格内**两次范围订正**：① 必须扩入**类型方法解析**（实测 21/30 夹具需要，与 G1 的 `stringConcat` 同型的
   可达性订正）；② **裸内建 callee 不解析**（仅 2/30，代价 = 两夹具由待办升为 `GAP_EXEC`）。
   全量 6 根 `OK 181 → 208` / `HIR_ENGINE_TODO 62 → 33` / `FLIP BLOCKERS 23 → 25`（+2 **非** `E7-001`，
-  是实质失败：`sqrt` 无主，已立 `docs/issue-hir-builtin-callee-unowned-2026-09-14.md`）；
+  是实质失败：`sqrt` 无主，已立 `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md`）；
   `notImplemented` 打靶点 **23 → 20**（差集恰三个节点名）；全量回归 **1252**/3/0 + 45，契约仍 `clean`；
   变异反证两级四轮判定全对；实录见 §13 与细目件 §8.5。
   **P2a 第六格 G3 已交付（2026-09-14，闭包与函数值）** —— 3 节点（`closureLiteral` / `functionValue` /
@@ -658,7 +658,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   ⚠️ **代价经实测且比预测更糟**：那 2 个夹具**从待办列表向上迁移成 `GAP_EXEC` 翻转阻塞**
   （`construct` 通了 ⇒ 夹具走得更远、死在 `call` 节点）⇒ `FLIP BLOCKERS` **23 → 25**，
   且 **+2 非 `E7-001`**（是**实质失败**，`rc` 非零），与既有假阳性族**不同**。
-  **归属缺口已立独立工单** `docs/issue-hir-builtin-callee-unowned-2026-09-14.md`：本项是**被调者解析规则**
+  **归属缺口已立独立工单** `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md`：本项是**被调者解析规则**
   而**非节点族**，九格按节点族切 ⇒ **无一格天然拥有它** ⇒ 不塞给任何一格（裁决取「立单」，可逆且守规模）。
   读数：`notImplemented` 打靶点 **23 → 20**（双向差集**恰三个节点名**、无反向退出）·
   全量 6 根 **`OK 181 → 208` / `HIR_ENGINE_TODO 62 → 33` / `GAP_EXEC 3 → 5` / `BLOCKERS 23 → 25`** ·
@@ -952,7 +952,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   与 P2b 定义完全重合）。
   读数（全部本次实测）：全量探针**闭合账目**成立 —— 离开 `HIR_ENGINE_TODO` 的 15 份 = 13 入 `OK`
   + 2 入 `GAP_EXEC`（`testDiffStdlib` / `examples/stdlib.pini`，**由缺口外移**，归既有工单
-  `docs/issue-hir-builtin-callee-unowned-2026-09-14.md`）；`OK 217 → 236`；其余五类判定**零变动**；
+  `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md`）；`OK 217 → 236`；其余五类判定**零变动**；
   `FLIP BLOCKERS 25 → 27`（新增 2 项均为已预言的 `E5-006`）；契约 `hir-contract-check.py` 仍
   `clean`（三锚点 60/60 = 判据 `J4`）；全量回归 **1263 tests / 3 skipped / 0 failures**。
   **本格零新增缺陷**；连同交付发现立单 1 份（`docs/issue-concurrency-timing-test-fragile-2026-09-14.md`，
@@ -976,7 +976,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   **byte-identical**。
   **本格零新增缺陷**；**订正一处既有误归属**：细目件 §10.3 把 2 个 `GAP_EXEC` 记为「G8 指针面」，
   实测二者错误码均为 `E5-006`（裸内建 callee 无主）、**到不了指针节点**（`ffi.pini` 第一句就死、
-  `struct.pini` 死在 `sqrt`）⇒ 归既有工单 `docs/issue-hir-builtin-callee-unowned-2026-09-14.md`，
+  `struct.pini` 死在 `sqrt`）⇒ 归既有工单 `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md`，
   **不新立单**；订正已随本格落地。
   **本格最重要的方法层收获**：G8 指针半是**「零覆盖」而非「低覆盖」** —— 三个指针节点**从来没有过**
   可达夹具（与 G7 的「删掉探针后才无覆盖」同族但更强）⇒ 开工检查项：**逐节点追问「到底有什么可达它」，
@@ -1045,7 +1045,7 @@ Lexer → Parser → Semantic → TypeChecker          ← 前端（单一实现
   逐夹具判定变化**恰 26 行**；⭐ **`FLIP BLOCKERS 27 → 11`**。
   **11 个阻塞逐条（7 真 + 4 假）**：7 真全 `E5-006` —— `testBuiltinMathFloatsViaLLI` /
   `testBuiltinMathIntegersViaLLI` / `testDiffStdlib` / `examples/stdlib.pini`
-  （→ `docs/issue-hir-builtin-callee-unowned-2026-09-14.md`）+ `testDiffStructValue` /
+  （→ `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md`）+ `testDiffStructValue` /
   `examples/struct.pini` / `examples/ffi.pini`（→ `docs/issue-hir-struct-copy-missing-2026-09-14.md`）；
   4 假 = **负向测试** `testArrayOutOfBoundsBothBackendsError`（`E5-005`）·
   `testArrayWriteOutOfBoundsBothBackendsError`（`E5-006`）· `testDictMissingKeyBothBackends`（`E7-001`）·

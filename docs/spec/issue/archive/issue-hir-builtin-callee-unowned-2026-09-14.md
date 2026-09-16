@@ -1,6 +1,6 @@
 # Issue：HIR 通道不解析「裸内建 callee」——`sqrt` 一类调用无归属，两夹具停在翻转阻塞槽
 
-- 状态：**Open（2026-09-14 立案；LR-4 P2a G5 收口登记，不阻塞本格）**
+- 状态：**LANDED（2026-09-16 关闭；LR-4「P4-0 判据面清零」批交付并实测核验）** —— 关闭依据与残余归属见文末「关闭记录」。
 - 发现渠道：G5（具名类型与字段）**开工期的范围裁决**。删除「委托解释器求值内建」这一选项后
   **实测出代价**，本单是把这个代价从「口头取舍」变成**在册的、可被后续裁决的边界**。
 - 归属：**被调者解析规则（callee resolution）**，**不是节点族**。
@@ -70,3 +70,43 @@ G5 的裁决是**不委托**（不把 callee 交给一个活的 `Interpreter` �
 
 未改探针的 `GAP_HIR_ENGINE` / 阻塞计数器判据（**收窄时机仍为上交给决策点**）；
 未实现任何内建解析；未补夹具；未改契约节点集；未改 AST / LLVM 侧实现。
+
+
+## 关闭记录（2026-09-16）
+
+**关闭依据**：本单的**实测代价**（两个具名夹具挂在翻转阻塞槽上）已**归零**，
+且交付方式**正是本单「处置建议」写明的正解**。
+
+### 实测（2026-09-16，现跑）
+
+| 夹具 | AST 通道 | HIR 通道 | 判定 |
+|---|---|---|---|
+| `Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffStructValue.pini` | rc=0 / 12 字节 | rc=0 / **12 字节** | **逐字节相同** |
+| `examples/struct.pini` | rc=0 / 12 字节 | rc=0 / **12 字节** | **逐字节相同** |
+
+全量探针：`FLIP BLOCKERS 11 → 0` ⇒ 本单自称的「两个无主阻塞**永久**挂在 P4 门槛上」**已解除**。
+
+### 交付形态（与本单建议逐条对应）
+
+本单「处置建议」写明：「**不要**为此在 `HIRExecutor` 里重写一个 `sqrt`（那会是 `sqrt` 的第二份、
+会漂移的定义）；正解是**把解释器那条链抽成静态可调用的单源**」。交付即此 ——
+`Sources/PiniCore/Interpreter/Interpreter.swift` 的 `builtinSqrt`（连同 `builtinAbs` /
+`builtinMin` / `builtinMax` / `builtinSin` / `builtinCos` / `builtinTan`）为**静态单源**，
+`Sources/PiniCore/Interpreter/HIRExecutor.swift` 调同一份：**HIRExecutor 里没有第二份 `sqrt`**。
+
+同批另把 libc 预注册表提为 `Interpreter.libcShims`（8 个 shim 的单源），并在 `.call` 落点加
+**declared-foreign 门**（只回答模块**自己声明过**的 foreign 名）⇒ `malloc` 一类的裸内建 callee
+**也有归属**了。交付读数与变异反证见 `docs/issue-interpreter-hir-plan-2026-09-12.md` 的 P4-0 条目。
+
+### 残余**不属本单**（避免「关闭即当无事」）
+
+`argv` / `moduleRoot` 在 HIR 下仍不可用，但**失败面不同**：它们在**降载层**被拒
+（`unsupported feature 'call to unknown function 'argv' …`），即 **lowerer 无对应节点**，
+而**不是**本单的「executor 侧 callee 解析」。
+⇒ 归属 = `docs/issue-hir-p4-plan-2026-09-16.md` 的 **P4-2「前置核对」** 行
+（该行明写「`argv` / `moduleRoot` 在 HIR 侧无节点」），**本单不重复登记**（同一件事不要两个状态源）。
+
+### 未做（本单边界）
+
+未改任何实现（关闭依据来自既有交付）· 未补夹具（两个具名夹具本就是既有语料）·
+未动契约节点集 · 未动 AST / LLVM 侧实现。
