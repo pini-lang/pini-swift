@@ -53,7 +53,14 @@ public final class DAPServer {
 
  private let driver = DAPDebugDriver()
  private var debugger: Debugger!
- private var interpreter: Interpreter?
+ private var launchRun: DebugRun?
+
+ /// 引擎装配点（LR-4 P4-3）。默认 nil = 本适配器自建 AST 引擎，即生产路径本身。
+ ///
+ /// 之所以是可注入的闭包而不是一个「引擎种类」枚举：HIR 侧要先把源码检查再 lower，
+ /// 而「谁来 lower」的答案是**调用方**（见 `DebugRun`）。注入方本来就握着那份信息，
+ /// 所以由它把「引擎 + 启动动作」一并交进来，适配器不为此多知道任何事。
+ public var makeRun: ((Module?, Package?) -> DebugRun)?
  private var module: Module?
  private var package: Package?
  private var sources: [String: String] = [:]
@@ -171,9 +178,29 @@ public final class DAPServer {
  sources = [program: src]
  }
 
- interpreter = Interpreter()
+ // 引擎在这里装：适配器只拿到「协议面 + 一个开始跑的动作」，于是它不认识
+ // 任何一种引擎（LR-4 P4-3，见 `DebugRun`）。lowering 的归属不变 —— 仍是调用方。
+ // 默认是 AST 引擎，也就是生产路径；`makeRun` 供调用方换引擎（双引擎验证，
+ // 或将来的默认引擎切换），并且换的时候只动这一处。
+ let launchPackage = package
+ let launchModule = module
+ let launch: DebugRun
+ if let makeRun = makeRun {
+ launch = makeRun(launchModule, launchPackage)
+ } else {
+ let ast = Interpreter()
+ // 启动动作把「跑哪个输入形状」也一并封进去：startProgram 不再分派。
+ launch = DebugRun(host: ast) {
+ if let pkg = launchPackage {
+ try ast.run(package: pkg)
+ } else if let mod = launchModule {
+ try ast.run(module: mod)
+ }
+ }
+ }
+ launchRun = launch
  // debuggee 的 print 输出 → DAP output 事件，与协议流分离。
- interpreter!.outputSink = { [weak self] line in
+ launch.host.outputSink = { [weak self] line in
  self?.sendOutput(category: "stdout", output: line + "\n")
  }
  debugger = Debugger(driver: driver)
@@ -186,7 +213,7 @@ public final class DAPServer {
  debugger.onStop = { [weak self] (event: StopEvent, reason: StopReason) in
  self?.handleStop(event: event, reason: reason)
  }
- interpreter!.debugHook = { [weak self] ctx in
+ launch.host.debugHook = { [weak self] ctx in
  try self?.debugger.consult(ctx) ?? .run
  }
 
@@ -298,11 +325,7 @@ public final class DAPServer {
  let t = Thread { [weak self] in
  guard let self = self else { return }
  do {
- if let pkg = self.package {
- try self.interpreter?.run(package: pkg)
- } else if let mod = self.module {
- try self.interpreter?.run(module: mod)
- }
+ try self.launchRun?.start()
  } catch is DebuggerError {
  // 用户/驱动器请求 quit：正常结束会话。
  } catch {

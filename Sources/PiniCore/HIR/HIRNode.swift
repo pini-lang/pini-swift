@@ -277,7 +277,7 @@ public indirect enum HIRExpr: Equatable {
     /// these names); an unannotated param adopts the return-annotation
     /// fallback, matching the checker's G29 inference.
     case closureLiteral(id: Int, paramNames: [String], paramTypes: [HIRType], returnType: HIRType?,
-                        captures: [HIRCapture], body: [HIRStmt], type: HIRType)
+                        captures: [HIRCapture], body: HIRBlock, type: HIRType)
     /// A named top-level function used as a value (G6): emitted through an
     /// env-ignoring adapter fat pointer (`@__adapter_<mangled>`) so direct
     /// and indirect call sites share one calling convention.
@@ -443,9 +443,9 @@ public struct HIRMatchCase: Equatable {
     /// wildcard arms (those live in `caseName`). See `HIRMatchLiteral`.
     public let literal: HIRMatchLiteral?
     public let bindings: [String?]
-    public let body: [HIRStmt]
+    public let body: HIRBlock
 
-    public init(caseName: String, literal: HIRMatchLiteral? = nil, bindings: [String?], body: [HIRStmt]) {
+    public init(caseName: String, literal: HIRMatchLiteral? = nil, bindings: [String?], body: HIRBlock) {
         self.caseName = caseName
         self.literal = literal
         self.bindings = bindings
@@ -473,17 +473,102 @@ public enum HIRForIterableKind: Equatable {
 }
 
 /// Typed statement tree (slice set).
+/// A statement list **with the source position of every statement**.
+///
+/// WHY THIS TYPE EXISTS (LR-4 P4-3)
+///
+/// An `[HIRStmt]` list is everything an emitter needs and not enough for a
+/// debugger. The AST carries a `SourceLocation` on every statement; the HIR
+/// carried none, so the HIR engine could not answer "which line is this?" and
+/// its debug hook had to stay dormant (`HIRExecutor.debugHook` documents that
+/// state). A pause that cannot name a line is worse than no pause, so the
+/// position has to land in the representation before the hook can be wired.
+///
+/// The carrier is the **block**, not the node. A position on each of the 60
+/// node cases would touch every construction site and every pattern match on
+/// both the executor and the LLVM emitter; a block-level parallel array
+/// touches one lowering function — `HIRLowerer.lowerBlock`, the single place
+/// where a `Block` becomes HIR statements — and nothing else changes shape.
+/// Positions are therefore at **AST-statement granularity**, which is exactly
+/// what the interpreter reports: its own pause site reads `Statement.location`
+/// the same way, so the two engines stop on the same lines by construction.
+///
+/// `positions` is parallel to `statements` when non-empty and empty when the
+/// block was built without them (hand-built HIR in tests). `position(at:)`
+/// answers `nil` in that case instead of inventing a line: an engine that
+/// cannot name a line must stay silent rather than stop somewhere fictional.
+///
+/// `Equatable` compares **statements only**. Two blocks of the same shape are
+/// the same block; letting a coordinate decide would make every existing
+/// structural assertion in the suite depend on source positions.
+///
+/// Conforming to `ExpressibleByArrayLiteral` and `RandomAccessCollection` is
+/// deliberate: `[stmt, stmt]` still builds a block and `for stmt in block`
+/// still iterates one, so the emitter, printer and executor keep reading what
+/// they read before, and only the places that *want* positions changed.
+public struct HIRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollection {
+    public typealias Element = HIRStmt
+    public typealias Index = Int
+
+    public var statements: [HIRStmt]
+    /// Parallel to `statements`; empty means "this block carries no positions".
+    public var positions: [SourceLocation]
+
+    public init(_ statements: [HIRStmt] = [], positions: [SourceLocation] = []) {
+        self.statements = statements
+        self.positions = positions
+    }
+
+    public init(arrayLiteral elements: HIRStmt...) {
+        self.init(elements)
+    }
+
+    /// A block whose every statement carries the same source position.
+    ///
+    /// The shape a construct needs when one source statement lowers into
+    /// several HIR statements: they all came from that one line, so a pause on
+    /// any of them is a pause on that line. Used by the `defer` body and the
+    /// try-else handler, which `lowerStatement` expands in place rather than
+    /// through `lowerBlock`.
+    public static func at(_ statements: [HIRStmt], _ location: SourceLocation) -> HIRBlock {
+        HIRBlock(
+            statements,
+            positions: Array(repeating: location, count: statements.count)
+        )
+    }
+
+    public var isEmpty: Bool { statements.isEmpty }
+    public var count: Int { statements.count }
+    public var startIndex: Int { statements.startIndex }
+    public var endIndex: Int { statements.endIndex }
+    public subscript(position: Int) -> HIRStmt { statements[position] }
+
+    /// The source position of the statement at `index`, or `nil` when this
+    /// block carries none (or the index is out of range).
+    public func position(at index: Int) -> SourceLocation? {
+        guard positions.count == statements.count, positions.indices.contains(index) else {
+            return nil
+        }
+        return positions[index]
+    }
+
+    /// Statements compared, positions ignored — see the note on the type.
+    public static func == (lhs: HIRBlock, rhs: HIRBlock) -> Bool {
+        lhs.statements == rhs.statements
+    }
+}
+
 public indirect enum HIRStmt: Equatable {
     /// Variable slot. Emitting allocates the slot; a non-nil initializer
     /// stores into it right after allocation.
     case allocVar(name: String, type: HIRType, mutable: Bool, initializer: HIRExpr?)
     /// Store into an existing variable; `type` is the declared variable type.
     case storeVar(name: String, type: HIRType, value: HIRExpr)
-    case ifStmt(condition: HIRExpr, thenBody: [HIRStmt], elseBody: [HIRStmt]?)
+    case ifStmt(condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?)
     /// `while cond: body [step: block]`. The step block (ADR-014) runs once
     /// per iteration after the body — on normal completion *and* on
     /// unlabeled `continue` (interpreter parity); `break` skips it.
-    case whileStmt(condition: HIRExpr, body: [HIRStmt], step: [HIRStmt]?)
+    case whileStmt(condition: HIRExpr, body: HIRBlock, step: HIRBlock?)
     /// `for (pattern,) in iterable: body [step: block]` (G15).
     /// `kind` selects the runtime accessor family; `elementTypes` are
     /// parallel to `pattern` (`"_"` entries still occupy a slot and carry
@@ -494,8 +579,8 @@ public indirect enum HIRStmt: Equatable {
         elementTypes: [HIRType],
         kind: HIRForIterableKind,
         iterable: HIRExpr,
-        body: [HIRStmt],
-        step: [HIRStmt]?
+        body: HIRBlock,
+        step: HIRBlock?
     )
     /// Slice set: single-value return; nil for void functions.
     case returnStmt(value: HIRExpr?)
@@ -505,13 +590,13 @@ public indirect enum HIRStmt: Equatable {
     /// `break`/`return` interplay **is** gated as of grid G1: both channels
     /// run the defers on the unwinding path too, because a block's scope
     /// closes on every exit, not only the normal one.
-    case deferStmt(body: [HIRStmt])
+    case deferStmt(body: HIRBlock)
     /// `try operand else errorVar: handler` (ADR-032). The operand's type is
     /// `result(ok:)`; the error path binds the type-erased error word to
     /// `errorVar` and runs `handler`. `okTarget` is set for expression
     /// position (the ok payload is stored into that variable); nil for
     /// statement position.
-    case tryStmt(operand: HIRExpr, errorVar: String, handler: [HIRStmt], okTarget: String?, type: HIRType)
+    case tryStmt(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?, type: HIRType)
     /// Subscript store `container[index] = value` (G2). The container may be
     /// a nested subscript chain (the emitter walks the COW split chain);
     /// compound assignment (`a[i] += k`) lowers to read-modify-write with the

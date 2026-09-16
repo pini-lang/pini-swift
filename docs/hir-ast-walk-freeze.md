@@ -72,7 +72,7 @@ CPS 都建在它上面。
 **不可验那半边 = `location`**：HIR 节点没有位置（`HIRExecutor` 只有 `noLocation`
 占位）。P1-5 已把 HIR 侧对暂停点的接线判为休眠态（接了必然报 `noLocation`，
 断点按行号相等匹配 ⇒ 永不命中，比「调试器还不在」更坏），由一条会变红的断言钉住。
-它的前置是 `docs/issue-hir-node-source-position-2026-09-12.md`，归 **P4**。
+它的前置是 `docs/spec/issue/archive/issue-hir-node-source-position-2026-09-12.md`，归 **P4**。
 
 **REPL 是另一条接缝，不在本清单内**：实测 `ReplSession` 不消费 `debugHook`，
 与调试面无关；它迁移的真实前置是「每次求值新建 `Interpreter()`」这一形态对齐

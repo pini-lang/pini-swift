@@ -56,10 +56,31 @@
 
 - **P2 的 HIR 执行面成形**（`docs/issue-interpreter-hir-plan-2026-09-12.md` P2 九格）。
 - **位置工单**：仅当同期要接线调试暂停点时才需要
-  ⇒ `docs/issue-hir-node-source-position-2026-09-12.md`。P1-5 S1 已把调试面协议备好，
+  ⇒ `docs/spec/issue/archive/issue-hir-node-source-position-2026-09-12.md`。P1-5 S1 已把调试面协议备好，
   该单的缺口收窄为「HIR 节点无位置」一项。
 
-## 不做范围
+## 处置（2026-09-16，LR-4 P4-3 交付，**已闭环并归档**）
+
+四个待裁点已裁。**第 3 点（接口形状）与立项时的「目标形态（待裁）」有偏离。**
+
+| # | 待裁 | 裁决 |
+|---|---|---|
+| 1 | 谁负责 lowering | **调用方（宿主）** —— 与 §现象 的根因一致：`lowering` 是调用方的决定，不是引擎的职责 |
+| 2 | 引擎开关归属 | **仍在 CLI**（`PINI_INTERP_ENGINE`）—— 本单不涉及，未动 |
+| 3 | 接口形状 | **`DebugRun`**（`host: any DebugHookHost` + `start: () throws -> Void`）；**不把 `run` 放进 `DebugHookHost`** |
+| 4 | 与位置工单的关系 | 同期完成（位置工单已闭环，见其处置节） |
+
+**第 3 点偏离的理由**：立项时写的是「协议含 `run`（或等价入口），两侧各由 `ASTEngine` /
+`HIREngine` 包装」。但本单 §现象 已经说清了协议**不该**含 `run` —— 那等于假装两台引擎吃
+同一份程序，把「谁负责 lower」藏进协议里。`DebugRun` 保住这个结论，同时达成本单两个目标：
+装配端不再持有具体引擎类型（`DAPServer` 与 CLI 各一条路径），CLI 的两份同形样板合并为一份
+（`startDebugger(run:sources:primaryName:)`）—— 即 §下游后果 的「样板重复」被消掉。
+
+**闭环**：`DAPServer` 新增 `makeRun` 注入点（默认 `nil` = 自建 AST 引擎，即生产路径本身），
+于是「DAP 在 HIR 引擎下也能用」成为**可断言**的事实 —— `DebuggerTests` 的 DAP 端到端用例
+按引擎参数化，两台引擎各跑一遍。
+
+## 不做范围（立项时）
 
 - **不在 P1 内做**（P1-5 S1 已按此裁决只做浅接缝）。
 - 不做并发 / CPS 相关的引擎抽象（并发不做，见执行计划）。

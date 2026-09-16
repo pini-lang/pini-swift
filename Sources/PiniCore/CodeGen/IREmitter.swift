@@ -385,7 +385,7 @@ public final class IREmitter {
     /// `for … in` element bindings are alloca'd ahead of their body, so they
     /// belong to the body block's frame even though they are not statements
     /// inside it.
-    private func emitBlock(_ statements: [HIRStmt], seedingReleases seed: [ReleasedHandle] = []) {
+    private func emitBlock(_ block: HIRBlock, seedingReleases seed: [ReleasedHandle] = []) {
         // G9 defer protocol: defers registered in this block run LIFO at
         // the block's normal end (loop bodies: every iteration). When the
         // block ends in a terminator the defers have already run — the
@@ -398,7 +398,7 @@ public final class IREmitter {
         pendingDefers.append([])
         let releaseBase = pendingReleases.count
         pendingReleases.append(seed)
-        for statement in statements {
+        for statement in block {
             if terminated { break }
             emitStatement(statement)
         }
@@ -456,7 +456,7 @@ public final class IREmitter {
 
     /// Deferred statement bodies per open block scope (G9 deferStmt):
     /// scope -> defer (LIFO at scope end) -> wrapped statements.
-    private var pendingDefers: [[[HIRStmt]]] = []
+    private var pendingDefers: [[HIRBlock]] = []
 
     /// A local holding one share of a refcounted collection handle, whose
     /// share this block must drop when it exits (H1-B, `pendingDefers`'
@@ -1054,7 +1054,7 @@ public final class IREmitter {
     /// try site and the handler runs as its own block scope; when the handler
     /// does not terminate (statement position / pass), control falls into the
     /// ok label, which stores the payload when this is expression position.
-    private func emitTry(operand: HIRExpr, errorVar: String, handler: [HIRStmt], okTarget: String?, type: HIRType) {
+    private func emitTry(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?, type: HIRType) {
         let errSlot = freshSlot(for: errorVar)
         bodyIR += builder.fmtAlloca(name: errSlot, type: "i64") + "\n"
         scopes[scopes.count - 1][errorVar] = errSlot
@@ -1100,7 +1100,7 @@ public final class IREmitter {
         }
     }
 
-    private func emitIf(condition: HIRExpr, thenBody: [HIRStmt], elseBody: [HIRStmt]?) {
+    private func emitIf(condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?) {
         let cond = emitExpr(condition)
         let id = builder.freshLabel()
         let thenLabel = "if.then.\(id)"
@@ -1149,7 +1149,7 @@ public final class IREmitter {
     /// (interpreter parity: `shouldRunStep = true` on continue), while a
     /// `continue` inside the step lands on the step's end. `break` targets
     /// the loop exit from either block and skips the step.
-    private func emitWhile(condition: HIRExpr, loopBody: [HIRStmt], step: [HIRStmt]?) {
+    private func emitWhile(condition: HIRExpr, loopBody: HIRBlock, step: HIRBlock?) {
         let id = builder.freshLabel()
         let condLabel = "while.cond.\(id)"
         let bodyLabel = "while.body.\(id)"
@@ -1210,8 +1210,8 @@ public final class IREmitter {
         elementTypes: [HIRType],
         kind: HIRForIterableKind,
         iterable: HIRExpr,
-        body: [HIRStmt],
-        step: [HIRStmt]?
+        body: HIRBlock,
+        step: HIRBlock?
     ) {
         let id = builder.freshLabel()
         let condLabel = "for.cond.\(id)"
@@ -3277,7 +3277,7 @@ public final class IREmitter {
         paramTypes: [HIRType],
         returnType: HIRType?,
         captures: [HIRCapture],
-        body: [HIRStmt],
+        body: HIRBlock,
         type: HIRType
     ) -> IRValue {
         let mangled = "@__closure_\(id)"
@@ -3408,7 +3408,7 @@ public final class IREmitter {
         paramTypes: [HIRType],
         returnType: HIRType?,
         captures: [HIRCapture],
-        body: [HIRStmt]
+        body: HIRBlock
     ) {
         let savedScopes = scopes
         let savedSlotCounters = slotCounters

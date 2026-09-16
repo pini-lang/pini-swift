@@ -23,7 +23,7 @@ public enum HIRPrinter {
         return "func \(function.name)(\(params))\(ret):"
     }
 
-    private static func dumpBody(_ body: [HIRStmt], indent: Int) -> [String] {
+    private static func dumpBody(_ body: HIRBlock, indent: Int) -> [String] {
         body.flatMap { dumpStmt($0, indent: indent) }
     }
 

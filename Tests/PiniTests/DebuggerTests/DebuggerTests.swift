@@ -23,6 +23,79 @@ private func dbgParse(_ source: String, _ fileName: String) -> Module {
 
 private let sampleProgram = try! loadPiniFixture("_sampleProgram", filePath: #filePath)
 
+/// 一台可被调试的引擎（LR-4 P4-3）。
+///
+/// 调试用例按这个维度参数化：同一份场景在两台引擎上各跑一遍，两边都必须给出
+/// 同样的停止结果 —— 「调试面在 HIR 下也能用」由此成为断言，而不是一句声明。
+/// 在此之前这些用例直接驱动具体 `Interpreter`，所以全绿**只**说明 AST 侧没问题。
+enum DebugEngine: String, CaseIterable, CustomTestStringConvertible {
+    case ast, hir
+    var testDescription: String { "engine=\(rawValue)" }
+}
+
+/// 把一份「已解析但未检查」的程序交给指定引擎跑，并接上调试器。
+///
+/// HIR 侧要先检查再 lower，而「谁来 lower」的答案是**调用方**（`DebugRun` 的注释
+/// 里有完整理由），测试侧同样是调用方。
+private func dbgDrive(_ engine: DebugEngine, module: Module, dbg: Debugger,
+                      suppressOutput: Bool = false) throws {
+    switch engine {
+    case .ast:
+        let interpreter = Interpreter()
+        if suppressOutput { interpreter.outputSink = { _ in } }
+        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
+        try interpreter.run(module: module)
+    case .hir:
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        try #require(errors.isEmpty, "the debugger fixtures must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let executor = HIRExecutor()
+        if suppressOutput { executor.outputSink = { _ in } }
+        executor.debugHook = { ctx in try dbg.consult(ctx) }
+        try executor.run(module: hir)
+    }
+}
+
+/// 同上，输入是包（多文件）：HIR 侧走整包降载。
+private func dbgDrive(_ engine: DebugEngine, package: Package, dbg: Debugger,
+                      suppressOutput: Bool = false) throws {
+    switch engine {
+    case .ast:
+        let interpreter = Interpreter()
+        if suppressOutput { interpreter.outputSink = { _ in } }
+        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
+        try interpreter.run(package: package)
+    case .hir:
+        let checker = TypeChecker()
+        try checker.check(package: package)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(package: package, typeInference: checker.typeInference)
+        let executor = HIRExecutor()
+        if suppressOutput { executor.outputSink = { _ in } }
+        executor.debugHook = { ctx in try dbg.consult(ctx) }
+        try executor.run(module: hir)
+    }
+}
+
+/// 造一台 HIR 引擎交给 DAP 适配器（LR-4 P4-3）。
+///
+/// lower 放在 `start` 里而不是这里，是为了让降载期错误与运行期错误走同一条上报
+/// 通道 —— 适配器对两者一视同仁，都是会话内的失败。
+private func dbgMakeRunHIR(module: Module?) -> DebugRun {
+    let executor = HIRExecutor()
+    guard let module else { return DebugRun(host: executor) {} }
+    let checker = TypeChecker()
+    _ = checker.checkCollecting(module: module)
+    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+    return DebugRun(host: executor) {
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        try executor.run(module: hir)
+    }
+}
+
+
 @Suite("P7-4 Debugger")
 struct DebuggerTests {
 
@@ -37,9 +110,9 @@ struct DebuggerTests {
         #expect(sm.line("other.pini", 1) == nil)
     }
 
-    @Test("断点命中后 continue 完成运行（仅停一次）")
+    @Test("断点命中后 continue 完成运行（仅停一次）", arguments: DebugEngine.allCases)
     /// 意图：验证断点命中后 continue 完成运行，仅停一次且停在断点行 line 2。
-    func testBreakpointThenContinue() throws {
+    func testBreakpointThenContinue(engine: DebugEngine) throws {
         let module = dbgParse(sampleProgram, "sample.pini")
         let driver = RecordingDebugDriver([.continue])
         let dbg = Debugger(driver: driver)
@@ -47,26 +120,22 @@ struct DebuggerTests {
         dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
         dbg.sourceMap = SourceMap(source: sampleProgram, fileName: "sample.pini")
 
-        let interpreter = Interpreter()
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg)
 
         #expect(driver.stops.contains { $0.location.line == 2 })
         #expect(driver.stops.count == 1)
     }
 
-    @Test("stepOver 命中点后停在下一条同深度语句")
+    @Test("stepOver 命中点后停在下一条同深度语句", arguments: DebugEngine.allCases)
     /// 意图：验证 stepOver 从断点行停到下一同深度语句（[2,3]），且 line 3 时快照可见 line 2 绑定的变量 a。
-    func testStepOverStopsNextLine() throws {
+    func testStepOverStopsNextLine(engine: DebugEngine) throws {
         let module = dbgParse(sampleProgram, "sample.pini")
         let driver = RecordingDebugDriver([.stepOver, .continue])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
 
-        let interpreter = Interpreter()
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg)
 
         let lines = driver.stops.map { $0.location.line }
         #expect(lines == [2, 3])
@@ -75,68 +144,59 @@ struct DebuggerTests {
         #expect(stopAt3?.variables.contains(where: { $0.name == "a" }) == true)
     }
 
-    @Test("stepInto 逐行停下（无函数调用时等价于逐行）")
+    @Test("stepInto 逐行停下（无函数调用时等价于逐行）", arguments: DebugEngine.allCases)
     /// 意图：验证 stepInto 逐行停止（无函数调用时等价于逐行），停行序列为 [2,3,4]。
-    func testStepIntoStopsEveryLine() throws {
+    func testStepIntoStopsEveryLine(engine: DebugEngine) throws {
         let module = dbgParse(sampleProgram, "sample.pini")
         let driver = RecordingDebugDriver([.stepIn, .stepIn, .continue])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
 
-        let interpreter = Interpreter()
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg)
 
         let lines = driver.stops.map { $0.location.line }
         #expect(lines == [2, 3, 4])
     }
 
-    @Test("quit 中止程序并抛出 DebuggerError.quit")
+    @Test("quit 中止程序并抛出 DebuggerError.quit", arguments: DebugEngine.allCases)
     /// 意图：验证 quit 命令中止运行并抛 DebuggerError，驱动仅停一次。
-    func testQuitAborts() throws {
+    func testQuitAborts(engine: DebugEngine) throws {
         let module = dbgParse(sampleProgram, "sample.pini")
         let driver = RecordingDebugDriver([.quit])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
 
-        let interpreter = Interpreter()
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-
         #expect(throws: DebuggerError.self) {
-            try interpreter.run(module: module)
+            try dbgDrive(engine, module: module, dbg: dbg)
         }
         #expect(driver.stops.count == 1)
     }
 
-    @Test("无断点无单步时全程不停")
+    @Test("无断点无单步时全程不停", arguments: DebugEngine.allCases)
     /// 意图：验证无断点且无单步时全程不停（stops 为空）。
-    func testNoBreakpointNoStop() throws {
+    func testNoBreakpointNoStop(engine: DebugEngine) throws {
         let module = dbgParse(sampleProgram, "sample.pini")
         let driver = RecordingDebugDriver([])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
 
-        let interpreter = Interpreter()
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg)
 
         #expect(driver.stops.isEmpty)
     }
 
-    @Test("stopAtEntry 在首条语句自动停下（一次）")
+    @Test("stopAtEntry 在首条语句自动停下（一次）", arguments: DebugEngine.allCases)
     /// 意图：验证 stopAtEntry 在入口首条语句（line 2）自动停一次，continue 后跑完。
-    func testStopAtEntry() throws {
+    func testStopAtEntry(engine: DebugEngine) throws {
         let module = dbgParse(sampleProgram, "sample.pini")
         let driver = RecordingDebugDriver([.continue])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.stopAtEntry = true
 
-        let interpreter = Interpreter()
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg)
 
         // 首条语句（line 2）自动停一次，continue 后跑完
         #expect(driver.stops.count == 1)
@@ -147,26 +207,23 @@ struct DebuggerTests {
 
     private let exprStmtProgram = try! loadPiniFixture("testStopAtEntry", filePath: #filePath)
 
-    @Test("P2 表达式语句（print）可命中其行断点")
+    @Test("P2 表达式语句（print）可命中其行断点", arguments: DebugEngine.allCases)
     /// 意图：验证表达式语句（print(x) 所在 line 3）可命中其行断点。
-    func testExpressionStatementBreakpoint() throws {
+    func testExpressionStatementBreakpoint(engine: DebugEngine) throws {
         let module = dbgParse(exprStmtProgram, "e.pini")
         let driver = RecordingDebugDriver([.continue])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "e.pini", line: 3)] // print(x)
 
-        let interpreter = Interpreter()
-        interpreter.outputSink = { _ in } // 抑制 print 输出
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg, suppressOutput: true)
 
         #expect(driver.stops.contains { $0.location.line == 3 })
     }
 
-    @Test("P2 stepOver 逐条同深度语句停下（含表达式语句）")
+    @Test("P2 stepOver 逐条同深度语句停下（含表达式语句）", arguments: DebugEngine.allCases)
     /// 意图：验证含表达式语句时 stepOver 逐条同深度语句停下（2→3→4→5）。
-    func testExpressionStatementStepOver() throws {
+    func testExpressionStatementStepOver(engine: DebugEngine) throws {
         let module = dbgParse(exprStmtProgram, "e.pini")
         // 断点 line 2，连续 3 次 stepOver 应收敛于 2→3→4→5（print 也是表达式语句）
         let driver = RecordingDebugDriver([.stepOver, .stepOver, .stepOver, .continue])
@@ -174,18 +231,15 @@ struct DebuggerTests {
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "e.pini", line: 2)]
 
-        let interpreter = Interpreter()
-        interpreter.outputSink = { _ in }
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg, suppressOutput: true)
 
         let lines = driver.stops.map { $0.location.line }
         #expect(lines == [2, 3, 4, 5])
     }
 
-    @Test("P2 函数体内表达式语句受断点控制（跨调用）")
+    @Test("P2 函数体内表达式语句受断点控制（跨调用）", arguments: DebugEngine.allCases)
     /// 意图：验证函数体内表达式语句受断点控制，跨调用命中 helper 内 print("hi") 所在行。
-    func testExpressionStatementWithFunctionCall() throws {
+    func testExpressionStatementWithFunctionCall(engine: DebugEngine) throws {
         let src = try loadPiniFixture("testExpressionStatementWithFunctionCall", filePath: #filePath)
         let module = dbgParse(src, "call.pini")
         let driver = RecordingDebugDriver([.continue])
@@ -193,19 +247,16 @@ struct DebuggerTests {
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "call.pini", line: 2)] // helper 内 print("hi")
 
-        let interpreter = Interpreter()
-        interpreter.outputSink = { _ in }
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
+        try dbgDrive(engine, module: module, dbg: dbg, suppressOutput: true)
 
         #expect(driver.stops.contains { $0.location.line == 2 })
     }
 
     // MARK: - P7-4 P3：多文件 / 目录调试
 
-    @Test("P3 跨文件断点命中（run(package:)）")
+    @Test("P3 跨文件断点命中（run(package:)）", arguments: DebugEngine.allCases)
     /// 意图：验证 run(package:) 下跨文件断点命中（helper.pini 的 line 2）。
-    func testCrossFileBreakpoint() throws {
+    func testCrossFileBreakpoint(engine: DebugEngine) throws {
         let mainSrc = try loadPiniFixture("testCrossFileBreakpoint", filePath: #filePath)
         let helperSrc = try loadPiniFixture("testCrossFileBreakpoint_2", filePath: #filePath)
         let mainMod = dbgParse(mainSrc, "main.pini")
@@ -219,10 +270,7 @@ struct DebuggerTests {
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "helper.pini", line: 2)]
 
-        let interpreter = Interpreter()
-        interpreter.outputSink = { _ in }
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(package: pkg)
+        try dbgDrive(engine, package: pkg, dbg: dbg, suppressOutput: true)
 
         #expect(driver.stops.contains { $0.location.fileName == "helper.pini" && $0.location.line == 2 })
     }
@@ -278,9 +326,10 @@ struct DebuggerTests {
         #expect(received == .stepOver)
     }
 
-    @Test("P4 DAP 端到端（内存流驱动）：initialize→launch→断点→stopped→continue→exited")
+    @Test("P4 DAP 端到端（内存流驱动）：initialize→launch→断点→stopped→continue→exited",
+          arguments: DebugEngine.allCases)
     /// 意图：验证 DAP 端到端会话（initialize→launch→断点→stopped→continue→exited）完整跑通，三个事件均出现。
-    func testDAPSessionEndToEnd() throws {
+    func testDAPSessionEndToEnd(engine: DebugEngine) throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("dap_inproc_\(Int.random(in: 0..<1_000_000)).pini")
         let src = try loadPiniFixture("testDAPSessionEndToEnd", filePath: #filePath)
@@ -296,6 +345,10 @@ struct DebuggerTests {
         var outBuffer = Data()
 
         let server = DAPServer()
+        // P4-3：把引擎交给适配器（仅 .hir 需要；.ast 走适配器自己的默认路径）。
+        if engine == .hir {
+            server.makeRun = { mod, _ in dbgMakeRunHIR(module: mod) }
+        }
         server.readChunk = { size in
             inCond.lock()
             while inBuffer.count < size && !inClosed { inCond.wait() }
@@ -357,31 +410,50 @@ struct DebuggerTests {
 
     // MARK: - P1-5：调试面接缝
 
-    @Test("调试面接缝：两台引擎同形，装配不提及具体类型")
+    @Test("调试面接缝：两台引擎同形，装配不提及具体类型，且两侧都真命中断点")
     /// 意图：验证 `DebugHookHost` 同时被 AST 与 HIR 两台引擎符合，且仅持协议面即可装配调试器；
-    /// AST 侧具备暂停点故断点真命中，HIR 侧装配成功但无暂停点（休眠态由 HIR 执行引擎侧用例断言）。
+    /// P4-3 之前 HIR 侧只是「同形可装配」（无暂停点），现在两台都具备暂停点 ⇒ 同一个断点在
+    /// 两侧都真命中同一行。
     func testDebugSurfaceIsEngineAgnostic() throws {
-        let interpreter = Interpreter()
-        let executor = HIRExecutor()
-        // 两台引擎唯一的共同点就是协议面本身 —— 以下全程不出现任何一种引擎的具体调试类型。
-        let hosts: [any DebugHookHost] = [interpreter, executor]
-
-        let driver = RecordingDebugDriver([.continue])
+        // 两台引擎唯一的共同点就是协议面本身 —— 装配全程不出现任何一种引擎的具体调试类型。
+        let driver = RecordingDebugDriver([.continue, .continue])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
-        // 同一个动作装到两台引擎上：装配只认协议面，不认引擎。
+
+        let hosts: [any DebugHookHost] = [Interpreter(), HIRExecutor()]
         for host in hosts {
+            // 同一个动作装到两台引擎上：装配只认协议面，不认引擎。
             host.debugHook = { ctx in try dbg.consult(ctx) }
+            #expect(host.debugHook != nil)
         }
 
-        // AST 侧有暂停点 ⇒ 断点命中，行为与直连具体类型时逐字一致。
-        try interpreter.run(module: dbgParse(sampleProgram, "sample.pini"))
-        #expect(driver.stops.count == 1)
-        #expect(driver.stops.first?.location.line == 2)
+        // 同一份程序在两台引擎上各跑一遍：断点都在 line 2 命中。
+        for engine in DebugEngine.allCases {
+            try dbgDrive(engine, module: dbgParse(sampleProgram, "sample.pini"), dbg: dbg)
+            #expect(driver.stops.last?.location.line == 2)
+        }
+        #expect(driver.stops.count == 2)
+    }
 
-        // HIR 侧的「同形可装配」在本用例内即可确认；「尚未接暂停点」属引擎侧事实。
-        #expect(executor.debugHook != nil)
+    @Test("两引擎停在逐项相同的行上（同一程序，同一批命令）")
+    /// 意图：P4-3 的核心判据 —— 同一份源码在两台引擎下产生**逐项相同**的停止行序列。
+    /// 这比「各自绿」更强：它要求位置供给落在与解释器同一批行上。HIR 的位置来自
+    /// `lowerBlock`（记的是 `Statement.location`），解释器的暂停点读的也是它，
+    /// 所以两侧同源 —— 这个用例把「同源」变成可观测的事实。
+    func testBothEnginesStopOnTheSameLines() throws {
+        let src = try loadPiniFixture("_sampleProgram", filePath: #filePath)
+        var recorded: [DebugEngine: [Int]] = [:]
+        for engine in DebugEngine.allCases {
+            let driver = RecordingDebugDriver([.stepIn, .stepIn, .stepIn, .continue])
+            let dbg = Debugger(driver: driver)
+            dbg.output = { _ in }
+            dbg.stopAtEntry = true
+            try dbgDrive(engine, module: dbgParse(src, "sample.pini"), dbg: dbg)
+            recorded[engine] = driver.stops.map { $0.location.line }
+        }
+        #expect(recorded[.hir]?.isEmpty == false, "the HIR engine must stop at least once")
+        #expect(recorded[.ast] == recorded[.hir])
     }
 }
 

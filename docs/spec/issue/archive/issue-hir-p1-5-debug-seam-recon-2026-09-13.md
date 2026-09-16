@@ -2,12 +2,12 @@
 
 - 状态：**LANDED（2026-09-13 归档）** —— 勘测完成（只读）且**其产出已全部处置**：
   S1 已落地并交付（见 §9）；S2 已另立 P4 前置工单
-  `docs/issue-hir-engine-abstraction-2026-09-13.md`；口径订正**已在 P1-6 收口同步**（见 §7）。
+  `docs/spec/issue/archive/issue-hir-engine-abstraction-2026-09-13.md`；口径订正**已在 P1-6 收口同步**（见 §7）。
   **归档动作** = P1-6 收口批（2026-09-13）；本件不再更新，历史价值 = 接缝勘测与两处推翻的假设。
 - 层级：**宿主级** —— 引擎接口形态；不涉语言契约（层级判据见 `ADR-024 D6`）
 - 隶属：`docs/issue-interpreter-hir-plan-2026-09-12.md` 的 **P1-5**（**调试面**接口预留；
   **REPL 经勘测判定为另一条接缝**，见 §7）
-- 关联：`docs/issue-hir-node-source-position-2026-09-12.md`（位置基准；**实测为 P4 前置、非本步前置**）
+- 关联：`docs/spec/issue/archive/issue-hir-node-source-position-2026-09-12.md`（位置基准；**实测为 P4 前置、非本步前置**）
 
 ## 0. 一句话结论
 
@@ -112,7 +112,7 @@ AST 侧仅多 `Statement` 后缀）。
 
 ## 6. 不做范围
 
-- **不在本步解位置工单**（详见 `docs/issue-hir-node-source-position-2026-09-12.md`；
+- **不在本步解位置工单**（详见 `docs/spec/issue/archive/issue-hir-node-source-position-2026-09-12.md`；
   实测其消费面比预期窄 —— 只是 4 字段中的 1 个）。
 - **不做 S2 引擎抽象层**（超 P1 定位）。
 - **不改 Debugger / DAP 的对外行为**（`pini debug` / `pini dap` 的输出、协议流一律不变）。
@@ -137,7 +137,7 @@ AST 侧仅多 `Statement` 后缀）。
   失败信息正好打印 `line: 0 / fileName: "<hir>"` —— 即它拦的正是「会命中但位置是 0」这一态，
   **断言确有载荷**（不是恒绿的装饰）。
 - **② `run(package:)` / `run(module:)` 是否统一** —— **本步不裁，随 S2 一并处理**
-  ⇒ 已登记 `docs/issue-hir-engine-abstraction-2026-09-13.md`（P4 前置）。
+  ⇒ 已登记 `docs/spec/issue/archive/issue-hir-engine-abstraction-2026-09-13.md`（P4 前置）。
 - **③ 测试侧 12 处装配是否随协议改造** —— **结论比预设更保守：生产侧三处一处未改，测试侧既有用例一处未改。**
   原设想的「三处装配改为面向协议」在本步**不可行也不必要**：三处都还要用具体类型调 `run(...)`
   （执行入口不进协议），改写成 `any DebugHookHost` 后仍须另留具体引用，净增复杂度。

@@ -1042,8 +1042,9 @@ private func runDebugFile(_ path: String) {
  }
  let module = parseOrReport(source: source, fileName: path)
  let sources = [path: source]
- startDebugger(module: module, sources: sources, primaryName: path,
- programBase: absoluteProgramBase(path))
+ let engine = Interpreter(programBase: absoluteProgramBase(path))
+ startDebugger(run: DebugRun(host: engine) { try engine.run(module: module) },
+ sources: sources, primaryName: path)
 }
 
 /// 目录/模块调试（P7-4 P3）：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，
@@ -1060,45 +1061,29 @@ private func runDebugDirectory(_ path: String) {
  sources[unit.fileName] = src
  }
  }
- startDebugger(package: pkg, sources: sources,
- programBase: absoluteProgramBase(path))
+ let engine = Interpreter(programBase: absoluteProgramBase(path))
+ startDebugger(run: DebugRun(host: engine) { try engine.run(package: pkg) },
+ sources: sources, primaryName: sources.keys.first ?? path)
 }
 
-private func startDebugger(module: Module, sources: [String: String], primaryName: String,
- programBase: String? = nil) {
+/// 装配一次调试会话（LR-4 P4-3）。
+///
+/// 入参是 `DebugRun` 而不是具体引擎：装配只认协议面与「开始跑」的动作，
+/// 所以同一份样板同时服务两条输入形状（此前 module 版 / package 版各一份同形样板），
+/// 而换默认引擎时这里不动 —— 引擎由调用方选、并连同启动动作一起交进来。
+private func startDebugger(run: DebugRun, sources: [String: String], primaryName: String) {
  let debugger = Debugger(driver: CLIDebugDriver())
  debugger.stopAtEntry = true
  debugger.sourceMap = SourceMap(sources: sources)
- // 批 5（G58）：调试运行同样注入程序基准（与 run 单文件路径一致）。
- let interpreter = Interpreter(programBase: programBase)
- interpreter.debugHook = { ctx in
+ run.host.debugHook = { ctx in
  try debugger.consult(ctx)
  }
  do {
- try interpreter.run(module: module)
+ try run.start()
  } catch is DebuggerError {
  print("调试会话已结束。")
  } catch {
  printError(formatCLIError(error: error, source: sources[primaryName])); exit(1)
- }
-}
-
-private func startDebugger(package: Package, sources: [String: String],
- programBase: String? = nil) {
- let debugger = Debugger(driver: CLIDebugDriver())
- debugger.stopAtEntry = true
- debugger.sourceMap = SourceMap(sources: sources)
- // 批 5（G58）：调试运行同样注入程序基准（与 run 模块路径一致）。
- let interpreter = Interpreter(programBase: programBase)
- interpreter.debugHook = { ctx in
- try debugger.consult(ctx)
- }
- do {
- try interpreter.run(package: package)
- } catch is DebuggerError {
- print("调试会话已结束。")
- } catch {
- printError(formatCLIError(error: error, source: sources.first?.value)); exit(1)
  }
 }
 
