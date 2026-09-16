@@ -53,3 +53,21 @@ main|func() -> ():
 把它塞进 `G-2` 会让该批的性质从「补降载面」变成「实现泛型枚举」，规模与风险都不是同一量级。
 
 ⇒ 单独立项。它同时是 `P4-γ` 之外的一条独立推进线（与 `G-3` 的并发迁移同属「大」）。
+
+## 4. 2026-09-16 勘测订正（两处成本偏重）＋ 开工前规划指针
+
+用户于 2026-09-16 裁决形态取 **C**（**限定为准 · 裸名为糖**），并点名出规划。规划件：
+
+> **`docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md`**
+> （分 `S0` 语言面登记 → `S1` 降载层三站 → `S2` 收口；**每阶段须单独点名**）
+
+本件两处表述经读码勘测**偏重**，收口时按规划件 §6 订正：
+
+| 本件原文 | 订正 |
+|---|---|
+| §2 第 3 条「缺的是**一整个特化族**……与 `registerStructSpecialization` 同形，但**多一条 `match` 分派链**」 | **偏重**：类型层**已有**同功能件（`TypeEnvironment.lookupSpecializedEnumCase` 连载荷类型替换都做完，且构造点与 match 绑定处**已在调用**）；**`match` 分派链不成立** —— `lowerMatch` 的 `.enumeration(name:)` 分支按**名字**通用，执行器 `matchStmt` 刻意不读 `scrutineeType`。⇒ 缺的只是**降载层的三个中间站** |
+| §1「受影响的用例：`GenericEnumTests` 4 条 · `GenericRuntimeTests` 1 条」 | **补一句性质区分**：其中 **2 条属「错误通道」议题**（`testGenericEnumArgumentCountMismatch` · `testUndefinedGenericTypeStillThrows`，均期望**运行期** `RuntimeError`），**不属本批** ⇒ 本批承诺 **3 条**转绿，不承诺 5 条 |
+
+⚠️ 另有一条**语言面缺口**（规划件 §0 / `S0` 的对象）：语言参考定义了泛型枚举的**声明**
+（`[可选<T>] 有(T,) 无`）与非泛型枚举的**构造**，但**未定义泛型枚举用例的显式类型实参挂在哪**。
+⇒ 须先走规范变更治理流程登记，**实现不得先于登记**。

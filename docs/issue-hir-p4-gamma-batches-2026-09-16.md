@@ -168,6 +168,17 @@ pini emit <该夹具>   →   rc=0（看起来成功），IR 里却出现对 `is
 ⇒ 这是一个**新的特化族**（枚举模板 → 特化枚举 → 构造点解析 → match 载荷类型），
 不是一个可以放宽的守卫。**另立工单**：`docs/issue-hir-generic-enum-specialization-2026-09-16.md`。
 
+⭐ **2026-09-16 勘测订正（本行两处偏重）**：① **类型层已有同功能件**
+（`TypeEnvironment.lookupSpecializedEnumCase` 连载荷类型替换都做完，且在构造点与 match 绑定处已被调用）；
+② **`match` 分派链不成立** —— `lowerMatch` 的 `.enumeration(name:)` 分支按**名字**通用，
+执行器 `matchStmt` 更刻意不读 `scrutineeType`（按值比对）。
+⇒ 缺的只是**降载层三个中间站**，不是照结构体那条路抄一遍。
+⚠️ 另：下面只点出 1 条错误通道用例，实测是 **2 条**（`GenericEnumTests` 的
+`testGenericEnumArgumentCountMismatch` 也期望**运行期** `RuntimeError`，
+文案「实参个数不符」由 `Interpreter.swift:1614` 产生）⇒ 本簇 5 红中**只有 3 条**属本批。
+⭐ **开工前规划**：`docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md`
+（用户裁决形态取 **C**：限定为准 · 裸名为糖；分 `S0` 语言面登记 → `S1` 降载层三站 → `S2` 收口）。
+
 另一条（`testUndefinedGenericTypeStillThrows`）要求「未定义泛型类型」抛**运行期** `RuntimeError`，
 而静态降载层在**编译期**就拒了它。二者属**错误通道**问题（见下方 G-2h 的全局发现），不单独处置。
 
