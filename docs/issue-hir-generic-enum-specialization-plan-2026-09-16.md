@@ -1,8 +1,8 @@
 # G-2d 规划：泛型枚举用例构造（限定为准 · 裸名为糖）
 
-> **批**：`P4-γ` 子批 `G-2d` **前置规划**（**纯规划，不含实现**）｜**日期**：2026-09-16｜**状态**：**`S0` 已交付 · `S1`/`S2` 待点名**
+> **批**：`P4-γ` 子批 `G-2d` **前置规划**（**纯规划，不含实现**）｜**日期**：2026-09-16｜**状态**：**`S0` ✅ · `S1` ✅（`S2` 并入 `S1` 收口）—— 全族交付**
 > **用户裁决（2026-09-16）**：形态取 **C** —— **限定形态为准、裸名形态为糖**；拼写取**第一种**（类型实参挂**枚举名**）。
-> **上游**：在册工单 `docs/issue-hir-generic-enum-specialization-2026-09-16.md`（本件订正其两处成本表述，见 §7）
+> **上游**：工单 `docs/spec/issue/archive/issue-hir-generic-enum-specialization-2026-09-16.md`（**已归档** —— 其主题由 `S1` 解决；本件订正其两处成本表述，见 §6）
 > **批表**：`docs/issue-hir-p4-gamma-plan-2026-09-16.md` §2.2 的 `G-2d` 行 · **执行记录**：`docs/issue-hir-p4-gamma-batches-2026-09-16.md` 的 `G-2d ❌ 未交付` 行 · **本件 §9 为本族交付记录**
 > **判据基线**：`G-2` 收口 **75** failures（`main` = `4fc89b3`，130 类逐类单跑）
 > ⚠️ **本件不建实现、每阶段须单独点名**；`S0` 批分支 `agent/pini-dev/p4-gamma-g2d-s0`（规划批为 `agent/pini-dev/p4-gamma-g2d-plan`）。
@@ -90,7 +90,7 @@
 | 阶段 | 名称 | 内容 | 判据 |
 |---|---|---|---|
 | **S0** ✅ | **语言面登记**（走规范变更治理流程） | ① **提议**：泛型枚举用例构造的两种形态与优先级；② **影响评估**：三种候选拼写的解析代价、`ADR-026 D1` 三档解析顺序、`ADR-023` 对点式限定的既往决定、两层实现现状；③ **登记**：**新建 `ADR-037`**（不挂 `ADR-026`）＋ ADR 索引 ＋ 规范 §3 台账 **G59**；④ **落地**：规范 §A 的 `generic-construct` 产生式后加**语义注记**（**文法零改动**——该拼写已被覆盖）；⑤ **证据登记**（现口径 = **日期前缀 + 中文短语**，旧 `E-NNN` 已于 2026-09-15 停用） | ✅ **已交付 2026-09-16**（see §9）。⚠️ **本行两处已订正**：**语言参考不递交**（原写「两章补构造形态」）——两条独立理由见 §9；**`CHANGELOG` 不触发**（非破坏性、非公开版本） |
-| **S1** | **降载层三站** | ① 收集 `genericEnumTemplates`（`!ed.genericParams.isEmpty` 的枚举）＋ 用例名→模板索引；② 穿参改为传结构体（§1.5）；③ `.genericConstruct` 站点：解析父枚举（**限定形态直接给出；裸名落 D1 三档**）→ 建特化体（载荷类型替换）→ 注册进 `enums` + `userTypes`；④ 构造发射改为 `enumConstruct(enumName: 特化名, …)`；⑤ `lowerMatch` / 执行器**不动** | ① 3 条指定用例转绿（逐条点名）；② **无新增红**（与 75 逐条两方向比对）；③ 探针 319 夹具逐夹具 `cmp` **零位移**；④ **契约节点计数不变**（44 + 16）；⑤ 编译 0 error |
+| **S1** ✅ | **降载层三站** | ① 收集泛型枚举模板 ＋ 用例名→模板索引；② 新表装进 pre-pass 状态（**偏离** §1.5 的「传结构体」：改为装进 `G10SpecializationState`，理由见 §9）；③ 构造站点：解析父枚举（**限定形态由书写给出；裸名落 D1 三档**）→ 建特化体（载荷类型替换）→ 注册进 `enums` + `userTypes`；④ 构造发射走既有 `enumConstruct`；⑤ `lowerMatch` / 执行器**一行未改**（实测确认） | ✅ **已交付 2026-09-16**（见 §9）：**3 条转绿逐条点名** · **无新增红**（基线 75 → 72，fixed 3 / new 0 / still 72，两方向逐类 116/116 相同）· 探针 319 夹具**归一化后零位移** · 契约三锚点 **60/60** clean · 编译 0 error |
 | **S2** | **判据与收口**（若不单独点名则并入 S1 收口） | 全量两方向回归 + 探针 + 执行覆盖对账 + 计划件回填 + 工单维护 + `--no-ff` 合并 | 默认(HIR) 与 `PINI_INTERP_ENGINE=ast` 两方向**失败集合逐项相同**；执行覆盖 vs 基线 130 类；`DID_NOT_RUN` 单列 |
 
 ---
@@ -135,7 +135,8 @@
 
 ## 6. 工单维护（本批收口时执行，**不在规划内动**）
 
-订正在册工单 `docs/issue-hir-generic-enum-specialization-2026-09-16.md` 的两处成本表述：
+订正工单 `docs/spec/issue/archive/issue-hir-generic-enum-specialization-2026-09-16.md` 的两处成本表述
+（**该件已随 `S1` 交付一并归档**，处置记录写在归档件内）：
 
 | 原文 | 实测订正 |
 |---|---|
@@ -239,3 +240,67 @@ for f in Tests/PiniTests/GenericEnumTests/*.pini Tests/PiniTests/GenericRuntimeT
    ⇒ 检索一律走宿主内置搜索工具。
 
 **未做**：`S1`（降载层三站）· `S2`（收口）· 未 push · 未跑构建与测试（本批无源码改动）。
+
+### `S1` 降载层三站 ✅（2026-09-16）
+
+> 分支 `agent/pini-dev/p4-gamma-g2d-s1`；改动 **1 文件 / +258 −27**（`Sources/PiniCore/HIR/HIRLowerer.swift`）。
+
+**开工第一步（规划 §8 的未实测项 · 止损点 1 的观察点）——三种拼写的解析形状，实测**：
+用现成二进制 `pini parse` 跑三条探针（**无需构建**），结果与读码推断**完全一致**：
+
+| 拼写 | 实测解析产出 | 结论 |
+|---|---|---|
+| `结果<I32, String>.ok(42)` | `.call(callee: .member(object: .genericConstruct(结果,[I32,String],[]), name: "ok"), args: [42])` | ✅ 可解析（文法已覆盖） |
+| `ok<I32, String>(42)` | **单个** `.genericConstruct(typeName:"ok", …, arguments:[42])`（**不**包 `.call`） | ✅ 可解析 |
+| `.ok<I32, String>(42)` | **E2-006 解析错误**（`invalid expression`） | ❌ 不可解析（S3 需扩节点，本批不取） |
+
+**改动三站（全在降载层）**：① 模板收集多收泛型枚举 ＋ 用例名→owner 索引（`HIRGenericEnumIndex`）；
+② `registerEnumSpecialization`（按实参替换各 case 载荷类型，case 序与 tag 原样继承）；
+③ 构造站点一个共用助手 `lowerGenericEnumCaseConstruct` 服务两形态，末段交给既有 `lowerEnumCaseConstructor`。
+
+⚠️ **一处要点（`S0` 勘测未预见）**：原枚举注册把**泛型枚举模板也当类型注册**并立即解析载荷
+⇒ 第一个 `T` 就抛错，**且抛在声明处、对任何「只是声明了泛型枚举」的模块都成立**。
+本批让注册表**跳过模板**、改注册特化体 —— 这才是原报错「`at 1:1` 指声明而非构造点」的根因。
+
+**判据（全部现跑）**：
+
+| # | 判据 | 读数 |
+|---|---|---|
+| ① | 3 条指定用例转绿（逐条点名） | `testGenericEnumConstructionAndMatch` · `testGenericEnumErrBranch` · `testGenericEnumDistinctSpecializations` **全绿**；同簇另 2 条**仍红且理由如预测**（见下） |
+| ② | **无新增红**（与基线逐条两方向比对） | 基线 **75** → 候选 **72**；**转绿 3 / 新增 0 / 仍红 72 逐条相同**；两方向逐类 **116/116 相同**（各 72） |
+| ③ | 探针 319 夹具逐夹具比对 | vs `G-2` 探针**归一化后 319/319 逐条相同（变化 0）**；vs `P4-0` 冻结件 318/319（唯一变化 = `testIsLetterUnsupportedViaIRGen`，**归属 `G-2a`**，`G-2` 探针已含之 ⇒ 非本批） |
+| ④ | 契约节点计数不变 | `hir-contract-check` 三锚点（llvm / printer / interp-hir）各 **60/60** 覆盖 · clean |
+| ⑤ | 编译 | `TMPDIR=/tmp swift build --disable-sandbox` **0 error**（5.2 s 增量） |
+
+**仍红的 2 条，理由与预测逐条吻合**（属**错误通道**议题，不属本批）：
+- `testGenericEnumArgumentCountMismatch` —— 期望**运行期** `RuntimeError`，实得
+  `HIR lowering error at 6:13: generic enum '结果' expects 2 type argument(s), got 1`。
+  ⚠️ **报错质量是净改善**：由「声明处 `1:1` 的 `lacks a resolvable type`」变为「**构造点**逐字说明缺几个实参」。
+- `testUndefinedGenericTypeStillThrows` —— 同族（静态拒绝 vs 运行期错误），本批未动。
+
+**LLVM 侧实测（规划 §3 第 6 条，非承诺项）—— 结论：不需要额外工作**：
+`emit` rc=0（95 行 IR，**无未定义符号**）；`run-llvm` 输出 **`42`**，与 HIR 引擎一致。
+⇒ 与 `G-2a` 的 `is_letter`（rc=0 却引用未定义符号）**不同型**：枚举走 `enumConstruct`，
+其 LLVM 发射早已存在且与特化名无关。
+
+⚠️ **一处如实登记的新引擎不对称**：**限定形态（ADR-037 定为「为准」者）在降载层与 LLVM 通道均可用，
+但 AST 走查侧不支持**（报 E5-001 `undefined variable 'ok'`）。影响面：**测试面不可见**（差分夹具全用裸名形态；
+两方向逐类 116/116 相同即为证人）；走查将于 `P4-γ` 删除 ⇒ **不投入**。已同步至 `ADR-037` 与规范 `G59`。
+
+**与规划的一处偏离（有理由）**：规划 §1.5/§2 建议「穿参改为传结构体（避免 42 处）」。实现时改取
+**更省的一路**：把新表装进 **`G10SpecializationState`**（该状态本就在 `precollectGenericUses` 的每次递归里
+传递）⇒ 递归调用点**零改动**；只在「建 `FunctionContext`」的三个入口加了一个带默认值的参数
+（9 处调用点补传）。**理由**：结构体化重写会把 ~20 行参数传递改动与本次功能改动混在一批，
+违反本项目自己的「零行为变更批单独走」先例（`G-1`）；装进既有状态则**纯增量**、可逐行归因。
+
+**判据器械本轮的两处缺口（如实登记）**：
+
+1. ⚠️ **逐类驱动的正则漏了「带 skip 的」那一行形状**：`Executed N tests, with M tests skipped and K failures`
+   不被 `Executed (\d+) tests?, with (\d+) failure` 匹配 ⇒ `IRExecutionTests`（**81 执行 / 3 跳过 / 0 失败**）
+   被读成 `DID_NOT_RUN`。**该失败方向是保守的**（不会把红读成绿），已当场修正则并重测。
+2. ⚠️ **一次整块 `DID_NOT_RUN`**：62 个类同批返回「0 执行」（构建目录争用），
+   且该批**被重复执行一次**导致表内每类两行。已把驱动改为**每类一个文件**（重复执行只覆盖不叠行）
+   ＋ `executed == 0` **自动重试一次** ⇒ 该类污染结构上不再发生。终版：116 类、唯一
+   `DID_NOT_RUN` 只剩 `RecordingDebugDriver`（**无测试的辅助类**，非缺口）。
+
+**未做**：`S2`（收口）· 未 push。

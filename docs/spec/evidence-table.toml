@@ -412,8 +412,8 @@ artifacts = [
   "docs/spec/adr/adr-037-generic-enum-construction-form.md",
   "docs/spec/adr/adr-index.md",
   "docs/spec/pini-spec-v0.md",
-  "docs/spec/issue-hir-generic-enum-specialization-plan-2026-09-16.md",
-  "docs/spec/issue-hir-generic-enum-specialization-2026-09-16.md",
+  "docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md",
+  "docs/spec/issue/archive/issue-hir-generic-enum-specialization-2026-09-16.md",
   "docs/spec/evidence-table.toml",
 ]
 command = "bash tools/check-doc-links.sh ; bash hooks/comment-lint.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; python3 tools/hir-contract-check.py"
@@ -429,3 +429,50 @@ note = """登记面 = ADR-037（新建）· ADR 索引新增一行 · 规范 §3
 **新增 G59 时踩到并当场修复的一处缺陷**：首版把新行插在 G58 之后**三个空行**之后 ⇒ 该行**落在表格外**（GFM 表格遇空行截断），会渲染成「表格少一行 + 下方多出裸文字」。机械复查（上一行与下一行都以 `|` 开头、本行是有内容的非 `|` 行）命中后改为紧邻 G58。⚠️ 全仓该复查仍命中 **1 处既有假阳性**（§A 的 EBNF 以 `|` 作交替，产生式续行被误判）——**非本批引入**，已用 `git show HEAD:` 版本对照确认。
 
 **一处门禁姿势的实证订正**（对作业手册）：`comment-lint.sh` **只传 `docs`** 时 L6 报「未扫到任何 ADR 引用：扫描未生效」并**非零退出**（ADR 引用住在代码注释里，`docs` 里 regex 匹配不到）；**传 `docs Sources` 或不带参数**才全绿 ⇒ 预扫姿势必须带上 `Sources`。"""
+
+[[evidence]]
+id = "2026-09-16 泛型枚举用例构造在降载层落地"
+citable = false
+claim = "Generic enum case construction is lowered on the HIR side: the template collection also gathers generic enums and the case -> owner index the bare spelling resolves through, registerEnumSpecialization substitutes a template's case payloads per type-argument combination, and one helper places both construction spellings before handing off to the existing lowerEnumCaseConstructor. A generic enum template is no longer registered as if it were a type, which is what made lowering fail at the declaration -- for any module that merely declared a generic enum. Measured: the failing suite goes 75 to 72 with 3 fixed, 0 new and 72 unchanged, both engine directions identical class-by-class (116/116), the probe unchanged fixture-by-fixture once the per-run temp path in one lli message is normalised, the contract node count unchanged at 60/60 on all three anchors, and the LLVM side needs no extra work (emit rc=0 with no undefined symbol, run-llvm prints 42). The two cases that stay red want a runtime RuntimeError where the lowering layer now rejects at the construction site, which is the separately filed static-rejection-vs-runtime-error question."
+artifacts = [
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "docs/spec/adr/adr-037-generic-enum-construction-form.md",
+  "docs/spec/pini-spec-v0.md",
+  "docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md",
+  "docs/spec/issue/archive/issue-hir-generic-enum-specialization-2026-09-16.md",
+  "Tests/PiniTests/GenericEnumTests/GenericEnumTests.swift",
+  "Tests/PiniTests/GenericRuntimeTests/GenericRuntimeTests.swift",
+  "docs/spec/evidence-table.toml",
+]
+command = "TMPDIR=/tmp swift build --disable-sandbox ; per-class: TMPDIR=/tmp swift test --filter <Class> (116 classes, both engine directions) ; TMPDIR=/tmp python3 tools/hir-parity-probe.py --out /tmp/s1-probe.tsv ; python3 tools/hir-contract-check.py ; PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin .build/debug/pini emit|run-llvm"
+output = "build 0 error in 5.2s. Per-class runs at the parent commit give 75 failing methods, the candidate gives 72: fixed 3 (GenericEnumTests testGenericEnumConstructionAndMatch, testGenericEnumErrBranch, testGenericEnumDistinctSpecializations), new 0, still 72 -- compared method by method, not by count. Both directions over the same 116 classes are identical class-by-class, 72 each, confirming the change lives on the HIR path only. Probe: 319 fixtures, 319/319 identical to the G-2 probe after normalising the random /tmp/pini_*.ll name embedded in one lli diagnostic; against the P4-0 freeze the single delta is testIsLetterUnsupportedViaIRGen (FRONTEND_FAIL -> HARNESS_DEPENDENT), which the G-2 probe already contained, so it belongs to G-2a. Contract: 60/60 nodes on each of llvm, printer and interp-hir, clean. LLVM: emit rc=0, 95 lines, no undefined symbol; run-llvm prints 42 matching the HIR engine."
+validated_at = "2026-09-16T19:51+0800"
+status = "FRESH"
+note = """降载层三站全在 `Sources/PiniCore/HIR/HIRLowerer.swift`（1 文件 / +258 −27）。
+**`lowerMatch` 与执行器一行未改**：`match` 按枚举名分派、执行器按值比对，特化名对二者是透明的。
+
+**开工第一步实测（`S0` 留下的未实测项）**：三种拼写的解析形状用现成二进制 `pini parse` 取得，
+**无需构建** ⇒ 与读码推断**完全一致**：限定形态 = `.call(.member(object: .genericConstruct(枚举名,[实参],[]), 用例), …)`；
+裸名形态 = **单个** `.genericConstruct`；点号形态 `.ok<…>` = **E2-006 解析错误**（故 S3 不取）。
+
+**一处 `S0` 未预见、本批才定位的根因**：原枚举注册把**泛型枚举模板也当类型**注册并立即解析载荷
+⇒ 第一个 `T` 就抛错，且**抛在声明处、对任何只是声明了泛型枚举的模块都成立**。
+这解释了原报错为何是「`at 1:1`」（指声明）而不是构造点。本批改为**跳过模板**、只注册特化体。
+
+**报错质量净改善**：`testGenericEnumArgumentCountMismatch` 的失败文本由
+「声明处 `1:1` 的 `lacks a resolvable type`」变为「**构造点** `6:13`：`generic enum '结果' expects 2 type argument(s), got 1`」。
+它仍红只是因为它要的是**运行期**错误（归另一工单）。
+
+**一处新引擎不对称（如实登记）**：`ADR-037` 定为「为准」的**限定形态**在**降载层与 LLVM 通道可用**，
+**AST 走查侧不支持**（E5-001 `undefined variable 'ok'`）。测试面不可见（差分夹具全用裸名形态；
+两方向逐类 116/116 相同即证人）；走查将于 `P4-γ` 删除 ⇒ 不投入。已同步 `ADR-037` 与规范 `G59`。
+
+**判据器械的两处缺口（本批实测，均已当场处置）**：① 逐类驱动的正则漏了
+`Executed N tests, with M tests skipped and K failures` 这一形状 ⇒ `IRExecutionTests`
+（81 执行 / 3 跳过 / 0 失败）被读成 `DID_NOT_RUN`；该失败方向**保守**（不会把红读成绿），
+已修正则并重测。② 曾有一整块 62 个类同批返回「0 执行」（构建目录争用）且该批被重复执行一次
+⇒ 驱动改为**每类一个文件**（重复执行只覆盖不叠行）＋ `executed == 0` 自动重试一次。
+
+**顺带修正的一处本表缺陷**：`S0` 那条证据的 `artifacts` 里有两个路径写成 `docs/spec/issue-hir-…`，
+实际在宿主级 `docs/`（该表不受文档链接门禁覆盖，故未被拦下）；已改为真实路径，
+其中工单一项指向归档新址。"""

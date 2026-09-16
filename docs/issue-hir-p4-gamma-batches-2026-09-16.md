@@ -166,7 +166,8 @@ pini emit <该夹具>   →   rc=0（看起来成功），IR 里却出现对 `is
 泛型参数 `T` 在那里无法解析 ⇒ 报 `associated value '…' of case 'ok' lacks a resolvable type`。
 
 ⇒ 这是一个**新的特化族**（枚举模板 → 特化枚举 → 构造点解析 → match 载荷类型），
-不是一个可以放宽的守卫。**另立工单**：`docs/issue-hir-generic-enum-specialization-2026-09-16.md`。
+不是一个可以放宽的守卫。**另立工单**：`docs/spec/issue/archive/issue-hir-generic-enum-specialization-2026-09-16.md`
+（**已归档** —— 该工单主题由 `G-2d` 的 `S1` 于 2026-09-16 解决，处置记录写在归档件内）。
 
 ⭐ **2026-09-16 勘测订正（本行两处偏重）**：① **类型层已有同功能件**
 （`TypeEnvironment.lookupSpecializedEnumCase` 连载荷类型替换都做完，且在构造点与 match 绑定处已被调用）；
