@@ -682,6 +682,27 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
         return .bool(first.isNumber)
     }
 
+    /// The interpreter's call-depth ceiling. One constant, because the two
+    /// engines used to hold separate copies kept in step by hand and by a
+    /// comment saying so.
+    static let maxCallDepth = 120
+
+    /// The error both engines raise when the ceiling is hit.
+    ///
+    /// Shared rather than duplicated because the wording is load-bearing: the
+    /// depth guard's contract is "a diagnosable error instead of a stack
+    /// overflow", and a caller matching on the reason (the guard's own test
+    /// does) can only match one wording. The HIR executor had an English
+    /// sentence here while the interpreter had a Chinese one, so the same
+    /// runaway recursion read as two different failures.
+    static func recursionGuardError() -> RuntimeError {
+        RuntimeError.invalidOperation(
+            reason: "调用深度超过上限 \(maxCallDepth)，疑似无限递归",
+            location: SourceLocation(line: 0, column: 0, fileName: "")
+        )
+    }
+
+
     /// The character builtins, by name.
     ///
     /// One table serves both engines: the lowerer's whitelist reads it (a name is

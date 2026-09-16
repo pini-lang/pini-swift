@@ -29,7 +29,9 @@ public class Interpreter: DebugHookHost {
  /// 调用深度护栏：无限递归以可诊断错误终止，而非打穿线程栈（零诊断崩溃）。
  /// 每层 Pini 函数调用对应数层 Swift 帧，上限取保守值，正常递归远不可及。
  private var callDepth = 0
- private let maxCallDepth = 120
+ /// The shared ceiling, under the interpreter's own name so the instance
+ /// code reads unchanged; the value lives in `RuntimeOps`.
+ private var maxCallDepth: Int { RuntimeOps.maxCallDepth }
 
  /// 并发调度脊柱（ADR-009 阶段 A）：解释器只依赖 `Scheduler` 协议，
  /// 当前后端为 `GCDScheduler`；阶段 B 可换挂起实现（`SuspendScheduler`）而不改调用点。
@@ -2675,11 +2677,8 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  public func callFunctionValue(_ fv: FunctionValue, args: [Value]) throws -> Value {
  callDepth += 1
  defer { callDepth -= 1 }
- if callDepth > maxCallDepth {
- throw RuntimeError.invalidOperation(
- reason: "调用深度超过上限 \(maxCallDepth)，疑似无限递归",
- location: Interpreter.builtinLocation
- )
+ if callDepth > RuntimeOps.maxCallDepth {
+ throw RuntimeOps.recursionGuardError()
  }
  if fv.isTypeConstructor {
  // G-P10(c)：类型构造不接受实参（字段经初始化器/赋值设置）；

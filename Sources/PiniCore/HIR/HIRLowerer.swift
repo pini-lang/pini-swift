@@ -2530,8 +2530,11 @@ public enum HIRLowerer {
             // nominal gates there yet (the FFI corpus only prints scalars,
             // strings, and pointers).
             if functionName == "print" {
-                guard !loweredArgs.isEmpty else {
-                    throw unsupported("print expects at least one argument", at: location)
+                // The zero-argument form is a bare newline: the interpreter
+                // joins an empty argument list and hands the empty string to
+                // the sink, and `printMulti` with no arguments does the same.
+                if loweredArgs.isEmpty {
+                    return LoweredExpr(node: .printMulti(arguments: []), type: .i32)
                 }
                 if loweredArgs.count == 1 {
                     if case .load(let name, _) = loweredArgs[0].node, context.errorBindings.contains(name) {
