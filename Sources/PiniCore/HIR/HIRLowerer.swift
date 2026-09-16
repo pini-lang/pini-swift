@@ -1857,7 +1857,34 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> HIRStmt {
-        let loweredOperand = try lowerExpr(operand, expected: nil, into: &context)
+        // A bare `ok(x)` / `err(x)` operand has no expected Result type to
+        // adopt: Pini's `^T` surface constrains neither half, so the general
+        // `ok`/`err` rule (which reads the expectation) has nothing to read.
+        // The two halves are not equally knowable, though -- `ok`'s payload
+        // fixes the ok half outright -- so the operand is built here with that
+        // type rather than being sent through the expectation channel.
+        //
+        // For `err` no ok type exists at all. I32 stands in, which is the same
+        // device `pass` uses to stay total without a node of its own: the ok
+        // half of a literal `err(...)` operand is unreachable (the handler owns
+        // control flow, and statement position is the only place this shape
+        // reaches), so the stand-in never carries a value.
+        let loweredOperand: LoweredExpr
+        if case .call(let callee, let arguments, _) = operand,
+           case .identifier(let calleeName, _) = callee,
+           calleeName == "ok" || calleeName == "err",
+           arguments.count == 1 {
+            let payload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
+            let resultType = HIRType.result(ok: calleeName == "ok" ? payload.type : .i32)
+            loweredOperand = LoweredExpr(
+                node: .resultConstruct(
+                    isOk: calleeName == "ok", payload: payload.node, type: resultType
+                ),
+                type: resultType
+            )
+        } else {
+            loweredOperand = try lowerExpr(operand, expected: nil, into: &context)
+        }
         guard case .result(let okType) = loweredOperand.type else {
             throw unsupported("try operand is not a Result", at: expressionLocation(operand))
         }
