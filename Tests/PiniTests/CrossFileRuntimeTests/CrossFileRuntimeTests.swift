@@ -29,7 +29,7 @@ final class CrossFileRuntimeTests: XCTestCase {
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(package: package)
         } catch {
             fflush(stdout)
@@ -91,7 +91,7 @@ final class CrossFileRuntimeTests: XCTestCase {
         let package = try buildPackage([
             ("lib.pini", "helper() -> ():\n    return\n"),
         ])
-        XCTAssertThrowsError(try Interpreter().run(package: package)) { error in
+        XCTAssertThrowsError(try ProgramRunner().run(package: package)) { error in
             XCTAssertTrue(error is RuntimeError, "无 main 应抛 RuntimeError（mainNotFound），实际 \(error)")
         }
     }

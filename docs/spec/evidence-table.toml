@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-16T13:25+0800"
-refresh_note = "2026-09-16 **P4-α（默认引擎切 HIR）批**：新增「默认执行引擎翻转为 HIR」一条（默认方向与 ast 回落方向各 1270/0 · 端到端差异夹具在两个方向各自给出预期读数 · 探针与 P4-0 冻结件逐字节相同）。⇒ **P4 本体已开工。** 2026-09-16 **P4-4（REPL 形态对齐）批**：新增「REPL 求值路径的两引擎对等」一条（REPL 用例 11 × 2 引擎全过 · 端到端 HIR 下 `1+2`→`3` · 全量 AST/HIR 各 1270/0 · 探针与 P4-0 冻结件逐字节相同）。⇒ **P4 前置五批全部交付。** 2026-09-16 **P4-3（调试面接缝）批**：新增「两台引擎停在同一批源行上」一条（调试用例 11 场景 × 2 引擎 = 22 用例全过 · 全量 AST/HIR 各 1270/0 · 探针与 P4-0 冻结件逐字节相同）。 2026-09-16 **P4-0（判据面清零）批**：新增「2026-09-16 内建 callee 归属落地、struct 拷贝取得最小见证」一条（`FLIP BLOCKERS 11 → 0` · 逐夹具对账恰 4 处 `GAP_EXEC → OK` · 变异反证两级零外溢 · 判定真值表 6/6 · 工单一关一留）。**本次仅新增该条；存量条目未重新验证，按其自身 validated_at 判定**。 【前一则】 2026-09-15 **第二批（证据表 ID 改型与引用闸门）**：ID 由三位编号改为「日期前缀 ＋ 中文自描述短语」并逐条 `citable = false`（旧编号仅在**说明悬空原因**时以「E-NNN（源已删除）」形态出现）；外部 79 个引用组加删除标注、25 处改摘要；`meta.dangling_policy` / `dangling_ids` 废除、改 `id_policy`；`tools/evidence_sweep.py --check` 新增「表外编号无标注 ⇒ 报错」并接入 `pre-commit`（**无条件**跑，与可跳过的清扫节拍分开）；判据面全绿 —— `--check` exit 0 · 全量回归 1269 / 3 skipped / 0 failures + 45 / 14 suites · 契约 clean 60/60 · doc-links 609 · comment-lint L1–L6；变异反证三则均以 md5 校验逐字节还原。**存量条目未重新验证，按其自身 validated_at 判定**。 【前一则】 2026-09-15 `P3` 附属批（B 组收口 / `CG-13` 收口）：新增「2026-09-15 契约 B 组六项减为五项」（`arrayJoin` 移出 B 组 ⇒ B 组 6 项 → 5 项，契约 §0.4/§2.40/§6 + `ADR-034` + 台账 + 两件计划同步；**先补非 ASCII 测试再移出** —— 该节点「非 ASCII 上逐字节一致」的断言此前**无落地载体**（指明载体为 752 字节纯 ASCII），已补测并补入夹具、三臂各 49 字节 / `FLIP BLOCKERS 0`；`CG-13` 原描述「工单自述含 `§2.39`」经复核**不成立**并就地订正 ⇒ 台账 已处置 6→7 / 需裁决 1→0；探针全量 319 夹具与冻结件**逐槽位零位移**、逐夹具判定变化 0、唯一差异 = 该夹具自身输出 `20/20/20 → 49/49/49`；契约 clean 60/60 · doc-links 600 · comment-lint L1–L6 · evidence_sweep --check 通过（drift 1 为时龄、非本批引入）；伴生发现的字符串字面量字形碰撞**已立案不修**）；**存量条目未重新验证，按其自身 validated_at 判定**。【前一则】 2026-09-15 `P3-G2` 判据缺口台账批：新增「2026-09-15 判据缺口台账落件 13 条」（`CG` 表 13 条由 5 处散落收敛并落件 —— 6 已处置 / 5 待处置 / 1 登记不修 / 1 需裁决；探针加 `--out` 且**行为中性**由全量重跑 TSV 与 G1 冻结件 `cmp` 逐字节相同证明；CG-10 实测订正「结构性不可观测」为「语料未覆盖」· `hir-contract-check` clean 60/60 · 全量回归 1269 / 3 skipped / 0 failures + 45 / 14 suites 与基线逐项相同 · doc-links 586 / comment-lint L1–L6 / evidence_sweep --check 全绿）；**存量条目未重新验证，按其自身 validated_at 判定**。；本次仅新增 1 条（P4-1a 装配层收口），存量条目未重新验证；本次仅新增 1 条（P4-1 完成），存量条目未重新验证；本次仅新增 1 条（P4-2 勘测），存量条目未重新验证"
+last_refresh = "2026-09-16T13:47+0800"
+refresh_note = "2026-09-16 **P4-β（测试面迁移）批**：新增「测试面迁移到 HIR 驱动」一条（默认方向与 `PINI_INTERP_ENGINE=ast` 方向各 **84 failures** 且**失败集合完全相同** ⇒ 迁移真实、非靠默认开关 · 未迁面 0 位移 · 探针与 P4-0 冻结件逐字节相同）。⚠️ 本批**不改用户可见行为**（A 类 50 文件只是换驱动入口），故不触发既有条目的重跑；`P4-α` 的「默认引擎翻转」一条仍为现值。"
 last_sweep = "2026-09-16T10:33:00+08:00"
 [[evidence]]
 id = "2026-09-13 工单核验、归档与状态刷新"
@@ -374,4 +374,32 @@ output = "Default (no variable) full suite 1270 / 3 skipped / 0 failures plus sw
 validated_at = "2026-09-16T13:25+0800"
 status = "FRESH"
 note = "**批属性**：**`P4-α`「默认引擎切 HIR」** —— **P4 本体的第一步**，也是「翻转」的字面含义。**Why it is one line**：翻转的风险不在改默认值，而在**删掉 AST 走查**（那是 P4-γ），所以本批刻意只动默认值，让回落路径仍在。**⚠️ 本批不改开关**：`PINI_INTERP_ENGINE` 仍可显式指定 `ast`，它服务两件事 —— **三通道探针的参照臂**（探针早已预见翻转：每个通道显式指定引擎并 `env.pop` 掉继承值，其注释原文即「P4 flips that default, and an inherited value would silently turn the frozen reference into a second HIR arm」），以及后续各批的过渡。按 `D-B6`，**开关的退役与「删除 AST 走查」是同一件事**，故归 P4-γ。⭐ **P4 本体的分批（本批量清）**：**P4-β** = 测试面迁移（实测 **67 文件 / 798 用例**驱动 `Interpreter`）；**P4-γ** = 删除 AST 走查（`Interpreter.swift` 3783 行 + `SuspendEvaluator.swift` 890 行 + 收开关 + 探针口径改两通道）。⚠️ **P4-γ 的真实闸门不是工程量而是 R1/R2**：P4-2 实测 **125 个夹具在 HIR 下是 `E6-004`（未实现，集中在并发 / CPS / 挂起）**，删掉 AST 走查会让这些能力**直接消失**（用户可见回退）⇒ 必须裁 R1（迁到 HIR）或 R2（弃）。⇒ **P4-β 应先做**，因为它的**红数是 R1/R2 的唯一实证输入**。**残留**：`Interpreter` 仍在（供测试与回落），本批不删。"
+
+
+[[evidence]]
+id = "2026-09-16 P4-beta 测试面迁移到 HIR 驱动"
+citable = false
+claim = """The test suite drives the HIR engine for execution, and it drives it because the test says so rather than because a default says so. The 67-file / 798-case surface that ran `Interpreter` was split by the role `Interpreter` played: 50 files / 429 cases migrated to the new engine-agnostic entry point `ProgramRunner` (`check -> lower -> execute`), while 9 files / 303 cases were deliberately left alone because there `Interpreter` is the *reference arm* of a two-engine comparison -- migrating them would make both arms HIR and the comparison vacuously true. The distinguishing evidence is that the default direction and `PINI_INTERP_ENGINE=ast` produce byte-identical failure sets, which only holds if the migrated cases ignore the environment variable. The batch also produces the first measured cost of deleting the AST walk: 84 cases go red, of which only 33 are the concurrency surface R2 proposes to drop."""
+artifacts = ["Sources/PiniCore/Run/ProgramRunner.swift", "docs/issue-hir-p4-beta-migration-2026-09-16.md", "docs/issue-hir-p4-plan-2026-09-16.md", "Tests/PiniTests/**/*.swift (50 files, 62 constructor sites)"]
+command = """swift build --build-tests --disable-sandbox --scratch-path /tmp/pini-build; swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=ast swift test --disable-sandbox --scratch-path /tmp/pini-build; python3 tools/hir-parity-probe.py --out /tmp/p4b-final.tsv; cmp /tmp/p4-0-final.tsv /tmp/p4b-final.tsv"""
+output = """Build with tests: 0 errors. Default direction: 84 failing assertions. PINI_INTERP_ENGINE=ast direction: 84 failing assertions, and the two failure sets are identical in both directions of the difference (no case in either set is missing from the other). All 84 failures fall inside the 50 migrated files; the B / C / D surfaces report 0 failures. Probe: 254 / 27 / 12 / 2 / 20 / 4 = 319, FLIP BLOCKERS 0, cmp against the P4-0 freeze identical (md5 84deca2fe5b48ccb4e0af5ee19ad3929, fifth consecutive batch at that value). lli process residue: 0."""
+validated_at = "2026-09-16T13:47+0800"
+status = "FRESH"
+note = """**批属性**：**`P4-β`「测试面迁移」** —— `P4-γ`（删 AST 走查）的**最后一块垫脚石**，因为在此之前 67 文件 / 798 用例仍钉在走查上，删掉走查等于连同「HIR 能跑真实程序」的唯一大面积证据一起删掉。
+
+**面的四分类**（实测，非估算）：A 可迁 **50 文件 / 429 用例** · B 挂起内部 API 3/43 · C `runTests` 4/23 · **D 对照臂 9/303**。
+
+⭐ **D 类是本批最重要的判断**：那 9 个文件（`HIRDifferentialTests` 89 · `IRExecutionTests` 81 · `RuntimeBackendTests` 51 · `HIRExecutorTests` 30 · `OptionalTests` 20 · `DebuggerTests` 17 · 另 3 个 15）用 `Interpreter` 当**参照臂**。把这些用例的 `Interpreter` 也换成新入口，**两侧都成 HIR，对照恒真 ⇒ 全部假绿**。⇒ 迁移规则必须按「`Interpreter` 在文件里扮什么角色」定，不能按出现次数定。这与 `P4-2` 的「两把尺都看不全」同族：**判据可能在改动中被无声掏空**。
+
+**判据的鉴别力所在**：默认方向与 `PINI_INTERP_ENGINE=ast` 方向的**失败集合完全相同** ⇒ 迁移后的测试不读环境变量、引擎由构造类型决定 ⇒ **迁移真实，不是靠默认开关**。若有人让新入口跟随环境变量，这条立刻报出来。
+
+**判据订正**（`D-P4-22`）：上游写的验收「迁移后全量回归 0 failures」**按实测不可达**（降载缺口 73 条）。订正为「已迁面驱动 HIR ∧ 未迁面零位移 ∧ 残余逐条归因」——理由同 `P4-1a`：**不可达的绿数若被当成目标，会诱导「把测试改松」而不是「把缺口记账」**。
+
+⚠️ **红数台账**（84 = 降载未实现 **73** · 类型检查不对等 **7** · 其他 **4**）不是遗留清单，而是 **`R1/R2` 的实证输入**。按语言特性簇：并发/异步 **33** · 内建字符/字符串函数 11 · 集合方法 8 · 一元运算符 6 · 泛型 5 · 跨模块符号 5 · 类型检查不对等 5 · 作用域块/defer 3 · 其余 8。
+
+⭐ **数字结论**：**`R2`（弃掉并发面）只覆盖 33/84（39%）**，其余 **51 条属基础语言面**（一元运算符 · 内建函数 · 集合方法 · 作用域块 · 泛型枚举 · 跨模块符号 · 类型检查）⇒ **它们没有「弃掉」这个选项**，弃掉就是语言回退。⇒ **`P4-γ` 的闸门因此不止 `R1/R2`**：删走查前须先补齐那 51 条所属的降载面。这是把上游「保能力 ⇒ 迁 CPS / 不保 ⇒ 能力消失」的二选一，**改成一张有数字的账单**。
+
+**两处本批修的对等缺口**（迁移引入，非既有）：① 入口一致性门禁首版只走单模块路径，**漏了包路径**（原 `Interpreter` 两条都走），实测被 `testEntryMismatchThrowsDiagnosticError` 抓住；② 「无 main」的错误类型对齐（AST 运行期抛 `RuntimeError.mainNotFound`，降载器 lower 期拒绝）——按**条件**判断，且顺序排在**类型检查之后**（放最前会遮蔽真实的类型错误）。
+
+**登记不修**：`ffiConfig` 在新入口保留形状但本路径不消费（HIR 无动态库加载）—— 不静默丢弃而是留字段 + 注释 + 本条登记；新入口 / `ReplEvaluator` / CLI 三份同构逻辑的抽单源归 `P4-γ`。"""
 

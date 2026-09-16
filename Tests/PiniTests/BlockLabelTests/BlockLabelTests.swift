@@ -14,7 +14,7 @@ final class BlockLabelTests: XCTestCase {
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
         
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         try interpreter.run(module: module)
         
         fflush(stdout)
@@ -74,7 +74,7 @@ final class BlockLabelTests: XCTestCase {
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
         let module = try parser.parseModule()
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         XCTAssertThrowsError(try interpreter.run(module: module))
     }
 
@@ -87,7 +87,7 @@ final class BlockLabelTests: XCTestCase {
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
         let module = try parser.parseModule()
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         XCTAssertThrowsError(try interpreter.run(module: module))
     }
 

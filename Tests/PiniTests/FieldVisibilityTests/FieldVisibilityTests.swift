@@ -4,7 +4,7 @@ import XCTest
 /// 字段级 type-private 强制（spec 2.5）。
 ///
 /// 规则：`_`-前缀字段仅其**声明类型自身的方法**可访问；同文件普通函数 / 跨类型方法 / 跨文件
-/// 访问均不可访问。静态（TypeChecker）与运行时（Interpreter）双重强制，确保即便漏掉静态路径
+/// 访问均不可访问。静态（TypeChecker）与运行时（ProgramRunner）双重强制，确保即便漏掉静态路径
 /// （如类型推断失败），运行时仍是最后一道硬墙。
 ///
 /// 与声明级可见性（inaccessibleSymbol）不同：字段级依赖「当前访问者类型」，故仅在
@@ -35,7 +35,7 @@ final class FieldVisibilityTests: XCTestCase {
     }
 
     private func runError(_ package: Package) -> Error? {
-        let interp = Interpreter()
+        let interp = ProgramRunner()
         do { try interp.run(package: package); return nil }
         catch { return error }
     }

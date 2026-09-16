@@ -3,7 +3,7 @@ import PiniCore
 import Foundation
 
 /// 元组位置访问 `.0` / `.1`（草稿 A2，2026-08-23 批次 1 · 1.1）。
-/// 驱动链路：Lexer → Parser → TypeChecker → Interpreter，与项目真实公共入口同构。
+/// 驱动链路：Lexer → Parser → TypeChecker → ProgramRunner（check → lower → run），与项目真实公共入口同构。
 final class TupleIndexTests: XCTestCase {
 
     // MARK: - Helpers
@@ -20,7 +20,7 @@ final class TupleIndexTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)

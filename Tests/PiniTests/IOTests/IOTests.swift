@@ -40,7 +40,7 @@ final class IOTests: XCTestCase {
 
         do {
             // 批 5（G58）：可选注入程序基准；nil 保持既有行为（CWD 兜底）。
-            let interpreter = Interpreter(programBase: programBase)
+            let interpreter = ProgramRunner(programBase: programBase)
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)

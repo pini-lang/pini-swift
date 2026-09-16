@@ -16,7 +16,7 @@ final class TraitDefaultTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)
@@ -86,7 +86,7 @@ final class TraitDefaultTests: XCTestCase {
         XCTAssertFalse(sd.fields.contains(where: { $0.name == "实现" }), "实现 field should be extracted out")
     }
 
-    // MARK: - Interpreter Tests
+    // MARK: - ProgramRunner Tests
 
     // TR-A6.2: Uncovered default method auto-available
     /// 意图：验证结构体未覆盖 trait 默认方法时自动可用：Dog 仅声明 `实现: Greetable`，调用 greet() 输出 "hello from trait"

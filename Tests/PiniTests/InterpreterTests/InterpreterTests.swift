@@ -15,7 +15,7 @@ final class InterpreterTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             // 抛出异常前恢复 stdout，避免后续测试输出写入 pipe 导致 SIGPIPE
