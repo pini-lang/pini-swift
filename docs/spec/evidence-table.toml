@@ -511,3 +511,31 @@ note = """本批 = `P4-γ` 子批 **`G-0`（口径订正）**：**只动 `docs/`
 **⚠️ 一次作废读数（过程教训）**：首版全量回归放**后台**跑 ⇒ 沙箱拦 `swift test` 临时目录清理 ⇒ **116 类全 `DID_NOT_RUN`（0 executed）**而驱动仍写「已完成」。根因 = 漏传 `TMPDIR=/tmp`。⇒ **凡 `swift test` 类读数一律前台 + 显式 `TMPDIR`；`executed == 0` 的批次不得进入对账。**
 
 **本批未做**：未裁 `G-4`（`runTests`）与**错误通道口径**（13 条，须走 `spec §1.3`）· 未动那 16 条结构性大件 · 未动判据缺口台账五条 · 未 push。"""
+
+[[evidence]]
+id = "2026-09-16 测试基建 SIGPIPE：43 处泄漏已修 + 三块度量替代"
+citable = false
+claim = "The stdout-capture helpers no longer leak the pipe write end on the failure path: 43 catch blocks in 43 files now close it before restoring stdout. The ticket's count of 43 was independently reproduced before touching anything. The fix is partial: a single full run now reaches 94 of 115 suites and still dies once with signal 13, leaving 24 classes unrun, so the ticket stays open. Two full runs are identical item by item (94 suites, one signal, 57 failures), which rules out a race and establishes the accumulation as deterministic. Attribution is left open on purpose: no pre-fix control run at the same commit was taken, so the fact that StarvationTests now completes cannot be credited to this change. What is established is a replacement measurement: splitting the 115 classes into three filtered chunks gives zero signals, zero unrun classes, and a failure set identical item by item to the 116 per-class runs (72 = 72, set equality), with the single full run's 57 a strict subset whose 15 missing entries all sit in the unrun classes. Full regression therefore drops from 116 invocations to 3 without weakening the reading"
+artifacts = [
+  "docs/issue-test-harness-sigpipe-on-failure-paths-2026-09-16.md",
+  "Tests/PiniTests/LexicalTests/LexicalTests.swift",
+  "Tests/PiniTests/GenericEnumTests/GenericEnumTests.swift",
+  "docs/spec/evidence-table.toml",
+]
+command = "count: block-parse over Tests/**/*.swift, three conjunctive conditions ; fix: insert <var>.fileHandleForWriting.closeFile() before the stdout restore in each catch ; TMPDIR=/tmp swift test --disable-sandbox (full, twice) ; python3 /tmp/chunk-run.py /tmp/s1-classes.txt 3 /tmp/chk ; compare merged failure set against the 116 per-class tsvs, item by item"
+output = "43 sites in 43 files (39 'pipe', 4 'outPipe'), one per file, +1 line each; compile clean in 4.6s. Full run (twice, identical): 94 suites, one 'signal code 13', 57 failing assertions, 24 classes not run starting at StdlibTests. StarvationTests now yields result lines. Three chunks: 39/39/37 classes, 115 reached, 0 unrun, 0 signals, failures 32/19/21 = 72, set-equal to the per-class reading; the single run's 57 is a strict subset with all 15 missing entries inside the unrun classes"
+validated_at = "2026-09-16T20:36+0800"
+status = "FRESH"
+note = """器械批 = `D-P4-29` 授权的修复，**`Sources/` 零改动 · `Tests/` 43 文件各 +1 行**。
+
+**票据的 43 与我独立复现的 43 逐项吻合** ⇒ 该数字可信（我自己的前两版扫描器分别得 51 与 55，都是假阳性，成因记在工单 §10）。
+
+**修复是部分的，如实记账**：判据 1（整跑一次完成 115 个 suite、无 signal 13）**未达** —— 修后单次整跑 = **94 suite / 仍 1 次 signal 13 / 24 个类未跑**（自 `StdlibTests` 起）。**工单维持 `Open`。**
+
+⚠️ **归因留白（有意）**：修后 `StarvationTests` 跑完了，但**本批没做「同一提交下修前」的对照整跑** ⇒ **不把这次位移归因给本批修复**（要把「修前是否也崩在 94」测出来才知道，本批未测）。
+
+**定位实验做了一次**：整跑两次**逐项相同**（94 / 1 / 57）⇒ **确定性累积、非竞态**。未继续追根因（成本无界）⇒ 按我自己写进工单 §8 的止损线**上报**，**不取 `signal(SIGPIPE, SIG_IGN)`**（那是掩盖）。
+
+**✅ 本批的实际产出 = 一个已实测等价的度量替代**：115 个类切 **3 块**（每块一次 `swift test --filter`）⇒ **0 次信号 · 0 个未跑类 · 失败 72 条**，与**逐类单跑 116 次**的读数**逐条相同（集合相等，非只比总数）**；旁证 = 单次整跑的 57 条是它的真子集，缺的 15 条**全在未跑的 24 个类里**（即「没跑」表现为少读数，不是多出假绿）。⇒ **全量回归由 116 次调用降到 3 次**，这是后续各批的直接提速项。
+
+**两条可复用教训（已写入工单 §10）**：① 判「某 token 在不在」**必须用词边界**（块里的 `thrown` 会被 `'throw' not in block` 放过）；② 判「`catch` 是否异常退出」**不能看附近有没有 `close`**（附近的行可能属于**公共退出路径**），要看**块边界**。"""

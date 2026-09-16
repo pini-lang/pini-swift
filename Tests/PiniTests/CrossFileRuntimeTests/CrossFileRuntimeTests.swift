@@ -33,6 +33,7 @@ final class CrossFileRuntimeTests: XCTestCase {
             try interpreter.run(package: package)
         } catch {
             fflush(stdout)
+            pipe.fileHandleForWriting.closeFile()
             dup2(originalStdout, STDOUT_FILENO)
             close(originalStdout)
             throw error

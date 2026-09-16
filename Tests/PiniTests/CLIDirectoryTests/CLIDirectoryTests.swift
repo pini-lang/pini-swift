@@ -36,6 +36,7 @@ final class CLIDirectoryTests: XCTestCase {
             try block()
         } catch {
             fflush(stdout)
+            pipe.fileHandleForWriting.closeFile()
             dup2(originalStdout, STDOUT_FILENO)
             close(originalStdout)
             throw error

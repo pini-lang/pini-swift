@@ -273,6 +273,7 @@ final class ConcurrencyTests: XCTestCase {
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)
+            pipe.fileHandleForWriting.closeFile()
             dup2(originalStdout, STDOUT_FILENO)
             close(originalStdout)
             throw error
