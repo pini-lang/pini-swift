@@ -52,6 +52,15 @@ public enum HIRLowerer {
         /// Specialized-name -> substitution used for that struct instance
         /// (generic param name -> concrete annotation).
         var structSubstitutions: [String: [String: TypeAnnotation]] = [:]
+        /// G-2d: specialized generic-enum bodies, keyed the same way
+        /// (`结果_I32_String`).
+        var enumSpecializations: [String: EnumDecl] = [:]
+        /// G-2d: what the pre-pass resolves enum construction sites against.
+        /// Carried here rather than threaded through every recursive call of
+        /// `precollectGenericUses` -- the scan already passes this state
+        /// everywhere, and a fourth by-value table would have to be added to
+        /// each of its ~40 call sites for no gain.
+        var genericEnums: HIRGenericEnumIndex = .empty
     }
 
     /// Specialized source name for a generic instantiation: `盒` + ["I32"]
@@ -292,6 +301,11 @@ public enum HIRLowerer {
         var nominals: [String: NominalInfo] = [:]
         var genericStructTemplates: [String: StructDecl] = [:]
         var genericFuncTemplates: [String: FuncDecl] = [:]
+        // G-2d: generic enum templates, plus the case -> owner index that the
+        // bare construction spelling resolves through (ADR-037). The qualified
+        // spelling names the enum itself, so it needs no index.
+        var genericEnumTemplates: [String: EnumDecl] = [:]
+        var genericEnumCaseOwners: [String: [String]] = [:]
         for decl in module.declarations {
             switch decl {
             case .structDecl(let sd):
@@ -303,9 +317,17 @@ public enum HIRLowerer {
             case .objectDecl(let od): nominals[od.name] = NominalInfo(name: od.name, isObject: true, decl: decl)
             case .funcDecl(let fd) where !fd.genericParams.isEmpty:
                 genericFuncTemplates[fd.name] = fd
+            case .enumDecl(let ed) where !ed.genericParams.isEmpty:
+                genericEnumTemplates[ed.name] = ed
+                for enumCase in ed.cases {
+                    genericEnumCaseOwners[enumCase.name, default: []].append(ed.name)
+                }
             default: break
             }
         }
+        let genericEnums = HIRGenericEnumIndex(
+            templates: genericEnumTemplates, caseOwners: genericEnumCaseOwners
+        )
         for decl in module.declarations {
             if case .extensionDecl(let ext) = decl, ext.kind == .structExt || ext.kind == .objectExt,
                nominals[ext.targetType] != nil {
@@ -348,6 +370,7 @@ public enum HIRLowerer {
         // type-argument combination, and merge the specializations into the
         // registries so the rest of lowering sees only concrete types.
         var specializationState = G10SpecializationState()
+        specializationState.genericEnums = genericEnums
         for decl in module.declarations {
             precollectGenericUses(in: decl,
                                   genericStructTemplates: genericStructTemplates,
@@ -383,11 +406,19 @@ public enum HIRLowerer {
         // objects, enums) used for annotation resolution. Names collect
         // first; payload annotations resolve second (they may reference
         // other user types).
+        //
+        // G-2d: a generic enum is a template, not a type -- its payload types
+        // name the type parameters, so they only resolve per specialization.
+        // Registering the template here is what failed on the first `T`, and it
+        // failed at the declaration, for every module that merely declared a
+        // generic enum. The specializations the G10 pre-pass registered take
+        // its place (added below, before any lookup can see them).
         var enums: [String: HIREnumDecl] = [:]
         var userTypes: [String: HIRType] = [:]
         for decl in module.declarations {
             switch decl {
             case .enumDecl(let ed):
+                guard ed.genericParams.isEmpty else { break }
                 enums[ed.name] = HIREnumDecl(
                     name: ed.name,
                     cases: ed.cases.enumerated().map { index, ec in
@@ -403,28 +434,18 @@ public enum HIRLowerer {
         for (name, info) in nominals {
             userTypes[name] = .nominal(name: name, isObject: info.isObject)
         }
+        for specializedName in specializationState.enumSpecializations.keys {
+            userTypes[specializedName] = .enumeration(name: specializedName)
+        }
         for decl in module.declarations {
-            if case .enumDecl(let ed) = decl {
-                var resolvedCases: [HIREnumCase] = []
-                for (index, ec) in ed.cases.enumerated() {
-                    var payloadTypes: [HIRType] = []
-                    for param in ec.associatedParams {
-                        guard let payloadType = resolveAnnotationType(param.type, userTypes: userTypes) else {
-                            throw unsupported(
-                                "associated value '\(param.name ?? "?")' of case '\(ec.name)' lacks a resolvable type",
-                                at: ed.location
-                            )
-                        }
-                        payloadTypes.append(payloadType)
-                    }
-                    resolvedCases.append(HIREnumCase(
-                        name: ec.name, tag: index,
-                        paramNames: ec.associatedParams.map { $0.name },
-                        payloadTypes: payloadTypes
-                    ))
-                }
-                enums[ed.name] = HIREnumDecl(name: ed.name, cases: resolvedCases)
+            if case .enumDecl(let ed) = decl, ed.genericParams.isEmpty {
+                enums[ed.name] = try resolveEnumPayloads(ed, userTypes: userTypes)
             }
+        }
+        // G-2d: the specialized bodies are ordinary enums by now (no type
+        // parameters left), so they resolve through the same call.
+        for (specializedName, specialized) in specializationState.enumSpecializations {
+            enums[specializedName] = try resolveEnumPayloads(specialized, userTypes: userTypes)
         }
 
         // Signature pre-pass (after type registries so enum/struct/object
@@ -535,7 +556,7 @@ public enum HIRLowerer {
                 guard funcDecl.genericParams.isEmpty else { continue }
                 functions.append(
                     try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
-                                      nominalTypes: nominals, userTypes: userTypes, enums: enums,
+                                      nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                                       genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                                           traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
                 )
@@ -558,7 +579,7 @@ public enum HIRLowerer {
         for (_, specialized) in specializationState.funcSpecializations {
             functions.append(
                 try lowerFunction(specialized, typeInference: typeInference, moduleSignatures: signatures,
-                                  nominalTypes: nominals, userTypes: userTypes, enums: enums,
+                                  nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                                   genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                                           traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
             )
@@ -584,7 +605,7 @@ public enum HIRLowerer {
                     name: sd.name, isObject: false, fields: info.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds,
                     traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                 ))
@@ -594,7 +615,7 @@ public enum HIRLowerer {
                     name: od.name, isObject: true, fields: info.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds,
                     traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                 ))
@@ -612,7 +633,7 @@ public enum HIRLowerer {
                 name: specializedName, isObject: false, fields: sd.fields,
                 methods: info.methods,
                 typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                 closureIds: closureIds
             ))
         }
@@ -802,6 +823,15 @@ public enum HIRLowerer {
                     genericFuncTemplates[typeName]!, typeArgs: typeArgs, state: &state
                 )
             }
+            // G-2d: a generic enum's case carries the type arguments in the
+            // bare spelling (`ok<I32, String>(42)`), so this is where it lands
+            // — neither branch above matches a case name. The qualified
+            // spelling (`结果<I32, String>.ok(42)`) reaches this same case
+            // through the member's receiver, so both spellings register here.
+            if genericStructTemplates[typeName] == nil, genericFuncTemplates[typeName] == nil,
+               let enumTemplate = state.genericEnums.parentTemplate(qualifier: typeName, caseName: typeName) {
+                registerEnumSpecialization(enumTemplate, typeArgs: typeArgs, state: &state)
+            }
         case .call(let callee, let arguments, _):
             precollectGenericUses(in: callee, genericStructTemplates: genericStructTemplates,
                                   genericFuncTemplates: genericFuncTemplates, state: &state)
@@ -933,6 +963,55 @@ public enum HIRLowerer {
         state.structSubstitutions[specializedName] = substitution
     }
 
+    /// G-2d: one specialized enum body per concrete type-argument combination
+    /// (`结果` + [I32, String] -> `结果_I32_String`), with every case payload
+    /// replaced through the same substitution the struct path uses. Case order
+    /// and therefore every tag is inherited unchanged from the template, which
+    /// is what lets the value-based `match` keep working without knowing about
+    /// specialization at all.
+    private static func registerEnumSpecialization(
+        _ template: EnumDecl,
+        typeArgs: [TypeAnnotation],
+        state: inout G10SpecializationState
+    ) {
+        // Arity is checked at the construction site, where the source spelling
+        // is available for the message. Registering nothing here keeps the
+        // site's own error the one the user sees.
+        guard typeArgs.count == template.genericParams.count else { return }
+        let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
+        guard state.enumSpecializations[specializedName] == nil else { return }
+        var substitution: [String: TypeAnnotation] = [:]
+        for (index, genericParam) in template.genericParams.enumerated() {
+            substitution[genericParam.name] = typeArgs[index]
+        }
+        let resolveType: (TypeAnnotation) -> TypeAnnotation = { annotation in
+            if case .simple(let name, _) = annotation, let sub = substitution[name] {
+                return sub
+            }
+            return annotation
+        }
+        let specializedCases = template.cases.map { enumCase in
+            EnumCase(
+                name: enumCase.name,
+                associatedParams: enumCase.associatedParams.map { param in
+                    AssociatedParam(
+                        name: param.name,
+                        type: resolveType(param.type),
+                        defaultValue: param.defaultValue
+                    )
+                },
+                location: enumCase.location
+            )
+        }
+        state.enumSpecializations[specializedName] = EnumDecl(
+            name: specializedName,
+            genericParams: [],
+            cases: specializedCases,
+            methods: [],
+            location: template.location
+        )
+    }
+
     /// Re-specialize one ((盒<T>)) extension method for a concrete instance:
     /// type parameters substituted, name kept (the nominal dispatch binds it
     /// to the specialized type through the receiver).
@@ -1024,6 +1103,7 @@ public enum HIRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
+        genericEnums: HIRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
@@ -1061,6 +1141,7 @@ public enum HIRLowerer {
             nominalTypes: nominalTypes,
             userTypes: userTypes,
             enums: enums,
+            genericEnums: genericEnums,
             genericFuncTemplates: genericFuncTemplates,
             closureIds: closureIds,
             traitRegistry: traitRegistry,
@@ -1074,6 +1155,35 @@ public enum HIRLowerer {
 
     /// Resolve a type annotation: the built-in slice set first, then the
     /// module's user types (structs / objects / enums) by simple name.
+    /// G-2d: build the HIR enum registry entry for one enum declaration whose
+    /// payload annotations are expected to resolve. Shared by the module's own
+    /// (non-generic) enums and by the specialized generic bodies, which are
+    /// indistinguishable from the former by the time they reach here.
+    private static func resolveEnumPayloads(
+        _ ed: EnumDecl,
+        userTypes: [String: HIRType]
+    ) throws -> HIREnumDecl {
+        var resolvedCases: [HIREnumCase] = []
+        for (index, ec) in ed.cases.enumerated() {
+            var payloadTypes: [HIRType] = []
+            for param in ec.associatedParams {
+                guard let payloadType = resolveAnnotationType(param.type, userTypes: userTypes) else {
+                    throw unsupported(
+                        "associated value '\(param.name ?? "?")' of case '\(ec.name)' lacks a resolvable type",
+                        at: ed.location
+                    )
+                }
+                payloadTypes.append(payloadType)
+            }
+            resolvedCases.append(HIREnumCase(
+                name: ec.name, tag: index,
+                paramNames: ec.associatedParams.map { $0.name },
+                payloadTypes: payloadTypes
+            ))
+        }
+        return HIREnumDecl(name: ed.name, cases: resolvedCases)
+    }
+
     private static func resolveAnnotationType(
         _ annotation: TypeAnnotation,
         userTypes: [String: HIRType]
@@ -1194,6 +1304,7 @@ public enum HIRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
+        genericEnums: HIRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
@@ -1203,7 +1314,7 @@ public enum HIRLowerer {
         var scratch = FunctionContext(
             functionName: "<field-default:\(name)>", returnType: nil, paramTypes: [:],
             typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
-            userTypes: userTypes, enums: enums, closureIds: closureIds
+            userTypes: userTypes, enums: enums, genericEnums: genericEnums, closureIds: closureIds
         )
         var loweredFields: [HIRTypeDecl.Field] = []
         for field in fields {
@@ -1226,7 +1337,7 @@ public enum HIRLowerer {
             loweredMethods.append(try lowerMethod(
                 method, typeName: name, selfType: selfType,
                 typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
-                userTypes: userTypes, enums: enums, genericFuncTemplates: genericFuncTemplates,
+                userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                 closureIds: closureIds, traitRegistry: traitRegistry,
                 traitDefaultsCollector: traitDefaultsCollector
             ))
@@ -1244,6 +1355,7 @@ public enum HIRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: HIRType],
         enums: [String: HIREnumDecl],
+        genericEnums: HIRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
@@ -1296,6 +1408,7 @@ public enum HIRLowerer {
             nominalTypes: nominalTypes,
             userTypes: userTypes,
             enums: enums,
+            genericEnums: genericEnums,
             genericFuncTemplates: genericFuncTemplates,
             closureIds: closureIds,
             traitRegistry: traitRegistry,
@@ -2309,6 +2422,16 @@ public enum HIRLowerer {
                     at: location, into: &context
                 )
             }
+            // G-2d: generic enum case construction — the bare spelling, where
+            // the case name carries the type arguments (`ok<I32, String>(42)`,
+            // ADR-037). Neither template table above holds a case name, which
+            // is why this is where it lands.
+            if let constructed = try lowerGenericEnumCaseConstruct(
+                qualifier: typeName, caseName: typeName, typeArgs: typeArgs,
+                arguments: arguments, at: location, into: &context
+            ) {
+                return constructed
+            }
             if let info = context.nominalTypes[specializedSourceName(typeName, typeArgs: typeArgs)] {
                 guard arguments.isEmpty else {
                     throw unsupported(
@@ -2451,6 +2574,22 @@ public enum HIRLowerer {
                     "dot-case construction '.\(dotName)' has no resolvable enum case",
                     at: location
                 )
+            }
+            // G-2d: the qualified generic enum case construction
+            // (`结果<I32, String>.ok(42)`, ADR-037) reaches here as a member
+            // call whose receiver is the *no-argument* generic construct: the
+            // qualifier names the enum, so both the parent and the type
+            // arguments are written down rather than inferred. An empty
+            // argument list is what separates it from a member access on a
+            // generic value, which this slice does not lower anyway.
+            if case .member(let object, let memberName, _) = callee,
+               case .genericConstruct(let enumName, let enumTypeArgs, let enumArguments, _) = object,
+               enumArguments.isEmpty,
+               let constructed = try lowerGenericEnumCaseConstruct(
+                   qualifier: enumName, caseName: memberName, typeArgs: enumTypeArgs,
+                   arguments: arguments, at: location, into: &context
+               ) {
+                return constructed
             }
             if case .member(let object, let memberName, _) = callee {
                 return try lowerMemberCall(
@@ -3203,6 +3342,63 @@ public enum HIRLowerer {
     /// unqualified names resolve through the checker's static registry
     /// (ADR-026 D1: call-site location → parent enum) and are gated
     /// when unresolved.
+    /// G-2d: a generic enum case construction in either spelling (ADR-037).
+    ///
+    /// Returns nil when the spelling names no generic enum at all, so callers
+    /// can fall through to their other paths. Once the spelling *is* a generic
+    /// enum, a failure is an error rather than a fall-through: the pre-pass
+    /// registers every use site it can see, so reaching here without a
+    /// specialization means the site and the registration disagree.
+    private static func lowerGenericEnumCaseConstruct(
+        qualifier: String,
+        caseName: String,
+        typeArgs: [TypeAnnotation],
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr? {
+        let template: EnumDecl
+        if let found = context.genericEnums.parentTemplate(qualifier: qualifier, caseName: caseName) {
+            template = found
+        } else if context.genericEnums.isAmbiguousCase(caseName) {
+            // The bare spelling resolves its parent by name alone (ADR-026 D1's
+            // second tier), so two enums sharing a case name cannot be told
+            // apart -- that is the tier-3 situation the qualified form exists
+            // for, and the message has to say which spelling to write.
+            throw unsupported(
+                "ambiguous generic enum case '\(caseName)' needs the qualified form "
+                + "(write 枚举名<实参…>.\(caseName)(…))",
+                at: location
+            )
+        } else {
+            return nil
+        }
+        guard template.cases.contains(where: { $0.name == caseName }) else {
+            throw unsupported(
+                "generic enum '\(template.name)' has no case '\(caseName)'", at: location
+            )
+        }
+        guard typeArgs.count == template.genericParams.count else {
+            throw unsupported(
+                "generic enum '\(template.name)' expects \(template.genericParams.count) "
+                + "type argument(s), got \(typeArgs.count)",
+                at: location
+            )
+        }
+        let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
+        guard let enumDecl = context.enums[specializedName],
+              let enumCase = enumDecl.cases.first(where: { $0.name == caseName }) else {
+            throw unsupported(
+                "generic enum '\(template.name)' has no registered specialization for this use site",
+                at: location
+            )
+        }
+        return try lowerEnumCaseConstructor(
+            enumDecl: enumDecl, enumCase: enumCase, arguments: arguments,
+            at: location, into: &context
+        )
+    }
+
     private static func resolveEnumCase(
         _ caseName: String,
         at location: SourceLocation?,
@@ -4601,6 +4797,35 @@ struct HIRLowererSignatureInfo {
 /// registry (G4).
 /// `errorBindings` tracks names currently bound to a try-else error word so
 /// `return err` can re-box and print can gate on the type-erased ABI.
+/// G-2d: the module's generic-enum templates plus the case -> owner index.
+/// ADR-037 gives two construction spellings: the qualified form names the enum
+/// (`结果<I32, String>.ok(42)`) and needs only `templates`; the bare form names
+/// the case (`ok<I32, String>(42)`) and resolves its parent through the
+/// ADR-026 D1 ladder, which is what `caseOwners` answers — exactly one owner
+/// means no expected type is needed, more than one means the spelling is
+/// ambiguous and the qualified form is required.
+private struct HIRGenericEnumIndex {
+    let templates: [String: EnumDecl]
+    let caseOwners: [String: [String]]
+
+    static let empty = HIRGenericEnumIndex(templates: [:], caseOwners: [:])
+
+    /// The template a construction spelling belongs to. `qualifier` is the
+    /// enum name in the qualified form and the case name in the bare one;
+    /// `caseName` is the case in both.
+    func parentTemplate(qualifier: String, caseName: String) -> EnumDecl? {
+        if let template = templates[qualifier] { return template }
+        guard let owners = caseOwners[caseName], owners.count == 1 else { return nil }
+        return templates[owners[0]]
+    }
+
+    /// Two or more generic enums declare this case name, so the bare spelling
+    /// cannot place it and ADR-026 D1 tier 3 applies.
+    func isAmbiguousCase(_ caseName: String) -> Bool {
+        (caseOwners[caseName]?.count ?? 0) > 1
+    }
+}
+
 private struct FunctionContext {
     let functionName: String
     let returnType: HIRType?
@@ -4610,6 +4835,10 @@ private struct FunctionContext {
     let nominalTypes: [String: HIRLowerer.NominalInfo]
     let userTypes: [String: HIRType]
     let enums: [String: HIREnumDecl]
+    /// G-2d: the module's generic-enum templates plus the case -> owner index,
+    /// used to place a generic enum case construction and to find the
+    /// specialized body the pre-pass registered (ADR-037).
+    let genericEnums: HIRGenericEnumIndex
     /// G10: generic function templates by source name, for call-site
     /// dispatch of `身份<I32>(...)` (the specialization itself is
     /// pre-registered during the monomorphization pre-pass).
@@ -4658,6 +4887,7 @@ private struct FunctionContext {
         nominalTypes: [String: HIRLowerer.NominalInfo] = [:],
         userTypes: [String: HIRType] = [:],
         enums: [String: HIREnumDecl] = [:],
+        genericEnums: HIRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: HIRLowerer.TraitRegistry = HIRLowerer.TraitRegistry(traits: [:], typeTraits: [:]),
@@ -4671,6 +4901,7 @@ private struct FunctionContext {
         self.nominalTypes = nominalTypes
         self.userTypes = userTypes
         self.enums = enums
+        self.genericEnums = genericEnums
         self.genericFuncTemplates = genericFuncTemplates
         self.closureIds = closureIds
         self.traitRegistry = traitRegistry
