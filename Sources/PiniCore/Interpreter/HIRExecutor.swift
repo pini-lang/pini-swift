@@ -500,6 +500,18 @@ public final class HIRExecutor: DebugHookHost {
                     )
                 }
             }
+            // G-2a: the character builtins, answered from the same implementation
+            // the AST channel calls -- one definition, two engines.
+            if let character = RuntimeOps.characterBuiltins[name] {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: \(name) expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                return try character(args)
+            }
             if name == "sqrt" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
