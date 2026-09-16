@@ -236,7 +236,7 @@
 ### 6.2 执行件对齐的实施记录（裁定 3 的落地，含一处实测推翻）
 
 规划给选项 A 的写法是「刷新默认 scratch 的构建件」。**实测该做法在本机沙箱下首次执行失败**：
-`swift build --disable-sandbox`（默认 scratch）报 `You don't have permission to save the file "output-file-map.json" in the folder "PiniRuntime.build"`，而**文件系统权限本身正常**（同目录 `touch` 成功、属主为当前用户）⇒ 是**沙箱对 `.build` 的写限制**，不是权限位问题。**再执行一次即成功**（`Build complete! (4.19s)`，本次经沙箱升级放行）。
+`swift build --disable-sandbox`（默认 scratch）报 `You don't have permission to save the file "output-file-map.json" in the folder "PiniRuntime.build"`，而**文件系统权限本身正常**（同目录 `touch` 成功、属主为当前用户）⇒ 是**沙箱策略问题**，不是权限位问题。⚠️ **本件首版把归因写成「沙箱对 `.build` 的写限制」，该归因不准确、已订正**：作业手则的环境节早有同一现象的记载，**真因是 SwiftPM 需要的「外部临时目录」被执行外层沙箱拒绝**，而**仓内 `.build` 本身可写**（本批亦实测同目录 `touch` 成功）。**处置**同为一步：**开沙箱豁免**（本批第二次执行即被放行，`Build complete! (4.19s)`）。
 
 **可用做法（本批采用）**：测试仍跑 `--scratch-path /tmp/pini-build`（沙箱内可写），另用默认 scratch 构建一次以把 **`.build/debug/pini`** 刷新为当前源码的产物 —— 因为测试的 `...ViaCLI` 用例只认那个硬编码路径。**新鲜度用行为探针验证**（不靠时间戳）：
 
