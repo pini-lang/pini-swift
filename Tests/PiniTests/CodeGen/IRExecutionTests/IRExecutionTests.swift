@@ -958,20 +958,19 @@ final class IRExecutionTests: XCTestCase {
                        "is_ascii_digit: '7' 判真打印 1，'x' 首字节非数字判假，空串判假")
     }
 
-    /// 批 C1：is_letter/is_number/chars 需 Unicode 运行时语义（\p{L}/numeric property/
-    /// grapheme 切分），LLVM C 字符串后端 v1 显式 unsupported——IR 生成期报错，无需执行。
-    func testIsLetterUnsupportedViaIRGen() throws {
+    /// 批 C1 的**事实已变**（LR-4 `G-2a`，2026-09-16）：降载层现在**接受** `is_letter`
+    /// / `is_number` / `chars` / `chr` / `ord` —— 运行时语义由 `RuntimeOps` 的共享实现提供，
+    /// 两个解释器通道都能回答。⇒ 原断言「`HIRLowerer` 抛 `E6-004`」不再成立，改为断言**降载成功**。
+    ///
+    /// ⚠️ **LLVM 通道仍没有这 5 个字符内建的运行时段**：实测 `pini emit` 对该夹具 **rc=0**，
+    /// 却产出引用未定义符号 `is_letter` 的 IR（与 `argv` 同型）。该事实**不在此断言**
+    /// （`IREmitter` 的失败通道是 `fatalError`，无法用 `XCTAssertThrowsError` 表达）——
+    /// 已登记在册（LLVM 通道运行时段缺口的工单，与 argv / moduleRoot 同单）。
+    func testIsLetterLowersAfterG2a() throws {
         let source = try loadPiniFixture("testIsLetterUnsupportedViaIRGen", filePath: #filePath)
         let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
         let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
-            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
-                XCTFail("应为 HIRLoweringError，实际: \(error)")
-                return
-            }
-            XCTAssertTrue(hirError.code.hasSuffix("-004"),
-                          "应落在 E6 未支持特征桶，实际: \(hirError.code)")
-        }
+        XCTAssertNoThrow(try HIRLowerer.lower(module: module, typeInference: nil))
     }
 
     // MARK: - P6-4d: struct method

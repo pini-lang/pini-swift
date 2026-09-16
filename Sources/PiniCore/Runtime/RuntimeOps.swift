@@ -614,4 +614,85 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  default: return "其它"
  }
  }
+
+    /// `chars` — split into grapheme clusters (matching Swift `Character`, so
+    /// surrogate pairs are not split); the empty string gives an empty array.
+    /// `len(chars(s)) == len(s)` holds by construction.
+    static func builtinChars(_ args: [Value]) throws -> Value {
+        guard case .string(let s) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "chars 的参数必须是字符串",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        return .array(s.map { .string(String($0)) })
+    }
+
+    /// `chr` — code point to a one-character string. Out of range (negative,
+    /// past the scalar maximum, or a surrogate) yields the empty-string sentinel.
+    static func builtinChr(_ args: [Value]) throws -> Value {
+        guard case .int(let code) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "chr 的参数必须是整数",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        guard code >= 0, code <= 0x10FFFF, !(0xD800...0xDFFF).contains(code),
+              let scalar = UnicodeScalar(UInt32(code)) else { return .string("") }
+        return .string(String(scalar))
+    }
+
+    /// `ord` — the first Unicode scalar's code point; `-1` for the empty string.
+    /// A multi-scalar grapheme yields its first scalar (the registered grapheme
+    /// model, ADR-019 D1).
+    static func builtinOrd(_ args: [Value]) throws -> Value {
+        guard case .string(let s) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "ord 的参数必须是字符串",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        guard let first = s.unicodeScalars.first else { return .int(-1) }
+        return .int(Int(first.value))
+    }
+
+    /// `is_letter` — Unicode letter property of the first character; the empty
+    /// string is false rather than an error.
+    static func builtinIsLetter(_ args: [Value]) throws -> Value {
+        guard case .string(let s) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "is_letter 的参数必须是字符串",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        guard let first = s.first else { return .bool(false) }
+        return .bool(first.isLetter)
+    }
+
+    /// `is_number` — Unicode numeric property of the first character. A strict
+    /// superset of `\p{N}`, matching the host's `Character.isNumber`.
+    static func builtinIsNumber(_ args: [Value]) throws -> Value {
+        guard case .string(let s) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "is_number 的参数必须是字符串",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        guard let first = s.first else { return .bool(false) }
+        return .bool(first.isNumber)
+    }
+
+    /// The character builtins, by name.
+    ///
+    /// One table serves both engines: the lowerer's whitelist reads it (a name is
+    /// either supported or it is not), and the executor dispatches through it.
+    /// That is deliberate -- a name cannot end up half-supported, with a
+    /// lowering rule on one side and no answer on the other.
+    static let characterBuiltins: [String: ([Value]) throws -> Value] = [
+        "chars": builtinChars,
+        "chr": builtinChr,
+        "ord": builtinOrd,
+        "is_letter": builtinIsLetter,
+        "is_number": builtinIsNumber,
+    ]
 }

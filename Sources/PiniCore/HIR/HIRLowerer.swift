@@ -2432,6 +2432,28 @@ public enum HIRLowerer {
             }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
             // corpus dependency. Other math intrinsics join their own grid.
+            // G-2a: the character builtins. Same shape as the other intrinsics --
+            // lowered to a `call` the executor answers by name -- and the name
+            // whitelist is the table itself, so a builtin cannot be lowered here
+            // and then go unanswered there.
+            if RuntimeOps.characterBuiltins[functionName] != nil {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("\(functionName) expects exactly one argument", at: location)
+                }
+                let resultType: HIRType
+                switch functionName {
+                case "chars": resultType = .array(element: .string)
+                case "chr": resultType = .string
+                case "ord": resultType = .i32
+                default: resultType = .boolean
+                }
+                return LoweredExpr(
+                    node: .call(function: functionName,
+                                arguments: loweredArgs.map { $0.node },
+                                returnType: resultType),
+                    type: resultType
+                )
+            }
             if functionName == "sqrt" {
                 guard loweredArgs.count == 1, loweredArgs[0].type == .f64 else {
                     throw unsupported("sqrt expects exactly one F64 argument", at: location)
