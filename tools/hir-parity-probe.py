@@ -68,18 +68,14 @@ VERDICTS
                        never moves stops being read. Reported separately and
                        aggregated by node
     GAP_EXEC           interp-hir exits non-zero while llvm-hir does not, and
-                       not because of an unimplemented node. As of 2026-09-15
-                       this test runs BEFORE the parity test, so it also
-                       absorbs a run whose stdout matched but whose HIR arm
-                       still exited non-zero. **Known over-count, measured:**
-                       4 of the fixtures it now catches are negative tests
-                       (array/dict/IO errors) where all three channels report
-                       an error and the HIR arm's non-zero exit is correct
-                       behaviour; `run-llvm` reports rc 0 for them only
-                       because it ignores lli's exit status. They are counted
-                       as blockers on purpose — a stricter symmetry traded for
-                       an acknowledged false positive — and are registered in
-                       the judging-gap list rather than silently excused
+                       not because of an unimplemented node, and the two live
+                       arms do not corroborate each other. As of 2026-09-15 this
+                       test runs BEFORE the parity test, so it also absorbs a run
+                       whose stdout matched but whose HIR arm still exited
+                       non-zero. As of 2026-09-16 (P4-0) the shape where BOTH
+                       interpreter arms fail while the LLVM arm reports its
+                       failure on stderr is no longer counted here — it has its
+                       own non-blocking slot below
     GAP_HIR_ENGINE     interp-hir writes to stderr without failing AND the
                        reference does not do the same. Narrowed to that
                        residual by the case below; it stays a rule (not a dead
@@ -103,6 +99,21 @@ VERDICTS
                        docs/issue-diagnostic-channel-parity-2026-09-12.md;
                        reported here so the count stays visible instead of
                        vanishing, but kept out of the blocker total
+    WARN_LLVM_RC_UNPROPAGATED
+                       all three channels fail the fixture, but only the two
+                       interpreter arms say so through their exit status. The
+                       LLVM arm reports the same failure on stderr and returns
+                       rc 0, because `run-llvm` does not propagate lli's exit
+                       code. NOT a flip blocker: the program fails under both
+                       engines before and after the flip, and the only signal
+                       that appears to differ is one the harness discards.
+                       Demoted here on 2026-09-16 (P4-0) from GAP_EXEC, where
+                       it had been carried as an acknowledged over-count. The
+                       gate bounds the false-green risk: it needs a failing
+                       reference arm AND a loud LLVM arm, so a fixture that
+                       merely fails on the HIR arm still reaches GAP_EXEC.
+                       `run-llvm` is deliberately NOT fixed here; the
+                       discarded-status defect is filed as its own ticket
     GAP_BEHAVIOR       both arms run, output differs AND llvm-hir matches the
                        reference — the interp-hir output is the odd one out
     CHANGE_F64         output differs, interp-hir matches the reference, and
@@ -555,6 +566,14 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
     #    an error and the HIR arm is right to exit non-zero now count as
     #    blockers. Accepted, registered, and visible in the blocker list.
     if h_rc != 0:
+        # 5a. Both interpreter arms fail AND the LLVM arm reports a failure
+        #     on stderr, so all three agree the program fails. The LLVM arm's
+        #     rc 0 is the harness discarding lli's exit status, not a success,
+        #     so the flip does not move these fixtures. Both conditions are
+        #     required: a fixture that only fails on the HIR arm still reaches
+        #     GAP_EXEC below.
+        if a_rc != 0 and l_err.strip():
+            return "WARN_LLVM_RC_UNPROPAGATED", first_line(h_err)
         return "GAP_EXEC", first_line(h_err)
     # 6. Parity across ALL THREE channels. `a_out` joined the test on
     #    2026-09-15: while only the two arms were compared, a fixture whose
@@ -653,6 +672,7 @@ def main():
                 "l_rc": l_rc, "h_rc": h_rc, "a_rc": a_rc,
                 "l_len": len(l_out), "h_len": len(h_out), "a_len": len(a_out),
                 "l_out": l_out, "h_out": h_out, "a_out": a_out,
+                "l_err": l_err, "h_err": h_err, "a_err": a_err,
             })
             if n % 50 == 0 or n == len(fixtures):
                 print("  %d/%d  (%.0fs)" % (n, len(fixtures), time.time() - t0),
@@ -674,7 +694,8 @@ def main():
              "HARNESS_DEPENDENT", "HIR_ENGINE_TODO", "GAP_EXEC",
              "GAP_HIR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG",
              "TIMEOUT_ALL", "TIMEOUT_AST", "TIMEOUT_LLVM", "CHANGE_F64",
-             "CHANGE_OTHER", "CHANGE_REFERENCE", "WARN_CHANNEL_ASYMMETRY"]
+             "CHANGE_OTHER", "CHANGE_REFERENCE", "WARN_CHANNEL_ASYMMETRY",
+             "WARN_LLVM_RC_UNPROPAGATED"]
     print("\n=== summary ===")
     for v in order:
         n = sum(1 for r in rows if r["verdict"] == v)
@@ -685,8 +706,10 @@ def main():
     # different one — how much of the HIR engine P2 has left to build — and
     # merging the two would make this line unreadable while P2 is in flight.
     # Combining them is the P3 judging-upgrade grid's job.
-    # Neither WARN_CHANNEL_ASYMMETRY nor CHANGE_REFERENCE is in the set: both
-    # are printed with their counts below so that leaving them out is a
+    # WARN_CHANNEL_ASYMMETRY, WARN_LLVM_RC_UNPROPAGATED and
+    # CHANGE_REFERENCE are not in the set: each is printed with its
+    # count and its fixture list below, so leaving them out is a
+    # readable decision rather than a disappearance.
     # readable decision, not a disappearance.
     blockers = [r for r in rows if r["verdict"] in
                 ("GAP_EXEC", "GAP_HIR_ENGINE", "GAP_BEHAVIOR", "GAP_HANG")]
@@ -745,6 +768,20 @@ def main():
         print("  both interpreter arms agree here, the reference among them; "
               "the LLVM arm is silent. See")
         print("  docs/issue-diagnostic-channel-parity-2026-09-12.md")
+
+    unpropagated = [r for r in rows
+        if r["verdict"] == "WARN_LLVM_RC_UNPROPAGATED"]
+    if unpropagated:
+        # Its own section for the same reason as the asymmetry slot above:
+        # it left the blocker total, so it must not leave the report.
+        print("\n=== LLVM arm status not propagated: %d fixture(s) "
+              "(NOT flip blockers - the program fails on both engines) ==="
+              % len(unpropagated))
+        for r in unpropagated:
+            print("  %-14s %s" % (r["verdict"], r["fixture"]))
+            print("        a_rc=%d  h_rc=%d  l_rc=%d; llvm stderr=%s"
+                  % (r["a_rc"], r["h_rc"], r["l_rc"],
+                     "present" if r["l_err"].strip() else "silent"))
 
     for label, group in [("blockers", blockers + unknown),
                          ("behaviour changes", [r for r in rows

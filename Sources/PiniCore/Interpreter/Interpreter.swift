@@ -563,12 +563,29 @@ public class Interpreter: DebugHookHost {
  /// 预注册 libc 内存/字符串函数（原生函数表方案，D1 解释器优先）。
  /// 平台不支持（非 Darwin/Glibc）时留空表——`[名称|foreign]` 声明未解析函数在注册期报错。
  private func registerNativeFunctions() {
+ for (name, shim) in Interpreter.libcShims { nativeFunctions[name] = shim }
+ }
+
+ /// The libc shim table (预注册原生函数表，ADR-015 D1 解释器优先).
+ ///
+ /// **Static single source**, for the same reason `builtinAbs` and its
+ /// peers are: the HIR execution engine has to answer the same foreign
+ /// callees, and a second copy of these closures would be a second
+ /// definition of what `malloc` does. The HIR side reaches this table
+ /// only for names the module actually declared in a `[名称|foreign]`
+ /// block, so an undeclared name is still an error there.
+ ///
+ /// Platform-gated: without Darwin/Glibc the table is empty, and a
+ /// foreign declaration of an unregistered symbol fails at registration
+ /// (the existing contract).
+ static let libcShims: [String: ([Value]) throws -> Value] = {
+ var shims: [String: ([Value]) throws -> Value] = [:]
  #if canImport(Darwin) || canImport(Glibc)
  let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
 
  // malloc(size: U64) -> *U8：C 语义——内存归用户，free 释放。
- nativeFunctions["malloc"] = { args in
- let n = try Self.intArg(args, name: "malloc")
+ shims["malloc"] = { args in
+ let n = try Interpreter.intArg(args, name: "malloc")
  guard let p = malloc(n) else {
  throw RuntimeError.invalidOperation(reason: "malloc 失败：内存不足", location: loc)
  }
@@ -580,49 +597,49 @@ public class Interpreter: DebugHookHost {
  }
 
  // free(p: *U8) -> ()：C 语义。
- nativeFunctions["free"] = { args in
- let p = try Self.ptrArg(args, name: "free", self: nil)
+ shims["free"] = { args in
+ let p = try Interpreter.ptrArg(args, name: "free", self: nil)
  free(p.pointer)
  return .null
  }
 
  // memcpy(dst: *U8, src: *U8, n: U64) -> *U8。
- nativeFunctions["memcpy"] = { args in
+ shims["memcpy"] = { args in
  guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memcpy", expected: 3, got: args.count, location: loc) }
  guard case .rawPointer(let dst) = args[0] else { throw RuntimeError.invalidOperation(reason: "memcpy 第 1 参须为指针", location: loc) }
  guard case .rawPointer(let src) = args[1] else { throw RuntimeError.invalidOperation(reason: "memcpy 第 2 参须为指针", location: loc) }
- let n = try Self.intArg(args, name: "memcpy", offset: 2)
+ let n = try Interpreter.intArg(args, name: "memcpy", offset: 2)
  memcpy(dst.pointer, src.pointer, n)
  return args[0]
  }
 
  // memset(p: *U8, v: I32, n: U64) -> *U8。
- nativeFunctions["memset"] = { args in
+ shims["memset"] = { args in
  guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memset", expected: 3, got: args.count, location: loc) }
  guard case .rawPointer(let p) = args[0] else { throw RuntimeError.invalidOperation(reason: "memset 第 1 参须为指针", location: loc) }
- let v = try Self.intArg(args, name: "memset", offset: 1)
- let n = try Self.intArg(args, name: "memset", offset: 2)
+ let v = try Interpreter.intArg(args, name: "memset", offset: 1)
+ let n = try Interpreter.intArg(args, name: "memset", offset: 2)
  memset(p.pointer, Int32(truncatingIfNeeded: v), n)
  return args[0]
  }
 
  // strlen(s: *U8) -> U64。
- nativeFunctions["strlen"] = { args in
- let p = try Self.ptrArg(args, name: "strlen", self: nil)
+ shims["strlen"] = { args in
+ let p = try Interpreter.ptrArg(args, name: "strlen", self: nil)
  let s = p.pointer.assumingMemoryBound(to: CChar.self)
  return .int(strlen(s))
  }
 
  // puts(s: *U8) -> I32：向 stdout 写一行 C 字符串。
- nativeFunctions["puts"] = { args in
- let p = try Self.ptrArg(args, name: "puts", self: nil)
+ shims["puts"] = { args in
+ let p = try Interpreter.ptrArg(args, name: "puts", self: nil)
  let s = p.pointer.assumingMemoryBound(to: CChar.self)
  let r = puts(s)
  return .int(Int(r))
  }
 
  // strcmp(a: *U8, b: *U8) -> I32。
- nativeFunctions["strcmp"] = { args in
+ shims["strcmp"] = { args in
  guard args.count >= 2 else { throw RuntimeError.argumentCountMismatch(name: "strcmp", expected: 2, got: args.count, location: loc) }
  guard case .rawPointer(let a) = args[0] else { throw RuntimeError.invalidOperation(reason: "strcmp 第 1 参须为指针", location: loc) }
  guard case .rawPointer(let b) = args[1] else { throw RuntimeError.invalidOperation(reason: "strcmp 第 2 参须为指针", location: loc) }
@@ -632,7 +649,7 @@ public class Interpreter: DebugHookHost {
  }
 
  // cstr(s: String) -> *U8：把 Pini 字符串转成 null 结尾的 C 字符串（malloc 分配，用户 free）。
- nativeFunctions["cstr"] = { args in
+ shims["cstr"] = { args in
  guard args.count >= 1 else { throw RuntimeError.argumentCountMismatch(name: "cstr", expected: 1, got: args.count, location: loc) }
  guard case .string(let s) = args[0] else {
  throw RuntimeError.invalidOperation(reason: "cstr：第 1 个参数须为 String", location: loc)
@@ -650,7 +667,8 @@ public class Interpreter: DebugHookHost {
  ))
  }
  #endif
- }
+ return shims
+ }()
 
  // MARK: - Phase 2a ADR-015 FFI：指针编解码辅助
 
@@ -3358,36 +3376,12 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
   )
  }
  if fv.name == "abs" {
- switch args[0] {
- case .int(let v):
- // Int.min 的绝对值超出 Int 表示范围，必须显式拦截，否则 abs(Int.min) 触发整数溢出 trap
- if v == .min {
- throw RuntimeError.invalidOperation(
- reason: "abs 整数溢出: \(v) 超出 Int 表示范围",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- return .int(abs(v))
- case .float(let v): return .float(abs(v))
- default:
- throw RuntimeError.invalidOperation(
- reason: "abs 的参数必须是数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ return try Interpreter.builtinAbs(args[0])
  }
  if fv.name == "min" || fv.name == "max" {
- switch (args[0], args[1]) {
- case (.int(let a), .int(let b)):
- return fv.name == "min" ? .int(Swift.min(a, b)) : .int(Swift.max(a, b))
- case (.float(let a), .float(let b)):
- return fv.name == "min" ? .float(Swift.min(a, b)) : .float(Swift.max(a, b))
- default:
- throw RuntimeError.invalidOperation(
- reason: "min/max 的参数必须是同类型数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ return try (fv.name == "min"
+ ? Interpreter.builtinMin(args[0], args[1])
+ : Interpreter.builtinMax(args[0], args[1]))
  }
  if fv.name == "F64" {
  // G-P1：值构造（见 BuiltinRegistry 同名条目注释）
@@ -3402,35 +3396,11 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  }
  }
  if fv.name == "sqrt" {
- switch args[0] {
- case .int(let v): return .float(sqrt(Double(v)))
- case .float(let v): return .float(sqrt(v))
- default:
- throw RuntimeError.invalidOperation(
- reason: "sqrt 的参数必须是数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
+ return try Interpreter.builtinSqrt(args[0])
  }
- }
- if ["sin", "cos", "tan"].contains(fv.name) {
- let v: Double
- switch args[0] {
- case .int(let i): v = Double(i)
- case .float(let f): v = f
- default:
- throw RuntimeError.invalidOperation(
- reason: "\(fv.name) 的参数必须是数值",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- let result: Double
- switch fv.name {
- case "sin": result = sin(v)
- case "cos": result = cos(v)
- default: result = tan(v)
- }
- return .float(result)
- }
+ if fv.name == "sin" { return try Interpreter.builtinSin(args[0]) }
+ if fv.name == "cos" { return try Interpreter.builtinCos(args[0]) }
+ if fv.name == "tan" { return try Interpreter.builtinTan(args[0]) }
 
  // 批 5（G58，D-2）：moduleRoot() —— 程序基准查询（模块根 / 单文件所在目录，绝对路径）。
  // 未注入基准（REPL / 直建解释器）时返回进程 CWD——如实呈现当前基准，不伪造模块根。
@@ -3651,6 +3621,105 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
  /// **逐字节一致**的展示串——这是差分探针的比较基准，故展示语义只允许存在一份。
  /// 本函数只引用静态常量（`builtinErrorTypeName` / `builtinCancelErrorTypeName`），
  /// 不读任何实例状态，故提取不改变行为。
+ // MARK: - P4-0: static single sources for the math builtins
+ //
+ // abs / min / max / sqrt used to be inlined in the builtin dispatch chain
+ // below. The HIR engine needs them too: abs/min/max lower to operators and
+ // sqrt lowers to a call, so without a shared source the two channels would
+ // each define them. Lifted here so both call one implementation, boundaries
+ // included -- notably the Int.min guard in abs, which would otherwise be
+ // re-derived (and is easy to get wrong) on the HIR side.
+
+ static func builtinAbs(_ value: Value) throws -> Value {
+ switch value {
+ case .int(let v):
+ // Int.min has no representable absolute value; without this guard
+ // abs(Int.min) traps on integer overflow.
+ if v == .min {
+ throw RuntimeError.invalidOperation(
+ reason: "abs 整数溢出: \(v) 超出 Int 表示范围",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ return .int(abs(v))
+ case .float(let v): return .float(abs(v))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "abs 的参数必须是数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ static func builtinMin(_ a: Value, _ b: Value) throws -> Value {
+ switch (a, b) {
+ case (.int(let x), .int(let y)): return .int(Swift.min(x, y))
+ case (.float(let x), .float(let y)): return .float(Swift.min(x, y))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "min/max 的参数必须是同类型数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ static func builtinMax(_ a: Value, _ b: Value) throws -> Value {
+ switch (a, b) {
+ case (.int(let x), .int(let y)): return .int(Swift.max(x, y))
+ case (.float(let x), .float(let y)): return .float(Swift.max(x, y))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "min/max 的参数必须是同类型数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ static func builtinSqrt(_ value: Value) throws -> Value {
+ switch value {
+ case .int(let v): return .float(sqrt(Double(v)))
+ case .float(let v): return .float(sqrt(v))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "sqrt 的参数必须是数值",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
+ /// Trigonometric builtins, shared with the HIR execution engine.
+ ///
+ /// The HIR channel never sees the name `tan`: the lowerer emits
+ /// `llvm.sin.f64` / `llvm.cos.f64` and divides (LLVM has no tan
+ /// intrinsic). `builtinTan` therefore stays the AST channel's one
+ /// definition, and the engine consumes `builtinSin` / `builtinCos`.
+ /// The coercion and its diagnostic live here, not in either caller,
+ /// so the two channels cannot drift on what an int argument means.
+ static func builtinSin(_ value: Value) throws -> Value {
+     return .float(sin(try trigArgument(value, name: "sin")))
+ }
+
+ static func builtinCos(_ value: Value) throws -> Value {
+     return .float(cos(try trigArgument(value, name: "cos")))
+ }
+
+ static func builtinTan(_ value: Value) throws -> Value {
+     return .float(tan(try trigArgument(value, name: "tan")))
+ }
+
+ /// One coercion for every trigonometric entry point.
+ private static func trigArgument(_ value: Value, name: String) throws -> Double {
+     switch value {
+     case .int(let i): return Double(i)
+     case .float(let f): return f
+     default:
+         throw RuntimeError.invalidOperation(
+             reason: "\(name) 的参数必须是数值",
+             location: SourceLocation(line: 0, column: 0, fileName: "")
+         )
+     }
+ }
+
  static func stringifyValue(_ value: Value) -> String {
  switch value {
  case .int(let v): return String(v)
