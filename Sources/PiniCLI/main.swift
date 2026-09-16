@@ -787,11 +787,6 @@ func absoluteProgramBase(_ path: String) -> String {
 /// `ast` = AST 解释器（`Interpreter`），默认；`hir` = HIR 执行引擎（`HIRExecutor`），
 /// 即 LR-4 统合的目标形态。两者是同一语义的**两份独立实现**——三通道探针因此比的是
 /// 两个真实实现，而不是让一条管线与自己比对（M6b 翻转后第三通道正是这种情况）。
-enum InterpreterEngine {
- case ast
- case hir
-}
-
 /// 从环境变量 `PINI_INTERP_ENGINE` 读引擎开关。
 ///
 /// 用环境变量而非 CLI 选项，两条理由。其一，`pini run` 把路径之后的参数**原样**交给

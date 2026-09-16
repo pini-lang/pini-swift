@@ -1,19 +1,30 @@
 import Foundation
 import PiniCore
 
-/// P7-1 REPL：增量解析 + 声明累积 + 表达式求值 + 续行检测。
+/// P7-1 REPL：交互循环 + 续行检测 + 特殊命令。
 ///
-/// 核心设计（对标 GHCi / evcxr 的模式）：
-/// 1. **声明累积**——func/struct/object/enum/trait/import 声明追加到 `accumulatedDeclarations`
-/// 2. **表达式求值**——非声明输入包装为 `_repl_main() { print(<expr>) }` 临时函数
-/// 3. **续行检测**——检测未闭合的括号、INDENT 续行（`:` 结尾）、反斜杠续行
-/// 4. **错误恢复**——解析/类型/运行时错误打印并回 loop，不退出
-/// 5. **特殊命令**——`:quit` / `:help` / `:clear`
+/// 求值（声明累积、表达式包装、跑哪个引擎）在 P4-4 移到了 `PiniCore` 的
+/// `ReplEvaluator`。理由见该类型的文档：求值此前与本类同处，于是它既绑死了
+/// AST 引擎、又因为测试 target 只依赖 `PiniCore` 而**完全不可测**（既有 REPL
+/// 用例只覆盖解析）。
 ///
-/// 每次求值时创建 fresh Interpreter 并 `registerDecls` 所有累积声明 +
-/// 合成 main 函数——虽然每次都重新注册，但对 REPL 规模的声明（< 100 条）瞬时完成。
+/// 本类保留的是**交互**那一半：
+/// 1. **续行检测**——未闭合的括号、INDENT 续行（`:` 结尾）、反斜杠续行
+/// 2. **特殊命令**——`:quit` / `:help` / `:clear`
+/// 3. **错误恢复**——错误打印并回 loop，不退出
 final class ReplSession {
- private var accumulatedDeclarations: [TopLevelDecl] = []
+
+ /// 求值核：承担「输入 → 跑一段程序」，并按引擎分派。
+ private let evaluator: ReplEvaluator
+
+ /// 本次会话使用的引擎。默认取环境开关；注入点让双引擎验证可测。
+ private let engine: InterpreterEngine
+
+ init(engine: InterpreterEngine = selectedInterpreterEngine(),
+ evaluator: ReplEvaluator = ReplEvaluator()) {
+ self.engine = engine
+ self.evaluator = evaluator
+ }
 
  /// 续行提示符。
  private static let promptMain = ">> "
@@ -23,6 +34,9 @@ final class ReplSession {
 
  func run() {
  print("Pini REPL (P7-1). 输入表达式或声明；:help 查看帮助，:quit 退出。")
+ if engine != .ast {
+ print("执行引擎：\(engine.rawValue)（来自 PINI_INTERP_ENGINE）。")
+ }
  var linesBuffer: [String] = []
 
  while true {
@@ -70,78 +84,7 @@ final class ReplSession {
  // MARK: - 求值
 
  private func evaluate(_ lines: [String]) throws {
- let source = lines.joined(separator: "\n")
- let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-
- // 检测表达式模式：不以声明关键字开头 → wrap 为 main + print
- if isExpressionInput(trimmed) {
- let body: String
- if trimmed.hasPrefix("print(") || trimmed.hasPrefix("print ") {
- // 已经是 print 调用 → 直接放入（避免 print(print(...)) 的双层 null）
- body = trimmed
- } else {
- body = "print(\(trimmed))"
- }
- let wrapped = "main|func() -> ():\n \(body)\n return\n"
- let exprModule = try parseReplSource(wrapped)
- let runModule = Module(
- declarations: accumulatedDeclarations + exprModule.declarations,
- imports: [], exports: [],
- location: SourceLocation(line: 0, column: 0, fileName: "<repl>")
- )
- let interpreter = Interpreter()
- try interpreter.run(module: runModule)
- return
- }
-
- // 声明模式：追加到累积列表，只注册声明不执行 main
- let module = try parseReplSource(source)
- for decl in module.declarations {
- accumulatedDeclarations.append(decl)
- }
- let interpreter = Interpreter()
- let runModule = Module(
- declarations: accumulatedDeclarations,
- imports: [], exports: [],
- location: SourceLocation(line: 0, column: 0, fileName: "<repl>")
- )
- // 声明路径可能没有 main 函数 — 吞掉 mainNotFound（正常），其他错误上报
- do {
- try interpreter.run(module: runModule)
- } catch let error as RuntimeError {
- // mainNotFound 在声明模式正常，其他错误仍上报
- if case .mainNotFound = error { /* ok */ }
- else { throw error }
- }
- }
-
- /// 判断输入是否为表达式（非声明）。
- /// 以声明关键字/符号开头 → 否；否则 → 是。
- private let declarationStarters: Set<String> = [
- "{", "object", "enum", "trait", "func",
- "let", "var", "import", "export",
- ]
-
- private func isExpressionInput(_ trimmed: String) -> Bool {
- for starter in declarationStarters {
- if trimmed.hasPrefix(starter) { return false }
- }
- return !trimmed.isEmpty
- }
-
- // MARK: - 解析
-
- private func parseReplSource(_ source: String) throws -> Module {
- let lexer = Lexer(source: source, fileName: "<repl>")
- let tokens = try lexer.tokenize()
- let parser = Parser(tokens: tokens, fileName: "<repl>")
- let result = parser.parseModuleCollectingErrors()
- if !result.errors.isEmpty {
- throw ReplError.parseError(
- result.errors.map { ErrorFormatter.formatParserError($0, source: source) }.joined(separator: "\n")
- )
- }
- return result.module
+ try evaluator.evaluate(lines, engine: engine)
  }
 
  // MARK: - 续行检测
@@ -246,22 +189,11 @@ final class ReplSession {
  声明类型（func/struct/object/enum/trait）会累积到会话中。
  """)
  case "clear":
- accumulatedDeclarations.removeAll()
+ evaluator.reset()
  print("会话已重置：累积的声明已清除。")
  default:
  print("未知命令：\(input)。输入 :help 查看帮助。")
  }
  return false
- }
-}
-
-// MARK: - 错误类型
-
-enum ReplError: LocalizedError {
- case parseError(String)
- var errorDescription: String? {
- switch self {
- case .parseError(let msg): return "解析错误:\n\(msg)"
- }
  }
 }
