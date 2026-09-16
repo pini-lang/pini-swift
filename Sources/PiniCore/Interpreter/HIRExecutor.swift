@@ -525,6 +525,14 @@ public final class HIRExecutor: DebugHookHost {
                 }
                 return try RuntimeOps.builtinF64(args[0])
             }
+            // G-2S: the Array member face (`append` / `last` / `pop`), answered
+            // from the same rules the AST walk applies -- one definition, two
+            // engines, exactly like the character builtins above. The receiver
+            // rides as the first argument.
+            if let arrayMethod = RuntimeOps.arrayMethods[name] {
+                let args = try arguments.map { try evaluate($0) }
+                return try arrayMethod(args)
+            }
             if name == "sqrt" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {

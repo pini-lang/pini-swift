@@ -3891,6 +3891,58 @@ public enum HIRLowerer {
             )
         }
 
+        // G-2S: the rest of the Array member face the registry already lists
+        // (`append` / `pop` in the collection trait, plus `last`). `get` and
+        // `slice` above became dedicated nodes because they predate the frozen
+        // contract; these three keep the node set at 60 by lowering to a named
+        // call the executor answers -- the shape `argv` and the character
+        // builtins already use. The types are the ones the runtime produces:
+        // append yields a new array, last the element or null, pop the pair
+        // (arrayWithoutLast, lastOrNull).
+        if case .array(let element) = objectType,
+           memberName == "append" || memberName == "last" || memberName == "pop" {
+            let callName = "Array.\(memberName)"
+            switch memberName {
+            case "append":
+                guard arguments.count == 1 else {
+                    throw unsupported("append expects exactly one argument", at: location)
+                }
+                let loweredValue = try lowerExpr(
+                    arguments[0].expression, expected: element, into: &context
+                )
+                try requireAssignable(loweredValue.type, to: element, at: location)
+                let appended = HIRType.array(element: element)
+                return LoweredExpr(
+                    node: .call(function: callName,
+                                arguments: [loweredObject.node, loweredValue.node],
+                                returnType: appended),
+                    type: appended
+                )
+            case "last":
+                guard arguments.isEmpty else {
+                    throw unsupported("last takes no arguments", at: location)
+                }
+                let found = HIRType.optional(wrapped: element)
+                return LoweredExpr(
+                    node: .call(function: callName, arguments: [loweredObject.node],
+                                returnType: found),
+                    type: found
+                )
+            default:
+                guard arguments.isEmpty else {
+                    throw unsupported("pop takes no arguments", at: location)
+                }
+                let pair = HIRType.tuple(labels: [nil, nil],
+                                         fieldTypes: [.array(element: element),
+                                                      .optional(wrapped: element)])
+                return LoweredExpr(
+                    node: .call(function: callName, arguments: [loweredObject.node],
+                                returnType: pair),
+                    type: pair
+                )
+            }
+        }
+
         throw unsupported("method '\(memberName)' calls are later grids", at: location)
     }
 
