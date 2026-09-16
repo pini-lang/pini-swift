@@ -1459,7 +1459,11 @@ public final class HIRExecutor: DebugHookHost {
             // Registered even without an initializer, as `.null` — the
             // interpreter's `varDecl` does the same, so an uninitialized read is
             // a value, not an "undefined variable" error, on both channels.
-            var value = try initializer.map { try evaluate($0) } ?? .null
+            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
+            // field by field -- the rule the interpreter applies at the same
+            // point. Without it both engines share one storage, and a write
+            // through the copy surfaces in the original, silently.
+            var value = try initializer.map { RuntimeOps.copyIfStruct(try evaluate($0)) } ?? .null
             // P2a G2: binding-site relabel — the second of the interpreter's two
             // label rules (`applyTypeAnnotationLabels`, which its `varDecl`
             // calls). A value bound to a slot type that names components
@@ -1485,7 +1489,11 @@ public final class HIRExecutor: DebugHookHost {
             currentEnv.define(name: name, value: value, isMutable: mutable)
 
         case .storeVar(let name, _, let value):
-            try currentEnv.assign(name: name, value: try evaluate(value))
+            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
+            // field by field -- the rule the interpreter applies at the same
+            // point. Without it both engines share one storage, and a write
+            // through the copy surfaces in the original, silently.
+            try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
 
         case .ifStmt(let condition, let thenBody, let elseBody):
             // Each branch is its own defer scope. The HIR folds `elif` chains
@@ -1523,7 +1531,11 @@ public final class HIRExecutor: DebugHookHost {
             // the VALUE is evaluated first, then the index, then the container
             // chain. Side-effecting subexpressions (a call that prints) can
             // observe the order, so it is mirrored rather than chosen.
-            let newValue = try evaluate(value)
+            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
+            // field by field -- the rule the interpreter applies at the same
+            // point. Without it both engines share one storage, and a write
+            // through the copy surfaces in the original, silently.
+            let newValue = RuntimeOps.copyIfStruct(try evaluate(value))
             let targetIndex = try evaluate(index)
             try storeSubscript(target: container, index: targetIndex, newValue: newValue)
 
@@ -1641,7 +1653,11 @@ public final class HIRExecutor: DebugHookHost {
             // assignment path uses (it evaluates the value, then the member base).
             // Observable only when both have effects, which is exactly when a
             // mirror that guessed would be caught late.
-            try storeField(base: base, field: field, value: try evaluate(value))
+            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
+            // field by field -- the rule the interpreter applies at the same
+            // point. Without it both engines share one storage, and a write
+            // through the copy surfaces in the original, silently.
+            try storeField(base: base, field: field, value: RuntimeOps.copyIfStruct(try evaluate(value)))
         }
     }
 
