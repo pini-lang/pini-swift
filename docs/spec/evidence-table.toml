@@ -476,3 +476,38 @@ note = """降载层三站全在 `Sources/PiniCore/HIR/HIRLowerer.swift`（1 文�
 **顺带修正的一处本表缺陷**：`S0` 那条证据的 `artifacts` 里有两个路径写成 `docs/spec/issue-hir-…`，
 实际在宿主级 `docs/`（该表不受文档链接门禁覆盖，故未被拦下）；已改为真实路径，
 其中工单一项指向归档新址。"""
+
+[[evidence]]
+id = "2026-09-16 P4-γ 口径订正与三条裁决登记"
+citable = false
+claim = "The P4-gamma closeout criteria are corrected from an unreachable zero-failure target to four measurable ones, the three pending adjudications are recorded, and a notation collision that made R1/R2 mean opposite things in different carriers is pinned down. A fresh per-class run over 116 test classes leaves 72 failing methods, and reading them by disposition gives 31 on the concurrency/async surface, 13 that assert a run-time error shape the static lowering layer rejects earlier, and 28 that have to be implemented -- of which 16 are structural (WeakRef family 5, expression-position try 4, the try-except face 4, three blocked by the frozen contract node set) and 12 are scattered. The four new criteria are: no new red compared item by item, zero probe blockers under the new two-channel denominator, item-by-item recheck of the four upstream P4-row criteria, and every residual named in a list. No source, test or contract change; docs only"
+artifacts = [
+  "docs/issue-hir-p4-gamma-plan-2026-09-16.md",
+  "docs/issue-hir-p4-plan-2026-09-16.md",
+  "docs/issue-hir-p4-gamma-batches-2026-09-16.md",
+  "docs/issue-test-harness-sigpipe-on-failure-paths-2026-09-16.md",
+  "docs/issue-selfhost-probe-plan-2026-09-13.md",
+  "docs/spec/evidence-table.toml",
+]
+command = "per-class: TMPDIR=/tmp swift test --filter <Class> over 116 classes ; bash tools/check-doc-links.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; bash hooks/comment-lint.sh"
+output = "72 failing methods in 25 of 116 classes (RecordingDebugDriver is the only DID_NOT_RUN and it has no tests, so 115 real test classes). Disposition split 31 / 13 / 28, item by item. doc-links: 818 references checked, all pass. evidence-sweep --check: parse plus schema ok, 0 unannotated citation marks outside the table. comment-lint full run: L1-L6 green, rc=0. Diff is five docs files, zero Sources and zero Tests changes."
+validated_at = "2026-09-16T20:22+0800"
+status = "FRESH"
+note = """本批 = `P4-γ` 子批 **`G-0`（口径订正）**：**只动 `docs/`**，零源码、零测试。
+
+**五处登记面**：① `docs/issue-hir-p4-gamma-plan-2026-09-16.md` **新增 §8**（裁决登记 · `G-6` 判据订正 · 批次修订 · §8.6 记号归一）并改头部状态与 §2/§4/§5 的指向；② `docs/issue-hir-p4-plan-2026-09-16.md` 新增 **`D-P4-25…30`** 六条决策 + §3.2 的 `P4-γ`/`P4 本体` 两行 + §3.1 的 `P4-6` 行 + §5 止损点 3；③ 本件（`G-2R` / `G-3` / `G-4·G-5` 三节 + `G-0` 交付节 + 头部基线）；④ `docs/issue-test-harness-sigpipe-on-failure-paths-2026-09-16.md` 状态由「只登记不修」改为**已授权修复** + §8 处置；⑤ `docs/issue-selfhost-probe-plan-2026-09-13.md` 裁决 8 行加记号订正指针。
+
+**⭐ 三处「读错就会做错」的缺陷（本批查出并订正）**：
+
+1. **`G-6` 的判据不可达**。原写「全量回归 **0 failures**」，而现测余 **72** 条 ⇒ 0 要消掉全部。按 `D-P4-22` **同形**订正（该行原文：**「不可达的绿数若被当成目标，会诱导『把测试改松』而不是『把缺口记账』」**）。
+2. **「主计划 §7」歧义**。上游 `docs/issue-interpreter-hir-plan-2026-09-12.md` 与 `docs/issue-hir-p4-plan-2026-09-16.md` **各有一个 §7**，后者是决策记录 ⇒ 规划期已差点读错。改引**文件名 + 主题词**（`ADR-035` 禁跨文件引章节号的实例）。
+3. **上游 P4 行第三项已失效**：原文「**763 个解释器用例全绿**」在 `P4-β` 之后**已不是有意义的集合**（`A` 类 429 用例改指 `ProgramRunner`）⇒ 对应物 =「已迁面全绿 ∧ 未迁面零位移 ∧ 残余逐条归因」。
+
+**⚠️ 一处记号反向冲突（`D-P4-30`，会把裁决读反）**：`docs/issue-selfhost-probe-plan-2026-09-13.md`（裁决 6/8）里 **`R2` = 保**（原文「保能力则只剩 `R2`」「`SuspendEvaluator` 归属 = `R2` 格」），而本件与 `P4-β` 件里 **`R1` = 保 · `R2` = 弃**。⇒ 以 `D-P4-30` 钉死约定并在旧载体加指针。
+⚠️ **用户裁决不受影响**：提问时**选项自带语义文字**（「迁到 HIR」/「移除能力面」），`R1` 只是标签 —— **这正是「决策请求必须自带背景」那条纪律救的一次**（若当初只给两个标签，本次裁决会被记反）。
+
+**⚠️ 一处数字自订正（如实登记）**：给用户做裁决时，我把「折中口径」选项写成「翻转时带 **44** 条」；该数与该选项自身描述不符（应为 **60** = 72 − 12）。44 = 并发 31 + 口径 13，是另一情形的残留数。正确两情形：`R1` **前置 ⇒ 29**、后置 ⇒ **60**；用户裁前置 ⇒ 适用 **29**。
+
+**⚠️ 一次作废读数（过程教训）**：首版全量回归放**后台**跑 ⇒ 沙箱拦 `swift test` 临时目录清理 ⇒ **116 类全 `DID_NOT_RUN`（0 executed）**而驱动仍写「已完成」。根因 = 漏传 `TMPDIR=/tmp`。⇒ **凡 `swift test` 类读数一律前台 + 显式 `TMPDIR`；`executed == 0` 的批次不得进入对账。**
+
+**本批未做**：未裁 `G-4`（`runTests`）与**错误通道口径**（13 条，须走 `spec §1.3`）· 未动那 16 条结构性大件 · 未动判据缺口台账五条 · 未 push。"""
