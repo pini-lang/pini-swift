@@ -42,7 +42,7 @@
 | 排障 | troubleshooting | — |
 | 目录分叉 | directory fork | 排障场景 |
 | 子模块 | submodule | 宿主拉取方式（ADR-018 D1） |
-| 版本锚点 | version anchor | .pini/version / pini.toml spec 字段 |
+| 版本锚点 | version anchor | .pini/baseline / pini.toml spec 字段 |
 | 逻辑引用 | logical reference | 跨仓库引用，不写物理路径（M1） |
 | 远程 | remote | push / fetch 目标 |
 
