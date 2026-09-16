@@ -48,7 +48,7 @@ final class SelfCallInferenceTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
         var thrown: Error? = nil
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             thrown = error

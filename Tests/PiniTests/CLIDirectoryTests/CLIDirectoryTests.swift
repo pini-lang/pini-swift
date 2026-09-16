@@ -6,7 +6,7 @@ import Foundation
 ///
 /// `PiniCLI` 是可执行目标（不可被测试直接 import），故本测试**直接驱动 CLI 目录处理所用到的
 /// 同一组公共 API**——`FileLoader.loadManifest` / `loadDirectory` + 包级
-/// `SemanticAnalyzer.analyze(package:)` / `TypeChecker.check(package:)` / `Interpreter.run(package:)`——
+/// `SemanticAnalyzer.analyze(package:)` / `TypeChecker.check(package:)` / `ProgramRunner.run(package:)`——
 /// 覆盖两种目录语义：
 /// 1. 含 `pini.toml` 的目录 = 显式多文件模块（跨文件符号解析 + 运行时链接）；
 /// 2. 无 `pini.toml` 的目录 = 一组独立程序（逐文件 check，不合并命名空间）。
@@ -72,7 +72,7 @@ final class CLIDirectoryTests: XCTestCase {
 
         // 模块级运行：跨文件链接后输出应为 5 / 25 / 0。
         let out = try captureStdout {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(package: pkg)
         }
         let lines = out.split(separator: "\n").map(String.init)
@@ -109,7 +109,7 @@ final class CLIDirectoryTests: XCTestCase {
                          "包级类型检查不应报错")
 
         let out = try captureStdout {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(package: pkg)
         }
         let lines = out.split(separator: "\n").map(String.init)
@@ -152,7 +152,7 @@ final class CLIDirectoryTests: XCTestCase {
             try analyzer.analyze(package: pkg)
             let checker = TypeChecker()
             try checker.check(package: pkg)
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(package: pkg)
         } catch {
             thrown = error
@@ -334,7 +334,7 @@ final class CLIDirectoryTests: XCTestCase {
         XCTAssertEqual(manifest.entryPoints, ["main.pini"], "[[bin]].entry 应被解析")
         let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
         let out = try captureStdout {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             interpreter.entryFiles = Set(manifest.entryPoints.map { dir + "/" + $0 })
             try interpreter.run(package: pkg)
         }
@@ -351,7 +351,7 @@ final class CLIDirectoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: dir) }
         let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
         let out = try captureStdout {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             interpreter.entryFiles = Set(manifest.entryPoints.map { dir + "/" + $0 })
             try interpreter.run(package: pkg)
         }
@@ -370,7 +370,7 @@ final class CLIDirectoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: dir) }
         let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
         XCTAssertThrowsError(try {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             interpreter.entryFiles = Set(manifest.entryPoints.map { dir + "/" + $0 })
             try interpreter.run(package: pkg)
         }()) { error in
@@ -395,7 +395,7 @@ final class CLIDirectoryTests: XCTestCase {
         XCTAssertEqual(manifest.entryPoints, [], "无 entry 声明 ⇒ entryPoints 为空")
         let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
         let out = try captureStdout {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(package: pkg)
         }
         XCTAssertEqual(out.split(separator: "\n").map(String.init), ["42"])

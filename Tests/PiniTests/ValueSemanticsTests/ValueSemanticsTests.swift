@@ -5,7 +5,7 @@ import Foundation
 /// 值/引用语义收口（G7：值/引用相等性、拷贝语义、`let` 不可变边界）。
 /// 兼固化 P3-2 ②：enum 判别联合子类型（variant → union 可赋值性）与 match 绑定类型窄化。
 /// 类型层驱动：Lexer → Parser → TypeChecker.checkCollecting(module:)，与 CLI `pini check` 同构。
-/// 运行时驱动：Lexer → Parser → Interpreter.run(module:)，与 CLI `pini run` 同构。
+/// 运行时驱动：Lexer → Parser → ProgramRunner.run(module:)，与 CLI `pini run` 同构。
 final class ValueSemanticsTests: XCTestCase {
 
     private func checkCollecting(_ source: String) -> [TypeError] {
@@ -28,7 +28,7 @@ final class ValueSemanticsTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)

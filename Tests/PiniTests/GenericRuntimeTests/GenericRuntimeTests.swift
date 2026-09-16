@@ -5,7 +5,10 @@ import XCTest
 /// 且成员方法派发到特化类型名（而非模板名），此前 `genericConstruct` 直接抛错。
 final class GenericRuntimeTests: XCTestCase {
 
-    /// 驱动链路：Lexer → Parser → Interpreter（与 CLI run 同构，绕过静态检查以专注运行时）。
+    /// 驱动链路：Lexer → Parser → ProgramRunner（check → lower → run，与 CLI `pini run` 同构）。
+///
+/// P4-β 迁移注：此前写的是「绕过静态检查以专注运行时」——那描述的是 AST 走查的单文件路径。
+/// 新入口与 CLI 同语义，先过类型检查，所以这些用例现在会因类型错误被拒而非静默跑出一份值。
     private func runProgram(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
@@ -18,7 +21,7 @@ final class GenericRuntimeTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)

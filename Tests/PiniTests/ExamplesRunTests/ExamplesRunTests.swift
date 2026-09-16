@@ -21,8 +21,8 @@ final class ExamplesRunTests: XCTestCase {
     }
 
     /// 进程内运行单个示例文件并捕获其 stdout。
-    /// 复刻 CLI 单文件 run 路径：Lexer → Parser.parseModule() → Interpreter.run(module:)。
-    /// 每个 `print` 经由 `Interpreter.outputSink` 重定向时，本方法在内容后补一个换行，
+    /// 复刻 CLI 单文件 run 路径：Lexer → Parser.parseModule() → ProgramRunner.run(module:)。
+    /// 每个 `print` 经由 `ProgramRunner.outputSink` 重定向时，本方法在内容后补一个换行，
     /// 与 CLI 的 `print` 行为逐字节一致（含末尾换行）。最终直接拼接各段（不再额外加分隔符），
     /// 使得返回值与 `pini run <file>` 的子进程 stdout 完全等价——golden 串据此标注（含尾换行）。
     private func runExample(at path: String) throws -> String {
@@ -33,7 +33,7 @@ final class ExamplesRunTests: XCTestCase {
         let parser = Parser(tokens: tokens, fileName: fileName)
         let module = try parser.parseModule()
 
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         var segments: [String] = []
         interpreter.outputSink = { segments.append($0 + "\n") }
         try interpreter.run(module: module)

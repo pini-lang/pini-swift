@@ -3,7 +3,7 @@ import PiniCore
 import Foundation
 
 /// 元组解构 `var (t, e) = rhs`（草稿 A1，2026-08-23 批次 1 · 1.2）。
-/// 驱动链路：Lexer → Parser → SemanticAnalyzer → TypeChecker → Interpreter，与项目真实公共入口同构。
+/// 驱动链路：Lexer → Parser → SemanticAnalyzer → TypeChecker → ProgramRunner（check → lower → run），与项目真实公共入口同构。
 final class TupleDestructureTests: XCTestCase {
 
     // MARK: - Helpers
@@ -20,7 +20,7 @@ final class TupleDestructureTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)

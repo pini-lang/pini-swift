@@ -20,7 +20,7 @@ final class ParenEqualsTests: XCTestCase {
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         try interpreter.run(module: module)
 
         fflush(stdout)

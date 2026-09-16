@@ -22,7 +22,7 @@ final class ParserRestructureTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)
@@ -229,7 +229,7 @@ final class ParserRestructureTests: XCTestCase {
     // MARK: - Task 7: 解释器适配
 
     /// Intent: 验证新语法端到端运行正确：对象构造、方法调用、|func 顶级函数入口
-    func testBareSyntaxObjectInterpreter() throws {
+    func testBareSyntaxObjectProgramRunner() throws {
         let source = try loadPiniFixture("testBareSyntaxObjectInterpreter", filePath: #filePath)
         let output = try runProgram(source)
         // Advancing: 两次 增加 后获取值应输出 2
@@ -276,7 +276,7 @@ final class ParserRestructureTests: XCTestCase {
         let parser = Parser(tokens: tokens, fileName: "test.pini")
         let module = try parser.parseModule()
 
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         XCTAssertThrowsError(try interpreter.run(module: module)) { error in
             let errStr = String(describing: error)
             XCTAssertTrue(errStr.contains("引用块不可组合"),

@@ -43,7 +43,7 @@ final class LabelValidationTests: XCTestCase {
         let module = try parser.parseModule()
         let checker = TypeChecker()
         try checker.check(module: module)
-        let interpreter = Interpreter()
+        let interpreter = ProgramRunner()
         try interpreter.run(module: module)
         return ""
     }
@@ -62,7 +62,7 @@ final class LabelValidationTests: XCTestCase {
         do {
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(module: module)
-            let interpreter = Interpreter()
+            let interpreter = ProgramRunner()
             try interpreter.run(module: module)
         } catch {
             fflush(stdout)
