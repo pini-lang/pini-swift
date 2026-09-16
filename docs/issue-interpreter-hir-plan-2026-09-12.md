@@ -1214,3 +1214,48 @@ evidence_sweep `--check` **通过**（drift **1** = 上一条（探针判据收�
 **范围声明**：**未动 `Sources/`**（零源码改动）· 未做 B 组 5 项的**实现**对齐（那是「字符串字节语义格」）·
 未动取址格 · 未做证据表 ID 改型（用户已裁为**第二批**）· 未 push。证据 = 本条。
 
+
+
+### P4 前置批（非独立格）：P4-0 判据面清零（2026-09-16）
+
+**性质**：LR-4 的 **P4 前置五批**之一（父计划 = 项目仓 `docs/issue-hir-p4-plan-2026-09-16.md` §3），
+**不是 P2 系列的「格」** —— 无节点族、无镜像实现，故与 §8.x 的逐格实录不同族。
+分支 `agent/pini-dev/p4-0-criteria-clear`（交付记录全文见 `docs/issue-hir-p4-0-plan-2026-09-16.md` §8）。
+
+**交付读数**（全部现跑）：
+
+- **探针**：`FLIP BLOCKERS` **11 → 0**；逐夹具对账 **319 → 319**、判定变化**恰 4 处**
+  （全 `GAP_EXEC → OK`）、其余 315 个 Δ 0、`process leaks 0`。
+- **两条回归**：AST `1269 / 3 skipped / 0 failures`（+ swift-testing **45 / 14 suites**）
+  = **与基线逐项相同**；`PINI_INTERP_ENGINE=hir` `1269 / 3 skipped / 7 failures`
+  = **仍是那 7 个**（全在 `Tests/PiniTests/ImportInjectionTests/ImportInjectionTests.swift`，
+  属 **P4-1** 的包运行缺口）⇒ 本批**零测试位移**。
+- **变异反证两级**：四夹具 × M1（两道门全禁）/ M2（只禁 foreign 门）/ M3（只禁 intrinsic 门）——
+  M1 **全红**（= 精确回退本批前）、M2 只红 `examples/ffi.pini`、M3 只红三个 math/stdlib 夹具
+  ⇒ **两条路径可分别归因、零外溢**。
+
+**实现面**（两处，均为「一处机制一道门」）：`Interpreter.swift` 的 libc 预注册表提为
+`static let libcShims`（单源，8 shim）+ `sin`/`cos`/`tan` 提为 `builtinSin`/`builtinCos`/`builtinTan`；
+`HIRExecutor.swift` 的 `.call` 落点加 **declared-foreign 门**（按 `module.foreigns` 判，**未声明仍报错**）
+与 **intrinsic 门**（`llvm.` 前缀按表回答、表外 fail-loud）。
+
+**判据面**：4 个「负向测试被计为阻塞」按 **P3-G1 的既有接受**（见
+`docs/hir-criteria-gap-ledger.md` 的 CG-06 段）**落到判据上** —— 探针新增非阻塞槽位
+`WARN_LLVM_RC_UNPROPAGATED`（门 = **参照臂非零 ∧ LLVM 臂 stderr 非空**），并以**判据真值表自检
+6/6** 证明「只在 HIR 臂失败」**仍落回阻塞集**（该改动**没有**放行真缺口）。
+`run-llvm` 依裁决**未修**；其「**丢弃 `lli` 退出码**」已立案
+（`docs/issue-run-llvm-discards-lli-exit-status-2026-09-16.md`，登记不修）。
+⚠️ 该缺陷**与** `docs/issue-diagnostic-channel-parity-2026-09-12.md`（**不转发语义警告**）
+**不是同一件事**，后者保持 Open、不在本批。
+
+**两条新教训（本批实证，已回写技能）**：
+
+1. **`/tmp` 被系统清理 ⇒ 旧冻结件全部失效**：收口判据③「与冻结件逐夹具对账」**改口径**为
+   「与 `state-readings.json` 记录的**逐槽读数**对账」+ **本轮重跑后立即另存新冻结件**（`--out`）。
+   该损失**如实登记**，不假装旧基线还在；新冻结件 md5 与逐槽读数一并留档。
+2. **变异器械必须带「基线自守」**：首跑四夹具**全判 `FRONTEND_FAIL`**，根因是**器械没带 LLVM 的
+   PATH**（`run-llvm` 起不来 `lli`）而非代码 ⇒ 加「基线非 `OK` 即中止」后，那张
+   **「看起来代码无罪」的空表**不会再出现。
+
+**真实范围声明**：未做 P4-1 ~ P4-4 · 未修 `run-llvm` · 未处置 `CG-03/09/10/11/12`（挂「P4 前置 ·
+独立批次」）· 未动 spec / ADR / 契约 · 未 push。

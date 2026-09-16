@@ -246,6 +246,15 @@ public final class HIRExecutor: DebugHookHost {
     private var types: [String: HIRTypeDecl] = [:]
     private var enums: [String: HIREnumDecl] = [:]
 
+    /// The foreign callees this module declared, from `[名称|foreign]` blocks.
+    ///
+    /// The gate matters: these names are answered by the interpreter's libc
+    /// shim table, and answering them unconditionally would let a program
+    /// that never declared `malloc` call it here while the AST channel
+    /// rejects the same program. Declared-foreign beats the generic
+    /// builtin guesses below because it is the program's own declaration.
+    private var foreignNames: Set<String> = []
+
     /// Bodies of the function *values* built while running, keyed by value
     /// identity — see `HIRCallableBody` for why the body cannot travel inside
     /// the value itself.
@@ -315,6 +324,7 @@ public final class HIRExecutor: DebugHookHost {
             for method in decl.methods { methods[method.name] = method }
         }
         for decl in module.enums { enums[decl.name] = decl }
+        foreignNames = Set(module.foreigns.flatMap { $0.funcs.map(\.name) })
     }
 
     /// Run a module's `main`, mirroring `Interpreter.run(module:)`.
@@ -432,6 +442,45 @@ public final class HIRExecutor: DebugHookHost {
             // @sqrt and the interpreter answers it as a builtin. Call the shared
             // builtin rather than delegating the callee to a live interpreter,
             // which is what the note above rules out.
+            // P4-0: a callee the module declared in a `[名称|foreign]` block is
+            // answered by the libc shim table shared with the AST channel. A
+            // declared name with no shim is a raw C binding, which resolves
+            // through dlsym in the interpreter's FFI loader -- this engine has
+            // no loader, so it fails loud rather than silently.
+            if foreignNames.contains(name) {
+                let args = try arguments.map { try evaluate($0) }
+                guard let shim = Interpreter.libcShims[name] else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: foreign callee \(name) is declared by the "
+                            + "module but has no shim; raw C bindings need the interpreter's "
+                            + "dlsym loader, which this engine does not carry",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                return try shim(args)
+            }
+            // P4-0: sin/cos lower to LLVM intrinsics, so the names that arrive here
+            // are `llvm.sin.f64` / `llvm.cos.f64` and `tan` arrives as a division
+            // between the two. Answer them from the shared trigonometric builtins
+            // instead of reporting a missing module-level function.
+            if name.hasPrefix("llvm.") {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: intrinsic \(name) expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                switch name {
+                case "llvm.sin.f64": return try Interpreter.builtinSin(args[0])
+                case "llvm.cos.f64": return try Interpreter.builtinCos(args[0])
+                default:
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: intrinsic \(name) has no interpreter counterpart",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+            }
             if name == "sqrt" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
