@@ -1,0 +1,233 @@
+# P4-γ 前置规划：删除 AST 走查前的六批
+
+> **批**：`P4-γ` **前置规划**（**纯规划，不含实现**）｜**日期**：2026-09-16｜**状态**：待裁决
+> **上游**：分批表 `docs/issue-hir-p4-plan-2026-09-16.md` §3.2（`P4-γ` 行 + `D-P4-24`）
+> **R1/R2 的红数输入**：`docs/issue-hir-p4-beta-migration-2026-09-16.md` §4–§5（**104** 条，按簇）
+> ⚠️ **每批须单独点名**；本件不建分支、不改任何实现。
+
+---
+
+## 0. 一句话
+
+`P4-γ` 在分批表里是一行（「删 `Interpreter` + `SuspendEvaluator`，收开关，探针改两通道」），
+但**它不是一批**：删之前有三件事**必须先完成**（静态成员外移、69 条降载面补齐、R1/R2 裁决），
+删之后有两件事**必须同时处置**（303 个对照用例的参照臂、`runTests` 的归宿）。
+本件把那三件前置 + 本体 + 两件同时处置切成 **六批**，每批给可测判据。
+
+---
+
+## 1. 事实基础（全部实测，`4b154fa`）
+
+### 1.1 删的对象
+
+| 对象 | 规模 |
+|---|:---:|
+| `Sources/PiniCore/Interpreter/Interpreter.swift` | **3783 行** |
+| `Sources/PiniCore/Interpreter/SuspendEvaluator.swift`（`extension Interpreter`） | **890 行** |
+| 合计 | **4673 行** |
+
+### 1.2 ⚠️ 隐藏工作：`Interpreter` 的**静态成员被保留面使用**（本件最重要的勘测）
+
+「删 `Interpreter`」不是纯删。它的**静态工具成员**被**不删的文件**用着：
+
+| 消费者（**保留**） | 用到的 `Interpreter.*` |
+|---|---|
+| `HIRExecutor.swift` | `builtinAbs` · `builtinCos` · `builtinGet` · `builtinMax` · `builtinMin` · `builtinSin` · `builtinSqrt` · `binaryValue` · `unaryValue` · `applyReturnLabels` · `decomposePatternRow` · `describeValueKind` · `makeResult` · `copyIfStruct` · `containerLength` · `matchArmMatches` · `libcShims` · …（**~30 个**） |
+| `Value.swift` | `makeError` · `builtinResultEnumName` |
+| `SuspendEvaluator.swift` | `coerceRuntimeError` · `decomposePatternRow` · `describeValueKind`（**该文件本身要删**，不构成约束） |
+
+⇒ **非注释行**中的 `Interpreter.<member>` 真引用共 **39 处**，其中落在**保留面**上的必须**先外移**。
+这是 `P4-0`（libc shim 单源）与 `P4-1b`（内建单源）**没抽完的余量**：它们把**实现**抽成了单源，
+但那个单源**住在 `Interpreter` 上**。
+
+### 1.3 `Interpreter` 的真实消费者（构造点）
+
+**Sources 侧 4 处**（都要改指）：
+
+| 位置 | 形态 |
+|---|---|
+| `Sources/PiniCLI/main.swift` L905 | 单文件 run 的 AST 回落 |
+| `Sources/PiniCLI/main.swift` L963 | 包 run 的 AST 回落 |
+| `Sources/PiniCore/REPL/ReplEvaluator.swift` L104 | REPL 的 `.ast` 分支 |
+| `Sources/PiniCore/Debugger/DAPServer.swift` L191 | **`makeRun` 未注入时的默认路径**（`let ast = Interpreter()`）|
+
+**Tests 侧 16 个文件**（未被迁移的），恰好等于四分类并集 —— **这是分类正确性的独立交叉验证**：
+
+| 类 | 文件 |
+|---|---|
+| **B 挂起/并发内部 API**（3） | `SuspendRuntimeTests` · `CPSDifferentialTests` · `StructuredConcurrencyTests` |
+| **C `runTests`**（4） | `TestBlockTests` · `ModuleTestCollectionTests` · `FFIModuleTests` · `TestBlockSwiftTests` |
+| **D 对照臂**（9） | `HIRDifferentialTests` · `IRExecutionTests` · `RuntimeBackendTests` · `HIRExecutorTests` · `OptionalTests` · `DebuggerTests` · `DotCaseConstructionTests` · `BuiltinOverrideTests` · `IRPrintGoldenTests` |
+
+### 1.4 降载层的「未实现」点：**25 处**（不是 162）
+
+`HIRLowerer.swift` 共有 **162** 处 `unsupported(...)`，但其中绝大多数是**正常报错**
+（用户程序确实错了：类型不符、未声明变量…）。按**措辞**筛出「**我还没做**」的标记点只有 **25 处**：
+
+| 措辞 | 处数 | 例 |
+|---|:---:|---|
+| `... is not yet lowered to HIR` | 4 | `statement scoped block` · `unary operator increment` · `binary operator` · `expression join` |
+| `... are later grids` | 4 | member stores · method calls · `intrinsics beyond print` |
+| `... outside this grid / the slice` | 17 | `match pattern` · `top-level construct` · `generic specialization` · `.get` · `.slice` · `string method` · `len on` · `printing a Result value` · `compound assignment target` · `.member access` |
+
+⚠️ **这 25 处与那 104 条红不是一一对应**：一个降载点常承载多个用例（如 `'ok' construction`
+承载并发簇的十几个），而一个用例也可能先死在更早的降载点上（`P4-1a` 的「首缺口遮蔽」）。
+⇒ **补缺口的判据必须按「用例转绿数」测，不能按「标记点消失数」测**。
+
+### 1.5 探针的三通道 → 两通道
+
+探针每夹具跑三条臂：`interp-ast`（**frozen reference**）· `interp-hir` · `llvm`。
+每条臂**显式指定** `PINI_INTERP_ENGINE` 且**不继承**（`env.pop`）—— 这正是 `P4-α` 翻转时它不用改的原因。
+收掉开关后 `interp-ast` 臂**无法再跑** ⇒ 三通道变两通道，且：
+- **判据会变弱**：现在有「参照臂」的夹具（`CHANGE_REFERENCE` 2 个）将失去参照；
+- **冻结件作废**：`/tmp/p4-0-final.tsv` 的六槽分母（319）里含 `interp-ast` 臂的读数 ⇒ 需要**新的冻结件与新的分母**。
+
+---
+
+## 2. 六批划分
+
+依赖顺序：**G-1 → G-2 → G-3 → G-6**；**G-4 / G-5 与 G-2 并行**（互不依赖），但都必须在 **G-6** 之前。
+
+| 批 | 名称 | 内容 | 判据（可测形式）| 规模 |
+|---|---|---|---|:---:|
+| **G-1** | **静态成员外移** | 把 `Interpreter` 上被**保留面**引用的静态成员搬到独立载体（`PiniCore` 内的共享工具，如 `RuntimeValueOps` / `BuiltinShims`），`Interpreter` 反向引用它 | **零行为变更**：全量回归读数与 `P4-β` 收口**逐项相同**（104 failures，两方向失败集合相同）；探针与旧冻结件 `cmp` 相同 | 小–中（纯重构）|
+| **G-2** | **69 条基础面降载缺口补齐** | 按 §1.4 的 25 个标记点归簇，**分批**补：字符/字符串内建 · 集合方法（`append`/`last`/`.get`/`.slice`）· 一元运算符 · 作用域块/`defer` · 泛型 · 跨模块符号 · `try-else` 位置与具名绑定 · 数组元素标注 · 值拷贝 | 每批：**该簇用例转绿数** + **无新增红**（`P4-β` 的 104 为基线）；两方向失败集合仍相同 | **大**（本规划的最大块）|
+| **G-3** | **R1/R2 实施** | 按裁决：**R1** = 把 `await`/`wait`/`join` 一族迁到 HIR（**大规模实现**）；**R2** = 移除该能力（B 类 43 用例连带退役 + CLI/文档同步） | 依裁决而定；**R2 时必须逐条列出退役的用例与用户可见影响** | 大（R1）/ 中（R2）|
+| **G-4** | **`runTests` 归宿** | C 类 4 文件 / 23 用例用的 `Interpreter.runTests`（`[test]` 块驱动）在 HIR 侧无对应 ⇒ 要么在 HIR 侧实现测试块驱动，要么随走查退役 | 二选一后：该面 0 失败，或**显式退役清单** + 语言面同步 | 中 |
+| **G-5** | **303 个对照用例的参照臂** | D 类 9 文件的 `Interpreter` 是**参照臂**。删走查后参照消失 ⇒ 三选一（见 §4 裁定 3） | 二选一后：对照仍**有参照物**且判据**能失败**（注入变异时转红）| 中–大 |
+| **G-6** | **本体：删 + 收开关 + 探针改口径 + 整合** | 删 4673 行；收 `PINI_INTERP_ENGINE`（`D-B6`）；探针三通道→两通道 + **新冻结件与分母**；整合三份同构装配（`ProgramRunner` / `ReplEvaluator` / CLI）；`DAPServer` L191 的默认路径改指 | **主计划 §7 的 P4 四条判据全过** + 探针新口径下 `FLIP BLOCKERS 0` + **全量回归 0 failures**（此时该数是**可达的**，与前几批不同）| 中 |
+
+### 2.1 为什么 `G-1` 必须最先（且它不显眼）
+
+它是**唯一一个「不改变任何行为」的批**，因此也是**唯一可以拿「逐项相同的既有读数」当判据**的批。
+把它排在最前，好处是：G-6 的删除面缩到「只剩实例面」，而**编译期就能证明**静态成员已经搬干净
+（删掉实例面后仍能编译 ⇒ 依赖已断）。
+
+⇒ 反过来说：**若不做 G-1 直接进 G-6，会在删文件的瞬间得到一屏编译错误**，
+而那些错误**与「删走查」这件事无关**（是工具函数没搬家）—— 会把一次结构变更伪装成一次大检修。
+
+### 2.2 `G-2` 的分批建议（按「降载点聚类」而不是按「用例数平均」）
+
+| 子批 | 覆盖的标记点 | 预期转绿 |
+|---|---|---|
+| G-2a | 字符/字符串内建（`chars` · `chr` · `ord` · `is_letter` · `is_number` · `len on` · `print` 无参）| **11** |
+| G-2b | 集合方法（`.get` · `.slice` · `append` · `last` · `method calls`）| **8** |
+| G-2c | 一元运算符（`increment` · `decrement` · `plus` · `bitwiseNot`）| **6** |
+| G-2d | 泛型（`generic specialization` · `associated value lacks a resolvable type`）| **5** |
+| G-2e | `try-else` 位置与 `try-except` 具名绑定 | **8** |
+| G-2f | 作用域块 / `defer`（`statement 'scoped block'`）| **3** |
+| G-2g | 跨模块符号（`reference to undeclared variable`）| **10** |
+| G-2h | 值拷贝语义（**已有在册工单**）· 数组元素标注 · 深度护栏文案 · 声明级检查 | **4** |
+
+⚠️ 上表的「预期转绿」是**按 `P4-β` 的簇归属记的，不是承诺**：`P4-1a` 的教训是
+**首缺口遮蔽** —— 补掉一层会露出下一层。⇒ 每子批**实测后回填**，不用预期值当验收。
+
+---
+
+## 3. 每批必跑的三条（沿用上游 §4）
+
+1. **全量回归**（默认方向）—— 且**必须先报「执行类数 vs 基线 115」**（`P4-β` 的 SIGPIPE 教训）。
+2. **`PINI_INTERP_ENGINE=ast` 方向**（在开关退役前）—— 失败集合必须与默认方向**逐项相同**。
+3. **全量探针 + 与冻结件逐夹具对账**（Δ 全 0 或**逐条说明**）。
+
+---
+
+## 4. 三件待裁（**带背景 / 选项 / 代价 / 建议**）
+
+### 裁定 1 — `R1` 还是 `R2`（保并发能力，还是弃）
+
+**这是什么**：`await` / `wait` / `join` / `joinAll` 这一族能力，目前**只在 AST 走查那一侧实现**
+（`SuspendEvaluator`，890 行）。删掉走查，这些能力就没有载体了。
+
+**为什么现在要决定**：它是 `G-3` 的全部内容，而 `G-3` 是 `G-6` 的前置。`P4-β` 已经把它从
+「抽象取舍」变成了数字：**104 条红里，并发/异步簇占 35 条**。
+
+**选项与代价**：
+- **R1（保）**：把该族迁到 HIR。代价 = 一次**大规模实现**（890 行的挂起求值器要在静态降载的
+  执行模型里重建，涉及调度器、Future、取消三件）；收益 = 语言能力不回退。
+- **R2（弃）**：移除该能力。代价 = **35 条用例连带退役** + CLI/REPL 对 `await` 的语法接受面收窄 +
+  **用户可见的能力回退**（需要在 release note 明示）。收益 = `G-3` 从「大」变「中」。
+
+**我的建议**：**R1**，但**不排在 `G-2` 之前**。理由：
+① 那 35 条中**多数**用例的失败是**降载点**报的（`'ok' construction` / `'join' is not yet lowered`），
+不是「挂起调度器缺失」—— ⇒ 先做 `G-2` 有可能把其中一部分**直接转绿**，从而**缩小 R1 的真实规模**；
+② 先 R2 再回头补是**不可逆**的（能力删了就没回头路），而先 G-2 再裁是**信息更多的同一决策**。
+
+### 裁定 2 — `G-2` 的子批是否**逐批收口**，还是**攒成一批**
+
+**这是什么**：§2.2 的八个子批（69 条）怎么走。
+
+**为什么现在要决定**：它决定要建几次分支、跑几次全量回归（约 1–2 分钟/次 + 分批执行 × 5）。
+
+**选项与代价**：
+- **A 逐子批收口**：8 次分支 + 8 次收口。代价 = 流程开销；收益 = **每子批的红数增量可归因**
+  （能看出「这一簇补掉了几条」）。
+- **B 攒成 2–3 批**（例如「内建+集合+运算符」/「泛型+try」/「跨模块+其余」）：
+  代价 = 归因变粗；收益 = 流程开销减半。
+
+**我的建议**：**A**，但只在**子批之间**允许合并（若某一子批实测发现是「一行守卫」级别的改动，就并入相邻批）。
+理由：`P4-2` 与 `P4-β` 两次的教训都是**归因粒度决定后续判断质量** —— 而 69 条正是 `G-6` 判据的基线。
+
+### 裁定 3 — **303 个对照用例的参照臂**怎么办
+
+**这是什么**：9 个文件的 303 个用例，结构是「同一程序跑两个引擎、断言结果相同」。
+其中 `Interpreter` 是**参照臂**（另一臂是 HIR 或 LLVM）。删掉走查，参照臂消失。
+
+**为什么现在要决定**：它在 `G-5`，**必须在 `G-6` 之前**处置 —— 否则删完走查，
+这 303 个用例要么编译不过，要么被改成「HIR 与 HIR 对照」而**集体假绿**（`P4-β` 的 D 类陷阱）。
+
+**选项与代价**：
+- **A 改用 LLVM 作参照**：让 LLVM 通道当参照臂（`pini run-llvm` 已在）。代价 = 需要 **JIT/LLVM 环境**
+  （`P4-β` 的暴露面里就有「`run-llvm` 忽略 `lli` 退出码」在册工单），且 LLVM 侧自身有未实现面（`emit` 对 `argv` 一类）。
+  收益 = 参照臂仍在、判据仍能失败。
+- **B 参照「黄金输出」**：把当前两引擎一致的输出**固化为 golden 文件**，之后只断言「输出 == golden」。
+  代价 = 参照物**冻在某一时刻**，此后只能测「没变」、不能测「对」；且 golden 更新会变成一次「重新采集」。
+- **C 随走查退役**：删掉这 303 个。代价 = **差分证据主体消失**（它们是「HIR 与 AST 行为一致」的现存证明），
+  翻转后**没有任何东西**能说明 HIR 的行为没漂移。
+
+**我的建议**：**A（LLVM 作参照）为主 + B 为辅**，**不做 C**。理由：
+① 走查删掉之后，**「两个独立实现互相校验」这个结构是唯一还能保留的形式**，而 LLVM 后端正是那个独立实现；
+② 但 LLVM 侧有未实现面（`emit`/`run-llvm` 的在册缺陷）⇒ 应**同时**保留 B 的一部分（对 LLVM 覆盖不到的夹具用 golden）；
+③ C 的代价被严重低估：303 条不是「一些测试」，是**翻转后唯一的跨实现一致性证据**。
+
+⚠️ 我**不建议**在 `P4-β` 里顺手把它们改成 HIR-vs-HIR —— 那正是本规划 §1.2 要防的事。
+
+---
+
+## 5. 止损点
+
+- **`G-2` 任一子批**：若某簇的转绿数 **< 该簇预期的一半**，停下来回报（说明存在更早的遮蔽层，
+  继续补会把「一个降载面」的工作量翻倍）。
+- **`G-1`**：若外移导致**任何**读数变化（哪怕 1 条），立即回退 —— 它被定义为「零行为变更」的批，
+  有变化就说明「静态成员」不只是工具函数（可能含着状态）。
+- **`G-3` 选 R1 时**：若挂起求值器的迁移需要改动**契约节点**（60 节点），停下来先把契约变更走 §1.3 治理。
+
+## 6. 不做范围
+
+不改契约计数（除非 `G-3` 触发治理）· 不修在册工单（`run-llvm` 退出码 · 测试基建 SIGPIPE ·
+REPL 声明识别 · 取址格 · 字符串字节语义格）· 不动 `docs/spec/` 的语言面正文 ·
+**不把本规划当成开工授权**（每批须单独点名）。
+
+---
+
+## 7. 复现方式（勘测本规划所依据的量）
+
+```sh
+# 删的对象与规模
+wc -l Sources/PiniCore/Interpreter/Interpreter.swift Sources/PiniCore/Interpreter/SuspendEvaluator.swift
+
+# 静态成员的真引用（去掉注释行，39 处）
+# 降载层「未实现」标记点（25 处；注意 162 是全部 unsupported()，多数是正常报错）
+python3 - <<'PY'
+import re
+t = open('Sources/PiniCore/HIR/HIRLowerer.swift', encoding='utf-8').read()
+MARK = ('is not yet lowered', 'later grids', 'outside this grid', 'outside the slice',
+        'no registered specialization', 'has no body')
+sites = [m.group(1) for m in re.finditer(r'unsupported\(\s*"((?:[^"\\]|\\.)*)"', t)
+         if any(k in m.group(1) for k in MARK)]
+print('unimplemented markers:', len(sites))
+PY
+
+# 真消费者与未迁移的测试面
+grep -rn "Interpreter(" Sources/ ; grep -rln "\bInterpreter\b" Tests/ | wc -l
+```
