@@ -539,3 +539,34 @@ note = """器械批 = `D-P4-29` 授权的修复，**`Sources/` 零改动 · `Tes
 **✅ 本批的实际产出 = 一个已实测等价的度量替代**：115 个类切 **3 块**（每块一次 `swift test --filter`）⇒ **0 次信号 · 0 个未跑类 · 失败 72 条**，与**逐类单跑 116 次**的读数**逐条相同（集合相等，非只比总数）**；旁证 = 单次整跑的 57 条是它的真子集，缺的 15 条**全在未跑的 24 个类里**（即「没跑」表现为少读数，不是多出假绿）。⇒ **全量回归由 116 次调用降到 3 次**，这是后续各批的直接提速项。
 
 **两条可复用教训（已写入工单 §10）**：① 判「某 token 在不在」**必须用词边界**（块里的 `thrown` 会被 `'throw' not in block` 放过）；② 判「`catch` 是否异常退出」**不能看附近有没有 `close`**（附近的行可能属于**公共退出路径**），要看**块边界**。"""
+
+[[evidence]]
+id = "2026-09-16 数值字面量转换与 abs 定义域的登记（ADR-038）"
+citable = false
+claim = "The numeric-literal rules the language never wrote down are registered. Two rulings: abs accepts both integers and decimals, each keeping its own type; and an integer literal is not implicitly widened where a decimal is expected, so the position has to be written 0.0. The first was measured to be a widening with a very small blast radius -- across the whole repository exactly one site feeds a decimal to abs, and it is the very test that asks for the widening, while the four integer call sites stay legal. The second is a ratification of what the type checker already does, so its behavioural edge is not between before and after but between the two engines, which is the already-registered E4 family. Registration only: no implementation, no contract-node change"
+artifacts = [
+  "docs/spec/adr/adr-038-numeric-literal-conversion.md",
+  "docs/spec/adr/adr-index.md",
+  "docs/spec/pini-spec-v0.md",
+  "docs/spec/migration-2026-09.md",
+  "docs/spec/evidence-table.toml",
+]
+command = "bash tools/check-doc-links.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; bash hooks/comment-lint.sh ; python3 tools/hir-contract-check.py ; orphan-row scan over the three edited tables"
+output = "doc-links pass, 821 references. evidence-sweep parse plus schema ok, 0 unannotated citation marks. comment-lint full run L1-L6 green, rc=0, which redeems the new ADR-038 through its index row. hir-contract-check clean at 60 nodes on all three anchors -- nothing here touches the contract. The orphan-row scan is 0 for the ADR index and the migration file; the spec keeps its one pre-existing false positive, the EBNF alternation in the appendix"
+validated_at = "2026-09-16T23:23+0800"
+status = "FRESH"
+note = """登记批 = `G-2R` 三条待裁里的**两条语言面裁决**（第三条见下），**只动 `docs/`**。
+
+**五处登记面**：新建 `docs/spec/adr/adr-038-numeric-literal-conversion.md`（提议 / 现状实测 / 影响评估 / D1·D2 / 后果 / 不在范围 / 溯源）· ADR 索引 +1 行（**紧邻 ADR-037**）· 规范 §3 台账新增 **G60**（**紧邻 G59**）· `docs/spec/migration-2026-09.md` 新增 **G 节**（破坏性迁移说明）· 证据表 +1 条。
+
+**⭐ 本批最有价值的是影响评估的实数，而不是裁决本身**：
+① **`abs` 放宽的爆炸半径极小** —— 全仓把**小数**喂给 `abs` 的只有 **1 处**（`Tests/PiniTests/StdlibTests/testMathAbs.pini`，且它正是要求放宽的那个用例）；把**整数**喂给 `abs` 的 4 处（`examples/stdlib.pini` · `testBuiltinMathIntegersViaLLI.pini` · `testDiffStdlib.pini` · `testMathAbs.pini`）**全部仍合法**。⇒ 无既有夹具依赖「`abs` 拒绝小数」。
+② **`abs` 在仓里有三种说法**（本批查实）：内建登记表说「只整数」· 旧引擎运行期「任意数字」· HIR 降载层**把结果类型硬写成 I32**。⇒ 裁决的作用是让三面归一。
+③ **整数字面量那条是「现状明文化」**：类型检查**今天就已经拒**，所以前后行为无差；真正的行为变更发生在**两引擎之间**（旧引擎不跑检查器 ⇒ 这类程序今天能跑、翻转后被拒），即已登记的 `E4` 族（`D-P4-15`）。
+⚠️ **未做全量语料普查**（「有多少既有 `.pini` 源把整数字面量写在小数位」）—— 它决定迁移说明的篇幅，归**实现批**。本批只在 ADR 与 G60 里如实标注为未做。
+
+**⚠️ 一处我自己的形态失误（用户当场纠正）**：三次追问我把待裁点写成内部编号（`abs 多态`/`契约节点`/`D-P4-13`），**未给背景与上下文**，用户判为「**无效的询问**」。重做后（每条给「它是什么（含真实程序片段）· 为什么卡在这里 · 各选项动什么/代价 · 我的建议」）才取得裁决。**这是同型纪律的第三次违反**，已在跨项目记忆里给该纪律加一步**发送前必过的三问**。
+
+**第三条（`BootstrapLanguageContract` 具名元组元数）已被我撤出待裁**：看清夹具后它更像**实现缺陷**（程序写了三个元素，检查器报只收到两个且第二个类型也不对）⇒ 先定位（解析器嵌套括号 vs 检查器标签配对），定性前不裁。
+
+**本批未做**：未动任何实现（内建表签名 · 降载层硬编码 · 夹具改写 · LLVM 侧处置）；未做语料普查；未 push。"""
