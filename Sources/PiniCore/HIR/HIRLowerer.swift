@@ -3401,8 +3401,12 @@ public enum HIRLowerer {
                 at: location, into: &context
             )
         }
-        // Array member methods (G9): join on Array<String>.
-        if case .array(let joinElem) = objectType, joinElem == .string, memberName == "join" {
+        // Array member methods (G9): join. G-2b lifted the `[String]`-only
+        // restriction -- the node's own semantics are "stringify each element
+        // and interpose the separator", which is what the interpreter's `join`
+        // arm does to whatever the array holds, so the element type never had
+        // to be a string.
+        if case .array = objectType, memberName == "join" {
             guard arguments.count == 1 else {
                 throw unsupported("join expects exactly one argument", at: location)
             }
@@ -3502,15 +3506,24 @@ public enum HIRLowerer {
             guard arguments.count == 1 else {
                 throw unsupported("get expects exactly one argument", at: location)
             } 
+            // G-2b: a dictionary's `.get` keys off any value the dictionary
+            // accepts, so the index expectation follows the key type and the
+            // I32 requirement is the Array/String arm's alone.
             let wrapped: HIRType
+            let indexExpectation: HIRType?
+            var requireI32Index = false
             switch objectType {
-            case .array(let element): wrapped = element
-            case .string: wrapped = .string
+            case .array(let element): wrapped = element; indexExpectation = .i32; requireI32Index = true
+            case .string: wrapped = .string; indexExpectation = .i32; requireI32Index = true
+            case .dict(let key, let value): wrapped = value; indexExpectation = key
             default:
-                throw unsupported(".get on type '\(objectType)' outside this grid (Array/String)", at: location)
+                throw unsupported(
+                    ".get on type '\(objectType)' outside this grid (Array/String/Dict)",
+                    at: location
+                )
             }
-            let loweredIndex = try lowerExpr(arguments[0].expression, expected: .i32, into: &context)
-            guard loweredIndex.type == .i32 else {
+            let loweredIndex = try lowerExpr(arguments[0].expression, expected: indexExpectation, into: &context)
+            if requireI32Index, loweredIndex.type != .i32 {
                 throw unsupported("get index must be I32", at: location)
             }
             return LoweredExpr(
