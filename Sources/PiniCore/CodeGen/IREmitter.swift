@@ -1362,6 +1362,9 @@ public final class IREmitter {
                 }
             case .logicalNot:
                 bodyIR += " \(temp) = xor i1 \(lowered.ssaName), 1\n"
+            case .bitwiseNot:
+                // `~v` is `v ^ -1`; the operand is I32 (the lowerer gates it).
+                bodyIR += " \(temp) = xor \(lowered.llvmType) \(lowered.ssaName), -1\n"
             case .abs:
                 let neg = builder.freshTemp()
                 bodyIR += " \(neg) = sub \(lowered.llvmType) 0, \(lowered.ssaName)\n"

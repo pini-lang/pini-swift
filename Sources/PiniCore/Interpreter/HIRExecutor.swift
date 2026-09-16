@@ -1345,6 +1345,9 @@ public final class HIRExecutor: DebugHookHost {
         switch op {
         case .negate: return .minus
         case .logicalNot: return .not
+        // G-2c: `~` maps to the interpreter's own `.bitwiseNot`, so both
+        // engines reach the shared `RuntimeOps.unaryValue` entry.
+        case .bitwiseNot: return .bitwiseNot
         // LLVM grid G9: `abs` is a builtin call on the AST channel, not a unary
         // operator.
         case .abs: return nil
