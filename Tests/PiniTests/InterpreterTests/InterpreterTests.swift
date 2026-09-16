@@ -20,6 +20,7 @@ final class InterpreterTests: XCTestCase {
         } catch {
             // 抛出异常前恢复 stdout，避免后续测试输出写入 pipe 导致 SIGPIPE
             fflush(stdout)
+            pipe.fileHandleForWriting.closeFile()
             dup2(originalStdout, STDOUT_FILENO)
             close(originalStdout)
             throw error
