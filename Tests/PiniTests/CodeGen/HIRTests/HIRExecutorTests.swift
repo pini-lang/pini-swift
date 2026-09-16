@@ -1248,6 +1248,20 @@ final class HIRExecutorTests: XCTestCase {
 
     /// Runaway recursion must end in a diagnosable error rather than a
     /// thread-stack smash with no output — the failure mode G-P9 was.
+    ///
+    /// The wording asserted below is `RuntimeOps.recursionGuardError()`'s, i.e.
+    /// the same sentence the AST interpreter raises. The guard used to have one
+    /// sentence per engine, so the same runaway recursion read as two different
+    /// failures depending on the engine; matching on one of them pinned the
+    /// split in place. The subject here is "the guard fires with a diagnosable
+    /// reason", not "the reason is in English".
+    ///
+    /// The wording asserted below is `RuntimeOps.recursionGuardError()`'s, i.e.
+    /// the same sentence the AST interpreter raises. The guard used to have one
+    /// sentence per engine, so the same runaway recursion read as two different
+    /// failures depending on the engine; matching on one of them pinned the
+    /// split in place. The subject here is "the guard fires with a diagnosable
+    /// reason", not "the reason is in English".
     func testRunawayRecursionEndsInADiagnosableError() throws {
         let hir = try lowerOnly("""
         rec|func(n: I32,) -> (I32,):
@@ -1261,7 +1275,7 @@ final class HIRExecutorTests: XCTestCase {
         XCTAssertThrowsError(try HIRExecutor().run(module: hir)) { error in
             let text = String(describing: error)
             XCTAssertTrue(
-                text.contains("call depth exceeded"),
+                text.contains("调用深度超过上限"),
                 "expected the depth guard to fire, got: \(text)"
             )
         }

@@ -2019,12 +2019,8 @@ public final class HIRExecutor: DebugHookHost {
             )
         }
 
-        guard callDepth < HIRExecutor.maxCallDepth else {
-            throw RuntimeError.invalidOperation(
-                reason: "HIR executor: call depth exceeded \(HIRExecutor.maxCallDepth) "
-                    + "(runaway recursion)",
-                location: HIRExecutor.noLocation
-            )
+        guard callDepth < RuntimeOps.maxCallDepth else {
+            throw RuntimeOps.recursionGuardError()
         }
         callDepth += 1
         callStackNames.append(name)
