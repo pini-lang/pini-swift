@@ -31,10 +31,14 @@ import Foundation
 ///
 /// CONFORMANCE IS NOT FUNCTION
 ///
-/// A conforming engine may still have no pause site. The HIR executor declares
-/// `debugHook` today and never consults it, because the HIR carries no source
-/// position; its own suite asserts that dormancy, so wiring a pause before
-/// positions exist fails a test rather than shipping a stop that points nowhere.
+/// Declaring the surface says nothing about whether an engine has a pause site.
+/// Both live engines now do — the HIR executor's was the last one missing, and
+/// the reason it was missing is worth keeping: the HIR carried no source
+/// position, so a pause there could only have reported a placeholder and stopped
+/// at a line that does not exist. The position had to reach the representation
+/// first (LR-4 P4-3 — see `HIRBlock`), and the dormancy assertion that guarded
+/// the gap was inverted rather than deleted, so the boundary stays witnessed
+/// from both sides.
 /// See ADR-034 (HIR contract) and ADR-031 (a capability conclusion must rest on
 /// a real run, not on the absence of a path).
 public protocol DebugHookHost: AnyObject {

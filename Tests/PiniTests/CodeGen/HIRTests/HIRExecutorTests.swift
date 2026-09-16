@@ -1181,18 +1181,17 @@ final class HIRExecutorTests: XCTestCase {
 
     // MARK: - Debug surface
 
-    /// The engine carries the debug surface (`DebugHookHost`) but has no pause
-    /// site, because the HIR carries no source position. A pause wired today
-    /// would report `noLocation`, and the debugger matches a breakpoint by line
-    /// equality — so no breakpoint could ever fire, while entry-stop and
-    /// stepping would stop at a line that does not exist.
+    /// The pause site is live as of P4-3: positions landed in the HIR, so the
+    /// hook is consulted once per statement, on the line that statement came
+    /// from.
     ///
-    /// Asserted by running, not by reading the property back: the hook is
-    /// installed to fail loudly if consulted, and a real program is then run to
-    /// its end. Wiring a pause site before positions land turns this red, and
-    /// that is the point — this test is the one place that says "not yet, and
-    /// here is why", so the wiring cannot happen by accident.
-    func testDebugHookIsDeclaredButDormantUntilPositionsExist() throws {
+    /// This test used to assert the opposite — that the hook was never
+    /// consulted — because a pause that cannot name a line is worse than no
+    /// pause. It is inverted rather than deleted: the property worth protecting
+    /// was never "stay dormant", it was "never report a position the engine does
+    /// not have", and that property needs a witness *more* now that positions
+    /// exist than it did when they did not.
+    func testDebugHookPausesAtTheSourceLineOfEveryStatement() throws {
         let hir = try lowerOnly("""
         main|func() -> ():
             print(1)
@@ -1203,14 +1202,45 @@ final class HIRExecutorTests: XCTestCase {
         var consulted: [SourceLocation] = []
         executor.debugHook = { ctx in
             consulted.append(ctx.location)
-            return .quit
+            return .run
         }
 
         XCTAssertNoThrow(try executor.run(module: hir))
+        XCTAssertEqual(consulted.map(\.line), [2, 3],
+                       "one consult per statement, each on its own source line")
+        XCTAssertTrue(consulted.allSatisfy { $0.fileName == HIRExecutorTests.fileName })
+        XCTAssertFalse(
+            consulted.contains { $0.fileName == HIRExecutor.noLocation.fileName },
+            "a pause must never report the placeholder as if it were a position"
+        )
+    }
+
+    /// A hand-built block carries no positions, and an engine that cannot name a
+    /// line must stay silent rather than stop somewhere fictional.
+    ///
+    /// Before P4-3 this was the pause site's only behaviour, so the whole debug
+    /// surface was dormant; it is the *fallback* now, which is exactly why it
+    /// needs its own witness — a fallback nobody tests is one that quietly stops
+    /// holding, and that failure would look like a debugger stopping on line 0.
+    func testHandBuiltHIRWithoutPositionsIsNotPausedOn() throws {
+        let executor = HIRExecutor()
+        var consulted: [SourceLocation] = []
+        executor.debugHook = { ctx in
+            consulted.append(ctx.location)
+            return .run
+        }
+
+        let module = HIRModule(functions: [
+            HIRFunction(name: "main", params: [], returnType: nil, body: [
+                .exprStmt(.intConst(value: 1, type: .i32)),
+                .returnStmt(value: nil),
+            ])
+        ])
+
+        XCTAssertNoThrow(try executor.run(module: module))
         XCTAssertTrue(
             consulted.isEmpty,
-            "the HIR engine must not consult the debug hook before positions exist; "
-                + "it reported \(consulted)"
+            "a block with no positions must not be paused on; the engine reported \(consulted)"
         )
     }
 

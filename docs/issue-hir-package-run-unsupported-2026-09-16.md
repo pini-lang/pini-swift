@@ -64,8 +64,8 @@ if engine == .hir {
 
 | 工单 | 覆盖 | 与本单的关系 |
 |---|---|---|
-| `docs/issue-hir-engine-abstraction-2026-09-13.md` | **执行入口抽象**（`run` 进协议、`DAPServer` 不持有具体类型） | **相邻但不同** —— 它管的是「换引擎时宿主装配要不要跟着改」（**改动面**），本单是「HIR 侧**根本没有**包运行入口」（**能力缺口**）。抽象完也仍需有人实现 HIR 侧的包运行。 |
-| `docs/issue-hir-node-source-position-2026-09-12.md` | HIR 节点无位置 | 无关（本项不涉及位置） |
+| `docs/spec/issue/archive/issue-hir-engine-abstraction-2026-09-13.md` | **执行入口抽象**（`run` 进协议、`DAPServer` 不持有具体类型） | **相邻但不同** —— 它管的是「换引擎时宿主装配要不要跟着改」（**改动面**），本单是「HIR 侧**根本没有**包运行入口」（**能力缺口**）。抽象完也仍需有人实现 HIR 侧的包运行。 |
+| `docs/spec/issue/archive/issue-hir-node-source-position-2026-09-12.md` | HIR 节点无位置 | 无关（本项不涉及位置） |
 | `docs/spec/issue/archive/issue-hir-builtin-callee-unowned-2026-09-14.md` | 内建 callee 解析 | 无关（不同的失败面） |
 
 ⇒ 本单**不并入** abstraction 单：那单的交付判据是「协议成形」，而协议成形后本洞仍在。

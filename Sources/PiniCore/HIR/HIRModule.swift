@@ -6,7 +6,7 @@ public struct HIRFunction: Equatable {
     public let name: String
     public let params: [HIRParam]
     public let returnType: HIRType?
-    public let body: [HIRStmt]
+    public let body: HIRBlock
 
     public struct HIRParam: Equatable {
         public let name: String
@@ -17,7 +17,7 @@ public struct HIRFunction: Equatable {
         }
     }
 
-    public init(name: String, params: [HIRParam], returnType: HIRType?, body: [HIRStmt]) {
+    public init(name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock) {
         self.name = name
         self.params = params
         self.returnType = returnType

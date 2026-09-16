@@ -70,7 +70,34 @@ Error: ... node 'arrayLiteral' is dispatched but not implemented yet (P1-2 skele
 - `HIRLoweringError.location` 是否已足够覆盖 emit 系命令（已有
   `docs/issue-emit-diagnostic-source-snippet-2026-09-10.md` 处理源码片段面）。
 
-## 不做范围
+## 处置（2026-09-16，LR-4 P4-3 交付，**已闭环并归档**）
+
+位置供给落地了，采用**选项 B 的一个变体**（块级平行数组），**不是立项时倾向的 A**。
+
+**载体 = `HIRBlock`**：块从裸类型 `[HIRStmt]` 升级为一个值，含 `statements` 与**平行的
+`positions`**。`positions` 由 `HIRLowerer.lowerBlock` **唯一填充** —— 那是「一个 `Block`
+变成 HIR 语句」的唯一入口 —— 所以 B 所担心的「第二个必须保持同步的载体」**不存在**：
+位置与语句是同**一个值**的两半（同构造、同传递），不是另立一张需要跟着节点增删维护的表。
+
+**为什么不用 A（60 个节点各加位置字段）**：A 要改 60 个 case 定义、全部构造点，以及全部
+模式匹配点（执行器 / LLVM 发射器 / 打印器 / 测试）；而且会让 `HIRStmt: Equatable` 的合成
+把位置纳入比较 —— 既有的结构断言要么因此失败，要么得手写 `==` 把成本转嫁回来。B-variant
+的改动面是它的一个零头，**提供的位置信息等价**（都是语句级）。
+
+**精度与解释器同源**：位置记的就是 `Statement.location`，正是
+`Interpreter.statementLocation` 读的同一个东西 ⇒「两引擎停在相同的行」是**构造上的事实**，
+不是靠约定对齐。判据是 `DebuggerTests` 的「两引擎停在逐项相同的行上」用例。
+
+**闭环**：暂停点接线在 `HIRExecutor.executeStatements`（与解释器同点、同上下文、同 `.quit`
+契约）。休眠断言被**反转而非删除**：`HIRExecutorTests` 现在用两个用例分别钉住
+「有位置 ⇒ 逐语句在该行暂停」（`testDebugHookPausesAtTheSourceLineOfEveryStatement`）
+与「无位置 ⇒ 不暂停」（`testHandBuiltHIRWithoutPositionsIsNotPausedOn`）。
+
+**残留（未做，不阻塞）**：本单 §证据 的注所提的「lowering 侧兜底位置」
+（`HIRLoweringError` 之外那些退化成 `SourceLocation(line: 0, column: 0, fileName: "")` 的点）
+仍原样；HIR **节点**依旧不带位置（LLVM 路径继续在 lowering 期报位置，这一点未变）。
+
+## 不做范围（立项时）
 
 **本单不修。** P1-2 已按「占位位置 + 明文登记」交付并验收（占位位置由测试断言钉住，
 保证它不会静默变成「看起来有位置」）。开工需点名。

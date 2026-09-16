@@ -1297,12 +1297,21 @@ public enum HIRLowerer {
     private static func lowerBlock(
         _ block: Block,
         into context: inout FunctionContext
-    ) throws -> [HIRStmt] {
+    ) throws -> HIRBlock {
         var statements: [HIRStmt] = []
+        var positions: [SourceLocation] = []
         for statement in block.statements {
-            statements.append(contentsOf: try lowerStatement(statement, into: &context))
+            let lowered = try lowerStatement(statement, into: &context)
+            statements.append(contentsOf: lowered)
+            // P4-3: every statement this source statement lowered to carries
+            // that statement's own position. One `Block` statement can expand
+            // into several HIR statements (a try-else variable initializer
+            // yields the allocation plus the try), and all of them are *this*
+            // line — which is what the interpreter reports for the same code.
+            let location = statement.location
+            positions.append(contentsOf: Array(repeating: location, count: lowered.count))
         }
-        return statements
+        return HIRBlock(statements, positions: positions)
     }
 
     // MARK: - Statements
@@ -1411,7 +1420,7 @@ public enum HIRLowerer {
             }
             let thenBody = try lowerBlock(thenBlock, into: &context)
             // Elif chains lower to nested ifs (tree shape keeps them structural).
-            var chain: [HIRStmt]? = nil
+            var chain: HIRBlock? = nil
             if let elseBlock = elseBlock {
                 chain = try lowerBlock(elseBlock, into: &context)
             }
@@ -1463,7 +1472,7 @@ public enum HIRLowerer {
         case .deferStatement(let wrapped, _):
             // G9: defer runs at the enclosing block scope's normal end,
             // LIFO across the defers of that scope (emitter block protocol).
-            return [.deferStmt(body: try lowerStatement(wrapped, into: &context))]
+            return [.deferStmt(body: .at(try lowerStatement(wrapped, into: &context), wrapped.location))]
 
         case .expressionStmt(let expr, let location):
             // Statement-position try-else: ok value discarded (ADR-032).
@@ -1855,7 +1864,7 @@ public enum HIRLowerer {
         }
         return .tryStmt(
             operand: loweredOperand.node, errorVar: errorVar,
-            handler: handlerStmts, okTarget: okTarget, type: .result(ok: okType)
+            handler: .at(handlerStmts, location), okTarget: okTarget, type: .result(ok: okType)
         )
     }
 
@@ -3530,7 +3539,7 @@ public enum HIRLowerer {
         _ matchCase: MatchCase,
         bindingType: HIRType,
         into context: inout FunctionContext
-    ) throws -> [HIRStmt] {
+    ) throws -> HIRBlock {
         let bindingNames = matchCase.bindings.map { $0.varName }
         let previousTypes = bindingNames.map { context.variableTypes[$0] }
         for (index, name) in bindingNames.enumerated() where name != "_" {
@@ -4237,6 +4246,33 @@ extension Expression {
 }
 
 extension Statement {
+    /// The statement's source position.
+    ///
+    /// Mirrors `Interpreter.statementLocation`: every `Statement` case carries
+    /// a location, and this switch has no `default:` on purpose — a new
+    /// statement case fails to compile here, so there is no path where a
+    /// statement reaches lowering with no position to record (P4-3).
+    var location: SourceLocation {
+        switch self {
+        case .varDecl(_, _, _, _, let l): return l
+        case .varDestructure(_, _, _, _, let l): return l
+        case .assign(_, _, let l): return l
+        case .returnStatement(_, let l): return l
+        case .breakStatement(_, let l): return l
+        case .continueStatement(_, let l): return l
+        case .ifStatement(_, _, _, _, _, let l): return l
+        case .whileStatement(_, _, _, _, let l): return l
+        case .forStatement(_, _, _, _, _, let l): return l
+        case .matchStatement(_, _, let l): return l
+        case .detachStatement(_, let l): return l
+        case .expressionStmt(_, let l): return l
+        case .deferStatement(_, let l): return l
+        case .passStatement(let l): return l
+        case .captureStatement(_, let l): return l
+        case .scopedBlock(_, _, let l): return l
+        }
+    }
+
     /// Short node-kind name for gate-error messages.
     var kindName: String {
         switch self {

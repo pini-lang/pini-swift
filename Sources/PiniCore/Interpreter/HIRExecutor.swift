@@ -32,7 +32,7 @@ enum HIRControlSignal: Error {
 private struct HIRCallableBody {
     /// Parameter names in declaration order — the order the arguments bind in.
     let paramNames: [String]
-    let body: [HIRStmt]
+    let body: HIRBlock
     /// Component labels of a declared named-tuple return; empty when the return
     /// carries none, which is what the return-site rule reads.
     let returnLabels: [String?]
@@ -152,10 +152,13 @@ private struct HIRCallableBody {
 ///
 /// REGISTERED GAPS AT THIS STAGE
 ///
-/// - **No positions.** HIR nodes carry no `SourceLocation` (the type is
-///   position-free by design; the LLVM path reports positions at *lowering*
-///   time). Every `RuntimeError` case requires one, so diagnostics from here
-///   point at `noLocation` — a placeholder, not a line number.
+/// - **Positions live on the block, not on the node** (P4-3). `HIRBlock`
+///   carries a parallel `positions` array the lowerer fills, so a pause can name
+///   the line a statement came from — the same `Statement.location` the
+///   interpreter reports. Nodes stay position-free by design (the LLVM path
+///   reports positions at *lowering* time), so a `RuntimeError` raised outside a
+///   statement loop — and HIR built by hand — still points at `noLocation`,
+///   which remains a placeholder rather than a line number.
 /// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method
 ///   and this engine does not apply the struct copy rule at its binding and
 ///   storing sites (`allocVar` / `storeVar` / `fieldStore` / `subscriptStore`).
@@ -191,8 +194,8 @@ private struct HIRCallableBody {
 /// the LLVM emitter.
 ///
 /// Its debug surface conforms to `DebugHookHost`, the same shape the AST
-/// interpreter exposes — see the `debugHook` property for why that surface is
-/// declared while still unwired.
+/// interpreter exposes, and both halves of it are live: `outputSink`, and a
+/// `debugHook` consulted before each statement on that statement's source line.
 public final class HIRExecutor: DebugHookHost {
 
     // MARK: - Host surface
@@ -204,19 +207,23 @@ public final class HIRExecutor: DebugHookHost {
     /// Debug pause hook — the other half of the surface `DebugHookHost` names,
     /// and the same type the interpreter exposes.
     ///
-    /// **Declared but not wired** (P1-5 S1). Nothing in this engine consults it,
-    /// because the HIR carries no source position — see the class header's "no
-    /// positions" gap. A pause site here today would have to report
-    /// `noLocation`, and the debugger matches a breakpoint by line equality, so
-    /// no breakpoint could ever fire while entry-stop and stepping would stop at
-    /// a line that does not exist. That is a debugger lying about where the
-    /// program is, which is worse than a debugger that is not there yet.
+    /// Consulted from `executeStatements` before each statement runs: the same
+    /// point in the control flow the interpreter uses, with the same context and
+    /// the same `.quit` contract. The line comes from that statement's entry in
+    /// the block's `positions`, which the lowerer filled from
+    /// `Statement.location` — the very thing the interpreter's pause site reads.
+    /// The two engines therefore stop on the same lines by construction rather
+    /// than by agreement, and `DebuggerTests` asserts it for both engines at once.
     ///
-    /// The surface is declared now so that the debugger subsystem is already
-    /// engine-agnostic when positions land: wiring this becomes a call at the
-    /// statement loop plus nothing else. The dormancy is asserted by
-    /// `HIRExecutorTests`, so adding that call before positions exist fails a
-    /// test instead of shipping silently.
+    /// This was declared in P1-5 S1 and deliberately left unwired until
+    /// positions existed: a pause that cannot name a line reports `noLocation`,
+    /// and since the debugger matches a breakpoint by line equality, no
+    /// breakpoint could fire while entry-stop and stepping would stop at a line
+    /// that does not exist — a debugger lying about where the program is, which
+    /// is worse than a debugger that is not there yet. Wiring it was a call at
+    /// the statement loop plus the position carrier, and the dormancy assertion
+    /// in `HIRExecutorTests` was inverted when that landed, so the boundary
+    /// stays witnessed from both sides rather than being crossed silently.
     public var debugHook: ((DebugContext) throws -> DebugAction)? = nil
 
     // MARK: - Module state
@@ -281,6 +288,14 @@ public final class HIRExecutor: DebugHookHost {
     private var callDepth = 0
     private static let maxCallDepth = 120
 
+    /// Names of the functions currently entered, innermost last.
+    ///
+    /// Mirrors `Interpreter.callStackNames` — the list a debugger reads for a
+    /// backtrace. Pushed and popped around a body exactly where `callDepth` is,
+    /// so the two cannot drift out of step: a depth without a name would be a
+    /// backtrace with a hole in it.
+    private var callStackNames: [String] = []
+
     /// Open defer scopes, innermost last: a scope holds its `defer` statements in
     /// registration order, and each `defer` holds the **group** of statements it
     /// wraps.
@@ -290,7 +305,7 @@ public final class HIRExecutor: DebugHookHost {
     /// reversed list would also invert a defer whose body lowered to more than
     /// one node — a difference that only shows up once such a body exists, which
     /// is the worst time to find it.
-    private var deferStack: [[[HIRStmt]]] = []
+    private var deferStack: [[HIRBlock]] = []
 
     /// Directory an unprefixed relative IO path resolves against, mirroring
     /// `Interpreter.programBase`. The emitter already carries this base; the
@@ -1359,10 +1374,10 @@ public final class HIRExecutor: DebugHookHost {
     /// what it means is: a signal thrown by a deferred statement is discarded, and
     /// whatever error is already unwinding keeps unwinding. "Fixing" this into a
     /// propagated error would invent a divergence rather than remove one.
-    private func executeBlock(_ statements: [HIRStmt]) throws {
+    private func executeBlock(_ block: HIRBlock) throws {
         pushDeferScope()
         defer { try? popDeferScope() }
-        try executeStatements(statements)
+        try executeStatements(block)
     }
 
     // MARK: - Statements
@@ -1373,10 +1388,21 @@ public final class HIRExecutor: DebugHookHost {
     /// This is the interpreter's `lastValue` rule from `executeFunctionBody`, and
     /// it is why control-flow bodies and function bodies can share one runner: a
     /// body that is not a function body simply discards the result.
+    ///
+    /// This is also the pause site. The interpreter consults its debug hook
+    /// before each statement it is about to run, and so does this: same point in
+    /// the control flow, same context, same `.quit` contract — which is what
+    /// makes "the debugger works the same on both engines" a fact rather than a
+    /// hope. The position comes from the block, not from the node: a block that
+    /// carries none is skipped rather than reported with an invented line, so an
+    /// unwired block can never make the debugger stop somewhere fictional.
     @discardableResult
-    private func executeStatements(_ statements: [HIRStmt]) throws -> Value {
+    private func executeStatements(_ block: HIRBlock) throws -> Value {
         var lastValue: Value = .null
-        for statement in statements {
+        for (index, statement) in block.enumerated() {
+            if debugHook != nil, let location = block.position(at: index) {
+                try debugPause(at: location)
+            }
             if case .exprStmt(let expr) = statement {
                 lastValue = try evaluate(expr)
             } else {
@@ -1384,6 +1410,31 @@ public final class HIRExecutor: DebugHookHost {
             }
         }
         return lastValue
+    }
+
+    /// Consult the debugger before a statement runs.
+    ///
+    /// Mirrors `Interpreter.debugPause(at:)`: the position is given by the
+    /// caller rather than read off a node, so the pause action does not depend
+    /// on statement shape — that is the half of the debug surface the two
+    /// engines genuinely share. `.quit` unwinds as `DebuggerError.quit`, the
+    /// same signal the interpreter throws.
+    ///
+    /// The hook is tested before the context is built, so an engine with no
+    /// debugger attached pays nothing — the interpreter's guard buys the same.
+    private func debugPause(at location: SourceLocation) throws {
+        guard let hook = debugHook else { return }
+        let context = DebugContext(
+            location: location,
+            depth: callDepth,
+            callStack: callStackNames,
+            variables: currentEnv.listBindings().map {
+                ($0.name, Interpreter.stringifyValue($0.value))
+            }
+        )
+        if try hook(context) == .quit {
+            throw DebuggerError.quit
+        }
     }
 
     private func execute(_ statement: HIRStmt) throws {
@@ -1695,7 +1746,7 @@ public final class HIRExecutor: DebugHookHost {
     ///   loop does not match, and a mismatched label is rethrown from the body
     ///   or the step without the step ever running.
     /// - a `return` propagates unchanged, depths being a loop affair only.
-    private func executeWhile(condition: HIRExpr, body: [HIRStmt], step: [HIRStmt]?) throws {
+    private func executeWhile(condition: HIRExpr, body: HIRBlock, step: HIRBlock?) throws {
         while true {
             if try !evaluateCondition(condition) { break }
 
@@ -1756,8 +1807,8 @@ public final class HIRExecutor: DebugHookHost {
         pattern: [String],
         kind: HIRForIterableKind,
         iterable: HIRExpr,
-        body: [HIRStmt],
-        step: [HIRStmt]?
+        body: HIRBlock,
+        step: HIRBlock?
     ) throws {
         let iterValue = try evaluate(iterable)
         var rows: [[Value]] = []
@@ -1854,7 +1905,7 @@ public final class HIRExecutor: DebugHookHost {
     private func makeFunctionValue(
         name: String,
         paramNames: [String],
-        body: [HIRStmt],
+        body: HIRBlock,
         returnLabels: [String?],
         closure: Environment
     ) -> Value {
@@ -1894,7 +1945,8 @@ public final class HIRExecutor: DebugHookHost {
                 returnLabels: HIRExecutor.declaredReturnLabels(function.returnType)
             ),
             parent: globalEnv,
-            args: args
+            args: args,
+            name: function.name
         )
     }
 
@@ -1935,13 +1987,14 @@ public final class HIRExecutor: DebugHookHost {
                 location: HIRExecutor.noLocation
             )
         }
-        return try invoke(callable, parent: function.closure, args: args)
+        return try invoke(callable, parent: function.closure, args: args, name: function.name)
     }
 
     private func invoke(
         _ callable: HIRCallableBody,
         parent: Environment,
-        args: [Value]
+        args: [Value],
+        name: String
     ) throws -> Value {
         guard callable.paramNames.count == args.count else {
             throw RuntimeError.arityMismatch(
@@ -1959,7 +2012,11 @@ public final class HIRExecutor: DebugHookHost {
             )
         }
         callDepth += 1
-        defer { callDepth -= 1 }
+        callStackNames.append(name)
+        defer {
+            callDepth -= 1
+            callStackNames.removeLast()
+        }
 
         let callEnv = Environment(enclosing: parent)
         for (index, name) in callable.paramNames.enumerated() {
