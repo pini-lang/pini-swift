@@ -113,10 +113,10 @@ public final class FutureValue {
  guard kid.isFinished else { kid.cancel(); continue }
  if let e = kid.error {
  // reject（运行时错误 / 取消）→ 以错误值形式计入 leaked
- leaked.append(Interpreter.makeError(e.description))
+ leaked.append(RuntimeOps.makeError(e.description))
  } else if let r = kid.result,
  case .enumValue(let ev) = r,
- ev.parentEnum == Interpreter.builtinResultEnumName,
+ ev.parentEnum == RuntimeOps.builtinResultEnumName,
  ev.caseName == "err" {
  // resolve 成 `err(...)` 值（errors-as-data 的失败）→ 计入 leaked
  leaked.append(r)

@@ -400,8 +400,8 @@ public final class HIRExecutor: DebugHookHost {
             // builtin calls, so they have no operator to map onto. Call the
             // shared builtin instead of failing.
             switch op {
-            case .minOf: return try Interpreter.builtinMin(left, right)
-            case .maxOf: return try Interpreter.builtinMax(left, right)
+            case .minOf: return try RuntimeOps.builtinMin(left, right)
+            case .maxOf: return try RuntimeOps.builtinMax(left, right)
             default: break
             }
             guard let mapped = HIRExecutor.operatorFor(op) else {
@@ -411,13 +411,13 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            return try Interpreter.binaryValue(left, mapped, right)
+            return try RuntimeOps.binaryValue(left, mapped, right)
 
         case .unary(let op, let operand, _):
             // P4-0: same reason as min/max above -- abs lowers to a HIR unary
             // operator but is a builtin call on the interpreter channel.
             if case .abs = op {
-                return try Interpreter.builtinAbs(try evaluate(operand))
+                return try RuntimeOps.builtinAbs(try evaluate(operand))
             }
             guard let mapped = HIRExecutor.operatorFor(op) else {
                 throw RuntimeError.invalidOperation(
@@ -426,7 +426,7 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            return try Interpreter.unaryValue(mapped, try evaluate(operand))
+            return try RuntimeOps.unaryValue(mapped, try evaluate(operand))
 
         case .call(let name, let arguments, _):
             // The callee is resolved **before** the arguments are evaluated, so an
@@ -468,7 +468,7 @@ public final class HIRExecutor: DebugHookHost {
             // no loader, so it fails loud rather than silently.
             if foreignNames.contains(name) {
                 let args = try arguments.map { try evaluate($0) }
-                guard let shim = Interpreter.libcShims[name] else {
+                guard let shim = RuntimeOps.libcShims[name] else {
                     throw RuntimeError.invalidOperation(
                         reason: "HIR executor: foreign callee \(name) is declared by the "
                             + "module but has no shim; raw C bindings need the interpreter's "
@@ -491,8 +491,8 @@ public final class HIRExecutor: DebugHookHost {
                     )
                 }
                 switch name {
-                case "llvm.sin.f64": return try Interpreter.builtinSin(args[0])
-                case "llvm.cos.f64": return try Interpreter.builtinCos(args[0])
+                case "llvm.sin.f64": return try RuntimeOps.builtinSin(args[0])
+                case "llvm.cos.f64": return try RuntimeOps.builtinCos(args[0])
                 default:
                     throw RuntimeError.invalidOperation(
                         reason: "HIR executor: intrinsic \(name) has no interpreter counterpart",
@@ -508,7 +508,7 @@ public final class HIRExecutor: DebugHookHost {
                         location: HIRExecutor.noLocation
                     )
                 }
-                return try Interpreter.builtinSqrt(args[0])
+                return try RuntimeOps.builtinSqrt(args[0])
             }
             // P4-1b: 宿主环境查询内建。两行都与解释器的同名内建**逐字同义**（镜像，不另造）：
             // 参数数组直接来自执行器持有的 `processArguments`；模块根即程序基准，
@@ -537,7 +537,7 @@ public final class HIRExecutor: DebugHookHost {
         case .printCall(let argument):
             // Mirrors the interpreter's `print` funnel for the one-argument form:
             // stringify, then hand the whole line to the sink at once.
-            outputSink(Interpreter.stringifyValue(try evaluate(argument)))
+            outputSink(RuntimeOps.stringifyValue(try evaluate(argument)))
             return .null
 
         // MARK: Collections (P2a grid G4)
@@ -577,7 +577,7 @@ public final class HIRExecutor: DebugHookHost {
 
         case .lenCall(let argument):
             // Shared with the interpreter's `len` builtin — see the note there.
-            return try Interpreter.containerLength(try evaluate(argument))
+            return try RuntimeOps.containerLength(try evaluate(argument))
 
         case .sliceCall(let container, let start, let end, _):
             return try sliceValue(
@@ -603,7 +603,7 @@ public final class HIRExecutor: DebugHookHost {
             // *means*. It does that by calling the interpreter's rule instead of
             // restating it, which is also what keeps the interpreter's own
             // diagnostic for a base the static type called a tuple and is not.
-            return try Interpreter.tupleElement(
+            return try RuntimeOps.tupleElement(
                 try evaluate(base),
                 index: index,
                 location: HIRExecutor.noLocation
@@ -621,7 +621,7 @@ public final class HIRExecutor: DebugHookHost {
             // group C — same results, different allocation). It is in *this*
             // grid because the defer fixtures build their expected string by
             // concatenating, so the P2a G1 fixtures cannot flip without it.
-            return try Interpreter.binaryValue(
+            return try RuntimeOps.binaryValue(
                 try evaluate(lhs), .plus, try evaluate(rhs)
             )
 
@@ -632,7 +632,7 @@ public final class HIRExecutor: DebugHookHost {
             // `makeResult`, so the two channels cannot disagree on what a Result
             // *is*. The err payload is one type-erased machine word on the LLVM
             // side (LR-12); see the class header's P2a G6 boundary note.
-            return Interpreter.makeResult(
+            return RuntimeOps.makeResult(
                 caseName: isOk ? "ok" : "err",
                 payload: try evaluate(payload)
             )
@@ -658,7 +658,7 @@ public final class HIRExecutor: DebugHookHost {
             // dictionary key equality, out-of-range → `none`. This node is the
             // *named* spelling of `.get(i)` and the lowerer emits it for Array and
             // String only, always the checked arm — hence `checked: true`.
-            return try Interpreter.builtinGet(
+            return try RuntimeOps.builtinGet(
                 receiver: try evaluate(container),
                 index: try evaluate(index),
                 checked: true,
@@ -765,7 +765,7 @@ public final class HIRExecutor: DebugHookHost {
             // unchanged — which is what the interpreter's `.literal` branch does.
             var text = ""
             for part in parts {
-                text += Interpreter.stringifyValue(try evaluate(part))
+                text += RuntimeOps.stringifyValue(try evaluate(part))
             }
             return .string(text)
 
@@ -785,7 +785,7 @@ public final class HIRExecutor: DebugHookHost {
             // concurrent task cannot interleave inside it). Arguments are
             // evaluated left to right — their evaluation is observable.
             let values = try arguments.map { try evaluate($0) }
-            outputSink(values.map { Interpreter.stringifyValue($0) }.joined(separator: " "))
+            outputSink(values.map { RuntimeOps.stringifyValue($0) }.joined(separator: " "))
             return .null
 
         case .assertCall(let condition, let message):
@@ -829,7 +829,7 @@ public final class HIRExecutor: DebugHookHost {
                 )
             }
             let sep = try requireString(try evaluate(separator), for: "join")
-            return .string(elements.map { Interpreter.stringifyValue($0) }.joined(separator: sep))
+            return .string(elements.map { RuntimeOps.stringifyValue($0) }.joined(separator: sep))
 
         case .stringCase(let isUpper, let receiver):
             // Contract §2.36: **Unicode-aware**, and the receiver is unchanged.
@@ -954,7 +954,7 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            return try Interpreter.decodePointer(raw)
+            return try RuntimeOps.decodePointer(raw)
 
         case .pointerStore(let pointer, let value, _):
             // Mirrors the interpreter's `store` builtin: encode by the pointer's
@@ -965,7 +965,7 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            try Interpreter.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
+            try RuntimeOps.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
             return .null
 
         case .addressOfVar(let name, _):
@@ -975,7 +975,7 @@ public final class HIRExecutor: DebugHookHost {
             // delivery and is deliberately not taken here — taking it would put
             // this arm in disagreement with the frozen AST arm and turn a
             // non-blocking slot into a flip blocker.
-            return try Interpreter.snapshotPointer(
+            return try RuntimeOps.snapshotPointer(
                 of: try currentEnv.get(name: name),
                 location: HIRExecutor.noLocation
             )
@@ -1012,7 +1012,7 @@ public final class HIRExecutor: DebugHookHost {
             // the only reachable one and zero is its code.
             let rawWritePath = try requireString(evaluate(pathExpr), for: "writeFile")
             let content = try requireString(evaluate(contentExpr), for: "writeFile")
-            let writePath = Interpreter.resolveIOPath(rawWritePath, programBase: programBase)
+            let writePath = RuntimeOps.resolveIOPath(rawWritePath, programBase: programBase)
             do {
                 try content.write(toFile: writePath, atomically: true, encoding: .utf8)
                 return .int(0)
@@ -1029,7 +1029,7 @@ public final class HIRExecutor: DebugHookHost {
             // side takes the same `IOLimits` truncation rather than restating the
             // number.
             let rawReadPath = try requireString(evaluate(pathExpr), for: "readFile")
-            let readPath = Interpreter.resolveIOPath(rawReadPath, programBase: programBase)
+            let readPath = RuntimeOps.resolveIOPath(rawReadPath, programBase: programBase)
             do {
                 let content = try String(contentsOfFile: readPath, encoding: .utf8)
                 return .string(IOLimits.truncateToFileLimit(content))
@@ -1180,7 +1180,7 @@ public final class HIRExecutor: DebugHookHost {
         default:
             throw RuntimeError.invalidOperation(
                 reason: "HIR executor: field read '.\(field)' needs a nominal receiver, got "
-                    + "\(Interpreter.describeValueKind(base))",
+                    + "\(RuntimeOps.describeValueKind(base))",
                 location: HIRExecutor.noLocation
             )
         }
@@ -1429,7 +1429,7 @@ public final class HIRExecutor: DebugHookHost {
             depth: callDepth,
             callStack: callStackNames,
             variables: currentEnv.listBindings().map {
-                ($0.name, Interpreter.stringifyValue($0.value))
+                ($0.name, RuntimeOps.stringifyValue($0.value))
             }
         )
         if try hook(context) == .quit {
@@ -1465,7 +1465,7 @@ public final class HIRExecutor: DebugHookHost {
             // targets) carry types derived from the value itself, so their
             // labels already agree and this is a no-op for them.
             if case .tuple(let labels, _) = type, labels.contains(where: { $0 != nil }) {
-                value = Interpreter.relabelled(value, with: labels)
+                value = RuntimeOps.relabelled(value, with: labels)
             }
             currentEnv.define(name: name, value: value, isMutable: mutable)
 
@@ -1564,10 +1564,10 @@ public final class HIRExecutor: DebugHookHost {
             // interpreter's shape.
             let result = try evaluate(operand)
             guard case .enumValue(let ev) = result,
-                  ev.parentEnum == Interpreter.builtinResultEnumName else {
+                  ev.parentEnum == RuntimeOps.builtinResultEnumName else {
                 throw RuntimeError.typeMismatch(
                     expected: "Result",
-                    got: Interpreter.describeValueKind(result),
+                    got: RuntimeOps.describeValueKind(result),
                     location: HIRExecutor.noLocation
                 )
             }
@@ -1600,7 +1600,7 @@ public final class HIRExecutor: DebugHookHost {
             // would create a second dispatch that could disagree with the value.
             let scrutineeValue = try evaluate(scrutinee)
             for arm in cases {
-                guard Interpreter.matchArmMatches(
+                guard RuntimeOps.matchArmMatches(
                     caseName: arm.caseName, literal: arm.literal, value: scrutineeValue
                 ) else { continue }
                 try executeArm(arm, scrutinee: scrutineeValue)
@@ -1818,7 +1818,7 @@ public final class HIRExecutor: DebugHookHost {
         switch (kind, iterValue) {
         case (.array, .array(let elements)), (.set, .set(let elements)):
             rows = try elements.map {
-                try Interpreter.decomposePatternRow(
+                try RuntimeOps.decomposePatternRow(
                     $0, patternCount: pattern.count, location: HIRExecutor.noLocation
                 )
             }
@@ -2051,7 +2051,7 @@ public final class HIRExecutor: DebugHookHost {
                 // shortcut: the interpreter builds a closure's `FunctionValue`
                 // with no declaration attached, so its return-label list is empty
                 // and the rule has nothing to apply there either.
-                return Interpreter.applyReturnLabels(callable.returnLabels, to: value ?? .null)
+                return RuntimeOps.applyReturnLabels(callable.returnLabels, to: value ?? .null)
             }
             throw signal
         }
