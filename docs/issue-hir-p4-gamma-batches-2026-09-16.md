@@ -355,6 +355,62 @@ keep their namespaces apart
 
 **不在本批**：16 条结构性大件（各有归属批或待裁项）· 13 条错误通道（待规范口径裁决）。
 
+## G-2S 集合成员方法走内建特征派发（`append` / `last` / `pop`）— ✅ **已交付**
+
+**由来**：`G-2R` 的验收面清单里 **4 条被 `append` 挡住** ⇒ 用户给出架构方向
+「**数组的 `append` 应当有一个内置特征来分发它的默认实现**」并批准独立成批。
+**本批是族粒度三段制的首例试点**（该工作方式 2026-09-17 由用户固化，见 `llvm-grid-closeout`）。
+
+### ① 验收面一次列全
+
+7 条：`CollectionsTests` 3 红（`append` 函数式 · `last`+`pop` · 空数组 `last`/`pop`）
++ 被 `append` 挡住的 4 条（`ArrayElementAnnotationTests` 2 · `CrossFileRuntimeTests` 2）。
+⚠️ **清单阶段即界定出 3 条不属本批**（见下「止损」）⇒ 可交付面**预先是 4 条**，不是 7 条。
+
+### ② 做法（不新增契约节点）
+
+`get` / `slice` 当年各占一个**专用节点**（`optionalGet` / `sliceCall`），而契约的 60 个节点是**冻结**的
+⇒ 这三条改走**按名调用**（`Array.append` / `Array.last` / `Array.pop`），执行器按名回答
+—— 与 `argv` / `moduleRoot` 同一先例。规则本体落在 **`RuntimeOps.arrayMethods`（单源）**，
+与 AST 侧同一套语义；`append` 不接受非数组接收者。
+
+**降载层给的静态类型 = 运行期的真实产物**（不是表里那个宽松的 `Any`）：
+`append` ⇒ `Array<T>` · `last` ⇒ `Optional<T>` · `pop` ⇒ `(Array<T>, Optional<T>)`。
+
+**三处落点**：`RuntimeOps`（表 + 三条规则 + 接收者校验）· `HIRExecutor`（按名回答）·
+`HIRLowerer.lowerMemberCall`（三条分支，插在 `slice` 之后、兜底之前）。
+
+### 判据（全部现跑）
+
+| 判据 | 读数 |
+|---|---|
+| 转绿 | **68 → 64**：`testArrayAppendFunctionalReturnsNewArray` · `testArrayLastAndPopStackSemantics` · `testArrayLastPopOnEmptyReturnsNull` · `testAppendArgumentAccepted` |
+| 无新增红 | 转绿 **4** / 新增 **0** / 仍红 64 **逐条相同** |
+| 契约 | **60/60** 三锚点 clean ⇒ **未新增节点**（本批的核心约束） |
+| CLI 面 | **逐条实测**：输出与期望**逐字一致**（`[1, 2, 3]`/`[1, 2, 3, 4]` · `3`/`3`/`[1, 2]` · `null`/`null`/`[]` · `[7]`） |
+| 探针 | 319 夹具逐夹具对账（见本批证据条目） |
+
+### ⚠️ 止损三条（验收面清单阶段界定，**如实登记不修**）
+
+`ArrayElementAnnotationTests.testWildcardAndUnannotatedUnchanged`（无标注累积器：先 `append(1)` 再 `append("b")`）·
+`CrossFileRuntimeTests.testCrossFileQualifiedEnumCaseConstruction` 与 `testCrossFileAmbiguousCaseAllowsQualified`
+（`var xs = []` 无标注空数组 + `append(枚举值)`）。
+
+**三条同属一个议题：静态层缺「动态 / 未定类型」的表示** —— 无标注空数组的元素类型默认落 `i32`，
+append 别的类型即报 `type mismatch: enumeration(...) is not i32`；无标注累积器要的是同一件事。
+它与本批 `G-2R` 的「**无标注形参**」**同源** ⇒ 两者**应合并为一个议题单独立项**，不在本批。
+
+### ⚠️ 器械加固（随交付）
+
+**`tools/hir-chunk-run.py`** —— 分块整跑驱动**固化进仓**，并加**读数有效性护栏**：
+跑到类数为 0，或有类根本没跑到 ⇒ **判作废 · 不写清单 · 删掉该路径上的旧清单 · 退出码 2**。
+
+**起因是一次真事故**：后台跑 `swift test` 会被沙箱拦临时目录清理 ⇒ 115 个类**全部 0 执行、失败也是 0**
+—— 一张**形状完全合法的整表假绿**（不删旧清单的话，下一轮读者会把上一轮读数当本轮结果）。
+同类事故此前已发生过一次（`G-0` 批）⇒ 按「**连续两批同类过程失误**」触发**取消触发**并上报；
+**用户裁决 = 改进**：① 前后台按「是不是 `swift test`」分（该判据已订正进 `pini-repo-handbook`）·
+② 读数入对账前先看「跑到 N/总数」· ③ 器械级护栏（本条）。
+
 ## G-3 并发迁移（`R1`）— 待点名
 
 **裁决（2026-09-16）**：取 **`R1` = 保并发能力、迁到 HIR**，且**排在 `G-6` 之前**（`D-P4-26`）。

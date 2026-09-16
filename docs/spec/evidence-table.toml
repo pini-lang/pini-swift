@@ -619,3 +619,59 @@ note = """本批 = `G-2R` 的第二批（第一批 = 结构体值拷贝，`c5f27
 
 **本批未做**：未跑 `ast` 方向全量回归（本批改动全在 HIR 降载层 / HIR 执行器 / `IREmitter`
 ⇒ `ast` 方向不经过这三处，结构性不受影响；两方向等价已在 `S1` 实测为逐类相同）· 未动契约 · 未 push。"""
+
+[[evidence]]
+id = "2026-09-17 Array 成员面（append/last/pop）按内建特征派发"
+citable = false
+claim = "The Array member face the lowering layer used to refuse -- append, last and pop -- is answered on the HIR path, without adding a contract node. get and slice each own a dedicated node because they predate the freeze; with the set frozen at 60, these three lower to a named call the executor answers, the shape argv and the character builtins already use, and the rules live once in RuntimeOps so the two engines cannot drift: append returns a new array and leaves the receiver alone, last returns the final element or null, pop returns (arrayWithoutLast, lastOrNull) and yields ([], null) on an empty array. The static types assigned match what the runtime produces rather than the registry's loose Any. Measured: the failing suite goes 68 to 64, four fixed and none new, the remaining 64 identical item by item; the contract stays at 60 nodes on all three anchors; the 319-fixture probe is unchanged fixture by fixture with zero flip blockers; and all four fixed cases were run through the CLI as well as the test entry point. Three further cases are left on purpose, as one problem rather than three: the static layer cannot express an element type that is not fixed yet. The batch also lands the chunked whole-suite driver with a validity guard, after a background run produced a legal-looking all-green table of 115 classes that had executed nothing"
+artifacts = [
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+  "Sources/PiniCore/Runtime/RuntimeOps.swift",
+  "tools/hir-chunk-run.py",
+  "docs/issue-hir-p4-gamma-batches-2026-09-16.md",
+  "docs/issue-hir-p4-gamma-plan-2026-09-16.md",
+  "docs/spec/evidence-table.toml",
+]
+command = "TMPDIR=/tmp python3 tools/hir-chunk-run.py (3 chunks, 115 classes, foreground) ; TMPDIR=/tmp python3 tools/hir-parity-probe.py --out /tmp/g2s-probe.tsv ; python3 tools/hir-contract-check.py ; TMPDIR=/tmp .build/debug/pini run <each fixed fixture> (CLI availability)"
+output = "Failing methods 68 -> 64: fixed 4 (CollectionsTests.testArrayAppendFunctionalReturnsNewArray, testArrayLastAndPopStackSemantics, testArrayLastPopOnEmptyReturnsNull, ArrayElementAnnotationTests.testAppendArgumentAccepted), added 0, the remaining 64 equal item by item. Chunked run: 39+39+37 classes, 117 suite starts over 115 classes, 0 unrun, 0 signal 13, 26+18+20 = 64 failures, guard passed so the list was written. Contract: 60/60 on each of llvm, printer and interp-hir, clean. Probe: 319/319 fixtures in 6m31s, zero flip blockers, zero process leaks, zero non-terminating fixtures, no item-level difference once the lli temp name is normalised. CLI: all four fixtures print exactly what they assert -- [1, 2, 3] then [1, 2, 3, 4]; 3, 3 then [1, 2]; null, null then []; [7]"
+validated_at = "2026-09-17T00:42+0800"
+status = "FRESH"
+note = """族粒度三段制（2026-09-17 用户固化）的**首例试点**，三段齐备。
+
+**① 验收面一次列全**：7 条 = `CollectionsTests` 3 红 + 被 `append` 挡住的 4 条。
+⚠️ **清单阶段即界定出 3 条不属本批** ⇒ 可交付面**预先是 4 条**，事后实测正是 4 条（**预期与实测吻合**，
+这正是该段的目的：把「本批边界」在动手前钉住）。
+
+**② 做法（核心约束 = 不动契约节点）**：`get`/`slice` 当年各占一个专用节点（`optionalGet`/`sliceCall`），
+而契约的 60 个节点**冻结** ⇒ 本批改走**按名调用**（`Array.append`/`Array.last`/`Array.pop`）+
+执行器按名回答（`argv`/`moduleRoot` 同一先例）；规则本体单源在 `RuntimeOps.arrayMethods`。
+**降载层给的静态类型 = 运行期真实产物**（`Array<T>` / `Optional<T>` / `(Array<T>, Optional<T>)`），
+不是登记表里那个宽松的 `Any` —— 二者不冲突：表是**宽松登记**（类型层不拦），降载层是**精确化**。
+
+**⚠️ 止损三条（验收面清单阶段界定，如实登记不修）**：`testWildcardAndUnannotatedUnchanged`（无标注累积器
+先 `append(1)` 再 `append("b")`）+ 跨文件 2 条（`var xs = []` 无标注空数组 + `append(枚举值)`，
+报 `type mismatch: enumeration(...) is not i32`）⇒ **三条同属一个议题：静态层缺「动态/未定类型」的表示**；
+与 `G-2R` 的「**无标注形参**」**同源** ⇒ **应合并为一个议题单独立项**，不在本批。
+
+**⛔ 本批触发了一次「取消触发」（用户固化的硬性条款），并如实执行了它**：
+**第二次**把全量回归放**后台**跑（第一次在 `G-0` 批）⇒ 沙箱拦 `swift test` 的 `.TemporaryItems` 清理
+⇒ **115 个类全部 0 执行、失败也是 0** —— 一张**形状完全合法的整表假绿**（不看「跑到 N/总数」这一列就会误判为全绿）。
+⇒ 命中「**连续两批同类过程失误**」⇒ **我按规矩停下、上报、不继续**（实现已完成、判据未取）。
+**用户裁决 = 改进**，三项已落实：
+1. **前后台按「是不是 `swift test`」分，不按耗时长短分** —— `swift test`（含分块）**一律前台**（3 块 ≈2 分钟）；
+   探针（≈12 分钟）与提交（门禁 ≈2 分钟）才后台。⚠️ 我此前写进 `pini-repo-handbook` 的
+   「长任务一律后台」**是错的**，已就地订正为按命令类型分。
+2. **读数护栏**：入对账前先看「跑到 N/总数」；`N == 0` 或「未跑 > 0」⇒ 判作废。
+3. **器械加固**：分块驱动**固化进仓**为 `tools/hir-chunk-run.py`，判作废时**不写清单 · 删该路径旧清单 · 退出码 2**
+   （旧清单必须删：留着它，下一轮读者会把上一轮读数当本轮结果）。
+
+**三条可复用教训（本批新增）**：
+① **同一命令会被执行两遍** ⇒ 脚本必须幂等（先查存在再插入）**且改后要用计数复核落点数**
+（本批三处落点均打印「已有，跳过」，靠计数确认各为 1）。
+② **含全角中文的块替换用行级配平**，不要用多行字面量（`count == 0` 的假失败）。
+③ **`grep` 模式里的转义层数**：核对降载层那条按名分派分支的写法时我写了多余转义 ⇒ 计数为 0 的假阴性，
+   改 python `str.count` 才对。
+
+**本批未做**：LLVM 侧的 `Array.append` 尚无运行时段（`emit` 会发射对未定义符号的调用）——
+不属本批判据面（四条用例都走解释器/HIR），如实登记；探针未因此新增阻塞（`FLIP BLOCKERS 0`）。"""

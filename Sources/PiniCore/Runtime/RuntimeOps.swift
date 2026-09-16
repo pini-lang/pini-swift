@@ -141,6 +141,56 @@ public enum RuntimeOps {
  }
  }
 
+ /// The Array member face the HIR path answers by name (`G-2S`). Each entry
+ /// takes the receiver first and then the call's arguments, and returns exactly
+ /// what the AST walk's member dispatch returns -- these are its rules, moved to
+ /// the shared carrier so the two engines cannot drift apart.
+ static let arrayMethods: [String: ([Value]) throws -> Value] = [
+  "Array.append": builtinArrayAppend,
+  "Array.last": builtinArrayLast,
+  "Array.pop": builtinArrayPop,
+ ]
+
+ /// `xs.append(v)` -- a new array with `v` on the end. The receiver is left
+ /// alone, which is what makes the value semantics visible at the call site.
+ static func builtinArrayAppend(_ args: [Value]) throws -> Value {
+  let arr = try arrayMemberReceiver(args)
+  guard args.count == 2 else {
+   throw RuntimeError.invalidOperation(
+    reason: "append 需要一个实参",
+    location: SourceLocation(line: 0, column: 0, fileName: "")
+   )
+  }
+  return .array(arr + [args[1]])
+ }
+
+ /// `xs.last()` -- the final element, or `null` when the array is empty.
+ static func builtinArrayLast(_ args: [Value]) throws -> Value {
+  return try arrayMemberReceiver(args).last ?? .null
+ }
+
+ /// `xs.pop()` -- the pair `(arrayWithoutLast, lastOrNull)`. An empty array
+ /// yields `([], null)` rather than failing, matching the AST side.
+ static func builtinArrayPop(_ args: [Value]) throws -> Value {
+  let arr = try arrayMemberReceiver(args)
+  guard let last = arr.last else {
+   return .tuple(labels: [nil, nil], elements: [.array([]), .null])
+  }
+  return .tuple(labels: [nil, nil], elements: [.array(Array(arr.dropLast())), last])
+ }
+
+ /// The receiver is always the first value; a call that could not have come
+ /// from the lowering layer is refused rather than guessed at.
+ private static func arrayMemberReceiver(_ args: [Value]) throws -> [Value] {
+  guard let first = args.first, case .array(let a) = first else {
+   throw RuntimeError.invalidOperation(
+    reason: "该操作仅可用于数组接收者",
+    location: SourceLocation(line: 0, column: 0, fileName: "")
+   )
+  }
+  return a
+ }
+
  static let builtinCancelErrorTypeName = "CancelError"
 
  static func builtinCos(_ value: Value) throws -> Value {
