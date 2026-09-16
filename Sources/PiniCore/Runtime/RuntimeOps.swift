@@ -125,6 +125,22 @@ public enum RuntimeOps {
  }
  }
 
+ /// `F64(value)` -- the numeric value constructor (`BuiltinRegistry` `F64`,
+ /// group `.value`). A float passes through unchanged; an integer widens. The
+ /// AST walk used to do this inline (G-P1), but the HIR executor owes the same
+ /// rule, and this is where the shared members live now.
+ static func builtinF64(_ value: Value) throws -> Value {
+ switch value {
+ case .float(let f): return .float(f)
+ case .int(let i): return .float(Double(i))
+ default:
+ throw RuntimeError.invalidOperation(
+ reason: "F64 的参数必须是数值（int/float）",
+ location: SourceLocation(line: 0, column: 0, fileName: "")
+ )
+ }
+ }
+
  static let builtinCancelErrorTypeName = "CancelError"
 
  static func builtinCos(_ value: Value) throws -> Value {

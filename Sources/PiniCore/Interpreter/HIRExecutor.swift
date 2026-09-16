@@ -512,6 +512,19 @@ public final class HIRExecutor: DebugHookHost {
                 }
                 return try character(args)
             }
+            // G-2R: the numeric constructor, answered from the same rule the
+            // AST walk uses (`RuntimeOps.builtinF64`) -- one definition, two
+            // engines, exactly like the character builtins above.
+            if name == "F64" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: F64 expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                return try RuntimeOps.builtinF64(args[0])
+            }
             if name == "sqrt" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
