@@ -1139,16 +1139,10 @@ public class Interpreter: DebugHookHost {
  }
  }
 
- func copyIfStruct(_ value: Value) -> Value {
- if case .structInstance(let si) = value {
- var copiedFields: [String: Value] = [:]
- for (k, v) in si.fields {
- copiedFields[k] = copyIfStruct(v)
- }
- return .structInstance(StructInstance(typeName: si.typeName, fields: copiedFields))
- }
- return value
- }
+ /// The rule itself now lives in `RuntimeOps` (LR-4 G-2R): the HIR executor
+ /// owes it at four sites of its own, and this home is scheduled for deletion.
+ /// Under the interpreter's own name so the instance code reads unchanged.
+ func copyIfStruct(_ value: Value) -> Value { RuntimeOps.copyIfStruct(value) }
 
  // MARK: - 语句执行
 

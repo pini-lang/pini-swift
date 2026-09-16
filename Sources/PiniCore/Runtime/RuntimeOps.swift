@@ -27,6 +27,29 @@ import Foundation
 /// private.
 public enum RuntimeOps {
 
+ /// Value-type copy rule: a `structInstance` is copied field by field,
+ /// recursively; everything else -- objects included -- is returned as-is,
+ /// which is what makes object aliasing correct rather than accidental.
+ ///
+ /// WHY IT IS HERE (LR-4 G-2R)
+ ///
+ /// Both engines owe this rule at every binding and store site, and the AST
+ /// walk used to be its only home -- as an *instance* method, which is also why
+ /// the HIR executor could not reach it. The flip deletes that home, so the rule
+ /// moves to the shared carrier and `Interpreter` keeps a forwarder. The body
+ /// never touches `self` and is pure over `Value`, so this is a move rather than
+ /// a redesign -- the test every member of this enum has to pass.
+ static func copyIfStruct(_ value: Value) -> Value {
+  if case .structInstance(let si) = value {
+   var copiedFields: [String: Value] = [:]
+   for (k, v) in si.fields {
+    copiedFields[k] = copyIfStruct(v)
+   }
+   return .structInstance(StructInstance(typeName: si.typeName, fields: copiedFields))
+  }
+  return value
+ }
+
  static func applyReturnLabels(_ labels: [String?], to value: Value) -> Value {
  guard !labels.isEmpty else { return value }
  guard case .tuple(_, let elements) = value, elements.count == labels.count else { return value }
