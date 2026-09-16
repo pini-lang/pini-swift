@@ -26,8 +26,8 @@
   - G51（import/export 块形式为唯一顶级形态；宿主裸语句为**已知偏差**，收敛待办）
   - ADR-017（`[ffi]` 模块配置，pini.toml 唯一已兑现的模块级语义）
   - ADR-018 D1（宿主 git 依赖）
-  - `docs/spec/pini-project-spec.md` §3（预留目录）/ §4（`.gitignore` 基线）/ §7（清单 schema）
-  - `docs/spec/pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
+  - `pini-project-spec.md` §3（预留目录）/ §4（`.gitignore` 基线）/ §7（清单 schema）
+  - `pini-roadmap-next.md` T2（模块化深化，RICE 1.05）
 
 > **改名溯源（R8，2026-08-29）**：本工单原文使用 `module.toml` / `_summary.toml`，
 > 现统一为 **`pini.toml`** / **`pini-summary.toml`**（理由见 R8；过程见 `docs/spec/issue/archive/issue-pini-dir-namespace-2026-08-29.md`）。
@@ -185,7 +185,7 @@ fmt  = ">=2.0, <3.0"
 uni = "^3.0"
 ```
 
-- 版本约束语法复用 `docs/spec/pini-project-spec.md` §7.3 已定义的 `^1.2` / `~1.2.3` / `=1.2.3` / `">=1.0, <2.0"`；**未知写 `*`**，由 `pini mod refresh` 回填精确版本（D21）。
+- 版本约束语法复用 `pini-project-spec.md` §7.3 已定义的 `^1.2` / `~1.2.3` / `=1.2.3` / `">=1.0, <2.0"`；**未知写 `*`**，由 `pini mod refresh` 回填精确版本（D21）。
 - **本节是 MVS 的输入**——MVS 在 `require` 的传递闭包上求解（R3）。
 - 生成命令 `pini mod tidy` **离线运行**（D21）：它只读本地 import 与既有 require，不联网。
 
@@ -468,8 +468,8 @@ G51 已钉 import/export **块形式为唯一顶级形态**，宿主裸语句为
 |---|---|---|
 | 工单落档 | 本文件 | ✅ |
 | `docs/spec/pini-spec-v0.md`：G52 决策行 + §2.5 访问控制表「可被跨模块引入」列 + import/export 条款（import 即依赖 / 禁环 / 双通道 / R8 命名 / MVS / 四命令） | spec v0 §2.5 | ✅ 已登记（批 1/批 6 时点写入，2026-09-04 补批 7） |
-| `docs/spec/pini-project-spec.md`：§3/§4 `pini-summary.toml`「生成但必须提交」+ §7 schema（`[tap]`/`[require]`/`[resources]`/`[replace]`，`[dependencies]` 标 Removed）+ §7.3 版本约束语法 | project-spec §3 §4 §7 | ✅ 已登记 |
-| `docs/spec/pini-roadmap-next.md`：T2 状态 + §8.1 批次登记表 | roadmap T2 / §8.1 增批 7 行 | ✅ 2026-09-04 更新 |
+| `pini-project-spec.md`：§3/§4 `pini-summary.toml`「生成但必须提交」+ §7 schema（`[tap]`/`[require]`/`[resources]`/`[replace]`，`[dependencies]` 标 Removed）+ §7.3 版本约束语法 | project-spec §3 §4 §7 | ✅ 已登记 |
+| `pini-roadmap-next.md`：T2 状态 + §8.1 批次登记表 | roadmap T2 / §8.1 增批 7 行 | ✅ 2026-09-04 更新 |
 
 ### 6.2 宿主 pini-swift
 

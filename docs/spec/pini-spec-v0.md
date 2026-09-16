@@ -342,7 +342,7 @@ try 表达式 else 错误绑定名:
     - `[resources]` / `[resources.<tap>]`：**根无** `pini.toml`，即非 Pini 资源（语料、数据集、脚本等）。**不可 `import`、不参与 MVS**；固定落地 **`.pini/resources/<name>/`**（R6：点前缀 ⇒ 不参与扫描），**无 `to` 参数**。**只查根、不查深层**（R7）。
     - 判据**双向强制**且**只看目标根**（R7）：把资源写进 `require`、或把模块写进 `resources`，均报错并指引到另一侧。
     - `[tap]` 声明**从哪来**；`[replace]` 提供**强制版本 / 本地 / 换 fork** 替换（仅主模块生效）。`[dependencies]` **已移除**（职责拆分给 `require` + `resources`）。
-  - **非源码内容的落点与扫描（G52 R5–R6）**：**点前缀目录（`.` 开头）不参与任何模块的源码扫描**，其整棵子树跳过——**只取 `.`，不取 `_`**（`_` 在 Pini 是 **package 级可见性**语义，Go 的「工具不可见」语义不可照搬）。工具管理的非源码内容统一置于模块根的 **`.pini/`** 下：`resources/<name>/`（资源）、`toolchain/<name>/`（宿主）、`build/`（产物）、`cache/`（缓存）、`version`（宿主版本 pin）。
+  - **非源码内容的落点与扫描（G52 R5–R6）**：**点前缀目录（`.` 开头）不参与任何模块的源码扫描**，其整棵子树跳过——**只取 `.`，不取 `_`**（`_` 在 Pini 是 **package 级可见性**语义，Go 的「工具不可见」语义不可照搬）。工具管理的非源码内容统一置于模块根的 **`.pini/`** 下：`resources/<name>/`（资源）、`toolchain/<name>/`（宿主）、`build/`（产物）、`cache/`（缓存）、`baseline`（宿主**标定记录**，ADR-024 D8——原 `version` 的「拉取指令」语义已废）。目录清单、豁免规则与 `.gitignore` 基线见 §8。
     ⇒ 项目现有的宿主 **`pini-swift` 属 `.pini/toolchain/` 一类，不属 `resources`**——它是**工具链**（读清单的那个东西，不是被清单描述的东西；Go 不在 `go.mod` 里写 Go 编译器）。
   - **文件命名（G52 R8）**：模块清单 = **`pini.toml`**（原 `module.toml`），锁文件 = **`pini-summary.toml`**（原 `_summary.toml`）。文件名是 R1 判定模块边界的**哨兵**，须特异到误判率近零（通名会让外来工程被**静默**误判为子模块）；**旧名 `module.toml` 命中即报错**，不得静默降级为「无清单」。
   - **版本与命令**：版本按 **MVS** 求解（输入 = `[require]` 的传递闭包），结果生成到 `pini-summary.toml`（生成物但**必须提交**）。命令集 `pini mod {tidy, refresh, verify, graph}`——`tidy` **离线**对齐集合、`refresh` 重解版本并下载（**唯一联网**；build 永不抓取）、`verify` 执行校验和、`graph --cycles` 输出依赖环。**已实现（批 6 + 批 7，2026-09-04）**：四命令全量落地（`pini mod <子命令> [模块根]`）；**批 7 解除远程限制**——`refresh` 覆盖 `github:`/`git:`（经 `TapFetcher` 调 git 抓取），MVS 升级为**经典 MVS**（候选来自 tag，取满足全部约束的最小版本），资源落 `.pini/resources/<name>/`（R6），锁文件 `commit` 成为真实的来源定位符（此后不再是 `-`）。v1 边界——`file:` tap 仍是「来源元数据 + git submodule / 手工拷贝落地」，不自动拷贝；求解用**有界不动点迭代**（依赖的版本决定其自身的 `[require]`，故约束集随选择而变；上限 8 轮，不收敛即报错而非静默取某一轮）；`[replace]` **三种形态全部生效**（2026-09-04 补完）：`"<版本约束>"` 只换版本、`"file:<路径>"` 换本地目录、`"github:<org>/<repo>[@<版本>]"` / `"git:<url>[@<版本>]"` 换 fork；版本类替换（版本覆盖与 fork 的 `@版本`）**并入 MVS 约束当“下界”**（requirer 记为 `<replace>`），不绕过 MVS 精确钉；fork 与本地形态的锁文件 `tap` 记 `replace`（来源由 `[replace]` 声明，不由任何 tap）。`[replace]` **仅主模块生效**；build 漂移检查已挂 run/check（仅对采用依赖通道的清单生效）。
@@ -437,7 +437,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 > 凡列入下表者，本规范**明确声明 unspecified**，读者不得视为已承诺行为。每项随演进在对应版本填补或收敛。
 
-> **关于「计划版本」列**：该列为**推测性目标版本**，仅表示预期落地的 spec 次版本，**不等同于 roadmap 的 P 阶段**，二者无直接一一对应。实际落地点以 `pini-roadmap-next.md` 的 P 阶段为准。
+> **关于「计划版本」列**：该列为**推测性目标版本**，仅表示预期落地的 spec 次版本；实际落地点由对应工单 / 计划件记录，本表不作排期承诺。
 
 > **关于「关联」列**：该列给**实现锚点**（哪个符号 / 文件实现了它）与**语言面位置**。语言面位置按 §0 文档引用约定用**主题词**指向语言参考（章 / 节名，不引章节号）；精确到小节的索引见 §5.1（该节属豁免面）。
 
@@ -447,9 +447,9 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.parseTopLevelDecl / 语言参考（词法结构·行首消歧） / §A.4 3.0 |
 | G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，ADR-032） | 已定义且已实现（§2.4.4：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；迁移批 M2 落地，`except` 关键字与 `UnwrapErrSignal` 已退役；LLVM 侧 try-else 表达式 fail-loud 待后端批） | Provisional | v0.53.0 | `Parser.parseTry` / `Expression.tryExpression` / `Interpreter` tryExpression 求值 / §2.4.4 / ADR-032 |
 | G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**） | Stable | v0.43.0 | SuspendEvaluator.swift / SuspendScheduler.swift / Value.swift / §3.1 |
-| G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
-| G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
-| G42 | `Ref 系类型引用语义`（独立 Value case + class 承载、复制共享状态） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | `pini-roadmap-next.md` |
+| G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
+| G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
+| G42 | `Ref 系类型引用语义`（独立 Value case + class 承载、复制共享状态） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
 | G43 | FFI 与 unsafe 子系统（`foreign` 块 / `*T` 指针 / `&` 取址 / `unsafe` 表达式 / `|unsafe` 函数 / 与 ARC 隔离） | 已实现（Phase 2a 解释器优先 + Phase 2b 解释器 dlsym 动态加载：foreign 块 + 原生函数表 / `*T` C 兼容性校验 / `&`+unsafe 上下文 / `|unsafe` 函数 / `dlsym` 裸 C 绑定 + thunk 工厂 + `[ffi]` 配置 + `SystemDL`/`FFILoader`；LLVM 端 FFI 仍显式 unsupported，D1） | Experimental | v0.48.0（Phase 2a）/ v0.48.3（Phase 2b 解释器，ADR-017） | §2.7 / §A.2.2(`foreign-decl`)/§A.2.5(`&`/`unsafe`)/§A.2.6(`*T`) |
 | G44 | 控制流标签语法反转（`scope 块标签:` → `标签|控制流关键字`；`scope` 关键字转 reserved-error） | 已实现（ADR-014：parseStatement 标签分派 + parseIf/parseWhile/parseFor(label:)；`scope` 转 reserved-error） | Provisional | v0.48.0（Phase 1） | §A.4 规则 3.13 / ADR-014 |
 | G45 | 字符谓词 `is_letter`（UCD \p{L} 字母判定，`String -> Bool`；空串/首字符非字母 → false） | 已实现（解释器端；自举 lexer 前置，issue-lexer-gaps-2026-08-28 P1-A）。**LLVM 端（批 C1，2026-09-04）**：`is_ascii_digit` 已实现（C 字节串首字节判定）；`is_letter`/`is_number`/`chars` 显式 unsupported（E6-002——Unicode 语义需运行时表 / grapheme 切分，v1 不入 C 字符串后端） | Provisional | v0.49.0 | §A.1.1 IDENT（`\p{L}` 实现原语）/ ADR-018 G1 |
@@ -472,7 +472,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 > **已闭环缺口索引**：正文引用的以下 G 号已随版本闭环（已定义 / 已落地 / 已采纳 / 候选），故不列入上表；对应落点：G8（trait 约束求解，Experimental，§2.4.1）、G9（ARC，见下 Optional 条）、G11（块标签 `scope 块标签:`，§2.4.1/ADR-013）、G13（注释 `;`/`#`，§A.1.4）、G14（文件 IO，§2.4.1）、**G15（模块系统边界，§2.5 残留 → 由 G52 收口）**、G17（数组/字典/集合字面量，§2.4.1）、G18/G24（泛型与运行时单态化，Experimental）、G28（match 子块 + `case _:`，§2.4.3）、G29（匿名函数，§2.4.1）、G30（nil，§2.4.1）、G31（`?T` 糖，§2.4.1）、G32（step，§2.4.1）、G34（COW 值语义，§2.4.1）、G35（`#` 文档注释，§2.4.1/§A.1.4）、G36（for-in，§2.4.1）、G37（扩展块，候选 §A.5.3）、G39（defer 语义，候选 §A.5.5）。
 
 > **已实现但运行语义未全钉定（Experimental，语义待定）**：以下构造已由解释器实现并被示例使用；其中语法若已在 §A 定义则标注出处，**运行语义未全钉定**者均按 Experimental 对待、不承诺兼容——这是「登记缺口」而非「反录入为事实」（避免「实现即规范」）：
-> - `defer`（块退出前 LIFO 清理）—— 草稿（`defer 块退出前清理:` 小节）已有 LIFO 语义意图（资源释放/清理）；示见 `examples/defer.pini`；**意图候选项 G39**（见 `pini-roadmap-next.md`），若采纳拟 Experimental→Provisional。
+> - `defer`（块退出前 LIFO 清理）—— 草稿（`defer 块退出前清理:` 小节）已有 LIFO 语义意图（资源释放/清理）；示见 `examples/defer.pini`；**意图候选项 G39**（原载体已归档），若采纳拟 Experimental→Provisional。
 > - 具名枚举关联值（`[E] case A(x: T)`）—— **已钉定并已实现**（2026-08-29，张力 T4 收口）：具名形参声明 / 标签实参构造（按名对位）/ match 具名绑定（`case A(x: v):`）全链路可用；位置形态并存（同一 case 声明内不可混用）；绑定数 ≠ 关联值数 → E4。宿主规则 3.15 的具名拒绝随之修订。
 > - 内嵌组合（结构体内首行裸父类型名）—— 语法检测已定义（§A.4 规则 3.9 / Parser.parseStructDecl（composition-line），草稿（`(结构块)` 组合示例））；运行语义（字段/方法嵌入复用）按张力 T5 待钉定（示见 `examples/composition.pini`）。
 > - 复合赋值（`+= -= *= /= %= &= \|= ^= <<= >>=`）—— 语法与折叠已定义（§A.2.4 assign-op / §A.4 规则 3.11）；溢出/符号运行语义未定，张力 T1·。
@@ -539,8 +539,13 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 **自举前置检查（阶段 3 的指导清单，2026-08-24 建立）**：
 1. **shim 边界 C ABI 不泄漏**——已守住（MUST + `RuntimeBackendTests` 门禁）。
 2. **语言自宿主能力**：Pini 需能表达「重写 `@bk_*`」所需的程序结构（内存布局、互操作、错误收口）——当前 `ok`/`err`、`match`、泛型、`LazyRef`、`|test` 已提供核心构件。
-3. **FFI / 内存管理（T14，最大前置缺口）**：自举需要调用 libc（`malloc`/`free`/`memcpy` 等）并操作不透明指针——**T14 FFI 尚未实现**，是阶段 3 启动前必须补的关键能力；在此之前 shim 保持 Swift 实现。
+3. **FFI / 内存管理（T14，最大前置缺口）—— 已部分满足**：自举需要调用 libc（`malloc` / `free` / `memcpy` 等）并操作不透明指针。**解释器优先已落地**（ADR-015 Phase 2a）：`[名称|foreign]` 块 + 预注册原生函数表（`malloc` / `free` / `memcpy` / `memset` / `strlen` / `puts` / `strcmp` / `cstr`）+ `*T` / `&` / `unsafe` / `|unsafe` + `load` / `store` / `addressof`。**剩余前置**：LLVM 端 FFI、`dlsym` 动态符号解析——在此之前 shim 保持 Swift 实现。
 4. **目标清单**：待用 Pini 重写的 C-ABI 函数集 = `bk_handle_*` + `bk_array_*` + `bk_dict_*` + `bk_set_*` + `bk_lazyref_*`（逐一对照 `PiniRuntime.swift` 的 `@_cdecl` 面）。
+
+**执行指引（对日常决策的约束）**：
+1. 任何新增运行时能力（集合 / 并发 / LazyRef / 工具内建）都应走 `@bk_*` C ABI 面——不改签、不引入 Swift 专有类型，保持自举终态可达；
+2. 语言新特性评估**自举可用性**：以 Pini 写的 Pini 编译器能否用它表达宿主实现需求为判据之一；
+3. 向自举收敛的决策记入本规范，避免在多处分散表述。
 
 **回滚**：若阶段 1 实测内部不变量无法守住，可回退到「纯 LLVM 手写 IR」——因阶段 2 边界尚未固化，回退成本可控。
 
@@ -560,7 +565,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 ## 5. 与既有文档的关系
 
 - **输入**：`Pini草稿.md`（rationale）；早期 `pini-gap-analysis.md` / `pini-tensions.md` 已合并入本规范 §3 与路线图。
-- **下游**：`pini-roadmap-next.md` 以本规范为交付物。
+- **下游**：排期与批次登记由工单 / 计划件承担——原「路线图」载体已于 2026-09-16 退役（见 ADR-036）。
 - **形式文法产物**：T5 的 EBNF（S2–S4）与候选产生式（S5）已并入本规范 **§A 附录**，为形式文法的唯一载体（原草案与事实基线文档已删除）。G1/G2/G3 已随 §A / §2.4.4 闭环（见 §3）。
 - **工程标准（测试）**：`test-refactoring-principles.md` 为项目**强制测试规范**，受本规范 §6 治理（细则见该文档）。
 - **工程标准（注释）**：`pini-comment-style-guide.md` 为项目**强制注释规范**，受本规范 §7 治理（细则见该文档）。与测试规范协和：测试规范要求「写意图」，注释规范约束「意图之外不叙事、不引易变外部」。
@@ -689,6 +694,223 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 - [ ] `TODO`/`FIXME` 均带稳定追踪 ID
 - [ ] 引用的 ADR / G / E 码均可在受治理文档中兑付
 - [ ] 测试意图注释齐备（呼应 §6.6）
+
+---
+
+## 8. 项目布局与清单 schema（Project Layout & Manifest）
+
+> 本节规定**语言使用者项目**在磁盘上如何组织、清单如何书写——管的是「用这门语言写的项目长什么样」；语言本身长什么样见 §5.1 索引 → 语言参考。
+> 本节内容原为独立载体（项目目录结构规范），2026-09-16 并入本节，该文件随之移出活跃面（见 ADR-036）。
+
+### 8.1 层级区分：宿主布局 vs 语言布局
+
+宿主工程本身是 **SwiftPM 工程**（`Package.swift` + `Sources/` + `Tests/` + `examples/` + `docs/`），承载「Pini 实现」；本节定义的是 **Pini 语言使用者的项目**布局。二者层级不同、可共存——宿主在自身清单中声明工具链依赖来复用本规范。
+
+### 8.2 ① 必需目录（Mandatory）
+
+合法的 Pini 项目**必须**包含下列路径；缺失任一项，工具链拒绝构建并报「项目结构不合法」。
+
+| 路径 | 类型 | 用途 | 备注 |
+|---|---|---|---|
+| `pini.toml` | 文件 | **项目清单**：项目名 / 版本 / `spec` 钉住的规范版本 / 入口 / 依赖 | schema 见 §8.6 |
+| `src/` | 目录 | **源码根**：`.pini` 源文件默认所在目录 | **不可改名**（约定优于配置） |
+| 入口文件 | 文件 | 可执行项目 `src/main.pini`；库项目 `src/lib.pini` | 二选一必需；即顶级交替起点（§2.3） |
+| `.pini/baseline` | 文件 | **标定记录**：上次构建 / 差分验证通过时的宿主状态 | 形如 `host=<sha> version=<v> spec=<ver> verified=<date>`；宿主与规范同仓时单 `sha` 同时钉住二者 |
+| `docs/` | 目录 | 项目自身文档 | 库项目必需；可执行小工具可豁免 |
+
+- 清单**必须**声明 `spec`，使破坏性变更治理可被机器校验（§8.6.4）。
+- `src/` 不可配置，避免工具链做路径推断；其子目录允许自由嵌套（§8.3）。
+
+### 8.3 ② 可扩展目录（Extensible）
+
+非必需；一旦存在，工具链与社区约定其语义。新增工具应优先在此落位，而非发明新路径。
+
+| 路径 | 用途 | 与最佳实践映射 |
+|---|---|---|
+| `tests/` | 单元 / 集成测试 | Cargo `tests/`、SwiftPM `Tests/` |
+| `examples/` | 可独立运行的示例程序 | Cargo `examples/` |
+| `benches/` | 性能基准 | Cargo `benches/` |
+| `docs/` 子结构 | 教程、`api.md`、规范摘录、ADR 记录 | — |
+| `tools/` 或 `scripts/` | 项目级脚本、代码生成入口、构建辅助 | 通用约定 |
+| `std/` | 随项目分发 / 可被覆盖的**标准库源码** | 本地 `std/` 只能**扩充**契约，不能削弱保证 API |
+| `src/**` 子目录 | 按主题拆分的源码子目录 | 子目录自由嵌套 |
+| `deps/` | **外部依赖源码落地**（G52 激活） | `vendor` 概念：**只放 `[require]` 的 Pini 模块**；每个模块自带 `pini.toml`，由 R1 自动切出父模块扫描 |
+| `.pini/toolchain/` | vendored 宿主工具链 | 一般性机制。**宿主判据 = 清单类型**：根含 `Package.swift` 而非 `pini.toml` 者不是 Pini 模块，从不属 `deps/` |
+
+> **`deps/` 的边界**：非 Pini 依赖与宿主一律落 `.pini/`（点前缀目录不参与扫描）；目录级特例因此不需要——原「`deps/` 为保留目录、工具链永不扫描」的设定已撤销。
+
+### 8.4 ③ 预留目录（Reserved）
+
+为**尚未实现**的能力提前占坑。当前工具链**不要求也不使用**这些路径；未来启用时必须使用下表既定名称，禁止另起名字。
+
+| 路径 | 预留给 |
+|---|---|
+| `modules/` 或 `pkg/` | 多模块 / 本地包根 |
+| `vendor/` | 备用依赖落地名（当前采用 `deps/`） |
+| `build/` 或 `.pini/build/` | 构建产物 / 中间表示 / 字节码 |
+| `gen/` | 代码生成输出（trait 派生、FFI 桩） |
+| `.pini/cache/` | 工具链缓存（索引、推断缓存、增量状态） |
+| `proto/` 或 `idl/` | 接口 / ABI 描述文件 |
+| `target/` | 跨平台产物根 |
+
+**预留治理规则**：
+
+- 预留目录默认进入 `.gitignore` 基线（构建类），或禁止手写内容（语义类，如 `proto/` 在格式未定义前）。
+- 任一预留项被激活时，本规范将其迁入「必需」或「可扩展」，并 bump 规范次版本。
+
+> ⚠️ **本节不含阶段编号**：原载体的「关联路线图」列引用了已退役路线图文档的阶段编号体系（见 ADR-036）。预留项的激活时机由对应能力的设计载体决定，本规范不臆造阶段编号。
+
+### 8.5 推荐 `.gitignore` 基线
+
+```gitignore
+# 构建产物（§8.4 预留）
+build/
+.pini/build/
+target/
+gen/
+
+# 工具链缓存（§8.4 预留）
+.pini/cache/
+
+# 依赖落地（§8.3 扩展项）
+deps/
+vendor/
+# 注：以上两条不影响以 git submodule 形式加入的依赖——submodule 是父仓库索引中的
+# gitlink，本身即被跟踪；这两条只针对手工拷贝进来的依赖源码。
+
+# ⚠ 陷阱：点前缀目录在此列表里默认被忽略，「点前缀 = 不进版本控制」已成直觉，
+# 但 .pini/ 下有**必须提交**的内容，须显式豁免：
+!.pini/resources/
+!.pini/toolchain/
+!.pini/baseline
+# 不豁免的后果：换机器后校验报「内容缺失」，症状离原因很远。
+
+# 例外：锁文件由工具生成但**必须提交**——它是可复现性凭据，不是可再生的中间物
+!pini-summary.toml
+```
+
+### 8.6 清单 schema：`pini.toml`
+
+> **稳定性**：下列 schema 为 **v0.1 基线**；字段可能随工具链演进细化，但 `name` / `version` / `spec` / `entry` 为 **Stable**。
+> 依赖两通道的**语义判据**在 §2.5（双通道 + 双向强制）；本节给**书写形态**。
+
+#### 8.6.1 顶层字段
+
+```toml
+# pini.toml —— Pini 项目清单（v0.1）
+
+[package]
+name        = "hello"        # (Stable) 模块标识，本地唯一；建议反向域名风格
+version     = "0.1.0"        # (Stable) 语义化版本 SemVer 2.0
+spec        = "0.1"          # (Stable) 钉住的规范版本——兼容性承诺锚点（§8.6.4）
+edition     = "2026"         # (Provisional) 语法纪元，未来破坏性语法切换时递增
+description = "A demo project"
+license     = "MIT"
+authors     = ["wen <wen@example.com>"]
+
+# 入口二选一：库用 [lib]，可执行用 [[bin]]
+[lib]
+path  = "src"                # 库根目录；默认入口 src/lib.pini
+entry = "src/lib.pini"       # 可选覆盖
+
+[[bin]]
+name  = "hello"
+entry = "src/main.pini"      # 可执行入口（顶级交替起点）
+
+[build]
+exclude = ["examples"]       # (Provisional) 包文件集排除（G49）；值不支持行内注释
+
+# ── 依赖（G52；判据与双向强制见 §2.5）──────────────────────
+[tap]                        # 从哪来。org 必须显式书写，禁止从全局配置 / 环境变量推断
+default = "github:pini-lang"        # → github.com/pini-lang/<name>
+local   = "file:../vendor/<name>"
+
+[require]                    # 模块依赖：目标**根含** pini.toml。可 import、激活 MVS。
+text = "1.2"                 # 条目集合由代码中的 import 生成，人工只可覆盖版本约束
+fmt  = ">=2.0, <3.0"
+[require.core]
+uni = "^3.0"
+
+[resources]                  # 资源落地：目标**根不含** pini.toml。不可 import、不参与 MVS。
+corpus = "1.0"               # 固定落 .pini/resources/<name>/；检查只看目标根、不查深层
+[resources.local]
+dataset = "*"
+
+[replace]                    # 替换（强制版本 / 本地调试 / 换 fork）。仅主模块生效
+uni  = "3.2.0"
+dev  = "file:../dev"
+fork = "github:me/fork@v1.0"
+
+[tool.pini]                  # (Provisional) 工具链配置
+target    = "native"
+opt-level = 2
+```
+
+> **`[dependencies]` 已移除**（G52 D17）：职责拆分给 `[require]` + `[resources]`，**不设共存期**——命中即报错并指引到另一侧。
+>
+> **资源寻址 v1 明确不提供**（G52 Def-8）：语言与工具链均无「按名读取资源内容」的 API，v1 语义止于「落地 + 校验和」；判据 = 当前零真实用例，待第二个用例出现再定型。
+>
+> **工具链命令**：`pini mod {tidy, refresh, verify, graph}`——`tidy` 离线对齐集合（未知约束写 `*`）；`refresh` 重解版本并下载（**唯一联网**，build 永不抓取）；`verify` 执行校验和；`graph --cycles` 输出依赖环。**无全局缓存、无 `clean`**。
+
+#### 8.6.2 字段稳定性分级
+
+| 字段 | 级别 | 说明 |
+|---|---|---|
+| `package.name` / `version` / `spec` / `entry` | **Stable** | v0.x 内不破坏 |
+| `package.edition` | Provisional | 仅在切换语法纪元时使用 |
+| `build.exclude` | Provisional | **测试收集范围**的排除（G49、G52 D27 收窄）——**不是**模块树扫描的排除；扫描边界由 R1（清单）与 R5/R6（点前缀 / `.pini/`）决定 |
+| `tap.*` | Provisional | 依赖源声明；org 必须显式书写 |
+| `require.*` | Provisional | 模块依赖（目标根含 `pini.toml`）；可 import、激活 MVS；落地 `deps/<name>/` |
+| `resources.*` | Provisional | 资源落地（目标根不含 `pini.toml`）；不可 import、不参与 MVS；固定落 `.pini/resources/<name>/` |
+| `replace.*` | Provisional | 强制版本 / 本地 / 换 fork；仅主模块生效 |
+| `tool.pini.*` | Provisional | 工具链参数可能增删 |
+| ~~`dependencies.*`~~ | **Removed** | 职责拆分给 `require.*` + `resources.*`（G52 D17） |
+
+#### 8.6.3 版本约束语法（`require` / `resources`）
+
+| 写法 | 展开为 | 含义 |
+|---|---|---|
+| `^1.2` | `>=1.2.0, <2.0.0` | caret：允许兼容的 minor / patch 更新 |
+| `~1.2.3` | `>=1.2.3, <1.3.0` | tilde：仅允许 patch 更新 |
+| `=1.2.3` | `=1.2.3` | 精确锁定 |
+| `">=1.0, <2.0"` | 范围 | 显式区间 |
+
+#### 8.6.4 `spec` 字段语义（破坏性变更治理的机器可读锚点）
+
+- `spec = "0.1"` 表示：本项目按 **spec v0.1** 编写，工具链承诺仅接受 v0.1.x 内的兼容变更；遇到 v0.2+ 的破坏性语法时**报错并提示迁移**，而非静默误编译。
+- 工具链读取 `spec` 后锁定对应稳定性分级表（§1.2），据此决定哪些特性可用、哪些标记为 Deprecated。
+- 与 `.pini/baseline` 的分工：`spec` 是**意图声明**（本项目承诺兼容的规范版本），`baseline` 是**实测观察**（上次验证通过时的宿主状态）。二者必须一致并由门禁校验——否则等于重新引入一对会漂移的双钉。宿主与规范同仓时，`baseline` 的单个 `host=<sha>` 同时钉住工具链与规范。
+
+### 8.7 脚手架与校验规则
+
+**最小合法项目**：
+
+```
+hello/
+├── pini.toml
+├── .pini/baseline
+├── src/
+│   └── main.pini
+└── docs/
+    └── README.md
+```
+
+**校验规则**（工具链行为约定）：
+
+- 从 `pini.toml` 读 `[[bin]].entry` → 定位入口文件 → 作为顶级交替根。
+- 缺 `pini.toml` 或 `spec` 字段 → 报「项目结构不合法」。
+- `src/` 下无任何入口声明文件 → 报「缺少入口」。
+- 库项目把 `[[bin]]` 换为 `[lib]`、入口改 `src/lib.pini` 即可，物理结构不变。
+
+### 8.8 验收清单（项目布局 DoD）
+
+- [ ] 最小磁盘结构 = `pini.toml` + `src/` + 入口 + `.pini/baseline` + `docs/`（库）/ 入口（可执行）。
+- [ ] 工具链能据清单的 `spec` 字段校验破坏性变更兼容性。
+- [ ] `tests/` `examples/` `benches/` 被默认发现，无需额外配置（`[build] exclude` 显式排除者除外）。
+- [ ] §8.4 预留目录在启用前保持「占坑不用」，且进入 `.gitignore` 基线。
+- [ ] 本节与 §2.5（依赖通道语义）无矛盾。
+
+---
 
 ## A. 形式文法（EBNF 附录）
 

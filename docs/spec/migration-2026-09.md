@@ -1,7 +1,7 @@
 # 迁移说明：2026-09 轮次破坏性变更
 
 > 适用范围：本轮两批破坏性变更——**批 2（G48 集合下标三通道）**与**批 3（括号内记法收口）**。
-> 决策理由见 `adr/adr-028-subscript-safety-channels.md`、`adr/adr-029-paren-equals-binding.md`；批次登记见 `pini-roadmap-next.md` §8。
+> 决策理由见 `adr/adr-028-subscript-safety-channels.md`、`adr/adr-029-paren-equals-binding.md`；批次登记原载于路线图文档（已归档：`issue/archive/pini-roadmap-next.md`）。
 > 本文为**面向 Pini 源码作者**的迁移指南（spec §1.3 第 4 步要求破坏性变更必须发布迁移说明）。
 
 ---

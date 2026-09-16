@@ -2747,7 +2747,7 @@ exclude = ["tests/fixtures"]
   ├─ toolchain/<name>/    ; 宿主工具链
   ├─ build/               ; 产物
   ├─ cache/               ; 缓存
-  └─ version              ; 宿主版本 pin
+  └─ baseline             ; 宿主标定记录（ADR-024 D8）
 ```
 
 **规则**：

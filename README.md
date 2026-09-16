@@ -315,7 +315,7 @@ swift test
 
 > 语言级文档（规范/项目规范/注释风格/术语/ADR/路线图/诊断码/测试规范/CHANGELOG）在 **`docs/spec/`**（语言级治理单一事实源，2026-08-30 自 pini-meta 迁回，见 ADR-024）。本仓库 docs/ 根保留实现级文档。
 
-- `docs/spec/`：pini-spec-v0.md（权威语言规范，单一事实源；**形式文法 EBNF 在 spec 附录**，唯一载体）／ pini-project-spec.md（项目目录结构约定）／ pini-comment-style-guide.md（注释风格，spec §7 治理）／ pini-glossary.toml（中英术语表）／ adr/adr-index.md（ADR 登记表）／ pini-roadmap-next.md（演进路线图）／ diagnostic-codes.md（诊断码表，派生视图）／ test-refactoring-principles.md（测试规范，spec §6 治理）／ CHANGELOG.md（语言版本里程碑）
+- `docs/spec/`：pini-spec-v0.md（**工程与治理面**权威 / 首要入口；含项目布局与清单 schema）／ pini-reference-v0.md（**语言面**权威 / 成熟成果沉积处；含形式文法）／ pini-comment-style-guide.md（注释风格，spec §7 治理）／ pini-glossary.toml（中英术语表）／ adr/adr-index.md（ADR 登记表）／ diagnostic-codes.md（诊断码表，派生视图）／ test-refactoring-principles.md（测试规范，spec §6 治理）／ CHANGELOG.md（语言版本里程碑）
 - 本仓库 docs/ 根：issue-*.md（实现级作业记录）＋ adr/adr-022（宿主级 ADR：分发策略）
 
 ---
