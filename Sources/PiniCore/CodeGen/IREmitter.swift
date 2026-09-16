@@ -1376,6 +1376,20 @@ public final class IREmitter {
 
         case .call(let function, let arguments, let returnType):
             let args = arguments.map { emitExpr($0) }
+            // G-2R: `F64(x)` is an instruction, not a symbol. Falling through to
+            // the generic `call @F64` below would emit IR that references an
+            // undefined value while the command still exits zero -- the silent
+            // shape the LLVM runtime-surface ticket records, and the reason this
+            // case is handled here instead of in the declare pass. A double is
+            // already there; anything integral widens with sitofp.
+            if function == "F64", args.count == 1 {
+                let operand = args[0]
+                if operand.llvmType == "double" { return operand }
+                let temp = builder.freshTemp()
+                bodyIR += " \(temp) = sitofp \(operand.llvmType) \(operand.ssaName) to double\n"
+                return IRValue(llvmType: "double", ssaName: temp)
+            }
+
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
             // G14: runtime-shimmed foreign symbols call their bk_ name
             // (the declare pass emits the matching bk_ symbol).
