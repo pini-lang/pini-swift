@@ -1472,6 +1472,16 @@ public enum HIRLowerer {
         case .deferStatement(let wrapped, _):
             // G9: defer runs at the enclosing block scope's normal end,
             // LIFO across the defers of that scope (emitter block protocol).
+            //
+            // G-2f: `defer:` with an indented body parses as a *scoped block*,
+            // not as a single statement, so lowering the wrapped statement
+            // reached the catch-all and reported "statement 'scoped block'".
+            // The body is what has to be deferred, and it is a real block --
+            // it carries its own positions -- so it lowers through lowerBlock
+            // rather than statement by statement.
+            if case .scopedBlock(_, let body, _) = wrapped {
+                return [.deferStmt(body: try lowerBlock(body, into: &context))]
+            }
             return [.deferStmt(body: .at(try lowerStatement(wrapped, into: &context), wrapped.location))]
 
         case .expressionStmt(let expr, let location):
