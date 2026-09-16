@@ -845,6 +845,21 @@ private func runHIREngine(module: Module, source: String, programBase: String?) 
  try HIRExecutor(programBase: programBase).run(module: hirModule)
 }
 
+/// HIR 引擎的包运行入口（LR-4 P4-1a）。
+///
+/// 整包降载（`HIRLowerer.lower(package:)`）早已存在，且已在 LLVM 的包 emit 通道上使用；
+/// 本函数把同一条降载结果交给 HIR 执行器，使 `pini run <目录>` 与单文件路径一样走
+/// 「共享前端 → 按开关分派」。调用方**必须**已完成包级语义与类型检查
+/// （与 `runHIRPackageEmit` 同一个前置约定）。
+///
+/// `moduleRoot` 取与解释器模块路径同一个基准（含清单的目录）：IO 节点的非前缀相对路径
+/// 必须两通道解析到同一份文件，否则会静默读到 CWD 里的同名文件，且不报错。
+private func runHIRPackageEngine(package: Package, moduleRoot: String,
+ typeInference: TypeInference) throws {
+ let hirModule = try HIRLowerer.lower(package: package, typeInference: typeInference)
+ try HIRExecutor(programBase: absoluteProgramBase(moduleRoot)).run(module: hirModule)
+}
+
 /// P4 Phase 5：run 接收文件或目录。
 /// - 文件 → 单文件运行（零回归）。
 /// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
@@ -889,12 +904,8 @@ func runRunPath(_ path: String, argv: [String] = []) {
  }
 
  // 目录
- // LR-4 P1-3：HIR 引擎当前只接单文件。不静默回落到 AST 引擎——那会让调用方
- // 以为自己在看 HIR 通道的结果。
- if engine == .hir {
- printError("Error: PINI_INTERP_ENGINE=hir 暂不支持目录/模块运行，当前仅支持单文件。")
- exit(1)
- }
+ // LR-4 P4-1a：此处不再早退。包路径改为与单文件路径同一形态——
+ // 共享前端（清单 / 漂移 / 语义 / 类型）之后，再按开关分派执行引擎。
  let manifest: ModuleManifest?
  do { manifest = try FileLoader.loadManifest(directory: path) } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)
@@ -924,12 +935,21 @@ func runRunPath(_ path: String, argv: [String] = []) {
  }
  // 与 runCheckPath 模块分支对齐：run 前先执行语义 + 类型层可见性 enforce，
  // 避免 `pini run` 绕过 4 级访问控制（P4 复审 HIGH：模块 run 路径此前不 enforce）。
+ // LR-4 P4-1a：门禁之后按开关分派执行引擎，与单文件路径同形。
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
  emitSemanticWarnings(analyzer)
  let checker = TypeChecker()
  try checker.check(package: pkg)
+ if engine == .hir {
+ // 降载会在 checker 弹出作用域之后重推 match scrutinee 的类型，
+ // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
+ checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+ try runHIRPackageEngine(package: pkg, moduleRoot: path,
+ typeInference: checker.typeInference)
+ return
+ }
  } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)
  }
