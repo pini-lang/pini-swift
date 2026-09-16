@@ -403,3 +403,29 @@ note = """**批属性**：**`P4-β`「测试面迁移」** —— `P4-γ`（删 
 
 **登记不修**：`ffiConfig` 在新入口保留形状但本路径不消费（HIR 无动态库加载）—— 不静默丢弃而是留字段 + 注释 + 本条登记；新入口 / `ReplEvaluator` / CLI 三份同构逻辑的抽单源归 `P4-γ`；**测试基建的 SIGPIPE 缺陷**（整跑中断 ⇒ 读数静默不完整）已另立 `docs/issue-test-harness-sigpipe-on-failure-paths-2026-09-16.md`。"""
 
+
+[[evidence]]
+id = "2026-09-16 泛型枚举用例构造形态与类型实参挂点登记"
+citable = false
+claim = "The language face never defined where the explicit type arguments of a generic enum case construction attach, while the differential fixtures already ran as bare case names carrying type arguments (ok<I32, String>(42), 满<I32>(5), 空<String>()). ADR-037 registers the ruling -- qualified form 枚举名<实参…>.用例(载荷…) is canonical, the bare form is a sugar that resolves the parent enum through the ADR-026 D1 ladder and then binds the arguments positionally -- and records three measured facts: the chosen spelling is already covered by the grammar so no production changes; the parsing shapes of the two rejected spellings are costed; and the two-layer implementation state is asymmetric -- the type layer already resolves specialized enum case payloads and is called from both the construction site and match bindings, while the lowering layer dispatches generic construction through only three routes (builtin LazyRef, generic function templates, generic struct specializations) so an enum name reaches none of them. The handover to the language reference is deliberately not performed at this stage on two independent grounds. No source, test or contract change"
+artifacts = [
+  "docs/spec/adr/adr-037-generic-enum-construction-form.md",
+  "docs/spec/adr/adr-index.md",
+  "docs/spec/pini-spec-v0.md",
+  "docs/spec/issue-hir-generic-enum-specialization-plan-2026-09-16.md",
+  "docs/spec/issue-hir-generic-enum-specialization-2026-09-16.md",
+  "docs/spec/evidence-table.toml",
+]
+command = "bash tools/check-doc-links.sh ; bash hooks/comment-lint.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; python3 tools/hir-contract-check.py"
+output = "doc-links: 805 references checked, all pass -- three initial failures were this ADR's own relative paths (../ reaching docs/spec instead of docs), corrected to ../../. comment-lint full run (no args, the same shape pre-commit uses): L1-L6 all green, rc=0, L6 redeeming the new ADR-037 through its index row; the same script limited to docs alone fails L6 with 'no ADR reference scanned', which is the guard refusing to claim green rather than a violation. evidence_sweep --check: parse plus schema ok, 19 entries before this one, 0 unannotated citation marks, status drift 8, advisory cap 100 within. hir-contract-check: 60/60 nodes covered by each of the llvm, printer and interp-hir anchors, clean."
+validated_at = "2026-09-16T18:51+0800"
+status = "FRESH"
+note = """登记面 = ADR-037（新建）· ADR 索引新增一行 · 规范 §3 新增 G59 · 规范 §A 的 `generic-construct` 产生式后新增一处语义注记。**文法与契约计数零改动**：`primary-atom` + `generic-construct` 两产生式与消歧规则 3.3 已覆盖所选拼写；`hir-contract-check` 三锚点各 60/60 覆盖且 clean 为证人。
+
+**两条独立理由决定本轮不递交语言参考**：① 递交流程的条件之一是「该构造已定级 Provisional 或 Stable」（Experimental 不递交）；② 另一条件是「实现侧有证据」，而实现发生在 `S1`。任一成立即不可递交，故本期只登记不下沉。
+
+**登记的代价（如实记账）**：裸名形态的**实参个数校验落在运行期**——类型层现有校验按**枚举名**查，而裸名形态给出的是**用例名**，校验不触发。此为「为准 vs 为糖」的真实差别，非遗漏；已写入 ADR-037 与 G59 行。
+
+**新增 G59 时踩到并当场修复的一处缺陷**：首版把新行插在 G58 之后**三个空行**之后 ⇒ 该行**落在表格外**（GFM 表格遇空行截断），会渲染成「表格少一行 + 下方多出裸文字」。机械复查（上一行与下一行都以 `|` 开头、本行是有内容的非 `|` 行）命中后改为紧邻 G58。⚠️ 全仓该复查仍命中 **1 处既有假阳性**（§A 的 EBNF 以 `|` 作交替，产生式续行被误判）——**非本批引入**，已用 `git show HEAD:` 版本对照确认。
+
+**一处门禁姿势的实证订正**（对作业手册）：`comment-lint.sh` **只传 `docs`** 时 L6 报「未扫到任何 ADR 引用：扫描未生效」并**非零退出**（ADR 引用住在代码注释里，`docs` 里 regex 匹配不到）；**传 `docs Sources` 或不带参数**才全绿 ⇒ 预扫姿势必须带上 `Sources`。"""
