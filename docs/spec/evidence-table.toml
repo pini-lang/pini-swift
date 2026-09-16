@@ -570,3 +570,52 @@ note = """登记批 = `G-2R` 三条待裁里的**两条语言面裁决**（第�
 **第三条（`BootstrapLanguageContract` 具名元组元数）已被我撤出待裁**：看清夹具后它更像**实现缺陷**（程序写了三个元素，检查器报只收到两个且第二个类型也不对）⇒ 先定位（解析器嵌套括号 vs 检查器标签配对），定性前不裁。
 
 **本批未做**：未动任何实现（内建表签名 · 降载层硬编码 · 夹具改写 · LLVM 侧处置）；未做语料普查；未 push。"""
+
+[[evidence]]
+id = "2026-09-17 泛型枚举之后的 G-2R 余量：F64 / LazyRef 糖 / 无标注形参"
+citable = false
+claim = "Three forms the AST walk has always answered and the lowering layer refused are now answered on the HIR path as well: F64(x), the inferred LazyRef(closure) sugar, and a cross-file call into a parameter declared without a type annotation. Each is fixed where its rule belongs rather than by widening a guard. F64's rule moves to RuntimeOps.builtinF64 so both engines answer with one definition. LazyRef's inferred spelling reuses the frozen lazyRefConstruct node and reads its element type off the closure's return type. For the untyped parameter, the call-site comparison now skips exactly those positions, which is alignment with the checker -- its own note says unannotated parameters stay inferred and the body check skips them. Measured: the failing suite goes 71 to 68, four fixed and none new, the remaining 68 identical item by item; the 319-fixture probe is unchanged fixture by fixture once the lli temp name is normalised, with zero flip blockers; the contract stays at 60 nodes. Two follow-ups are recorded rather than done: emitting F64 as a call produced an undefined symbol and is now sitofp, and the inferred LazyRef sugar still fails the checker on the CLI while the explicit spelling works"
+artifacts = [
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+  "Sources/PiniCore/Runtime/RuntimeOps.swift",
+  "Sources/PiniCore/CodeGen/IREmitter.swift",
+  "docs/issue-hir-p4-gamma-batches-2026-09-16.md",
+  "docs/issue-hir-p4-gamma-plan-2026-09-16.md",
+  "docs/spec/evidence-table.toml",
+]
+command = "3 chunks of TMPDIR=/tmp swift test (115 classes) ; TMPDIR=/tmp python3 tools/hir-parity-probe.py --out /tmp/g2rb3-probe.tsv ; python3 tools/hir-contract-check.py ; PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin .build/debug/pini emit|run-llvm ; PINI_INTERP_ENGINE=hir|ast .build/debug/pini run (CLI availability of each of the three forms)"
+output = "Failing methods 71 -> 68: fixed 3 in this run plus the 1 from the previous commit of the same branch; added 0; the remaining set equal item by item. Both chunked runs and the per-class driver agree. Probe: 319/319 fixtures, zero flip blockers, zero process leaks, zero non-terminating fixtures, 704s wall clock with progress printed at every 50th fixture through to 319; normalising the random /tmp/pini_*.ll name embedded in lli diagnostics removes all item-level differences. Contract: 60/60 on each anchor, clean. LLVM: emit rc=0 with no @F64 reference and 71 lines of IR, run-llvm prints 3.5 and 7.0 matching the HIR engine byte for byte. CLI availability checked per form: F64 prints 3.5/7.0 on both the HIR engine and run-llvm; the untyped parameter prints hi under hir and ast; the inferred LazyRef sugar is refused by the checker with E3-002 undefined function 'LazyRef' on both engines, while the explicit LazyRef<I32>(closure) spelling prints 7"
+validated_at = "2026-09-17T00:16+0800"
+status = "FRESH"
+note = """本批 = `G-2R` 的第二批（第一批 = 结构体值拷贝，`c5f279f` → 合并点 `3837654`）。
+**两条提交**：`f4bfd36`（降载层 + 执行器 + `RuntimeOps.builtinF64` 单源化，4 文件 / +112 −15）·
+`1588c58`（`IREmitter` 的 `F64` 改 `sitofp`）。
+
+**⭐ 交付自查时实测出的一个自伤**：`emit` 对 `F64` **返回 0 却产出引用未定义符号 `@F64` 的 IR**，
+`run-llvm` 报 `use of undefined value '@F64'` —— 即 `docs/issue-hir-argv-llvm-runtime-surface-2026-09-16.md`
+记录的**静默坏 IR** 形态，本批若不修就是**新引入一处**。`F64` 是一条指令（`sitofp`）而非符号，
+故在表达式发射器内解决，不进 declare pass。修后 IR 零未定义符号。
+
+**⭐ 三条转绿里，CLI 面只有两条真可用（本批实测，第三例）**：
+- `F64(...)` ⇒ CLI `pini run` 输出 `3.5 / 7.0`，与 `run-llvm` **逐字一致** ✅
+- 无标注形参 ⇒ CLI 单文件 `hir`/`ast` **两引擎都输出 `hi`** ✅
+- `LazyRef(闭包)` **推断糖** ⇒ 测试入口绿，但 **CLI 被类型检查器拦**（`E3-002 undefined function 'LazyRef'`，
+  两引擎相同）；而**显式形态 `LazyRef<I32>(闭包)` 在 CLI 上输出 `7`**。
+  ⇒ 根因：`BuiltinRegistry` 里 `LazyRef` **不在表内**（`typeSignature = nil` 的条目只记名、
+  不登记类型层签名，`registerBuiltinTypes` 会 `continue`），补齐需让检查器认识「内建泛型类型 + 推断糖」⇒ **类型层工程，超出本批定位**，如实登记不修。
+  前两例同族：`P4-2` 的引擎开关只影响 CLI 子进程 · `G-2d` 的限定形态只在降载层与 LLVM 通道。
+
+**范围订正（第二批执行时的账）**：本批实际只做 **4 条**，不是规划承诺的 12 条 —— 取**真实失败面**后
+**8 条迁出**（`append` 挡住 4 · 语言面裁决 3 已由 `ADR-038`/`G60` 处置 · 模块作用域 1）。
+⇒ **判据由「72 → 60」订正为「72 → 68」**，并已在规划件与批次记录两处就地订正。
+
+**探针「卡在第 150」的核查（用户提出）**：本次完整日志显示打点 **50 / 100 / 150 / 200 / 250 / 300 / 319**
+**连续无缺**，末尾 summary 完整，`process leaks 0`，总耗时 **704s（11m49s）**。
+⇒ **未卡**。「看起来停在 150」的成因是**我上一条回复用 `tail -3` 截断显示**，而采样时点恰在 150。
+打点逻辑为 `n % 50 == 0 or n == len(fixtures)` 且 `flush=True`，**不存在丢打点**。
+⚠️ 但**前期慢后期快**是真实的：50→150 用 296s（约 2.4s/夹具），150→300 用 211s（约 1.4s/夹具）——
+若在 150 附近观察，确实会等较久。
+
+**本批未做**：未跑 `ast` 方向全量回归（本批改动全在 HIR 降载层 / HIR 执行器 / `IREmitter`
+⇒ `ast` 方向不经过这三处，结构性不受影响；两方向等价已在 `S1` 实测为逐类相同）· 未动契约 · 未 push。"""

@@ -500,7 +500,7 @@ public enum HIRLowerer {
                     decl: funcDecl, userTypes: userTypes, nominals: nominals
                 ) ?? returnType
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
-                    paramTypes: paramTypes, returnType: effectiveReturn
+                    paramTypes: paramTypes, returnType: effectiveReturn, untypedParamIndices: untypedParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
                 // G14: foreign block signatures join the shared table so
@@ -534,7 +534,7 @@ public enum HIRLowerer {
                 specialized, userTypes: userTypes, subject: "'\(specialized.name)'"
             )
             signatures[specialized.name] = HIRLowererSignatureInfo(
-                paramTypes: paramTypes, returnType: returnType
+                paramTypes: paramTypes, returnType: returnType, untypedParamIndices: untypedParamIndices(specialized)
             )
         }
 
@@ -1081,7 +1081,7 @@ public enum HIRLowerer {
                 at: location
             )
         }
-        for (index, argument) in loweredArgs.enumerated() {
+        for (index, argument) in loweredArgs.enumerated() where !signature.untypedParamIndices.contains(index) {
             try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
         }
         return LoweredExpr(
@@ -1208,6 +1208,17 @@ public enum HIRLowerer {
     /// sites see the fallback) and the body lowering (so the definition
     /// agrees). `foreign` and trait-default declarations keep their own
     /// resolution — neither surface allows an unannotated parameter.
+    /// Positions of parameters declared without a type annotation.
+    ///
+    /// One source for the call-site rule: the signature builders record these,
+    /// and the call-site comparison skips exactly these positions.
+    private static func untypedParamIndices(_ decl: FuncDecl) -> Set<Int> {
+        Set(decl.params.enumerated().compactMap { index, parameter in
+            parameter.typeAnnotation == nil ? index : nil
+        })
+    }
+
+
     private static func resolveParamTypes(
         _ decl: FuncDecl,
         userTypes: [String: HIRType]
@@ -2729,6 +2740,55 @@ public enum HIRLowerer {
                     type: resultType
                 )
             }
+            // G-2R: `F64(x)` -- the numeric value constructor. The AST channel
+            // has answered it since G-P1 and the lowering layer never did, so
+            // `F64(3)` was "an unknown function". A float passes through, an
+            // integer widens through one `call` the executor answers by name
+            // (the same shape the character builtins use); anything else is
+            // refused here, matching the runtime's own refusal.
+            if functionName == "F64" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("F64 expects exactly one argument", at: location)
+                }
+                switch loweredArgs[0].type {
+                case .f64:
+                    return loweredArgs[0]
+                case .i32, .i64, .u64:
+                    return LoweredExpr(
+                        node: .call(function: "F64",
+                                    arguments: loweredArgs.map { $0.node },
+                                    returnType: .f64),
+                        type: .f64
+                    )
+                default:
+                    throw unsupported("F64 expects a numeric argument (int or float)", at: location)
+                }
+            }
+            // G-2R: `LazyRef(closure)` -- the inferred spelling (the G40 D1
+            // sugar), sibling of the `LazyRef<T>(closure)` form the
+            // generic-construct arm already lowers. "Inferred" here means the
+            // element type is read off the initialiser closure's own return
+            // type; a closure whose return type cannot be read is refused
+            // rather than guessed.
+            if functionName == "LazyRef" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported(
+                        "LazyRef expects exactly one argument (initializer closure)", at: location
+                    )
+                }
+                guard case .function(_, let closureReturn) = loweredArgs[0].type,
+                      let element = closureReturn else {
+                    throw unsupported(
+                        "LazyRef argument must be an initializer closure with a readable return type",
+                        at: location
+                    )
+                }
+                let type = HIRType.lazyRef(element: element)
+                return LoweredExpr(
+                    node: .lazyRefConstruct(closure: loweredArgs[0].node, type: type),
+                    type: type
+                )
+            }
             if functionName == "sqrt" {
                 guard loweredArgs.count == 1, loweredArgs[0].type == .f64 else {
                     throw unsupported("sqrt expects exactly one F64 argument", at: location)
@@ -2962,7 +3022,7 @@ public enum HIRLowerer {
             let retypedArgs = try zip(arguments, signature.paramTypes).map { argument, paramType in
                 try lowerExpr(argument.expression, expected: paramType, into: &context)
             }
-            for (index, argument) in retypedArgs.enumerated() {
+            for (index, argument) in retypedArgs.enumerated() where !signature.untypedParamIndices.contains(index) {
                 try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
             }
             return LoweredExpr(
@@ -3592,7 +3652,7 @@ public enum HIRLowerer {
         let retypedArgs = try zip(arguments, signature.paramTypes).map { argument, paramType in
             try lowerExpr(argument.expression, expected: paramType, into: &context)
         }
-        for (index, argument) in retypedArgs.enumerated() {
+        for (index, argument) in retypedArgs.enumerated() where !signature.untypedParamIndices.contains(index) {
             try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
         }
         return LoweredExpr(
@@ -4789,6 +4849,21 @@ extension Statement {
 struct HIRLowererSignatureInfo {
     let paramTypes: [HIRType]
     let returnType: HIRType?
+    /// Parameter positions declared without a type annotation.
+    ///
+    /// WHY (LR-4 G-2R): the checker does not constrain these positions -- its
+    /// return-consistency note says unannotated parameters stay inferred and the
+    /// body check skips them -- so a call site must not reject them either.
+    /// `greet(name,)` is legal, and `name` may arrive as a string. The slot type
+    /// still comes from the declaration's fallback, because the body's own
+    /// lowering needs *a* type; only the call-site comparison is skipped.
+    let untypedParamIndices: Set<Int>
+
+    init(paramTypes: [HIRType], returnType: HIRType?, untypedParamIndices: Set<Int> = []) {
+        self.paramTypes = paramTypes
+        self.returnType = returnType
+        self.untypedParamIndices = untypedParamIndices
+    }
 }
 
 /// Per-function lowering context: variable slot types, the enclosing

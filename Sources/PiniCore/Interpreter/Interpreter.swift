@@ -2940,16 +2940,9 @@ if fv.name == "chars" {
  : Interpreter.builtinMax(args[0], args[1]))
  }
  if fv.name == "F64" {
- // G-P1：值构造（见 BuiltinRegistry 同名条目注释）
- switch args[0] {
- case .float(let f): return .float(f)
- case .int(let i): return .float(Double(i))
- default:
- throw RuntimeError.invalidOperation(
- reason: "F64 的参数必须是数值（int/float）",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+ // G-P1：值构造（见 BuiltinRegistry 同名条目注释）。
+ // G-2R：规则移到 RuntimeOps —— HIR 执行器同样欠它，而此处将被删除。
+ return try RuntimeOps.builtinF64(args[0])
  }
  if fv.name == "sqrt" {
  return try Interpreter.builtinSqrt(args[0])

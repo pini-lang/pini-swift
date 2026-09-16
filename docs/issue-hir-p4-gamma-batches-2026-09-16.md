@@ -312,7 +312,7 @@ keep their namespaces apart
 
 ---
 
-## G-2R `G-2` 的余量（12 条零散小件）— 待点名
+## G-2R `G-2` 的余量 — ✅ **已交付**（2026-09-17 凌晨）
 
 **对象**（2026-09-16 现跑，逐条具名）：**结构体拷贝静默错值**
 （`ValueSemanticsTests.testStructCopySemantics`，在册工单 `docs/issue-hir-struct-copy-missing-2026-09-14.md`；
@@ -320,8 +320,39 @@ keep their namespaces apart
 `CrossFileRuntimeTests` 3 · `ArrayElementAnnotationTests` 2 · 浮点 / 数学 / 模块作用域 / 枚举具名构造 /
 递归枚举 / `LazyRef` 推导糖 各 1。
 
-**判据**：**72 → 60**；无新增红（逐条比对）；探针零位移。
-**前置**：SIGPIPE 器械修复（`docs/issue-test-harness-sigpipe-on-failure-paths-2026-09-16.md`，**已获授权**）。
+**判据（实际）**：**72 → 68** —— 转绿 **4** / 新增红 **0** / 仍红 68 逐条相同；探针 319 夹具逐夹具对账；
+契约 60 节点 clean。
+**前置**：SIGPIPE 器械修复 ✅。
+
+### ⚠️ 本批只做到 **4 条**，不是原承诺的 12 条
+
+取**真实失败面**（不按用例名猜）后的范围订正：
+
+| 归口 | 条数 | 明细与处置 |
+|---|---:|---|
+| ✅ **本批交付** | **4** | 结构体值拷贝 · `F64(...)` · `LazyRef(...)` 推断糖 · 无标注形参跨文件传参 |
+| 迁出 → `append` 命名调用路 | 4 | `ArrayElementAnnotationTests` 2 · `CrossFileRuntimeTests` 限定/歧义枚举构造 2（**全报** `method 'append' calls are later grids`） |
+| 迁出 → 语言面裁决 | 3 | `abs` 多态 · 整数字面量→小数 · 具名元组元数 ⇒ **已由登记批 `ADR-038` / `G60` 处置** |
+| 迁出 → 模块作用域 | 1 | `ModuleSystemTests` 三层嵌套同名导出（`G-2g` 已明示不夹带） |
+
+**两条提交**（分支 `agent/pini-dev/p4-gamma-g2r-b`）：
+
+- **`f4bfd36`** 降载层 + 执行器 + 单源化（4 文件 / +112 −15）
+- **`1588c58`** LLVM 侧 `F64` 改 `sitofp` —— **交付自查时实测发现**：`emit` 返回 0 却产出引用
+  未定义符号 `@F64` 的 IR（`run-llvm` 报 `use of undefined value`）⇒ 本批若不修就是**新引入一处静默坏 IR**。
+  修后 `emit` 零未定义符号、`run-llvm` 输出 `3.5 / 7.0` 与 HIR 逐字一致。
+
+### ⚠️ 一处必须在册的判据差异（本批实测，第三例）
+
+三条转绿里，**`LazyRef(闭包)` 推断糖只在「进程内测试入口」可用**：CLI 面 `pini run` 仍被
+**类型检查器**拦下（`E3-002 undefined function 'LazyRef'`，**两引擎相同**）；
+而**显式形态 `LazyRef<I32>(闭包)` 在 CLI 上完全可用**（输出 `7`）。
+⇒ 「测试面绿 ≠ 用户可见入口可用」。**前两例**：`P4-2` 的引擎开关只影响 CLI 子进程 · `G-2d` 的限定形态只在降载层与 LLVM 通道。
+补齐它需要让检查器认识「内建泛型类型 + 推断糖」（`BuiltinRegistry` 的 `typeSignature = nil` 只记名不登记类型层签名），
+属**类型层工程** ⇒ **如实登记，不在本批**。
+
+**另两条 CLI 面已实测可用**：`F64(...)` → `3.5 / 7.0`（HIR 与 LLVM 逐字一致）· 无标注形参 → 单文件两引擎都输出 `hi`。
+
 **不在本批**：16 条结构性大件（各有归属批或待裁项）· 13 条错误通道（待规范口径裁决）。
 
 ## G-3 并发迁移（`R1`）— 待点名
