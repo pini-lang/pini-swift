@@ -294,3 +294,42 @@
 
 不动降载层（依赖模块符号另立 `P4-1c`）· 不动契约面 · `argv` / `moduleRoot` 留 `P4-1b` ·
 未改测试（执行件路径参数化**另立案**，见 6.2）· 未 push。
+
+## 8. 交付记录 · P4-1b / P4-1c（降载层，2026-09-16）
+
+### 8.1 交付内容
+
+| 批 | 改动 |
+|---|---|
+| **P4-1c（依赖模块符号）** | `HIRLowerer`：新增 `mergedWithImports` —— 递归加载 `import` 目标（**复用解释器侧同一个加载器**，R2 环检测在内）并把其声明并入虚拟模块；签名表额外登记 `别名.符号` 键；`lowerMemberCall` 在**解析 receiver 之前**拦截该形状（否则会按变量解析并报未声明） |
+| **P4-1b（`argv` / `moduleRoot`）** | `HIRLowerer`：两项零参内建降成**既有的 `call` 形状**（与 `print` 同法）；`HIRExecutor`：新增 `processArguments` 属性 + 在 `.call` 分支按名回答（两行**逐字镜像**解释器同名内建）；CLI 的两条 HIR 路径把 `argv` 交给执行器 |
+
+⚠️ **未新增契约节点**（44 表达式 / 60 总数不变，`D-P4-13`）：两者都复用既有 `call` 形状，
+语义上属「具名内建调用」。LLVM 侧**未实现**，见 8.4。
+
+### 8.2 验收（**本批的核心判据达成**）
+
+| 判据 | 读数 |
+|---|---|
+| **HIR 下 `ImportInjectionTests`** | **7 → 0**（9 用例 / **0 failures**）—— 这正是本表给 `P4-1` 的原验收判据 |
+| AST 下同一套 | 9 用例 / 0 failures |
+| 包级等价（四个夹具） | 注入包 / 跨模块注入包 / 纯包 / **`argv` 包** —— 两条通道 rc / stdout / stderr **逐项相同** |
+| AST 全量回归 | 1269 / 3 skipped / 0 failures（+ swift-testing 45 / 14 suites） |
+| HIR 全量回归 | **1269 / 3 skipped / 0 failures**（本批前为 6） |
+| 全量探针 | 六槽分布不变、`FLIP BLOCKERS 0`（本批改的是降载层；夹具面无 `argv` 用法） |
+
+### 8.3 账目闭合
+
+**1（`P4-1a`）+ 3（`P4-1c`）+ 3（`P4-1b`）= 7 → 0**，与 7.4 的逐条归因表**逐项对上**。
+
+### 8.4 遗留（已立案，**不修**）
+
+- **LLVM 侧 `argv` / `moduleRoot` 无运行时段**：`emit` 会**返回成功**却产出引用未定义符号 `@argv`
+  的 IR，直到 `run-llvm`（lli）才报 `use of undefined value '@argv'` ⇒ **静默产出不可用 IR**。
+  载体：`docs/issue-hir-argv-llvm-runtime-surface-2026-09-16.md`。
+- ⚠️ 本批**刻意未改 `IREmitter`**：该文件用 `fatalError` 表达「lowerer 保证不会发生」，
+  而这里是**合法输入 + 未实现**，加 `fatalError` 会让 CLI 崩溃、比现状更糟。该形态已如实写进工单。
+
+### 8.5 未做范围
+
+不动契约计数 · 不动 LLVM 运行时段 · 未改测试工程件 · 未 push。

@@ -302,6 +302,10 @@ public final class HIRExecutor: DebugHookHost {
     /// before, and so the many test hosts that construct one bare keep working.
     private let programBase: String?
 
+    /// P4-1b: 命令行参数（脚本路径之后的裸参数），与解释器的同名属性同义 ——
+    /// `argv()` 内建的唯一来源，镜像而不另造。
+    public var processArguments: [String] = []
+
     public init(programBase: String? = nil) {
         let env = Environment()
         self.globalEnv = env
@@ -490,6 +494,21 @@ public final class HIRExecutor: DebugHookHost {
                     )
                 }
                 return try Interpreter.builtinSqrt(args[0])
+            }
+            // P4-1b: 宿主环境查询内建。两行都与解释器的同名内建**逐字同义**（镜像，不另造）：
+            // 参数数组直接来自执行器持有的 `processArguments`；模块根即程序基准，
+            // 未注入基准时如实返回进程 CWD，不伪造。
+            if name == "argv" || name == "moduleRoot" {
+                guard arguments.isEmpty else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: \(name) takes no arguments",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                if name == "argv" {
+                    return .array(processArguments.map { .string($0) })
+                }
+                return .string(programBase ?? FileManager.default.currentDirectoryPath)
             }
             throw RuntimeError.invalidOperation(
                 reason: "HIR executor: no module-level function named '\(name)' and no "

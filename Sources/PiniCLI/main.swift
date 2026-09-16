@@ -829,7 +829,8 @@ func selectedInterpreterEngine() -> InterpreterEngine {
 /// `programBase` 与 AST 通道取同一个值（入口文件所在目录）：IO 节点的非前缀相对路径
 /// 必须两通道解析到同一份文件。否则同一程序在两条通道上读到的不是同一个文件，而且不会
 /// 报错——只会静默读到 CWD 里的同名文件。
-private func runHIREngine(module: Module, source: String, programBase: String?) throws {
+private func runHIREngine(module: Module, source: String, programBase: String?,
+                         argv: [String] = []) throws {
  let checker = TypeChecker()
  let typeErrors = checker.checkCollecting(module: module)
  if !typeErrors.isEmpty {
@@ -842,7 +843,9 @@ private func runHIREngine(module: Module, source: String, programBase: String?) 
  // match scrutinee 的类型，需持久表兜底。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
  let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
- try HIRExecutor(programBase: programBase).run(module: hirModule)
+ let executor = HIRExecutor(programBase: programBase)
+ executor.processArguments = argv
+ try executor.run(module: hirModule)
 }
 
 /// HIR 引擎的包运行入口（LR-4 P4-1a）。
@@ -855,9 +858,12 @@ private func runHIREngine(module: Module, source: String, programBase: String?) 
 /// `moduleRoot` 取与解释器模块路径同一个基准（含清单的目录）：IO 节点的非前缀相对路径
 /// 必须两通道解析到同一份文件，否则会静默读到 CWD 里的同名文件，且不报错。
 private func runHIRPackageEngine(package: Package, moduleRoot: String,
- typeInference: TypeInference) throws {
+ typeInference: TypeInference,
+ argv: [String] = []) throws {
  let hirModule = try HIRLowerer.lower(package: package, typeInference: typeInference)
- try HIRExecutor(programBase: absoluteProgramBase(moduleRoot)).run(module: hirModule)
+ let executor = HIRExecutor(programBase: absoluteProgramBase(moduleRoot))
+ executor.processArguments = argv
+ try executor.run(module: hirModule)
 }
 
 /// P4 Phase 5：run 接收文件或目录。
@@ -892,7 +898,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
  // 否则非前缀相对路径会在 HIR 侧静默读到 CWD 的同名文件。
  let programBase = absoluteProgramBase(path)
  if engine == .hir {
- do { try runHIREngine(module: module, source: source, programBase: programBase) }
+ do { try runHIREngine(module: module, source: source, programBase: programBase, argv: argv) }
  catch { printError(formatCLIError(error: error, source: source)); exit(1) }
  return
  }
@@ -947,7 +953,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
  // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
  try runHIRPackageEngine(package: pkg, moduleRoot: path,
- typeInference: checker.typeInference)
+ typeInference: checker.typeInference, argv: argv)
  return
  }
  } catch {

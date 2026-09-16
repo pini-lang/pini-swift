@@ -192,25 +192,58 @@ public enum HIRLowerer {
     /// File ordering follows `FileLoader.loadDirectory`'s deterministic sort
     /// (fileName ascending), so pre-pass registration order is stable.
     public static func lower(package: Package, typeInference: TypeInference?) throws -> HIRModule {
-        guard package.fileUnits.count > 1 else {
-            let module = package.fileUnits.first?.module
-                ?? Module(declarations: [], imports: [], exports: [],
-                          location: SourceLocation(line: 0, column: 0, fileName: package.name))
-            return try lower(module: module, typeInference: typeInference)
-        }
-        let merged = Module(
+        let base = Module(
             declarations: package.fileUnits.flatMap { $0.module.declarations },
             imports: package.fileUnits.flatMap { $0.module.imports },
             exports: package.fileUnits.flatMap { $0.module.exports },
             location: package.location
         )
-        return try lower(module: merged, typeInference: typeInference)
+        let (merged, aliasMap) = try mergedWithImports(base)
+        return try lower(module: merged, typeInference: typeInference, moduleAliases: aliasMap)
+    }
+
+    /// P4-1c: 把 `import` 目标的声明并入虚拟模块，并返回「别名 → 可引入符号名」表。
+    ///
+    /// 为什么需要它：整包降载合并的是**本包**各文件的声明，而 `import` 目标的声明在
+    /// **另一份清单**之下 —— 目录加载器按「嵌套模块」规则把自带清单的子目录剔出本包，
+    /// 于是依赖符号根本不在 `Package.fileUnits` 里。解释器侧无此问题，它给每个别名建一个
+    /// 子解释器（运行时机制）；本侧是静态降载，故改为**把依赖声明并入同一个虚拟模块**：
+    /// 裸调用从此按前向引用解析，限定调用按 `别名.符号` 键解析。
+    ///
+    /// 传递性：依赖自身的 `import` 一并递归（`pending` 队列），环由加载器的 R2 检测兜住。
+    /// 只并入 **public** 符号的声明（跨模块可引入门槛与解释器一致）。
+    private static func mergedWithImports(_ module: Module) throws -> (Module, [String: Set<String>]) {
+        guard !module.imports.isEmpty else { return (module, [:]) }
+        let loader = ModuleDependencyLoader.shared
+        var aliasMap: [String: Set<String>] = [:]
+        var extraDecls: [TopLevelDecl] = []
+        var seenRoots = Set<String>()
+        var pending = module.imports
+        var index = 0
+        while index < pending.count {
+            let imp = pending[index]
+            index += 1
+            let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+            let loaded = try loader.load(packagePath: imp.packagePath, relativeTo: dir)
+            aliasMap[imp.alias] = loaded.publicSymbols
+            guard seenRoots.insert(loaded.rootPath).inserted else { continue }
+            extraDecls.append(contentsOf: loaded.declarations)
+            pending.append(contentsOf: loaded.imports)
+        }
+        let merged = Module(
+            declarations: module.declarations + extraDecls,
+            imports: module.imports,
+            exports: module.exports,
+            location: module.location
+        )
+        return (merged, aliasMap)
     }
 
     /// Lower a checked module. `typeInference` is the TypeChecker's inference
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
-    public static func lower(module: Module, typeInference: TypeInference?) throws -> HIRModule {
+    public static func lower(module: Module, typeInference: TypeInference?,
+                             moduleAliases: [String: Set<String>] = [:]) throws -> HIRModule {
         // G12 pre-pass: trait registry. Trait default-implementation bodies
         // (signatures with a body) join the signature table like any named
         // function; abstract signatures (body == nil) are skipped — the type
@@ -455,6 +488,15 @@ public enum HIRLowerer {
             signatures[specialized.name] = HIRLowererSignatureInfo(
                 paramTypes: paramTypes, returnType: returnType
             )
+        }
+
+        // P4-1c: 跨模块限定名键。`别名.符号` 与裸名**共用同一份签名**，只在键上带别名前缀 ——
+        // 于是限定调用不必另开一条解析路径，也不会与变量的成员访问混淆
+        // （变量 `a.b(...)` 的键永远不会出现在签名表里）。
+        for (alias, symbols) in moduleAliases {
+            for symbol in symbols {
+                if let info = signatures[symbol] { signatures["\(alias).\(symbol)"] = info }
+            }
         }
 
         var functions: [HIRFunction] = []
@@ -2363,6 +2405,22 @@ public enum HIRLowerer {
                 }
                 return LoweredExpr(node: .printMulti(arguments: loweredArgs.map { $0.node }), type: .i32)
             }
+            // P4-1b: 宿主环境查询内建。二者零参、由**执行器**按名回答，故降成同形的 `call`
+            //（与 `print` 一样不需要新节点）；解释器侧同名内建即镜像源
+            //（`argv` → 参数字符串数组；`moduleRoot` → 程序基准的绝对路径）。
+            // ⚠️ LLVM 侧尚未实现（须新增运行时段），发射器对它 fail-loud，见在册工单。
+            if functionName == "argv" || functionName == "moduleRoot" {
+                guard loweredArgs.isEmpty else {
+                    throw unsupported("\(functionName) takes no arguments", at: location)
+                }
+                let queryType: HIRType = functionName == "argv"
+                    ? .array(element: .string)
+                    : .string
+                return LoweredExpr(
+                    node: .call(function: functionName, arguments: [], returnType: queryType),
+                    type: queryType
+                )
+            }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
             // corpus dependency. Other math intrinsics join their own grid.
             if functionName == "sqrt" {
@@ -3153,6 +3211,37 @@ public enum HIRLowerer {
         }
     }
 
+    /// P4-1c: 降低 `别名.符号(…)`。合并之后它本就是同一张表里的具名函数，
+    /// 故形状与 `lowerCall` 的具名分支**逐字同构**（参数按签名逐个给期望类型）。
+    private static func lowerModuleQualifiedCall(
+        functionName: String,
+        signature: HIRLowererSignatureInfo,
+        arguments: [CallArgument],
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard arguments.count == signature.paramTypes.count else {
+            throw unsupported(
+                "call to '\(functionName)' expects \(signature.paramTypes.count) arguments, got \(arguments.count)",
+                at: location
+            )
+        }
+        let retypedArgs = try zip(arguments, signature.paramTypes).map { argument, paramType in
+            try lowerExpr(argument.expression, expected: paramType, into: &context)
+        }
+        for (index, argument) in retypedArgs.enumerated() {
+            try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
+        }
+        return LoweredExpr(
+            node: .call(
+                function: functionName,
+                arguments: retypedArgs.map { $0.node },
+                returnType: signature.returnType
+            ),
+            type: signature.returnType ?? .i32
+        )
+    }
+
     private static func lowerMemberCall(
         object: Expression,
         memberName: String,
@@ -3161,6 +3250,16 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
+        // P4-1c: 跨模块限定调用 `别名.符号(…)` —— receiver 是 import 别名、**不是变量**，
+        // 故必须在 lower receiver 之前拦截（否则会按变量解析并报「未声明变量」）。
+        if case .identifier(let aliasName, _) = object,
+           let signature = context.moduleSignatures["\(aliasName).\(memberName)"] {
+            return try lowerModuleQualifiedCall(
+                functionName: memberName, signature: signature,
+                arguments: arguments, at: location, into: &context
+            )
+        }
+
         // Qualified case constructor `Enum.Case(args)` (G4, P5-5): the
         // receiver is a user TYPE name, not a variable.
         if case .identifier(let typeName, _) = object, let enumDecl = context.enums[typeName],
