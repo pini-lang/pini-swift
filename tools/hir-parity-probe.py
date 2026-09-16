@@ -23,10 +23,12 @@ ran the HIR emit pipeline after the M6b flip. They are separate implementations
 now, so the cross-check compares two engines instead of one pipeline with
 itself.
 
-Each channel states PINI_INTERP_ENGINE explicitly and never inherits it. `pini
-run` selects the AST engine by default today, but P4 flips that default, and an
-inherited value would silently turn the frozen reference into a second HIR arm
-while the sweep still reported three channels.
+Each channel states PINI_INTERP_ENGINE explicitly and never inherits it. That
+was written ahead of LR-4's P4 flip (2026-09-16), when the default was about to
+stop being the AST engine; it is now the load-bearing detail it was meant to be.
+`pini run` defaults to HIR as of that flip, so an inherited value would silently
+turn the *default* arm into HIR -- the frozen reference would quietly stop being
+a reference while the sweep still reported three channels.
 
 All three typecheck first, which is what the CLI does, so a front-end reject
 fails all three and is correctly classified as "not a backend gap". The AST
@@ -416,9 +418,10 @@ def run(argv, env_extra=None, cwd=None):
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
     # Every channel states its engine explicitly, so an inherited value is never
     # consulted — a caller's shell must not be able to relabel a channel. The
-    # frozen reference is the one that matters: `pini run` defaults to the AST
-    # engine today, P4 flips that default, and inheriting would silently turn
-    # the reference into a second HIR arm while the sweep still reported three.
+    # frozen reference is the one that matters: `pini run` defaulted to the AST
+    # engine until LR-4's P4 flip made HIR the default (2026-09-16), and
+    # inheriting would now turn the reference into a second HIR arm while the
+    # sweep still reported three.
     env.pop("PINI_INTERP_ENGINE", None)
     if env_extra:
         env.update(env_extra)

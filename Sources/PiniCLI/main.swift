@@ -789,18 +789,23 @@ func absoluteProgramBase(_ path: String) -> String {
 /// 两个真实实现，而不是让一条管线与自己比对（M6b 翻转后第三通道正是这种情况）。
 /// 从环境变量 `PINI_INTERP_ENGINE` 读引擎开关。
 ///
+/// ⭐ **默认值已于 LR-4 P4 本体翻转为 `hir`**（2026-09-16）。此前默认是 `ast`。
+/// 翻转后的语义：**不设该变量 ⇒ 走 HIR**；设成 `ast` 是**显式回落**，暂时只服务两件事 ——
+/// 三通道探针需要一个 AST 参照臂，以及翻转之后各批（测试面迁移、删除 AST 走查）的过渡期。
+/// ⚠️ 开关本身按 `D-B6` **随 AST 走查一并退役**（与 `PINI_HIR_PIPELINE` 在 M6b 的处置同形）；
+/// 那一步属于「删除 AST 走查」那一批，不是本批 —— 本批只动默认值，所以回落路径仍在。
+///
 /// 用环境变量而非 CLI 选项，两条理由。其一，`pini run` 把路径之后的参数**原样**交给
 /// 脚本（`argv` 内建），是位置式、无 flag 解析——加 `--engine` 会与脚本参数歧义。其二，
-/// LR-5 已裁本项目**不设 CLI 兼容开关**。形态沿用 `PINI_HIR_PIPELINE` 先例：那个开关同样
-/// 用于选择发射管线，并在 M6b 翻转时随旧管线一并删除；本开关在解释器翻转（P4）时按同一
-/// 方式退役。
+/// LR-5 已裁本项目**不设 CLI 兼容开关**。
 ///
-/// 取值非法时**报错而非静默回退**：静默回退会让 AST 引擎跑出结果，而调用方以为测的是
-/// HIR——那次运行的每一个读数都是假绿。
+/// 取值非法时**报错而非静默回退**：静默回退会让默认引擎跑出结果，而调用方以为测的是另一个
+/// ——那次运行的每一个读数都是假绿。
 func selectedInterpreterEngine() -> InterpreterEngine {
  guard let raw = ProcessInfo.processInfo.environment["PINI_INTERP_ENGINE"],
  !raw.isEmpty else {
- return .ast
+ // LR-4 P4：默认引擎 = HIR。翻转前的默认是 `.ast`。
+ return .hir
  }
  switch raw.lowercased() {
  case "ast": return .ast
