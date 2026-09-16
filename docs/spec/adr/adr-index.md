@@ -39,6 +39,7 @@
 | ADR-032 | 语言级 | try-else 迁移与 `^` 右值糖脱糖（try-else 取代 try-except 且具语句位+表达式位双形态 / `except` 一步删除无迁移提示 / try-else 只接受 `Result`、`(值,错误)` 元组错误位约定退役 / `^e` 重定义脱糖 `try e else err: return err`、`UnwrapErrSignal` 退役 / LLVM 重写的前置前端收敛时序） | active | `adr-032-try-else-migration.md` |
 | ADR-033 | 语言级 | Char 类型引入——grapheme 标量与 FFI 命名腾挪（落实 ADR-019 D2 第二阶段 / **Char 表示复用 String**、不变式归类型系统 / FFI 既有单字节 `Char` 改名 `CChar` / grapheme 分段走 runtime shim 不在 IR 实现 / **字面量 `'c'` 拆格**） | active | `adr-033-char-type.md` |
 | ADR-034 | 宿主级 | HIR 契约——枢纽规范与多后端语义权威（HIR 升为**全部后端共用枢纽**需契约落点 / **语义权威上移到契约**、各后端与其一致（不以任一后端为定义处）/ 分歧**判准优先兼容 LLVM 端**（含「规范已裁 / 一侧未实现 / AOT 依赖」三类不适用边界）/ 甲类 4 项统一到 LLVM 侧、停损 6 拆为 IO 格 + `stringSplit` 格 / `bk_*` 冻结纪律照搬+清单化补齐（口径 35→37）；含 `char` 节点与 `.join` 挂起语义预留位） | active | `adr-034-hir-contract.md` |
+| ADR-035 | 治理级 | 语言参考纳入事实源——分面权威与递交流程（规范管工程与治理、语言参考管语言面描述的**分面权威** / **规范是首要入口**，成熟成果**递交**语言参考沉积 / 不一致以规范为准 / 语言参考不含工程内容 / 跨文件引用不引章节号 / 新增「语言细则索引」为唯一挂钩点与递交台账） | active | `adr-035-language-reference-as-source.md` |
 
 ## 备注
 
