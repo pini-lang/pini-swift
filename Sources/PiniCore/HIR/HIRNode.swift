@@ -202,6 +202,8 @@ public enum HIRBinaryOp: Equatable {
 public enum HIRUnaryOp: Equatable {
     case negate
     case logicalNot
+    /// `~v` — the I32 complement. Distinct from `logicalNot`, which is `!`.
+    case bitwiseNot
     /// `abs(v)` (G9) — I32 select(0-v, v<0).
     case abs
 }

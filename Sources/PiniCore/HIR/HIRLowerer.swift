@@ -1482,6 +1482,15 @@ public enum HIRLowerer {
                     okTarget: nil, at: location, into: &context
                 )]
             }
+            // Prefix `++`/`--` in statement position: read-modify-write on the
+            // target, value discarded (G-2c).
+            if case .unary(let op, let target, let unaryLocation) = expr,
+               op == .increment || op == .decrement {
+                let lowered = try lowerIncDec(
+                    op: op, target: target, at: unaryLocation, into: &context
+                )
+                return [lowered.statement]
+            }
             // Compound assignment (`a[i] += k` / `x += 1`) parses as a binary
             // expression; statement position lowers it to a store (G2).
             if case .binary(let left, let op, let right, let binaryLocation) = expr,
@@ -1604,6 +1613,32 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> [HIRStmt] {
+        // `var m = ++n`: the initializer writes back to n and yields the value
+        // it wrote, so the statement expands to the write followed by the
+        // allocation that consumes it (G-2c). The written value is I32, which
+        // is the only target type `lowerIncDec` accepts.
+        if case .unary(let op, let target, let unaryLocation)? = initializer,
+           op == .increment || op == .decrement {
+            if let annotation = annotation {
+                guard HIRType(from: annotation) == .i32 else {
+                    throw unsupported(
+                        "variable '\(name)': prefix '\(op)' yields I32, not '\(annotation)'",
+                        at: location
+                    )
+                }
+            }
+            let lowered = try lowerIncDec(
+                op: op, target: target, at: unaryLocation, into: &context
+            )
+            context.variableTypes[name] = lowered.type
+            return [
+                lowered.statement,
+                .allocVar(
+                    name: name, type: lowered.type, mutable: isMutable,
+                    initializer: lowered.value
+                ),
+            ]
+        }
         // `let x = try f() else ...`: the try unwraps the ok payload into x,
         // so x's type is the Result's payload type, not a Result itself.
         if case .tryExpression(let operand, let errorVar, let handler, _) = initializer {
@@ -2043,10 +2078,33 @@ public enum HIRLowerer {
             )
 
         case .unary(let op, let operand, let location):
+            // Prefix `++`/`--` are read-modify-write on an assignable target
+            // and yield the value they wrote. A store cannot live inside an
+            // expression node (the HIR declares none), so statement position
+            // lowers them — see `lowerIncDec`. Reaching here means an
+            // expression position the read-modify-write shape does not cover.
+            if op == .increment || op == .decrement {
+                throw unsupported(
+                    "prefix '\(op)' outside statement or variable-initializer position",
+                    at: location
+                )
+            }
+            // `+v` is the numeric identity: the interpreter's single-source
+            // `unaryValue` hands back the operand unchanged, so this lowers to
+            // the operand itself rather than to a node of its own. The guard
+            // keeps the rejection the interpreter raises for non-numbers.
+            if op == .plus {
+                let identity = try lowerExpr(operand, expected: nil, into: &context)
+                guard identity.type.isNumeric else {
+                    throw unsupported("unary plus on non-numeric operand", at: location)
+                }
+                return identity
+            }
             let hirOp: HIRUnaryOp
             switch op {
             case .minus: hirOp = .negate
             case .logicalNot, .not: hirOp = .logicalNot
+            case .bitwiseNot: hirOp = .bitwiseNot
             default:
                 throw unsupported("unary operator '\(op)' is not yet lowered to HIR", at: location)
             }
@@ -2067,6 +2125,17 @@ public enum HIRLowerer {
                 return LoweredExpr(
                     node: .unary(op: .logicalNot, operand: lowered.node, type: .boolean),
                     type: .boolean
+                )
+            case .bitwiseNot:
+                guard lowered.type == .i32 else {
+                    throw unsupported(
+                        "bitwise not needs an I32 operand, got '\(lowered.type)'",
+                        at: location
+                    )
+                }
+                return LoweredExpr(
+                    node: .unary(op: .bitwiseNot, operand: lowered.node, type: .i32),
+                    type: .i32
                 )
             case .abs:
                 // Constructed only by the abs intrinsic handler (G9); the
@@ -3700,6 +3769,108 @@ public enum HIRLowerer {
             hirCases.append(HIRMatchCase(caseName: enumCase.name, bindings: bindingNames, body: body))
         }
         return hirCases
+    }
+
+    // MARK: - Prefix increment / decrement (G-2c)
+
+    /// Lower prefix `++`/`--` to a read-modify-write on its target.
+    ///
+    /// The interpreter defines these in `evaluateIncDec` as "read the target,
+    /// add or subtract one, write it back, yield the written value" — I32
+    /// only, three assignable target shapes (variable, field, subscript). The
+    /// same three are lowered here, which is why one helper serves both
+    /// statement position and a variable initializer (`var m = ++n`): the
+    /// second form needs the written value as well as the write.
+    ///
+    /// The write lives in a statement because no HIR expression node carries a
+    /// side effect, and the returned `newValue` is the very node the write
+    /// stores rather than a re-read, so the two cannot drift apart.
+    private static func lowerIncDec(
+        op: UnaryOperator,
+        target: Expression,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> (statement: HIRStmt, value: HIRExpr, type: HIRType) {
+        // The direction lives in the operator, not in the constant: `--` is
+        // `subtract` by one, not `add` by minus one.
+        let baseOp: HIRBinaryOp = op == .increment ? .add : .subtract
+        let one = HIRExpr.intConst(value: 1, type: .i32)
+        switch target {
+        case .identifier(let name, _):
+            guard let varType = context.variableTypes[name] else {
+                throw unsupported("prefix '\(op)' on undeclared variable '\(name)'", at: location)
+            }
+            guard varType == .i32 else {
+                throw unsupported(
+                    "prefix '\(op)' target must be I32, got '\(varType)'", at: location
+                )
+            }
+            let value = HIRExpr.binary(
+                op: baseOp, lhs: .load(name: name, type: varType),
+                rhs: one, type: varType
+            )
+            // The read-back is the value the write just left. The interpreter
+            // returns the value it computed instead; for the I32 targets this
+            // grid accepts the two are the same, and reading back is what
+            // keeps `var m = ++n` from running the arithmetic a second time.
+            let readBack = HIRExpr.load(name: name, type: varType)
+            return (.storeVar(name: name, type: varType, value: value), readBack, varType)
+
+        case .member(let base, let fieldName, _):
+            let loweredBase = try lowerExpr(base, expected: nil, into: &context)
+            guard case .nominal = loweredBase.type,
+                  let fieldType = nominalFieldType(
+                      of: loweredBase.type, field: fieldName, in: context
+                  ) else {
+                throw unsupported(
+                    "prefix '\(op)' target must be a field of a known nominal type",
+                    at: location
+                )
+            }
+            guard fieldType == .i32 else {
+                throw unsupported(
+                    "prefix '\(op)' target must be I32, got '\(fieldType)'", at: location
+                )
+            }
+            let value = HIRExpr.binary(
+                op: baseOp,
+                lhs: .fieldGet(base: loweredBase.node, field: fieldName, type: fieldType),
+                rhs: one, type: fieldType
+            )
+            return (
+                .fieldStore(
+                    base: loweredBase.node, field: fieldName,
+                    value: value, fieldType: fieldType
+                ),
+                .fieldGet(base: loweredBase.node, field: fieldName, type: fieldType),
+                fieldType
+            )
+
+        case .subscript:
+            let read = try lowerExpr(target, expected: nil, into: &context)
+            guard read.type == .i32, case .subscriptGet(let container, let index, _) = read.node else {
+                throw unsupported(
+                    "prefix '\(op)' subscript target must be an I32 array element",
+                    at: location
+                )
+            }
+            let value = HIRExpr.binary(
+                op: baseOp, lhs: read.node, rhs: one, type: .i32
+            )
+            return (
+                .subscriptStore(
+                    container: container, index: index, value: value, elementType: .i32
+                ),
+                .subscriptGet(container: container, index: index, type: .i32),
+                .i32
+            )
+
+        default:
+            throw unsupported(
+                "prefix '\(op)' target must be a variable, a field or a subscript",
+                at: location
+            )
+        }
     }
 
     // MARK: - Array stores & compound assignment (G2 batch 2)
