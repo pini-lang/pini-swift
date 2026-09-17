@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-16T13:47+0800"
-refresh_note = "2026-09-16 **P4-β（测试面迁移）批**：新增「测试面迁移到 HIR 驱动」一条（默认方向与 `PINI_INTERP_ENGINE=ast` 方向各 **84 failures** 且**失败集合完全相同** ⇒ 迁移真实、非靠默认开关 · 未迁面 0 位移 · 探针与 P4-0 冻结件逐字节相同）。⚠️ 本批**不改用户可见行为**（A 类 50 文件只是换驱动入口），故不触发既有条目的重跑；`P4-α` 的「默认引擎翻转」一条仍为现值。"
+last_refresh = "2026-09-17T22:10+0800"
+refresh_note = "2026-09-17 **`G-3a`（L1 并发内建降载）批**：新增「三内建走同一张表，41 条缺口归零且不转绿」一条。要点 = 单源（`RuntimeOps.concurrencyBuiltins` 表两侧同读）· 夹具面 41 条 `call to unknown function` 归零 · 全量回归 64 条**集合相等**（fixed 0/new 0/still 64）· `ast` 方向逐条相同 · 契约 clean(61/61) · 变异反证级 2 只红对应不外溢。⚠️ **新发现一处判据失明**：探针 6 根**不含并发簇**（实测 0 条）⇒ 探针零位移对该面**无区分力**，已写进批次回填与阻塞队列。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -808,3 +808,46 @@ sha256 不同 ⇒ **二进制哈希不能当版本判据**，版本判定只认*
 （加上它只会让报错点从「未降载」变成「无引擎」，行为变差、无收益）；语言参考的递交
 （§1.3 第 4 步三条件中「实现侧有证据」不成立）。"""
 
+
+[[evidence]]
+id = "2026-09-17 G-3a 并发内建降载走同一张表：41 条缺口归零且不转绿"
+citable = false
+claim = "The three concurrency builtins the acceptance cluster dies on -- sleep, Error and CancelError -- gain a lowering rule, and the rule is a table both engines read: the lowerer's whitelist and the executor's dispatch both consult RuntimeOps.concurrencyBuiltins, so a name cannot be lowered on one side and go unanswered on the other. One definition, two engines: RuntimeOps now carries the argument rules, the sliced sleep loop and both constructors, and the interpreter's five call sites delegate to them instead of holding their own copies. The cluster's 41 call-to-unknown-function gaps go to zero and nothing turns green, which is the point rather than a shortfall: removing a first gap exposes the next one, so ok-construction rises 17 -> 50 and err 0 -> 8, together exactly the 41 that left."
+artifacts = [
+  "docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md",
+  "docs/issue-interpreter-hir-plan-2026-09-12.md",
+  "docs/issue-hir-blocker-queue-2026-09-17.md",
+  "docs/issue-hir-p4-gamma-plan-2026-09-16.md",
+  "Sources/PiniCore/Runtime/RuntimeOps.swift",
+  "Sources/PiniCore/Interpreter/Interpreter.swift",
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+]
+command = "swift build --disable-sandbox ; python3 tools/hir-chunk-run.py /tmp/g3a-classes.txt 3 /tmp/g3a-regression ; the same three chunks with PINI_INTERP_ENGINE=ast ; swift test --disable-sandbox --filter ConcurrencyTests|JoinAllTests|JoinWithinTests|CancellationTests ; env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/g3a-sweep.tsv ; python3 tools/hir-contract-check.py"
+output = "Fixture face: 7 concurrency directories, 71 .pini files; first gap call-to-unknown-function 41 -> 0 (sleep 33, Error 7, CancelError 1). The gap moves down a layer as planned: ok-construction 17 -> 50 and err 0 -> 8, together exactly +41, so the attribution closes with no remainder and the total stays 71. Full regression in three chunks: 64 failures, set-equal to the baseline (fixed 0 / new 0 / still 64). The same three chunks under PINI_INTERP_ENGINE=ast: 64, item-by-item identical to the default direction. Probe: 320 fixtures over 6 roots, unchanged in every slot (OK 255, PACKAGE_MEMBER 27, WARN_CHANNEL_ASYMMETRY 20, FRONTEND_FAIL 11, WARN_LLVM_RC_UNPROPAGATED 4, CHANGE_REFERENCE 2, HARNESS_DEPENDENT 1, FLIP BLOCKERS 0, leaks 0) -- but that face is not in the probe's roots, see the note. Contract check clean at 61/61 on all three anchors. Mutation, level two (delete the sleep entry alone): the 33 sleep fixtures return, ok-construction falls back to exactly 17, err holds at 8, the other three classes hold, so only the corresponding cases redden and nothing overflows; the mutated build lists sleep alone as an unknown function, which is what shows the other two names are still answered by the table. Level one (empty the table) did not compile and was not pursued. Source md5 is the witness, since Swift builds are not reproducible: RuntimeOps.swift 513bd22f1147158acfc89b41e4f47d94, restored byte-identical after the round."
+validated_at = "2026-09-17T22:10+08:00"
+status = "FRESH"
+note = """本格 = `G-3` 四批中的第 1 批（L1 并发内建降载），照 `G-2a` 的「表即白名单」定式，**单源**交付。
+
+⚠️ **两条口径，读数字前先看**：
+
+① **「17 条」与「41 条」都对，分母不同** —— 规划件 §1.4 的 17 是**测试面**（前四类 46 用例里的失败数），
+本条的 41 是**夹具面**（7 目录 71 个 `.pini`，含 B 类三目录）。
+
+② **「缺口归零」不是「转绿」** —— 41 条剥离后全部落到下一层（`'ok'` 17 → 50 · `'err'` 0 → 8，
+合计恰 +41）⇒ 全量回归仍 64 条红、**集合相等**。规划 §3.2 明写「不要把转绿数写进验收表」，
+本条按「该批去除的缺口数」记账。
+
+⭐ **本格实测发现一处判据失明，已登记**：**探针的 6 根不含并发簇**
+（实测 7 个并发目录的夹具在探针里 **0 条**）⇒ 本格的「探针零位移」是**必然的、不构成对本格改动的证据**。
+真证据 = 首缺口归零 + 变异反证 + 全量集合相等。凡以「探针零位移」为判据的 `G-3*` 批次，
+必须**同时给第二条判据**，否则该判据对该面没有区分力。
+
+⚠️ **变异反证只做到级 2**：级 1（整表清空为 `[:]`）**编译失败**，未查明是空字典的类型推断
+还是别处引用 —— 登记为器械限制，不硬做。
+
+**一处单源顺手消除的重复**：`builtinLocation` 原为两引擎各持一个字面量，现由 `RuntimeOps` 持有、解释器读它。
+
+**不在本批**：`joinAll` / `joinWithin` / `isCancel`（其回答要与 `Future` 值打交道，HIR 侧无表示）
+归 `G-3b` / `G-3c`；契约未动（仍 61）；调度器与值层未动；乙组 `D2` 的错误通道口径。
+"""
