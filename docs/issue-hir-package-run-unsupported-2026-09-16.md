@@ -107,7 +107,7 @@ if engine == .hir {
 | 子缺口 | 夹具 | 归谁 |
 |---|---|---|
 | 依赖模块的**命名空间**（两模块导出同名顶级符号 ⇒ 合并式降载保不住） | `…/demo3/app` | `docs/issue-hir-import-module-symbols-2026-09-16.md`（本单**不**认领） |
-| **vendored FFI 符号**（`[ffi] libs`，dlsym 第二段） | `examples/ffi_module` | `docs/issue-hir-vendored-ffi-unsupported-2026-09-17.md`（新立） |
+| **vendored FFI 符号**（`[ffi] libs`，dlsym 第二段） | `examples/ffi_module` | `docs/spec/issue/archive/issue-hir-vendored-ffi-unsupported-2026-09-17.md`（新立） |
 | 依赖模块被当入口跑（无 `main`）时**报错码两臂不同**（`ast E5-007` vs `hir E6-004`） | `demo/helper` · `demo3/app/frontend` · `…/syntax` | 本单（属**错误通道口径**，与乙组 `D2` 同族；只登记） |
 
 ⚠️ **本单判据面的那句「发现它的唯一姿势 = 显式传 `PINI_INTERP_ENGINE=hir` 跑全量回归」需要补一条**：

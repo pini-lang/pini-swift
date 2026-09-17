@@ -59,7 +59,7 @@ main|func() -> ():
 
 用户于 2026-09-16 裁决形态取 **C**（**限定为准 · 裸名为糖**），并点名出规划。规划件：
 
-> **`docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md`**
+> **`docs/spec/issue/archive/issue-hir-generic-enum-specialization-plan-2026-09-16.md`**
 > （分 `S0` 语言面登记 → `S1` 降载层三站 → `S2` 收口；**每阶段须单独点名**）
 
 本件两处表述经读码勘测**偏重**，收口时按规划件 §6 订正：

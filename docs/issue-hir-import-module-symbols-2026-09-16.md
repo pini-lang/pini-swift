@@ -74,7 +74,7 @@ L195（`testArgvPassthroughViaCLI` 的模块分支 —— 与 `argv` 缺口**叠
 
 - **未裁前不动源码**（本单只登记）。
 - 不改 `Package` 的字段（若路径 A 需要，另立决策）。
-- 不并入 `P4-1a`（该批已按「装配层」如实收口，见 `docs/issue-hir-p4-1-plan-2026-09-16.md` 的交付记录）。
+- 不并入 `P4-1a`（该批已按「装配层」如实收口，见 `docs/spec/issue/archive/issue-hir-p4-1-plan-2026-09-16.md` 的交付记录）。
 
 ## 7. 追加证据：形态三（2026-09-17，`A1` 批实测）
 

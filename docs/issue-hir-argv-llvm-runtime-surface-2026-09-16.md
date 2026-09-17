@@ -2,7 +2,7 @@
 
 > 状态：**Open**（2026-09-16 立案；**只登记不修**）
 > 发现于：P4-1b（`argv` / `moduleRoot` 降载层）实现之后 —— 该批只落了 **HIR 执行器侧**。
-> 关联：`docs/issue-hir-p4-plan-2026-09-16.md` 的 `P4-1b` 行；交付记录见 `docs/issue-hir-p4-1-plan-2026-09-16.md`。
+> 关联：`docs/issue-hir-p4-plan-2026-09-16.md` 的 `P4-1b` 行；交付记录见 `docs/spec/issue/archive/issue-hir-p4-1-plan-2026-09-16.md`。
 
 ## 1. 现象（实测，2026-09-16，`P4-1b` 交付后）
 

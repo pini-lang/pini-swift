@@ -287,7 +287,7 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
 | 分歧 | 归属 |
 |---|---|
 | `demo3/app`：两依赖模块**导出同名顶级符号**，合并式降载保不住命名空间 | **已有在册工单**（`docs/issue-hir-import-module-symbols-2026-09-16.md`）⇒ 本批**补证据不新建**（该单 §7 新增「形态三」） |
-| `ffi_module`：**vendored FFI 符号**（`[ffi] libs`，dlsym 第二段）在 HIR 侧无解析链 | **本批新立**：`docs/issue-hir-vendored-ffi-unsupported-2026-09-17.md`（Open，只登记不修） |
+| `ffi_module`：**vendored FFI 符号**（`[ffi] libs`，dlsym 第二段）在 HIR 侧无解析链 | **本批新立**：`docs/spec/issue/archive/issue-hir-vendored-ffi-unsupported-2026-09-17.md`（Open，只登记不修） |
 
 ⚠️ **一处口径订正**：`docs/issue-hir-package-run-unsupported-2026-09-16.md` 记的
 「CLI 在 `engine == .hir` 时**显式拒绝**目录运行」**已不成立**（实测该分支已移除，HIR 现在会进包通道）。

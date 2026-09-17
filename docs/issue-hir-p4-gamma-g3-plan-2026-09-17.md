@@ -126,7 +126,7 @@ L4  错误通道口径（断言形态不符）            3 条   归乙组 D2�
 ### 1.6 ⚠️ `P4-β` 的 B 类 43 条：现状订正（实测全绿，性质是「改指」不是「转绿」）
 
 `P4-β` 的迁移分类里，**B 类「挂起/并发内部 API」= 3 文件 / 43 用例**，
-当时记「保持驱动 `Interpreter`（`R1/R2` 的对象）」（`docs/issue-hir-p4-beta-migration-2026-09-16.md` §分类表 + §尾表）。
+当时记「保持驱动 `Interpreter`（`R1/R2` 的对象）」（`docs/spec/issue/archive/issue-hir-p4-beta-migration-2026-09-16.md` §分类表 + §尾表）。
 
 **本次实测（2026-09-17）**：
 
