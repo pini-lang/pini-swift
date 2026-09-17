@@ -1,0 +1,24 @@
+; CG-10 target fixture: a literal arm whose type differs from the scrutinee.
+;
+; The scrutinee is a String and the first two arms carry int literals, so those
+; arms must fall through and `case _:` must fire. Every other bare-scrutinee
+; fixture in the corpus matches on literals of the SAME type as the scrutinee,
+; so the "a mismatched literal never fires" half of the rule had no target: a
+; mutation that made a mismatched arm fire unconditionally moved no verdict at
+; all (measured 2026-09-15 for criteria-gap row CG-10).
+;
+; Why this fixture and not an inline test: the two interpreter arms share
+; RuntimeOps.matchArmMatches, so a mutation inside it moves both arms together
+; and any assertion that only compares the two arms stays green. The LLVM arm
+; emits its own comparison, so it is the only independent witness — and it only
+; runs over on-disk fixtures. Measured before committing: all three channels
+; agree on `wild` (5 bytes each).
+main|func() -> ():
+    match "s":
+        case 1:
+            print("one")
+        case 2:
+            print("two")
+        case _:
+            print("wild")
+    return

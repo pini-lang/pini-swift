@@ -675,3 +675,46 @@ note = """族粒度三段制（2026-09-17 用户固化）的**首例试点**，�
 
 **本批未做**：LLVM 侧的 `Array.append` 尚无运行时段（`emit` 会发射对未定义符号的调用）——
 不属本批判据面（四条用例都走解释器/HIR），如实登记；探针未因此新增阻塞（`FLIP BLOCKERS 0`）。"""
+
+[[evidence]]
+id = "2026-09-17 判据缺口台账五条（CG 批）"
+citable = false
+claim = "The five remaining rows of the HIR criteria-gap ledger are instrumentation work, and all five shared one property: the criteria could not see the branch they were supposed to guard. This batch makes them visible. The three channel pairs (reference vs HIR executor, reference vs the LLVM pipeline, HIR executor vs the LLVM pipeline) used to be covered by three separate instruments, so the union lived in a human habit; it is now one rerunnable entry that prints one line per edge and refuses to call an unmeasured edge green. The two-arm corpus parity is joined by a three-channel one, in its own test method because a skip under a closed LLVM gate would otherwise take the two-arm edge down with it; the lli invocation became a single source so the two harnesses cannot drift. One fixture was added for the literal-arm rule that had no target, and one mutation round showed the difference the three-channel assertion makes: under a mutation of a rule both interpreter arms share, the two-arm criterion stays green while the three-channel one goes red. One of the two branches named in the last row could not be witnessed at all: the LLVM arm emits invalid IR for a dictionary get, so that branch is recorded as partially disposed and the emitter defect is filed as its own ticket."
+artifacts = [
+  "tools/three-edge-union.py",
+  "Tests/PiniTests/CodeGen/LLVMChannel.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRExecutorTests.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffHeterogeneousLiteralArm.pini",
+  "docs/hir-criteria-gap-ledger.md",
+  "docs/issue-hir-cg-ledger-batch-2026-09-17.md",
+  "docs/issue-hir-dict-get-emitter-invalid-ir-2026-09-17.md",
+]
+command = "PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin python3 tools/three-edge-union.py --probe-out /tmp/cg-union-probe.tsv ; PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin python3 tools/hir-chunk-run.py /tmp/cg-classes.txt 3 /tmp/cg-regression (foreground, 3 chunks, 115 classes) ; same driver after git stash push -u for the baseline ; python3 tools/hir-contract-check.py ; git status --porcelain ; md5 -q Sources/PiniCore/Runtime/RuntimeOps.swift"
+output = "Three-edge union: ast<->hir 1 run / 0 failed / 0 skipped, ast<->llvm 89 run / 0 failed / 0 skipped, hir<->llvm 320 fixtures / FLIP BLOCKERS 0, verdict all three edges measured and green, exit 0. Regression: baseline 64 failing methods and this batch 64, chunked 26+18+20 in both, zero unrun, zero signals, sets equal so added 0 and fixed 0. Contract clean at 60/60 on each of llvm, printer and interp-hir. Probe: 319 to 320 fixtures, the only slot that moved is OK 254 to 255 and the other six are identical item by item. Mutation rounds: with the array negative-index tail count removed, the two-arm corpus criterion passed with 0 failures while the three-channel one failed; with the case-name comparison forced true it failed on an argument-count mismatch and with it forced false on a non-exhaustive match. Source restored byte for byte, md5 232246eeb33172dd2bd7f01746d1d627 equals the baseline, and git status shows no change under Sources/. The dictionary branch could not be witnessed: lli rejects the emitted IR with a ptr versus i32 type error, and run-llvm reports exit 0 anyway, which is why the probe files it as harness-dependent rather than as a blocker."
+validated_at = "2026-09-17T09:24+0800"
+status = "FRESH"
+note = """本批是**器械批**（台账自定归属「P4 前置 · 独立批次」），改动**不触碰 `Sources/`**——
+`git status` 实测无一行源码改动，这是「零行为变更」的最强保证，也是逐条对账能取真基线的前提。
+
+**⭐ 本批最有价值的一对读数**（同一变异、两条判据、一绿一红）：把数组负索引的尾部计数去掉后，
+两臂语料判据 **passed / 0 failures**（共用谓词让错值在两侧同时出现、相互抵消），
+三通道判据 **failed**（独立臂不看那个谓词）。⇒ 台账第 9 条记的「结构性失明」由**论证**变成**实测**，
+补第三臂也由**论证**变成**实测确证**。
+
+**⭐ 一处反直觉的如实记账**：第 11 条的分支（用例名比较）两次变异都**硬红**，但**都是「响的」失败**
+（恒真 → 参数数量不匹配；恒假 → match 未穷尽），因为下游有 arity 与穷尽性两道守卫
+⇒ 在它上面**做不出静默错值**。这不是判据弱，是坏值会先被守卫拦下。
+
+**⚠️ 第 12 条的字典分支卡在「独立臂不可用」而不是「语料未覆盖」**：补了候选夹具后实测，
+LLVM 臂生成**非法 IR**（lli 报 ptr 被当 i32 用）；而 `run-llvm` **丢弃 lli 的退出码**（rc=0）
+把它掩成非阻塞槽 `HARNESS_DEPENDENT`。⇒ 见证形态不可达 ⇒ 夹具**刻意不入仓**（会抬探针分母却换不到见证），
+另立工单 `docs/issue-hir-dict-get-emitter-invalid-ir-2026-09-17.md`（登记不修）。
+
+**过程失误三条（已就地订正）**：① 新器械首版把 XCTest 的嵌套 `Executed` 汇总行**求和**，89 被读成 267；
+② 三通道断言首版按**行**切分 LLVM 输出，而某夹具的字符串含真实换行 ⇒ 报出一处**假分歧**（改为逐字节比）；
+③ `swift build --product pini` **不产出运行时动态库** ⇒ 探针 LLVM 臂全线报 `Symbols not found`，
+整表落 `HARNESS_DEPENDENT`（形状合法的假红）。
+
+**一处可疑读数不替它编解释**：全量探针本批约 35 秒，而既有读数记 6 分 31 秒 / 11 分 49 秒；
+判定分布与基线逐项吻合，故倾向机器冷热差异，但**未证实**。"""

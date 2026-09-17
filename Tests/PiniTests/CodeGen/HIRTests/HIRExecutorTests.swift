@@ -292,6 +292,15 @@ final class HIRExecutorTests: XCTestCase {
         "testDiffLazyRef",
         "testDiffPointerLoad",
         "testDiffPointerStore",
+        // Added by the criteria-gap batch (CG-10). Its own first gap was nothing:
+        // the corpus had no fixture whose arm literal type differs from the
+        // scrutinee, so the "a mismatched literal never fires" half of the rule
+        // had no target and a mutation of it moved no verdict anywhere. The
+        // fixture exists to give that mutation something to move — see the note
+        // in the file itself and `testCorpusFixturesAgreeAcrossThreeChannels`
+        // for why the witness must be the LLVM arm rather than an arm-to-arm
+        // comparison.
+        "testDiffHeterogeneousLiteralArm",
     ]
 
     private static func fixtureDirectory() -> URL {
@@ -320,6 +329,68 @@ final class HIRExecutorTests: XCTestCase {
             let (ast, hir) = try runBothChannels(source)
             XCTAssertFalse(ast.isEmpty, "fixture \(name) produced no output on either channel")
             XCTAssertEqual(hir, ast, "channel output diverged for fixture \(name)")
+            exercised += 1
+        }
+
+        XCTAssertEqual(
+            exercised, HIRExecutorTests.inRangeFixtures.count,
+            "every declared in-range fixture must actually run"
+        )
+    }
+
+    /// The same corpus, with the LLVM arm in the comparison.
+    ///
+    /// Why it is a separate test rather than a third line in the two-arm one:
+    /// when the LLVM environment is unconfigured the gate throws `XCTSkip`,
+    /// which marks the whole method skipped. Folding the third arm into the
+    /// existing test would make the `hir⇄ast` edge disappear on any machine
+    /// without LLVM — and that edge is where the criteria are read from, so it
+    /// must not be hostage to a tool it does not need.
+    ///
+    /// Why it exists at all (criteria-gap ledger, CG-09): `RuntimeOps` holds the
+    /// rules **both** interpreter arms call, so a mutation inside one of them
+    /// moves both arms together and any arm-to-arm comparison stays green — the
+    /// mismatch cancels. The LLVM arm derives its comparisons from the IR it is
+    /// handed, so it is an independent observer; putting it in the comparison
+    /// turns that whole class of mutation from a silence into a failure.
+    ///
+    /// stdout only, deliberately. Two corpus fixtures (`testDiffTupleConstruct`
+    /// and `testDiffTupleConstructClang`) carry an `E7-001` warning on both
+    /// interpreter arms and nothing on the LLVM arm: the registered
+    /// diagnostic-channel asymmetry, produced by the shared front end, which the
+    /// LLVM arm has never forwarded. Their stdout is byte-equal across all three
+    /// channels, so comparing stdout keeps this assertion about the runtime
+    /// rules instead of about a diagnostic path that is owned elsewhere.
+    ///
+    /// Measured before landing (2026-09-17): all 57 declared fixtures pass, and
+    /// the only non-`OK` verdicts the probe reports for them are those two
+    /// warning-shape cases.
+    func testCorpusFixturesAgreeAcrossThreeChannels() throws {
+        let directory = HIRExecutorTests.fixtureDirectory()
+        var exercised = 0
+
+        for name in HIRExecutorTests.inRangeFixtures {
+            let path = directory.appendingPathComponent("\(name).pini").path
+            guard let source = try? String(contentsOfFile: path, encoding: .utf8) else {
+                XCTFail("missing fixture \(name).pini at \(path)")
+                continue
+            }
+            let (ast, hir) = try runBothChannels(source)
+            let llvm = try LLVMChannel.run(source, fileName: HIRExecutorTests.fileName)
+
+            // Byte comparison, not line-by-line. The interpreter arms report
+            // through `outputSink`, whose default is `print(line)` — one element
+            // per call, one trailing newline each — while the LLVM arm reports
+            // the raw stream. Splitting that stream on "\n" looks equivalent and
+            // is not: `testDiffLexical` prints a string containing a real
+            // newline, so splitting turns one element into two and reports a
+            // divergence that is an artefact of the comparison. Rebuilding the
+            // stream from the sink is the representation-free way to compare.
+            let expected = ast.map { $0 + "\n" }.joined()
+
+            XCTAssertFalse(ast.isEmpty, "fixture \(name) produced no output on any channel")
+            XCTAssertEqual(hir, ast, "interpreter arms diverged for \(name)")
+            XCTAssertEqual(llvm, expected, "the LLVM arm diverged from the interpreter arms for \(name)")
             exercised += 1
         }
 
