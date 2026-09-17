@@ -216,6 +216,8 @@ public enum HIRPrinter {
             return "readLine()"
         case .isAsciiDigit(let argument):
             return "is_ascii_digit(\(exprText(argument)))"
+        case .join(let future, _):
+            return "join(\(exprText(future)))"
         }
     }
 

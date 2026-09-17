@@ -1674,6 +1674,9 @@ public final class IREmitter {
 
         case .isAsciiDigit(let argument):
             return emitIsAsciiDigit(argument)
+
+        case .join:
+            fatalError("IREmitter: join has no emission — the lowerer has no rule for it")
         }
     }
 
@@ -2880,6 +2883,7 @@ public final class IREmitter {
         case .fileRead: return .string
         case .readLine: return .string
         case .isAsciiDigit: return .boolean
+        case .join(_, let type): return type
         }
     }
 

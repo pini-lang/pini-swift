@@ -1082,6 +1082,21 @@ public final class HIRExecutor: DebugHookHost {
                 return .string("")
             }
             return .string(IOLimits.truncateToLineLimit(line))
+
+        // MARK: join
+
+        /// `await f` / `wait f`: the suspension engine is the CPS evaluator,
+        /// which this engine does not have. The arm is here because the node
+        /// set and the contract entry move together — the coverage check reads
+        /// both directions, so an unacknowledged node fails the build rather
+        /// than sliding through. It fails loud instead of returning a silent
+        /// `.null`: a lowerer rule without the engine behind it must show up
+        /// as an error, not as a plausible-looking wrong value.
+        case .join:
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: `join` has no suspension engine",
+                location: HIRExecutor.noLocation
+            )
         }
     }
 

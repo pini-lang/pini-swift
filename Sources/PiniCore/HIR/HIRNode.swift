@@ -378,6 +378,16 @@ public indirect enum HIRExpr: Equatable {
     /// `handle.value` (G13): `bk_lazyref_value(handle)` returns the cached
     /// element box; the caller loads the element type out of it.
     case lazyRefValue(handle: HIRExpr, type: HIRType)
+
+    // MARK: G3c — join
+
+    /// `await f` / `wait f` (G3c): the node face the suspension semantics
+    /// hang off. `future` evaluates to a `Future`; once it resolves the join
+    /// site deconstructs the carried `ok` / `err`, so `type` is the
+    /// `Result<T>` the site yields. Where suspension lives is not settled by
+    /// this case: the CPS evaluator is what makes it suspend rather than
+    /// block (contract 4.2 reserved this face; G3c implements it).
+    case join(future: HIRExpr, type: HIRType)
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +
