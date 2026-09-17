@@ -1023,7 +1023,7 @@ Source → Lexer → Parser → AST → SemanticAnalyzer → TypeChecker
     范围守卫求值，超大 F64 触发 Swift trap；建议 wontfix 随旧 CodeGen 删除）、
     `docs/spec/issue/archive/issue-hir-collection-release-observability-2026-09-11.md`（集合释放唯一信号是
     24 条 IR 文本断言，执行等价判据失明；X3 触发止损点）、
-    `docs/issue-hir-defer-block-form-2026-09-11.md`（`defer:` 块形式报 E6-004：AST 包成
+    `docs/spec/issue/archive/issue-hir-defer-block-form-2026-09-11.md`（`defer:` 块形式报 E6-004：AST 包成
     `scopedBlock`，降级期无该分支）、
     `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（`s[1:3]` 对 CJK 按字节切出
     非法 UTF-8）、`docs/spec/issue/archive/issue-hir-aggregate-value-print-2026-09-10.md`（按 C5 更新，
