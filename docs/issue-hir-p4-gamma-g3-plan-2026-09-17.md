@@ -1,6 +1,6 @@
 # P4-γ / `G-3` 规划：并发迁移（`R1` = 保能力、迁到 HIR）
 
-> **批**：`P4-γ` 子批 **`G-3` 前置规划**（**纯规划**）｜**日期**：2026-09-17｜**状态**：§2 已裁 ①（2026-09-17；`.join` 节点面走 `spec §1.3`，已落 `docs/spec/adr/adr-040-hir-join-node.md`，契约 60 → 61）· **`G-3a` ✅ 已交付（2026-09-17，见 §10）** · **`G-3b` ✅ 已交付（2026-09-17，见 §11）**
+> **批**：`P4-γ` 子批 **`G-3` 前置规划**（**纯规划**）｜**日期**：2026-09-17｜**状态**：§2 已裁 ①（2026-09-17；`.join` 节点面走 `spec §1.3`，已落 `docs/spec/adr/adr-040-hir-join-node.md`，契约 60 → 61）· **`G-3a` ✅ 已交付（2026-09-17，见 §10）** · **`G-3b` ✅ 已交付（2026-09-17，见 §11）** · **`G-3c-1` ✅ 已交付（2026-09-17，见 §13）**
 > **上游**：`docs/issue-hir-p4-gamma-plan-2026-09-16.md` §8.4（五单元表）· `docs/issue-hir-blocker-queue-2026-09-17.md` §3 丙组
 > **裁决依据**：`D-P4-26`（取 `R1`，且排在 `G-6` 之前）· `D-P4-30`（记号归一：`R1` = 保）
 > **本件性质**：**只读勘测 + 落盘规划**。不建实现分支、不改 `Sources` / `Tests` / 契约正文。
@@ -608,3 +608,78 @@ done | sort | uniq -c | sort -rn
   上表 §12.2 列的是**已定位的关键成员**，不是完整清单；须在 `G-3c-2` 开工时现测。
 - **未动**任何文件：`Sources` / `Tests` / 契约正文 / 本件正文（§12 是唯一新增）。
 
+---
+
+## 13. 交付实录（`G-3c-1`，2026-09-17）
+
+**分支**：`agent/pini-dev/p4-gamma-g3c1-async-blocking-join`（起点 `df8395a`）
+
+⭐ **本批的形态与 `G-3a` / `G-3b` 不同**，读 §13.3 之前先记住这一点：
+那两批的缺口**逐层下落**（各 **0 条**转绿）；本批**部分真转绿**（夹具 **19** / 用例 **7**），
+其余**下落一层**（落到 `print` 一个 `Result` 值，已立案）。**两种形态都对**，但不可混写。
+
+### 13.1 改了什么 —— 五处落点，跨降载层与执行期
+
+| # | 落点 | 改了什么 |
+|---|---|---|
+| ① | `Sources/PiniCore/HIR/HIRModule.swift` | `HIRFunction` 增 `isAsync`（**默认 `false`**，既有构造点零改）。理由写在字段上：异步体的返回类型与「返回 `Result` 的同步函数」**同形**，单看类型分不出两种调用协议 |
+| ② | `HIRLowerer.lowerFunction` | 把 `decl.isAsync` 传进 `HIRFunction` |
+| ③ | `HIRLowerer` 表达式 switch | 新增 `.join` 降载规则：求值操作数，站点类型 = **操作数类型**（G-3b 已把异步调用点标成 `.result(ok:)`）⇒ **未新增 `HIRType` case**，契约计数不变 |
+| ④ | `HIRLowerer` 语句 switch | 新增 `.detachStatement` 降载规则 → `.detachStmt(inner:)` |
+| ⑤ | `HIRLowerer` 内建白名单区 + 成员调用区 | 新增 `isCancel` / `joinAll` / `joinWithin` 三条按名降载规则，与 `cancel` 成员方法降载 |
+| ⑥ | `HIRExecutor` 状态区 | **四项执行期状态改 `ThreadLocal`**（`currentEnv` / `callDepth` / `callStackNames` / `deferStack`，用计算属性包装 ⇒ 访问点零改）＋ 新增 `scheduler` 与 `currentFuture` |
+| ⑦ | `HIRExecutor` `case .call` | 新增 `isCancel` / `joinAll` / `joinWithin` / `cancel` 四条按名分派 |
+| ⑧ | `HIRExecutor` `case .join` / `.detachStmt` | 两处 **fail-loud 改为真实现**（镜像解释器同名分支的语义与报错形态） |
+| ⑨ | `HIRExecutor.invoke` | 拆为「分派 + `spawnAsync` + `invokeBody`」：异步体在 worker 线程跑，调用方拿 pending `Future`；两处退出路径都走 `closeScope()`；`flipIfLeaked` 在返回边界 |
+| ⑩ | `Sources/PiniCore/Runtime/RuntimeOps.swift` | **单源化**：`joinFuture` / `makeJoinAllFuture` / `flipIfLeaked` / `isCancelErrorValue` / `isResultValue` / `isErrResultValue` 六条规则搬到此层 |
+| ⑪ | `Sources/PiniCore/Interpreter/Interpreter.swift` | 上述六条改为**一行委托**（调用点零改）⇒ 两引擎跑**同一份**规则 |
+
+⚠️ **⑥ 不是「顺带加固」，是本批的必需项**（开工规划 §风险 B 要求实测）：
+`=>` 派发把体放到 worker 线程、调用方阻塞在 join 上，两边**同时**活 ⇒ 那四项从「单线程私有状态」
+变成「跨线程共享上下文」。AST 侧**已经为同一件事付过代价**（其注释记着无条件 `+=`/`-=` 引出的
+SIGTRAP/SIGSEGV）并把同样四项搬进了 `ThreadLocal`。⇒ 本批实测**必须随迁**，否则原样重现该竞态。
+
+**未动**：契约正文与计数（`62` 不变）· `SuspendEvaluator.swift`（890 行，属 `G-3c-2`）·
+`SuspendScheduler` / `Scheduler` · 测试文件 · `docs/spec/` 语言面。
+
+### 13.2 判据（全部实测）
+
+| 判据 | 读数 |
+|---|---|
+| **首缺口归零** | 8 目录 83 夹具：`join` 43 · `detach` 3 · `joinWithin` 5 · `joinAll` 2 · `cancel` 6 = **59 → 0** ✔ |
+| **闭合账目** | **59 = 19（rc 转 0，真跑通）+ 40（下落一层）**，**无余项** ✔ |
+| **无新增红**（全量，逐条） | **64 → 57**：转绿 **7** · 新增 **0** · 仍红 **57** ✔（逐条集合比对，非总数） |
+| `PINI_INTERP_ENGINE=ast` 方向 | **57 条，与默认方向逐条相同 = True**（基线 64）⇒ 本批未碰旧引擎 ✔ |
+| **契约** | `tools/hir-contract-check.py` **clean**（三锚点各 **62/62**，计数未变）✔ |
+| **全量探针** | **320** 夹具 / 6 根 · 逐槽相等（`OK 255` / `PACKAGE_MEMBER 27` / …）· **逐夹具零位移（0/320）** · `FLIP BLOCKERS 0` ✔ |
+| **变异反证（级 1）** | 禁用 `.join` 降载 ⇒ `join` 回红 **52** 条，且 = 34（`print`）+ 15（无报文）+ 2 + 1 **精确闭合**；其余族（`'ok'` 1 / `try-else` 1）**一字不动** ⇒ 归因成立、不外溢 ✔ |
+| **变异反证（级 2）** | 只禁用 `detach` ⇒ **精确 3 条**回红（= 无报文 −2 + `print` −1，闭合）；其余族零位移 ✔ |
+| 变异还原 | 两轮均 `md5 相符 = True` · 重建 `rc=0` ✔ |
+
+⚠️ **探针那条对本批无区分力**（与 `G-3a` / `G-3b` 同一失明形态）：探针 **6 根不含并发目录**
+（该面 0 条）⇒ 真证据是上表的首缺口归零 + 闭合账目 + 全量集合相等 + 两级变异。
+
+### 13.3 ⚠️ 判据部分未达（如实登记，须裁决）
+
+勘测件 §12.2 给本批写的判据是「59 条首缺口归零；**应当真转绿**」。
+
+**实测：前半达成（59 → 0），后半只部分达成** ——
+
+| 面 | 转绿 | 仍红 | 红因 |
+|---|:---:|:---:|---|
+| 夹具面 | **19** / 59 | 40 | **37** 条 `printing a Result value is outside the slice` ＋ 2 ＋ 1（§4 同族待查） |
+| 用例面（4 类） | **7** / 31 | 24 | 约 **20** 条同因 |
+
+⚠️ **本批未按此扩批吸收**（手册纪律：实测与预期不同时以实测收口、另立下一批），已立案：
+`docs/issue-hir-print-result-value-2026-09-17.md`（**只登记不修**，三方案待裁）。
+
+⚠️ **一处读数订正（不影响判据）**：勘测件 §12.1 记 `joinWithin` **6** / `joinAll` **1**，
+本批实测为 **5** / **2** —— **总数 7 不变**，属同层内的分布微调。勘测值为准与否未知，
+故两说并存登记，不替旧值编解释。
+
+### 13.4 未做范围
+
+真挂起 CPS（`G-3c-2`）· `G-3d` 的 43 条改指 · `G-4·G-5` · 删 `SuspendEvaluator` ·
+修在册工单 · `print` 一个 `Result` 值（已立案）· 未 push。
+
+**下一单元 = `G-3c-2`（真挂起 CPS）或点名其他，待点名。**

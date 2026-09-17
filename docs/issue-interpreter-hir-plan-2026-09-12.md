@@ -1323,3 +1323,22 @@ evidence_sweep `--check` **通过**（drift **1** = 上一条（探针判据收�
 **未做**：不给 `HIRLowerer` 加 `detach` 降载（加了会让节点从「不可达」变「可达而必失败」，行为变差）· **不实现两台引擎的行为**（节点今天不可达 ⇒ 写了也无法验证；归 `G-3c-1`，那时同一改动能拿到真证据）· 不给 `HIRType` 加 `future` case（`ADR-040` §3.1 已定：`Future` 是运行时值）。
 
 **下一单元**：`G-3c-1`（异步管道 + 阻塞 join），**待点名**。
+
+### `G-3c-1` ✅ 已交付（2026-09-17）—— 异步管道 + 阻塞 join
+
+**分支** `agent/pini-dev/p4-gamma-g3c1-async-blocking-join`（起点 `df8395a`）。
+**五处落点**跨降载层（`isAsync` 标记 · `.join` / `detach` 降载 · 三个 Future 内建的按名降载 · `cancel` 成员）
+与执行期（四项状态随迁 `ThreadLocal` · `scheduler` / `currentFuture` · `spawnAsync` ·
+`join` / `detach` 真实现 · 四条按名分派）。
+
+**判据（实测）**：夹具面首缺口 **59 → 0**（43 join · 3 detach · 5 joinWithin · 2 joinAll · 6 cancel）；
+**闭合账目 59 = 19 转绿 + 40 下落一层，无余项**；全量回归逐条 **64 → 57（转绿 7 / 新增红 0 / 仍红 57）**；
+`ast` 方向逐条相同；契约 **clean 62/62**（计数未变）；探针 **320 / 逐夹具零位移 / `FLIP BLOCKERS 0`**；
+变异反证两级成立（级 1 精确闭合不外溢 · 级 2 精确 3 条）。
+
+⚠️ **判据「应当真转绿」只部分达成**：夹具 **19** / 用例 **7**；其余 40 条落到
+`print` 一个 `Result` 值 —— **已立案** `docs/issue-hir-print-result-value-2026-09-17.md`（只登记不修）。
+⚠️ 本批**另含一处必需加固**：`HIRExecutor` 的四项执行期状态随 spawn 引入改 `ThreadLocal`（据此前的同类事故）。
+详见 `docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md` §13。
+
+**下一单元 = `G-3c-2`（真挂起 CPS）或点名其他，待点名。**
