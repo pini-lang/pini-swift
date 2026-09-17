@@ -1122,8 +1122,13 @@ public final class TypeChecker {
 
  private func isCScalarType(_ name: String) -> Bool {
  switch name {
+ // `CChar` is the C single byte character. ADR-033 D2 renamed this
+ // spelling from `Char` so the name can go to the language's grapheme
+ // character when that type lands (grid P0d), and so that spec section
+ // 2.7's "`Char` does not enter the FFI scalar set" becomes true of the
+ // implementation and not only of the prose.
  case "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
- "F32", "F64", "Bool", "Char", "Void", "Unit":
+ "F32", "F64", "Bool", "CChar", "Void", "Unit":
  return true
  default:
  return false
@@ -1192,7 +1197,13 @@ public final class TypeChecker {
 
  // MARK: - Phase 2a ADR-015 FFI：顶层签名静态校验
 
- /// 顶层 FFI 签名白名单（C 兼容标量，含 Char；Void/Unit 兼容 void 返回）。
+ /// 顶层 FFI 签名白名单（C 兼容标量；Void/Unit 兼容 void 返回）。
+ ///
+ /// ⚠️ **本集合不含 `Char`，也不含 `CChar`，且这不是缺口**：`checkFFITopLevelType`
+ /// 对**未知简单名**同样放行（见该函数注释：「shim 可能承载，放行；解析期 fail-fast 兜底」）
+ /// ⇒ 它**不是**一张有效白名单，而是一张「已知标量」表。单字节字符的**真正**判据在
+ /// `isCScalarType`（指针目标的 C 兼容判定），那里 2026-09-17 由 `Char` 改名为 `CChar`（`ADR-033 D2`）。
+ /// 本行原写「含 Char」，与该集合的实际内容不符 —— 一并订正。
  private static let ffiTopLevelScalars: Set<String> = [
  "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
  "F32", "F64", "Bool", "Void", "Unit"
