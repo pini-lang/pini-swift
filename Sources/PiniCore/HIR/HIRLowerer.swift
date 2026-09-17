@@ -500,7 +500,9 @@ public enum HIRLowerer {
                     decl: funcDecl, userTypes: userTypes, nominals: nominals
                 ) ?? returnType
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
-                    paramTypes: paramTypes, returnType: effectiveReturn, untypedParamIndices: untypedParamIndices(funcDecl)
+                    paramTypes: paramTypes,
+                    returnType: asyncBodyReturnType(declared: effectiveReturn, isAsync: funcDecl.isAsync),
+                    untypedParamIndices: untypedParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
                 // G14: foreign block signatures join the shared table so
@@ -1096,6 +1098,22 @@ public enum HIRLowerer {
 
     // MARK: - Functions
 
+    /// The type of the value an async (`=>`) body hands to its caller's join.
+    ///
+    /// The checker already pins this from the front end: `bodyReturns` requires
+    /// `Result<T, Error>` at a `=>` body's return position, which is why the
+    /// written forms there are `return ok(v)` / `return err(e)`, and why a bare
+    /// `=> ()` process keeps the void path. The interpreter states the same rule
+    /// from the other side -- its join passes a Result through untouched and
+    /// boxes anything else into `ok(v)` -- so narrowing this position to Result
+    /// is that rule written statically, not a second rule.
+    private static func asyncBodyReturnType(
+        declared: HIRType?, isAsync: Bool
+    ) -> HIRType? {
+        guard isAsync, let ok = declared else { return declared }
+        return .result(ok: ok)
+    }
+
     private static func lowerFunction(
         _ decl: FuncDecl,
         typeInference: TypeInference?,
@@ -1127,6 +1145,10 @@ public enum HIRLowerer {
             decl: decl, userTypes: userTypes, nominals: nominalTypes
         ) ?? returnType
 
+        // The definition and the signature table must state the same return
+        // type (see effectiveReturnType), including the async Result shape.
+        let bodyReturn = asyncBodyReturnType(declared: effectiveReturn, isAsync: decl.isAsync)
+
         let paramTypes = try resolveParamTypes(decl, userTypes: userTypes)
         let params: [HIRFunction.HIRParam] = zip(decl.params, paramTypes).map { param, type in
             HIRFunction.HIRParam(name: param.name, type: type)
@@ -1134,7 +1156,7 @@ public enum HIRLowerer {
 
         var context = FunctionContext(
             functionName: decl.name,
-            returnType: effectiveReturn,
+            returnType: bodyReturn,
             paramTypes: Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.type) }),
             typeInference: typeInference,
             moduleSignatures: moduleSignatures,
@@ -1148,7 +1170,7 @@ public enum HIRLowerer {
             traitDefaultsCollector: traitDefaultsCollector
         )
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(name: decl.name, params: params, returnType: effectiveReturn, body: body)
+        return HIRFunction(name: decl.name, params: params, returnType: bodyReturn, body: body)
     }
 
     // MARK: - Annotation resolution (G3/G4 user types)
