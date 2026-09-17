@@ -43,6 +43,7 @@
 | ADR-036 | 治理级 | 文档面收口——路线图退役与项目规范并入（`../issue/archive/pini-roadmap-next.md` 实测 79% 内容过时 → 抽北极星执行指引与 T14 现状入规范后归档 / `../issue/archive/pini-project-spec.md` 分拣：目录三分类 + `.gitignore` 基线 + 清单 schema + 脚手架校验 + DoD 移交规范新第 8 节，设计原则对照与资产映射表不随迁 / 顺带订正 `.pini/version` → `.pini/baseline` 在规范与语言参考里未跟进的两处） | active | `adr-036-doc-surface-closeout.md` |
 | ADR-037 | 语言级 | 泛型枚举用例构造的形态与类型实参挂点（**限定形态 `枚举名<实参…>.用例(载荷…)` 为准**——父枚举与实参均由书写给出、实参个数可静态校验 / **裸名形态为糖**——按 ADR-026 D1 三档解析父枚举后逐位绑定，与限定形态同一语义，**代价 = 实参个数校验落运行期** / 文法零改动：`primary-atom` + `generic-construct` + 消歧规则 3.3 已覆盖该拼写 / 稳定性 **Experimental** ⇒ 本轮**不递交**语言参考） | active | `adr-037-generic-enum-construction-form.md` |
 | ADR-038 | 语言级 | 数值字面量的转换与 `abs` 的定义域：`abs` 放宽到整数与小数、各自保型；整数字面量**不**隐式转为小数（要小数处须写 `0.0`）。本件只登记，实现另批 | active | `adr-038-numeric-literal-conversion.md` |
+| ADR-039 | 语言级 | 标签 `break` 的定向范围与标签命名规则：`break 标签` 可定向**任意带标签结构**（含 `if` 块，取「保留 ast 行为」）；`continue 标签` **仅循环标签有效**（明文加固）；内层同名标签**遮蔽**外层（最近匹配）；标签与变量**独立命名空间**。依据 = EBNF 两条注释的不对称（对 `continue` 设限、对 `break` 不设限）＋「标签落在 if/while/for 上」明文；触及契约节点 3/11/12（含一处与实测不符的「fail-loud 对齐」表述）⇒ 依 `P4-γ` 硬停条件走 §1.3，规范与实现**同批不可拆** | active | `adr-039-label-break-target-and-naming.md` |
 
 ## 备注
 

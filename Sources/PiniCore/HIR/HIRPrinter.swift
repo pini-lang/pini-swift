@@ -40,8 +40,12 @@ public enum HIRPrinter {
             return ["\(pad)\(kw) \(name): \(type.llvmSpelling)\(initPart)"]
         case .storeVar(let name, _, let value):
             return ["\(pad)\(name) = \(exprText(value))"]
-        case .ifStmt(let condition, let thenBody, let elseBody):
-            var lines = ["\(pad)if \(exprText(condition)):"]
+        case .ifStmt(let label, let condition, let thenBody, let elseBody):
+            // ADR-039: a labeled `if` prints its label, mirroring the source
+            // form `label|if cond:`. An unlabeled `if` prints exactly as
+            // before, so existing printer snapshots do not move.
+            let labelPart = label.map { "\($0)|" } ?? ""
+            var lines = ["\(pad)\(labelPart)if \(exprText(condition)):"]
             lines.append(contentsOf: dumpBody(thenBody, indent: level + 1))
             if let elseBody = elseBody {
                 lines.append("\(pad)else:")

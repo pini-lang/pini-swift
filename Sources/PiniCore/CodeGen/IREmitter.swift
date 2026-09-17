@@ -30,32 +30,49 @@ public final class IREmitter {
     /// are invalid IR).
     private var terminated = false
 
-    /// Enclosing loop labels, innermost last. `break` targets `exit`;
+    /// Enclosing interruptible frames, innermost last. `break` targets `exit`;
     /// `continue` targets `continueTarget` (the step entry when the loop has
     /// a step block, else the header) — labeled forms (depth > 1, ADR-014)
     /// target the depth-th frame's `header`. With an empty stack both lower
     /// to a runtime panic (interpreter parity: a bare break/continue
     /// escaping to the top level errors).
-    private struct LoopFrame {
+    ///
+    /// ADR-039 widened this from "loop frames" to "interruptible frames": a
+    /// labeled `if` block is a frame too, so `break 标签` may leave it. The
+    /// two resume labels are meaningless for such a frame (`continue` resolves
+    /// to loop frames only) and are set to its merge block, which is also its
+    /// `exit` — leaving a labeled `if` resumes right after it.
+    private struct ControlFrame {
         let exit: String
         let header: String
         let continueTarget: String
-        /// Index of the loop BODY's defer frame in `pendingDefers` (the
-        /// frame pushed after this loop frame was pushed). A break/continue
-        /// out of this loop flushes defer frames from the innermost one down
-        /// to this index, both included — leaving the loop's body block runs
+        /// `false` for a labeled `if` block: a frame `break` may leave but
+        /// `continue` may not target.
+        let isLoop: Bool
+        /// Index of the frame's BODY's defer frame in `pendingDefers` (the
+        /// frame pushed after this frame was pushed). A break/continue
+        /// out of this frame flushes defer frames from the innermost one down
+        /// to this index, both included — leaving the body block runs
         /// its defers (interpreter: the signal unwinds through
         /// executeBlock's own popDeferScope).
         let deferBase: Int
-        /// Index of the loop BODY's release frame in `pendingReleases`, the
-        /// counterpart of `deferBase`: a break/continue out of this loop
+        /// Index of the frame's BODY's release frame in `pendingReleases`, the
+        /// counterpart of `deferBase`: a break/continue out of this frame
         /// releases the collection handles registered in every frame from the
         /// innermost one down to this index, both included. Leaving the body
         /// block abandons those handles, and the runtime has no other holder.
         let releaseBase: Int
     }
 
-    private var loopStack: [LoopFrame] = []
+    private var controlStack: [ControlFrame] = []
+
+    /// Merge blocks that a `break` jumped to. `emitIf` decides whether to emit
+    /// its merge label from whether both branches were terminated by their own
+    /// terminators — but a `break` that leaves the `if` *is* a terminator and
+    /// still lands on that label, so the label has to be emitted (ADR-039).
+    /// Only non-loop frames record here: a loop's exit label is emitted
+    /// unconditionally.
+    private var breakMergeLabels: Set<String> = []
 
     /// Index in `pendingDefers` where the current function's (or closure's)
     /// defer frames begin. A `return` flushes defer frames down to this
@@ -330,7 +347,8 @@ public final class IREmitter {
         builder.reset()
         scopes = [[:]]
         slotCounters = [:]
-        loopStack = []
+        controlStack = []
+        breakMergeLabels = []
         deferScopeBase = 0
         pendingDefers.removeAll()
         // Frame 0 of this function is its body block, pushed by the
@@ -565,8 +583,8 @@ public final class IREmitter {
             bodyIR += builder.fmtStore(value: lowered.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
             emitRetainIfAliased(value, lowered)
 
-        case .ifStmt(let condition, let thenBody, let elseBody):
-            emitIf(condition: condition, thenBody: thenBody, elseBody: elseBody)
+        case .ifStmt(let label, let condition, let thenBody, let elseBody):
+            emitIf(label: label, condition: condition, thenBody: thenBody, elseBody: elseBody)
 
         case .whileStmt(let condition, let loopBody, let step):
             emitWhile(condition: condition, loopBody: loopBody, step: step)
@@ -639,22 +657,29 @@ public final class IREmitter {
         }
     }
 
-    /// `break`: the depth-th enclosing loop's exit (1 = innermost); without
-    /// enough enclosing loops, a runtime panic — the interpreter errors when
+    /// `break`: the depth-th enclosing frame's exit (1 = innermost); without
+    /// enough enclosing frames, a runtime panic — the interpreter errors when
     /// a break escapes to the top level (probe-verified), so this is
-    /// fail-loud parity, not a silent skip. Leaving the loop also leaves its
-    /// body block, so the defer frames down to the loop body's own frame run
+    /// fail-loud parity, not a silent skip. Leaving the frame also leaves its
+    /// body block, so the defer frames down to that body's own frame run
     /// before the jump.
+    ///
+    /// The frame this leaves may be a labeled `if` rather than a loop
+    /// (ADR-039). Its exit is an `if.end.N` merge label, which `emitIf` would
+    /// otherwise skip when both branches end in their own terminators — so the
+    /// label is recorded as targeted. A loop's exit label needs no such note:
+    /// `emitWhile`/`emitForIn` emit it unconditionally.
     private func emitBreak(depth: Int) {
-        if loopStack.count >= depth {
-            let frame = loopStack[loopStack.count - depth]
+        if controlStack.count >= depth {
+            let frame = controlStack[controlStack.count - depth]
             flushDefers(downTo: frame.deferBase)
-            // H1-B: breaking abandons the loop body's scope (and every scope
+            // H1-B: breaking abandons the body scope (and every scope
             // nested inside it) before the jump, so their handles are released
             // here. Iterations that end normally release the same handles at
             // the body block's tail — separate runtime paths, separate copies
             // of the same release code.
             emitReleases(downTo: frame.releaseBase)
+            if !frame.isLoop { breakMergeLabels.insert(frame.exit) }
             bodyIR += builder.fmtBr(labelName: frame.exit) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: break outside loop")
@@ -666,14 +691,22 @@ public final class IREmitter {
 
     /// `continue` (G15): unlabeled jumps to the innermost frame's
     /// continue-target (step entry when present, else the header); a labeled
-    /// form (depth > 1) jumps to the depth-th frame's header (interpreter
-    /// parity: a matching label resumes that loop). The checker rejects a
-    /// continue outside any loop, so the panic here is fail-loud parity.
-    /// Ending the iteration leaves the loop's body block, so the defer
+    /// form (depth > 1) jumps to the depth-th frame's header. The checker
+    /// rejects a continue outside any loop, so the panic here is fail-loud
+    /// parity. Ending the iteration leaves the loop's body block, so the defer
     /// frames down to that block's frame run before the jump.
+    ///
+    /// ⚠️ The `depth > 1` target is **not** interpreter parity, despite what
+    /// this comment used to claim. The interpreter runs the target loop's step
+    /// on a matching `continue`, while `header` is that loop's *condition*: for
+    /// a `while` with a step this skips the step, and for a `for` it skips the
+    /// increment and re-enters the bounds check with the index unchanged. That
+    /// is a defect of its own, older than and independent of ADR-039 (which
+    /// only widened the frame stack to include `if` blocks), and it is filed
+    /// separately rather than fixed here.
     private func emitContinue(depth: Int) {
-        if loopStack.count >= depth {
-            let frame = loopStack[loopStack.count - depth]
+        if controlStack.count >= depth {
+            let frame = controlStack[controlStack.count - depth]
             flushDefers(downTo: frame.deferBase)
             // H1-B: ending the iteration early abandons the scopes it held;
             // release them before the jump (same contract as emitBreak).
@@ -1100,7 +1133,7 @@ public final class IREmitter {
         }
     }
 
-    private func emitIf(condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?) {
+    private func emitIf(label: String?, condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?) {
         let cond = emitExpr(condition)
         let id = builder.freshLabel()
         let thenLabel = "if.then.\(id)"
@@ -1108,11 +1141,26 @@ public final class IREmitter {
         let elseLabel = elseBody != nil ? "if.else.\(id)" : endLabel
         bodyIR += builder.fmtCondBr(cond: cond.ssaName, thenLabelName: thenLabel, elseLabelName: elseLabel) + "\n"
 
+        // ADR-039: a labeled `if` is an interruptible frame, so a `break 标签`
+        // inside either branch jumps to `endLabel`. It is not a `continue`
+        // target, so its two resume labels are never read; they point at the
+        // merge block, which is what "leaving the `if`" resumes at. Each branch
+        // gets its own push so the frame's `deferBase`/`releaseBase` name that
+        // branch's body frame — the same trick `emitWhile` uses for body/step.
+        let isFrame = label != nil
+
         bodyIR += "\(thenLabel):\n"
+        if isFrame {
+            controlStack.append(ControlFrame(
+                exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
+                deferBase: pendingDefers.count, releaseBase: pendingReleases.count
+            ))
+        }
         scopes.append([:])
         terminated = false
         emitBlock(thenBody)
         let thenTerminated = terminated
+        if isFrame { controlStack.removeLast() }
         if !thenTerminated {
             bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
         }
@@ -1121,10 +1169,17 @@ public final class IREmitter {
         var elseTerminated = false
         if let elseBody = elseBody {
             bodyIR += "\(elseLabel):\n"
+            if isFrame {
+                controlStack.append(ControlFrame(
+                    exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
+                    deferBase: pendingDefers.count, releaseBase: pendingReleases.count
+                ))
+            }
             scopes.append([:])
             terminated = false
             emitBlock(elseBody)
             elseTerminated = terminated
+            if isFrame { controlStack.removeLast() }
             if !elseTerminated {
                 bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
             }
@@ -1132,9 +1187,11 @@ public final class IREmitter {
         }
 
         // The merge block is skippable only when both branches are covered by
-        // an else and both returned. Without an else, the condition's false
-        // edge targets the merge label, so it must always be emitted.
-        if elseBody != nil && thenTerminated && elseTerminated {
+        // an else and both returned — and, since ADR-039, only when no `break`
+        // jumped to it: such a jump is itself a terminator, so without this the
+        // label would be branched to but never defined.
+        let endTargeted = breakMergeLabels.contains(endLabel)
+        if elseBody != nil && thenTerminated && elseTerminated && !endTargeted {
             terminated = true
         } else {
             bodyIR += "\(endLabel):\n"
@@ -1164,11 +1221,11 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : condLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+        controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
-        loopStack.removeLast()
+        controlStack.removeLast()
         if !terminated {
             bodyIR += builder.fmtBr(labelName: step != nil ? stepLabel : condLabel) + "\n"
         }
@@ -1178,11 +1235,11 @@ public final class IREmitter {
             bodyIR += "\(stepLabel):\n"
             // Inside the step, an unlabeled continue goes to its own end
             // (interpreter: continue in the step block → next iteration).
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+            controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
             scopes.append([:])
             terminated = false
             emitBlock(step)
-            loopStack.removeLast()
+            controlStack.removeLast()
             if !terminated {
                 bodyIR += builder.fmtBr(labelName: stepEndLabel) + "\n"
             }
@@ -1247,7 +1304,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : incLabel
-        loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+        controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
         scopes.append([:])
         terminated = false
         // Pattern bindings: a fresh slot per iteration (the loop scope makes
@@ -1288,7 +1345,7 @@ public final class IREmitter {
         // the body's slot. Hand the same bindings to the step scope.
         let patternBindings = scopes[scopes.count - 1]
         emitBlock(body, seedingReleases: patternReleases)
-        loopStack.removeLast()
+        controlStack.removeLast()
         if !terminated {
             bodyIR += builder.fmtBr(labelName: step != nil ? stepLabel : incLabel) + "\n"
         }
@@ -1296,11 +1353,11 @@ public final class IREmitter {
 
         if let step = step {
             bodyIR += "\(stepLabel):\n"
-            loopStack.append(LoopFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+            controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
             scopes.append(patternBindings)
             terminated = false
             emitBlock(step)
-            loopStack.removeLast()
+            controlStack.removeLast()
             if !terminated {
                 bodyIR += builder.fmtBr(labelName: stepEndLabel) + "\n"
             }
@@ -3430,7 +3487,8 @@ public final class IREmitter {
         let savedScopes = scopes
         let savedSlotCounters = slotCounters
         let savedTerminated = terminated
-        let savedLoopStack = loopStack
+        let savedControlStack = controlStack
+        let savedBreakMergeLabels = breakMergeLabels
         let savedDeferScopeBase = deferScopeBase
         let savedReturnType = currentReturnType
         let savedIsMain = currentIsMain
@@ -3447,7 +3505,8 @@ public final class IREmitter {
         scopes = [[:]]
         slotCounters = [:]
         terminated = false
-        loopStack = []
+        controlStack = []
+        breakMergeLabels = []
         // A return inside the closure must not run the enclosing function's
         // defers: defer frames opened by the closure live above this base.
         deferScopeBase = pendingDefers.count
@@ -3508,7 +3567,8 @@ public final class IREmitter {
         scopes = savedScopes
         slotCounters = savedSlotCounters
         terminated = savedTerminated
-        loopStack = savedLoopStack
+        controlStack = savedControlStack
+        breakMergeLabels = savedBreakMergeLabels
         deferScopeBase = savedDeferScopeBase
         currentReturnType = savedReturnType
         currentIsMain = savedIsMain

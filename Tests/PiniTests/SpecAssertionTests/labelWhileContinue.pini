@@ -1,0 +1,13 @@
+main|func() -> ():
+    var k = 0
+    var total = 0
+    outer|while k < 3:
+        var m = 0
+        inner|while m < 4:
+            m = m + 1
+            if m == 2:
+                continue inner
+            total = total + m
+        k = k + 1
+    print(total)
+    return

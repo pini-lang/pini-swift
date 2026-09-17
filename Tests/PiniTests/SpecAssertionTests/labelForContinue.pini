@@ -1,0 +1,11 @@
+main|func() -> ():
+    var s = 0
+    outer|for (v,) in [1, 2, 3]:
+        for (w,) in [10, 20]:
+            if v == 2:
+                if w == 10:
+                    continue outer
+            s = s + v * w
+        s = s + 100
+    print(s)
+    return

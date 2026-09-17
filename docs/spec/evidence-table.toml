@@ -26,33 +26,7 @@ scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.m
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
 last_refresh = "2026-09-16T13:47+0800"
 refresh_note = "2026-09-16 **P4-β（测试面迁移）批**：新增「测试面迁移到 HIR 驱动」一条（默认方向与 `PINI_INTERP_ENGINE=ast` 方向各 **84 failures** 且**失败集合完全相同** ⇒ 迁移真实、非靠默认开关 · 未迁面 0 位移 · 探针与 P4-0 冻结件逐字节相同）。⚠️ 本批**不改用户可见行为**（A 类 50 文件只是换驱动入口），故不触发既有条目的重跑；`P4-α` 的「默认引擎翻转」一条仍为现值。"
-last_sweep = "2026-09-16T10:33:00+08:00"
-[[evidence]]
-id = "2026-09-13 工单核验、归档与状态刷新"
-citable = false
-claim = "Ticket-sweep batch: every host-level ticket and the one spec-level proposal is re-verified against source, registry and ADR evidence; the five that are substantively complete are archived to docs/spec/issue/archive with their status lines backfilled, four in-place status lines that had drifted are refreshed, and sixteen stay open with their open items enumerated"
-artifacts = [
-  "docs/spec/issue/archive/issue-e7-001-false-unused-warning-2026-09-12.md",
-  "docs/spec/issue/archive/issue-binop-dead-cases-2026-09-04.md",
-  "docs/spec/issue/archive/issue-prefix-increment-semantics-2026-09-04.md",
-  "docs/spec/issue/archive/issue-host-optional-slice-2026-08-28.md",
-  "docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md",
-  "docs/issue-ffi-module-2026-08-27.md",
-  "docs/issue-tuple-annotation-arity-mismatch-2026-09-10.md",
-  "docs/issue-llvm-get-unchecked-2026-09-04.md",
-  "docs/issue-lexer-gap-closure-2026-08-29.md",
-  "Sources/PiniCore/Semantic/SemanticAnalyzer.swift",
-  "Sources/PiniCore/AST/Expressions/BinaryExpr.swift",
-  "Sources/PiniCore/Interpreter/Interpreter.swift",
-  "Sources/PiniCore/Type/TypeInference.swift",
-  "Sources/PiniCore/HIR/HIRLowerer.swift",
-  "docs/spec/evidence-table.toml",
-]
-command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check"
-output = "31 documents triaged (29 host-level tickets, 1 spec-level proposal, plus the plan and audit carriers held by design): 5 archived, 16 kept open, 9 untouched by design. doc-links: 489 references checked, all pass. comment-lint: L1-L6 all green (L6 adjudicates every ADR ID cited by the new status lines). evidence_sweep --check: parse plus schema ok, entries 10 -> 11, status drift 0, advisory cap 100 within, and this entry stops being reported as a dangling citation."
-validated_at = "2026-09-13T10:00+08:00"
-status = "PENDING_DELETE"
-note = "核验方式 = 5 个只读核验单元并行（全程未编译、未跑探针），每条结论都落到「文件路径 + 符号名」，并标注证据级别。① 归档 5 张：`issue-e7-001-false-unused-warning`（`SemanticAnalyzer` 的成员调用接收者分支，提交 3ce97c0）、`issue-binop-dead-cases`（`BinaryExpr.swift` 三个死面 case 已删，spec 规则 3.11 已钉定，b6fe569）、`issue-prefix-increment-semantics`（统一读-改-写回 + 静态拒不可赋值目标 + 四测试 + CHANGELOG）、`issue-host-optional-slice`（解释器三通道下标语义落地，文中 20 个 M2 XCTSkip 全仓已无痕）、`issue-gated-stale-fixtures`（四夹具与后端语义修复落地，门判据由 LLVMGate 运行期化，66b0c9c）。② 时间线矛盾合并 1 处：`issue-gated-stale-fixtures` 头部并存 Open 与 Closed 两行状态，合并为一行并注明末句属文本滞后。③ 状态刷新 4 张（留原位）：`issue-ffi-module`（B1-B3 与 P3 已出账、P2 已转出，真开放项只剩 P1/P4）、`issue-tuple-annotation-arity-mismatch`（「源码未改」失真，G2 已改 TypeInference 两处而三处空标签生产点仍在）、`issue-llvm-get-unchecked`（命名 unchecked 应为 getUnchecked、越界语义已由 ADR-028 D-1 改为 UB、D-6 把该通道划为解释器专用、正文所指 CodeGen/Emitters 已随 M6b 删除，开放面收窄为 Dictionary.get）、`issue-lexer-gap-closure`（补记状态行：核心 LANDED / 六节残余八项实测仍成立）。④ 入向引用 18 处 / 11 文件重定向到 archive 新位置；源码注释与 CHANGELOG 里的裸名溯源标签按判据保留（加路径会撞注释门禁的文档名字面规则）。⑤ 判为仍开放的 16 张逐张给出开放项，头部状态行均未滞后。⑥ 未做：未 push；未改动 Sources/Tests/examples 的任何内容；未处理非 .md 形态的死引用（经裁决按历史标签保留）；`issue-selfhost-comment-lint-defects` 漏记其一（宿主二次加固引入的 PINI_RG 探测差异），本轮未并入，留待下一批。"
+last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
 citable = false
@@ -73,7 +47,7 @@ artifacts = [
 command = "bash tools/check-doc-links.sh && bash hooks/comment-lint.sh docs Sources Tests tools hooks && python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check"
 output = "Probe fixtures run through .build/debug/pini and /tmp/pini-build/debug/pini, both agreeing: unterminated interpolation and backslash-then-EOF exit 1 with E1-002, while the unterminated plain string, a lone invalid character, an unclosed block comment and five malformed numeric literals all exit 0. Lexer.swift carries six throw sites in total; three of them sit inside scanInterpolationExpression. Diagnostics.en.toml resolves to 70 sections split E2 23 / E3 11 / E4 14 / E5 15 / E6 5 / E7 2, with no E1 section, and the E1-002 message resolves to a hardcoded case in ErrorFormatter.swift. doc-links: 520 references checked, all pass, after the selfhost plan's two bare relative paths were disambiguated (that gate had been red on an untracked document). comment-lint: L1-L6 all green. evidence_sweep --check: parse plus schema ok, entries 11 -> 12, status drift 3, advisory cap 100 within."
 validated_at = "2026-09-13T22:49+08:00"
-status = "STALE"
+status = "PENDING_DELETE"
 note = "违例面收窄到两条同族路径，均已定位到符号：H1 = 常规字符串路径的反斜杠后 EOF 守卫（Lexer.swift:580）；H2 = scanInterpolationExpression()（:622-681）体内三处 throw（:639 内层字符串反斜杠后 EOF / :674 遇换行且 depth>0 / :679 循环退出即 EOF）。本单的诊断价值在**结构**而非计数：相邻代码在同一契约上分叉 —— :571-576 明文实现了 ADR-021（注释直引 ADR-021，换行即 break），而 :673-675 同一情形却 throw。并列登记未违反项以免把 ADR-021 读成普遍失效：:539/:545 的 invalidCharacter 在实测输入上不可达（0x / 0b / 1e / 1.2.3 / 0xZZ 全部 rc=0 且按 D1 回退）。**订正两条既有记录**（本批实测推翻）：① 2026-09-13 L5 日志记该插值函数 4 处 throw，源码实测为 3 处；② 同日志记 tokens 对词法错误恒 exit 0，实测为多数成立、H1/H2 是反例（该断言过度概括）。盲区三重：语料 123 行仅 1 处插值且闭合（:93）、门禁只对拍双侧都能出 token 的输入、rc 语义在两条路径上不一致。**语料刻意未落**：落未闭合用例会使 L0 立刻转红，而 red-window 红名单机制（selfhost 计划 §6.1）尚未获裁 ⇒ 落语料即要么违 ADR-024 D9 要么开未授权红窗口，故语料随修复一起落。修复侧留一条待裁：插值路径若照 :575 隐式终止会产生语义歧义（插值体为不完整表达式），三路线 A 降级为普通 string token（本单倾向，与 ADR-021 D1 自述理由一致）/ B 隐式补右括号（触 D9）/ C 在 ADR-021 内开显式例外（契约级，走 spec §1.3）。**未做**：未改任何源码与语料、未跑构建、未跑全量回归、未改任何 ADR 或 spec 正文；H1/H2 的修复归属格未定。"
 
 
@@ -303,7 +277,7 @@ artifacts = [
 command = "env -u PYTHONPATH python3 tools/hir-parity-probe.py --out /tmp/p4-0-final.tsv && swift test --disable-sandbox --scratch-path /tmp/pini-build && PINI_INTERP_ENGINE=hir swift test --disable-sandbox --scratch-path /tmp/pini-build"
 output = "PROBE: all six roots, 319 fixtures, exit 0, process leaks 0. Distribution OK 254 / WARN_CHANNEL_ASYMMETRY 20 / PACKAGE_MEMBER 27 / FRONTEND_FAIL 12 / WARN_LLVM_RC_UNPROPAGATED 4 / CHANGE_REFERENCE 2, summing to 319, with FLIP BLOCKERS 11 to 0. Reconciliation is per fixture, not per total: both key sets are 319, exactly 4 verdicts changed and all four went GAP_EXEC to OK -- testBuiltinMathFloatsViaLLI, testDiffStdlib, examples/stdlib.pini and examples/ffi.pini -- and the other 315 are unchanged, so the closed account for the 7 real blockers is 3 cleared by the previous session's WIP commit plus 4 cleared here, with no remainder. The frozen dump is /tmp/p4-0-p4close-e54b49a.tsv, md5 84deca2fe5b48ccb4e0af5ee19ad3929, 37377 bytes, and a second independent full run wrote /tmp/p4-0-final-recheck.tsv which cmp reports byte-identical. DIAGNOSIS: the remaining four real gaps were not one shape but two, and telling them apart needed the whole stderr rather than the probe's first-line note -- three were no module-level function named llvm.sin.f64, i.e. sin/cos/tan arrive as LLVM intrinsics, and the fourth was malloc. REGRESSIONS: AST runs 1269 tests / 3 skipped / 0 failures plus swift-testing 45 tests in 14 suites, item for item identical to the baseline, so zero test displacement; PINI_INTERP_ENGINE=hir runs 1269 / 3 skipped / 7 failures, the same seven as before this batch, all in ImportInjectionTests, which is the P4-1 package-run gap and not this batch's. A smoke run on main after the merge, filtered to HIRDifferentialTests, is 89 tests / 0 failures / exit 0. MUTATION COUNTER-PROOF, two levels over four fixtures: disabling both gates reds all four, an exact return to the pre-batch state; disabling only the foreign gate reds examples/ffi.pini alone; disabling only the intrinsic gate reds the three math and stdlib fixtures alone. So the two paths are individually attributable with no spillover. The restore is verified on source digests, not binary digests: HIRExecutor.swift eb4147d1dbc08ee6caaa1032f329c36d before and after, with git diff --numstat against Sources unchanged. CRITERIA CHANGE: the four acknowledged false positives left the blocker set for a new non-blocking slot whose gate requires a non-zero reference arm AND a loud LLVM arm; a six-case truth table run against classify() passes 6 of 6, three of those cases asserting that a fixture failing only on the HIR arm still reaches GAP_EXEC. TICKET DISPOSITION: the builtin-callee ticket closes, its two named fixtures now byte-identical across the AST and HIR channels at 12 bytes each; the struct-copy ticket stays open, and its gap now reproduces from a six-line program, ast printing 1 where hir prints 99, on both the allocVar binding path and the fieldStore path"
 validated_at = "2026-09-16T09:34+08:00"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**P4-0「判据面清零」**（LR-4 的 **P4 前置五批**之首；父计划 = P4 分批计划件 §3）。对象 = **HIR 引擎的 callee 解析面** + **探针的假阳性判据**。**起点读数与台账不符（差异本身是信息）**：台账记 `FLIP BLOCKERS 11`，实测 **8** —— 前一会话的 WIP 提交只清掉 **3** 个（`testBuiltinMathIntegersViaLLI` / `testDiffStructValue` / `examples/struct`），**不是 6 个**，机制 = **首缺口遮蔽**（修掉第一道缺口后夹具撞上下游缺口）。⭐ **取完整 stderr 才定得了性**（探针 TSV 的 `note` 只有报错首行）：剩余 4 个真缺口里 **3 个是同一个东西** —— `no module-level function named 'llvm.sin.f64'`（`sin`/`cos`/`tan` 被降载成 LLVM intrinsic），第 4 个是 `malloc`。⇒ 命中该批计划 §3 的预案（「若以新阻塞形态出现则同抽单源」），且属**既有面被揭开**、非本批引入。**实现面（两处，各一道门）**：`Interpreter.swift` 的 libc 预注册表提为 **`static let libcShims`**（8 shim 单源）+ `sin`/`cos`/`tan` 提为 `builtinSin`/`builtinCos`/`builtinTan` + 共用 `trigArgument`（**诊断文案逐字不变**）；`HIRExecutor.swift` 的 `.call` 落点加 **declared-foreign 门**（按 `module.foreigns` 判，**未声明仍报错** ⇒ 两通道对「没声明就调用」判断一致）与 **intrinsic 门**（`llvm.` 前缀按表回答、**表外 fail-loud**）。⚠️ `tan` **不在实现面**：lowering 把它拆成两条 intrinsic 的除法，引擎永远看不到 `tan` ⇒ `builtinTan` 仍是 AST 侧**唯一一份**定义。**判据面（按 P3-G1 的既有接受落地）**：新增非阻塞槽位 `WARN_LLVM_RC_UNPROPAGATED`，门 = **参照臂非零 ∧ LLVM 臂 stderr 非空**；⭐ **区分力是实测的** —— 判定函数真值表自检 **6/6**，其中三例专测「**只在 HIR 臂失败**」**仍落回阻塞集**（放宽类改动最危险的失败方式是把真缺口一并放行，而它表现为「阻塞数变 0」，看起来像成功）。`run-llvm` 依裁决**未修**，其「丢弃 `lli` 退出码」已另立工单（根因 = `Sources/PiniCLI/main.swift` 的 `run-llvm` 分支 `waitUntilExit()` 后丢弃 `process.terminationStatus`）。⚠️ **三处仪器教训（本批实证）**：① `/tmp` 被系统清理 ⇒ **旧冻结件全部失效**，「与冻结件逐夹具对账」**改口径**为「与 `state-readings.json` 记录的**逐槽读数**对账」+ 本轮重跑后**立即另存带标签的新冻结件**，**损失如实登记**；② **变异器械必须带「基线自守」** —— 首跑四夹具**全判 `FRONTEND_FAIL`**，根因是器械**没带 LLVM 的 PATH**（`run-llvm` 起不来 `lli`）**而非代码**，不拦就会得到一张「每轮都无变化」的空表、读起来像**代码无罪**；③ **改路径时新路径不能由「旧完整路径加前缀」构成**（旧路径自带 `docs/` ⇒ 拼出 `archive/docs/...`），本批**自犯一次**，靠「读文件取事实」而非「信工具输出」抓回。**工单处置**：`builtin-callee-unowned` **关闭并归档**（其两个具名夹具实测在 HIR 下与 AST **逐字节相同**；交付方式**正是该单自己写明的正解** —— 抽静态单源、不在 `HIRExecutor` 里重写第二份 `sqrt`）；其残余 `argv` / `moduleRoot` **不属该单**（失败面在**降载层**，lowerer 报 `unsupported feature`；已由 P4-2 行承接，**不重复登记**）。`struct-copy-missing` **保持 Open** 并刷新：① **误归属订正** —— 此前经夹具清单关联的 3 个夹具**从未成为该单的见证者**（首缺口是 `sqrt`），本批清掉遮蔽后它们**通过**，该单**至今仍无夹具**；② ⭐ **取得最小见证** —— `var b = a; b.x = 99; ` `print(a.x)` ⇒ ast `1` / hir **`99`**（`allocVar` 绑定点），`h.内 = p; p.x = 99; print(h.内.x)` ⇒ ast `1` / hir **`99`**（`fieldStore` 写入点），两通道 `rc` 皆 0、**只在输出值上分歧** = 该单预告的**静默错误结果**；③ ⇒ 推翻其两处前提（「今日无可观测后果」不再成立 · 「无法验证 ⇒ 不实现」的理由解除，见证**先于**实现存在）；④ 见证**刻意不入语料**（加夹具会改探针分母 319，应与实现同批），该单**排期不变**。⚠️ **同名误归属亦见于本表一条既有条目**（把 `testDiffStructValue` / `examples/struct.pini` / `examples/ffi.pini` 记在 `struct-copy-missing` 名下）：**实测订正** —— 三者分别先死在 `sqrt` / `sqrt` / `malloc` 上，**与 struct 拷贝无关**；其中 `examples/ffi.pini` 的struct 拷贝路径**一次都没被走到**。**范围声明（写成范围、不写成遗漏）**：未做 **P4-1 ~ P4-4** · 未修 `run-llvm` · 未处置 `CG-03/09/10/11/12`（挂「P4 前置 · 独立批次」）· 未动 spec / ADR / 契约 · **未测 `sin`/`cos` 的 f32 变体**（`IREmitter` 只声明两条 `.f64`；表外 `llvm.*` 名 fail-loud）· 未 push。**载体指针**：P4-0 交付记录 §8 · 主计划 §13 的 P4-0 条目 · 父计划 §3 行 · 判据缺口台账 CG-06 段的「已落地」句。"
 
 [[evidence]]
@@ -314,7 +288,7 @@ artifacts = ["Sources/PiniCLI/main.swift", "docs/issue-hir-p4-1-plan-2026-09-16.
 command = "swift build --disable-sandbox; swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=hir swift test --disable-sandbox --scratch-path /tmp/pini-build; env -u PYTHONPATH python3 tools/hir-parity-probe.py --out /tmp/p41-final.tsv"
 output = "HIR ImportInjectionTests 7 to 6 failures (line 163 turned green); AST same suite 9 tests / 0 failures; AST full regression 1269 / 3 skipped / 0 failures plus swift-testing 45 in 14 suites; HIR full regression 1269 / 3 skipped / 6 failures, all in ImportInjectionTests at lines 152 153 189 195 198 223. Probe distribution OK 254 / PACKAGE_MEMBER 27 / FRONTEND_FAIL 12 / CHANGE_REFERENCE 2 / WARN_CHANNEL_ASYMMETRY 20 / WARN_LLVM_RC_UNPROPAGATED 4, summing to 319, FLIP BLOCKERS 0, process leaks 0, and byte-identical to the P4-0 frozen TSV (md5 84deca2fe5b48ccb4e0af5ee19ad3929). A package without imports runs identically on both engines (rc 0, stdout plain); one with imports reports call to unknown function hello, and its qualified form reports reference to undeclared variable uni."
 validated_at = "2026-09-16T11:52+08:00"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**P4-1a「包运行入口（装配层）」**（LR-4 的 P4 前置第二批；分批表见 P4 分批计划件）。对象 = **CLI 的目录/模块运行入口** + 该批**验收判据本身的可达性**。**交付**：删掉目录分支在 HIR 下的早退拒绝，把引擎分派下移到共享前端之后（与单文件路径同形），新增 HIR 包运行 helper 复用**早已存在**的整包降载（LLVM 的包 emit 通道已在使用）。⚠️ **规划判据「7 → 3」实测不可达**：订正为 **7 → 6**（仅 1 条转绿），因为那 4 条的**第一道**缺口不是 CLI 而是**依赖模块符号**（裸调用 ⇒ 未知函数；限定名 ⇒ 未声明变量），属**降载层**。⇒ 本批按实测收口并另立 P4-1c，**不扩批**。⚠️ **本批产出的一条方法层认知**：按「每条失败的第一道缺口」做的分层，其**类目名只在当次实测状态下有效** —— 接通一层后会露出下一层，「纯装配」这一类因此**不存在**；凡此类分层须在修掉该层后**重测再定层**。**账目闭合**：1（本批）+ 3（P4-1c，152/153/223）+ 3（P4-1b，189/195/198）= 7。⚠️ **执行件对齐**（用户裁定第三项的落地）：测试的 ViaCLI 用例经子进程执行**硬编码**路径 pini-swift/.build/debug/pini，实测该件曾是两天前的构建 ⇒ 本批开工第一步先刷新它，并以**行为探针**（HIR 下 sin 可用，即 P4-0 刚交付的能力）验证新鲜度，不靠时间戳。⚠️ 一处**实测障碍留档**：默认 scratch 构建首次执行被**沙箱**拦下（报 output-file-map.json 无权限，而文件系统权限本身正常），重跑即过；故本批测试仍跑 /tmp scratch、执行件另用默认 scratch 构建对齐。"
 
 [[evidence]]
@@ -325,7 +299,7 @@ artifacts = ["Sources/PiniCore/HIR/HIRLowerer.swift", "Sources/PiniCore/Interpre
 command = "swift build --disable-sandbox; swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=hir swift test --disable-sandbox --scratch-path /tmp/pini-build; env -u PYTHONPATH python3 tools/hir-parity-probe.py --out /tmp/p41bc-final.tsv"
 output = "ImportInjectionTests on the HIR engine: 9 tests / 7 failures to 9 tests / 0 failures. AST same suite 9 / 0. AST full regression 1269 / 3 skipped / 0 failures plus swift-testing 45 in 14 suites; HIR full regression 1269 / 3 skipped / 0 failures, the same figures, down from 6. Four package fixtures (injection, cross-module injection, plain, argv) run identically on both engines in rc, stdout and stderr. Probe distribution OK 254 / PACKAGE_MEMBER 27 / FRONTEND_FAIL 12 / CHANGE_REFERENCE 2 / WARN_CHANNEL_ASYMMETRY 20 / WARN_LLVM_RC_UNPROPAGATED 4, summing to 319, FLIP BLOCKERS 0, process leaks 0, byte-identical to the P4-0 frozen file (md5 84deca2fe5b48ccb4e0af5ee19ad3929)."
 validated_at = "2026-09-16T12:16+08:00"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**`P4-1`（包运行入口）完成** = 三个批合一次收口：`P4-1a` 装配层（CLI 目录分支不再拒绝、引擎分派下移到共享前端之后）、`P4-1c` 依赖模块符号（`import` 目标的声明并入整包降载 + 登记 `别名.符号` 键）、`P4-1b` `argv`/`moduleRoot`（零参内建降成既有 `call` 形状、执行器按名回答）。**原验收判据已达成**：HIR 引擎下 `ImportInjectionTests` **7 → 0**，且 **HIR 全量回归归零**（本批前为 6）。⚠️ **一处刻意的范围取舍**：两项内建**未新增契约节点**（复用既有 `call` 形状，44 / 60 计数不变）—— 二者是具名内建调用而非新节点形状，新增条目会搅动计数基线与三方对照，而收益只是形式登记。⚠️ **一处须记账的遗留（已立案不修）**：LLVM 侧无 `argv`/`moduleRoot` 运行时段，且 `emit` **返回成功却产出引用未定义符号 `@argv` 的 IR**（直到 `run-llvm` 才报 `use of undefined value`）⇒ **静默产出不可用 IR**；本批**刻意未改 `IREmitter`**（该文件以 `fatalError` 表达「lowerer 保证不会发生」，而这里是合法输入 + 未实现，加它会令 CLI 崩溃、比现状更糟）。⚠️ **本批的两处认知订正留档**：① 规划按「首缺口」分的层**只对当次实测有效**（接通 CLI 后露出依赖模块符号一层）；② 本批自己的第一版把沙箱失败归因于 `.build` 写限制，后订正为「缺 SwiftPM 的外部临时目录」（作业手则早有记载）。⚠️ **探针面零位移**与前两批一致（本批改的是 CLI 与降载层，夹具面无 `argv`/包成员用法 ⇒ 该面结构性看不见包运行路径）。"
 
 [[evidence]]
@@ -336,7 +310,7 @@ artifacts = ["docs/issue-hir-p4-2-survey-2026-09-16.md", "docs/issue-hir-p4-plan
 command = "python3 /tmp/p4_2_face.py (972 fixtures x 2 engines, per-fixture pini run); python3 /tmp/p4_2_reclass.py (re-classify by the real Error line)"
 output = "Fixtures 1005 total; 33 package members; 972 single-file face. Identical across engines 786, different 186. By the real Error line on the HIR side: E6-004 unimplemented 125, E4-001 39, E4-013 4, E4-005 4, E4-006 2, E4-007 2, E4-008 1, no Error line 9. Reverse direction (AST refused, HIR ran) 7, all E5-006 or E5-017. Two fixtures crash the AST engine through the CLI with a Swift fatal error while the HIR side refuses them cleanly. Two agree on rc but differ by one output byte. Probe roots at the same commit are IRExecutionTests, RuntimeBackendTests, OptionalTests, IRPrintGoldenTests, CodeGen HIRTests and examples, 319 fixtures, FLIP BLOCKERS 0."
 validated_at = "2026-09-16T12:34+08:00"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**`P4-2`「翻转前置核对」**（LR-4 的 P4 前置第三批；勘测批，**不改源码**）。对象 = 上游记的那条「类型检查面不对等」，本批把它扩成**整个单文件夹具面**的行为核对。**Why it mattered**：翻转后默认引擎改变 ⇒「同一程序在两条引擎下是否一致」由开发期对照变为**用户可见语义**，而此前只有两把尺在量它、且都不构成证明。⚠️ **头号发现（两条，均为实测）**：① **全量探针只覆盖 6 根精选语料（319 夹具）**，而差异**集中在其根集之外**的目录（并发 / CPS / 内建 / 挂起）⇒「`FLIP BLOCKERS 0`」是**相对那个语料**的；② **`PINI_INTERP_ENGINE=hir` 的全量回归只影响 CLI 子进程**，而 66 个测试文件 / 796 个用例是**直接驱动解释器**的 ⇒ **翻转面根本没被那轮跑过**。⚠️ **类型检查不对等实测量 = 48 个夹具**（`E4` 族），其中 `E4-001` 的 39 个里 **26 个是负向夹具**（本就验证「被拒」）⇒ **不是回退面**；**13 个须逐个核对**（清单在勘测件 §6，不得静默变红）。最小形态取证：`var x: I32 = \"str\"` 在默认引擎 **rc=0 且输出 `str`**、在 HIR 侧 rc=1 `E4-001`。⚠️ **另立三类**：**反向 7 个**（仅 AST 被拒 ⇒ **HIR 侧缺门禁**：裸 case 歧义 `E5-006`、未定义外部符号 `E5-017`）· **AST 侧 CLI 崩溃 2 个**（负向输入触发 Swift fatalError，末态退役口径**不修**、只登记）· **同 rc 输出差 1 字节 2 个**。⚠️ **两条器械纪律**（本批踩到）：① 判两引擎是否相同时**必须把 stderr 计入**，但**取错误码不能用首行**（首行常是 `E7-001` 未使用变量一类的**警告**，真因在其后 —— 首版按首行分类把 125 个真因误归到诊断通道）；② 单文件面的分母是 **972**、探针的是 **319**，**两个数不可互换陈述**。⚠️ **`E6-004` 的 125 个**（并发 / 挂起 / 泛型 / 内建）**不由本批承接** —— 那是**能力取舍**（R1/R2，`P4-6`），本批只把它的量从抽象取舍变成具体数字。"
 
 
@@ -348,7 +322,7 @@ artifacts = ["Sources/PiniCore/HIR/HIRNode.swift", "Sources/PiniCore/HIR/HIRLowe
 command = "swift test --disable-sandbox --scratch-path /tmp/pini-build --filter 'DebuggerTests|HIRExecutorTests|HIRDifferentialTests'; swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=hir swift test --disable-sandbox --scratch-path /tmp/pini-build; python3 tools/hir-parity-probe.py"
 output = "Debugger suite: 11 scenarios x 2 engines = 22 test cases, 0 failures (17 @Test declarations; the argument list expands each parameterised one), with engine=hir appearing 11 times -- the HIR side really runs rather than being skipped. HIRExecutorTests 30/0, HIRDifferentialTests 89/0. Full AST suite 1270 tests / 3 skipped / 0 failures; full HIR suite (PINI_INTERP_ENGINE=hir) 1270 / 3 skipped / 0 failures; swift-testing 46 tests / 14 suites. Probe: six slots 254/27/12/2/20/4 = 319, FLIP BLOCKERS 0, byte-identical to the P4-0 freeze (md5 84deca2fe5b48ccb4e0af5ee19ad3929) -- the LLVM emitter and lowerer only changed type, so the single-file surface did not move. No leftover lli processes."
 validated_at = "2026-09-16T12:53+0800"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**`P4-3`「调试面接缝」**（P4 前置第四批；**动源码**，是本线迄今对 `Sources/` 改动面最广的一批）。对象 = 上游登记的两条前置：**HIR 节点不携带源码位置**（位置基准）+ **执行入口未抽象**（宿主绑死具体引擎）。**Why it mattered**：调试面的两半——`outputSink` 已通、`debugHook` 一直**声明而未接线**——缺的正是位置；而一个报不出行号的暂停点比没有暂停点更糟（断点按行号相等匹配 ⇒ 永不命中，单步停在虚构行），所以位置必须先进入表示。⚠️ **两处对本批上游载体的偏离（均为有意，理由已写进各自归档件与 `D-P4-16/17`）**：① 位置载体取**块级平行数组**（位置工单的 B 变体），**不取**其立项倾向的 A（60 节点各加字段）——A 要改 60 个 case 定义 + 全部构造点 + 全部模式匹配，且会让 `HIRStmt: Equatable` 合成把位置纳入比较而动摇既有结构断言；B 变体把「第二个需同步的载体」这一隐患**消解**掉（位置与语句是同一个值的两半，构造入口唯一）；② 引擎装配用 **`DebugRun`**，**不把 `run` 放进 `DebugHookHost`**——引擎抽象工单自己的根因分析已经说明协议不该含 `run`。**残留（未做，不阻塞）**：HIR **节点**仍不带位置（LLVM 路径继续在 lowering 期报位置）；lowering 侧那批退化成空 `SourceLocation` 的兜底点原样未动。**两处设计取舍的代价**：位置精度 = **AST 语句级**（一条源语句展成多条 HIR 语句时，它们共享同一行）——这正是解释器的粒度，故两侧可比；若要**表达式级**位置，需回到 A 那条路。"
 
 
@@ -360,7 +334,7 @@ artifacts = ["Sources/PiniCore/REPL/ReplEvaluator.swift", "Sources/PiniCore/REPL
 command = "swift test --disable-sandbox --scratch-path /tmp/pini-build --filter ReplEvaluatorTests; a piped REPL session (three input lines: 1 + 2, print(7), :quit) against PINI_INTERP_ENGINE=hir <scratch>/debug/pini repl; swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=hir swift test --disable-sandbox --scratch-path /tmp/pini-build; python3 tools/hir-parity-probe.py"
 output = "REPL suite: 11 tests / 0 failures covering both engines via `arguments: InterpreterEngine.allCases`, including two cases asserting the engines' output is identical item by item -- not merely that each passes. End to end, `PINI_INTERP_ENGINE=hir pini repl` prints `3` for `1 + 2` and `7` for `print(7)`, identical to the AST session. Full AST 1270 / 3 skipped / 0 failures; full HIR 1270 / 3 skipped / 0 failures; swift-testing 57 tests / 15 suites (up from 46/14 -- the new file). Probe six slots 254/27/12/2/20/4 = 319, FLIP BLOCKERS 0, byte-identical to the P4-0 freeze (md5 84deca2fe5b48ccb4e0af5ee19ad3929). No leftover lli processes."
 validated_at = "2026-09-16T13:09+0800"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**`P4-4`「REPL 形态对齐」**（P4 前置**最后一批**）⇒ **P4 前置五批全部交付**。对象 = REPL 这条**独立接缝**（它不消费 `debugHook`，与 P4-3 的调试面不同）。**Why it mattered**：REPL 的求值此前**写死 `Interpreter()`**、且长在 executable target 里 ⇒ 它既不能换引擎，也**够不到任何测试**（测试 target 只依赖 `PiniCore`）—— 既有 REPL 用例只覆盖**解析**，甚至自己重抄了表达式包装逻辑。⇒ 判据「REPL 用例在 HIR 下全绿」在当时**没有内容可绿**。**本批做法**：求值核移入 `PiniCore`（`ReplEvaluator`，引擎成为参数），`InterpreterEngine` 随之从 CLI 上移（它是引擎概念）；用例**按引擎参数化**。⭐ **一处必须修的对等缺口（本批实证）**：两引擎遇到「还没有 main」的**阶段不同** —— AST 侧是解释器**运行期**抛 `RuntimeError.mainNotFound`（既有实现吞掉它），HIR 侧是**降载器在 `lower` 期间就拒绝**（它要求一个可执行程序）⇒ 照抄「吞异常」会漏，按错误消息匹配则**文案一改即失效**；改为问「模块里有没有 `main`」。⚠️ **两处既有 REPL 缺陷（实测发现，立案不修）**：① 声明起始词表不匹配 Pini 语法（`名字|func` / `(结构体)` / `[枚举]` / `<trait>` 全被判为表达式）；② `let`/`var` 被当作顶层声明收下，而不合法的顶层变量声明会**使之后每次求值都失败**（一次误输入毒化整个会话）；③ 单行 `{名字}` 括号平衡 ⇒ 续行检测立即提交 ⇒ **多行类型体无法输入**。三者均**不阻塞翻转**（表达式路径两引擎已可用），载体 `docs/issue-repl-declaration-recognition-2026-09-16.md`。**残留**：REPL 的续行检测与特殊命令仍在 CLI（本批只对齐引擎接缝）。"
 
 
@@ -372,7 +346,7 @@ artifacts = ["Sources/PiniCLI/main.swift", "tools/hir-parity-probe.py", "docs/is
 command = "swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=ast swift test --disable-sandbox --scratch-path /tmp/pini-build; pini run on a fixture whose two engines disagree, with and without PINI_INTERP_ENGINE; python3 tools/hir-parity-probe.py, re-run after the probe comments were updated and byte-compared"
 output = "Default (no variable) full suite 1270 / 3 skipped / 0 failures plus swift-testing 57 / 15 suites; explicit ast fallback identical. End to end on the divergent fixture: default gives Type Error E4-001 at line 2 and exit 1, explicit ast prints str and exits 0. Probe six slots 254/27/12/2/20/4 = 319, FLIP BLOCKERS 0, byte-identical to the P4-0 freeze (md5 84deca2fe5b48ccb4e0af5ee19ad3929) -- and byte-identical again after the probe comments changed, which is how a comment-only edit is shown to be one."
 validated_at = "2026-09-16T13:25+0800"
-status = "FRESH"
+status = "STALE"
 note = "**批属性**：**`P4-α`「默认引擎切 HIR」** —— **P4 本体的第一步**，也是「翻转」的字面含义。**Why it is one line**：翻转的风险不在改默认值，而在**删掉 AST 走查**（那是 P4-γ），所以本批刻意只动默认值，让回落路径仍在。**⚠️ 本批不改开关**：`PINI_INTERP_ENGINE` 仍可显式指定 `ast`，它服务两件事 —— **三通道探针的参照臂**（探针早已预见翻转：每个通道显式指定引擎并 `env.pop` 掉继承值，其注释原文即「P4 flips that default, and an inherited value would silently turn the frozen reference into a second HIR arm」），以及后续各批的过渡。按 `D-B6`，**开关的退役与「删除 AST 走查」是同一件事**，故归 P4-γ。⭐ **P4 本体的分批（本批量清）**：**P4-β** = 测试面迁移（实测 **67 文件 / 798 用例**驱动 `Interpreter`）；**P4-γ** = 删除 AST 走查（`Interpreter.swift` 3783 行 + `SuspendEvaluator.swift` 890 行 + 收开关 + 探针口径改两通道）。⚠️ **P4-γ 的真实闸门不是工程量而是 R1/R2**：P4-2 实测 **125 个夹具在 HIR 下是 `E6-004`（未实现，集中在并发 / CPS / 挂起）**，删掉 AST 走查会让这些能力**直接消失**（用户可见回退）⇒ 必须裁 R1（迁到 HIR）或 R2（弃）。⇒ **P4-β 应先做**，因为它的**红数是 R1/R2 的唯一实证输入**。**残留**：`Interpreter` 仍在（供测试与回落），本批不删。"
 
 
@@ -384,7 +358,7 @@ artifacts = ["Sources/PiniCore/Run/ProgramRunner.swift", "docs/issue-hir-p4-beta
 command = """swift build --build-tests --disable-sandbox --scratch-path /tmp/pini-build; swift test --disable-sandbox --scratch-path /tmp/pini-build; PINI_INTERP_ENGINE=ast swift test --disable-sandbox --scratch-path /tmp/pini-build; python3 tools/hir-parity-probe.py --out /tmp/p4b-final.tsv; cmp /tmp/p4-0-final.tsv /tmp/p4b-final.tsv"""
 output = """Build with tests: 0 errors. Default direction: 104 failing assertions, obtained by running the baseline's 115 test classes in five --filter batches -- an unfiltered run aborts on SIGPIPE (signal 13) part-way through and silently skips 23 classes, which made a first version of this reading incomplete without looking wrong. PINI_INTERP_ENGINE=ast direction: the two failure sets are identical in both directions of the difference (no case in either set is missing from the other). All 104 failures fall inside the 50 migrated files; the B / C / D surfaces report 0 failures. Probe: 254 / 27 / 12 / 2 / 20 / 4 = 319, FLIP BLOCKERS 0, cmp against the P4-0 freeze identical (md5 84deca2fe5b48ccb4e0af5ee19ad3929, fifth consecutive batch at that value). lli process residue: 0."""
 validated_at = "2026-09-16T13:47+0800"
-status = "FRESH"
+status = "STALE"
 note = """**批属性**：**`P4-β`「测试面迁移」** —— `P4-γ`（删 AST 走查）的**最后一块垫脚石**，因为在此之前 67 文件 / 798 用例仍钉在走查上，删掉走查等于连同「HIR 能跑真实程序」的唯一大面积证据一起删掉。
 
 **面的四分类**（实测，非估算）：A 可迁 **50 文件 / 429 用例** · B 挂起内部 API 3/43 · C `runTests` 4/23 · **D 对照臂 9/303**。
@@ -419,7 +393,7 @@ artifacts = [
 command = "bash tools/check-doc-links.sh ; bash hooks/comment-lint.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; python3 tools/hir-contract-check.py"
 output = "doc-links: 805 references checked, all pass -- three initial failures were this ADR's own relative paths (../ reaching docs/spec instead of docs), corrected to ../../. comment-lint full run (no args, the same shape pre-commit uses): L1-L6 all green, rc=0, L6 redeeming the new ADR-037 through its index row; the same script limited to docs alone fails L6 with 'no ADR reference scanned', which is the guard refusing to claim green rather than a violation. evidence_sweep --check: parse plus schema ok, 19 entries before this one, 0 unannotated citation marks, status drift 8, advisory cap 100 within. hir-contract-check: 60/60 nodes covered by each of the llvm, printer and interp-hir anchors, clean."
 validated_at = "2026-09-16T18:51+0800"
-status = "FRESH"
+status = "STALE"
 note = """登记面 = ADR-037（新建）· ADR 索引新增一行 · 规范 §3 新增 G59 · 规范 §A 的 `generic-construct` 产生式后新增一处语义注记。**文法与契约计数零改动**：`primary-atom` + `generic-construct` 两产生式与消歧规则 3.3 已覆盖所选拼写；`hir-contract-check` 三锚点各 60/60 覆盖且 clean 为证人。
 
 **两条独立理由决定本轮不递交语言参考**：① 递交流程的条件之一是「该构造已定级 Provisional 或 Stable」（Experimental 不递交）；② 另一条件是「实现侧有证据」，而实现发生在 `S1`。任一成立即不可递交，故本期只登记不下沉。
@@ -447,7 +421,7 @@ artifacts = [
 command = "TMPDIR=/tmp swift build --disable-sandbox ; per-class: TMPDIR=/tmp swift test --filter <Class> (116 classes, both engine directions) ; TMPDIR=/tmp python3 tools/hir-parity-probe.py --out /tmp/s1-probe.tsv ; python3 tools/hir-contract-check.py ; PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin .build/debug/pini emit|run-llvm"
 output = "build 0 error in 5.2s. Per-class runs at the parent commit give 75 failing methods, the candidate gives 72: fixed 3 (GenericEnumTests testGenericEnumConstructionAndMatch, testGenericEnumErrBranch, testGenericEnumDistinctSpecializations), new 0, still 72 -- compared method by method, not by count. Both directions over the same 116 classes are identical class-by-class, 72 each, confirming the change lives on the HIR path only. Probe: 319 fixtures, 319/319 identical to the G-2 probe after normalising the random /tmp/pini_*.ll name embedded in one lli diagnostic; against the P4-0 freeze the single delta is testIsLetterUnsupportedViaIRGen (FRONTEND_FAIL -> HARNESS_DEPENDENT), which the G-2 probe already contained, so it belongs to G-2a. Contract: 60/60 nodes on each of llvm, printer and interp-hir, clean. LLVM: emit rc=0, 95 lines, no undefined symbol; run-llvm prints 42 matching the HIR engine."
 validated_at = "2026-09-16T19:51+0800"
-status = "FRESH"
+status = "STALE"
 note = """降载层三站全在 `Sources/PiniCore/HIR/HIRLowerer.swift`（1 文件 / +258 −27）。
 **`lowerMatch` 与执行器一行未改**：`match` 按枚举名分派、执行器按值比对，特化名对二者是透明的。
 
@@ -492,7 +466,7 @@ artifacts = [
 command = "per-class: TMPDIR=/tmp swift test --filter <Class> over 116 classes ; bash tools/check-doc-links.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; bash hooks/comment-lint.sh"
 output = "72 failing methods in 25 of 116 classes (RecordingDebugDriver is the only DID_NOT_RUN and it has no tests, so 115 real test classes). Disposition split 31 / 13 / 28, item by item. doc-links: 818 references checked, all pass. evidence-sweep --check: parse plus schema ok, 0 unannotated citation marks outside the table. comment-lint full run: L1-L6 green, rc=0. Diff is five docs files, zero Sources and zero Tests changes."
 validated_at = "2026-09-16T20:22+0800"
-status = "FRESH"
+status = "STALE"
 note = """本批 = `P4-γ` 子批 **`G-0`（口径订正）**：**只动 `docs/`**，零源码、零测试。
 
 **五处登记面**：① `docs/issue-hir-p4-gamma-plan-2026-09-16.md` **新增 §8**（裁决登记 · `G-6` 判据订正 · 批次修订 · §8.6 记号归一）并改头部状态与 §2/§4/§5 的指向；② `docs/issue-hir-p4-plan-2026-09-16.md` 新增 **`D-P4-25…30`** 六条决策 + §3.2 的 `P4-γ`/`P4 本体` 两行 + §3.1 的 `P4-6` 行 + §5 止损点 3；③ 本件（`G-2R` / `G-3` / `G-4·G-5` 三节 + `G-0` 交付节 + 头部基线）；④ `docs/issue-test-harness-sigpipe-on-failure-paths-2026-09-16.md` 状态由「只登记不修」改为**已授权修复** + §8 处置；⑤ `docs/issue-selfhost-probe-plan-2026-09-13.md` 裁决 8 行加记号订正指针。
@@ -525,7 +499,7 @@ artifacts = [
 command = "count: block-parse over Tests/**/*.swift, three conjunctive conditions ; fix: insert <var>.fileHandleForWriting.closeFile() before the stdout restore in each catch ; TMPDIR=/tmp swift test --disable-sandbox (full, twice) ; python3 /tmp/chunk-run.py /tmp/s1-classes.txt 3 /tmp/chk ; compare merged failure set against the 116 per-class tsvs, item by item"
 output = "43 sites in 43 files (39 'pipe', 4 'outPipe'), one per file, +1 line each; compile clean in 4.6s. Full run (twice, identical): 94 suites, one 'signal code 13', 57 failing assertions, 24 classes not run starting at StdlibTests. StarvationTests now yields result lines. Three chunks: 39/39/37 classes, 115 reached, 0 unrun, 0 signals, failures 32/19/21 = 72, set-equal to the per-class reading; the single run's 57 is a strict subset with all 15 missing entries inside the unrun classes"
 validated_at = "2026-09-16T20:36+0800"
-status = "FRESH"
+status = "STALE"
 note = """器械批 = `D-P4-29` 授权的修复，**`Sources/` 零改动 · `Tests/` 43 文件各 +1 行**。
 
 **票据的 43 与我独立复现的 43 逐项吻合** ⇒ 该数字可信（我自己的前两版扫描器分别得 51 与 55，都是假阳性，成因记在工单 §10）。
@@ -554,7 +528,7 @@ artifacts = [
 command = "bash tools/check-doc-links.sh ; python3 tools/evidence_sweep.py docs/spec/evidence-table.toml --check ; bash hooks/comment-lint.sh ; python3 tools/hir-contract-check.py ; orphan-row scan over the three edited tables"
 output = "doc-links pass, 821 references. evidence-sweep parse plus schema ok, 0 unannotated citation marks. comment-lint full run L1-L6 green, rc=0, which redeems the new ADR-038 through its index row. hir-contract-check clean at 60 nodes on all three anchors -- nothing here touches the contract. The orphan-row scan is 0 for the ADR index and the migration file; the spec keeps its one pre-existing false positive, the EBNF alternation in the appendix"
 validated_at = "2026-09-16T23:23+0800"
-status = "FRESH"
+status = "STALE"
 note = """登记批 = `G-2R` 三条待裁里的**两条语言面裁决**（第三条见下），**只动 `docs/`**。
 
 **五处登记面**：新建 `docs/spec/adr/adr-038-numeric-literal-conversion.md`（提议 / 现状实测 / 影响评估 / D1·D2 / 后果 / 不在范围 / 溯源）· ADR 索引 +1 行（**紧邻 ADR-037**）· 规范 §3 台账新增 **G60**（**紧邻 G59**）· `docs/spec/migration-2026-09.md` 新增 **G 节**（破坏性迁移说明）· 证据表 +1 条。
@@ -587,7 +561,7 @@ artifacts = [
 command = "3 chunks of TMPDIR=/tmp swift test (115 classes) ; TMPDIR=/tmp python3 tools/hir-parity-probe.py --out /tmp/g2rb3-probe.tsv ; python3 tools/hir-contract-check.py ; PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin .build/debug/pini emit|run-llvm ; PINI_INTERP_ENGINE=hir|ast .build/debug/pini run (CLI availability of each of the three forms)"
 output = "Failing methods 71 -> 68: fixed 3 in this run plus the 1 from the previous commit of the same branch; added 0; the remaining set equal item by item. Both chunked runs and the per-class driver agree. Probe: 319/319 fixtures, zero flip blockers, zero process leaks, zero non-terminating fixtures, 704s wall clock with progress printed at every 50th fixture through to 319; normalising the random /tmp/pini_*.ll name embedded in lli diagnostics removes all item-level differences. Contract: 60/60 on each anchor, clean. LLVM: emit rc=0 with no @F64 reference and 71 lines of IR, run-llvm prints 3.5 and 7.0 matching the HIR engine byte for byte. CLI availability checked per form: F64 prints 3.5/7.0 on both the HIR engine and run-llvm; the untyped parameter prints hi under hir and ast; the inferred LazyRef sugar is refused by the checker with E3-002 undefined function 'LazyRef' on both engines, while the explicit LazyRef<I32>(closure) spelling prints 7"
 validated_at = "2026-09-17T00:16+0800"
-status = "FRESH"
+status = "STALE"
 note = """本批 = `G-2R` 的第二批（第一批 = 结构体值拷贝，`c5f279f` → 合并点 `3837654`）。
 **两条提交**：`f4bfd36`（降载层 + 执行器 + `RuntimeOps.builtinF64` 单源化，4 文件 / +112 −15）·
 `1588c58`（`IREmitter` 的 `F64` 改 `sitofp`）。
@@ -636,7 +610,7 @@ artifacts = [
 command = "TMPDIR=/tmp python3 tools/hir-chunk-run.py (3 chunks, 115 classes, foreground) ; TMPDIR=/tmp python3 tools/hir-parity-probe.py --out /tmp/g2s-probe.tsv ; python3 tools/hir-contract-check.py ; TMPDIR=/tmp .build/debug/pini run <each fixed fixture> (CLI availability)"
 output = "Failing methods 68 -> 64: fixed 4 (CollectionsTests.testArrayAppendFunctionalReturnsNewArray, testArrayLastAndPopStackSemantics, testArrayLastPopOnEmptyReturnsNull, ArrayElementAnnotationTests.testAppendArgumentAccepted), added 0, the remaining 64 equal item by item. Chunked run: 39+39+37 classes, 117 suite starts over 115 classes, 0 unrun, 0 signal 13, 26+18+20 = 64 failures, guard passed so the list was written. Contract: 60/60 on each of llvm, printer and interp-hir, clean. Probe: 319/319 fixtures in 6m31s, zero flip blockers, zero process leaks, zero non-terminating fixtures, no item-level difference once the lli temp name is normalised. CLI: all four fixtures print exactly what they assert -- [1, 2, 3] then [1, 2, 3, 4]; 3, 3 then [1, 2]; null, null then []; [7]"
 validated_at = "2026-09-17T00:42+0800"
-status = "FRESH"
+status = "STALE"
 note = """族粒度三段制（2026-09-17 用户固化）的**首例试点**，三段齐备。
 
 **① 验收面一次列全**：7 条 = `CollectionsTests` 3 红 + 被 `append` 挡住的 4 条。
@@ -693,7 +667,7 @@ artifacts = [
 command = "PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin python3 tools/three-edge-union.py --probe-out /tmp/cg-union-probe.tsv ; PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin python3 tools/hir-chunk-run.py /tmp/cg-classes.txt 3 /tmp/cg-regression (foreground, 3 chunks, 115 classes) ; same driver after git stash push -u for the baseline ; python3 tools/hir-contract-check.py ; git status --porcelain ; md5 -q Sources/PiniCore/Runtime/RuntimeOps.swift"
 output = "Three-edge union: ast<->hir 1 run / 0 failed / 0 skipped, ast<->llvm 89 run / 0 failed / 0 skipped, hir<->llvm 320 fixtures / FLIP BLOCKERS 0, verdict all three edges measured and green, exit 0. Regression: baseline 64 failing methods and this batch 64, chunked 26+18+20 in both, zero unrun, zero signals, sets equal so added 0 and fixed 0. Contract clean at 60/60 on each of llvm, printer and interp-hir. Probe: 319 to 320 fixtures, the only slot that moved is OK 254 to 255 and the other six are identical item by item. Mutation rounds: with the array negative-index tail count removed, the two-arm corpus criterion passed with 0 failures while the three-channel one failed; with the case-name comparison forced true it failed on an argument-count mismatch and with it forced false on a non-exhaustive match. Source restored byte for byte, md5 232246eeb33172dd2bd7f01746d1d627 equals the baseline, and git status shows no change under Sources/. The dictionary branch could not be witnessed: lli rejects the emitted IR with a ptr versus i32 type error, and run-llvm reports exit 0 anyway, which is why the probe files it as harness-dependent rather than as a blocker."
 validated_at = "2026-09-17T09:24+0800"
-status = "FRESH"
+status = "STALE"
 note = """本批是**器械批**（台账自定归属「P4 前置 · 独立批次」），改动**不触碰 `Sources/`**——
 `git status` 实测无一行源码改动，这是「零行为变更」的最强保证，也是逐条对账能取真基线的前提。
 
@@ -718,3 +692,62 @@ LLVM 臂生成**非法 IR**（lli 报 ptr 被当 i32 用）；而 `run-llvm` **�
 
 **一处可疑读数不替它编解释**：全量探针本批约 35 秒，而既有读数记 6 分 31 秒 / 11 分 49 秒；
 判定分布与基线逐项吻合，故倾向机器冷热差异，但**未证实**。"""
+
+[[evidence]]
+id = "2026-09-17 标签语义面（第 3 层）与 ADR-039 落地：break 可定向 if 标签"
+citable = false
+claim = "The layer-3 spec-assertion corpus gains a second face (label semantics, 13 hand-written cases, 12 of them anchored in already-normative clauses and one written as a red spec), ADR-039 is implemented across all three channels so that `break <label>` can leave a labeled `if` block, the decision is handed over to the language reference, and the implementation segment introduces exactly one new invariant -- an unlabeled break/continue stays transparent to a labeled `if` on its way to the innermost loop -- which is pinned by probes rather than by a corpus case"
+artifacts = [
+  "docs/spec/adr/adr-039-label-break-target-and-naming.md",
+  "docs/spec/adr/adr-index.md",
+  "docs/spec/pini-spec-v0.md",
+  "docs/spec/pini-reference-v0.md",
+  "docs/spec/hir-contract.md",
+  "docs/spec/migration-2026-09.md",
+  "docs/issue-hir-labeled-continue-skips-loop-tail-2026-09-17.md",
+  "docs/issue-bitwise-or-parse-2026-09-10.md",
+  "Sources/PiniCore/HIR/HIRNode.swift",
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/HIR/HIRPrinter.swift",
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+  "Sources/PiniCore/CodeGen/IREmitter.swift",
+  "Tests/PiniTests/CodeGen/HIRTests/HIRLowererTests.swift",
+  "Tests/PiniTests/SpecAssertionTests/PROVENANCE.md",
+  "tools/hir-spec-assert.py",
+]
+command = "python3 tools/hir-spec-assert.py ; python3 tools/hir-chunk-run.py /tmp/cg-classes.txt 3 /tmp/lbl-regression (foreground, 115 classes, compared item by item against /tmp/cg-base-fails.json) ; python3 tools/hir-contract-check.py ; python3 tools/three-edge-union.py --probe-out /tmp/lbl-union-probe.tsv ; python3 tools/compare-sweeps.py /tmp/cg2-union-probe.tsv /tmp/lbl-union-probe.tsv ; python3 tools/three-channel.py /tmp/lblprobe/*.pini ; hooks/comment-lint.sh ; tools/check-doc-links.sh ; python3 tools/evidence_sweep.py --check"
+output = "Layer 3: 36 assertions over 12 cases / 36 ok before this batch, 75 over 25 cases with 72 ok and 3 failed when the face went in red, 74 ok and 1 failed after the implementation segment, and 49 ok and 1 failed with the interp-ast channel removed from the instrument. The one remaining red is labelForContinue, discovered by this face and filed as its own ticket. Regression: 64 failing methods and 64, chunked 26+18+20 both times, zero unrun, zero signal-13, failure sets item-by-item equal so added 0 and fixed 0. Contract clean at 60/60 on llvm, printer and interp-hir. Probe: 320 fixtures, seven verdict slots identical to the baseline and zero per-fixture verdict changes, FLIP BLOCKERS 0 before and after. Mutation round on the LLVM half: with the labeled-if frame disabled, labelBreakToIfTarget turns DIFF on llvm-hir while both interpreter channels stay ok and labelForContinue's red is unaffected, so the change is load-bearing and specifically attributable; source restored and re-measured. Two counters killed: 0 leftover pini processes and 0 leftover lli processes."
+validated_at = "2026-09-17T17:26+08:00"
+status = "FRESH"
+note = """本批 = **第 3 层「spec 断言层」扩第二个语义面**（「标签语义」）**＋ `ADR-039` 实现段**。
+触发不是计划里的：补语料要写「`break 标签` 能指向什么」的期望值，一查发现**三处文档沉默、
+两个引擎行为相反** ⇒ 先登记（§1.3 第 1–3 步）再实现，同批不可拆。
+
+**⭐ 本批最强的一条读数 = 全量回归逐条集合相等**（新增红 0 / 转绿 0 / 仍红 64）。
+这是对**改实现**的批唯一有说服力的「没弄坏东西」证据；只比总数会被「一红换一绿」骗过。
+
+**⭐ 一处判定为「有意保留」的红**：`labelForContinue` 全程红（`llvm-hir` 印空且 `rc=0`），
+它是本张面**第一次运行**时被**绝对期望值**照出来的、**不属于 ADR-039** 的缺陷。
+用户裁决「本批不修，单独立案」⇒ 已产出工单并把它的可达面从 1 种形态扩到 3 种（见下）。
+
+**⚠️ 三处计划与实测不符，已在件内如实改口径**（不是补丁式解释）：
+① 计划写「13 条新用例三通道全绿」—— 实测不可能，因为 `labelForContinue` 另案 ⇒ 改为
+「12 条明文锚点 + `labelBreakToIfTarget` 全绿，唯一红另案」；② 判据「摘掉 `interp-ast` 仍全绿」
+同理改为「49 ok / 1 failed，唯一红另案」；③ §5.2 记的收敛项在实现后**实测确认存在**
+（同名标签跨种类嵌套时换靶），落进迁移说明 §H.2。
+
+**⚠️ 一处**新引入**的不变式，只有探针支撑、没有语料用例**：`if` 上帧栈之后，
+「无标签 `break`/`continue` 定向最内层循环、途中的 `if` 标签不拦截」变成一条**需要维护**的性质。
+7 个成对探针三通道实测一致（含 `elif` 体 / `else` 体 / 双层嵌套），读数记入语料来源件，
+但**现有 13 条语料不会因它被破坏而转红**。已写进迁移说明 §H.4 与语料来源件，待裁是否补用例。
+
+**⚠️ 一处不替它编解释的外部红**：`three-edge-union` 的 `pkg ast<->hir` 边报
+「6 aligned / 2 divergent / 3 refused」。该边由**不在本批范围内**的 A1 WIP 工具改动驱动
+（`tools/three-edge-union.py` 带未提交改动，本批刻意绕开），且该边**此前从未被跑到**
+⇒ 既无 before 读数，也不能归因于本批。归属 A1，不并入本条的结论。
+
+**同批照出的另两条缺陷**：`continue 标签` 深度 > 1 时跳过目标循环尾部（新工单，三形态实测：
+`for` 无 step · `for` 带 step · `while` 带 step，症状分别为空输出 / 空输出 / 错值 `0`）；
+单竖线 `|` 无二元形态（既有 2026-09-10 工单，本批补齐「六处规范面 4:2」的完整清点，
+并指出「没有」那一侧是**已决事项**而非遗漏）。"""
+
