@@ -52,38 +52,21 @@ final class FFIModuleTests: XCTestCase {
  return segments.joined(separator: "")
  }
 
- /// 单文件执行并捕获 stdout（Pipe 重定向，复刻 FFITests.runProgram）。
- ///
- /// ⚠️ **本助手在 `G-5` 中被实测判定为「不可换腿」，保持 AST 走查**：
- /// 改成 HIR 后，唯一调用方 `testUndefinedForeignSymbolRejected` 实测**不再抛错**
- /// （`XCTAssertThrowsError failed: did not throw an error`，且 `puts` 的
- /// `hello, FFI` 照常打印）⇒ **HIR 侧对「声明了但找不到的 foreign 符号」不 fail-fast**，
- /// 而 AST 侧在注册期拒（E5-017）。这是**能力/语义缺口**，不是参照臂问题。
- /// 缺口登记见工单「未找到的 foreign 符号在 HIR 侧不 fail-fast」（`G-5` 批新立）；
- /// `G-6` 之前须先补该 fail-fast 或显式退役此用例。
- private func runProgram(_ source: String) throws -> String {
+/// 单文件执行并捕获 stdout（`ProgramRunner` + `outputSink`，与 `runModule` 同形）。
+///
+/// `G-5` 曾把本助手判为「不可换腿」：HIR 侧对「声明了但找不到的 foreign 符号」
+/// 不 fail-fast，而本文件的唯一调用方正是那条驳回性用例。
+/// `G-6a` 给 HIR 补上**注册期急切解析** —— 已声明的 foreign 符号在 `prepare` 期
+/// 逐个解析，顺序与解释器一致（先 libc shim 表、再 dlsym），于是两引擎在
+/// `E5-017` 上同相，本助手随之换腿。
+private func runProgram(_ source: String) throws -> String {
  let module = try parse(source)
- let pipe = Pipe()
- let originalStdout = dup(STDOUT_FILENO)
- setvbuf(stdout, nil, _IONBF, 0)
- dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
- do {
- let interpreter = Interpreter()
- try interpreter.run(module: module)
- } catch {
- fflush(stdout)
- pipe.fileHandleForWriting.closeFile()
- dup2(originalStdout, STDOUT_FILENO)
- close(originalStdout)
- throw error
- }
- fflush(stdout)
- pipe.fileHandleForWriting.closeFile()
- dup2(originalStdout, STDOUT_FILENO)
- close(originalStdout)
- return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
- .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
- }
+ let runner = ProgramRunner()
+ var segments: [String] = []
+ runner.outputSink = { segments.append($0 + "\n") }
+ try runner.run(module: module)
+ return segments.joined(separator: "").trimmingCharacters(in: .whitespacesAndNewlines)
+}
 
  private func parse(_ source: String) throws -> Module {
  let lexer = Lexer(source: source, fileName: "test.pini")

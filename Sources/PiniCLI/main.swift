@@ -1037,6 +1037,10 @@ func runDebugPath(_ path: String) {
 }
 
 /// 单文件调试：直接解析并用 SourceMap(sources:) 承载该文件源码。
+///
+/// `G-6a` 把引擎从 AST 走查接到 HIR（`check → lower → execute`）。调试入口是该
+/// 能力的**唯一实现**、没有第二条臂可换，所以删除 AST 走查之前必须先接上它 ——
+/// 否则 `pini dbg` 会随走查一起消失，那是用户可见能力净减。
 private func runDebugFile(_ path: String) {
  let source: String
  do { source = try readFile(path) } catch {
@@ -1044,14 +1048,26 @@ private func runDebugFile(_ path: String) {
  }
  let module = parseOrReport(source: source, fileName: path)
  let sources = [path: source]
- let engine = Interpreter(programBase: absoluteProgramBase(path))
- startDebugger(run: DebugRun(host: engine) { try engine.run(module: module) },
- sources: sources, primaryName: path)
+ let checker = TypeChecker()
+ let errors = checker.checkCollecting(module: module)
+ guard errors.isEmpty else {
+ printError(errors.map { ErrorFormatter.formatTypeError($0, source: source) }
+ .joined(separator: "\n"))
+ exit(1)
+ }
+ checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+ let executor = HIRExecutor(programBase: absoluteProgramBase(path))
+ startDebugger(run: DebugRun(host: executor) {
+ let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+ try executor.run(module: hir)
+ }, sources: sources, primaryName: path)
 }
 
 /// 目录/模块调试（P7-4 P3）：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，
 /// 供 SourceMap 跨文件展示断点上下文；运行时 `SourceLocation.fileName` 为全路径，
 /// 与 CLI 用户输入的基名通过 `Debugger.breakpointMatches` 容差匹配。
+///
+/// `G-6a` 同 `runDebugFile`：引擎改接 HIR，包走整包降载。
 private func runDebugDirectory(_ path: String) {
  let pkg: Package
  do { pkg = try FileLoader.loadDirectory(path: path) } catch {
@@ -1063,9 +1079,17 @@ private func runDebugDirectory(_ path: String) {
  sources[unit.fileName] = src
  }
  }
- let engine = Interpreter(programBase: absoluteProgramBase(path))
- startDebugger(run: DebugRun(host: engine) { try engine.run(package: pkg) },
- sources: sources, primaryName: sources.keys.first ?? path)
+ let checker = TypeChecker()
+ do { try checker.check(package: pkg) } catch {
+ printError(formatCLIError(error: error, source: nil))
+ exit(1)
+ }
+ checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+ let executor = HIRExecutor(programBase: absoluteProgramBase(path))
+ startDebugger(run: DebugRun(host: executor) {
+ let hir = try HIRLowerer.lower(package: pkg, typeInference: checker.typeInference)
+ try executor.run(module: hir)
+ }, sources: sources, primaryName: sources.keys.first ?? path)
 }
 
 /// 装配一次调试会话（LR-4 P4-3）。

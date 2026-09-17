@@ -434,7 +434,7 @@ public final class HIRExecutor: DebugHookHost {
     /// call on purpose — lowering stays the caller's explicit step
     /// (`HIRLowerer.lower(module:typeInference:)`), same split as the
     /// interpreter taking an already-checked AST.
-    public func prepare(module: HIRModule) {
+    public func prepare(module: HIRModule) throws {
         callableBodies.removeAll()
         for function in module.functions { functions[function.name] = function }
         for decl in module.types {
@@ -451,11 +451,35 @@ public final class HIRExecutor: DebugHookHost {
                 foreignDecls[function.name] = (library: block.name, function: function)
             }
         }
+        try resolveForeignsEagerly()
+    }
+
+    /// Resolves every declared foreign symbol now, in the interpreter's order:
+    /// the shared libc shim table first, then a raw `dlsym`.
+    ///
+    /// The interpreter resolves these while registering declarations, so a name
+    /// that does not resolve fails there — and `symbolNotFound` is a
+    /// registration-time code. Resolving only at the call site instead let the
+    /// same program pass silently until its first call, which diverges from the
+    /// interpreter on the *failure* behaviour of one program rather than on
+    /// what it can do. `FFILoader` caches resolved handles, so the work here is
+    /// not repeated by the call sites below.
+    ///
+    /// The shim table is consulted first for the same reason the call site
+    /// does: those names have no C symbol to find, so asking `dlsym` for them
+    /// would report a failure for a declaration that is perfectly resolvable.
+    private func resolveForeignsEagerly() throws {
+        for (name, foreign) in foreignDecls where RuntimeOps.libcShims[name] == nil {
+            _ = try ffiLoader.resolve(
+                library: foreign.library, symbol: name,
+                searchPaths: ffiConfig.searchPaths, location: HIRExecutor.noLocation
+            )
+        }
     }
 
     /// Run a module's `main`, mirroring `Interpreter.run(module:)`.
     public func run(module: HIRModule) throws {
-        prepare(module: module)
+        try prepare(module: module)
         try executeMain()
     }
 
