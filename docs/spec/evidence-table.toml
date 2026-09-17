@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-17T23:40+0800"
-refresh_note = "2026-09-17 **`G-3b`（L2 异步体 `Result` 上下文）批**：新增「异步体 return 位拿到 `Result` 上下文：夹具面 60 → 1，仍不转绿」一条。要点 = 照两条独立权威写（前端 `TypeChecker.bodyReturns` + 解释器 `Interpreter.joinFuture`）· 一条规则三处消费（return 位 / 定义侧 / 签名表）· 夹具面 60 → 1 且逐夹具账目闭合（59 条变化全部来自该缺口，其余 24 条未动）· 全量回归 64 → 64 **集合相等**（stash 法取父基线）· `ast` 方向逐条相同 · 契约 clean(61/61) · 探针逐槽相等（⚠️ 该判据对本面无区分力）。本次仅新增该条；存量条目未重新验证"
+last_refresh = "2026-09-17T23:55+0800"
+refresh_note = "2026-09-17 **乙组 `D1` / `D2` 裁决批**：新增「错误发现的层次定为静态层优先」一条（= `ADR-041` 的 §1.3 第 5 步）。要点 = 规范写明「编译期拒」· 判据绑定方法「负向夹具不删，改断言被拒 ∧ 拒绝在静态层 ∧ 错误码」· 13 条用例改写归 `G-4·G-5` · `D2` 后一半归在册的诊断通道单。⚠️ 本条**不含新读数**（裁决是规范性的、实现零改动），已如实标注。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -893,6 +893,37 @@ note = """本格 = `G-3` 四批中的第 2 批（L2 异步体 `return` 位的 `R
 
 **一处过程事故**：本机沙箱把 `git stash` 执行了两遍（第一遍已入栈、第二遍报「无改动可存」），
 我据第二遍输出一度以为改动丢失 ⇒ 用三方 md5 + `stash list` 交叉验证处置。同族事实见手册。
+
+本次仅新增该条；存量条目未重新验证
+"""
+
+[[evidence]]
+id = "2026-09-17 错误发现的层次定为静态层优先：规范写明编译期拒，判据以测试方法断言维持"
+citable = false
+claim = "The spec now says where a rejection is allowed to happen. What it promises is that an invalid program is rejected, not which stage rejects it -- but when a shape is decidable statically, the spec requires the static layer to reject it: type mismatches and visibility violations through the checker, missing Result contexts through lowering. What is not statically decidable -- an out-of-range read, a failed IO call, an assertion, a cancellation, a user err payload propagating -- stays a runtime error, and the static layer must not pre-empt it. The judgement method is bound to the semantics rather than left to taste: a negative fixture is kept, never deleted, and its assertion becomes a test-method assertion of three things -- that the program is rejected, that the rejection happened in the static layer, and which error code it carried. Weakening that to 'not a runtime error' would empty the criterion, which is the failure this repository has already paid for once under a different name. The decision comes from a user ruling on the blocker queue's second item, whose first option was to write the compile-time rejection into the spec; the thirteen affected fixtures' expectations move to the G-4/G-5 batch, since the ticket that raised the question states the discipline this ADR follows -- settle the spec first, then rewrite the cases, because rewriting them first would let the implementation define the spec."
+artifacts = [
+  "docs/spec/pini-spec-v0.md",
+  "docs/spec/adr/adr-041-static-layer-rejection.md",
+  "docs/spec/adr/adr-index.md",
+  "docs/issue-hir-static-rejection-vs-runtime-error-2026-09-16.md",
+  "docs/issue-hir-blocker-queue-2026-09-17.md",
+  "docs/issue-hir-p4-plan-2026-09-16.md",
+]
+command = "read docs/issue-hir-static-rejection-vs-runtime-error-2026-09-16.md (the measured list of ten shapes) ; read docs/spec/pini-spec-v0.md section 2.4.4 and section 3 ; grep -n 'Result-typed context' Sources/PiniCore/HIR/HIRLowerer.swift ; grep -n 'bodyReturns' Sources/PiniCore/Type/TypeChecker.swift"
+output = "No measurement was re-run for this entry: the ruling is normative and the implementation is unchanged by it. What the spec names is the shape the ticket already measured on 2026-09-16 over ten test classes -- FieldVisibilityTests, TupleIndexTests, TupleDestructureTests, ResultUnwrapTests, BuiltinFunctionTests (two cases), GenericRuntimeTests, FFITests, LazyRefTests, ParserRestructureTests -- where the program is refused either way and only the stage and the code differ (RuntimeError versus E4-012, invalidOperation versus E4-001, and so on). The implementation anchors the two stages: the type checker refuses with the E4 family, the lowerer with E6-004; the runtime owns the E5 family. The thirteen fixtures whose expectations must be rewritten are counted in the G-4/G-5 batch, not here, and this batch changes no test."
+validated_at = "2026-09-17T23:55+08:00"
+status = "FRESH"
+note = """本条 = **`ADR-041`**（乙组 `D2` 取 ①）的 §1.3 第 5 步证据。
+
+⚠️ **本条不含新读数**，如实标注：裁决是**规范性的**，实现**零改动**（HIR 现状已经是静态层优先，
+本条把它从「实现的性质」升格为「规范的要求」）。所引的现象清单来自
+`docs/issue-hir-static-rejection-vs-runtime-error-2026-09-16.md` 的 2026-09-16 实测（10 个测试类）。
+
+⭐ **本条的判据纪律部分是最该读的一段**：负向夹具**不删**，改断言「被拒 ∧ 拒绝在静态层 ∧ 错误码」；
+**不得**放宽为「只要不是运行期错就通过」—— 那是判据被掏空（`D-P4-21` 同族）。
+
+⚠️ **未做**：13 条用例的期望值改写与「静态可判定」的逐构造判定表 ⇒ 归 `G-4·G-5`；
+`D2` 的另一半（诊断通道奇偶 20 条）⇒ 归 `docs/issue-diagnostic-channel-parity-2026-09-12.md`。
 
 本次仅新增该条；存量条目未重新验证
 """

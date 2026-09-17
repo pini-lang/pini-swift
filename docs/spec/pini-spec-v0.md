@@ -312,6 +312,28 @@ try 表达式 else 错误绑定名:
 - 单错误绑定名，**不按错误类型分派**；类型化多分支捕获为后续增强。
 - 嵌套 try-else 的作用域与错误绑定名遮蔽规则随迁移批 M2 钉定。
 
+### 2.4.5 错误发现的层次（静态层优先）
+
+> **状态**：已定义且已实现（`ADR-041`，2026-09-17 用户裁决）。稳定性 **Provisional**。
+> **证据**：`Sources/PiniCore/HIR/HIRLowerer.swift`（降载期拒绝）· `Sources/PiniCore/Type/TypeChecker.swift`
+> （类型检查）；现象与实测清单见 `docs/issue-hir-static-rejection-vs-runtime-error-2026-09-16.md`。
+
+**本规范承诺的是「这个程序会被拒」，不是「它在哪一阶段被拒」。** 但当一个情形**在静态层可判定**时，
+规范要求它**在静态层被拒** —— 静态层拒错不产生任何输出、不依赖运行时状态、可复现，
+且错误位置绑在源码上，而不是绑在「跑到第几步才发现」。
+
+| 错误形态 | 发现层 | 表现 |
+|---|---|---|
+| 类型不符 · 可见性越界 · 泛型/元组形态错 · `Result` 上下文缺失 | **静态层** | 类型检查 `E4-*` · 降载 `E6-004`；**零 stdout**、非零退出码 |
+| 越界读 · IO 失败 · 断言失败 · 取消 · 用户 `err(...)` 的传播 | **运行期** | `E5-*`；这些**静态不可判定**，静态层**不得**抢报 |
+
+**判据纪律（与语义同等重要）**：负向程序的验证以**测试方法断言**「该程序被拒 ∧ 拒绝发生在静态层 ∧
+错误码是哪一个」；**不得**放宽为「只要不是运行期错就通过」这类无内容的断言 ——
+判据被掏空与语义写错同属治理事故。
+
+⚠️ **已知边界（见 §3 的 G63）**：「哪些情形属静态可判定」的**逐构造判定表尚未列全** ——
+当前只有一批实测用例的现象，没有逐构造的判定表；该表与相关用例的期望值改写随 `G-4·G-5` 批补齐。
+
 ### 2.5 访问控制（约定制 4 级）
 
 > **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests`、`FieldVisibilityTests`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现：批 1 已落地**（2026-08-31，块式 import/export + 禁环 + `别名.符号` + public 门槛，批 1 裁决与实现备注收编见 `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` 状态块）；MVS / `pini mod` 工具链 / 远程抓取待批 3/4。语言面细则见 §5.1 索引 → 语言参考的「声明」章（导入与导出 / 访问控制）与「模块系统」章。
@@ -469,6 +491,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | **G59** | **泛型枚举用例构造的形态与类型实参挂点**：**限定形态** `枚举名<实参…>.用例(载荷…)` **为准**——父枚举与类型实参**均由书写给出**、不依赖推断，实参个数可在类型层**静态校验**；**裸名形态** `用例<实参…>(载荷…)` 为**糖**——先按 ADR-026 D1 三档解析出父枚举再逐位绑定实参，此后与限定形态**同一语义**（**代价 = 实参个数校验落运行期**，已登记）。**文法零改动**：`primary-atom` + `generic-construct` 两产生式与消歧规则 3.3 已覆盖该拼写 | 已定义（**ADR-037**）；**实现：降载层 ✅（本批 `G-2d` 的 `S1`）· AST 走查 ✗**（限定形态在 AST 侧报 E5-001——走查将于 `P4-γ` 删除，故不投入；**两形态在降载层与 LLVM 通道均可用**，且差分夹具全用裸名形态 ⇒ **测试面不可见**）| Experimental | v0.54.0（推测） | ADR-037 / §A `generic-construct` 注记 / `Sources/PiniCore/HIR/HIRLowerer.swift`（`registerEnumSpecialization` · `lowerGenericEnumCaseConstruct`）/ `Sources/PiniCore/Type/TypeEnvironment.swift`（`defineGenericEnum` · `lookupSpecializedEnumCase`）/ 夹具 `Tests/PiniTests/GenericEnumTests/` · `Tests/PiniTests/GenericRuntimeTests/` / 规划件 `docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md` |
 | **G60** | **数值字面量的转换与 `abs` 的定义域**（ADR-038）：① `abs` 接受**整数与小数**、各自保型；② **整数字面量不隐式转为小数**（要小数处须写 `0.0`/`2.0`）。⚠️ ② 把类型面钉成单一可判形态，代价是**旧引擎时代写下的程序翻转后会被拒**（与 `D-P4-15` 的 `E4` 族同源） | 已定义（**ADR-038**）；**实现未落地** —— 待改：内建登记表的 `abs` 签名 · HIR 降载层 `abs` 结果类型硬编码 · LLVM 侧 `abs` 的处置（实现或响亮拒绝）· 夹具 `testEnumNamedConstructionUsesEquals.pini` 的 3 处 · 全量语料的整数→小数普查 | Experimental | v0.55.0（推测） | ADR-038 / `Sources/PiniCore/Common/BuiltinRegistry.swift` / `Sources/PiniCore/HIR/HIRLowerer.swift` / `docs/spec/migration-2026-09.md` / 用例 `testMathAbs` · `testEnumNamedConstructionUsesEquals` |
 | **G61** | **标签 `break` 的定向范围与标签命名规则**（ADR-039）：① `break 标签` 可定向**任意带标签结构**（含 `if` 块）；② `continue 标签` **仅循环标签有效**（明文加固，不放宽）；③ 内层同名标签**遮蔽**外层（最近匹配）；④ 标签与变量**独立命名空间**。触发面 = 第 3 层「spec 断言层」补「标签语义」面时照出「`break` 指向 `if` 标签」**两引擎相反**（ast 跳出块 / hir 与 llvm 同源 panic），而三处文档沉默 | 已定义**且已实现**（**ADR-039**；规范与实现同批落地）。落地面：契约节点 3 `ifStmt` 加标签与节点 11/12 表述订正 · 降载层「循环帧栈」泛化为「可中断帧栈」 · `HIRExecutor` `if` 帧捕获 · `IREmitter` `if` 块出口标签与释放路径 · `HIRPrinter` · 语言参考标签节与跳转节 · `docs/spec/migration-2026-09.md` 记一处收敛。⚠️ 同一张断言面还照出**另一条**缺陷（`continue 标签` 的深度 > 1 时跳过目标循环尾部）—— **不在本缺口内**，已单独立案 | Provisional | v0.55.0（推测） | ADR-039 / ADR-014（前身） / §2.4.1 / §A.4 规则 3.13 / `docs/spec/hir-contract.md` / 第 3 层语料 `Tests/PiniTests/SpecAssertionTests/` |
+| **G63** | 错误发现的层次（静态层优先，`ADR-041`） | 已定义（§2.4.5；承诺「会被拒」，静态可判定者要求静态层拒）｜⚠️ **残余**：逐构造判定表未列全 · 相关负向用例期望值待改写 | Provisional | — | `ADR-041` / `HIRLowerer` / `TypeChecker` / 语言参考（错误模型） |
 | **G62** | **HIR 契约 `join` 节点的挂起语义**（`ADR-040`）：`await`（异步函数体内挂起）/ `wait`（同步上下文阻塞）在 HIR 侧的落点。**节点面已落地**（2026-09-17 同批：契约 §2.45 · `HIRNode.swift` case · 三锚点 `llvm` / `printer` / `interp-hir`），**挂起语义本身未实现**（CPS 求值器，格 `G3c`）⇒ 本节点当前**不可达**（`HIRLowerer` 无 `.join` 降载规则，仍在原处兜底拒绝）。触发面 = 格 `G-3` 规划勘测照出**两条已立判据指向相反动作**（契约 §4.2「须增加节点面」 vs `D-P4-26` 硬停「须先走 §1.3」）—— 本批把该歧义判掉（走 §1.3），并作证「契约行 / enum case / 三锚点」是门禁强制的**最小自洽单元** | 节点面**已落地**（走 §1.3 五步，`ADR-040`）；**挂起语义待实现** | Provisional | v0.49.0 | ADR-040 / `docs/spec/hir-contract.md` §2.45 与 §4.2 / `docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md` / `Sources/PiniCore/HIR/HIRNode.swift` |
 
 
