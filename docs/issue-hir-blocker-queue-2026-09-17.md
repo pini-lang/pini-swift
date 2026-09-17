@@ -194,6 +194,10 @@
 > ✅ **已裁（2026-09-17，用户）**：取 **① 切**（按本件建议）。落位：`D-P4-34`。
 > ⇒ `G-3c` 拆为 **`G-3c-1`**（异步管道 + **阻塞** join；判据 = 59 条首缺口归零、**应当真转绿**）
 > 与 **`G-3c-2`**（真挂起 CPS + depth 制路由 + `ThreadLocal`，与 `G-3d` 合流）。
+>
+> ⛔ **2026-09-17：`G-3c-2` 已取消** —— 用户裁决「并发面判定为不完善、挂起模式**暂时退役**」
+> （`ADR-043` / 缺口 `G66`；`await`/`wait` **保留且语义不变**，退役的是「释放 OS 线程」这一实现形态）。
+> 残余（语料保全 / 触发条件 / 4 条可迁移用例）登记见 `docs/issue-suspend-retirement-residuals-2026-09-17.md`。
 
 ### `D-G3c-2` — 认不认 `G-3c` 的两批切法（`G-3c` 勘测新出，2026-09-17）
 
@@ -208,7 +212,7 @@
 | 批 | 内容 | 判据 |
 |---|---|---|
 | **`G-3c-1`** | 异步管道 + **阻塞** join（含 `HIRFunction` 异步标记 · 执行器 spawn 面 · `join` 降载 · `Future` 值层内建与方法 · `detach`） | **59 条**首缺口归零；⚠️ 与前两批**不同形态**：这批**应当真转绿**（阻塞语义**就是**发布语义） |
-| **`G-3c-2`** | 真挂起 CPS（890 行镜像 + driver 路由改 **depth** 制 + `HIRExecutor` 四状态改 `ThreadLocal`） | `SuspendRuntimeTests` 15 条 + `CPSDifferentialTests` 14 条**改指 HIR 后逐字节一致** ⇒ **与 `G-3d` 天然合流** |
+| **`G-3c-2`** ⛔ **已取消（2026-09-17，`ADR-043` / 缺口 `G66`；本行为取消前的登记留痕）** | 真挂起 CPS（890 行镜像 + driver 路由改 **depth** 制 + `HIRExecutor` 四状态改 `ThreadLocal`） | `SuspendRuntimeTests` 15 条 + `CPSDifferentialTests` 14 条**改指 HIR 后逐字节一致** ⇒ **与 `G-3d` 天然合流** |
 
 **为什么现在要决定**：不切则按 §3 原表单批做，两条代价**一次性承担** ——
 ① **访问面**：另立文件则 `HIRExecutor` 的 `private` 成员（`evaluate` / `execute` / `executeStatements` /
