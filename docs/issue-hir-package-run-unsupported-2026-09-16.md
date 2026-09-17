@@ -113,3 +113,53 @@ if engine == .hir {
 ⚠️ **本单判据面的那句「发现它的唯一姿势 = 显式传 `PINI_INTERP_ENGINE=hir` 跑全量回归」需要补一条**：
 全量回归**仍然看不见**上表前两类（它们的夹具在探针与回归里都是 `PACKAGE_MEMBER` / 不入根集）
 —— 看见它们的是**包通道**这一条新边。⇒ 「把引擎切过去跑一遍」是**必要不充分**的勘测动作。
+
+
+---
+
+## `A2` 批补记（2026-09-17）：**`run-llvm` 侧归本单**，附可复制的复现
+
+队列甲组 `A2` 的实测把「`run-llvm` 不接受目录」与「`rc=0` 掩盖」**分成两件事**，
+并判定**前者归本单、后者归 `docs/issue-run-llvm-discards-lli-exit-status-2026-09-16.md`**。
+本节按该判定把指针**补实**（此前台账 §9 与本单都只写「在册工单」，**没有指名**）。
+
+### 事实（实测 2026-09-17，`291a4b3`）
+
+```sh
+export PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin
+
+pini run-llvm examples/package-demo ; echo "rc=$?"
+#   stderr: Error: The file “package-demo” couldn’t be opened.
+#   rc=1     ← ⚠️ 显式失败，不是静默
+pini run-llvm examples/multifile ; echo "rc=$?"
+#   rc=1
+
+pini run examples/package-demo ; echo "rc=$?"
+#   stdout: 107
+#   rc=0     ← 解释器侧包通道（P4-1a）走的是另一条实现，有完整目录分支
+```
+
+| 通道 | 目录输入 | rc | 性质 |
+|---|---|:---:|---|
+| `pini run <目录>` | ✅ 正常 | 0 | `runRunPath` 有目录分支（`P4-1a`） |
+| `pini run-llvm <目录>` | ❌ 读不到 | **1** | `case "run-llvm"` 直接把参数当**文件**读（`main.swift:1729`），无目录分支 |
+
+### 为什么归本单
+
+本单主题 = **「包/目录运行这条入口缺能力」**。`run-llvm` 缺的正是同一件事的
+**LLVM 通道版本**：解释器侧入口已由 `P4-1a` 补齐，LLVM 侧从未有过。
+
+⚠️ **但它不是本单首节那种「判据看不见」的假绿** —— 它**显式 `rc=1`**，脚本与 CI 都看得见。
+它的真实危害只有一条：**探针那 27 条 `PACKAGE_MEMBER` 在 `hir⇄llvm` 边上不可能被覆盖**
+（见 `docs/hir-criteria-gap-ledger.md` §9/§10 与 `docs/issue-hir-blocker-queue-2026-09-17.md` §1-A1）
+⇒ 这条边对包成员的**永久未测**，是本单的直接后果，不是探针的疏漏。
+
+### 订正
+
+本单与台账 §9、阻塞队列 §1.1 此前记的「`run-llvm <目录>` … **`rc=0`**」**是错的**：
+现测 `rc=1`（两个二进制各三次连跑，读数逐项相同）。`rc=0` 那条读数属**另一条路径**
+（lli 真跑起来之后 `terminationStatus` 被丢弃），已由上面那张单载明并订正。
+**本批不替那次读错编解释**，只给出可复现的现测与符号级根因。
+
+**本批不做**：不改 `Sources/PiniCLI/main.swift`（`run-llvm` 原样无目录分支）·
+不新建单（两条缺陷同载体同 `case`，拆单会让「一处代码的两个不足」分家）· 不 push。

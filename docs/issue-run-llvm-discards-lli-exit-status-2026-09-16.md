@@ -116,7 +116,7 @@ pini run-llvm <夹具路径>        # 例：退出码 0，但 stderr 有 `Pini r
 | 输入 | `pini run-llvm` 打印 | `rc` |
 |---|---|---|
 | 一个只用字典 `.get` 的程序 | `lli: error: '%t14' defined with type 'ptr' but expected 'i32'` | **0** |
-| 一个**模块目录**（`examples/package-demo`） | `Error: The file "package-demo" couldn't be opened.` | **0** |
+| 一个**模块目录**（`examples/package-demo`） | `Error: The file "package-demo" couldn't be opened.` | ~~**0**~~ **1** ⚠️ **本行原记有误**（`A2` 批订正；原值保留以留痕，理由见本文 §`A2` 批现测复核） |
 
 ⇒ ① 前者使探针把一条**真缺陷**判成非阻塞槽 `HARNESS_DEPENDENT`（详见
 `docs/issue-hir-dict-get-emitter-invalid-ir-2026-09-17.md`）；
@@ -124,3 +124,126 @@ pini run-llvm <夹具路径>        # 例：退出码 0，但 stderr 有 `Pini r
 在 `hir⇄llvm` 这条边上**不可能**被覆盖（见 `docs/issue-hir-blocker-queue-2026-09-17.md` §1-A1）。
 
 本单**仍未修**（登记不修），上述两条只是补证。
+
+
+---
+
+## `A2` 批现测复核（2026-09-17）：复现命令、成立域、以及一处**订正**
+
+> 队列甲组 `A2` 要求「把 `A1` 的成因补进在册工单（`run-llvm` 不接受目录 + `rc=0` 掩盖），
+> **只登记不修**」，判据 = 「在册工单多一条实测证据（**含复现命令**）」。
+> 本节的实测把上面那句里的**两件事分开了** —— 它们**不是同一个缺陷**，而且**只有一件属于本单**。
+
+### 复现命令（可直接复制）
+
+```sh
+export PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin     # ADR-031 约束 6；否则 lli 找不到
+
+# ① 目录输入：**显式失败**，rc=1
+pini run-llvm examples/package-demo ; echo "rc=$?"
+#   stderr: Error: The file “package-demo” couldn’t be opened.
+#   rc=1
+
+# ② 对照：lli 真跑起来、程序运行时崩 —— **这里才是 rc=0 的假绿**
+pini run-llvm Tests/PiniTests/RuntimeBackendTests/testArrayOutOfBoundsBothBackendsError.pini ; echo "rc=$?"
+#   stderr: Pini runtime error: array index 99 out of bounds (size 3)
+#   rc=0
+
+# 两臂对照（同一夹具，解释器两引擎都如实报 1）
+PINI_INTERP_ENGINE=ast pini run Tests/PiniTests/RuntimeBackendTests/testArrayOutOfBoundsBothBackendsError.pini ; echo "rc=$?"   # 1
+PINI_INTERP_ENGINE=hir pini run Tests/PiniTests/RuntimeBackendTests/testArrayOutOfBoundsBothBackendsError.pini ; echo "rc=$?"   # 1
+```
+
+### 现测读数（2026-09-17，`291a4b3`，两个二进制各三次连跑）
+
+| 输入 | `pini run-llvm` stderr | rc（三次） |
+|---|---|:---:|
+| `examples/package-demo`（目录） | `Error: The file “package-demo” couldn’t be opened.` | **1 / 1 / 1** |
+| `examples/multifile`（目录） | `Error: The file “multifile” couldn’t be opened.` | **1 / 1 / 1** |
+| `…/RuntimeBackendTests/testArrayOutOfBoundsBothBackendsError.pini` | `Pini runtime error: array index 99 out of bounds (size 3)` | **0 / 0 / 0** |
+
+两处细节：① 用 **`.build/debug/pini` 与 `/tmp/pini-build/…/pini` 两个二进制**分别跑，
+读数逐项相同（⇒ 不是构建差异）；② 每条**连跑三次**，读数稳定（⇒ 不是闪断）。
+
+### ⚠️ 订正：本单「上文」的那条读数，**成立域比它写的窄**
+
+本单前两节（§补记的表格第二行）与台账 §9、阻塞队列 §1.1 都记着
+「`pini run-llvm <目录>` → `couldn't be opened.`，**`rc=0`**」。
+**现测为 `rc=1`**，且**符号级可达性**也支持现测（见下）⇒ **那三处的 `rc=0` 是错的**，
+本批一并订正（见文末「订正清单」）。
+
+**为什么会错**：`rc=0` 这条读数**本身是真的**，但它属于**另一条路径** —— 前两节把它与
+「目录被拒」并排写进同一张表，读者会顺理成章地读成「目录输入也静默 rc=0」。
+**本批不替那次读错编解释**（是按错读、是抄串行、还是当时确有第三种形态，无从复原）；
+本批只做两件事：**给出可复现的现测**，并**把两条路径在代码上分开**。
+
+### 符号级根因：两条路径在**不同位置**
+
+```swift
+// Sources/PiniCLI/main.swift:1729 —— 本单认领的这一半
+case "run-llvm":
+    guard args.count >= 3 else { … exit(1) }
+    do {
+        let source = try readFile(args[2])          // ← 直接把参数当**文件**读，没有目录分支
+        try runLLICommand(source: source, fileName: args[2])   // ← rc=0 的假绿发生在这句**内部**
+    } catch {
+        printError(formatCLIError(error: error, source: nil))
+        exit(1)                                     // ← 读不到 ⇒ 显式失败
+    }
+```
+
+对照 `case "run"` → `runRunPath`（`main.swift:869` 起）：它有完整的目录分支
+（`P4-1a` 交付：`loadManifest` → `loadDirectory` → 按引擎分派），所以
+**`pini run <目录>` rc=0 正常出结果，而 `pini run-llvm <目录>` 连解析都没进去**。
+
+⇒ **两条路径的性质相反**：
+
+| 路径 | 触发条件 | 表现 | 性质 | 属本单？ |
+|---|---|---|---|:---:|
+| `readFile` 失败 | 参数不是可读文件（目录 / 打不开） | 显式报错 + **rc=1** | **显式失败** —— 脚本能看见 | ✗ |
+| `runLLICommand` 内部 | 文件读到了、lli 跑起来了、**程序自己崩了** | lli 的 stderr 有真报错，命令却 **rc=0** | **假绿** —— 脚本看不见 | ✓ |
+
+**只有下面那一行是本单的对象**：`rc=0` 假绿的成立域 = **lli 真的执行过之后**
+（`waitUntilExit()` 丢弃 `terminationStatus`，见上文「根因（符号级）」）。
+
+### 全量复测：27 条 `PACKAGE_MEMBER` 的 `rc` 真实分布（本单核心证据）
+
+`A1` 说「那 27 条在 `hir⇄llvm` 边上不可能被覆盖」。本节把这句的**实际机制**测出来 ——
+对探针排除的 **27 条逐条**跑 `pini run-llvm <成员文件>`（27/27；超时 25s）：
+
+| rc | 条数 | 报文 | 失败发生在哪一层 |
+|---|---:|:---:|---|
+| **1** | **26** | `E6-004` × 12 · `E4-001` × 12 · `E2-001` × 1 · `E4-010` × 1 | **前端 / 降载层**拒绝 ⇒ Swift 侧 `exit(1)` |
+| **0** | **1** | `examples/ffi_module/cstring.pini` → `JIT session error: Symbols not found: [ _ffi_memset, … ]` | **lli 真跑起来了**，符号缺失而失败 ⇒ `terminationStatus` 被丢弃 ⇒ **`rc=0`** |
+
+⇒ 那**一条**（`cstring.pini`）是本单「假绿」在探针排除面上的实例：探针只能把它记成
+`PACKAGE_MEMBER`（未测），而它的真实形态是「**独立臂跑起来了**，却静默失败」。
+
+⚠️ **同时订正一处形态**：既有记载写「`pini run-llvm <成员>` 打印**同一错误**，但 `rc=0`」——
+**实测不成立**：27 条里 **26 条 `rc=1`**（且报文**并不统一**，共四种错误码），只有 **1 条 `rc=0`**。
+⇒ 那条记载把**一条**的读数写成了**通例**，并把两类失败（前端拒绝 vs 运行时失败）混成了一句。
+这与上一节的订正是**同一类错误**：**把不同层的现象并排写进一行**。
+
+### 归属：另一半（`run-llvm` 无目录分支）不在本单
+
+「`run-llvm` 不接受目录」是一条**能力缺口**，不是判据缺陷：它以**显式 `rc=1`** 失败，
+脚本与 CI 都看得见，**不会造成假绿**。它的真实危害只有一条 ——
+探针那 **27 条 `PACKAGE_MEMBER`** 在 `hir⇄llvm` 这条边上**不可能**被覆盖
+（`hir⇄llvm` 边喂不进目录）。
+
+⇒ 归 **`docs/issue-hir-package-run-unsupported-2026-09-16.md`**（该单主题正是「包运行入口」，
+且它的 §状态更新 已把本项列为三类子缺口之外的相邻项）。**本单不认领、本批不修、不新建单** ——
+两条缺陷的载体是**同一个文件、同一个 `case`**，拆成两张单会让「一处代码的两个不足」分家；
+本批改为**两边各写清归属**（该单也补了指针，见其 §`A2` 批补记）。
+
+## 订正清单（`A2` 批，`rc=0` → `rc=1`）
+
+| 载体 | 位置 | 改成 |
+|---|---|---|
+| 本单 | §补记 表格第二行 | 已在本节订正（历史行保留） |
+| `docs/hir-criteria-gap-ledger.md` | §9 `PACKAGE_MEMBER` 行的成因 | `rc=1`（显式失败）+ 归属补实 |
+| `docs/issue-hir-blocker-queue-2026-09-17.md` | §1.1 第 4 行表格 | `rc=1` |
+| `docs/issue-hir-package-run-unsupported-2026-09-16.md` | §`A2` 批补记 | 新增（含复现命令） |
+
+**未做（本批）**：不改 `Sources/PiniCLI/main.swift`（`terminationStatus` 原样丢弃、
+`run-llvm` 原样无目录分支）· 不动任何判据槽位 · 不 push。
