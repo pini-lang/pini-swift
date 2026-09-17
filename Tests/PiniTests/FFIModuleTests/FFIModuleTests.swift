@@ -128,8 +128,8 @@ final class FFIModuleTests: XCTestCase {
  // 单文件 |test 收集执行同样需加载所在模块的 `[ffi]` 配置（复刻 `pini test` 的行为），
  // 否则 foreign 块（ffilib）无法经 search_paths 解析到项目内 vendored lib。
  let manifest = try? FileLoader.loadManifest(directory: ffiModuleDir)
- let interpreter = Interpreter(ffiConfig: manifest?.ffi ?? .default)
- let results = try interpreter.runTests(module: module)
+ let runner = ProgramRunner(ffiConfig: manifest?.ffi ?? .default)
+ let results = try runner.runTests(module: module)
  XCTAssertEqual(results.count, 2, "应收集到 2 个 |test 块（裸绑定测试 / 比较测试）")
  let allPassed = results.allSatisfy { $0.passed }
  XCTAssertTrue(allPassed, "全部应通过，实际：\(results.map { ($0.name, $0.message) })")

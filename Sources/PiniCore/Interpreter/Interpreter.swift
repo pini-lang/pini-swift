@@ -266,17 +266,11 @@ public class Interpreter: DebugHookHost {
 
  // MARK: - #46-E G41（test 块，R1/R4）：pini test 的运行时执行入口
 
- /// 一次 `|test` 函数块的执行结果（供 CLI `pini test` 汇总报告）。
- public struct TestRunResult {
- public let name: String
- public let passed: Bool
- public let message: String
- public init(name: String, passed: Bool, message: String) {
- self.name = name
- self.passed = passed
- self.message = message
- }
- }
+ // 测试结果形状已迁到 `ProgramRunner.TestRunResult`（LR-4 P4-γ `G-4`）。
+ //
+ // 搬家的理由是**寿命**：本条所在类型是 `G-6` 的删除对象，而该形状是两个引擎共用的
+ // 报文（`pini test` 打印它、两条通道都产出它）—— 留在被删者名下，删的那天它跟着消失。
+ // 迁到继任者名下并同时改指，使这次搬家可对着旧定义逐字核对。
 
  /// 运行模块内所有顶级 `|test` 函数块（草稿「测试函数块必须显示声明|test」）。
  ///
@@ -286,9 +280,9 @@ public class Interpreter: DebugHookHost {
  /// - 失败不中断：某测试抛错（如 `assert` 失败 → `RuntimeError.assertionFailed`）记为失败，
  /// 继续执行其余测试；`runTests` 自身仅对「注册/执行框架错误」抛错。
  /// - 不执行 `main`（测试入口独立于程序入口）。
- public func runTests(module: Module) throws -> [TestRunResult] {
+ public func runTests(module: Module) throws -> [ProgramRunner.TestRunResult] {
  try prepare(module: module)
- var results: [TestRunResult] = []
+ var results: [ProgramRunner.TestRunResult] = []
  for decl in module.declarations {
  guard case .funcDecl(let f) = decl, f.modifiers.contains("test") else { continue }
  results.append(executeCollectedTest(f))
@@ -300,13 +294,13 @@ public class Interpreter: DebugHookHost {
  /// 运行时入口。注册包内**全部文件**声明（跨文件符号可见）后，仅执行 `fileScope` 命中的
  /// 文件单元中的顶级 `|test`（`fileScope == nil` = 模块全量收集）。执行语义与
  /// `runTests(module:)` 一致（参数注入零值、失败不中断）。
- public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
+ public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [ProgramRunner.TestRunResult] {
  registerBuiltins()
  collectEnumCaseNames(package: package)
  for unit in package.fileUnits {
  try registerDecls(module: unit.module)
  }
- var results: [TestRunResult] = []
+ var results: [ProgramRunner.TestRunResult] = []
  for unit in package.fileUnits {
  if let scope = fileScope, !scope(unit.fileName) { continue }
  for decl in unit.module.declarations {
@@ -318,16 +312,16 @@ public class Interpreter: DebugHookHost {
  }
 
  /// 单个已收集 `|test` 函数的执行（注册查询 + 零值注入 + 失败捕获），G41/G49 共用。
- private func executeCollectedTest(_ f: FuncDecl) -> TestRunResult {
+ private func executeCollectedTest(_ f: FuncDecl) -> ProgramRunner.TestRunResult {
  guard case .function(let fv)? = try? globalEnv.get(name: f.name) else {
- return TestRunResult(name: f.name, passed: false, message: "测试函数未注册到全局环境")
+ return ProgramRunner.TestRunResult(name: f.name, passed: false, message: "测试函数未注册到全局环境")
  }
  let args = f.params.map { zeroValueForTestParam($0) }
  do {
  _ = try callFunctionValue(fv, args: args)
- return TestRunResult(name: f.name, passed: true, message: "")
+ return ProgramRunner.TestRunResult(name: f.name, passed: true, message: "")
  } catch {
- return TestRunResult(name: f.name, passed: false, message: "\(error)")
+ return ProgramRunner.TestRunResult(name: f.name, passed: false, message: "\(error)")
  }
  }
 

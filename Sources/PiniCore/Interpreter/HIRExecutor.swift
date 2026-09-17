@@ -268,14 +268,32 @@ public final class HIRExecutor: DebugHookHost {
     private var types: [String: HIRTypeDecl] = [:]
     private var enums: [String: HIREnumDecl] = [:]
 
-    /// The foreign callees this module declared, from `[名称|foreign]` blocks.
+    /// The foreign callees this module declared, from `[名称|foreign]` blocks,
+    /// keyed by callee name.
     ///
-    /// The gate matters: these names are answered by the interpreter's libc
-    /// shim table, and answering them unconditionally would let a program
-    /// that never declared `malloc` call it here while the AST channel
-    /// rejects the same program. Declared-foreign beats the generic
-    /// builtin guesses below because it is the program's own declaration.
-    private var foreignNames: Set<String> = []
+    /// The gate matters: these names are answered by the shared libc shim
+    /// table, and answering them unconditionally would let a program that never
+    /// declared `malloc` call it here while the AST channel rejects the same
+    /// program. Declared-foreign beats the generic builtin guesses below
+    /// because it is the program's own declaration.
+    ///
+    /// A map and not a set because the second resolution stage needs the
+    /// **library**: a shim miss means a raw C binding, resolved with `dlsym`
+    /// against the block name (`[ffilib|foreign]` → `libffilib.dylib`), and the
+    /// thunk wrapping the address needs the declared signature. A set could
+    /// answer "is this foreign" but not "foreign to what, and shaped how".
+    private var foreignDecls: [String: (library: String, function: HIRForeignFunction)] = [:]
+
+    /// Library handles for raw C bindings, cached by library name.
+    ///
+    /// Per engine, not process-wide. The interpreter keeps its own `FFILoader`
+    /// on its instance; sharing one handle table between engines would make a
+    /// handle's lifetime — and so "when is it safe to close" — a cross-engine
+    /// question with no owner. Two engines, two caches, one resolution routine.
+    private let ffiLoader = FFILoader()
+
+    /// The package's `[ffi]` table, for `search_paths`.
+    private let ffiConfig: FFIConfig
 
     /// Bodies of the function *values* built while running, keyed by value
     /// identity — see `HIRCallableBody` for why the body cannot travel inside
@@ -398,9 +416,10 @@ public final class HIRExecutor: DebugHookHost {
     /// `argv()` 内建的唯一来源，镜像而不另造。
     public var processArguments: [String] = []
 
-    public init(programBase: String? = nil) {
+    public init(programBase: String? = nil, ffiConfig: FFIConfig = .default) {
         self.globalEnv = Environment()
         self.programBase = programBase
+        self.ffiConfig = ffiConfig
         // `currentEnv` is deliberately not seeded here. Its per-thread box
         // answers `globalEnv` until a thread enters something, so a seed would
         // be the same value written the hard way — and writing through the
@@ -423,7 +442,15 @@ public final class HIRExecutor: DebugHookHost {
             for method in decl.methods { methods[method.name] = method }
         }
         for decl in module.enums { enums[decl.name] = decl }
-        foreignNames = Set(module.foreigns.flatMap { $0.funcs.map(\.name) })
+        // One name maps to one declaration. A name declared in two blocks
+        // would be ambiguous and the semantic layer already rejects that; were
+        // it ever to arrive, last-wins is the rule the function tables use.
+        foreignDecls = [:]
+        for block in module.foreigns {
+            for function in block.funcs {
+                foreignDecls[function.name] = (library: block.name, function: function)
+            }
+        }
     }
 
     /// Run a module's `main`, mirroring `Interpreter.run(module:)`.
@@ -437,6 +464,26 @@ public final class HIRExecutor: DebugHookHost {
             throw RuntimeError.mainNotFound(location: HIRExecutor.noLocation)
         }
         _ = try call(main, args: [])
+    }
+
+    /// Call one module-level function by name.
+    ///
+    /// `run(module:)` reaches exactly one function and it is always `main`; a
+    /// test run reaches every `|test` function instead, so the entry point has
+    /// to be per-name rather than fixed. Nothing else differs — same `invoke`,
+    /// same argument protocol — which is what makes a test body meet the same
+    /// runtime an ordinary call would, rather than a second execution mode.
+    ///
+    /// The caller must have called `prepare(module:)` first, exactly as for
+    /// `run(module:)`; lowering stays the caller's explicit step on this engine.
+    public func callFunction(named name: String, args: [Value]) throws -> Value {
+        guard let function = functions[name] else {
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: no module-level function named \(name) to call",
+                location: HIRExecutor.noLocation
+            )
+        }
+        return try call(function, args: args)
     }
 
     // MARK: - Diagnostics
@@ -541,22 +588,51 @@ public final class HIRExecutor: DebugHookHost {
             // @sqrt and the interpreter answers it as a builtin. Call the shared
             // builtin rather than delegating the callee to a live interpreter,
             // which is what the note above rules out.
-            // P4-0: a callee the module declared in a `[名称|foreign]` block is
-            // answered by the libc shim table shared with the AST channel. A
-            // declared name with no shim is a raw C binding, which resolves
-            // through dlsym in the interpreter's FFI loader -- this engine has
-            // no loader, so it fails loud rather than silently.
-            if foreignNames.contains(name) {
+            // A callee declared in a `[名称|foreign]` block resolves in two
+            // stages, and this engine now runs both in the interpreter's order:
+            //
+            //   ① the libc shim table, shared with the AST channel — one
+            //      definition, two engines;
+            //   ② otherwise a raw C binding: `dlsym` against the block name,
+            //      then a per-signature thunk over the resolved address.
+            //
+            // Stage ② used to fail loud here, because the loader lived only on
+            // the interpreter instance. Running the same chain on both channels
+            // is the point of doing it at all: a shim added on one side and not
+            // the other, or a symbol resolving differently between them, is
+            // exactly the class of divergence this migration exists to remove.
+            if let foreign = foreignDecls[name] {
                 let args = try arguments.map { try evaluate($0) }
-                guard let shim = RuntimeOps.libcShims[name] else {
-                    throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: foreign callee \(name) is declared by the "
-                            + "module but has no shim; raw C bindings need the interpreter's "
-                            + "dlsym loader, which this engine does not carry",
-                        location: HIRExecutor.noLocation
-                    )
-                }
-                return try shim(args)
+                if let shim = RuntimeOps.libcShims[name] { return try shim(args) }
+                let symbol = try ffiLoader.resolve(
+                    library: foreign.library, symbol: name,
+                    searchPaths: ffiConfig.searchPaths, location: HIRExecutor.noLocation
+                )
+                let thunk = try ForeignThunk.make(
+                    symbol: symbol, name: name,
+                    paramTypes: try foreign.function.paramTypes.map { type in
+                        guard let annotation = ForeignThunk.annotation(for: type) else {
+                            throw RuntimeError.invalidOperation(
+                                reason: "HIR executor: foreign callee \(name) has a parameter "
+                                    + "type that is not a C top-level type",
+                                location: HIRExecutor.noLocation
+                            )
+                        }
+                        return annotation
+                    },
+                    returnTypes: try foreign.function.returnType.map { type -> [TypeAnnotation] in
+                        guard let annotation = ForeignThunk.annotation(for: type) else {
+                            throw RuntimeError.invalidOperation(
+                                reason: "HIR executor: foreign callee \(name) has a return "
+                                    + "type that is not a C top-level type",
+                                location: HIRExecutor.noLocation
+                            )
+                        }
+                        return [annotation]
+                    } ?? [],
+                    location: HIRExecutor.noLocation
+                )
+                return try thunk(args)
             }
             // P4-0: sin/cos lower to LLVM intrinsics, so the names that arrive here
             // are `llvm.sin.f64` / `llvm.cos.f64` and `tan` arrives as a division

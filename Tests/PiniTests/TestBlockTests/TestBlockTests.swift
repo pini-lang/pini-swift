@@ -69,13 +69,13 @@ final class TestBlockTests: XCTestCase {
         XCTAssertNoThrow(try analyzer.analyze(module: module), "|test 函数应通过语义检查")
     }
 
-    // MARK: - G41 R1/R4：Interpreter.runTests（pini test 的运行时执行入口）
+    // MARK: - G41 R1/R4：ProgramRunner.runTests（pini test 的运行时执行入口）
 
     /// 意图：runTests 收集全部顶级 |test 函数并逐一执行；assert 全通过时全部 passed。
     func testRunTestsAllPass() throws {
         let module = try parse(source: try loadPiniFixture("testRunTestsAllPass", filePath: #filePath) as String)
-        let interpreter = Interpreter()
-        let results = try interpreter.runTests(module: module)
+        let runner = ProgramRunner()
+        let results = try runner.runTests(module: module)
         XCTAssertEqual(results.count, 2, "应收集到 2 个测试函数")
         XCTAssertTrue(results.allSatisfy(\.passed), "全部应通过，实际 \(results.map { ($0.name, $0.message) })")
         XCTAssertEqual(results.map(\.name), ["加法测试", "字符串测试"])
@@ -84,8 +84,8 @@ final class TestBlockTests: XCTestCase {
     /// 意图：某测试断言失败记为失败（携带消息），不影响其余测试执行（失败不中断）。
     func testRunTestsCapturesFailure() throws {
         let module = try parse(source: try loadPiniFixture("testRunTestsCapturesFailure", filePath: #filePath) as String)
-        let interpreter = Interpreter()
-        let results = try interpreter.runTests(module: module)
+        let runner = ProgramRunner()
+        let results = try runner.runTests(module: module)
         XCTAssertEqual(results.count, 2)
         let failed = results.first { !$0.passed }
         XCTAssertNotNil(failed, "应存在失败测试")
@@ -98,8 +98,8 @@ final class TestBlockTests: XCTestCase {
     /// 意图：R4 参数注入——带参数的 |test 函数按类型注入零值（String→""、I32→0），函数可正常执行。
     func testRunTestsInjectsZeroValueParams() throws {
         let module = try parse(source: try loadPiniFixture("testRunTestsInjectsZeroValueParams", filePath: #filePath) as String)
-        let interpreter = Interpreter()
-        let results = try interpreter.runTests(module: module)
+        let runner = ProgramRunner()
+        let results = try runner.runTests(module: module)
         XCTAssertEqual(results.count, 1)
         XCTAssertTrue(results[0].passed, "零值注入后测试应通过，实际 \(results[0].message)")
     }
