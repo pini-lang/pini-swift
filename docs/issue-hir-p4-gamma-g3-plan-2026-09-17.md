@@ -1,6 +1,6 @@
 # P4-γ / `G-3` 规划：并发迁移（`R1` = 保能力、迁到 HIR）
 
-> **批**：`P4-γ` 子批 **`G-3` 前置规划**（**纯规划，不含实现**）｜**日期**：2026-09-17｜**状态**：待裁决（§2 一条）
+> **批**：`P4-γ` 子批 **`G-3` 前置规划**（**纯规划**）｜**日期**：2026-09-17｜**状态**：§2 已裁 ①（2026-09-17；`.join` 节点面走 `spec §1.3`，已落 `docs/spec/adr/adr-040-hir-join-node.md`，契约 60 → 61）· **`G-3a` ✅ 已交付（2026-09-17，见 §10）**
 > **上游**：`docs/issue-hir-p4-gamma-plan-2026-09-16.md` §8.4（五单元表）· `docs/issue-hir-blocker-queue-2026-09-17.md` §3 丙组
 > **裁决依据**：`D-P4-26`（取 `R1`，且排在 `G-6` 之前）· `D-P4-30`（记号归一：`R1` = 保）
 > **本件性质**：**只读勘测 + 落盘规划**。不建实现分支、不改 `Sources` / `Tests` / 契约正文。
@@ -272,7 +272,7 @@ HIR 执行器目前**单线程**（无并发），所以这四项是普通属性
 
 | 批 | 名称 | 内容 | 判据（可测） | 规模 |
 |---|---|---|---|---|
-| **`G-3a`** | **L1 并发内建降载登记** | `sleep` / `Error` / `CancelError` 三个内建加降载规则。⚠️ 三者**已在内建注册表登记**（`BuiltinRegistry.swift` L142 / value 组）⇒ 照 **`G-2a` 的「表即白名单」**先例：降载层与执行器**读同一张表**，杜绝「降载接受、执行器不答」的半支持 | **该簇 17 条的 `call to unknown function` 缺口归零**（⚠️ **不承诺转绿** —— 见 §1.5 遮蔽）；无新增红；三通道探针零位移 | 小–中（机械） |
+| **`G-3a`** ✅ **已交付 2026-09-17** | **L1 并发内建降载登记** | `sleep` / `Error` / `CancelError` 三个内建加降载规则。⚠️ 三者**已在内建注册表登记**（`BuiltinRegistry.swift` L142 / value 组）⇒ 照 **`G-2a` 的「表即白名单」**先例：降载层与执行器**读同一张表**，杜绝「降载接受、执行器不答」的半支持 | **该簇 17 条的 `call to unknown function` 缺口归零**（⚠️ **不承诺转绿** —— 见 §1.5 遮蔽）；无新增红；三通道探针零位移 | 小–中（机械） |
 | **`G-3b`** | **L2 异步体 return 位的 `Result` 上下文** | `HIRLowerer` 对 `=>` 异步函数体的 `return` 位给 `ok(...)` / `err(...)` 一个 `Result` 上下文 | 该簇 **9 条的 `'ok' construction` 缺口归零**（同上，不承诺转绿）；无新增红 | 中（降载层） |
 | **`G-3c`** | **L3 本体：`.join` 节点面 + HIR 侧 CPS 求值器** | ① 按 §2 裁决落节点面（含走 `spec §1.3` 一次）② `SuspendEvaluator` 的薄外壳换输入类型（`Expression`→`HIRExpr`、`Statement`→`HIRStmt`、`evaluateExpression`→HIR 同步求值）③ driver 控制流路由改 **depth 制**（§1.9）④ `HIRExecutor` 补 `currentFuture` / `debugDepth` / `scheduler` / `suspendMode` / 任务表，**并把已有四项改线程本地**（§1.8） | **31 条逐条转绿**；无新增红；**`CPSDifferentialTests` 14 条两臂改指后仍逐字节一致**（§1.6 第 3 条）；契约计数按 §2 裁决落定并 clean；**若须动 60 节点而未走 `§1.3` ⇒ 本批作废** | **大** |
 | **`G-3d`** | **B 类 43 条改指**（与 `G-3c` 同批或紧随） | `StructuredConcurrencyTests` / `SuspendRuntimeTests` / `CPSDifferentialTests` 三文件的入口由 `Interpreter` 改指 HIR 挂起入口 | 43 条**改指后仍全绿**；且**判据仍能失败**（注入变异时转红，防「改指即假绿」） | 小–中（机械） |
@@ -393,3 +393,43 @@ grep -n "private var \|private let \|public var " Sources/PiniCore/Interpreter/H
 （旧记号，与本仓现行口径相反）。`D-P4-30` 的订正清单当时只点了
 `docs/issue-selfhost-probe-plan-2026-09-13.md`，**未包含契约 §4.2 这一处**
 ⇒ 本件登记为 `D-P4-30` 订正范围的**遗漏一处**，建议随 `G-3c` 一并加订正指针（属文档动作，不涉语义）。
+
+
+---
+
+## 10. 交付实录（`G-3a`，2026-09-17）
+
+**分支**：`agent/pini-dev/p4-gamma-g3a-builtins`（起点 `3cc2484`）｜**规模**：4 文件 / +173 −41
+
+### 10.1 改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sources/PiniCore/Runtime/RuntimeOps.swift` | 按名表 `concurrencyBuiltins`（`sleep` / `Error` / `CancelError`）· `sleepMilliseconds` 参数规则 · `builtinSleep(milliseconds:checkpoint:)` 分片休眠 · `errorMessageArgument` · `builtinErrorConstructor` / `builtinCancelErrorConstructor` · `makeCancelError`（自解释器迁入）· `builtinLocation`（两引擎共用同一常量） |
+| `Sources/PiniCore/Interpreter/Interpreter.swift` | 五处改为**委托**共享层（`Error` / `CancelError` / `sleep` 三分支 · `makeCancelError` · `builtinLocation`）⇒ 两引擎不各持一份规则 |
+| `Sources/PiniCore/HIR/HIRLowerer.swift` | 新增降载规则，**白名单读同一张表**（照 `G-2a` 定式） |
+| `Sources/PiniCore/Interpreter/HIRExecutor.swift` | 新增按名分派块，**读同一张表** |
+
+**未动**：契约（计数不变，核验 `clean`）· `SuspendScheduler` / `Scheduler` / `Value.swift` · 测试文件 · `cli/`。
+
+### 10.2 判据（全部实测）
+
+| 判据 | 读数 |
+|---|---|
+| **首缺口归零** | **41 条**夹具（7 目录 71 个 `.pini`）的 `call to unknown function` **归零**：`sleep` 33 · `Error` 7 · `CancelError` 1 |
+| **无新增红** | 全量回归 **64 条失败，与基线集合相等**（fixed 0 / new 0 / still 64） |
+| **两方向一致** | `PINI_INTERP_ENGINE=ast` 方向 64 条，与默认方向**逐条相同**（= 本批只动 HIR 侧的证人） |
+| **契约** | `tools/hir-contract-check.py` **clean**（61/61 × 三锚点） |
+| **探针** | 320 夹具 / OK 255 / PACKAGE_MEMBER 27 / WARN_CHANNEL_ASYMMETRY 20 / FRONTEND_FAIL 11 / WARN_LLVM_RC_UNPROPAGATED 4 / CHANGE_REFERENCE 2 / HARNESS_DEPENDENT 1 · **FLIP BLOCKERS 0** · leaks 0 —— 与基线**逐槽相同** |
+| **变异反证（级 2）** | 单删表内 `sleep` 条目 ⇒ `unknown-fn: sleep` 恢复 **33**、`'ok'` 由 50 **精确回到 17**、`'err'` **不变 8**、其余三类不变 ⇒ **只红对应、不外溢**；变异版 `unknown function` 名单只剩 `sleep` ⇒ 证明 `Error` / `CancelError` 仍由表回答 |
+
+⚠️ **口径（读数字前先看）**：§1.4 的「17 条」是**测试面**（前四类 46 用例里的失败数），§10 的「41 条」是**夹具面**（7 目录 71 个 `.pini`，含 B 类三目录）。两者都对，分母不同 —— 同 `P4-γ` 已记录的口径族。
+
+### 10.3 ⚠️ 两处必须记账的边界（本格实测发现）
+
+1. **探针不覆盖并发簇** —— 实测 7 个并发目录的夹具在探针的 **6 根里是 0 条**（根集 = `examples/` + `CodeGen/HIRTests` + `CodeGen/IRExecutionTests` + `RuntimeBackendTests` + `OptionalTests` + `CodeGen/IRPrintGoldenTests`）。⇒ 本格的「探针零位移」**是必然的、不构成对本格改动的证据**；真证据是上表的首缺口归零 + 变异反证 + 全量集合相等。（判据失明的「覆盖在而区分力不在」形态。）
+2. **下一层缺口** —— 41 条剥离后**不是转绿**，而是落到下一层（实测 `'ok'` 17 → 50、`'err'` 0 → 8，合计恰 +41 ⇒ 归因闭合）。`joinAll` / `joinWithin` / `isCancel` **不在本批表内**（其回答要与 `Future` 值打交道，HIR 侧无表示）⇒ 归 `G-3b` / `G-3c`。
+
+### 10.4 未做范围
+
+不改契约 · 不动调度器与值层 · 不做 L4 错误通道（归乙组 `D2`）· 不修在册工单 · 不 push。

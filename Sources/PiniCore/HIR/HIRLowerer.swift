@@ -2787,6 +2787,45 @@ public enum HIRLowerer {
                     type: resultType
                 )
             }
+
+            // G-3a: the concurrency builtins a plain call can carry -- `sleep`
+            // blocks, `Error` / `CancelError` build a value. Same shape as the
+            // character builtins above, and the same rule that the whitelist is the
+            // table: a name cannot be lowered on this side and go unanswered by the
+            // executor.
+            //
+            // The names that traffic in `Future` values (`joinAll`, `joinWithin`,
+            // `isCancel`) stay out. The HIR has no representation for a Future yet,
+            // so lowering them would accept an argument the channel cannot produce.
+            if RuntimeOps.concurrencyBuiltins[functionName] != nil {
+                if functionName == "sleep" {
+                    // Blocks and yields nothing; the value is discarded. A call with
+                    // no return type is the shape this lowerer already emits for a
+                    // void callee.
+                    guard loweredArgs.count == 1, loweredArgs[0].type == .i32 else {
+                        throw unsupported("sleep expects one I32 argument", at: location)
+                    }
+                    return LoweredExpr(
+                        node: .call(function: functionName,
+                                    arguments: loweredArgs.map { $0.node },
+                                    returnType: nil),
+                        type: .i32
+                    )
+                }
+                // `Error("msg")` / `CancelError("msg")`: one String, and the value is a
+                // nominal the two types share nothing else with -- `isCancel` is what
+                // tells them apart, never the payload.
+                guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
+                    throw unsupported("\(functionName) expects one String argument", at: location)
+                }
+                let errorType = HIRType.nominal(name: functionName, isObject: false)
+                return LoweredExpr(
+                    node: .call(function: functionName,
+                                arguments: loweredArgs.map { $0.node },
+                                returnType: errorType),
+                    type: errorType
+                )
+            }
             // G-2R: `F64(x)` -- the numeric value constructor. The AST channel
             // has answered it since G-P1 and the lowering layer never did, so
             // `F64(3)` was "an unknown function". A float passes through, an

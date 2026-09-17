@@ -938,7 +938,9 @@ public class Interpreter: DebugHookHost {
  // 剪枝逻辑在 executeStatement 的 .detachStatement 分支；此处不再注册内建。
  }
 
- static let builtinLocation = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
+  /// G-3a：读 RuntimeOps 的同一个常量（值不变），使两引擎的内建报错位置字段
+ /// 不可能各自漂移。
+ static let builtinLocation = RuntimeOps.builtinLocation
 
  /// `await`/`wait` join：阻塞当前线程直至 Future 完成，结果恒归一为 `Result<T, Error>` 值（错误即数据，不抛出）。
  /// - 体已返回 `Result` 用例（`return ok(v)` / `return err(e)`）→ 原样透传；
@@ -1069,12 +1071,7 @@ public class Interpreter: DebugHookHost {
     static func makeError(_ message: String) -> Value { RuntimeOps.makeError(message) }
 
  /// 构造取消错误值 `CancelError { message }`（B2-1）。
- static func makeCancelError(_ message: String) -> Value {
- return .structInstance(StructInstance(
- typeName: builtinCancelErrorTypeName,
- fields: ["message": .string(message)]
- ))
- }
+  static func makeCancelError(_ message: String) -> Value { RuntimeOps.makeCancelError(message) }
 
  /// 判定一个值是否为取消错误（内建谓词 `isCancel(e)` 的实现）。
  static func isCancelErrorValue(_ value: Value) -> Bool {
@@ -2725,26 +2722,15 @@ private func builtinStringReceiver(_ fv: FunctionValue) throws -> String { guard
 
  // 立场 B 内建：Error("msg") → 内建默认错误值
  if fv.name == Interpreter.builtinErrorTypeName, args.count == 1 {
- guard case .string(let message) = args[0] else {
- throw RuntimeError.typeMismatch(
- expected: "String",
- got: Interpreter.describeValueKind(args[0]),
- location: Interpreter.builtinLocation
- )
- }
- return Interpreter.makeError(message)
+ // G-3a：校验与构造已上提到 RuntimeOps（HIR 侧读同一张表），
+ // 此处只按名转交 ⇒ 两引擎不各持一份构造规则。
+ return try RuntimeOps.builtinErrorConstructor(args)
  }
 
  // B2-1 内建：CancelError("msg") → 取消错误值
  if fv.name == Interpreter.builtinCancelErrorTypeName, args.count == 1 {
- guard case .string(let message) = args[0] else {
- throw RuntimeError.typeMismatch(
- expected: "String",
- got: Interpreter.describeValueKind(args[0]),
- location: Interpreter.builtinLocation
- )
- }
- return Interpreter.makeCancelError(message)
+ // G-3a：同 Error，转交 RuntimeOps 的共享构造。
+ return try RuntimeOps.builtinCancelErrorConstructor(args)
  }
 
  // B2-1 内建：isCancel(e) → 该错误值是否为「被取消」而非业务错误
@@ -3012,25 +2998,14 @@ if fv.name == "chars" {
  return .string(IOLimits.truncateToLineLimit(line))
  }
  if fv.name == "sleep" {
- guard case .int(let ms) = args[0] else {
- throw RuntimeError.invalidOperation(
- reason: "sleep 的参数必须是整数（毫秒）",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
- // B2-3 检查点：sleep 是典型阻塞点。按 20ms 分片休眠，每片检查一次取消，
- // 使「取消一个正在 sleep 的任务」在毫秒级生效，而非等满整段睡眠。
+ // G-3a：参数规则与分片休眠上提到 RuntimeOps（HIR 侧读同一份规则）；
+ // 取消检查点仍由本侧提供 —— 只有这里持任务句柄（线程本地）。
+ let ms = try RuntimeOps.sleepMilliseconds(args)
  let owner = currentFuture
- try checkCancellation(owner)
- var remaining = max(0, Double(ms)) / 1000.0
- let slice = 0.02
- while remaining > 0 {
- let step = min(slice, remaining)
- Thread.sleep(forTimeInterval: step)
- remaining -= step
- try checkCancellation(owner)
- }
- return .null
+ return try RuntimeOps.builtinSleep(
+     milliseconds: ms,
+     checkpoint: { try self.checkCancellation(owner) }
+ )
  }
 
  if fv.isAsync {
