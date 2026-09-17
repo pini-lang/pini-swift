@@ -751,3 +751,60 @@ note = """本批 = **第 3 层「spec 断言层」扩第二个语义面**（「�
 单竖线 `|` 无二元形态（既有 2026-09-10 工单，本批补齐「六处规范面 4:2」的完整清点，
 并指出「没有」那一侧是**已决事项**而非遗漏）。"""
 
+[[evidence]]
+id = "2026-09-17 HIR 契约 join 节点落地（ADR-040）与零行为变化"
+citable = false
+claim = "The HIR contract gains a `join` node face for `await` / `wait` (expression entries 44 -> 45, total 60 -> 61) together with its enum case and its three backend anchors; the reservation in contract 4.2 is discharged and kept as a traceable marker rather than deleted; and the batch is behaviour-preserving -- the suspension semantics itself is not implemented, so `HIRLowerer` still rejects `.join` at its default arm and the node remains unreachable"
+artifacts = [
+  "docs/spec/adr/adr-040-hir-join-node.md",
+  "docs/spec/hir-contract.md",
+  "docs/spec/pini-spec-v0.md",
+  "Sources/PiniCore/HIR/HIRNode.swift",
+  "Sources/PiniCore/HIR/HIRPrinter.swift",
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+  "Sources/PiniCore/CodeGen/IREmitter.swift",
+]
+command = "swift build --disable-sandbox ; python3 tools/hir-contract-check.py ; 106 fixtures over 10 test directories run with .build/debug/pini before and after the change and compared byte for byte on rc, total output size and message text ; python3 tools/evidence_sweep.py --check"
+output = "Contract: 45 expr + 16 stmt = 61 entries against 45 + 16 = 61 cases; llvm / printer / interp-hir each cover 61/61; check clean. The mid-batch state (enum case in, contract row not yet in) failed loudly as node-without-contract: join -- the mechanical proof that the contract row, the enum case and the three anchors are one indivisible unit rather than a style choice. Compiler as probe: adding the case broke exactly 4 switches in 3 files (HIRExecutor.evaluate, HIRPrinter.exprText, IREmitter.emitExpr and IREmitter.hirType); HIRLowerer was not among them because it carries a default arm. Fidelity, after one correction: the first attempt compared two copies of the SAME version -- the backup taken before the rollback turned out to hold the already-reverted content, so the reading '105 of 106 identical' was a self-comparison. With content verification at every step (grep -c 'case join' equal to 0 after the rollback and 1 after the restore, the two sides therefore being different sources) the honest figure is 104 of 106 byte-identical on rc, total output bytes and message text. Both differing fixtures -- SuspendRuntimeTests/testWorkStealingOccurs.pini (90060 bytes) and ConcurrencyTests/testConcurrentGenericTypeInstantiationIsRaceFree.pini (154074 bytes) -- keep their rc and their total byte count and change only the order and line number of unused-variable warnings; six consecutive runs of the same build produced six different outputs for each, so the variance belongs to those fixtures rather than to this batch. A third reading ceiling is booked alongside it. Separate environment fact: the Swift binary is not reproducibly built -- two builds of identical sources produced different sha256 -- so version identification rests on source content, never on a binary hash."
+validated_at = "2026-09-17T21:05+08:00"
+status = "FRESH"
+note = """本批 = **`ADR-040` 的四步同批交付**（§1.3 第 1–4 步）+ 本条证据（第 5 步）。
+
+**触发不是计划里的**：格 `G-3` 的规划勘测在给「31 条红」逐条归因时，照出**两条已立判据
+指向相反动作** —— 契约 §4.2 写「`HIRLowerer` **须**为 `.join` 增加节点面」且 §4 自称「**已裁**未实施」，
+而 `P4-γ` 的硬停条件 `D-P4-26` 写「若须动那 60 个节点 ⇒ **停下**先走 `spec §1.3`」。
+两者都是成文判据，谁也没错，错的是它们对同一件事给了不同动作。本批的实质是**把这条歧义判掉**。
+
+**⭐ 本批最强的一条读数 = 中途态的 `node-without-contract: join` 红**。
+它把「契约行 / enum case / 三锚点必须同批」从**风格主张**变成**机械事实** ——
+只改文档那条路根本走不通，不是我们不想分开做。
+
+**⭐⭐ 本批最值得留档的不是结论，是一次自查出的假绿**：
+首轮「备份 → 回退 → 恢复」**没有验证文件内容**（只看 `cp` 退出码），而备份拿到的**正是回退后那一份**
+⇒ 两侧跑的是**同一个版本**，那轮「105/106 一致」是**自己跟自己比**的全绿。事后以 `grep -c 'case join'`
+复核（期望 1、实为 0）才现形。⇒ 订正后为 **104/106 一致 + 2 条差异**（数字与判据见 `output` 字段）。
+
+**⭐ 由此得到一条可直接复用的判据纪律（四步版）**，对「不改行为的批」尤其适用：
+① 备份改动，**并立即验证备份内容**（`grep` 关键字到已知改动点，或 `diff`）；
+② 回退到 HEAD，**并验证确已回退**（同一个 `grep`，期望值相反）；
+③ 两侧各构建、各跑夹具集，逐字节比（`rc` / 总字节 / 报文）；
+④ **对差异条做「同版本连跑 N 次」** —— 同版本即得多个不同输出 ⇒ 该差异属夹具自身。
+⚠️ **① 与 ② 是本批现学的**：少了它们，比对的是同一版本（假绿）；少了 ④，
+夹具抖动会被误记成「本批弄坏了东西」，进而写进 ADR 与证据表。
+
+**⚠️ 另一条环境事实**：Swift 产物**不可复现构建** —— 同一份源码两次构建，`.build/debug/pini` 的
+sha256 不同 ⇒ **二进制哈希不能当版本判据**，版本判定只认**源码内容**。
+
+**⚠️ 第三条读数上限**：`testWorkStealingOccurs.pini` 与
+`testConcurrentGenericTypeInstantiationIsRaceFree.pini` 的输出**非确定**（同一版本连跑 6 次得
+6 个不同输出；差异仅在「未使用变量」警告的顺序 / 行号，`rc` 与总字节恒定）。
+⇒ 凡拿「多警告的并发夹具」做逐字节对账，须预期这一族会抖；**它们不能充当保真判据的差异条**。
+
+**⚠️ 一处口径订正（本批中途自查）**：一次性的正则清点曾得出 `HIRExpr` 有「56 个 case」，
+而核验脚本口径是 **45**。两个数不是多少之争 —— 那个正则的扫描窗口**跨过了 enum 边界**，
+把邻近 enum 的 case 也计入。⇒ 节点计数一律**只认核验脚本**，不认临时正则。
+
+**不在本批**：挂起语义本身（CPS 求值器，格 `G3c`）；`HIRLowerer` 的 `.join` 降载规则
+（加上它只会让报错点从「未降载」变成「无引擎」，行为变差、无收益）；语言参考的递交
+（§1.3 第 4 步三条件中「实现侧有证据」不成立）。"""
+
