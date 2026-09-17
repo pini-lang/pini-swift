@@ -205,3 +205,21 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
    `Tests/PiniTests/CodeGen/LLVMChannel.swift`）⇒ 登记不修，属器械整理。
 ③ 全量探针耗时与既有读数**对不上**（本批约 35s vs 既记 6m31s / 11m49s；判定分布与基线逐项吻合）——
    **不替它编解释**，按可疑读数标注，下次全量实测时复核。
+
+
+## 9. 「未测面」三组：成因与归属（2026-09-17 盘点，只登记不修）
+
+本表只收**判据本身的缺口**；下面三组不是判据缺口，是**判据够不到的语料**。
+单列它们的理由是：**「没测过」既不是红也不是绿**，若不具名，读者会把探针的
+`FLIP BLOCKERS 0` 读成「每一条都验过了」。**每一组都必须能回答「谁覆盖它」。**
+
+| 组 | 规模 | 成因（实测） | 归属 / 谁覆盖 |
+|---|---|---|---|
+| **`PACKAGE_MEMBER`** | 27（全在 `examples/`，四个含 `pini.toml` 的模块） | 成员文件**没有 `main`**，单文件通道 `rc=1 E6-004`；而 **`run-llvm` 没有包通道**（`pini run-llvm <目录>` 报 `The file … couldn't be opened.`，且 `rc=0`）⇒ `hir⇄llvm` 边**不可能**覆盖它们 | **解释器侧包通道已具备**（`pini run <dir>`，`P4-1a`）⇒ 应由 **`ast⇄hir` 边**补包成员判定（队列 `A1`）；`run-llvm` 侧待 `run-llvm` 支持目录（在册工单） |
+| **`FRONTEND_FAIL`** | 11（**全是并发面**：7 条 `concurrency-*.pini` + `concurrency.pini` 报 `E6-004`；3 条 `*_LLI.pini` 报 `E4-001`） | **LLVM 后端对并发面零覆盖** | **已在册**：`docs/issue-llvm-concurrency-runtime-2026-09-08.md`（Open，2026-09-12 裁决**搁置**，重启条件 = selfhost 探针完成解释器端） |
+| **`HARNESS_DEPENDENT`** | 1（`testIsLetterUnsupportedViaIRGen.pini`） | 该夹具本身就在测「IRGen 不支持」，独立臂**跑不动**是**预期**而非缺陷 | 夹具自述；无须覆盖，但**不得计作被测** |
+
+**另两条「不是未测、但读者会误读」的**：`CHANGE_REFERENCE` 2（裸/点用例的 `…ViaLLI`：
+两实臂各输出 `42`、**参照臂 `rc=1`** ⇒ 参照臂自己是偏离方）；`WARN_LLVM_RC_UNPROPAGATED` 4
+（三臂一致认定失败，LLVM 臂 `rc=0` 是**退出码被丢弃**，非成功）。
+二者均**阻塞集外**，但**必须与 `FLIP BLOCKERS 0` 一起读**。
