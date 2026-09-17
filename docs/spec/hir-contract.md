@@ -189,16 +189,16 @@
 |---|---|---|---|
 | 1 | `allocVar(name:type:mutable:initializer:)` | 声明变量槽；有初值则在分配后立即存入 | 可变性 `mutable` 是语言约束，不靠后端 |
 | 2 | `storeVar(name:type:value:)` | 向既有变量写值 | — |
-| 3 | `ifStmt(condition:thenBody:elseBody:)` | 条件分支 | 条件为布尔 |
-| 4 | `whileStmt(condition:body:step:)` | `while` 循环；**`step` 块每轮体后执行一次** —— 正常完成**与**无标签 `continue` 时均执行，`break` 跳过 | `step` 契约见 `ADR-014`；**这是常被误实现的点** |
-| 5 | `forInStmt(pattern:elementTypes:kind:iterable:body:step:)` | `for` 遍历；`kind` 决定元素读取方式；`"_"` 占位仍占槽位并带类型 | `break`/`continue` 的 `step` 契约同 `whileStmt` |
+| 3 | `ifStmt(label:condition:thenBody:elseBody:)` | 条件分支。`label` 非空时本节点是一个**可中断帧**：`break` 可定向到它（`ADR-039`） | 条件为布尔。`label` 本身运行时不读 —— 与循环同理，只有解析好的深度随信号走；`label != nil` 是后端「在此处捕获信号」的判据。`if` 帧**不是** `continue` 目标（`continue-stmt` 的「仅循环标签有效」） |
+| 4 | `whileStmt(condition:body:step:)` | `while` 循环；**`step` 块每轮体后执行一次** —— 正常完成**与**无标签 `continue` 时均执行，`break` 跳过 | `step` 契约见 `ADR-014`；**这是常被误实现的点**。⚠️ 带标签 `continue` 且深度 > 1 时，`IREmitter` 跳 `header` 而非 `continueTarget` ⇒ **该臂不执行 `step`**（与两解释器臂相反，已单独立案） |
+| 5 | `forInStmt(pattern:elementTypes:kind:iterable:body:step:)` | `for` 遍历；`kind` 决定元素读取方式；`"_"` 占位仍占槽位并带类型 | `break`/`continue` 的 `step` 契约同 `whileStmt`。⚠️ 同一缺陷在此更重：深度 > 1 的 `continue` 跳到边界检查、**跳过索引自增** |
 | 6 | `returnStmt(value:)` | 返回值；`nil` 表示空返回 | — |
 | 7 | `exprStmt(HIRExpr)` | 表达式求值并丢弃结果 | — |
 | 8 | `deferStmt(body:)` | 语句块**离开作用域时按 LIFO 执行**（含每轮循环结束） | ⚠️ `break`/`return` 交互**未入语料 = 未门控面**（如实登记） |
 | 9 | `tryStmt(operand:errorVar:handler:okTarget:type:)` | `try e else err: ...`（`ADR-032`）；操作数为 `result(ok:)`；错误路径绑定**类型擦除错误字**到 `errorVar` 并运行 handler；表达式位把 ok 载荷存入 `okTarget` | `nil` 的 `okTarget` = 语句位 |
 | 10 | `subscriptStore(container:index:value:elementType:)` | 下标写 `c[i] = v`；可嵌套链；复合赋值降级为读改写 | 越界写报错（不得经赋值扩容） |
-| 11 | `breakStmt(depth:)` | 跳出 `depth` 层循环（1 = 最内层）；标签 break 已解析为深度 | **不可解析目标 → 降级为 `panicStmt`**（fail-loud 对齐，非静默跳过） |
-| 12 | `continueStmt(depth:)` | 继续 `depth` 层循环；1 = 重测最内层条件 | 同 `breakStmt` 的不可解析处置 |
+| 11 | `breakStmt(depth:)` | 跳出第 `depth` 个**可中断帧**（1 = 最内层，目标本身计入）；标签 break 已解析为深度。帧 = 循环 **＋ 带标签的 `if` 块**（`ADR-039`） | 不可解析目标（无同名标签 / 无任何循环帧）→ 降级为 `panicStmt`（fail-loud 对齐，非静默跳过）。⚠️ **本行的「对齐」在 `ADR-039` 之前是错的**：`break 指向 if 标签` 解释器解析它、降载层判它不可解析，两侧并不对齐；`ADR-039` 落地后才成立 |
+| 12 | `continueStmt(depth:)` | 继续第 `depth` 个帧（1 = 重测最内层条件）。**目标只能是循环帧**（`continue-stmt` 的「仅循环标签有效」） | 同 `breakStmt` 的不可解析处置。⚠️ 一个带标签的 `if` 是 `break` 的合法目标、**不是** `continue` 的 —— 两者按同一深度计数，但可选项不同 |
 | 13 | `panicStmt(message:)` | 无条件运行时陷阱，固定消息；块终止 | 用于解释器仅运行时才发现的逃逸 |
 | 14 | `matchStmt(scrutinee:cases:scrutineeType:)` | `match` 分派；可分派于枚举、Optional 与**裸值字面量**（`HIRMatchLiteral`） | **未匹配 → 运行时 panic**（`matchNotExhaustive` 对齐） |
 | 15 | `fieldStore(base:field:value:fieldType:)` | 具名字段写 | 对象需越过引用头（实现细节） |
