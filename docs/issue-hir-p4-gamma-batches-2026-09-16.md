@@ -427,11 +427,45 @@ append 别的类型即报 `type mismatch: enumeration(...) is not i32`；无标�
 
 > 两件**合并为一批**（互不依赖，且都在 `G-6` 之前必须处置）。
 
-### G-4：**仍待裁**
+### G-4：✅ **已交付**（2026-09-18，单批）
 
-C 类 4 文件 / **23 用例**用的 `Interpreter.runTests`（`[test]` 块驱动）在 HIR 侧无对应 ⇒
-① 在 HIR 侧实现测试块驱动，或 ② 随走查退役（**用户可见能力回退**，须 release note 明示）。
-⇒ **开工前须单独裁**（本轮刻意未并入三条裁决，免得一次压四个决定）。
+> **裁决**：`D-P4-31` 取 ① —— **在 HIR 侧实现测试块驱动**（保能力）。
+> **追加范围（用户 2026-09-18 当场裁）**：本批一并实现 **HIR 侧 `dlsym` 加载器** ——
+> 把在册工单 `issue-hir-vendored-ffi-unsupported-2026-09-17.md` 的目标并入，
+> 使「vendored FFI 在默认引擎上不可运行」这条**用户可见回退**不成立。
+
+**开工前实测订正三处**（规划记「C 类 4 文件 / 23 用例」）：① `TestBlockSwiftTests`
+不在 `Tests/PiniTests/`，在 `Tests/PiniSwiftTests/`（另一 target）；② 「23」只数了
+`PiniTests` 一侧，实际 **26**；③ 26 条里**只有 10 条真驱动 `runTests`**。
+
+**交付**：
+| 面 | 内容 |
+|---|---|
+| HIR 结构 | `HIRFunction` 增 `isTest` / `sourceFile`（后者是包级 `fileScope` 的承载） |
+| 降载层 | `HIRLowerer.lower` 增 `requiresMain: Bool = true` —— 默认保持原行为，既有 20+ 调用点零改动 |
+| 执行器 | `HIRExecutor.callFunction(named:args:)`（`run` 只够到 `main`，测试要够到每一个） |
+| 入口 | `ProgramRunner.runTests(module:)` / `runTests(package:fileScope:)`；`TestRunResult` 迁入 `ProgramRunner`（免随 `G-6` 消失） |
+| FFI | `foreignNames: Set` → `foreignDecls`（名 → 库 + 签名）；引擎级 `FFILoader`；`ForeignThunk.annotation(for: HIRType)` |
+| 改指 | CLI 2 处 + **10 条**用例（4 文件） |
+
+**判据（全部现测）**：
+| 判据 | 读数 |
+|---|---|
+| 26 条判据面 | **26/26 绿**（`PiniTests` 23/0 · `PiniSwiftTests` 3/0） |
+| `pini test` 双引擎 | 3 夹具**逐字节相同**（rc 0/1/0 亦相同） |
+| FFI 生产路径 | `pini run examples/ffi_module/` **rc=0**，与 AST **逐字节相同**（md5 同） |
+| FFI 测试面 | `pini test cstring.pini` 与包模式各 **2 通过 0 失败** |
+| 无新增红 | 全量回归逐条 57 → 57：转绿 0 · **新增 0** · 仍红 57（默认与 `ast` 两方向逐条相同） |
+| 契约 | clean **62/62**，计数未变 |
+| 探针 | 320 夹具 · 逐夹具**差异 0** · 七槽相同（⚠️ 本批对象不在探针根集 ⇒ 无区分力，只作护栏） |
+| 变异反证 | **两级成立**：M1 恢复 `requiresMain` ⇒ 无 `main` 夹具回红（`E6-004`）；M2 禁用 foreign 分派 ⇒ FFI 夹具回红 |
+
+**⭐ 一处必须记账的后果**：`pini test` 改指后**不再看 `PINI_INTERP_ENGINE`**（实测 `ast`
+方向与默认逐字节相同）⇒ 「`ast` 方向」这条判据对 `pini test` 面**从此失效**。这是
+`D-P4-31` 的直接后果、不是缺陷；`pini run` 的 `ast` 方向仍有效，全量回归的对照臂在那里。
+
+**下游**：工单 `issue-hir-vendored-ffi-unsupported-2026-09-17.md` **闭环**（走其 §4 路径 ①）·
+`docs/spec/pini-spec-v0.md` 两处口径订正（§3 台账 `[名称|foreign]` 行 · 长期愿景 T14 行）。
 
 ### G-5：**已裁 = `A` 为主 + `B` 为辅**
 

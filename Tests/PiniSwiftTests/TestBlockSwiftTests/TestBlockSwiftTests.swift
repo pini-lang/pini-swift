@@ -5,18 +5,18 @@ import Foundation
 /// #46-E G41（test 块，R5，2026-08-24 拍板）：宿主测试使用 SwiftTesting 驱动 `.pini` `|test` 函数块。
 ///
 /// 本 target（PiniSwiftTests）依赖 Package.swift tools-version 6.2（S0 升级），
-/// 与既有 XCTest target（PiniTests）共存；端到端驱动 `Interpreter.runTests`，
+/// 与既有 XCTest target（PiniTests）共存；端到端驱动 `ProgramRunner.runTests`，
 /// 验证 `.pini` 语言级测试经 SwiftTesting 宿主可被收集、执行并正确判定。
 @Suite("G41 test 块：SwiftTesting 宿主端到端")
 struct TestBlockSwiftTests {
 
- private func runTests(_ source: String) throws -> [Interpreter.TestRunResult] {
+ private func runTests(_ source: String) throws -> [ProgramRunner.TestRunResult] {
  let lexer = Lexer(source: source, fileName: "swift_testing.pini")
  let tokens = try lexer.tokenize()
  let parser = Parser(tokens: tokens, fileName: "swift_testing.pini")
  let module = try parser.parseModule()
- let interpreter = Interpreter()
- return try interpreter.runTests(module: module)
+ let runner = ProgramRunner()
+ return try runner.runTests(module: module)
  }
 
  @Test("收集并执行全部 |test，assert 全通过")

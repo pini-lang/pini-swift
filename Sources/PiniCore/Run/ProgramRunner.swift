@@ -23,11 +23,16 @@ import Foundation
 /// WHAT IT DOES NOT OFFER
 ///
 /// The suspend/concurrency surface (`suspendMode`, `scheduler`,
-/// `runSuspendable`, ..., carried by `SuspendEvaluator`), the `runTests` entry
-/// point, and dynamic-library FFI loading are not implemented on the HIR
-/// engine. Callers that need them still drive `Interpreter`. They are listed in
-/// the P4-beta delivery record as the R1/R2 decision's input rather than
-/// silently substituted here.
+/// `runSuspendable`, ..., carried by `SuspendEvaluator`) is not implemented on
+/// the HIR engine — and that is now a decision rather than a gap: `ADR-043`
+/// retires the suspension implementation, so no caller needs it here.
+///
+/// The `runTests` entry point and dynamic-library FFI loading used to be on
+/// this list. Both landed in P4-gamma `G-4`: the test entry points are
+/// implemented on this type, and raw C bindings resolve through the same
+/// `FFILoader` + `ForeignThunk` chain the interpreter uses. The list stays a
+/// list of *what is missing* rather than being deleted, so the next reader can
+/// still tell a deliberate boundary from an unbuilt one.
 ///
 /// BEHAVIOUR CHANGE, STATED
 ///
@@ -55,12 +60,11 @@ public final class ProgramRunner: DebugHookHost {
     /// The package's `[ffi]` table, carried so callers keep one construction
     /// shape.
     ///
-    /// **Not consumed on this path**: the HIR engine resolves foreign calls
-    /// through its own builtin table and has no dynamic-library loading, so a
-    /// manifest declaring `[ffi].libs` will not have them resolved here. Kept
-    /// visible and documented rather than dropped, because a caller passing a
-    /// configuration that is quietly ignored is the failure mode worth naming.
-    /// Recorded as a gap in the P4-beta delivery record.
+    /// Consumed on both the run and test paths since P4-gamma `G-4`: it reaches
+    /// the executor, which resolves raw C bindings against `search_paths`. That
+    /// is what made a module with vendored libraries behave the same on both
+    /// engines — before `G-4` the HIR side refused such a symbol outright,
+    /// which was a capability regression on the default engine.
     public let ffiConfig: FFIConfig
 
     /// Directory the program's relative paths resolve against.
@@ -132,11 +136,129 @@ public final class ProgramRunner: DebugHookHost {
     }
 
     private func execute(_ module: HIRModule) throws {
-        let executor = HIRExecutor(programBase: programBase)
+        let executor = HIRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
         executor.processArguments = processArguments
         executor.debugHook = debugHook
         try executor.run(module: module)
+    }
+
+    // MARK: - Test blocks
+
+    /// One `|test` block's outcome, as `pini test` reports it.
+    ///
+    /// Declared here rather than on `Interpreter` because it has to outlive
+    /// that type: `G-6` removes the AST walk, and a report shape both engines
+    /// produce cannot go with one of them. Moving it now, while both are live,
+    /// keeps the move checkable against the old definition.
+    public struct TestRunResult {
+        public let name: String
+        public let passed: Bool
+        public let message: String
+
+        public init(name: String, passed: Bool, message: String) {
+            self.name = name
+            self.passed = passed
+            self.message = message
+        }
+    }
+
+    /// Runs every top-level `|test` function of one module.
+    ///
+    /// Mirrors `Interpreter.runTests(module:)` — collect, inject a zero value
+    /// per declared parameter, run, record a failure instead of stopping, and
+    /// never run `main` — with one deliberate difference: lowering is asked for
+    /// `requiresMain: false`. A test-only file is a legitimate module with no
+    /// `main` (two of the fixtures are exactly that), so requiring an entry
+    /// function here would delete a working program shape rather than migrate
+    /// it.
+    ///
+    /// Type checking happens first, and not to tighten anything: the HIR is a
+    /// typed tree, so lowering cannot proceed without the checker's inference.
+    /// The AST path's `runTests` did no checking of its own either — its
+    /// callers checked — and that division is unchanged.
+    public func runTests(module: Module) throws -> [TestRunResult] {
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        guard errors.isEmpty else {
+            throw ProgramRunError.typeCheck(
+                errors.map { ErrorFormatter.formatTypeError($0, source: "") }
+            )
+        }
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let (merged, aliasMap) = try HIRLowerer.mergedWithImports(module)
+        let lowered = try HIRLowerer.lower(
+            module: merged, typeInference: checker.typeInference,
+            moduleAliases: aliasMap, requiresMain: false
+        )
+        return try runCollectedTests(lowered)
+    }
+
+    /// Runs the `|test` functions of a package.
+    ///
+    /// `fileScope` narrows *which* tests run, never what they can see: the whole
+    /// package is lowered into one module, so a test in one file still reaches
+    /// another file's symbols, and only the selected files' tests are executed.
+    /// That is the interpreter's rule — `pini test <path>` is a filter, not a
+    /// smaller program — and the reason each lowered function carries the file
+    /// it came from.
+    public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
+        let checker = TypeChecker()
+        try checker.check(package: package)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let lowered = try HIRLowerer.lower(
+            package: package, typeInference: checker.typeInference, requiresMain: false
+        )
+        return try runCollectedTests(lowered, fileScope: fileScope)
+    }
+
+    /// Prepares the lowered module and runs only its `|test` functions.
+    ///
+    /// `prepare` (not `run`) on purpose: `run` would go looking for `main`,
+    /// which a test-only module does not have.
+    private func runCollectedTests(_ module: HIRModule,
+                                   fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
+        let executor = HIRExecutor(programBase: programBase, ffiConfig: ffiConfig)
+        executor.outputSink = outputSink
+        executor.processArguments = processArguments
+        executor.prepare(module: module)
+        var results: [TestRunResult] = []
+        for function in module.functions where function.isTest {
+            if let scope = fileScope, !scope(function.sourceFile) { continue }
+            results.append(runOneTest(function, on: executor))
+        }
+        return results
+    }
+
+    /// One collected test: inject the parameters' zero values, then call it.
+    ///
+    /// A failing test is a result, not an abort — one failure must not hide the
+    /// tests after it. Same rule as the AST path's `executeCollectedTest`.
+    private func runOneTest(_ function: HIRFunction, on executor: HIRExecutor) -> TestRunResult {
+        let args = function.params.map { Self.zeroValue(forTestParam: $0.type) }
+        do {
+            _ = try executor.callFunction(named: function.name, args: args)
+            return TestRunResult(name: function.name, passed: true, message: "")
+        } catch {
+            return TestRunResult(name: function.name, passed: false, message: "\(error)")
+        }
+    }
+
+    /// R4 parameter injection: the zero value of each declared type.
+    ///
+    /// Kept identical to `Interpreter.zeroValueForTestParam` (String → `""`,
+    /// integer → `0`, Bool → `false`, float → `0.0`, anything else → `null`),
+    /// because a test that passes on one engine and fails on the other would
+    /// make the two channels disagree about the language rather than about the
+    /// implementation.
+    static func zeroValue(forTestParam type: HIRType) -> Value {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64: return .int(0)
+        case .f64: return .float(0)
+        case .boolean: return .bool(false)
+        case .string: return .string("")
+        default: return .null
+        }
     }
 
     // MARK: - Entry consistency

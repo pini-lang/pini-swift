@@ -14,21 +14,38 @@ import Foundation
 /// 要求参数与返回同宽（混合 GPR+浮点暂不支持，抛「unsupported signature」已知限制）。
 enum ForeignThunk {
  /// 为裸 C 符号地址生成调用闭包。签名取自 `decl`（已通过 静态校验）。
+ // 按 AST 声明生成调用闭包（解释器侧的入口）。
+ //
+ // 本入口只做「解构」——实现全在下面那个核心入口里。拆开的理由不是好看：
+ // HIR 侧只携带签名（`HIRForeignFunction`），没有 `FuncDecl`，故 ABI 逻辑
+ // 必须能被离散地传进来，否则就得在 HIR 侧写第二份 —— 而第二份会漂。
  static func make(symbol sym: UnsafeMutableRawPointer, decl: FuncDecl, location: SourceLocation) throws -> ([Value]) throws -> Value {
- guard decl.returnTypes.count <= 1 else {
- throw RuntimeError.invalidOperation(reason: "FFI 裸绑定仅支持单返回（多返回元组已在类型检查期拒绝）：\(decl.name)", location: location)
+ try make(symbol: sym, name: decl.name,
+ paramTypes: decl.params.map { $0.typeAnnotation },
+ returnTypes: decl.returnTypes, location: location)
  }
- let paramKinds = try decl.params.map { p -> Kind in
- guard let ta = p.typeAnnotation, let k = kind(of: ta) else {
- throw RuntimeError.invalidOperation(reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：\(p.name)", location: location)
+
+ /// 按「已展开的签名」生成调用闭包 —— 唯一实现，两条通道共用。
+ ///
+ /// - Parameter paramTypes: 与形参位置对齐的类型标注。保留可选性只为与 AST 侧
+ /// 同形（`Parameter.typeAnnotation` 是可选的）；HIR 侧传进来的必然非 nil。
+ static func make(symbol sym: UnsafeMutableRawPointer, name: String,
+ paramTypes: [TypeAnnotation?], returnTypes: [TypeAnnotation],
+ location: SourceLocation) throws -> ([Value]) throws -> Value {
+ guard returnTypes.count <= 1 else {
+ throw RuntimeError.invalidOperation(reason: "FFI 裸绑定仅支持单返回（多返回元组已在类型检查期拒绝）：\(name)", location: location)
+ }
+ let paramKinds = try paramTypes.enumerated().map { index, ta -> Kind in
+ guard let ta = ta, let k = kind(of: ta) else {
+ throw RuntimeError.invalidOperation(reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个参数", location: location)
  }
  return k
  }
- let retKind = decl.returnTypes.first.flatMap { kind(of: $0) }
+ let retKind = returnTypes.first.flatMap { kind(of: $0) }
  // 指针返回：从签名 `*T` 提取元素类型，回填到运行时指针值，使 store/load
  // 等指针原语可用（否则 elemType 为 nil，报「指针元素类型未知」）。
  let retElemType: TypeAnnotation? = {
- guard retKind == .ptr, let rt = decl.returnTypes.first else { return nil }
+ guard retKind == .ptr, let rt = returnTypes.first else { return nil }
  if case .pointer(element: let elem, location: _) = rt { return elem }
  return nil
  }()
@@ -37,12 +54,12 @@ enum ForeignThunk {
  let hasFloat = paramKinds.contains { $0 == .f32 || $0 == .f64 } || retKind == .f32 || retKind == .f64
  if hasFloat {
  if retKind == .f64, paramKinds.allSatisfy({ $0 == .f64 }) {
- return makeFloatThunk(symbol: sym, asFloat: false, decl: decl, paramKinds: paramKinds, location: location)
+ return makeFloatThunk(symbol: sym, asFloat: false, name: name, paramKinds: paramKinds, location: location)
  }
  if retKind == .f32, paramKinds.allSatisfy({ $0 == .f32 }) {
- return makeFloatThunk(symbol: sym, asFloat: true, decl: decl, paramKinds: paramKinds, location: location)
+ return makeFloatThunk(symbol: sym, asFloat: true, name: name, paramKinds: paramKinds, location: location)
  }
- throw RuntimeError.invalidOperation(reason: "FFI 裸绑定暂不支持 GPR 与浮点混合签名：\(decl.name)", location: location)
+ throw RuntimeError.invalidOperation(reason: "FFI 裸绑定暂不支持 GPR 与浮点混合签名：\(name)", location: location)
  }
 
  // GPR 路径（整数 / 指针 / void）
@@ -50,7 +67,7 @@ enum ForeignThunk {
  let fn = unsafeBitCast(sym, to: GPRFn.self)
  return { (args: [Value]) throws -> Value in
  guard args.count == paramKinds.count else {
- throw RuntimeError.argumentCountMismatch(name: decl.name, expected: paramKinds.count, got: args.count, location: location)
+ throw RuntimeError.argumentCountMismatch(name: name, expected: paramKinds.count, got: args.count, location: location)
  }
  var cargs: [UInt64] = []
  for (arg, kind) in zip(args, paramKinds) {
@@ -65,13 +82,13 @@ enum ForeignThunk {
 
  // MARK: - 浮点路径
 
- private static func makeFloatThunk(symbol sym: UnsafeMutableRawPointer, asFloat: Bool, decl: FuncDecl, paramKinds: [Kind], location: SourceLocation) -> ([Value]) throws -> Value {
+ private static func makeFloatThunk(symbol sym: UnsafeMutableRawPointer, asFloat: Bool, name: String, paramKinds: [Kind], location: SourceLocation) -> ([Value]) throws -> Value {
  if asFloat {
  typealias Fn = @convention(c) (Float, Float, Float, Float, Float, Float, Float, Float) -> Float
  let fn = unsafeBitCast(sym, to: Fn.self)
  return { (args: [Value]) throws -> Value in
  guard args.count == paramKinds.count else {
- throw RuntimeError.argumentCountMismatch(name: decl.name, expected: paramKinds.count, got: args.count, location: location)
+ throw RuntimeError.argumentCountMismatch(name: name, expected: paramKinds.count, got: args.count, location: location)
  }
  var dargs: [Float] = []
  for arg in args {
@@ -89,7 +106,7 @@ enum ForeignThunk {
  let fn = unsafeBitCast(sym, to: Fn.self)
  return { (args: [Value]) throws -> Value in
  guard args.count == paramKinds.count else {
- throw RuntimeError.argumentCountMismatch(name: decl.name, expected: paramKinds.count, got: args.count, location: location)
+ throw RuntimeError.argumentCountMismatch(name: name, expected: paramKinds.count, got: args.count, location: location)
  }
  var dargs: [Double] = []
  for arg in args {
@@ -106,6 +123,29 @@ enum ForeignThunk {
  }
 
  // MARK: - 类型编解码
+
+ /// HIR 类型 → C 顶层类型标注（HIR 侧入口的桥）。
+ ///
+ /// HIR 只携带解析后的 `HIRType`，而 thunk 按 AST 的**类型标注**决定 ABI 路径。
+ /// 本桥只认 `HIRType` 里能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil，
+ /// 由调用方**报错** —— 不许退化成「无返回」：静默降级会让声明与调用悄悄不一致，
+ /// 而这类不一致不会在调用点显形，只会在读回值时变成垃圾。
+ static func annotation(for type: HIRType) -> TypeAnnotation? {
+ let location = SourceLocation(line: 0, column: 0, fileName: "<hir>")
+ switch type {
+ case .i8: return .simple(name: "I8", location: location)
+ case .u8: return .simple(name: "U8", location: location)
+ case .i32: return .simple(name: "I32", location: location)
+ case .i64: return .simple(name: "I64", location: location)
+ case .u64: return .simple(name: "U64", location: location)
+ case .f64: return .simple(name: "F64", location: location)
+ case .boolean: return .simple(name: "Bool", location: location)
+ case .pointer(let element):
+ guard let inner = annotation(for: element) else { return nil }
+ return .pointer(element: inner, location: location)
+ default: return nil
+ }
+ }
 
  private enum Kind { case ptr, i8, u8, i16, u16, i32, u32, i64, u64, f32, f64, bool }
  /// C 兼容标量 / 指针 → Kind；引用类型 / 未知 → nil（裸绑定不应到达）。

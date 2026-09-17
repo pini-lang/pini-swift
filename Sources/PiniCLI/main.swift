@@ -859,9 +859,10 @@ private func runHIREngine(module: Module, source: String, programBase: String?,
 /// 必须两通道解析到同一份文件，否则会静默读到 CWD 里的同名文件，且不报错。
 private func runHIRPackageEngine(package: Package, moduleRoot: String,
  typeInference: TypeInference,
+ ffiConfig: FFIConfig,
  argv: [String] = []) throws {
  let hirModule = try HIRLowerer.lower(package: package, typeInference: typeInference)
- let executor = HIRExecutor(programBase: absoluteProgramBase(moduleRoot))
+let executor = HIRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConfig: ffiConfig)
  executor.processArguments = argv
  try executor.run(module: hirModule)
 }
@@ -953,7 +954,8 @@ func runRunPath(_ path: String, argv: [String] = []) {
  // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
  try runHIRPackageEngine(package: pkg, moduleRoot: path,
- typeInference: checker.typeInference, argv: argv)
+ typeInference: checker.typeInference,
+ ffiConfig: manifest.ffi ?? .default, argv: argv)
  return
  }
  } catch {
@@ -1243,8 +1245,8 @@ private func gateAndRunTests(pkg: Package, scope: ((String) -> Bool)?, scopeLabe
  }
 
  // 批 5（G58）：测试运行注入程序基准（模块根 / 显式目录）——IO 相对路径与 run 一致。
- let interpreter = Interpreter(ffiConfig: ffiConfig, programBase: programBase)
- let results = try interpreter.runTests(package: pkg, fileScope: scope)
+let runner = ProgramRunner(ffiConfig: ffiConfig, programBase: programBase)
+        let results = try runner.runTests(package: pkg, fileScope: scope)
 
  if let label = scopeLabel {
  print("测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件，范围 \(label)）")
@@ -1283,9 +1285,9 @@ private func runSingleFileTests(path: String) throws {
  let dir = (path as NSString).deletingLastPathComponent
  let manifest = try? FileLoader.loadManifest(directory: dir)
  // 批 5（G58，D-3）：单文件测试基准 = 该文件所在目录。
- let interpreter = Interpreter(ffiConfig: manifest?.ffi ?? .default,
+ let runner = ProgramRunner(ffiConfig: manifest?.ffi ?? .default,
  programBase: absoluteProgramBase(path))
- let results = try interpreter.runTests(module: module)
+        let results = try runner.runTests(module: module)
  var passed = 0, failed = 0
  print("测试文件: \(path)")
  for r in results {

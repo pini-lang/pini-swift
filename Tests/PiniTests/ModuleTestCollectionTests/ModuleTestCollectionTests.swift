@@ -7,7 +7,7 @@ import Foundation
 ///
 /// `PiniCLI` 是可执行目标（不可被测试直接 import），故本测试**直接驱动 CLI 所用到的
 /// 同一组公共 API**——`FileLoader.locateModuleRoot` / `loadManifest` / `loadDirectory` /
-/// `loadFile` + 包级 `Interpreter.runTests(package:fileScope:)`——覆盖：
+/// `loadFile` + 包级 `ProgramRunner.runTests(package:fileScope:)`——覆盖：
 /// 1. `[build] exclude` 解析与包加载排除（目录前缀匹配，全目标统一生效）；
 /// 2. 模块根向上定位（文件 / 目录入口，模块外返回 nil）；
 /// 3. 包级测试收集：全量（无参语义）与 `fileScope` 限定（显式路径语义），
@@ -186,8 +186,8 @@ final class ModuleTestCollectionTests: XCTestCase {
 
         let manifest = try FileLoader.loadManifest(directory: root)
         let pkg = try FileLoader.loadDirectory(path: root, manifest: manifest)
-        let interpreter = Interpreter()
-        let results = try interpreter.runTests(package: pkg)
+        let runner = ProgramRunner()
+        let results = try runner.runTests(package: pkg)
         XCTAssertEqual(results.count, 2, "全量收集应命中 tests/t1.pini 的 2 个测试")
         XCTAssertTrue(results.allSatisfy(\.passed),
                       "跨文件调用 加 的测试应全部通过，实际 \(results.map { ($0.name, $0.message) })")
@@ -202,11 +202,11 @@ final class ModuleTestCollectionTests: XCTestCase {
         let manifest = try FileLoader.loadManifest(directory: root)
         let pkg = try FileLoader.loadDirectory(path: root, manifest: manifest)
         let target = root + "/tests/t1.pini"
-        let interpreter = Interpreter()
-        let results = try interpreter.runTests(package: pkg, fileScope: { $0 == target })
+        let runner = ProgramRunner()
+        let results = try runner.runTests(package: pkg, fileScope: { $0 == target })
         XCTAssertEqual(results.count, 2, "显式文件范围应命中该文件的 2 个测试")
 
-        let narrowed = try interpreter.runTests(package: pkg, fileScope: { _ in false })
+        let narrowed = try runner.runTests(package: pkg, fileScope: { _ in false })
         XCTAssertTrue(narrowed.isEmpty, "无命中范围应收集为空")
     }
 
@@ -227,8 +227,8 @@ final class ModuleTestCollectionTests: XCTestCase {
         let added = try FileLoader.loadFile(path: target)
         pkg = Package(name: pkg.name, fileUnits: pkg.fileUnits + added.fileUnits)
 
-        let interpreter = Interpreter()
-        let results = try interpreter.runTests(package: pkg, fileScope: { $0 == target })
+        let runner = ProgramRunner()
+        let results = try runner.runTests(package: pkg, fileScope: { $0 == target })
         XCTAssertEqual(results.count, 1, "加回后应命中排除区内的 1 个测试")
         XCTAssertTrue(results[0].passed, "排除区内测试应可跨文件调用 加，实际 \(results[0].message)")
     }

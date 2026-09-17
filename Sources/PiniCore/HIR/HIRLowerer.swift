@@ -200,7 +200,8 @@ public enum HIRLowerer {
     ///
     /// File ordering follows `FileLoader.loadDirectory`'s deterministic sort
     /// (fileName ascending), so pre-pass registration order is stable.
-    public static func lower(package: Package, typeInference: TypeInference?) throws -> HIRModule {
+    public static func lower(package: Package, typeInference: TypeInference?,
+                             requiresMain: Bool = true) throws -> HIRModule {
         let base = Module(
             declarations: package.fileUnits.flatMap { $0.module.declarations },
             imports: package.fileUnits.flatMap { $0.module.imports },
@@ -208,7 +209,8 @@ public enum HIRLowerer {
             location: package.location
         )
         let (merged, aliasMap) = try mergedWithImports(base)
-        return try lower(module: merged, typeInference: typeInference, moduleAliases: aliasMap)
+        return try lower(module: merged, typeInference: typeInference,
+                         moduleAliases: aliasMap, requiresMain: requiresMain)
     }
 
     /// P4-1c: 把 `import` 目标的声明并入虚拟模块，并返回「别名 → 可引入符号名」表。
@@ -278,8 +280,17 @@ public enum HIRLowerer {
     /// Lower a checked module. `typeInference` is the TypeChecker's inference
     /// output; callers must run the checker first (same contract as the old
     /// `typeCheckThenGenerate` pipeline).
+    /// - Parameter requiresMain: whether the lowered module must carry `main`.
+    ///   The default is the executable-program contract, so every existing
+    ///   caller keeps it. `pini test` passes `false`: a test-only file is a
+    ///   legitimate module with no `main` at all (two of the `|test` fixtures
+    ///   are exactly that), and refusing one would delete a working program
+    ///   shape rather than migrate it. The requirement is the *runner's*, not
+    ///   the IR's — which is why it is a parameter here and not a property of
+    ///   every lowered module.
     public static func lower(module: Module, typeInference: TypeInference?,
-                             moduleAliases: [String: Set<String>] = [:]) throws -> HIRModule {
+                             moduleAliases: [String: Set<String>] = [:],
+                             requiresMain: Bool = true) throws -> HIRModule {
         // G12 pre-pass: trait registry. Trait default-implementation bodies
         // (signatures with a body) join the signature table like any named
         // function; abstract signatures (body == nil) are skipped — the type
@@ -586,8 +597,10 @@ public enum HIRLowerer {
                                           traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
             )
         }
-        guard functions.contains(where: { $0.name == "main" }) else {
-            throw unsupported("no 'main' function found", at: module.location)
+        if requiresMain {
+            guard functions.contains(where: { $0.name == "main" }) else {
+                throw unsupported("no 'main' function found", at: module.location)
+            }
         }
 
         // G3: lower nominal type declarations (field defaults via a scratch
@@ -1172,7 +1185,11 @@ public enum HIRLowerer {
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(
             name: decl.name, params: params, returnType: bodyReturn, body: body,
-            isAsync: decl.isAsync
+            isAsync: decl.isAsync,
+            // `|test` arrives as a modifier string; the lexer already reduced the
+            // block's keyword to this canonical spelling (Token.swift).
+            isTest: decl.modifiers.contains("test"),
+            sourceFile: decl.location.fileName
         )
     }
 
@@ -1467,7 +1484,8 @@ public enum HIRLowerer {
             context.selfIsObjectLowered = selfIsObject
         }
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(name: irName, params: params, returnType: effectiveReturn, body: body)
+        return HIRFunction(name: irName, params: params, returnType: effectiveReturn, body: body,
+                           sourceFile: decl.location.fileName)
     }
 
     private static func lowerBlock(

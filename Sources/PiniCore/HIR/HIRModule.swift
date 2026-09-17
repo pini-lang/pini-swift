@@ -16,6 +16,23 @@ public struct HIRFunction: Equatable {
     /// two call protocols apart. A call site that guessed would either block on
     /// a plain Result or hand back a Future where a Result was promised.
     public let isAsync: Bool
+    /// `|test` (G41): the function block is a language-level test case, not a
+    /// callee of the program. `pini test` collects exactly these and runs each
+    /// one, and nothing else calls them.
+    ///
+    /// Carried because the collection rule lived only on the AST side: the
+    /// interpreter read `FuncDecl.modifiers`, which has no HIR counterpart, so
+    /// the fact had to travel or the HIR engine could not tell a test from an
+    /// ordinary function. The name is not a substitute — a program may freely
+    /// name a function `测试` and mean it as production code.
+    public let isTest: Bool
+    /// The file this function was declared in (`FuncDecl.location.fileName`).
+    ///
+    /// Carried because `lower(package:)` merges every file's declarations into
+    /// one virtual module, and the merge is exactly what erases the answer to
+    /// "which file was this from". `pini test <path>` narrows by file, so the
+    /// merged module has to keep it or the narrowing cannot be honoured.
+    public let sourceFile: String
 
     public struct HIRParam: Equatable {
         public let name: String
@@ -27,12 +44,14 @@ public struct HIRFunction: Equatable {
     }
 
     public init(name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock,
-                isAsync: Bool = false) {
+                isAsync: Bool = false, isTest: Bool = false, sourceFile: String = "") {
         self.name = name
         self.params = params
         self.returnType = returnType
         self.body = body
         self.isAsync = isAsync
+        self.isTest = isTest
+        self.sourceFile = sourceFile
     }
 }
 
