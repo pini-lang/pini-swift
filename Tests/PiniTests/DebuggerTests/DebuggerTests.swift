@@ -25,11 +25,15 @@ private let sampleProgram = try! loadPiniFixture("_sampleProgram", filePath: #fi
 
 /// 一台可被调试的引擎（LR-4 P4-3）。
 ///
-/// 调试用例按这个维度参数化：同一份场景在两台引擎上各跑一遍，两边都必须给出
-/// 同样的停止结果 —— 「调试面在 HIR 下也能用」由此成为断言，而不是一句声明。
-/// 在此之前这些用例直接驱动具体 `Interpreter`，所以全绿**只**说明 AST 侧没问题。
+/// 调试用例按这个维度参数化：场景跑在「这台引擎」上并断言停止结果 ——
+/// 「调试面在 HIR 下也能用」由此成为断言，而不是一句声明。
+///
+/// ⚠️ `G-5`（LR-4 P4-γ）把 `ast` 这一例**移除**了：它命名的引擎正在被删除，
+/// 留着它这一维度就只剩一个跑不起来的取值。**维度本身保留** —— 它让「用哪台引擎」
+/// 是参数而不是硬编码，且新增一例只要一行；同时 `dbgDrive` 的 `switch` 不带
+/// `default:`，所以哪天再加一例，编译会在这里失败而不是被静默走默认分支。
 enum DebugEngine: String, CaseIterable, CustomTestStringConvertible {
-    case ast, hir
+    case hir
     var testDescription: String { "engine=\(rawValue)" }
 }
 
@@ -40,11 +44,6 @@ enum DebugEngine: String, CaseIterable, CustomTestStringConvertible {
 private func dbgDrive(_ engine: DebugEngine, module: Module, dbg: Debugger,
                       suppressOutput: Bool = false) throws {
     switch engine {
-    case .ast:
-        let interpreter = Interpreter()
-        if suppressOutput { interpreter.outputSink = { _ in } }
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(module: module)
     case .hir:
         let checker = TypeChecker()
         let errors = checker.checkCollecting(module: module)
@@ -62,11 +61,6 @@ private func dbgDrive(_ engine: DebugEngine, module: Module, dbg: Debugger,
 private func dbgDrive(_ engine: DebugEngine, package: Package, dbg: Debugger,
                       suppressOutput: Bool = false) throws {
     switch engine {
-    case .ast:
-        let interpreter = Interpreter()
-        if suppressOutput { interpreter.outputSink = { _ in } }
-        interpreter.debugHook = { ctx in try dbg.consult(ctx) }
-        try interpreter.run(package: package)
     case .hir:
         let checker = TypeChecker()
         try checker.check(package: package)
@@ -410,50 +404,49 @@ struct DebuggerTests {
 
     // MARK: - P1-5：调试面接缝
 
-    @Test("调试面接缝：两台引擎同形，装配不提及具体类型，且两侧都真命中断点")
-    /// 意图：验证 `DebugHookHost` 同时被 AST 与 HIR 两台引擎符合，且仅持协议面即可装配调试器；
-    /// P4-3 之前 HIR 侧只是「同形可装配」（无暂停点），现在两台都具备暂停点 ⇒ 同一个断点在
-    /// 两侧都真命中同一行。
-    func testDebugSurfaceIsEngineAgnostic() throws {
-        // 两台引擎唯一的共同点就是协议面本身 —— 装配全程不出现任何一种引擎的具体调试类型。
-        let driver = RecordingDebugDriver([.continue, .continue])
+    @Test("调试面接缝：装配只认协议面，且断点真命中")
+    /// 意图：验证仅持 `DebugHookHost` 协议面即可装配调试器，且断点真的命中。
+    ///
+    /// ⚠️ **`G-5` 改写，原判据已收窄（如实登记）**：原文断言「两台引擎同形且各命中一次」。
+    /// AST 引擎随走查退役后，「同形」不再有第二个对象可比 ⇒ 保留仍可失败的那一半
+    /// （**协议面装配**：`debugHook` 装不上就红），命中断言收成一次并断言**恰好一次**。
+    /// 「两引擎停在同批行」那条判据**已转移**为对冻结序列的断言，见
+    /// `testStopSequenceMatchesTheFrozenExpectation`。
+    func testDebuggerAssemblesThroughTheProtocolSurfaceOnly() throws {
+        let driver = RecordingDebugDriver([.continue])
         let dbg = Debugger(driver: driver)
         dbg.output = { _ in }
         dbg.breakpoints = [Breakpoint(fileName: "sample.pini", line: 2)]
 
-        let hosts: [any DebugHookHost] = [Interpreter(), HIRExecutor()]
-        for host in hosts {
-            // 同一个动作装到两台引擎上：装配只认协议面，不认引擎。
-            host.debugHook = { ctx in try dbg.consult(ctx) }
-            #expect(host.debugHook != nil)
-        }
+        // 装配全程不出现任何引擎的具体调试类型，只出现协议面。
+        let host: any DebugHookHost = HIRExecutor()
+        host.debugHook = { ctx in try dbg.consult(ctx) }
+        #expect(host.debugHook != nil)
 
-        // 同一份程序在两台引擎上各跑一遍：断点都在 line 2 命中。
-        for engine in DebugEngine.allCases {
-            try dbgDrive(engine, module: dbgParse(sampleProgram, "sample.pini"), dbg: dbg)
-            #expect(driver.stops.last?.location.line == 2)
-        }
-        #expect(driver.stops.count == 2)
+        try dbgDrive(.hir, module: dbgParse(sampleProgram, "sample.pini"), dbg: dbg)
+        #expect(driver.stops.last?.location.line == 2)
+        #expect(driver.stops.count == 1)
     }
 
-    @Test("两引擎停在逐项相同的行上（同一程序，同一批命令）")
-    /// 意图：P4-3 的核心判据 —— 同一份源码在两台引擎下产生**逐项相同**的停止行序列。
-    /// 这比「各自绿」更强：它要求位置供给落在与解释器同一批行上。HIR 的位置来自
-    /// `lowerBlock`（记的是 `Statement.location`），解释器的暂停点读的也是它，
-    /// 所以两侧同源 —— 这个用例把「同源」变成可观测的事实。
-    func testBothEnginesStopOnTheSameLines() throws {
+    @Test("停止行序列与冻结期望逐项相同（同一程序，同一批命令）")
+    /// 意图：P4-3 的核心判据原为「同一份源码在两台引擎下产生**逐项相同**的停止行序列」。
+    ///
+    /// ⚠️ **`G-5` 判据转移（如实登记）**：AST 引擎退役后不再有第二个引擎可比，
+    /// 于是判据由「两臂相等」改为「**等于冻结序列**」——冻结值取自换腿**之前**那次
+    /// 「两臂逐项相同」的运行读数，所以它承载的正是原来那条信息，而不是一个新的期望。
+    /// 强度变化诚实陈述：**换腿前它能发现「两引擎不同源」，换腿后它能发现「HIR 位置供给
+    /// 变了」**；前者随第二引擎一起消失，后者仍在。变更登记在源用例（`issue-hir-node-source-position`）。
+    func testStopSequenceMatchesTheFrozenExpectation() throws {
         let src = try loadPiniFixture("_sampleProgram", filePath: #filePath)
-        var recorded: [DebugEngine: [Int]] = [:]
-        for engine in DebugEngine.allCases {
-            let driver = RecordingDebugDriver([.stepIn, .stepIn, .stepIn, .continue])
-            let dbg = Debugger(driver: driver)
-            dbg.output = { _ in }
-            dbg.stopAtEntry = true
-            try dbgDrive(engine, module: dbgParse(src, "sample.pini"), dbg: dbg)
-            recorded[engine] = driver.stops.map { $0.location.line }
-        }
-        #expect(recorded[.hir]?.isEmpty == false, "the HIR engine must stop at least once")
-        #expect(recorded[.ast] == recorded[.hir])
+        let driver = RecordingDebugDriver([.stepIn, .stepIn, .stepIn, .continue])
+        let dbg = Debugger(driver: driver)
+        dbg.output = { _ in }
+        dbg.stopAtEntry = true
+        try dbgDrive(.hir, module: dbgParse(src, "sample.pini"), dbg: dbg)
+        let lines = driver.stops.map { $0.location.line }
+        #expect(lines.isEmpty == false, "the HIR engine must stop at least once")
+        // 冻结值（取自换腿前「两臂逐项相同」的那次运行读数）：步进三次 + continue 共停 4 次。
+        #expect(lines == [2, 3, 4, 5])
     }
 }
 

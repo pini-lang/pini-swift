@@ -104,17 +104,19 @@ final class IRPrintGoldenTests: XCTestCase {
         return nil
     }
 
-    /// 进程内解释执行，返回与 `pini run` 等价的 stdout（每个 print 补一个换行）。
-    private func runViaInterpreter(_ source: String, fileName: String = "test.pini") throws -> String {
+    /// 进程内 HIR 树走查执行，返回与 `pini run` 等价的 stdout（每个 print 补一个换行）。
+    ///
+    /// LR-4 `G-5`：本臂原为 AST 走查（`Interpreter`），现改指同一棵降载树上的 HIR 执行器。
+    private func runViaHIRTree(_ source: String, fileName: String = "test.pini") throws -> String {
         let lexer = Lexer(source: source, fileName: fileName)
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: fileName)
         let module = try parser.parseModule()
 
-        let interpreter = Interpreter()
+        let runner = ProgramRunner()
         var segments: [String] = []
-        interpreter.outputSink = { segments.append($0 + "\n") }
-        try interpreter.run(module: module)
+        runner.outputSink = { segments.append($0 + "\n") }
+        try runner.run(module: module)
         return segments.joined(separator: "")
     }
 
@@ -146,12 +148,12 @@ final class IRPrintGoldenTests: XCTestCase {
         // panic 场景由 RuntimeBackendTests.testDictMissingKeyBothBackends 锁步覆盖。
     ]
 
-    func testAggregatePrintMatchesInterpreter() throws {
+    func testAggregatePrintMatchesHIRTree() throws {
         try LLVMGate.requireLLI()
 
         for c in Self.goldenCases {
             let llvmOut = (try runViaLLI(c.source)).trimmingCharacters(in: .whitespacesAndNewlines)
-            let interpOut = (try runViaInterpreter(c.source)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let interpOut = (try runViaHIRTree(c.source)).trimmingCharacters(in: .whitespacesAndNewlines)
 
             XCTAssertEqual(llvmOut, c.golden,
                            "[\(c.name)] run-llvm 输出与黄金不一致\n  期望：\(c.golden)\n  实际：\(llvmOut)")
@@ -162,13 +164,13 @@ final class IRPrintGoldenTests: XCTestCase {
 
     /// 多参 print 混排（标量 + 聚合 + 标量）：仅对拍解释器 vs run-llvm，不强绑硬编码黄金，
     /// 以吸收多参 join 的空格/换行差异（两后端均应 `join(separator: " ")`）。
-    func testMultiArgPrintMixedMatchesInterpreter() throws {
+    func testMultiArgPrintMixedMatchesHIRTree() throws {
         try LLVMGate.requireLLI()
 
         let source = try loadPiniFixture("testMultiArgPrintMixedMatchesInterpreter", filePath: #filePath)
 
         let llvmOut = (try runViaLLI(source)).trimmingCharacters(in: .whitespacesAndNewlines)
-        let interpOut = (try runViaInterpreter(source)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let interpOut = (try runViaHIRTree(source)).trimmingCharacters(in: .whitespacesAndNewlines)
 
         XCTAssertEqual(llvmOut, interpOut,
                        "多参 print 混排两后端不一致\n  解释器：\(interpOut)\n  run-llvm：\(llvmOut)")

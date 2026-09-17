@@ -5,7 +5,7 @@ import XCTest
 /// `examples/ffi_module/` 这个「配置 + 调用外部接口」的完整模块示例。
 ///
 /// 覆盖：
-/// · 目录级多文件模块运行（loadDirectory 经 pini.toml 的 `[ffi]` 配置 → Interpreter.run(package:)），
+/// · 目录级多文件模块运行（loadDirectory 经 pini.toml 的 `[ffi]` 配置 → ProgramRunner.run(package:)），
 /// 断言 `pini run examples/ffi_module/` 的 golden 输出逐字节一致；
 /// · 语言级 `|test` 块收集执行（runTests，等价于 `pini test examples/ffi_module/cstring.pini`）；
 /// · 类型/语义门禁（check 零错误）；
@@ -34,21 +34,33 @@ final class FFIModuleTests: XCTestCase {
  }
 
  /// 目录级多文件模块运行：loadDirectory（自动解析 pini.toml 的 `[ffi]`）→
- /// Interpreter.run(package:)，stdout 经 outputSink 重定向为字符串。
+ /// ProgramRunner.run(package:)，stdout 经 outputSink 重定向为字符串。
  /// 复刻 CLI `pini run examples/ffi_module/` 的进程内等价路径。
  /// `[ffi].search_paths` 已由 FileLoader.loadManifest 规一为相对模块目录的绝对路径，
- /// 故此处 Interpreter 传入同一 ffiConfig，使 vendored lib 在任意 cwd 下均可被加载。
+ /// 故此处 ProgramRunner 传入同一 ffiConfig，使 vendored lib 在任意 cwd 下均可被加载。
+ ///
+ /// LR-4 `G-5`：驱动入口由 AST 走查改为 HIR 树走查。本用例的断言是**冻结 golden**
+ /// （不是臂间对照），故换腿不改变判据强度；`G-4` 起 HIR 侧自备 dlsym 加载器，
+ /// 这条路径在默认引擎上真能解析到 vendored lib。
  private func runModule(at dir: String) throws -> String {
  let manifest = try FileLoader.loadManifest(directory: dir)
  let pkg = try FileLoader.loadDirectory(path: dir, manifest: manifest)
- let interpreter = Interpreter(ffiConfig: manifest?.ffi ?? .default)
+ let runner = ProgramRunner(ffiConfig: manifest?.ffi ?? .default)
  var segments: [String] = []
- interpreter.outputSink = { segments.append($0 + "\n") }
- try interpreter.run(package: pkg)
+ runner.outputSink = { segments.append($0 + "\n") }
+ try runner.run(package: pkg)
  return segments.joined(separator: "")
  }
 
- /// 单文件解释执行并捕获 stdout（Pipe 重定向，复刻 FFITests.runProgram）。
+ /// 单文件执行并捕获 stdout（Pipe 重定向，复刻 FFITests.runProgram）。
+ ///
+ /// ⚠️ **本助手在 `G-5` 中被实测判定为「不可换腿」，保持 AST 走查**：
+ /// 改成 HIR 后，唯一调用方 `testUndefinedForeignSymbolRejected` 实测**不再抛错**
+ /// （`XCTAssertThrowsError failed: did not throw an error`，且 `puts` 的
+ /// `hello, FFI` 照常打印）⇒ **HIR 侧对「声明了但找不到的 foreign 符号」不 fail-fast**，
+ /// 而 AST 侧在注册期拒（E5-017）。这是**能力/语义缺口**，不是参照臂问题。
+ /// 缺口登记见工单「未找到的 foreign 符号在 HIR 侧不 fail-fast」（`G-5` 批新立）；
+ /// `G-6` 之前须先补该 fail-fast 或显式退役此用例。
  private func runProgram(_ source: String) throws -> String {
  let module = try parse(source)
  let pipe = Pipe()

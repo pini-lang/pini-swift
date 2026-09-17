@@ -95,8 +95,9 @@ final class DotCaseConstructionTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
         var thrown: Error? = nil
         do {
-            let interpreter = Interpreter()
-            try interpreter.run(module: module)
+            // G-5：原为 AST 走查，改指 HIR 树走查（本文件断言为绝对期望，非臂间对照）
+            let runner = ProgramRunner()
+            try runner.run(module: module)
         } catch {
             thrown = error
         }

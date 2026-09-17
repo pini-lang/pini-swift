@@ -105,7 +105,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     func testCancelInterruptsRunningLoop() throws {
         let source = try loadPiniFixture("testCancelInterruptsRunningLoop", filePath: #filePath)
         let start = Date()
-        let output = try runProgram(source)
+        let output = try runProgramOnHIRTree(source)
         let elapsed = Date().timeIntervalSince(start)
 
         XCTAssertTrue(output.contains("已取消"), "被取消的任务 join 应归约为 err(CancelError)，实际输出: \(output)")
@@ -119,7 +119,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     func testParentReturnCancelsUnjoinedChildTask() throws {
         let source = try loadPiniFixture("testParentReturnCancelsUnjoinedChildTask", filePath: #filePath)
         let start = Date()
-        let output = try runProgram(source)
+        let output = try runProgramAST(source)
         let elapsed = Date().timeIntervalSince(start)
 
         XCTAssertTrue(output.contains("1"), "父任务应正常返回 ok(1)，实际输出: \(output)")
@@ -131,16 +131,21 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：显式 join 过的子任务不受父返回自动取消影响——「已 join」意味着生命周期已被消费。
     func testJoinedChildIsNotCancelledByParentReturn() throws {
         let source = try loadPiniFixture("testJoinedChildIsNotCancelledByParentReturn", filePath: #filePath)
-        let output = try runProgram(source)
+        let output = try runProgramAST(source)
         XCTAssertTrue(output.contains("42"), "已 join 的子任务应正常返回结果，实际输出: \(output)")
         XCTAssertFalse(output.contains("不应失败"), "已 join 子任务的失败分支不应触发：实际输出: \(output)")
     }
 
     /// 意图：取消走检查点抛出而非线程强杀，因此 `defer` 清理必须照常执行（资源不泄漏）。
     /// 这同时守住 executeFunctionBody 错误路径弹出 defer 作用域的修复。
+    ///
+    /// ⚠️ **`G-5` 实测判定为「不可换腿」，仍走 AST 走查**：改指 HIR 后本用例实测红
+    /// —— 输出只有 `主流程结束`，**缺 `清理完成`** ⇒ **HIR 侧取消时不执行 `defer` 清理**。
+    /// 退役件原记「4 条可改指」是按夹具 `rc=0` 判的，而 **`rc=0` 不蕴含断言可满足**：
+    /// 本用例正是那条反例（rc 为 0 而断言不成立）。实测订正写进退役件的「残余三」一节。
     func testDeferStillRunsWhenTaskCancelled() throws {
         let source = try loadPiniFixture("testDeferStillRunsWhenTaskCancelled", filePath: #filePath)
-        let output = try runProgram(source)
+        let output = try runProgramAST(source)
         XCTAssertTrue(output.contains("清理完成"), "取消是协作式的，defer 清理必须执行，实际输出: \(output)")
         XCTAssertTrue(output.contains("主流程结束"))
     }
@@ -149,13 +154,21 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 不变（推进性：同步求值照常出结果；驳回性：任何「已取消/检查点打断」副作用不得出现）。
     func testSynchronousProgramUnaffectedByCheckpoints() throws {
         let source = try loadPiniFixture("testSynchronousProgramUnaffectedByCheckpoints", filePath: #filePath)
-        let output = try runProgram(source)
+        let output = try runProgramOnHIRTree(source)
         XCTAssertTrue(output.contains("45"), "同步路径应完全不受取消检查点影响，实际输出: \(output)")
     }
 
     // MARK: - Helpers
 
-    private func runProgram(_ source: String) throws -> String {
+    /// 走 **AST 走查** 跑一份源码并捕获 stdout。
+    ///
+    /// ⚠️ 本助手仍在驱动**正在被删除的引擎**，只为余下的一组用例保留：
+    /// `G-3e` 退役件登记过 8 条语言层端到端用例，其中 **4 条已改指**
+    /// （走 `runProgramOnHIRTree`），另外 **4 条被两条既有缺口挡住**
+    /// （`printing a Result value is outside the slice` · `type mismatch: result(ok: i32) is not i32`）。
+    /// 那 4 条**尚未点名处置**（退役件给了 A/B 两选项）⇒ 本助手与它们一起等裁决；
+    /// `G-6` 删除本引擎之前必须先把它们改指或显式退役。
+    private func runProgramAST(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -169,6 +182,40 @@ final class StructuredConcurrencyTests: XCTestCase {
         do {
             let interpreter = Interpreter()
             try interpreter.run(module: module)
+        } catch {
+            fflush(stdout)
+            pipe.fileHandleForWriting.closeFile()
+            dup2(originalStdout, STDOUT_FILENO)
+            close(originalStdout)
+            throw error
+        }
+
+        fflush(stdout)
+        pipe.fileHandleForWriting.closeFile()
+        dup2(originalStdout, STDOUT_FILENO)
+        close(originalStdout)
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    }
+
+    /// 走 **HIR 树走查** 跑一份源码并捕获 stdout（LR-4 `G-5`）。
+    ///
+    /// 形状与 `runProgramAST` 逐行对应，只换了驱动入口。4 条可改指的语言层用例
+    /// 由此摆脱「驱动入口会被 `G-6` 删除」的处境；它们的断言本来就是**绝对期望**
+    /// （输出含某串 / 不含某串 / 耗时上限），不是臂间对照 ⇒ 换腿不改变判据强度。
+    private func runProgramOnHIRTree(_ source: String) throws -> String {
+        let lexer = Lexer(source: source, fileName: "test.pini")
+        let tokens = try lexer.tokenize()
+        let parser = Parser(tokens: tokens, fileName: "test.pini")
+        let module = try parser.parseModule()
+
+        let pipe = Pipe()
+        let originalStdout = dup(STDOUT_FILENO)
+        setvbuf(stdout, nil, _IONBF, 0)
+        dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
+
+        do {
+            let runner = ProgramRunner()
+            try runner.run(module: module)
         } catch {
             fflush(stdout)
             pipe.fileHandleForWriting.closeFile()
@@ -212,7 +259,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 不直接断言精确形态，只验证「父结果从 ok 翻转为 err，且携带子错误」。
     func testLeakedChildErrorFloatsToCallerResult() throws {
         let src = try loadPiniFixture("testLeakedChildErrorFloatsToCallerResult", filePath: #filePath)
-        let out = try runProgram(src)
+        let out = try runProgramAST(src)
         XCTAssertTrue(out.contains("err"), "父结果应翻转为 err：实际输出=\(out)")
         XCTAssertTrue(out.contains("boom"), "上浮的 err 应携带子任务错误：实际输出=\(out)")
         XCTAssertFalse(out.contains("ok(42)"), "父局部 ok(42) 应被（甲）翻转为 err，不得保持：实际输出=\(out)")
@@ -222,7 +269,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 既不触发 leaked 上浮、也不被父返回取消（甲 与 detach 出口的衔接）。
     func testDetachEscapeHatchSuppressesLeak() throws {
         let src = try loadPiniFixture("testDetachEscapeHatchSuppressesLeak", filePath: #filePath)
-        let out = try runProgram(src)
+        let out = try runProgramAST(src)
         XCTAssertTrue(out.contains("ok"), "detach 后父结果应保持 ok：实际输出=\(out)")
         XCTAssertTrue(out.contains("42"), "父局部结果 ok(42) 应保留：实际输出=\(out)")
         XCTAssertFalse(out.contains("err("), "detach 后不应再上浮子失败：实际输出=\(out)")
@@ -231,7 +278,7 @@ final class StructuredConcurrencyTests: XCTestCase {
     /// 意图：`detach` 语句把子任务从父 scope 剪枝——之后父返回不再追踪其结局。
     func testDetachBuiltinPrunesChildFromParent() throws {
         let src = try loadPiniFixture("testDetachBuiltinPrunesChildFromParent", filePath: #filePath)
-        let out = try runProgram(src)
+        let out = try runProgramOnHIRTree(src)
         XCTAssertTrue(out.contains("detached"))
     }
 }
