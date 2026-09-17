@@ -22,7 +22,7 @@ P3 的三层判据里：第 1 层（执行等值）与第 2 层（规范一致�
 |---|---|---|---|---|
 | **CG-01** | 探针 `OK` 槽位**不收参照臂**（`l_out == h_out`），而 verdict 说明写成「all three agree」⇒ **文档与实现不符** | `issue-diagnostic-channel-parity-2026-09-12.md` §现象一 | **已处置（G1，2026-09-15）** | 规则 6 纳入 `a_out`；实测真实盲区 **2 例**（非 20 例） |
 | **CG-02** | **参照臂不是天然正确** ⇒ 若硬比 `a_out`，「参照臂对、另两臂错」与「参照臂错、另两臂对」会被压成同一个红 | 同上 修正方向② | **已处置（G1）** | 新增独立槽位 `CHANGE_REFERENCE`（**阻塞集外**），2 例实测 |
-| **CG-03** | 三条边（`llvm⇄hir` / `ast⇄llvm` / `hir⇄ast`）的**并集**未固化为**单一可复跑判据** —— 单条都不完备，全靠「记得两处都跑」这一人工纪律 | 同上 修正方向③ | **已处置（CG 批，2026-09-17）** | 新增单点入口 `tools/three-edge-union.py`：一条命令跑完三条边、**各出一行分层读数**（不合并成一个数）；⚠️ 它**拒绝把「未测」报成绿**（跳过单列、退出码 2），实测三边 **VERDICT: all three edges measured and green** |
+| **CG-03** | 三条边（`llvm⇄hir` / `ast⇄llvm` / `hir⇄ast`）的**并集**未固化为**单一可复跑判据** —— 单条都不完备，全靠「记得两处都跑」这一人工纪律 | 同上 修正方向③ | **已处置（CG 批，2026-09-17）；`A1` 批（2026-09-17）补第四条线** | 新增单点入口 `tools/three-edge-union.py`：一条命令跑完各边、**各出一行分层读数**（不合并成一个数）；⚠️ 它**拒绝把「未测」报成绿**（跳过单列、退出码 2）。`A1` 加上的第四行是 **`pkg ast<->hir`**（包通道，判 `PACKAGE_MEMBER` 那 27 条），实测该行 **MEASURED-RED**（两处分歧各有主人）⇒ 该入口的**总判定自 `A1` 起不再是绿**，见 §10 |
 | **CG-04** | **套件名 ≠ 覆盖面**：`HIRDifferentialTests` 比的是 AST 解释器 ⇄ LLVM **管线**，**根本不经过 HIR 解释器** ⇒ 对 HIR 引擎缺口完全失明 | 同上 结论 2 | **已处置（G2）** | 写入本件 §5 纪律条款，供各格开工自检 |
 | **CG-05** | 旧 `GAP_HIR_ENGINE` **计数器过宽**（诊断通道奇偶叠加 ⇒ **假阻塞**，非 HIR 缺口） | P1-4 遗留② / P2 细目 §10.3 | **已处置（G1）** | 收窄为**残差** + 新增非阻塞槽位 `WARN_CHANNEL_ASYMMETRY`（20 例实测） |
 | **CG-06** | **规则序可产生空洞 parity**：`l_rc=0 / h_rc≠0`、两臂皆吵、stdout 皆空 ⇒ 「逐字等值」是**空串比空串**却被判 `OK_HARNESS` | P1-4 遗留③ | **已处置（G1）** | `h_rc != 0` 提为规则 5，**先于** parity |
@@ -195,7 +195,7 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
 | 零行为变更（**逐条**，stash 法取真基线） | 基线 64 = 本批 64；**新增红 0 / 转绿 0 / 仍红 64 / 集合相等** · 分块 26+18+20 逐块相同 · 未跑 0 · 信号 0 |
 | 契约 | `clean`，三锚点各 **60/60**（本批**未动**任何节点） |
 | 探针 | **320** 夹具（319 → 320，+1 具名）· `FLIP BLOCKERS 0` · 进程泄漏 0 |
-| 三边并集入口 | `tools/three-edge-union.py` → 三边 **MEASURED-GREEN**，退出码 0 |
+| 三边并集入口 | `tools/three-edge-union.py` → 三边 **MEASURED-GREEN**，退出码 0（⚠️ **该读数已被 `A1` 批取代**：本入口现为**四线**，见 §10） |
 | 三通道断言 | 57 → **58** 夹具全绿；`HIRDifferentialTests` 89 用例全绿（委托改造行为不变） |
 
 ### 8.5 本批发现、**不在本批修**的缺陷
@@ -215,7 +215,7 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
 
 | 组 | 规模 | 成因（实测） | 归属 / 谁覆盖 |
 |---|---|---|---|
-| **`PACKAGE_MEMBER`** | 27（全在 `examples/`，四个含 `pini.toml` 的模块） | 成员文件**没有 `main`**，单文件通道 `rc=1 E6-004`；而 **`run-llvm` 没有包通道**（`pini run-llvm <目录>` 报 `The file … couldn't be opened.`，且 `rc=0`）⇒ `hir⇄llvm` 边**不可能**覆盖它们 | **解释器侧包通道已具备**（`pini run <dir>`，`P4-1a`）⇒ 应由 **`ast⇄hir` 边**补包成员判定（队列 `A1`）；`run-llvm` 侧待 `run-llvm` 支持目录（在册工单） |
+| **`PACKAGE_MEMBER`** | 27（全在 `examples/`，四个含 `pini.toml` 的模块） | 成员文件**没有 `main`**，单文件通道 `rc=1 E6-004`；而 **`run-llvm` 没有包通道**（`pini run-llvm <目录>` 报 `The file … couldn't be opened.`，且 `rc=0`）⇒ `hir⇄llvm` 边**不可能**覆盖它们 | **已由 `A1` 拆账（2026-09-17，逐条具名，见 §10）**：**8 条**（`examples/` 下三个宿主模块的成员）由**包通道**判定；**19 条在 `examples/selfhost`（嵌套独立仓）内**，由**该仓自己的门禁**覆盖 —— 15 条走 `tools/gate.sh` 的 `pini check .` / `pini test .`（实测 `检查通过（模块 pini，15 个文件）` / `结果: 70 通过, 0 失败`），4 条语料里 3 条走 `tools/diff_tokens.sh` / `tools/diff_parse.sh`，余 1 条（`l1b-shapes.pini`）在该仓内有**自述归档语料、刻意不入门禁**的记载 ⇒ **27 条逐条有主**。⚠️ `run-llvm` 侧仍待它支持目录（在册工单） |
 | **`FRONTEND_FAIL`** | 11（**全是并发面**：7 条 `concurrency-*.pini` + `concurrency.pini` 报 `E6-004`；3 条 `*_LLI.pini` 报 `E4-001`） | **LLVM 后端对并发面零覆盖** | **已在册**：`docs/issue-llvm-concurrency-runtime-2026-09-08.md`（Open，2026-09-12 裁决**搁置**，重启条件 = selfhost 探针完成解释器端） |
 | **`HARNESS_DEPENDENT`** | 1（`testIsLetterUnsupportedViaIRGen.pini`） | 该夹具本身就在测「IRGen 不支持」，独立臂**跑不动**是**预期**而非缺陷 | 夹具自述；无须覆盖，但**不得计作被测** |
 
@@ -223,3 +223,72 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
 两实臂各输出 `42`、**参照臂 `rc=1`** ⇒ 参照臂自己是偏离方）；`WARN_LLVM_RC_UNPROPAGATED` 4
 （三臂一致认定失败，LLVM 臂 `rc=0` 是**退出码被丢弃**，非成功）。
 二者均**阻塞集外**，但**必须与 `FLIP BLOCKERS 0` 一起读**。
+
+---
+
+## 10. `A1` 批：包通道上线与「那 27 条」的逐条拆账（2026-09-17）
+
+> 队列甲组 `A1` 的交付实录。**本批零 `Sources` / `Tests` 改动**（只动 `tools/` + `docs/`）。
+
+### 10.1 做了什么
+
+`tools/three-edge-union.py` 新增第四条线 **`pkg ast<->hir`**：**结构式**枚举宿主模块
+（目录含 `pini.toml`、且**不在嵌套仓内** —— 判据是「任一祖先目录有 `.git`」，不是名字清单），
+对每个模块把 `pini run <目录>` 跑**两个引擎**再比。
+
+三条判定被**刻意分开**，不许互相折叠：
+
+| 判定 | 含义 | 为什么单列 |
+|---|---|---|
+| `agreed` | 两臂 rc=0 且 stdout 相同 | 这才是**判定** |
+| `diverged` | 一臂跑、一臂拒；或两臂都跑但输出不同 | 用户可见行为**取决于选了哪个引擎** ⇒ 唯一使该行判红的形态 |
+| `refused by both arms` | 两臂都拒 | **不是判定**，与「未测」同族（同「跳过不是通过」）；两侧报文并列打印，因为**引擎不对称恰好会藏在「退出码相同」下** |
+
+### 10.2 实测（2026-09-17，`e3dd5c8`，8 个宿主模块，耗时 0.2s）
+
+| 模块 | `ast` | `hir` | 判定 |
+|---|---|---|---|
+| `examples/package-demo` | rc=0 `107/42/0/1/0/1234` | 同 | `agreed` |
+| `examples/multifile` | rc=0 `5/25/0` | 同 | `agreed` |
+| `Tests/…/ModuleSystemTests/demo/app` | rc=0 `3` | 同 | `agreed` |
+| `examples/ffi_module` | rc=0，6 行 | **rc=1 `E5-006`** | **`diverged`** |
+| `Tests/…/ModuleSystemTests/demo3/app` | rc=0 `110` | **rc=1 `E6-004`** | **`diverged`** |
+| `Tests/…/demo/helper` · `demo3/app/frontend` · `…/frontend/syntax` | `E5-007` | `E6-004` | 两臂都拒（三个模块，报文**不同**） |
+
+⇒ 该行判定 = **`MEASURED-RED`**（不是「未测」）：
+`8 module(s): 3 agreed / 2 diverged / 3 refused by both arms`。
+
+### 10.3 「那 27 条」的逐条拆账（本件 §9 的 `PACKAGE_MEMBER` 行由此改写）
+
+| 归属 | 条数 | 谁覆盖（**实测**，非推测） |
+|---|:---:|---|
+| 宿主包通道（本批新增） | **8** | `examples/multifile`（2 文件）· `examples/package-demo`（5）· `examples/ffi_module`（1）—— 由模块入口路径判定，**7 条 agree + 1 条 diverged** |
+| `examples/selfhost`（**嵌套独立仓**，不属本仓判据面） | **19** | 该仓 `tools/gate.sh`：**15 条**走 `pini check .`（实测「检查通过（模块 pini，15 个文件）」）+ `pini test .`（实测「70 通过, 0 失败」）；**3 条**语料走 `tools/diff_tokens.sh` / `tools/diff_parse.sh`；**1 条**（`l1b-shapes.pini`）在该仓内有**「归档语料、刻意不入门禁」**的记载 |
+
+⇒ **27 条逐条有主**，且「不是被测」与「没人在意」被分开了。
+
+### 10.4 两处分歧：**各有主人**，本批一条都不修
+
+| 分歧 | 归属 |
+|---|---|
+| `demo3/app`：两依赖模块**导出同名顶级符号**，合并式降载保不住命名空间 | **已有在册工单**（`docs/issue-hir-import-module-symbols-2026-09-16.md`）⇒ 本批**补证据不新建**（该单 §7 新增「形态三」） |
+| `ffi_module`：**vendored FFI 符号**（`[ffi] libs`，dlsym 第二段）在 HIR 侧无解析链 | **本批新立**：`docs/issue-hir-vendored-ffi-unsupported-2026-09-17.md`（Open，只登记不修） |
+
+⚠️ **一处口径订正**：`docs/issue-hir-package-run-unsupported-2026-09-16.md` 记的
+「CLI 在 `engine == .hir` 时**显式拒绝**目录运行」**已不成立**（实测该分支已移除，HIR 现在会进包通道）。
+本批在该单补实测状态行；其「HIR 不支持目录/模块运行」这个**标题级结论应按上表细化**（是**三个模块级子缺口**，不是一个）。
+
+### 10.5 判据（本批）
+
+| 判据 | 读数 |
+|---|---|
+| 包通道可复跑 | 一行读数、实测 **0.2s**（无需重建二进制；用 `/tmp/pini-build` 的产物） |
+| 27 条逐条有主 | §10.3，**无余项** |
+| 两处分歧具名 | §10.4，**各有载体**（一件在册补证据 + 一件新立） |
+| 回归 / 探针 | **不适用重跑**：区间内 `git diff --name-only -- Sources Tests` **为空**（纯 `tools/` + `docs/`）⇒ 两项读数保留原 `at_head`，见 `state-readings.json` |
+
+### 10.6 未做范围
+
+- **不修**两处分歧（各归其主；`charter.md` D2：不满足「阻塞 ∧ 机械」两条者登记不修）。
+- **不把 `Tests/` 下的模块剔出扫描面** —— 判据用「不在嵌套仓内」这一**结构**条件，不用名字清单（`charter.md` E2）。
+- **不改 `run-llvm`**（它仍没有包通道）；**不接进 hook**（该入口是判据器械，不是门禁）。
