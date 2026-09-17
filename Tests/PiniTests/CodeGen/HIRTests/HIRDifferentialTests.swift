@@ -45,51 +45,11 @@ final class HIRDifferentialTests: XCTestCase {
     private func runNewPipeline(_ source: String, stdin: String? = nil,
                                 programBase: String? = nil,
                                 workingDirectory: String? = nil) throws -> String {
-        try LLVMGate.requireLLI()
-        let dylib = try LLVMGate.requireRuntimeDylib(locateRuntimeDylib())
-        let fileName = "test.pini"
-        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
-        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
-        let checker = TypeChecker()
-        let errors = checker.checkCollecting(module: module)
-        XCTAssertTrue(errors.isEmpty, "slice sources must typecheck: \(errors)")
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-        let emitter = IREmitter()
-        emitter.programBase = programBase
-        let ir = emitter.emit(module: hir)
-
-        let tmpIR = FileManager.default.temporaryDirectory.path + "/pini_hir_diff_\(UUID().uuidString).ll"
-        defer { try? FileManager.default.removeItem(atPath: tmpIR) }
-        try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
-
-        guard let lli = LLVMToolchain.lliPath else {
-            throw NSError(domain: "LLIUnavailable", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "lli not available"])
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: lli)
-        process.arguments = ["--dlopen=\(dylib)", tmpIR]
-        if let workingDirectory {
-            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
-        }
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        let inputPipe = stdin.map { _ in Pipe() }
-        if let inputPipe { process.standardInput = inputPipe }
-        try process.run()
-        if let stdin, let inputPipe {
-            inputPipe.fileHandleForWriting.write(Data(stdin.utf8))
-            inputPipe.fileHandleForWriting.closeFile()
-        }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            XCTFail("lli exited \(process.terminationStatus) for IR:\n\(ir)")
-            return ""
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
+        // The invocation itself lives in `LLVMChannel` — one source, shared with
+        // the three-channel corpus check in `HIRExecutorTests`. This wrapper keeps
+        // the call sites in this file unchanged.
+        try LLVMChannel.run(source, stdin: stdin, programBase: programBase,
+                            workingDirectory: workingDirectory)
     }
 
     private func runInterpreter(_ source: String, stdin inputText: String? = nil,
