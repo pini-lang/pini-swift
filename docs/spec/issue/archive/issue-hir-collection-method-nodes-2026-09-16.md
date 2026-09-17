@@ -1,6 +1,7 @@
 # 集合方法 `append` / `last` / `pop` 在 HIR 无节点可落
 
-> 状态：**Open**（2026-09-16 立案；**只登记不修**）
+> 状态：**已交付（2026-09-17，`G-2S`）· 已归档（2026-09-18，工单巡查第二轮）** ——
+> 原状态 Open（2026-09-16 立案；只登记不修）；处置记录见文末。
 > 发现于：`G-2b` 勘测。它是该子批**未交付的那一半**。
 > 上游：`docs/issue-hir-p4-gamma-batches-2026-09-16.md` 的 `G-2b` 行。
 
@@ -45,3 +46,24 @@ main|func() -> ():
 | C 不实现，`append`/`last`/`pop` 随走查退役 | 语言能力回退（三者在 `Interpreter` 侧是活着的），需 release note 明示 —— 与 `G-3` 的 `R1/R2` 同族问题 |
 
 ⚠️ **本单不预设选项**：它同时是 `G-3` 那条「保能力还是弃能力」判断的一个子问题，宜与 `R1/R2` 同批裁。
+
+---
+
+## 处置记录（2026-09-18，工单巡查第二轮）
+
+**对象已交付**：`G-2S`「集合成员方法走内建特征派发」（2026-09-17 ✅，
+实录见 `docs/issue-hir-p4-gamma-batches-2026-09-16.md` §`G-2S`）把 `append` / `last` / `pop` 三条同时落地。
+
+⚠️ **本单的选项表里没有这一形态**：A = 3 个新节点 · B = 1 个通用新节点 · C = 退役；
+而交付走的是**第四形态 —— 一个节点都不加**：改走**按名调用**
+（`Array.append` / `Array.last` / `Array.pop`），执行器按名回答，与 `argv` / `moduleRoot` 同一先例
+⇒ **契约 60/60 三锚点 clean**，§2 第 4 点担心的「新增节点须走 `spec §1.3` 治理」**因此未触发**。
+（§3 的选项表把「至少 1 个新节点」当作代价下限，实现找到了更低的路径。）
+
+**本单标的 6 条用例的去向**（`G-2S` 判据面）：转绿 **4**
+（`testArrayAppendFunctionalReturnsNewArray` · `testArrayLastAndPopStackSemantics` ·
+`testArrayLastPopOnEmptyReturnsNull` · `testAppendArgumentAccepted`）；余 **3 条**
+由 `G-2S` 自己的「止损三条」具名登记（无标注累积器 · 无标注空数组 ×2）⇒ **无孤儿**。
+
+**归档（2026-09-18）**：判据 = 对象已交付 ∧ 标的面逐条有主。入向引用 1 处
+（`docs/issue-hir-p4-gamma-batches-2026-09-16.md` §`G-2b` 的立案行）已改指本档新路径。

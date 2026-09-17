@@ -133,7 +133,7 @@ pini emit <该夹具>   →   rc=0（看起来成功），IR 里却出现对 `is
 
 ⚠️ **该簇的三个方法没做，理由是结构性的**：`append` · `last` · `pop` **在契约里没有可落的节点**。
 `ADR-034 D5` 冻结节点集，而规划 §6 把「改契约计数」排除在 `G-2` 之外 ⇒ 保持原守卫并**另立工单**
-（`docs/issue-hir-collection-method-nodes-2026-09-16.md`），不在本批硬造。
+（`docs/spec/issue/archive/issue-hir-collection-method-nodes-2026-09-16.md`），不在本批硬造。
 ⇒ **本簇转绿 2，低于 §2.2 预期的 8**；缺口归上述约束，不归「更早的降载层」。
 
 ### G-2c 一元运算符 ✅（2026-09-16）

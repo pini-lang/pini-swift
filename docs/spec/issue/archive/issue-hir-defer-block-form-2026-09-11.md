@@ -1,6 +1,7 @@
 # Issue：HIR 拒绝 defer 块形式（`defer:` + 多语句块）
 
-- 状态：**Open（2026-09-11 立案；M6c 横切项 X4 新发现，未实施）**
+- 状态：**已交付（2026-09-16，`G-2f`）· 已归档（2026-09-18，工单巡查第二轮）** ——
+  原状态 Open（2026-09-11 立案；M6c 横切项 X4 新发现，未实施）；处置记录见文末。
 - 发现来源：M6c 收尾批立案（该形态**无夹具覆盖**，属分母外新发现）
 - 关联：`docs/issue-llvm-rewrite-plan-2026-09-07.md`（M6c 的 C1 格 = defer 降级）、
   `docs/spec/pini-spec-v0.md`（defer 双形态定义）
@@ -59,3 +60,25 @@ main|func() -> ():
 
 规模估计：若只需在降级期把 `scopedBlock` 展开、且 `deferStmt` 的 body 已是
 可容纳序列的形状，则属小改动；若需改 HIR 节点形状，则与 C2 同量级。
+
+---
+
+## 处置记录（2026-09-18，工单巡查第二轮）
+
+**对象已交付**：`G-2f`「作用域块 / `defer`」（2026-09-16 ✅，
+实录见 `docs/issue-hir-p4-gamma-batches-2026-09-16.md` §`G-2f`，判据 **86 → 83**，转绿 3、新增 0）。
+
+**代码级证据（两处，正是本单「建议处置 1」的两半）**：
+
+| 本单的要求 | 现测 |
+|---|---|
+| 「在 `lowerStatement` 增 `scopedBlock` 分支」 | `Sources/PiniCore/HIR/HIRLowerer.swift:1698-1699` —— `.scopedBlock` 已单独接住，且**不是**降为顺序语句序列，而是**整块收进 `deferStmt` 的 body**：`return [.deferStmt(body: try lowerBlock(body, into: &context))]` |
+| 「确认 `deferStmt` 的 body 能否承载多语句」（本单自称的**关键未知项**） | `Sources/PiniCore/HIR/HIRNode.swift:612` —— `case deferStmt(body: HIRBlock)`：**已是块形状** ⇒ 不触节点形状变更 |
+
+⇒ 本单「规模估计」里「若需改 HIR 节点形状，则与 C2 同量级」那一支**未成立**，落在「小改动」支。
+
+**未随本单完成的一半（如实登记）**：建议处置 2 的**夹具补充** —— 「块形式 + `return` / `break` /
+`continue` 三条路径」是否逐条进入探针分母，**本轮未核**（须跑探针逐夹具对账）。
+价值判断：该形态**已可跑**，缺的只是覆盖计数 ⇒ 单独立项价值低，随下次探针分母刷新一并核即可。
+
+**归档（2026-09-18）**：入向引用 1 处（`docs/issue-llvm-rewrite-plan-2026-09-07.md:1026`）已改指本档新路径。

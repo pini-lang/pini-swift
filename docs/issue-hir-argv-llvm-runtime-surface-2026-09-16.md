@@ -76,3 +76,25 @@
 
 **本单的对象因此扩为**：`argv` · `moduleRoot` · `chars` · `chr` · `ord` · `is_letter` · `is_number`
 （后续 `G-2` 子批补齐的每个内建，按同一口径追加到本列表，不新开单）。
+
+---
+
+## 9. 列表追加（2026-09-18，工单巡查第二轮；按 §8 末**本单自定规则**执行）
+
+**规则回顾**（§8 末原文）：「后续 `G-2` 子批补齐的每个内建，按同一口径追加到本列表，不新开单。」
+`G-2` 已收口（`G-2R` / `G-2S` 交付后清零）⇒ 本次把差额一次补齐。
+
+| 候选项 | 由谁交付 | LLVM 侧实测（2026-09-18） | 结论 |
+|---|---|---|---|
+| `Array.append` · `Array.last` · `Array.pop` | `G-2S`（2026-09-17 ✅，按名调用） | ❌ **无对应实现** —— `Sources/PiniCore/CodeGen/IREmitter.swift` 里 `arrayMethods` / `Array.append` **零命中** | **追加** |
+| `~`（一元按位取反） | `G-2c`（2026-09-16 ✅，`HIRUnaryOp.bitwiseNot`） | ✅ 有 —— `IREmitter.swift:1430` 的 `case .bitwiseNot` | 不追加 |
+| `print()` 无参 = 空行 | `G-2h`（2026-09-16 ✅） | ——（非内建符号面，不涉未定义符号） | 不追加 |
+
+⇒ **现列表 = 10 项**：`argv` · `moduleRoot` · `chars` · `chr` · `ord` · `is_letter` · `is_number` ·
+**`Array.append` · `Array.last` · `Array.pop`**。
+
+⚠️ **口径**：只追加「**降载层已接受、而 LLVM 侧无运行时段**」的**内建符号** ——
+`G-2S` 三条满足（`IREmitter` 无分派）；`G-2c` 的 `~` 不满足（已有分派，追加会虚增对象面）。
+⚠️ **本轮未测的部分（如实）**：`emit` 对 `Array.append` 的**精确行为**（是产出对未定义符号的调用、
+还是别的形态）—— 只核了「`IREmitter` 无该分派」这一事实。若日后要精确记账，按 §8 的
+`pini emit <file>` + IR 内查未定义符号的方式补一次即可。
