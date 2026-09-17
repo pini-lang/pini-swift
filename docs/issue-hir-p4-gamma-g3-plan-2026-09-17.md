@@ -489,3 +489,116 @@ grep -n "private var \|private let \|public var " Sources/PiniCore/Interpreter/H
 - 不修在册工单 · 不 push。
 
 **下一单元**：`G-3c`（`.join` 节点面 + HIR 侧 CPS 求值器）或点名其他，**待点名**。
+
+---
+
+## 12. `G-3c` 开工前勘测（2026-09-17，**只读**；一项待裁 + 一项待认）
+
+> **性质**：**零改动**（未动 `Sources` / `Tests` / 契约正文；本节是唯一新增）。
+> **全部读数现测**，采集于 HEAD `a6e17ac`（`G-3a` / `G-3b` 交付之后）。
+> ⚠️ **本件 §1 的事实基础采集于 `1438887`**，早于那两批 ⇒ 其中「L1 **17 条** · L2 **9 条**」
+> 两行**已被消化**，**不再反映现状**。§12.1 给出**现行**缺口面；§1.5 的分层结论仍然成立
+> （只是 L1/L2 两层已归零）。
+
+### 12.1 现行夹具面：8 目录 83 夹具，首缺口逐条归类
+
+采集：`PINI_INTERP_ENGINE=hir pini run <夹具>`，逐条取**首缺口**（83 / 83 条，无排除）。
+
+| 首缺口 | 条数 | 属 `G-3c` 面？ |
+|---|:---:|---|
+| `expression 'join' is not yet lowered to HIR` | **43** | ✅ 本体（§2 裁 ① 的节点面已落，**降载规则与执行面未落**） |
+| `statement 'detach' is not yet lowered to HIR` | **3** | ✅ **但 §3 的批表未列** ⇒ 见 §12.3 裁定 `D-G3c-1` |
+| `call to unknown function 'joinWithin'` | **6** | ✅ **§3 未列**（`G-3b` §11.2 记为「下一层」） |
+| `call to unknown function 'joinAll'` | **1** | ✅ 同上 |
+| `method 'cancel' calls are later grids` | **6** | ✅ 同上 |
+| 类型 / 语义层拒绝（`rc=1`，非 `unsupported`） | 17 | ✘ 归 `G-4·G-5` 与乙组 `D2`（含 `TaskIsolationTests` 的**负向**夹具 —— 它们**本就该被拒**） |
+| 跑通 / 仅警告（`rc=0`） | 5 | ✘ 含 1 条**非确定**（`testWorkStealingOccurs`，`G-3b` §11.2 实测：并发警告行号随工位漂移） |
+| `try-else is only supported as a statement or a variable initializer` | 1 | ✘ 另一层 |
+| 空报文（`testDiffMatchJoinInBody`） | 1 | ✘ **已有主**（`match` 检体位的 `ok(1)`，`G-3b` §11.2 立的单） |
+| **合计** | **83** | |
+
+⇒ **属 `G-3c` 首缺口面的 = 59 条**（43 + 3 + 6 + 1 + 6）。
+⚠️ 与 `G-3a` / `G-3b` **口径相同**：这是**夹具面**（`.pini` 条数），不是**用例面**。
+本件 §1.4 的「31」是**用例面**（46 用例里的失败数），两者分母不同、都对。
+
+采集命令（可复跑）：
+
+```sh
+export PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin
+for d in ConcurrencyTests JoinAllTests JoinWithinTests CancellationTests \
+         StructuredConcurrencyTests SuspendRuntimeTests CPSDifferentialTests TaskIsolationTests; do
+  for f in Tests/PiniTests/$d/*.pini; do
+    PINI_INTERP_ENGINE=hir pini run "$f" 2>&1 | grep -m1 -o "unsupported feature '[^']*'"
+  done
+done | sort | uniq -c | sort -rn
+```
+
+### 12.2 ⭐ 结构发现：`suspendMode` 的**生产面是 `false`**
+
+- `Sources/PiniCore/Interpreter/Interpreter.swift:42` = 声明（`var suspendMode: Bool = false`）。
+- **全仓赋值点实测只有 `Tests/`**：`Tests/PiniTests/CPSDifferentialTests/CPSDifferentialTests.swift:23`
+  与 `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift` 的 8 处；
+  `Sources/` **零赋值**（`grep -rn "suspendMode = " Sources/` 只命中一行注释）。
+- `Sources/PiniCore/Run/ProgramRunner.swift` 的文件头注释**自陈**：挂起面
+  （`suspendMode` / `scheduler` / `runSuspendable`）**在 HIR 引擎上未实现**。
+
+⇒ **现行发布语义 = 阻塞 join**（`GCDScheduler` + 真线程；`joinFuture` 阻塞当前线程）。
+那 890 行的 CPS 求值器（`Sources/PiniCore/Interpreter/SuspendEvaluator.swift`）
+**只在测试把 `suspendMode` 翻成 `true` 时才被执行**。
+
+⭐ **这条改变 `G-3c` 的切法** —— 它让「第一批」既能拿到判据、又是**真交付**：
+
+| 批 | 内容 | 判据 | 触契约？ |
+|---|---|---|---|
+| **`G-3c-1`** | **异步管道 + 阻塞 join**：① `HIRFunction` 补**异步标记**（降载层已在 `HIRLowerer.swift:1110` 用 `isAsync` 算返回类型，**标记本身未进 HIR**）② 执行器补异步 spawn 面（`FutureValue` / `currentFuture?.addChild` / `scheduler.spawn` / `closeScope` / `flipIfLeaked` / `reject`，镜像 `Interpreter.swift:3011–3050`）③ `.join` 降载规则 + **阻塞** join ④ `Future` 值层的内建与方法（`joinWithin` / `joinAll` / `cancel` / `isCancel`）⑤ `detach` | 上表 **59 条首缺口归零**；⚠️ 与 `G-3a`/`G-3b` **不同** —— 这批**应当真转绿**（阻塞语义**就是** AST 的制作面语义） | ❓ **仅 ⑤ 待裁**（§12.3） |
+| **`G-3c-2`** | **真挂起 CPS**：890 行薄外壳的 HIR 镜像 + driver 路由改 **depth 制**（§1.9）+ `HIRExecutor` 四状态改 `ThreadLocal`（§1.8）+ `suspendMode` / `cpsTasks` | `SuspendRuntimeTests` 15 条 + `CPSDifferentialTests` 14 条**改指 HIR 后仍逐字节一致** ⇒ 与 `G-3d` 天然合流 | 否 |
+
+**为什么切**（沿用 §3.1 给 `G-3a` / `G-3b` 单列的同一条理由：**风险不同类**）：
+
+1. **阻塞 join** 是「照已有的生产语义补齐」；**真挂起**是「跨线程上下文还原」——
+   两者一旦混批，本体卡住会把可交付的一半一起拖住。
+2. **访问面代价只落在 `G-3c-2`**（本批实测）：`G-3c-1` 的改动**全部在 `HIRExecutor.swift` 文件内**
+   （异步臂加在 `case .call`（`HIRExecutor.swift:431`）、join 加在 `case .join`（同文件 `:1110`，现为 fail-loud）），
+   **不涉及访问面调整**；而 `G-3c-2` 若照 `SuspendEvaluator.swift` 的先例**另立文件**，
+   则该文件的 `private` 成员（`evaluate` `:373` / `execute` `:1506` / `executeStatements` `:1465` /
+   `executeBlock` `:1443` / `pushDeferScope` `:1411` / `popDeferScope` `:1422` / `currentEnv` `:281` …）
+   **必须放宽为 `internal`**，否则**跨文件扩展读不到**。另一条路是写在同一文件内
+   ⇒ `HIRExecutor.swift` 由 **2177** 行涨到约 **3100** 行。**两条路都不该混进第一批。**
+
+### 12.3 待裁
+
+**裁定 `D-G3c-1` —— `detach` 要不要新节点？**（唯一触契约的一项）
+
+**这是什么**：`detach <expr>` 是语言里的一条语句（「求值得到一个 `Future` 值，把它从父任务剪枝、
+不参与父返回时的自动取消」）。`HIRStmt` **16 case 且无 `detach`**；契约 §3 同样只列 16 条；
+§4 预留位**只剩 `char` 一条**（`§4.2` 已随 `join` 兑现而作废）
+⇒ **`detach` 没有预留位**，新增即 **61 → 62**。
+
+| 选项 | 做什么 | 代价 |
+|---|---|---|
+| **①** | 新增 `HIRStmt.detach` 节点 | 契约 **61 → 62** + 走一次 `spec §1.3`（**第 2 次**，第 1 次是 `ADR-040`）+ 三锚点（`llvm` / `printer` / `interp-hir`）同步认领 + 下游引用「61」的文字跟改（`docs/spec/hir-contract.md` §0.4 与本规划件至少各一处） |
+| **②** | 降成既有形状（`detach <expr>` → 求值 + 调 `Future` 的一个方法，即走 `call` 的按名形状） | 零治理成本；⚠️ 须登记「`detach` 走 `call` 形状」这一实现约定（`§2` 裁 `join` 时点名的风险：**偏差必须有登记处**） |
+
+**我的建议：②**。判据与 §2 裁 `join` 用 ① 时**是同一把尺**，只是**结论不同**：
+§2 的推理是「`join` 要在求值点**挂起整个求值栈**（保存续体、释放 OS 线程），不是『调用』能承载的」；
+而 `detach` **不需要挂起** —— 它是「先把表达式求成一个值，再调该值的一个方法」
+（AST 侧就是 `fut.detachFromParent()`，`SuspendEvaluator.swift:627` 一行），
+正落在 §2 自己认可的那类先例里（`argv` / `moduleRoot` / `Array.append`：**同步、有副作用但无控制流**）。
+⇒ 两个节点**性质不同**，同一把尺得出相反结论，**不是**两处判据打架。
+
+⚠️ 若裁 **①**，请在裁决里**同时指定**「契约计数 61 → 62 后，哪些下游文字要跟改」——
+`docs/spec/hir-contract.md` §0.4 的那句「**45 表达式节点 + 16 语句节点 = 61**」至少要被跟改，
+否则下一位读者会拿旧基数核验。
+
+**裁定 `D-G3c-2` —— 认不认 §12.2 的两批切法？**
+
+不认则按 §3 原表单批做（代价即上表「触契约」列与访问面那两条，**一次性承担**）。
+
+### 12.4 本节未覆盖（如实登记）
+
+- **未跑**全量回归 / 探针 / `ast` 方向（重任务，且本批只读）⇒ 本节**不含**任何回归或探针读数。
+  本节的 83 条**全部**来自 `pini run` 逐夹具直跑（8 目录，约 1.5 分钟）。
+- **未测** `G-3c-2` 的规模（890 行镜像的**实际**行数、`private` 放宽的**处数**）——
+  上表 §12.2 列的是**已定位的关键成员**，不是完整清单；须在 `G-3c-2` 开工时现测。
+- **未动**任何文件：`Sources` / `Tests` / 契约正文 / 本件正文（§12 是唯一新增）。
+
