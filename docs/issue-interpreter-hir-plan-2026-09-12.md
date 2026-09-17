@@ -1236,7 +1236,7 @@ evidence_sweep `--check` **通过**（drift **1** = 上一条（探针判据收�
 
 **性质**：LR-4 的 **P4 前置五批**之一（父计划 = 项目仓 `docs/issue-hir-p4-plan-2026-09-16.md` §3），
 **不是 P2 系列的「格」** —— 无节点族、无镜像实现，故与 §8.x 的逐格实录不同族。
-分支 `agent/pini-dev/p4-0-criteria-clear`（交付记录全文见 `docs/issue-hir-p4-0-plan-2026-09-16.md` §8）。
+分支 `agent/pini-dev/p4-0-criteria-clear`（交付记录全文见 `docs/spec/issue/archive/issue-hir-p4-0-plan-2026-09-16.md` §8）。
 
 **交付读数**（全部现跑）：
 

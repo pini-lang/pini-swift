@@ -76,7 +76,7 @@ error: Process '/Volumes/.../xctest /tmp/pini-build/arm64-apple-macosx/debug/Pin
 
 ## 7. 相关
 
-- 本批的交付记录（含红数与判据取得的完整说明）：`docs/issue-hir-p4-beta-migration-2026-09-16.md`
+- 本批的交付记录（含红数与判据取得的完整说明）：`docs/spec/issue/archive/issue-hir-p4-beta-migration-2026-09-16.md`
 - 分批表的判据节（每批必跑三条）：`docs/issue-hir-p4-plan-2026-09-16.md` §4
 
 ---

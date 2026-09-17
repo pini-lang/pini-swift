@@ -102,7 +102,7 @@ generic-construct ::= '<' type-annotation {',' type-annotation} '>' ('(' … ')'
 
 ## 溯源
 
-- 触发批：`G-2d` 的 `S0`（规划件 `../../issue-hir-generic-enum-specialization-plan-2026-09-16.md`）。
+- 触发批：`G-2d` 的 `S0`（规划件 `../issue/archive/issue-hir-generic-enum-specialization-plan-2026-09-16.md`）。
 - 勘测依据：`../issue/archive/issue-hir-generic-enum-specialization-2026-09-16.md`（工单，**已随 `S1` 归档**）·
   `../../issue-hir-p4-gamma-batches-2026-09-16.md`（`G-2d` 行）。
 - 用户裁决（2026-09-16）：形态 **C**；拼写取 **第一种**。

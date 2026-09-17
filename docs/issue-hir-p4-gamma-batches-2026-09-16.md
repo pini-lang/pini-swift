@@ -179,7 +179,7 @@ pini emit <该夹具>   →   rc=0（看起来成功），IR 里却出现对 `is
 ⚠️ 另：下面只点出 1 条错误通道用例，实测是 **2 条**（`GenericEnumTests` 的
 `testGenericEnumArgumentCountMismatch` 也期望**运行期** `RuntimeError`，
 文案「实参个数不符」由 `Interpreter.swift:1614` 产生）⇒ 本簇 5 红中**只有 3 条**属本批。
-⭐ **开工前规划**：`docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md`
+⭐ **开工前规划**：`docs/spec/issue/archive/issue-hir-generic-enum-specialization-plan-2026-09-16.md`
 （用户裁决形态取 **C**：限定为准 · 裸名为糖；分 `S0` 语言面登记 → `S1` 降载层三站 → `S2` 收口）。
 
 另一条（`testUndefinedGenericTypeStillThrows`）要求「未定义泛型类型」抛**运行期** `RuntimeError`，
@@ -431,7 +431,7 @@ append 别的类型即报 `type mismatch: enumeration(...) is not i32`；无标�
 
 > **裁决**：`D-P4-31` 取 ① —— **在 HIR 侧实现测试块驱动**（保能力）。
 > **追加范围（用户 2026-09-18 当场裁）**：本批一并实现 **HIR 侧 `dlsym` 加载器** ——
-> 把在册工单 `issue-hir-vendored-ffi-unsupported-2026-09-17.md` 的目标并入，
+> 把在册工单 `docs/spec/issue/archive/issue-hir-vendored-ffi-unsupported-2026-09-17.md` 的目标并入，
 > 使「vendored FFI 在默认引擎上不可运行」这条**用户可见回退**不成立。
 
 **开工前实测订正三处**（规划记「C 类 4 文件 / 23 用例」）：① `TestBlockSwiftTests`
@@ -464,7 +464,7 @@ append 别的类型即报 `type mismatch: enumeration(...) is not i32`；无标�
 方向与默认逐字节相同）⇒ 「`ast` 方向」这条判据对 `pini test` 面**从此失效**。这是
 `D-P4-31` 的直接后果、不是缺陷；`pini run` 的 `ast` 方向仍有效，全量回归的对照臂在那里。
 
-**下游**：工单 `issue-hir-vendored-ffi-unsupported-2026-09-17.md` **闭环**（走其 §4 路径 ①）·
+**下游**：工单 `docs/spec/issue/archive/issue-hir-vendored-ffi-unsupported-2026-09-17.md` **闭环**（走其 §4 路径 ①）·
 `docs/spec/pini-spec-v0.md` 两处口径订正（§3 台账 `[名称|foreign]` 行 · 长期愿景 T14 行）。
 
 ### G-5：✅ **已交付**（2026-09-18，单批）
