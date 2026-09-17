@@ -948,7 +948,7 @@ public class Interpreter: DebugHookHost {
  /// - 体执行抛出运行时错误 → 归约为 `err(Error("..."))`。
  /// - 任务被取消（手动 / 父返回 / 超时）→ 归约为 `err(CancelError("..."))`（B2-1）。
  func joinFuture(_ fut: FutureValue) -> Value {
- return joinFuture(fut, timeoutMs: nil)
+ RuntimeOps.joinFuture(fut, timeoutMs: nil)
  }
 
  /// `joinWithin(t, ms)`（B2-5）：至多等待 `ms` 毫秒的阻塞 join。
@@ -957,40 +957,7 @@ public class Interpreter: DebugHookHost {
  /// 因此超时与手动取消在调用方看来同构，`isCancel(e)` 对两者都为 true。
  /// 取消是协作式的：被取消的任务在下一个检查点结束，不会被强杀。
  func joinFuture(_ fut: FutureValue, timeoutMs: Int?) -> Value {
- // 被 join 的子任务脱离父节点：生命周期已被显式消费，不再受「父返回自动取消」约束（B2-2）。
- defer { fut.detachFromParent() }
- do {
- let value: Value
- if let timeoutMs = timeoutMs {
- guard let joined = try fut.wait(timeout: Double(max(0, timeoutMs)) / 1000.0) else {
- fut.cancel()
- return Interpreter.makeResult(
- caseName: "err",
- payload: Interpreter.makeCancelError("任务超时: \(timeoutMs)ms")
- )
- }
- value = joined
- } else {
- value = try fut.wait()
- }
- if Interpreter.isResultValue(value) { return value }
- return Interpreter.makeResult(caseName: "ok", payload: value)
- } catch RuntimeError.taskCancelled(let reason, _) {
- return Interpreter.makeResult(
- caseName: "err",
- payload: Interpreter.makeCancelError(reason)
- )
- } catch let runtimeError as RuntimeError {
- return Interpreter.makeResult(
- caseName: "err",
- payload: Interpreter.makeError(runtimeError.description)
- )
- } catch {
- return Interpreter.makeResult(
- caseName: "err",
- payload: Interpreter.makeError("\(error)")
- )
- }
+ RuntimeOps.joinFuture(fut, timeoutMs: timeoutMs)
  }
 
  /// B2-4（Q3）：`joinAll([a, b, c])` → 聚合 `Future<[T], Error>`。
@@ -1002,65 +969,17 @@ public class Interpreter: DebugHookHost {
  /// - 聚合节点自身被 `cancel()` → 经 `onCancel` 联动取消全部成员。
  /// 成员的父作用域保持不变（聚合不篡改父链），仅做取消联动。
  private func makeJoinAllFuture(_ argument: Value) throws -> Value {
- guard case .array(let items) = argument else {
- throw RuntimeError.typeMismatch(
- expected: "Array<Future<T, Error>>",
- got: Interpreter.describeValueKind(argument),
- location: Interpreter.builtinLocation
+ try RuntimeOps.makeJoinAllFuture(
+     argument: argument,
+     scheduler: scheduler,
+     owner: currentFuture,
+     enterTask: { task in
+         let previous = self.currentFuture
+         self.currentFuture = task
+         return { self.currentFuture = previous }
+     },
+     checkpoint: { try self.checkCancellation($0) }
  )
- }
- var members: [FutureValue] = []
- for item in items {
- guard case .future(let fut) = item else {
- throw RuntimeError.typeMismatch(
- expected: "Future<T, Error>",
- got: Interpreter.describeValueKind(item),
- location: Interpreter.builtinLocation
- )
- }
- members.append(fut)
- }
-
- let aggregate = FutureValue()
- currentFuture?.addChild(aggregate)
- aggregate.onCancel { members.forEach { $0.cancel() } }
-
- let captured = members
- self.scheduler.spawn(aggregate) { [weak self] in
- guard let self = self else {
- throw RuntimeError.invalidOperation(
- reason: "joinAll 执行时解释器已释放",
- location: Interpreter.builtinLocation
- )
- }
- let previousFuture = self.currentFuture
- self.currentFuture = aggregate
- defer {
- aggregate.cancelUnjoinedChildren()
- self.currentFuture = previousFuture
- }
-
- var values: [Value] = []
- for (index, member) in captured.enumerated() {
- try self.checkCancellation(aggregate)
- let joined = self.joinFuture(member)
- guard case .enumValue(let ev) = joined else { continue }
- if ev.caseName == "err" {
- // fail-fast：放弃其余成员，避免无人等待的任务继续占用线程池
- for rest in captured.dropFirst(index + 1) where !rest.isFinished {
- rest.cancel()
- }
- // 显式 resolve：调度器无关（GCD 用返回值 resolve、SuspendScheduler 由 work 自行
- // resolve——统一在此 resolve，两种后端都正确，重复 resolve 由 isResolved 守卫忽略）。
- aggregate.resolve(joined)
- return .null
- }
- values.append(ev.associatedValues.first ?? .null)
- }
- aggregate.resolve(Interpreter.makeResult(caseName: "ok", payload: .array(values)))
- return .null
- }
- return .future(aggregate)
  }
 
  // 跨文件 extension（SuspendEvaluator）与 HIR 执行引擎共用：G2 起为 static，
@@ -1075,8 +994,7 @@ public class Interpreter: DebugHookHost {
 
  /// 判定一个值是否为取消错误（内建谓词 `isCancel(e)` 的实现）。
  static func isCancelErrorValue(_ value: Value) -> Bool {
- guard case .structInstance(let si) = value else { return false }
- return si.typeName == builtinCancelErrorTypeName
+ RuntimeOps.isCancelErrorValue(value)
  }
 
  /// 构造 `Result` 用例值。
@@ -1084,28 +1002,19 @@ public class Interpreter: DebugHookHost {
 
  /// 判定一个值是否已是 `Result` 用例（`ok` / `err`）。
  static func isResultValue(_ value: Value) -> Bool {
- guard case .enumValue(let ev) = value else { return false }
- if ev.parentEnum == builtinResultEnumName { return true }
- return false
+ RuntimeOps.isResultValue(value)
  }
 
  /// 判定一个值是否为 `Result` 的 `err` 用例（`ok` 返回 false）。
  static func isErrResultValue(_ value: Value) -> Bool {
- guard case .enumValue(let ev) = value else { return false }
- return ev.parentEnum == builtinResultEnumName && ev.caseName == "err"
+ RuntimeOps.isErrResultValue(value)
  }
 
  /// （甲）唯一有界 override：函数局部结果为 `ok(v)`（或裸值）却存在 leaked 失败子任务时，
  /// 收口结果翻为 `err(aggregate)`；局部已显式 `err` 则不覆盖（errors-as-data 已有失败值）。
  /// 翻转发生在显式 `return` 边界、以 `Result` 值形式、可被 `await`/`wait` 取 `Result` 后 `match`——不构成隐式注入。
  func flipIfLeaked(_ result: Value, leaked: [Value]) -> Value {
- guard !leaked.isEmpty else { return result }
- if Interpreter.isErrResultValue(result) { return result }
- let detail = leaked.map { stringify($0) }.joined(separator: "; ")
- return Interpreter.makeResult(
- caseName: "err",
- payload: Interpreter.makeError("未 join 子任务失败（结构化并发兜底）: " + detail)
- )
+ RuntimeOps.flipIfLeaked(result, leaked: leaked)
  }
 
  private func executeMain() throws {

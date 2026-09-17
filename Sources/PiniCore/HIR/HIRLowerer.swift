@@ -1170,7 +1170,10 @@ public enum HIRLowerer {
             traitDefaultsCollector: traitDefaultsCollector
         )
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(name: decl.name, params: params, returnType: bodyReturn, body: body)
+        return HIRFunction(
+            name: decl.name, params: params, returnType: bodyReturn, body: body,
+            isAsync: decl.isAsync
+        )
     }
 
     // MARK: - Annotation resolution (G3/G4 user types)
@@ -1717,6 +1720,18 @@ public enum HIRLowerer {
             // closure literal's creation point (free-variable analysis); the
             // statement itself carries no runtime effect.
             return [.captureMarker(name: name)]
+
+        case .detachStatement(let expr, _):
+            // `detach <expr>` (G-3c-1): evaluate the operand and prune the task
+            // it yields from its parent, so the parent's return no longer cancels
+            // it — fire-and-forget's only sanctioned exit.
+            //
+            // A non-future operand is refused by the engine at run time, not
+            // here: the interpreter reports the same condition from its own
+            // detach arm, so a lowering-time refusal would be the earlier of
+            // the two rather than the equal one.
+            let inner = try lowerExpr(expr, expected: nil, into: &context)
+            return [.detachStmt(inner: inner.node)]
 
         default:
             throw unsupported(
@@ -2848,6 +2863,50 @@ public enum HIRLowerer {
                     type: errorType
                 )
             }
+            // G-3c-1: the Future-valued concurrency builtins. They stay out of
+            // the shared builtin table because answering them needs a scheduler
+            // and a task context, which a stateless table cannot carry — the two
+            // sides match the names side by side instead, and both read the same
+            // rule.
+            //
+            // The HIR denotes a Future by the `Result<T>` an async call already
+            // returns (G-3b): the value is a future at run time, the type on the
+            // node is what its join will yield.
+            if functionName == "isCancel" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("isCancel expects exactly one argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(function: functionName,
+                                arguments: loweredArgs.map { $0.node },
+                                returnType: .boolean),
+                    type: .boolean
+                )
+            }
+            if functionName == "joinAll" {
+                guard loweredArgs.count == 1, case .array(let element) = loweredArgs[0].type else {
+                    throw unsupported("joinAll expects one array of futures", at: location)
+                }
+                let aggregated = HIRType.result(ok: .array(element: element))
+                return LoweredExpr(
+                    node: .call(function: functionName,
+                                arguments: loweredArgs.map { $0.node },
+                                returnType: aggregated),
+                    type: aggregated
+                )
+            }
+            if functionName == "joinWithin" {
+                guard loweredArgs.count == 2, loweredArgs[1].type == .i32 else {
+                    throw unsupported("joinWithin expects a future and an I32 timeout", at: location)
+                }
+                let bounded = loweredArgs[0].type
+                return LoweredExpr(
+                    node: .call(function: functionName,
+                                arguments: loweredArgs.map { $0.node },
+                                returnType: bounded),
+                    type: bounded
+                )
+            }
             // G-2R: `F64(x)` -- the numeric value constructor. The AST channel
             // has answered it since G-P1 and the lowering layer never did, so
             // `F64(3)` was "an unknown function". A float passes through, an
@@ -3176,6 +3235,24 @@ public enum HIRLowerer {
             return LoweredExpr(
                 node: .addressOfVar(name: name, type: varType),
                 type: .pointer(element: varType)
+            )
+
+        case .join(let inner, _):
+            // `await f` / `wait f` (G-3c-1). The operand evaluates to a Future and
+            // the site yields the `Result<T>` its join deconstructs — the very
+            // type G-3b already puts on an async call's return, so nothing here
+            // has to denote a future and no HIR type case had to be added: the
+            // shape rides on the call node and the join site carries it through.
+            //
+            // The operand is lowered with no expectation, not with a Result
+            // expectation: an operand that is *not* a future is a run-time type
+            // mismatch on the other engine too (its join arm guards the same
+            // way), so refusing it here would move the error earlier than the
+            // channel it is being kept equal to.
+            let future = try lowerExpr(inner, expected: nil, into: &context)
+            return LoweredExpr(
+                node: .join(future: future.node, type: future.type),
+                type: future.type
             )
 
         default:
@@ -4049,6 +4126,20 @@ public enum HIRLowerer {
                     type: pair
                 )
             }
+        }
+
+        // G-3c-1: `t.cancel()` — the one Future member the corpus reaches. The
+        // receiver rides as the first argument, exactly as the array member face
+        // above does, and the result is discarded (the interpreter's cancel
+        // returns null).
+        if memberName == "cancel" {
+            guard arguments.isEmpty else {
+                throw unsupported("cancel takes no arguments", at: location)
+            }
+            return LoweredExpr(
+                node: .call(function: "cancel", arguments: [loweredObject.node], returnType: nil),
+                type: .i32
+            )
         }
 
         throw unsupported("method '\(memberName)' calls are later grids", at: location)

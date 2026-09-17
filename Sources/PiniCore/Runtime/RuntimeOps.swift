@@ -900,11 +900,12 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
     /// table and the executor dispatches through it, so a name cannot be
     /// lowered on one side and go unanswered on the other.
     ///
-    /// What is here is what a plain call can express: `sleep` blocks, `Error` /
-    /// `CancelError` build a value. `joinAll`, `joinWithin` and `isCancel` are
-    /// deliberately absent — they traffic in `Future` values, which the HIR has
-    /// no representation for, so admitting them would accept arguments the
-    /// channel cannot produce.
+    /// What is here is what a plain call can express with no context: `sleep`
+    /// blocks, `Error` / `CancelError` build a value. `joinAll`, `joinWithin`
+    /// and `isCancel` stay out even now that the async pipeline is connected —
+    /// answering them needs a scheduler and a task handle, which a stateless
+    /// closure cannot reach, so each engine matches those names itself and the
+    /// rules they share live in the section below.
     static let concurrencyBuiltins: [String: ([Value]) throws -> Value] = [
         "sleep": { args in
             try builtinSleep(milliseconds: try sleepMilliseconds(args), checkpoint: {})
@@ -912,4 +913,169 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
         "Error": builtinErrorConstructor,
         "CancelError": builtinCancelErrorConstructor,
     ]
+
+    // MARK: - G-3c-1: Future-valued concurrency, shared by both engines
+
+    /// Whether a value is a cancellation error — the `isCancel(e)` predicate.
+    ///
+    /// Moved out of the interpreter so the AST channel's by-name chain and the
+    /// HIR executor's arm read one rule. `Error` and `CancelError` are
+    /// structurally identical (one `message` field each), and this type name is
+    /// the only thing that tells them apart — which is why the predicate exists
+    /// at all rather than a string comparison at every call site.
+    static func isCancelErrorValue(_ value: Value) -> Bool {
+        guard case .structInstance(let si) = value else { return false }
+        return si.typeName == builtinCancelErrorTypeName
+    }
+
+    /// Whether a value is already a `Result` case (`ok` / `err`).
+    ///
+    /// Shared for the same reason: "is this already wrapped?" decides whether a
+    /// join boxes its value or passes it through, and two answers to that would
+    /// give the two engines different results for the same async body.
+    static func isResultValue(_ value: Value) -> Bool {
+        guard case .enumValue(let ev) = value else { return false }
+        return ev.parentEnum == builtinResultEnumName
+    }
+
+    /// Whether a value is the `err` case of a `Result` (`ok` gives false).
+    static func isErrResultValue(_ value: Value) -> Bool {
+        guard case .enumValue(let ev) = value else { return false }
+        return ev.parentEnum == builtinResultEnumName && ev.caseName == "err"
+    }
+
+    /// Block until `fut` resolves and normalise the outcome to a `Result` value
+    /// — errors as data, never thrown across the join.
+    ///
+    /// Three outcomes, and the shape each takes is the contract:
+    /// - the body already produced a `Result` → pass it through untouched;
+    /// - the body produced an ordinary value (a `=> ()` body's `.null` included)
+    ///   → box it as `ok(v)`;
+    /// - the body threw, the task was cancelled, or a timeout expired → `err`,
+    ///   with cancellation always normalised to `CancelError` so a caller cannot
+    ///   tell a manual cancel from a timeout by anything but the message.
+    ///
+    /// The join happens on both engines and the normalisation is exactly the
+    /// part that would drift: a second copy would agree on the happy path and
+    /// disagree about which catch clause wins.
+    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?) -> Value {
+        // A joined child leaves its parent: its lifetime has been consumed
+        // explicitly, so the parent's return must stop cancelling it.
+        defer { fut.detachFromParent() }
+        do {
+            let value: Value
+            if let timeoutMs = timeoutMs {
+                guard let joined = try fut.wait(timeout: Double(max(0, timeoutMs)) / 1000.0) else {
+                    fut.cancel()
+                    return makeResult(
+                        caseName: "err",
+                        payload: makeCancelError("任务超时: \(timeoutMs)ms")
+                    )
+                }
+                value = joined
+            } else {
+                value = try fut.wait()
+            }
+            if isResultValue(value) { return value }
+            return makeResult(caseName: "ok", payload: value)
+        } catch RuntimeError.taskCancelled(let reason, _) {
+            return makeResult(caseName: "err", payload: makeCancelError(reason))
+        } catch let runtimeError as RuntimeError {
+            return makeResult(caseName: "err", payload: makeError(runtimeError.description))
+        } catch {
+            return makeResult(caseName: "err", payload: makeError("\(error)"))
+        }
+    }
+
+    /// `joinAll([a, b, c])` → an aggregate future over every member.
+    ///
+    /// fail-fast: the first member to yield `err` decides the aggregate and the
+    /// remaining ones are cancelled — nobody is waiting for them, so they must
+    /// not keep burning threads. A member keeps its own parent: the aggregate
+    /// links to it for cancellation only, because rewriting a member's parent
+    /// would make some caller's return cancel a task it never owned.
+    ///
+    /// The scheduler, the owning task and the two engine hooks arrive as
+    /// parameters rather than fields because this type holds no state: each
+    /// engine passes its own back end and its own thread-local task handle, and
+    /// neither ends up with a second copy of the rule to disagree with.
+    static func makeJoinAllFuture(
+        argument: Value,
+        scheduler: Scheduler,
+        owner: FutureValue?,
+        enterTask: @escaping (FutureValue) -> () -> Void,
+        checkpoint: @escaping (FutureValue) throws -> Void
+    ) throws -> Value {
+        guard case .array(let items) = argument else {
+            throw RuntimeError.typeMismatch(
+                expected: "Array<Future<T, Error>>",
+                got: describeValueKind(argument),
+                location: builtinLocation
+            )
+        }
+        var members: [FutureValue] = []
+        for item in items {
+            guard case .future(let fut) = item else {
+                throw RuntimeError.typeMismatch(
+                    expected: "Future<T, Error>",
+                    got: describeValueKind(item),
+                    location: builtinLocation
+                )
+            }
+            members.append(fut)
+        }
+
+        let aggregate = FutureValue()
+        owner?.addChild(aggregate)
+        aggregate.onCancel { members.forEach { $0.cancel() } }
+
+        let captured = members
+        scheduler.spawn(aggregate) {
+            let restore = enterTask(aggregate)
+            // Registration order matches the AST side: the scope close runs
+            // before the task handle is restored, so the close still sees the
+            // aggregate as the current task.
+            defer { restore() }
+            defer { aggregate.cancelUnjoinedChildren() }
+
+            var values: [Value] = []
+            for (index, member) in captured.enumerated() {
+                try checkpoint(aggregate)
+                let joined = joinFuture(member, timeoutMs: nil)
+                guard case .enumValue(let ev) = joined else { continue }
+                if ev.caseName == "err" {
+                    for rest in captured.dropFirst(index + 1) where !rest.isFinished {
+                        rest.cancel()
+                    }
+                    // Resolve explicitly: the blocking back end would resolve
+                    // from the return value anyway and the suspension back end
+                    // expects the work to resolve itself, so one call at the
+                    // decision point is right on both — a second is ignored.
+                    aggregate.resolve(joined)
+                    return .null
+                }
+                values.append(ev.associatedValues.first ?? .null)
+            }
+            aggregate.resolve(makeResult(caseName: "ok", payload: .array(values)))
+            return .null
+        }
+        return .future(aggregate)
+    }
+
+    /// The strict structured rule's one bounded override: a body that finished
+    /// `ok` while a child nobody joined had failed comes out as `err(aggregate)`.
+    ///
+    /// Bounded on purpose — a body that produced its own `err` keeps it, because
+    /// errors-as-data already carries a failure and overwriting it would lose
+    /// which one happened. The flip happens at the return boundary, as a value,
+    /// and stays inspectable by `match`: nothing is injected into the call stack.
+    static func flipIfLeaked(_ result: Value, leaked: [Value]) -> Value {
+        guard !leaked.isEmpty else { return result }
+        if isErrResultValue(result) { return result }
+        let detail = leaked.map { stringifyValue($0) }.joined(separator: "; ")
+        return makeResult(
+            caseName: "err",
+            payload: makeError("未 join 子任务失败（结构化并发兜底）: " + detail)
+        )
+    }
 }

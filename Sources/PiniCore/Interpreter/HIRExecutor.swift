@@ -36,6 +36,21 @@ private struct HIRCallableBody {
     /// Component labels of a declared named-tuple return; empty when the return
     /// carries none, which is what the return-site rule reads.
     let returnLabels: [String?]
+    /// `=>` dispatch: this body runs on a worker thread and its caller receives
+    /// a pending Future instead of the body's value.
+    ///
+    /// A closure body stays false on this channel: the lowered closure node
+    /// carries no async flag, and plumbing one in would change the node's shape
+    /// for a form no fixture reaches. That is a boundary, not an oversight —
+    /// recorded here so the next reader finds it rather than deduces it.
+    let isAsync: Bool
+
+    init(paramNames: [String], body: HIRBlock, returnLabels: [String?], isAsync: Bool = false) {
+        self.paramNames = paramNames
+        self.body = body
+        self.returnLabels = returnLabels
+        self.isAsync = isAsync
+    }
 }
 
 /// Runs a lowered `HIRModule` directly — the third live channel of the LR-4
@@ -278,14 +293,70 @@ public final class HIRExecutor: DebugHookHost {
     private var callableBodies: [ObjectIdentifier: HIRCallableBody] = [:]
 
     private let globalEnv: Environment
-    private var currentEnv: Environment
+
+    /// Where an async body is dispatched (G-3c-1).
+    ///
+    /// The **blocking** back end, and that is the production semantics rather
+    /// than a simplification: `Interpreter.suspendMode` has no assignment point
+    /// anywhere in `Sources/` — the eight assignments all live in the tests — so
+    /// every published program takes the blocking join and the CPS evaluator
+    /// runs only when a test flips the flag. The suspension grid adds the other
+    /// back end; this one is what the language actually does today.
+    private let scheduler: Scheduler = GCDScheduler.shared
+
+    // MARK: - Per-thread execution state
+
+    /// These four describe *the thread that is executing*, not the engine.
+    ///
+    /// `=>` dispatch puts a body on a worker thread while its caller waits in the
+    /// join, so both are live at once and both touch this state. As plain
+    /// instance properties they were correct only while nothing spawned; the
+    /// moment one does, they are a shared mutable context. The failure is not
+    /// hypothetical: the AST interpreter already paid for it, and its own note
+    /// records what it cost (unconditional `+=` / `-=` from worker threads
+    /// racing the main thread's, ending in SIGTRAP/SIGSEGV), which is why it
+    /// moved the same four behind `ThreadLocal`.
+    ///
+    /// Wrapping the storage rather than renaming the properties is deliberate:
+    /// a computed property over a per-thread box means every existing read and
+    /// write kept its shape, so the fix did not have to travel through the whole
+    /// file.
+    private let currentEnvStorage = ThreadLocal<Environment>()
+    private let callDepthStorage = ThreadLocal<Int>()
+    private let callStackStorage = ThreadLocal<[String]>()
+    private let deferStackStorage = ThreadLocal<[[HIRBlock]]>()
+
+    /// The task this thread runs inside, when it runs inside one.
+    ///
+    /// Spawn links the new task here, which is what makes the dispatch tree and
+    /// the cancellation tree one tree — the same job it does on the AST side.
+    /// Thread-local for the same reason as the four below: a worker must not
+    /// adopt its caller's task, or a child would be booked under the wrong
+    /// parent and the parent's return would cancel the wrong set.
+    private let currentFutureStorage = ThreadLocal<FutureValue>()
+    private var currentFuture: FutureValue? {
+        get { currentFutureStorage.value }
+        set { currentFutureStorage.value = newValue }
+    }
+
+    /// The environment the current thread is executing in. A thread that has not
+    /// entered anything yet reads the global one — a worker's first act is to
+    /// enter its own call environment, so the seed is only ever what a read
+    /// before any entry deserves.
+    private var currentEnv: Environment {
+        get { currentEnvStorage.value ?? globalEnv }
+        set { currentEnvStorage.value = newValue }
+    }
 
     /// Call-depth guard, same value as the interpreter's (`Interpreter.maxCallDepth`).
     ///
     /// Unbounded recursion must end in a diagnosable error, not in a thread-stack
     /// smash with no output — that failure mode is exactly G-P9 (SIGSEGV,
     /// unbounded recursion) and a new execution path must not reintroduce it.
-    private var callDepth = 0
+    private var callDepth: Int {
+        get { callDepthStorage.value ?? 0 }
+        set { callDepthStorage.value = newValue }
+    }
     private static let maxCallDepth = 120
 
     /// Names of the functions currently entered, innermost last.
@@ -294,7 +365,10 @@ public final class HIRExecutor: DebugHookHost {
     /// backtrace. Pushed and popped around a body exactly where `callDepth` is,
     /// so the two cannot drift out of step: a depth without a name would be a
     /// backtrace with a hole in it.
-    private var callStackNames: [String] = []
+    private var callStackNames: [String] {
+        get { callStackStorage.value ?? [] }
+        set { callStackStorage.value = newValue }
+    }
 
     /// Open defer scopes, innermost last: a scope holds its `defer` statements in
     /// registration order, and each `defer` holds the **group** of statements it
@@ -305,7 +379,10 @@ public final class HIRExecutor: DebugHookHost {
     /// reversed list would also invert a defer whose body lowered to more than
     /// one node — a difference that only shows up once such a body exists, which
     /// is the worst time to find it.
-    private var deferStack: [[HIRBlock]] = []
+    private var deferStack: [[HIRBlock]] {
+        get { deferStackStorage.value ?? [] }
+        set { deferStackStorage.value = newValue }
+    }
 
     /// Directory an unprefixed relative IO path resolves against, mirroring
     /// `Interpreter.programBase`. The emitter already carries this base; the
@@ -322,10 +399,13 @@ public final class HIRExecutor: DebugHookHost {
     public var processArguments: [String] = []
 
     public init(programBase: String? = nil) {
-        let env = Environment()
-        self.globalEnv = env
-        self.currentEnv = env
+        self.globalEnv = Environment()
         self.programBase = programBase
+        // `currentEnv` is deliberately not seeded here. Its per-thread box
+        // answers `globalEnv` until a thread enters something, so a seed would
+        // be the same value written the hard way — and writing through the
+        // computed property during initialisation reads `self` before every
+        // stored property is in place, which the compiler refuses outright.
     }
 
     // MARK: - Entry points
@@ -526,6 +606,82 @@ public final class HIRExecutor: DebugHookHost {
             if let concurrency = RuntimeOps.concurrencyBuiltins[name] {
                 let args = try arguments.map { try evaluate($0) }
                 return try concurrency(args)
+            }
+
+            // G-3c-1: the Future-valued concurrency builtins. They are matched
+            // here rather than added to the shared table above because deciding
+            // them needs a scheduler and a task handle, which a stateless
+            // closure cannot reach — the lowerer matches the same names for the
+            // same reason, so the two sides are read together.
+            //
+            // What they compute lives in `RuntimeOps`: waiting, aggregating and
+            // the leaked-failure flip are one definition used by both engines.
+            if name == "isCancel" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: isCancel expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                return .bool(RuntimeOps.isCancelErrorValue(args[0]))
+            }
+            if name == "joinAll" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: joinAll expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                let owner = currentFuture
+                return try RuntimeOps.makeJoinAllFuture(
+                    argument: args[0],
+                    scheduler: scheduler,
+                    owner: owner,
+                    enterTask: { task in
+                        let previous = self.currentFuture
+                        self.currentFuture = task
+                        return { self.currentFuture = previous }
+                    },
+                    checkpoint: { try self.checkCancellation($0) }
+                )
+            }
+            if name == "joinWithin" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 2 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: joinWithin expects exactly two arguments",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                guard case .future(let fut) = args[0] else {
+                    throw RuntimeError.typeMismatch(
+                        expected: "Future<T, Error>",
+                        got: RuntimeOps.describeValueKind(args[0]),
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                let milliseconds = try requireInt(args[1], for: "joinWithin timeout")
+                return RuntimeOps.joinFuture(fut, timeoutMs: milliseconds)
+            }
+            if name == "cancel" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "HIR executor: cancel expects exactly one argument",
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                guard case .future(let fut) = args[0] else {
+                    throw RuntimeError.typeMismatch(
+                        expected: "Future<T, Error>",
+                        got: RuntimeOps.describeValueKind(args[0]),
+                        location: HIRExecutor.noLocation
+                    )
+                }
+                fut.cancel()
+                return .null
             }
             // G-2R: the numeric constructor, answered from the same rule the
             // AST walk uses (`RuntimeOps.builtinF64`) -- one definition, two
@@ -1107,11 +1263,25 @@ public final class HIRExecutor: DebugHookHost {
         /// than sliding through. It fails loud instead of returning a silent
         /// `.null`: a lowerer rule without the engine behind it must show up
         /// as an error, not as a plausible-looking wrong value.
-        case .join:
-            throw RuntimeError.invalidOperation(
-                reason: "HIR executor: `join` has no suspension engine",
-                location: HIRExecutor.noLocation
-            )
+        case .join(let futureExpr, _):
+            // `await f` / `wait f` (G-3c-1): evaluate the operand, then block
+            // until it resolves and deconstruct the carried ok / err.
+            //
+            // This is the whole of the arm. There is no suspend branch here and
+            // none is missing: `suspendMode` has no assignment point outside the
+            // tests, so the published semantics is the blocking join, and the
+            // suspension grid is what adds the other one. A `join` that is not
+            // given a future is a run-time type mismatch — the interpreter
+            // reports the same condition at the same stage.
+            let operand = try evaluate(futureExpr)
+            guard case .future(let fut) = operand else {
+                throw RuntimeError.typeMismatch(
+                    expected: "Future<T, Error>",
+                    got: RuntimeOps.describeValueKind(operand),
+                    location: HIRExecutor.noLocation
+                )
+            }
+            return RuntimeOps.joinFuture(fut, timeoutMs: nil)
         }
     }
 
@@ -1646,24 +1816,25 @@ public final class HIRExecutor: DebugHookHost {
         case .continueStmt(let depth):
             throw HIRControlSignal.continueSignal(depth: depth)
 
-        case .detachStmt:
-            // Unreachable today: the lowerer gates `detach` before it produces
-            // a node (same state `join` is in), so no program can reach this
-            // arm. Refusing rather than no-opping keeps the gap visible: a
-            // silent skip would look like a working fire-and-forget exit, and
-            // the one thing `detach` exists to suppress -- a leak warning --
-            // is exactly what would then appear to be handled.
+        case .detachStmt(let inner):
+            // `detach <expr>` (G-3c-1): prune the task from its parent so the
+            // parent's return stops cancelling it — fire-and-forget's only
+            // sanctioned exit, and the counterpart the strict structured rule
+            // needs to stay reversible.
             //
-            // The behaviour itself belongs to the batch that connects the
-            // async pipeline (the node face only claims existence, per the
-            // contract's own scope note). Implementing it here would mean
-            // committing to a Future value no path can produce yet, and
-            // nothing could test it.
-            throw RuntimeError.invalidOperation(
-                reason: "detach: the HIR async pipeline is not connected yet "
-                    + "(the node exists, but the lowerer does not produce it)",
-                location: HIRExecutor.noLocation
-            )
+            // The operand is evaluated first and a non-future one is a run-time
+            // type mismatch, exactly where the interpreter reports it: refusing
+            // it at lowering time would place the error on the wrong side of
+            // the run-time boundary the two engines are being kept equal across.
+            let operand = try evaluate(inner)
+            guard case .future(let fut) = operand else {
+                throw RuntimeError.typeMismatch(
+                    expected: "Future<T, Error>",
+                    got: RuntimeOps.describeValueKind(operand),
+                    location: HIRExecutor.noLocation
+                )
+            }
+            fut.detachFromParent()
 
         case .panicStmt(let message):
             // The message is the lowerer's — it names the escape the interpreter
@@ -2083,7 +2254,8 @@ public final class HIRExecutor: DebugHookHost {
             HIRCallableBody(
                 paramNames: function.params.map { $0.name },
                 body: function.body,
-                returnLabels: HIRExecutor.declaredReturnLabels(function.returnType)
+                returnLabels: HIRExecutor.declaredReturnLabels(function.returnType),
+                isAsync: function.isAsync
             ),
             parent: globalEnv,
             args: args,
@@ -2145,6 +2317,80 @@ public final class HIRExecutor: DebugHookHost {
             )
         }
 
+        // The arity check stays above the dispatch on purpose: it is a property
+        // of the call, not of the thread the body ends up on, and a spawned
+        // body's arity error would otherwise surface as a rejected Future the
+        // caller may never inspect rather than as a failure at the call site.
+        if callable.isAsync {
+            return try spawnAsync(callable, parent: parent, args: args, name: name)
+        }
+        return try invokeBody(callable, parent: parent, args: args, name: name)
+    }
+
+    /// Run an async body on a worker thread; hand the caller a pending Future.
+    ///
+    /// Mirrors the interpreter's `isAsync` branch, because the two engines have
+    /// to agree about more than the value: linking the child to its parent
+    /// *before* the body can run, setting the task handle on the worker rather
+    /// than the caller, and closing the scope on **both** exits are each a rule
+    /// a second copy would be free to get wrong — and getting the scope close
+    /// wrong shows up as a leak warning at best and a silently dropped failure
+    /// at worst.
+    private func spawnAsync(
+        _ callable: HIRCallableBody, parent: Environment, args: [Value], name: String
+    ) throws -> Value {
+        let future = FutureValue()
+        currentFuture?.addChild(future)
+        let captured = callable
+        let boundArgs = args
+        scheduler.spawn(future) { [weak self] in
+            guard let self = self else {
+                throw RuntimeError.invalidOperation(
+                    reason: "HIR executor: the engine was released while an async body ran",
+                    location: HIRExecutor.noLocation
+                )
+            }
+            let previousFuture = self.currentFuture
+            self.currentFuture = future
+            defer { self.currentFuture = previousFuture }
+            do {
+                try self.checkCancellation(self.currentFuture)
+                let result = try self.invokeBody(captured, parent: parent, args: boundArgs, name: name)
+                // The strict structured rule's closing act: cancel whatever was
+                // never joined, and let a failure that nobody consumed surface
+                // at this boundary instead of vanishing.
+                let leaked = future.closeScope()
+                return RuntimeOps.flipIfLeaked(result, leaked: leaked)
+            } catch {
+                // The throwing path closes the scope too — a body that dies must
+                // not leave its children running.
+                future.closeScope()
+                throw error
+            }
+        }
+        return .future(future)
+    }
+
+    /// Cooperative cancellation checkpoint: a task cancelled while it was waiting
+    /// ends here rather than at an arbitrary instruction.
+    ///
+    /// Mirrors `Interpreter.checkCancellation` down to the error it throws, so
+    /// the join site on either engine turns the same cancellation into the same
+    /// `err(CancelError)`.
+    private func checkCancellation(_ owner: FutureValue?) throws {
+        if let owner = owner, owner.isCancelled {
+            throw FutureValue.cancelError()
+        }
+    }
+
+    /// The synchronous body path: bind the arguments, run the statements, unwrap
+    /// the return signal.
+    private func invokeBody(
+        _ callable: HIRCallableBody,
+        parent: Environment,
+        args: [Value],
+        name: String
+    ) throws -> Value {
         guard callDepth < RuntimeOps.maxCallDepth else {
             throw RuntimeOps.recursionGuardError()
         }

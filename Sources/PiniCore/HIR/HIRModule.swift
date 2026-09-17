@@ -7,6 +7,15 @@ public struct HIRFunction: Equatable {
     public let params: [HIRParam]
     public let returnType: HIRType?
     public let body: HIRBlock
+    /// `=>` dispatch (G-3c-1): the body runs on a worker thread and the caller
+    /// receives a pending `Future` instead of the body's own value.
+    ///
+    /// The flag has to live here rather than be re-derived from `returnType`:
+    /// an async body's return type is the same `Result<T>` a synchronous
+    /// function returning a Result carries, so the type alone cannot tell the
+    /// two call protocols apart. A call site that guessed would either block on
+    /// a plain Result or hand back a Future where a Result was promised.
+    public let isAsync: Bool
 
     public struct HIRParam: Equatable {
         public let name: String
@@ -17,11 +26,13 @@ public struct HIRFunction: Equatable {
         }
     }
 
-    public init(name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock) {
+    public init(name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock,
+                isAsync: Bool = false) {
         self.name = name
         self.params = params
         self.returnType = returnType
         self.body = body
+        self.isAsync = isAsync
     }
 }
 
