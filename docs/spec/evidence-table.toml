@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-17T22:00+0800"
-refresh_note = "2026-09-17 **队列甲组 `A2` / `A3` 批**：新增「`run-llvm` 的失败分两层：前端拒绝 rc=1，lli 执行后失败才是 rc=0」一条。要点 = 27 条 `PACKAGE_MEMBER` 全量实测（**26 条 rc=1 / 1 条 rc=0**）· **三处载体的 `rc=0` 订正**（两个二进制 × 三次连跑取证）· 一处「一条读成通例」的记录错误 · `A3` 补台账 §9.1 读数出处。⚠️ 本批**零 `Sources` / `Tests` 改动**，两张在册单均未修。本次仅新增该条；存量条目未重新验证"
+last_refresh = "2026-09-17T22:45+0800"
+refresh_note = "2026-09-17 **`detach` 节点面批**：新增「契约 61 → 62，新裁条目而非兑预留，行为刻意不实现」一条。要点 = **新裁 vs 兑现预留的区别**（`D-P4-26` 硬停条件正是拦后者）· 三锚点同批（门禁强制的**最小自洽单元**）· 夹具面 83 条**逐夹具全文对比 0/83 位移**（2 条差异判为已知非确定夹具）· 全量回归 **64 → 64 集合相等** · ⚠️ **正确读数是「缺口数不变」**（`detach` 3 条原样仍在）。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -968,3 +968,33 @@ note = """本条 = 队列**甲组 `A2`** 的实测（「把 `A1` 的成因补进
 
 **未做**：不修 `run-llvm`（`terminationStatus` 原样丢弃 · 目录分支原样缺）—— 两张在册单各管一半；
 不新建单（同载体同 `case`）；不动任何判据槽位；不 push。本次仅新增该条；存量条目未重新验证"""
+
+[[evidence]]
+id = "2026-09-17 detach 节点面：契约 61 → 62，新裁条目而非兑预留，行为刻意不实现"
+citable = false
+claim = "The HIR contract gained a node for detach, and the way it was added is the part worth keeping. Unlike join, whose node redeemed a slot the contract had already reserved and ruled for, detach had no reservation at all -- the reserved section held char and nothing else -- so this is a new contract entry rather than an implementation of an agreed one, which is exactly the shape the hard stop on the concurrency batch was written to catch. The statement count therefore goes 16 to 17 and the total 61 to 62, through a second pass of the spec's change process. The node carries no type, unlike join, because a statement position produces no value to pin, and because no HIRType case denotes a future -- Future is a runtime value, the position the join decision already took. The three anchors landed together because the checker verifies both directions, so a contract row without a case or a case without a contract row fails immediately; the mid-state reading caught it as node-without-contract: detachStmt. What the batch deliberately does not do is make detach reachable: the lowering rule and both engines' behaviour stay out, so the three fixtures whose first gap is detach keep that gap, and that unchanged count is the correct reading rather than a disappointment -- had those three moved, the batch would have overrun its scope. Writing the behaviour now was considered and rejected on one ground only: the node is unreachable today, so nothing could test it, and unverifiable code is the thing this repository refuses to bank."
+artifacts = [
+  "docs/spec/adr/adr-042-hir-detach-node.md",
+  "docs/spec/hir-contract.md",
+  "docs/spec/pini-spec-v0.md",
+  "docs/spec/adr/adr-index.md",
+  "Sources/PiniCore/HIR/HIRNode.swift",
+  "Sources/PiniCore/HIR/HIRPrinter.swift",
+  "Sources/PiniCore/Interpreter/HIRExecutor.swift",
+  "Sources/PiniCore/CodeGen/IREmitter.swift",
+]
+command = "swift build --disable-sandbox --scratch-path /tmp/pini-build ; python3 tools/hir-contract-check.py ; then, for the fixture face, run every .pini under the eight concurrency directories with PINI_INTERP_ENGINE=hir and hash the normalised full output per fixture -- twice, once with the source change stashed and rebuilt, once restored -- comparing fixture by fixture ; that comparison is backed by an independent first-line comparison of the same 83 ; then python3 tools/hir-chunk-run.py /tmp/g3a-classes.txt 3 /tmp/dn-reg ; the same three chunks with PINI_INTERP_ENGINE=ast through /tmp/chunk-ast.py ; env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/dn-sweep.tsv ; and six consecutive runs of each fixture the full-output comparison flagged"
+output = "Contract check: clean, 62/62 against all three anchors (llvm, printer, interp-hir), 45 expression plus 17 statement entries equal to 62 cases. The mid-state -- case added, contract not yet edited -- reads contract 61 entries against code 62 cases with FAIL: node-without-contract: detachStmt, which is the checker enforcing that the four pieces move as one unit. The compiler located exactly three exhaustive-switch sites, one per anchor (HIRPrinter.dumpStmt, HIRExecutor.execute, IREmitter.emitStatement), one fewer than the join batch because a statement position has no hirType-style query; HIRLowerer is not among them, which is what keeps the lowering gap exactly where it was. Fixture face over the eight concurrency directories, 83 fixtures: stashing the source, rebuilding, and hashing the normalised full output per fixture on both sides gives 83 fixtures compared and 2 differing, both of which keep their exit code; running each of those two six times on one binary gives six distinct hashes each, so they are the fixtures' own non-determinism that the join batch already recorded, not an effect of this change. The 43 join gaps, 3 detach gaps and all remaining first gaps are unchanged. Full regression by the same three-chunk driver: 64 failures, chunks 26+18+20, set-equal to the previous measurement point (fixed 0, new 0, still 64). The ast direction reads 64 with an item-by-item identical set. Probe: 320 fixtures, every slot unchanged and zero per-fixture displacement, FLIP BLOCKERS 0."
+validated_at = "2026-09-17T22:45+08:00"
+status = "FRESH"
+note = """本批 = **`detach` 节点面**（`D-G3c-1` 取 ①），`§1.3` 第 1–4 步 + 第 5 步证据。载体 = `docs/spec/adr/adr-042-hir-detach-node.md`。
+
+⭐ **本批最该读的一句**：**`detach` 不是兑现预留位，是新裁的条目** —— `join` 那次是实施一条早已裁定的预留（旧契约 §4.2），而 `detach` **从来没有预留位**（§4 当时只剩 `char`）⇒ 这正是 `D-P4-26` 硬停条件「须动契约 ⇒ 先走 `§1.3`」**要拦的那一类**。契约 **61 → 62**。
+
+⚠️ **本批的正确读数是「缺口数不变」，不是「转绿」**：`detach` 那 3 条首缺口**原样仍在** —— 节点面**不接降载**，这是范围纪律；**若那 3 条动了，才是越界的事故**。全量回归 64 → 64 集合相等，与 `G-3a`/`G-3b` 的「缺口下落」、`G-3c-1` 的「应当真转绿」都不同：**本批不承诺任何行为变化**。
+
+⚠️ **一处刻意的取舍**：`detach` 的行为其实只需 6 行（AST 侧 `Interpreter.swift:1288` 就是全部语义），本批**仍然不实现** —— 理由只有一条：**它今天不可达，因此不可验证**。写进去的代码没有任何测试能覆盖，正确性只能靠读者相信；而 `G-3c-1` 会让它可达，那时同一 6 行能拿到真证据。⇒ 现在实现 = 制造一段**无法证伪的代码**，与本仓「不拿低级证据冒充高级」相反。
+
+**一处口径注**：夹具面的**全文对比**用归一化 md5（`/tmp/pini_<UUID>.ll` → `<TMP>`）；另跑的**首行**对比（83 条 0 差异）口径较粗 —— `detach` 的报文在第 4 行（前两行是 `Error: IRGen Error [E6-004]` 头），故首行口径会把那 3 条记成 `E6-004`。两者都对，**全文对比是主判据**。
+
+**未做**：不给 `HIRLowerer` 加降载 · 不实现两台引擎的行为 · 不给 `HIRType` 加 `future` case · 不递交语言参考（`§1.3` 第 4 步条件②「实现侧证据」不成立）。本次仅新增该条；存量条目未重新验证"""

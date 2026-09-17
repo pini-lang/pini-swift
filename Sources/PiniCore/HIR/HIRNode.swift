@@ -652,4 +652,15 @@ public indirect enum HIRStmt: Equatable {
     /// so this lowers to nothing — it exists so the statement kind is
     /// accepted inside lowered closure bodies rather than gated.
     case captureMarker(name: String)
+    /// `detach <expr>` — prune the task the operand evaluates to from its
+    /// parent, so the parent's return no longer cancels it (fire-and-forget's
+    /// only sanctioned exit). The operand must evaluate to a `Future`; a
+    /// non-future operand is a runtime type mismatch, not a lowerer error.
+    ///
+    /// No `type` rides along, unlike `join(future:type:)`: a statement
+    /// position produces no value, so there is no site type to pin, and the
+    /// operand's own type lives inside its node (typed tree). Note that no
+    /// `HIRType` case denotes a future — `Future` is a runtime value
+    /// (`Value.future`), which is the same position `ADR-040` took for `join`.
+    case detachStmt(inner: HIRExpr)
 }

@@ -108,6 +108,9 @@ public enum HIRPrinter {
             return ["\(pad)\(exprText(base)).\(field) = \(exprText(value))"]
         case .captureMarker(let name):
             return ["\(pad)capture \(name)"]
+        case .detachStmt(let inner):
+            // Mirrors the source form `detach <expr>` verbatim.
+            return ["\(pad)detach \(exprText(inner))"]
         }
     }
 

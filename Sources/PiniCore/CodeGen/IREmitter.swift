@@ -654,6 +654,14 @@ public final class IREmitter {
             // Marker only — captures are materialized by the closure literal
             // emission (env slot pointers), nothing to emit here.
             break
+
+        case .detachStmt:
+            // Mirrors the walk's own stance: unreachable by construction, so
+            // reaching it means an invariant broke, not that a feature is
+            // missing. The lowerer gates `detach` before any node exists
+            // (HIRLowerer guarantees), and the async pipeline that would make
+            // it reachable is not connected on this backend either.
+            fatalError("IREmitter: detach (HIRLowerer guarantees) -- the HIR async pipeline is not connected")
         }
     }
 
