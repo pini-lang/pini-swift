@@ -94,11 +94,23 @@
 | `testParentReturnCancelsUnjoinedChildTask` | 1 | 同上 |
 | `testJoinedChildIsNotCancelledByParentReturn` | 1 | `type mismatch: result(ok: i32) is not i32` |
 
-⇒ **4 条现在就能改指、4 条被两条既有缺口挡住**（两条**都已有主**：
+⇒ **4 条「现在就能改指」、4 条被两条既有缺口挡住**（两条**都已有主**：
 前者 = `docs/issue-hir-print-result-value-2026-09-17.md`（用户已裁**维持现状**）；
 后者 = 该单 §4 登记的「同族待查」两条之一）。
 
-⚠️ **记账要点**：这 4 条可迁移项**不属于退役面**，但它们的**驱动入口 `Interpreter` 会被 `G-6` 删除**
+⚠️ **2026-09-18 实测订正（`G-5` 批）：上表「4 条可改指」实际只有 3 条成立。**
+
+改指后逐条实测：**`testDeferStillRunsWhenTaskCancelled` 变红** —— 输出只有 `主流程结束`、
+**缺 `清理完成`** ⇒ **HIR 侧取消时不执行 `defer` 清理**。该条已**回退**为走 AST 臂并在用例注释里写明。
+⇒ **本表可改指数：4 → 3**（`testCancelInterruptsRunningLoop` · `testDetachBuiltinPrunesChildFromParent` ·
+`testSynchronousProgramUnaffectedByCheckpoints`）。
+
+⭐ **判据缺口（比这 1 条更值得记）**：上表「可改指」的判据是**夹具 `rc=0`**。
+实测反例说明 **`rc=0` 不蕴含断言可满足** —— 那条夹具在 HIR 上确实能跑完并返回 0，
+但**它跑出来的东西不对**。凡以 `rc` 作「可迁移」判据者，须补一条**断言级**验证
+（本批的做法：逐条改指后真跑该用例，看它是否绿）。
+
+⚠️ **记账要点**：这 3 条可迁移项**不属于退役面**，但它们的**驱动入口 `Interpreter` 会被 `G-6` 删除**
 ⇒ 若不改指，它们会**因删除而被动失效**（而不是因退役）。**这是本单与 `G-6` 之间的真实耦合。**
 改指动作须单独点名。
 

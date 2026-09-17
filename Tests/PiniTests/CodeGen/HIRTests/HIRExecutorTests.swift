@@ -57,45 +57,183 @@ final class HIRExecutorTests: XCTestCase {
         return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
-    /// Run one source through both live channels and report what each wrote.
+    /// Run one source through the HIR tree walker and report the lines it wrote.
     ///
-    /// Both engines are driven through `outputSink` rather than through process
-    /// stdout: that is the same funnel the debugger redirects, and it keeps the
-    /// comparison free of descriptor plumbing.
-    private func runBothChannels(_ source: String) throws -> (ast: [String], hir: [String]) {
+    /// Driven through `outputSink` rather than through process stdout: that is
+    /// the same funnel the debugger redirects, and it keeps the comparison free
+    /// of descriptor plumbing.
+    ///
+    /// ⚠️ LR-4 `G-5`: this used to return **two** arms, the second being the AST
+    /// walk. With the walk leaving the repo there is no AST arm, so what remains
+    /// is the HIR tree walker alone. Its reference is no longer a sibling arm but
+    /// the **frozen expectations** below (`probeGoldens`, `loweringDigests`) -
+    /// frozen before the swap, so they still carry the pre-swap reading.
+    private func runHIRTree(_ source: String) throws -> [String] {
         let tokens = try Lexer(source: source, fileName: HIRExecutorTests.fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: HIRExecutorTests.fileName).parseModule()
         let checker = TypeChecker()
         let errors = checker.checkCollecting(module: module)
         XCTAssertTrue(errors.isEmpty, "test sources must typecheck: \(errors)")
 
-        let interpreter = Interpreter()
-        var astLines: [String] = []
-        interpreter.outputSink = { astLines.append($0) }
-        try interpreter.run(module: module)
-
-        // The interpreter has run; lower the same module the way every shipping
-        // path does. `persistAcrossScopesForCodegen` is what the CLI's `run`
-        // (HIR engine), `emit`, `compile` and `run-llvm` each set before
-        // lowering, and every other lowering harness in the suite sets it too —
-        // without it a tuple literal's element types are gone once the checker
-        // pops its scope, and lowering rejects a program that runs fine. This
-        // harness was the only one that left it off.
+        // The same setting every shipping path uses before lowering.
+        // `persistAcrossScopesForCodegen` is what the CLI's `run` (HIR engine),
+        // `emit`, `compile` and `run-llvm` each set, and every other lowering
+        // harness in the suite sets it too — without it a tuple literal's element
+        // types are gone once the checker pops its scope, and lowering rejects a
+        // program that runs fine. This harness was the only one that left it off.
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
         let executor = HIRExecutor()
-        var hirLines: [String] = []
-        executor.outputSink = { hirLines.append($0) }
+        var lines: [String] = []
+        executor.outputSink = { lines.append($0) }
         try executor.run(module: hir)
-
-        return (astLines, hirLines)
+        return lines
     }
 
-    /// Runs one source on both channels and requires identical output.
-    private func assertParity(_ source: String, label: String) throws {
-        let (ast, hir) = try runBothChannels(source)
-        XCTAssertFalse(ast.isEmpty, "\(label) produced no output on either channel")
-        XCTAssertEqual(hir, ast, "channel output diverged for \(label)")
+    /// Ran the source and requires its output to equal the **frozen** expectation.
+    ///
+    /// A missing table entry is a failure, not a skip: adding a probe without
+    /// freezing its output would otherwise shrink coverage silently, which is the
+    /// failure mode this whole construction exists to avoid.
+    private func assertParity(_ source: String, label: String,
+                              file: StaticString = #filePath, line: UInt = #line) throws {
+        guard let expected = HIRExecutorTests.probeGoldens[label] else {
+            XCTFail("no frozen expectation for probe '\(label)': freeze one in `probeGoldens`",
+                    file: file, line: line)
+            return
+        }
+        let hir = try runHIRTree(source)
+        XCTAssertFalse(hir.isEmpty, "\(label) produced no output", file: file, line: line)
+        XCTAssertEqual(hir, expected,
+                       "probe '\(label)' diverged from its frozen expectation", file: file, line: line)
+    }
+
+    // MARK: - Lowering digest
+
+    // The frozen tables these helpers are compared against - `probeGoldens` and
+    // `loweringDigests` - live in `HIRFrozenExpectations.swift`: they are data,
+    // and keeping them next to the logic would bury both.
+
+    /// Parses, type-checks, lowers, and renders the result as a stable digest.
+    static func loweringDigest(of source: String) throws -> String {
+        let tokens = try Lexer(source: source, fileName: fileName).tokenize()
+        let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        XCTAssertTrue(errors.isEmpty, "corpus fixtures must typecheck: \(errors)")
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        return renderDigest(try HIRLowerer.lower(module: module, typeInference: checker.typeInference))
+    }
+
+    /// One line per statement, blocks delimited and counted, then the inventory.
+    ///
+    /// The `switch`es below carry **no `default:`** on purpose, the same rule
+    /// `Statement.location` follows: a new statement case must fail to compile
+    /// here, so a node this instrument cannot name can never be lowered past it
+    /// unnoticed.
+    /// Everything is rendered **sorted by name** - functions, types, enums,
+    /// foreigns.
+    ///
+    /// Not a stylistic choice: `HIRModule`'s order was measured to differ between
+    /// two runs over the same fixture on 2026-09-18, both for the nominal
+    /// inventory (`Array(enums.values)` out of a dictionary, and the type list
+    /// fed by a specialization loop) and for the **tail of the function list**
+    /// (generic specializations are appended from a dictionary too, so
+    /// `身份_I32` and `身份_String` swap places run to run). A digest that
+    /// preserved any of those orders would go red on iteration order rather than
+    /// on a change in what was lowered.
+    ///
+    /// What is given up, stated plainly: this instrument can no longer see a
+    /// *reordering* of top-level declarations. What it still sees is every
+    /// statement kind, nested by block and counted, in source order - which is
+    /// where the constructs a lowerer can drop actually live.
+    static func renderDigest(_ module: HIRModule) -> String {
+        var out: [String] = []
+        for function in module.functions.sorted(by: { $0.name < $1.name }) {
+            appendFunctionDigest(function, head: "func", into: &out)
+        }
+        for type in module.types.sorted(by: { $0.name < $1.name }) {
+            out.append("type \(type.name)\(type.isObject ? " object" : "")"
+                       + " fields=\(type.fields.map { "\($0.name):\($0.type)" }.joined(separator: ","))")
+            for method in type.methods.sorted(by: { $0.name < $1.name }) {
+                appendFunctionDigest(method, head: "  method", into: &out)
+            }
+        }
+        for declaration in module.enums.sorted(by: { $0.name < $1.name }) {
+            out.append("enum \(declaration.name) cases="
+                       + declaration.cases.map { "\($0.name):\($0.payloadTypes.count)" }
+                           .joined(separator: ","))
+        }
+        for foreign in module.foreigns.sorted(by: { $0.name < $1.name }) {
+            out.append("foreign \(foreign.name) funcs=" + foreign.funcs.map { $0.name }.joined(separator: ","))
+        }
+        return out.joined(separator: "\n")
+    }
+
+    private static func appendFunctionDigest(_ function: HIRFunction, head: String, into out: inout [String]) {
+        let params = function.params.map { "\($0.name):\($0.type)" }.joined(separator: ",")
+        let returns = function.returnType.map { "\($0)" } ?? "void"
+        out.append("\(head) \(function.name)(\(params)) -> \(returns)"
+                   + (function.isAsync ? " async" : "")
+                   + (function.isTest ? " test" : ""))
+        appendBlockDigest(function.body, depth: 1, into: &out)
+    }
+
+    /// A block is delimited and counted even when empty: without the header an
+    /// empty `else` branch would leave no trace at all.
+    private static func appendBlockDigest(_ block: HIRBlock, depth: Int, into out: inout [String]) {
+        let pad = String(repeating: "  ", count: depth)
+        out.append(pad + "block n=\(block.statements.count)")
+        for statement in block.statements {
+            out.append(pad + "  " + nodeKind(statement))
+            for nested in nestedBlocks(of: statement) {
+                appendBlockDigest(nested, depth: depth + 1, into: &out)
+            }
+        }
+    }
+
+    private static func nodeKind(_ statement: HIRStmt) -> String {
+        switch statement {
+        case .allocVar: return "allocVar"
+        case .storeVar: return "storeVar"
+        case .ifStmt: return "ifStmt"
+        case .whileStmt: return "whileStmt"
+        case .forInStmt: return "forInStmt"
+        case .returnStmt: return "returnStmt"
+        case .exprStmt: return "exprStmt"
+        case .deferStmt: return "deferStmt"
+        case .tryStmt: return "tryStmt"
+        case .subscriptStore: return "subscriptStore"
+        case .breakStmt: return "breakStmt"
+        case .continueStmt: return "continueStmt"
+        case .panicStmt: return "panicStmt"
+        case .matchStmt: return "matchStmt"
+        case .fieldStore: return "fieldStore"
+        case .captureMarker: return "captureMarker"
+        case .detachStmt: return "detachStmt"
+        }
+    }
+
+    /// The nested blocks of a statement, in source order. `ifStmt` yields its
+    /// `then` and (when present) its `else`; a `match` yields every arm's body.
+    private static func nestedBlocks(of statement: HIRStmt) -> [HIRBlock] {
+        switch statement {
+        case .ifStmt(_, _, let thenBody, let elseBody):
+            return elseBody.map { [thenBody, $0] } ?? [thenBody]
+        case .whileStmt(_, let body, let step):
+            return step.map { [body, $0] } ?? [body]
+        case .forInStmt(_, _, _, _, let body, let step):
+            return step.map { [body, $0] } ?? [body]
+        case .deferStmt(let body):
+            return [body]
+        case .tryStmt(_, _, let handler, _, _):
+            return [handler]
+        case .matchStmt(_, let cases, _):
+            return cases.map { $0.body }
+        case .allocVar, .storeVar, .returnStmt, .exprStmt, .subscriptStore,
+             .breakStmt, .continueStmt, .panicStmt, .fieldStore, .captureMarker, .detachStmt:
+            return []
+        }
     }
 
     // MARK: - Corpus parity
@@ -314,38 +452,83 @@ final class HIRExecutorTests: XCTestCase {
         return url.appendingPathComponent("Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests")
     }
 
-    /// Arithmetic, comparisons, booleans, floats and user calls, run on both
-    /// channels over the shared corpus.
-    func testCorpusFixturesAgreeWithTheInterpreter() throws {
-        let directory = HIRExecutorTests.fixtureDirectory()
+    /// Locates a fixture by name across the corpus directories whose classes this
+    /// batch drives. The frozen-digest corpus is named by *those* classes rather
+    /// than by one directory, because the programs whose only other witness is
+    /// the LLVM arm are spread over more than one suite.
+    static func fixturePath(named name: String) -> String? {
+        let roots = [
+            "Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests",
+            "Tests/PiniTests/CodeGen/IRExecutionTests",
+            "Tests/PiniTests/CodeGen/IRPrintGoldenTests",
+        ]
+        var url = URL(fileURLWithPath: #filePath)
+        while url.path != "/" {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent("Package.swift").path) { break }
+            url = url.deletingLastPathComponent()
+        }
+        for root in roots {
+            let candidate = url.appendingPathComponent(root).appendingPathComponent("\(name).pini").path
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+        return nil
+    }
+
+    /// The corpus must lower to exactly the shape recorded in `loweringDigests`.
+    ///
+    /// WHY THIS REPLACED A CHANNEL COMPARISON (LR-4 `G-5`, decision `B`)
+    ///
+    /// This test used to compare the HIR walk against the AST walk. After the
+    /// swap both surviving arms read the **same lowered tree**, so a rule the
+    /// lowerer silently drops is invisible to any arm-to-arm comparison over that
+    /// tree: both arms lose the same thing and agree. The observation has to be
+    /// taken one layer **up**, on the lowered module itself, and that is what
+    /// this test does - it runs no execution channel at all.
+    ///
+    /// The digest is a line per statement kind, nested by block, plus the
+    /// function/type/enum/foreign inventory. It changes when a construct is
+    /// dropped, duplicated, reordered, or lowered into a different statement
+    /// kind, and it is independent of the LLVM toolchain (so it still holds on a
+    /// machine where the LLVM arm would silently skip).
+    ///
+    /// Frozen before the swap; regenerating an entry is a deliberate edit that
+    /// says "the lowerer's output for this fixture changed", which is exactly the
+    /// sentence a reviewer wants to read in a diff.
+    func testNamedFixturesMatchFrozenLowering() throws {
+        let table = HIRExecutorTests.loweringDigests
         var exercised = 0
 
-        for name in HIRExecutorTests.inRangeFixtures {
-            let path = directory.appendingPathComponent("\(name).pini").path
-            guard let source = try? String(contentsOfFile: path, encoding: .utf8) else {
-                XCTFail("missing fixture \(name).pini at \(path)")
+        for name in table.keys.sorted() {
+            guard let path = HIRExecutorTests.fixturePath(named: name) else {
+                XCTFail("frozen digest for '\(name)' has no fixture file any more")
                 continue
             }
-            let (ast, hir) = try runBothChannels(source)
-            XCTAssertFalse(ast.isEmpty, "fixture \(name) produced no output on either channel")
-            XCTAssertEqual(hir, ast, "channel output diverged for fixture \(name)")
+            let source = try String(contentsOfFile: path, encoding: .utf8)
+            XCTAssertEqual(try HIRExecutorTests.loweringDigest(of: source), table[name],
+                           "the lowered shape of \(name) moved away from its frozen digest")
             exercised += 1
         }
 
+        // The count is checked against the table itself, so a key that quietly
+        // disappears takes the expected number down with it and the check fails.
         XCTAssertEqual(
-            exercised, HIRExecutorTests.inRangeFixtures.count,
-            "every declared in-range fixture must actually run"
+            exercised, HIRExecutorTests.frozenDigestFixtureCount,
+            "every frozen digest must have a fixture that lowers and matches"
         )
     }
 
-    /// The same corpus, with the LLVM arm in the comparison.
+    /// The corpus on both surviving channels: the HIR tree walker and LLVM.
     ///
-    /// Why it is a separate test rather than a third line in the two-arm one:
-    /// when the LLVM environment is unconfigured the gate throws `XCTSkip`,
-    /// which marks the whole method skipped. Folding the third arm into the
-    /// existing test would make the `hir⇄ast` edge disappear on any machine
-    /// without LLVM — and that edge is where the criteria are read from, so it
-    /// must not be hostage to a tool it does not need.
+    /// Why it is a separate test rather than a line in `testCorpusFixturesMatchFrozenLowering`:
+    /// when the LLVM environment is unconfigured the gate throws `XCTSkip`, which
+    /// marks the whole method skipped. Folding this arm into the frozen-digest
+    /// test would make the digest look like it needs LLVM - and it deliberately
+    /// does **not**: it is the witness that still stands when the LLVM arm
+    /// silently skips.
+    ///
+    /// ⚠️ LR-4 `G-5`: the pair used to be `hir ⇄ ast ⇄ llvm`. The AST arm left
+    /// with the walk, so this is now `hir ⇄ llvm` — and the LLVM arm is still
+    /// what makes the comparison non-vacuous, for the reason recorded below.
     ///
     /// Why it exists at all (criteria-gap ledger, CG-09): `RuntimeOps` holds the
     /// rules **both** interpreter arms call, so a mutation inside one of them
@@ -365,7 +548,7 @@ final class HIRExecutorTests: XCTestCase {
     /// Measured before landing (2026-09-17): all 57 declared fixtures pass, and
     /// the only non-`OK` verdicts the probe reports for them are those two
     /// warning-shape cases.
-    func testCorpusFixturesAgreeAcrossThreeChannels() throws {
+    func testCorpusFixturesAgreeAcrossBothChannels() throws {
         let directory = HIRExecutorTests.fixtureDirectory()
         var exercised = 0
 
@@ -375,7 +558,7 @@ final class HIRExecutorTests: XCTestCase {
                 XCTFail("missing fixture \(name).pini at \(path)")
                 continue
             }
-            let (ast, hir) = try runBothChannels(source)
+            let hir = try runHIRTree(source)
             let llvm = try LLVMChannel.run(source, fileName: HIRExecutorTests.fileName)
 
             // Byte comparison, not line-by-line. The interpreter arms report
@@ -386,11 +569,10 @@ final class HIRExecutorTests: XCTestCase {
             // newline, so splitting turns one element into two and reports a
             // divergence that is an artefact of the comparison. Rebuilding the
             // stream from the sink is the representation-free way to compare.
-            let expected = ast.map { $0 + "\n" }.joined()
+            let expected = hir.map { $0 + "\n" }.joined()
 
-            XCTAssertFalse(ast.isEmpty, "fixture \(name) produced no output on any channel")
-            XCTAssertEqual(hir, ast, "interpreter arms diverged for \(name)")
-            XCTAssertEqual(llvm, expected, "the LLVM arm diverged from the interpreter arms for \(name)")
+            XCTAssertFalse(hir.isEmpty, "fixture \(name) produced no output on any channel")
+            XCTAssertEqual(llvm, expected, "the LLVM arm diverged from the HIR tree walker for \(name)")
             exercised += 1
         }
 
@@ -927,7 +1109,7 @@ final class HIRExecutorTests: XCTestCase {
     /// a defect with its own ticket rather than asserted here, because a test that
     /// pins a known-wrong answer is worse than no test.
     func testObjectAliasingThroughASecondBindingAndAPlainVariableBase() throws {
-        let (ast, hir) = try runBothChannels("""
+        let hir = try runHIRTree("""
         {计数对象}
         数值: I32 = 0
 
@@ -947,8 +1129,7 @@ final class HIRExecutorTests: XCTestCase {
             return
         """)
 
-        XCTAssertEqual(ast, ["10", "10"], "an object binding aliases, it does not copy")
-        XCTAssertEqual(hir, ast, "channel output diverged for object aliasing")
+        XCTAssertEqual(hir, ["10", "10"], "an object binding aliases, it does not copy")
     }
 
     /// The two nominal paths a *typechecking* program cannot reach, kept loud.

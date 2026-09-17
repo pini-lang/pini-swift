@@ -464,9 +464,9 @@ final class IRExecutionTests: XCTestCase {
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "55")
     }
 
-    // MARK: - Interpreter vs LLVM parity
+    // MARK: - HIR tree vs LLVM parity
 
-    func testLLVMVsInterpreterParity() throws {
+    func testLLVMVsHIRTreeParity() throws {
         try LLVMGate.requireLLI()
         let source = try loadPiniFixture("testLLVMVsInterpreterParity", filePath: #filePath)
         let lliOutput = try runViaLLI(source).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -482,8 +482,8 @@ final class IRExecutionTests: XCTestCase {
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
-        let interpreter = Interpreter()
-        try interpreter.run(module: module)
+        let runner = ProgramRunner()
+        try runner.run(module: module)
 
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
@@ -491,11 +491,11 @@ final class IRExecutionTests: XCTestCase {
         pipe.fileHandleForWriting.closeFile()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let interpreterOutput = String(data: data, encoding: .utf8)!
+        let hirOutput = String(data: data, encoding: .utf8)!
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        XCTAssertEqual(lliOutput, interpreterOutput,
-                       "LLVM and interpreter should produce same output")
+        XCTAssertEqual(lliOutput, hirOutput,
+                       "LLVM and the HIR tree walker should produce the same output")
     }
 
     // MARK: - P6-2a: struct 类型真实执行
@@ -1016,7 +1016,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     /// lli 与解释器对 nil 关键字产出逐 token 一致（过滤掉既有 print 无换行差异）。
-    func testNilKeywordLLVMVsInterpreterParity() throws {
+    func testNilKeywordLLVMVsHIRTreeParity() throws {
         try LLVMGate.requireLLI()
         let source = [
             "main|func() -> ():",
@@ -1041,7 +1041,7 @@ final class IRExecutionTests: XCTestCase {
         let lliOutput = try runViaLLI(source)
             .components(separatedBy: .whitespacesAndNewlines).joined()
 
-        // 解释器产出
+        // HIR 树走查产出（G-5：参照臂由 AST 走查改为 HIR 树走查）
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -1051,8 +1051,8 @@ final class IRExecutionTests: XCTestCase {
         let originalStdout = dup(STDOUT_FILENO)
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-        let interpreter = Interpreter()
-        try interpreter.run(module: module)
+        let runner = ProgramRunner()
+        try runner.run(module: module)
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
         close(originalStdout)
@@ -1086,7 +1086,7 @@ final class IRExecutionTests: XCTestCase {
     }
 
     /// lli 与解释器对 ?T 可选糖产出逐 token 一致（覆盖 ?T↔Optional<I32> 互赋路径）。
-    func testQuestionTypeLLVMVsInterpreterParity() throws {
+    func testQuestionTypeLLVMVsHIRTreeParity() throws {
         try LLVMGate.requireLLI()
         let source = [
             "main|func() -> ():",
@@ -1103,7 +1103,7 @@ final class IRExecutionTests: XCTestCase {
         let lliOutput = try runViaLLI(source)
             .components(separatedBy: .whitespacesAndNewlines).joined()
 
-        // 解释器产出
+        // HIR 树走查产出（G-5：参照臂由 AST 走查改为 HIR 树走查）
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -1113,8 +1113,8 @@ final class IRExecutionTests: XCTestCase {
         let originalStdout = dup(STDOUT_FILENO)
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-        let interpreter = Interpreter()
-        try interpreter.run(module: module)
+        let runner = ProgramRunner()
+        try runner.run(module: module)
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
         close(originalStdout)
@@ -1152,7 +1152,7 @@ final class IRExecutionTests: XCTestCase {
         let clangOut = try runViaClang(source, dylib: dylib)
             .components(separatedBy: .whitespacesAndNewlines).joined()
 
-        // 解释器产出（stdout 重定向）
+        // HIR 树走查产出（stdout 重定向；G-5 改指）
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
@@ -1161,8 +1161,8 @@ final class IRExecutionTests: XCTestCase {
         let originalStdout = dup(STDOUT_FILENO)
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-        let interpreter = Interpreter()
-        try interpreter.run(module: module)
+        let runner = ProgramRunner()
+        try runner.run(module: module)
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
         close(originalStdout)

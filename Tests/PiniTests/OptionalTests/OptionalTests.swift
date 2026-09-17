@@ -258,8 +258,9 @@ final class OptionalTests: XCTestCase {
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
         do {
-            let interpreter = Interpreter()
-            try interpreter.run(module: module)
+            // G-5：原为 AST 走查，改指 HIR 树走查（参照臂换到同一棵降载树的另一执行器）
+            let runner = ProgramRunner()
+            try runner.run(module: module)
         } catch {
             fflush(stdout)
             pipe.fileHandleForWriting.closeFile()

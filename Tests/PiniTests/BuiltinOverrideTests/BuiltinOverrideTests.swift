@@ -9,7 +9,21 @@ import Foundation
 /// 驱动链路与 CLI `pini run` 同构：stdout 捕获（确定性环境，dup2 接管）。
 final class BuiltinOverrideTests: XCTestCase {
 
-    /// 与 IOTests 同构的运行 harness：真实解释器 + stdout 捕获。
+    /// 与 IOTests 同构的运行 harness：真实引擎 + stdout 捕获。
+    ///
+    /// ⚠️ **本文件在 `G-5` 中被实测判定为「不可换腿」，驱动入口保持 AST 走查。**
+    ///
+    /// 原因是实测而非推断：换成 HIR 后 6 条用例红 4 条 ——
+    /// `testArrayNewMethodOverride` / `testStringNewMethodAddition` 在**降载期**即被拒
+    /// （`HIR lowering error … method 'len' calls are later grids`），而
+    /// `testStringContainsOverride` / `testUnoverriddenStillBuiltin` 输出的
+    /// 是**内建行为**（`true`）而期望**用户扩展行为**（`false`）——
+    /// 即 HIR 侧**要么不实现、要么不遵守「用户扩展 > 语言内标准库 > 宿主原生」的三级派发**。
+    ///
+    /// ⇒ 本文件的 `Interpreter` **不是参照臂，而是被测能力的唯一实现**：
+    /// 它测的是「内建类型的用户扩展方法」（H-3），AST 引擎支持、HIR 引擎不支持。
+    /// 分类订正与缺口登记见工单「内建类型的用户扩展方法未在 HIR 落地」（`G-5` 批新立）；
+    /// `G-6` 删除本引擎之前必须先把该能力补到 HIR 或显式退役这 6 条用例。
     private func runProgram(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()

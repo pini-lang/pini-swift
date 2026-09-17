@@ -140,14 +140,17 @@ final class RuntimeBackendTests: XCTestCase {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    /// 进程内解释执行，返回 stdout（每条 print 补一个换行，对齐 `pini run` 语义）。
-    private func runViaInterpreter(_ source: String, fileName: String = "test.pini") throws -> String {
+    /// 进程内 HIR 树走查执行，返回 stdout（每条 print 补一个换行，对齐 `pini run` 语义）。
+    ///
+    /// LR-4 `G-5`：本臂原为 AST 走查（`Interpreter`）。走查一旦删除就没有 AST 臂了，
+    /// 故参照物改为「同一棵降载树上的另一个执行器」——本臂走 HIR，LLVM 臂走 IR。
+    private func runViaHIRTree(_ source: String, fileName: String = "test.pini") throws -> String {
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
         let module = try Parser(tokens: tokens, fileName: fileName).parseModule()
-        let interpreter = Interpreter()
+        let runner = ProgramRunner()
         var segments: [String] = []
-        interpreter.outputSink = { segments.append($0 + "\n") }
-        try interpreter.run(module: module)
+        runner.outputSink = { segments.append($0 + "\n") }
+        try runner.run(module: module)
         return segments.joined(separator: "")
     }
 
@@ -163,7 +166,7 @@ final class RuntimeBackendTests: XCTestCase {
         // print 各自补换行 → 归一化前原样为 "20\n3\n"
         XCTAssertEqual(llvmOut, "20\n3\n", "数组经运行时 shim + lli --dlopen 应输出 20(a[1]) 与 3(len)（print 各自换行）")
 
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(interpOut, "20\n3\n", "解释器侧应输出 20 与 3（每条 print 补换行）")
 
         // 双后端计算一致（剥离换行后）
@@ -185,7 +188,7 @@ final class RuntimeBackendTests: XCTestCase {
         let clangOut = try runViaClangWithRuntime(src, dylib: dylib)
         XCTAssertEqual(clangOut, "20\n3\n", "数组经 clang -lPiniRuntime AOT 应输出 20(a[1]) 与 3(len)（print 各自换行）")
 
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(clangOut.replacingOccurrences(of: "\n", with: ""),
                        interpOut.replacingOccurrences(of: "\n", with: ""),
                        "clang AOT 与解释器数组下标/len 计算应一致")
@@ -213,7 +216,7 @@ final class RuntimeBackendTests: XCTestCase {
         let src = try loadPiniFixture("testArrayOutOfBoundsBothBackendsError", filePath: #filePath)
 
         // 解释器侧（批 2 通道 1：安全断言通道）：越界 panic（E5-005），与 LLVM 的 bk_panic 对齐
-        XCTAssertThrowsError(try runViaInterpreter(src),
+        XCTAssertThrowsError(try runViaHIRTree(src),
                              "解释器越界下标 a[99] 应 panic，与 LLVM 运行时行为一致")
 
         // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
@@ -230,7 +233,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testEmptyArrayBothBackends() throws {
         let src = try loadPiniFixture("testEmptyArrayBothBackends", filePath: #filePath)
 
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(interpOut, "0\n", "解释器空数组 len 应为 0")
 
         try LLVMGate.requireLLI()
@@ -246,7 +249,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testStringArrayViaRuntimeLLI() throws {
         let src = try loadPiniFixture("testStringArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""),
                        interpOut.replacingOccurrences(of: "\n", with: ""),
                        "字符串元素数组构造/下标/len 双后端应一致")
@@ -257,7 +260,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testNestedStringArrayViaRuntimeLLI() throws {
         let src = try loadPiniFixture("testNestedStringArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""),
                        interpOut.replacingOccurrences(of: "\n", with: ""),
                        "嵌套字符串数组双层下标读双后端应一致")
@@ -269,7 +272,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testF64ArrayViaRuntimeLLI() throws {
         let src = try loadPiniFixture("testF64ArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         let llvmNorm = llvmOut.replacingOccurrences(of: "\n", with: "")
         let interpNorm = interpOut.replacingOccurrences(of: "\n", with: "")
         XCTAssertTrue(llvmNorm.contains("2.5"), "LLVM 应读出 2.5（格式化差异属已知浮点缺口）")
@@ -282,7 +285,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testBoolArrayViaRuntimeLLI() throws {
         let src = try loadPiniFixture("testBoolArrayViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""),
                        interpOut.replacingOccurrences(of: "\n", with: ""),
                        "Bool 元素数组构造/下标/len 双后端应一致（LLVM 亦打印 true/false）")
@@ -302,7 +305,7 @@ final class RuntimeBackendTests: XCTestCase {
         // 批 2（G48 三通道）：下标读返回元素本身；需要 Optional 枚举参与 match 时走
         // 通道 2 `.get(i)`——夹具即以此保留「严格枚举语义」的覆盖。
         let src = try loadPiniFixture("testArraySubscriptWriteInterpreter", filePath: #filePath)
-        let out = try runViaInterpreter(src)
+        let out = try runViaHIRTree(src)
         // 批 2：单层/嵌套下标读均返回元素本身（`m[0][1]`），无需 `!` 剥壳。
         XCTAssertEqual(out, "10\n25\n3\n99\nz\nfalse\n",
                        "解释器下标写（含嵌套/复合/多类型）应就地生效；单层读返回 some(...)、嵌套读经 `!` 剥壳取裸值")
@@ -326,7 +329,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testArrayWriteOutOfBoundsBothBackendsError() throws {
         let src = try loadPiniFixture("testArrayWriteOutOfBoundsBothBackendsError", filePath: #filePath)
         // 解释器侧：越界下标写应抛错
-        XCTAssertThrowsError(try runViaInterpreter(src), "解释器越界下标写 a[5]=9 应抛 RuntimeError")
+        XCTAssertThrowsError(try runViaHIRTree(src), "解释器越界下标写 a[5]=9 应抛 RuntimeError")
 
         // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空
         try LLVMGate.requireLLI()
@@ -344,7 +347,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testDictViaRuntimeLLI() throws {
         let src = try loadPiniFixture("testDictViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""),
                        interpOut.replacingOccurrences(of: "\n", with: ""),
                        "字典构造/键读/len 双后端归一化输出应一致")
@@ -356,7 +359,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testDictSubscriptWriteBothBackends() throws {
         let src = try loadPiniFixture("testDictSubscriptWriteBothBackends", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""),
                        interpOut.replacingOccurrences(of: "\n", with: ""),
                        "字典键写（新增键 + 既有键替换）双后端归一化输出应一致")
@@ -368,7 +371,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testSetViaRuntimeLLI() throws {
         let src = try loadPiniFixture("testSetViaRuntimeLLI", filePath: #filePath)
         let llvmOut = try runViaLLIWithRuntime(src, dylib: try requireDylib())
-        let interpOut = try runViaInterpreter(src)
+        let interpOut = try runViaHIRTree(src)
         XCTAssertEqual(llvmOut.replacingOccurrences(of: "\n", with: ""), "5", "集合 len 应为去重后 5")
         XCTAssertEqual(interpOut.replacingOccurrences(of: "\n", with: ""), "5", "解释器集合 len 应为去重后 5")
     }
@@ -380,7 +383,7 @@ final class RuntimeBackendTests: XCTestCase {
     func testDictMissingKeyBothBackends() throws {
         let src = try loadPiniFixture("testDictMissingKeyBothBackends", filePath: #filePath)
         // 解释器侧：缺键应与越界同义，panic 而非静默返回 nil。
-        XCTAssertThrowsError(try runViaInterpreter(src),
+        XCTAssertThrowsError(try runViaHIRTree(src),
                              "字典缺失键应与越界同义，panic 而非静默返回 nil")
         // LLVM 侧：bk_panic 触发 abort，lli 进程非零退出、stdout 为空。
         try LLVMGate.requireLLI()
@@ -402,7 +405,7 @@ final class RuntimeBackendTests: XCTestCase {
     /// 否则 share 记账方向错误（漏 retain / 多 release）仍可能单向偶然通过。
     private func assertBackendsAgree(_ src: String, expected: String, _ message: String) throws {
         let dylib = try requireDylib()
-        let interpOut = try runViaInterpreter(src).replacingOccurrences(of: "\n", with: "")
+        let interpOut = try runViaHIRTree(src).replacingOccurrences(of: "\n", with: "")
         XCTAssertEqual(interpOut, expected, "解释器：\(message)")
         let llvmOut = try runViaLLIWithRuntime(src, dylib: dylib).replacingOccurrences(of: "\n", with: "")
         XCTAssertEqual(llvmOut, expected, "LLVM：\(message)")
@@ -418,7 +421,7 @@ final class RuntimeBackendTests: XCTestCase {
     private func assertTripleBackendsAgree(_ src: String, expected: String, _ message: String) throws {
         try LLVMGate.requireLLI(); try LLVMGate.requireClang()
         let dylib = try requireDylib()
-        let interpOut = try runViaInterpreter(src).replacingOccurrences(of: "\n", with: "")
+        let interpOut = try runViaHIRTree(src).replacingOccurrences(of: "\n", with: "")
         XCTAssertEqual(interpOut, expected, "解释器：\(message)")
         let lliOut = try runViaLLIWithRuntime(src, dylib: dylib).replacingOccurrences(of: "\n", with: "")
         XCTAssertEqual(lliOut, expected, "lli-JIT：\(message)")

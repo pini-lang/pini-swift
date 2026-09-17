@@ -423,7 +423,7 @@ append 别的类型即报 `type mismatch: enumeration(...) is not i32`；无标�
 **⚠️ 记号**：本件与 `P4-β` 件的 `R1`/`R2` 与 `docs/issue-selfhost-probe-plan-2026-09-13.md` **相反**，见 `D-P4-30`。
 **工程理由（本批补记）**：**要移植的 890 行就是即将被删的 890 行** —— 后置则只剩 git 历史、无法并排验证。
 
-## G-4·G-5 `runTests` 归宿 + 303 个对照用例的参照臂 — 待点名
+## G-4·G-5 `runTests` 归宿 + D 类参照臂改造 — ✅ **两半均已交付**（2026-09-18）
 
 > 两件**合并为一批**（互不依赖，且都在 `G-6` 之前必须处置）。
 
@@ -467,13 +467,125 @@ append 别的类型即报 `type mismatch: enumeration(...) is not i32`；无标�
 **下游**：工单 `issue-hir-vendored-ffi-unsupported-2026-09-17.md` **闭环**（走其 §4 路径 ①）·
 `docs/spec/pini-spec-v0.md` 两处口径订正（§3 台账 `[名称|foreign]` 行 · 长期愿景 T14 行）。
 
-### G-5：**已裁 = `A` 为主 + `B` 为辅**
+### G-5：✅ **已交付**（2026-09-18，单批）
 
-**对象**：`D` 类 9 文件 / **303 用例**。其中 **`DebuggerTests`（17）已由 `P4-3` 参数化为双引擎** ⇒
-**删掉 AST 后该文件的参数化须收成一臂**，这是本批的显式工作项（不是「顺手」）。
-**做法**：`LLVM` 通道作参照臂（`pini run-llvm`）；其覆盖不到的夹具用 **golden 固化**输出。
-**判据**：改后对照**仍有参照物**且**判据能失败**（注入变异时转红）；覆盖不到的夹具**逐条列出**并转 golden。
-**不取**：`C 随走查退役`（那会让跨实现一致性证据归零）。
+> **裁决（用户 2026-09-18）**：① **`B`**（补降层独立证人）· ② **`B`**（本批吸收 `FFIModuleTests`
+> + `StructuredConcurrency` 的 4 条改指）· ③ **`A`**（探针仍 3 通道，留给 `G-6`）。
+> **交付分支**：`agent/pini-dev/p4-gamma-g5-reference-arms`。**零 `Sources/` 改动。**
+
+**对象（开工前实测订正）**：`D` 类 9 文件 **304 用例**（规划记 303）；另有 ②B 吸收进来的 2 处。
+**换腿点 = 15 个 `func`**：10 个臂助手 + 5 处用例体内直构。
+
+#### 1. 换腿表（每条都实测过）
+
+| 文件 | 原参照臂 | 换成 | 备注 |
+|---|---|---|---|
+| `HIRDifferentialTests`（89） | `runInterpreter` / `runPackageInterpreter` | **HIR 树走查**（`ProgramRunner`） | 另一侧是 LLVM ⇒ 两执行器对照 |
+| `IRExecutionTests`（81） | 用例体内 4 处直构 | 同上 | 另一侧是 LLVM |
+| `RuntimeBackendTests`（51） | `runViaInterpreter`（16 调用点） | 同上 | 另一侧是 LLVM |
+| `OptionalTests`（20） | `runProgram` | 同上 | 另一侧是 LLVM |
+| `IRPrintGoldenTests`（2） | `runViaInterpreter` | 同上 | 另一侧是 LLVM |
+| `HIRExecutorTests`（31） | `runBothChannels` 的 AST 臂 | 删 AST 臂；**改用冻结期望**（①B） | 见 §2 |
+| `DebuggerTests`（17） | 双引擎参数化（`DebugEngine.allCases`） | **收成一臂**（`.ast` 例移除） | 见 §3 |
+| `DotCaseConstructionTests`（7） · `BuiltinOverrideTests`（6） | `runSource` / `runProgram` | 见 §4 | |
+| ②B `FFIModuleTests`（7） | `runModule` / `runProgram` | `runModule` → HIR；**`runProgram` 回退** | 见 §4 |
+| ②B `StructuredConcurrencyTests`（14） | `runProgram` | 4 条改指 → **实测只 3 条可改** | 见 §4 |
+
+#### 2. ①B：两条**不依赖 LLVM 通道**的冻结证人
+
+| 证人 | 对象 | 规模 | 为什么需要 |
+|---|---|:--:|---|
+| `probeGoldens` | `HIRExecutorTests` 的 12 条手写探针 | 12 | 探针的旧参照物就是 AST 臂；换腿后它没了 |
+| `loweringDigests` | 受影响各**具名夹具**的降载结构摘要 | **83** | 换腿后两臂读**同一棵降载树** ⇒ 「降载器静默吞掉结构」对任何臂间对照都不可见 ⇒ 观测点必须**上移一层**，且**不跑任何执行通道** |
+
+**取值可信度是测出来的，不是声明的**：`probeGoldens` 取自 HIR 树走查臂，单看只是「钉住今天」——
+故同批**直接测量**：把仍在源码里的 AST 走查臂驱动同样 12 条探针源，**0 条不一致** ⇒
+这些值就是**被退役那条臂的读数**（正是换腿前 `assertParity` 断言的那个等式，此处对臂本身重测）。
+
+**「不依赖 LLVM」也是测出来的**：`PINI_LLVM_BIN` 未设且 LLVM 不在 `PATH` 时实测 ——
+`HIRDifferentialTests` **89/89 跳过**、语料 2 通道对照**跳过**，而
+`testNamedFixturesMatchFrozenLowering` **照常执行并通过**。
+⇒ 这批程序在没有工具链的机器上**仍有证人**，是设计的结果、不是碰巧。
+
+**三条不在表内、**具名**而非静默丢弃**：`testAsyncFunction_LLI` · `testAwaitConsumption_LLI` ·
+`testAsyncVsSyncParity_LLI` —— 它们**今天根本降不了载**（`type mismatch: i32 is not result(ok: i32)`，
+try-else 迁移前的旧形态），与 `IRExecutionTests` 用 `XCTSkipIf(true, …)` 跳过它们**同因**；
+断言它们当前失败等于**把已知错误答案钉死**，故只具名。
+
+#### 3. `DebuggerTests` 的收一臂（**执行面收窄 29 → 17 例，如实登记**）
+
+`DebugEngine` 移除 `.ast` 例（枚举与 `dbgDrive` 的 `switch` 保留，`switch` 不带 `default:`
+⇒ 再增一例会编译失败而非静默走默认分支）。12 条参数化用例由「每例 2 台引擎」变「1 台」
+⇒ **执行例数 29 → 17**。两条「两引擎对比」用例的**判据转移**：
+
+| 原用例 | 处置 |
+|---|---|
+| `testDebugSurfaceIsEngineAgnostic` | 保留仍可失败的一半（协议面装配）→ `testDebuggerAssemblesThroughTheProtocolSurfaceOnly` |
+| `testBothEnginesStopOnTheSameLines` | 改为**对冻结序列**的断言 → `testStopSequenceMatchesTheFrozenExpectation`（冻结值 `[2, 3, 4, 5]`，取自换腿前两臂逐项相同的那次读数） |
+
+#### 4. ⚠️ **三处实测判定「不可换腿」，已回退**（本批最重要的实测结论）
+
+| 处 | 换了会怎样（实测） | 性质 | 归属 |
+|---|---|---|---|
+| `BuiltinOverrideTests`（6 例红 4） | 降载期拒（`method 'len'` / `'shout' calls are later grids`）+ 用户扩展**未覆盖**内建（读到 `true`，期望 `false`） | **HIR 缺「内建类型的用户扩展方法」这一级派发** | 新立工单 + `G-6` 前置 |
+| `FFIModuleTests.testUndefinedForeignSymbolRejected` | **不再抛错**（`did not throw`），`puts` 照常输出 | **HIR 对「声明了但找不到的 foreign 符号」不 fail-fast** | 新立工单 + `G-6` 前置 |
+| `StructuredConcurrencyTests.testDeferStillRunsWhenTaskCancelled` | 输出只有 `主流程结束`、**缺 `清理完成`** | **HIR 取消时不执行 `defer` 清理** | 写进退役件「残余三」的实测订正 |
+
+⭐ **一处分类订正**：`P4-β` 的 `D` 类把 `BuiltinOverrideTests` 与另外 8 个文件并列（分法 = 「是否驱动
+`Interpreter` 做执行」）。该分法在这一个文件上**失效** —— 其余 8 个的 `Interpreter` 是**参照物**，
+本文件的 `Interpreter` 是**被测能力的唯一实现** ⇒ 换掉它不是「换参照物」而是**换掉被测对象**。
+⇒ `D` 类须按「`Interpreter` 扮**参照物**还是**实现**」再分一次；
+「绝对期望 vs 臂间对照」这个维度**不足以**判（本文件的断言全是绝对期望，却仍是实现）。
+
+⭐ **一处判据缺口**：退役件原记 `StructuredConcurrency` 「4 条可改指」，判据是**夹具 `rc=0`**。
+实测该 4 条里 **1 条不成立**（rc=0 而断言红）⇒ **`rc=0` 不蕴含断言可满足**。
+
+#### 5. 判据（全部现测）
+
+| 判据 | 读数 |
+|---|---|
+| 受影响面**逐类**（11 类，每类独立输出文件） | **325 执行 / 3 跳过 / 0 失败** |
+| 3 条跳过是谁 | `IRExecutionTests` 的 `testAsyncFunction_LLI` · `testAwaitConsumption_LLI` · `testAsyncVsSyncParity_LLI`（`XCTSkipIf(true, E6-004)`，**换腿前即跳过** ⇒ 无回退） |
+| 全量回归（3 块，`hir-chunk-run.py`） | **57 → 57**，0 次信号，**逐条集合相等**（= 新增红 0 / 转绿 0） |
+| 契约 | **clean 62/62**，计数未变 |
+| 探针（护栏，③A） | **320 → 320**，**逐夹具判定变化 0**，`FLIP BLOCKERS 0` |
+| **变异反证两级** | 见下表 |
+| 零 `Sources/` 改动 | `git diff --name-only -- Sources` 为空 |
+
+**变异反证（2×2 分工表，失败数）**：
+
+| 变异（一轮内改、跑、还原） | 降载摘要 | 探针冻结表 |
+|---|:--:|:--:|
+| **M1** 降载层：`HIRModule` 丢掉最后一个名义声明 | **8** | 0 |
+| **M2** 值层：单个 `print` 追加一个字符（**共享规则**，两臂同源） | 0 | **1** |
+
+⇒ 两条判据各自观测**自己那一层**、且**互不冒充**；M2 尤其说明：**共享规则**的改动在臂间对照里是
+**静音**的，而**冻结表**能抓住它。
+器械自带三条硬要求：锚点唯一性预检 · 「变异确实生效」md5 自检 · `finally` 还原 + 逐字节对账
+（每轮还原后 md5 与变异前相同；收尾 `git diff -- Sources` 为空）。
+
+#### 6. 同批新立工单（4 件，均只登记不修）
+
+1. `docs/issue-interpreter-residual-reference-surface-2026-09-18.md` —— `G-6` 前置：残余引用面
+   （含 **`pini dbg` 两条入口恒 AST、无 HIR 分支**；并**订正**规划件「静态成员 ~30 处」为实测 **0 处**）
+2. `docs/issue-hir-builtin-user-extension-gap-2026-09-18.md` —— 内建类型的用户扩展方法未在 HIR 落地
+3. `docs/issue-hir-foreign-symbol-not-found-not-loud-2026-09-18.md` —— 未找到的 foreign 符号不 fail-fast
+4. `docs/issue-hir-nominal-decl-order-nondeterminism-2026-09-18.md` —— `HIRModule` 声明顺序非确定
+   （**两处**：名义清单 + **函数尾段**）
+
+#### 7. 方法层沉淀（三条，已进技能）
+
+1. **`Read` 渲染的缩进不可信**——`FFIModuleTests.swift` 是**1 空格**缩进（第 4 个已知例外文件）
+   ⇒ 多文件编辑脚本**必须先普查缩进**（本批靠守卫拦住了一次「命中 0 次」）。
+2. **`private` 是文件作用域**：同文件的 `extension` 能访问，**另一个类不能** ⇒ 一次性器械要写成
+   `extension` 形态。
+3. **器械的产物不要走日志**：JSON 经测试日志传输时转义被破坏 ⇒ 直接落盘
+   （「只从日志里活着回来的冻结表不是冻结表」）。
+
+#### 8. 未做范围
+
+不改 `Sources/` · 不动探针通道数（③A）· 不修在册工单（三处缺口只登记）·
+不把 3 条不可换腿项「顺手改掉」· 不 push。
 
 ### 参照臂改造的已知障碍（在册，不属本批）
 

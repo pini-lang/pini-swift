@@ -52,7 +52,16 @@ final class HIRDifferentialTests: XCTestCase {
                             workingDirectory: workingDirectory)
     }
 
-    private func runInterpreter(_ source: String, stdin inputText: String? = nil,
+    /// The HIR tree-walking arm (LR-4 `G-5`).
+    ///
+    /// Until this grid the other arm was the AST walk (`Interpreter`). With the
+    /// walk removed there is no AST arm left, so the reference is now the other
+    /// *executor* over the same lowered tree: this arm walks the HIR, and
+    /// `runNewPipeline` hands that same HIR to LLVM. Sharing a front end is a
+    /// deliberate, recorded strength change - the byte-level independence the
+    /// AST arm used to give now lives in the frozen outputs the corpus asserts
+    /// against (see the frozen lowering digests in `HIRExecutorTests`).
+    private func runHIRTree(_ source: String, stdin inputText: String? = nil,
                                 programBase: String? = nil) throws -> String {
         let fileName = "test.pini"
         let tokens = try Lexer(source: source, fileName: fileName).tokenize()
@@ -74,8 +83,8 @@ final class HIRDifferentialTests: XCTestCase {
             inputPipe.fileHandleForWriting.closeFile()
         }
 
-        let interpreter = Interpreter(programBase: programBase)
-        try interpreter.run(module: module)
+        let runner = ProgramRunner(programBase: programBase)
+        try runner.run(module: module)
 
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
@@ -98,10 +107,10 @@ final class HIRDifferentialTests: XCTestCase {
 
     private func assertParity(fixtureName: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let source = try loadPiniFixture(fixtureName, filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source)
+        let hirOutput = try runHIRTree(source)
         let llvmOutput = try runNewPipeline(source)
-        XCTAssertEqual(llvmOutput, interpreterOutput,
-                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(hirOutput)--- hir pipeline ---\n\(llvmOutput)",
                        file: file, line: line)
         XCTAssertFalse(llvmOutput.isEmpty, "\(fixtureName): expected non-empty output", file: file, line: line)
     }
@@ -115,12 +124,12 @@ final class HIRDifferentialTests: XCTestCase {
     /// silently weakening the check to "" == "".
     private func assertParityAllowingEmptyOutput(fixtureName: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let source = try loadPiniFixture(fixtureName, filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source)
+        let hirOutput = try runHIRTree(source)
         let llvmOutput = try runNewPipeline(source)
-        XCTAssertEqual(llvmOutput, interpreterOutput,
-                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(hirOutput)--- hir pipeline ---\n\(llvmOutput)",
                        file: file, line: line)
-        XCTAssertTrue(interpreterOutput.isEmpty,
+        XCTAssertTrue(hirOutput.isEmpty,
                       "\(fixtureName): this fixture is declared output-free; use assertParity instead",
                       file: file, line: line)
     }
@@ -135,10 +144,10 @@ final class HIRDifferentialTests: XCTestCase {
     private func assertParityWithStdin(fixtureName: String, stdin: String,
                                        file: StaticString = #filePath, line: UInt = #line) throws {
         let source = try loadPiniFixture(fixtureName, filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source, stdin: stdin)
+        let hirOutput = try runHIRTree(source, stdin: stdin)
         let llvmOutput = try runNewPipeline(source, stdin: stdin)
-        XCTAssertEqual(llvmOutput, interpreterOutput,
-                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "\(fixtureName): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(hirOutput)--- hir pipeline ---\n\(llvmOutput)",
                        file: file, line: line)
         XCTAssertFalse(llvmOutput.isEmpty, "\(fixtureName): expected non-empty output", file: file, line: line)
     }
@@ -171,18 +180,18 @@ final class HIRDifferentialTests: XCTestCase {
         return (url.path as NSString).appendingPathComponent(relPath)
     }
 
-    /// Interpreter channel for a package: mirrors `Interpreter.run(package:)`
-    /// (single-file delegate inside). The manifest's `[ffi]` table (if any)
-    /// feeds the interpreter so foreign dlsym bindings resolve their search
-    /// paths exactly like the CLI directory branch.
-    private func runPackageInterpreter(_ package: Package, ffiConfig: FFIConfig = .default) throws -> String {
+    /// The HIR tree-walking arm for a package (LR-4 `G-5`): `ProgramRunner`
+    /// lowers the package and walks the result. The manifest's `[ffi]` table
+    /// (if any) feeds the runner, so foreign dlsym bindings resolve their
+    /// search paths exactly like the CLI directory branch.
+    private func runPackageHIRTree(_ package: Package, ffiConfig: FFIConfig = .default) throws -> String {
         let pipe = Pipe()
         let originalStdout = dup(STDOUT_FILENO)
         setvbuf(stdout, nil, _IONBF, 0)
         dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
 
-        let interpreter = Interpreter(ffiConfig: ffiConfig)
-        try interpreter.run(package: package)
+        let runner = ProgramRunner(ffiConfig: ffiConfig)
+        try runner.run(package: package)
 
         fflush(stdout)
         dup2(originalStdout, STDOUT_FILENO)
@@ -235,7 +244,7 @@ final class HIRDifferentialTests: XCTestCase {
 
     private func assertPackageParity(_ relPath: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let (package, manifest) = try loadPackageCorpus(relPath)
-        let interpreterOutput = try runPackageInterpreter(package, ffiConfig: manifest?.ffi ?? .default)
+        let hirOutput = try runPackageHIRTree(package, ffiConfig: manifest?.ffi ?? .default)
         // G14: resolve the manifest's foreign search-path libraries for the
         // extra --dlopen pass (lib<name>.dylib inside each search path).
         let ffi = manifest?.ffi
@@ -246,8 +255,8 @@ final class HIRDifferentialTests: XCTestCase {
             }
         }
         let llvmOutput = try runPackageNewPipeline(package, extraDlopens: extraDlopens)
-        XCTAssertEqual(llvmOutput, interpreterOutput,
-                       "\(relPath): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)",
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "\(relPath): HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(hirOutput)--- hir pipeline ---\n\(llvmOutput)",
                        file: file, line: line)
         XCTAssertFalse(llvmOutput.isEmpty, "\(relPath): expected non-empty output", file: file, line: line)
     }
@@ -431,10 +440,10 @@ final class HIRDifferentialTests: XCTestCase {
     /// would collide).
     func testDiffPackageFFI() throws {
         let source = try String(contentsOfFile: locateCorpusFile("examples/ffi.pini"), encoding: .utf8)
-        let interpreterOutput = try runInterpreter(source)
+        let hirOutput = try runHIRTree(source)
         let llvmOutput = try runNewPipeline(source)
-        XCTAssertEqual(llvmOutput, interpreterOutput,
-                       "examples/ffi.pini: HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(llvmOutput)")
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "examples/ffi.pini: HIR pipeline output must match interpreter byte-for-byte\n--- interpreter ---\n\(hirOutput)--- hir pipeline ---\n\(llvmOutput)")
         XCTAssertFalse(llvmOutput.isEmpty, "examples/ffi.pini: expected non-empty output")
     }
 
@@ -537,13 +546,13 @@ final class HIRDifferentialTests: XCTestCase {
                               atomically: true, encoding: .utf8)
 
         let source = try loadPiniFixture("testDiffIoProgramBase", filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source, programBase: base)
-        XCTAssertEqual(interpreterOutput, "base-resource\nwritten-to-base\n",
-                       "the interpreter resolves an unprefixed path against the program base")
+        let hirOutput = try runHIRTree(source, programBase: base)
+        XCTAssertEqual(hirOutput, "base-resource\nwritten-to-base\n",
+                       "the HIR tree walker resolves an unprefixed path against the program base")
 
-        let hirOutput = try runNewPipeline(source, programBase: base, workingDirectory: cwd)
-        XCTAssertEqual(hirOutput, interpreterOutput,
-                       "the HIR emitter must bake the base too, or lli reads the CWD decoy\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+        let llvmOutput = try runNewPipeline(source, programBase: base, workingDirectory: cwd)
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "the emitter must bake the base too, or lli reads the CWD decoy\n--- HIR tree ---\n\(hirOutput)--- llvm ---\n\(llvmOutput)")
 
         XCTAssertEqual(try String(contentsOfFile: (base as NSString).appendingPathComponent("out.txt"),
                                   encoding: .utf8),
@@ -570,12 +579,12 @@ final class HIRDifferentialTests: XCTestCase {
     /// Expected bytes are asserted, not just compared across channels.
     func testDiffWriteFileCode() throws {
         let source = try loadPiniFixture("testDiffWriteFileCode", filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source)
-        XCTAssertEqual(interpreterOutput, "0\n7\n",
+        let hirOutput = try runHIRTree(source)
+        XCTAssertEqual(hirOutput, "0\n7\n",
                        "writeFile must report a success code and the payload must read back")
-        let hirOutput = try runNewPipeline(source)
-        XCTAssertEqual(hirOutput, interpreterOutput,
-                       "the HIR pipeline must report the same result code\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+        let llvmOutput = try runNewPipeline(source)
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "the pipeline must report the same result code\n--- HIR tree ---\n\(hirOutput)--- llvm ---\n\(llvmOutput)")
     }
 
     /// `readLine` keeps the line terminator, so the length includes it. The
@@ -585,12 +594,12 @@ final class HIRDifferentialTests: XCTestCase {
     /// with a newline and asserts 6 (a stripped line would report 5).
     func testDiffReadLineKeepsTerminator() throws {
         let source = try loadPiniFixture("testDiffReadLineKeepsTerminator", filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source, stdin: "hello\n")
-        XCTAssertEqual(interpreterOutput, "6\n",
+        let hirOutput = try runHIRTree(source, stdin: "hello\n")
+        XCTAssertEqual(hirOutput, "6\n",
                        "readLine must keep the line terminator; 5 would mean it was stripped")
-        let hirOutput = try runNewPipeline(source, stdin: "hello\n")
-        XCTAssertEqual(hirOutput, interpreterOutput,
-                       "the HIR pipeline must keep the terminator too\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+        let llvmOutput = try runNewPipeline(source, stdin: "hello\n")
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "the pipeline must keep the terminator too\n--- HIR tree ---\n\(hirOutput)--- llvm ---\n\(llvmOutput)")
     }
 
     /// `readFile` caps a single read at 64 KiB. Every inherited file fixture
@@ -601,11 +610,11 @@ final class HIRDifferentialTests: XCTestCase {
     /// which deadlocks rather than fails.
     func testDiffReadFileTruncates() throws {
         let source = try loadPiniFixture("testDiffReadFileTruncates", filePath: #filePath)
-        let interpreterOutput = try runInterpreter(source)
-        XCTAssertEqual(interpreterOutput, "65536\n",
+        let hirOutput = try runHIRTree(source)
+        XCTAssertEqual(hirOutput, "65536\n",
                        "readFile must silently truncate a 128 KiB body at 64 KiB")
-        let hirOutput = try runNewPipeline(source)
-        XCTAssertEqual(hirOutput, interpreterOutput,
-                       "the HIR pipeline must truncate at the same limit\n--- interpreter ---\n\(interpreterOutput)--- hir pipeline ---\n\(hirOutput)")
+        let llvmOutput = try runNewPipeline(source)
+        XCTAssertEqual(llvmOutput, hirOutput,
+                       "the pipeline must truncate at the same limit\n--- HIR tree ---\n\(hirOutput)--- llvm ---\n\(llvmOutput)")
     }
 }
