@@ -550,7 +550,7 @@ done | sort | uniq -c | sort -rn
 
 | 批 | 内容 | 判据 | 触契约？ |
 |---|---|---|---|
-| **`G-3c-1`** | **异步管道 + 阻塞 join**：① `HIRFunction` 补**异步标记**（降载层已在 `HIRLowerer.swift:1110` 用 `isAsync` 算返回类型，**标记本身未进 HIR**）② 执行器补异步 spawn 面（`FutureValue` / `currentFuture?.addChild` / `scheduler.spawn` / `closeScope` / `flipIfLeaked` / `reject`，镜像 `Interpreter.swift:3011–3050`）③ `.join` 降载规则 + **阻塞** join ④ `Future` 值层的内建与方法（`joinWithin` / `joinAll` / `cancel` / `isCancel`）⑤ `detach` | 上表 **59 条首缺口归零**；⚠️ 与 `G-3a`/`G-3b` **不同** —— 这批**应当真转绿**（阻塞语义**就是** AST 的制作面语义） | ❓ **仅 ⑤ 待裁**（§12.3） |
+| **`G-3c-1`** ⏳ **前置已就绪：`detach` 节点面 ✅ 已落（`ADR-042`，契约 61 → 62）** | **异步管道 + 阻塞 join**：① `HIRFunction` 补**异步标记**（降载层已在 `HIRLowerer.swift:1110` 用 `isAsync` 算返回类型，**标记本身未进 HIR**）② 执行器补异步 spawn 面（`FutureValue` / `currentFuture?.addChild` / `scheduler.spawn` / `closeScope` / `flipIfLeaked` / `reject`，镜像 `Interpreter.swift:3011–3050`）③ `.join` 降载规则 + **阻塞** join ④ `Future` 值层的内建与方法（`joinWithin` / `joinAll` / `cancel` / `isCancel`）⑤ `detach` | 上表 **59 条首缺口归零**；⚠️ 与 `G-3a`/`G-3b` **不同** —— 这批**应当真转绿**（阻塞语义**就是** AST 的制作面语义） | ❓ **仅 ⑤ 待裁**（§12.3） |
 | **`G-3c-2`** | **真挂起 CPS**：890 行薄外壳的 HIR 镜像 + driver 路由改 **depth 制**（§1.9）+ `HIRExecutor` 四状态改 `ThreadLocal`（§1.8）+ `suspendMode` / `cpsTasks` | `SuspendRuntimeTests` 15 条 + `CPSDifferentialTests` 14 条**改指 HIR 后仍逐字节一致** ⇒ 与 `G-3d` 天然合流 | 否 |
 
 **为什么切**（沿用 §3.1 给 `G-3a` / `G-3b` 单列的同一条理由：**风险不同类**）：
@@ -566,6 +566,12 @@ done | sort | uniq -c | sort -rn
    ⇒ `HIRExecutor.swift` 由 **2177** 行涨到约 **3100** 行。**两条路都不该混进第一批。**
 
 ### 12.3 待裁
+
+> ✅ **两项均已裁（2026-09-17，用户）**：`D-G3c-1` 取 **①（新增节点）** · `D-G3c-2` 取 **①（切）**。
+> 落位：`D-P4-33` / `D-P4-34`（`docs/issue-hir-p4-plan-2026-09-16.md` 决策记录）。
+> ⚠️ **`D-G3c-1` 的裁决与本节的建议相反** —— 本节建议 ②、用户取 ①。
+> 下面的建议段**原样保留**（留痕：当时被建议了什么），理由以裁决为准。
+> `detach` 节点面**已随之落地**（`ADR-042`，契约 **61 → 62**）。
 
 **裁定 `D-G3c-1` —— `detach` 要不要新节点？**（唯一触契约的一项）
 

@@ -1646,6 +1646,25 @@ public final class HIRExecutor: DebugHookHost {
         case .continueStmt(let depth):
             throw HIRControlSignal.continueSignal(depth: depth)
 
+        case .detachStmt:
+            // Unreachable today: the lowerer gates `detach` before it produces
+            // a node (same state `join` is in), so no program can reach this
+            // arm. Refusing rather than no-opping keeps the gap visible: a
+            // silent skip would look like a working fire-and-forget exit, and
+            // the one thing `detach` exists to suppress -- a leak warning --
+            // is exactly what would then appear to be handled.
+            //
+            // The behaviour itself belongs to the batch that connects the
+            // async pipeline (the node face only claims existence, per the
+            // contract's own scope note). Implementing it here would mean
+            // committing to a Future value no path can produce yet, and
+            // nothing could test it.
+            throw RuntimeError.invalidOperation(
+                reason: "detach: the HIR async pipeline is not connected yet "
+                    + "(the node exists, but the lowerer does not produce it)",
+                location: HIRExecutor.noLocation
+            )
+
         case .panicStmt(let message):
             // The message is the lowerer's — it names the escape the interpreter
             // only discovers at run time — and is passed through verbatim.
