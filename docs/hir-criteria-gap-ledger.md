@@ -215,14 +215,29 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
 
 | 组 | 规模 | 成因（实测） | 归属 / 谁覆盖 |
 |---|---|---|---|
-| **`PACKAGE_MEMBER`** | 27（全在 `examples/`，四个含 `pini.toml` 的模块） | 成员文件**没有 `main`**，单文件通道 `rc=1 E6-004`；而 **`run-llvm` 没有包通道**（`pini run-llvm <目录>` 报 `The file … couldn't be opened.`，且 `rc=0`）⇒ `hir⇄llvm` 边**不可能**覆盖它们 | **已由 `A1` 拆账（2026-09-17，逐条具名，见 §10）**：**8 条**（`examples/` 下三个宿主模块的成员）由**包通道**判定；**19 条在 `examples/selfhost`（嵌套独立仓）内**，由**该仓自己的门禁**覆盖 —— 15 条走 `tools/gate.sh` 的 `pini check .` / `pini test .`（实测 `检查通过（模块 pini，15 个文件）` / `结果: 70 通过, 0 失败`），4 条语料里 3 条走 `tools/diff_tokens.sh` / `tools/diff_parse.sh`，余 1 条（`l1b-shapes.pini`）在该仓内有**自述归档语料、刻意不入门禁**的记载 ⇒ **27 条逐条有主**。⚠️ `run-llvm` 侧仍待它支持目录（在册工单） |
-| **`FRONTEND_FAIL`** | 11（**全是并发面**：7 条 `concurrency-*.pini` + `concurrency.pini` 报 `E6-004`；3 条 `*_LLI.pini` 报 `E4-001`） | **LLVM 后端对并发面零覆盖** | **已在册**：`docs/issue-llvm-concurrency-runtime-2026-09-08.md`（Open，2026-09-12 裁决**搁置**，重启条件 = selfhost 探针完成解释器端） |
+| **`PACKAGE_MEMBER`** | 27（全在 `examples/`，四个含 `pini.toml` 的模块） | 成员文件**没有 `main`**，单文件通道 `rc=1 E6-004`；而 **`run-llvm` 没有包通道**（`pini run-llvm <目录>` 报 `The file … couldn't be opened.`，且 **`rc=1`**（⚠️ **显式失败**，非静默 —— 此处原记 `rc=0`，系 `A2` 批订正，见 §11.1））⇒ `hir⇄llvm` 边**不可能**覆盖它们 | **已由 `A1` 拆账（2026-09-17，逐条具名，见 §10）**：**8 条**（`examples/` 下三个宿主模块的成员）由**包通道**判定；**19 条在 `examples/selfhost`（嵌套独立仓）内**，由**该仓自己的门禁**覆盖 —— 15 条走 `tools/gate.sh` 的 `pini check .` / `pini test .`（实测 `检查通过（模块 pini，15 个文件）` / `结果: 70 通过, 0 失败`），4 条语料里 3 条走 `tools/diff_tokens.sh` / `tools/diff_parse.sh`，余 1 条（`l1b-shapes.pini`）在该仓内有**自述归档语料、刻意不入门禁**的记载 ⇒ **27 条逐条有主**。⚠️ `run-llvm` 侧仍待它支持目录 ⇒ **具名单**（`A2` 批补实；此前只写「在册工单」**未指名**）=`docs/issue-hir-package-run-unsupported-2026-09-16.md`（该单 §`A2` 批补记 已附可复制的复现命令） |
+| **`FRONTEND_FAIL`** | 11（**全在并发 / 异步族**，两类报错码：**8 条** `examples/concurrency-*.pini` + `concurrency.pini` 报 `E6-004`（降载层）；**3 条** `Tests/PiniTests/CodeGen/IRExecutionTests/*_LLI.pini` 报 `E4-001`（类型层）—— 后三条是**异步**面（`testAsyncFunction_LLI` / `testAsyncVsSyncParity_LLI` / `testAwaitConsumption_LLI`），与前八条同属 LLVM 未覆盖的那一族） | **LLVM 后端对并发 / 异步族零覆盖** | **已在册**：`docs/issue-llvm-concurrency-runtime-2026-09-08.md`（Open，2026-09-12 裁决**搁置**，重启条件 = selfhost 探针完成解释器端） |
 | **`HARNESS_DEPENDENT`** | 1（`testIsLetterUnsupportedViaIRGen.pini`） | 该夹具本身就在测「IRGen 不支持」，独立臂**跑不动**是**预期**而非缺陷 | 夹具自述；无须覆盖，但**不得计作被测** |
 
 **另两条「不是未测、但读者会误读」的**：`CHANGE_REFERENCE` 2（裸/点用例的 `…ViaLLI`：
 两实臂各输出 `42`、**参照臂 `rc=1`** ⇒ 参照臂自己是偏离方）；`WARN_LLVM_RC_UNPROPAGATED` 4
 （三臂一致认定失败，LLVM 臂 `rc=0` 是**退出码被丢弃**，非成功）。
 二者均**阻塞集外**，但**必须与 `FLIP BLOCKERS 0` 一起读**。
+
+### 9.1 读数出处（三组可核验；`A3` 批补）
+
+三组的规模**不是盘点时的估算**，来自探针一次全量扫（6 根 / 320 夹具）的**槽位分布**：
+
+| 槽位 | 条数 | | 槽位 | 条数 |
+|---|---:|---|---|---:|
+| `OK` | 255 | | `WARN_LLVM_RC_UNPROPAGATED` | 4 |
+| **`PACKAGE_MEMBER`** | **27** | | `CHANGE_REFERENCE` | 2 |
+| `WARN_CHANNEL_ASYMMETRY` | 20 | | **`HARNESS_DEPENDENT`** | **1** |
+| **`FRONTEND_FAIL`** | **11** | | 合计 | **320** |
+
+**核验方式（可复跑）**：`env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out <TSV>`，
+再对 TSV 第 1 列计数。`A3` 批用的冻结件 = `/tmp/g3b-sweep.tsv`（与 `G-3a` 的冻结件**逐槽相同**）
+⇒ 三组的规模与探针槽位**逐项对得上**，没有「口头数字」。
 
 ---
 
@@ -292,3 +307,55 @@ scrutinee 为 `String`、臂字面量为 `int` 的 `match` —— `pini check` *
 - **不修**两处分歧（各归其主；`charter.md` D2：不满足「阻塞 ∧ 机械」两条者登记不修）。
 - **不把 `Tests/` 下的模块剔出扫描面** —— 判据用「不在嵌套仓内」这一**结构**条件，不用名字清单（`charter.md` E2）。
 - **不改 `run-llvm`**（它仍没有包通道）；**不接进 hook**（该入口是判据器械，不是门禁）。
+
+---
+
+## 11. `A2` / `A3` 批（2026-09-17）：成因补实、读数出处、以及一处订正
+
+> 队列甲组 `A2`（把成因补进**在册工单**，含复现命令）与 `A3`（三组的成因与归属写进本件 §9）。
+> **本批零 `Sources` / `Tests` 改动**（只动 `docs/`，共 4 个载体）。
+
+### 11.1 一处订正：`run-llvm` 对目录的退出码是 `1`，不是 `0`
+
+三处载体（本件 §9 · `docs/issue-hir-blocker-queue-2026-09-17.md` §1.1 ·
+`docs/issue-run-llvm-discards-lli-exit-status-2026-09-16.md` §补记）此前都记
+「`pini run-llvm <目录>` → `couldn't be opened.`，**`rc=0`**」。**现测为 `rc=1`**：
+
+| 输入 | stderr | rc（三次连跑） |
+|---|---|:---:|
+| `examples/package-demo`（目录） | `Error: The file “package-demo” couldn’t be opened.` | **1 / 1 / 1** |
+| `examples/multifile`（目录） | `Error: The file “multifile” couldn’t be opened.` | **1 / 1 / 1** |
+| `…/RuntimeBackendTests/testArrayOutOfBoundsBothBackendsError.pini`（lli 真跑起来） | `Pini runtime error: array index 99 out of bounds (size 3)` | **0 / 0 / 0** |
+
+两处细节：两个二进制（`.build/debug/pini` 与 `/tmp/pini-build/…/pini`）**读数逐项相同** ⇒ 不是构建差异；
+每条**连跑三次**读数稳定 ⇒ 不是闪断。
+
+**符号级根因**（为什么只有后者是 `rc=0`）：`Sources/PiniCLI/main.swift` 的 `case "run-llvm"`
+**直接把参数当文件读**（`readFile(args[2])`，**无目录分支**）⇒ 目录走 `catch` → `exit(1)`；
+而 `runLLICommand` **内部**的 `waitUntilExit()` 丢弃 `terminationStatus` ⇒ lli 真跑起来但程序崩溃时，
+命令仍返回 `0`。**两条路径在代码上是不同位置，性质相反**：
+
+| 路径 | 表现 | 性质 | 归谁 |
+|---|---|---|---|
+| `readFile` 失败（目录 / 打不开） | 显式报错 + **`rc=1`** | **显式失败** —— 脚本看得见，**不是判据缺陷** | `docs/issue-hir-package-run-unsupported-2026-09-16.md`（能力缺口） |
+| `runLLICommand` 之后（程序自己崩） | lli 的 stderr 有真报错，命令却 **`rc=0`** | **假绿** —— 脚本看不见 | `docs/issue-run-llvm-discards-lli-exit-status-2026-09-16.md` |
+
+⇒ 「`run-llvm` 不接受目录」与「`rc=0` 掩盖」是**两件事**，此前被并排写进同一张表，
+读者会顺理成章读成「目录输入也静默」。**本批不替那次读错编解释**，只给出可复现的现测与符号级根因。
+
+### 11.2 `A3` 的判据自检
+
+| 判据 | 结果 |
+|---|---|
+| 三组各有**成因** | §9「成因（实测）」列，三组齐 |
+| 三组各有**归属** | `PACKAGE_MEMBER` → 27 条逐条具名（§10.3）· `FRONTEND_FAIL` → 在册并发运行时单 · `HARNESS_DEPENDENT` → 夹具自述 |
+| **不谎称已覆盖** | §9 开篇明写「『没测过』既不是红也不是绿」；`HARNESS_DEPENDENT` 明写「无须覆盖，但**不得计作被测**」 |
+| 规模**可核验** | §9.1（槽位分布 + 可复跑命令） |
+
+⇒ `A3` 的主体在 `A1` 批已落；本批**补读数出处（§9.1）**，并把归属里的**悬空指针补实**（§11.1 表）。
+
+### 11.3 未做范围
+
+- **不修** `run-llvm`（`terminationStatus` 原样丢弃 · 目录分支原样缺）—— 两张在册单**各管一半**。
+- **不新建单**：两条缺陷同载体（`main.swift` 同一个 `case`），拆单会让「一处代码的两个不足」分家。
+- 不动任何判据槽位 · 不动探针 · 不接进 hook · 不 push。

@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-17T21:50+0800"
-refresh_note = "2026-09-17 **乙组 `D1` / `D2` 裁决批**：新增「错误发现的层次定为静态层优先」一条（= `ADR-041` 的 §1.3 第 5 步）。要点 = 规范写明「编译期拒」· 判据绑定方法「负向夹具不删，改断言被拒 ∧ 拒绝在静态层 ∧ 错误码」· 13 条用例改写归 `G-4·G-5` · `D2` 后一半归在册的诊断通道单。⚠️ 本条**不含新读数**（裁决是规范性的、实现零改动），已如实标注。本次仅新增该条；存量条目未重新验证"
+last_refresh = "2026-09-17T22:00+0800"
+refresh_note = "2026-09-17 **队列甲组 `A2` / `A3` 批**：新增「`run-llvm` 的失败分两层：前端拒绝 rc=1，lli 执行后失败才是 rc=0」一条。要点 = 27 条 `PACKAGE_MEMBER` 全量实测（**26 条 rc=1 / 1 条 rc=0**）· **三处载体的 `rc=0` 订正**（两个二进制 × 三次连跑取证）· 一处「一条读成通例」的记录错误 · `A3` 补台账 §9.1 读数出处。⚠️ 本批**零 `Sources` / `Tests` 改动**，两张在册单均未修。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -927,3 +927,44 @@ note = """本条 = **`ADR-041`**（乙组 `D2` 取 ①）的 §1.3 第 5 步证�
 
 本次仅新增该条；存量条目未重新验证
 """
+
+[[evidence]]
+id = "2026-09-17 run-llvm 的失败分两层：前端拒绝 rc=1，lli 执行后失败才是 rc=0（三处载体据此订正）"
+citable = false
+claim = "A `pini run-llvm` failure reports its fate in two different places, and only one of them is a silent pass. The CLI's `run-llvm` case reads its argument as a file -- there is no directory branch, unlike the `run` case, which grew one -- so a directory, and equally any rejection from the front end or the lowering pass, travels the catch branch and exits 1, which a script can see. The place that cannot be seen is the second one, inside `runLLICommand` after `waitUntilExit()`, where `terminationStatus` is discarded: a program that reached lli and failed there still leaves the command returning 0. Measured over the 27 members the probe excludes as PACKAGE_MEMBER, 26 exit 1 under four different codes -- E6-004 twelve times, E4-001 twelve, E2-001 once, E4-010 once -- and exactly one exits 0: the vendored-FFI member, whose stderr says the JIT session could not find its symbols. That one is the silent pass, and it sits inside the very set the probe records as unmeasured, so the probe cannot tell it apart from a member that never ran. Three carriers had recorded the directory case as returning 0; the measured value is 1 on two binaries across three consecutive runs each. A fourth carrier had generalised one member's reading into a rule for members at large; the measurement shows the exit code is decided by which layer refuses, not by the input being a member."
+artifacts = [
+  "docs/issue-run-llvm-discards-lli-exit-status-2026-09-16.md",
+  "docs/issue-hir-package-run-unsupported-2026-09-16.md",
+  "docs/hir-criteria-gap-ledger.md",
+  "docs/issue-hir-blocker-queue-2026-09-17.md",
+  "tools/three-edge-union.py",
+  "Sources/PiniCLI/main.swift",
+]
+command = "export PINI_LLVM_BIN=/opt/homebrew/opt/llvm/bin ; pini run-llvm examples/package-demo ; echo rc=$? ; pini run-llvm examples/multifile ; echo rc=$? ; pini run-llvm Tests/PiniTests/RuntimeBackendTests/testArrayOutOfBoundsBothBackendsError.pini ; echo rc=$? ; then for each of the 27 PACKAGE_MEMBER rows of the probe's frozen sweep (/tmp/g3b-sweep.tsv, column 3) run pini run-llvm <member> with a 25s timeout, tabulating returncode ; repeated with both .build/debug/pini and /tmp/pini-build/arm64-apple-macosx/debug/pini"
+output = "Directory input: examples/package-demo and examples/multifile both print the couldn-t-be-opened error and exit 1, three consecutive runs each, identical on both binaries. Control fixture testArrayOutOfBoundsBothBackendsError.pini prints `Pini runtime error: array index 99 out of bounds (size 3)` and exits 0 three times, while `pini run` reports 1 under both ast and hir. The 27 members give an exit-code distribution of 26 x 1 and 1 x 0. The single zero is examples/ffi_module/cstring.pini, whose stderr is `JIT session error: Symbols not found: [ _ffi_memset, … ]`. The 26 split as E6-004 twelve times (both multifile members, all five package-demo members, selfhost's src/main, src/ast/ast, src/lexer/lexer, and two of its corpora), E4-001 twelve times (selfhost's src/ast/format, src/parser/parser and ten test files), E2-001 once (lex_corpus), E4-010 once (parse_slice_corpus). `pini run examples/package-demo` exits 0 printing 107, so the interpreter-side package channel has a directory branch where run-llvm does not. No source or test file changed; both registered tickets remain unfixed."
+validated_at = "2026-09-17T21:58+08:00"
+status = "FRESH"
+note = """本条 = 队列**甲组 `A2`** 的实测（「把 `A1` 的成因补进在册工单，含复现命令」），顺带交付 `A3`。
+
+⭐ **要把「两层」读成一句话**：`pini run-llvm` 的失败**发生在哪一层**决定退出码 ——
+**前端 / 降载层拒绝**（`E2`/`E4`/`E6`）走 Swift 的 `catch` ⇒ **`rc=1`**（**显式失败**，脚本看得见）；
+**lli 真跑起来之后失败** ⇒ `terminationStatus` 被丢弃 ⇒ **`rc=0`**（**假绿**，脚本看不见）。
+`Sources/PiniCLI/main.swift` 的 `case "run-llvm"` **直接把参数当文件读**（无目录分支）⇒
+目录与前端拒绝**同路**；只有 `runLLICommand` 内部才是假绿。**两类现象此前被并排写进一行。**
+
+⚠️ **三处载体的 `rc=0` 订正**（本批的核心动作）：
+`docs/hir-criteria-gap-ledger.md` §9 · `docs/issue-hir-blocker-queue-2026-09-17.md` §1.1 ·
+`docs/issue-run-llvm-discards-lli-exit-status-2026-09-16.md` §补记 表格。
+**取证方式**：两个二进制 × 每条三次连跑，读数逐项相同 ⇒ 不是构建差异、不是闪断。
+**未替原错编解释**（是按错读、抄串行还是另有形态，无从复原），只给可复现的现测与符号级根因。
+
+⭐ **一处「一条读成通例」**：原记「`pini run-llvm <成员>` 打印**同一错误**，但 `rc=0`」——
+实测 27 条里 **26 条 `rc=1`** 且报文**四种码**，只有 **1 条 `rc=0`**（`ffi_module/cstring.pini`）。
+⇒ 那条记载把**一条**写成了**通例**，并把两类失败混成一句。**该 1 条才是假绿**，
+且它**恰在探针排除面上**（探针只能把它记成 `PACKAGE_MEMBER` = 未测）。
+
+**`A3` 的部分**：台账 §9.1 补**读数出处**（槽位分布 `320 = 255 + 27 + 20 + 11 + 4 + 2 + 1` + 可复跑命令），
+使三组「未测面」的规模**可核验**；归属里的**悬空指针补实**（「在册工单」→ 具名单）。
+
+**未做**：不修 `run-llvm`（`terminationStatus` 原样丢弃 · 目录分支原样缺）—— 两张在册单各管一半；
+不新建单（同载体同 `case`）；不动任何判据槽位；不 push。本次仅新增该条；存量条目未重新验证"""
