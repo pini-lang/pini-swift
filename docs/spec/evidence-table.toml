@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-17T22:10+0800"
-refresh_note = "2026-09-17 **`G-3a`（L1 并发内建降载）批**：新增「三内建走同一张表，41 条缺口归零且不转绿」一条。要点 = 单源（`RuntimeOps.concurrencyBuiltins` 表两侧同读）· 夹具面 41 条 `call to unknown function` 归零 · 全量回归 64 条**集合相等**（fixed 0/new 0/still 64）· `ast` 方向逐条相同 · 契约 clean(61/61) · 变异反证级 2 只红对应不外溢。⚠️ **新发现一处判据失明**：探针 6 根**不含并发簇**（实测 0 条）⇒ 探针零位移对该面**无区分力**，已写进批次回填与阻塞队列。本次仅新增该条；存量条目未重新验证"
+last_refresh = "2026-09-17T23:40+0800"
+refresh_note = "2026-09-17 **`G-3b`（L2 异步体 `Result` 上下文）批**：新增「异步体 return 位拿到 `Result` 上下文：夹具面 60 → 1，仍不转绿」一条。要点 = 照两条独立权威写（前端 `TypeChecker.bodyReturns` + 解释器 `Interpreter.joinFuture`）· 一条规则三处消费（return 位 / 定义侧 / 签名表）· 夹具面 60 → 1 且逐夹具账目闭合（59 条变化全部来自该缺口，其余 24 条未动）· 全量回归 64 → 64 **集合相等**（stash 法取父基线）· `ast` 方向逐条相同 · 契约 clean(61/61) · 探针逐槽相等（⚠️ 该判据对本面无区分力）。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -850,4 +850,49 @@ note = """本格 = `G-3` 四批中的第 1 批（L1 并发内建降载），照 
 
 **不在本批**：`joinAll` / `joinWithin` / `isCancel`（其回答要与 `Future` 值打交道，HIR 侧无表示）
 归 `G-3b` / `G-3c`；契约未动（仍 61）；调度器与值层未动；乙组 `D2` 的错误通道口径。
+"""
+
+[[evidence]]
+id = "2026-09-17 G-3b 异步体 return 位拿到 Result 上下文：夹具面 60 → 1，仍不转绿"
+citable = false
+claim = "A `=>` body's return position now gets the type the front end already demands of it. The checker's `bodyReturns` states that a `=>` body returns `Result<T, Error>` there -- which is why the written forms are `return ok(v)` and `return err(e)`, and why a bare `=> ()` process stays void -- while the interpreter states the same rule from the other side in `Interpreter.joinFuture`: a Result passes through untouched and anything else is boxed into `ok(v)`. The lowerer had neither, so `ok(10)` at that position found no context and the whole concurrency cluster stopped there. One helper, `asyncBodyReturnType`, now wraps a non-void async body's declared return in `.result(ok:)`, and the three consumers read that same rule: the return position's expected type, the emitted function's return type, and the signature table -- so the definition side and the call side cannot drift. Measured on the fixture face over eight directories (83 .pini files): the ok/err construction gap falls 60 -> 1, and the one that remains is a different position wearing the same message, filed separately. All 59 moves are ok/err construction becoming the next gap down; the other 24 fixtures do not move a byte. Nothing turns green: the full regression reads 64 failures both before and after, set-equal item by item, because removing this layer exposes the join layer, which G-3c owns."
+artifacts = [
+  "docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md",
+  "docs/issue-interpreter-hir-plan-2026-09-12.md",
+  "docs/issue-hir-blocker-queue-2026-09-17.md",
+  "docs/issue-hir-p4-gamma-plan-2026-09-16.md",
+  "docs/issue-hir-result-construction-without-context-2026-09-17.md",
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/Type/TypeChecker.swift",
+  "Sources/PiniCore/Interpreter/Interpreter.swift",
+]
+command = "swift build --disable-sandbox --scratch-path /tmp/pini-build ; python3 tools/hir-chunk-run.py /tmp/g3a-classes.txt 3 /tmp/g3b-base (after git stash, same driver) and /tmp/g3b-new ; the same three chunks with PINI_INTERP_ENGINE=ast through /tmp/chunk-ast.py ; env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/g3b-sweep.tsv ; python3 tools/hir-contract-check.py"
+output = "Fixture face, eight concurrency directories (7 from the plan plus TaskIsolationTests), 83 .pini files: old first-gap counts include ok-construction 52 and err-construction 8; the fixture-by-fixture diff shows 59 fixtures changed and all 59 came from those two classes. The new first gaps are join-not-lowered 40, cancel-method-calls 6, joinWithin 5, detach 3, joinAll 2, two reaching other error classes, and one try-else position. The single remaining ok-construction fixture is testDiffMatchJoinInBody, where `match ok(1)` builds a Result at a match scrutinee -- a different position that shares the message, so the message count is not a position count. The other 24 fixtures are byte-identical before and after. Full regression in three chunks, same driver on both sides (baseline obtained by stashing the source and rebuilding): 64 failures before and 64 after, set-equal (fixed 0 / new 0 / still 64), chunks 26+18+20 identical, 115/115 classes reached, zero signals. The same three chunks under PINI_INTERP_ENGINE=ast: 64, item-by-item identical to the default direction. On the AST engine the fixture face differs in 2 of 83, both stderr-only, and three consecutive runs of the same binary show the warning's line number moving between runs, so those two are the fixtures' own non-determinism rather than this change. Probe: 320 fixtures, every slot unchanged and zero per-fixture displacement, FLIP BLOCKERS 0 -- a reading with no discriminating power here, since the probe's six roots contain none of the concurrency fixtures; the evidence is the gap count, the fixture-by-fixture diff and the set-equal regression. Contract check clean at 61/61 on all three anchors."
+validated_at = "2026-09-17T23:40+08:00"
+status = "FRESH"
+note = """本格 = `G-3` 四批中的第 2 批（L2 异步体 `return` 位的 `Result` 上下文），**照权威写、不新定规则**。
+
+⚠️ **两条口径，读数字前先看**：
+
+① **「9 条」与「60 条」都对，分母不同** —— 规划件 §1.4 的 9 是**测试面**（前四类 46 用例里的失败数），
+本条的 60 是**夹具面**（8 个目录 83 个 `.pini`）。
+
+② **「缺口归零」不是「转绿」** —— 本格实测 **0 条转绿**，全量回归 64 → 64 集合相等；
+缺口原样落到下一层（`join 未降载` 40 条），归 `G-3c`。规划 §3.2 明写「不要把转绿数写进验收表」。
+
+⭐ **本格实测发现一处判据缺陷**：**同一句报文承载两个位置**。降载层那句
+`'(ok|err)' construction requires a Result-typed context this grid` 打靶点是**同一个**
+（`ok`/`err` 分支），但触发它的位置既有**异步体 return 位**（本格修的）又有 **`match` 检体位**
+（本格不认领的）⇒ **报文计数 ≠ 位置计数**，G-3b 之前的分母里混着后者。已另立工单。
+
+⚠️ **探针那一条对本格无区分力**：探针 6 根不含并发簇（实测 0 条）⇒ 零位移是必然的。
+与 `G-3a` 同一失明形态，凡以「探针零位移」为 `G-3*` 各批判据者必须同时给第二条判据。
+
+**已知边界（登记不修）**：`=> ()`（void）异步体沿用 void 路径 —— 语言没有可命名的 unit 载荷类型，
+且实测 0 条语料在 void 异步体里构造 `ok(...)`；方法侧的 `=>` 全仓实测 0 个。
+
+**一处过程事故**：本机沙箱把 `git stash` 执行了两遍（第一遍已入栈、第二遍报「无改动可存」），
+我据第二遍输出一度以为改动丢失 ⇒ 用三方 md5 + `stash list` 交叉验证处置。同族事实见手册。
+
+本次仅新增该条；存量条目未重新验证
 """
