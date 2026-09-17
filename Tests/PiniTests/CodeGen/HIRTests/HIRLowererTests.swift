@@ -73,7 +73,7 @@ final class HIRLowererTests: XCTestCase {
         XCTAssertEqual(op, .lessThan)
         // while body: if (1 stmt) + store
         XCTAssertEqual(loopBody.count, 2)
-        guard case .ifStmt(_, let thenBody, let elseBody)? = loopBody.first else {
+        guard case .ifStmt(_, _, let thenBody, let elseBody)? = loopBody.first else {
             return XCTFail("expected if inside loop")
         }
         XCTAssertEqual(thenBody.count, 1)

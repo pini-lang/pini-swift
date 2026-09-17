@@ -566,7 +566,14 @@ public indirect enum HIRStmt: Equatable {
     case allocVar(name: String, type: HIRType, mutable: Bool, initializer: HIRExpr?)
     /// Store into an existing variable; `type` is the declared variable type.
     case storeVar(name: String, type: HIRType, value: HIRExpr)
-    case ifStmt(condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?)
+    /// `[label|] if cond: then [else: else]`. `label` is what makes this an
+    /// **interruptible frame** (ADR-039): `break <label>` may leave the `if`
+    /// block. It is not a `continue` target — `continue-stmt ::= 'continue'
+    /// [IDENT]` carries the note *仅循环标签有效*, and `break-stmt` carries no
+    /// such restriction. The label itself is never read at run time: as with
+    /// loops, only the resolved depth travels, and `label != nil` is what the
+    /// back ends test to decide whether to catch a signal here.
+    case ifStmt(label: String?, condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?)
     /// `while cond: body [step: block]`. The step block (ADR-014) runs once
     /// per iteration after the body — on normal completion *and* on
     /// unlabeled `continue` (interpreter parity); `break` skips it.

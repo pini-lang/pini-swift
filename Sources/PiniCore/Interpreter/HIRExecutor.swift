@@ -1516,16 +1516,41 @@ public final class HIRExecutor: DebugHookHost {
             // through the copy surfaces in the original, silently.
             try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
 
-        case .ifStmt(let condition, let thenBody, let elseBody):
+        case .ifStmt(let label, let condition, let thenBody, let elseBody):
             // Each branch is its own defer scope. The HIR folds `elif` chains
             // into a nested `ifStmt` in `elseBody`, so a chain of three branches
             // is three scopes here for the same reason it is three on the AST
             // channel — the interpreter reaches each `Block` through
             // `executeBlock` too.
-            if try evaluateCondition(condition) {
-                try executeBlock(thenBody)
-            } else if let elseBody = elseBody {
-                try executeBlock(elseBody)
+            //
+            // ADR-039: a labeled `if` is an interruptible frame, so its branch
+            // runs under a catch — mirroring `Interpreter.executeIf`, which
+            // wraps `executeIfBody` for exactly this reason. An unlabeled `if`
+            // runs bare: it has no signal of its own to consume, and catching
+            // for it would swallow a depth-1 signal aimed at an enclosing loop.
+            if label == nil {
+                try executeIfBranch(condition: condition, thenBody: thenBody, elseBody: elseBody)
+            } else {
+                do {
+                    try executeIfBranch(condition: condition, thenBody: thenBody, elseBody: elseBody)
+                } catch let signal as HIRControlSignal {
+                    switch signal {
+                    case .breakSignal(let depth):
+                        // `depth == 1` ⇒ this frame is the target: the `break`
+                        // leaves the block and control resumes after the `if`.
+                        // Anything deeper belongs to an enclosing frame and is
+                        // rethrown one level shallower.
+                        if depth > 1 { throw HIRControlSignal.breakSignal(depth: depth - 1) }
+                    case .continueSignal(let depth):
+                        // An `if` frame is never a `continue` target
+                        // (`continue` resolves to loop frames only), so a
+                        // signal reaching here is aimed further out and its
+                        // residual depth is >= 2.
+                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                    default:
+                        throw signal
+                    }
+                }
             }
 
         case .whileStmt(let condition, let body, let step):
@@ -1784,6 +1809,21 @@ public final class HIRExecutor: DebugHookHost {
             )
         }
         return flag
+    }
+
+    /// Select and run one `if`/`elif`/`else` branch. Extracted so the frame
+    /// layer in the `ifStmt` case can wrap the selection without restating it
+    /// — the selection is the same whether or not the `if` carries a label.
+    private func executeIfBranch(
+        condition: HIRExpr,
+        thenBody: HIRBlock,
+        elseBody: HIRBlock?
+    ) throws {
+        if try evaluateCondition(condition) {
+            try executeBlock(thenBody)
+        } else if let elseBody = elseBody {
+            try executeBlock(elseBody)
+        }
     }
 
     /// Mirrors `Interpreter.executeWhile` (ADR-014 step contract), with the

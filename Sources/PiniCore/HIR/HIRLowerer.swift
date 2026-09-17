@@ -1564,13 +1564,25 @@ public enum HIRLowerer {
             }
             return [.returnStmt(value: nil)]
 
-        case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, _, _):
+        case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, let label, _):
             let cond = try lowerExpr(condition, expected: .boolean, into: &context)
             guard cond.type == .boolean else {
                 throw unsupported("if condition is not Bool", at: conditionLocation(condition))
             }
+            // ADR-039: a labeled `if` is an interruptible frame, so `break 标签`
+            // may leave the block. It is not a `continue` target (`isLoop:
+            // false`). The frame covers every branch — `then`, each `elif` and
+            // `else` — because the AST channel's `executeIf` wraps the whole of
+            // `executeIfBody` in its catch.
+            if let label = label {
+                context.controlFrames.append(ControlFrame(label: label, isLoop: false))
+            }
+            defer { if label != nil { context.controlFrames.removeLast() } }
             let thenBody = try lowerBlock(thenBlock, into: &context)
             // Elif chains lower to nested ifs (tree shape keeps them structural).
+            // The chain is nested *inside* this frame and therefore carries no
+            // label of its own: `break label` in an `elif` body leaves the whole
+            // `if`, which is where `executeIf`'s catch sits.
             var chain: HIRBlock? = nil
             if let elseBlock = elseBlock {
                 chain = try lowerBlock(elseBlock, into: &context)
@@ -1581,17 +1593,17 @@ public enum HIRLowerer {
                     throw unsupported("elif condition is not Bool", at: conditionLocation(branch.condition))
                 }
                 let branchBody = try lowerBlock(branch.block, into: &context)
-                chain = [.ifStmt(condition: branchCond.node, thenBody: branchBody, elseBody: chain)]
+                chain = [.ifStmt(label: nil, condition: branchCond.node, thenBody: branchBody, elseBody: chain)]
             }
-            return [.ifStmt(condition: cond.node, thenBody: thenBody, elseBody: chain)]
+            return [.ifStmt(label: label, condition: cond.node, thenBody: thenBody, elseBody: chain)]
 
         case .whileStatement(let condition, let body, let step, let label, _):
             let cond = try lowerExpr(condition, expected: .boolean, into: &context)
             guard cond.type == .boolean else {
                 throw unsupported("while condition is not Bool", at: conditionLocation(condition))
             }
-            context.loopLabels.append(label)
-            defer { context.loopLabels.removeLast() }
+            context.controlFrames.append(ControlFrame(label: label, isLoop: true))
+            defer { context.controlFrames.removeLast() }
             let bodyStmts = try lowerBlock(body, into: &context)
             let stepStmts = try step.map { try lowerBlock($0, into: &context) }
             return [.whileStmt(condition: cond.node, body: bodyStmts, step: stepStmts)]
@@ -1604,15 +1616,25 @@ public enum HIRLowerer {
 
         case .breakStatement(let label, _):
             // Unresolvable target: fail-loud at run time, exactly like the
-            // interpreter (the signal escapes to the top level). Lowering it
-            // hard here would reject programs the interpreter accepts.
-            guard let depth = resolveLoopDepth(label: label, into: &context) else {
+            // interpreter (the signal escapes past every frame and errors at
+            // the top level). Lowering it hard here would reject programs the
+            // interpreter accepts. "Unresolvable" means no enclosing
+            // interruptible frame carries the label — a labeled `if` counts
+            // (ADR-039), so this set is narrower than it was before that ADR.
+            guard let depth = resolveControlDepth(
+                label: label, target: .anyFrame, into: &context
+            ) else {
                 return [.panicStmt(message: "Pini runtime error: break outside loop")]
             }
             return [.breakStmt(depth: depth)]
 
         case .continueStatement(let label, _):
-            guard let depth = resolveLoopDepth(label: label, into: &context) else {
+            // `continue` needs a *loop* frame (`continue-stmt ::= 'continue'
+            // [IDENT]` carries the note *仅循环标签有效*), so an `if` label is
+            // unresolvable here even though it is a frame for `break`.
+            guard let depth = resolveControlDepth(
+                label: label, target: .loopOnly, into: &context
+            ) else {
                 return [.panicStmt(message: "Pini runtime error: continue outside loop")]
             }
             return [.continueStmt(depth: depth)]
@@ -1721,8 +1743,8 @@ public enum HIRLowerer {
                 at: location
             )
         }
-        context.loopLabels.append(label)
-        defer { context.loopLabels.removeLast() }
+        context.controlFrames.append(ControlFrame(label: label, isLoop: true))
+        defer { context.controlFrames.removeLast() }
         // Pattern variables are in scope for body AND step (mirroring the
         // emitter's loop scope and the interpreter's per-iteration
         // Environment). `_` placeholders bind nothing.
@@ -1744,24 +1766,49 @@ public enum HIRLowerer {
         )
     }
 
-    /// G15: resolve a break/continue to its unwind depth (ADR-014 labeled
-    /// control flow). `nil` label = innermost loop (depth 1); a labeled
-    /// target matches the nearest enclosing loop carrying that label.
-    /// Unresolvable targets (no enclosing loop, unmatched label) return `nil`
-    /// — the caller lowers those to a runtime panic, matching the
-    /// interpreter's escape-to-top-level error.
-    private static func resolveLoopDepth(
+    /// Which frames a signal is allowed to leave.
+    private enum ControlTarget {
+        /// `break` — any interruptible frame (ADR-039 D1).
+        case anyFrame
+        /// `continue` — a loop only (`continue-stmt`'s *仅循环标签有效*).
+        case loopOnly
+    }
+
+    /// Resolve a break/continue to its unwind depth (ADR-014 labeled control
+    /// flow, widened by ADR-039). Depth counts **frames unwound from the
+    /// innermost one, target included**, so it doubles as the number of
+    /// `depth - 1` decrements the signal makes on its way out.
+    ///
+    /// An unlabeled signal targets the innermost **loop**, not the innermost
+    /// frame: a labeled `if` on the way out is stepped over, because on the
+    /// AST channel the signal arrives there as `nil != label` and is rethrown
+    /// unchanged. Unresolvable targets (no frame of the required kind, no
+    /// matching label) return `nil` — the caller lowers those to a runtime
+    /// panic, matching the interpreter's escape-to-top-level error.
+    private static func resolveControlDepth(
         label: String?,
+        target: ControlTarget,
         into context: inout FunctionContext
     ) -> Int? {
-        guard let label = label else {
-            return context.loopLabels.isEmpty ? nil : 1
-        }
-        // Innermost-first scan: depth = number of loop frames unwound.
-        for (index, frameLabel) in context.loopLabels.enumerated().reversed() {
-            if frameLabel == label {
-                return context.loopLabels.count - index
+        let frames = context.controlFrames
+        var index = frames.count - 1
+        while index >= 0 {
+            let frame = frames[index]
+            let matches: Bool
+            switch (label, target) {
+            case (nil, _):
+                matches = frame.isLoop
+            case (let label?, .anyFrame):
+                matches = frame.label == label
+            case (let label?, .loopOnly):
+                // A label on an `if` block does not satisfy a `continue`: that
+                // form is invalid, not merely unreachable (ADR-039 D1).
+                matches = frame.isLoop && frame.label == label
             }
+            // Innermost-first: the nearest frame that both encloses the signal
+            // and can consume it is the target (ADR-039 D2).
+            if matches { return frames.count - index }
+            index -= 1
         }
         return nil
     }
@@ -4953,6 +5000,15 @@ private struct HIRGenericEnumIndex {
     }
 }
 
+/// One enclosing construct a `break`/`continue` may leave. Loops are
+/// `continue` targets as well; a labeled `if` block is not (ADR-039; the
+/// `continue-stmt` production carries the note *仅循环标签有效* while
+/// `break-stmt` carries no such restriction).
+private struct ControlFrame {
+    let label: String?
+    let isLoop: Bool
+}
+
 private struct FunctionContext {
     let functionName: String
     let returnType: HIRType?
@@ -4989,10 +5045,11 @@ private struct FunctionContext {
     var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
 
-    /// G15: enclosing loop labels, innermost last (`nil` = unlabeled loop).
-    /// Drives labeled break/continue depth resolution (ADR-014): a label
-    /// matches the nearest enclosing loop carrying that label.
-    var loopLabels: [String?] = []
+    /// Enclosing interruptible frames, innermost last (`nil` = unlabeled
+    /// loop). Drives labeled break/continue depth resolution (ADR-014 for the
+    /// loops-only era, ADR-039 once a labeled `if` became a frame too): a
+    /// label matches the nearest enclosing frame carrying that label.
+    var controlFrames: [ControlFrame] = []
 
     /// M6a D7: counter for synthetic slot names (`$destructureN`) so several
     /// destructures in one function cannot share a slot. `$` is not a
