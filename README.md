@@ -32,7 +32,7 @@ Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏
 | **函数体强制缩进** | 函数体必须缩进 ≥1 层（§A.2.3）；缩进还用于控制流子块边界 |
 | **数据与逻辑分离** | 类型体（struct/object/enum）只含字段/用例；方法须写在同文件扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>` 并显式 `\|self`/`\|Self`（规则 3.2/3.14） |
 | **显式错误传播** | 错误通过返回元组传递，而非异常抛出 |
-| **异步与并发** | `=>` 标记异步函数并急切派发、`await`（异步体挂起）/ `wait`（同步阻塞）显式 join 取结果；`joinAll` 聚合、`joinWithin` 超时、`cancel` 取消、`detach` 剪枝；错误走 `ok`/`err`（errors-as-data）；GCD 真线程 + 结构化取消树（B2-1/B2-2） |
+| **异步与并发** | `=>` 标记异步函数并急切派发、`await` / `wait` 显式 join 取结果（⚠️ 2026-09-17 起**两关键字同为阻塞 join** —— 挂起模式已暂时退役，见 `docs/spec/adr/adr-043-suspend-mode-retirement.md`）；`joinAll` 聚合、`joinWithin` 超时、`cancel` 取消、`detach` 剪枝；错误走 `ok`/`err`（errors-as-data）；GCD 真线程 + 结构化取消树（B2-1/B2-2） |
 | **值/引用类型分离** | 结构块是值类型，对象块是引用类型（ARC 管理） |
 | **块标签（ADR-014）** | `标签\|if`/`标签\|while`/`标签\|for` 定向 `break 标签`/`continue 标签`（旧 `scope 块标签:` 已转 reserved-error） |
 | **懒加载 `LazyRef<T>`（G40，v0.42.0）** | 引用语义懒加载包装：`.value` 同步 once 获取（多线程首访仅一个线程执行初始化）、复制共享缓存；`LazyRef<T>(闭包)` / `LazyRef(闭包)` 双形态构造；解释器 + LLVM 双后端 |
@@ -283,7 +283,7 @@ Pini/
 │   │   ├── Parser/           # 语法分析
 │   │   ├── Semantic/         # 语义分析
 │   │   ├── Type/             # 类型系统
-│   │   ├── Interpreter/      # 解释器（含 SuspendScheduler 并发运行时）
+│   │   ├── Interpreter/      # 解释器（并发运行时；⚠️ SuspendScheduler 已随挂起模式退役、待删）
 │   │   ├── HIR/              # 高级中间表示（类型化树；HIRLowerer 类型决策单点）
 │   │   ├── CodeGen/          # LLVM IR 生成（只消费 HIR，纯机械发射）
 │   │   ├── LSP/              # 语言服务器
@@ -328,7 +328,7 @@ swift test
 > - **迭代（v0.39.0+）**：`for-in` 已实现（spec G36）——`for (模式元组,) in 集合值:`，支持 `step:` 与 `标签\|for`（ADR-014）；`while + len()` 仍可用。
 > - **块标签（ADR-014，v0.48.1）**：`标签\|if`/`标签\|while`/`标签\|for` 模型——`break 标签` / `continue 标签` 按标签名定向（无 sigil）；旧 `scope 块标签:` 已转 reserved-error；`#` 文档注释（行首到行尾，与 `;` 行注释并存）。
 > - **继承**：当前无继承语法（方法沿继承链静态校验已移出 P3，单列排期）。
-> - **异步并发（G12，Provisional）**：`=>`/`await`/`wait`/`joinAll`/`joinWithin`/`cancel`/`isCancel`/`detach` 已实现（立场 B：GCD 真线程 + `Future` 结构化取消树 + `joinAll` fail-fast）。错误经 `ok`/`err` 返回，`CancelError` 表示取消。**`await`（异步体挂起）/ `wait`（同步阻塞 join）已落地**：suspend 模式经自建续体运行时（`SuspendScheduler`，纯 Swift 5.9）真正挂起、释放 OS 线程、精确恢复；默认同步/阻塞 join 路径不变，`joinWithin` 仍为带超时阻塞 join。跨平台后端与自举纯 libc 为规划方向（长期愿景见 spec）。
+> - **异步并发（G12：阻塞语义 Stable · 挂起模式 Provisional 已退役）**：`=>`/`await`/`wait`/`joinAll`/`joinWithin`/`cancel`/`isCancel`/`detach` 已实现（立场 B：GCD 真线程 + `Future` 结构化取消树 + `joinAll` fail-fast）。错误经 `ok`/`err` 返回，`CancelError` 表示取消。**`await` 与 `wait` 同为阻塞 join**（占用 worker 线程）：⚠️ 2026-09-17 起**挂起模式**（经自建续体运行时真正挂起、释放 OS 线程、精确恢复）**已暂时退役** —— 该路径在生产面从未启用，退役对用户程序**零可见影响**，待架构重写后恢复；`joinWithin` 仍为带超时阻塞 join。跨平台后端与自举纯 libc 为规划方向（长期愿景见 spec）。
 > - **测试（v0.42.0）**：`\|test` 函数块 + `assert` 内建 + `pini test` 已落地；`.valueFuture` 已抛弃。
 > - **FFI（ADR-015，Phase 2a，Experimental）**：解释器端已落地——`foreign` 块经预注册原生函数表（`malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`）解析，未注册函数注册期报错；`&` 为**快照取址**（写回不更新原变量，与 LLVM 端真引用语义不同）；dlsym 动态符号解析与 LLVM 端 FFI 为后续阶段。见 `examples/ffi.pini`。
 

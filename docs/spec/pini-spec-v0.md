@@ -198,7 +198,7 @@
 | `nil` 关键字（= `Optional.none` 等效常量） | 已定义（v0.35.0，见 G30） | ✅ | Provisional | `Keyword.nil` / `Parser.parsePrimaryAtom` / Pini草稿.md（G30） |
 | `?` 可选类型糖（前缀 `?T` = `Optional<T>` 类型层缩写） | 已定义（v0.36.0，见 G31） | ✅ | Provisional | `Token.questionMark` / `Parser.parseTypeAnnotation` / Pini草稿.md（G31） |
 | `iota()` 枚举序位自增 | 已移除（v0.29） | ✗ | Removed | 违反无元编程原则；字面量默认亦随规则 3.15（ADR-016）移除——枚举关联参数仅位置类型 |
-| 异步 `=>` 派发 + `await`/`wait`（`await` 异步体挂起 / `wait` 同步阻塞 join；挂起模式经自建续体运行时释放 OS 线程、精确恢复；同步/阻塞 join 为默认路径） | 已定义（G12 / §3.1；v0.41.0 落地，v0.43.0 T7→Stable） | ✅ | Stable | `examples/concurrency.pini` / `SuspendEvaluator.swift`、`SuspendScheduler.swift` |
+| 异步 `=>` 派发 + `await`/`wait`（`await` 异步体挂起 / `wait` 同步阻塞 join；⚠️ **挂起模式**——经自建续体运行时释放 OS 线程、精确恢复——**2026-09-17 已实现暂时退役**（ADR-043，生产面零启用），现行**唯一**形态为同步/阻塞 join） | 已定义（G12 / §3.1；v0.41.0 落地，v0.43.0 T7→Stable；⚠️ **2026-09-17 分层订正**：挂起模式降 Provisional 并退役） | ✅ | Stable（阻塞语义）· Provisional（挂起模式，已退役） | `examples/concurrency.pini` / `Interpreter.swift`、`Value.swift`、`Scheduler.swift`（现行）；`SuspendEvaluator.swift`、`SuspendScheduler.swift`（**已退役**） |
 | `import` / `export` 块（**唯一顶级形态**；解析 + 跨模块 enforce） | 已定义且已实现（**G52 批 1，2026-08-31**：块式解析（D-1 块头=当前文件名校验）+ 裸语句移除（破坏性）+ R2 依赖图禁环（E3-010）+ R4 `别名.符号` 限定访问（D-2 静态互斥 E3-004）+ public 门槛（E3-012）+ R1 物理边界（E3-011）；加载器递归预载全图。IR 后端不支持跨模块（后续批次）。MVS/`pini-summary`/`pini mod`/远程 = 批 3/4） | ✅（解释器） | Provisional | `Parser.parseImportBlock/parseExportBlock` / `ModuleDependencyLoader` / `SemanticAnalyzer` 限定校验 / `Interpreter` 限定派发 / `ModuleSystemTests` |
 | `pini.toml` 模块清单 | 已定义（P4 v0.23；边界细则见 **G52**） | **◐** | Provisional | `Package`/`FileLoader` 加载 + 跨文件符号 + 可见性 enforce **已实现**；**双通道清单已实现（批 6）**：`[tap]`/`[require]`/`[require.<tap>]`/`[resources]`/`[resources.<tap>]`/`[replace]` 解析 + `[[ ]]` 数组表（MiniTOML），旧 `[dependencies]` 命中即报错指引；`spec`/`[[bin]].entry`/`[lib]`/`[tool.pini]` 不消费；MVS 与 `pini-summary.toml` **已实现**（v1 每依赖单可用版本、仅本地 `file:` tap，远程下载批 7） |
 | 标准库内建函数（29 个，按 ADR-020 D4 六组组织：collection/char/pointer/io/math/concurrency/value） | 部分（G14 文件 IO 已落地；字符谓词已定义 ADR-019；并发签名未钉） | ✅ | Provisional/Experimental | `BuiltinRegistry`（单点登记）/ `Interpreter` 内建分发 |
@@ -476,7 +476,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | G1 | 形式化 EBNF（声明/表达式/语句/类型） | 已定义（权威文法见 §A 附录；原草案降为历史） | Provisional | v0.43.0 | 缺口 1.1 / §A |
 | G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.parseTopLevelDecl / 语言参考（词法结构·行首消歧） / §A.4 3.0 |
 | G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，ADR-032） | 已定义且已实现（§2.4.4：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；迁移批 M2 落地，`except` 关键字与 `UnwrapErrSignal` 已退役；LLVM 侧 try-else 表达式 fail-loud 待后端批） | Provisional | v0.53.0 | `Parser.parseTry` / `Expression.tryExpression` / `Interpreter` tryExpression 求值 / §2.4.4 / ADR-032 |
-| G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**） | Stable | v0.43.0 | SuspendEvaluator.swift / SuspendScheduler.swift / Value.swift / §3.1 |
+| G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 ADR-012） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**）。⚠️ **2026-09-17 分层订正（ADR-043）**：**阻塞语义与结构化并发契约维持 Stable**；**挂起模式降为 Provisional 并已实现暂时退役**（生产面零启用） | Stable（阻塞语义）· Provisional（挂起模式，已退役） | v0.43.0 | `Interpreter.swift` / `Value.swift` / `Scheduler.swift` / §3.1；⚠️ `SuspendEvaluator.swift`、`SuspendScheduler.swift` **已退役** |
 | G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
 | G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
 | G42 | `Ref 系类型引用语义`（独立 Value case + class 承载、复制共享状态） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
@@ -499,10 +499,11 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | **G59** | **泛型枚举用例构造的形态与类型实参挂点**：**限定形态** `枚举名<实参…>.用例(载荷…)` **为准**——父枚举与类型实参**均由书写给出**、不依赖推断，实参个数可在类型层**静态校验**；**裸名形态** `用例<实参…>(载荷…)` 为**糖**——先按 ADR-026 D1 三档解析出父枚举再逐位绑定实参，此后与限定形态**同一语义**（**代价 = 实参个数校验落运行期**，已登记）。**文法零改动**：`primary-atom` + `generic-construct` 两产生式与消歧规则 3.3 已覆盖该拼写 | 已定义（**ADR-037**）；**实现：降载层 ✅（本批 `G-2d` 的 `S1`）· AST 走查 ✗**（限定形态在 AST 侧报 E5-001——走查将于 `P4-γ` 删除，故不投入；**两形态在降载层与 LLVM 通道均可用**，且差分夹具全用裸名形态 ⇒ **测试面不可见**）| Experimental | v0.54.0（推测） | ADR-037 / §A `generic-construct` 注记 / `Sources/PiniCore/HIR/HIRLowerer.swift`（`registerEnumSpecialization` · `lowerGenericEnumCaseConstruct`）/ `Sources/PiniCore/Type/TypeEnvironment.swift`（`defineGenericEnum` · `lookupSpecializedEnumCase`）/ 夹具 `Tests/PiniTests/GenericEnumTests/` · `Tests/PiniTests/GenericRuntimeTests/` / 规划件 `docs/issue-hir-generic-enum-specialization-plan-2026-09-16.md` |
 | **G60** | **数值字面量的转换与 `abs` 的定义域**（ADR-038）：① `abs` 接受**整数与小数**、各自保型；② **整数字面量不隐式转为小数**（要小数处须写 `0.0`/`2.0`）。⚠️ ② 把类型面钉成单一可判形态，代价是**旧引擎时代写下的程序翻转后会被拒**（与 `D-P4-15` 的 `E4` 族同源） | 已定义（**ADR-038**）；**实现未落地** —— 待改：内建登记表的 `abs` 签名 · HIR 降载层 `abs` 结果类型硬编码 · LLVM 侧 `abs` 的处置（实现或响亮拒绝）· 夹具 `testEnumNamedConstructionUsesEquals.pini` 的 3 处 · 全量语料的整数→小数普查 | Experimental | v0.55.0（推测） | ADR-038 / `Sources/PiniCore/Common/BuiltinRegistry.swift` / `Sources/PiniCore/HIR/HIRLowerer.swift` / `docs/spec/migration-2026-09.md` / 用例 `testMathAbs` · `testEnumNamedConstructionUsesEquals` |
 | **G61** | **标签 `break` 的定向范围与标签命名规则**（ADR-039）：① `break 标签` 可定向**任意带标签结构**（含 `if` 块）；② `continue 标签` **仅循环标签有效**（明文加固，不放宽）；③ 内层同名标签**遮蔽**外层（最近匹配）；④ 标签与变量**独立命名空间**。触发面 = 第 3 层「spec 断言层」补「标签语义」面时照出「`break` 指向 `if` 标签」**两引擎相反**（ast 跳出块 / hir 与 llvm 同源 panic），而三处文档沉默 | 已定义**且已实现**（**ADR-039**；规范与实现同批落地）。落地面：契约节点 3 `ifStmt` 加标签与节点 11/12 表述订正 · 降载层「循环帧栈」泛化为「可中断帧栈」 · `HIRExecutor` `if` 帧捕获 · `IREmitter` `if` 块出口标签与释放路径 · `HIRPrinter` · 语言参考标签节与跳转节 · `docs/spec/migration-2026-09.md` 记一处收敛。⚠️ 同一张断言面还照出**另一条**缺陷（`continue 标签` 的深度 > 1 时跳过目标循环尾部）—— **不在本缺口内**，已单独立案 | Provisional | v0.55.0（推测） | ADR-039 / ADR-014（前身） / §2.4.1 / §A.4 规则 3.13 / `docs/spec/hir-contract.md` / 第 3 层语料 `Tests/PiniTests/SpecAssertionTests/` |
+| **G66** | **挂起模式实现暂时退役 —— 并发面判定为「不完善」**（`ADR-043`）：`await`/`wait` **保留且语义不变**，退役的是「释放当前 OS 线程」这一**实现形态**（CPS 求值器 + 挂起调度器）。依据 = 生产面**零启用**（`Sources/` 无 `suspendMode` 赋值、`SuspendScheduler` 零实例化）＋ §3.1 自陈「语义与挂起等价」⇒ **对用户程序零可见影响、非破坏性**。评测面 43 条归因：**25 条真退役**（差分 14 + 挂起运行时 11）、**18 条保留**（值层原语 4 + 结构化并发 14）。⚠️ **不承诺移除**（故非 Deprecated）；「暂时」的**触发条件未定义** ⇒ 须在 `P5` 收口时显式登记处置 | 已定义（退役登记；规范与语言参考同批改） | Provisional | — | `ADR-043` / §3.1 / 语言参考（并发模型） / `docs/spec/adr/adr-043-suspend-mode-retirement.md` |
 | **G65** | **FFI 单字节字符改名 `Char` → `CChar`**（`ADR-033 D2` 的实施，2026-09-17）：腾出 `Char` 名给 grapheme 字符（格 `P0d`），并使 §2.7「`Char` 不进入 FFI 标量集」对实现成立。**本批实测为行为中性**：改名前后 `*Char` / `*CChar` 的检查器接受性**完全相同**（`cCompatibilityFailure` 对未知简单名一律保守放行 ⇒ `isCScalarType` 的成员性对该名**惰性**）；全量回归与探针零位移｜⚠️ **残余**：`CChar` 面**今日不可运行**（两台引擎解析不出元素类型）⇒ 原计划的「补正向覆盖」**不可达**，已改判（见工单 §处置） | Provisional | — | `ADR-033` / `TypeChecker.swift` / `RuntimeOps.swift` / spec §2.7 |
 | **G64** | **HIR 契约 `detachStmt` 节点**（`ADR-042`）：`detach <expr>`（fire-and-forget 唯一出口）在 HIR 侧的落点。**节点面已落地**（2026-09-17 同批：契约 §3.17 · `HIRNode.swift` case · 三锚点 `printer` 真实现 / `interp-hir` 与 `llvm` fail-loud）｜⚠️ **残余**：降载规则与两台引擎的**行为**未落（`HIRLowerer` 无降载 ⇒ 节点当前不可达；引擎行为归格 `G-3c-1`）｜**非预留位**：本条目是 2026-09-17 **新裁**（`D-G3c-1`），不是实施既定预留 | Provisional | — | `ADR-042` / `HIRNode.swift` / `hir-contract.md` §3.17 |
 | **G63** | 错误发现的层次（静态层优先，`ADR-041`） | 已定义（§2.4.5；承诺「会被拒」，静态可判定者要求静态层拒）｜⚠️ **残余**：逐构造判定表未列全 · 相关负向用例期望值待改写 | Provisional | — | `ADR-041` / `HIRLowerer` / `TypeChecker` / 语言参考（错误模型） |
-| **G62** | **HIR 契约 `join` 节点的挂起语义**（`ADR-040`）：`await`（异步函数体内挂起）/ `wait`（同步上下文阻塞）在 HIR 侧的落点。**节点面已落地**（2026-09-17 同批：契约 §2.45 · `HIRNode.swift` case · 三锚点 `llvm` / `printer` / `interp-hir`），**挂起语义本身未实现**（CPS 求值器，格 `G3c`）⇒ 本节点当前**不可达**（`HIRLowerer` 无 `.join` 降载规则，仍在原处兜底拒绝）。触发面 = 格 `G-3` 规划勘测照出**两条已立判据指向相反动作**（契约 §4.2「须增加节点面」 vs `D-P4-26` 硬停「须先走 §1.3」）—— 本批把该歧义判掉（走 §1.3），并作证「契约行 / enum case / 三锚点」是门禁强制的**最小自洽单元** | 节点面**已落地**（走 §1.3 五步，`ADR-040`）；**挂起语义待实现** | Provisional | v0.49.0 | ADR-040 / `docs/spec/hir-contract.md` §2.45 与 §4.2 / `docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md` / `Sources/PiniCore/HIR/HIRNode.swift` |
+| **G62** | **HIR 契约 `join` 节点的挂起语义**（`ADR-040`）：`await`（异步函数体内挂起）/ `wait`（同步上下文阻塞）在 HIR 侧的落点。**节点面已落地**（2026-09-17 同批：契约 §2.45 · `HIRNode.swift` case · 三锚点 `llvm` / `printer` / `interp-hir`），**挂起语义本身已随挂起模式退役**（2026-09-17，`ADR-043` / `G66`）：`await`/`wait` 的**阻塞**语义由格 `G-3c-1` 在 HIR 侧交付（`.join` 降载规则 + 阻塞 join），**挂起**（释放 OS 线程）不再实现。触发面 = 格 `G-3` 规划勘测照出**两条已立判据指向相反动作**（契约 §4.2「须增加节点面」 vs `D-P4-26` 硬停「须先走 §1.3」）—— 本批把该歧义判掉（走 §1.3），并作证「契约行 / enum case / 三锚点」是门禁强制的**最小自洽单元** | 节点面**已落地**（走 §1.3 五步，`ADR-040`）；**阻塞语义已交付**（格 `G-3c-1`）；**挂起语义已退役**（`ADR-043`） | Provisional | v0.49.0 | ADR-040 / `docs/spec/hir-contract.md` §2.45 与 §4.2 / `docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md` / `Sources/PiniCore/HIR/HIRNode.swift` |
 
 
 > **已闭环缺口索引**：正文引用的以下 G 号已随版本闭环（已定义 / 已落地 / 已采纳 / 候选），故不列入上表；对应落点：G8（trait 约束求解，Experimental，§2.4.1）、G9（ARC，见下 Optional 条）、G11（块标签 `scope 块标签:`，§2.4.1/ADR-013）、G13（注释 `;`/`#`，§A.1.4）、G14（文件 IO，§2.4.1）、**G15（模块系统边界，§2.5 残留 → 由 G52 收口）**、G17（数组/字典/集合字面量，§2.4.1）、G18/G24（泛型与运行时单态化，Experimental）、G28（match 子块 + `case _:`，§2.4.3）、G29（匿名函数，§2.4.1）、G30（nil，§2.4.1）、G31（`?T` 糖，§2.4.1）、G32（step，§2.4.1）、G34（COW 值语义，§2.4.1）、G35（`#` 文档注释，§2.4.1/§A.1.4）、G36（for-in，§2.4.1）、G37（扩展块，候选 §A.5.3）、G39（defer 语义，候选 §A.5.5）。
@@ -522,20 +523,31 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 >
 > 其正式语义将在对应版本（预计 v0.3+）通过 RFC/ADR 落定；在此之前示例可演示，但规范不保证其行为长期稳定。
 
-### 3.1 异步语义契约（G12，Stable）
+### 3.1 异步语义契约（G12：阻塞语义 Stable · 挂起模式已退役 → Provisional）
 
 > **状态**：已定义、已落地（v0.41.0 落地 `=>` 派发 + `await`/`wait`；T7 异步语义正式化 v0.43.0 → **Stable**）。本小节为权威异步语义定义（结构化并发不变契约），具规范事实源地位。
 >
+> ⚠️ **2026-09-17 分层订正（依据见 ADR-043；缺口登记 `G66`）**：本小节的稳定性**分层**如下 ——
+> **阻塞语义**（`await`/`wait` 的现行唯一实现形态）与**结构化并发不变契约**维持 **Stable**；
+> **挂起模式**（释放当前 OS 线程）**降为 Provisional 并已实现暂时退役**。
+> 依据：该路径的**生产赋值点为零**（`Sources/` 无 `suspendMode` 赋值、`SuspendScheduler` 零实例化），
+> 而本节下文自陈「语义与挂起等价」⇒ **本次变化对用户程序零可见影响**，性质是**规范对自身状态的订正**。
+> 退役**不删** `await`/`wait` 关键字（两者行为暂同，区别留作挂起回归时的语用位）。
+> ⚠️ **「暂时」的可测触发条件尚未定义** ⇒ 须在 `P5` 收口时**显式登记处置**（否则延期即静默永久退役）；
+> 残余项与边界见 ADR-043。
+>
 > **术语（ADR-012，v0.41.0）**：异步 join 运算符为 `await`/`wait` **关键字前缀**（取代立场 B 的 `<=` 前缀）——`await` 用于异步函数体（`=>` 派发）内挂起等待，`wait` 用于同步上下文阻塞 join；二者均映射 `.join` AST 节点（Parser.parseUnary await/wait 前缀分支）。`<=` 已回归**纯比较运算符**（中缀），无前缀 join 义（见 §A.4 规则 3.1）。
 >
-> **证据**：`SuspendEvaluator.swift`（`evalK` CPS 求值 / `.join` 挂起分支 / 上下文五项还原）、`SuspendScheduler.swift`（挂起后端 work-stealing 池）、`Scheduler.swift`（`GCDScheduler` 默认阻塞后端）、`Interpreter.swift`（`joinFuture` / `joinWithin` / 并发原语 `cancel`/`isCancel`/`join`/`joinAll`）、`Value.swift`（`FutureValue` 取消树 / `closeScope`）。
+> **证据**：`Scheduler.swift`（`GCDScheduler` —— **现行唯一**后端）、`Interpreter.swift`（`joinFuture` / `joinWithin` / 并发原语 `cancel`/`isCancel`/`join`/`joinAll`）、`Value.swift`（`FutureValue` 取消树 / `closeScope`）。
+> ⚠️ **已退役（2026-09-17，ADR-043）**：`SuspendEvaluator.swift`（`evalK` CPS 求值 / `.join` 挂起分支 / 上下文五项还原）与 `SuspendScheduler.swift`（挂起后端 work-stealing 池）—— 两者在 `Sources/` 均**零生产启用**，随格 `G-6` 删除；此处保留仅作**重写时的语义参照**。
 
 #### 3.1.1 `=>` 派发与 `await`/`wait` 挂起语义
 
 - **`=>` 派发**：函数签名以 `=>` 引入的函数体即异步函数（`Parser.parseFuncDecl` 识别 `doubleArrow`，产出 `Expression.funcLiteral`）。
 - **`await`/`wait` 求值**：`await expr`（异步函数体内）/ `wait expr`（同步上下文）求值 `expr` 得 `Future`，经 `Result<T, Error>` 解构——**错误即数据，不抛出**（与 §2.4.4 errors-as-data 一致）。
-- **挂起模式**（`suspendMode`，`SuspendScheduler` 后端）：`Future` 未决时当前任务**挂起**——保存续体（精确恢复点）、释放当前 OS 线程（非阻塞），`Future` 决后经 executor 从精确恢复点续跑；CPS 求值器支持任意表达式深度挂起、已执行副作用**不重跑**（如 `print(await f())` 恰打印一次）。`Future` 已决则直接取 `ok/err` 值，不挂起（`SuspendEvaluator.swift:358-384` `evalK` 的 `.join` 分支；挂起判定 `suspendMode && !fut.isFinished` 于 `:374`）。
-- **同步/阻塞路径**（默认后端 `GCDScheduler`，`Interpreter.swift:25` `scheduler = GCDScheduler.shared`）：`wait` 为阻塞 join（占 worker 线程），语义与挂起等价——均经 `await`/`wait` 站点解构 `ok/err`。挂起模式是**新增能力**，默认行为不变（`Interpreter.swift:1377-1382`）。
+- ⚠️ **已实现暂时退役（2026-09-17，ADR-043）**：本条描述的对象在生产面上从未启用；以下描述**保留作重写参照**，**不是现行行为**。原描述 —— **挂起模式**（`suspendMode`，`SuspendScheduler` 后端）：`Future` 未决时当前任务**挂起**——保存续体（精确恢复点）、释放当前 OS 线程（非阻塞），`Future` 决后经 executor 从精确恢复点续跑；CPS 求值器支持任意表达式深度挂起、已执行副作用**不重跑**（如 `print(await f())` 恰打印一次）。`Future` 已决则直接取 `ok/err` 值，不挂起（`SuspendEvaluator.swift:358-384` `evalK` 的 `.join` 分支；挂起判定 `suspendMode && !fut.isFinished` 于 `:374`）。
+- **同步/阻塞路径 —— 现行唯一实现形态**（后端 `GCDScheduler`，`Interpreter.swift:25` `scheduler = GCDScheduler.shared`）：`wait` 为阻塞 join（**占用 worker 线程**），经 `await`/`wait` 站点解构 `ok/err`。⚠️ 原文此处写「语义与挂起等价／挂起模式是**新增能力**」—— 挂起模式已于 2026-09-17 退役（ADR-043），「等价」的比较对象不存在，故本句订正为「唯一形态」；**据此，本次退役对用户程序零可见影响**。
+- ⚠️ **固有边界（本次具名，2026-09-17）**：阻塞 join **占用 worker 线程** ⇒ 有界池下**高扇出会耗尽线程池**。该性质**固有于阻塞语义**、非退役引入（原由两条挂起夹具测得，夹具随退役删除）⇒ 在此具名，重写挂起时的目标之一即消除它。
 - **`joinWithin(t, ms)`**：带超时**阻塞** join，超时归约为 `err(CancelError)`，不受挂起模式影响（探针边界，见 §3.1.4）；手动取消与超时在调用方同构（`isCancel(e)` 均为 true）（`Interpreter.swift:664-676`，B2-5）。
 
 #### 3.1.2 结构化并发不变契约
@@ -547,18 +559,19 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 #### 3.1.3 协作式取消与上下文还原
 
-- **协作式取消**：取消不强杀线程，于下一个挂起 / resume 边界生效——挂起模式在 **resume 边界统一检查点**（任务被取消经 `onCancel` 即时唤醒、resume 入口 `checkCancellation` 见 cancelled 即抛 `CancelError` 终结；即使挂起等待的 `Future` 永不 resolve / 已 `detach`，取消也即时生效，`SuspendEvaluator.swift:227` `onCancel` / `:262` `checkCancellation`）；同步/阻塞路径检查点位于循环头 / 函数入口 / 睡眠分片。**非挂起即不可中断**（同 Swift）：紧循环不挂起则循环中不可被打断，循环头/回边检查仍保留。`CancelError` 经 `Result` 显式传播，经 try-else 的 `err` 路径正常捕获、不穿透（与 §2.4.4 一致）。
-- **挂起模式上下文还原（MUST）**：挂起/恢复跨线程（work-stealing 复用 OS 线程）时，continuation 必须捕获并还原解释器线程上下文 `{currentEnv, currentFuture, deferStack, debugDepth, callStackNames}`，否则上下文串台（类比 Swift `Executor` 上下文 / Kotlin `CoroutineContext`）。已落地（`SuspendTaskCPS`，`SuspendEvaluator.swift:164`；保存-还原于 `:237-258`）。
+- **协作式取消**：取消不强杀线程，于下一个挂起 / resume 边界生效——**挂起模式**（⚠️ 已退役，见本节上文）在 **resume 边界统一检查点**（任务被取消经 `onCancel` 即时唤醒、resume 入口 `checkCancellation` 见 cancelled 即抛 `CancelError` 终结；即使挂起等待的 `Future` 永不 resolve / 已 `detach`，取消也即时生效，`SuspendEvaluator.swift:227` `onCancel` / `:262` `checkCancellation`）；同步/阻塞路径检查点位于循环头 / 函数入口 / 睡眠分片。**非挂起即不可中断**（同 Swift）：紧循环不挂起则循环中不可被打断，循环头/回边检查仍保留。`CancelError` 经 `Result` 显式传播，经 try-else 的 `err` 路径正常捕获、不穿透（与 §2.4.4 一致）。
+- ⚠️ **已随挂起模式退役（2026-09-17，ADR-043）**：本 MUST 约束的对象（跨线程挂起/恢复）已不在现行实现中，保留描述供重写参照 —— **挂起模式上下文还原（MUST）**：挂起/恢复跨线程（work-stealing 复用 OS 线程）时，continuation 必须捕获并还原解释器线程上下文 `{currentEnv, currentFuture, deferStack, debugDepth, callStackNames}`，否则上下文串台（类比 Swift `Executor` 上下文 / Kotlin `CoroutineContext`）。已落地（`SuspendTaskCPS`，`SuspendEvaluator.swift:164`；保存-还原于 `:237-258`）。
 
 #### 3.1.4 探针边界（显式报错，不静默错）
 
-- 挂起模式暂不支持泛型构造实参内的 `await` 及 `callFunctionValue` 特殊形态（枚举构造 / `Optional` / `WeakRef`）在含 `await` 实参下的逐形复制；此类路径报「挂起模式暂不支持」（`.genericConstruct` 边界 / `resultUnwrap`（`^`）含 `await` 实参探针，`containsJoin` 判定于 `SuspendEvaluator.swift`）。
-- `joinWithin` 保持阻塞语义（见 §3.1.1）。完整 CPS 化覆盖 `match` / `try` / `for` / labeled 实参 / `break` / `continue` 内挂起（已支持，并经同步/CPS 差分测试逐字节对齐）。
+- ⚠️ **随挂起模式退役（2026-09-17，ADR-043）**：以下探针边界的对象已退役，保留供重写参照。原描述 —— 挂起模式暂不支持泛型构造实参内的 `await` 及 `callFunctionValue` 特殊形态（枚举构造 / `Optional` / `WeakRef`）在含 `await` 实参下的逐形复制；此类路径报「挂起模式暂不支持」（`.genericConstruct` 边界 / `resultUnwrap`（`^`）含 `await` 实参探针，`containsJoin` 判定于 `SuspendEvaluator.swift`）。
+- `joinWithin` 保持阻塞语义（见 §3.1.1）。⚠️ **以下「完整 CPS 化」与差分对齐随挂起模式退役（2026-09-17，ADR-043）**，保留供重写参照 —— 完整 CPS 化覆盖 `match` / `try` / `for` / labeled 实参 / `break` / `continue` 内挂起（已支持，并经同步/CPS 差分测试逐字节对齐）。
 
 #### 3.1.5 稳定性与已知限制
 
-- **G12 → Stable**（v0.43.0，T7 正式化）：异步语义模型（派发 / join / 结构化并发 / 协作式取消）正式钉定。
+- **G12：分层状态**（2026-09-17 订正，ADR-043）—— **阻塞语义与结构化并发契约维持 Stable**（v0.43.0，T7 正式化，语义模型已钉定）；**挂起模式降为 Provisional 并已实现暂时退役**（生产面零启用）。
 - **仍 Experimental（登记于 §3，函数签名未钉住）**：并发原语 `cancel` / `isCancel` / `join` / `joinAll` / `joinWithin` 的**函数签名**；内建错误类型 `Error()` / `CancelError()` / `Result` 的构造参数与字段细节。模型已由 G12（Stable）定义，但签名/构造细节待后续版本钉定。
+- **阻塞 join 的线程占用**（2026-09-17 具名，ADR-043）：有界池下高扇出**会耗尽 worker 线程** —— 阻塞语义固有、非退役引入；重写挂起时的目标之一即消除该边界。
 
 ### 3.2 运行时 shim 边界与长期愿景（C ABI）
 
