@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-17T22:45+0800"
-refresh_note = "2026-09-17 **`detach` 节点面批**：新增「契约 61 → 62，新裁条目而非兑预留，行为刻意不实现」一条。要点 = **新裁 vs 兑现预留的区别**（`D-P4-26` 硬停条件正是拦后者）· 三锚点同批（门禁强制的**最小自洽单元**）· 夹具面 83 条**逐夹具全文对比 0/83 位移**（2 条差异判为已知非确定夹具）· 全量回归 **64 → 64 集合相等** · ⚠️ **正确读数是「缺口数不变」**（`detach` 3 条原样仍在）。本次仅新增该条；存量条目未重新验证"
+last_refresh = "2026-09-17T22:58+0800"
+refresh_note = "2026-09-17 **`P0d` 前置腾名批**：新增「FFI `Char` 改名 `CChar`：实测**行为中性**，并探明该面**在两台引擎上不可运行**」一条。要点 = `isCScalarType` 成员性对 `Char` **惰性**（未知类型保守放行）⇒ 改名零可观察变化 · 一处**死面**（`*CChar` 过 check、三引擎均拒）⇒ 工单「处置 3」不可达已改判 · `CChar` 在 spec 内**已有宿主义项** · 影响面**位置漂移**（2/4 已移到 `RuntimeOps`，**不命中冻结面**）· 一处**过程事故**（spec 被写空，已恢复）。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -998,3 +998,33 @@ note = """本批 = **`detach` 节点面**（`D-G3c-1` 取 ①），`§1.3` 第 1
 **一处口径注**：夹具面的**全文对比**用归一化 md5（`/tmp/pini_<UUID>.ll` → `<TMP>`）；另跑的**首行**对比（83 条 0 差异）口径较粗 —— `detach` 的报文在第 4 行（前两行是 `Error: IRGen Error [E6-004]` 头），故首行口径会把那 3 条记成 `E6-004`。两者都对，**全文对比是主判据**。
 
 **未做**：不给 `HIRLowerer` 加降载 · 不实现两台引擎的行为 · 不给 `HIRType` 加 `future` case · 不递交语言参考（`§1.3` 第 4 步条件②「实现侧证据」不成立）。本次仅新增该条；存量条目未重新验证"""
+
+[[evidence]]
+id = "2026-09-17 FFI Char 改名 CChar：实测行为中性，并探明该面在两台引擎上不可运行"
+citable = false
+claim = "The FFI spelling for the C single byte character moved from Char to CChar, and the measurement says the move changes no behaviour -- which is worth recording precisely because it was expected to. The rename was scheduled on the belief that the checker's scalar set admitting Char made the implementation accept a spelling that the spec excludes. It does not: the C-compatibility walk returns early for anything that is neither a reference type nor a scalar nor a known struct, so a name that is none of those lands on the same permissive branch whether the scalar set contains it or not. Measured on both sides of the change: a foreign signature taking *Char passes the check before and after, *CChar passes on both sides too, and a pointer to a struct is refused both times. The value that remains is real but is not behavioural: the name leaves the implementation, so the grapheme character can take it when that type lands, and the spec's sentence about Char not entering the FFI scalar set becomes true of the code and not only of the prose. Two further facts the probe turned up are recorded rather than fixed. The face is dead: *CChar passes the checker, but both engines refuse it outright for want of a resolvable element type, so the decode two lines in the value layer can never run, and the coverage the ticket wanted to add cannot be written -- neither a fixture that runs nor one that is refused, since the checker accepts both spellings. And the token CChar already had a second meaning inside the same spec section: the thunk mapping table uses it for the host's own CChar, which is the same one-token-two-meanings shape this rename exists to remove."
+artifacts = [
+  "docs/spec/pini-spec-v0.md",
+  "docs/issue-ffi-char-rename-cchar-2026-09-12.md",
+  "Sources/PiniCore/Type/TypeChecker.swift",
+  "Sources/PiniCore/Runtime/RuntimeOps.swift",
+]
+command = "swift build --disable-sandbox --scratch-path /tmp/pini-build ; then, with the same probe sources on both sides of the change, pini check on a foreign signature taking *Char, one taking *CChar, one taking a pointer to a struct, and one taking *U8 ; pini run under PINI_INTERP_ENGINE=ast and =hir and pini run-llvm on the *Char form ; python3 tools/hir-chunk-run.py /tmp/g3a-classes.txt 3 /tmp/pc-reg ; the same three chunks with PINI_INTERP_ENGINE=ast through /tmp/chunk-ast.py ; python3 tools/hir-contract-check.py ; env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/pc-sweep.tsv"
+output = "Checker behaviour, measured before and after the rename on the same four probe sources: a foreign signature taking *Char passes pini check in both states; one taking *CChar passes in both states; a pointer to a user struct is refused with the C-compatibility message in both states; an existing *U8 FFI module passes in both. So the rename's observable effect is nil. At run time the face is dead on every backend: the *Char form reports E5-017 on the AST interpreter and E6-004 'parameter ... of foreign ... lacks a resolvable type' on the HIR interpreter and on run-llvm, which is why the value layer's Char decode is unreachable. Full regression by the same three-chunk driver: 64 failures, chunks 26+18+20, set-equal to the previous point (fixed 0, new 0, still 64). The ast direction reads 64 with an item-by-item identical set. Contract check clean at 62/62 on all three anchors. Probe: 320 fixtures, every slot unchanged, zero per-fixture displacement, FLIP BLOCKERS 0. Two source files changed (TypeChecker.swift, RuntimeOps.swift); the AST-walk frozen surface was not touched, because neither Interpreter.swift nor SuspendEvaluator.swift contains Char any more -- the two cases the ticket listed there had already moved to RuntimeOps during the value-layer extraction."
+validated_at = "2026-09-17T22:58+08:00"
+status = "FRESH"
+note = """本批 = **`P0d` 前置腾名**（`D-P4-36` 取「C 先行」）。`§1.3` 落位：spec §2.7 增补 + 台账 **`G65`**。
+
+⭐ **本批最重要的一条**：**改名是行为中性的**，而工单原本假定它改行为。理由（符号级）：
+`cCompatibilityFailure` 对「既非引用类型、又非已知结构体」的名字**一律保守放行** ⇒ `isCScalarType` 里 `Char` 的**成员性对该名惰性**（返回 true/false 落同一分支）。实测：`*Char` 与 `*CChar` **改名前后都通过 `check`**；`*结构体` 两次都拒。
+⇒ 本批价值**不在行为变化**，而在两条：① **名腾出来**（`Char` 从实现文本消失，留给 `P0d` grapheme）；② spec §2.7 那句「`Char` 不进入 FFI 标量集」**首次对实现也成立**。
+
+⚠️ **一处死面（探明，登记不修）**：`CChar` **只到达类型检查器** —— `*CChar` 过 `check`，但 `interp-ast` 报 `E5-017`、`interp-hir` 与 `llvm` 报 `E6-004 lacks a resolvable type` ⇒ `RuntimeOps` 那两处解码**不可达**。这也是**工单「处置 3（补正向覆盖）」不可达**的原因：既写不出能跑的语料，也写不出被拒的语料（两种拼写检查器都放行）⇒ 已改判为「在规范与台账写明该面不可运行」。
+
+⚠️ **一处同名不同物**：`CChar` 在 spec §2.7 的 **thunk 映射表**里已指**宿主 Swift 的 `CChar`**（`I8` 的 C 侧类型）⇒ 同一 token 在一节内指两物，与 `ADR-033 D2` 要修的「一名两义」同族。已就地写明分辨方式，**未动** thunk 表（不属本单范围）。
+
+⚠️ **本单影响面已订正**：原记 4 处中 **2 处在 `Interpreter.swift`**，实测**已随 `P1-2` 的值层提取漂到 `RuntimeOps.swift`** ⇒ **本批不命中 AST 走查冻结面**（`Interpreter.swift` 现零 `Char` 命中）。
+
+⚠️ **一处过程事故（如实登记）**：写 spec 时用 `io.open(p,"w").write(io.open(p).read()…)` ⇒ **`"w"` 先求值并截断文件**，内层读到空内容，**规范文件被写空**；`git checkout --` 恢复并逐项验真（1556 行 / 174437 字节 / `G64` 在位 / 引用数 954 回到原值），随后改为**先读后写 + 写后立刻回读校验**。与 `ADR-040` §5.1 的判据纪律同族：**写与读都不得只看返回值，必须校验内容**。
+
+**未做**：不修死面 · 不改 thunk 表 · 不删不可达解码 · 不动 `ffiTopLevelScalars` 集合内容（它事实上不是白名单）· 不排 `P0d` 本体。本次仅新增该条；存量条目未重新验证"""

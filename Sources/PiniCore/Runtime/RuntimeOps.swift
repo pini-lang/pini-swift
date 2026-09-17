@@ -315,7 +315,11 @@ public enum RuntimeOps {
  case "F32": return .float(Double(rp.pointer.load(as: Float.self)))
  case "F64": return .float(rp.pointer.load(as: Double.self))
  case "Bool": return .bool(rp.pointer.load(as: Bool.self))
- case "Char": return .int(Int(rp.pointer.load(as: UInt8.self)))
+ // `CChar` = the C single byte character, renamed from `Char` (ADR-033 D2).
+                // Unreachable in practice today: the checker accepts `*CChar`, but no
+                // engine resolves the element type, so no program reaches this decode.
+                // Kept because the day that face is implemented, this line is the decode.
+                case "CChar": return .int(Int(rp.pointer.load(as: UInt8.self)))
  default:
  throw RuntimeError.invalidOperation(reason: "load：不支持的指针元素类型 `\(name)`", location: loc)
  }
@@ -394,7 +398,7 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  case "Bool":
  guard case .bool(let b) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
  ptr.storeBytes(of: b, as: Bool.self)
- case "Char":
+ case "CChar":
  guard case .int(let i) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
  ptr.storeBytes(of: UInt8(truncatingIfNeeded: i), as: UInt8.self)
  default:
