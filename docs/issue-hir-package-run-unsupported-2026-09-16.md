@@ -87,3 +87,29 @@ if engine == .hir {
 1. 裁决上表 A / B / C；
 2. 无论取哪项，都**先把「HIR 引擎下跑全量回归」固化为 P4 的验收动作** ——
    否则下一个同类缺口（探针与默认引擎都看不见）仍会漏到翻转之后。
+
+---
+
+## 2026-09-17 状态更新（`A1` 批实测，本单结论须按此细化）
+
+`A1` 批把**包通道**接进判据器械（见 `docs/hir-criteria-gap-ledger.md` §10），
+顺带对本单做了一次现测。**三处要订正**：
+
+1. **「CLI 显式拒绝」已不成立** —— 本单 §现象引的那段 `if engine == .hir { printError(…暂不支持目录/模块运行…) }`
+   **实测已从 `Sources/PiniCLI/main.swift` 移除**（`grep` 零命中）。这是选项 **A** 的装配面交付
+   （`P4-1a`：包运行入口）留下的结果。
+2. **HIR 现在会真的进包通道，且部分成功** —— 8 个宿主模块实测：
+   **3 个 `agreed`**（`examples/package-demo` · `examples/multifile` · `…/ModuleSystemTests/demo/app`，
+   两臂 rc/stdout 逐项相同），**2 个 `diverged`**，**3 个两臂都拒**。
+3. ⇒ **本单的标题级结论「HIR 不支持目录/模块运行」应读作「**模块级子缺口有三类**」**，
+   而不是一条整体性拒绝：
+
+| 子缺口 | 夹具 | 归谁 |
+|---|---|---|
+| 依赖模块的**命名空间**（两模块导出同名顶级符号 ⇒ 合并式降载保不住） | `…/demo3/app` | `docs/issue-hir-import-module-symbols-2026-09-16.md`（本单**不**认领） |
+| **vendored FFI 符号**（`[ffi] libs`，dlsym 第二段） | `examples/ffi_module` | `docs/issue-hir-vendored-ffi-unsupported-2026-09-17.md`（新立） |
+| 依赖模块被当入口跑（无 `main`）时**报错码两臂不同**（`ast E5-007` vs `hir E6-004`） | `demo/helper` · `demo3/app/frontend` · `…/syntax` | 本单（属**错误通道口径**，与乙组 `D2` 同族；只登记） |
+
+⚠️ **本单判据面的那句「发现它的唯一姿势 = 显式传 `PINI_INTERP_ENGINE=hir` 跑全量回归」需要补一条**：
+全量回归**仍然看不见**上表前两类（它们的夹具在探针与回归里都是 `PACKAGE_MEMBER` / 不入根集）
+—— 看见它们的是**包通道**这一条新边。⇒ 「把引擎切过去跑一遍」是**必要不充分**的勘测动作。

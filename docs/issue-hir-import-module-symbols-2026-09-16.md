@@ -75,3 +75,23 @@ L195（`testArgvPassthroughViaCLI` 的模块分支 —— 与 `argv` 缺口**叠
 - **未裁前不动源码**（本单只登记）。
 - 不改 `Package` 的字段（若路径 A 需要，另立决策）。
 - 不并入 `P4-1a`（该批已按「装配层」如实收口，见 `docs/issue-hir-p4-1-plan-2026-09-16.md` 的交付记录）。
+
+## 7. 追加证据：形态三（2026-09-17，`A1` 批实测）
+
+`A1`（包通道补全）把**模块成员**纳入判定之后，本单多了一条与前两形态**不同因**的实测。
+夹具不是为本单写的，是既有的一组宿主模块（`Tests/PiniTests/ModuleSystemTests/demo3/app`，
+其 `frontend/` 下还有一层 `syntax/`）。
+
+| 命令 | 结果 |
+|---|---|
+| `pini run Tests/PiniTests/ModuleSystemTests/demo3/app`（默认 `ast`） | rc=0，stdout `110` |
+| `PINI_INTERP_ENGINE=hir pini run <同一个目录>` | **rc=1**，`E6-004` — `unsupported feature 'imported modules '<…>/frontend' and '<…>/frontend/syntax' both export the top-level name '取值': this channel merges import targets into one module, so it cannot keep their namespaces apart'` |
+
+**为什么它是新形态**：形态一 / 二都是「依赖模块的声明**根本没进**虚拟模块」；形态三是
+「**进了**，但两个依赖模块导出**同名顶级符号**，而合并式降载**没有命名空间可放**」。
+⇒ 这正是本单 §4 路径 A 需处理的第 ② 项（「同名冲突的命名空间（AST 侧用 `@序号` 后缀）」）
+**已经作为一条实测出现**，而不是一个假想的边界情况。
+
+**顺带的口径事实**：这条分歧在 `A1` 之前**没有任何器械能看见** —— 该模块的成员文件在探针里是
+`PACKAGE_MEMBER`（无 `main`，单文件通道拒收），而 `run-llvm` 没有包通道。
+⇒ 「本单的实测形态是**两**条」这个旧表述应读作「**至少三**条」（详见 `docs/hir-criteria-gap-ledger.md` §10）。
