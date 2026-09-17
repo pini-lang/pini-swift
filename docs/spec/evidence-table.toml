@@ -24,7 +24,7 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-17T23:55+0800"
+last_refresh = "2026-09-17T21:50+0800"
 refresh_note = "2026-09-17 **乙组 `D1` / `D2` 裁决批**：新增「错误发现的层次定为静态层优先」一条（= `ADR-041` 的 §1.3 第 5 步）。要点 = 规范写明「编译期拒」· 判据绑定方法「负向夹具不删，改断言被拒 ∧ 拒绝在静态层 ∧ 错误码」· 13 条用例改写归 `G-4·G-5` · `D2` 后一半归在册的诊断通道单。⚠️ 本条**不含新读数**（裁决是规范性的、实现零改动），已如实标注。本次仅新增该条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
@@ -825,7 +825,7 @@ artifacts = [
 ]
 command = "swift build --disable-sandbox ; python3 tools/hir-chunk-run.py /tmp/g3a-classes.txt 3 /tmp/g3a-regression ; the same three chunks with PINI_INTERP_ENGINE=ast ; swift test --disable-sandbox --filter ConcurrencyTests|JoinAllTests|JoinWithinTests|CancellationTests ; env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/g3a-sweep.tsv ; python3 tools/hir-contract-check.py"
 output = "Fixture face: 7 concurrency directories, 71 .pini files; first gap call-to-unknown-function 41 -> 0 (sleep 33, Error 7, CancelError 1). The gap moves down a layer as planned: ok-construction 17 -> 50 and err 0 -> 8, together exactly +41, so the attribution closes with no remainder and the total stays 71. Full regression in three chunks: 64 failures, set-equal to the baseline (fixed 0 / new 0 / still 64). The same three chunks under PINI_INTERP_ENGINE=ast: 64, item-by-item identical to the default direction. Probe: 320 fixtures over 6 roots, unchanged in every slot (OK 255, PACKAGE_MEMBER 27, WARN_CHANNEL_ASYMMETRY 20, FRONTEND_FAIL 11, WARN_LLVM_RC_UNPROPAGATED 4, CHANGE_REFERENCE 2, HARNESS_DEPENDENT 1, FLIP BLOCKERS 0, leaks 0) -- but that face is not in the probe's roots, see the note. Contract check clean at 61/61 on all three anchors. Mutation, level two (delete the sleep entry alone): the 33 sleep fixtures return, ok-construction falls back to exactly 17, err holds at 8, the other three classes hold, so only the corresponding cases redden and nothing overflows; the mutated build lists sleep alone as an unknown function, which is what shows the other two names are still answered by the table. Level one (empty the table) did not compile and was not pursued. Source md5 is the witness, since Swift builds are not reproducible: RuntimeOps.swift 513bd22f1147158acfc89b41e4f47d94, restored byte-identical after the round."
-validated_at = "2026-09-17T22:10+08:00"
+validated_at = "2026-09-17T20:50+08:00"
 status = "FRESH"
 note = """本格 = `G-3` 四批中的第 1 批（L1 并发内建降载），照 `G-2a` 的「表即白名单」定式，**单源**交付。
 
@@ -868,7 +868,7 @@ artifacts = [
 ]
 command = "swift build --disable-sandbox --scratch-path /tmp/pini-build ; python3 tools/hir-chunk-run.py /tmp/g3a-classes.txt 3 /tmp/g3b-base (after git stash, same driver) and /tmp/g3b-new ; the same three chunks with PINI_INTERP_ENGINE=ast through /tmp/chunk-ast.py ; env -u PYTHONPATH python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/g3b-sweep.tsv ; python3 tools/hir-contract-check.py"
 output = "Fixture face, eight concurrency directories (7 from the plan plus TaskIsolationTests), 83 .pini files: old first-gap counts include ok-construction 52 and err-construction 8; the fixture-by-fixture diff shows 59 fixtures changed and all 59 came from those two classes. The new first gaps are join-not-lowered 40, cancel-method-calls 6, joinWithin 5, detach 3, joinAll 2, two reaching other error classes, and one try-else position. The single remaining ok-construction fixture is testDiffMatchJoinInBody, where `match ok(1)` builds a Result at a match scrutinee -- a different position that shares the message, so the message count is not a position count. The other 24 fixtures are byte-identical before and after. Full regression in three chunks, same driver on both sides (baseline obtained by stashing the source and rebuilding): 64 failures before and 64 after, set-equal (fixed 0 / new 0 / still 64), chunks 26+18+20 identical, 115/115 classes reached, zero signals. The same three chunks under PINI_INTERP_ENGINE=ast: 64, item-by-item identical to the default direction. On the AST engine the fixture face differs in 2 of 83, both stderr-only, and three consecutive runs of the same binary show the warning's line number moving between runs, so those two are the fixtures' own non-determinism rather than this change. Probe: 320 fixtures, every slot unchanged and zero per-fixture displacement, FLIP BLOCKERS 0 -- a reading with no discriminating power here, since the probe's six roots contain none of the concurrency fixtures; the evidence is the gap count, the fixture-by-fixture diff and the set-equal regression. Contract check clean at 61/61 on all three anchors."
-validated_at = "2026-09-17T23:40+08:00"
+validated_at = "2026-09-17T21:45+08:00"
 status = "FRESH"
 note = """本格 = `G-3` 四批中的第 2 批（L2 异步体 `return` 位的 `Result` 上下文），**照权威写、不新定规则**。
 
@@ -911,7 +911,7 @@ artifacts = [
 ]
 command = "read docs/issue-hir-static-rejection-vs-runtime-error-2026-09-16.md (the measured list of ten shapes) ; read docs/spec/pini-spec-v0.md section 2.4.4 and section 3 ; grep -n 'Result-typed context' Sources/PiniCore/HIR/HIRLowerer.swift ; grep -n 'bodyReturns' Sources/PiniCore/Type/TypeChecker.swift"
 output = "No measurement was re-run for this entry: the ruling is normative and the implementation is unchanged by it. What the spec names is the shape the ticket already measured on 2026-09-16 over ten test classes -- FieldVisibilityTests, TupleIndexTests, TupleDestructureTests, ResultUnwrapTests, BuiltinFunctionTests (two cases), GenericRuntimeTests, FFITests, LazyRefTests, ParserRestructureTests -- where the program is refused either way and only the stage and the code differ (RuntimeError versus E4-012, invalidOperation versus E4-001, and so on). The implementation anchors the two stages: the type checker refuses with the E4 family, the lowerer with E6-004; the runtime owns the E5 family. The thirteen fixtures whose expectations must be rewritten are counted in the G-4/G-5 batch, not here, and this batch changes no test."
-validated_at = "2026-09-17T23:55+08:00"
+validated_at = "2026-09-17T21:45+08:00"
 status = "FRESH"
 note = """本条 = **`ADR-041`**（乙组 `D2` 取 ①）的 §1.3 第 5 步证据。
 
