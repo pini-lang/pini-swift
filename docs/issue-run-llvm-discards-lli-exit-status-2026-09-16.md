@@ -105,3 +105,22 @@ pini run-llvm <夹具路径>        # 例：退出码 0，但 stderr 有 `Pini r
 - 未清点 XCTest 侧是否有以 CLI rc 为证据的用例（测试 Harness 自有 lli helper，预计不受影响，
   但**未实测**）；
 - 不 push（宿主仓从未 push）。
+
+
+---
+
+## 补记（2026-09-17，CG 批盘点时第三次实测到，形态相同）
+
+同一形态在本日盘点中**又出现了两次**，且都在探针之外、值得单列：
+
+| 输入 | `pini run-llvm` 打印 | `rc` |
+|---|---|---|
+| 一个只用字典 `.get` 的程序 | `lli: error: '%t14' defined with type 'ptr' but expected 'i32'` | **0** |
+| 一个**模块目录**（`examples/package-demo`） | `Error: The file "package-demo" couldn't be opened.` | **0** |
+
+⇒ ① 前者使探针把一条**真缺陷**判成非阻塞槽 `HARNESS_DEPENDENT`（详见
+`docs/issue-hir-dict-get-emitter-invalid-ir-2026-09-17.md`）；
+② 后者说明 **`run-llvm` 没有包通道** —— 这直接决定了探针那 27 条 `PACKAGE_MEMBER`
+在 `hir⇄llvm` 这条边上**不可能**被覆盖（见 `docs/issue-hir-blocker-queue-2026-09-17.md` §1-A1）。
+
+本单**仍未修**（登记不修），上述两条只是补证。
