@@ -512,6 +512,21 @@ public final class HIRExecutor: DebugHookHost {
                 }
                 return try character(args)
             }
+
+            // G-3a: the concurrency builtins a plain call can carry, answered from the
+            // same table the lowerer's whitelist reads -- one definition, two engines,
+            // exactly like the character builtins above.
+            //
+            // `sleep` blocks this thread and yields nothing; that is the whole of its
+            // HIR-side semantics. Its cancellation checkpoints are a no-op here, and
+            // deliberately so: this engine is single-threaded and holds no task
+            // handle, so there is no context to check against. The shared rule takes
+            // the checkpoint as a parameter precisely so the suspension grid can plug
+            // a real one in without touching the sleeping loop.
+            if let concurrency = RuntimeOps.concurrencyBuiltins[name] {
+                let args = try arguments.map { try evaluate($0) }
+                return try concurrency(args)
+            }
             // G-2R: the numeric constructor, answered from the same rule the
             // AST walk uses (`RuntimeOps.builtinF64`) -- one definition, two
             // engines, exactly like the character builtins above.

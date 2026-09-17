@@ -805,4 +805,107 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
         "is_letter": builtinIsLetter,
         "is_number": builtinIsNumber,
     ]
+
+    /// Where the builtin constructors report from.
+    ///
+    /// One constant, read by both engines: the interpreter's own
+    /// `builtinLocation` now points here. The two channels' error text for a
+    /// mistyped builtin argument therefore cannot diverge at the location field
+    /// — and it used to be possible, because each side held its own literal.
+    static let builtinLocation = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
+
+    /// The `sleep` argument rule. Shared so both channels reject the same
+    /// things in the same words; a duration is an integer number of
+    /// milliseconds and always has been.
+    static func sleepMilliseconds(_ args: [Value]) throws -> Int {
+        guard args.count == 1, case .int(let ms) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "sleep 的参数必须是整数（毫秒）",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        return ms
+    }
+
+    /// `sleep(ms)` — block the calling thread for that long.
+    ///
+    /// Sleeps in slices rather than one long call so the caller can check a
+    /// cancellation flag between them: an interrupted task stops within one
+    /// slice instead of after the full duration, which is what makes "cancel a
+    /// task that is sleeping" take effect in milliseconds.
+    ///
+    /// The checkpoint is a parameter because the two engines legitimately
+    /// differ here. The AST channel holds a task handle and passes a real
+    /// check; the HIR channel has no cancellation context yet and passes a
+    /// no-op. That difference is recorded rather than hidden — when the
+    /// suspension grid gives the HIR executor a task handle, this is the one
+    /// place it plugs into, and until then a no-op is the honest answer
+    /// instead of a check against a context that does not exist.
+    static func builtinSleep(milliseconds ms: Int, checkpoint: () throws -> Void) throws -> Value {
+        try checkpoint()
+        var remaining = max(0, Double(ms)) / 1000.0
+        let slice = 0.02
+        while remaining > 0 {
+            let step = min(slice, remaining)
+            Thread.sleep(forTimeInterval: step)
+            remaining -= step
+            try checkpoint()
+        }
+        return .null
+    }
+
+    /// The `Error("msg")` / `CancelError("msg")` argument rule. Both
+    /// constructors take exactly one string, and the two types are structurally
+    /// identical — they are told apart by `isCancel`, never by their payload.
+    static func errorMessageArgument(_ args: [Value]) throws -> String {
+        guard args.count == 1, case .string(let message) = args[0] else {
+            throw RuntimeError.typeMismatch(
+                expected: "String",
+                got: args.first.map { describeValueKind($0) } ?? "no argument",
+                location: builtinLocation
+            )
+        }
+        return message
+    }
+
+    /// `Error("msg")` — the built-in default error value.
+    static func builtinErrorConstructor(_ args: [Value]) throws -> Value {
+        try makeError(try errorMessageArgument(args))
+    }
+
+    /// `CancelError("msg")` — the cancellation error.
+    static func builtinCancelErrorConstructor(_ args: [Value]) throws -> Value {
+        try makeCancelError(try errorMessageArgument(args))
+    }
+
+    /// The cancellation error value.
+    ///
+    /// Moved out of the interpreter so the constructor's two callers — the AST
+    /// channel's by-name chain and the HIR executor's table — build the same
+    /// value from the same rule rather than from two copies of it.
+    static func makeCancelError(_ message: String) -> Value {
+        .structInstance(StructInstance(
+            typeName: builtinCancelErrorTypeName,
+            fields: ["message": .string(message)]
+        ))
+    }
+
+    /// The concurrency builtins this grid answers synchronously, by name.
+    ///
+    /// Same contract as `characterBuiltins`: the lowerer's whitelist reads this
+    /// table and the executor dispatches through it, so a name cannot be
+    /// lowered on one side and go unanswered on the other.
+    ///
+    /// What is here is what a plain call can express: `sleep` blocks, `Error` /
+    /// `CancelError` build a value. `joinAll`, `joinWithin` and `isCancel` are
+    /// deliberately absent — they traffic in `Future` values, which the HIR has
+    /// no representation for, so admitting them would accept arguments the
+    /// channel cannot produce.
+    static let concurrencyBuiltins: [String: ([Value]) throws -> Value] = [
+        "sleep": { args in
+            try builtinSleep(milliseconds: try sleepMilliseconds(args), checkpoint: {})
+        },
+        "Error": builtinErrorConstructor,
+        "CancelError": builtinCancelErrorConstructor,
+    ]
 }
