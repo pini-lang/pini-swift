@@ -1,10 +1,21 @@
 # Issue：`G-6` 删 `Interpreter` 前必须先处置的**残余引用面**（含规划件过期读数的实测订正）
 
-> **日期**：2026-09-18｜**状态**：**Open**（只登记不修）
+> **日期**：2026-09-18｜**状态**：**部分交付**（`G-6a` 已处置 §2.2 与 §2.1 的一行；余项归 `G-6b` / `G-6c`）
 > **发现于**：格 `G-5`（D 类参照臂改造）的开工前引用面普查
 > **性质**：**三种形态并存** —— ① 规划件的一处读数**已过期**（抽取其实已完成）；
 > ② 一条**从未登记**的用户可见能力断点（`pini dbg` 无 HIR 分支）；③ 一处测试侧**无主**静态入口。
 > **归属**：**`G-6` 前置**（用户 2026-09-18 裁决：立工单并并入前置）。
+>
+> ⭐ **本单是「`G-6` 残余引用面的总挂点」**（承 §7），且**开工须按节点名**：本单**不是一批**。
+>
+> **2026-09-18 本批（`G-6b` 规划期）复核结果**：
+> - ✅ **§2.2 已交付**（`G-6a` 处置 B：`pini debug` 两条入口改指 HIR）—— 判据 2「能力不净减」达成。
+> - ⚠️ **§2.1 的表已过期四处**（行号与形态都变了），本批**逐行订正**，见 §2.1 的订正块。
+> - ⚠️ **§2.3 漏记 3 个构造点**（登记只记静态入口）—— 而它们才是 `G-6c` 的**编译阻塞面**，本批补记。
+> - ✅ 判据 3「规划件读数已订正」**已达成**（`docs/issue-hir-p4-gamma-plan-2026-09-16.md` 的事实基础与
+>   复现方式两处均有订正标注与指针）。
+> - ⏳ **余项**：`Sources` 的 3 处 `.ast` 分支（归 `G-6c`）· 测试侧引用面（归 `G-6b`）。
+>   ⇒ **本单在 `G-6c` 收口前不得归档。**
 
 ## 0. 一句话
 
@@ -29,16 +40,37 @@
 
 ### 2.1 `Sources` 侧 6 处构造点（**规划只记了 2 处**）
 
+⚠️ **2026-09-18 订正（`G-6b` 规划期，去注释现测）**：下表**四处**已随 `G-6a` 改变形态或行号。
+现测 `Sources` 侧 `Interpreter(` **仅余 4 处**（本表前两行 + `Interpreter.swift` 自身的 1 处自构 + `ReplEvaluator`），
+其余两行**已不再是构造点**。⇒ **按本表的旧形态施工会改错文件。**
+
 | 位置 | 所在函数 | 形态 | `G-6` 后的处置 |
 |---|---|---|---|
-| `Sources/PiniCLI/main.swift:906` | `runRunPath` | 单文件 run 的 **AST 回落**（`if engine == .hir { … return }` 之后） | 收开关时一并删 |
-| `Sources/PiniCLI/main.swift:965` | `runRunPath` | 包 run 的 **AST 回落** | 同上 |
-| `Sources/PiniCLI/main.swift:1047` | **`runDebugFile`** | **无回落分支，恒 AST** | ⛔ **见 §2.2** |
-| `Sources/PiniCLI/main.swift:1066` | **`runDebugDirectory`** | **无回落分支，恒 AST** | ⛔ **见 §2.2** |
-| `Sources/PiniCore/REPL/ReplEvaluator.swift:104` | REPL `.ast` 分支 | 收开关时删 | 已登记（`P4-β` 迁移件的「三份同构」项） |
-| `Sources/PiniCore/Debugger/DAPServer.swift:191` | `makeRun` 未注入时的默认路径 | `let ast = Interpreter()` | 已登记（`G-6` 行「`DAPServer` 默认路径改指」） |
+| `Sources/PiniCLI/main.swift:906` | `runRunPath` | 单文件 run 的 **AST 回落**（`if engine == .hir { … return }` 之后） | 收开关时一并删（归 `G-6c`） |
+| `Sources/PiniCLI/main.swift:965` | `runRunPath` | 包 run 的 **AST 回落** | 同上（归 `G-6c`） |
+| ~~`Sources/PiniCLI/main.swift:1047`~~ | ~~`runDebugFile`~~ | ⛔ **已订正**：`G-6a` 把该函数改指 HIR ⇒ 此处现在是 `HIRExecutor(programBase:)`（L1059），**`Interpreter(` 已不在其中**。见 §2.1.1 | ✅ **已交付**（`G-6a`） |
+| ~~`Sources/PiniCLI/main.swift:1066`~~ | ~~`runDebugDirectory`~~ | ⛔ **已订正**：同上（现为 L1088 的 `HIRExecutor`） | ✅ **已交付**（`G-6a`） |
+| `Sources/PiniCore/REPL/ReplEvaluator.swift:104` | REPL `.ast` 分支 | 收开关时删 | 归 **`G-6b`**（硬前置）：先收成一臂，`G-6c` 再删 |
+| ~~`Sources/PiniCore/Debugger/DAPServer.swift:191`~~ | ~~`makeRun` 未注入时的默认路径~~ | ⛔ **已订正**：`G-6a` 已改指 ⇒ 此处现在是 `let exec = HIRExecutor()`，**不再是 `Interpreter()`** | ✅ **已交付**（`G-6a`） |
 
-### 2.2 ⛔ 新增且无主：`pini dbg` 的 CLI 入口**恒走 AST**（用户可见能力断点）
+#### 2.1.1 ⚠️ `G-6a` 的处置方式带来一个**副作用**（须由 `G-6b` 收口）
+
+`G-6a` 把 `runDebugFile` / `runDebugDirectory` 接到 HIR 时，**手写了第三份 `check → lower → execute`**
+（没有复用已经存在的 `ProgramRunner`，而后者本就是 `DebugHookHost`）。
+⇒ 引用面**确实解除**了，但**装配同构从「四份」变成「九处」（4 文件）**。
+实测与完整清单见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §1.1 / §1.2。
+**这不是缺陷登记，是范围登记** —— 它正是 `G-6b` 的第一份对象清单的来源。
+
+### 2.2 ⛔ 新增且无主：`pini debug` 的 CLI 入口**恒走 AST**（用户可见能力断点）—— ✅ **已交付（`G-6a`，2026-09-18）**
+
+> **处置**：用户 2026-09-18 裁决「**全补实现**」⇒ `G-6a` 取本节选项 **A**
+> （两条入口改指 `HIRExecutor`，照 `DebuggerTests.dbgMakeRunHIR` 的形状）。
+> **判据**：`DebuggerTests` **17 passed** + **CLI 实机冒烟**（该套件走自己的 HIR helper，测试绿不算数）——
+> `b 3` 后确停在 3 行；目录模式停在 `package-demo/main.pini:20` 并跑完。
+> 实录见 `docs/issue-hir-p4-gamma-batches-2026-09-16.md` 的 `G-6a` §三项处置（处置 B）。
+> ⚠️ **两处订正**：① 命令名是 **`pini debug`**（不是 `dbg`）；
+> ② 处置方式**未复用 `ProgramRunner`** ⇒ 副作用见 §2.1.1（归本批 `G-6b`）。
+> 以下为处置前的原文，保留以留痕。
 
 ```swift
 // Sources/PiniCLI/main.swift:1040
@@ -54,7 +86,7 @@ private func runDebugFile(_ path: String) {
 `DAPServer.swift:191` 的默认路径与它是同一件事的两面 —— DAP 侧**可以**由调用方注入 `makeRun`
 （`DebuggerTests` 正是注入 `dbgMakeRunHIR`），而 **CLI 侧从不注入**。
 
-⇒ **`G-6` 直接删除 `Interpreter` 会让 `pini dbg <file>` 与 `pini dbg <dir>` 整体消失**，
+⇒ **`G-6` 直接删除 `Interpreter` 会让 `pini debug <file>` 与 `pini debug <dir>` 整体消失**，
 而 `G-6` 的判据 3 只写了「第四项（调试/DAP/REPL）**须先完成参照臂改造**才可读」——
 **参照臂改造（`G-5`）不包含这两处**：它们没有第二臂可换，只有一条臂要**新建**。
 
@@ -62,16 +94,34 @@ private func runDebugFile(_ path: String) {
 
 | 选项 | 动作 | 代价 |
 |---|---|---|
-| **A** | 把两条入口改指 `HIRExecutor`（照 `DebuggerTests.dbgMakeRunHIR` 的形状：`check → lower → execute`） | 中：须实测 `pini dbg` 的暂停点/断点行为在 HIR 侧等价（`DebuggerTests` 已有 12 条参数化用例覆盖同一面，可复用为判据） |
+| **A** ✅ **已取** | 把两条入口改指 `HIRExecutor`（照 `DebuggerTests.dbgMakeRunHIR` 的形状：`check → lower → execute`） | 中：须实测 `pini debug` 的暂停点/断点行为在 HIR 侧等价（`DebuggerTests` 已有 12 条参数化用例覆盖同一面，可复用为判据） |
 | **B** | 先在 `G-6` 前的某个批里补 HIR 分支并**保留** AST 分支（双引擎并存，随 `G-6` 收成一臂） | 中：多一个中间态 |
-| **C** | 显式退役 CLI 调试能力，`pini dbg` 报「暂不可用」 | 小，但**用户可见能力净减** ⇒ 须走 `spec §1.3` 登记 |
+| **C** | 显式退役 CLI 调试能力，`pini debug` 报「暂不可用」 | 小，但**用户可见能力净减** ⇒ 须走 `spec §1.3` 登记 |
 
-### 2.3 `Tests` 侧静态入口（**无主**）
+### 2.3 测试侧引用面 —— ⚠️ **原表只记了静态入口，漏了构造点**
+
+⚠️ **2026-09-18 订正（`G-6b` 规划期，去注释现测）**：测试侧 `Interpreter` 引用共 **18 行 / 19 处 / 3 文件**，
+其中**构造点 14 处**。原表只列了 5 处静态成员 ⇒ **漏记的 3 个构造点才是 `G-6c` 的编译阻塞面**。
+
+**（a）静态成员引用：5 处 / 2 文件**（原表，实测复核一致）：
 
 | 位置 | 引用 | 处置 |
 |---|---|---|
-| `Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift:199-200` | `Interpreter.makeResult` ×2 · `Interpreter.makeError` ×1 | 改指 `RuntimeOps.*`（**行为中性**：两侧都已是 `RuntimeOps` 的薄转调） |
+| `Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift:246-247` | `Interpreter.makeResult` ×2 · `Interpreter.makeError` ×1 | 改指 `RuntimeOps.*`（**行为中性**：两侧都已是 `RuntimeOps` 的薄转调） |
 | `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift:192,227` | `Interpreter.isCancelErrorValue` ×2 | **条件项**：`G-3e` 退役单的 `SuspendRuntimeTests` 节记该类 11 条**全部**退役 ⇒ 取处置 A（移入退役登记处）则随文件消亡；取处置 B（原地保留只读规格）则须一并改名 |
+
+**（b）构造点：14 处 / 3 文件**（**本批补记** —— 按「该文件 `G-6c` 之后是否存活」分成两面）：
+
+| 文件 | 构造点 | 存活面？ | 处置 |
+|---|:--:|---|---|
+| `StructuredConcurrencyTests` | **3**（L70 · L87 · L183） | ⛔ **整体存活**（`G-3e` 裁 14 条不退役） | ⛔ **必须先改指**（4 个用例 / 6 处引用）—— 否则 `G-6c` 删除瞬间 `cannot find 'Interpreter' in scope`。归 **`G-6b`** |
+| `SuspendRuntimeTests` | **9**（全落在退役的 11 条内） | 文件存活，但**存活的前 4 条实测零引用** | ✅ 随退役面消亡，**无需动** |
+| `CPSDifferentialTests` | **2**（L22 · L30，在一处夹具驱动 helper 内） | ⛔ 14 条**全部退役** | ✅ 随文件消亡，**无需动** |
+
+⭐ **判据级结论**：`G-6c` 的**真编译阻塞面** = `StructuredConcurrencyTests` 的 **4 个用例 / 6 处引用**。
+其余 13 处全部随退役面消亡。⇒ 本单**判据 1「三组引用面逐处有主」**的余项因此收窄为**两格**：
+`ReplEvaluator` 的 `.ast` 分支（归 `G-6b`）· 上述 4 个用例（归 `G-6b`）。
+逐条清单与实测命令见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §1.3。
 
 ## 3. 本单的两个错误结论（如实登记，因为它们是同一坑的两次）
 
@@ -88,21 +138,28 @@ private func runDebugFile(_ path: String) {
 
 ## 4. 判据（怎么算完成）
 
-| # | 判据 | 测法 |
-|:--:|---|---|
-| 1 | 三组引用面**逐处**有主 | §2.1/§2.2/§2.3 每一行都有「谁在哪一步做掉」 |
-| 2 | `pini dbg` 能力**不净减** | 两条入口在 `G-6` 后仍可用（取 §2.2 的 A/B），或按 C 走完 `spec §1.3` 登记 |
-| 3 | 规划件读数**已订正** | `issue-hir-p4-gamma-plan-2026-09-16.md` 的「事实基础」与「复现方式」两处的「39 处」旁有订正标注与指针 |
-| 4 | 编译面**零残留** | `G-6` 删除后 `swift build` 无 `cannot find 'Interpreter' in scope` |
+| # | 判据 | 测法 | 状态（2026-09-18 本批复核） |
+|:--:|---|---|---|
+| 1 | 三组引用面**逐处**有主 | §2.1/§2.2/§2.3 每一行都有「谁在哪一步做掉」 | ⏳ **余两格**：`ReplEvaluator` 的 `.ast` 分支（`G-6b`）· `StructuredConcurrencyTests` 的 4 个用例（`G-6b`）。§2.1 已逐行订正、§2.3 已补构造点 |
+| 2 | `pini debug` 能力**不净减** | 两条入口在 `G-6` 后仍可用（取 §2.2 的 A/B），或按 C 走完 `spec §1.3` 登记 | ✅ **已达**（`G-6a` 取 A；`DebuggerTests` 17 passed + CLI 实机冒烟） |
+| 3 | 规划件读数**已订正** | `issue-hir-p4-gamma-plan-2026-09-16.md` 的「事实基础」与「复现方式」两处的「39 处」旁有订正标注与指针 | ✅ **已达** |
+| 4 | 编译面**零残留** | `G-6c` 删除后 `swift build` 无 `cannot find 'Interpreter' in scope` | ⏳ 属 `G-6c`；**开工前的等价前置判据** = 去注释扫描「**存活面**引用 = 0」（见 `G-6b` 规划 §4 判据 1） |
+
+⇒ **本单在判据 1 与 4 收口前不得归档。**
 
 ## 5. 不做范围
 
 - **只登记不修**：本单不改任何源码、不改测试、不改规范。开工须单独点名。
+  ⚠️ **本批（`G-6b` 规划期）的例外已获授权**：只做**本单自身的文档订正**（行号表 · 漏记清单 · 状态行），
+  零 `Sources` / `Tests` 改动。
 - **不顺手做 §2.3 的改名** —— 它属 `G-6` 前置，与 `G-5` 的换腿不是同一件事
   （换腿改的是**测试怎么驱动引擎**，改名改的是**静态工具函数的挂载点**）。
-- **不把 §2.2 直接按 A 做掉** —— 它需要在 HIR 侧验证 `pini dbg` 的暂停面，属独立一格。
+- ~~**不把 §2.2 直接按 A 做掉**~~ —— ✅ **该条已失效**：用户 2026-09-18 裁「全补实现」，`G-6a` 已按 A 做掉。
 
 ## 6. 复现方式
+
+⚠️ **本节的 `grep` 姿势在本机不可用**（宿主 grep 整体被存根接管，见 `charter.md` §4 知识栏）；
+用**去注释扫描**代替。本单 §2 的读数按 §6 的脚本取。
 
 ```bash
 # 去注释后的真引用面（本单的核心读数）
@@ -130,8 +187,8 @@ for p in sorted(pathlib.Path("Sources").rglob("*.swift")):
         if re.search(r'\bInterpreter\b', l): print(f"{p}:{i}: {l.strip()}")
 PY
 
-# `pini dbg` 无 HIR 分支（§2.2）
-grep -n 'if engine == .hir' Sources/PiniCLI/main.swift     # 只在 runRunPath 里，debug 两入口没有
+# `pini debug` 无 HIR 分支（§2.2）—— ✅ 已交付（`G-6a`），本命令已**不再**成立
+grep -n 'if engine == .hir' Sources/PiniCLI/main.swift     # 只在 runRunPath 里（两处）；debug 两入口已改指 HIR
 ```
 
 ---
@@ -140,6 +197,13 @@ grep -n 'if engine == .hir' Sources/PiniCLI/main.swift     # 只在 runRunPath �
 
 `G-6` 的判据第 4 条要求「残余**逐条具名入账**」，而本单是那本账的**总挂点** ⇒ 下列各项按用户裁决挂此。
 ⚠️ 本节只做**登记与指针**，不改任何源码；各项处置仍须**各自点名**。
+
+### 7.0 ⚠️ 一处**登记纪律**（2026-09-18 本批复核补记）
+
+本单的 §2.1 行号表与 §2.3 静态入口表在 `G-6a` **真改了源码之后**已各自过期，
+而**没有任何一处回头改它**。⇒ 纪律：**凡以行号 / 函数形态登记「引用面」的单，
+在被登记面发生源码改动的那一批里必须同批回头订正**；否则下一位读者会按旧形态去改**已经改过的文件**。
+（本次的四处过期行号见 §2.1 的订正块；漏记的构造点见 §2.3(b)。）
 
 ### 7.1 `print` 一个 `Result` 值 —— **37 条**（用户已裁 **C · 维持现状**）
 

@@ -635,14 +635,31 @@ try-else 迁移前的旧形态），与 `IRExecutionTests` 用 `XCTSkipIf(true, 
 **跑完即验还原**（`git status` 三文件、`stash list` 为空）。同日复核：基线 57 与本批前记录的
 「`G-5` 实测 57」**一致** ⇒ 中间两轮工单巡查的零改动断言得到交叉验证。
 
-⚠️ **一条工具缺陷（新发现，未立案）**：`tools/hir-parity-probe.py:251` 的默认二进制路径写死为
-**`/tmp/pini-build/arm64-apple-macosx/debug/pini`** —— 该布局不是 `swift build --show-bin-path`
-今天写的那套（`out/Products/Debug`）⇒ 不显式设 `PINI_SWEEP_BIN` 就会**量到陈旧二进制**。
+⚠️ **一条工具缺陷（2026-09-18 已立案；原记的表述已订正）**：`tools/hir-parity-probe.py:251` 的默认二进制路径
+写死为 **`/tmp/pini-build/arm64-apple-macosx/debug/pini`** —— 该布局**不是** `swift build --show-bin-path`
+今天写的那套（`<scratch>/out/Products/Debug`）。⚠️ **订正两处**：
+① 原文「不显式设 `PINI_SWEEP_BIN` 就会**量到陈旧二进制**」**只对历史态成立**（旧布局文件还在 `/tmp` 里时）；
+**现行态**（本批现测：旧布局文件已被系统清理）= **无 env 时探针恒不可用**（明确报错、`rc=1`）。
+两态根因相同，但危害不同 ⇒ 不得只写历史态那一句。
+② `:647–650` 的提示语同样把人引向**半成品动作**（照它构建完，产物落在 `out/Products/Debug`，
+与默认值指向的那条**仍不同**）。
+⇒ 载体：`docs/issue-hir-parity-probe-default-bin-path-2026-09-18.md`（**只登记不修**；是否并入 `G-6b` 见该批规划 §5.3）。
 本批两次误读（一度把「同一夹具两条路径结论相反」当成架构矛盾）均由此而来。
 
 ### 未做范围
 
-不改 `G-6b` 的对象（四份同构装配整合 · `ReplEvaluator` 的 `.ast` 分支 · 测试侧静态入口 ·
-`InterpreterTests` 改名）· 不动 `G-6c`（删本体、收开关、探针两通道化）· 不 push ·
-不处置三张前置单在册状态（其**归档动作**留待下轮，本批只做实现）。
+不改 `G-6b` 的对象 · 不动 `G-6c`（删本体、收开关、探针两通道化）· 不 push ·
+不处置三张前置单在册状态（本批只做实现）。
+
+⚠️ **2026-09-18 订正（`G-6b` 规划期现测）**：上面这句里的「`G-6b` 的对象」原写「**四份**同构装配整合 · …」，
+实测为 **9 个调用点 / 4 个文件**，且 `resolveHIRPackage` 今天**不存在**。逐项订正与完整清单见
+`docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §1.1 / §1.2。
+⭐ **其中两处是 `G-6a` 自己写出来的** —— 处置 B 把 `runDebugFile` / `runDebugDirectory` 接到 HIR 时，
+**手写了第三份 `check → lower → execute`**（没有复用已是 `DebugHookHost` 的 `ProgramRunner`）
+⇒ 本批在解除引用面的同时，**使装配同构从「四份」变成「九处」**。这不是缺陷，是**登记未跟上事实**。
+
+⚠️ **三张前置单的在册状态（2026-09-18 已在 `G-6b` 规划批内处置完毕，此处留痕）**：
+`issue-hir-builtin-user-extension-gap-2026-09-18.md` → **已交付**（判据 4 已订正）·
+`issue-hir-foreign-symbol-not-found-not-loud-2026-09-18.md` → **已交付**（判据 4 待复核，列 `G-6b` 开工前）·
+`issue-interpreter-residual-reference-surface-2026-09-18.md` → **部分交付**（余项归 `G-6b` / `G-6c`，**不得归档**）。
 
