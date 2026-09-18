@@ -114,6 +114,25 @@
 ⇒ 若不改指，它们会**因删除而被动失效**（而不是因退役）。**这是本单与 `G-6` 之间的真实耦合。**
 改指动作须单独点名。
 
+⚠️ **2026-09-18 实测补记（`G-6b` 开工首步，逐条真跑而非按 `rc`）**：本节的「可迁移面」**已全部落实或定性完毕**，
+下表是本单在 `G-6` 之前的**终局账**（复现见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §10.3）：
+
+| 类 | 条数 | 用例 | 终局 |
+|---|:--:|---|---|
+| 已改指 | 3 | `testCancelInterruptsRunningLoop` · `testDetachBuiltinPrunesChildFromParent` · `testSynchronousProgramUnaffectedByCheckpoints` | ✅ 走 HIR 线 |
+| **不可转** | **5** | `testDeferStillRunsWhenTaskCancelled`（跑了但断言不满足）· `testDetachEscapeHatchSuppressesLeak` · `testLeakedChildErrorFloatsToCallerResult` · `testParentReturnCancelsUnjoinedChildTask`（三者 `printing a Result value is outside the slice`）· `testJoinedChildIsNotCancelledByParentReturn`（`type mismatch: result(ok: i32) is not i32`） | ⛔ **待裁**（见下） |
+| 非语言层、可直接改指 | 2 | `testJoinFutureDetachesChildFromParent`（→ `RuntimeOps.joinFuture`）· `testCloseScopeCollectsLeakedErrAndCancelsPending`（→ `RuntimeOps.makeResult` / `.makeError`） | 行为中性（两侧本就是逐字转发，源码可证） |
+| 非语言层、须先单源化 | 1 | `testCheckpointIsNoOpWithoutOwner`（`checkCancellation` 在 HIR 侧是 `private`） | 待裁 |
+
+⇒ **本单 §7 的「§4 4 条可迁移 A/B」选项已失效**：可迁移的从来只有 3 条、且**已全部改指**；
+真正悬着的是**那 5 条不可转的**（§7 的 B 选项「随 `G-6` 一并失效并具名入账」是它们的候选）。
+⚠️ 其中 `testDeferStillRunsWhenTaskCancelled` 若退役，须在本单**点名**「该缺陷此后无测试见证」——
+它是一条**已立案的能力缺口**，退役不等于缺口消失。
+
+⚠️ 同批实测另订正一处**普查形态**：`Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift:484`
+的 `captureSuspendStdout` 签名里有一个**类型标注** `(Interpreter) throws -> FutureValue` ——
+它既不是构造点、也不是静态成员 ⇒ **按那两栏枚举会漏掉**。该文件存活 ⇒ 这一行必须改、或该助手随退役面删。
+
 ## 5. 残余四：阻塞 join 的**固有边界**（已在规范具名，此处只登记归属）
 
 退役后阻塞 join **占用 worker 线程** ⇒ 有界池下**高扇出会耗尽线程池**。
