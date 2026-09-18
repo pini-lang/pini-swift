@@ -97,6 +97,11 @@
   - **容量阈值 100 条（advisory）**：条数 >100 时清扫**仅告警**，不触发任何强制删除。规模由时效规则控制，不设硬性上限。
   - **ID 与「不得被外部引用」（MUST）**：ID 为**日期前缀 + 中文自描述短语**（形如 `<YYYY-MM-DD> <短语>`，形态见 `evidence-table.toml` 表头；旧编号 `E-NNN` 已停用）。ID 是给人与代理**读表**用的标识符，**不是配额**——脚本不分配 ID、不重编号、不复用槽位。**本表是滚动表**（条目按新鲜度自动清扫），任何外部载体（本规范正文、ADR、工单、计划、CHANGELOG、源码注释）引用表内 ID 都必然悬空，故**禁止**引用：表内每条以 `citable = false` 自标此约束。历史载体确需保留一条**已删编号**的痕迹时，写 `E-NNN（源已删除）`——该标注只说明「此号在表内已查不到」，**不构成引用**。
   - **器械拦截（MUST）**：删除造成的悬空**不再记入表内待人工处置**，改由器械当场拦下——`tools/evidence_sweep.py --check` 报出表外所有「出现编号而无上述标注」的位置并**非零退出**，`hooks/pre-commit` 每提交无条件执行该检查（`--quiet`），违规即拦。`meta.dangling_ids` 已于 2026-09-15 废除（登记见 `docs/spec/issue/issue-evidence-id-retype-2026-09-15.md`）。
+  - **载体失效标记（MUST，2026-09-19 起）**：上一条管的是**编号**引用，这一条管**路径与套件名**引用——二者失效的方式相同（被指的东西先消失，引用照原样留着），故同一条原则：「**指向已不存在载体的位置，必须在原处标注，不得静默保留**」。
+    - **标注形态**：紧接该指针之后写 **`（载体已删）`**（如 `` `RuntimeBackendTests`（载体已删） ``）。它**不改变原句语义**，只声明「此处按原样找不到东西」。**不得**因载体消失而改写该处原有的**结论**（实测结论是关于「当时」的，载体消失不能反证它）。
+    - **两处口径一致**：证据表内的 `artifacts` 同缘由，以 `artifact_status = "carrier-deleted"` 标注；`tools/evidence_sweep.py --check` **两个方向都拦**（悬空而无标记 / 有标记而全部实存）。
+    - **只标指针，不改记录**：`command`/`output`/`note`/`claim` 之类描述「当时跑了什么、看到什么」的字段**只计数、不改写**——改写它们就是编造实测记录。
+    - ⚠️ **本标记在重建完成后逐处撤除并重指**；撤除是**重指的证据**，不是清理动作。撤除前，凡引用这些位置的**判据**（尤其 §A.6 的回归门禁与 §6.2 的测试组织）应视为**当时有效、当前未挂载**。
 
 ---
 
@@ -154,19 +159,18 @@
 > 标注：**规范状态** = 语义是否已在本文档定义（已定义 / **部分** = 语法已定义于 §A、运行语义未定 / 未定义-Experimental）；**实现状态** = ✅ 已实现、◐ 部分、✗ 未实现；**证据** = 源码符号或 `examples/*.pini`。
 > 「实现 ✅ 且 规范未定义」者，语义**未落定**、按 Experimental 对待（登记缺口，非反录入为事实），正式语义待 RFC/ADR 落定。
 >
-> ⚠️ **证据指针的可兑付性（2026-09-19 标注）**：下表「证据」列里凡出现**测试套件名**的，
-> 指向的是**已整体删除的旧测试面**（2026-09-18 一次删除，见变更记录）；该面正按**内联 source** 口径重建。
+> ⚠️ **证据指针的可兑付性（2026-09-19）**：下表「证据」列里指向**已整体删除的旧测试面**的指针，**逐处已标 `（载体已删）`**（口径见 §1.4「载体失效标记」）；该面正按**内联 source** 口径重建，重建后**逐处撤标并重指**。
 > ⇒ **这类指针当前不可兑付**：不要据它去找文件，也不要因为找不到就改判「未实现」——
 > **实现状态列记的是当时的实测结论，与证据载体是否还在是两件事**。
-> 重建完成后**逐条重指**到新载体（届时删去本注）。
+> ⇒ 未标 `（载体已删）` 的指针（源码符号、`examples/*.pini`）**仍然可兑付**，照常按它定位。
 
 | 构造 | 规范状态 | 实现状态 | 稳定性 | 证据 |
 |------|----------|----------|--------|------|
 | `var` / `let` 变量 | 已定义 | ✅ | Provisional | `Token.swift` `Keyword` |
 | `func` 函数声明 | 已定义 | ✅ | Provisional | `Parser.parseFuncDecl` |
-| 函数体强制缩进 ≥1 层（§A.2.3 `func-body` 仅 `INDENT { statement } DEDENT`；禁止顶级内容态顶格累积语句；trait 抽象方法豁免） | 已定义且已实现（任务 #13 草稿意图采纳） | ✅ | Provisional | `Parser.parseBareFuncDecl` 强制 INDENT / `ParserTests.testParseTopLevelFunctionBodyWithoutIndentRejected` |
-| 测试函数块 `|test`（`名称\|test(参数元组,) -> (返回元组,)` 裸声明——2026-09-05 修正批勘误：`{名称\|test}(签名)` 花括号形态系宿主实现超售（TestBlockTests 扩展，与 `\|func` 同机制），草稿 §测试函数块仅要求显式 `\|test` 裸声明，花括号形态已随批③ E2-005 一并拒绝；`pini test [path]` 收集范围内顶级 `\|test` 逐一执行——收集单位 = 模块（G49）：无参 = 模块根全量收集，显式 `<path>` 限定范围且可加回 `[build] exclude` 排除目录；参数按类型注入零值；`Interpreter.runTests` 为运行时入口。**测试入口四项（H-5/A14 裁决，2026-08-31 明写；行为已符合）**：① 测试入口不直接暴露给用户——由工具对 `|test` 的处理交付；② 测试执行顺序不保证，测试之间不得有顺序依赖；③ 收集粒度三形态——默认模块根全量收集 / 显式路径限定收集 / 单文件收集；④ 测试入口与 main 入口互斥——`pini test` 不执行 main，`pini run` 不执行测试） | 已定义（v0.42.0，见 G41；收集单位更正见 G49） | ✅ | Provisional | `pini test` 子命令 / `TestBlockTests` / `TestBlockSwiftTests` / `examples/test.pini` |
-| `assert` 内建（`assert(条件: Bool,)` / `assert(条件: Bool, 消息: String,)`；条件 false 抛 `RuntimeError.assertionFailed`，LLVM 端经 `@bk_panic` 终止） | 已定义（v0.42.0，见 G41） | ✅ | Provisional | `BuiltinFunctionTests` / `PiniRuntime.pini_panic` |
+| 函数体强制缩进 ≥1 层（§A.2.3 `func-body` 仅 `INDENT { statement } DEDENT`；禁止顶级内容态顶格累积语句；trait 抽象方法豁免） | 已定义且已实现（任务 #13 草稿意图采纳） | ✅ | Provisional | `Parser.parseBareFuncDecl` 强制 INDENT / `ParserTests（载体已删）.testParseTopLevelFunctionBodyWithoutIndentRejected` |
+| 测试函数块 `|test`（`名称\|test(参数元组,) -> (返回元组,)` 裸声明——2026-09-05 修正批勘误：`{名称\|test}(签名)` 花括号形态系宿主实现超售（TestBlockTests（载体已删） 扩展，与 `\|func` 同机制），草稿 §测试函数块仅要求显式 `\|test` 裸声明，花括号形态已随批③ E2-005 一并拒绝；`pini test [path]` 收集范围内顶级 `\|test` 逐一执行——收集单位 = 模块（G49）：无参 = 模块根全量收集，显式 `<path>` 限定范围且可加回 `[build] exclude` 排除目录；参数按类型注入零值；`Interpreter.runTests` 为运行时入口。**测试入口四项（H-5/A14 裁决，2026-08-31 明写；行为已符合）**：① 测试入口不直接暴露给用户——由工具对 `|test` 的处理交付；② 测试执行顺序不保证，测试之间不得有顺序依赖；③ 收集粒度三形态——默认模块根全量收集 / 显式路径限定收集 / 单文件收集；④ 测试入口与 main 入口互斥——`pini test` 不执行 main，`pini run` 不执行测试） | 已定义（v0.42.0，见 G41；收集单位更正见 G49） | ✅ | Provisional | `pini test` 子命令 / `TestBlockTests（载体已删）` / `TestBlockSwiftTests（载体已删）` / `examples/test.pini` |
+| `assert` 内建（`assert(条件: Bool,)` / `assert(条件: Bool, 消息: String,)`；条件 false 抛 `RuntimeError.assertionFailed`，LLVM 端经 `@bk_panic` 终止） | 已定义（v0.42.0，见 G41） | ✅ | Provisional | `BuiltinFunctionTests（载体已删）` / `PiniRuntime.pini_panic` |
 | 方法 `\|self` | 已定义 | ✅ | Provisional | `Keyword.self` |
 | 类型声明定界符 `( ) { } [ ] < >` | 已定义（§2.1） | ✅ | Provisional | `Parser.parseTopLevelDecl` |
 | 扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`（规则 3.2/3.14：类型体只含字段/用例，方法须移扩展块并显式 `\|self`/`\|own`；扩展块内禁自由函数；trait 扩展允许抽象签名） | 已定义且已实现（ADR-016，任务 #12） | ✅ | Provisional | `Parser.parseExtensionDecl` / `ExtensionDecl.swift` / `examples/struct.pini` 等 |
@@ -181,40 +185,40 @@
 | `match` / `case` | 已定义 | ✅ | Provisional | `Parser.parseMatch` |
 | `match` 子块结构 + `case _:` 通配 | 已落地（v0.42.0，见 G28）：case 缩进进 match 子块；通配=`case _:`；`default:`/pass 通配子块已移除 | ✅ | Provisional | `examples/match.pini` |
 | `for-in` 迭代 | 已定义且已实现（v0.39.0，见 G36：`for (模式元组,) in 集合值:` + `step:`；模式元组与集合元素一一对应绑定、`_` 占位忽略；标签经 `标签|for` 定向，ADR-014，**已实现**） | ✅ | Provisional | `Parser.parseFor(label:)` / `Interpreter.executeFor` / `StmtEmitter.generateForStatement`；`examples/for.pini` |
-| `defer` 块退出清理 | 已定义且已实现（§A.2.4 defer-stmt 双形态：相邻单行 + `:` 块形式——块体作为一个 defer 项入栈、包含块退出按书写序执行，跨项 LIFO；LIFO 运行语义按 G39 待转正） | ✅ | Experimental | `examples/defer.pini`、`DeferBlockTests` |
+| `defer` 块退出清理 | 已定义且已实现（§A.2.4 defer-stmt 双形态：相邻单行 + `:` 块形式——块体作为一个 defer 项入栈、包含块退出按书写序执行，跨项 LIFO；LIFO 运行语义按 G39 待转正） | ✅ | Experimental | `examples/defer.pini`、`DeferBlockTests（载体已删）` |
 | `return` / `break` / `continue` | 已定义 | ✅ | Provisional | `Keyword` |
 | `pass` no-op 占位语句 | 已定义 | ✅ 已落地 | Provisional | `Pini草稿.md`、本规范 §2.4.2、示例 `validated-match.pini` |
 | 元组 `(a, b)` | 已定义 | ✅ | Provisional | `TupleExpr` |
-| 元组解构 `var (t, e) = rhs`（模式元组绑定，复用 for-in 模式元组产生式） | 已定义（v0.42.0） | ✅ | Provisional | `TupleDestructureTests` |
-| 元组元素访问 `.0` / `.名称`（含命名元组标签） | 已定义（v0.42.0） | ✅ | Provisional | `.tupleIndex` / tuple labels / `TupleIndexTests` / `TupleNamedTests` |
-| `^` 右值糖（≡ `try X else err: return err` 定义性脱糖，ADR-032；与中缀位异或、类型糖 `^T` 三重身份消歧） | 已定义（v0.42.0；语义重定义见迁移批） | ✅ | Provisional | `ResultUnwrapTests` |
+| 元组解构 `var (t, e) = rhs`（模式元组绑定，复用 for-in 模式元组产生式） | 已定义（v0.42.0） | ✅ | Provisional | `TupleDestructureTests（载体已删）` |
+| 元组元素访问 `.0` / `.名称`（含命名元组标签） | 已定义（v0.42.0） | ✅ | Provisional | `.tupleIndex` / tuple labels / `TupleIndexTests（载体已删）` / `TupleNamedTests（载体已删）` |
+| `^` 右值糖（≡ `try X else err: return err` 定义性脱糖，ADR-032；与中缀位异或、类型糖 `^T` 三重身份消歧） | 已定义（v0.42.0；语义重定义见迁移批） | ✅ | Provisional | `ResultUnwrapTests（载体已删）` |
 | 字符串插值 `\(...)` | 已定义（G13） | ✅ | Provisional | `examples/lexical.pini`、`Token.interpolatedString` |
 | 复合赋值 `+= -= *= /= %= &= \|= ^= <<= >>=` | 部分（语法与折叠已定义 §A.2.4/§A.4 3.11；溢出/符号语义未定） | ✅ | Experimental | `Token.*Assign`、`Interpreter.evaluateBinaryOp`（Parser 折叠为 `.assign` 内 binary） |
 | 位运算 `& ^ ~ << >>` | 部分（语法与优先级已定义 §A.1.2/§A.2.5/§A.3 层 5；溢出/符号语义未钉住） | ✅ | Experimental | `Token.bitwise*`、`BinaryExpr`/`UnaryExpr` |
 | 匿名函数（`func` + 块体，含 async + 参数标注） | 已落地（v0.31.0，见 G29） | ✅ | Experimental | `Expression.funcLiteral`、`Parser.parseFuncLiteral`、`examples/lambda.pini` |
-| 匿名函数参数类型标注 `(n: T,)` | 已落地（v0.31.0：支持，与具名函数一致） | ✅ | Experimental | `TypeInference.inferFuncLiteral` 消费 `p.typeAnnotation`；调用点校验（`FuncLiteralTests`） |
+| 匿名函数参数类型标注 `(n: T,)` | 已落地（v0.31.0：支持，与具名函数一致） | ✅ | Experimental | `TypeInference.inferFuncLiteral` 消费 `p.typeAnnotation`；调用点校验（`FuncLiteralTests（载体已删）`） |
 | `detach <expr>` 语句（fire-and-forget：子任务从父 scope 剪枝、结局不再归父所有，§A.2.4 detach-expr-stmt；`detach(future)` 内建函数已升格为保留关键字） | 已定义且已实现（任务 #13） | ✅ | Provisional | `Keyword.detach` / `Statement.detachStatement` / `SuspendEvaluator.detachFromParent` / `examples/concurrency-future-handle.pini` |
 | 下标 `a[i]`（`subscript`） | 已实现（安全模型 G48 三通道：`a[i]` 安全断言→`T`，越界读 **panic**（E5-005）；`a.get(i)` 安全可选→`Optional<T>`，越界 `.none`；`unsafe a.getUnchecked(i)` 不安全→`T`，越界 UB。负索引尾部计数 + 切片语法 `a[i:j]`，见 §A.2.5 / `SubscriptStrategies.swift`） | ✅（解释器端；LLVM 端 `a[i]` 与运行时一致，`.get`/`.getUnchecked` 未实现 → IR 生成报 unsupported） | Experimental | `Parser`/`Interpreter` 下标路径 / `SubscriptStrategies.swift` / `docs/spec/issue/archive/proposal-subscript-safety-channels-2026-09-01.md` |
-| `own` 关键字（G50 更名自 `Self`，理由：G4 命名体系全小写 snake_case 自洽；语言无所有权模型，`own` 无歧义） | 已定义（类型层出现 §A.2.6；trait 签名内 `own` 返回类型经 conformance 校验替换为具体实现类型——`TypeChecker.replaceSelf`，抽象/默认实现均覆盖） | ✅ | Provisional | `Token.swift` `Keyword.own`、`TypeChecker.replaceSelf` / `TraitConstraintTests.testSelfReturnTypeConformance`/`testSelfReturnTypeInDefaultImplementation` |
+| `own` 关键字（G50 更名自 `Self`，理由：G4 命名体系全小写 snake_case 自洽；语言无所有权模型，`own` 无歧义） | 已定义（类型层出现 §A.2.6；trait 签名内 `own` 返回类型经 conformance 校验替换为具体实现类型——`TypeChecker.replaceSelf`，抽象/默认实现均覆盖） | ✅ | Provisional | `Token.swift` `Keyword.own`、`TypeChecker.replaceSelf` / `TraitConstraintTests（载体已删）.testSelfReturnTypeConformance`/`testSelfReturnTypeInDefaultImplementation` |
 | 数组 / 字典 / 集合字面量 | 已定义（G17；COW 值语义见 G34，v0.38.0） | ✅ | Provisional | `examples/collections.pini`、`examples/cow.pini` |
 | 内建错误类型 `Error()` / `Result` / `CancelError()` | 已实现（G12 异步模型已定义，Stable；错误类型构造细节未钉定，仍 Experimental） | ✅ | Experimental | `examples/concurrency.pini`、`Interpreter` |
-| 弱引用 `WeakRef`（`WeakRef(obj)`；`.target` / `.isAlive`；引用语义复制共享同一 box、弱引用计数对称配对） | 已定义（v0.42.0，见 G42） | ✅ | Provisional | `Interpreter`/`ARCManager`/`WeakRefTests` |
+| 弱引用 `WeakRef`（`WeakRef(obj)`；`.target` / `.isAlive`；引用语义复制共享同一 box、弱引用计数对称配对） | 已定义（v0.42.0，见 G42） | ✅ | Provisional | `Interpreter`/`ARCManager`/`WeakRefTests（载体已删）` |
 | 懒加载 `LazyRef<T>`（构造 `LazyRef<T>(初始化闭包)` / 推断糖 `LazyRef(闭包)`；`.value` 同步 once 获取；引用语义复制共享同一 box；多线程首访仅一个线程执行初始化） | 已定义（v0.42.0，见 G40） | ✅ | Provisional | `examples/lazyref.pini` / `Interpreter`（`.lazyRef`）/ `PiniRuntime.pini_lazyref_*`（LLVM） |
 | `Optional` | 部分（类型糖 `?T`/`nil` 已定义 §A.2.6/G30/G31；运行时释放/提升语义未定） | ✅ | Experimental | `Interpreter` |
 | `nil` 关键字（= `Optional.none` 等效常量） | 已定义（v0.35.0，见 G30） | ✅ | Provisional | `Keyword.nil` / `Parser.parsePrimaryAtom` / Pini草稿.md（G30） |
 | `?` 可选类型糖（前缀 `?T` = `Optional<T>` 类型层缩写） | 已定义（v0.36.0，见 G31） | ✅ | Provisional | `Token.questionMark` / `Parser.parseTypeAnnotation` / Pini草稿.md（G31） |
 | `iota()` 枚举序位自增 | 已移除（v0.29） | ✗ | Removed | 违反无元编程原则；字面量默认亦随规则 3.15（ADR-016）移除——枚举关联参数仅位置类型 |
 | 异步 `=>` 派发 + `await`/`wait`（`await` 异步体挂起 / `wait` 同步阻塞 join；⚠️ **挂起模式**——经自建续体运行时释放 OS 线程、精确恢复——**2026-09-17 已实现暂时退役**（ADR-043，生产面零启用），现行**唯一**形态为同步/阻塞 join） | 已定义（G12 / §3.1；v0.41.0 落地，v0.43.0 T7→Stable；⚠️ **2026-09-17 分层订正**：挂起模式降 Provisional 并退役） | ✅ | Stable（阻塞语义）· Provisional（挂起模式，已退役） | `examples/concurrency.pini` / `Interpreter.swift`、`Value.swift`、`Scheduler.swift`（现行）；`SuspendEvaluator.swift`、`SuspendScheduler.swift`（**已退役**） |
-| `import` / `export` 块（**唯一顶级形态**；解析 + 跨模块 enforce） | 已定义且已实现（**G52 批 1，2026-08-31**：块式解析（D-1 块头=当前文件名校验）+ 裸语句移除（破坏性）+ R2 依赖图禁环（E3-010）+ R4 `别名.符号` 限定访问（D-2 静态互斥 E3-004）+ public 门槛（E3-012）+ R1 物理边界（E3-011）；加载器递归预载全图。IR 后端不支持跨模块（后续批次）。MVS/`pini-summary`/`pini mod`/远程 = 批 3/4） | ✅（解释器） | Provisional | `Parser.parseImportBlock/parseExportBlock` / `ModuleDependencyLoader` / `SemanticAnalyzer` 限定校验 / `Interpreter` 限定派发 / `ModuleSystemTests` |
+| `import` / `export` 块（**唯一顶级形态**；解析 + 跨模块 enforce） | 已定义且已实现（**G52 批 1，2026-08-31**：块式解析（D-1 块头=当前文件名校验）+ 裸语句移除（破坏性）+ R2 依赖图禁环（E3-010）+ R4 `别名.符号` 限定访问（D-2 静态互斥 E3-004）+ public 门槛（E3-012）+ R1 物理边界（E3-011）；加载器递归预载全图。IR 后端不支持跨模块（后续批次）。MVS/`pini-summary`/`pini mod`/远程 = 批 3/4） | ✅（解释器） | Provisional | `Parser.parseImportBlock/parseExportBlock` / `ModuleDependencyLoader` / `SemanticAnalyzer` 限定校验 / `Interpreter` 限定派发 / `ModuleSystemTests（载体已删）` |
 | `pini.toml` 模块清单 | 已定义（P4 v0.23；边界细则见 **G52**） | **◐** | Provisional | `Package`/`FileLoader` 加载 + 跨文件符号 + 可见性 enforce **已实现**；**双通道清单已实现（批 6）**：`[tap]`/`[require]`/`[require.<tap>]`/`[resources]`/`[resources.<tap>]`/`[replace]` 解析 + `[[ ]]` 数组表（MiniTOML），旧 `[dependencies]` 命中即报错指引；`spec`/`[[bin]].entry`/`[lib]`/`[tool.pini]` 不消费；MVS 与 `pini-summary.toml` **已实现**（v1 每依赖单可用版本、仅本地 `file:` tap，远程下载批 7） |
 | 标准库内建函数（29 个，按 ADR-020 D4 六组组织：collection/char/pointer/io/math/concurrency/value） | 部分（G14 文件 IO 已落地；字符谓词已定义 ADR-019；并发签名未钉） | ✅ | Provisional/Experimental | `BuiltinRegistry`（单点登记）/ `Interpreter` 内建分发 |
-| 内建成员方法派发（String/Array 值的成员调用，ADR-020 步骤 B 派发表驱动） | 已定义且已实现（**H-3，2026-08-31**：三级派发——**用户扩展 > 语言内标准库（StdlibPini）> 宿主原生**；用户扩展按名匹配（非按签名），既可**覆盖**同名内建成员（不再被静默压过），也可**新增**内建表没有的方法；未被覆盖的成员按原表派发。**后端面边界已关闭**（`G-6a`，2026-09-18：扩展方法降载成普通 `module.functions`，IR 名 `方法__类型`，HIR 与 LLVM 两条通道都按名分派 ⇒ **无残留运行时段缺口**；实测 `emit` rc=0 且 IR 含 `shout__String`，`run-llvm` 端到端输出对）） | ✅（解释器 + HIR + LLVM） | Provisional | `BuiltinRegistry.memberMethods` / `Interpreter` `.string`/`.array` 派发 / `HIRLowerer` 内建扩展预扫描 / `BuiltinOverrideTests` |
+| 内建成员方法派发（String/Array 值的成员调用，ADR-020 步骤 B 派发表驱动） | 已定义且已实现（**H-3，2026-08-31**：三级派发——**用户扩展 > 语言内标准库（StdlibPini）> 宿主原生**；用户扩展按名匹配（非按签名），既可**覆盖**同名内建成员（不再被静默压过），也可**新增**内建表没有的方法；未被覆盖的成员按原表派发。**后端面边界已关闭**（`G-6a`，2026-09-18：扩展方法降载成普通 `module.functions`，IR 名 `方法__类型`，HIR 与 LLVM 两条通道都按名分派 ⇒ **无残留运行时段缺口**；实测 `emit` rc=0 且 IR 含 `shout__String`，`run-llvm` 端到端输出对）） | ✅（解释器 + HIR + LLVM） | Provisional | `BuiltinRegistry.memberMethods` / `Interpreter` `.string`/`.array` 派发 / `HIRLowerer` 内建扩展预扫描 / `BuiltinOverrideTests（载体已删）` |
 | 进程内建 `moduleRoot`/`argv`（批 6/F6；`moduleRoot` 返回程序基准、`argv` 返回脚本路径之后的裸参数数组——LLVM 端均 unsupported） + 文件 IO `readFile`/`writeFile`/`readLine` | 已落地（G14）；**路径基准已钉定（G58，批 5）**：绝对路径原样；`./` `../` 开头相对运行时 CWD（用户/shell 视角）；其余相对路径相对**程序基准**（模块运行=模块根 / 单文件=入口文件所在目录）；`moduleRoot()` 返回基准（LLVM 端 unsupported） | ✅ | Provisional | `examples/io.pini` / `docs/spec/issue/archive/proposal-io-path-base-2026-09-02.md` / ADR-030 |
-| `[名称\|foreign]` 块（§A.2.2 foreign-decl：外部 C 函数签名，块内函数自动 `\|unsafe`；运行时经预注册原生函数表解析 `malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`；未注册函数注册期 fail-fast） | 已定义且已实现（ADR-015，Phase 2a 解释器优先 + Phase 2b `dlsym`；**两条解释通道共用一条解析链**：shim 表 → 裸 C 绑定，LLVM 端显式 unsupported） | ✅（解释器 + HIR） | Experimental | `Parser.parseForeignDecl` / `Interpreter.registerNativeFunctions` / `FFILoader` / `ForeignThunk` / `HIRExecutor` / `FFITests` / `examples/ffi.pini` |
-| `unsafe <expr>` 消耗点 + `&` 取地址（§A.2.5：前缀一元；`unsafe` 标记单次不安全操作；`&` 仅 unsafe 上下文可用，非 unsafe 上下文报 E4-001；解释器 `&` 为快照取址） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Expression.unsafe`/`.addressOf` / `TypeChecker.unsafeContextDepth` / `FFITests` |
-| `\|unsafe` 函数修饰符（仅自由函数：顶层或 foreign 块签名；函数体自动不安全上下文；扩展块方法 / trait 签名标它报错） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Parser.parseBareFuncDecl`（`allowUnsafeModifier`）/ `TypeChecker.checkFuncBody` / `FFITests` |
-| `*T` 原始指针 + C 兼容性（§A.2.6：元素须标量/纯值结构体/另一指针；禁 object 及含 object 复合类型，ARC 隔离） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `TypeAnnotation.pointer` / `TypeChecker.validateDeclPointerTypes` / `Value.rawPointer` / `FFITests` |
-| 指针原语 `load`/`store`/`addressof`（按指针元素类型编解码 I8/I16/I32/I64/F32/F64/Bool/指针；runtime C-ABI 面 `bk_ptr_*`） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Interpreter.registerPointerBuiltins` / `RawPointerValue` / `PiniRuntime.pini_ptr_*` / `FFITests` |
+| `[名称\|foreign]` 块（§A.2.2 foreign-decl：外部 C 函数签名，块内函数自动 `\|unsafe`；运行时经预注册原生函数表解析 `malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`；未注册函数注册期 fail-fast） | 已定义且已实现（ADR-015，Phase 2a 解释器优先 + Phase 2b `dlsym`；**两条解释通道共用一条解析链**：shim 表 → 裸 C 绑定，LLVM 端显式 unsupported） | ✅（解释器 + HIR） | Experimental | `Parser.parseForeignDecl` / `Interpreter.registerNativeFunctions` / `FFILoader` / `ForeignThunk` / `HIRExecutor` / `FFITests（载体已删）` / `examples/ffi.pini` |
+| `unsafe <expr>` 消耗点 + `&` 取地址（§A.2.5：前缀一元；`unsafe` 标记单次不安全操作；`&` 仅 unsafe 上下文可用，非 unsafe 上下文报 E4-001；解释器 `&` 为快照取址） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Expression.unsafe`/`.addressOf` / `TypeChecker.unsafeContextDepth` / `FFITests（载体已删）` |
+| `\|unsafe` 函数修饰符（仅自由函数：顶层或 foreign 块签名；函数体自动不安全上下文；扩展块方法 / trait 签名标它报错） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Parser.parseBareFuncDecl`（`allowUnsafeModifier`）/ `TypeChecker.checkFuncBody` / `FFITests（载体已删）` |
+| `*T` 原始指针 + C 兼容性（§A.2.6：元素须标量/纯值结构体/另一指针；禁 object 及含 object 复合类型，ARC 隔离） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `TypeAnnotation.pointer` / `TypeChecker.validateDeclPointerTypes` / `Value.rawPointer` / `FFITests（载体已删）` |
+| 指针原语 `load`/`store`/`addressof`（按指针元素类型编解码 I8/I16/I32/I64/F32/F64/Bool/指针；runtime C-ABI 面 `bk_ptr_*`） | 已定义且已实现（ADR-015，Phase 2a） | ✅（解释器） | Experimental | `Interpreter.registerPointerBuiltins` / `RawPointerValue` / `PiniRuntime.pini_ptr_*` / `FFITests（载体已删）` |
 
 #### 2.4.2 `pass` 关键字（no-op 占位 + 通配子块校验性匹配）
 
@@ -342,7 +346,7 @@ try 表达式 else 错误绑定名:
 
 ### 2.5 访问控制（约定制 4 级）
 
-> **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests`、`FieldVisibilityTests`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现：批 1 已落地**（2026-08-31，块式 import/export + 禁环 + `别名.符号` + public 门槛，批 1 裁决与实现备注收编见 `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` 状态块）；MVS / `pini mod` 工具链 / 远程抓取待批 3/4。语言面细则见 §5.1 索引 → 语言参考的「声明」章（导入与导出 / 访问控制）与「模块系统」章。
+> **现况**：可见性由「符号名 `_` 前缀 + 文件/目录名 `_` 前缀」共同决定（约定制；旧 `^^`/`_^`/`__` 符号制已移除）。实现：`VisibilityLevel.forSymbol(name:fileName:)`（`Sources/PiniCore/AST/Visibility.swift`）按「符号名 `_` 前缀 → private / 文件名 `_` 前缀 → internal / 目录名 `_` 前缀 → package / 默认 → public + `main` 豁免」推导，跨文件 enforce 经 `PackageSymbolIndex`（语义层 `build` 拦截重声明、类型层 `isVisible(from:)` 判定）。演示与测试：`examples/package-demo`、`CrossFileVisibilityTests（载体已删）`、`FieldVisibilityTests（载体已删）`。**跨模块边界（G52 收口，原 G15 缺口）**：跨模块（import/export）边界 enforce 与块式别名表（`[名称|import]`/`[类型名称|export]`）已由 **G52** 决议——`import` 即依赖、依赖图禁环、全导入绑定别名、`别名.符号` 限定访问、跨模块引入门槛仅 `public`；**宿主实现：批 1 已落地**（2026-08-31，块式 import/export + 禁环 + `别名.符号` + public 门槛，批 1 裁决与实现备注收编见 `docs/spec/issue/archive/issue-module-system-rules-2026-08-28.md` 状态块）；MVS / `pini mod` 工具链 / 远程抓取待批 3/4。语言面细则见 §5.1 索引 → 语言参考的「声明」章（导入与导出 / 访问控制）与「模块系统」章。
 
 - **可见性四级（取三者最严格者为准）**：
 
@@ -507,9 +511,9 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | **G56** | **集合下标三通道安全模型（G48 破坏性修订，批 2）**：① **安全断言** `a[i]` → 元素类型 `T`，越界（读）**panic**（`RuntimeError.indexOutOfRange`，**E5-005**）；② **安全可选** `a.get(i)` → `Optional<T>`，越界 / 缺键 `.none`；③ **不安全** `unsafe a.getUnchecked(i)` → `T`，越界 **UB**（解释器无法表达真 UB，以「UB 陷阱」E5-006 近似）。Array / Dictionary / String 一致（**字典缺失键与越界同义**）；负索引尾部计数与切片语义不变 | 已定义**且已实现（解释器端）**；**LLVM 端通道 ②③ 未实现**（IR 生成报 unsupported，锁步断言在无 `lli` 环境跳过并如实记录）。**破坏性**：越界由 nil 改 panic、类型 `Optional<T>` → `T`，迁移见 `docs/spec/migration-2026-09.md` §A | Provisional | v0.50.0（批 2 修订；G48 原文 v0.49.0） | §2.2 / §2.4.1 G48 / `SubscriptReadStrategy.read`（`SubscriptStrategies.swift`）/ `TypeInference.infer` subscript 分支 / `BuiltinRegistry.memberMethods` 的 `get`、`getUnchecked` / `Interpreter.callFunctionValue` + `uncheckedOrNone` / `PiniRuntime.bk_array_get` / ADR-028 / `docs/spec/issue/archive/proposal-subscript-safety-channels-2026-09-01.md` |
 | **G57** | **括号内记法收口——值的注入用 `=`（批 3）**：总原则 **`=` = 值的注入方向**（实参标签 `f(a = 1)`、字典条目 `["k" = 1]`、元组标签 `(a = 1,)`、默认参数 `n: I32 = 1`），**`：= 标注与取出方向`**（类型标注、块开启、match 具名绑定 `case A(x: v):`）。旧记法 `f(a: 1)` / `[k: v]` / `(a: 1,)` / `E(x: 1)` **已废弃**，解析器给迁移提示。**空字典无字面量**（`[:]` 为全切片），走类型构造 `字典<键, 值>()` | 已定义**且已实现**（宿主 + 自举 parser 同步；parse 差分 MATCH 222 + 94）。**破坏性**：注入位旧记法全部报错；**触及 G54 已钉定面的构造位**（计划修正案 AM-2，G54 解构位保持 `:` 不变），迁移见 `docs/spec/migration-2026-09.md` §B | Provisional | v0.50.0（批 3） | §2.2 记法原则 / 规则 3.15 / `Parser.swift` 实参标签与泛型构造实参分支、`parseTupleOrParen` 标签元素、`parseCollectionLiteral` 字典条目（match 具名绑定分支保持 `colon`）/ 自举 `parser.pini` `parse_element` + 实参表 / ADR-029 / `docs/spec/issue/archive/proposal-paren-equals-binding-2026-09-01.md` |
 | **G58** | **IO 相对路径解析基准（批 5，方案 A 三段式）**：`readFile`/`writeFile` 的路径按形态解析——①绝对路径原样；②`./` `../` 开头相对**运行时 CWD**（用户/shell 视角，为 F6 argv 透传铺路）；③其余相对路径相对**程序基准**（模块运行=模块根、单文件=入口文件所在目录，均为绝对路径）——程序资源可复现，与 `import` 的模块根基准对齐（消除双基准）。`moduleRoot()` 内建返回基准（未注入基准时如实返回 CWD；LLVM 端 unsupported）。LLVM 端无前缀相对路径**字面量**在编译期烘焙基准（跨机运行不可移植为 v1 已知限制）；非字面量路径运行时按 CWD（v1 已知限制） | 已定义**且已实现**（解释器 + CLI 六入口注入 + LLVM 烘焙；自举测试从仓根直跑 70/0——原 5 个 CWD 依赖假失败零改动修复）。**破坏性**：无前缀相对路径由 CWD 改程序基准（现存用例受害数 0，G14 Provisional 窗口期）；出账 `issue-conflict-register` A13/P-path | Provisional | v0.51.0 | `docs/spec/issue/archive/proposal-io-path-base-2026-09-02.md` / ADR-030 / `migration-2026-09.md` §E / `Sources/PiniCore/Interpreter/Interpreter.swift` resolveIOPath / `Sources/PiniCLI/main.swift` absoluteProgramBase |
-| **G59** | **泛型枚举用例构造的形态与类型实参挂点**：**限定形态** `枚举名<实参…>.用例(载荷…)` **为准**——父枚举与类型实参**均由书写给出**、不依赖推断，实参个数可在类型层**静态校验**；**裸名形态** `用例<实参…>(载荷…)` 为**糖**——先按 ADR-026 D1 三档解析出父枚举再逐位绑定实参，此后与限定形态**同一语义**（**代价 = 实参个数校验落运行期**，已登记）。**文法零改动**：`primary-atom` + `generic-construct` 两产生式与消歧规则 3.3 已覆盖该拼写 | 已定义（**ADR-037**）；**实现：降载层 ✅（本批 `G-2d` 的 `S1`）· AST 走查 ✗**（限定形态在 AST 侧报 E5-001——走查将于 `P4-γ` 删除，故不投入；**两形态在降载层与 LLVM 通道均可用**，且差分夹具全用裸名形态 ⇒ **测试面不可见**）| Experimental | v0.54.0（推测） | ADR-037 / §A `generic-construct` 注记 / `Sources/PiniCore/HIR/HIRLowerer.swift`（`registerEnumSpecialization` · `lowerGenericEnumCaseConstruct`）/ `Sources/PiniCore/Type/TypeEnvironment.swift`（`defineGenericEnum` · `lookupSpecializedEnumCase`）/ 夹具 `Tests/PiniTests/GenericEnumTests/` · `Tests/PiniTests/GenericRuntimeTests/` / 规划件 `docs/spec/issue/archive/issue-hir-generic-enum-specialization-plan-2026-09-16.md` |
+| **G59** | **泛型枚举用例构造的形态与类型实参挂点**：**限定形态** `枚举名<实参…>.用例(载荷…)` **为准**——父枚举与类型实参**均由书写给出**、不依赖推断，实参个数可在类型层**静态校验**；**裸名形态** `用例<实参…>(载荷…)` 为**糖**——先按 ADR-026 D1 三档解析出父枚举再逐位绑定实参，此后与限定形态**同一语义**（**代价 = 实参个数校验落运行期**，已登记）。**文法零改动**：`primary-atom` + `generic-construct` 两产生式与消歧规则 3.3 已覆盖该拼写 | 已定义（**ADR-037**）；**实现：降载层 ✅（本批 `G-2d` 的 `S1`）· AST 走查 ✗**（限定形态在 AST 侧报 E5-001——走查将于 `P4-γ` 删除，故不投入；**两形态在降载层与 LLVM 通道均可用**，且差分夹具全用裸名形态 ⇒ **测试面不可见**）| Experimental | v0.54.0（推测） | ADR-037 / §A `generic-construct` 注记 / `Sources/PiniCore/HIR/HIRLowerer.swift`（`registerEnumSpecialization` · `lowerGenericEnumCaseConstruct`）/ `Sources/PiniCore/Type/TypeEnvironment.swift`（`defineGenericEnum` · `lookupSpecializedEnumCase`）/ 夹具 `Tests/PiniTests/GenericEnumTests/（载体已删）` · `Tests/PiniTests/GenericRuntimeTests/（载体已删）` / 规划件 `docs/spec/issue/archive/issue-hir-generic-enum-specialization-plan-2026-09-16.md` |
 | **G60** | **数值字面量的转换与 `abs` 的定义域**（ADR-038）：① `abs` 接受**整数与小数**、各自保型；② **整数字面量不隐式转为小数**（要小数处须写 `0.0`/`2.0`）。⚠️ ② 把类型面钉成单一可判形态，代价是**旧引擎时代写下的程序翻转后会被拒**（与 `D-P4-15` 的 `E4` 族同源） | 已定义（**ADR-038**）；**实现未落地** —— 待改：内建登记表的 `abs` 签名 · HIR 降载层 `abs` 结果类型硬编码 · LLVM 侧 `abs` 的处置（实现或响亮拒绝）· 夹具 `testEnumNamedConstructionUsesEquals.pini` 的 3 处 · 全量语料的整数→小数普查 | Experimental | v0.55.0（推测） | ADR-038 / `Sources/PiniCore/Common/BuiltinRegistry.swift` / `Sources/PiniCore/HIR/HIRLowerer.swift` / `docs/spec/migration-2026-09.md` / 用例 `testMathAbs` · `testEnumNamedConstructionUsesEquals` |
-| **G61** | **标签 `break` 的定向范围与标签命名规则**（ADR-039）：① `break 标签` 可定向**任意带标签结构**（含 `if` 块）；② `continue 标签` **仅循环标签有效**（明文加固，不放宽）；③ 内层同名标签**遮蔽**外层（最近匹配）；④ 标签与变量**独立命名空间**。触发面 = 第 3 层「spec 断言层」补「标签语义」面时照出「`break` 指向 `if` 标签」**两引擎相反**（ast 跳出块 / hir 与 llvm 同源 panic），而三处文档沉默 | 已定义**且已实现**（**ADR-039**；规范与实现同批落地）。落地面：契约节点 3 `ifStmt` 加标签与节点 11/12 表述订正 · 降载层「循环帧栈」泛化为「可中断帧栈」 · `HIRExecutor` `if` 帧捕获 · `IREmitter` `if` 块出口标签与释放路径 · `HIRPrinter` · 语言参考标签节与跳转节 · `docs/spec/migration-2026-09.md` 记一处收敛。⚠️ 同一张断言面还照出**另一条**缺陷（`continue 标签` 的深度 > 1 时跳过目标循环尾部）—— **不在本缺口内**，已单独立案 | Provisional | v0.55.0（推测） | ADR-039 / ADR-014（前身） / §2.4.1 / §A.4 规则 3.13 / `docs/spec/hir-contract.md` / 第 3 层语料 `Tests/PiniTests/SpecAssertionTests/` |
+| **G61** | **标签 `break` 的定向范围与标签命名规则**（ADR-039）：① `break 标签` 可定向**任意带标签结构**（含 `if` 块）；② `continue 标签` **仅循环标签有效**（明文加固，不放宽）；③ 内层同名标签**遮蔽**外层（最近匹配）；④ 标签与变量**独立命名空间**。触发面 = 第 3 层「spec 断言层」补「标签语义」面时照出「`break` 指向 `if` 标签」**两引擎相反**（ast 跳出块 / hir 与 llvm 同源 panic），而三处文档沉默 | 已定义**且已实现**（**ADR-039**；规范与实现同批落地）。落地面：契约节点 3 `ifStmt` 加标签与节点 11/12 表述订正 · 降载层「循环帧栈」泛化为「可中断帧栈」 · `HIRExecutor` `if` 帧捕获 · `IREmitter` `if` 块出口标签与释放路径 · `HIRPrinter` · 语言参考标签节与跳转节 · `docs/spec/migration-2026-09.md` 记一处收敛。⚠️ 同一张断言面还照出**另一条**缺陷（`continue 标签` 的深度 > 1 时跳过目标循环尾部）—— **不在本缺口内**，已单独立案 | Provisional | v0.55.0（推测） | ADR-039 / ADR-014（前身） / §2.4.1 / §A.4 规则 3.13 / `docs/spec/hir-contract.md` / 第 3 层语料 `Tests/PiniTests/SpecAssertionTests/（载体已删）` |
 | **G66** | **挂起模式实现暂时退役 —— 并发面判定为「不完善」**（`ADR-043`）：`await`/`wait` **保留且语义不变**，退役的是「释放当前 OS 线程」这一**实现形态**（CPS 求值器 + 挂起调度器）。依据 = 生产面**零启用**（`Sources/` 无 `suspendMode` 赋值、`SuspendScheduler` 零实例化）＋ §3.1 自陈「语义与挂起等价」⇒ **对用户程序零可见影响、非破坏性**。评测面 43 条归因：**25 条真退役**（差分 14 + 挂起运行时 11）、**18 条保留**（值层原语 4 + 结构化并发 14）。⚠️ **不承诺移除**（故非 Deprecated）；「暂时」的**触发条件未定义** ⇒ 须在 `P5` 收口时显式登记处置 | 已定义（退役登记；规范与语言参考同批改） | Provisional | — | `ADR-043` / §3.1 / 语言参考（并发模型） / `docs/spec/adr/adr-043-suspend-mode-retirement.md` |
 | **G65** | **FFI 单字节字符改名 `Char` → `CChar`**（`ADR-033 D2` 的实施，2026-09-17）：腾出 `Char` 名给 grapheme 字符（格 `P0d`），并使 §2.7「`Char` 不进入 FFI 标量集」对实现成立。**本批实测为行为中性**：改名前后 `*Char` / `*CChar` 的检查器接受性**完全相同**（`cCompatibilityFailure` 对未知简单名一律保守放行 ⇒ `isCScalarType` 的成员性对该名**惰性**）；全量回归与探针零位移｜⚠️ **残余**：`CChar` 面**今日不可运行**（两台引擎解析不出元素类型）⇒ 原计划的「补正向覆盖」**不可达**，已改判（见工单 §处置） | Provisional | — | `ADR-033` / `TypeChecker.swift` / `RuntimeOps.swift` / spec §2.7 |
 | **G64** | **HIR 契约 `detachStmt` 节点**（`ADR-042`）：`detach <expr>`（fire-and-forget 唯一出口）在 HIR 侧的落点。**节点面已落地**（2026-09-17 同批：契约 §3.17 · `HIRNode.swift` case · 三锚点 `printer` 真实现 / `interp-hir` 与 `llvm` fail-loud）｜⚠️ **残余**：降载规则与两台引擎的**行为**未落（`HIRLowerer` 无降载 ⇒ 节点当前不可达；引擎行为归格 `G-3c-1`）｜**非预留位**：本条目是 2026-09-17 **新裁**（`D-G3c-1`），不是实施既定预留 | Provisional | — | `ADR-042` / `HIRNode.swift` / `hir-contract.md` §3.17 |
@@ -593,7 +597,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 **现状（阶段 1 已落地，维持）**：集合 / COW / LazyRef（G40）运行时采用 Swift 实现的 shim 库 `libPiniRuntime`（`.dynamic` target，`lli --dlopen` / `clang -L/-l` 加载），emitted IR 经 `call @bk_*` 调用。内部以**不透明句柄**（IR `ptr`）承载，类型检查 / 推断层只见 opaque handle，不暴露 Swift 专有类型；`IRBuilder` 对集合与 LazyRef 一律建模为 opaque C-ABI handle。`@bk_*` 仅接受 / 返回 C 兼容类型（`void*`/`i8*` 句柄、`i64`/`i32` 标量、长度）。已实装的 C-ABI 面：`bk_array_*` / `bk_dict_*` / `bk_set_*`（G34 COW）+ `bk_lazyref_*`（G40 S3，统一 `(ptr,ptr,ptr)->ptr` wrapper ABI）+ `bk_panic`（G41 assert）+ `bk_handle_*`（share 管理）。
 
-**硬性约束（MUST，现即生效）**：shim 与用户代码的边界必须是 **C ABI**，不是 Swift 泛型 ABI——违反即锁死自举终态，使 Swift 成为永久依赖。已实证可守住不泄漏 Swift 类型（越界即错误、空数组、双后端逐字节一致等回归门禁锁进 `RuntimeBackendTests`）。
+**硬性约束（MUST，现即生效）**：shim 与用户代码的边界必须是 **C ABI**，不是 Swift 泛型 ABI——违反即锁死自举终态，使 Swift 成为永久依赖。已实证可守住不泄漏 Swift 类型（越界即错误、空数组、双后端逐字节一致等回归门禁锁进 `RuntimeBackendTests（载体已删）`）。
 
 **统一 shim 边界**：集合（G34）、并发（§3.1 挂起后端需要的 `NSLock`/`NSCondition`/GCD 替换）与 LazyRef（G40）**共用单一 `libPiniRuntime` C-ABI 面**，不另设独立 shim；C-ABI 纪律只在 §3.2 一处施加。FFI 的 foreign C 调用（Phase 2b）同样经此单一 C-ABI 边界（复用 `@bk_*` 面或同构的 `dlopen`/`dlsym` 边界），**不引入第二个 ABI 面**——守住「不泄漏 Swift 类型」（§2.7 三阶段模型）。
 
@@ -602,7 +606,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 - **阶段 3（自举纯 libc，北极星）**：Pini 成熟后以自身重写同一组 C ABI 函数替换 Swift shim；用户程序从「依赖 libPiniRuntime + Swift runtime」变为「只依赖 libPiniRuntime」；若 `@bk_*` 后续内联 / 直接生成 IR，可做到**纯 libc**。不设定时间表。
 
 **自举前置检查（阶段 3 的指导清单，2026-08-24 建立）**：
-1. **shim 边界 C ABI 不泄漏**——已守住（MUST + `RuntimeBackendTests` 门禁）。
+1. **shim 边界 C ABI 不泄漏**——已守住（MUST + `RuntimeBackendTests（载体已删）` 门禁）。
 2. **语言自宿主能力**：Pini 需能表达「重写 `@bk_*`」所需的程序结构（内存布局、互操作、错误收口）——当前 `ok`/`err`、`match`、泛型、`LazyRef`、`|test` 已提供核心构件。
 3. **FFI / 内存管理（T14，最大前置缺口）—— 已部分满足**：自举需要调用 libc（`malloc` / `free` / `memcpy` 等）并操作不透明指针。**解释器优先已落地**（ADR-015 Phase 2a）：`[名称|foreign]` 块 + 预注册原生函数表（`malloc` / `free` / `memcpy` / `memset` / `strlen` / `puts` / `strcmp` / `cstr`）+ `*T` / `&` / `unsafe` / `|unsafe` + `load` / `store` / `addressof`。**剩余前置**：LLVM 端 FFI（`dlsym` 动态符号解析已落地：Phase 2b 解释器 + `G-4` 的 HIR 通道；shim 表本身仍为 Swift 实现）。
 4. **目标清单**：待用 Pini 重写的 C-ABI 函数集 = `bk_handle_*` + `bk_array_*` + `bk_dict_*` + `bk_set_*` + `bk_lazyref_*`（逐一对照 `PiniRuntime.swift` 的 `@_cdecl` 面）。
@@ -702,7 +706,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 - **驳回性测量（Dismissing Measures）**：断言「非期望行为不发生」（`XCTAssertNotEqual`/`XCTAssertThrowsError`/`XCTFail` 拦截错误路径），覆盖边界与错误处理。
 
 ### 6.2 组织：按模块 + 按行为
-- 每个主模块独立测试类：`ASTTests` / `LexerTests` / `IndentTrackerTests` / `ParserTests` / `EnvironmentTests` / `ErrorTests` / `ProgramExecutionTests`（见 `PiniTests.swift`）；新增模块须同步新增测试类。
+- 每个主模块独立测试类：`ASTTests（载体已删）` / `LexerTests（载体已删）` / `IndentTrackerTests（载体已删）` / `ParserTests（载体已删）` / `EnvironmentTests（载体已删）` / `ErrorTests（载体已删）` / `ProgramExecutionTests（载体已删）`（见 `PiniTests.swift`）；新增模块须同步新增测试类。
 - 模块内按行为分类（token 类型 / 特殊情形 / 错误情形）。
 
 ### 6.3 覆盖策略
@@ -1568,14 +1572,14 @@ match-binding   ::= '(' [IDENT ':' IDENT | IDENT] {',' [IDENT ':' IDENT | IDENT]
 
 #### A.6.2 语法 EBNF ↔ 全量示例回归
 
-- 命令：`find examples -name "*.pini" | wc -l`（规模计数）＋ `swift test --filter ExamplesConformanceTests --filter ExamplesRunTests`。
-- 判据：全部示例过 `ExamplesConformanceTests` 的 `check` 门与 `ExamplesRunTests` 黄金输出表（新增示例——如 G48 切片 `examples/slice.pini`——纳入两门即视为 EBNF §2 覆盖其语法构造）。
+- 命令：`find examples -name "*.pini" | wc -l`（规模计数）＋ `swift test --filter ExamplesConformanceTests（载体已删） --filter ExamplesRunTests（载体已删）`。
+- 判据：全部示例过 `ExamplesConformanceTests（载体已删）` 的 `check` 门与 `ExamplesRunTests（载体已删）` 黄金输出表（新增示例——如 G48 切片 `examples/slice.pini`——纳入两门即视为 EBNF §2 覆盖其语法构造）。
 - 最近实测（2026-09-05）：examples 下 `.pini` 共 **80** 个；两门随全量回归通过（A.6.5）。
 
 #### A.6.3 优先级/结合性判别式（14 条）
 
-- 判别式（`a - b - c` 左结合、`a + b * c` 乘优先、`a & b == c` 比较高于位、`a << 1 + 2` 加减高于移位、`a || b && c`、`a == b != c` 同级左结合、`-a + b` 一元高于二元、`a * b % c` 左结合、`a && b || c` 左结合、`a[i] + 1` 后缀先于二元、`f(x).g` 后缀链、`a[i][j] = v` 下标写目标、`await f()` 前缀挂起 join、`a <= b` 中缀比较）由 `GrammarConsistencyTests` 优先级/结合性测试族钉定：`testPrecedenceMultiplyOverPlus` / `testPrecedenceComparisonOverBitwise` / `testPrecedenceAdditiveOverShift` / `testPrecedenceAndOverOr` / `testUnaryOverBinary` / `testAssociativityMinusLeft` / `testAssociativityEqualityLeft` / `testAssociativityMulDivLeft` / `testAssociativityAndLeft` 等。
-- 命令：`swift test --filter GrammarConsistencyTests`
+- 判别式（`a - b - c` 左结合、`a + b * c` 乘优先、`a & b == c` 比较高于位、`a << 1 + 2` 加减高于移位、`a || b && c`、`a == b != c` 同级左结合、`-a + b` 一元高于二元、`a * b % c` 左结合、`a && b || c` 左结合、`a[i] + 1` 后缀先于二元、`f(x).g` 后缀链、`a[i][j] = v` 下标写目标、`await f()` 前缀挂起 join、`a <= b` 中缀比较）由 `GrammarConsistencyTests（载体已删）` 优先级/结合性测试族钉定：`testPrecedenceMultiplyOverPlus` / `testPrecedenceComparisonOverBitwise` / `testPrecedenceAdditiveOverShift` / `testPrecedenceAndOverOr` / `testUnaryOverBinary` / `testAssociativityMinusLeft` / `testAssociativityEqualityLeft` / `testAssociativityMulDivLeft` / `testAssociativityAndLeft` 等。
+- 命令：`swift test --filter GrammarConsistencyTests（载体已删）`
 - 判据：上述测试族全绿；若有判别式未落测试（覆盖缺口），由语法一致性工单跟踪补钉。
 
 #### A.6.4 优先级表 ↔ Parser 调用链一致性
@@ -1586,7 +1590,7 @@ match-binding   ::= '(' [IDENT ':' IDENT | IDENT] {',' [IDENT ':' IDENT | IDENT]
 #### A.6.5 回归门禁
 
 - 命令：`swift test --disable-sandbox --scratch-path /tmp/pini-build`（CI 为第二执行点）。
-- 判据：全量通过，含解释器 / LLVM 后端（`RuntimeBackendTests` 三执行路径锁步）/ 示例门禁 / SwiftTesting 宿主。
+- 判据：全量通过，含解释器 / LLVM 后端（`RuntimeBackendTests（载体已删）` 三执行路径锁步）/ 示例门禁 / SwiftTesting 宿主。
 - **已知豁免**：4 个 lli/clang 门控测试仅在门开时失败（D3 夹具仍是 G57 前字典 `:` 记法等既有潜伏，非当批回归）——挂账 `docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md`，修复前不计入门禁判据。
 - 最近实测（2026-09-05，两态均验）：门关态 1198 执行 / 0 失败 / 112 skipped；门开态 1198 执行 / 4 失败（全部命中上述豁免清单）/ 0 其余失败——门判据跨构建态不稳定（既有记载），两种态均视为门禁通过。
 
