@@ -11,10 +11,14 @@ So:
 
   * Check mode (default) is the real job. It never writes anything.
   * Generate mode (--generate --force) exists only to bootstrap a new case, and
-    it refuses to write unless all three channels already agree (otherwise it
-    would freeze a live divergence into the spec baseline). It also stamps the
+    it refuses to write unless every channel already agrees (otherwise it would
+    freeze a live divergence into the spec baseline). It also stamps the
     provenance file so a generated expectation can never pass as a hand-written
     one.
+
+CHANNELS: G-6c (2026-09-18) removed the `interp-ast` channel along with the AST
+walk it named, leaving the HIR executor and the LLVM pipeline. Generating a case
+therefore needs those two to agree, where it used to need three.
 
 What is asserted: standard output byte-for-byte, and the exit code. Standard
 error is deliberately NOT asserted -- a batch of known diagnostic-channel
@@ -44,13 +48,11 @@ RUN_TIMEOUT = 10
 CORPUS = "Tests/PiniTests/SpecAssertionTests"
 PROVENANCE = "PROVENANCE.md"
 
-# The three channels, defined the same way as tools/three-channel.py. The engine
-# is stated explicitly per channel and never inherited: P4 flips the default, and
-# an inherited value would quietly turn the frozen reference into a second HIR
-# arm while the report still claimed three channels.
+# The channels, defined the same way as tools/three-channel.py. `interp-ast` was
+# the third until G-6c deleted the AST walk it named; nothing selects an engine
+# here any more, because there is only one.
 CHANNELS = [
-    ("interp-ast", ["run"], {"PINI_INTERP_ENGINE": "ast"}),
-    ("interp-hir", ["run"], {"PINI_INTERP_ENGINE": "hir"}),
+    ("interp-hir", ["run"], {}),
     ("llvm-hir", ["run-llvm"], None),
 ]
 
@@ -58,7 +60,7 @@ CHANNELS = [
 def run(argv, extra_env, cwd):
     env = dict(os.environ)
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
-    env.pop("PINI_INTERP_ENGINE", None)
+    # Single engine since G-6c; the switch this used to clear is gone.
     if extra_env:
         env.update(extra_env)
     # Own process group so a timeout also reaps lli, which would otherwise

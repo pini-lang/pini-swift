@@ -11,30 +11,39 @@ aggregate prints rejected at emit time, ...). Measured 2026-09-11: the
 emit-only judge called all of them PASS.
 
 This probe changes the unit of judgement from "can we emit it" to "does it
-run, and does it behave the same". Three channels per fixture:
+run, and does it behave the same". Two execution channels per fixture:
 
-    interp-ast   `PINI_INTERP_ENGINE=ast pini run <file>`  frozen reference
-    interp-hir   `PINI_INTERP_ENGINE=hir pini run <file>`  HIR execution engine
-    llvm-hir     `pini run-llvm <file>`                    HIR -> LLVM
+    interp-hir   `pini run <file>`        the HIR execution engine
+    llvm-hir     `pini run-llvm <file>`   HIR -> LLVM
 
-The middle channel is what P1-4 added. Until then the last two were the same
-command — a two-channel sweep under a three-channel label — because both arms
-ran the HIR emit pipeline after the M6b flip. They are separate implementations
-now, so the cross-check compares two engines instead of one pipeline with
-itself.
+They are separate implementations of the same semantics — one walks the HIR
+tree, the other lowers it to LLVM IR and runs that — so the cross-check compares
+two engines rather than one pipeline with itself.
 
-Each channel states PINI_INTERP_ENGINE explicitly and never inherits it. That
-was written ahead of LR-4's P4 flip (2026-09-16), when the default was about to
-stop being the AST engine; it is now the load-bearing detail it was meant to be.
-`pini run` defaults to HIR as of that flip, so an inherited value would silently
-turn the *default* arm into HIR -- the frozen reference would quietly stop being
-a reference while the sweep still reported three channels.
+TWO CHANNELS, NOT ONE, AND NOT THREE (G-6c, 2026-09-18)
 
-All three typecheck first, which is what the CLI does, so a front-end reject
-fails all three and is correctly classified as "not a backend gap". The AST
-channel is the exception — its single-file path runs the semantic gate only —
-but that asymmetry cannot fake a backend gap here, because the two arms a gap
-is measured between both typecheck.
+Until that batch there was a third channel: `interp-ast`, the AST walk, held as
+a *frozen reference* — a second interpreter whose agreement was the standard.
+G-6c deleted the walk, so both the channel and the thing it was a reference to
+are gone, and with one implementation left there would be nothing to compare.
+What remains is HIR-executor against LLVM, which is a real comparison; what is
+lost is the third opinion, and the two fixtures where the reference had been the
+odd one out are recorded in the batch that removed it rather than carried as a
+permanent exception table.
+
+A DIAGNOSTIC-ORIGIN INSTRUMENT, WHICH IS NOT A CHANNEL
+
+`pini check <file>` is run as well, but it is not a third opinion about
+behaviour: it executes nothing. It answers one question the two execution
+channels cannot — *where did this diagnostic come from*. The reference arm used
+to answer it incidentally (a warning the reference printed too must have come
+from the shared front end), and two slots below depend on that answer. `check`
+answers it directly, by running the front end and nothing else, and the
+classification requires it to report the *same* diagnostic code, not merely to
+be loud: a front end that complains about something else is not corroboration.
+
+Both execution channels typecheck first, which is what the CLI does, so a
+front-end reject fails both and is correctly classified as "not a backend gap".
 
 ISOLATION
 ---------
@@ -58,15 +67,9 @@ frozen-artifact flow wants, and it stays.
 
 VERDICTS
 --------
-    OK                 all three agree — stdout is byte-equal across the
-                       reference and both arms, and all three are silent on
-                       stderr. `a_out` participates as of 2026-09-15: until
-                       then this test compared only the two arms while the
-                       table claimed "all three agree", so a fixture whose two
-                       arms agreed with each other and disagreed with the
-                       reference was filed OK (measured: 2 fixtures, now
-                       CHANGE_REFERENCE)
-    OK_HARNESS         stdout agrees across all three AND both arms write to
+    OK                 the two arms agree — stdout byte-equal and both silent
+                       on stderr
+    OK_HARNESS         stdout agrees across both arms AND both arms write to
                        stderr without failing, but the standalone channel is
                        not the real harness — the test substitutes paths or
                        supplies a program base
@@ -81,92 +84,80 @@ VERDICTS
                        never moves stops being read. Reported separately and
                        aggregated by node
     GAP_EXEC           interp-hir exits non-zero while llvm-hir does not, and
-                       not because of an unimplemented node, and the two live
-                       arms do not corroborate each other. As of 2026-09-15 this
+                       not because of an unimplemented node. As of 2026-09-15 this
                        test runs BEFORE the parity test, so it also absorbs a run
                        whose stdout matched but whose HIR arm still exited
                        non-zero. As of 2026-09-16 (P4-0) the shape where BOTH
                        interpreter arms fail while the LLVM arm reports its
                        failure on stderr is no longer counted here — it has its
                        own non-blocking slot below
-    GAP_HIR_ENGINE     interp-hir writes to stderr without failing AND the
-                       reference does not do the same. Narrowed to that
-                       residual by the case below; it stays a rule (not a dead
-                       slot) because a HIR arm that warns where the reference
-                       is silent is a real gap class. Reachable but currently
-                       UNEXERCISED: the corpus holds no fixture of that shape,
-                       so dropping the reference check from the rule above
-                       moves 0 verdicts (mutation measured 2026-09-15). Recorded
-                       rather than glossed — a rule nothing reaches has no
-                       demonstrated discriminating power yet
+    GAP_HIR_ENGINE     interp-hir writes to stderr without failing, and the
+                       diagnostic is NOT the shared front end's. Narrowed to
+                       that residual by the slot below; it stays a rule (not a
+                       dead slot) because an engine that warns where the front
+                       end does not is a real gap class. Reachable but, on this
+                       corpus, unexercised — recorded rather than glossed: a
+                       rule nothing reaches has no demonstrated discriminating
+                       power yet
     WARN_CHANNEL_ASYMMETRY
-                       the two interpreter arms agree with each other — stdout
-                       byte-equal, both write to stderr — while the LLVM arm is
-                       silent. NOT an HIR engine failure and NOT a flip
-                       blocker: the warning comes from the shared front end,
-                       so both engines emit it and the flip changes nothing.
-                       Measured 2026-09-15: 20/20 fixtures carrying E7-001 on
-                       the interpreter arms carry it on the frozen reference
-                       too, and 0/20 on the LLVM arm. That asymmetry is the
-                       diagnostic-channel defect in
+                       interp-hir writes a diagnostic with a zero exit status
+                       while the LLVM arm is silent, AND `pini check` reports
+                       the same diagnostic code. NOT an HIR engine failure: the
+                       warning is the shared front end's, one execution path
+                       prints it and the other does not. Measured 2026-09-18:
+                       20/20 of these fixtures carry E7-001 on every
+                       front-end-touching path and 0/20 on the LLVM arm. That
+                       asymmetry is the diagnostic-channel defect in
                        docs/issue-diagnostic-channel-parity-2026-09-12.md;
-                       reported here so the count stays visible instead of
-                       vanishing, but kept out of the blocker total
+                       reported with its count so that leaving it out of the
+                       blocker total is a decision the reader can see
     WARN_LLVM_RC_UNPROPAGATED
-                       all three channels fail the fixture, but only the two
-                       interpreter arms say so through their exit status. The
-                       LLVM arm reports the same failure on stderr and returns
-                       rc 0, because `run-llvm` does not propagate lli's exit
-                       code. NOT a flip blocker: the program fails under both
-                       engines before and after the flip, and the only signal
-                       that appears to differ is one the harness discards.
-                       Demoted here on 2026-09-16 (P4-0) from GAP_EXEC, where
-                       it had been carried as an acknowledged over-count. The
-                       gate bounds the false-green risk: it needs a failing
-                       reference arm AND a loud LLVM arm, so a fixture that
-                       merely fails on the HIR arm still reaches GAP_EXEC.
-                       `run-llvm` is deliberately NOT fixed here; the
-                       discarded-status defect is filed as its own ticket
-    GAP_BEHAVIOR       both arms run, output differs AND llvm-hir matches the
-                       reference — the interp-hir output is the odd one out
-    CHANGE_F64         output differs, interp-hir matches the reference, and
-                       the divergence is the print(F64) format — LR-8
-                       adjudicated shortest round-trip, so the flip *fixes*
-                       this; the test expectation is what must change
-    CHANGE_OTHER       interp-hir matches the reference but not for the F64
-                       reason (needs a look; still not an implementation gap)
-    CHANGE_REFERENCE   the two arms agree with each other and the reference is
-                       the odd one out. Given its own slot on purpose: the
-                       parity ticket's correction direction notes that the
-                       reference is not automatically right, and folding this
-                       into OK would hide a flip-visible behaviour change.
-                       Measured 2026-09-15: 2 fixtures where the reference
-                       fails (rc 1) while both arms print `42`. An expectation
-                       question, so non-blocking like the other CHANGE_*
-    GAP_UNKNOWN        output differs, neither arm matches the reference —
-                       needs manual triage
+                       interp-hir exits non-zero AND the LLVM arm reports a
+                       failure on stderr while returning rc 0, because
+                       `run-llvm` does not propagate lli's exit status. NOT a
+                       blocker: the program fails, both execution paths say so,
+                       and the only signal that differs is one the harness
+                       discards. Demoted here on 2026-09-16 (P4-0) from
+                       GAP_EXEC, where it had been carried as an acknowledged
+                       over-count.
+                       WEAKENED BY G-6c, STATED RATHER THAN HIDDEN: the rule
+                       used to require a failing *reference* arm as well, so the
+                       claim was "every implementation agrees this program
+                       fails". With the reference gone the surviving
+                       corroboration is the LLVM arm's own stderr. That is
+                       enough to establish the program fails — the harness
+                       defect it names is unchanged and separately filed — but
+                       it is one witness where there used to be two
+    GAP_BEHAVIOR       both arms run to completion and their stdout differs —
+                       an execution divergence between the two implementations.
+                       G-6c re-formed this slot: it used to mean "interp-hir is
+                       the odd one out against the reference", which cannot be
+                       asked any more. It is now the plain two-arm form, which
+                       is also what the retired CHANGE_* slots were splitting
+                       ("which of the three is wrong") — that question was
+                       reference-relative, so it went with the reference
+    GAP_UNKNOWN        neither of the ordered rules above fits — manual triage.
+                       With every slot now two-arm or front-end-relative, this
+                       should be unreachable; it is kept so that an unforeseen
+                       shape lands in a named bucket instead of a crash
     HARNESS_DEPENDENT  the LLVM arm does not run cleanly standalone, so the
                        standalone channel cannot judge the fixture
     TIMEOUT_ALL        all three channels hit the wall clock — the fixture
                        loops by design (a `continue` before the loop's
                        increment, say); a property of the program, not a gap
-    TIMEOUT_AST        only the reference hit the wall clock — the reference
-                       semantics itself does not terminate, so there is nothing
-                       to compare; excluded
+    TIMEOUT_AST        RETIRED (G-6c): it described a reference arm that no
+                       longer exists
     TIMEOUT_LLVM       the LLVM arm hangs but interp-hir terminates — an LLVM
                        arm defect, not something the flip introduces
     GAP_HANG           llvm-hir terminated, interp-hir did not — the flip would
                        turn a terminating program into a hang; an emit-only
                        judge can never see this, and stdout gives no warning
 
-BLOCKERS for the flip = GAP_EXEC + GAP_HIR_ENGINE + GAP_BEHAVIOR + GAP_HANG
-                        + GAP_UNKNOWN.
+BLOCKERS = GAP_EXEC + GAP_HIR_ENGINE + GAP_BEHAVIOR + GAP_HANG + GAP_UNKNOWN.
 HIR_ENGINE_TODO is deliberately NOT among them: it measures how much of the HIR
-engine P2 has left to build, which is a different question from "does the LLVM
-arm still disagree with the reference". Merging the two is the P3
-judging-upgrade grid's job.
-CHANGE_* are expectation updates, not implementation work. TIMEOUT_* (other
-than GAP_HANG) describe the fixture, not the implementation.
+engine P2 has left to build, which is a different question. Merging the two is
+the P3 judging-upgrade grid's job.
+TIMEOUT_* (other than GAP_HANG) describe the fixture, not the implementation.
 WARN_CHANNEL_ASYMMETRY is likewise not a blocker, and for a stronger reason
 than "it looks benign": the flip does not move it at all. It is printed with
 its count so that leaving it out of the total is a decision the reader can see
@@ -180,7 +171,9 @@ whose stdout matched while the HIR arm exited non-zero was filed OK_HARNESS —
 
 Both orderings were measured on the full 319-fixture corpus before choosing,
 together with the two other changes of the same grid (a_out in the parity test,
-and the two new slots):
+and the two new slots). ⚠️ `a_out` and the comparison it participated in were
+removed in G-6c along with the reference arm; what follows is the measurement as
+it was taken, kept for the record.
 
     shipped rules                     FLIP BLOCKERS 27 = GAP_HIR_ENGINE 20
                                                       + GAP_EXEC 7
@@ -286,6 +279,7 @@ DEFAULT_ROOTS = [
 F64_SIX = re.compile(r"\d+\.\d{6}")
 # The HIR execution engine names the node it cannot run yet; that message is the
 # whole judgement for HIR_ENGINE_TODO (see classify).
+DIAG_CODE = re.compile(r"\[([A-Z]\d-\d+)\]")
 HIR_TODO = re.compile(
     r"node '([A-Za-z_][A-Za-z0-9_]*)' is dispatched but not implemented yet")
 
@@ -459,13 +453,10 @@ def drain(proc):
 def run(argv, env_extra=None, cwd=None):
     env = dict(os.environ)
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
-    # Every channel states its engine explicitly, so an inherited value is never
-    # consulted — a caller's shell must not be able to relabel a channel. The
-    # frozen reference is the one that matters: `pini run` defaulted to the AST
-    # engine until LR-4's P4 flip made HIR the default (2026-09-16), and
-    # inheriting would now turn the reference into a second HIR arm while the
-    # sweep still reported three.
-    env.pop("PINI_INTERP_ENGINE", None)
+    # No engine is selected here any more: G-6c retired `PINI_INTERP_ENGINE`
+    # with the AST walk, so a channel cannot be relabelled by a caller's shell
+    # because there is only one engine to label. The pop that used to guard
+    # against exactly that went with the switch.
     if env_extra:
         env.update(env_extra)
     # Own process group: `pini run-llvm` spawns lli as a child, so a plain
@@ -558,20 +549,33 @@ def collect(roots, needle=None):
     return files
 
 
-def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
-    """Verdict for one fixture across the three live channels.
+def diag_code(text):
+    """The first diagnostic code in `text`, or "" — the unit of corroboration.
 
-    `l` = llvm-hir (`run-llvm`, the arm that emits IR), `h` = interp-hir (the
-    HIR execution engine), `a` = interp-ast (the frozen reference). `h` is a
-    separate implementation as of P1-4; before that it was a second copy of
-    `run-llvm`, which is why the rules below still lean on the LLVM arm for
-    anything IR-shaped.
+    Used to ask whether two paths are reporting the *same* diagnostic rather
+    than merely both being unhappy: a front end complaining about something
+    else is not evidence about where this diagnostic came from.
+    """
+    m = DIAG_CODE.search(text)
+    return m.group(1) if m else ""
 
-    `a_err` participates too. It used to be discarded at the call site, which
-    made "does the reference say the same thing?" unanswerable — the question
-    that turns a lone HIR-arm warning from a blocker into the registered
-    channel asymmetry. See the module docstring's VERDICTS and TIE-BREAK
-    sections for the measurements behind the ordering.
+
+def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
+    """Verdict for one fixture across the two execution channels.
+
+    `l` = llvm-hir (`run-llvm`, the arm that lowers to IR), `h` = interp-hir (the
+    HIR execution engine). They are separate implementations, which is what makes
+    the comparison between them worth making.
+
+    `c` = the front end (`check`), which executes nothing. It is an instrument,
+    not a third channel: it only ever answers "did the shared front end produce
+    this diagnostic". It is consulted in one slot, where the alternative would be
+    to guess the origin of a warning from the fact that one arm printed it.
+
+    Until G-6c there was a third execution channel, the AST walk, held as a
+    frozen reference. Its removal is why the parity tests below are between two
+    arms and why the reference-relative slots are gone; the docstring's VERDICTS
+    section records what replaced what.
     """
     # 1. A file inside a module cannot run standalone at all.
     if in_module(rel):
@@ -584,14 +588,11 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
     if h_rc == 124 and l_rc != 124:
         return "GAP_HANG", "llvm-hir terminated in time, interp-hir did not"
     if l_rc == 124 and h_rc == 124:
-        return "TIMEOUT_ALL", "loops by design; all three channels hit the wall clock"
+        return "TIMEOUT_ALL", "loops by design; both channels hit the wall clock"
     if l_rc == 124:
         return "TIMEOUT_LLVM", "llvm-hir hangs, interp-hir terminates"
-    if a_rc == 124:
-        return "TIMEOUT_AST", "the reference itself does not terminate; nothing to compare"
     # 3. The LLVM arm rejects it -> not a backend gap. Both arms typecheck, so
-    #    this also absorbs the AST channel's looser front end: a program the
-    #    reference happens to accept is still a front-end reject here.
+    #    this is the front end and the emitter agreeing to refuse.
     if l_rc != 0:
         return "FRONTEND_FAIL", first_line(l_err)
     # 4. interp-hir names a node the engine has not implemented yet. Those
@@ -607,30 +608,22 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
     #    rule on purpose (2026-09-15). It used to run after, so a run whose
     #    stdout matched while the HIR arm exited non-zero reached the parity
     #    test and was filed OK_HARNESS — equal on two EMPTY stdout strings,
-    #    which is not evidence of anything. Cost, measured on the corpus: 4
-    #    negative tests (array/dict/IO errors) where all three channels report
-    #    an error and the HIR arm is right to exit non-zero now count as
-    #    blockers. Accepted, registered, and visible in the blocker list.
+    #    which is not evidence of anything.
     if h_rc != 0:
-        # 5a. Both interpreter arms fail AND the LLVM arm reports a failure
-        #     on stderr, so all three agree the program fails. The LLVM arm's
-        #     rc 0 is the harness discarding lli's exit status, not a success,
-        #     so the flip does not move these fixtures. Both conditions are
-        #     required: a fixture that only fails on the HIR arm still reaches
-        #     GAP_EXEC below.
-        if a_rc != 0 and l_err.strip():
+        # 5a. The LLVM arm ALSO reports a failure on stderr, so both paths agree
+        #     the program fails; the LLVM arm's rc 0 is the harness discarding
+        #     lli's exit status, not a success. Previously this also required a
+        #     failing reference arm; that clause is gone with the reference, and
+        #     the docstring states the weakening rather than hiding it. The
+        #     condition that matters is unchanged: a fixture that only fails on
+        #     the HIR arm still reaches GAP_EXEC below.
+        if l_err.strip():
             return "WARN_LLVM_RC_UNPROPAGATED", first_line(h_err)
         return "GAP_EXEC", first_line(h_err)
-    # 6. Parity across ALL THREE channels. `a_out` joined the test on
-    #    2026-09-15: while only the two arms were compared, a fixture whose
-    #    arms agreed with each other and disagreed with the reference was
-    #    filed OK, and the table claimed "all three agree" while testing two.
-    #    The stderr shape is part of it because a silent-stdout crash on one
-    #    side and a silent-stdout success on the other look identical on
-    #    stdout alone. That clause entered when the probe was promoted into the
-    #    repo, and it reclassified `testNestedCOWIRContract_2` out of OK_HARNESS
-    #    (docs/issue-llvm-rewrite-plan-2026-09-07.md, C4).
-    if l_out == h_out == a_out and bool(l_err.strip()) == bool(h_err.strip()):
+    # 6. Parity across BOTH channels. The stderr shape is part of it because a
+    #    silent-stdout crash on one side and a silent-stdout success on the other
+    #    look identical on stdout alone.
+    if l_out == h_out and bool(l_err.strip()) == bool(h_err.strip()):
         if l_err.strip():
             # parity, but the standalone channel is not the real harness
             # (the test substitutes paths / supplies a program base).
@@ -640,35 +633,24 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
     #    cannot judge this fixture; excluding it is honest, not lenient.
     if l_err.strip():
         return "HARNESS_DEPENDENT", first_line(l_err)
-    # 8. Both interpreter arms agree with each other while the LLVM arm is
-    #    silent -> the diagnostic-channel asymmetry, not an HIR engine failure.
-    #    The reference check is what makes this a safe demotion rather than an
-    #    excuse: measured 2026-09-15, all 20 fixtures in this shape carry
-    #    E7-001 on the reference as well, and none on the LLVM arm. Non-
-    #    blocking because the flip does not move it — the warning is produced
-    #    by the shared front end, which both engines run.
-    if (h_err.strip() and h_rc == 0 and l_out == h_out == a_out
-            and a_err.strip()):
+    # 8. The diagnostic-channel asymmetry, and the only slot that consults the
+    #    front-end instrument. Reaching here with equal stdout means the stderr
+    #    *shapes* differed: the LLVM arm is silent (rule 7) and the HIR arm is
+    #    loud. The question is whether that warning belongs to the engine or to
+    #    the front end both arms run -- and `check` answers it, provided it
+    #    reports the SAME code. Same code -> shared front end -> not a gap;
+    #    different or absent -> rule 9, where it is an engine difference.
+    if h_err.strip() and l_out == h_out and diag_code(c_err) and \
+            diag_code(c_err) == diag_code(h_err):
         return "WARN_CHANNEL_ASYMMETRY", first_line(h_err)
-    # 9. The HIR arm is loud and the reference is not. This slot used to carry
-    #    the wider test above; what is left is the genuinely asymmetric case,
-    #    so it stays a rule rather than a dead slot.
+    # 9. The HIR arm is loud and the front end does not corroborate it.
     if h_err.strip():
         return "GAP_HIR_ENGINE", first_line(h_err)
-    if h_out == a_out:
-        if F64_SIX.search(l_out) and not F64_SIX.search(h_out):
-            return "CHANGE_F64", ""
-        return "CHANGE_OTHER", ""
-    if l_out == a_out:
+    # 10. Both arms ran to completion and their stdout differs: a real execution
+    #     divergence between the two implementations. This is the two-arm form of
+    #     what the retired GAP_BEHAVIOR / CHANGE_* slots split between them.
+    if l_out != h_out:
         return "GAP_BEHAVIOR", ""
-    # 10. The two arms agree with each other and the reference is the odd one
-    #     out. Its own slot rather than OK: the reference is not automatically
-    #     right (the parity ticket's correction direction says so explicitly),
-    #     and this is a behaviour change the flip makes visible. Measured
-    #     2026-09-15: 2 fixtures where the reference exits 1 and both arms
-    #     print `42`.
-    if l_rc == 0 and h_rc == 0 and l_out == h_out:
-        return "CHANGE_REFERENCE", ""
     return "GAP_UNKNOWN", ""
 
 
@@ -687,22 +669,6 @@ def main():
                          "--show-bin-path` so the probe reads that build, and "
                          "repeated in the hint below when it is missing")
     args = ap.parse_args()
-
-    # SEALED (G-6c-1). The AST reference arm this probe drives was deleted with
-    # the AST walk, so `interp-ast` and `interp-hir` are now the same command and
-    # every verdict below would compare one engine against itself while still
-    # reporting three channels. A wrong reading that looks well-formed is the
-    # failure mode this file's own docstring spends most of its words on, so it
-    # refuses to produce one. The two-channel rework is the next commit in the
-    # same batch and removes this block.
-    print("hir-parity-probe is SEALED: the AST reference arm retired with the AST walk.\n"
-          "  `PINI_INTERP_ENGINE` no longer selects an engine, so interp-ast and\n"
-          "  interp-hir would be the same implementation and every parity verdict\n"
-          "  would report agreement that nothing measured. The two-channel rework\n"
-          "  is in flight (same batch, next commit); see the G-6c batch record.",
-          file=sys.stderr)
-    return 1
-
     roots = args.root or DEFAULT_ROOTS
     RUN_TIMEOUT = args.timeout
     OUT = args.out
@@ -732,19 +698,21 @@ def main():
     try:
         for n, (root, rel) in enumerate(fixtures, 1):
             cwd, run_path = scratch_copy(rel)
-            a_rc, a_out, a_err = run([BIN, "run", run_path], cwd=cwd,
-                                     env_extra={"PINI_INTERP_ENGINE": "ast"})
             l_rc, l_out, l_err = run([BIN, "run-llvm", run_path], cwd=cwd)
-            h_rc, h_out, h_err = run([BIN, "run", run_path], cwd=cwd,
-                                     env_extra={"PINI_INTERP_ENGINE": "hir"})
+            h_rc, h_out, h_err = run([BIN, "run", run_path], cwd=cwd)
+            # The front-end instrument. Not a judgement of behaviour -- it runs
+            # nothing -- so it is consulted by exactly one rule, for the one
+            # question the two execution channels cannot answer: whether a
+            # diagnostic belongs to the shared front end or to the engine.
+            c_rc, _c_out, c_err = run([BIN, "check", run_path], cwd=cwd)
             verdict, note = classify(rel, l_rc, l_out, l_err, h_rc, h_out,
-                                     h_err, a_rc, a_out, a_err)
+                                     h_err, c_rc, c_err)
             rows.append({
                 "verdict": verdict, "note": note, "root": root, "fixture": rel,
-                "l_rc": l_rc, "h_rc": h_rc, "a_rc": a_rc,
-                "l_len": len(l_out), "h_len": len(h_out), "a_len": len(a_out),
-                "l_out": l_out, "h_out": h_out, "a_out": a_out,
-                "l_err": l_err, "h_err": h_err, "a_err": a_err,
+                "l_rc": l_rc, "h_rc": h_rc, "c_rc": c_rc,
+                "l_len": len(l_out), "h_len": len(h_out),
+                "l_out": l_out, "h_out": h_out,
+                "l_err": l_err, "h_err": h_err, "c_err": c_err,
             })
             if n % 50 == 0 or n == len(fixtures):
                 print("  %d/%d  (%.0fs)" % (n, len(fixtures), time.time() - t0),
@@ -755,8 +723,8 @@ def main():
         if _scratch_root[0] and os.path.isdir(_scratch_root[0]):
             shutil.rmtree(_scratch_root[0], ignore_errors=True)
 
-    cols = ["verdict", "root", "fixture", "l_rc", "h_rc", "a_rc",
-            "l_len", "h_len", "a_len", "note"]
+    cols = ["verdict", "root", "fixture", "l_rc", "h_rc", "c_rc",
+            "l_len", "h_len", "note"]
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write("\t".join(cols) + "\n")
         for r in rows:
@@ -765,24 +733,21 @@ def main():
     order = ["OK", "OK_HARNESS", "PACKAGE_MEMBER", "FRONTEND_FAIL",
              "HARNESS_DEPENDENT", "HIR_ENGINE_TODO", "GAP_EXEC",
              "GAP_HIR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG",
-             "TIMEOUT_ALL", "TIMEOUT_AST", "TIMEOUT_LLVM", "CHANGE_F64",
-             "CHANGE_OTHER", "CHANGE_REFERENCE", "WARN_CHANNEL_ASYMMETRY",
+             "TIMEOUT_ALL", "TIMEOUT_LLVM", "WARN_CHANNEL_ASYMMETRY",
              "WARN_LLVM_RC_UNPROPAGATED"]
     print("\n=== summary ===")
     for v in order:
         n = sum(1 for r in rows if r["verdict"] == v)
         if n:
             print("  %-15s %d" % (v, n))
-    # FLIP BLOCKERS answers "does the LLVM arm still disagree with the
-    # reference", i.e. the M6b-style question. HIR_ENGINE_TODO answers a
+    # BLOCKERS = "do the two remaining implementations disagree", i.e. the
+    # M6b-style question in its two-arm form. HIR_ENGINE_TODO answers a
     # different one — how much of the HIR engine P2 has left to build — and
     # merging the two would make this line unreadable while P2 is in flight.
     # Combining them is the P3 judging-upgrade grid's job.
-    # WARN_CHANNEL_ASYMMETRY, WARN_LLVM_RC_UNPROPAGATED and
-    # CHANGE_REFERENCE are not in the set: each is printed with its
-    # count and its fixture list below, so leaving them out is a
-    # readable decision rather than a disappearance.
-    # readable decision, not a disappearance.
+    # WARN_CHANNEL_ASYMMETRY and WARN_LLVM_RC_UNPROPAGATED are not in the set:
+    # each is printed with its count and its fixture list below, so leaving
+    # them out is a readable decision rather than a disappearance.
     blockers = [r for r in rows if r["verdict"] in
                 ("GAP_EXEC", "GAP_HIR_ENGINE", "GAP_BEHAVIOR", "GAP_HANG")]
     unknown = [r for r in rows if r["verdict"] == "GAP_UNKNOWN"]
@@ -837,8 +802,9 @@ def main():
             print("  %-12s %3d  %s" % (code, len(fixtures),
                                        ", ".join(os.path.basename(f)
                                                  for f in fixtures[:3])))
-        print("  both interpreter arms agree here, the reference among them; "
-              "the LLVM arm is silent. See")
+        print("  the warning is the shared front end's -- `pini check` reports "
+              "the same code --")
+        print("  and only the LLVM arm is silent about it. See")
         print("  docs/issue-diagnostic-channel-parity-2026-09-12.md")
 
     unpropagated = [r for r in rows
@@ -851,13 +817,12 @@ def main():
               % len(unpropagated))
         for r in unpropagated:
             print("  %-14s %s" % (r["verdict"], r["fixture"]))
-            print("        a_rc=%d  h_rc=%d  l_rc=%d; llvm stderr=%s"
-                  % (r["a_rc"], r["h_rc"], r["l_rc"],
-                     "present" if r["l_err"].strip() else "silent"))
+            print("        h_rc=%d  l_rc=%d; llvm stderr=%s  (front end: %s)"
+                  % (r["h_rc"], r["l_rc"],
+                     "present" if r["l_err"].strip() else "silent",
+                     "rc %d" % r["c_rc"]))
 
     for label, group in [("blockers", blockers + unknown),
-                         ("behaviour changes", [r for r in rows
-                                                if r["verdict"].startswith("CHANGE_")]),
                          ("non-terminating fixtures", [r for r in rows
                                                        if r["verdict"].startswith("TIMEOUT_")])]:
         print("\n=== %s ===" % label)
@@ -866,7 +831,8 @@ def main():
             if r["note"]:
                 print("        %s" % r["note"])
             elif r["verdict"].startswith("GAP_"):
-                print("        legacy=%r  hir=%r" % (r["l_out"][:60], r["h_out"][:60]))
+                print("        llvm-hir=%r  interp-hir=%r"
+                      % (r["l_out"][:60], r["h_out"][:60]))
     print("\ndetail -> %s" % OUT)
     # A surviving lli is a tool failure, not a fixture verdict: exit non-zero
     # so a sweep can never be read as clean while a process is still spinning.

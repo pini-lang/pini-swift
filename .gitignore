@@ -3,6 +3,11 @@
 .workbuddy/
 .DS_Store
 
+# Python 字节码缓存 —— 本仓 tools/ 下有多个辅助脚本，跑一次就会生成
+# ⚠️ 2026-09-18（G-6c-1）实证：缺这一行时 `git add -A` 把 tools/__pycache__/*.pyc 收进了提交
+__pycache__/
+*.pyc
+
 # 嵌套独立仓：自举项目（探针）。物理在内、git 归属在外 —— 不进本仓历史与归档（ADR-024 D2）
 /examples/selfhost
 

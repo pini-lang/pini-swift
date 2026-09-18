@@ -10,7 +10,9 @@ This tuple must track the probe's own blocker set. It had drifted: it still
 named GAP_IR, which P1-4 retired in favour of GAP_HIR_ENGINE, and therefore
 omitted GAP_HIR_ENGINE from its total — so its TRUE BLOCKERS line silently
 undercounted by however many fixtures sat in that slot. Fixed 2026-09-15 (P3-G1).
-WARN_CHANNEL_ASYMMETRY and CHANGE_REFERENCE are deliberately absent: the probe
+WARN_CHANNEL_ASYMMETRY is deliberately absent, and CHANGE_REFERENCE, likewise
+absent here, no longer exists at all (G-6c retired it with the reference arm):
+the probe
 keeps them out of its total too.
 
 Usage: python3 tools/compare-sweeps.py <before.tsv> <after.tsv>
