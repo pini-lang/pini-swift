@@ -4984,6 +4984,7 @@ extension HIRType {
             case "F64": self = .f64
             case "Bool": self = .boolean
             case "String": self = .string
+            case "Char": self = .char
             default: return nil
             }
         case .generic(let name, let params, _):

@@ -34,6 +34,13 @@ public indirect enum HIRType: Equatable {
     case f64
     case boolean
     case string
+    /// `Char` (P0d): one extended grapheme cluster — the user-perceived
+    /// "one character", not a code point and not a byte. Its representation
+    /// is the same as `String` (ADR-033 D1 takes option A), so the LLVM
+    /// spelling is `i8*` and no new ABI travels through aggregates, calls or
+    /// the runtime boundary. The invariant "exactly one grapheme" is the type
+    /// system's job; the representation does not enforce it.
+    case char
     /// `Result<T, E>` (ADR-032). Only the ok payload type is statically
     /// carried: Pini's surface form `^T` pins T but leaves E unconstrained
     /// (the checker accepts any err payload), so the error slot is
@@ -87,6 +94,7 @@ public indirect enum HIRType: Equatable {
         case .f64: return "double"
         case .boolean: return "i1"
         case .string: return "i8*"
+        case .char: return "i8*"
         case .result(let ok):
             return "{ i64, \(ok.llvmSpelling), i64 }"
         case .array:
@@ -149,7 +157,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
+        case .boolean, .string, .char, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
             return false
         }
     }

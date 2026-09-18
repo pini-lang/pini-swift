@@ -299,6 +299,13 @@ public enum Value {
  case int(Int)
  case float(Double)
  case string(String)
+ /// `Char` (P0d): one extended grapheme cluster. Same payload type as
+ /// `string` because ADR-033 D1 takes option A — the representation is
+ /// shared and the "exactly one grapheme" invariant is the type system's.
+ /// Keeping the payload a `String` is what makes that sharing real: every
+ /// existing string path (printing, concatenation, runtime handles) can be
+ /// reused without a conversion step.
+ case char(String)
  case bool(Bool)
  /// 元组值。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素；位置元组为全 nil 或空数组）。
  /// 与 TypeAnnotation.tuple(labels:) / Expression.tuple(labels:) 对齐（草稿 A2，批次 1.3，D1），供 `.名称` 标签访问。

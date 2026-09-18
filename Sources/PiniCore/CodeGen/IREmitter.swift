@@ -1960,7 +1960,7 @@ public final class IREmitter {
     /// they render through the shared recursive printer.
     private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
         switch type {
-        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer,
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .char, .pointer,
              .nominal:
             return false
         case .result, .array, .optional, .enumeration, .dict,
