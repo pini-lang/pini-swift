@@ -518,6 +518,14 @@ swift test --disable-sandbox --scratch-path /tmp/pini-build --filter StructuredC
 
 ### 10.6 ⛔ 待裁（重切）—— 三项，各带背景 / 选项 / 代价 / 建议
 
+> ✅ **2026-09-18 已裁**（用户「按你的建议来」⇒ 三项建议全部采纳）：
+> **① 建议 A** —— 那 5 条**随 `G-6c` 退役**并**具名入账**（`defer` 那条须在单里点名「此后无测试见证」）；
+> **② 建议 B** —— **撤销**「装配整合」动作，**订正登记**（`G-6b-2` 承载）；
+> **③ 建议 A** —— 把 `checkCancellation` **单源化**到 `RuntimeOps`（本批已交付）。
+> ⇒ **`G-6b-1` 已交付**（③ + 3 条改指 + 具名入账），实录见
+> `docs/issue-hir-p4-gamma-batches-2026-09-16.md` 的 `G-6b-1` 节。
+> ⚠️ 以下「待裁」文字保留为**选项的原始记录**（含代价对比），其**待裁状态即失效**。
+
 **① 那 5 条不可转的用例怎么办**（主裁）
 - **是什么**：`testParentReturnCancelsUnjoinedChildTask` · `testJoinedChildIsNotCancelledByParentReturn` ·
   `testDeferStillRunsWhenTaskCancelled` · `testLeakedChildErrorFloatsToCallerResult` ·

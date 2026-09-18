@@ -660,6 +660,59 @@ try-else 迁移前的旧形态），与 `IRExecutionTests` 用 `XCTSkipIf(true, 
 
 ⚠️ **三张前置单的在册状态（2026-09-18 已在 `G-6b` 规划批内处置完毕，此处留痕）**：
 `issue-hir-builtin-user-extension-gap-2026-09-18.md` → **已交付**（判据 4 已订正）·
-`issue-hir-foreign-symbol-not-found-not-loud-2026-09-18.md` → **已交付**（判据 4 待复核，列 `G-6b` 开工前）·
+`issue-hir-foreign-symbol-not-found-not-loud-2026-09-18.md` → **已交付**（判据 4 已于 `G-6b-1` 复核通过，四判据全达）·
 `issue-interpreter-residual-reference-surface-2026-09-18.md` → **部分交付**（余项归 `G-6b` / `G-6c`，**不得归档**）。
 
+
+## G-6b-1 引用面改指 + `checkCancellation` 单源化 — ✅ **已交付**（2026-09-18）
+
+> **授权**：用户 2026-09-18「按你的建议来」⇒ 采纳 `G-6b` 规划 §10.6 的**三项自查建议**
+> （① 5 条不可转用例**随 `G-6c` 退役** ② **撤销**「装配整合」动作、改为订正登记 ③ 单源化 `checkCancellation`）。
+> **上游**：`docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §10（开工首步止损的实测与重切选项）
+> **本批真改源码**（`Sources` 3 文件 + `Tests` 1 文件）；**`G-6b-2`** 承载 ②与器械、改名。
+
+### 改了什么（逐处）
+
+| # | 位置 | 改动 |
+|:--:|---|---|
+| 1 | `Sources/PiniCore/Runtime/RuntimeOps.swift` | **新增** `checkCancellation(_ owner:)` —— 该规则的**唯一实现**（`@inline(__always)`，函数体与原先两份**逐字相同**） |
+| 2 | `Sources/PiniCore/Interpreter/Interpreter.swift` | 原实现 → **转调** `RuntimeOps`（注释写明上提理由；`SuspendEvaluator` 及其热路径调用点一行未动） |
+| 3 | `Sources/PiniCore/Interpreter/HIRExecutor.swift` | **删掉私有拷贝**（含其文档），两处调用改指 `RuntimeOps.checkCancellation` ⇒ **净删**，不是加一层 |
+| 4 | `Tests/…/StructuredConcurrencyTests.swift` | 3 条用例改指（`joinFuture` · `checkCancellation` · `makeResult`/`makeError` → `RuntimeOps.*`）；助手 `runProgramAST` 的文档改写为**那 5 条退役的具名依据** |
+
+⭐ **为什么单源化是必须的**：`HIRExecutor` 那份是 `private` ⇒ 这条接缝在测试侧**只能经由某个引擎的名字**断言，
+而那正是它会在删除日一起消失的原因。上提到 `RuntimeOps`（那里已住着 `joinFuture` / `makeCancelError` /
+`isCancelErrorValue`）之后，判据落在**规则本身**上，不落在某个引擎上。
+
+### 判据（全部现测）
+
+| 判据 | 读数 |
+|---|---|
+| **新增红 0** | 分块驱动 115 类**两侧各跑一遍**：基线 **56**（22+14+20）→ 本批 **56**（22+14+20）；**逐条集合比对 = 新增红 0 · 转绿 0 · 仍红 56**（**集合相等**，不是只比总数） |
+| ⭐ 基线的**互证** | 本批起点基线与本批前记录的 `G-6a` 收口读数（56）**逐条相同**，且与 25 分钟前落盘的上一轮失败清单**逐条相同** ⇒ 树稳定、装置可信 |
+| **编译面零阻塞** | 去注释扫描：`Tests` 侧 `Interpreter` **只剩助手那一处**（原 6 处 → 1 处）；`Sources` 侧余项**逐处落在 `G-6c` 的删除面上**（逐条见残余单 §2.3.2） |
+| 契约 | `tools/hir-contract-check.py` **clean**（45 expr + 17 stmt = 62，三锚点各 62/62） |
+| 用户可见入口冒烟 | `pini run <file>` · `pini run <dir>` · `pini debug <file>` · `pini repl` **四入口均正常**（`debug`：停在入口 → `l` 列断点 → `c` 跑完 → 输出 `3.0/4.0/5.0`） |
+| 前置复核 | `foreign` 单**判据 4**（vendored FFI 不受急切解析影响）：两引擎 `rc=0` + stdout **逐字节相同** ⇒ ✅ |
+
+### ⭐ 本批最有价值的产出：三处实测订正
+
+1. **测试侧引用面 18/19 → 19/20** —— 漏的是 `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift:484`
+   的**闭包形参类型标注**。按「构造点 + 静态成员」两栏枚举**结构性看不见**它
+   ⇒ 普查一律用 `\b<TypeName>\b` **全量**数，形态划分只可用于分类、不可用于枚举。
+2. **「类型标注」那一栏能否免处理，必须实测** —— 原怀疑它会被存活用例拖住；逐条实测
+   `captureSuspendStdout` 的 **3 个调用者全在退役的 11 条内** ⇒ 才敢判「随退役面消亡」。
+   若有**一个存活调用者**，就必须先改它 —— 这是**判据成立与否的前提**，不是细节。
+3. **一处「已立案」未验真** —— 规划件把 `defer` 缺口写成「已立案」，`grep` 全 `docs/` **无命中**。
+   本批**据实新立工单** `docs/issue-hir-defer-not-run-on-cancel-2026-09-18.md`；
+   纪律：凡写「已立案」，须回 filesystem 用 `grep -rl` 验。
+
+### 未做范围
+
+- **那 5 条不可转用例与助手**：**随 `G-6c` 退役**，本批**只入账不删**。
+  理由不是拖延：**AST 引擎还活着时它们仍是真实覆盖**，提前删是**净损失**；与引擎同批消失，
+  代价才由「引擎被删」解释。`G-6c` 须**按名**处置它们（具名账 = 残余单 §7.3）。
+- **`G-6b-2` 的对象**（撤销「装配整合」登记 · 探针默认路径 · `InterpreterTests` 改名）—— 不在本批。
+- `Sources` 侧 3 处 `.ast` 分支：**随开关一起删**，本批不动。
+  ⚠️ 明确记一条**「不得提前做」**：开关还在时把 REPL 的 `.ast` 静默改走 HIR，正是「静默回退假绿」。
+- `G-6c`（删本体 · 收开关 · 探针两通道化）· 不 push。
