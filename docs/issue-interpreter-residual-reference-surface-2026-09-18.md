@@ -1,6 +1,6 @@
 # Issue：`G-6` 删 `Interpreter` 前必须先处置的**残余引用面**（含规划件过期读数的实测订正）
 
-> **日期**：2026-09-18｜**状态**：**部分交付**（`G-6a` 已处置 §2.2 与 §2.1 的一行；余项归 `G-6b` / `G-6c`）
+> **日期**：2026-09-18｜**状态**：**引用面已逐处有主**（`G-6a` 处置 §2.2 与 §2.1 的一行；`G-6b-1` 处置 §2.3 的 3 条并补全整面）—— 余项**全部**归 `G-6c`，随删除面消失
 > **发现于**：格 `G-5`（D 类参照臂改造）的开工前引用面普查
 > **性质**：**三种形态并存** —— ① 规划件的一处读数**已过期**（抽取其实已完成）；
 > ② 一条**从未登记**的用户可见能力断点（`pini dbg` 无 HIR 分支）；③ 一处测试侧**无主**静态入口。
@@ -14,8 +14,11 @@
 > - ⚠️ **§2.3 漏记 3 个构造点**（登记只记静态入口）—— 而它们才是 `G-6c` 的**编译阻塞面**，本批补记。
 > - ✅ 判据 3「规划件读数已订正」**已达成**（`docs/issue-hir-p4-gamma-plan-2026-09-16.md` 的事实基础与
 >   复现方式两处均有订正标注与指针）。
-> - ⏳ **余项**：`Sources` 的 3 处 `.ast` 分支（归 `G-6c`）· 测试侧引用面（归 `G-6b`）。
->   ⇒ **本单在 `G-6c` 收口前不得归档。**
+> - ✅ **§2.3 已收口（`G-6b-1`，2026-09-18）**：3 条可改指的用例已改指 `RuntimeOps.*`；
+>   **整面补全**为 **8 个用例 + 1 个助手**并逐条具名归属（§2.3.1）；另补记**第三栏 = 类型标注**（见 §2.3）。
+> - ✅ **判据 1「三组引用面逐处有主」已达** —— 余项**全部**落在 `G-6c` 的删除面上（逐处见 §2.3.2）。
+> - ⏳ **余项**：`Sources` 的 3 处 `.ast` 分支 · 测试侧 5 条退役用例 · 2 个整体退役文件 —— 全部随 `G-6c` 消失。
+>   ⇒ **本单在 `G-6c` 收口前不得归档**（判据 4 须在删除后实测）。
 
 ## 0. 一句话
 
@@ -59,7 +62,14 @@
 （没有复用已经存在的 `ProgramRunner`，而后者本就是 `DebugHookHost`）。
 ⇒ 引用面**确实解除**了，但**装配同构从「四份」变成「九处」（4 文件）**。
 实测与完整清单见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §1.1 / §1.2。
-**这不是缺陷登记，是范围登记** —— 它正是 `G-6b` 的第一份对象清单的来源。
+**这不是缺陷登记，是范围登记** —— 它曾是 `G-6b` 的第一份对象清单的来源。
+
+⛔ **2026-09-18 撤销**：该「同构」判断**未通过实测** —— 按五维（`lower` 时机 / 错误面 / 下游类型 /
+`import` 合并 / `requiresMain`）摊开后，**变体数与调用点数同阶** ⇒ **不是同一段代码抄了 N 遍**。
+用户 2026-09-18 裁决「不整、订正登记」。⇒ **本节不再派生任何对象**；
+依据见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §10.4，订正落点见
+`docs/issue-hir-p4-gamma-plan-2026-09-16.md` §8.4（权威批次表）。
+⚠️ 本节的价值从此只是**历史**：记下一次「按形状判同构」的误判与它的纠正方式。
 
 ### 2.2 ⛔ 新增且无主：`pini debug` 的 CLI 入口**恒走 AST**（用户可见能力断点）—— ✅ **已交付（`G-6a`，2026-09-18）**
 
@@ -107,21 +117,85 @@ private func runDebugFile(_ path: String) {
 
 | 位置 | 引用 | 处置 |
 |---|---|---|
-| `Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift:246-247` | `Interpreter.makeResult` ×2 · `Interpreter.makeError` ×1 | 改指 `RuntimeOps.*`（**行为中性**：两侧都已是 `RuntimeOps` 的薄转调） |
+| `Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift`（原 :246-247） | `Interpreter.makeResult` ×2 · `Interpreter.makeError` ×1 | ✅ **已改指 `RuntimeOps.*`**（`G-6b-1`）—— 行为中性：两侧本就是逐字转调 |
 | `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift:192,227` | `Interpreter.isCancelErrorValue` ×2 | **条件项**：`G-3e` 退役单的 `SuspendRuntimeTests` 节记该类 11 条**全部**退役 ⇒ 取处置 A（移入退役登记处）则随文件消亡；取处置 B（原地保留只读规格）则须一并改名 |
 
-**（b）构造点：14 处 / 3 文件**（**本批补记** —— 按「该文件 `G-6c` 之后是否存活」分成两面）：
+**（b）构造点：14 处 / 3 文件**（`G-6b` 规划期补记 —— 按「该文件 `G-6c` 之后是否存活」分成两面）：
 
 | 文件 | 构造点 | 存活面？ | 处置 |
 |---|:--:|---|---|
-| `StructuredConcurrencyTests` | **3**（L70 · L87 · L183） | ⛔ **整体存活**（`G-3e` 裁 14 条不退役） | ⛔ **必须先改指**（4 个用例 / 6 处引用）—— 否则 `G-6c` 删除瞬间 `cannot find 'Interpreter' in scope`。归 **`G-6b`** |
-| `SuspendRuntimeTests` | **9**（全落在退役的 11 条内） | 文件存活，但**存活的前 4 条实测零引用** | ✅ 随退役面消亡，**无需动** |
+| `StructuredConcurrencyTests` | **3**（原 L70 · L87 · L183） | **3 条改指后存活**、5 条随引擎退役（§2.3.1） | ✅ **`G-6b-1` 已处置** |
+| `SuspendRuntimeTests` | **9**（全落在退役的 11 条内） | 文件存活，但**存活的前 4 条实测零引用**（复验见 §2.3.3） | ✅ 随退役面消亡，**无需动** |
 | `CPSDifferentialTests` | **2**（L22 · L30，在一处夹具驱动 helper 内） | ⛔ 14 条**全部退役** | ✅ 随文件消亡，**无需动** |
 
-⭐ **判据级结论**：`G-6c` 的**真编译阻塞面** = `StructuredConcurrencyTests` 的 **4 个用例 / 6 处引用**。
-其余 13 处全部随退役面消亡。⇒ 本单**判据 1「三组引用面逐处有主」**的余项因此收窄为**两格**：
-`ReplEvaluator` 的 `.ast` 分支（归 `G-6b`）· 上述 4 个用例（归 `G-6b`）。
-逐条清单与实测命令见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §1.3。
+**（c）⚠️ 第三栏：类型标注**（`G-6b-1` 实测补记 —— 按（a）（b）两栏枚举**结构性看不见**）：
+
+| 位置 | 形态 | 处置 |
+|---|---|---|
+| `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift:484` | `captureSuspendStdout(_ body: (Interpreter) throws -> FutureValue)` —— **闭包形参的类型标注**，既非构造点、也非静态成员 | ✅ 随退役面消亡（其 **3 个调用者**全在退役的 11 条内，见 §2.3.3） |
+
+⇒ **测试侧引用面总数订正：19 行 / 20 处 / 3 文件**（原记 18 / 19 —— 漏的正是（c）那一行）。
+
+#### 2.3.1 真编译阻塞面（逐条归属，`G-6b` 实测终结）
+
+⚠️ **数它时必须沿助手展开**：该文件只有一处构造点（`runProgramAST` 内），却由 **5 条**用例共用 ——
+按「构造点处数」会把 5 条算成 1 条。**这正是原登记把面记成「4 个用例」的成因**（实测 **8 个**）。
+
+| 用例 | 驱动 | 归属 |
+|---|---|:--:|
+| `testCancelUnjoinedChildrenOnlyCancelsPendingOnes` | 纯 `FutureValue` 单元（无引用） | 存活 |
+| `testCancelUnjoinedChildrenPropagatesToGrandchildren` | 同上 | 存活 |
+| `testDetachedChildSurvivesParentReturn` | 同上 | 存活 |
+| `testJoinFutureDetachesChildFromParent` | → `RuntimeOps.joinFuture` | ✅ **`G-6b-1` 已改指** |
+| `testCheckpointIsNoOpWithoutOwner` | → `RuntimeOps.checkCancellation` | ✅ **`G-6b-1` 已改指**（规则本体同批上提 `RuntimeOps`） |
+| `testCloseScopeCollectsLeakedErrAndCancelsPending` | → `RuntimeOps.makeResult` / `.makeError` | ✅ **`G-6b-1` 已改指** |
+| `testCancelInterruptsRunningLoop` | `runProgramOnHIRTree` | 存活（`G-5` 已换腿） |
+| `testSynchronousProgramUnaffectedByCheckpoints` | `runProgramOnHIRTree` | 存活（`G-5` 已换腿） |
+| `testDetachBuiltinPrunesChildFromParent` | `runProgramOnHIRTree` | 存活（`G-5` 已换腿） |
+| `testParentReturnCancelsUnjoinedChildTask` | HIR 腿**红**（`printing a Result value…`） | ⛔ **随 `G-6c` 退役** |
+| `testJoinedChildIsNotCancelledByParentReturn` | HIR 腿**红**（`result(ok: i32) is not i32`） | ⛔ **随 `G-6c` 退役** |
+| `testDeferStillRunsWhenTaskCancelled` | HIR 腿**红**（**跑得完、不抛错，断言不成立**） | ⛔ **随 `G-6c` 退役**（见 §7.3） |
+| `testLeakedChildErrorFloatsToCallerResult` | HIR 腿**红**（`printing a Result value…`） | ⛔ **随 `G-6c` 退役** |
+| `testDetachEscapeHatchSuppressesLeak` | HIR 腿**红**（同缺口） | ⛔ **随 `G-6c` 退役** |
+| 助手 `runProgramAST` | 驱动 AST 走查（唯一构造点） | ⛔ **随 `G-6c` 一并删** |
+
+⚠️ **那 5 条为何不在删除之前改指**（裁决依据，非拖延）：只要 AST 引擎还在，它们**仍是真实覆盖**；
+提前改指或删除是**净损失**。与引擎同批消失，代价才由「引擎被删」解释 ⇒ `G-6c` 须**按名**处置。
+逐条实测矩阵与复现命令见 `docs/issue-hir-p4-gamma-g6b-plan-2026-09-18.md` §10.2 / §10.3。
+
+#### 2.3.2 ⭐ 判据 1 的收口：余项**全部**落在 `G-6c` 的删除面上
+
+`G-6b-1` 之后，去注释扫描的**每一处** `Interpreter` 都在「`G-6c` 会删掉的东西」里面：
+
+| 面 | 处所 | 为何无需前置 |
+|---|---|---|
+| `Sources/PiniCore/Interpreter/Interpreter.swift` | 文件自身全部命中 | **文件即删除对象** |
+| `Sources/PiniCore/Interpreter/SuspendEvaluator.swift` | `extension Interpreter` 全部命中 | **文件即删除对象** |
+| `Sources/PiniCLI/main.swift:906, 965` | `runRunPath` 的 **AST 回落**（`if engine == .hir { … return }` 之后） | **随引擎开关一起删**（`G-6c` 已含「收开关」） |
+| `Sources/PiniCore/REPL/ReplEvaluator.swift:104` | `ReplEvaluator.run` 的 `.ast` 分支 | 同上。⚠️ **不得提前收成一臂** —— 开关还在时把 `.ast` 静默改走 HIR，正是该文件注释里点名要避免的「静默回退假绿」 |
+| `Tests/…/StructuredConcurrencyTests.swift` | 助手 + 5 条用例（§2.3.1） | 与引擎同批删 |
+| `Tests/…/SuspendRuntimeTests.swift` | 11 条退役用例 + 其 helper（§2.3.3） | 随挂起退役面 |
+| `Tests/…/CPSDifferentialTests.swift` | 文件自身 2 处 | 14 条全退役 ⇒ **随文件消亡** |
+
+⇒ **判据 1 已达**：`G-6c` 只需**按删除清单执行**，不需要「顺手改测试」或「顺手搬装配」。
+判据 4 仍须在 `G-6c` 执行后实测（`swift build` 无 `cannot find 'Interpreter' in scope`）。
+
+#### 2.3.3 复验：`SuspendRuntimeTests` 的存活 4 条与「类型标注」helper 的真实调用面
+
+原记「存活的前 4 条实测零引用」为真，但**没有回答**一个决定性问题：
+那个带类型标注的 helper 会不会**被存活用例拖住**（若会，它就**不能**随退役面消亡）。`G-6b-1` 逐条实测（该类共 **15 条**）：
+
+| # | 用例 | 引用 `Interpreter` | 调 `captureSuspendStdout` | 退役？ |
+|:--:|---|:--:|:--:|:--:|
+| 1–4 | `testWhenResolvedDeliversValue` · `testWhenResolvedFastPath` · `testWhenResolvedReject` · `testFanOutNonBlocking` | — | — | **存活**（值层原语） |
+| 5–11 | `testSuspendAwaitReleasesThread` 等 7 条 | ✅ | — | 退役 |
+| 12–13 | `testJoinInsideCallArgumentRunsSideEffectOnce` · `testSyncCallChainSuspendResumesExactly` | — | ✅ | 退役 |
+| 14 | `testWorkStealingOccurs` | ✅ | — | 退役 |
+| 15 | `testBackpressureBoundsInflight` | ✅ | ✅ | 退役 |
+
+⇒ ⭐ **`captureSuspendStdout` 的 3 个调用者（#12 · #13 · #15）全在退役的 11 条内**
+⇒ 该 helper **随退役面消亡**，`L484` 的类型标注**不需要任何前置动作**。
+（这正是「类型标注」那一栏能否免处理的关键 —— 只要有一个存活调用者，就必须先改它。）
 
 ## 3. 本单的两个错误结论（如实登记，因为它们是同一坑的两次）
 
@@ -140,7 +214,7 @@ private func runDebugFile(_ path: String) {
 
 | # | 判据 | 测法 | 状态（2026-09-18 本批复核） |
 |:--:|---|---|---|
-| 1 | 三组引用面**逐处**有主 | §2.1/§2.2/§2.3 每一行都有「谁在哪一步做掉」 | ⏳ **余两格**：`ReplEvaluator` 的 `.ast` 分支（`G-6b`）· `StructuredConcurrencyTests` 的 4 个用例（`G-6b`）。§2.1 已逐行订正、§2.3 已补构造点 |
+| 1 | 三组引用面**逐处**有主 | §2.1/§2.2/§2.3 每一行都有「谁在哪一步做掉」 | ✅ **已达（`G-6b-1`，2026-09-18）** —— 余项**全部**落在 `G-6c` 的删除面上，逐处见 §2.3.2。§2.3 的 3 条已改指、整面已补全并逐条归属 |
 | 2 | `pini debug` 能力**不净减** | 两条入口在 `G-6` 后仍可用（取 §2.2 的 A/B），或按 C 走完 `spec §1.3` 登记 | ✅ **已达**（`G-6a` 取 A；`DebuggerTests` 17 passed + CLI 实机冒烟） |
 | 3 | 规划件读数**已订正** | `issue-hir-p4-gamma-plan-2026-09-16.md` 的「事实基础」与「复现方式」两处的「39 处」旁有订正标注与指针 | ✅ **已达** |
 | 4 | 编译面**零残留** | `G-6c` 删除后 `swift build` 无 `cannot find 'Interpreter' in scope` | ⏳ 属 `G-6c`；**开工前的等价前置判据** = 去注释扫描「**存活面**引用 = 0」（见 `G-6b` 规划 §4 判据 1） |
@@ -229,3 +303,31 @@ grep -n 'if engine == .hir' Sources/PiniCLI/main.swift     # 只在 runRunPath �
   （实测那 31 条不依赖任何参照臂）⇒ **不得沉默存在**。
 - ⚠️ `G-6` 开工时要做的：把它作为**一条明确的能力损失**写进收口记录 ——
   性质是「**已知并接受的代价**」，不是「遗留待办」。
+
+### 7.3 ⚠️ 5 条语言层并发用例**随引擎退役**（用户 2026-09-18 裁决；`G-6b` 逐条实测后的具名账）
+
+**这不是「改指失败」，是「引擎能力不够」**：把这 5 条的驱动换成 HIR 腿后全红，且**全部挡在已有主的缺口上**。
+
+| 用例 | HIR 腿上的实测 | 挡在谁身上 |
+|---|---|---|
+| `testParentReturnCancelsUnjoinedChildTask` | `printing a Result value is outside the slice`（`at 15:18`） | §7.1（**用户已裁 C 维持现状**） |
+| `testLeakedChildErrorFloatsToCallerResult` | 同缺口（`at 11:10`） | §7.1 |
+| `testDetachEscapeHatchSuppressesLeak` | 同缺口（`at 12:10`） | §7.1 |
+| `testJoinedChildIsNotCancelledByParentReturn` | `type mismatch: result(ok: i32) is not i32`（`at 10:22`） | `docs/issue-hir-print-result-value-2026-09-17.md` §4「同族待查」（**未裁**） |
+| `testDeferStillRunsWhenTaskCancelled` | **跑得完、不抛错（`rc=0`），但断言不成立** —— 输出只有 `主流程结束`、**缺 `清理完成`** | `docs/issue-hir-defer-not-run-on-cancel-2026-09-18.md`（**本批新立**） |
+
+**裁决**：**随 `G-6c` 一并退役**（用户 2026-09-18「按你的建议来」，采纳建议 A）。
+**代价（如实登记）**：语言层端到端覆盖 **8 条 → 3 条**；
+其中「父返回取消未 join 子」在**单元层**仍有 **3 条**存活用例守着（§2.3.1 前三行）。
+
+⚠️ **`G-6c` 必须按名处置这 5 条**，并在收口记录里点名下面这一条：
+
+> `testDeferStillRunsWhenTaskCancelled` 退役 ⇒ **「取消时 HIR 不执行 `defer` 清理」这条缺陷
+> 此后没有测试见证**。退役**不等于缺口消失** —— 它由「被测试守住」变成「只在工单里」。
+
+⚠️ **同批订正一处未验真的写法**：`G-6b` 的规划件曾把这条 `defer` 缺口写成「已立案」，
+而 `grep` 全 `docs/` **无命中** —— 它此前只在批次实录与退役件里被记着。
+本批据此**新立工单**（见上表末行）；纪律见新单头部的订正段。
+
+⚠️ **判据纪律（本项最有价值的副产品）**：这 5 条里有 1 条是 **`rc=0` 却断言不成立** ——
+与 `G-5` 记的教训是同一条（`rc=0` 不蕴含断言可满足）。凡以 `rc` 判「可迁移」者，必须补断言级验证。

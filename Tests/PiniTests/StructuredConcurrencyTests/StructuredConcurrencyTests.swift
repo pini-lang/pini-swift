@@ -65,15 +65,17 @@ final class StructuredConcurrencyTests: XCTestCase {
         XCTAssertFalse(child.isCancelled, "已脱离的子任务不应被父返回取消")
     }
 
-    /// 意图：`<=` 消费（joinFuture）即视为「已 join」，解释器接缝上必须完成 detach。
+    /// 意图：`<=` 消费（joinFuture）即视为「已 join」，共享规则上必须完成 detach。
+    ///
+    /// `G-6b` 起断言的是 **`RuntimeOps` 的那一条规则**，不再经解释器实例 ——
+    /// 两侧本是逐字转发，而经实例断言会让这条判据随实例类型的删除一起消失。
     func testJoinFutureDetachesChildFromParent()  throws {
-        let interpreter = Interpreter()
         let parent = FutureValue()
         let child = FutureValue()
         parent.addChild(child)
         child.resolve(.int(7))
 
-        _ = interpreter.joinFuture(child)
+        _ = RuntimeOps.joinFuture(child, timeoutMs: nil)
 
         XCTAssertTrue(parent.childrenSnapshot().isEmpty, "join 后子任务应脱离父节点")
         XCTAssertNil(child.parent)
@@ -83,15 +85,18 @@ final class StructuredConcurrencyTests: XCTestCase {
     // MARK: - B2-3 检查点单元
 
     /// 意图：检查点在同步路径（owner == nil）必须完全无副作用——这是「主线程零开销」的前提。
+    ///
+    /// `G-6b` 起断言的是**共享规则本身**（`RuntimeOps`），不再经某个引擎的名字：该规则
+    /// 原先在两侧各有一份、HIR 那份还是 `private`，于是这条接缝只能由仍存活的引擎代为作证
+    /// —— 而那正是它会在删除日一起消失的原因。
     func testCheckpointIsNoOpWithoutOwner()  throws {
-        let interpreter = Interpreter()
-        XCTAssertNoThrow(try interpreter.checkCancellation(nil))
+        XCTAssertNoThrow(try RuntimeOps.checkCancellation(nil))
 
         let live = FutureValue()
-        XCTAssertNoThrow(try interpreter.checkCancellation(live), "未取消的任务不应被检查点中断")
+        XCTAssertNoThrow(try RuntimeOps.checkCancellation(live), "未取消的任务不应被检查点中断")
 
         live.cancel()
-        XCTAssertThrowsError(try interpreter.checkCancellation(live)) { error in
+        XCTAssertThrowsError(try RuntimeOps.checkCancellation(live)) { error in
             guard case RuntimeError.taskCancelled = error else {
                 return XCTFail("已取消任务的检查点应抛 taskCancelled，实际: \(error)")
             }
@@ -162,12 +167,15 @@ final class StructuredConcurrencyTests: XCTestCase {
 
     /// 走 **AST 走查** 跑一份源码并捕获 stdout。
     ///
-    /// ⚠️ 本助手仍在驱动**正在被删除的引擎**，只为余下的一组用例保留：
-    /// `G-3e` 退役件登记过 8 条语言层端到端用例，其中 **4 条已改指**
-    /// （走 `runProgramOnHIRTree`），另外 **4 条被两条既有缺口挡住**
-    /// （`printing a Result value is outside the slice` · `type mismatch: result(ok: i32) is not i32`）。
-    /// 那 4 条**尚未点名处置**（退役件给了 A/B 两选项）⇒ 本助手与它们一起等裁决；
-    /// `G-6` 删除本引擎之前必须先把它们改指或显式退役。
+    /// ⚠️ 本助手仍在驱动**正在被删除的引擎**，且它服务的 5 条用例**已裁决为随该引擎一同退役**
+    /// （`G-6b` 逐条实测后的终局账；逐条归属见「残余引用面」件与退役件的终局表）：
+    /// 把驱动换成 HIR 腿后 5 条全红 —— 3 条撞 `Result` 打印，1 条撞结果类型，
+    /// 1 条**跑得完、不抛错，却断言不成立**（取消时不执行 `defer` 清理）。
+    /// ⇒ 它们**不在删除之前改指**：只要 AST 引擎还在，它们仍是真实覆盖；
+    /// 与引擎同批消失，代价才由「引擎被删」解释。删除批须**按名**处置它们。
+    ///
+    /// ⚠️ 数这一组用例时**要沿助手展开**：本文件里只有一处构造点，却由 5 条用例共用 ——
+    /// 在构造点处数，会把这 5 条算成 1 条。
     private func runProgramAST(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
@@ -243,8 +251,8 @@ final class StructuredConcurrencyTests: XCTestCase {
         parent.addChild(okChild)
         parent.addChild(errChild)
         parent.addChild(pending)
-        okChild.resolve(Interpreter.makeResult(caseName: "ok", payload: .int(1)))
-        errChild.resolve(Interpreter.makeResult(caseName: "err", payload: Interpreter.makeError("leaked boom")))
+        okChild.resolve(RuntimeOps.makeResult(caseName: "ok", payload: .int(1)))
+        errChild.resolve(RuntimeOps.makeResult(caseName: "err", payload: RuntimeOps.makeError("leaked boom")))
         // pending 故意保持未完成
 
         let leaked = parent.closeScope()

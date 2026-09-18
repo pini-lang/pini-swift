@@ -744,7 +744,7 @@ public final class HIRExecutor: DebugHookHost {
                         self.currentFuture = task
                         return { self.currentFuture = previous }
                     },
-                    checkpoint: { try self.checkCancellation($0) }
+                    checkpoint: { try RuntimeOps.checkCancellation($0) }
                 )
             }
             if name == "joinWithin" {
@@ -2454,7 +2454,7 @@ public final class HIRExecutor: DebugHookHost {
             self.currentFuture = future
             defer { self.currentFuture = previousFuture }
             do {
-                try self.checkCancellation(self.currentFuture)
+                try RuntimeOps.checkCancellation(self.currentFuture)
                 let result = try self.invokeBody(captured, parent: parent, args: boundArgs, name: name)
                 // The strict structured rule's closing act: cancel whatever was
                 // never joined, and let a failure that nobody consumed surface
@@ -2469,18 +2469,6 @@ public final class HIRExecutor: DebugHookHost {
             }
         }
         return .future(future)
-    }
-
-    /// Cooperative cancellation checkpoint: a task cancelled while it was waiting
-    /// ends here rather than at an arbitrary instruction.
-    ///
-    /// Mirrors `Interpreter.checkCancellation` down to the error it throws, so
-    /// the join site on either engine turns the same cancellation into the same
-    /// `err(CancelError)`.
-    private func checkCancellation(_ owner: FutureValue?) throws {
-        if let owner = owner, owner.isCancelled {
-            throw FutureValue.cancelError()
-        }
     }
 
     /// The synchronous body path: bind the arguments, run the statements, unwrap

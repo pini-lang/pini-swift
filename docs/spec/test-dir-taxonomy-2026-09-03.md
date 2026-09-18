@@ -36,7 +36,7 @@ invalid names).
 
 | Group | n | Members |
 |---|---|---|
-| **Runtime** | 11 | `InterpreterTests` `EnvironmentTests` `ValueSemanticsTests` `RuntimeCOWTests` `RuntimeBackendTests` `ARCManagerTests` `WeakRefTests` `LazyRefTests` `StackGuardTests` `StdlibTests` `BuiltinFunctionTests` |
+| **Runtime** | 11 | `ProgramExecutionTests` `EnvironmentTests` `ValueSemanticsTests` `RuntimeCOWTests` `RuntimeBackendTests` `ARCManagerTests` `WeakRefTests` `LazyRefTests` `StackGuardTests` `StdlibTests` `BuiltinFunctionTests` |
 | **Syntax** | 10 | `ParenEqualsTests` `LabelValidationTests` `BlockLabelTests` `StepBlockTests` `TestBlockTests` `FuncLiteralTests` `CaptureStmtTests` `IfElifElseLevelTests` `DeferBlockTests` `TryExceptTests` |
 | **Concurrency** | 9 | `ConcurrencyTests` `JoinAllTests` `JoinWithinTests` `StructuredConcurrencyTests` `TaskIsolationTests` `CancellationTests` `SuspendRuntimeTests` `StarvationTests` `CPSDifferentialTests` |
 | **Module** | 9 | `ModuleSystemTests` `ModuleTestCollectionTests` `ModuleToolchainTests` `ImportExportTests` `ImportInjectionTests` `CrossFileRuntimeTests` `CrossFileVisibilityTests` `PackageTests` `CLIDirectoryTests` |

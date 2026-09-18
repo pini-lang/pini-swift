@@ -57,11 +57,13 @@ public class Interpreter: DebugHookHost {
  /// 取消不抢占线程，而是在检查点处提前结束：任务体抛出后由 Scheduler reject，
  /// join 方因 `cancelled` 已置位恒得 `err(CancelError)`（见 `joinFuture`）。
  /// 同步路径 `owner == nil`，零开销。
+ ///
+ /// 规则本体已上提到 `RuntimeOps`（`G-6b`）：HIR 执行器原先各持一份**私有拷贝**，
+ /// 于是这条接缝在测试侧只能经由某个引擎的名字断言 —— 那正是不该有的耦合。
+ /// 这里保留转调，本文件与 `SuspendEvaluator` 的热路径调用点一行未动。
  @inline(__always)
  func checkCancellation(_ owner: FutureValue?) throws {
- if let owner = owner, owner.isCancelled {
- throw FutureValue.cancelError()
- }
+ try RuntimeOps.checkCancellation(owner)
  }
 
  /// 读取线程本地当前任务并检查取消（热路径请改用带参版本，避免重复读线程字典）。

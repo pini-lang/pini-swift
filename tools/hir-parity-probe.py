@@ -45,6 +45,17 @@ token) would otherwise litter the real fixture directory with its output. The
 copy keeps the fixture's sibling .pini files next to it, so same-directory
 multi-file fixtures still resolve.
 
+WHICH BINARY
+------------
+The CLI under test is located by asking SwiftPM (`swift build --show-bin-path`,
+with `--scratch-path` when the caller passes one) rather than by naming a
+layout. It used to be a literal path, and a literal path into a build layout is
+a fact with an expiry date: once the layout changed, the probe either refused to
+start -- or, the worse of the two, swept a binary that still happened to sit
+there from an earlier build, reporting a whole table of numbers about code that
+no longer existed. `PINI_SWEEP_BIN` overrides the lookup; that is what a
+frozen-artifact flow wants, and it stays.
+
 VERDICTS
 --------
     OK                 all three agree — stdout is byte-equal across the
@@ -247,9 +258,10 @@ import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.environ.get(
-    "PINI_SWEEP_BIN", "/tmp/pini-build/arm64-apple-macosx/debug/pini"
-)
+# Filled in by `main` from `resolve_bin`. A product path is the toolchain's
+# answer to a question, so the toolchain is who gets asked -- see WHICH BINARY.
+BIN_ENV = "PINI_SWEEP_BIN"
+BIN = ""
 # Resolve lli through the toolchain path as well as PATH, so the probe does
 # not depend on the caller having sourced a shell profile.
 LLVM_BIN = "/opt/homebrew/opt/llvm/bin"
@@ -288,6 +300,37 @@ _stray_baseline = set()
 # "0 killed" for a sweep that killed several — a number that contradicts the
 # clean /tmp next to it.
 _reaped = []
+
+
+def _show_bin_path(scratch_path):
+    """SwiftPM's answer to "where is the product", or "" if it cannot say."""
+    cmd = ["swift", "build", "--disable-sandbox", "--show-bin-path"]
+    if scratch_path:
+        cmd += ["--scratch-path", scratch_path]
+    try:
+        out = subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=180).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    lines = out.decode("utf-8", "replace").strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def resolve_bin(scratch_path=None):
+    """The CLI to sweep: the override when set, else whatever was built."""
+    override = os.environ.get(BIN_ENV)
+    if override:
+        return override
+    bin_dir = _show_bin_path(scratch_path)
+    return os.path.join(bin_dir, "pini") if bin_dir else ""
+
+
+def build_hint(scratch_path=None):
+    """The one command that lands a CLI exactly where `resolve_bin` reads."""
+    cmd = "swift build --disable-sandbox --product pini"
+    if scratch_path:
+        cmd += " --scratch-path " + scratch_path
+    return cmd
 
 
 def strays():
@@ -630,7 +673,7 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, a_rc, a_out, a_err):
 
 
 def main():
-    global RUN_TIMEOUT, OUT
+    global RUN_TIMEOUT, OUT, BIN
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", action="append", default=None)
     ap.add_argument("--filter", default=None,
@@ -639,15 +682,25 @@ def main():
                     help="per-channel wall clock, seconds (default %d)" % RUN_TIMEOUT)
     ap.add_argument("--out", default=OUT,
                     help="per-fixture TSV destination (default %s)" % OUT)
+    ap.add_argument("--scratch-path", default=None,
+                    help="where the CLI was built: passed to `swift build "
+                         "--show-bin-path` so the probe reads that build, and "
+                         "repeated in the hint below when it is missing")
     args = ap.parse_args()
     roots = args.root or DEFAULT_ROOTS
     RUN_TIMEOUT = args.timeout
     OUT = args.out
 
-    if not os.access(BIN, os.X_OK):
-        print("pini binary missing at %s\n  swift build --disable-sandbox "
-              "--scratch-path /tmp/pini-build --product pini" % BIN, file=sys.stderr)
+    BIN = resolve_bin(args.scratch_path)
+    if not BIN or not os.access(BIN, os.X_OK):
+        print("pini binary missing at %s" % (BIN or "<unresolved>"), file=sys.stderr)
+        print("  build it with:  %s" % build_hint(args.scratch_path), file=sys.stderr)
+        print("  (that command lands the CLI exactly where this probe reads it; "
+              "set %s to point the probe at another build)" % BIN_ENV, file=sys.stderr)
         return 1
+    # Named on every run: with the path resolved rather than written down, the
+    # first question about any reading is which build produced it.
+    print("binary under test: %s" % BIN)
 
     _lli_baseline.update(live_lli_pids())
     _stray_baseline.update(strays())

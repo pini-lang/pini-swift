@@ -944,6 +944,26 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
         return ev.parentEnum == builtinResultEnumName && ev.caseName == "err"
     }
 
+    /// Cooperative cancellation checkpoint: a task cancelled while it was waiting
+    /// ends here rather than at an arbitrary instruction.
+    ///
+    /// Shared for the same reason as the predicates above, and it was the last
+    /// one still copied: the interpreter held one and the HIR executor held a
+    /// private one, so the rule could not be asserted from the outside without
+    /// naming one of the two engines. A cancellation that ended a task on one
+    /// engine and not the other would be a difference in the language rather
+    /// than in the implementation — and the join site turns either into the same
+    /// `err(CancelError)`, so the two are one rule or they are wrong.
+    ///
+    /// Inlined because it sits on the loop-header path: the synchronous case is
+    /// a nil check, and it has to cost nothing when no task owns the thread.
+    @inline(__always)
+    static func checkCancellation(_ owner: FutureValue?) throws {
+        if let owner = owner, owner.isCancelled {
+            throw FutureValue.cancelError()
+        }
+    }
+
     /// Block until `fut` resolves and normalise the outcome to a `Result` value
     /// — errors as data, never thrown across the join.
     ///
