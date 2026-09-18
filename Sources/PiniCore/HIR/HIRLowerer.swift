@@ -561,6 +561,41 @@ public enum HIRLowerer {
         }
 
         var functions: [HIRFunction] = []
+
+        // H-3 三级派发（用户扩展 > 语言内标准库 > 宿主原生）的第一级。
+        //
+        // 内建类型（`String` / `Array`）不是名义声明 ⇒ 上面那轮扩展注册收不到它们，
+        // 方法体从未被降载：新增方法在 `lowerMemberCall` 落到「later grids」兜底，
+        // 覆盖同名成员则读不到用户实现（派发直接走内建表）。
+        //
+        // 这里把方法体降载成普通 `HIRFunction`（IR 名 `方法__类型`，与名义类型同一
+        // mangle 规则），调用点按名分派 ⇒ 执行期不需要第二份实现。
+        //
+        // ⚠️ **必须先于**函数降载跑：函数降载要把这张表带进 `FunctionContext`，
+        // 同序遍历会让先降载的函数拿到空表。
+        // ⚠️ `Array` 在扩展块里不署名元素类型，self 取 i32 占位。本批的对象不使用
+        // self 的元素，故占位不参与语义；元素敏感的扩展方法需要调用点特化。
+        var builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
+        for decl in module.declarations {
+            guard case .extensionDecl(let ext) = decl,
+                  ext.kind == .structExt || ext.kind == .objectExt,
+                  let selfType = builtinReceiverType(named: ext.targetType)
+            else { continue }
+            for method in ext.methods {
+                let lowered = try lowerMethod(
+                    method, typeName: ext.targetType, selfType: selfType,
+                    typeInference: typeInference, moduleSignatures: signatures,
+                    nominalTypes: nominals, userTypes: userTypes, enums: enums,
+                    genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                    closureIds: closureIds, traitRegistry: traitRegistry,
+                    traitDefaultsCollector: traitDefaultsCollector
+                )
+                functions.append(lowered)
+                builtinExtensionMethods[ext.targetType, default: [:]][method.name] =
+                    (irName: lowered.name, returnType: lowered.returnType ?? .i32)
+            }
+        }
+
         for decl in module.declarations {
             switch decl {
             case .funcDecl(let funcDecl):
@@ -571,7 +606,8 @@ public enum HIRLowerer {
                     try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
                                       nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                                       genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
-                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
+                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
+                                          builtinExtensionMethods: builtinExtensionMethods)
                 )
             case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below; trait
@@ -594,7 +630,8 @@ public enum HIRLowerer {
                 try lowerFunction(specialized, typeInference: typeInference, moduleSignatures: signatures,
                                   nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                                   genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
-                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector)
+                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
+                                          builtinExtensionMethods: builtinExtensionMethods)
             )
         }
         if requiresMain {
@@ -1138,7 +1175,8 @@ public enum HIRLowerer {
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
-        traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector()
+        traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector(),
+        builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
     ) throws -> HIRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -1180,7 +1218,8 @@ public enum HIRLowerer {
             genericFuncTemplates: genericFuncTemplates,
             closureIds: closureIds,
             traitRegistry: traitRegistry,
-            traitDefaultsCollector: traitDefaultsCollector
+            traitDefaultsCollector: traitDefaultsCollector,
+            builtinExtensionMethods: builtinExtensionMethods
         )
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(
@@ -3868,6 +3907,28 @@ public enum HIRLowerer {
         )
     }
 
+    /// H-3 三级派发的类型映射：内建接收者类型名 → `HIRType`。
+    ///
+    /// ⚠️ `Array` 在扩展块里不署名元素类型 ⇒ 取 i32 占位。这个值只用于**登记**
+    /// 扩展方法（`lowerMethod` 需要一个 self 类型），调用点的接收者类型仍由实际
+    /// 值决定 ⇒ 本批的对象不使用 self 的元素，占位不参与语义。
+    private static func builtinReceiverType(named name: String) -> HIRType? {
+        switch name {
+        case "String": return .string
+        case "Array": return .array(element: .i32)
+        default: return nil
+        }
+    }
+
+    /// 反向映射：接收者类型 → 内建类型名（查扩展方法表用）。
+    private static func builtinReceiverName(of type: HIRType) -> String? {
+        switch type {
+        case .string: return "String"
+        case .array: return "Array"
+        default: return nil
+        }
+    }
+
     private static func lowerMemberCall(
         object: Expression,
         memberName: String,
@@ -3917,6 +3978,25 @@ public enum HIRLowerer {
 
         let loweredObject = try lowerExpr(object, expected: nil, into: &context)
         let objectType = loweredObject.type
+
+        // H-3 三级派发的第一级：内建类型（`String` / `Array`）的**用户扩展方法**
+        // 排在语言内标准库（下面那些按名硬编码的分支）与宿主原生之前。
+        // 缺这一支时：新增方法会落到尾部兜底报「later grids」，覆盖同名成员则
+        // 直接读到内建结果（用户实现被静默压过）。
+        if let receiverName = builtinReceiverName(of: objectType),
+           let ext = context.builtinExtensionMethods[receiverName]?[memberName] {
+            let loweredArgs = try arguments.map {
+                try lowerExpr($0.expression, expected: nil, into: &context)
+            }
+            return LoweredExpr(
+                node: .call(
+                    function: ext.irName,
+                    arguments: [loweredObject.node] + loweredArgs.map(\.node),
+                    returnType: ext.returnType
+                ),
+                type: ext.returnType
+            )
+        }
 
         // String member methods (G9): upper/lower/contains/substring/split.
         // `slice`/`get` fall through to the G2/G2b tolerant-read channels.
@@ -5208,6 +5288,10 @@ private struct FunctionContext {
     /// `方法__类型`), collected here for module emission. Reference type so
     /// appends from nested FunctionContexts propagate to `lower()`.
     let traitDefaultsCollector: HIRLowerer.TraitDefaultCollector
+    /// H-3 三级派发的第一级：内建类型（`String` / `Array`）的**用户扩展方法**。
+    /// 接收者类型名 → 方法名 → （降载后的 IR 函数名, 返回类型）。由模块级预扫描填
+    /// （见 `lower(module:)` 的扩展块分支）；空表即「本模块没有内建扩展」。
+    var builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
     /// G12: receiver field types for bare-name resolution inside method
     /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
     var selfFieldTypes: [String: HIRType] = [:]
@@ -5245,7 +5329,8 @@ private struct FunctionContext {
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: HIRLowerer.TraitRegistry = HIRLowerer.TraitRegistry(traits: [:], typeTraits: [:]),
-        traitDefaultsCollector: HIRLowerer.TraitDefaultCollector = HIRLowerer.TraitDefaultCollector()
+        traitDefaultsCollector: HIRLowerer.TraitDefaultCollector = HIRLowerer.TraitDefaultCollector(),
+        builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
     ) {
         self.functionName = functionName
         self.returnType = returnType
@@ -5260,6 +5345,7 @@ private struct FunctionContext {
         self.closureIds = closureIds
         self.traitRegistry = traitRegistry
         self.traitDefaultsCollector = traitDefaultsCollector
+        self.builtinExtensionMethods = builtinExtensionMethods
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {
