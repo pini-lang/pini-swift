@@ -27,7 +27,7 @@
 | ADR-019 | 语言级 | Unicode 字符模型与字符谓词集（grapheme 钉住 / Char 两阶段 / IDENT 续字符放宽 / 三谓词三层对齐） | active | `adr-019-unicode-char-model.md` |
 | ADR-020 | 语言级 | 内建特征化（`collection` 最小面 / 内建双层 / 单点登记 / 归组表 / 缓冲惯用法 / 特征内 unsafe 消耗点；COW 机制推迟） | active | `adr-020-builtin-traits.md` |
 | ADR-021 | 语言级 | 宽松词法（未知字符兜底单字符 IDENT / 字符串三边界宽松 / 畸形数字回退 / 标识符规则一致性；错误报告后移解析语义；词法段 E1-001/E1-002 移除） | active | `adr-021-bootstrap-lex-diagnostics.md` |
-| ADR-022 | 宿主级 | 分发策略（源码分发用户自建 / 仅 macOS / 零签名 / LLVM 后端随宿主 / 自举跟随宿主可移植性） | active | `../../adr/adr-022-distribution-strategy.md` |
+| ADR-022 | 宿主级 | 分发策略（源码分发用户自建 / 仅 macOS / 零签名 / LLVM 后端随宿主 / 自举跟随宿主可移植性） | active | `adr-022-distribution-strategy.md` |
 | ADR-023 | 语言级 | 具名枚举关联值与 match 解构（具名声明/标签构造/位置·具名·`_` 解构；单绑定=第 1 位（破坏性）；arity → E4；含「实现先于 spec」的流程越界记录与事后追认） | active | `adr-023-named-associated-values.md` |
 | ADR-024 | 治理级 | 规范治理归位——撤销元仓、三层规范模型与自举探针定位 | active | `adr-024-spec-governance-relocation.md` |
 | ADR-026 | 语言级 | 歧义 case 名消歧与类型传播（裸名构造按期望类型/实参类型消歧；match 按 scrutinee 解析；self 调用传播；作用域化类型变量；case 值完整身份） | active | `adr-026-ambiguous-case-resolution.md` |
