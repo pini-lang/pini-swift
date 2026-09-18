@@ -685,7 +685,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 - **驳回性测量（Dismissing Measures）**：断言「非期望行为不发生」（`XCTAssertNotEqual`/`XCTAssertThrowsError`/`XCTFail` 拦截错误路径），覆盖边界与错误处理。
 
 ### 6.2 组织：按模块 + 按行为
-- 每个主模块独立测试类：`ASTTests` / `LexerTests` / `IndentTrackerTests` / `ParserTests` / `EnvironmentTests` / `ErrorTests` / `InterpreterTests`（见 `PiniTests.swift`）；新增模块须同步新增测试类。
+- 每个主模块独立测试类：`ASTTests` / `LexerTests` / `IndentTrackerTests` / `ParserTests` / `EnvironmentTests` / `ErrorTests` / `ProgramExecutionTests`（见 `PiniTests.swift`）；新增模块须同步新增测试类。
 - 模块内按行为分类（token 类型 / 特殊情形 / 错误情形）。
 
 ### 6.3 覆盖策略

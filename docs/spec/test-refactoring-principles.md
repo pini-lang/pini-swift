@@ -67,7 +67,7 @@ Each major module should have its own test class:
 | Parser | `ParserTests` | Test parsing of all syntax constructs |
 | Environment | `EnvironmentTests` | Test scope management and variable binding |
 | Errors | `ErrorTests` | Test error types and control signals |
-| Interpreter | `InterpreterTests` | Test end-to-end program execution |
+| Program execution | `ProgramExecutionTests` | Test end-to-end program execution |
 
 ### By Behavior Within Module
 
@@ -221,7 +221,7 @@ func testEnvironmentNestedScope() {
 Extract repetitive setup into private helper methods:
 
 ```swift
-final class InterpreterTests: XCTestCase {
+final class ProgramExecutionTests: XCTestCase {
     private func runProgram(_ source: String) throws -> String {
         // Common setup: lex, parse, interpret, capture output
         let lexer = Lexer(source: source, fileName: "test.pini")

@@ -2,7 +2,14 @@ import XCTest
 import PiniCore
 import Foundation
 
-final class InterpreterTests: XCTestCase {
+/// 程序执行的端到端用例：源文件走「读 → 解析 → 运行 → 捕获 stdout」全链，
+/// 断言的是**语言行为**（字面量函数、控制流、`match`、一元运算符…），不是某个引擎的 API。
+///
+/// 本类由 `InterpreterTests` 改名而来（`G-6b-2`）：驱动早已是 `ProgramRunner`
+/// —— `P4-β` 的测试面迁移之后，旧名描述的是「它们曾经属于谁」。
+/// 改名判据 = 新名说的是「这些用例现在测什么」 ⇒
+/// `swift test --filter ProgramExecutionTests` 仍跑得到原来的 12 条。
+final class ProgramExecutionTests: XCTestCase {
     private func runProgram(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
