@@ -1080,7 +1080,9 @@ public final class HIRExecutor: DebugHookHost {
             // comparison puts every non-ASCII scalar above "9", so the predicate
             // is effectively ASCII-only without a second range check. The empty
             // string is false, not an error.
-            let s = try requireString(try evaluate(argument), for: "is_ascii_digit")
+            // G67: the parameter face moved from `String` to `Char`; `requireChar`
+            // takes either, because the two share a representation.
+            let s = try requireChar(try evaluate(argument), for: "is_ascii_digit")
             guard let first = s.first else { return .bool(false) }
             return .bool(first >= "0" && first <= "9")
 
@@ -1402,6 +1404,23 @@ public final class HIRExecutor: DebugHookHost {
             )
         }
         return text
+    }
+
+    /// One `Char` operand as its grapheme text, or a loud error naming the caller.
+    ///
+    /// G67: `Char` and `String` share a representation, and `Char` widening to
+    /// `String` is legal (see the implicit-conversion rule), so a `String` value
+    /// is accepted here too — a `Char`-faced operand that reached us through a
+    /// `String` position is still the same one grapheme.
+    private func requireChar(_ value: Value, for what: String) throws -> String {
+        switch value {
+        case .char(let text), .string(let text): return text
+        default:
+            throw RuntimeError.invalidOperation(
+                reason: "\(what) expects a Char operand, got \(value)",
+                location: HIRExecutor.noLocation
+            )
+        }
     }
 
     /// One `I32` operand, or a loud error naming the caller. See `requireString`.

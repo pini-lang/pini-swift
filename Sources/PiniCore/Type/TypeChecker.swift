@@ -627,6 +627,13 @@ public final class TypeChecker {
  isNumericPrimitive(aName), isNumericPrimitive(eName) {
  return true
  }
+ // G68（P0d-D）：`Char → String` 单向加宽。判据是「加宽安全、窄化危险」——
+ // `Char` 与 `String` 表示同构（ADR-033 D1 取方案 A），而一个「恰含 1 个字素」的串
+ // **本来就是**串 ⇒ 这个方向恒安全。反方向（`String → Char`）是**窄化**，故此处
+ // **不放行** —— 与上面整型宽度族那条双向放行不同，**方向性就是本规则的全部内容**：
+ // 窄化入口只留三个构造点（`s[i]` / `chars` / `chr`）加一次显式转换，
+ // `ADR-033 D1` 第 4 条的「恰含 1 个字素」不变式因此仍归类型系统管。
+ if isCharWideningTo(actual, expected) { return true }
  // 内建签名可在泛型实参位使用 `_` 通配（如 `joinWithin(t: Future<_, _>, ms: I32)`）：
  // 元素类型对内建而言无关紧要，只需锚定外层构造子与元数。顶层 `_` 早在
  // validateCallArguments 放行，此处覆盖嵌套位。
@@ -666,6 +673,31 @@ public final class TypeChecker {
  return false
  }
  }
+
+ /// G68（`P0d-D`）：`Char` → `String` 的**单向加宽**判定（`actual` 是实参侧、
+ /// `expected` 是期望侧）。
+ ///
+ /// 只认这一个方向。反向由调用方另行判断为「窄化」并**拒绝** —— 判据见
+ /// `isAssignable` 内的说明与 spec 缺口台账 `G68`。
+ private func isCharWideningTo(_ actual: TypeAnnotation, _ expected: TypeAnnotation) -> Bool {
+ guard case .simple(let aName, _) = actual, aName == charTypeName,
+ case .simple(let eName, _) = expected, eName == stringTypeName else { return false }
+ return true
+ }
+
+ /// G68（`P0d-D`）：二元运算的左右类型是否构成 `Char` / `String` **相容对**。
+ ///
+ /// 与 `isCharWideningTo` 的单向不同，此处**对称**：二元运算没有「哪一侧是期望」
+ /// —— `c + s` 与 `s + c` 同为合法。结果类型不是「谁宽跟谁」，而是取 `String` 面
+ /// （见 `TypeInference` 的 `+` 分支）：两侧都是 `Char` 时拼接结果可能有多个字素，
+ /// 若仍算 `Char`，`ADR-033 D1` 的不变式就会被 `c + c` 这类表达式绕开。
+ private func isCharStringPair(_ lhs: String, _ rhs: String) -> Bool {
+ (lhs == charTypeName && rhs == stringTypeName) || (lhs == stringTypeName && rhs == charTypeName)
+ }
+
+ /// 内建标量名：`Char` / `String`（G68 的两端）。集中一处，避免字面量散落。
+ private var charTypeName: String { "Char" }
+ private var stringTypeName: String { "String" }
 
  /// `_` / `Any` 通配的逐位匹配：仅当 `expected` 中出现通配位时才可能放行，
  /// 其余情形返回 false 交回原有结构等价路径（零回归）。
@@ -2055,7 +2087,12 @@ public final class TypeChecker {
  let leftName = typeName(from: leftType)
  let rightName = typeName(from: rightType)
 
- if leftName != rightName {
+ // G68（P0d-D）：`Char` / `String` 视为**相容对**。本处的判据原本是「左右类型名
+ // 字面相等」，而 `Char` 与 `String` 是表示同构的两个类型（ADR-033 D1 方案 A）
+ // ⇒ 字面不等并不代表不可运算。放宽只覆盖这一对，方向性不适用（二元运算对称）。
+ // ⚠️ 本处只放宽「能不能运算」；**支持哪些算符**仍是既有事实 —— 与 `String` 自身
+ // 一致：`+` / `==` / `!=` 有实现，`<` 一族两臂都在运行时响亮拒绝。
+ if leftName != rightName, !isCharStringPair(leftName, rightName) {
  try report(TypeError.mismatch(expected: leftName, got: rightName, location: location))
  }
  }

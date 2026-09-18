@@ -1,6 +1,6 @@
 main|func() -> ():
-    print(is_number("0"))
-    print(is_number("三"))
-    print(is_number("〇"))
-    print(is_number("½"))
+    print(is_number("0"[0]))
+    print(is_number("三"[0]))
+    print(is_number("〇"[0]))
+    print(is_number("½"[0]))
     return

@@ -228,12 +228,16 @@ final class BuiltinFunctionTests: XCTestCase {
         XCTAssertEqual(output, "true\ntrue\n", "ASCII 与中文字母均应判定为字母")
     }
 
-    /// 意图：is_letter 对非字母（数字/下划线/空串）返回 false——IDENT 首字符判定边界。
-    /// 驳回性测量：输出 "false\nfalse\nfalse\n"（1、_、空串）。
+    /// 意图：is_letter 对非字母（数字/下划线）返回 false——IDENT 首字符判定边界。
+    /// 驳回性测量：输出 "false\nfalse\n"（1、_）。
+    ///
+    /// ⚠️ 原「空串」一行已随 `P0d` 作废：`is_letter` 的参数面改为 `Char`，而
+    /// `Char` 恒为 1 个字素 ⇒「空串」在该签名下**不可表达**。不变式因此由
+    /// **类型系统**守（比原先「谓词对空串返回 false」更强），不是覆盖缩水。
     func testIsLetterRejectsNonLetters() throws {
         let source = try loadPiniFixture("testIsLetterRejectsNonLetters", filePath: #filePath)
         let output = try runProgram(source)
-        XCTAssertEqual(output, "false\nfalse\nfalse\n", "数字/下划线/空串均不应判定为字母")
+        XCTAssertEqual(output, "false\nfalse\n", "数字/下划线均不应判定为字母")
     }
 
     // MARK: - is_ascii_digit（ADR-019 D4）
@@ -247,12 +251,14 @@ final class BuiltinFunctionTests: XCTestCase {
     }
 
     /// 意图：is_ascii_digit 拒绝非 ASCII 数字字符——含带数值的汉字 三（numeric property
-    /// 但非 [0-9]）、字母、空串；INT 字面量严格 ASCII 的边界锚（ADR-019 D3 对照）。
-    /// 驳回性测量：输出 "false\nfalse\nfalse\nfalse\n"（三、a、_、空串）。
+    /// 但非 [0-9]）、字母、下划线；INT 字面量严格 ASCII 的边界锚（ADR-019 D3 对照）。
+    /// 驳回性测量：输出 "false\nfalse\nfalse\n"（三、a、_）。
+    ///
+    /// ⚠️ 原「空串」一行已随 `P0d` 作废（参数面 `String` → `Char`，空串不可表达）。
     func testIsAsciiDigitRejectsNonDigits() throws {
         let source = try loadPiniFixture("testIsAsciiDigitRejectsNonDigits", filePath: #filePath)
         let output = try runProgram(source)
-        XCTAssertEqual(output, "false\nfalse\nfalse\nfalse\n", "汉字/字母/下划线/空串均不应判定为 digit")
+        XCTAssertEqual(output, "false\nfalse\nfalse\n", "汉字/字母/下划线均不应判定为 digit")
     }
 
     // MARK: - is_number（ADR-019 D4 / D3）
@@ -267,18 +273,21 @@ final class BuiltinFunctionTests: XCTestCase {
     }
 
     /// 意图：is_number 对无 numeric property 的字符返回 false——与 is_letter 的
-    /// 互斥锚（字 为字母但无数值）、下划线、空串。
-    /// 驳回性测量：输出 "false\nfalse\nfalse\nfalse\n"（字、a、_、空串）。
+    /// 互斥锚（字 为字母但无数值）、下划线。
+    /// 驳回性测量：输出 "false\nfalse\nfalse\n"（字、a、_）。
+    ///
+    /// ⚠️ 原「空串」一行已随 `P0d` 作废（参数面 `String` → `Char`，空串不可表达）。
     func testIsNumberRejectsNonNumeric() throws {
         let source = try loadPiniFixture("testIsNumberRejectsNonNumeric", filePath: #filePath)
         let output = try runProgram(source)
-        XCTAssertEqual(output, "false\nfalse\nfalse\nfalse\n", "非 numeric property 字符不应判定为 number")
+        XCTAssertEqual(output, "false\nfalse\nfalse\n", "非 numeric property 字符不应判定为 number")
     }
 
     // MARK: - chars（ADR-019 性能项：grapheme 预切）
 
-    /// 意图：chars 按 grapheme cluster 预切字符数组——中文/ASCII 混排与 len 一致。
-    /// 推进性测量：输出 "3\n圆\n0"（len=3、首元素、拼接还原）。
+    /// 意图：chars 按 grapheme cluster 预切字符数组——中文/ASCII 混排与 len 一致；
+    /// 元素类型为 `Char`（`P0d`），故拼接还原仍成立（`Char + Char` 结果取 `String` 面）。
+    /// 推进性测量：输出 "3\na\ntrue\n"。
     func testCharsSplitsGraphemes() throws {
         let source = try loadPiniFixture("testCharsSplitsGraphemes", filePath: #filePath)
         let output = try runProgram(source)
@@ -296,6 +305,9 @@ final class BuiltinFunctionTests: XCTestCase {
 
     /// 意图：chars 对空串返回空数组——len 恒等边界。
     /// 驳回性测量：输出 "0\n"。
+    ///
+    /// ⚠️ 本条**不受** `P0d` 影响：`chars` 的参数面**保持** `String`（其契约正是把
+    /// 串切开），改的只是**元素**类型。空串仍是它的一等输入。
     func testCharsEmptyString() throws {
         let source = try loadPiniFixture("testCharsEmptyString", filePath: #filePath)
         let output = try runProgram(source)
@@ -304,21 +316,41 @@ final class BuiltinFunctionTests: XCTestCase {
 
     // MARK: - ord / chr（词法门禁 H1：码点原语）
 
-    /// 意图：ord 取首 Unicode scalar 码点值——ASCII 与中文；空串哨兵 -1
-    /// （errors-as-data 风，ADR-019 D1 grapheme 模型下多 scalar grapheme
-    /// 取首 scalar）。
-    /// 推进性/驳回性测量：输出 "65\n23383\n-1\n"。
+    /// 意图：ord 取首 Unicode scalar 码点值——ASCII 与中文（ADR-019 D1 grapheme
+    /// 模型下多 scalar grapheme 取首 scalar）。
+    /// 推进性测量：输出 "65\n23383\n"。
+    ///
+    /// ⚠️ 原「空串哨兵 -1」已随 `P0d` 作废：`ord` 的参数面改为 `Char`，而 `Char`
+    /// 恒为 1 个字素 ⇒「空串」在该签名下**不可表达**，哨兵失去输入来源。
     func testOrdCodepoints() throws {
         let source = try loadPiniFixture("testOrdCodepoints", filePath: #filePath)
         let output = try runProgram(source)
-        XCTAssertEqual(output, "65\n23383\n-1\n", "ord 应返回首 scalar 码点，空串哨兵 -1")
+        XCTAssertEqual(output, "65\n23383\n", "ord 应返回首 scalar 码点")
     }
 
-    /// 意图：chr 码点值转字符；负值 / 超出 scalar 上限 / 代理区哨兵返回空串。
-    /// 推进性/驳回性测量：输出 "A\n字\n\n\n\n"。
+    /// 意图：chr 合法码点还原字符。
+    /// 推进性测量：输出 "A\n字\n"（65、23383）。
     func testChrCodepoints() throws {
         let source = try loadPiniFixture("testChrCodepoints", filePath: #filePath)
         let output = try runProgram(source)
-        XCTAssertEqual(output, "A\n字\n\n\n\n", "chr 合法码点应还原字符，越界/代理区哨兵空串")
+        XCTAssertEqual(output, "A\n字\n", "chr 合法码点应还原字符")
+    }
+
+    /// 意图：chr 越界 = **panic**（`E5-005`），不再是「返回空串哨兵」。
+    ///
+    /// `P0d` 的边界裁决：`chr` 的返回面改为 `Char`，而 `Char` 恒为 1 个字素
+    /// ⇒ 它**没有**任何值可以表示「没有字符」⇒ 空串哨兵不可表达，改走既有的
+    /// indexOutOfRange 通道（与 `s[i]` 越界同族，**不新增诊断码**）。
+    ///
+    /// 三个越界形态各自独立成源：任一个都会 panic ⇒ 不能共处一份夹具
+    /// （原先它们共处一份，正因为它们都「返回空串」；这一形态已不存在）。
+    func testChrOutOfRangePanics() throws {
+        for code in ["-1", "1114112", "55296"] {
+            let source = "main|func() -> ():\n    print(chr(\(code)))\n    return"
+            XCTAssertThrowsError(
+                try runProgram(source),
+                "chr(\(code)) 越界应 panic（负值 / 超 scalar 上限 / 代理区）"
+            )
+        }
     }
 }

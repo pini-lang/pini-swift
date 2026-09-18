@@ -949,13 +949,18 @@ final class IRExecutionTests: XCTestCase {
                       "writeFile/readFile 往返应输出 file_content，实际: \(output)")
     }
 
-    /// 批 C1：is_ascii_digit 的 LLVM 后端实现——C 字节串首字节判 ASCII [0-9]；
-    /// 空串（NUL 首字节）自然为 false。'7'→真、'x'→假。
+    /// 批 C1：is_ascii_digit 的 LLVM 后端实现——C 字节串首字节判 ASCII [0-9]。
+    /// '7'→真、'x'→假。
+    ///
+    /// ⚠️ `P0d` 后参数面由 `String` 改为 `Char`，故夹具改为 **`"7"[0]` 形态**
+    /// （下标的 LLVM 侧仍是字节切片，ASCII 单字节下与 grapheme 一致）。
+    /// 原「空串（NUL 首字节）自然为 false」一行随之作废 —— 空串在 `Char` 参数下
+    /// **不可表达**，该分支已无输入来源。
     func testIsAsciiDigitViaLLI() throws {
         try LLVMGate.requireLLI()
         let output = try runViaLLI(try loadPiniFixture("testIsAsciiDigitViaLLI", filePath: #filePath) as String)
         XCTAssertEqual(output.trimmingCharacters(in: .whitespacesAndNewlines), "1\n9",
-                       "is_ascii_digit: '7' 判真打印 1，'x' 首字节非数字判假，空串判假")
+                       "is_ascii_digit: '7' 判真打印 1，'x' 首字节非数字判假")
     }
 
     /// 批 C1 的**事实已变**（LR-4 `G-2a`，2026-09-16）：降载层现在**接受** `is_letter`

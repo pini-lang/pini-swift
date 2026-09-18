@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-18T10:09+08:00"
-refresh_note = "2026-09-18 **`G-6c`**：新增两条 —— ①「删 AST 走查：四文件 **4162 行**清空，静态成员全是一行转发」（删除面比规划读数**多一个文件**：`REPL/InterpreterEngine.swift` 23 行）· ②「探针两通道化：观测点改指 `pini check`，**320 夹具恰好 2 处迁移**」。要点 = 删前逐条测过 41 个静态成员（非数出来）· 退役 **30 条**用例**逐条具名**并**如实记代价**（`defer` 与挂起语义此后**无测试见证**）· 两处缺陷由爆炸半径炸出、**已立案未修** · 观测层替换而非补替身 · **1 个槽自愿声明为减弱**；本次仅新增这两条；存量条目未重新验证"
+last_refresh = "2026-09-18T12:16+08:00"
+refresh_note = "2026-09-18 **`P0d-D`（相容桥 + 签名迁移）**：新增五条 —— ①「`Char → String` 单向加宽：三份探针逐向钉住，窄化被拒」· ②「桥两侧原子性：两臂逐行相同」· ③「`chr` 越界改走 panic」· ④「落点比规划件多两类：HIR 降载的三处类型门与 `+` 的结果类型」· ⑤「selfhost 参数面实测 5 处而非静态推的 3 处」。要点 = 判据**两向都测**（窄化那份才是裁定的全部内容）· 桥的 LLVM 探针**剥掉已登记不可运行的那一面**才测得到桥本身 · 一处止损如实上报并**按裁定回退**（登记 `G70`）· 计划件的处数**两处被实测订正**；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -1145,3 +1145,79 @@ output = "All three runs exit 0 and print the same six lines (107 / 42 / 0 / 1 /
 validated_at = "2026-09-18T10:45+08:00"
 status = "FRESH"
 note = "本单**不是** `G-6c-2` 那条「已失去对象、不重构」的重复件：那条是**决策**（不去修），本单是**决策的漏洞**（至少别让它报绿）。⚠️ **一处同族未修**：该件的 `BIN` 默认值写死历史布局路径，**与已修的对等探针缺陷同族**（`docs/issue-hir-parity-probe-default-bin-path-2026-09-18.md`），本单只登记不修。⚠️ **发现渠道 = `P5` 的过期表述全扫（判据 4）**，该扫描要找的是三类过期表述，本项是它的遗留产物 —— 说明**「扫表述」这类动作会顺带炸出器械缺陷**，不是空转。"
+
+[[evidence]]
+id = "2026-09-18 Char→String 单向加宽：三份探针逐向钉住，窄化被拒"
+citable = false
+claim = """The implicit-conversion rule now has exactly one direction: a Char may be written anywhere a String is expected, and a String may not be written where a Char is expected. The reason is that widening is safe and narrowing is dangerous - a string holding exactly one grapheme already is a string, so Char to String can never be wrong, while treating an arbitrary string as a character is precisely what has to be caught. Confining narrowing to three constructors (the subscript s[i], the elements of chars(s), and chr(code)) plus one explicit cast keeps ADR-033 D1's exactly-one-grapheme invariant with the type system instead of trading it away, which is what two-way compatibility would have done by making Char an alias of String. The direction is a claim about the checker and not about the comment that states it, so it is measured in both directions: the narrowing probe is the one a one-sided test would skip, and it is the whole content of the ruling."""
+artifacts = [
+  "docs/spec/pini-spec-v0.md",
+  "docs/spec/pini-reference-v0.md",
+  "Sources/PiniCore/Type/TypeChecker.swift",
+  "Sources/PiniCore/Type/TypeInference.swift"
+]
+command = ".build/debug/pini check /tmp/p0d-d/narrow.pini ; echo rc ; .build/debug/pini check /tmp/p0d-d/widen.pini ; echo rc ; .build/debug/pini check /tmp/p0d-d/ident.pini ; echo rc"
+output = "narrow.pini (var c: Char = s, where s: String) is rejected at 3:5 with E4-001 expected Char got String. widen.pini (var t: String = c, where c: Char) passes. ident.pini (var d: Char = c) passes. Three probes, three expected verdicts, and the two that pass are the two a one-sided test would have run."
+validated_at = "2026-09-18T12:16+08:00"
+status = "FRESH"
+note = "窄化那一份是**本裁定的全部内容**：只跑「加宽通过」会漏掉「窄化被误放行」。三份都用 `check`（静态面）而非 `run`——要判的是**类型系统接受性**，不是运行结果。"
+
+[[evidence]]
+id = "2026-09-18 桥两侧原子性：Char 参与的 + 与 == 在两臂逐行相同"
+citable = false
+claim = """Char and String are one compatibility pair for binary operators, and the pair is symmetric there because a binary operator has no expected side: c + s, s + c and c + c are all legal, and the result of concatenation is String rather than Char, because two characters concatenated hold two graphemes and calling that a Char would route around the invariant the type exists to keep. The pair is admitted in four places that do not know about each other - the checker's assignability rule, the checker's same-type-name rule for binary operands, the runtime's tuple-pattern dispatch for plus, equal and notEqual, and the lowering's exact-match assignability gate - and the latter two are invisible to the compiler because both end in a default arm, which is why the dispatch sites are counted by hand rather than discovered by building. Both engines answer identically on the probe, which is the only form of the claim that separates a bridge from a widening only the interpreter honours."""
+artifacts = [
+  "Sources/PiniCore/Interpreter/Value.swift",
+  "Sources/PiniCore/Runtime/RuntimeOps.swift",
+  "Sources/PiniCore/HIR/HIRLowerer.swift"
+]
+command = ".build/debug/pini run /tmp/p0d-d/bridge-llvm.pini ; echo rc ; .build/debug/pini run-llvm /tmp/p0d-d/bridge-llvm.pini ; echo rc"
+output = "Both arms print the same ten lines (aabc / abca / aa / true / false / true / true / a! / false) and both exit 0."
+validated_at = "2026-09-18T12:16+08:00"
+status = "FRESH"
+note = "探针**必须剥掉已登记不可运行的那一面**（`chars` / `ord` / `chr` / `is_letter` / `is_number` 的 LLVM 运行时符号不存在，见 `G69`）——带上它们，LLVM 臂会在 `@chars` 上先死，测不到桥本身。⚠️ 另一条已登记的中间态：LLVM 臂对该面仍发未定义符号。"
+
+[[evidence]]
+id = "2026-09-18 chr 越界改走 panic：空串哨兵在 Char 面不可表达"
+citable = false
+claim = """The empty-string sentinel that chr returned for an out-of-range code point is gone and is replaced by a panic on the same channel an out-of-range subscript uses. The move is forced rather than chosen: chr now returns a Char, a Char holds exactly one grapheme, so the type has no value available to mean no character, and a sentinel would have to be a lie about what the type can hold. The three out-of-range shapes on record - negative, past the scalar maximum, and the surrogate block - are three inputs to one guard, so they are measured as three runs of one source rather than as three fixtures, because a panic ends the program and they can no longer share one."""
+artifacts = [
+  "Sources/PiniCore/Runtime/RuntimeOps.swift",
+  "Sources/PiniCore/Common/BuiltinRegistry.swift",
+  "Tests/PiniTests/BuiltinFunctionTests/BuiltinFunctionTests.swift"
+]
+command = "for code in -1 1114112 55296 ; do .build/debug/pini run /tmp/p0d-d/chr$code.pini ; echo rc ; done ; .build/debug/pini run /tmp/p0d-d/chr65.pini ; echo rc"
+output = "All three out-of-range runs exit 1 with E5-005 index out of range, after printing the line that precedes the failing call, so the failure is a diagnostic rather than a crash. chr(65) prints A and exits 0."
+validated_at = "2026-09-18T12:16+08:00"
+status = "FRESH"
+note = "**不新增诊断码**：走 `ADR-028` 既定通道（`E5-005`），与 `s[i]` 越界同族。夹具侧原先三个越界行共处一份（因为它们都返回空串），该形态消失后改为「一份夹具 + 三个源的循环断言」。"
+
+[[evidence]]
+id = "2026-09-18 相容桥落点比规划件多两类：HIR 降载的类型门与加号的结果类型"
+citable = false
+claim = """The bridge plan counted three checker sites and two runtime sites, and the implementation found the surface wider in two shapes the plan's survey had no category for. The first is that the lowering layer holds its own type gates which know nothing about the checker's new rule: an exact-match assignability gate used for variable declarations and arguments, whose own docstring said exact match only; a guard requiring both comparison operands to share a HIR type; and a concatenation guard requiring both to be String. The second is that the result type of plus was taken from the left operand, so c + s would have been typed Char while its runtime value was a String of two graphemes - not a missing case but a wrong answer, and one only the type layer can catch. Neither shape widens the change beyond Char and String, so this is a correction to the plan's count rather than a stop-loss; the stop-loss item did fire, on the selfhost repo, and is registered separately."""
+artifacts = [
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/HIR/HIRNode.swift",
+  "Sources/PiniCore/Type/TypeInference.swift"
+]
+command = "rg -n 'isStringFaced|formsCharStringPair' Sources/PiniCore/HIR/ ; rg -n 'isCharTyped' Sources/PiniCore/Type/TypeInference.swift"
+output = "The lowering carries isStringFaced (concatenation, and the is_ascii_digit argument gate) and formsCharStringPair (comparison), and its requireAssignable admits exactly one named exception: char into a string slot. TypeInference carries isCharTyped, used by the plus branch. With these in place the fifteen-line bridge probe runs clean on the interpreter arm; before them it stopped first at type mismatch string is not char on the variable declaration, then at comparison operand types differ char vs string."
+validated_at = "2026-09-18T12:16+08:00"
+status = "FRESH"
+note = "⚠️ 过程事实（已入技能）：本批**两次**因「一条消息里对同一文件发两条编辑」而**静默丢失**其中一条 —— 内容未落、工具却报成功 ⇒ 定式：**同文件改动一律串行**，改完按符号 `rg` 复核。另一次同类丢失发生在计划件（四处）。"
+
+[[evidence]]
+id = "2026-09-18 selfhost 字符原语参数面：实测 5 处，非静态推的 3 处"
+citable = false
+claim = """Landing the Char parameter face on the host predicates makes the selfhost lexer uncompilable in five places rather than the three the plan inferred, and the difference is which naming family was searched. The three that were counted (is_digit, is_alpha, is_alnum) are predicate forwarders; the two that were missed (is_hex_digit, hex_value) are codepoint forwarders that call ord, live in a different naming family, and are reachable only if the search is by what a body calls rather than by what the function is called. All five fail for one reason and none can be rescued by the widening ruling, because the failure is inside the body and points the narrowing way. The call sites need no change at all: they pass elements of chars(src), which are Chars now, so those are the widening direction. The count mattered rather than the workload - the authorized scope was three, so the batch stopped and the state was registered instead of being finished quietly."""
+artifacts = [
+  "examples/selfhost/src/lexer/lexer.pini",
+  "examples/selfhost/tools/gate.sh",
+  "docs/spec/pini-spec-v0.md"
+]
+command = "cd examples/selfhost && ../../.build/debug/pini check . ; echo rc ; git status --porcelain ; git rev-parse --short HEAD"
+output = "Check exits 1 with E4-001 at lexer.pini:500 (expected Char, got String). The scan lists five declarations whose parameter is String and whose body forwards to a Char-faced builtin, at lines 497 / 502 / 510 / 685 / 696, and every caller passing cs[i] or cs[j], which are Chars. The tree is back on main at 73249be with a clean status, so no half-applied change is left behind; the consequence is that selfhost check is red, which is what the registration records."
+validated_at = "2026-09-18T12:16+08:00"
+status = "FRESH"
+note = "⇒ 该状态登记为 spec 台账 `G70`（含 5 处清单、代价面、解除条件）。⚠️ **代价面已实测**：宿主四道门禁**均显式排除** selfhost（各自持排除理由）⇒ 该红**只落在 selfhost 自己的 gate**（其第 4 项 = `pini check .`），不污染宿主门禁。"

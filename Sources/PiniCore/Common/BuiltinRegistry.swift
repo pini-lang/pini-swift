@@ -84,22 +84,26 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "CancelError", group: .value, paramNames: ["message"], definesRuntimeValue: false),
 
  // ---- char ----
+ // G67（P0d）：字符谓词与 `ord` 取 `Char` 参数面（原 `String`）；`chars` **保持**
+ // `String` 参数（其契约是 len(chars(s)) == len(s)，改收 `Char` 会退化成恒返回
+ // 单元素数组），只把**元素**改为 `Char`；`chr` 返回 `Char`。
  BuiltinDecl(name: "is_letter", group: .char, paramNames: ["value"],
- params: [t("String")], returns: [t("Bool")]),
+ params: [t("Char")], returns: [t("Bool")]),
  BuiltinDecl(name: "is_ascii_digit", group: .char, paramNames: ["value"],
- params: [t("String")], returns: [t("Bool")]),
+ params: [t("Char")], returns: [t("Bool")]),
  BuiltinDecl(name: "is_number", group: .char, paramNames: ["value"],
- params: [t("String")], returns: [t("Bool")]),
+ params: [t("Char")], returns: [t("Bool")]),
  BuiltinDecl(name: "chars", group: .char, paramNames: ["value"],
- params: [t("String")], returns: [.generic(name: "Array", params: [t("String")], location: builtinLocation)]),
+ params: [t("String")], returns: [.generic(name: "Array", params: [t("Char")], location: builtinLocation)]),
  // 词法门禁 H1（lexer 缺口审计）：码点原语——解锁字符范围判定（hex 判定等）
- // 与 upper/lower 下沉。grapheme 模型对齐（ADR-019 D1）：ord 取首 Unicode
- // scalar；空串哨兵 -1（errors-as-data 风，与 is_letter("") 同调）；
- // chr 越界/代理区返回空串。
+ // 与 upper/lower 下沉。grapheme 模型对齐（ADR-019 D1）：ord 取首 Unicode scalar。
+ // ⚠️ G67（P0d）两条边界裁决：① `ord` 的**空串哨兵作废** —— `Char` 参数恒为
+ // 1 个字素，「空串」在该签名下**不可表达**；② `chr` 越界/代理区由「返回空串」
+ // 改为 **panic**（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。
  BuiltinDecl(name: "ord", group: .char, paramNames: ["value"],
- params: [t("String")], returns: [t("I32")]),
+ params: [t("Char")], returns: [t("I32")]),
  BuiltinDecl(name: "chr", group: .char, paramNames: ["code"],
- params: [t("I32")], returns: [t("String")]),
+ params: [t("I32")], returns: [t("Char")]),
 
  // ---- pointer（unsafe；专属路径 registerPointerBuiltins）----
  BuiltinDecl(name: "load", group: .pointer, paramNames: ["p"], definesRuntimeValue: false),
@@ -204,9 +208,9 @@ public enum BuiltinRegistry {
  // `getUnchecked` 供已证明界内的热路径跳过检查（调用方以 `unsafe` 消耗点承担义务）。
  // `inTrait = false`：不作为 collection 特征面，避免用户类型被要求实现这两个方法。
  MemberDecl(typeName: "String", name: "get", paramNames: ["index"],
- params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("String")], location: builtinLocation)], inTrait: false),
+ params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Char")], location: builtinLocation)], inTrait: false),
  MemberDecl(typeName: "String", name: "getUnchecked", paramNames: ["index"],
- params: [t("I32")], returns: [t("String")], inTrait: false),
+ params: [t("I32")], returns: [t("Char")], inTrait: false),
  // Array（collection 子集：append/pop/slice/join；扩展面：last）
  MemberDecl(typeName: "Array", name: "join", paramNames: ["sep"],
  params: [t("String")], returns: [t("String")], inTrait: true),
