@@ -2,7 +2,7 @@ import Foundation
 
 /// Lowers a type-checked `Module` (AST) plus the checker's `TypeInference`
 /// into a typed `HIRModule`. This is the single point where all type
-/// decisions are made for the LLVM backend, and the single place allowed to
+/// decisions are made for every backend, and the single place allowed to
 /// say "unsupported": every capability gap surfaces as one
 /// `HIRLoweringError.unsupported` thrown from this file. The old IRGenerator
 /// scattered ~108 such decisions across emitters; they consolidate here.

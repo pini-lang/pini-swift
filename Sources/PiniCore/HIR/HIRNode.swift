@@ -1,6 +1,7 @@
 import Foundation
 
-/// High-level intermediate representation for the LLVM backend (LR-2/LR-3).
+/// High-level intermediate representation shared by every backend
+/// (LR-2/LR-3 built it for one; LR-4 made it the single one).
 ///
 /// The HIR is a **typed tree**: every expression node carries its resolved
 /// scalar type, every variable access carries the declared type of the
@@ -9,10 +10,10 @@ import Foundation
 /// types. This is the structural replacement for the old IRGenerator's
 /// shadow type tables.
 ///
-/// Scope note: this is the M4 vertical-slice node set (scalars, arithmetic,
-/// control flow, function calls). Aggregate / closure / concurrency / FFI /
-/// generics nodes are added grid-by-grid in M5; anything outside the
-/// current set is rejected by the single capability gate in `HIRLowerer`.
+/// Scope note: this began as the M4 vertical slice (scalars, arithmetic,
+/// control flow, function calls) and grew family by family as the grids
+/// landed. The contract is the authority on what the set holds now; anything
+/// outside it is rejected by the single capability gate in `HIRLowerer`.
 
 /// Resolved scalar types carried by HIR nodes (slice set).
 public indirect enum HIRType: Equatable {
