@@ -257,6 +257,14 @@ public final class ProgramRunner: DebugHookHost {
         case .f64: return .float(0)
         case .boolean: return .bool(false)
         case .string: return .string("")
+        /// `Char` (P0d) is declared rather than defaulted, and it keeps
+        /// returning `null`. That is deliberate: the language has no "empty
+        /// character", so any injected zero would itself violate the
+        /// one-grapheme invariant, and inventing one here would put a value
+        /// the type system calls impossible into the shared engine. The arm
+        /// is written out so the choice is visible rather than absorbed by
+        /// the default, and the open question is filed separately.
+        case .char: return .null
         default: return .null
         }
     }

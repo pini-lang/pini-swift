@@ -352,6 +352,7 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  case .int: return "I32"
  case .float: return "F64"
  case .string: return "String"
+ case .char: return "Char"
  case .bool: return "Bool"
  case .tuple: return "Tuple"
  case .array: return "Array"
@@ -597,6 +598,11 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  case .int(let v): return String(v)
  case .float(let v): return String(v)
  case .string(let v): return v
+ /// `Char` (P0d) prints as the character itself, not as a quoted or
+ /// bracketed form — that is what the value layer already did for `s[i]`
+ /// when it handed back a single-grapheme string, so the type change is
+ /// behaviour-preserving here.
+ case .char(let v): return v
  case .bool(let v): return String(v)
  case .null: return "null"
  case .tuple(let labels, let vs):
@@ -703,6 +709,7 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  case .float: return "float"
  case .bool: return "bool"
  case .string: return "string"
+ case .char: return "char"
  case .rawPointer: return "指针"
  default: return "其它"
  }
