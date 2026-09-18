@@ -55,7 +55,9 @@ enum SubscriptReadStrategy {
  throw RuntimeError.indexOutOfRange(location: loc)
  }
  let cidx = s.index(s.startIndex, offsetBy: idx)
- return .string(String(s[cidx]))
+ // G67（P0d）：下标结果由 `String` 改为 `Char` —— 这是窄化的三个构造点之一
+ // （`s[i]` / `chars` / `chr`）。想拿回 `String` 由加宽承接（G68）。
+ return .char(String(s[cidx]))
  }
 
  r[.dictionary] = { container, index, loc in

@@ -32,11 +32,21 @@ public final class TypeInference {
  case .boolLiteral(_, let loc):
  return .simple(name: "Bool", location: loc)
 
- case .binary(let left, let op, _, _):
+ case .binary(let left, let op, let right, _):
  let leftType = infer(expression: left, scopedParams: scopedParams)
  // 算术运算符返回操作数类型
  switch op {
- case .plus, .minus, .multiply, .divide, .modulo,
+ case .plus:
+ // G68（P0d-D）：`Char` 参与 `+` ⇒ 结果是 `String` 面。任一操作数为 `Char` 时
+ // 拼接结果都可能超过一个字素（`c + c` / `c + s` / `s + c`），若仍按「结果 =
+ // 左操作数类型」算成 `Char`，`ADR-033 D1` 的「恰含 1 个字素」不变式就会被这类
+ // 表达式绕开 —— 那是本类型存在的理由，不能交出去。其余组合沿用下面的既有规则。
+ if isCharTyped(leftType)
+ || isCharTyped(infer(expression: right, scopedParams: scopedParams)) {
+ return .simple(name: "String", location: SourceLocation(line: 0, column: 0, fileName: ""))
+ }
+ return leftType
+ case .minus, .multiply, .divide, .modulo,
  .bitwiseAnd, .bitwiseOr, .bitwiseXor, .leftShift, .rightShift,
  .assign, .plusAssign, .minusAssign, .multiplyAssign, .divideAssign,
  .moduloAssign, .andAssign, .orAssign, .xorAssign,
@@ -290,7 +300,10 @@ public final class TypeInference {
  case .generic(let name, let params, _) where name == "Dictionary":
  return params.last ?? .simple(name: "Any", location: loc)
  case .simple(let name, _) where name == "String":
- return .simple(name: "String", location: loc)
+ // G68（P0d-D）：`String` 的下标结果是 `Char`（不再是 `String`）。这是窄化
+ // 的三个入口之一（`s[i]` / `chars` / `chr`），`ADR-033 D1` 的不变式靠它守：
+ // 想拿回 `String` 由 `Char → String` 单向加宽承接，不需要在此留住旧类型。
+ return .simple(name: "Char", location: loc)
  default:
  return nil
  }
@@ -333,6 +346,14 @@ public final class TypeInference {
  } else {
  return .tuple(labels: sig.returnLabels, elements: sig.returns, location: loc)
  }
+ }
+
+ /// G68（`P0d-D`）：推断出的类型是否为 `Char`。
+ ///
+ /// `nil`（推断不出）一律为假 —— 推断不出时**不接管**结果类型，交回既有路径。
+ private func isCharTyped(_ type: TypeAnnotation?) -> Bool {
+ guard let type, case .simple(let name, _) = type else { return false }
+ return name == "Char"
  }
 
  // MARK: - 匿名函数（funcLiteral）双向类型推断

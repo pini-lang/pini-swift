@@ -1,5 +1,4 @@
 main|func() -> ():
-    print(is_letter("1"))
-    print(is_letter("_"))
-    print(is_letter(""))
+    print(is_letter("1"[0]))
+    print(is_letter("_"[0]))
     return

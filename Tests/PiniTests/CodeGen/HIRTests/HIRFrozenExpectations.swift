@@ -675,10 +675,7 @@ extension HIRExecutorTests {
         """,
         "testDiffIsAsciiDigit": """
         func main() -> void
-          block n=5
-            ifStmt
-            block n=1
-              exprStmt
+          block n=4
             ifStmt
             block n=1
               exprStmt

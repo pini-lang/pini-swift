@@ -87,9 +87,22 @@ public enum RuntimeOps {
         case (.float(let a), .float(let b), .greaterThan): return .bool(a > b)
         case (.float(let a), .float(let b), .greaterThanOrEqual): return .bool(a >= b)
  case (.string(let a), .string(let b), .plus): return .string(a + b)
+ // G68（P0d-D）：`Char` 搭 `String` 的车 —— 凡 `String` 支持的算符，`Char` 参与时
+ // 行为一致（拼接出 `String`、比较按字素内容）。分派是按值 case 的**元组形状**做的，
+ // `Char` 与 `String` 是两个不同的 case、无法靠一条通配覆盖 ⇒ 3 算符 × 3 组合写全。
+ // ⚠️ 漏写会落到下面的 `default: throw`，编译器同样不报 —— 只能按清单逐处勾。
+ case (.char(let a), .char(let b), .plus): return .string(a + b)
+ case (.char(let a), .string(let b), .plus): return .string(a + b)
+ case (.string(let a), .char(let b), .plus): return .string(a + b)
  case (.string(let a), .string(let b), .equal): return .bool(a == b)
+ case (.char(let a), .char(let b), .equal): return .bool(a == b)
+ case (.char(let a), .string(let b), .equal): return .bool(a == b)
+ case (.string(let a), .char(let b), .equal): return .bool(a == b)
  // ADR-020 D2 试点发现：String 缺 notEqual 分派（语言内 contains 需要）——补齐。
  case (.string(let a), .string(let b), .notEqual): return .bool(a != b)
+ case (.char(let a), .char(let b), .notEqual): return .bool(a != b)
+ case (.char(let a), .string(let b), .notEqual): return .bool(a != b)
+ case (.string(let a), .char(let b), .notEqual): return .bool(a != b)
  case (.bool(let a), .bool(let b), .equal): return .bool(a == b)
  case (.bool(let a), .bool(let b), .notEqual): return .bool(a != b)
  case (.bool(let a), .bool(let b), .and): return .bool(a && b)
@@ -718,6 +731,10 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
     /// `chars` — split into grapheme clusters (matching Swift `Character`, so
     /// surrogate pairs are not split); the empty string gives an empty array.
     /// `len(chars(s)) == len(s)` holds by construction.
+    ///
+    /// G67: the parameter stays a `String` — the whole point of `chars` is to
+    /// cut a string apart, and taking a `Char` would collapse it to an
+    /// always-single-element array. What changed is the *element* type.
     static func builtinChars(_ args: [Value]) throws -> Value {
         guard case .string(let s) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -725,11 +742,15 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
                 location: SourceLocation(line: 0, column: 0, fileName: "")
             )
         }
-        return .array(s.map { .string(String($0)) })
+        return .array(s.map { .char(String($0)) })
     }
 
-    /// `chr` — code point to a one-character string. Out of range (negative,
-    /// past the scalar maximum, or a surrogate) yields the empty-string sentinel.
+    /// `chr` — code point to a `Char`.
+    ///
+    /// G67: out of range (negative, past the scalar maximum, or a surrogate)
+    /// now **panics** through the same channel as an out-of-range `s[i]`. The
+    /// empty-string sentinel this used to return is gone on purpose: a `Char`
+    /// always holds exactly one grapheme, so it has no value to mean "nothing".
     static func builtinChr(_ args: [Value]) throws -> Value {
         guard case .int(let code) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -738,47 +759,57 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
             )
         }
         guard code >= 0, code <= 0x10FFFF, !(0xD800...0xDFFF).contains(code),
-              let scalar = UnicodeScalar(UInt32(code)) else { return .string("") }
-        return .string(String(scalar))
-    }
-
-    /// `ord` — the first Unicode scalar's code point; `-1` for the empty string.
-    /// A multi-scalar grapheme yields its first scalar (the registered grapheme
-    /// model, ADR-019 D1).
-    static func builtinOrd(_ args: [Value]) throws -> Value {
-        guard case .string(let s) = args[0] else {
-            throw RuntimeError.invalidOperation(
-                reason: "ord 的参数必须是字符串",
+              let scalar = UnicodeScalar(UInt32(code)) else {
+            throw RuntimeError.indexOutOfRange(
                 location: SourceLocation(line: 0, column: 0, fileName: "")
             )
         }
-        guard let first = s.unicodeScalars.first else { return .int(-1) }
+        return .char(String(scalar))
+    }
+
+    /// `ord` — the first Unicode scalar's code point. A multi-scalar grapheme
+    /// yields its first scalar (the registered grapheme model, ADR-019 D1).
+    ///
+    /// G67: the `-1` empty-string sentinel is obsolete — a `Char` holds exactly
+    /// one grapheme, so "empty" is not a value this signature can be handed.
+    /// The guard stays as a floor rather than an assertion: it is unreachable
+    /// for a well-typed `Char`, and a `null` (the injected test-parameter zero
+    /// value) should read as an error, not as a crash.
+    static func builtinOrd(_ args: [Value]) throws -> Value {
+        guard case .char(let c) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "ord 的参数必须是字符",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        guard let first = c.unicodeScalars.first else { return .int(-1) }
         return .int(Int(first.value))
     }
 
-    /// `is_letter` — Unicode letter property of the first character; the empty
-    /// string is false rather than an error.
+    /// `is_letter` — Unicode letter property of the first character. The empty
+    /// string was false rather than an error; a `Char` (G67) has no empty case,
+    /// so the guard remains only as the floor for a `null` zero value.
     static func builtinIsLetter(_ args: [Value]) throws -> Value {
-        guard case .string(let s) = args[0] else {
+        guard case .char(let c) = args[0] else {
             throw RuntimeError.invalidOperation(
-                reason: "is_letter 的参数必须是字符串",
+                reason: "is_letter 的参数必须是字符",
                 location: SourceLocation(line: 0, column: 0, fileName: "")
             )
         }
-        guard let first = s.first else { return .bool(false) }
+        guard let first = c.first else { return .bool(false) }
         return .bool(first.isLetter)
     }
 
     /// `is_number` — Unicode numeric property of the first character. A strict
     /// superset of `\p{N}`, matching the host's `Character.isNumber`.
     static func builtinIsNumber(_ args: [Value]) throws -> Value {
-        guard case .string(let s) = args[0] else {
+        guard case .char(let c) = args[0] else {
             throw RuntimeError.invalidOperation(
-                reason: "is_number 的参数必须是字符串",
+                reason: "is_number 的参数必须是字符",
                 location: SourceLocation(line: 0, column: 0, fileName: "")
             )
         }
-        guard let first = s.first else { return .bool(false) }
+        guard let first = c.first else { return .bool(false) }
         return .bool(first.isNumber)
     }
 

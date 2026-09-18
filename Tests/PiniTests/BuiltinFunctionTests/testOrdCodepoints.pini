@@ -1,5 +1,4 @@
 main|func() -> ():
-    print(ord("A"))
-    print(ord("字"))
-    print(ord(""))
+    print(ord("A"[0]))
+    print(ord("字"[0]))
     return

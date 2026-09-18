@@ -2306,7 +2306,10 @@ public enum HIRLowerer {
             switch loweredContainer.type {
             case .array(let element): elementType = element
             case .dict(_, let value): elementType = value
-            case .string: elementType = .string
+            // G67（P0d）：`String` 的下标元素是 `Char` —— 这是窄化的三个构造点
+            // 之一（`s[i]` / `chars` / `chr`），与运行时读策略 `SubscriptStrategies`
+            // 返回的 `.char` 必须同型，否则一个合法下标的**类型**会与它的**值**不符。
+            case .string: elementType = .char
             default:
                 throw unsupported(
                     "subscript on non-container type '\(loweredContainer.type)'",
@@ -2376,7 +2379,10 @@ public enum HIRLowerer {
             let lhs = try lowerExpr(left, expected: operandExpectation, into: &context)
             let rhs = try lowerExpr(right, expected: lhs.type, into: &context)
             if hirOp.isComparison {
-                guard lhs.type == rhs.type else {
+                // G68（P0d-D）：`Char` / `String` 是**相容对**（表示同构，ADR-033 D1
+                // 方案 A）⇒「两操作数类型名必须字面相等」这条判据对这一对不适用。
+                // 放宽只覆盖这一对；两侧同为 `Char` 或同为 `String` 的情形本就走通。
+                guard lhs.type == rhs.type || lhs.type.formsCharStringPair(with: rhs.type) else {
                     throw unsupported(
                         "comparison operand types differ (\(lhs.type) vs \(rhs.type))",
                         at: location
@@ -2389,7 +2395,10 @@ public enum HIRLowerer {
             }
             // String concatenation `s1 + s2` (G9): defer semantics build
             // strings incrementally; concat joins the two C strings.
-            if hirOp == .add, lhs.type == .string, rhs.type == .string {
+            // G68（P0d-D）：判据从「两侧都是 `.string`」放宽为「两侧都是**字符串面**」
+            // —— `Char` 与 `String` 表示同构（都是 `i8*`），拼接语义完全相同，
+            // 而结果类型取 `String`（`c + c` 是两个字节，不再是单个字素）。
+            if hirOp == .add, lhs.type.isStringFaced, rhs.type.isStringFaced {
                 return LoweredExpr(
                     node: .stringConcat(lhs: lhs.node, rhs: rhs.node),
                     type: .string
@@ -2869,8 +2878,10 @@ public enum HIRLowerer {
                 }
                 let resultType: HIRType
                 switch functionName {
-                case "chars": resultType = .array(element: .string)
-                case "chr": resultType = .string
+                // G67（P0d）：`chars` 的**元素**与 `chr` 的**结果**都是 `Char`
+                // （窄化的三个构造点之二）；`ord` 仍是 `I32`、其余三个谓词仍是 `Bool`。
+                case "chars": resultType = .array(element: .char)
+                case "chr": resultType = .char
                 case "ord": resultType = .i32
                 default: resultType = .boolean
                 }
@@ -3120,8 +3131,11 @@ public enum HIRLowerer {
                 return LoweredExpr(node: .readLine, type: .string)
             }
             if functionName == "is_ascii_digit" {
-                guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
-                    throw unsupported("is_ascii_digit expects one String argument", at: location)
+                // G67（P0d）：参数面由 `String` 迁到 `Char`。判据取**字符串面**
+                // 而非字面 `.char` —— 两者表示同构，且 `Char` 加宽到 `String` 合法
+                // （G68），故两种都应收，否则一个本该合法实参会在此响亮被拒。
+                guard loweredArgs.count == 1, loweredArgs[0].type.isStringFaced else {
+                    throw unsupported("is_ascii_digit expects one Char argument", at: location)
                 }
                 return LoweredExpr(
                     node: .isAsciiDigit(argument: loweredArgs[0].node), type: .boolean
@@ -4120,7 +4134,10 @@ public enum HIRLowerer {
             var requireI32Index = false
             switch objectType {
             case .array(let element): wrapped = element; indexExpectation = .i32; requireI32Index = true
-            case .string: wrapped = .string; indexExpectation = .i32; requireI32Index = true
+            // G67（P0d）：`String` 的 `.get(i)` 取的是**元素**，与 `s[i]` 同物
+            // ⇒ 元素类型同为 `Char`。留成 `.string` 会让这个通道的**声明类型**
+            // 与它实际取到的**值**不符（读策略返回 `.char`）。
+            case .string: wrapped = .char; indexExpectation = .i32; requireI32Index = true
             case .dict(let key, let value): wrapped = value; indexExpectation = key
             default:
                 throw unsupported(
@@ -4784,9 +4801,19 @@ public enum HIRLowerer {
         return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
     }
 
-    /// Slice set: exact match only. Widening (I32 literal into I64 slot) is
-    /// already handled at the literal level via `expected`; non-matching
-    /// composite/implicit coercions are later grids.
+    /// Slice set: exact match only, **plus one named exception**.
+    ///
+    /// The exception is `G68`'s implicit widening (`Char` into a `String` slot).
+    /// It is admitted here rather than left to the literal level because it is a
+    /// **declared rule about two types**, not a literal-coercion convenience, and
+    /// the checker already admits it — a lowering gate that refused it would turn
+    /// a legal program into a loud `E6-004`. No coercion is emitted: the two share
+    /// an ABI (`i8*`), so this is the same value in the same slot. The reverse
+    /// direction is *not* admitted, matching the checker: narrowing is what the
+    /// three constructors are for.
+    ///
+    /// Widening at the literal level (I32 literal into I64 slot) is handled via
+    /// `expected`; other non-matching composite coercions are later grids.
     ///
     /// G2 exception, tuples only: component *names* are not part of the shape.
     /// A positional literal `(3, 2)` satisfies `(商: I32, 余: I32,)`. The
@@ -4797,7 +4824,7 @@ public enum HIRLowerer {
     /// declared labels onto the value, exactly as the interpreter does at the
     /// two same sites.
     private static func requireAssignable(_ from: HIRType, to: HIRType, at location: SourceLocation) throws {
-        guard labelInsensitiveEqual(from, to) else {
+        guard labelInsensitiveEqual(from, to) || (from == .char && to == .string) else {
             throw unsupported("type mismatch: \(from) is not \(to)", at: location)
         }
     }

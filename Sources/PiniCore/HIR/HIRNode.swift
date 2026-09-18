@@ -154,6 +154,26 @@ public indirect enum HIRType: Equatable {
         return false
     }
 
+    /// `G68`：本类型是否属于「字符串面」—— `String` 与 `Char`。
+    ///
+    /// 二者共用表示（`ADR-033 D1` 方案 A），故凡按「字符串」处理的通道
+    /// （拼接、拼接式比较、字符串常量池）都按本判定收，而不是逐个列 `.string`；
+    /// 漏一处就会让 `Char` 落到某个 `default:` 上静默走错路。
+    public var isStringFaced: Bool {
+        switch self {
+        case .string, .char: return true
+        default: return false
+        }
+    }
+
+    /// `G68`：本类型与给定类型是否构成 `Char` / `String` 相容对（**对称**）。
+    ///
+    /// 用于二元运算与比较：此处没有「哪一侧是期望」，故不看方向；
+    /// 单方向的**加宽**判定在类型检查器（`Char → String`，反向拒绝）。
+    public func formsCharStringPair(with other: HIRType) -> Bool {
+        (self == .char && other == .string) || (self == .string && other == .char)
+    }
+
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
