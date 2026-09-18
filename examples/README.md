@@ -64,7 +64,7 @@
 | `slice.pini` | 切片 `a[i:j]` / `a[i:]` / `a[:j]` / `a[:]`（半开区间 / 开放边界 / 负索引 / 越界夹紧，G48） | `[20, 30]` … `none` | Provisional |
 | `multidim.pini` | 多维数组（下标读返回 `Optional<T>`、越界 `none`；强制解包 `!` 须处 unsafe 上下文） | 见文件 | Provisional |
 | `cow.pini` | 集合 COW 写时复制值语义（数组 / 字典 / 集合 / 嵌套写） | `[1, 2, 3] [99, 2, 3] {a: 1} {a: 9}` | Provisional |
-| `dict-set-d2.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
+| `dict-set.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
 | `stdlib.pini` | 标准库 字符串方法 + 数学函数 | `HELLO, WORLD` / `42 / 3 / 9 / 5.0` | Stable |
 | `access.pini` | 字段访问 vs 方法访问 | `秒表 / 60 / 60` | Stable |
 | `try.pini` | 错误处理 `try`/`except`（返回元组） | `读取失败` | Stable |

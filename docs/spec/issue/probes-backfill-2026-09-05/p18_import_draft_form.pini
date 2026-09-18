@@ -1,5 +1,0 @@
-[p18_import_draft_form|import]
-math = "./math"
-
-main|func() -> ():
-    return

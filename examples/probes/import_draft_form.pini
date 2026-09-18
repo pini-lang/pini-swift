@@ -1,0 +1,5 @@
+[import_draft_form|import]
+math = "./math" ; 假设存在
+
+main|func() -> ():
+    return
