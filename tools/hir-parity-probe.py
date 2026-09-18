@@ -534,9 +534,16 @@ def in_module(rel):
 
 def collect(roots, needle=None):
     files = []
+    missing = []
     for root in roots:
         base = os.path.join(REPO, root)
         if not os.path.isdir(base):
+            # Do NOT return in silence here. A root that has gone away -- after
+            # a test surface is deleted, say -- used to be skipped without a
+            # word, so the sweep still finished with a verdict over whatever
+            # was left. The corpus a parity verdict rests on is part of the
+            # verdict: a green over one surviving root is not a green over six.
+            missing.append(root)
             continue
         for dirpath, dirnames, filenames in os.walk(base):
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
@@ -546,6 +553,13 @@ def collect(roots, needle=None):
                     if needle and needle not in rel:
                         continue
                     files.append((root, rel))
+    if missing:
+        print(
+            "coverage: %d of %d roots missing -- %s"
+            % (len(missing), len(roots), ", ".join(missing)),
+            file=sys.stderr,
+        )
+        print("coverage: %d .pini collected" % len(files), file=sys.stderr)
     return files
 
 

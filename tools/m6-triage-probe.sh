@@ -50,6 +50,15 @@ while IFS= read -r -d '' f; do
 done < <(find "$REPO_ROOT/Tests" -name '*.pini' -print0 | sort -z)
 echo "pass1 (HIR emit): total=$total pass=$pass fail=$fail"
 
+# Zero corpus is not a clean sweep. This pass reads the test surface, and that
+# surface can be emptied by a deletion; "total=0 pass=0 fail=0" then reads
+# exactly like a run that found nothing wrong, and the two must not share an
+# output shape. Say which one happened.
+if [[ "$total" -eq 0 ]]; then
+  echo "pass1: NO CORPUS -- 0 .pini under $REPO_ROOT/Tests. Not a pass." >&2
+  exit 2
+fi
+
 # ---- pass 2: classify each FAIL by the legacy channel --------------------
 : > "$BLOCK"
 while IFS=$'\t' read -r rel status msg; do
