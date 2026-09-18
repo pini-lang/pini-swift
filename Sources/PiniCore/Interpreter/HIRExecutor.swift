@@ -174,17 +174,17 @@ private struct HIRCallableBody {
 ///   reports positions at *lowering* time), so a `RuntimeError` raised outside a
 ///   statement loop — and HIR built by hand — still points at `noLocation`,
 ///   which remains a placeholder rather than a line number.
-/// - **No struct value-copy.** `Interpreter.copyIfStruct` is an instance method
-///   and this engine does not apply the struct copy rule at its binding and
-///   storing sites (`allocVar` / `storeVar` / `fieldStore` / `subscriptStore`).
-///   Before P2a grid G5 no struct was reachable here, so the rule was dormant;
-///   that grid makes structs reachable, so it is now a real difference rather
-///   than a dormant one — but no fixture stores a struct value into another
-///   slot, so neither channel's observable output moves today. Filed as its own
-///   issue
-///   (the struct-copy hole) instead of being
-///   implemented unverified: an implementation with no fixture to judge it is
-///   exactly the kind of change this repository does not accept.
+/// - ~~**No struct value-copy.**~~ ✅ **CLOSED** — re-measured `G-6c`, 2026-09-18.
+///   The rule lives in `RuntimeOps.copyIfStruct` and **is** applied at all four
+///   sites this entry used to list as missing (`allocVar` / `storeVar` /
+///   `fieldStore` / `subscriptStore`). The gap's own minimal witness — `var b = a`
+///   on a struct, then `b.x = 99`, then printing `a.x` — printed `99` while the
+///   hole was open and prints `1` now. The ticket that carried it is closed with
+///   that evidence.
+///   ⚠️ One caveat kept rather than tidied away: its *second* witness (a struct
+///   written into a struct-typed field) was **not** reproduced during the
+///   re-check — the reconstructed fixture is rejected with a type error — so that
+///   site rests on the applied call alone, not on a witness.
 /// - **`panicStmt`'s text has no cross-channel counterpart.** The node is
 ///   compiler-generated (an unresolvable `break`/`continue`), and on the AST
 ///   channel the same program ends in an escaped `ControlSignal` whose top-level
@@ -315,11 +315,12 @@ public final class HIRExecutor: DebugHookHost {
     /// Where an async body is dispatched (G-3c-1).
     ///
     /// The **blocking** back end, and that is the production semantics rather
-    /// than a simplification: `Interpreter.suspendMode` has no assignment point
-    /// anywhere in `Sources/` — the eight assignments all live in the tests — so
-    /// every published program takes the blocking join and the CPS evaluator
-    /// runs only when a test flips the flag. The suspension grid adds the other
-    /// back end; this one is what the language actually does today.
+    /// than a simplification: the flag that selected the alternative had no
+    /// assignment point anywhere in `Sources/` — every assignment lived in the
+    /// tests — so no published program ever took anything but the blocking join.
+    /// `ADR-043` retired that alternative along with the walk it was built on.
+    /// This is what the language does; it is not a placeholder for a suspend
+    /// branch that has yet to arrive.
     private let scheduler: Scheduler = GCDScheduler.shared
 
     // MARK: - Per-thread execution state
@@ -1368,11 +1369,11 @@ public final class HIRExecutor: DebugHookHost {
             // until it resolves and deconstruct the carried ok / err.
             //
             // This is the whole of the arm. There is no suspend branch here and
-            // none is missing: `suspendMode` has no assignment point outside the
-            // tests, so the published semantics is the blocking join, and the
-            // suspension grid is what adds the other one. A `join` that is not
-            // given a future is a run-time type mismatch — the interpreter
-            // reports the same condition at the same stage.
+            // none is missing: the alternative — releasing the thread across the
+            // join — was selected by a flag with no assignment point outside the
+            // tests, and `ADR-043` retired it with the walk. The join always
+            // blocks. A `join` that is not given a future is a run-time type
+            // mismatch.
             let operand = try evaluate(futureExpr)
             guard case .future(let fut) = operand else {
                 throw RuntimeError.typeMismatch(

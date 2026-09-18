@@ -5,8 +5,10 @@ import PiniCore
 ///
 /// 求值（声明累积、表达式包装、跑哪个引擎）在 P4-4 移到了 `PiniCore` 的
 /// `ReplEvaluator`。理由见该类型的文档：求值此前与本类同处，于是它既绑死了
-/// AST 引擎、又因为测试 target 只依赖 `PiniCore` 而**完全不可测**（既有 REPL
+/// 某一台引擎、又因为测试 target 只依赖 `PiniCore` 而**完全不可测**（既有 REPL
 /// 用例只覆盖解析）。
+///
+/// `G-6c`：引擎开关随 AST 走查一并退役，本类不再持有引擎。
 ///
 /// 本类保留的是**交互**那一半：
 /// 1. **续行检测**——未闭合的括号、INDENT 续行（`:` 结尾）、反斜杠续行
@@ -14,15 +16,10 @@ import PiniCore
 /// 3. **错误恢复**——错误打印并回 loop，不退出
 final class ReplSession {
 
- /// 求值核：承担「输入 → 跑一段程序」，并按引擎分派。
+ /// 求值核：承担「输入 → 跑一段程序」。
  private let evaluator: ReplEvaluator
 
- /// 本次会话使用的引擎。默认取环境开关；注入点让双引擎验证可测。
- private let engine: InterpreterEngine
-
- init(engine: InterpreterEngine = selectedInterpreterEngine(),
- evaluator: ReplEvaluator = ReplEvaluator()) {
- self.engine = engine
+ init(evaluator: ReplEvaluator = ReplEvaluator()) {
  self.evaluator = evaluator
  }
 
@@ -34,9 +31,6 @@ final class ReplSession {
 
  func run() {
  print("Pini REPL (P7-1). 输入表达式或声明；:help 查看帮助，:quit 退出。")
- if engine != .ast {
- print("执行引擎：\(engine.rawValue)（来自 PINI_INTERP_ENGINE）。")
- }
  var linesBuffer: [String] = []
 
  while true {
@@ -84,7 +78,7 @@ final class ReplSession {
  // MARK: - 求值
 
  private func evaluate(_ lines: [String]) throws {
- try evaluator.evaluate(lines, engine: engine)
+ try evaluator.evaluate(lines)
  }
 
  // MARK: - 续行检测

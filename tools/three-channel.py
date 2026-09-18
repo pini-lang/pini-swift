@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Print the three-channel result for one or more .pini files, byte-exact.
+"""Print each channel's result, byte-exact, for one or more .pini files.
 
 The companion to tools/hir-parity-probe.py for single-fixture inspection: the
 probe answers "how does the whole corpus classify", this answers "what exactly
 did each channel print for this file".
 
-Channels (same as the probe):
-    interp-ast  `PINI_INTERP_ENGINE=ast pini run <file>`   frozen reference
-    interp-hir  `PINI_INTERP_ENGINE=hir pini run <file>`   HIR execution engine
-    llvm-hir    `pini run-llvm <file>`                     HIR -> LLVM
+TWO CHANNELS AND AN INSTRUMENT (G-6c, 2026-09-18) — the filename is historical
+--------------------------------------------------------------------------
+This tool used to print three channels, the first of them `interp-ast`, the AST
+walk, held as a frozen reference. G-6c deleted the walk, so that channel and the
+thing it referenced are both gone. What is left:
 
-Before the P1-4 wiring the last two channels were the same command (`run-llvm`
-twice), a leftover of the M6b flip, so "three channels" really meant two.
+    interp-hir  `pini run <file>`        HIR execution engine
+    llvm-hir    `pini run-llvm <file>`   HIR -> LLVM
+    frontend    `pini check <file>`      runs nothing; prints the shared front
+                                         end's diagnostics, which is how a
+                                         warning's origin is established
 
-PINI_INTERP_ENGINE is set explicitly on each channel and never inherited. `pini
-run` selects the AST engine by default today, but P4 flips that default, and an
-inherited value would silently turn the frozen reference into a second HIR arm
-— a sweep that still reports three channels while measuring two.
+The name was not changed with the arity: dated batch records and tickets cite
+this tool by name, and rewriting those would falsify them. The header says what
+it does now; the filename says what it did then.
 
 Usage: python3 tools/three-channel.py <fixture.pini> [more.pini ...]
 """
@@ -40,7 +43,8 @@ def run(args, extra_env=None, cwd=None):
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
     # Drop any inherited engine: every channel states its engine explicitly, so
     # a value in the caller's shell cannot relabel a channel.
-    env.pop("PINI_INTERP_ENGINE", None)
+    # No engine is selected per channel any more: G-6c retired the switch with
+    # the AST walk, so there is exactly one engine to label.
     if extra_env:
         env.update(extra_env)
     # Own process group so a timeout takes down lli (pini's child) too —
@@ -80,10 +84,8 @@ def probe(path):
     with tempfile.TemporaryDirectory() as scratch:
         copy = os.path.join(scratch, os.path.basename(path))
         shutil.copy(path, copy)
-        show("interp-ast", *run([BIN, "run", copy],
-                                {"PINI_INTERP_ENGINE": "ast"}, cwd=scratch))
-        show("interp-hir", *run([BIN, "run", copy],
-                                {"PINI_INTERP_ENGINE": "hir"}, cwd=scratch))
+        show("frontend  ", *run([BIN, "check", copy], cwd=scratch))
+        show("interp-hir", *run([BIN, "run", copy], cwd=scratch))
         show("llvm-hir  ", *run([BIN, "run-llvm", copy], cwd=scratch))
     print()
 

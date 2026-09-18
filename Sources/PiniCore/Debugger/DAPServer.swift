@@ -38,8 +38,8 @@ public final class DAPDebugDriver: DebugDriver {
 /// VS Code / 任意 DAP 客户端调试适配器。
 ///
 /// 传输：stdio + `Content-Length` 分帧（与 LSP 同形）。协议流与 debuggee 的 `print`
-/// 输出严格分离——debuggee stdout 经 `Interpreter.outputSink` 重定向为 DAP `output` 事件，
-/// 绝不污染协议流（避免 stdio 分帧错乱）。
+/// 输出严格分离——debuggee stdout 经引擎的 output sink（`DebugHookHost` 的那一面）
+/// 重定向为 DAP `output` 事件，绝不污染协议流（避免 stdio 分帧错乱）。
 ///
 /// 生命周期（标准 DAP 交互）：
 /// 1. `initialize` → 响应 capabilities + 发送 `initialized` 事件
@@ -55,11 +55,14 @@ public final class DAPServer {
  private var debugger: Debugger!
  private var launchRun: DebugRun?
 
- /// 引擎装配点（LR-4 P4-3）。默认 nil = 本适配器自建 AST 引擎，即生产路径本身。
+ /// 引擎装配点（LR-4 P4-3）。默认 nil = 本适配器自建引擎（见 `launch` 里那条默认路径）。
  ///
- /// 之所以是可注入的闭包而不是一个「引擎种类」枚举：HIR 侧要先把源码检查再 lower，
- /// 而「谁来 lower」的答案是**调用方**（见 `DebugRun`）。注入方本来就握着那份信息，
- /// 所以由它把「引擎 + 启动动作」一并交进来，适配器不为此多知道任何事。
+ /// 之所以是可注入的闭包而不是一个「引擎种类」枚举：源码要先检查再 lower，而「谁来
+ /// lower」的答案是**调用方**（见 `DebugRun`）。注入方本来就握着那份信息，所以由它把
+ /// 「引擎 + 启动动作」一并交进来，适配器不为此多知道任何事。
+ ///
+ /// `G-6c` 之后只剩一台引擎，但**注入点保留**：它服务的是「调用方决定怎么 lower」
+ /// 这件事（测试注入自己那份、生产走默认），不是「选哪台引擎」。
  public var makeRun: ((Module?, Package?) -> DebugRun)?
  private var module: Module?
  private var package: Package?

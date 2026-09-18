@@ -12,21 +12,25 @@ import Foundation
 /// re-implements the expression wrap rather than drive the session, so nothing
 /// asserted what the REPL does when it actually evaluates something.
 ///
-/// Splitting evaluation out of the I/O loop makes the engine a parameter, which
-/// is what "REPL cases green on the HIR engine" needs in order to mean anything.
+/// Splitting evaluation out of the I/O loop is what let "REPL cases green on
+/// the HIR engine" mean anything: evaluation used to construct `Interpreter()`
+/// inside the loop, so it could neither run on another engine nor be tested.
 ///
-/// The shape is the one P4-3 established with `DebugRun`: **the caller decides
-/// which engine runs**, so the engine is an argument rather than a protocol
-/// requirement, and the HIR side does its own `check → lower → run`.
+/// Until `G-6c` the engine was a *parameter*, because two engines existed and
+/// "which one runs" was the caller's decision — the shape P4-3 established with
+/// `DebugRun`. The AST walk has retired, so that question has one answer left and
+/// the parameter went with it.
 ///
-/// DELIBERATE PARITY LIMIT
+/// TYPE-INCORRECT INPUT IS REFUSED
 ///
-/// The two engines do not accept the same set of inputs, and this type does not
-/// paper over that. The AST path runs the semantic gate only; the HIR path needs
-/// the checker's inference to lower at all, so a type-incorrect input is refused
-/// there with a type error while the AST path may run it. That asymmetry is the
-/// already-registered behaviour change from the P4-2 survey, met here in its
-/// interactive form; the HIR path reports it rather than swallowing it.
+/// The checker is not optional on this path: lowering reads its inference to
+/// type the nodes, so an input that does not typecheck cannot be lowered at all.
+/// It is reported as a REPL type error rather than swallowed.
+///
+/// Until `G-6c` that was a *parity limit* as much as a behaviour — the walk ran
+/// the semantic gate only, so the same input would run there and be refused
+/// here, which the P4-2 survey registered as a behaviour change for interactive
+/// input. With the walk gone there is one behaviour left, and it is this one.
 public final class ReplEvaluator {
 
     /// Declarations accumulated across inputs — the REPL's session state.
@@ -59,7 +63,6 @@ public final class ReplEvaluator {
     @discardableResult
     public func evaluate(
         _ lines: [String],
-        engine: InterpreterEngine,
         output: @escaping (String) -> Void = { print($0) }
     ) throws -> Outcome {
         let source = lines.joined(separator: "\n")
@@ -77,7 +80,7 @@ public final class ReplEvaluator {
             let runnable = moduleForRun(
                 declarations: accumulatedDeclarations + expressionModule.declarations
             )
-            try run(runnable, engine: engine, output: output, tolerateMissingMain: false)
+            try run(runnable, output: output, tolerateMissingMain: false)
             return .expression
         }
 
@@ -87,7 +90,7 @@ public final class ReplEvaluator {
         let module = try parse(source)
         accumulatedDeclarations.append(contentsOf: module.declarations)
         let runnable = moduleForRun(declarations: accumulatedDeclarations)
-        try run(runnable, engine: engine, output: output, tolerateMissingMain: true)
+        try run(runnable, output: output, tolerateMissingMain: true)
         return .declaration
     }
 
@@ -95,51 +98,35 @@ public final class ReplEvaluator {
 
     private func run(
         _ module: Module,
-        engine: InterpreterEngine,
         output: @escaping (String) -> Void,
         tolerateMissingMain: Bool
     ) throws {
-        switch engine {
-        case .ast:
-            let interpreter = Interpreter()
-            interpreter.outputSink = output
-            do {
-                try interpreter.run(module: module)
-            } catch let error as RuntimeError where tolerateMissingMain {
-                if case .mainNotFound = error { return }
-                throw error
-            }
-
-        case .hir:
-            // The checker is not optional on this path: lowering reads its
-            // inference to type the nodes, so an untypeable input cannot be
-            // lowered at all. Reported as a REPL type error, not swallowed.
-            let checker = TypeChecker()
-            let errors = checker.checkCollecting(module: module)
-            if !errors.isEmpty {
-                throw ReplError.typeError(
-                    errors.map { ErrorFormatter.formatTypeError($0, source: "") }
-                        .joined(separator: "\n")
-                )
-            }
-            // A session that is still all declarations is the REPL's normal
-            // state. The AST path tolerates it by swallowing the `mainNotFound`
-            // the interpreter throws at run time; this path cannot do that the
-            // same way, because the lowerer requires an executable program and
-            // throws *while lowering* -- the same condition, one phase earlier.
-            // Decided by asking whether `main` exists rather than by matching
-            // the error message, which would drift the day it is reworded.
-            if tolerateMissingMain, !Self.hasMainFunction(module) { return }
-            checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-            let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-            let executor = HIRExecutor()
-            executor.outputSink = output
-            do {
-                try executor.run(module: hir)
-            } catch let error as RuntimeError where tolerateMissingMain {
-                if case .mainNotFound = error { return }
-                throw error
-            }
+        // The checker is not optional on this path: lowering reads its inference
+        // to type the nodes, so an untypeable input cannot be lowered at all.
+        // Reported as a REPL type error, not swallowed.
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        if !errors.isEmpty {
+            throw ReplError.typeError(
+                errors.map { ErrorFormatter.formatTypeError($0, source: "") }
+                    .joined(separator: "\n")
+            )
+        }
+        // A session that is still all declarations is the REPL's normal state,
+        // and the lowerer treats it as an error -- it requires an executable
+        // program and throws *while lowering*. Decided by asking whether `main`
+        // exists rather than by matching the error message, which would drift
+        // the day it is reworded.
+        if tolerateMissingMain, !Self.hasMainFunction(module) { return }
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let executor = HIRExecutor()
+        executor.outputSink = output
+        do {
+            try executor.run(module: hir)
+        } catch let error as RuntimeError where tolerateMissingMain {
+            if case .mainNotFound = error { return }
+            throw error
         }
     }
 

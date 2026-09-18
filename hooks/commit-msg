@@ -1,30 +1,12 @@
 #!/usr/bin/env bash
-# hooks/commit-msg — AST 走查冻结门槛（docs/hir-ast-walk-freeze.md §1）
-# 启用：git config core.hooksPath hooks
+# hooks/commit-msg — 提交信息门禁。
 #
-# 冻结 = 改动须声明，不是禁止改动。命中冻结面而提交信息没有 [ast-walk] 标记
-# 即拒绝；带上标记并说明理由即可通过。判据与误报性质见上述文档 §2。
+# ⛔ 这里原有一段 `[ast-walk]` 冻结门槛（走查删除前，改 `Interpreter.swift` /
+# `SuspendEvaluator.swift` 须在提交信息里带该标记）。`G-6c` 删掉走查后，门槛的
+# 对象与判据体一并作废：段已删，`tools/ast-walk-freeze-check.py` 也删了。
+# 留着它只会要求一个已经不存在的声明。历史见 docs/hir-ast-walk-freeze.md（已标作废）。
+#
+# 现存内容：无。本 hook 保留为挂载点 —— 下一条提交信息规则应加在这里，而不是新建 hook 文件。
 set -euo pipefail
 
-root="$(git rev-parse --show-toplevel)"
-msg="$1"
-
-# 合并提交不声明：它本身不带新改动，两侧的提交已各自过闸。
-if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-  exit 0
-fi
-
-py=""
-for cand in python3 python3.13 python3.12 python3.11; do
-  if command -v "$cand" >/dev/null 2>&1; then
-    py="$cand"
-    break
-  fi
-done
-if [ -z "$py" ]; then
-  echo "    ast-walk freeze: skipped, no python3 found" >&2
-  exit 0
-fi
-
-"$py" "$root/tools/ast-walk-freeze-check.py" --message-file "$msg" || exit 1
 exit 0

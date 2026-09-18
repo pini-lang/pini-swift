@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-"""Run the three channel-pair edges in one command (criteria-gap ledger, CG-03).
+"""LOST MOST OF ITS OBJECT IN G-6c (2026-09-18) — read this before running it.
 
-Why this exists
----------------
-The three channels (the frozen reference `interp-ast`, the HIR executor, and the
-LLVM pipeline) form three pairs, and no single instrument covers all three:
+Why this exists, and what is left of it
+---------------------------------------
+This ran the channel-pair edges in one command, because no single instrument
+covered all of them (criteria-gap ledger, CG-03):
 
     ast <-> hir    HIRExecutorTests.testCorpusFixturesAgreeWithTheInterpreter
     ast <-> llvm   HIRDifferentialTests
     hir <-> llvm   tools/hir-parity-probe.py
     pkg ast<->hir  every host module with a pini.toml, both engines
+
+Every edge above names the AST walk, and G-6c deleted it. The pairs that
+compared *against* the walk (ast<->hir, ast<->llvm) and the package line that
+ran both engines over a manifest now have no second side. What survives is
+hir<->llvm, and that one is already covered by tools/hir-parity-probe.py, which
+is the instrument the batch that removed the walk reworked for it.
+
+⇒ This file is left in place, unreworked, as the record of an instrument whose
+object went away, and the ledger entry that commissioned it is re-adjudicated in
+docs/hir-criteria-gap-ledger.md rather than left dangling. Deleting it instead
+would have left that entry pointing at nothing -- the failure the ledger was
+created to avoid. Running it today measures nothing meaningful: the remaining
+edge duplicates the probe.
 
 The package line is not one of the channel pairs: it is the only judgement a
 module member ever gets. A member file has no `main`, so the single-file

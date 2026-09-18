@@ -590,8 +590,9 @@ final class HIRExecutorTests: XCTestCase {
     /// the skeleton did not implement). G1 brought that fixture in, so this case
     /// now overlaps it — deliberately kept, because it isolates one thing: the
     /// step runs on normal completion of the body, with no `break`, no `for-in`
-    /// and no pattern variable in the picture. The interpreter-side rule being
-    /// mirrored is `Interpreter.executeWhile`.
+    /// and no pattern variable in the picture. The rule being mirrored was the
+    /// walk's `while`-step handling; it retired with the walk, so the frozen
+    /// expectation is now the only statement of that rule.
     ///
     /// WHY THE LOOP IS DRIVEN BY A BOOLEAN, NOT BY A COUNTER
     ///
@@ -857,8 +858,8 @@ final class HIRExecutorTests: XCTestCase {
     ///
     /// WHAT THE SECOND MUTATION RUN TAUGHT THIS CASE (2026-09-13)
     ///
-    /// The rule now has one implementation shared by both engines
-    /// (`Interpreter.relabelled`), so byte equality between the arms cannot see
+    /// The rule has one implementation shared by both arms
+    /// (`RuntimeOps.relabelled`), so byte equality between them cannot see
     /// that implementation being removed — and a literal pin on the expected
     /// bytes was written here to cover it. The mutation run then showed the pin
     /// was **redundant**, and it was removed rather than kept as unexercised
@@ -915,7 +916,7 @@ final class HIRExecutorTests: XCTestCase {
     /// family — the one the lowerer routes through `HIRMatchLiteral` — would ship
     /// unasserted. Two facts are pinned at once: a literal arm fires on value
     /// equality, and the wildcard fires for everything else. The rule being
-    /// mirrored is `Interpreter.matchArmMatches`, the shared value-level core.
+    /// mirrored is `RuntimeOps.matchArmMatches`, the shared value-level core.
     func testBareScrutineeMatchDispatchesOnLiteralsAndWildcard() throws {
         try assertParity("""
         main|func() -> ():
@@ -941,8 +942,8 @@ final class HIRExecutorTests: XCTestCase {
     /// before anything after the `match`.
     ///
     /// No fixture covers it: `testDiffDefer` exercises `while` and `for-in` bodies
-    /// only. The arm body is a block scope of its own (`Interpreter.executeMatch`
-    /// calls `executeBlock` per arm), so its defers fire at arm exit, LIFO, while
+    /// only. Each arm body is a block scope of its own — one scope per arm, not
+    /// one per `match` — so its defers fire at arm exit, LIFO, while
     /// the arm's own bindings and the scrutinee binding are still in scope. The
     /// ordering of the two defers is the point — a flattened reversal would print
     /// `100` before `200`.
@@ -1103,11 +1104,14 @@ final class HIRExecutorTests: XCTestCase {
     /// than as a divergence — so parity alone would be a hollow judge here.
     ///
     /// This test uses an object on purpose. The struct analogue of the same shape
-    /// (`var b = a` where `a` is a struct) is the engine's one known semantic
-    /// hole — `Interpreter.copyIfStruct` is not applied at this engine's binding
-    /// sites — and the two channels would **diverge** on it today. It is filed as
-    /// a defect with its own ticket rather than asserted here, because a test that
-    /// pins a known-wrong answer is worse than no test.
+    /// (`var b = a` where `a` is a struct) is the rule this engine used to miss —
+    /// the copy was not applied at its binding sites, so this engine and the
+    /// reference disagreed on it — which is why that shape was filed rather than
+    /// asserted. The gap has since been closed: the rule lives in
+    /// `RuntimeOps.copyIfStruct` and is applied at every binding and storing site
+    /// (re-measured in `G-6c`, where the gap's own witness now prints the
+    /// value-semantics answer). The object shape stays because it asserts
+    /// reference sharing, which is a different rule and is not covered by it.
     func testObjectAliasingThroughASecondBindingAndAPlainVariableBase() throws {
         let hir = try runHIRTree("""
         {计数对象}

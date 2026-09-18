@@ -24,8 +24,8 @@ spec_ref = "pini-spec-v0.md §1.4"
 granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-18T08:15+0800"
-refresh_note = "2026-09-18 **`G-6a`**：新增「前置三单：内建扩展落 HIR + 调试入口改指 + foreign 急切解析」一条。要点 = 三项处置各有红→绿实测 · 判据 1 同法重测基线（57 → 56，新增红 0 / 转绿 1）· 一处**裁决前提被实测推翻**（LLVM 侧也通了 ⇒ 回归锁改正向）· 一处**定位作废真因 = 陈旧二进制**（探针默认路径写死旧布局）· 并订正三处读数（探针耗时 / 类清单只含 XCTest / `pini debug` 命令名）；本次仅新增该条；存量条目未重新验证"
+last_refresh = "2026-09-18T10:09+08:00"
+refresh_note = "2026-09-18 **`G-6c`**：新增两条 —— ①「删 AST 走查：四文件 **4162 行**清空，静态成员全是一行转发」（删除面比规划读数**多一个文件**：`REPL/InterpreterEngine.swift` 23 行）· ②「探针两通道化：观测点改指 `pini check`，**320 夹具恰好 2 处迁移**」。要点 = 删前逐条测过 41 个静态成员（非数出来）· 退役 **30 条**用例**逐条具名**并**如实记代价**（`defer` 与挂起语义此后**无测试见证**）· 两处缺陷由爆炸半径炸出、**已立案未修** · 观测层替换而非补替身 · **1 个槽自愿声明为减弱**；本次仅新增这两条；存量条目未重新验证"
 last_sweep = "2026-09-17T17:27:00+08:00"
 [[evidence]]
 id = "2026-09-13 字符串扫描的换行终止契约违反立案"
@@ -1063,3 +1063,52 @@ output = "Directed suites: BuiltinOverrideTests 6 executed / 0 failed (was 4 fai
 validated_at = "2026-09-18T08:15+08:00"
 status = "FRESH"
 note = "本批 = **`G-6a`（三批制的第一批，`G-6` 的前置处置）**。⚠️ 该行**无 `Sources/` 之外的治理动作**，但**改了能力面** ⇒ 按用户裁决同批补完 spec `§1.3` 的提议/影响/登记/落地/证据留痕：spec `§2.4.1` 的 H-3 行删去失效句「IR 后端对内建类型用户扩展不支持——既有 E6-002 边界，非本项引入，待 G18/G24 批次收口」，状态列改 `✅（解释器 + HIR + LLVM）`；⚠️ **该原句两处都错**：① 边界已关闭 ② `G18/G24` 是 `M6a` 期已交付的**泛型线**格，与本条无关（第三例「指向已过批次」）。\n\n⚠️ **一处裁决前提被实测推翻**：原定把回归锁「改指到 LLVM 侧仍拒绝」，实测 LLVM 侧**也通了**（`emit` rc=0 且 IR 含符号、`run-llvm` 语义正确）⇒ 照 `IRExecutionTests.testIsLetterLowersAfterG2a` 先例改为**正向断言**（**改用例名、保留夹具名**：`testBuiltinExtensionLowersAfterG6a` 读 `testIRUnsupportedForBuiltinExtension.pini`）。\n\n⚠️ **一轮定位作废的真因 = 陈旧二进制**：`tools/hir-parity-probe.py:251` 的默认路径写死 `/tmp/pini-build/arm64-apple-macosx/debug/pini`，而 `swift build --show-bin-path` 今天写的是 `/tmp/pini-build/out/Products/Debug` —— 两套布局并存时固定用前者，「重建后重测」测的仍是旧文件（`swift test --filter` 只重建测试束及其依赖，**不重链 CLI 产品**）。曾据此得出「同一夹具在测试路径绿、CLI 路径红」的**假矛盾**，并差点被写进一段「两个不同层的同名码」的错误澄清（真因：`ErrorFormatter.swift:112` 把 `HIRLowerer.HIRLoweringError` 的标签映射成 `irgen` ⇒ `IRGen Error [E6-004]` **本来就是降载错误**）。\n\n⚠️ **判据 1 的取证方式须记档**：失败清单**从不落档**（只在 `/tmp`，已被系统清理）⇒ 采「暂存 → 从 `ca5de98` 取回 `8f48a92` 动过的 5 个文件 → 跑 → 还原 → `stash pop`」同法重测基线，跑完即验还原。同日基线 57 与 `G-5` 记录的 57 **一致**，顺带交叉验证了中间两轮工单巡查的「零源码改动」断言。\n\n⚠️ **三处读数订正**（供后续批次）：① 探针实测 **33 秒**（手册记「~12 分钟」已过时，且只有把 `PATH` 清空才叫不动 `pgrep` ⇒ 会静默失去泄漏检查）；② 类清单**只应含 XCTest 类**（115 个）——3 个 swift-testing 套件（`TestBlockSwiftTests`/`DebuggerTests`/`ReplEvaluatorTests`）不进 `Test Case ... failed` 计数，留在清单里会让把守器判整表作废；③ 工单里 4 处写 `pini dbg`，**实际子命令是 `pini debug`**。\n\n⚠️ **不能宣称的部分**：探针**未逐夹具比**（冻结件已随 `/tmp` 清理）——只与七槽计数比；`G-6b`/`G-6c` 的对象（四份同构装配整合 · `ReplEvaluator` 的 `.ast` 分支 · 测试侧静态入口 · `InterpreterTests` 改名 · 删本体 · 收开关 · 探针两通道化）**均未动**。本次仅新增该条；存量条目未重新验证"
+
+[[evidence]]
+id = "2026-09-18 G-6c 删 AST 走查：四文件 4162 行清空，静态成员全是一行转发"
+citable = false
+claim = "The AST walk is deleted, and with it the second execution engine. Four source files go: Interpreter.swift (3090 lines), SuspendEvaluator.swift (890), SuspendScheduler.swift (159) and REPL/InterpreterEngine.swift (23) -- 4162 lines, one more file than the planning readings counted, because the 23-line engine enum only became deletable once G-6b-2 removed the switch's last consumer. Deleting it was gated on a measurement rather than a belief: all 41 static members on Interpreter were checked one by one to be one-line forwarders into RuntimeOps, and no surviving code names Interpreter.<member> (same-named hits elsewhere are different symbols: HIRLowerer.statementLocation, ProgramRunner.normalizeEntryPath). The PINI_INTERP_ENGINE switch retires with it, and it retires by disappearing rather than by reading 'ast' and erroring -- a compatibility gate is the thing this project decided not to have (LR-5), and the validity check existed only to stop the caller running a different engine than they thought they picked. On the test side 30 cases retire by name, not as cases that could not be re-pointed but as cases whose requirements the surviving engine does not meet, each against an already filed gap: StructuredConcurrencyTests 14 to 9, SuspendRuntimeTests 15 to 4 (the 4 survivors are zero-suspension value primitives), CPSDifferentialTests 14 to 0 (whole file). The cost is recorded rather than absorbed: after testDeferStillRunsWhenTaskCancelled retires, the defer-not-run-on-cancel defect has no test witness at all, and the suspension semantics have none either. Two further defects were surfaced by the blast radius and filed rather than fixed: the CLI package path has not checked manifest-declared entry points since the P4 flip, and the struct-copy gap recorded in HIRExecutor's docstring was still open despite being closed in fact."
+artifacts = [
+  "Sources/PiniCore/Interpreter/Interpreter.swift",
+  "Sources/PiniCore/Interpreter/SuspendEvaluator.swift",
+  "Sources/PiniCore/Interpreter/SuspendScheduler.swift",
+  "Sources/PiniCore/REPL/InterpreterEngine.swift",
+  "Sources/PiniCLI/main.swift",
+  "Sources/PiniCore/REPL/ReplEvaluator.swift",
+  "Sources/PiniCLI/REPL/ReplSession.swift",
+  "Sources/PiniCore/Run/ProgramRunner.swift",
+  "Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift",
+  "Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift",
+  "Tests/PiniTests/CPSDifferentialTests/CPSDifferentialTests.swift",
+  "Tests/PiniTests/ReplTests/ReplEvaluatorTests.swift",
+  "docs/issue-cli-package-entry-check-2026-09-18.md",
+  "docs/issue-hir-struct-copy-missing-2026-09-14.md",
+  "docs/issue-interpreter-residual-reference-surface-2026-09-18.md",
+  "docs/issue-hir-p4-gamma-batches-2026-09-16.md"
+]
+command = "git show --numstat 9deea90 -- Tests | awk '$2==\"-\"' ; git show \"9deea90^:Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift\" | grep -c 'func test' ; swift test --disable-sandbox --scratch-path /tmp/pini-build (chunked, 114 classes via tools/hir-chunk-run.py) ; python3 tools/hir-contract-check.py ; swift build --build-tests --disable-sandbox --scratch-path /tmp/pini-build ; the de-commented residual scan of the reference-surface ticket section 6 over Sources and Tests"
+output = "Deletion face 4162 lines over 4 files (3090 + 890 + 159 + 23). Retired cases 30, by file: StructuredConcurrencyTests 14 to 9, SuspendRuntimeTests 15 to 4, CPSDifferentialTests 14 to 0; git show over the diff lists exactly 30 deleted func test lines. Chunked full regression over 114 classes: FAILED SET 56 before and 56 after, set-equal, 0 new and 0 fixed. Contract clean 62/62, all three anchors. Build with tests: rc=0, 0 error, 0 'cannot find'. De-commented scan for \\bInterpreter\\b over Sources and Tests: 0 hits in 0 files, down from 6 construct sites plus 5 static references. Four CLI entries smoke-tested: run a file, run a directory, repl, debug. The compiled binary's mtime (09:52) precedes the deletion commit (09:53:41) and no .o file is newer than the commit, which is what makes the up-to-date build a witness for the post-deletion tree rather than for a stale one."
+validated_at = "2026-09-18T10:09+08:00"
+status = "FRESH"
+note = "本批 = **`G-6c-1`（三批制的第三批，不可逆面）**。⚠️ **删前先测**是这一批的全部纪律：删一个引擎可以顺手带走一项能力，所以「41 个静态成员都是一行转发」是**逐条看完**得出的，不是数出来或推出来的（判据 = 改 `RuntimeOps` 里任一成员会**编译失败**，而不是「看起来是转发」）。⚠️ **退役 30 条用例不是「改不动就删」**：每条各自对着一张**在册缺口**，逐条具名入账，且**代价不粉饰** —— 「取消时 HIR 不执行 `defer` 清理」此后**没有测试见证**，挂起语义（释放线程 / resume 边界取消 / work-stealing / 背压）**同样没有**，这是**能力净减**而非「测试简化」。⚠️ **装配整合一项已撤销**（前提「三份同构」被 `G-6b` 实测否证：五维摊开后变体数与调用点数同阶）⇒ 该动作**不属于本批**，也**不得顺手做**。⚠️ **判据面的一处暴露如实登记**：`three-edge-union.py` 失去对象，其原覆盖的「包通道 `ast<->hir`」**此后无人测**。⚠️ **两处缺陷是删除的爆炸半径炸出来的、已立案未修**：① `pini run <dir>` 自 `P4` 翻转起就不检查 manifest 声明的入口（此前只有解释器被交付 `entryFiles`，而默认引擎不是解释器 —— 删走查移除了**最后一条**会检查的路径）；② `HIRExecutor` docstring 记的结构体拷贝缺口事实上已闭、**工单却仍 Open** ⇒ 用**工单自己的证人**复测后闭环，并**如实写明限制**：它的第二个证人**未能复现**。"
+
+[[evidence]]
+id = "2026-09-18 G-6c 探针两通道化：观测点改指 pini check，320 夹具恰好 2 处迁移"
+citable = false
+claim = "Removing the reference arm turns the parity probe from three channels into two execution channels plus one diagnostic-origin instrument, and the work is in replacing the observation layer rather than finding a stand-in. Left alone, interp-ast and interp-hir would become the same command, so the three-channel table would report agreement that nothing had tested -- the failure mode this repository keeps recording. Two layers replace what was lost: execution parity is now witnessed by the two surviving arms (interp-hir against llvm-hir, which share a front end and therefore cannot see what the lowerer swallows), and 'which layer did this diagnostic come from' is witnessed by pini check, which runs the front end and executes nothing. check is an instrument, not a third channel: it cannot testify about behaviour, exactly one slot consults it, and it must report the same diagnostic code -- 'both spoke' is not corroboration, because the front end complaining about something else proves nothing. The slot set moves by subtraction: four retire (TIMEOUT_AST, CHANGE_F64, CHANGE_OTHER, CHANGE_REFERENCE, all of the 'the reference arm is the odd one out' family), two are redefined (WARN_CHANNEL_ASYMMETRY now corroborated by check, GAP_BEHAVIOR as a pure two-arm form), and one is declared weakened rather than quietly kept (WARN_LLVM_RC_UNPROPAGATED loses the 'the reference arm failed too' side-evidence, which is written down as a weakening). The accounting closes on the same 320-fixture key set with exactly two migrations, CHANGE_REFERENCE to OK, and they are the two known reference-odd fixtures whose information is not lost but is no longer a question the probe can ask -- so it is recorded as a one-time migration rather than frozen into a two-line permanent exception table, which would make 'the reference arm used to disagree' look like a current criterion. The replacement instrument reproduces the retired arm's discriminating power slot for slot: WARN_CHANNEL_ASYMMETRY stays at 20, fixture for fixture."
+artifacts = [
+  "tools/hir-parity-probe.py",
+  "tools/three-channel.py",
+  "tools/hir-spec-assert.py",
+  "tools/compare-sweeps.py",
+  "tools/three-edge-union.py",
+  "hooks/commit-msg",
+  "docs/hir-ast-walk-freeze.md",
+  "docs/hir-criteria-gap-ledger.md",
+  "docs/issue-hir-p4-gamma-batches-2026-09-16.md"
+]
+command = "env -u PYTHONPATH /Users/zhangwentao/.workbuddy/binaries/python/versions/3.13.12/bin/python3 tools/hir-parity-probe.py --timeout 10 --out /tmp/g6c-two-channel-frozen.tsv ; python3 tools/compare-sweeps.py <baseline tsv> /tmp/g6c-two-channel-frozen.tsv ; pgrep -fl 'lli --dlopen' ; ls /tmp/pini_*.ll"
+output = "Denominator 320 fixtures, the same key set as the reference-arm era (0 only-before, 0 only-after). Five slots identical fixture for fixture: PACKAGE_MEMBER 27, WARN_CHANNEL_ASYMMETRY 20, FRONTEND_FAIL 11, WARN_LLVM_RC_UNPROPAGATED 4, HARNESS_DEPENDENT 1. Exactly 2 migrations: CHANGE_REFERENCE to OK, on testBareCaseAmbiguousExpectedTypeViaLLI and testDotCaseAmbiguousExpectedTypeViaLLI, so 318 of 320 are fixture-for-fixture identical and every other delta is 0. FLIP BLOCKERS 0, blocker detail section empty, 0 lli processes alive, 0 stray .ll files. New frozen artifact /tmp/g6c-two-channel-frozen.tsv, 36838 bytes, md5 ca4417cffe4c62e8a8fe48ec520d48f5, on the new 320 denominator."
+validated_at = "2026-09-18T10:09+08:00"
+status = "FRESH"
+note = "本批 = **`G-6c-2`（三批制的收尾：器械与观测层）**。⚠️ **封印先于改造**：`G-6c-1` 先给探针**加封印**（拒绝出数并非零退出），`G-6c-2` 才改造 —— 顺序反了会在中间态产出**没有任何东西测过的「一致」**。⭐ **本批最有价值的一条**：删掉旧 oracle 时，要换的**不是替身、而是观测层**（承 `G-5` 的定式）—— 补一个 golden 只换值层的证人，而**共享前端吞掉的结构对任何臂间对照都不可见**；故观测点上移，且回路里**不放执行通道**。⚠️ **一处判据被声明为「减弱」而不是悄悄留着**：`WARN_LLVM_RC_UNPROPAGATED` 失去「参照臂也失败」的旁证 ⇒ 已在文档里写明是减弱，不装作原样。⚠️ **一条读数**：`CHANGE_REFERENCE` 那 2 条的信息**没有丢**，但它**不再存在于探针里**；做成永久例外表会让「参照臂曾经不同意」看起来像一条**当前**判据，而**那已经不是一个能问的问题**。⚠️ **器械族三处收尾**：`three-channel.py` 的 `ast` 通道改为前端仪器（**文件名保留**，理由写在文件头）· `hir-spec-assert.py` 通道表去 `interp-ast` · `three-edge-union.py` **标为已失去对象、不重构**（台账 `CG-03` 改判）。⚠️ **冻结件家族按其自定判据作废**：`docs/hir-ast-walk-freeze.md` 标作废 · `hooks/commit-msg` 的 `[ast-walk]` 段删除 · `tools/ast-walk-freeze-check.py` 删除 ⇒ **「冻结 = 改动须声明」这条纪律的对象消失**，故纪律本身失效（不是被违反）。"
