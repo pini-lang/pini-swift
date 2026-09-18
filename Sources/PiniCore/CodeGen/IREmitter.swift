@@ -2022,6 +2022,11 @@ public final class IREmitter {
         case .f64: return ("double", 8, 1)
         case .boolean: return ("i1", 1, 2)
         case .string: return ("i8*", 8, 4)
+        /// `Char` (P0d), declared rather than left to the default: it rides on
+        /// `string` here because the representation is the same, so the same
+        /// raw-ptr tag applies for the reason in the note above — a grapheme
+        /// is immutable C bytes with no share count.
+        case .char: return ("i8*", 8, 4)
         default:
             fatalError("IREmitter: no LazyRef element ABI for '\(type)' (HIRLowerer gates element types)")
         }
@@ -2039,6 +2044,9 @@ public final class IREmitter {
         case .f64: suffix = "f64"
         case .boolean: suffix = "i1"
         case .string: suffix = "ptr"
+        /// Same spelling as `string` on purpose — identical ABI means one
+        /// wrapper, and the dedup guard below then shares it.
+        case .char: suffix = "ptr"
         default: suffix = elemSpelling.replacingOccurrences(of: " ", with: "_")
         }
         guard !lazyrefWrapperNames.contains(suffix) else { return "__lazyref_wrapper_\(suffix)" }
@@ -2482,6 +2490,7 @@ public final class IREmitter {
         case .f64: return ("double", 8, 1)
         case .boolean: return ("i1", 1, 2)
         case .string: return ("i8*", 8, 3)
+        case .char: return ("i8*", 8, 3)
         case .array: return ("%bk_array*", 8, 4)
         case .dict: return ("%bk_dict*", 8, 4)
         case .set: return ("%bk_set*", 8, 4)
@@ -3820,7 +3829,7 @@ public final class IREmitter {
     private func emitStringPiece(_ part: HIRExpr) -> IRValue {
         let type = hirType(of: part)
         switch type {
-        case .string:
+        case .string, .char:
             return emitExpr(part)
         default:
             let value = emitExpr(part)
@@ -3847,7 +3856,7 @@ public final class IREmitter {
             let sel = builder.freshTemp()
             bodyIR += " \(sel) = select i1 \(value.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false\n"
             return IRValue(llvmType: "i8*", ssaName: sel)
-        case .string:
+        case .string, .char:
             return value
         case .array(let elementType):
             let buf = builder.freshTemp()

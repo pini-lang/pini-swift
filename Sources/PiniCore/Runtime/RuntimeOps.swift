@@ -709,6 +709,7 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  case .float: return "float"
  case .bool: return "bool"
  case .string: return "string"
+ case .char: return "char"
  case .rawPointer: return "指针"
  default: return "其它"
  }
