@@ -22,6 +22,9 @@
 **两项的面比登记的大**（漏记了构造点与 `G-6a` 新写的装配）、**一项与删除无关**（整合不阻塞删除）、
 **一项的判据写法已失效**（「两引擎一致」在该文件上已不可测）。逐条见 §1.3 · §2 · §5.4。
 
+> ⛔ **2026-09-18 开工首步实测：本件 §1.3 · §5.1 · §5.2 的读数已被推翻，`G-6b` 止损点 2 命中 ⇒ 块待重切。**
+> **本批未产生任何提交**（`Sources/` / `Tests/` 未动）。**重切前先读 §10**，本节以下凡与 §10 冲突之处以 §10 为准。
+
 ---
 
 ## 1. 事实基础（全部现测，2026-09-18，HEAD `ec70667`，**工作树干净**）
@@ -82,6 +85,9 @@
 | `Tests/PiniTests/CPSDifferentialTests/CPSDifferentialTests.swift` | **2**（L22 · L30，在一处夹具驱动 helper 内） | 0 | 14 条**全部退役** ⇒ 随文件消亡 |
 
 ⭐ **判据级结论（本件最重要的一条实测）**：
+
+> ⛔ **已被 2026-09-18 开工首步实测推翻 —— 下面是错的，正确读数见 §10.2（8 个用例 / 5 处引用 + 1 个助手）。**
+> 错因：把助手 `runProgramAST` 的构造点记成一个「1 处引用」，未沿它展开到 **5 条**调用用例。
 
 > `G-6c` 的**真编译阻塞面** = `StructuredConcurrencyTests` 的 **4 个用例 / 6 处引用**
 > （3 构造点 + 3 静态成员）。**其余 13 处引用全部随退役面消亡**，不构成阻塞。
@@ -361,3 +367,204 @@ grep -n 'PINI_INTERP_ENGINE' Tests/PiniTests/BuiltinOverrideTests/BuiltinOverrid
 - **残余引用面的总挂点** = `docs/issue-interpreter-residual-reference-surface-2026-09-18.md`
   （本件给它的 §2.1 行号表与 §2.3 清单各补一条订正）。
 - **删除面规模** = `docs/issue-hir-p4-gamma-plan-2026-09-16.md` §8.7（**唯一权威点位**）。
+
+---
+
+## 10. 开工首步实测（2026-09-18）：⛔ 止损点 2 命中，块待重切
+
+> **状态**：勘测完成，**零提交** —— `Sources/` / `Tests/` / `tools/` 未动，工作树停在 `8db4e52`。
+> **本节的作用**：本件 §1.3 · §5.1 · §5.2 的读数**已实测推翻**；重切方案见 §10.6（**待裁**）。
+> ⚠️ 本节的实验改动（临时换腿）**已全部还原**，`git status` 实测为空。
+
+### 10.1 `Tests` 侧引用面：登记 18 行 / 19 处 → 实测 **19 行 / 20 处**
+
+| 文件 | 登记（§1.3） | 实测（去注释） | 判定 |
+|---|---|---|---|
+| `Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift` | 3 构造 + 3 静态 = 6 处 | 3 行 / 6 处（L70 · L87 · L183；L246 ×2 · L247 ×1） | 一致 |
+| `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift` | 9 构造 + 2 静态 = 11 | **12 行 / 12 处** | ⚠️ **漏记 1 行** |
+| `Tests/PiniTests/CPSDifferentialTests/CPSDifferentialTests.swift` | 2 构造 | 2 行 / 2 处 | 一致 |
+| **合计** | 18 行 / 19 处 | **19 行 / 20 处** | ⚠️ |
+
+漏记的那一处在 `Tests/PiniTests/SuspendRuntimeTests/SuspendRuntimeTests.swift:484`：
+
+```swift
+private func captureSuspendStdout(_ body: (Interpreter) throws -> FutureValue) throws -> [String]
+```
+
+它是**闭包的类型标注** —— 既不是构造点、也不是静态成员 ⇒ **按「构造点 + 静态成员」两栏枚举时结构性看不见**。
+⚠️ 它的编译后果与构造点**相同**：该文件存活 ⇒ 这一行必须改、或该助手必须随退役面删。
+
+⭐ 推广判据：**引用面普查只数「构造点 / 静态成员」两栏会漏掉第三栏 —— 类型标注**（参数、返回值、泛型实参）。
+下次普查照 `\bInterpreter\b` 全量数，不预设形态。
+
+### 10.2 ⛔ `G-6c` 的真编译阻塞面：登记「4 个用例 / 6 处引用」→ 实测 **8 个用例 / 5 处引用 + 1 个助手**
+
+`Tests/PiniTests/StructuredConcurrencyTests/StructuredConcurrencyTests.swift` 共 **14 条**用例。
+沿用「夹具 → 驱动 → 引用点」映射后：
+
+| 用例 | 驱动 | 引用点 | `G-6c` 之后 |
+|---|---|---|:--:|
+| `testCancelUnjoinedChildrenOnlyCancelsPendingOnes` | 纯 `FutureValue` 单元 | — | 存活 |
+| `testCancelUnjoinedChildrenPropagatesToGrandchildren` | 纯 `FutureValue` 单元 | — | 存活 |
+| `testDetachedChildSurvivesParentReturn` | 纯 `FutureValue` 单元 | — | 存活 |
+| **`testJoinFutureDetachesChildFromParent`** | `Interpreter().joinFuture` | **L70** | ⛔ 编不过 |
+| **`testCheckpointIsNoOpWithoutOwner`** | `Interpreter().checkCancellation` | **L87** | ⛔ 编不过 |
+| **`testCloseScopeCollectsLeakedErrAndCancelsPending`** | `Interpreter.makeResult` / `.makeError` | **L246 ×2 · L247 ×1** | ⛔ 编不过 |
+| `testCancelInterruptsRunningLoop` | `runProgramOnHIRTree` | — | 存活 |
+| `testSynchronousProgramUnaffectedByCheckpoints` | `runProgramOnHIRTree` | — | 存活 |
+| `testDetachBuiltinPrunesChildFromParent` | `runProgramOnHIRTree` | — | 存活 |
+| **`testParentReturnCancelsUnjoinedChildTask`** | `runProgramAST` | 经助手 | ⛔ 助手需换腿 |
+| **`testJoinedChildIsNotCancelledByParentReturn`** | `runProgramAST` | 经助手 | ⛔ |
+| **`testDeferStillRunsWhenTaskCancelled`** | `runProgramAST` | 经助手 | ⛔ |
+| **`testLeakedChildErrorFloatsToCallerResult`** | `runProgramAST` | 经助手 | ⛔ |
+| **`testDetachEscapeHatchSuppressesLeak`** | `runProgramAST` | 经助手 | ⛔ |
+| — | 助手 **`runProgramAST`** | **L183** | ⛔ 须换腿或删 |
+
+⇒ **8 个用例 + 1 个助手**，不是 4 个用例（**低估 2×**）。
+
+**根因**：§1.3 把 `L183` 记成「一个构造点」，**没有沿 `runProgramAST` 展开** ——
+那个助手被 **5 条**用例共用。⚠️ 同族判据：**助手（helper）不是「一处引用」，它是一组用例的入口**；
+普查引用面时必须**把助手的调用者一起展开**，否则阻塞面会系统性低估。
+
+### 10.3 ⛔ 那 8 个用例里 **5 条在 HIR 腿上红**（逐条真跑，不按 `rc` 判）
+
+**实验做法**：把助手 `runProgramAST` 的实现**临时**从 `Interpreter` 换成 `ProgramRunner`
+（只改驱动，不改断言、不改夹具）⇒ 整类 14 条一次跑完，逐条取结果。
+
+| 用例 | HIR 腿上的实测 | 在册主 |
+|---|---|---|
+| `testDeferStillRunsWhenTaskCancelled` | **跑了、且不抛错**，但断言不成立 —— 输出只有 `主流程结束`，**缺 `清理完成`** | `G-5` 实测记录；缺口 = 「取消时 HIR 不执行 `defer` 清理」 |
+| `testDetachEscapeHatchSuppressesLeak` | `HIR lowering error at 12:10: printing a Result value is outside the slice` | `docs/issue-hir-print-result-value-2026-09-17.md`（用户已裁 **C 维持现状**） |
+| `testLeakedChildErrorFloatsToCallerResult` | 同上（`at 11:10`） | 同上 |
+| `testParentReturnCancelsUnjoinedChildTask` | 同上（`at 15:18`） | 同上 |
+| `testJoinedChildIsNotCancelledByParentReturn` | `HIR lowering error at 10:22: type mismatch: result(ok: PiniCore.HIRType.i32) is not i32` | 同一单 §4「同族待查」（**未裁**） |
+| 其余 9 条 | 绿 | — |
+
+⭐ **5 条全部挡在已有主的缺口上**（4 条归 `Result` 打印 / 类型族，1 条归取消时的 `defer` 清理），
+与 `docs/issue-suspend-retirement-residuals-2026-09-17.md` §4 的记录**吻合**，与该件「4 个用例」不合。
+⇒ **这 5 条不是「改指的技术问题」，是「引擎能力」问题**：`G-6c` 删掉 AST 走查后，它们**无处可跑**。
+
+### 10.4 ⛔ §5.1 的裁决前提被实测推翻：装配「同构」是登记的假象
+
+把 12 个调用点按**四个维度**摊开（不是按「有没有 `check → lower`」）：
+
+| # | 调用点 | `lower` 时机 | 错误面 | 下游 | `mergedWithImports` |
+|:--:|---|---|---|---|:--:|
+| 1–4 | `Sources/PiniCore/Run/ProgramRunner.swift`（4 处） | 立即 | `throw ProgramRunError.typeCheck` | `HIRExecutor` | ✅ **用** |
+| 5 | `Sources/PiniCLI/main.swift` `runHIREngine` | 立即 | 逐条 `printError` + `exit(1)` | `HIRExecutor` | ❌ |
+| 6 | `Sources/PiniCLI/main.swift` `runHIRPackageEngine` | 立即（前置由调用方做） | 调用方 `catch` | `HIRExecutor` | n/a |
+| 7 | `Sources/PiniCLI/main.swift` `runDebugFile` | **延迟到会话启动** | `printError` + `exit(1)` | `DebugRun` | ❌ |
+| 8 | `Sources/PiniCLI/main.swift` `runDebugDirectory` | **延迟到会话启动** | 同上 | `DebugRun` | n/a |
+| 9 | `Sources/PiniCore/Debugger/DAPServer.swift` | **延迟到会话启动** | `throw` | `DebugRun` | ❌ |
+| 10 | `Sources/PiniCore/REPL/ReplEvaluator.swift` | 立即 | `throw ReplError.typeError` | `HIRExecutor` | ❌ |
+| 11 | `Sources/PiniCLI/main.swift` `typeCheckThenGenerate` | 立即 | 逐条 stderr + `exit(1)` | `IREmitter` | ❌ |
+| 12 | `Sources/PiniCLI/main.swift` `runHIRPackageEmit` | 立即 | 调用方 `catch` | `IREmitter` | n/a |
+
+**结论**：**变体数与调用点数同阶**（错误面 4 种 × 时机 2 种 × 下游 2 种 × import 合并 2 种 × `requiresMain` 2 种），
+⇒ 抽出来的共享类型**只能逐点转发**。这比 §5.1 预设的触发条件（「前半段只有 4 行 ⇒ 退 A」）**更极端**：
+
+- **B**（新立 `ProgramFrontend`）⇒ 造出一个几乎纯转发的类型，**它花掉的复杂度买不回任何东西**；
+- **A**（全经 `ProgramRunner`）⇒ 要吸收 4 种错误风格与**调试面的延迟 lower**，**做不到「全经」**；
+  能给 emit 面加的那个「不执行」出口还会让它的名字继续说谎。
+
+⇒ **A 与 B 都不可取** —— 选项需**重裁**（§10.6 之②）。登记说的「四份同构装配」**不是一个抽象机会**，
+是一组**看起来像**共有前端的调用点。
+
+⚠️ 顺带一条**待查项**（本批未裁定，不动手）：`runHIREngine`（CLI 单文件）与 `ProgramRunner.run(module:)`
+在 `HIRLowerer.mergedWithImports` 上**不同**（前者不用）。`Sources/PiniCore/Run/ProgramRunner.swift`
+的类注释把这一差异记成「AST 单文件路径曾经漏合并 import，导致别名被读成未声明变量」——
+若 CLI 的单文件路径**今天仍有同一个缺陷**，那它是**用户可见缺陷**（记缺陷 → 提工单），
+而**不是**「整合顺手修掉」的对象。本批只登记、**未实测**（`G-6b-2` 的判据 4 要求零行为变更 ⇒ 不可顺手修）。
+
+### 10.5 复现方式（本节全部读数）
+
+```sh
+cd <repo>
+
+# 10.1 去注释枚举 Tests 侧 Interpreter 引用面（含「类型标注」第三栏）
+python3 - <<'PY'
+import re, pathlib
+def strip(t):
+    out=[];i=0;n=len(t)
+    while i<n:
+        if t.startswith("//",i):
+            j=t.find("\n",i); i=n if j<0 else j; continue
+        if t.startswith("/*",i):
+            j=t.find("*/",i+2); i=n if j<0 else j+2; continue
+        if t[i]=='"':
+            j=i+1
+            while j<n:
+                if t[j]=='\\': j+=2; continue
+                if t[j]=='"': break
+                j+=1
+            i=j+1; out.append('""'); continue
+        out.append(t[i]); i+=1
+    return "".join(out)
+FUNC=re.compile(r'^\s*(?:public |private |internal |fileprivate |final |static |@\w+ )*(?:func|var|let)\s+(\w+)')
+for p in sorted(pathlib.Path("Tests").rglob("*.swift")):
+    owner=""; lines=strip(p.read_text(errors="replace")).splitlines(); hits=[]
+    for i,l in enumerate(lines,1):
+        m=FUNC.match(l)
+        if m: owner=m.group(1)
+        if re.search(r'\bInterpreter\b', l): hits.append((i,owner))
+    if hits: print(p, len(hits), hits)
+PY
+
+# 10.3 换腿矩阵：把 runProgramAST 的驱动换成 ProgramRunner 后跑整类
+#   （实验改动必须还原：git checkout -- <该测试文件>）
+swift build --build-tests --disable-sandbox --scratch-path /tmp/pini-build
+swift test --disable-sandbox --scratch-path /tmp/pini-build --filter StructuredConcurrencyTests
+```
+
+### 10.6 ⛔ 待裁（重切）—— 三项，各带背景 / 选项 / 代价 / 建议
+
+**① 那 5 条不可转的用例怎么办**（主裁）
+- **是什么**：`testParentReturnCancelsUnjoinedChildTask` · `testJoinedChildIsNotCancelledByParentReturn` ·
+  `testDeferStillRunsWhenTaskCancelled` · `testLeakedChildErrorFloatsToCallerResult` ·
+  `testDetachEscapeHatchSuppressesLeak` —— 语言层端到端，HIR 上跑不动（§10.3）。
+- **为什么现在要决定**：不改动它们，`G-6c` 删引擎时它们连文件一起废；而它们的处置**决定 `G-6c` 是
+  「只删」还是「删 + 补能力」**。
+- **选项与代价**：
+  - **A 随 `G-6c` 退役 + 具名入账**：代价 = 语言层端到端覆盖 8 条 → 3 条；
+    但「父返回取消未 join 子」在**单元层**仍有 3 条存活用例守着；
+    ⚠️ `testDeferStillRunsWhenTaskCancelled` 退役等于**放弃对一条已立案缺陷的测试见证**。
+  - **B 先补齐 4 个 HIR 缺口再改指**：代价 = 把 4 张在册单从「非前置」提为 `G-6c` 前置，
+    **不可逆批被能力补齐绑住**；且 `Result` 打印那一条**要改用户已下的「维持现状」裁决**。
+  - **C 改夹具的观测通道**（不打印 `Result`，改用语言层判定 `err`）：代价 = 改 3 份夹具并逐条实测
+    会不会再撞缺口；**对 `defer` 那一条无效**（它是在 HIR 上真跑、缺口在能力上，不在观测上）；
+    收益 = 保住 3 条覆盖且不扩 `G-6c`。
+  - **我建议 A + 单独把 `defer` 那一条的去向写清**：`defer` 缺口已立案，退役要**在单里点名**
+    「该缺陷此后无测试见证」，避免它静默存在。C 可作为 A 之后的追加项，不该塞进本批。
+- ⚠️ 本项**归属本来就在** `docs/issue-suspend-retirement-residuals-2026-09-17.md` §7（本件 §7 已声明不做）。
+
+**② 装配整合的形态**（因 §10.4 而重裁）
+- **是什么**：A/B 都被实测推翻（§10.4）。真问题是「那 12 个调用点到底还整不整」。
+- **选项与代价**：
+  - **A 整**：只把**逐字相同的那一行**（`persistAcrossScopesForCodegen = true`）或其载体收口，
+    例如实测该行能否由 `HIRLowerer.lower` 自己承担（**须先实测它是不是真必要**）；
+    代价 = 需要动 `HIRLowerer` 的入口语义（**止损点 1 的邻域**）；收益 = 少一处机械重复。
+  - **B 不整，改写登记**：把这 12 处**不是**「同构装配」这一事实写进 `G-6` 行，
+    承认它们只在**形状上**相似；代价 = `G-6` 行要删掉「装配整合」这一动作；收益 = 省掉一次
+    只为满足登记而做的重构。
+  - **C 后置到 `P5`**（原 §5.1 的 C）：代价 = `G-6c` 之后仍抄着同构序列；收益 = 本批最小。
+  - **我建议 B**：登记的「装配整合」前提（同构）被实测否证，那么**该做的是订正登记，不是硬做整合**。
+    若你更想留一条收口动作，则取 A 的**最小形式**，但须先实测那一行是否必要。
+
+**③ 接缝用例 `testCheckpointIsNoOpWithoutOwner`**（本批新发现的独立项）
+- **是什么**：它驱动 `Interpreter().checkCancellation`（`Sources/PiniCore/Interpreter/Interpreter.swift:61`）。
+  同一语义在 `Sources/PiniCore/Interpreter/HIRExecutor.swift:2480` 有一份**逐字相同**的拷贝，
+  但是 `private` ⇒ **测试改指不到**。
+- **选项与代价**：
+  - **A 单源化**：把该语义提到 `Sources/PiniCore/Runtime/RuntimeOps.swift`（那里已住着
+    `joinFuture` / `makeCancelError` / `isCancelErrorValue` 等同族），两引擎各自转调，测试改指 `RuntimeOps.*`。
+    代价 = 动 `HIRExecutor` 一处（**止损点 1 的邻域**，但属「单源化」而非「语义变更」）；收益 = 判据留在 HIR 侧。
+  - **B 退役该用例**：代价 = 丢一条单元级接缝判据；
+    但它的**语言层意图**（同步路径不受检查点影响）已由存活的
+    `testSynchronousProgramUnaffectedByCheckpoints`（走 HIR 线）守着。
+  - **我建议 A**：`RuntimeOps` 就是这类共享运行期谓词的既有家，且 `G-6a` 已证明「单源化能同时
+    喂到两条腿」（内建扩展那次）。
+
+**另有两条不需要裁决、只须告知**：
+- 探针默认路径那 1 行（§5.3 裁 **A**）：**独立于本止损**，可随重切后的任一批落地，修法取运行时解析。
+- `InterpreterTests` 改名（§2.4）：质量项，编译无关，同样不阻塞。
+
