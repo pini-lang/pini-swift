@@ -1,4 +1,0 @@
-main|func() -> ():
-    print(is_letter("h"[0]))
-    print(is_letter("字"[0]))
-    return

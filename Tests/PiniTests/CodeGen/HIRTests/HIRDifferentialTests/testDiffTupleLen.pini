@@ -1,6 +1,0 @@
-; 元组长度：len(tuple) 内建。
-
-main|func() -> ():
-    var t = (1, 2.5, 7)
-    print(len(t))
-    return

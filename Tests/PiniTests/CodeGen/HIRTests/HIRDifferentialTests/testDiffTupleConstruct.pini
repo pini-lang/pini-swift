@@ -1,8 +1,0 @@
-; 无标签元组构造：变量元素 (a, b)。
-
-main|func() -> ():
-    var a = 10
-    var b = 20
-    var p = (a, b)
-    print(a + b)
-    return

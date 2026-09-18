@@ -1,3 +1,0 @@
-main() -> ():
-    var x: Optional<I32> = nil
-    return

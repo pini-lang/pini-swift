@@ -1,3 +1,0 @@
-main|func() -> ():
-    var x = 1 + 2
-    return

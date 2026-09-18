@@ -1,8 +1,0 @@
-main|func() -> ():
-    ; readLine keeps the line terminator, so the length includes it: the test
-    ; injects "hello\n" and expects 6 rather than 5. The inherited fixture
-    ; feeds newline-free input, from when the interpreter stripped it, so a
-    ; stripping channel and a keeping channel print the same bytes there.
-    ; Only the length is printed, never the line itself.
-    print(len(readLine()))
-    return

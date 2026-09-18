@@ -1,8 +1,0 @@
-main|func() -> ():
-    var c = 0
-    match c:
-        case foo:
-            print("foo")
-        case bar:
-            print("bar")
-    return

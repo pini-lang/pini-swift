@@ -1,8 +1,0 @@
-((String))
- shout|self() -> (String,):
-    return "!!!"
-
-main|func() -> ():
-    var s = "abc"
-    print(s.shout())
-    return

@@ -1,3 +1,0 @@
-main|func() -> ():
-    print(len(readFile("__PATH__")))
-    return

@@ -1,5 +1,0 @@
-[testProductionsImportExport|import]
-foo = "./foo"
-
-[testProductionsImportExport|export]
-bar = bar

@@ -1,4 +1,0 @@
-main|func() -> ():
-    var t = (a: 1,)
-    print(t.a)
-    return

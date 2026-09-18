@@ -1,3 +1,0 @@
-main|func() -> ():
-    assert(1)
-    return

@@ -1,5 +1,0 @@
-main|func() -> ():
-    var cs = chars("𝐀")
-    print(len(cs))
-    print(is_letter(cs[0]))
-    return

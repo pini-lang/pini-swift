@@ -1,4 +1,0 @@
-main|func() -> ():
-    print(ord("A"[0]))
-    print(ord("字"[0]))
-    return

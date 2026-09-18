@@ -1,3 +1,0 @@
-main|func() -> ():
-    let x: I32 = 9
-    print(x)

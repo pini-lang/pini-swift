@@ -1,3 +1,0 @@
-main|func() -> ():
-    writeFile("out.txt", "写入基准")
-    return

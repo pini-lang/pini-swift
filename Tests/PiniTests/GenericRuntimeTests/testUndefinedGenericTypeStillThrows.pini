@@ -1,3 +1,0 @@
-main|func() -> ():
-    let x = 不存在<I32>()
-    return

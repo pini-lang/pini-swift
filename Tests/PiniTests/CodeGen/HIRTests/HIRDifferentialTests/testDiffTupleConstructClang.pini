@@ -1,8 +1,0 @@
-; 无标签元组构造（常量差异版）：与上一夹具同形，仅常量与运算符不同。
-
-main|func() -> ():
-    var a = 7
-    var b = 8
-    var p = (a, b)
-    print(a * b)
-    return

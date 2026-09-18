@@ -1,8 +1,0 @@
-fib|func(n: I32,) -> (I32,):
-    if n < 2:
-        return n
-    return fib(n - 1) + fib(n - 2)
-
-main|func() -> ():
-    print(fib(10))
-    return

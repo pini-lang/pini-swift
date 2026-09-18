@@ -1,8 +1,0 @@
-; ADR-032：`^err(e)` ≡ `try err(e) else err: return err`——错误值经 handler 的
-; return 作为函数返回值带出（旧「注入返回元组末槽」机制已退役）。
-尝试|func() -> (String,):
-    return ^err("boom")
-
-main|func() -> ():
-    print(尝试())
-    return

@@ -1,4 +1,0 @@
-foo|func() -> ():
-    return
-main|func() -> ():
-    return

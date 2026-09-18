@@ -1,7 +1,0 @@
-main|func() -> ():
-    let a: I32 = 1 + 2 * 3
-    var b = a - 4
-    b = b / 2
-    print(b)
-    print(7 % 3)
-    return

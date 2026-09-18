@@ -1,2 +1,0 @@
-<Serializable>
-    serialize(self) -> (String,)

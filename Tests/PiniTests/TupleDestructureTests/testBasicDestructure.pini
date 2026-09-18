@@ -1,5 +1,0 @@
-main|func() -> ():
-    var (t, e) = (1, "hello")
-    print(t,)
-    print(e,)
-    return

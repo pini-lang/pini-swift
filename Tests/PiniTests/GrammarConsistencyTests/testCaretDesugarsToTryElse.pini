@@ -1,5 +1,0 @@
-; ADR-032 M2：`^` 右值糖定义性脱糖——`^f()` ≡ `try f() else err: return err`，
-; errorVar 恒为合成名 err，handler 恒为单条 return err。
-main|func() -> ():
-    let x = ^f()
-    return x

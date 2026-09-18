@@ -1,3 +1,0 @@
-main|func() -> ():
-    writeFile("__PATH__", "written by pini")
-    return

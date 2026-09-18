@@ -1,5 +1,0 @@
-; ADR-032 M2：表达式位 try-else——varDecl initializer 为 tryExpression，
-; 单行 handler `return e` 将错误值返回给调用方。
-main|func() -> ():
-    let x = try f() else e: return e
-    return x

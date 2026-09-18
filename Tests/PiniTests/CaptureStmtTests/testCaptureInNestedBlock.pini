@@ -1,8 +1,0 @@
-main|func() -> ():
-    var base = 10
-    var f = func () -> (I32,):
-        if true:
-            capture base
-        return base
-    print(f())
-    return

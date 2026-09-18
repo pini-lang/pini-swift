@@ -1,4 +1,0 @@
-main|func() -> ():
-    var x = +5
-    print(x)
-    return

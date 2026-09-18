@@ -1,5 +1,0 @@
-<显示>
-描述|self() -> (String,):
-    return "汪"
-叫声|self() -> (String,):
-    return "喵"

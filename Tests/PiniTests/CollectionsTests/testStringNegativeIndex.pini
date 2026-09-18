@@ -1,4 +1,0 @@
-main|func() -> ():
-    print("hello"[-1])
-    print("hello"[-5])
-    return

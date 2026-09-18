@@ -1,4 +1,0 @@
-main|func() -> ():
-    if is_letter("a"[0]):
-        print(1)
-    return

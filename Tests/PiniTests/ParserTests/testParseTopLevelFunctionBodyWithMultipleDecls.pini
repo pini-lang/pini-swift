@@ -1,5 +1,0 @@
-main() -> ():
-    print("first")
-    return
-other() -> ():
-    return

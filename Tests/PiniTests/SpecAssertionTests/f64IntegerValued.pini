@@ -1,3 +1,0 @@
-main|func() -> ():
-    print(2.0)
-    return

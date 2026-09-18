@@ -1,5 +1,0 @@
-main|func() -> ():
-    let x: Optional<I32> = .some(7)
-    let v = x!
-    print(v,)
-    return

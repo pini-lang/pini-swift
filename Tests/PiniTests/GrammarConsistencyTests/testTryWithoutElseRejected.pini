@@ -1,5 +1,0 @@
-; ADR-032 M2（D2 一步删）：旧 try 块语法 `try expr:` 无 else → 拒绝（常规解析错误，无迁移提示）。
-main|func() -> ():
-    try f():
-        print("x")
-    return

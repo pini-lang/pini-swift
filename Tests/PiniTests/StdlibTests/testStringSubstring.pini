@@ -1,4 +1,0 @@
-main|func() -> ():
-    var s = "hello"
-    print(s.substring(1, 4))
-    return

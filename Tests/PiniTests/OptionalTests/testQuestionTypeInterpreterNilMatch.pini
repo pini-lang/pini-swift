@@ -1,6 +1,0 @@
-main() -> ():
-    var x: ?I32 = nil
-    match x:
-        case nil:
-            print("q-none")
-    return

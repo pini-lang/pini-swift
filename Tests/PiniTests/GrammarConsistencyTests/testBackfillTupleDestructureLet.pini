@@ -1,7 +1,0 @@
-f|func() -> (I32, F64,):
-    return (1, 2.5,)
-main|func() -> ():
-    let (t, e) = f()
-    print(t,)
-    print(e,)
-    return

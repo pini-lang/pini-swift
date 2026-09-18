@@ -1,7 +1,0 @@
-loop|func(n: I32,) -> (I32,):
-    return loop(n)
-
-main|func() -> ():
-    let r = loop(1)
-    print(r)
-    return

@@ -1,4 +1,0 @@
-main|func() -> ():
-    elif false:
-        print("B",)
-    return

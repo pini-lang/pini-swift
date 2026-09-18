@@ -1,3 +1,0 @@
-<Printable>
-    describe() -> (String,):
-        return "default"

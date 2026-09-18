@@ -1,6 +1,0 @@
-main|func() -> ():
-    x = 1
-    )bad
-    y = 2
-    ]bad
-    return

@@ -1,3 +1,0 @@
-main|func() -> ():
-    var (a, b, c) = (1, 2)
-    return

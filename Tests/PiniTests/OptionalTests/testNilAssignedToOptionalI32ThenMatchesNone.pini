@@ -1,8 +1,0 @@
-main() -> ():
-    var x: Optional<I32> = nil
-    match x:
-        case none:
-            print("none")
-        case some(v,):
-            print(v)
-    return

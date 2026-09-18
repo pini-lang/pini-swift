@@ -1,5 +1,0 @@
-; ADR-032：单行 handler `pass`（仅语句位）——显式吞掉错误后继续执行后续语句。
-main|func() -> ():
-    try err("ignored") else e: pass
-    print("after")
-    return

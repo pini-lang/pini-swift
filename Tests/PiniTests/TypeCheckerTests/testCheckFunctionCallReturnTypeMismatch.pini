@@ -1,5 +1,0 @@
-getNumber() -> (I32,):
-    return 42
-main|func() -> ():
-    var result = getNumber() + "hello"
-    return

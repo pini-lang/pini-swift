@@ -1,5 +1,0 @@
-; ADR-032 M2：块形式 handler——冒号后换行 + 缩进块，块须以控制流语句终止。
-main|func() -> ():
-    let x = try f() else e:
-        return e
-    return x

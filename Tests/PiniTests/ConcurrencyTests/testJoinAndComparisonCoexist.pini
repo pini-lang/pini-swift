@@ -1,7 +1,0 @@
-three|func() => (I32,):
-    return ok(3)
-
-main|func() -> ():
-    print(1 <= 2)
-    print(wait three())
-    return

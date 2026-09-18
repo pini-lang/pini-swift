@@ -1,4 +1,0 @@
-; ADR-032：`^` 定义性脱糖——^ok(7) ≡ try ok(7) else err: return err，ok 路径求值载荷。
-main|func() -> ():
-    print(^ok(7))
-    return

@@ -1,7 +1,0 @@
-main|func() -> ():
-    while true:
-        if true:
-            print("A",)
-    elif false:
-        print("B",)
-    return

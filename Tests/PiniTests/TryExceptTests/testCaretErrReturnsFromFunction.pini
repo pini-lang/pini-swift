@@ -1,9 +1,0 @@
-; ADR-032：^err(9) ≡ try err(9) else err: return err——err 分支经 handler
-; 的 return 把错误值作为函数返回值带出（替代旧 UnwrapErrSignal 注入末槽）。
-caller|func() -> (I32,):
-    return ^err(9)
-
-main|func() -> ():
-    var r = caller()
-    print(r)
-    return

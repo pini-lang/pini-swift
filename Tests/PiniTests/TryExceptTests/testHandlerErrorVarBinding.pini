@@ -1,6 +1,0 @@
-; ADR-032：handler 内 errorVar 绑定到错误值。
-main|func() -> ():
-    try err("my error msg") else e:
-        print(e)
-        return
-    return

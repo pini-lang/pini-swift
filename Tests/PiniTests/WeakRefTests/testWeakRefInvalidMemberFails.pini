@@ -1,7 +1,0 @@
-{节点}
-值: I32 = 10
-main|func() -> ():
-    var obj = 节点()
-    var weak = WeakRef(obj)
-    var x = weak.不存在
-    return

@@ -1,3 +1,0 @@
-main|func() -> ():
-    var x: I32 = ().0
-    return

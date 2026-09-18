@@ -1,4 +1,0 @@
-greet|func(name: String,) -> ():
-    return
-main|func() -> ():
-    return

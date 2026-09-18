@@ -1,5 +1,0 @@
-main|func() -> ():
-    var m = [[1, 2], [3, 4]]
-    var n = m
-    m[0][0] = 99
-    return

@@ -1,4 +1,0 @@
-main|func() -> ():
-    else:
-        print("B",)
-    return

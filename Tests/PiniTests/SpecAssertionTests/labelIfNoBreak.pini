@@ -1,8 +1,0 @@
-main|func() -> ():
-    var k = 0
-    tag|if k == 0:
-        print("then")
-    else:
-        print("else")
-    print("after")
-    return

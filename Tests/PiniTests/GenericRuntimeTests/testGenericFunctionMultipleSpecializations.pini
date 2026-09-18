@@ -1,6 +1,0 @@
-identity|func<T>(x: T) -> (T,):
-    return x
-main|func() -> ():
-    print(identity<I32>(x = 7))
-    print(identity<String>(x = "hi"))
-    return

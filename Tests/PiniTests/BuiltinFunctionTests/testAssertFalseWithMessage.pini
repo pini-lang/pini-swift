@@ -1,3 +1,0 @@
-main|func() -> ():
-    assert(false, "参数必须为正数")
-    return

@@ -1,7 +1,0 @@
-[main|import]
-helper = "../helper"
-
-main|func() -> ():
-    var r = helper.加法(1, 2)
-    print(r)
-    return

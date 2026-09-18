@@ -1,6 +1,0 @@
-add(a, b,) -> ():
-    print(a + b)
-    return
-main|func() -> ():
-    add(1, 2)
-    return

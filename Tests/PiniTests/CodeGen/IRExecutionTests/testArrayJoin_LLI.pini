@@ -1,5 +1,0 @@
-main|func() -> ():
-    var a = ["a", "b", "c"]
-    print(a.join("-"))
-    print(["x", "y"].join("+"))
-    return

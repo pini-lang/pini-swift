@@ -1,8 +1,0 @@
-main|func() -> ():
-    var k = 0
-    outer|if k == 0:
-        print("before")
-        break outer
-        print("never")
-    print("after")
-    return

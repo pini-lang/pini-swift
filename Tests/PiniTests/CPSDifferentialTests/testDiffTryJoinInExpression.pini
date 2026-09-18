@@ -1,7 +1,0 @@
-; ADR-032：try-else 表达式位 + operand 内 await（CPS 挂起对齐）——ok 路径求值载荷。
-child|func() => (I32,):
-    return ok(7)
-
-main|func() => (I32,):
-    print(try (await child()) else e: return)
-    return ok(0)

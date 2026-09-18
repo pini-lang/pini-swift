@@ -1,5 +1,0 @@
-main|func() -> ():
-    var lst = Array<String>()
-    lst.join("-")
-    lst.foo()
-    return

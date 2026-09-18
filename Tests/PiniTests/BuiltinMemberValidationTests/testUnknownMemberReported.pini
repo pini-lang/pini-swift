@@ -1,4 +1,0 @@
-main|func() -> ():
-    var s = "Hello"
-    print(s.uppr())
-    return

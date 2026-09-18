@@ -1,3 +1,0 @@
-main() -> ():
-    var r = 容器 < I32 > 5
-    return

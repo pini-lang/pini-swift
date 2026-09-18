@@ -1,3 +1,0 @@
-排除区测试|test() -> ():
-    assert(加(2, 3,) == 5, "add works in excluded dir too")
-    return

@@ -1,4 +1,0 @@
-bad|func() -> (I32,):
-    return
-main|func() -> ():
-    return

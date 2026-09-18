@@ -1,3 +1,0 @@
-main|func() -> ():
-    print(sqrt(16.0))
-    return

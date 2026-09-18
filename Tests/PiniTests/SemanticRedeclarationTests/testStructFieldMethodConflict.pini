@@ -1,6 +1,0 @@
-(Conflict)
-x: I32
-
-((Conflict))
-x|self() -> ():
-    return

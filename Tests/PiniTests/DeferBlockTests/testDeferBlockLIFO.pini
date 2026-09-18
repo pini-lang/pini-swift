@@ -1,8 +1,0 @@
-main|func() -> ():
-    defer print("single")
-    defer:
-        print("b1")
-        print("b2")
-    defer print("single2")
-    print("body")
-    return

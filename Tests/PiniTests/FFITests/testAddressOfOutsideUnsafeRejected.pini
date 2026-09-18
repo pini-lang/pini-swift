@@ -1,5 +1,0 @@
-main|func() -> ():
-    var x: I64 = 1
-    var p = &x
-    print("x")
-    return

@@ -1,3 +1,0 @@
-main() -> ():
-    var m = 映射<String, I32>()
-    return

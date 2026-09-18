@@ -1,7 +1,0 @@
-{测试对象}
-值: I32 = 42
-main|func() -> ():
-    var obj = 测试对象()
-    var weak = WeakRef(obj)
-    print(weak.isAlive)
-    return

@@ -1,8 +1,0 @@
-main() -> ():
-    var x = Optional.none
-    match x:
-        case some(v,):
-            print("some")
-        case none:
-            print("none")
-    return

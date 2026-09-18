@@ -1,4 +1,0 @@
-main|func() -> ():
-    print("a", "b", 3)
-    print("single")
-    return
