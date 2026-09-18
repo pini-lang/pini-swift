@@ -687,6 +687,22 @@ def main():
                          "--show-bin-path` so the probe reads that build, and "
                          "repeated in the hint below when it is missing")
     args = ap.parse_args()
+
+    # SEALED (G-6c-1). The AST reference arm this probe drives was deleted with
+    # the AST walk, so `interp-ast` and `interp-hir` are now the same command and
+    # every verdict below would compare one engine against itself while still
+    # reporting three channels. A wrong reading that looks well-formed is the
+    # failure mode this file's own docstring spends most of its words on, so it
+    # refuses to produce one. The two-channel rework is the next commit in the
+    # same batch and removes this block.
+    print("hir-parity-probe is SEALED: the AST reference arm retired with the AST walk.\n"
+          "  `PINI_INTERP_ENGINE` no longer selects an engine, so interp-ast and\n"
+          "  interp-hir would be the same implementation and every parity verdict\n"
+          "  would report agreement that nothing measured. The two-channel rework\n"
+          "  is in flight (same batch, next commit); see the G-6c batch record.",
+          file=sys.stderr)
+    return 1
+
     roots = args.root or DEFAULT_ROOTS
     RUN_TIMEOUT = args.timeout
     OUT = args.out

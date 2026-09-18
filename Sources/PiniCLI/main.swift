@@ -780,51 +780,23 @@ func absoluteProgramBase(_ path: String) -> String {
  return abs
 }
 
-// MARK: - 解释器引擎开关（LR-4 P1-3）
+// MARK: - 执行引擎（LR-4 P4-γ）
 
-/// `pini run` 用哪个引擎执行。
-///
-/// `ast` = AST 解释器（`Interpreter`），默认；`hir` = HIR 执行引擎（`HIRExecutor`），
-/// 即 LR-4 统合的目标形态。两者是同一语义的**两份独立实现**——三通道探针因此比的是
-/// 两个真实实现，而不是让一条管线与自己比对（M6b 翻转后第三通道正是这种情况）。
-/// 从环境变量 `PINI_INTERP_ENGINE` 读引擎开关。
-///
-/// ⭐ **默认值已于 LR-4 P4 本体翻转为 `hir`**（2026-09-16）。此前默认是 `ast`。
-/// 翻转后的语义：**不设该变量 ⇒ 走 HIR**；设成 `ast` 是**显式回落**，暂时只服务两件事 ——
-/// 三通道探针需要一个 AST 参照臂，以及翻转之后各批（测试面迁移、删除 AST 走查）的过渡期。
-/// ⚠️ 开关本身按 `D-B6` **随 AST 走查一并退役**（与 `PINI_HIR_PIPELINE` 在 M6b 的处置同形）；
-/// 那一步属于「删除 AST 走查」那一批，不是本批 —— 本批只动默认值，所以回落路径仍在。
-///
-/// 用环境变量而非 CLI 选项，两条理由。其一，`pini run` 把路径之后的参数**原样**交给
-/// 脚本（`argv` 内建），是位置式、无 flag 解析——加 `--engine` 会与脚本参数歧义。其二，
-/// LR-5 已裁本项目**不设 CLI 兼容开关**。
-///
-/// 取值非法时**报错而非静默回退**：静默回退会让默认引擎跑出结果，而调用方以为测的是另一个
-/// ——那次运行的每一个读数都是假绿。
-func selectedInterpreterEngine() -> InterpreterEngine {
- guard let raw = ProcessInfo.processInfo.environment["PINI_INTERP_ENGINE"],
- !raw.isEmpty else {
- // LR-4 P4：默认引擎 = HIR。翻转前的默认是 `.ast`。
- return .hir
- }
- switch raw.lowercased() {
- case "ast": return .ast
- case "hir": return .hir
- default:
- printError("Error: PINI_INTERP_ENGINE='\(raw)' 无效；可选 ast | hir。")
- exit(1)
- }
-}
+// ⛔ 此处原有一个引擎开关（环境变量 `PINI_INTERP_ENGINE`，取值 `ast | hir`）。
+// `G-6c` 按 D-B6 把它随 AST 走查一并退役：走查删除后只剩一台引擎，「选哪台」
+// 不再有第二个答案。取值的合法性检查也一并消失 —— 它当初防的是「静默回退到另一台
+// 引擎跑出结果，而调用方以为测的是另一台」，没有第二台引擎就没有那个失败方式。
+// 刻意**不做**「读到 ast 就报错」的兼容闸：本项目不设 CLI 兼容开关（LR-5），
+// 且一个已无意义的变量名不构成契约。
 
 /// 单文件走 HIR 执行引擎（LR-4 P1-3）。
 ///
 /// 前段与 `typeCheckThenGenerate` 一致，理由也相同：lowering 需要 checker 的
-/// `typeInference`，故本路径**必须跑类型检查**。而 AST 通道的单文件路径只跑语义门禁
-/// （沿用既有宽松口径），于是一个带类型错误的程序会在一侧运行、在另一侧被拒。该差异是
-/// **固有的**——HIR 是类型化树，没有推断出的类型就 lower 不出来——故如实登记，不在此处抹平。
+/// `typeInference`，故本路径**必须跑类型检查**。单文件 run 的类型层因此比语义层更严
+/// （语义门禁之上又过一遍类型）——HIR 是类型化树，没有推断出的类型就 lower 不出来，
+/// 这是该形态**固有的**，不是可抹平的实现细节。
 ///
-/// 目录/模块运行**刻意不接**：整包 lower 再执行是更大的面，而等价探针驱动的是单文件。
-/// 该开关下遇到目录**明确报错**，不静默回落到 AST 引擎。
+/// 目录/模块运行由 `runHIRPackageEngine` 承担：整包 lower 再执行，见该函数。
 ///
 /// `programBase` 与 AST 通道取同一个值（入口文件所在目录）：IO 节点的非前缀相对路径
 /// 必须两通道解析到同一份文件。否则同一程序在两条通道上读到的不是同一个文件，而且不会
@@ -852,8 +824,13 @@ private func runHIREngine(module: Module, source: String, programBase: String?,
 ///
 /// 整包降载（`HIRLowerer.lower(package:)`）早已存在，且已在 LLVM 的包 emit 通道上使用；
 /// 本函数把同一条降载结果交给 HIR 执行器，使 `pini run <目录>` 与单文件路径一样走
-/// 「共享前端 → 按开关分派」。调用方**必须**已完成包级语义与类型检查
+/// 「共享前端 → 执行」。调用方**必须**已完成包级语义与类型检查
 /// （与 `runHIRPackageEmit` 同一个前置约定）。
+///
+/// ⚠️ 与 AST 时代的包路径有一处**已立案的行为差**：清单声明了入口（`[[bin]].entry` /
+/// `[lib].entry`）时，旧路径会给引擎注入 `entryFiles` 并校验「`main` 是否定义在声明入口里」，
+/// 本路径不校验。实测该检查**自 P4 翻转起在默认路径上已不执行**（默认即本路径），
+/// 故删除 AST 走查并不改变用户可见行为；缺陷与处置见工单 `issue-cli-package-entry-check-2026-09-18`。
 ///
 /// `moduleRoot` 取与解释器模块路径同一个基准（含清单的目录）：IO 节点的非前缀相对路径
 /// 必须两通道解析到同一份文件，否则会静默读到 CWD 里的同名文件，且不报错。
@@ -872,8 +849,6 @@ let executor = HIRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConf
 /// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
 /// - 目录无 `pini.toml` → 无法定位单一入口，报错（运行一组独立程序无意义）。
 func runRunPath(_ path: String, argv: [String] = []) {
- // LR-4 P1-3：引擎在共享前端之后才选定，故两条通道看到同一份「已接受」的程序。
- let engine = selectedInterpreterEngine()
  var isDir: ObjCBool = false
  guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
  printError("Error: 路径不存在：\(path)"); exit(1)
@@ -894,18 +869,10 @@ func runRunPath(_ path: String, argv: [String] = []) {
  } catch {
  printError(formatCLIError(error: error, source: source)); exit(1)
  }
- // LR-4 P1-3：语义门禁之前是共享前端，之后按开关分派执行引擎。
- // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。两条通道传同一个值，
- // 否则非前缀相对路径会在 HIR 侧静默读到 CWD 的同名文件。
+ // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。IO 节点的非前缀相对路径
+ // 以它为基准解析，否则会在 HIR 侧静默读到 CWD 里的同名文件。
  let programBase = absoluteProgramBase(path)
- if engine == .hir {
  do { try runHIREngine(module: module, source: source, programBase: programBase, argv: argv) }
- catch { printError(formatCLIError(error: error, source: source)); exit(1) }
- return
- }
- let interpreter = Interpreter(programBase: programBase)
- interpreter.processArguments = argv
- do { try interpreter.run(module: module) }
  catch { printError(formatCLIError(error: error, source: source)); exit(1) }
  return
  }
@@ -942,35 +909,23 @@ func runRunPath(_ path: String, argv: [String] = []) {
  }
  // 与 runCheckPath 模块分支对齐：run 前先执行语义 + 类型层可见性 enforce，
  // 避免 `pini run` 绕过 4 级访问控制（P4 复审 HIGH：模块 run 路径此前不 enforce）。
- // LR-4 P4-1a：门禁之后按开关分派执行引擎，与单文件路径同形。
+ // LR-4 P4-1a：门禁之后执行，与单文件路径同形。
  do {
  let analyzer = SemanticAnalyzer()
  try analyzer.analyze(package: pkg)
  emitSemanticWarnings(analyzer)
  let checker = TypeChecker()
  try checker.check(package: pkg)
- if engine == .hir {
  // 降载会在 checker 弹出作用域之后重推 match scrutinee 的类型，
  // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
  checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+ // 批 5（G58，D-1）：模块基准 = 模块根（含 pini.toml 的目录）。
  try runHIRPackageEngine(package: pkg, moduleRoot: path,
  typeInference: checker.typeInference,
  ffiConfig: manifest.ffi ?? .default, argv: argv)
- return
- }
  } catch {
  printError(formatCLIError(error: error, source: nil)); exit(1)
  }
- // 批 5（G58，D-1）：模块基准 = 模块根（含 pini.toml 的目录）。
- let interpreter = Interpreter(ffiConfig: manifest.ffi ?? .default,
- programBase: absoluteProgramBase(path))
- interpreter.processArguments = argv
- // G52 §9 Def-3：注入清单声明的入口文件（`[[bin]].entry` / `[lib].entry`）。
- // 拼接方式与 loadDirectory 构造 fileName 的基准一致（模块根原样拼接），
- // 解释器侧 checkEntryConsistency 按相等/后缀比对。空集 = 未声明，不介入。
- interpreter.entryFiles = Set(manifest.entryPoints.map { path + "/" + $0 })
- do { try interpreter.run(package: pkg) }
- catch { printError(formatCLIError(error: error, source: nil)); exit(1) }
 }
 
 // MARK: - 调试器（P7-4）

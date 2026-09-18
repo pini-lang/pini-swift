@@ -22,10 +22,10 @@ import Foundation
 ///
 /// WHAT IT DOES NOT OFFER
 ///
-/// The suspend/concurrency surface (`suspendMode`, `scheduler`,
-/// `runSuspendable`, ..., carried by `SuspendEvaluator`) is not implemented on
-/// the HIR engine — and that is now a decision rather than a gap: `ADR-043`
-/// retires the suspension implementation, so no caller needs it here.
+/// The suspension back end that released the OS thread across an `await` is not
+/// here, and that is a decision rather than a gap: `ADR-043` retired it, nothing
+/// published ever reached it, and it went out with the walk it was built on. The
+/// blocking join is the semantics this entry point runs.
 ///
 /// The `runTests` entry point and dynamic-library FFI loading used to be on
 /// this list. Both landed in P4-gamma `G-4`: the test entry points are
