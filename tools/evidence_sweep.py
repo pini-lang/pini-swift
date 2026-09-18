@@ -19,6 +19,20 @@ carrier has to keep the trace of a deleted three-digit number it writes it as
 violation. `--check` reports those and exits non-zero, and hooks/pre-commit
 runs it on every commit, so a fresh citation cannot land.
 
+Second gate, on the entries themselves (2026-09-19): an entry's `artifacts`
+list is a set of *pointers*, and a pointer can outlive what it points at. The
+citation-mark gate above never noticed -- it validates a format, and a path to
+a file that no longer exists is still well-formed. So an entry whose carriers
+are gone must say so, once, in `artifact_status`; `--check` fails on either
+direction of the disagreement (dangling carriers with no mark, or a mark with
+nothing dangling), because a mark that is not maintained stops being read.
+
+The split is deliberate: `artifacts` is enforced, and `command` / `output` /
+`note` / `claim` are only counted. Those four describe what was run and
+observed at the time; rewriting them to drop a vanished path would be editing
+a measurement record, and the deletion of a carrier does not unmake the
+measurement. Enforcement follows the pointer; reporting follows the record.
+
 Two-phase sweep (D-4): delete what a *previous* run marked PENDING_DELETE, then
 recompute statuses on what survives. Nothing is removed in the same run that
 marks it. The minimum interval between sweeps (24 h, meta.last_sweep) is what
@@ -78,6 +92,9 @@ EID = re.compile(r"\bE-(\d{3})\b")
 CONT = re.compile(r"(?:\s*(?:\.\.?|/|、|,)\s*(?:E-)?\d{3}\b)")
 MARK = "源已删除"          # 标注正文；`（源已删除）` 与并入括号的 `（源已删除；` 都含它
 MARK_WINDOW = 8            # 标注须落在引用组尾之后这么多个字符内
+CARRIER_FIELD = "artifact_status"
+CARRIER_MARK = "carrier-deleted"   # 该条 artifacts 里有实存不存在的载体
+RECORD_FIELDS = ("command", "output", "note", "claim")   # 只计数，不改写
 HEADER = re.compile(r"^\[")
 KV = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$')
 
@@ -106,6 +123,52 @@ def parse_ts(raw, default_tz=TZ):
 
 def fmt(stamp):
     return stamp.astimezone(TZ).replace(second=0, microsecond=0).isoformat()
+
+
+PATHISH = re.compile(
+    r"(?<![A-Za-z0-9_./@-])([A-Za-z0-9_][A-Za-z0-9_./@-]*/[A-Za-z0-9_./@-]+)"
+)
+
+
+def artifact_audit(root, entries):
+    """Audit the pointer field against the filesystem, and count the record fields.
+
+    Existence is tested on disk, not in the version index: an index holds files
+    and not directories, so a path naming a surviving directory would read as
+    dangling and a whole build manifest could be misreported. (Cost of getting
+    this wrong, measured 2026-09-19 in the other repo: one false class of hits.)
+
+    Returns (marked, unmarked, stale, carriers, missing, record_hits):
+      marked    [(id, gone_count)] -- carriers gone and the entry says so
+      unmarked  [(id, [gone...])]  -- carriers gone and it does not
+      stale     [id]               -- the mark is present but nothing is gone
+      carriers  total pointers listed across all entries
+      missing   how many of them do not exist
+      record_hits  path-shaped tokens inside the record fields that do not exist
+      (Record fields are reported, never enforced: they say what was observed.)
+    """
+    marked, unmarked, stale = [], [], []
+    carriers = missing = record_hits = 0
+    for entry in entries:
+        arts = [a for a in (entry.get("artifacts") or []) if a]
+        gone = [a for a in arts if not (root / a).exists()]
+        carriers += len(arts)
+        missing += len(gone)
+        has_mark = entry.get(CARRIER_FIELD) == CARRIER_MARK
+        if gone and has_mark:
+            marked.append((entry["id"], len(gone)))
+        elif gone:
+            unmarked.append((entry["id"], gone))
+        elif has_mark:
+            stale.append(entry["id"])
+        for field in RECORD_FIELDS:
+            value = entry.get(field)
+            if not isinstance(value, str):
+                continue
+            for token in PATHISH.findall(value):
+                if not (root / token).exists():
+                    record_hits += 1
+    return marked, unmarked, stale, carriers, missing, record_hits
 
 
 def classify(validated_at, now):
@@ -327,12 +390,41 @@ def main():
             log("  %s:%d  %s" % (rel, lineno, token))
         if len(unannotated) > 40:
             log("  ... and %d more" % (len(unannotated) - 40))
+
+        marked, unmarked, stale, carriers, missing, record_hits = artifact_audit(
+            root, entries
+        )
+        log("artifact carriers: %d listed / %d missing / %d entries marked %s"
+            % (carriers, missing, len(marked), CARRIER_MARK))
+        log("record fields naming a missing path (reported, not enforced): %d"
+            % record_hits)
+        for eid, gone in unmarked[:20]:
+            log("  UNMARKED  %s  (%d gone: %s%s)"
+                % (eid, len(gone), ", ".join(gone[:2]),
+                   ", ..." if len(gone) > 2 else ""))
+        if len(unmarked) > 20:
+            log("  ... and %d more entry/entries" % (len(unmarked) - 20))
+        for eid in stale[:20]:
+            log("  STALE MARK  %s  (mark present, no carrier is gone)" % eid)
+
         if args.check:
             if unannotated:
                 log("check FAILED: %d unannotated evidence number(s); write "
                     "`E-NNN（源已删除）` or drop the number" % len(unannotated))
                 return 1
-            log("check ok (parse + schema + citation marks)")
+            if unmarked:
+                log("check FAILED: %d entr(y/ies) list a carrier that does not "
+                    "exist and carry no `%s = \"%s\"` -- add the mark, or "
+                    "re-point the artifact"
+                    % (len(unmarked), CARRIER_FIELD, CARRIER_MARK))
+                return 1
+            if stale:
+                log("check FAILED: %d entr(y/ies) carry `%s = \"%s\"` while "
+                    "every listed carrier exists -- drop the mark, or the mark "
+                    "stops being read"
+                    % (len(stale), CARRIER_FIELD, CARRIER_MARK))
+                return 1
+            log("check ok (parse + schema + citation marks + artifact carriers)")
         return 0
 
     # Only delete if the entry is *still* overdue. An entry marked in a previous
