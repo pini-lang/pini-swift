@@ -221,7 +221,7 @@ public final class ProgramRunner: DebugHookHost {
         let executor = HIRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
         executor.processArguments = processArguments
-        executor.prepare(module: module)
+        try executor.prepare(module: module)
         var results: [TestRunResult] = []
         for function in module.functions where function.isTest {
             if let scope = fileScope, !scope(function.sourceFile) { continue }

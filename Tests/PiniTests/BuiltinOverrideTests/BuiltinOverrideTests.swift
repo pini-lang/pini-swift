@@ -5,52 +5,34 @@ import Foundation
 /// 用户扩展方法覆盖内建成员方法（H-3，2026-08-31 落地）：
 ///   内建类型（String/Array）值的成员派发为三级——**用户扩展 > 语言内标准库 > 宿主原生**。
 ///   用户扩展按名匹配（非按签名），既可覆盖同名内建成员，也可新增内建表没有的方法。
-///   IR 后端对内建类型用户扩展维持不支持（既有 Experimental 边界，E6-002，回归锁）。
+///   后端面（**边界已关闭**，`G-6a`，2026-09-18）：扩展方法降载成普通 `module.functions`，
+///   HIR 与 LLVM 两条通道都按名分派——实测 `emit` rc=0 且 IR 含 `方法__类型`，`run-llvm` 端到端执行正确。
 /// 驱动链路与 CLI `pini run` 同构：stdout 捕获（确定性环境，dup2 接管）。
 final class BuiltinOverrideTests: XCTestCase {
 
-    /// 与 IOTests 同构的运行 harness：真实引擎 + stdout 捕获。
+    /// 与 IOTests 同构的运行 harness：真实引擎 + stdout 收集（`ProgramRunner`）。
     ///
-    /// ⚠️ **本文件在 `G-5` 中被实测判定为「不可换腿」，驱动入口保持 AST 走查。**
-    ///
-    /// 原因是实测而非推断：换成 HIR 后 6 条用例红 4 条 ——
+    /// `G-5` 曾把本文件判为「不可换腿」，依据是实测而非推断：换成 HIR 后 6 条用例红 4 条 ——
     /// `testArrayNewMethodOverride` / `testStringNewMethodAddition` 在**降载期**即被拒
     /// （`HIR lowering error … method 'len' calls are later grids`），而
     /// `testStringContainsOverride` / `testUnoverriddenStillBuiltin` 输出的
     /// 是**内建行为**（`true`）而期望**用户扩展行为**（`false`）——
     /// 即 HIR 侧**要么不实现、要么不遵守「用户扩展 > 语言内标准库 > 宿主原生」的三级派发**。
     ///
-    /// ⇒ 本文件的 `Interpreter` **不是参照臂，而是被测能力的唯一实现**：
+    /// ⇒ 本文件的 `Interpreter` **不是参照臂，而是被测能力的唯一实现** ——
     /// 它测的是「内建类型的用户扩展方法」（H-3），AST 引擎支持、HIR 引擎不支持。
-    /// 分类订正与缺口登记见工单「内建类型的用户扩展方法未在 HIR 落地」（`G-5` 批新立）；
-    /// `G-6` 删除本引擎之前必须先把该能力补到 HIR 或显式退役这 6 条用例。
+    /// `G-6a` 把三级派发补到 HIR 之后，本 harness 随之换腿（该批实测两个后端都已可用）。
     private func runProgram(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "test.pini")
         let tokens = try lexer.tokenize()
         let parser = Parser(tokens: tokens, fileName: "test.pini")
         let module = try parser.parseModule()
 
-        let outPipe = Pipe()
-        let originalStdout = dup(STDOUT_FILENO)
-        setvbuf(stdout, nil, _IONBF, 0)
-        dup2(outPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-
-        do {
-            let interpreter = Interpreter()
-            try interpreter.run(module: module)
-        } catch {
-            fflush(stdout)
-            outPipe.fileHandleForWriting.closeFile()
-            dup2(originalStdout, STDOUT_FILENO)
-            close(originalStdout)
-            throw error
-        }
-
-        fflush(stdout)
-        outPipe.fileHandleForWriting.closeFile()
-        dup2(originalStdout, STDOUT_FILENO)
-        close(originalStdout)
-        return String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let runner = ProgramRunner()
+        var segments: [String] = []
+        runner.outputSink = { segments.append($0 + "\n") }
+        try runner.run(module: module)
+        return segments.joined(separator: "")
     }
 
     private func runFixture(_ name: String) throws -> String {
@@ -93,19 +75,21 @@ final class BuiltinOverrideTests: XCTestCase {
                        "自由函数通道与成员通道互不影响")
     }
 
-    /// 意图：IR 后端对内建类型用户扩展维持不支持（既有 Experimental 边界——回归锁）。
-    /// 门码随管线收敛：HIR 的各个未实现门共用一个 E6 未支持特征码，见 HIRLoweringError 注释。
-    func testIRUnsupportedForBuiltinExtension() throws {
+    /// **事实已变**（LR-4 `G-6a`，2026-09-18）：降载层现在**接受**内建类型的用户扩展方法，
+    /// 原断言「`HIRLowerer` 抛 `E6-004`」不再成立，改为断言**降载成功**。
+    ///
+    /// 该边界（规范构造级索引表里 H-3 那行的「IR 后端对内建类型用户扩展不支持」）已在本批**关闭**：
+    /// 扩展方法降载成普通 `module.functions`（IR 名 `方法__类型`），两个后端都按名分派 ⇒
+    /// **无残留后端缺口** —— 区别于 `IRExecutionTests` 的字符内建那类「降载通了、LLVM 仍缺运行时段」。
+    /// 实测（2026-09-18，当前构建）：`pini emit` 本夹具 **rc=0** 且 IR 含 `shout__String`；
+    /// `pini run-llvm` **端到端输出 `!!!`**；覆盖支（`testStringContainsOverride`）得 `false`。
+    ///
+    /// 夹具名沿用发现时的 `testIRUnsupportedForBuiltinExtension`（与 `.pini` 同名，
+    /// 与 `testIsLetterLowersAfterG2a` 同型：改名的是用例，不是夹具）。
+    func testBuiltinExtensionLowersAfterG6a() throws {
         let source = try loadPiniFixture("testIRUnsupportedForBuiltinExtension", filePath: #filePath)
         let tokens = try Lexer(source: source, fileName: "test.pini").tokenize()
         let module = try Parser(tokens: tokens, fileName: "test.pini").parseModule()
-        XCTAssertThrowsError(try HIRLowerer.lower(module: module, typeInference: nil)) { error in
-            guard let hirError = error as? HIRLowerer.HIRLoweringError else {
-                XCTFail("应为 HIRLoweringError，实际: \(error)")
-                return
-            }
-            XCTAssertTrue(hirError.code.hasSuffix("-004"),
-                          "应落在 E6 未支持特征桶，实际: \(hirError.code)")
-        }
+        XCTAssertNoThrow(try HIRLowerer.lower(module: module, typeInference: nil))
     }
 }

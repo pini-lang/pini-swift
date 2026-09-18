@@ -593,3 +593,56 @@ try-else 迁移前的旧形态），与 `IRExecutionTests` 用 `XCTSkipIf(true, 
 `emit` 对 `argv` 一类**静默产出引用未定义符号的 IR**（`docs/issue-hir-argv-llvm-runtime-surface-2026-09-16.md`）。
 ⇒ 二者使 `LLVM` 作参照臂时**会漏判某些失败**；本批须**逐夹具标注**哪些落 golden 正是因此。
 
+## G-6a 前置处置（三张单补实现）— ✅ **已交付**（2026-09-18）
+
+**对象**：`§8.2` 判据 3 要求「删走查前须先处置 `pini dbg` 的两条 AST-唯一入口」，加上 `G-5`
+实测出的另两处「换了腿就红」。三张单原**均无处置方式**，本批按用户裁决取「**全补实现**」
+（不把能力缺口翻译成测试期望被调低）。三批制的第一批（`G-6a`）。
+
+### 与规划的偏差（两处，均为实测订正）
+
+1. ⚠️ **命令名订正**：工单里 4 处写 `pini dbg`，实际子命令是 **`pini debug`**
+   （`Sources/PiniCLI/main.swift` 的 `case "debug"`）。对象（那两个函数）不受影响。
+2. ⚠️ **一处裁决前提实测失效**：原计划把 `testIRUnsupportedForBuiltinExtension` 的断言
+   「从降载期拒绝**改指到 LLVM 侧仍拒绝**」。实测**该前提不成立** —— 处置 C 的实现把
+   **LLVM 侧也一并带通**了（扩展方法降载成普通 `module.functions` ⇒ IRGen 按名调用即可，
+   **不需要**给 `IREmitter` 加分派）。故照 `IRExecutionTests.testIsLetterLowersAfterG2a`
+   的先例改为**正向断言**（改用例名、保留夹具名），并把 spec `§2.4.1` 的 H-3 行边界标记
+   为**已关闭**（状态列 `✅（解释器 + HIR + LLVM）`）。
+
+### 三项处置与证据（各自红 → 绿）
+
+| # | 单 | 处置 | 灯基线 → 结果 |
+|---|---|---|---|
+| A | `foreign` 符号未找到不 fail-fast | `HIRExecutor.prepare(module:)` 改 `throws`，登记后**急切解析**；链序照解释器：**先 `RuntimeLibcShims` 白名单、再 `dlsym`**（顺序反了会把 `cstr`/`puts` 误报为找不到） | `FFIModuleTests` **1 红 → 0**（`did not throw`，与工单预测逐字吻合） |
+| B | `pini debug` 两条入口恒 AST | `runDebugFile` / `runDebugDirectory` 改指 `HIRExecutor`（照测试侧 `dbgMakeRunHIR` 三步）；`DAPServer` 默认路径把 `check`/`lower` 一并放进 `start`，三类错误走同一上报通道 | `DebuggerTests` **17 passed** + **CLI 实机冒烟**（该套件走自己的 HIR helper，测试绿**不算数**）：`b 3` 后确停在 3 行；目录模式停在 `package-demo/main.pini:20` 并跑完 |
+| C | 内建类型的用户扩展方法未在 HIR 落地 | 根因 = 扩展块注册要求 `nominals[targetType] != nil`，内建类型不是名义声明 ⇒ 方法体从未降载。修法 = 模块级**预扫描**（须先于函数降载）+ `lowerMemberCall` 最前加**用户扩展优先**分支 + 两个类型映射 helper | `BuiltinOverrideTests` **4 红 → 0** |
+
+⭐ **处置 C 的附带结论**：`BuiltinOverrideTests` 的 6 条用例从「AST 臂撑」换成 HIR 臂后**全绿**，
+即 `G-5` 判定的「不可换腿」第三条**已被消解**（该判定原本成立，是因为能力缺失而非参照臂问题）。
+
+### 收口判据（全部现测）
+
+| 判据 | 读数 |
+|---|---|
+| 判据 1 **新增红 0** | 同法重测两侧：基线 **57**（块 23+14+20）→ 本批 **56**（22+14+20）；**逐条集合比对 = 新增红 0 · 转绿 1 · 仍红 56**。转绿那条 = `FFITests.testUndefinedNativeFunctionRejected`（处置 A 的连带） |
+| 判据 2 探针 | 七槽**逐项相同**：OK 255 / PACKAGE_MEMBER 27 / FRONTEND_FAIL 11 / HARNESS_DEPENDENT 1 / CHANGE_REFERENCE 2 / WARN_CHANNEL_ASYMMETRY 20 / WARN_LLVM_RC_UNPROPAGATED 4（=320）· **FLIP BLOCKERS 0** · **process leaks 0**。⚠️ **不能宣称逐夹具相同** —— 冻结件在 `/tmp` 已被系统清理，本轮只能与记录的七槽计数比分 |
+| 契约 | `tools/hir-contract-check.py` **clean**（45 expr + 17 stmt = 62，三锚点各 62/62） |
+| 门禁 | 文档链接校验 0 过时 · comment-lint 待批末一并跑 |
+
+⚠️ **重测基线的手法与代价**：判据 1 要求「逐条比对」，而基线清单从不落档（只在 `/tmp`），
+已被清理 ⇒ 采「暂存本轮改动 → 从 `ca5de98` 取回 5 个源码文件 → 跑 → 还原 → `stash pop`」，
+**跑完即验还原**（`git status` 三文件、`stash list` 为空）。同日复核：基线 57 与本批前记录的
+「`G-5` 实测 57」**一致** ⇒ 中间两轮工单巡查的零改动断言得到交叉验证。
+
+⚠️ **一条工具缺陷（新发现，未立案）**：`tools/hir-parity-probe.py:251` 的默认二进制路径写死为
+**`/tmp/pini-build/arm64-apple-macosx/debug/pini`** —— 该布局不是 `swift build --show-bin-path`
+今天写的那套（`out/Products/Debug`）⇒ 不显式设 `PINI_SWEEP_BIN` 就会**量到陈旧二进制**。
+本批两次误读（一度把「同一夹具两条路径结论相反」当成架构矛盾）均由此而来。
+
+### 未做范围
+
+不改 `G-6b` 的对象（四份同构装配整合 · `ReplEvaluator` 的 `.ast` 分支 · 测试侧静态入口 ·
+`InterpreterTests` 改名）· 不动 `G-6c`（删本体、收开关、探针两通道化）· 不 push ·
+不处置三张前置单在册状态（其**归档动作**留待下轮，本批只做实现）。
+
