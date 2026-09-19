@@ -56,8 +56,10 @@ swift build -c release --disable-sandbox
 .build/release/pini run examples/hello.pini
 ```
 
-> 注：仓库根不是 Pini 模块（无 `pini.toml`），对根目录跑 `pini test .` 会逐文件解析整棵树，
-> 并解析到 `examples/probes/`（负向探针，故意不可解析）而报错；冒烟请如上指定文件。
+> 注：仓库根不是 Pini 模块（无 `pini.toml`），对根目录跑 `pini test .` / `check .` 会逐文件解析整棵树，
+> 并在**第一个**不被接受的语料处报错退出（当前是 `examples/probes/foreign-draft-form.pini`）。
+> `examples/probes/` 是 2026-09-05 反录勘测的探针语料（22 个：宿主接受 14 个、拒绝 8 个），
+> 故冒烟请如上指定文件。
 
 ## 5. 使用与安装（可选）
 
