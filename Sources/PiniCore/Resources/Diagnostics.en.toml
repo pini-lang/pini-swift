@@ -118,6 +118,9 @@ message = "cannot pass reference type '{typeName}' to concurrent task '{function
 [E4-014]
 message = "enum case '{caseName}' is constructed positionally; named argument '{label}:' is not allowed (use positional arguments, e.g. `{caseName}(value)`)"
 
+[E4-015]
+message = "the given block type name '{typeName}' cannot be used as a value -- take its default instance through a `using` parameter instead"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

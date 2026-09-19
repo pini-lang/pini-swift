@@ -118,6 +118,9 @@ message = "不能把引用类型 '{typeName}' 传给并发进程 '{functionName}
 [E4-014]
 message = "枚举用例 '{caseName}' 的构造为位置式，不允许具名实参 '{label}:'（请改为位置实参，如 `{caseName}(值)`）"
 
+[E4-015]
+message = "给定块类型名 '{typeName}' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: {typeName}`，体内用 `名.字段`（ADR-001）"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

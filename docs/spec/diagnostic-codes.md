@@ -8,6 +8,9 @@
 > **定位**：错误码体系登记（`DiagnosticProviding` 协议元数据，源码见 `Sources/PiniCore/Common/Diagnostic.swift`）。
 > 渲染由 `ErrorFormatter.formatDiagnostic` 消费（`Error: <类型> [<code>]`）。域段：E0 通用 / E1 词法 / E2 语法 / E3 语义 / E4 类型 / E5 运行时 / E6 IR 生成。
 > 约定：**append-only**——已分配的码不删除、不复用；新码追加段内编号（以 TOML 为登记入口，见上）。
+> ⚠️ **槽名（`{...}` 占位）的取名规则按错误族分**，抄邻族的名字会**静默漏印**（`fill` 找不到键即原样输出，不报错、无门禁）：
+> `TypeError` / `SemanticError` / `RuntimeError` 这一侧，槽名 = **错误 case 的关联值标签**（如 `{typeName}` / `{caseName}` / `{variableName}`）；
+> `HIRLoweringError` 那一侧因是自由文本消息、反射取不到载荷，槽名**固定为 `{feature}`**。新增码时按**本族**规则取名。
 
 ## E0 通用（PiniError）
 
@@ -87,6 +90,7 @@
 | E4-012 | type-private 字段访问 |
 | E4-013 | 跨任务共享引用类型 |
 | E4-014 | 枚举用例位置式构造遇具名实参（声明上下文收紧·规则 3.15） |
+| E4-015 | 给定块类型名出现在值位（默认实例须经 `using` 取用） |
 
 ## E5 运行时（RuntimeError）
 
@@ -115,6 +119,8 @@
 | E6-003 | 不支持的语句 |
 | E6-004 | 不支持的特性 |
 | E6-005 | 类型不匹配 |
+| E6-006 | 无法归并的扩展目标 |
+| E6-007 | 无可用默认实例 |
 
 ## E7 警告段（B2）
 

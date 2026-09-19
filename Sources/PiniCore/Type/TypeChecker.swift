@@ -275,9 +275,28 @@ public final class TypeChecker {
     /// G52 批 1：import 别名集——`别名.符号` 限定调用在类型层暂作不透明处理
     /// （跨模块签名校验随批 3 类型系统深化；运行时由解释器限定派发保证）。
     private var importAliasNames: Set<String> = []
+    /// ADR-001 `P3`：**给定块**的类型名集合。用于把「给定块类型名出现在值位」报成一条
+    /// 可行动的静态诊断（此前落到 IRGen 层报「未声明的变量」，读起来像拼错了变量名）。
+    private var givenBlockTypeNames: Set<String> = []
+    /// `P3` 豁免计数：为正时不做上面那条检查 —— `配置()` 的 callee 位是**显式构造**，不是值位引用。
+    private var givenBlockNameCheckSuppression = 0
+
+    /// ADR-001 `P3`：把模块里的给定块类型名收进来。
+    ///
+    /// ⚠️ **两个入口都必须调**：`check(module:)` 与 `checkCollecting(module:)` 是同一套初始化的
+    /// 两份平行拷贝（各自做 `importAliasNames` / `preregisterTraits` / `registerTopLevelDeclSignature`），
+    /// 而 `pini check` 走的是**后者**。只在一处填充时，另一条路上的本集合恒为空集
+    /// ⇒ 下面那条诊断**静默失效**（实测：改动到位、编译通过、探针一条不报）。
+    private func collectGivenBlockTypeNames(_ module: Module) {
+        givenBlockTypeNames = []
+        for decl in module.declarations {
+            if case .givenDecl(let g) = decl { givenBlockTypeNames.insert(g.name) }
+        }
+    }
 
     public func check(module: Module) throws {
         importAliasNames = Set(module.imports.map { $0.alias })
+        collectGivenBlockTypeNames(module)
         BareCaseResolutionRegistry.reset()
         // 预注册所有 trait 声明，确保后续类型声明（无论出现先后）都能解析其 `traits` 引用
         preregisterTraits(module)
@@ -437,6 +456,7 @@ public final class TypeChecker {
     /// 函数体内逐语句恢复（跨语句/跨方法/跨顶级声明均不中断），单文件可一次性报出多错。
     public func checkCollecting(module: Module) -> [TypeError] {
         importAliasNames = Set(module.imports.map { $0.alias })
+        collectGivenBlockTypeNames(module)
         diagnostics = []
         collecting = true
         defer { collecting = false }
@@ -1813,6 +1833,16 @@ public final class TypeChecker {
     // MARK: - 表达式检查
 
     private func checkExpression(_ expr: Expression) throws {
+        // ADR-001 `P3`：给定块的**类型名不是值** —— 默认实例只能经 `using` 形参取用。
+        // 同名局部变量 / 形参在作用域内时按遮蔽放行（那时这个名字确实是值）：类型名只登记进
+        // **字段表**（`defineStruct`）、不进**变量表**，故 `lookupVariable` 为 nil 即「未被值遮蔽」。
+        if givenBlockNameCheckSuppression == 0,
+            case .identifier(let givenName, let givenLoc) = expr,
+            givenBlockTypeNames.contains(givenName),
+            typeEnv.lookupVariable(name: givenName) == nil
+        {
+            try report(TypeError.givenBlockTypeInValuePosition(typeName: givenName, location: givenLoc))
+        }
         switch expr {
         case .binary(let left, let op, let right, let location):
             try checkExpression(left)
@@ -1885,7 +1915,14 @@ public final class TypeChecker {
             typeEnv.popScope()
 
         case .call(let callee, let arguments, let location):
-            try checkExpression(callee)
+            // ADR-001 §2.6：`配置()` 是**显式构造**（合法），其 callee 位不是值位引用 ⇒ 豁免上面那条检查。
+            if case .identifier(let calleeName, _) = callee, givenBlockTypeNames.contains(calleeName) {
+                givenBlockNameCheckSuppression += 1
+                defer { givenBlockNameCheckSuppression -= 1 }
+                try checkExpression(callee)
+            } else {
+                try checkExpression(callee)
+            }
             for arg in arguments { try checkExpression(arg.expression) }
 
             // P2-1 / P2-1.4 调用点校验：按被调用者形态分派

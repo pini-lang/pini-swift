@@ -217,6 +217,7 @@ extension TypeError: DiagnosticProviding {
         case .inaccessibleField: return "\(DiagnosticDomain.type.rawValue)-012"
         case .sharedReferenceAcrossTasks: return "\(DiagnosticDomain.type.rawValue)-013"
         case .enumCaseArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-014"
+        case .givenBlockTypeInValuePosition: return "\(DiagnosticDomain.type.rawValue)-015"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -234,7 +235,8 @@ extension TypeError: DiagnosticProviding {
             .unknownMember(_, _, let loc), .reassignmentToImmutable(_, let loc),
             .inaccessibleSymbol(_, _, _, let loc), .inaccessibleField(_, _, let loc),
             .sharedReferenceAcrossTasks(_, _, _, let loc),
-            .enumCaseArgumentLabel(_, _, let loc):
+            .enumCaseArgumentLabel(_, _, let loc),
+            .givenBlockTypeInValuePosition(_, let loc):
             return loc
         }
     }

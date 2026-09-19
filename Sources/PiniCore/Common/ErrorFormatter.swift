@@ -252,6 +252,7 @@ public enum ErrorFormatter {
         case .inaccessibleField(let typeName, let fieldName, _): return "字段 '\(typeName).\(fieldName)' 为 type-private（仅 \(typeName) 类型自身的方法可访问）"
         case .sharedReferenceAcrossTasks(let typeName, let paramName, let functionName, _): return "不能把引用类型 '\(typeName)' 传给并发进程 '\(functionName)' 的形参 '\(paramName)'：跨任务共享可变引用不安全。改传值类型（struct），或让 '\(functionName)' 返回结果后用 `joinAll` 汇合"
         case .enumCaseArgumentLabel(let label, let caseName, _): return "枚举用例 '\(caseName)' 的构造为位置式，不允许具名实参 '\(label):'（请改为位置实参，如 `\(caseName)(值)`）"
+        case .givenBlockTypeInValuePosition(let typeName, _): return "给定块类型名 '\(typeName)' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: \(typeName)`，体内用 `名.字段`（ADR-001）"
         }
     }
 

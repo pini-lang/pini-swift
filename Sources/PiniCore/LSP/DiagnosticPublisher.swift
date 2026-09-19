@@ -154,6 +154,7 @@ public struct DiagnosticPublisher {
         case .inaccessibleField(_, _, let loc): return loc
         case .sharedReferenceAcrossTasks(_, _, _, let loc): return loc
         case .enumCaseArgumentLabel(_, _, let loc): return loc
+        case .givenBlockTypeInValuePosition(_, let loc): return loc
         }
     }
 }
