@@ -19,7 +19,7 @@ cssclasses:
 
 Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏感、函数体强制缩进、数据与逻辑分离（类型体字段 + 扩展块方法）等设计理念。
 
-> **构建与使用**：见 [docs/BUILDING.md](docs/BUILDING.md)——本项目以源码分发、用户自行构建（macOS + Swift 6.2+ 工具链，无预编译二进制）。
+> **构建与使用**：见 [docs/BUILDING.md](docs/BUILDING.md)——本项目以源码分发、用户自行构建（macOS + Swift 6.4+ 工具链，无预编译二进制）。
 
 ---
 
@@ -51,7 +51,7 @@ Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏
 ### 环境要求
 
 - macOS 26.x（宿主实现仅支持 macOS，Linux 待稳定后评估）
-- **Swift 6.2+ 工具链**（随 Xcode 或 swift.org 安装；实测锚定 Apple Swift 6.3.3）
+- **Swift 6.4+ 工具链**（随 Xcode 或 swift.org 安装；实测锚定 Apple Swift 6.4）
 - 可选：clang / lli（仅 LLVM 后端 `emit`/`compile`/`run-llvm` 需要；解释器功能不依赖）
 
 ### 构建
