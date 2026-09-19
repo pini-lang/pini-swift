@@ -32,12 +32,12 @@ public final class IREmitter {
 
     /// Enclosing interruptible frames, innermost last. `break` targets `exit`;
     /// `continue` targets `continueTarget` (the step entry when the loop has
-    /// a step block, else the header) — labeled forms (depth > 1, ADR-014)
+    /// a step block, else the header) — labeled forms (depth > 1, 标签语法反转)
     /// target the depth-th frame's `header`. With an empty stack both lower
     /// to a runtime panic (interpreter parity: a bare break/continue
     /// escaping to the top level errors).
     ///
-    /// ADR-039 widened this from "loop frames" to "interruptible frames": a
+    /// 标签 break 定向范围 widened this from "loop frames" to "interruptible frames": a
     /// labeled `if` block is a frame too, so `break 标签` may leave it. The
     /// two resume labels are meaningless for such a frame (`continue` resolves
     /// to loop frames only) and are set to its merge block, which is also its
@@ -69,7 +69,7 @@ public final class IREmitter {
     /// Merge blocks that a `break` jumped to. `emitIf` decides whether to emit
     /// its merge label from whether both branches were terminated by their own
     /// terminators — but a `break` that leaves the `if` *is* a terminator and
-    /// still lands on that label, so the label has to be emitted (ADR-039).
+    /// still lands on that label, so the label has to be emitted (标签 break 定向范围).
     /// Only non-loop frames record here: a loop's exit label is emitted
     /// unconditionally.
     private var breakMergeLabels: Set<String> = []
@@ -673,7 +673,7 @@ public final class IREmitter {
     /// before the jump.
     ///
     /// The frame this leaves may be a labeled `if` rather than a loop
-    /// (ADR-039). Its exit is an `if.end.N` merge label, which `emitIf` would
+    /// (标签 break 定向范围). Its exit is an `if.end.N` merge label, which `emitIf` would
     /// otherwise skip when both branches end in their own terminators — so the
     /// label is recorded as targeted. A loop's exit label needs no such note:
     /// `emitWhile`/`emitForIn` emit it unconditionally.
@@ -709,7 +709,7 @@ public final class IREmitter {
     /// on a matching `continue`, while `header` is that loop's *condition*: for
     /// a `while` with a step this skips the step, and for a `for` it skips the
     /// increment and re-enters the bounds check with the index unchanged. That
-    /// is a defect of its own, older than and independent of ADR-039 (which
+    /// is a defect of its own, older than and independent of 标签 break 定向范围 (which
     /// only widened the frame stack to include `if` blocks), and it is filed
     /// separately rather than fixed here.
     private func emitContinue(depth: Int) {
@@ -1149,7 +1149,7 @@ public final class IREmitter {
         let elseLabel = elseBody != nil ? "if.else.\(id)" : endLabel
         bodyIR += builder.fmtCondBr(cond: cond.ssaName, thenLabelName: thenLabel, elseLabelName: elseLabel) + "\n"
 
-        // ADR-039: a labeled `if` is an interruptible frame, so a `break 标签`
+        // 标签 break 定向范围: a labeled `if` is an interruptible frame, so a `break 标签`
         // inside either branch jumps to `endLabel`. It is not a `continue`
         // target, so its two resume labels are never read; they point at the
         // merge block, which is what "leaving the `if`" resumes at. Each branch
@@ -1195,7 +1195,7 @@ public final class IREmitter {
         }
 
         // The merge block is skippable only when both branches are covered by
-        // an else and both returned — and, since ADR-039, only when no `break`
+        // an else and both returned — and, since 标签 break 定向范围, only when no `break`
         // jumped to it: such a jump is itself a terminator, so without this the
         // label would be branched to but never defined.
         let endTargeted = breakMergeLabels.contains(endLabel)
@@ -1207,7 +1207,7 @@ public final class IREmitter {
         }
     }
 
-    /// `while cond: body [step: block]` (step: G15, ADR-014).
+    /// `while cond: body [step: block]` (step: G15, 标签语法反转).
     ///
     /// Layout — the step block sits between body and the back edge, so an
     /// unlabeled `continue` inside the body lands on the **step entry**

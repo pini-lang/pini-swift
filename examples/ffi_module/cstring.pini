@@ -1,5 +1,5 @@
 ; ════════════════════════════════════════════════════════════════════════
-; ffi_module — FFI & unsafe 完整模块示例（ADR-015 / ADR-017）
+; ffi_module — FFI & unsafe 完整模块示例（FFI 子系统 / 解释器 dlsym 加载）
 ;
 ; 本文件与 pini.toml 同处 examples/ffi_module/ 多文件模块（模块名 ffimodule）。
 ; 演示「配置外部接口 + 以最小不安全范围调用」的完整链路：

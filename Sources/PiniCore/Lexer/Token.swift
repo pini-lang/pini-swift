@@ -278,7 +278,7 @@ public enum Keyword: String, CaseIterable {
  case `case` = "case"
  case `while` = "while"
  case `try` = "try"
- // ADR-032 迁移批 M2：`except` 随 try-else 迁移退出关键字表（D2 一步删，降级普通标识符）。
+ // try-else 迁移 迁移批 M2：`except` 随 try-else 迁移退出关键字表（D2 一步删，降级普通标识符）。
  case `return` = "return"
  case `break` = "break"
  case `continue` = "continue"
@@ -287,11 +287,11 @@ public enum Keyword: String, CaseIterable {
  // `Self` 降级为普通标识符，旧代码须迁移为 `own`。
  case `own` = "own"
  case `defer` = "defer"
-// ADR-012：异步表层 `<=` 前缀 join（立场 B）逆转，由 `await`/`wait` 关键字承载。
+// 异步 join 表层：异步表层 `<=` 前缀 join（立场 B）逆转，由 `await`/`wait` 关键字承载。
 // `await` 用于异步函数体（=>` 派发）内的挂起等待；`wait` 用于同步上下文的阻塞 join；
-// 二者均映射到既有 `.join` AST 节点（运行时按 suspendMode 上下文敏感，脊柱 ADR-009 不变）。
-// ADR-013：块标签模型由 `while@label`/`for@label` 逆转，新增 `scope` 关键字
-// 开启带标签无条件子块（`scope 块标签:`），`break`/`continue` 按标签名定向。见 ADR-012 / ADR-013。
+// 二者均映射到既有 `.join` AST 节点（运行时按 suspendMode 上下文敏感，脊柱 并发调度脊柱 不变）。
+// 块标签语法（已撤销）：块标签模型由 `while@label`/`for@label` 逆转，新增 `scope` 关键字
+// 开启带标签无条件子块（`scope 块标签:`），`break`/`continue` 按标签名定向。见 异步 join 表层 / 块标签语法（已撤销）。
  case `import` = "import"
  case `export` = "export"
  case `pass` = "pass"
@@ -303,11 +303,11 @@ public enum Keyword: String, CaseIterable {
  case `await` = "await"
  case `wait` = "wait"
  case `scope` = "scope"
- // ADR-016/任务 #13：detach 语句形式 `detach <expr>`（ detach-expr-stmt），
+ // 声明上下文收紧/任务 #13：detach 语句形式 `detach <expr>`（ detach-expr-stmt），
  // 从内建函数升格为保留关键字——fire-and-forget 唯一合法出口。
  case `detach` = "detach"
- // Phase 2a（ADR-015 FFI）：`unsafe` 前缀表达式 / `|unsafe` 函数修饰符 + `foreign` 块声明。
- // 关键字集 31→33（ADR-015）；34（G51 补 `test`，对齐 spec 『共 34』）。
+ // Phase 2a（FFI 子系统）：`unsafe` 前缀表达式 / `|unsafe` 函数修饰符 + `foreign` 块声明。
+ // 关键字集 31→33（FFI 子系统）；34（G51 补 `test`，对齐 spec 『共 34』）。
  case `unsafe` = "unsafe"
  case `foreign` = "foreign"
  // G51（spec KEYWORD 收口）：测试函数块修饰符关键字——宿主词法对齐自举

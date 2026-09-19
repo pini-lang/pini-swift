@@ -109,7 +109,7 @@ Linux 上经 apt/snap 安装的 rg 必在 `PATH`（`command -v` 先命中），�
 它是 macOS 例外通道，不是跨平台兜底。
 
 > ⚠️ **为什么不能只查 `PATH`**：本仓对「工具装着但 `PATH` 里看不见」有明确规定
-> （ADR-031 约束 6：`command -v lli` 曾两次造出假「门关」结论，并规定自动化/代理
+> （LLVM 后端重写 约束 6：`command -v lli` 曾两次造出假「门关」结论，并规定自动化/代理
 > 环境的默认 `PATH` 不得作为依据）。只在 `PATH` 里找 rg，会让脚本**静默回退**到
 > 最慢后端；若该后端的 `grep` 又被代理存根接管，7 趟全树扫描会从 1 秒膨胀到约 9 分钟。
 > 未找到 ripgrep 时脚本会打印一行 `[后端]` 提示，便于从 CI 日志判断实际走了哪条。
@@ -145,15 +145,15 @@ git worktree add <path> -b worktree/<purpose> main
 git worktree remove <path>    # 摘除务必用命令，勿直接 rm
 ```
 
-### 嵌套独立仓：`examples/selfhost/`（ADR-024 D2）
+### 嵌套独立仓：`examples/selfhost/`（自举入树为独立嵌套仓）
 
 自举项目（探针）位于 `examples/selfhost/`，是**独立 git 仓库**（自有 `.git`），经 `.gitignore` 的 `/examples/selfhost` 条目**不进本仓历史与归档**：
 
 - **不要**在本仓 `git add` 它——git 会对嵌套仓发出 embedded repository 警告并记下悬空 gitlink；被 ignore 后此风险已消除，但仍不得强行 `add -f`
 - **不要**用 `git clean -ffdx`（双 `f`）——那会删除嵌套仓；单 `-f` 是安全的（git 保护含 `.git` 的目录）
-- 本仓 clone 不含它；新环境须单独获取（探针为本地唯一副本，ADR-024 D2）
+- 本仓 clone 不含它；新环境须单独获取（探针为本地唯一副本，自举入树为独立嵌套仓）
 - 它有自己的 GIT_WORKFLOW 与身份注册表（§3/§4 纪律同样适用于其内提交）
 
 ---
 
-*本文件由 `agent:pini-dev` 于仓库初始化协作约定时建立，随仓库提交，所有会话默认读取。§3 分支命名修正（去除 git 禁用的 `:`）、§5 改为绝对 `hooksPath`（2026-08-09）；§7 由多工作树改写为单工作树 + 嵌套独立仓拓扑、主干 `master`→`main`（2026-08-30，ADR-024）。*
+*本文件由 `agent:pini-dev` 于仓库初始化协作约定时建立，随仓库提交，所有会话默认读取。§3 分支命名修正（去除 git 禁用的 `:`）、§5 改为绝对 `hooksPath`（2026-08-09）；§7 由多工作树改写为单工作树 + 嵌套独立仓拓扑、主干 `master`→`main`（2026-08-30，规范治理归位）。*

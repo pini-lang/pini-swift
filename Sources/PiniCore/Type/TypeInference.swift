@@ -39,7 +39,7 @@ public final class TypeInference {
  case .plus:
  // G68（P0d-D）：`Char` 参与 `+` ⇒ 结果是 `String` 面。任一操作数为 `Char` 时
  // 拼接结果都可能超过一个字素（`c + c` / `c + s` / `s + c`），若仍按「结果 =
- // 左操作数类型」算成 `Char`，`ADR-033 D1` 的「恰含 1 个字素」不变式就会被这类
+ // 左操作数类型」算成 `Char`，`Char 表示与 String 同构` 的「恰含 1 个字素」不变式就会被这类
  // 表达式绕开 —— 那是本类型存在的理由，不能交出去。其余组合沿用下面的既有规则。
  if isCharTyped(leftType)
  || isCharTyped(infer(expression: right, scopedParams: scopedParams)) {
@@ -123,7 +123,7 @@ public final class TypeInference {
  return .generic(name: "Optional", params: [.simple(name: "Any", location: loc)], location: loc)
  }
 
- // ADR-026 D2：限定枚举用例构造 Enum.case(args) 推断为父枚举类型，
+ // match 按 scrutinee 解析：限定枚举用例构造 Enum.case(args) 推断为父枚举类型，
  // 使以其为 scrutinee 的 match 按正确父枚举解析 case 字段。
  if case .member(let object, let caseName, _) = callee,
  case .identifier(let typeName, _) = object,
@@ -201,13 +201,13 @@ public final class TypeInference {
  return .tuple(labels: [], elements: returns, location: loc)
  }
  }
- // ADR-026 D5（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，
+ // case 值类型身份（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，
  // 使 case 值可在期望父枚举的位置（return/关联值）通过检查（G-P3）。
  let caseParents = env.parentEnums(of: name)
  if caseParents.count == 1 {
  return .simple(name: caseParents[0], location: loc)
  }
- // ADR-026 D1（实参位补全）：歧义 case 名且期望类型命中候选 → 按期望解析。
+ // 裸名 case 消歧（静态收敛版）（实参位补全）：歧义 case 名且期望类型命中候选 → 按期望解析。
  // 此前实参位置不线程期望类型，跨枚举同名 case（如两个 none）在实参位
  // 无法构造——S4.9 宿主对等改名回退的前置。
  if let exp = expected {
@@ -256,7 +256,7 @@ public final class TypeInference {
  return inferFuncLiteral(decl: decl, expected: expected, location: loc)
 
  case .selfKeyword:
- // ADR-026 D3：self 在方法体内已登记为接收对象类型（checkBody 的 defineVariable），
+ // self 调用类型传播：self 在方法体内已登记为接收对象类型（checkBody 的 defineVariable），
  // 与外部标识符接收者同路径解析，修复合绑定退化 Any（G-P8）。
  return environment?.lookupVariable(name: "self")
 
@@ -301,7 +301,7 @@ public final class TypeInference {
  return params.last ?? .simple(name: "Any", location: loc)
  case .simple(let name, _) where name == "String":
  // G68（P0d-D）：`String` 的下标结果是 `Char`（不再是 `String`）。这是窄化
- // 的三个入口之一（`s[i]` / `chars` / `chr`），`ADR-033 D1` 的不变式靠它守：
+ // 的三个入口之一（`s[i]` / `chars` / `chr`），`Char 表示与 String 同构` 的不变式靠它守：
  // 想拿回 `String` 由 `Char → String` 单向加宽承接，不需要在此留住旧类型。
  return .simple(name: "Char", location: loc)
  default:
@@ -320,7 +320,7 @@ public final class TypeInference {
  return nil
 
  case .tryExpression(let operand, _, _, _):
- // ADR-032 迁移批 M2：try-else 的类型 = Result 的第一个泛型参数（载荷 T）。
+ // try-else 迁移 迁移批 M2：try-else 的类型 = Result 的第一个泛型参数（载荷 T）。
  guard let t = infer(expression: operand) else { return nil }
  if case .generic(let name, let params, _) = t, name == "Result", !params.isEmpty {
  return params[0]
@@ -328,10 +328,10 @@ public final class TypeInference {
  return nil
 
  case .unsafe(let operand, _):
- // Phase 2a（ADR-015 FFI）：`unsafe expr` 的类型 = 操作数类型（类型不变，仅加不安全上下文）。
+ // Phase 2a（FFI 子系统）：`unsafe expr` 的类型 = 操作数类型（类型不变，仅加不安全上下文）。
  return infer(expression: operand)
  case .addressOf(let operand, let loc):
- // Phase 2a（ADR-015 FFI）：`&x` 的类型 = `*T`（指向操作数类型的指针）。
+ // Phase 2a（FFI 子系统）：`&x` 的类型 = `*T`（指向操作数类型的指针）。
  guard let inner = infer(expression: operand) else { return nil }
  return .pointer(element: inner, location: loc)
  }

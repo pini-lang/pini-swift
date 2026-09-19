@@ -103,7 +103,7 @@ public struct FileLoader {
  }
  let text = try String(contentsOfFile: tomlPath, encoding: .utf8)
  let manifest = try parseManifest(text, path: tomlPath)
- // Phase 2b（ADR-017）：将 `[ffi].search_paths` 的非绝对项规一为「相对本模块目录」
+ // Phase 2b（解释器 dlsym 加载）：将 `[ffi].search_paths` 的非绝对项规一为「相对本模块目录」
  // 的绝对路径，使 FFI 搜索与调用 cwd 解耦（示例可在任意检出位置独立运行）。
  // 绝对路径（如系统库 /usr/lib）原样保留；无 `[ffi]` 表时此步为空操作。
  guard var ffi = manifest.ffi, !ffi.searchPaths.isEmpty else { return manifest }
@@ -157,7 +157,7 @@ public struct FileLoader {
  }
 }
 
-/// FFI 模块配置（`pini.toml` 的 `[ffi]` 表，ADR-017 Phase 2b）。
+/// FFI 模块配置（`pini.toml` 的 `[ffi]` 表，解释器 dlsym 加载 Phase 2b）。
 ///
 /// - `abi`：全局唯一，默认 `"C"`，子模块**不可覆盖**（与模块级 ABI 决策一致）。
 /// - `searchPaths`：库搜索路径，**分层追加**（子模块追加到父模块之后）。
@@ -210,7 +210,7 @@ public struct ModuleManifest: Equatable {
  public let resourcesTaps: [String: [String: String]]
  /// 批 6：`[replace]` 强制版本 / 本地 / 换 fork（仅主模块生效，G52 D13）。
  public let replaces: [String: String]
- /// Phase 2b（ADR-017）：`[ffi]` FFI 配置；无 `[ffi]` 表时为 `nil`（解释器回退 `FFIConfig.default`）。
+ /// Phase 2b（解释器 dlsym 加载）：`[ffi]` FFI 配置；无 `[ffi]` 表时为 `nil`（解释器回退 `FFIConfig.default`）。
  public let ffi: FFIConfig?
  /// G49（issue-tdd-module-blockers-2026-08-28）：`[build] exclude`——模块包加载排除路径
  /// （相对模块根；目录前缀匹配；`loadDirectory` 统一生效，`pini test` 显式路径可加回）。

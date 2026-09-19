@@ -12,7 +12,7 @@ public final class SemanticAnalyzer {
  private var enumCaseParents: [String: [String]] = [:]
  private var enumAllCases: [String: [String]] = [:]
 
- /// ADR-016 规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查时注入 self 字段作用域。
+ /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查时注入 self 字段作用域。
  private var typeFields: [String: [FieldDecl]] = [:]
 
  /// T1/B2（2026-08-24）：语义警告（非致命）。首版=未使用局部变量（`emitUnusedWarnings` 检测点=块作用域）。
@@ -67,7 +67,7 @@ public final class SemanticAnalyzer {
 
  private func registerBuiltins() {
  let dummyLoc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
- // ADR-020 D3：内建符号从单点登记表（BuiltinRegistry）派生——
+ // 内建单点登记：内建符号从单点登记表（BuiltinRegistry）派生——
  // 名字与归组只声明一次，解释器 / 类型检查 / 本层各自取用。
  // 静态分析层须先登记，否则示例/用户代码中调用这些自由函数会被误报
  // undefinedFunction。字符串成员方法（s.upper() 等）走成员调用路径，
@@ -351,7 +351,7 @@ private func teardownInjections() {
  case .traitDecl(let t):
  try defineUnique(name: t.name, kind: .trait, location: t.location)
  case .extensionDecl(let x):
- // 扩展块不引入新符号；方法名须与目标类型字段/其它方法不冲突（ADR-016 规则 3.2/3.14）。
+ // 扩展块不引入新符号；方法名须与目标类型字段/其它方法不冲突（声明上下文收紧·规则 3.2/3.14）。
  let targetFields = typeFields[x.targetType] ?? []
  var seen: [String: SourceLocation] = [:]
  for f in targetFields { seen[f.name] = f.location }
@@ -363,7 +363,7 @@ private func teardownInjections() {
  }
  return
  case .foreignDecl(let fd):
- // Phase 2a（ADR-015 FFI）：foreign 函数注册为模块级函数符号（调用点可解析）；
+ // Phase 2a（FFI 子系统）：foreign 函数注册为模块级函数符号（调用点可解析）；
  // 块本身不引入新符号，外部 C 符号运行时经原生函数表解析。
  for f in fd.funcs {
  try defineUnique(name: f.name, kind: .function, location: f.location)
@@ -434,7 +434,7 @@ private func teardownInjections() {
  try checkFuncDecl(method, fields: targetFields)
  }
  case .foreignDecl:
- // Phase 2a（ADR-015 FFI）：仅签名、无函数体，无检查项。
+ // Phase 2a（FFI 子系统）：仅签名、无函数体，无检查项。
  break
  case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
  break
@@ -729,7 +729,7 @@ private func teardownInjections() {
  try checkExpression(operand)
 
  case .tryExpression(let operand, let errorVar, let handler, _):
- // ADR-032 迁移批 M2：递归检查 operand；handler 内 errorVar 绑定到子作用域。
+ // try-else 迁移 迁移批 M2：递归检查 operand；handler 内 errorVar 绑定到子作用域。
  try checkExpression(operand)
  symbolTable.enterScope(name: "try-handler")
  symbolTable.define(Symbol(name: errorVar, kind: .variable(isMutable: true), location: handler.location))
@@ -824,10 +824,10 @@ private func teardownInjections() {
  try checkExpression(inner)
 
  case .unsafe(let operand, _):
- // Phase 2a（ADR-015 FFI）：不安全消耗点——递归检查操作数。
+ // Phase 2a（FFI 子系统）：不安全消耗点——递归检查操作数。
  try checkExpression(operand)
  case .addressOf(let operand, _):
- // Phase 2a（ADR-015 FFI）：取地址——递归检查操作数。
+ // Phase 2a（FFI 子系统）：取地址——递归检查操作数。
  try checkExpression(operand)
  }
  }

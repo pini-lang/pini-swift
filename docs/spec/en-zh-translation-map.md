@@ -1,9 +1,9 @@
 # zh↔en Translation Map（中英翻译对照表）
 
-> **定位**：Pini 项目文档英文化（zh→en）的翻译对照表，沉淀自 pini/ 脚手架英文化作业（ADR-018 D3：pini/ 为英文项目）。
+> **定位**：Pini 项目文档英文化（zh→en）的翻译对照表，沉淀自 pini/ 脚手架英文化作业（pini/ 为英文项目：pini/ 为英文项目）。
 > **用途**：后续任何 zh→en 文档翻译作业先查本表，保证译法一致、避免一词多译。
 > **与 glossary 分工**：`pini-glossary.toml` 管**术语规范引用**（`{term:key}`，供诊断消息 / 文档引用、机器可追溯）；本表管**翻译对照**（zh→en 词对 + 上下文备注），不承担引用契约。
-> **新增词对**：翻译作业遇到本表未收录的对应，补入对应分类并提交（走 pini-spec-v0.md §1.3 变更治理，2026-08-30 起 governance 在本仓，见 ADR-024）。
+> **新增词对**：翻译作业遇到本表未收录的对应，补入对应分类并提交（走 pini-spec-v0.md §1.3 变更治理，2026-08-30 起 governance 在本仓，见 规范治理归位）。
 
 ## 1. Git 协作
 
@@ -41,7 +41,7 @@
 | 摘除工作树 | remove worktree | 勿直接 rm |
 | 排障 | troubleshooting | — |
 | 目录分叉 | directory fork | 排障场景 |
-| 子模块 | submodule | 宿主拉取方式（ADR-018 D1） |
+| 子模块 | submodule | 宿主拉取方式（子模块宿主拉取） |
 | 版本锚点 | version anchor | .pini/baseline / pini.toml spec 字段 |
 | 逻辑引用 | logical reference | 跨仓库引用，不写物理路径（M1） |
 | 远程 | remote | push / fetch 目标 |
@@ -56,7 +56,7 @@
 | 可执行入口 | executable entry | [[bin]].entry |
 | 顶级交替（根） | top-level alternation (root) | Pini 语言结构 |
 | 阶段占位 | stage placeholder | src/main.pini 占位 |
-| 依赖拓扑序 | dependency-topological order | ADR-018 G1 重述顺序 |
+| 依赖拓扑序 | dependency-topological order | 自举验证契约 G1 重述顺序 |
 | 临时约定 | provisional convention | T9a 落地前 |
 | 续行 / 行宽 | line continuation / line width | 格式约定 |
 | 括号内换行 | parenthesized wrapping | 续行策略 |
@@ -98,7 +98,7 @@
 | 黄金文件 | golden file | 字节级对比 |
 | 消歧 / 副语言 | disambiguation / secondary language | 术语表 / i18n |
 | 单一事实源 | source of truth | 与 §1 同词，此处属治理语义 |
-| 已知副作用 | known side effects | ADR-018 Consequences |
+| 已知副作用 | known side effects | 自举验证契约 Consequences |
 
 ## 4. 通用写作（本次作业常见）
 
@@ -117,7 +117,7 @@
 | 纪律 | discipline | 身份纪律等 |
 | 上下文 / 备注 | context / note | 表头 |
 
-## 5. 仓库治理与自举（2026-08-30 ADR-024 迁移与英文化作业沉淀）
+## 5. 仓库治理与自举（2026-08-30 规范治理归位 迁移与英文化作业沉淀）
 
 | 中文 | English | 上下文 / 备注 |
 |---|---|---|

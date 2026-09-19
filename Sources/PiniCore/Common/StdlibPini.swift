@@ -1,12 +1,12 @@
 import Foundation
 
-/// ADR-020 D2 试点：语言内标准库（Pini 源内嵌于宿主，启动期解析）。
+/// 内建双层结构 试点：语言内标准库（Pini 源内嵌于宿主，启动期解析）。
 ///
 /// 结构：按扩展块组织——`((String))` 内的语言内默认实现会在运行时成员派发中
 /// **优先于宿主原生实现**被选中（callFunctionValue 的 body-first 通道）。
 /// 本源码是固化的仓内资产：启动期解析失败 = 资产被破坏，fail-fast。
 ///
-/// 下沉规则（ADR-020 D2）：每个方法从宿主原生转为语言内实现，须同时满足
+/// 下沉规则（内建双层结构）：每个方法从宿主原生转为语言内实现，须同时满足
 /// ① 全量测试对拍 0 失败；② bench 无不可接受回退。试点 = String.contains。
 ///
 /// 缩进说明：Swift 多行字符串闭定界符与 `static let` 齐平（1 空格），剥离后
@@ -14,7 +14,7 @@ import Foundation
 enum StdlibPini {
  static let source = """
  ((String))
- ; contains -- language-level default impl (ADR-020 D2 pilot).
+ ; contains -- language-level default impl (内建双层结构 pilot).
  ; Semantics mirror the host native impl: empty needle -> true;
  ; grapheme-cluster substring match via len + subscript.
  contains|self(needle: String,) -> (Bool,):
@@ -68,7 +68,7 @@ enum StdlibPini {
  ; accumulator went in unconditionally and every empty segment survived. Doubled,
  ; leading and trailing separators therefore all contribute no element, and an
  ; empty receiver yields zero parts.
- ; An empty separator yields one element per grapheme (ADR-019 D1; the native
+ ; An empty separator yields one element per grapheme (字符模型 = Grapheme Cluster; the native
  ; impl splits UTF-16). Two neighbouring behaviours are deliberately NOT settled
  ; here: the LLVM arm carries no guard for the empty separator, and it reads the
  ; separator as a character *set* rather than a substring, so a multi-character

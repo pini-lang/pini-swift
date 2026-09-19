@@ -23,7 +23,7 @@ public class Lexer {
  /// 此时行尾不发 newline、行首旁路缩进处理（换行等同空白、缩进不参与，括号深度即结构）。
  /// 栈顶为块携带括号时布局完全照常——IIFE / LazyRef 式块体的 token 流与抑制前逐字节相同。
  /// 边界（已裁决）：`< >` 不参与深度跟踪；前瞻仅限同行；`` `func` `` 反引号转义不算
- /// 块携带；未闭合括号到 EOF 宽松静默（ADR-021 契约）；不匹配 closer 一律 pop（限制级联）。
+ /// 块携带；未闭合括号到 EOF 宽松静默（宽松词法 契约）；不匹配 closer 一律 pop（限制级联）。
  private var bracketStack: [(char: Character, blockCarrying: Bool)] = []
 
  public init(source: String, fileName: String) {
@@ -285,9 +285,9 @@ public class Lexer {
  _ = advance()
  return .at(loc)
  case "`":
- // ADR-027 D1：反引号转义——`名称` 整体产出 IDENT token（跳过关键字
+ // 反引号转义产生式：反引号转义——`名称` 整体产出 IDENT token（跳过关键字
  // 分类），允许关键字作标识符/构造标签（自举探针 G-P5，用户提案）。
- // D2：未闭合（行尾/EOF）或空内容回退 ADR-021 兜底（单字符 IDENT），
+ // D2：未闭合（行尾/EOF）或空内容回退 宽松词法 兜底（单字符 IDENT），
  // 保持「词法器零错误」契约；L0 语料第 95 行的裸反引号即此兜底。
  _ = advance()
  var escaped = ""
@@ -319,7 +319,7 @@ public class Lexer {
  if char.isLetter {
  return try identifierOrKeyword()
  }
- // ADR-021：宽松词法——未匹配任何词法类的字符产出单字符标识符，
+ // 宽松词法：宽松词法——未匹配任何词法类的字符产出单字符标识符，
  // 错误报告后移到解析/语义阶段（标识符落在不合适的位置被拒）。
  _ = advance()
  return .identifier(String(char), loc)
@@ -399,7 +399,7 @@ public class Lexer {
  if match(">") { return .doubleArrow(loc) }
  return .assign(loc)
  default:
- // ADR-021：宽松词法兜底（防御分支，现有 12 字符均有 case）
+ // 宽松词法：宽松词法兜底（防御分支，现有 12 字符均有 case）
  return .identifier(String(head), loc)
  }
  }
@@ -420,7 +420,7 @@ public class Lexer {
  }
 
  private func readIdentifier(startingWith prefix: String) -> String {
- // ADR-019 D3：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——spec 已按
+ // IDENT 续字符放宽：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——spec 已按
  // numeric property（isNumber 语义，严格超集 \p{N}）放宽对齐本实现（见 spec「词法类」主题）；INT 字面量仍限 [0-9]。
  var name = prefix
  while let char = currentChar, char.isLetter || char.isNumber || char == "_" {
@@ -450,7 +450,7 @@ public class Lexer {
  if let first = currentChar, first == "0", let second = peek(offset: 1) {
  switch second {
  case "x", "X":
- // ADR-021：前缀后无有效数字 → 只消费 '0' 产出 int 0，余下按标识符走
+ // 宽松词法：前缀后无有效数字 → 只消费 '0' 产出 int 0，余下按标识符走
  // （注意检查的是「前缀字母 + 后随数字」，x 本身不是 hex 字符）
  _ = advance()
  if let d3 = currentChar, d3 == "x" || d3 == "X",
@@ -506,7 +506,7 @@ public class Lexer {
  }
  }
 
- // 科学计数法：e/E[+-]?digits——ADR-021：仅当指数位确有数字才消费，
+ // 科学计数法：e/E[+-]?digits——宽松词法：仅当指数位确有数字才消费，
  // 否则 e 留给标识符通道（如 `1e` → int 1 + identifier e）
  if let char = currentChar, char == "e" || char == "E" {
  var offset = 1
@@ -570,7 +570,7 @@ public class Lexer {
 
  while let char = currentChar, char != "\"" {
  if char == "\n" {
- // ADR-021：宽松词法——字符串在行尾隐式终止（换行不消费，
+ // 宽松词法：宽松词法——字符串在行尾隐式终止（换行不消费，
  // 版面处理照常），不再抛 unterminatedString
  break
  }
@@ -592,7 +592,7 @@ public class Lexer {
  case "\\": literal.append("\\")
  case "\"": literal.append("\"")
  default:
- // ADR-021：非法转义原样保留（反斜杠 + 字符），不报错
+ // 宽松词法：非法转义原样保留（反斜杠 + 字符），不报错
  literal.append("\\")
  literal.append(esc)
  }

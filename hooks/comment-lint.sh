@@ -7,7 +7,7 @@
 #   L3 文档名快照    注释内出现 `docs/*.md` 式文件名
 #   L4 版本号叙事    注释内出现 `v0.NN` 式版本号
 #   L5 裸待办        TODO/FIXME/HACK/XXX 未跟 issue-/ADR- 追踪 ID
-#   L6 ID 可兑付     注释引用的 ADR-NNN 必须在 docs/adr-index.md 登记表可兑付
+#   L6 ID 可兑付     注释引用的 ADR-NNN 必须在 docs/spec/adr/ 有同编号文件（无索引表；编号自 001 起）
 #
 # 用法：hooks/comment-lint.sh [path...]   # 默认扫描 Sources Tests examples bench
 # 依赖：ripgrep 优先（探测顺序：PINI_RG → PATH → 常见安装位置），无则回退 grep -E。
@@ -32,7 +32,7 @@ if [ "${#targets[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# ADR-024 D2：.gitignore 锚定的嵌套独立仓（examples/selfhost）不属本仓扫描范围。
+# 自举入树为独立嵌套仓：.gitignore 锚定的嵌套独立仓（examples/selfhost）不属本仓扫描范围。
 # 实测：rg 对嵌套 .git 边界内的文件不套用父仓 ignore 规则；grep 从不尊重 ignore。
 # 显式排除（rg 用锚定全路径 glob，grep 用末段目录名），双后端行为一致。
 excl_rg=()
@@ -50,7 +50,7 @@ if [ -f .gitignore ]; then
 fi
 
 # ripgrep 探测。不能只查 PATH：「工具装着但 PATH 里看不见」在本仓已有前科 ——
-# ADR-031 约束 6 记载 `command -v lli` 曾两次造出假「门关」结论，并规定
+# LLVM 后端重写 约束 6 记载 `command -v lli` 曾两次造出假「门关」结论，并规定
 # 「自动化/代理环境的默认 PATH 不得作为依据」。此处同族：rg 装着却不在 PATH ⇒
 # 静默回退 grep，而本机 PATH 的 grep 是沙箱代理存根（每文件一次 IPC）⇒ 慢约 80 倍。
 # 实测同一棵树、同一模式：rg 0 秒 / 存根 grep 79 秒，7 趟 scan 即 ~9 分钟 vs 1 秒。
@@ -128,40 +128,56 @@ check "L3 文档名快照"   '^[[:space:]]*(//|///|;|#).*[A-Za-z0-9_-]+\.md'
 check "L4 版本号叙事"   '^[[:space:]]*(//|///|;|#).*v0\.[0-9]+'
 check "L5 裸待办"       '(TODO|FIXME|HACK|XXX)'
 
-# L6 ADR ID 兑付：登记表来自 docs/spec/adr/adr-index.md 首列（大小写不敏感匹配，堵小写盲区）
-# ADR-024：登记表随语言级资产迁入 docs/spec/adr/；路径须与之一致。
-index_file="docs/spec/adr/adr-index.md"
-registered="$(sed -nE 's/^\| (ADR-[0-9]+) \|.*/\1/p' "$index_file" 2>/dev/null | sort -u)"
-# 登记表读不到 = 判据**入口**失效，必须报错。此处原是 `⚠️ 跳过`（rc=0）—— 与下面
-# 「未扫到任何 ADR 引用」属同一类假绿：该报错的情形被输出成了一次通过。
-if [ -z "$registered" ]; then
-  echo "❌ [L6] 无法从 $index_file 读到任何已登记 ADR：登记表缺失或格式漂移（不等于「全部可兑付」）"
+# L6 ADR ID 兑付：**登记表就是文件本身** —— 兑付判据 = `docs/spec/adr/adr-NNN-*.md` 是否存在于该编号。
+# ⚠️ 2026-09-19 编号重置：旧一批（018–043）连同其文件退役，全仓引用已改写为主题词 ⇒ 当前**零引用、
+# 零文件**是**合法状态**，故本条不再把「扫不到 ADR」判失败（那正是重置前的形态）。
+# 判据三条，缺一即假绿：
+#   ① **阳性对照**：合成样本必须被同一抽取式命中 —— 否则「扫不到引用」与「全都合规」不可区分；
+#   ② 零引用合法（清除后的常态），有引用才进入兑付；
+#   ③ 有引用而**无可兑付文件**（或目录不存在）⇒ 拦。
+# 「另设一张索引表」的做法已废止：索引与文件是同一事实的两份副本，而副本必然漂移。
+adr_dir="docs/spec/adr"
+
+# ① 阳性对照：与 scan_o 用同一抽取工具，喂一个必然出现的合成样本。
+probe_match() {
+  if [ "$has_rg" -eq 1 ]; then
+    printf 'ADR-777\n' | "$rg_bin" -o '[Aa][Dd][Rr]-[0-9]+' 2>/dev/null
+  else
+    printf 'ADR-777\n' | grep -Eo '[Aa][Dd][Rr]-[0-9]+' 2>/dev/null
+  fi
+}
+
+if [ -z "$(probe_match)" ]; then
+  echo "❌ [L6] 抽取式失灵（阳性对照未命中合成样本）：不等于「全部可兑付」"
   fail=1
 else
   refs="$(scan_o '[Aa][Dd][Rr]-[0-9]+' | tr '[:lower:]' '[:upper:]' | sort -u)"
-  # 扫描未生效必须报出来 —— 「没扫到」与「全都合规」在输出上无法区分，混同即假绿。
   if [ -z "$refs" ]; then
-    echo "❌ [L6] 未扫到任何 ADR 引用：扫描未生效（不等于「全部可兑付」）"
-    fail=1
+    echo "✅ [L6] 无 ADR 引用（编号已重置，当前无在册 ADR）"
   else
-    # 兑付判定不用 grep -f 的进程替换：沙箱禁止 /dev/fd ⇒ 该 grep 失败，若再挂 `|| true`
-    # 就会被吞成「bad 为空 ⇒ 全部可兑付」。也不用 awk -v 传多行表（BSD awk 报
-    # `newline in string`，同样会退化成 bad 为空）。改用纯 bash 比对：无外部命令、
-    # 无临时文件、无进程替换 —— 这一层**没有可静默失败的执行体**。
+    # 兑付集 = 目录下的文件名（大小写不敏感、去零填充差异）
+    registered=""
+    if [ -d "$adr_dir" ]; then
+      registered="$(ls "$adr_dir" 2>/dev/null \
+        | sed -nE 's/^[Aa][Dd][Rr]-([0-9]+)-.*$/\1/p' \
+        | sed -E 's/^0*([0-9]+)$/\1/' | sort -u)"
+    fi
     ok_flat=" $(printf '%s\n' "$registered" | tr '\n' ' ') "
     bad=""
     for id in $refs; do
+      n="$(printf '%s' "$id" | sed -E 's/^ADR-0*([0-9]+)$/\1/')"
       case "$ok_flat" in
-        *" $id "*) ;;
+        *" $n "*) ;;
         *) bad="$bad$id"$'\n' ;;
       esac
     done
     if [ -n "$bad" ]; then
-      echo "❌ [L6] 悬空 ADR ID（登记表不可兑付）："
+      echo "❌ [L6] 悬空 ADR ID（无同编号文件可兑付）："
       echo "$bad"
+      echo "     兑付判据 = $adr_dir/adr-<编号>-<slug>.md 存在；目录当前$([ -d "$adr_dir" ] && echo '存在' || echo '不存在')。"
       fail=1
     else
-      echo "✅ [L6] ADR ID 全部可兑付"
+      echo "✅ [L6] ADR ID 全部可兑付（$adr_dir 同编号文件）"
     fi
   fi
   lowercase="$(scan_o 'adr-[0-9]+' | sort -u)"

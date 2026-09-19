@@ -174,7 +174,7 @@ public final class TypeEnvironment {
  return traits[name]
  }
 
- // MARK: - 内建类型 conformance 标记（ADR-020 步骤 A）
+ // MARK: - 内建类型 conformance 标记（内建特征化 步骤 A）
 
  /// 内建类型的特征遵循标记（typeName -> trait 集合）。仅承载声明：
  /// 用户源码里的 `实现: 特征` 仍走 verifyTraitConformance 严格校验，
@@ -322,7 +322,7 @@ public final class TypeEnvironment {
  /// 供 TypeChecker 实现「枚举变体 → 联合类型」可赋值性（判别联合子类型）与 match 模式绑定类型注入。
  private var enumCases: [String: [String: [(name: String?, type: TypeAnnotation)]]] = [:]
  private var enumCaseToParent: [String: String] = [:]
- /// ADR-026 D1：case 名 → 全部声明枚举（含歧义），与单值反查并行维护
+ /// 裸名 case 消歧（静态收敛版）：case 名 → 全部声明枚举（含歧义），与单值反查并行维护
  private var caseParentMulti: [String: [String]] = [:]
  /// 每个枚举用例「带默认值的关联值字段数」，供 arity 校验容忍字面量默认值。
  /// 键为 枚举名 → 用例名 → 默认值字段数。
@@ -383,7 +383,7 @@ public final class TypeEnvironment {
  return enumCaseToParent[caseName]
  }
 
- /// ADR-026 D1：同名 case 的全部声明枚举（候选集）。
+ /// 裸名 case 消歧（静态收敛版）：同名 case 的全部声明枚举（候选集）。
  /// 歧义消歧（期望类型/实参类型）由此取候选，单值反查仅用于全局唯一场景。
  public func parentEnums(of caseName: String) -> [String] {
  let direct = enumCaseToParent[caseName].map { [$0] } ?? []

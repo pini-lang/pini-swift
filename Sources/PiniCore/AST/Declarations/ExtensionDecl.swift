@@ -1,6 +1,6 @@
 import Foundation
 
-/// 扩展块声明（ADR-016 规则 3.2/3.14， extension-decl）
+/// 扩展块声明（声明上下文收紧·规则 3.2/3.14， extension-decl）
 ///
 /// 数据与逻辑分离：类型体（struct/object/enum）只含字段/用例；方法必须写在
 /// 同文件扩展块中，并显式使用 `|self` 或 `|Self`。扩展块内禁止自由函数。

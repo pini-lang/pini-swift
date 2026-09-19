@@ -38,13 +38,13 @@ public enum RuntimeError: Error, CustomStringConvertible {
  case matchNotExhaustive(value: String, location: SourceLocation)
  /// G41（test 块，R2）：assert 内建断言失败——条件为 false 时抛出，测试运行器捕获为测试失败。
  case assertionFailed(message: String, location: SourceLocation)
- /// Phase 2a（ADR-015 FFI）：原生函数实参个数不符（load/store/malloc 等）。
+ /// Phase 2a（FFI 子系统）：原生函数实参个数不符（load/store/malloc 等）。
  case argumentCountMismatch(name: String, expected: Int, got: Int, location: SourceLocation)
- /// Phase 2a（ADR-015 FFI）：`[名称|foreign]` 声明的 C 函数不在原生函数表（未预注册）。
+ /// Phase 2a（FFI 子系统）：`[名称|foreign]` 声明的 C 函数不在原生函数表（未预注册）。
  case undefinedNativeFunction(name: String, available: [String], location: SourceLocation)
- /// Phase 2b（ADR-017 FFI dlsym）：`[名称|foreign]` 块名对应的库在搜索路径中未找到。
+ /// Phase 2b（解释器 dlsym 加载 FFI dlsym）：`[名称|foreign]` 块名对应的库在搜索路径中未找到。
  case libraryNotFound(library: String, searched: [String], location: SourceLocation)
- /// Phase 2b（ADR-017 FFI dlsym）：库已加载但其中未找到 foreign 声明的符号。
+ /// Phase 2b（解释器 dlsym 加载 FFI dlsym）：库已加载但其中未找到 foreign 声明的符号。
  case symbolNotFound(library: String, symbol: String, location: SourceLocation)
 
  public var description: String {

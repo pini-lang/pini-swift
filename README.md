@@ -32,12 +32,12 @@ Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏
 | **函数体强制缩进** | 函数体必须缩进 ≥1 层（§A.2.3）；缩进还用于控制流子块边界 |
 | **数据与逻辑分离** | 类型体（struct/object/enum）只含字段/用例；方法须写在同文件扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>` 并显式 `\|self`/`\|Self`（规则 3.2/3.14） |
 | **显式错误传播** | 错误通过返回元组传递，而非异常抛出 |
-| **异步与并发** | `=>` 标记异步函数并急切派发、`await` / `wait` 显式 join 取结果（⚠️ 2026-09-17 起**两关键字同为阻塞 join** —— 挂起模式已暂时退役，见 `docs/spec/adr/adr-043-suspend-mode-retirement.md`）；`joinAll` 聚合、`joinWithin` 超时、`cancel` 取消、`detach` 剪枝；错误走 `ok`/`err`（errors-as-data）；GCD 真线程 + 结构化取消树（B2-1/B2-2） |
+| **异步与并发** | `=>` 标记异步函数并急切派发、`await` / `wait` 显式 join 取结果（⚠️ 2026-09-17 起**两关键字同为阻塞 join** —— 挂起模式已暂时退役，见 `docs/spec/pini-spec-v0.md` §3.1 异步语义契约）；`joinAll` 聚合、`joinWithin` 超时、`cancel` 取消、`detach` 剪枝；错误走 `ok`/`err`（errors-as-data）；GCD 真线程 + 结构化取消树（B2-1/B2-2） |
 | **值/引用类型分离** | 结构块是值类型，对象块是引用类型（ARC 管理） |
-| **块标签（ADR-014）** | `标签\|if`/`标签\|while`/`标签\|for` 定向 `break 标签`/`continue 标签`（旧 `scope 块标签:` 已转 reserved-error） |
+| **块标签（标签语法反转）** | `标签\|if`/`标签\|while`/`标签\|for` 定向 `break 标签`/`continue 标签`（旧 `scope 块标签:` 已转 reserved-error） |
 | **懒加载 `LazyRef<T>`（G40，v0.42.0）** | 引用语义懒加载包装：`.value` 同步 once 获取（多线程首访仅一个线程执行初始化）、复制共享缓存；`LazyRef<T>(闭包)` / `LazyRef(闭包)` 双形态构造；解释器 + LLVM 双后端 |
 | **语言级测试 `\|test` + `assert`（G41，v0.42.0）** | 测试函数块 `名称\|test()` 显式声明；`assert(条件)` / `assert(条件, 消息)` 判定；`pini test` 子命令收集执行；SwiftTesting 宿主驱动 |
-| **FFI 与 unsafe（ADR-015，Phase 2a）** | `[名称\|foreign]` 块声明外部 C 函数（`malloc`/`free`/`memcpy`/`strlen`/`puts`/`cstr` 等原生函数表）；`*T` 原始指针 + C 兼容性（禁 object，ARC 隔离）；`unsafe` 消耗点 / `&` 取地址 / `\|unsafe` 自由函数；`load`/`store`/`addressof` 指针原语（解释器优先；LLVM 端按能力清单逐格补齐，见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`） |
+| **FFI 与 unsafe（FFI 子系统，Phase 2a）** | `[名称\|foreign]` 块声明外部 C 函数（`malloc`/`free`/`memcpy`/`strlen`/`puts`/`cstr` 等原生函数表）；`*T` 原始指针 + C 兼容性（禁 object，ARC 隔离）；`unsafe` 消耗点 / `&` 取地址 / `\|unsafe` 自由函数；`load`/`store`/`addressof` 指针原语（解释器优先；LLVM 端按能力清单逐格补齐，见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`） |
 
 > [!tip] 设计哲学
 > Pini 追求**平坦编码风格**——不鼓励多重嵌套，鼓励通过类型组合和方法声明构建清晰的代码结构。
@@ -46,7 +46,7 @@ Pini 是一门基于 Swift Package 实现的解释型编程语言，具有行敏
 
 ## 🚀 快速开始
 
-> **分发策略（ADR-022）**：本项目**以源码分发、用户自行构建**——当前仅支持 macOS，不提供预编译二进制；本地构建产物无 Gatekeeper 隔离标记，无需签名。完整指南见 [docs/BUILDING.md](docs/BUILDING.md)。
+> **分发策略（分发策略）**：本项目**以源码分发、用户自行构建**——当前仅支持 macOS，不提供预编译二进制；本地构建产物无 Gatekeeper 隔离标记，无需签名。完整指南见 [docs/BUILDING.md](docs/BUILDING.md)。
 
 ### 环境要求
 
@@ -212,7 +212,7 @@ main|func() -> ()
     return
 ```
 
-### 带标签控制流（ADR-014）
+### 带标签控制流（标签语法反转）
 
 ```pini
 main|func() -> ()
@@ -268,7 +268,7 @@ graph TD
 
 > 双后端：解释器（`pini run`，始终可用）与 LLVM 后端（`emit`/`compile`/`run-llvm`，需 LLVM 工具链；运行时经 `PiniRuntime` 动态库 C ABI shim 提供服务）。`RuntimeBackendTests` 保证两后端逐字节一致。
 >
-> LLVM 后端已于 2026-09-12 完成重写（ADR-031）：`HIR` 中间层（类型决策单点）成为**唯一代码生成路径**，旧的直接发射后端已整体删除；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
+> LLVM 后端已于 2026-09-12 完成重写（LLVM 后端重写）：`HIR` 中间层（类型决策单点）成为**唯一代码生成路径**，旧的直接发射后端已整体删除；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### 目录结构
 
@@ -313,10 +313,10 @@ swift test
 
 ## 📚 相关文档
 
-> 语言级文档（规范/项目规范/注释风格/术语/ADR/路线图/诊断码/测试规范/CHANGELOG）在 **`docs/spec/`**（语言级治理单一事实源，2026-08-30 自 pini-meta 迁回，见 ADR-024）。本仓库 docs/ 根保留实现级文档。
+> 语言级文档（规范/项目规范/注释风格/术语/ADR/路线图/诊断码/测试规范/CHANGELOG）在 **`docs/spec/`**（语言级治理单一事实源，2026-08-30 自 pini-meta 迁回，见 规范治理归位）。本仓库 docs/ 根保留实现级文档。
 
-- `docs/spec/`：pini-spec-v0.md（**工程与治理面**权威 / 首要入口；含项目布局与清单 schema）／ pini-reference-v0.md（**语言面**权威 / 成熟成果沉积处；含形式文法）／ pini-comment-style-guide.md（注释风格，spec §7 治理）／ pini-glossary.toml（中英术语表）／ adr/adr-index.md（ADR 登记表）／ diagnostic-codes.md（诊断码表，派生视图）／ test-refactoring-principles.md（测试规范，spec §6 治理）／ CHANGELOG.md（语言版本里程碑）
-- 本仓库 docs/ 根：issue-*.md（实现级作业记录）＋ adr/adr-022（宿主级 ADR：分发策略）
+- `docs/spec/`：pini-spec-v0.md（**工程与治理面**权威 / 首要入口；含项目布局与清单 schema）／ pini-reference-v0.md（**语言面**权威 / 成熟成果沉积处；含形式文法）／ pini-comment-style-guide.md（注释风格，spec §7 治理）／ pini-glossary.toml（中英术语表）／ adr/（决策记录，编号自 001 起；目录约定见其 README）／ diagnostic-codes.md（诊断码表，派生视图）／ test-refactoring-principles.md（测试规范，spec §6 治理）／ CHANGELOG.md（语言版本里程碑）
+- 本仓库 docs/ 根：issue-*.md（实现级作业记录）＋ adr/（决策记录，编号自 001 起）
 
 ---
 
@@ -324,13 +324,13 @@ swift test
 
 > [!warning] 当前版本限制
 > - **LLVM 后端（P6）**：已交付。`emit`/`compile`/`run-llvm` 可生成并运行 LLVM IR，但需本机安装 LLVM 工具链（`clang`/`lli`，或设置 `PINI_LLVM_BIN`）。纯解释器执行请用 `pini run`（始终可用，无需 LLVM）。`LazyRef.valueFuture` 已抛弃（仅同步 `.value`）。**FFI/unsafe 构造（`foreign` 块/`*T`/`&`/`unsafe`）已由 LLVM 通道支持**（示例 `examples/ffi.pini` 在 `run-llvm` 与 `pini run` 输出一致）——解释器端 `&` 为快照取址（写回不更新原变量），与 LLVM 端真引用语义不同，见下方 FFI 条。
-> - **模式匹配**：已支持枚举关联值绑定与元组/多返回值 `match`（`case` 子块缩进 + `case _:` 通配）；错误经 `try <表达式> else <错误绑定名>:`（ADR-032，含 `^T` 糖）或 `return ok/err` + `match ok/err` 收口，无 `catch` 子句。
-> - **迭代（v0.39.0+）**：`for-in` 已实现（spec G36）——`for (模式元组,) in 集合值:`，支持 `step:` 与 `标签\|for`（ADR-014）；`while + len()` 仍可用。
-> - **块标签（ADR-014，v0.48.1）**：`标签\|if`/`标签\|while`/`标签\|for` 模型——`break 标签` / `continue 标签` 按标签名定向（无 sigil）；旧 `scope 块标签:` 已转 reserved-error；`#` 文档注释（行首到行尾，与 `;` 行注释并存）。
+> - **模式匹配**：已支持枚举关联值绑定与元组/多返回值 `match`（`case` 子块缩进 + `case _:` 通配）；错误经 `try <表达式> else <错误绑定名>:`（try-else 迁移，含 `^T` 糖）或 `return ok/err` + `match ok/err` 收口，无 `catch` 子句。
+> - **迭代（v0.39.0+）**：`for-in` 已实现（spec G36）——`for (模式元组,) in 集合值:`，支持 `step:` 与 `标签\|for`（标签语法反转）；`while + len()` 仍可用。
+> - **块标签（标签语法反转，v0.48.1）**：`标签\|if`/`标签\|while`/`标签\|for` 模型——`break 标签` / `continue 标签` 按标签名定向（无 sigil）；旧 `scope 块标签:` 已转 reserved-error；`#` 文档注释（行首到行尾，与 `;` 行注释并存）。
 > - **继承**：当前无继承语法（方法沿继承链静态校验已移出 P3，单列排期）。
 > - **异步并发（G12：阻塞语义 Stable · 挂起模式 Provisional 已退役）**：`=>`/`await`/`wait`/`joinAll`/`joinWithin`/`cancel`/`isCancel`/`detach` 已实现（立场 B：GCD 真线程 + `Future` 结构化取消树 + `joinAll` fail-fast）。错误经 `ok`/`err` 返回，`CancelError` 表示取消。**`await` 与 `wait` 同为阻塞 join**（占用 worker 线程）：⚠️ 2026-09-17 起**挂起模式**（经自建续体运行时真正挂起、释放 OS 线程、精确恢复）**已暂时退役** —— 该路径在生产面从未启用，退役对用户程序**零可见影响**，待架构重写后恢复；`joinWithin` 仍为带超时阻塞 join。跨平台后端与自举纯 libc 为规划方向（长期愿景见 spec）。
 > - **测试（v0.42.0）**：`\|test` 函数块 + `assert` 内建 + `pini test` 已落地；`.valueFuture` 已抛弃。
-> - **FFI（ADR-015，Phase 2a，Experimental）**：解释器端已落地——`foreign` 块经预注册原生函数表（`malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`）解析，未注册函数注册期报错；`&` 为**快照取址**（写回不更新原变量，与 LLVM 端真引用语义不同）；dlsym 动态符号解析与 LLVM 端 FFI 为后续阶段。见 `examples/ffi.pini`。
+> - **FFI（FFI 子系统，Phase 2a，Experimental）**：解释器端已落地——`foreign` 块经预注册原生函数表（`malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`）解析，未注册函数注册期报错；`&` 为**快照取址**（写回不更新原变量，与 LLVM 端真引用语义不同）；dlsym 动态符号解析与 LLVM 端 FFI 为后续阶段。见 `examples/ffi.pini`。
 
 更多待完善特性与已知缺口见 `docs/spec/pini-spec-v0.md`（Pini 不完善规范 v0）。
 

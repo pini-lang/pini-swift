@@ -8,7 +8,7 @@ import Foundation
 /// 3. **树节点**：`parent` / `children`——在 **spawn 时**建立链接，与调用方是否保留句柄无关，
 /// 因此即便子 Future 句柄被丢弃，父被取消时子仍会一并停止（类 Kotlin/Swift `Job`/`Task`）。
 public final class FutureValue {
- // MARK: - 同步原语（后端实现细节，ADR-008 / ADR-009 ）
+ // MARK: - 同步原语（后端实现细节，并发后端抽象 / 并发调度脊柱 ）
 
  // `lock` 及其保护的 `wait` / `resolve` / `reject` 临界区，当前以 Foundation `NSLock`
  // 实现，属**后端实现细节**。将来跨平台后端以可移植同步原语（pthread / 原子 parking）
@@ -93,7 +93,7 @@ public final class FutureValue {
  }
  }
 
- /// （甲）scope 收口：与 `cancelUnjoinedChildren` 统一为单一例程（ADR-009）。
+ /// （甲）scope 收口：与 `cancelUnjoinedChildren` 统一为单一例程（并发调度脊柱）。
  ///
  /// 快照 `children` → 分区：
  /// - 未完成 → `cancel()`（B2-2 预期，不计失败）；
@@ -300,7 +300,7 @@ public enum Value {
  case float(Double)
  case string(String)
  /// `Char` (P0d): one extended grapheme cluster. Same payload type as
- /// `string` because ADR-033 D1 takes option A — the representation is
+ /// `string` because Char 表示与 String 同构 takes option A — the representation is
  /// shared and the "exactly one grapheme" invariant is the type system's.
  /// Keeping the payload a `String` is what makes that sharing real: every
  /// existing string path (printing, concatenation, runtime handles) can be
@@ -322,12 +322,12 @@ public enum Value {
  case weakRef(WeakRefBox)
  /// #46-E G40（LazyRef）：懒加载包装——引用语义承载（class），复制共享同一「锁 + once 标志 + 缓存」。
  case lazyRef(LazyRefBox)
- /// Phase 2a（ADR-015 FFI）：原始指针 `*T`——引用语义承载（class），复制共享同一地址。
+ /// Phase 2a（FFI 子系统）：原始指针 `*T`——引用语义承载（class），复制共享同一地址。
  case rawPointer(RawPointerValue)
  case null
 }
 
-/// Phase 2a（ADR-015 FFI）：`*T` 原始指针的运行时承载。
+/// Phase 2a（FFI 子系统）：`*T` 原始指针的运行时承载。
 /// - `pointer`：裸内存地址（C ABI， 不泄漏 Swift 类型）。
 /// - `elemType`：`*T` 的元素类型（load/store 编解码宽度）；`nil` = 未知（如 `malloc` 的 `*U8` 之外）。
 /// - `ownsMemory`：是否由解释器负责释放（`&` 快照内存；`malloc` 内存由用户 `free`，C 语义）。
@@ -492,7 +492,7 @@ public class FunctionValue {
  public var enumIsGeneric: Bool = false
  public var enumParentName: String = ""
  public var enumGenericParamCount: Int = 0
- /// ADR-026 D1：关联参数声明类型名（describe），供歧义 case 裸名构造的动态消歧计分
+ /// 裸名 case 消歧（静态收敛版）：关联参数声明类型名（describe），供歧义 case 裸名构造的动态消歧计分
  public var enumCaseParamTypeNames: [String] = []
  private var _isAsync: Bool = false
 
@@ -503,7 +503,7 @@ public class FunctionValue {
 
  public enum TypeKind { case structKind, objectKind }
 
- /// Phase 2a（ADR-015 FFI）：foreign/native 函数的 Swift 实现（`[名称|foreign]` 声明经原生函数表解析）。
+ /// Phase 2a（FFI 子系统）：foreign/native 函数的 Swift 实现（`[名称|foreign]` 声明经原生函数表解析）。
  public var nativeImpl: (([Value]) throws -> Value)? = nil
 
  public init(name: String,
@@ -531,7 +531,7 @@ extension Value: Equatable {
  case (.int(let l), .int(let r)): return l == r
  case (.float(let l), .float(let r)): return l == r
  case (.string(let l), .string(let r)): return l == r
- // G68（P0d-D）：`Char` 与 `String` 是**相容对**（同表示，ADR-033 D1 方案 A），
+ // G68（P0d-D）：`Char` 与 `String` 是**相容对**（同表示，Char 表示与 String 同构 方案 A），
  // 比较按字素内容进行 ⇒ 三种组合都写出来。⚠️ 不写就会落到下面的
  // `default: return false` —— 那样 `Char` 与**自身**比较恒为假，而编译器不报。
  case (.char(let l), .char(let r)): return l == r

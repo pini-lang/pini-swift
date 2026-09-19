@@ -11,7 +11,7 @@
 ;
 ; 说明：
 ;   - break 跳出最近的 while；continue 跳到循环头。
-;   - 标签|控制流: 给控制流语句打标签（标签落在 while/for 上）；break 标签 / continue 标签 可跳出/续行到指定层（ADR-014）。
+;   - 标签|控制流: 给控制流语句打标签（标签落在 while/for 上）；break 标签 / continue 标签 可跳出/续行到指定层（标签语法反转）。
 
 main|func() -> ():
     ; 基础 while
@@ -28,7 +28,7 @@ main|func() -> ():
             continue
         print(j)
 
-    ; 带标签 break：从内层直接跳出外层循环（标签|控制流，ADR-014）
+    ; 带标签 break：从内层直接跳出外层循环（标签|控制流，标签语法反转）
     var k = 0
     outer|while k < 3:
         var m = 0

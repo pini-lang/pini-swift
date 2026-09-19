@@ -3,7 +3,7 @@ import Foundation
 /// How a `break` / `continue` / `return` leaves the statement layer.
 ///
 /// The HIR carries an unwind **depth** (`breakStmt(depth:)`), never a label: the
-/// lowerer resolves labels to depths (ADR-014) and turns a target it cannot
+/// lowerer resolves labels to depths (标签语法反转) and turns a target it cannot
 /// resolve into a `panicStmt`. So this engine's control vocabulary is depths, and
 /// it deliberately does *not* reuse the AST channel's `ControlSignal`, whose
 /// vocabulary is labels — squeezing a depth into a label field would mean
@@ -63,7 +63,7 @@ private struct HIRCallableBody {
 /// thing on every channel" stops being an assumption and becomes testable: this
 /// engine and the AST interpreter run the same source, and their output is
 /// compared byte for byte. Structure-level trust comes from the HIR contract
-/// (ADR-034); execution-level trust comes from that
+/// (HIR 契约); execution-level trust comes from that
 /// cross-check. Neither replaces the other.
 ///
 /// GRID NUMBERS — TWO SCHEMES, ONE LETTER
@@ -154,7 +154,7 @@ private struct HIRCallableBody {
 ///   `lastValue` rule in `executeFunctionBody`.
 /// - `while`'s step block runs after the body on normal completion *and* on an
 ///   unlabeled `continue`; an unlabeled `break` returns without running it
-///   (ADR-014, `Interpreter.executeWhile`).
+///   (标签语法反转, `Interpreter.executeWhile`).
 /// - Control-flow bodies and both `if` branches run through `executeBlock`,
 ///   which opens a **defer scope** exactly where the interpreter's `executeBlock`
 ///   does; a function body opens one too, mirroring `executeFunctionBody`. Block
@@ -205,7 +205,7 @@ private struct HIRCallableBody {
 /// This is grid P1-2 of the LR-4 interpreter unification, extended by
 /// P2a G4 (collections), P2a G2 (tuples), P2a G1 (control flow), P2a G6 (enums
 /// and the error model), P2a G5 (nominal types and fields) and P2a G3 (closures
-/// and function values): the HIR (ADR-034) gains an execution engine that is not
+/// and function values): the HIR (HIR 契约) gains an execution engine that is not
 /// the LLVM emitter.
 ///
 /// Its debug surface conforms to `DebugHookHost`, the same shape the AST
@@ -318,7 +318,7 @@ public final class HIRExecutor: DebugHookHost {
     /// than a simplification: the flag that selected the alternative had no
     /// assignment point anywhere in `Sources/` — every assignment lived in the
     /// tests — so no published program ever took anything but the blocking join.
-    /// `ADR-043` retired that alternative along with the walk it was built on.
+    /// `挂起模式退役` retired that alternative along with the walk it was built on.
     /// This is what the language does; it is not a placeholder for a suspend
     /// branch that has yet to arrive.
     private let scheduler: Scheduler = GCDScheduler.shared
@@ -1151,10 +1151,10 @@ public final class HIRExecutor: DebugHookHost {
 
         case .stringContains(let receiver, let needle):
             // The AST channel serves `contains` from `StdlibPini`'s Pini source
-            // (ADR-020 D2 sank it), so *that* file is the authority, not a Swift
+            // (内建双层结构 sank it), so *that* file is the authority, not a Swift
             // arm — the interpreter's native chain has a standing instruction not
             // to reintroduce a by-name branch for a sunk method. The loop below is
-            // the same algorithm over `[Character]` (graphemes, ADR-019 D1):
+            // the same algorithm over `[Character]` (graphemes, 字符模型 = Grapheme Cluster):
             // empty needle is true, otherwise scan for a grapheme-wise match.
             //
             // This is the structural cost of a sunk method: the authority is Pini
@@ -1373,7 +1373,7 @@ public final class HIRExecutor: DebugHookHost {
             // This is the whole of the arm. There is no suspend branch here and
             // none is missing: the alternative — releasing the thread across the
             // join — was selected by a flag with no assignment point outside the
-            // tests, and `ADR-043` retired it with the walk. The join always
+            // tests, and `挂起模式退役` retired it with the walk. The join always
             // blocks. A `join` that is not given a future is a run-time type
             // mismatch.
             let operand = try evaluate(futureExpr)
@@ -1596,7 +1596,7 @@ public final class HIRExecutor: DebugHookHost {
     ///
     /// The AST channel does **not** implement this in Swift: `slice` sank to the
     /// language-level stdlib (`StdlibPini.source`, the `((String))` and
-    /// `((Array))` blocks, ADR-020 D2), so its reference implementation is Pini
+    /// `((Array))` blocks, 内建双层结构), so its reference implementation is Pini
     /// source this engine cannot run. The bodies below are a native mirror of
     /// that source, and the two are held together by the differential probe
     /// rather than by shared code:
@@ -1606,7 +1606,7 @@ public final class HIRExecutor: DebugHookHost {
     /// - an integer bound is tail-counted when negative;
     /// - both bounds are clamped to `[0, len]`, and `hi < lo` yields empty;
     /// - `String` walks **grapheme clusters** (the AST channel's `self[k]` is a
-    ///   grapheme subscript), which is the contract (`ADR-019 D1`). The LLVM side
+    ///   grapheme subscript), which is the contract (`字符模型 = Grapheme Cluster`). The LLVM side
     ///   still slices bytes — the registered B-group deviation, and not something
     ///   to "align" from this engine.
     private func sliceValue(container: Value, start: Value, end: Value) throws -> Value {
@@ -1843,7 +1843,7 @@ public final class HIRExecutor: DebugHookHost {
             // channel — the interpreter reaches each `Block` through
             // `executeBlock` too.
             //
-            // ADR-039: a labeled `if` is an interruptible frame, so its branch
+            // 标签 break 定向范围: a labeled `if` is an interruptible frame, so its branch
             // runs under a catch — mirroring `Interpreter.executeIf`, which
             // wraps `executeIfBody` for exactly this reason. An unlabeled `if`
             // runs bare: it has no signal of its own to consume, and catching
@@ -2166,7 +2166,7 @@ public final class HIRExecutor: DebugHookHost {
         }
     }
 
-    /// Mirrors `Interpreter.executeWhile` (ADR-014 step contract), with the
+    /// Mirrors `Interpreter.executeWhile` (标签语法反转 step contract), with the
     /// unwind spoken in depths instead of labels:
     ///
     /// - body completes normally → step runs;

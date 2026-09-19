@@ -58,19 +58,19 @@ public indirect enum Expression: Equatable {
  case selfKeyword(location: SourceLocation)
  case selfTypeKeyword(location: SourceLocation)
  case genericConstruct(typeName: String, typeArgs: [TypeAnnotation], arguments: [CallArgument], location: SourceLocation)
- /// `join` 运算符：由 `await`/`wait` 关键字前缀产生（ADR-012 逆转，取代旧 `<=` 前缀写法）。
+ /// `join` 运算符：由 `await`/`wait` 关键字前缀产生（异步 join 表层 逆转，取代旧 `<=` 前缀写法）。
  /// 阻塞当前线程直至操作数 Future 完成，求值为 `Result<T, Error>`（错误即数据，不抛出）。
  case join(Expression, SourceLocation)
- /// try-else（ADR-032 迁移批 M2，取代旧 `try`/`except` 语句与 `^` 右值糖，spec『try-else 错误传播』节）：
+ /// try-else（try-else 迁移 迁移批 M2，取代旧 `try`/`except` 语句与 `^` 右值糖，spec『try-else 错误传播』节）：
  /// 错误传播唯一原语，语句位与表达式位双形态（语句位由 Parser 包装为 expressionStmt）。
  /// operand 静态要求 `Result<T, E>`：`ok(v)` → 表达式值为 v；`err(e)` → 绑定 errorVar
  /// 后执行 handler（限控制流：return/break/continue/pass，pass 仅语句位吞错）。
  /// `^` 右值糖为定义性脱糖：`^e` ≡ `try e else err: return err`（Parser 层展开）。
  case tryExpression(operand: Expression, errorVar: String, handler: Block, location: SourceLocation)
- /// Phase 2a（ADR-015 FFI， `unsafe`）：不安全消耗点前缀。
+ /// Phase 2a（FFI 子系统， `unsafe`）：不安全消耗点前缀。
  /// 标记紧随其后的单次函数调用或指针操作；复合表达式须括号 `unsafe (加载(p) + 1)`。
  case unsafe(operand: Expression, location: SourceLocation)
- /// Phase 2a（ADR-015 FFI， `&`）：不安全取地址前缀。
+ /// Phase 2a（FFI 子系统， `&`）：不安全取地址前缀。
  /// 仅在 unsafe 上下文可用（`|unsafe` 函数体或 `unsafe (...)` 消耗点内）。
  case addressOf(operand: Expression, location: SourceLocation)
  /// 点号用例构造（proposal-dot-case-construction-2026-08-30，D-1 裁决采纳）：

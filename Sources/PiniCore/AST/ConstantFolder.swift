@@ -42,7 +42,7 @@ public enum ConstantFolder {
  targetTypeAnnotation: x.targetTypeAnnotation,
  methods: x.methods.map(fold), location: x.location))
  case .foreignDecl(let fd):
- // Phase 2a（ADR-015 FFI）：仅签名，无函数体，无需折叠。
+ // Phase 2a（FFI 子系统）：仅签名，无函数体，无需折叠。
  return .foreignDecl(fd)
  case .varDecl(let stmt):
  return .varDecl(fold(stmt))
@@ -137,7 +137,7 @@ public enum ConstantFolder {
  case .member(let obj, let name, let loc):
  return .member(object: fold(obj), name: name, location: loc)
  case .tryExpression(let operand, let errorVar, let handler, let loc):
- // ADR-032 迁移批 M2：递归折叠 operand 与 handler 块（handler 限控制流语句，
+ // try-else 迁移 迁移批 M2：递归折叠 operand 与 handler 块（handler 限控制流语句，
  // 含调用则折叠自然跳过）。
  return .tryExpression(operand: fold(operand), errorVar: errorVar,
  handler: fold(handler), location: loc)
@@ -160,10 +160,10 @@ public enum ConstantFolder {
  case .subscript(let e, let idx, let loc):
  return .subscript(expr: fold(e), index: fold(idx), location: loc)
  case .unsafe(let operand, let loc):
- // Phase 2a（ADR-015 FFI）：不安全消耗点——递归折叠操作数。
+ // Phase 2a（FFI 子系统）：不安全消耗点——递归折叠操作数。
  return .unsafe(operand: fold(operand), location: loc)
  case .addressOf(let operand, let loc):
- // Phase 2a（ADR-015 FFI）：取地址——递归折叠操作数（折叠只做常量归约，地址不变）。
+ // Phase 2a（FFI 子系统）：取地址——递归折叠操作数（折叠只做常量归约，地址不变）。
  return .addressOf(operand: fold(operand), location: loc)
  case .stringInterpolation(let segs, let loc):
  let fsegs = segs.map { (seg) -> InterpolationSegment in

@@ -36,18 +36,18 @@ public indirect enum HIRType: Equatable {
     case string
     /// `Char` (P0d): one extended grapheme cluster — the user-perceived
     /// "one character", not a code point and not a byte. Its representation
-    /// is the same as `String` (ADR-033 D1 takes option A), so the LLVM
+    /// is the same as `String` (Char 表示与 String 同构 takes option A), so the LLVM
     /// spelling is `i8*` and no new ABI travels through aggregates, calls or
     /// the runtime boundary. The invariant "exactly one grapheme" is the type
     /// system's job; the representation does not enforce it.
     case char
-    /// `Result<T, E>` (ADR-032). Only the ok payload type is statically
+    /// `Result<T, E>` (try-else 迁移). Only the ok payload type is statically
     /// carried: Pini's surface form `^T` pins T but leaves E unconstrained
     /// (the checker accepts any err payload), so the error slot is
     /// type-erased to a machine word in the IR ABI (LR-12).
     case result(ok: HIRType)
     /// `Array<T>` (G2). The array itself is an opaque runtime handle
-    /// (`%bk_array*`, ADR-008); elements are boxed through the `bk_array_*`
+    /// (`%bk_array*`, 并发后端抽象); elements are boxed through the `bk_array_*`
     /// C ABI. Nested arrays recurse via the element type.
     case array(element: HIRType)
     /// `Optional<T>` (G2). Tagged aggregate `{ i64, T }` — tag 0 = some,
@@ -78,7 +78,7 @@ public indirect enum HIRType: Equatable {
     /// param/return shapes are carried for parity checking only — the IR
     /// call protocol is fixed (first arg is always the env pointer).
     case function(params: [HIRType], returnType: HIRType?)
-    /// `*T` (G14, ADR-015 FFI): raw pointer. Opaque `ptr` in LLVM IR —
+    /// `*T` (G14, FFI 子系统): raw pointer. Opaque `ptr` in LLVM IR —
     /// load/store take the element type; address-of produces it from an
     /// alloca. Element rides along for load/store typing (mirrors the
     /// interpreter's snapshot/decode semantics: `*U8` loads sign-extend to
@@ -156,7 +156,7 @@ public indirect enum HIRType: Equatable {
 
     /// `G68`：本类型是否属于「字符串面」—— `String` 与 `Char`。
     ///
-    /// 二者共用表示（`ADR-033 D1` 方案 A），故凡按「字符串」处理的通道
+    /// 二者共用表示（`Char 表示与 String 同构` 方案 A），故凡按「字符串」处理的通道
     /// （拼接、拼接式比较、字符串常量池）都按本判定收，而不是逐个列 `.string`；
     /// 漏一处就会让 `Char` 落到某个 `default:` 上静默走错路。
     public var isStringFaced: Bool {
@@ -369,7 +369,7 @@ public indirect enum HIRExpr: Equatable {
     /// semantics: the empty string reads its NUL terminator and is false,
     /// matching the interpreter's "first grapheme" rule inside the ASCII
     /// domain (outside it the interpreter's grapheme model takes over and the
-    /// remaining Unicode predicates stay fail-loud, ADR-019 D4).
+    /// remaining Unicode predicates stay fail-loud, 谓词集三层对齐).
     case isAsciiDigit(argument: HIRExpr)
 
     // MARK: G9 string deepening
@@ -606,14 +606,14 @@ public indirect enum HIRStmt: Equatable {
     /// Store into an existing variable; `type` is the declared variable type.
     case storeVar(name: String, type: HIRType, value: HIRExpr)
     /// `[label|] if cond: then [else: else]`. `label` is what makes this an
-    /// **interruptible frame** (ADR-039): `break <label>` may leave the `if`
+    /// **interruptible frame** (标签 break 定向范围): `break <label>` may leave the `if`
     /// block. It is not a `continue` target — `continue-stmt ::= 'continue'
     /// [IDENT]` carries the note *仅循环标签有效*, and `break-stmt` carries no
     /// such restriction. The label itself is never read at run time: as with
     /// loops, only the resolved depth travels, and `label != nil` is what the
     /// back ends test to decide whether to catch a signal here.
     case ifStmt(label: String?, condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?)
-    /// `while cond: body [step: block]`. The step block (ADR-014) runs once
+    /// `while cond: body [step: block]`. The step block (标签语法反转) runs once
     /// per iteration after the body — on normal completion *and* on
     /// unlabeled `continue` (interpreter parity); `break` skips it.
     case whileStmt(condition: HIRExpr, body: HIRBlock, step: HIRBlock?)
@@ -639,7 +639,7 @@ public indirect enum HIRStmt: Equatable {
     /// run the defers on the unwinding path too, because a block's scope
     /// closes on every exit, not only the normal one.
     case deferStmt(body: HIRBlock)
-    /// `try operand else errorVar: handler` (ADR-032). The operand's type is
+    /// `try operand else errorVar: handler` (try-else 迁移). The operand's type is
     /// `result(ok:)`; the error path binds the type-erased error word to
     /// `errorVar` and runs `handler`. `okTarget` is set for expression
     /// position (the ok payload is stored into that variable); nil for
@@ -652,7 +652,7 @@ public indirect enum HIRStmt: Equatable {
     case subscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType)
     /// `break` (G2; labeled form G15). `depth` = how many enclosing loops to
     /// unwind (1 = innermost). Labeled `break outer` lowers to the depth the
-    /// lowerer resolved from the label stack (ADR-014). An *unresolvable*
+    /// lowerer resolved from the label stack (标签语法反转). An *unresolvable*
     /// target (bare break with no enclosing loop, or a label that matches no
     /// enclosing loop) lowers to `panicStmt` instead — the interpreter lets
     /// the signal escape and errors at the top level, so this is fail-loud
@@ -660,7 +660,7 @@ public indirect enum HIRStmt: Equatable {
     case breakStmt(depth: Int)
     /// `continue` (G15). `depth` mirrors breakStmt: 1 = innermost loop's
     /// condition re-test; N = the depth-th enclosing loop's header (labeled
-    /// continue, ADR-014). Unresolvable targets panic like break.
+    /// continue, 标签语法反转). Unresolvable targets panic like break.
     case continueStmt(depth: Int)
     /// Unconditional runtime trap with a fixed message (G15). Emitted for
     /// control-flow escapes the interpreter only detects at run time
@@ -690,6 +690,6 @@ public indirect enum HIRStmt: Equatable {
     /// position produces no value, so there is no site type to pin, and the
     /// operand's own type lives inside its node (typed tree). Note that no
     /// `HIRType` case denotes a future — `Future` is a runtime value
-    /// (`Value.future`), which is the same position `ADR-040` took for `join`.
+    /// (`Value.future`), which is the same position `HIR join 节点` took for `join`.
     case detachStmt(inner: HIRExpr)
 }

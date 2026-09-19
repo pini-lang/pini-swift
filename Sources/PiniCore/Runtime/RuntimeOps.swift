@@ -98,7 +98,7 @@ public enum RuntimeOps {
  case (.char(let a), .char(let b), .equal): return .bool(a == b)
  case (.char(let a), .string(let b), .equal): return .bool(a == b)
  case (.string(let a), .char(let b), .equal): return .bool(a == b)
- // ADR-020 D2 试点发现：String 缺 notEqual 分派（语言内 contains 需要）——补齐。
+ // 内建双层结构 试点发现：String 缺 notEqual 分派（语言内 contains 需要）——补齐。
  case (.string(let a), .string(let b), .notEqual): return .bool(a != b)
  case (.char(let a), .char(let b), .notEqual): return .bool(a != b)
  case (.char(let a), .string(let b), .notEqual): return .bool(a != b)
@@ -328,7 +328,7 @@ public enum RuntimeOps {
  case "F32": return .float(Double(rp.pointer.load(as: Float.self)))
  case "F64": return .float(rp.pointer.load(as: Double.self))
  case "Bool": return .bool(rp.pointer.load(as: Bool.self))
- // `CChar` = the C single byte character, renamed from `Char` (ADR-033 D2).
+ // `CChar` = the C single byte character, renamed from `Char` (FFI 的 Char 改名 CChar).
                 // Unreachable in practice today: the checker accepts `*CChar`, but no
                 // engine resolves the element type, so no program reaches this decode.
                 // Kept because the day that face is implemented, this line is the decode.
@@ -666,7 +666,7 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
  }
  return "<pending Future>"
  case .rawPointer(let rp):
- // Phase 2a（ADR-015 FFI）：打印 `*T@0x...`（元素类型 + 地址）。
+ // Phase 2a（FFI 子系统）：打印 `*T@0x...`（元素类型 + 地址）。
  let t = rp.elemType.map { $0.describe() } ?? "?"
  return "*\(t)@\(rp.pointer)"
  }
@@ -768,7 +768,7 @@ static func decomposePatternRow(_ element: Value, patternCount: Int, location: S
     }
 
     /// `ord` — the first Unicode scalar's code point. A multi-scalar grapheme
-    /// yields its first scalar (the registered grapheme model, ADR-019 D1).
+    /// yields its first scalar (the registered grapheme model, 字符模型 = Grapheme Cluster).
     ///
     /// G67: the `-1` empty-string sentinel is obsolete — a `Char` holds exactly
     /// one grapheme, so "empty" is not a value this signature can be handed.

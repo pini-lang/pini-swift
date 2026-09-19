@@ -42,7 +42,7 @@ public struct IRValue: Hashable, CustomStringConvertible {
 // MARK: - IR 构建器（#46-A）
 
 /// #46-A IR 构建器：集中所有「手写字符串 IR」的格式，消除 GEP-i8 字节偏移 / phi 误用 /
-/// 类过早闭合类 typo（设计依据见 ADR-008）。
+/// 类过早闭合类 typo（设计依据见 并发后端抽象）。
 ///
 /// 设计要点：
 /// - **不持有 IR 缓冲区**。调用方（IRGenerator）仍持有 `ir` 并以 `emitLine` 落盘；
