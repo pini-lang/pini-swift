@@ -6,7 +6,7 @@
 ; 语义要点（Pini草稿.md（异步函数块））：
 ;   `=>` 声明 = 调用即派发到 worker 线程，返回运行中的 Future（调用点零标记）。
 ;   `wait` 前缀 = 同步阻塞 join（默认后端）；`await` 用于异步函数体内的挂起等待；
-;               二者均返回 Result<T, Error>（错误即数据，不抛出）；suspend 模式释放 OS 线程、精确恢复（见 spec 3.1 / ADR-012）。
+;               二者均返回 Result<T, Error>（错误即数据，不抛出）；suspend 模式释放 OS 线程、精确恢复（见 spec 3.1 / 异步 join 表层）。
 
 workerA|func() => ():
     var i = 0

@@ -89,7 +89,7 @@ public struct HIREnumDecl: Equatable {
     }
 }
 
-/// One foreign function binding (G14, ADR-015 FFI): a signature-only entry
+/// One foreign function binding (G14, FFI 子系统): a signature-only entry
 /// from a `[库|foreign]` block. The emitter forwards its declare; the call
 /// site is a plain `.call` resolved through the signature table.
 public struct HIRForeignFunction: Equatable {

@@ -7,10 +7,10 @@ public enum TopLevelDecl: Equatable {
  case enumDecl(EnumDecl)
  case funcDecl(FuncDecl)
  case traitDecl(TraitDecl)
- /// ADR-016 规则 3.2/3.14（ extension-decl）：扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`，
+ /// 声明上下文收紧·规则 3.2/3.14（ extension-decl）：扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`，
  /// 承载类型的 `|self`/`|Self` 方法（数据与逻辑分离）。
  case extensionDecl(ExtensionDecl)
- /// Phase 2a（ADR-015 FFI， foreign-decl）：外部 C 函数声明块 `[名称|foreign]`。
+ /// Phase 2a（FFI 子系统， foreign-decl）：外部 C 函数声明块 `[名称|foreign]`。
  case foreignDecl(ForeignDecl)
  case varDecl(Statement)
  case statement(Statement)

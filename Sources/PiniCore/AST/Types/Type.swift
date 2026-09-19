@@ -27,7 +27,7 @@ public struct Parameter: Equatable {
  }
 }
 
-/// 类型注解。`indirect`：`.pointer(element:)` 递归引用自身（Phase 2a `*T`，ADR-015）。
+/// 类型注解。`indirect`：`.pointer(element:)` 递归引用自身（Phase 2a `*T`，FFI 子系统）。
 public indirect enum TypeAnnotation: Equatable {
  case simple(name: String, location: SourceLocation)
  /// 元组类型。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素）；
@@ -35,7 +35,7 @@ public indirect enum TypeAnnotation: Equatable {
  case tuple(labels: [String?], elements: [TypeAnnotation], location: SourceLocation)
  case generic(name: String, params: [TypeAnnotation], location: SourceLocation)
  case function(params: [TypeAnnotation], returns: [TypeAnnotation], captured: [TypeAnnotation], location: SourceLocation)
- /// Phase 2a（ADR-015 FFI， `*T`）：原始指针类型。element 须为 C 兼容类型
+ /// Phase 2a（FFI 子系统， `*T`）：原始指针类型。element 须为 C 兼容类型
  /// （标量、纯值结构体、或另一指针），禁 object 及含 object 字段的复合类型。
  case pointer(element: TypeAnnotation, location: SourceLocation)
 }

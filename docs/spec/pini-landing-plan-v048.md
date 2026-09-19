@@ -27,7 +27,7 @@
 | 构造 | 新版 spec 位置 | 代码现状（证据） | 复杂度 |
 |---|---|---|---|
 | **FFI 全套**（foreign/`*T`/`&`/`unsafe`/`\|unsafe`） | §A EBNF；草稿全文 | **完全未实现**：`Sources` 搜 `foreign`/`Foreign` 零命中（仅 Diagnostics TOML + runtime 的 Swift `UnsafePointer` 无关项）；`Token.swift:280-303` 关键字枚举**无** `unsafe`/`foreign`/`detach` | 极大（新子系统） |
-| **标签反转** `标签\|关键字` | §A EBNF + 规则 3.13 | 代码仅实现**旧** `scope 块标签:`：`Parser.swift:1549 parseScope`→`scopedBlock`；while/for `label:nil`（`1796`/`1862`）；ADR-013 注释（`1774-1775`/`1836-1837`） | 中（破坏性 + 迁移） |
+| **标签反转** `标签\|关键字` | §A EBNF + 规则 3.13 | 代码仅实现**旧** `scope 块标签:`：`Parser.swift:1549 parseScope`→`scopedBlock`；while/for `label:nil`（`1796`/`1862`）；块标签语法（已撤销） 注释（`1774-1775`/`1836-1837`） | 中（破坏性 + 迁移） |
 | **规则 3.2** 类型体禁函数 | §A 规则 3.2（需实现） | 代码**相反**：`methodDefaultAssumptionActive`（`Parser.swift:21/253/447…`），遇类型体内函数假定为方法，否则抛 `methodDefaultAssumptionTerminated`（`1043`/`1207`，`ParserError.swift:27`） | 中 |
 | **规则 3.14** 扩展块禁自由函数 | 规则 3.14（需实现） | 未实现 | 小 |
 | **规则 3.15** 枚举关联参数仅位置 | 规则 3.15（需实现） | 未实现 | 小 |
@@ -40,33 +40,33 @@
 
 ## 4. 必须先解决的治理问题（blocker）
 
-1. **spec 内部自相矛盾（最高优先级）**：§2.4.1 散文（spec 行 `94/115/116/121`）仍规定 `scope 块标签:`（ADR-013），§A EBNF + 规则 3.13 规定 `标签\|关键字` 且 `scope`"保留但不再使用"。落地前须对齐；为不虚假声称已实现，§2.4.1 改为新设计但标「实现状态：待 Phase 1」。
-2. **FFI 是「文法孤儿」**：草稿有完整设计、§A 有文法，但 spec **prose（§2.x）、§3 缺口表、ADR 全缺**。T14 此前未立项。须先补 FFI prose + ADR-015 + §3 缺口登记再写码。
+1. **spec 内部自相矛盾（最高优先级）**：§2.4.1 散文（spec 行 `94/115/116/121`）仍规定 `scope 块标签:`（块标签语法（已撤销）），§A EBNF + 规则 3.13 规定 `标签\|关键字` 且 `scope`"保留但不再使用"。落地前须对齐；为不虚假声称已实现，§2.4.1 改为新设计但标「实现状态：待 Phase 1」。
+2. **FFI 是「文法孤儿」**：草稿有完整设计、§A 有文法，但 spec **prose（§2.x）、§3 缺口表、ADR 全缺**。T14 此前未立项。须先补 FFI prose + FFI 子系统 + §3 缺口登记再写码。
 3. **关键字集漂移**：§A.1.1 标称 33 关键字（含 `unsafe`/`foreign`/`test`/`detach`），`Token.swift` 仅 lex 子集（证据 E-047（源已删除） 称 30）。随 Phase 1/2 补齐或修正声明。
 4. **证据表未刷新（违反 §1.4）**：新规则 3.2/3.13/3.14/3.15 未进 `evidence-table.toml`；E-047（源已删除） 关键字数应更新为 33。
 5. **版本**：当前 `v0.47.0`（CHANGELOG）。含破坏性变更 → `v0.48.0` + 迁移说明（spec §1.1 允许 v0.x 破坏性变更，须迁移说明）。
 
 ## 5. ADR 草案
 
-### ADR-014 · 控制流标签语法反转（`scope label:` → `标签|关键字`）
-- **上下文**：ADR-013(v0.41.0) 的 `scope 块标签:` 与草稿/§A 新模型 `标签|控制流关键字` 冲突；新模型把标签直接绑在 `if/while/for` 上，取消独立 `scope` 语句。
+### 标签语法反转 · 控制流标签语法反转（`scope label:` → `标签|关键字`）
+- **上下文**：块标签语法（已撤销）(v0.41.0) 的 `scope 块标签:` 与草稿/§A 新模型 `标签|控制流关键字` 冲突；新模型把标签直接绑在 `if/while/for` 上，取消独立 `scope` 语句。
 - **决策**：采纳新模型。`scope` 关键字保留但**改为 reserved-error**（使用即报错）；`break/continue 标签` 按标签名定向不变。
 - **后果**：破坏性。codemod `examples/for.pini:48`、`examples/control-while.pini:33` + 7 测试文件。`Statement.scopedBlock` 停止产出（AST 节点暂留，消费者后续清理）。
 - **状态**：Proposed。
 
-### ADR-015 · 采纳 FFI & unsafe 子系统
+### FFI 子系统 · 采纳 FFI & unsafe 子系统
 - **上下文**：自举北极星要求调用 libc（`malloc/free/memcpy` + 不透明指针），T14 是阶段 3 前置；草稿已给出完整设计。
 - **决策（D1，解释器优先、LLVM 暂缓）**：① `unsafe` 表达式前缀（最小不安全范围）；② `|unsafe` 自由函数（不安全上下文）；③ `*T` 原始指针（仅 C 兼容类型，禁 object，与 ARC 隔离）；④ `&` 取址；⑤ `[X|foreign]` 声明外部 C 函数。FFI 标 **Experimental** 保可逆。LLVM 端暂缓（仿 LazyRef：先解释器，未支持子集显式 unsupported）。
 - **后果**：新增 Lexer/Parser/AST/TypeChecker/Interpreter/CodeGen/Runtime 七层；LLVM 调外部 C 是最难点（按决策推迟）。严守 spec §3.2 C-ABI **不得泄漏 Swift 类型**。
 - **状态**：Proposed。
 
-### ADR-016 · 解析器声明上下文收紧（规则 3.2/3.14/3.15）
+### 声明上下文收紧 · 解析器声明上下文收紧（规则 3.2/3.14/3.15）
 - **决策**：类型体内遇函数声明 → 报错指引「移到同文件扩展块用 `|self`」；扩展块内遇自由函数 → 报错「移到模块顶层」；枚举关联参数仅接受位置 `type-annotation`（拒 `IDENT:`/`IDENT=`/字面量）。移除 `methodDefaultAssumption` 状态机。
 - **后果**：破坏性（任何「类型体内写方法」旧写法失效），须扫描 examples/tests 确认无存量。
 - **状态**：Proposed。
 
-### ADR-017 · Phase 2b 解释器 dlsym 动态加载
-- **上下文**：ADR-015 在 Phase 2a 仅落地「解释器预注册原生函数表」（shim 白名单）；`dlsym` 动态符号解析与 `[ffi]` 配置被标记为 D1 暂缓的后续阶段（CHANGELOG v0.48.2 范围说明）。自举编译器所需 `libc`/`libm` 已在 shim 表内，但 FFI 的本体意义是「调用任意 C 库」——需真实 `dlsym` 加载。本 ADR 决策 Phase 2b **解释器半场**的机制（LLVM 端 FFI 仍 D1 暂缓，见 Phase 2b-LLVM）。
+### 解释器 dlsym 加载 · Phase 2b 解释器 dlsym 动态加载
+- **上下文**：FFI 子系统 在 Phase 2a 仅落地「解释器预注册原生函数表」（shim 白名单）；`dlsym` 动态符号解析与 `[ffi]` 配置被标记为 D1 暂缓的后续阶段（CHANGELOG v0.48.2 范围说明）。自举编译器所需 `libc`/`libm` 已在 shim 表内，但 FFI 的本体意义是「调用任意 C 库」——需真实 `dlsym` 加载。本 ADR 决策 Phase 2b **解释器半场**的机制（LLVM 端 FFI 仍 D1 暂缓，见 Phase 2b-LLVM）。
 - **决策**：
   1. **动态加载用 `dlopen`/`dlsym`/`dlclose`**（Darwin/Linux 经 `SystemDL` 封装），不引入链接期绑定、也不引入 libffi 依赖。
   2. **每签名 thunk 工厂**：因 Phase 2a（§2.7）已将顶层签名收敛为**封闭集**（标量 + 指针 + `()`），在 foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包（`@convention(c)` 函数指针），避免 libffi 的复杂度——类型集封闭使分支可枚举。
@@ -83,13 +83,13 @@
 **Phase 0 · 治理补全（先于任何代码）** — `feature/agent/pini-dev/spec-v048-governance`
 1. 提交人工已 staged 的草稿+spec 基线。
 2. 对齐 §2.4.1 散文与 §A（标签反转、`scope` reserved，标「待 Phase 1」）。
-3. 写 FFI prose（§2.x，Experimental）+ ADR-015 + §3 缺口登记（G43 FFI / G44 标签反转）。
+3. 写 FFI prose（§2.x，Experimental）+ FFI 子系统 + §3 缺口登记（G43 FFI / G44 标签反转）。
 4. 刷新 `evidence-table.toml`（补 3.13/3.14/3.15；E-047（源已删除） 关键字数→33）。
 5. `printVersion`→`0.48.0`；CHANGELOG 加 v0.48.0。
 - DoD：spec 内部一致、FFI 有 prose+ADR、证据表刷新通过 `tomllib`。
 
 **Phase 1 · 非 FFI 解析器对齐** — `feature/agent/pini-dev/parser-reconcile`
-- ADR-014（标签反转 + `scope` reserved-error + codemod 2 示例/7 测试）、ADR-016（3.2/3.14/3.15）、`detach-expr-stmt`、函数体强制缩进（若 Phase 0 已采纳进 spec）。
+- 标签语法反转（标签反转 + `scope` reserved-error + codemod 2 示例/7 测试）、声明上下文收紧（3.2/3.14/3.15）、`detach-expr-stmt`、函数体强制缩进（若 Phase 0 已采纳进 spec）。
 - 测试：TDD 三要素；`ExamplesConformanceTests` 全绿为门禁。
 
 **Phase 2a · FFI & unsafe 解释器优先** — `feature/agent/pini-dev/ffi-interp`
@@ -116,5 +116,5 @@
 ## 8. 执行日志（append-only）
 
 - 2026-08-26：规划制定 + 缺口核实（证据见 §3）；用户拍板 D1/D2；本文件持久化；切 `feature/agent/pini-dev/spec-v048-governance` 并提交人工 staged 基线；开始 Phase 0 治理补全。
-- 2026-08-26：Phase 1（非 FFI 解析器对齐）全量落地——ADR-014（a62aa21）、ADR-016 规则 3.15（a710f51）、detach 语句（313cda3）、函数体强制缩进（c03ef4f）、扩展块子系统（7bab11f）。970 XCTest + 44 SwiftTesting 全绿。
+- 2026-08-26：Phase 1（非 FFI 解析器对齐）全量落地——标签语法反转（a62aa21）、声明上下文收紧·规则 3.15（a710f51）、detach 语句（313cda3）、函数体强制缩进（c03ef4f）、扩展块子系统（7bab11f）。970 XCTest + 44 SwiftTesting 全绿。
 - 2026-08-27：Phase 2a（FFI & unsafe 解释器优先）落地——foreign 块 + 原生函数表 + `*T` + `unsafe`/`&`/`|unsafe` + 指针原语；983 XCTest 全绿；LLVM 端显式 unsupported（D1 保留）；dlsym 动态解析与 LLVM FFI 列后续。

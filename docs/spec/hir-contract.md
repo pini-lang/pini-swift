@@ -1,13 +1,13 @@
 # HIR 节点语义契约（HIR Node Semantic Contract）
 
 - 性质：**宿主级规范**。HIR 节点语义的**唯一权威载体**。
-- 依据：`docs/spec/adr/adr-034-hir-contract.md`（ADR-034，Accepted 2026-09-12）。
+- 依据：本契约自身为语义权威（原依据件已随旧决策记录退役；现行治理见 `pini-spec-v0.md` §1.3 与 §3 台账）。
 - 版本：v1（2026-09-12，随 P0b 首次落地）。
-- 变更：走 `pini-spec-v0.md` §1.3 五步治理；条目一经落地**不得随实现漂移**（ADR-034 D5）。
+- 变更：走 `pini-spec-v0.md` §1.3 五步治理；条目一经落地**不得随实现漂移**（冻结纪律照搬 bk_* 范本）。
 
 ## 0. 定位与判读规则
 
-### 0.1 权威次序（ADR-034 D1）
+### 0.1 权威次序（HIR 契约是语义权威）
 
 1. **语言面语义**（用户可见行为）以 `pini-spec-v0.md` 为准 —— 本契约**不得与之冲突**；
 2. **HIR 节点语义**（后端间契约）以**本契约**为准；
@@ -19,7 +19,7 @@
   `memcpy`、GEP、refcount 布局、fat pointer 形状等实现细节；
 - 实现细节只能出现在**「LLVM 侧实现注记」**列，且其地位是「一种实现」，不是语义；
 - **禁止**以 `bk_*` 行为定义语义 —— 否则等于把某一后端的实现选择升格为全体后端的义务
-  （ADR-034 D1、WASM 约束）。
+  （HIR 契约是语义权威、WASM 约束）。
 
 > **反例（本契约立此存照）**：`HIRNode.swift` 原注释写 `fileRead`「fread into a 64 KiB
 > stack buffer」——把缓冲尺寸写成了节点语义。本契约的表述为「读取整文件内容；上限见
@@ -36,8 +36,8 @@
 ### 0.4 计数基线
 
 **45 表达式节点 + 17 语句节点 = 62**（2026-09-12 逐个复核为 **60**；2026-09-17 **两次**增量：
-① 新增 `join` 一条，走 `§1.3` / `ADR-040` ⇒ 表达式 44 → 45、合计 60 → 61；
-② 新增 `detachStmt` 一条，走 `§1.3` / `ADR-042` ⇒ 语句 16 → 17、合计 61 → 62）。
+① 新增 `join` 一条，走 `§1.3` / `HIR join 节点` ⇒ 表达式 44 → 45、合计 60 → 61；
+② 新增 `detachStmt` 一条，走 `§1.3` / `HIR detach 节点` ⇒ 语句 16 → 17、合计 61 → 62）。
 
 > ⚠️ **两条增量的性质不同，不要当成同一件事读**：`join`（①）是**兑现一个已登记的预留位**
 > （旧 §4.2 早已裁「须增加节点面」）；`detachStmt`（②）**不是** —— 它**从来没有预留位**
@@ -65,7 +65,7 @@
 | `f64` | 64 位 IEEE-754 浮点 | `double` |
 | `boolean` | 布尔 | `i1` |
 | `string` | 字节串值 | `i8*` |
-| `char` | **一个字素簇**（extended grapheme cluster，用户感知的「一个字符」）—— **不是**码点、**不是**字节；表示**与 `string` 同构**（`ADR-033 D1` 方案 A），「恰含 1 个字素」的不变式**由类型系统承担**、表示层不设防 | `i8*`（与 `string` 同拼写；**零新 ABI**） |
+| `char` | **一个字素簇**（extended grapheme cluster，用户感知的「一个字符」）—— **不是**码点、**不是**字节；表示**与 `string` 同构**（`Char 表示与 String 同构` 方案 A），「恰含 1 个字素」的不变式**由类型系统承担**、表示层不设防 | `i8*`（与 `string` 同拼写；**零新 ABI**） |
 | `result(ok:)` | `Result<ok, E>`；**错误槽类型擦除** | `{ i64, ok, i64 }` — 三槽是**布局约定** |
 | `array(element:)` | 有序、可重复、值语义集合 | 不透明句柄（`%bk_array*`） |
 | `optional(wrapped:)` | 有/无二态容器 | `{ i64, T }` 带 tag（**tag 取值是布局约定**） |
@@ -78,7 +78,7 @@
 | `function(params:returnType:)` | 函数是一等值 | fat pointer `{ptr, ptr}`；**首参恒为 env 是调用协议** |
 | `pointer(element:)` | `*T` 原始指针（FFI） | 不透明 `ptr`；**load/store 按元素类型解码**（半语义，见 §2.29） |
 
-> **乙类纪律**（ADR-034 D3 E 组）：上表「布局约定」字样者为**后端约定**，WASM 端可另择
+> **乙类纪律**（甲类裁决统一到 LLVM 侧 E 组）：上表「布局约定」字样者为**后端约定**，WASM 端可另择
 > 表示；标「语义」者为**必须实现的行为**。半语义两项见 §2.17（`optionalGet` 的 panic 面）
 > 与 §2.29（`pointerLoad` 的符号扩展）。
 
@@ -121,7 +121,7 @@
 |---|---|---|---|
 | 15 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；**错误载荷类型擦除为一个机器字** | 擦除是 ABI 约定；「错误可为任意类型」是语言语义 |
 | 16 | `optionalConstruct(isSome:payload:type:)` | `Optional` 构造：`isSome=false` 为 `none`（语言级 nil）；`true` 携带载荷 | 切片语法开放边界到达时为 `none` |
-| 17 | `optionalGet(container:index:type:)` | **宽容读通道** `container.get(i)`：越界 → `none`；界内 → `some(v)` | ⚠️ **半语义**：越界返回 `none` 是语义；边界检查方式是约定（E 组，ADR-034 D3） |
+| 17 | `optionalGet(container:index:type:)` | **宽容读通道** `container.get(i)`：越界 → `none`；界内 → `some(v)` | ⚠️ **半语义**：越界返回 `none` 是语义；边界检查方式是约定（E 组，甲类裁决统一到 LLVM 侧） |
 > **语句位指针（不占编号）**：`tryStmt` 见 §3.9。
 
 ### 2.5 集合
@@ -131,8 +131,8 @@
 | 18 | `arrayLiteral(elements:type:)` | 数组字面量，**元素保序** | — |
 | 19 | `dictLiteral(entries:type:)` | 字典字面量，键值对预降级 | — |
 | 20 | `setLiteral(elements:type:)` | 集合字面量，**元素唯一** | — |
-| 21 | `subscriptGet(container:index:type:)` | **安全断言读** `c[i]`：越界（读）→ panic（`E5-005`） | 负索引尾部计数；三通道语义见 ADR-028 |
-| 22 | `lenCall(argument:)` | 容器长度 | ⚠️ **B 组缺陷**：`String` 的「字符」定义两侧不同（契约 = **字素簇**，`ADR-019 D1`；LLVM 侧现为码点，**偏离**） |
+| 21 | `subscriptGet(container:index:type:)` | **安全断言读** `c[i]`：越界（读）→ panic（`E5-005`） | 负索引尾部计数；三通道语义见 下标三通道安全模型 |
+| 22 | `lenCall(argument:)` | 容器长度 | ⚠️ **B 组缺陷**：`String` 的「字符」定义两侧不同（契约 = **字素簇**，`字符模型 = Grapheme Cluster`；LLVM 侧现为码点，**偏离**） |
 | 23 | `sliceCall(container:start:end:type:)` | 切片：**负界尾部计数**，夹到 `[0, len]`，`hi < lo` 得空 | ⚠️ **B 组缺陷**：`String` 切片契约 = 字素簇；LLVM 侧现为**字节**，偏离 |
 | 24 | `tupleConstruct(labels:elements:type:)` | 带标签元组构造 | — |
 | 25 | `tupleIndexGet(base:index:type:)` | 元组成员读，按**字段序** | — |
@@ -162,7 +162,7 @@
 | 33 | `fileRead(path:)` | 读取文件的**全部内容**并作为 `String` 返回 | ✅ **A2 裁决：统一到本方** —— **上限 65536 字节，超出静默截断**。**已对齐**（2026-09-14，IO 语义格）：解释器侧补上限，两处尺寸常量单源化。**HIR 侧已实现**（2026-09-14，G9）。⚠️ 该上限源于发射器缓冲尺寸，**已立案**：`docs/issue-io-limit-from-emitter-2026-09-12.md`（载体已删） |
 | 34 | `readLine` | 从标准输入读**一行**，作为 `String` 返回；**输入耗尽返回空串** | ✅ **A1 裁决：统一到本方** —— **行终止符不剥离**；**上限 256 字节**（可观测值 = **255 字节**，即 `fgets` 的 `size - 1`）。**已对齐**（2026-09-14，IO 语义格）：解释器侧改为不剥 + 上限，**EOF 语义一并钉死**——LLVM 侧此前把 `fgets` 的 NULL 直接交给 `%s`（未定义行为，实测打印 `(null)`，7 字节，而解释器输出空串 1 字节），现两侧均为空串。**HIR 侧已实现**（2026-09-14，G9）。⚠️ 上限同上已立案；**超长行的流位置语义仍分歧**（同工单补记）。受害面已改：`Tests/PiniTests/IOTests/testReadLine.pini`（载体已删） 期望 |
 
-> **A 组裁决的共同性质**（ADR-034 D3/D4）：三项均按判准**统一到 LLVM 侧**；上限本身
+> **A 组裁决的共同性质**（甲类裁决统一到 LLVM 侧/D4）：三项均按判准**统一到 LLVM 侧**；上限本身
 > 的合理性**不在本次裁量范围**，已另立工单。
 > **落地状态**：三项**均已对齐**（2026-09-14，IO 语义格）；三项**在 HIR 引擎侧亦已实现**
 > （2026-09-14，G9，打靶点清零）。本表数字均为**节点语义**，实现面的位置见
@@ -172,12 +172,12 @@
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 35 | `isAsciiDigit(argument:)` | 首字符是否 ASCII `[0-9]`；空串 → 假 | ASCII 域内与解释器「首字素」规则重合；域外由 `ADR-019 D4` 管辖（显式 unsupported，fail-loud） |
-| 36 | `stringCase(isUpper:receiver:)` | 大小写转换，**接收者不变**，返回新串 | ⚠️ **B 组缺陷**：契约 = **Unicode 感知**（`ADR-019 D1`）；LLVM 侧现为**逐字节 ASCII-only**，偏离（实测 `"café".upper()` → `CAFé`） |
+| 35 | `isAsciiDigit(argument:)` | 首字符是否 ASCII `[0-9]`；空串 → 假 | ASCII 域内与解释器「首字素」规则重合；域外由 `谓词集三层对齐` 管辖（显式 unsupported，fail-loud） |
+| 36 | `stringCase(isUpper:receiver:)` | 大小写转换，**接收者不变**，返回新串 | ⚠️ **B 组缺陷**：契约 = **Unicode 感知**（`字符模型 = Grapheme Cluster`）；LLVM 侧现为**逐字节 ASCII-only**，偏离（实测 `"café".upper()` → `CAFé`） |
 | 37 | `stringContains(receiver:needle:)` | 子串包含判定 | ⚠️ **B 组缺陷**：契约 = **字素**语义；LLVM 侧现为**字节查找**，偏离（分解式 Unicode 下分歧） |
 | 38 | `stringSubstring(receiver:start:length:)` | 取子串 | ⚠️ **B 组缺陷**：注册表与测试已裁 **`(start, end)`**；LLVM 侧现为 `(start, length)`，**偏离** |
 | 39 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为**真数组** | ✅ **A4 裁决：统一到本方** —— **跳过空 token**（`"a,,b"` → 2 段）。**已对齐（2026-09-15，`stringSplit` 格）**：偏离方是解释器，已由 `StdlibPini.split` 的两处 `len(cur) > 0` 守卫对齐；三通道在 `"a,,b"` / `",a"` / `"a,"` / `",,"` / `""` 上**逐字节一致**。⚠️ **本条只裁「空 token」**：**分隔符语义本身（子串 vs 字符集）与空分隔符语义均未裁**，LLVM 侧现按 `@strtok` 的**字符集**解释、且空分隔符无守卫 ⇒ **两处实测偏离不在本条裁决范围内，已另立工单**（`docs/issue-hir-stringsplit-delimiter-semantics-2026-09-15.md`（载体已删），登记不修） |
-| 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ✅ **已核，移出 B 组（2026-09-15）**：`interp-ast` 与 `llvm-hir` 在**五类接收者形态**（普通 / 字面量 / 空分隔符 / 单元素 / **空数组**）上**逐字节一致**（P1-4，2026-09-12）⇒ **本节点测量不到字符语义偏离**；原「B 组」标注系**按邻近归类**（未经实测）给出，**测量未予支持**。⚠️ **订正一条此前不可核验的断言**：原文称「与**非 ASCII 分隔符 + 非 ASCII 元素**上亦逐字节一致」，而其指明的载体当时为 **752 字节纯 ASCII 文本（非 ASCII 字符数 = 0）** ⇒ 该断言**无落地载体**；**2026-09-15 已补测并同步补入夹具**（CJK / 韩文 / emoji ZWJ / 分解式重音等用例，三臂各 **49** 字节、`FLIP BLOCKERS 0`）⇒ 该断言现**可核验**。依 `ADR-034` 口径（B 组 = 规范已裁、实现偏离）与本次实测，**本节点不属 B 组** ⇒ **现行 B 组 5 项**（`§2.22` / `§2.23` / `§2.36` / `§2.37` / `§2.38`）。`interp-hir` 侧**已实现**（2026-09-14，G7 交付）——原文「未实现（`arrayLiteral` 更早拦截）⇒ P2 格」系 P1-4（2026-09-12）时点的**掩蔽**描述（本节点及其前的 `arrayLiteral` 当时均为打靶点），随该格落地失效；2026-09-14 复测本节点探针夹具三臂输出**逐字节一致**。⚠️ **本次补测的伴生发现**（同字形不同码点的字符串字面量碰撞，与 `join` 无关）已另立工单 `docs/issue-hir-string-literal-grapheme-collision-2026-09-15.md`（载体已删）（登记不修）。探针载体：`Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffArrayJoin.pini`（载体已删） |
+| 40 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | ✅ **已核，移出 B 组（2026-09-15）**：`interp-ast` 与 `llvm-hir` 在**五类接收者形态**（普通 / 字面量 / 空分隔符 / 单元素 / **空数组**）上**逐字节一致**（P1-4，2026-09-12）⇒ **本节点测量不到字符语义偏离**；原「B 组」标注系**按邻近归类**（未经实测）给出，**测量未予支持**。⚠️ **订正一条此前不可核验的断言**：原文称「与**非 ASCII 分隔符 + 非 ASCII 元素**上亦逐字节一致」，而其指明的载体当时为 **752 字节纯 ASCII 文本（非 ASCII 字符数 = 0）** ⇒ 该断言**无落地载体**；**2026-09-15 已补测并同步补入夹具**（CJK / 韩文 / emoji ZWJ / 分解式重音等用例，三臂各 **49** 字节、`FLIP BLOCKERS 0`）⇒ 该断言现**可核验**。依 `HIR 契约` 口径（B 组 = 规范已裁、实现偏离）与本次实测，**本节点不属 B 组** ⇒ **现行 B 组 5 项**（`§2.22` / `§2.23` / `§2.36` / `§2.37` / `§2.38`）。`interp-hir` 侧**已实现**（2026-09-14，G7 交付）——原文「未实现（`arrayLiteral` 更早拦截）⇒ P2 格」系 P1-4（2026-09-12）时点的**掩蔽**描述（本节点及其前的 `arrayLiteral` 当时均为打靶点），随该格落地失效；2026-09-14 复测本节点探针夹具三臂输出**逐字节一致**。⚠️ **本次补测的伴生发现**（同字形不同码点的字符串字面量碰撞，与 `join` 无关）已另立工单 `docs/issue-hir-string-literal-grapheme-collision-2026-09-15.md`（载体已删）（登记不修）。探针载体：`Tests/PiniTests/CodeGen/HIRTests/HIRDifferentialTests/testDiffArrayJoin.pini`（载体已删） |
 | 41 | `stringConcat(lhs:rhs:)` | 字符串拼接（**字节语义**） | ✅ C 组：两侧结果一致，仅分配方式不同 |
 | 42 | `interpString(parts:)` | 字符串插值：各部分转 C 串后拼接 | ✅ C 组：纯组装。F64 渲染走**最短往返**（`§2.8` / LR-8） |
 
@@ -192,7 +192,7 @@
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 45 | `join(future:type:)` | `await f`（异步函数体内**挂起**等待）/ `wait f`（同步上下文**阻塞** join）：求值 `future`，待其决后**解构 `ok` / `err`**；`type` 为站点所得 `Result<T>` | ⚠️ **节点面已落地（2026-09-17，走 `§1.3` / `ADR-040`）**；**挂起语义的实现面尚未落地** —— `HIRLowerer` 无 `.join` 降载规则 ⇒ 本节点当前**不可达**。`interp-hir` 对该形态 **fail-loud**、不静默。挂起 / 恢复跨线程的上下文还原见 `pini-spec-v0.md` §3.1.3 |
+| 45 | `join(future:type:)` | `await f`（异步函数体内**挂起**等待）/ `wait f`（同步上下文**阻塞** join）：求值 `future`，待其决后**解构 `ok` / `err`**；`type` 为站点所得 `Result<T>` | ⚠️ **节点面已落地（2026-09-17，走 `§1.3` / `HIR join 节点`）**；**挂起语义的实现面尚未落地** —— `HIRLowerer` 无 `.join` 降载规则 ⇒ 本节点当前**不可达**。`interp-hir` 对该形态 **fail-loud**、不静默。挂起 / 恢复跨线程的上下文还原见 `pini-spec-v0.md` §3.1.3 |
 
 > 注：§2.1–§2.11 的编号连续，共 **45 条**；**上表编号即契约条目号**，下游文档与工单以 `§2.N` 形式引用它。
 > 语句位指针（`tryStmt` → §3.9、`matchStmt` → §3.14）**不占编号**，故编号与条目数严格相等。
@@ -203,21 +203,21 @@
 |---|---|---|---|
 | 1 | `allocVar(name:type:mutable:initializer:)` | 声明变量槽；有初值则在分配后立即存入 | 可变性 `mutable` 是语言约束，不靠后端 |
 | 2 | `storeVar(name:type:value:)` | 向既有变量写值 | — |
-| 3 | `ifStmt(label:condition:thenBody:elseBody:)` | 条件分支。`label` 非空时本节点是一个**可中断帧**：`break` 可定向到它（`ADR-039`） | 条件为布尔。`label` 本身运行时不读 —— 与循环同理，只有解析好的深度随信号走；`label != nil` 是后端「在此处捕获信号」的判据。`if` 帧**不是** `continue` 目标（`continue-stmt` 的「仅循环标签有效」） |
-| 4 | `whileStmt(condition:body:step:)` | `while` 循环；**`step` 块每轮体后执行一次** —— 正常完成**与**无标签 `continue` 时均执行，`break` 跳过 | `step` 契约见 `ADR-014`；**这是常被误实现的点**。⚠️ 带标签 `continue` 且深度 > 1 时，`IREmitter` 跳 `header` 而非 `continueTarget` ⇒ **该臂不执行 `step`**（与两解释器臂相反，已单独立案） |
+| 3 | `ifStmt(label:condition:thenBody:elseBody:)` | 条件分支。`label` 非空时本节点是一个**可中断帧**：`break` 可定向到它（`标签 break 定向范围`） | 条件为布尔。`label` 本身运行时不读 —— 与循环同理，只有解析好的深度随信号走；`label != nil` 是后端「在此处捕获信号」的判据。`if` 帧**不是** `continue` 目标（`continue-stmt` 的「仅循环标签有效」） |
+| 4 | `whileStmt(condition:body:step:)` | `while` 循环；**`step` 块每轮体后执行一次** —— 正常完成**与**无标签 `continue` 时均执行，`break` 跳过 | `step` 契约见 `标签语法反转`；**这是常被误实现的点**。⚠️ 带标签 `continue` 且深度 > 1 时，`IREmitter` 跳 `header` 而非 `continueTarget` ⇒ **该臂不执行 `step`**（与两解释器臂相反，已单独立案） |
 | 5 | `forInStmt(pattern:elementTypes:kind:iterable:body:step:)` | `for` 遍历；`kind` 决定元素读取方式；`"_"` 占位仍占槽位并带类型 | `break`/`continue` 的 `step` 契约同 `whileStmt`。⚠️ 同一缺陷在此更重：深度 > 1 的 `continue` 跳到边界检查、**跳过索引自增** |
 | 6 | `returnStmt(value:)` | 返回值；`nil` 表示空返回 | — |
 | 7 | `exprStmt(HIRExpr)` | 表达式求值并丢弃结果 | — |
 | 8 | `deferStmt(body:)` | 语句块**离开作用域时按 LIFO 执行**（含每轮循环结束） | ⚠️ `break`/`return` 交互**未入语料 = 未门控面**（如实登记） |
-| 9 | `tryStmt(operand:errorVar:handler:okTarget:type:)` | `try e else err: ...`（`ADR-032`）；操作数为 `result(ok:)`；错误路径绑定**类型擦除错误字**到 `errorVar` 并运行 handler；表达式位把 ok 载荷存入 `okTarget` | `nil` 的 `okTarget` = 语句位 |
+| 9 | `tryStmt(operand:errorVar:handler:okTarget:type:)` | `try e else err: ...`（`try-else 迁移`）；操作数为 `result(ok:)`；错误路径绑定**类型擦除错误字**到 `errorVar` 并运行 handler；表达式位把 ok 载荷存入 `okTarget` | `nil` 的 `okTarget` = 语句位 |
 | 10 | `subscriptStore(container:index:value:elementType:)` | 下标写 `c[i] = v`；可嵌套链；复合赋值降级为读改写 | 越界写报错（不得经赋值扩容） |
-| 11 | `breakStmt(depth:)` | 跳出第 `depth` 个**可中断帧**（1 = 最内层，目标本身计入）；标签 break 已解析为深度。帧 = 循环 **＋ 带标签的 `if` 块**（`ADR-039`） | 不可解析目标（无同名标签 / 无任何循环帧）→ 降级为 `panicStmt`（fail-loud 对齐，非静默跳过）。⚠️ **本行的「对齐」在 `ADR-039` 之前是错的**：`break 指向 if 标签` 解释器解析它、降载层判它不可解析，两侧并不对齐；`ADR-039` 落地后才成立 |
+| 11 | `breakStmt(depth:)` | 跳出第 `depth` 个**可中断帧**（1 = 最内层，目标本身计入）；标签 break 已解析为深度。帧 = 循环 **＋ 带标签的 `if` 块**（`标签 break 定向范围`） | 不可解析目标（无同名标签 / 无任何循环帧）→ 降级为 `panicStmt`（fail-loud 对齐，非静默跳过）。⚠️ **本行的「对齐」在 `标签 break 定向范围` 之前是错的**：`break 指向 if 标签` 解释器解析它、降载层判它不可解析，两侧并不对齐；`标签 break 定向范围` 落地后才成立 |
 | 12 | `continueStmt(depth:)` | 继续第 `depth` 个帧（1 = 重测最内层条件）。**目标只能是循环帧**（`continue-stmt` 的「仅循环标签有效」） | 同 `breakStmt` 的不可解析处置。⚠️ 一个带标签的 `if` 是 `break` 的合法目标、**不是** `continue` 的 —— 两者按同一深度计数，但可选项不同 |
 | 13 | `panicStmt(message:)` | 无条件运行时陷阱，固定消息；块终止 | 用于解释器仅运行时才发现的逃逸 |
 | 14 | `matchStmt(scrutinee:cases:scrutineeType:)` | `match` 分派；可分派于枚举、Optional 与**裸值字面量**（`HIRMatchLiteral`） | **未匹配 → 运行时 panic**（`matchNotExhaustive` 对齐） |
 | 15 | `fieldStore(base:field:value:fieldType:)` | 具名字段写 | 对象需越过引用头（实现细节） |
 | 16 | `captureMarker(name:)` | 闭包体内的 `capture` 标记语句；**捕获在闭包创建点解析**，本节点**降级为无操作** | 存在意义是让该语句种类在闭包体内被接受而非被门控 |
-| 17 | `detachStmt(inner:)` | `detach <expr>`：求值操作数（须为 `Future` 值），把它从父任务**剪枝** —— 父返回时不再取消它（fire-and-forget 的**唯一**合法出口） | ⚠️ **节点面已落地（2026-09-17，走 `§1.3` / `ADR-042`）**；**降载规则与两台引擎的行为尚未落地** —— `HIRLowerer` 无 `detach` 降载 ⇒ 本节点当前**不可达**（与 §2.45 的 `join` 同一状态）。`interp-hir` **fail-loud**（`RuntimeError`）、`llvm` 侧 `fatalError`，**均不静默**。操作数非 `Future` 时按**运行时类型不符**报错（对齐解释器的 `typeMismatch(expected: "Future<T, Error>")`），**不是**降载期拒绝。**不带 `type`**：语句位不产出值，操作数类型在其自身节点内；且**没有任何 `HIRType` case 表示 future**（`Future` 是运行时值，同 `§2.45` 的立场）|
+| 17 | `detachStmt(inner:)` | `detach <expr>`：求值操作数（须为 `Future` 值），把它从父任务**剪枝** —— 父返回时不再取消它（fire-and-forget 的**唯一**合法出口） | ⚠️ **节点面已落地（2026-09-17，走 `§1.3` / `HIR detach 节点`）**；**降载规则与两台引擎的行为尚未落地** —— `HIRLowerer` 无 `detach` 降载 ⇒ 本节点当前**不可达**（与 §2.45 的 `join` 同一状态）。`interp-hir` **fail-loud**（`RuntimeError`）、`llvm` 侧 `fatalError`，**均不静默**。操作数非 `Future` 时按**运行时类型不符**报错（对齐解释器的 `typeMismatch(expected: "Future<T, Error>")`），**不是**降载期拒绝。**不带 `type`**：语句位不产出值，操作数类型在其自身节点内；且**没有任何 `HIRType` case 表示 future**（`Future` 是运行时值，同 `§2.45` 的立场）|
 
 ## 4. 预留位（**两条均已兑现**；本节只留可追性）
 
@@ -225,12 +225,12 @@
 
 原预留位（依据 / 契约预留 / 现状 / 命名注意 / 处置五条）随兑现**作废**，不再于此处复述。
 **兑现动作**：`HIRType` 新增 `char` case（`Sources/PiniCore/HIR/HIRNode.swift`）+ 本节所属
-契约 §1 新增 `char` 行；走 `§1.3`（等级 `G67`，`ADR-033`）。**前置已兑现**：FFI 单字节
-`Char` 改名 `CChar`（2026-09-17，`ADR-033 D2` / `G65`）。
+契约 §1 新增 `char` 行；走 `§1.3`（等级 `G67`，`Char 类型引入`）。**前置已兑现**：FFI 单字节
+`Char` 改名 `CChar`（2026-09-17，`FFI 的 Char 改名 CChar` / `G65`）。
 
 ⚠️ **一处计数事实（留档）**：本契约 §1 标题原写「20 case」而实现实为 **19 case**（既存差异，
 本次实测发现）；兑现后实现为 **20 case**，**标题与实现就此一致**。⇒ 原差异的合理解释是
-标题写于 `ADR-033` 时期、**已把预留的 `char` 计入**（属推断，非实证）。
+标题写于 `Char 类型引入` 时期、**已把预留的 `char` 计入**（属推断，非实证）。
 
 ⚠️ **仍未实施的是 LLVM 端 grapheme 运行时符号**（2026-09-18 拆格、另立新格）—— 它**不在契约面**
 （契约查**存在**不查**行为**，见 §0.3），故不构成本节遗留项。
@@ -241,7 +241,7 @@
 
 原预留位（依据 / 预留内容 / 现状三条）随兑现**作废**，不再于此处复述。**兑现动作**：新增
 `HIRExpr.join` 节点 + 三锚点（`llvm` / `printer` / `interp-hir`）+ `§2.45` 语义条目，
-走 `§1.3` 五步（`ADR-040`）。
+走 `§1.3` 五步（`HIR join 节点`）。
 
 ⚠️ **仍未实施的是挂起语义本身**（CPS 求值器，格 `G3c`）—— 它不在契约面（契约查**存在**不查**行为**），
 故不构成本节遗留项；该语义的进度见计划 §13 与 `docs/issue-hir-p4-gamma-g3-plan-2026-09-17.md`（载体已删）。
@@ -251,17 +251,17 @@
 
 ## 5. 冻结纪律与 `bk_*` 清单
 
-### 5.1 冻结纪律（照搬 `bk_*` 范本，`ADR-034 D5`）
+### 5.1 冻结纪律（照搬 `bk_*` 范本，`冻结纪律照搬 bk_* 范本`）
 
 - 契约条目一经落地，**变更须走 §1.3**；不得为迁就某后端实现而漂移；
-- `bk_*` 是 **LLVM 后端的实现面，不是语义定义处**；其 ABI 冻结（`ADR-031` 约束 4）继续有效；
+- `bk_*` 是 **LLVM 后端的实现面，不是语义定义处**；其 ABI 冻结（`LLVM 后端重写` 约束 4）继续有效；
 - **每个后端须能自备 shim** —— 既有的「shim 边界必须是 C ABI」MUST 得到强化
   （`pini-spec-v0.md` §3.2），因为多后端下每个后端都需要自己的值层实现面。
 
 ### 5.2 `bk_*` 权威清单（37 个，2026-09-12 实测）
 
-> **口径订正**：`ADR-031` 两处写「35 个」，`@_cdecl` 实测 **37 个**。本清单为该面的
-> 单一权威来源，`ADR-031` 同步订正（`ADR-034 D6`）。
+> **口径订正**：`LLVM 后端重写` 两处写「35 个」，`@_cdecl` 实测 **37 个**。本清单为该面的
+> 单一权威来源，`LLVM 后端重写` 同步订正（`同步变更`）。
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -281,13 +281,13 @@
 |---|---|---|
 | A 组 4 项统一裁决（§2.32/33/34/39） | **已裁**；偏离方 = **解释器**。**§2.32/33/34 已对齐**（2026-09-14，IO 语义格）；**§2.39 已对齐**（2026-09-15，`stringSplit` 格）⇒ **A 组四项全部对齐** | §2.8 注记：IO 三项 = **IO 语义格**（已落地）；§2.39 的 `split` 空 token = **`stringSplit` 格**（**已落地**，窄读：只对齐空 token） |
 | `stringSplit` 分隔符语义（§2.39 的**未裁部分**） | **缺口**：LLVM 侧 `@strtok` ⇒ 分隔符按**字符集**解释 + 空分隔符无守卫；契约**未裁**「子串 vs 字符集」 ⇒ 须走 spec §1.3 | `docs/issue-hir-stringsplit-delimiter-semantics-2026-09-15.md`（载体已删）（登记不修） |
-| B 组 5 项字符语义偏离（§2.22/23/36/37/38） | **实现缺陷**，修实现对齐 `ADR-019 D1`。**`§2.40` 已于 2026-09-15 移出本组**（P1-4 实测未复现偏离 + 非 ASCII 面已补测，见 §2.40 行） | `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（载体已删） |
+| B 组 5 项字符语义偏离（§2.22/23/36/37/38） | **实现缺陷**，修实现对齐 `字符模型 = Grapheme Cluster`。**`§2.40` 已于 2026-09-15 移出本组**（P1-4 实测未复现偏离 + 非 ASCII 面已补测，见 §2.40 行） | `docs/issue-hir-string-slice-byte-based-2026-09-11.md`（载体已删） |
 | A1/A2 上限（§2.8 注记） | **有害默认**，须 §1.3 反向修订；**对齐已落地，但上限本身的合理性仍未裁** | `docs/issue-io-limit-from-emitter-2026-09-12.md`（载体已删）（含超长行流位置补记） |
 | `addressOfVar` 解释器快照（§2.31） | **A/D1 裁决**：解释器须改为真引用 | 本契约 + 计划 IO/指针格 |
 | `assoc` 等半语义两项（§2.17 / §2.29） | **规范表述**：须写成语义 | 本契约 |
-| D2 路径基准 | **允许差异**（明文登记） | `ADR-034` D3；spec G58「v1 已知限制」 |
+| D2 路径基准 | **允许差异**（明文登记） | `HIR 契约` D3；spec G58「v1 已知限制」 |
 | D3 警告通道 | 缺口 | `docs/issue-diagnostic-channel-parity-2026-09-12.md`（载体已删） |
 | `deferStmt` break/return 交互 | **未门控面** | 本契约（如实登记） |
 | `HIRNode.swift` 头部「for the LLVM backend」 | ✅ **已订正**（2026-09-18 `P5` 收口批：实测 3 处改写、1 处判为叙述 `LR-4` 动机的历史句而不改）。⚠️ **本行系 `P0d` 批替 `P5` 补的账** —— 该批漏改本汇总行 | `docs/issue-lr4-p5-closeout-plan-2026-09-18.md`（载体已删） |
-| `char` 节点 / `.join` 挂起语义 | **均已兑现，两条预留位清空**（`char` 于 2026-09-18 兑现为 §1 行，见 §4.1；`.join` 于 2026-09-17 兑现为 §2.45） | §4；`ADR-033` / `G67` · `ADR-040` |
-| `detach` 的降载规则与两台引擎的行为 | **节点面已落、行为未落**（非预留位：条目是 2026-09-17 新裁的） | §3.17；`ADR-042` / 格 `G-3c-1` |
+| `char` 节点 / `.join` 挂起语义 | **均已兑现，两条预留位清空**（`char` 于 2026-09-18 兑现为 §1 行，见 §4.1；`.join` 于 2026-09-17 兑现为 §2.45） | §4；`Char 类型引入` / `G67` · `HIR join 节点` |
+| `detach` 的降载规则与两台引擎的行为 | **节点面已落、行为未落**（非预留位：条目是 2026-09-17 新裁的） | §3.17；`HIR detach 节点` / 格 `G-3c-1` |

@@ -6,7 +6,7 @@ let package = Package(
     products: [
         .executable(name: "pini", targets: ["PiniCLI"]),
         .library(name: "PiniCore", targets: ["PiniCore"]),
-        // ADR-008 阶段1：集合/COW 运行时 shim（Swift 实现，经 @_cdecl 暴露 C ABI）。
+        // 并发后端抽象 阶段1：集合/COW 运行时 shim（Swift 实现，经 @_cdecl 暴露 C ABI）。
         // 动态库产物 libPiniRuntime.{dylib,so} 由 CLI 在 run-llvm / compile 时经
         // `lli --dlopen` / `clang -lPiniRuntime` 加载；CLI 自身不 import 它。
         .library(name: "PiniRuntime", type: .dynamic, targets: ["PiniRuntime"]),

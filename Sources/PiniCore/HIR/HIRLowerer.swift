@@ -313,7 +313,7 @@ public enum HIRLowerer {
         var genericStructTemplates: [String: StructDecl] = [:]
         var genericFuncTemplates: [String: FuncDecl] = [:]
         // G-2d: generic enum templates, plus the case -> owner index that the
-        // bare construction spelling resolves through (ADR-037). The qualified
+        // bare construction spelling resolves through (泛型枚举构造形态). The qualified
         // spelling names the enum itself, so it needs no index.
         var genericEnumTemplates: [String: EnumDecl] = [:]
         var genericEnumCaseOwners: [String: [String]] = [:]
@@ -1651,7 +1651,7 @@ public enum HIRLowerer {
             guard cond.type == .boolean else {
                 throw unsupported("if condition is not Bool", at: conditionLocation(condition))
             }
-            // ADR-039: a labeled `if` is an interruptible frame, so `break 标签`
+            // 标签 break 定向范围: a labeled `if` is an interruptible frame, so `break 标签`
             // may leave the block. It is not a `continue` target (`isLoop:
             // false`). The frame covers every branch — `then`, each `elif` and
             // `else` — because the AST channel's `executeIf` wraps the whole of
@@ -1702,7 +1702,7 @@ public enum HIRLowerer {
             // the top level). Lowering it hard here would reject programs the
             // interpreter accepts. "Unresolvable" means no enclosing
             // interruptible frame carries the label — a labeled `if` counts
-            // (ADR-039), so this set is narrower than it was before that ADR.
+            // (标签 break 定向范围), so this set is narrower than it was before that ADR.
             guard let depth = resolveControlDepth(
                 label: label, target: .anyFrame, into: &context
             ) else {
@@ -1740,7 +1740,7 @@ public enum HIRLowerer {
             return [.deferStmt(body: .at(try lowerStatement(wrapped, into: &context), wrapped.location))]
 
         case .expressionStmt(let expr, let location):
-            // Statement-position try-else: ok value discarded (ADR-032).
+            // Statement-position try-else: ok value discarded (try-else 迁移).
             if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
                 return [try lowerTry(
                     operand: operand, errorVar: errorVar, handler: handler,
@@ -1862,14 +1862,14 @@ public enum HIRLowerer {
 
     /// Which frames a signal is allowed to leave.
     private enum ControlTarget {
-        /// `break` — any interruptible frame (ADR-039 D1).
+        /// `break` — any interruptible frame (break 可定向任意带标签结构).
         case anyFrame
         /// `continue` — a loop only (`continue-stmt`'s *仅循环标签有效*).
         case loopOnly
     }
 
-    /// Resolve a break/continue to its unwind depth (ADR-014 labeled control
-    /// flow, widened by ADR-039). Depth counts **frames unwound from the
+    /// Resolve a break/continue to its unwind depth (标签语法反转 labeled control
+    /// flow, widened by 标签 break 定向范围). Depth counts **frames unwound from the
     /// innermost one, target included**, so it doubles as the number of
     /// `depth - 1` decrements the signal makes on its way out.
     ///
@@ -1896,11 +1896,11 @@ public enum HIRLowerer {
                 matches = frame.label == label
             case (let label?, .loopOnly):
                 // A label on an `if` block does not satisfy a `continue`: that
-                // form is invalid, not merely unreachable (ADR-039 D1).
+                // form is invalid, not merely unreachable (break 可定向任意带标签结构).
                 matches = frame.isLoop && frame.label == label
             }
             // Innermost-first: the nearest frame that both encloses the signal
-            // and can consume it is the target (ADR-039 D2).
+            // and can consume it is the target (内层同名标签遮蔽外层).
             if matches { return frames.count - index }
             index -= 1
         }
@@ -2113,7 +2113,7 @@ public enum HIRLowerer {
         return statements
     }
 
-    // MARK: - Try-else (ADR-032, G1)
+    // MARK: - Try-else (try-else 迁移, G1)
 
     /// The static Result type of a try operand: annotation-derived when
     /// resolvable, otherwise via the checker's inference (Result -> params[0]).
@@ -2379,7 +2379,7 @@ public enum HIRLowerer {
             let lhs = try lowerExpr(left, expected: operandExpectation, into: &context)
             let rhs = try lowerExpr(right, expected: lhs.type, into: &context)
             if hirOp.isComparison {
-                // G68（P0d-D）：`Char` / `String` 是**相容对**（表示同构，ADR-033 D1
+                // G68（P0d-D）：`Char` / `String` 是**相容对**（表示同构，Char 表示与 String 同构
                 // 方案 A）⇒「两操作数类型名必须字面相等」这条判据对这一对不适用。
                 // 放宽只覆盖这一对；两侧同为 `Char` 或同为 `String` 的情形本就走通。
                 guard lhs.type == rhs.type || lhs.type.formsCharStringPair(with: rhs.type) else {
@@ -2585,7 +2585,7 @@ public enum HIRLowerer {
             }
             // G-2d: generic enum case construction — the bare spelling, where
             // the case name carries the type arguments (`ok<I32, String>(42)`,
-            // ADR-037). Neither template table above holds a case name, which
+            // 泛型枚举构造形态). Neither template table above holds a case name, which
             // is why this is where it lands.
             if let constructed = try lowerGenericEnumCaseConstruct(
                 qualifier: typeName, caseName: typeName, typeArgs: typeArgs,
@@ -2737,7 +2737,7 @@ public enum HIRLowerer {
                 )
             }
             // G-2d: the qualified generic enum case construction
-            // (`结果<I32, String>.ok(42)`, ADR-037) reaches here as a member
+            // (`结果<I32, String>.ok(42)`, 泛型枚举构造形态) reaches here as a member
             // call whose receiver is the *no-argument* generic construct: the
             // qualifier names the enum, so both the parent and the type
             // arguments are written down rather than inferred. An empty
@@ -3656,9 +3656,9 @@ public enum HIRLowerer {
     /// Resolve a case name to (enum decl, case) — exact qualified
     /// `Enum.case` first, then unique unqualified fallback; ambiguous
     /// unqualified names resolve through the checker's static registry
-    /// (ADR-026 D1: call-site location → parent enum) and are gated
+    /// (裸名 case 消歧（静态收敛版）: call-site location → parent enum) and are gated
     /// when unresolved.
-    /// G-2d: a generic enum case construction in either spelling (ADR-037).
+    /// G-2d: a generic enum case construction in either spelling (泛型枚举构造形态).
     ///
     /// Returns nil when the spelling names no generic enum at all, so callers
     /// can fall through to their other paths. Once the spelling *is* a generic
@@ -3677,7 +3677,7 @@ public enum HIRLowerer {
         if let found = context.genericEnums.parentTemplate(qualifier: qualifier, caseName: caseName) {
             template = found
         } else if context.genericEnums.isAmbiguousCase(caseName) {
-            // The bare spelling resolves its parent by name alone (ADR-026 D1's
+            // The bare spelling resolves its parent by name alone (裸名 case 消歧（静态收敛版）'s
             // second tier), so two enums sharing a case name cannot be told
             // apart -- that is the tier-3 situation the qualified form exists
             // for, and the message has to say which spelling to write.
@@ -5015,7 +5015,7 @@ extension HIRType {
             default: return nil
             }
         case .generic(let name, let params, _):
-            // `^T` surface form (Result type sugar, ADR-032): pins the ok
+            // `^T` surface form (Result type sugar, try-else 迁移): pins the ok
             // payload; the error slot is type-erased in the IR ABI (LR-12).
             if name == "Result", let first = params.first,
                let ok = HIRType(from: first) {
@@ -5041,7 +5041,7 @@ extension HIRType {
             }
             return nil
         case .pointer(let element, _):
-            // `*T` (G14, ADR-015 FFI): element recurses; the pointer itself
+            // `*T` (G14, FFI 子系统): element recurses; the pointer itself
             // is an opaque `ptr` in the IR ABI.
             guard let elementType = HIRType(from: element) else { return nil }
             self = .pointer(element: elementType)
@@ -5250,10 +5250,10 @@ struct HIRLowererSignatureInfo {
 /// `errorBindings` tracks names currently bound to a try-else error word so
 /// `return err` can re-box and print can gate on the type-erased ABI.
 /// G-2d: the module's generic-enum templates plus the case -> owner index.
-/// ADR-037 gives two construction spellings: the qualified form names the enum
+/// 泛型枚举构造形态 gives two construction spellings: the qualified form names the enum
 /// (`结果<I32, String>.ok(42)`) and needs only `templates`; the bare form names
 /// the case (`ok<I32, String>(42)`) and resolves its parent through the
-/// ADR-026 D1 ladder, which is what `caseOwners` answers — exactly one owner
+/// 裸名 case 消歧（静态收敛版） ladder, which is what `caseOwners` answers — exactly one owner
 /// means no expected type is needed, more than one means the spelling is
 /// ambiguous and the qualified form is required.
 private struct HIRGenericEnumIndex {
@@ -5272,14 +5272,14 @@ private struct HIRGenericEnumIndex {
     }
 
     /// Two or more generic enums declare this case name, so the bare spelling
-    /// cannot place it and ADR-026 D1 tier 3 applies.
+    /// cannot place it and 裸名 case 消歧（静态收敛版） tier 3 applies.
     func isAmbiguousCase(_ caseName: String) -> Bool {
         (caseOwners[caseName]?.count ?? 0) > 1
     }
 }
 
 /// One enclosing construct a `break`/`continue` may leave. Loops are
-/// `continue` targets as well; a labeled `if` block is not (ADR-039; the
+/// `continue` targets as well; a labeled `if` block is not (标签 break 定向范围; the
 /// `continue-stmt` production carries the note *仅循环标签有效* while
 /// `break-stmt` carries no such restriction).
 private struct ControlFrame {
@@ -5298,7 +5298,7 @@ private struct FunctionContext {
     let enums: [String: HIREnumDecl]
     /// G-2d: the module's generic-enum templates plus the case -> owner index,
     /// used to place a generic enum case construction and to find the
-    /// specialized body the pre-pass registered (ADR-037).
+    /// specialized body the pre-pass registered (泛型枚举构造形态).
     let genericEnums: HIRGenericEnumIndex
     /// G10: generic function templates by source name, for call-site
     /// dispatch of `身份<I32>(...)` (the specialization itself is
@@ -5328,8 +5328,8 @@ private struct FunctionContext {
     var errorBindings: Set<String> = []
 
     /// Enclosing interruptible frames, innermost last (`nil` = unlabeled
-    /// loop). Drives labeled break/continue depth resolution (ADR-014 for the
-    /// loops-only era, ADR-039 once a labeled `if` became a frame too): a
+    /// loop). Drives labeled break/continue depth resolution (标签语法反转 for the
+    /// loops-only era, 标签 break 定向范围 once a labeled `if` became a frame too): a
     /// label matches the nearest enclosing frame carrying that label.
     var controlFrames: [ControlFrame] = []
 

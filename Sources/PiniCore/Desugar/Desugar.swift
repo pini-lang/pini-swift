@@ -242,7 +242,7 @@ public enum Desugar {
  case .member(let obj, let name, let loc):
  return .member(object: desugar(obj), name: name, location: loc)
  case .tryExpression(let operand, let errorVar, let handler, let loc):
- // ADR-032 迁移批 M2：递归降层 operand 与 handler 块。
+ // try-else 迁移 迁移批 M2：递归降层 operand 与 handler 块。
  return .tryExpression(operand: desugar(operand), errorVar: errorVar,
  handler: desugar(handler), location: loc)
  case .tupleIndex(let obj, let index, let loc):

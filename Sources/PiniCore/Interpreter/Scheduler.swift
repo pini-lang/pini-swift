@@ -1,6 +1,6 @@
 import Foundation
 
-/// 并发调度脊柱的抽象边界（ADR-009 阶段 A）。
+/// 并发调度脊柱的抽象边界（阶段 A）。
 ///
 /// `Scheduler` 协议是「派发任务」这一动作的唯一契约边界：调用方（解释器）
 /// 只依赖 `spawn`，不感知底层是 GCD、pthread 还是未来的 work-stealing executor。
@@ -8,7 +8,7 @@ import Foundation
 /// 设计意图（前瞻，非过度设计）：
 /// - `spawn` 的契约是稳定的——「可挂起 await」（阶段 B）由 `SuspendScheduler` 后端实现
 /// （已落地，见 SuspendScheduler.swift），调用点（`Interpreter` 的两处 `spawn`）与任务契约不变。
-/// - 本协议不含任何 GCD 专有类型，便于将来跨平台后端接入（见 ADR-008）。
+/// - 本协议不含任何 GCD 专有类型，便于将来跨平台后端接入（见 并发后端抽象）。
 protocol Scheduler {
  /// 派发 `work` 执行；`work` 返回即 `future` 被 `resolve`/`reject`。
  /// 具体实现决定「工作跑在哪、如何背压、如何观测」，调用方不感知。
@@ -23,7 +23,7 @@ protocol Scheduler {
 /// 将异步函数体派发到 GCD 有界并发池，防止线程爆炸与线程池饥饿（R5）。
 /// `await`/`wait` 在同步/阻塞路径下**阻塞**当前任务线程（见 `FutureValue.wait`）；挂起路径
 /// （suspend 模式）由 `SuspendScheduler` 实现「挂起 await（释放 OS 线程）」，
-/// 而 `Scheduler` 协议与调用点保持不变（两后端并存，见 ADR-009 ）。
+/// 而 `Scheduler` 协议与调用点保持不变（两后端并存，见 并发调度脊柱 ）。
 ///
 /// 基线池大小 = max(4, 处理器数 × 2)；最大并发任务数 = 基线 × 4。
 /// GCD concurrent queue 在需要时仍能创建额外线程，信号量提供「可观测的上界」。

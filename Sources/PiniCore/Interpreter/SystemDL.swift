@@ -6,7 +6,7 @@ import Darwin
 import Glibc
 #endif
 
-/// Phase 2b（ADR-017）：跨平台动态链接封装（Darwin / Linux）。
+/// Phase 2b（解释器 dlsym 加载）：跨平台动态链接封装（Darwin / Linux）。
 ///
 /// 屏蔽 macOS `.dylib` 与 Linux `.so` 差异，提供 `dlopen`/`dlsym`/`dlclose` 薄封装。
 /// 仅返回裸地址（`UnsafeMutableRawPointer`）；调用侧（`ForeignThunk`）负责按精确 C 签名

@@ -84,7 +84,7 @@
 | `enum-namespacing.pini` | 跨枚举同名 case（命名空间化） | 见文件 | Stable |
 | `validated-match.pini` | match 穷尽性（D3①：case 缩进子块、`case _:` 通配兜底） | 见文件 | Stable |
 | `test.pini` | `|test` 测试块 + `assert` 内建（G41） | `全部测试通过` | Stable |
-| `ffi.pini` | FFI 与 unsafe（`[libc|foreign]` 块 / `unsafe` 消耗点 / `&x` 取地址 / `load`·`store`·`addressof`，ADR-015 Phase 2a） | 见文件 | Provisional |
+| `ffi.pini` | FFI 与 unsafe（`[libc|foreign]` 块 / `unsafe` 消耗点 / `&x` 取地址 / `load`·`store`·`addressof`，FFI 子系统 Phase 2a） | 见文件 | Provisional |
 | `multifile/`（目录） | 多文件模块（跨文件共享命名空间） | `5 / 25 / 0` | Provisional |
 | `package-demo/`（目录） | 可见性 / 模块化（4 级约定制） | 见目录 | Provisional |
 

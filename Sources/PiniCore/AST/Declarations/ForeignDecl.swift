@@ -1,6 +1,6 @@
 import Foundation
 
-/// Phase 2a（ADR-015 FFI， foreign-decl）：外部 C 函数声明块 `[名称|foreign]`。
+/// Phase 2a（FFI 子系统， foreign-decl）：外部 C 函数声明块 `[名称|foreign]`。
 ///
 /// 块内只允许函数签名（无函数体），声明外部 C 函数；块内函数自动视为 `|unsafe`。
 /// 不接收内联 ABI 参数，继承模块级 `pini.toml` 设定的 FFI ABI（默认 `"C"`）。

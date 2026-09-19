@@ -1,6 +1,6 @@
 import Foundation
 
-/// ADR-020 D3/D4：内建单点登记表。
+/// 内建单点登记/D4：内建单点登记表。
 ///
 /// 每个内建在此**声明一次**（名字 + 归组 + 各层登记开关），三个消费方从本表派生：
 /// - `SemanticAnalyzer.registerBuiltins`：符号表登记（`definesSymbol`）
@@ -10,7 +10,7 @@ import Foundation
 /// 本表只承载「声明」，不承载「实现」：运行时分发仍由 Interpreter 按函数值名字分派。
 /// 专属路径（指针内建 `registerPointerBuiltins`、并发 `registerConcurrencyBuiltins`、
 /// 枚举构造器 `registerEnumCaseConstructor`）保留原有登记，表中以开关位标记归属，
-/// 使本表同时是 ADR-020 D4 归组清单的**唯一事实源**。
+/// 使本表同时是 内建归组表 归组清单的**唯一事实源**。
 public enum BuiltinGroup: String, CaseIterable {
  case collection
  case char
@@ -60,7 +60,7 @@ public enum BuiltinRegistry {
  .simple(name: name, location: builtinLocation)
  }
 
- /// ADR-020 D4 归组清单（唯一事实源）。旧调用名全部保留，零破坏。
+ /// 内建归组表 归组清单（唯一事实源）。旧调用名全部保留，零破坏。
  public static let decls: [BuiltinDecl] = [
  // ---- collection ----
  BuiltinDecl(name: "len", group: .collection, paramNames: ["value"],
@@ -77,7 +77,7 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "err", group: .value, paramNames: ["value"], definesRuntimeValue: false),
  BuiltinDecl(name: "Error", group: .value, paramNames: ["message"], definesRuntimeValue: false),
  // G-P1（自举探针批次 4）：F64 值构造——此前无 I32→F64 转换路径，
- // 整型表达式无法参与浮点算术（E5-003 混合算术拒绝）；按 ADR-020
+ // 整型表达式无法参与浮点算术（E5-003 混合算术拒绝）；按 内建特征化
  // 内建快速路径补齐（最小面：int→float、float 原样，字符串解析另行提案）。
  BuiltinDecl(name: "F64", group: .value, paramNames: ["value"],
  params: [t("Any")], returns: [t("F64")]),
@@ -96,7 +96,7 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "chars", group: .char, paramNames: ["value"],
  params: [t("String")], returns: [.generic(name: "Array", params: [t("Char")], location: builtinLocation)]),
  // 词法门禁 H1（lexer 缺口审计）：码点原语——解锁字符范围判定（hex 判定等）
- // 与 upper/lower 下沉。grapheme 模型对齐（ADR-019 D1）：ord 取首 Unicode scalar。
+ // 与 upper/lower 下沉。grapheme 模型对齐（字符模型 = Grapheme Cluster）：ord 取首 Unicode scalar。
  // ⚠️ G67（P0d）两条边界裁决：① `ord` 的**空串哨兵作废** —— `Char` 参数恒为
  // 1 个字素，「空串」在该签名下**不可表达**；② `chr` 越界/代理区由「返回空串」
  // 改为 **panic**（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。
@@ -152,7 +152,7 @@ public enum BuiltinRegistry {
  BuiltinDecl(name: "joinWithin", group: .concurrency, paramNames: ["future", "ms"], definesRuntimeValue: false),
  ]
 
- /// ADR-020 步骤 A（D1/D7）：内建类型 conformance 声明（声明面）。
+ /// 内建特征化 步骤 A（D1/D7）：内建类型 conformance 声明（声明面）。
  /// 特征方法派发（步骤 B）落地前，成员方法仍走 evaluateMember 既有路径；
  /// 此处仅使 String/Array 在类型环境中可查询「遵循 collection」。
  /// 方法面 = D1 最小集的成员方法部分（append/pop/slice/join/contains）+
@@ -162,7 +162,7 @@ public enum BuiltinRegistry {
  "Array": ["collection"],
  ]
 
- // MARK: - 内建成员方法表（ADR-020 步骤 B）
+ // MARK: - 内建成员方法表（内建特征化 步骤 B）
 
  /// 内建成员方法声明：类型层签名与运行时派发共用同一张表。
  public struct MemberDecl {

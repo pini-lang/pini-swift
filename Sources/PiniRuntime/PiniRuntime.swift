@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - ADR-008 阶段1：集合/COW 运行时 shim（Swift 实现，C ABI 边界）
+// MARK: - 并发后端抽象 阶段1：集合/COW 运行时 shim（Swift 实现，C ABI 边界）
 
 // MARK: - #46-D D4：显式 share count 与写时复制（COW）基础设施
 //
@@ -9,7 +9,7 @@ import Foundation
 // 引用计数恒为 1（仅 `_liveHandles` 持有），`isKnownUniquelyReferenced` 恒为 true，
 // 分裂永不触发。故 D4 改为**运行时显式 share count**：codegen 在别名绑定处发射
 // `bk_handle_retain`，写入前发射 `bk_handle_ensure_unique`（或经 set 的返回句柄），
-// 由运行时按 `shares` 判定是否分裂。解释器侧则由 Swift 集合原生 COW 保证（见 ADR-001）。
+// 由运行时按 `shares` 判定是否分裂。解释器侧则由 Swift 集合原生 COW 保证（见 值分裂与 COW 判定）。
 
 // 所有权契约（codegen 与运行时的分工，务必遵守）：
 // 1. `bk_*_create` 产出 shares == 1 的 box，所有权归**接收该句柄的那个所有者**
@@ -99,12 +99,12 @@ private func _bkEnsureUnique(_ h: UnsafeMutableRawPointer) -> UnsafeMutableRawPo
 ///
 /// 所有对外函数经 `@_cdecl` 导出为 C ABI：句柄为 `void*`（LLVM IR 中 `ptr`），
 /// 在模块内以 `%bk_array*`（= `type { ptr }`）承载，仅作类型区分；IR 中从不解引用，
-/// 所有访问经下方 `@bk_array_*` 调用完成。C ABI 为 MUST 硬约束（见 ADR-008），
+/// 所有访问经下方 `@bk_array_*` 调用完成。C ABI 为 MUST 硬约束（见 并发后端抽象），
 /// 否则阶段3 纯 libc 重写时被锁死。
 private final class _BkArrayBox: _BkBox {
  /// #46-D D1：装箱-raw 存储——每槽是一个由运行时拥有的堆 box（`UnsafeMutableRawPointer`），
  /// box 内 memcpy 存元素原始字节。无论元素类型是 Int/F64/Bool/String 还是嵌套数组，
- /// 均以 `ptr` 承载，与 ADR-008「一切经 C ABI 的 `ptr`」哲学一致，且天然支持任意宽度元素
+ /// 均以 `ptr` 承载，与 并发后端抽象「一切经 C ABI 的 `ptr`」哲学一致，且天然支持任意宽度元素
  /// （由 codegen 在 `@bk_array_set` 时传入 `elemBytes`）。box 的生命周期由本 box 持有，
  /// `deinit` 时统一释放，配合 `bk_array_destroy` / `bk_runtime_cleanup` 实现精确/进程级回收。
  var elements: [UnsafeMutableRawPointer?]
@@ -147,7 +147,7 @@ private final class _BkArrayBox: _BkBox {
 // MARK: - 数组运行时（D0 最小覆盖：I32 元素特化）
 
 /// 运行时致命错误：打印到 stderr 并终止进程。
-/// 与解释器抛 `RuntimeError` 语义对齐——双后端均以「错误」终止（见 ADR-008）。
+/// 与解释器抛 `RuntimeError` 语义对齐——双后端均以「错误」终止（见 并发后端抽象）。
 @_cdecl("bk_panic")
 public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
  if let msg { fputs(String(cString: msg), stderr) }
@@ -250,7 +250,7 @@ public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeM
 }
 
 /// 写入下标 `i` 处的元素：将 `src` 处 `elemBytes` 字节 memcpy 进运行时新分配的堆 box
-/// （先释放该槽旧 box），与 ADR-008「一切经 `ptr` C ABI」一致，支持任意宽度/类型元素。
+/// （先释放该槽旧 box），与 并发后端抽象「一切经 `ptr` C ABI」一致，支持任意宽度/类型元素。
 /// 越界经 `bk_panic` 终止（与解释器越界抛错一致）。
 ///
 /// #46-D D4（COW）：写前先 `_bkEnsureUnique` —— 句柄被共享（`shares > 1`）时深拷分裂，
@@ -654,7 +654,7 @@ public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawP
  return found ? 1 : 0
 }
 
-// MARK: - Phase 2a（ADR-015 FFI）：指针原语（C-ABI 面）
+// MARK: - Phase 2a（FFI 子系统）：指针原语（C-ABI 面）
 
 /// `*T` 原始指针的 load/store 原语（ `load/store/addressof` 经 runtime `bk_*`）。
 /// 语义：`p + offsetBytes` 处读/写标量，字节宽度按类型固定——C ABI 纪律，

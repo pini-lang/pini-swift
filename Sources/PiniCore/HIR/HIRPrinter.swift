@@ -41,7 +41,7 @@ public enum HIRPrinter {
         case .storeVar(let name, _, let value):
             return ["\(pad)\(name) = \(exprText(value))"]
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
-            // ADR-039: a labeled `if` prints its label, mirroring the source
+            // 标签 break 定向范围: a labeled `if` prints its label, mirroring the source
             // form `label|if cond:`. An unlabeled `if` prints exactly as
             // before, so existing printer snapshots do not move.
             let labelPart = label.map { "\($0)|" } ?? ""

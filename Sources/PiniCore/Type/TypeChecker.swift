@@ -45,14 +45,14 @@ public final class TypeChecker {
  /// B3-1：`Type.method` → 形参名列表，覆盖标了 `=>` 的**方法**（与自由函数同等对待）。
  private var asyncMethodParamNames: [String: [String]] = [:]
 
- /// ADR-016 规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查注入 self 字段作用域。
+ /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查注入 self 字段作用域。
  private var typeFieldsByName: [String: [(name: String, type: TypeAnnotation)]] = [:]
 
  /// P4 Phase 3：多文件包分析时的包级符号索引与「当前正在分析的文件」。
  /// 单文件模式（`check(module:)`）下恒为 `nil`，故单文件行为零回归。
  private var packageContext: (index: PackageSymbolIndex, currentFileName: String)? = nil
 
- /// Phase 2a（ADR-015 FFI）：不安全上下文深度。`|unsafe` 函数体或 `unsafe (...)` 消耗点内 > 0。
+ /// Phase 2a（FFI 子系统）：不安全上下文深度。`|unsafe` 函数体或 `unsafe (...)` 消耗点内 > 0。
  /// `&` 取地址 / 指针解引用仅允许在此深度 > 0 时出现。
  private var unsafeContextDepth: Int = 0
  // F5（issue-unsafe-gate-foreign）：foreign 函数名集——调用位门禁用。
@@ -61,7 +61,7 @@ public final class TypeChecker {
 
  private func registerBuiltinTypes() {
  let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
- // ADR-020 D3：内建静态签名从单点登记表（BuiltinRegistry）派生——
+ // 内建单点登记：内建静态签名从单点登记表（BuiltinRegistry）派生——
  // 类型层须登记签名，否则示例/用户代码调用这些自由函数会因调用点查不到
  // 签名而被跳过校验。带泛型/指针/通配位的特例（load/store/addressof、
  // ok/err/Error/CancelError、isCancel/joinAll/joinWithin）由专属路径登记，
@@ -79,7 +79,7 @@ public final class TypeChecker {
  }
  let string = TypeAnnotation.simple(name: "String", location: loc)
 
- // Phase 2a（ADR-015 FFI）：指针原语内建（与 Interpreter.registerPointerBuiltins 对齐）。
+ // Phase 2a（FFI 子系统）：指针原语内建（与 Interpreter.registerPointerBuiltins 对齐）。
  // load/store 参数用 Any 通配——接受任意 `*T`（元素类型由运行时指针值自描述，静态层不约束）。
  let anyType = TypeAnnotation.simple(name: "Any", location: loc)
  let anyPtr = TypeAnnotation.pointer(element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
@@ -89,7 +89,7 @@ public final class TypeChecker {
 
  registerConcurrencyBuiltins(loc: loc, string: string)
 
- // ADR-020 步骤 A（D1/D7）：内建特征 collection 声明面。
+ // 内建特征化 步骤 A（D1/D7）：内建特征 collection 声明面。
  // 方法面 = D1 最小集的成员方法部分（append/pop/slice/join/contains + len，
  // len 现为自由函数，方法化随步骤 B 裁决；下标读属运算符通道，不入方法表）。
  // 抽象签名参数/返回一律 `_` 通配位（joinWithin 先例；Any 非顶部类型，
@@ -128,7 +128,7 @@ public final class TypeChecker {
  typeEnv.markConformance(typeName: typeName, traits: traitNames)
  }
 
- // ADR-020 步骤 B：内建成员方法签名从单点登记表（BuiltinRegistry.memberMethods）
+ // 内建特征化 步骤 B：内建成员方法签名从单点登记表（BuiltinRegistry.memberMethods）
  // 派生——与运行时 evaluateMember 的表驱动派发共用同一张表。未知成员将被
  // 类型层捕获（unknownMember），提前于运行时 undefinedVariable。
  // 注：数组字面量在类型层推断为 nil（TypeInference.arrayLiteral → nil），故 Array 成员校验
@@ -221,7 +221,7 @@ public final class TypeChecker {
  )]
  )
 
- // detach（ADR-009（甲）escape hatch）：fire-and-forget，把 Future 从父 scope 剪枝，
+ // detach（并发调度脊柱（甲）escape hatch）：fire-and-forget，把 Future 从父 scope 剪枝，
  // 不消费结果，返回 ()。与 Interpreter.registerBuiltins 对齐登记。
  typeEnv.defineFunction(
  name: "detach",
@@ -565,7 +565,7 @@ public final class TypeChecker {
  /// 例如 `圆` 是 `形状` 的用例时，期望 `形状`、实际 `圆` 视为合法（P2 收尾：enum 进入静态类型检查）。
  /// 立场 B 追加：期望为泛型枚举特化类型（`Result<I32, Error>`）时，其用例名（`ok` / `err`）
  /// 同样视为可赋值——实参精度由 `refineEnumCaseConstruction` 在下推路径上单独校验。
- /// ADR-026 D1（静态收敛版）：观测一次裸名 case 构造的推断结局——
+ /// 裸名 case 消歧（静态收敛版）（静态收敛版）：观测一次裸名 case 构造的推断结局——
  /// 期望类型命中候选 → 记录静态决议（供运行期查表构造）；
  /// 歧义且未解析（推断退化为例名同名类型）→ 按「需限定形式」报错。
  private func noteBareCaseOutcome(_ expr: Expression, actual: TypeAnnotation, location: SourceLocation) throws {
@@ -628,11 +628,11 @@ public final class TypeChecker {
  return true
  }
  // G68（P0d-D）：`Char → String` 单向加宽。判据是「加宽安全、窄化危险」——
- // `Char` 与 `String` 表示同构（ADR-033 D1 取方案 A），而一个「恰含 1 个字素」的串
+ // `Char` 与 `String` 表示同构（Char 表示与 String 同构 取方案 A），而一个「恰含 1 个字素」的串
  // **本来就是**串 ⇒ 这个方向恒安全。反方向（`String → Char`）是**窄化**，故此处
  // **不放行** —— 与上面整型宽度族那条双向放行不同，**方向性就是本规则的全部内容**：
  // 窄化入口只留三个构造点（`s[i]` / `chars` / `chr`）加一次显式转换，
- // `ADR-033 D1` 第 4 条的「恰含 1 个字素」不变式因此仍归类型系统管。
+ // `Char 表示与 String 同构` 第 4 条的「恰含 1 个字素」不变式因此仍归类型系统管。
  if isCharWideningTo(actual, expected) { return true }
  // 内建签名可在泛型实参位使用 `_` 通配（如 `joinWithin(t: Future<_, _>, ms: I32)`）：
  // 元素类型对内建而言无关紧要，只需锚定外层构造子与元数。顶层 `_` 早在
@@ -690,7 +690,7 @@ public final class TypeChecker {
  /// 与 `isCharWideningTo` 的单向不同，此处**对称**：二元运算没有「哪一侧是期望」
  /// —— `c + s` 与 `s + c` 同为合法。结果类型不是「谁宽跟谁」，而是取 `String` 面
  /// （见 `TypeInference` 的 `+` 分支）：两侧都是 `Char` 时拼接结果可能有多个字素，
- /// 若仍算 `Char`，`ADR-033 D1` 的不变式就会被 `c + c` 这类表达式绕开。
+ /// 若仍算 `Char`，`Char 表示与 String 同构` 的不变式就会被 `c + c` 这类表达式绕开。
  private func isCharStringPair(_ lhs: String, _ rhs: String) -> Bool {
  (lhs == charTypeName && rhs == stringTypeName) || (lhs == stringTypeName && rhs == charTypeName)
  }
@@ -757,7 +757,7 @@ public final class TypeChecker {
  return false
  }
 
- // ADR-026 D1：期望类型命中的候选枚举优先；仅全局唯一时退回单值反查
+ // 裸名 case 消歧（静态收敛版）：期望类型命中的候选枚举优先；仅全局唯一时退回单值反查
  let caseCandidates = typeEnv.parentEnums(of: caseName)
  var refinedParent: String? = nil
  switch expected {
@@ -820,7 +820,7 @@ public final class TypeChecker {
  resolvedParent = typeEnv.parentEnum(of: caseName)
  }
  guard let parent = resolvedParent else { return }
- // ADR-026 D1：同名 case 跨枚举歧义时，不得按单一猜测父枚举做 arity/类型校验
+ // 裸名 case 消歧（静态收敛版）：同名 case 跨枚举歧义时，不得按单一猜测父枚举做 arity/类型校验
  // （E4-005 错误参量数即由此而来）；退化为「拟合任一候选即放行」，精度交由
  // refineEnumCaseConstruction（期望类型下推）与运行时动态消歧承担。
  let caseCandidates = typeEnv.parentEnums(of: caseName)
@@ -864,7 +864,7 @@ public final class TypeChecker {
  // refineEnumCaseConstruction 在期望特化类型下推路径处理。
  if typeEnv.genericEnumParamCount(name: parent) == nil {
  for (i, arg) in args.enumerated() {
- // ADR-026 D1（实参位补全）：线程字段声明类型作期望——嵌套 case 构造
+ // 裸名 case 消歧（静态收敛版）（实参位补全）：线程字段声明类型作期望——嵌套 case 构造
  // （如 target_annot: none(...)）的歧义名由此消歧；不线程则嵌套歧义名
  // 一律推断失败（S4.9 宿主对等改名回退的前置）。
  guard let actual = inference.infer(expression: arg.expression, expected: fields[i].type) else { continue }
@@ -887,7 +887,7 @@ public final class TypeChecker {
  }
 
  /// 集合字面量的期望类型下推（[T] 元素标注，proposal-array-element-annotation D-β：
- /// 标注仅做检查，ADR-020 签名契约不动）。与 refineEnumCaseConstruction 同轨——
+ /// 标注仅做检查，内建特征化 签名契约不动）。与 refineEnumCaseConstruction 同轨——
  /// 在期望类型站点调用：字面量形态与期望类型匹配时逐元素校验（推断 + isAssignable），
  /// 元素类型不符报 mismatch 并返回 true（调用方跳过通用比对）；形态不匹配返回 false
  /// 走原有路径（零回归）。通配元素类型（`_` / `Any`）放行——`var zs: [Any]` 不拦。
@@ -1045,10 +1045,10 @@ public final class TypeChecker {
  case .traitDecl(let t):
  typeEnv.defineTrait(name: t.name, trait: t)
  case .extensionDecl(let x):
- // ADR-016 规则 3.2/3.14：扩展块方法注册到目标类型（与类型自身方法同等对待）。
+ // 声明上下文收紧·规则 3.2/3.14：扩展块方法注册到目标类型（与类型自身方法同等对待）。
  registerExtensionMethods(x)
  case .foreignDecl(let fd):
- // Phase 2a（ADR-015 FFI）：外部 C 函数签名注册为模块级函数（块内函数自动 |unsafe）。
+ // Phase 2a（FFI 子系统）：外部 C 函数签名注册为模块级函数（块内函数自动 |unsafe）。
  foreignFunctionNames.formUnion(fd.funcs.map { $0.name })
  for f in fd.funcs {
  let paramTypes = f.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: f.location) }
@@ -1059,7 +1059,7 @@ public final class TypeChecker {
  }
  }
 
- // MARK: - Phase 2a ADR-015：`*T` C 兼容性校验（ARC 隔离）
+ // MARK: - Phase 2a FFI 子系统：`*T` C 兼容性校验（ARC 隔离）
 
  /// 遍历声明的全部类型注解并校验 `*T` 元素 C 兼容性。
  private func validateDeclPointerTypes(_ decl: TopLevelDecl) throws {
@@ -1154,7 +1154,7 @@ public final class TypeChecker {
 
  private func isCScalarType(_ name: String) -> Bool {
  switch name {
- // `CChar` is the C single byte character. ADR-033 D2 renamed this
+ // `CChar` is the C single byte character. FFI 的 Char 改名 CChar renamed this
  // spelling from `Char` so the name can go to the language's grapheme
  // character when that type lands (grid P0d), and so that spec section
  // 2.7's "`Char` does not enter the FFI scalar set" becomes true of the
@@ -1193,7 +1193,7 @@ public final class TypeChecker {
  // MARK: - 声明检查
 
  private func checkTopLevelDecl(_ decl: TopLevelDecl) throws {
- // Phase 2a（ADR-015 FFI）：`*T` 元素须为 C 兼容类型（标量/纯值结构体/指针），
+ // Phase 2a（FFI 子系统）：`*T` 元素须为 C 兼容类型（标量/纯值结构体/指针），
  // 禁 object 及含 object 字段的复合类型（ARC 隔离）。此时 register 已完成，类型表完整。
  try validateDeclPointerTypes(decl)
  switch decl {
@@ -1218,7 +1218,7 @@ public final class TypeChecker {
  try checkFuncBody(method, fields: targetFields, typeName: x.targetType)
  }
  case .foreignDecl(let fd):
- // Phase 2a（ADR-015 FFI）：顶层签名静态校验——拒绝 by-value 结构体（Phase 2c）、
+ // Phase 2a（FFI 子系统）：顶层签名静态校验——拒绝 by-value 结构体（Phase 2c）、
  // 元组、函数指针、泛型；标量 / 指针 / 引用类型（含 shim 友好的 String）放行（shim 经原生函数表解析，
  // 裸 C 绑定 C 兼容校验见 Phase 2b）。
  try checkForeignDeclSignatures(fd)
@@ -1227,14 +1227,14 @@ public final class TypeChecker {
  }
  }
 
- // MARK: - Phase 2a ADR-015 FFI：顶层签名静态校验
+ // MARK: - Phase 2a FFI 子系统：顶层签名静态校验
 
  /// 顶层 FFI 签名白名单（C 兼容标量；Void/Unit 兼容 void 返回）。
  ///
  /// ⚠️ **本集合不含 `Char`，也不含 `CChar`，且这不是缺口**：`checkFFITopLevelType`
  /// 对**未知简单名**同样放行（见该函数注释：「shim 可能承载，放行；解析期 fail-fast 兜底」）
  /// ⇒ 它**不是**一张有效白名单，而是一张「已知标量」表。单字节字符的**真正**判据在
- /// `isCScalarType`（指针目标的 C 兼容判定），那里 2026-09-17 由 `Char` 改名为 `CChar`（`ADR-033 D2`）。
+ /// `isCScalarType`（指针目标的 C 兼容判定），那里 2026-09-17 由 `Char` 改名为 `CChar`（`FFI 的 Char 改名 CChar`）。
  /// 本行原写「含 Char」，与该集合的实际内容不符 —— 一并订正。
  private static let ffiTopLevelScalars: Set<String> = [
  "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
@@ -1290,7 +1290,7 @@ public final class TypeChecker {
 
  private func checkFuncBody(_ funcDecl: FuncDecl, fields: [(name: String, type: TypeAnnotation)] = [], typeName: String? = nil) throws {
  guard let body = funcDecl.body else { return }
- // Phase 2a（ADR-015 FFI）：`|unsafe` 函数体自动处于不安全上下文。
+ // Phase 2a（FFI 子系统）：`|unsafe` 函数体自动处于不安全上下文。
  // foreign 块内函数声明时已被注入 `unsafe` 修饰符（本路径无 body，不进入）。
  let bodyUnsafe = funcDecl.modifiers.contains("unsafe")
  if bodyUnsafe { unsafeContextDepth += 1 }
@@ -1381,7 +1381,7 @@ public final class TypeChecker {
  _ body: () throws -> Void
  ) throws {
  typeEnv.pushScope()
- // ADR-026 D2：歧义 case 名按 scrutinee 类型在候选集中解析，
+ // match 按 scrutinee 解析：歧义 case 名按 scrutinee 类型在候选集中解析，
  // 不得信任单值反查（跨枚举同名会绑到错误父枚举的字段，E4-005）。
  var resolvedParent: String? = nil
  if case .enumCase(let name) = c.pattern {
@@ -1446,7 +1446,7 @@ public final class TypeChecker {
  }
  }
 
- /// ADR-032 迁移批 M2：try-else handler 内的 return 语句计入返回完整性收集
+ /// try-else 迁移 迁移批 M2：try-else handler 内的 return 语句计入返回完整性收集
  /// （handler 是表达式内嵌块，语句级 switch 不会自然递归到它）。
  private func collectReturnFindingsInTryExpression(_ expr: Expression, into result: inout [ReturnFinding]) throws {
  switch expr {
@@ -1496,7 +1496,7 @@ public final class TypeChecker {
  }
  // D3①：`case _:` 通配已作为 case 进入 cases（case 循环覆盖），无独立 default/wildcard 块。
  case .varDecl(_, _, let initializer, _, _), .varDestructure(_, _, let initializer, _, _):
- // ADR-032：try-else 常驻 let 初始化式（`let x = try f() else e: return err`），
+ // try-else 迁移：try-else 常驻 let 初始化式（`let x = try f() else e: return err`），
  // handler 内 return 亦计入返回完整性收集。
  if let initExpr = initializer {
  try collectReturnFindingsInTryExpression(initExpr, into: &result)
@@ -1525,7 +1525,7 @@ public final class TypeChecker {
  private func checkStatement(_ stmt: Statement) throws {
  switch stmt {
  case .varDecl(let name, let annot, let initializer, let isMutable, let location):
- // ADR-026 D1：显式标注此前被整体忽略（绑定类型只看推断）——现作为期望
+ // 裸名 case 消歧（静态收敛版）：显式标注此前被整体忽略（绑定类型只看推断）——现作为期望
  // 类型下推：枚举用例构造走 refine（跨枚举同名 case 按标注消歧），其余按
  // 标注比对；绑定类型 = 标注（与宿主声明类型语义对齐）。
  let declaredType: TypeAnnotation
@@ -1757,7 +1757,7 @@ public final class TypeChecker {
  try checkExpression(operand)
 
  case .tryExpression(let operand, let errorVar, let handler, let location):
- // ADR-032 迁移批 M2（spec『try-else 错误传播』节）：try-else 操作数静态要求 Result<T, E>（静态拦截）；
+ // try-else 迁移 迁移批 M2（spec『try-else 错误传播』节）：try-else 操作数静态要求 Result<T, E>（静态拦截）；
  // `ok(...)`/`err(...)` 为 Result 的用例构造（推断为 case 名），同样放行；推断不可达时由运行时兜底。
  try checkExpression(operand)
  if let t = inference.infer(expression: operand) {
@@ -1788,7 +1788,7 @@ public final class TypeChecker {
  try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
  if let sig = typeEnv.lookupFunction(name: calleeName) {
  // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
- // 与 ADR-028 D-4（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
+ // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
  // `|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 |unsafe 放行。
  if foreignFunctionNames.contains(calleeName), unsafeContextDepth == 0 {
  try report(TypeError.mismatch(
@@ -1869,7 +1869,7 @@ public final class TypeChecker {
  }
  }
  // [T] 元素标注（D-β，proposal-array-element-annotation）：Array.append 的实参
- // 按接收者声明元素类型检查。ADR-020 签名契约不动（append 仍返回新数组、内建
+ // 按接收者声明元素类型检查。内建特征化 签名契约不动（append 仍返回新数组、内建
  // 签名 `[any]` 不特化）——此处是纯检查通道，不改任何推断/运行时行为。
  // 通配元素类型（`_` / `Any`）放行；`xs.append` 未应用形态不在此校验。
  if memberName == "append",
@@ -2036,13 +2036,13 @@ public final class TypeChecker {
  }
 
  case .unsafe(let operand, let location):
- // Phase 2a（ADR-015 FFI）：不安全消耗点——进入不安全上下文检查操作数。
+ // Phase 2a（FFI 子系统）：不安全消耗点——进入不安全上下文检查操作数。
  unsafeContextDepth += 1
  defer { unsafeContextDepth -= 1 }
  try checkExpression(operand)
 
  case .addressOf(let operand, let location):
- // Phase 2a（ADR-015 FFI）：`&` 取地址仅在 unsafe 上下文可用。
+ // Phase 2a（FFI 子系统）：`&` 取地址仅在 unsafe 上下文可用。
  guard unsafeContextDepth > 0 else {
  try report(TypeError.mismatch(
  expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
@@ -2088,7 +2088,7 @@ public final class TypeChecker {
  let rightName = typeName(from: rightType)
 
  // G68（P0d-D）：`Char` / `String` 视为**相容对**。本处的判据原本是「左右类型名
- // 字面相等」，而 `Char` 与 `String` 是表示同构的两个类型（ADR-033 D1 方案 A）
+ // 字面相等」，而 `Char` 与 `String` 是表示同构的两个类型（Char 表示与 String 同构 方案 A）
  // ⇒ 字面不等并不代表不可运算。放宽只覆盖这一对，方向性不适用（二元运算对称）。
  // ⚠️ 本处只放宽「能不能运算」；**支持哪些算符**仍是既有事实 —— 与 `String` 自身
  // 一致：`+` / `==` / `!=` 有实现，`<` 一族两臂都在运行时响亮拒绝。
@@ -2219,7 +2219,7 @@ public final class TypeChecker {
  }
  return nil
  case .pointer(let element, _):
- // Phase 2a（ADR-015 FFI）：`*T` 禁 object（ARC 隔离），元素理论上不会是引用类型；
+ // Phase 2a（FFI 子系统）：`*T` 禁 object（ARC 隔离），元素理论上不会是引用类型；
  // 仍递归下钻以防御含 object 的纯值结构体被误用作指针元素。
  return escapingReferenceType(in: element, visiting: &visiting)
  }

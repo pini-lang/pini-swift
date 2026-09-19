@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（ADR）与 `spec/issue/`。
+> 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（决策记录）与 `spec/issue/`。
 > 版本号与 `pini version` 输出同源：`PiniCore/Common/Version.swift`。
 
 ## v0.54.0 (2026-09-18)
@@ -11,19 +11,19 @@
 
 ### 09-14 → 09-18（简要）
 
-- **`LR-4`「HIR 统合全后端」完成**（`P0`–`P5` 全交付）：旧 AST 走查求值器与挂起引擎整体退役 —— `Interpreter` / `SuspendEvaluator` / `SuspendScheduler` / `REPL/InterpreterEngine.swift` 四文件共 **4162 行**删除，`PINI_INTERP_ENGINE` 引擎开关退役；HIR 成为**全部后端共用的唯一枢纽**，语义权威由「以某一后端为定义处」上移到契约件 `docs/spec/hir-contract.md`（ADR-034）。执行通道的表述由「三通道」改为**两执行通道 × 一个诊断来源器械**（探针口径见 `docs/issue-interpreter-hir-plan-2026-09-12.md` §8.1）。
-- **`Char` 类型落地**（ADR-033，格 `P0d`，已收格）：`Char` = **extended grapheme cluster 标量**（不是 Unicode 码点、不是 UTF-8 字节），表示**与 `String` 同构**（零新 ABI），不变式「恰含 1 个字素」归类型系统承担；FFI 既有单字节 `Char` 更名 **`CChar`**；相容桥 = **`Char → String` 单向加宽**（窄化被拒）。六字符原语签名迁移（`is_letter` / `is_ascii_digit` / `is_number` / `ord` 取 `Char`，`chr` 取 `I32` 返回 `Char`，`chars` **参数保持 `String`**、仅元素改 `Char`）。两条边界裁决：`ord` 的空串哨兵 `-1` **作废**（该签名下「空串」不可表达）；`chr` 越界由「返回空串」改为 **panic**（走 ADR-028 既定通道 `E5-005`，不新增诊断码）。
-- **契约新增两个节点**（走 spec §1.3）：`join`（`await` / `wait` 的挂起点，ADR-040）与 `detachStmt`（`detach` 语句，ADR-042）⇒ 契约语句 **16 → 17**、合计 **61 → 62**。⚠️ 两者本批**只落节点面、行为未接**（节点今天不可达），降载与两台引擎的行为另格。
-- **挂起模式实现退役**（ADR-043）：`await` / `wait` **保留且语义不变**，退役的只是「释放当前 OS 线程」这一**实现形态**（CPS 求值器 + 挂起调度器）；生产面实测**零启用** ⇒ **对用户程序零可见影响、非破坏性**；⚠️ **不承诺移除**（故分级取 `Provisional` 而非 `Deprecated`）。
-- **语言级新裁决登记**（ADR-037 / 038 / 039 / 041）：泛型枚举用例构造形态（限定形态 `枚举名<实参…>.用例(载荷…)` 为准、裸名形态为糖）；数值字面量**不**隐式转小数、`abs` 放宽到整数且保型（**本件只登记，实现另批**）；标签 `break` 可定向**任意带标签结构**（含 `if` 块）、`continue` 仅循环标签有效、内层同名标签遮蔽外层、标签与变量属独立命名空间；错误发现**静态层优先**（静态可判定者须在类型检查 / 降载层被拒，静态层不得抢报运行期错误）。
-- **文档面治理**（ADR-035 / 036）：语言参考纳入事实源（分面权威、成熟成果由规范**递交**沉积）；路线图退役（实测 79% 内容过时）后抽北极星执行指引入项目规范。
+- **`LR-4`「HIR 统合全后端」完成**（`P0`–`P5` 全交付）：旧 AST 走查求值器与挂起引擎整体退役 —— `Interpreter` / `SuspendEvaluator` / `SuspendScheduler` / `REPL/InterpreterEngine.swift` 四文件共 **4162 行**删除，`PINI_INTERP_ENGINE` 引擎开关退役；HIR 成为**全部后端共用的唯一枢纽**，语义权威由「以某一后端为定义处」上移到契约件 `docs/spec/hir-contract.md`（HIR 契约）。执行通道的表述由「三通道」改为**两执行通道 × 一个诊断来源器械**（探针口径见 `docs/issue-interpreter-hir-plan-2026-09-12.md` §8.1）。
+- **`Char` 类型落地**（Char 类型引入，格 `P0d`，已收格）：`Char` = **extended grapheme cluster 标量**（不是 Unicode 码点、不是 UTF-8 字节），表示**与 `String` 同构**（零新 ABI），不变式「恰含 1 个字素」归类型系统承担；FFI 既有单字节 `Char` 更名 **`CChar`**；相容桥 = **`Char → String` 单向加宽**（窄化被拒）。六字符原语签名迁移（`is_letter` / `is_ascii_digit` / `is_number` / `ord` 取 `Char`，`chr` 取 `I32` 返回 `Char`，`chars` **参数保持 `String`**、仅元素改 `Char`）。两条边界裁决：`ord` 的空串哨兵 `-1` **作废**（该签名下「空串」不可表达）；`chr` 越界由「返回空串」改为 **panic**（走 下标三通道安全模型 既定通道 `E5-005`，不新增诊断码）。
+- **契约新增两个节点**（走 spec §1.3）：`join`（`await` / `wait` 的挂起点，HIR join 节点）与 `detachStmt`（`detach` 语句，HIR detach 节点）⇒ 契约语句 **16 → 17**、合计 **61 → 62**。⚠️ 两者本批**只落节点面、行为未接**（节点今天不可达），降载与两台引擎的行为另格。
+- **挂起模式实现退役**（挂起模式退役）：`await` / `wait` **保留且语义不变**，退役的只是「释放当前 OS 线程」这一**实现形态**（CPS 求值器 + 挂起调度器）；生产面实测**零启用** ⇒ **对用户程序零可见影响、非破坏性**；⚠️ **不承诺移除**（故分级取 `Provisional` 而非 `Deprecated`）。
+- **语言级新裁决登记**（泛型枚举构造形态 / 数值字面量转换 / 标签 break 定向范围 / 静态层优先）：泛型枚举用例构造形态（限定形态 `枚举名<实参…>.用例(载荷…)` 为准、裸名形态为糖）；数值字面量**不**隐式转小数、`abs` 放宽到整数且保型（**本件只登记，实现另批**）；标签 `break` 可定向**任意带标签结构**（含 `if` 块）、`continue` 仅循环标签有效、内层同名标签遮蔽外层、标签与变量属独立命名空间；错误发现**静态层优先**（静态可判定者须在类型检查 / 降载层被拒，静态层不得抢报运行期错误）。
+- **文档面治理**（语言参考纳入事实源 / 036）：语言参考纳入事实源（分面权威、成熟成果由规范**递交**沉积）；路线图退役（实测 79% 内容过时）后抽北极星执行指引入项目规范。
 - ⚠️ **本版对外登记的一处已知破损**：selfhost 的 `check` 因字符原语**参数面 5 处**（缺口台账 `G70`，跨仓）现为**红**。宿主四道门禁**均显式排除** selfhost ⇒ 不污染宿主门禁，但该红由 `P0d` 造成、**不因收格消失**。
 - ⚠️ **随收格登记、未排期的后续单元**（各须单独点名）：LLVM 端 grapheme 运行时 shim（缺口台账 `G69`）· selfhost 字符原语参数面 5 处（`G70`）· 字符字面量 `'c'` 格 · selfhost 语义面重校（授权轨 `auth-6`）。
 
 > 批 7（远程 tap）当时未登记，此处一并补上；批 8 为 G52 工单的收尾补修。
 
 ### Breaking
-- **IO 三项语义对齐到 HIR 契约（2026-09-14，P2b「IO 语义格」）**：`ADR-034` D3 的 A 组三项由「已裁、解释器未改」落地为两侧一致——**改的是解释器侧**，LLVM 侧维持不变。用户可见变化三条：① **`readLine` 不再剥离行终止符**（输入 `"line\n"` 现返回 `"line\n"`，此前返回 `"line"`），且超 **255 字节**的行被截断；② **`readFile` 上限 65536 字节、超出静默截断**（此前无上限——读大文件会返回不完整内容而无任何提示）；③ **`writeFile` 返回写操作整型结果码**（成功 `0`），不再是 void/`null`。另修 LLVM 侧 `readLine` 在输入耗尽时的未定义行为：`fgets` 的 NULL 此前被直接交给 `%s`，实测打印 `(null)`（7 字节）而解释器输出空串（1 字节），现两侧一致为空串。两处尺寸常量单源化为 `Sources/PiniCore/Common/IOLimits.swift`（解释器与发射器共用，防各自漂）。**迁移面实测零受害**：全仓无超 64 KiB 的 `.pini`、selfhost 语料均 ~2 KiB，受害测试期望值已随改（`Tests/PiniTests/IOTests/`）。上限本身的合理性**未裁**、另案：`docs/issue-io-limit-from-emitter-2026-09-12.md`（含**超长行流位置语义**补记——该分歧仍存在）。证据：readLine 保留行终止符、readFile 截断。
+- **IO 三项语义对齐到 HIR 契约（2026-09-14，P2b「IO 语义格」）**：`HIR 契约` D3 的 A 组三项由「已裁、解释器未改」落地为两侧一致——**改的是解释器侧**，LLVM 侧维持不变。用户可见变化三条：① **`readLine` 不再剥离行终止符**（输入 `"line\n"` 现返回 `"line\n"`，此前返回 `"line"`），且超 **255 字节**的行被截断；② **`readFile` 上限 65536 字节、超出静默截断**（此前无上限——读大文件会返回不完整内容而无任何提示）；③ **`writeFile` 返回写操作整型结果码**（成功 `0`），不再是 void/`null`。另修 LLVM 侧 `readLine` 在输入耗尽时的未定义行为：`fgets` 的 NULL 此前被直接交给 `%s`，实测打印 `(null)`（7 字节）而解释器输出空串（1 字节），现两侧一致为空串。两处尺寸常量单源化为 `Sources/PiniCore/Common/IOLimits.swift`（解释器与发射器共用，防各自漂）。**迁移面实测零受害**：全仓无超 64 KiB 的 `.pini`、selfhost 语料均 ~2 KiB，受害测试期望值已随改（`Tests/PiniTests/IOTests/`）。上限本身的合理性**未裁**、另案：`docs/issue-io-limit-from-emitter-2026-09-12.md`（含**超长行流位置语义**补记——该分歧仍存在）。证据：readLine 保留行终止符、readFile 截断。
 - **LLVM 后端整体替换为 HIR 管线（2026-09-12，M6b 翻转批）**：旧的直接发射后端（`IRGenerator` / `IRTypeMapper` / `IRGenError` / `Emit/` 族，共 11 文件 5443 行）与迁移期开关 `PINI_HIR_PIPELINE` 一并删除，`emit` / `compile` / `run-llvm` 恒走 `HIRLowerer → IREmitter`，`HIR` 成为唯一代码生成路径。用户可见变化三条：① `emit` 对模块成员文件**恒输出包级 IR**（此前取决于迁移开关是否置位）；② LLVM 通道 `f64` 打印**不再补足 6 位小数**（`3.000000` → `3.0`，与解释器一致）；③ LLVM 通道**字符串相等判定修正**（夹具 `testDiffStringEquality` 在旧后端输出 `false`，现与解释器一致输出 `true`）。此外 **22 个旧后端拒绝的样例现可由 LLVM 通道运行**（含 `cow` / `array-basic` / `multidim` / `slice` / `try` / `ffi` / `object` / `enum-dot-case` 八个示例），1 例旧后端崩溃（`testDiffFloatPrint`）随之消失。证据：执行与契约套件迁到 HIR 管线 + 旧代码生成器整体删除；计划与完成记录见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### Added
@@ -32,7 +32,7 @@
 - **门控陈旧夹具收口 + 双后端缺键/换行语义对齐（2026-09-07）**：① LLVM 单参/插值 print 补发尾部换行（`@fmt_newline`；此前仅多参 print 带换行，双后端 stdout 分歧被测试空白归一化掩盖）；② 字典缺失键语义对齐 G48 三通道——`bk_dict_get` 缺键改 `bk_panic`（原「NULL → 补零值」/print 位「打 null」特例移除，与解释器 panic 一致）；③ D3 夹具迁移 G57 字典 `=` 记法并移除三通道前的缺键打 null 残留行；④ `testArraySubscriptWriteBothBackends` 转 D1 边界负向断言（无门控恒可执行）。详见 `docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md`
 - **trait-body 终止性修复（2026-09-06）**：trait 块后接任何后续顶级声明（结构块/扩展块/对象糖/import/export/后续特征块）解析失败——终止检查 `isTopLevelDeclStart()` 被包在 `if justDedented` 门内，顶格方法（spec 合法形态）与后续声明间无 dedent 时检查被跳过。修复：`parseTraitDecl` 循环 else 分支前加无条件收束（对齐扩展块循环）。GCT 三钉（trait+结构块 / trait+扩展块 / 多带体方法回归）；spec trait-body 产生式加终止注记 + IDENT 同形歧义登记（trait 后跟顶级裸函数被吸收为 trait-method，spec 贪婪语义与宿主一致，规避法已注记）。详见 `docs/spec/issue/archive/issue-trait-body-termination-2026-09-05.md`
 - **特征扩展块 `<<T>>` 重新引入（2026-09-06）**：批③曾以「词法不可达」移除 spec 产生式，经用户裁决推翻（行首 `<<` 可消歧）后按治理流程重新引入实现。词法消歧 = **行首 `<<` 拆为两个 `.lessThan` token**（Parser 顶层分派本就期望该 token 对 → traitExt 扩展块，主体零改动；行首作表达式起始位无前缀 `<<`，零歧义），行内 `<<` 维持移位合并；闭合 `>>` 行内恒合并为 `.rightShift`，traitExt 闭合位接受合并态与分离态（`<<T>>`/`<<T >>`）。GCT 双向钉：行首 `<<动物>>` → extensionDecl(kind: traitExt) + trait-body 方法、行内 `a << 2` 维持 binary(op: .leftShift)。spec §A extension-decl 产生式加落地注。详见 `docs/spec/issue/archive/issue-trait-extension-reintroduce-2026-09-05.md`
-- **数组元素标注 `[T]` 语义检查（批 F）**：`[T]`/`[K: V]`/`{T}` 标注对集合字面量初始化、字面量赋值右值、Array.append 实参做逐元素类型检查（期望类型下推，通配 `_`/`Any` 放行）；标注仅做检查——ADR-020 签名契约不动（append 仍返回新数组），无标注累积器 `var ys = []` 语义零变更（实施前实测 `[1, "a"]` 混型与 `append("a")` 均静默通过）
+- **数组元素标注 `[T]` 语义检查（批 F）**：`[T]`/`[K: V]`/`{T}` 标注对集合字面量初始化、字面量赋值右值、Array.append 实参做逐元素类型检查（期望类型下推，通配 `_`/`Any` 放行）；标注仅做检查——内建特征化 签名契约不动（append 仍返回新数组），无标注累积器 `var ys = []` 语义零变更（实施前实测 `[1, "a"]` 混型与 `append("a")` 均静默通过）
 - **点号用例构造 `.caseName` / `.caseName(args)`（批 E）**：前导点 = 成员意图标记（D-1 与 Swift `UnresolvedMemberExpr` 同构：解析期专用未解析节点，决议在类型检查阶段期望类型优先——期望类型命中 > 唯一父枚举回退 > 歧义拒绝）；成员意图不受本地位遮蔽影响；内建 Optional `.some`/`.none` 直达；spec primary-atom 产生式同步入 §A。解释通道全量可用；LLVM 端唯一名可用、歧义名 unsupported（D-3 报错 + 立案，跟踪于 issue-llvm-dotcase-expected-type；2026-09-07 已收口——歧义名经 checker 静态决议表消歧，见 Added 2026-09-07 条目）
 - **字符谓词 LLVM 后端（批 C1）**：`is_ascii_digit` 实现（C 字节串首字节判 ASCII [0-9]，ASCII 域与解释器 grapheme 首字符一致，空串 NUL 自然 false）；`is_letter`/`is_number`/`chars` 显式 unsupported（E6-002——需运行时 Unicode 表 / grapheme 切分，v1 不入 C 字符串后端；对齐 moduleRoot/argv 惯例）——lexer-gap-closure §6「LLVM 端四内建」挂账以此收口
 - **远程 tap 抓取**（G52 批 7）：`TapFetcher` 支持 `github:<org>` / `git:<url>` / `file:<path>`（`git:` 接受本地路径 ⇒ 整条链路可离线端到端测试）；`git clone`/`fetch`+`checkout` + `rev-parse` 取 `commit`
@@ -58,7 +58,7 @@
 
 ### Fixed
 - **前缀 `++`/`--` 语义钉定并修复三处缺陷（F3 / 批 A）**：表达式位与成员/下标目标现读-改-写回（此前表达式位、成员/下标不写回）；不可赋值目标（字面量等）为编译错误（此前 `++1` 求值为 2）；语句位与表达式位同轨（`Interpreter.evaluateIncDec`）
-- **foreign 调用 unsafe 门禁（F5 / 批 A）**：安全上下文裸调 `[X|foreign]` 函数报 E4-001（此前不拦，「该消耗而未消耗」反向缺口；与 ADR-028 D-4 正交）；`examples/ffi_module/cstring.pini` 1 处裸调已迁移加 `unsafe`
+- **foreign 调用 unsafe 门禁（F5 / 批 A）**：安全上下文裸调 `[X|foreign]` 函数报 E4-001（此前不拦，「该消耗而未消耗」反向缺口；与 空 unsafe 消耗点无害 正交）；`examples/ffi_module/cstring.pini` 1 处裸调已迁移加 `unsafe`
 - **BinaryOperator 死面删除（F2 / 批 A）**：`logicalAnd` / `logicalOr` / `power` 永不被构造（解析器在 and/or 层构造 `.and`/`.or`），删除无行为变化；assign 族「仅语句级」入 spec 规则 3.11
 - 锁文件 `commit` 此前恒为 `-`（只写不读），现为真实的来源定位符；`tap` / `source` 同样补上读取，`verify` 报错回显来源
 - **R7 双向封闭**：`resources X` 而 X 的根含 `pini.toml` → 报错指引改用 `[require]`（此前只兑现正向）
@@ -74,7 +74,7 @@
 ### Added
 - **模块工具链 `pini mod`**（G52 批 3）：`tidy`（离线对齐 require↔import）/ `refresh`（本地 tap 重解版本 + 写 `pini-summary.toml`）/ `verify`（SHA-256 校验和执行点）/ `graph [--cycles]`
 - **清单双通道**：`[tap]`/`[require]`/`[resources]`/`[replace]` 及点分子表、`[[ ]]` 数组表（MiniTOML）；MVS v1（本地 `file:` tap）
-- **隐式别名注入**（D-4，ADR-029 后续裁决）：`_别名 = path` = 注入全导入（文件级裸调用或 `_别名.符号` 限定）；冲突 E3-013；名字不一致 E7-002 弱警告（E7 段首个发出的警告）
+- **隐式别名注入**（D-4，括号内记法收口 后续裁决）：`_别名 = path` = 注入全导入（文件级裸调用或 `_别名.符号` 限定）；冲突 E3-013；名字不一致 E7-002 弱警告（E7 段首个发出的警告）
 - **argv 透传**（F6）：`argv()` 内建返回脚本路径之后的裸参数（LLVM 端暂 unsupported）
 - 多项 import 块；R1 嵌套清单父扫描排除补全
 
@@ -90,9 +90,9 @@
 ## v0.51.0 (2026-09-02)
 
 ### Added
-- **下标三通道**（G48 破坏性修订，ADR-028）：`a[i]` 安全断言（越界 panic E5-005）；`.get(i)` 安全可选（越界 `.none`，Array/Dictionary/String 一致，字典键按任意值匹配）；`unsafe .getUnchecked(i)` 不安全（解释器以「UB 陷阱」E5-006 近似，LLVM 端未实现报 unsupported）
+- **下标三通道**（G48 破坏性修订，下标三通道安全模型）：`a[i]` 安全断言（越界 panic E5-005）；`.get(i)` 安全可选（越界 `.none`，Array/Dictionary/String 一致，字典键按任意值匹配）；`unsafe .getUnchecked(i)` 不安全（解释器以「UB 陷阱」E5-006 近似，LLVM 端未实现报 unsupported）
 - **跨行字面量**（G55，A12 方案 B / 路 C）：普通括号内 NEWLINE 等同空白、缩进不参与；块携带括号（开括号同行紧跟 `func`）布局照常——草稿「原地调用 IIFE」形态由此可用；自举 lexer 同步（差分 L0 MATCH 508）
-- **括号内 `=` 记法**（G57，ADR-029）：实参标签 / 字典条目 / 元组标签 / 枚举具名构造统一 `=`（注入方向）；自举 parser 同步
+- **括号内 `=` 记法**（G57，括号内记法收口）：实参标签 / 字典条目 / 元组标签 / 枚举具名构造统一 `=`（注入方向）；自举 parser 同步
 
 ### Changed
 - **破坏性**：下标读返回元素类型 `T`（原 `Optional<T>`），越界由「得 nil」改「panic」；`unsafe a[i]!` 类剥壳写法失效（迁移见 `docs/spec/migration-2026-09.md` §A）
@@ -105,18 +105,18 @@
 ## v0.49.0 (2026-08-29)
 
 ### Added
-- **内建单点登记表**（ADR-020 D3/D4）：`BuiltinRegistry` 承载 28 个内建声明（名字/归组/签名/三层开关），解释器、类型检查、语义分析三处表驱动派生；成员方法表驱动派发（String/Array 11 方法）
-- **collection 内建特征声明面**（ADR-020 步骤 A）：抽象签名 + String/Array 标记式 conformance；用户类型严格校验可用
-- **标准库语言内下沉试点**（ADR-020 D2）：`StdlibPini.swift` 内嵌 Pini 源，`String.contains` 为首个 Pini 实现的成员方法（body-first 派发通道）
+- **内建单点登记表**（内建单点登记/D4）：`BuiltinRegistry` 承载 28 个内建声明（名字/归组/签名/三层开关），解释器、类型检查、语义分析三处表驱动派生；成员方法表驱动派发（String/Array 11 方法）
+- **collection 内建特征声明面**（内建特征化 步骤 A）：抽象签名 + String/Array 标记式 conformance；用户类型严格校验可用
+- **标准库语言内下沉试点**（内建双层结构）：`StdlibPini.swift` 内嵌 Pini 源，`String.contains` 为首个 Pini 实现的成员方法（body-first 派发通道）
 - **码点原语**（词法门禁 H1）：`ord`/`chr`（grapheme 首 Unicode scalar；空串/越界/代理区哨兵）
-- **字符谓词扩容**（G45/ADR-019 D4）：`is_ascii_digit` / `is_number` / `chars`（grapheme 预切）；`is_letter` 三层登记
-- **宽松词法**（ADR-021）：未知字符 → 单字符标识符 token（`unknown` 类型移除）；非法转义原样保留；字符串行尾/EOF 隐式终止；畸形进制/指数回退 `int` + 标识符（`0xg` → `int 0` + `identifier xg`）
+- **字符谓词扩容**（G45/谓词集三层对齐）：`is_ascii_digit` / `is_number` / `chars`（grapheme 预切）；`is_letter` 三层登记
+- **宽松词法**（宽松词法）：未知字符 → 单字符标识符 token（`unknown` 类型移除）；非法转义原样保留；字符串行尾/EOF 隐式终止；畸形进制/指数回退 `int` + 标识符（`0xg` → `int 0` + `identifier xg`）
 - **G49**：模块级 `pini test` 收集 + `[build] exclude`
 
 ### Changed
 - **G50（破坏性）**：`Self` 关键字更名 `own`，`Self` 降级普通标识符（对齐自举 lexer 与 spec EBNF）
 - **module.toml → pini.toml**；R5：点前缀路径构件扫描跳过
-- 语言级文档迁移至 pini-meta 仓库（ADR-018）——2026-08-30 由 ADR-024 迁回本仓 `docs/spec/`
+- 语言级文档迁移至 pini-meta 仓库（自举验证契约）——2026-08-30 由 规范治理归位 迁回本仓 `docs/spec/`
 
 ### Fixed
 - G48 下标安全模型：负索引尾部计数、越界 nil、切片语法、substring 尾部计数；下标读严格 Optional some/none（P2-E）
@@ -126,14 +126,14 @@
 ## v0.50.0 (2026-08-29)
 
 ### Breaking
-- **match 单绑定语义**（ADR-023 D2）：`case X(b):` 的 `b` 现在绑定**第 1 个关联值**（原为整个关联值元组）。
+- **match 单绑定语义**（单绑定取第 1 个关联值）：`case X(b):` 的 `b` 现在绑定**第 1 个关联值**（原为整个关联值元组）。
   迁移：`case 圆(r):` 对 2 关联值声明 → 改写 `case 圆(r, _):`。
   实测影响面：examples/tests 中 26 处单绑定均为单值关联值（等价、零迁移）；
   `examples/enum-namespacing.pini` 已迁移（2 关联值 + 单绑定）。
 - **绑定数与关联值数不匹配 → E4-005**（原静默绑 `.null`）。
 
 ### Added
-- 具名枚举关联值全链路（ADR-023）：声明 `case E(x: T, y: U,)`、标签实参构造（具名声明）、
+- 具名枚举关联值全链路（具名关联值与 match 解构）：声明 `case E(x: T, y: U,)`、标签实参构造（具名声明）、
   match 具名解构 `case E(x: v):`、`_` 占位。
 
 ## v0.48.4 (2026-08-24)

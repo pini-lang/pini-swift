@@ -133,7 +133,7 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
  case .join(let inner, _):
  return "\(indent)join(await/wait):\n" + describeExpression(inner, indent: indent + " ")
  case .tryExpression(let operand, let errorVar, let handler, _):
- // ADR-032 迁移批 M2：try-else 表达式描述。
+ // try-else 迁移 迁移批 M2：try-else 表达式描述。
  var result = "\(indent)tryExpression(try-else, errorVar=\(errorVar)):\n"
  result += describeExpression(operand, indent: indent + " ") + "\n"
  result += "\(indent) handler:\n"
@@ -370,7 +370,7 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
  }
  // D3①：`case _:` 通配已作为 case 进入 cases（case 列表覆盖），无独立 default/wildcard 块。
  return String(result.dropLast())
- // ADR-032 迁移批 M2：旧 try 语句描述随节点删除；语句位 try-else 经 expressionStmt。
+ // try-else 迁移 迁移批 M2：旧 try 语句描述随节点删除；语句位 try-else 经 expressionStmt。
  case .expressionStmt(let expr, _):
  return "\(indent)exprStmt:\n" + describeExpression(expr, indent: indent + " ")
  case .detachStatement(let expr, _):
@@ -1259,7 +1259,7 @@ private func runSingleFileTests(path: String) throws {
  let tokens = try lexer.tokenize()
  let parser = Parser(tokens: tokens, fileName: path)
  let module = try parser.parseModule()
- // Phase 2b（ADR-017）：单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，
+ // Phase 2b（解释器 dlsym 加载）：单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，
  // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
  let dir = (path as NSString).deletingLastPathComponent
  let manifest = try? FileLoader.loadManifest(directory: dir)
@@ -1480,7 +1480,7 @@ private func runHIRPackageEmit(package: Package, moduleRoot: String, outputPath:
  }
 }
 
-/// 定位集合运行时动态库（ADR-008 阶段1）。
+/// 定位集合运行时动态库（并发后端抽象 阶段1）。
 /// 优先 env `PINI_RUNTIME_LIB`；否则取 CLI 可执行文件同级目录的
 /// `libPiniRuntime.{dylib,so}`（swift build 产物默认同目录）。
 /// 找不到时返回 nil —— 调用方据此 best-effort 跳过加载（非集合程序本就无需运行时）。
@@ -1516,7 +1516,7 @@ func runCompileCommand(source: String, fileName: String) throws {
  }
  let process = Process()
  process.executableURL = URL(fileURLWithPath: clang)
- // ADR-008 阶段1：链接集合运行时（best-effort，找不到则跳过——非集合程序无需）。
+ // 并发后端抽象 阶段1：链接集合运行时（best-effort，找不到则跳过——非集合程序无需）。
  var clangArgs = ["-o", tmpBin, tmpIR]
  if let dylib = runtimeLibraryPath() {
  let dir = (dylib as NSString).deletingLastPathComponent
@@ -1554,7 +1554,7 @@ func runLLICommand(source: String, fileName: String) throws {
  userInfo: [NSLocalizedDescriptionKey: "lli not found. Install LLVM (e.g. `brew install llvm`) or set PINI_LLVM_BIN."])
  }
  var lliArgs = [tmpIR]
- // ADR-008 阶段1：加载集合运行时（best-effort，找不到则跳过——非集合程序无需）。
+ // 并发后端抽象 阶段1：加载集合运行时（best-effort，找不到则跳过——非集合程序无需）。
  if let dylib = runtimeLibraryPath() {
  lliArgs.insert("--dlopen=\(dylib)", at: 0)
  }

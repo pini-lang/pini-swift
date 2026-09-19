@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 ---------------
-`ADR-034` makes `docs/spec/hir-contract.md` the semantic authority for HIR nodes
+`HIR 契约` makes `docs/spec/hir-contract.md` the semantic authority for HIR nodes
 and requires every backend to agree with it. That claim is only worth something
 if drift is detectable without a human reading 60 entries every time. This is
 the mechanical half of the judging stack (plan section 8, layer 2); the probe

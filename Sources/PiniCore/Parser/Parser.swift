@@ -361,7 +361,7 @@ public class Parser {
  )
  }
 
- // 根据括号类型分派（ADR-016 规则 3.2/3.14：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块）
+ // 根据括号类型分派（声明上下文收紧·规则 3.2/3.14：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块）
  switch currentToken {
  case .leftParen(_):
  if case .leftParen(_) = peek(offset: 1) {
@@ -508,7 +508,7 @@ public class Parser {
  advance()
  isEnum = true
  } else if checkKeyword(.foreign) {
- // Phase 2a（ADR-015 FFI， foreign-decl）：`[名称|foreign]` 外部 C 函数声明块。
+ // Phase 2a（FFI 子系统， foreign-decl）：`[名称|foreign]` 外部 C 函数声明块。
  advance()
  try expect(.rightBracket(loc))
  return .foreignDecl(try parseForeignDecl(name: name, location: loc))
@@ -542,7 +542,7 @@ public class Parser {
  }
  }
 
- // MARK: - foreign 块解析（Phase 2a ADR-015 FFI， foreign-decl）
+ // MARK: - foreign 块解析（Phase 2a FFI 子系统， foreign-decl）
 
  /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）。
  /// 块内只允许外部 C 函数签名（无函数体）；块内函数自动视为 `|unsafe`。
@@ -593,7 +593,7 @@ public class Parser {
  return ForeignDecl(name: name, funcs: funcs, location: location)
  }
 
- /// Phase 2a（ADR-015 FFI）：判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。
+ /// Phase 2a（FFI 子系统）：判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。
  /// 用于 foreign 块循环区分「纯外部签名」与「顶层函数定义」——二者同为 `IDENT(...) -> (...)` 形态。
  private func isBareFunctionWithBodyStart() -> Bool {
  guard case .identifier(_) = currentToken else { return false }
@@ -652,7 +652,7 @@ public class Parser {
  return false
  }
 
- /// Phase 2a（ADR-015 FFI）：foreign 块的结束标记——类型/扩展块/import 等非签名声明头。
+ /// Phase 2a（FFI 子系统）：foreign 块的结束标记——类型/扩展块/import 等非签名声明头。
  /// 裸函数签名（foreign 签名本身）不是结束标记。
  private func isForeignBlockEndMarker() -> Bool {
  switch currentToken {
@@ -665,7 +665,7 @@ public class Parser {
  }
  }
 
- // MARK: - 扩展块解析（ADR-016 规则 3.2/3.14， extension-decl）
+ // MARK: - 扩展块解析（声明上下文收紧·规则 3.2/3.14， extension-decl）
 
  /// 解析扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`（traitExt 开定界符由 Lexer 行首
  /// `<<` 拆 token 对送达，2026-09-06 重新引入落地）。
@@ -789,7 +789,7 @@ public class Parser {
  // 期望 )
  try expect(.rightParen(loc))
  
- // 解析内容态（ADR-016 规则 3.2：类型体内只允许字段，方法移至扩展块）
+ // 解析内容态（声明上下文收紧·规则 3.2：类型体内只允许字段，方法移至扩展块）
  var fields: [FieldDecl] = []
  
  skipNewlines()
@@ -830,7 +830,7 @@ public class Parser {
  if case .leftBrace(_) = currentToken {
  // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 规则 3.2 报错
  if case .leftBrace(_) = peek(offset: 1) { break }
- // ADR-016 规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
+ // 声明上下文收紧·规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
  throw ParserError.invalidStatement(
  reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `((\(name)))` 中，并显式使用 `|self` 或 `|Self`",
  location: currentLocation
@@ -936,7 +936,7 @@ public class Parser {
  }
 
  private func parseObjectDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> ObjectDecl {
- // 解析内容态（ADR-016 规则 3.2：对象体内只允许字段，方法移至扩展块）
+ // 解析内容态（声明上下文收紧·规则 3.2：对象体内只允许字段，方法移至扩展块）
  var fields: [FieldDecl] = []
 
  skipNewlines()
@@ -954,7 +954,7 @@ public class Parser {
  if case .leftBrace(_) = currentToken {
  // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 规则 3.2 报错
  if case .leftBrace(_) = peek(offset: 1) { break }
- // ADR-016 规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
+ // 声明上下文收紧·规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
  throw ParserError.invalidStatement(
  reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `{{\(name)}}` 中，并显式使用 `|self` 或 `|Self`",
  location: currentLocation
@@ -981,7 +981,7 @@ public class Parser {
  // MARK: - 枚举块解析
  
  private func parseEnumDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> EnumDecl {
- // 解析内容态（ADR-016 规则 3.2：枚举体内只允许用例，方法移至扩展块）
+ // 解析内容态（声明上下文收紧·规则 3.2：枚举体内只允许用例，方法移至扩展块）
  var cases: [EnumCase] = []
  
  skipNewlines()
@@ -997,7 +997,7 @@ public class Parser {
  if case .leftBrace(_) = currentToken {
  // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 规则 3.2 报错
  if case .leftBrace(_) = peek(offset: 1) { break }
- // ADR-016 规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
+ // 声明上下文收紧·规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
  throw ParserError.invalidStatement(
  reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
  location: currentLocation
@@ -1029,7 +1029,7 @@ public class Parser {
  if case .leftParen(_) = currentToken {
  advance()
  while !check(.rightParen(loc)) && !isEOF() {
- // ADR-021/具名关联值决议（2026-08-29）：具名形参 `IDENT ':' 类型` 合法
+ // 宽松词法/具名关联值决议（2026-08-29）：具名形参 `IDENT ':' 类型` 合法
  // （推翻规则 3.15 的具名拒绝；spec A.2.2 具名四形态收口）。默认值 / 裸字面量
  // / 表达式默认值仍拒绝（与具名无关）。
  var assocName: String? = nil
@@ -1423,7 +1423,7 @@ public class Parser {
  }
 
  /// 判断是否是 `name|func(...)` 形式的裸函数（顶级自由函数，类型体内遇到即结束类型体）。
- /// ADR-016 规则 3.2 后类型体循环用它区分「顶级函数（break）」与「类型体内方法/函数（报错）」。
+ /// 声明上下文收紧·规则 3.2 后类型体循环用它区分「顶级函数（break）」与「类型体内方法/函数（报错）」。
  private func isBareFuncWithFuncModifierStart() -> Bool {
  guard case .identifier(_) = currentToken else { return false }
  guard case .pipe(_) = peek(offset: 1) else { return false }
@@ -1458,7 +1458,7 @@ public class Parser {
  if case .pipe(_) = currentToken {
  advance()
  let modifier = try parseIdentifier()
- // Phase 2a（ADR-015 FFI）：`|unsafe` 仅限自由函数（顶层函数或
+ // Phase 2a（FFI 子系统）：`|unsafe` 仅限自由函数（顶层函数或
  // `[名称|foreign]` 块签名）；禁止用于类型扩展方法 / trait 签名。
  if modifier == "unsafe" && !allowUnsafeModifier {
  throw ParserError.invalidStatement(
@@ -1861,7 +1861,7 @@ public class Parser {
  return try parseCaptureStmt()
  }
 
- // ADR-014（规则 3.13）：`标签|控制流关键字` 前缀 → 带标签语句。
+ // 标签语法反转（规则 3.13）：`标签|控制流关键字` 前缀 → 带标签语句。
  // 仅当 `IDENT '|'` 后为控制流关键字（if/while/for）时才识别为标签；
  // 否则（方法调用 `obj|m` / 按位或 `a|b`）回退为表达式，交由 default 分支处理。
  if case .identifier(let labelName, _) = currentToken,
@@ -1903,7 +1903,7 @@ public class Parser {
  case .keyword(.for, _):
  return try parseFor()
  case .keyword(.scope, let l):
- // ADR-014（G44）：`scope 块标签:` 语法已废弃 → 标签改用 `标签|控制流关键字`（规则 3.13）。
+ // 标签语法反转（G44）：`scope 块标签:` 语法已废弃 → 标签改用 `标签|控制流关键字`（规则 3.13）。
  throw ParserError.invalidStatement(reason: "scope 关键字已废弃：带标签控制流改用 `标签|while`/`标签|for`/`标签|if`（见规则 3.13）", location: l)
  case .keyword(.match, _):
  return try parseMatch()
@@ -2134,7 +2134,7 @@ public class Parser {
  let loc = currentLocation
  advance() // 跳过 while
 
- // 注（ADR-014，规则 3.13）：标签重新绑回 while 本体（`标签|while 条件:`），
+ // 注（标签语法反转，规则 3.13）：标签重新绑回 while 本体（`标签|while 条件:`），
  // 由 parseStatement 的 `标签|控制流关键字` 前缀解析；`scope 块标签:` 已废弃（G44）。
 
  // 条件表达式
@@ -2196,7 +2196,7 @@ public class Parser {
  let loc = currentLocation
  advance() // 跳过 for
 
- // 注（ADR-014，规则 3.13）：标签重新绑回 for 本体（`标签|for ... in ...:`），
+ // 注（标签语法反转，规则 3.13）：标签重新绑回 for 本体（`标签|for ... in ...:`），
  // 由 parseStatement 的 `标签|控制流关键字` 前缀解析；`scope 块标签:` 已废弃（G44）。
 
  // 模式元组：( 标识符|_ {, 标识符|_} )
@@ -2225,7 +2225,7 @@ public class Parser {
  return Statement.forStatement(pattern: pattern, iterable: iterable, body: body, step: step, label: label, location: loc)
  }
  
- // ADR-014（G44）：`scope` 关键字已废弃（改为 `标签|控制流关键字`，规则 3.13）。
+ // 标签语法反转（G44）：`scope` 关键字已废弃（改为 `标签|控制流关键字`，规则 3.13）。
  // parseScope 已移除；scopedBlock AST 节点与 Interpreter.executeScope 暂保留为遗留兼容，后续清理。
 
  private func parseMatch() throws -> Statement {
@@ -2361,7 +2361,7 @@ public class Parser {
  )
  }
  
- /// ADR-032 迁移批 M2（spec『try-else 错误传播』节 / EBNF try-stmt ::= try-expr）：
+ /// try-else 迁移 迁移批 M2（spec『try-else 错误传播』节 / EBNF try-stmt ::= try-expr）：
  /// 语句位 try-else——`try <expr> else <IDENT> <handler>`，包装为 expressionStmt。
  /// 旧 try 块/except 已一步删除（D2）：缺 else 报常规解析错误，无迁移提示。
  private func parseTry() throws -> Statement {
@@ -2382,7 +2382,7 @@ public class Parser {
  )
  }
 
- /// try-handler（ADR-032）：
+ /// try-handler（try-else 迁移）：
  /// ①单行形式——冒号后同行直接跟控制流语句，白名单限 return/break/continue/pass
  ///   （pass 仅语句位"显式吞掉错误"惯用法）；
  /// ②块形式——冒号后换行 + 缩进块（复用 parseControlBlock），块须以控制流语句
@@ -2639,7 +2639,7 @@ public class Parser {
  private func parseUnary() throws -> Expression {
  let loc = currentLocation
 
- // ADR-032 迁移批 M2（spec 附录表达式文法）：表达式位 try-expr——挂 primary 位，
+ // try-else 迁移 迁移批 M2（spec 附录表达式文法）：表达式位 try-expr——挂 primary 位，
  // 不占优先级层（`else` 关键字天然终止操作数，无贪婪歧义）。语句位 try 由
  // parseStatement 派发到 parseTry（包装 expressionStmt），二者共用 handler 解析。
  if checkKeyword(.try) {
@@ -2652,7 +2652,7 @@ public class Parser {
  operand: operand, errorVar: errorVar, handler: handler, location: loc)
  }
 
- // ADR-012：`await`/`wait` 前缀 = join / 挂起 await，取代立场 B 的 `<=` 前缀。
+ // 异步 join 表层：`await`/`wait` 前缀 = join / 挂起 await，取代立场 B 的 `<=` 前缀。
  // `await` 用于异步函数体（=>` 派发）内的挂起等待；`wait` 用于同步上下文的阻塞 join；
  // 二者均映射到既有 `.join` AST 节点（运行时按 suspendMode 上下文敏感，与立场 B 的 `<=` 行为一致）。
  // `await`/`wait` 仅作表达式起始位的前缀——`<=` 在此已回归纯比较运算符（中缀比较见 parseComparison）。
@@ -2703,7 +2703,7 @@ public class Parser {
  return Expression.unary(op: .minus, operand: operand, location: loc)
  }
 
- // ADR-032 迁移批 M2：`^` 右值糖定义性脱糖（spec『try-else 错误传播』节）——
+ // try-else 迁移 迁移批 M2：`^` 右值糖定义性脱糖（spec『try-else 错误传播』节）——
  // `^expr` ≡ `try expr else err: return err`（合成名 err 遮蔽外层同名绑定，
  // 语义与手写嵌套 try-else 一致）。仅在操作数起始位（parseUnary 在取得左操作数后
  // 被 parseFactor 调用，中缀位异或 `^` 由 parseBitwise 消费），与类型糖 `^T` 上下文分离。
@@ -2717,14 +2717,14 @@ public class Parser {
  return Expression.tryExpression(operand: operand, errorVar: "err", handler: handler, location: loc)
  }
 
- // Phase 2a（ADR-015 FFI）：`unsafe` 不安全消耗点前缀。
+ // Phase 2a（FFI 子系统）：`unsafe` 不安全消耗点前缀。
  if case .keyword(.unsafe, _) = currentToken {
  advance()
  let operand = try parseUnary()
  return Expression.unsafe(operand: operand, location: loc)
  }
 
- // Phase 2a（ADR-015 FFI）：`&` 不安全取地址前缀（复用 .bitwiseAnd token，
+ // Phase 2a（FFI 子系统）：`&` 不安全取地址前缀（复用 .bitwiseAnd token，
  // 前缀位置与中缀按位与靠语法位置消歧——parseUnary 在操作数起始位消费）。
  if case .bitwiseAnd(_) = currentToken {
  advance()
@@ -3225,7 +3225,7 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  return .generic(name: "Result", params: [inner], location: loc)
  }
 
- // Phase 2a（ADR-015 FFI）：前缀指针类型糖 *T ≡ 原始指针（复用 .star token）。
+ // Phase 2a（FFI 子系统）：前缀指针类型糖 *T ≡ 原始指针（复用 .star token）。
  // 元素类型为 C 兼容类型（标量/纯值结构体/另一指针）；T 禁 object（ARC 隔离）。
  if case .star(_) = currentToken {
  advance()
@@ -3449,11 +3449,11 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  advance()
  return "func"
  case .keyword(.unsafe, _):
- // Phase 2a（ADR-015 FFI， modifier）：`|unsafe` 函数修饰符。
+ // Phase 2a（FFI 子系统， modifier）：`|unsafe` 函数修饰符。
  advance()
  return "unsafe"
  case .keyword(.foreign, _):
- // Phase 2a（ADR-015 FFI， modifier）：`[名称|foreign]` 块修饰符。
+ // Phase 2a（FFI 子系统， modifier）：`[名称|foreign]` 块修饰符。
  advance()
  return "foreign"
  case .keyword(.test, _):
@@ -3472,7 +3472,7 @@ private func sliceSugar(base: Expression, start: Expression, end: Expression, lo
  case .keyword(.import, _), .keyword(.export, _):
  return true
  case .leftBrace(_):
- // ADR-016 规则 3.2：类型体内禁止函数声明后，行首 `{` 恒为顶级声明
+ // 声明上下文收紧·规则 3.2：类型体内禁止函数声明后，行首 `{` 恒为顶级声明
  //（`{name|func}` 函数块或 `{name}` 对象块），不再需要方法缺省假定区分。
  return true
  case .lessThan(_):

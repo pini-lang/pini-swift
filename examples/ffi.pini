@@ -1,4 +1,4 @@
-; Phase 2a（ADR-015 FFI）：FFI & unsafe 子系统示例（解释器优先，用户决策 D1）。
+; Phase 2a（FFI 子系统）：FFI & unsafe 子系统示例（解释器优先，用户决策 D1）。
 ;
 ; 特性演示：
 ;   1. `[libc|foreign]` 块声明外部 C 函数签名（块内函数自动视为 |unsafe）

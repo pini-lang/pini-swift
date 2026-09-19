@@ -1,6 +1,6 @@
 import Foundation
 
-/// Phase 2b（ADR-017）：库名 → 路径解析 + 句柄缓存 + 符号查找。
+/// Phase 2b（解释器 dlsym 加载）：库名 → 路径解析 + 句柄缓存 + 符号查找。
 ///
 /// 库名（`[名称|foreign]` 的 `名称`，`fd.name` 升级为真实库绑定键）解析顺序：
 /// 1. `libc` 保留名 → 直连系统 C 库（进程已加载映像，`SystemDL.openDefault`），不经路径搜索。

@@ -39,7 +39,7 @@ import Foundation
 /// first (LR-4 P4-3 — see `HIRBlock`), and the dormancy assertion that guarded
 /// the gap was inverted rather than deleted, so the boundary stays witnessed
 /// from both sides.
-/// See ADR-034 (HIR contract) and ADR-031 (a capability conclusion must rest on
+/// See HIR 契约 (HIR contract) and LLVM 后端重写 (a capability conclusion must rest on
 /// a real run, not on the absence of a path).
 public protocol DebugHookHost: AnyObject {
 

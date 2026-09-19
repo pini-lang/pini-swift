@@ -1,6 +1,6 @@
 import Foundation
 
-/// Phase 2b（ADR-017）：每签名 thunk 工厂。
+/// Phase 2b（解释器 dlsym 加载）：每签名 thunk 工厂。
 ///
 /// 因 Phase 2a已将顶层签名收敛为**封闭集**（标量 + 指针 + `()`），
 /// 在 foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包，

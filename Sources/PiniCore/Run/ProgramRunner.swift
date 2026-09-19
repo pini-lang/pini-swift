@@ -23,7 +23,7 @@ import Foundation
 /// WHAT IT DOES NOT OFFER
 ///
 /// The suspension back end that released the OS thread across an `await` is not
-/// here, and that is a decision rather than a gap: `ADR-043` retired it, nothing
+/// here, and that is a decision rather than a gap: `挂起模式退役` retired it, nothing
 /// published ever reached it, and it went out with the walk it was built on. The
 /// blocking join is the semantics this entry point runs.
 ///
