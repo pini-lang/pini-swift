@@ -90,6 +90,9 @@ public enum HIRLowerer {
             switch decl {
             case .structDecl(let sd): return sd.fields
             case .objectDecl(let od): return od.fields
+            // ADR-001 `P1b`：给定块与对象同规 —— 块内字段即其字段表（`[[T]]` 追加的
+            // 只有方法，从不追加字段，故这里不含 `extensionMethods` 对应物）。
+            case .givenDecl(let gd): return gd.fields
             default: return []
             }
         }
@@ -98,6 +101,9 @@ public enum HIRLowerer {
             switch decl {
             case .structDecl(let sd): return sd.methods + extensionMethods
             case .objectDecl(let od): return od.methods + extensionMethods
+            // ADR-001 `P1b`：给定块**自带的方法**与 `[[给定块名]]` 归并进来的方法合成
+            // 一张表 —— 须显式列出，`default:` 分支只给 `extensionMethods`，会丢块内方法。
+            case .givenDecl(let gd): return gd.methods + extensionMethods
             default: return extensionMethods
             }
         }
@@ -334,6 +340,13 @@ public enum HIRLowerer {
                     genericStructTemplates[sd.name] = sd
                 }
             case .objectDecl(let od): nominals[od.name] = NominalInfo(name: od.name, isObject: true, decl: decl)
+            // ADR-001 `P1b`：给定块与结构 / 对象**同规进入归并表** ⇒ `[[给定块名]]`
+            // 的方法能归并进来。`[[X]]` 的覆盖范围由这张表决定，与括号形无关。
+            // ⚠️ `isObject: false` **不是**新语义承诺，而是与类型层现状对齐：`TypeChecker`
+            // 显式不把给定块登记进 `referenceTypeNames`（值 / 引用语义属 `P2` 未裁项），
+            // 故此处取「非引用」= 忠实反映现状，而非替 `P2` 预裁。后批若裁定给定块为
+            // 引用类型，改这一处即可（`userTypes` 与 self 类型随之）。
+            case .givenDecl(let gd): nominals[gd.name] = NominalInfo(name: gd.name, isObject: false, decl: decl)
             case .funcDecl(let fd) where !fd.genericParams.isEmpty:
                 genericFuncTemplates[fd.name] = fd
             case .enumDecl(let ed) where !ed.genericParams.isEmpty:
@@ -347,16 +360,49 @@ public enum HIRLowerer {
         let genericEnums = HIRGenericEnumIndex(
             templates: genericEnumTemplates, caseOwners: genericEnumCaseOwners
         )
+        // ADR-001 `P1b`：三形扩展的目标按**实际注册类别**分三类处置。
+        // 「放过但今日也不归并」的名单 = 已声明、却不在 `nominals` 里的类型名：枚举
+        // （含泛型枚举）与泛型结构模板 —— 前者今日即无归并路径（`P1a` 登记的不覆盖面，
+        // 逐字维持），后者在 `G10` 特化段落按 `盒_<实参>` 另行归并。两者都**不是**本批要动的面。
+        var toleratedExtensionTargets: Set<String> = []
+        for decl in module.declarations {
+            switch decl {
+            case .enumDecl(let ed): toleratedExtensionTargets.insert(ed.name)
+            case .structDecl(let sd) where !sd.genericParams.isEmpty:
+                toleratedExtensionTargets.insert(sd.name)
+            default: break
+            }
+        }
         for decl in module.declarations {
             // ADR-001：`.bracketExt`（方括号 = 通用扩展形）与 `((` / `{{` 两形**同权**。
             // 归并条件从来只看「目标是否注册为名义类型」，不看 kind 本身 —— 实测（2026-09-19）
-            // `((` 与 `{{` 对结构 / 对象目标**互通**，即是一例。故 `[[X]]` 对结构 / 对象 /
-            // 给定块生效；对枚举与特征**不生效**（二者不在这张表里）＝ 各自维持今日行为。
+            // `((` 与 `{{` 对结构 / 对象目标**互通**，即是一例。
+            //
+            // ⚠️ **订正**（`P1b`，2026-09-19）：`P1a` 此处曾写「故 `[[X]]` 对结构 / 对象 /
+            // **给定块**生效」—— 当时**失实**：给定块根本没进 `nominals`（落 `default: break`），
+            // 其方法在归并处被**静默丢弃**。`P1b` 把给定块收编进表后，那句话才成立。
+            //
+            // 三类处置：① 在 `nominals` 里（结构 / 对象 / 给定块）⇒ 归并；
+            // ② 在 `toleratedExtensionTargets` 里（枚举 / 泛型模板）⇒ 放过，维持今日行为；
+            // ③ 其余 —— 名字谁都不是，或指向**特征**（特征名不在这两份名单里）⇒ **响亮拒绝**
+            //    （新码 `E6-006`）。今日为静默丢弃；`P1b` 按用户裁定改为出声 ——
+            //    静默会让「写对了却没效果」无从定位。
             if case .extensionDecl(let ext) = decl,
-                ext.kind == .structExt || ext.kind == .objectExt || ext.kind == .bracketExt,
-                nominals[ext.targetType] != nil
+                ext.kind == .structExt || ext.kind == .objectExt || ext.kind == .bracketExt
             {
-                nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
+                if nominals[ext.targetType] != nil {
+                    nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
+                } else if !toleratedExtensionTargets.contains(ext.targetType) {
+                    let spelling =
+                        ext.kind == .structExt ? "((\(ext.targetType)))"
+                        : ext.kind == .objectExt ? "{{\(ext.targetType)}}" : "[[\(ext.targetType)]]"
+                    throw HIRLoweringError(
+                        message: "extension block `\(spelling)`：目标 `\(ext.targetType)` 未声明为"
+                            + "可归并的类型（结构 / 对象 / 给定块），或指向特征 —— 方法无处可归",
+                        location: ext.location,
+                        code: "\(DiagnosticDomain.irgen.rawValue)-006"
+                    )
+                }
             }
         }
 
@@ -639,12 +685,19 @@ public enum HIRLowerer {
                 // no function body to emit.
                 continue
             case .givenDecl(let givenDecl):
-                // ADR-001 `P1a`：给定块的**声明面**已落地（解析 + AST + 特征摘取），
-                // 但默认实例的**物化面**（存放位 · 一次性守卫 · 取用点解析）属 `P2`
-                // ⇒ 响亮拒绝，**不静默丢弃**（静默会让「写对了却没效果」无从定位）。
-                // 中间态「能解析、不能跑」已在 ADR-001 落地计划件的 `P1a` 显式登记。
+                // ADR-001 `P1a`/`P1b`：给定块的**声明面**已落地（解析 + AST + 特征摘取 +
+                // `[[给定块名]]` 的方法归并），但默认实例的**物化面**（存放位 · 一次性守卫 ·
+                // 取用点解析）属 `P2` ⇒ 响亮拒绝，**不静默丢弃**（静默会让「写对了却没效果」
+                // 无从定位）。中间态「能解析、不能跑」已在 ADR-001 落地计划件显式登记。
+                //
+                // ⚠️ `P1b`：文案携带**归并计数** —— 给定块在此中间态下跑不到，归并结果没有
+                // 别的可观测面；把计数写进这条诊断是本批唯一的观测口径（判据据此断言
+                // 「`[[给定块名]]` 的方法确实进了块的方法表」）。`P2` 兑现后本条降为历史。
+                let mergedCount = nominals[givenDecl.name]?.extensionMethods.count ?? 0
                 throw unsupported(
-                    "given block `\(givenDecl.name)` (`[名称|given]`)：声明面已落地，默认实例机制属后续批次（ADR-001 P2）",
+                    "given block `\(givenDecl.name)` (`[名称|given]`)：声明面已落地"
+                        + "（`[[\(givenDecl.name)]]` 已归并 \(mergedCount) 个方法），"
+                        + "默认实例机制属后续批次（ADR-001 P2）",
                     at: givenDecl.location
                 )
             default:
