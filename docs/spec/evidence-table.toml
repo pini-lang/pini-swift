@@ -33,8 +33,8 @@ granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 artifact_policy = "条目的 `artifacts` 是**指针**，指针可以比它所指的东西活得久。凡 `artifacts` 里有**实存不存在**的路径，该条必须写 `artifact_status = \"carrier-deleted\"`；反之不得写。`tools/evidence_sweep.py --check` 两个方向都拦（悬空无标记 / 有标记而全实存），因为**不维护的标记与没有标记等价**。⚠️ 只拦指针、只报记录：`command`/`output`/`note`/`claim` 记的是**当时的观测**，载体消失不能反证当时的观测 ⇒ 这四项只计数、不改写（2026-09-19 口径）"
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-19T15:53+08:00"
-refresh_note = "2026-09-19 **`P1a`（方括号通用形 + 给定块声明位）**：新增一条 —— 「扩展归并只看目标是否注册为名义类型，不看 kind」。要点 = 该发现由**两形糖互通**反推得出（对象目标吃 `(( ))`、结构目标吃 `{{ }}` 均生效），它把「kind 须按目标类别决定」这一计划假设否证，并把通用形的成本从「新 kind + 解析期两遍」降到**一行归并条件**。同批登记两处不覆盖面（目标未声明时静默、`[[结构体名]]` 由静默转为生效）。存量条目未重新验证。2026-09-18 **`P0d-D`（相容桥 + 签名迁移）**：新增五条 —— ①「`Char → String` 单向加宽：三份探针逐向钉住，窄化被拒」· ②「桥两侧原子性：两臂逐行相同」· ③「`chr` 越界改走 panic」· ④「落点比规划件多两类：HIR 降载的三处类型门与 `+` 的结果类型」· ⑤「selfhost 参数面实测 5 处而非静态推的 3 处」。要点 = 判据**两向都测**（窄化那份才是裁定的全部内容）· 桥的 LLVM 探针**剥掉已登记不可运行的那一面**才测得到桥本身 · 一处止损如实上报并**按裁定回退**（登记 `G70`）· 计划件的处数**两处被实测订正**；存量条目未重新验证"
+last_refresh = "2026-09-19T16:07+08:00"
+refresh_note = "2026-09-19 **治理前置（`P0`）**：新增一条 —— 「关键字计数两侧皆 33，且『先登记后落码』在契约面只能落在 §4」。要点 = ① 规范与实现的关键字**计数注释都失实**（退役 `except` 后未随动）⇒ 计划件的成本数字据实更正为 33 → 34；② 契约器械的**双向对账**划定了登记位置 —— 未落地的节点面只能进 §4 预留位，此时「先登记后落码」才与器械相容。同批交付 `HIR 契约` §4.3 · `G71` 行订正 · 语言规范 §A.1.1 计数订正 · §5.1 递交台账补 `G71` 行 · `ADR-001` 五处订正。存量条目未重新验证。2026-09-19 **`P1a`（方括号通用形 + 给定块声明位）**：新增一条 —— 「扩展归并只看目标是否注册为名义类型，不看 kind」。要点 = 该发现由**两形糖互通**反推得出（对象目标吃 `(( ))`、结构目标吃 `{{ }}` 均生效），它把「kind 须按目标类别决定」这一计划假设否证，并把通用形的成本从「新 kind + 解析期两遍」降到**一行归并条件**。同批登记两处不覆盖面（目标未声明时静默、`[[结构体名]]` 由静默转为生效）。存量条目未重新验证。2026-09-18 **`P0d-D`（相容桥 + 签名迁移）**：新增五条 —— ①「`Char → String` 单向加宽：三份探针逐向钉住，窄化被拒」· ②「桥两侧原子性：两臂逐行相同」· ③「`chr` 越界改走 panic」· ④「落点比规划件多两类：HIR 降载的三处类型门与 `+` 的结果类型」· ⑤「selfhost 参数面实测 5 处而非静态推的 3 处」。要点 = 判据**两向都测**（窄化那份才是裁定的全部内容）· 桥的 LLVM 探针**剥掉已登记不可运行的那一面**才测得到桥本身 · 一处止损如实上报并**按裁定回退**（登记 `G70`）· 计划件的处数**两处被实测订正**；存量条目未重新验证"
 last_sweep = "2026-09-18T23:12:00+08:00"
 [[evidence]]
 id = "2026-09-18 selfhost 字符原语参数面：实测 5 处，非静态推的 3 处"
@@ -65,3 +65,25 @@ output = ["The mis-bracketed pair prints 77 and 3, so both brackets work on both
 validated_at = "2026-09-19T15:53+08:00"
 status = "FRESH"
 note = "⇒ 推翻了计划件的一处假设（「kind 须由目标的类别在解析期决定」）：实测表明归并层只需要「目标在名义类型注册表里」，kind 本身不参与判定 ⇒ `[[X]]` 只改归并条件即成通用形，枚举与特征各自维持今日行为（零回归面）。⚠️ 同批登记两处**不覆盖面**（见计划件的遗留段）：目标是未声明名 / 特征名时**静默丢弃**无诊断（今日行为，本批未改）；`[[结构体名]]` 的行为**由「静默丢弃」变为「归并生效」**（零语料 ⇒ 无回归面，但属行为变更，已显式登记）。"
+
+[[evidence]]
+id = "2026-09-19 关键字计数两侧皆 33，且「先登记后落码」在契约面只能落在 §4"
+citable = false
+claim = [
+  "Both the spec's KEYWORD production and Token.Keyword list 33 keywords while both annotate themselves as 34, so the plan's cost line for adding `using` (34 -> 35) came from a number that had already gone stale. The stale claim dates from the try-else migration, which retired `except` from both tables on 2026-09-07 without touching either count note; walking Token.swift's history makes the arithmetic visible (32 at first release, +own, +test, -except) and shows that the set changed rather than the note. Separately, the contract's own checker fixes where a node that does not exist yet may be registered: it cross-checks the section 2 and 3 entry tables against the HIRExpr / HIRStmt case sets in both directions, so an entry naming an undeclared node fails on the spot, and a reserved slot in section 4 is the only form 'register before implementing' can take. The batch therefore registers in section 4 and leaves the keyword movement to the batch that can move both sides at once.",
+]
+artifacts = [
+  "docs/spec/pini-spec-v0.md",
+  "Sources/PiniCore/Lexer/Token.swift",
+  "docs/spec/hir-contract.md",
+  "tools/hir-contract-check.py",
+]
+command = [
+  "a script extracting the spec KEYWORD production literals and the Token.Keyword cases and comparing both sets; git log over Token.swift re-extracting the case set per commit; python3 tools/hir-contract-check.py before and after",
+]
+output = [
+  "The two sets are equal and 33 long each, order aside. Token.swift's history reads 32 at the first release, 33 after `own`, 34 after `test`, then 33 once `except` retired with the try-else migration - so the '34' in both notes was correct when written and is not now. The checker reports clean before and after the batch (45 expr + 17 stmt = 62 entries against 62 cases, three anchors at 62/62), and the new section 4.3 slot is not counted as an entry because section 4 lies outside both tables the script parses; references checked rose from 18 to 20 with none dangling.",
+]
+validated_at = "2026-09-19T16:07+08:00"
+status = "FRESH"
+note = "⇒ 本批（治理前置 `P0`）的两处实测。① **计数失实**：规范 `KEYWORD` 产生式与 `Token.Keyword` **都是 33**，而两侧注释都写 34 —— 那是 2026-09-07 退役 `except` **之前**的正确值，此后未随动。⇒ 计划件原写的「`using` 入关键字表（34 → 35）」更正为 **33 → 34**；实现侧那处注释**本批不动**（零源码改动），登记为 `P1` 随批订正。② **登记的合法位置**：`hir-contract-check.py` 对 §2/§3 条目表与节点集**双向对账** ⇒ 「先登记后落码」在契约面**只能**落在 §4 预留位（写进 §2 即报 `contract-without-node`）⇒ 已交付 = `HIR 契约` §4.3（默认实例取用）。⚠️ 本条的结论**不依赖**行号（`§2/§3` 是节名，两个计数是集合大小）。"
