@@ -107,16 +107,20 @@ struct LexerTests {
 
 ### The Directory Unit (codified 2026-09-03 — the convention practice already settled on)
 
-Every suite lives in its own directory, named after the suite. Fixtures read
-by that suite live beside it, named after the test function that consumes them.
+Every suite lives in its own directory, named after the suite. Fixtures read by that
+suite live in a `Fixtures/` subdirectory of it, named after the test function that
+consumes them. （`Fixtures/` 这一层是 2026-09-19 加的：SwiftPM 把目标目录内的非源文件
+判为 unhandled，而 `exclude` 只能按路径、不能按扩展名 ⇒ 夹具独占一层才能一条排掉。
+它同时让「夹具」与「套件源文件」在目录层面分开，孤儿检查只看得到夹具。）
 
 ```
 Tests/PiniTests/
     PiniFixtureLoader.swift            <- shared loader; stays at the top level
     <SuiteName>/
         <SuiteName>.swift              <- the suite
-        testXxxBehavior.pini           <- fixture, named after the consuming test func
-        testYyyBehavior.pini
+        Fixtures/                      <- fixture data; excluded from the target
+            testXxxBehavior.pini       <- fixture, named after the consuming test func
+            testYyyBehavior.pini
 ```
 
 Rules:
@@ -128,7 +132,10 @@ Rules:
   把「夹具名 ↔ 用例名」逐条断言，不必只靠肉眼。）
 - **Fixtures are located by path, not by bundle resource.** `PiniFixtureLoader` derives
   the fixture directory from `#filePath`, so a directory can be relocated without
-  touching a single call site.
+  touching a single call site. ⛔ Do **not** declare a suite directory as a `resources:`
+  entry to silence the unhandled-file warning: SwiftPM then stops compiling the `.swift`
+  inside it and silently drops the whole suite, while the build still exits 0 and the
+  warning still disappears. A path-shaped `exclude:` in the manifest is the supported way.
 - **Shared helpers stay at the `Tests/PiniTests/` top level** (today: `PiniFixtureLoader.swift`).
   Per-suite helpers belong inside the suite.
 - **Fixture trees are not groups.** `ModuleSystemTests/demo/` is fixture data, not a

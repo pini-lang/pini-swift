@@ -34,6 +34,14 @@
   独立 scratch 全量重建 0 错误且**警告数与改前完全相同**（255/255）· 32 条测试全绿 · 注释与文档链接两道门禁绿。
   目标一律显式列出（`Sources Tests Package.swift`）：`swift format` 的递归跳过隐藏目录，但会进入非隐藏的嵌套目录
   —— 本仓 `examples/selfhost` 是嵌套独立仓。
+- **测试夹具独立一层，消掉 SwiftPM 的 unhandled 告警**：29 个 `.pini` 夹具迁入
+  `Tests/PiniTests/GrammarAcceptanceTests/Fixtures/`，清单加一行 `exclude: ["GrammarAcceptanceTests/Fixtures"]`
+  ⇒ 构建告警从 255 行降到 254、`unhandled` 归零。动因：SwiftPM 把目标目录内的非源文件判为 unhandled，
+  而 `exclude` **只能按路径、不能按扩展名**，所以夹具必须独占一层才能一条排掉（否则每加一个夹具都要改清单）。
+  加载器与套件各改一处定位（`PiniFixtureLoader` 的 `Fixtures/` 分支、套件的 `suiteDirectory`），
+  其余 4 个消费点从单一属性派生、一行未动；32 条用例与夹具内容均未改。⚠️ 实测留档：改用
+  `resources:` 指向套件目录会让该目录里的 `.swift` **不再被编译**，整个套件被静默丢弃 ——
+  构建仍退出 0、告警也会消失，**只有「测试汇总行」能发现**，故不用那条路。
 - **器械解析层跟上框架**：`tools/hir-chunk-run.py` 与 `tools/three-edge-union.py` 解析测试输出时同时认两个框架
   （套件起始行、失败行、汇总行三处形状都不同，且 Swift Testing 不产 `Executed ...` 行）；分块驱动的失败集合元素
   由「类 + 方法」二元组归一为字符串。⚠️ 只认一种框架的后果是**静默失效** —— 另一种的套件会整体落进「未跑」而被
