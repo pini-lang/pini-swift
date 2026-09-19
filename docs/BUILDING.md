@@ -6,8 +6,8 @@
 
 | 依赖 | 版本要求 | 用途 |
 |------|---------|------|
-| macOS | 26.x（随 Swift 6.2+ 工具链） | 必需 |
-| Swift 工具链 | **6.2+**（`swift-tools-version:6.2`；本机验证：Apple Swift 6.3.3） | 必需，随 Xcode 或 swift.org 安装 |
+| macOS | 26.x（随 Swift 6.4+ 工具链） | 必需 |
+| Swift 工具链 | **6.4+**（`swift-tools-version:6.4`；本机验证：Apple Swift 6.4） | 必需，随 Xcode 或 swift.org 安装 |
 | Git | 任意近期版本 | 获取源码 |
 | clang / lli（LLVM） | 系统自带或 brew 安装 | **可选**——仅 `compile` / `run-llvm` / `emit` 后端需要 |
 
@@ -50,11 +50,14 @@ swift build -c release --disable-sandbox
 # 预期输出：Hello, World! / 欢迎使用Pini语言
 
 .build/debug/pini check examples/array-basic.pini
-.build/debug/pini test .         # 全量 |test 块（当前 10/10）
+.build/debug/pini test examples/test.pini   # 语言级 |test 块（3 个）
 
 # release 构建冒烟（把 debug 换成 release）
 .build/release/pini run examples/hello.pini
 ```
+
+> 注：仓库根不是 Pini 模块（无 `pini.toml`），对根目录跑 `pini test .` 会逐文件解析整棵树，
+> 并解析到 `examples/probes/`（负向探针，故意不可解析）而报错；冒烟请如上指定文件。
 
 ## 5. 使用与安装（可选）
 
@@ -119,21 +122,25 @@ export PATH="$PATH:$HOME/.local/bin"
 
 ## 7. 自举演示（进阶）
 
-宿主实现就绪后，可以体验 **Pini 语言自己实现的编译器**（自举，自举验证契约）：
+宿主实现就绪后，可以体验 **Pini 语言自己实现的编译器**（自举）。自举项目位于 `examples/selfhost/`，
+是**嵌套独立仓**——自有 `.git`，被宿主 `.gitignore` 排除，故本仓 clone 不含它，须单独获取：
 
 ```bash
-# 上级目录需同时存在 pini/（自举源码）仓库
-.build/release/pini run ../pini        # 运行自举词法器（对拍驱动入口）
-.build/release/pini test ../pini       # 自举端 |test 块（10/10）
+.build/release/pini run examples/selfhost     # 运行自举词法器（对拍驱动入口）
+.build/release/pini test examples/selfhost    # 自举端 |test 块
 ```
 
-自举词法器与宿主 `pini tokens` 的输出逐字节一致（`pini/tools/diff_tokens.sh` 差分门禁，含中文标识符语料）。
+⚠️ **该演示当前不可运行**：自举探针未过类型检查——`examples/selfhost/src/lexer/lexer.pini:500`
+报 `expected Char, got String`，即字符原语参数面迁移（`String` → `Char`）尚未完成的那部分，
+已登记为规范缺口台账 `G70`。宿主四道门禁**均显式排除** selfhost，故宿主侧不受此影响。
+
+自举词法器与宿主 `pini tokens` 的输出逐字节一致（`examples/selfhost/tools/diff_tokens.sh` 差分门禁，含中文标识符语料）。
 
 ## 8. 故障排查
 
 | 症状 | 原因与处理 |
 |------|-----------|
-| `swift build` 报 swift-tools-version 不支持 | Swift 工具链 < 6.2：升级 Xcode 或从 swift.org 安装最新工具链 |
+| `swift build` 报 swift-tools-version 不支持 | Swift 工具链 < 6.4：升级 Xcode 或从 swift.org 安装最新工具链 |
 | 构建中系统卡顿 / 换页 | release 构建峰值内存数 GB：关闭其他重负载；**不要并行第二个构建** |
 | `compile`/`run-llvm` 报找不到 clang/lli | 安装 LLVM（`brew install llvm`）或设 `PINI_LLVM_BIN` 指向其 bin 目录；解释器功能不受影响 |
 | LLVM 程序运行时报找不到运行时库 | `libPiniRuntime.dylib` 不在 `pini` 同级：设 `PINI_RUNTIME_LIB` 指向该 dylib |
@@ -145,4 +152,5 @@ export PATH="$PATH:$HOME/.local/bin"
 
 - 仅支持 macOS；不提供预编译二进制——本地构建的产物不带 Gatekeeper 隔离标记，**无需签名/公证**；
 - Linux（Swift static SDK 静态链接路线）与 Windows 在项目稳定后评估；
-- 版本锚定与 CHANGELOG 重建为待办事项（当前 `pini version` 输出滞后于代码状态）。
+- 版本锚定已落地：版本号**单一事实源**为 `Sources/PiniCore/Common/Version.swift`（`pini version` 输出与之一致），
+  实现级 CHANGELOG 见 `docs/CHANGELOG.md`。
