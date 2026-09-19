@@ -25,6 +25,9 @@ jobs:
       - name: Doc Link Check
         run: bash tools/check-doc-links.sh
 
+      - name: Doc Hygiene Check
+        run: bash tools/check-doc-hygiene.sh
+
       - name: Build
         run: swift build --disable-sandbox
 

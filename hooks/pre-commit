@@ -42,8 +42,11 @@ fi
 # 注释风格门禁（pini-comment-style-guide.md §7；违规已清零 → block 模式）
 "$root/hooks/comment-lint.sh" || exit 1
 
-# 文档链接校验（ADR-024 挂账 8）：引用失效即拦截 —— 补上 M1 当年结构性缺失的能力
+# 文档链接校验（治理归位 挂账 8）：引用失效即拦截 —— 补上 M1 当年结构性缺失的能力
 "$root/tools/check-doc-links.sh" || exit 1
+
+# 决策记录正文卫生（「零文件级引用」）：判「**该不该写路径**」（与上一条互补 —— 那条只判路径是否存在）
+"$root/tools/check-doc-hygiene.sh" || exit 1
 
 # 证据表自动清扫（spec §1.4「自动清扫」；工单 docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md）
 # 放最后：只有前面所有闸门都通过才动这张表。本仓第一个会改写文件的 hook。
