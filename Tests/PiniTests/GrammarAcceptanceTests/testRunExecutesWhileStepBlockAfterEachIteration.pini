@@ -1,7 +1,7 @@
 main|func() -> ():
-    let i = 0
+    var i = 0
     while i < 3:
         print(i,)
     step:
-        print(-1,)
+        i = i + 1
     return

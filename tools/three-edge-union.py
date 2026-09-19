@@ -39,10 +39,16 @@ places. This tool is that union as one rerunnable judgement.
 What it will not do
 -------------------
 Report an unmeasured edge as green. A skip is not a pass: when the LLVM
-environment is unconfigured the gate turns the LLVM-gated tests into `XCTSkip`,
-and a summary line reading "0 failures" over a suite that never ran is the
-"shape-legal false green" this project has already paid for twice. Skips are
-counted, printed as their own state, and make the exit code non-zero.
+environment is unconfigured the gate turns the LLVM-gated tests into a skip
+(XCTest `XCTSkip`; under Swift Testing, a counted known issue), and a summary
+line reading "0 failures" over a suite that never ran is the "shape-legal false
+green" this project has already paid for twice. Skips are counted, printed as
+their own state, and make the exit code non-zero.
+
+⚠️ 测试框架 2026-09-19 起迁到 Swift Testing：本器械的 `swift test` 两处解析已同时认
+两个框架的套件行 / 失败行 / 汇总行。但**这两条边的对象在 G-6c 与测试树清空后已不存在**
+（`HIRExecutorTests` / `HIRDifferentialTests` 均已删），所以它们今天读作「0 run」⇒
+UNMEASURED。这是既存状态，不是本次迁移造成的 —— 要复活得先给这两条边重新指定对象。
 
 Exit codes: 0 = every edge measured and green · 1 = an edge failed ·
             2 = an edge was not measured (skips, or a tool missing)
@@ -59,6 +65,14 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 EXECUTED = re.compile(r"Executed (\d+) tests?, with (\d+) failures?")
+# Swift Testing 的汇总行与 XCTest 完全不同，且**不产出** `Executed ...`：
+#   Test run with 32 tests in 2 suites passed after 0.83 seconds.
+#   Test run with 4 tests in 1 suite failed after 0.42 seconds with 3 issues.
+#   Test run with 4 tests in 1 suite passed after 0.01 seconds with 1 known issue.
+# 只认 XCTest 会把 Swift Testing 的套件读成「0 run」，而那是未测、不是通过。
+SWIFT_TESTING_SUMMARY = re.compile(
+    r"Test run with (\d+) tests? in (\d+) suites? (passed|failed)"
+    r"(?: after [\d.]+ seconds)?(?: with (\d+) (?:known )?issues?)?")
 BLOCKERS = re.compile(r"FLIP BLOCKERS\s+(\d+)")
 
 EDGES = [
@@ -174,14 +188,27 @@ def read_package_channel():
 
 
 def read_swift_test(filter_expr):
-    """Returns (state, reading). A skip outranks a pass: see the module docstring."""
+    """Returns (state, reading). A skip outranks a pass: see the module docstring.
+
+    两个框架都读，判别靠汇总行的形状而不是调用参数 —— Swift Testing 的套件由同一条
+    `swift test --filter` 驱动，输出里却一个 XCTest 汇总行都没有。
+    """
     rc, out = run(["swift", "test", "--filter", filter_expr])
     # XCTest prints one `Executed ...` summary per nesting level (suite, bundle,
-    # "Selected tests"). Summing them multiplies the count by the nesting depth —
+    # "Selected tests"). Summing them multiplies the count by the nesting depth --
     # measured: 89 tests read as 267. The last one is the outermost total.
     executed = EXECUTED.findall(out)
-    skipped = len(re.findall(r"\bskipped\b", out))
-    ran, failures = (int(executed[-1][0]), int(executed[-1][1])) if executed else (0, 0)
+    swift_testing = SWIFT_TESTING_SUMMARY.findall(out)
+    if swift_testing:
+        ran, _, verdict, issues = swift_testing[-1]
+        ran = int(ran)
+        failures = 0 if verdict == "passed" else int(issues or 1)
+        skipped = int(issues or 0) if verdict == "passed" else 0
+    elif executed:
+        ran, failures = int(executed[-1][0]), int(executed[-1][1])
+        skipped = len(re.findall(r"\bskipped\b", out))
+    else:
+        ran, failures, skipped = 0, 0, 0
     if rc != 0 or failures:
         return RED, "%d run / %d failed / %d skipped" % (ran, failures, skipped)
     if skipped:
