@@ -2,7 +2,7 @@ import Foundation
 import PiniCore
 import Testing
 
-/// ADR-001（给定块 `given` / 取用参数 `using`）语法面的判据 —— `P1a` 与 `P1` 两批同住一件。
+/// ADR-001（给定块 `given` / 取用参数 `using`）判据 —— `P1a` / `P1` / `P1b` 三批同住一件。
 ///
 /// **`P1a` 的实质交付**：方括号从「枚举扩展」改为**通用扩展形** —— 归并时按**目标的实际
 /// 注册类别**落表，而不是按定界符预设类别。三形糖（`((` / `{{` / `<<`）的 kind 语义不变。
@@ -12,9 +12,15 @@ import Testing
 /// ⚠️ 入表是**破坏性**的：今日合法的标识符 `using` 变成保留字。它与 `given` 的处置相反
 /// —— 后者只出现在 `|` 右侧的修饰符位、走标识符白名单、**不入**表；两半各有判据钉住。
 ///
+/// **`P1b` 的实质交付**：给定块**进入降载归并表** ⇒ `[[给定块名]]` 的方法真的归并进块的
+/// 方法表（`P1a` 只在注释里这么写过，实测**并未成立** —— 给定块当时落 `default: break`，
+/// 其方法被静默丢弃）；三形扩展的目标**未声明**、或**指向特征**时**响亮拒绝**（新码
+/// `E6-006`），今日为静默丢弃。⚠️ 枚举与泛型模板目标**不在**该诊断的射程内（各自维持今日行为）。
+///
 /// **中间态（必须知道）**：`using` 今天只被**标记**、不被**物化** —— 调用点仍须显式传参，
 /// 强制规则（值位引用即须声明）属后续批次；给定块同样只落**声明面**
-/// （解析 + AST + 类型层注册），含给定块的程序在降载层被**响亮拒绝**（不是静默丢弃）。
+/// （解析 + AST + 类型层注册 + 扩展方法归并），含给定块的程序在降载层被**响亮拒绝**
+/// （不是静默丢弃），其拒绝文案**携带归并计数** —— 那是中间态下归并的唯一可观测面。
 ///
 /// 每条用例三要素齐备：意图写在显示名与首行注释；推进性测量断言期望行为**发生**；
 /// 驳回性测量断言不该发生的**确实没发生**（否定形态，见测试规程 `C5`）。
@@ -378,6 +384,104 @@ struct GivenUsingTests {
         #expect(
             incomplete?.message.contains("初值") == false,
             "不得提前施加「字段必须完整提供初值」，实际：\(incomplete?.message ?? "")"
+        )
+    }
+
+    // MARK: - `P1b`：方括号扩展的归并，与「目标无法归并」的诊断
+
+    @Test("给定块的方括号扩展方法确实归并进块的方法表")
+    func givenBlockMergesBracketExtensionMethods() throws {
+        /// 意图：`[[配置]]` 的方法要**真的进块的方法表**，而不是被静默丢弃 ——
+        /// `P1a` 把「`[[X]]` 对给定块生效」写在注释里当既成事实，实测（2026-09-19）并非如此。
+        /// 观测口径：给定块此刻跑不到（物化面属 `P2`）⇒ 拒绝文案**携带归并计数**，
+        /// 这是本中间态下归并的唯一可观测面。
+        let source = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        [[配置]]
+            取名|self() -> (String,):
+                return self.名称
+
+            改名|self(n: String) -> ():
+                return
+        """#
+        let failed = failure { _ = try lowered(source) }
+        #expect(failed?.code == "E6-004", "实际判定码 \(failed?.code ?? "无（未被拒绝）")")
+        #expect(
+            failed?.message.contains("已归并 2 个方法") == true,
+            "拒绝文案应报出归并计数 2，实际：\(failed?.message ?? "")"
+        )
+        // 驳回性：不得报 0 —— 那正是「注释说生效、实际静默丢弃」的旧形态。
+        #expect(failed?.message.contains("已归并 0 个方法") == false, "归并未发生")
+    }
+
+    @Test("归并计数是活的：同一块无扩展块时计数为 0")
+    func mergeCountIsLiveNotConstant() throws {
+        /// 意图：与上一条成对 —— 上一条只证明「有扩展时是 2」，若计数是写死的常量也会通过；
+        /// 本条用**无扩展块**的同一个块证明计数随输入变化（阴性对照）。
+        let source = #"""
+        [配置|given]
+            名称: String = "默认"
+        """#
+        let failed = failure { _ = try lowered(source) }
+        #expect(failed?.code == "E6-004", "实际判定码 \(failed?.code ?? "无")")
+        #expect(
+            failed?.message.contains("已归并 0 个方法") == true,
+            "无扩展块时应报 0，实际：\(failed?.message ?? "")"
+        )
+    }
+
+    @Test("扩展的目标未声明时响亮拒绝")
+    func extensionOnUndeclaredTargetFailsLoudly() throws {
+        /// 意图：今日「目标未声明 ⇒ 方法静默丢弃」改为出声（用户 2026-09-19 裁定）。
+        /// 静默的代价与给定块那条相同：「写对了却没效果」无从定位。
+        let source = #"""
+        ((盒))
+        取|self() -> (I32,):
+            return 1
+        """#
+        let failed = failure { _ = try lowered(source) }
+        #expect(failed?.code == "E6-006", "实际判定码 \(failed?.code ?? "无（未被拒绝）")")
+        #expect(failed?.message.contains("盒") == true, "文案应指名目标，实际：\(failed?.message ?? "")")
+        // 驳回性：码不得复用「不支持的特性」桶 —— 混同会让两条不同的缺口无法区分。
+        #expect(failed?.code != "E6-004", "新诊断不得与给定块未落地的码混同")
+    }
+
+    @Test("扩展的目标指向特征时响亮拒绝")
+    func extensionOnTraitTargetFailsLoudly() throws {
+        /// 意图：特征与结构 / 对象是**不同的类型类别**，把方法挂到特征上今日无路径 ⇒
+        /// 与「目标未声明」同一次裁定（用户原话：「目标未声明 / 是特征」）⇒ 共用判定码。
+        let source = #"""
+        <<丁>>
+        取|self() -> (I32,):
+
+        [[丁]]
+        额外|self() -> (I32,):
+            return 2
+        """#
+        let failed = failure { _ = try lowered(source) }
+        #expect(failed?.code == "E6-006", "实际判定码 \(failed?.code ?? "无（未被拒绝）")")
+        #expect(failed?.message.contains("丁") == true, "文案应指名目标，实际：\(failed?.message ?? "")")
+    }
+
+    @Test("不扩大改动面：泛型模板目标不被新诊断波及")
+    func genericTemplateTargetsAreNotRejected() throws {
+        /// 意图：`((盒<T>))` 的归并走 `G10` 特化段落（按 `盒_<实参>` 落表），归并处**碰不到**
+        /// 模板名 ⇒ 新诊断必须放过它，否则会把一条合法且今日可用的路径打红。
+        /// 观测口径：只断言**不是** `E6-006`（该程序没有 `main`，另有别的判定码，与本条无关）。
+        let source = #"""
+        (盒<T>)
+        值: T
+
+        ((盒<T>))
+        取|self() -> (T,):
+            return self.值
+        """#
+        let failed = failure { _ = try lowered(source) }
+        #expect(
+            failed?.code != "E6-006",
+            "泛型模板目标不得被判为「无法归并」，实际：\(failed?.message ?? "无诊断")"
         )
     }
 }

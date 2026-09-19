@@ -174,3 +174,5 @@ message = "unsupported statement '{kind}'"
 message = "unsupported feature '{feature}'"
 [E6-005]
 message = "type mismatch: expected '{expected}', got '{got}'"
+[E6-006]
+message = "unresolvable extension target '{feature}'"
