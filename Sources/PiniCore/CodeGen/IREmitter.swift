@@ -1699,6 +1699,11 @@ public final class IREmitter {
 
         case .join:
             fatalError("IREmitter: join has no emission — the lowerer has no rule for it")
+
+        case .givenInstance:
+            // ADR-001 `P2a`：节点面已落、物化面属 `P2b`。与 `.join` 同一形态 ——
+            // 无降载规则 ⇒ 不可达；真到了这里说明降载与发射脱节，**必须响**而不是静默。
+            fatalError("IREmitter: givenInstance has no emission — the lowerer has no rule for it")
         }
     }
 
@@ -2921,6 +2926,7 @@ public final class IREmitter {
         case .readLine: return .string
         case .isAsciiDigit: return .boolean
         case .join(_, let type): return type
+        case .givenInstance(let type): return type
         }
     }
 

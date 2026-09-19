@@ -1387,6 +1387,18 @@ public final class HIRExecutor: DebugHookHost {
                 )
             }
             return RuntimeOps.joinFuture(fut, timeoutMs: nil)
+
+        // MARK: 默认实例取用（ADR-001）
+
+        /// 取某类型的默认实例（契约 §2.46）。`P2a` 只落节点面：**没有降载入口**
+        /// ⇒ 本臂当前不可达，而它必须存在 —— 契约器械的覆盖检查**双向对账**
+        /// （未认领的节点直接让构建失败）。故这里 **fail-loud**、不静默返回一个
+        /// 看起来合理的值：物化面（存放位 + once + `bk_given_get`）属 `P2b`。
+        case .givenInstance(let type):
+            throw RuntimeError.invalidOperation(
+                reason: "givenInstance(\(type.llvmSpelling))：默认实例的物化面属后续批次（ADR-001 P2b）",
+                location: HIRExecutor.noLocation
+            )
         }
     }
 
