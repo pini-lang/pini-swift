@@ -15,31 +15,31 @@ import Foundation
 /// `targetTypeAnnotation` 为 `((名称: 类型注解))` 形式的限定（泛型特化扩展场景，
 /// 暂只解析存储；当前合并按 `targetType` 名称匹配）。
 public struct ExtensionDecl: Equatable, ASTNode {
- /// 扩展种类（决定消费端合并到哪类类型/特征）。
- public enum Kind: Equatable {
- case structExt
- case objectExt
- case enumExt
- case traitExt
- }
+    /// 扩展种类（决定消费端合并到哪类类型/特征）。
+    public enum Kind: Equatable {
+        case structExt
+        case objectExt
+        case enumExt
+        case traitExt
+    }
 
- public let kind: Kind
- public let targetType: String
- public let targetTypeAnnotation: TypeAnnotation?
- public let methods: [FuncDecl]
- public let location: SourceLocation
+    public let kind: Kind
+    public let targetType: String
+    public let targetTypeAnnotation: TypeAnnotation?
+    public let methods: [FuncDecl]
+    public let location: SourceLocation
 
- public init(
- kind: Kind,
- targetType: String,
- targetTypeAnnotation: TypeAnnotation? = nil,
- methods: [FuncDecl],
- location: SourceLocation
- ) {
- self.kind = kind
- self.targetType = targetType
- self.targetTypeAnnotation = targetTypeAnnotation
- self.methods = methods
- self.location = location
- }
+    public init(
+        kind: Kind,
+        targetType: String,
+        targetTypeAnnotation: TypeAnnotation? = nil,
+        methods: [FuncDecl],
+        location: SourceLocation
+    ) {
+        self.kind = kind
+        self.targetType = targetType
+        self.targetTypeAnnotation = targetTypeAnnotation
+        self.methods = methods
+        self.location = location
+    }
 }

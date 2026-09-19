@@ -361,7 +361,8 @@ public final class IREmitter {
 
         // main is the process entry: emitted with i32 return regardless of
         // the Pini-level void signature (bare returns become `ret i32 0`).
-        let returnSpelling = currentIsMain
+        let returnSpelling =
+            currentIsMain
             ? "i32"
             : (function.returnType?.llvmSpelling ?? "void")
         let params = function.params.map { "\($0.type.llvmSpelling) %\(Self.mangle($0.name))" }
@@ -530,9 +531,10 @@ public final class IREmitter {
         for frame in pendingReleases[base...].reversed() {
             for handle in frame.reversed() {
                 let loaded = builder.freshTemp()
-                bodyIR += builder.fmtLoad(
-                    name: loaded, type: handle.typeSpelling, ptr: handle.slot
-                ) + "\n"
+                bodyIR +=
+                    builder.fmtLoad(
+                        name: loaded, type: handle.typeSpelling, ptr: handle.slot
+                    ) + "\n"
                 bodyIR += " call void @\(handle.destroySymbol)(ptr \(loaded))\n"
             }
         }
@@ -543,16 +545,22 @@ public final class IREmitter {
     /// were registered for release are eligible, so a variable of a non-handle
     /// type is never touched.
     private func emitReassignRelease(slot: String) {
-        guard pendingReleases.contains(where: { frame in
-            frame.contains(where: { $0.slot == slot })
-        }) else { return }
-        guard let registered = pendingReleases
-            .flatMap({ $0 })
-            .first(where: { $0.slot == slot }) else { return }
+        guard
+            pendingReleases.contains(where: { frame in
+                frame.contains(where: { $0.slot == slot })
+            })
+        else { return }
+        guard
+            let registered =
+                pendingReleases
+                .flatMap({ $0 })
+                .first(where: { $0.slot == slot })
+        else { return }
         let loaded = builder.freshTemp()
-        bodyIR += builder.fmtLoad(
-            name: loaded, type: registered.typeSpelling, ptr: slot
-        ) + "\n"
+        bodyIR +=
+            builder.fmtLoad(
+                name: loaded, type: registered.typeSpelling, ptr: slot
+            ) + "\n"
         bodyIR += " call void @\(registered.destroySymbol)(ptr \(loaded))\n"
     }
 
@@ -758,7 +766,8 @@ public final class IREmitter {
             )
         case .enumeration(let enumName):
             guard let aggregate = scrutineeType.nominalAggregateSpelling,
-                  let enumDecl = moduleEnums.first(where: { $0.name == enumName }) else {
+                let enumDecl = moduleEnums.first(where: { $0.name == enumName })
+            else {
                 fatalError("IREmitter: match on unregistered enum (HIRLowerer guarantees)")
             }
             emitTaggedMatch(
@@ -832,12 +841,14 @@ public final class IREmitter {
         for (position, entry) in literalArms.enumerated() {
             let (index, matchCase) = entry
             let armLabel = "match.arm.\(id).\(index)"
-            let nextLabel = position + 1 < literalArms.count
+            let nextLabel =
+                position + 1 < literalArms.count
                 ? checkLabel(literalArms[position + 1].offset)
                 : defaultLabel
             bodyIR += "\(checkLabel(index)):\n"
             guard let literal = matchCase.literal,
-                  let comparison = emitLiteralComparison(literal, scrutinee: scrutineeValue) else {
+                let comparison = emitLiteralComparison(literal, scrutinee: scrutineeValue)
+            else {
                 // The operand does not fit the scrutinee's value type — the
                 // interpreter never matches such an arm either, so skip it
                 // rather than fabricate an operand.
@@ -884,7 +895,7 @@ public final class IREmitter {
             bodyIR += " \(result) = icmp eq i32 \(ordering), 0\n"
             return result
         case (let spelling, .int(let value))
-            where spelling == "i8" || spelling == "i32" || spelling == "i64":
+        where spelling == "i8" || spelling == "i32" || spelling == "i64":
             let result = builder.freshTemp()
             bodyIR += " \(result) = icmp eq \(spelling) \(scrutinee.ssaName), \(value)\n"
             return result
@@ -921,7 +932,8 @@ public final class IREmitter {
         let panicLabel = "match.fail.\(id)"
         for (caseIndex, matchCase) in cases.enumerated() {
             let armLabel = "match.arm.\(id).\(caseIndex)"
-            let fallthroughLabel = caseIndex + 1 < cases.count
+            let fallthroughLabel =
+                caseIndex + 1 < cases.count
                 ? "match.next.\(id).\(caseIndex)"
                 : panicLabel
             if matchCase.caseName == "_" {
@@ -1159,10 +1171,11 @@ public final class IREmitter {
 
         bodyIR += "\(thenLabel):\n"
         if isFrame {
-            controlStack.append(ControlFrame(
-                exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
-                deferBase: pendingDefers.count, releaseBase: pendingReleases.count
-            ))
+            controlStack.append(
+                ControlFrame(
+                    exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
+                    deferBase: pendingDefers.count, releaseBase: pendingReleases.count
+                ))
         }
         scopes.append([:])
         terminated = false
@@ -1178,10 +1191,11 @@ public final class IREmitter {
         if let elseBody = elseBody {
             bodyIR += "\(elseLabel):\n"
             if isFrame {
-                controlStack.append(ControlFrame(
-                    exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
-                    deferBase: pendingDefers.count, releaseBase: pendingReleases.count
-                ))
+                controlStack.append(
+                    ControlFrame(
+                        exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
+                        deferBase: pendingDefers.count, releaseBase: pendingReleases.count
+                    ))
             }
             scopes.append([:])
             terminated = false
@@ -1693,10 +1707,11 @@ public final class IREmitter {
     /// every caller can route its path argument through this unconditionally.
     private func bakedIOPath(_ path: HIRExpr) -> HIRExpr {
         guard let base = programBase,
-              case .stringConst(let value) = path,
-              !value.hasPrefix("/"),
-              !value.hasPrefix("./"),
-              !value.hasPrefix("../") else {
+            case .stringConst(let value) = path,
+            !value.hasPrefix("/"),
+            !value.hasPrefix("./"),
+            !value.hasPrefix("../")
+        else {
             return path
         }
         return .stringConst(value: base + "/" + value)
@@ -1961,10 +1976,10 @@ public final class IREmitter {
     private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
         switch type {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .char, .pointer,
-             .nominal:
+            .nominal:
             return false
         case .result, .array, .optional, .enumeration, .dict,
-             .lazyRef, .set, .tuple, .function:
+            .lazyRef, .set, .tuple, .function:
             return true
         }
     }
@@ -2071,7 +2086,8 @@ public final class IREmitter {
             fatalError("IREmitter: field access on non-nominal base (HIRLowerer guarantees)")
         }
         guard let decl = moduleTypes.first(where: { $0.name == name }),
-              let index = decl.fields.firstIndex(where: { $0.name == field }) else {
+            let index = decl.fields.firstIndex(where: { $0.name == field })
+        else {
             fatalError("IREmitter: unknown nominal field '\(name).\(field)' (HIRLowerer guarantees)")
         }
         let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
@@ -2080,8 +2096,9 @@ public final class IREmitter {
 
     private func emitConstruct(type: HIRType) -> IRValue {
         guard case .nominal(let name, let isObject) = type,
-              let aggregate = type.nominalAggregateSpelling,
-              let decl = moduleTypes.first(where: { $0.name == name }) else {
+            let aggregate = type.nominalAggregateSpelling,
+            let decl = moduleTypes.first(where: { $0.name == name })
+        else {
             fatalError("IREmitter: construct of unknown nominal type (HIRLowerer guarantees)")
         }
         let ptr = builder.freshTemp()
@@ -2744,8 +2761,9 @@ public final class IREmitter {
         let temp = builder.freshTemp()
 
         if op.isComparison {
-            let predicate = comparePredicate(op: op, operandType: lhsValue.llvmType, temp: temp,
-                                             lhs: lhsValue, rhs: rhsValue)
+            let predicate = comparePredicate(
+                op: op, operandType: lhsValue.llvmType, temp: temp,
+                lhs: lhsValue, rhs: rhsValue)
             bodyIR += " \(temp) = \(predicate)\n"
             return IRValue(llvmType: "i1", ssaName: temp)
         }
@@ -2794,8 +2812,10 @@ public final class IREmitter {
 
     /// Comparison line body for the operand kind. Strings compare via strcmp
     /// against zero; floats use ordered fcmp; integers/bools use icmp.
-    private func comparePredicate(op: HIRBinaryOp, operandType: String, temp: String,
-                                  lhs: IRValue, rhs: IRValue) -> String {
+    private func comparePredicate(
+        op: HIRBinaryOp, operandType: String, temp: String,
+        lhs: IRValue, rhs: IRValue
+    ) -> String {
         if operandType == "i8*" {
             usesStrCmp = true
             let cmpTemp = builder.freshTemp()
@@ -3069,7 +3089,8 @@ public final class IREmitter {
             // shifts every field index by one — the same offset the
             // constructor applies.
             guard let decl = moduleTypes.first(where: { $0.name == name }),
-                  let aggregate = type.nominalAggregateSpelling else {
+                let aggregate = type.nominalAggregateSpelling
+            else {
                 fatalError("IREmitter: printing unregistered nominal (HIRLowerer guarantees)")
             }
             let open = emitStringConstant("\(name){")
@@ -3086,14 +3107,16 @@ public final class IREmitter {
                 let label = emitStringConstant("\(entry.element.name): ")
                 bodyIR += " call i32 (ptr, ...) @printf(ptr \(label.ssaName))\n"
                 let fieldPtr = builder.freshTemp()
-                bodyIR += builder.fmtGEP(
-                    name: fieldPtr, aggregate: aggregate, base: value.ssaName,
-                    indices: [0, fieldBase + entry.offset]
-                ) + "\n"
+                bodyIR +=
+                    builder.fmtGEP(
+                        name: fieldPtr, aggregate: aggregate, base: value.ssaName,
+                        indices: [0, fieldBase + entry.offset]
+                    ) + "\n"
                 let fieldValue = builder.freshTemp()
-                bodyIR += builder.fmtLoad(
-                    name: fieldValue, type: entry.element.type.llvmSpelling, ptr: fieldPtr
-                ) + "\n"
+                bodyIR +=
+                    builder.fmtLoad(
+                        name: fieldValue, type: entry.element.type.llvmSpelling, ptr: fieldPtr
+                    ) + "\n"
                 emitValuePrint(
                     value: IRValue(
                         llvmType: entry.element.type.llvmSpelling, ssaName: fieldValue
@@ -3109,7 +3132,8 @@ public final class IREmitter {
             // `caseName(p1, p2)` — runtime tag dispatch, payloads printed
             // recursively by their declared types.
             guard let enumDecl = moduleEnums.first(where: { $0.name == name }),
-                  let aggregate = type.nominalAggregateSpelling else {
+                let aggregate = type.nominalAggregateSpelling
+            else {
                 fatalError("IREmitter: printing unregistered enum (HIRLowerer guarantees)")
             }
             let tagPtr = builder.freshTemp()
@@ -3122,7 +3146,8 @@ public final class IREmitter {
                 let matchesTag = builder.freshTemp()
                 bodyIR += " \(matchesTag) = icmp eq i32 \(tag), \(enumCase.tag)\n"
                 let armLabel = "fmt.enum.arm.\(id).\(caseIndex)"
-                let nextLabel = caseIndex + 1 < enumDecl.cases.count
+                let nextLabel =
+                    caseIndex + 1 < enumDecl.cases.count
                     ? "fmt.enum.next.\(id).\(caseIndex)"
                     : "fmt.enum.fail.\(id)"
                 bodyIR += builder.fmtCondBr(cond: matchesTag, thenLabelName: armLabel, elseLabelName: nextLabel) + "\n"
@@ -3381,8 +3406,7 @@ public final class IREmitter {
             envPtr = "null"
         } else {
             let envTypeName = "%__closure_env_\(id)"
-            closureEnvTypeDecls.append("\(envTypeName) = type { " +
-                captures.map { _ in "ptr" }.joined(separator: ", ") + " }")
+            closureEnvTypeDecls.append("\(envTypeName) = type { " + captures.map { _ in "ptr" }.joined(separator: ", ") + " }")
             let mallocTemp = builder.freshTemp()
             bodyIR += " \(mallocTemp) = call ptr @malloc(i64 \(captures.count * 8))\n"
             for (index, capture) in captures.enumerated() {

@@ -10,12 +10,12 @@ import Foundation
 /// （已落地，见 SuspendScheduler.swift），调用点（`Interpreter` 的两处 `spawn`）与任务契约不变。
 /// - 本协议不含任何 GCD 专有类型，便于将来跨平台后端接入（见 并发后端抽象）。
 protocol Scheduler {
- /// 派发 `work` 执行；`work` 返回即 `future` 被 `resolve`/`reject`。
- /// 具体实现决定「工作跑在哪、如何背压、如何观测」，调用方不感知。
- func spawn(_ future: FutureValue, work: @escaping () throws -> Value)
+    /// 派发 `work` 执行；`work` 返回即 `future` 被 `resolve`/`reject`。
+    /// 具体实现决定「工作跑在哪、如何背压、如何观测」，调用方不感知。
+    func spawn(_ future: FutureValue, work: @escaping () throws -> Value)
 
- /// 当前并发活跃任务数（可观测、可诊断）。供饥饿/背压诊断使用。
- var activeTaskCount: Int { get }
+    /// 当前并发活跃任务数（可观测、可诊断）。供饥饿/背压诊断使用。
+    var activeTaskCount: Int { get }
 }
 
 /// P5 B3-2 更新：有界并发池 + 信号量背压（GCD 后端）。
@@ -28,84 +28,84 @@ protocol Scheduler {
 /// 基线池大小 = max(4, 处理器数 × 2)；最大并发任务数 = 基线 × 4。
 /// GCD concurrent queue 在需要时仍能创建额外线程，信号量提供「可观测的上界」。
 final class GCDScheduler: Scheduler {
- static let shared = GCDScheduler()
+    static let shared = GCDScheduler()
 
- /// 基线池大小（常规并发度）。
- let basePoolSize: Int
- /// 最大并发任务数（溢出容限）。
- let maxPoolSize: Int
+    /// 基线池大小（常规并发度）。
+    let basePoolSize: Int
+    /// 最大并发任务数（溢出容限）。
+    let maxPoolSize: Int
 
- private let semaphore: DispatchSemaphore
- private let queue = DispatchQueue(
- label: "pini.scheduler", qos: .default,
- attributes: .concurrent
- )
+    private let semaphore: DispatchSemaphore
+    private let queue = DispatchQueue(
+        label: "pini.scheduler", qos: .default,
+        attributes: .concurrent
+    )
 
- // MARK: - 并发度观测（调试/饥饿诊断）
+    // MARK: - 并发度观测（调试/饥饿诊断）
 
- private var activeCount: Int = 0
- private let countLock = NSLock()
+    private var activeCount: Int = 0
+    private let countLock = NSLock()
 
- /// 高水位警告阈值：activeCount / maxPoolSize 超过此比例时打印日志。
- private static let watermarkWarning: Double = 0.9
+    /// 高水位警告阈值：activeCount / maxPoolSize 超过此比例时打印日志。
+    private static let watermarkWarning: Double = 0.9
 
- private init() {
- let procCount = ProcessInfo.processInfo.activeProcessorCount
- self.basePoolSize = max(4, procCount * 2)
- self.maxPoolSize = basePoolSize * 4
- self.semaphore = DispatchSemaphore(value: maxPoolSize)
- }
+    private init() {
+        let procCount = ProcessInfo.processInfo.activeProcessorCount
+        self.basePoolSize = max(4, procCount * 2)
+        self.maxPoolSize = basePoolSize * 4
+        self.semaphore = DispatchSemaphore(value: maxPoolSize)
+    }
 
- /// 派发 `work` 到有界并发池；若池满则**阻塞调用线程**直至有空槽（背压）。
- ///
- /// B3-2 防护：若并发任务已满（信号量归零），`spawn` 调用方（通常是解释器主线程）
- /// 会被挂起，从而阻止继续生成新任务——这是「有限背压」，等价于生产者暂停。
- /// GCD 在需要时仍可创建额外线程推进阻塞中的任务，避免经典信号量死锁。
- func spawn(_ future: FutureValue, work: @escaping () throws -> Value) {
- semaphore.wait()
- countLock.lock()
- let current = activeCount + 1
- activeCount = current
- countLock.unlock()
- if let em = Self.emergencyMsg(current) { print(em) }
- queue.async { [weak self] in
- defer {
- if let self = self {
- self.countLock.lock()
- self.activeCount -= 1
- self.countLock.unlock()
- self.semaphore.signal()
- }
- }
- do {
- let value = try work()
- future.resolve(value)
- } catch {
- future.reject(GCDScheduler.coerce(error))
- }
- }
- }
+    /// 派发 `work` 到有界并发池；若池满则**阻塞调用线程**直至有空槽（背压）。
+    ///
+    /// B3-2 防护：若并发任务已满（信号量归零），`spawn` 调用方（通常是解释器主线程）
+    /// 会被挂起，从而阻止继续生成新任务——这是「有限背压」，等价于生产者暂停。
+    /// GCD 在需要时仍可创建额外线程推进阻塞中的任务，避免经典信号量死锁。
+    func spawn(_ future: FutureValue, work: @escaping () throws -> Value) {
+        semaphore.wait()
+        countLock.lock()
+        let current = activeCount + 1
+        activeCount = current
+        countLock.unlock()
+        if let em = Self.emergencyMsg(current) { print(em) }
+        queue.async { [weak self] in
+            defer {
+                if let self = self {
+                    self.countLock.lock()
+                    self.activeCount -= 1
+                    self.countLock.unlock()
+                    self.semaphore.signal()
+                }
+            }
+            do {
+                let value = try work()
+                future.resolve(value)
+            } catch {
+                future.reject(GCDScheduler.coerce(error))
+            }
+        }
+    }
 
- /// 当前并发的活跃任务数（可观测、可诊断）。
- var activeTaskCount: Int {
- countLock.lock()
- let c = activeCount
- countLock.unlock()
- return c
- }
+    /// 当前并发的活跃任务数（可观测、可诊断）。
+    var activeTaskCount: Int {
+        countLock.lock()
+        let c = activeCount
+        countLock.unlock()
+        return c
+    }
 
- private static func emergencyMsg(_ active: Int) -> String? {
- let chans = shared.maxPoolSize
- let ratio = Double(active) / Double(chans)
- guard ratio >= watermarkWarning else { return nil }
- return "[scheduler] ⚠️ 高并发水位：\(active)/\(chans) 活跃任务 (\(Int(ratio * 100))% 池容)"
- }
+    private static func emergencyMsg(_ active: Int) -> String? {
+        let chans = shared.maxPoolSize
+        let ratio = Double(active) / Double(chans)
+        guard ratio >= watermarkWarning else { return nil }
+        return "[scheduler] ⚠️ 高并发水位：\(active)/\(chans) 活跃任务 (\(Int(ratio * 100))% 池容)"
+    }
 
- private static func coerce(_ error: Error) -> RuntimeError {
- if let re = error as? RuntimeError { return re }
- return RuntimeError.invalidOperation(
- reason: "异步任务执行失败: \(error.localizedDescription)",
- location: SourceLocation(line: 0, column: 0, fileName: "")
- )
- }
+    private static func coerce(_ error: Error) -> RuntimeError {
+        if let re = error as? RuntimeError { return re }
+        return RuntimeError.invalidOperation(
+            reason: "异步任务执行失败: \(error.localizedDescription)",
+            location: SourceLocation(line: 0, column: 0, fileName: "")
+        )
+    }
 }

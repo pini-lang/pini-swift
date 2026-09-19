@@ -307,8 +307,9 @@ public indirect enum HIRExpr: Equatable {
     /// type. `paramNames` parallels `paramTypes` (body references go through
     /// these names); an unannotated param adopts the return-annotation
     /// fallback, matching the checker's G29 inference.
-    case closureLiteral(id: Int, paramNames: [String], paramTypes: [HIRType], returnType: HIRType?,
-                        captures: [HIRCapture], body: HIRBlock, type: HIRType)
+    case closureLiteral(
+        id: Int, paramNames: [String], paramTypes: [HIRType], returnType: HIRType?,
+        captures: [HIRCapture], body: HIRBlock, type: HIRType)
     /// A named top-level function used as a value (G6): emitted through an
     /// env-ignoring adapter fat pointer (`@__adapter_<mangled>`) so direct
     /// and indirect call sites share one calling convention.

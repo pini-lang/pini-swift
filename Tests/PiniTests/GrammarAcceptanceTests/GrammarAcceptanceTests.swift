@@ -130,8 +130,9 @@ struct GrammarAcceptanceTests {
         #expect(f.params.count == 2, "形参尾逗号不应吞参，实际 \(f.params.count) 个")
         #expect(f.returnTypes.count == 2, "返回元组尾逗号不应吞类型，实际 \(f.returnTypes.count) 个")
         guard case .expressionStmt(let expr, _) = statements(ofMainIn: module).first,
-              case .call(_, let printArgs, _) = expr, printArgs.count == 1,
-              case .call(_, let callArgs, _) = printArgs[0].expression else {
+            case .call(_, let printArgs, _) = expr, printArgs.count == 1,
+            case .call(_, let callArgs, _) = printArgs[0].expression
+        else {
             Issue.record("应打印一次两层调用"); return
         }
         #expect(callArgs.count == 2, "实参尾逗号不应吞实参，实际 \(callArgs.count) 个")
@@ -144,7 +145,8 @@ struct GrammarAcceptanceTests {
         let (module, errors) = try parse("testParserAcceptsTrailingCommaInDictionaryLiteral")
         #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
         guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module).first,
-              case .dictionaryLiteral(let entries, _) = initializer else {
+            case .dictionaryLiteral(let entries, _) = initializer
+        else {
             Issue.record("初始化器应为字典字面量"); return
         }
         #expect(entries.count == 2, "尾逗号不应吞条目，实际 \(entries.count) 条")
@@ -157,7 +159,8 @@ struct GrammarAcceptanceTests {
         let (module, errors) = try parse("testParserAcceptsTrailingCommaInSetLiteral")
         #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
         guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module).first,
-              case .setLiteral(let elements, _) = initializer else {
+            case .setLiteral(let elements, _) = initializer
+        else {
             Issue.record("初始化器应为集合字面量"); return
         }
         #expect(elements.count == 2, "尾逗号不应吞元素，实际 \(elements.count) 个")
@@ -208,8 +211,9 @@ struct GrammarAcceptanceTests {
         let (module, errors) = try parse("testParserAcceptsTrailingCommaInGenericCall")
         #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
         guard case .expressionStmt(let expr, _) = statements(ofMainIn: module).first,
-              case .call(_, let printArgs, _) = expr,
-              case .genericConstruct(let typeName, let typeArgs, let arguments, _) = printArgs[0].expression else {
+            case .call(_, let printArgs, _) = expr,
+            case .genericConstruct(let typeName, let typeArgs, let arguments, _) = printArgs[0].expression
+        else {
             Issue.record("应为打印一次泛型构造调用"); return
         }
         #expect(typeName == "f")
@@ -230,8 +234,9 @@ struct GrammarAcceptanceTests {
         }
         #expect(f.params.count == 2)
         guard case .expressionStmt(let expr, _) = statements(ofMainIn: module).first,
-              case .call(_, let printArgs, _) = expr,
-              case .call(_, let arguments, _) = printArgs[0].expression else {
+            case .call(_, let printArgs, _) = expr,
+            case .call(_, let arguments, _) = printArgs[0].expression
+        else {
             Issue.record("应为打印一次调用 f"); return
         }
         let labels = arguments.map(\.label)
@@ -256,8 +261,10 @@ struct GrammarAcceptanceTests {
     func testParserAcceptsVarDestructure() throws {
         /// 意图：`var (t, e) = f()` 解析为可变解构声明，两位名字按序绑定。
         let module = try checkedModule("testParserAcceptsVarDestructure")
-        guard case .varDestructure(let names, _, let initializer, let mutable, _) =
-                statements(ofMainIn: module).first else {
+        guard
+            case .varDestructure(let names, _, let initializer, let mutable, _) =
+                statements(ofMainIn: module).first
+        else {
             Issue.record("首条语句应为解构声明"); return
         }
         #expect(names == ["t", "e"])
@@ -273,8 +280,10 @@ struct GrammarAcceptanceTests {
     func testParserAcceptsLetDestructure() throws {
         /// 意图：`let (t, e) = f()` 与 `var` 形态同一节点，仅可变性不同。
         let module = try checkedModule("testParserAcceptsLetDestructure")
-        guard case .varDestructure(let names, _, _, let mutable, _) =
-                statements(ofMainIn: module).first else {
+        guard
+            case .varDestructure(let names, _, _, let mutable, _) =
+                statements(ofMainIn: module).first
+        else {
             Issue.record("首条语句应为解构声明"); return
         }
         #expect(names == ["t", "e"])
@@ -299,8 +308,9 @@ struct GrammarAcceptanceTests {
         /// 意图：`unsafe (x!)` 解析为 unsafe 消耗点包住后缀 `!`，且类型层放行。
         let module = try checkedModule("testParserAcceptsForceUnwrapInsideUnsafeContext")
         guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module)[1],
-              case .unsafe(let operand, _) = initializer,
-              case .unary(let op, let target, _) = operand else {
+            case .unsafe(let operand, _) = initializer,
+            case .unary(let op, let target, _) = operand
+        else {
             Issue.record("第二条语句应为 unsafe 包住后缀 `!`"); return
         }
         #expect(op == .forceUnwrap, "后缀 `!` 应落在 forceUnwrap 上，实际 \(op)")
@@ -332,8 +342,9 @@ struct GrammarAcceptanceTests {
         /// 意图：`unsafe (1 + 2)` 解析为 unsafe 消耗点，常量折叠后操作数为字面量 3。
         let module = try checkedModule("testParserAcceptsUnsafeCompoundExpression")
         guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module).first,
-              case .unsafe(let operand, _) = initializer,
-              case .integerLiteral(let value, _) = operand else {
+            case .unsafe(let operand, _) = initializer,
+            case .integerLiteral(let value, _) = operand
+        else {
             Issue.record("初始化器应为 unsafe 包住折叠后的字面量"); return
         }
         #expect(value == 3, "复合表达式应折叠为 3，实际 \(value)")
@@ -430,7 +441,8 @@ struct GrammarAcceptanceTests {
         let module = try checkedModule("testParserClosesTraitBodyBeforeStructDecl")
         #expect(module.declarations.count == 2, "trait 块应在其后的类型体之前闭合")
         guard case .traitDecl(let trait) = module.declarations.first,
-              case .structDecl(let box) = module.declarations.last else {
+            case .structDecl(let box) = module.declarations.last
+        else {
             Issue.record("应为 trait 块加类型体"); return
         }
         #expect(trait.name == "显示")
@@ -446,7 +458,8 @@ struct GrammarAcceptanceTests {
         let module = try checkedModule("testParserClosesTraitBodyWithMethodBeforeStructDecl")
         #expect(module.declarations.count == 2)
         guard case .traitDecl(let trait) = module.declarations.first,
-              case .structDecl = module.declarations.last else {
+            case .structDecl = module.declarations.last
+        else {
             Issue.record("应为 trait 块加类型体"); return
         }
         #expect(trait.signatures.count == 1)
@@ -532,8 +545,10 @@ struct GrammarAcceptanceTests {
     func testRunExecutesWhileStepBlockAfterEachIteration() throws {
         /// 意图：step 块不是装饰 —— 计数器在 step 里自增，程序因此迭代三次并终止。
         let module = try checkedModule("testRunExecutesWhileStepBlockAfterEachIteration")
-        guard case .whileStatement(let condition, let body, let step, _, _) =
-                module.declarations.first.map({ _ in statements(ofMainIn: module) })?[1] else {
+        guard
+            case .whileStatement(let condition, let body, let step, _, _) =
+                module.declarations.first.map({ _ in statements(ofMainIn: module) })?[1]
+        else {
             Issue.record("第二条语句应为 while"); return
         }
         #expect(step != nil, "step 块应被解析并挂在 while 上")
@@ -575,7 +590,8 @@ struct GrammarAcceptanceTests {
         for name in names {
             let path = Self.suiteDirectory + "/" + name + ".pini"
             let checked = try launch(cli, ["check", path])
-            let fromCLI = checked.status == 0
+            let fromCLI =
+                checked.status == 0
                 ? "accept"
                 : "reject " + (firstCode(in: checked.stderr) ?? "?")
             let inProcess = checkedVerdict(name)
@@ -584,7 +600,8 @@ struct GrammarAcceptanceTests {
 
             let ran = try launch(cli, ["run", path])
             let ranInProcess = runVerdict(name)
-            let fromCLIRun = ran.status == 0
+            let fromCLIRun =
+                ran.status == 0
                 ? "ok " + ran.stdout.split(separator: "\n").joined(separator: "|")
                 : "fail " + (firstCode(in: ran.stderr) ?? "?")
             #expect(ranInProcess == fromCLIRun, "\(name)：运行级 进程内 \(ranInProcess) ≠ 命令行 \(fromCLIRun)")
@@ -611,13 +628,15 @@ struct GrammarAcceptanceTests {
         do {
             return "ok " + (try runFixture(name)).joined(separator: "|")
         } catch {
-            return "fail " + ((error as? any DiagnosticProviding)?.diagnosticCode
-                ?? String(describing: type(of: error)))
+            return "fail "
+                + ((error as? any DiagnosticProviding)?.diagnosticCode
+                    ?? String(describing: type(of: error)))
         }
     }
 
     private func launch(_ executable: String, _ arguments: [String]) throws
-        -> (status: Int32, stdout: String, stderr: String) {
+        -> (status: Int32, stdout: String, stderr: String)
+    {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -628,9 +647,11 @@ struct GrammarAcceptanceTests {
         let outData = out.fileHandleForReading.readDataToEndOfFile()
         let errData = err.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return (process.terminationStatus,
-                String(decoding: outData, as: UTF8.self),
-                String(decoding: errData, as: UTF8.self))
+        return (
+            process.terminationStatus,
+            String(decoding: outData, as: UTF8.self),
+            String(decoding: errData, as: UTF8.self)
+        )
     }
 
     /// 命令行诊断里的首条判定码，与进程内「首条即根因」同口径。

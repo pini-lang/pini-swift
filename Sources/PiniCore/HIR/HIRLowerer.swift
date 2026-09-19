@@ -117,16 +117,18 @@ public enum HIRLowerer {
             var copy = self
             switch decl {
             case .structDecl(let sd):
-                copy.decl = .structDecl(StructDecl(
-                    name: sd.name, genericParams: sd.genericParams,
-                    fields: fields, methods: [],
-                    composedType: sd.composedType, traits: sd.traits, location: sd.location
-                ))
+                copy.decl = .structDecl(
+                    StructDecl(
+                        name: sd.name, genericParams: sd.genericParams,
+                        fields: fields, methods: [],
+                        composedType: sd.composedType, traits: sd.traits, location: sd.location
+                    ))
             case .objectDecl(let od):
-                copy.decl = .objectDecl(ObjectDecl(
-                    name: od.name, genericParams: od.genericParams,
-                    fields: fields, methods: [], traits: od.traits, location: od.location
-                ))
+                copy.decl = .objectDecl(
+                    ObjectDecl(
+                        name: od.name, genericParams: od.genericParams,
+                        fields: fields, methods: [], traits: od.traits, location: od.location
+                    ))
             default: break
             }
             copy.extensionMethods = methods
@@ -142,7 +144,8 @@ public enum HIRLowerer {
     private static func flattenComposedNominals(_ nominals: inout [String: NominalInfo]) {
         func merged(_ info: NominalInfo, _ visited: inout Set<String>) -> NominalInfo {
             guard let parentName = info.composedParent,
-                  let parent = nominals[parentName] else {
+                let parent = nominals[parentName]
+            else {
                 return info
             }
             guard !visited.contains(parentName) else { return info }
@@ -200,8 +203,10 @@ public enum HIRLowerer {
     ///
     /// File ordering follows `FileLoader.loadDirectory`'s deterministic sort
     /// (fileName ascending), so pre-pass registration order is stable.
-    public static func lower(package: Package, typeInference: TypeInference?,
-                             requiresMain: Bool = true) throws -> HIRModule {
+    public static func lower(
+        package: Package, typeInference: TypeInference?,
+        requiresMain: Bool = true
+    ) throws -> HIRModule {
         let base = Module(
             declarations: package.fileUnits.flatMap { $0.module.declarations },
             imports: package.fileUnits.flatMap { $0.module.imports },
@@ -209,8 +214,9 @@ public enum HIRLowerer {
             location: package.location
         )
         let (merged, aliasMap) = try mergedWithImports(base)
-        return try lower(module: merged, typeInference: typeInference,
-                         moduleAliases: aliasMap, requiresMain: requiresMain)
+        return try lower(
+            module: merged, typeInference: typeInference,
+            moduleAliases: aliasMap, requiresMain: requiresMain)
     }
 
     /// P4-1c: 把 `import` 目标的声明并入虚拟模块，并返回「别名 → 可引入符号名」表。
@@ -288,9 +294,11 @@ public enum HIRLowerer {
     ///   shape rather than migrate it. The requirement is the *runner's*, not
     ///   the IR's — which is why it is a parameter here and not a property of
     ///   every lowered module.
-    public static func lower(module: Module, typeInference: TypeInference?,
-                             moduleAliases: [String: Set<String>] = [:],
-                             requiresMain: Bool = true) throws -> HIRModule {
+    public static func lower(
+        module: Module, typeInference: TypeInference?,
+        moduleAliases: [String: Set<String>] = [:],
+        requiresMain: Bool = true
+    ) throws -> HIRModule {
         // G12 pre-pass: trait registry. Trait default-implementation bodies
         // (signatures with a body) join the signature table like any named
         // function; abstract signatures (body == nil) are skipped — the type
@@ -341,7 +349,8 @@ public enum HIRLowerer {
         )
         for decl in module.declarations {
             if case .extensionDecl(let ext) = decl, ext.kind == .structExt || ext.kind == .objectExt,
-               nominals[ext.targetType] != nil {
+                nominals[ext.targetType] != nil
+            {
                 nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
             }
         }
@@ -383,11 +392,12 @@ public enum HIRLowerer {
         var specializationState = G10SpecializationState()
         specializationState.genericEnums = genericEnums
         for decl in module.declarations {
-            precollectGenericUses(in: decl,
-                                  genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates,
-                                  nominals: &nominals,
-                                  state: &specializationState)
+            precollectGenericUses(
+                in: decl,
+                genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates,
+                nominals: &nominals,
+                state: &specializationState)
         }
         for (specializedName, specialized) in specializationState.structSpecializations {
             nominals[specializedName] = NominalInfo(name: specializedName, isObject: false, decl: .structDecl(specialized))
@@ -398,7 +408,8 @@ public enum HIRLowerer {
             // concrete struct of the same name cannot exist alongside it).
             for decl in module.declarations {
                 if case .extensionDecl(let ext) = decl, ext.kind == .structExt,
-                   specializedName == ext.targetType || specializedName.hasPrefix("\(ext.targetType)_") {
+                    specializedName == ext.targetType || specializedName.hasPrefix("\(ext.targetType)_")
+                {
                     // Methods of a generic struct template arrive through
                     // ((盒<T>)) extensions; re-specialize them per instance.
                     for method in ext.methods {
@@ -433,9 +444,10 @@ public enum HIRLowerer {
                 enums[ed.name] = HIREnumDecl(
                     name: ed.name,
                     cases: ed.cases.enumerated().map { index, ec in
-                        HIREnumCase(name: ec.name, tag: index,
-                                    paramNames: ec.associatedParams.map { $0.name },
-                                    payloadTypes: [])
+                        HIREnumCase(
+                            name: ec.name, tag: index,
+                            paramNames: ec.associatedParams.map { $0.name },
+                            payloadTypes: [])
                     }
                 )
                 userTypes[ed.name] = .enumeration(name: ed.name)
@@ -471,7 +483,8 @@ public enum HIRLowerer {
             let bodyParams = sig.params.first?.name == "self" ? Array(sig.params.dropFirst()) : sig.params
             let paramTypes = try bodyParams.map { parameter -> HIRType in
                 guard let annotation = parameter.typeAnnotation,
-                      let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                    let type = resolveAnnotationType(annotation, userTypes: userTypes)
+                else {
                     throw unsupported(
                         "parameter '\(parameter.name)' of trait default '\(sig.name)' lacks a resolvable scalar type",
                         at: sig.location
@@ -507,9 +520,10 @@ public enum HIRLowerer {
                 // functions that return a value (interpreter-faithful; the
                 // signature table drives call sites, so it must agree with
                 // the definition side's upgrade).
-                let effectiveReturn = try effectiveReturnType(
-                    decl: funcDecl, userTypes: userTypes, nominals: nominals
-                ) ?? returnType
+                let effectiveReturn =
+                    try effectiveReturnType(
+                        decl: funcDecl, userTypes: userTypes, nominals: nominals
+                    ) ?? returnType
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
                     paramTypes: paramTypes,
                     returnType: asyncBodyReturnType(declared: effectiveReturn, isAsync: funcDecl.isAsync),
@@ -521,7 +535,8 @@ public enum HIRLowerer {
                 for funcDecl in foreignDecl.funcs {
                     let paramTypes = try funcDecl.params.map { parameter -> HIRType in
                         guard let annotation = parameter.typeAnnotation,
-                              let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                            let type = resolveAnnotationType(annotation, userTypes: userTypes)
+                        else {
                             throw unsupported(
                                 "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
                                 at: funcDecl.location
@@ -578,8 +593,8 @@ public enum HIRLowerer {
         var builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
         for decl in module.declarations {
             guard case .extensionDecl(let ext) = decl,
-                  ext.kind == .structExt || ext.kind == .objectExt,
-                  let selfType = builtinReceiverType(named: ext.targetType)
+                ext.kind == .structExt || ext.kind == .objectExt,
+                let selfType = builtinReceiverType(named: ext.targetType)
             else { continue }
             for method in ext.methods {
                 let lowered = try lowerMethod(
@@ -603,11 +618,12 @@ public enum HIRLowerer {
                 // specializations are (G10 monomorphization).
                 guard funcDecl.genericParams.isEmpty else { continue }
                 functions.append(
-                    try lowerFunction(funcDecl, typeInference: typeInference, moduleSignatures: signatures,
-                                      nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
-                                      genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
-                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
-                                          builtinExtensionMethods: builtinExtensionMethods)
+                    try lowerFunction(
+                        funcDecl, typeInference: typeInference, moduleSignatures: signatures,
+                        nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                        genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
+                        traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
+                        builtinExtensionMethods: builtinExtensionMethods)
                 )
             case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below; trait
@@ -627,11 +643,12 @@ public enum HIRLowerer {
         // G10: emit the specialized generic function bodies.
         for (_, specialized) in specializationState.funcSpecializations {
             functions.append(
-                try lowerFunction(specialized, typeInference: typeInference, moduleSignatures: signatures,
-                                  nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
-                                  genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
-                                          traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
-                                          builtinExtensionMethods: builtinExtensionMethods)
+                try lowerFunction(
+                    specialized, typeInference: typeInference, moduleSignatures: signatures,
+                    nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                    genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
+                    traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
+                    builtinExtensionMethods: builtinExtensionMethods)
             )
         }
         if requiresMain {
@@ -653,24 +670,26 @@ public enum HIRLowerer {
                 // (registered as nominals, emitted below from the registry).
                 guard sd.genericParams.isEmpty else { continue }
                 let info = nominals[sd.name]!
-                typeDecls.append(try lowerNominal(
-                    name: sd.name, isObject: false, fields: info.fields,
-                    methods: info.methods,
-                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
-                    closureIds: closureIds,
-                    traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
-                ))
+                typeDecls.append(
+                    try lowerNominal(
+                        name: sd.name, isObject: false, fields: info.fields,
+                        methods: info.methods,
+                        typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                        userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        closureIds: closureIds,
+                        traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
+                    ))
             case .objectDecl(let od):
                 let info = nominals[od.name]!
-                typeDecls.append(try lowerNominal(
-                    name: od.name, isObject: true, fields: info.fields,
-                    methods: info.methods,
-                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
-                    closureIds: closureIds,
-                    traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
-                ))
+                typeDecls.append(
+                    try lowerNominal(
+                        name: od.name, isObject: true, fields: info.fields,
+                        methods: info.methods,
+                        typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                        userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        closureIds: closureIds,
+                        traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
+                    ))
             default:
                 break
             }
@@ -681,13 +700,14 @@ public enum HIRLowerer {
         for specializedName in specializationState.structSpecializations.keys {
             let info = nominals[specializedName]!
             guard case .structDecl(let sd) = info.decl else { continue }
-            typeDecls.append(try lowerNominal(
-                name: specializedName, isObject: false, fields: sd.fields,
-                methods: info.methods,
-                typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
-                closureIds: closureIds
-            ))
+            typeDecls.append(
+                try lowerNominal(
+                    name: specializedName, isObject: false, fields: sd.fields,
+                    methods: info.methods,
+                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                    closureIds: closureIds
+                ))
         }
         // G12: trait default bodies specialized at dispatch sites join the
         // function list (dedup by IR name already applied at the dispatch).
@@ -701,7 +721,8 @@ public enum HIRLowerer {
             for funcDecl in foreignDecl.funcs {
                 let paramTypes = try funcDecl.params.map { parameter -> HIRType in
                     guard let annotation = parameter.typeAnnotation,
-                          let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                        let type = resolveAnnotationType(annotation, userTypes: userTypes)
+                    else {
                         throw unsupported(
                             "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
                             at: funcDecl.location
@@ -718,15 +739,17 @@ public enum HIRLowerer {
                     }
                     return type
                 }
-                foreignFuncs.append(HIRForeignFunction(
-                    name: funcDecl.name, paramTypes: paramTypes, returnType: returnType
-                ))
+                foreignFuncs.append(
+                    HIRForeignFunction(
+                        name: funcDecl.name, paramTypes: paramTypes, returnType: returnType
+                    ))
             }
             foreigns.append(HIRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
         }
 
-        return HIRModule(functions: functions, types: typeDecls, enums: Array(enums.values),
-                         foreigns: foreigns)
+        return HIRModule(
+            functions: functions, types: typeDecls, enums: Array(enums.values),
+            foreigns: foreigns)
     }
 
     // MARK: - G10 monomorphization
@@ -744,37 +767,42 @@ public enum HIRLowerer {
     ) {
         switch decl {
         case .funcDecl(let fd):
-            precollectGenericUses(in: fd.body?.statements ?? [],
-                                  genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates,
-                                  state: &state)
+            precollectGenericUses(
+                in: fd.body?.statements ?? [],
+                genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates,
+                state: &state)
         case .structDecl(let sd):
             for m in sd.methods {
-                precollectGenericUses(in: m.body?.statements ?? [],
-                                      genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates,
-                                      state: &state)
+                precollectGenericUses(
+                    in: m.body?.statements ?? [],
+                    genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates,
+                    state: &state)
             }
         case .objectDecl(let od):
             for m in od.methods {
-                precollectGenericUses(in: m.body?.statements ?? [],
-                                      genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates,
-                                      state: &state)
+                precollectGenericUses(
+                    in: m.body?.statements ?? [],
+                    genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates,
+                    state: &state)
             }
         case .enumDecl(let ed):
             for m in ed.methods {
-                precollectGenericUses(in: m.body?.statements ?? [],
-                                      genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates,
-                                      state: &state)
+                precollectGenericUses(
+                    in: m.body?.statements ?? [],
+                    genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates,
+                    state: &state)
             }
         case .extensionDecl(let ext):
             for m in ext.methods {
-                precollectGenericUses(in: m.body?.statements ?? [],
-                                      genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates,
-                                      state: &state)
+                precollectGenericUses(
+                    in: m.body?.statements ?? [],
+                    genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates,
+                    state: &state)
             }
         default:
             break
@@ -788,10 +816,11 @@ public enum HIRLowerer {
         state: inout G10SpecializationState
     ) {
         for statement in statements {
-            precollectGenericUses(in: statement,
-                                  genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates,
-                                  state: &state)
+            precollectGenericUses(
+                in: statement,
+                genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates,
+                state: &state)
         }
     }
 
@@ -804,54 +833,69 @@ public enum HIRLowerer {
         switch statement {
         case .varDecl(_, _, let initializer, _, _):
             if let e = initializer {
-                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: e, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .assign(let target, let value, _):
             if case .member(let base, _) = target {
-                precollectGenericUses(in: base, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: base, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
-            precollectGenericUses(in: value, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: value, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .expressionStmt(let e, _):
-            precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: e, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .returnStatement(let e, _):
             if let e = e {
-                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: e, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, _, _):
-            precollectGenericUses(in: condition, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
-            precollectGenericUses(in: thenBlock.statements, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: condition, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: thenBlock.statements, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
             for branch in elifs {
-                precollectGenericUses(in: branch.condition, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
-                precollectGenericUses(in: branch.block.statements, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: branch.condition, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: branch.block.statements, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
             if let elseBlock = elseBlock {
-                precollectGenericUses(in: elseBlock.statements, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: elseBlock.statements, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .whileStatement(let condition, let body, _, _, _):
-            precollectGenericUses(in: condition, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
-            precollectGenericUses(in: body.statements, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: condition, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: body.statements, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .matchStatement(let value, let cases, _):
-            precollectGenericUses(in: value, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: value, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
             for matchCase in cases {
-                precollectGenericUses(in: matchCase.block.statements, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: matchCase.block.statements, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .deferStatement(let wrapped, _):
-            precollectGenericUses(in: wrapped, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: wrapped, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         default:
             break
         }
@@ -881,55 +925,69 @@ public enum HIRLowerer {
             // spelling (`结果<I32, String>.ok(42)`) reaches this same case
             // through the member's receiver, so both spellings register here.
             if genericStructTemplates[typeName] == nil, genericFuncTemplates[typeName] == nil,
-               let enumTemplate = state.genericEnums.parentTemplate(qualifier: typeName, caseName: typeName) {
+                let enumTemplate = state.genericEnums.parentTemplate(qualifier: typeName, caseName: typeName)
+            {
                 registerEnumSpecialization(enumTemplate, typeArgs: typeArgs, state: &state)
             }
         case .call(let callee, let arguments, _):
-            precollectGenericUses(in: callee, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: callee, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
             // `身份<I32>(...)` arrives as a genericConstruct callee inside a
             // call — the callee scan above already registers it.
             for argument in arguments {
-                precollectGenericUses(in: argument.expression, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: argument.expression, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .binary(let lhs, _, let rhs, _):
-            precollectGenericUses(in: lhs, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
-            precollectGenericUses(in: rhs, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: lhs, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: rhs, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .unary(_, let operand, _):
-            precollectGenericUses(in: operand, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: operand, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .member(let base, _, _):
-            precollectGenericUses(in: base, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: base, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .subscript(let container, let index, _):
-            precollectGenericUses(in: container, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
-            precollectGenericUses(in: index, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: container, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: index, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .tupleIndex(let base, _, _):
-            precollectGenericUses(in: base, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: base, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .tryExpression(let operand, _, _, _):
-            precollectGenericUses(in: operand, genericStructTemplates: genericStructTemplates,
-                                  genericFuncTemplates: genericFuncTemplates, state: &state)
+            precollectGenericUses(
+                in: operand, genericStructTemplates: genericStructTemplates,
+                genericFuncTemplates: genericFuncTemplates, state: &state)
         case .tuple(_, let elements, _):
             for e in elements {
-                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: e, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .arrayLiteral(let elements, _):
             for e in elements {
-                precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
-                                      genericFuncTemplates: genericFuncTemplates, state: &state)
+                precollectGenericUses(
+                    in: e, genericStructTemplates: genericStructTemplates,
+                    genericFuncTemplates: genericFuncTemplates, state: &state)
             }
         case .stringInterpolation(let segments, _):
             for segment in segments {
                 if case .expression(let e) = segment {
-                    precollectGenericUses(in: e, genericStructTemplates: genericStructTemplates,
-                                          genericFuncTemplates: genericFuncTemplates, state: &state)
+                    precollectGenericUses(
+                        in: e, genericStructTemplates: genericStructTemplates,
+                        genericFuncTemplates: genericFuncTemplates, state: &state)
                 }
             }
         default:
@@ -1192,9 +1250,10 @@ public enum HIRLowerer {
         // G13 batch 2: effective return for void-declared functions that
         // return a value (must match the signature-table upgrade so call
         // sites and the definition agree).
-        let effectiveReturn = try effectiveReturnType(
-            decl: decl, userTypes: userTypes, nominals: nominalTypes
-        ) ?? returnType
+        let effectiveReturn =
+            try effectiveReturnType(
+                decl: decl, userTypes: userTypes, nominals: nominalTypes
+            ) ?? returnType
 
         // The definition and the signature table must state the same return
         // type (see effectiveReturnType), including the async Result shape.
@@ -1256,11 +1315,12 @@ public enum HIRLowerer {
                 }
                 payloadTypes.append(payloadType)
             }
-            resolvedCases.append(HIREnumCase(
-                name: ec.name, tag: index,
-                paramNames: ec.associatedParams.map { $0.name },
-                payloadTypes: payloadTypes
-            ))
+            resolvedCases.append(
+                HIREnumCase(
+                    name: ec.name, tag: index,
+                    paramNames: ec.associatedParams.map { $0.name },
+                    payloadTypes: payloadTypes
+                ))
         }
         return HIREnumDecl(name: ed.name, cases: resolvedCases)
     }
@@ -1294,11 +1354,11 @@ public enum HIRLowerer {
     /// One source for the call-site rule: the signature builders record these,
     /// and the call-site comparison skips exactly these positions.
     private static func untypedParamIndices(_ decl: FuncDecl) -> Set<Int> {
-        Set(decl.params.enumerated().compactMap { index, parameter in
-            parameter.typeAnnotation == nil ? index : nil
-        })
+        Set(
+            decl.params.enumerated().compactMap { index, parameter in
+                parameter.typeAnnotation == nil ? index : nil
+            })
     }
-
 
     private static func resolveParamTypes(
         _ decl: FuncDecl,
@@ -1306,7 +1366,8 @@ public enum HIRLowerer {
     ) throws -> [HIRType] {
         let fallback: HIRType
         if decl.returnTypes.count == 1,
-           let single = resolveAnnotationType(decl.returnTypes[0], userTypes: userTypes) {
+            let single = resolveAnnotationType(decl.returnTypes[0], userTypes: userTypes)
+        {
             fallback = single
         } else {
             fallback = .i32
@@ -1426,13 +1487,14 @@ public enum HIRLowerer {
         }
         var loweredMethods: [HIRFunction] = []
         for method in methods {
-            loweredMethods.append(try lowerMethod(
-                method, typeName: name, selfType: selfType,
-                typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
-                userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
-                closureIds: closureIds, traitRegistry: traitRegistry,
-                traitDefaultsCollector: traitDefaultsCollector
-            ))
+            loweredMethods.append(
+                try lowerMethod(
+                    method, typeName: name, selfType: selfType,
+                    typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
+                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                    closureIds: closureIds, traitRegistry: traitRegistry,
+                    traitDefaultsCollector: traitDefaultsCollector
+                ))
         }
         return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
     }
@@ -1468,21 +1530,24 @@ public enum HIRLowerer {
         // (package-demo corpus documents the interpreter flows it out)
         // upgrades to the effective return type — body returns and call
         // sites both use it.
-        let effectiveReturn = try effectiveReturnType(
-            decl: decl, userTypes: userTypes, nominals: nominalTypes,
-            selfTypeName: typeName
-        ) ?? returnType
+        let effectiveReturn =
+            try effectiveReturnType(
+                decl: decl, userTypes: userTypes, nominals: nominalTypes,
+                selfTypeName: typeName
+            ) ?? returnType
         var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
         // The receiver may also be written as an explicit leading `self`
         // parameter (trait default bodies are written that way). It is the
         // receiver marker rather than a parameter: the interpreter, the type
         // checker and the trait signature pre-pass all drop it. Lowering it
         // as an ordinary parameter made it look like an unannotated one.
-        let declaredParams = decl.params.first?.name == "self"
+        let declaredParams =
+            decl.params.first?.name == "self"
             ? Array(decl.params.dropFirst()) : decl.params
         for param in declaredParams {
             guard let annotation = param.typeAnnotation,
-                  let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                let type = resolveAnnotationType(annotation, userTypes: userTypes)
+            else {
                 throw unsupported(
                     "parameter '\(param.name)' of method '\(decl.name)' lacks a resolvable type",
                     at: decl.location
@@ -1511,7 +1576,8 @@ public enum HIRLowerer {
         // default body reads `名字` without a `self.` prefix). Emission goes
         // through an explicit self load + fieldGet at the identifier site.
         if case .nominal(let selfTypeName, let selfIsObject) = selfType,
-           let info = nominalTypes[selfTypeName] {
+            let info = nominalTypes[selfTypeName]
+        {
             var fieldTypes: [String: HIRType] = [:]
             for field in info.fields {
                 if let fieldType = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes) {
@@ -1523,8 +1589,9 @@ public enum HIRLowerer {
             context.selfIsObjectLowered = selfIsObject
         }
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(name: irName, params: params, returnType: effectiveReturn, body: body,
-                           sourceFile: decl.location.fileName)
+        return HIRFunction(
+            name: irName, params: params, returnType: effectiveReturn, body: body,
+            sourceFile: decl.location.fileName)
     }
 
     private static func lowerBlock(
@@ -1573,9 +1640,11 @@ public enum HIRLowerer {
             // Subscript stores are the G2 write path (array family); member
             // stores are the G3 write path (nominal field store).
             if case .subscript(let container, let index) = target {
-                return [try lowerSubscriptStore(
-                    container: container, index: index, value: value, at: location, into: &context
-                )]
+                return [
+                    try lowerSubscriptStore(
+                        container: container, index: index, value: value, at: location, into: &context
+                    )
+                ]
             }
             if case .member(let base, let fieldName) = target {
                 let loweredBase = try lowerExpr(base, expected: nil, into: &context)
@@ -1593,10 +1662,12 @@ public enum HIRLowerer {
                 }
                 let loweredValue = try lowerExpr(value, expected: fieldType, into: &context)
                 try requireAssignable(loweredValue.type, to: fieldType, at: location)
-                return [.fieldStore(
-                    base: loweredBase.node, field: fieldName,
-                    value: loweredValue.node, fieldType: fieldType
-                )]
+                return [
+                    .fieldStore(
+                        base: loweredBase.node, field: fieldName,
+                        value: loweredValue.node, fieldType: fieldType
+                    )
+                ]
             }
             guard case .identifier(let name) = target else {
                 throw unsupported(
@@ -1691,10 +1762,12 @@ public enum HIRLowerer {
             return [.whileStmt(condition: cond.node, body: bodyStmts, step: stepStmts)]
 
         case .forStatement(let pattern, let iterable, let body, let step, let label, let location):
-            return [try lowerForIn(
-                pattern: pattern, iterable: iterable, body: body, step: step,
-                label: label, at: location, into: &context
-            )]
+            return [
+                try lowerForIn(
+                    pattern: pattern, iterable: iterable, body: body, step: step,
+                    label: label, at: location, into: &context
+                )
+            ]
 
         case .breakStatement(let label, _):
             // Unresolvable target: fail-loud at run time, exactly like the
@@ -1703,9 +1776,11 @@ public enum HIRLowerer {
             // interpreter accepts. "Unresolvable" means no enclosing
             // interruptible frame carries the label — a labeled `if` counts
             // (标签 break 定向范围), so this set is narrower than it was before that ADR.
-            guard let depth = resolveControlDepth(
-                label: label, target: .anyFrame, into: &context
-            ) else {
+            guard
+                let depth = resolveControlDepth(
+                    label: label, target: .anyFrame, into: &context
+                )
+            else {
                 return [.panicStmt(message: "Pini runtime error: break outside loop")]
             }
             return [.breakStmt(depth: depth)]
@@ -1714,9 +1789,11 @@ public enum HIRLowerer {
             // `continue` needs a *loop* frame (`continue-stmt ::= 'continue'
             // [IDENT]` carries the note *仅循环标签有效*), so an `if` label is
             // unresolvable here even though it is a frame for `break`.
-            guard let depth = resolveControlDepth(
-                label: label, target: .loopOnly, into: &context
-            ) else {
+            guard
+                let depth = resolveControlDepth(
+                    label: label, target: .loopOnly, into: &context
+                )
+            else {
                 return [.panicStmt(message: "Pini runtime error: continue outside loop")]
             }
             return [.continueStmt(depth: depth)]
@@ -1742,15 +1819,18 @@ public enum HIRLowerer {
         case .expressionStmt(let expr, let location):
             // Statement-position try-else: ok value discarded (try-else 迁移).
             if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
-                return [try lowerTry(
-                    operand: operand, errorVar: errorVar, handler: handler,
-                    okTarget: nil, at: location, into: &context
-                )]
+                return [
+                    try lowerTry(
+                        operand: operand, errorVar: errorVar, handler: handler,
+                        okTarget: nil, at: location, into: &context
+                    )
+                ]
             }
             // Prefix `++`/`--` in statement position: read-modify-write on the
             // target, value discarded (G-2c).
             if case .unary(let op, let target, let unaryLocation) = expr,
-               op == .increment || op == .decrement {
+                op == .increment || op == .decrement
+            {
                 let lowered = try lowerIncDec(
                     op: op, target: target, at: unaryLocation, into: &context
                 )
@@ -1759,11 +1839,14 @@ public enum HIRLowerer {
             // Compound assignment (`a[i] += k` / `x += 1`) parses as a binary
             // expression; statement position lowers it to a store (G2).
             if case .binary(let left, let op, let right, let binaryLocation) = expr,
-               let baseOp = HIRBinaryOp(compound: op) {
-                return [try lowerCompoundAssign(
-                    left: left, baseOp: baseOp, right: right,
-                    at: binaryLocation, into: &context
-                )]
+                let baseOp = HIRBinaryOp(compound: op)
+            {
+                return [
+                    try lowerCompoundAssign(
+                        left: left, baseOp: baseOp, right: right,
+                        at: binaryLocation, into: &context
+                    )
+                ]
             }
             return [.exprStmt(try lowerExpr(expr, expected: nil, into: &context).node)]
 
@@ -1920,7 +2003,8 @@ public enum HIRLowerer {
         // allocation that consumes it (G-2c). The written value is I32, which
         // is the only target type `lowerIncDec` accepts.
         if case .unary(let op, let target, let unaryLocation)? = initializer,
-           op == .increment || op == .decrement {
+            op == .increment || op == .decrement
+        {
             if let annotation = annotation {
                 guard HIRType(from: annotation) == .i32 else {
                     throw unsupported(
@@ -1983,7 +2067,8 @@ public enum HIRLowerer {
             declaredType = type
         } else if let initializer = initializer {
             if let inferred = context.inferType(of: initializer),
-               let type = HIRType(from: inferred) {
+                let type = HIRType(from: inferred)
+            {
                 declaredType = type
             } else {
                 // Checker inference miss (collection literals, checker-untracked
@@ -2013,12 +2098,14 @@ public enum HIRLowerer {
         // The static view keeps the declared names (member reads resolve
         // against it); the slot itself stores the type computed below.
         context.variableTypes[name] = varType
-        return [.allocVar(
-            name: name,
-            type: slotType(declared: varType, initializer: initializerType),
-            mutable: isMutable,
-            initializer: loweredInit
-        )]
+        return [
+            .allocVar(
+                name: name,
+                type: slotType(declared: varType, initializer: initializerType),
+                mutable: isMutable,
+                initializer: loweredInit
+            )
+        ]
     }
 
     /// The type a binding's slot actually stores.
@@ -2163,9 +2250,10 @@ public enum HIRLowerer {
         // reaches), so the stand-in never carries a value.
         let loweredOperand: LoweredExpr
         if case .call(let callee, let arguments, _) = operand,
-           case .identifier(let calleeName, _) = callee,
-           calleeName == "ok" || calleeName == "err",
-           arguments.count == 1 {
+            case .identifier(let calleeName, _) = callee,
+            calleeName == "ok" || calleeName == "err",
+            arguments.count == 1
+        {
             let payload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
             let resultType = HIRType.result(ok: calleeName == "ok" ? payload.type : .i32)
             loweredOperand = LoweredExpr(
@@ -2255,7 +2343,8 @@ public enum HIRLowerer {
             // mismatch as an ordinary gate error instead of trapping here.
             // Non-literal float expressions in integer slots stay fail-loud.
             if let expected, expected.isIntegerNumeric, value.isFinite,
-               value >= -9.223372036854776e18, value <= 9.223372036854776e18 {
+                value >= -9.223372036854776e18, value <= 9.223372036854776e18
+            {
                 return LoweredExpr(
                     node: .intConst(value: Int(value), type: expected), type: expected
                 )
@@ -2744,12 +2833,13 @@ public enum HIRLowerer {
             // argument list is what separates it from a member access on a
             // generic value, which this slice does not lower anyway.
             if case .member(let object, let memberName, _) = callee,
-               case .genericConstruct(let enumName, let enumTypeArgs, let enumArguments, _) = object,
-               enumArguments.isEmpty,
-               let constructed = try lowerGenericEnumCaseConstruct(
-                   qualifier: enumName, caseName: memberName, typeArgs: enumTypeArgs,
-                   arguments: arguments, at: location, into: &context
-               ) {
+                case .genericConstruct(let enumName, let enumTypeArgs, let enumArguments, _) = object,
+                enumArguments.isEmpty,
+                let constructed = try lowerGenericEnumCaseConstruct(
+                    qualifier: enumName, caseName: memberName, typeArgs: enumTypeArgs,
+                    arguments: arguments, at: location, into: &context
+                )
+            {
                 return constructed
             }
             if case .member(let object, let memberName, _) = callee {
@@ -2784,7 +2874,8 @@ public enum HIRLowerer {
             }
             if functionName == "store" {
                 guard arguments.count == 2,
-                      case .pointer(let element) = loweredArgs[0].type else {
+                    case .pointer(let element) = loweredArgs[0].type
+                else {
                     throw unsupported("store expects (pointer, value) arguments", at: location)
                 }
                 // The value re-lowers against the pointer's element type so
@@ -2858,7 +2949,8 @@ public enum HIRLowerer {
                 guard loweredArgs.isEmpty else {
                     throw unsupported("\(functionName) takes no arguments", at: location)
                 }
-                let queryType: HIRType = functionName == "argv"
+                let queryType: HIRType =
+                    functionName == "argv"
                     ? .array(element: .string)
                     : .string
                 return LoweredExpr(
@@ -2886,9 +2978,10 @@ public enum HIRLowerer {
                 default: resultType = .boolean
                 }
                 return LoweredExpr(
-                    node: .call(function: functionName,
-                                arguments: loweredArgs.map { $0.node },
-                                returnType: resultType),
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: resultType),
                     type: resultType
                 )
             }
@@ -2911,9 +3004,10 @@ public enum HIRLowerer {
                         throw unsupported("sleep expects one I32 argument", at: location)
                     }
                     return LoweredExpr(
-                        node: .call(function: functionName,
-                                    arguments: loweredArgs.map { $0.node },
-                                    returnType: nil),
+                        node: .call(
+                            function: functionName,
+                            arguments: loweredArgs.map { $0.node },
+                            returnType: nil),
                         type: .i32
                     )
                 }
@@ -2925,9 +3019,10 @@ public enum HIRLowerer {
                 }
                 let errorType = HIRType.nominal(name: functionName, isObject: false)
                 return LoweredExpr(
-                    node: .call(function: functionName,
-                                arguments: loweredArgs.map { $0.node },
-                                returnType: errorType),
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: errorType),
                     type: errorType
                 )
             }
@@ -2945,9 +3040,10 @@ public enum HIRLowerer {
                     throw unsupported("isCancel expects exactly one argument", at: location)
                 }
                 return LoweredExpr(
-                    node: .call(function: functionName,
-                                arguments: loweredArgs.map { $0.node },
-                                returnType: .boolean),
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: .boolean),
                     type: .boolean
                 )
             }
@@ -2957,9 +3053,10 @@ public enum HIRLowerer {
                 }
                 let aggregated = HIRType.result(ok: .array(element: element))
                 return LoweredExpr(
-                    node: .call(function: functionName,
-                                arguments: loweredArgs.map { $0.node },
-                                returnType: aggregated),
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: aggregated),
                     type: aggregated
                 )
             }
@@ -2969,9 +3066,10 @@ public enum HIRLowerer {
                 }
                 let bounded = loweredArgs[0].type
                 return LoweredExpr(
-                    node: .call(function: functionName,
-                                arguments: loweredArgs.map { $0.node },
-                                returnType: bounded),
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: bounded),
                     type: bounded
                 )
             }
@@ -2990,9 +3088,10 @@ public enum HIRLowerer {
                     return loweredArgs[0]
                 case .i32, .i64, .u64:
                     return LoweredExpr(
-                        node: .call(function: "F64",
-                                    arguments: loweredArgs.map { $0.node },
-                                    returnType: .f64),
+                        node: .call(
+                            function: "F64",
+                            arguments: loweredArgs.map { $0.node },
+                            returnType: .f64),
                         type: .f64
                     )
                 default:
@@ -3012,7 +3111,8 @@ public enum HIRLowerer {
                     )
                 }
                 guard case .function(_, let closureReturn) = loweredArgs[0].type,
-                      let element = closureReturn else {
+                    let element = closureReturn
+                else {
                     throw unsupported(
                         "LazyRef argument must be an initializer closure with a readable return type",
                         at: location
@@ -3050,7 +3150,8 @@ public enum HIRLowerer {
                 }
                 let arg = loweredArgs[0].node
                 return LoweredExpr(
-                    node: .binary(op: .divide,
+                    node: .binary(
+                        op: .divide,
                         lhs: .call(function: "llvm.sin.f64", arguments: [arg], returnType: .f64),
                         rhs: .call(function: "llvm.cos.f64", arguments: [arg], returnType: .f64),
                         type: .f64),
@@ -3071,7 +3172,8 @@ public enum HIRLowerer {
                     throw unsupported("\(functionName) expects exactly two I32 arguments", at: location)
                 }
                 return LoweredExpr(
-                    node: .binary(op: functionName == "min" ? .minOf : .maxOf,
+                    node: .binary(
+                        op: functionName == "min" ? .minOf : .maxOf,
                         lhs: loweredArgs[0].node, rhs: loweredArgs[1].node, type: .i32),
                     type: .i32
                 )
@@ -3169,7 +3271,8 @@ public enum HIRLowerer {
             // top-level functions resolve through the signature table below;
             // a bare `加倍(x)` call never reaches this branch.
             if let signature = context.variableTypes[functionName],
-               case .function(let paramTypes, let functionReturn) = signature {
+                case .function(let paramTypes, let functionReturn) = signature
+            {
                 guard loweredArgs.count == paramTypes.count else {
                     throw unsupported(
                         "indirect call through '\(functionName)' expects \(paramTypes.count) arguments, got \(loweredArgs.count)",
@@ -3219,7 +3322,8 @@ public enum HIRLowerer {
             // resolved before the function-signature table — case names share
             // the identifier namespace with functions.
             if case .identifier(let caseName, _) = callee,
-               let (enumDecl, enumCase) = try resolveEnumCase(caseName, at: location, in: context) {
+                let (enumDecl, enumCase) = try resolveEnumCase(caseName, at: location, in: context)
+            {
                 if enumCase.payloadTypes.isEmpty && arguments.isEmpty {
                     return try lowerBareEnumCase(caseName, at: location, into: &context)!
                 }
@@ -3363,7 +3467,7 @@ public enum HIRLowerer {
                 precollectClosureIds(in: initializer, counter: &counter, into: &ids)
             }
         case .assign(let target, let value, _):
-            if case .identifier = target {} // identifier targets carry no literals
+            if case .identifier = target {}  // identifier targets carry no literals
             precollectClosureIds(in: value, counter: &counter, into: &ids)
         case .expressionStmt(let expr, _):
             precollectClosureIds(in: expr, counter: &counter, into: &ids)
@@ -3473,7 +3577,8 @@ public enum HIRLowerer {
         let inferredAnnotation = context.inferType(of: .funcLiteral(decl: decl, location: location))
         let functionType: HIRType
         if let annotation = inferredAnnotation, let mapped = HIRType(from: annotation),
-           case .function = mapped {
+            case .function = mapped
+        {
             functionType = mapped
         } else if case .function(let expectedParams, let expectedReturn) = expected {
             functionType = .function(params: expectedParams, returnType: expectedReturn)
@@ -3683,7 +3788,7 @@ public enum HIRLowerer {
             // for, and the message has to say which spelling to write.
             throw unsupported(
                 "ambiguous generic enum case '\(caseName)' needs the qualified form "
-                + "(write 枚举名<实参…>.\(caseName)(…))",
+                    + "(write 枚举名<实参…>.\(caseName)(…))",
                 at: location
             )
         } else {
@@ -3697,13 +3802,14 @@ public enum HIRLowerer {
         guard typeArgs.count == template.genericParams.count else {
             throw unsupported(
                 "generic enum '\(template.name)' expects \(template.genericParams.count) "
-                + "type argument(s), got \(typeArgs.count)",
+                    + "type argument(s), got \(typeArgs.count)",
                 at: location
             )
         }
         let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
         guard let enumDecl = context.enums[specializedName],
-              let enumCase = enumDecl.cases.first(where: { $0.name == caseName }) else {
+            let enumCase = enumDecl.cases.first(where: { $0.name == caseName })
+        else {
             throw unsupported(
                 "generic enum '\(template.name)' has no registered specialization for this use site",
                 at: location
@@ -3724,7 +3830,8 @@ public enum HIRLowerer {
             let enumName = String(caseName[..<dotIndex])
             let caseLeaf = String(caseName[caseName.index(after: dotIndex)...])
             guard let enumDecl = context.enums[enumName],
-                  let enumCase = enumDecl.cases.first(where: { $0.name == caseLeaf }) else {
+                let enumCase = enumDecl.cases.first(where: { $0.name == caseLeaf })
+            else {
                 return nil
             }
             return (enumDecl, enumCase)
@@ -3739,8 +3846,9 @@ public enum HIRLowerer {
         // Cross-enum same-name case (P5-5): static resolution via the
         // checker's expected-type registry.
         if let location = location,
-           let parent = BareCaseResolutionRegistry.parent(at: location),
-           let hit = matches.first(where: { $0.0.name == parent }) {
+            let parent = BareCaseResolutionRegistry.parent(at: location),
+            let hit = matches.first(where: { $0.0.name == parent })
+        {
             return hit
         }
         throw unsupported(
@@ -3757,7 +3865,8 @@ public enum HIRLowerer {
         into context: inout FunctionContext
     ) throws -> LoweredExpr? {
         guard let (enumDecl, enumCase) = try resolveEnumCase(name, at: location, in: context),
-              enumCase.payloadTypes.isEmpty else {
+            enumCase.payloadTypes.isEmpty
+        else {
             return nil
         }
         return LoweredExpr(
@@ -3954,7 +4063,8 @@ public enum HIRLowerer {
         // P4-1c: 跨模块限定调用 `别名.符号(…)` —— receiver 是 import 别名、**不是变量**，
         // 故必须在 lower receiver 之前拦截（否则会按变量解析并报「未声明变量」）。
         if case .identifier(let aliasName, _) = object,
-           let signature = context.moduleSignatures["\(aliasName).\(memberName)"] {
+            let signature = context.moduleSignatures["\(aliasName).\(memberName)"]
+        {
             return try lowerModuleQualifiedCall(
                 functionName: memberName, signature: signature,
                 arguments: arguments, at: location, into: &context
@@ -3964,7 +4074,8 @@ public enum HIRLowerer {
         // Qualified case constructor `Enum.Case(args)` (G4, P5-5): the
         // receiver is a user TYPE name, not a variable.
         if case .identifier(let typeName, _) = object, let enumDecl = context.enums[typeName],
-           let enumCase = enumDecl.cases.first(where: { $0.name == memberName }) {
+            let enumCase = enumDecl.cases.first(where: { $0.name == memberName })
+        {
             return try lowerEnumCaseConstructor(
                 enumDecl: enumDecl, enumCase: enumCase, arguments: arguments,
                 at: location, into: &context
@@ -3998,7 +4109,8 @@ public enum HIRLowerer {
         // 缺这一支时：新增方法会落到尾部兜底报「later grids」，覆盖同名成员则
         // 直接读到内建结果（用户实现被静默压过）。
         if let receiverName = builtinReceiverName(of: objectType),
-           let ext = context.builtinExtensionMethods[receiverName]?[memberName] {
+            let ext = context.builtinExtensionMethods[receiverName]?[memberName]
+        {
             let loweredArgs = try arguments.map {
                 try lowerExpr($0.expression, expected: nil, into: &context)
             }
@@ -4015,7 +4127,8 @@ public enum HIRLowerer {
         // String member methods (G9): upper/lower/contains/substring/split.
         // `slice`/`get` fall through to the G2/G2b tolerant-read channels.
         if case .string = objectType,
-           ["upper", "lower", "contains", "substring", "split"].contains(memberName) {
+            ["upper", "lower", "contains", "substring", "split"].contains(memberName)
+        {
             return try lowerStringMethod(
                 receiver: loweredObject, memberName: memberName, arguments: arguments,
                 at: location, into: &context
@@ -4068,22 +4181,25 @@ public enum HIRLowerer {
                 // return type (void-declared value-returning methods upgrade
                 // to the body's returned type — same computation as the
                 // definition side, so body and calls agree).
-                let returnType = try effectiveReturnType(
-                    decl: method, userTypes: context.userTypes,
-                    nominals: context.nominalTypesMap, selfTypeName: typeName
-                ) ?? method.returnTypes.first.map { annotation -> HIRType in
-                    guard let type = HIRType(from: annotation) else {
-                        throw unsupported(
-                            "return type of '\(memberName)' is not resolvable",
-                            at: location
-                        )
+                let returnType =
+                    try effectiveReturnType(
+                        decl: method, userTypes: context.userTypes,
+                        nominals: context.nominalTypesMap, selfTypeName: typeName
+                    )
+                    ?? method.returnTypes.first.map { annotation -> HIRType in
+                        guard let type = HIRType(from: annotation) else {
+                            throw unsupported(
+                                "return type of '\(memberName)' is not resolvable",
+                                at: location
+                            )
+                        }
+                        return type
                     }
-                    return type
-                }
                 var arguments_ir = [loweredObject.node]
                 for (index, argument) in arguments.enumerated() {
                     guard let annotation = method.params[index].typeAnnotation,
-                          let paramType = HIRType(from: annotation) else {
+                        let paramType = HIRType(from: annotation)
+                    else {
                         throw unsupported(
                             "parameter '\(method.params[index].name)' of '\(memberName)' lacks a resolvable type",
                             at: location
@@ -4107,14 +4223,16 @@ public enum HIRLowerer {
             if let traitNames = context.traitRegistry.typeTraits[typeName] {
                 for traitName in traitNames {
                     guard let trait = context.traitRegistry.traits[traitName],
-                          let defaultMethod = trait.signatures.first(where: {
-                              $0.name == memberName && $0.body != nil
-                          }) else { continue }
+                        let defaultMethod = trait.signatures.first(where: {
+                            $0.name == memberName && $0.body != nil
+                        })
+                    else { continue }
                     let loweredCall = try lowerTraitDefaultCall(
                         defaultMethod, receiver: loweredObject.node, receiverType: objectType,
                         arguments: arguments, at: location, into: &context
                     )
-                    return loweredCall                }
+                    return loweredCall
+                }
             }
             throw unsupported(
                 "undefined method '\(memberName)' on '\(objectType)'",
@@ -4125,7 +4243,7 @@ public enum HIRLowerer {
         if memberName == "get" {
             guard arguments.count == 1 else {
                 throw unsupported("get expects exactly one argument", at: location)
-            } 
+            }
             // G-2b: a dictionary's `.get` keys off any value the dictionary
             // accepts, so the index expectation follows the key type and the
             // I32 requirement is the Array/String arm's alone.
@@ -4200,7 +4318,8 @@ public enum HIRLowerer {
         // append yields a new array, last the element or null, pop the pair
         // (arrayWithoutLast, lastOrNull).
         if case .array(let element) = objectType,
-           memberName == "append" || memberName == "last" || memberName == "pop" {
+            memberName == "append" || memberName == "last" || memberName == "pop"
+        {
             let callName = "Array.\(memberName)"
             switch memberName {
             case "append":
@@ -4213,9 +4332,10 @@ public enum HIRLowerer {
                 try requireAssignable(loweredValue.type, to: element, at: location)
                 let appended = HIRType.array(element: element)
                 return LoweredExpr(
-                    node: .call(function: callName,
-                                arguments: [loweredObject.node, loweredValue.node],
-                                returnType: appended),
+                    node: .call(
+                        function: callName,
+                        arguments: [loweredObject.node, loweredValue.node],
+                        returnType: appended),
                     type: appended
                 )
             case "last":
@@ -4224,20 +4344,25 @@ public enum HIRLowerer {
                 }
                 let found = HIRType.optional(wrapped: element)
                 return LoweredExpr(
-                    node: .call(function: callName, arguments: [loweredObject.node],
-                                returnType: found),
+                    node: .call(
+                        function: callName, arguments: [loweredObject.node],
+                        returnType: found),
                     type: found
                 )
             default:
                 guard arguments.isEmpty else {
                     throw unsupported("pop takes no arguments", at: location)
                 }
-                let pair = HIRType.tuple(labels: [nil, nil],
-                                         fieldTypes: [.array(element: element),
-                                                      .optional(wrapped: element)])
+                let pair = HIRType.tuple(
+                    labels: [nil, nil],
+                    fieldTypes: [
+                        .array(element: element),
+                        .optional(wrapped: element),
+                    ])
                 return LoweredExpr(
-                    node: .call(function: callName, arguments: [loweredObject.node],
-                                returnType: pair),
+                    node: .call(
+                        function: callName, arguments: [loweredObject.node],
+                        returnType: pair),
                     type: pair
                 )
             }
@@ -4299,12 +4424,13 @@ public enum HIRLowerer {
             var hirCases: [HIRMatchCase] = []
             for matchCase in cases {
                 let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
-                hirCases.append(HIRMatchCase(
-                    caseName: matchCase.pattern.description,
-                    literal: literalOperand(of: matchCase.pattern),
-                    bindings: matchCase.bindings.map { $0.varName },
-                    body: body
-                ))
+                hirCases.append(
+                    HIRMatchCase(
+                        caseName: matchCase.pattern.description,
+                        literal: literalOperand(of: matchCase.pattern),
+                        bindings: matchCase.bindings.map { $0.varName },
+                        body: body
+                    ))
             }
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         }
@@ -4367,8 +4493,9 @@ public enum HIRLowerer {
                 var bindingName: String? = nil
                 if !matchCase.bindings.isEmpty {
                     guard caseName == "some", matchCase.bindings.count == 1,
-                          matchCase.bindings[0].paramName == nil,
-                          matchCase.bindings[0].varName != "_" else {
+                        matchCase.bindings[0].paramName == nil,
+                        matchCase.bindings[0].varName != "_"
+                    else {
                         throw unsupported(
                             "match case bindings outside this grid (single positional binding on some)",
                             at: matchCase.location
@@ -4422,7 +4549,8 @@ public enum HIRLowerer {
                     at: matchCase.location
                 )
             }
-            let leafName = rawCaseName.contains(".")
+            let leafName =
+                rawCaseName.contains(".")
                 ? String(rawCaseName.split(separator: ".").last!)
                 : rawCaseName
             guard let enumCase = enumDecl.cases.first(where: { $0.name == leafName }) else {
@@ -4521,9 +4649,10 @@ public enum HIRLowerer {
         case .member(let base, let fieldName, _):
             let loweredBase = try lowerExpr(base, expected: nil, into: &context)
             guard case .nominal = loweredBase.type,
-                  let fieldType = nominalFieldType(
-                      of: loweredBase.type, field: fieldName, in: context
-                  ) else {
+                let fieldType = nominalFieldType(
+                    of: loweredBase.type, field: fieldName, in: context
+                )
+            else {
                 throw unsupported(
                     "prefix '\(op)' target must be a field of a known nominal type",
                     at: location
@@ -4738,7 +4867,8 @@ public enum HIRLowerer {
                 at: location
             )
         }
-        let bodyParams = defaultMethod.params.first?.name == "self"
+        let bodyParams =
+            defaultMethod.params.first?.name == "self"
             ? Array(defaultMethod.params.dropFirst()) : defaultMethod.params
         guard arguments.count == bodyParams.count else {
             throw unsupported(
@@ -4758,7 +4888,8 @@ public enum HIRLowerer {
         var loweredArgs: [LoweredExpr] = []
         for (index, argument) in arguments.enumerated() {
             guard let annotation = bodyParams[index].typeAnnotation,
-                  let paramType = resolveAnnotationType(annotation, userTypes: context.userTypes) else {
+                let paramType = resolveAnnotationType(annotation, userTypes: context.userTypes)
+            else {
                 throw unsupported(
                     "parameter '\(bodyParams[index].name)' of trait default '\(defaultMethod.name)' lacks a resolvable type",
                     at: location
@@ -4772,7 +4903,8 @@ public enum HIRLowerer {
         // lowerMethod: self = receiver nominal + declared params). Dedup by
         // IR name so repeated call sites share one function.
         let irName = "\(IRName.mangle(defaultMethod.name))__\(IRName.mangle(typeName))"
-        context.traitDefaultsCollector.add(try lowerMethod(
+        context.traitDefaultsCollector.add(
+            try lowerMethod(
                 defaultMethod, typeName: typeName, selfType: receiverType,
                 typeInference: context.typeInference, moduleSignatures: context.moduleSignatures,
                 nominalTypes: context.nominalTypes, userTypes: context.userTypes,
@@ -4794,8 +4926,9 @@ public enum HIRLowerer {
     /// The HIR type of a nominal field, resolved through the registry (G3).
     private static func nominalFieldType(of type: HIRType, field: String, in context: FunctionContext) -> HIRType? {
         guard case .nominal(let name, _) = type,
-              let info = context.nominalTypes[name],
-              let fieldDecl = info.fields.first(where: { $0.name == field }) else {
+            let info = context.nominalTypes[name],
+            let fieldDecl = info.fields.first(where: { $0.name == field })
+        else {
             return nil
         }
         return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
@@ -4903,8 +5036,10 @@ public enum HIRLowerer {
             // Error-binding returns were already dropped before this point
             // for void functions (returnStmt(value: nil)); a plain return
             // with a value upgrades the type.
-            switch inferHIRType(of: value, userTypes: userTypes, nominals: nominals,
-                                selfTypeName: selfTypeName) {
+            switch inferHIRType(
+                of: value, userTypes: userTypes, nominals: nominals,
+                selfTypeName: selfTypeName)
+            {
             case .some(let type):
                 return type
             case .none:
@@ -4937,9 +5072,10 @@ public enum HIRLowerer {
             return selfTypeName.flatMap { userTypes[$0] }
         case .member(let object, let fieldName, _):
             guard let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
-                  case .nominal(let typeName, _) = baseType,
-                  let info = nominals[typeName],
-                  let field = info.fields.first(where: { $0.name == fieldName }) else {
+                case .nominal(let typeName, _) = baseType,
+                let info = nominals[typeName],
+                let field = info.fields.first(where: { $0.name == fieldName })
+            else {
                 return nil
             }
             return HIRType(from: field.typeAnnotation)
@@ -4947,11 +5083,12 @@ public enum HIRLowerer {
             // Zero-arg method call: `self.方法()` — the method's declared
             // return annotation is the effective value type.
             guard arguments.isEmpty,
-                  case .member(let object, let methodName, _) = callee,
-                  let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
-                  case .nominal(let typeName, _) = baseType,
-                  let info = nominals[typeName],
-                  let method = info.methods.first(where: { $0.name == methodName }) else {
+                case .member(let object, let methodName, _) = callee,
+                let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
+                case .nominal(let typeName, _) = baseType,
+                let info = nominals[typeName],
+                let method = info.methods.first(where: { $0.name == methodName })
+            else {
                 return nil
             }
             return method.returnTypes.first.flatMap { HIRType(from: $0) }
@@ -5018,7 +5155,8 @@ extension HIRType {
             // `^T` surface form (Result type sugar, try-else 迁移): pins the ok
             // payload; the error slot is type-erased in the IR ABI (LR-12).
             if name == "Result", let first = params.first,
-               let ok = HIRType(from: first) {
+                let ok = HIRType(from: first)
+            {
                 self = .result(ok: ok)
                 return
             }
@@ -5057,7 +5195,8 @@ extension HIRType {
             // inference and the checker's payload shape). HIR keeps labels
             // index-aligned with fieldTypes, so expand the empty list to
             // all-nil; a genuinely partial label list is passed through as-is.
-            let resolvedLabels = labels.isEmpty && !fieldTypes.isEmpty
+            let resolvedLabels =
+                labels.isEmpty && !fieldTypes.isEmpty
                 ? [String?](repeating: nil, count: fieldTypes.count)
                 : labels
             self = .tuple(labels: resolvedLabels, fieldTypes: fieldTypes)

@@ -118,9 +118,11 @@ public final class ProgramRunner: DebugHookHost {
     /// LLVM package channel already uses.
     public func run(package: Package) throws {
         guard package.fileUnits.count > 1 else {
-            let module = package.fileUnits.first?.module
-                ?? Module(declarations: [], imports: [], exports: [],
-                          location: SourceLocation(line: 0, column: 0, fileName: package.name))
+            let module =
+                package.fileUnits.first?.module
+                ?? Module(
+                    declarations: [], imports: [], exports: [],
+                    location: SourceLocation(line: 0, column: 0, fileName: package.name))
             try run(module: module)
             return
         }
@@ -216,8 +218,10 @@ public final class ProgramRunner: DebugHookHost {
     ///
     /// `prepare` (not `run`) on purpose: `run` would go looking for `main`,
     /// which a test-only module does not have.
-    private func runCollectedTests(_ module: HIRModule,
-                                   fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
+    private func runCollectedTests(
+        _ module: HIRModule,
+        fileScope: ((String) -> Bool)? = nil
+    ) throws -> [TestRunResult] {
         let executor = HIRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
         executor.processArguments = processArguments

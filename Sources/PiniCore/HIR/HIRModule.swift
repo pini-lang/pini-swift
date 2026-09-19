@@ -43,8 +43,10 @@ public struct HIRFunction: Equatable {
         }
     }
 
-    public init(name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock,
-                isAsync: Bool = false, isTest: Bool = false, sourceFile: String = "") {
+    public init(
+        name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock,
+        isAsync: Bool = false, isTest: Bool = false, sourceFile: String = ""
+    ) {
         self.name = name
         self.params = params
         self.returnType = returnType
@@ -129,8 +131,10 @@ public struct HIRModule: Equatable {
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [HIRForeignBlock]
 
-    public init(functions: [HIRFunction], types: [HIRTypeDecl] = [], enums: [HIREnumDecl] = [],
-                foreigns: [HIRForeignBlock] = []) {
+    public init(
+        functions: [HIRFunction], types: [HIRTypeDecl] = [], enums: [HIREnumDecl] = [],
+        foreigns: [HIRForeignBlock] = []
+    ) {
         self.functions = functions
         self.types = types
         self.enums = enums

@@ -11,30 +11,30 @@ import Foundation
 /// 不进访问路径（G52 R4）。别名是静态限定符：`别名.符号` 限定访问，
 /// 不参与运行时值命名空间（D-2 静态互斥：本地符号禁止与别名同名）。
 public struct ImportDecl: Equatable, ASTNode {
- /// import 别名（静态限定符，`别名.符号` 的前缀）。
- public let alias: String
- /// 被引入模块的包路径（相对当前文件目录或绝对路径）。
- public let packagePath: String
- public let location: SourceLocation
+    /// import 别名（静态限定符，`别名.符号` 的前缀）。
+    public let alias: String
+    /// 被引入模块的包路径（相对当前文件目录或绝对路径）。
+    public let packagePath: String
+    public let location: SourceLocation
 
- public init(alias: String, packagePath: String, location: SourceLocation) {
- self.alias = alias
- self.packagePath = packagePath
- self.location = location
- }
+    public init(alias: String, packagePath: String, location: SourceLocation) {
+        self.alias = alias
+        self.packagePath = packagePath
+        self.location = location
+    }
 }
 
 /// `export` 块中的重命名导出项：`可见别名 = 原符号`。
 public struct ExportRename: Equatable, ASTNode {
- public let alias: String
- public let symbol: String
- public let location: SourceLocation
+    public let alias: String
+    public let symbol: String
+    public let location: SourceLocation
 
- public init(alias: String, symbol: String, location: SourceLocation) {
- self.alias = alias
- self.symbol = symbol
- self.location = location
- }
+    public init(alias: String, symbol: String, location: SourceLocation) {
+        self.alias = alias
+        self.symbol = symbol
+        self.location = location
+    }
 }
 
 /// `export` 块声明（G52 批 1）：显式导出表（覆盖默认可见性规则的逃生舱，
@@ -46,11 +46,11 @@ public struct ExportRename: Equatable, ASTNode {
 /// 可见别名 = 原符号
 /// ```
 public struct ExportDecl: Equatable, ASTNode {
- public let renames: [ExportRename]
- public let location: SourceLocation
+    public let renames: [ExportRename]
+    public let location: SourceLocation
 
- public init(renames: [ExportRename], location: SourceLocation) {
- self.renames = renames
- self.location = location
- }
+    public init(renames: [ExportRename], location: SourceLocation) {
+        self.renames = renames
+        self.location = location
+    }
 }
