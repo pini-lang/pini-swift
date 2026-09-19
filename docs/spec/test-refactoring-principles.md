@@ -136,7 +136,7 @@ Tests/PiniTests/CodeGen/                <- subject group (IR / LLVM)
 Grouping is **by subject, not by compiler pass**. Measured 2026-09-03: 61 of 111 test
 files (55%) drive the whole Lexer → Parser → Interpreter pipeline and only 8 (7%) touch
 a single pass, so pass-based buckets collapse into one oversized bucket. See
-`docs/spec/test-dir-taxonomy-2026-09-03.md` for the measured proposal.
+`docs/spec/test-dir-taxonomy-2026-09-03.md`（载体已删） for the measured proposal.
 
 ## Coverage Strategy
 
