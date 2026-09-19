@@ -418,6 +418,21 @@ public indirect enum HIRExpr: Equatable {
     /// this case: the CPS evaluator is what makes it suspend rather than
     /// block (contract 4.2 reserved this face; G3c implements it).
     case join(future: HIRExpr, type: HIRType)
+
+    // MARK: ADR-001 — 默认实例取用
+
+    /// 取某类型的**默认实例**（ADR-001 `P2a`；契约 §2.46）。
+    ///
+    /// 语义（后端无关）：该实例**由类型决定** —— 编译器按类型解析，**无运行时查找、无 vtable**；
+    /// **惰性物化、恰一次、地址稳定**；取到的是**该实例本身**（非副本、非模板）。
+    ///
+    /// ⚠️ 与 `lazyRefValue`（§2.44）**不是同一件事**：后者是**字段内**的细粒度缓冲，
+    /// 本条是**类型级**的默认实例取用（用户裁定：`LazyRef` 不承担默认实例的物化）。
+    /// 命名不得含 `bk_` 前缀（那是实现面）。
+    ///
+    /// 中间态（`P2a`）：**无降载入口** ⇒ 本节点当前**不可达**；两台引擎起步 **fail-loud**
+    /// （照 §2.45 `join` / §3.17 `detachStmt` 的先例）。物化面与 `using` 解析属 `P2b`。
+    case givenInstance(type: HIRType)
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +

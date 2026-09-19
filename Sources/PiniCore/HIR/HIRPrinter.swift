@@ -221,6 +221,10 @@ public enum HIRPrinter {
             return "is_ascii_digit(\(exprText(argument)))"
         case .join(let future, _):
             return "join(\(exprText(future)))"
+        case .givenInstance(let type):
+            // ADR-001 `P2a`：内部节点，**无源形态**（默认实例在源语言里由 `using` 参数
+            // 省略实参时**隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-hir` 读。
+            return "givenInstance(\(type.llvmSpelling))"
         }
     }
 

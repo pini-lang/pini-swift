@@ -370,6 +370,74 @@ public func bk_lazyref_destroy(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
 }
 
+// MARK: - 默认实例取用（ADR-001，契约 §2.46）
+
+/// 「某类型的默认实例」的**存放位盒**。
+///
+/// 与 `_BkLazyRefBox` 的差别只在持有物：那边持 wrapper/code/env（一个闭包的调用面），
+/// 这边只需要 `initFn` 与字节数 —— 「谁来跑各字段初值」由发射层合成的具名函数承担。
+/// 锁与缓存的形态照抄，因为**语义要求相同**：惰性物化、恰一次、地址稳定。
+private final class _BkGivenSlotBox {
+    let initFn: UnsafeMutableRawPointer?
+    let bytes: Int
+    let lock = NSLock()
+    var cached: UnsafeMutableRawPointer? = nil
+
+    init(initFn: UnsafeMutableRawPointer?, bytes: Int) {
+        self.initFn = initFn
+        self.bytes = bytes
+    }
+}
+
+/// 保护「判空 + 建盒 + 写 slot」这一段的全局锁。
+///
+/// 必须是**独立于盒内锁**的第二级：两个线程同时看到一个空 slot 会各建一个盒，
+/// 于是同一个类型物化出**两个实例**、地址不稳定 —— 而地址稳定是契约写明的语义。
+/// 建盒之后物化仍归盒内锁管（那才是「恰一次」发生的地方）。
+private let _bkGivenSlotLock = NSLock()
+
+/// 取某类型的**默认实例**（ADR-001；契约 §2.46）。`slot` 是发射层定义的静态全局
+/// （`@__given_<T>`），首调时由 `initFn` 写入初值，此后永远返回同一地址。
+///
+/// `init_fn` 的 ABI 与 LazyRef 的 wrapper 同形：`ptr (ptr out) -> ptr` —— 运行时把
+/// 分配好的输出缓冲交给它，它写入 T 并返回该缓冲（规避「wrapper 内 alloca 返回栈
+/// 地址」的逃逸 UB）。
+///
+/// ⚠️ **不得持 `_bkGivenSlotLock` 调 `initFn`**：`initFn` 会跑各字段初值，而那些初值
+/// 自己可能取用**另一个**类型的默认实例 ⇒ 持锁调用就是一次可复现的自死锁。
+/// 故建盒与物化分成两段，中间放锁。
+@_cdecl("bk_given_get")
+public func bk_given_get(
+    _ slot: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ initFn: UnsafeMutableRawPointer?,
+    _ bytes: Int
+) -> UnsafeMutableRawPointer {
+    guard let slot else { bk_panic("Pini runtime error: given slot is null") }
+    let boxPtr: UnsafeMutableRawPointer
+    _bkGivenSlotLock.lock()
+    if let existing = slot.pointee {
+        boxPtr = existing
+    } else {
+        let fresh = Unmanaged.passRetained(_BkGivenSlotBox(initFn: initFn, bytes: bytes)).toOpaque()
+        slot.pointee = fresh
+        boxPtr = fresh
+    }
+    _bkGivenSlotLock.unlock()
+
+    let box = Unmanaged<_BkGivenSlotBox>.fromOpaque(boxPtr).takeUnretainedValue()
+    box.lock.lock()
+    defer { box.lock.unlock() }
+    if let cached = box.cached { return cached }
+    guard let initFn else { bk_panic("Pini runtime error: given initializer is null") }
+    let buf = UnsafeMutableRawPointer.allocate(
+        byteCount: box.bytes, alignment: MemoryLayout<Int>.alignment)
+    let invoke = unsafeBitCast(
+        initFn, to: (@convention(c) (UnsafeMutableRawPointer) -> UnsafeMutableRawPointer).self)
+    _ = invoke(buf)
+    box.cached = buf
+    return buf
+}
+
 /// 进程退出时释放所有活动句柄（数组 / 字典 / 集合），避免句柄泄漏（D0 阶段护栏；
 /// D4.2.3 收紧为作用域精确销毁后本函数退化为兜底）。
 @_cdecl("bk_runtime_cleanup")
