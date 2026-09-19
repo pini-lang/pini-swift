@@ -70,6 +70,8 @@ message = "missing label"
 message = "unexpected end of file"
 [E2-024]
 message = "block-local function must declare self explicitly (e.g. `方法名|self()` or `方法名|Self()`)"
+[E2-025]
+message = "a `using` parameter is not allowed here: {reason}"
 
 [E3-001]
 message = "undefined variable '{name}'"

@@ -130,6 +130,7 @@ extension ParserError: DiagnosticProviding {
         case .missingLabel: return "\(DiagnosticDomain.parser.rawValue)-022"
         case .unexpectedEOF: return "\(DiagnosticDomain.parser.rawValue)-023"
         case .methodDefaultAssumptionTerminated: return "\(DiagnosticDomain.parser.rawValue)-024"
+        case .usingParameterNotAllowed: return "\(DiagnosticDomain.parser.rawValue)-025"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -150,7 +151,8 @@ extension ParserError: DiagnosticProviding {
             .missingTraitName(let loc), .missingStructName(let loc),
             .missingObjectName(let loc), .missingEnumName(let loc),
             .missingGenericParam(let loc), .missingLabel(let loc),
-            .unexpectedEOF(let loc), .methodDefaultAssumptionTerminated(let loc):
+            .unexpectedEOF(let loc), .methodDefaultAssumptionTerminated(let loc),
+            .usingParameterNotAllowed(_, let loc):
             return loc
         }
     }

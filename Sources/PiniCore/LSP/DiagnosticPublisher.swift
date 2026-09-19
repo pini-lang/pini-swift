@@ -117,6 +117,7 @@ public struct DiagnosticPublisher {
         case .missingLabel(let loc): return loc
         case .unexpectedEOF(let loc): return loc
         case .methodDefaultAssumptionTerminated(let loc): return loc
+        case .usingParameterNotAllowed(_, let loc): return loc
         }
     }
 

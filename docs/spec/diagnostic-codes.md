@@ -59,6 +59,7 @@
 | E2-022 | 缺少标签 |
 | E2-023 | 意外文件末尾 |
 | E2-024 | 块内函数缺显式 self 修饰符 |
+| E2-025 | `using` 形参出现在没有 Pini 调用方的位置（`main` / `\|test` / `\|foreign` / trait 抽象签名） |
 
 ## E3 语义（SemanticError）
 

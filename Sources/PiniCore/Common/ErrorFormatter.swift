@@ -215,6 +215,7 @@ public enum ErrorFormatter {
         case .missingLabel: return "缺少标签"
         case .unexpectedEOF: return "意外到达文件末尾"
         case .methodDefaultAssumptionTerminated: return "块内函数必须显式声明 self 修饰符（如 `方法名|self()` 或 `方法名|Self()`）"
+        case .usingParameterNotAllowed(let reason, _): return "`using` 形参不可用在此位置：\(reason)"
         }
     }
 

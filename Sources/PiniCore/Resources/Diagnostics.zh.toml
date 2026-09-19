@@ -70,6 +70,8 @@ message = "缺少标签"
 message = "意外到达文件末尾"
 [E2-024]
 message = "块内函数必须显式声明 self 修饰符（如 `方法名|self()` 或 `方法名|Self()`）"
+[E2-025]
+message = "`using` 形参不可用在此位置：{reason}"
 
 [E3-001]
 message = "未定义变量 '{name}'"
