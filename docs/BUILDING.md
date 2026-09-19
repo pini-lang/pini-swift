@@ -41,6 +41,19 @@ swift build -c release --disable-sandbox
 
 `--disable-sandbox` 是本项目惯例（沙箱会阻断构建期文件访问；具体原因见仓库历史）。
 
+### 源码风格（Swift）
+
+Swift 源码缩进 **4 空格**；配置在仓根 `.swift-format`，该文件**只启用缩进**、其余 43 条可选规则全部关闭
+（2026-09-19 一次性统一，此前老代码 1 空格与新代码 4 空格并存）。
+
+```bash
+# 目标一律显式列出 —— 不要给包根
+swift format --in-place --recursive --parallel Sources Tests Package.swift
+```
+
+⚠️ `swift format` 的递归**跳过隐藏目录**（`.build` / `.git` 安全），但**会进入非隐藏的嵌套目录**
+—— 本仓 `examples/selfhost` 是嵌套独立仓（ADR-024 D2），不属本仓格式化范围，故不以包根为参数。
+
 ## 4. 冒烟验证
 
 ```bash

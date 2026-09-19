@@ -855,9 +855,10 @@ public final class HIRExecutor: DebugHookHost {
 
         case .dictLiteral(let entries, _):
             // Entry order as written; the formatting of `print(dict)` follows it.
-            return .dictionary(try entries.map { entry in
-                (try evaluate(entry.key), try evaluate(entry.value))
-            })
+            return .dictionary(
+                try entries.map { entry in
+                    (try evaluate(entry.key), try evaluate(entry.value))
+                })
 
         case .setLiteral(let elements, _):
             // Insertion order, first occurrence wins, compared by value — copied
@@ -984,12 +985,13 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            return .enumValue(EnumValue(
-                caseName: enumCase.name,
-                associatedValues: try payloads.map { try evaluate($0) },
-                paramNames: enumCase.paramNames,
-                parentEnum: enumName
-            ))
+            return .enumValue(
+                EnumValue(
+                    caseName: enumCase.name,
+                    associatedValues: try payloads.map { try evaluate($0) },
+                    paramNames: enumCase.paramNames,
+                    parentEnum: enumName
+                ))
 
         // MARK: Nominal instances and their fields (P2a grid G5)
 
@@ -1566,8 +1568,9 @@ public final class HIRExecutor: DebugHookHost {
     private func storeField(base: HIRExpr, field: String, value: Value) throws {
         let receiver = try evaluate(base)
         if case .load(let rootName, _) = base, rootName != "self",
-           case .structInstance = receiver,
-           let mutable = currentEnv.isMutable(name: rootName), !mutable {
+            case .structInstance = receiver,
+            let mutable = currentEnv.isMutable(name: rootName), !mutable
+        {
             throw RuntimeError.immutableVariable(name: rootName, location: HIRExecutor.noLocation)
         }
         switch receiver {
@@ -1977,7 +1980,8 @@ public final class HIRExecutor: DebugHookHost {
             // interpreter's shape.
             let result = try evaluate(operand)
             guard case .enumValue(let ev) = result,
-                  ev.parentEnum == RuntimeOps.builtinResultEnumName else {
+                ev.parentEnum == RuntimeOps.builtinResultEnumName
+            else {
                 throw RuntimeError.typeMismatch(
                     expected: "Result",
                     got: RuntimeOps.describeValueKind(result),
@@ -2013,9 +2017,11 @@ public final class HIRExecutor: DebugHookHost {
             // would create a second dispatch that could disagree with the value.
             let scrutineeValue = try evaluate(scrutinee)
             for arm in cases {
-                guard RuntimeOps.matchArmMatches(
-                    caseName: arm.caseName, literal: arm.literal, value: scrutineeValue
-                ) else { continue }
+                guard
+                    RuntimeOps.matchArmMatches(
+                        caseName: arm.caseName, literal: arm.literal, value: scrutineeValue
+                    )
+                else { continue }
                 try executeArm(arm, scrutinee: scrutineeValue)
                 return
             }
@@ -2292,9 +2298,9 @@ public final class HIRExecutor: DebugHookHost {
                         currentEnv = previousEnv
                         throw HIRControlSignal.continueSignal(depth: depth - 1)
                     }
-                    // Aimed at this loop: the step still runs, and it runs in
-                    // the loop environment — so `currentEnv` deliberately stays
-                    // on `loopEnv` across this catch.
+                // Aimed at this loop: the step still runs, and it runs in
+                // the loop environment — so `currentEnv` deliberately stays
+                // on `loopEnv` across this catch.
                 default:
                     currentEnv = previousEnv
                     throw signal

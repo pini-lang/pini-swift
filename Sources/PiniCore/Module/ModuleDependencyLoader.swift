@@ -33,8 +33,10 @@ public final class ModuleDependencyLoader {
             resolved = relativeToDir + "/" + packagePath
         } else {
             // 相对目录锚定到进程工作目录，保证 canonical 全局可比（环检测依赖）
-            let base = relativeToDir.isEmpty ? FileManager.default.currentDirectoryPath
-                                             : FileManager.default.currentDirectoryPath + "/" + relativeToDir
+            let base =
+                relativeToDir.isEmpty
+                ? FileManager.default.currentDirectoryPath
+                : FileManager.default.currentDirectoryPath + "/" + relativeToDir
             resolved = base + "/" + packagePath
         }
         return (resolved as NSString).standardizingPath
@@ -46,7 +48,7 @@ public final class ModuleDependencyLoader {
         let canonical = canonicalPath(packagePath: packagePath, relativeTo: relativeToDir)
 
         // R2：依赖图禁环——依赖链命中即环（先于缓存检查：环路径不可复用缓存豁免）
-               if chain.contains(canonical) {
+        if chain.contains(canonical) {
             let cycleChain = (chain + [canonical]).map { ($0 as NSString).lastPathComponent }
             throw SemanticError.moduleDependencyCycle(chain: cycleChain)
         }
@@ -65,7 +67,8 @@ public final class ModuleDependencyLoader {
         //   （自带 `pini.toml` 的子目录是独立模块，不进本模块）。
         // ⚠ 此前的划分轴是「主模块 vs 被引入」——于是本地被引入的模块拿到了远程策略，
         //   自带 `src/` 布局的依赖被 import 时源码静默不加载。轴已改为「远程 vs 本地」。
-        let units: [FileUnit] = try Self.isRemoteLanding(canonical)
+        let units: [FileUnit] =
+            try Self.isRemoteLanding(canonical)
             ? Self.scanRootLevel(at: canonical)
             : FileLoader.loadDirectory(path: canonical).fileUnits
         guard !units.isEmpty else {
@@ -81,7 +84,8 @@ public final class ModuleDependencyLoader {
             // 可见性按**相对模块根**的路径判定（`VisibilityLevel.forSymbol` 看的是
             // 文件名与其父目录名）：递归扫描后路径可能带子目录，须剥掉模块根前缀，
             // 否则 `_pkg/foo.pini` 的 package 可见性会被误判为 public。
-            let rel = unit.fileName.hasPrefix(canonical + "/")
+            let rel =
+                unit.fileName.hasPrefix(canonical + "/")
                 ? String(unit.fileName.dropFirst(canonical.count + 1))
                 : (unit.fileName as NSString).lastPathComponent
             moduleImports.append(contentsOf: module.imports)
@@ -128,8 +132,9 @@ public final class ModuleDependencyLoader {
         return try entries.filter { $0.hasSuffix(LangConfig.sourceSuffix) }.sorted()
             .map { name in
                 let path = canonical + "/" + name
-                return try FileLoader.parseUnit(fileName: path,
-                                                source: String(contentsOfFile: path, encoding: .utf8))
+                return try FileLoader.parseUnit(
+                    fileName: path,
+                    source: String(contentsOfFile: path, encoding: .utf8))
             }
     }
 

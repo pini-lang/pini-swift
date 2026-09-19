@@ -72,7 +72,8 @@ public final class ReplEvaluator {
             // `print(...)` is left alone rather than wrapped again: wrapping it
             // would print the null a `print` call returns, so `print(1)` would
             // come out as an extra blank line.
-            let body = trimmed.hasPrefix("print(") || trimmed.hasPrefix("print ")
+            let body =
+                trimmed.hasPrefix("print(") || trimmed.hasPrefix("print ")
                 ? trimmed
                 : "print(\(trimmed))"
             let wrapped = "main|func() -> ():\n    \(body)\n    return\n"
