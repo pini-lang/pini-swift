@@ -25,7 +25,7 @@ func describeTypeAnnotation(_ type: TypeAnnotation, indent: String = "") -> Stri
     case .generic(let name, let params, _):
         let paramStrs = params.map { describeTypeAnnotation($0, indent: indent) }
         return "\(name)<" + paramStrs.joined(separator: ", ") + ">"
-    case .function(let params, let returns, _, _):
+    case .function(let params, let returns, _, _, _):
         let paramStrs = params.map { describeTypeAnnotation($0, indent: indent) }
         let returnStrs = returns.map { describeTypeAnnotation($0, indent: indent) }
         let returnStr = returnStrs.count == 1 ? returnStrs[0] : "(" + returnStrs.joined(separator: ", ") + ")"

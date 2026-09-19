@@ -77,7 +77,7 @@ public indirect enum HIRType: Equatable {
     /// values. Unified fat-pointer ABI `{ ptr, ptr }` = { code, env }; the
     /// param/return shapes are carried for parity checking only — the IR
     /// call protocol is fixed (first arg is always the env pointer).
-    case function(params: [HIRType], returnType: HIRType?)
+    case function(params: [HIRType], returnType: HIRType?, usingIndices: Set<Int>)
     /// `*T` (G14, FFI 子系统): raw pointer. Opaque `ptr` in LLVM IR —
     /// load/store take the element type; address-of produces it from an
     /// alloca. Element rides along for load/store typing (mirrors the

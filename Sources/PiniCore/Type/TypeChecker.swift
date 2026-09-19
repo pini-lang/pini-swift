@@ -353,7 +353,7 @@ public final class TypeChecker {
             for p in params { try enforceAnnotationVisibility(p) }
         case .tuple(_, let elements, _):
             for e in elements { try enforceAnnotationVisibility(e) }
-        case .function(let params, let returns, _, _):
+        case .function(let params, let returns, _, _, _):
             for p in params { try enforceAnnotationVisibility(p) }
             for r in returns { try enforceAnnotationVisibility(r) }
         case .pointer(let element, _):
@@ -1199,7 +1199,7 @@ public final class TypeChecker {
             for e in elements { try validatePointerAnnotations(e) }
         case .generic(_, let params, _):
             for p in params { try validatePointerAnnotations(p) }
-        case .function(let params, let returns, _, _):
+        case .function(let params, let returns, _, _, _):
             for p in params { try validatePointerAnnotations(p) }
             for r in returns { try validatePointerAnnotations(r) }
         case .simple:
@@ -1925,13 +1925,15 @@ public final class TypeChecker {
                             ))
                     }
                 } else if let varType = typeEnv.lookupVariable(name: calleeName),
-                    case .function(let params, let returns, _, _) = varType
+                    case .function(let params, let returns, _, let usingIndices, _) = varType
                 {
                     // 函数类型变量调用（f(...)：高阶函数形参 / 匿名函数绑定变量）——
                     // 按变量函数类型校验实参（闭合 L1：匿名函数参数标注 + 函数类型实参校验）。
                     try validateCallArguments(
                         arguments: arguments,
-                        signature: TypeEnvironment.FunctionSignature(params: params, returns: returns),
+                        signature: TypeEnvironment.FunctionSignature(
+                            params: params, returns: returns, usingParamIndices: usingIndices
+                        ),
                         location: location
                     )
                 }
@@ -2011,11 +2013,13 @@ public final class TypeChecker {
                 // 函数类型变量调用（f(...)：高阶函数形参 / 匿名函数绑定变量）——按 callee
                 // 推断的函数类型校验实参（闭合 L1：匿名函数参数标注 + 函数类型实参校验）。
                 if let calleeType = inference.infer(expression: callee),
-                    case .function(let params, let returns, _, _) = calleeType
+                    case .function(let params, let returns, _, let usingIndices, _) = calleeType
                 {
                     try validateCallArguments(
                         arguments: arguments,
-                        signature: TypeEnvironment.FunctionSignature(params: params, returns: returns),
+                        signature: TypeEnvironment.FunctionSignature(
+                            params: params, returns: returns, usingParamIndices: usingIndices
+                        ),
                         location: location
                     )
                 }
@@ -2306,7 +2310,7 @@ public final class TypeChecker {
             // 引用类型可借「闭包 + => 边界」双重通道偷渡（R6 数据竞争）。
             // 仅当实参实际类型确为带捕获的函数类型时才覆盖（非函数实参走原 declared/推断路径）。
             if let actual = inference.infer(expression: arg.expression),
-                case .function(_, _, let actualCaptured, _) = actual, !actualCaptured.isEmpty
+                case .function(_, _, let actualCaptured, _, _) = actual, !actualCaptured.isEmpty
             {
                 candidate = actual
             }
@@ -2354,7 +2358,7 @@ public final class TypeChecker {
                 if let hit = escapingReferenceType(in: param, visiting: &visiting) { return hit }
             }
             return nil
-        case .function(_, _, let captured, _):
+        case .function(_, _, let captured, _, _):
             for cap in captured {
                 if let hit = escapingReferenceType(in: cap, visiting: &visiting) { return hit }
             }

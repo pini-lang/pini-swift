@@ -41,7 +41,7 @@ public indirect enum TypeAnnotation: Equatable {
     /// 命名元组 `(a: I32, b: String,)` 的 labels = ["a", "b"]（草稿 A2，批次 1.3，D1）。
     case tuple(labels: [String?], elements: [TypeAnnotation], location: SourceLocation)
     case generic(name: String, params: [TypeAnnotation], location: SourceLocation)
-    case function(params: [TypeAnnotation], returns: [TypeAnnotation], captured: [TypeAnnotation], location: SourceLocation)
+    case function(params: [TypeAnnotation], returns: [TypeAnnotation], captured: [TypeAnnotation], usingIndices: Set<Int>, location: SourceLocation)
     /// Phase 2a（FFI 子系统， `*T`）：原始指针类型。element 须为 C 兼容类型
     /// （标量、纯值结构体、或另一指针），禁 object 及含 object 字段的复合类型。
     case pointer(element: TypeAnnotation, location: SourceLocation)
@@ -63,7 +63,11 @@ extension TypeAnnotation {
             return a == b
                 && pa.count == pb.count
                 && zip(pa, pb).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
-        case (.function(let ap, let ar, _, _), .function(let bp, let br, _, _)):
+        case (.function(let ap, let ar, _, _, _), .function(let bp, let br, _, _, _)):
+            // ⚠️ 第 4 个关联值（取用下标集合，ADR-001 §2.6）**刻意用 `_` 接住、不参与比较**：
+            // 取用位是「声明 ↔ 调用」的配对信息，不是类型恒等的一部分（用户 2026-09-19 裁定）。
+            // HIR 面的同口径落在 `HIRLowerer.labelInsensitiveEqual` 的 `.function` 分支，
+            // 两处必须同口径 —— 判据各钉一条。
             return ap.count == bp.count
                 && zip(ap, bp).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
                 && ar.count == br.count
@@ -90,7 +94,7 @@ extension TypeAnnotation {
             return "(" + parts.joined(separator: ", ") + ")"
         case .generic(let name, let params, _):
             return name + "<" + params.map { $0.describe() }.joined(separator: ", ") + ">"
-        case .function(let params, let returns, _, _):
+        case .function(let params, let returns, _, _, _):
             return "(" + params.map { $0.describe() }.joined(separator: ", ")
                 + ") -> (" + returns.map { $0.describe() }.joined(separator: ", ") + ")"
         case .pointer(let element, _):

@@ -3386,7 +3386,7 @@ public class Parser {
                 }
                 try expect(.rightParen(loc))
                 // 函数类型参数元组中的 `名: 类型` 视为参数名，不落入 tuple labels（.function 用 elements）。
-                return .function(params: elements, returns: returns, captured: [], location: loc)
+                return .function(params: elements, returns: returns, captured: [], usingIndices: [], location: loc)
             } else if case .doubleArrow(_) = currentToken {
                 advance()
                 try expect(.leftParen(loc))
@@ -3401,7 +3401,7 @@ public class Parser {
                     }
                 }
                 try expect(.rightParen(loc))
-                return .function(params: elements, returns: returns, captured: [], location: loc)
+                return .function(params: elements, returns: returns, captured: [], usingIndices: [], location: loc)
             }
 
             return .tuple(labels: labels, elements: elements, location: loc)

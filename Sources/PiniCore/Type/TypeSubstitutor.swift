@@ -23,11 +23,11 @@ public final class TypeSubstitutor {
             let substitutedParams = params.map { substitute(type: $0) }
             return .generic(name: name, params: substitutedParams, location: loc)
 
-        case .function(let params, let returns, let captured, let loc):
+        case .function(let params, let returns, let captured, let usingIndices, let loc):
             let subParams = params.map { substitute(type: $0) }
             let subReturns = returns.map { substitute(type: $0) }
             let subCaptured = captured.map { substitute(type: $0) }
-            return .function(params: subParams, returns: subReturns, captured: subCaptured, location: loc)
+            return .function(params: subParams, returns: subReturns, captured: subCaptured, usingIndices: usingIndices, location: loc)
 
         case .pointer(let element, let loc):
             return .pointer(element: substitute(type: element), location: loc)
