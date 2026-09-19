@@ -387,6 +387,10 @@ public final class TypeChecker {
                 }
                 for rt in f.returnTypes { try enforceAnnotationVisibility(rt) }
             }
+        case .givenDecl(let g):
+            // AD-001：给定块与对象同规 —— 字段类型与 `实现: T` 都是类型名引用，须过可见性 enforce。
+            for f in g.fields { try enforceAnnotationVisibility(f.typeAnnotation) }
+            for t in g.traits { try enforceTypeVisibility(name: t, location: g.location) }
         case .traitDecl, .extensionDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
@@ -1052,6 +1056,39 @@ public final class TypeChecker {
                 }
                 registerTraitMethods(for: o.name, traits: o.traits, location: loc)
             }
+        case .givenDecl(let g):
+            // AD-001：给定块与对象**同规注册**（字段表 / 类型环境 / `实现: T` 的方法）。
+            // ⚠️ 不登记 `referenceTypeNames` —— 值 / 引用语义是 `P2` 未裁项，本批只落声明面，
+            // 不预设语义（登记与否会改变构造与赋值的行为）。
+            typeFieldsByName[g.name] = g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
+            if !g.genericParams.isEmpty {
+                let fieldInfos = g.fields.map { (name: $0.name, type: $0.typeAnnotation) }
+                let methodInfos = g.methods.map {
+                    (
+                        name: $0.name,
+                        params: $0.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) },
+                        returns: $0.returnTypes
+                    )
+                }
+                typeEnv.defineGenericStruct(
+                    name: g.name,
+                    genericParams: g.genericParams.map { $0.name },
+                    fields: fieldInfos,
+                    methods: methodInfos
+                )
+            } else {
+                let fieldInfos = g.fields.map { (name: $0.name, type: $0.typeAnnotation) }
+                typeEnv.defineStruct(name: g.name, fields: fieldInfos)
+                for method in g.methods {
+                    let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
+                    typeEnv.defineMethod(
+                        typeName: g.name, methodName: method.name, params: paramTypes,
+                        returns: method.returnTypes, returnLabels: method.returnLabels
+                    )
+                    if method.isAsync { asyncMethodParamNames["\(g.name).\(method.name)"] = method.params.map { $0.name } }
+                }
+                registerTraitMethods(for: g.name, traits: g.traits, location: loc)
+            }
         case .enumDecl(let e):
             // 注册判别联合：将各用例的关联参数（字段名? + 类型）存入类型环境，
             // 供 variant→union 可赋值性校验与 match 模式绑定类型注入使用。
@@ -1114,6 +1151,10 @@ public final class TypeChecker {
             for m in x.methods { try validateFuncDeclPointerTypes(m) }
         case .foreignDecl(let fd):
             for f in fd.funcs { try validateFuncDeclPointerTypes(f) }
+        case .givenDecl(let g):
+            // AD-001：给定块字段与对象字段同规过 `*T` C 兼容校验。
+            for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
+            for m in g.methods { try validateFuncDeclPointerTypes(m) }
         case .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
@@ -1254,6 +1295,12 @@ public final class TypeChecker {
             // 元组、函数指针、泛型；标量 / 指针 / 引用类型（含 shim 友好的 String）放行（shim 经原生函数表解析，
             // 裸 C 绑定 C 兼容校验见 Phase 2b）。
             try checkForeignDeclSignatures(fd)
+        case .givenDecl(let g):
+            // AD-001：给定块方法体按字段作用域检查 + `实现: T` 一致性校验（与对象同规）。
+            for method in g.methods {
+                try checkFuncBody(method, fields: g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: g.name)
+            }
+            if !g.traits.isEmpty { try verifyTraitConformance(typeName: g.name, traits: g.traits, location: g.location) }
         case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
         }

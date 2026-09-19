@@ -468,6 +468,27 @@ func describeStructDecl(_ structDecl: StructDecl, indent: String = "") -> String
     return String(result.dropLast())
 }
 
+/// AD-001：给定块的 AST dump（`pini parse` 面）。与对象同构 ⇒ 同形渲染。
+func describeGivenDecl(_ givenDecl: GivenDecl, indent: String = "") -> String {
+    var result = "\(indent)given \(givenDecl.name)"
+
+    if !givenDecl.genericParams.isEmpty {
+        result += "<" + givenDecl.genericParams.map { $0.name }.joined(separator: ", ") + ">"
+    }
+
+    result += ":\n"
+
+    for field in givenDecl.fields {
+        result += describeFieldDecl(field, indent: indent + " ") + "\n"
+    }
+
+    for method in givenDecl.methods {
+        result += describeFuncDecl(method, indent: indent + " ") + "\n"
+    }
+
+    return String(result.dropLast())
+}
+
 func describeObjectDecl(_ objectDecl: ObjectDecl, indent: String = "") -> String {
     var result = "\(indent)object \(objectDecl.name)"
 
@@ -541,6 +562,8 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
         return describeStructDecl(structDecl, indent: indent)
     case .objectDecl(let objectDecl):
         return describeObjectDecl(objectDecl, indent: indent)
+    case .givenDecl(let givenDecl):
+        return describeGivenDecl(givenDecl, indent: indent)
     case .enumDecl(let enumDecl):
         return describeEnumDecl(enumDecl, indent: indent)
     case .funcDecl(let funcDecl):

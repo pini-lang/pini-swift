@@ -321,6 +321,9 @@ public final class SemanticAnalyzer {
             symbolTable.define(Symbol(name: f.name, kind: .function, location: f.location))
         case .traitDecl(let t):
             symbolTable.define(Symbol(name: t.name, kind: .trait, location: t.location))
+        case .givenDecl(let g):
+            // AD-001：给定块是具名复合类型 ⇒ 纳入包级符号表（与对象同族）。
+            symbolTable.define(Symbol(name: g.name, kind: .object, location: g.location))
         case .extensionDecl, .foreignDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
@@ -338,6 +341,10 @@ public final class SemanticAnalyzer {
         case .objectDecl(let o):
             typeFields[o.name] = o.fields
             return try registerStructLike(o.name, fields: o.fields, methods: o.methods, location: o.location)
+        case .givenDecl(let g):
+            // AD-001：给定块与对象体同规 ⇒ 同路径注册（字段表 / 符号表 / 重声明检测 / 成员名冲突）。
+            typeFields[g.name] = g.fields
+            return try registerStructLike(g.name, fields: g.fields, methods: g.methods, location: g.location)
         case .enumDecl(let e):
             try defineUnique(name: e.name, kind: .enum, location: e.location)
             // P5-5 HIGH-1：case 名按枚举命名空间隔离，不再全局唯一。
@@ -444,6 +451,12 @@ public final class SemanticAnalyzer {
             let targetFields = typeFields[x.targetType] ?? []
             for method in x.methods {
                 try checkFuncDecl(method, fields: targetFields)
+            }
+        case .givenDecl(let g):
+            // AD-001：给定块的方法体按字段作用域检查（本批 `methods` 恒空 —— 方法写扩展块，
+            // 归并属 `P1b`；此处按同规处理，使归并批次无需回改本处）。
+            for method in g.methods {
+                try checkFuncDecl(method, fields: g.fields)
             }
         case .foreignDecl:
             // Phase 2a（FFI 子系统）：仅签名、无函数体，无检查项。

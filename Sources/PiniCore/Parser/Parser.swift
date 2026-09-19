@@ -505,6 +505,7 @@ public class Parser {
         // 检查是否有 | 修饰符
         var isObject = false
         var isEnum = false
+        var isGiven = false
 
         if case .pipe(_) = currentToken {
             advance()
@@ -514,6 +515,12 @@ public class Parser {
             } else if checkKeyword(.enum) {
                 advance()
                 isEnum = true
+            } else if case .identifier("given", _) = currentToken {
+                // AD-001（给定块）：`[名称|given]`。`given` **不入关键字表**——它只出现在
+                // `|` 右侧的修饰符位，与 `|foreign` / `|import` / `|export` 同走标识符白名单
+                // 路径（判据：全仓语料零处把 `given` 用作标识符，且这些修饰符都不是关键字）。
+                advance()
+                isGiven = true
             } else if checkKeyword(.foreign) {
                 // Phase 2a（FFI 子系统， foreign-decl）：`[名称|foreign]` 外部 C 函数声明块。
                 advance()
@@ -540,6 +547,10 @@ public class Parser {
         // 期望 ]
         try expect(.rightBracket(loc))
 
+        if isGiven {
+            let givenDecl = try parseGivenDeclContent(name: name, genericParams: genericParams, location: loc)
+            return .givenDecl(givenDecl)
+        }
         if isObject {
             let objectDecl = try parseObjectDeclContent(name: name, genericParams: genericParams, location: loc)
             return .objectDecl(objectDecl)
@@ -684,7 +695,7 @@ public class Parser {
         switch currentToken {
         case .leftParen(_): kind = .structExt
         case .leftBrace(_): kind = .objectExt
-        case .leftBracket(_): kind = .enumExt
+        case .leftBracket(_): kind = .bracketExt
         case .lessThan(_): kind = .traitExt
         default:
             throw ParserError.invalidDeclaration(reason: "无法识别的扩展块起始定界符", location: loc)
@@ -713,7 +724,7 @@ public class Parser {
             try expect(.rightParen(loc)); try expect(.rightParen(loc))
         case .objectExt:
             try expect(.rightBrace(loc)); try expect(.rightBrace(loc))
-        case .enumExt:
+        case .bracketExt:
             try expect(.rightBracket(loc)); try expect(.rightBracket(loc))
         case .traitExt:
             // `>>` 闭合双态（2026-09-06 重新引入落地）：词法合并态 `.rightShift`（`<<T>>`
@@ -944,7 +955,20 @@ public class Parser {
         return try parseObjectDeclContent(name: name, genericParams: genericParams, location: loc)
     }
 
-    private func parseObjectDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> ObjectDecl {
+    /// 解析类型体内容（`{名称}` 对象糖 / `[名称|object]` / AD-001 `[名称|given]` 三者共用）。
+    ///
+    /// 单源化理由：给定块体与对象体**同规**（只含字段，方法移至扩展块，`实现: T` 解析期摘出）
+    /// ⇒ 不复写第二份语义，只把「错误提示里指哪个扩展块」参数化。
+    ///
+    /// - Parameter extensionBracket: 错误提示里给出的「方法该移到哪个扩展块」的括号形态。
+    ///   缺省为对象扩展 `{{名称}}`；给定块传 `[[名称]]`（通用扩展形，AD-001）。
+    private func parseObjectDeclContent(
+        name: String,
+        genericParams: [GenericParam],
+        location: SourceLocation,
+        extensionBracket: String? = nil
+    ) throws -> ObjectDecl {
+        let bracket = extensionBracket ?? "{{\(name)}}"
         // 解析内容态（声明上下文收紧·规则 3.2：对象体内只允许字段，方法移至扩展块）
         var fields: [FieldDecl] = []
 
@@ -965,14 +989,14 @@ public class Parser {
                 if case .leftBrace(_) = peek(offset: 1) { break }
                 // 声明上下文收紧·规则 3.2：类型体内禁止函数声明（旧 `{name|self}(...)` 方法形式已废止）
                 throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `{{\(name)}}` 中，并显式使用 `|self` 或 `|Self`",
+                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
             } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `{{\(name)}}` 中，并显式使用 `|self` 或 `|Self`",
+                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
             } else {
@@ -985,6 +1009,27 @@ public class Parser {
 
         let (traits, remainingFields) = extractTraits(from: fields)
         return ObjectDecl(name: name, genericParams: genericParams, fields: remainingFields, methods: [], traits: traits, location: location)
+    }
+
+    // MARK: - 给定块解析（AD-001， given-decl）
+
+    /// 解析给定块内容（`[名称|given]` 的 `]` 已被消费）。
+    ///
+    /// 与对象体同规（字段 + `实现: T`，方法移至扩展块）⇒ 复用 `parseObjectDeclContent`，
+    /// 只把错误提示里的扩展块括号换成通用扩展形 `[[名称]]`。
+    private func parseGivenDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> GivenDecl {
+        let body = try parseObjectDeclContent(
+            name: name, genericParams: genericParams, location: location,
+            extensionBracket: "[[\(name)]]"
+        )
+        return GivenDecl(
+            name: body.name,
+            genericParams: body.genericParams,
+            fields: body.fields,
+            methods: body.methods,
+            traits: body.traits,
+            location: body.location
+        )
     }
 
     // MARK: - 枚举块解析
