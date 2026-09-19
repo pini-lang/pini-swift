@@ -197,7 +197,7 @@ struct GrammarAcceptanceTests {
         guard case .varDecl(_, let annotation, let initializer, _, _) = statements(ofMainIn: module).first else {
             Issue.record("首条语句应为变量声明"); return
         }
-        guard case .function(let params, let returns, _, _) = annotation else {
+        guard case .function(let params, let returns, _, _, _) = annotation else {
             Issue.record("类型标注应为函数类型，实际：\(String(describing: annotation))"); return
         }
         #expect(params.count == 1 && returns.count == 1, "函数类型两侧尾逗号都不应吞位")

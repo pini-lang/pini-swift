@@ -25,4 +25,7 @@ public enum ParserError: Error, Equatable {
     case missingLabel(location: SourceLocation)
     case unexpectedEOF(location: SourceLocation)
     case methodDefaultAssumptionTerminated(location: SourceLocation)
+    /// ADR-001 `P3`（参数位收窄）：`using` 形参出现在**没有 Pini 调用方**的位置
+    /// （`main` / `|test` / `|foreign` / trait 抽象签名）⇒ 编译器无处插入默认实例。
+    case usingParameterNotAllowed(reason: String, location: SourceLocation)
 }

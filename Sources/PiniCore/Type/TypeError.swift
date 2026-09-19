@@ -32,4 +32,10 @@ public enum TypeError: Error, Equatable {
     case sharedReferenceAcrossTasks(typeName: String, paramName: String, functionName: String, location: SourceLocation)
     /// 3.15：枚举用例构造为位置式，不允许具名实参（如 `圆(半径: 5.0)`）。
     case enumCaseArgumentLabel(label: String, caseName: String, location: SourceLocation)
+    /// ADR-001 `P3`：**给定块的类型名**出现在值位（`取(配置)` / `配置.方法()`）。
+    ///
+    /// 默认实例**只能**经 `using` 形参取得 —— 类型名不是值。此前这条路落到 IRGen 层报
+    /// 「未声明的变量 '配置'」（误导：读起来像拼错了变量名）；本诊断把它提前到静态层，
+    /// 并把该怎么做**写进文案**。⚠️ 这不是新增约束：该通路本来就不可行（`P3` 开工实测）。
+    case givenBlockTypeInValuePosition(typeName: String, location: SourceLocation)
 }

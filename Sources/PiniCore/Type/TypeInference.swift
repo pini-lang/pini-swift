@@ -196,7 +196,7 @@ public final class TypeInference {
                 }
                 // 高阶函数：被调者是函数类型参数/变量（f(x)）——返回其声明返回类型。
                 // 此前此处退化为 .simple(name) 导致 return f(x) 类型误判为「类型 f」。
-                if case .function(_, let returns, _, _) = env.lookupVariable(name: name) {
+                if case .function(_, let returns, _, _, _) = env.lookupVariable(name: name) {
                     if returns.count == 1 {
                         return returns[0]
                     } else if returns.isEmpty {
@@ -377,7 +377,7 @@ public final class TypeInference {
         // 自顶向下：期望函数类型灌入参数与返回
         var expectedParamTypes: [TypeAnnotation?] = Array(repeating: nil, count: params.count)
         var expectedReturns: [TypeAnnotation?] = []
-        if case .function(let ep, let er, _, _) = expected, ep.count == params.count {
+        if case .function(let ep, let er, _, _, _) = expected, ep.count == params.count {
             expectedParamTypes = ep.map { $0 }
             expectedReturns = er.map { $0 }
         }
@@ -441,7 +441,7 @@ public final class TypeInference {
             }
         }
 
-        return .function(params: paramTypes, returns: returnTypes, captured: capturedTypes, location: location)
+        return .function(params: paramTypes, returns: returnTypes, captured: capturedTypes, usingIndices: Set(params.enumerated().filter { $0.element.isUsing }.map { $0.offset }), location: location)
     }
 
     // MARK: - 自由变量分析（捕获集计算，复用阶段 B 同算法）

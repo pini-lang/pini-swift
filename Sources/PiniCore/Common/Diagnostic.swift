@@ -130,6 +130,7 @@ extension ParserError: DiagnosticProviding {
         case .missingLabel: return "\(DiagnosticDomain.parser.rawValue)-022"
         case .unexpectedEOF: return "\(DiagnosticDomain.parser.rawValue)-023"
         case .methodDefaultAssumptionTerminated: return "\(DiagnosticDomain.parser.rawValue)-024"
+        case .usingParameterNotAllowed: return "\(DiagnosticDomain.parser.rawValue)-025"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -150,7 +151,8 @@ extension ParserError: DiagnosticProviding {
             .missingTraitName(let loc), .missingStructName(let loc),
             .missingObjectName(let loc), .missingEnumName(let loc),
             .missingGenericParam(let loc), .missingLabel(let loc),
-            .unexpectedEOF(let loc), .methodDefaultAssumptionTerminated(let loc):
+            .unexpectedEOF(let loc), .methodDefaultAssumptionTerminated(let loc),
+            .usingParameterNotAllowed(_, let loc):
             return loc
         }
     }
@@ -217,6 +219,7 @@ extension TypeError: DiagnosticProviding {
         case .inaccessibleField: return "\(DiagnosticDomain.type.rawValue)-012"
         case .sharedReferenceAcrossTasks: return "\(DiagnosticDomain.type.rawValue)-013"
         case .enumCaseArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-014"
+        case .givenBlockTypeInValuePosition: return "\(DiagnosticDomain.type.rawValue)-015"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -234,7 +237,8 @@ extension TypeError: DiagnosticProviding {
             .unknownMember(_, _, let loc), .reassignmentToImmutable(_, let loc),
             .inaccessibleSymbol(_, _, _, let loc), .inaccessibleField(_, _, let loc),
             .sharedReferenceAcrossTasks(_, _, _, let loc),
-            .enumCaseArgumentLabel(_, _, let loc):
+            .enumCaseArgumentLabel(_, _, let loc),
+            .givenBlockTypeInValuePosition(_, let loc):
             return loc
         }
     }

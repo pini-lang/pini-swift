@@ -70,6 +70,8 @@ message = "missing label"
 message = "unexpected end of file"
 [E2-024]
 message = "block-local function must declare self explicitly (e.g. `方法名|self()` or `方法名|Self()`)"
+[E2-025]
+message = "a `using` parameter is not allowed here: {reason}"
 
 [E3-001]
 message = "undefined variable '{name}'"
@@ -117,6 +119,9 @@ message = "field '{typeName}.{fieldName}' is type-private (only accessible withi
 message = "cannot pass reference type '{typeName}' to concurrent task '{functionName}' parameter '{paramName}': sharing mutable references across tasks is unsafe. Pass a value type (struct) or join results with `joinAll`"
 [E4-014]
 message = "enum case '{caseName}' is constructed positionally; named argument '{label}:' is not allowed (use positional arguments, e.g. `{caseName}(value)`)"
+
+[E4-015]
+message = "the given block type name '{typeName}' cannot be used as a value -- take its default instance through a `using` parameter instead"
 
 [E5-001]
 message = "undefined variable '{name}'"

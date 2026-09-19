@@ -408,7 +408,7 @@ public class Parser {
         default:
             // 检查是否是裸函数声明 `name(params,) -> (ret,)`
             if isBareFunctionDeclStart() {
-                return .funcDecl(try parseBareFuncDecl(isTopLevel: true, allowUnsafeModifier: true))
+                return .funcDecl(try parseBareFuncDecl(position: .freeFunction, allowUnsafeModifier: true))
             }
             // 否则可能是变量声明、表达式语句等
             return .statement(try parseStatement())
@@ -583,7 +583,7 @@ public class Parser {
                     location: currentLocation
                 )
             }
-            var sig = try parseBareFuncDecl(isTopLevel: false, allowEmptyBody: true, allowUnsafeModifier: true)
+            var sig = try parseBareFuncDecl(position: .foreignBlock, allowEmptyBody: true, allowUnsafeModifier: true)
             if sig.body != nil {
                 throw ParserError.invalidStatement(
                     reason: "foreign 块内函数不可带函数体（仅签名声明外部 C 函数）：`\(sig.name)`",
@@ -751,7 +751,7 @@ public class Parser {
                     // 类型扩展：顶格非 `|self`/`|own`（如 `main|func`、字段）→ 扩展块结束
                     break
                 }
-                let funcDecl = try parseBareFuncDecl(isTopLevel: false, allowEmptyBody: isTraitExt)
+                let funcDecl = try parseBareFuncDecl(position: .typeBodyMethod, allowEmptyBody: isTraitExt)
                 // 规则 3.14：类型扩展内只允许 |self/|own 方法（G50：Self 更名 own）；特征扩展保持 trait-body 宽松
                 if !isTraitExt {
                     let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("own")
@@ -1186,12 +1186,12 @@ public class Parser {
 
     /// 解析「参数元组 + 返回类型标注」（`-> (返回,)` / `=> (返回,)`)。
     /// 裸声明函数（parseBareFuncDecl）与匿名函数（parseFuncLiteral）共用。
-    private func parseFunctionSignature(loc: SourceLocation) throws -> (params: [Parameter], returnTypes: [TypeAnnotation], returnLabels: [String?], isAsync: Bool) {
+    private func parseFunctionSignature(loc: SourceLocation, position: UsingParamPosition) throws -> (params: [Parameter], returnTypes: [TypeAnnotation], returnLabels: [String?], isAsync: Bool) {
         // 参数元组
         try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
-            let param = try parseParameter()
+            let param = try parseParameter(position: position)
             params.append(param)
             if case .comma(_) = currentToken {
                 advance()
@@ -1265,7 +1265,8 @@ public class Parser {
         let loc = currentLocation
         advance()  // 跳过 func
 
-        let (params, returnTypes, returnLabels, isAsync) = try parseFunctionSignature(loc: loc)
+        // ADR-001 `P3`：匿名函数**允许** `using` 形参（P3 前半已交付省略式与物化）。
+        let (params, returnTypes, returnLabels, isAsync) = try parseFunctionSignature(loc: loc, position: .anonymousFunction)
 
         // 匿名函数是「引导子块关键字」，带 `:` 尾缀
         try expect(.colon(loc))
@@ -1333,7 +1334,10 @@ public class Parser {
         try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
-            let param = try parseParameter()
+            // ⚠️ 本函数的**唯一**调用者就在 `parseTraitDecl` 里 ⇒ 它服务的是 trait 抽象签名的
+            // 「花括号形态」`{名}(...)`，与名字里的「类型体内」无关（名字是历史遗留，易误导）。
+            // ADR-001 `P3`：trait 抽象签名无体 ⇒ 取用点无处插入 ⇒ 拒。
+            let param = try parseParameter(position: .traitSignature)
             params.append(param)
             if case .comma(_) = currentToken {
                 advance()
@@ -1499,7 +1503,7 @@ public class Parser {
 
     // 解析裸函数声明：`name[|修饰符][<泛型>](参数,) -> (返回,)`
     // 用于：对象/枚举/结构内的方法声明（新语法），以及顶级裸函数声明
-    private func parseBareFuncDecl(isTopLevel: Bool, allowEmptyBody: Bool = false, allowUnsafeModifier: Bool = false) throws -> FuncDecl {
+    private func parseBareFuncDecl(position: UsingParamPosition, allowEmptyBody: Bool = false, allowUnsafeModifier: Bool = false) throws -> FuncDecl {
         let loc = currentLocation
 
         // 解析名称
@@ -1521,6 +1525,18 @@ public class Parser {
             modifiers.append(modifier)
         }
 
+        // ADR-001 `P3`（参数位收窄）：顶层裸函数是 `main` / `|test` / 普通函数**三态合一**，
+        // 而三者只能按**名字与修饰符**分辨 —— 两者在本行之前还不可知，故细分落在这里。
+        // ⇒ 传 `.freeFunction` 时它是**候选**值（待细分）；其余位置原样透传。
+        var paramPosition = position
+        if case .freeFunction = position {
+            if name == "main" {
+                paramPosition = .mainEntry
+            } else if modifiers.contains("test") {
+                paramPosition = .testBlock
+            }
+        }
+
         // 解析泛型参数（可选）
         var genericParams: [GenericParam] = []
         if case .lessThan = currentToken {
@@ -1531,7 +1547,7 @@ public class Parser {
         try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
-            let param = try parseParameter()
+            let param = try parseParameter(position: paramPosition)
             params.append(param)
             if case .comma(_) = currentToken {
                 advance()
@@ -1681,7 +1697,7 @@ public class Parser {
                 let sig = try parseFuncDeclInTypeContext()
                 signatures.append(sig)
             } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
-                let sig = try parseBareFuncDecl(isTopLevel: false, allowEmptyBody: true)
+                let sig = try parseBareFuncDecl(position: .traitSignature, allowEmptyBody: true)
                 signatures.append(sig)
             } else if isTopLevelDeclStart() {
                 // 顶级声明起始（结构块/扩展块/对象糖/import/export/后续特征块等）→ trait 体终止。
@@ -1720,7 +1736,7 @@ public class Parser {
         try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
-            let param = try parseParameter()
+            let param = try parseParameter(position: .traitSignature)
             params.append(param)
             if case .comma(_) = currentToken {
                 advance()
@@ -3386,7 +3402,7 @@ public class Parser {
                 }
                 try expect(.rightParen(loc))
                 // 函数类型参数元组中的 `名: 类型` 视为参数名，不落入 tuple labels（.function 用 elements）。
-                return .function(params: elements, returns: returns, captured: [], location: loc)
+                return .function(params: elements, returns: returns, captured: [], usingIndices: [], location: loc)
             } else if case .doubleArrow(_) = currentToken {
                 advance()
                 try expect(.leftParen(loc))
@@ -3401,7 +3417,7 @@ public class Parser {
                     }
                 }
                 try expect(.rightParen(loc))
-                return .function(params: elements, returns: returns, captured: [], location: loc)
+                return .function(params: elements, returns: returns, captured: [], usingIndices: [], location: loc)
             }
 
             return .tuple(labels: labels, elements: elements, location: loc)
@@ -3469,14 +3485,55 @@ public class Parser {
         return params
     }
 
-    private func parseParameter() throws -> Parameter {
+    /// ADR-001 `P3`（参数位收窄）：`using` 形参**只在有 Pini 调用方**的位置合法 ——
+    /// 默认实例由编译器在**调用点**插入，所以位置的价值全看「有没有调用点可插」。
+    /// 被宿主直接调用的位置（`main` / `|test` / `|foreign`）与无体签名（trait 抽象签名）都没有插入点
+    /// ⇒ 解析期**响亮拒绝**（此前它们能过 `check`：trait 签名彻底静默、`|test` 与 `main` 在运行期才崩）。
+    enum UsingParamPosition {
+        /// 顶层普通函数：Pini 调用方存在。
+        case freeFunction
+        /// 类型体内 / 扩展块方法（`|self` / `|own`）：同上。
+        case typeBodyMethod
+        /// 匿名函数：同上。
+        case anonymousFunction
+        /// `main`：由运行时直接调用。
+        case mainEntry
+        /// `|test` 块：由测试驱动直接调用。
+        case testBlock
+        /// `[名|foreign]` 块签名：按 C ABI 调用。
+        case foreignBlock
+        /// trait 抽象签名：无函数体。
+        case traitSignature
+
+        /// 拒绝理由（即诊断正文的载荷）；`nil` = 该位置允许。
+        var rejectionReason: String? {
+            switch self {
+            case .freeFunction, .typeBodyMethod, .anonymousFunction:
+                return nil
+            case .mainEntry:
+                return "`main` 由运行时直接调用，没有 Pini 调用方能在调用点插入默认实例"
+            case .testBlock:
+                return "`|test` 块由测试驱动直接调用，没有 Pini 调用方能在调用点插入默认实例"
+            case .foreignBlock:
+                return "`|foreign` 签名按 C ABI 调用，没有 Pini 调用方能在调用点插入默认实例"
+            case .traitSignature:
+                return "trait 抽象签名没有函数体，取用点无处插入"
+            }
+        }
+    }
+
+    private func parseParameter(position: UsingParamPosition) throws -> Parameter {
         let loc = currentLocation
 
         // ADR-001（取用参数 `using`，P1）：参数位前缀。
         // `using` 是关键字 ⇒ 只能出现在这里；别处（标识符位、`|` 修饰符位）一律不再接受它，
         // 这正是「入关键字表」的可观测后果。前缀只标记参数，**不在此层解析实参来源**。
+        // `P3`（参数位收窄）：前缀还要**位置**合法 —— 理由见 `UsingParamPosition`。
         var isUsing = false
         if checkKeyword(.using) {
+            if let reason = position.rejectionReason {
+                throw ParserError.usingParameterNotAllowed(reason: reason, location: loc)
+            }
             advance()
             isUsing = true
         }

@@ -75,7 +75,7 @@
 | `set(element:)` | 唯一元素集合 | 不透明句柄（`%bk_set*`） |
 | `lazyRef(element:)` | **一次求值**、共享（引用）拷贝语义的惰性引用 | 不透明句柄（`%bk_lazyref*`） |
 | `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 聚合值；**按标签序取成员** |
-| `function(params:returnType:)` | 函数是一等值 | fat pointer `{ptr, ptr}`；**首参恒为 env 是调用协议** |
+| `function(params:returnType:)`（＋**取用下标集合**） | 函数是一等值；取用下标集合标出「哪些参数位可取用」（ADR-001 §2.6）—— **由推断产生、用户写不出、不参与类型等价** | fat pointer `{ptr, ptr}`；**首参恒为 env 是调用协议**；⚠️ 取用位**不进**运行时表示 |
 | `pointer(element:)` | `*T` 原始指针（FFI） | 不透明 `ptr`；**load/store 按元素类型解码**（半语义，见 §2.29） |
 
 > **乙类纪律**（甲类裁决统一到 LLVM 侧 E 组）：上表「布局约定」字样者为**后端约定**，WASM 端可另择

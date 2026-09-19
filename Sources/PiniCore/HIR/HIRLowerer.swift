@@ -1643,6 +1643,25 @@ public enum HIRLowerer {
         return HIRType(from: annotation) ?? resolveAnnotationType(annotation, userTypes: userTypes)
     }
 
+    /// ADR-001 §2.6：把**推断出的函数类型标注**逐位解析成 HIR 函数类型。
+    ///
+    /// ⚠️ 不能直接用 `HIRType(from:)` —— 它只吃**内建简单名**，而匿名函数的参数类型
+    /// 可以是用户类型（给定块 `配置`、结构、对象…）。这与 `P2b` 在函数签名处遇到的是
+    /// 同一个坑，故复用 `resolveUsingParamType` 逐位解析。
+    /// 取用下标集合**原样透传** —— 它正是本批要让它活起来的那一位。
+    private static func resolvedFunctionType(
+        _ annotation: TypeAnnotation,
+        userTypes: [String: HIRType]
+    ) -> HIRType? {
+        guard case .function(let aParams, let aReturns, _, let usingIndices, _) = annotation else {
+            return HIRType(from: annotation)
+        }
+        let params = aParams.compactMap { resolveUsingParamType($0, userTypes: userTypes) }
+        guard params.count == aParams.count else { return nil }
+        let returns = aReturns.compactMap { resolveUsingParamType($0, userTypes: userTypes) }
+        return .function(params: params, returnType: returns.first, usingIndices: usingIndices)
+    }
+
     /// ADR-001 `P2b`：一个 `using` 形参的取用点。
     ///
     /// 只判一件事 —— **该类型有默认实例**，即它得是给定块（`[名|given]`）。
@@ -2794,7 +2813,7 @@ public enum HIRLowerer {
             // The type comes from the pre-pass signature table; emission goes
             // through an env-ignoring adapter fat pointer at the use site.
             if let signature = context.moduleSignatures[name] {
-                let type = HIRType.function(params: signature.paramTypes, returnType: signature.returnType)
+                let type = HIRType.function(params: signature.paramTypes, returnType: signature.returnType, usingIndices: signature.usingParamIndices)
                 return LoweredExpr(node: .functionValue(functionName: name, type: type), type: type)
             }
             throw unsupported("reference to undeclared variable '\(name)'", at: location)
@@ -3454,7 +3473,7 @@ public enum HIRLowerer {
                         "LazyRef expects exactly one argument (initializer closure)", at: location
                     )
                 }
-                guard case .function(_, let closureReturn) = loweredArgs[0].type,
+                guard case .function(_, let closureReturn, _) = loweredArgs[0].type,
                     let element = closureReturn
                 else {
                     throw unsupported(
@@ -3614,22 +3633,28 @@ public enum HIRLowerer {
             // typed parameter `f(x)` or closure variable `sq(6)`). Named
             // top-level functions resolve through the signature table below;
             // a bare `加倍(x)` call never reaches this branch.
+            // ADR-001 §2.6：**经变量**调用拿得到取用位（它随函数类型走）⇒
+            // 按两式判 arity，并在省略式下于取用位插入取用点。
             if let signature = context.variableTypes[functionName],
-                case .function(let paramTypes, let functionReturn) = signature
+                case .function(let paramTypes, let functionReturn, let variableUsing) = signature
             {
-                guard loweredArgs.count == paramTypes.count else {
-                    throw unsupported(
-                        "indirect call through '\(functionName)' expects \(paramTypes.count) arguments, got \(loweredArgs.count)",
-                        at: location
-                    )
-                }
+                let mapping = try usingParamMapping(
+                    callee: functionName, paramCount: paramTypes.count,
+                    usingParamIndices: variableUsing, argumentCount: loweredArgs.count, at: location
+                )
                 for (index, argument) in loweredArgs.enumerated() {
-                    try requireAssignable(argument.type, to: paramTypes[index], at: location)
+                    try requireAssignable(argument.type, to: paramTypes[mapping[index]], at: location)
                 }
+                let nodes = try fillUsingArguments(
+                    retypedArgs: loweredArgs, paramIndices: mapping, paramTypes: paramTypes,
+                    usingParamIndices: variableUsing,
+                    omittedForm: loweredArgs.count != paramTypes.count,
+                    callee: functionName, at: location, into: &context
+                )
                 return LoweredExpr(
                     node: .indirectCall(
                         callee: .load(name: functionName, type: signature),
-                        arguments: loweredArgs.map { $0.node },
+                        arguments: nodes,
                         returnType: functionReturn
                     ),
                     type: functionReturn ?? .i32
@@ -3637,26 +3662,32 @@ public enum HIRLowerer {
             }
             // Direct call on an immediate closure literal `sq(6)` where sq
             // was just created inline — `f(...)` with a funcLiteral callee.
+            // ADR-001 §2.6：内联字面量的取用位**就在声明里**（比经变量更直接）。
             if case .funcLiteral(let literalDecl, let literalLocation) = callee {
                 let loweredCallee = try lowerFuncLiteral(
                     decl: literalDecl, expected: nil, at: literalLocation, into: &context
                 )
-                guard case .function(let literalParams, let literalReturn) = loweredCallee.type else {
+                guard case .function(let literalParams, let literalReturn, _) = loweredCallee.type else {
                     throw unsupported("inline anonymous function resolved to a non-function type", at: location)
                 }
-                guard loweredArgs.count == literalParams.count else {
-                    throw unsupported(
-                        "anonymous function call expects \(literalParams.count) arguments, got \(loweredArgs.count)",
-                        at: location
-                    )
-                }
+                let literalUsing = usingParamIndices(literalDecl)
+                let mapping = try usingParamMapping(
+                    callee: "<anon>", paramCount: literalParams.count,
+                    usingParamIndices: literalUsing, argumentCount: loweredArgs.count, at: location
+                )
                 for (index, argument) in loweredArgs.enumerated() {
-                    try requireAssignable(argument.type, to: literalParams[index], at: location)
+                    try requireAssignable(argument.type, to: literalParams[mapping[index]], at: location)
                 }
+                let nodes = try fillUsingArguments(
+                    retypedArgs: loweredArgs, paramIndices: mapping, paramTypes: literalParams,
+                    usingParamIndices: literalUsing,
+                    omittedForm: loweredArgs.count != literalParams.count,
+                    callee: "<anon>", at: location, into: &context
+                )
                 return LoweredExpr(
                     node: .indirectCall(
                         callee: loweredCallee.node,
-                        arguments: loweredArgs.map { $0.node },
+                        arguments: nodes,
                         returnType: literalReturn
                     ),
                     type: literalReturn ?? .i32
@@ -3925,19 +3956,19 @@ public enum HIRLowerer {
         // annotation conversion as declared signatures.
         let inferredAnnotation = context.inferType(of: .funcLiteral(decl: decl, location: location))
         let functionType: HIRType
-        if let annotation = inferredAnnotation, let mapped = HIRType(from: annotation),
-            case .function = mapped
+        if let annotation = inferredAnnotation,
+            let mapped = resolvedFunctionType(annotation, userTypes: context.userTypes)
         {
             functionType = mapped
-        } else if case .function(let expectedParams, let expectedReturn) = expected {
-            functionType = .function(params: expectedParams, returnType: expectedReturn)
+        } else if case .function(let expectedParams, let expectedReturn, let expectedUsing) = expected {
+            functionType = .function(params: expectedParams, returnType: expectedReturn, usingIndices: expectedUsing)
         } else {
             throw unsupported(
                 "anonymous function type could not be resolved (annotate the parameter or the variable)",
                 at: location
             )
         }
-        guard case .function(let paramTypes, let returnType) = functionType else {
+        guard case .function(let paramTypes, let returnType, _) = functionType else {
             throw unsupported("anonymous function resolved to a non-function type", at: location)
         }
         guard decl.params.count == paramTypes.count else {
@@ -5581,7 +5612,7 @@ extension HIRType {
                 ? [String?](repeating: nil, count: fieldTypes.count)
                 : labels
             self = .tuple(labels: resolvedLabels, fieldTypes: fieldTypes)
-        case .function(let params, let returns, _, _):
+        case .function(let params, let returns, _, let usingIndices, _):
             // `(I32,) -> (I32,)` (G6): the fat-pointer ABI is uniform, the
             // shapes ride along for parity checks. A single return is the
             // slice surface; zero returns = void.
@@ -5596,7 +5627,7 @@ extension HIRType {
                 guard let resolved = HIRType(from: firstReturn) else { return nil }
                 returnType = resolved
             }
-            self = .function(params: paramTypes, returnType: returnType)
+            self = .function(params: paramTypes, returnType: returnType, usingIndices: usingIndices)
         default:
             return nil
         }

@@ -117,6 +117,7 @@ public struct DiagnosticPublisher {
         case .missingLabel(let loc): return loc
         case .unexpectedEOF(let loc): return loc
         case .methodDefaultAssumptionTerminated(let loc): return loc
+        case .usingParameterNotAllowed(_, let loc): return loc
         }
     }
 
@@ -154,6 +155,7 @@ public struct DiagnosticPublisher {
         case .inaccessibleField(_, _, let loc): return loc
         case .sharedReferenceAcrossTasks(_, _, _, let loc): return loc
         case .enumCaseArgumentLabel(_, _, let loc): return loc
+        case .givenBlockTypeInValuePosition(_, let loc): return loc
         }
     }
 }
