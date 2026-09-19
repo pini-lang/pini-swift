@@ -4,7 +4,7 @@ import Foundation
 public enum TopLevelDecl: Equatable {
     case structDecl(StructDecl)
     case objectDecl(ObjectDecl)
-    /// AD-001（给定块与取用参数）：`[名称|given]` 块——带字段初值的具名复合类型，
+    /// ADR-001（给定块与取用参数）：`[名称|given]` 块——带字段初值的具名复合类型，
     /// 其默认实例可被 `using` 参数隐式取用。`given` 不入关键字表（走方括号声明总线的修饰符白名单）。
     case givenDecl(GivenDecl)
     case enumDecl(EnumDecl)

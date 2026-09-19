@@ -117,7 +117,7 @@ public enum Desugar {
             location: o.location)
     }
 
-    /// AD-001：给定块体与对象体同构 ⇒ 同规去糖（字段初值里的糖也要降）。
+    /// ADR-001：给定块体与对象体同构 ⇒ 同规去糖（字段初值里的糖也要降）。
     public static func desugar(_ g: GivenDecl) -> GivenDecl {
         return GivenDecl(
             name: g.name,

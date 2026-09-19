@@ -516,7 +516,7 @@ public class Parser {
                 advance()
                 isEnum = true
             } else if case .identifier("given", _) = currentToken {
-                // AD-001（给定块）：`[名称|given]`。`given` **不入关键字表**——它只出现在
+                // ADR-001（给定块）：`[名称|given]`。`given` **不入关键字表**——它只出现在
                 // `|` 右侧的修饰符位，与 `|foreign` / `|import` / `|export` 同走标识符白名单
                 // 路径（判据：全仓语料零处把 `given` 用作标识符，且这些修饰符都不是关键字）。
                 advance()
@@ -955,13 +955,13 @@ public class Parser {
         return try parseObjectDeclContent(name: name, genericParams: genericParams, location: loc)
     }
 
-    /// 解析类型体内容（`{名称}` 对象糖 / `[名称|object]` / AD-001 `[名称|given]` 三者共用）。
+    /// 解析类型体内容（`{名称}` 对象糖 / `[名称|object]` / ADR-001 `[名称|given]` 三者共用）。
     ///
     /// 单源化理由：给定块体与对象体**同规**（只含字段，方法移至扩展块，`实现: T` 解析期摘出）
     /// ⇒ 不复写第二份语义，只把「错误提示里指哪个扩展块」参数化。
     ///
     /// - Parameter extensionBracket: 错误提示里给出的「方法该移到哪个扩展块」的括号形态。
-    ///   缺省为对象扩展 `{{名称}}`；给定块传 `[[名称]]`（通用扩展形，AD-001）。
+    ///   缺省为对象扩展 `{{名称}}`；给定块传 `[[名称]]`（通用扩展形，ADR-001）。
     private func parseObjectDeclContent(
         name: String,
         genericParams: [GenericParam],
@@ -1011,7 +1011,7 @@ public class Parser {
         return ObjectDecl(name: name, genericParams: genericParams, fields: remainingFields, methods: [], traits: traits, location: location)
     }
 
-    // MARK: - 给定块解析（AD-001， given-decl）
+    // MARK: - 给定块解析（ADR-001， given-decl）
 
     /// 解析给定块内容（`[名称|given]` 的 `]` 已被消费）。
     ///
@@ -3472,6 +3472,15 @@ public class Parser {
     private func parseParameter() throws -> Parameter {
         let loc = currentLocation
 
+        // ADR-001（取用参数 `using`，P1）：参数位前缀。
+        // `using` 是关键字 ⇒ 只能出现在这里；别处（标识符位、`|` 修饰符位）一律不再接受它，
+        // 这正是「入关键字表」的可观测后果。前缀只标记参数，**不在此层解析实参来源**。
+        var isUsing = false
+        if checkKeyword(.using) {
+            advance()
+            isUsing = true
+        }
+
         // 参数名
         let name = try parseIdentifier()
 
@@ -3486,7 +3495,7 @@ public class Parser {
         // 注意：参数默认值在参数元组中使用 = 表达式 形式
         // 但这里暂时不处理
 
-        return Parameter(name: name, typeAnnotation: typeAnnotation)
+        return Parameter(name: name, typeAnnotation: typeAnnotation, isUsing: isUsing)
     }
 
     // MARK: - 辅助

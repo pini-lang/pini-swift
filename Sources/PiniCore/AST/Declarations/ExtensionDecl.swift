@@ -25,7 +25,7 @@ public struct ExtensionDecl: Equatable, ASTNode {
     public enum Kind: Equatable {
         case structExt
         case objectExt
-        /// 方括号 `[[X]]` —— 通用扩展（方括号本身是通用形，见 `给定块` AD-001）。
+        /// 方括号 `[[X]]` —— 通用扩展（方括号本身是通用形，见 `给定块` ADR-001）。
         case bracketExt
         case traitExt
     }

@@ -468,7 +468,7 @@ func describeStructDecl(_ structDecl: StructDecl, indent: String = "") -> String
     return String(result.dropLast())
 }
 
-/// AD-001：给定块的 AST dump（`pini parse` 面）。与对象同构 ⇒ 同形渲染。
+/// ADR-001：给定块的 AST dump（`pini parse` 面）。与对象同构 ⇒ 同形渲染。
 func describeGivenDecl(_ givenDecl: GivenDecl, indent: String = "") -> String {
     var result = "\(indent)given \(givenDecl.name)"
 

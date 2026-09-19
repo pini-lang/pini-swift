@@ -37,9 +37,16 @@ public struct HIRFunction: Equatable {
     public struct HIRParam: Equatable {
         public let name: String
         public let type: HIRType
-        public init(name: String, type: HIRType) {
+        /// ADR-001（取用参数 `using`，P1）：AST 面 `Parameter.isUsing` 的随行者。
+        ///
+        /// 与 `isAsync` / `isTest` / `sourceFile` 同族 —— **AST 面上有的事实，HIR 面必须随行**，
+        /// 否则降载是首个丢失它的地方，而后端再也问不出「这个参数是谁提供的」。
+        /// 本批只做**携带**：物化与强制规则属后续批次，故它今天没有消费点。
+        public let isUsing: Bool
+        public init(name: String, type: HIRType, isUsing: Bool = false) {
             self.name = name
             self.type = type
+            self.isUsing = isUsing
         }
     }
 
