@@ -22,9 +22,19 @@ import Testing
 /// 加一个合成的初始化函数，解释器侧一张表加记忆化。中间态的三处痕迹随之作废并**逐条改判**
 /// （拒绝 → 类型面；归并计数文案 → 方法表本身）。
 ///
-/// **仍然不做的**：强制规则（「值位引用即须声明 `using`」）属 `P3`；环检测只留**余量**
-/// （`HIRModule.givenReferences` 留痕，当期不产诊断）；跨模块（独立编译单元）在本编译器里
-/// **没有通路** ⇒ 「跨文件」= 同包同模块（实测：整包一个 `HIRModule`、一个 IR 模块）。
+/// **`P3` 的实质交付（两半 + 一条派生）**：① **取用位进入函数类型** —— 匿名函数赋给变量后
+/// 调用仍可省略实参；经参数 / 字段传递后**失去**该能力（裁定：`using` 采用**声明位与调用位
+/// 配对**）。② **诊断 `E4-015`** —— 给定块类型名出现在**值位**时响亮拒绝。⚠️ 形态变了：
+/// ADR 原写「值位引用即须声明 `using`」，但该**前提被探针否证**（类型名在值位被判「未声明的
+/// 变量」，`object` 类型的**对照组报同一条错** ⇒ 依赖**本来就不可隐藏**，没有可强制的对象）
+/// ⇒ 用户裁定**降级为诊断改进**。③ **参数位收窄（`E2-025`）** —— `using` 形参**只在有 Pini
+/// 调用方**的位置合法：被宿主直接调用的位置（`main|func` / `|test` / `|foreign`）与无体签名
+/// （trait 抽象签名）在**解析期**拒绝。此前那几处能过静态检查：trait 签名**彻底静默**、
+/// `|test` 与 `main` 要到运行期才崩。
+///
+/// **仍然不做的**：环检测只留**余量**（`HIRModule.givenReferences` 留痕，当期不产诊断；
+/// 码位 `E6-008` 已预留）；跨模块（独立编译单元）在本编译器里**没有通路**
+/// ⇒ 「跨文件」= 同包同模块（实测：整包一个 `HIRModule`、一个 IR 模块）。
 ///
 /// **⚠️ 两臂覆盖说明**：本件的运行面判据走 `HIRExecutor`（解释器臂）；**发射臂**
 /// （槽位 / 合成初始化函数 / 运行时取用符号）不在本件覆盖内，由命令行探针两臂对照取证。
@@ -691,6 +701,329 @@ struct GivenUsingTests {
         #expect(
             failed?.code != "E6-006",
             "泛型模板目标不得被判为「无法归并」，实际：\(failed?.message ?? "无诊断")"
+        )
+    }
+
+    // MARK: - `P3` 诊断 `E4-015`：给定块类型名出现在值位
+
+    @Test("给定块类型名出现在值位 ⇒ 报「须经取用参数取得」，而不是漏到 IR 层的「未声明的变量」")
+    func givenBlockTypeNameInValuePositionIsDiagnosed() throws {
+        /// 意图：默认实例**只能**经 `using` 取用 —— 这不是新规则，是语言的既有性质
+        /// （类型名在值位被判「未声明的变量」，且 `object` 类型的**对照组报同一条错**）。
+        /// ⇒ 「依赖不得隐藏」本来就成立，没有可强制的对象；能交付的是一条**可行动的诊断**：
+        /// 告诉用户「这里该用 `using 名: 类型` 取默认实例」，而不是让他一路撞到 IR 层。
+        /// 三条语料覆盖三种值位：作**实参** · 作**接收者** · 声明了 `using` 却仍写类型名
+        /// （最后一条正是本诊断的价值所在 —— 给了取用参数却没用它）。
+        let asArgument = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        取|func(x: I32,) -> (I32,):
+            return x
+
+        main|func() -> ():
+            print(取(配置))
+            return
+        """#
+        let asReceiver = #"""
+        [应用服务|given]
+            队列: I32 = 7
+
+        [[应用服务]]
+            提交|self() -> (I32,):
+                return self.队列
+
+        处理|func() -> (I32,):
+            return 应用服务.提交()
+
+        main|func() -> ():
+            print(处理())
+            return
+        """#
+        let declaredButUnused = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        取名|func(using 配: 配置,) -> (String,):
+            return 配置.名称
+
+        main|func() -> ():
+            print(取名())
+            return
+        """#
+
+        for (label, typeName, source) in [
+            ("类型名作实参", "配置", asArgument),
+            ("类型名作接收者", "应用服务", asReceiver),
+            ("声明了 using 却仍写类型名", "配置", declaredButUnused),
+        ] {
+            let failed = failure { _ = try typeChecked(source) }
+            #expect(failed?.code == "E4-015", "\(label)：实际判定码 \(failed?.code ?? "无（被接受了）")")
+            // ⚠️ 可断言面**按错误族分**（与 TOML 槽名同源的一条规律）：本 case 带**载荷**
+            // （`typeName`），而本件 helper 的 `message` 取自 `String(describing: error)`
+            // —— 是**错误的 Swift 描述**，不是 TOML 渲染后的用户文案。⇒ 这里能钉的是
+            // 「载荷把类型名带上了」；渲染文案（`Diagnostics.{zh,en}.toml`）是另一个契约面，
+            // 由命令行探针取证，不在本件射程内。（自由文本 case 那边才可直接断言文案。）
+            #expect(
+                failed?.message.contains(typeName) == true,
+                "\(label)：诊断载荷应带上出问题的类型名，实际：\(failed?.message ?? "")"
+            )
+        }
+    }
+
+    @Test("新诊断不误伤合法用法：显式构造 / 同名遮蔽 / 取用正路 / object 类型名对照")
+    func givenBlockTypeNameDiagnosisLeavesLegalUsesAlone() throws {
+        /// 意图：`E4-015` 有两条**承重**的豁免，各自都在这里钉住 ——
+        /// ① `配置()` 的 callee 位是**显式构造**（合法），不是值位引用；
+        /// ② 类型名登记在**字段表**（`defineStruct`）而非变量表，故 `lookupVariable` 返回 nil
+        /// 恰是「未被值遮蔽」的判据 ⇒ 同名局部变量**合法遮蔽**类型名时不得误报。
+        /// ⚠️ **对照**：`object` 类型名出现在同一值位**不报**本法码（它在检查器面不报，
+        /// 要到 IR 层才报 `E6-004`）⇒ 证明本诊断是**给定块专属**，不是「类型名当值」的通用拒绝。
+        let explicitConstruction = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        用标注|func() -> (String,):
+            let c: 配置 = 配置()
+            return c.名称
+
+        main|func() -> ():
+            print(用标注())
+            return
+        """#
+        let shadowedByLocal = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        取|func(x: String,) -> (String,):
+            return x
+
+        main|func() -> ():
+            let 配置: String = "本地"
+            print(取(配置))
+            return
+        """#
+        let objectControl = #"""
+        [服务|object]
+            值: I32 = 5
+
+        取|func(x: I32,) -> (I32,):
+            return x
+
+        main|func() -> ():
+            print(取(服务))
+            return
+        """#
+
+        for (label, source) in [
+            ("显式构造", explicitConstruction), ("同名局部变量遮蔽", shadowedByLocal),
+            ("object 类型名（对照）", objectControl),
+        ] {
+            let failed = failure { _ = try typeChecked(source) }
+            #expect(
+                failed?.code != "E4-015",
+                "\(label) 不该触发给定块专属诊断，实际判定码 \(failed?.code ?? "无")"
+            )
+        }
+
+        // 取用正路：不但不报，还要真的跑出默认实例的字段值
+        let viaUsing = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        取名|func(using 配: 配置,) -> (String,):
+            return 配.名称
+
+        main|func() -> ():
+            print(取名())
+            return
+        """#
+        #expect(try runOutput(viaUsing) == ["默认"], "取用正路应取到默认实例")
+    }
+
+    // MARK: - `P3` 参数位收窄 `E2-025`：`using` 只在有 Pini 调用方处合法
+
+    @Test("`using` 形参在无体签名上被拒 —— trait 抽象签名的三种书写形态")
+    func usingIsRejectedInBodylessTraitSignatures() throws {
+        /// 意图：默认实例由编译器在**调用点**插入 ⇒ 无体签名没有调用点可插，`using` 无从物化。
+        /// ⇒ 与其静默忽略（此前 trait 抽象签名**彻底无诊断**，是最坏的一种），不如解析期拒绝。
+        /// 三种书写形态**各有落点**（裸 `名|self(...)` · 带缩进的裸形态 · 花括号 `{名}(...)`），
+        /// 故逐条钉住 —— 只测一种会漏掉另两种。
+        let bareWithModifier = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        <可显示>
+        描述|self(using 配: 配置,) -> (String,)
+        """#
+        let barePlain = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        <可描述>
+            描述(using 配: 配置,) -> (String,):
+        """#
+        let braceForm = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        <可描述>
+            {描述}(using 配: 配置,) -> (String,):
+        """#
+        // ⚠️ trait **默认方法**（带体）不属用户裁定的四处，但它今天**同样静默失效**
+        // （基线 `rc=0`），与本条同因 ⇒ 一并拒绝并在此登记。若日后裁为「只拒无体」，此条须同步改。
+        let defaultMethod = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        <可显示>
+        描述|self(using 配: 配置,) -> (String,):
+            return 配.名称
+        """#
+
+        for (label, source) in [
+            ("裸形态（带 |self）", bareWithModifier), ("裸形态（带缩进冒号）", barePlain),
+            ("花括号形态", braceForm), ("trait 默认方法（带体）", defaultMethod),
+        ] {
+            let failed = failure { _ = try decls(source) }
+            #expect(failed?.code == "E2-025", "\(label)：实际判定码 \(failed?.code ?? "无（被接受了）")")
+        }
+    }
+
+    @Test("`using` 形参在被宿主直接调用的位置被拒 —— main / |test / |foreign")
+    func usingIsRejectedWhereTheHostCallsDirectly() throws {
+        /// 意图：这三个位置的调用方**不是 Pini 代码**（`main` 由运行时调、`|test` 由测试驱动器调、
+        /// `|foreign` 由 C 侧调）⇒ 没人能替它填 `using` 实参，能力无处兑现。
+        /// ⚠️ `main` 与 `|test` **共用同一个落点**（顶层裸函数是三态合一，只能按名字与修饰符分辨）
+        /// ⇒ 撤掉该细分会让这两条同时回绿，故两条并测。
+        /// ⚠️ `|foreign` 的语料**必须用标量参数**：给定块类型参数那一版另有一条**无关**的
+        /// C 兼容性诊断（`E4-001`），会让「起点」带上一处无关的红，读数就成了假功。
+        let mainEntry = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        main|func(using 配: 配置,) -> ():
+            print("ok")
+            return
+        """#
+        let testBlock = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        注入测试|test(using 配: 配置,) -> ():
+            print(配.名称)
+            return
+        """#
+        let foreignBlock = #"""
+        [libc|foreign]
+            取数(using 配: I64, x: I64,) -> (I64,)
+        """#
+
+        for (label, source) in [
+            ("main|func", mainEntry), ("|test 块", testBlock), ("|foreign 块", foreignBlock),
+        ] {
+            let failed = failure { _ = try decls(source) }
+            #expect(failed?.code == "E2-025", "\(label)：实际判定码 \(failed?.code ?? "无（被接受了）")")
+        }
+    }
+
+    @Test("收窄不扩大改动面：有 Pini 调用方的位置照旧合法，原形态一个不动")
+    func usingParameterSurvivesWhereACallerExists() throws {
+        /// 意图：收窄若把合法位也拒了，就是把今日可用的代码打红 ⇒ 这一半比拒收那一半更该盯。
+        /// 三个合法位各有取值：顶层普通函数 · 类型扩展方法 · 匿名函数（`P3` 前半的交付）。
+        /// ⚠️ 前两个**真的跑**（断言输出），不止断言「没抛」—— 拒绝面与接受面要能区分。
+        let topLevel = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        取名|func(using 配: 配置,) -> (String,):
+            return 配.名称
+
+        main|func() -> ():
+            print(取名())
+            return
+        """#
+        let extensionMethod = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        [服务|object]
+            值: I32 = 5
+
+        [[服务]]
+            取名|self(using 配: 配置,) -> (String,):
+                return 配.名称
+
+        main|func() -> ():
+            let s: 服务 = 服务()
+            print(s.取名())
+            return
+        """#
+        let anonymous = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        main|func() -> ():
+            var f = func (using 配: 配置,) -> (String,):
+                return 配.名称
+            print(f())
+            return
+        """#
+
+        #expect(try runOutput(topLevel) == ["默认"], "顶层函数的取用参数应照旧生效")
+        #expect(try runOutput(extensionMethod) == ["默认"], "扩展方法的取用参数应照旧生效")
+        #expect(try runOutput(anonymous) == ["默认"], "匿名函数的取用参数应照旧生效（P3 前半交付）")
+    }
+
+    @Test("收窄不扩大改动面：四处不带 `using` 的原形态仍被接受，标注位仍报 `E2-008`")
+    func shapesWithoutUsingAreStillAccepted() throws {
+        /// 意图：本批只收窄 **`using` 前缀**的合法性。同四个构造的**原形态**（不带 `using`）
+        /// 一个字都没动，必须照旧被接受 —— 否则收窄就变成了对 `main` / trait / FFI 的改动。
+        /// ⚠️ 标注位写 `using` 的判定码**不变**（仍是既有的 `E2-008`）：本批没有碰那条路。
+        let traitPlain = #"""
+        <可显示>
+        描述|self() -> (String,)
+
+        (盒)
+        值: I32 = 0
+        """#
+        let mainPlain = #"""
+        main|func() -> ():
+            print("ok")
+            return
+        """#
+        let foreignPlain = #"""
+        [libc|foreign]
+        malloc(大小: I64,) -> (*I8,)
+        """#
+        let testPlain = #"""
+        注入测试|test() -> ():
+            print("ok")
+            return
+        """#
+        let annotationPosition = #"""
+        [配置|given]
+            名称: String = "默认"
+
+        [服务|object]
+            处理: (using 配置,) -> (String,)
+
+        main|func() -> ():
+            print("ok")
+            return
+        """#
+
+        for (label, source) in [
+            ("trait 原形态", traitPlain), ("main 原形态", mainPlain),
+            ("|foreign 原形态", foreignPlain), ("|test 原形态", testPlain),
+        ] {
+            let failed = failure { _ = try decls(source) }
+            #expect(failed?.code != "E2-025", "\(label) 不该被收窄波及，实际：\(failed?.code ?? "无")")
+        }
+        let annotationFailed = failure { _ = try decls(annotationPosition) }
+        #expect(
+            annotationFailed?.code == "E2-008",
+            "标注位的判定码应保持既有形态，实际：\(annotationFailed?.code ?? "无（被接受了）")"
         )
     }
 }
