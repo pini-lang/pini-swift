@@ -33,6 +33,11 @@ public struct HIRFunction: Equatable {
     /// "which file was this from". `pini test <path>` narrows by file, so the
     /// merged module has to keep it or the narrowing cannot be honoured.
     public let sourceFile: String
+    /// ADR-001（`P2b`）：本函数的**物化依赖** —— 函数体里出现的默认实例取用所指向的给定块类型。
+    ///
+    /// 由函数体降载时逐点收集（`FunctionContext.givenReferenceNames`），在构造 `HIRFunction`
+    /// 时取出。留痕的用途是后置的环检测（见 `HIRModule.givenReferences`）；本批一条诊断都不产。
+    public let givenReferenceNames: Set<String>
 
     public struct HIRParam: Equatable {
         public let name: String
@@ -52,7 +57,8 @@ public struct HIRFunction: Equatable {
 
     public init(
         name: String, params: [HIRParam], returnType: HIRType?, body: HIRBlock,
-        isAsync: Bool = false, isTest: Bool = false, sourceFile: String = ""
+        isAsync: Bool = false, isTest: Bool = false, sourceFile: String = "",
+        givenReferenceNames: Set<String> = []
     ) {
         self.name = name
         self.params = params
@@ -60,6 +66,7 @@ public struct HIRFunction: Equatable {
         self.body = body
         self.isAsync = isAsync
         self.isTest = isTest
+        self.givenReferenceNames = givenReferenceNames
         self.sourceFile = sourceFile
     }
 }
@@ -138,14 +145,26 @@ public struct HIRModule: Equatable {
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [HIRForeignBlock]
 
+    /// ADR-001（`P2b` 交付，用户第 5 条裁定的「余量」第 1 条）：**谁引用了哪个给定块**。
+    ///
+    /// 键 = 引用方（函数名 / 给定块名 / `类型.方法`），值 = 它引用的给定块类型名（升序去重）。
+    /// 引用面 = 函数体里出现的默认实例取用点 + 给定块字段初值里的引用 —— 正是**物化依赖**
+    /// 的两条边，环只会从这两条边里长出来。
+    ///
+    /// WHY 现在就要有：环检测本体是后置的（用户裁定「降为警告级服务」），但**留痕**当期就要做对。
+    /// 有了这张表，后置的检测是**加一条遍历**；没有它，就得回头重扫一遍降载结果。
+    /// ⚠️ 这是**可观测面**而非诊断：当期一条诊断都不产（ADR §7 第 4 项）。
+    public let givenReferences: [String: [String]]
+
     public init(
         functions: [HIRFunction], types: [HIRTypeDecl] = [], enums: [HIREnumDecl] = [],
-        foreigns: [HIRForeignBlock] = []
+        foreigns: [HIRForeignBlock] = [], givenReferences: [String: [String]] = [:]
     ) {
         self.functions = functions
         self.types = types
         self.enums = enums
         self.foreigns = foreigns
+        self.givenReferences = givenReferences
     }
 
     public func function(named name: String) -> HIRFunction? {

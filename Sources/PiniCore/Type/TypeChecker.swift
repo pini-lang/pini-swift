@@ -968,6 +968,15 @@ public final class TypeChecker {
         }
     }
 
+    /// ADR-001：`using` 形参的位置集合。
+    ///
+    /// 与 `HIRLowererSignatureInfo` 的同名字段是**同一口径的两份**（检查器一份、降载器一份）：
+    /// 两处都按「实参个数 == 形参个数 − using 个数」判省略式调用，且都把实参按非 using 形参逐位对上
+    /// —— 一份判合法、一份真插入实参，口径不同步就会在 check 通过之后于降载层报错。
+    private static func usingParamIndices(of params: [Parameter]) -> Set<Int> {
+        Set(params.enumerated().filter { $0.element.isUsing }.map { $0.offset })
+    }
+
     private func registerTopLevelDeclSignature(_ decl: TopLevelDecl) {
         let loc = SourceLocation(line: 0, column: 0, fileName: "")
         switch decl {
@@ -992,7 +1001,8 @@ public final class TypeChecker {
             } else {
                 typeEnv.defineFunction(
                     name: f.name, params: paramTypes, returns: returnTypes,
-                    returnLabels: TypeChecker.signatureReturnLabels(of: f)
+                    returnLabels: TypeChecker.signatureReturnLabels(of: f),
+                    usingParamIndices: TypeChecker.usingParamIndices(of: f.params)
                 )
             }
         case .structDecl(let s):
@@ -1019,7 +1029,8 @@ public final class TypeChecker {
                     let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
                     typeEnv.defineMethod(
                         typeName: s.name, methodName: method.name, params: paramTypes,
-                        returns: method.returnTypes, returnLabels: method.returnLabels
+                        returns: method.returnTypes, returnLabels: method.returnLabels,
+                        usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
                     )
                     if method.isAsync { asyncMethodParamNames["\(s.name).\(method.name)"] = method.params.map { $0.name } }
                 }
@@ -1050,7 +1061,8 @@ public final class TypeChecker {
                     let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
                     typeEnv.defineMethod(
                         typeName: o.name, methodName: method.name, params: paramTypes,
-                        returns: method.returnTypes, returnLabels: method.returnLabels
+                        returns: method.returnTypes, returnLabels: method.returnLabels,
+                        usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
                     )
                     if method.isAsync { asyncMethodParamNames["\(o.name).\(method.name)"] = method.params.map { $0.name } }
                 }
@@ -1083,7 +1095,8 @@ public final class TypeChecker {
                     let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
                     typeEnv.defineMethod(
                         typeName: g.name, methodName: method.name, params: paramTypes,
-                        returns: method.returnTypes, returnLabels: method.returnLabels
+                        returns: method.returnTypes, returnLabels: method.returnLabels,
+                        usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
                     )
                     if method.isAsync { asyncMethodParamNames["\(g.name).\(method.name)"] = method.params.map { $0.name } }
                 }
@@ -1247,7 +1260,8 @@ public final class TypeChecker {
             let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: method.location) }
             typeEnv.defineMethod(
                 typeName: x.targetType, methodName: method.name, params: paramTypes,
-                returns: method.returnTypes, returnLabels: method.returnLabels
+                returns: method.returnTypes, returnLabels: method.returnLabels,
+                usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
             )
             if method.isAsync { asyncMethodParamNames["\(x.targetType).\(method.name)"] = method.params.map { $0.name } }
         }
@@ -2231,17 +2245,23 @@ public final class TypeChecker {
                 }
             }
         }
-        if !sig.isVariadic && arguments.count != sig.params.count {
+        // ADR-001：`using` 形参的实参可由编译器插入 ⇒ 除「全显式」外「省略式」也合法
+        // （实参个数 = 形参个数 − using 个数）。映射助手把两种形态统一成「形参位置序列」，
+        // 下面两处消费（实参类型比对 / 任务隔离）都按它取形参 —— 省略式下实参下标与形参位置
+        // 不再重合，按下标直接索引会取到**错的形参类型**。
+        let paramIndices = sig.argumentToParamIndices(argumentCount: arguments.count)
+        if !sig.isVariadic && paramIndices == nil {
             try report(
                 TypeError.argumentCountMismatch(
-                    expected: sig.params.count,
+                    expected: sig.params.count - sig.usingParamIndices.count,
                     got: arguments.count,
                     location: location
                 ))
         }
+        let effectiveIndices = paramIndices ?? Array(sig.params.indices)
         for (index, arg) in arguments.enumerated() {
-            guard index < sig.params.count else { break }
-            let paramType = sig.params[index]
+            guard index < effectiveIndices.count else { break }
+            let paramType = sig.params[effectiveIndices[index]]
             if case .simple(let pname, _) = paramType, (pname == "_" || pname == "Any") { continue }
             guard let argType = inference.infer(expression: arg.expression, expected: paramType) else { continue }
             try noteBareCaseOutcome(arg.expression, actual: argType, location: location)
@@ -2265,10 +2285,14 @@ public final class TypeChecker {
         signature sig: TypeEnvironment.FunctionSignature,
         location: SourceLocation
     ) throws {
+        // ADR-001：与 `validateCallArguments` 用**同一个**映射 —— 否则省略式调用下
+        // 「越界的是哪个形参」会指错，隔离判定随之失真。
+        let effectiveIndices = sig.argumentToParamIndices(argumentCount: arguments.count)
+            ?? Array(sig.params.indices)
         for (index, arg) in arguments.enumerated() {
             var candidate: TypeAnnotation? = nil
-            if index < sig.params.count {
-                let declared = sig.params[index]
+            if index < effectiveIndices.count {
+                let declared = sig.params[effectiveIndices[index]]
                 if case .simple(let pname, _) = declared, pname == "_" || pname == "Any" {
                     candidate = inference.infer(expression: arg.expression)
                 } else {

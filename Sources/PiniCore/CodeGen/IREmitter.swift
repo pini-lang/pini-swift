@@ -139,6 +139,18 @@ public final class IREmitter {
     private var lazyrefWrappers: [String] = []
     private var lazyrefWrapperNames: Set<String> = []
 
+    /// ADR-001 `P2b`：默认实例的**存放位**（程序级槽位，每个给定块类型一个）。
+    ///
+    /// 定义处 = 声明所在文件（发射层按类型名发一次），同包内其它文件经**同一个** IR 模块
+    /// 引用它 ⇒ 不需要 `external`：实测整包降载为**一个** `HIRModule`、发射为**一个** IR 模块
+    /// （计划件原写的「跨文件 `external`」在实测下不成立，已订正）。
+    private var givenSlotDefs: [String] = []
+    private var givenSlotNames: Set<String> = []
+    /// ADR-001 `P2b`：合成的**初始化函数** `ptr @__given_init_<T>(ptr %out)` —— 把该类型的
+    /// 字段初值写进运行时给的缓冲。与 LazyRef 那条 wrapper 同理：一次合成、按类型去重。
+    private var givenInitializerDefs: [String] = []
+    private var givenInitializerNames: Set<String> = []
+
     /// Program base for compile-time IO path baking — the new-pipeline
     /// counterpart of the legacy generator's knob of the same name, which
     /// fed its own IO emitter. An unprefixed relative path *literal* is
@@ -186,6 +198,9 @@ public final class IREmitter {
         header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
         header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
         header += "declare void @bk_panic(ptr) noreturn\n"
+        // ADR-001 `P2b`：默认实例取用（`slot` = 存放位地址，`init_fn` = 合成初始化函数，
+        // `bytes` = 聚合体大小）。与 `bk_array_*` 同规：无条件声明，未用到时是无害的前向声明。
+        header += "declare ptr @bk_given_get(ptr, ptr, i64)\n"
         // Dict / set family (G5): opaque handles + runtime C ABI declares.
         header += "%bk_dict = type { ptr }\n"
         header += "%bk_set = type { ptr }\n"
@@ -245,6 +260,10 @@ public final class IREmitter {
         usesReadLine = false
         lazyrefWrappers = []
         lazyrefWrapperNames = []
+        givenSlotDefs = []
+        givenSlotNames = []
+        givenInitializerDefs = []
+        givenInitializerNames = []
         moduleTypes = module.types
         moduleEnums = module.enums
         // G6: record every top-level function's ABI by mangled IR name so
@@ -317,6 +336,10 @@ public final class IREmitter {
             tail += "declare ptr @fgets(ptr, i32, ptr)\n"
             tail += "@__stdinp = external global ptr\n"
         }
+        // ADR-001 `P2b`：默认实例的存放位。模块级全局、初值 null ⇒ 首调由运行时建盒。
+        for def in givenSlotDefs {
+            tail += def
+        }
         // G6: env struct type declarations must precede their uses — the
         // creation-point GEPs live in the function bodies, and lli requires
         // a sized base element at the GEP (the legacy emitter also placed
@@ -329,6 +352,9 @@ public final class IREmitter {
             closureTail += def
         }
         for def in lazyrefWrappers {
+            closureTail += def
+        }
+        for def in givenInitializerDefs {
             closureTail += def
         }
         var envHeader = ""
@@ -1700,10 +1726,9 @@ public final class IREmitter {
         case .join:
             fatalError("IREmitter: join has no emission — the lowerer has no rule for it")
 
-        case .givenInstance:
-            // ADR-001 `P2a`：节点面已落、物化面属 `P2b`。与 `.join` 同一形态 ——
-            // 无降载规则 ⇒ 不可达；真到了这里说明降载与发射脱节，**必须响**而不是静默。
-            fatalError("IREmitter: givenInstance has no emission — the lowerer has no rule for it")
+        case .givenInstance(let type):
+            // ADR-001 `P2b`：物化面已落 —— 存放位 + 合成初始化函数 + 运行时取用。
+            return emitGivenInstance(type: type)
         }
     }
 
@@ -2097,6 +2122,126 @@ public final class IREmitter {
         }
         let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
         return (aggregate, decl.fields[index].type, index + (isObject ? 1 : 0))
+    }
+
+    /// ADR-001 `P2b`：默认实例的取用点。
+    ///
+    /// 形状 = `bk_given_get(槽位, 初始化函数, 字节数)` → 盒指针，**再 `memcpy` 一份到本地**。
+    ///
+    /// WHY 拷贝（用户 2026-09-19 裁定）：`using` 取的是**实参的副本**，与函数传参一致。
+    /// 盒是程序级唯一的，但交给调用点的是**值** ⇒ 写实例自身字段等于改参数（不留痕），
+    /// 只有经它持有的**引用字段**往下写才对所有取用点可见。解释器那一臂天然同形
+    /// （那边 `Value` 本就是值类型），故两臂语义一致 —— 这是本批刻意维持的对等。
+    ///
+    /// 字节数取 `ptrtoint(gep(T, null, 1))`：本仓无 `sizeof` 先例，而这个常量式只依赖
+    /// 聚合体定义，是 LLVM 取类型大小的标准写法（不引入新声明、不依赖目标数据布局查询）。
+    private func emitGivenInstance(type: HIRType) -> IRValue {
+        guard case .nominal(let name, _) = type,
+            let aggregate = type.nominalAggregateSpelling,
+            moduleTypes.contains(where: { $0.name == name })
+        else {
+            fatalError("IREmitter: givenInstance of unknown nominal type (HIRLowerer guarantees)")
+        }
+        let slot = ensureGivenSlot(type: type)
+        let initializer = ensureGivenInitializer(type: type)
+        let sizeTemp = builder.freshTemp()
+        bodyIR +=
+            " \(sizeTemp) = ptrtoint (ptr getelementptr (\(aggregate), ptr null, i32 1) to i64)\n"
+        let boxed = builder.freshTemp()
+        bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
+        let local = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: local, type: aggregate) + "\n"
+        bodyIR += " call ptr @memcpy(ptr \(local), ptr \(boxed), i64 \(sizeTemp))\n"
+        return IRValue(llvmType: type.llvmSpelling, ssaName: local)
+    }
+
+    /// 取（并在首次需要时定义）某类型的存放位符号。
+    private func ensureGivenSlot(type: HIRType) -> String {
+        guard case .nominal(let name, _) = type else {
+            fatalError("IREmitter: given slot for non-nominal type (HIRLowerer guarantees)")
+        }
+        let symbol = "__given_slot_\(IRName.mangle(name))"
+        if givenSlotNames.insert(symbol).inserted {
+            givenSlotDefs.append("@\(symbol) = internal global ptr null\n")
+        }
+        return symbol
+    }
+
+    /// 合成（并按类型去重）该类型的初始化函数：`define ptr @__given_init_<T>(ptr %out)`。
+    ///
+    /// 字段初值在这里当**普通表达式**降载 —— 与 `emitConstruct` 同一套算法，只差落点：
+    /// 那边写进一个新 `alloca`，这边写进运行时给的 `%out`。故本函数保存/恢复发射上下文，
+    /// 在一个干净的子上下文里发射函数体（姿势照抄闭包发射，那边也是「另起一个 define」）。
+    ///
+    /// ⚠️ **可重入**：某个字段初值自己可能取用**另一个**给定块 ⇒ 这里会递归回到
+    /// `emitGivenInstance`。上下文是保存/恢复的、两个符号集合各自去重，故递归安全
+    /// （运行时那一侧的死锁由 `bk_given_get` 的两级锁挡住，见其实现注释）。
+    private func ensureGivenInitializer(type: HIRType) -> String {
+        guard case .nominal(let name, _) = type,
+            let aggregate = type.nominalAggregateSpelling,
+            let decl = moduleTypes.first(where: { $0.name == name })
+        else {
+            fatalError("IREmitter: given initializer for unknown nominal type (HIRLowerer guarantees)")
+        }
+        let symbol = "__given_init_\(IRName.mangle(name))"
+        guard givenInitializerNames.insert(symbol).inserted else { return symbol }
+
+        let savedBodyIR = bodyIR
+        let savedBuilder = builder
+        let savedScopes = scopes
+        let savedSlotCounters = slotCounters
+        let savedTerminated = terminated
+        let savedControlStack = controlStack
+        let savedBreakMergeLabels = breakMergeLabels
+        let savedDeferScopeBase = deferScopeBase
+        let savedReturnType = currentReturnType
+        let savedIsMain = currentIsMain
+        let savedCaptureSlots = captureSlots
+        let savedPendingReleases = pendingReleases
+
+        builder = IRBuilder()
+        bodyIR = ""
+        scopes = [[:]]
+        slotCounters = [:]
+        terminated = false
+        controlStack = []
+        breakMergeLabels = []
+        deferScopeBase = 0
+        currentReturnType = nil
+        currentIsMain = false
+        captureSlots = [:]
+        pendingReleases = []
+
+        for (index, field) in decl.fields.enumerated() {
+            let fieldPtr = builder.freshTemp()
+            bodyIR +=
+                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, index]) + "\n"
+            if let defaultValue = field.defaultValue {
+                let value = emitExpr(defaultValue)
+                bodyIR +=
+                    builder.fmtStore(value: value.ssaName, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
+            } else {
+                bodyIR +=
+                    builder.fmtStore(value: zeroConst(for: field.type), type: field.type.llvmSpelling, ptr: fieldPtr)
+                    + "\n"
+            }
+        }
+        bodyIR += " ret ptr %out\n"
+        givenInitializerDefs.append("define ptr @\(symbol)(ptr %out) {\n" + bodyIR + "}\n\n")
+
+        bodyIR = savedBodyIR
+        builder = savedBuilder
+        scopes = savedScopes
+        slotCounters = savedSlotCounters
+        terminated = savedTerminated
+        controlStack = savedControlStack
+        breakMergeLabels = savedBreakMergeLabels
+        deferScopeBase = savedDeferScopeBase
+        currentReturnType = savedReturnType
+        currentIsMain = savedIsMain
+        captureSlots = savedCaptureSlots
+        pendingReleases = savedPendingReleases
+        return symbol
     }
 
     private func emitConstruct(type: HIRType) -> IRValue {

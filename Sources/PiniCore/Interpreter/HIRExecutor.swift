@@ -266,6 +266,13 @@ public final class HIRExecutor: DebugHookHost {
     private var methods: [String: HIRFunction] = [:]
 
     private var types: [String: HIRTypeDecl] = [:]
+    /// ADR-001 `P2b`：默认实例的**记忆表**（类型名 → 物化好的实例）。
+    ///
+    /// 「恰一次」在这里是**自然**的：走查单线 ⇒ 首次取用物化并记住，之后直接返回缓存值。
+    /// 与发射层那张「槽位 + 两级锁」的表同一语义，只是一个靠锁、一个靠单线。
+    /// ⚠️ 表挂在走查器实例上 ⇒ 生命周期 = 一次运行，与「程序级唯一」在解释器语境下等价
+    /// （一次 `run` 就是一个程序）。
+    private var givenInstances: [String: Value] = [:]
     private var enums: [String: HIREnumDecl] = [:]
 
     /// The foreign callees this module declared, from `[名称|foreign]` blocks,
@@ -1395,10 +1402,8 @@ public final class HIRExecutor: DebugHookHost {
         /// （未认领的节点直接让构建失败）。故这里 **fail-loud**、不静默返回一个
         /// 看起来合理的值：物化面（存放位 + once + `bk_given_get`）属 `P2b`。
         case .givenInstance(let type):
-            throw RuntimeError.invalidOperation(
-                reason: "givenInstance(\(type.llvmSpelling))：默认实例的物化面属后续批次（ADR-001 P2b）",
-                location: HIRExecutor.noLocation
-            )
+            // ADR-001 `P2b`：物化面已落 —— 与发射层同语义（惰性 · 恰一次 · 取副本）。
+            return try materializeGivenInstance(type)
         }
     }
 
@@ -1485,6 +1490,27 @@ public final class HIRExecutor: DebugHookHost {
     /// A nominal with no declaration in this module yields an instance with no
     /// fields — the interpreter's behaviour when its type registry has no entry
     /// either, not a silent success invented here.
+    /// ADR-001 `P2b`：默认实例的物化（解释器臂）。
+    ///
+    /// 物化本身**复用 `constructValue`** —— 给定块的字段初值走的就是普通复合类型那条路，
+    /// 没有第二条算法（这是本批刻意做的：两条算法必然漂）。本函数只多管「记住」与「取副本」。
+    ///
+    /// ⚠️ 取副本是**白拿**的：`Value.structInstance` 是值类型，返回缓存值即得一份拷贝
+    /// （用户 2026-09-19 裁定：取实参的副本，与函数传参一致）。写实例自身字段因此不留痕，
+    /// 而经引用字段往下写对所有取用点可见 —— 与发射层逐字同语义。
+    private func materializeGivenInstance(_ type: HIRType) throws -> Value {
+        guard case .nominal(let name, _) = type else {
+            throw RuntimeError.invalidOperation(
+                reason: "givenInstance 需要一个名义类型，实为 '\(type.llvmSpelling)'",
+                location: HIRExecutor.noLocation
+            )
+        }
+        if let cached = givenInstances[name] { return cached }
+        let materialized = try constructValue(type)
+        givenInstances[name] = materialized
+        return materialized
+    }
+
     private func constructValue(_ type: HIRType) throws -> Value {
         guard case .nominal(let name, let isObject) = type else {
             throw RuntimeError.invalidOperation(

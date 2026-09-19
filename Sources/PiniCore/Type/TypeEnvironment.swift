@@ -13,6 +13,12 @@ public final class TypeEnvironment {
         public let params: [TypeAnnotation]
         public let returns: [TypeAnnotation]
         public let isVariadic: Bool
+        /// ADR-001：`using` 形参在 `params` 里的**位置**（0 基）。
+        ///
+        /// WHY 存位置而不是一个布尔数组：调用点要判「实参个数是否等于形参个数 − using 个数」，
+        /// 并据**同一个**集合把实参按非 using 形参逐位对上 —— 两处用的是同一个量。
+        /// 空集 = 无 `using` 形参 ⇒ 判据退化为 ADR-001 之前的原式，逐字不变。
+        public let usingParamIndices: Set<Int>
         /// 多值返回各分量的**声明标签**（`-> (商: I32, 余: I32,)` 的 `["商", "余"]`）；
         /// 位置返回为 `[]`。调用点据此构造带标签的元组类型——标签既决定 `.名称` 能否
         /// 命中，也决定 `print` 是否呈现它，丢在这里等于静态层读不到自己签名里写过的名字。
@@ -22,12 +28,31 @@ public final class TypeEnvironment {
             params: [TypeAnnotation],
             returns: [TypeAnnotation],
             isVariadic: Bool = false,
-            returnLabels: [String?] = []
+            returnLabels: [String?] = [],
+            usingParamIndices: Set<Int> = []
         ) {
             self.params = params
             self.returns = returns
             self.isVariadic = isVariadic
             self.returnLabels = returnLabels
+            self.usingParamIndices = usingParamIndices
+        }
+
+        /// ADR-001：把「实参个数」映射到「形参位置」。
+        ///
+        /// 两种合法形态，其余一律 nil（= arity 错）：
+        ///   · **全显式**（个数 == 形参个数）⇒ 恒等映射，`using` 位由调用点自己给；
+        ///   · **省略式**（个数 == 形参个数 − `using` 个数）⇒ 实参只落在**非 using** 形参上，
+        ///     `using` 位留给编译器插入默认实例。
+        ///
+        /// ⚠️ 两式**必然可区分**：`using` 个数 > 0 时两式的右端不相等 ⇒ 不存在歧义形态。
+        /// 空 `using` 集合时只剩第一式，行为与 ADR-001 之前逐字相同。
+        public func argumentToParamIndices(argumentCount: Int) -> [Int]? {
+            if argumentCount == params.count { return Array(params.indices) }
+            guard !usingParamIndices.isEmpty,
+                argumentCount == params.count - usingParamIndices.count
+            else { return nil }
+            return params.indices.filter { !usingParamIndices.contains($0) }
         }
     }
 
@@ -101,11 +126,12 @@ public final class TypeEnvironment {
         params: [TypeAnnotation],
         returns: [TypeAnnotation],
         isVariadic: Bool = false,
-        returnLabels: [String?] = []
+        returnLabels: [String?] = [],
+        usingParamIndices: Set<Int> = []
     ) {
         let sig = FunctionSignature(
             params: params, returns: returns, isVariadic: isVariadic,
-            returnLabels: returnLabels
+            returnLabels: returnLabels, usingParamIndices: usingParamIndices
         )
         scopes[scopes.count - 1].functions[name] = sig
     }
@@ -146,10 +172,12 @@ public final class TypeEnvironment {
         methodName: String,
         params: [TypeAnnotation],
         returns: [TypeAnnotation],
-        returnLabels: [String?] = []
+        returnLabels: [String?] = [],
+        usingParamIndices: Set<Int> = []
     ) {
         let sig = FunctionSignature(
-            params: params, returns: returns, returnLabels: returnLabels
+            params: params, returns: returns, returnLabels: returnLabels,
+            usingParamIndices: usingParamIndices
         )
         if typeMethods[typeName] == nil {
             typeMethods[typeName] = [:]

@@ -176,3 +176,5 @@ message = "unsupported feature '{feature}'"
 message = "type mismatch: expected '{expected}', got '{got}'"
 [E6-006]
 message = "unresolvable extension target '{feature}'"
+[E6-007]
+message = "no default instance available for '{feature}'"

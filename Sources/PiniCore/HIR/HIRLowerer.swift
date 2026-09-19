@@ -48,6 +48,9 @@ public enum HIRLowerer {
     /// map so extension methods can be re-specialized per instance.
     fileprivate struct G10SpecializationState {
         var structSpecializations: [String: StructDecl] = [:]
+        /// ADR-001 `P2b`：泛型**给定块**的特化体（按特化名键，形如 `匣_I32`）。
+        /// 与结构体那一格分开：给定块不是 `StructDecl`，且它还要驱动默认实例的取用。
+        var givenSpecializations: [String: GivenDecl] = [:]
         var funcSpecializations: [String: FuncDecl] = [:]
         /// Specialized-name -> substitution used for that struct instance
         /// (generic param name -> concrete annotation).
@@ -525,6 +528,45 @@ public enum HIRLowerer {
         // Signature pre-pass (after type registries so enum/struct/object
         // parameter annotations resolve): captures every declared function's
         // signature so bodies can call functions declared later in the file.
+        // ADR-001 `P2b`：泛型给定块的**模板**与被用到的**特化**。
+        //
+        // ⚠️ **位置是承重的**：必须排在**签名表构造之前**。签名表要解析每个形参的类型标注，
+        // 而 `using 箱: 匣<I32>` 的标注是泛型形 ⇒ 特化得先登记进 `userTypes`，否则
+        // 「parameter lacks a resolvable scalar type」当场就报（实测踩过一次）。
+        // 这里也正好是「类型表已就绪、签名还没建」的那一档。
+        // ADR-001 `P2b`：泛型给定块的**模板**与被用到的**特化**。
+        //
+        // 为什么在这里扫而不是进 `precollectGenericUses` 的递归：泛型给定块只有**一个**
+        // 可达入口 —— `using` 形参的类型标注（它没有构造点、没有调用点，故语句级预扫看不见它）。
+        // 一个入口就一段扫描，硬塞进预扫要给它的递归加一层参数；参数一多，那条链上每处都要跟。
+        // ⚠️ 本扫描只登记「被 `using` 用到的」特化（= 可达集合），不做全量枚举。
+        var genericGivenTemplates: [String: GivenDecl] = [:]
+        for decl in module.declarations {
+            guard case .givenDecl(let gd) = decl, !gd.genericParams.isEmpty else { continue }
+            genericGivenTemplates[gd.name] = gd
+        }
+        if !genericGivenTemplates.isEmpty {
+            for decl in module.declarations {
+                for params in usingAnnotationParamLists(of: decl) {
+                    for parameter in params {
+                        guard case .generic(let typeName, let typeArgs, _)? = parameter.typeAnnotation,
+                            let template = genericGivenTemplates[typeName],
+                            typeArgs.count == template.genericParams.count
+                        else { continue }
+                        let specialized = registerGivenSpecialization(
+                            template, typeArgs: typeArgs, state: &specializationState)
+                        // 登记进 `nominals`（方法表 / 字段表由此可查）与 `userTypes`（类型标注
+                        // 可解析）。`isObject: false` 与 `P1b` 一致。
+                        if nominals[specialized.name] == nil {
+                            nominals[specialized.name] = NominalInfo(
+                                name: specialized.name, isObject: false, decl: .givenDecl(specialized))
+                        }
+                        userTypes[specialized.name] = .nominal(name: specialized.name, isObject: false)
+                    }
+                }
+            }
+        }
+
         var signatures: [String: HIRLowererSignatureInfo] = [:]
 
         /// G12: signature info for a trait default implementation. The
@@ -578,7 +620,8 @@ public enum HIRLowerer {
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
                     paramTypes: paramTypes,
                     returnType: asyncBodyReturnType(declared: effectiveReturn, isAsync: funcDecl.isAsync),
-                    untypedParamIndices: untypedParamIndices(funcDecl)
+                    untypedParamIndices: untypedParamIndices(funcDecl),
+                    usingParamIndices: usingParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
                 // G14: foreign block signatures join the shared table so
@@ -613,7 +656,8 @@ public enum HIRLowerer {
                 specialized, userTypes: userTypes, subject: "'\(specialized.name)'"
             )
             signatures[specialized.name] = HIRLowererSignatureInfo(
-                paramTypes: paramTypes, returnType: returnType, untypedParamIndices: untypedParamIndices(specialized)
+                paramTypes: paramTypes, returnType: returnType, untypedParamIndices: untypedParamIndices(specialized),
+                usingParamIndices: usingParamIndices(specialized)
             )
         }
 
@@ -685,21 +729,22 @@ public enum HIRLowerer {
                 // no function body to emit.
                 continue
             case .givenDecl(let givenDecl):
-                // ADR-001 `P1a`/`P1b`：给定块的**声明面**已落地（解析 + AST + 特征摘取 +
-                // `[[给定块名]]` 的方法归并），但默认实例的**物化面**（存放位 · 一次性守卫 ·
-                // 取用点解析）属 `P2` ⇒ 响亮拒绝，**不静默丢弃**（静默会让「写对了却没效果」
-                // 无从定位）。中间态「能解析、不能跑」已在 ADR-001 落地计划件显式登记。
+                // ADR-001 `P2b`：中间态结束 —— 给定块不再是「能解析、不能跑」。它现在与
+                // 结构 / 对象同规进入类型面（下面的类型装配），默认实例由 `using` 取用点物化。
                 //
-                // ⚠️ `P1b`：文案携带**归并计数** —— 给定块在此中间态下跑不到，归并结果没有
-                // 别的可观测面；把计数写进这条诊断是本批唯一的观测口径（判据据此断言
-                // 「`[[给定块名]]` 的方法确实进了块的方法表」）。`P2` 兑现后本条降为历史。
-                let mergedCount = nominals[givenDecl.name]?.extensionMethods.count ?? 0
-                throw unsupported(
-                    "given block `\(givenDecl.name)` (`[名称|given]`)：声明面已落地"
-                        + "（`[[\(givenDecl.name)]]` 已归并 \(mergedCount) 个方法），"
-                        + "默认实例机制属后续批次（ADR-001 P2）",
-                    at: givenDecl.location
-                )
+                // ⚠️ **字段初值必须齐全**：默认实例的定义就是「各字段初值合起来」（ADR §2.2）
+                // ⇒ 缺一个就没有完整默认值。用户 2026-09-19 裁定：**降载期对每个给定块报**，
+                // 不做「用到了才报」—— 于是未被任何 `using` 使用的给定块**也**会因此报错。
+                // 这是**行为收紧**，已在那条裁定里登记；代价是「字段留空、以后显式构造」这种
+                // 写法不再合法（要它就写显式初值）。
+                for field in givenDecl.fields where field.initializer == nil {
+                    throw rejected(
+                        "给定块 `\(givenDecl.name)` 的字段 `\(field.name)` 缺初值"
+                            + " ⇒ 无完整默认实例（ADR-001：默认实例 = 各字段初值合起来）",
+                        code: noDefaultInstanceCode, at: field.location
+                    )
+                }
+                continue
             default:
                 throw unsupported(
                     "top-level construct outside the slice (named functions + struct/object types)",
@@ -757,9 +802,40 @@ public enum HIRLowerer {
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                     ))
+            case .givenDecl(let gd):
+                // ADR-001 `P2b`：给定块**进类型面**。此前它只进 `nominals`（`P1b`）而进不了
+                // `types` ⇒ 既没有聚合体、也不可构造（`配置()` 曾直接报错），默认实例更无从
+                // 物化。`isObject: false` 与 `P1b` 的登记一致：值 / 引用语义仍不预裁。
+                let info = nominals[gd.name]!
+                typeDecls.append(
+                    try lowerNominal(
+                        name: gd.name, isObject: false, fields: info.fields,
+                        methods: info.methods,
+                        typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                        userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                        genericFuncTemplates: genericFuncTemplates,
+                        closureIds: closureIds,
+                        traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
+                    ))
             default:
                 break
             }
+        }
+
+        // ADR-001 `P2b`：泛型给定块的**特化**进同一张类型表。只到降载面（用户 2026-09-19
+        // 裁定「含泛型但只到降载」）—— 发射与引擎沿用非泛型路径，故这里只保证「类型存在且
+        // 字段已替换」，不新增特化专属的槽位或初始化函数。
+        for specializedName in specializationState.givenSpecializations.keys.sorted() {
+            let info = nominals[specializedName]!
+            typeDecls.append(
+                try lowerNominal(
+                    name: specializedName, isObject: false, fields: info.fields,
+                    methods: info.methods,
+                    typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
+                    userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                    genericFuncTemplates: genericFuncTemplates,
+                    closureIds: closureIds
+                ))
         }
 
         // G10: emit typeDecls for specialized struct instances (fields +
@@ -816,7 +892,10 @@ public enum HIRLowerer {
 
         return HIRModule(
             functions: functions, types: typeDecls, enums: Array(enums.values),
-            foreigns: foreigns)
+            foreigns: foreigns,
+            // ADR-001（用户第 5 条裁定的余量）：物化依赖留痕。当期**不产诊断** ——
+            // 环检测本体是后置的，这里只保证「后置的检测是加一条遍历，而不是重扫降载结果」。
+            givenReferences: Self.givenReferences(of: functions))
     }
 
     // MARK: - G10 monomorphization
@@ -1140,6 +1219,66 @@ public enum HIRLowerer {
         state.structSubstitutions[specializedName] = substitution
     }
 
+    /// ADR-001 `P2b`：登记一份**给定块**特化（字段经同一套替换）。
+    ///
+    /// 与结构体那条的差别只有两点：类型参数换成 `GivenDecl`；**方法一并带上**
+    /// （给定块的方法表要参与默认实例的成员访问，丢掉就不是同一个类型了）。
+    /// 字段初值原样保留 —— 替换只动类型标注，不动初值表达式。
+    private static func registerGivenSpecialization(
+        _ template: GivenDecl,
+        typeArgs: [TypeAnnotation],
+        state: inout G10SpecializationState
+    ) -> GivenDecl {
+        let specializedName = specializedSourceName(template.name, typeArgs: typeArgs)
+        if let existing = state.givenSpecializations[specializedName] { return existing }
+        var substitution: [String: TypeAnnotation] = [:]
+        for (index, genericParam) in template.genericParams.enumerated() where index < typeArgs.count {
+            substitution[genericParam.name] = typeArgs[index]
+        }
+        let resolveType: (TypeAnnotation?) -> TypeAnnotation? = { annotation in
+            guard let annotation = annotation else { return nil }
+            if case .simple(let name, _) = annotation, let sub = substitution[name] { return sub }
+            return annotation
+        }
+        let resolveParam: (Parameter) -> Parameter = { parameter in
+            Parameter(
+                name: parameter.name,
+                typeAnnotation: resolveType(parameter.typeAnnotation) ?? parameter.typeAnnotation,
+                isUsing: parameter.isUsing
+            )
+        }
+        let specialized = GivenDecl(
+            name: specializedName,
+            genericParams: [],
+            fields: template.fields.map { field in
+                FieldDecl(
+                    name: field.name,
+                    typeAnnotation: resolveType(field.typeAnnotation) ?? field.typeAnnotation,
+                    initializer: field.initializer,
+                    location: field.location
+                )
+            },
+            methods: template.methods.map { method in
+                FuncDecl(
+                    name: method.name,
+                    modifiers: method.modifiers,
+                    genericParams: method.genericParams,
+                    params: method.params.map(resolveParam),
+                    returnTypes: method.returnTypes.map { resolveType($0) ?? $0 },
+                    returnLabels: method.returnLabels,
+                    isAsync: method.isAsync,
+                    body: method.body,
+                    location: method.location,
+                    captured: method.captured
+                )
+            },
+            traits: template.traits,
+            location: template.location
+        )
+        state.givenSpecializations[specializedName] = specialized
+        return specialized
+    }
+
     /// G-2d: one specialized enum body per concrete type-argument combination
     /// (`结果` + [I32, String] -> `结果_I32_String`), with every case payload
     /// replaced through the same substitution the struct path uses. Case order
@@ -1354,7 +1493,8 @@ public enum HIRLowerer {
             // `|test` arrives as a modifier string; the lexer already reduced the
             // block's keyword to this canonical spelling (Token.swift).
             isTest: decl.modifiers.contains("test"),
-            sourceFile: decl.location.fileName
+            sourceFile: decl.location.fileName,
+            givenReferenceNames: context.givenReferenceNames
         )
     }
 
@@ -1427,6 +1567,140 @@ public enum HIRLowerer {
             })
     }
 
+    /// ADR-001 `P2b`：一个顶层声明里**全部参数表**（自由函数 / 方法 / 特征默认体 / 扩展方法）。
+    ///
+    /// 泛型给定块的特化只在 `using` 形参的类型标注上出现，故扫描面就是参数表本身；
+    /// 语句级预扫看不见类型标注，两者是**互补**的，不是重复。
+    private static func usingAnnotationParamLists(of decl: TopLevelDecl) -> [[Parameter]] {
+        switch decl {
+        case .funcDecl(let fd): return [fd.params]
+        case .structDecl(let sd): return sd.methods.map(\.params)
+        case .objectDecl(let od): return od.methods.map(\.params)
+        case .givenDecl(let gd): return gd.methods.map(\.params)
+        case .extensionDecl(let x): return x.methods.map(\.params)
+        case .traitDecl(let td): return td.signatures.filter { $0.body != nil }.map(\.params)
+        case .enumDecl(let ed): return ed.methods.map(\.params)
+        case .foreignDecl(let fd): return fd.funcs.map(\.params)
+        case .varDecl, .statement, .importDecl, .exportDecl: return []
+        }
+    }
+
+    /// ADR-001：`using` 形参的位置（0 基）。
+    ///
+    /// 与 `untypedParamIndices` 并列，理由相同：这个量在**声明侧**成立（AST 上记着），
+    /// 调用侧只是照它判合法性并补实参 —— 两处必须来自同一个函数，否则会漂。
+    private static func usingParamIndices(_ decl: FuncDecl) -> Set<Int> {
+        Set(
+            decl.params.enumerated().compactMap { index, parameter in
+                parameter.isUsing ? index : nil
+            })
+    }
+
+    /// ADR-001 `P2b`：依赖留痕的聚合 —— 函数名 → 它取用过的给定块类型（升序）。
+    private static func givenReferences(of functions: [HIRFunction]) -> [String: [String]] {
+        var edges: [String: [String]] = [:]
+        for function in functions where !function.givenReferenceNames.isEmpty {
+            edges[function.name] = function.givenReferenceNames.sorted()
+        }
+        return edges
+    }
+
+    /// ADR-001 `P2b`：把一次调用的实参映射到**形参位**。
+    ///
+    /// 与检查器 `FunctionSignature.argumentToParamIndices` 同口径（那份判合法性，这份真插入）：
+    /// 全显式 ⇒ 恒等；省略式（个数 = 形参个数 − using 个数）⇒ 实参只落非 using 位。
+    /// 两者都不成立 ⇒ arity 错，**文案与改动前逐字相同**（`using` 为空时两式合一）。
+    private static func usingParamMapping(
+        callee: String,
+        paramCount: Int,
+        usingParamIndices: Set<Int>,
+        argumentCount: Int,
+        at location: SourceLocation
+    ) throws -> [Int] {
+        if argumentCount == paramCount { return Array(0..<paramCount) }
+        guard !usingParamIndices.isEmpty, argumentCount == paramCount - usingParamIndices.count else {
+            throw unsupported(
+                "call to '\(callee)' expects \(paramCount - usingParamIndices.count) arguments, got \(argumentCount)",
+                at: location
+            )
+        }
+        return (0..<paramCount).filter { !usingParamIndices.contains($0) }
+    }
+
+    /// ADR-001 `P2b`：`using` 形参的类型 —— 通用路径之外多一条**泛型给定块特化**的路。
+    ///
+    /// `HIRType(from:)` / `resolveAnnotationType` 只吃简单名；泛型给定块在标注位写的是
+    /// `匣<I32>`，故先按特化名查一次（特化由预扫描登记进 `userTypes`）。
+    private static func resolveUsingParamType(
+        _ annotation: TypeAnnotation,
+        userTypes: [String: HIRType]
+    ) -> HIRType? {
+        if case .generic(let name, let typeArgs, _) = annotation,
+            let specialized = userTypes[specializedSourceName(name, typeArgs: typeArgs)]
+        {
+            return specialized
+        }
+        return HIRType(from: annotation) ?? resolveAnnotationType(annotation, userTypes: userTypes)
+    }
+
+    /// ADR-001 `P2b`：一个 `using` 形参的取用点。
+    ///
+    /// 只判一件事 —— **该类型有默认实例**，即它得是给定块（`[名|given]`）。
+    /// ⚠️ 字段是否齐全**不在**这里判：那条判据在声明处按「降载期对每个给定块」执行
+    /// （用户 2026-09-19 裁定），跑到调用点时声明早已过一遍 ⇒ 齐的。
+    private static func givenInstanceNode(
+        forParamType type: HIRType,
+        callee: String,
+        nominalTypes: [String: NominalInfo],
+        into context: inout FunctionContext,
+        at location: SourceLocation
+    ) throws -> LoweredExpr {
+        guard case .nominal(let name, let isObject) = type, !isObject,
+            let info = nominalTypes[name], case .givenDecl = info.decl
+        else {
+            throw rejected(
+                "'\(callee)' 的取用参数：类型 '\(type.llvmSpelling)' 无默认实例"
+                    + "（默认实例只由给定块 `[名|given]` 提供 —— ADR-001）",
+                code: noDefaultInstanceCode, at: location
+            )
+        }
+        context.givenReferenceNames.insert(name)
+        return LoweredExpr(node: .givenInstance(type: type), type: type)
+    }
+
+    /// ADR-001 `P2b`：把降载好的实参放回形参位，并在 `using` 位补取用点。
+    private static func fillUsingArguments(
+        retypedArgs: [LoweredExpr],
+        paramIndices: [Int],
+        paramTypes: [HIRType],
+        usingParamIndices: Set<Int>,
+        omittedForm: Bool,
+        callee: String,
+        at location: SourceLocation,
+        into context: inout FunctionContext
+    ) throws -> [HIRExpr] {
+        // ⚠️ **全显式形态下一位都不注入**：那种形态里每个形参位都有调用点给的实参，
+        // 在 `using` 位再插一个取用点会把它**顶掉**（`取(5, 6,)` 会变成「5 被忽略、
+        // 甲 取默认实例」）。ADR 说显式提供合法 ⇒ 这条守卫就是那句「允许」的落地。
+        // 本缺陷是被既有判据抓到的（`usingPrefixMarksOnlyItsOwnParameter`），不是想出来的。
+        guard omittedForm else { return retypedArgs.map(\.node) }
+        var nodes: [HIRExpr] = []
+        var next = 0
+        for paramIndex in paramTypes.indices {
+            if usingParamIndices.contains(paramIndex) {
+                nodes.append(
+                    try givenInstanceNode(
+                        forParamType: paramTypes[paramIndex], callee: callee,
+                        nominalTypes: context.nominalTypes, into: &context, at: location
+                    ).node)
+            } else {
+                nodes.append(retypedArgs[next].node)
+                next += 1
+            }
+        }
+        return nodes
+    }
+
     private static func resolveParamTypes(
         _ decl: FuncDecl,
         userTypes: [String: HIRType]
@@ -1441,7 +1715,10 @@ public enum HIRLowerer {
         }
         return try decl.params.map { parameter in
             guard let annotation = parameter.typeAnnotation else { return fallback }
-            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+            // ADR-001 `P2b`：走 `resolveUsingParamType` —— 它比 `resolveAnnotationType`
+            // 多一条**泛型给定块特化**的路（`using 箱: 匣<I32>` 的类型标注是泛型形，
+            // 通用解析只吃简单名）。非泛型标注两条路等价，故这是纯放宽。
+            guard let type = resolveUsingParamType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "parameter '\(parameter.name)' of '\(decl.name)' lacks a resolvable scalar type",
                     at: decl.location
@@ -1658,7 +1935,7 @@ public enum HIRLowerer {
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(
             name: irName, params: params, returnType: effectiveReturn, body: body,
-            sourceFile: decl.location.fileName)
+            sourceFile: decl.location.fileName, givenReferenceNames: context.givenReferenceNames)
     }
 
     private static func lowerBlock(
@@ -3420,24 +3697,29 @@ public enum HIRLowerer {
             // G14: lower arguments with each parameter type as the expected
             // context so untyped integer literals adopt non-I32 parameter
             // slots (U64 param → literal 64 is u64) — mirroring the checker's
-            // bidirectional literal propagation and the interpreter's
-            // untyped-int world.
-            guard arguments.count == signature.paramTypes.count else {
-                throw unsupported(
-                    "call to '\(functionName)' expects \(signature.paramTypes.count) arguments, got \(arguments.count)",
-                    at: location
-                )
+            // ADR-001 `P2b`：`using` 形参的实参可由编译器插入 ⇒ 先问「实参对哪些形参位」，
+            // 再逐位降载；`using` 位在填充阶段补取用点。
+            let paramIndices = try usingParamMapping(
+                callee: functionName, paramCount: signature.paramTypes.count,
+                usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
+                at: location)
+            let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
+                try lowerExpr(argument.expression, expected: signature.paramTypes[paramIndex], into: &context)
             }
-            let retypedArgs = try zip(arguments, signature.paramTypes).map { argument, paramType in
-                try lowerExpr(argument.expression, expected: paramType, into: &context)
+            for (position, argument) in retypedArgs.enumerated()
+            where !signature.untypedParamIndices.contains(paramIndices[position]) {
+                try requireAssignable(
+                    argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
             }
-            for (index, argument) in retypedArgs.enumerated() where !signature.untypedParamIndices.contains(index) {
-                try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
-            }
+            let argumentNodes = try fillUsingArguments(
+                retypedArgs: retypedArgs, paramIndices: paramIndices,
+                paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
+                omittedForm: arguments.count != signature.paramTypes.count,
+                callee: functionName, at: location, into: &context)
             return LoweredExpr(
                 node: .call(
                     function: functionName,
-                    arguments: retypedArgs.map { $0.node },
+                    arguments: argumentNodes,
                     returnType: signature.returnType
                 ),
                 type: signature.returnType ?? .i32
@@ -4075,22 +4357,29 @@ public enum HIRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
-        guard arguments.count == signature.paramTypes.count else {
-            throw unsupported(
-                "call to '\(functionName)' expects \(signature.paramTypes.count) arguments, got \(arguments.count)",
-                at: location
-            )
+        // ADR-001 `P2b`：与具名分支同一份映射与填充助手（两条路径必须同口径，
+        // 否则同一个函数经裸名与经别名调用会得到不同的实参个数）。
+        let paramIndices = try usingParamMapping(
+            callee: functionName, paramCount: signature.paramTypes.count,
+            usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
+            at: location)
+        let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
+            try lowerExpr(argument.expression, expected: signature.paramTypes[paramIndex], into: &context)
         }
-        let retypedArgs = try zip(arguments, signature.paramTypes).map { argument, paramType in
-            try lowerExpr(argument.expression, expected: paramType, into: &context)
+        for (position, argument) in retypedArgs.enumerated()
+        where !signature.untypedParamIndices.contains(paramIndices[position]) {
+            try requireAssignable(
+                argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
         }
-        for (index, argument) in retypedArgs.enumerated() where !signature.untypedParamIndices.contains(index) {
-            try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
-        }
+        let argumentNodes = try fillUsingArguments(
+            retypedArgs: retypedArgs, paramIndices: paramIndices,
+            paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
+            omittedForm: arguments.count != signature.paramTypes.count,
+            callee: functionName, at: location, into: &context)
         return LoweredExpr(
             node: .call(
                 function: functionName,
-                arguments: retypedArgs.map { $0.node },
+                arguments: argumentNodes,
                 returnType: signature.returnType
             ),
             type: signature.returnType ?? .i32
@@ -4238,12 +4527,24 @@ public enum HIRLowerer {
         if case .nominal(let typeName, _) = objectType {
             let dispatchInfo = context.nominalTypes[typeName]
             if let method = dispatchInfo?.methods.first(where: { $0.name == memberName }) {
-                guard arguments.count == method.params.count else {
-                    throw unsupported(
-                        "method '\(memberName)' expects \(method.params.count) arguments, got \(arguments.count)",
-                        at: location
-                    )
+                // ADR-001 `P2b`：方法位与自由函数位同规 —— `using` 形参可省略，
+                // 实参由编译器在该位插入默认实例取用。
+                let methodParamTypes: [HIRType] = try method.params.map { parameter -> HIRType in
+                    guard let annotation = parameter.typeAnnotation,
+                        let paramType = resolveUsingParamType(annotation, userTypes: context.userTypes)
+                    else {
+                        throw unsupported(
+                            "parameter '\(parameter.name)' of '\(memberName)' lacks a resolvable type",
+                            at: location
+                        )
+                    }
+                    return paramType
                 }
+                let methodUsingIndices = usingParamIndices(method)
+                let methodParamIndices = try usingParamMapping(
+                    callee: memberName, paramCount: methodParamTypes.count,
+                    usingParamIndices: methodUsingIndices, argumentCount: arguments.count,
+                    at: location)
                 // G13 batch 2: the call site uses the method's EFFECTIVE
                 // return type (void-declared value-returning methods upgrade
                 // to the body's returned type — same computation as the
@@ -4262,20 +4563,20 @@ public enum HIRLowerer {
                         }
                         return type
                     }
-                var arguments_ir = [loweredObject.node]
-                for (index, argument) in arguments.enumerated() {
-                    guard let annotation = method.params[index].typeAnnotation,
-                        let paramType = HIRType(from: annotation)
-                    else {
-                        throw unsupported(
-                            "parameter '\(method.params[index].name)' of '\(memberName)' lacks a resolvable type",
-                            at: location
-                        )
-                    }
+                var retypedArgs: [LoweredExpr] = []
+                for (position, argument) in arguments.enumerated() {
+                    let paramType = methodParamTypes[methodParamIndices[position]]
                     let loweredArg = try lowerExpr(argument.expression, expected: paramType, into: &context)
                     try requireAssignable(loweredArg.type, to: paramType, at: location)
-                    arguments_ir.append(loweredArg.node)
+                    retypedArgs.append(loweredArg)
                 }
+                var arguments_ir = [loweredObject.node]
+                arguments_ir.append(
+                    contentsOf: try fillUsingArguments(
+                        retypedArgs: retypedArgs, paramIndices: methodParamIndices,
+                        paramTypes: methodParamTypes, usingParamIndices: methodUsingIndices,
+                        omittedForm: arguments.count != methodParamTypes.count,
+                        callee: memberName, at: location, into: &context))
                 let irName = "\(IRName.mangle(memberName))__\(IRName.mangle(typeName))"
                 return LoweredExpr(
                     node: .call(function: irName, arguments: arguments_ir, returnType: returnType),
@@ -5067,6 +5368,18 @@ public enum HIRLowerer {
         HIRLoweringError(message: message, location: location)
     }
 
+    /// ADR-001 `P2b`：默认实例相关的**用户错误**（不是「还没做」）。
+    ///
+    /// 与 `E6-004`（「不支持的特性」）分开是刻意的 —— 那一条的意思是「语言有了、编译器还没做」，
+    /// 而这两条说的是「程序写错了」。混在一个码里，CLI 上就分不开「我该改程序」与「等它做完」。
+    private static let noDefaultInstanceCode = "\(DiagnosticDomain.irgen.rawValue)-007"
+
+    private static func rejected(
+        _ message: String, code: String, at location: SourceLocation
+    ) -> HIRLoweringError {
+        HIRLoweringError(message: message, location: location, code: code)
+    }
+
     /// Stable funcLiteral identity: file + line + column. The legacy
     /// ClosureEmitter registry contract was "行:列"; the file component was
     /// implicit (single-file world). G13 batch 2 makes it explicit so a
@@ -5442,11 +5755,21 @@ struct HIRLowererSignatureInfo {
     /// still comes from the declaration's fallback, because the body's own
     /// lowering needs *a* type; only the call-site comparison is skipped.
     let untypedParamIndices: Set<Int>
+    /// ADR-001：`using` 形参的位置（0 基）。
+    ///
+    /// 与检查器的 `FunctionSignature.usingParamIndices` 是**同一口径的两份**：调用点按
+    /// 「实参个数 == 形参个数 − using 个数」认省略式调用，并把实参按非 using 形参逐位对上。
+    /// 空集 ⇒ 与 ADR-001 之前逐字同形（既有构造点靠默认值零改动）。
+    let usingParamIndices: Set<Int>
 
-    init(paramTypes: [HIRType], returnType: HIRType?, untypedParamIndices: Set<Int> = []) {
+    init(
+        paramTypes: [HIRType], returnType: HIRType?, untypedParamIndices: Set<Int> = [],
+        usingParamIndices: Set<Int> = []
+    ) {
         self.paramTypes = paramTypes
         self.returnType = returnType
         self.untypedParamIndices = untypedParamIndices
+        self.usingParamIndices = usingParamIndices
     }
 }
 
@@ -5499,6 +5822,9 @@ private struct FunctionContext {
     let returnType: HIRType?
     let typeInference: TypeInference?
     var variableTypes: [String: HIRType]
+    /// ADR-001 `P2b`：函数体里取用过的给定块类型（留痕，见 `HIRFunction.givenReferenceNames`）。
+    /// 值字段即可 —— 调用点全都在**同一个**函数的 `context` 上写，不需要跨函数共享。
+    var givenReferenceNames: Set<String> = []
     let moduleSignatures: [String: HIRLowererSignatureInfo]
     let nominalTypes: [String: HIRLowerer.NominalInfo]
     let userTypes: [String: HIRType]
