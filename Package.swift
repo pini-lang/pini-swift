@@ -34,6 +34,13 @@ let package = Package(
             name: "PiniTests",
             dependencies: ["PiniCore", "PiniRuntime"],
             path: "Tests/PiniTests",
+            // 夹具（.pini）集中在各套件目录的 Fixtures/ 下。SwiftPM 把目标目录内的非源文件判为
+            // unhandled，而 exclude 只能按路径、不能按扩展名 ⇒ 夹具独占一层才排得掉。
+            // ⚠️ 路径相对 `path:`（此处即 Tests/PiniTests），不是相对包根 —— 写错只会发
+            // `Invalid Exclude ... File not found` 而告警照旧。
+            // ⛔ 不要改用 `resources:` 指向套件目录：那会让目录里的 .swift 不再被编译，
+            // 整个套件被静默丢弃（构建仍退出 0、告警也会消失）。
+            exclude: ["GrammarAcceptanceTests/Fixtures"],
         ),
     ],
     swiftLanguageModes: [SwiftLanguageMode.v6]

@@ -7,17 +7,20 @@ private typealias Expression = PiniCore.Expression
 
 /// 语法接受面的回归判据（来源：2026-09-05 的规范反录勘测探针语料）。
 ///
-/// 组织：**一个夹具一条用例**，夹具与本文件同目录、文件名即消费它的用例名 ——
+/// 组织：**一个夹具一条用例**，夹具在本文件同目录的 `Fixtures/` 下、文件名即消费它的用例名 ——
 /// 于是「有夹具而无用例」与「有用例而无夹具」都能一眼看出（前者另有一条判据机械检查）。
+/// ⚠️ 夹具之所以独占一层，是为了让清单能**一条** `exclude` 排掉 SwiftPM 的 unhandled 告警
+/// （`exclude` 只能按路径、不能按扩展名）；理由与实测见 `PiniFixtureLoader.swift`。
 ///
 /// 每条用例三要素齐备：意图写在显示名与首行注释；接受态断言解析结构、类型结论与
 /// 运行产物（推进性测量）；拒绝态断言错误的**类型与判定码**（驳回性测量）。
 /// 判定码取首条诊断 —— 解析器会在根因之后级联补报，首条才是根因。
 struct GrammarAcceptanceTests {
 
-    /// 套件目录（夹具与本文件同目录）。
+    /// 套件目录（夹具在本文件同目录下的 `Fixtures/` 子目录）。
     static var suiteDirectory: String {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures").path
     }
 
     // MARK: - 私有 helper
