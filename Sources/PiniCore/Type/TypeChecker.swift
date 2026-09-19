@@ -388,7 +388,7 @@ public final class TypeChecker {
                 for rt in f.returnTypes { try enforceAnnotationVisibility(rt) }
             }
         case .givenDecl(let g):
-            // AD-001：给定块与对象同规 —— 字段类型与 `实现: T` 都是类型名引用，须过可见性 enforce。
+            // ADR-001：给定块与对象同规 —— 字段类型与 `实现: T` 都是类型名引用，须过可见性 enforce。
             for f in g.fields { try enforceAnnotationVisibility(f.typeAnnotation) }
             for t in g.traits { try enforceTypeVisibility(name: t, location: g.location) }
         case .traitDecl, .extensionDecl, .varDecl, .statement, .importDecl, .exportDecl:
@@ -1057,7 +1057,7 @@ public final class TypeChecker {
                 registerTraitMethods(for: o.name, traits: o.traits, location: loc)
             }
         case .givenDecl(let g):
-            // AD-001：给定块与对象**同规注册**（字段表 / 类型环境 / `实现: T` 的方法）。
+            // ADR-001：给定块与对象**同规注册**（字段表 / 类型环境 / `实现: T` 的方法）。
             // ⚠️ 不登记 `referenceTypeNames` —— 值 / 引用语义是 `P2` 未裁项，本批只落声明面，
             // 不预设语义（登记与否会改变构造与赋值的行为）。
             typeFieldsByName[g.name] = g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
@@ -1152,7 +1152,7 @@ public final class TypeChecker {
         case .foreignDecl(let fd):
             for f in fd.funcs { try validateFuncDeclPointerTypes(f) }
         case .givenDecl(let g):
-            // AD-001：给定块字段与对象字段同规过 `*T` C 兼容校验。
+            // ADR-001：给定块字段与对象字段同规过 `*T` C 兼容校验。
             for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
             for m in g.methods { try validateFuncDeclPointerTypes(m) }
         case .varDecl, .statement, .importDecl, .exportDecl:
@@ -1296,7 +1296,7 @@ public final class TypeChecker {
             // 裸 C 绑定 C 兼容校验见 Phase 2b）。
             try checkForeignDeclSignatures(fd)
         case .givenDecl(let g):
-            // AD-001：给定块方法体按字段作用域检查 + `实现: T` 一致性校验（与对象同规）。
+            // ADR-001：给定块方法体按字段作用域检查 + `实现: T` 一致性校验（与对象同规）。
             for method in g.methods {
                 try checkFuncBody(method, fields: g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: g.name)
             }

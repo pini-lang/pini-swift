@@ -192,7 +192,7 @@ private func topLevelSymbolInfo(_ decl: TopLevelDecl) -> (name: String, kind: Sy
     switch decl {
     case .structDecl(let s): return (s.name, .struct, s.location)
     case .objectDecl(let o): return (o.name, .object, o.location)
-    /// AD-001：给定块是**具名复合类型** ⇒ 与对象同族纳入包级符号表（用户第 6 条：
+    /// ADR-001：给定块是**具名复合类型** ⇒ 与对象同族纳入包级符号表（用户第 6 条：
     /// 可见性规则保持一致）。细分种类（值 / 引用语义）属 `P2` 未裁项 ⇒ 暂按 `.object` 归类。
     case .givenDecl(let g): return (g.name, .object, g.location)
     case .enumDecl(let e): return (e.name, .enum, e.location)

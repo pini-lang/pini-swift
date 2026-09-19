@@ -2,13 +2,19 @@ import Foundation
 import PiniCore
 import Testing
 
-/// AD-001 `P1a`：`[[X]]` 通用扩展形 + `[名称|given]` 声明位的判据。
+/// ADR-001（给定块 `given` / 取用参数 `using`）语法面的判据 —— `P1a` 与 `P1` 两批同住一件。
 ///
-/// **本批的实质交付**：方括号从「枚举扩展」改为**通用扩展形** —— 归并时按**目标的实际
+/// **`P1a` 的实质交付**：方括号从「枚举扩展」改为**通用扩展形** —— 归并时按**目标的实际
 /// 注册类别**落表，而不是按定界符预设类别。三形糖（`((` / `{{` / `<<`）的 kind 语义不变。
 ///
-/// **中间态（必须知道）**：给定块只落**声明面**（解析 + AST + 类型层注册），
-/// 默认实例的物化面属 `P2` ⇒ 含给定块的程序在降载层被**响亮拒绝**（不是静默丢弃）。
+/// **`P1` 的实质交付**：`using` **入关键字表**（实现侧计数 33 → 34，与规范侧同批同值），
+/// 并在**参数位**接出前缀 ⇒ `Parameter.isUsing` → `HIRParam.isUsing`（降载层不断链）。
+/// ⚠️ 入表是**破坏性**的：今日合法的标识符 `using` 变成保留字。它与 `given` 的处置相反
+/// —— 后者只出现在 `|` 右侧的修饰符位、走标识符白名单、**不入**表；两半各有判据钉住。
+///
+/// **中间态（必须知道）**：`using` 今天只被**标记**、不被**物化** —— 调用点仍须显式传参，
+/// 强制规则（值位引用即须声明）属后续批次；给定块同样只落**声明面**
+/// （解析 + AST + 类型层注册），含给定块的程序在降载层被**响亮拒绝**（不是静默丢弃）。
 ///
 /// 每条用例三要素齐备：意图写在显示名与首行注释；推进性测量断言期望行为**发生**；
 /// 驳回性测量断言不该发生的**确实没发生**（否定形态，见测试规程 `C5`）。
@@ -256,5 +262,122 @@ struct GivenUsingTests {
         #expect(failed?.message.contains("[[配置]]") == true, "提示应指向通用扩展括号，实际：\(failed?.message ?? "")")
         // 驳回性：不得把对象糖的括号塞给给定块。
         #expect(failed?.message.contains("{{配置}}") == false, "不得提示对象扩展括号")
+    }
+
+    // MARK: - `P1`：`using` 入关键字表 + 参数位
+
+    @Test("关键字表把 `using` 计入，`given` 仍不入表")
+    func usingJoinsTheKeywordTableButGivenDoesNot() throws {
+        /// 意图：`using` 是**关键字** —— 实现侧计数 33 → 34，且规范侧同一批改、同值。
+        /// 这条钉的是「入表」这个裁定的实现侧一半；集合相同、顺序不作判据。
+        #expect(Keyword(rawValue: "using") == .using, "`using` 应在关键字表内")
+        #expect(Keyword.allCases.count == 34, "实际 \(Keyword.allCases.count) 个")
+        // 驳回性：`given` **不入**表（它只在 `|` 右侧修饰符位，走标识符白名单）。
+        #expect(Keyword(rawValue: "given") == nil, "`given` 不应是关键字")
+    }
+
+    @Test("取用前缀只标记它自己那一个参数")
+    func usingPrefixMarksOnlyItsOwnParameter() throws {
+        /// 意图：`using 甲: I32` 的 `isUsing` 为真，同一签名里的普通参数 `乙` 为假 ——
+        /// 标记是**逐参数**的事实，不是整个签名的事实。
+        /// 行为面：本批只标记、不物化 ⇒ 调用点照常显式传参，跑出 5。
+        let source = #"""
+        取|func(using 甲: I32, 乙: I32,) -> (I32,):
+            return 甲
+
+        main|func() -> ():
+            print(取(5, 6,))
+            return
+        """#
+        let declarations = try decls(source)
+        guard case .funcDecl(let fn) = declarations.first else {
+            Issue.record("首条声明应为函数，实际：\(String(describing: declarations.first))")
+            return
+        }
+        #expect(fn.params.map(\.isUsing) == [true, false], "实际 \(fn.params.map(\.isUsing))")
+        #expect(try runOutput(source) == ["5"])
+    }
+
+    @Test("降载层随行携带取用标记，不在中间表示处断链")
+    func loweringCarriesTheUsingFlag() throws {
+        /// 意图：`Parameter.isUsing` 要到得了 HIR —— 与 `isAsync` / `isTest` / `sourceFile`
+        /// 同族：「AST 面上有的事实，HIR 面必须随行」，否则后续批次在后端再也问不出来。
+        /// ⚠️ 语料里**不能**出现给定块：那会让整个模块在降载层被拒，测不到参数面。
+        let source = #"""
+        取|func(using 甲: I32, 乙: I32,) -> (I32,):
+            return 甲
+
+        main|func() -> ():
+            print(取(5, 6,))
+            return
+        """#
+        let module = try lowered(source)
+        guard let fn = module.functions.first(where: { $0.name == "取" }) else {
+            Issue.record("降载后找不到函数 `取`，实际函数名：\(module.functions.map(\.name))")
+            return
+        }
+        #expect(fn.params.map(\.isUsing) == [true, false], "实际 \(fn.params.map(\.isUsing))")
+        // 驳回性：普通参数不得被顺带标成取用 —— 那会让后续批次的强制规则误报。
+        #expect(fn.params.filter(\.isUsing).count == 1, "只有取用位那一个参数该被标记")
+    }
+
+    @Test("入表是破坏性的：`using` 在标识符位被拒")
+    func usingIsNoLongerAnIdentifier() throws {
+        /// 意图：入表的**代价**必须在判据上可见 —— 今日合法的标识符 `using`
+        /// （`let using = 1`）现在落解析错。这条是「破坏性变更」的可观测证据。
+        let source = #"""
+        main|func() -> ():
+            let using = 1
+            print(using)
+            return
+        """#
+        let failed = failure { _ = try decls(source) }
+        #expect(failed?.code == "E2-002", "实际判定码 \(failed?.code ?? "无（被接受了）")")
+        // 阳性对照：同一位置换成普通标识符必须被接受 —— 否则本用例拦下的是别的东西。
+        let control = #"""
+        main|func() -> ():
+            let 使用 = 1
+            print(使用)
+            return
+        """#
+        #expect(try runOutput(control) == ["1"])
+    }
+
+    @Test("`using` 与 `given` 分工不同：方括号修饰符位不认识它")
+    func usingIsRejectedOutsideTheParameterPosition() throws {
+        /// 意图：`using` 是**参数位前缀**，不是块修饰符 ⇒ `[名称|using]` 必须落回
+        /// 无效的方括号声明修饰符，而不是被当成某个块的糖。
+        /// 与「`given` 走该修饰符位」互为对照：同一条总线、两个词各占一头。
+        let source = #"""
+        [配置|using]
+            名称: String = "默认"
+        """#
+        let failed = failure { _ = try decls(source) }
+        #expect(failed?.code == "E2-005", "实际判定码 \(failed?.code ?? "无（被接受了）")")
+        #expect(failed?.message.contains("方括号声明修饰符") == true, "实际：\(failed?.message ?? "")")
+    }
+
+    @Test("缺字段初值的给定块：本批不提前施加规则，冲突面不可观测")
+    func missingInitializerIsNotYetDiagnosed() throws {
+        /// 意图：`using` 的物化要求「字段初值齐备」，但那条规则属后续批次。
+        /// 本批的可观测事实 = **缺初值与初值齐备在降载层得到同一条拒绝** ⇒
+        /// 该冲突面在本批**无法区分**，故不得半途实现（那会引入今日没有的行为）。
+        let withInitializer = #"""
+        [配置|given]
+            名称: String = "默认"
+        """#
+        let withoutInitializer = #"""
+        [配置|given]
+            名称: String
+        """#
+        let complete = failure { _ = try lowered(withInitializer) }
+        let incomplete = failure { _ = try lowered(withoutInitializer) }
+        #expect(complete?.code == "E6-004", "实际 \(complete?.code ?? "无")")
+        #expect(incomplete?.code == "E6-004", "实际 \(incomplete?.code ?? "无")")
+        // 驳回性：拒绝理由不得指向初值缺失 —— 那说明规则被提前实现了。
+        #expect(
+            incomplete?.message.contains("初值") == false,
+            "不得提前施加「字段必须完整提供初值」，实际：\(incomplete?.message ?? "")"
+        )
     }
 }
