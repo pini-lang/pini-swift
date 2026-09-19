@@ -10,6 +10,17 @@ every class with no signal at all, and the failure set it produces is equal,
 item by item, to what the per-class sweep produces. Splitting is therefore a
 robust way to *measure*, not a repair of the underlying defect.
 
+⚠️ 上面那两个数字（94 / 115）是 **115 类那棵测试树**的实测，该树已于 2026-09-18 清空、
+2026-09-19 起重建（当前只有两个套件）。切块本身仍成立：它是「一次跑不完就分块量」的
+量具，不依赖旧树规模。
+
+FRAMEWORKS
+
+本器械读**两个框架**的输出：XCTest 与 Swift Testing。后者的套件起始行、失败行、
+汇总行与前者都不同（且不产出任何 `Executed ...` 行），只认一种会把另一种的套件
+整体读成「未跑」—— 护栏会据此判作废，于是账目看起来只是「这次读不出来」，
+真实原因是量具认不出框架。改动量具的解析层时，两种形状都要喂一遍。
+
 ⚠️ ALWAYS RUN THIS IN THE FOREGROUND.
 
 Run from a background shell, the sandbox refuses `swift test`'s cleanup of its
@@ -23,8 +34,12 @@ USAGE
 
     python3 tools/hir-chunk-run.py <class-list-file> <chunk-count> <output-prefix>
 
-`<class-list-file>` is one test class name per line. Outputs `<prefix>-chunkN.log`
+`<class-list-file>` is one test class name per line. 名单可由
+`swift test list | sed 's#/[^/]*$##' | sort -u` 现取 —— 两个框架都产这个形状；
+`--filter` 接受裸套件名（实测 Swift Testing 套件同样被它命中）。
+Outputs `<prefix>-chunkN.log`
 for each chunk and `<prefix>-fails.json` holding the merged failure set.
+失败集合的元素是字符串：XCTest 侧为 `类.方法`，Swift Testing 侧为用例显示名。
 
 EXIT CODES
 
@@ -45,7 +60,14 @@ classes = [c for c in classes if c != 'RecordingDebugDriver']
 size = -(-len(classes) // nchunks)
 chunks = [classes[i:i + size] for i in range(0, len(classes), size)]
 
-SUITE_RUN = re.compile(r"Test Suite '([^']+)' started at")
+# 套件起始行两式并存：XCTest 报 `Test Suite 'X' started at`，Swift Testing 报
+# `Suite X started.`（前缀一个图标字符）。只认一种，另一种的套件会整体落进「未跑」
+# 而被护栏判作废 —— 那是静默失效，不是报错。
+SUITE_RUN = re.compile(r"Test Suite '([^']+)' started at|Suite (\S+) started\.")
+# 失败行同样两式：XCTest 报「类 + 方法」，Swift Testing 报用例显示名。
+# 两侧都归一到字符串（Swift Testing 没有类/方法二分，保留元组会让并集不可比）。
+FAIL_XCTEST = re.compile(r"Test Case '-\[([\w.]+) ([\w]+)\]' failed")
+FAIL_SWIFT_TESTING = re.compile(r'Test "([^"]+)" recorded an issue|Test "([^"]+)" failed after')
 fails_all, suites_all = set(), []
 for ci, chunk in enumerate(chunks, 1):
     pat = '(' + '|'.join(chunk) + ')'
@@ -58,9 +80,11 @@ for ci, chunk in enumerate(chunks, 1):
     log = pathlib.Path(out).read_text(encoding='utf-8', errors='replace')
     ran = []
     for m in SUITE_RUN.finditer(log):
-        if m.group(1) not in ran:
-            ran.append(m.group(1))
-    fails = set(re.findall(r"Test Case '-\[([\w.]+) ([\w]+)\]' failed", log))
+        name = m.group(1) or m.group(2)
+        if name not in ran:
+            ran.append(name)
+    fails = {"%s.%s" % (cls, method) for cls, method in FAIL_XCTEST.findall(log)}
+    fails |= {a or b for a, b in FAIL_SWIFT_TESTING.findall(log)}
     fails_all |= fails
     suites_all += ran
     missing = [c for c in chunk if c not in ran]
@@ -91,6 +115,6 @@ if reached == 0 or missing_total:
     sys.exit(2)
 
 print('合计失败方法 =', len(fails_all))
-json.dump(sorted((c, m) for c, m in fails_all),
+json.dump(sorted(fails_all),
           open(f'{prefix}-fails.json', 'w'), ensure_ascii=False, indent=1)
 print('失败清单落盘 =', f'{prefix}-fails.json')

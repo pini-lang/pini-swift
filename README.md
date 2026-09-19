@@ -291,8 +291,8 @@ Pini/
 │   │   └── Common/           # 公共组件
 │   └── PiniRuntime/       # LLVM 后端运行时 C ABI shim（libPiniRuntime）
 └── Tests/
-    ├── PiniTests/         # XCTest 测试（解释器 + LLVM + 示例门禁）
-    └── PiniSwiftTests/    # SwiftTesting 宿主测试（.pini |test 端到端）
+    ├── PiniTests/         # Swift Testing 套件（前端 + 执行 + 示例门禁）
+    └── PiniSwiftTests/    # Swift Testing 宿主测试（.pini |test 端到端）
 ```
 
 ---

@@ -56,10 +56,14 @@ swift build -c release --disable-sandbox
 .build/release/pini run examples/hello.pini
 ```
 
-> 注：仓库根不是 Pini 模块（无 `pini.toml`），对根目录跑 `pini test .` / `check .` 会逐文件解析整棵树，
-> 并在**第一个**不被接受的语料处报错退出（当前是 `examples/probes/foreign-draft-form.pini`）。
-> `examples/probes/` 是 2026-09-05 反录勘测的探针语料（22 个：宿主接受 14 个、拒绝 8 个），
-> 故冒烟请如上指定文件。
+> 注一：仓库根不是 Pini 模块（无 `pini.toml`），对根目录跑 `pini test .` / `check .` 会逐文件解析整棵树，
+> 并在**第一个**不被接受的语料处报错退出 —— 现在落在 `Tests/PiniTests/GrammarAcceptanceTests/` 下
+> 那条「调用位标签用 `:` 被拒」的夹具上，而那个目录里**本就有一批夹具是「应当被拒」的语料**。
+> ⇒ 这两个命令既不是全仓扫描，也不该被当作「仓里有坏文件」的证据；冒烟请如上指定文件。
+>
+> 注二：`examples/` 现在是干净的（`pini check examples` 逐文件全通过）。语法接受面的那批探针语料
+> 已于 2026-09-19 从 `examples/probes/` **迁入** `Tests/PiniTests/GrammarAcceptanceTests/`：
+> 一个夹具一条用例，夹具名即消费它的用例名，期望写在用例里 ⇒ 那些 `.pini` 是**夹具**，不是示例。
 
 ## 5. 使用与安装（可选）
 

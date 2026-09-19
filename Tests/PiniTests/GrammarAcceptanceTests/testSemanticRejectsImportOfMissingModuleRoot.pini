@@ -1,4 +1,4 @@
-[import_draft_form|import]
+[testSemanticRejectsImportOfMissingModuleRoot|import]
 math = "./math" ; 假设存在
 
 main|func() -> ():

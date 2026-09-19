@@ -698,12 +698,12 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 ## 6. 测试规范（Testing Standards）
 
-> 本节将 `test-refactoring-principles.md` 确立为项目**强制工程标准**，受本规范治理（与语言语义同源、同变更流程 §1.3）。测试是 v0.x 演进的 safety net——任何 Provisional/Experimental 构造的落地都必须伴随可回归测试（呼应 §1.1 演进策略）。完整细则（模板、示例代码、checklist）见该文档；本节给出权威摘要。
+> 本节将 `test-refactoring-principles.md` 确立为项目**强制工程标准**，受本规范治理（与语言语义同源、同变更流程 §1.3）。断言语汇为 Swift Testing（`@Test` / `#expect` / `try #require`；2026-09-19 起）。测试是 v0.x 演进的 safety net——任何 Provisional/Experimental 构造的落地都必须伴随可回归测试（呼应 §1.1 演进策略）。完整细则（模板、示例代码、checklist）见该文档；本节给出权威摘要。
 
 ### 6.1 三要素（每条测试必备）
-- **意图用例（Intent Case）**：测试名 `test[模块][行为]`，一眼可见验证目的；方法首行注释写明意图。
-- **推进性测量（Advancing Measures）**：断言「期望行为发生」（`XCTAssertEqual`/`XCTAssertTrue`/`XCTAssertNotNil` 等），对期望值具体明确。
-- **驳回性测量（Dismissing Measures）**：断言「非期望行为不发生」（`XCTAssertNotEqual`/`XCTAssertThrowsError`/`XCTFail` 拦截错误路径），覆盖边界与错误处理。
+- **意图用例（Intent Case）**：显示名 `@Test("一句话意图")` 加函数名 `test[模块][行为]`，一眼可见验证目的；方法首行注释写明意图。
+- **推进性测量（Advancing Measures）**：断言「期望行为发生」（`#expect(...)` / `try #require(...)` 等），对期望值具体明确。
+- **驳回性测量（Dismissing Measures）**：断言「非期望行为不发生」（`#expect(... != ...)` / `#expect(throws:)` / `Issue.record(...)` 拦截错误路径），覆盖边界与错误处理。
 
 ### 6.2 组织：按模块 + 按行为
 - 每个主模块独立测试类：`ASTTests（载体已删）` / `LexerTests（载体已删）` / `IndentTrackerTests（载体已删）` / `ParserTests（载体已删）` / `EnvironmentTests（载体已删）` / `ErrorTests（载体已删）` / `ProgramExecutionTests（载体已删）`（见 `PiniTests.swift`）；新增模块须同步新增测试类。
@@ -719,12 +719,12 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 - 公共装配抽 `private func runProgram(_:)` 之类 helper（仓库已广泛采用）。
 
 ### 6.5 错误与回归
-- 显式校验错误**类型与载荷**（`XCTAssertThrowsError` + 模式匹配）。
+- 显式校验错误**类型与载荷**（`#expect(throws:)` 或 do-catch 加模式匹配）。
 - **每个 bug 修复必配测试**：先红（复现）→ 修复 → 绿（通过），防回潮。
 
 ### 6.6 验收清单（测试 DoD）
 - [ ] 每模块至少一测试类
-- [ ] 每条测试含意图 / 推进 / 驳回三要素
+- [ ] 每条测试含意图 / 推进 / 驳回三要素（断言语汇用 `#expect` / `try #require`，不用 XCTest 断言）
 - [ ] 按模块 + 行为组织
 - [ ] 错误路径随成功路径同测
 - [ ] 测试独立隔离
