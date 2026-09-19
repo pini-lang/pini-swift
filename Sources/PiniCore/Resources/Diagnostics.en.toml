@@ -183,3 +183,12 @@ message = "type mismatch: expected '{expected}', got '{got}'"
 message = "unresolvable extension target '{feature}'"
 [E6-007]
 message = "no default instance available for '{feature}'"
+
+# [E6-008] —— **预留**（未实现 · 零触发点 · 当期不产任何诊断）。
+# 依据：`ADR-001` §7 第 4 项已裁「环检测降为编译器警告级服务并**后置**」；落地计划 §3.5 第 3 条
+# 要求「为环检测**预留码位并登记**」（append-only 约定下，预留须显式写）。
+# 此处登记的是**编号归属**：后置实现时沿用本号，不另起编号 —— 号一经分配即不复用。
+# ⚠️ 消息模板是**占位稿**，实现时可改写；**码不得改**。
+[E6-008]
+message = "the default instance dependencies of a given block form a cycle (reserved: cycle detection is not implemented yet)"
+suggestion = "split the shared state into a smaller layer, or pass it explicitly"
