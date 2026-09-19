@@ -33,8 +33,8 @@ granularity_minutes = 60
 scan_exclude = ["docs/spec/issue/archive/issue-evidence-table-sweep-2026-09-03.md"]
 artifact_policy = "条目的 `artifacts` 是**指针**，指针可以比它所指的东西活得久。凡 `artifacts` 里有**实存不存在**的路径，该条必须写 `artifact_status = \"carrier-deleted\"`；反之不得写。`tools/evidence_sweep.py --check` 两个方向都拦（悬空无标记 / 有标记而全实存），因为**不维护的标记与没有标记等价**。⚠️ 只拦指针、只报记录：`command`/`output`/`note`/`claim` 记的是**当时的观测**，载体消失不能反证当时的观测 ⇒ 这四项只计数、不改写（2026-09-19 口径）"
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
-last_refresh = "2026-09-18T12:16+08:00"
-refresh_note = "2026-09-18 **`P0d-D`（相容桥 + 签名迁移）**：新增五条 —— ①「`Char → String` 单向加宽：三份探针逐向钉住，窄化被拒」· ②「桥两侧原子性：两臂逐行相同」· ③「`chr` 越界改走 panic」· ④「落点比规划件多两类：HIR 降载的三处类型门与 `+` 的结果类型」· ⑤「selfhost 参数面实测 5 处而非静态推的 3 处」。要点 = 判据**两向都测**（窄化那份才是裁定的全部内容）· 桥的 LLVM 探针**剥掉已登记不可运行的那一面**才测得到桥本身 · 一处止损如实上报并**按裁定回退**（登记 `G70`）· 计划件的处数**两处被实测订正**；存量条目未重新验证"
+last_refresh = "2026-09-19T15:53+08:00"
+refresh_note = "2026-09-19 **`P1a`（方括号通用形 + 给定块声明位）**：新增一条 —— 「扩展归并只看目标是否注册为名义类型，不看 kind」。要点 = 该发现由**两形糖互通**反推得出（对象目标吃 `(( ))`、结构目标吃 `{{ }}` 均生效），它把「kind 须按目标类别决定」这一计划假设否证，并把通用形的成本从「新 kind + 解析期两遍」降到**一行归并条件**。同批登记两处不覆盖面（目标未声明时静默、`[[结构体名]]` 由静默转为生效）。存量条目未重新验证。2026-09-18 **`P0d-D`（相容桥 + 签名迁移）**：新增五条 —— ①「`Char → String` 单向加宽：三份探针逐向钉住，窄化被拒」· ②「桥两侧原子性：两臂逐行相同」· ③「`chr` 越界改走 panic」· ④「落点比规划件多两类：HIR 降载的三处类型门与 `+` 的结果类型」· ⑤「selfhost 参数面实测 5 处而非静态推的 3 处」。要点 = 判据**两向都测**（窄化那份才是裁定的全部内容）· 桥的 LLVM 探针**剥掉已登记不可运行的那一面**才测得到桥本身 · 一处止损如实上报并**按裁定回退**（登记 `G70`）· 计划件的处数**两处被实测订正**；存量条目未重新验证"
 last_sweep = "2026-09-18T23:12:00+08:00"
 [[evidence]]
 id = "2026-09-18 selfhost 字符原语参数面：实测 5 处，非静态推的 3 处"
@@ -50,3 +50,18 @@ output = "Check exits 1 with E4-001 at lexer.pini:500 (expected Char, got String
 validated_at = "2026-09-18T12:16+08:00"
 status = "STALE"
 note = "⇒ 该状态登记为 spec 台账 `G70`（含 5 处清单、代价面、解除条件）。⚠️ **代价面已实测**：宿主四道门禁**均显式排除** selfhost（各自持排除理由）⇒ 该红**只落在 selfhost 自己的 gate**（其第 4 项 = `pini check .`），不污染宿主门禁。"
+
+[[evidence]]
+id = "2026-09-19 扩展归并只看目标是否注册为名义类型，不看 kind：两形糖互通即是证据"
+citable = false
+claim = ["The extension merge never looked at the kind at all - it looks at whether the target name is registered as a nominal type. The evidence is that the two specialised brackets are interchangeable today: an object target accepts `((...))` and a struct target accepts `{{...}}`, both running correctly, which no kind-based rule could produce since each pair contradicts the other's bracket. That is why making `[[X]]` the general form cost one clause in the merge condition rather than a new kind, and why enum targets keep their old behaviour for free: enums live in a separate registry, so a bracket extension over an enum never had a consumer and still does not. It also falsifies the plan's assumption that the kind would have to be decided from the target's category - the category decides where methods merge, but it does not need to be known at parse time. With the bracket kind added to the merge, `[[X]]` over a struct now binds its methods where the same spelling used to drop them silently."]
+artifacts = [
+  "Sources/PiniCore/HIR/HIRLowerer.swift",
+  "Sources/PiniCore/AST/Declarations/ExtensionDecl.swift",
+  "Tests/PiniTests/GivenUsingTests.swift",
+]
+command = "pini run on two mis-bracketed probes (object target with `(( ))`, struct target with `{{ }}`), then pini run/check on a bracket extension over a struct, over an enum, and over a given block; swift test --filter GivenUsingTests ; swift test --scratch-path /tmp/pini-build-base (baseline worktree at 9d4f7b6)"
+output = ["The mis-bracketed pair prints 77 and 3, so both brackets work on both nominal categories. A bracket extension over a struct prints 3 after the change and reported E6-004 before it; over an enum it still reports E6-004, unchanged. A given block parses and is then refused at lowering with E6-004 naming the block and the later batch, instead of being dropped in silence. Tests: 41 passing after the change against 32 passing at the baseline, the nine being the new suite, so the red set is empty on both sides. Removing the one merge clause again turns exactly one test red (the struct case) and leaves the other eight green, and the file is byte-identical to HEAD after restoring."]
+validated_at = "2026-09-19T15:53+08:00"
+status = "FRESH"
+note = "⇒ 推翻了计划件的一处假设（「kind 须由目标的类别在解析期决定」）：实测表明归并层只需要「目标在名义类型注册表里」，kind 本身不参与判定 ⇒ `[[X]]` 只改归并条件即成通用形，枚举与特征各自维持今日行为（零回归面）。⚠️ 同批登记两处**不覆盖面**（见计划件的遗留段）：目标是未声明名 / 特征名时**静默丢弃**无诊断（今日行为，本批未改）；`[[结构体名]]` 的行为**由「静默丢弃」变为「归并生效」**（零语料 ⇒ 无回归面，但属行为变更，已显式登记）。"
