@@ -29,6 +29,13 @@ public enum ConstantFolder {
                     name: o.name, genericParams: o.genericParams,
                     fields: o.fields.map { FieldDecl(name: $0.name, typeAnnotation: $0.typeAnnotation, initializer: $0.initializer.map(fold), location: $0.location) },
                     methods: o.methods.map(fold), traits: o.traits, location: o.location))
+        case .givenDecl(let g):
+            // AD-001：与对象体同规，字段初值里的常量表达式同样折叠。
+            return .givenDecl(
+                GivenDecl(
+                    name: g.name, genericParams: g.genericParams,
+                    fields: g.fields.map { FieldDecl(name: $0.name, typeAnnotation: $0.typeAnnotation, initializer: $0.initializer.map(fold), location: $0.location) },
+                    methods: g.methods.map(fold), traits: g.traits, location: g.location))
         case .enumDecl(let e):
             return .enumDecl(
                 EnumDecl(

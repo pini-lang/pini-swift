@@ -348,7 +348,12 @@ public enum HIRLowerer {
             templates: genericEnumTemplates, caseOwners: genericEnumCaseOwners
         )
         for decl in module.declarations {
-            if case .extensionDecl(let ext) = decl, ext.kind == .structExt || ext.kind == .objectExt,
+            // AD-001：`.bracketExt`（方括号 = 通用扩展形）与 `((` / `{{` 两形**同权**。
+            // 归并条件从来只看「目标是否注册为名义类型」，不看 kind 本身 —— 实测（2026-09-19）
+            // `((` 与 `{{` 对结构 / 对象目标**互通**，即是一例。故 `[[X]]` 对结构 / 对象 /
+            // 给定块生效；对枚举与特征**不生效**（二者不在这张表里）＝ 各自维持今日行为。
+            if case .extensionDecl(let ext) = decl,
+                ext.kind == .structExt || ext.kind == .objectExt || ext.kind == .bracketExt,
                 nominals[ext.targetType] != nil
             {
                 nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
@@ -633,6 +638,15 @@ public enum HIRLowerer {
                 // G14: declare-only surface — lowered into `foreigns` below,
                 // no function body to emit.
                 continue
+            case .givenDecl(let givenDecl):
+                // AD-001 `P1a`：给定块的**声明面**已落地（解析 + AST + 特征摘取），
+                // 但默认实例的**物化面**（存放位 · 一次性守卫 · 取用点解析）属 `P2`
+                // ⇒ 响亮拒绝，**不静默丢弃**（静默会让「写对了却没效果」无从定位）。
+                // 中间态「能解析、不能跑」已在 ADR-001 落地计划件的 `P1a` 显式登记。
+                throw unsupported(
+                    "given block `\(givenDecl.name)` (`[名称|given]`)：声明面已落地，默认实例机制属后续批次（AD-001 P2）",
+                    at: givenDecl.location
+                )
             default:
                 throw unsupported(
                     "top-level construct outside the slice (named functions + struct/object types)",
@@ -4984,6 +4998,7 @@ public enum HIRLowerer {
         case .funcDecl(let funcDecl): return funcDecl.name
         case .structDecl(let structDecl): return structDecl.name
         case .objectDecl(let objectDecl): return objectDecl.name
+        case .givenDecl(let givenDecl): return givenDecl.name
         case .enumDecl(let enumDecl): return enumDecl.name
         case .traitDecl(let traitDecl): return traitDecl.name
         case .foreignDecl(let foreignDecl): return foreignDecl.name

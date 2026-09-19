@@ -39,6 +39,7 @@ public enum Desugar {
         switch decl {
         case .structDecl(let s): return .structDecl(desugar(s))
         case .objectDecl(let o): return .objectDecl(desugar(o))
+        case .givenDecl(let g): return .givenDecl(desugar(g))
         case .enumDecl(let e): return .enumDecl(desugar(e))
         case .funcDecl(let f): return .funcDecl(desugar(f))
         case .traitDecl(let t): return .traitDecl(desugar(t))
@@ -114,6 +115,23 @@ public enum Desugar {
             methods: o.methods.map(desugar),
             traits: o.traits,
             location: o.location)
+    }
+
+    /// AD-001：给定块体与对象体同构 ⇒ 同规去糖（字段初值里的糖也要降）。
+    public static func desugar(_ g: GivenDecl) -> GivenDecl {
+        return GivenDecl(
+            name: g.name,
+            genericParams: g.genericParams,
+            fields: g.fields.map {
+                FieldDecl(
+                    name: $0.name,
+                    typeAnnotation: $0.typeAnnotation,
+                    initializer: $0.initializer.map(desugar),
+                    location: $0.location)
+            },
+            methods: g.methods.map(desugar),
+            traits: g.traits,
+            location: g.location)
     }
 
     public static func desugar(_ e: EnumDecl) -> EnumDecl {
