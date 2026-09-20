@@ -421,7 +421,12 @@ public final class HIRExecutor: DebugHookHost {
     /// `挂起模式退役` retired that alternative along with the walk it was built on.
     /// This is what the language does; it is not a placeholder for a suspend
     /// branch that has yet to arrive.
-    private let scheduler: Scheduler = GCDScheduler.shared
+    /// Injected rather than hardcoded so a criterion can stand a back end in that
+    /// declines to yield. That is not a test seam for its own sake: "a back end
+    /// that cannot hand the thread back degrades instead of failing" is a
+    /// normative discipline (DE-1 §6.2), and a discipline with no criterion on it
+    /// is a sentence, not a rule.
+    private let scheduler: Scheduler
 
     // MARK: - Per-thread execution state
 
@@ -517,10 +522,20 @@ public final class HIRExecutor: DebugHookHost {
     /// `argv()` 内建的唯一来源，镜像而不另造。
     public var processArguments: [String] = []
 
-    public init(programBase: String? = nil, ffiConfig: FFIConfig = .default) {
+    public convenience init(programBase: String? = nil, ffiConfig: FFIConfig = .default) {
+        self.init(programBase: programBase, ffiConfig: ffiConfig, scheduler: GCDScheduler.shared)
+    }
+
+    /// The engine with an explicit back end.
+    ///
+    /// Production always takes the line above; this overload exists so a criterion
+    /// can ask what happens on a back end whose `yieldTask()` answers `0`. Nothing
+    /// branches on it — the back end answers, the engine obeys.
+    init(programBase: String?, ffiConfig: FFIConfig, scheduler: Scheduler) {
         self.globalEnv = Environment()
         self.programBase = programBase
         self.ffiConfig = ffiConfig
+        self.scheduler = scheduler
         // `currentEnv` is deliberately not seeded here. Its per-thread box
         // answers `globalEnv` until a thread enters something, so a seed would
         // be the same value written the hard way — and writing through the
@@ -2928,10 +2943,22 @@ public final class HIRExecutor: DebugHookHost {
                 // whenever there is nothing to wait for — which is both cheaper
                 // and observably calmer, since it costs no task switch to collect
                 // a child that has already finished.
+                //
+                // The third case is the back end answering "not this time". `await`
+                // promises to give the task up, but that promise needs a back end
+                // that can hand the OS thread back, and a back end that cannot is
+                // not a broken configuration — it is a compliant one (DE-1 §6.2
+                // discipline 3: degrade, do not fail). So the wait is taken
+                // occupying the thread instead, exactly as `wait` would, and
+                // nothing is reported. Giving the task up here would be worse than
+                // degrading: a suspended body whose future can only be settled by
+                // someone this back end will never schedule is a deadlock, and a
+                // deadlock is not a "supported with reduced semantics" reading of
+                // `await` — it is a program that stops.
                 if fut.isFinished {
                     let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
                     if let updated = try finishYield(plan, value: value) { last = updated }
-                } else {
+                } else if scheduler.yieldTask() == 1 {
                     return .givenUp(
                         HIRYieldFrame(
                             callable: callable,
@@ -2950,6 +2977,9 @@ public final class HIRExecutor: DebugHookHost {
                             currentFuture: currentFuture
                         )
                     )
+                } else {
+                    let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
+                    if let updated = try finishYield(plan, value: value) { last = updated }
                 }
             } else if case .exprStmt(let expr) = statement {
                 last = try evaluate(expr)

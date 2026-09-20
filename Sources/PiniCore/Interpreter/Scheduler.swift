@@ -36,6 +36,24 @@ protocol Scheduler {
 
     /// 当前并发活跃任务数（可观测、可诊断）。供饥饿/背压诊断使用。
     var activeTaskCount: Int { get }
+
+    /// 本后端的能力自述（`DE-1` §6 分层）。**启动解析一次、此后固化**。
+    var capabilities: ConcurrencyCapabilities { get }
+
+    /// `bk_task_yield() -> i32` 在解释器腿的对应物（`DE-1` §3.2）。
+    ///
+    /// **让出当前任务**：后端能释放当前 OS 线程就让出，**否则立即返回**。
+    ///
+    /// - Returns: `1` = 真让出 · `0` = **合规降级**（后端兑现不了让出）。
+    ///   ⛔ `0` **不是错误** —— 它是 `DE-1` §6.2 纪律 3 的落点（无合格版本则降级，不失败），
+    ///   与 Go 的 WASM 目标等价 `GOMAXPROCS=1` 同性质（**语义保持、只降执行策略**）。
+    ///   ⛔ 也**不得**读成「让出语义为空」—— 该读法已被否证。
+    ///
+    /// ⚠️ 调用它**不等于**已经让出：它回答的是「这次让出能不能真的发生」。
+    /// 谁执行让出，随腿而异 —— 解释器腿是驱动器交出挂起帧（控制流返回），
+    /// 发射腿是这一句调用本身切走（`DE-3`）。两腿必须在这一位上一致，否则
+    /// 「`await` 让出 / `wait` 占用」这条可观测差异在跨后端时就没有共同基准。
+    func yieldTask() -> Int32
 }
 
 /// P5 B3-2 更新：有界并发池 + 信号量背压（GCD 后端）。
@@ -151,6 +169,25 @@ final class GCDScheduler: Scheduler {
         let c = activeCount
         countLock.unlock()
         return c
+    }
+
+    /// 本后端的进程级能力读数（`DE-1` §3.4 / §6）。
+    ///
+    /// **启动解析一次、此后固化** —— Swift 的 `static let` 天然满足这两条
+    /// （惰性、一次性、线程安全，此后不再重算），于是纪律 1「不逐调用点判」自动成立：
+    /// 调用点读的是这个已经算好的位图，而不是每次去问一遍宿主。
+    ///
+    /// ⚠️ 这里的 `threadsAvailable: true` 是**本后端的实情自述**，不是常量装饰：
+    /// 本类建在 `DispatchQueue` 上，它的并发执行**依赖宿主线程**。将来若接一个
+    /// 单线程后端（无线程宿主），那个后端自述 `false` ⇒ 它的 L1 自动不可用、
+    /// `await` 降级为占用，**而没有任何东西报错**。
+    static let capabilities = ConcurrencyCapabilities.resolve(threadsAvailable: true)
+
+    var capabilities: ConcurrencyCapabilities { GCDScheduler.capabilities }
+
+    /// 见协议声明。本后端有线程 ⇒ L1 在场 ⇒ 恒返 `1`（真让出）。
+    func yieldTask() -> Int32 {
+        GCDScheduler.capabilities.supports(.yield) ? 1 : 0
     }
 
     private static func emergencyMsg(_ active: Int) -> String? {
