@@ -1194,6 +1194,31 @@ public func bk_task_yield() -> Int32 {
     (_bkCapabilities & ConcurrencyTierBits.yield) != 0 ? 1 : 0
 }
 
+/// `sleep(ms)` 的原语层落点 —— **按片睡**，每片醒来查一次取消位。
+///
+/// ⛔ 为什么不做成 libc 的睡眠：解释器腿的对应物（`RuntimeOps.builtinSleep`）是把长睡
+/// 拆成小片、每片回来查一次取消 / 超时，因此「取消一个正在睡的任务」在**一片之内**生效，
+/// 而不是等它睡完。一条直通的 libc 睡眠会让两腿在**取消时机**上分岔，而那个分岔在
+/// 只跑成功的样板里看不出来。睡眠本就属原语层（`DE-1` §4：让出 / 恢复 / 续体保存归宿主），
+/// 故它住在这里、而不是被降载成一条 libc 调用。
+///
+/// ⚠️ **一处如实的边界**：解释器腿在检查点发现取消时是**抛**（abort 体），而 C ABI 面
+/// 没有异常通道 ⇒ 本函数只能**提前结束睡眠**，体随后仍会跑完。差别只在「取消后体还能跑几步」，
+/// 而**等待侧的归约是同一套**：盒子已被置取消，`bk_task_join` 照旧返回 `status = 1`
+/// （⇒ `err(CancelError)`）。体被真正中断要等发射层的检查点接线，属后置批次。
+@_cdecl("bk_sleep")
+public func bk_sleep(_ ms: Int32) {
+    guard ms > 0 else { return }
+    var remaining = Double(ms) / 1000.0
+    let slice = 0.02
+    while remaining > 0 {
+        if _bkTaskCurrent?.cancelled == true { return }
+        let step = min(slice, remaining)
+        Thread.sleep(forTimeInterval: step)
+        remaining -= step
+    }
+}
+
 // MARK: join
 
 /// 阻塞 join（`DE-1` §3.1，现行唯一形态）。`out` 收 `Result`（三槽，见 `_bkWriteResult`）。
