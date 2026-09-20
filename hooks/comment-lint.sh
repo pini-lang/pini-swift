@@ -10,6 +10,11 @@
 #   L6 ID 可兑付     注释引用的 ADR-NNN 必须在 docs/spec/adr/ 有同编号文件（无索引表；编号自 001 起）
 #
 # 用法：hooks/comment-lint.sh [path...]   # 默认扫描 Sources Tests examples bench
+# 扫描面（后缀）：`*.swift` / `*.pini` / `*.toml`。⚠️ `.toml` 于 2026-09-20 纳入 ——
+#   资源类 TOML（如 `Resources/Diagnostics.{zh,en}.toml`）同样载有注释，早先不在面内
+#   ⇒ 其注释**零门禁**（实测：两个诊断资源各有 3 行违规，而门禁一直全绿）。
+#   后两条规则（L5 待办 / L6 ADR 兑付）**不锚定注释符**（对 .swift/.pini 亦如此，行为未变），
+#   故它们也会看到 TOML 的**数据行**；L1–L4 因锚定 `#` 而天然只见注释行。
 # 依赖：ripgrep 优先（探测顺序：PINI_RG → PATH → 常见安装位置），无则回退 grep -E。
 #   ⚠️ 回退路径在「命令被沙箱代理存根接管」的环境里会慢约 80 倍（实测单趟 79 秒 vs 0 秒），
 #   本脚本有 7 趟全树扫描 ⇒ 整条门禁从 1 秒膨胀到 ~9 分钟。故探测不只看 PATH。
@@ -91,18 +96,18 @@ fi
 scan() { # $1=pattern，输出命中行
   local pat="$1"
   if [ "$has_rg" -eq 1 ]; then
-    "$rg_bin" -n --hidden --glob '*.swift' --glob '*.pini' ${excl_rg[@]+"${excl_rg[@]}"} "$pat" "${targets[@]}" 2>/dev/null
+    "$rg_bin" -n --hidden --glob '*.swift' --glob '*.pini' --glob '*.toml' ${excl_rg[@]+"${excl_rg[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   else
-    grep -rEn --include='*.swift' --include='*.pini' ${excl_grep[@]+"${excl_grep[@]}"} "$pat" "${targets[@]}" 2>/dev/null
+    grep -rEn --include='*.swift' --include='*.pini' --include='*.toml' ${excl_grep[@]+"${excl_grep[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   fi
 }
 
 scan_o() { # $1=pattern，仅输出匹配片段（L6 用，无文件名前缀）
   local pat="$1"
   if [ "$has_rg" -eq 1 ]; then
-    "$rg_bin" -o --no-filename --hidden --glob '*.swift' --glob '*.pini' ${excl_rg[@]+"${excl_rg[@]}"} "$pat" "${targets[@]}" 2>/dev/null
+    "$rg_bin" -o --no-filename --hidden --glob '*.swift' --glob '*.pini' --glob '*.toml' ${excl_rg[@]+"${excl_rg[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   else
-    grep -rEoh --include='*.swift' --include='*.pini' ${excl_grep[@]+"${excl_grep[@]}"} "$pat" "${targets[@]}" 2>/dev/null
+    grep -rEoh --include='*.swift' --include='*.pini' --include='*.toml' ${excl_grep[@]+"${excl_grep[@]}"} "$pat" "${targets[@]}" 2>/dev/null
   fi
 }
 

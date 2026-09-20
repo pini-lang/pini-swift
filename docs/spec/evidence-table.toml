@@ -35,7 +35,7 @@ artifact_policy = "条目的 `artifacts` 是**指针**，指针可以比它所�
 id_policy = "本表 ID 为**中文自描述短语 + 日期前缀**，**只供读表**，不得被任何外部载体引用：本表是滚动表，条目按新鲜度自动清扫，引用它必然悬空（旧编号 E-NNN 停用即为此故）。外部确需追溯某条已清理的证据时，写「E-NNN（源已删除）」；`tools/evidence_sweep.py --check` 对无该标注的编号出现**报错**（2026-09-15 口径，取代此前的 `dangling_policy` 三分类）"
 last_refresh = "2026-09-19T22:26+08:00"
 refresh_note = "2026-09-19 **治理前置（`P0`）**：新增一条 —— 「关键字计数两侧皆 33，且『先登记后落码』在契约面只能落在 §4」。要点 = ① 规范与实现的关键字**计数注释都失实**（退役 `except` 后未随动）⇒ 计划件的成本数字据实更正为 33 → 34；② 契约器械的**双向对账**划定了登记位置 —— 未落地的节点面只能进 §4 预留位，此时「先登记后落码」才与器械相容。同批交付 `HIR 契约` §4.3 · `G71` 行订正 · 语言规范 §A.1.1 计数订正 · §5.1 递交台账补 `G71` 行 · `ADR-001` 五处订正。存量条目未重新验证。2026-09-19 **`P1a`（方括号通用形 + 给定块声明位）**：新增一条 —— 「扩展归并只看目标是否注册为名义类型，不看 kind」。要点 = 该发现由**两形糖互通**反推得出（对象目标吃 `(( ))`、结构目标吃 `{{ }}` 均生效），它把「kind 须按目标类别决定」这一计划假设否证，并把通用形的成本从「新 kind + 解析期两遍」降到**一行归并条件**。同批登记两处不覆盖面（目标未声明时静默、`[[结构体名]]` 由静默转为生效）。2026-09-19 **`P1`（`using` 入关键字表 + 参数位）**：新增一条 —— 「两侧同批升 34，入表的两个后果由 CLI 前后对照臂量到」。要点 = ① 规范侧与实现侧的计数注释都是失实过的（`except` 退役未随动），本批**两侧同批**改到 34 并逐项比对集合；② 入表是**破坏性**的（合法标识符变保留字），而**不该动的一处未动**（方括号修饰符位的拒绝两臂逐字节相同）；③ 变异反证**逐层各一**（词法 4 / 语法 2 / 降载 1 条红），AST 面那条在降载变异下保持绿 ⇒ 判据不重复计数。2026-09-19 **`P2b`（默认实例物化面：类型面 · 取用点注入 · 发射槽位 · 引擎表）**：新增一条。要点 = 一条既有判据抓到了首版实现的真缺陷（全显式形态下注入顶掉用户实参），以及「依赖留痕的边方向」与直觉相反。存量条目未重新验证。2026-09-19 **`P2a`（默认实例取用：节点面 + 运行时符号）**：新增一条。要点 = 它把「预留位」变成「存在的节点 + 存在的符号」，并量到一个关于**判据有效性**的结论：并发判据的形态决定了它能不能抓住竞态类变异（单轮与信号量栅栏两级都抓不住，自旋栅栏才 60/60 命中）。同批登记 `bk_given_destroy` 决定不加（清单停在 38）。存量条目未重新验证。2026-09-19 **`P1b`（给定块进归并表 + 扩展目标诊断）**：新增一条。要点 = 它先把 `P1a` 的**失实注释**订正成事实（归并表只装 struct / object，给定块当时落 `default: break`），再给诊断划**显式射程** —— 放过名单不含枚举与泛型模板，正是这条射程让**上一批的判据**（枚举目标维持不归并）在本批的改动下仍然转红，成为「不扩大改动面」的活守卫。存量条目未重新验证。存量条目未重新验证。2026-09-18 **`P0d-D`（相容桥 + 签名迁移）**：新增五条 —— ①「`Char → String` 单向加宽：三份探针逐向钉住，窄化被拒」· ②「桥两侧原子性：两臂逐行相同」· ③「`chr` 越界改走 panic」· ④「落点比规划件多两类：HIR 降载的三处类型门与 `+` 的结果类型」· ⑤「selfhost 参数面实测 5 处而非静态推的 3 处」。要点 = 判据**两向都测**（窄化那份才是裁定的全部内容）· 桥的 LLVM 探针**剥掉已登记不可运行的那一面**才测得到桥本身 · 一处止损如实上报并**按裁定回退**（登记 `G70`）· 计划件的处数**两处被实测订正**；存量条目未重新验证。2026-09-19 **`P3`（取用位进函数类型 + 强制规则降级为诊断）**：新增一条。要点 = ① 一次「改动到位、编译通过、一条不报」的失效，根因是**入口放错**（`check(module:)` 与 `checkCollecting(module:)` 是两份平行拷贝，而 `pini check` 只走后者 ⇒ 只加在前者的状态在该路径上恒为空集），四次尝试的共同点是都动了判据、而真正错的地方一次也没碰；② **模板槽名按错误族分**（`TypeError` 侧 = case 标签，`HIRLoweringError` 侧固定 `{feature}`），首稿照抄邻族 ⇒ 原样漏印且无门禁；③ `ADR-001` 的一条前提被探针否证（类型名在值位 = 未声明的变量，`object` 对照同报）⇒ 强制规则**降级为诊断**。 2026-09-19 **`P3` 收窄（参数位收窄 · 码 `E2-025`）**：新增一条。要点 = ① `using` 前缀的合法性判点是一处，但落点是**五个不是四个**（trait 抽象签名的两种书写形态各一处 · `main` 与 `|test` **共用**一处 · `|foreign` 一处），且**三个落点各有独立见证者**（由一级变异实证）；② 一条死参数（`parseBareFuncDecl(isTopLevel:)`：4 个调用点都传、体内一次未读）与一个名字误导的函数（`parseFuncDeclInTypeContext` 唯一调用者在 trait 里，实为花括号形态）都把「按名字推断用途」这条捷径堵死；③ `|foreign` 的干净起点须用**标量参数**版才量得到（给定块类型那一版报的 `E4-001` 来自 FFI 的 C 兼容性检查，与前缀无关）；④ **诊断级联非本批引入**（既有 `E2-008` 同形级联）。同批登记**名单外第 5 处**（trait 默认方法）一并拒、待裁。2026-09-19 **`P4`（收口批）**：新增一条 —— 「把只住在 `/tmp` 的判据变成可持续回归」。要点 = ① 「收口」的实质是**判据固化**，不是再跑一遍回归（`P3` 两半判据齐、变异齐，但**零进仓**）；② 判据形态按错误族分（**有载荷的 case 与自由文本 case 的可断言面不同**，与 `P3` 的槽名规律同源）；③ `G71` 行**内部两个列自相矛盾** —— **同族第三次**「两份平行拷贝、只改了一份」；④ 余量第 2 条的取证方式是**读实现**而非跑探针（它是结构性质）。存量条目未重新验证"
-last_sweep = "2026-09-18T23:12:00+08:00"
+last_sweep = "2026-09-20T18:15:00+08:00"
 [[evidence]]
 id = "2026-09-18 selfhost 字符原语参数面：实测 5 处，非静态推的 3 处"
 citable = false
@@ -63,7 +63,7 @@ artifacts = [
 command = "pini run on two mis-bracketed probes (object target with `(( ))`, struct target with `{{ }}`), then pini run/check on a bracket extension over a struct, over an enum, and over a given block; swift test --filter GivenUsingTests ; swift test --scratch-path /tmp/pini-build-base (baseline worktree at 9d4f7b6)"
 output = ["The mis-bracketed pair prints 77 and 3, so both brackets work on both nominal categories. A bracket extension over a struct prints 3 after the change and reported E6-004 before it; over an enum it still reports E6-004, unchanged. A given block parses and is then refused at lowering with E6-004 naming the block and the later batch, instead of being dropped in silence. Tests: 41 passing after the change against 32 passing at the baseline, the nine being the new suite, so the red set is empty on both sides. Removing the one merge clause again turns exactly one test red (the struct case) and leaves the other eight green, and the file is byte-identical to HEAD after restoring."]
 validated_at = "2026-09-19T15:53+08:00"
-status = "FRESH"
+status = "STALE"
 note = "⇒ 推翻了计划件的一处假设（「kind 须由目标的类别在解析期决定」）：实测表明归并层只需要「目标在名义类型注册表里」，kind 本身不参与判定 ⇒ `[[X]]` 只改归并条件即成通用形，枚举与特征各自维持今日行为（零回归面）。⚠️ 同批登记两处**不覆盖面**（见计划件的遗留段）：目标是未声明名 / 特征名时**静默丢弃**无诊断（今日行为，本批未改）；`[[结构体名]]` 的行为**由「静默丢弃」变为「归并生效」**（零语料 ⇒ 无回归面，但属行为变更，已显式登记）。"
 
 [[evidence]]
@@ -85,7 +85,7 @@ output = [
   "The two sets are equal and 33 long each, order aside. Token.swift's history reads 32 at the first release, 33 after `own`, 34 after `test`, then 33 once `except` retired with the try-else migration - so the '34' in both notes was correct when written and is not now. The checker reports clean before and after the batch (45 expr + 17 stmt = 62 entries against 62 cases, three anchors at 62/62), and the new section 4.3 slot is not counted as an entry because section 4 lies outside both tables the script parses; references checked rose from 18 to 20 with none dangling.",
 ]
 validated_at = "2026-09-19T16:07+08:00"
-status = "FRESH"
+status = "STALE"
 note = "⇒ 本批（治理前置 `P0`）的两处实测。① **计数失实**：规范 `KEYWORD` 产生式与 `Token.Keyword` **都是 33**，而两侧注释都写 34 —— 那是 2026-09-07 退役 `except` **之前**的正确值，此后未随动。⇒ 计划件原写的「`using` 入关键字表（34 → 35）」更正为 **33 → 34**；实现侧那处注释**本批不动**（零源码改动），登记为 `P1` 随批订正。② **登记的合法位置**：`hir-contract-check.py` 对 §2/§3 条目表与节点集**双向对账** ⇒ 「先登记后落码」在契约面**只能**落在 §4 预留位（写进 §2 即报 `contract-without-node`）⇒ 已交付 = `HIR 契约` §4.3（默认实例取用）。⚠️ 本条的结论**不依赖**行号（`§2/§3` 是节名，两个计数是集合大小）。"
 [[evidence]]
 id = "2026-09-19 `using` 入关键字表：两侧同批升 34，入表的两个后果由 CLI 前后对照臂量到"
@@ -103,13 +103,13 @@ artifacts = [
 command = "a script extracting the spec KEYWORD production literals and the Token.Keyword cases and comparing the sets, with two positive controls (inject a one-sided word on the spec side; drop the case on the implementation side); pini run on four probes against a binary built from 8a6c829 in a worktree and against one built from the batch tree; swift test on the batch tree, on the stashed pre-batch state, and under three one-layer mutations"
 output = "The two sets are equal and 34 long each. The CLI pair: `using 甲: I32` goes E2-001 -> accepted, printing 5; `let using = 1` goes from running and printing 1 to E2-002 expected token identifier; `[配置|using]` is byte-identical in both arms (377 bytes, E2-005); the given-block probe reports E6-004 in both, the only difference being the record's name after this batch's rename. Tests: 47 passing against 41 passing on the stashed state, the difference being exactly the six new cases with no test disappearing and an empty red set on both sides. Mutations: breaking the keyword entry turns four red (the set probe, the identifier probe, and both marker probes) with the forty baseline cases green; removing the parser prefix turns two red; dropping the flag at lowering turns exactly one, leaving the AST-level marker probe green. The positive controls both fired: injecting a one-sided word on the spec side and dropping the case on the implementation side each showed up as a non-empty difference, so the equality above is not an extractor that returns nothing."
 validated_at = "2026-09-19T19:00+08:00"
-status = "FRESH"
+status = "STALE"
 note = "⇒ 本批（`P1`）的三处实测。① **两侧同批**：关键字表规范侧与实现侧**集合相同、数量各 34**，`P0` 那笔「改期挂到本批」由此兑现。⚠️ 首次的对账脚本**阳性对照设计错了**（把探针塞在产生式的分号之后 ⇒ 抽取范围之外）⇒ 守卫报「抽取式失效」而不是「两侧一致」—— 这正是对照存在的意义，重做后才取得读数。② **CLI 前后对照臂**：`using 甲: I32` 由 `E2-001` 转为可用、`let using = 1` 由合法标识符转为保留字（**破坏性**，与裁定的登记一致：破坏面只对仓外代码成立）；而**不该动的一处未动** —— 方括号修饰符位的拒绝两臂逐字节相同，给定块降载两臂同为 `E6-004`，唯一差异归属本批自己的注释归一。③ **变异反证逐层各一**：4 / 2 / 1 条转红，且 AST 面那条在降载变异下保持绿 ⇒ 「AST 面标记」与「标记到达 HIR」是两条独立判据，不是同一条被数了两遍。⚠️ **本批未做**：物化（`P2`）· 强制规则与参数位收窄（`P3`）—— 故「`using` 能隐式取到实参」这句**今天仍不成立**，调用点必须显式传参。"
 
 [[evidence]]
 id = "2026-09-19 `P1b`：给定块进归并表，扩展目标诊断按显式放过名单分射程"
 validated_at = "2026-09-19T19:30+08:00"
-status = "FRESH"
+status = "STALE"
 citable = false
 claim = "给定块此前**不在**降载归并表里 —— `P1a` 那句「故 `[[X]]` 对结构 / 对象 / 给定块生效」当时**失实**（给定块落 `default: break`，其方法被静默丢弃）；收编后 `[[给定块名]]` 的方法真的进块的方法表，且三形扩展的目标无法归并时按**显式放过名单**出声（枚举与泛型模板维持今日行为）。"
 command = "swift test 两臂（改前检出 4ab5144 的 worktree vs 工作树）· CLI 六类目标探针两臂 · examples 55 个目标两臂冒烟 · 变异三级（撤收编 / 撤诊断 / 射程过宽）"
@@ -120,7 +120,7 @@ artifacts = ["Sources/PiniCore/HIR/HIRLowerer.swift", "Sources/PiniCore/Resource
 [[evidence]]
 id = "2026-09-19 `P2a`：并发判据的形态决定它能否抓住变异"
 validated_at = "2026-09-19T19:58+08:00"
-status = "FRESH"
+status = "STALE"
 citable = false
 claim = "对「默认实例取用」的运行时符号 `bk_given_get`，**竞态类**变异（去掉建盒的全局锁）**不是随便写个并发测试就能抓住的**：单轮 `concurrentPerform(64)` 与「信号量栅栏 + 40 轮」两级写法都**抓不住**，直到改用**自旋栅栏**（线程不挂起）+ 显式队列 + 主线程参与，才 60/60 轮全部命中。据以判断「两级锁是否必要」的那个判据，其**有效性本身**必须先被变异证明。"
 command = "swift test 两臂（改前检出 9687c17 的 worktree vs 工作树）· 契约器械覆盖读数 · 变异三级（M1 去全局锁 / M2 持锁调 init_fn / M3 缓存不落盒）"
@@ -131,7 +131,7 @@ artifacts = ["Sources/PiniRuntime/PiniRuntime.swift", "Sources/PiniCore/HIR/HIRN
 [[evidence]]
 id = "2026-09-19 `P2b`：既有判据抓到了首版实现的一个真缺陷，而留痕的边方向不是直觉的那个"
 validated_at = "2026-09-19T20:58+08:00"
-status = "FRESH"
+status = "STALE"
 citable = false
 claim = "「让 `using` 形参可省略」这件事，**面比计划写的大**：它同时牵动检查器的实参个数校验与降载层的三处 arity 守卫，且两处签名表（检查器 / 降载器）各要补一个 `using` 位置集合 —— **不同步就会「check 过了、降载报错」**。而首版实现把「取用点只在省略式下插入」漏掉，导致**全显式**形态下用户给的实参被注入的取用点**顶掉**；抓住它的是 `P1` 留下的既有判据，不是新写的用例。"
 command = "swift test 两臂（改前检出 afd5601 的 worktree vs 工作树）· 两臂同名探针 10 组跑两遍（base / new）· 变异三级（关闭注入 / 撤字段校验 / 撤显式守卫）"
@@ -142,7 +142,7 @@ artifacts = ["Sources/PiniCore/HIR/HIRLowerer.swift", "Sources/PiniCore/CodeGen/
 [[evidence]]
 id = "2026-09-19 `P3`：一次「改动到位、编译通过、一条不报」的根因是入口放错"
 validated_at = "2026-09-19T21:50+08:00"
-status = "FRESH"
+status = "STALE"
 citable = false
 claim = "检查器的 `check(module:)` 与 `checkCollecting(module:)` 是同一套初始化序列的**两份平行拷贝**（各自做 `importAliasNames` / `preregisterTraits` / `registerTopLevelDeclSignature`），而 `pini check` 的路径只走**后者**。⇒ 任何只加在 `check(module:)` 里的状态，在 `check` 路径上**恒为空集**，依赖它的检查**静默失效**且**无任何机械信号**（编译通过、退出码 0、无警告、门禁全绿）。本批新增的 `E4-015` 因此连改四版全不生效 —— 四次尝试都只动「检查逻辑与判据」，**没有一次离开那个放错的填充函数**。"
 command = "19 条勘测探针 + 8 条新码探针（`q0`–`q7`，含 4 条对照）· 两臂全仓语料扫描（112 个 `.pini`）· 全量 `swift test` 两臂 · 变异三级 · 带 `PINI_CLI_BIN` 的 CLI 逐夹具一致性"
@@ -153,7 +153,7 @@ artifacts = ["Sources/PiniCore/Type/TypeChecker.swift", "Sources/PiniCore/Type/T
 [[evidence]]
 id = "2026-09-19 `P3` 收窄：`using` 前缀的合法性判在 `parseParameter`，但落点是五个不是四个"
 validated_at = "2026-09-19T22:07+08:00"
-status = "FRESH"
+status = "STALE"
 citable = false
 claim = "`using` 形参的合法性判点在 `parseParameter` 一处，但它有 **4 个调用者**、`parseBareFuncDecl` 又有 **4 个调用点** —— 两个维度**正交** ⇒ 「一处定义、四处调用」的直觉是错的。真正的落点是 **5 个**：trait 抽象签名有**两种书写形态**（裸 `名|self(...)` 与花括号 `{名}(...)`）**各自一个落点**；`main` 与 `|test` **共用同一个落点**（顶层裸函数是三态合一，只能按名字与修饰符分辨）；`|foreign` 块内签名一个。⚠️ 按函数名推断用途会漏：`parseFuncDeclInTypeContext` 名字像「类型体内的方法」，而它的**唯一调用者**在 `parseTraitDecl` 里 ⇒ 实为 trait 的花括号形态，按名字当合法位放过会把该形态**整类漏掉**。"
 command = "15 条探针两臂（`ec0114b` vs 本批）· 全仓 112 个 `.pini` 两臂逐文件对照 · 全量 `swift test`（带 `PINI_CLI_BIN`）· 变异三级（M1 撤 foreign+trail 裸形态的拒绝 / M2 把放过名单上的扩展方法也设拒 / M3 撤 main 与 |test 的细分）"
@@ -164,7 +164,7 @@ artifacts = ["Sources/PiniCore/Parser/Parser.swift", "Sources/PiniCore/Parser/Pa
 [[evidence]]
 id = "2026-09-19 `P4` 收口：把只住在 `/tmp` 的判据变成可持续回归"
 validated_at = "2026-09-19T22:24+08:00"
-status = "FRESH"
+status = "STALE"
 citable = false
 claim = "「收口」不是「再跑一遍回归」，而是**把批次留下的一次性判据变成可持续的**。`P3` 两半（诊断 `E4-015` · 参数位收窄 `E2-025`）判据齐、读数齐、变异齐，但**一条都没进仓库** —— 全测试面里两码的引用数 = **0**，全部住在 `/tmp` 探针（8 + 15 条）⇒ `/tmp` 一清，两处行为变更**再无回归网**，而 `E2-025` 是**破坏性**的（四处从「静默通过」变「解析期拒绝」）。⚠️ 计划件 §1.3 本就写「验收改用新增专项测试 + 一次全量回归」，**专项测试那一半从未兑现**。⇒ 本批先实测**能不能**做成测试，能做故做：新增 **6 个 `@Test`**（27 → 33），语料**逐字搬自**已实测的探针。"
 command = "只读勘测（测试面引用计数 · helper 语义 · 余量三条逐条核实）· 单套件测试（33 条）· 变异双点（撤 `E4-015` 填充 + 撤 `main` / `|test` 三态细分）· 全仓全量回归一次（带 `PINI_CLI_BIN`）· 契约器械"
