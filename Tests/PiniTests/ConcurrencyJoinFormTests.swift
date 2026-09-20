@@ -54,22 +54,36 @@ struct ConcurrencyJoinFormTests {
         return lines
     }
 
-    /// 同一段程序里两种形态各写一次 —— 这是判据的最小语料。
+    /// 同一段程序里两种形态各写一次，**各自写在自己的上下文里** —— 这是判据的最小语料。
+    ///
+    /// ⚠️ **2026-09-20 改过语料（裁定 35）**：原语料把 `await` 写在同步的 `main` 里，那是当时
+    /// 允许的写法。新规则要求 `await` 只在异步体内、`wait` 只在同步体内，所以语料随之改。
+    /// 判据的**意图没变**：两种形态都得给出正确结果 —— 只是现在还要各自落在自己的上下文里。
     private static let bothForms = #"""
     取|func(n: I32,) => (I32,):
         return ok(n)
 
-    main|func() -> ():
-        let a = 取(1)
+    ; 同步体：只能写 wait
+    经等待|func(n: I32,) -> (I32,):
+        let a = 取(n)
         let x = try wait a else e:
+            return 0
+        return x
+
+    ; 异步体：只能写 await
+    经让出|func(n: I32,) => (I32,):
+        let a = 取(n)
+        let x = try await a else e:
+            return ok(0)
+        return ok(x)
+
+    main|func() -> ():
+        print(经等待(1))
+        let f = 经让出(2)
+        let r = try wait f else g:
             print("err")
             return
-        let b = 取(2)
-        let y = try await b else f:
-            print("err")
-            return
-        print(x)
-        print(y)
+        print(r)
         return
     """#
 
@@ -87,16 +101,17 @@ struct ConcurrencyJoinFormTests {
 
     // MARK: - 判据 2：降级是合规行为，不是回归（驳回性）
 
-    @Test("让出尚未落地时，两种形态的运行结果一致 —— 少了让出，不少 join 本身")
-    func bothFormsAgreeWhileYieldingIsAbsent() throws {
+    @Test("两种形态各自在自己的上下文里都给出正确结果 —— 少了让出，不少 join 本身")
+    func bothFormsAgreeInTheirOwnContexts() throws {
         /// 意图：这是**驳回性**测量 —— 它断言「两种形态此刻**不**产生不同结果」。
         /// 让出没实现时，`await` 只能降级为 `wait`；降级必须**安静地**成立（结果正确），
         /// 而不是报错、也不是给出不同的值。判据 1 证明载体在、判据 2 证明降级不伤结果，
         /// 二者合起来说明这一批改的是**载体**，没顺手动语义。
         ///
-        /// ⚠️ 让出落地后，本判据**依然应当通过**（同程序的两种写法本就该同结果），
-        /// 所以它不是临时脚手架 —— 但那时它会变弱：真正区分两种形态的判据得能测出
-        /// 「让出发生了」，而那需要一条可观测让出的信号，不在本件。
+        /// ⚠️ **2026-09-20（裁定 35）**：让出已落地，两形态不再同结果 —— `await` 让出、
+        /// `wait` 占用，且各自限定在自己的上下文里。所以本判据的落点从「两形态同结果」改为
+        /// 「两形态各自可用且结果一致」。**让出是否真的发生**由别处把关
+        /// （`ConcurrencyYieldTests` 读让出计数）；本件只管两种写法都能拿到值。
         #expect(try runOutput(Self.bothForms) == ["1", "2"])
     }
 }

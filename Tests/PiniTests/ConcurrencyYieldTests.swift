@@ -52,31 +52,63 @@ struct ConcurrencyYieldTests {
     /// 「池里只剩一个」的判读起点挪到子任务已经 spawn **之后**），睡一段足以让判读跑完的
     /// 时间，再打 `S-done`（它同时是「睡完了」与「下一次判读该走了」的信号）。
     /// 子任务的返回值得以走到 `print(7)`，所以这条语料**同时**钉住结果正确性。
-    private static func yieldProbe(_ join: String) -> String {
-        """
-        慢|func(n: I32,) => (I32,):
-            print("S-start")
-            sleep(250)
-            print("S-done")
-            return ok(n)
-
-        父|func(n: I32,) => (I32,):
-            let a = 慢(n)
-            let x = try \(join) a else e:
-                return err(Error("failed"))
-            return ok(x)
-
-        main|func() -> ():
-            let t = 父(7)
-            let r = wait t
-            match r:
-                case ok(v):
-                    print(v)
-                case err(e):
-                    print("failed")
-            return
-        """
+    /// ⚠️ **2026-09-20 改过对照的形态（裁定 35）**：原来是「同一体把 `await` 换成 `wait`」，
+    /// 但新规则不许异步体写 `wait` ⇒ 那个对照在**语言层面已不可能**，留着一个编不过的语料
+    /// 只会让判据变成装饰。改成「先让子任务跑完，再 `await`」—— 同一代码路径、同一个关键字，
+    /// 只差**等待时子任务是否已决**。它证明的事情反而更准：让出不是 `await` 这个字造成的，
+    /// 是「要等一个还没好的东西」造成的。
+    private static func yieldProbe(_ mode: String) -> String {
+        mode == "settled" ? 探针已决 : 探针未决
     }
+
+    private static let 探针未决 = """
+    慢|func(n: I32,) => (I32,):
+        print("S-start")
+        sleep(250)
+        print("S-done")
+        return ok(n)
+
+    父|func(n: I32,) => (I32,):
+        let a = 慢(n)
+        let x = try await a else e:
+            return err(Error("failed"))
+        return ok(x)
+
+    main|func() -> ():
+        let t = 父(7)
+        let r = wait t
+        match r:
+            case ok(v):
+                print(v)
+            case err(e):
+                print("failed")
+        return
+    """
+
+    private static let 探针已决 = """
+    慢|func(n: I32,) => (I32,):
+        print("S-start")
+        sleep(250)
+        print("S-done")
+        return ok(n)
+
+    父|func(n: I32,) => (I32,):
+        let a = 慢(n)
+        sleep(400)
+        let x = try await a else e:
+            return err(Error("failed"))
+        return ok(x)
+
+    main|func() -> ():
+        let t = 父(7)
+        let r = wait t
+        match r:
+            case ok(v):
+                print(v)
+            case err(e):
+                print("failed")
+        return
+    """
 
     /// 跑一次探针，返回（本次运行里让出发生的次数，全部输出）。
     ///
@@ -121,7 +153,7 @@ struct ConcurrencyYieldTests {
 
     // MARK: - 判据 1：让出真的发生（推进性），且 `wait` 不占用同一格（驳回性）
 
-    @Test("await 未决子任务时父任务把线程让出去 —— 同一语料换成 wait 则不会")
+    @Test("await 未决子任务时父任务把线程让出去 —— 子任务已决则不让出")
     func awaitingGivesTheTaskUp() throws {
         /// 意图：这是本批的核心判据，它一次测两面，因为「让出」这个概念**就是**那个差异。
         /// 推进性：`await` 版必须观测到**至少一次让出** —— 子任务还没决，父任务的体
@@ -132,7 +164,7 @@ struct ConcurrencyYieldTests {
         /// ⚠️ 两面必须同一语料、只差一个关键字：拿两段不同的程序对照，
         /// 差异就可能来自别处，而这条判据要说的恰恰是**唯有关键字**造成了差异。
         let yielding = try runYieldProbe(join: "await")
-        let occupying = try runYieldProbe(join: "wait")
+        let occupying = try runYieldProbe(join: "settled")
 
         #expect(yielding.yields >= 1, "await never gave its task up (yields: \(yielding.yields))")
         #expect(occupying.yields == 0, "wait gave its task up \(occupying.yields) time(s), so the two forms are not distinct")

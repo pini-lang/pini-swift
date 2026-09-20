@@ -192,3 +192,11 @@ message = "无可用默认实例 '{feature}'"
 [E6-008]
 message = "给定块默认实例的依赖成环（预留：环检测尚未实现）"
 suggestion = "把共享状态拆到更小的一层，或改用显式参数传递"
+
+[E6-009]
+message = "`await`/`wait` 与所在函数体不匹配：`await` 只能用于异步体（`=>`），`wait` 只能用于同步体（`->`）"
+suggestion = "改用与所在体匹配的关键字，或改函数的异步声明"
+
+[E6-010]
+message = "`await` 落在没有可恢复续跑点的位置：它会让出当前任务，而这里回不到精确的续跑点"
+suggestion = "把这次等待挪到一条语句的根部：`await f()` 独占一行 · `var x = await f()` · `try await f() else …` · `match await f():`"

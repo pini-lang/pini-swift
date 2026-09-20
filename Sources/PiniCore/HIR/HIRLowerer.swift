@@ -1486,6 +1486,7 @@ public enum HIRLowerer {
             traitDefaultsCollector: traitDefaultsCollector,
             builtinExtensionMethods: builtinExtensionMethods
         )
+        context.isAsync = decl.isAsync
         let body = try lowerBlock(decl.body!, into: &context)
         return HIRFunction(
             name: decl.name, params: params, returnType: bodyReturn, body: body,
@@ -1934,6 +1935,7 @@ public enum HIRLowerer {
             traitRegistry: traitRegistry,
             traitDefaultsCollector: traitDefaultsCollector
         )
+        context.isAsync = decl.isAsync
         // G12: bare field names resolve against the receiver's fields inside
         // method bodies (interpreter bindInstanceFields parity — trait.pini's
         // default body reads `名字` without a `self.` prefix). Emission goes
@@ -1979,6 +1981,34 @@ public enum HIRLowerer {
 
     // MARK: - Statements
 
+    /// 一条语句**根位置**上被允许的可让出 `await` 的位置（`nil` = 这条语句没有这样的位置）。
+    ///
+    /// 四类与运行时的让出计划**同源**（`HIRExecutor.HIRYieldPlan`）：裸表达式语句 ·
+    /// `var` 初值 · `match` 判别式 · try-else 的 operand。两处必须一致，否则会出现
+    /// 「检查器说合法、运行时静默按阻塞处理」—— 那正是这条规则要消灭的东西。
+    ///
+    /// `try` 是**透明**的：`try await f() else …` 的求值点就是 `await f()` 的求值点，
+    /// 所以剥掉包装再判。⚠️ 赋值语句与解构语句**不在**此列，这是刻意的：运行时的让出计划
+    /// 里没有这两形，放行只会造出上面那种混合，所以按 fail-closed 拒绝。
+    private static func allowedAwaitLocation(in statement: Statement) -> SourceLocation? {
+        var root: Expression?
+        switch statement {
+        case .expressionStmt(let expr, _):
+            root = expr
+        case .varDecl(_, _, let initializer, _, _):
+            root = initializer
+        case .matchStatement(let value, _, _):
+            root = value
+        default:
+            root = nil
+        }
+        while case .tryExpression(let operand, _, _, _)? = root {
+            root = operand
+        }
+        if case .join(_, let location, .awaits)? = root { return location }
+        return nil
+    }
+
     /// Returns the lowered statements for one source statement. Most cases
     /// produce exactly one; a try-else variable initializer produces the
     /// allocation plus the try statement.
@@ -1986,6 +2016,15 @@ public enum HIRLowerer {
         _ statement: Statement,
         into context: inout FunctionContext
     ) throws -> [HIRStmt] {
+        // `await` 的**位置**判定（2026-09-20，裁定 35）：本次语句降载里，只有语句根表达式
+        // 本身（剥掉 `try` 包装之后）算可让出位置。判定放在语句层而不是表达式层，是因为
+        // 「语句根」本来就是**语句**的性质 —— 表达式层看不到它。
+        //
+        // 嵌套语句（`if` 体、`match` 各臂）各自走到这里，各自设置、各自恢复。
+        let previousAllowedAwaitAt = context.allowedAwaitAt
+        context.allowedAwaitAt = allowedAwaitLocation(in: statement)
+        defer { context.allowedAwaitAt = previousAllowedAwaitAt }
+
         switch statement {
         case .varDecl(let name, let annotation, let initializer, let isMutable, let location):
             return try lowerVarDecl(
@@ -3792,7 +3831,44 @@ public enum HIRLowerer {
                 type: .pointer(element: varType)
             )
 
-        case .join(let inner, _, let form):
+        case .join(let inner, let joinLocation, let form):
+            // `await`/`wait` 的上下文与位置判定（2026-09-20，裁定 35）。
+            //
+            // 两个关键字各自绑定自己的上下文，`await` 还额外要求**可让出位置**：它承诺
+            // 让出，只有在能兑现的地方才诚实。三条拒绝理由的修法各不相同 —— 上下文不符的人
+            // 该改函数签名或换关键字，位置越界的人该改写法 —— 所以用两个码分开。
+            //
+            // 位置上为什么必须拒：`await` 与 `wait` 的唯一运行区别就是让不让出，而让出需要
+            // **可恢复的体**（`DE-2b` 的挂起帧）。语句根之外没有续跑点，于是同一个 `await`
+            // 会在 A 处让出、B 处静默按阻塞处理，使用者无从知道。
+            switch form {
+            case .awaits:
+                guard context.isAsync else {
+                    throw rejected(
+                        "`await` 只能写在异步函数体（`=>`）里：这里不在异步体内。"
+                            + "同步上下文里等待请写 `wait`",
+                        code: Self.awaitOutsideAsyncBodyCode, at: joinLocation
+                    )
+                }
+                guard let allowed = context.allowedAwaitAt, allowed == joinLocation else {
+                    throw rejected(
+                        "`await` 不能写在这个位置：它会让出当前任务，而这里没有可恢复的续跑点。"
+                            + "把这次等待挪到一条语句的根部：`await f()` 独占一行 · "
+                            + "`var x = await f()` · `try await f() else …` · `match await f():`",
+                        code: Self.awaitUnrecoverablePositionCode, at: joinLocation
+                    )
+                }
+            case .waits:
+                guard !context.isAsync else {
+                    throw rejected(
+                        "`wait` 只能写在同步函数体（`->`）里：它会占住当前线程直到子任务结束，"
+                            + "而异步体内这样写会让任务池里的槽位各等各自的子任务、"
+                            + "子任务排不到线程。异步体里等待请写 `await`",
+                        code: Self.awaitOutsideAsyncBodyCode, at: joinLocation
+                    )
+                }
+            }
+
             // `await f` / `wait f` (G-3c-1). The operand evaluates to a Future and
             // the site yields the `Result<T>` its join deconstructs — the very
             // type G-3b already puts on an async call's return, so nothing here
@@ -4016,6 +4092,7 @@ public enum HIRLowerer {
             genericFuncTemplates: context.genericFuncTemplates,
             closureIds: context.closureIds
         )
+        closureContext.isAsync = decl.isAsync
         for capture in captures {
             closureContext.variableTypes[capture.name] = capture.type
         }
@@ -5487,6 +5564,15 @@ public enum HIRLowerer {
     /// 而这两条说的是「程序写错了」。混在一个码里，CLI 上就分不开「我该改程序」与「等它做完」。
     private static let noDefaultInstanceCode = "\(DiagnosticDomain.irgen.rawValue)-007"
 
+    /// `await`/`wait` 与所在体不匹配（2026-09-20，裁定 35）。
+    ///
+    /// 与下面那条**位置**码分开是刻意的，理由同 `E6-006` 与 `E6-004` 的分家：两者修法不同。
+    /// 上下文不符的人改的是函数签名（或换关键字），位置越界的人改的是写法。
+    private static let awaitOutsideAsyncBodyCode = "\(DiagnosticDomain.irgen.rawValue)-009"
+
+    /// `await` 落在没有可恢复续跑点的位置（2026-09-20，裁定 35）。
+    private static let awaitUnrecoverablePositionCode = "\(DiagnosticDomain.irgen.rawValue)-010"
+
     private static func rejected(
         _ message: String, code: String, at location: SourceLocation
     ) -> HIRLoweringError {
@@ -5986,6 +6072,20 @@ private struct FunctionContext {
     /// legal in an unquoted LLVM local name, which mangling leaves untouched.
     var tempCounter: Int = 0
 
+    /// `await`/`wait` 的**上下文**判定（2026-09-20，裁定 35）：**最近的体**是否异步。
+    ///
+    /// 「最近的体」而不是「整条链」是刻意的。一个同步闭包嵌在 `=>` 体里时，闭包体自己
+    /// 没有可让出的任务，`await` 写在那里兑现不了 —— `DE-2b` 实测过的帧栈是**一个任务一个**，
+    /// 穿透闭包挂起会打破这个前提。所以每个体各判各的，闭包体用它自己的 `isAsync` 覆盖。
+    var isAsync: Bool = false
+
+    /// 本次语句降载里**唯一**被允许出现可让出 `await` 的位置（`nil` = 这条语句不允许）。
+    ///
+    /// 用**位置**而不是布尔标志：布尔标志要么在表达式入口一次性消费（那 `try` 包装位就会
+    /// 误伤），要么得改遍每个表达式分支才能正确传播（漏一个就静默放行，正是这条规则要防的
+    /// 失败模式）。位置比较不必碰任何表达式分支 —— 子表达式里的 `await` 位置天然不同。
+    var allowedAwaitAt: SourceLocation?
+
     /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,
     /// shorter name at call sites).
     fileprivate var nominalTypesMap: [String: HIRLowerer.NominalInfo] { nominalTypes }
@@ -6004,7 +6104,8 @@ private struct FunctionContext {
         closureIds: [String: Int] = [:],
         traitRegistry: HIRLowerer.TraitRegistry = HIRLowerer.TraitRegistry(traits: [:], typeTraits: [:]),
         traitDefaultsCollector: HIRLowerer.TraitDefaultCollector = HIRLowerer.TraitDefaultCollector(),
-        builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
+        builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:],
+        isAsync: Bool = false
     ) {
         self.functionName = functionName
         self.returnType = returnType
@@ -6020,6 +6121,7 @@ private struct FunctionContext {
         self.traitRegistry = traitRegistry
         self.traitDefaultsCollector = traitDefaultsCollector
         self.builtinExtensionMethods = builtinExtensionMethods
+        self.isAsync = isAsync
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {
