@@ -282,7 +282,7 @@
 - **每个后端须能自备 shim** —— 既有的「shim 边界必须是 C ABI」MUST 得到强化
   （`pini-spec-v0.md` §3.2），因为多后端下每个后端都需要自己的值层实现面。
 
-### 5.2 `bk_*` 权威清单（46 个，2026-09-20 实测）
+### 5.2 `bk_*` 权威清单（48 个，2026-09-20 实测）
 
 > **口径订正**：`LLVM 后端重写` 两处写「35 个」，**导出符号**实测 **37 个**（2026-09-12）。本清单为该面的
 > 单一权威来源，`LLVM 后端重写` 同步订正（`同步变更`）。
@@ -303,8 +303,8 @@
 | 指针 | `bk_ptr_load_f32` `bk_ptr_load_f64` `bk_ptr_load_i32` `bk_ptr_load_i64` `bk_ptr_load_i8` `bk_ptr_store` | 6 |
 | 展示 / 陷阱 | `bk_cstr` `bk_double_to_string` `bk_panic` | 3 |
 | 运行时 | `bk_runtime_cleanup` | 1 |
-| **任务 / 并发**（2026-09-20 新增，`DE-3b` 的 `B-2` 段） | `bk_capabilities` `bk_scope_close` `bk_task_cancel` `bk_task_detach` `bk_task_is_cancelled` `bk_task_join` `bk_task_join_all` `bk_task_join_within` | 8 |
-| **合计** | | **46** |
+| **任务 / 并发**（2026-09-20 新增：`DE-3b` 的 `B-2` 段 8 个 + `B-3` 段 2 个） | `bk_capabilities` `bk_scope_close` `bk_task_cancel` `bk_task_detach` `bk_task_is_cancelled` `bk_task_join` `bk_task_join_all` `bk_task_join_within` `bk_task_spawn` `bk_task_yield` | 10 |
+| **合计** | | **48** |
 
 #### 5.2.1 任务 / 并发族的**两处定案**（`DE-1` 留了空，`B-2` 补全）
 
@@ -319,9 +319,22 @@
    `B-2` 的处置：取消 / 超时的身份由 `status` 承载；`bk_scope_close` 的聚合只写 **leaked 计数**。
    ⛔ **明标为待 `DE-3c` 换真实值** —— 换的时候这两处（`status = 1` 与聚合载荷）要一起改。
 
-⚠️ **本族不是 `DE-1` 函数表的全部**：`DE-1` §3 共 10 个符号，其中 `bk_task_spawn` 与 `bk_task_yield`
-受**让出机制**选择影响（2026-09-20 定案走乙：让出是**体的 `return`**，不是一次调用）⇒ 形状**待重议**，
-属 `B-3`。**不得把本族到齐读成 `DE-3b` 完成。**
+#### 5.2.2 任务体的 **wrapper 返回协议**（`B-3` 定案）
+
+⛔ `DE-1` §3.1 只写了「照 §2 第 2 条的 wrapper ABI，不新造」，而 `B-1` 实测判定**该条在走乙下不成立**：
+那条统一 ABI（`ptr (ptr, ptr, ptr) -> ptr`）的返回是**单个 `ptr`**，**表达不了「跑完 / 已让出」两态**，
+而两态正是让出在走乙之下的**全部内容**。故本族**必须**与 LazyRef / 给定块那一族不同形：
+
+| 项 | 定案 |
+|---|---|
+| 形态 | `i32 (ptr code, ptr env, ptr out) -> i32` —— **状态走返回值、值走 `out`**，与 §5.2.1 第 1 条**同一约定**（该条已定「状态用 `i32`、值走 out 缓冲」） |
+| 返回 `0` | 体**跑到底** ⇒ 三槽已写，由运行时决出该任务的 `Result` |
+| 返回非 `0` | 体**已让出** ⇒ `out` **不许被写**，`future` **保持未决**，由**续跑方**决出（续跑入口属 `DE-3c`，本契约不替它定） |
+| 线程归属 | 体在**一条新 OS 线程**上开始（`bk_task_spawn` 内起线程）⇒ 这是本腿**原语层**的事（`DE-1` §4）。⚠️ **不作策略**：队列 / 优先级 / **选择下一个任务**仍归策略层（Pini 值经 HIR，裁定 28） |
+| `bk_task_yield` | **查询**语义（`B-1` 订正）：`1` = 能真让出 · `0` = 合规降级。⭐ 答案**取自 L1 位** —— 与解释器腿 `capabilities.supports(.yield) ? 1 : 0` **同一条规则**，故两腿不会各说各话 |
+
+⚠️ 判据在 `Tests/PiniTests/ConcurrencyRuntimeABITests.swift`（三条：`yield` 的关系式 · `spawn` 不阻塞调用方且体在**另一条线程** · **让出态保持未决**）。
+⭐ **本族 10 个到齐 ✓** —— 但这**仍不等于 `DE-3b` 完成**：发射层接线属 `DE-3c`。
 
 
 ## 6. 待办与已知偏离汇总
@@ -340,5 +353,5 @@
 | `HIRNode.swift` 头部「for the LLVM backend」 | ✅ **已订正**（2026-09-18 `P5` 收口批：实测 3 处改写、1 处判为叙述 `LR-4` 动机的历史句而不改）。⚠️ **本行系 `P0d` 批替 `P5` 补的账** —— 该批漏改本汇总行 | `docs/issue-lr4-p5-closeout-plan-2026-09-18.md`（载体已删） |
 | `char` 节点 / `.join` 挂起语义 | **均已兑现，两条预留位清空**（`char` 于 2026-09-18 兑现为 §1 行，见 §4.1；`.join` 于 2026-09-17 兑现为 §2.45） | §4；`Char 类型引入` / `G67` · `HIR join 节点` |
 | `detach` 的降载规则与两台引擎的行为 | **节点面已落、行为未落**（非预留位：条目是 2026-09-17 新裁的） | §3.17；`HIR detach 节点` / 格 `G-3c-1` |
-| `Future` 在 HIR 的承载（§1 `future(ok:)` · §2.45） | ✅ **已兑现（`DE-3a`，2026-09-20）**：类型层加 `future(ok:)`；`=>` 的**对外签名**用它、**体**的返回仍是 `Result`；`join` 的操作数是句柄、站点是 `Result`。⚠️ **`DE-3b` 分段推进中（`B-2`，2026-09-20）**：C ABI 侧的**任务 / 并发族 8 个已落地**（见 §5.2，判据见 `Tests/PiniTests/ConcurrencyRuntimeABITests.swift`）；⛔ **`bk_task_spawn` / `bk_task_yield` 未落**（形状待重议，属 `B-3`）· ⛔ **发射层接线未落**（`DE-3c`）⇒ **LLVM 腿仍不能跑并发程序**（两处 `fatalError`，`rc=133`） | §1；§2.45；§5.2；`docs/spec/issue/proposal-scheduling-surface-2026-09-20.md` §11 |
+| `Future` 在 HIR 的承载（§1 `future(ok:)` · §2.45） | ✅ **已兑现（`DE-3a`，2026-09-20）**：类型层加 `future(ok:)`；`=>` 的**对外签名**用它、**体**的返回仍是 `Result`；`join` 的操作数是句柄、站点是 `Result`。✅ **`DE-3b` 的 C ABI 运行时已到齐 10 个**（`B-2` 段 8 个 + `B-3` 段 `bk_task_spawn` / `bk_task_yield`，见 §5.2；wrapper 返回协议见 **§5.2.2**；判据见 `Tests/PiniTests/ConcurrencyRuntimeABITests.swift`）· ⛔ **发射层接线未落**（`DE-3c`）⇒ **LLVM 腿仍不能跑并发程序**（两处 `fatalError`，`rc=133`）。⚠️ 本腿能力位**仍只含 L0**：`bk_task_yield()` 据 L1 位回 `0`（合规降级）—— L1 须待发射层接住让出 | §1；§2.45；§5.2；§5.2.2；`docs/spec/issue/proposal-scheduling-surface-2026-09-20.md` §11 |
 | `join` 的**让出**（§2.45 的 `form = awaits`） | **已兑现（解释器腿）**：载体落于 2026-09-20（`form` 字段），让出落于同日 `DE-2b` —— 异步体内语句根位置的 `await` 让出任务，经挂起帧 + 驱动器从精确恢复点续跑。⛔ **两处差口仍在**：**LLVM 腿**（`DE-3`）· **越界位置的硬拒绝**（裁定 33 的 `α`） | §2.11；spec `G74`；`docs/spec/issue/proposal-concurrency-runtime-c-abi-2026-09-20.md` |

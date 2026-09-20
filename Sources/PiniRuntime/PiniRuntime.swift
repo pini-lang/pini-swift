@@ -900,6 +900,28 @@ private final class _BkTaskBox: _BkBox {
     /// 取消树的边（照 `FutureValue`：**父强持有子、子弱引用父**，避免保留环）。
     weak var parent: _BkTaskBox?
     var children: [_BkTaskBox] = []
+
+    // MARK: 任务体（`B-3` 的 `bk_task_spawn` 记入）
+
+    /// 体的 wrapper / code / env（`DE-1` §3.1 的实参，原样存下）。
+    var wrapper: UnsafeMutableRawPointer?
+    var code: UnsafeMutableRawPointer?
+    var env: UnsafeMutableRawPointer?
+
+    /// 载荷类型描述（`DE-1` §3.1 的 `elemBytes` / `elemTag`）—— 本层**不解释**它们，
+    /// 与三槽同理：只搬运，解释权在发射层（`DE-3c`）。
+    var elemBytes: Int32 = 0
+    var elemTag: Int32 = 0
+
+    /// ⭐ **体是否已让出**（wrapper 返回非 `0`）。
+    ///
+    /// ⛔ 它**不是**结束状态 —— 让出之后 `future` 仍**未决**，由**续跑方**决出（`DE-3c`）。
+    /// 记它的用途只有一个：让「体让出过」这件事可被**外部观测**（判据与诊断），
+    /// 否则本层的让出是**静默**的，而静默正是本仓反复消灭的东西。
+    var suspended = false
+
+    /// 体已经跑过（无论跑完还是让出）。防同一句柄被跑第二次。
+    var bodyStarted = false
 }
 
 /// 句柄 → 任务盒。
@@ -1025,7 +1047,14 @@ private func _bkTaskJoinOne(
 /// ⚠️ 本 target **不依赖 `PiniCore`**（`Package.swift`），故位值在此**重述**；权威定义在解释器腿
 /// （`Sources/PiniCore/Interpreter/ConcurrencyCapabilities.swift`）。**重述不漂开**由判据钉住：
 /// `ConcurrencyRuntimeABITests` 断言本腿的置位是解释器腿的**子集**（即位定义一致）。
-private let _bkCapabilities: UInt32 = 1  // L0（L1 待 `DE-3c`；L2 永不给）
+/// 能力位的**位值**（`DE-1` §3.4 定案表，`DE-2b-3` 补遗）。命名而非散落字面量：
+/// `bk_task_yield` 的答案就取自 L1 位（见该函数），两处必须是**同一个**位。
+private enum ConcurrencyTierBits {
+    static let dispatch: UInt32 = 1  // L0 调度
+    static let yield: UInt32 = 2     // L1 让出
+}
+
+private let _bkCapabilities: UInt32 = ConcurrencyTierBits.dispatch  // L0（L1 待 `DE-3c`；L2 永不给）
 
 /// 后端能力位图（`DE-1` §3.4）。
 @_cdecl("bk_capabilities")
@@ -1060,6 +1089,109 @@ public func bk_task_is_cancelled() -> Int32 {
 public func bk_task_detach(_ h: UnsafeMutableRawPointer?) {
     guard let box = _bkTaskBox(h) else { return }
     _bkTaskDetachFromParent(box)
+}
+
+// MARK: spawn 与让出（`B-3` —— `DE-1` §3 里仅有的两个**受形状影响**的符号）
+
+/// 任务体的 wrapper 调用形态（`B-1` 订正后的**两态**形状）。
+///
+/// ⛔ **与 LazyRef / 给定块的 wrapper ABI 不同形，这是刻意的**：那条统一 ABI 的返回是
+/// **单个 `ptr`**，**表达不了「跑完 / 已让出」两态**，而两态正是让出在走乙之下的全部内容
+/// （`B-1` 的订正结论，见 `DE-1` §3.1 的订正注）。⇒ 本族必须自带**一个状态位**。
+///
+/// - Returns: `0` = 体跑到底（三槽已写）· 非 `0` = **体已让出**（`out` **未**写，
+///   控制流已交还驱动器）。⇒ 续跑入口是 `DE-3c` 的事，本段**不**替它定。
+private typealias _BkTaskBody = @convention(c) (
+    UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
+) -> Int32
+
+/// `Result` 三槽的字节数（`DE-1` §3.1：tag + ok + err，载荷一律擦除为 i64 宽度）。
+private let _bkResultSlotsBytes = 24
+
+/// 派发任务体（`DE-1` §3.1）。
+///
+/// ⭐ **「调用即派发」**（裁定 37 糖读法）：本符号是**一次异步调用的落点** ——
+/// 它的实参就是该次调用的实参 ⇒ **它自己另无「形状」待定**。
+///
+/// 三件事按序做完再返回，故调用方**立刻**拿到句柄（急切派发）：
+/// ① 建盒 · ② **认父**（父已取消 ⇒ 新子立即取消，见 `_bkTaskAdopt`）· ③ 起线程跑体。
+///
+/// ⚠️ **线程归本腿的「原语层」**（`DE-1` §4：让出 / 恢复 · 续体保存 · 任务树 · 取消树 = 原语）。
+/// **策略层**（队列 / 优先级 / 归约阈值 / **选择下一个任务**）**不住在这里** —— 那是 Pini 值、
+/// 经 HIR 执行（裁定 28）。本函数只回答「体在哪条 OS 线程上开始跑」，不回答「下一个跑谁」。
+@_cdecl("bk_task_spawn")
+public func bk_task_spawn(
+    _ wrapper: UnsafeMutableRawPointer?, _ code: UnsafeMutableRawPointer?,
+    _ env: UnsafeMutableRawPointer?, _ elemBytes: Int32, _ elemTag: Int32
+) -> UnsafeMutableRawPointer {
+    guard let wrapper else {
+        bk_panic("Pini runtime error: task spawn got a null body wrapper")
+    }
+    let box = _BkTaskBox()
+    box.wrapper = wrapper
+    box.code = code
+    box.env = env
+    box.elemBytes = elemBytes
+    box.elemTag = elemTag
+    let h = _bkRegister(box)
+    if let parent = _bkTaskCurrent {
+        _bkTaskAdopt(Unmanaged.passUnretained(parent).toOpaque(), h)
+    }
+    let thread = Thread { _bkTaskRunBody(h) }
+    thread.start()
+    return h
+}
+
+/// 体的一次运行：登记当前任务 → 调 wrapper → 按返回的**两态**收尾。
+///
+/// ⚠️ 归出（让出）时**不**决出 `future` —— 那是续跑方的责任（`DE-3c`）。
+/// 本层在这里唯一能做的、也必须做的是**让这件事可观测**（`box.suspended`）。
+private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
+    guard let box = _bkTaskBox(h), let wrapper = box.wrapper else { return }
+    let restore = _bkTaskEnter(h)
+    defer { restore() }
+    box.cond.lock()
+    let alreadyStarted = box.bodyStarted
+    box.bodyStarted = true
+    box.cond.unlock()
+    guard !alreadyStarted else { return }
+
+    let out = UnsafeMutableRawPointer.allocate(byteCount: _bkResultSlotsBytes, alignment: 8)
+    defer { out.deallocate() }
+    let body = unsafeBitCast(wrapper, to: _BkTaskBody.self)
+    if body(box.code, box.env, out) == 0 {
+        let tag = out.load(fromByteOffset: 0, as: Int64.self)
+        let ok = out.load(fromByteOffset: 8, as: Int64.self)
+        let err = out.load(fromByteOffset: 16, as: Int64.self)
+        if tag == 0 {
+            _bkTaskResolveOk(h, ok)
+        } else {
+            _bkTaskResolveErr(h, err)
+        }
+        return
+    }
+    box.cond.lock()
+    box.suspended = true
+    box.cond.broadcast()
+    box.cond.unlock()
+}
+
+/// 问后端**能否让出**（`DE-1` §3.2.1 订正后的**查询**语义）。
+///
+/// ⛔ 它**不执行**让出 —— 走乙之下让出是**异步体的 `return`**（`DE-1` §3.2.1），
+/// 由驱动器接住。调用它只回答一个问题：**这次让出能不能真的发生**。
+///
+/// - Returns: `1` = 能真让出 · `0` = **合规降级** ⇒ 本次等待按**占用**处理。
+///   ⛔ `0` **不是错误**（`DE-1` §6.2 纪律 3：无合格版本则降级，不失败）。
+///
+/// ⭐ **答案取自 L1 位，与解释器腿同源**：解释器腿的对应物就是
+/// `GCDScheduler.capabilities.supports(.yield) ? 1 : 0`（`Scheduler.swift`）。
+/// ⇒ 两腿在这一位上由**同一条规则**决定，不会各说各话 —— 这正是 `DE-1` §3.2 要求的
+/// 「两腿必须在这一位上一致」。⚠️ 本腿今天 `_bkCapabilities` **只含 L0**（`DE-2b-3` 定的分层：
+/// L1 须待发射层接住让出，即 `DE-3c`）⇒ **恒返 `0`**；届时置 L1 位，本函数自动跟到位。
+@_cdecl("bk_task_yield")
+public func bk_task_yield() -> Int32 {
+    (_bkCapabilities & ConcurrencyTierBits.yield) != 0 ? 1 : 0
 }
 
 // MARK: join

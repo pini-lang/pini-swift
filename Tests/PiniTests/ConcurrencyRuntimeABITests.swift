@@ -352,4 +352,117 @@ struct ConcurrencyRuntimeABITests {
         #expect(bk_task_is_cancelled() == 1, "未完成的子须被取消")
         restore()
     }
+
+    // MARK: - `B-3`：spawn / yield
+
+    @Test("yield 的答案取自 L1 位 —— 与解释器腿同一条规则，且今天诚实地回 0")
+    func yieldAnswersFromTheCapabilityBit() throws {
+        /// 意图：`DE-1` §3.2 要求**两腿在这一位上一致**，否则「`await` 让出 / `wait` 占用」
+        /// 这条可观测差异跨后端就没有共同基准。解释器腿的对应物就是
+        /// `capabilities.supports(.yield) ? 1 : 0` ⇒ 本腿照**同一条规则**取答案。
+        /// ⭐ 写成**关系式**而不是常量：L1 落地（`DE-3c`）后本条**仍然成立**，
+        /// 届时它自动跟着位图走 —— 常量式判据会在那天变成一条必须手改的假绿。
+        let expected: Int32 = (bk_capabilities() & 2) != 0 ? 1 : 0
+        #expect(bk_task_yield() == expected, "yield 的答案必须由 L1 位推出")
+        #expect(bk_task_yield() == 0, "本腿今天未宣称 L1 ⇒ 合规降级回 0（不是错误）")
+    }
+
+    @Test("spawn 立刻返回，且体在**另一条线程**上跑完（急切派发不是「就地跑完」）")
+    func spawnDispatchesOffTheCallerThread() throws {
+        /// 意图：钉子句 `DE-1` §3.1 的「派发」二字。若 `spawn` 就地跑体，急切派发是假的 ——
+        /// 调用方会一直等到体结束，`=>` 的语义也就没了。
+        /// **判据的强度来自「体在等测试放行」**：`spawn` 若阻塞，本用例**会挂死**而不是悄悄通过。
+        let probe = SpawnProbe()
+        probe.status = 0
+        probe.payload = 4242
+        probe.callerThread = Thread.current
+        let env = Unmanaged.passUnretained(probe).toOpaque()
+
+        let kid = bk_task_spawn(bkTestBodyPtr(), nil, env, 8, 0)
+        #expect(probe.entered.wait(timeout: .now() + 3) == .success, "体没被派发起来")
+        probe.release.signal()
+
+        let out = makeOut()
+        #expect(bk_task_join(kid, raw(out)) == 0, "跑完的任务 join 应得 Result")
+        #expect(out[0] == 0 && out[1] == 4242, "ok 载荷应原样搬运")
+        probe.lock.lock()
+        let ran = probe.bodyRan
+        let offThread = probe.bodyOffCallerThread
+        probe.lock.unlock()
+        #expect(ran, "体没跑")
+        #expect(offThread, "体跑在调用方那条线程上 ⇒ 那不是派发，是就地求值")
+    }
+
+    @Test("spawn 的两态：体返回非 0 ⇒ 任务**保持未决**（让出后由续跑方决出，不是跑完了）")
+    func spawnLeavesTheTaskUnresolvedWhenTheBodyYields() throws {
+        /// 意图：`DE-1` §3.2.1 的**唯一内容**就是这两态 —— 体返回 `0` 才算跑完；
+        /// 返回非 `0` 表示「体已让出」，此时 `future` **仍未决**。
+        /// ⛔ 若把非 0 也当成跑完，本用例会读到 `out` 里的默认值 ⇒ 立刻变红。
+        let probe = SpawnProbe()
+        probe.status = 1
+        probe.payload = 999  // 刻意给一个值：让出态**不许**把它写出去
+        probe.callerThread = Thread.current
+        let env = Unmanaged.passUnretained(probe).toOpaque()
+
+        let kid = bk_task_spawn(bkTestBodyPtr(), nil, env, 8, 0)
+        #expect(probe.entered.wait(timeout: .now() + 3) == .success, "体没被派发起来")
+        probe.release.signal()
+
+        let out = makeOut()
+        #expect(bk_task_join_within(kid, 120, raw(out)) == 1, "让出后仍未决 ⇒ join 只能超时归约")
+        #expect(out[1] != 999, "让出态不许把载荷写出去（写出去就等于假装跑完了）")
+    }
+}
+
+// MARK: - `B-3` 判据用的体观测面
+//
+// ⚠️ C 函数指针**不能捕获上下文**，所以体的观测面只能经 `env` 传 ——
+// 那正是 `DE-1` §3.1 里 `env` 参数的**本来用途**（闭包捕获环境），不是为测试新开的口子。
+
+/// 体运行时的观测箱（`env` 指向它）。
+private final class SpawnProbe: @unchecked Sendable {
+    let lock = NSLock()
+    var bodyRan = false
+    var bodyOffCallerThread = false
+    /// `0` = 跑完（写三槽）· 非 `0` = 让出（**不写**）。
+    var status: Int32 = 0
+    var payload: Int64 = 0
+    /// 体已开始执行。
+    let entered = DispatchSemaphore(value: 0)
+    /// 测试放行体继续（用于证明 `spawn` 没阻塞调用方）。
+    let release = DispatchSemaphore(value: 0)
+    var callerThread: Thread?
+}
+
+/// 任务体的最小 wrapper（`B-3` 的两态形状：`0` = 跑完 · 非 `0` = 让出）。
+private func bkTestBody(
+    _ code: UnsafeMutableRawPointer?, _ env: UnsafeMutableRawPointer?,
+    _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let env, let out else { return 0 }
+    let probe = Unmanaged<SpawnProbe>.fromOpaque(env).takeUnretainedValue()
+    probe.lock.lock()
+    probe.bodyRan = true
+    probe.bodyOffCallerThread = Thread.current !== probe.callerThread
+    let status = probe.status
+    let payload = probe.payload
+    probe.lock.unlock()
+
+    probe.entered.signal()
+    _ = probe.release.wait(timeout: .now() + 3)
+
+    guard status == 0 else { return status }
+    out.storeBytes(of: Int64(0), toByteOffset: 0, as: Int64.self)
+    out.storeBytes(of: payload, toByteOffset: 8, as: Int64.self)
+    out.storeBytes(of: Int64(0), toByteOffset: 16, as: Int64.self)
+    return 0
+}
+
+private typealias BkTestBody = @convention(c) (
+    UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
+) -> Int32
+
+/// 体的地址，按 `DE-1` §3.1 的 `wrapper` 参数形态（不透明 `ptr`）交给运行时。
+private func bkTestBodyPtr() -> UnsafeMutableRawPointer {
+    unsafeBitCast(bkTestBody as BkTestBody, to: UnsafeMutableRawPointer.self)
 }
