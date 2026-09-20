@@ -848,7 +848,7 @@ public final class SemanticAnalyzer {
         case .genericConstruct:
             break
 
-        case .join(let inner, _):
+        case .join(let inner, _, _):
             try checkExpression(inner)
 
         case .unsafe(let operand, _):

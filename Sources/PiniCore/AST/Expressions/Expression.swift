@@ -1,5 +1,22 @@
 import Foundation
 
+/// 一次 join 站点由哪个关键字引入。
+///
+/// 这是语法对两种形态所作的**唯一**区分：`await` 在异步函数体内使用、可以让出当前任务；
+/// `wait` 在任意上下文使用、占用当前线程直到 `Future` 决。
+/// ⚠️ 该区分**曾在管线中被丢弃** —— 两个关键字产出同一个节点、关键字当场丢掉，
+/// 运行时只能去问一个**在生产面从未被赋值**的模式开关；开关随停用而退役之后，
+/// 两种形态就再无任何可分之处。本类型是那个区分的载体。
+public enum JoinForm: String, Sendable, Equatable {
+    /// `await` —— 异步函数体内，允许挂起等待。
+    case awaits = "await"
+    /// `wait` —— 任意上下文，阻塞直至决。
+    case waits = "wait"
+
+    /// 关键字字面量（诊断与打印用）。
+    public var keyword: String { rawValue }
+}
+
 /// 函数调用参数（支持命名参数）
 public struct CallArgument: Equatable {
     public let label: String?
@@ -60,7 +77,8 @@ public indirect enum Expression: Equatable {
     case genericConstruct(typeName: String, typeArgs: [TypeAnnotation], arguments: [CallArgument], location: SourceLocation)
     /// `join` 运算符：由 `await`/`wait` 关键字前缀产生（异步 join 表层 逆转，取代旧 `<=` 前缀写法）。
     /// 阻塞当前线程直至操作数 Future 完成，求值为 `Result<T, Error>`（错误即数据，不抛出）。
-    case join(Expression, SourceLocation)
+    /// `form` 记录**是哪个关键字写的** —— 它决定该站点可否让出（见 `JoinForm`）。
+    case join(Expression, SourceLocation, JoinForm)
     /// try-else（try-else 迁移 迁移批 M2，取代旧 `try`/`except` 语句与 `^` 右值糖，spec『try-else 错误传播』节）：
     /// 错误传播唯一原语，语句位与表达式位双形态（语句位由 Parser 包装为 expressionStmt）。
     /// operand 静态要求 `Result<T, E>`：`ok(v)` → 表达式值为 v；`err(e)` → 绑定 errorVar

@@ -414,10 +414,13 @@ public indirect enum HIRExpr: Equatable {
     /// `await f` / `wait f` (G3c): the node face the suspension semantics
     /// hang off. `future` evaluates to a `Future`; once it resolves the join
     /// site deconstructs the carried `ok` / `err`, so `type` is the
-    /// `Result<T>` the site yields. Where suspension lives is not settled by
-    /// this case: the CPS evaluator is what makes it suspend rather than
-    /// block (contract 4.2 reserved this face; G3c implements it).
-    case join(future: HIRExpr, type: HIRType)
+    /// `Result<T>` the site yields.
+    ///
+    /// `form` is which keyword was written. It is the only thing that tells the
+    /// two apart, and the engines must be able to read it: the retired
+    /// implementation asked a mode flag instead, and with the flag gone there is
+    /// nothing left for a downstream reader to consult.
+    case join(future: HIRExpr, type: HIRType, form: JoinForm)
 
     // MARK: ADR-001 — 默认实例取用
 

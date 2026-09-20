@@ -130,8 +130,8 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
             result = String(result.dropLast())
         }
         return result
-    case .join(let inner, _):
-        return "\(indent)join(await/wait):\n" + describeExpression(inner, indent: indent + " ")
+    case .join(let inner, _, let form):
+        return "\(indent)join(\(form.keyword)):\n" + describeExpression(inner, indent: indent + " ")
     case .tryExpression(let operand, let errorVar, let handler, _):
         // try-else 迁移 迁移批 M2：try-else 表达式描述。
         var result = "\(indent)tryExpression(try-else, errorVar=\(errorVar)):\n"

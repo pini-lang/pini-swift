@@ -2178,7 +2178,7 @@ public final class TypeChecker {
                     ))
             }
 
-        case .join(let inner, let location):
+        case .join(let inner, let location, _):
             try checkExpression(inner)
             // （G12）：`await`/`wait` 的操作数必须是 Future<_,_>（或后续的 Chan<_>）；
             // 对普通值 join 是类型错误（收紧了早期 await 的「非 Future 透传」行为）。
