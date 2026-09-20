@@ -2031,12 +2031,18 @@ public final class IREmitter {
     /// come out as their bits. Scalars, strings and raw pointers keep the
     /// existing scalar spelling. Nominal values are no longer in this set:
     /// they render through the shared recursive printer.
+    ///
+    /// A `Future` sits with the handles rather than with the pointers even
+    /// though both are spelled `ptr`: what groups a type here is whether
+    /// printing one produces an answer, and a running process has no scalar
+    /// rendering to fall back on. It belongs to the same family as the other
+    /// opaque handles, and it degrades the same way they do.
     private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
         switch type {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .char, .pointer,
             .nominal:
             return false
-        case .result, .array, .optional, .enumeration, .dict,
+        case .result, .future, .array, .optional, .enumeration, .dict,
             .lazyRef, .set, .tuple, .function:
             return true
         }
