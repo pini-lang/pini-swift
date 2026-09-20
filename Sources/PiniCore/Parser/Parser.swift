@@ -2722,19 +2722,19 @@ public class Parser {
                 operand: operand, errorVar: errorVar, handler: handler, location: loc)
         }
 
-        // 异步 join 表层：`await`/`wait` 前缀 = join / 挂起 await，取代立场 B 的 `<=` 前缀。
-        // `await` 用于异步函数体（=>` 派发）内的挂起等待；`wait` 用于同步上下文的阻塞 join；
-        // 二者均映射到既有 `.join` AST 节点（运行时按 suspendMode 上下文敏感，与立场 B 的 `<=` 行为一致）。
+        // 异步 join 表层：`await`/`wait` 前缀 = 让出式 / 占用式 join，取代立场 B 的 `<=` 前缀。
+        // 两个关键字产出的节点相同、但 `form` 不同 —— 那一位是它们的全部区别所在，
+        // 也是唯一能让下游（而非某个已退役的运行时开关）知道该怎么做的信息。
         // `await`/`wait` 仅作表达式起始位的前缀——`<=` 在此已回归纯比较运算符（中缀比较见 parseComparison）。
         if case .keyword(.await, _) = currentToken {
             advance()
             let operand = try parseUnary()
-            return .join(operand, loc)
+            return .join(operand, loc, .awaits)
         }
         if case .keyword(.wait, _) = currentToken {
             advance()
             let operand = try parseUnary()
-            return .join(operand, loc)
+            return .join(operand, loc, .waits)
         }
 
         if case .logicalNot(_) = currentToken {

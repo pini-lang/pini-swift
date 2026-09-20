@@ -328,7 +328,7 @@ swift test
 > - **迭代（v0.39.0+）**：`for-in` 已实现（spec G36）——`for (模式元组,) in 集合值:`，支持 `step:` 与 `标签\|for`（标签语法反转）；`while + len()` 仍可用。
 > - **块标签（标签语法反转，v0.48.1）**：`标签\|if`/`标签\|while`/`标签\|for` 模型——`break 标签` / `continue 标签` 按标签名定向（无 sigil）；旧 `scope 块标签:` 已转 reserved-error；`#` 文档注释（行首到行尾，与 `;` 行注释并存）。
 > - **继承**：当前无继承语法（方法沿继承链静态校验已移出 P3，单列排期）。
-> - **异步并发（G12：阻塞语义 Stable · 挂起模式 Provisional 已退役）**：`=>`/`await`/`wait`/`joinAll`/`joinWithin`/`cancel`/`isCancel`/`detach` 已实现（立场 B：GCD 真线程 + `Future` 结构化取消树 + `joinAll` fail-fast）。错误经 `ok`/`err` 返回，`CancelError` 表示取消。**`await` 与 `wait` 同为阻塞 join**（占用 worker 线程）：⚠️ 2026-09-17 起**挂起模式**（经自建续体运行时真正挂起、释放 OS 线程、精确恢复）**已暂时退役** —— 该路径在生产面从未启用，退役对用户程序**零可见影响**，待架构重写后恢复；`joinWithin` 仍为带超时阻塞 join。跨平台后端与自举纯 libc 为规划方向（长期愿景见 spec）。
+> - **异步并发（G12：阻塞语义 Provisional〔2026-09-20 由 Stable 降级〕· 挂起模式 Provisional 已退役）**：`=>`/`await`/`wait`/`joinAll`/`joinWithin`/`cancel`/`isCancel`/`detach` 已实现（立场 B：GCD 真线程 + `Future` 结构化取消树 + `joinAll` fail-fast）。错误经 `ok`/`err` 返回，`CancelError` 表示取消。**`await` 与 `wait` 同为阻塞 join**（占用 worker 线程）：⚠️ 2026-09-17 起**挂起模式**（经自建续体运行时真正挂起、释放 OS 线程、精确恢复）**已暂时退役** —— 该路径在生产面从未启用，退役对用户程序**零可见影响**，待架构重写后恢复；`joinWithin` 仍为带超时阻塞 join。跨平台后端与自举纯 libc 为规划方向（长期愿景见 spec）。
 > - **测试（v0.42.0）**：`\|test` 函数块 + `assert` 内建 + `pini test` 已落地；`.valueFuture` 已抛弃。
 > - **FFI（FFI 子系统，Phase 2a，Experimental）**：解释器端已落地——`foreign` 块经预注册原生函数表（`malloc`/`free`/`memcpy`/`memset`/`strlen`/`puts`/`strcmp`/`cstr`）解析，未注册函数注册期报错；`&` 为**快照取址**（写回不更新原变量，与 LLVM 端真引用语义不同）；dlsym 动态符号解析与 LLVM 端 FFI 为后续阶段。见 `examples/ffi.pini`。
 

@@ -313,7 +313,7 @@ public final class TypeInference {
                 return nil
             }
 
-        case .join(let inner, _):
+        case .join(let inner, _, _):
             // `await`/`wait` fut 归约为 `Result<T, E>`（fut : Future<T, E>）。
             // 操作数类型不可解析或非 Future 时返回 nil，交由 TypeChecker 报错（此处仅做推断）。
             guard let operand = infer(expression: inner) else { return nil }
@@ -499,7 +499,7 @@ public final class TypeInference {
         case .tupleIndex(let base, _, _): return collectIdentifiers(in: base)
         case .tuple(_, let els, _): return els.reduce(into: Set<String>()) { $0.formUnion(collectIdentifiers(in: $1)) }
         case .arrayLiteral(let els, _): return els.reduce(into: Set<String>()) { $0.formUnion(collectIdentifiers(in: $1)) }
-        case .join(let inner, _): return collectIdentifiers(in: inner)
+        case .join(let inner, _, _): return collectIdentifiers(in: inner)
         case .genericConstruct(_, _, let args, _):
             return args.reduce(into: Set<String>()) { $0.formUnion(collectIdentifiers(in: $1.expression)) }
         case .stringInterpolation(let segs, _):

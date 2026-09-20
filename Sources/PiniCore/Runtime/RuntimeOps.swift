@@ -1026,7 +1026,19 @@ public enum RuntimeOps {
     /// The join happens on both engines and the normalisation is exactly the
     /// part that would drift: a second copy would agree on the happy path and
     /// disagree about which catch clause wins.
-    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?) -> Value {
+    ///
+    /// `form` is which keyword the site was written with — the one thing the
+    /// grammar distinguishes and the pipeline used to drop. The two forms differ
+    /// in exactly one respect: whether the site may give the current task up
+    /// while it waits. **That difference is not implemented yet**, so both forms
+    /// take the blocking path below. It cannot be implemented here: a
+    /// tree-walking body's state *is* the machine stack, so resuming one part-way
+    /// through needs a resumable body form first. Until that lands, `await`
+    /// degrades to `wait` — the compliant direction, since yielding is optional
+    /// while the join is not (see the C ABI face, `DE-1`, for the primitive that
+    /// will carry it and the layering rule that makes degradation the required
+    /// behaviour rather than a bug).
+    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .waits) -> Value {
         // A joined child leaves its parent: its lifetime has been consumed
         // explicitly, so the parent's return must stop cancelling it.
         defer { fut.detachFromParent() }

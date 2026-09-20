@@ -219,8 +219,10 @@ public enum HIRPrinter {
             return "readLine()"
         case .isAsciiDigit(let argument):
             return "is_ascii_digit(\(exprText(argument)))"
-        case .join(let future, _):
-            return "join(\(exprText(future)))"
+        case .join(let future, _, let form):
+            // 打关键字本身，而不是笼统的 `join` —— 语料里写下的是哪个词，
+            // dump 就得回显哪个词，否则两种形态在唯一能看见降载结果的地方又混成一样。
+            return "\(form.keyword)(\(exprText(future)))"
         case .givenInstance(let type):
             // ADR-001 `P2a`：内部节点，**无源形态**（默认实例在源语言里由 `using` 参数
             // 省略实参时**隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-hir` 读。

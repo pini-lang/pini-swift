@@ -3792,7 +3792,7 @@ public enum HIRLowerer {
                 type: .pointer(element: varType)
             )
 
-        case .join(let inner, _):
+        case .join(let inner, _, let form):
             // `await f` / `wait f` (G-3c-1). The operand evaluates to a Future and
             // the site yields the `Result<T>` its join deconstructs — the very
             // type G-3b already puts on an async call's return, so nothing here
@@ -3806,7 +3806,7 @@ public enum HIRLowerer {
             // channel it is being kept equal to.
             let future = try lowerExpr(inner, expected: nil, into: &context)
             return LoweredExpr(
-                node: .join(future: future.node, type: future.type),
+                node: .join(future: future.node, type: future.type, form: form),
                 type: future.type
             )
 

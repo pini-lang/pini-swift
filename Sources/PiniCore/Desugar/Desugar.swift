@@ -325,8 +325,8 @@ public enum Desugar {
                         expression: desugar($0.expression))
                 },
                 location: loc)
-        case .join(let inner, let loc):
-            return .join(desugar(inner), loc)
+        case .join(let inner, let loc, let form):
+            return .join(desugar(inner), loc, form)
         case .unsafe(let operand, let loc):
             return .unsafe(operand: desugar(operand), location: loc)
         case .addressOf(let operand, let loc):

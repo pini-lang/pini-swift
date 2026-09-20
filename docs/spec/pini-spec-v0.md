@@ -66,6 +66,22 @@
 | **Experimental** | 语法/语义均可能大改（如 泛型运行时） | 允许，可不保证兼容 | 不承诺 |
 | **Deprecated** | 已弃用 | 给定移除时间表 | 明确退出 |
 
+⛔ **v0.x 禁则（2026-09-20 立）**：**v0.x 期内不得有构造处于 `Stable`**。`Stable` 是 **v1.0 的到达状态**，
+不是可在 v0.x 内提前授予的标记。理由：`Stable` 的承诺是「不允许破坏性变更（如需，须走 v1.0 路径）」，
+而 v1.0 路径本身尚未建立 ⇒ 在 v0.x 内授予 `Stable`，等于把一个构造锁进一条走不通的流程
+（既不许破坏，又没有解锁闸门）。
+
+**全仓订正（2026-09-20）**：本规范与语言参考中**原标 `Stable` 的构造一律降为 `Provisional`**。
+分级**制度自身**的定义不在此列 —— 含本节分级表、§1.1 的 v1.0 触发条件、§1.3 的递交条件、
+§4 的破坏性变更限制；降这些等于拆掉尺度本身。
+
+⚠️ **历史沿革不改写**：正文中 `v0.43.0 T7 → Stable` 一类记述是**史实**（当时确实定级为 `Stable`），
+保留原样；级别以「现行」表述为准。
+
+**`Stable` 的授予判据（三条全中）**：① 该构造在 §1.1 的**核心构造名单内**；
+② 测试覆盖达标；③ 在册缺口为零。
+⚠️ 无此判据，`Stable` 虽有定义却无从产生**合法实例**；有此判据，v0.x 才有迁出路径。
+
 ### 1.3 变更治理流程（RFC/ADR 轻量版）
 1. **提议（Proposal）**：说明动机、影响面、是否破坏性。
 2. **影响评估**：标注受影响的构造及其稳定性级别；若触及 Stable 或跨 minor 破坏性，升级评审。
@@ -202,14 +218,14 @@
 | 下标 `a[i]`（`subscript`） | 已实现（安全模型 G48 三通道：`a[i]` 安全断言→`T`，越界读 **panic**（E5-005）；`a.get(i)` 安全可选→`Optional<T>`，越界 `.none`；`unsafe a.getUnchecked(i)` 不安全→`T`，越界 UB。负索引尾部计数 + 切片语法 `a[i:j]`，见 §A.2.5 / `SubscriptStrategies.swift`） | ✅（解释器端；LLVM 端 `a[i]` 与运行时一致，`.get`/`.getUnchecked` 未实现 → IR 生成报 unsupported） | Experimental | `Parser`/`Interpreter` 下标路径 / `SubscriptStrategies.swift` / `docs/spec/issue/archive/proposal-subscript-safety-channels-2026-09-01.md`（载体已删） |
 | `own` 关键字（G50 更名自 `Self`，理由：G4 命名体系全小写 snake_case 自洽；语言无所有权模型，`own` 无歧义） | 已定义（类型层出现 §A.2.6；trait 签名内 `own` 返回类型经 conformance 校验替换为具体实现类型——`TypeChecker.replaceSelf`，抽象/默认实现均覆盖） | ✅ | Provisional | `Token.swift` `Keyword.own`、`TypeChecker.replaceSelf` / `TraitConstraintTests（载体已删）.testSelfReturnTypeConformance`/`testSelfReturnTypeInDefaultImplementation` |
 | 数组 / 字典 / 集合字面量 | 已定义（G17；COW 值语义见 G34，v0.38.0） | ✅ | Provisional | `examples/collections.pini`、`examples/cow.pini` |
-| 内建错误类型 `Error()` / `Result` / `CancelError()` | 已实现（G12 异步模型已定义，Stable；错误类型构造细节未钉定，仍 Experimental） | ✅ | Experimental | `examples/concurrency.pini`、`Interpreter` |
+| 内建错误类型 `Error()` / `Result` / `CancelError()` | 已实现（G12 异步模型已定义，Provisional；错误类型构造细节未钉定，仍 Experimental） | ✅ | Experimental | `examples/concurrency.pini`、`Interpreter` |
 | 弱引用 `WeakRef`（`WeakRef(obj)`；`.target` / `.isAlive`；引用语义复制共享同一 box、弱引用计数对称配对） | 已定义（v0.42.0，见 G42） | ✅ | Provisional | `Interpreter`/`ARCManager`/`WeakRefTests（载体已删）` |
 | 懒加载 `LazyRef<T>`（构造 `LazyRef<T>(初始化闭包)` / 推断糖 `LazyRef(闭包)`；`.value` 同步 once 获取；引用语义复制共享同一 box；多线程首访仅一个线程执行初始化） | 已定义（v0.42.0，见 G40） | ✅ | Provisional | `examples/lazyref.pini` / `Interpreter`（`.lazyRef`）/ `PiniRuntime.pini_lazyref_*`（LLVM） |
 | `Optional` | 部分（类型糖 `?T`/`nil` 已定义 §A.2.6/G30/G31；运行时释放/提升语义未定） | ✅ | Experimental | `Interpreter` |
 | `nil` 关键字（= `Optional.none` 等效常量） | 已定义（v0.35.0，见 G30） | ✅ | Provisional | `Keyword.nil` / `Parser.parsePrimaryAtom` / Pini草稿.md（G30） |
 | `?` 可选类型糖（前缀 `?T` = `Optional<T>` 类型层缩写） | 已定义（v0.36.0，见 G31） | ✅ | Provisional | `Token.questionMark` / `Parser.parseTypeAnnotation` / Pini草稿.md（G31） |
 | `iota()` 枚举序位自增 | 已移除（v0.29） | ✗ | Removed | 违反无元编程原则；字面量默认亦随规则 3.15（声明上下文收紧）移除——枚举关联参数仅位置类型 |
-| 异步 `=>` 派发 + `await`/`wait`（`await` 异步体挂起 / `wait` 同步阻塞 join；⚠️ **挂起模式**——经自建续体运行时释放 OS 线程、精确恢复——**2026-09-17 已实现暂时退役**（挂起模式退役，生产面零启用），现行**唯一**形态为同步/阻塞 join） | 已定义（G12 / §3.1；v0.41.0 落地，v0.43.0 T7→Stable；⚠️ **2026-09-17 分层订正**：挂起模式降 Provisional 并退役） | ✅ | Stable（阻塞语义）· Provisional（挂起模式，已退役） | `examples/concurrency.pini` / `Interpreter.swift`、`Value.swift`、`Scheduler.swift`（现行）；`SuspendEvaluator.swift`、`SuspendScheduler.swift`（**已退役**） |
+| 异步 `=>` 派发 + `await`/`wait`（`await` 异步体挂起 / `wait` 同步阻塞 join；⚠️ **挂起模式**——经自建续体运行时释放 OS 线程、精确恢复——**2026-09-17 已实现暂时退役**（挂起模式退役，生产面零启用），现行**唯一**形态为同步/阻塞 join） | 已定义（G12 / §3.1；v0.41.0 落地，v0.43.0 T7→Stable〔史实〕；⚠️ **2026-09-17 分层订正**：挂起模式降 Provisional 并退役；⛔ **2026-09-20 全仓降级**：阻塞语义降为 Provisional） | ✅ | Provisional（阻塞语义，2026-09-20 由 Stable 降级）· Provisional（挂起模式，已退役） | `examples/concurrency.pini` / `Interpreter.swift`、`Value.swift`、`Scheduler.swift`（现行）；`SuspendEvaluator.swift`、`SuspendScheduler.swift`（**已退役**） |
 | `import` / `export` 块（**唯一顶级形态**；解析 + 跨模块 enforce） | 已定义且已实现（**G52 批 1，2026-08-31**：块式解析（D-1 块头=当前文件名校验）+ 裸语句移除（破坏性）+ R2 依赖图禁环（E3-010）+ R4 `别名.符号` 限定访问（D-2 静态互斥 E3-004）+ public 门槛（E3-012）+ R1 物理边界（E3-011）；加载器递归预载全图。IR 后端不支持跨模块（后续批次）。MVS/`pini-summary`/`pini mod`/远程 = 批 3/4） | ✅（解释器） | Provisional | `Parser.parseImportBlock/parseExportBlock` / `ModuleDependencyLoader` / `SemanticAnalyzer` 限定校验 / `Interpreter` 限定派发 / `ModuleSystemTests（载体已删）` |
 | `pini.toml` 模块清单 | 已定义（P4 v0.23；边界细则见 **G52**） | **◐** | Provisional | `Package`/`FileLoader` 加载 + 跨文件符号 + 可见性 enforce **已实现**；**双通道清单已实现（批 6）**：`[tap]`/`[require]`/`[require.<tap>]`/`[resources]`/`[resources.<tap>]`/`[replace]` 解析 + `[[ ]]` 数组表（MiniTOML），旧 `[dependencies]` 命中即报错指引；`spec`/`[[bin]].entry`/`[lib]`/`[tool.pini]` 不消费；MVS 与 `pini-summary.toml` **已实现**（v1 每依赖单可用版本、仅本地 `file:` tap，远程下载批 7） |
 | 标准库内建函数（29 个，按 内建归组表 六组组织：collection/char/pointer/io/math/concurrency/value） | 部分（G14 文件 IO 已落地；字符谓词已定义 Unicode 字符模型；并发签名未钉） | ✅ | Provisional/Experimental | `BuiltinRegistry`（单点登记）/ `Interpreter` 内建分发 |
@@ -492,7 +508,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | G1 | 形式化 EBNF（声明/表达式/语句/类型） | 已定义（权威文法见 §A 附录；原草案降为历史） | Provisional | v0.43.0 | 缺口 1.1 / §A |
 | G2 | 行首定界符分派（类型声明 vs 字面量） | 已定义（§A.4 规则 3.0 / §2.1–§2.2；「行首位置」单一锚点，脆弱性显式登记） | Provisional | v0.43.0 | Parser.parseTopLevelDecl / 语言参考（词法结构·行首消歧） / §A.4 3.0 |
 | G3 | `try`-else 错误传播（errors-as-data，非异常式；原 `try`/`except` 返回元组模型迁移，try-else 迁移） | 已定义且已实现（§2.4.4：try-else 语句位+表达式位、只接受 `Result`、元组错误位约定退役、`^e` 重定义脱糖；迁移批 M2 落地，`except` 关键字与 `UnwrapErrSignal` 已退役；LLVM 侧 try-else 表达式 fail-loud 待后端批） | Provisional | v0.53.0 | `Parser.parseTry` / `Expression.tryExpression` / `Interpreter` tryExpression 求值 / §2.4.4 / try-else 迁移 |
-| G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 异步 join 表层） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → **Stable**）。⚠️ **2026-09-17 分层订正（挂起模式退役）**：**阻塞语义与结构化并发契约维持 Stable**；**挂起模式降为 Provisional 并已实现暂时退役**（生产面零启用） | Stable（阻塞语义）· Provisional（挂起模式，已退役） | v0.43.0 | `Interpreter.swift` / `Value.swift` / `Scheduler.swift` / §3.1；⚠️ `SuspendEvaluator.swift`、`SuspendScheduler.swift` **已退役** |
+| G12 | 异步语义模型（`=>` 派发 + `await`/`wait` join + 结构化并发 + 协作式取消；取代立场 B 的 `<=` 前缀，见 异步 join 表层） | 已定义（权威契约见 §3.1；v0.41.0 落地，T7 正式化 v0.43.0 → Stable〔史实〕）。⚠️ **2026-09-17 分层订正（挂起模式退役）**：阻塞语义与结构化并发契约当时维持 Stable；**挂起模式降为 Provisional 并已实现暂时退役**（生产面零启用）。⛔ **2026-09-20 全仓降级**：原标 Stable 者降为 **Provisional**（见 §1.2 禁则） | Provisional（阻塞语义，2026-09-20 由 Stable 降级）· Provisional（挂起模式，已退役） | v0.43.0 | `Interpreter.swift` / `Value.swift` / `Scheduler.swift` / §3.1；⚠️ `SuspendEvaluator.swift`、`SuspendScheduler.swift` **已退役** |
 | G40 | `LazyRef<T>` 懒加载（`.value` once / 引用语义 / 双后端；无 `.valueFuture`） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
 | G41 | `测试函数块 |test`（`pini test` 子命令 / `assert` 内建 / 参数注入零值 / SwiftTesting 宿主） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
 | G42 | `Ref 系类型引用语义`（独立 Value case + class 承载、复制共享状态） | 已采纳（v0.42.0 转正） | Provisional | v0.42.0 | 已采纳并落地（v0.42.0）；原批次载体已归档 |
@@ -527,6 +543,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 | **G71** | **给定块（`given`）与取用参数（`using`）—— 已登记，语义面已实施**（`given 与 using`，2026-09-19）：Pini 禁止全局可变状态，但**调度器 / 队列 / 连接池 / 缓存**这类「程序级、可变、多模块共用」的资源**无机制可承载**（顶层 `let` 无模块级绑定、`object` 非唯一、`enum` 无用例构造、`import` 不创造值、显式传参**传染**）。**决策** = 引入给定块与 `using` 参数，**定性为一种普通复合类型**：① 块头 `[类型名\|given]`（块头名是**类型名**，沿用 `field-decl`，**不新增产生式**）；② **实例数任意**、**构造与普通复合类型同规**、**字段可写**（写语义归 COW 等优化）、值 / 引用语义**由类型自决**；③ ⭐ **各字段初值合起来 = 编译器为该类型提供的「默认实例」**，**惰性物化、恰一次**、地址稳定；④ `using 名: 类型` 是**参数修饰符**（非子句、非第二块），**编译期按类型解析**、无运行时查找 / 无 vtable、允许调用点显式提供，且**强制**（值位引用即须声明 —— 牙齿 = 「依赖不得隐藏」；⚠️ **本项两半均已订正**：强制的前提被实测否证 ⇒ 降级为诊断 `E4-015`；「抽象签名无体 ⇒ 豁免」改为**解析期拒绝** `E2-025`）；⑤ **惰性分三层**：块级惰性（本条）· **字段级急切（默认）** · 字段要惰性写 `LazyRef`（`G40`）；⑥ ⚠️ **「程序级」是用法的性质而非类型的保证** —— 自行构造的实例不共享而语言不报错；⇒ 配套规则：**可变共享状态必须放进引用字段**（放值字段则共享**静默失效**）。**「零新运行时机制」已订正（2026-09-19）** —— 惰性 / 恰一次 / 线程安全 / 地址稳定四项**复用既有 `LazyRef`（`G40`）的实现骨架**，但**默认实例的物化是新面**：一个**程序级存放位** + 一个**取用节点**（`HIR 契约` **§2.46**，2026-09-19 节点面已落）+ 一个**运行时取用符号**（`bk_given_get`；`bk_*` 清单 **38**，2026-09-19 实测）⇒ 正确表述是「零新**惰性**机制」，不是「零新运行时机制」。**`P2b`（2026-09-19）**：默认实例**物化面已落地** —— 给定块进类型面 · `using` 省略式实参由编译器在**调用点**插入取用点 · 发射层发**程序级存放位**与**合成的初始化函数** · 引擎侧一张表加记忆化（两臂同语义）；取用交付**副本**（裁定：与函数传参一致）。⚠️ **仍不做**：环检测**本体**（只留余量：依赖留痕 + 码位预留，当期零诊断）· 真·跨模块（无独立编译单元通路）。⚠️ **「强制规则」已降级为诊断**（用户裁定「降级为诊断改进」）：其前提被实测否证 —— 给定块类型名在值位被判「未声明的变量」，且 `object` 类型的**对照组报同一条错**（与给定块无关，是语言的通用性质）⇒ 依赖**本来就不可隐藏**、没有可强制的对象；交付物 = `E4-015`。⚠️ 另有一条**语义收紧**（裁定）：字段缺初值的给定块**在降载期即报**，即使从未被取用。⚠️ **终结语义（显式不对称登记；只登记、不改码）**：给定块的**初始化定义完整**，**终结零字** —— 语言**不定义**其清理，清理责任在开发者（载体是 `main` 内的 `defer`），理由与影响见 `ADR-001` §4.3「不承诺」。**用户裁定**：`LazyRef` 只作**字段内**细粒度缓冲，**不承担**默认实例物化。**破坏性 = 无**（`\|given` 与参数位 `using` 均为新拼写；后者的槽位今天报 `E2-001`、不抢占任何现有含义）。✅ **原「未决六项」已逐项裁决（2026-09-19；「裁决前不得先行改码」的限制随之解除）**：`using` 入关键字表 ⇒ **入**（`given` 不入 —— 只出现在 `\|` 修饰符位，走既有白名单；破坏面实测只对**仓外**代码成立：两词在全部 `.pini` 语料中零处作标识符）· 初始化器 `await` ⇒ **禁止**（物化是同步过程，不引入等待）· 给定块扩展块括号 ⇒ **`[[T]]` 通用形**（方括号为通用形、`((` / `{{` / `<<` 为按类别专门化的糖；**已落地**）· 环检测 ⇒ **降为编译器警告级服务并后置**，当期只留余量（依赖留痕 · 取用解析逐点独立 · 诊断码预留）· 终结语义 ⇒ **只登记不改码** · `实现: T` 与「字段必须完整提供初值」的冲突 ⇒ **实测消解**（`实现:` 走特征摘取路径、**不进 `fields`**）。逐项判据与影响见 `ADR-001` §7。⚠️ **不属本条的既有问题（另行立案）**：`\|own` 触实例（`object`/`struct`/`enum` 三类均如此，**全语言缺陷**）· 泛型类型不能作参数类型 · 参数可变性 · 特征默认体的成员访问不静态校验 · 「默认参数」登记失实。**排期**：**已排期且已开批**（落地计划 = `docs/spec/issue/adr-001-landing-plan-2026-09-19.md`）：`P1a` **已交付**（方括号通用形 + `[名\|given]` 声明位 —— 能解析、语义面降载**响亮拒绝**）· `P0` **已交付**（治理前置）· `P1` **已交付**（`using` 参数位 + 关键字表 33 → 34，规范与实现同批）· `P1b` **已交付**（给定块进降载归并表 + 扩展目标诊断 `E6-006`）· `P2a` **已交付**（默认实例**取用**：`HIR 契约` §2.46 节点 + 三锚点 + 运行时 `bk_given_get`）· `P2b` **已交付**（物化面：发射层合成与 `using` 解析）· `P3` **已交付**（三段：取用位进函数类型 · 诊断 `E4-015` · 参数位收窄 `E2-025`）· `P4` **已交付**（收口：全量回归取新基线 · 契约核验 · 余量三项兑现 · 判据固化进测试面）。⚠️ **跨仓面仍须另立授权**（自举 AST 加一个 `given_decl` 用例）—— 用户已裁「selfhost 搁置改动」。 | 已定义（**登记；`P0`–`P4` 全批交付** —— 语法面**已落地**（方括号通用形 · `using` 参数位 · 关键字表升 34 · `[名\|given]` 声明位）· **语义面已落地**（`P2b` 物化面：默认实例在取用点物化 · 省略式实参由编译器在**调用点**插入 · 两臂同语义）· **诊断面已落地**（`E4-015` 给定块类型名在值位 · `E2-025` `using` 只在有 Pini 调用方处合法 · `E6-006` / `E6-007` 降载期）· **环检测只留余量**（依赖留痕 = `HIRModule.givenReferences` · **码位 `E6-008` 已预留**、未实现零触发点）；稳定性 `Experimental` ⇒ **不递交语言参考**，递交台账见 §5.1） | **Experimental** | — | `given 与 using` / `ADR-001` / `docs/spec/adr/adr-001-given-blocks-and-using-parameters.md` / `docs/spec/issue/proposal-given-using-examples-2026-09-19.md`（载体已删）（决策过程与实测） / `docs/spec/issue/proposal-given-using-impact-2026-09-19.md`（载体已删）（影响评估） / `docs/spec/issue/adr-001-landing-plan-2026-09-19.md`（落地计划：分批 · 判据 · 止损 · 遗留） / `HIR 契约` §2.46（默认实例取用；§4.3 已降为兑现记载） / `G40`（`LazyRef`，**仅被字段级复用**） / 改动点状态：块修饰符集 **已改**（`given`）· 参数产生式 **已改**（`using` 前缀）· 关键字表 **已升 34**（`using`，两侧同批）· §2.4.1 索引 **已补行** · 默认实例取用节点 **已落**（`HIR 契约` §2.46）· 运行时符号 **已导出**（`bk_given_get`，`bk_*` **38**） |
 | **G72** | **`Result` 型 scrutinee 的 `match` 分派缺失（`ok` 绑定未取载荷类型）—— 已登记，修复同批落地**（`Result 窄化的 match 分派`，2026-09-20）：`match` 一个 `Result` 值时，`case ok(v)` 绑定的 `v` **保留 scrutinee 的 `Result` 类型**、**未取载荷类型** ⇒ 把 `v` 当 `I32` 用（类型标注 / 算术 / 打印）逐处被判类型不符。**根因（符号级）**：`Sources/PiniCore/HIR/HIRLowerer.swift` 的 `lowerMatch` 按 scrutinee 类型**只分两岔**（`.optional` → `lowerOptionalCases`、`.enumeration` → `lowerEnumCases`），**缺 `.result` 一岔** ⇒ `Result` 作 scrutinee 时落默认分支（按裸值 / 字面量处理），绑定不窄化。**报文三类 = 同一根因**（实测 2026-09-20：8 个 `examples/concurrency*.pini` 逐个取首缺口）：① `printing a Result value is outside the slice` —— **7/8**，因 `v` 是 `Result` ⇒ 撞 `print` **单参**门禁（⚠️ 报文列位指向 **`v`**、非 `print`，如 `:17:26`）；② `type mismatch: result(ok: i32) is not i32` —— **1/8**（`concurrency-async-contagion-end.pini:25:22`，即 `return ok(v)` 的 `v`）；③ `operator 'plus' operand types differ (result(ok: i32) vs i32)`（探针实测，**零并发**亦复现）。⚠️ **②③ 原被搁置** —— 2026-09-17 的旧工单把它们登记为「同族待查、**不得按缺陷记账**」；本轮实测证明**三者同根因** ⇒ 旧工单**问错了层**：它问「要不要让 `print` 支持 `Result`」（方案 A/B/C 三选，用户裁 **C 维持现状**），而真正缺的是**更上游**的「绑定取载荷类型」。**2026-09-20 用户裁定推翻「维持现状」**；修法 = 照 `lowerOptionalCases` 既有形态**补一个 Result 版分支函数 + 一处分派支**。⚠️ **旧工单的夹具面已不存在** —— 其判据面的 8 个并发测试目录（83 夹具、37 条落此面）随 2026-09-19 文档清理**全部删除**，旧工单 `docs/issue-hir-print-result-value-2026-09-17.md` 载体亦已删 ⇒ 症状面 = 上述 8 个样例。⚠️ **本条不覆盖那条 `print` 限制本身**（「`Result` 值不可直接打印」**依然生效、仍未裁**）—— 修复只使样例不再触碰它（`v` 窄化后 `print` 的是 `I32`）。**排期**：**已交付**（`S0` 登记 → `S1` 实现 → `S2` 首缺口前移实测 → `S3` 收口；登记与修复同批） | 已定义**且已实现**（降载支 + 发射支 + 三条内联判据；全量回归 72/0） | Provisional | — | `Result 窄化的 match 分派` / `Sources/PiniCore/HIR/HIRLowerer.swift`（`lowerMatch` · `lowerResultCases`）· `Sources/PiniCore/CodeGen/IREmitter.swift`（`emitMatch`）· 判据 `Tests/PiniTests/ResultNarrowingTests.swift` / 语言面位置：match 解构 · try-else / `examples/concurrency*.pini` / `docs/issue-hir-print-result-value-2026-09-17.md`（载体已删；旧裁定的载体） · `G73`（同批拆出的发射层静默缺陷） |
 | **G73** | **`Result` 型 scrutinee 的 `match` 在发射层无分派 ⇒ 静默跳过全部 arm**（`Result match 的发射层静默跳过`；`G72` 作业中发现并同批交付，2026-09-20）：`IREmitter` 的 `emitMatch` 按 scrutinee 类型**同样只分 Optional 与 enum 两岔**，`Result` 落兜底路 —— 而兜底路对**无字面量模式**的分支只做「发射 scrutinee、丢弃全部 arm」（该形态是为裸值 scrutinee 立的）。⇒ 程序**跑完、不做任何分支动作、退出码 0**。**实测（`G72` 修复前就成立）**：同一个 `Result` match 程序，解释器臂打印 `OK-BRANCH` / `rc=0`，**发射臂零输出 / `rc=0`** ⇒ **静默分歧**，且退出码为 0 ⇒ 不可能被退出码发现。⚠️ **它与 `G72` 是两处缺陷、不是一处**：`G72` 是**降载层**绑定类型错（**响亮拒绝**），本条是**发射层**无分派（**静默通过**）；症状类别相反（loud vs silent），故拆出单列。**为何必须同批处置**：只修 `G72` 会把本条**放大** —— 修前 `print(v)` 门禁拦住全部两臂（两臂都响亮拒绝），修后 `v` 是载荷类型 ⇒ 门禁不再触发 ⇒ 程序走到发射层 ⇒ 静默跳过。**净效果是把响亮拒绝换成静默错**，违反「宁 fail-loud 不静默」。**修法**：`emitMatch` 补 `.result` 一岔（tag 槽 0 = ok / 1 = err、ok 载荷槽 1、err 载荷槽 2 擦除字），并把 `emitTaggedMatch` 的载荷回调加上「臂」参数（Optional 的单槽公式要 `slot + 1`，Result 的两侧槽位不同，须知道是哪一臂）。**排除项**：本条**不含**「err 载荷的擦除是否能被展示」—— 那是 `G72` 记的既有错误绑定门禁，仍然生效、仍未裁。**排期**：**已交付** | 已定义**且已实现** | Provisional | — | `Result match 的发射层静默跳过` / `Sources/PiniCore/CodeGen/IREmitter.swift`（`emitMatch` · `emitTaggedMatch`）/ `Sources/PiniCore/HIR/HIRNode.swift`（`result(ok:)` 三槽）/ `docs/spec/hir-contract.md`（`result(ok:)` 行 · `resultConstruct` 行） / `G72` |
+| **G74** | **`await` 的让出语义未落地（两种形态的载体已补，让出实现未落）**（`await 让出的载体与实现`，2026-09-20）：`await` 与 `wait` 在语法上是**两种形态**（`await` 在异步函数体内等待、**可以让出当前任务**；`wait` 在任意上下文等待、**占用当前线程**），而管线上**曾经完全无法区分** —— 两个关键字产出**同一个** `join` 节点、关键字**当场丢弃**，运行时只能去问一个**生产面零赋值点**的模式开关，而该开关随挂起模式退役一并消失 ⇒ 两种形态再无任何可分之处。**2026-09-20 已补载体**（`D`+`E` 批 `DE-2a`）：`JoinForm`（`awaits` / `waits`）贯穿 `Parser` → AST → HIR 节点 `join(future:type:form:)`，三处消费点（降载 / 打印 / 执行）随之读它。⚠️ **让出本身仍未实现** —— 两台引擎当下都按**阻塞**处理两种形态，`await` **降级为 `wait`**；降级方向合规（让出可选、join 不可选），但**与「让出」的字面语义不符**。**根因（为何不是小改）**：本引擎是**树走查**，任务的状态**就是机器栈** ⇒ 在 join 处让出、稍后从**精确恢复点**续跑，需要**体本身可恢复**（挂起点要能被编码成续体 / 状态机），而这是**另一件量级的事**（被删的 AST 版挂起实现为 890 + 159 行，且它整篇长在那个更简单的求值器上）。**落点**：原语面（`bk_task_yield` 及让出原语）与分层 + 等级定案见 `docs/spec/issue/proposal-concurrency-runtime-c-abi-2026-09-20.md`（`DE-1`）。⚠️ **不得**把本状态读成「WASM 之类无线程后端上让出语义为空」—— 该读法已被否证，正解是**语义保持、只降级执行策略** | 已定义（**载体已实现**；**让出实现未落地**，`await` 降级为阻塞） | Provisional | — | `await 让出的载体与实现` / `Sources/PiniCore/AST/Expressions/Expression.swift`（`JoinForm`）· `Sources/PiniCore/Parser/Parser.swift`（两个关键字分别记形态）· `Sources/PiniCore/HIR/HIRNode.swift`（`join(future:type:form:)`）· `Sources/PiniCore/Runtime/RuntimeOps.swift`（`joinFuture` 的降级点）· `Sources/PiniCore/Interpreter/HIRExecutor.swift` / `docs/spec/hir-contract.md`（`join` 行）· `docs/spec/issue/proposal-concurrency-runtime-c-abi-2026-09-20.md` |
 
 
 
@@ -540,19 +557,19 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 > - 位运算（`& ^ ~ << >>`）—— 语法与优先级已定义（§A.1.2 / §A.2.5 / §A.3 层 5）；溢出/符号运行语义未钉住。
 > - 内建函数全集（**33 个**，内建归组表 归组，宿主 `BuiltinRegistry.decls` 为唯一事实源）—— **collection**：len；**char**：is_letter / is_ascii_digit / is_number / chars / ord / chr；**pointer**：load / store / addressof；**io**：moduleRoot / argv / readFile / writeFile / readLine；**math**：abs / min / max / sqrt / sin / cos / tan；**concurrency**：sleep / isCancel / joinAll / joinWithin；**value**：print / assert / ok / err / Error / CancelError / F64（值构造：int→F64、float 原样；G-P1，自举探针批次 4）。⚠️ **2026-09-18 订正（走 §1.3，格 `P0d`）**：本条原记 **29 个**并与宿主实测不符 —— 漏登记 4 个：`ord` / `chr`（char 组 **4 → 6**，见 `G45`）与 `moduleRoot` / `argv`（io 组 **3 → 5**，随 `G58` 落地但本清单未随动）。⇒ **29 → 33**。⚠️ **字符谓词签名已随 `G67` 改为 `Char` 面**（原钉「String -> Bool，chars 为 String -> Array\<String\>」**已作废**）；字符串 `upper`/`lower`/`contains`/`substring`/`split` 为**成员方法**（非自由函数，§A.2.5）。其中并发原语签名未钉住（Experimental），其余签名随 Unicode 字符模型/内建特征化 逐步钉定。
 > - `Optional` —— 类型层糖 `?T`（G31）与 `nil`（G30）已定义（§2.4.1 / §A.2.6）；运行时释放/提升语义未定（与 G9 ARC 关联）。**下标读（G48）类型推断为元素类型 `T`（安全断言通道，越界 panic）**；可选通道 `.get(i)` 推断为 `Optional<T>`，越界返回 `.none`。
-> - 内建错误类型 `Error()` / `Result` / `CancelError()` —— 由 G12（Stable）纳入异步错误模型；`Error`/`CancelError` 构造与 `Result` 成员语义随 G12 已定义，细节（构造参数、字段）待钉定。
+> - 内建错误类型 `Error()` / `Result` / `CancelError()` —— 由 G12（Provisional）纳入异步错误模型；`Error`/`CancelError` 构造与 `Result` 成员语义随 G12 已定义，细节（构造参数、字段）待钉定。
 > - 下标 `a[i]`（`subscript`）—— 安全模型三通道已定稿（G48，批 2）：**`a[i]` 安全断言**→`T`，越界读 **panic**（E5-005，与写通道越界报错对称，调用者不解包）；**`a.get(i)` 安全可选**→`Optional<T>`，越界/缺键 `.none`（调用者显式解包）；**`unsafe a.getUnchecked(i)` 不安全**→`T`，越界 **UB**（调用者承担前置条件），须 `unsafe <expr>` 消耗点（FFI 子系统 / 特征内不安全行为的表达）。三通道对 Array/Dictionary/String 一致（字典缺失键与越界同义）。负索引尾部计数、切片语法 `a[i:j]`（脱糖 `a.slice(i, j)`）、`substring` 负索引尾部计数（Python 一致）。原「unsafe 单元素直接访问通道（P2-F）」由第三通道落地，形态为**显式成员方法 + `unsafe` 消耗点**（非 `|unsafe` 成员方法修饰符，故不触碰 特征内不安全行为的表达「`|unsafe` 不扩展到特征方法派发」）。
 > - `own` 关键字（类型内自指，G50 更名自 `Self`）—— 类型层出现已定义（§A.2.6 type-annotation `'self'|'own'`）；作用域运行语义未定。
 > - 泛型运行时单态化特化（调用点 `T` 占位通配 + 延迟特化队列）—— `examples/generic-func.pini` 演示，调用点行为未全钉住（部分由 G18/G24 覆盖）。
 >
 > 其正式语义将在对应版本（预计 v0.3+）通过 RFC/ADR 落定；在此之前示例可演示，但规范不保证其行为长期稳定。
 
-### 3.1 异步语义契约（G12：阻塞语义 Stable · 挂起模式已退役 → Provisional）
+### 3.1 异步语义契约（G12：阻塞语义 Provisional · 挂起模式已退役 → Provisional）
 
-> **状态**：已定义、已落地（v0.41.0 落地 `=>` 派发 + `await`/`wait`；T7 异步语义正式化 v0.43.0 → **Stable**）。本小节为权威异步语义定义（结构化并发不变契约），具规范事实源地位。
+> **状态**：已定义、已落地（v0.41.0 落地 `=>` 派发 + `await`/`wait`；T7 异步语义正式化 v0.43.0 → Stable〔史实〕；⛔ **2026-09-20 降为 `Provisional`**，见 §1.2 禁则）。本小节为权威异步语义定义（结构化并发不变契约），具规范事实源地位。
 >
 > ⚠️ **2026-09-17 分层订正（依据见 挂起模式退役；缺口登记 `G66`）**：本小节的稳定性**分层**如下 ——
-> **阻塞语义**（`await`/`wait` 的现行唯一实现形态）与**结构化并发不变契约**维持 **Stable**；
+> **阻塞语义**（`await`/`wait` 的现行唯一实现形态）与**结构化并发不变契约**维持 **Provisional**（2026-09-20 由 `Stable` 降级）；
 > **挂起模式**（释放当前 OS 线程）**降为 Provisional 并已实现暂时退役**。
 > 依据：该路径的**生产赋值点为零**（`Sources/` 无 `suspendMode` 赋值、`SuspendScheduler` 零实例化），
 > 而本节下文自陈「语义与挂起等价」⇒ **本次变化对用户程序零可见影响**，性质是**规范对自身状态的订正**。
@@ -593,8 +610,8 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
 
 #### 3.1.5 稳定性与已知限制
 
-- **G12：分层状态**（2026-09-17 订正，挂起模式退役）—— **阻塞语义与结构化并发契约维持 Stable**（v0.43.0，T7 正式化，语义模型已钉定）；**挂起模式降为 Provisional 并已实现暂时退役**（生产面零启用）。
-- **仍 Experimental（登记于 §3，函数签名未钉住）**：并发原语 `cancel` / `isCancel` / `join` / `joinAll` / `joinWithin` 的**函数签名**；内建错误类型 `Error()` / `CancelError()` / `Result` 的构造参数与字段细节。模型已由 G12（Stable）定义，但签名/构造细节待后续版本钉定。
+- **G12：分层状态**（2026-09-17 订正，挂起模式退役；2026-09-20 全仓降级）—— **阻塞语义与结构化并发契约**为 **Provisional**（v0.43.0 当时定级 Stable〔史实〕，2026-09-20 降级，见 §1.2 禁则）；**挂起模式降为 Provisional 并已实现暂时退役**（生产面零启用）。
+- **仍 Experimental（登记于 §3，函数签名未钉住）**：并发原语 `cancel` / `isCancel` / `join` / `joinAll` / `joinWithin` 的**函数签名**；内建错误类型 `Error()` / `CancelError()` / `Result` 的构造参数与字段细节。模型已由 G12（Provisional）定义，但签名/构造细节待后续版本钉定。
 - **阻塞 join 的线程占用**（2026-09-17 具名，挂起模式退役）：有界池下高扇出**会耗尽 worker 线程** —— 阻塞语义固有、非退役引入；重写挂起时的目标之一即消除该边界。
 
 ### 3.2 运行时 shim 边界与长期愿景（C ABI）
@@ -876,7 +893,7 @@ vendor/
 
 ### 8.6 清单 schema：`pini.toml`
 
-> **稳定性**：下列 schema 为 **v0.1 基线**；字段可能随工具链演进细化，但 `name` / `version` / `spec` / `entry` 为 **Stable**。
+> **稳定性**：下列 schema 为 **v0.1 基线**；字段可能随工具链演进细化，但 `name` / `version` / `spec` / `entry` 为 **Provisional**（2026-09-20 由 `Stable` 降级，只降标记、字段语义不变）。
 > 依赖两通道的**语义判据**在 §2.5（双通道 + 双向强制）；本节给**书写形态**。
 
 #### 8.6.1 顶层字段
@@ -885,9 +902,9 @@ vendor/
 # pini.toml —— Pini 项目清单（v0.1）
 
 [package]
-name        = "hello"        # (Stable) 模块标识，本地唯一；建议反向域名风格
-version     = "0.1.0"        # (Stable) 语义化版本 SemVer 2.0
-spec        = "0.1"          # (Stable) 钉住的规范版本——兼容性承诺锚点（§8.6.4）
+name        = "hello"        # (Provisional) 模块标识，本地唯一；建议反向域名风格
+version     = "0.1.0"        # (Provisional) 语义化版本 SemVer 2.0
+spec        = "0.1"          # (Provisional) 钉住的规范版本——兼容性承诺锚点（§8.6.4）
 edition     = "2026"         # (Provisional) 语法纪元，未来破坏性语法切换时递增
 description = "A demo project"
 license     = "MIT"
@@ -941,7 +958,7 @@ opt-level = 2
 
 | 字段 | 级别 | 说明 |
 |---|---|---|
-| `package.name` / `version` / `spec` / `entry` | **Stable** | v0.x 内不破坏 |
+| `package.name` / `version` / `spec` / `entry` | **Provisional** | v0.x 内不破坏；⚠️ 标记 2026-09-20 由 `Stable` 降级（只降标记，字段语义与「v0.x 内不破坏」的实践承诺不变） |
 | `package.edition` | Provisional | 仅在切换语法纪元时使用 |
 | `build.exclude` | Provisional | **测试收集范围**的排除（G49、G52 D27 收窄）——**不是**模块树扫描的排除；扫描边界由 R1（清单）与 R5/R6（点前缀 / `.pini/`）决定 |
 | `tap.*` | Provisional | 依赖源声明；org 必须显式书写 |
@@ -963,7 +980,7 @@ opt-level = 2
 #### 8.6.4 `spec` 字段语义（破坏性变更治理的机器可读锚点）
 
 - `spec = "0.1"` 表示：本项目按 **spec v0.1** 编写，工具链承诺仅接受 v0.1.x 内的兼容变更；遇到 v0.2+ 的破坏性语法时**报错并提示迁移**，而非静默误编译。
-- 工具链读取 `spec` 后锁定对应稳定性分级表（§1.2），据此决定哪些特性可用、哪些标记为 Deprecated。
+- ⛔ **订正（2026-09-20）**：本条原称「工具链读取 `spec` 后**锁定对应稳定性分级表**（§1.2），据此决定哪些特性可用、哪些标记为 Deprecated」—— **该机制未实现**（`Sources/` 零命中），且与既有裁决「**不要兼容性闸门**」相矛盾 ⇒ **撤销该声称**（不是去实现它）。`spec` 的实际语义**仅为上一条的意图声明**；「哪些特性可用」由**后端能力**决定（见语言参考的后端名册），**不由稳定性分级表决定**。
 - 与 `.pini/baseline` 的分工：`spec` 是**意图声明**（本项目承诺兼容的规范版本），`baseline` 是**实测观察**（上次验证通过时的宿主状态）。二者必须一致并由门禁校验——否则等于重新引入一对会漂移的双钉。宿主与规范同仓时，`baseline` 的单个 `host=<sha>` 同时钉住工具链与规范。
 
 ### 8.7 脚手架与校验规则

@@ -771,7 +771,9 @@ public final class HIRExecutor: DebugHookHost {
                     )
                 }
                 let milliseconds = try requireInt(args[1], for: "joinWithin timeout")
-                return RuntimeOps.joinFuture(fut, timeoutMs: milliseconds)
+                // A builtin, not a keyword site: `joinWithin` has no `await` form,
+                // so it takes the occupying stance by construction.
+                return RuntimeOps.joinFuture(fut, timeoutMs: milliseconds, form: .waits)
             }
             if name == "cancel" {
                 let args = try arguments.map { try evaluate($0) }
@@ -1375,16 +1377,20 @@ public final class HIRExecutor: DebugHookHost {
         /// than sliding through. It fails loud instead of returning a silent
         /// `.null`: a lowerer rule without the engine behind it must show up
         /// as an error, not as a plausible-looking wrong value.
-        case .join(let futureExpr, _):
-            // `await f` / `wait f` (G-3c-1): evaluate the operand, then block
-            // until it resolves and deconstruct the carried ok / err.
+        case .join(let futureExpr, _, let form):
+            // `await f` / `wait f` (G-3c-1): evaluate the operand, then wait for it
+            // to resolve and deconstruct the carried ok / err.
             //
-            // This is the whole of the arm. There is no suspend branch here and
-            // none is missing: the alternative — releasing the thread across the
-            // join — was selected by a flag with no assignment point outside the
-            // tests, and `挂起模式退役` retired it with the walk. The join always
-            // blocks. A `join` that is not given a future is a run-time type
-            // mismatch.
+            // `form` says which keyword the site was written with, and that is now
+            // the only thing that can: the mode flag the retired implementation
+            // consulted had no assignment point outside the tests, and it left with
+            // the walk. Both forms still wait the same way — giving the task up
+            // across a join needs a body that can be resumed part-way through, and
+            // this engine walks the body on the machine stack. The form is carried
+            // through anyway so the difference has somewhere to land, and so a
+            // reader can tell the two apart at the one place that matters.
+            //
+            // A `join` that is not given a future is a run-time type mismatch.
             let operand = try evaluate(futureExpr)
             guard case .future(let fut) = operand else {
                 throw RuntimeError.typeMismatch(
@@ -1393,7 +1399,7 @@ public final class HIRExecutor: DebugHookHost {
                     location: HIRExecutor.noLocation
                 )
             }
-            return RuntimeOps.joinFuture(fut, timeoutMs: nil)
+            return RuntimeOps.joinFuture(fut, timeoutMs: nil, form: form)
 
         // MARK: 默认实例取用（ADR-001）
 

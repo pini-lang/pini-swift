@@ -3098,7 +3098,7 @@ public final class IREmitter {
         case .fileRead: return .string
         case .readLine: return .string
         case .isAsciiDigit: return .boolean
-        case .join(_, let type): return type
+        case .join(_, let type, _): return type
         case .givenInstance(let type): return type
         }
     }
