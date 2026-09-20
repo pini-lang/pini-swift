@@ -4805,6 +4805,14 @@ public enum HIRLowerer {
             }
             let hirCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+        case .result(let okType):
+            // Result scrutinee (`G72`): without this arm the family fell to
+            // `default` below, whose binding adopts the scrutinee type — so
+            // `case ok(v)` bound `v` as a Result and every use of it (a
+            // print, an arithmetic operand, a typed copy) was rejected against
+            // a type the source never names.
+            let hirCases = try lowerResultCases(cases, okType: okType, into: &context)
+            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
         default:
             // Bare scrutinee — neither Optional nor enum (a direct subscript
             // read: the interpreter yields a plain value there, verified).
@@ -4909,6 +4917,80 @@ public enum HIRLowerer {
                 let body = try lowerBlock(matchCase.block, into: &context)
                 if let bindingName = bindingName {
                     context.variableTypes[bindingName] = previousType
+                }
+                hirCases.append(HIRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
+            default:
+                throw unsupported(
+                    "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
+                    at: matchCase.location
+                )
+            }
+        }
+        return hirCases
+    }
+
+    /// Result scrutinee arms (`G72`): ok/err, single positional binding. The
+    /// two sides are deliberately asymmetric, and the asymmetry is the whole
+    /// point of the arm family:
+    ///
+    /// - the **ok** binding takes the payload type — that narrowing is what
+    ///   this family exists for, and it is what makes a print / arithmetic
+    ///   operand / typed copy of `v` legal;
+    /// - the **err** binding takes the shape try-else already established for
+    ///   an error word: one machine word, tracked in `errorBindings`. It is
+    ///   not a new form. `result(ok:)` carries no error type to narrow to
+    ///   (the HIR type has one field, the ok type), and the IR ABI erases that
+    ///   slot (LR-12), so the only faithful spelling is the erased word. The
+    ///   consequence is that printing an err binding stays gated — loudly, by
+    ///   the existing error-binding gate, and now with a message that names
+    ///   the real reason instead of blaming the binding's type.
+    private static func lowerResultCases(
+        _ cases: [MatchCase],
+        okType: HIRType,
+        into context: inout FunctionContext
+    ) throws -> [HIRMatchCase] {
+        var hirCases: [HIRMatchCase] = []
+        for matchCase in cases {
+            switch matchCase.pattern {
+            case .enumCase(let rawCaseName):
+                // A qualified spelling (`Result.ok`) names the same leaf.
+                let caseName =
+                    rawCaseName.contains(".")
+                    ? String(rawCaseName.split(separator: ".").last!)
+                    : rawCaseName
+                guard caseName == "ok" || caseName == "err" else {
+                    throw unsupported(
+                        "match case '\(caseName)' outside this grid (Result scrutinee: ok/err)",
+                        at: matchCase.location
+                    )
+                }
+                var bindingName: String? = nil
+                if !matchCase.bindings.isEmpty {
+                    guard matchCase.bindings.count == 1,
+                        matchCase.bindings[0].paramName == nil,
+                        matchCase.bindings[0].varName != "_"
+                    else {
+                        throw unsupported(
+                            "match case bindings outside this grid (single positional binding on ok/err)",
+                            at: matchCase.location
+                        )
+                    }
+                    bindingName = matchCase.bindings[0].varName
+                }
+                let isOk = caseName == "ok"
+                let previousType = bindingName.flatMap { context.variableTypes[$0] }
+                let wasErrorBinding =
+                    bindingName.map { context.errorBindings.contains($0) } ?? false
+                if let bindingName = bindingName {
+                    context.variableTypes[bindingName] = isOk ? okType : .i64
+                    if !isOk { context.errorBindings.insert(bindingName) }
+                }
+                let body = try lowerBlock(matchCase.block, into: &context)
+                if let bindingName = bindingName {
+                    context.variableTypes[bindingName] = previousType
+                    // Only undo an insertion of ours — an outer error binding
+                    // of the same name must survive the arm.
+                    if !isOk && !wasErrorBinding { context.errorBindings.remove(bindingName) }
                 }
                 hirCases.append(HIRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
             default:

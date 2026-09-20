@@ -784,7 +784,7 @@ public final class IREmitter {
                     bodyIR += " \(value) = extractvalue \(aggregate) \(base), 0\n"
                     return IRValue(llvmType: "i64", ssaName: value)
                 },
-                loadPayload: { [self] base, slot, spelling in
+                loadPayload: { [self] _, base, slot, spelling in
                     let value = builder.freshTemp()
                     bodyIR += " \(value) = extractvalue \(aggregate) \(base), \(slot + 1)\n"
                     return IRValue(llvmType: spelling, ssaName: value)
@@ -817,11 +817,39 @@ public final class IREmitter {
                     bodyIR += builder.fmtLoad(name: value, type: "i32", ptr: tagPtr) + "\n"
                     return IRValue(llvmType: "i32", ssaName: value)
                 },
-                loadPayload: { [self] base, slot, spelling in
+                loadPayload: { [self] _, base, slot, spelling in
                     let fieldPtr = builder.freshTemp()
                     bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: base, indices: [0, slot + 1]) + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: spelling, ptr: fieldPtr) + "\n"
+                    return IRValue(llvmType: spelling, ssaName: value)
+                }
+            )
+        case .result(let okType):
+            // Result scrutinee (`G72`): tag 0 = ok, 1 = err. The ok payload
+            // rides in field 1 and the err payload in field 2 — the erased
+            // error word (LR-12), which is why the two sides cannot share one
+            // slot formula the way Optional's single payload can.
+            //
+            // Reaching this case at all is new: before it, a Result scrutinee
+            // fell to the `default` arm below, which for a family with no
+            // literal patterns emits the scrutinee and drops every arm — so
+            // the program ran to completion having executed none of them.
+            // Silent, and rc=0. This arm is what makes the tag actually
+            // dispatch.
+            let aggregate = scrutineeType.llvmSpelling
+            emitTaggedMatch(
+                scrutinee: scrutinee, cases: cases, aggregate: aggregate, tagType: "i64",
+                tagFor: { $0.caseName == "ok" ? "0" : "1" },
+                payloadSpelling: { arm, _ in arm.caseName == "ok" ? okType.llvmSpelling : "i64" },
+                loadTag: { [self] base in
+                    let value = builder.freshTemp()
+                    bodyIR += " \(value) = extractvalue \(aggregate) \(base), 0\n"
+                    return IRValue(llvmType: "i64", ssaName: value)
+                },
+                loadPayload: { [self] arm, base, _, spelling in
+                    let value = builder.freshTemp()
+                    bodyIR += " \(value) = extractvalue \(aggregate) \(base), \(arm.caseName == "ok" ? 1 : 2)\n"
                     return IRValue(llvmType: spelling, ssaName: value)
                 }
             )
@@ -949,7 +977,7 @@ public final class IREmitter {
         tagFor: (HIRMatchCase) -> String,
         payloadSpelling: (HIRMatchCase, Int) -> String,
         loadTag: (String) -> IRValue,
-        loadPayload: (String, Int, String) -> IRValue
+        loadPayload: (HIRMatchCase, String, Int, String) -> IRValue
     ) {
         let scrutineeValue = emitExpr(scrutinee)
         let tag = loadTag(scrutineeValue.ssaName)
@@ -978,7 +1006,7 @@ public final class IREmitter {
             for (slot, bindingName) in matchCase.bindings.enumerated() {
                 guard let bindingName = bindingName else { continue }
                 let spelling = payloadSpelling(matchCase, slot)
-                let value = loadPayload(scrutineeValue.ssaName, slot, spelling)
+                let value = loadPayload(matchCase, scrutineeValue.ssaName, slot, spelling)
                 let slotName = freshSlot(for: bindingName)
                 bodyIR += builder.fmtAlloca(name: slotName, type: spelling) + "\n"
                 bodyIR += builder.fmtStore(value: value.ssaName, type: spelling, ptr: slotName) + "\n"
