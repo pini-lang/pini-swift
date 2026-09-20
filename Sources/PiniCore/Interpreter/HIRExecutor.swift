@@ -53,6 +53,99 @@ private struct HIRCallableBody {
     }
 }
 
+/// What one run of a body produced.
+///
+/// Two outcomes and no third: a body either reached its end, or it stopped at a
+/// join and gave the task up. The distinction has to exist *somewhere* above the
+/// statement loop, because a caller that cannot tell them apart has no way to
+/// leave the worker thread — which is the whole difference between `await` and
+/// `wait`.
+private enum HIRBodyStep {
+    case finished(Value)
+    case givenUp(HIRYieldFrame)
+}
+
+/// A body that gave its task up, together with everything needed to pick it up.
+///
+/// WHY THE CONTEXT IS IN HERE
+///
+/// A suspension returns from the Swift call that was running the body, so every
+/// piece of execution state that lived in Swift locals or thread-locals goes away
+/// with it. Thread-locals are the sharp edge: giving up does not unwind them the
+/// way a normal return does (the enclosing `defer`s in `invokeBodyStep` are
+/// deliberately not taken on this path), so if the frame did not carry them, the
+/// body would resume with empty call-depth, empty call stack and — worse —
+/// an empty defer stack, and its `defer`s would never run.
+///
+/// The environment is here for the same reason, plus one of its own: it is not
+/// actually lost, it is *reachable* from the frame, and the resume path must put
+/// back the exact one the body was using rather than one rebuilt from arguments.
+private struct HIRYieldFrame {
+    /// The callable whose body is part-way through.
+    let callable: HIRCallableBody
+    /// The statement the body stopped in, counted in that body's statement list.
+    let index: Int
+    /// Finish the statement at `index` with the awaited value, then carry on.
+    let finish: (Value) throws -> Value?
+    /// The future this body gave the task up for.
+    let awaited: FutureValue
+    let env: Environment
+    /// The environment to hand back to the caller when the body finally ends.
+    ///
+    /// In the frame rather than recomputed, because it belongs to the *run* and
+    /// not to the body: a resumed run's Swift caller is a continuation, not the
+    /// frame that entered the body, so there is nothing left to restore to unless
+    /// the value travelled. Getting this wrong is quiet — the body completes and
+    /// returns correctly, and only the *next* statement on that thread reads a
+    /// stale environment.
+    let previousEnv: Environment
+    /// The `lastValue` accumulator at the moment of suspension — see
+    /// `driveStatements` for why it is part of where the body was.
+    let lastValue: Value
+    let callDepth: Int
+    let callStackNames: [String]
+    let deferStack: [[HIRBlock]]
+    let currentFuture: FutureValue?
+}
+
+/// The statement positions a join may actually give the task up at.
+///
+/// This is the driver's half of the yield envelope; the lowerer's half is the
+/// refusal that keeps anything else from ever arriving here. The two must agree,
+/// and the agreement is load-bearing in one direction only: if the lowerer admits
+/// a position the driver has no plan for, the join silently degrades to a blocking
+/// wait — which is exactly the failure the envelope exists to prevent. So the
+/// driver is written as a `switch` with no `default` over the positions it plans
+/// for, and anything else falls through to ordinary execution only because the
+/// lowerer has already refused it.
+///
+/// The two halves cover the four shapes the corpus actually uses: a bare
+/// statement, a `var` initializer, a `match` scrutinee, and the operand of a
+/// try-else. See the proposal's section 7.5.8.2 for the measurement.
+private enum HIRYieldPlan {
+    /// S1 — the join is the whole expression statement, so its value is the
+    /// statement's value.
+    case expressionStatement(operand: HIRExpr)
+    /// S2 — the join is a `var` initializer.
+    case varInitializer(operand: HIRExpr, name: String, type: HIRType, mutable: Bool)
+    /// S3 — the join is a `match` scrutinee.
+    case matchScrutinee(operand: HIRExpr, cases: [HIRMatchCase])
+    /// S4 — the join is the operand of a try-else.
+    case tryOperand(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?)
+
+    /// The expression whose value is the future: evaluated synchronously, before
+    /// any decision to give the task up is made.
+    var operand: HIRExpr {
+        switch self {
+        case .expressionStatement(let operand),
+            .varInitializer(let operand, _, _, _),
+            .matchScrutinee(let operand, _),
+            .tryOperand(let operand, _, _, _):
+            return operand
+        }
+    }
+}
+
 /// Runs a lowered `HIRModule` directly — the third live channel of the LR-4
 /// unification, alongside the AST interpreter and HIR → LLVM.
 ///
@@ -2023,35 +2116,7 @@ public final class HIRExecutor: DebugHookHost {
             // bare `pass` terminator just ends the statement — both are the
             // interpreter's shape.
             let result = try evaluate(operand)
-            guard case .enumValue(let ev) = result,
-                ev.parentEnum == RuntimeOps.builtinResultEnumName
-            else {
-                throw RuntimeError.typeMismatch(
-                    expected: "Result",
-                    got: RuntimeOps.describeValueKind(result),
-                    location: HIRExecutor.noLocation
-                )
-            }
-            let payload = ev.associatedValues.first ?? .null
-
-            if ev.caseName == "ok" {
-                // Expression position (`let x = try f() else e: return`) arrives as
-                // `allocVar(x, initializer: nil)` followed by this node with
-                // `okTarget: x`, so this write is the *initialization* of an
-                // already-declared slot. `assign` would misread it as assigning to
-                // a `let` and reject a legal program.
-                if let okTarget = okTarget {
-                    try currentEnv.initialize(name: okTarget, value: payload)
-                }
-                return
-            }
-
-            let handlerEnv = Environment(enclosing: currentEnv)
-            handlerEnv.define(name: errorVar, value: payload, isMutable: true)
-            let previousEnv = currentEnv
-            currentEnv = handlerEnv
-            defer { currentEnv = previousEnv }
-            for statement in handler { try execute(statement) }
+            try runTryResult(result, errorVar: errorVar, handler: handler, okTarget: okTarget)
 
         case .matchStmt(let scrutinee, let cases, _):
             // The carried `scrutineeType` is deliberately not consulted: the
@@ -2060,27 +2125,7 @@ public final class HIRExecutor: DebugHookHost {
             // lowerer, where it chose which arm family to build. Reading it here
             // would create a second dispatch that could disagree with the value.
             let scrutineeValue = try evaluate(scrutinee)
-            for arm in cases {
-                guard
-                    RuntimeOps.matchArmMatches(
-                        caseName: arm.caseName, literal: arm.literal, value: scrutineeValue
-                    )
-                else { continue }
-                try executeArm(arm, scrutinee: scrutineeValue)
-                return
-            }
-            // No arm fired — the interpreter's tail rule (D3①, R3): an enum value
-            // means the match was not exhaustive *at run time*, and says so with
-            // the case name; a bare value keeps the silent fall-through, because a
-            // literal's value space is infinite and `case _:` is how the language
-            // spells "everything else". Exhaustiveness itself is a checker duty
-            // (E3-007), so a shape that reaches here with an enum was not
-            // statically coverable.
-            if case .enumValue(let ev) = scrutineeValue {
-                throw RuntimeError.matchNotExhaustive(
-                    value: ev.caseName, location: HIRExecutor.noLocation
-                )
-            }
+            try runMatch(cases, scrutinee: scrutineeValue)
 
         // MARK: Nominal field store (P2a grid G5)
 
@@ -2189,6 +2234,87 @@ public final class HIRExecutor: DebugHookHost {
     /// Evaluate a condition and insist on `Bool`, mirroring the interpreter's
     /// `guard case .bool` at both `executeIfBody` and `executeWhile` (a non-bool
     /// condition is a `typeMismatch`, not a truthiness coercion).
+    /// A `match`'s arm selection, once the scrutinee value is in hand.
+    ///
+    /// Extracted from the `matchStmt` arm so the yield driver can finish a
+    /// suspended `match` by calling the same code rather than a second copy of
+    /// it. That matters more than it looks: the tail rule below is subtle enough
+    /// that a copy would be free to differ, and the difference would show up as
+    /// two engines disagreeing about whether an unmatched enum is an error —
+    /// exactly the kind of drift the LR-4 unification exists to prevent.
+    ///
+    /// The carried `scrutineeType` is deliberately not consulted: the
+    /// interpreter's rule is value-based (what the value *is* decides which arm
+    /// fires), and the static type has already done its work in the lowerer,
+    /// where it chose which arm family to build. Reading it here would create a
+    /// second dispatch that could disagree with the value.
+    private func runMatch(_ cases: [HIRMatchCase], scrutinee value: Value) throws {
+        for arm in cases {
+            guard
+                RuntimeOps.matchArmMatches(
+                    caseName: arm.caseName, literal: arm.literal, value: value
+                )
+            else { continue }
+            try executeArm(arm, scrutinee: value)
+            return
+        }
+        // No arm fired — the interpreter's tail rule (D3①, R3): an enum value
+        // means the match was not exhaustive *at run time*, and says so with the
+        // case name; a bare value keeps the silent fall-through, because a
+        // literal's value space is infinite and `case _:` is how the language
+        // spells "everything else". Exhaustiveness itself is a checker duty
+        // (E3-007), so a shape that reaches here with an enum was not statically
+        // coverable.
+        if case .enumValue(let ev) = value {
+            throw RuntimeError.matchNotExhaustive(
+                value: ev.caseName, location: HIRExecutor.noLocation
+            )
+        }
+    }
+
+    /// A try-else's outcome, once the operand's `Result` is in hand. Extracted
+    /// for the same reason as `runMatch`, and by the same rule.
+    private func runTryResult(
+        _ result: Value,
+        errorVar: String,
+        handler: HIRBlock,
+        okTarget: String?
+    ) throws {
+        guard case .enumValue(let ev) = result,
+            ev.parentEnum == RuntimeOps.builtinResultEnumName
+        else {
+            throw RuntimeError.typeMismatch(
+                expected: "Result",
+                got: RuntimeOps.describeValueKind(result),
+                location: HIRExecutor.noLocation
+            )
+        }
+        let payload = ev.associatedValues.first ?? .null
+
+        if ev.caseName == "ok" {
+            // Expression position (`let x = try f() else e: return`) arrives as
+            // `allocVar(x, initializer: nil)` followed by this node with
+            // `okTarget: x`, so this write is the *initialization* of an
+            // already-declared slot. `assign` would misread it as assigning to
+            // a `let` and reject a legal program.
+            if let okTarget = okTarget {
+                try currentEnv.initialize(name: okTarget, value: payload)
+            }
+            return
+        }
+
+        // The handler statements run *here* (not as a block), so `return` /
+        // `break` / `continue` inside them leave as signals for the enclosing
+        // function or loop to catch, and their bare `pass` terminator just ends
+        // the statement.
+        let handlerEnv = Environment(enclosing: currentEnv)
+        handlerEnv.define(name: errorVar, value: payload, isMutable: true)
+        let previousEnv = currentEnv
+        currentEnv = handlerEnv
+        defer { currentEnv = previousEnv }
+        for statement in handler { try execute(statement) }
+    }
+
     private func evaluateCondition(_ expr: HIRExpr) throws -> Bool {
         let value = try evaluate(expr)
         guard case .bool(let flag) = value else {
@@ -2525,12 +2651,22 @@ public final class HIRExecutor: DebugHookHost {
             defer { self.currentFuture = previousFuture }
             do {
                 try RuntimeOps.checkCancellation(self.currentFuture)
-                let result = try self.invokeBody(captured, parent: parent, args: boundArgs, name: name)
-                // The strict structured rule's closing act: cancel whatever was
-                // never joined, and let a failure that nobody consumed surface
-                // at this boundary instead of vanishing.
-                let leaked = future.closeScope()
-                return RuntimeOps.flipIfLeaked(result, leaked: leaked)
+                switch try self.invokeBodyStep(
+                    captured, parent: parent, args: boundArgs, name: name
+                ) {
+                case .finished(let result):
+                    // The strict structured rule's closing act: cancel whatever
+                    // was never joined, and let a failure that nobody consumed
+                    // surface at this boundary instead of vanishing.
+                    return .finished(HIRExecutor.closeTask(future, value: result))
+                case .givenUp(let frame):
+                    // The thread goes back to the pool with nothing sent to the
+                    // future. The body is not done, and the resumer owns
+                    // completion from here — which is the entire content of
+                    // "the task was given up".
+                    self.attachResume(frame, task: future)
+                    return .suspended
+                }
             } catch {
                 // The throwing path closes the scope too — a body that dies must
                 // not leave its children running.
@@ -2541,23 +2677,60 @@ public final class HIRExecutor: DebugHookHost {
         return .future(future)
     }
 
+    /// The closing act a task performs once, however many runs it took.
+    private static func closeTask(_ future: FutureValue, value: Value) -> Value {
+        RuntimeOps.flipIfLeaked(value, leaked: future.closeScope())
+    }
+
     /// The synchronous body path: bind the arguments, run the statements, unwrap
     /// the return signal.
+    ///
+    /// Since `DE-2b` this is a wrapper over `invokeBodyStep` rather than the body
+    /// loop itself, so that the two callers share one prologue and one exit rule.
+    /// The unwrap below is the whole of what being synchronous means here, and
+    /// since the driver tries yielding only inside an async body it can no longer
+    /// fire on a program: a synchronous body keeps occupying the thread at a
+    /// join, `await` and `wait` alike. It stays as a guard on this engine rather
+    /// than on its inputs — a suspension arriving here means the driver offered a
+    /// resume where none can exist, which is a defect in the driver and not a
+    /// program outcome, so it is named rather than papered over.
     private func invokeBody(
         _ callable: HIRCallableBody,
         parent: Environment,
         args: [Value],
         name: String
     ) throws -> Value {
+        switch try invokeBodyStep(callable, parent: parent, args: args, name: name) {
+        case .finished(let value):
+            return value
+        case .givenUp:
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: a synchronous body gave its task up at a join "
+                    + "— the yield envelope and the driver disagree about what can suspend",
+                location: HIRExecutor.noLocation
+            )
+        }
+    }
+
+    /// Enter a body and run it, reporting a suspension rather than hiding it.
+    ///
+    /// The prologue is `invokeBody`'s, unchanged: depth guard, argument binding,
+    /// environment, defer scope. What differs is the exit. A body that finished
+    /// unwinds exactly as before. A body that gave the task up must **not** unwind
+    /// — running its `defer`s at a suspension would be a semantic change, not a
+    /// cleanup — and must leave the worker thread clean, which `standDown` does
+    /// and the comment there explains.
+    private func invokeBodyStep(
+        _ callable: HIRCallableBody,
+        parent: Environment,
+        args: [Value],
+        name: String
+    ) throws -> HIRBodyStep {
         guard callDepth < RuntimeOps.maxCallDepth else {
             throw RuntimeOps.recursionGuardError()
         }
         callDepth += 1
         callStackNames.append(name)
-        defer {
-            callDepth -= 1
-            callStackNames.removeLast()
-        }
 
         let callEnv = Environment(enclosing: parent)
         for (index, name) in callable.paramNames.enumerated() {
@@ -2566,19 +2739,116 @@ public final class HIRExecutor: DebugHookHost {
 
         let previousEnv = currentEnv
         currentEnv = callEnv
-        defer { currentEnv = previousEnv }
 
         // A function body is a defer scope of its own — the interpreter opens one
         // in `executeFunctionBody` rather than routing through `executeBlock`,
         // because it also owns the `lastValue` rule. Registration order is the
-        // interpreter's and is load-bearing: this `defer` is declared *after* the
-        // environment restore, so on the way out the defers run first and still
-        // see the function's own environment.
+        // interpreter's and is load-bearing: the defers run *before* the
+        // environment restore, so they still see the function's own environment.
+        // That order is now spelled out in `exitBody` instead of by two Swift
+        // `defer`s, because a suspended body must not take either of them.
         pushDeferScope()
-        defer { try? popDeferScope() }
 
+        let step: HIRBodyStep
         do {
-            return try executeStatements(callable.body)
+            step = try bodyOutcome(returnLabels: callable.returnLabels) {
+                try self.driveStatements(
+                    callable, previousEnv: previousEnv, from: 0, lastValue: .null,
+                    yieldable: callable.isAsync, pending: nil
+                )
+            }
+        } catch {
+            // A body that dies leaves nothing behind: the scope closes and the
+            // context unwinds exactly as it does on a normal return.
+            try? popDeferScope()
+            currentEnv = previousEnv
+            callDepth -= 1
+            callStackNames.removeLast()
+            throw error
+        }
+
+        switch step {
+        case .finished:
+            try? popDeferScope()
+            currentEnv = previousEnv
+            callDepth -= 1
+            callStackNames.removeLast()
+        case .givenUp:
+            standDown()
+        }
+        return step
+    }
+
+    /// Pick a given-up body back up, on whichever thread the awaited future
+    /// settled on.
+    ///
+    /// No prologue: the arguments were bound before the body gave the task up,
+    /// and their environment is the one in the frame. Re-entering through the
+    /// prologue would rebind them over a body that has already moved past them,
+    /// which is how a resumed body would quietly restart with fresh parameters.
+    private func resumeBody(_ frame: HIRYieldFrame, awaited: Value) throws -> HIRBodyStep {
+        currentEnv = frame.env
+        callDepth = frame.callDepth
+        callStackNames = frame.callStackNames
+        deferStack = frame.deferStack
+        currentFuture = frame.currentFuture
+
+        let step: HIRBodyStep
+        do {
+            step = try bodyOutcome(returnLabels: frame.callable.returnLabels) {
+                try self.driveStatements(
+                    frame.callable, previousEnv: frame.previousEnv, from: frame.index,
+                    lastValue: frame.lastValue, yieldable: frame.callable.isAsync,
+                    pending: (resume: frame.finish, value: awaited)
+                )
+            }
+        } catch {
+            try? popDeferScope()
+            currentEnv = frame.previousEnv
+            callDepth -= 1
+            callStackNames.removeLast()
+            throw error
+        }
+
+        switch step {
+        case .finished:
+            try? popDeferScope()
+            currentEnv = frame.previousEnv
+            callDepth -= 1
+            callStackNames.removeLast()
+        case .givenUp:
+            standDown()
+        }
+        return step
+    }
+
+    /// Leave the worker thread with nothing of this body left on it.
+    ///
+    /// The four thread-locals are *cleared* rather than restored, and that is not
+    /// tidiness: a suspended body has no outer frame to restore to, because the
+    /// thread it was on goes back to the pool and the body continues somewhere
+    /// else. Leaving them set would let the next task to land on this thread
+    /// enter with a non-zero call depth, a stranger's backtrace and a stranger's
+    /// defer scopes — and the depth one would present as a recursion-guard error
+    /// on an unrelated task, which is about the least diagnosable shape a bug can
+    /// take. The frame carries the real values, so nothing is lost by clearing.
+    private func standDown() {
+        callDepthStorage.value = nil
+        callStackNames = []
+        deferStack = []
+        currentEnvStorage.value = nil
+    }
+
+    /// The body loop's signal rule, shared so the first run and every resumed run
+    /// apply it once instead of twice: a `return` is the body's own and becomes
+    /// the value, with the interpreter's return-site labels applied; every other
+    /// signal belongs to a loop or a function further out and is rethrown intact.
+    private func bodyOutcome(
+        returnLabels: [String?],
+        _ run: () throws -> HIRBodyStep
+    ) throws -> HIRBodyStep {
+        do {
+            return try run()
         } catch let signal as HIRControlSignal {
             if case .returnSignal(let value) = signal {
                 // P2a G2: the interpreter's return-site rule, fed from the declared
@@ -2592,9 +2862,210 @@ public final class HIRExecutor: DebugHookHost {
                 // shortcut: the interpreter builds a closure's `FunctionValue`
                 // with no declaration attached, so its return-label list is empty
                 // and the rule has nothing to apply there either.
-                return RuntimeOps.applyReturnLabels(callable.returnLabels, to: value ?? .null)
+                return .finished(RuntimeOps.applyReturnLabels(returnLabels, to: value ?? .null))
             }
             throw signal
+        }
+    }
+
+    /// Run a body's statements, and report a suspension instead of causing one.
+    ///
+    /// `pending` is how a resumed run rejoins the loop: the statement at `from`
+    /// was already started before the task was given up, so it is finished with
+    /// the awaited value and the loop carries on from the statement after it. The
+    /// `lastValue` accumulator travels in the frame for the same reason the index
+    /// does — it is part of where the body was, and a resumed body that dropped it
+    /// would return the wrong value for a body whose last statement is an
+    /// expression.
+    /// - Parameter yieldable: whether the body this loop belongs to may give the
+    ///   task up at all. Only an async body may, and the reason is semantic rather
+    ///   than mechanical: `await` says the *site* may yield, but yielding needs a
+    ///   body that can be resumed part-way, and only an async body has a task to
+    ///   give up in the first place. A synchronous body has none, so an `await`
+    ///   written there keeps the older behaviour — it occupies the thread, exactly
+    ///   as `wait` does. That is not a fallback invented here: an existing
+    ///   criterion pins it (`ConcurrencyJoinFormTests`, "both forms agree while
+    ///   yielding is absent"), so treating it as an error would have this batch
+    ///   change a program's meaning instead of adding a capability to it.
+    private func driveStatements(
+        _ callable: HIRCallableBody,
+        previousEnv: Environment,
+        from index: Int,
+        lastValue: Value,
+        yieldable: Bool,
+        pending: (resume: (Value) throws -> Value?, value: Value)?
+    ) throws -> HIRBodyStep {
+        let body = callable.body
+        var last = lastValue
+        var position = index
+        if let pending = pending {
+            if let updated = try pending.resume(pending.value) { last = updated }
+            position = index + 1
+        }
+
+        while position < body.count {
+            let statement = body[position]
+            if debugHook != nil, let location = body.position(at: position) {
+                try debugPause(at: location)
+            }
+
+            if yieldable, let plan = yieldPlan(for: statement) {
+                // The operand is evaluated synchronously and deliberately: it is
+                // the thing that *produces* the future, so it cannot itself be
+                // waiting on one. A join nested inside it is refused by the
+                // lowerer, which is what keeps this call off the recursive path.
+                let operand = try evaluate(plan.operand)
+                guard case .future(let fut) = operand else {
+                    throw RuntimeError.typeMismatch(
+                        expected: "Future<T, Error>",
+                        got: RuntimeOps.describeValueKind(operand),
+                        location: HIRExecutor.noLocation
+                    )
+                }
+
+                // A settled future is not a reason to give the task up. Taking
+                // the value straight away keeps `await` on the same path as `wait`
+                // whenever there is nothing to wait for — which is both cheaper
+                // and observably calmer, since it costs no task switch to collect
+                // a child that has already finished.
+                if fut.isFinished {
+                    let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
+                    if let updated = try finishYield(plan, value: value) { last = updated }
+                } else {
+                    return .givenUp(
+                        HIRYieldFrame(
+                            callable: callable,
+                            index: position,
+                            finish: { [weak self] value in
+                                guard let self = self else { return nil }
+                                return try self.finishYield(plan, value: value)
+                            },
+                            awaited: fut,
+                            env: currentEnv,
+                            previousEnv: previousEnv,
+                            lastValue: last,
+                            callDepth: callDepth,
+                            callStackNames: callStackNames,
+                            deferStack: deferStack,
+                            currentFuture: currentFuture
+                        )
+                    )
+                }
+            } else if case .exprStmt(let expr) = statement {
+                last = try evaluate(expr)
+            } else {
+                try execute(statement)
+            }
+            position += 1
+        }
+        return .finished(last)
+    }
+
+    /// The statement positions the driver knows how to give the task up at, and
+    /// only those. See `HIRYieldPlan` for why this is a whitelist.
+    private func yieldPlan(for statement: HIRStmt) -> HIRYieldPlan? {
+        let plan: HIRYieldPlan?
+        switch statement {
+        case .exprStmt(.join(let operand, _, .awaits)):
+            plan = .expressionStatement(operand: operand)
+
+        case .allocVar(let name, let type, let mutable, .some(.join(let operand, _, .awaits))):
+            plan = .varInitializer(operand: operand, name: name, type: type, mutable: mutable)
+
+        case .matchStmt(.join(let operand, _, .awaits), let cases, _):
+            plan = .matchScrutinee(operand: operand, cases: cases)
+
+        case .tryStmt(.join(let operand, _, .awaits), let errorVar, let handler, let okTarget, _):
+            plan = .tryOperand(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget)
+
+        default:
+            plan = nil
+        }
+        return plan
+    }
+
+    /// Finish the statement a given-up body stopped in, from the awaited value.
+    ///
+    /// The `var` case is the one that is not a one-liner, and it is the one worth
+    /// reading. The initializer is **not** the last thing that statement does:
+    /// two further steps follow it inside the same arm — the value-type copy and
+    /// the binding-site relabel — and both are load-bearing. A resume that only
+    /// remembered "the initializer is done" would skip them and bind a value that
+    /// is neither copied nor relabelled, and the difference would not show up in
+    /// the output of an ordinary program: it surfaces only where a value type
+    /// shares storage with its copy. So the whole tail of the arm is replayed
+    /// here, and this function is the one place that knows it.
+    ///
+    /// Returning `nil` means "this statement did not contribute a value", which is
+    /// the loop's `lastValue` rule: only an expression statement does.
+    private func finishYield(_ plan: HIRYieldPlan, value: Value) throws -> Value? {
+        switch plan {
+        case .expressionStatement:
+            return value
+
+        case .varInitializer(_, let name, let type, let mutable):
+            var bound = RuntimeOps.copyIfStruct(value)
+            if case .tuple(let labels, _) = type, labels.contains(where: { $0 != nil }) {
+                bound = RuntimeOps.relabelled(bound, with: labels)
+            }
+            currentEnv.define(name: name, value: bound, isMutable: mutable)
+            return nil
+
+        case .matchScrutinee(_, let cases):
+            try runMatch(cases, scrutinee: value)
+            return nil
+
+        case .tryOperand(_, let errorVar, let handler, let okTarget):
+            try runTryResult(value, errorVar: errorVar, handler: handler, okTarget: okTarget)
+            return nil
+        }
+    }
+
+    /// Wait for the future a body gave the task up on, and pick the body up when
+    /// it settles.
+    ///
+    /// The resumption runs on whichever thread settled that future. That is the
+    /// point rather than a side effect: no thread is held on this side while the
+    /// body waits, so a task that awaits a child costs a continuation instead of
+    /// a worker — which is what makes the bounded pool a bound rather than a
+    /// queue of parked threads.
+    private func attachResume(_ frame: HIRYieldFrame, task: FutureValue) {
+        frame.awaited.whenResolved { [weak self] outcome in
+            guard let self = self else { return }
+            switch outcome {
+            case .success(let value):
+                self.completeResumedRun(frame, task: task, value: value)
+            case .failure(let error):
+                // The body never gets its value, so it never reaches its own
+                // closing act; the scope has to be closed here or its children
+                // keep running under a task that is already over. Whatever the
+                // close reports as leaked is dropped on purpose: this task is
+                // failing on its own account, and folding an aggregate of
+                // nobody-joined children into the error would replace the reason
+                // the await failed with a list of bystanders.
+                _ = task.closeScope()
+                task.reject(error)
+            }
+        }
+    }
+
+    /// Run a resumed body to its next stopping point and settle the task.
+    private func completeResumedRun(_ frame: HIRYieldFrame, task: FutureValue, value: Value) {
+        do {
+            switch try resumeBody(frame, awaited: value) {
+            case .finished(let result):
+                task.resolve(HIRExecutor.closeTask(task, value: result))
+            case .givenUp(let next):
+                attachResume(next, task: task)
+            }
+        } catch {
+            // `resumeBody` turns a return signal into a value, so a control
+            // signal arriving here is one that escaped past the body it belonged
+            // to — a defect in the driver rather than a program outcome. It is
+            // reported as such instead of being read as a failure of the await.
+            // Leaked children are dropped for the same reason as above.
+            _ = task.closeScope()
+            task.reject(GCDScheduler.coerce(error))
         }
     }
 }
