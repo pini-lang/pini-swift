@@ -192,3 +192,11 @@ message = "no default instance available for '{feature}'"
 [E6-008]
 message = "the default instance dependencies of a given block form a cycle (reserved: cycle detection is not implemented yet)"
 suggestion = "split the shared state into a smaller layer, or pass it explicitly"
+
+[E6-009]
+message = "`await`/`wait` does not match its enclosing body: `await` needs an async body (`=>`), `wait` needs a synchronous one (`->`)"
+suggestion = "use the keyword that matches the body, or change the function's async declaration"
+
+[E6-010]
+message = "`await` sits where there is no resumable point: it gives the task up, and nothing here can pick the body back up"
+suggestion = "move the wait to a statement root: a bare `await f()` · `var x = await f()` · `try await f() else …` · `match await f():`"

@@ -1127,17 +1127,19 @@ public enum RuntimeOps {
                     for rest in captured.dropFirst(index + 1) where !rest.isFinished {
                         rest.cancel()
                     }
-                    // Resolve explicitly: the blocking back end would resolve
-                    // from the return value anyway and the suspension back end
-                    // expects the work to resolve itself, so one call at the
-                    // decision point is right on both — a second is ignored.
+                    // Resolve explicitly rather than by returning: this task
+                    // decides its own outcome at the decision point, and the
+                    // `Value` it hands back would otherwise be the thing the
+                    // scheduler reads. Reporting `.finished` afterwards is
+                    // harmless for the same reason a second `resolve` is — it
+                    // is ignored once the future is settled.
                     aggregate.resolve(joined)
-                    return .null
+                    return .finished(.null)
                 }
                 values.append(ev.associatedValues.first ?? .null)
             }
             aggregate.resolve(makeResult(caseName: "ok", payload: .array(values)))
-            return .null
+            return .finished(.null)
         }
         return .future(aggregate)
     }
