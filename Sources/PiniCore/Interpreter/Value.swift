@@ -128,8 +128,8 @@ public final class FutureValue {
 
     /// 递归取消：标记自身 → 唤醒所有阻塞的 `wait()` → 逐个递归取消子任务。
     ///
-    /// 取消是**协作式**的：worker 线程不会被强杀，而是在下一个检查点（循环头 / 函数入口 /
-    /// join 前）看到标志后提前结束（见 Interpreter.checkCancellation）。因此取消是最终一致的。
+    /// 取消是**协作式**的：worker 线程不会被强杀，而是在下一个检查点（**异步体入口** /
+    /// join 前）看到标志后提前结束（见 `RuntimeOps.checkCancellation`）。因此取消是最终一致的。
     public func cancel() {
         lock.lock()
         if cancelled { lock.unlock(); return }
