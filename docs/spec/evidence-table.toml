@@ -45,6 +45,9 @@ artifacts = [
   "examples/selfhost/tools/gate.sh",
   "docs/spec/pini-spec-v0.md"
 ]
+# 前两个载体随 selfhost 嵌套仓整目录删除 ⇒ 本条按器械指引标载体已删，
+# 而不是把 `artifacts` 重新指向别处（那会改掉一条测量记录的指向）。
+artifact_status = "carrier-deleted"
 command = "cd examples/selfhost && ../../.build/debug/pini check . ; echo rc ; git status --porcelain ; git rev-parse --short HEAD"
 output = "Check exits 1 with E4-001 at lexer.pini:500 (expected Char, got String). The scan lists five declarations whose parameter is String and whose body forwards to a Char-faced builtin, at lines 497 / 502 / 510 / 685 / 696, and every caller passing cs[i] or cs[j], which are Chars. The tree is back on main at 73249be with a clean status, so no half-applied change is left behind; the consequence is that selfhost check is red, which is what the registration records."
 validated_at = "2026-09-18T12:16+08:00"
