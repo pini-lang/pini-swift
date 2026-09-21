@@ -33,6 +33,142 @@ struct ContractReferenceTests {
         try assertBothLegsProduceTheExpectation(of: "concurrency-async-contagion-end")
     }
 
+    // MARK: - 让出（`DE-6b`）：那条观测通道有没有区分力
+
+    /// 闸门置位时运行时打的那一行（`DE-6a` §3.6 的形态）。⛔ 逐字节比：汇总行是**确定**的，
+    /// 而「读一个数再比大小」会把「通道没输出」与「输出 0」并成一类，那正是这一条要分开的两种。
+    private static let yieldReportPrefix = "pini-yield-report: bodies-suspended="
+
+    @Test("⭐ 让出可观测：同一台机器上 `await` 版计数 > 0、`wait` 版 = 0 —— 有区分力才算判据")
+    func theYieldChannelTellsTheTwoAwaitFormsApart() throws {
+        /// 意图：`DE-6a` §3.6 定了观测通道的形状，而**形状在册不等于通道有区分力**。
+        /// 这一条问的是后者：`await`（承诺让出）与 `wait`（承诺占用）在同一台机器、同一个体上
+        /// 跑，读数必须**不同**。
+        /// ⛔ 若两者读数相同（都 0 或都 >0），通道就只是「打了一行字」，`D`+`E` 验收标准里
+        /// 「`await` 让出 / `wait` 占用的可观测差异」那一条会变成一句空话。
+        /// ⚠️ 负控程序**刻意内联**、不进样例面：它是「最小到只剩「有任务、没 `await`」」的一段，
+        /// 落进样例面就成了一份别人要维护的语料，而它要证明的只是**这一条**读数。
+        let environment = ProcessInfo.processInfo.environment
+        let cli = environment["PINI_CLI_BIN"] ?? ""
+        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
+            withKnownIssue("未提供 \(missing) ⇒ 让出读数本次未取（跳过 +1）") {
+                Issue.record("让出读数未取：本批的 L1 判据本次没有跑")
+            }
+            return
+        }
+        let underTest = "\(cli)（构建于 \(buildTime(of: cli))）"
+        let gate = ["PINI_YIELD_REPORT": "1"]
+
+        // ① `await` 版 —— 就是受守卫的那一份语料。
+        let awaited = try launch(
+            cli, ["run-llvm", fixtureFile("concurrency-async-contagion-end").path], environment: gate)
+        try #require(awaited.status == 0, "LLVM 腿未跑通：\(underTest) ⇒ \(awaited.stderr)")
+        #expect(
+            awaited.stderr == Self.yieldReportPrefix + "1\n",
+            "`await` 版应当**真的让出过**（读数还兼作闸门是否生效的证据）：\(awaited.stderr)")
+
+        // ② `wait` 版 —— 有派发、但一处 `await` 也没有。
+        let negativeControl = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("de6b-yield-negative-\(UUID().uuidString).pini")
+        defer { try? FileManager.default.removeItem(at: negativeControl) }
+        try Self.waitOnlyProgram.write(to: negativeControl, atomically: true, encoding: .utf8)
+        let waited = try launch(cli, ["run-llvm", negativeControl.path], environment: gate)
+        try #require(waited.status == 0, "负控程序未跑通：\(underTest) ⇒ \(waited.stderr)")
+        #expect(waited.stdout == Self.expectedOutput, "负控程序的输出应与 await 版一致：\(waited.stdout)")
+        #expect(
+            waited.stderr == Self.yieldReportPrefix + "0\n",
+            "`wait` 版不该让出（它的承诺就是占用）：\(waited.stderr)")
+
+        // ③ 闸门未置位 ⇒ **零输出**：不得污染任何正常程序的 stderr。
+        let ungated = try launch(cli, ["run-llvm", fixtureFile("concurrency-async-contagion-end").path])
+        try #require(ungated.status == 0, "LLVM 腿未跑通：\(underTest) ⇒ \(ungated.stderr)")
+        #expect(ungated.stderr.isEmpty, "未置位时不许有任何输出：\(ungated.stderr)")
+    }
+
+    /// 负控程序的全文（见上一条用例的注释：为何内联而不进样例面）。
+    private static let waitOnlyProgram = """
+        f|func() => (I32,):
+            sleep(5)
+            return ok(10)
+
+        main|func() -> ():
+            var r = wait f()
+            match r:
+                case ok(v):
+                    print(v)
+                case err(e):
+                    print("err")
+            return
+        """
+
+    @Test("⭐ 限外的 `await` 响亮拒绝：只支持顶层 `var x = await f(...)`，其余位置不静默阻塞")
+    func awaitsOutsideTheSupportedPositionAreRefusedLoudly() throws {
+        /// 意图：`DE-6b` 只接通**一个**让出形态。⛔ 其余位置（`match` 的操作数 · 嵌在 `if` 里的
+        /// 语句）若照旧发射成阻塞等待，那件事**看起来完全正常** —— 程序跑得出结果，只是
+        /// 「让出」这个承诺被悄悄打了个折。故这里钉的不是「能编译」，而是**编译不了且说得出理由**。
+        ///
+        /// ⚠️ 判据取两件：**非零退出** + 报文里点名 `DE-6c`（下一个该接的批）。只断言「非零退出」
+        /// 会把「崩在别处」也算成通过。
+        let environment = ProcessInfo.processInfo.environment
+        let cli = environment["PINI_CLI_BIN"] ?? ""
+        guard !cli.isEmpty else {
+            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 限外拒绝本次未验（跳过 +1）") {
+                Issue.record("限外拒绝未验：本批的边界判据本次没有跑")
+            }
+            return
+        }
+        for (label, program) in [
+            ("`match` 的操作数", Self.matchOperandAwaitProgram),
+            ("嵌在 `if` 里的语句", Self.nestedStatementAwaitProgram),
+        ] {
+            let file = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("de6b-refuse-\(UUID().uuidString).pini")
+            defer { try? FileManager.default.removeItem(at: file) }
+            try program.write(to: file, atomically: true, encoding: .utf8)
+            let result = try launch(cli, ["emit", file.path])
+            #expect(result.status != 0, "\(label) 的 `await` 本应被拒绝，却编译过去了")
+            #expect(
+                result.stderr.contains("DE-6c"),
+                "拒绝报文须点名下一个该接的批（DE-6c），实际：\(result.stderr)")
+        }
+    }
+
+    /// 限外形态一：`await` 出现在 `match` 的操作数位置。
+    private static let matchOperandAwaitProgram = """
+        f|func() => (I32,):
+            return ok(1)
+
+        g|func() => (I32,):
+            match await f():
+                case ok(v):
+                    return ok(v)
+                case err(e):
+                    return ok(0)
+
+        main|func() -> ():
+            var r = wait g()
+            print(0)
+            return
+        """
+
+    /// 限外形态二：`await` 是合法语句，但**不在函数体那一层**（嵌在 `if` 里）。
+    private static let nestedStatementAwaitProgram = """
+        f|func() => (I32,):
+            return ok(1)
+
+        g|func() => (I32,):
+            if true:
+                var a = await f()
+                return a
+            return ok(0)
+
+        main|func() -> ():
+            var r = wait g()
+            print(0)
+            return
+        """
+
     // MARK: - 两条腿
 
     /// 腿一（进程内，无依赖）与腿二（子进程，需环境变量）**各自**与同一份期望比。
@@ -141,12 +277,19 @@ struct ContractReferenceTests {
 
     // MARK: - 子进程
 
-    private func launch(_ executable: String, _ arguments: [String]) throws
+    private func launch(
+        _ executable: String, _ arguments: [String], environment: [String: String]? = nil
+    ) throws
         -> (status: Int32, stdout: String, stderr: String)
     {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        if let environment {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in environment { merged[key] = value }
+            process.environment = merged
+        }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
