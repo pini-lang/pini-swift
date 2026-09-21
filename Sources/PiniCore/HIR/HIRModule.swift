@@ -10,11 +10,16 @@ public struct HIRFunction: Equatable {
     /// `=>` dispatch (G-3c-1): the body runs on a worker thread and the caller
     /// receives a pending `Future` instead of the body's own value.
     ///
-    /// The flag has to live here rather than be re-derived from `returnType`:
-    /// an async body's return type is the same `Result<T>` a synchronous
-    /// function returning a Result carries, so the type alone cannot tell the
-    /// two call protocols apart. A call site that guessed would either block on
-    /// a plain Result or hand back a Future where a Result was promised.
+    /// This note used to add that the flag had to live here rather than be
+    /// re-derived from `returnType`, because an async body's return type was
+    /// the same `Result<T>` a synchronous Result-returning function carried and
+    /// the type alone could not tell the two call protocols apart. Half of that
+    /// still holds and half of it has moved: the HIR now types an async
+    /// *signature* as `future(ok:)`, so a caller could read the type instead --
+    /// but the flag remains the callee's own fact, and it is the only one that
+    /// survives the positions where a type has been rewritten or is absent (a
+    /// call node carries the body protocol, not the signature; an unannotated
+    /// parameter has no type at all).
     public let isAsync: Bool
     /// `|test` (G41): the function block is a language-level test case, not a
     /// callee of the program. `pini test` collects exactly these and runs each

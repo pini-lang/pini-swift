@@ -46,6 +46,21 @@ public indirect enum HIRType: Equatable {
     /// (the checker accepts any err payload), so the error slot is
     /// type-erased to a machine word in the IR ABI (LR-12).
     case result(ok: HIRType)
+    /// `Future<T, E>`：`=>` 函数**对外签名**的返回类型 —— 运行中的并发进程句柄。
+    ///
+    /// 与 `result` 平行，但两者**不可互换**：`result` 是「已经结算的值」，
+    /// `future` 是「还没结算的句柄」。加它是因为一个后端要真派发任务时，
+    /// 必须能静态分辨这两者 —— 在它缺席时，一次异步调用与一次「返回 Result
+    /// 的同步调用」在中间表示里逐字相同，发射层无从决定该直接调用还是该
+    /// 交给线程。
+    ///
+    /// 这不是新定的规则，而是让本层与类型层对齐：类型层早已把 `=> (T,)` 的
+    /// 签名返回定为 `Future<T, Error>`（`=> T` 是语法糖）。
+    ///
+    /// 仅携带 ok 载荷：错误槽与 `result` 同口径（擦除为一个机器字）。
+    /// ⚠️ 表示是**不透明句柄**，与 `array` / `dict` / `lazyRef` 同族 ——
+    /// 句柄形状归后端，而「等一次、结果恰一次」是语义、不归后端。
+    case future(ok: HIRType)
     /// `Array<T>` (G2). The array itself is an opaque runtime handle
     /// (`%bk_array*`, 并发后端抽象); elements are boxed through the `bk_array_*`
     /// C ABI. Nested arrays recurse via the element type.
@@ -97,6 +112,10 @@ public indirect enum HIRType: Equatable {
         case .char: return "i8*"
         case .result(let ok):
             return "{ i64, \(ok.llvmSpelling), i64 }"
+        case .future:
+            // Opaque handle, same as the other `bk_*` families: the handle
+            // shape is a backend concern and no payload travels through it.
+            return "ptr"
         case .array:
             return "%bk_array*"
         case .optional(let wrapped):
@@ -133,6 +152,17 @@ public indirect enum HIRType: Equatable {
     /// The ok payload type when this is a Result type.
     public var resultOkType: HIRType? {
         if case .result(let ok) = self { return ok }
+        return nil
+    }
+
+    /// The `Result` a join site yields when this is a Future type.
+    ///
+    /// A join consumes the handle and produces the settled value, so the site's
+    /// type is the Result that the Future was standing in for. Keeping the
+    /// translation here rather than at the join site means the two types cannot
+    /// drift: a Future whose ok payload changed would move its join site with it.
+    public var joinedResultType: HIRType? {
+        if case .future(let ok) = self { return .result(ok: ok) }
         return nil
     }
 
@@ -177,7 +207,7 @@ public indirect enum HIRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .char, .result, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
+        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
             return false
         }
     }

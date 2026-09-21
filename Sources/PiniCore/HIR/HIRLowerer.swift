@@ -619,7 +619,10 @@ public enum HIRLowerer {
                     ) ?? returnType
                 signatures[funcDecl.name] = HIRLowererSignatureInfo(
                     paramTypes: paramTypes,
-                    returnType: asyncBodyReturnType(declared: effectiveReturn, isAsync: funcDecl.isAsync),
+                    returnType: asyncSignatureReturnType(
+                        declared: effectiveReturn, isAsync: funcDecl.isAsync),
+                    bodyReturnType: asyncBodyReturnType(
+                        declared: effectiveReturn, isAsync: funcDecl.isAsync),
                     untypedParamIndices: untypedParamIndices(funcDecl),
                     usingParamIndices: usingParamIndices(funcDecl)
                 )
@@ -1404,7 +1407,7 @@ public enum HIRLowerer {
             node: .call(
                 function: specializedName,
                 arguments: loweredArgs.map { $0.node },
-                returnType: signature.returnType
+                returnType: signature.bodyReturnType
             ),
             type: signature.returnType ?? .i32
         )
@@ -1412,7 +1415,9 @@ public enum HIRLowerer {
 
     // MARK: - Functions
 
-    /// The type of the value an async (`=>`) body hands to its caller's join.
+    /// The type of the value an async (`=>`) body hands to its caller's join --
+    /// that is, the **body's** own return type, the one its `return ok(v)` sites
+    /// are checked against.
     ///
     /// The checker already pins this from the front end: `bodyReturns` requires
     /// `Result<T, Error>` at a `=>` body's return position, which is why the
@@ -1421,11 +1426,35 @@ public enum HIRLowerer {
     /// from the other side -- its join passes a Result through untouched and
     /// boxes anything else into `ok(v)` -- so narrowing this position to Result
     /// is that rule written statically, not a second rule.
+    ///
+    /// This is **not** the type a caller sees. See `asyncSignatureReturnType`:
+    /// the two used to be one function, and that collapse is what kept a handle
+    /// from being tellable apart from a settled value.
     private static func asyncBodyReturnType(
         declared: HIRType?, isAsync: Bool
     ) -> HIRType? {
         guard isAsync, let ok = declared else { return declared }
         return .result(ok: ok)
+    }
+
+    /// The type a **caller** sees for an async (`=>`) function: a handle to a
+    /// running process, not the value that process will settle on.
+    ///
+    /// The type layer has said this all along -- `=> (T,)` types as
+    /// `Future<T, Error>` there, with `=> T` as sugar -- so this is the HIR
+    /// catching up to a decision that was already made, not a new one.
+    ///
+    /// Why it has to be a distinct HIR type rather than a note on the callee:
+    /// a value's type is what a backend reads when it decides how to move that
+    /// value. With both positions typed as a Result, an async call and a call to
+    /// a function that merely returns a Result were the same shape in the IR,
+    /// and a backend that must dispatch the first to a worker while calling the
+    /// second directly had nothing to dispatch on.
+    private static func asyncSignatureReturnType(
+        declared: HIRType?, isAsync: Bool
+    ) -> HIRType? {
+        guard isAsync, let ok = declared else { return declared }
+        return .future(ok: ok)
     }
 
     private static func lowerFunction(
@@ -3790,7 +3819,7 @@ public enum HIRLowerer {
                 node: .call(
                     function: functionName,
                     arguments: argumentNodes,
-                    returnType: signature.returnType
+                    returnType: signature.bodyReturnType
                 ),
                 type: signature.returnType ?? .i32
             )
@@ -3869,11 +3898,18 @@ public enum HIRLowerer {
                 }
             }
 
-            // `await f` / `wait f` (G-3c-1). The operand evaluates to a Future and
-            // the site yields the `Result<T>` its join deconstructs — the very
-            // type G-3b already puts on an async call's return, so nothing here
-            // has to denote a future and no HIR type case had to be added: the
-            // shape rides on the call node and the join site carries it through.
+            // `await f` / `wait f` (G-3c-1). The operand evaluates to a handle and
+            // the site yields the `Result<T>` its join deconstructs.
+            //
+            // This comment used to end the opposite way: that nothing here had
+            // to denote a future and no HIR type case had to be added, because
+            // the shape could ride on the call node. That was true and it was
+            // the design -- but it also meant the two positions carried one type,
+            // and a backend that must dispatch an async call to a worker instead
+            // of calling it had no way to tell that call from an ordinary
+            // Result-returning one. The two positions are separate types now
+            // (handle in, settled value out), which is the shape the type layer
+            // already had.
             //
             // The operand is lowered with no expectation, not with a Result
             // expectation: an operand that is *not* a future is a run-time type
@@ -3881,9 +3917,15 @@ public enum HIRLowerer {
             // way), so refusing it here would move the error earlier than the
             // channel it is being kept equal to.
             let future = try lowerExpr(inner, expected: nil, into: &context)
+            // One handle in, one settled value out. The fallback keeps the old
+            // pass-through for an operand that is not a handle: the checker
+            // already rejects that, and the other engine only notices at run
+            // time, so refusing it here would move the error earlier than the
+            // channel this is being kept equal to.
+            let siteType = future.type.joinedResultType ?? future.type
             return LoweredExpr(
-                node: .join(future: future.node, type: future.type, form: form),
-                type: future.type
+                node: .join(future: future.node, type: siteType, form: form),
+                type: siteType
             )
 
         default:
@@ -5944,7 +5986,23 @@ extension Statement {
 /// call functions declared later in the file.
 struct HIRLowererSignatureInfo {
     let paramTypes: [HIRType]
+    /// The type a caller of this function sees.
+    ///
+    /// For an async (`=>`) function this is `future(ok:)` -- a handle to a
+    /// running process -- so the two differ exactly where a backend has to
+    /// treat the call differently. Everywhere else the defaults below make the
+    /// two equal, which is why the split costs existing call sites nothing.
     let returnType: HIRType?
+    /// The type carried on the emitted `.call` node: the value the callee's
+    /// body actually produces, which is an `ok(v)` / `err(e)` Result even for
+    /// an async function.
+    ///
+    /// Kept apart from `returnType` because they answer different questions and
+    /// are read by different consumers: a value's type is what a backend moves
+    /// values by, while the call node's protocol is what the callee really
+    /// returns. Collapsing them would put a handle's type on a call that
+    /// produces an aggregate.
+    let bodyReturnType: HIRType?
     /// Parameter positions declared without a type annotation.
     ///
     /// WHY (LR-4 G-2R): the checker does not constrain these positions -- its
@@ -5962,11 +6020,15 @@ struct HIRLowererSignatureInfo {
     let usingParamIndices: Set<Int>
 
     init(
-        paramTypes: [HIRType], returnType: HIRType?, untypedParamIndices: Set<Int> = [],
-        usingParamIndices: Set<Int> = []
+        paramTypes: [HIRType], returnType: HIRType?, bodyReturnType: HIRType? = nil,
+        untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = []
     ) {
         self.paramTypes = paramTypes
         self.returnType = returnType
+        // Defaulted rather than required: every call site that has nothing to
+        // say about a handle keeps saying nothing, and the two types coincide
+        // everywhere the call protocol is not an async dispatch.
+        self.bodyReturnType = bodyReturnType ?? returnType
         self.untypedParamIndices = untypedParamIndices
         self.usingParamIndices = usingParamIndices
     }
