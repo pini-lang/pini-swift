@@ -102,58 +102,45 @@ struct ContractReferenceTests {
             return
         """
 
-    @Test("⭐ 限外的 `await` 响亮拒绝：只支持顶层 `var x = await f(...)`，其余位置不静默阻塞")
-    func awaitsOutsideTheSupportedPositionAreRefusedLoudly() throws {
-        /// 意图：`DE-6b` 只接通**一个**让出形态。⛔ 其余位置（`match` 的操作数 · 嵌在 `if` 里的
-        /// 语句）若照旧发射成阻塞等待，那件事**看起来完全正常** —— 程序跑得出结果，只是
-        /// 「让出」这个承诺被悄悄打了个折。故这里钉的不是「能编译」，而是**编译不了且说得出理由**。
+    @Test("⭐ 嵌套控制流里的 `await` 响亮拒绝：位置不合法的那些写法不静默阻塞")
+    func awaitsInNestedControlFlowAreRefusedLoudly() throws {
+        /// 意图：让出的续跑靠**入口的 `switch` 直接跳回**让出点所在的那一块 ⇒ 只有**一条语句的
+        /// 根部**能当让出点。嵌在 `if` / `match` 的 case / 循环体里的 `await` 若照旧发射成阻塞等待，
+        /// 那件事**看起来完全正常** —— 程序跑得出结果，只是「让出」这个承诺被悄悄打了个折。
+        /// 故这里钉的不是「能编译」，而是**编译不了且说得出理由**。
         ///
-        /// ⚠️ 判据取两件：**非零退出** + 报文里点名 `DE-6c`（下一个该接的批）。只断言「非零退出」
-        /// 会把「崩在别处」也算成通过。
+        /// ⚠️ 判据取两件：**非零退出** + 报文**说得出位置要求**（含 `statement root`）。
+        /// 只断言「非零退出」会把「崩在别处」也算成通过。
+        /// ⛔ **不许把断言锚在批次编号上**（原先钉的是「报文须点名下一个该接的批」）：批次编号是
+        /// **过程**记号，它随批次推进而失效 —— 本段真的落地时，那条断言就会因为「报文不再提这个
+        /// 编号」而变红，而它想钉的**行为**其实没变。判据该锚在**行为与理由**上，这两样才不随批次走。
         let environment = ProcessInfo.processInfo.environment
         let cli = environment["PINI_CLI_BIN"] ?? ""
         guard !cli.isEmpty else {
-            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 限外拒绝本次未验（跳过 +1）") {
-                Issue.record("限外拒绝未验：本批的边界判据本次没有跑")
+            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 嵌套位置拒绝本次未验（跳过 +1）") {
+                Issue.record("嵌套位置拒绝未验：本段的边界判据本次没有跑")
             }
             return
         }
         for (label, program) in [
-            ("`match` 的操作数", Self.matchOperandAwaitProgram),
-            ("嵌在 `if` 里的语句", Self.nestedStatementAwaitProgram),
+            ("嵌在 `if` 里的语句", Self.nestedIfStatementAwaitProgram),
+            ("嵌在 `match` 的 case 体里", Self.nestedMatchCaseAwaitProgram),
+            ("嵌在循环体里", Self.nestedLoopBodyAwaitProgram),
         ] {
             let file = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("de6b-refuse-\(UUID().uuidString).pini")
+                .appendingPathComponent("de6c-refuse-\(UUID().uuidString).pini")
             defer { try? FileManager.default.removeItem(at: file) }
             try program.write(to: file, atomically: true, encoding: .utf8)
             let result = try launch(cli, ["emit", file.path])
             #expect(result.status != 0, "\(label) 的 `await` 本应被拒绝，却编译过去了")
             #expect(
-                result.stderr.contains("DE-6c"),
-                "拒绝报文须点名下一个该接的批（DE-6c），实际：\(result.stderr)")
+                result.stderr.contains("statement root"),
+                "拒绝报文须说得出位置要求（让出点只能落在一条语句的根部），实际：\(result.stderr)")
         }
     }
 
-    /// 限外形态一：`await` 出现在 `match` 的操作数位置。
-    private static let matchOperandAwaitProgram = """
-        f|func() => (I32,):
-            return ok(1)
-
-        g|func() => (I32,):
-            match await f():
-                case ok(v):
-                    return ok(v)
-                case err(e):
-                    return ok(0)
-
-        main|func() -> ():
-            var r = wait g()
-            print(0)
-            return
-        """
-
-    /// 限外形态二：`await` 是合法语句，但**不在函数体那一层**（嵌在 `if` 里）。
-    private static let nestedStatementAwaitProgram = """
+    /// 嵌套位置一：`await` 是合法形态（`var x = await f()`），但**不在函数体那一层**。
+    private static let nestedIfStatementAwaitProgram = """
         f|func() => (I32,):
             return ok(1)
 
@@ -166,6 +153,192 @@ struct ContractReferenceTests {
         main|func() -> ():
             var r = wait g()
             print(0)
+            return
+        """
+
+    /// 嵌套位置二：同上，嵌在 `match` 的 case 体里。
+    private static let nestedMatchCaseAwaitProgram = """
+        f|func() => (I32,):
+            return ok(1)
+
+        g|func() => (I32,):
+            match 1:
+                case 1:
+                    var a = await f()
+                    return a
+                case 2:
+                    return ok(0)
+            return ok(0)
+
+        main|func() -> ():
+            var r = wait g()
+            print(0)
+            return
+        """
+
+    /// 嵌套位置三：同上，嵌在循环体里。
+    private static let nestedLoopBodyAwaitProgram = """
+        f|func() => (I32,):
+            return ok(1)
+
+        g|func() => (I32,):
+            var i = 0
+            while i < 1:
+                var a = await f()
+                i = i + 1
+            return ok(0)
+
+        main|func() -> ():
+            var r = wait g()
+            print(0)
+            return
+        """
+
+    // MARK: - 让出的其余形态（`DE-6c`）：三形态各一条独立判据
+
+    /// 一个让出形态的判据：**这份语料里只有该形态一处 `await`** ⇒ 读数 `1` 归因于它。
+    ///
+    /// ⛔ 三条形态**各写一条用例**、各自调本函数，而不是合成一条遍历全部语料：合成之后
+    /// 「哪一形态坏了」在读数上不可分（与「不得顺手互做」同一条理由 —— 一次做完则不可归因）。
+    ///
+    /// ⭐ 判据取三件：**该形态真的让出过**（读数逐字节 `1`）· **输出与手写期望相符** ·
+    /// **两腿同输出**。只断言「编译通过」会把「悄悄退化成阻塞等待」也算成通过 ——
+    /// 而那正是本段要防的形态（让出计数**不可**由输出替代：阻塞等待下输出同样正确）。
+    ///
+    /// ⚠️ 期望值全部**手写**（来自语料自身的意图），不从任何一条腿回抄；两腿各比一次。
+    private func assertYieldFormYieldsOnce(
+        _ program: String, expecting expected: String, label: String
+    ) throws {
+        let environment = ProcessInfo.processInfo.environment
+        let cli = environment["PINI_CLI_BIN"] ?? ""
+        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
+            withKnownIssue("未提供 \(missing) ⇒ \(label) 的让出读数本次未取（跳过 +1）") {
+                Issue.record("\(label) 的让出读数未取：本段的形态判据本次没有跑")
+            }
+            return
+        }
+        let file = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("de6c-yield-form-\(UUID().uuidString).pini")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try program.write(to: file, atomically: true, encoding: .utf8)
+
+        let llvm = try launch(cli, ["run-llvm", file.path], environment: ["PINI_YIELD_REPORT": "1"])
+        try #require(llvm.status == 0, "\(label)：LLVM 腿未跑通 ⇒ \(llvm.stderr)")
+        #expect(
+            llvm.stdout == expected,
+            "\(label)：输出应是手写期望 \(expected.debugDescription)，实际 \(llvm.stdout.debugDescription)")
+        #expect(
+            llvm.stderr == Self.yieldReportPrefix + "1\n",
+            "\(label)：该形态本应**真的让出**一次（退化成阻塞等待会让这个读数变 0）：\(llvm.stderr)")
+
+        let interpreted = try launch(cli, ["run", file.path])
+        try #require(interpreted.status == 0, "\(label)：解释器腿未跑通 ⇒ \(interpreted.stderr)")
+        #expect(
+            interpreted.stdout == expected,
+            "\(label)：两腿须同输出，解释器腿得 \(interpreted.stdout.debugDescription)")
+    }
+
+    @Test("⭐ `S1` 让出形态：顶层裸语句 `await f()` —— 让出，结果按语义丢弃")
+    func bareStatementAwaitYields() throws {
+        /// 形态：`await f()` 独占一行（`S1`）。⭐ 它是四形态里**唯一没有产出**的那种 ——
+        /// 结果丢弃，因而让出序列的产出档位是「丢弃」。
+        try assertYieldFormYieldsOnce(
+            Self.bareAwaitProgram, expecting: "7\n", label: "`S1` 顶层裸语句")
+    }
+
+    @Test("⭐ `S3` 让出形态：`match await f():` 的判别式位 —— 判别式跨过让出存活")
+    func matchSubjectAwaitYields() throws {
+        /// 形态：`await` 落在 `match` 的**判别式**位（`S3`）。⚠️ 这一形态的关键在于
+        /// **判别式的结果必须跨过让出**：紧接其后的分派（tag 提取 · 逐 arm 比较）要读它，
+        /// 而续跑是从函数入口跳回来的 ⇒ 那个值只能经帧槽。
+        ///
+        /// ⚠️ **本形态的 `err` 臂今天测不了**（不是漏了，是做不到），两处都**与本段无关**、
+        /// 且都经独立实测确认：① 要造出 `err` 就得用 `Error(...)` 构造，而它在 LLVM 腿上
+        /// `lli` 直接报 `use of undefined type named 'struct.Error'` —— ⭐ 这一点由一份**不含任何
+        /// `await`/`wait` 的同步程序**独立证明（既有语料 `try.pini` 走的是字符串载荷，所以没暴露）；
+        /// ② 解释器腿在同形态上给出的是「`g` 返回 `err`」（未走 `case err(e):`），而解释器腿的让出
+        /// 由 `HIRExecutor` 承担、**不在本段改动面内**。⇒ 判据锚在**能建立**的那条路上。
+        try assertYieldFormYieldsOnce(
+            Self.matchSubjectAwaitProgram, expecting: "3\n", label: "`S3` 判别式位")
+    }
+
+    @Test("⭐ `S4` 让出形态：`try await f() else …` 的 try 位 —— 操作数跨过让出存活")
+    func tryOperandAwaitYields() throws {
+        /// 形态：`await` 落在 `try` 位（`S4`）。与 `S3` 同一条理由（求值在前、分派在后），
+        /// 但分派形态不同（tag → ok / else 两支）⇒ 单独一条判据。
+        /// ⚠️ 本形态另有一处**专属**的坑：错误变量的槽在让出点**之前**声明 ⇒ 它若留在栈上，
+        /// 续跑路径**不支配**它，续跑后写进的是一块悬垂地址。那一处的修正已落地
+        /// （`errSlot` 改走 `declareLocalSlot`），但**没有判据能证明它**：要走到那条路同样得先
+        /// 造出 `err`，而那卡在上面 `S3` 记的同一处既有缺陷上。⇒ 如实登记，不当成已覆盖。
+        try assertYieldFormYieldsOnce(
+            Self.tryOperandAwaitProgram, expecting: "5\n", label: "`S4` try 位")
+    }
+
+    /// `S1` 的语料：让出一次、结果丢弃，函数随后正常返回 `ok(7)`。
+    ///
+    /// ⚠️ 三份语料一律在 ok 分支 `print` **整数**、err 分支 `print` **字符串**：打印 `Result`
+    /// 本身会撞上另一处上游门禁（与本段无关），混进来会让读数指向错的地方。
+    private static let bareAwaitProgram = """
+        f|func(n: I32,) => (I32,):
+            sleep(1)
+            return ok(n)
+
+        g|func() => (I32,):
+            await f(7)
+            return ok(7)
+
+        main|func() -> ():
+            var r = wait g()
+            match r:
+                case ok(v):
+                    print(v)
+                case err(e):
+                    print("err")
+            return
+        """
+
+    /// `S3` 的语料（ok 路径）：判别式是 `await f(3)`，分派读出 `ok` 分支的载荷。
+    private static let matchSubjectAwaitProgram = """
+        f|func(n: I32,) => (I32,):
+            sleep(1)
+            return ok(n)
+
+        g|func() => (I32,):
+            match await f(3):
+                case ok(v):
+                    return ok(v)
+                case err(e):
+                    return ok(0)
+
+        main|func() -> ():
+            var r = wait g()
+            match r:
+                case ok(v):
+                    print(v)
+                case err(e):
+                    print("err")
+            return
+        """
+
+    /// `S4` 的语料（ok 路径）：`try` 位求值成功 ⇒ 跳过 `else` 块、走到紧随其后的语句。
+    private static let tryOperandAwaitProgram = """
+        f|func(n: I32,) => (I32,):
+            sleep(1)
+            return ok(n)
+
+        g|func() => (I32,):
+            try await f(5) else e:
+                return ok(99)
+            return ok(5)
+
+        main|func() -> ():
+            var r = wait g()
+            match r:
+                case ok(v):
+                    print(v)
+                case err(e):
+                    print("err")
             return
         """
 

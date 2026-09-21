@@ -793,8 +793,8 @@ public final class IREmitter {
             let address = declareLocalSlot(named: slot, spelling: type.llvmSpelling)
             scopes[scopes.count - 1][name] = address
             if let initializer = initializer {
-                if frameMode == .resumable, case .join(let awaited, _, .awaits) = initializer {
-                    emitYieldPoint(awaited: awaited, type: type, into: address)
+                if frameMode == .resumable, blockDepth == 1, case .join(let awaited, _, .awaits) = initializer {
+                    emitYieldPoint(awaited: awaited, type: type, produce: .frameSlot(address))
                 } else {
                     let value = emitExpr(initializer)
                     bodyIR += builder.fmtStore(value: value.ssaName, type: type.llvmSpelling, ptr: address) + "\n"
@@ -849,7 +849,14 @@ public final class IREmitter {
             terminated = true
 
         case .exprStmt(let expr):
-            _ = emitExpr(expr)
+            // ⭐ `S1`（`DE-6c`）：`await f()` 独占一行 —— 让出，结果按语言语义**丢弃**。
+            // ⛔ 不加这一支的话，这条路会落到 `emitJoin` 的 `.awaits` 拒绝上 —— 一个本该让出的
+            // 位置被当成「写错了」，而它其实是降载层明文承诺合法的四个位置之一。
+            if frameMode == .resumable, blockDepth == 1, case .join(let awaited, let type, .awaits) = expr {
+                emitYieldPoint(awaited: awaited, type: type, produce: .discard)
+            } else {
+                _ = emitExpr(expr)
+            }
 
         case .deferStmt(let body):
             pendingDefers[pendingDefers.count - 1].append(body)
@@ -978,12 +985,40 @@ public final class IREmitter {
     /// scrutinee values panic at runtime (interpreter matchNotExhaustive
     /// parity). `break` inside an arm is NOT caught by the match — the
     /// interpreter propagates the signal outward.
+    /// 判别式的求值 —— `S3`（`DE-6c`）的落点。
+    ///
+    /// 一般情形就是 `emitExpr(scrutinee)`；⭐ 但当判别式位是一处**可让出的 `await`**（且满足让出点
+    /// 那两条前置：可恢复体 · 顶层语句）时，它必须走**让出序列**，并把结果落进**帧槽**再由这里读回。
+    ///
+    /// ⛔ **为什么不直接用让出序列产出的那个 SSA 值**：体让出等于**从栈返回**，而续跑是从函数入口的
+    /// `switch` 跳进 `de6b.resume.k` 的 —— 让出点所在块里的 SSA 值**不支配**续跑块。
+    /// 帧槽是两条路径唯一都够得着的地方（这与 `S2` 存变量槽是同一个理由，不是新机制）。
+    ///
+    /// ⚠️ 让出序列只在这两条前置都成立时才接得住；不成立时**落到 `emitExpr`**，由 `emitJoin`
+    /// 按位置响亮拒绝 —— 那条路不是静默降级。
+    private func emitMatchSubject(_ scrutinee: HIRExpr, type: HIRType) -> IRValue {
+        guard frameMode == .resumable, blockDepth == 1,
+            case .join(let awaited, _, .awaits) = scrutinee
+        else {
+            return emitExpr(scrutinee)
+        }
+        let slot = declareLocalSlot(
+            named: "%yield_scrutinee_\(yieldPointCount + 1)", spelling: type.llvmSpelling)
+        emitYieldPoint(awaited: awaited, type: type, produce: .frameSlot(slot))
+        let loaded = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: slot) + "\n"
+        return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
+    }
+
     private func emitMatch(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType) {
+        // ⭐ 判别式**只在这里求值一次** —— `S3`（`DE-6c`）的落点就在这一步（见 `emitMatchSubject`）。
+        // 四个分派分支因此拿的都是同一个已物化的值，不存在「某条分支漏走让出」的缝。
+        let subject = emitMatchSubject(scrutinee, type: scrutineeType)
         switch scrutineeType {
         case .optional(let wrapped):
             let aggregate = scrutineeType.llvmSpelling
             emitTaggedMatch(
-                scrutinee: scrutinee, cases: cases, aggregate: aggregate, tagType: "i64",
+                scrutineeValue: subject, cases: cases, aggregate: aggregate, tagType: "i64",
                 tagFor: { $0.caseName == "some" ? "0" : "1" },
                 payloadSpelling: { _, _ in wrapped.llvmSpelling },
                 loadTag: { [self] base in
@@ -1004,7 +1039,7 @@ public final class IREmitter {
                 fatalError("IREmitter: match on unregistered enum (HIRLowerer guarantees)")
             }
             emitTaggedMatch(
-                scrutinee: scrutinee, cases: cases, aggregate: aggregate, tagType: "i32",
+                scrutineeValue: subject, cases: cases, aggregate: aggregate, tagType: "i32",
                 tagFor: { arm in
                     guard let enumCase = enumDecl.cases.first(where: { $0.name == arm.caseName }) else {
                         fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (HIRLowerer guarantees)")
@@ -1046,7 +1081,7 @@ public final class IREmitter {
             // dispatch.
             let aggregate = scrutineeType.llvmSpelling
             emitTaggedMatch(
-                scrutinee: scrutinee, cases: cases, aggregate: aggregate, tagType: "i64",
+                scrutineeValue: subject, cases: cases, aggregate: aggregate, tagType: "i64",
                 tagFor: { $0.caseName == "ok" ? "0" : "1" },
                 payloadSpelling: { arm, _ in arm.caseName == "ok" ? okType.llvmSpelling : "i64" },
                 loadTag: { [self] base in
@@ -1072,10 +1107,11 @@ public final class IREmitter {
             // skip the arms; their bodies were lowered only for scope
             // resolution.
             if cases.contains(where: { $0.literal != nil }) {
-                emitScalarMatch(scrutinee: scrutinee, cases: cases)
-            } else {
-                _ = emitExpr(scrutinee)
+                emitScalarMatch(scrutineeValue: subject, cases: cases)
             }
+            // 无字面量手臂时**什么都不发**：判别式的求值（含它可能的副作用与让出）已经在
+            // `emitMatchSubject` 里做过了。⛔ 不许在这里再求一次 —— 判别式若是 `await`，
+            // 再求一次就是**多派发一个任务**（而且那个任务的句柄没人接）。
         }
     }
 
@@ -1087,8 +1123,7 @@ public final class IREmitter {
     /// Falling off the chain with no wildcard arm is a silent no-op
     /// (interpreter parity: a non-exhaustive match is an error for enum values
     /// only), so the default block simply branches to the end label.
-    private func emitScalarMatch(scrutinee: HIRExpr, cases: [HIRMatchCase]) {
-        let scrutineeValue = emitExpr(scrutinee)
+    private func emitScalarMatch(scrutineeValue: IRValue, cases: [HIRMatchCase]) {
         let id = builder.freshLabel()
         let endLabel = "match.end.\(id)"
         let defaultLabel = "match.default.\(id)"
@@ -1177,7 +1212,7 @@ public final class IREmitter {
     /// Arms chain by tag comparison; each arm's bindings become scoped
     /// variables; a scrutinee matching no arm reaches the panic block.
     private func emitTaggedMatch(
-        scrutinee: HIRExpr,
+        scrutineeValue: IRValue,
         cases: [HIRMatchCase],
         aggregate: String,
         tagType: String,
@@ -1186,7 +1221,6 @@ public final class IREmitter {
         loadTag: (String) -> IRValue,
         loadPayload: (HIRMatchCase, String, Int, String) -> IRValue
     ) {
-        let scrutineeValue = emitExpr(scrutinee)
         let tag = loadTag(scrutineeValue.ssaName)
         let id = builder.freshLabel()
         let endLabel = "match.end.\(id)"
@@ -1368,12 +1402,34 @@ public final class IREmitter {
     /// try site and the handler runs as its own block scope; when the handler
     /// does not terminate (statement position / pass), control falls into the
     /// ok label, which stores the payload when this is expression position.
+    /// `try` 操作数的求值 —— `S4`（`DE-6c`）的落点。
+    ///
+    /// 与 `emitMatchSubject` **同一条理由、同一种做法**（判别式位与 `try` 位在发射层是同一件事：
+    /// 都是「一条语句的根部有一个先求值、后分派的操作数」）。⛔ 不合并成一个通用函数是有意的：
+    /// 两处的**分派**形态不同（tagged match vs tag→ok/err 两支），能共用的只是这一段求值。
+    private func emitTryOperand(_ operand: HIRExpr, type: HIRType) -> IRValue {
+        guard frameMode == .resumable, blockDepth == 1,
+            case .join(let awaited, _, .awaits) = operand
+        else {
+            return emitExpr(operand)
+        }
+        let slot = declareLocalSlot(
+            named: "%yield_operand_\(yieldPointCount + 1)", spelling: type.llvmSpelling)
+        emitYieldPoint(awaited: awaited, type: type, produce: .frameSlot(slot))
+        let loaded = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: slot) + "\n"
+        return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
+    }
+
     private func emitTry(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?, type: HIRType) {
-        let errSlot = freshSlot(for: errorVar)
-        bodyIR += builder.fmtAlloca(name: errSlot, type: "i64") + "\n"
+        // ⚠️ 错误变量的槽在让出点**之前**声明 —— 若它落在栈上，续跑路径（入口 `switch` →
+        // `de6b.resume.k`）**不支配**它，续跑之后读到的就是一块悬垂地址。故与其余局部槽同规：
+        // 走 `declareLocalSlot`（可恢复体里 = 帧槽；普通体里 = `alloca`，形状一字未改）。
+        let errSlot = declareLocalSlot(named: freshSlot(for: errorVar), spelling: "i64")
         scopes[scopes.count - 1][errorVar] = errSlot
 
-        let resultValue = emitExpr(operand)
+        // ⭐ `S4`（`DE-6c`）：`try` 位若是可让出的 `await` ⇒ 走让出序列，结果落帧槽再读回。
+        let resultValue = emitTryOperand(operand, type: type)
         let aggregate = resultValue.llvmType
         let tag = builder.freshTemp()
         bodyIR += " \(tag) = extractvalue \(aggregate) \(resultValue.ssaName), 0\n"
@@ -3953,7 +4009,26 @@ public final class IREmitter {
 
     // MARK: - 并发接线（`DE-3c`；让出路径 `DE-6b`）
 
-    /// 一个**让出点**（`DE-6b`）：顶层语句 `var x = await f(...)`。
+    /// 让出点的**产出档位**（`DE-6c`）：这一处让出要不要把结果交给后续代码。
+    ///
+    /// ⭐ 抽成档位而不是两份发射函数：四个让出位置**只差这一点**，其余发射（求值 · 可让出的等待 ·
+    /// 续跑点 · 让出块 · 续跑块）逐字共用。分成两份函数会让「同一个约定两处解释」的老毛病回来 ——
+    /// 那条约定（三槽的装配、续跑块由入口 `switch` 跳入）本段只该有一处解释。
+    private enum YieldProduce {
+        /// 结果**丢弃** —— `S1`（`await f()` 独占一行）。⚠️ 丢弃的是**结果**，不是**等待**。
+        case discard
+        /// 结果**存进给定的帧槽** —— `S2` / `S3` / `S4` 都是这一档，只是槽的用途不同
+        /// （分别是变量本身 · 判别式 · `try` 的操作数）。
+        /// ⛔ 必须是**帧槽**：续跑块由入口 `switch` 跳入，让出点所在块里的 SSA 值**不支配**它。
+        case frameSlot(String)
+    }
+
+    /// 一个**让出点**（`DE-6b` 立 · `DE-6c` 扩到四形态）：顶层语句根部的 `await`。
+    ///
+    /// 四处调用点，形态即位置：`S1` 裸语句 `await f()` · `S2` `var x = await f(...)` ·
+    /// `S3` `match await f():` 的判别式 · `S4` `try await f() else …` 的 `try` 位。
+    /// ⭐ 这四个正是降载层已经**明文承诺合法**的位置（它那条位置报文的原话），本函数是把发射层
+    /// 补齐到与那条承诺一致。
     ///
     /// 发射的形状（`DE-1` §3.2.1 / §3.2.2 的落地）：
     ///
@@ -3983,18 +4058,23 @@ public final class IREmitter {
     /// ⛔ **限层**：只允许出现在函数体那一层（`blockDepth == 1`）。嵌套在 `if` / `match` / 循环
     /// 里的让出点，其所在块依赖外层块先算出的值（条件、被匹配的主题），而续跑的跳转会整段跳过
     /// 那些计算 ⇒ 那些值**不支配**续跑块。限在顶层就没有这个问题：顶层语句之间只经**帧**传值。
-    private func emitYieldPoint(awaited: HIRExpr, type: HIRType, into slot: String) {
+    private func emitYieldPoint(awaited: HIRExpr, type: HIRType, produce: YieldProduce) {
         guard blockDepth == 1 else {
             fatalError(
                 "IREmitter: a resumable `await` must sit at the top level of an async body"
-                    + " (nested positions are not wired yet; DE-6c)")
+                    + " (nested control flow has no resume entry yet)")
         }
         guard case .result(let okType) = type else {
             fatalError("IREmitter: await site type is not a Result (HIRLowerer guarantees)")
         }
-        guard isSingleWordPayload(okType) else {
-            fatalError(
-                "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
+        // ⭐ 载荷宽度只在**真搬运**时才成为约束：`S1` 把结果丢弃 ⇒ 没有搬运通道要过，
+        // 于是聚合载荷的 `await` 在那条路上是合法的。⛔ 不许把这个检查提到前面 ——
+        // 那会让「丢弃」凭空多出一条与它无关的限制。
+        if case .frameSlot = produce {
+            guard isSingleWordPayload(okType) else {
+                fatalError(
+                    "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
+            }
         }
         let handle = emitExpr(awaited)
         guard handle.llvmType == "ptr" else {
@@ -4028,8 +4108,18 @@ public final class IREmitter {
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         // 返回值**刻意丢弃**：与 `emitJoin` 同一条口径 —— 三槽已由运行时归一化，状态位不必再判。
         bodyIR += " call i32 @bk_task_await(ptr \(handleReloaded), ptr \(out))\n"
-        let filled = collectResult(from: out, type: type, okType: okType)
-        bodyIR += builder.fmtStore(value: filled.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+        // ⭐ 产出档位在这里分岔 —— 这是本段唯一的形态差异，其余发射**逐字共用**。
+        switch produce {
+        case .discard:
+            // `S1`（`await f()` 独占一行）：结果按语言语义**丢弃** ⇒ 续跑块到此为止。
+            // ⚠️ 仍然保留上面那次 `bk_task_await`：丢弃的是**结果**，不是**等待**。
+            // 语义上 `await f()` 承诺「等它跑完」，而那条承诺的兑现点就是这次调用
+            // （已决 ⇒ 运行时直通）；省掉它会让「丢弃结果」顺带丢掉「等待」。
+            break
+        case .frameSlot(let slot):
+            let filled = collectResult(from: out, type: type, okType: okType)
+            bodyIR += builder.fmtStore(value: filled.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+        }
     }
 
     /// 三槽 → `Result` 聚合（与 `emitJoin` 的装配**同形**；`DE-1` §3.1 的三槽约定只有一处解释）。
@@ -4191,8 +4281,9 @@ public final class IREmitter {
     private func emitJoin(future: HIRExpr, type: HIRType, form: JoinForm) -> IRValue {
         if form == .awaits {
             fatalError(
-                "IREmitter: `await` is only resumable at a top-level `var x = await f(...)` statement;"
-                    + " other await positions are not wired yet (DE-6c)")
+                "IREmitter: `await` yields only at a statement root — `await f()` · `var x = await f(...)`"
+                    + " · `try await f() else ...` · `match await f():`; a nested control-flow or"
+                    + " in-expression position has no resume entry")
         }
         usesTaskRuntime = true
         guard case .result(let okType) = type else {
