@@ -1003,8 +1003,10 @@ public enum RuntimeOps {
     /// than in the implementation — and the join site turns either into the same
     /// `err(CancelError)`, so the two are one rule or they are wrong.
     ///
-    /// Inlined because it sits on the loop-header path: the synchronous case is
-    /// a nil check, and it has to cost nothing when no task owns the thread.
+    /// Inlined because it sits on the entry path of every async body: the
+    /// synchronous case is a nil check, and it has to cost nothing when no task
+    /// owns the thread. ⛔ Not "the loop-header path" — there is no checkpoint
+    /// there (measured 2026-09-21; see the language reference, §8.3).
     @inline(__always)
     static func checkCancellation(_ owner: FutureValue?) throws {
         if let owner = owner, owner.isCancelled {
