@@ -1072,8 +1072,10 @@ public func bk_task_cancel(_ h: UnsafeMutableRawPointer?) {
 
 /// 取消检查点（`DE-1` §3.3）：回答**当前任务**是否已被取消。
 ///
-/// 无参形态对应解释器腿的循环头 / 函数入口 / 睡眠分片检查点
-/// （`RuntimeOps.checkCancellation`）。⛔ **无当前任务时回 `0`** —— 与
+/// 无参形态对应解释器腿的检查点 `RuntimeOps.checkCancellation` —— 该腿在岗的是
+/// **异步体入口**与 **`joinAll` 聚合**；该腿 `sleep` 的检查点**有意留空**（单线程、
+/// 不持任务句柄），按片真查取消位的是发射层的 `bk_sleep`。⛔ 两条腿都**没有**
+/// 「循环头」检查点（2026-09-21 逐处实测）。⛔ **无当前任务时回 `0`** —— 与
 /// `checkCancellation(nil)`「不做事」同义，也即「没有任务在跑 ⇒ 没有被取消」。
 @_cdecl("bk_task_is_cancelled")
 public func bk_task_is_cancelled() -> Int32 {
