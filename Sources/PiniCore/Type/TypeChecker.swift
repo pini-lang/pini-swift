@@ -232,6 +232,23 @@ public final class TypeChecker {
             params: [.generic(name: "Future", params: [wildcard, wildcard], location: loc)],
             returns: []
         )
+
+        // 调度面（调度面提案）：语言预置的调度特征。登记这个名字，使它可被 `实现:` 引用；
+        // 派发点对它的取用由编译器插入，调用点若要换成自己构造的实例则走既有取用实参位。
+        //
+        // ⛔ 抽象方法集**当前刻意留空**，不是遗漏：策略层的接口形状（队列 / 优先级 /
+        // 归约阈值 / 选择下一个任务）由提供默认实例的那一段定 —— 在此之前写死一套签名，
+        // 等于按「只有一种叫法」的样子把形状钉死，而形状是先于实现的契约。
+        // 空集合下声明实现它的类型无需提供任何方法，这也是本征当前唯一可判的行为。
+        typeEnv.defineTrait(
+            name: "调度器",
+            trait: TraitDecl(
+                name: "调度器",
+                genericParams: [],
+                signatures: [],
+                location: loc
+            )
+        )
     }
 
     /// 取消专用错误类型名（与 Interpreter.builtinCancelErrorTypeName 对齐）。
