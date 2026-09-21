@@ -458,8 +458,29 @@ public func bk_runtime_cleanup() {
 }
 
 /// 进程退出统一回收活动句柄（D0 阶段；D4 改为作用域精确销毁）。
-private func _bkAtExitCleanup() { bk_runtime_cleanup() }
+///
+/// ⭐ 让出的观测汇总行（`DE-6a` §3.6）挂在这里 —— 经**既有**的退出钩子那条路径，⛔ 不新起
+/// 退出路径。顺序放在回收之前：回收会碰句柄表，而汇总只读一个计数器，先打完更不容易被
+/// 回收路径上的意外打断。
+private func _bkAtExitCleanup() {
+    _bkReportYields()
+    bk_runtime_cleanup()
+}
+
 private let _bkAtExitToken = atexit(_bkAtExitCleanup)
+
+/// 保证进程退出钩子**真的被登记**。
+///
+/// ⛔ 这一句不是仪式。Swift 的全局 `let` 是**惰性**初始化：`atexit(_bkAtExitCleanup)` 只有在那句
+/// 声明被**求值**时才发生，而它此前**没有任何读者** ⇒ 那个退出钩子**一次也没有生效过** ——
+/// 文件看着对，行为上不存在（本仓最防的一类形态）。★ 它是 `DE-6b` 落地观测通道时逐处实测发现的：
+/// 让出计数打了 0 行，顺着读下去才发现登记本身没发生。
+///
+/// ⚠️ 由运行时的**首个真实并发入口**触发（`bk_task_spawn`）。⇒ 如实登记一条边界：**不用任务的
+/// 程序**不会走到这里，故那条「活动句柄兜底回收」对它们仍然不生效（本批不改，只登记）。
+private func _bkEnsureProcessExitHook() {
+    _ = _bkAtExitToken
+}
 
 // MARK: - 字典 / 集合 运行时（#46-D D2）
 
@@ -922,6 +943,46 @@ private final class _BkTaskBox: _BkBox {
 
     /// 体已经跑过（无论跑完还是让出）。防同一句柄被跑第二次。
     var bodyStarted = false
+
+    // MARK: 可恢复帧（`DE-6b`）
+
+    /// 指向自己的句柄。⭐ 只为**续跑**存在：决出方手里是「等待者盒子」，而起一条线程重入体需要
+    /// 的是**句柄**（`_bkTaskRunBody` 的实参）⇒ 没有它就得反查登记表。
+    var selfHandle: UnsafeMutableRawPointer?
+
+    /// 帧里**局部槽**的块表 —— `bk_task_slot` 每次取槽追加一块，体真跑完（或让出态被取消）时
+    /// 一次性交还。
+    ///
+    /// ⛔ **为什么不一次性算好整块**：发射层**没有**「类型 → 字节数」的通用能力（容器元素那两张
+    /// 表都只枚举有限类型、聚合一律拒绝），若在 Swift 侧另算一套布局，就成了「同一件事两处各算
+    /// 一次」—— 一旦不一致就是**静默错位的帧**，比崩溃难查得多。⇒ 尺寸由 IR 侧的常量表达式自己
+    /// 算，本层只管搬运。
+    var frameChunks: [UnsafeMutableRawPointer] = []
+
+    /// `bk_task_slot` 的**重放游标**：每次进入体都归零（见 `_bkTaskRunBody`）。
+    ///
+    /// ⭐ 这不是优化，是**续跑正确性的前提**：让出时体从栈返回、槽指针全部丢失，续跑靠重新执行
+    /// 同一段取槽代码把它拿回来 ⇒ 只有「第 n 次进入的第 k 次取槽必得同一地址」，续跑才拿得到
+    /// 上次那些槽。
+    var frameCursor = 0
+
+    /// 我已经把控制流交还出去、正等 `awaiting` 决出。⛔ 它**不是**结束状态 —— `future` 仍**未决**。
+    ///
+    /// 弱引用：`awaiters` 反向持强引用，两者不成环（与 `parent` / `children` 同一套记账）。
+    weak var awaiting: _BkTaskBox?
+
+    /// 正在等我决出的那些任务 —— 我决出或被取消时逐个**续跑**它们。
+    var awaiters: [_BkTaskBox] = []
+
+    /// 体**正在跑**。防同一句柄被并发进入两次：续跑是**另一条线程**，与首次进入可能交错。
+    var running = false
+
+    /// 「决出方已经来叫过，但那时我还没让出」的**记号**（见 `_bkTaskResume`）。
+    /// ⛔ 它关的是一扇**丢唤醒**的窗，不是缓存：没有它，「等我的任务」会在窄缝里永远不再被调度。
+    var resumePending = false
+
+    /// 帧是否已交还。幂等守卫 —— 「跑完」与「让出态被取消」两条路径都会来收，而**只能收一次**。
+    var frameReleased = false
 }
 
 /// 句柄 → 任务盒。
@@ -974,8 +1035,16 @@ private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     if box.cancelled { box.cond.unlock(); return }
     box.cancelled = true
     let kids = box.children
+    let wasSuspended = box.suspended
     box.cond.broadcast()   // 唤醒阻塞中的 join —— 它读到标志后归一为 err(CancelError)
     box.cond.unlock()
+    // `DE-1` §3.2.2 的第二条连带：**让出态被取消 ⇒ 体不会再被进入** ⇒ 帧必须由运行时交还。
+    // ⛔ 落地顺序有讲究：先把取消位置起（上面的锁内），再交还帧 —— 反过来的话，一条已经在
+    // 「续跑」路上的线程会带着已释放的帧进入体，而那是**静默内存错**，不是崩溃。
+    if wasSuspended { _bkTaskReleaseFrame(box) }
+    // 等我的那些任务：我已经被取消 ⇒ 它们的等待应当**现在**归约为 `err(CancelError)`，
+    // 而不是等我（永不）决出。它们醒来后走的是 `bk_task_await` 的「已决 ⇒ 直线取值」那条路。
+    _bkTaskResumeAwaiters(box)
     for k in kids { _bkTaskCancelBox(k) }
 }
 
@@ -1040,9 +1109,11 @@ private func _bkTaskJoinOne(
 ///
 /// ⛔ **L2 一律不许宣称**（裁定 29：登记不实现）⇒ 这里没有它的位。
 ///
-/// ⭐ **本腿今天只宣称 L0**，这是 `DE-1` §6.2 **纪律 3** 的合规降级，不是遗漏：
-/// L1 的定义是「`bk_task_yield` 能**真让出**」，而走乙之下「让出」是**异步体的 `return`**、
-/// 由驱动器（发射层）接住 —— 那件**尚未落地**（`DE-3c`）。在它落地之前宣称 L1 就是发假绿。
+/// ⭐ **本腿自 `DE-6b` 起宣称 L0 + L1**。为什么此刻才敢宣称：L1 的定义是「`bk_task_yield`
+/// 能**真让出**」，而走乙之下「让出」是**异步体的 `return`**、由驱动器接住 —— 那件事与申报位
+/// **同批落地**：发射层在异步体的语句根 `await` 处交出控制流（帧 + 续跑点），运行时由**决出方**
+/// 续跑。⛔ 此前「只宣称 L0」是合规降级、不是遗漏；如今反过来 —— 若再宣 L0 就是**低报**，
+/// 而低报同样会让判据失真（能力位的用处正是让两腿可被对照）。
 ///
 /// ⚠️ 本 target **不依赖 `PiniCore`**（`Package.swift`），故位值在此**重述**；权威定义在解释器腿
 /// （`Sources/PiniCore/Interpreter/ConcurrencyCapabilities.swift`）。**重述不漂开**由判据钉住：
@@ -1054,7 +1125,8 @@ private enum ConcurrencyTierBits {
     static let yield: UInt32 = 2     // L1 让出
 }
 
-private let _bkCapabilities: UInt32 = ConcurrencyTierBits.dispatch  // L0（L1 待 `DE-3c`；L2 永不给）
+private let _bkCapabilities: UInt32 =
+    ConcurrencyTierBits.dispatch | ConcurrencyTierBits.yield  // L0 + L1（L2 永不给）
 
 /// 后端能力位图（`DE-1` §3.4）。
 @_cdecl("bk_capabilities")
@@ -1129,6 +1201,9 @@ public func bk_task_spawn(
     guard let wrapper else {
         bk_panic("Pini runtime error: task spawn got a null body wrapper")
     }
+    // 并发的首个真实入口 —— 进程退出钩子在此登记（见 `_bkEnsureProcessExitHook`：惰性全局，
+    // 没有读者就等于没登记）。
+    _bkEnsureProcessExitHook()
     let box = _BkTaskBox()
     box.wrapper = wrapper
     box.code = code
@@ -1136,6 +1211,7 @@ public func bk_task_spawn(
     box.elemBytes = elemBytes
     box.elemTag = elemTag
     let h = _bkRegister(box)
+    box.selfHandle = h
     if let parent = _bkTaskCurrent {
         _bkTaskAdopt(Unmanaged.passUnretained(parent).toOpaque(), h)
     }
@@ -1146,25 +1222,45 @@ public func bk_task_spawn(
 
 /// 体的一次运行：登记当前任务 → 调 wrapper → 按返回的**两态**收尾。
 ///
-/// ⚠️ 归出（让出）时**不**决出 `future` —— 那是续跑方的责任（`DE-3c`）。
-/// 本层在这里唯一能做的、也必须做的是**让这件事可观测**（`box.suspended`）。
+/// ⭐ `DE-6b` 起它同时是**续跑**的入口（首跑与续跑走同一条路径，这是「不需要第二个入口函数」
+/// 的落地处，`DE-1` §3.2.2）。
+///
+/// ⚠️ 归出（让出）时**不**决出 `future` —— 那是续跑方的责任；本层在这里做的是**让这件事
+/// 可观测**（`box.suspended`）并为观测面计数。
 private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
     guard let box = _bkTaskBox(h), let wrapper = box.wrapper else { return }
     let restore = _bkTaskEnter(h)
     defer { restore() }
     box.cond.lock()
-    let alreadyStarted = box.bodyStarted
+    // ⛔ 这道闸从 L0 的「体已跑过就返回」放开为「**让出态允许续跑**」。
+    // 不放开，续跑会被这里**静默吞掉**，而症状是「等待方永久阻塞」——不是崩溃，所以更需要闸本身
+    // 开门见山。今天（L0）体从不中途返回，故放开的只是那条到不了的路径。
+    let admitted = (!box.bodyStarted || box.suspended) && !box.frameReleased
+    let concurrent = box.running
     box.bodyStarted = true
+    box.suspended = false
+    if admitted && !concurrent { box.running = true }
+    // ⭐ 取槽游标归零 ⇒ 帧槽地址可重放（见 `frameCursor` 的注释）。
+    box.frameCursor = 0
+    box.awaiting = nil
     box.cond.unlock()
-    guard !alreadyStarted else { return }
+    guard admitted, !concurrent else { return }
 
     let out = UnsafeMutableRawPointer.allocate(byteCount: _bkResultSlotsBytes, alignment: 8)
     defer { out.deallocate() }
     let body = unsafeBitCast(wrapper, to: _BkTaskBody.self)
-    if body(box.code, box.env, out) == 0 {
+    let status = body(box.code, box.env, out)
+
+    box.cond.lock()
+    box.running = false
+    box.cond.unlock()
+
+    if status == 0 {
         let tag = out.load(fromByteOffset: 0, as: Int64.self)
         let ok = out.load(fromByteOffset: 8, as: Int64.self)
         let err = out.load(fromByteOffset: 16, as: Int64.self)
+        // 真跑完才交还帧（`DE-1` §3.2.2）；先读三槽再交还，免得交还后又去读它。
+        _bkTaskReleaseFrame(box)
         if tag == 0 {
             _bkTaskResolveOk(h, ok)
         } else {
@@ -1172,10 +1268,19 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
         }
         return
     }
+    _bkTaskNoteYield()
     box.cond.lock()
     box.suspended = true
+    // ⭐ 关上那扇丢唤醒的窗：若「决出方」在我交还控制流**之前**就已经来叫过（`resumePending`），
+    // 它当时看到的还是一个没让出的任务、因而没起线程 ⇒ 记号的兑现责任落在这里。
+    let resumeNow = box.resumePending
+    box.resumePending = false
     box.cond.broadcast()
     box.cond.unlock()
+    if resumeNow {
+        let thread = Thread { _bkTaskRunBody(h) }
+        thread.start()
+    }
 }
 
 /// 问后端**能否让出**（`DE-1` §3.2.1 订正后的**查询**语义）。
@@ -1189,11 +1294,110 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
 /// ⭐ **答案取自 L1 位，与解释器腿同源**：解释器腿的对应物就是
 /// `GCDScheduler.capabilities.supports(.yield) ? 1 : 0`（`Scheduler.swift`）。
 /// ⇒ 两腿在这一位上由**同一条规则**决定，不会各说各话 —— 这正是 `DE-1` §3.2 要求的
-/// 「两腿必须在这一位上一致」。⚠️ 本腿今天 `_bkCapabilities` **只含 L0**（`DE-2b-3` 定的分层：
-/// L1 须待发射层接住让出，即 `DE-3c`）⇒ **恒返 `0`**；届时置 L1 位，本函数自动跟到位。
+/// 「两腿必须在这一位上一致」。
+///
+/// ⭐ **`DE-6b` 起本腿宣称 L1**（`_bkCapabilities` 含 `yield` 位）⇒ 本函数回 `1`。
+/// 它之所以能宣称，是因为让出的**执行路径**真的接上了：发射层在异步体的语句根 `await` 处
+/// 交出控制权（帧+续跑点），运行时由决出方续跑 —— 即「申报」与「可用」同批成立。
 @_cdecl("bk_task_yield")
 public func bk_task_yield() -> Int32 {
     (_bkCapabilities & ConcurrencyTierBits.yield) != 0 ? 1 : 0
+}
+
+/// 帧的取用（`DE-6b`）：**一个概念、两种用途**，两者的区别只在 `bytes`。
+///
+/// - `bytes > 0` —— **派发点用**：新建一块属于运行时的帧（`bytes` 字节、**已清零**），并登记
+///   所有权。⛔ 清零不是顺手：帧的第一个字是**续跑点**（`0` = 首次进入），清零即把「首次进入」
+///   写进去，发射层因而不必额外发一条 `store`。
+/// - `bytes == 0` —— **体内用**：取当前任务的帧。⛔ 无论第几次进入都是**同一块**，
+///   这也正是「续跑能拿回上次的上下文」的地方。
+///
+/// ⭐ 为什么由运行时分配、而不是让派发点 `malloc`（`DE-1` §3.2.2：`env` 升格为**体的持久帧**）：
+/// 帧的生命周期跨让出，而「让出态被取消 ⇒ 体不会再被进入 ⇒ 帧必须由**运行时**释放」
+/// 是同一节的明文连带 ⇒ 所有权必须在运行时这一侧，否则那条路径上没有人能安全地收这块内存。
+/// ⚠️ 由此**取消了一处旧分工**：`env` 原先由体 wrapper 在跑完后 `free`，自 `DE-6b` 起改由
+/// 运行时在真跑完时交还 —— 两处都释放会 double free，故 wrapper 侧那一条已删。
+@_cdecl("bk_task_frame")
+public func bk_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
+    guard bytes > 0 else {
+        return _bkTaskCurrent?.env
+    }
+    let p = UnsafeMutableRawPointer.allocate(byteCount: Int(bytes), alignment: 8)
+    _ = p.initializeMemory(as: UInt8.self, repeating: 0, count: Int(bytes))
+    _bkAdoptFrame(p)
+    return p
+}
+
+/// 帧内取一个**局部槽**（`DE-6b`）。
+///
+/// ⭐ **可重放**是它的全部要点：让出时体从栈返回、槽指针全部丢失，续跑靠重新执行同一段取槽
+/// 代码把它们拿回来 ⇒ 本函数必须保证「同一体第 n 次进入的第 k 次调用得到同一地址」，故游标在
+/// **每次进入体时归零**（`_bkTaskRunBody`），命中已发的块就原样返回。
+///
+/// ⚠️ 尺寸由**调用方**（发射层）给：本层没有类型知识，也不该有（见 `frameChunks` 的注释）。
+/// ⚠️ 如实边界：对齐按 **8 字节** —— 帧与各块都以 8 对齐，故凡对齐要求 ≤ 8 的类型都对；
+/// 超 8 对齐的类型**今天没有通道**（不静默降级：发射层侧由类型表把关）。
+@_cdecl("bk_task_slot")
+public func bk_task_slot(_ bytes: Int64) -> UnsafeMutableRawPointer {
+    let size = max(1, Int(bytes))
+    guard let box = _bkTaskCurrent else {
+        bk_panic("Pini runtime error: bk_task_slot called outside a task body")
+    }
+    box.cond.lock()
+    let index = box.frameCursor
+    if index < box.frameChunks.count {
+        box.frameCursor = index + 1
+        let reused = box.frameChunks[index]
+        box.cond.unlock()
+        return reused
+    }
+    let fresh = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 8)
+    box.frameChunks.append(fresh)
+    box.frameCursor = index + 1
+    box.cond.unlock()
+    return fresh
+}
+
+/// **可让出的等待**（`DE-6a` 定案 · `DE-6b` 落地）。
+///
+/// 与 `bk_task_join` 的唯一区别是它**可以拒绝阻塞**：
+/// - `0` / `1` —— 归一化与 `bk_task_join` **同一套**（`0` = 三槽已写 · `1` = 未取得 `Result`，
+///   取消 / 超时归约）；
+/// - ⭐ `2` —— **本次会让出**：`out` **一个字节都不许写**，控制流交还驱动器，调用方据此返回非 `0`
+///   且**不得交还帧**。
+///
+/// ⛔ **谁决定「这次会让出」**：编译期事实。发射层**只在**「异步体 · 语句根 · `form = awaits`」
+/// 处发射本符号，其余位置（含同步体的 `wait`）一律沿用 `bk_task_join` —— 因为「调用方是不是
+/// 异步体」运行时刻判不出来（`DE-1` §3.1 末尾那处补注）。本函数因而**不校验**这个前置。
+///
+/// ⭐ **登记在等待对象上**（`target.awaiters`）而不是只记在自己身上：决出方是**被等的那个**，
+/// 只有它知道「现在该把谁叫醒」。登记与「对象是否已决」的判定**在同一把锁下**完成 ——
+/// 否则「登记」与「决出」之间会有一个丢唤醒的窗口，而症状是**永久阻塞**。
+@_cdecl("bk_task_await")
+public func bk_task_await(
+    _ handle: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let target = _bkTaskBox(handle) else {
+        bk_panic("Pini runtime error: task await got a null handle")
+    }
+    // ⛔ 两处**合规降级**（都不是错误）：不在任何任务里 ⇒ 没有「当前任务」可让出；
+    // L1 位缺席 ⇒ 后端不能真让出（`DE-1` §6.2 纪律 3：降级，不失败）。
+    guard let current = _bkTaskCurrent,
+        (_bkCapabilities & ConcurrencyTierBits.yield) != 0
+    else {
+        return _bkTaskJoinOne(target, timeoutMs: nil, out: out)
+    }
+    target.cond.lock()
+    let settled = target.resolved || target.cancelled
+    if !settled {
+        current.awaiting = target
+        target.awaiters.append(current)
+    }
+    target.cond.unlock()
+    // 已决的对象不值得交出控制流：直接取值（解释器腿同一条规则 —— 「已决的 future 不是
+    // 放弃任务的理由」，那里也走直线）。
+    if settled { return _bkTaskJoinOne(target, timeoutMs: nil, out: out) }
+    return 2
 }
 
 /// `sleep(ms)` 的原语层落点 —— **按片睡**，每片醒来查一次取消位。
@@ -1389,7 +1593,10 @@ private var _bkTaskCurrent: _BkTaskBox? {
 
 /// 造一个**未决**任务盒并返回句柄。所有权 = 调用方（用完经 `bk_handle_release` 归还）。
 func _bkTaskMake() -> UnsafeMutableRawPointer {
-    _bkRegister(_BkTaskBox())
+    let box = _BkTaskBox()
+    let h = _bkRegister(box)
+    box.selfHandle = h
+    return h
 }
 
 /// 把任务标记为已决（`ok`）。写入方是任务体（`DE-3c` 接线）。
@@ -1404,6 +1611,9 @@ func _bkTaskResolveOk(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
         box.cond.broadcast()
     }
     box.cond.unlock()
+    // `DE-6b`：决出方**续跑**在等我的那些任务 —— 这是 L1 的驱动侧（`DE-6a` §3.2.2 用户选定
+    // 的「决出方触发」）。放在锁外：续跑会起线程，不该持锁做。
+    _bkTaskResumeAwaiters(box)
 }
 
 /// 把任务标记为已决（`err`）。写入方是任务体（`DE-3c` 接线）。
@@ -1418,6 +1628,121 @@ func _bkTaskResolveErr(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
         box.cond.broadcast()
     }
     box.cond.unlock()
+    _bkTaskResumeAwaiters(box)
+}
+
+// MARK: 可恢复帧与续跑（`DE-6b`）
+
+/// 运行时**自有**帧的地址集 —— 由 `bk_task_frame(bytes > 0)` 登记，交还时摘除。
+///
+/// ⚠️ 这张表存在的理由是**归属**：帧必须由运行时释放（让出态被取消那条路径上没有别人能安全
+/// 地收它），而 `env` 也可能是**调用方直接给的**（进程内单测就这么做：把 Swift 对象的指针当作
+/// 体的观测箱传进来）。⛔ 无条件释放后者会立即崩溃 ⇒ 只有本表里登记过的才释放。
+private var _bkOwnedFrames: Set<UInt> = []
+private let _bkOwnedFramesLock = NSLock()
+
+private func _bkAdoptFrame(_ p: UnsafeMutableRawPointer) {
+    _bkOwnedFramesLock.lock()
+    _bkOwnedFrames.insert(UInt(bitPattern: p))
+    _bkOwnedFramesLock.unlock()
+}
+
+/// 交还一个任务的全部帧内存（`env` 那一块 + `bk_task_slot` 发出的各块）。幂等。
+///
+/// ⭐ 两条路径都会来这里：**真跑完**（`_bkTaskRunBody` 的 `status == 0` 分支）与
+/// **让出态被取消**（`_bkTaskCancelBox`）—— `DE-1` §3.2.2 的两条明文连带。
+private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
+    box.cond.lock()
+    guard !box.frameReleased else {
+        box.cond.unlock()
+        return
+    }
+    box.frameReleased = true
+    let chunks = box.frameChunks
+    box.frameChunks.removeAll()
+    box.frameCursor = 0
+    let env = box.env
+    box.env = nil
+    box.cond.unlock()
+    for chunk in chunks { chunk.deallocate() }
+    guard let env else { return }
+    _bkOwnedFramesLock.lock()
+    let owned = _bkOwnedFrames.remove(UInt(bitPattern: env)) != nil
+    _bkOwnedFramesLock.unlock()
+    if owned { env.deallocate() }
+}
+
+/// 取走等待者快照并逐个续跑（先快照、解锁、再动作 —— 与取消传播同一条定式：
+/// 持锁递归会与反向加锁形成死锁）。
+private func _bkTaskResumeAwaiters(_ box: _BkTaskBox) {
+    box.cond.lock()
+    let waiters = box.awaiters
+    box.awaiters.removeAll()
+    box.cond.unlock()
+    for w in waiters { _bkTaskResume(w) }
+}
+
+/// 让一个**已让出**的任务接着跑（`DE-6b`）。
+///
+/// ⭐ 起一条**新线程**重入体 —— 与解释器腿同形（那条腿的注释：「resumption runs on whichever
+/// thread settled that future ... no thread is held on this side」）。⇒ 「让出」换来的是
+/// **线程经济**，而不只是「输出看起来一样」。
+///
+/// ⛔ 三道守卫各挡一件事：`resolved` / `cancelled` 挡「已经收口了，别再进去」；`running` 挡
+/// **并发双重进入**（两条线程同时续跑同一个体会让帧游标与槽互相踩）。
+///
+/// ⭐⭐ **`resumePending` 是这里最要紧的一行，它不是优化**：等待方登记「我在等谁」与它把
+/// 自己标成「已让出」**不是同一个原子步** —— 中间隔着体的返回。若被等方恰好在这条缝里决出，
+/// 「谁来叫醒它」这一问就会落空：决出方看到的还是一个**没让出**的任务，于是既不起线程、
+/// 也不留记号 ⇒ **等待方永远不再被调度**。⚠️ 症状是**永久阻塞**而不是崩溃，所以这个窗口
+/// 必须由记号关掉，不能靠「缝很窄」侥幸：让出态未到就先**挂记号**，等体交还控制流时自取自跑。
+private func _bkTaskResume(_ box: _BkTaskBox) {
+    guard let h = box.selfHandle else { return }
+    box.cond.lock()
+    let alive = !box.resolved && !box.cancelled
+    let wasSuspended = box.suspended
+    if alive && !wasSuspended { box.resumePending = true }
+    box.cond.unlock()
+    guard alive, wasSuspended else { return }
+    let thread = Thread { _bkTaskRunBody(h) }
+    thread.start()
+}
+
+// MARK: 让出的可观测通道（`DE-6a` §3.6）
+
+/// 闸门：**仅在环境变量置位时**输出，未置位 ⇒ **零输出**。
+///
+/// ⛔ 性质：它是**测试器械专用**的观测面 —— **不是** ABI、**不是**诊断通道、**不是**给用户的
+/// 功能（`DE-6a` §3.6 的明文声明）。本仓另有一笔**已登记的**「诊断通道」缺口，**二者不是一件
+/// 事** —— 这条声明的作用正是防止有人把它当成那个缺口的补丁。
+private let _bkYieldReportEnabled: Bool = {
+    guard let raw = ProcessInfo.processInfo.environment["PINI_YIELD_REPORT"] else { return false }
+    return !(raw.isEmpty || raw == "0")
+}()
+
+private var _bkYieldCount = 0
+private let _bkYieldCountLock = NSLock()
+
+/// 体**真让出**一次（wrapper 返回非 `0`，且运行时已接受）。计数在闸门之外也累加 ——
+/// 闸门只决定**打不打印**，不影响运行时行为。
+private func _bkTaskNoteYield() {
+    guard _bkYieldReportEnabled else { return }
+    _bkYieldCountLock.lock()
+    _bkYieldCount += 1
+    _bkYieldCountLock.unlock()
+}
+
+/// 进程退出时打**一行**汇总（经**既有**的退出钩子那条路径，⛔ 不新起退出路径）。
+///
+/// ⚠️ 为什么是汇总一行而不是逐次一行：逐次打点会与程序自身输出交错 ⇒ 读起来**非确定**；
+/// 汇总一行**逐字节可断言**。代价如实说：**只有置位的运行可见** ⇒ 「不置位时也让出」这一半
+/// 测不到 —— 这与本仓「**跳过必须可见**」同向（必须显式开闸，否则读数不可信）。
+private func _bkReportYields() {
+    guard _bkYieldReportEnabled else { return }
+    _bkYieldCountLock.lock()
+    let n = _bkYieldCount
+    _bkYieldCountLock.unlock()
+    FileHandle.standardError.write(Data("pini-yield-report: bodies-suspended=\(n)\n".utf8))
 }
 
 /// 认父（照 `FutureValue.addChild`）：父已取消 ⇒ 新子**立即**被取消（不漏网）。

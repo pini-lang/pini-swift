@@ -19,7 +19,7 @@ import Testing
 /// 而 Swift Testing 默认并行、多个用例可能落在同一线程 ⇒ 并行会让当前任务互相污染，
 /// 判据变成随机通过。串行是这个设计成立的前提。
 ///
-/// **符号 → 判据对照**（8/8 全覆盖）：
+/// **符号 → 判据对照**（8/8 全覆盖；`DE-6b` 补入让出族 3 个）：
 ///
 /// | 符号 | 判据 |
 /// |---|---|
@@ -27,10 +27,13 @@ import Testing
 /// | `bk_task_join` | join 三态 · join 真的阻塞 |
 /// | `bk_task_join_within` | 超时归约 |
 /// | `bk_task_join_all` | fail-fast · 全 ok 聚合 |
-/// | `bk_task_cancel` | 检查点 · 沿树传播 · 认父时刻 |
+/// | `bk_task_cancel` | 检查点 · 沿树传播 · 认父时刻 · **让出态被取消 ⇒ 帧交还** |
 /// | `bk_task_is_cancelled` | 检查点 |
 /// | `bk_task_detach` | 剪枝阴性对照 |
 /// | `bk_scope_close` | 有界 override（翻 / 不覆盖 / 不计未完成） |
+/// | `bk_task_frame` | 派发点建帧（已清零）· 体内取回**同一块** |
+/// | `bk_task_slot` | ⭐ **可重放**：同一体第 n 次进入的第 k 次取槽必得同一地址 |
+/// | `bk_task_await` | ⭐ **续跑协议**：`2` 会让出且不写 `out` · 决出方续跑 · 已决则直线取值 |
 @Suite(.serialized)
 struct ConcurrencyRuntimeABITests {
 
@@ -118,22 +121,23 @@ struct ConcurrencyRuntimeABITests {
 
     // MARK: - 能力位
 
-    @Test("能力位自述：位定义与解释器腿一致，L2 永不宣称，且本腿不越权宣称 L1")
+    @Test("能力位自述：位定义与解释器腿一致，L2 永不宣称，且本腿自 DE-6b 起宣称 L1")
     func capabilitiesAgreeWithTheInterpreterLeg() throws {
         /// 意图：`bk_capabilities()` 的**位定义**必须与解释器腿同源 —— 两腿各定一套的话，
         /// `DE-4` 的契约参照就没有共同基准（`DE-1` §3.4 定案表的原话）。
         /// 断言的是**子集关系**（本腿 ⊂ 解释器腿）：这条**将来仍成立**（相等也是子集），
         /// 所以它不是一次性判据。
         /// ⛔ L2 缺席是**裁定 29** 的直接后果（登记不实现）—— 任何后端都不许宣称它。
-        /// ⭐ **L1 今天必须缺席**：走乙之下「让出」是异步体的 `return`、由发射层接住，
-        /// 而那件尚未落地（`DE-3c`）。**在它落地之前宣称 L1 就是发假绿** —— 这条断言会在
-        /// `DE-3c` 真的接通让出时变红，而那正是它该变红的时刻（届时须一并改 `_bkCapabilities`）。
+        /// ⭐ **L1 自 `DE-6b` 起在场**：此前它「必须缺席」是因为让出的执行路径没接上，
+        /// 那时宣称 L1 就是发假绿；`DE-6b` 把路径接通（发射层在异步体语句根 `await` 交出控制流
+        /// + 运行时由决出方续跑）⇒ 位与能力**同批**到位。⚠️ 反向同样要紧：若路径被撤而位还在，
+        /// 本条与 `yieldAnswersFromTheCapabilityBit` 都会红。
         let actual = bk_capabilities()
         let oracle = ConcurrencyCapabilities.resolve(threadsAvailable: true)
         #expect(actual & 4 == 0, "L2 永不许宣称（裁定 29），实际位图 \(actual)")
         #expect(actual & 1 == 1, "L0 应在场，实际位图 \(actual)")
         #expect(actual & ~oracle.bitmap == 0, "本腿置了位定义之外的位：\(actual) 对 \(oracle.bitmap)")
-        #expect(actual & 2 == 0, "L1 今天的诚实值是「未接线」（DE-3c 接通后本条须一并改）")
+        #expect(actual & 2 == 2, "L1 自 DE-6b 起在场（让出路径同批接通），实际位图 \(actual)")
     }
 
     // MARK: - join
@@ -355,16 +359,19 @@ struct ConcurrencyRuntimeABITests {
 
     // MARK: - `B-3`：spawn / yield
 
-    @Test("yield 的答案取自 L1 位 —— 与解释器腿同一条规则，且今天诚实地回 0")
+    @Test("yield 的答案取自 L1 位 —— 与解释器腿同一条规则，且本腿自 DE-6b 起真的回 1")
     func yieldAnswersFromTheCapabilityBit() throws {
         /// 意图：`DE-1` §3.2 要求**两腿在这一位上一致**，否则「`await` 让出 / `wait` 占用」
         /// 这条可观测差异跨后端就没有共同基准。解释器腿的对应物就是
         /// `capabilities.supports(.yield) ? 1 : 0` ⇒ 本腿照**同一条规则**取答案。
-        /// ⭐ 写成**关系式**而不是常量：L1 落地（`DE-3c`）后本条**仍然成立**，
-        /// 届时它自动跟着位图走 —— 常量式判据会在那天变成一条必须手改的假绿。
+        /// ⭐ 第一条断言写成**关系式**而不是常量：位图变了它仍成立 —— 常量式判据会变成一条
+        /// 必须手改的假绿。
+        /// ⭐ 第二条则是**关系式之外的一处刻意固化**（`DE-6b`）：本腿的 L1 不再是「将来时」，
+        /// 让出的执行路径同批接上了 ⇒ 这里点明它现在必须回 `1`。若哪天有人把 L1 位撤掉而
+        /// 忘了撤让出路径，本条会红 —— 那正是它该红的时刻。
         let expected: Int32 = (bk_capabilities() & 2) != 0 ? 1 : 0
         #expect(bk_task_yield() == expected, "yield 的答案必须由 L1 位推出")
-        #expect(bk_task_yield() == 0, "本腿今天未宣称 L1 ⇒ 合规降级回 0（不是错误）")
+        #expect(bk_task_yield() == 1, "`DE-6b` 起本腿宣称 L1 ⇒ 回 1（不再是合规降级）")
     }
 
     @Test("spawn 立刻返回，且体在**另一条线程**上跑完（急切派发不是「就地跑完」）")
@@ -412,6 +419,205 @@ struct ConcurrencyRuntimeABITests {
         #expect(bk_task_join_within(kid, 120, raw(out)) == 1, "让出后仍未决 ⇒ join 只能超时归约")
         #expect(out[1] != 999, "让出态不许把载荷写出去（写出去就等于假装跑完了）")
     }
+
+    // MARK: - `DE-6b`：让出族（frame / slot / await）
+
+    @Test("⭐ 续跑协议：体让出后由**决出方**续跑；续跑拿回同一帧与**同一批槽**；让出时 out 一字节未写")
+    func theYieldedBodyIsResumedByWhoeverSettlesTheAwaited() throws {
+        /// 意图：`DE-6a` §3.2.2 定案的两件事，各用一条断言钉住 ——
+        /// ① **续跑由决出方触发**（不是驱动器原地等）：被等待的任务一决出，让出方就被重入；
+        /// ② **帧与槽可重放**：续跑重新执行取槽代码时必须拿回**上次那些地址**，否则「上下文留在
+        ///    帧里」这句话是空的。
+        /// ⛔ 本件看不见发射层（「发射层真的在 `await` 处让出」另有判据），但发射层也看不见
+        /// **协议本身** —— 两者不可互相替代（`DE-6a` §3.6 的分工）。
+        /// ⭐ 判据**不靠睡眠**：先等体把续跑点写进帧（那是「已让出」的可观测证据），再放行被等待的
+        /// 任务。先后颠倒的话，本用例会退化成「谁先谁后」的抽签。
+        let frame = UnsafeMutableRawPointer.allocate(byteCount: YieldFrameSlot.bytes, alignment: 8)
+        defer { frame.deallocate() }
+        _ = frame.initializeMemory(as: UInt8.self, repeating: 0, count: YieldFrameSlot.bytes)
+
+        let h = bk_task_spawn(bkYieldOuterBodyPtr(), nil, frame, 0, 0)
+        defer { bk_handle_release(h) }
+
+        let deadline = Date(timeIntervalSinceNow: 5)
+        while yieldFrameGet(frame, YieldFrameSlot.resumePoint) == 0, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        #expect(yieldFrameGet(frame, YieldFrameSlot.resumePoint) == 1, "体没走到让出点")
+        #expect(yieldFrameGet(frame, YieldFrameSlot.lastStatus) == 2, "await 在未决对象上应回 2")
+        #expect(
+            yieldFrameGet(frame, YieldFrameSlot.outUntouched) == 1,
+            "让出时 `out` **一个字节都不许被写**（`DE-6a` §3.2.1 的第三条边界）")
+        #expect(
+            yieldFrameGet(frame, YieldFrameSlot.frameIdentity) == 1,
+            "`bk_task_frame(0)` 必须是派发点建的那块帧，否则续跑读的是另一块内存")
+
+        bkYieldChildProbe.entered.wait(timeout: .now() + 5)
+        bkYieldChildProbe.release.signal()
+
+        let out = makeOut()
+        defer { out.deallocate() }
+        #expect(bk_task_join(h, raw(out)) == 0, "续跑完成后外层任务应决出（不是永远未决）")
+        #expect(out[0] == 0 && out[1] == 42, "ok 载荷须来自被等待的子任务：\(out[0])/\(out[1])")
+        #expect(yieldFrameGet(frame, YieldFrameSlot.entries) == 2, "体应被进入两次：首跑 + 续跑")
+        #expect(
+            yieldFrameGet(frame, YieldFrameSlot.slotsReplayed) == 1,
+            "续跑须拿回**同一批槽地址** —— 取槽游标归零正是为此")
+        #expect(yieldFrameGet(frame, YieldFrameSlot.lastStatus) == 0, "续跑后等待的对象已决 ⇒ 回 0")
+    }
+
+    @Test("await 的合规降级：不在任何任务里 ⇒ 直线阻塞等待（不假装让出）")
+    func awaitOutsideATaskDegradesToABlockingJoin() throws {
+        /// 意图：`DE-6a` §3.2.2 的降级面。`bk_task_await` 只有「有当前任务**且** L1 在位」时才
+        /// 可能回 `2`；其余一律走与 `bk_task_join` 同一套归一化。
+        /// ⛔ 这不是错误路径（`DE-1` §6.2 纪律 3：降级，不失败），但**必须与「真让出」可区分** ——
+        /// 它回的是 `0` / `1`，绝不回 `2`。
+        let t = _bkTaskMake()
+        defer { bk_handle_release(t) }
+        let o = makeOut()
+        defer { o.deallocate() }
+        _bkTaskResolveOk(t, 7)
+        let status = bk_task_await(t, raw(o))
+        #expect(status == 0, "已决的对象不值得交出控制流（解释器腿同一条规则）")
+        #expect(o[0] == 0 && o[1] == 7, "三槽须与 join 同形：\(o[0])/\(o[1])")
+    }
+}
+
+// MARK: - `DE-6b` 让出族判据用的帧与体
+//
+// ⚠️ 这一族刻意**不用** `SpawnProbe` 那种 Swift 对象当 `env`：本族要验的是「帧里的字在让出前后
+// **留在原地**」，那是一段**裸缓冲**的事 —— 对象字段的布局不归这个判据管，混用会让「帧」这个词
+// 指两样东西。故这里的 `env` 是一块自己 `allocate` 的裸帧，字段偏移如下。
+
+/// 裸帧的字段偏移（字节）。`resumePoint` 在 **0** 不是随意选的：那是发射层约定的**续跑点**位置。
+private enum YieldFrameSlot {
+    static let resumePoint = 0
+    static let childWord = 8
+    static let entries = 16
+    static let slotAWord = 24
+    static let slotBWord = 32
+    static let slotsReplayed = 40
+    static let frameIdentity = 48
+    static let lastStatus = 56
+    static let outUntouched = 64
+    static let bytes = 72
+}
+
+private func yieldFrameGet(_ f: UnsafeMutableRawPointer, _ offset: Int) -> Int64 {
+    f.load(fromByteOffset: offset, as: Int64.self)
+}
+
+private func yieldFramePut(_ f: UnsafeMutableRawPointer, _ offset: Int, _ value: Int64) {
+    f.storeBytes(of: value, toByteOffset: offset, as: Int64.self)
+}
+
+/// 指针 ↔ 不透明字（帧里存句柄用的是**位型**，与运行时三槽同一条约定）。
+private func yieldWord(_ p: UnsafeMutableRawPointer?) -> Int64 {
+    guard let p else { return 0 }
+    return Int64(bitPattern: UInt64(UInt(bitPattern: p)))
+}
+
+private func yieldPointer(_ word: Int64) -> UnsafeMutableRawPointer? {
+    UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: Int(word)))
+}
+
+/// `bk_task_await` 的 `out` 搬到体 wrapper 的三槽（与发射层 wrapper 同一件事）。
+private func yieldCopySlots(_ from: UnsafeMutableRawPointer, _ to: UnsafeMutableRawPointer) {
+    for offset in stride(from: 0, to: 24, by: 8) {
+        to.storeBytes(of: from.load(fromByteOffset: offset, as: Int64.self), toByteOffset: offset, as: Int64.self)
+    }
+}
+
+/// 被等待的子任务：**进来就停**，直到判据放行为止 —— 让「让出」这件事在判据里是**确定的**，
+/// 而不是「子任务恰好还没跑完」的巧合。
+///
+/// ⚠️ 它是一份文件级单例、供一个用例使用，而本 suite 标了 `.serialized` ⇒ 不存在两个用例同时
+/// 借它的问题。若日后要再加一个用它的用例，须先把它改成按用例构造。
+private final class YieldChildProbe: @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+}
+
+private let bkYieldChildProbe = YieldChildProbe()
+
+private func bkYieldChildBody(
+    _ code: UnsafeMutableRawPointer?, _ env: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let out else { return 0 }
+    if let env {
+        let probe = Unmanaged<YieldChildProbe>.fromOpaque(env).takeUnretainedValue()
+        probe.entered.signal()
+        _ = probe.release.wait(timeout: .now() + 5)
+    }
+    out.storeBytes(of: Int64(0), toByteOffset: 0, as: Int64.self)
+    out.storeBytes(of: Int64(42), toByteOffset: 8, as: Int64.self)
+    out.storeBytes(of: Int64(0), toByteOffset: 16, as: Int64.self)
+    return 0
+}
+
+/// 让出方：**照发射层将要发出的形状**手写一遍 —— 派发 → 可让出地等 → 让出（返非 0）→ 被续跑后
+/// 重新等（这次已决）→ 决出。
+///
+/// ⭐ 为什么手写而不是等发射层：本件的职责是钉**运行时的续跑协议**。若它也依赖发射层，那么
+/// 「协议错」与「发射层错」会一起变红，没有判据能把两者分开。
+private func bkYieldOuterBody(
+    _ code: UnsafeMutableRawPointer?, _ env: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let env, let out else { return 0 }
+    // 体内取帧必须拿回派发点那一块 —— 「帧」这个词在两处指的必须是同一块内存。
+    yieldFramePut(env, YieldFrameSlot.frameIdentity, bk_task_frame(0) == env ? 1 : 0)
+
+    if yieldFrameGet(env, YieldFrameSlot.resumePoint) == 0 {
+        let kid = bk_task_spawn(
+            bkYieldChildBodyPtr(), nil, Unmanaged.passUnretained(bkYieldChildProbe).toOpaque(), 0, 0)
+        yieldFramePut(env, YieldFrameSlot.childWord, yieldWord(kid))
+        // 让出前先取两个槽：续跑时再取一次，地址必须相同。
+        yieldFramePut(env, YieldFrameSlot.slotAWord, yieldWord(bk_task_slot(8)))
+        yieldFramePut(env, YieldFrameSlot.slotBWord, yieldWord(bk_task_slot(8)))
+
+        let o = UnsafeMutableRawPointer.allocate(byteCount: 24, alignment: 8)
+        defer { o.deallocate() }
+        for offset in stride(from: 0, to: 24, by: 8) {
+            o.storeBytes(of: Int64(-7), toByteOffset: offset, as: Int64.self)
+        }
+        let status = bk_task_await(kid, o)
+        yieldFramePut(env, YieldFrameSlot.entries, 1)
+        yieldFramePut(env, YieldFrameSlot.lastStatus, Int64(status))
+        guard status == 2 else {
+            // 只有 L1 缺席时才会来这里（合规降级）：那时不许让出，直接取值。
+            yieldCopySlots(o, out)
+            return 0
+        }
+        let untouched =
+            (0..<3).allSatisfy { o.load(fromByteOffset: $0 * 8, as: Int64.self) == -7 }
+        yieldFramePut(env, YieldFrameSlot.outUntouched, untouched ? 1 : 0)
+        yieldFramePut(env, YieldFrameSlot.resumePoint, 1)
+        return 2
+    }
+
+    let a = bk_task_slot(8)
+    let b = bk_task_slot(8)
+    let replayed =
+        yieldWord(a) == yieldFrameGet(env, YieldFrameSlot.slotAWord)
+        && yieldWord(b) == yieldFrameGet(env, YieldFrameSlot.slotBWord)
+    yieldFramePut(env, YieldFrameSlot.slotsReplayed, replayed ? 1 : 0)
+
+    let o = UnsafeMutableRawPointer.allocate(byteCount: 24, alignment: 8)
+    defer { o.deallocate() }
+    let status = bk_task_await(yieldPointer(yieldFrameGet(env, YieldFrameSlot.childWord)), o)
+    yieldFramePut(env, YieldFrameSlot.lastStatus, Int64(status))
+    yieldFramePut(env, YieldFrameSlot.entries, 2)
+    yieldFramePut(env, YieldFrameSlot.resumePoint, 0)
+    yieldCopySlots(o, out)
+    return 0
+}
+
+private func bkYieldOuterBodyPtr() -> UnsafeMutableRawPointer {
+    unsafeBitCast(bkYieldOuterBody as BkTestBody, to: UnsafeMutableRawPointer.self)
+}
+
+private func bkYieldChildBodyPtr() -> UnsafeMutableRawPointer {
+    unsafeBitCast(bkYieldChildBody as BkTestBody, to: UnsafeMutableRawPointer.self)
 }
 
 // MARK: - `B-3` 判据用的体观测面
