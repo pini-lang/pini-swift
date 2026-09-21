@@ -1,5 +1,5 @@
 import Foundation
-import PiniCore
+@testable import PiniCore
 import Testing
 
 /// 「契约参照」守卫：**每一条腿各自与同一份手写期望比**，不是两条腿互相比。
@@ -15,9 +15,14 @@ import Testing
 ///     缺变量时**报「本臂未参与」并让跳过可见**（`known issue` 计数），不静默通过 ——
 ///     否则「没跑」与「通过」在读数上不可区分。
 ///
-/// ⚠️ 覆盖面：本守卫今天守**一个**断言点。样例面下 8 份并发语料只有一份两腿可达，
-/// 其余 7 份停在同一处上游降载门禁上（与 LLVM 腿无关）。⇒ 它证明的是**形态已经接通**，
-/// **不是**「并发面已被守卫覆盖」。
+/// ⚠️ 覆盖面：本守卫今天守**一个**断言点，判**两个维度**（输出 + 让出读数）。
+/// 语料面下 8 份并发语料只有一份两腿可达，其余 7 份停在同一处上游降载门禁上（与 LLVM 腿无关）。
+/// ⇒ 它证明的是**形态已经接通**，**不是**「并发面已被守卫覆盖」。
+///
+/// ⚠️ **让出那一维的前置条件**：两条腿的让出计数器**语义不同** —— 发射腿数「每次让出」，
+/// 解释器腿数「体在**派发那一趟**上让出」（续跑由决出方直接驱动、不经调度器）
+/// ⇒ 一个体内**多处** `await` 的程序上两者会分岔。受守卫这一格只有一处 `await`，
+/// 故两支读数一致、判据成立。**接多处让出的语料之前，须先把两处口径归一。**
 struct ContractReferenceTests {
 
     // MARK: - 受守卫的那一格
@@ -28,16 +33,22 @@ struct ContractReferenceTests {
     /// 近似会把「什么都没打印」与「打印了空行」并成一类。
     private static let expectedOutput = "10\n"
 
-    @Test("异步传染的终点：两条腿各自与手写期望逐字节相符")
-    func testAsyncContagionEndMatchesTheWrittenExpectationOnBothLegs() throws {
-        try assertBothLegsProduceTheExpectation(of: "concurrency-async-contagion-end")
-    }
-
-    // MARK: - 让出（`DE-6b`）：那条观测通道有没有区分力
+    /// 期望值的**第二维**：让出读数。同样手写、同样逐字节比。
+    ///
+    /// ⚠️ 为什么这一维非得独立存在：让出与阻塞**在输出上分不出差别**（阻塞等同样打印 `10`）。
+    /// 若守卫只比输出，「`await` 真的让出了」这件事就**没有任何守卫在看** ——
+    /// 而它正是本批的验收标准里明文的那一条。⚠️ 语料自身只有**一处** `await`，
+    /// 所以期望值是 `1` 而不是「`> 0`」：一个能断精确值的判据，比一个能断存在性的强一档。
+    private static let expectedYields = 1
 
     /// 闸门置位时运行时打的那一行（`DE-6a` §3.6 的形态）。⛔ 逐字节比：汇总行是**确定**的，
     /// 而「读一个数再比大小」会把「通道没输出」与「输出 0」并成一类，那正是这一条要分开的两种。
     private static let yieldReportPrefix = "pini-yield-report: bodies-suspended="
+
+    @Test("异步传染的终点：两条腿各自与手写期望逐字节相符 —— 输出与让出各判一维")
+    func testAsyncContagionEndMatchesTheWrittenExpectationOnBothLegs() throws {
+        try assertBothLegsProduceTheExpectation(of: "concurrency-async-contagion-end")
+    }
 
     @Test("⭐ 让出可观测：同一台机器上 `await` 版计数 > 0、`wait` 版 = 0 —— 有区分力才算判据")
     func theYieldChannelTellsTheTwoAwaitFormsApart() throws {
@@ -343,29 +354,42 @@ struct ContractReferenceTests {
         """
 
     // MARK: - 两条腿
+    //
+    // 每条腿判**两维**，两维的期望都是手写的一份、并排写在上面：**输出**与**让出读数**。
+    // ⚠️ 两维不可互相替代：让出与阻塞在**输出**上分不出差别（阻塞等同样打印 `10`）⇒
+    // 只比输出的守卫对「`await` 到底有没有真的让出」是全盲的。而本批的验收标准里，
+    // 「`await` 让出 / `wait` 占用的可观测差异」正是明文那一条 ⇒ 它必须落在这里，
+    // 而不是落在一条只跑发射腿的旁证上。
 
     /// 腿一（进程内，无依赖）与腿二（子进程，需环境变量）**各自**与同一份期望比。
     ///
-    /// 两条 `#expect` 是两次独立判定，不是「两边一样」：任何一条腿单独偏离都要报红，
+    /// 每条腿的每一维都是**一次独立判定**，不是「两边一样」：任何一腿任一维单独偏离都要报红，
     /// 这正是这一层与「两两对照」的分界。
     private func assertBothLegsProduceTheExpectation(of fixture: String) throws {
         let expected = Self.expectedOutput
         let source = try fixtureSource(fixture)
 
-        let inProcess = stdoutForm(try runInProcess(source: source, named: fixture))
+        // 腿一：进程内。⭐ 让出读数取**只归本次运行**的后端（理由见该类型的注释）——
+        // 进程级单例的计数会被并行跑的别的用例挪走，读出来的是别人的数。
+        let counting = YieldCountingScheduler(inner: GCDScheduler.shared)
+        let (lines, yields) = try runInProcess(source: source, named: fixture, yielding: counting)
         #expect(
-            inProcess == expected,
+            stdoutForm(lines) == expected,
             "解释器腿的输出与手写期望不符：\(fixture)")
+        #expect(
+            yields == Self.expectedYields,
+            "解释器腿的让出读数与手写期望（\(Self.expectedYields)）不符：\(fixture) ⇒ \(yields)")
 
         let environment = ProcessInfo.processInfo.environment
         let cli = environment["PINI_CLI_BIN"] ?? ""
-        // 两条前置缺任一都算「本臂未参与」：LLVM 腿要既找得到命令行、又找得到 lli。
-        // 环境未配置 ⇒ 跳过（与本仓既有 LLVM 门控同一取向），但**跳过要可见** —— 静默通过
-        // 会让「只有一条腿在守」读成「这一格守住了」。
+        // 两条前置缺任一都算「LLVM 腿未参与」：它要既找得到命令行、又找得到 lli。
+        // ⚠️ 腿一**已经在上方判完**（它零环境依赖）⇒ 这一处跳过只抹掉发射腿的那一维，
+        // 不像从前那样把两条腿一起跳过。环境未配置 ⇒ 跳过（与本仓既有 LLVM 门控同一取向），
+        // 但**跳过要可见** —— 静默通过会让「只有一条腿在守」读成「这一格守住了」。
         guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ LLVM 腿本次未参与（跳过 +1，只有解释器腿在守）") {
-                Issue.record("LLVM 腿未参与：这一格的守卫本次只覆盖一条腿")
+            withKnownIssue("未提供 \(missing) ⇒ 发射腿的输出与让出两维本次未验（跳过 +1）") {
+                Issue.record("发射腿未参与：这一格本次只有解释器腿在守")
             }
             return
         }
@@ -374,16 +398,28 @@ struct ContractReferenceTests {
         // 失败报文里带上二进制的**构建时间**：解析出来的路径仍可能指向改动之前的构建，
         // 而「构建旧」与「判据红」在输出上长得很像 —— 排一行日期，让前者表现为一个旧日期。
         let underTest = "\(cli)（构建于 \(buildTime(of: cli))）"
-        let viaCLI = try launch(cli, ["run-llvm", fixtureFile(fixture).path])
+        // 闸门只在这一趟次进程上置位 ⇒ 它的 stderr 多出那一行汇总，正是第二维的读数来源。
+        let viaCLI = try launch(
+            cli, ["run-llvm", fixtureFile(fixture).path],
+            environment: ["PINI_YIELD_REPORT": "1"])
         try #require(viaCLI.status == 0, "LLVM 腿未跑通：\(underTest) ⇒ \(viaCLI.stderr)")
         #expect(
             viaCLI.stdout == expected,
             "LLVM 腿的输出与手写期望不符：\(underTest)")
+        #expect(
+            viaCLI.stderr == Self.yieldReportPrefix + "\(Self.expectedYields)\n",
+            "LLVM 腿的让出读数与手写期望（\(Self.expectedYields)）不符：\(underTest) ⇒ \(viaCLI.stderr)")
     }
 
     /// 镜像命令行 `run` 的**单文件**路径：解析（含常量折叠）→ 语义门禁 → 类型收集 →
     /// 降载 → 执行。与命令行同一序，因为降载需要检查器推断出的类型 —— 这条路径**必须**跑类型层。
-    private func runInProcess(source: String, named fixture: String) throws -> [String] {
+    ///
+    /// - Returns: 逐行输出，以及**本次运行**里体让出的次数（由传入的后端计）。
+    private func runInProcess(
+        source: String, named fixture: String, yielding scheduler: YieldCountingScheduler
+    ) throws
+        -> (lines: [String], yields: Int)
+    {
         let lexer = Lexer(source: source, fileName: fixture + ".pini")
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: fixture + ".pini")
             .parseModuleCollectingErrors()
@@ -398,10 +434,12 @@ struct ContractReferenceTests {
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let lowered = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
         var lines: [String] = []
-        let executor = HIRExecutor(programBase: Self.fixtureDirectory.path)
+        let executor = HIRExecutor(
+            programBase: Self.fixtureDirectory.path, ffiConfig: .default, scheduler: scheduler)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: lowered)
-        return lines
+        // 读在运行**之后**：`main` 的那一处 `wait` 会把整条链等到决，故此刻所有让出都已发生。
+        return (lines, scheduler.yieldCount)
     }
 
     // MARK: - 语料定位（读样例面，不复制它）
@@ -486,4 +524,52 @@ enum ContractGuardError: Error, CustomStringConvertible {
         case .fixtureMissing(let path): return "受守卫的语料不存在：\(path)"
         }
     }
+}
+
+/// 只数**本次运行**让出次数的后端：把生产后端整个委派出去，只在体的结局上挂一个计数。
+///
+/// ⚠️ 为什么不能直接读进程级单例的增量：那个计数是**整台进程**的读数，并行的另一条用例
+/// 让出一次就把它挪走 ⇒ 判据既可能在自己的程序**没**让出时报绿（读到别人的数），
+/// 也可能在自己的程序让出时读出**别人的次数**。本件要断的是**精确值**（`= 1`），
+/// 增量式的「至少一次」给不了这个判别力。包装一层就只数自己的。
+///
+/// ⚠️ **如实边界 —— 它数与发射腿那个计数器不是同一个量**：本类型数的是
+/// 「体在**派发那一趟**上让出」；续跑不再经调度器（由决出方直接驱动），故一个体内
+/// **多处**让出的程序，这里只数到第一次。发射腿记的是**每一次**让出 ⇒ 两者在那种程序上会分岔。
+/// 受守卫这一格只有一处 `await`，故两支读数一致；**接多处让出的语料之前须先归并口径**。
+///
+/// ⚠️ 与 `ConcurrencyCapabilitiesTests` 里那个替身后端**不是同一件事**：那个宣告
+/// 「本后端不能让出」（`yieldTask()` 恒返 `0`）以检验降级纪律；本类型**照常让出**，
+/// 只是把次数记下来 ⇒ 它验的是读数，不是纪律。
+private final class YieldCountingScheduler: Scheduler {
+    private let inner: GCDScheduler
+    private let lock = NSLock()
+    private var suspensions = 0
+
+    init(inner: GCDScheduler) { self.inner = inner }
+
+    /// 本次运行里体让出的次数。只由「让出」这一个动作驱动 ⇒ 取读数不需要独占整台机器。
+    var yieldCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return suspensions
+    }
+
+    func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
+        inner.spawn(future) {
+            let outcome = try work()
+            if case .suspended = outcome {
+                self.lock.lock()
+                self.suspensions += 1
+                self.lock.unlock()
+            }
+            return outcome
+        }
+    }
+
+    var activeTaskCount: Int { inner.activeTaskCount }
+    var capabilities: ConcurrencyCapabilities { inner.capabilities }
+
+    /// 委派而不是自己答：**让出判定必须走生产后端**，否则本替换品测的就是它自己的回答了。
+    func yieldTask() -> Int32 { inner.yieldTask() }
 }
