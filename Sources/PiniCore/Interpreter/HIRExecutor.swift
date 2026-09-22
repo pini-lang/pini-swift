@@ -426,7 +426,19 @@ public final class HIRExecutor: DebugHookHost {
     /// that cannot hand the thread back degrades instead of failing" is a
     /// normative discipline (DE-1 §6.2), and a discipline with no criterion on it
     /// is a sentence, not a rule.
-    private let scheduler: Scheduler
+    ///
+    /// ⭐ **派发点与语言侧接线**：生产路径上后端**不再硬编码**，而是由语言侧的默认实例
+    /// 解析而来（见 `resolveSchedulerFromLanguage`）—— 那就是「派发点用哪个调度器」这条
+    /// 语言侧表面的内容。本属性只剩**注入覆盖**这一职：非空时它赢，解析不发生。
+    ///
+    /// ⚠️ 为什么注入要先于解析：注入是宿主在**构造期**说的，而语言侧实例要到
+    /// 模块装载后才取得到。若有注入值仍去解析，判据就再也摆不进一个替身后端 ——
+    /// 而「降级而不失败」这条纪律的判据正是那么摆进去的。
+    private let injectedScheduler: Scheduler?
+
+    /// 派发点实际用的后端。**只在 `prepare` 里被改写一次** —— 那之后才可能有工作线程
+    /// ⇒ 不需要锁。初值取注入值或主后端，故任何路径上它都不是空的。
+    private var scheduler: Scheduler
 
     // MARK: - Per-thread execution state
 
@@ -523,19 +535,22 @@ public final class HIRExecutor: DebugHookHost {
     public var processArguments: [String] = []
 
     public convenience init(programBase: String? = nil, ffiConfig: FFIConfig = .default) {
-        self.init(programBase: programBase, ffiConfig: ffiConfig, scheduler: GCDScheduler.shared)
+        self.init(programBase: programBase, ffiConfig: ffiConfig, scheduler: nil)
     }
 
-    /// The engine with an explicit back end.
+    /// The engine with an explicit back end, or with `nil` and therefore with the
+    /// language's own default (see `resolveSchedulerFromLanguage`).
     ///
-    /// Production always takes the line above; this overload exists so a criterion
-    /// can ask what happens on a back end whose `yieldTask()` answers `0`. Nothing
-    /// branches on it — the back end answers, the engine obeys.
-    init(programBase: String?, ffiConfig: FFIConfig, scheduler: Scheduler) {
+    /// Production takes the line above with `nil`; passing a back end overrides the
+    /// language's choice — which is how a criterion stands in one that answers `0`
+    /// to `yieldTask()`. Nothing branches on the difference: the back end answers,
+    /// the engine obeys.
+    init(programBase: String?, ffiConfig: FFIConfig, scheduler: Scheduler?) {
         self.globalEnv = Environment()
         self.programBase = programBase
         self.ffiConfig = ffiConfig
-        self.scheduler = scheduler
+        self.injectedScheduler = scheduler
+        self.scheduler = scheduler ?? GCDScheduler.shared
         // `currentEnv` is deliberately not seeded here. Its per-thread box
         // answers `globalEnv` until a thread enters something, so a seed would
         // be the same value written the hard way — and writing through the
@@ -550,6 +565,14 @@ public final class HIRExecutor: DebugHookHost {
     /// call on purpose — lowering stays the caller's explicit step
     /// (`HIRLowerer.lower(module:typeInference:)`), same split as the
     /// interpreter taking an already-checked AST.
+    /// 派发点当前后端的**能力自述**（只读，供诊断与判据）。
+    ///
+    /// 它是语言侧接线（`resolveSchedulerFromLanguage`）的**读侧**，而这一侧不是可有可无的：
+    /// 降级后的程序**结果不变**（那是「语义保持、只降执行策略」的内容）
+    /// ⇒ 光看程序的输出，区分不出「声明被读到了」与「引擎根本没理那句声明」。
+    /// 没有本属性，「派发点用语言侧那个调度器」这句话就**没有可观测面**。
+    var dispatchBackEndCapabilities: ConcurrencyCapabilities { scheduler.capabilities }
+
     public func prepare(module: HIRModule) throws {
         callableBodies.removeAll()
         for function in module.functions { functions[function.name] = function }
@@ -568,6 +591,13 @@ public final class HIRExecutor: DebugHookHost {
             }
         }
         try resolveForeignsEagerly()
+        // 派发点的后端由**语言侧**决定（见 `resolveSchedulerFromLanguage`）。解析落在这里，
+        // 因为语言侧那份声明要到本模块的类型表装好之后才读得到 —— 构造器里没有它可读。
+        // ⇒ 也正因为落在装载期、任何工作线程出现之前，`scheduler` 那个 `var` 不需要锁。
+        // 注入值在场时不解析：注入是宿主在构造期说的，而判据正是经它摆进替身后端的。
+        if injectedScheduler == nil {
+            scheduler = resolveSchedulerFromLanguage()
+        }
     }
 
     /// Resolves every declared foreign symbol now, in the interpreter's order:
@@ -1623,6 +1653,42 @@ public final class HIRExecutor: DebugHookHost {
         let materialized = try constructValue(type)
         givenInstances[name] = materialized
         return materialized
+    }
+
+    /// 派发点的后端：从**语言侧的默认声明**解析而来。
+    ///
+    /// 这条接线的内容 —— 程序可以在语言里说明它的调度器（那个预置给定块），而派发点读它：
+    /// 于是「用哪个调度器、它能做什么」由**程序**说了算，而不是由引擎写死一个常量。
+    /// 在此之前，唯一能改动派发点后端的办法是宿主注入一个替身，而那种改动**语言看不见**。
+    ///
+    /// ⚠️ **只读声明，不物化实例** —— 这不是优化，是正确性要求。
+    /// 本函数跑在装载期，而装载期的契约是**只注册、不运行**：
+    /// 在这里求值（哪怕只是读一个字段初值）会去碰一套**尚未就绪**的执行状态。
+    /// 实测代价是响亮的：改成本实现之前的那版在装载期物化实例，
+    /// 让同进程里另一条「取用默认实例」的判据**超时**、整个测试进程**段错误**。
+    /// ⇒ 读字段的**声明值**（一个已折叠的字面量）而不是它的**运行值**。
+    ///
+    /// ⚠️ **读法刻意宽容**：字段缺席、或它的值不是布尔字面量，一律取**语言默认**（可让出）。
+    /// 理由不是省事 —— 用户可以整块替换那份声明，若他替换时没提到这个字段就判红，
+    /// 等于拿一处**没写**去罚一处**没改**的地方，而这类名字的处置有一条承诺是「零破坏性」。
+    /// ⇒ 判据的区分力不靠这条路：靠的是「显式声明不能让出」那条，它会真的变红。
+    ///
+    /// ⚠️ 内层仍是宿主那**唯一**的后端（原语层的事，语言今天说不了）。
+    /// 本函数换的不是后端本体，而是**它按谁的声明作答**。
+    private func resolveSchedulerFromLanguage() -> Scheduler {
+        SchedulerWithDeclaredCapability(
+            inner: GCDScheduler.shared, canYield: declaredYieldCapability())
+    }
+
+    /// 语言侧那份声明说这个调度器能不能让出。**只读字面量，不求值。**
+    private func declaredYieldCapability() -> Bool {
+        guard let declaration = types[PredefinedDecls.schedulerTypeName],
+            let field = declaration.fields.first(
+                where: { $0.name == PredefinedDecls.yieldCapabilityField }),
+            let declared = field.defaultValue,
+            case .boolConst(let canYield) = declared
+        else { return true }
+        return canYield
     }
 
     private func constructValue(_ type: HIRType) throws -> Value {

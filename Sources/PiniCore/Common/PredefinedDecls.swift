@@ -28,10 +28,16 @@ enum PredefinedDecls {
     /// **特征**是接口（`实现:` 位的可引用对象），**给定块**是默认实例的类型
     /// （取用点只认给定块 —— 只有特征形态时，`using` 形参在降载期解析不出类型）。
     ///
-    /// ⛔ **字段表刻意只有一个标识字段，不是遗漏**：策略自身的状态
+    /// ⛔ **字段表只有两个字段，不是遗漏**：策略自身的状态
     /// （队列 · 优先级 · 归约阈值）的形状，依附于「**任务在语言里怎么表示**」这一面，
     /// 而那一面今天还没有载体 ⇒ 在此预置字段等于替一个未决的形状做承诺。
-    /// 标识字段只回答一个问题：**取到的是哪一个默认实例**。
+    ///
+    /// 两个字段各回答一个问题 —— `名称`：**取到的是哪一个默认实例**；
+    /// `可让出`：**这个调度器能不能真的把线程交回去**。
+    ///
+    /// ⭐ 后者**不是策略**，而是执行策略里唯一有一个**可用替代值**的那一格：
+    /// 声明不能让出时，等待退化为占用线程、程序照常跑完（既有规范纪律：降级而不失败）。
+    /// ⇒ 它是这条语言侧接线今天唯一能承重的载荷 —— 派发点读了它，行为**可观测地**不同。
     ///
     /// ⛔ **不声明 `实现:` 它自己的特征**：该特征的抽象方法集今天为空，
     /// 此刻声明这条遵循关系**不携带任何内容**。待方法集随任务载体定下时，
@@ -48,7 +54,13 @@ enum PredefinedDecls {
                         typeAnnotation: .simple(name: "String", location: loc),
                         initializer: .stringLiteral(value: "默认", location: loc),
                         location: loc
-                    )
+                    ),
+                    FieldDecl(
+                        name: yieldCapabilityField,
+                        typeAnnotation: .simple(name: "Bool", location: loc),
+                        initializer: .boolLiteral(value: true, location: loc),
+                        location: loc
+                    ),
                 ],
                 methods: [],
                 traits: [],
@@ -59,6 +71,12 @@ enum PredefinedDecls {
 
     /// 调度特征的**语言可见名**。类型层登记的那个特征与上面的给定块同名。
     static let schedulerTypeName = "调度器"
+
+    /// 语言侧声明「本调度器能否让出」的字段名。
+    ///
+    /// 名字住在这里而不是读取处：字段名是**声明**的一部分，
+    /// 读取方与声明方各写一份，迟早在改名时对不上而无一条判据变红。
+    static let yieldCapabilityField = "可让出"
 
     /// 全部预置声明。两个消费者都从这里取。
     static var all: [TopLevelDecl] { [schedulerGivenBlock] }

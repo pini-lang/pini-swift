@@ -211,3 +211,36 @@ final class GCDScheduler: Scheduler {
         )
     }
 }
+
+/// 能力由**语言侧声明**决定的后端：派发照旧走 `inner`，而「能不能让出」按语言的声明答。
+///
+/// 它是「派发点用语言侧那个调度器」这条接线的落点。为什么要包一层、而不是换掉后端本体：
+/// 后端本体做的事（池容、背压、把工作放到线程上）属**原语层**、由宿主提供，
+/// 而语言今天能说的只有**能力那一格**。包一层把「宿主怎么做」与「语言说它能做什么」分开 ——
+/// 将来语言侧能说的东西变多时，本类型只多读几个字段，接缝不动。
+///
+/// ⚠️ `yieldTask()` **不委派给 `inner`**，这是本类型存在的全部理由：
+/// `inner` 的自述是它自己的实情，而语言侧的声明若被那一层委派覆盖掉，这条接线就等于没接。
+/// 两者不一致时以**语言的声明**为准 —— 声明不能让出就照不能办，
+/// 引擎随之走「占用线程等它决」那条路（降级而不失败，既有规范纪律）。
+final class SchedulerWithDeclaredCapability: Scheduler {
+    private let inner: Scheduler
+
+    /// 语言侧声明的能力。**固化一次**：声明在读它的那一刻定下，
+    /// 逐调用点重读等于让同一个程序在不同时刻自述不同能力。
+    let capabilities: ConcurrencyCapabilities
+
+    init(inner: Scheduler, canYield: Bool) {
+        self.inner = inner
+        self.capabilities = ConcurrencyCapabilities.resolve(threadsAvailable: canYield)
+    }
+
+    func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
+        inner.spawn(future, work: work)
+    }
+
+    var activeTaskCount: Int { inner.activeTaskCount }
+
+    /// 见类型说明：答的是**语言的声明**，不是 `inner` 的自述。
+    func yieldTask() -> Int32 { capabilities.supports(.yield) ? 1 : 0 }
+}
