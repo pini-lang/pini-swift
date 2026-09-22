@@ -249,6 +249,16 @@ public final class TypeChecker {
                 location: loc
             )
         )
+
+        // 预置声明（**宿主提供**）：上述特征的**给定块形态** —— 语言提供的默认调度实例。
+        //
+        // ⚠️ 为什么只有特征不够：`using` 位的取用点**只认给定块**。名字只有特征形态时，
+        // 该形参的类型在降载期解析不出来（实测形态：类型检查判过、降载期才拒）⇒ 两处形态都要在。
+        // 声明内容住在预置声明件里（**唯一出处**），此处只负责把它登记进类型环境。
+        // 登记走的是与用户声明**同一条**路径 ⇒ 字段表、`实现:`、方法表的行为都照旧，零新机制。
+        for decl in PredefinedDecls.all {
+            registerTopLevelDeclSignature(decl)
+        }
     }
 
     /// 取消专用错误类型名（与 Interpreter.builtinCancelErrorTypeName 对齐）。
@@ -304,6 +314,14 @@ public final class TypeChecker {
     /// 两份平行拷贝（各自做 `importAliasNames` / `preregisterTraits` / `registerTopLevelDeclSignature`），
     /// 而 `pini check` 走的是**后者**。只在一处填充时，另一条路上的本集合恒为空集
     /// ⇒ 下面那条诊断**静默失效**（实测：改动到位、编译通过、探针一条不报）。
+    /// 把**本模块声明**的给定块类型名收进来。
+    ///
+    /// ⛔ **刻意不合并的那一个来源**：预置声明（宿主提供）的名字**不进本集**。
+    /// 理由不是省事，而是一条承诺：该名字的处置是**软关键字** —— 「不作保留字、零破坏性」。
+    /// 把预置名并进来，等于让它在**任何**值位都成为不可用的名字：实测形态是用户自己写一个
+    /// 同名函数并在调用点用它，被判成「该名字不能作值」⇒ 破坏成立。
+    /// ⇒ 要合并它，先得有一条「本程序自己声明了同名符号时预置声明被遮蔽」的规则；
+    /// 那是一条**独立决定**，不随预置声明附带。
     private func collectGivenBlockTypeNames(_ module: Module) {
         givenBlockTypeNames = []
         for decl in module.declarations {

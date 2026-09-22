@@ -334,6 +334,15 @@ public enum HIRLowerer {
         // spelling names the enum itself, so it needs no index.
         var genericEnumTemplates: [String: EnumDecl] = [:]
         var genericEnumCaseOwners: [String: [String]] = [:]
+        // 预置声明（**宿主提供**）中、**未被本模块占用名字**的那些 —— 见 `visiblePredefined`。
+        // ⚠️ 落在这里而不是各入口：整包降载会把各文件摊平成一个模块再走本函数 ⇒
+        // 此处一处覆盖单模块与整包两条路。名义表又是 `userTypes` 的来源，故这一步同时让
+        // `using` 形参的类型标注找得到这个名字。
+        let predefined = HIRLowerer.visiblePredefined(in: module)
+        for decl in predefined {
+            guard case .givenDecl(let gd) = decl else { continue }
+            nominals[gd.name] = NominalInfo(name: gd.name, isObject: false, decl: decl)
+        }
         for decl in module.declarations {
             switch decl {
             case .structDecl(let sd):
@@ -778,7 +787,13 @@ public enum HIRLowerer {
         // Fields come from the registry, not the raw declaration: G11
         // composition flattening has already merged inherited members there.
         var typeDecls: [HIRTypeDecl] = []
-        for decl in module.declarations {
+        // 预置声明（**宿主提供**）也进本表：名义表只让类型名可解析，而**本表**才是
+        // 执行器建类型表、并据以物化默认实例的来源 —— 只进名义表会让实例
+        // 「类型上存在、字段上空」（实测形态：字段读得出类型、运行时却报该类型无此字段）。
+        //
+        // ⚠️ 用**同一份** `predefined`：本表是**数组**，两条同名项会让下游拿到两份定义
+        // （执行器按名字建表会后者胜，而发射器按条发定义会发两份）⇒ 在入口处消歧。
+        for decl in predefined + module.declarations {
             switch decl {
             case .structDecl(let sd):
                 // Generic templates emit no typeDecl — specializations do
@@ -5594,6 +5609,51 @@ public enum HIRLowerer {
             return nil
         case .importDecl, .exportDecl: return nil
         }
+    }
+
+    /// 预置声明里，**名字未被本模块占用**的那些。
+    ///
+    /// ⭐ 规则一句话：**用户声明优先**。本模块只要声明了一个同名顶级符号，预置的那份就**让位**。
+    ///
+    /// ⚠️ 为什么必须是「占用名字」这么宽的判据，而不是「同名且同类」：实测反例是用户自己写一个
+    /// 同名**函数**并在调用点用它 —— 只按同类判会漏掉它，而漏掉的后果是那处调用被解析成
+    /// 「该类型的构造」⇒ **既有程序静默换义**（报的是「构造函数不支持实参」这类下游错误，
+    /// 读起来像语法缺功能，而不像名字冲突）。这类名字的处置早已定为软关键字：它**不作保留字**。
+    ///
+    /// ⚠️ 与导入归并那条取名函数的**两处差异**，都是刻意的：
+    /// - **扩展块不算占名** —— 它挂在一个别处声明的类型上（`[[预置块名]]` 加方法正是正当用法）。
+    ///   把扩展算成占名，会让这种用法反过来把预置声明挤掉。
+    /// - **`[名|foreign]` 块名不算占名** —— 那个名字按定义只作组织名、不参与符号解析；
+    ///   真正占名的是块内的外部函数，故取它们的名字。
+    private static func visiblePredefined(in module: Module) -> [TopLevelDecl] {
+        let claimed = declaredNames(in: module)
+        return PredefinedDecls.all.filter { decl in
+            guard case .givenDecl(let given) = decl else { return true }
+            return !claimed.contains(given.name)
+        }
+    }
+
+    /// 本模块**声明**占用的顶级名字。
+    ///
+    /// 局部名不在此列：它们由作用域处理（同名的局部变量 / 形参本来就遮蔽类型名）。
+    private static func declaredNames(in module: Module) -> Set<String> {
+        var names: Set<String> = []
+        for decl in module.declarations {
+            switch decl {
+            case .funcDecl(let d): names.insert(d.name)
+            case .structDecl(let d): names.insert(d.name)
+            case .objectDecl(let d): names.insert(d.name)
+            case .givenDecl(let d): names.insert(d.name)
+            case .enumDecl(let d): names.insert(d.name)
+            case .traitDecl(let d): names.insert(d.name)
+            case .foreignDecl(let d):
+                for foreignFunc in d.funcs { names.insert(foreignFunc.name) }
+            case .varDecl(let statement), .statement(let statement):
+                if case .varDecl(let name, _, _, _, _) = statement { names.insert(name) }
+            case .extensionDecl, .importDecl, .exportDecl: break
+            }
+        }
+        return names
     }
 
     private static func unsupported(_ message: String, at location: SourceLocation) -> HIRLoweringError {
