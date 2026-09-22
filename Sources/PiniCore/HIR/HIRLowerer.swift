@@ -5611,49 +5611,13 @@ public enum HIRLowerer {
         }
     }
 
-    /// 预置声明里，**名字未被本模块占用**的那些。
+    /// 预置声明里，**名字未被本模块占用**的那些 —— **让位规则的唯一落点**。
     ///
-    /// ⭐ 规则一句话：**用户声明优先**。本模块只要声明了一个同名顶级符号，预置的那份就**让位**。
-    ///
-    /// ⚠️ 为什么必须是「占用名字」这么宽的判据，而不是「同名且同类」：实测反例是用户自己写一个
-    /// 同名**函数**并在调用点用它 —— 只按同类判会漏掉它，而漏掉的后果是那处调用被解析成
-    /// 「该类型的构造」⇒ **既有程序静默换义**（报的是「构造函数不支持实参」这类下游错误，
-    /// 读起来像语法缺功能，而不像名字冲突）。这类名字的处置早已定为软关键字：它**不作保留字**。
-    ///
-    /// ⚠️ 与导入归并那条取名函数的**两处差异**，都是刻意的：
-    /// - **扩展块不算占名** —— 它挂在一个别处声明的类型上（`[[预置块名]]` 加方法正是正当用法）。
-    ///   把扩展算成占名，会让这种用法反过来把预置声明挤掉。
-    /// - **`[名|foreign]` 块名不算占名** —— 那个名字按定义只作组织名、不参与符号解析；
-    ///   真正占名的是块内的外部函数，故取它们的名字。
+    /// ⚠️ 规则本身（什么算「占用」、什么刻意不算）住在预置声明的出处里，⛔ 本处不另写一份：
+    /// 类型层那条「给定块类型名不是值」的诊断问的是**同一个问题**，
+    /// 两处各写一份必然漂，而漂的那一刻**不会有一条判据变红**。
     private static func visiblePredefined(in module: Module) -> [TopLevelDecl] {
-        let claimed = declaredNames(in: module)
-        return PredefinedDecls.all.filter { decl in
-            guard case .givenDecl(let given) = decl else { return true }
-            return !claimed.contains(given.name)
-        }
-    }
-
-    /// 本模块**声明**占用的顶级名字。
-    ///
-    /// 局部名不在此列：它们由作用域处理（同名的局部变量 / 形参本来就遮蔽类型名）。
-    private static func declaredNames(in module: Module) -> Set<String> {
-        var names: Set<String> = []
-        for decl in module.declarations {
-            switch decl {
-            case .funcDecl(let d): names.insert(d.name)
-            case .structDecl(let d): names.insert(d.name)
-            case .objectDecl(let d): names.insert(d.name)
-            case .givenDecl(let d): names.insert(d.name)
-            case .enumDecl(let d): names.insert(d.name)
-            case .traitDecl(let d): names.insert(d.name)
-            case .foreignDecl(let d):
-                for foreignFunc in d.funcs { names.insert(foreignFunc.name) }
-            case .varDecl(let statement), .statement(let statement):
-                if case .varDecl(let name, _, _, _, _) = statement { names.insert(name) }
-            case .extensionDecl, .importDecl, .exportDecl: break
-            }
-        }
-        return names
+        PredefinedDecls.effective(in: module.declarations)
     }
 
     private static func unsupported(_ message: String, at location: SourceLocation) -> HIRLoweringError {

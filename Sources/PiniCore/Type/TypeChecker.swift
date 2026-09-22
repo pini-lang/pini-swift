@@ -314,19 +314,20 @@ public final class TypeChecker {
     /// 两份平行拷贝（各自做 `importAliasNames` / `preregisterTraits` / `registerTopLevelDeclSignature`），
     /// 而 `pini check` 走的是**后者**。只在一处填充时，另一条路上的本集合恒为空集
     /// ⇒ 下面那条诊断**静默失效**（实测：改动到位、编译通过、探针一条不报）。
-    /// 把**本模块声明**的给定块类型名收进来。
+    /// 把**在本程序里仍然生效**的给定块类型名收进来。
     ///
-    /// ⛔ **刻意不合并的那一个来源**：预置声明（宿主提供）的名字**不进本集**。
-    /// 理由不是省事，而是一条承诺：该名字的处置是**软关键字** —— 「不作保留字、零破坏性」。
-    /// 把预置名并进来，等于让它在**任何**值位都成为不可用的名字：实测形态是用户自己写一个
-    /// 同名函数并在调用点用它，被判成「该名字不能作值」⇒ 破坏成立。
-    /// ⇒ 要合并它，先得有一条「本程序自己声明了同名符号时预置声明被遮蔽」的规则；
-    /// 那是一条**独立决定**，不随预置声明附带。
+    /// ⚠️ **两个来源**：本模块声明的，以及**预置的**（宿主提供）。
+    /// 上一版只收前者，理由是「把预置名并进来会让它在任何值位都不可用」——
+    /// 那个顾虑现在由**让位规则**解掉了（规则本身住在预置声明的唯一出处里，本函数不另写一份）：
+    /// 本模块占了这个名字时预置那份不生效，这条诊断也随之不适用。
+    /// ⇒ 于是它对预置块**不再静默失效**，而「零破坏性」那条承诺照旧成立。
     private func collectGivenBlockTypeNames(_ module: Module) {
-        givenBlockTypeNames = []
+        var names: Set<String> = []
         for decl in module.declarations {
-            if case .givenDecl(let g) = decl { givenBlockTypeNames.insert(g.name) }
+            if case .givenDecl(let g) = decl { names.insert(g.name) }
         }
+        names.formUnion(PredefinedDecls.effectiveGivenBlockNames(in: module.declarations))
+        givenBlockTypeNames = names
     }
 
     public func check(module: Module) throws {

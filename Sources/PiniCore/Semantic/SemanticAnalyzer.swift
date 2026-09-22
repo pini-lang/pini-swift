@@ -90,6 +90,18 @@ public final class SemanticAnalyzer {
 
         try setupInjections(for: module)
         defer { teardownInjections() }
+        // 预置声明（宿主提供）先注册：让**语言预置的名字在本文件里存在**。
+        // ⚠️ 缺了这一步，那个名字落在值位会被判「未定义的变量」—— 一条**旧式**诊断，
+        // 读起来像拼错了名字，而它不是：那个名字确实存在，只是不能作值。
+        // 实测形态：同一个名字，用户自己声明成给定块时给的是可行动诊断，
+        // 而语言预置的那份给的是「未定义」⇒ 两处对同一件事给出两种答案。
+        //
+        // ⚠️ 顺序与判据都不是随意：「未被本模块占名的那些」是先决条件 ——
+        // 若连用户已占名的那份也注册，用户自己的声明会被判**重声明**，
+        // 而这类名字的处置有一条承诺是「用户声明优先」（让位规则，与降载层同源）。
+        for decl in PredefinedDecls.effective(in: module.declarations) {
+            try registerTopLevelDecl(decl)
+        }
         // 第一遍：预注册所有顶级声明
         for decl in module.declarations {
             try registerTopLevelDecl(decl)
@@ -127,6 +139,11 @@ public final class SemanticAnalyzer {
             try setupInjections(for: unit.module)
             defer { teardownInjections() }
 
+            // 预置声明先注册（理由见单模块入口）；本路径逐文件独立符号表，
+            // 故每个文件各注册一份，互不冲突。
+            for decl in PredefinedDecls.effective(in: unit.module.declarations) {
+                try registerTopLevelDecl(decl)
+            }
             // 第一遍：预注册当前文件自身的顶级声明（跨文件符号不入本表，防 private 泄漏）
             for decl in unit.module.declarations {
                 try registerTopLevelDecl(decl)
@@ -276,6 +293,19 @@ public final class SemanticAnalyzer {
                 errors.append(e)
             } catch {
                 errors.append(.moduleRootMissing(path: imp.packagePath))
+            }
+        }
+
+        // 预置声明先注册 —— 与单错误入口同一规则、同一顺序，理由见那里。
+        // ⚠️ 本入口是 `pini check` 实际走的那个：只在另一处加，命令行探针会**照旧**报
+        // 「未定义的变量」，而单元测试（走前者）却绿 ⇒ 一处漏改会伪装成「已修好」。
+        for decl in PredefinedDecls.effective(in: module.declarations) {
+            do {
+                try registerTopLevelDecl(decl)
+            } catch let error as SemanticError {
+                errors.append(error)
+            } catch {
+                // 非 SemanticError 不阻断后续（与下面同规）
             }
         }
 

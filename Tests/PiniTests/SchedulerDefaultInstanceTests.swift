@@ -35,6 +35,16 @@ struct SchedulerDefaultInstanceTests {
         return TypeChecker().checkCollecting(module: module)
     }
 
+    /// 走**收集模式**入口的语义层错误。
+    ///
+    /// ⚠️ 这个入口不是备选路径：**命令行实际走的是它**，而上面那个走的是单错误入口。
+    /// 两者是同一套初始化的**两份平行拷贝** ⇒ 只在一处登记预置声明时，
+    /// 另一条路上的那个名字**照旧**被报成「未定义的变量」，而单元测试却全绿。
+    /// ⇒ 每条「某名字必须被认识」的判据，都要问：**两条入口都测到了吗。**
+    private func collectingErrors(_ source: String) throws -> [SemanticError] {
+        SemanticAnalyzer().analyzeCollecting(module: try parsed(source))
+    }
+
     /// 跑到底，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {
         let module = try parsed(source)
@@ -177,5 +187,57 @@ struct SchedulerDefaultInstanceTests {
         """
         let lines = try runOutput(source)
         #expect(lines == ["你好"], "a method added to the preset block was not reachable: \(lines)")
+    }
+
+    // MARK: - 判据 6：值位诊断对**预置**块也生效（与用户声明的块同一条）
+
+    @Test("预置块的名字出现在值位时，给的是可行动诊断 —— 两处对同一件事给出同一答案")
+    func thePresetBlockNameIsDiagnosedInValuePosition() throws {
+        /// 意图：同一个名字，**用户自己声明成给定块**时早有一条可行动诊断
+        /// （「该类型名不能作值，请改用取用参数」），而**语言预置**的那份此前拿到的是
+        /// 「未定义的变量」—— 一条**旧式**诊断，读起来像拼错了名字，而那个名字确实存在。
+        ///
+        /// ⚠️ 本判据**必须**钉住**判定码**而不是「报了错就行」：旧式与新式都报错，
+        /// 断言「有错误」会让两种实现都通过 —— 而那正是本条要区分的东西。
+        ///
+        /// ⚠️ 命名一致性与让位规则是**同一批工作的两半**，判据 3 钉另一半：
+        /// 把预置名并进诊断的判定集，等于让它在**任何**值位都不可用
+        /// ⇒ 若同时不做出「用户占名则预置让位」，用户自己写的同名函数会被判红。
+        /// 两半必须同时在场，本件与判据 3 一起构成那个「同时」。
+        let source = """
+        取|func(x: String,) -> (String,):
+            return x
+
+        main|func() -> ():
+            print(取(调度器))
+            return
+        """
+        let failed = failure { _ = try runOutput(source) }
+        #expect(
+            failed?.code == "E4-015",
+            "实际判定码 \(failed?.code ?? "无（被接受了）") —— 期望可行动诊断，而不是「未定义的变量」")
+    }
+
+    @Test("收集模式那条入口同样认识这个名字 —— 两条入口不得给出两个答案")
+    func theCollectingEntryAlsoKnowsThePresetName() throws {
+        /// 意图：语义层那套初始化有**两份平行拷贝**（`pini check` 走收集模式，单元测试走另一条）
+        /// ⇒ 「预置名被登记」这件事**两处都要做**，只做一处会伪装成已修好：
+        /// 另一条路上那个名字仍被判「未定义变量」。
+        ///
+        /// ⚠️ 断言的是**「不报未定义变量」**而不是「没有错误」：收集模式只跑语义层，
+        /// 值位那条可行动诊断生在类型层 ⇒ 本入口本来就不该报它。
+        /// 断错这一格会让本判据永远红（把「本该没有的错误」当成漏做）。
+        let source = """
+        取|func(x: String,) -> (String,):
+            return x
+
+        main|func() -> ():
+            print(取(调度器))
+            return
+        """
+        let codes = try collectingErrors(source).map(\.diagnosticCode)
+        #expect(
+            !codes.contains("E3-001"),
+            "收集模式入口把预置名判成未定义 —— 那个名字确实存在，只是不能作值：\(codes)")
     }
 }
