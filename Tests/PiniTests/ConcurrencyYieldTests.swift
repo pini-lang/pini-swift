@@ -85,6 +85,43 @@ struct ConcurrencyYieldTests {
         return
     """
 
+    /// 一个体里**两处** `await` 的最小语料 —— 归并口径的判据靠它取区分力。
+    ///
+    /// 为什么必须是**两处**：只让出一次的程序上，「只数首跑那一趟」与「每一次都数」
+    /// **读数相同** ⇒ 那种语料量不出归并前后的差别（这也正是它此前没被发现的原因）。
+    /// 第二次 `await` 的对象是**新 spawn 的**子任务 ⇒ 它同样未决、同样会让出。
+    ///
+    /// ⚠️ 睡眠取值刻意**远小于**下面那两份为「池水平线判读」留窗口的语料：本判据读的是
+    /// **让出计数的精确值**、不需要判读窗口，只要求「`await` 那一刻子任务尚未决」
+    /// —— 而 spawn 到 await 之间只隔微秒 ⇒ 留一点余量即可。取大值的代价是**整机负载**：
+    /// 全量并行时它会去挤别的判据（本仓另有一条判据用固定秒数的看门狗等结果）。
+    private static let 探针两处让出 = """
+    慢|func(n: I32,) => (I32,):
+        print("S-start")
+        sleep(60)
+        print("S-done")
+        return ok(n)
+
+    父|func(n: I32,) => (I32,):
+        let a = 慢(n)
+        let x = try await a else e:
+            return err(Error("failed"))
+        let b = 慢(x)
+        let y = try await b else e:
+            return err(Error("failed"))
+        return ok(y)
+
+    main|func() -> ():
+        let t = 父(7)
+        let r = wait t
+        match r:
+            case ok(v):
+                print(v)
+            case err(e):
+                print("failed")
+        return
+    """
+
     private static let 探针已决 = """
     慢|func(n: I32,) => (I32,):
         print("S-start")
@@ -116,8 +153,8 @@ struct ConcurrencyYieldTests {
     /// 有几个任务」的读数，而测试默认并行执行 ⇒ 另一条用例的任务会把读数挪走，
     /// 让一条本来成立的判据报红。让出计数只由「让出」驱动 ⇒ 取增量即可判定，
     /// 不需要独占整台机器。
-    private func runYieldProbe(join: String) throws -> (yields: Int, lines: [String]) {
-        let module = try lowered(Self.yieldProbe(join))
+    private func runYieldProbe(_ source: String) throws -> (yields: Int, lines: [String]) {
+        let module = try lowered(source)
         let lock = NSLock()
         var lines: [String] = []
         var finished = false
@@ -151,6 +188,29 @@ struct ConcurrencyYieldTests {
         return (GCDScheduler.shared.yieldedTaskCount - before, seen)
     }
 
+    /// 同一份语料，但让出读数取自**只归本次运行**的后端（替身）。
+    ///
+    /// ⚠️ 为什么要能换读数来源：进程级单例的计数是**整台机器**的读数，并行的另一条用例
+    /// 让出一次就把它挪走（上面那条也因此取**增量**）。替身把生产后端整个委派出去、
+    /// 只在体的结局处挂一个计数 ⇒ 只数自己的，不必靠增量。
+    ///
+    /// ⚠️ 断言形态与上面那条**一致**（同一个精确值），两条各是一次独立判定 ——
+    /// **合起来才是「两侧同口径」**；只保一侧的话，「归并完成」会变成一侧的完成。
+    /// ⚠️ 它与上面那条同住一个**串行化**的 suite：两条都会真的跑程序，
+    /// 并行跑会互相挪动读数（本 suite 的串行正是为这个立的）。
+    private func runYieldProbe(
+        _ source: String, via counting: YieldCountingScheduler
+    ) throws -> (yields: Int, lines: [String]) {
+        let module = try lowered(source)
+        var lines: [String] = []
+        let executor = HIRExecutor(
+            programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: counting)
+        executor.outputSink = { lines.append($0) }
+        try executor.run(module: module)
+        // 读在运行**之后**：`main` 的那一处 `wait` 会把整条链等到决 ⇒ 此刻所有让出都已发生。
+        return (counting.yieldCount, lines)
+    }
+
     // MARK: - 判据 1：让出真的发生（推进性），且 `wait` 不占用同一格（驳回性）
 
     @Test("await 未决子任务时父任务把线程让出去 —— 子任务已决则不让出")
@@ -163,8 +223,8 @@ struct ConcurrencyYieldTests {
         ///
         /// ⚠️ 两面必须同一语料、只差一个关键字：拿两段不同的程序对照，
         /// 差异就可能来自别处，而这条判据要说的恰恰是**唯有关键字**造成了差异。
-        let yielding = try runYieldProbe(join: "await")
-        let occupying = try runYieldProbe(join: "settled")
+        let yielding = try runYieldProbe(Self.yieldProbe("await"))
+        let occupying = try runYieldProbe(Self.yieldProbe("settled"))
 
         #expect(yielding.yields >= 1, "await never gave its task up (yields: \(yielding.yields))")
         #expect(occupying.yields == 0, "wait gave its task up \(occupying.yields) time(s), so the two forms are not distinct")
@@ -178,12 +238,58 @@ struct ConcurrencyYieldTests {
         /// （子任务会再 spawn 一次、值再算一遍），而副作用做了两遍。本判据用
         /// `S-start` 的**出现次数**把这条堵住：子任务只该被 spawn 一次。
         /// 同时钉住返回值走到了输出（`7`），即续跑的路径没有把语句尾巴丢掉。
-        let probe = try runYieldProbe(join: "await")
+        let probe = try runYieldProbe(Self.yieldProbe("await"))
 
         #expect(probe.lines.contains("7"), "the resumed body did not carry its value to the end")
         #expect(
             probe.lines.filter { $0 == "S-start" }.count == 1,
             "the child was spawned more than once, so the body restarted instead of resuming"
         )
+    }
+
+    // MARK: - 判据 3：让出次数是「每一次」，不是「首跑那一趟」
+
+    @Test("一个体内让出两次 ⇒ 读数 = 2（首跑一次 + 续跑一次）")
+    func everyGiveUpIsCountedNotOnlyTheFirstRun() throws {
+        /// 意图：两腿的让出计数必须是**同一个量**（口径 = 让出动作次数）。归并前本腿只数
+        /// 「体在派发那一趟上让出」—— 续跑由决出方直接驱动、不经派发口 ⇒ 一个体内让出两次的
+        /// 程序只读得到 1，而发射腿读得到 2。本判据用**精确值**把归并钉住。
+        ///
+        /// ⚠️ 它的区分力**全在语料上**：只让出一次的程序，两种口径读数相同 ⇒ 那种语料
+        /// 量不出这次归并（这正是该缺口此前只能靠读两条腿的代码发现的原因）。
+        ///
+        /// 驳回性的一半由**语料自检**承担：两个子任务必须都起来过（两处 `S-start`），
+        /// 否则「读数 = 2」可能出自别的原因，而语料已经不再测它自称要测的东西。
+        let probe = try runYieldProbe(Self.探针两处让出)
+
+        #expect(
+            probe.lines.filter { $0 == "S-start" }.count == 2,
+            "expected two children, hence two waits — the corpus stopped measuring what it claims"
+        )
+        #expect(
+            probe.yields == 2,
+            "expected every give-up (outbound run + resumed run), got \(probe.yields)"
+        )
+        #expect(probe.lines.contains("7"), "the second await did not carry its value to the end")
+    }
+
+    // MARK: - 判据 4：替身与生产后端必须是同一个量（两侧同时跟上口径）
+
+    @Test("替身也数续跑那一次 ⇒ 读数 = 2（与生产后端同一个量）")
+    func theCountingBackendCountsResumedRunsToo() throws {
+        /// 意图：口径归并要求**两侧同时**跟上。只改生产后端会让「替身与生产后端读数一致」
+        /// 这条前提**静默失效** —— 两边的数**各自都看不出错**，差别只在「一个体内让出多次」
+        /// 的语料上显形（只让出一次时两种口径读数相同）。
+        ///
+        /// ⚠️ 本条读替身的读数、上一条读生产后端的读数，两条断的是**同一个精确值**
+        /// ⇒ 合起来等价于「两侧相等」。分居两条不是因为可以少验一侧，而是读数来源不同。
+        let counting = YieldCountingScheduler(inner: GCDScheduler.shared)
+        let probe = try runYieldProbe(Self.探针两处让出, via: counting)
+
+        #expect(
+            probe.yields == 2,
+            "the counting backend saw \(probe.yields) give-ups — the resumed one did not land here"
+        )
+        #expect(probe.lines.contains("7"), "the second await did not carry its value to the end")
     }
 }

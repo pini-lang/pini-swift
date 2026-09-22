@@ -3152,6 +3152,11 @@ public final class HIRExecutor: DebugHookHost {
             case .finished(let result):
                 task.resolve(HIRExecutor.closeTask(task, value: result))
             case .givenUp(let next):
+                // 续跑这一趟也让出了，而它不由派发口驱动 ⇒ 记账要在这里补一次。
+                // ⚠️ 漏掉这一句，本腿的让出计数就只数得到**首跑那一趟**，
+                // 而发射腿数的是每一次 —— 两腿在「一个体内让出多次」的语料上会分岔，
+                // 且两边各自的数都看不出错。
+                scheduler.noteYield()
                 attachResume(next, task: task)
             }
         } catch {

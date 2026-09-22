@@ -533,15 +533,19 @@ enum ContractGuardError: Error, CustomStringConvertible {
 /// 也可能在自己的程序让出时读出**别人的次数**。本件要断的是**精确值**（`= 1`），
 /// 增量式的「至少一次」给不了这个判别力。包装一层就只数自己的。
 ///
-/// ⚠️ **如实边界 —— 它数与发射腿那个计数器不是同一个量**：本类型数的是
-/// 「体在**派发那一趟**上让出」；续跑不再经调度器（由决出方直接驱动），故一个体内
-/// **多处**让出的程序，这里只数到第一次。发射腿记的是**每一次**让出 ⇒ 两者在那种程序上会分岔。
-/// 受守卫这一格只有一处 `await`，故两支读数一致；**接多处让出的语料之前须先归并口径**。
+/// ⚠️ **此处原有一条「如实边界」，已随本次口径归并失效** —— 它当时写的是「本类型数的是
+/// 『体在**派发那一趟**上让出』，故一个体内**多处**让出的程序这里只数到第一次，与发射腿会分岔」，
+/// 并留下一句「**接多处让出的语料之前须先归并口径**」的后置条件。
+/// 现况：**归并已完成** —— 两个来源（派发那一趟 · 续跑那几趟）都落在本类型自己实现的
+/// `noteYield()` 上 ⇒ 让出一次就记一次，与发射腿同一个量。
 ///
 /// ⚠️ 与 `ConcurrencyCapabilitiesTests` 里那个替身后端**不是同一件事**：那个宣告
 /// 「本后端不能让出」（`yieldTask()` 恒返 `0`）以检验降级纪律；本类型**照常让出**，
 /// 只是把次数记下来 ⇒ 它验的是读数，不是纪律。
-private final class YieldCountingScheduler: Scheduler {
+/// ⚠️ **本类型刻意不是私有的**：让出口径的两条判据分居两处（一处按契约参照跑两腿、
+/// 一处在只读进程内读数的件里），而**两侧必须读出同一个数** ⇒ 两处都要能构造它。
+/// 这不是「为了方便共享」，是那条判据的形态要求：只保一侧的话，「归并完成」会变成一侧的完成。
+final class YieldCountingScheduler: Scheduler {
     private let inner: GCDScheduler
     private let lock = NSLock()
     private var suspensions = 0
@@ -558,13 +562,20 @@ private final class YieldCountingScheduler: Scheduler {
     func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
         inner.spawn(future) {
             let outcome = try work()
-            if case .suspended = outcome {
-                self.lock.lock()
-                self.suspensions += 1
-                self.lock.unlock()
-            }
+            if case .suspended = outcome { self.noteYield() }
             return outcome
         }
+    }
+
+    /// 记账**自己收**、⛔ 不委派给 `inner` —— 本类型数的是「**本次运行**」，
+    /// 而 `inner` 的计数是**进程级**的（并行的另一条用例让出一次就把它挪走）。
+    ///
+    /// ⚠️ 它与派发口里那一处**配对**：续跑那几趟不经派发口，故必须在这里也收一次
+    /// —— 否则本替身只数得到首跑那一趟，与生产后端再度分岔，而两边的数**各自都看不出错**。
+    func noteYield() {
+        lock.lock()
+        suspensions += 1
+        lock.unlock()
     }
 
     var activeTaskCount: Int { inner.activeTaskCount }
