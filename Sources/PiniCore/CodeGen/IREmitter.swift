@@ -245,6 +245,7 @@ public final class IREmitter {
         header += "declare i32 @bk_array_len(ptr)\n"
         header += "declare ptr @bk_array_get(ptr, i32)\n"
         header += "declare ptr @bk_array_set(ptr, i32, ptr, i32, i32)\n"
+        header += "declare ptr @bk_array_append(ptr, ptr, i32, i32)\n"
         header += "declare void @bk_handle_retain(ptr)\n"
         header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
         header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
@@ -1724,6 +1725,12 @@ public final class IREmitter {
     private func emitExpr(_ expr: HIRExpr) -> IRValue {
         switch expr {
         case .intConst(let value, let type):
+            // ⚠️ 指针类型上不能写整数字面量：`ret ptr 0` 会让**整个模块**被 lli 拒
+            // （integer constant must have integer type）⇒ 指针位的零要写成 `null`。
+            // 那个零的**含义**就是空指针 —— 「这个句柄没有指向任何东西」。
+            if case .pointer = type, value == 0 {
+                return IRValue(llvmType: type.llvmSpelling, ssaName: "null")
+            }
             return IRValue(llvmType: type.llvmSpelling, ssaName: String(value))
 
         case .floatConst(let value):
@@ -1796,6 +1803,21 @@ public final class IREmitter {
                 let temp = builder.freshTemp()
                 bodyIR += " \(temp) = sitofp \(operand.llvmType) \(operand.ssaName) to double\n"
                 return IRValue(llvmType: "double", ssaName: temp)
+            }
+
+            // 语言层的内建数组方法 `append` 在降载层是**命名调用**（不展开成专门节点），
+            // 解释器腿由运行时回答它，而发射腿此前没有任何符号来回答 ⇒ IR 里引用了未定义值。
+            // ⚠️ 它住在**对每个程序无条件生效**的预置声明里 ⇒ 拒绝面是**整个模块**，不是个别程序。
+            // 这里把它接到数组族的符号上；元素 ABI 与 `bk_array_set` 取同一张表。
+            if function == "Array.append" {
+                guard args.count == 2, case .array(let elementType)? = returnType else {
+                    fatalError(
+                        "IREmitter: the builtin array append needs a receiver plus one element and an array result (HIRLowerer guarantees)"
+                    )
+                }
+                return emitArrayAppend(
+                    receiver: args[0], elementNode: arguments[1], elementValue: args[1],
+                    elementType: elementType)
             }
 
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
@@ -2741,6 +2763,31 @@ public final class IREmitter {
         }
     }
 
+    /// Append one element, yielding a **new** array handle (the input handle and
+    /// its contents are left alone — the same functional shape `slice` produces).
+    ///
+    /// The element ABI (width + tag) comes from the table the subscript store
+    /// uses, and so does the alias rule: a value the source still owns is
+    /// retained before the move, while a fresh temporary transfers ownership.
+    /// The byte copy itself belongs to the runtime, which is also where the
+    /// tag's nested-handle accounting lives.
+    private func emitArrayAppend(
+        receiver: IRValue, elementNode: HIRExpr, elementValue: IRValue, elementType: HIRType
+    ) -> IRValue {
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        emitRetainIfAliased(elementNode, elementValue)
+        let boxPtr = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+        bodyIR += builder.fmtStore(value: elementValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(receiver.ssaName) to ptr\n"
+        let appended = builder.freshTemp()
+        bodyIR += " \(appended) = call ptr @bk_array_append(ptr \(raw), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        let typed = builder.freshTemp()
+        bodyIR += " \(typed) = bitcast ptr \(appended) to %bk_array*\n"
+        return IRValue(llvmType: "%bk_array*", ssaName: typed)
+    }
+
     /// One slice bound: `none` (optionalConstruct isSome=false) takes the
     /// default (start → "0", end → the runtime count); an integer is
     /// tail-counted when negative, then clamped into [0, count] — all via
@@ -2976,6 +3023,10 @@ public final class IREmitter {
         case .array: return ("%bk_array*", 8, 4)
         case .dict: return ("%bk_dict*", 8, 4)
         case .set: return ("%bk_set*", 8, 4)
+        // ⭐ `*T` 原始指针走**裸指针 tag**（与 String / Char 同格），不是容器句柄那一格：
+        // 它不参与引用计数，而运行时那两条钩子（retain / release）只在 handle tag 上动手。
+        // ⚠️ 装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
+        case .pointer: return ("i8*", 8, 3)
         case .future:
             // 句柄数组（`joinAll` 的实参形态）需要一条把句柄搬进运行时容器的通道，
             // 而聚合 join 尚未接线 ⇒ 这里给一个点名的拒绝，而不是笼统的「没有这条 ABI」。

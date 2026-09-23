@@ -72,8 +72,15 @@ public final class SemanticAnalyzer {
         // 静态分析层须先登记，否则示例/用户代码中调用这些自由函数会被误报
         // undefinedFunction。字符串成员方法（s.upper() 等）走成员调用路径，
         // 不经符号表查找，无需在此登记。
+        //
+        // ⚠️ 形态不止一种：表里除函数外还有**值**（策略层的空句柄即其一）。值也要登记 ——
+        // 漏了它，裸名字读会被判「未定义的变量」，而那个名字确实存在，读起来却像拼错了名字。
+        // 两者按同一条规则分流：带值类型的登记为变量，其余登记为函数。
         for decl in BuiltinRegistry.decls where decl.definesSymbol {
-            symbolTable.define(Symbol(name: decl.name, kind: .function, location: dummyLoc))
+            let kind: SymbolKind = decl.valueType == nil
+                ? .function
+                : .variable(isMutable: false)
+            symbolTable.define(Symbol(name: decl.name, kind: kind, location: dummyLoc))
         }
     }
 

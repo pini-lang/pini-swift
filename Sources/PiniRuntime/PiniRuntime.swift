@@ -289,6 +289,48 @@ public func bk_array_set(
     return target
 }
 
+/// 追加一个元素，返回**新数组**（函数式：输入句柄与其内容都不受影响）。
+///
+/// 与语言层内建数组方法的 `append` 同契约：追加**不就地**发生，调用方必须用返回值替换原句柄
+/// （`元素 = 元素.append(任务)`）。与 `bk_array_set` 的分工是刻意的 ——
+/// 后者是**写既有容器**（故写前必须 `_bkEnsureUnique`），前者是**产出新容器**
+/// （故天然不与输入共享存储，无需分裂）。
+///
+/// 元素宽度与 tag 由 codegen 的元素 ABI 传入（与 `bk_array_set` 同一对参数），
+/// 故本函数对元素类型无关：新元素按 `elemBytes` 字节装箱，`elemTag` 供嵌套句柄识别。
+/// ⚠️ 与 `bk_array_set` 同规：对句柄型内容只做**字节复制（移动语义）**、不 retain ——
+/// 别名点 retain 是 codegen 的责任（它按同一个判定发射）。
+///
+/// ⛔ 空句柄（`nil`）上追加视作**从空数组开始**：与「长度为 0 的容器」行为一致，
+/// 而不是报错 —— 调用方拿到的仍是长度为 1 的新数组。
+@_cdecl("bk_array_append")
+public func bk_array_append(
+    _ arr: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer,
+    _ elemBytes: Int32, _ elemTag: Int32
+) -> UnsafeMutableRawPointer {
+    let width = Int(elemBytes)
+    guard width > 0 else {
+        bk_panic(
+            "Pini runtime error: bk_array_append needs a positive element width (from the codegen element ABI)")
+    }
+    let source = arr.map { Unmanaged<_BkArrayBox>.fromOpaque($0).takeUnretainedValue() }
+    let count = source?.elements.count ?? 0
+    let grown = _BkArrayBox(count: count + 1)
+    if let source {
+        for i in 0..<count {
+            grown.tags[i] = source.tags[i]
+            grown.widths[i] = source.widths[i]
+            guard let elem = source.elements[i], source.widths[i] > 0 else { continue }
+            grown.elements[i] = _bkAllocBox(elem, source.widths[i])
+            _bkRetainIfHandle(elem, source.tags[i])
+        }
+    }
+    grown.elements[count] = _bkAllocBox(src, width)
+    grown.tags[count] = elemTag
+    grown.widths[count] = width
+    return _bkRegister(grown)
+}
+
 /// 释放数组句柄的一份 share（归零才真正回收）。
 /// D4.2.3 将经 IR 在作用域末尾注入此调用以实现精确释放。
 @_cdecl("bk_array_destroy")

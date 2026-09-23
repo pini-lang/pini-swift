@@ -2876,6 +2876,18 @@ public enum HIRLowerer {
             if let type = context.variableTypes[name] {
                 return LoweredExpr(node: .load(name: name, type: type), type: type)
             }
+            // 内建**值**：裸名字直出常量。
+            //
+            // ⚠️ 位置在变量表**之后**是刻意的：用户自己声明了同名变量时，读到的是用户那份
+            // —— 与预置声明的让位规则同向，不另立一套优先级。
+            // ⚠️ 那个常量恒为零，而它**不是一个可解引用的地址**：它的含义是「这个句柄
+            // 没有指向任何东西」。这句话由类型层承重（它只被比较、不被解引用）。
+            if let valueType = BuiltinRegistry.builtinValueType(named: name) {
+                guard let hirType = HIRType(from: valueType) else {
+                    throw unsupported("builtin value '\(name)' has no HIR type", at: location)
+                }
+                return LoweredExpr(node: .intConst(value: 0, type: hirType), type: hirType)
+            }
             // G12: bare field name inside a method body (interpreter
             // bindInstanceFields parity) — lower as `self.<field>`.
             if let fieldType = context.selfFieldTypes[name] {
