@@ -12,8 +12,8 @@ import Testing
 /// ⛔ **本件不是 `DE-3b` 的验收**：`DE-3b` 的判据是「符号存在性 + 形状与 `DE-1` 一致」，
 /// 而**符号存在性只算辅助证据**（一个 `return 0` 的空壳同样存在）。本件把每个符号**真调一遍**
 /// 并断言其效果 ⇒ 「存在」这一半被「可用」这一半盖住。
-/// ⛔ **也不含**「LLVM 腿跑通并发程序」—— 那属 `DE-3c`（发射层接线，今天两处 `fatalError`、
-/// `rc=133`）。**不得把本件全绿读成 LLVM 腿能跑并发。**
+/// ⛔ **也不含**「LLVM 后端跑通并发程序」—— 那属 `DE-3c`（发射层接线，今天两处 `fatalError`、
+/// `rc=133`）。**不得把本件全绿读成 LLVM 后端能跑并发。**
 ///
 /// ⚠️ **`.serialized` 不是风格选择**：`bk_task_is_cancelled()` 读的是**线程本地**的「当前任务」，
 /// 而 Swift Testing 默认并行、多个用例可能落在同一线程 ⇒ 并行会让当前任务互相污染，
@@ -121,11 +121,11 @@ struct ConcurrencyRuntimeABITests {
 
     // MARK: - 能力位
 
-    @Test("能力位自述：位定义与解释器腿一致，L2 永不宣称，且本腿自 DE-6b 起宣称 L1")
+    @Test("能力位自述：位定义与解释器后端一致，L2 永不宣称，且本后端自 DE-6b 起宣称 L1")
     func capabilitiesAgreeWithTheInterpreterLeg() throws {
-        /// 意图：`bk_capabilities()` 的**位定义**必须与解释器腿同源 —— 两腿各定一套的话，
+        /// 意图：`bk_capabilities()` 的**位定义**必须与解释器后端同源 —— 各后端各定一套的话，
         /// `DE-4` 的契约参照就没有共同基准（`DE-1` §3.4 定案表的原话）。
-        /// 断言的是**子集关系**（本腿 ⊂ 解释器腿）：这条**将来仍成立**（相等也是子集），
+        /// 断言的是**子集关系**（本后端 ⊂ 解释器后端）：这条**将来仍成立**（相等也是子集），
         /// 所以它不是一次性判据。
         /// ⛔ L2 缺席是**裁定 29** 的直接后果（登记不实现）—— 任何后端都不许宣称它。
         /// ⭐ **L1 自 `DE-6b` 起在场**：此前它「必须缺席」是因为让出的执行路径没接上，
@@ -136,7 +136,7 @@ struct ConcurrencyRuntimeABITests {
         let oracle = ConcurrencyCapabilities.resolve(threadsAvailable: true)
         #expect(actual & 4 == 0, "L2 永不许宣称（裁定 29），实际位图 \(actual)")
         #expect(actual & 1 == 1, "L0 应在场，实际位图 \(actual)")
-        #expect(actual & ~oracle.bitmap == 0, "本腿置了位定义之外的位：\(actual) 对 \(oracle.bitmap)")
+        #expect(actual & ~oracle.bitmap == 0, "本后端置了位定义之外的位：\(actual) 对 \(oracle.bitmap)")
         #expect(actual & 2 == 2, "L1 自 DE-6b 起在场（让出路径同批接通），实际位图 \(actual)")
     }
 
@@ -144,7 +144,7 @@ struct ConcurrencyRuntimeABITests {
 
     @Test("join 三态：ok 直通 · 任务自己的 err 直通 · 取消归约为 CancelError")
     func joinNormalisesThreeOutcomes() throws {
-        /// 意图：`RuntimeOps.joinFuture` 的三条归一化各归一态 —— 它是两腿**唯一**容易分歧的
+        /// 意图：`RuntimeOps.joinFuture` 的三条归一化各归一态 —— 它是各后端**唯一**容易分歧的
         /// 地方（一个复制品会在 happy path 上一致、在「哪个 catch 先命中」上分歧），故逐态钉。
         /// ⛔ 第三条断言的 `status == 1` **不是错误**：C ABI 面没有值构造器 ⇒ 取消身份
         /// 由 `status` 承载（本段定案，见源码段首 ②）。它与 `err(CancelError)` 同义。
@@ -182,9 +182,9 @@ struct ConcurrencyRuntimeABITests {
         #expect(writer.wait(timeout: .now() + 1) == .success)
     }
 
-    @Test("joinWithin 超时：归约为 CancelError、且该任务被取消（与解释器腿 timeout 分支同构）")
+    @Test("joinWithin 超时：归约为 CancelError、且该任务被取消（与解释器后端 timeout 分支同构）")
     func joinWithinTimesOutAndCancelsTheTask() throws {
-        /// 意图：`DE-1` §3.1 说超时「归约 `err(CancelError)`（与解释器腿 `joinWithin` 同构）」。
+        /// 意图：`DE-1` §3.1 说超时「归约 `err(CancelError)`（与解释器后端 `joinWithin` 同构）」。
         /// 「同构」有两半，缺一不可：**值**（err）与**副作用**（取消那个任务）——
         /// 只回 err 不取消，会让一个没人在等的任务继续占线程，那正是 fail-fast 要避免的事。
         let t = _bkTaskMake(); defer { bk_handle_release(t) }
@@ -249,7 +249,7 @@ struct ConcurrencyRuntimeABITests {
     @Test("取消检查点：无当前任务回 0 · 有且已取消回 1 · 未取消回 0 · 恢复后回 0")
     func isCancelledReadsTheCurrentTask() throws {
         /// 意图：`bk_task_is_cancelled()` 是**无参**的，故它只能问「**当前**任务」——
-        /// 与解释器腿 `RuntimeOps.checkCancellation(owner)` 同职。
+        /// 与解释器后端 `RuntimeOps.checkCancellation(owner)` 同职。
         /// ⛔ 第一条断言（主线程无任务 ⇒ 0）与 `checkCancellation(nil)`「不做事」同义：
         /// 「没有任务在跑」**不是**「被取消了」；若实现回 `1`，任何不在任务里的循环都会误退出。
         #expect(bk_task_is_cancelled() == 0, "没有任务在跑 ⇒ 不该报被取消")
@@ -359,19 +359,19 @@ struct ConcurrencyRuntimeABITests {
 
     // MARK: - `B-3`：spawn / yield
 
-    @Test("yield 的答案取自 L1 位 —— 与解释器腿同一条规则，且本腿自 DE-6b 起真的回 1")
+    @Test("yield 的答案取自 L1 位 —— 与解释器后端同一条规则，且本后端自 DE-6b 起真的回 1")
     func yieldAnswersFromTheCapabilityBit() throws {
-        /// 意图：`DE-1` §3.2 要求**两腿在这一位上一致**，否则「`await` 让出 / `wait` 占用」
-        /// 这条可观测差异跨后端就没有共同基准。解释器腿的对应物就是
-        /// `capabilities.supports(.yield) ? 1 : 0` ⇒ 本腿照**同一条规则**取答案。
+        /// 意图：`DE-1` §3.2 要求**各后端在这一位上一致**，否则「`await` 让出 / `wait` 占用」
+        /// 这条可观测差异跨后端就没有共同基准。解释器后端的对应物就是
+        /// `capabilities.supports(.yield) ? 1 : 0` ⇒ 本后端照**同一条规则**取答案。
         /// ⭐ 第一条断言写成**关系式**而不是常量：位图变了它仍成立 —— 常量式判据会变成一条
         /// 必须手改的假绿。
-        /// ⭐ 第二条则是**关系式之外的一处刻意固化**（`DE-6b`）：本腿的 L1 不再是「将来时」，
+        /// ⭐ 第二条则是**关系式之外的一处刻意固化**（`DE-6b`）：本后端的 L1 不再是「将来时」，
         /// 让出的执行路径同批接上了 ⇒ 这里点明它现在必须回 `1`。若哪天有人把 L1 位撤掉而
         /// 忘了撤让出路径，本条会红 —— 那正是它该红的时刻。
         let expected: Int32 = (bk_capabilities() & 2) != 0 ? 1 : 0
         #expect(bk_task_yield() == expected, "yield 的答案必须由 L1 位推出")
-        #expect(bk_task_yield() == 1, "`DE-6b` 起本腿宣称 L1 ⇒ 回 1（不再是合规降级）")
+        #expect(bk_task_yield() == 1, "`DE-6b` 起本后端宣称 L1 ⇒ 回 1（不再是合规降级）")
     }
 
     @Test("spawn 立刻返回，且体在**另一条线程**上跑完（急切派发不是「就地跑完」）")
@@ -478,7 +478,7 @@ struct ConcurrencyRuntimeABITests {
         defer { o.deallocate() }
         _bkTaskResolveOk(t, 7)
         let status = bk_task_await(t, raw(o))
-        #expect(status == 0, "已决的对象不值得交出控制流（解释器腿同一条规则）")
+        #expect(status == 0, "已决的对象不值得交出控制流（解释器后端同一条规则）")
         #expect(o[0] == 0 && o[1] == 7, "三槽须与 join 同形：\(o[0])/\(o[1])")
     }
 
@@ -765,7 +765,7 @@ private func bkTestBodyPtr() -> UnsafeMutableRawPointer {
 // ⚠️ **为什么这里用替身而不是 Pini 语料**：本段要证的是**驱动面**（谁在什么时候被交出去、
 // 谁被挑中），而那不是「策略用什么语言写的」的函数。判据侧自造策略能把驱动面单独钉住，
 // ⛔ 不受语言面那两处**已知阻塞**牵动（语言面上「两个任务等同一个未来」写不出来；
-// 「用户替换调度器」在发射腿上另有一处既有缺口）。⇒ 那两处**各是各的账**，
+// 「用户替换调度器」在 LLVM 后端上另有一处既有缺口）。⇒ 那两处**各是各的账**，
 // 不得把本条全绿读成它们做成了。
 
 /// 替身策略的状态。

@@ -3126,7 +3126,7 @@ public final class HIRExecutor: DebugHookHost {
     private struct ReadyItem {
         let task: FutureValue
         let frame: HIRYieldFrame
-        /// 让出时等到的那个值 —— 推进它时随调用带进去（本腿的取值形态）。
+        /// 让出时等到的那个值 —— 推进它时随调用带进去（本后端的取值形态）。
         let value: Value
     }
 
@@ -3439,8 +3439,8 @@ public final class HIRExecutor: DebugHookHost {
                 task.resolve(HIRExecutor.closeTask(task, value: result))
             case .givenUp(let next):
                 // 续跑这一趟也让出了，而它不由派发口驱动 ⇒ 记账要在这里补一次。
-                // ⚠️ 漏掉这一句，本腿的让出计数就只数得到**首跑那一趟**，
-                // 而发射腿数的是每一次 —— 两腿在「一个体内让出多次」的语料上会分岔，
+                // ⚠️ 漏掉这一句，本后端的让出计数就只数得到**首跑那一趟**，
+                // 而 LLVM 后端数的是每一次 —— 各后端在「一个体内让出多次」的语料上会分岔，
                 // 且两边各自的数都看不出错。
                 scheduler.noteYield()
                 attachResume(next, task: task)

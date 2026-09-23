@@ -1819,7 +1819,7 @@ public final class IREmitter {
             }
 
             // 语言层的内建数组方法 `append` 在降载层是**命名调用**（不展开成专门节点），
-            // 解释器腿由运行时回答它，而发射腿此前没有任何符号来回答 ⇒ IR 里引用了未定义值。
+            // 解释器后端由运行时回答它，而 LLVM 后端此前没有任何符号来回答 ⇒ IR 里引用了未定义值。
             // ⚠️ 它住在**对每个程序无条件生效**的预置声明里 ⇒ 拒绝面是**整个模块**，不是个别程序。
             // 这里把它接到数组族的符号上；元素 ABI 与 `bk_array_set` 取同一张表。
             if function == "Array.append" {
@@ -2550,7 +2550,7 @@ public final class IREmitter {
     /// ⚠️ 两个入口直接取方法函数的地址：调用约定能对上的理由是**两边都是裸指针形态**
     /// （第一实参是策略实例，参数 / 返回是任务句柄）。
     /// ⛔ 方法不存在时这里**不做检查** —— 发射层照发那个符号，由 `lli` 报未定义符号。
-    /// 如实登记：解释器腿的对应形态是运行期抛「策略没有这个方法」，两腿的**拒绝形态不同**，
+    /// 如实登记：解释器后端的对应形态是运行期抛「策略没有这个方法」，各后端的**拒绝形态不同**，
     /// 收敛它须另行点名（⛔ 不在本段）。
     private func emitSchedulerBinding(handle: String) {
         // 调度器类型不在本模块 ⇒ 没有策略可绑。⛔ 此时不绑：运行时的处置是
@@ -4461,7 +4461,7 @@ public final class IREmitter {
     }
 
     /// ok 载荷能否住进**一个字**（三槽 ABI 的宽度）。聚合值（元组 / optional / 嵌套 Result）
-    /// 需要多于一个字，本腿没有搬运通道。
+    /// 需要多于一个字，本后端没有搬运通道。
     private func isSingleWordPayload(_ type: HIRType) -> Bool {
         switch type {
         case .tuple, .optional, .result: return false

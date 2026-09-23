@@ -912,7 +912,7 @@ public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? 
 // （`join` · `join_within` · `join_all` · `cancel` · `is_cancelled` · `detach` ·
 // `scope_close` · `capabilities`）的形状与机制无关，故本段交付。
 //
-// 语义**一律对齐解释器腿**，不做第二套解释（出处逐个写明）：
+// 语义**一律对齐解释器后端**，不做第二套解释（出处逐个写明）：
 //   `RuntimeOps.joinFuture`        —— 阻塞 join 的三态归一化（`RuntimeOps.swift`）
 //   `RuntimeOps.makeJoinAllFuture` —— fail-fast 聚合
 //   `FutureValue.closeScope` + `RuntimeOps.flipIfLeaked` —— 唯一有界 override
@@ -932,7 +932,7 @@ public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? 
 // 非法用法（空句柄 / 越界）**不走 `status`**，一律 `bk_panic` —— 与既有 `bk_array_get` /
 // `bk_dict_get` 同一条通道（本仓错误分三通道：panic / status / 值，此处沿用 panic）。
 
-/// 任务盒 —— `FutureValue`（解释器腿）在 C ABI 面的对应物。
+/// 任务盒 —— `FutureValue`（解释器后端）在 C ABI 面的对应物。
 ///
 /// 继承 `_BkBox` 是**刻意的复用**，不是顺手：`_bkRegister` / `_bkReleaseShare` /
 /// `bk_runtime_cleanup` 那套「活动句柄登记 + 进程退出兜底回收」对任务句柄**同样成立**
@@ -942,7 +942,7 @@ private final class _BkTaskBox: _BkBox {
     /// 阻塞 join 的等待 / 唤醒。
     ///
     /// 与 `FutureValue.wait()` 同构，但用 `NSCondition` 而非 `DispatchGroup`：后者为每个
-    /// 等待者引入一次队列跳转，而这里的等待者往往就是同一台腿上的发射代码，不需要那层调度。
+    /// 等待者引入一次队列跳转，而这里的等待者往往就是同一台后端上的发射代码，不需要那层调度。
     /// ⛔ **所有状态改动都在本锁下进行** —— 否则「置位 + broadcast」与「判位 + wait」之间
     /// 会出现丢唤醒的窗口，而那正是阻塞 join 最经典的竞态。
     let cond = NSCondition()
@@ -956,7 +956,7 @@ private final class _BkTaskBox: _BkBox {
     var okPayload: Int64 = 0
     var errPayload: Int64 = 0
 
-    /// 协作式取消标志。⛔ 取消**不强杀** —— 与解释器腿一致：worker 在下一个检查点
+    /// 协作式取消标志。⛔ 取消**不强杀** —— 与解释器后端一致：worker 在下一个检查点
     /// （`bk_task_is_cancelled`）自行提前结束，故取消是**最终一致**的。
     var cancelled = false
 
@@ -1081,7 +1081,7 @@ private func _bkTaskWait(_ box: _BkTaskBox, timeoutMs: Int32?) -> Bool {
 /// 递归取消（照 `FutureValue.cancel()`）。
 ///
 /// ⛔ **先取快照、解锁、再向下传播** —— 持锁递归会与剪枝的反向加锁（子 → 父）
-/// 形成锁序死锁。解释器腿的 `cancel()` 也是这个形状（取快照 → 解锁 → 传播）。
+/// 形成锁序死锁。解释器后端的 `cancel()` 也是这个形状（取快照 → 解锁 → 传播）。
 private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     box.cond.lock()
     if box.cancelled { box.cond.unlock(); return }
@@ -1161,15 +1161,15 @@ private func _bkTaskJoinOne(
 ///
 /// ⛔ **L2 一律不许宣称**（裁定 29：登记不实现）⇒ 这里没有它的位。
 ///
-/// ⭐ **本腿自 `DE-6b` 起宣称 L0 + L1**。为什么此刻才敢宣称：L1 的定义是「`bk_task_yield`
+/// ⭐ **本后端自 `DE-6b` 起宣称 L0 + L1**。为什么此刻才敢宣称：L1 的定义是「`bk_task_yield`
 /// 能**真让出**」，而走乙之下「让出」是**异步体的 `return`**、由驱动器接住 —— 那件事与申报位
 /// **同批落地**：发射层在异步体的语句根 `await` 处交出控制流（帧 + 续跑点），运行时由**决出方**
 /// 续跑。⛔ 此前「只宣称 L0」是合规降级、不是遗漏；如今反过来 —— 若再宣 L0 就是**低报**，
-/// 而低报同样会让判据失真（能力位的用处正是让两腿可被对照）。
+/// 而低报同样会让判据失真（能力位的用处正是让各后端可被对照）。
 ///
-/// ⚠️ 本 target **不依赖 `PiniCore`**（`Package.swift`），故位值在此**重述**；权威定义在解释器腿
+/// ⚠️ 本 target **不依赖 `PiniCore`**（`Package.swift`），故位值在此**重述**；权威定义在解释器后端
 /// （`Sources/PiniCore/Interpreter/ConcurrencyCapabilities.swift`）。**重述不漂开**由判据钉住：
-/// `ConcurrencyRuntimeABITests` 断言本腿的置位是解释器腿的**子集**（即位定义一致）。
+/// `ConcurrencyRuntimeABITests` 断言本后端的置位是解释器后端的**子集**（即位定义一致）。
 /// 能力位的**位值**（`DE-1` §3.4 定案表，`DE-2b-3` 补遗）。命名而非散落字面量：
 /// `bk_task_yield` 的答案就取自 L1 位（见该函数），两处必须是**同一个**位。
 private enum ConcurrencyTierBits {
@@ -1196,9 +1196,9 @@ public func bk_task_cancel(_ h: UnsafeMutableRawPointer?) {
 
 /// 取消检查点（`DE-1` §3.3）：回答**当前任务**是否已被取消。
 ///
-/// 无参形态对应解释器腿的检查点 `RuntimeOps.checkCancellation` —— 该腿在岗的是
-/// **异步体入口**与 **`joinAll` 聚合**；该腿 `sleep` 的检查点**有意留空**（单线程、
-/// 不持任务句柄），按片真查取消位的是发射层的 `bk_sleep`。⛔ 两条腿都**没有**
+/// 无参形态对应解释器后端的检查点 `RuntimeOps.checkCancellation` —— 该后端在岗的是
+/// **异步体入口**与 **`joinAll` 聚合**；该后端 `sleep` 的检查点**有意留空**（单线程、
+/// 不持任务句柄），按片真查取消位的是发射层的 `bk_sleep`。⛔ 各后端都**没有**
 /// 「循环头」检查点（2026-09-21 逐处实测）。⛔ **无当前任务时回 `0`** —— 与
 /// `checkCancellation(nil)`「不做事」同义，也即「没有任务在跑 ⇒ 没有被取消」。
 @_cdecl("bk_task_is_cancelled")
@@ -1242,7 +1242,7 @@ private let _bkResultSlotsBytes = 24
 /// 三件事按序做完再返回，故调用方**立刻**拿到句柄（急切派发）：
 /// ① 建盒 · ② **认父**（父已取消 ⇒ 新子立即取消，见 `_bkTaskAdopt`）· ③ 起线程跑体。
 ///
-/// ⚠️ **线程归本腿的「原语层」**（`DE-1` §4：让出 / 恢复 · 续体保存 · 任务树 · 取消树 = 原语）。
+/// ⚠️ **线程归本后端的「原语层」**（`DE-1` §4：让出 / 恢复 · 续体保存 · 任务树 · 取消树 = 原语）。
 /// **策略层**（队列 / 优先级 / 归约阈值 / **选择下一个任务**）**不住在这里** —— 那是 Pini 值、
 /// 经 HIR 执行（裁定 28）。本函数只回答「体在哪条 OS 线程上开始跑」，不回答「下一个跑谁」。
 @_cdecl("bk_task_spawn")
@@ -1345,12 +1345,12 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
 /// - Returns: `1` = 能真让出 · `0` = **合规降级** ⇒ 本次等待按**占用**处理。
 ///   ⛔ `0` **不是错误**（`DE-1` §6.2 纪律 3：无合格版本则降级，不失败）。
 ///
-/// ⭐ **答案取自 L1 位，与解释器腿同源**：解释器腿的对应物就是
+/// ⭐ **答案取自 L1 位，与解释器后端同源**：解释器后端的对应物就是
 /// `GCDScheduler.capabilities.supports(.yield) ? 1 : 0`（`Scheduler.swift`）。
-/// ⇒ 两腿在这一位上由**同一条规则**决定，不会各说各话 —— 这正是 `DE-1` §3.2 要求的
-/// 「两腿必须在这一位上一致」。
+/// ⇒ 各后端在这一位上由**同一条规则**决定，不会各说各话 —— 这正是 `DE-1` §3.2 要求的
+/// 「各后端必须在这一位上一致」。
 ///
-/// ⭐ **`DE-6b` 起本腿宣称 L1**（`_bkCapabilities` 含 `yield` 位）⇒ 本函数回 `1`。
+/// ⭐ **`DE-6b` 起本后端宣称 L1**（`_bkCapabilities` 含 `yield` 位）⇒ 本函数回 `1`。
 /// 它之所以能宣称，是因为让出的**执行路径**真的接上了：发射层在异步体的语句根 `await` 处
 /// 交出控制权（帧+续跑点），运行时由决出方续跑 —— 即「申报」与「可用」同批成立。
 @_cdecl("bk_task_yield")
@@ -1448,7 +1448,7 @@ public func bk_task_await(
         target.awaiters.append(current)
     }
     target.cond.unlock()
-    // 已决的对象不值得交出控制流：直接取值（解释器腿同一条规则 —— 「已决的 future 不是
+    // 已决的对象不值得交出控制流：直接取值（解释器后端同一条规则 —— 「已决的 future 不是
     // 放弃任务的理由」，那里也走直线）。
     if settled { return _bkTaskJoinOne(target, timeoutMs: nil, out: out) }
     return 2
@@ -1456,13 +1456,13 @@ public func bk_task_await(
 
 /// `sleep(ms)` 的原语层落点 —— **按片睡**，每片醒来查一次取消位。
 ///
-/// ⛔ 为什么不做成 libc 的睡眠：解释器腿的对应物（`RuntimeOps.builtinSleep`）是把长睡
+/// ⛔ 为什么不做成 libc 的睡眠：解释器后端的对应物（`RuntimeOps.builtinSleep`）是把长睡
 /// 拆成小片、每片回来查一次取消 / 超时，因此「取消一个正在睡的任务」在**一片之内**生效，
-/// 而不是等它睡完。一条直通的 libc 睡眠会让两腿在**取消时机**上分岔，而那个分岔在
+/// 而不是等它睡完。一条直通的 libc 睡眠会让各后端在**取消时机**上分岔，而那个分岔在
 /// 只跑成功的样板里看不出来。睡眠本就属原语层（`DE-1` §4：让出 / 恢复 / 续体保存归宿主），
 /// 故它住在这里、而不是被降载成一条 libc 调用。
 ///
-/// ⚠️ **一处如实的边界**：解释器腿在检查点发现取消时是**抛**（abort 体），而 C ABI 面
+/// ⚠️ **一处如实的边界**：解释器后端在检查点发现取消时是**抛**（abort 体），而 C ABI 面
 /// 没有异常通道 ⇒ 本函数只能**提前结束睡眠**，体随后仍会跑完。差别只在「取消后体还能跑几步」，
 /// 而**等待侧的归约是同一套**：盒子已被置取消，`bk_task_join` 照旧返回 `status = 1`
 /// （⇒ `err(CancelError)`）。体被真正中断要等发射层的检查点接线，属后置批次。
@@ -1493,7 +1493,7 @@ public func bk_task_join(
     return _bkTaskJoinOne(box, timeoutMs: nil, out: out)
 }
 
-/// 带超时的阻塞 join（`DE-1` §3.1）。超时**归约为取消**（与解释器腿 `joinFuture(timeoutMs:)`
+/// 带超时的阻塞 join（`DE-1` §3.1）。超时**归约为取消**（与解释器后端 `joinFuture(timeoutMs:)`
 /// 同构：取消该任务 + `err(CancelError)`）⇒ 超时时返回 `status = 1`。
 @_cdecl("bk_task_join_within")
 public func bk_task_join_within(
@@ -1508,7 +1508,7 @@ public func bk_task_join_within(
 /// 聚合 join（`DE-1` §3.1），**fail-fast**：任一成员的 `err` 即决定聚合，其余成员被取消
 /// （照 `RuntimeOps.makeJoinAllFuture` —— 没人在等它们，就不该继续占线程）。
 ///
-/// ⚠️ **成员的父链不动**：解释器腿用 `onCancel` 做取消联动，而非改写父链 —— 改写会让某个
+/// ⚠️ **成员的父链不动**：解释器后端用 `onCancel` 做取消联动，而非改写父链 —— 改写会让某个
 /// 调用方的返回取消掉**它从未拥有过**的任务。本段同此：只对成员调取消，不 `adopt`。
 ///
 /// ⚠️ 全 `ok` 时聚合载荷是一个**数组句柄**，元素是各成员的 ok 载荷（8 字节不透明字，
@@ -1519,7 +1519,7 @@ public func bk_task_join_all(
 ) -> Int32 {
     let n = Int(count)
     guard n > 0 else {
-        // 空集合的聚合是**空数组**，不是错误：`joinAll([])` 在解释器腿返回 ok([])。
+        // 空集合的聚合是**空数组**，不是错误：`joinAll([])` 在解释器后端返回 ok([])。
         let arr = bk_array_create(0)
         _bkWriteResult(out, tag: 0, ok: _bkWord(arr), err: 0)
         return 0
@@ -1579,7 +1579,7 @@ public func bk_task_join_all(
 /// ② **已有 `err` 的 `out` 不被覆盖** —— errors-as-data 已经载着一次失败，
 ///    覆盖它等于丢掉「到底哪一次失败了」。
 ///
-/// ⛔ 聚合载荷：解释器腿拼的是一句人读的错误消息（要 stringify 各 leaked 值），
+/// ⛔ 聚合载荷：解释器后端拼的是一句人读的错误消息（要 stringify 各 leaked 值），
 /// 而 C ABI 面**构造不出值、也没有 stringify** ⇒ 本段只写 **leaked 计数**，
 /// 并明标为待 `DE-3c` 换真实聚合值（见段首 ②）。
 @_cdecl("bk_scope_close")
@@ -1736,7 +1736,7 @@ private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
 /// 成立的**前提**：一次决出会**同步地、依次**唤醒所有等它的任务，若让**每个**唤醒各自去请挑选，
 /// 第一趟挑选就可能发生在这批里**还有任务没入队**的时刻 ⇒ 第一个醒来的被挑走
 /// ⇒ 挑选顺序退回**决出顺序**，策略层**无选择可言**。
-/// ⚠️ 这条与解释器腿同源（那条腿为此把登记改成「按被等的未来并批」）；本腿的快照**本来就是整批**，
+/// ⚠️ 这条与解释器后端同源（那个后端为此把登记改成「按被等的未来并批」）；本后端的快照**本来就是整批**，
 /// 故只需把「两步分开」写对。
 private func _bkTaskResumeAwaiters(_ box: _BkTaskBox) {
     box.cond.lock()
@@ -1755,7 +1755,7 @@ private func _bkTaskResumeAwaiters(_ box: _BkTaskBox) {
 ///
 /// ⛔ **本函数不再起线程**：那正是本段改掉的东西。此前它 `Thread { _bkTaskRunBody(h) }`
 /// 直接重入体 ⇒ 顺序完全由**决出顺序**决定，策略层没有任何可挑的余地
-/// （与解释器腿在 `Q-3` 之前同构）。⇒ 「调度器可替换」这句话在两腿上从此有**对象**。
+/// （与解释器后端在 `Q-3` 之前同构）。⇒ 「调度器可替换」这句话在各后端上从此有**对象**。
 ///
 /// ⛔ 两道守卫各挡一件事：`resolved` / `cancelled` 挡「已经收口了，别再排队」。
 ///
@@ -1778,13 +1778,13 @@ private func _bkTaskResume(_ box: _BkTaskBox) -> Bool {
 
 // MARK: 就绪队列的驱动面（`Q-4`：决出 ⇒ 入队，由策略层决定谁跑）
 //
-// ⛔ 本段与解释器腿**同形**（对应物在 `HIRExecutor` 的同名一节）—— 决出不再直接续跑体，
+// ⛔ 本段与解释器后端**同形**（对应物在 `HIRExecutor` 的同名一节）—— 决出不再直接续跑体，
 // 而是把任务**交给策略层的队列**，再由挑选循环按策略给的顺序推进。
-// ⚠️ 两腿在**句柄承载**上不同，这是架构使然、⛔ 不是偏差：
-//   · 解释器腿的任务是宿主对象，塞不进语言层的 `*U8` ⇒ 用**整数句柄 + 一张映射表**；
-//   · 发射腿的任务句柄**本来就是一个不透明指针**（造盒时登记所得），与语言层的 `*U8` 同形
+// ⚠️ 各后端在**句柄承载**上不同，这是架构使然、⛔ 不是偏差：
+//   · 解释器后端的任务是宿主对象，塞不进语言层的 `*U8` ⇒ 用**整数句柄 + 一张映射表**；
+//   · LLVM 后端的任务句柄**本来就是一个不透明指针**（造盒时登记所得），与语言层的 `*U8` 同形
 //     ⇒ **零映射表**：直接把那个指针交给策略层，拿回来即任务。
-//   ⇒ 「推进一次」的跨腿契约定的是**语义**，明文不固定两腿的入口形状。
+//   ⇒ 「推进一次」的跨后端契约定的是**语义**，明文不固定各后端的入口形状。
 
 /// 策略层的绑定记录（裁定 **57** 取甲：**运行时持挑选循环**，发射层交出**可调用的入口**）。
 ///
@@ -1806,7 +1806,7 @@ private struct _BkSchedBinding {
 
 /// 一次「问策略层要一个」的结果。
 ///
-/// ⚠️ **「空」与「缺陷」必须分开**（与解释器腿同一条纪律）：前者是正常状态（刚建好的队列
+/// ⚠️ **「空」与「缺陷」必须分开**（与解释器后端同一条纪律）：前者是正常状态（刚建好的队列
 /// 就是空的），后者是策略给了一个**从没发出去过**的句柄。混成一个读数就会把缺陷读成
 /// 「暂时没活」⇒ 于是**静默地什么都不做** —— 那是本引擎最不能出的结果。
 private enum _BkReadyTake {
@@ -1824,7 +1824,7 @@ private enum _BkReadyTake {
 private var _bkReadyQueue: [UnsafeMutableRawPointer] = []
 private let _bkReadyLock = NSLock()
 
-/// 「趟」的两笔账（照解释器腿）：**有人要挑** · **已经有一趟在挑**。
+/// 「趟」的两笔账（照解释器后端）：**有人要挑** · **已经有一趟在挑**。
 ///
 /// ⚠️ 为什么需要它们：一批任务**全部入队之后**才请挑选循环，但请挑选这件事本身可能落在
 /// **另一条线程**上（同一时刻可能有多批）⇒ 用「已有循环在跑就只记一笔」把它收成
@@ -1930,8 +1930,8 @@ private func _bkTaskOffer(_ box: _BkTaskBox) -> Bool {
         //
         // ⚠️ 两处**如实登记**：① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」而非「可跑」
         // （没有队列就无所谓「在队列里」，那个成员身份在这条路上**不成立**）；
-        // ② 解释器腿**没有**这条降级路径（那条腿总有策略 —— 预置默认实例），
-        // 故两腿在这一格上不对称，收敛它须另行点名。
+        // ② 解释器后端**没有**这条降级路径（那个后端总有策略 —— 预置默认实例），
+        // 故各后端在这一格上不对称，收敛它须另行点名。
         let thread = Thread { _bkTaskRunBody(h) }
         thread.start()
         return false
@@ -2033,8 +2033,8 @@ private func _bkTaskDrain() {
 ///
 /// ⚠️ **走 stderr 而不是 stdout**：这一层程序的 stdout 是**被断言的东西**（判据逐字节比它），
 /// 在它上面打诊断会把「程序输出」与「引擎抱怨」混成一个读数。
-/// ⚠️ 与解释器腿的对应物**一处不对称**如实登记：那条腿打的是 stdout
-/// （本腿的 stdout 承载着 `printf` 的程序输出，故不能照搬）。
+/// ⚠️ 与解释器后端的对应物**一处不对称**如实登记：那个后端打的是 stdout
+/// （本后端的 stdout 承载着 `printf` 的程序输出，故不能照搬）。
 private func _bkReportSchedulerDefect(_ detail: String) {
     FileHandle.standardError.write(
         Data("[scheduler] ⛔ 策略层给出的答案不可用，就绪队列停止驱动：\(detail)\n".utf8))
