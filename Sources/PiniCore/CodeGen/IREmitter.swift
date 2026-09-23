@@ -190,6 +190,12 @@ public final class IREmitter {
     /// 是否发射过帧的取用 —— `bk_task_frame` / `bk_task_slot` 的 declare 随之条件出现。
     private var usesTaskFrame = false
 
+    /// 是否把**调度器绑定**交给过运行时（`Q-4` 乙段）。
+    ///
+    /// ⚠️ 它是「派发点会取用默认调度实例」这件事的**唯一征兆**：本符号的 declare 随它条件出现，
+    /// 与让出族那几行同规（只有真发过的模块才带）。
+    private var usesSchedBinding = false
+
     /// ADR-001 `P2b`：默认实例的**存放位**（程序级槽位，每个给定块类型一个）。
     ///
     /// 定义处 = 声明所在文件（发射层按类型名发一次），同包内其它文件经**同一个** IR 模块
@@ -314,6 +320,7 @@ public final class IREmitter {
         usesTaskArgRelease = false
         usesSleepShim = false
         usesTaskFrame = false
+        usesSchedBinding = false
         frameMode = .none
         blockDepth = 0
         frameSlotDecls = []
@@ -417,6 +424,12 @@ public final class IREmitter {
         }
         if usesSleepShim {
             tail += "declare void @bk_sleep(i32)\n"
+        }
+        // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
+        // 只有真发过派发的模块才带。⚠️ 观测符号 `bk_task_state` **不在这里** ——
+        // 它没有调用点（发射层从不发射它），它是给宿主与判据用的 C ABI 观测面。
+        if usesSchedBinding {
+            tail += "declare i32 @bk_task_bind_sched(ptr, ptr)\n"
         }
         // ADR-001 `P2b`：默认实例的存放位。模块级全局、初值 null ⇒ 首调由运行时建盒。
         for def in givenSlotDefs {
@@ -2499,6 +2512,70 @@ public final class IREmitter {
         return IRValue(llvmType: type.llvmSpelling, ssaName: local)
     }
 
+    /// 默认实例的**盒指针** —— ⛔ 不是它的值。
+    ///
+    /// 与 `emitGivenInstance` 只差一处：**不做那份本地拷贝**。
+    ///
+    /// ⚠️ 为什么本处必须**不**拷贝：策略层的方法会**写它自己的字段**（入队 / 出队），
+    /// 队列状态因而必须活过派发点那一帧。把调用方栈上那份副本的地址交给运行时，
+    /// 等于把队列放进一个**随帧消失**的对象里 —— 挑选循环随后拿到的是**悬垂指针**，
+    /// 而它的症状是随机错乱、不是立即崩溃。
+    /// ⇒ 取用点要副本（「实参的副本」是那条路的语义），驱动面要**本体**，两者不可互推。
+    private func emitGivenBoxPointer(type: HIRType) -> IRValue {
+        guard case .nominal(let name, _) = type,
+            let aggregate = type.nominalAggregateSpelling,
+            moduleTypes.contains(where: { $0.name == name })
+        else {
+            fatalError("IREmitter: given box pointer of unknown nominal type (caller gates this)")
+        }
+        let slot = ensureGivenSlot(type: type)
+        let initializer = ensureGivenInitializer(type: type)
+        let sizeEnd = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: sizeEnd, aggregate: aggregate, base: "null", indices: [1]) + "\n"
+        let sizeTemp = builder.freshTemp()
+        bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
+        let boxed = builder.freshTemp()
+        bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
+        return IRValue(llvmType: "ptr", ssaName: boxed)
+    }
+
+    /// 把一个**已派发**的任务与调度器绑定起来（`Q-4` 乙段）。
+    ///
+    /// ⭐ 为什么由发射层交出「怎么调」：策略是 Pini 值、它的方法体是**编译产物**，
+    /// 而运行时那一层是纯 C ABI、**拿不到方法表** ⇒ 那层不可能自己去调策略。
+    /// 三个机器字 —— 策略实例 · 「收下」的入口 · 「选择下一个任务」的入口 —— 就是那次交接
+    /// （裁定 **57** 取甲：运行时持挑选循环，发射层交出可调用的入口）。
+    ///
+    /// ⚠️ 策略实例取的是**盒指针**而不是它的一份副本，理由见 `emitGivenBoxPointer`。
+    /// ⚠️ 两个入口直接取方法函数的地址：调用约定能对上的理由是**两边都是裸指针形态**
+    /// （第一实参是策略实例，参数 / 返回是任务句柄）。
+    /// ⛔ 方法不存在时这里**不做检查** —— 发射层照发那个符号，由 `lli` 报未定义符号。
+    /// 如实登记：解释器腿的对应形态是运行期抛「策略没有这个方法」，两腿的**拒绝形态不同**，
+    /// 收敛它须另行点名（⛔ 不在本段）。
+    private func emitSchedulerBinding(handle: String) {
+        // 调度器类型不在本模块 ⇒ 没有策略可绑。⛔ 此时不绑：运行时的处置是
+        // 「没有绑定 ⇒ 该任务按取消归约」，而那条路只有在**真有人 await** 时才有对象。
+        guard moduleTypes.contains(where: { $0.name == PredefinedDecls.schedulerTypeName }) else {
+            return
+        }
+        usesSchedBinding = true
+        let schedulerType = HIRType.nominal(
+            name: PredefinedDecls.schedulerTypeName, isObject: false)
+        let sched = emitGivenBoxPointer(type: schedulerType)
+        let typeName = IRName.mangle(PredefinedDecls.schedulerTypeName)
+        let accept = "@\(IRName.mangle(PredefinedDecls.acceptMethodName))__\(typeName)"
+        let pick = "@\(IRName.mangle(PredefinedDecls.pickMethodName))__\(typeName)"
+        let binding = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: binding, type: "[3 x ptr]") + "\n"
+        for (index, value) in [sched.ssaName, accept, pick].enumerated() {
+            let field = builder.freshTemp()
+            bodyIR += builder.fmtGEPByteOffset(name: field, base: binding, offset: "\(index * 8)") + "\n"
+            bodyIR += builder.fmtStore(value: value, type: "ptr", ptr: field) + "\n"
+        }
+        let ignored = builder.freshTemp()
+        bodyIR += " \(ignored) = call i32 @bk_task_bind_sched(ptr \(handle), ptr \(binding))\n"
+    }
+
     /// 取（并在首次需要时定义）某类型的存放位符号。
     private func ensureGivenSlot(type: HIRType) -> String {
         guard case .nominal(let name, _) = type else {
@@ -4239,6 +4316,9 @@ public final class IREmitter {
         let handle = builder.freshTemp()
         bodyIR +=
             " \(handle) = call ptr @bk_task_spawn(ptr @__task_body_\(mangled), ptr null, ptr \(envRaw), i32 0, i32 0)\n"
+        // `Q-4` 乙段：把调度器绑定交给运行时。⭐ 派发点是「这个任务属于哪个调度器」的
+        // **唯一知情处** —— 设计里「派发点把调度器写进盒子」那句话的落点就在这一行。
+        emitSchedulerBinding(handle: handle)
         return IRValue(llvmType: "ptr", ssaName: handle)
     }
 

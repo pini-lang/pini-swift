@@ -3198,8 +3198,8 @@ public final class HIRExecutor: DebugHookHost {
     private var strategyMethodKeys: (accept: String, pick: String) {
         let typeName = IRName.mangle(PredefinedDecls.schedulerTypeName)
         return (
-            "\(IRName.mangle("收下"))__\(typeName)",
-            "\(IRName.mangle("选择下一个任务"))__\(typeName)"
+            "\(IRName.mangle(PredefinedDecls.acceptMethodName))__\(typeName)",
+            "\(IRName.mangle(PredefinedDecls.pickMethodName))__\(typeName)"
         )
     }
 
@@ -3240,7 +3240,7 @@ public final class HIRExecutor: DebugHookHost {
     /// 调策略层的「收下」。接收者走**首个实参位** —— 类型方法的既定调用形态。
     private func strategyAccept(handle: Int) throws {
         guard let accept = methods[strategyMethodKeys.accept] else {
-            throw HIRExecutor.missingStrategyMethod("收下")
+            throw HIRExecutor.missingStrategyMethod(PredefinedDecls.acceptMethodName)
         }
         strategyLock.lock()
         defer { strategyLock.unlock() }
@@ -3250,7 +3250,7 @@ public final class HIRExecutor: DebugHookHost {
     /// 问策略层「下一个是谁」，并把答案落成一件待推进项。
     private func strategyPick() throws -> ReadyTake {
         guard let pick = methods[strategyMethodKeys.pick] else {
-            throw HIRExecutor.missingStrategyMethod("选择下一个任务")
+            throw HIRExecutor.missingStrategyMethod(PredefinedDecls.pickMethodName)
         }
         strategyLock.lock()
         let answered: Value

@@ -1023,6 +1023,16 @@ private final class _BkTaskBox: _BkBox {
     /// ⛔ 它关的是一扇**丢唤醒**的窗，不是缓存：没有它，「等我的任务」会在窄缝里永远不再被调度。
     var resumePending = false
 
+    /// ⭐ **我此刻在就绪队列里等着被挑**（`Q-4`）。
+    ///
+    /// ⛔ 它与 `suspended` **不是同一件事的两面**：`suspended` 说「体交出了控制流」，
+    /// 而本位置说「它已经交给策略层、策略层还没挑它」—— 一个已决出**待挑**的任务两者**同时**成立。
+    /// ⚠️ 它正是 `bk_task_state` 那一格里「**可跑**」的落点（裁定 50 的四态之一），
+    /// 而这个身份**是本路新引入的**：此前的驱动形态里没有「排队等挑」这一段
+    /// ⇒ 四态表上那个成员在此之前**没有承载**。
+    /// 由**入队**写、由**出队**（挑走）清。
+    var queued = false
+
     /// 帧是否已交还。幂等守卫 —— 「跑完」与「让出态被取消」两条路径都会来收，而**只能收一次**。
     var frameReleased = false
 }
@@ -1320,8 +1330,10 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
     box.cond.broadcast()
     box.cond.unlock()
     if resumeNow {
-        let thread = Thread { _bkTaskRunBody(h) }
-        thread.start()
+        // `Q-4`：兑现方式由「起一条新线程重入体」改为「**入队**」——「谁跑下一个」归策略层，
+        // ⛔ 不在这里抢跑。⚠️ 这一处与 `_bkTaskResume` 的那一处是**同一个改道的两侧**：
+        // 漏掉任何一侧，被漏的那条路上挑选顺序就退回决出顺序。
+        if _bkTaskOffer(box) { _bkTaskScheduleDrain() }
     }
 }
 
@@ -1714,40 +1726,318 @@ private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
     if owned { env.deallocate() }
 }
 
-/// 取走等待者快照并逐个续跑（先快照、解锁、再动作 —— 与取消传播同一条定式：
+/// 取走等待者快照并逐个交给队列（先快照、解锁、再动作 —— 与取消传播同一条定式：
 /// 持锁递归会与反向加锁形成死锁）。
+///
+/// ⭐ **改道落在这里**（本段的「决策点不再直接重入体」）：这个函数是**一次决出的全部后果**，
+/// 而它现在做的是「把这一批交给策略层」，⛔ 不是「把这一批跑掉」。
+///
+/// ⭐⭐ 顺序是「**先全部入队、再请挑选**」，两步分开 —— 这不是优化，是「顺序由策略决定」
+/// 成立的**前提**：一次决出会**同步地、依次**唤醒所有等它的任务，若让**每个**唤醒各自去请挑选，
+/// 第一趟挑选就可能发生在这批里**还有任务没入队**的时刻 ⇒ 第一个醒来的被挑走
+/// ⇒ 挑选顺序退回**决出顺序**，策略层**无选择可言**。
+/// ⚠️ 这条与解释器腿同源（那条腿为此把登记改成「按被等的未来并批」）；本腿的快照**本来就是整批**，
+/// 故只需把「两步分开」写对。
 private func _bkTaskResumeAwaiters(_ box: _BkTaskBox) {
     box.cond.lock()
     let waiters = box.awaiters
     box.awaiters.removeAll()
     box.cond.unlock()
-    for w in waiters { _bkTaskResume(w) }
+    var enqueuedAny = false
+    for w in waiters {
+        if _bkTaskResume(w) { enqueuedAny = true }
+    }
+    guard enqueuedAny else { return }
+    _bkTaskScheduleDrain()
 }
 
-/// 让一个**已让出**的任务接着跑（`DE-6b`）。
+/// 让一个**已让出**的任务接着跑 —— 在改道之后，「接着跑」= **交给策略层的队列**（`Q-4`）。
 ///
-/// ⭐ 起一条**新线程**重入体 —— 与解释器腿同形（那条腿的注释：「resumption runs on whichever
-/// thread settled that future ... no thread is held on this side」）。⇒ 「让出」换来的是
-/// **线程经济**，而不只是「输出看起来一样」。
+/// ⛔ **本函数不再起线程**：那正是本段改掉的东西。此前它 `Thread { _bkTaskRunBody(h) }`
+/// 直接重入体 ⇒ 顺序完全由**决出顺序**决定，策略层没有任何可挑的余地
+/// （与解释器腿在 `Q-3` 之前同构）。⇒ 「调度器可替换」这句话在两腿上从此有**对象**。
 ///
-/// ⛔ 三道守卫各挡一件事：`resolved` / `cancelled` 挡「已经收口了，别再进去」；`running` 挡
-/// **并发双重进入**（两条线程同时续跑同一个体会让帧游标与槽互相踩）。
+/// ⛔ 两道守卫各挡一件事：`resolved` / `cancelled` 挡「已经收口了，别再排队」。
 ///
-/// ⭐⭐ **`resumePending` 是这里最要紧的一行，它不是优化**：等待方登记「我在等谁」与它把
+/// ⭐⭐ **`resumePending` 仍然是这里最要紧的一行，它不是优化**：等待方登记「我在等谁」与它把
 /// 自己标成「已让出」**不是同一个原子步** —— 中间隔着体的返回。若被等方恰好在这条缝里决出，
-/// 「谁来叫醒它」这一问就会落空：决出方看到的还是一个**没让出**的任务，于是既不起线程、
+/// 「谁来叫醒它」这一问就会落空：决出方看到的还是一个**没让出**的任务，于是既不入队、
 /// 也不留记号 ⇒ **等待方永远不再被调度**。⚠️ 症状是**永久阻塞**而不是崩溃，所以这个窗口
 /// 必须由记号关掉，不能靠「缝很窄」侥幸：让出态未到就先**挂记号**，等体交还控制流时自取自跑。
-private func _bkTaskResume(_ box: _BkTaskBox) {
-    guard let h = box.selfHandle else { return }
+///
+/// - Returns: 它这次**真的入了队** ⇒ `true`（没让出而只挂了记号 ⇒ `false`，那不是「没接上」）。
+private func _bkTaskResume(_ box: _BkTaskBox) -> Bool {
     box.cond.lock()
     let alive = !box.resolved && !box.cancelled
     let wasSuspended = box.suspended
     if alive && !wasSuspended { box.resumePending = true }
     box.cond.unlock()
-    guard alive, wasSuspended else { return }
-    let thread = Thread { _bkTaskRunBody(h) }
-    thread.start()
+    guard alive, wasSuspended else { return false }
+    return _bkTaskOffer(box)
+}
+
+// MARK: 就绪队列的驱动面（`Q-4`：决出 ⇒ 入队，由策略层决定谁跑）
+//
+// ⛔ 本段与解释器腿**同形**（对应物在 `HIRExecutor` 的同名一节）—— 决出不再直接续跑体，
+// 而是把任务**交给策略层的队列**，再由挑选循环按策略给的顺序推进。
+// ⚠️ 两腿在**句柄承载**上不同，这是架构使然、⛔ 不是偏差：
+//   · 解释器腿的任务是宿主对象，塞不进语言层的 `*U8` ⇒ 用**整数句柄 + 一张映射表**；
+//   · 发射腿的任务句柄**本来就是一个不透明指针**（造盒时登记所得），与语言层的 `*U8` 同形
+//     ⇒ **零映射表**：直接把那个指针交给策略层，拿回来即任务。
+//   ⇒ 「推进一次」的跨腿契约定的是**语义**，明文不固定两腿的入口形状。
+
+/// 策略层的绑定记录（裁定 **57** 取甲：**运行时持挑选循环**，发射层交出**可调用的入口**）。
+///
+/// ⭐ **布局即 ABI** —— 三个机器字：策略实例 · 「收下」入口 · 「选择下一个任务」入口。
+/// 发射层在派发点就地构造这三个字、把地址交进来。⛔ 本层**不解释**第一个字是什么
+/// （它是默认实例的盒指针，本层只把它原样回传给那两个入口）。
+/// ⚠️ 为什么不写成三个独立实参：一个记录指针是**一处**形状，将来加一格只动那一处；
+/// 且它与「绑定记录」这个已裁的形态**同名同实**。
+private struct _BkSchedBinding {
+    /// 调策略层的「收下」：`(策略实例, 任务句柄) -> ()`。
+    typealias Accept = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void
+    /// 调策略层的「选择下一个任务」：`(策略实例) -> 任务句柄`，**`nil` = 队列空**。
+    typealias Pick = @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?
+
+    let sched: UnsafeMutableRawPointer?
+    let accept: Accept?
+    let pick: Pick?
+}
+
+/// 一次「问策略层要一个」的结果。
+///
+/// ⚠️ **「空」与「缺陷」必须分开**（与解释器腿同一条纪律）：前者是正常状态（刚建好的队列
+/// 就是空的），后者是策略给了一个**从没发出去过**的句柄。混成一个读数就会把缺陷读成
+/// 「暂时没活」⇒ 于是**静默地什么都不做** —— 那是本引擎最不能出的结果。
+private enum _BkReadyTake {
+    case task(UnsafeMutableRawPointer)
+    case empty
+    case unknown(UnsafeMutableRawPointer)
+    /// 策略层答不出来（没绑、或答了个不是句柄的东西）。
+    case defect(String)
+}
+
+/// 就绪队列 —— 元素是**任务盒句柄**（造盒时登记所得的那个裸指针）。
+///
+/// ⚠️ 写入方是**决出方所在的那条线程**（决出 ⇒ 入队），读取方是挑选循环 ⇒ 由 `_bkReadyLock`
+/// 守护。⛔ **不是「反正单线」**：「同族的既有状态已有隔离」这条**推不到**新状态上。
+private var _bkReadyQueue: [UnsafeMutableRawPointer] = []
+private let _bkReadyLock = NSLock()
+
+/// 「趟」的两笔账（照解释器腿）：**有人要挑** · **已经有一趟在挑**。
+///
+/// ⚠️ 为什么需要它们：一批任务**全部入队之后**才请挑选循环，但请挑选这件事本身可能落在
+/// **另一条线程**上（同一时刻可能有多批）⇒ 用「已有循环在跑就只记一笔」把它收成
+/// **同一时刻只跑一趟**，那一笔由收工的那趟兑现（见 `_bkTaskDrain` 尾部的对账）。
+private var _bkReadyRequested = false
+private var _bkReadyScheduled = false
+private var _bkReadyDraining = false
+
+/// 进程内最近一次的绑定 —— 挑选循环用它问策略。
+///
+/// ⚠️ **今天只有一个调度实例**（预置那份，或用户替换的那一份）⇒ 「用哪份绑定」不构成问题。
+/// ⛔ 本层**不做**「按调度器分组的多队列」—— 那是设计里另立的一段，今天**无对象**
+/// （登记在案，⛔ 不在本段顺手做）。
+private var _bkSchedBinding: _BkSchedBinding?
+
+/// 从绑定记录的三个字里读出它的三个字段（布局见 `_BkSchedBinding`）。
+private func _bkReadBinding(_ p: UnsafeMutableRawPointer?) -> _BkSchedBinding? {
+    guard let p else { return nil }
+    let sched = p.load(fromByteOffset: 0, as: UnsafeMutableRawPointer?.self)
+    let acceptRaw = p.load(fromByteOffset: 8, as: UnsafeMutableRawPointer?.self)
+    let pickRaw = p.load(fromByteOffset: 16, as: UnsafeMutableRawPointer?.self)
+    guard let acceptRaw, let pickRaw else { return nil }
+    return _BkSchedBinding(
+        sched: sched,
+        accept: unsafeBitCast(acceptRaw, to: _BkSchedBinding.Accept.self),
+        pick: unsafeBitCast(pickRaw, to: _BkSchedBinding.Pick.self))
+}
+
+/// 把调度器绑定交给运行时（乙段）。
+///
+/// - Parameters:
+///   - handle: 该次派发得到的任务句柄 —— ⚠️ **今天只作校验用**：绑定存在**运行时**那一份上
+///     （见 `_bkSchedBinding` 的注释），⛔ 不逐任务存。理由是今天只有一个调度实例，
+///     逐任务存会得到一个**没有读者**的字段，而那正是本仓反复消灭的东西。
+///   - binding: 指向绑定记录的指针（布局见 `_BkSchedBinding`）。⭐ **传空即解绑** ——
+///     这条路径不是为生产代码留的，而是为判据留的：替身策略住在一个测试对象里，
+///     它一旦释放而绑定还在，后续任何入队都会调到一个**悬垂的函数指针**。
+/// - Returns: `0` = 已接受（或已解绑）。⛔ 今天**不定义**别的取值 —— 语义未裁 ⇒ 不作承诺。
+@_cdecl("bk_task_bind_sched")
+public func bk_task_bind_sched(
+    _ handle: UnsafeMutableRawPointer?, _ binding: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard _bkTaskBox(handle) != nil else { return 1 }
+    _bkReadyLock.lock()
+    defer { _bkReadyLock.unlock() }
+    guard let binding else {
+        _bkSchedBinding = nil
+        return 0
+    }
+    guard let read = _bkReadBinding(binding) else { return 1 }
+    _bkSchedBinding = read
+    return 0
+}
+
+/// 任务的可观测态（裁定 **50** 的**四态**；丙段）。
+///
+/// ⚠️ 一经采纳即成**可观测承诺**（受「使用者会依赖一切可见行为」约束）⇒ 改它须走**破坏性**流程。
+/// ⛔ 与「能力位查询」**不同族**：那是**可叠加的位图**，这是**互斥的状态**。
+///
+/// ⭐ 四态与盒子上那几个位的关系（三处**如实登记**的空洞，都在下表的脚注里）：
+/// `3` 已决 = 有结果或其取消已归约 · `1` 可跑 = **在就绪队列里**（这个成员身份是本路新引入的，
+/// 此前无承载）· `2` 等待中 = 体已交出控制流、等某个未来决出 · `0` 未起 = 体从未进入。
+@_cdecl("bk_task_state")
+public func bk_task_state(_ h: UnsafeMutableRawPointer?) -> Int32 {
+    guard let box = _bkTaskBox(h) else { return 0 }
+    box.cond.lock()
+    let resolved = box.resolved
+    let cancelled = box.cancelled
+    let queued = box.queued
+    let suspended = box.suspended
+    let started = box.bodyStarted
+    box.cond.unlock()
+    // ① 取消按既有的归一读作**已决**（`join` 那一侧就是把它归约成 `err(CancelError)`）。
+    // ⚠️ 四态表里没有「已取消」这一格 —— 如实登记，⛔ 不自行扩表。
+    if resolved || cancelled { return 3 }
+    if queued { return 1 }
+    if suspended { return 2 }
+    // ② 体正在跑 ⇒ 读作**可跑**：四态表里没有「正在被推进」这一格，而它的定义
+    // （「该被执行器推进」）在这一刻仍然成立。⚠️ 由此本条**不能**用来区分「在队列里」与「正在跑」
+    // —— 判据要区分的是「等待中」与「可跑」，那两格分得开。
+    if started { return 1 }
+    return 0
+}
+
+/// 把一个任务**交给策略层的队列**（甲段）。
+///
+/// ⚠️ 调「收下」在锁**外**：那跑的是用户代码（策略是 Pini 值），⛔ 不该持本层的锁调它。
+///
+/// - Returns: 真的入了队 ⇒ `true`（入不了队时已就地处置，见下）。
+@discardableResult
+private func _bkTaskOffer(_ box: _BkTaskBox) -> Bool {
+    guard let h = box.selfHandle else { return false }
+    _bkReadyLock.lock()
+    let binding = _bkSchedBinding
+    guard let binding else {
+        _bkReadyLock.unlock()
+        // ⚠️ **没有策略层 ⇒ 降级为直接续跑**，⛔ 不是把任务归约掉。
+        //
+        // 依据是本仓的既有纪律：**无合格版本则降级，不失败**（与 `bk_task_await` 在
+        // 「不在任何任务里」时走直线等待同族）。⭐ 这条降级另有一个**具体用处**：
+        // 进程内直接调这一族符号的用法（判据就是这么做的）从不绑策略，而那些用法在改道
+        // 之前是能跑的 —— 「没有绑定就归约」会让它们**从能跑变成不能跑**，是退化不是改进。
+        //
+        // ⚠️ 两处**如实登记**：① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」而非「可跑」
+        // （没有队列就无所谓「在队列里」，那个成员身份在这条路上**不成立**）；
+        // ② 解释器腿**没有**这条降级路径（那条腿总有策略 —— 预置默认实例），
+        // 故两腿在这一格上不对称，收敛它须另行点名。
+        let thread = Thread { _bkTaskRunBody(h) }
+        thread.start()
+        return false
+    }
+    box.cond.lock()
+    let already = box.queued
+    box.queued = true
+    box.cond.unlock()
+    if !already { _bkReadyQueue.append(h) }
+    _bkReadyLock.unlock()
+    binding.accept?(binding.sched, h)
+    return true
+}
+
+/// 请一趟挑选循环来把这批活挑完。**同一时刻只排一趟**。
+private func _bkTaskScheduleDrain() {
+    _bkReadyLock.lock()
+    if _bkReadyDraining || _bkReadyScheduled {
+        _bkReadyRequested = true
+        _bkReadyLock.unlock()
+        return
+    }
+    _bkReadyScheduled = true
+    _bkReadyLock.unlock()
+    DispatchQueue.global().async { _bkTaskDrain() }
+}
+
+/// 问策略层「下一个是谁」。
+private func _bkTaskPick() -> _BkReadyTake {
+    _bkReadyLock.lock()
+    let binding = _bkSchedBinding
+    _bkReadyLock.unlock()
+    guard let binding, let pick = binding.pick else {
+        return .defect("没有绑定可用的策略层")
+    }
+    guard let answered = pick(binding.sched) else { return .empty }
+    _bkReadyLock.lock()
+    let known = _bkReadyQueue.contains(answered)
+    _bkReadyLock.unlock()
+    // ⛔ 给了一个**从没发出去过**的句柄 ⇒ 缺陷，⛔ 不得读成「暂时没活」。
+    guard known else { return .unknown(answered) }
+    return .task(answered)
+}
+
+/// 驱动循环：**问策略要一个 ⇒ 推进它一次**，直到策略说没有下一个。
+private func _bkTaskDrain() {
+    _bkReadyLock.lock()
+    _bkReadyScheduled = false
+    _bkReadyDraining = true
+    _bkReadyLock.unlock()
+
+    // ⚠️ 策略给的答案**可不可信**要分开记：不可信时**不得**再排下一趟，
+    // 否则「策略每次都答同一个我们不认识的句柄」会转成一个不停循环。
+    var trustworthy = true
+    drain: while true {
+        switch _bkTaskPick() {
+        case .task(let h):
+            _bkReadyLock.lock()
+            if let idx = _bkReadyQueue.firstIndex(where: { $0 == h }) {
+                _bkReadyQueue.remove(at: idx)
+            }
+            _bkReadyLock.unlock()
+            if let box = _bkTaskBox(h) {
+                box.cond.lock()
+                // ⚠️ 在队列里等着的这段时间里它可能被取消 ⇒ **出队即丢弃**：
+                // 一个从未被进入的体没有检查点，取消只能在**这里**被看见。
+                box.queued = false
+                let gone = box.cancelled
+                box.cond.unlock()
+                if !gone { _bkTaskRunBody(h) }
+            }
+        case .empty:
+            break drain
+        case .unknown(let h):
+            trustworthy = false
+            _bkReportSchedulerDefect("它点名了一个从未发出去过的句柄 \(h)")
+            break drain
+        case .defect(let why):
+            trustworthy = false
+            _bkReportSchedulerDefect(why)
+            break drain
+        }
+    }
+
+    _bkReadyLock.lock()
+    _bkReadyDraining = false
+    // 关掉那道窗：本循环据「策略说没有」收工时，另一边可能刚入了队、
+    // 又因为「已经有一趟在跑」而只记了一笔 ⇒ 那一笔在这里兑现。
+    let again = trustworthy && _bkReadyRequested && !_bkReadyScheduled
+    _bkReadyRequested = false
+    if again { _bkReadyScheduled = true }
+    _bkReadyLock.unlock()
+    if again {
+        DispatchQueue.global().async { _bkTaskDrain() }
+    }
+}
+
+/// 策略层坏了 —— 响亮说，⛔ 不静默降级成「没有下一个」。
+///
+/// ⚠️ **走 stderr 而不是 stdout**：这一层程序的 stdout 是**被断言的东西**（判据逐字节比它），
+/// 在它上面打诊断会把「程序输出」与「引擎抱怨」混成一个读数。
+/// ⚠️ 与解释器腿的对应物**一处不对称**如实登记：那条腿打的是 stdout
+/// （本腿的 stdout 承载着 `printf` 的程序输出，故不能照搬）。
+private func _bkReportSchedulerDefect(_ detail: String) {
+    FileHandle.standardError.write(
+        Data("[scheduler] ⛔ 策略层给出的答案不可用，就绪队列停止驱动：\(detail)\n".utf8))
 }
 
 // MARK: 让出的可观测通道（`DE-6a` §3.6）

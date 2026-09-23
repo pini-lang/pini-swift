@@ -55,7 +55,7 @@ enum PredefinedDecls {
         let selfExpr = Expression.selfKeyword(location: loc)
         let queueRead = Expression.member(object: selfExpr, name: queueField, location: loc)
         let acceptTask = FuncDecl(
-            name: "收下",
+            name: acceptMethodName,
             modifiers: [],
             genericParams: [],
             params: [Parameter(name: "任务", typeAnnotation: handleType)],
@@ -82,7 +82,7 @@ enum PredefinedDecls {
         // **不产生这个类型的成员方法** ⇒ 调用点在降载层报「该类型没有这个方法」。
         // 实测形态就是那条判据的读数。
         let pickNext = FuncDecl(
-            name: "选择下一个任务",
+            name: pickMethodName,
             modifiers: [],
             genericParams: [],
             params: [],
@@ -183,6 +183,14 @@ enum PredefinedDecls {
 
     /// 调度特征的**语言可见名**。类型层登记的那个特征与上面的给定块同名。
     static let schedulerTypeName = "调度器"
+
+    /// 策略层两个方法的**语言可见名**。
+    ///
+    /// ⭐ 名字住在这里而不是读取处（与 `yieldCapabilityField` / `queueField` 同一条纪律）：
+    /// 本文件里的声明方要用它们，而**两条腿各自的调用方**也要用它们拼方法表里的键 ——
+    /// 三处各写一份字面量，改名时必然对不上，而那一刻**不会有一条判据变红**。
+    static let acceptMethodName = "收下"
+    static let pickMethodName = "选择下一个任务"
 
     /// 语言侧声明「本调度器能否让出」的字段名。
     ///

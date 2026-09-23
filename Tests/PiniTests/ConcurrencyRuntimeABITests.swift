@@ -481,6 +481,93 @@ struct ConcurrencyRuntimeABITests {
         #expect(status == 0, "已决的对象不值得交出控制流（解释器腿同一条规则）")
         #expect(o[0] == 0 && o[1] == 7, "三槽须与 join 同形：\(o[0])/\(o[1])")
     }
+
+    // MARK: - `Q-4`：决出 ⇒ 入队，推进由策略的答案决定
+
+    @Test("⭐ 改道可观测：决出 ⇒ 入队读作「可跑」，且入队经过策略层")
+    func settlingHandsTheTaskToThePolicyQueue() throws {
+        /// 意图：本段那处「改道」的**直接观测面**。
+        ///
+        /// ⚠️ 「决出 ⇒ 直接重入体」的那种实现里，「**可跑**」这个状态**永远不出现** ——
+        /// 任务会直接变成在跑、随后已决 ⇒ 故这一条对那种实现有区分力。
+        ///
+        /// ⚠️ 四条读数各答一问：① 状态确实能读出「可跑」② 入队确实调了策略层的「收下」
+        /// ③ 挑不挑由策略说了算（本条的输入是「答空」）④ 已决那一格能读出来。
+        /// ⛔ 本条**不测**「两个任务一起就绪时谁先跑」—— 那要两次入队落在同一次挑选之前，
+        /// 而语言面上写不出那种语料（那条路各是各的账）。
+        let policy = Q4PolicyState()
+        let target = _bkTaskMake()
+        let waiter = spawnQ4Waiter(target: target)
+        defer {
+            bk_handle_release(waiter.handle)
+            bk_handle_release(target)
+        }
+
+        // 未起：造出来、但从没进过体。
+        let fresh = _bkTaskMake()
+        defer { bk_handle_release(fresh) }
+        #expect(bk_task_state(fresh) == 0, "从没进过体的任务读作「未起」")
+
+        #expect(waitForTaskState(waiter.handle, 2), "体在未决的目标上让出 ⇒ 读作「等待中」")
+
+        /// ⚠️ 次序**不可换**：先让等待者真的让出，再绑策略，最后才决出目标。
+        /// 反过来会把 `bk_task_await` 推上「已决 ⇒ 直线取值」那条路 —— 那条路上没有队列，
+        /// 判据就测不到它要测的东西。
+        policy.nextAnswer = nil
+        #expect(bindPolicy(policy, handle: waiter.handle) == 0, "绑定应当被接受")
+        _bkTaskResolveOk(target, 1)
+
+        #expect(waitForTaskState(waiter.handle, 1), "决出 ⇒ 入队 ⇒ 读作「可跑」")
+        #expect(policy.acceptedCount == 1, "入队须经策略层的「收下」：\(policy.acceptedCount)")
+        #expect(policy.acceptedHandle == waiter.handle, "交给策略的句柄应当就是这件任务")
+        #expect(bk_task_state(target) == 3, "已决的目标读作「已决」")
+
+        /// 驳回性：策略答「没有下一个」⇒ 挑选循环**问过**、但**不推进**它。
+        Thread.sleep(forTimeInterval: 0.2)
+        #expect(policy.pickCalls >= 1, "挑选循环须问过策略：\(policy.pickCalls)")
+        #expect(bk_task_state(waiter.handle) == 1, "策略答「没有下一个」⇒ 停在「可跑」，不得被推进")
+
+        /// 收尾：把它推进掉 —— 否则它留在队列里，会被**后续**判据触发的挑选循环撞上，
+        /// 而那一刻本判据的 §env 已经不在了。做法是让策略改口，再用**新的一次入队**请一趟挑选。
+        // ⚠️ 触发用的那件任务**不释放 env 也不释放句柄**：它可能仍停在队列里，
+        // 释放后再被推进就是悬垂。代价是这一条判据留下 16 字节与一个未推进的任务，
+        // 而两者都无害（测试进程结束即回收；没有绑定就走降级那条路）。
+        policy.nextAnswer = waiter.handle
+        let flushTarget = _bkTaskMake()
+        let flushWaiter = spawnQ4Waiter(target: flushTarget)
+        _ = flushWaiter
+        // ⚠️ **必须等它真的让出**再决出它的目标：`spawn` 只是起线程，体还没跑到登记等待者那一步；
+        // 此时决出会得到一个**空快照** ⇒ 没有入队 ⇒ 挑选循环从不启动 ⇒ 收尾落空。
+        #expect(waitForTaskState(flushWaiter.handle, 2), "触发用的那件须先让出")
+        _bkTaskResolveOk(flushTarget, 1)
+        #expect(waitForTaskState(waiter.handle, 3), "收尾：策略改口之后它被推进一次 ⇒ 决出")
+
+        _ = bk_task_bind_sched(waiter.handle, nil)
+    }
+
+    @Test("⭐ 推进由策略的答案决定：答出句柄 ⇒ 推进一次 ⇒ 决出（与「答空」互为反证）")
+    func thePolicyAnswerDecidesWhetherTheTaskAdvances() throws {
+        /// 意图：与上一条**只差策略答什么**（答出句柄 vs 答空），结论必须相反。
+        /// ⚠️ 只看「答出 ⇒ 它跑起来了」这一半，「策略被问了」与「谁来问都一样」在读数上
+        /// **同形** —— 两条合起来才说明「推不推进」是**策略**说了算。
+        let policy = Q4PolicyState()
+        let target = _bkTaskMake()
+        let waiter = spawnQ4Waiter(target: target)
+        defer {
+            bk_handle_release(waiter.handle)
+            bk_handle_release(target)
+        }
+        #expect(waitForTaskState(waiter.handle, 2), "体在未决的目标上让出 ⇒ 读作「等待中」")
+
+        policy.nextAnswer = waiter.handle
+        #expect(bindPolicy(policy, handle: waiter.handle) == 0, "绑定应当被接受")
+        _bkTaskResolveOk(target, 1)
+
+        #expect(policy.acceptedCount == 1, "入队须经策略层的「收下」")
+        #expect(waitForTaskState(waiter.handle, 3), "策略给出句柄 ⇒ 推进它一次 ⇒ 决出")
+
+        _ = bk_task_bind_sched(waiter.handle, nil)
+    }
 }
 
 // MARK: - `DE-6b` 让出族判据用的帧与体
@@ -671,4 +758,137 @@ private typealias BkTestBody = @convention(c) (
 /// 体的地址，按 `DE-1` §3.1 的 `wrapper` 参数形态（不透明 `ptr`）交给运行时。
 private func bkTestBodyPtr() -> UnsafeMutableRawPointer {
     unsafeBitCast(bkTestBody as BkTestBody, to: UnsafeMutableRawPointer.self)
+}
+
+// MARK: - `Q-4` 调度驱动面判据用的替身策略与体
+//
+// ⚠️ **为什么这里用替身而不是 Pini 语料**：本段要证的是**驱动面**（谁在什么时候被交出去、
+// 谁被挑中），而那不是「策略用什么语言写的」的函数。判据侧自造策略能把驱动面单独钉住，
+// ⛔ 不受语言面那两处**已知阻塞**牵动（语言面上「两个任务等同一个未来」写不出来；
+// 「用户替换调度器」在发射腿上另有一处既有缺口）。⇒ 那两处**各是各的账**，
+// 不得把本条全绿读成它们做成了。
+
+/// 替身策略的状态。
+///
+/// `@unchecked Sendable` 的依据：所有字段都在 `lock` 下读写，而 `lock` 只在**两个 C 函数**里
+/// 被持有 —— 它们不做任何重入调用。
+private final class Q4PolicyState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handles: [UnsafeMutableRawPointer] = []
+    private var picks = 0
+    private var answer: UnsafeMutableRawPointer?
+
+    /// 「收下」收到的第一个句柄 —— 本判据要问的正是「入队到底经没经过策略」。
+    var acceptedHandle: UnsafeMutableRawPointer? {
+        lock.lock(); defer { lock.unlock() }
+        return handles.first
+    }
+    var acceptedCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return handles.count
+    }
+    var pickCalls: Int {
+        lock.lock(); defer { lock.unlock() }
+        return picks
+    }
+    /// 「选择下一个任务」的答案，`nil` = 空队列。⛔ 判据**自己**决定答什么 —— 那就是被测的输入。
+    var nextAnswer: UnsafeMutableRawPointer? {
+        get { lock.lock(); defer { lock.unlock() }; return answer }
+        set { lock.lock(); answer = newValue; lock.unlock() }
+    }
+
+    fileprivate func noteAccepted(_ h: UnsafeMutableRawPointer?) {
+        guard let h else { return }
+        lock.lock(); handles.append(h); lock.unlock()
+    }
+    fileprivate func notePick() -> UnsafeMutableRawPointer? {
+        lock.lock(); defer { lock.unlock() }
+        picks += 1
+        let a = answer
+        // ⭐ **一次性答案**：答过就清。否则挑选循环会拿同一个句柄反复问，而那个句柄早已出队
+        // ⇒ 运行时会把它读成「从未发出去过的句柄」并判为缺陷（那条路是**响亮报错**，不是静默）。
+        answer = nil
+        return a
+    }
+}
+
+/// 「收下」的替身（`(策略实例, 任务句柄) -> ()`）—— 记下入队的句柄。
+private func q4AcceptBody(_ sched: UnsafeMutableRawPointer?, _ task: UnsafeMutableRawPointer?) {
+    guard let sched else { return }
+    Unmanaged<Q4PolicyState>.fromOpaque(sched).takeUnretainedValue().noteAccepted(task)
+}
+
+/// 「选择下一个任务」的替身（`(策略实例) -> 任务句柄`）—— 答出来之前设定的那个句柄。
+private func q4PickBody(_ sched: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    guard let sched else { return nil }
+    return Unmanaged<Q4PolicyState>.fromOpaque(sched).takeUnretainedValue().notePick()
+}
+
+private typealias Q4AcceptFn = @convention(c) (
+    UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
+) -> Void
+private typealias Q4PickFn = @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?
+
+/// 一个「在给定目标上让出一次」的最小体：首跑让出、续跑跑完并写三槽。
+///
+/// ⚠️ `env` 由**调用方**给（⛔ 不是运行时的帧）：本判据要往它里面记「第几次进入」与「等谁」，
+/// 而它因此**不归运行时释放** —— 这正是「只释放登记过的帧」那条规矩的用法，
+/// 也是进程内判据能自己造体的原因。
+private func q4WaiterBody(
+    _ code: UnsafeMutableRawPointer?, _ env: UnsafeMutableRawPointer?,
+    _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let env, let out else { return 0 }
+    if env.load(fromByteOffset: 0, as: Int64.self) == 0 {
+        env.storeBytes(of: Int64(1), toByteOffset: 0, as: Int64.self)
+        let target = env.load(fromByteOffset: 8, as: UnsafeMutableRawPointer?.self)
+        // `2` = 真让出 ⇒ 原样把它报给运行时（⛔ 不许改写 `out`）。
+        return bk_task_await(target, out) == 2 ? 2 : 0
+    }
+    out.storeBytes(of: Int64(0), toByteOffset: 0, as: Int64.self)
+    out.storeBytes(of: Int64(7), toByteOffset: 8, as: Int64.self)
+    out.storeBytes(of: Int64(0), toByteOffset: 16, as: Int64.self)
+    return 0
+}
+
+private func q4WaiterBodyPtr() -> UnsafeMutableRawPointer {
+    unsafeBitCast(q4WaiterBody as BkTestBody, to: UnsafeMutableRawPointer.self)
+}
+
+/// 把替身策略绑给运行时（三个机器字的记录）。
+///
+/// ⚠️ 记录里的**第一个字是策略实例**，本判据给的是那个替身对象本身 —— 运行时把它原样回传给
+/// 两个入口，故 `q4AcceptBody` / `q4PickBody` 才拿得到自己的状态。
+private func bindPolicy(_ state: Q4PolicyState, handle: UnsafeMutableRawPointer) -> Int32 {
+    var words: [UnsafeMutableRawPointer?] = [
+        Unmanaged.passUnretained(state).toOpaque(),
+        unsafeBitCast(q4AcceptBody as Q4AcceptFn, to: UnsafeMutableRawPointer.self),
+        unsafeBitCast(q4PickBody as Q4PickFn, to: UnsafeMutableRawPointer.self),
+    ]
+    return words.withUnsafeMutableBufferPointer { buf in
+        bk_task_bind_sched(handle, buf.baseAddress.map { UnsafeMutableRawPointer($0) })
+    }
+}
+
+/// 轮询等某任务读到指定状态。**有上限** —— 判据不作无界等待（本仓既有的墙钟纪律）。
+private func waitForTaskState(
+    _ h: UnsafeMutableRawPointer?, _ want: Int32, seconds: Double = 2.0
+) -> Bool {
+    let deadline = Date(timeIntervalSinceNow: seconds)
+    while Date() < deadline {
+        if bk_task_state(h) == want { return true }
+        Thread.sleep(forTimeInterval: 0.005)
+    }
+    return false
+}
+
+/// 造一个「等某个未决目标」的等待者，返回它的句柄与它那块 env（调用方负责收）。
+private func spawnQ4Waiter(
+    target: UnsafeMutableRawPointer
+) -> (handle: UnsafeMutableRawPointer, env: UnsafeMutableRawPointer) {
+    let env = UnsafeMutableRawPointer.allocate(byteCount: 16, alignment: 8)
+    env.storeBytes(of: Int64(0), toByteOffset: 0, as: Int64.self)
+    env.storeBytes(of: target, toByteOffset: 8, as: UnsafeMutableRawPointer?.self)
+    let h = bk_task_spawn(q4WaiterBodyPtr(), nil, env, 0, 0)
+    return (h, env)
 }
