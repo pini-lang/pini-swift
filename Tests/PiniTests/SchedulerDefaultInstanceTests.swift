@@ -240,4 +240,113 @@ struct SchedulerDefaultInstanceTests {
             !codes.contains("E3-001"),
             "收集模式入口把预置名判成未定义 —— 那个名字确实存在，只是不能作值：\(codes)")
     }
+
+    // MARK: - 判据 7：策略层两个方法都调得动（接口真的在）
+
+    @Test("默认实例上「收下」与「选择下一个任务」都调得动 —— 接口不是只登记了名字")
+    func bothStrategyMethodsAreCallableOnTheDefaultInstance() throws {
+        /// 意图：方法**存在**（名字登记了）与「调用得通」是两件事 —— 降载层没把方法体接上时，
+        /// 调用点以「该类型没有这个方法」告终，而那是**跑起来才知道**的形态。
+        /// 断言落在运行输出上，故静态与运行两步都被覆盖。
+        let source = """
+        探|func(using s: 调度器,) -> (I32,):
+            s.收下(空句柄)
+            print(s.选择下一个任务())
+            return 1
+
+        main|func() -> ():
+            print(探())
+            return
+        """
+        let lines = try runOutput(source)
+        #expect(lines == ["0", "1"], "策略层的两个方法没有都调通：\(lines)")
+    }
+
+    // MARK: - 判据 8：空队列的答案是空句柄
+
+    @Test("队列为空时「选择下一个任务」给出空句柄 —— 不报错，也不是别的值")
+    func anEmptyQueueYieldsTheEmptyHandle() throws {
+        /// 意图：空队列是策略层**必然遇到**的一格（刚建好的调度器就是空的）。
+        /// ⚠️ 它今天走的**是特征默认体**：真正的先进先出实现要等「结果决出 ⇒ 入队」那一段
+        /// 才有对象可挑 ⇒ 本判据此刻钉的是「空队列这一格有答案」。
+        /// ⚠️ 「非空队列返回队首」今天**验不了** —— 语言里只构造得出一个句柄值（空句柄本身），
+        /// 两个不同的句柄无从区分。
+        let source = """
+        空|func(using s: 调度器,) -> (I32,):
+            print(s.选择下一个任务())
+            return 1
+
+        main|func() -> ():
+            print(空())
+            return
+        """
+        let lines = try runOutput(source)
+        #expect(lines == ["0", "1"], "空队列没有给出空句柄：\(lines)")
+    }
+
+    // MARK: - 判据 9 / 10：覆盖生效 · 与它的阴性对照（互为一对，不可拆开）
+
+    /// 一对判据共用的语料 —— 两份只差一段 `[[调度器]]` 扩展块。
+    ///
+    /// ⭐ **为什么必须成对**：单看「覆盖后队列为空」那一格，「覆盖生效」与「`收下` 根本没被调到」
+    /// 两种实现**读数完全相同** ⇒ 一条正向判据在这里没有区分力。成对之后，两条读数
+    /// （0 与 1）互为反证，任一侧的实现走偏都会让其中一条转红。
+    private static func queueLengthCorpus(overriding: Bool) -> String {
+        let overrideBlock = overriding ? """
+        [[调度器]]
+            收下|self(任务: *U8,) -> ():
+                return
+
+        """ : ""
+        return """
+        \(overrideBlock)数|func(using s: 调度器,) -> (I32,):
+            s.收下(空句柄)
+            return len(s.元素)
+
+        main|func() -> ():
+            print(数())
+            return
+        """
+    }
+
+    @Test("用户覆盖「收下」后跑的是用户那一份 —— 默认实现在队列上不动手")
+    func aUserOverrideReplacesThePresetBody() throws {
+        /// 意图：可替换性的兑现面。用户那份**不往队列里放**东西 ⇒ 读到的长度是 0。
+        let lines = try runOutput(Self.queueLengthCorpus(overriding: true))
+        #expect(lines == ["0"], "覆盖没有生效，用户那份没被跑到：\(lines)")
+    }
+
+    @Test("未覆盖时跑的是预置那一份 —— 收到的任务真的进了队列（阴性对照）")
+    func thePresetBodyActuallyEnqueues() throws {
+        /// 意图：上一条的对照。预置的「收下」把任务接到队尾 ⇒ 长度从 0 变成 1。
+        /// ⚠️ 这一格同时钉住一处**易漏**：队列字段走的是**函数式**更新（`append` 返回新数组），
+        /// 漏了写回字段这一步，任务会**静默丢掉** —— 不报错、调用方看不出异常，读数退回 0。
+        /// 也就是说：本判据是那条实现在今天**唯一**的观测面。
+        let lines = try runOutput(Self.queueLengthCorpus(overriding: false))
+        #expect(lines == ["1"], "预置的「收下」没有把任务接到队列里：\(lines)")
+    }
+
+    // MARK: - 判据 11：取走队首时它真的离开了队列
+
+    @Test("取走队首后队列少一个 —— 「选择下一个任务」把它移出了队列")
+    func pickingMovesTheHeadOutOfTheQueue() throws {
+        /// 意图：先进先出的**移出**那一半。
+        /// ⚠️ 它必须独立成条：那个方法的**返回值**今天验不了（语言里只构造得出一个句柄值，
+        /// 取到队首与取到空句柄读数相同）；能验的是**队列长度的变化**。
+        /// ⚠️ 而「取走不移」正是最容易漏的一步 —— 队列字段是函数式更新（`slice` 返回新数组），
+        /// 漏了写回字段，下一次还会拿到同一个任务，而读数退回 1（本判据转红）。
+        let source = """
+        取|func(using s: 调度器,) -> (I32,):
+            s.收下(空句柄)
+            print(len(s.元素))
+            s.选择下一个任务()
+            return len(s.元素)
+
+        main|func() -> ():
+            print(取())
+            return
+        """
+        let lines = try runOutput(source)
+        #expect(lines == ["1", "0"], "取走队首后队列长度没有减少：\(lines)")
+    }
 }

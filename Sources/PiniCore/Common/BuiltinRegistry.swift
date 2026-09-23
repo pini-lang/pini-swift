@@ -24,10 +24,17 @@ public enum BuiltinGroup: String, CaseIterable {
 public struct BuiltinDecl {
     public let name: String
     public let group: BuiltinGroup
-    /// Interpreter 侧 FunctionValue 的形参名（须与既有分发实现一致）
+    /// Interpreter 侧 FunctionValue 的形参名（须与既有分发实现一致）。
+    /// ⚠️ 值条目为空数组 —— 一个值没有形参可标。
     public let paramNames: [String]
     /// nil = 类型层签名由专属路径登记（泛型/指针/构造器特化），本表只记名与组
     public let typeSignature: (params: [TypeAnnotation], returns: [TypeAnnotation], isVariadic: Bool)?
+    /// ⭐ 本条目是**值**时它的类型；非 nil ⇒ 本条目不是函数。
+    ///
+    /// 本表此前只有函数一种形态。值是第二种，理由不是「方便」而是**语言里有这样一批名字**：
+    /// 它们**本身就是值**，按名读到即可，没有调用点、没有形参、也没有「调用它才得到值」这一步。
+    /// 消费方据此分流：语义层按值登记符号 · 类型层按值登记类型 · 降载层对它直出常量。
+    public let valueType: TypeAnnotation?
     /// 是否由 SemanticAnalyzer 在符号表登记（调用点 undefinedFunction 检查依赖）
     public let definesSymbol: Bool
     /// 是否由 Interpreter.registerBuiltins 循环定义运行时函数值
@@ -37,10 +44,11 @@ public struct BuiltinDecl {
     public init(
         name: String,
         group: BuiltinGroup,
-        paramNames: [String],
+        paramNames: [String] = [],
         params: [TypeAnnotation]? = nil,
         returns: [TypeAnnotation]? = nil,
         isVariadic: Bool = false,
+        valueType: TypeAnnotation? = nil,
         definesSymbol: Bool = true,
         definesRuntimeValue: Bool = true
     ) {
@@ -48,6 +56,7 @@ public struct BuiltinDecl {
         self.group = group
         self.paramNames = paramNames
         self.typeSignature = params.map { ($0, returns ?? [], isVariadic) }
+        self.valueType = valueType
         self.definesSymbol = definesSymbol
         self.definesRuntimeValue = definesRuntimeValue
     }
@@ -55,6 +64,22 @@ public struct BuiltinDecl {
 
 public enum BuiltinRegistry {
     public static let builtinLocation = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
+
+    /// 空句柄的**语言可见名** —— 策略层「队列为空」那个返回值。
+    ///
+    /// ⭐ 单一出处：语义层（登记为变量）· 类型层（登记类型）· 降载层（裸名字直出常量）
+    /// 三处都从这里取 —— 各写一份必然漂，而漂的那一刻**不会有一条判据变红**。
+    public static let emptyHandleName = "空句柄"
+
+    /// 按名取内建**值**的类型；不是值（或没有这个名字）⇒ nil。
+    ///
+    /// 与 `member(typeName:name:)` 同形：消费方按需查询，⛔ 不各自遍历 `decls` 重写一遍判定。
+    public static func builtinValueType(named name: String) -> TypeAnnotation? {
+        for decl in decls where decl.valueType != nil && decl.name == name {
+            return decl.valueType
+        }
+        return nil
+    }
 
     private static func t(_ name: String) -> TypeAnnotation {
         .simple(name: name, location: builtinLocation)
@@ -119,6 +144,19 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "load", group: .pointer, paramNames: ["p"], definesRuntimeValue: false),
         BuiltinDecl(name: "store", group: .pointer, paramNames: ["p", "v"], definesRuntimeValue: false),
         BuiltinDecl(name: "addressof", group: .pointer, paramNames: ["value"], definesRuntimeValue: false),
+        // ⭐ **本表第一个非函数条目**：策略层的空句柄 —— 就绪队列为空时那个返回值。
+        //
+        // 为什么它必须存在：队列元素是**不透明标量句柄**，而语言里今天**构造不出**这种值
+        // （`addressof` 未实现；`nil` 在那一格上类型不匹配）⇒ 空队列分支本没有可返回的东西。
+        // ⚠️ 它不能只住在默认方法体里：用户写自己的策略时同样要写空队列分支，
+        // 拿不到这个值就写不出来 —— 那正是「策略层是可替换的」这句话所要求的。
+        //
+        // ⚠️ `definesRuntimeValue: false`：值不是函数，解释器侧不为它定义函数值。
+        // 它由降载层直出常量 ⇒ 解释器**没有新增求值分支**（整数常量那条路已有）。
+        BuiltinDecl(
+            name: emptyHandleName, group: .pointer,
+            valueType: .pointer(element: t("U8"), location: builtinLocation),
+            definesRuntimeValue: false),
 
         // ---- io ----
         // 批 5（G58，D-2）：程序基准查询——模块根（单文件=入口文件所在目录），绝对路径。

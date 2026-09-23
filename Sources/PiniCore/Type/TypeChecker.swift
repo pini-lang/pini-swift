@@ -87,6 +87,14 @@ public final class TypeChecker {
         typeEnv.defineFunction(name: "store", params: [anyType, anyType], returns: [])
         typeEnv.defineFunction(name: "addressof", params: [anyType], returns: [anyPtr])
 
+        // 内建**值**：类型层按**变量**登记它的类型（不是函数签名）。
+        // ⚠️ 形态与上面三个同属指针面，但处置不同：值没有形参与调用点，按名读到它即得。
+        // 漏了这一步，那个名字在类型层没有类型 —— 静态侧算不出它参与的表达式的类型。
+        for decl in BuiltinRegistry.decls {
+            guard let valueType = decl.valueType else { continue }
+            typeEnv.defineVariable(name: decl.name, type: valueType, isMutable: false)
+        }
+
         registerConcurrencyBuiltins(loc: loc, string: string)
 
         // 内建特征化 步骤 A（D1/D7）：内建特征 collection 声明面。
@@ -236,16 +244,52 @@ public final class TypeChecker {
         // 调度面（调度面提案）：语言预置的调度特征。登记这个名字，使它可被 `实现:` 引用；
         // 派发点对它的取用由编译器插入，调用点若要换成自己构造的实例则走既有取用实参位。
         //
-        // ⛔ 抽象方法集**当前刻意留空**，不是遗漏：策略层的接口形状（队列 / 优先级 /
-        // 归约阈值 / 选择下一个任务）由提供默认实例的那一段定 —— 在此之前写死一套签名，
-        // 等于按「只有一种叫法」的样子把形状钉死，而形状是先于实现的契约。
-        // 空集合下声明实现它的类型无需提供任何方法，这也是本征当前唯一可判的行为。
+        // ⭐ 方法集**两个**：`收下`（接一个待跑的任务）· `选择下一个任务`（队列为空时返回空句柄）。
+        // 它们是策略层的**接口** —— 可替换性的落点：用户写自己的 `[[调度器]]` 扩展块即可覆盖。
+        //
+        // ⚠️ 两个签名都**带最小合法默认体**，不是纯抽象。这不是风格选择：
+        // 一致性校验只对**无体**签名要求实现 ⇒ 只有带体，那种「空体 `实现: 调度器`」
+        // 的既有声明才照旧通过（纯抽象会让它转红）。
+        // ⚠️ 默认体**最小**也是刻意的：真正的实现住在语言预置的扩展块里，它要访问队列字段，
+        // 而特征没有「字段要求」机制 ⇒ 只有目标类型具体的扩展块写得出。
+        let schedulerSelfParam = Parameter(name: "self")
+        let schedulerHandleType = TypeAnnotation.pointer(
+            element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
+        func schedulerMethod(
+            _ name: String, extra: [Parameter], returns: [TypeAnnotation], body: [Statement]
+        ) -> FuncDecl {
+            return FuncDecl(
+                name: name,
+                modifiers: [],
+                genericParams: [],
+                params: [schedulerSelfParam] + extra,
+                returnTypes: returns,
+                body: Block(statements: body, location: loc),
+                location: loc
+            )
+        }
         typeEnv.defineTrait(
             name: "调度器",
             trait: TraitDecl(
                 name: "调度器",
                 genericParams: [],
-                signatures: [],
+                signatures: [
+                    // 默认体**无事**：「收下但不排」是一个合法（虽然无用）的策略，不是错误。
+                    // ⚠️ 它也必须是合法体 —— 一个什么也不做的策略不该因此过不了编译。
+                    schedulerMethod(
+                        "收下",
+                        extra: [Parameter(name: "任务", typeAnnotation: schedulerHandleType)],
+                        returns: [], body: []),
+                    // 默认体**返回空句柄**：默认策略的队列恒为空，于是「没有下一个」是它唯一的答案。
+                    schedulerMethod(
+                        "选择下一个任务", extra: [], returns: [schedulerHandleType],
+                        body: [
+                            .returnStatement(
+                                value: .identifier(
+                                    name: BuiltinRegistry.emptyHandleName, location: loc),
+                                location: loc)
+                        ]),
+                ],
                 location: loc
             )
         )

@@ -54,6 +54,31 @@ protocol Scheduler {
     /// 发射腿是这一句调用本身切走（`DE-3`）。两腿必须在这一位上一致，否则
     /// 「`await` 让出 / `wait` 占用」这条可观测差异在跨后端时就没有共同基准。
     func yieldTask() -> Int32
+
+    /// 登记**一次让出**。
+    ///
+    /// 与 `yieldTask()` 成对但性质相反：那个回答「这次让出**能不能**真的发生」——
+    /// **无副作用**、可反复问；本方法**有副作用**，每调一次记一次。
+    ///
+    /// ⚠️ **谁调它**：让出被**消费**的每一处。首跑那一趟由派发口自己记；
+    /// **续跑那几趟不经派发口**（由决出方直接驱动、不再走 `spawn`），
+    /// 故由引擎在让出被消费时调本方法补记。两侧合起来，本计数才是「**每一次让出**」，
+    /// 也才是与发射腿同一个量。
+    ///
+    /// ⚠️ 协议扩展给了**默认空实现**（见下）：只关心派发与能力、不持有让出计数的实现
+    /// 无须写它。⛔ 但**包装型后端必须转发** —— 否则引擎的续跑登记停在包装层、
+    /// 而计数在更内层，且这类漏计**没有任何症状**。
+    func noteYield()
+}
+
+/// `noteYield()` 的默认实现：**空**。
+///
+/// 让出计数的持有人是**生产后端**（让出这个动作发生在它手上）。测试替身与将来其他后端
+/// 若不需要这个读数，继承本默认即可。
+///
+/// ⚠️ **包装型后端不适用本默认** —— 它必须把记账转发给内层；理由见各包装类型自己的说明。
+extension Scheduler {
+    func noteYield() {}
 }
 
 /// P5 B3-2 更新：有界并发池 + 信号量背压（GCD 后端）。
@@ -135,11 +160,10 @@ final class GCDScheduler: Scheduler {
                     // program running alongside would move it. This number is
                     // driven by giving up alone, which is what makes it the
                     // signal a criterion can read without owning the machine.
-                    if let self = self {
-                        self.countLock.lock()
-                        self.yieldedCount += 1
-                        self.countLock.unlock()
-                    }
+                    //
+                    // 计数本身挪进了 `noteYield()`：这一趟只是**两个来源之一**
+                    // （另一处是续跑，它不走这里）⇒ 两处必须落到同一个数上。
+                    if let self = self { self.noteYield() }
                 }
             } catch {
                 future.reject(GCDScheduler.coerce(error))
@@ -147,10 +171,22 @@ final class GCDScheduler: Scheduler {
         }
     }
 
+    /// 登记一次让出 —— 本条腿的**两个来源**都落在这里（协议侧的说明见同名方法）。
+    ///
+    /// ① **派发那一趟**：体返回 `.suspended`，本类型在派发口内自己调。
+    /// ② **续跑那几趟**：续跑不经派发口（由决出方直接驱动），由引擎在让出被消费时调。
+    /// ⚠️ 漏掉 ② 的后果是「计数只数得到首跑那一趟」—— 而这正是归并前两腿分岔的形态。
+    func noteYield() {
+        countLock.lock()
+        yieldedCount += 1
+        countLock.unlock()
+    }
+
     /// 让出发生的累计次数（可观测、可诊断）。
     ///
-    /// 「`await` 让出 / `wait` 占用」这条差异的可观测面。它记的是**返回 `.suspended`
-    /// 的次数**，即体真的把任务让出去了。与 `activeTaskCount` 并列但不同性质：那个读的是
+    /// 「`await` 让出 / `wait` 占用」这条差异的可观测面。它记的是**每一次让出**
+    /// （两个来源都落在 `noteYield()` 上），即体真的把任务让出去了。与 `activeTaskCount`
+    /// 并列但不同性质：那个读的是
     /// **整台机器现在有几个任务**，任何并行的程序都会挪动它；本计数只由「让出」这一个动作驱动
     /// ⇒ 取**增量**即可判定，不需要独占整台机器。
     ///
@@ -243,4 +279,11 @@ final class SchedulerWithDeclaredCapability: Scheduler {
 
     /// 见类型说明：答的是**语言的声明**，不是 `inner` 的自述。
     func yieldTask() -> Int32 { capabilities.supports(.yield) ? 1 : 0 }
+
+    /// 记账**转发给 `inner`** —— 与上面那个刻意不委派的方法形成对照：
+    /// 那一个答的是「**语言声明**它能做什么」，声明即答案，⛔ 不许被宿主的自述覆盖；
+    /// 本方法记的是「**宿主后端实际让出了几次**」，而那个事实发生在 `inner` 手上，
+    /// 计数也该住在那里。
+    /// ⚠️ 不转发则引擎的续跑登记停在包装层 ⇒ 计数漏，而这类漏计**没有症状**。
+    func noteYield() { inner.noteYield() }
 }

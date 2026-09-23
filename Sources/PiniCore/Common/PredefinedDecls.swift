@@ -28,22 +28,124 @@ enum PredefinedDecls {
     /// **特征**是接口（`实现:` 位的可引用对象），**给定块**是默认实例的类型
     /// （取用点只认给定块 —— 只有特征形态时，`using` 形参在降载期解析不出类型）。
     ///
-    /// ⛔ **字段表只有两个字段，不是遗漏**：策略自身的状态
-    /// （队列 · 优先级 · 归约阈值）的形状，依附于「**任务在语言里怎么表示**」这一面，
-    /// 而那一面今天还没有载体 ⇒ 在此预置字段等于替一个未决的形状做承诺。
+    /// 三个字段各回答一个问题 —— `名称`：**取到的是哪一个默认实例**；
+    /// `可让出`：**这个调度器能不能真的把线程交回去**；`元素`：**它手上待跑的是哪些任务**。
     ///
-    /// 两个字段各回答一个问题 —— `名称`：**取到的是哪一个默认实例**；
-    /// `可让出`：**这个调度器能不能真的把线程交回去**。
-    ///
-    /// ⭐ 后者**不是策略**，而是执行策略里唯一有一个**可用替代值**的那一格：
+    /// ⭐ `可让出`**不是策略**，而是执行策略里唯一有一个**可用替代值**的那一格：
     /// 声明不能让出时，等待退化为占用线程、程序照常跑完（既有规范纪律：降级而不失败）。
     /// ⇒ 它是这条语言侧接线今天唯一能承重的载荷 —— 派发点读了它，行为**可观测地**不同。
     ///
-    /// ⛔ **不声明 `实现:` 它自己的特征**：该特征的抽象方法集今天为空，
-    /// 此刻声明这条遵循关系**不携带任何内容**。待方法集随任务载体定下时，
-    /// 应当**连同默认方法体一起**作一次决定 —— 那时这条遵循关系才有内容可约束。
+    /// ⭐ 声明 `实现:` 它自己的特征 —— 一个名字的两种角色在此合流：特征给接口、
+    /// 给定块给默认实例，而这条遵循关系让「默认实例满足那份接口」成为**可校验**的。
+    /// ⚠️ 它不要求本处提供任何方法：那个特征的两个签名都带默认体，而一致性校验只对
+    /// **无体**签名要求实现 ⇒ 默认实例不必自己再写一遍。真实现住在**预置扩展块**里 ——
+    /// 只有目标类型具体的扩展块写得出 `self.元素`（特征没有「字段要求」机制）。
     static var schedulerGivenBlock: TopLevelDecl {
         let loc = location
+        let handleType = TypeAnnotation.pointer(
+            element: .simple(name: "U8", location: loc), location: loc)
+        // ⭐ 策略层方法的**真实现**住在这份声明**自己**身上 —— 这不是省事，是**让位规则使然**：
+        // 方法是声明的组成部分 ⇒ 这份声明让位（用户自己声明同名块）时，方法**跟着让位**，
+        // 不需要任何额外机制。⚠️ 挂在扩展块上则不然：目标被顶掉后方法仍会归并到**用户那份**
+        // 声明上，而那里没有队列字段 —— 实测形态就是「找不到字段」与「响亮拒绝」两种。
+        //
+        // ⚠️ 给定块**体内**不许写方法，那是**解析层**拒的形态；本处由宿主构造、不经解析器。
+        // ⚠️ 形参表**不含** `self`：体内方法是隐式 self（扩展块才要求显式写），
+        // 而调用点校验按本表算实参个数。
+        let selfExpr = Expression.selfKeyword(location: loc)
+        let queueRead = Expression.member(object: selfExpr, name: queueField, location: loc)
+        let acceptTask = FuncDecl(
+            name: acceptMethodName,
+            modifiers: [],
+            genericParams: [],
+            params: [Parameter(name: "任务", typeAnnotation: handleType)],
+            returnTypes: [],
+            body: Block(
+                statements: [
+                    // ⚠️ 队列字段走**函数式**更新（`append` 返回新数组）⇒ 必须写回字段，
+                    // 否则收到的任务静默丢掉，而调用方看不出任何异常。
+                    .assign(
+                        target: .member(object: selfExpr, name: queueField),
+                        value: .call(
+                            callee: .member(object: queueRead, name: "append", location: loc),
+                            arguments: [
+                                CallArgument(expression: .identifier(name: "任务", location: loc))
+                            ],
+                            location: loc),
+                        location: loc)
+                ],
+                location: loc),
+            location: loc)
+        // ⭐ 另一个方法的真实现：取队首并把它移出队列（先进先出）。
+        //
+        // ⚠️ 它**必须**有真实现，不能只靠特征默认体：默认体只满足一致性校验，
+        // **不产生这个类型的成员方法** ⇒ 调用点在降载层报「该类型没有这个方法」。
+        // 实测形态就是那条判据的读数。
+        let pickNext = FuncDecl(
+            name: pickMethodName,
+            modifiers: [],
+            genericParams: [],
+            params: [],
+            returnTypes: [handleType],
+            body: Block(
+                statements: [
+                    .varDecl(
+                        name: "队首", typeAnnotation: nil,
+                        initializer: .call(
+                            callee: .member(object: queueRead, name: "get", location: loc),
+                            arguments: [
+                                CallArgument(expression: .integerLiteral(value: 0, location: loc))
+                            ],
+                            location: loc),
+                        isMutable: false, location: loc),
+                    // ⚠️ 取出来的**是 Optional**（`get` 的契约：越界给 none）⇒ 必须解包。
+                    // 两支都返回 `*U8`：有货给货，无货给空句柄 —— 空队列那一格就落在这里。
+                    .matchStatement(
+                        value: .identifier(name: "队首", location: loc),
+                        cases: [
+                            MatchCase(
+                                pattern: .enumCase("some"),
+                                bindings: [MatchBinding(paramName: nil, varName: "任务")],
+                                block: Block(
+                                    statements: [
+                                        // 取走了就得**移走**：队列字段是函数式更新，
+                                        // 漏了这一步，下一次还会拿到同一个任务。
+                                        .assign(
+                                            target: .member(object: selfExpr, name: queueField),
+                                            value: .call(
+                                                callee: .member(
+                                                    object: queueRead, name: "slice", location: loc),
+                                                arguments: [
+                                                    CallArgument(expression: .integerLiteral(value: 1, location: loc)),
+                                                    CallArgument(expression: .call(
+                                                        callee: .identifier(name: "len", location: loc),
+                                                        arguments: [CallArgument(expression: queueRead)],
+                                                        location: loc)),
+                                                ],
+                                                location: loc),
+                                            location: loc),
+                                        .returnStatement(
+                                            value: .identifier(name: "任务", location: loc),
+                                            location: loc),
+                                    ],
+                                    location: loc),
+                                location: loc),
+                            MatchCase(
+                                pattern: .enumCase("none"), bindings: [],
+                                block: Block(
+                                    statements: [
+                                        .returnStatement(
+                                            value: .identifier(
+                                                name: BuiltinRegistry.emptyHandleName, location: loc),
+                                            location: loc)
+                                    ],
+                                    location: loc),
+                                location: loc),
+                        ],
+                        location: loc),
+                ],
+                location: loc),
+            location: loc)
         return .givenDecl(
             GivenDecl(
                 name: schedulerTypeName,
@@ -61,9 +163,19 @@ enum PredefinedDecls {
                         initializer: .boolLiteral(value: true, location: loc),
                         location: loc
                     ),
+                    // ⭐ 就绪队列 —— 策略层的**状态**，也是「选择下一个任务」可挑的那个集合。
+                    // 元素是**不透明标量句柄** ⇒ 本层不解释它指向什么。
+                    // ⚠️ 初值空数组就是「刚建好的调度器」的实况，不是占位。
+                    FieldDecl(
+                        name: queueField,
+                        typeAnnotation: .generic(
+                            name: "Array", params: [handleType], location: loc),
+                        initializer: .arrayLiteral(elements: [], location: loc),
+                        location: loc
+                    ),
                 ],
-                methods: [],
-                traits: [],
+                methods: [acceptTask, pickNext],
+                traits: [schedulerTypeName],
                 location: loc
             )
         )
@@ -72,11 +184,25 @@ enum PredefinedDecls {
     /// 调度特征的**语言可见名**。类型层登记的那个特征与上面的给定块同名。
     static let schedulerTypeName = "调度器"
 
+    /// 策略层两个方法的**语言可见名**。
+    ///
+    /// ⭐ 名字住在这里而不是读取处（与 `yieldCapabilityField` / `queueField` 同一条纪律）：
+    /// 本文件里的声明方要用它们，而**两条腿各自的调用方**也要用它们拼方法表里的键 ——
+    /// 三处各写一份字面量，改名时必然对不上，而那一刻**不会有一条判据变红**。
+    static let acceptMethodName = "收下"
+    static let pickMethodName = "选择下一个任务"
+
     /// 语言侧声明「本调度器能否让出」的字段名。
     ///
     /// 名字住在这里而不是读取处：字段名是**声明**的一部分，
     /// 读取方与声明方各写一份，迟早在改名时对不上而无一条判据变红。
     static let yieldCapabilityField = "可让出"
+
+    /// 就绪队列的字段名。
+    ///
+    /// 名字住在这里而不是读取处，理由同上：声明方与扩展块里的两个真实现都要用它，
+    /// 各写一份必然在改名时对不上，而那一刻**不会有一条判据变红**。
+    static let queueField = "元素"
 
     /// 全部预置声明。两个消费者都从这里取。
     static var all: [TopLevelDecl] { [schedulerGivenBlock] }
