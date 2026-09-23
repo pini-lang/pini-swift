@@ -4403,13 +4403,19 @@ public final class IREmitter {
     /// `await` / `wait` 的落点（`DE-1` §3.1 的 `bk_task_join`）。
     ///
     /// ⭐ `DE-6b` 起**两形分岔**：`await` 在**可恢复体的顶层语句**处走让出路径（那条路不走本函数，
-    /// 见 `emitYieldPoint`），而**到达本函数的 `await`** —— 即出现在别处（`match` / `try` 的操作数、
-    /// 表达式内部、闭包体）的那种 —— 本段**响亮拒绝**。
+    /// 见 `emitYieldPoint`），而**到达本函数的 `await`** 本段**响亮拒绝**。
     ///
-    /// ⛔ 为什么拒绝而不是照旧发射一条阻塞 join：`await` 的语义承诺是「把任务让出去」。在让出路径
-    /// 只覆盖顶层语句的今天，其余位置若静默地按占用处理，就是**把承诺打折而不出声** —— 而本仓
-    /// 反复吃亏的正是这种形态。⛔ 也不许「顺手也支持一下」：其余形态各有自己的续跑点与续跑块形状，
-    /// 归 `DE-6c`。
+    /// ⚠️ **谁还会到达这里**（2026-09-24 订正）：原先这里列的是「`match` / `try` 的操作数、表达式
+    /// 内部、闭包体」—— 那份清单里**位置**那一半已经不成立了：同一天起，**嵌套位置与表达式内部
+    /// 位置在降载层就被拒**（`E6-010`），根本到不了发射层。⇒ 今天仍会到达本函数的只剩**一种**：
+    /// **拿不到可恢复帧的体**里的顶层 `await` —— 即**无声明返回类型的异步体**（它不返回 `Result`，
+    /// 因而没有承载续跑点的帧）以及闭包体（闭包不是任务，一律无帧）。
+    /// ⚠️ 这一格**未收口**，仍以本处断言拒绝；它与上面那批不是一个量级的事（那批是**位置**，
+    /// 这一格是**体没有帧**），故分开记。
+    ///
+    /// ⛔ 为什么拒绝而不是照旧发射一条阻塞 join：`await` 的语义承诺是「把任务让出去」。在本函数
+    /// 面对的这种体里若静默地按占用处理，就是**把承诺打折而不出声** —— 而本仓
+    /// 反复吃亏的正是这种形态。
     ///
     /// `wait`（`.waits`）与 `joinWithin` 一类的聚合等待**不受影响**：它们的承诺就是阻塞。
     ///
@@ -4419,9 +4425,9 @@ public final class IREmitter {
     private func emitJoin(future: HIRExpr, type: HIRType, form: JoinForm) -> IRValue {
         if form == .awaits {
             fatalError(
-                "IREmitter: `await` yields only at a statement root — `await f()` · `var x = await f(...)`"
-                    + " · `try await f() else ...` · `match await f():`; a nested control-flow or"
-                    + " in-expression position has no resume entry")
+                "IREmitter: a resumable `await` needs a frame — this body has none"
+                    + " (an async body with no declared Result return, or a closure body)."
+                    + " Nested and in-expression positions are refused earlier, in lowering")
         }
         usesTaskRuntime = true
         guard case .result(let okType) = type else {

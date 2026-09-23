@@ -199,4 +199,4 @@ suggestion = "改用与所在体匹配的关键字，或改函数的异步声明
 
 [E6-010]
 message = "`await` 落在没有可恢复续跑点的位置：它会让出当前任务，而这里回不到精确的续跑点"
-suggestion = "把这次等待挪到一条语句的根部：`await f()` 独占一行 · `var x = await f()` · `try await f() else …` · `match await f():`"
+suggestion = "把这次等待挪到**函数体那一层**的一条语句根部：`await f()` 独占一行 · `var x = await f()` · `try await f() else …` · `match await f():`。同样的四形**嵌在** `if` / 循环体 / `match` 的 case 体里也不行 —— 续跑跳不回嵌套块"

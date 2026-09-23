@@ -2036,6 +2036,11 @@ public enum HIRLowerer {
         _ block: Block,
         into context: inout FunctionContext
     ) throws -> HIRBlock {
+        // 体嵌套深度（2026-09-24 裁定）：**体那一层是 1**，任何控制流的体都使之上浮一格。
+        // 与发射层同名计数同一含义，但两者是**独立实现** —— 它们必须对同一条规则给出同一个
+        // 答案，否则就回到「两层口径差」那种形态（见 `allowedAwaitLocation`）。
+        context.bodyDepth += 1
+        defer { context.bodyDepth -= 1 }
         var statements: [HIRStmt] = []
         var positions: [SourceLocation] = []
         for statement in block.statements {
@@ -2063,6 +2068,10 @@ public enum HIRLowerer {
     /// `try` 是**透明**的：`try await f() else …` 的求值点就是 `await f()` 的求值点，
     /// 所以剥掉包装再判。⚠️ 赋值语句与解构语句**不在**此列，这是刻意的：运行时的让出计划
     /// 里没有这两形，放行只会造出上面那种混合，所以按 fail-closed 拒绝。
+    ///
+    /// ⚠️ ⭐ **这四形还须落在「体那一层」**（2026-09-24 裁定，见 `lowerStatement` 里的深度判据）：
+    /// 嵌在 `if` / `match` 的 case / 循环体里的那四形**同属此列也不放行**。本函数只判**句法形态**，
+    /// 深度由调用方判 —— 两者缺一即回到「降载层放行、发射层拒绝」的旧形态。
     private static func allowedAwaitLocation(in statement: Statement) -> SourceLocation? {
         var root: Expression?
         switch statement {
@@ -2093,9 +2102,15 @@ public enum HIRLowerer {
         // 本身（剥掉 `try` 包装之后）算可让出位置。判定放在语句层而不是表达式层，是因为
         // 「语句根」本来就是**语句**的性质 —— 表达式层看不到它。
         //
+        // ⭐ **且须落在体那一层**（2026-09-24 裁定）：嵌在 `if` / `match` 的 case / 循环体里的
+        // 语句根**不是**可让出位置。理由与发射层同一条 —— 续跑的跳转只跳得回体那一层的那一块，
+        // 嵌套块的进入条件在那条路径上被整段跳过，故那些值不支配续跑块。
+        // ⚠️ 在此之前这里是**只看句法形态**的，而发射层另按深度拒 ⇒ 两层对同一条规则给出不同
+        // 答案，且那处拒绝是**内部断言**（编译器直接崩）。本条把两层收口到同一个答案上。
+        //
         // 嵌套语句（`if` 体、`match` 各臂）各自走到这里，各自设置、各自恢复。
         let previousAllowedAwaitAt = context.allowedAwaitAt
-        context.allowedAwaitAt = allowedAwaitLocation(in: statement)
+        context.allowedAwaitAt = context.bodyDepth == 1 ? allowedAwaitLocation(in: statement) : nil
         defer { context.allowedAwaitAt = previousAllowedAwaitAt }
 
         switch statement {
@@ -3938,8 +3953,10 @@ public enum HIRLowerer {
                 guard let allowed = context.allowedAwaitAt, allowed == joinLocation else {
                     throw rejected(
                         "`await` 不能写在这个位置：它会让出当前任务，而这里没有可恢复的续跑点。"
-                            + "把这次等待挪到一条语句的根部：`await f()` 独占一行 · "
-                            + "`var x = await f()` · `try await f() else …` · `match await f():`",
+                            + "把这次等待挪到**函数体那一层**的一条语句根部：`await f()` 独占一行 · "
+                            + "`var x = await f()` · `try await f() else …` · `match await f():`；"
+                            + "嵌在 `if` / 循环体 / `match` 的 case 体里的那几形同样不行 —— "
+                            + "续跑跳不回嵌套块。",
                         code: Self.awaitUnrecoverablePositionCode, at: joinLocation
                     )
                 }
@@ -6212,6 +6229,16 @@ private struct FunctionContext {
     /// 误伤），要么得改遍每个表达式分支才能正确传播（漏一个就静默放行，正是这条规则要防的
     /// 失败模式）。位置比较不必碰任何表达式分支 —— 子表达式里的 `await` 位置天然不同。
     var allowedAwaitAt: SourceLocation?
+
+    /// 体嵌套深度：**函数 / 闭包体的那一层是 1**，每进一层控制流的体加一（`lowerBlock` 里维护）。
+    ///
+    /// ⭐ 它只有一个用途 —— 与 `allowedAwaitLocation` 的句法判定**合取**，把「可让出位置」
+    /// 收到体那一层（`DE-6b` 的让出点只能落在那里）。
+    ///
+    /// ⚠️ 与发射层那个同名计数**同一含义但不是同一个变量**：两者是独立实现，必须对同一条规则
+    /// 给出同一个答案。这个「两个独立实现给同一答案」的要求不是洁癖 ——
+    /// 2026-09-24 之前正因两者答案不同，才出现「降载层放行、发射层拒绝且以内部断言崩溃」的形态。
+    var bodyDepth: Int = 0
 
     /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,
     /// shorter name at call sites).
