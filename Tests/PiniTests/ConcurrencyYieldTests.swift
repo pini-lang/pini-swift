@@ -292,4 +292,97 @@ struct ConcurrencyYieldTests {
         )
         #expect(probe.lines.contains("7"), "the second await did not carry its value to the end")
     }
+
+    // MARK: - 判据 5：顺序由**策略**决定，而不是由**决出顺序**决定（改道那一格的验收面）
+
+    /// 一对判据共用的语料 —— 两份**只差**开头那一段 `[[调度器]]` 覆盖块。
+    ///
+    /// ⭐ 语料的机关在**时间**上，三处缺一不可：
+    /// - `父` 先派发 `甲`/`乙`（各自 await 一个闸），**再** await 自己的闸 ⇒
+    ///   「父被挂起」先发生；
+    /// - `父` 的**续跑段**睡一段（300ms）⇒ 它占住驱动，而 `甲`（100ms）与 `乙`（150ms）的闸
+    ///   在这期间先后决出 ⇒ **两笔入队都发生在任何一次挑选之前**；
+    /// - 于是策略层拿到的是一个**装着两件待跑项的队列**，它挑谁谁就先跑。
+    ///
+    /// ⚠️ 不作覆盖（默认策略 = 先进先出）时，顺序应当**等于决出顺序**（甲先于乙）；
+    /// 覆盖成后进先出之后，**先跑的必须是后决出的乙**。两条读数互为反证：
+    /// 只看后一条，「策略生效」与「碰巧乙先跑」在读数上**同形**。
+    ///
+    /// ⚠️ 为什么这条判据**不能省**（本 suite 的串行化正是为这类判据立的，代价是它占住整个套件）：
+    /// 它是「结果决出 ⇒ 入队」这处改道**唯一**的验收面。判据面里最直观的候选
+    /// （验「选择下一个任务被调用过至少一次」）**区分力不足** —— 回调式实现下它也会绿:
+    /// 一次「调用记录」不证明顺序由策略决定。只有「顺序 = 策略给的顺序」能把它证伪。
+    private static func strategyOrderCorpus(overriding: Bool) -> String {
+        let overrideBlock = overriding ? """
+        [[调度器]]
+            选择下一个任务|self() -> (*U8,):
+                var 个数 = len(self.元素)
+                if 个数 == 0:
+                    return 空句柄
+                var 队尾 = self.元素.get(个数 - 1)
+                match 队尾:
+                    case some(任务):
+                        self.元素 = self.元素.slice(0, 个数 - 1)
+                        return 任务
+                    case none:
+                        return 空句柄
+
+        """ : ""
+        return overrideBlock + """
+        闸|func(毫秒: I32,) => (I32,):
+            sleep(毫秒)
+            return ok(0)
+
+        甲|func() => (I32,):
+            var g = 闸(100)
+            let x = try await g else e:
+                return err(Error("闸"))
+            print("甲")
+            return ok(0)
+
+        乙|func() => (I32,):
+            var g = 闸(150)
+            let x = try await g else e:
+                return err(Error("闸"))
+            print("乙")
+            return ok(0)
+
+        父|func() => (I32,):
+            var a = 甲()
+            var b = 乙()
+            var g0 = 闸(50)
+            let x = try await g0 else e:
+                return err(Error("闸"))
+            sleep(300)
+            print("父续")
+            let ra = try await a else e:
+                return err(Error("甲"))
+            return ok(0)
+
+        main|func() -> ():
+            var t = 父()
+            var q = wait t
+            return
+        """
+    }
+
+    @Test("顺序由策略决定 —— 换成后进先出后，先跑的是后决出的那个")
+    func thePolicyDecidesTheOrder() throws {
+        /// 意图：整段「改道」的验收面。
+        /// 推进性：默认策略下顺序**等于决出顺序**（甲先于乙）——
+        /// 这一步同时证明语料里的两个闸确实是先后决出的，否则后一条读数没有意义。
+        /// 驳回性：同一段语料只多一个覆盖块，先跑的必须变成**后决出的乙**。
+        /// 两条合起来才说明「先跑谁」是**策略**说了算，而不是决出时刻说了算。
+        ///
+        /// ⚠️ 变异（必须转红）：去掉改道（恢复「决出 ⇒ 直接重入体」）⇒ 顺序退回决出顺序，
+        /// 覆盖块形同虚设 ⇒ 本条的后一个断言读到 `甲/乙/父续`（已实测）。
+        let preset = try runYieldProbe(Self.strategyOrderCorpus(overriding: false)).lines
+        #expect(preset == ["父续", "甲", "乙"], "默认策略下顺序应当等于决出顺序：\(preset)")
+
+        let overridden = try runYieldProbe(Self.strategyOrderCorpus(overriding: true)).lines
+        #expect(
+            overridden == ["父续", "乙", "甲"],
+            "覆盖成后进先出后，先跑的应当是后决出的乙：\(overridden)"
+        )
+    }
 }

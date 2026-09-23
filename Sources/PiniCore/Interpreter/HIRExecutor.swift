@@ -3117,30 +3117,316 @@ public final class HIRExecutor: DebugHookHost {
         }
     }
 
-    /// Wait for the future a body gave the task up on, and pick the body up when
-    /// it settles.
+    // MARK: - 就绪队列的驱动面（`Q-3`：结果决出 ⇒ 入队，而非直接重入体）
+
+    /// 一个**已决出、待续跑**的任务 —— 策略层那份队列里那个句柄背后所指的东西。
     ///
-    /// The resumption runs on whichever thread settled that future. That is the
-    /// point rather than a side effect: no thread is held on this side while the
-    /// body waits, so a task that awaits a child costs a continuation instead of
-    /// a worker — which is what makes the bounded pool a bound rather than a
-    /// queue of parked threads.
+    /// ⚠️ 它是**驱动层的私面**：队列元素按裁定只是**不透明标量句柄**，句柄在这边映射到
+    /// 哪件东西是驱动层自己的事 ⇒ 策略层那份队列**不必**认识任务、也不必认识帧。
+    private struct ReadyItem {
+        let task: FutureValue
+        let frame: HIRYieldFrame
+        /// 让出时等到的那个值 —— 推进它时随调用带进去（本腿的取值形态）。
+        let value: Value
+    }
+
+    /// 这次去问策略层，得到了什么。
+    ///
+    /// ⚠️ 「空」与「缺陷」**必须分开**：前者是正常状态（刚建好的队列就是空的），
+    /// 后者是策略给了一个**从没发出去过**的句柄。混成一个读数就会把缺陷读成「暂时没活」，
+    /// 于是**静默地什么都不做** —— 那是本引擎最不能出的结果。
+    private enum ReadyTake {
+        case item(ReadyItem)
+        case empty
+        case unknown(Int)
+    }
+
+    /// 句柄 → 待续跑项。
+    ///
+    /// ⚠️ **跨线程共享**：谁把结果决出，就由谁把任务入队 ⇒ **写入方是多条工作线程**，
+    /// 而读取方是驱动循环。故它由 `readyLock` 守护，⛔ 不是「反正单线」——
+    /// 「同族的既有状态已有隔离」这条**推不到**新状态上。
+    private var readyItems: [Int: ReadyItem] = [:]
+
+    /// 下一个要发的句柄。
+    ///
+    /// ⭐ 取值约定**沿语言层既有约定**：那句「没有下一个」在降载后是一个**整数零**
+    /// ⇒ 这里保留 `0`、真任务从 `1` 起。⛔ 不引入指针承载 —— 队列元素按裁定只是
+    /// **不透明标量**，换成地址反而要自己管它的生命周期。
+    private var nextReadyHandle = 1
+
+    /// 「趟」的两笔账：**有人要挑**、**已经有一趟在挑**。
+    ///
+    /// ⚠️ 为什么需要它们：一批任务**全部入队之后**才请挑选循环，但请挑选这件事本身
+    /// 可能落在**另一条线程**上（同一时刻可能有多批）⇒ 用「已有循环在跑就只记一笔」把它收成
+    /// **同一时刻只跑一趟**，那一笔由收工的那趟兑现（见 `runReadyLoop` 尾部的对账）。
+    private var readyDrainRequested = false
+    private var readyDrainScheduled = false
+    private var readyDraining = false
+    private let readyLock = NSLock()
+
+    /// 一批待续跑项：**同一个被等的未来**上挂着的全部帧。
+    ///
+    /// ⭐ 一个未来**只挂一个**回调 —— 这是「顺序由策略决定」成立的**前提**，不是优化：
+    /// 一次决出会**同步地、依次**唤醒所有在等它的任务。若让**每个**唤醒各自去入队、
+    /// 各自去请挑选，第一趟挑选就可能发生在这批里**还有任务没入队**的时刻 ⇒
+    /// 第一个醒来的被挑走 ⇒ 挑选顺序退回**决出顺序**，策略层**无选择可言**，
+    /// 那条判据（顺序 = 策略给的顺序）也就**失去对象**。
+    /// ⇒ 按「被等的未来」**并批**：一个回调负责把这一批**先全部入队、再挑**。
+    ///
+    /// ⚠️ 帧与任务**成对**存：同一批里的帧属于**不同的任务**（一个任务同时只有一个未决帧）。
+    private struct PendingFrame {
+        let frame: HIRYieldFrame
+        let task: FutureValue
+    }
+    private var framesAwaitingSettle: [ObjectIdentifier: [PendingFrame]] = [:]
+
+    /// 调策略层那两个方法的**串行面**。
+    ///
+    /// ⚠️ 那两个方法碰的是**同一个对象**（策略层那份队列）：入队来自决出方、
+    /// 取一个来自驱动循环 ⇒ 两条线程会同时碰它。
+    /// ⛔ 这不是「给队列换个主人」—— 队列仍归策略层；本锁只管**调用不重叠**。
+    private let strategyLock = NSLock()
+
+    /// 语言层那句「没有下一个」在运行期的样子。
+    private static let emptyHandle = 0
+
+    /// 策略层那两个方法在方法表里的键。
+    ///
+    /// ⚠️ 键**用降载器同一个改名函数**算，⛔ 不在这里手写一份拼法：
+    /// 手写的那份改名时不出声，而它错的那一刻症状是「执行器找不到自己程序里的方法」。
+    private var strategyMethodKeys: (accept: String, pick: String) {
+        let typeName = IRName.mangle(PredefinedDecls.schedulerTypeName)
+        return (
+            "\(IRName.mangle("收下"))__\(typeName)",
+            "\(IRName.mangle("选择下一个任务"))__\(typeName)"
+        )
+    }
+
+    /// 策略层那个值。⭐ **运行期物化** —— 装载期的契约是「只注册、不运行」，
+    /// 故它不能在 `prepare` 里求（那条路的代价已经实测过一次）。
+    private func strategyInstance() throws -> Value {
+        try materializeGivenInstance(
+            .nominal(name: PredefinedDecls.schedulerTypeName, isObject: false)
+        )
+    }
+
+    /// 把一件待续跑的任务交给策略层。**入队是同步的** ⇒ 调用方可以「先入完一批、再挑」。
+    ///
+    /// - Returns: 真的入队了 ⇒ `true`（入不了队时已就地处置，见下）。
+    @discardableResult
+    private func offerToStrategy(frame: HIRYieldFrame, task: FutureValue, value: Value) -> Bool {
+        readyLock.lock()
+        let handle = nextReadyHandle
+        nextReadyHandle += 1
+        readyItems[handle] = ReadyItem(task: task, frame: frame, value: value)
+        readyLock.unlock()
+
+        do {
+            try strategyAccept(handle: handle)
+        } catch {
+            // 入不了队 ⇒ 这件任务**永远不会被推进**，而它手里的等待者会一直等下去。
+            // ⛔ 不静默丢掉：当作那个任务自己的一次失败交出去，让调用方看得见。
+            readyLock.lock()
+            readyItems.removeValue(forKey: handle)
+            readyLock.unlock()
+            _ = task.closeScope()
+            task.reject(GCDScheduler.coerce(error))
+            return false
+        }
+        return true
+    }
+
+    /// 调策略层的「收下」。接收者走**首个实参位** —— 类型方法的既定调用形态。
+    private func strategyAccept(handle: Int) throws {
+        guard let accept = methods[strategyMethodKeys.accept] else {
+            throw HIRExecutor.missingStrategyMethod("收下")
+        }
+        strategyLock.lock()
+        defer { strategyLock.unlock() }
+        _ = try call(accept, args: [try strategyInstance(), .int(handle)])
+    }
+
+    /// 问策略层「下一个是谁」，并把答案落成一件待推进项。
+    private func strategyPick() throws -> ReadyTake {
+        guard let pick = methods[strategyMethodKeys.pick] else {
+            throw HIRExecutor.missingStrategyMethod("选择下一个任务")
+        }
+        strategyLock.lock()
+        let answered: Value
+        do {
+            answered = try call(pick, args: [try strategyInstance()])
+            strategyLock.unlock()
+        } catch {
+            strategyLock.unlock()
+            throw error
+        }
+        guard let handle = HIRExecutor.handleNumber(answered) else {
+            throw RuntimeError.invalidOperation(
+                reason: "HIR executor: the scheduler's '选择下一个任务' answered \(answered),"
+                    + " which is not a handle",
+                location: HIRExecutor.noLocation
+            )
+        }
+        guard handle != HIRExecutor.emptyHandle else { return .empty }
+        readyLock.lock()
+        let item = readyItems.removeValue(forKey: handle)
+        readyLock.unlock()
+        guard let item = item else { return .unknown(handle) }
+        return .item(item)
+    }
+
+    private static func missingStrategyMethod(_ name: String) -> RuntimeError {
+        RuntimeError.invalidOperation(
+            reason: "HIR executor: the scheduler has no '\(name)' method — "
+                + "the preset declaration or the program's replacement lacks it",
+            location: HIRExecutor.noLocation
+        )
+    }
+
+    /// 把一个策略层给的答案读成句柄号。
+    ///
+    /// ⚠️ 那一格的声明是**单元素元组**，而「单元素返回」在本语言里不写括号 ⇒
+    /// 两种形态都得认。⛔ 认不出就报缺陷 —— 静默当成「没有下一个」会把
+    /// 「策略坏了」读成「暂时没活」。
+    private static func handleNumber(_ value: Value) -> Int? {
+        if case .int(let handle) = value { return handle }
+        if case .tuple(_, let elements) = value, elements.count == 1,
+            case .int(let handle) = elements[0] {
+            return handle
+        }
+        return nil
+    }
+
+    /// 请一趟驱动循环来把这批活挑完。**同一时刻只排一趟**。
+    ///
+    /// ⚠️ 排的是**另起一趟**而不是就地跑 —— 理由见 `readyDrainRequested` 的说明。
+    private func scheduleReadyDrain() {
+        readyLock.lock()
+        if readyDraining || readyDrainScheduled {
+            readyDrainRequested = true
+            readyLock.unlock()
+            return
+        }
+        readyDrainScheduled = true
+        readyLock.unlock()
+        DispatchQueue.global().async { [weak self] in self?.runReadyLoop() }
+    }
+
+    /// 驱动循环：**问策略要一个 ⇒ 推进它一次**，直到策略说没有下一个。
+    private func runReadyLoop() {
+        readyLock.lock()
+        readyDrainScheduled = false
+        readyDraining = true
+        readyLock.unlock()
+
+        // ⚠️ 策略给的答案**可不可信**要分开记：不可信时**不得**再排下一趟，
+        // 否则「策略每次都答同一个我们不认识的句柄」会转成一个不停循环。
+        var trustworthy = true
+        drain: while true {
+            let take: ReadyTake
+            do {
+                take = try strategyPick()
+            } catch {
+                trustworthy = false
+                HIRExecutor.reportStrategyDefect("\(error)")
+                break drain
+            }
+            switch take {
+            case .item(let item):
+                // ⚠️ 在队列里等着的这段时间里它可能被取消 ⇒ **出队即丢弃**：
+                // 一个从未被进入的体没有检查点，取消只能在**这里**被看见。
+                if item.task.isCancelled { continue drain }
+                completeResumedRun(item.frame, task: item.task, value: item.value)
+            case .empty:
+                break drain
+            case .unknown(let handle):
+                trustworthy = false
+                HIRExecutor.reportStrategyDefect(
+                    "it named handle \(handle), which was never handed out")
+                break drain
+            }
+        }
+
+        readyLock.lock()
+        readyDraining = false
+        // 关掉那道窗：本循环据「策略说没有」收工时，另一边可能刚入了队、
+        // 又因为「已经有一趟在跑」而只记了一笔 ⇒ 那一笔在这里兑现。
+        let again = trustworthy && readyDrainRequested && !readyDrainScheduled
+        readyDrainRequested = false
+        if again { readyDrainScheduled = true }
+        readyLock.unlock()
+        if again {
+            DispatchQueue.global().async { [weak self] in self?.runReadyLoop() }
+        }
+    }
+
+    /// 策略层坏了 —— 响亮说，⛔ 不静默降级成「没有下一个」。
+    private static func reportStrategyDefect(_ detail: String) {
+        print("[scheduler] ⛔ 策略层给出的答案不可用，就绪队列停止驱动：\(detail)")
+    }
+
+    /// Wait for the future a body gave the task up on, and hand the bodies to the
+    /// policy when it settles.
+    ///
+    /// `Q-3`: settling no longer resumes a body **directly** — it offers the task
+    /// to the scheduler's queue, and the driver loop picks it back up in the order
+    /// the policy gives. That indirection is the difference between "the scheduler
+    /// can be replaced" and "the completion order decides everything": on the
+    /// direct path there is nothing for a policy to choose between.
+    ///
+    /// The registration is **per awaited future, not per frame** — see
+    /// `framesAwaitingSettle` for why that grouping is what makes a policy's
+    /// choice observable at all.
+    ///
+    /// The old note holds for everything else: no thread is held on this side
+    /// while the body waits, so a task that awaits a child costs a continuation
+    /// instead of a worker — which is what makes the bounded pool a bound rather
+    /// than a queue of parked threads.
     private func attachResume(_ frame: HIRYieldFrame, task: FutureValue) {
+        let key = ObjectIdentifier(frame.awaited)
+        readyLock.lock()
+        let isFirstOfBatch = framesAwaitingSettle[key] == nil
+        framesAwaitingSettle[key, default: []].append(PendingFrame(frame: frame, task: task))
+        readyLock.unlock()
+
+        guard isFirstOfBatch else { return }
         frame.awaited.whenResolved { [weak self] outcome in
             guard let self = self else { return }
-            switch outcome {
-            case .success(let value):
-                self.completeResumedRun(frame, task: task, value: value)
-            case .failure(let error):
-                // The body never gets its value, so it never reaches its own
-                // closing act; the scope has to be closed here or its children
-                // keep running under a task that is already over. Whatever the
-                // close reports as leaked is dropped on purpose: this task is
-                // failing on its own account, and folding an aggregate of
-                // nobody-joined children into the error would replace the reason
-                // the await failed with a list of bystanders.
-                _ = task.closeScope()
-                task.reject(error)
+            self.settleBatch(key: key, outcome: outcome)
+        }
+    }
+
+    /// 一个被等的未来有了结果（或失败）⇒ 处置它名下那一批。
+    ///
+    /// ⭐ 顺序是「**先全部入队、再请挑选**」，两步分开且都在这一个回调里 ⇒
+    /// 策略层看到的是**整批**，而不是「先醒来的那一个」。
+    private func settleBatch(key: ObjectIdentifier, outcome: Result<Value, RuntimeError>) {
+        readyLock.lock()
+        let batch = framesAwaitingSettle.removeValue(forKey: key) ?? []
+        readyLock.unlock()
+
+        switch outcome {
+        case .success(let value):
+            var enqueuedAny = false
+            for item in batch {
+                if offerToStrategy(frame: item.frame, task: item.task, value: value) {
+                    enqueuedAny = true
+                }
+            }
+            guard enqueuedAny else { return }
+            scheduleReadyDrain()
+        case .failure(let error):
+            // The body never gets its value, so it never reaches its own
+            // closing act; the scope has to be closed here or its children
+            // keep running under a task that is already over. Whatever the
+            // close reports as leaked is dropped on purpose: this task is
+            // failing on its own account, and folding an aggregate of
+            // nobody-joined children into the error would replace the reason
+            // the await failed with a list of bystanders.
+            for item in batch {
+                _ = item.task.closeScope()
+                item.task.reject(error)
             }
         }
     }
