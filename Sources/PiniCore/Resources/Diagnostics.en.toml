@@ -199,4 +199,4 @@ suggestion = "use the keyword that matches the body, or change the function's as
 
 [E6-010]
 message = "`await` sits where there is no resumable point: it gives the task up, and nothing here can pick the body back up"
-suggestion = "move the wait to a statement root: a bare `await f()` · `var x = await f()` · `try await f() else …` · `match await f():`"
+suggestion = "move the wait to a statement root at the top level of the body: a bare `await f()` · `var x = await f()` · `try await f() else …` · `match await f():`. The same four forms nested inside `if`, a loop body or a `match` case do not qualify either -- the resume jump cannot reach into a nested block"
