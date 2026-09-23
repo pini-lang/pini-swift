@@ -15,10 +15,13 @@ import Testing
 ///     缺变量时**报「本臂未参与」并让跳过可见**（`known issue` 计数），不静默通过 ——
 ///     否则「没跑」与「通过」在读数上不可区分。
 ///
-/// ⚠️ 覆盖面：本守卫守**两个**断言点 —— 一格判**两个维度**（输出 + 让出读数；那格语料含一处 `await`），
-/// 另一格判**一个维度**（只有输出；那格语料零处 `await` ⇒ 让出读数恒为 `0`，是个**空维**，刻意不加）。
-/// ⭐ 第二格是**补**的：给定实例的取用那条路**曾经在发射腿上无人守** —— 它的缺陷只在那条路上才被
-/// 发射出来，而当时碰它的判据全在解释器腿上 ⇒ **一格的缺席能藏住一整类缺陷**，这一格是那次的对照。
+/// ⚠️ 覆盖面：本守卫的**两腿对照格** = 用例里两条腿**各自**与手写期望比一次（有的还多判一维让出
+/// 读数）。现有 **八** 格 —— 计法就是这条规则，改完用例照它数一遍，别去信一个写死的数
+/// （同一个数从前就落过一次伍，正是因为它只写在标题里、没有可复算的计法）。
+/// ⭐ 其中「给定实例的取用」那一格是**补**的：那条路**曾经在发射腿上无人守** —— 它的缺陷只在发射腿上
+/// 才现形，而当时碰它的判据全在解释器腿上 ⇒ **一格的缺席能藏住一整类缺陷**，这一格是那次的对照。
+/// ⭐ 最近两格（跨来源同名方法的合并 · 用户覆盖调度策略后的顺序）同属这一类：**只在发射腿上现形**，
+/// 所以放进本件，而不是放进任何单腿的套件。
 /// 语料面下 8 份并发语料只有一份两腿可达，其余 7 份停在同一处上游降载门禁上（与 LLVM 腿无关）。
 /// ⇒ 它证明的是**形态已经接通**，**不是**「并发面已被守卫覆盖」。
 ///
@@ -529,6 +532,187 @@ struct ContractReferenceTests {
             interpreted.stdout == expected,
             "解释器腿的输出应是手写期望 \(expected.debugDescription)，实际 \(interpreted.stdout.debugDescription)"
         )
+    }
+
+    // MARK: - 跨来源的同名方法：按名合并（与调度器无关的那一面）
+
+    /// 同一结构的两个扩展块写**同名**方法。
+    ///
+    /// ⚠️ 这条与调度无关，放在本件的理由却与调度那一格**同一个**：它问的是降载层怎么合并
+    /// 两处方法来源，而出问题的是发射腿 —— 合并留下两条同名方法时，模块在被执行之前就被拒；
+    /// 解释器腿按字典收表、后写者胜，因而**看不出**这件事。⇒ **缺陷只在发射腿上现形**。
+    ///
+    /// ⭐ 期望值手写：后声明的那一份答 `2`，前一份答 `1` —— 两个数不同，读数才有区分力。
+    private static let duplicateMethodProgram = """
+        (匣)
+        值: I32 = 0
+
+        ((匣))
+        取|self() -> (I32,):
+            return 1
+
+        ((匣))
+        取|self() -> (I32,):
+            return 2
+
+        main|func() -> ():
+            var x = 匣()
+            print(x.取())
+            return
+        """
+
+    /// 阴性对照：只留**一个**扩展块。
+    ///
+    /// ⭐ 它证明「`2`」不是常量、也不是「恰好打印了顺手读到的那一个数」——
+    /// 少了它，一条恒打印 `2` 的实现也能让上面那格通过。
+    private static let singleMethodProgram = """
+        (匣)
+        值: I32 = 0
+
+        ((匣))
+        取|self() -> (I32,):
+            return 1
+
+        main|func() -> ():
+            var x = 匣()
+            print(x.取())
+            return
+        """
+
+    @Test("⭐ 两处来源的同名方法按名合并：后声明者胜 —— 且阴性对照读出不同的数")
+    func laterDeclarationWinsAcrossMethodSources() throws {
+        try assertBothLegsMatch(
+            Self.duplicateMethodProgram, expecting: ["2"], label: "两处同名（后声明者胜）")
+        try assertBothLegsMatch(
+            Self.singleMethodProgram, expecting: ["1"], label: "阴性对照（只有一处）")
+    }
+
+    // MARK: - 调度策略被覆盖后的顺序（此前只有一个策略可验的那一半）
+
+    /// 一对语料共用的行程，两份**只差**开头那段 `[[调度器]]` 覆盖块。
+    ///
+    /// ⭐ 机关全在**时间**上，三处缺一不可：
+    /// - `父` 先派发 `甲`/`乙`（各 await 一个闸），**再** await 自己的闸 ⇒ 「父被挂起」先发生；
+    /// - `父` 的**续跑段**睡一段 ⇒ 它占住驱动，而 `甲` 与 `乙` 的闸在这段里先后决出
+    ///   ⇒ **两笔入队都发生在任何一次挑选之前**；
+    /// - 于是策略层拿到的是一个**装着两件待跑项的队列**，它挑谁谁就先跑。
+    ///
+    /// ⇒ 默认策略（先进先出）下顺序**等于决出顺序**（甲先于乙）；覆盖成后进先出之后，
+    /// 先跑的必须是**后决出的乙**。两条读数互为反证 —— 只看后一条，
+    /// 「策略生效」与「碰巧乙先跑」在读数上同形。
+    ///
+    /// ⚠️ 与解释器腿那一侧的同名判据**不是同一份语料**，差在两处、都是刻意的：
+    /// ① 那边每处 `else` 臂用错误构造，而发射腿表达不出那个构造（那条路上的既有边界，
+    /// 不是本段引入）；② 那边父的续跑段睡 300ms，这里睡 800ms —— 本件不与任何套件串行，
+    /// 睡太短会在机器忙时把「乙的闸还没决出、父就醒了」误报成顺序不符。**这是余量，不是语义。**
+    private static func strategyOrderCorpus(overriding: Bool) -> String {
+        let overrideBlock = overriding ? """
+        [[调度器]]
+            选择下一个任务|self() -> (*U8,):
+                var 个数 = len(self.元素)
+                if 个数 == 0:
+                    return 空句柄
+                var 队尾 = self.元素.get(个数 - 1)
+                match 队尾:
+                    case some(任务):
+                        self.元素 = self.元素.slice(0, 个数 - 1)
+                        return 任务
+                    case none:
+                        return 空句柄
+
+        """ : ""
+        return overrideBlock + """
+        闸|func(毫秒: I32,) => (I32,):
+            sleep(毫秒)
+            return ok(0)
+
+        甲|func() => (I32,):
+            var g = 闸(100)
+            try await g else e:
+                return ok(0)
+            print("甲")
+            return ok(0)
+
+        乙|func() => (I32,):
+            var g = 闸(150)
+            try await g else e:
+                return ok(0)
+            print("乙")
+            return ok(0)
+
+        父|func() => (I32,):
+            var a = 甲()
+            var b = 乙()
+            var g0 = 闸(50)
+            try await g0 else e:
+                return ok(0)
+            sleep(800)
+            print("父续")
+            var ra = try await a else e:
+                return ok(0)
+            return ok(0)
+
+        main|func() -> ():
+            var t = 父()
+            var q = wait t
+            return
+        """
+    }
+
+    @Test("⭐ 顺序由策略决定（发射腿那一半）：覆盖成后进先出后，先跑的是后决出的那个")
+    func thePolicyDecidesTheOrderOnTheEmittingLeg() throws {
+        /// 意图：这半格此前**建立不起来** —— 一份替换掉调度器的程序在发射腿上不被接受
+        /// （同一个类型上出现两个同名的方法定义），于是覆盖块形同虚设。合并那一处补上之后，
+        /// 两条腿才都问得出「先跑谁由谁决定」。
+        ///
+        /// 推进性：默认策略下顺序**等于决出顺序**（甲先于乙）—— 这一步同时证明语料里的两个闸
+        /// 确实先后决出，否则后一条读数没有意义。驳回性：只多那段覆盖块，先跑的必须变成乙。
+        try assertBothLegsMatch(
+            Self.strategyOrderCorpus(overriding: false), expecting: ["父续", "甲", "乙"],
+            label: "默认策略")
+        try assertBothLegsMatch(
+            Self.strategyOrderCorpus(overriding: true), expecting: ["父续", "乙", "甲"],
+            label: "覆盖成后进先出")
+    }
+    /// 两条腿各跑一次这份程序，**各自**与同一份手写期望比输出。
+    ///
+    /// ⛔ 不比退出码：本仓实测过「底层工具报错、而命令行仍返回成功码」的形态（本段的语料
+    /// 当时就是 `rc=0`），退出码单独用是**弱判据**，输出才是。
+    /// ⛔ 也不比让出读数：本函数服务的语料要么零处 `await`、要么让出次数不是本格要问的东西
+    /// ⇒ 硬塞一维进来会是个空维。
+    ///
+    /// ⚠️ 期望值全部**手写**、逐字节比，⛔ 不从任何一条腿的输出回抄。
+    @discardableResult
+    private func assertBothLegsMatch(
+        _ program: String, expecting expected: [String], label: String
+    ) throws -> String {
+        let environment = ProcessInfo.processInfo.environment
+        let cli = environment["PINI_CLI_BIN"] ?? ""
+        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
+            withKnownIssue("未提供 \(missing) ⇒ \(label) 两腿本次未验（跳过 +1）") {
+                Issue.record("\(label)：这一格本次没有腿在守")
+            }
+            return ""
+        }
+        let file = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("both-legs-\(UUID().uuidString).pini")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try program.write(to: file, atomically: true, encoding: .utf8)
+        let expectedText = expected.isEmpty ? "" : expected.joined(separator: "\n") + "\n"
+
+        let llvm = try launch(cli, ["run-llvm", file.path])
+        #expect(
+            llvm.stdout == expectedText,
+            "\(label)：发射腿的输出应是手写期望 \(expectedText.debugDescription)，实际 \(llvm.stdout.debugDescription)；stderr：\(llvm.stderr)"
+        )
+
+        let interpreted = try launch(cli, ["run", file.path])
+        #expect(
+            interpreted.stdout == expectedText,
+            "\(label)：解释器腿的输出应是手写期望 \(expectedText.debugDescription)，实际 \(interpreted.stdout.debugDescription)"
+        )
+        return interpreted.stdout
     }
 
     // MARK: - 输出形态

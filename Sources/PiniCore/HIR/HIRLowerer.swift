@@ -101,14 +101,43 @@ public enum HIRLowerer {
         }
 
         var methods: [FuncDecl] {
+            let own: [FuncDecl]
             switch decl {
-            case .structDecl(let sd): return sd.methods + extensionMethods
-            case .objectDecl(let od): return od.methods + extensionMethods
+            case .structDecl(let sd): own = sd.methods
+            case .objectDecl(let od): own = od.methods
             // ADR-001 `P1b`：给定块**自带的方法**与 `[[给定块名]]` 归并进来的方法合成
             // 一张表 —— 须显式列出，`default:` 分支只给 `extensionMethods`，会丢块内方法。
-            case .givenDecl(let gd): return gd.methods + extensionMethods
-            default: return extensionMethods
+            case .givenDecl(let gd): own = gd.methods
+            default: own = []
             }
+            return Self.merging(own: own, extensions: extensionMethods)
+        }
+
+        /// 合并一个名义类型的两处方法来源：**类型自身**（给定块把自己的真实现带在身上）
+        /// 与**各扩展块**（按声明顺序归并进来的）。
+        ///
+        /// ⭐ **按名合并、同名者后者胜** —— 两半都不可省：
+        /// - **按名**：本语言不支持重载 ⇒ 一个类型上一个名字至多对应一个体，
+        ///   而调用点本就只按名字取。
+        /// - **后者胜**：扩展块声明在类型之后 ⇒ 用户写的覆盖块压过自身那一份，
+        ///   这正是「默认实现可被替换」的兑现面。
+        ///
+        /// ⚠️ 不去重的后果不在本层：重名两条会一路走到发射，成为同名的两个函数定义，
+        /// 而模块在被执行之前就被拒。解释器腿按字典收表、后写者胜，因而**看不出**这件事
+        /// —— 两腿在此的差别不是分工，是一条腿替另一条腿把缺陷兜住了。
+        ///
+        /// ⚠️ 与组合扁平化那一格的规则**同向**（那里也是子类同名的方法把父类的滤掉）：
+        /// 两处问的是同一个问题 —— 同一个名字上谁说了算。
+        ///
+        /// 位置取**首次出现**处：只换内容、不挪位置 ⇒ 发射顺序与方法表顺序与从前一致。
+        static func merging(own: [FuncDecl], extensions: [FuncDecl]) -> [FuncDecl] {
+            var byName: [String: FuncDecl] = [:]
+            var order: [String] = []
+            for method in own + extensions {
+                if byName[method.name] == nil { order.append(method.name) }
+                byName[method.name] = method
+            }
+            return order.compactMap { byName[$0] }
         }
 
         var composedParent: String? {
