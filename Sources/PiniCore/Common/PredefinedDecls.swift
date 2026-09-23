@@ -187,7 +187,7 @@ enum PredefinedDecls {
     /// 策略层两个方法的**语言可见名**。
     ///
     /// ⭐ 名字住在这里而不是读取处（与 `yieldCapabilityField` / `queueField` 同一条纪律）：
-    /// 本文件里的声明方要用它们，而**两条腿各自的调用方**也要用它们拼方法表里的键 ——
+    /// 本文件里的声明方要用它们，而**各后端各自的调用方**也要用它们拼方法表里的键 ——
     /// 三处各写一份字面量，改名时必然对不上，而那一刻**不会有一条判据变红**。
     static let acceptMethodName = "收下"
     static let pickMethodName = "选择下一个任务"

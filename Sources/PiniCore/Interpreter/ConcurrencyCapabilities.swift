@@ -8,7 +8,7 @@ import Foundation
 /// ## ⚠️ 位值：**本批定案**（`DE-1` 只定了形态、没定位值）
 ///
 /// `DE-1` §3.4 定下 `bk_capabilities() -> u32` 的**形态**是位图，而**位值本身是 ABI 的一部分**
-/// —— `DE-3` 建 C ABI 运行时时必须照它发。两腿各定一套的话，`DE-4` 的契约参照就没有共同基准，
+/// —— `DE-3` 建 C ABI 运行时时必须照它发。各后端各定一套的话，`DE-4` 的契约参照就没有共同基准，
 /// 所以在此定案并登记（见提案件 `DE-2b-3` 执行记录）。
 public enum ConcurrencyTier: UInt32, Sendable, CaseIterable {
     /// **L0 调度** —— 派发任务与阻塞 join。**不依赖线程**，因而是唯一无条件可用的层。
@@ -21,7 +21,7 @@ public enum ConcurrencyTier: UInt32, Sendable, CaseIterable {
     case preemption = 4
 }
 
-/// 后端能力的**自述**（`DE-1` §3.4 与 §6 在解释器腿的对应物）。
+/// 后端能力的**自述**（`DE-1` §3.4 与 §6 在解释器后端的对应物）。
 ///
 /// ## 为什么它是一个**值**而不是一句注释
 ///
