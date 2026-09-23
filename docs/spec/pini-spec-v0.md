@@ -584,7 +584,7 @@ Pini 通过 FFI 调用宿主 / C 侧函数，并暴露最小不安全面以操�
   ⚠️ **分层**：**挂起模式**（释放当前 OS 线程）降为 `Provisional` 并**已实现暂时退役**；
   ⛔ **「暂时」的可测触发条件尚未定义** ⇒ 须在 `P5` 收口时**显式登记处置**
   （否则延期即**静默永久退役**）。退役**不删**两个关键字。
-- **裁决溯源**：`ADR-003`（让出语义与位置约束）· `ADR-004`（原语层 C ABI 形状）。
+- **裁决溯源**：`ADR-002`（调度面与让出 —— 含让出语义与位置约束、原语层的 C ABI 形状两节）。
 - **证据**：`Scheduler.swift`（`GCDScheduler` —— **现行唯一**后端）· `Interpreter.swift`
   （`joinFuture` / `joinWithin` / 并发原语 `cancel`/`isCancel`/`join`/`joinAll`）· `Value.swift`
   （`FutureValue` 取消树 / `closeScope`）。
