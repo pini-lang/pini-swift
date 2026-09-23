@@ -2470,8 +2470,14 @@ public final class IREmitter {
     /// 只有经它持有的**引用字段**往下写才对所有取用点可见。解释器那一臂天然同形
     /// （那边 `Value` 本就是值类型），故两臂语义一致 —— 这是本批刻意维持的对等。
     ///
-    /// 字节数取 `ptrtoint(gep(T, null, 1))`：本仓无 `sizeof` 先例，而这个常量式只依赖
-    /// 聚合体定义，是 LLVM 取类型大小的标准写法（不引入新声明、不依赖目标数据布局查询）。
+    /// 字节数取「**过尾指针的整数形式**」：本仓无 `sizeof` 先例，而这个式子只依赖聚合体定义，
+    /// 是 LLVM 取类型大小的标准写法（不引入新声明、不依赖目标数据布局查询）。
+    ///
+    /// ⚠️ 同一个式子有**两种位置**，而**位置决定它合法与否**：当**操作数**用（调用实参之类）合法；
+    /// 写在**赋值位**不合法 —— 那里它被当作一条 cast **指令**解析，于是要求 `<类型> <值>`，
+    /// 而它看到的是一个 `(`，报 `expected type`。⇒ 此处发**两条真指令**（先取过尾指针、再转成整数），
+    /// 而不是把这个式子绑到一个名字上。
+    /// ⛔ 别处把它当**调用实参**用是**合法**的 —— 这里改了**不等于**那边也该改。
     private func emitGivenInstance(type: HIRType) -> IRValue {
         guard case .nominal(let name, _) = type,
             let aggregate = type.nominalAggregateSpelling,
@@ -2481,9 +2487,10 @@ public final class IREmitter {
         }
         let slot = ensureGivenSlot(type: type)
         let initializer = ensureGivenInitializer(type: type)
+        let sizeEnd = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: sizeEnd, aggregate: aggregate, base: "null", indices: [1]) + "\n"
         let sizeTemp = builder.freshTemp()
-        bodyIR +=
-            " \(sizeTemp) = ptrtoint (ptr getelementptr (\(aggregate), ptr null, i32 1) to i64)\n"
+        bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let boxed = builder.freshTemp()
         bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
         let local = builder.freshTemp()

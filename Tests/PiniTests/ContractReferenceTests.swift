@@ -15,7 +15,10 @@ import Testing
 ///     缺变量时**报「本臂未参与」并让跳过可见**（`known issue` 计数），不静默通过 ——
 ///     否则「没跑」与「通过」在读数上不可区分。
 ///
-/// ⚠️ 覆盖面：本守卫今天守**一个**断言点，判**两个维度**（输出 + 让出读数）。
+/// ⚠️ 覆盖面：本守卫守**两个**断言点 —— 一格判**两个维度**（输出 + 让出读数；那格语料含一处 `await`），
+/// 另一格判**一个维度**（只有输出；那格语料零处 `await` ⇒ 让出读数恒为 `0`，是个**空维**，刻意不加）。
+/// ⭐ 第二格是**补**的：给定实例的取用那条路**曾经在发射腿上无人守** —— 它的缺陷只在那条路上才被
+/// 发射出来，而当时碰它的判据全在解释器腿上 ⇒ **一格的缺席能藏住一整类缺陷**，这一格是那次的对照。
 /// 语料面下 8 份并发语料只有一份两腿可达，其余 7 份停在同一处上游降载门禁上（与 LLVM 腿无关）。
 /// ⇒ 它证明的是**形态已经接通**，**不是**「并发面已被守卫覆盖」。
 ///
@@ -466,6 +469,66 @@ struct ContractReferenceTests {
             throw ContractGuardError.fixtureMissing(url.path)
         }
         return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    // MARK: - 给定实例的取用：一条**发射腿也参与**的判据
+
+    /// 语料：一处给定块取用（`using`），**一处 `await` 也没有**。
+    ///
+    /// ⚠️ 为什么刻意不含 `await`：这一格问的是「**发射腿能不能收下含给定块取用的程序**」。
+    /// 带 `await` 的语料会先撞上上游降载门禁（与本格无关）⇒ 混进来会让读数指向错的地方。
+    ///
+    /// ⚠️ 期望值是**手写**的：收下一笔之后队列长度 `1`，取走队首之后长度 `0`。
+    private static let givenInstanceProgram = """
+        探|func(using s: 调度器,) -> (I32,):
+            s.收下(空句柄)
+            print(len(s.元素))
+            s.选择下一个任务()
+            return len(s.元素)
+
+        main|func() -> ():
+            print(探())
+            return
+        """
+
+    @Test("⭐ 给定实例的取用：两条腿各自与手写期望逐字节相符 —— 这条路径先前只有解释器腿在守")
+    func givenInstanceUseIsAcceptedByBothLegs() throws {
+        /// 意图：`using` 取用**预置默认实例**这条路，在发射腿上曾**零判据守着** ——
+        /// 它的缺陷形态是「发射出的 IR 在**解析期**被拒」，而那段 IR 只在**程序真的取用给定实例**
+        /// 时才被发射出来 ⇒ 一份不取用的程序读不到它，解释器腿更读不到它（那边根本没有 IR）。
+        ///
+        /// ⛔ 这一格**不看让出读数**（与三条形态判据的关键差异）：本语料零处 `await`，
+        /// 那个读数恒为 `0` ⇒ 加进来是个**空维**；而「精确值」的强处恰恰来自它能取到**不同**的值。
+        ///
+        /// ⛔ 也**不**只比退出码：实测过「底层工具报错、而命令行仍返回成功码」的形态
+        /// ⇒ 退出码单独用是**弱判据**，输出才是。
+        let expected = "1\n0\n"
+
+        let environment = ProcessInfo.processInfo.environment
+        let cli = environment["PINI_CLI_BIN"] ?? ""
+        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
+            withKnownIssue("未提供 \(missing) ⇒ 给定实例取用这一格本批未验（跳过 +1）") {
+                Issue.record("给定实例取用：这一格本次没有发射腿在守")
+            }
+            return
+        }
+
+        let file = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("given-instance-\(UUID().uuidString).pini")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Self.givenInstanceProgram.write(to: file, atomically: true, encoding: .utf8)
+
+        let viaLLVM = try launch(cli, ["run-llvm", file.path])
+        #expect(
+            viaLLVM.stdout == expected,
+            "发射腿的输出应是手写期望 \(expected.debugDescription)，实际 \(viaLLVM.stdout.debugDescription)；stderr：\(viaLLVM.stderr)")
+
+        let interpreted = try launch(cli, ["run", file.path])
+        #expect(
+            interpreted.stdout == expected,
+            "解释器腿的输出应是手写期望 \(expected.debugDescription)，实际 \(interpreted.stdout.debugDescription)"
+        )
     }
 
     // MARK: - 输出形态
