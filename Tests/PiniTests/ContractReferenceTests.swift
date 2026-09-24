@@ -119,6 +119,56 @@ struct ContractReferenceTests {
             return
         """
 
+    @Test("⭐ 解释器后端有同形的让出读数：闸门置位 ⇒ 一行、未置位 ⇒ 零输出")
+    func theInterpreterLegReportsYieldsInTheSameShapeAsTheEmitter() throws {
+        /// 意图：本后端**原先没有**读数出口 —— 让出计数住在调度器上，而它**模块内可见**
+        /// ⇒ 命令行读不到，「`await` 真的让出了」这件事在本后端只有**进程内**才可判。
+        /// 这一条钉两件：**出口存在**，且其**形态与对侧逐字节一致**（同一个闸门、同一行、
+        /// 同样打到 stderr）—— 形态不一致时两份读数不可比，而「可比」正是这条通道存在的全部理由。
+        /// ⚠️ 与对侧有一处**刻意**差异，在**挂点**而不在读数形态：对侧挂在**进程退出钩子**上，
+        /// 本后端挂在**运行入口返回**时 —— 那个钩子在发射腿那边**曾长期不生效** ⇒ 其形态不得照抄。
+        ///
+        /// ⛔ 三档缺一不可，且「stderr 非空」这种断言会把「打了别的东西」也算成通过 ⇒ 逐字节比：
+        /// ① **有让出**（读数 `1`；用的是对侧那条**同一条语料、同一条手写期望**）
+        /// ② **有派发、无 `await`**（读数 `0`）—— 这一档证明读数**有区分力**，不是恒为 `1` 的定值；
+        /// ③ **未置位**（**零输出**）—— 不许污染正常程序的 stderr。
+        let environment = ProcessInfo.processInfo.environment
+        let cli = environment["PINI_CLI_BIN"] ?? ""
+        guard !cli.isEmpty else {
+            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 解释器后端读数本次未取（跳过 +1）") {
+                Issue.record("解释器后端读数未取：这一条判据本次没有跑")
+            }
+            return
+        }
+        let underTest = "\(cli)（构建于 \(buildTime(of: cli))）"
+        let gate = ["PINI_YIELD_REPORT": "1"]
+
+        // ① 有让出的那份语料 —— 与对侧（`run-llvm`）同一条语料、同一条手写期望。
+        let awaited = try launch(
+            cli, ["run", fixtureFile("concurrency-async-contagion-end").path], environment: gate)
+        try #require(awaited.status == 0, "解释器后端未跑通：\(underTest) ⇒ \(awaited.stderr)")
+        #expect(
+            awaited.stderr == Self.yieldReportPrefix + "1\n",
+            "本后端应当**真的让出过**（读数还兼作闸门是否生效的证据）：\(awaited.stderr)")
+
+        // ② 负控 —— 有派发、一处 `await` 也没有 ⇒ 读数须与 ① 不同。
+        let negativeControl = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("de6a-yield-negative-\(UUID().uuidString).pini")
+        defer { try? FileManager.default.removeItem(at: negativeControl) }
+        try Self.waitOnlyProgram.write(to: negativeControl, atomically: true, encoding: .utf8)
+        let waited = try launch(cli, ["run", negativeControl.path], environment: gate)
+        try #require(waited.status == 0, "负控程序未跑通：\(underTest) ⇒ \(waited.stderr)")
+        #expect(waited.stdout == Self.expectedOutput, "负控程序的输出应与 ① 一致：\(waited.stdout)")
+        #expect(
+            waited.stderr == Self.yieldReportPrefix + "0\n",
+            "`wait` 版不该让出（它的承诺就是占用）：\(waited.stderr)")
+
+        // ③ 闸门未置位 ⇒ **零输出**：不得污染任何正常程序的 stderr。
+        let ungated = try launch(cli, ["run", fixtureFile("concurrency-async-contagion-end").path])
+        try #require(ungated.status == 0, "解释器后端未跑通：\(underTest) ⇒ \(ungated.stderr)")
+        #expect(ungated.stderr.isEmpty, "未置位时不许有任何输出：\(ungated.stderr)")
+    }
+
     @Test("⭐ 嵌套控制流里的 `await` 响亮拒绝：位置不合法的那些写法不静默阻塞")
     func awaitsInNestedControlFlowAreRefusedLoudly() throws {
         /// 意图：让出的续跑靠**入口的 `switch` 直接跳回**让出点所在的那一块 ⇒ 只有**体那一层的
