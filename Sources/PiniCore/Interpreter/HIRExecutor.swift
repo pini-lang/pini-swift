@@ -624,7 +624,16 @@ public final class HIRExecutor: DebugHookHost {
     }
 
     /// Run a module's `main`, mirroring `Interpreter.run(module:)`.
+    ///
+    /// ⚠️ 本入口是**解释器后端**这条腿上唯一「跑一个程序」的地方，故让出读数的挂点也在这里
+    /// （见 `reportInterpreterYieldsIfGated`）。用 `defer` 而**不是**在末行调用：对侧的读数挂在
+    /// **进程退出钩子**上，程序无论正常结束还是出错结束都会打 ⇒ 本处照同一时刻报，
+    /// 否则两份读数在「出错的那次运行」上不可比，而可比是这条通道存在的全部理由。
+    /// ⚠️ 代价如实说：`prepare` 就抛出时也会打一行（那一次**没有执行**），
+    /// 读数于是是**上一次运行留下的累计值** —— 闸门只由测试器械置位，而器械是「一个进程跑一个程序」，
+    /// 故这一格今天不可达；⛔ 但它不是「不会发生」，是**今天用不到**。
     public func run(module: HIRModule) throws {
+        defer { reportInterpreterYieldsIfGated() }
         try prepare(module: module)
         try executeMain()
     }
