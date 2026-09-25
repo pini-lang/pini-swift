@@ -32,7 +32,7 @@ for a green one.
 
 USAGE
 
-    python3 tools/hir-chunk-run.py <class-list-file> <chunk-count> <output-prefix>
+    python3 tools/ir-chunk-run.py <class-list-file> <chunk-count> <output-prefix>
 
 `<class-list-file>` is one test class name per line. 名单可由
 `swift test list | sed 's#/[^/]*$##' | sort -u` 现取 —— 两个框架都产这个形状；

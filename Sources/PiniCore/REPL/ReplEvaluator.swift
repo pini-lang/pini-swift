@@ -13,7 +13,7 @@ import Foundation
 /// asserted what the REPL does when it actually evaluates something.
 ///
 /// Splitting evaluation out of the I/O loop is what let "REPL cases green on
-/// the HIR engine" mean anything: evaluation used to construct `Interpreter()`
+/// the IR engine" mean anything: evaluation used to construct `Interpreter()`
 /// inside the loop, so it could neither run on another engine nor be tested.
 ///
 /// Until `G-6c` the engine was a *parameter*, because two engines existed and
@@ -120,11 +120,11 @@ public final class ReplEvaluator {
         // the day it is reworded.
         if tolerateMissingMain, !Self.hasMainFunction(module) { return }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-        let executor = HIRExecutor()
+        let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let executor = IRExecutor()
         executor.outputSink = output
         do {
-            try executor.run(module: hir)
+            try executor.run(module: ir)
         } catch let error as RuntimeError where tolerateMissingMain {
             if case .mainNotFound = error { return }
             throw error

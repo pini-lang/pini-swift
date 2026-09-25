@@ -10,7 +10,7 @@
 > 约定：**append-only**——已分配的码不删除、不复用；新码追加段内编号（以 TOML 为登记入口，见上）。
 > ⚠️ **槽名（`{...}` 占位）的取名规则按错误族分**，抄邻族的名字会**静默漏印**（`fill` 找不到键即原样输出，不报错、无门禁）：
 > `TypeError` / `SemanticError` / `RuntimeError` 这一侧，槽名 = **错误 case 的关联值标签**（如 `{typeName}` / `{caseName}` / `{variableName}`）；
-> `HIRLoweringError` 那一侧因是自由文本消息、反射取不到载荷，槽名**固定为 `{feature}`**。新增码时按**本族**规则取名。
+> `IRLoweringError` 那一侧因是自由文本消息、反射取不到载荷，槽名**固定为 `{feature}`**。新增码时按**本族**规则取名。
 
 ## E0 通用（PiniError）
 

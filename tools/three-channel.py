@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print each channel's result, byte-exact, for one or more .pini files.
 
-The companion to tools/hir-parity-probe.py for single-fixture inspection: the
+The companion to tools/ir-parity-probe.py for single-fixture inspection: the
 probe answers "how does the whole corpus classify", this answers "what exactly
 did each channel print for this file".
 
@@ -11,8 +11,8 @@ This tool used to print three channels, the first of them `interp-ast`, the AST
 walk, held as a frozen reference. G-6c deleted the walk, so that channel and the
 thing it referenced are both gone. What is left:
 
-    interp-hir  `pini run <file>`        HIR execution engine
-    llvm-hir    `pini run-llvm <file>`   HIR -> LLVM
+    interp-ir  `pini run <file>`        IR execution engine
+    llvm-ir    `pini run-llvm <file>`   IR -> LLVM
     frontend    `pini check <file>`      runs nothing; prints the shared front
                                          end's diagnostics, which is how a
                                          warning's origin is established
@@ -85,8 +85,8 @@ def probe(path):
         copy = os.path.join(scratch, os.path.basename(path))
         shutil.copy(path, copy)
         show("frontend  ", *run([BIN, "check", copy], cwd=scratch))
-        show("interp-hir", *run([BIN, "run", copy], cwd=scratch))
-        show("llvm-hir  ", *run([BIN, "run-llvm", copy], cwd=scratch))
+        show("interp-ir", *run([BIN, "run", copy], cwd=scratch))
+        show("llvm-ir  ", *run([BIN, "run-llvm", copy], cwd=scratch))
     print()
 
 

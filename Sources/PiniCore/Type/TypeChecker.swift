@@ -1070,7 +1070,7 @@ public final class TypeChecker {
 
     /// ADR-001：`using` 形参的位置集合。
     ///
-    /// 与 `HIRLowererSignatureInfo` 的同名字段是**同一口径的两份**（检查器一份、降载器一份）：
+    /// 与 `IRLowererSignatureInfo` 的同名字段是**同一口径的两份**（检查器一份、降载器一份）：
     /// 两处都按「实参个数 == 形参个数 − using 个数」判省略式调用，且都把实参按非 using 形参逐位对上
     /// —— 一份判合法、一份真插入实参，口径不同步就会在 check 通过之后于降载层报错。
     private static func usingParamIndices(of params: [Parameter]) -> Set<Int> {

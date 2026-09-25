@@ -4,7 +4,7 @@
 ; 说明：#46-D D1 —— 数组以 opaque handle 经运行时 shim（@bk_array_*）承载；
 ;       元素类型支持 I32 / F64 / Bool / String（装箱-raw 模型，任意宽度元素）。
 ;       #46-D D1.5 —— 数组下标写 a[i]=v / 复合 a[i]+=k 双后端对齐（见末尾 w 演示）。
-;       注意：F64 打印差异（G-IR-enum-print）已按最短往返收敛于 HIR 管线
+;       注意：F64 打印差异（G-IR-enum-print）已按最短往返收敛于 IR 管线
 ;       （经 @bk_double_to_string 单源）；旧后端维持 %f 格式直至 M6 消亡。
 ;       其余类型（Int / Bool / String / 嵌套数组）双后端精确对齐。字典 / 集合见 examples/collections.pini。
 

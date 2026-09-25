@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - SSA 值（从 IRGenerator 提升为共享值类型）
 
-/// IR 标识符 mangle（HIR 管线与遗留管线共享的唯一实现源）：
+/// IR 标识符 mangle（IR 管线与遗留管线共享的唯一实现源）：
 /// 非 ASCII 标量 hex 编码为下划线前缀形式（`点` → `_u70B9`）。
 public enum IRName {
     public static func mangle(_ name: String) -> String {

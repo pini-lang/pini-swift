@@ -10,7 +10,7 @@ import Testing
 /// `Result` 一支，照既有 Optional 一支的形态。
 ///
 /// **两侧刻意不对称，且不对称正是这一支存在的理由**：`ok` 侧取**载荷类型**（窄化，本支线要的
-/// 就是它）；`err` 侧取 `try-else` 早已确立的**类型擦除错误字**形态 —— `Result` 的 HIR 类型
+/// 就是它）；`err` 侧取 `try-else` 早已确立的**类型擦除错误字**形态 —— `Result` 的 IR 类型
 /// 只带 ok 侧字段，没有可窄化的错误类型，且 IR ABI 把该槽擦成一个机器字。
 /// ⇒ 后果是**打印 err 绑定仍然被拒**，但拒得**响亮**（既有错误绑定门禁），
 /// 且文案现在说的是真实理由，不再把绑定的类型当替罪羊。
@@ -18,7 +18,7 @@ import Testing
 /// **两条判据即本支线的验收面**（克制口径：内联、不建夹具、不建整套并发套件）。
 /// 二者都**不依赖并发** —— 分派在降载层完成，与执行后端无关；掺进 `=>` 只会让红因不可归因。
 ///
-/// **⚠️ 发射臂不在此件覆盖内**：本件走 `HIRExecutor`（解释器臂）。发射臂那一支由命令行
+/// **⚠️ 发射臂不在此件覆盖内**：本件走 `IRExecutor`（解释器臂）。发射臂那一支由命令行
 /// 两臂对照取证 —— 在补它之前，`Result` scrutinee 落到「无字面量分支」的兜底路上，
 /// 会**静默跳过全部 arm 且退出码为 0**，那是一处独立缺陷，由同一批一并处置。
 ///
@@ -43,16 +43,16 @@ struct ResultNarrowingTests {
     }
 
     /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {
         var lines: [String] = []
-        let executor = HIRExecutor(programBase: NSTemporaryDirectory())
+        let executor = IRExecutor(programBase: NSTemporaryDirectory())
         executor.outputSink = { lines.append($0) }
         try executor.run(module: try lowered(source))
         return lines
@@ -120,7 +120,7 @@ struct ResultNarrowingTests {
 
     @Test("err 绑定维持类型擦除形态：打印它被响亮拒绝，而不是静默出错值")
     func errBindingPrintingStaysLoudlyRejected() throws {
-        /// 意图：钉住本条**刻意不做**的那一半。`err` 侧没有可窄化的类型（HIR 类型不带错误
+        /// 意图：钉住本条**刻意不做**的那一半。`err` 侧没有可窄化的类型（IR 类型不带错误
         /// 类型），故它沿用 `try-else` 已确立的擦除字形态 ⇒ 打印它应报既有诊断，
         /// **而不是**静默给出一个值。
         /// ⚠️ 这条是**否定形态**：它断言「不该发生的确实没发生」——若哪天有人把 err 侧

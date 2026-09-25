@@ -26,11 +26,11 @@
 | 面 | 定义处 | 有取用位吗 |
 |---|---|---|
 | AST | `Type.swift:44` `case function(params:returns:captured:location:)` | ❌ |
-| HIR | `HIRNode.swift:80` `case function(params:[HIRType], returnType:)` | ❌ |
+| IR | `IRNode.swift:80` `case function(params:[IRType], returnType:)` | ❌ |
 
 ⇒ 间接调用**在原理上无法**知道哪个位置需要插入取用点。
 
-### 1.2 间接调用有两条路径，处境不同（`HIRLowerer.swift`）
+### 1.2 间接调用有两条路径，处境不同（`IRLowerer.swift`）
 
 - **经变量**（`3617`）：`case .function(let paramTypes, let functionReturn) = signature`
   —— 只解出类型序列，**取用位丢失**；`3620` 的 arity 检查因此按「实参个数 = 形参个数」判。
@@ -105,22 +105,22 @@ type mismatch: function(params: [nominal(name: "配置", isObject: false)], retu
 |---|---|---|
 | AST 类型 | `Type.swift:44` 加取用下标集合 | 1 |
 | AST 等价 | `Type.swift:66-70` 手写分支（**默认不进**，须显式决定） | 1 |
-| HIR 类型 | `HIRNode.swift:80` 加同字段 | 1 |
-| HIR 等价 | 合成 `==`（**默认进**）⇒ 与 AST 面判据**不同源**，须对齐 | 1 |
+| IR 类型 | `IRNode.swift:80` 加同字段 | 1 |
+| IR 等价 | 合成 `==`（**默认进**）⇒ 与 AST 面判据**不同源**，须对齐 | 1 |
 | 类型推断 | `TypeInference.swift` | 2 |
 | 类型替换 | `TypeSubstitutor.swift` | 1 |
 | 类型检查器 | `TypeChecker.swift`（含 `2256` 的 arity 判据） | 6 |
-| 降载 | `HIRLowerer.swift`（含 `3617` / `3640` 两条间接路径） | 6 |
-| 执行 | `HIRExecutor.swift` · `RuntimeOps.swift`（预计只透传） | 3 |
+| 降载 | `IRLowerer.swift`（含 `3617` / `3640` 两条间接路径） | 6 |
+| 执行 | `IRExecutor.swift` · `RuntimeOps.swift`（预计只透传） | 3 |
 | **合计** | **7 个源文件** | **22 处解构** |
 
 **规范面**：§A.2.6 **不动**（用户倾向「声明位」，且标注位已天然拒绝）。
-**契约面**：`HIR 契约` 的 `HIRType` 条目须同步（登记先于落码）。
+**契约面**：`IR 契约` 的 `IRType` 条目须同步（登记先于落码）。
 **诊断面**：新增 **`E4-015`**（给定块类型名出现在值位）与 **`E2-025`**（取用位出现在不允许的参数位置）；
 `Diagnostics.{en,zh}.toml` 为权威登记入口，`docs/spec/diagnostic-codes.md` 顺手同步
 （⚠️ 该表已落后两码：`E6-006` / `E6-007` 未登记，一并补）。
 ⚠️ **`E4-015` 的模板槽名 = `{typeName}`（不是 `{feature}`）**：槽名规则**按错误族分** ——
-`TypeError` 这一侧槽名 = **case 的关联值标签**（本件首稿照抄了邻族 `HIRLoweringError` 的 `{feature}`，
+`TypeError` 这一侧槽名 = **case 的关联值标签**（本件首稿照抄了邻族 `IRLoweringError` 的 `{feature}`，
 而那一族的 `{feature}` 是「自由文本消息、反射取不到载荷」时的专用槽）⇒ 实测**原样漏印**成
 `'…the given block type name '{feature}' cannot be used…'`（`fill` 找不到键即原样输出，不报错、无门禁）。
 该规则已写入 `docs/spec/diagnostic-codes.md` 文件头约定。
@@ -133,9 +133,9 @@ type mismatch: function(params: [nominal(name: "配置", isObject: false)], retu
 
 - `TypeAnnotation: Equatable` 是**合成**的 ⇒ 加字段**自动进** `==`；
   但类型比对实际走**手写的** `isStructurallyEquivalent`（`Type.swift:53`）⇒ **默认不进**。
-- `HIRType` 的 `==` 是**合成**的 ⇒ **自动进**。
+- `IRType` 的 `==` 是**合成**的 ⇒ **自动进**。
 
-⇒ 若不对齐，会出现「AST 面忽略、HIR 面比较」的**静默分裂**。
+⇒ 若不对齐，会出现「AST 面忽略、IR 面比较」的**静默分裂**。
 **处置**：两面对该位取**同一口径（忽略）**，并在两处各留一行注释说明「为什么忽略」，
 判据里各钉一条（§8 第 4、5 条）。
 
@@ -198,7 +198,7 @@ type mismatch: function(params: [nominal(name: "配置", isObject: false)], retu
 | 2 | 内联立即调用省略实参 ⇒ 真的物化 | 值 |
 | 3 | **对照**：显式标注裸类型后省略 ⇒ `E4-005`（能力确实失去） | 判定码 |
 | 4 | 两面等价**同口径**：AST 面 `isStructurallyEquivalent` 忽略该位 | 直接断言 |
-| 5 | HIR 面 `==` 与上一条同口径 | 直接断言 |
+| 5 | IR 面 `==` 与上一条同口径 | 直接断言 |
 | 6 | 类型标注位写 `using` ⇒ `E2-008`（字段位与局部位各一） | 判定码 |
 | 7 | **强制规则**（因前提被否证而**降级为诊断**）：体内值位引用给定块类型名 ⇒ `E4-015`（不再漏到 `E6-004`） | 判定码 + 对照（object 类型名仍走旧路）—— ✅ **已交付**（2026-09-19，读数见 §10） |
 | 8 | **参数位收窄**：trait 签名 / `\|test` / `main` / `\|foreign` 各拒 | 判定码 —— ✅ **已交付**（2026-09-19，码 `E2-025`，读数见计划件 §3.10）。⚠️ 实测把「四处」扩到**五处**：trait 抽象签名有**两种书写形态**（各自一个落点），另加**名单外第 5 处**（trait **默认方法**带体，今天同样静默失效，本批一并拒） |

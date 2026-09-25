@@ -17,7 +17,7 @@ So:
     one.
 
 CHANNELS: G-6c (2026-09-18) removed the `interp-ast` channel along with the AST
-walk it named, leaving the HIR executor and the LLVM pipeline. Generating a case
+walk it named, leaving the IR executor and the LLVM pipeline. Generating a case
 therefore needs those two to agree, where it used to need three.
 
 What is asserted: standard output byte-for-byte, and the exit code. Standard
@@ -26,9 +26,9 @@ asymmetries lives there, and pulling them in on day one would bury the new
 instrument under defects that are already ticketed elsewhere.
 
 Usage:
-    python3 tools/hir-spec-assert.py                 # check every case
-    python3 tools/hir-spec-assert.py --filter f64    # check a subset
-    python3 tools/hir-spec-assert.py --generate --force --filter newCase
+    python3 tools/ir-spec-assert.py                 # check every case
+    python3 tools/ir-spec-assert.py --filter f64    # check a subset
+    python3 tools/ir-spec-assert.py --generate --force --filter newCase
 """
 
 import argparse
@@ -49,11 +49,11 @@ CORPUS = "Tests/PiniTests/SpecAssertionTests"
 PROVENANCE = "PROVENANCE.md"
 
 # The channels, defined the same way as tools/three-channel.py. `interp-ast` was
-# the third until G-6c deleted the AST walk it named; nothing selects an engine
+# the tird until G-6c deleted the AST walk it named; nothing selects an engine
 # here any more, because there is only one.
 CHANNELS = [
-    ("interp-hir", ["run"], {}),
-    ("llvm-hir", ["run-llvm"], None),
+    ("interp-ir", ["run"], {}),
+    ("llvm-ir", ["run-llvm"], None),
 ]
 
 

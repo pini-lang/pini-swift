@@ -7,7 +7,7 @@ import Foundation
 ///
 /// `DebugHookHost` unifies what a debugger needs *from* an engine and stops
 /// short of the entry point on purpose: the interpreter runs an already-checked
-/// `Module`/`Package`, the HIR executor runs an `HIRModule`, and **choosing the
+/// `Module`/`Package`, the IR executor runs an `IRModule`, and **choosing the
 /// engine is what lowering decides**, so a `run` on the protocol would have to
 /// pretend both engines take the same program.
 ///
@@ -19,7 +19,7 @@ import Foundation
 /// name, and switching the default engine meant editing both hosts.
 ///
 /// This closes that gap **without moving lowering**. The caller that already
-/// decided which engine to use builds the closure — `lower → run` on the HIR
+/// decided which engine to use builds the closure — `lower → run` on the IR
 /// side — and the debugger subsystem holds only a protocol reference plus a way
 /// to start. Which engine runs stays a decision made in one place, by the party
 /// that has the information to make it.

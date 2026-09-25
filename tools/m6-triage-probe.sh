@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # M6 triage probe (2026-09-10).
-# Purpose: measure the HIR channel against the TEST FIXTURE corpus (not just
+# Purpose: measure the IR channel against the TEST FIXTURE corpus (not just
 # examples/) and separate TRUE flip blockers from front-end rejects.
 #
-#   A true blocker = legacy emit PASSES but HIR emit FAILS
-#                    (i.e. a capability HIR lacks, would regress on flip)
+#   A true blocker = legacy emit PASSES but IR emit FAILS
+#                    (i.e. a capability IR lacks, would regress on flip)
 #   Not a blocker  = both fail (front-end/checker rejects it; not a backend gap)
 #
 # Usage: bash tools/m6-triage-probe.sh
 #   PINI_SWEEP_BIN overrides the CLI path; requires a build with --product pini.
 #   REPO_ROOT overrides the repo location (default: the repo this script sits in,
 #   else the pinned absolute path below).
-# Output: /tmp/hir-fixture-sweep.tsv, /tmp/m6-blockers.tsv  (regenerated)
+# Output: /tmp/ir-fixture-sweep.tsv, /tmp/m6-blockers.tsv  (regenerated)
 set -u
 
 if [[ -z "${REPO_ROOT:-}" ]]; then
@@ -23,7 +23,7 @@ if [[ -z "${REPO_ROOT:-}" ]]; then
   fi
 fi
 BIN="${PINI_SWEEP_BIN:-/tmp/pini-build/arm64-apple-macosx/debug/pini}"
-SWEEP=/tmp/hir-fixture-sweep.tsv
+SWEEP=/tmp/ir-fixture-sweep.tsv
 BLOCK=/tmp/m6-blockers.tsv
 BUILD_HINT="swift build --disable-sandbox --scratch-path /tmp/pini-build --product pini"
 
@@ -33,7 +33,7 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-# ---- pass 1: HIR emit over every .pini under Tests/ ----------------------
+# ---- pass 1: IR emit over every .pini under Tests/ ----------------------
 : > "$SWEEP"
 total=0; pass=0; fail=0
 while IFS= read -r -d '' f; do
@@ -48,7 +48,7 @@ while IFS= read -r -d '' f; do
     printf '%s\tFAIL\t%s\n' "$rel" "$msg" >> "$SWEEP"
   fi
 done < <(find "$REPO_ROOT/Tests" -name '*.pini' -print0 | sort -z)
-echo "pass1 (HIR emit): total=$total pass=$pass fail=$fail"
+echo "pass1 (IR emit): total=$total pass=$pass fail=$fail"
 
 # Zero corpus is not a clean sweep. This pass reads the test surface, and that
 # surface can be emptied by a deletion; "total=0 pass=0 fail=0" then reads
@@ -64,14 +64,14 @@ fi
 while IFS=$'\t' read -r rel status msg; do
   [[ "$status" == "FAIL" ]] || continue
   if "$BIN" emit "$REPO_ROOT/$rel" > /dev/null 2>&1; then
-    printf '%s\tLEGACY_PASS_HIR_FAIL\t%s\n' "$rel" "$msg" >> "$BLOCK"
+    printf '%s\tLEGACY_PASS_IR_FAIL\t%s\n' "$rel" "$msg" >> "$BLOCK"
   else
     printf '%s\tBOTH_FAIL\t%s\n' "$rel" "$msg" >> "$BLOCK"
   fi
 done < "$SWEEP"
 
-echo "--- true flip blockers (legacy PASS, HIR FAIL) ---"
-grep -c 'LEGACY_PASS_HIR_FAIL' "$BLOCK"
+echo "--- true flip blockers (legacy PASS, IR FAIL) ---"
+grep -c 'LEGACY_PASS_IR_FAIL' "$BLOCK"
 echo "--- failing on both sides (front-end reject, not a backend gap) ---"
 grep -c 'BOTH_FAIL' "$BLOCK"
 echo "detail -> $SWEEP , $BLOCK"

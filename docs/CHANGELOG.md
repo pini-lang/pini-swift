@@ -5,7 +5,7 @@
 
 ## v0.54.0 (2026-09-18)
 
-> 本版是 `LR-4`（HIR 统合为全后端枢纽，`P0`–`P5` 全 ✅）与 `P0d`（`Char` 类型落地、收格）两个里程碑的收口版本。
+> 本版是 `LR-4`（IR 统合为全后端枢纽，`P0`–`P5` 全 ✅）与 `P0d`（`Char` 类型落地、收格）两个里程碑的收口版本。
 > ⚠️ 版本号取 **0.54.0**：语言级 CHANGELOG 此前已发布 `v0.53.0`（2026-09-07，try-else 迁移），该号已被占用、不可复用。
 > ⚠️ 下方 `### 09-14 → 09-18` 为**简要收编**（该窗口 200 个提交无逐条记录）；其后各节是 09-14 之前已登记的条目，**逐条未改写**。
 
@@ -24,7 +24,7 @@
   写成「类型体带约束」的名实不符。⚠️ `!` 强制解包要求 unsafe 上下文这条规则**已在实现里、尚未写进规范**，
   本批按实现记账并单独立了一条负向夹具；它是否入规范另需裁决。
 - **Swift 源码缩进统一为 4 空格**：此前仓内两种风格并存（老代码 1 空格 / 级：81 个文件；新代码 4 空格：16 个文件，
-  含三个最大文件 HIRLowerer / IREmitter / HIRExecutor）。本次用**工具链内建的** `swift format` 一次性统一
+  含三个最大文件 IRLowerer / IREmitter / IRExecutor）。本次用**工具链内建的** `swift format` 一次性统一
   （91 文件 / +19426 −18866 行）。配置落仓根 `.swift-format`：**只启用缩进设置，43 条可选规则全部关闭** ——
   默认规则会改写非缩进内容（拆 `;`、给集合字面量加尾逗号），且 `AlwaysUseLowerCamelCase` 会指向 `@_cdecl`
   导出的 C ABI 符号名（`libPiniRuntime` 的 `bk_*`，38 处），开着它要么门禁天生红、要么有人改绿而破坏 ABI。
@@ -42,7 +42,7 @@
   其余 4 个消费点从单一属性派生、一行未动；32 条用例与夹具内容均未改。⚠️ 实测留档：改用
   `resources:` 指向套件目录会让该目录里的 `.swift` **不再被编译**，整个套件被静默丢弃 ——
   构建仍退出 0、告警也会消失，**只有「测试汇总行」能发现**，故不用那条路。
-- **器械解析层跟上框架**：`tools/hir-chunk-run.py` 与 `tools/three-edge-union.py` 解析测试输出时同时认两个框架
+- **器械解析层跟上框架**：`tools/ir-chunk-run.py` 与 `tools/three-edge-union.py` 解析测试输出时同时认两个框架
   （套件起始行、失败行、汇总行三处形状都不同，且 Swift Testing 不产 `Executed ...` 行）；分块驱动的失败集合元素
   由「类 + 方法」二元组归一为字符串。⚠️ 只认一种框架的后果是**静默失效** —— 另一种的套件会整体落进「未跑」而被
   护栏判作废，账目看起来只是「这次读不出来」。另：`three-edge-union.py` 的两条测试边对象在 G-6c 与测试树清空后
@@ -50,9 +50,9 @@
 
 ### 09-14 → 09-18（简要）
 
-- **`LR-4`「HIR 统合全后端」完成**（`P0`–`P5` 全交付）：旧 AST 走查求值器与挂起引擎整体退役 —— `Interpreter` / `SuspendEvaluator` / `SuspendScheduler` / `REPL/InterpreterEngine.swift` 四文件共 **4162 行**删除，`PINI_INTERP_ENGINE` 引擎开关退役；HIR 成为**全部后端共用的唯一枢纽**，语义权威由「以某一后端为定义处」上移到契约件 `docs/spec/hir-contract.md`（HIR 契约）。执行通道的表述由「三通道」改为**两执行通道 × 一个诊断来源器械**（探针口径见 `docs/issue-interpreter-hir-plan-2026-09-12.md` §8.1）。
+- **`LR-4`「IR 统合全后端」完成**（`P0`–`P5` 全交付）：旧 AST 走查求值器与挂起引擎整体退役 —— `Interpreter` / `SuspendEvaluator` / `SuspendScheduler` / `REPL/InterpreterEngine.swift` 四文件共 **4162 行**删除，`PINI_INTERP_ENGINE` 引擎开关退役；IR 成为**全部后端共用的唯一枢纽**，语义权威由「以某一后端为定义处」上移到契约件 `docs/spec/ir-contract.md`（IR 契约）。执行通道的表述由「三通道」改为**两执行通道 × 一个诊断来源器械**（探针口径见 `docs/issue-interpreter-ir-plan-2026-09-12.md` §8.1）。
 - **`Char` 类型落地**（Char 类型引入，格 `P0d`，已收格）：`Char` = **extended grapheme cluster 标量**（不是 Unicode 码点、不是 UTF-8 字节），表示**与 `String` 同构**（零新 ABI），不变式「恰含 1 个字素」归类型系统承担；FFI 既有单字节 `Char` 更名 **`CChar`**；相容桥 = **`Char → String` 单向加宽**（窄化被拒）。六字符原语签名迁移（`is_letter` / `is_ascii_digit` / `is_number` / `ord` 取 `Char`，`chr` 取 `I32` 返回 `Char`，`chars` **参数保持 `String`**、仅元素改 `Char`）。两条边界裁决：`ord` 的空串哨兵 `-1` **作废**（该签名下「空串」不可表达）；`chr` 越界由「返回空串」改为 **panic**（走 下标三通道安全模型 既定通道 `E5-005`，不新增诊断码）。
-- **契约新增两个节点**（走 spec §1.3）：`join`（`await` / `wait` 的挂起点，HIR join 节点）与 `detachStmt`（`detach` 语句，HIR detach 节点）⇒ 契约语句 **16 → 17**、合计 **61 → 62**。⚠️ 两者本批**只落节点面、行为未接**（节点今天不可达），降载与两台引擎的行为另格。
+- **契约新增两个节点**（走 spec §1.3）：`join`（`await` / `wait` 的挂起点，IR join 节点）与 `detachStmt`（`detach` 语句，IR detach 节点）⇒ 契约语句 **16 → 17**、合计 **61 → 62**。⚠️ 两者本批**只落节点面、行为未接**（节点今天不可达），降载与两台引擎的行为另格。
 - **挂起模式实现退役**（挂起模式退役）：`await` / `wait` **保留且语义不变**，退役的只是「释放当前 OS 线程」这一**实现形态**（CPS 求值器 + 挂起调度器）；生产面实测**零启用** ⇒ **对用户程序零可见影响、非破坏性**；⚠️ **不承诺移除**（故分级取 `Provisional` 而非 `Deprecated`）。
 - **语言级新裁决登记**（泛型枚举构造形态 / 数值字面量转换 / 标签 break 定向范围 / 静态层优先）：泛型枚举用例构造形态（限定形态 `枚举名<实参…>.用例(载荷…)` 为准、裸名形态为糖）；数值字面量**不**隐式转小数、`abs` 放宽到整数且保型（**本件只登记，实现另批**）；标签 `break` 可定向**任意带标签结构**（含 `if` 块）、`continue` 仅循环标签有效、内层同名标签遮蔽外层、标签与变量属独立命名空间；错误发现**静态层优先**（静态可判定者须在类型检查 / 降载层被拒，静态层不得抢报运行期错误）。
 - **文档面治理**（语言参考纳入事实源 / 036）：语言参考纳入事实源（分面权威、成熟成果由规范**递交**沉积）；路线图退役（实测 79% 内容过时）后抽北极星执行指引入项目规范。
@@ -62,11 +62,11 @@
 > 批 7（远程 tap）当时未登记，此处一并补上；批 8 为 G52 工单的收尾补修。
 
 ### Breaking
-- **IO 三项语义对齐到 HIR 契约（2026-09-14，P2b「IO 语义格」）**：`HIR 契约` D3 的 A 组三项由「已裁、解释器未改」落地为两侧一致——**改的是解释器侧**，LLVM 侧维持不变。用户可见变化三条：① **`readLine` 不再剥离行终止符**（输入 `"line\n"` 现返回 `"line\n"`，此前返回 `"line"`），且超 **255 字节**的行被截断；② **`readFile` 上限 65536 字节、超出静默截断**（此前无上限——读大文件会返回不完整内容而无任何提示）；③ **`writeFile` 返回写操作整型结果码**（成功 `0`），不再是 void/`null`。另修 LLVM 侧 `readLine` 在输入耗尽时的未定义行为：`fgets` 的 NULL 此前被直接交给 `%s`，实测打印 `(null)`（7 字节）而解释器输出空串（1 字节），现两侧一致为空串。两处尺寸常量单源化为 `Sources/PiniCore/Common/IOLimits.swift`（解释器与发射器共用，防各自漂）。**迁移面实测零受害**：全仓无超 64 KiB 的 `.pini`、selfhost 语料均 ~2 KiB，受害测试期望值已随改（`Tests/PiniTests/IOTests/`）。上限本身的合理性**未裁**、另案：`docs/issue-io-limit-from-emitter-2026-09-12.md`（含**超长行流位置语义**补记——该分歧仍存在）。证据：readLine 保留行终止符、readFile 截断。
-- **LLVM 后端整体替换为 HIR 管线（2026-09-12，M6b 翻转批）**：旧的直接发射后端（`IRGenerator` / `IRTypeMapper` / `IRGenError` / `Emit/` 族，共 11 文件 5443 行）与迁移期开关 `PINI_HIR_PIPELINE` 一并删除，`emit` / `compile` / `run-llvm` 恒走 `HIRLowerer → IREmitter`，`HIR` 成为唯一代码生成路径。用户可见变化三条：① `emit` 对模块成员文件**恒输出包级 IR**（此前取决于迁移开关是否置位）；② LLVM 通道 `f64` 打印**不再补足 6 位小数**（`3.000000` → `3.0`，与解释器一致）；③ LLVM 通道**字符串相等判定修正**（夹具 `testDiffStringEquality` 在旧后端输出 `false`，现与解释器一致输出 `true`）。此外 **22 个旧后端拒绝的样例现可由 LLVM 通道运行**（含 `cow` / `array-basic` / `multidim` / `slice` / `try` / `ffi` / `object` / `enum-dot-case` 八个示例），1 例旧后端崩溃（`testDiffFloatPrint`）随之消失。证据：执行与契约套件迁到 HIR 管线 + 旧代码生成器整体删除；计划与完成记录见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
+- **IO 三项语义对齐到 IR 契约（2026-09-14，P2b「IO 语义格」）**：`IR 契约` D3 的 A 组三项由「已裁、解释器未改」落地为两侧一致——**改的是解释器侧**，LLVM 侧维持不变。用户可见变化三条：① **`readLine` 不再剥离行终止符**（输入 `"line\n"` 现返回 `"line\n"`，此前返回 `"line"`），且超 **255 字节**的行被截断；② **`readFile` 上限 65536 字节、超出静默截断**（此前无上限——读大文件会返回不完整内容而无任何提示）；③ **`writeFile` 返回写操作整型结果码**（成功 `0`），不再是 void/`null`。另修 LLVM 侧 `readLine` 在输入耗尽时的未定义行为：`fgets` 的 NULL 此前被直接交给 `%s`，实测打印 `(null)`（7 字节）而解释器输出空串（1 字节），现两侧一致为空串。两处尺寸常量单源化为 `Sources/PiniCore/Common/IOLimits.swift`（解释器与发射器共用，防各自漂）。**迁移面实测零受害**：全仓无超 64 KiB 的 `.pini`、selfhost 语料均 ~2 KiB，受害测试期望值已随改（`Tests/PiniTests/IOTests/`）。上限本身的合理性**未裁**、另案：`docs/issue-io-limit-from-emitter-2026-09-12.md`（含**超长行流位置语义**补记——该分歧仍存在）。证据：readLine 保留行终止符、readFile 截断。
+- **LLVM 后端整体替换为 IR 管线（2026-09-12，M6b 翻转批）**：旧的直接发射后端（`IRGenerator` / `IRTypeMapper` / `IRGenError` / `Emit/` 族，共 11 文件 5443 行）与迁移期开关 `PINI_IR_PIPELINE` 一并删除，`emit` / `compile` / `run-llvm` 恒走 `IRLowerer → IREmitter`，`IR` 成为唯一代码生成路径。用户可见变化三条：① `emit` 对模块成员文件**恒输出包级 IR**（此前取决于迁移开关是否置位）；② LLVM 通道 `f64` 打印**不再补足 6 位小数**（`3.000000` → `3.0`，与解释器一致）；③ LLVM 通道**字符串相等判定修正**（夹具 `testDiffStringEquality` 在旧后端输出 `false`，现与解释器一致输出 `true`）。此外 **22 个旧后端拒绝的样例现可由 LLVM 通道运行**（含 `cow` / `array-basic` / `multidim` / `slice` / `try` / `ffi` / `object` / `enum-dot-case` 八个示例），1 例旧后端崩溃（`testDiffFloatPrint`）随之消失。证据：执行与契约套件迁到 IR 管线 + 旧代码生成器整体删除；计划与完成记录见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### Added
-- **HIR 引擎实现 IO 三节点（2026-09-14，P2b「G9」）**：`fileWrite` / `fileRead` / `readLine` 三处打靶点（`throw not implemented`）补齐为实现，逐臂镜像解释器——同一 `IOLimits` 上限、同一 `resolveIOPath` 基准解析、同一错误文案，差异仅在「非 String 实参」的英文报错用词（已登记不修）。用户可见变化一条：**HIR 通道下的这三条内建调用由「报错退出」变为可用**（`fileWrite` 返回整型码、`fileRead` 走 64 KiB 静默截断、`readLine` 保留行终止符且在输入耗尽时返回空串）。本格使**打靶点 3 → 0**，`Sources/` 全树不再有 `notImplemented` 残留，P2b 三格清空；**阻塞槽零新增**（`FLIP BLOCKERS 27 → 27`）。附带补齐**基准管道**（用户裁定「做满 6/6」）：`HIRExecutor` 新增 `programBase`，`PiniCLI` 把 `absoluteProgramBase(path)` 上提到引擎分派之前，使 HIR 通道与 AST 通道取**同一个值**（入口文件所在目录），非前缀相对路径不再静默读 CWD 的同名文件。三个新差分夹具（写码 `0\n7\n` / 读上限 `65536\n` / 读行保留终止符 `6\n`）落在 `HIRDifferentialTests`；`HIRExecutorTests` 的「Fail-loud gaps」表整段删除（补三臂后零引用，其防回归断言改由差分夹具承担）。夹具 316 → 319。证据：IO 三节点在 HIR 引擎侧实现。
+- **IR 引擎实现 IO 三节点（2026-09-14，P2b「G9」）**：`fileWrite` / `fileRead` / `readLine` 三处打靶点（`throw not implemented`）补齐为实现，逐臂镜像解释器——同一 `IOLimits` 上限、同一 `resolveIOPath` 基准解析、同一错误文案，差异仅在「非 String 实参」的英文报错用词（已登记不修）。用户可见变化一条：**IR 通道下的这三条内建调用由「报错退出」变为可用**（`fileWrite` 返回整型码、`fileRead` 走 64 KiB 静默截断、`readLine` 保留行终止符且在输入耗尽时返回空串）。本格使**打靶点 3 → 0**，`Sources/` 全树不再有 `notImplemented` 残留，P2b 三格清空；**阻塞槽零新增**（`FLIP BLOCKERS 27 → 27`）。附带补齐**基准管道**（用户裁定「做满 6/6」）：`IRExecutor` 新增 `programBase`，`PiniCLI` 把 `absoluteProgramBase(path)` 上提到引擎分派之前，使 IR 通道与 AST 通道取**同一个值**（入口文件所在目录），非前缀相对路径不再静默读 CWD 的同名文件。三个新差分夹具（写码 `0\n7\n` / 读上限 `65536\n` / 读行保留终止符 `6\n`）落在 `IRDifferentialTests`；`IRExecutorTests` 的「Fail-loud gaps」表整段删除（补三臂后零引用，其防回归断言改由差分夹具承担）。夹具 316 → 319。证据：IO 三节点在 IR 引擎侧实现。
 - **LLVM 歧义 case 构造的期望类型静态决议（2026-09-07）**：跨枚举同名 case 的点号/裸名构造 `.圆(3.0)` / `圆(3.0)` 在 LLVM 端经 checker 静态决议表（`BareCaseResolutionRegistry`）消歧——`enumCaseQualifiedKey` 歧义分支查表命中即按期望类型父枚举构造（对齐解释器通道），未命中维持既有报错（fail-open）；位置键对齐：call 形态两侧均用外层 call 的 loc（`generateCall` 签名加 `at:` 线程），无实参形态用表达式自身 loc；唯一名路径零改动（golden IR 不变）。此前 LLVM 端歧义名一律报 E6-004 要求限定形式（D-3 报错 + 立案）。详见 `docs/spec/issue/archive/issue-llvm-dotcase-expected-type-2026-09-04.md`
 - **门控陈旧夹具收口 + 双后端缺键/换行语义对齐（2026-09-07）**：① LLVM 单参/插值 print 补发尾部换行（`@fmt_newline`；此前仅多参 print 带换行，双后端 stdout 分歧被测试空白归一化掩盖）；② 字典缺失键语义对齐 G48 三通道——`bk_dict_get` 缺键改 `bk_panic`（原「NULL → 补零值」/print 位「打 null」特例移除，与解释器 panic 一致）；③ D3 夹具迁移 G57 字典 `=` 记法并移除三通道前的缺键打 null 残留行；④ `testArraySubscriptWriteBothBackends` 转 D1 边界负向断言（无门控恒可执行）。详见 `docs/spec/issue/archive/issue-gated-stale-fixtures-2026-09-05.md`
 - **trait-body 终止性修复（2026-09-06）**：trait 块后接任何后续顶级声明（结构块/扩展块/对象糖/import/export/后续特征块）解析失败——终止检查 `isTopLevelDeclStart()` 被包在 `if justDedented` 门内，顶格方法（spec 合法形态）与后续声明间无 dedent 时检查被跳过。修复：`parseTraitDecl` 循环 else 分支前加无条件收束（对齐扩展块循环）。GCT 三钉（trait+结构块 / trait+扩展块 / 多带体方法回归）；spec trait-body 产生式加终止注记 + IDENT 同形歧义登记（trait 后跟顶级裸函数被吸收为 trait-method，spec 贪婪语义与宿主一致，规避法已注记）。详见 `docs/spec/issue/archive/issue-trait-body-termination-2026-09-05.md`

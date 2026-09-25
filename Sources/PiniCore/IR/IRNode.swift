@@ -3,9 +3,9 @@ import Foundation
 /// High-level intermediate representation shared by every backend
 /// (LR-2/LR-3 built it for one; LR-4 made it the single one).
 ///
-/// The HIR is a **typed tree**: every expression node carries its resolved
+/// The IR is a **typed tree**: every expression node carries its resolved
 /// scalar type, every variable access carries the declared type of the
-/// variable. All type decisions live in `HIRLowerer`; consumers (the
+/// variable. All type decisions live in `IRLowerer`; consumers (the
 /// emitters) translate nodes to IR text mechanically and never re-derive
 /// types. This is the structural replacement for the old IRGenerator's
 /// shadow type tables.
@@ -13,10 +13,10 @@ import Foundation
 /// Scope note: this began as the M4 vertical slice (scalars, arithmetic,
 /// control flow, function calls) and grew family by family as the grids
 /// landed. The contract is the authority on what the set holds now; anything
-/// outside it is rejected by the single capability gate in `HIRLowerer`.
+/// outside it is rejected by the single capability gate in `IRLowerer`.
 
-/// Resolved scalar types carried by HIR nodes (slice set).
-public indirect enum HIRType: Equatable {
+/// Resolved scalar types carried by IR nodes (slice set).
+public indirect enum IRType: Equatable {
     case i32
     case i64
     /// `U64` (G14): 64-bit unsigned integer. LLVM has no separate unsigned
@@ -45,7 +45,7 @@ public indirect enum HIRType: Equatable {
     /// carried: Pini's surface form `^T` pins T but leaves E unconstrained
     /// (the checker accepts any err payload), so the error slot is
     /// type-erased to a machine word in the IR ABI (LR-12).
-    case result(ok: HIRType)
+    case result(ok: IRType)
     /// `Future<T, E>`：`=>` 函数**对外签名**的返回类型 —— 运行中的并发进程句柄。
     ///
     /// 与 `result` 平行，但两者**不可互换**：`result` 是「已经结算的值」，
@@ -60,15 +60,15 @@ public indirect enum HIRType: Equatable {
     /// 仅携带 ok 载荷：错误槽与 `result` 同口径（擦除为一个机器字）。
     /// ⚠️ 表示是**不透明句柄**，与 `array` / `dict` / `lazyRef` 同族 ——
     /// 句柄形状归后端，而「等一次、结果恰一次」是语义、不归后端。
-    case future(ok: HIRType)
+    case future(ok: IRType)
     /// `Array<T>` (G2). The array itself is an opaque runtime handle
     /// (`%bk_array*`, 并发后端抽象); elements are boxed through the `bk_array_*`
     /// C ABI. Nested arrays recurse via the element type.
-    case array(element: HIRType)
+    case array(element: IRType)
     /// `Optional<T>` (G2). Tagged aggregate `{ i64, T }` — tag 0 = some,
     /// 1 = none. The interpreter models Optional as an enum with `some` /
     /// `none` cases; `none` is the language-level nil (user adjudication).
-    case optional(wrapped: HIRType)
+    case optional(wrapped: IRType)
     /// User nominal type (G3): struct (value layout carried as a stack
     /// pointer, legacy ABI `%struct.<mangled>*`) or object (reference,
     /// `%object.<mangled>*` with an i32 refcount header at field 0).
@@ -78,27 +78,27 @@ public indirect enum HIRType: Equatable {
     case enumeration(name: String)
     /// `Dictionary<K, V>` (G5): opaque handle `%bk_dict*`, keys/values boxed
     /// through the `bk_dict_*` C ABI.
-    case dict(key: HIRType, value: HIRType)
+    case dict(key: IRType, value: IRType)
     /// `LazyRef<T>` (G13 batch 1): opaque handle `%bk_lazyref*` — once-evaluated
     /// lazy reference with shared (reference) copy semantics; the element rides
     /// along for the boxing ABI (bytes/tag) and the `.value` load type.
-    case lazyRef(element: HIRType)
+    case lazyRef(element: IRType)
     /// `Set<T>` (G5): opaque handle `%bk_set*`, ordered unique elements.
-    case set(element: HIRType)
+    case set(element: IRType)
     /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
     /// member access via extractvalue by label index.
-    case tuple(labels: [String?], fieldTypes: [HIRType])
+    case tuple(labels: [String?], fieldTypes: [IRType])
     /// Function value (G6): closures / lambdas / named functions used as
     /// values. Unified fat-pointer ABI `{ ptr, ptr }` = { code, env }; the
     /// param/return shapes are carried for parity checking only — the IR
     /// call protocol is fixed (first arg is always the env pointer).
-    case function(params: [HIRType], returnType: HIRType?, usingIndices: Set<Int>)
+    case function(params: [IRType], returnType: IRType?, usingIndices: Set<Int>)
     /// `*T` (G14, FFI 子系统): raw pointer. Opaque `ptr` in LLVM IR —
     /// load/store take the element type; address-of produces it from an
     /// alloca. Element rides along for load/store typing (mirrors the
     /// interpreter's snapshot/decode semantics: `*U8` loads sign-extend to
     /// one int value).
-    case pointer(element: HIRType)
+    case pointer(element: IRType)
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -150,7 +150,7 @@ public indirect enum HIRType: Equatable {
     }
 
     /// The ok payload type when this is a Result type.
-    public var resultOkType: HIRType? {
+    public var resultOkType: IRType? {
         if case .result(let ok) = self { return ok }
         return nil
     }
@@ -161,19 +161,19 @@ public indirect enum HIRType: Equatable {
     /// type is the Result that the Future was standing in for. Keeping the
     /// translation here rather than at the join site means the two types cannot
     /// drift: a Future whose ok payload changed would move its join site with it.
-    public var joinedResultType: HIRType? {
+    public var joinedResultType: IRType? {
         if case .future(let ok) = self { return .result(ok: ok) }
         return nil
     }
 
     /// The wrapped type when this is an Optional type.
-    public var optionalWrapped: HIRType? {
+    public var optionalWrapped: IRType? {
         if case .optional(let wrapped) = self { return wrapped }
         return nil
     }
 
     /// The element type when this is an Array type.
-    public var arrayElementType: HIRType? {
+    public var arrayElementType: IRType? {
         if case .array(let element) = self { return element }
         return nil
     }
@@ -200,7 +200,7 @@ public indirect enum HIRType: Equatable {
     ///
     /// 用于二元运算与比较：此处没有「哪一侧是期望」，故不看方向；
     /// 单方向的**加宽**判定在类型检查器（`Char → String`，反向拒绝）。
-    public func formsCharStringPair(with other: HIRType) -> Bool {
+    public func formsCharStringPair(with other: IRType) -> Bool {
         (self == .char && other == .string) || (self == .string && other == .char)
     }
 
@@ -224,7 +224,7 @@ public indirect enum HIRType: Equatable {
 }
 
 /// Binary operators in the slice set.
-public enum HIRBinaryOp: Equatable {
+public enum IRBinaryOp: Equatable {
     case add, subtract, multiply, divide, modulo
     case equal, notEqual, lessThan, lessThanOrEqual, greaterThan, greaterThanOrEqual
     /// Bitwise family (G15): integer operands; `and`/`or`/`xor`/`shl`/`ashr`
@@ -258,7 +258,7 @@ public enum HIRBinaryOp: Equatable {
 }
 
 /// Unary operators in the slice set.
-public enum HIRUnaryOp: Equatable {
+public enum IRUnaryOp: Equatable {
     case negate
     case logicalNot
     /// `~v` — the I32 complement. Distinct from `logicalNot`, which is `!`.
@@ -268,64 +268,64 @@ public enum HIRUnaryOp: Equatable {
 }
 
 /// Typed expression tree (slice set).
-public indirect enum HIRExpr: Equatable {
-    case intConst(value: Int, type: HIRType)
+public indirect enum IRExpr: Equatable {
+    case intConst(value: Int, type: IRType)
     case floatConst(value: Double)
     case boolConst(value: Bool)
     case stringConst(value: String)
     /// Load a variable's value; `type` is the declared type of the variable.
-    case load(name: String, type: HIRType)
-    case binary(op: HIRBinaryOp, lhs: HIRExpr, rhs: HIRExpr, type: HIRType)
-    case unary(op: HIRUnaryOp, operand: HIRExpr, type: HIRType)
+    case load(name: String, type: IRType)
+    case binary(op: IRBinaryOp, lhs: IRExpr, rhs: IRExpr, type: IRType)
+    case unary(op: IRUnaryOp, operand: IRExpr, type: IRType)
     /// Call to a module-level function; `returnType` is nil for void calls.
-    case call(function: String, arguments: [HIRExpr], returnType: HIRType?)
+    case call(function: String, arguments: [IRExpr], returnType: IRType?)
     /// Intrinsic `print(expr)` — one scalar argument, void result.
-    case printCall(argument: HIRExpr)
+    case printCall(argument: IRExpr)
     /// `ok(v)` / `err(e)` Result case construction. The err payload is
     /// widened to a machine word at emission (type-erased ABI, LR-12).
-    case resultConstruct(isOk: Bool, payload: HIRExpr, type: HIRType)
+    case resultConstruct(isOk: Bool, payload: IRExpr, type: IRType)
     /// Array literal `[e1, e2, ...]` (G2). `type` is `.array(element:)`; the
     /// emitter builds the handle via `bk_array_create` + per-element
     /// `bk_array_set` (boxed through the C ABI).
-    case arrayLiteral(elements: [HIRExpr], type: HIRType)
+    case arrayLiteral(elements: [IRExpr], type: IRType)
     /// Subscript read `container[index]` (G2). Out-of-bounds panics in the
     /// runtime (`bk_array_get`), matching the interpreter's safe-assert
     /// channel; the tolerant channel (`.get` -> Optional) is a later grid.
-    case subscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType)
+    case subscriptGet(container: IRExpr, index: IRExpr, type: IRType)
     /// Intrinsic `len(array)` — runtime `bk_array_len`, i32 result.
-    case lenCall(argument: HIRExpr)
+    case lenCall(argument: IRExpr)
     /// Tolerant read channel `container.get(index)` (G2): out of bounds
     /// yields `none` (the language-level nil), in bounds `some(value)`.
     /// Emitted as a bounds-checked inline branch around `bk_array_len/get`.
-    case optionalGet(container: HIRExpr, index: HIRExpr, type: HIRType)
+    case optionalGet(container: IRExpr, index: IRExpr, type: IRType)
     /// `Optional` construction (G2b): `isSome=false` is the `none` literal
     /// (the slice-sugar open bound arrives as `Optional.none`); `isSome=true`
     /// carries the wrapped payload. Mirrors `resultConstruct`.
-    case optionalConstruct(isSome: Bool, payload: HIRExpr?, type: HIRType)
+    case optionalConstruct(isSome: Bool, payload: IRExpr?, type: IRType)
     /// `container.slice(start, end)` (G2b) — the slice-sugar desugaring.
     /// `type` is `.array(element:)` or `.string`; open bounds arrive as
     /// `optionalConstruct(isSome: false, ...)`. Semantics are the sunk
     /// stdlib slice: tail-counted negative bounds, clamp to [0, len],
     /// empty result when hi < lo.
-    case sliceCall(container: HIRExpr, start: HIRExpr, end: HIRExpr, type: HIRType)
+    case sliceCall(container: IRExpr, start: IRExpr, end: IRExpr, type: IRType)
     /// Nominal constructor `名()` (G3). Fields take their declared defaults
     /// (or zero); constructor arguments are not part of the slice surface.
     /// Objects additionally write the refcount header (= 1).
-    case construct(type: HIRType)
+    case construct(type: IRType)
     /// Enum case construction `Case(p1, p2, ...)` (G4): tag is the case's
     /// declaration-order index; payloads store by value into the typed
     /// slots of the tagged union.
-    case enumConstruct(enumName: String, caseName: String, tag: Int, payloads: [HIRExpr], payloadTypes: [HIRType], type: HIRType)
+    case enumConstruct(enumName: String, caseName: String, tag: Int, payloads: [IRExpr], payloadTypes: [IRType], type: IRType)
     /// Nominal field read `base.field` (G3). `type` is the field's type.
-    case fieldGet(base: HIRExpr, field: String, type: HIRType)
+    case fieldGet(base: IRExpr, field: String, type: IRType)
     /// Dictionary / set literal (G5). Entries carry pre-lowered key/value
     /// pairs; construction goes through the runtime C ABI.
-    case dictLiteral(entries: [HIRDictEntry], type: HIRType)
-    case setLiteral(elements: [HIRExpr], type: HIRType)
+    case dictLiteral(entries: [IRDictEntry], type: IRType)
+    case setLiteral(elements: [IRExpr], type: IRType)
     /// Labeled tuple construction (G5 minimal slice).
-    case tupleConstruct(labels: [String?], elements: [HIRExpr], type: HIRType)
+    case tupleConstruct(labels: [String?], elements: [IRExpr], type: IRType)
     /// Tuple member read `base.label` (G5) — extractvalue by field index.
-    case tupleIndexGet(base: HIRExpr, index: Int, type: HIRType)
+    case tupleIndexGet(base: IRExpr, index: Int, type: IRType)
 
     // MARK: G6 closures / higher-order functions
 
@@ -338,53 +338,53 @@ public indirect enum HIRExpr: Equatable {
     /// these names); an unannotated param adopts the return-annotation
     /// fallback, matching the checker's G29 inference.
     case closureLiteral(
-        id: Int, paramNames: [String], paramTypes: [HIRType], returnType: HIRType?,
-        captures: [HIRCapture], body: HIRBlock, type: HIRType)
+        id: Int, paramNames: [String], paramTypes: [IRType], returnType: IRType?,
+        captures: [IRCapture], body: IRBlock, type: IRType)
     /// A named top-level function used as a value (G6): emitted through an
     /// env-ignoring adapter fat pointer (`@__adapter_<mangled>`) so direct
     /// and indirect call sites share one calling convention.
-    case functionValue(functionName: String, type: HIRType)
+    case functionValue(functionName: String, type: IRType)
     /// Indirect call through a function value (G6): always the closure ABI
     /// `call ret code(ptr env, args...)` — `callee` is a closureLiteral /
     /// functionValue / function-typed variable load.
-    case indirectCall(callee: HIRExpr, arguments: [HIRExpr], returnType: HIRType?)
+    case indirectCall(callee: IRExpr, arguments: [IRExpr], returnType: IRType?)
 
     // MARK: G14 FFI pointer primitives
 
     /// `load(p)` (G14): read the element value through a `*T` pointer.
-    /// `type` is the element HIRType (mirrors the interpreter's
+    /// `type` is the element IRType (mirrors the interpreter's
     /// decodePointer: U8 loads sign-extend into one unified int value).
-    case pointerLoad(pointer: HIRExpr, type: HIRType)
+    case pointerLoad(pointer: IRExpr, type: IRType)
     /// `store(p, v)` (G14): write the value through a `*T` pointer using
     /// the pointer's element type (mirrors the interpreter's encode:
     /// truncating store for narrow elements). Value expression.
-    case pointerStore(pointer: HIRExpr, value: HIRExpr, type: HIRType)
+    case pointerStore(pointer: IRExpr, value: IRExpr, type: IRType)
     /// `&x` (G14, D-B adjudication: true pointer semantics): the address of
     /// a variable's alloca slot. The interpreter's snapshot aliasing gap
     /// (write-back does not update the original) is the documented
     /// divergence covered by the read-only corpus.
-    case addressOfVar(name: String, type: HIRType)
+    case addressOfVar(name: String, type: IRType)
     /// `print(a, b, ...)` multi-argument form (G14, D-A=A1): the
     /// interpreter's semantics are per-argument stringify joined with a
     /// single space on one line; the emitter realizes the same byte stream
     /// (value, space, value, ..., newline).
-    case printMulti(arguments: [HIRExpr])
+    case printMulti(arguments: [IRExpr])
     /// `assert(cond)` / `assert(cond, message)` (G41 surface): boolean
     /// trap — false raises the runtime panic with the message. Only needed
     /// so `|test` blocks lower; the differential harness never executes
     /// them.
-    case assertCall(condition: HIRExpr, message: HIRExpr?)
+    case assertCall(condition: IRExpr, message: IRExpr?)
 
     // MARK: G15 file IO
 
     /// `writeFile(path, content)` (G15) — fopen("w") / fwrite / fclose.
     /// Value expression; the legacy emitter yields the fclose i32 result.
-    case fileWrite(path: HIRExpr, content: HIRExpr)
+    case fileWrite(path: IRExpr, content: IRExpr)
     /// `readFile(path)` (G15) — fopen("r") / fread into a 64 KiB stack
     /// buffer / fclose, yielding the buffer pointer as a String. The
     /// buffer size cap is the legacy emitter's (LLI's JIT makes
     /// fseek/ftell/fstat unreliable), so the corpus stays well under it.
-    case fileRead(path: HIRExpr)
+    case fileRead(path: IRExpr)
 
     // MARK: G17 builtins
 
@@ -401,32 +401,32 @@ public indirect enum HIRExpr: Equatable {
     /// matching the interpreter's "first grapheme" rule inside the ASCII
     /// domain (outside it the interpreter's grapheme model takes over and the
     /// remaining Unicode predicates stay fail-loud, 谓词集三层对齐).
-    case isAsciiDigit(argument: HIRExpr)
+    case isAsciiDigit(argument: IRExpr)
 
     // MARK: G9 string deepening
 
     /// `s.upper()` / `s.lower()` (G9) — byte-wise toupper/tolower over a
     /// memcpy'd copy (the receiver stays untouched).
-    case stringCase(isUpper: Bool, receiver: HIRExpr)
+    case stringCase(isUpper: Bool, receiver: IRExpr)
     /// `s.contains(needle)` (G9) — `strstr != null`, byte semantics.
-    case stringContains(receiver: HIRExpr, needle: HIRExpr)
+    case stringContains(receiver: IRExpr, needle: IRExpr)
     /// `s.substring(start, length)` (G9) — memcpy out of the receiver.
-    case stringSubstring(receiver: HIRExpr, start: HIRExpr, length: HIRExpr)
+    case stringSubstring(receiver: IRExpr, start: IRExpr, length: IRExpr)
     /// `s.split(delim)` (G9) — a REAL `Array<String>` (interpreter parity,
     /// unlike the legacy emitter which renders a formatted string): strtok
     /// loop feeding bk_array_create/set with strdup'd tokens.
-    case stringSplit(receiver: HIRExpr, delim: HIRExpr, type: HIRType)
+    case stringSplit(receiver: IRExpr, delim: IRExpr, type: IRType)
     /// `arr.join(sep)` (G9) — string-array elements strcat'd with sep.
-    case arrayJoin(receiver: HIRExpr, separator: HIRExpr)
+    case arrayJoin(receiver: IRExpr, separator: IRExpr)
     /// `s1 + s2` string concatenation (G9) — malloc'd join of the two
     /// C strings (byte semantics, matching the sunk concat channel).
-    case stringConcat(lhs: HIRExpr, rhs: HIRExpr)
+    case stringConcat(lhs: IRExpr, rhs: IRExpr)
     /// String interpolation `"x=\(expr)"` (G9): parts are already-lowered
     /// expressions of scalar/string/array types; each converts to a C
     /// string and pieces strcat into a stack buffer. F64 renders via
     /// bk_double_to_string (shortest round-trip — LR-8; the legacy emitter
     /// still uses %f here and diverges from the interpreter).
-    case interpString(parts: [HIRExpr])
+    case interpString(parts: [IRExpr])
 
     // MARK: G13 batch 1 — LazyRef
 
@@ -434,10 +434,10 @@ public indirect enum HIRExpr: Equatable {
     /// `bk_lazyref_create(wrapper, code, env, bytes, tag)`. `closure` is the
     /// lowered initializer fat pointer; the wrapper (per element type,
     /// deduplicated) is buffered at module end by the emitter.
-    case lazyRefConstruct(closure: HIRExpr, type: HIRType)
+    case lazyRefConstruct(closure: IRExpr, type: IRType)
     /// `handle.value` (G13): `bk_lazyref_value(handle)` returns the cached
     /// element box; the caller loads the element type out of it.
-    case lazyRefValue(handle: HIRExpr, type: HIRType)
+    case lazyRefValue(handle: IRExpr, type: IRType)
 
     // MARK: G3c — join
 
@@ -450,7 +450,7 @@ public indirect enum HIRExpr: Equatable {
     /// two apart, and the engines must be able to read it: the retired
     /// implementation asked a mode flag instead, and with the flag gone there is
     /// nothing left for a downstream reader to consult.
-    case join(future: HIRExpr, type: HIRType, form: JoinForm)
+    case join(future: IRExpr, type: IRType, form: JoinForm)
 
     // MARK: ADR-001 — 默认实例取用
 
@@ -465,18 +465,18 @@ public indirect enum HIRExpr: Equatable {
     ///
     /// 中间态（`P2a`）：**无降载入口** ⇒ 本节点当前**不可达**；两台引擎起步 **fail-loud**
     /// （照 §2.45 `join` / §3.17 `detachStmt` 的先例）。物化面与 `using` 解析属 `P2b`。
-    case givenInstance(type: HIRType)
+    case givenInstance(type: IRType)
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +
 /// methods (each already self-parameterized, IR name mangled).
-public struct HIRTypeDecl: Equatable {
+public struct IRTypeDecl: Equatable {
     public struct Field: Equatable {
         public let name: String
-        public let type: HIRType
-        public let defaultValue: HIRExpr?
+        public let type: IRType
+        public let defaultValue: IRExpr?
 
-        public init(name: String, type: HIRType, defaultValue: HIRExpr?) {
+        public init(name: String, type: IRType, defaultValue: IRExpr?) {
             self.name = name
             self.type = type
             self.defaultValue = defaultValue
@@ -486,9 +486,9 @@ public struct HIRTypeDecl: Equatable {
     public let name: String
     public let isObject: Bool
     public let fields: [Field]
-    public let methods: [HIRFunction]
+    public let methods: [IRFunction]
 
-    public init(name: String, isObject: Bool, fields: [Field], methods: [HIRFunction]) {
+    public init(name: String, isObject: Bool, fields: [Field], methods: [IRFunction]) {
         self.name = name
         self.isObject = isObject
         self.fields = fields
@@ -497,12 +497,12 @@ public struct HIRTypeDecl: Equatable {
 }
 
 /// One dictionary literal entry (G5). A struct because Swift tuples cannot
-/// carry conditional Equatable conformance for the HIR tree.
-public struct HIRDictEntry: Equatable {
-    public let key: HIRExpr
-    public let value: HIRExpr
+/// carry conditional Equatable conformance for the IR tree.
+public struct IRDictEntry: Equatable {
+    public let key: IRExpr
+    public let value: IRExpr
 
-    public init(key: HIRExpr, value: HIRExpr) {
+    public init(key: IRExpr, value: IRExpr) {
         self.key = key
         self.value = value
     }
@@ -512,11 +512,11 @@ public struct HIRDictEntry: Equatable {
 /// name and declared type. The env field stores a pointer to the variable's
 /// storage slot (reference capture — later writes to the outer variable are
 /// visible through the closure, interpreter currentEnv parity).
-public struct HIRCapture: Equatable {
+public struct IRCapture: Equatable {
     public let name: String
-    public let type: HIRType
+    public let type: IRType
 
-    public init(name: String, type: HIRType) {
+    public init(name: String, type: IRType) {
         self.name = name
         self.type = type
     }
@@ -527,15 +527,15 @@ public struct HIRCapture: Equatable {
 /// Optional scrutinee; user enum cases via the same node — G4). `bindings`
 /// are the per-payload variable names (`nil` = `_` placeholder), positional
 /// by payload index; the arm body sees them as scoped variables.
-public struct HIRMatchCase: Equatable {
+public struct IRMatchCase: Equatable {
     public let caseName: String
     /// Literal-pattern operand of a bare-scrutinee arm, nil for enum-case and
-    /// wildcard arms (those live in `caseName`). See `HIRMatchLiteral`.
-    public let literal: HIRMatchLiteral?
+    /// wildcard arms (those live in `caseName`). See `IRMatchLiteral`.
+    public let literal: IRMatchLiteral?
     public let bindings: [String?]
-    public let body: HIRBlock
+    public let body: IRBlock
 
-    public init(caseName: String, literal: HIRMatchLiteral? = nil, bindings: [String?], body: HIRBlock) {
+    public init(caseName: String, literal: IRMatchLiteral? = nil, bindings: [String?], body: IRBlock) {
         self.caseName = caseName
         self.literal = literal
         self.bindings = bindings
@@ -548,7 +548,7 @@ public struct HIRMatchCase: Equatable {
 /// The interpreter compares such an arm by value (`matchCaseMatches`), so the
 /// emitter must dispatch on it; the operand is carried structurally rather
 /// than re-parsed out of `caseName`'s rendered text.
-public enum HIRMatchLiteral: Equatable {
+public enum IRMatchLiteral: Equatable {
     case int(Int)
     case float(Double)
     case string(String)
@@ -558,7 +558,7 @@ public enum HIRMatchLiteral: Equatable {
 /// for-in iterable family (G15): the container kind decides which runtime
 /// accessor reads element `i` — `bk_array_get` / `bk_set_at` for 1-field
 /// patterns, `bk_dict_key_at` / `bk_dict_val_at` for 2-field `(k, v)`.
-public enum HIRForIterableKind: Equatable {
+public enum IRForIterableKind: Equatable {
     case array, set, dict
 }
 
@@ -567,24 +567,24 @@ public enum HIRForIterableKind: Equatable {
 ///
 /// WHY THIS TYPE EXISTS (LR-4 P4-3)
 ///
-/// An `[HIRStmt]` list is everything an emitter needs and not enough for a
-/// debugger. The AST carries a `SourceLocation` on every statement; the HIR
-/// carried none, so the HIR engine could not answer "which line is this?" and
-/// its debug hook had to stay dormant (`HIRExecutor.debugHook` documents that
+/// An `[IRStmt]` list is everything an emitter needs and not enough for a
+/// debugger. The AST carries a `SourceLocation` on every statement; the IR
+/// carried none, so the IR engine could not answer "which line is this?" and
+/// its debug hook had to stay dormant (`IRExecutor.debugHook` documents that
 /// state). A pause that cannot name a line is worse than no pause, so the
 /// position has to land in the representation before the hook can be wired.
 ///
 /// The carrier is the **block**, not the node. A position on each of the 60
 /// node cases would touch every construction site and every pattern match on
 /// both the executor and the LLVM emitter; a block-level parallel array
-/// touches one lowering function — `HIRLowerer.lowerBlock`, the single place
-/// where a `Block` becomes HIR statements — and nothing else changes shape.
+/// touches one lowering function — `IRLowerer.lowerBlock`, the single place
+/// where a `Block` becomes IR statements — and nothing else changes shape.
 /// Positions are therefore at **AST-statement granularity**, which is exactly
 /// what the interpreter reports: its own pause site reads `Statement.location`
 /// the same way, so the two engines stop on the same lines by construction.
 ///
 /// `positions` is parallel to `statements` when non-empty and empty when the
-/// block was built without them (hand-built HIR in tests). `position(at:)`
+/// block was built without them (hand-built IR in tests). `position(at:)`
 /// answers `nil` in that case instead of inventing a line: an engine that
 /// cannot name a line must stay silent rather than stop somewhere fictional.
 ///
@@ -596,32 +596,32 @@ public enum HIRForIterableKind: Equatable {
 /// deliberate: `[stmt, stmt]` still builds a block and `for stmt in block`
 /// still iterates one, so the emitter, printer and executor keep reading what
 /// they read before, and only the places that *want* positions changed.
-public struct HIRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollection {
-    public typealias Element = HIRStmt
+public struct IRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollection {
+    public typealias Element = IRStmt
     public typealias Index = Int
 
-    public var statements: [HIRStmt]
+    public var statements: [IRStmt]
     /// Parallel to `statements`; empty means "this block carries no positions".
     public var positions: [SourceLocation]
 
-    public init(_ statements: [HIRStmt] = [], positions: [SourceLocation] = []) {
+    public init(_ statements: [IRStmt] = [], positions: [SourceLocation] = []) {
         self.statements = statements
         self.positions = positions
     }
 
-    public init(arrayLiteral elements: HIRStmt...) {
+    public init(arrayLiteral elements: IRStmt...) {
         self.init(elements)
     }
 
     /// A block whose every statement carries the same source position.
     ///
     /// The shape a construct needs when one source statement lowers into
-    /// several HIR statements: they all came from that one line, so a pause on
+    /// several IR statements: they all came from that one line, so a pause on
     /// any of them is a pause on that line. Used by the `defer` body and the
     /// try-else handler, which `lowerStatement` expands in place rather than
     /// through `lowerBlock`.
-    public static func at(_ statements: [HIRStmt], _ location: SourceLocation) -> HIRBlock {
-        HIRBlock(
+    public static func at(_ statements: [IRStmt], _ location: SourceLocation) -> IRBlock {
+        IRBlock(
             statements,
             positions: Array(repeating: location, count: statements.count)
         )
@@ -631,7 +631,7 @@ public struct HIRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollec
     public var count: Int { statements.count }
     public var startIndex: Int { statements.startIndex }
     public var endIndex: Int { statements.endIndex }
-    public subscript(position: Int) -> HIRStmt { statements[position] }
+    public subscript(position: Int) -> IRStmt { statements[position] }
 
     /// The source position of the statement at `index`, or `nil` when this
     /// block carries none (or the index is out of range).
@@ -643,17 +643,17 @@ public struct HIRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollec
     }
 
     /// Statements compared, positions ignored — see the note on the type.
-    public static func == (lhs: HIRBlock, rhs: HIRBlock) -> Bool {
+    public static func == (lhs: IRBlock, rhs: IRBlock) -> Bool {
         lhs.statements == rhs.statements
     }
 }
 
-public indirect enum HIRStmt: Equatable {
+public indirect enum IRStmt: Equatable {
     /// Variable slot. Emitting allocates the slot; a non-nil initializer
     /// stores into it right after allocation.
-    case allocVar(name: String, type: HIRType, mutable: Bool, initializer: HIRExpr?)
+    case allocVar(name: String, type: IRType, mutable: Bool, initializer: IRExpr?)
     /// Store into an existing variable; `type` is the declared variable type.
-    case storeVar(name: String, type: HIRType, value: HIRExpr)
+    case storeVar(name: String, type: IRType, value: IRExpr)
     /// `[label|] if cond: then [else: else]`. `label` is what makes this an
     /// **interruptible frame** (标签 break 定向范围): `break <label>` may leave the `if`
     /// block. It is not a `continue` target — `continue-stmt ::= 'continue'
@@ -661,11 +661,11 @@ public indirect enum HIRStmt: Equatable {
     /// such restriction. The label itself is never read at run time: as with
     /// loops, only the resolved depth travels, and `label != nil` is what the
     /// back ends test to decide whether to catch a signal here.
-    case ifStmt(label: String?, condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?)
+    case ifStmt(label: String?, condition: IRExpr, thenBody: IRBlock, elseBody: IRBlock?)
     /// `while cond: body [step: block]`. The step block (标签语法反转) runs once
     /// per iteration after the body — on normal completion *and* on
     /// unlabeled `continue` (interpreter parity); `break` skips it.
-    case whileStmt(condition: HIRExpr, body: HIRBlock, step: HIRBlock?)
+    case whileStmt(condition: IRExpr, body: IRBlock, step: IRBlock?)
     /// `for (pattern,) in iterable: body [step: block]` (G15).
     /// `kind` selects the runtime accessor family; `elementTypes` are
     /// parallel to `pattern` (`"_"` entries still occupy a slot and carry
@@ -673,32 +673,32 @@ public indirect enum HIRStmt: Equatable {
     /// whileStmt.
     case forInStmt(
         pattern: [String],
-        elementTypes: [HIRType],
-        kind: HIRForIterableKind,
-        iterable: HIRExpr,
-        body: HIRBlock,
-        step: HIRBlock?
+        elementTypes: [IRType],
+        kind: IRForIterableKind,
+        iterable: IRExpr,
+        body: IRBlock,
+        step: IRBlock?
     )
     /// Slice set: single-value return; nil for void functions.
-    case returnStmt(value: HIRExpr?)
-    case exprStmt(HIRExpr)
+    case returnStmt(value: IRExpr?)
+    case exprStmt(IRExpr)
     /// `defer stmt` (G9): the wrapped statements run LIFO when the
     /// enclosing block scope exits (each loop-iteration end included).
     /// `break`/`return` interplay **is** gated as of grid G1: both channels
     /// run the defers on the unwinding path too, because a block's scope
     /// closes on every exit, not only the normal one.
-    case deferStmt(body: HIRBlock)
+    case deferStmt(body: IRBlock)
     /// `try operand else errorVar: handler` (try-else 迁移). The operand's type is
     /// `result(ok:)`; the error path binds the type-erased error word to
     /// `errorVar` and runs `handler`. `okTarget` is set for expression
     /// position (the ok payload is stored into that variable); nil for
     /// statement position.
-    case tryStmt(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?, type: HIRType)
+    case tryStmt(operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?, type: IRType)
     /// Subscript store `container[index] = value` (G2). The container may be
     /// a nested subscript chain (the emitter walks the COW split chain);
     /// compound assignment (`a[i] += k`) lowers to read-modify-write with the
     /// same node. `elementType` is the boxed element's static type.
-    case subscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType)
+    case subscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType)
     /// `break` (G2; labeled form G15). `depth` = how many enclosing loops to
     /// unwind (1 = innermost). Labeled `break outer` lowers to the depth the
     /// lowerer resolved from the label stack (标签语法反转). An *unresolvable*
@@ -720,13 +720,13 @@ public indirect enum HIRStmt: Equatable {
     /// `{ i64, T }` tag (some=0, none=1); enum scrutinees join their own grid
     /// through the same node. Unmatched scrutinee values panic at runtime
     /// (interpreter matchNotExhaustive parity).
-    case matchStmt(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType)
+    case matchStmt(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType)
     /// Nominal field store `base.field = value` (G3). GEP + store through
     /// the base pointer; objects offset past the refcount header.
-    case fieldStore(base: HIRExpr, field: String, value: HIRExpr, fieldType: HIRType)
+    case fieldStore(base: IRExpr, field: String, value: IRExpr, fieldType: IRType)
     /// `capture name` (G6): a marker statement inside a closure body. The
     /// capture itself is resolved at the closure-literal creation point
-    /// (HIRLowerer free-variable analysis mirrors the checker's G29 set),
+    /// (IRLowerer free-variable analysis mirrors the checker's G29 set),
     /// so this lowers to nothing — it exists so the statement kind is
     /// accepted inside lowered closure bodies rather than gated.
     case captureMarker(name: String)
@@ -738,7 +738,7 @@ public indirect enum HIRStmt: Equatable {
     /// No `type` rides along, unlike `join(future:type:)`: a statement
     /// position produces no value, so there is no site type to pin, and the
     /// operand's own type lives inside its node (typed tree). Note that no
-    /// `HIRType` case denotes a future — `Future` is a runtime value
-    /// (`Value.future`), which is the same position `HIR join 节点` took for `join`.
-    case detachStmt(inner: HIRExpr)
+    /// `IRType` case denotes a future — `Future` is a runtime value
+    /// (`Value.future`), which is the same position `IR join 节点` took for `join`.
+    case detachStmt(inner: IRExpr)
 }

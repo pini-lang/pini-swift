@@ -27,7 +27,7 @@ func testParserRejectsConstraintOnStructBody() throws {
 
 **Naming Convention:** `test[Module][Behavior]`
 
-- Module: AST, Lexer, Parser, TypeChecker, HIRExecutor, etc.
+- Module: AST, Lexer, Parser, TypeChecker, IRExecutor, etc.
 - Behavior: What specific behavior is being tested
 - The display name carries the same intent in one sentence; the function name keeps the
   `test` prefix and the module/behavior shape, so both the report and a text search agree.

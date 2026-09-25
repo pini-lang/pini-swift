@@ -1,12 +1,12 @@
 import Foundation
 
 /// Lowers a type-checked `Module` (AST) plus the checker's `TypeInference`
-/// into a typed `HIRModule`. This is the single point where all type
+/// into a typed `IRModule`. This is the single point where all type
 /// decisions are made for every backend, and the single place allowed to
 /// say "unsupported": every capability gap surfaces as one
-/// `HIRLoweringError.unsupported` thrown from this file. The old IRGenerator
+/// `IRLoweringError.unsupported` thrown from this file. The old IRGenerator
 /// scattered ~108 such decisions across emitters; they consolidate here.
-public enum HIRLowerer {
+public enum IRLowerer {
 
     /// The single capability-gate error for the new pipeline: free-form
     /// English detail plus the source position of the construct that gate
@@ -19,7 +19,7 @@ public enum HIRLowerer {
     /// yet" — so they share one code from the legacy E6 surface rather than
     /// being classified one by one. `LocalizedError` is kept because the
     /// description is the only text a caller without the resource layer gets.
-    public struct HIRLoweringError: Error, CustomStringConvertible, LocalizedError {
+    public struct IRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
         /// Diagnostic code, defaulted to the E6 unsupported-feature bucket.
@@ -28,18 +28,18 @@ public enum HIRLowerer {
         public var code: String = "\(DiagnosticDomain.irgen.rawValue)-004"
 
         public var description: String {
-            "HIR lowering error at \(location.line):\(location.column): \(message)"
+            "IR lowering error at \(location.line):\(location.column): \(message)"
         }
 
         public var errorDescription: String? { description }
     }
 
-    /// A lowered expression plus its resolved type. The HIR nodes already
+    /// A lowered expression plus its resolved type. The IR nodes already
     /// carry their own types where the emitter needs them; this wrapper keeps
     /// the lowering-time type decisions explicit and uniform.
     private struct LoweredExpr {
-        let node: HIRExpr
-        let type: HIRType
+        let node: IRExpr
+        let type: IRType
     }
 
     /// G10 monomorphization scratch: one specialization per concrete
@@ -63,7 +63,7 @@ public enum HIRLowerer {
         /// `precollectGenericUses` -- the scan already passes this state
         /// everywhere, and a fourth by-value table would have to be added to
         /// each of its ~40 call sites for no gain.
-        var genericEnums: HIRGenericEnumIndex = .empty
+        var genericEnums: IRGenericEnumIndex = .empty
     }
 
     /// Specialized source name for a generic instantiation: `盒` + ["I32"]
@@ -216,10 +216,10 @@ public enum HIRLowerer {
     /// sites. Reference type — appends from nested contexts (function bodies
     /// inside main) reach the module assembly in `lower()`.
     final class TraitDefaultCollector {
-        private(set) var functions: [HIRFunction] = []
+        private(set) var functions: [IRFunction] = []
         private var seen: Set<String> = []
 
-        func add(_ function: HIRFunction) {
+        func add(_ function: IRFunction) {
             guard seen.insert(function.name).inserted else { return }
             functions.append(function)
         }
@@ -228,7 +228,7 @@ public enum HIRLowerer {
     /// G13 batch 2: lower a checked multi-file package. Callers must run the
     /// package-level semantic + type-check passes first (same contract as
     /// `check(package:)`). The checker's package context has already enforced
-    /// cross-file visibility (D4: the HIR channel re-enforces nothing).
+    /// cross-file visibility (D4: the IR channel re-enforces nothing).
     ///
     /// D1 implementation: merge every file's declarations into one virtual
     /// module and run the existing single-module pre-pass chain on the
@@ -244,7 +244,7 @@ public enum HIRLowerer {
     public static func lower(
         package: Package, typeInference: TypeInference?,
         requiresMain: Bool = true
-    ) throws -> HIRModule {
+    ) throws -> IRModule {
         let base = Module(
             declarations: package.fileUnits.flatMap { $0.module.declarations },
             imports: package.fileUnits.flatMap { $0.module.imports },
@@ -300,7 +300,7 @@ public enum HIRLowerer {
             for decl in loaded.declarations {
                 guard let name = topLevelName(of: decl) else { continue }
                 if let previous = supplier[name], previous != loaded.rootPath {
-                    throw HIRLoweringError(
+                    throw IRLoweringError(
                         message: "imported modules '\(previous)' and '\(loaded.rootPath)' both "
                             + "export the top-level name '\(name)': this channel merges import "
                             + "targets into one module, so it cannot keep their namespaces apart",
@@ -336,7 +336,7 @@ public enum HIRLowerer {
         module: Module, typeInference: TypeInference?,
         moduleAliases: [String: Set<String>] = [:],
         requiresMain: Bool = true
-    ) throws -> HIRModule {
+    ) throws -> IRModule {
         // G12 pre-pass: trait registry. Trait default-implementation bodies
         // (signatures with a body) join the signature table like any named
         // function; abstract signatures (body == nil) are skipped — the type
@@ -367,7 +367,7 @@ public enum HIRLowerer {
         // ⚠️ 落在这里而不是各入口：整包降载会把各文件摊平成一个模块再走本函数 ⇒
         // 此处一处覆盖单模块与整包两条路。名义表又是 `userTypes` 的来源，故这一步同时让
         // `using` 形参的类型标注找得到这个名字。
-        let predefined = HIRLowerer.visiblePredefined(in: module)
+        let predefined = IRLowerer.visiblePredefined(in: module)
         for decl in predefined {
             guard case .givenDecl(let gd) = decl else { continue }
             nominals[gd.name] = NominalInfo(name: gd.name, isObject: false, decl: decl)
@@ -398,7 +398,7 @@ public enum HIRLowerer {
             default: break
             }
         }
-        let genericEnums = HIRGenericEnumIndex(
+        let genericEnums = IRGenericEnumIndex(
             templates: genericEnumTemplates, caseOwners: genericEnumCaseOwners
         )
         // ADR-001 `P1b`：三形扩展的目标按**实际注册类别**分三类处置。
@@ -437,7 +437,7 @@ public enum HIRLowerer {
                     let spelling =
                         ext.kind == .structExt ? "((\(ext.targetType)))"
                         : ext.kind == .objectExt ? "{{\(ext.targetType)}}" : "[[\(ext.targetType)]]"
-                    throw HIRLoweringError(
+                    throw IRLoweringError(
                         message: "extension block `\(spelling)`：目标 `\(ext.targetType)` 未声明为"
                             + "可归并的类型（结构 / 对象 / 给定块），或指向特征 —— 方法无处可归",
                         location: ext.location,
@@ -527,16 +527,16 @@ public enum HIRLowerer {
         // failed at the declaration, for every module that merely declared a
         // generic enum. The specializations the G10 pre-pass registered take
         // its place (added below, before any lookup can see them).
-        var enums: [String: HIREnumDecl] = [:]
-        var userTypes: [String: HIRType] = [:]
+        var enums: [String: IREnumDecl] = [:]
+        var userTypes: [String: IRType] = [:]
         for decl in module.declarations {
             switch decl {
             case .enumDecl(let ed):
                 guard ed.genericParams.isEmpty else { break }
-                enums[ed.name] = HIREnumDecl(
+                enums[ed.name] = IREnumDecl(
                     name: ed.name,
                     cases: ed.cases.enumerated().map { index, ec in
-                        HIREnumCase(
+                        IREnumCase(
                             name: ec.name, tag: index,
                             paramNames: ec.associatedParams.map { $0.name },
                             payloadTypes: [])
@@ -605,14 +605,14 @@ public enum HIRLowerer {
             }
         }
 
-        var signatures: [String: HIRLowererSignatureInfo] = [:]
+        var signatures: [String: IRLowererSignatureInfo] = [:]
 
         /// G12: signature info for a trait default implementation. The
         /// leading `self` parameter (annotation nil — trait bodies do not
         /// annotate it) is stripped; remaining parameters resolve normally.
-        func traitSignatureInfo(_ sig: FuncDecl, userTypes: [String: HIRType]) throws -> HIRLowererSignatureInfo {
+        func traitSignatureInfo(_ sig: FuncDecl, userTypes: [String: IRType]) throws -> IRLowererSignatureInfo {
             let bodyParams = sig.params.first?.name == "self" ? Array(sig.params.dropFirst()) : sig.params
-            let paramTypes = try bodyParams.map { parameter -> HIRType in
+            let paramTypes = try bodyParams.map { parameter -> IRType in
                 guard let annotation = parameter.typeAnnotation,
                     let type = resolveAnnotationType(annotation, userTypes: userTypes)
                 else {
@@ -626,7 +626,7 @@ public enum HIRLowerer {
             let returnType = try resolveReturnType(
                 sig, userTypes: userTypes, subject: "trait default '\(sig.name)'"
             )
-            return HIRLowererSignatureInfo(paramTypes: paramTypes, returnType: returnType)
+            return IRLowererSignatureInfo(paramTypes: paramTypes, returnType: returnType)
         }
 
         for decl in module.declarations {
@@ -655,7 +655,7 @@ public enum HIRLowerer {
                     try effectiveReturnType(
                         decl: funcDecl, userTypes: userTypes, nominals: nominals
                     ) ?? returnType
-                signatures[funcDecl.name] = HIRLowererSignatureInfo(
+                signatures[funcDecl.name] = IRLowererSignatureInfo(
                     paramTypes: paramTypes,
                     returnType: asyncSignatureReturnType(
                         declared: effectiveReturn, isAsync: funcDecl.isAsync),
@@ -668,7 +668,7 @@ public enum HIRLowerer {
                 // G14: foreign block signatures join the shared table so
                 // call sites resolve them like any top-level function.
                 for funcDecl in foreignDecl.funcs {
-                    let paramTypes = try funcDecl.params.map { parameter -> HIRType in
+                    let paramTypes = try funcDecl.params.map { parameter -> IRType in
                         guard let annotation = parameter.typeAnnotation,
                             let type = resolveAnnotationType(annotation, userTypes: userTypes)
                         else {
@@ -682,7 +682,7 @@ public enum HIRLowerer {
                     let returnType = try resolveReturnType(
                         funcDecl, userTypes: userTypes, subject: "foreign '\(funcDecl.name)'"
                     )
-                    signatures[funcDecl.name] = HIRLowererSignatureInfo(
+                    signatures[funcDecl.name] = IRLowererSignatureInfo(
                         paramTypes: paramTypes, returnType: returnType
                     )
                 }
@@ -696,7 +696,7 @@ public enum HIRLowerer {
             let returnType = try resolveReturnType(
                 specialized, userTypes: userTypes, subject: "'\(specialized.name)'"
             )
-            signatures[specialized.name] = HIRLowererSignatureInfo(
+            signatures[specialized.name] = IRLowererSignatureInfo(
                 paramTypes: paramTypes, returnType: returnType, untypedParamIndices: untypedParamIndices(specialized),
                 usingParamIndices: usingParamIndices(specialized)
             )
@@ -711,7 +711,7 @@ public enum HIRLowerer {
             }
         }
 
-        var functions: [HIRFunction] = []
+        var functions: [IRFunction] = []
 
         // H-3 三级派发（用户扩展 > 语言内标准库 > 宿主原生）的第一级。
         //
@@ -719,14 +719,14 @@ public enum HIRLowerer {
         // 方法体从未被降载：新增方法在 `lowerMemberCall` 落到「later grids」兜底，
         // 覆盖同名成员则读不到用户实现（派发直接走内建表）。
         //
-        // 这里把方法体降载成普通 `HIRFunction`（IR 名 `方法__类型`，与名义类型同一
+        // 这里把方法体降载成普通 `IRFunction`（IR 名 `方法__类型`，与名义类型同一
         // mangle 规则），调用点按名分派 ⇒ 执行期不需要第二份实现。
         //
         // ⚠️ **必须先于**函数降载跑：函数降载要把这张表带进 `FunctionContext`，
         // 同序遍历会让先降载的函数拿到空表。
         // ⚠️ `Array` 在扩展块里不署名元素类型，self 取 i32 占位。本批的对象不使用
         // self 的元素，故占位不参与语义；元素敏感的扩展方法需要调用点特化。
-        var builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
+        var builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
         for decl in module.declarations {
             guard case .extensionDecl(let ext) = decl,
                 ext.kind == .structExt || ext.kind == .objectExt,
@@ -815,7 +815,7 @@ public enum HIRLowerer {
         // names `方法__类型` so they cannot collide with top-level functions).
         // Fields come from the registry, not the raw declaration: G11
         // composition flattening has already merged inherited members there.
-        var typeDecls: [HIRTypeDecl] = []
+        var typeDecls: [IRTypeDecl] = []
         // 预置声明（**宿主提供**）也进本表：名义表只让类型名可解析，而**本表**才是
         // 执行器建类型表、并据以物化默认实例的来源 —— 只进名义表会让实例
         // 「类型上存在、字段上空」（实测形态：字段读得出类型、运行时却报该类型无此字段）。
@@ -904,12 +904,12 @@ public enum HIRLowerer {
         functions.append(contentsOf: traitDefaultsCollector.functions)
 
         // G14: lower foreign blocks into the declare-only surface.
-        var foreigns: [HIRForeignBlock] = []
+        var foreigns: [IRForeignBlock] = []
         for decl in module.declarations {
             guard case .foreignDecl(let foreignDecl) = decl else { continue }
-            var foreignFuncs: [HIRForeignFunction] = []
+            var foreignFuncs: [IRForeignFunction] = []
             for funcDecl in foreignDecl.funcs {
-                let paramTypes = try funcDecl.params.map { parameter -> HIRType in
+                let paramTypes = try funcDecl.params.map { parameter -> IRType in
                     guard let annotation = parameter.typeAnnotation,
                         let type = resolveAnnotationType(annotation, userTypes: userTypes)
                     else {
@@ -920,7 +920,7 @@ public enum HIRLowerer {
                     }
                     return type
                 }
-                let returnType: HIRType? = try funcDecl.returnTypes.first.map { annotation in
+                let returnType: IRType? = try funcDecl.returnTypes.first.map { annotation in
                     guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                         throw unsupported(
                             "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(funcDecl.name)'",
@@ -930,14 +930,14 @@ public enum HIRLowerer {
                     return type
                 }
                 foreignFuncs.append(
-                    HIRForeignFunction(
+                    IRForeignFunction(
                         name: funcDecl.name, paramTypes: paramTypes, returnType: returnType
                     ))
             }
-            foreigns.append(HIRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
+            foreigns.append(IRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
         }
 
-        return HIRModule(
+        return IRModule(
             functions: functions, types: typeDecls, enums: Array(enums.values),
             foreigns: foreigns,
             // ADR-001（用户第 5 条裁定的余量）：物化依赖留痕。当期**不产诊断** ——
@@ -1475,8 +1475,8 @@ public enum HIRLowerer {
     /// the two used to be one function, and that collapse is what kept a handle
     /// from being tellable apart from a settled value.
     private static func asyncBodyReturnType(
-        declared: HIRType?, isAsync: Bool
-    ) -> HIRType? {
+        declared: IRType?, isAsync: Bool
+    ) -> IRType? {
         guard isAsync, let ok = declared else { return declared }
         return .result(ok: ok)
     }
@@ -1485,18 +1485,18 @@ public enum HIRLowerer {
     /// running process, not the value that process will settle on.
     ///
     /// The type layer has said this all along -- `=> (T,)` types as
-    /// `Future<T, Error>` there, with `=> T` as sugar -- so this is the HIR
+    /// `Future<T, Error>` there, with `=> T` as sugar -- so this is the IR
     /// catching up to a decision that was already made, not a new one.
     ///
-    /// Why it has to be a distinct HIR type rather than a note on the callee:
+    /// Why it has to be a distinct IR type rather than a note on the callee:
     /// a value's type is what a backend reads when it decides how to move that
     /// value. With both positions typed as a Result, an async call and a call to
     /// a function that merely returns a Result were the same shape in the IR,
     /// and a backend that must dispatch the first to a worker while calling the
     /// second directly had nothing to dispatch on.
     private static func asyncSignatureReturnType(
-        declared: HIRType?, isAsync: Bool
-    ) -> HIRType? {
+        declared: IRType?, isAsync: Bool
+    ) -> IRType? {
         guard isAsync, let ok = declared else { return declared }
         return .future(ok: ok)
     }
@@ -1504,17 +1504,17 @@ public enum HIRLowerer {
     private static func lowerFunction(
         _ decl: FuncDecl,
         typeInference: TypeInference?,
-        moduleSignatures: [String: HIRLowererSignatureInfo],
+        moduleSignatures: [String: IRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
-        userTypes: [String: HIRType],
-        enums: [String: HIREnumDecl],
-        genericEnums: HIRGenericEnumIndex = .empty,
+        userTypes: [String: IRType],
+        enums: [String: IREnumDecl],
+        genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
         traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector(),
-        builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
-    ) throws -> HIRFunction {
+        builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
+    ) throws -> IRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
         }
@@ -1539,8 +1539,8 @@ public enum HIRLowerer {
         let bodyReturn = asyncBodyReturnType(declared: effectiveReturn, isAsync: decl.isAsync)
 
         let paramTypes = try resolveParamTypes(decl, userTypes: userTypes)
-        let params: [HIRFunction.HIRParam] = zip(decl.params, paramTypes).map { param, type in
-            HIRFunction.HIRParam(name: param.name, type: type, isUsing: param.isUsing)
+        let params: [IRFunction.IRParam] = zip(decl.params, paramTypes).map { param, type in
+            IRFunction.IRParam(name: param.name, type: type, isUsing: param.isUsing)
         }
 
         var context = FunctionContext(
@@ -1561,7 +1561,7 @@ public enum HIRLowerer {
         )
         context.isAsync = decl.isAsync
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(
+        return IRFunction(
             name: decl.name, params: params, returnType: bodyReturn, body: body,
             isAsync: decl.isAsync,
             // `|test` arrives as a modifier string; the lexer already reduced the
@@ -1576,17 +1576,17 @@ public enum HIRLowerer {
 
     /// Resolve a type annotation: the built-in slice set first, then the
     /// module's user types (structs / objects / enums) by simple name.
-    /// G-2d: build the HIR enum registry entry for one enum declaration whose
+    /// G-2d: build the IR enum registry entry for one enum declaration whose
     /// payload annotations are expected to resolve. Shared by the module's own
     /// (non-generic) enums and by the specialized generic bodies, which are
     /// indistinguishable from the former by the time they reach here.
     private static func resolveEnumPayloads(
         _ ed: EnumDecl,
-        userTypes: [String: HIRType]
-    ) throws -> HIREnumDecl {
-        var resolvedCases: [HIREnumCase] = []
+        userTypes: [String: IRType]
+    ) throws -> IREnumDecl {
+        var resolvedCases: [IREnumCase] = []
         for (index, ec) in ed.cases.enumerated() {
-            var payloadTypes: [HIRType] = []
+            var payloadTypes: [IRType] = []
             for param in ec.associatedParams {
                 guard let payloadType = resolveAnnotationType(param.type, userTypes: userTypes) else {
                     throw unsupported(
@@ -1597,20 +1597,20 @@ public enum HIRLowerer {
                 payloadTypes.append(payloadType)
             }
             resolvedCases.append(
-                HIREnumCase(
+                IREnumCase(
                     name: ec.name, tag: index,
                     paramNames: ec.associatedParams.map { $0.name },
                     payloadTypes: payloadTypes
                 ))
         }
-        return HIREnumDecl(name: ed.name, cases: resolvedCases)
+        return IREnumDecl(name: ed.name, cases: resolvedCases)
     }
 
     private static func resolveAnnotationType(
         _ annotation: TypeAnnotation,
-        userTypes: [String: HIRType]
-    ) -> HIRType? {
-        if let builtin = HIRType(from: annotation) { return builtin }
+        userTypes: [String: IRType]
+    ) -> IRType? {
+        if let builtin = IRType(from: annotation) { return builtin }
         if case .simple(let name, _) = annotation {
             return userTypes[name]
         }
@@ -1671,7 +1671,7 @@ public enum HIRLowerer {
     }
 
     /// ADR-001 `P2b`：依赖留痕的聚合 —— 函数名 → 它取用过的给定块类型（升序）。
-    private static func givenReferences(of functions: [HIRFunction]) -> [String: [String]] {
+    private static func givenReferences(of functions: [IRFunction]) -> [String: [String]] {
         var edges: [String: [String]] = [:]
         for function in functions where !function.givenReferenceNames.isEmpty {
             edges[function.name] = function.givenReferenceNames.sorted()
@@ -1703,32 +1703,32 @@ public enum HIRLowerer {
 
     /// ADR-001 `P2b`：`using` 形参的类型 —— 通用路径之外多一条**泛型给定块特化**的路。
     ///
-    /// `HIRType(from:)` / `resolveAnnotationType` 只吃简单名；泛型给定块在标注位写的是
+    /// `IRType(from:)` / `resolveAnnotationType` 只吃简单名；泛型给定块在标注位写的是
     /// `匣<I32>`，故先按特化名查一次（特化由预扫描登记进 `userTypes`）。
     private static func resolveUsingParamType(
         _ annotation: TypeAnnotation,
-        userTypes: [String: HIRType]
-    ) -> HIRType? {
+        userTypes: [String: IRType]
+    ) -> IRType? {
         if case .generic(let name, let typeArgs, _) = annotation,
             let specialized = userTypes[specializedSourceName(name, typeArgs: typeArgs)]
         {
             return specialized
         }
-        return HIRType(from: annotation) ?? resolveAnnotationType(annotation, userTypes: userTypes)
+        return IRType(from: annotation) ?? resolveAnnotationType(annotation, userTypes: userTypes)
     }
 
-    /// ADR-001 §2.6：把**推断出的函数类型标注**逐位解析成 HIR 函数类型。
+    /// ADR-001 §2.6：把**推断出的函数类型标注**逐位解析成 IR 函数类型。
     ///
-    /// ⚠️ 不能直接用 `HIRType(from:)` —— 它只吃**内建简单名**，而匿名函数的参数类型
+    /// ⚠️ 不能直接用 `IRType(from:)` —— 它只吃**内建简单名**，而匿名函数的参数类型
     /// 可以是用户类型（给定块 `配置`、结构、对象…）。这与 `P2b` 在函数签名处遇到的是
     /// 同一个坑，故复用 `resolveUsingParamType` 逐位解析。
     /// 取用下标集合**原样透传** —— 它正是本批要让它活起来的那一位。
     private static func resolvedFunctionType(
         _ annotation: TypeAnnotation,
-        userTypes: [String: HIRType]
-    ) -> HIRType? {
+        userTypes: [String: IRType]
+    ) -> IRType? {
         guard case .function(let aParams, let aReturns, _, let usingIndices, _) = annotation else {
-            return HIRType(from: annotation)
+            return IRType(from: annotation)
         }
         let params = aParams.compactMap { resolveUsingParamType($0, userTypes: userTypes) }
         guard params.count == aParams.count else { return nil }
@@ -1742,7 +1742,7 @@ public enum HIRLowerer {
     /// ⚠️ 字段是否齐全**不在**这里判：那条判据在声明处按「降载期对每个给定块」执行
     /// （用户 2026-09-19 裁定），跑到调用点时声明早已过一遍 ⇒ 齐的。
     private static func givenInstanceNode(
-        forParamType type: HIRType,
+        forParamType type: IRType,
         callee: String,
         nominalTypes: [String: NominalInfo],
         into context: inout FunctionContext,
@@ -1765,19 +1765,19 @@ public enum HIRLowerer {
     private static func fillUsingArguments(
         retypedArgs: [LoweredExpr],
         paramIndices: [Int],
-        paramTypes: [HIRType],
+        paramTypes: [IRType],
         usingParamIndices: Set<Int>,
         omittedForm: Bool,
         callee: String,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> [HIRExpr] {
+    ) throws -> [IRExpr] {
         // ⚠️ **全显式形态下一位都不注入**：那种形态里每个形参位都有调用点给的实参，
         // 在 `using` 位再插一个取用点会把它**顶掉**（`取(5, 6,)` 会变成「5 被忽略、
         // 甲 取默认实例」）。ADR 说显式提供合法 ⇒ 这条守卫就是那句「允许」的落地。
         // 本缺陷是被既有判据抓到的（`usingPrefixMarksOnlyItsOwnParameter`），不是想出来的。
         guard omittedForm else { return retypedArgs.map(\.node) }
-        var nodes: [HIRExpr] = []
+        var nodes: [IRExpr] = []
         var next = 0
         for paramIndex in paramTypes.indices {
             if usingParamIndices.contains(paramIndex) {
@@ -1796,9 +1796,9 @@ public enum HIRLowerer {
 
     private static func resolveParamTypes(
         _ decl: FuncDecl,
-        userTypes: [String: HIRType]
-    ) throws -> [HIRType] {
-        let fallback: HIRType
+        userTypes: [String: IRType]
+    ) throws -> [IRType] {
+        let fallback: IRType
         if decl.returnTypes.count == 1,
             let single = resolveAnnotationType(decl.returnTypes[0], userTypes: userTypes)
         {
@@ -1821,7 +1821,7 @@ public enum HIRLowerer {
         }
     }
 
-    /// Declared return type in HIR terms.
+    /// Declared return type in IR terms.
     ///
     /// Several return slots (`-> (I32, I32,)`) collapse into ONE tuple value —
     /// the representation the single-slot tuple form (`-> ((I32, I32,),)`)
@@ -1829,17 +1829,17 @@ public enum HIRLowerer {
     /// need no second path: the call's value type is the tuple, exactly as if
     /// the declaration had written the tuple annotation directly. The elements
     /// are positional, so their labels are all nil — the same label shape the
-    /// call-site inference produces for a multi-value call (HIRType's tuple
+    /// call-site inference produces for a multi-value call (IRType's tuple
     /// branch normalises the annotation layer's empty label list to all-nil).
     ///
     /// `subject` names the declaration kind for diagnostics ("'f'", "foreign
     /// 'f'", "trait default 'f'", "method 'f'").
     private static func resolveReturnType(
         _ decl: FuncDecl,
-        userTypes: [String: HIRType],
+        userTypes: [String: IRType],
         subject: String
-    ) throws -> HIRType? {
-        func resolve(_ annotation: TypeAnnotation) throws -> HIRType {
+    ) throws -> IRType? {
+        func resolve(_ annotation: TypeAnnotation) throws -> IRType {
             guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "return type '\(annotation.simpleName ?? "(non-scalar)")' of \(subject)",
@@ -1860,13 +1860,13 @@ public enum HIRLowerer {
             // value from `decl.returnLabels` at the function boundary, the
             // executor does the same off this type, and the emitter prints a
             // tuple's labels straight from the type it was handed. Dropping
-            // them here un-names the value on *both* HIR arms while the AST
+            // them here un-names the value on *both* IR arms while the AST
             // engine keeps the names: measured, `print(r)` gave `[3, 2]` on
             // both arms and `[商: 3, 余: 2]` on the reference.
             //
             // Only a genuinely named signature switches this on. A positional
             // multi-return keeps the all-nil list it had before, which matters
-            // because `HIRType(from: annotation)` reads an *empty* label list
+            // because `IRType(from: annotation)` reads an *empty* label list
             // as "positional" and expands it to all-nil.
             let named = decl.returnLabels.contains { $0 != nil }
             return .tuple(
@@ -1881,7 +1881,7 @@ public enum HIRLowerer {
     // MARK: - Nominal types (G3)
 
     /// Lower one struct/object declaration: field defaults via a scratch
-    /// context, methods as self-parameterized HIRFunctions with IR names
+    /// context, methods as self-parameterized IRFunctions with IR names
     /// `方法__类型` (double-underscore separator cannot collide with
     /// mangle output, which never emits underscores for ASCII names).
     private static func lowerNominal(
@@ -1890,23 +1890,23 @@ public enum HIRLowerer {
         fields: [FieldDecl],
         methods: [FuncDecl],
         typeInference: TypeInference?,
-        moduleSignatures: [String: HIRLowererSignatureInfo],
+        moduleSignatures: [String: IRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
-        userTypes: [String: HIRType],
-        enums: [String: HIREnumDecl],
-        genericEnums: HIRGenericEnumIndex = .empty,
+        userTypes: [String: IRType],
+        enums: [String: IREnumDecl],
+        genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
         traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector()
-    ) throws -> HIRTypeDecl {
-        let selfType = HIRType.nominal(name: name, isObject: isObject)
+    ) throws -> IRTypeDecl {
+        let selfType = IRType.nominal(name: name, isObject: isObject)
         var scratch = FunctionContext(
             functionName: "<field-default:\(name)>", returnType: nil, paramTypes: [:],
             typeInference: typeInference, moduleSignatures: moduleSignatures, nominalTypes: nominalTypes,
             userTypes: userTypes, enums: enums, genericEnums: genericEnums, closureIds: closureIds
         )
-        var loweredFields: [HIRTypeDecl.Field] = []
+        var loweredFields: [IRTypeDecl.Field] = []
         for field in fields {
             guard let fieldType = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes) else {
                 throw unsupported(
@@ -1914,15 +1914,15 @@ public enum HIRLowerer {
                     at: field.location
                 )
             }
-            var defaultValue: HIRExpr? = nil
+            var defaultValue: IRExpr? = nil
             if let initializer = field.initializer {
                 let lowered = try lowerExpr(initializer, expected: fieldType, into: &scratch)
                 try requireAssignable(lowered.type, to: fieldType, at: field.location)
                 defaultValue = lowered.node
             }
-            loweredFields.append(HIRTypeDecl.Field(name: field.name, type: fieldType, defaultValue: defaultValue))
+            loweredFields.append(IRTypeDecl.Field(name: field.name, type: fieldType, defaultValue: defaultValue))
         }
-        var loweredMethods: [HIRFunction] = []
+        var loweredMethods: [IRFunction] = []
         for method in methods {
             loweredMethods.append(
                 try lowerMethod(
@@ -1933,25 +1933,25 @@ public enum HIRLowerer {
                     traitDefaultsCollector: traitDefaultsCollector
                 ))
         }
-        return HIRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
+        return IRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
     }
 
     /// Lower one method: IR name `方法__类型`, params = [self] + declared.
     private static func lowerMethod(
         _ decl: FuncDecl,
         typeName: String,
-        selfType: HIRType,
+        selfType: IRType,
         typeInference: TypeInference?,
-        moduleSignatures: [String: HIRLowererSignatureInfo],
+        moduleSignatures: [String: IRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
-        userTypes: [String: HIRType],
-        enums: [String: HIREnumDecl],
-        genericEnums: HIRGenericEnumIndex = .empty,
+        userTypes: [String: IRType],
+        enums: [String: IREnumDecl],
+        genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
         traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector()
-    ) throws -> HIRFunction {
+    ) throws -> IRFunction {
         guard decl.body != nil else {
             throw unsupported("method '\(decl.name)' of '\(typeName)' has no body", at: decl.location)
         }
@@ -1972,7 +1972,7 @@ public enum HIRLowerer {
                 decl: decl, userTypes: userTypes, nominals: nominalTypes,
                 selfTypeName: typeName
             ) ?? returnType
-        var params = [HIRFunction.HIRParam(name: "self", type: selfType)]
+        var params = [IRFunction.IRParam(name: "self", type: selfType)]
         // The receiver may also be written as an explicit leading `self`
         // parameter (trait default bodies are written that way). It is the
         // receiver marker rather than a parameter: the interpreter, the type
@@ -1990,7 +1990,7 @@ public enum HIRLowerer {
                     at: decl.location
                 )
             }
-            params.append(HIRFunction.HIRParam(name: param.name, type: type, isUsing: param.isUsing))
+            params.append(IRFunction.IRParam(name: param.name, type: type, isUsing: param.isUsing))
         }
         let irName = "\(IRName.mangle(decl.name))__\(IRName.mangle(typeName))"
         var context = FunctionContext(
@@ -2016,7 +2016,7 @@ public enum HIRLowerer {
         if case .nominal(let selfTypeName, let selfIsObject) = selfType,
             let info = nominalTypes[selfTypeName]
         {
-            var fieldTypes: [String: HIRType] = [:]
+            var fieldTypes: [String: IRType] = [:]
             for field in info.fields {
                 if let fieldType = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes) {
                     fieldTypes[field.name] = fieldType
@@ -2027,7 +2027,7 @@ public enum HIRLowerer {
             context.selfIsObjectLowered = selfIsObject
         }
         let body = try lowerBlock(decl.body!, into: &context)
-        return HIRFunction(
+        return IRFunction(
             name: irName, params: params, returnType: effectiveReturn, body: body,
             sourceFile: decl.location.fileName, givenReferenceNames: context.givenReferenceNames)
     }
@@ -2035,33 +2035,33 @@ public enum HIRLowerer {
     private static func lowerBlock(
         _ block: Block,
         into context: inout FunctionContext
-    ) throws -> HIRBlock {
+    ) throws -> IRBlock {
         // 体嵌套深度（2026-09-24 裁定）：**体那一层是 1**，任何控制流的体都使之上浮一格。
         // 与发射层同名计数同一含义，但两者是**独立实现** —— 它们必须对同一条规则给出同一个
         // 答案，否则就回到「两层口径差」那种形态（见 `allowedAwaitLocation`）。
         context.bodyDepth += 1
         defer { context.bodyDepth -= 1 }
-        var statements: [HIRStmt] = []
+        var statements: [IRStmt] = []
         var positions: [SourceLocation] = []
         for statement in block.statements {
             let lowered = try lowerStatement(statement, into: &context)
             statements.append(contentsOf: lowered)
             // P4-3: every statement this source statement lowered to carries
             // that statement's own position. One `Block` statement can expand
-            // into several HIR statements (a try-else variable initializer
+            // into several IR statements (a try-else variable initializer
             // yields the allocation plus the try), and all of them are *this*
             // line — which is what the interpreter reports for the same code.
             let location = statement.location
             positions.append(contentsOf: Array(repeating: location, count: lowered.count))
         }
-        return HIRBlock(statements, positions: positions)
+        return IRBlock(statements, positions: positions)
     }
 
     // MARK: - Statements
 
     /// 一条语句**根位置**上被允许的可让出 `await` 的位置（`nil` = 这条语句没有这样的位置）。
     ///
-    /// 四类与运行时的让出计划**同源**（`HIRExecutor.HIRYieldPlan`）：裸表达式语句 ·
+    /// 四类与运行时的让出计划**同源**（`IRExecutor.IRYieldPlan`）：裸表达式语句 ·
     /// `var` 初值 · `match` 判别式 · try-else 的 operand。两处必须一致，否则会出现
     /// 「检查器说合法、运行时静默按阻塞处理」—— 那正是这条规则要消灭的东西。
     ///
@@ -2097,7 +2097,7 @@ public enum HIRLowerer {
     private static func lowerStatement(
         _ statement: Statement,
         into context: inout FunctionContext
-    ) throws -> [HIRStmt] {
+    ) throws -> [IRStmt] {
         // `await` 的**位置**判定（2026-09-20，裁定 35）：本次语句降载里，只有语句根表达式
         // 本身（剥掉 `try` 包装之后）算可让出位置。判定放在语句层而不是表达式层，是因为
         // 「语句根」本来就是**语句**的性质 —— 表达式层看不到它。
@@ -2226,7 +2226,7 @@ public enum HIRLowerer {
             // The chain is nested *inside* this frame and therefore carries no
             // label of its own: `break label` in an `elif` body leaves the whole
             // `if`, which is where `executeIf`'s catch sits.
-            var chain: HIRBlock? = nil
+            var chain: IRBlock? = nil
             if let elseBlock = elseBlock {
                 chain = try lowerBlock(elseBlock, into: &context)
             }
@@ -2329,7 +2329,7 @@ public enum HIRLowerer {
             // Compound assignment (`a[i] += k` / `x += 1`) parses as a binary
             // expression; statement position lowers it to a store (G2).
             if case .binary(let left, let op, let right, let binaryLocation) = expr,
-                let baseOp = HIRBinaryOp(compound: op)
+                let baseOp = IRBinaryOp(compound: op)
             {
                 return [
                     try lowerCompoundAssign(
@@ -2342,7 +2342,7 @@ public enum HIRLowerer {
 
         case .passStatement:
             // pass is a pure no-op; lower to a side-effect-free constant
-            // expression statement so HIRStmt stays total without a new case.
+            // expression statement so IRStmt stays total without a new case.
             return [.exprStmt(.intConst(value: 0, type: .i32))]
 
         case .captureStatement(let name, _):
@@ -2365,14 +2365,14 @@ public enum HIRLowerer {
 
         default:
             throw unsupported(
-                "statement '\(statement.kindName)' is not yet lowered to HIR",
+                "statement '\(statement.kindName)' is not yet lowered to IR",
                 at: statementLocation(statement)
             )
         }
     }
 
     /// G15: lower `for (pattern,) in iterable: body [step:]`. The iterable is
-    /// lowered once; its HIR type decides the container kind and the
+    /// lowered once; its IR type decides the container kind and the
     /// per-field element types, which must line up with the pattern arity
     /// (`_` placeholders included — the interpreter requires an exact
     /// field-count match, decomposePatternRow).
@@ -2384,10 +2384,10 @@ public enum HIRLowerer {
         label: String?,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> IRStmt {
         let lowered = try lowerExpr(iterable, expected: nil, into: &context)
-        let kind: HIRForIterableKind
-        let elementTypes: [HIRType]
+        let kind: IRForIterableKind
+        let elementTypes: [IRType]
         switch lowered.type {
         case .array(let element):
             kind = .array
@@ -2487,7 +2487,7 @@ public enum HIRLowerer {
         isMutable: Bool,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> [HIRStmt] {
+    ) throws -> [IRStmt] {
         // `var m = ++n`: the initializer writes back to n and yields the value
         // it wrote, so the statement expands to the write followed by the
         // allocation that consumes it (G-2c). The written value is I32, which
@@ -2496,7 +2496,7 @@ public enum HIRLowerer {
             op == .increment || op == .decrement
         {
             if let annotation = annotation {
-                guard HIRType(from: annotation) == .i32 else {
+                guard IRType(from: annotation) == .i32 else {
                     throw unsupported(
                         "variable '\(name)': prefix '\(op)' yields I32, not '\(annotation)'",
                         at: location
@@ -2519,7 +2519,7 @@ public enum HIRLowerer {
         // so x's type is the Result's payload type, not a Result itself.
         if case .tryExpression(let operand, let errorVar, let handler, _) = initializer {
             if let annotation = annotation {
-                guard let declared = HIRType(from: annotation), !isResultAnnotation(annotation) else {
+                guard let declared = IRType(from: annotation), !isResultAnnotation(annotation) else {
                     throw unsupported(
                         "variable '\(name)': a try-else initializer unwraps the payload — annotate with the payload type, not a Result type",
                         at: location
@@ -2537,7 +2537,7 @@ public enum HIRLowerer {
             guard let okType = operandType.resultOkType else {
                 throw unsupported("try operand is not a Result", at: location)
             }
-            let alloc = HIRStmt.allocVar(name: name, type: okType, mutable: isMutable, initializer: nil)
+            let alloc = IRStmt.allocVar(name: name, type: okType, mutable: isMutable, initializer: nil)
             let tryStmt = try lowerTry(
                 operand: operand, errorVar: errorVar, handler: handler,
                 okTarget: name, at: location, into: &context
@@ -2546,7 +2546,7 @@ public enum HIRLowerer {
             return [alloc, tryStmt]
         }
 
-        let declaredType: HIRType?
+        let declaredType: IRType?
         if let annotation = annotation {
             guard let type = resolveAnnotationType(annotation, userTypes: context.userTypes) else {
                 throw unsupported(
@@ -2557,7 +2557,7 @@ public enum HIRLowerer {
             declaredType = type
         } else if let initializer = initializer {
             if let inferred = context.inferType(of: initializer),
-                let type = HIRType(from: inferred)
+                let type = IRType(from: inferred)
             {
                 declaredType = type
             } else {
@@ -2575,8 +2575,8 @@ public enum HIRLowerer {
             )
         }
         let varType = declaredType!
-        let loweredInit: HIRExpr?
-        var initializerType: HIRType?
+        let loweredInit: IRExpr?
+        var initializerType: IRType?
         if let initializer = initializer {
             let lowered = try lowerExpr(initializer, expected: varType, into: &context)
             try requireAssignable(lowered.type, to: varType, at: location)
@@ -2626,7 +2626,7 @@ public enum HIRLowerer {
     /// names, which is the one shape where this test and the interpreter's
     /// syntactic rule can disagree — registered as an open issue (tuple label
     /// binding rule, 2026-09-13) rather than papered over here.
-    private static func slotType(declared: HIRType, initializer: HIRType?) -> HIRType {
+    private static func slotType(declared: IRType, initializer: IRType?) -> IRType {
         guard case .tuple(let labels, let fieldTypes) = declared, !labels.isEmpty else {
             return declared
         }
@@ -2655,7 +2655,7 @@ public enum HIRLowerer {
         isMutable: Bool,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> [HIRStmt] {
+    ) throws -> [IRStmt] {
         guard let initializer = initializer else {
             throw unsupported("destructure declaration lacks an initializer", at: location)
         }
@@ -2674,13 +2674,13 @@ public enum HIRLowerer {
         }
         let tempName = "$destructure\(context.tempCounter)"
         context.tempCounter += 1
-        var statements: [HIRStmt] = [
+        var statements: [IRStmt] = [
             .allocVar(name: tempName, type: lowered.type, mutable: false, initializer: lowered.node)
         ]
-        let base = HIRExpr.load(name: tempName, type: lowered.type)
+        let base = IRExpr.load(name: tempName, type: lowered.type)
         for (index, name) in names.enumerated() where name != "_" {
             context.variableTypes[name] = fieldTypes[index]
-            let element = HIRExpr.tupleIndexGet(
+            let element = IRExpr.tupleIndexGet(
                 base: base, index: index, type: fieldTypes[index]
             )
             statements.append(
@@ -2694,8 +2694,8 @@ public enum HIRLowerer {
 
     /// The static Result type of a try operand: annotation-derived when
     /// resolvable, otherwise via the checker's inference (Result -> params[0]).
-    private static func resultType(of operand: Expression, into context: FunctionContext) throws -> HIRType {
-        if let inferred = context.inferType(of: operand), let type = HIRType(from: inferred) {
+    private static func resultType(of operand: Expression, into context: FunctionContext) throws -> IRType {
+        if let inferred = context.inferType(of: operand), let type = IRType(from: inferred) {
             return type
         }
         throw unsupported(
@@ -2725,7 +2725,7 @@ public enum HIRLowerer {
         okTarget: String?,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> IRStmt {
         // A bare `ok(x)` / `err(x)` operand has no expected Result type to
         // adopt: Pini's `^T` surface constrains neither half, so the general
         // `ok`/`err` rule (which reads the expectation) has nothing to read.
@@ -2745,7 +2745,7 @@ public enum HIRLowerer {
             arguments.count == 1
         {
             let payload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
-            let resultType = HIRType.result(ok: calleeName == "ok" ? payload.type : .i32)
+            let resultType = IRType.result(ok: calleeName == "ok" ? payload.type : .i32)
             loweredOperand = LoweredExpr(
                 node: .resultConstruct(
                     isOk: calleeName == "ok", payload: payload.node, type: resultType
@@ -2779,7 +2779,7 @@ public enum HIRLowerer {
             context.errorBindings.remove(errorVar)
         }
 
-        var handlerStmts: [HIRStmt] = []
+        var handlerStmts: [IRStmt] = []
         for statement in handler.statements {
             handlerStmts.append(contentsOf: try lowerStatement(statement, into: &context))
         }
@@ -2814,7 +2814,7 @@ public enum HIRLowerer {
 
     private static func lowerExpr(
         _ expression: Expression,
-        expected: HIRType?,
+        expected: IRType?,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
         switch expression {
@@ -2850,7 +2850,7 @@ public enum HIRLowerer {
         case .stringInterpolation(let segments, let location):
             // G9: each expression part goes through the value display
             // pipeline at emission (stringify parity, interpreter channel).
-            var parts: [HIRExpr] = []
+            var parts: [IRExpr] = []
             for segment in segments {
                 switch segment {
                 case .literal(let text):
@@ -2881,7 +2881,7 @@ public enum HIRLowerer {
             // panic channel. Negative indices tail-count in both. The
             // tolerant `.get` channel (Optional) is the member-call path.
             let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
-            let elementType: HIRType
+            let elementType: IRType
             switch loweredContainer.type {
             case .array(let element): elementType = element
             case .dict(_, let value): elementType = value
@@ -2897,7 +2897,7 @@ public enum HIRLowerer {
             }
             // Dict keys carry the declared key type; array/string indices
             // are I32 (tail-counted on the negative side).
-            let indexExpectation: HIRType?
+            let indexExpectation: IRType?
             var requireI32Index = false
             switch loweredContainer.type {
             case .dict(let keyType, _): indexExpectation = keyType
@@ -2927,15 +2927,15 @@ public enum HIRLowerer {
             // ⚠️ 那个常量恒为零，而它**不是一个可解引用的地址**：它的含义是「这个句柄
             // 没有指向任何东西」。这句话由类型层承重（它只被比较、不被解引用）。
             if let valueType = BuiltinRegistry.builtinValueType(named: name) {
-                guard let hirType = HIRType(from: valueType) else {
-                    throw unsupported("builtin value '\(name)' has no HIR type", at: location)
+                guard let irType = IRType(from: valueType) else {
+                    throw unsupported("builtin value '\(name)' has no IR type", at: location)
                 }
-                return LoweredExpr(node: .intConst(value: 0, type: hirType), type: hirType)
+                return LoweredExpr(node: .intConst(value: 0, type: irType), type: irType)
             }
             // G12: bare field name inside a method body (interpreter
             // bindInstanceFields parity) — lower as `self.<field>`.
             if let fieldType = context.selfFieldTypes[name] {
-                let selfType = HIRType.nominal(
+                let selfType = IRType.nominal(
                     name: context.selfTypeNameLowered ?? "", isObject: context.selfIsObjectLowered
                 )
                 return LoweredExpr(
@@ -2952,24 +2952,24 @@ public enum HIRLowerer {
             // The type comes from the pre-pass signature table; emission goes
             // through an env-ignoring adapter fat pointer at the use site.
             if let signature = context.moduleSignatures[name] {
-                let type = HIRType.function(params: signature.paramTypes, returnType: signature.returnType, usingIndices: signature.usingParamIndices)
+                let type = IRType.function(params: signature.paramTypes, returnType: signature.returnType, usingIndices: signature.usingParamIndices)
                 return LoweredExpr(node: .functionValue(functionName: name, type: type), type: type)
             }
             throw unsupported("reference to undeclared variable '\(name)'", at: location)
 
         case .binary(let left, let op, let right, let location):
-            guard let hirOp = HIRBinaryOp(from: op) else {
+            guard let irOp = IRBinaryOp(from: op) else {
                 throw unsupported(
-                    "binary operator '\(op)' is not yet lowered to HIR",
+                    "binary operator '\(op)' is not yet lowered to IR",
                     at: location
                 )
             }
             // Comparison operands are lowered without scalar expectation;
             // arithmetic operands adopt the expected numeric type.
-            let operandExpectation: HIRType? = hirOp.isComparison ? nil : expected
+            let operandExpectation: IRType? = irOp.isComparison ? nil : expected
             let lhs = try lowerExpr(left, expected: operandExpectation, into: &context)
             let rhs = try lowerExpr(right, expected: lhs.type, into: &context)
-            if hirOp.isComparison {
+            if irOp.isComparison {
                 // G68（P0d-D）：`Char` / `String` 是**相容对**（表示同构，Char 表示与 String 同构
                 // 方案 A）⇒「两操作数类型名必须字面相等」这条判据对这一对不适用。
                 // 放宽只覆盖这一对；两侧同为 `Char` 或同为 `String` 的情形本就走通。
@@ -2980,7 +2980,7 @@ public enum HIRLowerer {
                     )
                 }
                 return LoweredExpr(
-                    node: .binary(op: hirOp, lhs: lhs.node, rhs: rhs.node, type: .boolean),
+                    node: .binary(op: irOp, lhs: lhs.node, rhs: rhs.node, type: .boolean),
                     type: .boolean
                 )
             }
@@ -2989,7 +2989,7 @@ public enum HIRLowerer {
             // G68（P0d-D）：判据从「两侧都是 `.string`」放宽为「两侧都是**字符串面**」
             // —— `Char` 与 `String` 表示同构（都是 `i8*`），拼接语义完全相同，
             // 而结果类型取 `String`（`c + c` 是两个字节，不再是单个字素）。
-            if hirOp == .add, lhs.type.isStringFaced, rhs.type.isStringFaced {
+            if irOp == .add, lhs.type.isStringFaced, rhs.type.isStringFaced {
                 return LoweredExpr(
                     node: .stringConcat(lhs: lhs.node, rhs: rhs.node),
                     type: .string
@@ -3002,14 +3002,14 @@ public enum HIRLowerer {
                 )
             }
             return LoweredExpr(
-                node: .binary(op: hirOp, lhs: lhs.node, rhs: rhs.node, type: lhs.type),
+                node: .binary(op: irOp, lhs: lhs.node, rhs: rhs.node, type: lhs.type),
                 type: lhs.type
             )
 
         case .unary(let op, let operand, let location):
             // Prefix `++`/`--` are read-modify-write on an assignable target
             // and yield the value they wrote. A store cannot live inside an
-            // expression node (the HIR declares none), so statement position
+            // expression node (the IR declares none), so statement position
             // lowers them — see `lowerIncDec`. Reaching here means an
             // expression position the read-modify-write shape does not cover.
             if op == .increment || op == .decrement {
@@ -3029,16 +3029,16 @@ public enum HIRLowerer {
                 }
                 return identity
             }
-            let hirOp: HIRUnaryOp
+            let irOp: IRUnaryOp
             switch op {
-            case .minus: hirOp = .negate
-            case .logicalNot, .not: hirOp = .logicalNot
-            case .bitwiseNot: hirOp = .bitwiseNot
+            case .minus: irOp = .negate
+            case .logicalNot, .not: irOp = .logicalNot
+            case .bitwiseNot: irOp = .bitwiseNot
             default:
-                throw unsupported("unary operator '\(op)' is not yet lowered to HIR", at: location)
+                throw unsupported("unary operator '\(op)' is not yet lowered to IR", at: location)
             }
             let lowered = try lowerExpr(operand, expected: nil, into: &context)
-            switch hirOp {
+            switch irOp {
             case .negate:
                 guard lowered.type.isNumeric else {
                     throw unsupported("unary minus on non-numeric operand", at: location)
@@ -3069,11 +3069,11 @@ public enum HIRLowerer {
             case .abs:
                 // Constructed only by the abs intrinsic handler (G9); the
                 // AST unary-operator path never produces it.
-                fatalError("HIRLowerer: .abs outside the abs intrinsic handler")
+                fatalError("IRLowerer: .abs outside the abs intrinsic handler")
             }
 
         case .selfKeyword(let location):
-            // Methods carry self as their first HIR param (G3).
+            // Methods carry self as their first IR param (G3).
             guard let type = context.variableTypes["self"] else {
                 throw unsupported("self outside a method body", at: location)
             }
@@ -3147,7 +3147,7 @@ public enum HIRLowerer {
             // dispatch so a user `LazyRef` template cannot shadow it
             // (parity with the legacy emitter's builtin-first contract).
             if typeName == "LazyRef" {
-                guard typeArgs.count == 1, let element = HIRType(from: typeArgs[0]) else {
+                guard typeArgs.count == 1, let element = IRType(from: typeArgs[0]) else {
                     throw unsupported("LazyRef requires 1 resolvable type arg", at: location)
                 }
                 guard arguments.count == 1 else {
@@ -3157,7 +3157,7 @@ public enum HIRLowerer {
                 guard case .function = loweredClosure.type else {
                     throw unsupported("LazyRef argument must be an initializer closure", at: location)
                 }
-                let type = HIRType.lazyRef(element: element)
+                let type = IRType.lazyRef(element: element)
                 return LoweredExpr(
                     node: .lazyRefConstruct(closure: loweredClosure.node, type: type),
                     type: type
@@ -3192,7 +3192,7 @@ public enum HIRLowerer {
                     )
                 }
                 let specializedName = specializedSourceName(typeName, typeArgs: typeArgs)
-                let type = HIRType.nominal(name: specializedName, isObject: info.isObject)
+                let type = IRType.nominal(name: specializedName, isObject: info.isObject)
                 return LoweredExpr(node: .construct(type: type), type: type)
             }
             if context.nominalTypes[typeName] != nil {
@@ -3237,9 +3237,9 @@ public enum HIRLowerer {
         case .dictionaryLiteral(let entries, let location):
             // G5: dict literal — key/value types derived from the lowered
             // first entry (homogeneity required, checker does not infer).
-            var loweredEntries: [HIRDictEntry] = []
-            var keyType: HIRType? = nil
-            var valueType: HIRType? = nil
+            var loweredEntries: [IRDictEntry] = []
+            var keyType: IRType? = nil
+            var valueType: IRType? = nil
             for entry in entries {
                 let loweredKey = try lowerExpr(entry.key, expected: keyType, into: &context)
                 if let known = keyType {
@@ -3253,17 +3253,17 @@ public enum HIRLowerer {
                 } else {
                     valueType = loweredValue.type
                 }
-                loweredEntries.append(HIRDictEntry(key: loweredKey.node, value: loweredValue.node))
+                loweredEntries.append(IRDictEntry(key: loweredKey.node, value: loweredValue.node))
             }
             guard let key = keyType, let value = valueType else {
                 throw unsupported("empty dictionary literal needs an entry (annotate the variable)", at: location)
             }
-            let dictType = HIRType.dict(key: key, value: value)
+            let dictType = IRType.dict(key: key, value: value)
             return LoweredExpr(node: .dictLiteral(entries: loweredEntries, type: dictType), type: dictType)
 
         case .setLiteral(let elements, let location):
-            var loweredElements: [HIRExpr] = []
-            var elementType: HIRType? = nil
+            var loweredElements: [IRExpr] = []
+            var elementType: IRType? = nil
             for element in elements {
                 let lowered = try lowerExpr(element, expected: elementType, into: &context)
                 if let known = elementType {
@@ -3276,18 +3276,18 @@ public enum HIRLowerer {
             guard let resolvedElement = elementType else {
                 throw unsupported("empty set literal needs an element (annotate the variable)", at: location)
             }
-            let setType = HIRType.set(element: resolvedElement)
+            let setType = IRType.set(element: resolvedElement)
             return LoweredExpr(node: .setLiteral(elements: loweredElements, type: setType), type: setType)
 
         case .tuple(let labels, let elements, let location):
-            var loweredElements: [HIRExpr] = []
-            var fieldTypes: [HIRType] = []
+            var loweredElements: [IRExpr] = []
+            var fieldTypes: [IRType] = []
             for element in elements {
                 let lowered = try lowerExpr(element, expected: nil, into: &context)
                 loweredElements.append(lowered.node)
                 fieldTypes.append(lowered.type)
             }
-            let tupleType = HIRType.tuple(labels: labels, fieldTypes: fieldTypes)
+            let tupleType = IRType.tuple(labels: labels, fieldTypes: fieldTypes)
             return LoweredExpr(node: .tupleConstruct(labels: labels, elements: loweredElements, type: tupleType), type: tupleType)
 
         case .call(let callee, let arguments, let location):
@@ -3310,7 +3310,7 @@ public enum HIRLowerer {
                         throw unsupported("Optional.some expects exactly one argument", at: location)
                     }
                     let loweredPayload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
-                    let type = HIRType.optional(wrapped: loweredPayload.type)
+                    let type = IRType.optional(wrapped: loweredPayload.type)
                     return LoweredExpr(
                         node: .optionalConstruct(isSome: true, payload: loweredPayload.node, type: type),
                         type: type
@@ -3451,7 +3451,7 @@ public enum HIRLowerer {
                 guard loweredArgs.isEmpty else {
                     throw unsupported("\(functionName) takes no arguments", at: location)
                 }
-                let queryType: HIRType =
+                let queryType: IRType =
                     functionName == "argv"
                     ? .array(element: .string)
                     : .string
@@ -3470,7 +3470,7 @@ public enum HIRLowerer {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("\(functionName) expects exactly one argument", at: location)
                 }
-                let resultType: HIRType
+                let resultType: IRType
                 switch functionName {
                 // G67（P0d）：`chars` 的**元素**与 `chr` 的**结果**都是 `Char`
                 // （窄化的三个构造点之二）；`ord` 仍是 `I32`、其余三个谓词仍是 `Bool`。
@@ -3495,7 +3495,7 @@ public enum HIRLowerer {
             // executor.
             //
             // The names that traffic in `Future` values (`joinAll`, `joinWithin`,
-            // `isCancel`) stay out. The HIR has no representation for a Future yet,
+            // `isCancel`) stay out. The IR has no representation for a Future yet,
             // so lowering them would accept an argument the channel cannot produce.
             if RuntimeOps.concurrencyBuiltins[functionName] != nil {
                 if functionName == "sleep" {
@@ -3519,7 +3519,7 @@ public enum HIRLowerer {
                 guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
                     throw unsupported("\(functionName) expects one String argument", at: location)
                 }
-                let errorType = HIRType.nominal(name: functionName, isObject: false)
+                let errorType = IRType.nominal(name: functionName, isObject: false)
                 return LoweredExpr(
                     node: .call(
                         function: functionName,
@@ -3534,7 +3534,7 @@ public enum HIRLowerer {
             // sides match the names side by side instead, and both read the same
             // rule.
             //
-            // The HIR denotes a Future by the `Result<T>` an async call already
+            // The IR denotes a Future by the `Result<T>` an async call already
             // returns (G-3b): the value is a future at run time, the type on the
             // node is what its join will yield.
             if functionName == "isCancel" {
@@ -3553,7 +3553,7 @@ public enum HIRLowerer {
                 guard loweredArgs.count == 1, case .array(let element) = loweredArgs[0].type else {
                     throw unsupported("joinAll expects one array of futures", at: location)
                 }
-                let aggregated = HIRType.result(ok: .array(element: element))
+                let aggregated = IRType.result(ok: .array(element: element))
                 return LoweredExpr(
                     node: .call(
                         function: functionName,
@@ -3620,7 +3620,7 @@ public enum HIRLowerer {
                         at: location
                     )
                 }
-                let type = HIRType.lazyRef(element: element)
+                let type = IRType.lazyRef(element: element)
                 return LoweredExpr(
                     node: .lazyRefConstruct(closure: loweredArgs[0].node, type: type),
                     type: type
@@ -3855,7 +3855,7 @@ public enum HIRLowerer {
                         at: location
                     )
                 }
-                let type = HIRType.nominal(name: functionName, isObject: info.isObject)
+                let type = IRType.nominal(name: functionName, isObject: info.isObject)
                 return LoweredExpr(node: .construct(type: type), type: type)
             }
             guard let signature = context.moduleSignatures[functionName] else {
@@ -3975,7 +3975,7 @@ public enum HIRLowerer {
             // the site yields the `Result<T>` its join deconstructs.
             //
             // This comment used to end the opposite way: that nothing here had
-            // to denote a future and no HIR type case had to be added, because
+            // to denote a future and no IR type case had to be added, because
             // the shape could ride on the call node. That was true and it was
             // the design -- but it also meant the two positions carried one type,
             // and a backend that must dispatch an async call to a worker instead
@@ -4003,7 +4003,7 @@ public enum HIRLowerer {
 
         default:
             throw unsupported(
-                "expression '\(expression.kindName)' is not yet lowered to HIR",
+                "expression '\(expression.kindName)' is not yet lowered to IR",
                 at: expressionLocation(expression)
             )
         }
@@ -4129,7 +4129,7 @@ public enum HIRLowerer {
     /// final fallback).
     private static func lowerFuncLiteral(
         decl: FuncDecl,
-        expected: HIRType?,
+        expected: IRType?,
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
@@ -4146,7 +4146,7 @@ public enum HIRLowerer {
         // return-annotation fallback > wildcard) mapped through the same
         // annotation conversion as declared signatures.
         let inferredAnnotation = context.inferType(of: .funcLiteral(decl: decl, location: location))
-        let functionType: HIRType
+        let functionType: IRType
         if let annotation = inferredAnnotation,
             let mapped = resolvedFunctionType(annotation, userTypes: context.userTypes)
         {
@@ -4180,7 +4180,7 @@ public enum HIRLowerer {
         let used = collectBodyIdentifiers(in: decl)
         let localBound = Set(decl.params.map { $0.name })
             .union(declaredLocalVars(in: decl.body?.statements ?? []))
-        var captures: [HIRCapture] = []
+        var captures: [IRCapture] = []
         var captureIndex: [String: Int] = [:]
         for name in used.sorted() where !localBound.contains(name) {
             // Named top-level functions are function values, not captures
@@ -4189,7 +4189,7 @@ public enum HIRLowerer {
             guard let type = context.variableTypes[name] else { continue }
             guard captureIndex[name] == nil else { continue }
             captureIndex[name] = captures.count
-            captures.append(HIRCapture(name: name, type: type))
+            captures.append(IRCapture(name: name, type: type))
         }
 
         // Lower the body in a fresh scope: params + captures pre-seeded so
@@ -4397,7 +4397,7 @@ public enum HIRLowerer {
         _ caseName: String,
         at location: SourceLocation?,
         in context: FunctionContext
-    ) throws -> (HIREnumDecl, HIREnumCase)? {
+    ) throws -> (IREnumDecl, IREnumCase)? {
         if let dotIndex = caseName.firstIndex(of: ".") {
             let enumName = String(caseName[..<dotIndex])
             let caseLeaf = String(caseName[caseName.index(after: dotIndex)...])
@@ -4408,7 +4408,7 @@ public enum HIRLowerer {
             }
             return (enumDecl, enumCase)
         }
-        let matches = context.enums.values.compactMap { enumDecl -> (HIREnumDecl, HIREnumCase)? in
+        let matches = context.enums.values.compactMap { enumDecl -> (IREnumDecl, IREnumCase)? in
             guard let enumCase = enumDecl.cases.first(where: { $0.name == caseName }) else {
                 return nil
             }
@@ -4456,8 +4456,8 @@ public enum HIRLowerer {
     /// Missing arguments fall back to declared default expressions
     /// (legacy createInstance parity).
     private static func lowerEnumCaseConstructor(
-        enumDecl: HIREnumDecl,
-        enumCase: HIREnumCase,
+        enumDecl: IREnumDecl,
+        enumCase: IREnumCase,
         arguments: [CallArgument],
         at location: SourceLocation,
         into context: inout FunctionContext
@@ -4468,7 +4468,7 @@ public enum HIRLowerer {
                 at: location
             )
         }
-        var payloads: [HIRExpr?] = Array(repeating: nil, count: enumCase.payloadTypes.count)
+        var payloads: [IRExpr?] = Array(repeating: nil, count: enumCase.payloadTypes.count)
         for (index, argument) in arguments.enumerated() {
             var slot = index
             if let label = argument.label {
@@ -4490,7 +4490,7 @@ public enum HIRLowerer {
             try requireAssignable(lowered.type, to: enumCase.payloadTypes[slot], at: location)
             payloads[slot] = lowered.node
         }
-        var loweredPayloads: [HIRExpr] = []
+        var loweredPayloads: [IRExpr] = []
         for (index, slot) in payloads.enumerated() {
             guard let node = slot else {
                 throw unsupported(
@@ -4561,7 +4561,7 @@ public enum HIRLowerer {
                 throw unsupported("split expects exactly one argument", at: location)
             }
             let delim = try lowerExpr(arguments[0].expression, expected: .string, into: &context)
-            let arrayType = HIRType.array(element: .string)
+            let arrayType = IRType.array(element: .string)
             return LoweredExpr(
                 node: .stringSplit(receiver: receiver.node, delim: delim.node, type: arrayType),
                 type: arrayType
@@ -4575,7 +4575,7 @@ public enum HIRLowerer {
     /// 故形状与 `lowerCall` 的具名分支**逐字同构**（参数按签名逐个给期望类型）。
     private static func lowerModuleQualifiedCall(
         functionName: String,
-        signature: HIRLowererSignatureInfo,
+        signature: IRLowererSignatureInfo,
         arguments: [CallArgument],
         at location: SourceLocation,
         into context: inout FunctionContext
@@ -4609,12 +4609,12 @@ public enum HIRLowerer {
         )
     }
 
-    /// H-3 三级派发的类型映射：内建接收者类型名 → `HIRType`。
+    /// H-3 三级派发的类型映射：内建接收者类型名 → `IRType`。
     ///
     /// ⚠️ `Array` 在扩展块里不署名元素类型 ⇒ 取 i32 占位。这个值只用于**登记**
     /// 扩展方法（`lowerMethod` 需要一个 self 类型），调用点的接收者类型仍由实际
     /// 值决定 ⇒ 本批的对象不使用 self 的元素，占位不参与语义。
-    private static func builtinReceiverType(named name: String) -> HIRType? {
+    private static func builtinReceiverType(named name: String) -> IRType? {
         switch name {
         case "String": return .string
         case "Array": return .array(element: .i32)
@@ -4623,7 +4623,7 @@ public enum HIRLowerer {
     }
 
     /// 反向映射：接收者类型 → 内建类型名（查扩展方法表用）。
-    private static func builtinReceiverName(of type: HIRType) -> String? {
+    private static func builtinReceiverName(of type: IRType) -> String? {
         switch type {
         case .string: return "String"
         case .array: return "Array"
@@ -4635,7 +4635,7 @@ public enum HIRLowerer {
         object: Expression,
         memberName: String,
         arguments: [CallArgument],
-        expected: HIRType?,
+        expected: IRType?,
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
@@ -4670,7 +4670,7 @@ public enum HIRLowerer {
             }
             let payloadExpected = expected?.optionalWrapped
             let loweredPayload = try lowerExpr(arguments[0].expression, expected: payloadExpected, into: &context)
-            let type = HIRType.optional(wrapped: loweredPayload.type)
+            let type = IRType.optional(wrapped: loweredPayload.type)
             if let payloadExpected = payloadExpected {
                 try requireAssignable(loweredPayload.type, to: payloadExpected, at: location)
             }
@@ -4752,7 +4752,7 @@ public enum HIRLowerer {
             if let method = dispatchInfo?.methods.first(where: { $0.name == memberName }) {
                 // ADR-001 `P2b`：方法位与自由函数位同规 —— `using` 形参可省略，
                 // 实参由编译器在该位插入默认实例取用。
-                let methodParamTypes: [HIRType] = try method.params.map { parameter -> HIRType in
+                let methodParamTypes: [IRType] = try method.params.map { parameter -> IRType in
                     guard let annotation = parameter.typeAnnotation,
                         let paramType = resolveUsingParamType(annotation, userTypes: context.userTypes)
                     else {
@@ -4777,8 +4777,8 @@ public enum HIRLowerer {
                         decl: method, userTypes: context.userTypes,
                         nominals: context.nominalTypesMap, selfTypeName: typeName
                     )
-                    ?? method.returnTypes.first.map { annotation -> HIRType in
-                        guard let type = HIRType(from: annotation) else {
+                    ?? method.returnTypes.first.map { annotation -> IRType in
+                        guard let type = IRType(from: annotation) else {
                             throw unsupported(
                                 "return type of '\(memberName)' is not resolvable",
                                 at: location
@@ -4838,8 +4838,8 @@ public enum HIRLowerer {
             // G-2b: a dictionary's `.get` keys off any value the dictionary
             // accepts, so the index expectation follows the key type and the
             // I32 requirement is the Array/String arm's alone.
-            let wrapped: HIRType
-            let indexExpectation: HIRType?
+            let wrapped: IRType
+            let indexExpectation: IRType?
             var requireI32Index = false
             switch objectType {
             case .array(let element): wrapped = element; indexExpectation = .i32; requireI32Index = true
@@ -4874,7 +4874,7 @@ public enum HIRLowerer {
             guard objectType.isArray || objectType == .string else {
                 throw unsupported(".slice on type '\(objectType)' outside this grid (Array/String)", at: location)
             }
-            var loweredBounds: [HIRExpr] = []
+            var loweredBounds: [IRExpr] = []
             for argument in arguments {
                 let lowered = try lowerExpr(argument.expression, expected: nil, into: &context)
                 let boundIsValid: Bool
@@ -4921,7 +4921,7 @@ public enum HIRLowerer {
                     arguments[0].expression, expected: element, into: &context
                 )
                 try requireAssignable(loweredValue.type, to: element, at: location)
-                let appended = HIRType.array(element: element)
+                let appended = IRType.array(element: element)
                 return LoweredExpr(
                     node: .call(
                         function: callName,
@@ -4933,7 +4933,7 @@ public enum HIRLowerer {
                 guard arguments.isEmpty else {
                     throw unsupported("last takes no arguments", at: location)
                 }
-                let found = HIRType.optional(wrapped: element)
+                let found = IRType.optional(wrapped: element)
                 return LoweredExpr(
                     node: .call(
                         function: callName, arguments: [loweredObject.node],
@@ -4944,7 +4944,7 @@ public enum HIRLowerer {
                 guard arguments.isEmpty else {
                     throw unsupported("pop takes no arguments", at: location)
                 }
-                let pair = HIRType.tuple(
+                let pair = IRType.tuple(
                     labels: [nil, nil],
                     fieldTypes: [
                         .array(element: element),
@@ -4985,26 +4985,26 @@ public enum HIRLowerer {
         cases: [MatchCase],
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> IRStmt {
         let loweredValue = try lowerExpr(value, expected: nil, into: &context)
         switch loweredValue.type {
         case .optional(let wrapped):
-            let hirCases = try lowerOptionalCases(cases, wrapped: wrapped, into: &context)
-            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+            let irCases = try lowerOptionalCases(cases, wrapped: wrapped, into: &context)
+            return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         case .enumeration(let enumName):
             guard let enumDecl = context.enums[enumName] else {
                 throw unsupported("match scrutinee enum '\(enumName)' not registered", at: location)
             }
-            let hirCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
-            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+            let irCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
+            return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         case .result(let okType):
             // Result scrutinee (`G72`): without this arm the family fell to
             // `default` below, whose binding adopts the scrutinee type — so
             // `case ok(v)` bound `v` as a Result and every use of it (a
             // print, an arithmetic operand, a typed copy) was rejected against
             // a type the source never names.
-            let hirCases = try lowerResultCases(cases, okType: okType, into: &context)
-            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+            let irCases = try lowerResultCases(cases, okType: okType, into: &context)
+            return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         default:
             // Bare scrutinee — neither Optional nor enum (a direct subscript
             // read: the interpreter yields a plain value there, verified).
@@ -5016,28 +5016,28 @@ public enum HIRLowerer {
             //     probe-verified at any scrutinee depth: outer `match m[1]`
             //     on array(I32), inner `match row[2]` on I32).
             //   · literal arms (`case 1:`) DO compare by value and must
-            //     dispatch; the operand rides along as `HIRMatchLiteral` so
+            //     dispatch; the operand rides along as `IRMatchLiteral` so
             //     the emitter never re-parses rendered pattern text.
             // Either way each body lowers with its binding typed by the
             // scrutinee itself (the value a live some-arm would bind).
-            var hirCases: [HIRMatchCase] = []
+            var irCases: [IRMatchCase] = []
             for matchCase in cases {
                 let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
-                hirCases.append(
-                    HIRMatchCase(
+                irCases.append(
+                    IRMatchCase(
                         caseName: matchCase.pattern.description,
                         literal: literalOperand(of: matchCase.pattern),
                         bindings: matchCase.bindings.map { $0.varName },
                         body: body
                     ))
             }
-            return .matchStmt(scrutinee: loweredValue.node, cases: hirCases, scrutineeType: loweredValue.type)
+            return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         }
     }
 
     /// Literal-pattern operand handed to the emitter; nil for enum-case and
     /// wildcard patterns, whose dispatch is not value-based.
-    private static func literalOperand(of pattern: MatchPattern) -> HIRMatchLiteral? {
+    private static func literalOperand(of pattern: MatchPattern) -> IRMatchLiteral? {
         switch pattern {
         case .intLiteral(let n): return .int(n)
         case .floatLiteral(let f): return .float(f)
@@ -5055,9 +5055,9 @@ public enum HIRLowerer {
     /// bind), wildcard/none arms bind nothing.
     private static func lowerBareScrutineeArmBody(
         _ matchCase: MatchCase,
-        bindingType: HIRType,
+        bindingType: IRType,
         into context: inout FunctionContext
-    ) throws -> HIRBlock {
+    ) throws -> IRBlock {
         let bindingNames = matchCase.bindings.map { $0.varName }
         let previousTypes = bindingNames.map { context.variableTypes[$0] }
         for (index, name) in bindingNames.enumerated() where name != "_" {
@@ -5075,10 +5075,10 @@ public enum HIRLowerer {
     /// binding typed by the wrapped payload.
     private static func lowerOptionalCases(
         _ cases: [MatchCase],
-        wrapped: HIRType,
+        wrapped: IRType,
         into context: inout FunctionContext
-    ) throws -> [HIRMatchCase] {
-        var hirCases: [HIRMatchCase] = []
+    ) throws -> [IRMatchCase] {
+        var irCases: [IRMatchCase] = []
         for matchCase in cases {
             switch matchCase.pattern {
             case .enumCase(let rawCaseName):
@@ -5110,7 +5110,7 @@ public enum HIRLowerer {
                 if let bindingName = bindingName {
                     context.variableTypes[bindingName] = previousType
                 }
-                hirCases.append(HIRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
+                irCases.append(IRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
             default:
                 throw unsupported(
                     "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
@@ -5118,7 +5118,7 @@ public enum HIRLowerer {
                 )
             }
         }
-        return hirCases
+        return irCases
     }
 
     /// Result scrutinee arms (`G72`): ok/err, single positional binding. The
@@ -5131,17 +5131,17 @@ public enum HIRLowerer {
     /// - the **err** binding takes the shape try-else already established for
     ///   an error word: one machine word, tracked in `errorBindings`. It is
     ///   not a new form. `result(ok:)` carries no error type to narrow to
-    ///   (the HIR type has one field, the ok type), and the IR ABI erases that
+    ///   (the IR type has one field, the ok type), and the IR ABI erases that
     ///   slot (LR-12), so the only faithful spelling is the erased word. The
     ///   consequence is that printing an err binding stays gated — loudly, by
     ///   the existing error-binding gate, and now with a message that names
     ///   the real reason instead of blaming the binding's type.
     private static func lowerResultCases(
         _ cases: [MatchCase],
-        okType: HIRType,
+        okType: IRType,
         into context: inout FunctionContext
-    ) throws -> [HIRMatchCase] {
-        var hirCases: [HIRMatchCase] = []
+    ) throws -> [IRMatchCase] {
+        var irCases: [IRMatchCase] = []
         for matchCase in cases {
             switch matchCase.pattern {
             case .enumCase(let rawCaseName):
@@ -5184,7 +5184,7 @@ public enum HIRLowerer {
                     // of the same name must survive the arm.
                     if !isOk && !wasErrorBinding { context.errorBindings.remove(bindingName) }
                 }
-                hirCases.append(HIRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
+                irCases.append(IRMatchCase(caseName: caseName, bindings: bindingName.map { [$0] } ?? [], body: body))
             default:
                 throw unsupported(
                     "match pattern '\(matchCase.pattern)' outside this grid (enum-case patterns only)",
@@ -5192,7 +5192,7 @@ public enum HIRLowerer {
                 )
             }
         }
-        return hirCases
+        return irCases
     }
 
     /// Enum scrutinee arms (G4): tag dispatch through the general skeleton;
@@ -5200,10 +5200,10 @@ public enum HIRLowerer {
     /// skip, named labels (`text: s`) resolve through the declared names.
     private static func lowerEnumCases(
         _ cases: [MatchCase],
-        enumDecl: HIREnumDecl,
+        enumDecl: IREnumDecl,
         into context: inout FunctionContext
-    ) throws -> [HIRMatchCase] {
-        var hirCases: [HIRMatchCase] = []
+    ) throws -> [IRMatchCase] {
+        var irCases: [IRMatchCase] = []
         for (caseOrder, matchCase) in cases.enumerated() {
             // Wildcard `case _:` matches everything — last arm only.
             if case .wildcard = matchCase.pattern {
@@ -5213,7 +5213,7 @@ public enum HIRLowerer {
                         at: matchCase.location
                     )
                 }
-                hirCases.append(HIRMatchCase(caseName: "_", bindings: [], body: try lowerBlock(matchCase.block, into: &context)))
+                irCases.append(IRMatchCase(caseName: "_", bindings: [], body: try lowerBlock(matchCase.block, into: &context)))
                 continue
             }
             guard case .enumCase(let rawCaseName) = matchCase.pattern else {
@@ -5239,7 +5239,7 @@ public enum HIRLowerer {
                 )
             }
             var bindingNames: [String?] = []
-            var scoped: [(String, HIRType, HIRType?)] = []
+            var scoped: [(String, IRType, IRType?)] = []
             for (index, binding) in matchCase.bindings.enumerated() {
                 if binding.varName == "_" {
                     bindingNames.append(nil)
@@ -5269,9 +5269,9 @@ public enum HIRLowerer {
             for (bindingName, _, previousType) in scoped {
                 context.variableTypes[bindingName] = previousType
             }
-            hirCases.append(HIRMatchCase(caseName: enumCase.name, bindings: bindingNames, body: body))
+            irCases.append(IRMatchCase(caseName: enumCase.name, bindings: bindingNames, body: body))
         }
-        return hirCases
+        return irCases
     }
 
     // MARK: - Prefix increment / decrement (G-2c)
@@ -5285,7 +5285,7 @@ public enum HIRLowerer {
     /// statement position and a variable initializer (`var m = ++n`): the
     /// second form needs the written value as well as the write.
     ///
-    /// The write lives in a statement because no HIR expression node carries a
+    /// The write lives in a statement because no IR expression node carries a
     /// side effect, and the returned `newValue` is the very node the write
     /// stores rather than a re-read, so the two cannot drift apart.
     private static func lowerIncDec(
@@ -5293,11 +5293,11 @@ public enum HIRLowerer {
         target: Expression,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> (statement: HIRStmt, value: HIRExpr, type: HIRType) {
+    ) throws -> (statement: IRStmt, value: IRExpr, type: IRType) {
         // The direction lives in the operator, not in the constant: `--` is
         // `subtract` by one, not `add` by minus one.
-        let baseOp: HIRBinaryOp = op == .increment ? .add : .subtract
-        let one = HIRExpr.intConst(value: 1, type: .i32)
+        let baseOp: IRBinaryOp = op == .increment ? .add : .subtract
+        let one = IRExpr.intConst(value: 1, type: .i32)
         switch target {
         case .identifier(let name, _):
             guard let varType = context.variableTypes[name] else {
@@ -5308,7 +5308,7 @@ public enum HIRLowerer {
                     "prefix '\(op)' target must be I32, got '\(varType)'", at: location
                 )
             }
-            let value = HIRExpr.binary(
+            let value = IRExpr.binary(
                 op: baseOp, lhs: .load(name: name, type: varType),
                 rhs: one, type: varType
             )
@@ -5316,7 +5316,7 @@ public enum HIRLowerer {
             // returns the value it computed instead; for the I32 targets this
             // grid accepts the two are the same, and reading back is what
             // keeps `var m = ++n` from running the arithmetic a second time.
-            let readBack = HIRExpr.load(name: name, type: varType)
+            let readBack = IRExpr.load(name: name, type: varType)
             return (.storeVar(name: name, type: varType, value: value), readBack, varType)
 
         case .member(let base, let fieldName, _):
@@ -5336,7 +5336,7 @@ public enum HIRLowerer {
                     "prefix '\(op)' target must be I32, got '\(fieldType)'", at: location
                 )
             }
-            let value = HIRExpr.binary(
+            let value = IRExpr.binary(
                 op: baseOp,
                 lhs: .fieldGet(base: loweredBase.node, field: fieldName, type: fieldType),
                 rhs: one, type: fieldType
@@ -5358,7 +5358,7 @@ public enum HIRLowerer {
                     at: location
                 )
             }
-            let value = HIRExpr.binary(
+            let value = IRExpr.binary(
                 op: baseOp, lhs: read.node, rhs: one, type: .i32
             )
             return (
@@ -5387,9 +5387,9 @@ public enum HIRLowerer {
         value: Expression,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> IRStmt {
         let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
-        let elementType: HIRType
+        let elementType: IRType
         switch loweredContainer.type {
         case .array(let element): elementType = element
         case .dict(_, let value): elementType = value
@@ -5399,7 +5399,7 @@ public enum HIRLowerer {
                 at: location
             )
         }
-        let indexExpectation: HIRType?
+        let indexExpectation: IRType?
         var requireI32Index = false
         switch loweredContainer.type {
         case .dict(let keyType, _): indexExpectation = keyType
@@ -5426,11 +5426,11 @@ public enum HIRLowerer {
     /// legacy emitter's evaluation shape.
     private static func lowerCompoundAssign(
         left: Expression,
-        baseOp: HIRBinaryOp,
+        baseOp: IRBinaryOp,
         right: Expression,
         at location: SourceLocation,
         into context: inout FunctionContext
-    ) throws -> HIRStmt {
+    ) throws -> IRStmt {
         if case .identifier(let name, _) = left {
             guard let varType = context.variableTypes[name] else {
                 throw unsupported("assignment to undeclared variable '\(name)'", at: location)
@@ -5439,7 +5439,7 @@ public enum HIRLowerer {
                 throw unsupported("compound assignment on non-numeric variable '\(name)'", at: location)
             }
             let rhs = try lowerExpr(right, expected: varType, into: &context)
-            let combined = HIRExpr.binary(
+            let combined = IRExpr.binary(
                 op: baseOp, lhs: .load(name: name, type: varType), rhs: rhs.node, type: varType
             )
             return .storeVar(name: name, type: varType, value: combined)
@@ -5453,7 +5453,7 @@ public enum HIRLowerer {
                 )
             }
             let rhs = try lowerExpr(right, expected: read.type, into: &context)
-            let combined = HIRExpr.binary(op: baseOp, lhs: read.node, rhs: rhs.node, type: read.type)
+            let combined = IRExpr.binary(op: baseOp, lhs: read.node, rhs: rhs.node, type: read.type)
             guard case .subscriptGet(let containerNode, let indexNode, _) = read.node else {
                 throw unsupported("subscript read did not produce a subscript node", at: location)
             }
@@ -5477,7 +5477,7 @@ public enum HIRLowerer {
     /// drives empty-literal and integer-literal adoption.
     private static func lowerArrayLiteral(
         _ elements: [Expression],
-        expected: HIRType?,
+        expected: IRType?,
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
@@ -5494,8 +5494,8 @@ public enum HIRLowerer {
                 type: .array(element: element)
             )
         }
-        var loweredElements: [HIRExpr] = []
-        var elementType: HIRType? = elementExpected
+        var loweredElements: [IRExpr] = []
+        var elementType: IRType? = elementExpected
         for element in elements {
             let lowered = try lowerExpr(element, expected: elementType, into: &context)
             if let known = elementType {
@@ -5528,8 +5528,8 @@ public enum HIRLowerer {
     /// invokes it with the receiver as the implicit first argument.
     private static func lowerTraitDefaultCall(
         _ defaultMethod: FuncDecl,
-        receiver: HIRExpr,
-        receiverType: HIRType,
+        receiver: IRExpr,
+        receiverType: IRType,
         arguments: [CallArgument],
         at location: SourceLocation,
         into context: inout FunctionContext
@@ -5549,7 +5549,7 @@ public enum HIRLowerer {
                 at: location
             )
         }
-        let returnType = try defaultMethod.returnTypes.first.map { annotation -> HIRType in
+        let returnType = try defaultMethod.returnTypes.first.map { annotation -> IRType in
             guard let type = resolveAnnotationType(annotation, userTypes: context.userTypes) else {
                 throw unsupported(
                     "return type of trait default '\(defaultMethod.name)' is not resolvable",
@@ -5596,8 +5596,8 @@ public enum HIRLowerer {
 
     // MARK: - Type conformance
 
-    /// The HIR type of a nominal field, resolved through the registry (G3).
-    private static func nominalFieldType(of type: HIRType, field: String, in context: FunctionContext) -> HIRType? {
+    /// The IR type of a nominal field, resolved through the registry (G3).
+    private static func nominalFieldType(of type: IRType, field: String, in context: FunctionContext) -> IRType? {
         guard case .nominal(let name, _) = type,
             let info = context.nominalTypes[name],
             let fieldDecl = info.fields.first(where: { $0.name == field })
@@ -5629,7 +5629,7 @@ public enum HIRLowerer {
     /// reconciled where the language says they are: the executor stamps the
     /// declared labels onto the value, exactly as the interpreter does at the
     /// two same sites.
-    private static func requireAssignable(_ from: HIRType, to: HIRType, at location: SourceLocation) throws {
+    private static func requireAssignable(_ from: IRType, to: IRType, at location: SourceLocation) throws {
         guard labelInsensitiveEqual(from, to) || (from == .char && to == .string) else {
             throw unsupported("type mismatch: \(from) is not \(to)", at: location)
         }
@@ -5638,7 +5638,7 @@ public enum HIRLowerer {
     /// `==` everywhere except inside a tuple, where the label dimension is
     /// dropped and the element types still have to match one by one (nesting
     /// included).
-    private static func labelInsensitiveEqual(_ from: HIRType, _ to: HIRType) -> Bool {
+    private static func labelInsensitiveEqual(_ from: IRType, _ to: IRType) -> Bool {
         if case .tuple(_, let fromFields) = from, case .tuple(_, let toFields) = to {
             guard fromFields.count == toFields.count else { return false }
             for (a, b) in zip(fromFields, toFields) where !labelInsensitiveEqual(a, b) {
@@ -5678,8 +5678,8 @@ public enum HIRLowerer {
         PredefinedDecls.effective(in: module.declarations)
     }
 
-    private static func unsupported(_ message: String, at location: SourceLocation) -> HIRLoweringError {
-        HIRLoweringError(message: message, location: location)
+    private static func unsupported(_ message: String, at location: SourceLocation) -> IRLoweringError {
+        IRLoweringError(message: message, location: location)
     }
 
     /// ADR-001 `P2b`：默认实例相关的**用户错误**（不是「还没做」）。
@@ -5699,8 +5699,8 @@ public enum HIRLowerer {
 
     private static func rejected(
         _ message: String, code: String, at location: SourceLocation
-    ) -> HIRLoweringError {
-        HIRLoweringError(message: message, location: location, code: code)
+    ) -> IRLoweringError {
+        IRLoweringError(message: message, location: location, code: code)
     }
 
     /// Stable funcLiteral identity: file + line + column. The legacy
@@ -5727,10 +5727,10 @@ public enum HIRLowerer {
     /// the call sites — interpreter-faithful, statically decided.
     private static func effectiveReturnType(
         decl: FuncDecl,
-        userTypes: [String: HIRType],
+        userTypes: [String: IRType],
         nominals: [String: NominalInfo],
         selfTypeName: String? = nil
-    ) throws -> HIRType? {
+    ) throws -> IRType? {
         // Declared non-void: nothing to upgrade.
         if decl.returnTypes.first != nil { return nil }
         for statement in decl.body?.statements ?? [] {
@@ -5740,7 +5740,7 @@ public enum HIRLowerer {
             // Error-binding returns were already dropped before this point
             // for void functions (returnStmt(value: nil)); a plain return
             // with a value upgrades the type.
-            switch inferHIRType(
+            switch inferIRType(
                 of: value, userTypes: userTypes, nominals: nominals,
                 selfTypeName: selfTypeName)
             {
@@ -5759,12 +5759,12 @@ public enum HIRLowerer {
     /// Type resolution for the effective-return pre-scan. Mirrors the
     /// annotation resolver plus the nominal field-read / zero-arg method
     /// call shapes the corpus uses; literals resolve directly.
-    private static func inferHIRType(
+    private static func inferIRType(
         of expression: Expression,
-        userTypes: [String: HIRType],
+        userTypes: [String: IRType],
         nominals: [String: NominalInfo],
         selfTypeName: String? = nil
-    ) -> HIRType? {
+    ) -> IRType? {
         switch expression {
         case .integerLiteral: return .i32
         case .floatLiteral: return .f64
@@ -5775,27 +5775,27 @@ public enum HIRLowerer {
         case .selfKeyword:
             return selfTypeName.flatMap { userTypes[$0] }
         case .member(let object, let fieldName, _):
-            guard let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
+            guard let baseType = inferIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
                 case .nominal(let typeName, _) = baseType,
                 let info = nominals[typeName],
                 let field = info.fields.first(where: { $0.name == fieldName })
             else {
                 return nil
             }
-            return HIRType(from: field.typeAnnotation)
+            return IRType(from: field.typeAnnotation)
         case .call(let callee, let arguments, _):
             // Zero-arg method call: `self.方法()` — the method's declared
             // return annotation is the effective value type.
             guard arguments.isEmpty,
                 case .member(let object, let methodName, _) = callee,
-                let baseType = inferHIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
+                let baseType = inferIRType(of: object, userTypes: userTypes, nominals: nominals, selfTypeName: selfTypeName),
                 case .nominal(let typeName, _) = baseType,
                 let info = nominals[typeName],
                 let method = info.methods.first(where: { $0.name == methodName })
             else {
                 return nil
             }
-            return method.returnTypes.first.flatMap { HIRType(from: $0) }
+            return method.returnTypes.first.flatMap { IRType(from: $0) }
         default:
             return nil
         }
@@ -5837,7 +5837,7 @@ public enum HIRLowerer {
     }
 }
 
-extension HIRType {
+extension IRType {
     /// Normalize a `TypeAnnotation` into the scalar slice set; nil for
     /// anything outside it (the caller turns nil into a gate error).
     init?(from annotation: TypeAnnotation) {
@@ -5859,25 +5859,25 @@ extension HIRType {
             // `^T` surface form (Result type sugar, try-else 迁移): pins the ok
             // payload; the error slot is type-erased in the IR ABI (LR-12).
             if name == "Result", let first = params.first,
-                let ok = HIRType(from: first)
+                let ok = IRType(from: first)
             {
                 self = .result(ok: ok)
                 return
             }
             // `Array<T>` (G2): nested generics recurse through the element.
-            if name == "Array", params.count == 1, let element = HIRType(from: params[0]) {
+            if name == "Array", params.count == 1, let element = IRType(from: params[0]) {
                 self = .array(element: element)
                 return
             }
             // `Optional<T>` (G7): covers the `?T` sugar too — the parser maps
             // `?T` to the same Optional generic annotation.
-            if name == "Optional", params.count == 1, let wrapped = HIRType(from: params[0]) {
+            if name == "Optional", params.count == 1, let wrapped = IRType(from: params[0]) {
                 self = .optional(wrapped: wrapped)
                 return
             }
             // `LazyRef<T>` (G13 batch 1): opaque once-evaluated handle;
             // element rides along for the boxing ABI / `.value` load.
-            if name == "LazyRef", params.count == 1, let element = HIRType(from: params[0]) {
+            if name == "LazyRef", params.count == 1, let element = IRType(from: params[0]) {
                 self = .lazyRef(element: element)
                 return
             }
@@ -5885,18 +5885,18 @@ extension HIRType {
         case .pointer(let element, _):
             // `*T` (G14, FFI 子系统): element recurses; the pointer itself
             // is an opaque `ptr` in the IR ABI.
-            guard let elementType = HIRType(from: element) else { return nil }
+            guard let elementType = IRType(from: element) else { return nil }
             self = .pointer(element: elementType)
         case .tuple(let labels, let elements, _):
             // `(a: I32, b: F64,)` (G8): fields recurse, labels carry over.
-            var fieldTypes: [HIRType] = []
+            var fieldTypes: [IRType] = []
             for element in elements {
-                guard let fieldType = HIRType(from: element) else { return nil }
+                guard let fieldType = IRType(from: element) else { return nil }
                 fieldTypes.append(fieldType)
             }
             // The annotation layer writes `labels: []` for element lists whose
             // members are all positional (the multi-value producers: call-site
-            // inference and the checker's payload shape). HIR keeps labels
+            // inference and the checker's payload shape). IR keeps labels
             // index-aligned with fieldTypes, so expand the empty list to
             // all-nil; a genuinely partial label list is passed through as-is.
             let resolvedLabels =
@@ -5909,14 +5909,14 @@ extension HIRType {
             // shapes ride along for parity checks. A single return is the
             // slice surface; zero returns = void.
             guard returns.count <= 1 else { return nil }
-            var paramTypes: [HIRType] = []
+            var paramTypes: [IRType] = []
             for param in params {
-                guard let paramType = HIRType(from: param) else { return nil }
+                guard let paramType = IRType(from: param) else { return nil }
                 paramTypes.append(paramType)
             }
-            var returnType: HIRType?
+            var returnType: IRType?
             if let firstReturn = returns.first {
-                guard let resolved = HIRType(from: firstReturn) else { return nil }
+                guard let resolved = IRType(from: firstReturn) else { return nil }
                 returnType = resolved
             }
             self = .function(params: paramTypes, returnType: returnType, usingIndices: usingIndices)
@@ -5933,8 +5933,8 @@ extension TypeAnnotation {
     }
 }
 
-extension HIRBinaryOp {
-    /// Map a compound-assign AST operator onto its base HIR operator; nil for
+extension IRBinaryOp {
+    /// Map a compound-assign AST operator onto its base IR operator; nil for
     /// operators outside the slice (bitwise/shift compounds are later grids).
     init?(compound op: BinaryOperator) {
         switch op {
@@ -6066,15 +6066,15 @@ extension Statement {
 
 /// Module-level function signature captured by the pre-pass, so a body can
 /// call functions declared later in the file.
-struct HIRLowererSignatureInfo {
-    let paramTypes: [HIRType]
+struct IRLowererSignatureInfo {
+    let paramTypes: [IRType]
     /// The type a caller of this function sees.
     ///
     /// For an async (`=>`) function this is `future(ok:)` -- a handle to a
     /// running process -- so the two differ exactly where a backend has to
     /// treat the call differently. Everywhere else the defaults below make the
     /// two equal, which is why the split costs existing call sites nothing.
-    let returnType: HIRType?
+    let returnType: IRType?
     /// The type carried on the emitted `.call` node: the value the callee's
     /// body actually produces, which is an `ok(v)` / `err(e)` Result even for
     /// an async function.
@@ -6084,7 +6084,7 @@ struct HIRLowererSignatureInfo {
     /// values by, while the call node's protocol is what the callee really
     /// returns. Collapsing them would put a handle's type on a call that
     /// produces an aggregate.
-    let bodyReturnType: HIRType?
+    let bodyReturnType: IRType?
     /// Parameter positions declared without a type annotation.
     ///
     /// WHY (LR-4 G-2R): the checker does not constrain these positions -- its
@@ -6102,7 +6102,7 @@ struct HIRLowererSignatureInfo {
     let usingParamIndices: Set<Int>
 
     init(
-        paramTypes: [HIRType], returnType: HIRType?, bodyReturnType: HIRType? = nil,
+        paramTypes: [IRType], returnType: IRType?, bodyReturnType: IRType? = nil,
         untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = []
     ) {
         self.paramTypes = paramTypes
@@ -6129,11 +6129,11 @@ struct HIRLowererSignatureInfo {
 /// 裸名 case 消歧（静态收敛版） ladder, which is what `caseOwners` answers — exactly one owner
 /// means no expected type is needed, more than one means the spelling is
 /// ambiguous and the qualified form is required.
-private struct HIRGenericEnumIndex {
+private struct IRGenericEnumIndex {
     let templates: [String: EnumDecl]
     let caseOwners: [String: [String]]
 
-    static let empty = HIRGenericEnumIndex(templates: [:], caseOwners: [:])
+    static let empty = IRGenericEnumIndex(templates: [:], caseOwners: [:])
 
     /// The template a construction spelling belongs to. `qualifier` is the
     /// enum name in the qualified form and the case name in the bare one;
@@ -6162,20 +6162,20 @@ private struct ControlFrame {
 
 private struct FunctionContext {
     let functionName: String
-    let returnType: HIRType?
+    let returnType: IRType?
     let typeInference: TypeInference?
-    var variableTypes: [String: HIRType]
-    /// ADR-001 `P2b`：函数体里取用过的给定块类型（留痕，见 `HIRFunction.givenReferenceNames`）。
+    var variableTypes: [String: IRType]
+    /// ADR-001 `P2b`：函数体里取用过的给定块类型（留痕，见 `IRFunction.givenReferenceNames`）。
     /// 值字段即可 —— 调用点全都在**同一个**函数的 `context` 上写，不需要跨函数共享。
     var givenReferenceNames: Set<String> = []
-    let moduleSignatures: [String: HIRLowererSignatureInfo]
-    let nominalTypes: [String: HIRLowerer.NominalInfo]
-    let userTypes: [String: HIRType]
-    let enums: [String: HIREnumDecl]
+    let moduleSignatures: [String: IRLowererSignatureInfo]
+    let nominalTypes: [String: IRLowerer.NominalInfo]
+    let userTypes: [String: IRType]
+    let enums: [String: IREnumDecl]
     /// G-2d: the module's generic-enum templates plus the case -> owner index,
     /// used to place a generic enum case construction and to find the
     /// specialized body the pre-pass registered (泛型枚举构造形态).
-    let genericEnums: HIRGenericEnumIndex
+    let genericEnums: IRGenericEnumIndex
     /// G10: generic function templates by source name, for call-site
     /// dispatch of `身份<I32>(...)` (the specialization itself is
     /// pre-registered during the monomorphization pre-pass).
@@ -6187,18 +6187,18 @@ private struct FunctionContext {
     /// G12: trait registry — trait bodies by name plus per-type trait lists.
     /// Read-only at lowering time; drives the member-call trait-default
     /// fallback (legacy tryTraitMethodDispatch mirror).
-    let traitRegistry: HIRLowerer.TraitRegistry
+    let traitRegistry: IRLowerer.TraitRegistry
     /// G12: trait default bodies specialized at dispatch sites (IR name
     /// `方法__类型`), collected here for module emission. Reference type so
     /// appends from nested FunctionContexts propagate to `lower()`.
-    let traitDefaultsCollector: HIRLowerer.TraitDefaultCollector
+    let traitDefaultsCollector: IRLowerer.TraitDefaultCollector
     /// H-3 三级派发的第一级：内建类型（`String` / `Array`）的**用户扩展方法**。
     /// 接收者类型名 → 方法名 → （降载后的 IR 函数名, 返回类型）。由模块级预扫描填
     /// （见 `lower(module:)` 的扩展块分支）；空表即「本模块没有内建扩展」。
-    var builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:]
+    var builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
     /// G12: receiver field types for bare-name resolution inside method
     /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
-    var selfFieldTypes: [String: HIRType] = [:]
+    var selfFieldTypes: [String: IRType] = [:]
     var selfTypeNameLowered: String?
     var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
@@ -6242,23 +6242,23 @@ private struct FunctionContext {
 
     /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,
     /// shorter name at call sites).
-    fileprivate var nominalTypesMap: [String: HIRLowerer.NominalInfo] { nominalTypes }
+    fileprivate var nominalTypesMap: [String: IRLowerer.NominalInfo] { nominalTypes }
 
     init(
         functionName: String,
-        returnType: HIRType?,
-        paramTypes: [String: HIRType],
+        returnType: IRType?,
+        paramTypes: [String: IRType],
         typeInference: TypeInference?,
-        moduleSignatures: [String: HIRLowererSignatureInfo],
-        nominalTypes: [String: HIRLowerer.NominalInfo] = [:],
-        userTypes: [String: HIRType] = [:],
-        enums: [String: HIREnumDecl] = [:],
-        genericEnums: HIRGenericEnumIndex = .empty,
+        moduleSignatures: [String: IRLowererSignatureInfo],
+        nominalTypes: [String: IRLowerer.NominalInfo] = [:],
+        userTypes: [String: IRType] = [:],
+        enums: [String: IREnumDecl] = [:],
+        genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
-        traitRegistry: HIRLowerer.TraitRegistry = HIRLowerer.TraitRegistry(traits: [:], typeTraits: [:]),
-        traitDefaultsCollector: HIRLowerer.TraitDefaultCollector = HIRLowerer.TraitDefaultCollector(),
-        builtinExtensionMethods: [String: [String: (irName: String, returnType: HIRType)]] = [:],
+        traitRegistry: IRLowerer.TraitRegistry = IRLowerer.TraitRegistry(traits: [:], typeTraits: [:]),
+        traitDefaultsCollector: IRLowerer.TraitDefaultCollector = IRLowerer.TraitDefaultCollector(),
+        builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:],
         isAsync: Bool = false
     ) {
         self.functionName = functionName

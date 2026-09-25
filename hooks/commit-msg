@@ -4,7 +4,7 @@
 # ⛔ 这里原有一段 `[ast-walk]` 冻结门槛（走查删除前，改 `Interpreter.swift` /
 # `SuspendEvaluator.swift` 须在提交信息里带该标记）。`G-6c` 删掉走查后，门槛的
 # 对象与判据体一并作废：段已删，`tools/ast-walk-freeze-check.py` 也删了。
-# 留着它只会要求一个已经不存在的声明。历史见 docs/hir-ast-walk-freeze.md（已标作废）。
+# 留着它只会要求一个已经不存在的声明。历史见 docs/ir-ast-walk-freeze.md（已标作废）。
 #
 # 现存内容：无。本 hook 保留为挂载点 —— 下一条提交信息规则应加在这里，而不是新建 hook 文件。
 set -euo pipefail

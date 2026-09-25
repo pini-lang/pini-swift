@@ -138,8 +138,8 @@
 
 | 面 | 载体 | 行数 |
 |---|---|---|
-| 长效 | 语言规范 **5** · 语言参考 **2** · HIR 契约 **28** · 证据表 **6** · 决策记录第二号 **11** | **52** |
-| 源码 | `Sources/` 7 文件（其中 `PiniRuntime` 38 · `Scheduler` 7 · `IREmitter` 3 · `HIRExecutor` 3 · `HIRLowerer` 2 · `ConcurrencyCapabilities` 2 · `PredefinedDecls` 1） | **56** |
+| 长效 | 语言规范 **5** · 语言参考 **2** · IR 契约 **28** · 证据表 **6** · 决策记录第二号 **11** | **52** |
+| 源码 | `Sources/` 7 文件（其中 `PiniRuntime` 38 · `Scheduler` 7 · `IREmitter` 3 · `IRExecutor` 3 · `IRLowerer` 2 · `ConcurrencyCapabilities` 2 · `PredefinedDecls` 1） | **56** |
 | 测试 | `Tests/` 5 文件（其中 `ContractReferenceTests` 65 · `ConcurrencyRuntimeABITests` 18 · `ConcurrencyCapabilitiesTests` 5 · `ConcurrencyYieldTests` 4 · `ResultNarrowingTests` 1） | **93** |
 | — | **合计（含测试）** | **201** |
 
@@ -223,7 +223,7 @@
 
 | 面 | 文件 | 行 |
 |---|---|---|
-| 长效 | 语言规范 · 语言参考 · HIR 契约 · 证据表 · 决策记录第二号 | **53** |
+| 长效 | 语言规范 · 语言参考 · IR 契约 · 证据表 · 决策记录第二号 | **53** |
 | 源码 | `Sources/` 7 文件 | **57** |
 | 测试 | `Tests/` 5 文件 | **89** |
 | 工作件 | 4 份提案 | **375** |
@@ -266,7 +266,7 @@
 ### 10.5 ⛔ 一条**同族**发现（⛔ 本批未动，请裁）
 
 实测全仓另有 **20 行**是**同一个病根的另一种写法** —— 计数式**「引擎」**指代（「两台引擎」「各引擎」「该引擎」…），
-分布在：语言规范 4 · 落地计划 3 · 调度面提案 3 · HIR 契约 2 · C ABI 件 2 · 源码 3 · 测试 2 · 变更记录 1。
+分布在：语言规范 4 · 落地计划 3 · 调度面提案 3 · IR 契约 2 · C ABI 件 2 · 源码 3 · 测试 2 · 变更记录 1。
 
 ⚠️ **为什么不顺手清**：那会让**本批的量级再涨一截**，而「清『腿』」与「清『引擎』」是**同一判据的两次适用** ⇒
 按纪律**单列**（与 §7 待裁 2 同一处置方式：新发现的面**不并入旧答复**）。

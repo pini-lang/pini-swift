@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Capability sweep: measure LLVM-backend pass rate over the examples corpus.
-# For each .pini file records: legacy emit status, run-llvm status, HIR-pipeline
+# For each .pini file records: legacy emit status, run-llvm status, IR-pipeline
 # emit status, interpreter status.
 # Output: TSV at tools/capability-sweep.tsv
-#   (file \t emit \t llvm \t hir-emit \t interp \t note)
+#   (file \t emit \t llvm \t ir-emit \t interp \t note)
 # Re-run after each grid lands (LLVM rewrite M5) to refresh the matrix.
 # Every channel now runs the same pipeline: the M6 flip removed the
 # migration switch along with the legacy generator.
@@ -26,7 +26,7 @@ while IFS= read -r -d '' f; do
 
   emit_note=""
   llvm_note=""
-  hir_note=""
+  ir_note=""
   if "$BIN" emit "$f" > /dev/null 2> /tmp/cap-emit.err; then
     emit="PASS"
   else
@@ -45,11 +45,11 @@ while IFS= read -r -d '' f; do
     llvm="SKIP"
   fi
 
-  if "$BIN" emit "$f" > /dev/null 2> /tmp/cap-hir.err; then
-    hir="PASS"
+  if "$BIN" emit "$f" > /dev/null 2> /tmp/cap-ir.err; then
+    ir="PASS"
   else
-    hir="FAIL"
-    hir_note="$(head -c 160 /tmp/cap-hir.err | tr '\n\t' '  ')"
+    ir="FAIL"
+    ir_note="$(head -c 160 /tmp/cap-ir.err | tr '\n\t' '  ')"
   fi
 
   if "$BIN" run "$f" > /dev/null 2>&1; then
@@ -60,8 +60,8 @@ while IFS= read -r -d '' f; do
 
   note="$emit_note"
   [[ -n "$llvm_note" ]] && note="$note | llvm: $llvm_note"
-  [[ -n "$hir_note" ]] && note="$note | hir: $hir_note"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$rel" "$emit" "$llvm" "$hir" "$interp" "$note" >> "$OUT"
+  [[ -n "$ir_note" ]] && note="$note | ir: $ir_note"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$rel" "$emit" "$llvm" "$ir" "$interp" "$note" >> "$OUT"
 done < <(find "$REPO_ROOT/examples" -name "*.pini" -not -path "*/selfhost/*" -print0 | sort -z)
 
 echo "swept $total files -> $OUT"

@@ -17,8 +17,8 @@ enum ForeignThunk {
     // 按 AST 声明生成调用闭包（解释器侧的入口）。
     //
     // 本入口只做「解构」——实现全在下面那个核心入口里。拆开的理由不是好看：
-    // HIR 侧只携带签名（`HIRForeignFunction`），没有 `FuncDecl`，故 ABI 逻辑
-    // 必须能被离散地传进来，否则就得在 HIR 侧写第二份 —— 而第二份会漂。
+    // IR 侧只携带签名（`IRForeignFunction`），没有 `FuncDecl`，故 ABI 逻辑
+    // 必须能被离散地传进来，否则就得在 IR 侧写第二份 —— 而第二份会漂。
     static func make(symbol sym: UnsafeMutableRawPointer, decl: FuncDecl, location: SourceLocation) throws -> ([Value]) throws -> Value {
         try make(
             symbol: sym, name: decl.name,
@@ -29,7 +29,7 @@ enum ForeignThunk {
     /// 按「已展开的签名」生成调用闭包 —— 唯一实现，两条通道共用。
     ///
     /// - Parameter paramTypes: 与形参位置对齐的类型标注。保留可选性只为与 AST 侧
-    /// 同形（`Parameter.typeAnnotation` 是可选的）；HIR 侧传进来的必然非 nil。
+    /// 同形（`Parameter.typeAnnotation` 是可选的）；IR 侧传进来的必然非 nil。
     static func make(
         symbol sym: UnsafeMutableRawPointer, name: String,
         paramTypes: [TypeAnnotation?], returnTypes: [TypeAnnotation],
@@ -127,14 +127,14 @@ enum ForeignThunk {
 
     // MARK: - 类型编解码
 
-    /// HIR 类型 → C 顶层类型标注（HIR 侧入口的桥）。
+    /// IR 类型 → C 顶层类型标注（IR 侧入口的桥）。
     ///
-    /// HIR 只携带解析后的 `HIRType`，而 thunk 按 AST 的**类型标注**决定 ABI 路径。
-    /// 本桥只认 `HIRType` 里能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil，
+    /// IR 只携带解析后的 `IRType`，而 thunk 按 AST 的**类型标注**决定 ABI 路径。
+    /// 本桥只认 `IRType` 里能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil，
     /// 由调用方**报错** —— 不许退化成「无返回」：静默降级会让声明与调用悄悄不一致，
     /// 而这类不一致不会在调用点显形，只会在读回值时变成垃圾。
-    static func annotation(for type: HIRType) -> TypeAnnotation? {
-        let location = SourceLocation(line: 0, column: 0, fileName: "<hir>")
+    static func annotation(for type: IRType) -> TypeAnnotation? {
+        let location = SourceLocation(line: 0, column: 0, fileName: "<ir>")
         switch type {
         case .i8: return .simple(name: "I8", location: location)
         case .u8: return .simple(name: "U8", location: location)

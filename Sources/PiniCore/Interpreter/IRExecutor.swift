@@ -2,14 +2,14 @@ import Foundation
 
 /// How a `break` / `continue` / `return` leaves the statement layer.
 ///
-/// The HIR carries an unwind **depth** (`breakStmt(depth:)`), never a label: the
+/// The IR carries an unwind **depth** (`breakStmt(depth:)`), never a label: the
 /// lowerer resolves labels to depths (标签语法反转) and turns a target it cannot
 /// resolve into a `panicStmt`. So this engine's control vocabulary is depths, and
 /// it deliberately does *not* reuse the AST channel's `ControlSignal`, whose
 /// vocabulary is labels — squeezing a depth into a label field would mean
 /// re-deciding the mapping inside every loop, which is how two channels drift
 /// apart while both look correct.
-enum HIRControlSignal: Error {
+enum IRControlSignal: Error {
     /// Leave the enclosing function with this value; `nil` = void return.
     case returnSignal(Value?)
     /// Unwind `depth` enclosing loops; 1 = the innermost.
@@ -21,7 +21,7 @@ enum HIRControlSignal: Error {
 /// The half of a callable that a function *value* cannot carry.
 ///
 /// `Value.function` holds a `FunctionValue`, and a `FunctionValue` holds an AST
-/// `Block?` — it has no room for the lowered `[HIRStmt]` a closure body is. So
+/// `Block?` — it has no room for the lowered `[IRStmt]` a closure body is. So
 /// the body lives beside the value, in a table on the executor, and the value
 /// keeps only what it is good for here: identity, the environment it closes
 /// over, and the name a `print` shows.
@@ -29,10 +29,10 @@ enum HIRControlSignal: Error {
 /// No environment field: a closure's environment is fixed at the moment the
 /// closure is created, so it belongs with the value rather than with the body,
 /// and two closures over the same body must not share one.
-private struct HIRCallableBody {
+private struct IRCallableBody {
     /// Parameter names in declaration order — the order the arguments bind in.
     let paramNames: [String]
-    let body: HIRBlock
+    let body: IRBlock
     /// Component labels of a declared named-tuple return; empty when the return
     /// carries none, which is what the return-site rule reads.
     let returnLabels: [String?]
@@ -45,7 +45,7 @@ private struct HIRCallableBody {
     /// recorded here so the next reader finds it rather than deduces it.
     let isAsync: Bool
 
-    init(paramNames: [String], body: HIRBlock, returnLabels: [String?], isAsync: Bool = false) {
+    init(paramNames: [String], body: IRBlock, returnLabels: [String?], isAsync: Bool = false) {
         self.paramNames = paramNames
         self.body = body
         self.returnLabels = returnLabels
@@ -55,14 +55,14 @@ private struct HIRCallableBody {
 
 /// What one run of a body produced.
 ///
-/// Two outcomes and no third: a body either reached its end, or it stopped at a
+/// Two outcomes and no tird: a body either reached its end, or it stopped at a
 /// join and gave the task up. The distinction has to exist *somewhere* above the
 /// statement loop, because a caller that cannot tell them apart has no way to
 /// leave the worker thread — which is the whole difference between `await` and
 /// `wait`.
-private enum HIRBodyStep {
+private enum IRBodyStep {
     case finished(Value)
-    case givenUp(HIRYieldFrame)
+    case givenUp(IRYieldFrame)
 }
 
 /// A body that gave its task up, together with everything needed to pick it up.
@@ -80,9 +80,9 @@ private enum HIRBodyStep {
 /// The environment is here for the same reason, plus one of its own: it is not
 /// actually lost, it is *reachable* from the frame, and the resume path must put
 /// back the exact one the body was using rather than one rebuilt from arguments.
-private struct HIRYieldFrame {
+private struct IRYieldFrame {
     /// The callable whose body is part-way through.
-    let callable: HIRCallableBody
+    let callable: IRCallableBody
     /// The statement the body stopped in, counted in that body's statement list.
     let index: Int
     /// Finish the statement at `index` with the awaited value, then carry on.
@@ -104,7 +104,7 @@ private struct HIRYieldFrame {
     let lastValue: Value
     let callDepth: Int
     let callStackNames: [String]
-    let deferStack: [[HIRBlock]]
+    let deferStack: [[IRBlock]]
     let currentFuture: FutureValue?
 }
 
@@ -122,20 +122,20 @@ private struct HIRYieldFrame {
 /// The two halves cover the four shapes the corpus actually uses: a bare
 /// statement, a `var` initializer, a `match` scrutinee, and the operand of a
 /// try-else. See the proposal's section 7.5.8.2 for the measurement.
-private enum HIRYieldPlan {
+private enum IRYieldPlan {
     /// S1 — the join is the whole expression statement, so its value is the
     /// statement's value.
-    case expressionStatement(operand: HIRExpr)
+    case expressionStatement(operand: IRExpr)
     /// S2 — the join is a `var` initializer.
-    case varInitializer(operand: HIRExpr, name: String, type: HIRType, mutable: Bool)
+    case varInitializer(operand: IRExpr, name: String, type: IRType, mutable: Bool)
     /// S3 — the join is a `match` scrutinee.
-    case matchScrutinee(operand: HIRExpr, cases: [HIRMatchCase])
+    case matchScrutinee(operand: IRExpr, cases: [IRMatchCase])
     /// S4 — the join is the operand of a try-else.
-    case tryOperand(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?)
+    case tryOperand(operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?)
 
     /// The expression whose value is the future: evaluated synchronously, before
     /// any decision to give the task up is made.
-    var operand: HIRExpr {
+    var operand: IRExpr {
         switch self {
         case .expressionStatement(let operand),
             .varInitializer(let operand, _, _, _),
@@ -146,17 +146,17 @@ private enum HIRYieldPlan {
     }
 }
 
-/// Runs a lowered `HIRModule` directly — the third live channel of the LR-4
-/// unification, alongside the AST interpreter and HIR → LLVM.
+/// Runs a lowered `IRModule` directly — the tird live channel of the LR-4
+/// unification, alongside the AST interpreter and IR → LLVM.
 ///
 /// WHY THIS EXISTS
 ///
-/// The HIR was built to serve the LLVM backend alone (LR-2/LR-3). LR-4 makes it
+/// The IR was built to serve the LLVM backend alone (LR-2/LR-3). LR-4 makes it
 /// the single IR for *every* backend, so that "the same program means the same
 /// thing on every channel" stops being an assumption and becomes testable: this
 /// engine and the AST interpreter run the same source, and their output is
-/// compared byte for byte. Structure-level trust comes from the HIR contract
-/// (HIR 契约); execution-level trust comes from that
+/// compared byte for byte. Structure-level trust comes from the IR contract
+/// (IR 契约); execution-level trust comes from that
 /// cross-check. Neither replaces the other.
 ///
 /// GRID NUMBERS — TWO SCHEMES, ONE LETTER
@@ -181,9 +181,9 @@ private enum HIRYieldPlan {
 /// Two properties, deliberately kept apart:
 ///
 /// 1. **Coverage is a compile-time fact.** Every node in the contract is
-///    *dispatched* here, with no `default:`. Adding a case to `HIRExpr` or
-///    `HIRStmt` breaks this file until the node is acknowledged, which is what
-///    `tools/hir-contract-check.py` asserts from the outside.
+///    *dispatched* here, with no `default:`. Adding a case to `IRExpr` or
+///    `IRStmt` breaks this file until the node is acknowledged, which is what
+///    `tools/ir-contract-check.py` asserts from the outside.
 /// 2. **Only the delivered node set is *implemented*.** Grids land here a family
 ///    at a time: P1-2 (the scalar core — the four constants, `load`, `binary`,
 ///    `unary`, `call`, `printCall`, and `allocVar` / `storeVar` / `ifStmt` /
@@ -224,14 +224,14 @@ private enum HIRYieldPlan {
 /// are `Interpreter.stringifyValue` / `binaryValue` / `unaryValue`, extracted to
 /// statics in P1-2 for exactly this reuse. There is one place where "what `+`
 /// does" and "what a value prints as" are decided, so the channels cannot drift.
-/// What stays here is the HIR's own knowledge: which interpreter operator an
-/// `HIRBinaryOp` corresponds to (`operatorFor`).
+/// What stays here is the IR's own knowledge: which interpreter operator an
+/// `IRBinaryOp` corresponds to (`operatorFor`).
 ///
 /// P2a grid G6 added two more shared semantics rather than restating them:
 /// `Interpreter.matchArmMatches` ("does this arm fire on this value" — the
 /// value-level core the AST pattern predicate, the CPS evaluator and this engine
 /// all call) and `Interpreter.builtinGet` (the Optional read rules: negative
-/// tail-count, dictionary key equality, out-of-range → `none`). What the HIR
+/// tail-count, dictionary key equality, out-of-range → `none`). What the IR
 /// knows on its own is only the *shape*: an arm is "literal, wildcard, or case
 /// name" and a `match` scrutinee's static type, both of which the lowerer
 /// resolved already.
@@ -256,16 +256,16 @@ private enum HIRYieldPlan {
 /// - `break` / `continue` carry an unwind **depth**, not a label. This engine
 ///   consumes depth 1 and rethrows `depth - 1` with the current loop's step
 ///   skipped — which is exactly what a label mismatch does on the AST channel,
-///   so the depth is the same contract expressed in the vocabulary the HIR has.
+///   so the depth is the same contract expressed in the vocabulary the IR has.
 ///
 /// REGISTERED GAPS AT THIS STAGE
 ///
-/// - **Positions live on the block, not on the node** (P4-3). `HIRBlock`
+/// - **Positions live on the block, not on the node** (P4-3). `IRBlock`
 ///   carries a parallel `positions` array the lowerer fills, so a pause can name
 ///   the line a statement came from — the same `Statement.location` the
 ///   interpreter reports. Nodes stay position-free by design (the LLVM path
 ///   reports positions at *lowering* time), so a `RuntimeError` raised outside a
-///   statement loop — and HIR built by hand — still points at `noLocation`,
+///   statement loop — and IR built by hand — still points at `noLocation`,
 ///   which remains a placeholder rather than a line number.
 /// - ~~**No struct value-copy.**~~ ✅ **CLOSED** — re-measured `G-6c`, 2026-09-18.
 ///   The rule lives in `RuntimeOps.copyIfStruct` and **is** applied at all four
@@ -298,13 +298,13 @@ private enum HIRYieldPlan {
 /// This is grid P1-2 of the LR-4 interpreter unification, extended by
 /// P2a G4 (collections), P2a G2 (tuples), P2a G1 (control flow), P2a G6 (enums
 /// and the error model), P2a G5 (nominal types and fields) and P2a G3 (closures
-/// and function values): the HIR (HIR 契约) gains an execution engine that is not
+/// and function values): the IR (IR 契约) gains an execution engine that is not
 /// the LLVM emitter.
 ///
 /// Its debug surface conforms to `DebugHookHost`, the same shape the AST
 /// interpreter exposes, and both halves of it are live: `outputSink`, and a
 /// `debugHook` consulted before each statement on that statement's source line.
-public final class HIRExecutor: DebugHookHost {
+public final class IRExecutor: DebugHookHost {
 
     // MARK: - Host surface
 
@@ -330,22 +330,22 @@ public final class HIRExecutor: DebugHookHost {
     /// that does not exist — a debugger lying about where the program is, which
     /// is worse than a debugger that is not there yet. Wiring it was a call at
     /// the statement loop plus the position carrier, and the dormancy assertion
-    /// in `HIRExecutorTests` was inverted when that landed, so the boundary
+    /// in `IRExecutorTests` was inverted when that landed, so the boundary
     /// stays witnessed from both sides rather than being crossed silently.
     public var debugHook: ((DebugContext) throws -> DebugAction)? = nil
 
     // MARK: - Module state
 
-    /// Module-level functions by name. The HIR carries no closures at module
+    /// Module-level functions by name. The IR carries no closures at module
     /// level: `main` and its peers are the only callables. Closure values are
     /// their own node family and live in `callableBodies` instead.
     ///
     /// Trait default bodies arrive here too: the lowerer materialises them into
     /// module-level functions rather than into a type's method list.
-    private var functions: [String: HIRFunction] = [:]
+    private var functions: [String: IRFunction] = [:]
 
     /// Type methods by **lowered** name (`方法__类型`), flattened out of every
-    /// `HIRTypeDecl`.
+    /// `IRTypeDecl`.
     ///
     /// A method is not a module-level function and is kept in its own table for
     /// that reason — but a call to one is an ordinary `.call`, because the
@@ -353,12 +353,12 @@ public final class HIRExecutor: DebugHookHost {
     /// the receiver travels as the first argument. So this table exists to answer
     /// the question the call node asks, and the two are consulted in that order.
     ///
-    /// Keys come from each `HIRFunction.name` as lowered, never re-derived here:
+    /// Keys come from each `IRFunction.name` as lowered, never re-derived here:
     /// a generic type's methods live under its specialised name (`盒_I32`), and
     /// re-mangling on this side would be a second, drifting source of truth.
-    private var methods: [String: HIRFunction] = [:]
+    private var methods: [String: IRFunction] = [:]
 
-    private var types: [String: HIRTypeDecl] = [:]
+    private var types: [String: IRTypeDecl] = [:]
     /// ADR-001 `P2b`：默认实例的**记忆表**（类型名 → 物化好的实例）。
     ///
     /// 「恰一次」在这里是**自然**的：走查单线 ⇒ 首次取用物化并记住，之后直接返回缓存值。
@@ -366,7 +366,7 @@ public final class HIRExecutor: DebugHookHost {
     /// ⚠️ 表挂在走查器实例上 ⇒ 生命周期 = 一次运行，与「程序级唯一」在解释器语境下等价
     /// （一次 `run` 就是一个程序）。
     private var givenInstances: [String: Value] = [:]
-    private var enums: [String: HIREnumDecl] = [:]
+    private var enums: [String: IREnumDecl] = [:]
 
     /// The foreign callees this module declared, from `[名称|foreign]` blocks,
     /// keyed by callee name.
@@ -382,7 +382,7 @@ public final class HIRExecutor: DebugHookHost {
     /// against the block name (`[ffilib|foreign]` → `libffilib.dylib`), and the
     /// thunk wrapping the address needs the declared signature. A set could
     /// answer "is this foreign" but not "foreign to what, and shaped how".
-    private var foreignDecls: [String: (library: String, function: HIRForeignFunction)] = [:]
+    private var foreignDecls: [String: (library: String, function: IRForeignFunction)] = [:]
 
     /// Library handles for raw C bindings, cached by library name.
     ///
@@ -396,19 +396,19 @@ public final class HIRExecutor: DebugHookHost {
     private let ffiConfig: FFIConfig
 
     /// Bodies of the function *values* built while running, keyed by value
-    /// identity — see `HIRCallableBody` for why the body cannot travel inside
+    /// identity — see `IRCallableBody` for why the body cannot travel inside
     /// the value itself.
     ///
     /// Identity is the key, not the name: a closure literal has no name of its
     /// own (`<anon>` is what the parser gives every one of them), so a program
     /// with three closures would have three entries under one key and two of
-    /// them would silently call the third's body. Identity is also what this
+    /// them would silently call the tird's body. Identity is also what this
     /// codebase already means by "the same function value" — `Value.==` decides
     /// two function values are equal exactly when they are the same reference.
     ///
     /// Per-run state, not module state: the values in it are created during
     /// execution, so `prepare` clears it and nothing here survives a run.
-    private var callableBodies: [ObjectIdentifier: HIRCallableBody] = [:]
+    private var callableBodies: [ObjectIdentifier: IRCallableBody] = [:]
 
     private let globalEnv: Environment
 
@@ -460,7 +460,7 @@ public final class HIRExecutor: DebugHookHost {
     private let currentEnvStorage = ThreadLocal<Environment>()
     private let callDepthStorage = ThreadLocal<Int>()
     private let callStackStorage = ThreadLocal<[String]>()
-    private let deferStackStorage = ThreadLocal<[[HIRBlock]]>()
+    private let deferStackStorage = ThreadLocal<[[IRBlock]]>()
 
     /// The task this thread runs inside, when it runs inside one.
     ///
@@ -515,7 +515,7 @@ public final class HIRExecutor: DebugHookHost {
     /// reversed list would also invert a defer whose body lowered to more than
     /// one node — a difference that only shows up once such a body exists, which
     /// is the worst time to find it.
-    private var deferStack: [[HIRBlock]] {
+    private var deferStack: [[IRBlock]] {
         get { deferStackStorage.value ?? [] }
         set { deferStackStorage.value = newValue }
     }
@@ -563,7 +563,7 @@ public final class HIRExecutor: DebugHookHost {
     /// Register a module without running it. Mirrors
     /// `Interpreter.prepare(module:)`; lower-then-run is *not* folded into one
     /// call on purpose — lowering stays the caller's explicit step
-    /// (`HIRLowerer.lower(module:typeInference:)`), same split as the
+    /// (`IRLowerer.lower(module:typeInference:)`), same split as the
     /// interpreter taking an already-checked AST.
     /// 派发点当前后端的**能力自述**（只读，供诊断与判据）。
     ///
@@ -573,7 +573,7 @@ public final class HIRExecutor: DebugHookHost {
     /// 没有本属性，「派发点用语言侧那个调度器」这句话就**没有可观测面**。
     var dispatchBackEndCapabilities: ConcurrencyCapabilities { scheduler.capabilities }
 
-    public func prepare(module: HIRModule) throws {
+    public func prepare(module: IRModule) throws {
         callableBodies.removeAll()
         for function in module.functions { functions[function.name] = function }
         for decl in module.types {
@@ -618,7 +618,7 @@ public final class HIRExecutor: DebugHookHost {
         for (name, foreign) in foreignDecls where RuntimeOps.libcShims[name] == nil {
             _ = try ffiLoader.resolve(
                 library: foreign.library, symbol: name,
-                searchPaths: ffiConfig.searchPaths, location: HIRExecutor.noLocation
+                searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
             )
         }
     }
@@ -632,7 +632,7 @@ public final class HIRExecutor: DebugHookHost {
     /// ⚠️ 代价如实说：`prepare` 就抛出时也会打一行（那一次**没有执行**），
     /// 读数于是是**上一次运行留下的累计值** —— 闸门只由测试器械置位，而器械是「一个进程跑一个程序」，
     /// 故这一格今天不可达；⛔ 但它不是「不会发生」，是**今天用不到**。
-    public func run(module: HIRModule) throws {
+    public func run(module: IRModule) throws {
         defer { reportInterpreterYieldsIfGated() }
         try prepare(module: module)
         try executeMain()
@@ -640,7 +640,7 @@ public final class HIRExecutor: DebugHookHost {
 
     private func executeMain() throws {
         guard let main = functions["main"] else {
-            throw RuntimeError.mainNotFound(location: HIRExecutor.noLocation)
+            throw RuntimeError.mainNotFound(location: IRExecutor.noLocation)
         }
         _ = try call(main, args: [])
     }
@@ -658,8 +658,8 @@ public final class HIRExecutor: DebugHookHost {
     public func callFunction(named name: String, args: [Value]) throws -> Value {
         guard let function = functions[name] else {
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: no module-level function named \(name) to call",
-                location: HIRExecutor.noLocation
+                reason: "IR executor: no module-level function named \(name) to call",
+                location: IRExecutor.noLocation
             )
         }
         return try call(function, args: args)
@@ -669,19 +669,19 @@ public final class HIRExecutor: DebugHookHost {
 
     /// Placeholder position for every diagnostic out of this engine.
     ///
-    /// The file name says `<hir>` rather than `""` so that a diagnostic cannot be
+    /// The file name says `<ir>` rather than `""` so that a diagnostic cannot be
     /// mistaken for one with a real (if empty) file attached. See the class
     /// header's "no positions" gap.
-    static let noLocation = SourceLocation(line: 0, column: 0, fileName: "<hir>")
+    static let noLocation = SourceLocation(line: 0, column: 0, fileName: "<ir>")
 
     // MARK: - Expressions
 
-    private func evaluate(_ expr: HIRExpr) throws -> Value {
+    private func evaluate(_ expr: IRExpr) throws -> Value {
         switch expr {
 
         // MARK: Scalar constants
         // All integer widths collapse onto one runtime `int`, exactly as the
-        // interpreter models them (HIRType.u8/i8/u64 are ABI widths, not runtime
+        // interpreter models them (IRType.u8/i8/u64 are ABI widths, not runtime
         // distinctions) — so `intConst` ignores its carried type here.
 
         case .intConst(let value, _):
@@ -702,7 +702,7 @@ public final class HIRExecutor: DebugHookHost {
         case .binary(let op, let lhs, let rhs, _):
             let left = try evaluate(lhs)
             let right = try evaluate(rhs)
-            // P4-0: min/max lower to HIR operators but reach the interpreter as
+            // P4-0: min/max lower to IR operators but reach the interpreter as
             // builtin calls, so they have no operator to map onto. Call the
             // shared builtin instead of failing.
             switch op {
@@ -710,26 +710,26 @@ public final class HIRExecutor: DebugHookHost {
             case .maxOf: return try RuntimeOps.builtinMax(left, right)
             default: break
             }
-            guard let mapped = HIRExecutor.operatorFor(op) else {
+            guard let mapped = IRExecutor.operatorFor(op) else {
                 throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: binary operator '\(op)' has no interpreter "
+                    reason: "IR executor: binary operator '\(op)' has no interpreter "
                         + "counterpart (min/max are builtin calls on the AST channel)",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return try RuntimeOps.binaryValue(left, mapped, right)
 
         case .unary(let op, let operand, _):
-            // P4-0: same reason as min/max above -- abs lowers to a HIR unary
+            // P4-0: same reason as min/max above -- abs lowers to a IR unary
             // operator but is a builtin call on the interpreter channel.
             if case .abs = op {
                 return try RuntimeOps.builtinAbs(try evaluate(operand))
             }
-            guard let mapped = HIRExecutor.operatorFor(op) else {
+            guard let mapped = IRExecutor.operatorFor(op) else {
                 throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: unary operator '\(op)' has no interpreter "
+                    reason: "IR executor: unary operator '\(op)' has no interpreter "
                         + "counterpart (`abs` is a builtin call on the AST channel)",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return try RuntimeOps.unaryValue(mapped, try evaluate(operand))
@@ -739,7 +739,7 @@ public final class HIRExecutor: DebugHookHost {
             // unknown name is reported without running any argument expression —
             // the same order the interpreter uses.
             //
-            // Three kinds of callee reach this node, and the HIR does not
+            // Three kinds of callee reach this node, and the IR does not
             // distinguish them (the lowerer emits one node shape):
             //
             // - a module-level function, including the trait default bodies the
@@ -748,9 +748,9 @@ public final class HIRExecutor: DebugHookHost {
             //   prepended to the arguments;
             // - a registered builtin (`sqrt`, `abs`, `argv`, the file IO …),
             //   whose bodies live in the interpreter's `if fv.name == …` chain
-            //   rather than anywhere in the HIR.
+            //   rather than anywhere in the IR.
             //
-            // The first two are executed here. The third is **not answered, on
+            // The first two are executed here. The tird is **not answered, on
             // purpose** — a scope decision of this grid, not an oversight:
             // delegating the callee to a live `Interpreter` would run genuine
             // builtin semantics, file IO included, inside a channel whose own IO
@@ -785,16 +785,16 @@ public final class HIRExecutor: DebugHookHost {
                 if let shim = RuntimeOps.libcShims[name] { return try shim(args) }
                 let symbol = try ffiLoader.resolve(
                     library: foreign.library, symbol: name,
-                    searchPaths: ffiConfig.searchPaths, location: HIRExecutor.noLocation
+                    searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
                 )
                 let thunk = try ForeignThunk.make(
                     symbol: symbol, name: name,
                     paramTypes: try foreign.function.paramTypes.map { type in
                         guard let annotation = ForeignThunk.annotation(for: type) else {
                             throw RuntimeError.invalidOperation(
-                                reason: "HIR executor: foreign callee \(name) has a parameter "
+                                reason: "IR executor: foreign callee \(name) has a parameter "
                                     + "type that is not a C top-level type",
-                                location: HIRExecutor.noLocation
+                                location: IRExecutor.noLocation
                             )
                         }
                         return annotation
@@ -802,14 +802,14 @@ public final class HIRExecutor: DebugHookHost {
                     returnTypes: try foreign.function.returnType.map { type -> [TypeAnnotation] in
                         guard let annotation = ForeignThunk.annotation(for: type) else {
                             throw RuntimeError.invalidOperation(
-                                reason: "HIR executor: foreign callee \(name) has a return "
+                                reason: "IR executor: foreign callee \(name) has a return "
                                     + "type that is not a C top-level type",
-                                location: HIRExecutor.noLocation
+                                location: IRExecutor.noLocation
                             )
                         }
                         return [annotation]
                     } ?? [],
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
                 return try thunk(args)
             }
@@ -821,8 +821,8 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: intrinsic \(name) expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: intrinsic \(name) expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 switch name {
@@ -830,8 +830,8 @@ public final class HIRExecutor: DebugHookHost {
                 case "llvm.cos.f64": return try RuntimeOps.builtinCos(args[0])
                 default:
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: intrinsic \(name) has no interpreter counterpart",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: intrinsic \(name) has no interpreter counterpart",
+                        location: IRExecutor.noLocation
                     )
                 }
             }
@@ -841,8 +841,8 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: \(name) expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: \(name) expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 return try character(args)
@@ -853,7 +853,7 @@ public final class HIRExecutor: DebugHookHost {
             // exactly like the character builtins above.
             //
             // `sleep` blocks this thread and yields nothing; that is the whole of its
-            // HIR-side semantics. Its cancellation checkpoints are a no-op here, and
+            // IR-side semantics. Its cancellation checkpoints are a no-op here, and
             // deliberately so: this engine is single-threaded and holds no task
             // handle, so there is no context to check against. The shared rule takes
             // the checkpoint as a parameter precisely so the suspension grid can plug
@@ -875,8 +875,8 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: isCancel expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: isCancel expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 return .bool(RuntimeOps.isCancelErrorValue(args[0]))
@@ -885,8 +885,8 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: joinAll expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: joinAll expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 let owner = currentFuture
@@ -906,15 +906,15 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 2 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: joinWithin expects exactly two arguments",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: joinWithin expects exactly two arguments",
+                        location: IRExecutor.noLocation
                     )
                 }
                 guard case .future(let fut) = args[0] else {
                     throw RuntimeError.typeMismatch(
                         expected: "Future<T, Error>",
                         got: RuntimeOps.describeValueKind(args[0]),
-                        location: HIRExecutor.noLocation
+                        location: IRExecutor.noLocation
                     )
                 }
                 let milliseconds = try requireInt(args[1], for: "joinWithin timeout")
@@ -926,15 +926,15 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: cancel expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: cancel expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 guard case .future(let fut) = args[0] else {
                     throw RuntimeError.typeMismatch(
                         expected: "Future<T, Error>",
                         got: RuntimeOps.describeValueKind(args[0]),
-                        location: HIRExecutor.noLocation
+                        location: IRExecutor.noLocation
                     )
                 }
                 fut.cancel()
@@ -947,8 +947,8 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: F64 expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: F64 expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 return try RuntimeOps.builtinF64(args[0])
@@ -965,8 +965,8 @@ public final class HIRExecutor: DebugHookHost {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: sqrt expects exactly one argument",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: sqrt expects exactly one argument",
+                        location: IRExecutor.noLocation
                     )
                 }
                 return try RuntimeOps.builtinSqrt(args[0])
@@ -977,8 +977,8 @@ public final class HIRExecutor: DebugHookHost {
             if name == "argv" || name == "moduleRoot" {
                 guard arguments.isEmpty else {
                     throw RuntimeError.invalidOperation(
-                        reason: "HIR executor: \(name) takes no arguments",
-                        location: HIRExecutor.noLocation
+                        reason: "IR executor: \(name) takes no arguments",
+                        location: IRExecutor.noLocation
                     )
                 }
                 if name == "argv" {
@@ -987,12 +987,12 @@ public final class HIRExecutor: DebugHookHost {
                 return .string(programBase ?? FileManager.default.currentDirectoryPath)
             }
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: no module-level function named '\(name)' and no "
+                reason: "IR executor: no module-level function named '\(name)' and no "
                     + "type method lowered under that name. Builtin callees are not "
                     + "answered by this engine (no delegation to the interpreter — see "
                     + "the note on `call`), and stdlib methods are resolved through the "
-                    + "interpreter's Pini-source member table with no HIR surface yet",
-                location: HIRExecutor.noLocation
+                    + "interpreter's Pini-source member table with no IR surface yet",
+                location: IRExecutor.noLocation
             )
 
         case .printCall(let argument):
@@ -1034,7 +1034,7 @@ public final class HIRExecutor: DebugHookHost {
             return try SubscriptReadStrategy.read(
                 container: try evaluate(container),
                 index: try evaluate(index),
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
 
         case .lenCall(let argument):
@@ -1068,7 +1068,7 @@ public final class HIRExecutor: DebugHookHost {
             return try RuntimeOps.tupleElement(
                 try evaluate(base),
                 index: index,
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
 
         // MARK: Strings
@@ -1109,8 +1109,8 @@ public final class HIRExecutor: DebugHookHost {
             }
             guard let payload = payload else {
                 throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: optionalConstruct says some but carries no payload",
-                    location: HIRExecutor.noLocation
+                    reason: "IR executor: optionalConstruct says some but carries no payload",
+                    location: IRExecutor.noLocation
                 )
             }
             return .enumValue(EnumValue(caseName: "some", associatedValues: [try evaluate(payload)]))
@@ -1124,7 +1124,7 @@ public final class HIRExecutor: DebugHookHost {
                 receiver: try evaluate(container),
                 index: try evaluate(index),
                 checked: true,
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
 
         case .enumConstruct(let enumName, let caseName, let tag, let payloads, _, _):
@@ -1136,9 +1136,9 @@ public final class HIRExecutor: DebugHookHost {
             guard let enumCase = resolveEnumCase(enumName: enumName, caseName: caseName, tag: tag)
             else {
                 throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: enum construct '\(enumName).\(caseName)' has no "
+                    reason: "IR executor: enum construct '\(enumName).\(caseName)' has no "
                         + "declaration in this module (the lowerer registers it at lowering time)",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return .enumValue(
@@ -1188,9 +1188,9 @@ public final class HIRExecutor: DebugHookHost {
             // engine disagree — not a program error to be tolerated quietly.
             guard let target = functions[name] else {
                 throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: function value '\(name)' names no module-level "
+                    reason: "IR executor: function value '\(name)' names no module-level "
                         + "function in this module",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             // A named function closes over nothing: the interpreter registers
@@ -1201,7 +1201,7 @@ public final class HIRExecutor: DebugHookHost {
                 name: name,
                 paramNames: target.params.map { $0.name },
                 body: target.body,
-                returnLabels: HIRExecutor.declaredReturnLabels(target.returnType),
+                returnLabels: IRExecutor.declaredReturnLabels(target.returnType),
                 closure: globalEnv
             )
 
@@ -1212,7 +1212,7 @@ public final class HIRExecutor: DebugHookHost {
             // detail.
             let calleeValue = try evaluate(callee)
             guard case .function(let function) = calleeValue else {
-                throw RuntimeError.notCallable(location: HIRExecutor.noLocation)
+                throw RuntimeError.notCallable(location: IRExecutor.noLocation)
             }
             return try callFunctionValue(function, args: try arguments.map { try evaluate($0) })
 
@@ -1263,7 +1263,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .bool(let passed) = conditionValue else {
                 throw RuntimeError.invalidOperation(
                     reason: "assert 的参数 1 必须是 Bool（条件）",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             guard !passed else { return .null }
@@ -1272,14 +1272,14 @@ public final class HIRExecutor: DebugHookHost {
                 guard case .string(let m) = messageValue else {
                     throw RuntimeError.invalidOperation(
                         reason: "assert 的参数 2 必须是 String（消息）",
-                        location: HIRExecutor.noLocation
+                        location: IRExecutor.noLocation
                     )
                 }
                 text = m
             } else {
                 text = "assert failed"
             }
-            throw RuntimeError.assertionFailed(message: text, location: HIRExecutor.noLocation)
+            throw RuntimeError.assertionFailed(message: text, location: IRExecutor.noLocation)
 
         case .arrayJoin(let receiver, let separator):
             // Mirrors the interpreter's `join` arm: `stringify` each element and
@@ -1290,7 +1290,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .array(let elements) = try evaluate(receiver) else {
                 throw RuntimeError.invalidOperation(
                     reason: "join needs an Array receiver",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             let sep = try requireString(try evaluate(separator), for: "join")
@@ -1303,7 +1303,7 @@ public final class HIRExecutor: DebugHookHost {
             // branches), which are `String.uppercased()` / `.lowercased()`; the
             // LLVM emitter's byte-wise ASCII-only pass is the deviating side and
             // is filed as a B-group defect. Mirroring the contract here is
-            // therefore mirroring the interpreter, not choosing a third reading.
+            // therefore mirroring the interpreter, not choosing a tird reading.
             let text = try requireString(try evaluate(receiver), for: "upper/lower")
             return .string(isUpper ? text.uppercased() : text.lowercased())
 
@@ -1318,7 +1318,7 @@ public final class HIRExecutor: DebugHookHost {
             // This is the structural cost of a sunk method: the authority is Pini
             // source, which cannot be called from here without a cross-engine
             // call, so the grid carries a second copy of the algorithm. The copy
-            // is guarded by `HIRExecutorTests`' both-channel fixtures, which fail
+            // is guarded by `IRExecutorTests`' both-channel fixtures, which fail
             // the moment the two readings drift. Same shape as G4's `sliceCall`.
             let haystack = Array(try requireString(try evaluate(receiver), for: "contains"))
             let needleChars = Array(try requireString(try evaluate(needle), for: "contains"))
@@ -1416,7 +1416,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .rawPointer(let raw) = try evaluate(pointer) else {
                 throw RuntimeError.invalidOperation(
                     reason: "pointerLoad expects a *T pointer operand",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return try RuntimeOps.decodePointer(raw)
@@ -1427,7 +1427,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .rawPointer(let raw) = try evaluate(pointer) else {
                 throw RuntimeError.invalidOperation(
                     reason: "pointerStore expects a *T pointer operand",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             try RuntimeOps.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
@@ -1442,7 +1442,7 @@ public final class HIRExecutor: DebugHookHost {
             // non-blocking slot into a flip blocker.
             return try RuntimeOps.snapshotPointer(
                 of: try currentEnv.get(name: name),
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
 
         case .lazyRefConstruct(let closure, _):
@@ -1451,7 +1451,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .function(let function) = try evaluate(closure) else {
                 throw RuntimeError.invalidOperation(
                     reason: "lazyRefConstruct expects an initialiser closure",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return .lazyRef(LazyRefBox(initializer: function))
@@ -1463,7 +1463,7 @@ public final class HIRExecutor: DebugHookHost {
             guard case .lazyRef(let box) = try evaluate(handle) else {
                 throw RuntimeError.invalidOperation(
                     reason: "lazyRefValue expects a LazyRef handle",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return try box.value { function in
@@ -1484,7 +1484,7 @@ public final class HIRExecutor: DebugHookHost {
             } catch {
                 throw RuntimeError.invalidOperation(
                     reason: "IO 错误: 无法写入文件 \(writePath): \(error.localizedDescription)",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
 
@@ -1501,7 +1501,7 @@ public final class HIRExecutor: DebugHookHost {
             } catch {
                 throw RuntimeError.invalidOperation(
                     reason: "IO 错误: 无法读取文件 \(readPath): \(error.localizedDescription)",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
 
@@ -1543,7 +1543,7 @@ public final class HIRExecutor: DebugHookHost {
                 throw RuntimeError.typeMismatch(
                     expected: "Future<T, Error>",
                     got: RuntimeOps.describeValueKind(operand),
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             return RuntimeOps.joinFuture(fut, timeoutMs: nil, form: form)
@@ -1572,7 +1572,7 @@ public final class HIRExecutor: DebugHookHost {
         guard case .string(let text) = value else {
             throw RuntimeError.invalidOperation(
                 reason: "\(what) expects a String operand, got \(value)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         return text
@@ -1590,7 +1590,7 @@ public final class HIRExecutor: DebugHookHost {
         default:
             throw RuntimeError.invalidOperation(
                 reason: "\(what) expects a Char operand, got \(value)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
     }
@@ -1600,7 +1600,7 @@ public final class HIRExecutor: DebugHookHost {
         guard case .int(let number) = value else {
             throw RuntimeError.invalidOperation(
                 reason: "\(what) expects an integer operand, got \(value)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         return number
@@ -1613,7 +1613,7 @@ public final class HIRExecutor: DebugHookHost {
     /// miss on both is a real inconsistency (a module assembled by hand, or a
     /// declaration dropped between lowering and execution), so the caller fails
     /// loud rather than inventing an empty associated-value list.
-    private func resolveEnumCase(enumName: String, caseName: String, tag: Int) -> HIREnumCase? {
+    private func resolveEnumCase(enumName: String, caseName: String, tag: Int) -> IREnumCase? {
         guard let decl = enums[enumName] else { return nil }
         if let named = decl.cases.first(where: { $0.name == caseName }) { return named }
         guard decl.cases.indices.contains(tag) else { return nil }
@@ -1651,11 +1651,11 @@ public final class HIRExecutor: DebugHookHost {
     /// ⚠️ 取副本是**白拿**的：`Value.structInstance` 是值类型，返回缓存值即得一份拷贝
     /// （用户 2026-09-19 裁定：取实参的副本，与函数传参一致）。写实例自身字段因此不留痕，
     /// 而经引用字段往下写对所有取用点可见 —— 与发射层逐字同语义。
-    private func materializeGivenInstance(_ type: HIRType) throws -> Value {
+    private func materializeGivenInstance(_ type: IRType) throws -> Value {
         guard case .nominal(let name, _) = type else {
             throw RuntimeError.invalidOperation(
                 reason: "givenInstance 需要一个名义类型，实为 '\(type.llvmSpelling)'",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         if let cached = givenInstances[name] { return cached }
@@ -1700,11 +1700,11 @@ public final class HIRExecutor: DebugHookHost {
         return canYield
     }
 
-    private func constructValue(_ type: HIRType) throws -> Value {
+    private func constructValue(_ type: IRType) throws -> Value {
         guard case .nominal(let name, let isObject) = type else {
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: construct needs a nominal type, got '\(type)'",
-                location: HIRExecutor.noLocation
+                reason: "IR executor: construct needs a nominal type, got '\(type)'",
+                location: IRExecutor.noLocation
             )
         }
         var fieldValues: [String: Value] = [:]
@@ -1761,9 +1761,9 @@ public final class HIRExecutor: DebugHookHost {
             return value
         default:
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: field read '.\(field)' needs a nominal receiver, got "
+                reason: "IR executor: field read '.\(field)' needs a nominal receiver, got "
                     + "\(RuntimeOps.describeValueKind(base))",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
     }
@@ -1782,7 +1782,7 @@ public final class HIRExecutor: DebugHookHost {
     /// - it deep-copies the incoming value (`copyIfStruct`). No differential
     ///   fixture stores a struct into a field, so the rule has no observable
     ///   consequence *today* on either channel; it is a real hole the moment
-    ///   HIR replaces the AST engine, which is why it is filed as a defect
+    ///   IR replaces the AST engine, which is why it is filed as a defect
     ///   instead of either implemented blind or left unmentioned.
     /// - it applies the type-private gate to `_`-prefixed names — unreachable
     ///   for the reason `fieldRead` records (the checker rejects it statically,
@@ -1792,13 +1792,13 @@ public final class HIRExecutor: DebugHookHost {
     /// resolves the base and refuses non-nominal receivers, so the trailing
     /// branch reports an internal inconsistency with the interpreter's own
     /// wording, not a new rule.
-    private func storeField(base: HIRExpr, field: String, value: Value) throws {
+    private func storeField(base: IRExpr, field: String, value: Value) throws {
         let receiver = try evaluate(base)
         if case .load(let rootName, _) = base, rootName != "self",
             case .structInstance = receiver,
             let mutable = currentEnv.isMutable(name: rootName), !mutable
         {
-            throw RuntimeError.immutableVariable(name: rootName, location: HIRExecutor.noLocation)
+            throw RuntimeError.immutableVariable(name: rootName, location: IRExecutor.noLocation)
         }
         switch receiver {
         case .structInstance(let instance):
@@ -1808,17 +1808,17 @@ public final class HIRExecutor: DebugHookHost {
         default:
             throw RuntimeError.invalidOperation(
                 reason: "无法赋值的对象类型",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
     }
 
     private func missingField(_ field: String, on typeName: String) -> RuntimeError {
         RuntimeError.invalidOperation(
-            reason: "HIR executor: '\(typeName)' carries no field '\(field)' "
+            reason: "IR executor: '\(typeName)' carries no field '\(field)' "
                 + "(the lowerer resolves fields statically, so this is an internal "
                 + "inconsistency, not a gap in this engine)",
-            location: HIRExecutor.noLocation
+            location: IRExecutor.noLocation
         )
     }
 
@@ -1859,7 +1859,7 @@ public final class HIRExecutor: DebugHookHost {
         default:
             throw RuntimeError.invalidOperation(
                 reason: "slice needs an Array or String receiver, got \(container)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
     }
@@ -1875,19 +1875,19 @@ public final class HIRExecutor: DebugHookHost {
         guard case .int(let offset) = bound else {
             throw RuntimeError.invalidOperation(
                 reason: "slice bound must be an integer or the open-bound none, got \(bound)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         return offset < 0 ? count + offset : offset
     }
 
-    /// `HIRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the
+    /// `IRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the
     /// operation through a builtin call instead of an operator.
     ///
-    /// This mapping is HIR vocabulary and lives here; the *meaning* of each
+    /// This mapping is IR vocabulary and lives here; the *meaning* of each
     /// operator lives in `Interpreter.binaryValue`, so the two channels cannot
     /// drift into two semantics.
-    static func operatorFor(_ op: HIRBinaryOp) -> BinaryOperator? {
+    static func operatorFor(_ op: IRBinaryOp) -> BinaryOperator? {
         switch op {
         case .add: return .plus
         case .subtract: return .minus
@@ -1911,8 +1911,8 @@ public final class HIRExecutor: DebugHookHost {
         }
     }
 
-    /// `HIRUnaryOp` → `UnaryOperator`; see `operatorFor(_ op: HIRBinaryOp)`.
-    static func operatorFor(_ op: HIRUnaryOp) -> UnaryOperator? {
+    /// `IRUnaryOp` → `UnaryOperator`; see `operatorFor(_ op: IRBinaryOp)`.
+    static func operatorFor(_ op: IRUnaryOp) -> UnaryOperator? {
         switch op {
         case .negate: return .minus
         case .logicalNot: return .not
@@ -1960,7 +1960,7 @@ public final class HIRExecutor: DebugHookHost {
     /// what it means is: a signal thrown by a deferred statement is discarded, and
     /// whatever error is already unwinding keeps unwinding. "Fixing" this into a
     /// propagated error would invent a divergence rather than remove one.
-    private func executeBlock(_ block: HIRBlock) throws {
+    private func executeBlock(_ block: IRBlock) throws {
         pushDeferScope()
         defer { try? popDeferScope() }
         try executeStatements(block)
@@ -1983,7 +1983,7 @@ public final class HIRExecutor: DebugHookHost {
     /// carries none is skipped rather than reported with an invented line, so an
     /// unwired block can never make the debugger stop somewhere fictional.
     @discardableResult
-    private func executeStatements(_ block: HIRBlock) throws -> Value {
+    private func executeStatements(_ block: IRBlock) throws -> Value {
         var lastValue: Value = .null
         for (index, statement) in block.enumerated() {
             if debugHook != nil, let location = block.position(at: index) {
@@ -2023,7 +2023,7 @@ public final class HIRExecutor: DebugHookHost {
         }
     }
 
-    private func execute(_ statement: HIRStmt) throws {
+    private func execute(_ statement: IRStmt) throws {
         switch statement {
 
         case .allocVar(let name, let type, let mutable, let initializer):
@@ -2046,7 +2046,7 @@ public final class HIRExecutor: DebugHookHost {
             // carries one entry per field (`[nil, nil]`), and relabelling with
             // those nils would *wipe* names the value already had. Which slot
             // types arrive here named is decided at lowering time
-            // (`HIRLowerer.slotType`), because only there is the initializer's
+            // (`IRLowerer.slotType`), because only there is the initializer's
             // static type still visible — the deciding fact is whether the
             // declaration names more than the value-producing expression's own
             // type does, and two bindings otherwise identical can differ on it.
@@ -2067,7 +2067,7 @@ public final class HIRExecutor: DebugHookHost {
             try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
-            // Each branch is its own defer scope. The HIR folds `elif` chains
+            // Each branch is its own defer scope. The IR folds `elif` chains
             // into a nested `ifStmt` in `elseBody`, so a chain of three branches
             // is three scopes here for the same reason it is three on the AST
             // channel — the interpreter reaches each `Block` through
@@ -2083,20 +2083,20 @@ public final class HIRExecutor: DebugHookHost {
             } else {
                 do {
                     try executeIfBranch(condition: condition, thenBody: thenBody, elseBody: elseBody)
-                } catch let signal as HIRControlSignal {
+                } catch let signal as IRControlSignal {
                     switch signal {
                     case .breakSignal(let depth):
                         // `depth == 1` ⇒ this frame is the target: the `break`
                         // leaves the block and control resumes after the `if`.
                         // Anything deeper belongs to an enclosing frame and is
                         // rethrown one level shallower.
-                        if depth > 1 { throw HIRControlSignal.breakSignal(depth: depth - 1) }
+                        if depth > 1 { throw IRControlSignal.breakSignal(depth: depth - 1) }
                     case .continueSignal(let depth):
                         // An `if` frame is never a `continue` target
                         // (`continue` resolves to loop frames only), so a
                         // signal reaching here is aimed further out and its
                         // residual depth is >= 2.
-                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                        throw IRControlSignal.continueSignal(depth: depth - 1)
                     default:
                         throw signal
                     }
@@ -2107,7 +2107,7 @@ public final class HIRExecutor: DebugHookHost {
             try executeWhile(condition: condition, body: body, step: step)
 
         case .returnStmt(let value):
-            throw HIRControlSignal.returnSignal(try value.map { try evaluate($0) })
+            throw IRControlSignal.returnSignal(try value.map { try evaluate($0) })
 
         case .exprStmt(let expr):
             // Dropped here; `executeStatements` is what captures it as the body's
@@ -2155,16 +2155,16 @@ public final class HIRExecutor: DebugHookHost {
             guard !deferStack.isEmpty else {
                 throw RuntimeError.invalidOperation(
                     reason: "defer 必须在块作用域内使用",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             deferStack[deferStack.count - 1].append(body)
 
         case .breakStmt(let depth):
-            throw HIRControlSignal.breakSignal(depth: depth)
+            throw IRControlSignal.breakSignal(depth: depth)
 
         case .continueStmt(let depth):
-            throw HIRControlSignal.continueSignal(depth: depth)
+            throw IRControlSignal.continueSignal(depth: depth)
 
         case .detachStmt(let inner):
             // `detach <expr>` (G-3c-1): prune the task from its parent so the
@@ -2181,7 +2181,7 @@ public final class HIRExecutor: DebugHookHost {
                 throw RuntimeError.typeMismatch(
                     expected: "Future<T, Error>",
                     got: RuntimeOps.describeValueKind(operand),
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             fut.detachFromParent()
@@ -2191,7 +2191,7 @@ public final class HIRExecutor: DebugHookHost {
             // only discovers at run time — and is passed through verbatim.
             throw RuntimeError.invalidOperation(
                 reason: message,
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
 
         // MARK: Try / match (P2a grid G6)
@@ -2243,7 +2243,7 @@ public final class HIRExecutor: DebugHookHost {
     /// `case c(名: x)` to declaration order and rejected the out-of-order forms,
     /// so the interpreter's run-time name lookup has no counterpart here. `nil` is
     /// the `_` placeholder — it holds a position without binding anything.
-    private func executeArm(_ arm: HIRMatchCase, scrutinee value: Value) throws {
+    private func executeArm(_ arm: IRMatchCase, scrutinee value: Value) throws {
         let caseEnv = Environment(enclosing: currentEnv)
         if case .enumValue(let ev) = value {
             // The interpreter's arity gate, kept: bindings that do not line up with
@@ -2254,7 +2254,7 @@ public final class HIRExecutor: DebugHookHost {
                 throw RuntimeError.arityMismatch(
                     expected: ev.associatedValues.count,
                     got: arm.bindings.count,
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             for (index, name) in arm.bindings.enumerated() {
@@ -2285,7 +2285,7 @@ public final class HIRExecutor: DebugHookHost {
     /// (top-down COW: `bk_handle_ensure_unique` on the root slot, in-place
     /// `*_ensure_unique_at` for the intermediate levels). The two chains are
     /// compared on the output, not on the mechanism.
-    private func storeSubscript(target: HIRExpr, index: Value, newValue: Value) throws {
+    private func storeSubscript(target: IRExpr, index: Value, newValue: Value) throws {
         switch target {
         case .load(let name, _):
             let current = try currentEnv.get(name: name)
@@ -2293,7 +2293,7 @@ public final class HIRExecutor: DebugHookHost {
                 container: current,
                 index: index,
                 newValue: newValue,
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
             try currentEnv.assign(name: name, value: updated)
 
@@ -2304,7 +2304,7 @@ public final class HIRExecutor: DebugHookHost {
                 container: innerContainer,
                 index: index,
                 newValue: newValue,
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
             try storeSubscript(target: inner, index: innerIndexValue, newValue: updated)
 
@@ -2314,9 +2314,9 @@ public final class HIRExecutor: DebugHookHost {
             // job (`fieldStore`), so it fails loud here instead of silently
             // writing into a copy.
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: subscript store target is neither a variable nor a "
+                reason: "IR executor: subscript store target is neither a variable nor a "
                     + "nested subscript (field targets arrive with fieldStore)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
     }
@@ -2338,7 +2338,7 @@ public final class HIRExecutor: DebugHookHost {
     /// fires), and the static type has already done its work in the lowerer,
     /// where it chose which arm family to build. Reading it here would create a
     /// second dispatch that could disagree with the value.
-    private func runMatch(_ cases: [HIRMatchCase], scrutinee value: Value) throws {
+    private func runMatch(_ cases: [IRMatchCase], scrutinee value: Value) throws {
         for arm in cases {
             guard
                 RuntimeOps.matchArmMatches(
@@ -2357,7 +2357,7 @@ public final class HIRExecutor: DebugHookHost {
         // coverable.
         if case .enumValue(let ev) = value {
             throw RuntimeError.matchNotExhaustive(
-                value: ev.caseName, location: HIRExecutor.noLocation
+                value: ev.caseName, location: IRExecutor.noLocation
             )
         }
     }
@@ -2367,7 +2367,7 @@ public final class HIRExecutor: DebugHookHost {
     private func runTryResult(
         _ result: Value,
         errorVar: String,
-        handler: HIRBlock,
+        handler: IRBlock,
         okTarget: String?
     ) throws {
         guard case .enumValue(let ev) = result,
@@ -2376,7 +2376,7 @@ public final class HIRExecutor: DebugHookHost {
             throw RuntimeError.typeMismatch(
                 expected: "Result",
                 got: RuntimeOps.describeValueKind(result),
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         let payload = ev.associatedValues.first ?? .null
@@ -2405,13 +2405,13 @@ public final class HIRExecutor: DebugHookHost {
         for statement in handler { try execute(statement) }
     }
 
-    private func evaluateCondition(_ expr: HIRExpr) throws -> Bool {
+    private func evaluateCondition(_ expr: IRExpr) throws -> Bool {
         let value = try evaluate(expr)
         guard case .bool(let flag) = value else {
             throw RuntimeError.typeMismatch(
                 expected: "bool",
                 got: "\(value)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         return flag
@@ -2421,9 +2421,9 @@ public final class HIRExecutor: DebugHookHost {
     /// layer in the `ifStmt` case can wrap the selection without restating it
     /// — the selection is the same whether or not the `if` carries a label.
     private func executeIfBranch(
-        condition: HIRExpr,
-        thenBody: HIRBlock,
-        elseBody: HIRBlock?
+        condition: IRExpr,
+        thenBody: IRBlock,
+        elseBody: IRBlock?
     ) throws {
         if try evaluateCondition(condition) {
             try executeBlock(thenBody)
@@ -2444,23 +2444,23 @@ public final class HIRExecutor: DebugHookHost {
     ///   loop does not match, and a mismatched label is rethrown from the body
     ///   or the step without the step ever running.
     /// - a `return` propagates unchanged, depths being a loop affair only.
-    private func executeWhile(condition: HIRExpr, body: HIRBlock, step: HIRBlock?) throws {
+    private func executeWhile(condition: IRExpr, body: IRBlock, step: IRBlock?) throws {
         while true {
             if try !evaluateCondition(condition) { break }
 
             var shouldRunStep = true
             do {
                 try executeBlock(body)
-            } catch let signal as HIRControlSignal {
+            } catch let signal as IRControlSignal {
                 switch signal {
                 case .breakSignal(let depth):
                     if depth == 1 { return }
-                    throw HIRControlSignal.breakSignal(depth: depth - 1)
+                    throw IRControlSignal.breakSignal(depth: depth - 1)
                 case .continueSignal(let depth):
                     if depth == 1 {
                         shouldRunStep = true
                     } else {
-                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                        throw IRControlSignal.continueSignal(depth: depth - 1)
                     }
                 default:
                     throw signal
@@ -2470,14 +2470,14 @@ public final class HIRExecutor: DebugHookHost {
             if shouldRunStep, let step = step {
                 do {
                     try executeBlock(step)
-                } catch let signal as HIRControlSignal {
+                } catch let signal as IRControlSignal {
                     switch signal {
                     case .breakSignal(let depth):
                         if depth == 1 { return }
-                        throw HIRControlSignal.breakSignal(depth: depth - 1)
+                        throw IRControlSignal.breakSignal(depth: depth - 1)
                     case .continueSignal(let depth):
                         if depth == 1 { continue }
-                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                        throw IRControlSignal.continueSignal(depth: depth - 1)
                     default:
                         throw signal
                     }
@@ -2503,10 +2503,10 @@ public final class HIRExecutor: DebugHookHost {
     ///   the same rule as `executeWhile`, so the two loops are one contract.
     private func executeForIn(
         pattern: [String],
-        kind: HIRForIterableKind,
-        iterable: HIRExpr,
-        body: HIRBlock,
-        step: HIRBlock?
+        kind: IRForIterableKind,
+        iterable: IRExpr,
+        body: IRBlock,
+        step: IRBlock?
     ) throws {
         let iterValue = try evaluate(iterable)
         var rows: [[Value]] = []
@@ -2517,7 +2517,7 @@ public final class HIRExecutor: DebugHookHost {
         case (.array, .array(let elements)), (.set, .set(let elements)):
             rows = try elements.map {
                 try RuntimeOps.decomposePatternRow(
-                    $0, patternCount: pattern.count, location: HIRExecutor.noLocation
+                    $0, patternCount: pattern.count, location: IRExecutor.noLocation
                 )
             }
         case (.dict, .dictionary(let pairs)):
@@ -2525,7 +2525,7 @@ public final class HIRExecutor: DebugHookHost {
                 throw RuntimeError.typeMismatch(
                     expected: "字典迭代需 2 字段模式元组 (k, v)",
                     got: "\(pattern.count) 字段",
-                    location: HIRExecutor.noLocation
+                    location: IRExecutor.noLocation
                 )
             }
             rows = pairs.map { [$0.0, $0.1] }
@@ -2533,7 +2533,7 @@ public final class HIRExecutor: DebugHookHost {
             throw RuntimeError.typeMismatch(
                 expected: "可迭代集合（数组/字典/集合）",
                 got: "\(iterValue)",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
 
@@ -2547,16 +2547,16 @@ public final class HIRExecutor: DebugHookHost {
 
             do {
                 try executeBlock(body)
-            } catch let signal as HIRControlSignal {
+            } catch let signal as IRControlSignal {
                 switch signal {
                 case .breakSignal(let depth):
                     currentEnv = previousEnv
                     if depth == 1 { return }
-                    throw HIRControlSignal.breakSignal(depth: depth - 1)
+                    throw IRControlSignal.breakSignal(depth: depth - 1)
                 case .continueSignal(let depth):
                     if depth > 1 {
                         currentEnv = previousEnv
-                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                        throw IRControlSignal.continueSignal(depth: depth - 1)
                     }
                 // Aimed at this loop: the step still runs, and it runs in
                 // the loop environment — so `currentEnv` deliberately stays
@@ -2570,16 +2570,16 @@ public final class HIRExecutor: DebugHookHost {
             if let step = step {
                 do {
                     try executeBlock(step)
-                } catch let signal as HIRControlSignal {
+                } catch let signal as IRControlSignal {
                     switch signal {
                     case .breakSignal(let depth):
                         currentEnv = previousEnv
                         if depth == 1 { return }
-                        throw HIRControlSignal.breakSignal(depth: depth - 1)
+                        throw IRControlSignal.breakSignal(depth: depth - 1)
                     case .continueSignal(let depth):
                         currentEnv = previousEnv
                         if depth == 1 { continue }
-                        throw HIRControlSignal.continueSignal(depth: depth - 1)
+                        throw IRControlSignal.continueSignal(depth: depth - 1)
                     default:
                         currentEnv = previousEnv
                         throw signal
@@ -2603,7 +2603,7 @@ public final class HIRExecutor: DebugHookHost {
     private func makeFunctionValue(
         name: String,
         paramNames: [String],
-        body: HIRBlock,
+        body: IRBlock,
         returnLabels: [String?],
         closure: Environment
     ) -> Value {
@@ -2612,7 +2612,7 @@ public final class HIRExecutor: DebugHookHost {
             params: paramNames.map { Parameter(name: $0) },
             closure: closure
         )
-        callableBodies[ObjectIdentifier(function)] = HIRCallableBody(
+        callableBodies[ObjectIdentifier(function)] = IRCallableBody(
             paramNames: paramNames,
             body: body,
             returnLabels: returnLabels
@@ -2624,7 +2624,7 @@ public final class HIRExecutor: DebugHookHost {
     /// tuple (`-> (商: I32, 余: I32,)`). A scalar, a positional tuple and a
     /// void return all yield nothing, and `applyReturnLabels` then leaves the
     /// value untouched.
-    private static func declaredReturnLabels(_ type: HIRType?) -> [String?] {
+    private static func declaredReturnLabels(_ type: IRType?) -> [String?] {
         guard let type = type, case .tuple(let labels, _) = type else { return [] }
         return labels
     }
@@ -2635,12 +2635,12 @@ public final class HIRExecutor: DebugHookHost {
     /// environment is the global one and its labels come from its declared
     /// return type. Together with the function-value case in `evaluate` this is
     /// the whole of "how a call happens" — see `invoke` for why that matters.
-    private func call(_ function: HIRFunction, args: [Value]) throws -> Value {
+    private func call(_ function: IRFunction, args: [Value]) throws -> Value {
         try invoke(
-            HIRCallableBody(
+            IRCallableBody(
                 paramNames: function.params.map { $0.name },
                 body: function.body,
-                returnLabels: HIRExecutor.declaredReturnLabels(function.returnType),
+                returnLabels: IRExecutor.declaredReturnLabels(function.returnType),
                 isAsync: function.isAsync
             ),
             parent: globalEnv,
@@ -2681,16 +2681,16 @@ public final class HIRExecutor: DebugHookHost {
     private func callFunctionValue(_ function: FunctionValue, args: [Value]) throws -> Value {
         guard let callable = callableBodies[ObjectIdentifier(function)] else {
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: a function value with no registered body "
+                reason: "IR executor: a function value with no registered body "
                     + "(hand-built, or carried in from another run) cannot be called",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
         return try invoke(callable, parent: function.closure, args: args, name: function.name)
     }
 
     private func invoke(
-        _ callable: HIRCallableBody,
+        _ callable: IRCallableBody,
         parent: Environment,
         args: [Value],
         name: String
@@ -2699,7 +2699,7 @@ public final class HIRExecutor: DebugHookHost {
             throw RuntimeError.arityMismatch(
                 expected: callable.paramNames.count,
                 got: args.count,
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
 
@@ -2723,7 +2723,7 @@ public final class HIRExecutor: DebugHookHost {
     /// wrong shows up as a leak warning at best and a silently dropped failure
     /// at worst.
     private func spawnAsync(
-        _ callable: HIRCallableBody, parent: Environment, args: [Value], name: String
+        _ callable: IRCallableBody, parent: Environment, args: [Value], name: String
     ) throws -> Value {
         let future = FutureValue()
         currentFuture?.addChild(future)
@@ -2732,8 +2732,8 @@ public final class HIRExecutor: DebugHookHost {
         scheduler.spawn(future) { [weak self] in
             guard let self = self else {
                 throw RuntimeError.invalidOperation(
-                    reason: "HIR executor: the engine was released while an async body ran",
-                    location: HIRExecutor.noLocation
+                    reason: "IR executor: the engine was released while an async body ran",
+                    location: IRExecutor.noLocation
                 )
             }
             let previousFuture = self.currentFuture
@@ -2748,7 +2748,7 @@ public final class HIRExecutor: DebugHookHost {
                     // The strict structured rule's closing act: cancel whatever
                     // was never joined, and let a failure that nobody consumed
                     // surface at this boundary instead of vanishing.
-                    return .finished(HIRExecutor.closeTask(future, value: result))
+                    return .finished(IRExecutor.closeTask(future, value: result))
                 case .givenUp(let frame):
                     // The thread goes back to the pool with nothing sent to the
                     // future. The body is not done, and the resumer owns
@@ -2785,7 +2785,7 @@ public final class HIRExecutor: DebugHookHost {
     /// resume where none can exist, which is a defect in the driver and not a
     /// program outcome, so it is named rather than papered over.
     private func invokeBody(
-        _ callable: HIRCallableBody,
+        _ callable: IRCallableBody,
         parent: Environment,
         args: [Value],
         name: String
@@ -2795,9 +2795,9 @@ public final class HIRExecutor: DebugHookHost {
             return value
         case .givenUp:
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: a synchronous body gave its task up at a join "
+                reason: "IR executor: a synchronous body gave its task up at a join "
                     + "— the yield envelope and the driver disagree about what can suspend",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
     }
@@ -2811,11 +2811,11 @@ public final class HIRExecutor: DebugHookHost {
     /// cleanup — and must leave the worker thread clean, which `standDown` does
     /// and the comment there explains.
     private func invokeBodyStep(
-        _ callable: HIRCallableBody,
+        _ callable: IRCallableBody,
         parent: Environment,
         args: [Value],
         name: String
-    ) throws -> HIRBodyStep {
+    ) throws -> IRBodyStep {
         guard callDepth < RuntimeOps.maxCallDepth else {
             throw RuntimeOps.recursionGuardError()
         }
@@ -2839,7 +2839,7 @@ public final class HIRExecutor: DebugHookHost {
         // `defer`s, because a suspended body must not take either of them.
         pushDeferScope()
 
-        let step: HIRBodyStep
+        let step: IRBodyStep
         do {
             step = try bodyOutcome(returnLabels: callable.returnLabels) {
                 try self.driveStatements(
@@ -2876,14 +2876,14 @@ public final class HIRExecutor: DebugHookHost {
     /// and their environment is the one in the frame. Re-entering through the
     /// prologue would rebind them over a body that has already moved past them,
     /// which is how a resumed body would quietly restart with fresh parameters.
-    private func resumeBody(_ frame: HIRYieldFrame, awaited: Value) throws -> HIRBodyStep {
+    private func resumeBody(_ frame: IRYieldFrame, awaited: Value) throws -> IRBodyStep {
         currentEnv = frame.env
         callDepth = frame.callDepth
         callStackNames = frame.callStackNames
         deferStack = frame.deferStack
         currentFuture = frame.currentFuture
 
-        let step: HIRBodyStep
+        let step: IRBodyStep
         do {
             step = try bodyOutcome(returnLabels: frame.callable.returnLabels) {
                 try self.driveStatements(
@@ -2935,11 +2935,11 @@ public final class HIRExecutor: DebugHookHost {
     /// signal belongs to a loop or a function further out and is rethrown intact.
     private func bodyOutcome(
         returnLabels: [String?],
-        _ run: () throws -> HIRBodyStep
-    ) throws -> HIRBodyStep {
+        _ run: () throws -> IRBodyStep
+    ) throws -> IRBodyStep {
         do {
             return try run()
-        } catch let signal as HIRControlSignal {
+        } catch let signal as IRControlSignal {
             if case .returnSignal(let value) = signal {
                 // P2a G2: the interpreter's return-site rule, fed from the declared
                 // return type instead of the AST's `returnLabels` (the engine
@@ -2978,13 +2978,13 @@ public final class HIRExecutor: DebugHookHost {
     ///   yielding is absent"), so treating it as an error would have this batch
     ///   change a program's meaning instead of adding a capability to it.
     private func driveStatements(
-        _ callable: HIRCallableBody,
+        _ callable: IRCallableBody,
         previousEnv: Environment,
         from index: Int,
         lastValue: Value,
         yieldable: Bool,
         pending: (resume: (Value) throws -> Value?, value: Value)?
-    ) throws -> HIRBodyStep {
+    ) throws -> IRBodyStep {
         let body = callable.body
         var last = lastValue
         var position = index
@@ -3009,7 +3009,7 @@ public final class HIRExecutor: DebugHookHost {
                     throw RuntimeError.typeMismatch(
                         expected: "Future<T, Error>",
                         got: RuntimeOps.describeValueKind(operand),
-                        location: HIRExecutor.noLocation
+                        location: IRExecutor.noLocation
                     )
                 }
 
@@ -3019,7 +3019,7 @@ public final class HIRExecutor: DebugHookHost {
                 // and observably calmer, since it costs no task switch to collect
                 // a child that has already finished.
                 //
-                // The third case is the back end answering "not this time". `await`
+                // The tird case is the back end answering "not this time". `await`
                 // promises to give the task up, but that promise needs a back end
                 // that can hand the OS thread back, and a back end that cannot is
                 // not a broken configuration — it is a compliant one (DE-1 §6.2
@@ -3035,7 +3035,7 @@ public final class HIRExecutor: DebugHookHost {
                     if let updated = try finishYield(plan, value: value) { last = updated }
                 } else if scheduler.yieldTask() == 1 {
                     return .givenUp(
-                        HIRYieldFrame(
+                        IRYieldFrame(
                             callable: callable,
                             index: position,
                             finish: { [weak self] value in
@@ -3079,9 +3079,9 @@ public final class HIRExecutor: DebugHookHost {
     }
 
     /// The statement positions the driver knows how to give the task up at, and
-    /// only those. See `HIRYieldPlan` for why this is a whitelist.
-    private func yieldPlan(for statement: HIRStmt) -> HIRYieldPlan? {
-        let plan: HIRYieldPlan?
+    /// only those. See `IRYieldPlan` for why this is a whitelist.
+    private func yieldPlan(for statement: IRStmt) -> IRYieldPlan? {
+        let plan: IRYieldPlan?
         switch statement {
         case .exprStmt(.join(let operand, _, .awaits)):
             plan = .expressionStatement(operand: operand)
@@ -3115,7 +3115,7 @@ public final class HIRExecutor: DebugHookHost {
     ///
     /// Returning `nil` means "this statement did not contribute a value", which is
     /// the loop's `lastValue` rule: only an expression statement does.
-    private func finishYield(_ plan: HIRYieldPlan, value: Value) throws -> Value? {
+    private func finishYield(_ plan: IRYieldPlan, value: Value) throws -> Value? {
         switch plan {
         case .expressionStatement:
             return value
@@ -3146,7 +3146,7 @@ public final class HIRExecutor: DebugHookHost {
     /// 哪件东西是驱动层自己的事 ⇒ 策略层那份队列**不必**认识任务、也不必认识帧。
     private struct ReadyItem {
         let task: FutureValue
-        let frame: HIRYieldFrame
+        let frame: IRYieldFrame
         /// 让出时等到的那个值 —— 推进它时随调用带进去（本后端的取值形态）。
         let value: Value
     }
@@ -3197,7 +3197,7 @@ public final class HIRExecutor: DebugHookHost {
     ///
     /// ⚠️ 帧与任务**成对**存：同一批里的帧属于**不同的任务**（一个任务同时只有一个未决帧）。
     private struct PendingFrame {
-        let frame: HIRYieldFrame
+        let frame: IRYieldFrame
         let task: FutureValue
     }
     private var framesAwaitingSettle: [ObjectIdentifier: [PendingFrame]] = [:]
@@ -3236,7 +3236,7 @@ public final class HIRExecutor: DebugHookHost {
     ///
     /// - Returns: 真的入队了 ⇒ `true`（入不了队时已就地处置，见下）。
     @discardableResult
-    private func offerToStrategy(frame: HIRYieldFrame, task: FutureValue, value: Value) -> Bool {
+    private func offerToStrategy(frame: IRYieldFrame, task: FutureValue, value: Value) -> Bool {
         readyLock.lock()
         let handle = nextReadyHandle
         nextReadyHandle += 1
@@ -3261,7 +3261,7 @@ public final class HIRExecutor: DebugHookHost {
     /// 调策略层的「收下」。接收者走**首个实参位** —— 类型方法的既定调用形态。
     private func strategyAccept(handle: Int) throws {
         guard let accept = methods[strategyMethodKeys.accept] else {
-            throw HIRExecutor.missingStrategyMethod(PredefinedDecls.acceptMethodName)
+            throw IRExecutor.missingStrategyMethod(PredefinedDecls.acceptMethodName)
         }
         strategyLock.lock()
         defer { strategyLock.unlock() }
@@ -3271,7 +3271,7 @@ public final class HIRExecutor: DebugHookHost {
     /// 问策略层「下一个是谁」，并把答案落成一件待推进项。
     private func strategyPick() throws -> ReadyTake {
         guard let pick = methods[strategyMethodKeys.pick] else {
-            throw HIRExecutor.missingStrategyMethod(PredefinedDecls.pickMethodName)
+            throw IRExecutor.missingStrategyMethod(PredefinedDecls.pickMethodName)
         }
         strategyLock.lock()
         let answered: Value
@@ -3282,14 +3282,14 @@ public final class HIRExecutor: DebugHookHost {
             strategyLock.unlock()
             throw error
         }
-        guard let handle = HIRExecutor.handleNumber(answered) else {
+        guard let handle = IRExecutor.handleNumber(answered) else {
             throw RuntimeError.invalidOperation(
-                reason: "HIR executor: the scheduler's '选择下一个任务' answered \(answered),"
+                reason: "IR executor: the scheduler's '选择下一个任务' answered \(answered),"
                     + " which is not a handle",
-                location: HIRExecutor.noLocation
+                location: IRExecutor.noLocation
             )
         }
-        guard handle != HIRExecutor.emptyHandle else { return .empty }
+        guard handle != IRExecutor.emptyHandle else { return .empty }
         readyLock.lock()
         let item = readyItems.removeValue(forKey: handle)
         readyLock.unlock()
@@ -3299,9 +3299,9 @@ public final class HIRExecutor: DebugHookHost {
 
     private static func missingStrategyMethod(_ name: String) -> RuntimeError {
         RuntimeError.invalidOperation(
-            reason: "HIR executor: the scheduler has no '\(name)' method — "
+            reason: "IR executor: the scheduler has no '\(name)' method — "
                 + "the preset declaration or the program's replacement lacks it",
-            location: HIRExecutor.noLocation
+            location: IRExecutor.noLocation
         )
     }
 
@@ -3350,7 +3350,7 @@ public final class HIRExecutor: DebugHookHost {
                 take = try strategyPick()
             } catch {
                 trustworthy = false
-                HIRExecutor.reportStrategyDefect("\(error)")
+                IRExecutor.reportStrategyDefect("\(error)")
                 break drain
             }
             switch take {
@@ -3363,7 +3363,7 @@ public final class HIRExecutor: DebugHookHost {
                 break drain
             case .unknown(let handle):
                 trustworthy = false
-                HIRExecutor.reportStrategyDefect(
+                IRExecutor.reportStrategyDefect(
                     "it named handle \(handle), which was never handed out")
                 break drain
             }
@@ -3404,7 +3404,7 @@ public final class HIRExecutor: DebugHookHost {
     /// while the body waits, so a task that awaits a child costs a continuation
     /// instead of a worker — which is what makes the bounded pool a bound rather
     /// than a queue of parked threads.
-    private func attachResume(_ frame: HIRYieldFrame, task: FutureValue) {
+    private func attachResume(_ frame: IRYieldFrame, task: FutureValue) {
         let key = ObjectIdentifier(frame.awaited)
         readyLock.lock()
         let isFirstOfBatch = framesAwaitingSettle[key] == nil
@@ -3453,11 +3453,11 @@ public final class HIRExecutor: DebugHookHost {
     }
 
     /// Run a resumed body to its next stopping point and settle the task.
-    private func completeResumedRun(_ frame: HIRYieldFrame, task: FutureValue, value: Value) {
+    private func completeResumedRun(_ frame: IRYieldFrame, task: FutureValue, value: Value) {
         do {
             switch try resumeBody(frame, awaited: value) {
             case .finished(let result):
-                task.resolve(HIRExecutor.closeTask(task, value: result))
+                task.resolve(IRExecutor.closeTask(task, value: result))
             case .givenUp(let next):
                 // 续跑这一趟也让出了，而它不由派发口驱动 ⇒ 记账要在这里补一次。
                 // ⚠️ 漏掉这一句，本后端的让出计数就只数得到**首跑那一趟**，

@@ -9,7 +9,7 @@ import Testing
 /// 绝不能从任何一个后端的输出回抄 —— 回抄会把这一层塌回「实现与它自己一致」。
 ///
 /// 各后端的形状刻意不同，理由是**在不在场**比对称更重要：
-///   - 解释器后端**进程内**跑：与命令行的 `run` 是同一个后端（单文件 run 走的就是 HIR 执行），
+///   - 解释器后端**进程内**跑：与命令行的 `run` 是同一个后端（单文件 run 走的就是 IR 执行），
 ///     且**零环境依赖** ⇒ 裸跑一次回归就有真覆盖，不需要谁先记得设变量。
 ///   - LLVM 后端要 `lli`，只能走**子进程**命令行 ⇒ 它需要 `PINI_CLI_BIN` 与 `PINI_LLVM_BIN`。
 ///     缺变量时**报「本臂未参与」并让跳过可见**（`known issue` 计数），不静默通过 ——
@@ -502,9 +502,9 @@ struct ContractReferenceTests {
         // 降载会在检查器弹出作用域之后重推 match 的 scrutinee 类型，需持久表兜底
         // （命令行各执行入口同款）。
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
         var lines: [String] = []
-        let executor = HIRExecutor(
+        let executor = IRExecutor(
             programBase: Self.fixtureDirectory.path, ffiConfig: .default, scheduler: scheduler)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: lowered)

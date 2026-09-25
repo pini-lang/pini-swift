@@ -9,7 +9,7 @@ import Foundation
 /// evaluates the AST directly. That made the test suite the last place still
 /// pinned to the AST walk: 429 cases across 51 files drove `Interpreter` for
 /// execution alone, so deleting the walk (P4-gamma) would have taken them with
-/// it — and with them the only evidence that the HIR engine runs real
+/// it — and with them the only evidence that the IR engine runs real
 /// programs, as opposed to selected corpus fixtures.
 ///
 /// This type keeps the surface those callers actually use and implements it as
@@ -17,7 +17,7 @@ import Foundation
 ///     check -> lower -> execute
 ///
 /// on the engine the default flip (`P4-alpha`) selected. The front end is the
-/// same `TypeChecker` and the same `HIRLowerer` the CLI's other HIR paths use,
+/// same `TypeChecker` and the same `IRLowerer` the CLI's other IR paths use,
 /// which is what makes this a migration rather than a second implementation.
 ///
 /// WHAT IT DOES NOT OFFER
@@ -63,7 +63,7 @@ public final class ProgramRunner: DebugHookHost {
     /// Consumed on both the run and test paths since P4-gamma `G-4`: it reaches
     /// the executor, which resolves raw C bindings against `search_paths`. That
     /// is what made a module with vendored libraries behave the same on both
-    /// engines — before `G-4` the HIR side refused such a symbol outright,
+    /// engines — before `G-4` the IR side refused such a symbol outright,
     /// which was a capability regression on the default engine.
     public let ffiConfig: FFIConfig
 
@@ -103,8 +103,8 @@ public final class ProgramRunner: DebugHookHost {
         // read as a variable and reported as "reference to undeclared
         // variable 'helper'". Same merge, same entry, so the two paths cannot
         // disagree about what an import brings in.
-        let (merged, aliasMap) = try HIRLowerer.mergedWithImports(module)
-        let lowered = try HIRLowerer.lower(
+        let (merged, aliasMap) = try IRLowerer.mergedWithImports(module)
+        let lowered = try IRLowerer.lower(
             module: merged, typeInference: checker.typeInference, moduleAliases: aliasMap
         )
         try execute(lowered)
@@ -114,7 +114,7 @@ public final class ProgramRunner: DebugHookHost {
     ///
     /// Mirrors `Interpreter.run(package:)`: a single-unit package *is* one
     /// module and goes down the module path; anything larger merges into one
-    /// virtual module through `HIRLowerer.lower(package:)` — the same entry the
+    /// virtual module through `IRLowerer.lower(package:)` — the same entry the
     /// LLVM package channel already uses.
     public func run(package: Package) throws {
         guard package.fileUnits.count > 1 else {
@@ -133,12 +133,12 @@ public final class ProgramRunner: DebugHookHost {
         // last, so the latter cannot mask the former.
         try requireMain(in: package)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try HIRLowerer.lower(package: package, typeInference: checker.typeInference)
+        let lowered = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
         try execute(lowered)
     }
 
-    private func execute(_ module: HIRModule) throws {
-        let executor = HIRExecutor(programBase: programBase, ffiConfig: ffiConfig)
+    private func execute(_ module: IRModule) throws {
+        let executor = IRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
         executor.processArguments = processArguments
         executor.debugHook = debugHook
@@ -175,7 +175,7 @@ public final class ProgramRunner: DebugHookHost {
     /// function here would delete a working program shape rather than migrate
     /// it.
     ///
-    /// Type checking happens first, and not to tighten anything: the HIR is a
+    /// Type checking happens first, and not to tighten anything: the IR is a
     /// typed tree, so lowering cannot proceed without the checker's inference.
     /// The AST path's `runTests` did no checking of its own either — its
     /// callers checked — and that division is unchanged.
@@ -188,8 +188,8 @@ public final class ProgramRunner: DebugHookHost {
             )
         }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let (merged, aliasMap) = try HIRLowerer.mergedWithImports(module)
-        let lowered = try HIRLowerer.lower(
+        let (merged, aliasMap) = try IRLowerer.mergedWithImports(module)
+        let lowered = try IRLowerer.lower(
             module: merged, typeInference: checker.typeInference,
             moduleAliases: aliasMap, requiresMain: false
         )
@@ -208,7 +208,7 @@ public final class ProgramRunner: DebugHookHost {
         let checker = TypeChecker()
         try checker.check(package: package)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try HIRLowerer.lower(
+        let lowered = try IRLowerer.lower(
             package: package, typeInference: checker.typeInference, requiresMain: false
         )
         return try runCollectedTests(lowered, fileScope: fileScope)
@@ -219,10 +219,10 @@ public final class ProgramRunner: DebugHookHost {
     /// `prepare` (not `run`) on purpose: `run` would go looking for `main`,
     /// which a test-only module does not have.
     private func runCollectedTests(
-        _ module: HIRModule,
+        _ module: IRModule,
         fileScope: ((String) -> Bool)? = nil
     ) throws -> [TestRunResult] {
-        let executor = HIRExecutor(programBase: programBase, ffiConfig: ffiConfig)
+        let executor = IRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
         executor.processArguments = processArguments
         try executor.prepare(module: module)
@@ -238,7 +238,7 @@ public final class ProgramRunner: DebugHookHost {
     ///
     /// A failing test is a result, not an abort — one failure must not hide the
     /// tests after it. Same rule as the AST path's `executeCollectedTest`.
-    private func runOneTest(_ function: HIRFunction, on executor: HIRExecutor) -> TestRunResult {
+    private func runOneTest(_ function: IRFunction, on executor: IRExecutor) -> TestRunResult {
         let args = function.params.map { Self.zeroValue(forTestParam: $0.type) }
         do {
             _ = try executor.callFunction(named: function.name, args: args)
@@ -255,7 +255,7 @@ public final class ProgramRunner: DebugHookHost {
     /// because a test that passes on one engine and fails on the other would
     /// make the two channels disagree about the language rather than about the
     /// implementation.
-    static func zeroValue(forTestParam type: HIRType) -> Value {
+    static func zeroValue(forTestParam type: IRType) -> Value {
         switch type {
         case .i8, .u8, .i32, .i64, .u64: return .int(0)
         case .f64: return .float(0)
@@ -368,7 +368,7 @@ public final class ProgramRunner: DebugHookHost {
 
 // MARK: - Errors
 
-/// What can refuse a program before it runs on the HIR path.
+/// What can refuse a program before it runs on the IR path.
 public enum ProgramRunError: LocalizedError {
     /// The program does not type-check. The AST walk's single-file path did not
     /// check, so this is a new refusal rather than a new defect — see the

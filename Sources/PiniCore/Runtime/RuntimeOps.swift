@@ -6,7 +6,7 @@ import Foundation
 /// WHY THIS EXISTS (LR-4 G-1)
 ///
 /// `P4-gamma` deletes the AST walk, and `Interpreter` with it. But `Interpreter`
-/// also carried helpers the *surviving* engine uses: `HIRExecutor` references
+/// also carried helpers the *surviving* engine uses: `IRExecutor` references
 /// two dozen of them, `Value` another two. They are the leftover of the P4-0 and
 /// P4-1b single-sourcing -- the implementations were extracted into one place,
 /// and that place was still `Interpreter`.
@@ -35,7 +35,7 @@ public enum RuntimeOps {
     ///
     /// Both engines owe this rule at every binding and store site, and the AST
     /// walk used to be its only home -- as an *instance* method, which is also why
-    /// the HIR executor could not reach it. The flip deletes that home, so the rule
+    /// the IR executor could not reach it. The flip deletes that home, so the rule
     /// moves to the shared carrier and `Interpreter` keeps a forwarder. The body
     /// never touches `self` and is pure over `Value`, so this is a move rather than
     /// a redesign -- the test every member of this enum has to pass.
@@ -140,7 +140,7 @@ public enum RuntimeOps {
 
     /// `F64(value)` -- the numeric value constructor (`BuiltinRegistry` `F64`,
     /// group `.value`). A float passes through unchanged; an integer widens. The
-    /// AST walk used to do this inline (G-P1), but the HIR executor owes the same
+    /// AST walk used to do this inline (G-P1), but the IR executor owes the same
     /// rule, and this is where the shared members live now.
     static func builtinF64(_ value: Value) throws -> Value {
         switch value {
@@ -154,7 +154,7 @@ public enum RuntimeOps {
         }
     }
 
-    /// The Array member face the HIR path answers by name (`G-2S`). Each entry
+    /// The Array member face the IR path answers by name (`G-2S`). Each entry
     /// takes the receiver first and then the call's arguments, and returns exactly
     /// what the AST walk's member dispatch returns -- these are its rules, moved to
     /// the shared carrier so the two engines cannot drift apart.
@@ -553,7 +553,7 @@ public enum RuntimeOps {
             ))
     }
 
-    static func matchArmMatches(caseName: String?, literal: HIRMatchLiteral?, value: Value) -> Bool {
+    static func matchArmMatches(caseName: String?, literal: IRMatchLiteral?, value: Value) -> Bool {
         if let literal = literal {
             switch literal {
             case .int(let n):
@@ -833,7 +833,7 @@ public enum RuntimeOps {
     /// Shared rather than duplicated because the wording is load-bearing: the
     /// depth guard's contract is "a diagnosable error instead of a stack
     /// overflow", and a caller matching on the reason (the guard's own test
-    /// does) can only match one wording. The HIR executor had an English
+    /// does) can only match one wording. The IR executor had an English
     /// sentence here while the interpreter had a Chinese one, so the same
     /// runaway recursion read as two different failures.
     static func recursionGuardError() -> RuntimeError {
@@ -887,9 +887,9 @@ public enum RuntimeOps {
     ///
     /// The checkpoint is a parameter because the two engines legitimately
     /// differ here. The AST channel holds a task handle and passes a real
-    /// check; the HIR channel has no cancellation context yet and passes a
+    /// check; the IR channel has no cancellation context yet and passes a
     /// no-op. That difference is recorded rather than hidden — when the
-    /// suspension grid gives the HIR executor a task handle, this is the one
+    /// suspension grid gives the IR executor a task handle, this is the one
     /// place it plugs into, and until then a no-op is the honest answer
     /// instead of a check against a context that does not exist.
     static func builtinSleep(milliseconds ms: Int, checkpoint: () throws -> Void) throws -> Value {
@@ -932,7 +932,7 @@ public enum RuntimeOps {
     /// The cancellation error value.
     ///
     /// Moved out of the interpreter so the constructor's two callers — the AST
-    /// channel's by-name chain and the HIR executor's table — build the same
+    /// channel's by-name chain and the IR executor's table — build the same
     /// value from the same rule rather than from two copies of it.
     static func makeCancelError(_ message: String) -> Value {
         .structInstance(
@@ -967,7 +967,7 @@ public enum RuntimeOps {
     /// Whether a value is a cancellation error — the `isCancel(e)` predicate.
     ///
     /// Moved out of the interpreter so the AST channel's by-name chain and the
-    /// HIR executor's arm read one rule. `Error` and `CancelError` are
+    /// IR executor's arm read one rule. `Error` and `CancelError` are
     /// structurally identical (one `message` field each), and this type name is
     /// the only thing that tells them apart — which is why the predicate exists
     /// at all rather than a string comparison at every call site.
@@ -996,7 +996,7 @@ public enum RuntimeOps {
     /// ends here rather than at an arbitrary instruction.
     ///
     /// Shared for the same reason as the predicates above, and it was the last
-    /// one still copied: the interpreter held one and the HIR executor held a
+    /// one still copied: the interpreter held one and the IR executor held a
     /// private one, so the rule could not be asserted from the outside without
     /// naming one of the two engines. A cancellation that ended a task on one
     /// engine and not the other would be a difference in the language rather

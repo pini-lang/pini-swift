@@ -8,14 +8,14 @@ import Testing
 /// 当前任务）与 `wait`（任意上下文等待、**占用**当前线程）。管线**曾经完全分辨不出**它们：
 /// 两个关键字产出同一个节点、关键字当场丢掉，运行时只能去问一个**生产面零赋值点**的模式开关；
 /// 那个开关随挂起模式退役一并消失之后，两种形态就再没有任何可分之处。补上的载体是一个
-/// `form` 字段，从 `Parser` 一路带到 HIR 节点。
+/// `form` 字段，从 `Parser` 一路带到 IR 节点。
 ///
 /// **本件不测让出**，因为让出**还没实现** —— 引擎是树走查，任务的状态就是机器栈，要在 join 处
 /// 让出、稍后从精确恢复点续跑，得先有「体可恢复」这一层。当下两种形态都按**阻塞**处理，
 /// `await` **降级为 `wait`**；降级方向是合规的（让出可选、join 不可选），但它与「让出」的
 /// 字面语义不符，这一点由缺口登记承载，不由一条假装通过的判据掩盖。
 ///
-/// ⇒ 本件钉的是**载体不丢**：`form` 必须一路到得了 HIR（否则下游无从分辨），
+/// ⇒ 本件钉的是**载体不丢**：`form` 必须一路到得了 IR（否则下游无从分辨），
 /// 且两种形态的**运行结果一致**（降级是当前的合规行为，不是回归）。
 ///
 /// 每条用例三要素齐备：意图写在显示名与首行注释；推进性测量断言期望行为**发生**；
@@ -39,16 +39,16 @@ struct ConcurrencyJoinFormTests {
     }
 
     /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {
         var lines: [String] = []
-        let executor = HIRExecutor(programBase: NSTemporaryDirectory())
+        let executor = IRExecutor(programBase: NSTemporaryDirectory())
         executor.outputSink = { lines.append($0) }
         try executor.run(module: try lowered(source))
         return lines
@@ -87,14 +87,14 @@ struct ConcurrencyJoinFormTests {
         return
     """#
 
-    // MARK: - 判据 1：载体一路到得了 HIR（正向）
+    // MARK: - 判据 1：载体一路到得了 IR（正向）
 
-    @Test("HIR 打印面回显写的是哪个关键字 —— 两种形态在降载结果里不再混成同一样子")
+    @Test("IR 打印面回显写的是哪个关键字 —— 两种形态在降载结果里不再混成同一样子")
     func theFormSurvivesLowering() throws {
-        /// 意图：`form` 从 Parser 带到 HIR，且**在唯一能看见降载结果的地方**（打印面）
+        /// 意图：`form` 从 Parser 带到 IR，且**在唯一能看见降载结果的地方**（打印面）
         /// 能被读出。若载体在中途被丢掉，两者都会退化成同一个词 —— 那正是补载体之前的
         /// 状态，也正是本判据要挡住的东西。
-        let dump = HIRPrinter.dump(module: try lowered(Self.bothForms))
+        let dump = IRPrinter.dump(module: try lowered(Self.bothForms))
         #expect(dump.contains("wait("), "occupying form missing from the lowered dump")
         #expect(dump.contains("await("), "yielding form missing from the lowered dump")
     }

@@ -40,10 +40,10 @@ struct ConcurrencyYieldTests {
         return (module, checker)
     }
 
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
     /// 同一段程序，两个关键字只差一个词 —— 这是判据的最小语料。
@@ -159,7 +159,7 @@ struct ConcurrencyYieldTests {
         var lines: [String] = []
         var finished = false
 
-        let executor = HIRExecutor(programBase: NSTemporaryDirectory())
+        let executor = IRExecutor(programBase: NSTemporaryDirectory())
         executor.outputSink = { line in
             lock.lock()
             lines.append(line)
@@ -203,7 +203,7 @@ struct ConcurrencyYieldTests {
     ) throws -> (yields: Int, lines: [String]) {
         let module = try lowered(source)
         var lines: [String] = []
-        let executor = HIRExecutor(
+        let executor = IRExecutor(
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: counting)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: module)

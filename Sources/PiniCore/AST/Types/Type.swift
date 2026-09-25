@@ -66,7 +66,7 @@ extension TypeAnnotation {
         case (.function(let ap, let ar, _, _, _), .function(let bp, let br, _, _, _)):
             // ⚠️ 第 4 个关联值（取用下标集合，ADR-001 §2.6）**刻意用 `_` 接住、不参与比较**：
             // 取用位是「声明 ↔ 调用」的配对信息，不是类型恒等的一部分（用户 2026-09-19 裁定）。
-            // HIR 面的同口径落在 `HIRLowerer.labelInsensitiveEqual` 的 `.function` 分支，
+            // IR 面的同口径落在 `IRLowerer.labelInsensitiveEqual` 的 `.function` 分支，
             // 两处必须同口径 —— 判据各钉一条。
             return ap.count == bp.count
                 && zip(ap, bp).allSatisfy { $0.isStructurallyEquivalent(to: $1) }

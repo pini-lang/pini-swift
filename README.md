@@ -256,8 +256,8 @@ graph TD
     F --> G[Interpreter 解释执行]
     G --> H[Output]
 
-    F --> HIR[HIRLowerer AST+类型 → HIR]
-    HIR --> I[IREmitter HIR → IR 文本]
+    F --> IR[IRLowerer AST+类型 → IR]
+    IR --> I[IREmitter IR → IR 文本]
     I --> J[clang / lli 编译执行]
     J --> K[PiniRuntime C ABI shim]
     K --> H
@@ -268,7 +268,7 @@ graph TD
 
 > 双后端：解释器（`pini run`，始终可用）与 LLVM 后端（`emit`/`compile`/`run-llvm`，需 LLVM 工具链；运行时经 `PiniRuntime` 动态库 C ABI shim 提供服务）。`RuntimeBackendTests` 保证两后端逐字节一致。
 >
-> LLVM 后端已于 2026-09-12 完成重写（LLVM 后端重写）：`HIR` 中间层（类型决策单点）成为**唯一代码生成路径**，旧的直接发射后端已整体删除；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
+> LLVM 后端已于 2026-09-12 完成重写（LLVM 后端重写）：`IR` 中间层（类型决策单点）成为**唯一代码生成路径**，旧的直接发射后端已整体删除；执行计划与决策台账见 `docs/issue-llvm-rewrite-plan-2026-09-07.md`。
 
 ### 目录结构
 
@@ -284,8 +284,8 @@ Pini/
 │   │   ├── Semantic/         # 语义分析
 │   │   ├── Type/             # 类型系统
 │   │   ├── Interpreter/      # 解释器（并发运行时；⚠️ SuspendScheduler 已随挂起模式退役、待删）
-│   │   ├── HIR/              # 高级中间表示（类型化树；HIRLowerer 类型决策单点）
-│   │   ├── CodeGen/          # LLVM IR 生成（只消费 HIR，纯机械发射）
+│   │   ├── IR/              # 高级中间表示（类型化树；IRLowerer 类型决策单点）
+│   │   ├── CodeGen/          # LLVM IR 生成（只消费 IR，纯机械发射）
 │   │   ├── LSP/              # 语言服务器
 │   │   ├── Debugger/         # 源码级调试器 / DAP
 │   │   └── Common/           # 公共组件

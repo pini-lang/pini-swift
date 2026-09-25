@@ -53,9 +53,9 @@ struct SchedulerDefaultInstanceTests {
         let errors = checker.checkCollecting(module: module)
         guard errors.isEmpty else { throw errors[0] }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
         var lines: [String] = []
-        let executor = HIRExecutor(
+        let executor = IRExecutor(
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: GCDScheduler.shared)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: lowered)

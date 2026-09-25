@@ -37,9 +37,9 @@ struct ConcurrentAwaitContextTests {
         guard typeErrors.isEmpty else { throw typeErrors[0] }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         do {
-            _ = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+            _ = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
             return nil
-        } catch let error as HIRLowerer.HIRLoweringError {
+        } catch let error as IRLowerer.IRLoweringError {
             return error.code
         }
     }

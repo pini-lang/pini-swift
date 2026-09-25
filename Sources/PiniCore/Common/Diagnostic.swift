@@ -295,7 +295,7 @@ extension RuntimeError: DiagnosticProviding {
 /// feature" bucket. Those codes are registered in the diagnostic catalogue,
 /// and keeping the domain means they survive the change of producer instead
 /// of being retired by accident.
-extension HIRLowerer.HIRLoweringError: DiagnosticProviding {
+extension IRLowerer.IRLoweringError: DiagnosticProviding {
     public var diagnosticCode: String { code }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
     public var suggestion: String? { nil }

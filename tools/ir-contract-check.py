@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Cross-check the HIR contract against the node set and the backend anchors.
+"""Cross-check the IR contract against the node set and the backend anchors.
 
 WHY THIS EXISTS
 ---------------
-`HIR 契约` makes `docs/spec/hir-contract.md` the semantic authority for HIR nodes
+`IR 契约` makes `docs/spec/ir-contract.md` the semantic authority for IR nodes
 and requires every backend to agree with it. That claim is only worth something
 if drift is detectable without a human reading 60 entries every time. This is
 the mechanical half of the judging stack (plan section 8, layer 2); the probe
-(`tools/hir-parity-probe.py`) covers the behavioural half by running code.
+(`tools/ir-parity-probe.py`) covers the behavioural half by running code.
 
 WHY THE FIRST RUN MATTERED
 --------------------------
@@ -20,7 +20,7 @@ rather than this script being loosened. Expect it to keep finding things.
 THREE SIDES, BOTH DIRECTIONS
 ----------------------------
     contract      sections 2 and 3 entry tables in the contract
-    node set      HIRExpr / HIRStmt cases in HIRNode.swift
+    node set      IRExpr / IRStmt cases in IRNode.swift
     impl anchors  `case .<node>` dispatch sites, per backend
 
     contract-without-node    an entry names a node the enum does not declare
@@ -37,12 +37,12 @@ Keeping the two apart is what stops this script from growing into a second,
 worse parity probe.
 
 A backend that does not exist yet is reported as absent, not as 60 gaps — the
-interpreter-over-HIR engine is a later grid, and a script that cries wolf about
+interpreter-over-IR engine is a later grid, and a script that cries wolf about
 unbuilt code gets ignored by the time the code lands.
 
 Usage:
-    python3 tools/hir-contract-check.py
-    python3 tools/hir-contract-check.py --quiet     # failures only
+    python3 tools/ir-contract-check.py
+    python3 tools/ir-contract-check.py --quiet     # failures only
 
 Exit status is 0 when every check passes, 1 otherwise.
 """
@@ -55,19 +55,19 @@ import sys
 # broken tree. A checker that is never seen to fail is indistinguishable from
 # one that cannot fail.
 ROOT = os.environ.get(
-    "HIR_CONTRACT_ROOT",
+    "IR_CONTRACT_ROOT",
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 
-CONTRACT = os.path.join(ROOT, "docs/spec/hir-contract.md")
-NODE_FILE = os.path.join(ROOT, "Sources/PiniCore/HIR/HIRNode.swift")
+CONTRACT = os.path.join(ROOT, "docs/spec/ir-contract.md")
+NODE_FILE = os.path.join(ROOT, "Sources/PiniCore/IR/IRNode.swift")
 
 # name -> (relative paths, required). A required anchor whose files are missing is
 # an error; an optional one is simply reported as not-yet-present.
 ANCHORS = [
     ("llvm", (["Sources/PiniCore/CodeGen/IREmitter.swift"], True)),
-    ("printer", (["Sources/PiniCore/HIR/HIRPrinter.swift"], True)),
-    ("interp-hir", (["Sources/PiniCore/Interpreter/HIRExecutor.swift"], False)),
+    ("printer", (["Sources/PiniCore/IR/IRPrinter.swift"], True)),
+    ("interp-ir", (["Sources/PiniCore/Interpreter/IRExecutor.swift"], False)),
 ]
 
 EXPR_HEAD = "## 2. 表达式节点"
@@ -142,7 +142,7 @@ def parse_contract():
 def parse_node_set():
     text = read(NODE_FILE)
     out = {}
-    for name in ("HIRExpr", "HIRStmt"):
+    for name in ("IRExpr", "IRStmt"):
         m = re.search(
             r"public (?:indirect )?enum %s\b.*?\n\}\n" % name, text, re.S
         )
@@ -173,7 +173,7 @@ def main():
 
     entries, order, refs, contract_problems = parse_contract()
     node_sets = parse_node_set()
-    nodes = node_sets["HIRExpr"] | node_sets["HIRStmt"]
+    nodes = node_sets["IRExpr"] | node_sets["IRStmt"]
 
     failures = list(contract_problems)
     notes = []
@@ -192,7 +192,7 @@ def main():
         )
         print(
             "code:     %d expr + %d stmt = %d cases"
-            % (len(node_sets["HIRExpr"]), len(node_sets["HIRStmt"]), len(nodes))
+            % (len(node_sets["IRExpr"]), len(node_sets["IRStmt"]), len(nodes))
         )
         print("references checked: %d" % len(refs))
         print()
@@ -226,7 +226,7 @@ def main():
     if failures:
         print("\n%d check(s) failed" % len(failures))
         return 1
-    print("hir contract check: clean")
+    print("ir contract check: clean")
     return 0
 
 

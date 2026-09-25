@@ -11,8 +11,8 @@ import Testing
 /// 五条里两条是**驳回性**的，它们守的是「这次分叉不许越界」：
 /// 体协议那一侧不能被一起改掉（否则后端会拿句柄的类型去搬一个聚合值），
 /// 结算翻译也不许对着非句柄臆造一个结果。
-@Suite("HIR 的句柄类型")
-struct HIRFutureTypeTests {
+@Suite("IR 的句柄类型")
+struct IRFutureTypeTests {
 
     /// 语料刻意**只用一个维度**：一个异步函数、一个同步函数、两条等待。
     /// 同步那一条是阳性对照 —— 它证明分叉是**只在异步上**发生的，不是「所有调用都变了」。
@@ -46,13 +46,13 @@ struct HIRFutureTypeTests {
         return (module, checker)
     }
 
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
-    private func function(_ name: String, in module: HIRModule) throws -> HIRFunction {
+    private func function(_ name: String, in module: IRModule) throws -> IRFunction {
         try #require(
             module.functions.first { $0.name == name },
             "模块里没有函数 \(name)：\(module.functions.map(\.name))"
@@ -60,8 +60,8 @@ struct HIRFutureTypeTests {
     }
 
     private func allocVar(
-        named name: String, in block: HIRBlock
-    ) throws -> (type: HIRType, initializer: HIRExpr?) {
+        named name: String, in block: IRBlock
+    ) throws -> (type: IRType, initializer: IRExpr?) {
         for statement in block {
             if case .allocVar(let slotName, let type, _, let initializer) = statement,
                 slotName == name
@@ -100,8 +100,8 @@ struct HIRFutureTypeTests {
         // 站点产出的类型，挂在站点上。
         // ⚠️ 站点上的那个字段**不是**操作数的类型 —— 它一开始被我按操作数类型读过，
         // 于是判据报红而实现是对的。先把两个位置分清，再断言。
-        var awaitedType: HIRType? = nil
-        var siteType: HIRType? = nil
+        var awaitedType: IRType? = nil
+        var siteType: IRType? = nil
         for statement in main.body {
             if case .tryStmt(.join(let awaited, let site, _), _, _, _, _) = statement {
                 siteType = site
@@ -165,11 +165,11 @@ struct HIRFutureTypeTests {
 
     @Test("结算翻译只对句柄说话 —— 在别的类型上它保持沉默，不臆造一个结果")
     func theSettlementTranslationOnlySpeaksAboutHandles() {
-        #expect(HIRType.future(ok: .i32).joinedResultType == .result(ok: .i32))
+        #expect(IRType.future(ok: .i32).joinedResultType == .result(ok: .i32))
         // 已经是结算值的，不再翻译一次。
-        #expect(HIRType.result(ok: .i32).joinedResultType == nil)
+        #expect(IRType.result(ok: .i32).joinedResultType == nil)
         // 标量上更不该有。
-        #expect(HIRType.i32.joinedResultType == nil)
-        #expect(HIRType.string.joinedResultType == nil)
+        #expect(IRType.i32.joinedResultType == nil)
+        #expect(IRType.string.joinedResultType == nil)
     }
 }

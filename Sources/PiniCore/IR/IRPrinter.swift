@@ -1,11 +1,11 @@
 import Foundation
 
-/// Human-readable dump of a lowered HIR module. Debug aid for differential
+/// Human-readable dump of a lowered IR module. Debug aid for differential
 /// troubleshooting: when the new pipeline and the interpreter disagree, this
 /// dump shows exactly what the lowerer produced before emission.
-public enum HIRPrinter {
+public enum IRPrinter {
 
-    public static func dump(module: HIRModule) -> String {
+    public static func dump(module: IRModule) -> String {
         var out: [String] = []
         for function in module.functions {
             out.append(signatureLine(of: function))
@@ -15,7 +15,7 @@ public enum HIRPrinter {
         return out.joined(separator: "\n")
     }
 
-    private static func signatureLine(of function: HIRFunction) -> String {
+    private static func signatureLine(of function: IRFunction) -> String {
         let params = function.params
             .map { "\($0.name): \($0.type.llvmSpelling)" }
             .joined(separator: ", ")
@@ -23,7 +23,7 @@ public enum HIRPrinter {
         return "func \(function.name)(\(params))\(ret):"
     }
 
-    private static func dumpBody(_ body: HIRBlock, indent: Int) -> [String] {
+    private static func dumpBody(_ body: IRBlock, indent: Int) -> [String] {
         body.flatMap { dumpStmt($0, indent: indent) }
     }
 
@@ -31,7 +31,7 @@ public enum HIRPrinter {
         String(repeating: "    ", count: level)
     }
 
-    private static func dumpStmt(_ statement: HIRStmt, indent level: Int) -> [String] {
+    private static func dumpStmt(_ statement: IRStmt, indent level: Int) -> [String] {
         let pad = indent(level)
         switch statement {
         case .allocVar(let name, let type, let mutable, let initializer):
@@ -114,7 +114,7 @@ public enum HIRPrinter {
         }
     }
 
-    private static func exprText(_ expression: HIRExpr) -> String {
+    private static func exprText(_ expression: IRExpr) -> String {
         switch expression {
         case .intConst(let value, _): return "\(value)"
         case .floatConst(let value): return "\(value)"
@@ -225,12 +225,12 @@ public enum HIRPrinter {
             return "\(form.keyword)(\(exprText(future)))"
         case .givenInstance(let type):
             // ADR-001 `P2a`：内部节点，**无源形态**（默认实例在源语言里由 `using` 参数
-            // 省略实参时**隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-hir` 读。
+            // 省略实参时**隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-ir` 读。
             return "givenInstance(\(type.llvmSpelling))"
         }
     }
 
-    private static func symbol(of op: HIRBinaryOp) -> String {
+    private static func symbol(of op: IRBinaryOp) -> String {
         switch op {
         case .add: return "+"
         case .subtract: return "-"

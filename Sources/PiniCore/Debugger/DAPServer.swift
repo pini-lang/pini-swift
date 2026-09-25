@@ -183,7 +183,7 @@ public final class DAPServer {
 
         // 引擎在这里装：适配器只拿到「协议面 + 一个开始跑的动作」，于是它不认识
         // 任何一种引擎（LR-4 P4-3，见 `DebugRun`）。lowering 的归属不变 —— 仍是调用方。
-        // `G-6a`：默认引擎由 AST 走查改指 HIR（那条 AST 默认路径要随走查一起删除）。
+        // `G-6a`：默认引擎由 AST 走查改指 IR（那条 AST 默认路径要随走查一起删除）。
         // `makeRun` 仍供调用方注入引擎 —— 双引擎验证与将来的默认切换都只动这一处。
         let launchPackage = package
         let launchModule = module
@@ -191,7 +191,7 @@ public final class DAPServer {
         if let makeRun = makeRun {
             launch = makeRun(launchModule, launchPackage)
         } else {
-            let exec = HIRExecutor()
+            let exec = IRExecutor()
             // 启动动作把「跑哪个输入形状」也一并封进去：startProgram 不再分派。
             // check 与 lower 都留在 `start` 里，与运行期错误走同一条上报通道 ——
             // 适配器对三者一视同仁，都是会话内的失败。
@@ -200,8 +200,8 @@ public final class DAPServer {
                     let checker = TypeChecker()
                     try checker.check(package: pkg)
                     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-                    let hir = try HIRLowerer.lower(package: pkg, typeInference: checker.typeInference)
-                    try exec.run(module: hir)
+                    let ir = try IRLowerer.lower(package: pkg, typeInference: checker.typeInference)
+                    try exec.run(module: ir)
                 } else if let mod = launchModule {
                     let checker = TypeChecker()
                     let errors = checker.checkCollecting(module: mod)
@@ -211,8 +211,8 @@ public final class DAPServer {
                         )
                     }
                     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-                    let hir = try HIRLowerer.lower(module: mod, typeInference: checker.typeInference)
-                    try exec.run(module: hir)
+                    let ir = try IRLowerer.lower(module: mod, typeInference: checker.typeInference)
+                    try exec.run(module: ir)
                 }
             }
         }

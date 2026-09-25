@@ -75,7 +75,7 @@ struct ConcurrencyCapabilitiesTests {
 
     // MARK: - 私有 helper
 
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let lexer = Lexer(source: source, fileName: "inline.pini")
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
             .parseModuleCollectingErrors()
@@ -86,13 +86,13 @@ struct ConcurrencyCapabilitiesTests {
         let typeErrors = checker.checkCollecting(module: module)
         guard typeErrors.isEmpty else { throw typeErrors[0] }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
     /// 跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String, scheduler: Scheduler) throws -> [String] {
         var lines: [String] = []
-        let executor = HIRExecutor(
+        let executor = IRExecutor(
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: scheduler)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: try lowered(source))

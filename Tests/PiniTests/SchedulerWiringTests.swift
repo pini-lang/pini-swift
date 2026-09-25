@@ -32,7 +32,7 @@ struct SchedulerWiringTests {
 
     // MARK: - 私有 helper
 
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let lexer = Lexer(source: source, fileName: "inline.pini")
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
             .parseModuleCollectingErrors()
@@ -43,12 +43,12 @@ struct SchedulerWiringTests {
         let typeErrors = checker.checkCollecting(module: module)
         guard typeErrors.isEmpty else { throw typeErrors[0] }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
     /// 只装载、不运行，返回引擎。⭐ 本件的主测量形态（见类型说明）。
-    private func prepared(_ source: String, scheduler: Scheduler? = nil) throws -> HIRExecutor {
-        let executor = HIRExecutor(
+    private func prepared(_ source: String, scheduler: Scheduler? = nil) throws -> IRExecutor {
+        let executor = IRExecutor(
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: scheduler)
         try executor.prepare(module: try lowered(source))
         return executor

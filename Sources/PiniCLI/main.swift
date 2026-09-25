@@ -808,26 +808,26 @@ func absoluteProgramBase(_ path: String) -> String {
 
 // MARK: - 执行引擎（LR-4 P4-γ）
 
-// ⛔ 此处原有一个引擎开关（环境变量 `PINI_INTERP_ENGINE`，取值 `ast | hir`）。
+// ⛔ 此处原有一个引擎开关（环境变量 `PINI_INTERP_ENGINE`，取值 `ast | ir`）。
 // `G-6c` 按 D-B6 把它随 AST 走查一并退役：走查删除后只剩一台引擎，「选哪台」
 // 不再有第二个答案。取值的合法性检查也一并消失 —— 它当初防的是「静默回退到另一台
 // 引擎跑出结果，而调用方以为测的是另一台」，没有第二台引擎就没有那个失败方式。
 // 刻意**不做**「读到 ast 就报错」的兼容闸：本项目不设 CLI 兼容开关（LR-5），
 // 且一个已无意义的变量名不构成契约。
 
-/// 单文件走 HIR 执行引擎（LR-4 P1-3）。
+/// 单文件走 IR 执行引擎（LR-4 P1-3）。
 ///
 /// 前段与 `typeCheckThenGenerate` 一致，理由也相同：lowering 需要 checker 的
 /// `typeInference`，故本路径**必须跑类型检查**。单文件 run 的类型层因此比语义层更严
-/// （语义门禁之上又过一遍类型）——HIR 是类型化树，没有推断出的类型就 lower 不出来，
+/// （语义门禁之上又过一遍类型）——IR 是类型化树，没有推断出的类型就 lower 不出来，
 /// 这是该形态**固有的**，不是可抹平的实现细节。
 ///
-/// 目录/模块运行由 `runHIRPackageEngine` 承担：整包 lower 再执行，见该函数。
+/// 目录/模块运行由 `runIRPackageEngine` 承担：整包 lower 再执行，见该函数。
 ///
 /// `programBase` 与 AST 通道取同一个值（入口文件所在目录）：IO 节点的非前缀相对路径
 /// 必须两通道解析到同一份文件。否则同一程序在两条通道上读到的不是同一个文件，而且不会
 /// 报错——只会静默读到 CWD 里的同名文件。
-private func runHIREngine(
+private func runIREngine(
     module: Module, source: String, programBase: String?,
     argv: [String] = []
 ) throws {
@@ -842,18 +842,18 @@ private func runHIREngine(
     // 与 emit / compile / run-llvm 同款：lowering 会在 checker 弹出作用域之后重推
     // match scrutinee 的类型，需持久表兜底。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-    let executor = HIRExecutor(programBase: programBase)
+    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let executor = IRExecutor(programBase: programBase)
     executor.processArguments = argv
-    try executor.run(module: hirModule)
+    try executor.run(module: irModule)
 }
 
-/// HIR 引擎的包运行入口（LR-4 P4-1a）。
+/// IR 引擎的包运行入口（LR-4 P4-1a）。
 ///
-/// 整包降载（`HIRLowerer.lower(package:)`）早已存在，且已在 LLVM 的包 emit 通道上使用；
-/// 本函数把同一条降载结果交给 HIR 执行器，使 `pini run <目录>` 与单文件路径一样走
+/// 整包降载（`IRLowerer.lower(package:)`）早已存在，且已在 LLVM 的包 emit 通道上使用；
+/// 本函数把同一条降载结果交给 IR 执行器，使 `pini run <目录>` 与单文件路径一样走
 /// 「共享前端 → 执行」。调用方**必须**已完成包级语义与类型检查
-/// （与 `runHIRPackageEmit` 同一个前置约定）。
+/// （与 `runIRPackageEmit` 同一个前置约定）。
 ///
 /// ⚠️ 与 AST 时代的包路径有一处**已立案的行为差**：清单声明了入口（`[[bin]].entry` /
 /// `[lib].entry`）时，旧路径会给引擎注入 `entryFiles` 并校验「`main` 是否定义在声明入口里」，
@@ -862,16 +862,16 @@ private func runHIREngine(
 ///
 /// `moduleRoot` 取与解释器模块路径同一个基准（含清单的目录）：IO 节点的非前缀相对路径
 /// 必须两通道解析到同一份文件，否则会静默读到 CWD 里的同名文件，且不报错。
-private func runHIRPackageEngine(
+private func runIRPackageEngine(
     package: Package, moduleRoot: String,
     typeInference: TypeInference,
     ffiConfig: FFIConfig,
     argv: [String] = []
 ) throws {
-    let hirModule = try HIRLowerer.lower(package: package, typeInference: typeInference)
-    let executor = HIRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConfig: ffiConfig)
+    let irModule = try IRLowerer.lower(package: package, typeInference: typeInference)
+    let executor = IRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConfig: ffiConfig)
     executor.processArguments = argv
-    try executor.run(module: hirModule)
+    try executor.run(module: irModule)
 }
 
 /// P4 Phase 5：run 接收文件或目录。
@@ -900,9 +900,9 @@ func runRunPath(_ path: String, argv: [String] = []) {
             printError(formatCLIError(error: error, source: source)); exit(1)
         }
         // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。IO 节点的非前缀相对路径
-        // 以它为基准解析，否则会在 HIR 侧静默读到 CWD 里的同名文件。
+        // 以它为基准解析，否则会在 IR 侧静默读到 CWD 里的同名文件。
         let programBase = absoluteProgramBase(path)
-        do { try runHIREngine(module: module, source: source, programBase: programBase, argv: argv) } catch { printError(formatCLIError(error: error, source: source)); exit(1) }
+        do { try runIREngine(module: module, source: source, programBase: programBase, argv: argv) } catch { printError(formatCLIError(error: error, source: source)); exit(1) }
         return
     }
 
@@ -951,7 +951,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
         // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         // 批 5（G58，D-1）：模块基准 = 模块根（含 pini.toml 的目录）。
-        try runHIRPackageEngine(
+        try runIRPackageEngine(
             package: pkg, moduleRoot: path,
             typeInference: checker.typeInference,
             ffiConfig: manifest.ffi ?? .default, argv: argv)
@@ -1025,7 +1025,7 @@ func runDebugPath(_ path: String) {
 
 /// 单文件调试：直接解析并用 SourceMap(sources:) 承载该文件源码。
 ///
-/// `G-6a` 把引擎从 AST 走查接到 HIR（`check → lower → execute`）。调试入口是该
+/// `G-6a` 把引擎从 AST 走查接到 IR（`check → lower → execute`）。调试入口是该
 /// 能力的**唯一实现**、没有第二条臂可换，所以删除 AST 走查之前必须先接上它 ——
 /// 否则 `pini dbg` 会随走查一起消失，那是用户可见能力净减。
 private func runDebugFile(_ path: String) {
@@ -1044,11 +1044,11 @@ private func runDebugFile(_ path: String) {
         exit(1)
     }
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let executor = HIRExecutor(programBase: absoluteProgramBase(path))
+    let executor = IRExecutor(programBase: absoluteProgramBase(path))
     startDebugger(
         run: DebugRun(host: executor) {
-            let hir = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
-            try executor.run(module: hir)
+            let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+            try executor.run(module: ir)
         }, sources: sources, primaryName: path)
 }
 
@@ -1056,7 +1056,7 @@ private func runDebugFile(_ path: String) {
 /// 供 SourceMap 跨文件展示断点上下文；运行时 `SourceLocation.fileName` 为全路径，
 /// 与 CLI 用户输入的基名通过 `Debugger.breakpointMatches` 容差匹配。
 ///
-/// `G-6a` 同 `runDebugFile`：引擎改接 HIR，包走整包降载。
+/// `G-6a` 同 `runDebugFile`：引擎改接 IR，包走整包降载。
 private func runDebugDirectory(_ path: String) {
     let pkg: Package
     do { pkg = try FileLoader.loadDirectory(path: path) } catch {
@@ -1074,11 +1074,11 @@ private func runDebugDirectory(_ path: String) {
         exit(1)
     }
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let executor = HIRExecutor(programBase: absoluteProgramBase(path))
+    let executor = IRExecutor(programBase: absoluteProgramBase(path))
     startDebugger(
         run: DebugRun(host: executor) {
-            let hir = try HIRLowerer.lower(package: pkg, typeInference: checker.typeInference)
-            try executor.run(module: hir)
+            let ir = try IRLowerer.lower(package: pkg, typeInference: checker.typeInference)
+            try executor.run(module: ir)
         }, sources: sources, primaryName: sources.keys.first ?? path)
 }
 
@@ -1449,7 +1449,7 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
     return false
 }
 
-/// #46-optional / Task #2：LLVM 管线先类型检查，再以类型推断结果降载到 HIR。
+/// #46-optional / Task #2：LLVM 管线先类型检查，再以类型推断结果降载到 IR。
 /// 与解释器对齐做静态校验（零类型信息的 codegen 无法解构 Optional.some，需此前提）。
 /// 类型错误一次性同报并退出（沿用 `runCheckCommand` 的收集模式风格）。
 private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
@@ -1464,11 +1464,11 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
     }
     // #46-optional：开启持久表兜底，使 codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let hirModule = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     let emitter = IREmitter()
     // 批 5（G58，D-4）：注入程序基准，与解释器同规则。
     emitter.programBase = absoluteProgramBase(fileName)
-    return emitter.emit(module: hirModule)
+    return emitter.emit(module: irModule)
 }
 
 func runEmitCommand(source: String, fileName: String, outputPath: String?) throws {
@@ -1499,25 +1499,25 @@ private func loadOwningPackageIfModule(path: String) throws -> (package: Package
     return try (FileLoader.loadDirectory(path: moduleRoot, manifest: manifest), moduleRoot)
 }
 
-/// G13 batch 2: package-level HIR emit — package semantic + type-check,
-/// then `HIRLowerer.lower(package:)` -> IREmitter. Visibility was already
-/// enforced by the checker (D4); the HIR channel re-enforces nothing.
+/// G13 batch 2: package-level IR emit — package semantic + type-check,
+/// then `IRLowerer.lower(package:)` -> IREmitter. Visibility was already
+/// enforced by the checker (D4); the IR channel re-enforces nothing.
 /// `moduleRoot` is the package's own directory: the module run and test
-/// paths anchor the program base there, and the HIR channel follows them
+/// paths anchor the program base there, and the IR channel follows them
 /// rather than the entry file's directory, because the whole package is
 /// lowered as one unit.
-private func runHIRPackageEmit(package: Package, moduleRoot: String, outputPath: String?) throws {
+private func runIRPackageEmit(package: Package, moduleRoot: String, outputPath: String?) throws {
     let analyzer = SemanticAnalyzer()
     try analyzer.analyze(package: package)
     let checker = TypeChecker()
     try checker.check(package: package)
     // #46-optional: same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let hirModule = try HIRLowerer.lower(package: package, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
     let emitter = IREmitter()
     // 批 5（G58，D-1）：模块基准 = 模块根，与解释器模块路径一致。
     emitter.programBase = absoluteProgramBase(moduleRoot)
-    let ir = emitter.emit(module: hirModule)
+    let ir = emitter.emit(module: irModule)
     if let out = outputPath {
         try ir.write(toFile: out, atomically: true, encoding: .utf8)
     } else {
@@ -1733,7 +1733,7 @@ case "emit":
         // any module keeps single-file behavior. Directory arguments were never
         // accepted here, so no directory branch is added.
         if let loaded = try loadOwningPackageIfModule(path: args[2]) {
-            try runHIRPackageEmit(
+            try runIRPackageEmit(
                 package: loaded.package, moduleRoot: loaded.moduleRoot,
                 outputPath: args.count >= 4 ? args[3] : nil)
         } else {

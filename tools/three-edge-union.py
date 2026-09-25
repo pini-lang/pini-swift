@@ -6,20 +6,20 @@ Why this exists, and what is left of it
 This ran the channel-pair edges in one command, because no single instrument
 covered all of them (criteria-gap ledger, CG-03):
 
-    ast <-> hir    HIRExecutorTests.testCorpusFixturesAgreeWithTheInterpreter
-    ast <-> llvm   HIRDifferentialTests
-    hir <-> llvm   tools/hir-parity-probe.py
-    pkg ast<->hir  every host module with a pini.toml, both engines
+    ast <-> ir    IRExecutorTests.testCorpusFixturesAgreeWithTheInterpreter
+    ast <-> llvm   IRDifferentialTests
+    ir <-> llvm   tools/ir-parity-probe.py
+    pkg ast<->ir  every host module with a pini.toml, both engines
 
 Every edge above names the AST walk, and G-6c deleted it. The pairs that
-compared *against* the walk (ast<->hir, ast<->llvm) and the package line that
+compared *against* the walk (ast<->ir, ast<->llvm) and the package line that
 ran both engines over a manifest now have no second side. What survives is
-hir<->llvm, and that one is already covered by tools/hir-parity-probe.py, which
+ir<->llvm, and that one is already covered by tools/ir-parity-probe.py, which
 is the instrument the batch that removed the walk reworked for it.
 
 ⇒ This file is left in place, unreworked, as the record of an instrument whose
 object went away, and the ledger entry that commissioned it is re-adjudicated in
-docs/hir-criteria-gap-ledger.md rather than left dangling. Deleting it instead
+docs/ir-criteria-gap-ledger.md rather than left dangling. Deleting it instead
 would have left that entry pointing at nothing -- the failure the ledger was
 created to avoid. Running it today measures nothing meaningful: the remaining
 edge duplicates the probe.
@@ -27,7 +27,7 @@ edge duplicates the probe.
 The package line is not one of the channel pairs: it is the only judgement a
 module member ever gets. A member file has no `main`, so the single-file
 channels refuse it, and `pini run-llvm` takes no directory -- measured, and its
-exit status is discarded on top of that -- so the HIR-versus-LLVM edge cannot
+exit status is discarded on top of that -- so the IR-versus-LLVM edge cannot
 reach a member either. Until this line existed those files were covered by
 nothing, and the probe recorded that only as an exclusion slot.
 
@@ -47,7 +47,7 @@ their own state, and make the exit code non-zero.
 
 ⚠️ 测试框架 2026-09-19 起迁到 Swift Testing：本器械的 `swift test` 两处解析已同时认
 两个框架的套件行 / 失败行 / 汇总行。但**这两条边的对象在 G-6c 与测试树清空后已不存在**
-（`HIRExecutorTests` / `HIRDifferentialTests` 均已删），所以它们今天读作「0 run」⇒
+（`IRExecutorTests` / `IRDifferentialTests` 均已删），所以它们今天读作「0 run」⇒
 UNMEASURED。这是既存状态，不是本次迁移造成的 —— 要复活得先给这两条边重新指定对象。
 
 Exit codes: 0 = every edge measured and green · 1 = an edge failed ·
@@ -76,10 +76,10 @@ SWIFT_TESTING_SUMMARY = re.compile(
 BLOCKERS = re.compile(r"FLIP BLOCKERS\s+(\d+)")
 
 EDGES = [
-    ("ast <-> hir ", "swift test", "HIRExecutorTests/testCorpusFixturesAgreeWithTheInterpreter"),
-    ("ast <-> llvm", "swift test", "HIRDifferentialTests"),
-    ("hir <-> llvm", "probe", None),
-    ("pkg ast<->hir", "package", None),
+    ("ast <-> ir ", "swift test", "IRExecutorTests/testCorpusFixturesAgreeWithTheInterpreter"),
+    ("ast <-> llvm", "swift test", "IRDifferentialTests"),
+    ("ir <-> llvm", "probe", None),
+    ("pkg ast<->ir", "package", None),
 ]
 
 GREEN, RED, UNMEASURED = "MEASURED-GREEN", "MEASURED-RED", "UNMEASURED"
@@ -167,16 +167,16 @@ def read_package_channel():
     agreed, diverged, refused = [], [], []
     for root in modules:
         ast = run_package_module(root, "ast")
-        hir = run_package_module(root, "hir")
-        if ast[0] != 0 and hir[0] != 0:
-            refused.append("%s [ast %s / hir %s]" % (root, first_line(ast[2]),
-                                                     first_line(hir[2])))
-        elif ast[0] == hir[0] and ast[1] == hir[1]:
+        ir = run_package_module(root, "ir")
+        if ast[0] != 0 and ir[0] != 0:
+            refused.append("%s [ast %s / ir %s]" % (root, first_line(ast[2]),
+                                                     first_line(ir[2])))
+        elif ast[0] == ir[0] and ast[1] == ir[1]:
             agreed.append(root)
         else:
-            reason = first_line(hir[2]) or "stdout differs"
-            diverged.append("%s [ast rc=%s / hir rc=%s: %s]" % (
-                root, ast[0], hir[0], reason))
+            reason = first_line(ir[2]) or "stdout differs"
+            diverged.append("%s [ast rc=%s / ir rc=%s: %s]" % (
+                root, ast[0], ir[0], reason))
     reading = "%d module(s): %d agreed / %d diverged / %d refused by both arms" % (
         len(modules), len(agreed), len(diverged), len(refused))
     if diverged:
@@ -219,7 +219,7 @@ def read_swift_test(filter_expr):
 
 
 def read_probe(out_path):
-    rc, out = run([sys.executable, "tools/hir-parity-probe.py", "--out", out_path])
+    rc, out = run([sys.executable, "tools/ir-parity-probe.py", "--out", out_path])
     m = BLOCKERS.search(out)
     if rc != 0:
         return RED, "probe exited %d" % rc
@@ -249,7 +249,7 @@ def main():
                 state, reading = UNMEASURED, "--skip-probe"
             else:
                 state, reading = read_probe(args.probe_out)
-            where = "tools/hir-parity-probe.py"
+            where = "tools/ir-parity-probe.py"
         elif kind == "package":
             state, reading = read_package_channel()
             where = "pini run <module> (both engines, host modules only)"

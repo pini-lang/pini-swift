@@ -69,9 +69,9 @@ struct GrammarAcceptanceTests {
         let typeErrors = checker.checkCollecting(module: module)
         guard typeErrors.isEmpty else { throw typeErrors[0] }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
         var lines: [String] = []
-        let executor = HIRExecutor(programBase: Self.suiteDirectory)
+        let executor = IRExecutor(programBase: Self.suiteDirectory)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: lowered)
         return lines

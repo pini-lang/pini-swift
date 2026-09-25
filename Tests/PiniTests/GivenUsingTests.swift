@@ -8,7 +8,7 @@ import Testing
 /// 注册类别**落表，而不是按定界符预设类别。三形糖（`((` / `{{` / `<<`）的 kind 语义不变。
 ///
 /// **`P1` 的实质交付**：`using` **入关键字表**（实现侧计数 33 → 34，与规范侧同批同值），
-/// 并在**参数位**接出前缀 ⇒ `Parameter.isUsing` → `HIRParam.isUsing`（降载层不断链）。
+/// 并在**参数位**接出前缀 ⇒ `Parameter.isUsing` → `IRParam.isUsing`（降载层不断链）。
 /// ⚠️ 入表是**破坏性**的：今日合法的标识符 `using` 变成保留字。它与 `given` 的处置相反
 /// —— 后者只出现在 `|` 右侧的修饰符位、走标识符白名单、**不入**表；两半各有判据钉住。
 ///
@@ -32,11 +32,11 @@ import Testing
 /// （trait 抽象签名）在**解析期**拒绝。此前那几处能过静态检查：trait 签名**彻底静默**、
 /// `|test` 与 `main` 要到运行期才崩。
 ///
-/// **仍然不做的**：环检测只留**余量**（`HIRModule.givenReferences` 留痕，当期不产诊断；
+/// **仍然不做的**：环检测只留**余量**（`IRModule.givenReferences` 留痕，当期不产诊断；
 /// 码位 `E6-008` 已预留）；跨模块（独立编译单元）在本编译器里**没有通路**
-/// ⇒ 「跨文件」= 同包同模块（实测：整包一个 `HIRModule`、一个 IR 模块）。
+/// ⇒ 「跨文件」= 同包同模块（实测：整包一个 `IRModule`、一个 IR 模块）。
 ///
-/// **⚠️ 两臂覆盖说明**：本件的运行面判据走 `HIRExecutor`（解释器臂）；**发射臂**
+/// **⚠️ 两臂覆盖说明**：本件的运行面判据走 `IRExecutor`（解释器臂）；**发射臂**
 /// （槽位 / 合成初始化函数 / 运行时取用符号）不在本件覆盖内，由命令行探针两臂对照取证。
 ///
 /// 每条用例三要素齐备：意图写在显示名与首行注释；推进性测量断言期望行为**发生**；
@@ -61,16 +61,16 @@ struct GivenUsingTests {
     }
 
     /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> HIRModule {
+    private func lowered(_ source: String) throws -> IRModule {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try HIRLowerer.lower(module: module, typeInference: checker.typeInference)
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {
         var lines: [String] = []
-        let executor = HIRExecutor(programBase: NSTemporaryDirectory())
+        let executor = IRExecutor(programBase: NSTemporaryDirectory())
         executor.outputSink = { lines.append($0) }
         try executor.run(module: try lowered(source))
         return lines
@@ -334,9 +334,9 @@ struct GivenUsingTests {
 
     @Test("降载层随行携带取用标记，不在中间表示处断链")
     func loweringCarriesTheUsingFlag() throws {
-        /// 意图：`Parameter.isUsing` 要到得了 HIR —— 与 `isAsync` / `isTest` / `sourceFile`
-        /// 同族：「AST 面上有的事实，HIR 面必须随行」，否则后续批次在后端再也问不出来。
-        /// ⚠️ 该语料用的是 `I32` 形参（不是给定块）：本条的射程是「标记到了 HIR」，
+        /// 意图：`Parameter.isUsing` 要到得了 IR —— 与 `isAsync` / `isTest` / `sourceFile`
+        /// 同族：「AST 面上有的事实，IR 面必须随行」，否则后续批次在后端再也问不出来。
+        /// ⚠️ 该语料用的是 `I32` 形参（不是给定块）：本条的射程是「标记到了 IR」，
         /// 与物化无关。**旧版这里写「语料里不能出现给定块：那会让整个模块在降载层被拒」——
         /// 那句随本批失效**（给定块现在降载通过），故一并删掉，不留下一条假约束。
         let source = #"""

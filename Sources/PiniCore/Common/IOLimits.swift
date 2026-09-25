@@ -1,5 +1,5 @@
 /// IO builtin limits — the A-group semantics the contract pins for the three
-/// IO nodes (`HIR 契约` D3 unified the interpreter to the LLVM side).
+/// IO nodes (`IR 契约` D3 unified the interpreter to the LLVM side).
 ///
 /// These numbers are **language semantics**, not implementation accidents:
 /// the interpreter and the LLVM emitter both have to agree on them, so they

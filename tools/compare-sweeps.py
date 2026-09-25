@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diff two hir-parity-probe TSVs — the isolation proof for one convergence grid.
+"""Diff two ir-parity-probe TSVs — the isolation proof for one convergence grid.
 
 A grid's change is "isolated" when the corpus verdicts move only for the
 fixtures the grid targets and nothing else. This prints the per-verdict deltas
@@ -7,8 +7,8 @@ and the per-fixture verdict changes, flagging blockers resolved and newly
 introduced.
 
 This tuple must track the probe's own blocker set. It had drifted: it still
-named GAP_IR, which P1-4 retired in favour of GAP_HIR_ENGINE, and therefore
-omitted GAP_HIR_ENGINE from its total — so its TRUE BLOCKERS line silently
+named GAP_IR, which P1-4 retired in favour of GAP_IR_ENGINE, and therefore
+omitted GAP_IR_ENGINE from its total — so its TRUE BLOCKERS line silently
 undercounted by however many fixtures sat in that slot. Fixed 2026-09-15 (P3-G1).
 WARN_CHANNEL_ASYMMETRY is deliberately absent, and CHANGE_REFERENCE, likewise
 absent here, no longer exists at all (G-6c retired it with the reference arm):
@@ -21,7 +21,7 @@ Usage: python3 tools/compare-sweeps.py <before.tsv> <after.tsv>
 import collections
 import sys
 
-BLOCKERS = ("GAP_EXEC", "GAP_HIR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG")
+BLOCKERS = ("GAP_EXEC", "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG")
 
 
 def load(path):

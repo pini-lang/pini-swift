@@ -12,10 +12,10 @@ private enum FunctionFrameMode {
     case resumable
 }
 
-/// HIR -> LLVM IR text emitter for the M4 vertical slice (LR-2/LR-3).
+/// IR -> LLVM IR text emitter for the M4 vertical slice (LR-2/LR-3).
 ///
 /// The emitter is a mechanical translation: every type decision was already
-/// made by `HIRLowerer` (the single capability gate), so this file contains no
+/// made by `IRLowerer` (the single capability gate), so this file contains no
 /// type inference, no shadow type tables, and no unsupported paths — the
 /// slice node set is emitted in full. State is per-emission: create one fresh
 /// emitter per module; nothing is shared with the legacy `IRGenerator`.
@@ -29,7 +29,7 @@ public final class IREmitter {
     // MARK: - Per-function state
 
     /// Block-nested variable slots: scopes.last is the innermost block.
-    /// Mirrors the HIR tree nesting so shadowing declarations resolve
+    /// Mirrors the IR tree nesting so shadowing declarations resolve
     /// innermost-first at emit time.
     private var scopes: [[String: String]] = []
 
@@ -93,18 +93,18 @@ public final class IREmitter {
     private var deferScopeBase = 0
 
     private var currentIsMain = false
-    private var currentReturnType: HIRType? = nil
+    private var currentReturnType: IRType? = nil
 
     private var builder = IRBuilder()
     private var bodyIR = ""
 
     /// Nominal type declarations of the module being emitted (G3) — field
     /// layouts for constructor / field-access GEPs.
-    private var moduleTypes: [HIRTypeDecl] = []
+    private var moduleTypes: [IRTypeDecl] = []
 
     /// Enum declarations of the module being emitted (G4) — case tags and
     /// payload types for construction and match dispatch.
-    private var moduleEnums: [HIREnumDecl] = []
+    private var moduleEnums: [IREnumDecl] = []
 
     // MARK: - Module-level collected pieces
 
@@ -132,7 +132,7 @@ public final class IREmitter {
     private var captureSlots: [String: String] = [:]
     /// Module function registry by mangled IR name (G6): adapter generation
     /// reads the original ABI (params/return) from here.
-    private var moduleFunctions: [String: HIRFunction] = [:]
+    private var moduleFunctions: [String: IRFunction] = [:]
     /// G13 batch 1: `%bk_lazyref` handle type + `bk_lazyref_*` C ABI used —
     /// the header declares are appended conditionally (legacy
     /// `usesLazyRef` contract, golden-IR stability for modules that
@@ -199,7 +199,7 @@ public final class IREmitter {
     /// ADR-001 `P2b`：默认实例的**存放位**（程序级槽位，每个给定块类型一个）。
     ///
     /// 定义处 = 声明所在文件（发射层按类型名发一次），同包内其它文件经**同一个** IR 模块
-    /// 引用它 ⇒ 不需要 `external`：实测整包降载为**一个** `HIRModule`、发射为**一个** IR 模块
+    /// 引用它 ⇒ 不需要 `external`：实测整包降载为**一个** `IRModule`、发射为**一个** IR 模块
     /// （计划件原写的「跨文件 `external`」在实测下不成立，已订正）。
     private var givenSlotDefs: [String] = []
     private var givenSlotNames: Set<String> = []
@@ -223,16 +223,16 @@ public final class IREmitter {
     /// lived; a non-literal path expression cannot be baked either way and
     /// keeps resolving against the CWD (known v1 limitation).
     ///
-    /// This sits in the emitter rather than in the HIR tree on purpose: it is
+    /// This sits in the emitter rather than in the IR tree on purpose: it is
     /// a code-generation environment input, not a language-semantics
-    /// decision, and the HIR tree stays a pure lowering of the source.
+    /// decision, and the IR tree stays a pure lowering of the source.
     public var programBase: String?
 
     public init() {}
 
     // MARK: - Module
 
-    public func emit(module: HIRModule) -> String {
+    public func emit(module: IRModule) -> String {
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += "declare ptr @bk_double_to_string(double)\n"
@@ -467,7 +467,7 @@ public final class IREmitter {
 
     // MARK: - Functions
 
-    private func emitFunction(_ function: HIRFunction) {
+    private func emitFunction(_ function: IRFunction) {
         builder.reset()
         scopes = [[:]]
         slotCounters = [:]
@@ -547,7 +547,7 @@ public final class IREmitter {
     ///
     /// ⭐ 抽成一个函数而不是在两处各写一遍：帧式的启用条件必须与派发点的进入条件**逐字同源**，
     /// 否则会出现「派发了但没有帧」或「有帧却从未被派发」这两种都很难查的错配。
-    private func isResultReturning(_ function: HIRFunction) -> Bool {
+    private func isResultReturning(_ function: IRFunction) -> Bool {
         guard let returnType = function.returnType else { return false }
         if case .result = returnType { return true }
         return false
@@ -638,7 +638,7 @@ public final class IREmitter {
     /// `for … in` element bindings are alloca'd ahead of their body, so they
     /// belong to the body block's frame even though they are not statements
     /// inside it.
-    private func emitBlock(_ block: HIRBlock, seedingReleases seed: [ReleasedHandle] = []) {
+    private func emitBlock(_ block: IRBlock, seedingReleases seed: [ReleasedHandle] = []) {
         // G9 defer protocol: defers registered in this block run LIFO at
         // the block's normal end (loop bodies: every iteration). When the
         // block ends in a terminator the defers have already run — the
@@ -711,7 +711,7 @@ public final class IREmitter {
 
     /// Deferred statement bodies per open block scope (G9 deferStmt):
     /// scope -> defer (LIFO at scope end) -> wrapped statements.
-    private var pendingDefers: [[HIRBlock]] = []
+    private var pendingDefers: [[IRBlock]] = []
 
     /// A local holding one share of a refcounted collection handle, whose
     /// share this block must drop when it exits (H1-B, `pendingDefers`'
@@ -800,7 +800,7 @@ public final class IREmitter {
         bodyIR += " call void @\(registered.destroySymbol)(ptr \(loaded))\n"
     }
 
-    private func emitStatement(_ statement: HIRStmt) {
+    private func emitStatement(_ statement: IRStmt) {
         switch statement {
         case .allocVar(let name, let type, _, let initializer):
             let slot = freshSlot(for: name)
@@ -821,7 +821,7 @@ public final class IREmitter {
 
         case .storeVar(let name, let type, let value):
             guard let slot = lookupSlot(name) else {
-                fatalError("IREmitter: store to undeclared variable '\(name)' (HIRLowerer guarantees declarations)")
+                fatalError("IREmitter: store to undeclared variable '\(name)' (IRLowerer guarantees declarations)")
             }
             let lowered = emitExpr(value)
             // H1-B: overwriting a handle-typed local drops the share it held
@@ -921,7 +921,7 @@ public final class IREmitter {
             usesTaskRuntime = true
             let handle = emitExpr(inner)
             guard handle.llvmType == "ptr" else {
-                fatalError("IREmitter: detach operand is not a task handle (HIRLowerer gates the operand)")
+                fatalError("IREmitter: detach operand is not a task handle (IRLowerer gates the operand)")
             }
             bodyIR += " call void @bk_task_detach(ptr \(handle.ssaName))\n"
         }
@@ -1010,7 +1010,7 @@ public final class IREmitter {
     ///
     /// ⚠️ 让出序列只在这两条前置都成立时才接得住；不成立时**落到 `emitExpr`**，由 `emitJoin`
     /// 按位置响亮拒绝 —— 那条路不是静默降级。
-    private func emitMatchSubject(_ scrutinee: HIRExpr, type: HIRType) -> IRValue {
+    private func emitMatchSubject(_ scrutinee: IRExpr, type: IRType) -> IRValue {
         guard frameMode == .resumable, blockDepth == 1,
             case .join(let awaited, _, .awaits) = scrutinee
         else {
@@ -1024,7 +1024,7 @@ public final class IREmitter {
         return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
     }
 
-    private func emitMatch(scrutinee: HIRExpr, cases: [HIRMatchCase], scrutineeType: HIRType) {
+    private func emitMatch(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType) {
         // ⭐ 判别式**只在这里求值一次** —— `S3`（`DE-6c`）的落点就在这一步（见 `emitMatchSubject`）。
         // 四个分派分支因此拿的都是同一个已物化的值，不存在「某条分支漏走让出」的缝。
         let subject = emitMatchSubject(scrutinee, type: scrutineeType)
@@ -1050,19 +1050,19 @@ public final class IREmitter {
             guard let aggregate = scrutineeType.nominalAggregateSpelling,
                 let enumDecl = moduleEnums.first(where: { $0.name == enumName })
             else {
-                fatalError("IREmitter: match on unregistered enum (HIRLowerer guarantees)")
+                fatalError("IREmitter: match on unregistered enum (IRLowerer guarantees)")
             }
             emitTaggedMatch(
                 scrutineeValue: subject, cases: cases, aggregate: aggregate, tagType: "i32",
                 tagFor: { arm in
                     guard let enumCase = enumDecl.cases.first(where: { $0.name == arm.caseName }) else {
-                        fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (HIRLowerer guarantees)")
+                        fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (IRLowerer guarantees)")
                     }
                     return String(enumCase.tag)
                 },
                 payloadSpelling: { (arm, slot) in
                     guard let enumCase = enumDecl.cases.first(where: { $0.name == arm.caseName }) else {
-                        fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (HIRLowerer guarantees)")
+                        fatalError("IREmitter: match case '\(arm.caseName)' not in enum decl (IRLowerer guarantees)")
                     }
                     return enumCase.payloadTypes[slot].llvmSpelling
                 },
@@ -1137,7 +1137,7 @@ public final class IREmitter {
     /// Falling off the chain with no wildcard arm is a silent no-op
     /// (interpreter parity: a non-exhaustive match is an error for enum values
     /// only), so the default block simply branches to the end label.
-    private func emitScalarMatch(scrutineeValue: IRValue, cases: [HIRMatchCase]) {
+    private func emitScalarMatch(scrutineeValue: IRValue, cases: [IRMatchCase]) {
         let id = builder.freshLabel()
         let endLabel = "match.end.\(id)"
         let defaultLabel = "match.default.\(id)"
@@ -1194,7 +1194,7 @@ public final class IREmitter {
     /// the i1 temp, or nil when the operand does not fit the scrutinee's value
     /// type (the caller skips such an arm — the interpreter never matches it
     /// either, and inventing an operand would emit invalid IR).
-    private func emitLiteralComparison(_ literal: HIRMatchLiteral, scrutinee: IRValue) -> String? {
+    private func emitLiteralComparison(_ literal: IRMatchLiteral, scrutinee: IRValue) -> String? {
         switch (scrutinee.llvmType, literal) {
         case ("i8*", .string(let value)):
             usesStrCmp = true
@@ -1227,13 +1227,13 @@ public final class IREmitter {
     /// variables; a scrutinee matching no arm reaches the panic block.
     private func emitTaggedMatch(
         scrutineeValue: IRValue,
-        cases: [HIRMatchCase],
+        cases: [IRMatchCase],
         aggregate: String,
         tagType: String,
-        tagFor: (HIRMatchCase) -> String,
-        payloadSpelling: (HIRMatchCase, Int) -> String,
+        tagFor: (IRMatchCase) -> String,
+        payloadSpelling: (IRMatchCase, Int) -> String,
         loadTag: (String) -> IRValue,
-        loadPayload: (HIRMatchCase, String, Int, String) -> IRValue
+        loadPayload: (IRMatchCase, String, Int, String) -> IRValue
     ) {
         let tag = loadTag(scrutineeValue.ssaName)
         let id = builder.freshLabel()
@@ -1297,10 +1297,10 @@ public final class IREmitter {
     ///   share before the box move (ownership contract 3);
     /// - the split handle returned by `bk_array_set` is written back to the
     ///   owning variable slot, or the write would be silently lost.
-    private func emitSubscriptStore(container: HIRExpr, index: HIRExpr, value: HIRExpr, elementType: HIRType) {
+    private func emitSubscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType) {
         // Dictionary store (G5): keys/values boxed by their own types; the
         // returned handle is written back to the owning slot (COW parity).
-        if case .dict(let keyType, let valueType) = hirType(of: container) {
+        if case .dict(let keyType, let valueType) = irType(of: container) {
             // A nested dict target (`a["k"]["j"] = v`) joins the same top-down
             // chain the array branch below uses. Handing bk_dict_set a bare
             // emitExpr handle would let it write through a shared box and
@@ -1325,7 +1325,7 @@ public final class IREmitter {
             bodyIR += " \(newRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
             if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_dict*" {
                 guard let slot = lookupSlot(name) else {
-                    fatalError("IREmitter: dict store to undeclared container '\(name)' (HIRLowerer guarantees)")
+                    fatalError("IREmitter: dict store to undeclared container '\(name)' (IRLowerer guarantees)")
                 }
                 let typed = builder.freshTemp()
                 bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_dict*\n"
@@ -1352,7 +1352,7 @@ public final class IREmitter {
         bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(raw), i32 \(indexValue.ssaName), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
         if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_array*" {
             guard let slot = lookupSlot(name) else {
-                fatalError("IREmitter: subscript store to undeclared container '\(name)' (HIRLowerer guarantees declarations)")
+                fatalError("IREmitter: subscript store to undeclared container '\(name)' (IRLowerer guarantees declarations)")
             }
             let typed = builder.freshTemp()
             bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
@@ -1371,7 +1371,7 @@ public final class IREmitter {
     /// opaque aggregates, and the dict split additionally takes the key boxed
     /// with its width and tag. The legacy emitter dispatches on those same
     /// three pieces, so both chains stay step-for-step equivalent.
-    private func emitUniqueContainerHandle(_ container: HIRExpr) -> IRValue {
+    private func emitUniqueContainerHandle(_ container: IRExpr) -> IRValue {
         switch container {
         case .load(let name, let slotType):
             let handleSpelling = slotType.llvmSpelling
@@ -1394,7 +1394,7 @@ public final class IREmitter {
             switch parent.llvmType {
             case "%bk_dict*":
                 let keyValue = emitExpr(index)
-                let (keySpelling, keyWidth, keyTag) = arrayElementABI(hirType(of: index))
+                let (keySpelling, keyWidth, keyTag) = arrayElementABI(irType(of: index))
                 let keyBox = boxValue(keyValue, spelling: keySpelling)
                 bodyIR += " \(childRaw) = call ptr @bk_dict_ensure_unique_at(ptr \(parentRaw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
             default:
@@ -1421,7 +1421,7 @@ public final class IREmitter {
     /// 与 `emitMatchSubject` **同一条理由、同一种做法**（判别式位与 `try` 位在发射层是同一件事：
     /// 都是「一条语句的根部有一个先求值、后分派的操作数」）。⛔ 不合并成一个通用函数是有意的：
     /// 两处的**分派**形态不同（tagged match vs tag→ok/err 两支），能共用的只是这一段求值。
-    private func emitTryOperand(_ operand: HIRExpr, type: HIRType) -> IRValue {
+    private func emitTryOperand(_ operand: IRExpr, type: IRType) -> IRValue {
         guard frameMode == .resumable, blockDepth == 1,
             case .join(let awaited, _, .awaits) = operand
         else {
@@ -1435,7 +1435,7 @@ public final class IREmitter {
         return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
     }
 
-    private func emitTry(operand: HIRExpr, errorVar: String, handler: HIRBlock, okTarget: String?, type: HIRType) {
+    private func emitTry(operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?, type: IRType) {
         // ⚠️ 错误变量的槽在让出点**之前**声明 —— 若它落在栈上，续跑路径（入口 `switch` →
         // `de6b.resume.k`）**不支配**它，续跑之后读到的就是一块悬垂地址。故与其余局部槽同规：
         // 走 `declareLocalSlot`（可恢复体里 = 帧槽；普通体里 = `alloca`，形状一字未改）。
@@ -1470,10 +1470,10 @@ public final class IREmitter {
         bodyIR += "\(okLabel):\n"
         if let okTarget = okTarget {
             guard let okSlot = lookupSlot(okTarget) else {
-                fatalError("IREmitter: try ok target '\(okTarget)' undeclared (HIRLowerer guarantees the allocation)")
+                fatalError("IREmitter: try ok target '\(okTarget)' undeclared (IRLowerer guarantees the allocation)")
             }
             guard case .result(let okType) = type else {
-                fatalError("IREmitter: tryStmt type is not a Result (HIRLowerer guarantees)")
+                fatalError("IREmitter: tryStmt type is not a Result (IRLowerer guarantees)")
             }
             terminated = false
             let payload = builder.freshTemp()
@@ -1484,7 +1484,7 @@ public final class IREmitter {
         }
     }
 
-    private func emitIf(label: String?, condition: HIRExpr, thenBody: HIRBlock, elseBody: HIRBlock?) {
+    private func emitIf(label: String?, condition: IRExpr, thenBody: IRBlock, elseBody: IRBlock?) {
         let cond = emitExpr(condition)
         let id = builder.freshLabel()
         let thenLabel = "if.then.\(id)"
@@ -1559,7 +1559,7 @@ public final class IREmitter {
     /// (interpreter parity: `shouldRunStep = true` on continue), while a
     /// `continue` inside the step lands on the step's end. `break` targets
     /// the loop exit from either block and skips the step.
-    private func emitWhile(condition: HIRExpr, loopBody: HIRBlock, step: HIRBlock?) {
+    private func emitWhile(condition: IRExpr, loopBody: IRBlock, step: IRBlock?) {
         let id = builder.freshLabel()
         let condLabel = "while.cond.\(id)"
         let bodyLabel = "while.body.\(id)"
@@ -1617,11 +1617,11 @@ public final class IREmitter {
     /// break/continue follow the whileStmt contract.
     private func emitForIn(
         pattern: [String],
-        elementTypes: [HIRType],
-        kind: HIRForIterableKind,
-        iterable: HIRExpr,
-        body: HIRBlock,
-        step: HIRBlock?
+        elementTypes: [IRType],
+        kind: IRForIterableKind,
+        iterable: IRExpr,
+        body: IRBlock,
+        step: IRBlock?
     ) {
         let id = builder.freshLabel()
         let condLabel = "for.cond.\(id)"
@@ -1735,7 +1735,7 @@ public final class IREmitter {
 
     // MARK: - Expressions
 
-    private func emitExpr(_ expr: HIRExpr) -> IRValue {
+    private func emitExpr(_ expr: IRExpr) -> IRValue {
         switch expr {
         case .intConst(let value, let type):
             // ⚠️ 指针类型上不能写整数字面量：`ret ptr 0` 会让**整个模块**被 lli 拒
@@ -1757,7 +1757,7 @@ public final class IREmitter {
 
         case .load(let name, let type):
             guard let slot = lookupSlot(name) else {
-                fatalError("IREmitter: load of undeclared variable '\(name)' (HIRLowerer guarantees declarations)")
+                fatalError("IREmitter: load of undeclared variable '\(name)' (IRLowerer guarantees declarations)")
             }
             let temp = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: temp, type: type.llvmSpelling, ptr: slot) + "\n"
@@ -1825,7 +1825,7 @@ public final class IREmitter {
             if function == "Array.append" {
                 guard args.count == 2, case .array(let elementType)? = returnType else {
                     fatalError(
-                        "IREmitter: the builtin array append needs a receiver plus one element and an array result (HIRLowerer guarantees)"
+                        "IREmitter: the builtin array append needs a receiver plus one element and an array result (IRLowerer guarantees)"
                     )
                 }
                 return emitArrayAppend(
@@ -1874,7 +1874,7 @@ public final class IREmitter {
 
         case .resultConstruct(let isOk, let payload, let type):
             guard case .result = type else {
-                fatalError("IREmitter: resultConstruct type is not a Result (HIRLowerer guarantees)")
+                fatalError("IREmitter: resultConstruct type is not a Result (IRLowerer guarantees)")
             }
             let p = emitExpr(payload)
             let aggregate = type.llvmSpelling
@@ -1903,7 +1903,7 @@ public final class IREmitter {
 
         case .optionalConstruct(let isSome, let payload, let type):
             guard case .optional = type else {
-                fatalError("IREmitter: optionalConstruct type is not Optional (HIRLowerer guarantees)")
+                fatalError("IREmitter: optionalConstruct type is not Optional (IRLowerer guarantees)")
             }
             let aggregate = type.llvmSpelling
             let withTag = builder.freshTemp()
@@ -1924,7 +1924,7 @@ public final class IREmitter {
 
         case .enumConstruct(let enumName, _, let tag, let payloads, let payloadTypes, let type):
             guard let aggregate = type.nominalAggregateSpelling else {
-                fatalError("IREmitter: enumConstruct on non-enum type (HIRLowerer guarantees)")
+                fatalError("IREmitter: enumConstruct on non-enum type (IRLowerer guarantees)")
             }
             let ptr = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: ptr, type: aggregate) + "\n"
@@ -2079,7 +2079,7 @@ public final class IREmitter {
     /// Bake a path *literal* against the program base (see `programBase`).
     /// Non-literals and paths that the rule exempts come back untouched, so
     /// every caller can route its path argument through this unconditionally.
-    private func bakedIOPath(_ path: HIRExpr) -> HIRExpr {
+    private func bakedIOPath(_ path: IRExpr) -> IRExpr {
         guard let base = programBase,
             case .stringConst(let value) = path,
             !value.hasPrefix("/"),
@@ -2118,7 +2118,7 @@ public final class IREmitter {
     /// trailing newline is appended, matching the interpreter's
     /// `String.write(toFile:)`. Yields the fclose i32 as the value. The one
     /// deliberate divergence is the NULL guard: the legacy emitter has none.
-    private func emitFileWrite(path: HIRExpr, content: HIRExpr) -> IRValue {
+    private func emitFileWrite(path: IRExpr, content: IRExpr) -> IRValue {
         usesFileIO = true
         let pathValue = emitExpr(bakedIOPath(path))
         let contentValue = emitExpr(content)
@@ -2145,7 +2145,7 @@ public final class IREmitter {
     /// unreliable. The NULL guard is the second divergence from the
     /// legacy emitter, and the one that matters most here: a missing file is
     /// reachable from ordinary source, unlike the write path's.
-    private func emitFileRead(path: HIRExpr) -> IRValue {
+    private func emitFileRead(path: IRExpr) -> IRValue {
         usesFileIO = true
         let bufferSize = IOLimits.fileBufferSize
         let pathValue = emitExpr(bakedIOPath(path))
@@ -2211,7 +2211,7 @@ public final class IREmitter {
     /// false without a length check — the same shape the legacy emitter uses,
     /// and the same answer the interpreter's first-grapheme rule gives in the
     /// ASCII domain.
-    private func emitIsAsciiDigit(_ argument: HIRExpr) -> IRValue {
+    private func emitIsAsciiDigit(_ argument: IRExpr) -> IRValue {
         let subject = emitExpr(argument)
         let byte = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: byte, type: "i8", ptr: subject.ssaName) + "\n"
@@ -2228,7 +2228,7 @@ public final class IREmitter {
     /// prints the message (or a default) and calls the noreturn panic.
     /// Passing asserts fall through — a failing assert never appears in a
     /// parity baseline (test blocks are not executed by the harness).
-    private func emitAssertCall(condition: HIRExpr, message: HIRExpr?) -> IRValue {
+    private func emitAssertCall(condition: IRExpr, message: IRExpr?) -> IRValue {
         let cond = emitExpr(condition)
         let passLabel = "assert.pass.\(builder.freshLabel())"
         let failLabel = "assert.fail.\(builder.freshLabel())"
@@ -2252,7 +2252,7 @@ public final class IREmitter {
     /// `load(p)`: typed load through the pointer, then widen to the
     /// unified int value the rest of the pipeline prints with (mirrors the
     /// interpreter's decodePointer — U8 sign-extends, U64 loads 8 bytes).
-    private func emitPointerLoad(pointer: HIRExpr, element: HIRType) -> IRValue {
+    private func emitPointerLoad(pointer: IRExpr, element: IRType) -> IRValue {
         let p = emitExpr(pointer)
         let loaded = builder.freshTemp()
         bodyIR += " \(loaded) = load \(element.llvmSpelling), ptr \(p.ssaName)\n"
@@ -2268,7 +2268,7 @@ public final class IREmitter {
     /// interpreter's encode — Int8(truncatingIfNeeded:)). The value's own
     /// IR type drives the narrowing chain (a declared I32 into a *U8 slot
     /// truncates i32 -> i8); the element type is the ABI authority.
-    private func emitPointerStore(pointer: HIRExpr, value: HIRExpr, element: HIRType) -> IRValue {
+    private func emitPointerStore(pointer: IRExpr, value: IRExpr, element: IRType) -> IRValue {
         let p = emitExpr(pointer)
         var v = emitExpr(value)
         let target = element.llvmSpelling
@@ -2297,9 +2297,9 @@ public final class IREmitter {
 
     /// `&x`: the variable's alloca slot address (D-B true pointer
     /// semantics). Opaque ptr typed by the pointee for load/store use.
-    private func emitAddressOfVar(name: String, type: HIRType) -> IRValue {
+    private func emitAddressOfVar(name: String, type: IRType) -> IRValue {
         guard let slot = lookupSlot(name) else {
-            fatalError("IREmitter: addressOf of undeclared variable '\(name)' (HIRLowerer guarantees declarations)")
+            fatalError("IREmitter: addressOf of undeclared variable '\(name)' (IRLowerer guarantees declarations)")
         }
         return IRValue(llvmType: "ptr", ssaName: slot)
     }
@@ -2315,8 +2315,8 @@ public final class IREmitter {
     /// have no rendering at all trap at run time instead (`bk_panic` is
     /// noreturn), keeping the remaining gap observable rather than letting
     /// the scalar fallback print a handle's bits.
-    private func emitPrintMulti(arguments: [HIRExpr]) -> IRValue {
-        if arguments.contains(where: { Self.hasNoScalarRendering(hirType(of: $0)) }) {
+    private func emitPrintMulti(arguments: [IRExpr]) -> IRValue {
+        if arguments.contains(where: { Self.hasNoScalarRendering(irType(of: $0)) }) {
             let message = emitStringConstant(
                 "Pini runtime error: printing an aggregate value is a later grid (value formatting)"
             )
@@ -2335,7 +2335,7 @@ public final class IREmitter {
                 bodyIR += " call i32 (ptr, ...) @printf(ptr \(space.ssaName))\n"
             }
             let printed = emitExpr(argument)
-            emitValuePrint(value: printed, type: hirType(of: argument))
+            emitValuePrint(value: printed, type: irType(of: argument))
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
@@ -2353,7 +2353,7 @@ public final class IREmitter {
     /// printing one produces an answer, and a running process has no scalar
     /// rendering to fall back on. It belongs to the same family as the other
     /// opaque handles, and it degrades the same way they do.
-    private static func hasNoScalarRendering(_ type: HIRType) -> Bool {
+    private static func hasNoScalarRendering(_ type: IRType) -> Bool {
         switch type {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .char, .pointer,
             .nominal:
@@ -2370,15 +2370,15 @@ public final class IREmitter {
     /// pointer { code, env }, ensure the type-specialized boxing wrapper,
     /// and call `bk_lazyref_create(wrapper, code, env, bytes, tag)`. The
     /// handle is kept as an opaque `%bk_lazyref*` (legacy bitcast mirror).
-    private func emitLazyRefConstruct(closure: HIRExpr, type: HIRType) -> IRValue {
+    private func emitLazyRefConstruct(closure: IRExpr, type: IRType) -> IRValue {
         guard case .lazyRef(let element) = type else {
-            fatalError("IREmitter: lazyRefConstruct type is not a lazyRef (HIRLowerer guarantees)")
+            fatalError("IREmitter: lazyRefConstruct type is not a lazyRef (IRLowerer guarantees)")
         }
         let (elemSpelling, bytes, tag) = lazyRefElemABI(element)
         usesLazyRef = true
         let closureValue = emitExpr(closure)
         guard closureValue.llvmType == "{ ptr, ptr }" else {
-            fatalError("IREmitter: LazyRef initializer is not a closure (HIRLowerer guarantees)")
+            fatalError("IREmitter: LazyRef initializer is not a closure (IRLowerer guarantees)")
         }
         let code = builder.freshTemp()
         bodyIR += " \(code) = extractvalue { ptr, ptr } \(closureValue.ssaName), 0\n"
@@ -2394,7 +2394,7 @@ public final class IREmitter {
 
     /// `handle.value` (G13 batch 1): `bk_lazyref_value(handle)` yields the
     /// cached element box; the element value is loaded out of it.
-    private func emitLazyRefValue(handle: HIRExpr, element: HIRType) -> IRValue {
+    private func emitLazyRefValue(handle: IRExpr, element: IRType) -> IRValue {
         usesLazyRef = true
         let handleValue = emitExpr(handle)
         let raw = builder.freshTemp()
@@ -2411,7 +2411,7 @@ public final class IREmitter {
     /// `lazyRefElemInfo` table — string uses the raw-ptr tag (4), NOT the
     /// array-family tag 3 (strings are immutable C bytes with no share
     /// count; boxing them as share-counted handles would corrupt cleanup).
-    private func lazyRefElemABI(_ type: HIRType) -> (spelling: String, bytes: Int, tag: Int32) {
+    private func lazyRefElemABI(_ type: IRType) -> (spelling: String, bytes: Int, tag: Int32) {
         switch type {
         case .i32: return ("i32", 4, 0)
         case .f64: return ("double", 8, 1)
@@ -2423,7 +2423,7 @@ public final class IREmitter {
         /// is immutable C bytes with no share count.
         case .char: return ("i8*", 8, 4)
         default:
-            fatalError("IREmitter: no LazyRef element ABI for '\(type)' (HIRLowerer gates element types)")
+            fatalError("IREmitter: no LazyRef element ABI for '\(type)' (IRLowerer gates element types)")
         }
     }
 
@@ -2432,7 +2432,7 @@ public final class IREmitter {
     /// initializer code, stores the element into the runtime-provided heap
     /// box, and returns it (uniform ptr ABI sidesteps per-type return
     /// register differences; the runtime owns the box allocation).
-    private func ensureLazyRefWrapper(element: HIRType, elemSpelling: String) -> String {
+    private func ensureLazyRefWrapper(element: IRType, elemSpelling: String) -> String {
         let suffix: String
         switch element {
         case .i32: suffix = "i32"
@@ -2460,15 +2460,15 @@ public final class IREmitter {
     /// Field layout resolution for a nominal base expression: aggregate
     /// spelling, the field's type, and its GEP index (objects offset past
     /// the refcount header at field 0).
-    private func fieldLayout(of base: HIRExpr, field: String) -> (aggregate: String, fieldType: HIRType, index: Int) {
-        let baseType = hirType(of: base)
+    private func fieldLayout(of base: IRExpr, field: String) -> (aggregate: String, fieldType: IRType, index: Int) {
+        let baseType = irType(of: base)
         guard case .nominal(let name, let isObject) = baseType else {
-            fatalError("IREmitter: field access on non-nominal base (HIRLowerer guarantees)")
+            fatalError("IREmitter: field access on non-nominal base (IRLowerer guarantees)")
         }
         guard let decl = moduleTypes.first(where: { $0.name == name }),
             let index = decl.fields.firstIndex(where: { $0.name == field })
         else {
-            fatalError("IREmitter: unknown nominal field '\(name).\(field)' (HIRLowerer guarantees)")
+            fatalError("IREmitter: unknown nominal field '\(name).\(field)' (IRLowerer guarantees)")
         }
         let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
         return (aggregate, decl.fields[index].type, index + (isObject ? 1 : 0))
@@ -2491,12 +2491,12 @@ public final class IREmitter {
     /// 而它看到的是一个 `(`，报 `expected type`。⇒ 此处发**两条真指令**（先取过尾指针、再转成整数），
     /// 而不是把这个式子绑到一个名字上。
     /// ⛔ 别处把它当**调用实参**用是**合法**的 —— 这里改了**不等于**那边也该改。
-    private func emitGivenInstance(type: HIRType) -> IRValue {
+    private func emitGivenInstance(type: IRType) -> IRValue {
         guard case .nominal(let name, _) = type,
             let aggregate = type.nominalAggregateSpelling,
             moduleTypes.contains(where: { $0.name == name })
         else {
-            fatalError("IREmitter: givenInstance of unknown nominal type (HIRLowerer guarantees)")
+            fatalError("IREmitter: givenInstance of unknown nominal type (IRLowerer guarantees)")
         }
         let slot = ensureGivenSlot(type: type)
         let initializer = ensureGivenInitializer(type: type)
@@ -2521,7 +2521,7 @@ public final class IREmitter {
     /// 等于把队列放进一个**随帧消失**的对象里 —— 挑选循环随后拿到的是**悬垂指针**，
     /// 而它的症状是随机错乱、不是立即崩溃。
     /// ⇒ 取用点要副本（「实参的副本」是那条路的语义），驱动面要**本体**，两者不可互推。
-    private func emitGivenBoxPointer(type: HIRType) -> IRValue {
+    private func emitGivenBoxPointer(type: IRType) -> IRValue {
         guard case .nominal(let name, _) = type,
             let aggregate = type.nominalAggregateSpelling,
             moduleTypes.contains(where: { $0.name == name })
@@ -2559,7 +2559,7 @@ public final class IREmitter {
             return
         }
         usesSchedBinding = true
-        let schedulerType = HIRType.nominal(
+        let schedulerType = IRType.nominal(
             name: PredefinedDecls.schedulerTypeName, isObject: false)
         let sched = emitGivenBoxPointer(type: schedulerType)
         let typeName = IRName.mangle(PredefinedDecls.schedulerTypeName)
@@ -2577,9 +2577,9 @@ public final class IREmitter {
     }
 
     /// 取（并在首次需要时定义）某类型的存放位符号。
-    private func ensureGivenSlot(type: HIRType) -> String {
+    private func ensureGivenSlot(type: IRType) -> String {
         guard case .nominal(let name, _) = type else {
-            fatalError("IREmitter: given slot for non-nominal type (HIRLowerer guarantees)")
+            fatalError("IREmitter: given slot for non-nominal type (IRLowerer guarantees)")
         }
         let symbol = "__given_slot_\(IRName.mangle(name))"
         if givenSlotNames.insert(symbol).inserted {
@@ -2597,12 +2597,12 @@ public final class IREmitter {
     /// ⚠️ **可重入**：某个字段初值自己可能取用**另一个**给定块 ⇒ 这里会递归回到
     /// `emitGivenInstance`。上下文是保存/恢复的、两个符号集合各自去重，故递归安全
     /// （运行时那一侧的死锁由 `bk_given_get` 的两级锁挡住，见其实现注释）。
-    private func ensureGivenInitializer(type: HIRType) -> String {
+    private func ensureGivenInitializer(type: IRType) -> String {
         guard case .nominal(let name, _) = type,
             let aggregate = type.nominalAggregateSpelling,
             let decl = moduleTypes.first(where: { $0.name == name })
         else {
-            fatalError("IREmitter: given initializer for unknown nominal type (HIRLowerer guarantees)")
+            fatalError("IREmitter: given initializer for unknown nominal type (IRLowerer guarantees)")
         }
         let symbol = "__given_init_\(IRName.mangle(name))"
         guard givenInitializerNames.insert(symbol).inserted else { return symbol }
@@ -2665,12 +2665,12 @@ public final class IREmitter {
         return symbol
     }
 
-    private func emitConstruct(type: HIRType) -> IRValue {
+    private func emitConstruct(type: IRType) -> IRValue {
         guard case .nominal(let name, let isObject) = type,
             let aggregate = type.nominalAggregateSpelling,
             let decl = moduleTypes.first(where: { $0.name == name })
         else {
-            fatalError("IREmitter: construct of unknown nominal type (HIRLowerer guarantees)")
+            fatalError("IREmitter: construct of unknown nominal type (IRLowerer guarantees)")
         }
         let ptr = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: ptr, type: aggregate) + "\n"
@@ -2694,7 +2694,7 @@ public final class IREmitter {
     }
 
     /// Zero constant per field spelling (legacy zeroConst mirror).
-    private func zeroConst(for type: HIRType) -> String {
+    private func zeroConst(for type: IRType) -> String {
         switch type {
         case .i8, .u8, .i32, .i64, .u64, .boolean: return "0"
         case .f64: return "0.0"
@@ -2711,7 +2711,7 @@ public final class IREmitter {
     /// own); strings copy bytes into a fresh stack buffer with a NUL
     /// terminator (byte semantics — the documented ASCII limitation, same
     /// as the legacy len(string) gap).
-    private func emitSliceCall(container: HIRExpr, start: HIRExpr, end: HIRExpr, type: HIRType) -> IRValue {
+    private func emitSliceCall(container: IRExpr, start: IRExpr, end: IRExpr, type: IRType) -> IRValue {
         let containerValue = emitExpr(container)
 
         switch type {
@@ -2843,7 +2843,7 @@ public final class IREmitter {
             return IRValue(llvmType: "i8*", ssaName: buffer)
 
         default:
-            fatalError("IREmitter: slice on non-array/string type '\(type)' (HIRLowerer gates)")
+            fatalError("IREmitter: slice on non-array/string type '\(type)' (IRLowerer gates)")
         }
     }
 
@@ -2856,7 +2856,7 @@ public final class IREmitter {
     /// The byte copy itself belongs to the runtime, which is also where the
     /// tag's nested-handle accounting lives.
     private func emitArrayAppend(
-        receiver: IRValue, elementNode: HIRExpr, elementValue: IRValue, elementType: HIRType
+        receiver: IRValue, elementNode: IRExpr, elementValue: IRValue, elementType: IRType
     ) -> IRValue {
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
         emitRetainIfAliased(elementNode, elementValue)
@@ -2876,7 +2876,7 @@ public final class IREmitter {
     /// default (start → "0", end → the runtime count); an integer is
     /// tail-counted when negative, then clamped into [0, count] — all via
     /// select chains, no branches (sunk-stdlib parity).
-    private func resolveSliceBound(_ bound: HIRExpr, count: String, defaultValue: String) -> String {
+    private func resolveSliceBound(_ bound: IRExpr, count: String, defaultValue: String) -> String {
         if case .optionalConstruct(let isSome, _, _) = bound, !isSome {
             return defaultValue
         }
@@ -2999,15 +2999,15 @@ public final class IREmitter {
     /// character count) and wrap the byte in a fresh 2-byte buffer. The
     /// aggregate flows through a stack slot (alloca + store + load) so the
     /// branch join needs no phi node.
-    private func emitOptionalGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
+    private func emitOptionalGet(container: IRExpr, index: IRExpr, type: IRType) -> IRValue {
         guard case .optional(let wrapped) = type else {
-            fatalError("IREmitter: optionalGet type is not Optional (HIRLowerer guarantees)")
+            fatalError("IREmitter: optionalGet type is not Optional (IRLowerer guarantees)")
         }
         let aggregate = type.llvmSpelling
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
 
-        let isStringReceiver = hirType(of: container) == .string
+        let isStringReceiver = irType(of: container) == .string
         let count: String
         var arrayRaw: String? = nil
         if isStringReceiver {
@@ -3097,7 +3097,7 @@ public final class IREmitter {
     /// handle tag: they are immutable C strings with no share count — the
     /// handle tag makes dict cowCopy retain read-only constant bytes (a
     /// legacy bug that surfaces only on dict alias splits).
-    private func arrayElementABI(_ type: HIRType) -> (spelling: String, width: Int, tag: Int32) {
+    private func arrayElementABI(_ type: IRType) -> (spelling: String, width: Int, tag: Int32) {
         switch type {
         case .i32: return ("i32", 4, 0)
         case .f64: return ("double", 8, 1)
@@ -3117,7 +3117,7 @@ public final class IREmitter {
             fatalError(
                 "IREmitter: an array of task handles has no element ABI yet — the aggregate join is not wired (this batch covers dispatch, blocking wait and pruning)")
         default:
-            fatalError("IREmitter: no array element ABI for '\(type)' (HIRLowerer gates element types)")
+            fatalError("IREmitter: no array element ABI for '\(type)' (IRLowerer gates element types)")
         }
     }
 
@@ -3130,7 +3130,7 @@ public final class IREmitter {
     ///   (the legacy emitter skipped this retain, which is one reason it
     ///   could not pass cow.pini). True temporaries (literals, scalars,
     ///   fresh constructions) transfer ownership and must NOT retain.
-    private func emitRetainIfAliased(_ valueNode: HIRExpr, _ value: IRValue) {
+    private func emitRetainIfAliased(_ valueNode: IRExpr, _ value: IRValue) {
         let containerSpellings = ["%bk_array*", "%bk_dict*", "%bk_set*"]
         guard containerSpellings.contains(value.llvmType) else { return }
         let aliased: Bool
@@ -3148,9 +3148,9 @@ public final class IREmitter {
         bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
     }
 
-    private func emitArrayLiteral(elements: [HIRExpr], type: HIRType) -> IRValue {
+    private func emitArrayLiteral(elements: [IRExpr], type: IRType) -> IRValue {
         guard case .array(let elementType) = type else {
-            fatalError("IREmitter: arrayLiteral type is not an array (HIRLowerer guarantees)")
+            fatalError("IREmitter: arrayLiteral type is not an array (IRLowerer guarantees)")
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
         let createTemp = builder.freshTemp()
@@ -3174,13 +3174,13 @@ public final class IREmitter {
         return IRValue(llvmType: "%bk_array*", ssaName: handle)
     }
 
-    private func emitSubscriptGet(container: HIRExpr, index: HIRExpr, type: HIRType) -> IRValue {
+    private func emitSubscriptGet(container: IRExpr, index: IRExpr, type: IRType) -> IRValue {
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
 
         // Dictionary read (G5): the key is boxed by its own type; a missing
         // key panics inside bk_dict_get (G48 three-channel alignment).
-        if case .dict(let keyType, let valueType) = hirType(of: container) {
+        if case .dict(let keyType, let valueType) = irType(of: container) {
             let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
             let keyBox = boxValue(indexValue, spelling: keySpelling)
             let raw = builder.freshTemp()
@@ -3192,7 +3192,7 @@ public final class IREmitter {
             return IRValue(llvmType: valueType.llvmSpelling, ssaName: value)
         }
 
-        if hirType(of: container) == .string {
+        if irType(of: container) == .string {
             // String subscript: tail-counted index, inline strlen, OOB panics
             // (safe-assert channel, E5-005 parity); returns a 1-char string.
             let count = emitStringByteLength(containerValue)
@@ -3247,9 +3247,9 @@ public final class IREmitter {
         return IRValue(llvmType: type.llvmSpelling, ssaName: value)
     }
 
-    private func emitLen(_ argument: HIRExpr) -> IRValue {
+    private func emitLen(_ argument: IRExpr) -> IRValue {
         let value = emitExpr(argument)
-        switch hirType(of: argument) {
+        switch irType(of: argument) {
         case .dict:
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_dict* \(value.ssaName) to ptr\n"
@@ -3282,9 +3282,9 @@ public final class IREmitter {
         return boxPtr
     }
 
-    private func emitDictLiteral(entries: [HIRDictEntry], type: HIRType) -> IRValue {
+    private func emitDictLiteral(entries: [IRDictEntry], type: IRType) -> IRValue {
         guard case .dict(let keyType, let valueType) = type else {
-            fatalError("IREmitter: dictLiteral type is not a dict (HIRLowerer guarantees)")
+            fatalError("IREmitter: dictLiteral type is not a dict (IRLowerer guarantees)")
         }
         let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
         let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
@@ -3312,9 +3312,9 @@ public final class IREmitter {
         return IRValue(llvmType: "%bk_dict*", ssaName: handle)
     }
 
-    private func emitSetLiteral(elements: [HIRExpr], type: HIRType) -> IRValue {
+    private func emitSetLiteral(elements: [IRExpr], type: IRType) -> IRValue {
         guard case .set(let elementType) = type else {
-            fatalError("IREmitter: setLiteral type is not a set (HIRLowerer guarantees)")
+            fatalError("IREmitter: setLiteral type is not a set (IRLowerer guarantees)")
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
         let create = builder.freshTemp()
@@ -3370,11 +3370,11 @@ public final class IREmitter {
                 bodyIR += " \(t) = ptrtoint \(value.llvmType) \(value.ssaName) to i64\n"
                 return IRValue(llvmType: "i64", ssaName: t)
             }
-            fatalError("IREmitter: no word widening for '\(value.llvmType)' (HIRLowerer gates non-scalar payloads)")
+            fatalError("IREmitter: no word widening for '\(value.llvmType)' (IRLowerer gates non-scalar payloads)")
         }
     }
 
-    private func emitBinary(op: HIRBinaryOp, lhs: HIRExpr, rhs: HIRExpr, type: HIRType) -> IRValue {
+    private func emitBinary(op: IRBinaryOp, lhs: IRExpr, rhs: IRExpr, type: IRType) -> IRValue {
         let lhsValue = emitExpr(lhs)
         let rhsValue = emitExpr(rhs)
         let temp = builder.freshTemp()
@@ -3432,7 +3432,7 @@ public final class IREmitter {
     /// Comparison line body for the operand kind. Strings compare via strcmp
     /// against zero; floats use ordered fcmp; integers/bools use icmp.
     private func comparePredicate(
-        op: HIRBinaryOp, operandType: String, temp: String,
+        op: IRBinaryOp, operandType: String, temp: String,
         lhs: IRValue, rhs: IRValue
     ) -> String {
         if operandType == "i8*" {
@@ -3483,17 +3483,17 @@ public final class IREmitter {
     /// bk_double_to_string (shortest round-trip, spec "value display
     /// semantics" note, LR-8); the malloc'd C string is freed right after
     /// printf consumes it.
-    private func emitPrint(_ argument: HIRExpr) -> IRValue {
-        let type = hirType(of: argument)
+    private func emitPrint(_ argument: IRExpr) -> IRValue {
+        let type = irType(of: argument)
         let value = emitExpr(argument)
         emitValuePrint(value: value, type: type)
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
-    /// Resolved HIR type of a lowered expression node (every case carries
+    /// Resolved IR type of a lowered expression node (every case carries
     /// its type — the typed-tree contract).
-    private func hirType(of expr: HIRExpr) -> HIRType {
+    private func irType(of expr: IRExpr) -> IRType {
         switch expr {
         case .intConst(_, let type): return type
         case .floatConst: return .f64
@@ -3580,7 +3580,7 @@ public final class IREmitter {
     /// runtime handle (bk_array_len/get loop, induction via a stack slot —
     /// no phi); optionals branch on the tag. Literal formatting pieces come
     /// from emitStringConstant (deduped module constants).
-    private func emitValuePrint(value: IRValue, type: HIRType) {
+    private func emitValuePrint(value: IRValue, type: IRType) {
         switch type {
         case .array(let elementType):
             let open = emitStringConstant("[")
@@ -3711,7 +3711,7 @@ public final class IREmitter {
             guard let decl = moduleTypes.first(where: { $0.name == name }),
                 let aggregate = type.nominalAggregateSpelling
             else {
-                fatalError("IREmitter: printing unregistered nominal (HIRLowerer guarantees)")
+                fatalError("IREmitter: printing unregistered nominal (IRLowerer guarantees)")
             }
             let open = emitStringConstant("\(name){")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
@@ -3754,7 +3754,7 @@ public final class IREmitter {
             guard let enumDecl = moduleEnums.first(where: { $0.name == name }),
                 let aggregate = type.nominalAggregateSpelling
             else {
-                fatalError("IREmitter: printing unregistered enum (HIRLowerer guarantees)")
+                fatalError("IREmitter: printing unregistered enum (IRLowerer guarantees)")
             }
             let tagPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: value.ssaName, indices: [0, 0]) + "\n"
@@ -4001,7 +4001,7 @@ public final class IREmitter {
 
     /// Hex-encode non-ASCII identifiers into LLVM-safe names (`点` -> `_u70B9`).
     /// Delegates to the shared `IRName.mangle` (single implementation source
-    /// for both pipelines since G3; HIRType spellings mangle through it too).
+    /// for both pipelines since G3; IRType spellings mangle through it too).
     static func mangle(_ name: String) -> String {
         IRName.mangle(name)
     }
@@ -4020,11 +4020,11 @@ public final class IREmitter {
     private func emitClosureLiteral(
         id: Int,
         paramNames: [String],
-        paramTypes: [HIRType],
-        returnType: HIRType?,
-        captures: [HIRCapture],
-        body: HIRBlock,
-        type: HIRType
+        paramTypes: [IRType],
+        returnType: IRType?,
+        captures: [IRCapture],
+        body: IRBlock,
+        type: IRType
     ) -> IRValue {
         let mangled = "@__closure_\(id)"
         let envPtr: String
@@ -4037,7 +4037,7 @@ public final class IREmitter {
             bodyIR += " \(mallocTemp) = call ptr @malloc(i64 \(captures.count * 8))\n"
             for (index, capture) in captures.enumerated() {
                 guard let slot = lookupSlot(capture.name) ?? captureSlots[capture.name] else {
-                    fatalError("IREmitter: capture '\(capture.name)' has no visible slot (HIRLowerer guarantees)")
+                    fatalError("IREmitter: capture '\(capture.name)' has no visible slot (IRLowerer guarantees)")
                 }
                 let gepTemp = builder.freshTemp()
                 bodyIR += builder.fmtGEP(name: gepTemp, aggregate: envTypeName, base: mallocTemp, indices: [0, index]) + "\n"
@@ -4076,9 +4076,9 @@ public final class IREmitter {
     /// Indirect call through a function value: extractvalue code + env, then
     /// `call ret code(ptr env, args...)` (uniform closure ABI).
     private func emitIndirectCall(
-        callee: HIRExpr,
-        arguments: [HIRExpr],
-        returnType: HIRType?
+        callee: IRExpr,
+        arguments: [IRExpr],
+        returnType: IRType?
     ) -> IRValue {
         let closure = emitExpr(callee)
         let code = builder.freshTemp()
@@ -4110,7 +4110,7 @@ public final class IREmitter {
         // is generated lazily against the module function registry passed
         // through moduleFunctions (set during emit(module:)).
         guard let function = moduleFunctions[mangled] else {
-            fatalError("IREmitter: adapter for unknown function '\(mangled)' (HIRLowerer guarantees)")
+            fatalError("IREmitter: adapter for unknown function '\(mangled)' (IRLowerer guarantees)")
         }
         var body = ""
         var callArgs: [String] = []
@@ -4193,14 +4193,14 @@ public final class IREmitter {
     /// ⛔ **限层**：只允许出现在函数体那一层（`blockDepth == 1`）。嵌套在 `if` / `match` / 循环
     /// 里的让出点，其所在块依赖外层块先算出的值（条件、被匹配的主题），而续跑的跳转会整段跳过
     /// 那些计算 ⇒ 那些值**不支配**续跑块。限在顶层就没有这个问题：顶层语句之间只经**帧**传值。
-    private func emitYieldPoint(awaited: HIRExpr, type: HIRType, produce: YieldProduce) {
+    private func emitYieldPoint(awaited: IRExpr, type: IRType, produce: YieldProduce) {
         guard blockDepth == 1 else {
             fatalError(
                 "IREmitter: a resumable `await` must sit at the top level of an async body"
                     + " (nested control flow has no resume entry yet)")
         }
         guard case .result(let okType) = type else {
-            fatalError("IREmitter: await site type is not a Result (HIRLowerer guarantees)")
+            fatalError("IREmitter: await site type is not a Result (IRLowerer guarantees)")
         }
         // ⭐ 载荷宽度只在**真搬运**时才成为约束：`S1` 把结果丢弃 ⇒ 没有搬运通道要过，
         // 于是聚合载荷的 `await` 在那条路上是合法的。⛔ 不许把这个检查提到前面 ——
@@ -4213,7 +4213,7 @@ public final class IREmitter {
         }
         let handle = emitExpr(awaited)
         guard handle.llvmType == "ptr" else {
-            fatalError("IREmitter: await operand is not a task handle (HIRLowerer guarantees)")
+            fatalError("IREmitter: await operand is not a task handle (IRLowerer guarantees)")
         }
         yieldPointCount += 1
         let index = yieldPointCount
@@ -4259,7 +4259,7 @@ public final class IREmitter {
 
     /// 三槽 → `Result` 聚合（与 `emitJoin` 的装配**同形**；`DE-1` §3.1 的三槽约定只有一处解释）。
     private func collectResult(
-        from out: String, type: HIRType, okType: HIRType
+        from out: String, type: IRType, okType: IRType
     ) -> IRValue {
         let tag = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: tag, type: "i64", ptr: out) + "\n"
@@ -4294,7 +4294,7 @@ public final class IREmitter {
     /// ⭐ `DE-6b`：那块缓冲**升格为「体的持久帧」**（`DE-1` §3.2.2）—— 由运行时分配
     /// （`bk_task_frame`，**已清零**，故帧头那个「续跑点 = 0」不必再发一条 store）、由运行时交还，
     /// 而**不再**由体 wrapper 释放。布局：`[0..8)` = 续跑点 · `[8 + 8i ..)` = 第 i 个形参（加宽后的字）。
-    private func emitTaskSpawn(callee: HIRFunction, mangled: String, args: [IRValue]) -> IRValue {
+    private func emitTaskSpawn(callee: IRFunction, mangled: String, args: [IRValue]) -> IRValue {
         usesTaskRuntime = true
         emitTaskBodyWrapper(callee: callee, mangled: mangled)
         let envRaw = builder.freshTemp()
@@ -4334,14 +4334,14 @@ public final class IREmitter {
     ///
     /// - Returns: `0` = 体跑到底、三槽已写。⭐ `2` = 体已让出 —— `out` **一个字节都不写**，
     ///   容器形参的份额也**不**还（体还在用它们；那是续跑方的责任）。
-    private func emitTaskBodyWrapper(callee: HIRFunction, mangled: String) {
+    private func emitTaskBodyWrapper(callee: IRFunction, mangled: String) {
         let name = "__task_body_\(mangled)"
         guard !taskBodyNames.contains(name) else { return }
         guard case .result(let okType)? = callee.returnType else {
             fatalError("IREmitter: task body wrapper needs a Result-returning body (emitTaskSpawn gates this)")
         }
         let okSpelling = okType.llvmSpelling
-        let resultType = HIRType.result(ok: okType).llvmSpelling
+        let resultType = IRType.result(ok: okType).llvmSpelling
         taskBodyNames.insert(name)
         var body = ""
         var callArgs: [String] = []
@@ -4422,7 +4422,7 @@ public final class IREmitter {
     /// 状态位**不由本段判断**：`status` 非 0 时运行时已经把三槽写成「非 ok」，
     /// 所以这里无条件读三槽即得正确的 `Result` —— 少一个分支，也少一处可能与运行时
     /// 不同的口径。
-    private func emitJoin(future: HIRExpr, type: HIRType, form: JoinForm) -> IRValue {
+    private func emitJoin(future: IRExpr, type: IRType, form: JoinForm) -> IRValue {
         if form == .awaits {
             fatalError(
                 "IREmitter: a resumable `await` needs a frame — this body has none"
@@ -4431,7 +4431,7 @@ public final class IREmitter {
         }
         usesTaskRuntime = true
         guard case .result(let okType) = type else {
-            fatalError("IREmitter: join site type is not a Result (HIRLowerer guarantees)")
+            fatalError("IREmitter: join site type is not a Result (IRLowerer guarantees)")
         }
         // 载荷宽度：三槽把载荷**擦除为 i64**（`DE-1` §3.1）⇒ 只有单字载荷能原样往返。
         // 聚合载荷（元组 / optional / 嵌套 Result 的值形态）今天没有搬运通道，故在这里
@@ -4442,7 +4442,7 @@ public final class IREmitter {
         }
         let handle = emitExpr(future)
         guard handle.llvmType == "ptr" else {
-            fatalError("IREmitter: join operand is not a task handle (HIRLowerer guarantees)")
+            fatalError("IREmitter: join operand is not a task handle (IRLowerer guarantees)")
         }
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
@@ -4454,11 +4454,11 @@ public final class IREmitter {
     /// 需要**份额**的句柄类型（容器）：它们的生命周期由运行时的份额计数管，
     /// 跨线程借用必须自己留一份。字符串是裸 C 串、标量是值，都不在此列
     /// （与 `emitRetainIfAliased` 认定的集合一致）。
-    private func isOwningContainer(_ type: HIRType) -> Bool {
+    private func isOwningContainer(_ type: IRType) -> Bool {
         ["%bk_array*", "%bk_dict*", "%bk_set*"].contains(type.llvmSpelling)
     }
 
-    private func retainIfOwningContainer(_ value: IRValue, type: HIRType) {
+    private func retainIfOwningContainer(_ value: IRValue, type: IRType) {
         guard isOwningContainer(type) else { return }
         usesTaskArgRelease = true
         let raw = builder.freshTemp()
@@ -4468,7 +4468,7 @@ public final class IREmitter {
 
     /// ok 载荷能否住进**一个字**（三槽 ABI 的宽度）。聚合值（元组 / optional / 嵌套 Result）
     /// 需要多于一个字，本后端没有搬运通道。
-    private func isSingleWordPayload(_ type: HIRType) -> Bool {
+    private func isSingleWordPayload(_ type: IRType) -> Bool {
         switch type {
         case .tuple, .optional, .result: return false
         default: return true
@@ -4526,10 +4526,10 @@ public final class IREmitter {
         id: Int,
         mangled: String,
         paramNames: [String],
-        paramTypes: [HIRType],
-        returnType: HIRType?,
-        captures: [HIRCapture],
-        body: HIRBlock
+        paramTypes: [IRType],
+        returnType: IRType?,
+        captures: [IRCapture],
+        body: IRBlock
     ) {
         let savedScopes = scopes
         let savedSlotCounters = slotCounters
@@ -4589,7 +4589,7 @@ public final class IREmitter {
             bodyIR += builder.fmtAlloca(name: slot, type: spelling) + "\n"
             bodyIR += builder.fmtStore(value: "%arg\(index)", type: spelling, ptr: slot) + "\n"
             // Body statements reference params by source name; decl order
-            // parallels paramTypes (HIRLowerer contract).
+            // parallels paramTypes (IRLowerer contract).
             let name = index < paramNames.count ? paramNames[index] : "param\(index)"
             scopes[scopes.count - 1][name] = slot
         }
@@ -4683,7 +4683,7 @@ public final class IREmitter {
     /// the exact length; pass 2 fills), each token strdup'd into the array
     /// via bk_array_set (raw-ptr tag 3). strtok skips empty tokens —
     /// corpus-identical with the interpreter's sunk split.
-    private func emitStringSplit(source: String, delim: String, type: HIRType) -> IRValue {
+    private func emitStringSplit(source: String, delim: String, type: IRType) -> IRValue {
         let slen = builder.freshTemp()
         bodyIR += " \(slen) = call i64 @strlen(ptr \(source))\n"
 
@@ -4848,7 +4848,7 @@ public final class IREmitter {
 
     /// String interpolation: pieces converted to C strings, strcat'd into a
     /// stack buffer. Uses stringifyValue (same display pipeline as print).
-    private func emitInterpString(parts: [HIRExpr]) -> IRValue {
+    private func emitInterpString(parts: [IRExpr]) -> IRValue {
         let buf = builder.freshTemp()
         bodyIR += " \(buf) = alloca i8, i64 4096\n"
         bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
@@ -4861,8 +4861,8 @@ public final class IREmitter {
 
     /// One interpolation piece as a C string pointer. Buffers for scalars
     /// are stack allocas; container pieces recurse through stringifyValue.
-    private func emitStringPiece(_ part: HIRExpr) -> IRValue {
-        let type = hirType(of: part)
+    private func emitStringPiece(_ part: IRExpr) -> IRValue {
+        let type = irType(of: part)
         switch type {
         case .string, .char:
             return emitExpr(part)
@@ -4876,7 +4876,7 @@ public final class IREmitter {
     /// emitValuePrint. Supports the scalar/container set the corpus
     /// interpolates (i32/F64/bool/string/array); optionals/enums/tuples
     /// render through the same buffer-concat shape as their print paths.
-    private func stringifyValue(value: IRValue, type: HIRType) -> IRValue {
+    private func stringifyValue(value: IRValue, type: IRType) -> IRValue {
         switch type {
         case .i32:
             let buf = builder.freshTemp()
@@ -4949,7 +4949,7 @@ public final class IREmitter {
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(close.ssaName))\n"
             return IRValue(llvmType: "i8*", ssaName: buf)
         default:
-            fatalError("IREmitter: stringify of '\(type)' outside the G9 grid (HIRLowerer gates interpolation parts)")
+            fatalError("IREmitter: stringify of '\(type)' outside the G9 grid (IRLowerer gates interpolation parts)")
         }
     }
 }

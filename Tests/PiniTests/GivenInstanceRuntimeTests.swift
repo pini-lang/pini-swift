@@ -87,10 +87,10 @@ struct GivenInstanceRuntimeTests {
 
         let first = bk_given_get(slot, fn, MemoryLayout<Int32>.size)
         let second = bk_given_get(slot, fn, MemoryLayout<Int32>.size)
-        let third = bk_given_get(slot, fn, MemoryLayout<Int32>.size)
+        let tird = bk_given_get(slot, fn, MemoryLayout<Int32>.size)
 
         #expect(first == second, "第二次取用应返回同一地址")
-        #expect(second == third, "第三次取用应返回同一地址")
+        #expect(second == tird, "第三次取用应返回同一地址")
         #expect(first.load(as: Int32.self) == 41, "取到的应是初始化函数写入的值")
         #expect(Self.probe.snapshot().calls == 1, "初始化函数应恰跑一次，实际 \(Self.probe.snapshot().calls) 次")
     }
