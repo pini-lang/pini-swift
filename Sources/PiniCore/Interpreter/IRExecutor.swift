@@ -986,6 +986,45 @@ public final class IRExecutor: DebugHookHost {
                 }
                 return .string(programBase ?? FileManager.default.currentDirectoryPath)
             }
+            // 自举仓 M8 的前置：目录枚举。条目 = **名字**（不含目录部分）—— 调用方已经
+            // 知道目录，自己拼路径比让这里替它猜更灵活。
+            //
+            // 路径按 IO 三段式解析（同 `readFile`）：相对路径相对**程序基准**，不是进程 CWD。
+            // 排序钉在 UTF-8 字节序升序：文件系统的返回顺序不稳定，不排序则依赖顺序的
+            // 判据会假绿 —— 而假绿比报错贵得多（它不报警，只让人以为通过了）。
+            // ⛔ 不截断（对照 `readFile` 的静默截断）：列不全时**报错**，不返回半个目录。
+            if name == "listDir" {
+                guard arguments.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IR executor: listDir expects exactly one argument",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                let rawPath = try requireString(try evaluate(arguments[0]), for: "listDir")
+                let dirPath = RuntimeOps.resolveIOPath(rawPath, programBase: programBase)
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: dirPath, isDirectory: &isDirectory),
+                      isDirectory.boolValue
+                else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IO 错误: 不是目录或不存在 \(dirPath)",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                let entries: [String]
+                do {
+                    entries = try FileManager.default.contentsOfDirectory(atPath: dirPath)
+                } catch {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IO 错误: 无法列出目录 \(dirPath): \(error.localizedDescription)",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                let ordered = entries.sorted {
+                    Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8))
+                }
+                return .array(ordered.map { .string($0) })
+            }
             throw RuntimeError.invalidOperation(
                 reason: "IR executor: no module-level function named '\(name)' and no "
                     + "type method lowered under that name. Builtin callees are not "

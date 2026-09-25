@@ -1,0 +1,6 @@
+; 意图：路径存在但**不是目录**时同样响亮拒绝。
+; ⚠️ 单靠上一条抓不到这一形态：`FileManager.fileExists` 对文件为真，
+;    故只查「存在」而不查「是目录」的实现会在这里**静默返回空数组**。
+main|func() -> ():
+    print(len(listDir("a-file.txt")))
+    return

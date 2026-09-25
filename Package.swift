@@ -40,7 +40,7 @@ let package = Package(
             // `Invalid Exclude ... File not found` 而告警照旧。
             // ⛔ 不要改用 `resources:` 指向套件目录：那会让目录里的 .swift 不再被编译，
             // 整个套件被静默丢弃（构建仍退出 0、告警也会消失）。
-            exclude: ["GrammarAcceptanceTests/Fixtures"],
+            exclude: ["GrammarAcceptanceTests/Fixtures", "ListDirBuiltinTests/Fixtures"],
         ),
     ],
     swiftLanguageModes: [SwiftLanguageMode.v6]

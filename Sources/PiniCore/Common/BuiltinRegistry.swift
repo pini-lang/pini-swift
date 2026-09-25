@@ -178,6 +178,23 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "readLine", group: .io, paramNames: [],
             params: [], returns: [t("String")]),
+        // ⭐ 目录枚举（自举仓 M8 的前置）。此前 `.pini` 源码**写不出**「列出目录」——
+        // 宿主能列目录的地方全在 Swift 侧（CLI / 调试器 / 模块工具链），语言面没有。
+        // 而自举仓的 module 层要「以目录为输入编译自身源码」，第一步就是列目录 ⇒ 该缺口
+        // 卡在语言面，不是自举仓的任务。
+        //
+        // 与 `readFile` 的一处**刻意不同**：**无条目数上限**。
+        // `readFile` 的 64 KiB 上限不是语言选的，是从发射器固定栈缓冲继承的
+        // （见 `IOLimits` 头注自陈），而本条不继承任何栈缓冲 ⇒ 没有同族约束。
+        // ⇒ 不平白引进一个任意数字，⛔ 也不复制 `readFile` 那处**静默截断**的形态：
+        //    列不全应当报错，而不是拿到半个目录继续跑（那会在很远的地方才显形）。
+        //
+        // 排序语义（**语言语义**，不是实现细节）：按 UTF-8 字节序升序。
+        // 必须钉死 —— 文件系统的返回顺序不稳定，不排序则任何依赖顺序的判据都是假绿。
+        BuiltinDecl(
+            name: "listDir", group: .io, paramNames: ["path"],
+            params: [t("String")],
+            returns: [.generic(name: "Array", params: [t("String")], location: builtinLocation)]),
 
         // ---- math ----
         BuiltinDecl(

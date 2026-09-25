@@ -3460,6 +3460,30 @@ public enum IRLowerer {
                     type: queryType
                 )
             }
+            // 自举仓 M8 的前置：目录枚举。与上面两条**同形** —— 降成既有 `call`，
+            // 由执行器按名回答，⛔ 不新增 IR 节点（⇒ 节点集与契约不动、覆盖检查不受影响）。
+            //
+            // ⚠️ LLVM 侧未实现，其表现为：`emit` **照常产出** `@listDir()` 调用（静默），
+            // 由 clang 在 `compile` 时以 `use of undefined value` 拒绝。
+            // ⭐ 这与 `argv` / `moduleRoot` **完全同形**（本批实测）。
+            // ⛔ 注意：本节上方两条的注释写「发射器对它 fail-loud」——**实测不成立**，
+            //    发射器并不 fail-loud，它静默产出未定义调用。该措辞已随本批登记为待订正。
+            if functionName == "listDir" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("listDir expects (path)", at: location)
+                }
+                guard loweredArgs[0].type == .string else {
+                    throw unsupported("listDir expects a String path", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: .array(element: .string)
+                    ),
+                    type: .array(element: .string)
+                )
+            }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
             // corpus dependency. Other math intrinsics join their own grid.
             // G-2a: the character builtins. Same shape as the other intrinsics --
