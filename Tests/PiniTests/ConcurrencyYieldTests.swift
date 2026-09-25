@@ -385,4 +385,102 @@ struct ConcurrencyYieldTests {
             "覆盖成后进先出后，先跑的应当是后决出的乙：\(overridden)"
         )
     }
+
+    // MARK: - 判据 6：被等待过的失败子任务不再倒扣体的结果（配对保住上浮规则）
+
+    /// 两份语料都含一个**会失败的子任务**，只差**父等没等它**。
+    ///
+    /// ⭐ 为什么要**成对**：修复动的是 `closeScope` 读到的「谁还在册」，而
+    /// 「未 join 的失败子任务 ⇒ 体的结果上浮为 `err(aggregate)`」是规格明写的规则
+    /// （语言参考「失败上浮」）。只测前一份 ⇒ 把整条上浮规则一并关掉也能全绿；
+    /// 只测后一份 ⇒ 看不见本缺陷。两份合起来才把「收窄」与「砍功能」分开。
+    ///
+    /// ⚠️ 两处 `sleep` 都是**判据的一部分**，不是叙述：
+    /// - 前一份让子任务睡够久（`sleep(60)`，而父派发完只隔微秒就去 `await`）⇒ 等的那一刻
+    ///   它**未决** ⇒ 走**让出 / 续跑**那一路。用例另按让出读数确认一次，因为若子任务
+    ///   恰好已决，这条语料会走「已决 ⇒ 直线取值」那条**本就正确**的路 ⇒ 缺陷不可见。
+    /// - 后一份让父**等子任务决完**（`sleep(200)` > 子任务的 60）再返回 ⇒ 子任务决出时
+    ///   **已收敛为失败、且仍在册** ⇒ 上浮该发生。⚠️ 少了这个 `sleep`，父返回时子任务
+    ///   还没决 ⇒ `closeScope` 走的是「取消未完成子任务」那一支，上浮**不会**发生，
+    ///   判据会绿得毫无道理（已实测：去掉它读到 `555`）。
+    private static let 探针已等的失败子任务 = """
+    坏|func() => (I32,):
+        sleep(60)
+        return err(Error("failed"))
+
+    父|func() => (I32,):
+        let t = 坏()
+        match await t:
+            case ok(v):
+                return ok(v)
+            case err(e):
+                print("handled")
+                return ok(777)
+
+    main|func() -> ():
+        let t = 父()
+        let r = wait t
+        match r:
+            case ok(v):
+                print(v)
+            case err(e):
+                print("flipped")
+        return
+    """
+
+    private static let 探针未等的失败子任务 = """
+    坏|func() => (I32,):
+        sleep(60)
+        return err(Error("failed"))
+
+    父|func() => (I32,):
+        坏()
+        sleep(200)
+        return ok(555)
+
+    main|func() -> ():
+        let t = 父()
+        let r = wait t
+        match r:
+            case ok(v):
+                print(v)
+            case err(e):
+                print("flipped")
+        return
+    """
+
+    @Test("已 `await` 的失败子任务不倒扣体的结果 —— 未 `await` 的失败子任务照旧上浮")
+    func anAwaitedFailingChildDoesNotFlipTheBodysResult() throws {
+        /// 意图：`await` 一个**会失败**的子任务，本身就是**一次 join**。父体拿它的结果做了
+        /// 什么（`match` 的 err 臂处理掉、或干脆丢掉），是父体的事 —— 子任务的失败不该在
+        /// 父的 `return` 边界上再翻一次。缺陷的形态是：续跑那条路把值递进来时**没有**把那
+        /// 个子任务从父的在册子里剪掉，于是 `return` 边界把它读成「**没人 join 过**的失败
+        /// 子任务」，父体自己的 `ok` 被翻成 `err(aggregate)` —— 臂跑了、体的结果却没了。
+        ///
+        /// 推进性：err 臂处理过之后，父体的结果必须**算数**（`777`）。
+        /// 驳回性：**未** join 的失败子任务必须照旧上浮（`flipped`）——
+        /// 这一半是「收窄」与「砍功能」的分界。
+        ///
+        /// ⚠️ 两腿对照**今天建不起来**，如实记在这里而不是绕开：LLVM 后端造一个 `err` 子任务
+        /// 的两条路各自卡在一处已登记缺陷上（`Error(...)` 构造不可用；`match` 一个
+        /// `joinWithin` 的结果报 `E6-004`）⇒ 本条的读数只有解释器后端一侧。
+        /// 发射腿侧**按代码读**不现形：它的续跑段**重发**一次 `bk_task_await`，那一刻对象
+        /// 已决 ⇒ 落进 `_bkTaskJoinOne`，而它的 `defer { _bkTaskDetachFromParent(box) }`
+        /// 与 `joinFuture` 的 `defer { detachFromParent() }` 是同一件事。
+        let handled = try runYieldProbe(Self.探针已等的失败子任务)
+        #expect(
+            handled.yields >= 1,
+            "语料没走到让出那一路（让出 \(handled.yields) 次）⇒ 本条测的就不是续跑那条路"
+        )
+        #expect(
+            handled.lines == ["handled", "777"],
+            "err 臂处理过之后体的结果应当算数，实际输出：\(handled.lines)"
+        )
+
+        let unjoined = try runYieldProbe(Self.探针未等的失败子任务)
+        #expect(
+            unjoined.lines == ["flipped"],
+            "未 join 的失败子任务必须照旧上浮，实际输出：\(unjoined.lines)"
+        )
+    }
 }

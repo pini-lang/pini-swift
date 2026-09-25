@@ -3040,6 +3040,18 @@ public final class HIRExecutor: DebugHookHost {
                             index: position,
                             finish: { [weak self] value in
                                 guard let self = self else { return nil }
+                                // The child's lifetime is consumed here, and this is the
+                                // one way into `finishYield` that has to say so itself:
+                                // the other two arrive from `joinFuture`, whose exit is a
+                                // `detachFromParent()`. Without it the child stays in this
+                                // body's scope, and the return boundary reads a failure
+                                // that was waited for as one nobody joined -- so the body's
+                                // own `ok` comes out as `err(aggregate)` and whatever the
+                                // body did with the error is discarded. Coming back to
+                                // collect the value is what consumes it; that is the same
+                                // moment `joinFuture` prunes at, not the moment the body
+                                // gives the task up.
+                                fut.detachFromParent()
                                 return try self.finishYield(plan, value: value)
                             },
                             awaited: fut,
