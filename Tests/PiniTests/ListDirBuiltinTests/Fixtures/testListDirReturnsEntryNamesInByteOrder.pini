@@ -1,0 +1,9 @@
+; 意图：listDir 返回的条目是**名字**（不含目录部分），且**按 UTF-8 字节序升序**。
+; 被测目录由用例在临时基准目录下现建（`entries/`），本夹具只负责调用与打印。
+main|func() -> ():
+    var xs = listDir("entries")
+    var i = 0
+    while i < len(xs):
+        print(xs[i])
+        i = i + 1
+    return

@@ -1,0 +1,4 @@
+; 意图：**空目录是合法输入**，返回空数组（区别于上面两条错误路径）。
+main|func() -> ():
+    print(len(listDir("empty")))
+    return
