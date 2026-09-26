@@ -1494,14 +1494,23 @@ public final class TypeChecker {
         typeEnv.pushScope()
         // 方法体作用域：注册 self 与所属类型字段，使字段引用可参与类型推断（P3-1 示例 trait.pini 触发）。
         // 字段先于参数注册，参数可遮蔽同名字段。
+        //
+        // ⚠️ 这两个名字**不进**跨作用域 re-infer 兜底表（`persistent: false`）：它们是
+        // **按类型注入**的，每个类型各有自己的一套，而那张表按裸名索引、模块内共享。
+        // 进了表，`甲类型.本行: String` 就会顶掉另一个文件里叫 `本行` 的局部变量，
+        // 且**只在多文件模块里发作**（2026-09-26 实测：自举仓 common 层一段
+        // Levenshtein 的无标注数组因此被判成 String，降载报 E6-004）。
+        // 兜底表要回答的是「这个裸名在**本模块的局部绑定**里是什么类型」，
+        // 成员的答案在字段表、`self` 的答案在方法签名，都不归它管。
         if let tn = typeName {
             // G-P8（重开修正）：self 的注册不得以「类型有字段」为前提——无字段类型
             // （或字段表未传入）的扩展方法此前拿不到 self，方法体内 self 调用退化 Any。
-            typeEnv.defineVariable(name: "self", type: .simple(name: tn, location: funcDecl.location))
+            typeEnv.defineVariable(
+                name: "self", type: .simple(name: tn, location: funcDecl.location), persistent: false)
         }
         if !fields.isEmpty {
             for (fname, ftype) in fields {
-                typeEnv.defineVariable(name: fname, type: ftype)
+                typeEnv.defineVariable(name: fname, type: ftype, persistent: false)
             }
         }
         for param in funcDecl.params {

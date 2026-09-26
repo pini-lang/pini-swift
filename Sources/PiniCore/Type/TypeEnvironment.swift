@@ -87,11 +87,24 @@ public final class TypeEnvironment {
 
     // MARK: - Variables
 
-    public func defineVariable(name: String, type: TypeAnnotation, isMutable: Bool = true) {
+    /// 登记一个名字的类型。
+    ///
+    /// `persistent` 决定这个名字是否进**跨作用域**_re-infer_ 兜底表。默认进（形参、
+    /// 局部绑定、模块级值都要靠它），但**类型作用域注入**的名字必须传 `false`：
+    /// 那张表按**裸名**索引且模块内共享，而字段名是**每个类型各自的成员**，不同
+    /// 类型完全可能各有一个同名字段。放进去就会让「甲类型有个 `本行` 字段」替
+    /// 换掉「乙文件里那个叫 `本行` 的局部变量」的类型，且**只在多文件模块里发作**
+    /// （单文件时同名不会跨类型出现，缺陷因此藏了很久）。字段的类型本该由字段表
+    /// 回答，不是由变量表回答。
+    public func defineVariable(
+        name: String, type: TypeAnnotation, isMutable: Bool = true, persistent: Bool = true
+    ) {
         let idx = scopes.count - 1
         scopes[idx].variables[name] = type
         scopes[idx].variableMutable[name] = isMutable
-        persistentVarTypes[name] = type
+        if persistent {
+            persistentVarTypes[name] = type
+        }
     }
 
     public func lookupVariable(name: String) -> TypeAnnotation? {
