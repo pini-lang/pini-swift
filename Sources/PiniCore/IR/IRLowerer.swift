@@ -4796,20 +4796,31 @@ public enum IRLowerer {
                 // return type (void-declared value-returning methods upgrade
                 // to the body's returned type — same computation as the
                 // definition side, so body and calls agree).
+                //
+                // G87 (2026-09-26): the declared-type fallback must go through
+                // `resolveReturnType`, not the narrower `IRType(from:)`. The
+                // narrower one only knows builtin scalars and the builtin
+                // generic container names, so a method declared to return a
+                // USER-declared type (struct / enum) threw right here even
+                // though the very same annotation resolves fine on the
+                // definition side (`resolveAnnotationType` falls back to
+                // `userTypes[name]`). Both the definition side and the trait
+                // default path already use the wide resolver — this call site
+                // was the only one that did not.
+                //
+                // ⚠️ For multi-slot returns (`-> (I32, I32,)`) this also
+                // aligns the call site with the definition side: the value
+                // type is the collapsed TUPLE, not the first element
+                // (`resolveReturnType`'s own doc records that contract).
                 let returnType =
                     try effectiveReturnType(
                         decl: method, userTypes: context.userTypes,
                         nominals: context.nominalTypesMap, selfTypeName: typeName
                     )
-                    ?? method.returnTypes.first.map { annotation -> IRType in
-                        guard let type = IRType(from: annotation) else {
-                            throw unsupported(
-                                "return type of '\(memberName)' is not resolvable",
-                                at: location
-                            )
-                        }
-                        return type
-                    }
+                    ?? resolveReturnType(
+                        method, userTypes: context.userTypes,
+                        subject: "method '\(memberName)'"
+                    )
                 var retypedArgs: [LoweredExpr] = []
                 for (position, argument) in arguments.enumerated() {
                     let paramType = methodParamTypes[methodParamIndices[position]]
