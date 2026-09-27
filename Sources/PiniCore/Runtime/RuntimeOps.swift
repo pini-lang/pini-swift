@@ -1,3 +1,8 @@
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#endif
 import Foundation
 
 /// Runtime operations both engines need: the value-level helpers, builtins and
@@ -823,22 +828,84 @@ public enum RuntimeOps {
         return .bool(first.isNumber)
     }
 
-    /// The interpreter's call-depth ceiling. One constant, because the two
-    /// engines used to hold separate copies kept in step by hand and by a
-    /// comment saying so.
-    static let maxCallDepth = 120
-
-    /// The error both engines raise when the ceiling is hit.
+    /// Bytes of host stack that must remain before one more body may be entered.
     ///
-    /// Shared rather than duplicated because the wording is load-bearing: the
-    /// depth guard's contract is "a diagnosable error instead of a stack
-    /// overflow", and a caller matching on the reason (the guard's own test
-    /// does) can only match one wording. The IR executor had an English
-    /// sentence here while the interpreter had a Chinese one, so the same
-    /// runaway recursion read as two different failures.
-    static func recursionGuardError() -> RuntimeError {
+    /// A share of the stack rather than a constant, because "enough left" means
+    /// nothing without knowing how much there was: on this host a main thread
+    /// carries 8 MB while one detached through `Thread` starts with 512 KB. An
+    /// eighth is held back so that raising the diagnostic and unwinding the
+    /// frames still have room, with a floor for the stacks small enough that an
+    /// eighth of them would leave nothing at all.
+    static func freeStackFloor(stackSize: Int) -> Int {
+        max(stackSize / 8, 256 * 1024)
+    }
+
+    /// The ceiling the guard falls back to where the stack cannot be read.
+    ///
+    /// Deliberately the conservative number the guard used on its own: the
+    /// fallback's only job is to keep a silent stack smash impossible on a
+    /// platform that cannot report what is left, and a generous ceiling would
+    /// defeat exactly that. It is not the decision a normal run makes — where a
+    /// reading is available the remaining stack decides, and this is never
+    /// consulted.
+    static let fallbackCallCeiling = 120
+
+    /// Whether one more body may be entered at `depth`.
+    ///
+    /// WHY A FRAME COUNT COULD NOT BE THE DECISION (G-P9)
+    ///
+    /// What one Pini call costs the host stack depends on the shape of that
+    /// call, and by enough to matter: a recursion over scalars spends about
+    /// 47 KB per frame here, while one that returns a user-declared enum, takes
+    /// a struct argument and runs a `match` spends about 80 KB. A single count is
+    /// therefore wrong in both directions at once — high enough that the heavy
+    /// shape smashes the stack before the guard is reached, which reports
+    /// nothing at all and takes the buffered output down with it, yet low enough
+    /// that a legal scalar recursion is refused as "suspected infinite" with
+    /// most of the stack still free. The stack left on the running thread is
+    /// what the decision actually needs.
+    ///
+    /// The fallback is not a second opinion: it answers only where no reading is
+    /// available, so that a platform which cannot report the stack still gets a
+    /// diagnosable refusal rather than the smash.
+    static func mayEnterAnotherBody(depth: Int) -> Bool {
+        guard let stack = hostStack() else {
+            return depth < fallbackCallCeiling
+        }
+        var marker: UInt8 = 0
+        let here = withUnsafeMutablePointer(to: &marker) { Int(bitPattern: $0) }
+        return here - stack.low > freeStackFloor(stackSize: stack.size)
+    }
+
+    /// The running thread's stack, or `nil` where the platform cannot report it.
+    ///
+    /// Read once per thread and cached for its life: the bounds do not move
+    /// while the thread runs, and on Linux asking for them walks the process
+    /// maps — too much work to repeat on every call. A thread whose bounds
+    /// cannot be read is cached as such, so it is not asked again either.
+    static func hostStack() -> (low: Int, size: Int)? {
+        let bounds: HostStackBounds
+        if let cached = hostStackBounds.value {
+            bounds = cached
+        } else {
+            let fresh = HostStackBounds(readHostStack())
+            hostStackBounds.value = fresh
+            bounds = fresh
+        }
+        guard let low = bounds.low, let size = bounds.size else { return nil }
+        return (low, size)
+    }
+
+    /// The error the guard raises when it refuses a call.
+    ///
+    /// One construction site, because the wording is load-bearing: the guard's
+    /// contract is "a diagnosable error instead of a stack overflow", and a
+    /// caller matching on the reason can only match one wording. The depth is
+    /// carried in the text because it is what separates a runaway recursion from
+    /// a merely deep one.
+    static func recursionGuardError(depth: Int) -> RuntimeError {
         RuntimeError.invalidOperation(
-            reason: "调用深度超过上限 \(maxCallDepth)，疑似无限递归",
+            reason: "宿主栈余量不足，无法再进入一层调用（深度 \(depth)），疑似无限递归或递归过深",
             location: SourceLocation(line: 0, column: 0, fileName: "")
         )
     }
@@ -1162,4 +1229,49 @@ public enum RuntimeOps {
             payload: makeError("未 join 子任务失败（结构化并发兜底）: " + detail)
         )
     }
+}
+
+/// The stack bounds of one thread, cached for the life of that thread.
+///
+/// Both fields are optional so that "this platform cannot answer" is a value
+/// that can be cached too: without that, a platform which cannot report its
+/// stack would be asked again on every single call.
+private final class HostStackBounds {
+    let low: Int?
+    let size: Int?
+
+    init(_ bounds: (low: Int, size: Int)?) {
+        self.low = bounds?.low
+        self.size = bounds?.size
+    }
+}
+
+/// One cache per thread — read by `RuntimeOps.hostStack()`.
+private let hostStackBounds = ThreadLocal<HostStackBounds>()
+
+/// Ask the platform where the running thread's stack begins and how big it is.
+///
+/// `low` is the lowest address that stack can reach, which is what a reading of
+/// the current frame is measured against: the stack grows downward, so a frame
+/// closer to `low` has less room left beneath it.
+private func readHostStack() -> (low: Int, size: Int)? {
+    #if canImport(Darwin)
+        let thread = pthread_self()
+        let size = Int(pthread_get_stacksize_np(thread))
+        let high = Int(bitPattern: pthread_get_stackaddr_np(thread))
+        guard size > 0, high > 0 else { return nil }
+        return (high - size, size)
+    #elseif canImport(Glibc)
+        var attributes = pthread_attr_t()
+        guard pthread_getattr_np(pthread_self(), &attributes) == 0 else { return nil }
+        defer { pthread_attr_destroy(&attributes) }
+        var base: UnsafeMutableRawPointer?
+        var size = 0
+        guard pthread_attr_getstack(&attributes, &base, &size) == 0,
+            let low = base, size > 0
+        else { return nil }
+        return (Int(bitPattern: low), size)
+    #else
+        return nil
+    #endif
 }

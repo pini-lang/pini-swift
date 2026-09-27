@@ -484,16 +484,18 @@ public final class IRExecutor: DebugHookHost {
         set { currentEnvStorage.value = newValue }
     }
 
-    /// Call-depth guard, same value as the interpreter's (`Interpreter.maxCallDepth`).
+    /// How many bodies the host is currently inside.
     ///
-    /// Unbounded recursion must end in a diagnosable error, not in a thread-stack
-    /// smash with no output — that failure mode is exactly G-P9 (SIGSEGV,
-    /// unbounded recursion) and a new execution path must not reintroduce it.
+    /// Reported rather than decided on: whether one more may be entered is
+    /// settled by the stack left on the running thread, because only that knows
+    /// what the shape of the call costs. A frame count was the decision once,
+    /// and the heavy shapes reached the smash before they ever reached the count
+    /// (`G-P9`). The depth survives as the number the diagnostic and the
+    /// debugger quote.
     private var callDepth: Int {
         get { callDepthStorage.value ?? 0 }
         set { callDepthStorage.value = newValue }
     }
-    private static let maxCallDepth = 120
 
     /// Names of the functions currently entered, innermost last.
     ///
@@ -2843,7 +2845,7 @@ public final class IRExecutor: DebugHookHost {
 
     /// Enter a body and run it, reporting a suspension rather than hiding it.
     ///
-    /// The prologue is `invokeBody`'s, unchanged: depth guard, argument binding,
+    /// The prologue is `invokeBody`'s, unchanged: stack guard, argument binding,
     /// environment, defer scope. What differs is the exit. A body that finished
     /// unwinds exactly as before. A body that gave the task up must **not** unwind
     /// — running its `defer`s at a suspension would be a semantic change, not a
@@ -2855,8 +2857,8 @@ public final class IRExecutor: DebugHookHost {
         args: [Value],
         name: String
     ) throws -> IRBodyStep {
-        guard callDepth < RuntimeOps.maxCallDepth else {
-            throw RuntimeOps.recursionGuardError()
+        guard RuntimeOps.mayEnterAnotherBody(depth: callDepth) else {
+            throw RuntimeOps.recursionGuardError(depth: callDepth)
         }
         callDepth += 1
         callStackNames.append(name)
