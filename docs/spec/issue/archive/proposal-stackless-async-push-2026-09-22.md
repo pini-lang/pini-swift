@@ -9,9 +9,9 @@
 > **语境**：Pini 语言。对接既有 `bk_*` 并发 C ABI 面。
 >
 > **两个称呼**（正文用它指代，不重复写路径）：
-> **「调度面提案」**= `proposal-scheduling-surface-2026-09-20.md`；
-> **「C ABI 件」**= `proposal-concurrency-runtime-c-abi-2026-09-20.md`；
-> **「轮询设计件」**= `proposal-polling-stackless-async-2026-09-22.md`。
+> **「调度面提案」**= `docs/spec/issue/archive/proposal-scheduling-surface-2026-09-20.md`；
+> **「C ABI 件」**= `docs/spec/issue/proposal-concurrency-runtime-c-abi-2026-09-20.md`；
+> **「轮询设计件」**= `docs/spec/issue/proposal-polling-stackless-async-2026-09-22.md`。
 > ⭐ **本件与轮询设计件的关系**（⛔ 别读错）：轮询设计件是**轴一 `A3` 的完整方案**，
 > 已随用户裁定（2026-09-22）**转为备选**；⛔ **它不是本件的前身，本件也不是它的修订版** ——
 > 两者是**同一支线的两条路径**，共用 ①③④ 三层，**只差 ② 驱动层**。
