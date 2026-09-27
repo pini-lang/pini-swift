@@ -103,7 +103,20 @@ public final class TypeInference {
                 return .generic(name: "Optional", params: [.simple(name: "Any", location: location)], location: location)
             }
             if let sp = scopedParams, let t = sp[name] { return t }
-            return environment?.lookupVariable(name: name)
+            if let bound = environment?.lookupVariable(name: name) { return bound }
+            // 无实参枚举用例的**裸名**形态（`名`，不带括号）：调用形态 `名(...)` 的识别只写在
+            // `.call` 分支里，故本支此前一律返 nil。而 nil 在**无线程期望类型**的位置（局部变量
+            // 初值位最典型）会被 `varDecl` 落成 `Any` ⇒ 错误迟发在**最后用它的地方**，报错点
+            // 与被推断的名字无关（实测：`var x = 某用例` 的报错落在「后续拿 x 做参数」那行）。
+            // 口径与 `.call` 分支同一档：父枚举唯一 ⇒ 取父枚举类型；歧义 ⇒ 仍返 nil，
+            // 交期望类型路径处置（不猜）。
+            if let env = environment {
+                let caseParents = env.parentEnums(of: name)
+                if caseParents.count == 1 {
+                    return .simple(name: caseParents[0], location: location)
+                }
+            }
+            return nil
 
         case .call(let callee, let arguments, let loc):
             if case .member(let object, let memberName, _) = callee,
