@@ -1641,6 +1641,30 @@ func formatCLIError(error: Error, source: String?) -> String {
 
 // MARK: - Main Entry Point
 
+// ⭐ 执行线程栈放大（宿主侧解锁批——递归守卫诊断的修法）。
+//
+// 深递归命令（run/check 对大模块）在主线程 8MB 栈上被递归守卫限深：
+// 解释器单帧 ≈47–80KB（RuntimeOps.freeStackFloor 的注释实测），有效深度 ~85。
+// 守卫语义本身健康（1/8 栈安全垫 + 实况读数），瓶颈是**栈供给**——
+// ⇒ 把 CLI 逻辑搬进 64MB 栈的工作线程重入一次，守卫读实况自动适配（深度 ×8），
+//   语义零改动。重入标记走进程环境（setenv）；`exit()` 在线程内照常终止进程，
+//   自然结束路径由主线程 wait 后统一 exit(0)。
+let alreadyWidened = ProcessInfo.processInfo.environment["PINI_STACK_WIDENED"] != nil
+if !alreadyWidened {
+    setenv("PINI_STACK_WIDENED", "1", 1)
+    let sem = DispatchSemaphore(value: 0)
+    let cliThread = Thread {
+        cliMain()
+        sem.signal()
+    }
+    cliThread.stackSize = 256 * 1024 * 1024
+    cliThread.name = "pini-cli-256MB"
+    cliThread.start()
+    sem.wait()
+    exit(0)
+}
+
+func cliMain() {
 var args = CommandLine.arguments
 
 // T11（A4）：--lang zh|en 诊断语言（TOML 资源驱动；默认 zh，未覆盖码回退 zh）。
@@ -1790,4 +1814,5 @@ default:
     printError("Error: Unknown command '\(command)'")
     printHelp()
     exit(1)
+}
 }
