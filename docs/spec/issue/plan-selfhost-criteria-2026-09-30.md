@@ -149,12 +149,18 @@
 | 演进路线 · 速度根因（立项快照） | 二期件（⚠️ 其数字为**立项快照**，件头明写「用前重测」） |
 | **特性差距（销账以它为准）** | 差距台账 `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
 | **P2-0 速度基线读数** | 自举仓 `examples/selfhost/tools/baseline-p2-0.tsv`（判读件 `.../docs/baseline-p2-0.md`） |
+| **源文件尺寸**（须落在语言自身 `readFile` 上限内） | 自举仓 `examples/selfhost/tools/check-source-size.sh`（判据）· 上限的**单一源** = `Sources/PiniCore/Common/IOLimits.swift`（其件头自陈该问题独立在案） |
 | 在案缺陷（`G79`–`G89` 族等） | `docs/spec/pini-spec-v0.md` §3 已知缺口登记 |
 | 待裁清单 | ⚠️ 原 `decision-backlog-2026-09-28.md` **载体已删** ⇒ 存量待裁项散在各载体，收拢须另行点名 |
 | 授权与 scope | 元仓 `L0 授权台账`（**唯一授权源**） |
 
 ⚠️ **仍开的三项**（⛔ 不因收口而消失，逐条处置须点名）：**插值表达式段**（`parser` 格缺口）·
 **扩展方法格**（宿主侧先补现量语料后）· **在案缺陷族**与**规范面待裁存量**。
+
+⚠️ **另登记一项**（2026-10-01 · P2-1）：**语言的 `readFile` 上限**是否应作语言自身的上限，
+以及**静默截断**的处置 —— ⚠️ 上限数值的实现侧单一源已在其件头自陈为独立问题。
+⭐ 它对本轨的**实际约束**：源文件必须落在该上限内（越限 ⇒ 合法源被报成语法错）⇒
+已成机械判据（自举仓 `examples/selfhost/tools/check-source-size.sh`）。
 
 ---
 
