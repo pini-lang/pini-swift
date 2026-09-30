@@ -27,6 +27,7 @@
 | 演进路线（P2-0 基线 / P2-1 清障与自洽 / P3 AOT 与特性回填） | 二期件 `plan-selfhost-evolution-2026-09-30.md` |
 | 层边界 · 交付面逐项登记 | 自举仓 `examples/selfhost/docs/boundaries.md` |
 | 原始读数（append-only） | 自举仓 `examples/selfhost/docs/probe-notes.md` |
+| 特性差距（**销账单位**） | 差距台账 `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
 | 器械（各层判据脚本 · 红名单 · 子集白名单） | 自举仓 `tools/` |
 | 授权与 scope | 元仓 `L0 授权台账` |
 | 工程与治理面规范 | `docs/spec/pini-spec-v0.md`（首要入口） |
@@ -145,7 +146,9 @@
 | 格表 · 交付面 · 层边界 | 自举仓 `examples/selfhost/docs/boundaries.md` |
 | 各层读数 · 收口记录 · 缺陷判因 | 自举仓 `examples/selfhost/docs/probe-notes.md`（append-only） |
 | 收口态（原统合件 §14） | ⚠️ **载体已删**（2026-09-30 归档清理）⇒ 记录只在 git 历史里 |
-| 演进路线 · 速度根因 · 特性差距表 | 二期件（⚠️ 其数字为**立项快照**，件头明写「用前重测」） |
+| 演进路线 · 速度根因（立项快照） | 二期件（⚠️ 其数字为**立项快照**，件头明写「用前重测」） |
+| **特性差距（销账以它为准）** | 差距台账 `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
+| **P2-0 速度基线读数** | 自举仓 `examples/selfhost/tools/baseline-p2-0.tsv`（判读件 `.../docs/baseline-p2-0.md`） |
 | 在案缺陷（`G79`–`G89` 族等） | `docs/spec/pini-spec-v0.md` §3 已知缺口登记 |
 | 待裁清单 | ⚠️ 原 `decision-backlog-2026-09-28.md` **载体已删** ⇒ 存量待裁项散在各载体，收拢须另行点名 |
 | 授权与 scope | 元仓 `L0 授权台账`（**唯一授权源**） |
