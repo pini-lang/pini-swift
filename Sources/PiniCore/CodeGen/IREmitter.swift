@@ -5222,6 +5222,13 @@ public final class IREmitter {
     private func emitStringSplit(source: String, delim: String, type: IRType) -> IRValue {
         let slen = builder.freshTemp()
         bodyIR += " \(slen) = call i64 @strlen(ptr \(source))\n"
+        // Room for the NUL copySource writes at index slen. Sized from the
+        // source, not from a constant: the caller is routinely a whole file's
+        // text (the selfhost scanner splits file content on newline), and a
+        // fixed buffer overruns on it -- measured, ASan reports the copy as a
+        // SEGV on a wild address.
+        let slenRoom = builder.freshTemp()
+        bodyIR += " \(slenRoom) = add i64 \(slen), 1\n"
 
         func copySource(_ buf: String) {
             bodyIR += " call ptr @memcpy(ptr \(buf), ptr \(source), i64 \(slen))\n"
@@ -5232,7 +5239,7 @@ public final class IREmitter {
 
         // Pass 1: count tokens.
         let countBuf = builder.freshTemp()
-        bodyIR += " \(countBuf) = alloca i8, i64 1024\n"
+        bodyIR += " \(countBuf) = call ptr @malloc(i64 \(slenRoom))\n"
         copySource(countBuf)
         let counterSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
@@ -5277,7 +5284,7 @@ public final class IREmitter {
 
         // Pass 2: fill.
         let fillBuf = builder.freshTemp()
-        bodyIR += " \(fillBuf) = alloca i8, i64 1024\n"
+        bodyIR += " \(fillBuf) = call ptr @malloc(i64 \(slenRoom))\n"
         copySource(fillBuf)
         let f1 = builder.freshTemp()
         bodyIR += " \(f1) = call ptr @strtok(ptr \(fillBuf), ptr \(delim))\n"
@@ -5302,8 +5309,13 @@ public final class IREmitter {
         bodyIR += "\(fillBody):\n"
         let dupLen = builder.freshTemp()
         bodyIR += " \(dupLen) = call i64 @strlen(ptr \(fillTok))\n"
+        // +1 for the NUL strcpy writes: allocating strlen alone leaves the
+        // terminator one byte past the region. Measured, not reasoned about —
+        // ASan reports "WRITE of size 85 -> 84-byte region" in makeScanner.
+        let dupRoom = builder.freshTemp()
+        bodyIR += " \(dupRoom) = add i64 \(dupLen), 1\n"
         let dupBuf = builder.freshTemp()
-        bodyIR += " \(dupBuf) = call ptr @malloc(i64 \(dupLen))\n"
+        bodyIR += " \(dupBuf) = call ptr @malloc(i64 \(dupRoom))\n"
         bodyIR += " call ptr @strcpy(ptr \(dupBuf), ptr \(fillTok))\n"
         let idx = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: idx, type: "i32", ptr: idxSlot) + "\n"
@@ -5327,6 +5339,10 @@ public final class IREmitter {
         bodyIR += builder.fmtStore(value: nextFillTok, type: "ptr", ptr: fillTokSlot) + "\n"
         bodyIR += builder.fmtBr(labelName: fillHdr) + "\n"
         bodyIR += "\(fillEnd):\n"
+        // Both scratch copies are dead by here (strtok rewrote them in place).
+        // The token strings themselves are strdup'd and belong to the array.
+        bodyIR += " call ptr @free(ptr \(countBuf))\n"
+        bodyIR += " call ptr @free(ptr \(fillBuf))\n"
         let finalHandle = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: finalHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
         return IRValue(llvmType: "%bk_array*", ssaName: finalHandle)

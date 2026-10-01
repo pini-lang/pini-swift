@@ -41,9 +41,11 @@ let package = Package(
             // ⛔ 不要改用 `resources:` 指向套件目录：那会让目录里的 .swift 不再被编译，
             // 整个套件被静默丢弃（构建仍退出 0、告警也会消失）。
             exclude: [
+                "EntryParityTests/Fixtures",
                 "GrammarAcceptanceTests/Fixtures",
                 "ListDirBuiltinTests/Fixtures",
                 "ReadFileBuiltinTests/Fixtures",
+                "SplitPathTests/Fixtures",
             ],
         ),
     ],

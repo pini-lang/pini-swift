@@ -1,0 +1,10 @@
+; 判据：单个 token 长于百字符 —— token 的复制必须留有 NUL 的位置
+; 归因：旧实现按 `strlen(token)` 分配后 `strcpy` ⇒ 终止符写到区外一字节
+;   （ASan：WRITE of size 85 → 84-byte region）。该形态**没有**行为签名，
+;   ⇒ 本件由同目录用例的第二条判据（产出的 IR 里 malloc 的尺寸不得直接取 strlen 结果）承担。
+main|func() -> ():
+    var s = "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij,b"
+    print(len(s))
+    let parts = s.split(",")
+    print(len(parts))
+    return

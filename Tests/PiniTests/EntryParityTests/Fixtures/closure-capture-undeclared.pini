@@ -1,0 +1,9 @@
+; 阴性夹具：闭包引用外层变量而未写 capture 行
+; 期望：四条入口（check / run / emit / compile）**同判**拒绝，且判定码都是 E3-008。
+; ⚠️ 本件正是 2026-10-01 那处覆盖面分叉的最小复现 —— 修前 `emit` 照跑（rc=0）。
+main|func() -> ():
+    var k = 101
+    var f = func (x,) -> (I32,):
+        return x + k
+    print(f(1,))
+    return

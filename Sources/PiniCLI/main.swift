@@ -1454,6 +1454,21 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
 /// 类型错误一次性同报并退出（沿用 `runCheckCommand` 的收集模式风格）。
 private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
     let module = parseOrReport(source: source, fileName: fileName)
+    // The semantic layer gates here for the same reason `check` runs it before
+    // the type layer: it is where capture declarations, undefined names and
+    // visibility are enforced. Without it the LLVM entry points accepted
+    // sources the interpreter rejects -- measured: one source gave E3-008
+    // under `check`/`run` and emitted IR under `emit`/`compile`. A check that
+    // runs ahead of only one backend is not a check, it is a backend trait.
+    let analyzer = SemanticAnalyzer()
+    let semanticErrors = analyzer.analyzeCollecting(module: module)
+    if !semanticErrors.isEmpty {
+        for e in semanticErrors {
+            FileHandle.standardError.write(
+                Data((ErrorFormatter.formatSemanticError(e, source: source) + "\n").utf8))
+        }
+        exit(1)
+    }
     let checker = TypeChecker()
     let typeErrors = checker.checkCollecting(module: module)
     if !typeErrors.isEmpty {

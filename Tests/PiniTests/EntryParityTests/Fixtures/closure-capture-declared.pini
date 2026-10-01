@@ -1,0 +1,9 @@
+; 阳性对照：与阴性件同一形态，只补上 capture 行
+; 期望：四条入口**全部**放行（rc=0）—— 证明判据不是「凡闭包必拒」。
+main|func() -> ():
+    var k = 101
+    var f = func (x,) -> (I32,):
+        capture k
+        return x + k
+    print(f(1,))
+    return
