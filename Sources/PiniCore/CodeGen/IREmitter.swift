@@ -170,9 +170,15 @@ public final class IREmitter {
     private var usesCharacterShims = false
     /// 是否调用过宿主环境查询内建（`argv` / `listDir`）—— 同上，落点是 `bk_argv` / `bk_list_dir`。
     private var usesProcessShims = false
-    /// 是否发射过 `substring` —— 它的落点是运行时段 `bk_substring`（契约第 38 条的 B 组缺陷
-    /// 即在此处修掉：语义与**变长分配**都不再由发射器承担）。
-    private var usesSubstringShim = false
+    /// 是否发射过**字符串字素簇通道**的调用 —— 落点是运行时段那一族（`bk_substring` /
+    /// `bk_string_count` / `bk_string_char_at` / `bk_string_slice` / `bk_string_upper` /
+    /// `bk_string_lower` / `bk_string_contains`）。
+    ///
+    /// ⭐ 为什么整族都在运行时段：契约 `字符模型 = Grapheme Cluster`，而字素簇边界是
+    /// Unicode 分段算法，**发射器发不出**（发得出来的只有字节循环，那正是契约 §2.9
+    /// 第 22/23/36/37 条登记的在案偏离）。运行时段用的是 `String` / `Character` ——
+    /// 与解释器同一个模型。⚠️ 语义一律对着解释器那一路写，⛔ 不在这里各造一套。
+    private var usesStringShims = false
     /// 任务体 wrapper 的 `define` 缓冲与去重名集（照 `@__adapter_` 那套）。
     private var taskBodyDefs: [String] = []
     private var taskBodyNames: Set<String> = []
@@ -337,7 +343,7 @@ public final class IREmitter {
         usesSleepShim = false
         usesCharacterShims = false
         usesProcessShims = false
-        usesSubstringShim = false
+        usesStringShims = false
         usesTaskFrame = false
         usesSchedBinding = false
         frameMode = .none
@@ -461,8 +467,14 @@ public final class IREmitter {
             tail += "declare ptr @bk_argv()\n"
             tail += "declare ptr @bk_list_dir(ptr)\n"
         }
-        if usesSubstringShim {
+        if usesStringShims {
             tail += "declare ptr @bk_substring(ptr, i32, i32)\n"
+            tail += "declare i32 @bk_string_count(ptr)\n"
+            tail += "declare ptr @bk_string_char_at(ptr, i32)\n"
+            tail += "declare ptr @bk_string_slice(ptr, i32, i32, i32, i32)\n"
+            tail += "declare ptr @bk_string_upper(ptr)\n"
+            tail += "declare ptr @bk_string_lower(ptr)\n"
+            tail += "declare i32 @bk_string_contains(ptr, ptr)\n"
         }
         // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
         // 只有真发过派发的模块才带。⚠️ 观测符号 `bk_task_state` **不在这里** ——
@@ -2093,12 +2105,18 @@ public final class IREmitter {
             return emitStringCase(isUpper: isUpper, source: receiverValue.ssaName)
 
         case .stringContains(let receiver, let needle):
+            // 契约 §2.9 第 37 条：**字素级**判定。⛔ 旧形状的 `strstr` 是字节查找 ——
+            // 分解式 Unicode 下与字素判定分歧（`"café"` 分解式 vs 预组合）。语义在运行时段，
+            // 与解释器的 `.stringContains` 同源。
             let receiverValue = emitExpr(receiver)
             let needleValue = emitExpr(needle)
+            usesStringShims = true
             let hit = builder.freshTemp()
-            bodyIR += " \(hit) = call ptr @strstr(ptr \(receiverValue.ssaName), ptr \(needleValue.ssaName))\n"
+            bodyIR +=
+                " \(hit) = call i32 @bk_string_contains(ptr \(receiverValue.ssaName), "
+                + "ptr \(needleValue.ssaName))\n"
             let found = builder.freshTemp()
-            bodyIR += " \(found) = icmp ne ptr \(hit), null\n"
+            bodyIR += " \(found) = icmp ne i32 \(hit), 0\n"
             return IRValue(llvmType: "i1", ssaName: found)
 
         case .stringSubstring(let receiver, let start, let end):
@@ -2114,7 +2132,7 @@ public final class IREmitter {
             let receiverValue = emitExpr(receiver)
             let startValue = emitExpr(start)
             let endValue = emitExpr(end)
-            usesSubstringShim = true
+            usesStringShims = true
             let substringResult = builder.freshTemp()
             bodyIR +=
                 " \(substringResult) = call ptr @bk_substring(ptr \(receiverValue.ssaName), "
@@ -2899,58 +2917,24 @@ public final class IREmitter {
             return IRValue(llvmType: "%bk_array*", ssaName: result)
 
         case .string:
-            // Length: inline byte scan (strlen semantics — ASCII parity with
-            // the interpreter's character count holds for the corpus).
-            let count = emitStringByteLength(containerValue)
-            let lo = resolveSliceBound(start, count: count, defaultValue: "0")
-            let hi = resolveSliceBound(end, count: count, defaultValue: count)
-            let length = builder.freshTemp()
-            bodyIR += " \(length) = sub i32 \(hi), \(lo)\n"
-            let bufferBytes = builder.freshTemp()
-            bodyIR += " \(bufferBytes) = add i32 \(length), 1\n"
-            let buffer = builder.freshTemp()
-            bodyIR += " \(buffer) = alloca i8, i32 \(bufferBytes)\n"
-            let kSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
-            let id = builder.freshLabel()
-            let condLabel = "strslice.cond.\(id)"
-            let bodyLabel = "strslice.body.\(id)"
-            let incLabel = "strslice.inc.\(id)"
-            let endLabel = "strslice.end.\(id)"
-            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
-            bodyIR += "\(condLabel):\n"
-            let k = builder.freshTemp()
-            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
-            let inBounds = builder.freshTemp()
-            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(length)\n"
-            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
-
-            bodyIR += "\(bodyLabel):\n"
-            let srcIndex = builder.freshTemp()
-            bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
-            let srcByte = builder.freshTemp()
-            bodyIR += " \(srcByte) = getelementptr i8, ptr \(containerValue.ssaName), i32 \(srcIndex)\n"
-            let byte = builder.freshTemp()
-            bodyIR += " \(byte) = load i8, ptr \(srcByte)\n"
-            let dstByte = builder.freshTemp()
-            bodyIR += " \(dstByte) = getelementptr i8, ptr \(buffer), i32 \(k)\n"
-            bodyIR += builder.fmtStore(value: byte, type: "i8", ptr: dstByte) + "\n"
-            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
-
-            bodyIR += "\(incLabel):\n"
-            let kValue = builder.freshTemp()
-            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
-            let kNext = builder.freshTemp()
-            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
-            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
-            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
-
-            bodyIR += "\(endLabel):\n"
-            let terminatorSlot = builder.freshTemp()
-            bodyIR += " \(terminatorSlot) = getelementptr i8, ptr \(buffer), i32 \(length)\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: terminatorSlot) + "\n"
-            return IRValue(llvmType: "i8*", ssaName: buffer)
+            // 契约 §2.9 第 23 条：String 切片按**字素簇**。⛔ 旧形状按字节切（内联数字节 +
+            // 逐字节 copy + 调用点变长 `alloca`）—— 非 ASCII 文本上切点落进多字节序列内部，
+            // 自举 `splitLines` 正是由此切错行。语义与分配一起交给运行时段，
+            // 与 `IRExecutor.sliceValue` 的 `.string` 分支同源。
+            //
+            // ⚠️ 开界传**标志位**，⛔ 不传哨兵：`s[-1...]` 是合法写法，拿 `-1` 当「开」
+            // 会与真实下标撞车。开界时也⛔ 不求值那个界（旧形状同此）。
+            let startOpen = sliceBoundIsOpen(start)
+            let endOpen = sliceBoundIsOpen(end)
+            let startOperand = startOpen ? "0" : emitExpr(start).ssaName
+            let endOperand = endOpen ? "0" : emitExpr(end).ssaName
+            usesStringShims = true
+            let sliced = builder.freshTemp()
+            bodyIR +=
+                " \(sliced) = call ptr @bk_string_slice(ptr \(containerValue.ssaName), "
+                + "i32 \(startOpen ? "0" : "1"), i32 \(startOperand), "
+                + "i32 \(endOpen ? "0" : "1"), i32 \(endOperand))\n"
+            return IRValue(llvmType: "i8*", ssaName: sliced)
 
         default:
             fatalError("IREmitter: slice on non-array/string type '\(type)' (IRLowerer gates)")
@@ -2982,10 +2966,22 @@ public final class IREmitter {
         return IRValue(llvmType: "%bk_array*", ssaName: typed)
     }
 
-    /// One slice bound: `none` (optionalConstruct isSome=false) takes the
+    /// 切片的界是否是**开界**（`s[lo...]` / `s[...hi]` / `s[...]`）。
+    ///
+    /// 判据是**语法节点**（`optionalConstruct` 的 `isSome == false`）而不是值 ⇒ 发射期即可
+    /// 定死，运行时段只收一个标志位（C ABI 面没有 Optional 这个类型）。
+    private func sliceBoundIsOpen(_ bound: IRExpr) -> Bool {
+        if case .optionalConstruct(let isSome, _, _) = bound, !isSome { return true }
+        return false
+    }
+
+    /// One **Array** slice bound: `none` (optionalConstruct isSome=false) takes the
     /// default (start → "0", end → the runtime count); an integer is
     /// tail-counted when negative, then clamped into [0, count] — all via
     /// select chains, no branches (sunk-stdlib parity).
+    ///
+    /// ⚠️ String 切片**不走这里**：它的界、尾计数与夹取都在运行时段（`bk_string_slice`），
+    /// 因为 String 的「字符」是字素簇 —— 拿字节或标量做算术都会偏离（契约第 23 条）。
     private func resolveSliceBound(_ bound: IRExpr, count: String, defaultValue: String) -> String {
         if case .optionalConstruct(let isSome, _, _) = bound, !isSome {
             return defaultValue
@@ -3008,107 +3004,17 @@ public final class IREmitter {
         return clamped
     }
 
-    /// Inline byte-scan length for an `i8*` string value: counts bytes up to the
-    /// NUL terminator. Used for slice arithmetic, which indexes bytes — see
-    /// `emitStringCharCount` for the value `len` reports.
-    private func emitStringByteLength(_ value: IRValue) -> String {
-        let counterSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: counterSlot) + "\n"
-        let id = builder.freshLabel()
-        let condLabel = "strlen.cond.\(id)"
-        let bodyLabel = "strlen.body.\(id)"
-        let incLabel = "strlen.inc.\(id)"
-        let endLabel = "strlen.end.\(id)"
-        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
-        bodyIR += "\(condLabel):\n"
-        let k = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: counterSlot) + "\n"
-        let bytePtr = builder.freshTemp()
-        bodyIR += " \(bytePtr) = getelementptr i8, ptr \(value.ssaName), i32 \(k)\n"
-        let byte = builder.freshTemp()
-        bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
-        let notEnd = builder.freshTemp()
-        bodyIR += " \(notEnd) = icmp ne i8 \(byte), 0\n"
-        bodyIR += builder.fmtCondBr(cond: notEnd, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
-        bodyIR += "\(bodyLabel):\n"
-        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
-        bodyIR += "\(incLabel):\n"
-        let kValue = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: counterSlot) + "\n"
-        let kNext = builder.freshTemp()
-        bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
-        bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: counterSlot) + "\n"
-        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
-        bodyIR += "\(endLabel):\n"
-        let result = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: result, type: "i32", ptr: counterSlot) + "\n"
-        return result
-    }
-
-    /// Character count for an `i8*` string value: the number of Unicode
-    /// scalars, obtained by counting every byte that is not a UTF-8
-    /// continuation byte (`byte & 0xC0 == 0x80`). This is what `len` reports
-    /// on a string, and mirrors the byte-skipping loop the retired emitter
-    /// emitted — the interpreter counts grapheme clusters, which is the same
-    /// number for CJK and ordinary text; ZWJ and skin-tone sequences are a
-    /// known edge.
-    private func emitStringCharCount(_ value: IRValue) -> String {
-        let countSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: countSlot, type: "i32") + "\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: countSlot) + "\n"
-        let cursorSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: cursorSlot, type: "i32") + "\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: cursorSlot) + "\n"
-        let id = builder.freshLabel()
-        let loopLabel = "strcount.loop.\(id)"
-        let bodyLabel = "strcount.body.\(id)"
-        let countLabel = "strcount.count.\(id)"
-        let incLabel = "strcount.inc.\(id)"
-        let endLabel = "strcount.end.\(id)"
-        bodyIR += builder.fmtBr(labelName: loopLabel) + "\n"
-        bodyIR += "\(loopLabel):\n"
-        let cursor = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: cursor, type: "i32", ptr: cursorSlot) + "\n"
-        let bytePtr = builder.freshTemp()
-        bodyIR += " \(bytePtr) = getelementptr i8, ptr \(value.ssaName), i32 \(cursor)\n"
-        let byte = builder.freshTemp()
-        bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
-        let isEnd = builder.freshTemp()
-        bodyIR += " \(isEnd) = icmp eq i8 \(byte), 0\n"
-        bodyIR += builder.fmtCondBr(cond: isEnd, thenLabelName: endLabel, elseLabelName: bodyLabel) + "\n"
-        bodyIR += "\(bodyLabel):\n"
-        let leadBits = builder.freshTemp()
-        bodyIR += " \(leadBits) = and i8 \(byte), 192\n"
-        let isContinuation = builder.freshTemp()
-        bodyIR += " \(isContinuation) = icmp eq i8 \(leadBits), 128\n"
-        bodyIR += builder.fmtCondBr(cond: isContinuation, thenLabelName: incLabel, elseLabelName: countLabel) + "\n"
-        bodyIR += "\(countLabel):\n"
-        let current = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: current, type: "i32", ptr: countSlot) + "\n"
-        let bumped = builder.freshTemp()
-        bodyIR += " \(bumped) = add i32 \(current), 1\n"
-        bodyIR += builder.fmtStore(value: bumped, type: "i32", ptr: countSlot) + "\n"
-        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
-        bodyIR += "\(incLabel):\n"
-        let cursorValue = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: cursorValue, type: "i32", ptr: cursorSlot) + "\n"
-        let cursorNext = builder.freshTemp()
-        bodyIR += " \(cursorNext) = add i32 \(cursorValue), 1\n"
-        bodyIR += builder.fmtStore(value: cursorNext, type: "i32", ptr: cursorSlot) + "\n"
-        bodyIR += builder.fmtBr(labelName: loopLabel) + "\n"
-        bodyIR += "\(endLabel):\n"
-        let total = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: total, type: "i32", ptr: countSlot) + "\n"
-        return total
-    }
 
     /// `arr.get(i)` — tolerant read: tail-counted negative index, then a
     /// bounds check; some(payload) or none. Arrays go through the runtime
-    /// handle; strings scan bytes inline (ASCII parity with the interpreter's
-    /// character count) and wrap the byte in a fresh 2-byte buffer. The
-    /// aggregate flows through a stack slot (alloca + store + load) so the
-    /// branch join needs no phi node.
+    /// handle; strings take the **grapheme** count and the character itself from
+    /// the runtime too (contract row 22/23 — the character model is grapheme
+    /// clusters, which byte arithmetic cannot express). The aggregate flows
+    /// through a stack slot (alloca + store + load) so the branch join needs no
+    /// phi node.
+    ///
+    /// ⚠️ Tolerant channel: out-of-range yields `none`, so the bounds test stays
+    /// here and the runtime character fetch is only ever reached in range.
     private func emitOptionalGet(container: IRExpr, index: IRExpr, type: IRType) -> IRValue {
         guard case .optional(let wrapped) = type else {
             fatalError("IREmitter: optionalGet type is not Optional (IRLowerer guarantees)")
@@ -3121,7 +3027,10 @@ public final class IREmitter {
         let count: String
         var arrayRaw: String? = nil
         if isStringReceiver {
-            count = emitStringByteLength(containerValue)
+            // 契约 §2.9 第 22 条：String 的「字符」= **字素簇**（与 `len` 同一定义）。
+            usesStringShims = true
+            count = builder.freshTemp()
+            bodyIR += " \(count) = call i32 @bk_string_count(ptr \(containerValue.ssaName))\n"
         } else {
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
@@ -3148,19 +3057,12 @@ public final class IREmitter {
         bodyIR += "\(someLabel):\n"
         let value: String
         if isStringReceiver {
-            let bytePtr = builder.freshTemp()
-            bodyIR += " \(bytePtr) = getelementptr i8, ptr \(containerValue.ssaName), i32 \(effective)\n"
-            let byte = builder.freshTemp()
-            bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
-            let buffer = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: buffer, type: "[2 x i8]") + "\n"
-            let byteSlot = builder.freshTemp()
-            bodyIR += " \(byteSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 0\n"
-            bodyIR += builder.fmtStore(value: byte, type: "i8", ptr: byteSlot) + "\n"
-            let zeroSlot = builder.freshTemp()
-            bodyIR += " \(zeroSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 1\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: zeroSlot) + "\n"
-            value = buffer
+            // 到此 `effective` 必在 `[0, count)` ⇒ 运行时段不会 panic（容错通道）。
+            let charAt = builder.freshTemp()
+            bodyIR +=
+                " \(charAt) = call ptr @bk_string_char_at(ptr \(containerValue.ssaName), "
+                + "i32 \(effective))\n"
+            value = charAt
         } else {
             let boxPtr = builder.freshTemp()
             bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(arrayRaw!), i32 \(effective))\n"
@@ -3303,44 +3205,17 @@ public final class IREmitter {
         }
 
         if irType(of: container) == .string {
-            // String subscript: tail-counted index, inline strlen, OOB panics
-            // (safe-assert channel, E5-005 parity); returns a 1-char string.
-            let count = emitStringByteLength(containerValue)
-            let effective = tailCountIndex(index: indexValue.ssaName, count: count)
-            let id = builder.freshLabel()
-            let okLabel = "strsub.ok.\(id)"
-            let failLabel = "strsub.fail.\(id)"
-            let endLabel = "strsub.end.\(id)"
-            let inBounds = builder.freshTemp()
-            bodyIR += " \(inBounds) = icmp slt i32 \(effective), \(count)\n"
-            let notNegative = builder.freshTemp()
-            bodyIR += " \(notNegative) = icmp sge i32 \(effective), 0\n"
-            let ok = builder.freshTemp()
-            bodyIR += " \(ok) = and i1 \(inBounds), \(notNegative)\n"
-            bodyIR += builder.fmtCondBr(cond: ok, thenLabelName: okLabel, elseLabelName: failLabel) + "\n"
-
-            bodyIR += "\(okLabel):\n"
-            let bytePtr = builder.freshTemp()
-            bodyIR += " \(bytePtr) = getelementptr i8, ptr \(containerValue.ssaName), i32 \(effective)\n"
-            let byte = builder.freshTemp()
-            bodyIR += " \(byte) = load i8, ptr \(bytePtr)\n"
-            let buffer = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: buffer, type: "[2 x i8]") + "\n"
-            let byteSlot = builder.freshTemp()
-            bodyIR += " \(byteSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 0\n"
-            bodyIR += builder.fmtStore(value: byte, type: "i8", ptr: byteSlot) + "\n"
-            let zeroSlot = builder.freshTemp()
-            bodyIR += " \(zeroSlot) = getelementptr [2 x i8], ptr \(buffer), i32 0, i32 1\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: zeroSlot) + "\n"
-            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
-
-            bodyIR += "\(failLabel):\n"
-            let message = emitStringConstant("Pini runtime error: string index out of range")
-            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
-            bodyIR += " unreachable\n"
-
-            bodyIR += "\(endLabel):\n"
-            return IRValue(llvmType: "i8*", ssaName: buffer)
+            // 契约 §2.9 第 23 条：String 下标按**字素簇**，负值尾计数，越界走安全断言通道
+            // （E5-005 parity）。⛔ 旧形状按**字节**取一个字节 —— 非 ASCII 上取出的不是合法
+            // UTF-8，且与 `len` 的计数模型互相矛盾（两者叠在一起正是自举切错的机理）。
+            // 语义（含越界 panic 与单字符结果）都在运行时段，与 `SubscriptReadStrategy`
+            // 的 `.string` 策略同源。
+            usesStringShims = true
+            let charAt = builder.freshTemp()
+            bodyIR +=
+                " \(charAt) = call ptr @bk_string_char_at(ptr \(containerValue.ssaName), "
+                + "i32 \(indexValue.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: charAt)
         }
 
         let raw = builder.freshTemp()
@@ -3373,7 +3248,13 @@ public final class IREmitter {
             bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
             return IRValue(llvmType: "i32", ssaName: count)
         case .string:
-            return IRValue(llvmType: "i32", ssaName: emitStringCharCount(value))
+            // 契约 §2.9 第 22 条：**字素簇**计数，与解释器的 `text.count` 同一定义。
+            // ⛔ 旧形状数的是「非续字节」（= Unicode 标量）：纯 ASCII 与 CJK 上同值，
+            // 只在组合序列上分歧 —— 但正是它与下标的字节寻址**叠在一起**，把自举切错。
+            usesStringShims = true
+            let charCount = builder.freshTemp()
+            bodyIR += " \(charCount) = call i32 @bk_string_count(ptr \(value.ssaName))\n"
+            return IRValue(llvmType: "i32", ssaName: charCount)
         default:
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
@@ -4794,46 +4675,18 @@ public final class IREmitter {
 
     // MARK: - G9 string deepening
 
-    /// `s.upper()` / `s.lower()`: memcpy the receiver, toupper/tolower loop.
+    /// `s.upper()` / `s.lower()` —— 契约 §2.9 第 36 条：**Unicode 感知**，接收者不变。
+    ///
+    /// ⛔ 旧形状是「memcpy 接收者 + 逐字节 `toupper`/`tolower`」：ASCII-only（实测
+    /// `"café".upper()` 得 `CAFé`），而且那个 `memcpy` 落在**调用点的变长 `alloca`** 上
+    /// —— 与 `substring` 同一个栈炸弹形状。语义与分配一起交给运行时段，
+    /// 与解释器的 `.stringCase` 分支同源。
     private func emitStringCase(isUpper: Bool, source: String) -> IRValue {
-        let funcName = isUpper ? "toupper" : "tolower"
-        let clen = builder.freshTemp()
-        bodyIR += " \(clen) = call i64 @strlen(ptr \(source))\n"
-        let sz1 = builder.freshTemp()
-        bodyIR += " \(sz1) = add i64 \(clen), 1\n"
-        let copyBuf = builder.freshTemp()
-        bodyIR += " \(copyBuf) = alloca i8, i64 \(sz1)\n"
-        bodyIR += " call ptr @memcpy(ptr \(copyBuf), ptr \(source), i64 \(sz1))\n"
-        let slot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: slot, type: "ptr") + "\n"
-        bodyIR += builder.fmtStore(value: copyBuf, type: "ptr", ptr: slot) + "\n"
-        let id = builder.freshLabel()
-        let header = "strcase.hdr.\(id)"
-        let bodyLabel = "strcase.body.\(id)"
-        let endLabel = "strcase.end.\(id)"
-        bodyIR += builder.fmtBr(labelName: header) + "\n"
-        bodyIR += "\(header):\n"
-        let curPtr = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: curPtr, type: "ptr", ptr: slot) + "\n"
-        let ch = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: ch, type: "i8", ptr: curPtr) + "\n"
-        let done = builder.freshTemp()
-        bodyIR += " \(done) = icmp eq i8 \(ch), 0\n"
-        bodyIR += builder.fmtCondBr(cond: done, thenLabelName: endLabel, elseLabelName: bodyLabel) + "\n"
-        bodyIR += "\(bodyLabel):\n"
-        let wide = builder.freshTemp()
-        bodyIR += " \(wide) = sext i8 \(ch) to i32\n"
-        let conv = builder.freshTemp()
-        bodyIR += " \(conv) = call i32 @\(funcName)(i32 \(wide))\n"
-        let narrow = builder.freshTemp()
-        bodyIR += " \(narrow) = trunc i32 \(conv) to i8\n"
-        bodyIR += builder.fmtStore(value: narrow, type: "i8", ptr: curPtr) + "\n"
-        let next = builder.freshTemp()
-        bodyIR += " \(next) = getelementptr i8, ptr \(curPtr), i64 1\n"
-        bodyIR += builder.fmtStore(value: next, type: "ptr", ptr: slot) + "\n"
-        bodyIR += builder.fmtBr(labelName: header) + "\n"
-        bodyIR += "\(endLabel):\n"
-        return IRValue(llvmType: "i8*", ssaName: copyBuf)
+        usesStringShims = true
+        let symbol = isUpper ? "bk_string_upper" : "bk_string_lower"
+        let converted = builder.freshTemp()
+        bodyIR += " \(converted) = call ptr @\(symbol)(ptr \(source))\n"
+        return IRValue(llvmType: "i8*", ssaName: converted)
     }
 
     /// `s.split(delim)` — a real `Array<String>`: two strtok passes over
