@@ -1,0 +1,11 @@
+; 判据：通配臂执行后，控制流**不得**穿透到 match 之后 —— 函数返回 1，不是 9。
+; 这条比「返回 1」更强：它排除「臂没执行、但从后一条语句拿了个凑巧的值」。
+; 修前：整条 match 被跳过 ⇒ 走到 `return 9`（静默，rc=0）。
+; 权威 = 解释器的读数（1）。见同目录用例 `wildcardArmDoesNotFallThrough`。
+main|func() -> ():
+    print(取(5))
+取|func(x: I32,) -> (I32,):
+    match x:
+        case _:
+            return 1
+    return 9

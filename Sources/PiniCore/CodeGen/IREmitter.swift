@@ -1340,31 +1340,42 @@ public final class IREmitter {
         default:
             // Bare scrutinee — neither Optional nor enum (a direct subscript
             // read yields a plain value there). Literal arms (`case 1:`,
-            // `case "hi":`) compare by value and need real dispatch; enum-case
-            // arms cannot match a bare value, so when no literal arm is
-            // present there is nothing to dispatch on and every arm is dead
-            // (G11 multidim parity: the match falls through silently — the
-            // interpreter reports a non-exhaustive match for enum values
-            // only). In that case emit the scrutinee for its side effects and
-            // skip the arms; their bodies were lowered only for scope
-            // resolution.
-            if cases.contains(where: { $0.literal != nil }) {
+            // `case "hi":`) compare by value and need real dispatch. Enum-case
+            // arms cannot match a bare value — but a **wildcard** arm can, and
+            // it is live even when no literal arm exists: `match x:` with only
+            // `case _:` must still run that body (the interpreter runs it, and
+            // `emitScalarMatch` already dispatches the wildcard arm through its
+            // own default block). Emitting nothing there would return `undef`
+            // from a function whose source plainly returns a value — silent,
+            // and rc=0.
+            //
+            // So the trigger is "has a literal arm **or** has a wildcard arm".
+            // Only when neither is present (bare scrutinee whose arms are all
+            // enum-case arms, which cannot match) is the whole match dead; then
+            // the scrutinee is emitted for its side effects alone and the arms
+            // are skipped — their bodies were lowered only for scope
+            // resolution. ⛔ Never re-evaluate the scrutinee here: the one
+            // evaluation (with any side effects and yields) already happened in
+            // `emitMatchSubject`; an `await` scrutinee evaluated twice would
+            // dispatch a second task nobody joins.
+            if cases.contains(where: { $0.literal != nil }) || cases.contains(where: { $0.caseName == "_" }) {
                 emitScalarMatch(scrutineeValue: subject, cases: cases)
             }
-            // 无字面量手臂时**什么都不发**：判别式的求值（含它可能的副作用与让出）已经在
-            // `emitMatchSubject` 里做过了。⛔ 不许在这里再求一次 —— 判别式若是 `await`，
-            // 再求一次就是**多派发一个任务**（而且那个任务的句柄没人接）。
         }
     }
 
-    /// Bare-scrutinee match carrying literal arms: a source-ordered chain of
-    /// value comparisons (the interpreter's `executeMatch` scans arms in
-    /// order and the first match wins). Strings compare via strcmp, floats via
-    /// ordered fcmp, integers and bools via icmp. Enum-case arms cannot match
-    /// a bare value and are skipped; the wildcard arm is the fallback.
+    /// Bare-scrutinee match carrying literal arms and/or a wildcard arm: a
+    /// source-ordered chain of value comparisons (the interpreter's
+    /// `executeMatch` scans arms in order and the first match wins). Strings
+    /// compare via strcmp, floats via ordered fcmp, integers and bools via
+    /// icmp. Enum-case arms cannot match a bare value and are skipped; the
+    /// wildcard arm is the fallback.
     /// Falling off the chain with no wildcard arm is a silent no-op
     /// (interpreter parity: a non-exhaustive match is an error for enum values
     /// only), so the default block simply branches to the end label.
+    /// ⚠️ `literalArms` may be empty — a bare-scrutinee match whose only arm is
+    /// `case _:` still arrives here (see the `default` arm of `emitMatch`), and
+    /// then the entry branch goes straight to the default block that runs it.
     private func emitScalarMatch(scrutineeValue: IRValue, cases: [IRMatchCase]) {
         let id = builder.freshLabel()
         let endLabel = "match.end.\(id)"
@@ -1374,7 +1385,8 @@ public final class IREmitter {
         let literalArms = cases.enumerated().filter { $0.element.literal != nil }
         let wildcardArm = cases.first { $0.caseName == "_" }
 
-        bodyIR += builder.fmtBr(labelName: checkLabel(literalArms[0].offset)) + "\n"
+        let entryLabel = literalArms.isEmpty ? defaultLabel : checkLabel(literalArms[0].offset)
+        bodyIR += builder.fmtBr(labelName: entryLabel) + "\n"
 
         for (position, entry) in literalArms.enumerated() {
             let (index, matchCase) = entry

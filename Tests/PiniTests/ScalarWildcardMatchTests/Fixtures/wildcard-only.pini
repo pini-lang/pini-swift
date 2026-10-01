@@ -1,0 +1,10 @@
+; 判据：裸值受试 + **只有**通配臂 —— 该臂必须被执行。
+; 修前：`emitMatch` 的 default 分支只在「有字面量臂」时才调 `emitScalarMatch`
+;   ⇒ 这条 match 一个臂都不发，函数落 `ret i32 undef`（静默，rc=0）。
+; 权威 = 解释器的读数（1）。见同目录用例 `wildcardOnlyArmRuns`。
+main|func() -> ():
+    print(分类(5))
+分类|func(x: I32,) -> (I32,):
+    match x:
+        case _:
+            return 1

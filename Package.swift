@@ -45,6 +45,7 @@ let package = Package(
                 "GrammarAcceptanceTests/Fixtures",
                 "ListDirBuiltinTests/Fixtures",
                 "ReadFileBuiltinTests/Fixtures",
+                "ScalarWildcardMatchTests/Fixtures",
                 "SplitPathTests/Fixtures",
             ],
         ),
