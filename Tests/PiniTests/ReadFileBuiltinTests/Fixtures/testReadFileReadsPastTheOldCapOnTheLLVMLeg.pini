@@ -1,0 +1,8 @@
+; 意图：LLVM 腿读同一份超旧上限的文件 —— 与**同一份手写期望**比，⛔ 不与解释器腿互比。
+; 路径由用例在运行期把绝对路径填进来（`__BIG_PATH__` 占位），因为本臂由子进程跑、
+;   程序基准是入口文件所在目录，用绝对路径才与工作目录无关。
+main|func() -> ():
+    let s = readFile("__BIG_PATH__")
+    print(len(s))
+    print(s.contains("TAIL-MARKER"))
+    return

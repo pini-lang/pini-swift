@@ -143,9 +143,12 @@ struct ListDirBuiltinTests {
 
     @Test("无条目数上限：300 个条目全部返回")
     func testListDirHasNoEntryCountCap() throws {
-        /// 意图：钉住**语义决定**（见规范内建清单那段）——`listDir` 刻意不设上限，
-        /// 与 `readFile` 的 64 KiB 上限不同（后者继承自发射器栈缓冲，前者无同族约束）。
-        /// ⇒ 将来若有人加上限，这条红得**正确**：那是一次语义变更，不是优化。
+        /// 意图：钉住**语义决定**（见规范内建清单那段）——`listDir` 刻意不设上限。
+        /// ⚠️ 本条原先以 `readFile` 的 64 KiB 上限作**对照**，那个对照已于 2026-10-01 失效：
+        /// 该上限被删除（与本条同一条理由 —— 它继承自发射器栈缓冲、不是语言选的，
+        /// 见 `Sources/PiniCore/Common/IOLimits.swift` 头注）⇒ 本仓**两个**目录/文件读入内建
+        /// 现在都不设上限。`readFile` 那一侧有自己的判据：`ReadFileBuiltinTests`。
+        /// ⇒ 将来若有人给任一侧加上限，这条（或那条）红得**正确**：那是语义变更，不是优化。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         let names = (0..<300).map { String(format: "f%03d.txt", $0) }

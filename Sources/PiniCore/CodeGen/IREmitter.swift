@@ -141,7 +141,13 @@ public final class IREmitter {
     /// G15: `writeFile`/`readFile` pull in the stdio declares and the
     /// mode-string constants. Conditional for the same golden-IR reason
     /// as the other optional headers.
-    private var usesFileIO = false
+    private var usesFileWrite = false
+    /// G15: `readFile` reads the whole file through the runtime shim
+    /// (`bk_read_file`) rather than emitted stdio. A whole file does not fit a
+    /// fixed stack buffer, and under LLI's JIT the size is not knowable before
+    /// the read (`fseek` / `ftell` / `fstat` are unreliable there). Conditional
+    /// for the same golden-IR reason as the other optional headers.
+    private var usesFileRead = false
     /// G17: `readLine` pulls in the `fgets` declare and the stdin stream
     /// global. Conditional for the same golden-IR reason as the other
     /// optional headers.
@@ -315,6 +321,8 @@ public final class IREmitter {
         stringConstants = [:]
         usesStrCmp = false
         usesLazyRef = false
+        usesFileWrite = false
+        usesFileRead = false
         usesReadLine = false
         usesTaskRuntime = false
         usesTaskArgRelease = false
@@ -389,15 +397,18 @@ public final class IREmitter {
             tail += "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)\n"
             tail += "declare ptr @bk_lazyref_value(ptr)\n"
         }
-        // G15: file IO declares + mode-string constants, appended only for
-        // modules that actually call writeFile/readFile.
-        if usesFileIO {
+        // G15: `writeFile`'s declares + mode-string constant, appended only for
+        // modules that actually write. ⚠️ `readFile` is **not** here any more
+        // (2026-10-01): it reads through the runtime shim, so neither `fread`
+        // nor the `"r"` mode string has an emitter-side user left.
+        if usesFileWrite {
             tail += "declare ptr @fopen(ptr, ptr)\n"
             tail += "declare i64 @fwrite(ptr, i64, i64, ptr)\n"
-            tail += "declare i64 @fread(ptr, i64, i64, ptr)\n"
             tail += "declare i32 @fclose(ptr)\n"
             tail += "@.fopen_w = private constant [2 x i8] c\"w\\00\"\n"
-            tail += "@.fopen_r = private constant [2 x i8] c\"r\\00\"\n"
+        }
+        if usesFileRead {
+            tail += "declare ptr @bk_read_file(ptr)\n"
         }
         // G17: `readLine` pulls in the libc line reader and the stdin stream
         // global (macOS `__stdinp`, the legacy module header's spelling).
@@ -2091,15 +2102,18 @@ public final class IREmitter {
         return .stringConst(value: base + "/" + value)
     }
 
-    /// `fopen` yields NULL whenever the file cannot be opened, and the legacy
-    /// emitter hands that NULL straight to `fread`/`fwrite`, which traps
-    /// inside libc with no message at all. Fail loud through the same panic
-    /// channel the other runtime guards use, so the failure names the builtin
-    /// instead of surfacing as an opaque crash. The path is deliberately not
-    /// interpolated: a non-literal argument cannot be folded into a constant
-    /// here, and a message that only covers some call shapes would be worse
-    /// than one that covers none.
-    private func emitFopenNullGuard(handle: String, builtin: String) {
+    /// A libc call or a runtime shim that answers NULL on failure is turned into
+    /// a panic here rather than handed on: the legacy emitter passes the NULL
+    /// through, and the trap then happens inside libc with no message at all.
+    /// Failing loud through the same panic channel as the other runtime guards
+    /// names the builtin instead of surfacing as an opaque crash. The path is
+    /// deliberately not interpolated: a non-literal argument cannot be folded
+    /// into a constant here, and a message that only covers some call shapes
+    /// would be worse than one that covers none. `message` is a caller-supplied
+    /// constant for the same reason -- `readFile` can now fail at the **read**
+    /// and not only at the open, and a message that still said "could not open"
+    /// would be wrong about half the failures it can no longer tell apart.
+    private func emitNullGuard(handle: String, message: String) {
         let failed = builder.freshTemp()
         bodyIR += " \(failed) = icmp eq ptr \(handle), null\n"
         let id = builder.freshLabel()
@@ -2107,8 +2121,8 @@ public final class IREmitter {
         let openLabel = "io.open.\(id)"
         bodyIR += builder.fmtCondBr(cond: failed, thenLabelName: failLabel, elseLabelName: openLabel) + "\n"
         bodyIR += "\(failLabel):\n"
-        let message = emitStringConstant("Pini runtime error: \(builtin) could not open the file")
-        bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+        let text = emitStringConstant(message)
+        bodyIR += " call void @bk_panic(ptr \(text.ssaName))\n"
         bodyIR += " unreachable\n"
         bodyIR += "\(openLabel):\n"
     }
@@ -2119,14 +2133,14 @@ public final class IREmitter {
     /// `String.write(toFile:)`. Yields the fclose i32 as the value. The one
     /// deliberate divergence is the NULL guard: the legacy emitter has none.
     private func emitFileWrite(path: IRExpr, content: IRExpr) -> IRValue {
-        usesFileIO = true
+        usesFileWrite = true
         let pathValue = emitExpr(bakedIOPath(path))
         let contentValue = emitExpr(content)
         let mode = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_w", indices: [0, 0]) + "\n"
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
-        emitFopenNullGuard(handle: handle, builtin: "writeFile")
+        emitNullGuard(handle: handle, message: "Pini runtime error: writeFile could not open the file")
         let length = builder.freshTemp()
         bodyIR += " \(length) = call i64 @strlen(ptr \(contentValue.ssaName))\n"
         let written = builder.freshTemp()
@@ -2136,39 +2150,29 @@ public final class IREmitter {
         return IRValue(llvmType: "i32", ssaName: closed)
     }
 
-    /// `readFile(path)` (G15): fopen(path, "r") / fread into a fixed
-    /// 64 KiB stack buffer / NUL-terminate / fclose. Yields the buffer
-    /// pointer as a String. The cap comes from the shared limit and is the
-    /// interpreter's cap too — bytes past it are dropped on both sides.
-    /// The magnitude is inherited from the legacy emitter, which sized the
-    /// buffer this way because LLI's JIT makes fseek/ftell/fstat
-    /// unreliable. The NULL guard is the second divergence from the
-    /// legacy emitter, and the one that matters most here: a missing file is
-    /// reachable from ordinary source, unlike the write path's.
+    /// `readFile(path)` (G15): the runtime shim reads the whole file and hands
+    /// back a NUL-terminated, malloc-allocated C string (UTF-8), or NULL when
+    /// the file cannot be read. Yields that pointer as a String.
+    ///
+    /// ⚠️⭐ This used to `fread` into a **fixed 64 KiB stack buffer** and drop
+    /// the rest -- silently, on both channels. The buffer could not be sized
+    /// from the file, because LLI's JIT makes `fseek` / `ftell` / `fstat`
+    /// unreliable, so "read the whole file" was not expressible in **emitted
+    /// IR** at all. It is expressible in the runtime, which is where it lives
+    /// now; the cap's removal is documented in `IOLimits`.
+    ///
+    /// The NULL guard stays, and now covers the read as well as the open: a
+    /// missing file is reachable from ordinary source, unlike the write path's.
     private func emitFileRead(path: IRExpr) -> IRValue {
-        usesFileIO = true
-        let bufferSize = IOLimits.fileBufferSize
+        usesFileRead = true
         let pathValue = emitExpr(bakedIOPath(path))
-        let mode = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_r", indices: [0, 0]) + "\n"
-        let handle = builder.freshTemp()
-        bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
-        emitFopenNullGuard(handle: handle, builtin: "readFile")
-        let buffer = freshSlot(for: "file.buffer")
-        bodyIR += builder.fmtAlloca(name: buffer, type: "[\(bufferSize) x i8]") + "\n"
-        let base = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: base, aggregate: "[\(bufferSize) x i8]", base: buffer, indices: [0, 0]) + "\n"
-        let read = builder.freshTemp()
-        bodyIR += " \(read) = call i64 @fread(ptr \(base), i64 1, i64 \(bufferSize), ptr \(handle))\n"
-        let terminator = builder.freshTemp()
-        bodyIR += builder.fmtGEPByteOffset(name: terminator, base: base, offset: read, offsetType: "i64") + "\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: terminator) + "\n"
-        let closed = builder.freshTemp()
-        bodyIR += " \(closed) = call i32 @fclose(ptr \(handle))\n"
+        let content = builder.freshTemp()
+        bodyIR += " \(content) = call ptr @bk_read_file(ptr \(pathValue.ssaName))\n"
+        emitNullGuard(handle: content, message: "Pini runtime error: readFile could not read the file")
         // "i8*" (not "ptr"): that is the spelling emitScalarPrint treats as a
         // C string; a bare `ptr` falls into the %d default and prints the
         // address.
-        return IRValue(llvmType: "i8*", ssaName: base)
+        return IRValue(llvmType: "i8*", ssaName: content)
     }
 
     /// `readLine()` (G17): a fixed-size stack buffer filled by `fgets` from the

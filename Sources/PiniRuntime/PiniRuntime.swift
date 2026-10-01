@@ -890,6 +890,38 @@ public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
     return strdup(String(v))
 }
 
+// MARK: - G15: whole-file read for the LLVM leg
+
+/// `readFile(path)`: the whole file as a NUL-terminated, malloc-allocated C
+/// string (UTF-8), or NULL when it cannot be read (missing, unreadable, or not
+/// valid UTF-8). The emitted IR calls this instead of `fread`-ing into a fixed
+/// buffer; see `IOLimits` for why the cap went away.
+///
+/// Why the runtime and not emitted IR: reading a whole file needs a buffer
+/// sized from the file, and under LLI's JIT the size is not knowable before the
+/// read (`fseek` / `ftell` / `fstat` are unreliable there). A chunked
+/// grow-and-retry loop would be expressible in IR, but this is the same shape
+/// the other `bk_` shims already use, so there is one place that knows the
+/// allocation contract instead of two.
+///
+/// Allocation contract: `strdup`, **caller frees** -- identical to `bk_cstr`
+/// and `bk_double_to_string`. ⚠️ The emitted IR does not free string values
+/// anywhere today (it has exactly one `free` call, for a print temporary), so
+/// this adds no new *class* of leak; it does mean a large read stays resident
+/// for the process lifetime on the LLVM leg. The interpreter leg is unaffected
+/// (it returns a Swift `String`).
+///
+/// Decoding uses the **same** Foundation call as the interpreter's arm, so the
+/// two channels agree byte for byte rather than merely both being "UTF-8-ish".
+@_cdecl("bk_read_file")
+public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+    guard let path else { return nil }
+    guard let text = try? String(contentsOfFile: String(cString: path), encoding: .utf8) else {
+        return nil
+    }
+    return strdup(text)
+}
+
 // MARK: - G14 FFI: Pini String -> C string (interpreter "cstr" shim parity)
 
 /// Materializes a Swift String as a NUL-terminated, malloc-allocated C
