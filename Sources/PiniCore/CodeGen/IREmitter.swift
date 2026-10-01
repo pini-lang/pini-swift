@@ -179,6 +179,31 @@ public final class IREmitter {
     /// 第 22/23/36/37 条登记的在案偏离）。运行时段用的是 `String` / `Character` ——
     /// 与解释器同一个模型。⚠️ 语义一律对着解释器那一路写，⛔ 不在这里各造一套。
     private var usesStringShims = false
+    /// 是否发射过**名义箱的分配**（`bk_nominal_alloc`）—— 只有真构造过名义值的模块才带它的 declare。
+    ///
+    /// ⭐ 2026-10-01「名义箱上堆」：结构体 / 对象 / 枚举的箱从栈 `alloca` 搬到运行时段堆分配
+    /// （三族首格统一为引用计数头）。与 LazyRef / 文件 IO / 字符族同规 —— 条件 declare，
+    /// 不碰名义值的程序 IR 除类型定义外逐字节不变。
+    private var usesNominalBoxes = false
+
+    /// 本函数（或闭包体）里**被闭包捕获**的变量名集合（2026-10-01 · 片 D）。
+    ///
+    /// ⭐ 为什么要在进体之前先算出来：捕获的槽必须**在分配它的那一刻**就知道
+    /// 「这个变量将来会被闭包带走」—— 声明点（`allocVar`）总在闭包字面量之前，
+    /// 事后补不了（栈 `alloca` 已经发出去了）。
+    private var capturedNamesInFunction: Set<String> = []
+
+    /// 是否发射过**捕获槽的堆分配**（`bk_slot_alloc`）—— 条件 declare。
+    private var usesCapturedSlots = false
+
+    /// 逐类型合成的**释放胶水**（`__release_*`）缓冲与去重名集 —— 照 `givenInitializerDefs` 那套。
+    private var releaseFunctionDefs: [String] = []
+    private var releaseFunctionNames: Set<String> = []
+
+    /// 逐类型合成的**值语义拷贝胶水**（`__copy_struct_*`，只为结构体存在）—— 同上。
+    private var copyFunctionDefs: [String] = []
+    private var copyFunctionNames: Set<String> = []
+
     /// 任务体 wrapper 的 `define` 缓冲与去重名集（照 `@__adapter_` 那套）。
     private var taskBodyDefs: [String] = []
     private var taskBodyNames: Set<String> = []
@@ -350,6 +375,13 @@ public final class IREmitter {
         blockDepth = 0
         frameSlotDecls = []
         yieldPointCount = 0
+        usesNominalBoxes = false
+        usesCapturedSlots = false
+        capturedNamesInFunction = []
+        releaseFunctionDefs = []
+        releaseFunctionNames = []
+        copyFunctionDefs = []
+        copyFunctionNames = []
         taskBodyDefs = []
         taskBodyNames = []
         lazyrefWrappers = []
@@ -375,15 +407,20 @@ public final class IREmitter {
         // `%object.X = type { i32 (refcount), ... }` come first so field GEPs
         // verify against complete types. Enums (G4): tagged unions —
         // `%enum.X = type { i32, <max-arity case payload types> }`.
+        // ⭐ 2026-10-01（名义箱上堆）：**三族名义箱的第 0 格一律是 `i32` 引用计数** ——
+        // `%struct` 与 `%object` 由此同形，`%enum` 的用例标签顺延到第 1 格。
+        // 头固定在 0 格是刻意的：分配 / retain / release / 释放胶水都只认这一个偏移。
+        // ⚠️ 箱的分配点见 `emitNominalAllocation`（⛔ 不再是栈 `alloca`）。
         for typeDecl in module.types {
             let aggregate = "%\(typeDecl.isObject ? "object" : "struct").\(IRName.mangle(typeDecl.name))"
-            var fieldTypes = typeDecl.isObject ? ["i32"] : []
+            var fieldTypes = ["i32"]
             fieldTypes.append(contentsOf: typeDecl.fields.map { $0.type.llvmSpelling })
             bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
         }
         for enumDecl in module.enums {
             let aggregate = "%enum.\(IRName.mangle(enumDecl.name))"
-            var fieldTypes = ["i32"]
+            // 第 0 格 = 引用计数头，第 1 格 = 用例标签（2026-10-01 · 名义箱上堆）。
+            var fieldTypes = ["i32", "i32"]
             fieldTypes.append(contentsOf: enumDecl.slotTypes.map { $0.llvmSpelling })
             bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
         }
@@ -467,6 +504,14 @@ public final class IREmitter {
             tail += "declare ptr @bk_argv()\n"
             tail += "declare ptr @bk_list_dir(ptr)\n"
         }
+        if usesCapturedSlots {
+            tail += "declare ptr @bk_slot_alloc(i64)\n"
+        }
+        if usesNominalBoxes {
+            tail += "declare ptr @bk_nominal_alloc(i64)\n"
+            tail += "declare void @bk_nominal_retain(ptr)\n"
+            tail += "declare i32 @bk_nominal_release(ptr)\n"
+        }
         if usesStringShims {
             tail += "declare ptr @bk_substring(ptr, i32, i32)\n"
             tail += "declare i32 @bk_string_count(ptr)\n"
@@ -501,6 +546,14 @@ public final class IREmitter {
             closureTail += def
         }
         for def in givenInitializerDefs {
+            closureTail += def
+        }
+        // 名义箱的释放胶水（2026-10-01）：按类型合成、只在真用到时才有内容。
+        for def in releaseFunctionDefs {
+            closureTail += def
+        }
+        // 值语义的拷贝胶水（片 C）：同上，只为结构体合成。
+        for def in copyFunctionDefs {
             closureTail += def
         }
         for def in taskBodyDefs {
@@ -542,6 +595,10 @@ public final class IREmitter {
         // 而帧式要求「进入体时必然有一个当前任务」⇒ 若把它也帧式，那条路会从「静默同步执行」
         // 变成「响亮拒绝」，等于顺手改了本批 scope 之外的一件事。
         frameMode = (function.isAsync && isResultReturning(function)) ? .resumable : .none
+        // 片 D：本函数里被闭包捕获的名字 —— 捕获槽由此改走堆分配（`declareValueSlot`）。
+        // ⚠️ 收集范围是整个函数体（含嵌套闭包）⇒ **宁可宽**：同名局部会多上一次堆，
+        // 无害；漏收才会让某个槽留在栈上，而那正是跨帧才炸的那一类。
+        capturedNamesInFunction = capturedNames(in: function.body)
 
         // main is the process entry: emitted with i32 return regardless of
         // the Pini-level void signature (bare returns become `ret i32 0`).
@@ -573,7 +630,10 @@ public final class IREmitter {
             // 手工命名会让两条路都取到 `%span_slot` —— 同一个函数里两个同名局部值。
             // 计数器把「第二个同名者」推到 `%span_slot_1`；⚠️ 不相撞时计数为 0 ⇒ **原样**，
             // 既有 golden IR 逐字节不变。
-            let slot = declareLocalSlot(named: freshSlot(for: param.name), spelling: spelling)
+            // 片 D：形参同样可能被闭包捕获（E 探针那类形态的入口）。
+            let slot = declareValueSlot(
+                named: freshSlot(for: param.name), spelling: spelling,
+                captured: capturedNamesInFunction.contains(param.name))
             bodyIR += builder.fmtStore(value: "%\(paramNames[index])", type: spelling, ptr: slot) + "\n"
             scopes[scopes.count - 1][param.name] = slot
         }
@@ -631,6 +691,29 @@ public final class IREmitter {
         let address = "%de6b." + slot.dropFirst()
         frameSlotDecls.append((name: address, spelling: spelling))
         return address
+    }
+
+    /// 声明一个**值变量**的槽：被闭包捕获的那一族走**堆槽**，其余照旧（栈 `alloca` / 帧槽）。
+    ///
+    /// ⭐ 为什么捕获的那一族必须上堆（2026-10-01 片 D）：闭包 env 里存的就是**这个槽的
+    /// 地址**，而闭包可能比创建帧活得久 —— 栈上的槽随帧作废（E 探针：原生 `E2 -255950759`，
+    /// 解释器 `101`）。上堆之后，帧与闭包读写的是同一个盒。
+    /// ⚠️ 堆槽**不登记释放**：寿命归闭包（本批如实登记这条边界 —— 见报告）。
+    /// ⚠️ 可恢复体（`.resumable`）仍走帧槽：帧本身由运行时持有，与捕获槽同一份存储。
+    private func declareValueSlot(named slot: String, spelling: String, captured: Bool) -> String {
+        guard captured, frameMode != .resumable else {
+            return declareLocalSlot(named: slot, spelling: spelling)
+        }
+        usesCapturedSlots = true
+        let sizeEnd = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: sizeEnd, aggregate: spelling, base: "null", indices: [1]) + "\n"
+        let sizeTemp = builder.freshTemp()
+        bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = call ptr @bk_slot_alloc(i64 \(sizeTemp))\n"
+        let typed = builder.freshTemp()
+        bodyIR += " \(typed) = bitcast ptr \(raw) to \(spelling)*\n"
+        return typed
     }
 
     /// 帧序（`DE-6b`）：取帧 → 读续跑点并清零 → **按声明顺序**取槽 → 按续跑点分派。
@@ -809,14 +892,25 @@ public final class IREmitter {
     /// the handle. Same-slot duplicates within one frame are skipped: a
     /// shadowing redeclaration reuses the name, and releasing twice would drop
     /// two shares for one holder (over-release → use-after-free).
-    private func registerReleasedHandle(slot: String, typeSpelling: String) {
-        guard let symbol = Self.collectionDestroySymbol(for: typeSpelling) else { return }
+    private func registerReleasedHandle(slot: String, type: IRType) {
+        guard let symbol = releaseSymbol(for: type) else { return }
         guard !pendingReleases.isEmpty else { return }
         let frame = pendingReleases.count - 1
         guard !pendingReleases[frame].contains(where: { $0.slot == slot }) else { return }
         pendingReleases[frame].append(
-            ReleasedHandle(slot: slot, typeSpelling: typeSpelling, destroySymbol: symbol)
+            ReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling, destroySymbol: symbol)
         )
+    }
+
+    /// 一个「持有者槽」在退出 / 被覆盖时要调的释放符号；nil = 该类型不在计数族里。
+    ///
+    /// ⭐ 两族共用**同一条登记通道**（2026-10-01 · 名义箱上堆）：容器句柄用 `bk_*_destroy`，
+    /// 名义箱用合成胶水 `__release_*` —— 下游（`emitReleases` / `emitReassignRelease`）
+    /// 只认符号名，不关心是哪一族。⛔ 也正因如此，**改族别不会漏掉释放点**：
+    /// 释放点只问「这个类型要不要释放」，不问「它是谁」。
+    private func releaseSymbol(for type: IRType) -> String? {
+        if nominalKindSpelling(type) != nil { return ensureReleaseFunction(for: type) }
+        return Self.collectionDestroySymbol(for: type.llvmSpelling)
     }
 
     /// Emit one `bk_*_destroy` per registered handle in frames `base...`
@@ -862,11 +956,29 @@ public final class IREmitter {
         bodyIR += " call void @\(registered.destroySymbol)(ptr \(loaded))\n"
     }
 
+    /// 字段被覆盖前释放旧值 —— `emitReassignRelease` 的**字段版**。
+    ///
+    /// ⚠️ 与槽那版的一处结构差异：槽的释放符号在登记时就固定了（写进 `ReleasedHandle`），
+    /// 字段这里**当场问类型**（`releaseCallee`）—— 字段的布局来自静态声明，
+    /// 对同一字段的两次写一定是同一个类型。
+    /// ⚠️ 旧值可能是 null（无默认值字段刚构造出来）：容器那一族因此走判空分支
+    /// （由 `emitReleaseCall` 发），名义一族不必 —— 见 `releaseCallee`。
+    private func emitFieldReassignRelease(fieldPtr: String, type: IRType) {
+        guard let callee = releaseCallee(for: type) else { return }
+        let old = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: old, type: type.llvmSpelling, ptr: fieldPtr) + "\n"
+        emitReleaseCall(
+            callee: callee, valueName: old, spelling: type.llvmSpelling, tag: "w\(builder.freshLabel())")
+    }
+
     private func emitStatement(_ statement: IRStmt) {
         switch statement {
         case .allocVar(let name, let type, _, let initializer):
             let slot = freshSlot(for: name)
-            let address = declareLocalSlot(named: slot, spelling: type.llvmSpelling)
+            // 片 D：被闭包捕获的变量走**堆槽**（闭包与帧共享同一个盒）。
+            let address = declareValueSlot(
+                named: slot, spelling: type.llvmSpelling,
+                captured: capturedNamesInFunction.contains(name))
             // ⚠️★ 绑定的**登记**排在初始化式求值**之后**（槽名与 `alloca` 仍在原处，
             // 故不相撞的程序 IR 逐字节不变）。理由：`var x = <expr>` 里的 `<expr>` 在
             // **旧**作用域里求值 —— 这是解释器的语义。旧形状先登记后求值 ⇒
@@ -882,27 +994,44 @@ public final class IREmitter {
                 } else {
                     let value = emitExpr(initializer)
                     scopes[scopes.count - 1][name] = address
-                    bodyIR += builder.fmtStore(value: value.ssaName, type: type.llvmSpelling, ptr: address) + "\n"
-                    emitRetainIfAliased(initializer, value)
+                    // 值语义（片 C）：结构体别名 ⇒ 拷出新箱；对象 / 枚举 / 容器别名 ⇒ retain；
+                    // 临时值 ⇒ 直接接管。⛔ 这一步必须在 store **之前** —— 它是「站住」那一步。
+                    let stored = emitValueForStorage(initializer, value, type: type)
+                    bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: address) + "\n"
                 }
             } else {
                 scopes[scopes.count - 1][name] = address
+                // ⚠️★ 没有初始化式的变量槽**必须清零**（2026-10-01 · 片 B 的配套）：
+                // 这种槽会被下面的 `registerReleasedHandle` 登记，退出 / 被覆盖时
+                // 按计数释放 —— 而栈 `alloca` 里是**垃圾**。实测（自举 `ast` 层）：
+                // 退出时 `bk_nominal_release` 写在代码段上，SIGBUS / KERN_PROTECTION_FAILURE。
+                // 零 = `null` =「还没有箱」：释放路径对它是无操作（`bk_nominal_release(null)`
+                // 返回 0；容器那一族走判空分支）。
+                // ⚠️ 只对**参与计数**的类型发这条 store：不变量类型（标量 / 字符串 / 外呼指针）
+                // 的 IR 与改动前逐字节相同。
+                if releaseSymbol(for: type) != nil {
+                    bodyIR += builder.fmtStore(value: zeroConst(for: type), type: type.llvmSpelling, ptr: address) + "\n"
+                }
             }
             // H1-B: the fresh local holds one share of its handle; drop it
             // when the declaring block exits.
-            registerReleasedHandle(slot: address, typeSpelling: type.llvmSpelling)
+            registerReleasedHandle(slot: address, type: type)
 
         case .storeVar(let name, let type, let value):
             guard let slot = lookupSlot(name) else {
                 fatalError("IREmitter: store to undeclared variable '\(name)' (IRLowerer guarantees declarations)")
             }
             let lowered = emitExpr(value)
+            // ⚠️★ 三行的顺序就是语义（2026-10-01 片 C）：**先**让新值站住（结构体 ⇒ 拷出
+            // 新箱；对象/枚举/容器别名 ⇒ retain），**再**释放旧值，最后才写槽。
+            // 旧形状把 `emitRetainIfAliased` 排在释放**之后** ⇒ `a = a` 这类自赋值会
+            // 先把新值要读的那个箱回收掉（读已释放内存）。⭐ 与既有的三处同族：**顺序错**。
+            let stored = emitValueForStorage(value, lowered, type: type)
             // H1-B: overwriting a handle-typed local drops the share it held
             // before the store replaces it. The runtime only decrements, so an
             // alias still holding the old handle keeps it alive.
             emitReassignRelease(slot: slot)
-            bodyIR += builder.fmtStore(value: lowered.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
-            emitRetainIfAliased(value, lowered)
+            bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
             emitIf(label: label, condition: condition, thenBody: thenBody, elseBody: elseBody)
@@ -930,9 +1059,19 @@ public final class IREmitter {
             // （`KERN_INVALID_ADDRESS`，帧落 `bk_array_len`）。
             // ⭐ 判据不是「释放对不对」（它本来就该释放局部）而是**顺序**：所有权契约里
             // 返回值是**转移**出去的那一份，先把它扣住，局部释放才不会把它一起带走。
-            let returnedValue: IRValue? = value.map { emitExpr($0) }
-            if let returnedNode = value, let returnedValue {
-                emitRetainIfAliased(returnedNode, returnedValue)
+            // ⚠️★ 这个 `var` 不是风格：值语义那一步会**换掉**交出去的那个值
+            // （结构体别名 ⇒ 拷贝出的新箱）。上一版把它写成 `let` + `_ =`，于是
+            // 拷贝做了、`ret` 交出去的却还是**原件** —— 而原件紧接着就被 `emitReleases`
+            // 释放掉 ⇒ 调用方拿到悬垂箱（读数：`RETURN 0`，解释器 `7`）。
+            var returnedValue: IRValue? = value.map { emitExpr($0) }
+            if let returnedNode = value, let current = returnedValue {
+                // 值语义（片 C）：结构体别名 ⇒ 拷出新箱交出去；对象 / 枚举 / 容器 ⇒ retain 一份。
+                // ⚠️ 没有返回类型（`main`）时退化为原来的别名点 retain —— 那条路不交值。
+                if let returnType = currentReturnType {
+                    returnedValue = emitValueForStorage(returnedNode, current, type: returnType)
+                } else {
+                    emitRetainIfAliased(returnedNode, current)
+                }
             }
             // H1-B: returning leaves the function outright, abandoning every
             // open scope; the fall-through `exit_block` cleanup is only
@@ -984,11 +1123,14 @@ public final class IREmitter {
         case .fieldStore(let base, let field, let value, let fieldType):
             let baseValue = emitExpr(base)
             let loweredValue = emitExpr(value)
-            emitRetainIfAliased(value, loweredValue)
             let (aggregate, _, fieldIndex) = fieldLayout(of: base, field: field)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
-            bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
+            // ⚠️ 顺序同 `storeVar`：新值先站住（拷贝 / retain），**再**释放字段旧值，最后写。
+            let stored = emitValueForStorage(value, loweredValue, type: fieldType)
+            // 字段是**持有者**：被覆盖前先释放旧值（与 `emitReassignRelease` 同规，落点是字段）。
+            emitFieldReassignRelease(fieldPtr: fieldPtr, type: fieldType)
+            bodyIR += builder.fmtStore(value: stored.ssaName, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
 
         case .captureMarker:
             // Marker only — captures are materialized by the closure literal
@@ -1152,15 +1294,16 @@ public final class IREmitter {
                     return enumCase.payloadTypes[slot].llvmSpelling
                 },
                 loadTag: { [self] base in
+                    // 标签在第 1 格（第 0 格是引用计数头，2026-10-01）。
                     let tagPtr = builder.freshTemp()
-                    bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: base, indices: [0, 0]) + "\n"
+                    bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: base, indices: [0, 1]) + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: "i32", ptr: tagPtr) + "\n"
                     return IRValue(llvmType: "i32", ssaName: value)
                 },
                 loadPayload: { [self] _, base, slot, spelling in
                     let fieldPtr = builder.freshTemp()
-                    bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: base, indices: [0, slot + 1]) + "\n"
+                    bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: base, indices: [0, slot + 2]) + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: spelling, ptr: fieldPtr) + "\n"
                     return IRValue(llvmType: spelling, ssaName: value)
@@ -2055,15 +2198,16 @@ public final class IREmitter {
             guard let aggregate = type.nominalAggregateSpelling else {
                 fatalError("IREmitter: enumConstruct on non-enum type (IRLowerer guarantees)")
             }
-            let ptr = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: ptr, type: aggregate) + "\n"
+            // 名义箱上堆（2026-10-01）：分配器写第 0 格（引用计数 = 1）；
+            // 标签落第 1 格、载荷从第 2 格起 —— 与 `emitMatch` 的 enum 分支同一套偏移。
+            let ptr = emitNominalAllocation(aggregate: aggregate)
             let tagPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, 0]) + "\n"
+            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, 1]) + "\n"
             bodyIR += builder.fmtStore(value: String(tag), type: "i32", ptr: tagPtr) + "\n"
             for (index, payload) in payloads.enumerated() {
                 let value = emitExpr(payload)
                 let fieldPtr = builder.freshTemp()
-                bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 1]) + "\n"
+                bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 2]) + "\n"
                 bodyIR += builder.fmtStore(value: value.ssaName, type: payloadTypes[index].llvmSpelling, ptr: fieldPtr) + "\n"
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
@@ -2599,7 +2743,10 @@ public final class IREmitter {
             fatalError("IREmitter: unknown nominal field '\(name).\(field)' (IRLowerer guarantees)")
         }
         let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
-        return (aggregate, decl.fields[index].type, index + (isObject ? 1 : 0))
+        // 三族名义箱的第 0 格都是引用计数头（2026-10-01）⇒ 字段索引一律 +1。
+        // ⚠️ `isObject` 仍决定聚合名拼写（`%object` / `%struct` 是两个不同的类型名），
+        // 只是**不再影响字段偏移** —— 头两边都有。
+        return (aggregate, decl.fields[index].type, index + 1)
     }
 
     /// ADR-001 `P2b`：默认实例的取用点。
@@ -2634,9 +2781,14 @@ public final class IREmitter {
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let boxed = builder.freshTemp()
         bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
-        let local = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: local, type: aggregate) + "\n"
+        // ⭐ 副本也住堆（2026-10-01）：它是取用方**自己的一份**（`using` 的副本语义），
+        // 但那份副本会随帧外逃 ⇒ 不能再落在栈上。`memcpy` 连头一起搬，随后把头**重写成 1**
+        // —— 副本与源从此各是一次独立持有，不依赖源头当时的值。
+        let local = emitNominalAllocation(aggregate: aggregate)
         bodyIR += " call ptr @memcpy(ptr \(local), ptr \(boxed), i64 \(sizeTemp))\n"
+        let rcFix = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: rcFix, aggregate: aggregate, base: local, indices: [0, 0]) + "\n"
+        bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: rcFix) + "\n"
         return IRValue(llvmType: type.llvmSpelling, ssaName: local)
     }
 
@@ -2761,10 +2913,15 @@ public final class IREmitter {
         captureSlots = [:]
         pendingReleases = []
 
+        // 引用计数头（第 0 格）：`%out` 是运行时给的**程序级单例盒**，头格写 1；
+        // ⚠️ 它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
+        let rcPtr = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: rcPtr, aggregate: aggregate, base: "%out", indices: [0, 0]) + "\n"
+        bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: rcPtr) + "\n"
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, index]) + "\n"
+                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, index + 1]) + "\n"
             if let defaultValue = field.defaultValue {
                 let value = emitExpr(defaultValue)
                 bodyIR +=
@@ -2793,24 +2950,373 @@ public final class IREmitter {
         return symbol
     }
 
+    /// 名义箱的**分配**（2026-10-01 · 名义箱上堆）。
+    ///
+    /// 把一个聚合体大小的块要进**运行时段**（`bk_nominal_alloc`），由它写第 0 格
+    /// 引用计数 = 1。⛔ 不再用栈 `alloca`：栈上的箱活不过创建帧，而名义值今天会随
+    /// 返回值 / 字段 / 闭包捕获跨帧（实测五条外逃全红的那一族）。
+    ///
+    /// 大小用「**过尾指针的整数形式**」（`getelementptr <agg>, ptr null, i32 1` → `ptrtoint`）——
+    /// 与 `emitGivenInstance` 同一式子，只依赖聚合体定义，不引入 `sizeof` 先例。
+    ///
+    /// ⚠️ 与 `bk_given_get` 的单例盒**不是**同一条通道：那边由运行时持有到进程结束、
+    /// 从不释放，因此不参与计数（见 `ensureGivenInitializer`）。
+    private func emitNominalAllocation(aggregate: String) -> String {
+        usesNominalBoxes = true
+        let sizeEnd = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: sizeEnd, aggregate: aggregate, base: "null", indices: [1]) + "\n"
+        let sizeTemp = builder.freshTemp()
+        bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
+        let ptr = builder.freshTemp()
+        bodyIR += " \(ptr) = call ptr @bk_nominal_alloc(i64 \(sizeTemp))\n"
+        return ptr
+    }
+
+    // MARK: - 释放胶水（2026-10-01 · 名义箱的寿命）
+
+    /// 收集一棵 IR 子树里**所有闭包字面量捕获的变量名**（含嵌套闭包自己再捕获的）。
+    ///
+    /// ⚠️ 用 `Mirror` 反射而不是手写 `switch`：IR 有几十个节点种类，手写遍历漏掉一个
+    /// 新节点时的症状是「某个捕获槽还留在栈上」—— 只在跨帧时才炸，正是本片要修的那一类。
+    /// 反射在这里**宁可宽**：多收几个名字只会让那个槽上堆（多一次分配），漏收才出错。
+    private func capturedNames(in value: Any) -> Set<String> {
+        var names: Set<String> = []
+        collectCaptures(value, into: &names)
+        return names
+    }
+
+    private func collectCaptures(_ value: Any, into names: inout Set<String>) {
+        if let expr = value as? IRExpr,
+            case .closureLiteral(_, _, _, _, let captures, let body, _) = expr
+        {
+            for capture in captures { names.insert(capture.name) }
+            collectCaptures(body, into: &names)
+            return
+        }
+        for child in Mirror(reflecting: value).children {
+            collectCaptures(child.value, into: &names)
+        }
+    }
+
+    /// 名义类型的「胶水专用」拼写：`struct.<mangled>` / `object.<mangled>` / `enum.<mangled>`。
+    ///
+    /// ⭐ 抽出来的理由不是好看：`__release_*` / `__copy_*`（片 C）两族合成函数都按它去重，
+    /// 而**同名的 struct 与 enum** 若共用一族的符号就会撞在一起。
+    private func nominalKindSpelling(_ type: IRType) -> String? {
+        switch type {
+        case .nominal(let name, let isObject):
+            return "\(isObject ? "object" : "struct").\(IRName.mangle(name))"
+        case .enumeration(let name):
+            return "enum.\(IRName.mangle(name))"
+        default:
+            return nil
+        }
+    }
+
+    /// 释放胶水对某个**字段类型**要做的动作。
+    /// - 名义字段（struct / object / enum）：递归调它自己的释放胶水 —— **不判空**
+    ///   （`bk_nominal_release(null)` 返回 0 ⇒ 递归进去什么也不做）。
+    /// - 容器字段（array / dict / set）：`bk_*_destroy` —— **必须判空**
+    ///   （运行时的 destroy 对 null 是 `bk_panic`）。
+    /// - 其余（标量 / 字符串 / 指针）：无动作。
+    private func releaseCallee(for type: IRType) -> (symbol: String, needsNullGuard: Bool)? {
+        if nominalKindSpelling(type) != nil {
+            return (ensureReleaseFunction(for: type), false)
+        }
+        if let destroy = Self.collectionDestroySymbol(for: type.llvmSpelling) {
+            return (destroy, true)
+        }
+        return nil
+    }
+
+    /// 某个类型在释放胶水里**有没有动作**。
+    ///
+    /// ⚠️ 与 `releaseCallee` 的分工：那个会**递归合成**子类型的胶水（有副作用），
+    /// 这个只回答「要不要」—— 胶水里的**分派结构**（哪些 case 值得生成一个 arm）
+    /// 必须在合成之前就能算出来，否则会为「只有标量载荷的 case」生成空 arm。
+    private func needsReleaseAction(for type: IRType) -> Bool {
+        if nominalKindSpelling(type) != nil { return true }
+        return Self.collectionDestroySymbol(for: type.llvmSpelling) != nil
+    }
+
+    /// 在胶水体里发一次「释放这个值」的调用；需要判空的那一族先生成分支。
+    private func emitReleaseCall(
+        callee: (symbol: String, needsNullGuard: Bool), valueName: String, spelling: String, tag: String
+    ) {
+        guard callee.needsNullGuard else {
+            // 名义递归：直接传（null 进去返回 0，不做任何事）
+            bodyIR += " call void @\(callee.symbol)(ptr \(valueName))\n"
+            return
+        }
+        let nonNull = builder.freshTemp()
+        bodyIR += " \(nonNull) = icmp ne \(spelling) \(valueName), null\n"
+        bodyIR +=
+            builder.fmtCondBr(cond: nonNull, thenLabelName: "rel.\(tag)", elseLabelName: "cont.\(tag)") + "\n"
+        bodyIR += "rel.\(tag):\n"
+        bodyIR += " call void @\(callee.symbol)(ptr \(valueName))\n"
+        bodyIR += builder.fmtBr(labelName: "cont.\(tag)") + "\n"
+        bodyIR += "cont.\(tag):\n"
+    }
+
+    /// 逐类型合成的**值语义拷贝胶水**：`define ptr @__copy_struct_<mangled>(ptr %src)`。
+    ///
+    /// 规则**逐条对齐**解释器的 `RuntimeOps.copyIfStruct`（那边是权威；它的注释原文写着
+    /// 「Both engines owe this rule at every binding and store site」）：
+    /// - **结构体字段** ⇒ 递归拷贝（新箱）；
+    /// - **对象 / 枚举字段** ⇒ **原样共享**（引用语义，`copyIfStruct` 对它们原样返回）+ retain；
+    /// - **容器字段** ⇒ 共享 + retain（写时复制由容器在运行时那一层管）；
+    /// - **标量 / 字符串 / 指针** ⇒ 直接复制（字符串是不可变 C 串，没有主）。
+    ///
+    /// ⚠️ `null` 入参返回 `null`（无默认值字段还没写过）—— 调用点因此不必判空。
+    /// ⚠️ 只为**结构体**合成：对象与枚举本身是引用语义，拷贝即共享 ⇒ 那条路走 retain。
+    private func ensureCopyFunction(for type: IRType) -> String? {
+        guard case .nominal(let name, let isObject) = type, !isObject else { return nil }
+        guard let decl = moduleTypes.first(where: { $0.name == name }),
+            let aggregate = type.nominalAggregateSpelling
+        else {
+            fatalError("IREmitter: copy glue for unregistered struct (IRLowerer guarantees)")
+        }
+        let symbol = "__copy_struct_\(IRName.mangle(name))"
+        guard copyFunctionNames.insert(symbol).inserted else { return symbol }
+
+        let savedBodyIR = bodyIR
+        let savedBuilder = builder
+        let savedUsesNominalBoxes = usesNominalBoxes
+        builder = IRBuilder()
+        bodyIR = ""
+        usesNominalBoxes = true
+
+        let isNull = builder.freshTemp()
+        bodyIR += " \(isNull) = icmp eq ptr %src, null\n"
+        bodyIR += builder.fmtCondBr(cond: isNull, thenLabelName: "null.src", elseLabelName: "copy") + "\n"
+        bodyIR += "null.src:\n"
+        bodyIR += " ret ptr null\n"
+        bodyIR += "copy:\n"
+        let sizeEnd = builder.freshTemp()
+        bodyIR += builder.fmtGEP(name: sizeEnd, aggregate: aggregate, base: "null", indices: [1]) + "\n"
+        let sizeTemp = builder.freshTemp()
+        bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
+        let dst = builder.freshTemp()
+        bodyIR += " \(dst) = call ptr @bk_nominal_alloc(i64 \(sizeTemp))\n"
+        for (index, field) in decl.fields.enumerated() {
+            let srcPtr = builder.freshTemp()
+            bodyIR +=
+                builder.fmtGEP(name: srcPtr, aggregate: aggregate, base: "%src", indices: [0, index + 1]) + "\n"
+            let value = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: srcPtr) + "\n"
+            let stored: String
+            switch boxFamily(ofValueSpelling: field.type.llvmSpelling) {
+            case .container:
+                // 容器：共享 + 留一份份额（COW 的分裂逻辑在运行时那一层）
+                let raw = builder.freshTemp()
+                bodyIR += " \(raw) = bitcast \(field.type.llvmSpelling) \(value) to ptr\n"
+                bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+                stored = value
+            case .nominal:
+                if case .nominal(_, false) = field.type, let sub = ensureCopyFunction(for: field.type) {
+                    // 结构体字段：值语义的一部分 ⇒ 递归拷贝
+                    let copied = builder.freshTemp()
+                    bodyIR += " \(copied) = call ptr @\(sub)(ptr \(value))\n"
+                    let typed = builder.freshTemp()
+                    bodyIR += " \(typed) = bitcast ptr \(copied) to \(field.type.llvmSpelling)\n"
+                    stored = typed
+                } else {
+                    // 对象 / 枚举字段：引用语义 ⇒ 共享 + retain
+                    let raw = builder.freshTemp()
+                    bodyIR += " \(raw) = bitcast \(field.type.llvmSpelling) \(value) to ptr\n"
+                    bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+                    stored = value
+                }
+            case nil:
+                stored = value  // 标量 / 字符串 / 指针：直接复制
+            }
+            let dstPtr = builder.freshTemp()
+            bodyIR +=
+                builder.fmtGEP(name: dstPtr, aggregate: aggregate, base: dst, indices: [0, index + 1]) + "\n"
+            bodyIR += builder.fmtStore(value: stored, type: field.type.llvmSpelling, ptr: dstPtr) + "\n"
+        }
+        bodyIR += " ret ptr \(dst)\n"
+        copyFunctionDefs.append("define ptr @\(symbol)(ptr %src) {\nentry:\n" + bodyIR + "}\n\n")
+
+        bodyIR = savedBodyIR
+        builder = savedBuilder
+        usesNominalBoxes = savedUsesNominalBoxes
+        return symbol
+    }
+
+    /// 该表达式节点给的是**已有箱的别名**（要按值语义拷贝 / 按引用语义 retain），
+    /// 还是**一个新箱的所有权**（直接接管，什么都不做）。
+    ///
+    /// ⚠️ `.fieldGet` 在列：读字段给的是**指向父箱字段的指针**（别名），不是一份自己的
+    /// 存储 —— `var g = h.p` 因此必须拷贝。而 `h.p.x = 9` 里的那个 `h.p` 是 fieldStore 的
+    /// **base**，走的是发射 base 的分支、⛔ 不经过这里。
+    private func yieldsAlias(_ node: IRExpr) -> Bool {
+        switch node {
+        case .load, .subscriptGet, .fieldGet, .optionalGet:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 把「求值出来的值」按**值语义**落到一个持有位置（变量槽 / 字段 / 返回值）。
+    ///
+    /// - 结构体**别名** ⇒ 拷贝出新箱（`__copy_struct_*`，规则见它的注释）；
+    /// - 对象 / 枚举 / 容器别名 ⇒ retain 一份（引用语义 / 写时复制）；
+    /// - **临时值**（构造、调用返回值 …）⇒ 直接接管，零额外动作。
+    ///
+    /// - Returns: 应当被存下去（或被交出去）的那个值。
+    @discardableResult
+    private func emitValueForStorage(_ node: IRExpr, _ value: IRValue, type: IRType) -> IRValue {
+        guard yieldsAlias(node) else { return value }
+        if case .nominal(_, false) = type, let symbol = ensureCopyFunction(for: type) {
+            let copied = builder.freshTemp()
+            bodyIR += " \(copied) = call ptr @\(symbol)(ptr \(value.ssaName))\n"
+            let typed = builder.freshTemp()
+            bodyIR += " \(typed) = bitcast ptr \(copied) to \(type.llvmSpelling)\n"
+            return IRValue(llvmType: type.llvmSpelling, ssaName: typed)
+        }
+        emitRetainIfAliased(node, value)
+        return value
+    }
+
+    /// 逐类型合成的**释放胶水**：`define void @__release_<kind>_<mangled>(ptr %box)`。
+    ///
+    /// 形状（与容器那套「份额」语义对齐）：
+    /// ① `bk_nominal_release(box)` —— 头格减一，返回 1 表示**归零**；
+    /// ② **只有归零**才进 `sweep`：逐字段释放，最后 `free(box)`。
+    ///
+    /// ⚠️ 自引用类型（链表节点等）靠「**名字先占位**」防合成期无限递归；运行期沿指针走，
+    /// 与解释器同假设（值类型语义下不存在环）。
+    /// ⚠️ 枚举按 **tag 分派**：只有被选中 case 的载荷槽里有活值，其余槽**不碰**
+    /// （未选中的槽里是分配器的原样字节）。
+    /// ⚠️ 合成期间会递归回到自己（字段是名义类型时）—— 上下文保存/恢复照
+    /// `ensureGivenInitializer` 的姿势，可重入。
+    private func ensureReleaseFunction(for type: IRType) -> String {
+        guard let kind = nominalKindSpelling(type) else {
+            fatalError("IREmitter: release glue for non-nominal type (caller gates this)")
+        }
+        let symbol = "__release_\(kind)"
+        guard releaseFunctionNames.insert(symbol).inserted else { return symbol }
+
+        let savedBodyIR = bodyIR
+        let savedBuilder = builder
+        let savedUsesNominalBoxes = usesNominalBoxes
+        builder = IRBuilder()
+        bodyIR = ""
+        usesNominalBoxes = true  // 胶水体自己要用 bk_nominal_release
+
+        let dead = builder.freshTemp()
+        bodyIR += " \(dead) = call i32 @bk_nominal_release(ptr %box)\n"
+        let isZero = builder.freshTemp()
+        bodyIR += " \(isZero) = icmp ne i32 \(dead), 0\n"
+        bodyIR += builder.fmtCondBr(cond: isZero, thenLabelName: "sweep", elseLabelName: "done") + "\n"
+        bodyIR += "sweep:\n"
+
+        switch type {
+        case .nominal(let name, _):
+            guard let decl = moduleTypes.first(where: { $0.name == name }),
+                let aggregate = type.nominalAggregateSpelling
+            else {
+                fatalError("IREmitter: release glue for unregistered nominal (IRLowerer guarantees)")
+            }
+            for (index, field) in decl.fields.enumerated() {
+                guard let callee = releaseCallee(for: field.type) else { continue }
+                let fieldPtr = builder.freshTemp()
+                bodyIR +=
+                    builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, index + 1])
+                    + "\n"
+                let value = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
+                emitReleaseCall(
+                    callee: callee, valueName: value, spelling: field.type.llvmSpelling, tag: "f\(index)")
+            }
+        case .enumeration(let name):
+            guard let enumDecl = moduleEnums.first(where: { $0.name == name }),
+                let aggregate = type.nominalAggregateSpelling
+            else {
+                fatalError("IREmitter: release glue for unregistered enum (IRLowerer guarantees)")
+            }
+            let tagPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: "%box", indices: [0, 1]) + "\n"
+            let tagValue = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: tagValue, type: "i32", ptr: tagPtr) + "\n"
+            // ⚠️★ 判据必须用 **case 自己的 `payloadTypes`**，⛔ 不能用 `slotTypes`（那一版
+            // 把自举的 `ast` 层跑崩了，实测栈：`__release_enum.TypeAnnotation` →
+            // `__release_enum.TypeAnnotationList(box=0x1000b06a5)`，而那个地址落在
+            // `__TEXT.__const`）。理由：**同一个槽在不同 case 里可以是不同类型** ——
+            // `TypeAnnotation` 的槽 0，`simple` 放 `String`、`tupleType` 放 `TypeAnnotationList`。
+            // 按 `slotTypes` 统一判断 ⇒ 会给「槽里其实是字符串常量」的 case 也生成释放。
+            //
+            // ⚠️ 另一半判据：只挑**真的有释放动作**的 case —— 只有标量载荷的 case 生成出来的
+            // arm 里一条释放也没有，而 `after` 标签前若没有终结指令，clang 同样拒绝
+            // （`expected instruction opcode`）。
+            let payloadCases = enumDecl.cases.enumerated().filter { entry in
+                entry.element.payloadTypes.contains { needsReleaseAction(for: $0) }
+            }
+            let afterLabel = "rel.cases.after"
+            for (position, entry) in payloadCases.enumerated() {
+                let (caseIndex, enumCase) = (entry.offset, entry.element)
+                let matches = builder.freshTemp()
+                bodyIR += " \(matches) = icmp eq i32 \(tagValue), \(enumCase.tag)\n"
+                let armLabel = "rel.case.\(caseIndex)"
+                let nextLabel =
+                    position + 1 < payloadCases.count ? "rel.next.\(caseIndex)" : afterLabel
+                bodyIR +=
+                    builder.fmtCondBr(cond: matches, thenLabelName: armLabel, elseLabelName: nextLabel) + "\n"
+                bodyIR += "\(armLabel):\n"
+                for (slot, payloadType) in enumCase.payloadTypes.enumerated() {
+                    guard let callee = releaseCallee(for: payloadType) else { continue }
+                    // 拼写跟着**这个 case 的实际载荷类型**走 —— 与构造点的 `store` 同一套拼写。
+                    let slotSpelling = payloadType.llvmSpelling
+                    let fieldPtr = builder.freshTemp()
+                    bodyIR +=
+                        builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, slot + 2])
+                        + "\n"
+                    let value = builder.freshTemp()
+                    bodyIR += builder.fmtLoad(name: value, type: slotSpelling, ptr: fieldPtr) + "\n"
+                    emitReleaseCall(
+                        callee: callee, valueName: value, spelling: slotSpelling,
+                        tag: "c\(caseIndex)s\(slot)")
+                }
+                bodyIR += builder.fmtBr(labelName: afterLabel) + "\n"
+                if position + 1 < payloadCases.count {
+                    bodyIR += "rel.next.\(caseIndex):\n"
+                }
+            }
+            if !payloadCases.isEmpty {
+                bodyIR += "\(afterLabel):\n"
+            }
+        default:
+            break
+        }
+
+        bodyIR += " call void @free(ptr %box)\n"
+        bodyIR += builder.fmtBr(labelName: "done") + "\n"
+        bodyIR += "done:\n"
+        bodyIR += " ret void\n"
+        releaseFunctionDefs.append("define void @\(symbol)(ptr %box) {\nentry:\n" + bodyIR + "}\n\n")
+
+        bodyIR = savedBodyIR
+        builder = savedBuilder
+        usesNominalBoxes = savedUsesNominalBoxes
+        return symbol
+    }
+
     private func emitConstruct(type: IRType) -> IRValue {
-        guard case .nominal(let name, let isObject) = type,
+        guard case .nominal(let name, _) = type,
             let aggregate = type.nominalAggregateSpelling,
             let decl = moduleTypes.first(where: { $0.name == name })
         else {
             fatalError("IREmitter: construct of unknown nominal type (IRLowerer guarantees)")
         }
-        let ptr = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: ptr, type: aggregate) + "\n"
+        // 名义箱上堆（2026-10-01）：分配器写第 0 格（引用计数 = 1），字段从第 1 格起。
+        // ⚠️ `isObject` 只影响聚合名拼写 —— 头两边都有，字段偏移不再分类讨论。
+        let ptr = emitNominalAllocation(aggregate: aggregate)
         let zero = zeroConst(for:)
-        if isObject {
-            let refcountPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: refcountPtr, aggregate: aggregate, base: ptr, indices: [0, 0]) + "\n"
-            bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: refcountPtr) + "\n"
-        }
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + (isObject ? 1 : 0)]) + "\n"
+            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 1]) + "\n"
             if let defaultValue = field.defaultValue {
                 let value = emitExpr(defaultValue)
                 bodyIR += builder.fmtStore(value: value.ssaName, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
@@ -3143,21 +3649,34 @@ public final class IREmitter {
     ///   could not pass cow.pini). True temporaries (literals, scalars,
     ///   fresh constructions) transfer ownership and must NOT retain.
     private func emitRetainIfAliased(_ valueNode: IRExpr, _ value: IRValue) {
-        let containerSpellings = ["%bk_array*", "%bk_dict*", "%bk_set*"]
-        guard containerSpellings.contains(value.llvmType) else { return }
-        let aliased: Bool
-        switch valueNode {
-        case .load:
-            aliased = true
-        case .subscriptGet:
-            aliased = true
-        default:
-            aliased = false
-        }
-        guard aliased else { return }
+        guard let family = boxFamily(ofValueSpelling: value.llvmType) else { return }
+        guard yieldsAlias(valueNode) else { return }
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
-        bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+        switch family {
+        case .container:
+            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+        case .nominal:
+            usesNominalBoxes = true
+            bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+        }
+    }
+
+    /// 值在发射层的**计数族**（2026-10-01 · 名义箱上堆）：容器句柄与名义箱走两套 C ABI
+    /// （`bk_handle_*` / `bk_nominal_*`），但**所有权规则同一套**
+    /// （别名点 retain · 作用域退出 release · 写前 release 旧值）。
+    ///
+    /// 返回 nil = 该类型不参与计数（标量 / 字符串 / 外呼指针 / 任务句柄 …）。
+    private enum BoxFamily { case container, nominal }
+
+    private func boxFamily(ofValueSpelling spelling: String) -> BoxFamily? {
+        if ["%bk_array*", "%bk_dict*", "%bk_set*"].contains(spelling) { return .container }
+        if spelling.hasPrefix("%struct.") || spelling.hasPrefix("%object.")
+            || spelling.hasPrefix("%enum.")
+        {
+            return .nominal
+        }
+        return nil
     }
 
     private func emitArrayLiteral(elements: [IRExpr], type: IRType) -> IRValue {
@@ -3706,7 +4225,8 @@ public final class IREmitter {
             }
             let open = emitStringConstant("\(name){")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
-            let fieldBase = decl.isObject ? 1 : 0
+            // 引用计数头占第 0 格（2026-10-01）⇒ 字段基准一律 1。
+            let fieldBase = 1
             let orderedFields = decl.fields.enumerated().sorted {
                 $0.element.name < $1.element.name
             }
@@ -3748,7 +4268,7 @@ public final class IREmitter {
                 fatalError("IREmitter: printing unregistered enum (IRLowerer guarantees)")
             }
             let tagPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: value.ssaName, indices: [0, 0]) + "\n"
+            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: value.ssaName, indices: [0, 1]) + "\n"
             let tag = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tag, type: "i32", ptr: tagPtr) + "\n"
             let id = builder.freshLabel()
@@ -3776,7 +4296,7 @@ public final class IREmitter {
                             bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
                         }
                         let fieldPtr = builder.freshTemp()
-                        bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: value.ssaName, indices: [0, slot + 1]) + "\n"
+                        bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: value.ssaName, indices: [0, slot + 2]) + "\n"
                         let element = builder.freshTemp()
                         bodyIR += builder.fmtLoad(name: element, type: payloadType.llvmSpelling, ptr: fieldPtr) + "\n"
                         emitValuePrint(
@@ -4581,6 +5101,7 @@ public final class IREmitter {
         let savedBodyIR = bodyIR
         let savedBuilder = builder
         let savedCaptureSlots = captureSlots
+        let savedCapturedNames = capturedNamesInFunction
         // A closure is its own release scope: its body block is frame 0 of a
         // fresh stack, exactly like a function body. Without this the closure
         // would inherit the enclosing function's frames, and a `return` inside
@@ -4609,6 +5130,9 @@ public final class IREmitter {
         bodyIR = ""
         captureSlots = [:]
         pendingReleases = []
+        // 片 D：闭包体是**自己的**函数上下文 —— 它自己的嵌套闭包捕获的名字要在进体前算好
+        // （同 `emitFunction` 的理由：声明点在捕获点之前）。
+        capturedNamesInFunction = capturedNames(in: body)
 
         let envTypeName = "%__closure_env_\(id)"
         for (index, capture) in captures.enumerated() {
@@ -4669,6 +5193,7 @@ public final class IREmitter {
         builder = savedBuilder
         captureSlots = savedCaptureSlots
         pendingReleases = savedPendingReleases
+        capturedNamesInFunction = savedCapturedNames
         frameMode = savedFrameMode
         blockDepth = savedBlockDepth
     }

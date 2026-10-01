@@ -1076,6 +1076,82 @@ public func bk_substring(
     return strdup(String(characters[lo..<hi]))
 }
 
+// MARK: - 名义箱（结构体 / 对象 / 枚举）的堆分配（2026-10-01「名义箱上堆」）
+
+// 背景（实测，取宿主侧「聚合值的返回与拷贝」调研件的第 9 节 —— 按主题指认，⛔ 不引路径）：
+// LLVM 路径上，名义值此前是**创建帧里的一块栈 `alloca`**，值 = 指向它的指针。于是
+// 「结构体返回 / 对象返回 / 带载荷枚举返回后 match / 闭包捕获随闭包外逃」五条探针全红
+// （垃圾值 / `match no case`），而五条**同帧对照**全绿 ⇒ 洞的准确表述是
+// 「**名义箱与捕获槽都分配在创建帧里**」，不是某一种返回值写法的问题。
+//
+// 处置：三族名义箱（`%struct` / `%object` / `%enum`）**一律上堆**，聚合体第 0 格统一为
+// `i32` 引用计数头（`%object` 原本就有，`%struct` / `%enum` 本批补上，见发射器的类型定义段）。
+// 分配从这里出；retain / release 的插入点与逐类型释放胶水在发射层。
+//
+// ⚠️ 与容器句柄（`bk_handle_*`）**不是**同一套：容器的 box 是运行时对象、句柄是
+// `%bk_array` 之类的**包装类型**；名义箱就是裸聚合体本身，头在聚合体内部第 0 格，
+// 因此字段可被 LLVM 的 GEP 直接寻址（索引 +1），无常驻注册表、无动态转型。
+//
+// ⚠️ 分配契约：`malloc` 出来的块，**释放由发射层合成的释放胶水负责**（`free`），
+// 判据是引用计数归零 —— ⛔ 运行时这里不做任何记账（没有 live 表）。
+
+/// 名义箱的分配：`malloc(size)`，并把第 0 格（引用计数头）写成 1。
+///
+/// `size` 由发射层用「**过尾指针的整数形式**」算好（只依赖聚合体定义，不依赖目标布局查询）。
+/// 字段本身**不在这里初始化** —— 构造点逐格覆盖，与旧的栈形状同规。
+@_cdecl("bk_nominal_alloc")
+public func bk_nominal_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
+    guard size > 0 else { bk_panic("Pini runtime error: nominal box size must be positive") }
+    guard let raw = malloc(Int(size)) else {
+        bk_panic("Pini runtime error: nominal box allocation failed")
+    }
+    raw.storeBytes(of: Int32(1), as: Int32.self)
+    return raw
+}
+
+/// 被闭包捕获的变量槽（2026-10-01 · 片 D「捕获装箱」）：**闭包与帧共享同一个盒**。
+///
+/// 形状与 `bk_nominal_alloc` 刻意不同：**没有引用计数头** —— 槽是一个裸的、零初始化的
+/// 数据块，读写由发射层直接 `load`/`store`（盒子本体不参与计数）。
+///
+/// ⚠️ 分配契约：`malloc` 出来的块，**本批不释放**（寿命归闭包 —— 如实登记的边界）。
+/// 闭包自身的 env 本来就是 `malloc` 且不释放（`emitClosureLiteral`），两者寿命同阶。
+@_cdecl("bk_slot_alloc")
+public func bk_slot_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
+    guard size > 0 else { bk_panic("Pini runtime error: captured slot size must be positive") }
+    guard let raw = malloc(Int(size)) else {
+        bk_panic("Pini runtime error: captured slot allocation failed")
+    }
+    // 零初始化：栈 `alloca` 是未初始化的，而捕获槽可能在被写之前就被闭包读到
+    // （`capture` 声明只要求变量存在，不要求已赋值）⇒ 零比垃圾更能暴露问题（0 比随机数好认）。
+    memset(raw, 0, Int(size))
+    return raw
+}
+
+/// 名义箱的**别名点 retain**：头格 +1。
+///
+/// ⚠️ 只需要箱指针 —— 三族名义箱的头都在**同一个偏移**（第 0 格），所以这一条
+/// **不需要类型分派**（与释放胶水那半不同：那个要按类型递归，见发射器合成的 `__release_*`）。
+@_cdecl("bk_nominal_retain")
+public func bk_nominal_retain(_ box: UnsafeMutableRawPointer?) {
+    guard let box else { return }
+    box.assumingMemoryBound(to: Int32.self).pointee += 1
+}
+
+/// 名义箱的**引用计数递减**：返回 1 表示**归零**（调用方负责释放字段并 `free`），0 表示还有其他持有者。
+///
+/// ⭐ 归零后的动作**不在这里**：字段要按**静态类型**递归释放，而那是发射层知道的事
+/// （逐类型合成的 `__release_*` 胶水）。运行时这一层只碰头格，保持类型无关。
+/// ⚠️ `null` 入参返回 0（不崩）—— 释放胶水因此可以对「可能为空的字段」直接递归调用，
+/// 无需在每个字段前判空。
+@_cdecl("bk_nominal_release")
+public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
+    guard let box else { return 0 }
+    let rc = box.assumingMemoryBound(to: Int32.self)
+    rc.pointee -= 1
+    return rc.pointee == 0 ? 1 : 0
+}
+
 // MARK: - 字符串的**字素簇**通道（IR 契约 §2.9 第 22/23/36/37 条的 LLVM 侧落地）
 
 // 契约 `字符模型 = Grapheme Cluster`，而 C 字符串这一层只能按**字节**碰。字素簇边界是
