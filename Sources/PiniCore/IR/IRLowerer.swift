@@ -3088,6 +3088,30 @@ public enum IRLowerer {
                     type: .optional(wrapped: .i32)
                 )
             }
+            // 枚举型名限定的**零参用例** `色彩.绿`：接收者是**类型名**、不是值，
+            // 故必须在 lower receiver 之前拦截（否则按变量解析 ⇒
+            // `reference to undeclared variable '色彩'`）。
+            // 与 `lowerMemberCall` 的限定构造支（`Enum.Case(实参)`）同一条决议次序：
+            // **先查枚举表、再看变量** —— 带参形态早已如此，本处补无参形态。
+            if case .identifier(let enumTypeName, _) = object,
+                let enumDecl = context.enums[enumTypeName],
+                let enumCase = enumDecl.cases.first(where: { $0.name == name })
+            {
+                guard enumCase.payloadTypes.isEmpty else {
+                    throw unsupported(
+                        "case '\(name)' carries associated values — construct it as '\(enumTypeName).\(name)(…)'",
+                        at: location
+                    )
+                }
+                return LoweredExpr(
+                    node: .enumConstruct(
+                        enumName: enumDecl.name, caseName: enumCase.name, tag: enumCase.tag,
+                        payloads: [], payloadTypes: [],
+                        type: .enumeration(name: enumDecl.name)
+                    ),
+                    type: .enumeration(name: enumDecl.name)
+                )
+            }
             // Nominal field read (G3): `base.field` / `self.field`.
             // Tuple label read (G5 minimal slice): extractvalue by index.
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
