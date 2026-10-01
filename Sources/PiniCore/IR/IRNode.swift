@@ -380,10 +380,16 @@ public indirect enum IRExpr: Equatable {
     /// `writeFile(path, content)` (G15) — fopen("w") / fwrite / fclose.
     /// Value expression; the legacy emitter yields the fclose i32 result.
     case fileWrite(path: IRExpr, content: IRExpr)
-    /// `readFile(path)` (G15) — fopen("r") / fread into a 64 KiB stack
-    /// buffer / fclose, yielding the buffer pointer as a String. The
-    /// buffer size cap is the legacy emitter's (LLI's JIT makes
-    /// fseek/ftell/fstat unreliable), so the corpus stays well under it.
+    /// `readFile(path)` (G15) -- the whole file, uncapped, yielded as a
+    /// String.
+    ///
+    /// ⚠️ This node used to `fread` into a **64 KiB stack buffer** and drop the
+    /// rest, silently. §0.2 of the IR contract keeps that wording as its worked
+    /// example of a buffer size written down as node semantics -- and the
+    /// example became real: that number did not stay in a comment, it became the
+    /// language limit. It was removed on both sides on 2026-10-01 (see the
+    /// `IOLimits` head note). How the read is emitted is an implementation
+    /// detail and belongs in the emitter, not here.
     case fileRead(path: IRExpr)
 
     // MARK: G17 builtins

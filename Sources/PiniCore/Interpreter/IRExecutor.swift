@@ -994,7 +994,8 @@ public final class IRExecutor: DebugHookHost {
             // 路径按 IO 三段式解析（同 `readFile`）：相对路径相对**程序基准**，不是进程 CWD。
             // 排序钉在 UTF-8 字节序升序：文件系统的返回顺序不稳定，不排序则依赖顺序的
             // 判据会假绿 —— 而假绿比报错贵得多（它不报警，只让人以为通过了）。
-            // ⛔ 不截断（对照 `readFile` 的静默截断）：列不全时**报错**，不返回半个目录。
+            // ⛔ 不截断，列不全时**报错**，不返回半个目录。（`readFile` 曾是这里的对照，
+            // 它自己的静默截断已于 2026-10-01 删除 —— 见 `IOLimits` 头注。）
             if name == "listDir" {
                 guard arguments.count == 1 else {
                     throw RuntimeError.invalidOperation(
@@ -1530,15 +1531,16 @@ public final class IRExecutor: DebugHookHost {
             }
 
         case .fileRead(let pathExpr):
-            // Mirrors the interpreter's arm, cap included: the contract fixes the
-            // read limit and the channel that deviates is named there, so this
-            // side takes the same `IOLimits` truncation rather than restating the
-            // number.
+            // The whole file, uncapped. The cap that used to be applied here was
+            // inherited from the emitter's fixed stack buffer rather than chosen,
+            // and it dropped everything past itself with no diagnostic and exit
+            // code 0 -- the shape that made a source file unreadable by the
+            // language for no stated reason. Both sides read it out now; the
+            // removal is documented in `IOLimits`.
             let rawReadPath = try requireString(evaluate(pathExpr), for: "readFile")
             let readPath = RuntimeOps.resolveIOPath(rawReadPath, programBase: programBase)
             do {
-                let content = try String(contentsOfFile: readPath, encoding: .utf8)
-                return .string(IOLimits.truncateToFileLimit(content))
+                return .string(try String(contentsOfFile: readPath, encoding: .utf8))
             } catch {
                 throw RuntimeError.invalidOperation(
                     reason: "IO 错误: 无法读取文件 \(readPath): \(error.localizedDescription)",

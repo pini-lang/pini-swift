@@ -1,0 +1,9 @@
+; 意图：文件**整份**读入。`readFile` 曾按固定 64 KiB **静默截断**（越限部分丢弃 · 无诊断 ·
+;   退出码 0），那条上限于 2026-10-01 删除 —— 理由见 Sources/PiniCore/Common/IOLimits.swift 头注。
+; ⚠️ 规模刻意取**旧上限的数倍**，而不是「恰好等于」：要证明一条**不存在**的行为只能靠规模。
+; ⚠️ 与 testReadFileRejectsMissingFile 配对：两条一起才把「读全」与「读失败」分开。
+main|func() -> ():
+    let s = readFile("big.txt")
+    print(len(s))
+    print(s.contains("TAIL-MARKER"))
+    return
