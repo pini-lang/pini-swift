@@ -936,6 +936,146 @@ public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? 
     return strdup(s)
 }
 
+// MARK: - 字符内建（G-3a）与宿主环境查询内建（P4-1b / M8）的 **LLVM 侧**运行时段
+//
+// 为什么需要这一段：这几个名字在**解释器侧**早已有实现（`RuntimeOps.characterBuiltins` 的
+// 表、`IRExecutor` 里 `argv` / `listDir` / `moduleRoot` 的按名回答），而降载侧也早已把它们
+// 降成既有的 `call` 节点 —— 缺的**只有 LLVM 侧的符号**。缺法的形态值得记住：
+// `emit` **rc=0**、照常产出 `call @chars(...)`，直到 clang 才以 `use of undefined value`
+// 拒绝（静默产出不可用 IR，与本仓在册的同类形态一致）。
+//
+// 语义**一律镜像解释器那一路**（出处逐个写在函数上），⛔ 不另造第二套解释。
+// ⚠️ 元素 ABI 与发射器 `arrayElementABI` 同表：`String` 元素 = `i8*` · 宽度 8 · tag 3（裸指针，
+// ⛔ 不是 handle —— 字符串不可变、无 share count）。
+
+/// 把一组 Swift 字符串装成语言层 `Array<String>`：每槽是一个 8 字节的 **C 串指针** box。
+///
+/// ⚠️ 与「把字节直接塞进槽里」不是一回事：发射层读数组元素是 `bk_array_get` 拿 box 指针、
+/// 再 `load i8*` ⇒ box 内容必须是**指针**，宽度必须是 8。
+private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
+    let box = _BkArrayBox(count: items.count)
+    for (index, item) in items.enumerated() {
+        var pointer: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(strdup(item))
+        withUnsafeBytes(of: &pointer) { raw in
+            box.elements[index] = _bkAllocBox(raw.baseAddress!, MemoryLayout<UnsafeMutableRawPointer?>.size)
+        }
+        box.tags[index] = _BkTag.str.rawValue
+        box.widths[index] = MemoryLayout<UnsafeMutableRawPointer?>.size
+    }
+    return _bkRegister(box)
+}
+
+/// `chars(String) -> Array<Char>` —— 按**字素簇**切分，镜像解释器的 `s.map { .char(String($0)) }`。
+@_cdecl("bk_chars")
+public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
+    let text = s.map { String(cString: $0) } ?? ""
+    return _bkStringArray(text.map { String($0) })
+}
+
+/// `chr(I32) -> Char` —— 码点到单字符。越界（负数 / 超标量上界 / 代理区）**panic**，
+/// 与解释器 `builtinChr` 同口径（G67：不再回空串哨兵）。
+@_cdecl("bk_chr")
+public func bk_chr(_ code: Int32) -> UnsafeMutablePointer<CChar>? {
+    guard code >= 0, let scalar = Unicode.Scalar(UInt32(code)) else {
+        bk_panic("Pini runtime error: chr 的参数超出 Unicode 标量范围（\(code)）")
+    }
+    return strdup(String(Character(scalar)))
+}
+
+/// `ord(Char) -> I32` —— **首个 Unicode 标量**的值；空串回 -1（同解释器）。
+@_cdecl("bk_ord")
+public func bk_ord(_ c: UnsafePointer<CChar>?) -> Int32 {
+    guard let c else { return -1 }
+    guard let first = String(cString: c).unicodeScalars.first else { return -1 }
+    return Int32(first.value)
+}
+
+/// `is_letter(Char) -> Bool` —— 首字符的 Unicode 字母属性（同解释器 `first.isLetter`）。
+/// ⛔ 返回值是 `i32` 而非 C 的 `_Bool`：后者在 C ABI 里是零扩展的 i8，而语言的 Bool 是 i1
+/// ⇒ 两处对不上就是「能跑、但高位语义没人定义」。收敛到 i1 由发射层的调用点显式做掉。
+@_cdecl("bk_is_letter")
+public func bk_is_letter(_ c: UnsafePointer<CChar>?) -> Int32 {
+    guard let c, let first = String(cString: c).first else { return 0 }
+    return first.isLetter ? 1 : 0
+}
+
+/// `is_number(Char) -> Bool` —— 同解释器 `first.isNumber`。
+@_cdecl("bk_is_number")
+public func bk_is_number(_ c: UnsafePointer<CChar>?) -> Int32 {
+    guard let c, let first = String(cString: c).first else { return 0 }
+    return first.isNumber ? 1 : 0
+}
+
+/// `argv() -> Array<String>` —— 进程参数里**去掉可执行文件自己**之后的裸参数数组。
+///
+/// ⭐ 为什么是「去掉第一个」：解释器那一路的 `argv` 是「**脚本路径之后**的裸参数」，
+/// 而原生二进制没有脚本路径 —— 两边的**第一个元素都是「层名」**，这正是调用方
+/// （自举 `main.pini` 的分派）依赖的那一条。
+@_cdecl("bk_argv")
+public func bk_argv() -> UnsafeMutableRawPointer {
+    return _bkStringArray(Array(CommandLine.arguments.dropFirst()))
+}
+
+/// `listDir(String) -> Array<String>` —— 目录**条目名**（不含目录部分）+ UTF-8 字节序升序，
+/// 与解释器 `IRExecutor` 的 `listDir` 逐条同义（排序那一条尤其要紧：文件系统返回顺序不稳定，
+/// 不排序则依赖顺序的判据会**假绿**）。
+///
+/// 路径按 `bk_read_file` 的同一口径解析（相对路径 → 进程 CWD）—— 与解释器在模块口径下
+/// 「相对程序基准」**等价于同一件事**，因为门禁调用前一律 `cd` 到模块根。
+/// ⛔ 列不全时 **panic**，⛔ 不返回半个目录（与那些静默截断的旧形态刻意相反）。
+@_cdecl("bk_list_dir")
+public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
+    guard let path else { bk_panic("Pini runtime error: listDir: 路径为空") }
+    let dirPath = String(cString: path)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: dirPath, isDirectory: &isDirectory),
+        isDirectory.boolValue
+    else {
+        bk_panic("Pini runtime error: listDir: 不是目录或不存在 \(dirPath)")
+    }
+    let entries: [String]
+    do {
+        entries = try FileManager.default.contentsOfDirectory(atPath: dirPath)
+    } catch {
+        bk_panic("Pini runtime error: listDir: 无法列出目录 \(dirPath): \(error.localizedDescription)")
+    }
+    let ordered = entries.sorted {
+        Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8))
+    }
+    return _bkStringArray(ordered)
+}
+
+/// `substring(start, end) -> String` —— 契约 §2.9 第 38 条。
+///
+/// ⭐ 为什么这条要落进运行时段（而不是留在发射器里发 IR）：**两个理由，缺一都不是它**。
+///   ① **语义**：第 2 参数是 **end（绝对下标）**、不是 length；且按**字素簇**切、负值尾计数、
+///      双端夹取到 `[0, len]`、`hi <= lo` 得空串。逐字节的 `memcpy` **表达不了**字素语义。
+///   ② **分配**：旧形状在**调用点**发 `alloca i8, len+1`，而循环里的 `alloca` 不到函数返回
+///      不回收 ⇒ 循环 N 次吃 N²/2 字节栈。自举 `splitLines` 就是这样撞上栈保护页
+///      （`KERN_PROTECTION_FAILURE`，帧落 `_platform_memmove`）。非变长的分配位置
+///      本身就是一处缺陷，与语义那半**独立**。
+///
+/// 语义**逐条镜像** `IRExecutor.stringSubstring`（同一份规则，两个后端不再各写一份）。
+/// 分配契约：`strdup`，**调用方释放** —— 与 `bk_cstr` / `bk_read_file` 一致。
+@_cdecl("bk_substring")
+public func bk_substring(
+    _ s: UnsafePointer<CChar>?, _ start: Int32, _ end: Int32
+) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return strdup("") }
+    let characters = Array(String(cString: s))
+    let n = characters.count
+    var lo = Int(start)
+    var hi = Int(end)
+    if lo < 0 { lo = n + lo }
+    if hi < 0 { hi = n + hi }
+    if lo < 0 { lo = 0 }
+    if lo > n { lo = n }
+    if hi < 0 { hi = 0 }
+    if hi > n { hi = n }
+    guard hi > lo else { return strdup("") }
+    return strdup(String(characters[lo..<hi]))
+}
+
 // MARK: - 并发原语的 C ABI 面（`DE-3b` · `B-2` 段：8 个无悔符号）
 //
 // 「无悔」= 形状与**让出机制**无关。`DE-1` §3 的 10 个符号里，`bk_task_spawn` 与

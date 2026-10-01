@@ -165,6 +165,14 @@ public final class IREmitter {
     /// 是否调用过 `sleep` —— 它在原语层（按片睡、每片查取消），故落点是运行时符号
     /// 而不是 libc 的睡眠，声明也随之条件出现。
     private var usesSleepShim = false
+    /// 是否调用过字符内建（`chars` / `chr` / `ord` / `is_letter` / `is_number`）——
+    /// 它们的运行时段在 `PiniRuntime`（`bk_<名字>`），declare 随之条件出现。
+    private var usesCharacterShims = false
+    /// 是否调用过宿主环境查询内建（`argv` / `listDir`）—— 同上，落点是 `bk_argv` / `bk_list_dir`。
+    private var usesProcessShims = false
+    /// 是否发射过 `substring` —— 它的落点是运行时段 `bk_substring`（契约第 38 条的 B 组缺陷
+    /// 即在此处修掉：语义与**变长分配**都不再由发射器承担）。
+    private var usesSubstringShim = false
     /// 任务体 wrapper 的 `define` 缓冲与去重名集（照 `@__adapter_` 那套）。
     private var taskBodyDefs: [String] = []
     private var taskBodyNames: Set<String> = []
@@ -327,6 +335,9 @@ public final class IREmitter {
         usesTaskRuntime = false
         usesTaskArgRelease = false
         usesSleepShim = false
+        usesCharacterShims = false
+        usesProcessShims = false
+        usesSubstringShim = false
         usesTaskFrame = false
         usesSchedBinding = false
         frameMode = .none
@@ -436,6 +447,23 @@ public final class IREmitter {
         if usesSleepShim {
             tail += "declare void @bk_sleep(i32)\n"
         }
+        // 字符内建（G-3a）与宿主环境查询（P4-1b / M8）的**运行时段落地**。
+        // ⚠️ 与上面同规：只有真调用过才带这几个 declare ⇒ 不碰它们的程序 IR 逐字节不变。
+        // ⛔ 谓词与 `ord` 一律 `i32` 返回（收敛到 i1 由调用点做，见 `.call` 那条注释）。
+        if usesCharacterShims {
+            tail += "declare ptr @bk_chars(ptr)\n"
+            tail += "declare ptr @bk_chr(i32)\n"
+            tail += "declare i32 @bk_ord(ptr)\n"
+            tail += "declare i32 @bk_is_letter(ptr)\n"
+            tail += "declare i32 @bk_is_number(ptr)\n"
+        }
+        if usesProcessShims {
+            tail += "declare ptr @bk_argv()\n"
+            tail += "declare ptr @bk_list_dir(ptr)\n"
+        }
+        if usesSubstringShim {
+            tail += "declare ptr @bk_substring(ptr, i32, i32)\n"
+        }
         // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
         // 只有真发过派发的模块才带。⚠️ 观测符号 `bk_task_state` **不在这里** ——
         // 它没有调用点（发射层从不发射它），它是给宿主与判据用的 C ABI 观测面。
@@ -509,7 +537,13 @@ public final class IREmitter {
             currentIsMain
             ? "i32"
             : (function.returnType?.llvmSpelling ?? "void")
-        let params = function.params.map { "\($0.type.llvmSpelling) %\(Self.mangle($0.name))" }
+        // ⛔ 形参 SSA 名**不能**直接用源码名（规则与理由见 `parameterSSANames`）：
+        // 发射器自有的局部名有两族 —— `%t<数字>`（临时值）与 `%<名字>_slot[_<k>]`（Pini 级
+        // 局部槽）—— 源码里的形参名若恰好落进这两族，同一个函数里就会出现两个同名局部值，
+        // 而 clang 的处置是**拒绝整段模块**（`multiple definition of local value named 'X'`），
+        // 同时 `emit` 自身 **rc=0**（静默产出不可用 IR）。
+        let paramNames = parameterSSANames(function.params.map { $0.name })
+        let params = zip(function.params, paramNames).map { "\($0.0.type.llvmSpelling) %\($0.1)" }
         let header = "define \(returnSpelling) @\(Self.mangle(function.name))(\(params.joined(separator: ", "))) {\n"
 
         // 体先写进 `bodyIR`（此时它被清空），收尾时再与 `header` / 帧序拼起来。
@@ -520,10 +554,15 @@ public final class IREmitter {
         let emittedFunctions = bodyIR
         bodyIR = ""
 
-        for param in function.params {
+        for (index, param) in function.params.enumerated() {
             let spelling = param.type.llvmSpelling
-            let slot = declareLocalSlot(named: "%\(Self.mangle(param.name))_slot", spelling: spelling)
-            bodyIR += builder.fmtStore(value: "%\(Self.mangle(param.name))", type: spelling, ptr: slot) + "\n"
+            // ⚠️★ 形参槽走 `freshSlot` 的**同一计数器**，⛔ 不再手工拼 `%<名字>_slot`：
+            // 形参与体内同名局部（自举 `common.pini` 的 `var span = span`）各声明一个槽，
+            // 手工命名会让两条路都取到 `%span_slot` —— 同一个函数里两个同名局部值。
+            // 计数器把「第二个同名者」推到 `%span_slot_1`；⚠️ 不相撞时计数为 0 ⇒ **原样**，
+            // 既有 golden IR 逐字节不变。
+            let slot = declareLocalSlot(named: freshSlot(for: param.name), spelling: spelling)
+            bodyIR += builder.fmtStore(value: "%\(paramNames[index])", type: spelling, ptr: slot) + "\n"
             scopes[scopes.count - 1][param.name] = slot
         }
 
@@ -816,15 +855,26 @@ public final class IREmitter {
         case .allocVar(let name, let type, _, let initializer):
             let slot = freshSlot(for: name)
             let address = declareLocalSlot(named: slot, spelling: type.llvmSpelling)
-            scopes[scopes.count - 1][name] = address
+            // ⚠️★ 绑定的**登记**排在初始化式求值**之后**（槽名与 `alloca` 仍在原处，
+            // 故不相撞的程序 IR 逐字节不变）。理由：`var x = <expr>` 里的 `<expr>` 在
+            // **旧**作用域里求值 —— 这是解释器的语义。旧形状先登记后求值 ⇒
+            // `var span = span`（自举 `common.pini`，与形参同名）生成
+            // 「`load` **自己刚分配、还没写过**的槽 → 存回自己」⇒ 后续 `span.startLine`
+            // 解引用未初始化指针。实证：`render` 空指针崩溃（`KERN_INVALID_ADDRESS at 0x0`）。
+            // ⭐ 与形参槽那处（`freshSlot` 计数器）、与 `stringSubstring` 那处同属一族：
+            // **遮蔽名字时的「谁先谁后」**——三处都是顺序错，不是算错。
             if let initializer = initializer {
                 if frameMode == .resumable, blockDepth == 1, case .join(let awaited, _, .awaits) = initializer {
+                    scopes[scopes.count - 1][name] = address
                     emitYieldPoint(awaited: awaited, type: type, produce: .frameSlot(address))
                 } else {
                     let value = emitExpr(initializer)
+                    scopes[scopes.count - 1][name] = address
                     bodyIR += builder.fmtStore(value: value.ssaName, type: type.llvmSpelling, ptr: address) + "\n"
                     emitRetainIfAliased(initializer, value)
                 }
+            } else {
+                scopes[scopes.count - 1][name] = address
             }
             // H1-B: the fresh local holds one share of its handle; drop it
             // when the declaring block exits.
@@ -859,13 +909,25 @@ public final class IREmitter {
             // return (interpreter: the signal unwinds through each
             // executeBlock's popDeferScope, innermost first).
             flushDefers(downTo: deferScopeBase)
+            // ⚠️★ 下面三行的**顺序就是语义**，⛔ 不是风格（H1-B 之后的第二处修正）：
+            //   「求值 → 若与局部**别名**则留一份 → 再释放 → ret」。
+            // 旧形状把释放排在求值**之前**（`emitReleases` 紧跟 `flushDefers`），于是
+            // `return <局部容器>` 交出的是**已被回收**的悬垂句柄 —— 实证：自举
+            // `splitLines` 的 `return lines` 生成 `call void @bk_array_destroy(...)`
+            // 紧接 `ret %bk_array*`，调用方第一次 `len()` 就撞进已释放的 box
+            // （`KERN_INVALID_ADDRESS`，帧落 `bk_array_len`）。
+            // ⭐ 判据不是「释放对不对」（它本来就该释放局部）而是**顺序**：所有权契约里
+            // 返回值是**转移**出去的那一份，先把它扣住，局部释放才不会把它一起带走。
+            let returnedValue: IRValue? = value.map { emitExpr($0) }
+            if let returnedNode = value, let returnedValue {
+                emitRetainIfAliased(returnedNode, returnedValue)
+            }
             // H1-B: returning leaves the function outright, abandoning every
             // open scope; the fall-through `exit_block` cleanup is only
             // reached when control does NOT return, so the two never both run.
             emitReleases(downTo: 0)
-            if let value = value {
-                let lowered = emitExpr(value)
-                bodyIR += " ret \(lowered.llvmType) \(lowered.ssaName)\n"
+            if let returnedValue {
+                bodyIR += " ret \(returnedValue.llvmType) \(returnedValue.ssaName)\n"
             } else if currentIsMain {
                 bodyIR += " ret i32 0\n"
             } else {
@@ -1845,6 +1907,39 @@ public final class IREmitter {
             }
 
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
+            // G-3a 的字符内建：解释器侧由 `RuntimeOps.characterBuiltins` 按名回答，而 LLVM 侧
+            // 此前**没有任何符号**回答它们 —— 降载照常产出 `call @chars(...)`（rc=0、静默），
+            // 由 clang 以 `use of undefined value` 拒绝（与 `argv` / `listDir` 同形）。
+            // 这里把它们接到 `bk_<名字>` 运行时段上。⚠️ 表即白名单（与降载侧同一条规矩）
+            // ⇒ 不存在「降下来了却没人答」的名字。
+            //
+            // ⛔ 谓词**不**用 C 的 `_Bool` 返回：那在 C ABI 里是零扩展的 i8，而本层语言的 Bool
+            // 是 i1 —— 两处对不上就是「看起来能跑、高位语义没人定义」。故运行时段一律回 `i32`，
+            // 收敛到 `i1` 这一步在**这里**显式做掉。
+            if RuntimeOps.characterBuiltins[function] != nil {
+                usesCharacterShims = true
+                let symbol = "bk_\(function)"
+                switch function {
+                case "chars":
+                    let temp = builder.freshTemp()
+                    bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
+                    return IRValue(llvmType: "%bk_array*", ssaName: temp)
+                case "chr":
+                    let temp = builder.freshTemp()
+                    bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
+                    return IRValue(llvmType: "i8*", ssaName: temp)
+                case "ord":
+                    let temp = builder.freshTemp()
+                    bodyIR += " \(temp) = call i32 @\(symbol)(\(argList))\n"
+                    return IRValue(llvmType: "i32", ssaName: temp)
+                default:
+                    let raw = builder.freshTemp()
+                    bodyIR += " \(raw) = call i32 @\(symbol)(\(argList))\n"
+                    let flag = builder.freshTemp()
+                    bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
+                    return IRValue(llvmType: "i1", ssaName: flag)
+                }
+            }
             // G14: runtime-shimmed foreign symbols call their bk_ name
             // (the declare pass emits the matching bk_ symbol).
             let symbolName: String
@@ -1856,6 +1951,17 @@ public final class IREmitter {
                 // （理由见 `PiniRuntime` 里 `bk_sleep` 的注释）。
                 usesSleepShim = true
                 symbolName = "bk_sleep"
+            } else if function == "argv" {
+                // P4-1b 的宿主环境查询内建：降载侧早已按名降成既有 `call` 节点，
+                // 解释器侧由执行器按名回答；**缺的一直只是 LLVM 侧的符号**。
+                // 接 `bk_argv`（无参、回字符串数组 = `%bk_array*`）。
+                usesProcessShims = true
+                symbolName = "bk_argv"
+            } else if function == "listDir" {
+                // 自举仓 M8 前置的目录枚举。同上：降载已在册，LLVM 侧此前无符号。
+                // 接 `bk_list_dir`（一参 String、回**条目名字**数组，排序与错误语义镜像解释器）。
+                usesProcessShims = true
+                symbolName = "bk_list_dir"
             } else {
                 symbolName = Self.mangle(function)
             }
@@ -1995,25 +2101,25 @@ public final class IREmitter {
             bodyIR += " \(found) = icmp ne ptr \(hit), null\n"
             return IRValue(llvmType: "i1", ssaName: found)
 
-        case .stringSubstring(let receiver, let start, let length):
+        case .stringSubstring(let receiver, let start, let end):
+            // ⚠️⭐ 本节点此前是**在案 B 组缺陷**（契约 §2.9 第 38 条原文：「注册表与测试已裁
+            // `(start, end)`；LLVM 侧现为 `(start, length)`，**偏离**」）。契约与解释器都按
+            // **end（绝对下标）**钉，只有发射器按 length 读 —— 自举代码处处写
+            // `s.substring(i, i + 1)`，于是每取一个字符都多拷 `i` 个字节。
+            // ⛔ 更贵的是它同时是个**栈炸弹**：旧形状在**调用点**发 `alloca i8, len+1`，而循环里
+            // 的 `alloca` 不到函数返回不回收 ⇒ 循环 N 次即吃 N²/2 字节栈。自举 `splitLines`
+            // 实测正是这样撞上栈保护页（`KERN_PROTECTION_FAILURE`，帧落 `_platform_memmove`）。
+            // ⇒ 语义（字素 · 负值尾计数 · 双端夹取 · hi≤lo 得空串）与分配一起交给运行时段，
+            // 与解释器的 `IRExecutor.stringSubstring` **同源**，⛔ 不再各写一份。
             let receiverValue = emitExpr(receiver)
             let startValue = emitExpr(start)
-            let lengthValue = emitExpr(length)
-            let sz = builder.freshTemp()
-            bodyIR += " \(sz) = sext i32 \(lengthValue.ssaName) to i64\n"
-            let sz1 = builder.freshTemp()
-            bodyIR += " \(sz1) = add i64 \(sz), 1\n"
-            let buf = builder.freshTemp()
-            bodyIR += " \(buf) = alloca i8, i64 \(sz1)\n"
-            let srcOfs = builder.freshTemp()
-            bodyIR += " \(srcOfs) = sext i32 \(startValue.ssaName) to i64\n"
-            let src = builder.freshTemp()
-            bodyIR += " \(src) = getelementptr i8, ptr \(receiverValue.ssaName), i64 \(srcOfs)\n"
-            bodyIR += " call ptr @memcpy(ptr \(buf), ptr \(src), i64 \(sz))\n"
-            let nl = builder.freshTemp()
-            bodyIR += " \(nl) = getelementptr i8, ptr \(buf), i64 \(sz)\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: nl) + "\n"
-            return IRValue(llvmType: "i8*", ssaName: buf)
+            let endValue = emitExpr(end)
+            usesSubstringShim = true
+            let substringResult = builder.freshTemp()
+            bodyIR +=
+                " \(substringResult) = call ptr @bk_substring(ptr \(receiverValue.ssaName), "
+                + "i32 \(startValue.ssaName), i32 \(endValue.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: substringResult)
 
         case .stringSplit(let receiver, let delim, let type):
             let receiverValue = emitExpr(receiver)
@@ -3988,6 +4094,54 @@ public final class IREmitter {
             if let slot = scope[name] { return slot }
         }
         return nil
+    }
+
+    /// 这个名字是否与发射器**自己生成**的局部名同形。
+    ///
+    /// 生成名只有四族：`freshTemp` 的 `%t<数字>` · `freshSlot` 的 `%<mangled>_slot` 与
+    /// `%<mangled>_slot_<k>` · 帧式体的 `%de6b.*` · 闭包形参的 `%arg<数字>_slot`。
+    /// 源码标识符落进其中任何一族，生成的 IR 里就是**两个同名局部值**。
+    static func isEmitterLocalShape(_ name: String) -> Bool {
+        if name.hasPrefix("de6b.") { return true }
+        if name.count > 1, name.hasPrefix("t"), name.dropFirst().allSatisfy({ $0.isNumber }) {
+            return true
+        }
+        if name.hasSuffix("_slot") { return true }
+        if let r = name.range(of: "_slot_", options: .backwards) {
+            let tail = name[r.upperBound...]
+            if !tail.isEmpty, tail.allSatisfy({ $0.isNumber }) { return true }
+        }
+        return false
+    }
+
+    /// 形参的 SSA 名，与 `params` **按位置一一对应**。
+    ///
+    /// ⭐ 规则：**只在必要时改名** —— 名字落进发射器自有命名族（`isEmitterLocalShape`），
+    /// 或与前面某个形参重名。其余一律**原样**，故不相撞的程序其 IR **逐字节不变**
+    /// （既有 golden / 字节级门禁不受影响）。
+    ///
+    /// 改名形如 `<原名>.p<序号>`：`.p` 同时避开两族（族成员要么是 `t<数字>`、要么以
+    /// `_slot` 结尾），且 `.` 不在语言的标识符字符集里 ⇒ 源码名**不可能**先占这个形状。
+    /// ⚠️ 与 `%<名字>_slot` 同级的另一处是**槽名**，它由 `freshSlot` 的计数器保证唯一
+    /// —— 两处各自收敛，才不会有「一处唯一、另一处不唯一」的漏网。
+    private func parameterSSANames(_ names: [String]) -> [String] {
+        var taken = Set<String>()
+        var out: [String] = []
+        for (index, name) in names.enumerated() {
+            let raw = Self.mangle(name)
+            var candidate = raw
+            if Self.isEmitterLocalShape(raw) || taken.contains(raw) {
+                candidate = "\(raw).p\(index)"
+                var bump = 0
+                while taken.contains(candidate) || Self.isEmitterLocalShape(candidate) {
+                    bump += 1
+                    candidate = "\(raw).p\(index).\(bump)"
+                }
+            }
+            taken.insert(candidate)
+            out.append(candidate)
+        }
+        return out
     }
 
     /// LLVM double literal: decimal form when it round-trips unambiguously,
