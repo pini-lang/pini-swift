@@ -1076,6 +1076,127 @@ public func bk_substring(
     return strdup(String(characters[lo..<hi]))
 }
 
+// MARK: - 字符串的**字素簇**通道（IR 契约 §2.9 第 22/23/36/37 条的 LLVM 侧落地）
+
+// 契约 `字符模型 = Grapheme Cluster`，而 C 字符串这一层只能按**字节**碰。字素簇边界是
+// Unicode 分段算法（组合序列、ZWJ 表情、区域旗标…），拿字节循环复现不了 —— 发射器此前
+// 正是用字节循环近似它，于是与解释器在非 ASCII 文本上分歧：**切点落进多字节序列内部**，
+// 自举 `splitLines` 由此切错行。
+//
+// ⇒ 这一族一律**下沉到运行时段**，用 `String` / `Character` —— 那是编译器与解释器
+// **同一个**模型，⛔ 不再各写一份近似。
+//
+// ⚠️ 每条都写明权威出处（解释器那一路的哪一处），改动时对着那边改。
+// 分配契约与 `bk_substring` 一致：`strdup`，**调用方释放**。
+
+/// `len(s)` —— 契约 §2.9 第 22 条。
+///
+/// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）：数的是
+/// **字素簇**。⚠️ 发射器旧形状数的是「非续字节」（= Unicode 标量），两者只在组合序列
+/// 上分歧（分解式变音符、ZWJ 表情、区域旗标），纯 ASCII 与 CJK 上同值 —— 所以它长期
+/// 没被发现，直到与 `s[i]` 的字节寻址**叠在一起**才把自举切错。
+@_cdecl("bk_string_count")
+public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
+    guard let s else { return 0 }
+    return Int32(String(cString: s).count)
+}
+
+/// `s[i]` 读一个字符 —— 契约 §2.9 第 23 条（下标与切片共用同一个「字符」定义）。
+///
+/// 权威 = `SubscriptReadStrategy` 的 `.string` 策略：负值尾计数；越界走**安全断言
+/// 通道**（E5-005）⇒ `bk_panic`，与数组下标同规。
+/// 返回单字符（`Char 表示与 String 同构`，方案 A），`strdup` 交调用方。
+/// ⚠️ 报文沿用发射器旧形状那一句 —— 这一层拿不到源位置，措辞与解释器的
+/// `RuntimeError.indexOutOfRange` 不同，是**既有的**独立差异，本通道不改它。
+@_cdecl("bk_string_char_at")
+public func bk_string_char_at(
+    _ s: UnsafePointer<CChar>?, _ index: Int32
+) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return strdup("") }
+    let characters = Array(String(cString: s))
+    var idx = Int(index)
+    if idx < 0 { idx += characters.count }
+    guard idx >= 0, idx < characters.count else {
+        bk_panic("Pini runtime error: string index out of range")
+    }
+    return strdup(String(characters[idx]))
+}
+
+/// 字符串切片 —— 契约 §2.9 第 23 条。
+///
+/// 语义**逐条镜像** `IRExecutor.sliceValue` 的 `.string` 分支（那是权威）：
+/// 开界取默认（`hasStart == 0` ⇒ 0；`hasEnd == 0` ⇒ 字数），负值尾计数
+/// （`offset < 0 ? count + offset : offset`），两端夹到 `[0, count]`，`hi <= lo` 得空串。
+///
+/// ⚠️ 两个 `has*` 是**开界标志**，⛔ 不是 `Int32` 哨兵值 —— 哨兵会与真实下标撞车
+/// （`s[-1...]` 是合法写法）。
+@_cdecl("bk_string_slice")
+public func bk_string_slice(
+    _ s: UnsafePointer<CChar>?, _ hasStart: Int32, _ start: Int32,
+    _ hasEnd: Int32, _ end: Int32
+) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return strdup("") }
+    let characters = Array(String(cString: s))
+    let count = characters.count
+    var lo = hasStart != 0 ? Int(start) : 0
+    var hi = hasEnd != 0 ? Int(end) : count
+    if lo < 0 { lo = count + lo }
+    if hi < 0 { hi = count + hi }
+    lo = Swift.max(0, Swift.min(lo, count))
+    hi = Swift.max(0, Swift.min(hi, count))
+    guard hi > lo else { return strdup("") }
+    return strdup(String(characters[lo..<hi]))
+}
+
+/// `s.upper()` / `s.lower()` —— 契约 §2.9 第 36 条（**Unicode 感知**，接收者不变）。
+///
+/// 权威 = `IRExecutor` 的 `.stringCase` 分支（`String.uppercased()` / `.lowercased()`）。
+/// ⚠️ 发射器旧形状逐字节 `toupper`/`tolower` 是 **ASCII-only** —— 实测
+/// `"café".upper()` 得 `CAFé`（`é` 原样），且对带变音符的拉丁字母整词错。
+@_cdecl("bk_string_upper")
+public func bk_string_upper(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return strdup("") }
+    return strdup(String(cString: s).uppercased())
+}
+
+@_cdecl("bk_string_lower")
+public func bk_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return strdup("") }
+    return strdup(String(cString: s).lowercased())
+}
+
+/// `s.contains(needle)` —— 契约 §2.9 第 37 条。
+///
+/// 权威 = `IRExecutor` 的 `.stringContains` 分支（它自己镜像 `StdlibPini` 的 Pini 源，
+/// 见那里「内建双层结构」的说明）：**字素级**扫描，空 needle 为真。
+/// ⚠️ 发射器旧形状是 `strstr`（字节查找），分解式 Unicode 下与字素判定分歧。
+/// 返回 `i32` 而非 C 的 `_Bool` —— 后者是零扩展的 `i8`，与语言侧 `i1` 对不上；
+/// 收敛到 `i1` 由调用点做（同 `bk_is_letter` 一族）。
+@_cdecl("bk_string_contains")
+public func bk_string_contains(
+    _ haystack: UnsafePointer<CChar>?, _ needle: UnsafePointer<CChar>?
+) -> Int32 {
+    guard let haystack, let needle else { return 0 }
+    let haystackChars = Array(String(cString: haystack))
+    let needleChars = Array(String(cString: needle))
+    if needleChars.isEmpty { return 1 }
+    var i = 0
+    while i + needleChars.count <= haystackChars.count {
+        var j = 0
+        var matched = true
+        while j < needleChars.count {
+            if haystackChars[i + j] != needleChars[j] {
+                matched = false
+                break
+            }
+            j += 1
+        }
+        if matched { return 1 }
+        i += 1
+    }
+    return 0
+}
+
 // MARK: - 并发原语的 C ABI 面（`DE-3b` · `B-2` 段：8 个无悔符号）
 //
 // 「无悔」= 形状与**让出机制**无关。`DE-1` §3 的 10 个符号里，`bk_task_spawn` 与
