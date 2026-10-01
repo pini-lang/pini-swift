@@ -528,11 +528,19 @@ public enum IRLowerer {
         // generic enum. The specializations the G10 pre-pass registered take
         // its place (added below, before any lookup can see them).
         var enums: [String: IREnumDecl] = [:]
+        // ⚠️ 声明序**单独记一份**：`IRModule.enums` 是数组，而 `Array(enums.values)`
+        // 取的是 Swift 字典的遍历序 —— **String 哈希带逐进程随机种子** ⇒ 多枚举的
+        // 模块每次运行产出的类型定义段顺序都不同（实测：同一份源连跑三次三个序，
+        // `.ll` 的哈希随之变）。发射器逐条发定义 ⇒ 顺序直接进产物 ⇒
+        // **产物不可复现**。这里改记声明序，特化枚举排在声明枚举之后（按特化名
+        // 定序，同样是确定的）。
+        var enumOrder: [String] = []
         var userTypes: [String: IRType] = [:]
         for decl in module.declarations {
             switch decl {
             case .enumDecl(let ed):
                 guard ed.genericParams.isEmpty else { break }
+                enumOrder.append(ed.name)
                 enums[ed.name] = IREnumDecl(
                     name: ed.name,
                     cases: ed.cases.enumerated().map { index, ec in
@@ -559,8 +567,14 @@ public enum IRLowerer {
         }
         // G-2d: the specialized bodies are ordinary enums by now (no type
         // parameters left), so they resolve through the same call.
-        for (specializedName, specialized) in specializationState.enumSpecializations {
+        // ⚠️ 遍历用 `.sorted()`：这个字典的键序同样带哈希随机性，而它们会进
+        // `IRModule.enums` 的尾部 ⇒ 不排序就还是不可复现。
+        for specializedName in specializationState.enumSpecializations.keys.sorted() {
+            guard let specialized = specializationState.enumSpecializations[specializedName] else {
+                continue
+            }
             enums[specializedName] = try resolveEnumPayloads(specialized, userTypes: userTypes)
+            enumOrder.append(specializedName)
         }
 
         // Signature pre-pass (after type registries so enum/struct/object
@@ -938,7 +952,8 @@ public enum IRLowerer {
         }
 
         return IRModule(
-            functions: functions, types: typeDecls, enums: Array(enums.values),
+            functions: functions, types: typeDecls,
+            enums: enumOrder.compactMap { enums[$0] },
             foreigns: foreigns,
             // ADR-001（用户第 5 条裁定的余量）：物化依赖留痕。当期**不产诊断** ——
             // 环检测本体是后置的，这里只保证「后置的检测是加一条遍历，而不是重扫降载结果」。
