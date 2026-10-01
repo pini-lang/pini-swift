@@ -24,7 +24,7 @@
 | 4 | **闭包 / 函数值** | `docs/spec/ir-contract.md` §2.3 #11 `indirectCall` / #12 `functionValue` / #13 `closureLiteral` | `Sources/PiniCore/IR/IRNode.swift`（fat pointer 形态） | 划出 | 三节点 + 调用协议（env 首参）实现 + 语料 |
 | 5 | **指针 / FFI** | `docs/spec/ir-contract.md` §2.7 #29 `pointerLoad` / #30 `pointerStore` / #31 `addressOfVar`（⚠️ #29 的**符号扩展语义待裁**） | FFI 子系统（`foreign` 块 · `ForeignThunk`） | `type` 段六只交付**声明面** | 语义待裁项先裁 + 执行面实现 |
 | 6 | **泛型** | ⚠️ 契约内**无独立节点**（判定：属降载面形态，非独立语义节点） | `IRLowerer` 的 `genericConstruct` / 泛型枚举构造先例 | 划出 | 先裁「是否需要契约条目」⇒ 再定销账形态 |
-| 7 | **CodeGen（LLVM，自举侧从零发射 `.ll`）** | ⛔ 不涉契约（后端面）· 纪律 = **按契约钉语义** | `Sources/PiniCore/CodeGen/` | 目录占位（P3 的必要件） | P3 首段（IR→`.ll` 线性发射最小循环）+ clang 链路判据 |
+| 7 | **CodeGen（LLVM，自举侧从零发射 `.ll`）** | ⛔ 不涉契约（后端面）· 纪律 = **按契约钉语义** | `Sources/PiniCore/CodeGen/`（⭐ 本路线的**规格书与判据右端**） | ⛔ **未动工**（⚠️ 原写「目录占位」与 2026-10-01 实测不符：自举仓 `src/` 下**无** `codegen` 目录 —— 建层属待裁项，见规划件 §7 待裁 A） | P3 首段（IR→`.ll` 线性发射最小循环）+ clang 链路判据 · ⭐ **施工面见规划件** `docs/spec/issue/plan-selfhost-llvm-backend-2026-10-01.md`（`auth-78`）· 销账口径 = **`.ll`**（该行原文即为 `.ll`，⛔ 无 C 后端提案的残留） |
 
 ## 2. ⛔ 一处必须点名的账目口径问题（升格时发现，**未裁**）
 

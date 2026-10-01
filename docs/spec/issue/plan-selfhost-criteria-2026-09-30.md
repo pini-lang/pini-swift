@@ -25,6 +25,7 @@
 |---|---|
 | **判据定义 · 档位 · 判据定式** | **本件** |
 | 演进路线（P2-0 基线 / P2-1 清障与自洽 / P3 AOT 与特性回填） | 二期件 `plan-selfhost-evolution-2026-09-30.md` |
+| **后端路线**（P3 的施工面：发射 `.ll` 的分段 · 判据骨架 · 止损） | LLVM IR 后端规划件 `docs/spec/issue/plan-selfhost-llvm-backend-2026-10-01.md` |
 | 层边界 · 交付面逐项登记 | 自举仓 `examples/selfhost/docs/boundaries.md` |
 | 原始读数（append-only） | 自举仓 `examples/selfhost/docs/probe-notes.md` |
 | 特性差距（**销账单位**） | 差距台账 `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
@@ -148,6 +149,7 @@
 | 收口态（原统合件 §14） | ⚠️ **载体已删**（2026-09-30 归档清理）⇒ 记录只在 git 历史里 |
 | 演进路线 · 速度根因（立项快照） | 二期件（⚠️ 其数字为**立项快照**，件头明写「用前重测」） |
 | **特性差距（销账以它为准）** | 差距台账 `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
+| **后端路线现况（P3 / CodeGen）** | LLVM IR 后端规划件 `docs/spec/issue/plan-selfhost-llvm-backend-2026-10-01.md`（⚠️ 起点读数 · 风险面在该件 §1 / §2.4） |
 | **P2-0 速度基线读数** | 自举仓 `examples/selfhost/tools/baseline-p2-0.tsv`（判读件 `.../docs/baseline-p2-0.md`） |
 | **读入不截断**（原「源文件尺寸」） | ⭐ **2026-10-01 换承载者**：语言 `readFile` 的 64 KiB 上限**已删**（宿主 `auth-70`）⇒ 尺寸不再是约束、原判据 `examples/selfhost/tools/check-source-size.sh` **已退役**。现由**宿主侧**判据承担：`Tests/PiniTests/ReadFileBuiltinTests/`（超旧上限的文件两腿都须整份读入 · 读不到须报错）。⛔ 不要再按文件尺寸设判据 |
 | 在案缺陷（`G79`–`G89` 族等） | `docs/spec/pini-spec-v0.md` §3 已知缺口登记 |
