@@ -20,6 +20,22 @@
   判据：新 `ReadFileBuiltinTests` 三条（超旧上限读全 / 缺文件走错误通道 / LLVM 腿同判），变异反证三条各打一条判据。
   证据：两腿各读到 70000 字节文件的末尾标记（改前两腿均只读到 65536 字节、末标记不可见、退出码 0）。
 
+- **`split` 的分配按源串长度算 + 单文件 LLVM 入口补语义门禁**（`auth-76`）。两处独立缺陷：
+  **(a) 切分路径的两处分配**（`IREmitter.emitStringSplit`）—— 两次暂存拷贝写在固定 `alloca i8, i64 1024` 上
+  再 `memcpy(strlen(source))`，源串一长就砸栈；token 复制按 `strlen` 分配后 `strcpy`，终止符写到区外一字节。
+  修法：暂存改 `malloc(strlen+1)` + 用完 `free`；token 复制改 `strlen+1`。⚠️ 两处都**不再用固定常数**，
+  也不在循环里留变长 `alloca`（后者是 `stringSubstring` 那条已登记的教训）。**可达性**：自举的
+  `makeScanner` 就是 `source.split("\n")`，源串是整份文件文本 —— 这条缺陷此前一直踩着。
+  **(b) 单文件 LLVM 入口漏了语义门禁** —— `emit` / `compile` / `run-llvm` 走的 `typeCheckThenGenerate`
+  只跑类型检查、不跑语义分析，而 `check` 与**模块级** `emit` 都跑 ⇒ 同一份源两条路**不同判**。
+  **用户可见变化一条**：`emit` / `compile` 开始拒绝它们此前接受的源（实测：闭包引用外层变量而未写
+  `capture` 行的源，此前 `emit` 照出 237 行 IR、`compile` 照印 `102`；现在四条入口一致报 `E3-008`）。
+  判据：新 `EntryParityTests`（四入口同判，含阳性对照）· `SplitPathTests`（行为级两路对照 +
+  产物结构级「`malloc` 尺寸不得直接取 `strlen` 结果」）。变异反证三条各打一条判据。
+  证据：长源串从「原生崩（栈转储落在 `bk_array_set`）」变为两路同为 `2800` / `40`；ASan 下
+  `WRITE of size 85 → 84-byte region` 消失；自举各层在 ASan 下由 3 / 19 升到 16 / 19 干净。
+  ⚠️ 「门禁提速」本体**未达成**（门禁仍走双层解释、原生臂未接），剩余阻塞是**另一个族**，报告 §5 已登记。
+
 ### 09-19
 
 - **测试树重建，框架迁到 Swift Testing**：09-18 清空的测试面开始重建。两份判定标准（规范 §6 的权威摘要与
