@@ -82,6 +82,13 @@
 | `module` · `module-check` | ⛔ rc=134（`match value matched no case`） |
 | `type-seg1` | ⛔ rc=134（同上） |
 
+> ⚠️ **2026-10-01 同日订正（两行 rc=134 的归因）**：本表记录时把它读作「`match` 的代码生成在自举代码上
+> 语义不符」。**该读法已被实测推翻** —— 同日的最小探针给出：**同帧的枚举 `match` 两路一致**
+> （`D-ctl 2.0`），而**同一枚举一旦跨帧返回**就报**同一句** `match value matched no case`
+> （`D`，夹具 `examples/selfhost/tools/.fixtures/aggregate-escape-D-enum.pini`）。
+> ⇒ 它是**名义箱跨帧外逃**（枚举盒随创建帧一起失效、标签被覆盖）的症状，**不是 `match` 的缺陷**。
+> ⇒ 本表的读数值照旧有效，**归因以后一条为准**（载体：`docs/spec/issue/survey-aggregate-return-2026-10-01.md` §9）。
+
 ⚠️ **`module-check` 的墙钟有两道假读数，如实登记**：原生侧 **0 s 即 rc=134**（跑错了，不是跑快了）；
 解释侧 rc=**142** 是**我方 150 s 闹钟截断**，⛔ 不是被测程序的结果。
 ⇒ 门禁时长**本批未取得可比值**，照旧只有 P2-0 的 **≥688 s 下界**。
