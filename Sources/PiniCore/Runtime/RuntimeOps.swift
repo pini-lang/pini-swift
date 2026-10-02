@@ -251,10 +251,14 @@ public enum RuntimeOps {
             guard idx >= 0, idx < arr.count else { return try outOfRange() }
             return checked ? some(arr[idx]) : arr[idx]
         case .string(let s):
-            let idx = raw < 0 ? s.count + raw : raw
-            guard idx >= 0, idx < s.count else { return try outOfRange() }
-            let cidx = s.index(s.startIndex, offsetBy: idx)
-            let ch: Value = .string(String(s[cidx]))
+            // 字素簇语义不变，但「数出总字数」与「定位第 i 个字素」都改走 `GraphemeCursor`
+            // （均摊 O(1)，**空间 O(1)**）—— 此前 `s.count` 每次 O(len)、
+            // `s.index(_:offsetBy:)` 每次 O(i) ⇒ 逐字符扫描整体 O(n²)。
+            // 语义与边界判定一字未改（含负值尾计数）。
+            let n = GraphemeCursor.count(of: s)
+            let idx = raw < 0 ? n + raw : raw
+            guard idx >= 0, idx < n else { return try outOfRange() }
+            let ch: Value = .string(String(GraphemeCursor.character(in: s, at: idx)))
             return checked ? some(ch) : ch
         default:
             throw RuntimeError.invalidOperation(reason: "\(name) 的接收者必须是数组/字符串/字典", location: location)
@@ -309,7 +313,7 @@ public enum RuntimeOps {
         case .array(let elements): return .int(elements.count)
         case .dictionary(let entries): return .int(entries.count)
         case .set(let elements): return .int(elements.count)
-        case .string(let text): return .int(text.count)
+        case .string(let text): return .int(GraphemeCursor.count(of: text))
         default:
             throw RuntimeError.invalidOperation(
                 reason: "len 不支持的类型: \(value)",

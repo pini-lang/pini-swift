@@ -49,15 +49,19 @@ enum SubscriptReadStrategy {
                 throw RuntimeError.invalidOperation(reason: "字符串下标需整数索引: \(container)[\(index)]", location: loc)
             }
             // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
-            let idx = i < 0 ? s.count + i : i
+            // ⚠️ 计数与定位都改走 `GraphemeCursor`（均摊 O(1) · 空间 O(1)）—— 此前
+            //    `s.count` 每次 O(len)、`s.index(_:offsetBy:)` 每次 O(i)
+            //    ⇒ `while i < len(s): s[i]` 整体 O(n²)。
+            //    语义（负值尾计数、越界即 panic）一字未改。
+            let n = GraphemeCursor.count(of: s)
+            let idx = i < 0 ? n + i : i
             // 批 2（G48 三通道）：字符串下标同为安全断言通道——越界 panic（E5-005），界内返回字符。
-            guard idx >= 0, idx < s.count else {
+            guard idx >= 0, idx < n else {
                 throw RuntimeError.indexOutOfRange(location: loc)
             }
-            let cidx = s.index(s.startIndex, offsetBy: idx)
             // G67（P0d）：下标结果由 `String` 改为 `Char` —— 这是窄化的三个构造点之一
             // （`s[i]` / `chars` / `chr`）。想拿回 `String` 由加宽承接（G68）。
-            return .char(String(s[cidx]))
+            return .char(String(GraphemeCursor.character(in: s, at: idx)))
         }
 
         r[.dictionary] = { container, index, loc in

@@ -1391,8 +1391,12 @@ public final class IRExecutor: DebugHookHost {
             // Authority is `StdlibPini.substring`: negative bounds tail-count,
             // both bounds clamp into `[0, len]`, and `hi < lo` yields the empty
             // string. `len` is the grapheme count.
-            let characters = Array(try requireString(try evaluate(receiver), for: "substring"))
-            let n = characters.count
+            //
+            // ⚠️ 计数与切片都改走 `GraphemeCursor`：此前每次调用都 `Array(整串)`（O(整串长)），
+            //    而切片的真实下界只需 O(切片长)。⇒ `while i < n: s.substring(i, i+1)`
+            //    这种逐字符取片从 O(n²) 降到 O(n)。规则本身（下面这套夹取）一字未改。
+            let receiverText = try requireString(try evaluate(receiver), for: "substring")
+            let n = GraphemeCursor.count(of: receiverText)
             var lo = try requireInt(try evaluate(start), for: "substring start")
             var hi = try requireInt(try evaluate(end), for: "substring end")
             if lo < 0 { lo = n + lo }
@@ -1402,7 +1406,7 @@ public final class IRExecutor: DebugHookHost {
             if hi < 0 { hi = 0 }
             if hi > n { hi = n }
             guard hi > lo else { return .string("") }
-            return .string(String(characters[lo..<hi]))
+            return .string(GraphemeCursor.slice(of: receiverText, from: lo, to: hi))
 
         case .stringSplit(let receiver, let delim, _):
             // Contract §2.39 (A4): the result is a **real `Array<String>`** and
@@ -1892,12 +1896,14 @@ public final class IRExecutor: DebugHookHost {
             return .array(lo < hi ? Array(elements[lo..<hi]) : [])
 
         case .string(let text):
-            let characters = Array(text)
-            let lower = try sliceBound(start, count: characters.count, defaultWhenOpen: 0)
-            let upper = try sliceBound(end, count: characters.count, defaultWhenOpen: characters.count)
-            let lo = Swift.max(0, Swift.min(lower, characters.count))
-            let hi = Swift.max(0, Swift.min(upper, characters.count))
-            return .string(lo < hi ? String(characters[lo..<hi]) : "")
+            // ⚠️ 同 `stringSubstring`：计数与切片都走 `GraphemeCursor`，
+            //    代价从 O(整串长) 降到 O(切片长)。夹取规则一字未改。
+            let n = GraphemeCursor.count(of: text)
+            let lower = try sliceBound(start, count: n, defaultWhenOpen: 0)
+            let upper = try sliceBound(end, count: n, defaultWhenOpen: n)
+            let lo = Swift.max(0, Swift.min(lower, n))
+            let hi = Swift.max(0, Swift.min(upper, n))
+            return .string(lo < hi ? GraphemeCursor.slice(of: text, from: lo, to: hi) : "")
 
         default:
             throw RuntimeError.invalidOperation(
