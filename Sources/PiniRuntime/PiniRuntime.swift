@@ -1057,13 +1057,18 @@ public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointe
 ///
 /// 语义**逐条镜像** `IRExecutor.stringSubstring`（同一份规则，两个后端不再各写一份）。
 /// 分配契约：`strdup`，**调用方释放** —— 与 `bk_cstr` / `bk_read_file` 一致。
+///
+/// ⚠️ 同族的一处常数改善（2026-10-02）：改前 `Array(String(cString: s))` 把**整串**物化成
+/// `Character` 数组（O(len) 时间 + O(len) 空间），而切片的下界只需 O(切片长)；
+/// 现改为**走到 `end` 即停**（空间 O(1)）。⛔ 阶未变（C 串无长度 ⇒ 下界 O(len)），
+/// 规则本身（下面这套夹取）一字未改。
 @_cdecl("bk_substring")
 public func bk_substring(
     _ s: UnsafePointer<CChar>?, _ start: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return strdup("") }
-    let characters = Array(String(cString: s))
-    let n = characters.count
+    let text = String(cString: s)
+    let n = text.count
     var lo = Int(start)
     var hi = Int(end)
     if lo < 0 { lo = n + lo }
@@ -1073,7 +1078,18 @@ public func bk_substring(
     if hi < 0 { hi = 0 }
     if hi > n { hi = n }
     guard hi > lo else { return strdup("") }
-    return strdup(String(characters[lo..<hi]))
+    var a = text.startIndex
+    var k = 0
+    while k < lo {
+        a = text.index(after: a)
+        k += 1
+    }
+    var b = a
+    while k < hi {
+        b = text.index(after: b)
+        k += 1
+    }
+    return strdup(String(text[a..<b]))
 }
 
 // MARK: - 名义箱（结构体 / 对象 / 枚举）的堆分配（2026-10-01「名义箱上堆」）
@@ -1184,18 +1200,39 @@ public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
 /// 返回单字符（`Char 表示与 String 同构`，方案 A），`strdup` 交调用方。
 /// ⚠️ 报文沿用发射器旧形状那一句 —— 这一层拿不到源位置，措辞与解释器的
 /// `RuntimeError.indexOutOfRange` 不同，是**既有的**独立差异，本通道不改它。
+///
+/// ⚠️⭐ **本通道的代价下界，与一处 100× 的常数改善（2026-10-02 实测）**：
+/// C 串没有长度 ⇒ 任何访问都要先 `String(cString:)` 走一遍（找 NUL + UTF-8 校验），
+/// 实测它随规模**线性**（4× 规模比 3.33，26 KB 约 2.4 µs）⇒ **单次 `s[i]` 的下界就是 O(len)**，
+/// 与取第几个无关。⇒ 在 C 串 ABI 下，逐字符扫描**必然是 O(n²)**；这是**表示**问题，
+/// ⛔ 不是这一层写得不好。要线性化只有一条路：让字符串值自带长度与缓存槽（改 ABI）。
+///
+/// ⭐ 但**旧写法比这个下界还贵 100 倍**：它先 `Array(String(cString:))` **物化整串的
+/// `Character` 数组**（O(len) 时间 **+ O(len) 空间**，且逐字素构造 `Character` 很贵）。
+/// 实测（同一 C 串重复取同一个中段下标，2000 次）：
+///     6.6 KB 第 100 个：建数组 **146.8 ms** · 走 i 步 **1.7 ms**（0.01×）
+///     26.4 KB 第 400 个：建数组 **521.8 ms** · 走 i 步 **6.3 ms**（0.01×）
+/// ⇒ 改为**走到目标下标即停**：空间 O(1)，时间 O(len + i)（`cString` 那一遍无法省）。
+/// ⚠️ 这一条**没有改阶**（O(n²) 仍是 O(n²)）—— 如实标注，⛔ 别把它读成「原生臂已线性化」。
 @_cdecl("bk_string_char_at")
 public func bk_string_char_at(
     _ s: UnsafePointer<CChar>?, _ index: Int32
 ) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return strdup("") }
-    let characters = Array(String(cString: s))
+    let text = String(cString: s)
+    let n = text.count
     var idx = Int(index)
-    if idx < 0 { idx += characters.count }
-    guard idx >= 0, idx < characters.count else {
+    if idx < 0 { idx += n }
+    guard idx >= 0, idx < n else {
         bk_panic("Pini runtime error: string index out of range")
     }
-    return strdup(String(characters[idx]))
+    var p = text.startIndex
+    var k = 0
+    while k < idx {
+        p = text.index(after: p)
+        k += 1
+    }
+    return strdup(String(text[p]))
 }
 
 /// 字符串切片 —— 契约 §2.9 第 23 条。
@@ -1206,14 +1243,18 @@ public func bk_string_char_at(
 ///
 /// ⚠️ 两个 `has*` 是**开界标志**，⛔ 不是 `Int32` 哨兵值 —— 哨兵会与真实下标撞车
 /// （`s[-1...]` 是合法写法）。
+///
+/// ⚠️ 同 `bk_string_char_at` 的代价说明：改前 `Array(String(cString: s))` 物化整串
+/// （O(len) 时间 + **O(len) 空间**）⇒ 现改为**走到边界即停**（空间 O(1)，
+/// 时间 O(len + hi)）。⛔ 阶未变（C 串无长度 ⇒ 下界 O(len)）。
 @_cdecl("bk_string_slice")
 public func bk_string_slice(
     _ s: UnsafePointer<CChar>?, _ hasStart: Int32, _ start: Int32,
     _ hasEnd: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return strdup("") }
-    let characters = Array(String(cString: s))
-    let count = characters.count
+    let text = String(cString: s)
+    let count = text.count
     var lo = hasStart != 0 ? Int(start) : 0
     var hi = hasEnd != 0 ? Int(end) : count
     if lo < 0 { lo = count + lo }
@@ -1221,7 +1262,18 @@ public func bk_string_slice(
     lo = Swift.max(0, Swift.min(lo, count))
     hi = Swift.max(0, Swift.min(hi, count))
     guard hi > lo else { return strdup("") }
-    return strdup(String(characters[lo..<hi]))
+    var a = text.startIndex
+    var k = 0
+    while k < lo {
+        a = text.index(after: a)
+        k += 1
+    }
+    var b = a
+    while k < hi {
+        b = text.index(after: b)
+        k += 1
+    }
+    return strdup(String(text[a..<b]))
 }
 
 /// `s.upper()` / `s.lower()` —— 契约 §2.9 第 36 条（**Unicode 感知**，接收者不变）。

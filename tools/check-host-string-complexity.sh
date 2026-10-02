@@ -26,17 +26,32 @@
 #   ⚠️ 两侧都要判，理由：只判线性侧会漏掉「修好了但声明没更新」（声明会腐烂）；
 #      只判二次侧会让**退化**静默通过。这正是本仓 `expected-red` 那一族纪律的同一形状。
 #
-# ══ 当前现状（2026-10-02 实测 · 自举字符模型批）═════════════════
+# ══ 当前现状（2026-10-02 · 宿主侧字符串线性化批）═════════════════
 #
-#   线性：`concat` 3.x · `index-base` 3.x          二次：`read` 12.x · `read-local` 11.x · `slices` 14.x
-#   ⇒ 待修站点 = 解释器侧的三处：`RuntimeOps` 的字符串下标与 `containerLength` 的 `.string` 分支、
-#     `SubscriptReadStrategy` 的 `.string` 分支。
+#   **五条臂全部线性**（实测比值）：`read` 2.97 · `read-local` 3.16 · `index-base` 3.62 ·
+#   `concat` 3.19 · `slices` 3.82 —— 均 ≤ MAX_LINEAR_RATIO ⇒ `PENDING_ARMS` 已清空。
 #
-#   ⚠️⭐ **两条「不改字符串表示」的路线已被实测否证**（装置 = 本件同一套计时器，变异体在 /tmp）：
-#     ① 旁路缓存 + 键 = `s as NSString` 的桥接身份 ⇒ **会串味**（错值，当场崩）；
-#     ② 旁路缓存 + 键 = 内容（`String` 自身）⇒ **正确但无效**（每次查表 O(len) 哈希，比值退回 11–12）。
-#     ⇒ 剩下的正解只有「缓存**随值走**」（把字素边界挂在字符串值的表示上）——
-#       那要改 `Value.string` 的载荷，改动面见宿主侧复杂度登记件。
+#   改前（同日早批实测）：`read` 13.05 · `read-local` 11.39 · `slices` 14.11（三条二次）。
+#   ⇒ 变化只来自三处站点改走字素游标：`RuntimeOps` 的字符串下标与 `containerLength` 的
+#     `.string` 分支、`SubscriptReadStrategy` 的 `.string` 分支（外加 `IRExecutor` 的
+#     `stringSubstring` 与 `sliceValue` 两个切片站点）。
+#
+#   ⚠️⭐ **走过的三条路（前两条被实测否掉，留档以免重走）**：
+#     ① 旁路缓存 + 键 = `s as NSString` 的桥接身份 ⇒ **会串味**（词法层两通道产物当场分歧，
+#        判据红 5 条）。归因由实验得出：换回内容作键 ⇒ 立刻全绿。
+#     ② 旁路缓存 + 键 = 内容（`String` 自身）⇒ **正确但无效**（每次查表要 O(len) 哈希，
+#        比值退回 11–14）。
+#     ③ ⭐ **字素游标**（✅ 采用）：缓存「上一次的 `String.Index`」（**空间 O(1)**），
+#        顺序递增时每步只 `index(after:)` 一次 ⇒ 均摊 O(1)。
+#        **取法来自 Swift 自己的字符串设计**：`String.Index` 内含 `encodedOffset` 与一个 6 位的
+#        grapheme cache（到下一字素边界的距离）⇒ 从**已有**索引前进不需要从头扫，所以
+#        「按顺序迭代」高效、而「计算第 n 个字符的索引」仍是 O(n)。
+#        命中判据 = `String ==`（实测**同存储 O(1)**，0.8 ns/次，两规模比值 0.99）——
+#        语义上严格正确（内容相等，⛔ 不是身份）。
+#        ⇒ 它**不物化整串**：物化数组方案（空间 O(n)）实测与游标**时间同级**
+#        （6.6 KB / 26.4 KB：物化 0.1/0.4 ms vs 游标 0.13/0.51 ms）⇒ 取空间 O(1) 的那条。
+#        ⚠️ 代价：**随机访问退化为 O(len)/次**（与改动前同阶，⛔ 不会错，只会慢）——
+#        `forwardWindow = 16` 把「顺序」与「跳跃」分开，超过窗口即重走。
 #
 # ══ 口径纪律 ═══════════════════════════════════════════════════
 #
@@ -59,8 +74,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MAX_LINEAR_RATIO=6      # 线性臂的比值上限（O(len) ≈ 4）
 MIN_SECONDARY_RATIO=8   # 二次臂的判定下界（O(len²) ≈ 16；取 8 留出抖动余量）
 
-LINEAR_ARMS="concat index-base"
-PENDING_ARMS="read read-local slices"
+LINEAR_ARMS="concat index-base read read-local slices"
+PENDING_ARMS=""
 
 PINI_BIN="${PINI_BIN:-}"
 if [ -z "$PINI_BIN" ]; then
