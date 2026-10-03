@@ -72,17 +72,30 @@ private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
     }
 }
 
-/// 元素 box 内容若为嵌套句柄（`tag == .handle`），递增其 share count。
-/// 供 `cowCopy` 使用：字节复制会让两个容器持有同一内层句柄，必须计入共享。
+/// 元素 box 内容若为可计数引用（嵌套句柄 **或** 字符串），递增其计数。
+/// 供 `cowCopy` 使用：字节复制会让两个容器持有同一内层值，必须计入共享。
+///
+/// ⭐ N76 起 `.str` 与 `.handle` **同走这一条通道**：两者都是「槽持有一份引用」的引用型内容，
+/// 差别只在计数住在哪（容器在 `_BkBox.shares`，字符串在它自己的头格里）。
+/// ⚠️ 常量串（`@.strN` 的 GEP）在 `bk_str_retain` 里是无操作 ⇒ 这里不必分辨。
 private func _bkRetainIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
+    if _BkTag(rawValue: tag) == .str {
+        bk_str_retain(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
+        return
+    }
     guard _BkTag(rawValue: tag) == .handle else { return }
     let inner = elemBox.load(as: UnsafeMutableRawPointer?.self)
     guard let inner else { return }
     Unmanaged<_BkBox>.fromOpaque(inner).takeUnretainedValue().shares += 1
 }
 
-/// 元素 box 内容若为嵌套句柄，递减其 share count（供 `deinit` 释放嵌套引用）。
+/// 元素 box 内容若为可计数引用（嵌套句柄 **或** 字符串），递减其计数
+/// （供 `deinit` / `releaseAllElements` 释放本槽持有的那一份）。
 private func _bkReleaseIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
+    if _BkTag(rawValue: tag) == .str {
+        bk_str_release(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
+        return
+    }
     guard _BkTag(rawValue: tag) == .handle else { return }
     _bkReleaseShare(elemBox.load(as: UnsafeMutableRawPointer?.self))
 }
@@ -992,6 +1005,148 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
     memcpy(p.advanced(by: Int(offsetBytes)), src, n)
 }
 
+// MARK: - N76：原生字符串的**引用计数所有权**（运行时段侧）
+//
+// 缺陷形态（开放项册 `N76`）：native 字符串是裸 `char*`，本运行时段**不导出任何释放入口**，
+// 而发射出来的拼接是 `strlen` ×2 + `malloc` + `strcpy` + `strcat` —— 每产出一个新串，
+// 上一个就被丢掉、**无人回收** ⇒ `self.buf = self.buf + line` 这类累积形态的峰值
+// = Σ(各次拼接结果长度) = **二次方**（实测：N=4000 ⇒ 206 MB，整包面 62 s 涨到 4.2 GB）。
+//
+// 本段给字符串加**计数头**：分配时多要 `MemoryLayout<Int>.size` 字节，头里放引用计数，
+// **用户指针 = 基址 + 头长**。
+// ⚠️ 用户指针仍是 NUL 结尾的 C 串 ⇒ `printf("%s")` / `strlen` / `strcmp` / `strcat`
+// 等**一切既有消费点逐字不变**（于是 IR 契约里 `string` 表示钉的 `i8*` 也不动）。
+//
+// ⭐ **与容器那套（`_liveHandles`）的一处刻意差异**：**释放一个不是本运行时段分配的指针是无操作**。
+// 判据是「它在不在登记表里」，⛔ **不是**读计数头里的魔数 —— 后者对**全局字符串常量**
+// （`@.strN` 的 GEP）会读到紧邻的别的常量字节，据此判定即段错误。
+// ⇒ 这条性质使「常量串与堆串混走同一批代码路径」自动安全：槽里是常量时，
+// retain / release 两侧都退化成空操作。它同时把「双重释放」变成无操作（第二次查表即失配）。
+//
+// ⚠️ **本段只做分配 / 计数 / 回收**（片 1）。**谁在什么时候 retain / release 由发射器决定**
+// （片 2 / 片 3），规则与容器族同一条：别名点 retain · 槽退出与被覆盖时 release · 逃逸点转移。
+
+/// 计数头长度（字节）。分配块 = 头 + 载荷，用户指针指在头之后。
+private let _bkStrHeaderBytes = MemoryLayout<Int>.size
+
+/// 本运行时段分配过、且**尚未归零**的字符串（键 = 用户指针）。
+/// 判据见件头：**不在表里 = 无操作** —— 这条同时兜住全局常量与已释放指针。
+private var _bkStrLive: Set<UnsafeMutableRawPointer> = []
+
+/// 保护 `_bkStrLive` 的锁。
+///
+/// ⚠️ 与容器族的 `_liveHandles`（无锁）**刻意不同**：那张表在本片之前就存在且不带锁，
+/// 本片不去动它；而本表是**新引入**的数据结构，且分配 / 释放串是多线程（任务族）也会走的路
+/// ⇒ 让新表自己带锁，⛔ 不把一类新的并发崩溃引进来。
+/// 临界区只含表的读写与头格加减，`deallocate` 故意放在**锁外**。
+private let _bkStrLock = NSLock()
+
+/// 分配一个带计数头的 C 串，计数 = 1，返回**用户指针**（基址 + 头长）。
+private func _bkStrAlloc(_ byteCount: Int) -> UnsafeMutableRawPointer {
+    let payload = max(byteCount, 1)
+    let base = UnsafeMutableRawPointer.allocate(
+        byteCount: payload + _bkStrHeaderBytes, alignment: MemoryLayout<Int>.alignment)
+    base.storeBytes(of: 1, as: Int.self)
+    let user = base.advanced(by: _bkStrHeaderBytes)
+    _bkStrLock.lock()
+    _bkStrLive.insert(user)
+    _bkStrLock.unlock()
+    return user
+}
+
+/// 把 Swift `String` 的 UTF-8 字节装成带计数头的 C 串（`strdup` 的替代）。
+private func _bkStrDup(_ text: String) -> UnsafeMutablePointer<CChar> {
+    let bytes = Array(text.utf8)
+    let user = _bkStrAlloc(bytes.count + 1)
+    let out = user.assumingMemoryBound(to: CChar.self)
+    for (index, byte) in bytes.enumerated() { out[index] = CChar(bitPattern: byte) }
+    out[bytes.count] = 0
+    return out
+}
+
+/// 把一条既有 C 串复制成带计数头的 C 串（`strdup` 的替代 · 指针形态）。
+private func _bkStrDup(_ source: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar> {
+    let length = strlen(source)
+    let user = _bkStrAlloc(Int(length) + 1)
+    memcpy(user, source, Int(length) + 1)
+    return user.assumingMemoryBound(to: CChar.self)
+}
+
+/// 用户指针 → 计数头基址。
+private func _bkStrBase(_ user: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+    return user.advanced(by: -_bkStrHeaderBytes)
+}
+
+/// 字符串的**别名点 retain**（与 `bk_handle_retain` 同一条所有权规则的不同族）。
+/// 非本运行时段分配的指针（全局常量 · 外呼 C 串）⇒ 无操作。
+@_cdecl("bk_str_retain")
+public func bk_str_retain(_ p: UnsafeMutablePointer<CChar>?) {
+    guard let p else { return }
+    let user = UnsafeMutableRawPointer(p)
+    _bkStrLock.lock()
+    guard _bkStrLive.contains(user) else {
+        _bkStrLock.unlock()
+        return
+    }
+    let base = _bkStrBase(user)
+    base.storeBytes(of: base.load(as: Int.self) + 1, as: Int.self)
+    _bkStrLock.unlock()
+}
+
+/// 字符串的**释放**：计数递减，归零则摘出登记表并归还内存。
+/// 非本运行时段分配的指针、以及**已归零**的指针 ⇒ 无操作（见件头那两条性质）。
+@_cdecl("bk_str_release")
+public func bk_str_release(_ p: UnsafeMutablePointer<CChar>?) {
+    guard let p else { return }
+    let user = UnsafeMutableRawPointer(p)
+    _bkStrLock.lock()
+    guard _bkStrLive.contains(user) else {
+        _bkStrLock.unlock()
+        return
+    }
+    let base = _bkStrBase(user)
+    let next = base.load(as: Int.self) - 1
+    if next > 0 {
+        base.storeBytes(of: next, as: Int.self)
+        _bkStrLock.unlock()
+        return
+    }
+    _bkStrLive.remove(user)
+    _bkStrLock.unlock()
+    base.deallocate()
+}
+
+/// 分配一个 `byteCount` 字节（含 NUL 位）的**带计数头** C 串，计数 = 1，返回用户指针。
+///
+/// 发射器的字符串拼接用它**替代裸 `malloc`**：拼接本身（`strlen` ×2 + `strcpy` + `strcat`）
+/// 的形状逐字不变，只有分配入口换成本运行时段 ⇒ 产出的串从此进入登记表、
+/// 可被 `bk_str_release` 回收。⛔ 载荷由调用方写（本入口不置零、也不写 NUL）—— 与 `malloc` 同契约。
+@_cdecl("bk_str_alloc")
+public func bk_str_alloc(_ byteCount: Int64) -> UnsafeMutablePointer<CChar> {
+    return _bkStrAlloc(Int(byteCount)).assumingMemoryBound(to: CChar.self)
+}
+
+/// 把一条既有 C 串（通常是栈上拼出来的缓冲）复制成**带计数头**的新串，计数 = 1。
+///
+/// 发射器里 `heapCopyOfStackString` 用它替代裸 `strdup`（插值与 `join` 那条路）：
+/// 复制语义逐字不变，但结果进入登记表 ⇒ 可被 `bk_str_release` 回收。
+@_cdecl("bk_str_dup")
+public func bk_str_dup(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+    guard let source else { return _bkStrDup("") }
+    return _bkStrDup(source)
+}
+
+/// 当前引用计数（仅供测试 / 诊断，IR 不发射）。非本运行时段分配的指针返回 0。
+@_cdecl("bk_str_refcount")
+public func bk_str_refcount(_ p: UnsafeMutablePointer<CChar>?) -> Int32 {
+    guard let p else { return 0 }
+    let user = UnsafeMutableRawPointer(p)
+    _bkStrLock.lock()
+    defer { _bkStrLock.unlock() }
+    guard _bkStrLive.contains(user) else { return 0 }
+    return Int32(_bkStrBase(user).load(as: Int.self))
+}
+
 // MARK: - LR-8：F64 最短往返展示（spec「值展示语义」节）
 
 /// `print(F64)` 的文本展示（spec「值展示语义」注的四条形态规则）。
@@ -1005,7 +1160,7 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
 /// printf 消费后调 `@free` 释放；单值即用即弃，无别名）。
 @_cdecl("bk_double_to_string")
 public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
-    return strdup(String(v))
+    return _bkStrDup(String(v))
 }
 
 // MARK: - G15: whole-file read for the LLVM leg
@@ -1037,7 +1192,7 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
     guard let text = try? String(contentsOfFile: String(cString: path), encoding: .utf8) else {
         return nil
     }
-    return strdup(text)
+    return _bkStrDup(text)
 }
 
 // MARK: - G14 FFI: Pini String -> C string (interpreter "cstr" shim parity)
@@ -1051,7 +1206,7 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
 @_cdecl("bk_cstr")
 public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return nil }
-    return strdup(s)
+    return _bkStrDup(s)
 }
 
 // MARK: - 字符内建（G-3a）与宿主环境查询内建（P4-1b / M8）的 **LLVM 侧**运行时段
@@ -1073,7 +1228,7 @@ public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? 
 private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     let box = _BkArrayBox(count: items.count)
     for (index, item) in items.enumerated() {
-        var pointer: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(strdup(item))
+        var pointer: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(_bkStrDup(item))
         withUnsafeBytes(of: &pointer) { raw in
             box.storage.elements[index] = _bkAllocBox(raw.baseAddress!, MemoryLayout<UnsafeMutableRawPointer?>.size)
         }
@@ -1097,7 +1252,7 @@ public func bk_chr(_ code: Int32) -> UnsafeMutablePointer<CChar>? {
     guard code >= 0, let scalar = Unicode.Scalar(UInt32(code)) else {
         bk_panic("Pini runtime error: chr 的参数超出 Unicode 标量范围（\(code)）")
     }
-    return strdup(String(Character(scalar)))
+    return _bkStrDup(String(Character(scalar)))
 }
 
 /// `ord(Char) -> I32` —— **首个 Unicode 标量**的值；空串回 -1（同解释器）。
@@ -1184,7 +1339,7 @@ public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointe
 public func bk_substring(
     _ s: UnsafePointer<CChar>?, _ start: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
-    guard let s else { return strdup("") }
+    guard let s else { return _bkStrDup("") }
     let text = String(cString: s)
     let n = text.count
     var lo = Int(start)
@@ -1195,7 +1350,7 @@ public func bk_substring(
     if lo > n { lo = n }
     if hi < 0 { hi = 0 }
     if hi > n { hi = n }
-    guard hi > lo else { return strdup("") }
+    guard hi > lo else { return _bkStrDup("") }
     var a = text.startIndex
     var k = 0
     while k < lo {
@@ -1207,7 +1362,7 @@ public func bk_substring(
         b = text.index(after: b)
         k += 1
     }
-    return strdup(String(text[a..<b]))
+    return _bkStrDup(String(text[a..<b]))
 }
 
 // MARK: - 名义箱（结构体 / 对象 / 枚举）的堆分配（2026-10-01「名义箱上堆」）
@@ -1336,7 +1491,7 @@ public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
 public func bk_string_char_at(
     _ s: UnsafePointer<CChar>?, _ index: Int32
 ) -> UnsafeMutablePointer<CChar>? {
-    guard let s else { return strdup("") }
+    guard let s else { return _bkStrDup("") }
     let text = String(cString: s)
     let n = text.count
     var idx = Int(index)
@@ -1350,7 +1505,7 @@ public func bk_string_char_at(
         p = text.index(after: p)
         k += 1
     }
-    return strdup(String(text[p]))
+    return _bkStrDup(String(text[p]))
 }
 
 /// 字符串切片 —— 契约 §2.9 第 23 条。
@@ -1370,7 +1525,7 @@ public func bk_string_slice(
     _ s: UnsafePointer<CChar>?, _ hasStart: Int32, _ start: Int32,
     _ hasEnd: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
-    guard let s else { return strdup("") }
+    guard let s else { return _bkStrDup("") }
     let text = String(cString: s)
     let count = text.count
     var lo = hasStart != 0 ? Int(start) : 0
@@ -1379,7 +1534,7 @@ public func bk_string_slice(
     if hi < 0 { hi = count + hi }
     lo = Swift.max(0, Swift.min(lo, count))
     hi = Swift.max(0, Swift.min(hi, count))
-    guard hi > lo else { return strdup("") }
+    guard hi > lo else { return _bkStrDup("") }
     var a = text.startIndex
     var k = 0
     while k < lo {
@@ -1391,7 +1546,7 @@ public func bk_string_slice(
         b = text.index(after: b)
         k += 1
     }
-    return strdup(String(text[a..<b]))
+    return _bkStrDup(String(text[a..<b]))
 }
 
 /// `s.upper()` / `s.lower()` —— 契约 §2.9 第 36 条（**Unicode 感知**，接收者不变）。
@@ -1401,14 +1556,14 @@ public func bk_string_slice(
 /// `"café".upper()` 得 `CAFé`（`é` 原样），且对带变音符的拉丁字母整词错。
 @_cdecl("bk_string_upper")
 public func bk_string_upper(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
-    guard let s else { return strdup("") }
-    return strdup(String(cString: s).uppercased())
+    guard let s else { return _bkStrDup("") }
+    return _bkStrDup(String(cString: s).uppercased())
 }
 
 @_cdecl("bk_string_lower")
 public func bk_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
-    guard let s else { return strdup("") }
-    return strdup(String(cString: s).lowercased())
+    guard let s else { return _bkStrDup("") }
+    return _bkStrDup(String(cString: s).lowercased())
 }
 
 /// `s.contains(needle)` —— 契约 §2.9 第 37 条。
@@ -1494,7 +1649,7 @@ public func bk_string_split(
     }
     var handle = bk_array_create(Int32(parts.count))
     for (index, part) in parts.enumerated() {
-        var box: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(strdup(part))
+        var box: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(_bkStrDup(part))
         handle = bk_array_set(handle, Int32(index), &box, 8, 3) ?? handle
     }
     return handle
