@@ -1,0 +1,19 @@
+; 判据：**`join` 结果**必须活过产出它的那一帧（与插值同族：`emitArrayJoin` 也在栈缓冲上拼）。
+;
+; 归因同 `string-escapes-interp.pini`。`burn` 的作用是**把那片栈压掉**——
+;   没有它，判据只是「栈还没被复用」，会碰运气变绿。
+; 权威 = 解释器的行为（BEFORE 与 AFTER 都必须是 `alpha,beta,gamma`）。
+burn|func(n: I32,) -> (I32,):
+    if n <= 0:
+        return 0
+    let dirty = "\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)"
+    return burn(n - 1,) + len(dirty,)
+
+main|func() -> ():
+    let xs: [String] = ["alpha", "beta", "gamma"]
+    let joined = xs.join(",")
+    print("BEFORE \(joined)")
+    let noise = burn(64,)
+    print("AFTER \(joined)")
+    print("NOISE \(noise > 0,)")
+    return

@@ -1,0 +1,30 @@
+; 判据：`split` 的**定界符语义**两路一致。
+;
+; 归因（2026-10-03 · 甲路线实测）：LLVM 侧旧实现走 `strtok`，而 `strtok` 把定界符当
+;   **字符集**（⛔ 不是子串），且**空定界符不匹配任何字符** ⇒ `"ab\ncd".split("")`
+;   只给 **1** 个元素（整串），解释器给 **5**（逐字素）。自举 `common.pini` 的
+;   `textAtoms` 正是 `text.split("")` ⇒ 原生路径下整份资源表解析成空表。
+; 权威 = 解释器的 `IRExecutor.split`（空定界符 ⇒ 逐字素 · 非空 ⇒ 子串匹配 ·
+;   省略空子序列）。⚠️ 第 10 项是**强阳性对照**：字素簇语义下组合序列是 **1**，
+;   按字节/码点实现会给 2。
+show|func(tag: String, parts: [String],) -> ():
+    print("\(tag)|len=\(len(parts,),)")
+    var i = 0
+    while i < len(parts):
+        print("\(tag)|[\(i,)]=\(parts[i])")
+        i = i + 1
+    return
+
+main|func() -> ():
+    show("1-single", "a,b,c".split(","))
+    show("2-multichar", "a::b::c".split("::"))
+    show("3-nomatch", "ab".split("Xb"))
+    show("4-empty-delim", "ab".split(""))
+    show("5-empty-src", "".split(","))
+    show("6-empty-both", "".split(""))
+    show("7-trailing", "a\n".split("\n"))
+    show("8-blank-line", "a\n\nb".split("\n"))
+    show("9-cjk", "色彩".split(""))
+    show("10-grapheme", ("e" + chr(769,)).split(""))
+    show("11-tab", "a\tb".split("\t"))
+    return

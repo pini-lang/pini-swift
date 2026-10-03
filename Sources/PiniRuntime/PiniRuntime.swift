@@ -1325,6 +1325,63 @@ public func bk_string_contains(
     return 0
 }
 
+/// `s.split(sep)` —— 契约 §2.9 第 23 条**族**的容器通道（`Array<String>`）。
+///
+/// 权威 = `IRExecutor` 的 `.split` 分支，本函数的循环**逐条镜像**它：
+///   · **空定界符 ⇒ 逐字素**，一个元素恰一字素（自举 `textAtoms` 靠这一条建原子数组）；
+///   · 非空定界符走**子串**匹配（⛔ 不是字符集匹配），步长 = 定界符的字素数；
+///   · **省略空子序列**（`"".split(",")` ⇒ 0 个元素 · `"a\n".split("\n")` ⇒ `["a"]`）。
+///
+/// ⚠️⭐ 为什么整族下沉（2026-10-03 实测，甲路线）：发射器旧形状是**两遍 `strtok`**，
+/// 而 `strtok` 把定界符当**字符集**且空集**不匹配任何字符** ⇒ `"ab\ncd".split("")`
+/// 得 **1** 个元素（整串），解释器得 **5**（逐字素）。自举 `common.pini` 的 `textAtoms`
+/// 正是 `text.split("")` ⇒ 原生路径下整份资源表解析成**空表**（实测：`TABLE` 值全空 ·
+/// `CODES|zh|` 空），即自举 `common` 层两路对照失败的直接原因。
+/// ⛔ 这不是「性能取舍」—— 是**语义**：字素簇边界是 Unicode 分段算法，发射器发不出来，
+/// 所以这一族一律在运行时段里实现（同 `bk_string_count` / `bk_string_slice` 的立场）。
+///
+/// 元素形态与发射器旧形状**逐位一致**：长度 8 字节的 `.str`（tag 3）槽，内容 `strdup`。
+@_cdecl("bk_string_split")
+public func bk_string_split(
+    _ s: UnsafePointer<CChar>?, _ delim: UnsafePointer<CChar>?
+) -> UnsafeMutableRawPointer {
+    let characters = Array(s.map { String(cString: $0) } ?? "")
+    let delimChars = Array(delim.map { String(cString: $0) } ?? "")
+    var parts: [String] = []
+    if delimChars.isEmpty {
+        parts = characters.map { String($0) }
+    } else {
+        var current = ""
+        var i = 0
+        while i < characters.count {
+            var j = 0
+            var hit = true
+            while j < delimChars.count {
+                if i + j >= characters.count || characters[i + j] != delimChars[j] {
+                    hit = false
+                    break
+                }
+                j += 1
+            }
+            if hit {
+                if !current.isEmpty { parts.append(current) }
+                current = ""
+                i += delimChars.count
+            } else {
+                current.append(characters[i])
+                i += 1
+            }
+        }
+        if !current.isEmpty { parts.append(current) }
+    }
+    var handle = bk_array_create(Int32(parts.count))
+    for (index, part) in parts.enumerated() {
+        var box: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(strdup(part))
+        handle = bk_array_set(handle, Int32(index), &box, 8, 3) ?? handle
+    }
+    return handle
+}
+
 // MARK: - 并发原语的 C ABI 面（`DE-3b` · `B-2` 段：8 个无悔符号）
 //
 // 「无悔」= 形状与**让出机制**无关。`DE-1` §3 的 10 个符号里，`bk_task_spawn` 与

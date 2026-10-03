@@ -1,0 +1,24 @@
+; 判据：**插值串**必须活过产出它的那一帧。
+;
+; 归因（2026-10-03 · 甲路线实测）：插值在**本帧的栈缓冲**（`alloca i8, i64 4096`）上拼串，
+;   而结果会离开本帧 —— 自举词法层原文就是 `self.emit("int", "\(parseDecimal(wholeText))")`，
+;   那个插值串随即被存进 Token 的 `text` 字段（堆上的箱）。⇒ 帧一退，字段里是**悬垂的栈地址**。
+;   本夹具用**返回**把它交出去（同一形态：结果离开产出它的帧）。
+; `burn` 的作用是**把那片栈压掉**：没有它就只是「还没被复用」，判据会碰运气变绿。
+; 权威 = 解释器的行为（BEFORE 与 AFTER 都必须是 `v7v`）。
+mk|func(n: I32,) -> (String,):
+    return "v\(n,)v"
+
+burn|func(n: I32,) -> (I32,):
+    if n <= 0:
+        return 0
+    let dirty = "\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)"
+    return burn(n - 1,) + len(dirty,)
+
+main|func() -> ():
+    let s = mk(7,)
+    print("BEFORE \(s)")
+    let noise = burn(64,)
+    print("AFTER \(s)")
+    print("NOISE \(noise > 0,)")
+    return
