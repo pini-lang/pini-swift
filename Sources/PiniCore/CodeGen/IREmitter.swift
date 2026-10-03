@@ -199,6 +199,29 @@ public final class IREmitter {
     /// 不碰名义值的程序 IR 除类型定义外逐字节不变。
     private var usesNominalBoxes = false
 
+    /// 是否发射过**字符串的引用计数**调用（`bk_str_retain` / `bk_str_release`）—— **N76**。
+    ///
+    /// 与 `usesNominalBoxes` 同规：条件 declare，不碰字符串所有权的程序 IR 逐字节不变。
+    /// ⭐ N76 之前字符串**整族不在计数面上**（`boxFamily` 的注释原文写着「标量 / 字符串 /
+    /// 外呼指针 / 任务句柄」不参与计数），理由是「字符串是不可变 C 串，没有主」——
+    /// 而那条理由只对**读**成立：`self.buf = self.buf + line` 这类累积形态每产出一个新串
+    /// 就把上一个丢掉，而**没有人回收它** ⇒ 峰值 = Σ(各次结果长度)。
+    private var usesStringOwnership = false
+
+    /// 本层当前**持有 +1 引用**的字符串 SSA 名（N76 的发射器侧账本）。
+    ///
+    /// 入账 = 本层亲手分配的堆串（`stringConcat` / `interpString` / `bk_*` 的返回）；
+    /// 出账 = ① 交出所有权（存入槽 / return / 存入元素槽 / 存入字段）⇒ `claimOwnedString`；
+    /// ② 就地消费掉（打印 / 参与运算 / 传给内建）⇒ `releaseOwnedString`。
+    ///
+    /// ⚠️ 为什么必须有这本账：`self.buf = self.buf + line + "\n"` 里的**中间串**
+    /// `self.buf + line` 既不落槽、也不是最终值 ⇒ 没有这本账就无人释放它，
+    /// 而那正是**二次方那一项**（每次迭代泄漏一个「当前累积长度」的串）。
+    private var ownedStrings: Set<String> = []
+
+    /// `ownedStrings` 需要跨函数隔离：函数体发射前保存、发射后恢复。
+    private var ownedStringsStack: [Set<String>] = []
+
     /// 本函数（或闭包体）里**被闭包捕获**的变量名集合（2026-10-01 · 片 D）。
     ///
     /// ⭐ 为什么要在进体之前先算出来：捕获的槽必须**在分配它的那一刻**就知道
@@ -524,6 +547,14 @@ public final class IREmitter {
             tail += "declare ptr @bk_nominal_alloc(i64)\n"
             tail += "declare void @bk_nominal_retain(ptr)\n"
             tail += "declare i32 @bk_nominal_release(ptr)\n"
+        }
+        // N76：字符串的引用计数。与上一条同规 —— 只有真发过 retain / release 的模块才带，
+        // 故「不碰字符串所有权」的程序 IR 逐字节不变。
+        if usesStringOwnership {
+            tail += "declare ptr @bk_str_alloc(i64)\n"
+            tail += "declare ptr @bk_str_dup(ptr)\n"
+            tail += "declare void @bk_str_retain(ptr)\n"
+            tail += "declare void @bk_str_release(ptr)\n"
         }
         if usesStringShims {
             tail += "declare ptr @bk_substring(ptr, i32, i32)\n"
@@ -928,7 +959,25 @@ public final class IREmitter {
     /// 释放点只问「这个类型要不要释放」，不问「它是谁」。
     private func releaseSymbol(for type: IRType) -> String? {
         if nominalKindSpelling(type) != nil { return ensureReleaseFunction(for: type) }
+        if isRefcountedString(type) {
+            usesStringOwnership = true
+            return "bk_str_release"
+        }
         return Self.collectionDestroySymbol(for: type.llvmSpelling)
+    }
+
+    /// 该类型在发射层**是否按字符串参与引用计数**（N76）。
+    ///
+    /// 判据 = IR 类型是 `string` 或 `char` —— `Char` 的表示与 `String` **同构**（运行时段里
+    /// 两者都是带计数头的 C 串，见 `arrayElementABI` 把两者的元素 tag 都钉在 3）
+    /// ⇒ 同一条释放通道。
+    /// ⛔ `*T` 指针**不算**：它的 `llvmSpelling` 也是 `i8*`，但它指向**外部内存**，
+    /// 谁也不该去 release 它。⚠️ 本条按 `IRType` 判（不是按拼写），故 `.pointer` 天然被排除。
+    private func isRefcountedString(_ type: IRType) -> Bool {
+        switch type {
+        case .string, .char: return true
+        default: return false
+        }
     }
 
     /// Emit one `bk_*_destroy` per registered handle in frames `base...`
@@ -2347,9 +2396,21 @@ public final class IREmitter {
             let sz1 = builder.freshTemp()
             bodyIR += " \(sz1) = add i64 \(total), 1\n"
             let buf = builder.freshTemp()
-            bodyIR += " \(buf) = call ptr @malloc(i64 \(sz1))\n"
+            // N76：分配入口从裸 `malloc` 换成运行时段的 `bk_str_alloc` —— 拼接的**形状逐字不变**
+            // （`strlen` ×2 → `add` → `add 1` → 分配 → `strcpy` → `strcat`），
+            // 差别只在产出的串**带引用计数头**、进了运行时段的登记表 ⇒ 可被 `bk_str_release` 回收。
+            // ⛔ 若这里退回裸 `malloc`，后续所有 release 都会静默变成无操作（登记表里没有它）
+            // —— 即「看起来发了释放、实际一个字节都没回收」，正是最坏的那类假绿。
+            bodyIR += " \(buf) = call ptr @bk_str_alloc(i64 \(sz1))\n"
             bodyIR += " call ptr @strcpy(ptr \(buf), ptr \(lhsValue.ssaName))\n"
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(rhsValue.ssaName))\n"
+            // 两个操作数到此**用完**：只被 `strlen` / `strcpy` / `strcat` 读过，没有持有者接管
+            // ⇒ 本层分配的那一份就地还掉。
+            // ⚠️⭐ 这一步就是**二次方那一项的处置**：`a + b + c` 里的中间串 `a + b`
+            // 既不落槽、也不是最终值 ⇒ 除了这里没有任何回收点（少了它，峰值仍是 Σ 各次结果长度）。
+            releaseOwnedString(lhsValue)
+            releaseOwnedString(rhsValue)
+            adoptOwnedString(buf)
             return IRValue(llvmType: "i8*", ssaName: buf)
 
         case .interpString(let parts):
@@ -3169,8 +3230,14 @@ public final class IREmitter {
                     bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
                     stored = value
                 }
+            case .string:
+                // N76：**字符串字段**在结构体拷贝里也要留一份 —— 源箱与新箱是两个持有者。
+                // ⚠️ 与另两族同规：`bk_str_retain` 对非本时段分配的串（全局常量）是无操作。
+                usesStringOwnership = true
+                bodyIR += " call void @bk_str_retain(ptr \(value))\n"
+                stored = value
             case nil:
-                stored = value  // 标量 / 字符串 / 指针：直接复制
+                stored = value  // 标量 / 外呼指针：直接复制
             }
             let dstPtr = builder.freshTemp()
             bodyIR +=
@@ -3210,7 +3277,14 @@ public final class IREmitter {
     /// - Returns: 应当被存下去（或被交出去）的那个值。
     @discardableResult
     private func emitValueForStorage(_ node: IRExpr, _ value: IRValue, type: IRType) -> IRValue {
-        guard yieldsAlias(node) else { return value }
+        guard yieldsAlias(node) else {
+            // N76：**临时值被持有位置接管** ⇒ 所有权转移，本层不再负责释放它。
+            // ⚠️ 字符串的「临时值」判定就是 `yieldsAlias` 的补集：`stringConcat` /
+            // `interpString` / 运行时段那些返回新串的内建调用产出的都是**新的一份引用**；
+            // 而 `load` / 常量 / 形参都是借来的 —— 那些不在账本里，这一笔对它们是空操作。
+            claimOwnedString(value)
+            return value
+        }
         if case .nominal(_, false) = type, let symbol = ensureCopyFunction(for: type) {
             let copied = builder.freshTemp()
             bodyIR += " \(copied) = call ptr @\(symbol)(ptr \(value.ssaName))\n"
@@ -3701,7 +3775,49 @@ public final class IREmitter {
         case .nominal:
             usesNominalBoxes = true
             bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+        case .string:
+            // N76：字符串的别名点 —— 源那个槽仍持有它那一份，故新槽留一份。
+            // `raw` 的 `bitcast i8* … to ptr` 是空操作型 cast，与另两族同形。
+            usesStringOwnership = true
+            bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
         }
+    }
+
+    // MARK: - N76：字符串临时值的账本
+
+    /// 记下一个**本层亲手分配**、当前持有 +1 引用的字符串 SSA 名。
+    ///
+    /// 只有三类产出入账：`stringConcat` / `interpString` 的拼接结果，以及运行时段
+    /// **返回新分配串**的那些内建（`bk_substring` / `bk_string_slice` / … 见各调用点）。
+    /// ⛔ 借来的值（`load` / 全局常量 / 形参）**不入账** —— 账本的存在意义正是把
+    /// 「本层该负责回收的」与「借来的」分开。
+    private func adoptOwnedString(_ name: String) {
+        usesStringOwnership = true
+        ownedStrings.insert(name)
+    }
+
+    /// 交出所有权：该值已被某个**持有位置**（变量槽 / 返回位 / 数组元素槽 / 字段）接管，
+    /// 此后由那个位置负责释放，本层不再动手。
+    ///
+    /// ⚠️ 这一笔与 `releaseOwnedString` 是**互斥**的两条出路 —— 一个值只能走其中一条。
+    /// 走错的后果不对称：错成 claim ⇒ **泄漏**（安全）；错成 release ⇒ **悬垂**（危险）
+    /// ⇒ 凡「这个值要存下去」的位置，宁可用 claim。
+    private func claimOwnedString(_ value: IRValue) {
+        guard value.llvmType == "i8*" else { return }
+        ownedStrings.remove(value.ssaName)
+    }
+
+    /// 就地消费掉一个字符串值（用完即扔，没有持有者接管它）。
+    ///
+    /// 典型位置：拼接的**两个操作数**（`strlen` / `strcpy` / `strcat` 只读它们）、
+    /// 打印、长度查询、作为内建实参。⛔ 对**借用值**（不在账里）是无操作
+    /// ⇒ 常量串、`load` 出来的槽值、形参都不会被误释放。
+    @discardableResult
+    private func releaseOwnedString(_ value: IRValue) -> Bool {
+        guard value.llvmType == "i8*" else { return false }
+        guard ownedStrings.remove(value.ssaName) != nil else { return false }
+        bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
+        return true
     }
 
     /// 值在发射层的**计数族**（2026-10-01 · 名义箱上堆）：容器句柄与名义箱走两套 C ABI
@@ -3709,7 +3825,7 @@ public final class IREmitter {
     /// （别名点 retain · 作用域退出 release · 写前 release 旧值）。
     ///
     /// 返回 nil = 该类型不参与计数（标量 / 字符串 / 外呼指针 / 任务句柄 …）。
-    private enum BoxFamily { case container, nominal }
+    private enum BoxFamily { case container, nominal, string }
 
     private func boxFamily(ofValueSpelling spelling: String) -> BoxFamily? {
         if ["%bk_array*", "%bk_dict*", "%bk_set*"].contains(spelling) { return .container }
@@ -3718,6 +3834,11 @@ public final class IREmitter {
         {
             return .nominal
         }
+        // N76：字符串族（`String` 与 `Char`，两者拼写同为 `i8*`）。
+        // ⚠️ `*T` 外部指针的拼写**也是** `i8*` ⇒ 也会落到这一支，即对**外部内存**发 retain。
+        // 那在运行时段是**无操作**（该指针不在「本时段分配过」的登记表里，见 `bk_str_retain`）
+        // ⇒ 判错族的方向是安全的（最多不释放），⛔ 不会踩内存。
+        if spelling == "i8*" { return .string }
         return nil
     }
 
@@ -4120,7 +4241,11 @@ public final class IREmitter {
             let rendered = builder.freshTemp()
             bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered))\n"
-            bodyIR += " call ptr @free(ptr \(rendered))\n"
+            // N76：这处临时串由本运行时段分配（`bk_double_to_string` 走带头的分配器）
+            // ⇒ 释放入口跟着换族。⚠️ 它是**当场消费掉**的临时值，故直接还，
+            // ⛔ 不进账本（账本记的是待决定归属的那些）。
+            usesStringOwnership = true
+            bodyIR += " call void @bk_str_release(ptr \(rendered))\n"
         case "i8*":
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(value.ssaName))\n"
         default:
@@ -5344,15 +5469,18 @@ public final class IREmitter {
     /// 这也解释了「剩余红层**非确定性**」：哪一层先撞上，取决于栈什么时候被谁复用。
     /// 解释器没有这个问题（字符串是值，帧退不掉内容）。
     ///
-    /// ⛔ **已知边界**：产物里**没有任何 `free`**（实测 0 处）⇒ 堆串只增不减。
-    /// 字符串表示是裸 C 指针、不带产权，本批只修「活不过帧」这一条；泄漏另立。
+    /// ⭐ **原登记的那条边界（产物里一个 `free` 也没有 ⇒ 堆串只增不减）已由 N76 解除**：
+    /// 复制入口换成 `bk_str_dup`（带引用计数头）⇒ 产出的串进入运行时段的登记表，
+    /// 可被 `bk_str_release` 回收。⛔ 仍要记住它带**一份**引用：本函数把它记进账本，
+    /// 由消费点或持有位置决定何时还（漏还只会泄漏，⛔ 不会踩内存）。
     ///
     /// ⚠️ 本函数置位 `usesHeapStringCopy` —— **这条 declare 是条件发出的**，⛔ 别把置位删掉
     /// （删了产物里就只有 `call` 没有 `declare`，clang 报 `use of undefined value`）。
     private func heapCopyOfStackString(_ buf: String) -> IRValue {
         usesHeapStringCopy = true
         let dup = builder.freshTemp()
-        bodyIR += " \(dup) = call ptr @strdup(ptr \(buf))\n"
+        bodyIR += " \(dup) = call ptr @bk_str_dup(ptr \(buf))\n"
+        adoptOwnedString(dup)
         return IRValue(llvmType: "i8*", ssaName: dup)
     }
 
