@@ -627,6 +627,12 @@ public final class IREmitter {
         controlStack = []
         breakMergeLabels = []
         deferScopeBase = 0
+        // N76：**字符串账本是每函数一份**。这里把上一份压栈、换上一份空的（函数发射结束时还原）——
+        // ⚠️ 少了这一步，账本会跨函数累积：上一个函数里还没出账的 SSA 名会留在本函数的账上，
+        // 而本函数又不会去释放它们（`freshTemp` 的名字全局递增，故不会撞名误放）
+        // ⇒ 症状只是编译期集合变大。带上它是为了让「账本 = 本函数的持有量」这句话成立。
+        ownedStringsStack.append(ownedStrings)
+        ownedStrings = []
         pendingDefers.removeAll()
         // Frame 0 of this function is its body block, pushed by the
         // `emitBlock` call below; `emitBlock` leaves that frame to the exit
@@ -712,6 +718,8 @@ public final class IREmitter {
             bodyIR = emittedFunctions + header + statements + "}\n\n"
         }
         frameMode = .none
+        // N76：还原上一个函数的字符串账本（与函数头的压栈配对）。
+        ownedStrings = ownedStringsStack.popLast() ?? []
     }
 
     /// 该函数会不会被 `emitTaskSpawn` 接住（`isAsync` 且返回 `Result`）。
@@ -3126,6 +3134,14 @@ public final class IREmitter {
         if nominalKindSpelling(type) != nil {
             return (ensureReleaseFunction(for: type), false)
         }
+        // N76：**字符串字段**的释放。⚠️ 加上这一支之前，`self.字段 = 新串` 的覆盖
+        // **不发任何释放** —— 而自举发射器的整篇累积形态正是走字段（`self.buf`）⇒
+        // 那条二次方路径原封不动（实测：只补槽那一半时，整包面仍是 2.76 GB）。
+        // `needsNullGuard = true`：结构体的字符串字段可能还没写过（是 null）。
+        if isRefcountedString(type) {
+            usesStringOwnership = true
+            return ("bk_str_release", true)
+        }
         if let destroy = Self.collectionDestroySymbol(for: type.llvmSpelling) {
             return (destroy, true)
         }
@@ -3139,6 +3155,7 @@ public final class IREmitter {
     /// 必须在合成之前就能算出来，否则会为「只有标量载荷的 case」生成空 arm。
     private func needsReleaseAction(for type: IRType) -> Bool {
         if nominalKindSpelling(type) != nil { return true }
+        if isRefcountedString(type) { return true }
         return Self.collectionDestroySymbol(for: type.llvmSpelling) != nil
     }
 
