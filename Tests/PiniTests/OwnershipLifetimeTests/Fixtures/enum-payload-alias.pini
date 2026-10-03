@@ -1,0 +1,41 @@
+; 判据：引用语义的**枚举载荷**在源变量被重赋值之后仍然活着。
+;
+; 归因（2026-10-03 · 甲路线实测）：发射器的 `enumConstruct` 对载荷只做**裸 store**，
+;   没有走「别名点 retain」⇒ `acc = c(tail = acc,)` 这种形态（自举的 `stringListAdd` /
+;   `sectionNames` 累积、模块层目录扫描全靠它）里，新箱的载荷存着旧箱的指针却不占份额，
+;   紧接着「写前 release 旧值」把旧箱收回 ⇒ 新箱里的载荷**悬垂**。
+; 权威 = 解释器的行为（CTL 1 / ACC 3 / TWO 2）。⛔ 不比「实现输出 vs 手写期望」。
+[L]
+e
+c(n: I32, t: L,)
+
+lLen|func(list: L,) -> (I32,):
+    var k = 0
+    var cur = list
+    var go = true
+    while go:
+        match cur:
+            case e:
+                go = false
+            case c(_, tail):
+                k = k + 1
+                cur = tail
+    return k
+
+main|func() -> ():
+    ; 对照一：单次构造（不重赋值）—— 改动前后都应当对（证明判据不是「凡构造必红」）
+    let one = c(n = 0, t = e,)
+    print("CTL \(lLen(one,),)")
+
+    ; 组一：循环累积（每轮把旧 acc 存进新箱的载荷，再重赋值 acc）
+    var acc = e
+    var i = 0
+    while i < 3:
+        acc = c(n = i, t = acc,)
+        i = i + 1
+    print("ACC \(lLen(acc,),)")
+
+    ; 组二：嵌套构造（载荷是另一个新箱）
+    let two = c(n = 7, t = c(n = 8, t = e,),)
+    print("TWO \(lLen(two,),)")
+    return

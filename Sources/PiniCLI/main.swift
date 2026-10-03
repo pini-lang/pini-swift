@@ -1603,6 +1603,22 @@ func runCompileCommand(source: String, fileName: String) throws {
     run.executableURL = URL(fileURLWithPath: tmpBin)
     try run.run()
     run.waitUntilExit()
+    // ⚠️⭐ **把子进程的退出码交出去**（2026-10-03 实测修正）。此前这里把状态**丢掉**了，
+    // 于是 `pini compile` 对一个 **abort 掉**的程序报 **rc=0** —— 而本仓的门禁形态正是
+    // 「看退出码」（三态 0/1/2）。⇒ 任何建在 `compile` / `run-llvm` 上的判据都会**恒绿**
+    // （实测：既有 `SplitPathTests` 里 `compiled.status == 0` 那条断言就是这样恒真的）。
+    // ⛔ 甲路线 scope ⑦（门禁接原生臂）读的正是这条臂 ⇒ 不修它，门禁接上去等于没接。
+    exit(childExitStatus(of: run))
+}
+
+/// 子进程的退出码，按 **shell 惯例**归一：被信号杀死 ⇒ `128 + 信号`（`abort()` ⇒ 134），
+/// 而不是 `terminationStatus` 直接给出的裸信号号（那会是 6）。两者都非零、都能判失败，
+/// 但惯例那一支才是调用方（与人）预期的数。
+func childExitStatus(of process: Process) -> Int32 {
+    if process.terminationReason == .uncaughtSignal {
+        return 128 + process.terminationStatus
+    }
+    return process.terminationStatus
 }
 
 func runLLICommand(source: String, fileName: String) throws {
@@ -1628,6 +1644,8 @@ func runLLICommand(source: String, fileName: String) throws {
 
     try process.run()
     process.waitUntilExit()
+    // 同上（`runCompileCommand` 的注释有完整理由）：状态必须交出去，⛔ 不能丢。
+    exit(childExitStatus(of: process))
 }
 
 func handleSemanticError(_ error: SemanticError) {

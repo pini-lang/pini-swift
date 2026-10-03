@@ -85,6 +85,39 @@ struct SplitPathTests {
         }
     }
 
+    // MARK: - ①′ 定界符**语义**（2026-10-03 · 甲路线）
+
+    @Test("split 的定界符语义两路一致：空定界符 ⇒ 逐字素 · 多字符 ⇒ 子串匹配")
+    func splitDelimiterSemanticsMatchInterpreter() throws {
+        guard requireCLI(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
+
+        let file = fixtureFile("split-delimiter-semantics")
+        let interpreted = try launch(["run", file.path])
+        let compiled = try launch(["run-llvm", file.path])
+
+        try #require(interpreted.status == 0, "解释器未跑通：\(interpreted.stderr)")
+        try #require(
+            compiled.status == 0,
+            "LLVM 后端未跑通（rc=\(compiled.status)）：\(compiled.stderr)")
+
+        // 非退化锚点：判据必须在**这一组真的被拆过**时才有意义。
+        // ⚠️ 旧实现（`strtok`）在空定界符上返回**整串**，所以 `4-empty-delim|len=2` 会变 1。
+        #expect(
+            interpreted.stdout.contains("1-single|len=3\n"),
+            "夹具自身没跑出预期形状 ⇒ 本判据会空转：\(interpreted.stdout.debugDescription)")
+        #expect(
+            interpreted.stdout.contains("4-empty-delim|len=2\n"),
+            "夹具缺少空定界符那一组 ⇒ 本判据会空转：\(interpreted.stdout.debugDescription)")
+
+        #expect(
+            compiled.stdout == interpreted.stdout,
+            """
+            split 的定界符语义两路应逐字节相同（空定界符 ⇒ 逐字素 · 多字符 ⇒ 子串匹配 · 省略空子序列）。
+              · 解释器：\(interpreted.stdout.debugDescription)
+              · LLVM  ：\(compiled.stdout.debugDescription)
+            """)
+    }
+
     // MARK: - ② 没有行为签名的那条：判产出的 IR
 
     @Test("切分路径的 malloc 尺寸不得直接取 strlen 结果（终止符要位置）")
@@ -101,7 +134,10 @@ struct SplitPathTests {
             let ir = try String(contentsOf: out, encoding: .utf8)
 
             // 非退化：本判据只在切分路径真的被发射时才有意义。
-            #expect(ir.contains("@strtok"), "\(fixture)：产物里没有切分路径 ⇒ 本判据会空转")
+            // ⚠️ 锚点 2026-10-03 换过：改前是 `@strtok`，而切分自本批起**委派给运行时段**
+            //    （`@bk_string_split`），`@strtok` 只剩头部的**无条件声明** ⇒ 那个锚点从此
+            //    恒真、判据会退化。新锚点认**调用**，不认声明。
+            #expect(ir.contains("@bk_string_split"), "\(fixture)：产物里没有切分路径 ⇒ 本判据会空转")
 
             let offenders = Self.mallocSizesTakenStraightFromStrlen(in: ir)
             #expect(

@@ -179,6 +179,19 @@ public final class IREmitter {
     /// 第 22/23/36/37 条登记的在案偏离）。运行时段用的是 `String` / `Character` ——
     /// 与解释器同一个模型。⚠️ 语义一律对着解释器那一路写，⛔ 不在这里各造一套。
     private var usesStringShims = false
+
+    /// 是否发射过**把栈上拼出来的串复制到堆**（`strdup`）—— 条件 declare。
+    ///
+    /// ⭐ 2026-10-03（甲路线）：插值与 `join` 的结果会离开产出它的帧，而两者都在本帧的
+    /// `alloca` 上拼串 ⇒ 交出的是**悬垂的栈地址**（详见 `heapCopyOfStackString` 的说明）。
+    /// 与 LazyRef / 文件 IO / 字符族同规 —— **条件 declare**，不用这两条路径的程序
+    /// 其 IR **逐字节不变**。
+    ///
+    /// ⚠️ 这条 declare **不能**放进无条件头部：自举侧自己的发射器（P3 那一格）发的是
+    /// 同一份头部清单，而它**还没有**这条堆复制 ⇒ 无条件发出会让「宿主发射器 ⇄ 自举发射器
+    /// 产物逐字节相同」那条门禁**当场变红**（实测：就只差这一行）。
+    /// ⛔ 本批对自举仓 `src/` 零改动（甲路线的范围外），所以这里取的是**按需发出**。
+    private var usesHeapStringCopy = false
     /// 是否发射过**名义箱的分配**（`bk_nominal_alloc`）—— 只有真构造过名义值的模块才带它的 declare。
     ///
     /// ⭐ 2026-10-01「名义箱上堆」：结构体 / 对象 / 枚举的箱从栈 `alloca` 搬到运行时段堆分配
@@ -520,6 +533,11 @@ public final class IREmitter {
             tail += "declare ptr @bk_string_upper(ptr)\n"
             tail += "declare ptr @bk_string_lower(ptr)\n"
             tail += "declare i32 @bk_string_contains(ptr, ptr)\n"
+            tail += "declare ptr @bk_string_split(ptr, ptr)\n"
+        }
+        // 栈串搬到堆（`strdup`）：只有真走插值 / `join` 的模块才带（理由见字段处注释）。
+        if usesHeapStringCopy {
+            tail += "declare ptr @strdup(ptr)\n"
         }
         // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
         // 只有真发过派发的模块才带。⚠️ 观测符号 `bk_task_state` **不在这里** ——
@@ -2220,7 +2238,15 @@ public final class IREmitter {
                 let value = emitExpr(payload)
                 let fieldPtr = builder.freshTemp()
                 bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 2]) + "\n"
-                bodyIR += builder.fmtStore(value: value.ssaName, type: payloadTypes[index].llvmSpelling, ptr: fieldPtr) + "\n"
+                // ⚠️⭐ 载荷槽是**持有位置** ⇒ 与 `.fieldStore` **同一规**：别名（`.load` 出来的
+                // 名义值）在这里必须 retain（对象/枚举是引用语义 = 共享），结构体则深拷贝。
+                // ⛔ 这里曾经是**裸 store** —— 于是 `acc = c(tail = acc,)` 这种形态（自举的
+                // `stringListAdd` / `sectionNames` 累积，模块层扫描全靠它）会这样烂掉：
+                // 新箱的载荷存着旧箱的指针、却没有多一份份额，紧接着「写前 release 旧值」
+                // 把旧箱收回 ⇒ 新箱里悬垂。实测（2026-10-03·甲路线）读数
+                // `Pini runtime error: match value matched no case`，非确定性 rc=133/134/139。
+                let stored = emitValueForStorage(payload, value, type: payloadTypes[index])
+                bodyIR += builder.fmtStore(value: stored.ssaName, type: payloadTypes[index].llvmSpelling, ptr: fieldPtr) + "\n"
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
 
@@ -2298,6 +2324,10 @@ public final class IREmitter {
         case .stringSplit(let receiver, let delim, let type):
             let receiverValue = emitExpr(receiver)
             let delimValue = emitExpr(delim)
+            // ⚠️ 本条**必须**置位：委派到运行时段之后，declare 靠这个标志出现
+            // （旧实现是内联的，故此前不置位也对）。漏了它 ⇒ 产物里只有 `call`，
+            // 没有 `declare` ⇒ clang 报 `use of undefined value '@bk_string_split'`。
+            usesStringShims = true
             return emitStringSplit(source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
 
         case .arrayJoin(let receiver, let separator):
@@ -5226,138 +5256,26 @@ public final class IREmitter {
         return IRValue(llvmType: "i8*", ssaName: converted)
     }
 
-    /// `s.split(delim)` — a real `Array<String>`: two strtok passes over
-    /// copies of the source (pass 1 counts tokens so bk_array_create gets
-    /// the exact length; pass 2 fills), each token strdup'd into the array
-    /// via bk_array_set (raw-ptr tag 3). strtok skips empty tokens —
-    /// corpus-identical with the interpreter's sunk split.
+    /// `s.split(delim)` — a real `Array<String>`, delegated to the runtime.
+    ///
+    /// The runtime call mirrors `IRExecutor`'s `.split` branch line for line,
+    /// which is where the authority sits: an empty delimiter yields one
+    /// element per grapheme; otherwise the delimiter is matched as a
+    /// **substring** and empty subsequences are omitted.
+    ///
+    /// ⚠️ It used to be emitted inline on top of two `strtok` passes. `strtok`
+    /// treats the delimiter as a character *set* and matches nothing at all
+    /// when that set is empty, so `"ab\ncd".split("")` produced one element
+    /// instead of five. The self-host `common` layer builds its per-grapheme
+    /// atom list with exactly that call (`textAtoms = text.split("")`), so the
+    /// whole resource table parsed as empty on the native path — measured, and
+    /// that is what this delegation fixes.
     private func emitStringSplit(source: String, delim: String, type: IRType) -> IRValue {
-        let slen = builder.freshTemp()
-        bodyIR += " \(slen) = call i64 @strlen(ptr \(source))\n"
-        // Room for the NUL copySource writes at index slen. Sized from the
-        // source, not from a constant: the caller is routinely a whole file's
-        // text (the selfhost scanner splits file content on newline), and a
-        // fixed buffer overruns on it -- measured, ASan reports the copy as a
-        // SEGV on a wild address.
-        let slenRoom = builder.freshTemp()
-        bodyIR += " \(slenRoom) = add i64 \(slen), 1\n"
-
-        func copySource(_ buf: String) {
-            bodyIR += " call ptr @memcpy(ptr \(buf), ptr \(source), i64 \(slen))\n"
-            let nl = builder.freshTemp()
-            bodyIR += " \(nl) = getelementptr i8, ptr \(buf), i64 \(slen)\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: nl) + "\n"
-        }
-
-        // Pass 1: count tokens.
-        let countBuf = builder.freshTemp()
-        bodyIR += " \(countBuf) = call ptr @malloc(i64 \(slenRoom))\n"
-        copySource(countBuf)
-        let counterSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: counterSlot, type: "i32") + "\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: counterSlot) + "\n"
-        let t1 = builder.freshTemp()
-        bodyIR += " \(t1) = call ptr @strtok(ptr \(countBuf), ptr \(delim))\n"
-        let tokSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: tokSlot, type: "ptr") + "\n"
-        bodyIR += builder.fmtStore(value: t1, type: "ptr", ptr: tokSlot) + "\n"
-        let id = builder.freshLabel()
-        let countHdr = "splitc.hdr.\(id)"
-        let countBody = "splitc.body.\(id)"
-        let countEnd = "splitc.end.\(id)"
-        bodyIR += builder.fmtBr(labelName: countHdr) + "\n"
-        bodyIR += "\(countHdr):\n"
-        let curTok = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: curTok, type: "ptr", ptr: tokSlot) + "\n"
-        let done = builder.freshTemp()
-        bodyIR += " \(done) = icmp eq ptr \(curTok), null\n"
-        bodyIR += builder.fmtCondBr(cond: done, thenLabelName: countEnd, elseLabelName: countBody) + "\n"
-        bodyIR += "\(countBody):\n"
-        let curCount = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: curCount, type: "i32", ptr: counterSlot) + "\n"
-        let nextCount = builder.freshTemp()
-        bodyIR += " \(nextCount) = add i32 \(curCount), 1\n"
-        bodyIR += builder.fmtStore(value: nextCount, type: "i32", ptr: counterSlot) + "\n"
-        let nextTok = builder.freshTemp()
-        bodyIR += " \(nextTok) = call ptr @strtok(ptr null, ptr \(delim))\n"
-        bodyIR += builder.fmtStore(value: nextTok, type: "ptr", ptr: tokSlot) + "\n"
-        bodyIR += builder.fmtBr(labelName: countHdr) + "\n"
-        bodyIR += "\(countEnd):\n"
-
-        let tokenCount = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: tokenCount, type: "i32", ptr: counterSlot) + "\n"
-        let create = builder.freshTemp()
-        bodyIR += " \(create) = call ptr @bk_array_create(i32 \(tokenCount))\n"
-        let handleSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
-        let createHandle = builder.freshTemp()
-        bodyIR += " \(createHandle) = bitcast ptr \(create) to %bk_array*\n"
-        bodyIR += builder.fmtStore(value: createHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
-
-        // Pass 2: fill.
-        let fillBuf = builder.freshTemp()
-        bodyIR += " \(fillBuf) = call ptr @malloc(i64 \(slenRoom))\n"
-        copySource(fillBuf)
-        let f1 = builder.freshTemp()
-        bodyIR += " \(f1) = call ptr @strtok(ptr \(fillBuf), ptr \(delim))\n"
-        let fillTokSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: fillTokSlot, type: "ptr") + "\n"
-        bodyIR += builder.fmtStore(value: f1, type: "ptr", ptr: fillTokSlot) + "\n"
-        let idxSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
-
-        let fid = builder.freshLabel()
-        let fillHdr = "splitf.hdr.\(fid)"
-        let fillBody = "splitf.body.\(fid)"
-        let fillEnd = "splitf.end.\(fid)"
-        bodyIR += builder.fmtBr(labelName: fillHdr) + "\n"
-        bodyIR += "\(fillHdr):\n"
-        let fillTok = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: fillTok, type: "ptr", ptr: fillTokSlot) + "\n"
-        let fillDone = builder.freshTemp()
-        bodyIR += " \(fillDone) = icmp eq ptr \(fillTok), null\n"
-        bodyIR += builder.fmtCondBr(cond: fillDone, thenLabelName: fillEnd, elseLabelName: fillBody) + "\n"
-        bodyIR += "\(fillBody):\n"
-        let dupLen = builder.freshTemp()
-        bodyIR += " \(dupLen) = call i64 @strlen(ptr \(fillTok))\n"
-        // +1 for the NUL strcpy writes: allocating strlen alone leaves the
-        // terminator one byte past the region. Measured, not reasoned about —
-        // ASan reports "WRITE of size 85 -> 84-byte region" in makeScanner.
-        let dupRoom = builder.freshTemp()
-        bodyIR += " \(dupRoom) = add i64 \(dupLen), 1\n"
-        let dupBuf = builder.freshTemp()
-        bodyIR += " \(dupBuf) = call ptr @malloc(i64 \(dupRoom))\n"
-        bodyIR += " call ptr @strcpy(ptr \(dupBuf), ptr \(fillTok))\n"
-        let idx = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: idx, type: "i32", ptr: idxSlot) + "\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = call ptr @bk_string_split(ptr \(source), ptr \(delim))\n"
         let handle = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: handle, type: "%bk_array*", ptr: handleSlot) + "\n"
-        let handleRaw = builder.freshTemp()
-        bodyIR += " \(handleRaw) = bitcast %bk_array* \(handle) to ptr\n"
-        let box = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: box, type: "i8*") + "\n"
-        bodyIR += builder.fmtStore(value: dupBuf, type: "i8*", ptr: box) + "\n"
-        let newRaw = builder.freshTemp()
-        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(handleRaw), i32 \(idx), ptr \(box), i32 8, i32 3)\n"
-        let newHandle = builder.freshTemp()
-        bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %bk_array*\n"
-        bodyIR += builder.fmtStore(value: newHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
-        let idxNext = builder.freshTemp()
-        bodyIR += " \(idxNext) = add i32 \(idx), 1\n"
-        bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
-        let nextFillTok = builder.freshTemp()
-        bodyIR += " \(nextFillTok) = call ptr @strtok(ptr null, ptr \(delim))\n"
-        bodyIR += builder.fmtStore(value: nextFillTok, type: "ptr", ptr: fillTokSlot) + "\n"
-        bodyIR += builder.fmtBr(labelName: fillHdr) + "\n"
-        bodyIR += "\(fillEnd):\n"
-        // Both scratch copies are dead by here (strtok rewrote them in place).
-        // The token strings themselves are strdup'd and belong to the array.
-        bodyIR += " call ptr @free(ptr \(countBuf))\n"
-        bodyIR += " call ptr @free(ptr \(fillBuf))\n"
-        let finalHandle = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: finalHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
-        return IRValue(llvmType: "%bk_array*", ssaName: finalHandle)
+        bodyIR += " \(handle) = bitcast ptr \(raw) to %bk_array*\n"
+        return IRValue(llvmType: "%bk_array*", ssaName: handle)
     }
 
     /// `arr.join(sep)`: string-array elements strcat'd with sep into a
@@ -5407,7 +5325,35 @@ public final class IREmitter {
         bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
         bodyIR += builder.fmtBr(labelName: header) + "\n"
         bodyIR += "\(endLabel):\n"
-        return IRValue(llvmType: "i8*", ssaName: buf)
+        // ⚠️ 结果会**离开本帧**（`let s = xs.join(",")` 之后 s 进变量槽 / 进箱 / 被返回）
+        // ⇒ 交出前必须复制到堆，理由见 `heapCopyOfStackString`。
+        return heapCopyOfStackString(buf)
+    }
+
+    /// 把**栈上拼出来的串**交出去之前复制到堆（返回堆指针）。
+    ///
+    /// ⚠️⭐ 为什么必须复制（2026-10-03 · 甲路线实测）：**插值**与 **`join`** 都在
+    /// **本帧的栈缓冲**（`alloca i8, i64 4096`）上拼串，而它们的结果**会离开本帧**。
+    /// 自举词法层原文就是 `self.emit("int", "\(parseDecimal(wholeText))")` —— 那个插值串
+    /// 随即被存进 Token 的 `text` 字段（**堆上的箱**，活得比本帧久）⇒ 帧一退，
+    /// 字段里留下的是**悬垂的栈地址**。
+    ///
+    /// 实测症状（`type-seg4b`）：`parseDecimal` 里 `len(text)`（`bk_string_count`）与
+    /// `text[i]`（`bk_string_char_at`）读**同一个指针**却给出不同答案（前者 ≥1、后者 0）
+    /// ⇒ `string index out of range` —— 因为两次读之间栈被复用覆写了。
+    /// 这也解释了「剩余红层**非确定性**」：哪一层先撞上，取决于栈什么时候被谁复用。
+    /// 解释器没有这个问题（字符串是值，帧退不掉内容）。
+    ///
+    /// ⛔ **已知边界**：产物里**没有任何 `free`**（实测 0 处）⇒ 堆串只增不减。
+    /// 字符串表示是裸 C 指针、不带产权，本批只修「活不过帧」这一条；泄漏另立。
+    ///
+    /// ⚠️ 本函数置位 `usesHeapStringCopy` —— **这条 declare 是条件发出的**，⛔ 别把置位删掉
+    /// （删了产物里就只有 `call` 没有 `declare`，clang 报 `use of undefined value`）。
+    private func heapCopyOfStackString(_ buf: String) -> IRValue {
+        usesHeapStringCopy = true
+        let dup = builder.freshTemp()
+        bodyIR += " \(dup) = call ptr @strdup(ptr \(buf))\n"
+        return IRValue(llvmType: "i8*", ssaName: dup)
     }
 
     /// String interpolation: pieces converted to C strings, strcat'd into a
@@ -5420,7 +5366,7 @@ public final class IREmitter {
             let piece = emitStringPiece(part)
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(piece.ssaName))\n"
         }
-        return IRValue(llvmType: "i8*", ssaName: buf)
+        return heapCopyOfStackString(buf)
     }
 
     /// One interpolation piece as a C string pointer. Buffers for scalars
