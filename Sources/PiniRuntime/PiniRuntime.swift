@@ -104,18 +104,32 @@ private func _bkEnsureUnique(_ h: UnsafeMutableRawPointer) -> UnsafeMutableRawPo
     return _bkRegister(box.cowCopy())
 }
 
-/// 不透明句柄背后的真实存储。
+/// 数组的**元素存储**——一块可由多个数组 box **共享**的槽表。
+///
+/// 为何要把槽表从 box 里抽出来单独承载（#74）：`append` 的契约是**产出新数组、输入数组不受影响**，
+/// 而语言层自建容器的发射形态是 `append` → `destroy(旧句柄)` → `store(新句柄)`
+/// （见 `IREmitter.emitArrayAppend`）⇒ 旧句柄**当场就被丢掉**。逐个深拷的旧实现于是为
+/// n 次追加付 n²/2 次 `_bkAllocBox`（实测：三张 8192 项表在原生臂上 45 s，比解释路径慢 11×）。
+/// 抽出存储后 `append` 分两条路：
+///   ① **存储独占**（`refs == 1`，即输入句柄是它唯一的持有者）⇒ **就地增长**（容量不足则倍增），
+///      旧元素一个都不动 ⇒ 开销摊销 O(1)，元素 box 总数由 n²/2 降为 n；
+///   ② 存储被共享 ⇒ 走原有那条逐元素深拷路（语义与改动前逐字相同）。
+/// ⚠️ 两条路下**输入数组的长度与内容都不变**：长度记在 box 的 `count` 上，⛔ 不在存储上
+/// （容量可因追加而大于长度，也可被更长的兄弟 box 共享）。
+/// ⚠️ 写入路径（`bk_array_set` / `bk_array_ensure_unique_at`）动存储前先按 `refs` 分裂
+/// （`_bkArraySplitStorage`）⇒「共享存储」对语言层不可见，语义与逐次深拷一致。
 ///
 /// 所有对外函数经 `@_cdecl` 导出为 C ABI：句柄为 `void*`（LLVM IR 中 `ptr`），
 /// 在模块内以 `%bk_array*`（= `type { ptr }`）承载，仅作类型区分；IR 中从不解引用，
 /// 所有访问经下方 `@bk_array_*` 调用完成。C ABI 为 MUST 硬约束（见 并发后端抽象），
 /// 否则阶段3 纯 libc 重写时被锁死。
-private final class _BkArrayBox: _BkBox {
+private final class _BkArrayStorage {
     /// #46-D D1：装箱-raw 存储——每槽是一个由运行时拥有的堆 box（`UnsafeMutableRawPointer`），
     /// box 内 memcpy 存元素原始字节。无论元素类型是 Int/F64/Bool/String 还是嵌套数组，
     /// 均以 `ptr` 承载，与 并发后端抽象「一切经 C ABI 的 `ptr`」哲学一致，且天然支持任意宽度元素
-    /// （由 codegen 在 `@bk_array_set` 时传入 `elemBytes`）。box 的生命周期由本 box 持有，
-    /// `deinit` 时统一释放，配合 `bk_array_destroy` / `bk_runtime_cleanup` 实现精确/进程级回收。
+    /// （由 codegen 在 `@bk_array_set` 时传入 `elemBytes`）。元素 box 的生命周期由**本存储**持有，
+    /// 最后一个持有者离开时统一释放（`releaseAllElements`），配合 `bk_array_destroy` /
+    /// `bk_runtime_cleanup` 实现精确/进程级回收。
     var elements: [UnsafeMutableRawPointer?]
     /// #46-D D4：每槽内容的类型标签（与 `_BkTag` 对齐）。COW 深拷时据此识别嵌套句柄元素
     /// 并递增其 share count——否则字节复制会让两个数组共享同一内层句柄，
@@ -123,18 +137,38 @@ private final class _BkArrayBox: _BkBox {
     var tags: [Int32]
     /// 每槽字节宽度（深拷需要，且与 `elemBytes` 一致）。
     var widths: [Int]
+    /// 持有本存储的 **box 数**（由 `_BkArrayBox` 的初始化器与反初始化器成对增减）。
+    /// ⛔ 不借 ARC / `isKnownUniquelyReferenced` 判定 —— 与 box 的 `shares` 同源（见件头那条
+    /// 「LLVM 层的复制不经过 ARC」）：要的是一个能被判据数出来的计数，不是运行时的猜测。
+    var refs: Int = 0
 
-    init(count: Int) {
-        // 上限保护：负数长度按 0 处理，避免越界分配。
-        let n = max(count, 0)
+    init(capacity: Int) {
+        // 上限保护：负数容量按 0 处理，避免越界分配。
+        let n = max(capacity, 0)
         elements = Array(repeating: nil, count: n)
         tags = Array(repeating: 0, count: n)
         widths = Array(repeating: 0, count: n)
     }
 
-    override func cowCopy() -> _BkBox {
-        let copy = _BkArrayBox(count: elements.count)
-        for i in elements.indices {
+    /// 扩容到至少容纳 `needed` 个槽（容量倍增；增量追加 ⇒ 单次摊销 O(1)）。
+    /// ⚠️ **只搬指针**：已存在的元素 box 继续原地被引用，所有权不变
+    /// —— ⛔ **不**为它们重新分配 box，那正是改动前那条二次方路径。
+    func grow(to needed: Int) {
+        var capacity = max(elements.count, 1)
+        while capacity < needed { capacity *= 2 }
+        guard capacity > elements.count else { return }
+        elements.append(contentsOf: Array(repeating: nil, count: capacity - elements.count))
+        tags.append(contentsOf: Array(repeating: 0, count: capacity - tags.count))
+        widths.append(contentsOf: Array(repeating: 0, count: capacity - widths.count))
+    }
+
+    /// 深拷前 `count` 个槽成一块**新存储**（COW 分裂 / 共享路专用）。
+    /// 与 `grow` 的分工：这里**必须**为每个元素重新分配 box —— 两块存储将各自拥有它们，
+    /// 一侧释放不得动到另一侧的槽；并对 `tag == .handle` 的嵌套元素 retain 一份（配对 `deinit`）。
+    func deepCopy(count: Int) -> _BkArrayStorage {
+        let n = max(count, 0)
+        let copy = _BkArrayStorage(capacity: n)
+        for i in 0..<n {
             copy.tags[i] = tags[i]
             copy.widths[i] = widths[i]
             guard let src = elements[i], widths[i] > 0 else { continue }
@@ -144,13 +178,66 @@ private final class _BkArrayBox: _BkBox {
         return copy
     }
 
-    deinit {
+    /// 释放本存储拥有的全部元素 box（**最后一个**持有者离开时调用）。
+    /// ⚠️ 遍历**整个容量**（⛔ 不是某个 box 的 `count`）：被追加过的槽可能超出该持有者的长度，
+    /// 却仍由本存储拥有；漏掉即泄漏、多放即双重释放。
+    func releaseAllElements() {
         for i in elements.indices {
             guard let b = elements[i] else { continue }
             _bkReleaseIfHandle(b, tags[i])
             b.deallocate()
         }
     }
+}
+
+/// 数组句柄背后的真实存储：**长度**（`count`）+ 一块（可与兄弟 box 共享的）`_BkArrayStorage`。
+private final class _BkArrayBox: _BkBox {
+    /// 元素存储。⚠️ 可与 `append` 产出的兄弟 box **共享**（`refs > 1`）⇒ 写入前须先分裂。
+    var storage: _BkArrayStorage
+    /// 本数组的**长度**（元素个数）。
+    /// ⚠️ 与 `storage.elements.count`（**容量**）不是一回事：容量可因追加而更大，也可被更长的
+    /// 兄弟 box 共享 ⇒ 一切越界判定（get / set / ensure_unique_at）**只认本字段**。
+    var count: Int
+
+    init(count: Int) {
+        let n = max(count, 0)
+        storage = _BkArrayStorage(capacity: n)
+        self.count = n
+        storage.refs += 1
+    }
+
+    /// 承接一块已有存储（追加的就地增长路径 · 深拷之后的绑定）。
+    /// ⚠️ 与 `init(count:)` 同规：**初始化即计入一份 `refs`**，与 `deinit` 成对。
+    init(reusing storage: _BkArrayStorage, count: Int) {
+        self.storage = storage
+        self.count = count
+        storage.refs += 1
+    }
+
+    override func cowCopy() -> _BkBox {
+        _BkArrayBox(reusing: storage.deepCopy(count: count), count: count)
+    }
+
+    deinit {
+        storage.refs -= 1
+        guard storage.refs <= 0 else { return }
+        storage.releaseAllElements()
+    }
+}
+
+/// 写入前确保 box 的元素存储**独占**：共享（`refs > 1`）则深拷出一块私有存储并就地换装。
+///
+/// ⭐ 与 box 那层的 `_bkEnsureUnique`（变量槽别名）**是两件事**：那一层管「同一句柄被两个变量槽
+/// 持有」，这一层管「`append` 产出的新容器与输入容器共享同一块存储」。两层都必须守，
+/// 缺任一层就会出现「改一个数组、另一个跟着变」。
+/// ⚠️ 就地改写 `box.storage`（⛔ 不换句柄）⇒ 调用方持有的句柄仍然有效。
+private func _bkArraySplitStorage(_ box: _BkArrayBox) {
+    guard box.storage.refs > 1 else { return }
+    let old = box.storage
+    let fresh = old.deepCopy(count: box.count)
+    fresh.refs = 1
+    box.storage = fresh
+    old.refs -= 1
 }
 
 // MARK: - 数组运行时（D0 最小覆盖：I32 元素特化）
@@ -198,14 +285,15 @@ public func bk_array_ensure_unique_at(_ arr: UnsafeMutableRawPointer?, _ i: Int3
     guard box.shares <= 1 else {
         bk_panic("Pini runtime error: bk_array_ensure_unique_at requires a unique parent handle (shares=\(box.shares))")
     }
+    _bkArraySplitStorage(box)
     let idx = Int(i)
-    guard idx >= 0, idx < box.elements.count else {
-        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.elements.count))")
+    guard idx >= 0, idx < box.count else {
+        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
     }
-    guard let slot = box.elements[idx] else {
+    guard let slot = box.storage.elements[idx] else {
         bk_panic("Pini runtime error: array element \(idx) is uninitialized")
     }
-    guard _BkTag(rawValue: box.tags[idx]) == .handle else {
+    guard _BkTag(rawValue: box.storage.tags[idx]) == .handle else {
         bk_panic("Pini runtime error: array element \(idx) is not a nested container handle")
     }
     let old = slot.load(as: UnsafeMutableRawPointer.self)
@@ -239,20 +327,22 @@ public func bk_array_create(_ len: Int32) -> UnsafeMutableRawPointer {
 public func bk_array_len(_ arr: UnsafeMutableRawPointer?) -> Int32 {
     guard let arr else { return 0 }
     let box = Unmanaged<_BkArrayBox>.fromOpaque(arr).takeUnretainedValue()
-    return Int32(box.elements.count)
+    return Int32(box.count)
 }
 
 /// 读取下标 `i` 处的元素 box（返回运行时拥有的稳定 `ptr`，codegen 据此 `load T`）。
 /// 越界或槽未初始化经 `bk_panic` 终止（与解释器越界抛错一致）。
+/// ⚠️ 稳定期：直到本数组的**该槽被重写**（`bk_array_set`）或本数组被释放为止
+/// —— 与兄弟数组共享存储的写入**不会**动到它（那条路会先分裂成私有存储）。
 @_cdecl("bk_array_get")
 public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer {
     guard let arr else { bk_panic("Pini runtime error: array handle is null") }
     let box = Unmanaged<_BkArrayBox>.fromOpaque(arr).takeUnretainedValue()
     let idx = Int(i)
-    guard idx >= 0, idx < box.elements.count else {
-        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.elements.count))")
+    guard idx >= 0, idx < box.count else {
+        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
     }
-    guard let ptr = box.elements[idx] else {
+    guard let ptr = box.storage.elements[idx] else {
         bk_panic("Pini runtime error: array element \(idx) is uninitialized")
     }
     return ptr
@@ -264,7 +354,9 @@ public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeM
 ///
 /// #46-D D4（COW）：写前先 `_bkEnsureUnique` —— 句柄被共享（`shares > 1`）时深拷分裂，
 /// 写入落在**副本**上，原 box 不受影响；返回实际被写入的句柄，**调用方必须写回变量槽**。
-/// `elemTag` 供深拷时识别嵌套句柄元素（见 `_BkArrayBox.tags`）。
+/// #74：再叠一层 `_bkArraySplitStorage` —— 追加产出的兄弟数组与本数组共享元素存储时同样要分裂
+/// （两层分别对应「变量槽别名」与「容器存储共享」，见 `_bkArraySplitStorage`）。
+/// `elemTag` 供深拷时识别嵌套句柄元素（见 `_BkArrayStorage.tags`）。
 @_cdecl("bk_array_set")
 public func bk_array_set(
     _ arr: UnsafeMutableRawPointer?, _ i: Int32, _ src: UnsafeRawPointer,
@@ -273,19 +365,21 @@ public func bk_array_set(
     guard let arr else { return nil }
     let target = _bkEnsureUnique(arr)
     let box = Unmanaged<_BkArrayBox>.fromOpaque(target).takeUnretainedValue()
+    // ⭐ 两层分裂都必须在写入**之前**：一层管变量槽别名（上一行），一层管容器存储共享（本行）。
+    _bkArraySplitStorage(box)
     let idx = Int(i)
-    guard idx >= 0, idx < box.elements.count else {
-        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.elements.count))")
+    guard idx >= 0, idx < box.count else {
+        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
     }
     let n = Int(elemBytes)
     guard n > 0 else { return target }
-    if let old = box.elements[idx] {
-        _bkReleaseIfHandle(old, box.tags[idx])
+    if let old = box.storage.elements[idx] {
+        _bkReleaseIfHandle(old, box.storage.tags[idx])
         old.deallocate()
     }
-    box.elements[idx] = _bkAllocBox(src, n)
-    box.tags[idx] = elemTag
-    box.widths[idx] = n
+    box.storage.elements[idx] = _bkAllocBox(src, n)
+    box.storage.tags[idx] = elemTag
+    box.storage.widths[idx] = n
     return target
 }
 
@@ -293,8 +387,12 @@ public func bk_array_set(
 ///
 /// 与语言层内建数组方法的 `append` 同契约：追加**不就地**发生，调用方必须用返回值替换原句柄
 /// （`元素 = 元素.append(任务)`）。与 `bk_array_set` 的分工是刻意的 ——
-/// 后者是**写既有容器**（故写前必须 `_bkEnsureUnique`），前者是**产出新容器**
-/// （故天然不与输入共享存储，无需分裂）。
+/// 后者是**写既有容器**（故写前必须分裂），前者是**产出新容器**。
+/// ⚠️⭐ 与改动前的一处**实质差别**（#74）：新数组可能仍与输入**共享元素存储**（`refs > 1`）
+/// —— 因为「输入不受影响」只要求**长度与既有元素**不变，而共享的槽本就没有人会写（长度在
+/// box 的 `count` 上，追加写在 ≥ 输入长度的格）。故**写入路径必须补一层 `_bkArraySplitStorage`**
+/// （`bk_array_set` / `bk_array_ensure_unique_at` 都已带上），否则会退化成「改一个数组、
+/// 另一个跟着变」。⛔ 别把这里的共享读成「省掉了分裂义务」。
 ///
 /// 元素宽度与 tag 由 codegen 的元素 ABI 传入（与 `bk_array_set` 同一对参数），
 /// 故本函数对元素类型无关：新元素按 `elemBytes` 字节装箱，`elemTag` 供嵌套句柄识别。
@@ -314,20 +412,40 @@ public func bk_array_append(
             "Pini runtime error: bk_array_append needs a positive element width (from the codegen element ABI)")
     }
     let source = arr.map { Unmanaged<_BkArrayBox>.fromOpaque($0).takeUnretainedValue() }
-    let count = source?.elements.count ?? 0
+    let count = source?.count ?? 0
+    // ⭐ #74 的分岔点。**存储独占**（`refs == 1` ⇒ 输入句柄是这块存储唯一的持有者）⇒ 就地增长：
+    // 旧元素一个都不动，只有追加的那一格是新分配的（容量不足时倍增）⇒ 单次摊销 O(1)，
+    // 元素 box 总数由 n²/2 降为 n。⛔ 判据不是「长度 == 容量」：容量可因先前的追加而更大，
+    // 那些槽仍由本存储拥有（故先把该格的旧内容释放掉，免得泄漏）。
+    // ⚠️ 就地增长的**前提**是「输入数组不受影响」仍成立：长度在 box 的 `count` 上，
+    // 写入的槽恒 ≥ 输入的长度 ⇒ 输入侧的长度与元素（0..<count）逐字节不变。
+    if let source, source.storage.refs == 1 {
+        let storage = source.storage
+        storage.grow(to: count + 1)
+        if let old = storage.elements[count] {
+            _bkReleaseIfHandle(old, storage.tags[count])
+            old.deallocate()
+        }
+        storage.elements[count] = _bkAllocBox(src, width)
+        storage.tags[count] = elemTag
+        storage.widths[count] = width
+        return _bkRegister(_BkArrayBox(reusing: storage, count: count + 1))
+    }
+    // 存储被共享（或输入为空句柄）：走逐元素深拷那条路 —— 新数组拿到一块**自己独占**的存储，
+    // 与输入侧互不相干（语义与改动前逐字相同；重复此路也不构成二次方，因为每次只增一格）。
     let grown = _BkArrayBox(count: count + 1)
     if let source {
         for i in 0..<count {
-            grown.tags[i] = source.tags[i]
-            grown.widths[i] = source.widths[i]
-            guard let elem = source.elements[i], source.widths[i] > 0 else { continue }
-            grown.elements[i] = _bkAllocBox(elem, source.widths[i])
-            _bkRetainIfHandle(elem, source.tags[i])
+            grown.storage.tags[i] = source.storage.tags[i]
+            grown.storage.widths[i] = source.storage.widths[i]
+            guard let elem = source.storage.elements[i], source.storage.widths[i] > 0 else { continue }
+            grown.storage.elements[i] = _bkAllocBox(elem, source.storage.widths[i])
+            _bkRetainIfHandle(elem, source.storage.tags[i])
         }
     }
-    grown.elements[count] = _bkAllocBox(src, width)
-    grown.tags[count] = elemTag
-    grown.widths[count] = width
+    grown.storage.elements[count] = _bkAllocBox(src, width)
+    grown.storage.tags[count] = elemTag
+    grown.storage.widths[count] = width
     return _bkRegister(grown)
 }
 
@@ -957,10 +1075,10 @@ private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     for (index, item) in items.enumerated() {
         var pointer: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(strdup(item))
         withUnsafeBytes(of: &pointer) { raw in
-            box.elements[index] = _bkAllocBox(raw.baseAddress!, MemoryLayout<UnsafeMutableRawPointer?>.size)
+            box.storage.elements[index] = _bkAllocBox(raw.baseAddress!, MemoryLayout<UnsafeMutableRawPointer?>.size)
         }
-        box.tags[index] = _BkTag.str.rawValue
-        box.widths[index] = MemoryLayout<UnsafeMutableRawPointer?>.size
+        box.storage.tags[index] = _BkTag.str.rawValue
+        box.storage.widths[index] = MemoryLayout<UnsafeMutableRawPointer?>.size
     }
     return _bkRegister(box)
 }
