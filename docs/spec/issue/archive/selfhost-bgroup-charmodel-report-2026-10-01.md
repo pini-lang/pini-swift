@@ -2,7 +2,7 @@
 
 **日期**：2026-10-01
 **授权**：`auth-74`（元仓 `authorizations.json`）
-**前序**：`docs/spec/issue/selfhost-aot-gate-report-2026-10-01.md`（甲路线第一批：链路打通、语义未通）
+**前序**：`docs/spec/issue/archive/selfhost-aot-gate-report-2026-10-01.md`（甲路线第一批：链路打通、语义未通）
 
 ---
 
@@ -146,7 +146,7 @@ main|func() -> ():
 > 而同帧对照**两路全一致** ⇒ 病根不是「结构体缺值语义拷贝」，是「**名义箱与捕获槽都分配在创建帧里**」。
 > ⇒ §5.4 的三条修法（`sret` / `malloc` / 聚合值内联）**都只覆盖结构体**，对**对象与枚举**（它们在解释器里是**引用语义**、必须共享）**不成立**；
 > 其中的「聚合值内联」另有一条硬障碍：自举 AST 是**互引图**，LLVM 类型须可定尺寸 ⇒ 递归类型**必须**用指针。
-> ⇒ 订正后的路线 = **堆箱 + 引用计数**，见 `docs/spec/issue/survey-aggregate-return-2026-10-01.md` §9.3；
+> ⇒ 订正后的路线 = **堆箱 + 引用计数**，见 `docs/spec/issue/archive/survey-aggregate-return-2026-10-01.md` §9.3；
 > 证据夹具见 `examples/selfhost/tools/.fixtures/aggregate-{escape,sameframe}-*.pini`。
 
 **修法面**（三条，代价递减、风险递增）：

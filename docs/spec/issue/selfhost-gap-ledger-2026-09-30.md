@@ -316,7 +316,7 @@
   同步这件事在甲路线的授权范围之外（该授权原文即要求「若必须改自举源码才能过 ⇒ **停下登记**」）。
   ⭐ **销它的条件** = 自举发射器同样实现这三处；⛔ 「宿主侧改了 ⇒ 自举发射器欠一笔」是**结构性**的。
 - 读数逐条见自举仓 `docs/probe-notes.md` **§66** 与交付报告
-  `docs/spec/issue/selfhost-aot-parity-report-2026-10-03.md`（本件不复述）。
+  `docs/spec/issue/archive/selfhost-aot-parity-report-2026-10-03.md`（本件不复述）。
 
 ### 2k. ⭐⭐ IR 腿补上**整包面** —— 宿主 `lower(package:) → emit` 的对偶物（2026-10-04）
 
