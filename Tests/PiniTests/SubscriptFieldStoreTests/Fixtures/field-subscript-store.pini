@@ -1,0 +1,18 @@
+; `obj.field[i] = v` 的**非别名**形态：值就地改对，且只在目标下标。
+; ⚠️ 本份**不**制造别名 ⇒ 独占时写路径可能就地改 ⇒ 它**区分不出**「回写字段」与否。
+;   那一半的判别力在 `field-subscript-store-alias`，⛔ 别只跑这一份。
+(Holder)
+xs: [I32] = [10, 20, 30]
+
+((Holder))
+put|self(i: I32, v: I32,) -> ():
+    self.xs[i] = v
+    return
+
+main|func() -> ():
+    var h = Holder()
+    h.put(1, 7,)
+    print(h.xs[0])
+    print(h.xs[1])
+    print(h.xs[2])
+    return

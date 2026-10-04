@@ -1840,7 +1840,14 @@ public final class IRExecutor: DebugHookHost {
     /// branch reports an internal inconsistency with the interpreter's own
     /// wording, not a new rule.
     private func storeField(base: IRExpr, field: String, value: Value) throws {
-        let receiver = try evaluate(base)
+        try storeField(on: try evaluate(base), base: base, field: field, value: value)
+    }
+
+    /// `storeField` 的**已求值接收者**那一半 —— 拆出来是为了让 `obj.field[i] = v`
+    /// 那条链复用**同一次**接收者求值：它先读字段、写下标，再把新容器写回同一个接收者。
+    /// ⛔ 若那里改调 `storeField(base:…)`，`base` 会被**求值两次** ⇒ 接收者带副作用时
+    /// （`f().xs[i] = v` 一类）会多跑一次调用，而发射侧只求值一次 ⇒ 两腿不等价。
+    private func storeField(on receiver: Value, base: IRExpr, field: String, value: Value) throws {
         if case .load(let rootName, _) = base, rootName != "self",
             case .structInstance = receiver,
             let mutable = currentEnv.isMutable(name: rootName), !mutable
@@ -2357,14 +2364,29 @@ public final class IRExecutor: DebugHookHost {
             )
             try storeSubscript(target: inner, index: innerIndexValue, newValue: updated)
 
+        case .fieldGet(let baseExpr, let field, _):
+            // `obj.field[i] = v` —— 对**字段值**写下标，再把新容器**写回该字段**。
+            // ⚠️ 写回是必需的：容器写入可能分裂出新句柄（写时复制），不回写则那次写
+            //   会**静默丢失** —— 发射侧同一处的回写规则正是为这个存在的。
+            // ⚠️ `base` 只求值**一次**（同一个接收者用于读字段与写回），理由见
+            //   `storeField(on:base:field:value:)` 的说明。
+            let receiver = try evaluate(baseExpr)
+            let containerValue = try fieldRead(from: receiver, field: field)
+            let updated = try SubscriptWriteStrategy.write(
+                container: containerValue,
+                index: index,
+                newValue: newValue,
+                location: IRExecutor.noLocation
+            )
+            try storeField(on: receiver, base: baseExpr, field: field, value: updated)
+
         default:
-            // `obj.field[i] = v` needs a field write-back, which the interpreter
-            // reaches through its `.member` arm. That is the named-field grid's
-            // job (`fieldStore`), so it fails loud here instead of silently
-            // writing into a copy.
+            // 兜底：本引擎到此仍不认的目标形态（既非变量、非嵌套下标、也非字段）。
+            // ⚠️ 它**不再是**「字段目标还没做」那条说明 —— 字段目标现在走上面那一臂，
+            //   `fieldGet` 不再落到这里。留着它是为了**响亮**：写成静默会丢一次写。
             throw RuntimeError.invalidOperation(
-                reason: "IR executor: subscript store target is neither a variable nor a "
-                    + "nested subscript (field targets arrive with fieldStore)",
+                reason: "IR executor: subscript store target is neither a variable, a "
+                    + "nested subscript, nor a field get",
                 location: IRExecutor.noLocation
             )
         }

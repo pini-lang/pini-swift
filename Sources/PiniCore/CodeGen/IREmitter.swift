@@ -1600,6 +1600,48 @@ public final class IREmitter {
         terminated = false
     }
 
+    /// 下标写的容器求值 + **写回目标**（`c[i] = v` 里的 `c`）。
+    ///
+    /// 三种形态，各对应一条不同的回写义务：
+    /// - `.subscriptGet`（嵌套容器 `m[0][1] = v`）：走**自上而下**的独占化链
+    ///   （`emitUniqueContainerHandle`）⇒ 回写已在链内完成，无写回目标；
+    /// - ⭐ `.fieldGet`（**字段容器** `obj.field[i] = v`）：读字段拿容器，返回**字段指针**
+    ///   作为写回目标 ⇒ 调用方在 `bk_*_set` 之后把新句柄写回同一字段。
+    ///   ⛔ 不回写的后果与「回写变量槽」同理 —— COW 分裂出的新句柄没人接住，那次写**静默丢失**。
+    ///   ⚠️ 此前该形态落到 `emitExpr(container)` 那一支 ⇒ 既无独占化、也无回写；
+    ///   而执行器对同一形态是**响亮拒绝**（`E5-006`）⇒ 两条腿一边响一边哑。
+    ///   ⚠️ `base` 只求值**一次**：读与写回共用同一个字段指针
+    ///   （⛔ 另调一次 `emitExpr(base)` 会让带副作用的接收者跑两遍，而执行器只跑一遍）。
+    /// - 其余（`.load` 变量槽 / 无 owning slot 的表达式）：原样 `emitExpr`；
+    ///   变量槽的回写由调用方在 `set` 之后按类型做（既有行为，未改）。
+    private func emitSubscriptContainer(_ container: IRExpr) -> (value: IRValue, writeBack: (ptr: String, spelling: String)?) {
+        if case .subscriptGet = container {
+            return (emitUniqueContainerHandle(container), nil)
+        }
+        if case .fieldGet(let baseExpr, let field, let fieldType) = container {
+            let baseValue = emitExpr(baseExpr)
+            let (aggregate, _, fieldIndex) = fieldLayout(of: baseExpr, field: field)
+            let fieldPtr = builder.freshTemp()
+            bodyIR += builder.fmtGEP(
+                name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName,
+                indices: [0, fieldIndex]
+            ) + "\n"
+            let loaded = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: loaded, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
+            return (IRValue(llvmType: fieldType.llvmSpelling, ssaName: loaded), (fieldPtr, fieldType.llvmSpelling))
+        }
+        return (emitExpr(container), nil)
+    }
+
+    /// `bk_*_set` 之后把**新句柄写回字段**（`obj.field[i] = v` 那条链的收尾）。
+    /// ⛔ 它是那半条链的判据所在：不写回 ⇒ COW 分裂出的新句柄没人接住 ⇒ 那次写静默丢失。
+    private func emitSubscriptFieldWriteBack(_ wb: (ptr: String, spelling: String)?, newRaw: String) {
+        guard let wb = wb else { return }
+        let typed = builder.freshTemp()
+        bodyIR += " \(typed) = bitcast ptr \(newRaw) to \(wb.spelling)\n"
+        bodyIR += builder.fmtStore(value: typed, type: wb.spelling, ptr: wb.ptr) + "\n"
+    }
+
     /// Subscript store `container[index] = value` (G2 batch 2), mirroring the
     /// legacy emitter's COW contract:
     /// - nested containers (`m[0][1] = v`) take the top-down ensure-unique
@@ -1621,12 +1663,7 @@ public final class IREmitter {
             // emitExpr handle would let it write through a shared box and
             // silently mutate every alias — the failure the legacy emitter
             // avoids by splitting here too.
-            let containerValue: IRValue
-            if case .subscriptGet = container {
-                containerValue = emitUniqueContainerHandle(container)
-            } else {
-                containerValue = emitExpr(container)
-            }
+            let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
             let indexValue = emitExpr(index)
             let loweredValue = emitExpr(value)
             emitRetainIfAliased(value, loweredValue)
@@ -1646,15 +1683,13 @@ public final class IREmitter {
                 bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_dict*\n"
                 bodyIR += builder.fmtStore(value: typed, type: "%bk_dict*", ptr: slot) + "\n"
             }
+            // ⭐ 字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `bk_dict_set` 之后。
+            emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
             return
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
-        let containerValue: IRValue
-        if case .subscriptGet = container {
-            containerValue = emitUniqueContainerHandle(container)
-        } else {
-            containerValue = emitExpr(container)
-        }
+        // ⭐ 容器求值走统一的 helper —— 它同时交出**字段容器**的写回钩子（`obj.field[i] = v`）。
+        let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
         let indexValue = emitExpr(index)
         let loweredValue = emitExpr(value)
         emitRetainIfAliased(value, loweredValue)
@@ -1673,6 +1708,9 @@ public final class IREmitter {
             bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
             bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
         }
+        // ⭐ 字段容器的回写（`obj.field[i] = v`）：**同一个**字段指针，时序在 `bk_array_set` 之后。
+        //    ⛔ 不回写 ⇒ 分裂出的新句柄没人接住 ⇒ 那次写静默丢失（与上面变量槽那条同理）。
+        emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
     }
 
     /// Top-down COW split for nested container writes (`m[0][1] = v`).

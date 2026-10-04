@@ -1,0 +1,21 @@
+; `obj.field[i] = v` 的**别名**形态 —— 本组的判别力全在这一份上。
+;
+; 先取快照、再写字段 ⇒ 写时复制**必须分裂**：
+;   · 若把分裂出的新句柄**写回字段** ⇒ `h.xs[1]` 变 7、`snapshot[1]` 保持 20；
+;   · 若不回写 ⇒ 字段仍指着旧句柄 ⇒ `h.xs[1]` 会是 20（那次写**静默丢失**）。
+; ⚠️ 所以这一份不是「多跑一个用例」，它是「回写」这条契约的**唯一见证**。
+(Holder)
+xs: [I32] = [10, 20, 30]
+
+((Holder))
+put|self(i: I32, v: I32,) -> ():
+    self.xs[i] = v
+    return
+
+main|func() -> ():
+    var h = Holder()
+    let snapshot: [I32] = h.xs
+    h.put(1, 7,)
+    print(h.xs[1])
+    print(snapshot[1])
+    return
