@@ -5,7 +5,7 @@
 > ⛔ 不复述语言规范、IR 契约与自举判据件的正文（那些各自有主，本件只留指针）。
 >
 > **出身**：① 2026-10-01 用户三项裁定（见 §1.1）② 二期件（`plan-selfhost-evolution-2026-09-30.md`）
-> 的 P2 → P3 路线 ③ 同日甲路线实测（`selfhost-aot-gate-report-2026-10-01.md`）与其三道后续专项
+> 的 P2 → P3 路线 ③ 同日甲路线实测（`docs/spec/issue/archive/selfhost-aot-gate-report-2026-10-01.md`）与其三道后续专项
 > （`auth-74` / `75` / `76` 的交付报告）。
 >
 > **授权**：本件由 `auth-78`（元仓授权台账）点名制定；⛔ **本件不授权开工** —— 每段开工仍须独立点名 +
@@ -1624,7 +1624,7 @@ clang -o <bin> -L<dir> -lPiniRuntime -Wl,-rpath,<dir> <ir.ll>     # dir = libPin
 
 **六、边界**：⛔ 本批**未改实现 · 未改语料 · 未改 `src/`**（`git diff --stat -- src/` 为空）；
 ⛔ 证据表未新增条目；⛔ 未动那处已裁「暂不修」的数组 COW 时间缺陷。
-**`N76` 的解除方案另出提案**：见 `docs/spec/issue/proposal-native-string-ownership-2026-10-04.md`
+**`N76` 的解除方案另出提案**：见 `docs/spec/issue/archive/proposal-native-string-ownership-2026-10-04.md`
 （走「语言级变更流程」的**第 1 步 · 提议**）。⚠️ 该件是**工作件**（半持久、快演进）：只出方案与代价，⛔ 未落地、⛔ 未收口为决策记录 —— 裁定后再定落点。
 
 ### 10.24 2026-10-04 · ⭐⭐ `N76` **全量实施**：原生字符串的引用计数所有权（用户裁「必须全量解决」）

@@ -87,7 +87,7 @@
 > （`D-ctl 2.0`），而**同一枚举一旦跨帧返回**就报**同一句** `match value matched no case`
 > （`D`，夹具 `examples/selfhost/tools/.fixtures/aggregate-escape-D-enum.pini`）。
 > ⇒ 它是**名义箱跨帧外逃**（枚举盒随创建帧一起失效、标签被覆盖）的症状，**不是 `match` 的缺陷**。
-> ⇒ 本表的读数值照旧有效，**归因以后一条为准**（载体：`docs/spec/issue/survey-aggregate-return-2026-10-01.md` §9）。
+> ⇒ 本表的读数值照旧有效，**归因以后一条为准**（载体：`docs/spec/issue/archive/survey-aggregate-return-2026-10-01.md` §9）。
 
 ⚠️ **`module-check` 的墙钟有两道假读数，如实登记**：原生侧 **0 s 即 rc=134**（跑错了，不是跑快了）；
 解释侧 rc=**142** 是**我方 150 s 闹钟截断**，⛔ 不是被测程序的结果。

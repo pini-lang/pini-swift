@@ -2,10 +2,10 @@
 
 **日期**：2026-10-03
 **授权**：`auth-73`（活跃条目，本批为其**延续**）· 用户当轮裁定 = 「**走甲路线**」
-**前序**：`selfhost-aot-gate-report-2026-10-01.md`（链路打通、语义未通）·
-`selfhost-bgroup-charmodel-report-2026-10-01.md`（B 组清零）·
-`nominal-boxes-report-2026-10-01.md`（名义箱上堆，绿层 2 → 3）·
-`split-alloc-and-entry-parity-report-2026-10-01.md`（切分分配，ASan 下 16/19 干净）
+**前序**：`docs/spec/issue/archive/selfhost-aot-gate-report-2026-10-01.md`（链路打通、语义未通）·
+`docs/spec/issue/archive/selfhost-bgroup-charmodel-report-2026-10-01.md`（B 组清零）·
+`docs/spec/issue/archive/nominal-boxes-report-2026-10-01.md`（名义箱上堆，绿层 2 → 3）·
+`docs/spec/issue/archive/split-alloc-and-entry-parity-report-2026-10-01.md`（切分分配，ASan 下 16/19 干净）
 
 ---
 
