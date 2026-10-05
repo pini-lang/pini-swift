@@ -204,6 +204,10 @@ P2-0 基线 ──▶ P2-1 清障与自洽 ──▶ 演进阶段 P3（AOT 与�
 - **match 绑定变量作接收者的字段访问**（一族槽）
 - **装配通道**（量级项）· **常量折叠**的反转条件 · **分族维**是否落成常设器械
 
+⭐ **段 C 的施工作业面已另立下钻件**（批次切分 · 依赖序 · 各批判据 · 待裁）——
+见 §9 指针表。⚠️ 本节的候选与那一件**互为对照**：本件记「有哪些候选」，
+那一件记「按什么序做、每批拿什么判」；⛔ 两处**不重复条目**（冲突时以那件为准，它承本件之后）。
+
 ---
 
 ## 6. 止损
@@ -284,6 +288,7 @@ P2-0 基线 ──▶ P2-1 清障与自洽 ──▶ 演进阶段 P3（AOT 与�
 | **判据的定义**（档位 / 三判据 / 四定式 / 弱对比 / 证据新鲜度） | `docs/spec/issue/plan-selfhost-criteria-2026-09-30.md` |
 | **演进路线与批序**（P2-0 / P2-1 / P3） | `docs/spec/issue/plan-selfhost-evolution-2026-09-30.md` |
 | **段施工面 + 批记录**（段 A/B/C 全细节） | `docs/spec/issue/plan-selfhost-llvm-backend-2026-10-01.md` |
+| **段 C 的施工作业面**（批次切分 · 依赖序 · 各批判据 · 待裁） | `docs/spec/issue/plan-selfhost-segment-c-2026-10-05.md` |
 | **加速横切面**（集合同复杂度；⚠️ 优先级已随「效率次要且趋同」裁定下调，⛔ 是否停未裁） | `docs/spec/issue/plan-selfhost-collection-complexity-2026-10-03.md` |
 | **销账单位**（特性差距，一行一差距） | `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
 | **开放项唯一收拢处** | `docs/spec/issue/open-items-register-2026-10-02.md` |
