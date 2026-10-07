@@ -146,7 +146,7 @@
 
 | 面 | 去哪读 |
 |---|---|
-| 三条判据现况（分叉态） | 自举仓 `examples/selfhost/README.md`「当前状态」段 |
+| 三条判据现况（分叉态） | 自举仓 `pini-bootstrap/README.md`「当前状态」段 |
 | 格表 · 交付面 · 层边界 | 自举仓 `examples/selfhost/docs/boundaries.md` |
 | 各层读数 · 收口记录 · 缺陷判因 | 自举仓 `examples/selfhost/docs/probe-notes.md`（append-only） |
 | 收口态（原统合件 §14） | ⚠️ **载体已删**（2026-09-30 归档清理）⇒ 记录只在 git 历史里 |
