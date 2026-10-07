@@ -121,7 +121,7 @@
 
 | 中文 | English | 上下文 / 备注 |
 |---|---|---|
-| 嵌套独立仓 | nested independent repo | 物理在内、git 归属在外；examples/selfhost 拓扑 |
+| 独立仓（自举仓） | independent repo | ⚠️ **旧译名「嵌套独立仓 / nested independent repo」已作废**（2026-10-07 迁仓）：自举仓从「嵌套于本仓树内」迁为「与本仓**平级**」⇒ 不再是 nested。⚠️ 引用本条时⛔ 别沿用旧译名 |
 | 标定记录 | calibration record | 取代「拉取指令」语义（.pini/baseline，D8） |
 | 拉取指令 | fetch instruction | 旧 .pini/version 语义（已废弃） |
 | 钉住 / 双钉 | pin / dual pins | 版本锚定；双钉必然漂移 |

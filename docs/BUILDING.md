@@ -139,21 +139,39 @@ export PATH="$PATH:$HOME/.local/bin"
 | `pini debug <file>` / `pini dap <file>` | 源码级调试器 / DAP 适配器 |
 | `pini version` / `pini help` | 版本 / 帮助 |
 
-## 7. 自举演示（进阶）
+## 7. 自举编译器（进阶）
 
-宿主实现就绪后，可以体验 **Pini 语言自己实现的编译器**（自举）。自举项目位于 `examples/selfhost/`，
-是**嵌套独立仓**——自有 `.git`，被宿主 `.gitignore` 排除，故本仓 clone 不含它，须单独获取：
+宿主实现就绪后，可以体验 **Pini 语言自己实现的编译器前端**（自举）。自举项目是**独立 git 仓**，
+⚠️ **2026-10-07 起已从「嵌套于本仓树内」迁为「与本仓平级」**（目录 `pini-bootstrap/`，与 `pini-swift/` 并列）：
 
 ```bash
-.build/release/pini run examples/selfhost     # 运行自举词法器（对拍驱动入口）
-.build/release/pini test examples/selfhost    # 自举端 |test 块
+cd ../pini-bootstrap          # 自举仓不在本仓树内 ⇒ 须单独获取并 cd 进去
+.tools/bin/pini check .       # 类型检查整个自举模块
 ```
 
-⚠️ **该演示当前不可运行**：自举探针未过类型检查——`examples/selfhost/src/lexer/lexer.pini:500`
-报 `expected Char, got String`，即字符原语参数面迁移（`String` → `Char`）尚未完成的那部分，
-已登记为规范缺口台账 `G70`。宿主四道门禁**均显式排除** selfhost，故宿主侧不受此影响。
+⚠️ **它需要一份宿主构建产物作为「种子」**，且该种子**手动放置**：
 
-自举词法器与宿主 `pini tokens` 的输出逐字节一致（`examples/selfhost/tools/diff_tokens.sh` 差分门禁，含中文标识符语料）。
+```bash
+mkdir -p .tools/bin
+cp <宿主仓>/.build/debug/pini              .tools/bin/
+cp <宿主仓>/.build/debug/libPiniRuntime.dylib .tools/bin/
+cp -R <宿主仓>/.build/debug/Pini_PiniCore.bundle .tools/bin/   # ⚠️ 资源包，缺它模块模式会失败
+bash tools/check-seed.sh                # 核对放置件（⛔ 不猜宿主仓在哪；右端须显式指定）
+```
+
+⚠️ **判据的右端在宿主仓**（权威资源 / 版本锚 / 规范件 / 宿主 AST）⇒ 跑判据前须显式指定：
+
+```bash
+export PINI_HOST_REPO="$(cd ../pini-swift && pwd)"
+bash tools/check-all.sh                 # 门禁总入口
+```
+
+✅ **实测现状**（2026-10-07）：自举模块**已通过类型检查**（51 个文件）——
+⚠️ 本节此前记载「当前不可运行 / 报 `expected Char, got String`」，那是**已过时**的断言
+（对应缺口 `G70`，该缺口已闭合）。
+
+⚠️ **宿主仓侧不扫描自举仓**：它在宿主仓**外部**（git 面与文件扫描面都扫不到），
+故本仓的四道提交门禁**不覆盖**它——它的门禁由它自己承担。
 
 ## 8. 故障排查
 
