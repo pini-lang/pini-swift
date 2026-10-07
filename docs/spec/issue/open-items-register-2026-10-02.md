@@ -97,7 +97,7 @@
 | 面 | 去哪读 |
 |---|---|
 | ⭐ **selfhost 规划面入口**（目标 / 定标 / 结构 / 路线 / 判据分层 / 站位 / 拦路物） | `docs/spec/issue/plan-selfhost-2026-10-04.md` |
-| 三条判据现况（分叉态） | 自举仓 `examples/selfhost/README.md`「当前状态」段 |
+| 三条判据现况（分叉态） | 自举仓 `pini-bootstrap/README.md`「当前状态」段 |
 | 格表 · 交付面 · 层边界 | 自举仓 `examples/selfhost/docs/boundaries.md` |
 | 逐面销行（覆盖面两册） | 自举仓 `examples/selfhost/tools/codegen-coverage.txt` · `.../codegen-mod-faces.txt` |
 | 摘出常跑面的器械（**3 项**）· 生效行与理由 | 自举仓 `examples/selfhost/tools/expected-red.txt` |
