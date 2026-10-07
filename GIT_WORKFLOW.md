@@ -145,14 +145,19 @@ git worktree add <path> -b worktree/<purpose> main
 git worktree remove <path>    # 摘除务必用命令，勿直接 rm
 ```
 
-### 嵌套独立仓：`examples/selfhost/`（自举入树为独立嵌套仓）
+### 自举仓：与本仓**平级**的独立仓（2026-10-07 迁）
 
-自举项目（探针）位于 `examples/selfhost/`，是**独立 git 仓库**（自有 `.git`），经 `.gitignore` 的 `/examples/selfhost` 条目**不进本仓历史与归档**：
+自举项目（探针）是**独立 git 仓库**（自有 `.git`）。⚠️ **2026-10-07 起它从「嵌套于本仓树内」迁为「与本仓平级」**：
 
-- **不要**在本仓 `git add` 它——git 会对嵌套仓发出 embedded repository 警告并记下悬空 gitlink；被 ignore 后此风险已消除，但仍不得强行 `add -f`
-- **不要**用 `git clean -ffdx`（双 `f`）——那会删除嵌套仓；单 `-f` 是安全的（git 保护含 `.git` 的目录）
-- 本仓 clone 不含它；新环境须单独获取（探针为本地唯一副本，自举入树为独立嵌套仓）
+- **位置**：与 `pini-swift/` 并列的 `pini-bootstrap/`（⚠️ 在本仓**树外**，故 `.gitignore` 里⛔ **不再有** `/examples/selfhost` 那条 —— 那条已随迁移删除）
+- **独立性更强**：它在git 面**与文件扫描面**上都够不到本仓 ⇒ 本仓的 clone、归档、四道提交门禁**天然不覆盖**它
+- ⛔ **不要**在本仓 `git add` 它（它根本不在本仓树内）；⛔ 不要用 `git clean -ffdx`（双 `f`）清工作区时波及仓外目录
+- 本仓 clone 不含它；新环境须单独获取（它是**本地唯一副本**，无远端）
 - 它有自己的 GIT_WORKFLOW 与身份注册表（§3/§4 纪律同样适用于其内提交）
+
+⚠️ **一处曾存在的风险已随迁移消失**：嵌套时代若误 `add` 嵌套仓，git 会记下**悬空 gitlink**
+（提交里存一个指向不存在的路径）⇒ 现象是「本仓历史里有个永远拉不到的 gitlink」。
+⚠️ 平级之后**结构上不可能**再发生 ⇒ 不再需要那条 ignore 规则来兜底。
 
 ---
 
