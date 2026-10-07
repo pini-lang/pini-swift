@@ -180,6 +180,20 @@ public final class ProgramRunner: DebugHookHost {
     /// The AST path's `runTests` did no checking of its own either — its
     /// callers checked — and that division is unchanged.
     public func runTests(module: Module) throws -> [TestRunResult] {
+        try runCollectedTests(lowerTests(module: module))
+    }
+
+    /// 测试模式的**降载**（不执行）：把模块交给另一条通道。
+    ///
+    /// ⭐ 抽出来的理由只有一个，但它是本批的核心：**两条通道的「跑哪些测试」必须出自同一处**。
+    /// 收窄范围所依据的事实（`isTest` 与 `sourceFile`）、零值注入的规则、以及函数表的顺序，
+    /// 全都在这一步定下来；只要两条通道各降载一次，「哪些测试、什么顺序」就有两个答案，
+    /// 而它们会随任一侧的改动各自漂移 —— 那正是「两个后端行为一致」最容易被破坏的方式
+    /// （而且破坏得很安静：两侧都自洽，只是不一致）。故这里**只有一份**降载，
+    /// 解释器通道执行它，LLVM 通道把它发射出去。
+    ///
+    /// ⚠️ 与执行通道的边界：本函数**不跑任何测试**、不碰运行时段、不建执行器。
+    public func lowerTests(module: Module) throws -> IRModule {
         let checker = TypeChecker()
         let errors = checker.checkCollecting(module: module)
         guard errors.isEmpty else {
@@ -189,11 +203,10 @@ public final class ProgramRunner: DebugHookHost {
         }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let (merged, aliasMap) = try IRLowerer.mergedWithImports(module)
-        let lowered = try IRLowerer.lower(
+        return try IRLowerer.lower(
             module: merged, typeInference: checker.typeInference,
             moduleAliases: aliasMap, requiresMain: false
         )
-        return try runCollectedTests(lowered)
     }
 
     /// Runs the `|test` functions of a package.
@@ -205,13 +218,18 @@ public final class ProgramRunner: DebugHookHost {
     /// smaller program — and the reason each lowered function carries the file
     /// it came from.
     public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
+        try runCollectedTests(lowerTests(package: package), fileScope: fileScope)
+    }
+
+    /// 测试模式的**降载**（不执行），包级版。理由与 `lowerTests(module:)` 逐字相同
+    /// （两通道共用一份降载），故不重复一遍。
+    public func lowerTests(package: Package) throws -> IRModule {
         let checker = TypeChecker()
         try checker.check(package: package)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try IRLowerer.lower(
+        return try IRLowerer.lower(
             package: package, typeInference: checker.typeInference, requiresMain: false
         )
-        return try runCollectedTests(lowered, fileScope: fileScope)
     }
 
     /// Prepares the lowered module and runs only its `|test` functions.
@@ -238,11 +256,24 @@ public final class ProgramRunner: DebugHookHost {
     ///
     /// A failing test is a result, not an abort — one failure must not hide the
     /// tests after it. Same rule as the AST path's `executeCollectedTest`.
+    ///
+    /// ⭐ 断言失败的消息**只取消息本体**（⛔ 不带 `RuntimeError.description` 里那截
+    /// `at <SourceLocation>`）。两条理由，缺一条它都不该这么写：
+    /// ① 那截位置是**空位置**（行列全零、`fileName` 是 `"<ir>"`）—— 对读者零信息；
+    /// ② **另一个后端要出同一格报告**：LLVM 通道的报告由发射出的驱动器写，而它手里只有
+    ///    源里的那个消息串 ⇒ 报告要逐字节相同，两侧的消息就必须是同一个东西。
+    /// ⚠️ 其余错误照旧 `"\(error)"` —— 那些不是「测试判定」而是运行时段出了问题，
+    /// 完整描述（含位置）恰是那时最需要的。
     private func runOneTest(_ function: IRFunction, on executor: IRExecutor) -> TestRunResult {
         let args = function.params.map { Self.zeroValue(forTestParam: $0.type) }
         do {
             _ = try executor.callFunction(named: function.name, args: args)
             return TestRunResult(name: function.name, passed: true, message: "")
+        } catch let error as RuntimeError {
+            if case .assertionFailed(let message, _) = error {
+                return TestRunResult(name: function.name, passed: false, message: message)
+            }
+            return TestRunResult(name: function.name, passed: false, message: "\(error)")
         } catch {
             return TestRunResult(name: function.name, passed: false, message: "\(error)")
         }
