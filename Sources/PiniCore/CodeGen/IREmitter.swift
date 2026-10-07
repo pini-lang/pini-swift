@@ -95,6 +95,20 @@ public final class IREmitter {
     private var currentIsMain = false
     private var currentReturnType: IRType? = nil
 
+    /// 当前函数是不是**测试函数**（`|test`），且本模块正按测试驱动器发射。
+    ///
+    /// ⛔ 它不是「这个函数是不是测试函数」的答案 —— `|test` 这个事实在 `IRFunction.isTest` 上；
+    /// 本字段是「**此刻要不要按测试口径发射它**」，两个条件缺一不可（见 `testReportHeader`）。
+    private var currentIsTest = false
+
+    /// 本函数的**测试出口**标签名：测试模式下，失败断言的假边跳到它。
+    ///
+    /// ⭐ 存在的理由是**与解释器同形**：解释器那条路里失败断言是一个 panic 信号，
+    /// 它中止**本测试**剩下的语句（语句链在非正常控制流上停），再由收集器在调用边界
+    /// 收成一条失败结果 ⇒ 「一个失败不隐藏它后面的测试」。发射侧要同形，就必须有一个
+    /// 「放弃本函数剩余语句，但把控制交回调用者」的落点 —— 陷阱（`bk_panic`）做不到这件事。
+    private var currentTestExitLabel: String? = nil
+
     private var builder = IRBuilder()
     private var bodyIR = ""
 
@@ -309,6 +323,46 @@ public final class IREmitter {
     /// decision, and the IR tree stays a pure lowering of the source.
     public var programBase: String?
 
+    /// 测试模式（TM）：非 nil 时本模块按**测试驱动器**发射，该值就是报告首行的正文。
+    ///
+    /// ⭐ TM 打开后发射侧做四件事，四件都是为了让 LLVM 后端与解释器后端**行为一致**：
+    /// ① 跳过程序入口（`main`）——兑现「`pini test` 不执行 main」；
+    /// ② `|test` 函数体内的失败断言**不陷阱**，改为记标志 + 跳到本函数的测试出口
+    ///   （中止本测试剩余语句，但控制交回驱动器）；
+    /// ③ 合成驱动器：逐个调用 `|test`（实参按类型注入零值）、累计失败、**自己写完报告**；
+    /// ④ 合成入口：以「有无失败」归一成进程退出码。
+    ///
+    /// ⛔ **默认 nil，故关闭时的一切产物逐字节不变** —— 这条与本类里 `programBase` 的取值
+    /// 理由同源（它也是「默认关、开了才变」的形态）：既有 golden IR 与逐字节判据都建立在
+    /// 「同一个输入同一个产物」上，默认态一变，那些判据就全体失真。
+    ///
+    /// ⚠️ 报告**由驱动器自己写出**（而不是回传结果让命令行再渲染），是为了**输出顺序**：
+    /// 解释器那条路是「程序输出边跑边出、报告收尾」，驱动器一条指令流同样先跑完所有测试
+    /// 再写报告 ⇒ 两个后端的标准输出**逐字节同序**。⛔ 别改成「子进程回传 + 命令行渲染」：
+    /// 那会把报告行插进程序输出中间，顺序就不再一致了。
+    public var testReportHeader: String?
+
+    /// 测试模式下**要跑的测试**（按名的有序清单）；nil = 模块里全部 `|test`。
+    ///
+    /// ⭐ 它的存在是为了让「按路径收窄」在发射侧也能兑现：解释器那条路是「全部降载、**只执行**
+    /// 选中的那些」，发射侧等价的兑现方式是「驱动器只调用选中的那些」（⛔ 不是把没选中的函数
+    /// 从模块里删掉 —— 那会让测试看不见别的文件的符号，而解释器的规则是「收窄的是跑哪些，
+    /// 不是能看到什么」）。
+    ///
+    /// ⚠️ 清单由命令行从**同一个降载结果**里算出来（见 `ProgramRunner.lowerTests`），
+    /// 故两条通道的「跑哪些」与「什么顺序」出自一处，不可能各自漂移。
+    public var testSelection: [String]?
+
+    private var testMode: Bool { testReportHeader != nil }
+
+    /// 失败标志与断言消息的模块级插槽名。
+    ///
+    /// ⛔ **刻意不是 `bk_*` 运行时段符号**：它们只是本模块内部的两个插槽，驱动器与断言都在
+    /// 同一个模块里 ⇒ 运行时段一行都不用改，也不新增任何跨 ABI 面（本仓对运行时段符号的
+    /// 增删有单独纪律）。
+    static let testFailedGlobal = "__pini_test_failed"
+    static let testMsgGlobal = "__pini_test_msg"
+
     public init() {}
 
     // MARK: - Module
@@ -426,6 +480,11 @@ public final class IREmitter {
         givenSlotNames = []
         givenInitializerDefs = []
         givenInitializerNames = []
+        // 测试模式的两个**每模一次**的状态：模块级重置（⛔ 不放在 `emitFunction` 里 ——
+        // 一个发射器的实例可以连发多个模块，留在上一个模块的值会让下一个模块的第一个函数
+        // 误判自己是不是测试）。
+        currentIsTest = false
+        currentTestExitLabel = nil
         moduleTypes = module.types
         moduleEnums = module.enums
         // G6: record every top-level function's ABI by mangled IR name so
@@ -464,6 +523,11 @@ public final class IREmitter {
             bodyIR += "\n"
         }
         for function in module.functions {
+            // ⭐ 测试模式：**不发射程序入口** —— 兑现「`pini test` 不执行 main」。
+            // ⛔ 判据必须与 `emitFunction` 里 `currentIsMain` 的判据**逐字同源**：那边把
+            // 「测试模式下的 `|test main`」判成**不是入口**，故这边也只跳过**角色是入口**的那一个。
+            // 两处若不同源，就会出现「跳过了但驱动器仍去调用它」（未定义符号）这类错配。
+            if testMode, function.name == "main", !function.isTest { continue }
             emitFunction(function)
         }
         for typeDecl in module.types {
@@ -472,7 +536,20 @@ public final class IREmitter {
             }
         }
 
+        // ⭐ 测试模式：合成驱动器与入口。位置**必须在下面组 `tail` 之前** ——
+        // 驱动器与报告片段都经 `registerStringConstant` 登记常量，而 `tail` 正是把已登记的
+        // 常量刷出去的那一刻 ⇒ 排在它之后就一个常量都刷不出来（产物里只剩裸 `@.strN` 引用）。
+        if testMode {
+            bodyIR += emitTestDriver(module: module)
+        }
+
         var tail = ""
+        // 测试模式的两个模块级插槽（⛔ 不是运行时段符号，见 `testFailedGlobal` 那条注释）。
+        // `internal` 而非 `private`：驱动器与各测试函数都在本模块内，两者都要读写它们。
+        if testMode {
+            tail += "@\(Self.testFailedGlobal) = internal global i32 0\n"
+            tail += "@\(Self.testMsgGlobal) = internal global ptr null\n"
+        }
         for def in stringConstantDefs {
             tail += def + "\n"
         }
@@ -639,7 +716,13 @@ public final class IREmitter {
         // paths here (see `emitReleases` in the fall-through tail).
         pendingReleases.removeAll()
         terminated = false
-        currentIsMain = function.name == "main"
+        // ⭐ 测试模式下「是不是入口」按**角色**判，⛔ 不只看名字：一个 `|test` 函数若恰好叫
+        // `main`，它是测试而不是入口 —— 只看名字会让它拿到入口的 i32 返回口径
+        // （`returnSpelling` 与裸返回都跟着变），而驱动器仍按它**声明的**返回类型去调用它
+        // ⇒ 调用点与定义签名对不上，产物整段不可用。
+        currentIsMain = function.name == "main" && !(testMode && function.isTest)
+        currentIsTest = testMode && function.isTest
+        currentTestExitLabel = currentIsTest ? "test.exit.\(builder.freshLabel())" : nil
         currentReturnType = function.returnType
         blockDepth = 0
         frameSlotDecls = []
@@ -711,6 +794,22 @@ public final class IREmitter {
             }
         }
 
+        // ⭐ 测试出口：失败断言的假边跳到这里，放弃本函数剩余语句，但把控制交回驱动器。
+        //
+        // ⚠️ 它与上面的 `exit_block` **不是同一个落点，也⛔ 不能合并**：`exit_block` 走的是
+        // 正常落空路径（含句柄释放），而本块是从体内**半途**跳来的 —— 那一刻的所有权台账是
+        // 分支点的状态，任何在这里生成的释放串都是错的。故本块只做一件事：按声明的返回类型
+        // 返回一个不用的值。⚠️ 有一处**如实登记的边界**：失败测试的局部容器因此不在本函数内
+        // 释放（进程随后由驱动器收尾并退出，故不可观测；但「泄漏到进程结束」是事实）。
+        if currentIsTest, let exitLabel = currentTestExitLabel {
+            bodyIR += "\(exitLabel):\n"
+            if let returnType = function.returnType {
+                bodyIR += " ret \(returnType.llvmSpelling) undef\n"
+            } else {
+                bodyIR += " ret void\n"
+            }
+        }
+
         let statements = bodyIR
         if frameMode == .resumable {
             bodyIR = emittedFunctions + header + emitFramePrologue() + "de6b.body:\n" + statements + "}\n\n"
@@ -730,6 +829,225 @@ public final class IREmitter {
         guard let returnType = function.returnType else { return false }
         if case .result = returnType { return true }
         return false
+    }
+
+    /// 合成的测试驱动器与入口的符号名（`__` 前缀与 `__given_init_*` 同族：
+    /// 它们不是 Pini 级名字，故不经 `mangle`，也⛔ 不进任何用户可见的名字域）。
+    static let testDriverName = "__pini_test_driver"
+
+    /// 合成测试驱动器与进程入口。
+    ///
+    /// 驱动器逐个调用 `|test` 函数、累计失败、**自己把报告写完**，返回失败条数；入口把它归一
+    /// 成 0/1 的进程退出码。⭐ 报告与退出码因此都由**运行中的程序**产生、命令行一路透传 ——
+    /// 这正是「两个后端的报告逐字节同序」得以成立的原因（理由的完整版见 `testReportHeader`）。
+    ///
+    /// ⚠️ 与解释器那条路的**逐条对应**（实现前实测取得，⛔ 不是照文档推断的）：
+    /// ① 报告在**全部测试跑完之后**才出（解释器：程序输出流式、报告收尾）；
+    /// ② 每条测试一行 —— 通过 ` ✓ <名>`、失败 ` ✗ <名>: <消息>`（前导一个空格）；
+    /// ③ 一条测试都没有时出 ` （未找到 |test 测试函数）`；
+    /// ④ 收尾行 `结果: <通过> 通过, <失败> 失败`；
+    /// ⑤ 先后顺序 = 模块内声明序（解释器按同一份函数表的同一顺序过滤，故两腿同序）。
+    ///
+    /// ⛔ 报告**不**由命令行渲染、结果**不**经子进程回传：那会把报告行插进程序输出中间，
+    /// 而两个后端的输出顺序正是本批要对齐的东西之一。
+    private func emitTestDriver(module: IRModule) -> String {
+        // 选中面：给了清单就按清单（**保持清单给的顺序**），否则取模块里全部 `|test`
+        // （即模块声明序 —— 与解释器那边 `module.functions` 的过滤同序）。
+        let tests: [IRFunction]
+        if let selection = testSelection {
+            var byName: [String: IRFunction] = [:]
+            for function in module.functions where function.isTest {
+                byName[function.name] = function
+            }
+            // ⚠️ 清单里有、模块里没有的名字**静默跳过**而不是崩：清单是从同一个降载结果算的，
+            // 对不上只可能是发射器被单独驱动（测试直接构造发射器）。那种情况下少跑一条，
+            // 比让整段发射崩掉更容易定位。
+            tests = selection.compactMap { byName[$0] }
+        } else {
+            tests = module.functions.filter { $0.isTest }
+        }
+        var d = ""
+
+        /// 把一个字符串登记为常量并**就地取址**（`ptr`），返回该 `ptr` 的 SSA 名。
+        ///
+        /// ⚠️ 这里**不写 `bodyIR`**：驱动器是单独成段收口的（在所有函数之后、常量组之前），
+        /// 取址指令写进本函数的局部缓冲，由调用方按顺序拼进驱动器体。
+        func strPtr(_ value: String) -> String {
+            let entry = registerStringConstant(value)
+            let temp = builder.freshTemp()
+            d += " " + builder.fmtGEP(
+                name: temp, aggregate: "[\(entry.length) x i8]", base: entry.name,
+                indices: [0, 0]) + "\n"
+            return temp
+        }
+
+        func printString(_ ptr: String) {
+            d += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(ptr))\n"
+        }
+        func printNewline() {
+            d += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        }
+
+        // 计数器用 `alloca` 而⛔ 不用全局：驱动器是单次调用，槽只活在本帧内，
+        // 于是「跨测试的状态」仅剩那两个插槽，可被逐条读清。
+        let failsSlot = builder.freshTemp()
+        d += "define i32 @\(Self.testDriverName)() {\n"
+        d += " \(failsSlot) = alloca i32\n"
+        d += " store i32 0, ptr \(failsSlot)\n"
+
+        // 报告首行与各片段、以及每条测试的名字：**取址全部排在第一个标签之前**（即入口块里）
+        // ⇒ 它们支配其后每一个块。⛔ 挪到分支之后就成「用未支配的值」。
+        //
+        // ⚠️⭐ 首行正文由调用方给 —— 它是「测试文件: <路径>」与「测试目标: 模块 …」两形之一，
+        // 只有命令行的解析逻辑知道该用哪一形，发射器⛔ 不猜。
+        let headerPtr = testReportHeader.map { strPtr($0) }
+        let passPrefix = strPtr(" \u{2713} ")
+        let failPrefix = strPtr(" \u{2717} ")
+        let colon = strPtr(": ")
+        let summaryFormat = strPtr("结果: %d 通过, %d 失败")
+        let namePtrs = tests.map { strPtr($0.name) }
+
+        // 结果收集槽：每条测试一份「判定」与一份「消息」。
+        //
+        // ⭐ 为什么要**先收后写**（而不是每条跑完立刻打）：解释器那条路的输出顺序是
+        // 「程序输出全部在前、报告收尾」—— 测试体里的 `print` 边跑边出，而报告是全部跑完之后
+        // 才打的。若驱动器边跑边打，报告行就会插进程序输出中间，两个后端的标准输出立刻不同序。
+        // ⛔ 故这里**两个阶段**：先只跑与收集（零输出），再统一写报告。
+        //
+        // ⚠️ 用本帧 `alloca` 而⛔ 不用模块级数组：驱动器是单次调用，槽只活在本帧内，
+        // 于是「跨测试的共享状态」仅剩那两个插槽，可被逐条读清。
+        let outcomeSlots = tests.map { _ in builder.freshTemp() }
+        let messageSlots = tests.map { _ in builder.freshTemp() }
+        for index in tests.indices {
+            d += " \(outcomeSlots[index]) = alloca i32\n"
+            d += " \(messageSlots[index]) = alloca ptr\n"
+        }
+
+        // ── 阶段 1：逐个跑，只收集（⛔ 本阶段一条输出都不产生）────────────────
+        for (index, test) in tests.enumerated() {
+            // 每条测试前把两个插槽归零。⛔ 不归零的话上一条的失败会**污染**下一条 ——
+            // 驱动器问的是「本条跑完之后标志是不是 1」，不是「有没有人为它置过 1」。
+            d += " store i32 0, ptr @\(Self.testFailedGlobal)\n"
+            d += " store ptr null, ptr @\(Self.testMsgGlobal)\n"
+
+            // 实参：按声明类型注入零值（与解释器 `zeroValue(forTestParam:)` 同规）。
+            var args: [String] = []
+            for param in test.params {
+                let value = testZeroArgument(for: param.type, output: &d)
+                args.append("\(param.type.llvmSpelling) \(value)")
+            }
+            let retSpelling = test.returnType?.llvmSpelling ?? "void"
+            d += " call \(retSpelling) @\(Self.mangle(test.name))(\(args.joined(separator: ", ")))\n"
+
+            let flag = builder.freshTemp()
+            let bad = builder.freshTemp()
+            let asInt = builder.freshTemp()
+            let prev = builder.freshTemp()
+            let next = builder.freshTemp()
+            let message = builder.freshTemp()
+            d += " \(flag) = load i32, ptr @\(Self.testFailedGlobal)\n"
+            d += " \(bad) = icmp ne i32 \(flag), 0\n"
+            d += " \(asInt) = zext i1 \(bad) to i32\n"
+            d += " \(prev) = load i32, ptr \(failsSlot)\n"
+            d += " \(next) = add i32 \(prev), \(asInt)\n"
+            d += " store i32 \(next), ptr \(failsSlot)\n"
+            d += " store i32 \(asInt), ptr \(outcomeSlots[index])\n"
+            d += " \(message) = load ptr, ptr @\(Self.testMsgGlobal)\n"
+            d += " store ptr \(message), ptr \(messageSlots[index])\n"
+        }
+
+        // ── 阶段 2：写报告（首行 → 每条 → 收尾）────────────────────────────
+        if let headerPtr {
+            printString(headerPtr)
+            printNewline()
+        }
+        if tests.isEmpty {
+            printString(strPtr(" （未找到 |test 测试函数）"))
+            printNewline()
+        }
+
+        for (index, _) in tests.enumerated() {
+            let value = builder.freshTemp()
+            let isBad = builder.freshTemp()
+            // ⚠️⭐ 标签名**一律加前缀**，⛔ 不能直接用 `freshLabel()` 的裸数值：那个数只是
+            // 「本函数第几个标签」，而 LLVM 里**裸数字标签是无名值的编号**（`5:` 定义的是第 5 个
+            // 无名值，`br label %5` 于是成了「前向引用的 label」，clang 拒绝整段模块）。
+            // 本类既有处一律写成 `<族名>.<数>`，此处同规。
+            let passLabel = "test.pass.\(builder.freshLabel())"
+            let failLabel = "test.fail.\(builder.freshLabel())"
+            let endLabel = "test.end.\(builder.freshLabel())"
+            d += " \(value) = load i32, ptr \(outcomeSlots[index])\n"
+            d += " \(isBad) = icmp ne i32 \(value), 0\n"
+            d += " br i1 \(isBad), label %\(failLabel), label %\(passLabel)\n"
+            d += "\(passLabel):\n"
+            printString(passPrefix)
+            printString(namePtrs[index])
+            printNewline()
+            d += " br label %\(endLabel)\n"
+            d += "\(failLabel):\n"
+            printString(failPrefix)
+            printString(namePtrs[index])
+            printString(colon)
+            // 消息是断言点存下的那个串 —— 与解释器报告里那一格**同一个字符串**
+            // （源里的消息字面量），故两腿这一格逐字节相同。
+            let message = builder.freshTemp()
+            d += " \(message) = load ptr, ptr \(messageSlots[index])\n"
+            printString(message)
+            printNewline()
+            d += " br label %\(endLabel)\n"
+            d += "\(endLabel):\n"
+        }
+
+        // 收尾行：通过数 = 总数 − 失败数。⚠️ 这里⛔ 不能用 `printString`（那会把格式当普通串打出来）。
+        let totalFails = builder.freshTemp()
+        let totalPass = builder.freshTemp()
+        d += " \(totalFails) = load i32, ptr \(failsSlot)\n"
+        d += " \(totalPass) = sub i32 \(tests.count), \(totalFails)\n"
+        d += " call i32 (ptr, ...) @printf(ptr \(summaryFormat), i32 \(totalPass), i32 \(totalFails))\n"
+        d += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        d += " ret i32 \(totalFails)\n"
+        d += "}\n\n"
+
+        // 进程入口：把「失败条数」归一成 0/1。解释器那条路的退出码约定 =
+        // 「全通过 0 · 存在失败测试 1 · 文件/解析/框架错误 2」，末一条由命令行侧处理。
+        let driverResult = builder.freshTemp()
+        let nonZero = builder.freshTemp()
+        let code = builder.freshTemp()
+        d += "define i32 @main() {\n"
+        d += " \(driverResult) = call i32 @\(Self.testDriverName)()\n"
+        d += " \(nonZero) = icmp ne i32 \(driverResult), 0\n"
+        d += " \(code) = select i1 \(nonZero), i32 1, i32 0\n"
+        d += " ret i32 \(code)\n"
+        d += "}\n\n"
+        return d
+    }
+
+    /// 某类型在**测试参数注入**下的零值文本（LLVM 常量或已取好的 SSA 名）。
+    ///
+    /// 与解释器 `ProgramRunner.zeroValue(forTestParam:)` **逐条同规**（那是本格的规范面）：
+    /// 整数→0 · 浮点→0.0 · 布尔→false · 字符串→**空串**（⛔ 不是空指针 —— `len(s) == 0`
+    /// 这类注入测试要真的跑得动）· 其它→`null`。
+    ///
+    /// ⚠️ `Char` 落在「其它」里是**刻意的**：解释器对 `Char` 同样注入 `.null`，理由是语言里
+    /// 没有「空字符」，任何自造的零值都会违反「一字素」不变式。两侧同规矩，⛔ 别在发射侧
+    /// 单独「修好」它 —— 那会让同一个测试在两个后端上得出不同结论。
+    private func testZeroArgument(for type: IRType, output: inout String) -> String {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64, .boolean:
+            return "0"
+        case .f64:
+            return "0.000000e+00"
+        case .string:
+            let entry = registerStringConstant("")
+            let temp = builder.freshTemp()
+            output += " " + builder.fmtGEP(
+                name: temp, aggregate: "[\(entry.length) x i8]", base: entry.name,
+                indices: [0, 0]) + "\n"
+            return temp
+        default:
+            let spelling = type.llvmSpelling
+            return (spelling == "ptr" || spelling.hasSuffix("*")) ? "null" : "zeroinitializer"
+        }
     }
 
     /// 声明一个 **Pini 级局部槽**，返回它的地址名。
@@ -2649,6 +2967,14 @@ public final class IREmitter {
     /// prints the message (or a default) and calls the noreturn panic.
     /// Passing asserts fall through — a failing assert never appears in a
     /// parity baseline (test blocks are not executed by the harness).
+    ///
+    /// ⭐ 测试模式下（`testMode` 且当前函数是 `|test`）**假边不陷阱**：它把消息与失败事实记进
+    /// 模块级插槽，然后跳到本函数的测试出口。⛔ 这**不是**「让断言变软」—— 它是把解释器那条
+    /// 路的行为搬到发射侧：解释器里失败断言中止**本测试剩余语句**，收集器在调用边界把它收成
+    /// 一条失败 ⇒ 「一个失败不隐藏它后面的测试」。陷阱做不到这件事（陷阱连驱动器一起带走）。
+    ///
+    /// ⚠️⛔ **生产语义一字未改**：非测试函数、或 TM 关闭时，走的仍是下面那条
+    /// `printf(消息) + bk_panic` 的陷阱路。两条路的**分叉条件只有「本函数是不是测试」**。
     private func emitAssertCall(condition: IRExpr, message: IRExpr?) -> IRValue {
         let cond = emitExpr(condition)
         let passLabel = "assert.pass.\(builder.freshLabel())"
@@ -2658,10 +2984,18 @@ public final class IREmitter {
         bodyIR += "\(failLabel):\n"
         let msg = message ?? .stringConst(value: "assert failed")
         let rendered = emitExpr(msg)
-        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered.ssaName))\n"
-        bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
-        bodyIR += " call ptr @bk_panic(ptr null)\n"
-        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        if let exitLabel = currentTestExitLabel {
+            // 顺序即语义：先把消息存好，再置失败事实，最后才离开本函数 ——
+            // 反过来的话，驱动器可能读到「已置失败、消息还没写」的中间态。
+            bodyIR += " store ptr \(rendered.ssaName), ptr @\(Self.testMsgGlobal)\n"
+            bodyIR += " store i32 1, ptr @\(Self.testFailedGlobal)\n"
+            bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
+        } else {
+            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered.ssaName))\n"
+            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+            bodyIR += " call ptr @bk_panic(ptr null)\n"
+            bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        }
         bodyIR += "\(passLabel):\n"
         bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
         bodyIR += "\(endLabel):\n"

@@ -627,6 +627,7 @@ func printHelp() {
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Type check (alias of check) a file or directory/module")
     print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
+    print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
     print(" tokens <file.pini> Print tokens from lexical analysis")
     print(" emit <file.pini> Emit LLVM IR (.ll) to stdout or -o file")
@@ -1152,6 +1153,25 @@ func runCheckCommand(source: String, fileName: String) throws {
     print("检查通过：\(fileName)")
 }
 
+/// 测试执行通道：同一套收集范围与门禁，两条后端。
+///
+/// ⭐ 它只决定**最后一步怎么跑**（解释器执行 / 发射成原生程序再运行），
+/// ⛔ 不影响「收集哪些」与「门禁怎么做」—— 那两件事两条通道走的是同一份代码，
+/// 否则「两个后端行为一致」就成了一句没有载体的话（而两侧各自自洽、彼此不一致，
+/// 是最难发现的一类偏离）。
+enum TestChannel {
+    case interpreter
+    case llvm
+
+    /// 消息里要用的子命令名 —— 提示得说对用户刚敲的那一个。
+    var commandName: String {
+        switch self {
+        case .interpreter: return "test"
+        case .llvm: return "test-llvm"
+        }
+    }
+}
+
 /// #46-E G41（R1）：`pini test [path]` —— 收集顶级 `|test` 函数块逐一执行并汇总报告。
 ///
 /// G49（issue-tdd-module-blockers-2026-08-28）：收集单位 = 模块（回归 G41「收集所有 |test」原意）。
@@ -1162,16 +1182,19 @@ func runCheckCommand(source: String, fileName: String) throws {
 /// - 模块外单文件：保持单文件行为（向后兼容）。
 /// 语义/类型门禁：模块模式整包 analyze/check（与 check 目录模式一致）；失败退出码 1。
 /// 退出码：全部通过 0；存在失败测试 1；文件/解析/框架错误 2。
-func runTestPath(_ path: String?) {
+///
+/// `channel`（本批新增）：本函数负责的是**收集范围**，两条通道共用它；
+/// 差别只在 `gateAndRunTests` / `runSingleFileTests` 的最后一步。
+func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
     do {
         // 无参：收集当前目录所属模块根
         guard let path = path else {
             let cwd = FileManager.default.currentDirectoryPath
             guard let root = try FileLoader.locateModuleRoot(for: cwd) else {
-                printError("Error: \(cwd) 不属于任何模块（向上未找到清单）；请在模块内运行 `pini test`，或显式指定路径")
+                printError("Error: \(cwd) 不属于任何模块（向上未找到清单）；请在模块内运行 `pini \(channel.commandName)`，或显式指定路径")
                 exit(1)
             }
-            try runModuleTests(moduleRoot: root, scopePath: nil)
+            try runModuleTests(moduleRoot: root, scopePath: nil, channel: channel)
             return
         }
 
@@ -1184,7 +1207,7 @@ func runTestPath(_ path: String?) {
 
         // 模块内（文件或目录）：模块模式
         if let root = try FileLoader.locateModuleRoot(for: abs) {
-            try runModuleTests(moduleRoot: root, scopePath: abs)
+            try runModuleTests(moduleRoot: root, scopePath: abs, channel: channel)
             return
         }
 
@@ -1193,12 +1216,12 @@ func runTestPath(_ path: String?) {
             let pkg = try FileLoader.loadDirectory(path: abs)
             try gateAndRunTests(
                 pkg: pkg, scope: nil, scopeLabel: nil, ffiConfig: .default,
-                programBase: absoluteProgramBase(abs))
+                programBase: absoluteProgramBase(abs), channel: channel)
             return
         }
 
         // 模块外单文件：单文件行为（G41 原语义，向后兼容）
-        try runSingleFileTests(path: abs)
+        try runSingleFileTests(path: abs, channel: channel)
     } catch let err as SemanticError {
         handleSemanticError(err); exit(1)
     } catch let err as TypeError {
@@ -1210,7 +1233,7 @@ func runTestPath(_ path: String?) {
 }
 
 /// G49：模块模式测试——整包加载（`[build] exclude` 生效）+ 显式路径加回 + 收集范围限定。
-private func runModuleTests(moduleRoot: String, scopePath: String?) throws {
+private func runModuleTests(moduleRoot: String, scopePath: String?, channel: TestChannel) throws {
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
     var pkg = try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
 
@@ -1243,13 +1266,16 @@ private func runModuleTests(moduleRoot: String, scopePath: String?) throws {
     try gateAndRunTests(
         pkg: pkg, scope: scope, scopeLabel: scopeLabel,
         ffiConfig: manifest?.ffi ?? .default,
-        programBase: absoluteProgramBase(moduleRoot))
+        programBase: absoluteProgramBase(moduleRoot), channel: channel)
 }
 
-/// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级 runTests → 汇总报告。
+/// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级测试 → 汇总报告。
+///
+/// `channel` 只影响**最后怎么跑**这一步；门禁、报告首行、以及「跑哪些」的收窄两条通道同规。
 private func gateAndRunTests(
     pkg: Package, scope: ((String) -> Bool)?, scopeLabel: String?,
-    ffiConfig: FFIConfig, programBase: String? = nil
+    ffiConfig: FFIConfig, programBase: String? = nil,
+    channel: TestChannel = .interpreter
 ) throws {
     do {
         let analyzer = SemanticAnalyzer()
@@ -1263,32 +1289,46 @@ private func gateAndRunTests(
         handleTypeError(err); exit(1)
     }
 
+    // 报告首行：两条通道是**同一个字符串** —— 解释器打印它，LLVM 把它交给产物自己打印。
+    // ⚠️ 两边各拼一次就迟早会不一致，故这里只拼一处。
+    let header: String
+    if let label = scopeLabel {
+        header = "测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件，范围 \(label)）"
+    } else {
+        header = "测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件）"
+    }
+
     // 批 5（G58）：测试运行注入程序基准（模块根 / 显式目录）——IO 相对路径与 run 一致。
     let runner = ProgramRunner(ffiConfig: ffiConfig, programBase: programBase)
-    let results = try runner.runTests(package: pkg, fileScope: scope)
 
-    if let label = scopeLabel {
-        print("测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件，范围 \(label)）")
-    } else {
-        print("测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件）")
-    }
-    var passed = 0, failed = 0
-    for r in results {
-        if r.passed {
-            passed += 1
-            print(" ✓ \(r.name)")
-        } else {
-            failed += 1
-            print(" ✗ \(r.name): \(r.message)")
+    switch channel {
+    case .interpreter:
+        let results = try runner.runTests(package: pkg, fileScope: scope)
+        print(header)
+        var passed = 0, failed = 0
+        for r in results {
+            if r.passed {
+                passed += 1
+                print(" ✓ \(r.name)")
+            } else {
+                failed += 1
+                print(" ✗ \(r.name): \(r.message)")
+            }
         }
+        if results.isEmpty { print(" （未找到 |test 测试函数）") }
+        print("结果: \(passed) 通过, \(failed) 失败")
+        if failed > 0 { exit(1) }
+
+    case .llvm:
+        // ⭐ 降载走 `lowerTests` —— 与上面那条通道**同一份**降载（理由见它的注释）。
+        let lowered = try runner.lowerTests(package: pkg)
+        try emitAndRunLLVMTests(
+            module: lowered, fileScope: scope, header: header, programBase: programBase)
     }
-    if results.isEmpty { print(" （未找到 |test 测试函数）") }
-    print("结果: \(passed) 通过, \(failed) 失败")
-    if failed > 0 { exit(1) }
 }
 
 /// G41 原单文件语义（模块外单文件向后兼容路径）。
-private func runSingleFileTests(path: String) throws {
+private func runSingleFileTests(path: String, channel: TestChannel = .interpreter) throws {
     let source = try readFile(path)
     let diagnostics = checkSingleFileDiagnostics(source: source, fileName: path)
     if !diagnostics.isEmpty {
@@ -1307,21 +1347,106 @@ private func runSingleFileTests(path: String) throws {
     let runner = ProgramRunner(
         ffiConfig: manifest?.ffi ?? .default,
         programBase: absoluteProgramBase(path))
-    let results = try runner.runTests(module: module)
-    var passed = 0, failed = 0
-    print("测试文件: \(path)")
-    for r in results {
-        if r.passed {
-            passed += 1
-            print(" ✓ \(r.name)")
-        } else {
-            failed += 1
-            print(" ✗ \(r.name): \(r.message)")
+
+    // 报告首行：两条通道同一个字符串（同 `gateAndRunTests` 的理由）。
+    let header = "测试文件: \(path)"
+
+    switch channel {
+    case .interpreter:
+        let results = try runner.runTests(module: module)
+        var passed = 0, failed = 0
+        print(header)
+        for r in results {
+            if r.passed {
+                passed += 1
+                print(" ✓ \(r.name)")
+            } else {
+                failed += 1
+                print(" ✗ \(r.name): \(r.message)")
+            }
         }
+        if results.isEmpty { print(" （未找到 |test 测试函数）") }
+        print("结果: \(passed) 通过, \(failed) 失败")
+        if failed > 0 { exit(1) }
+
+    case .llvm:
+        let lowered = try runner.lowerTests(module: module)
+        try emitAndRunLLVMTests(
+            module: lowered, fileScope: nil, header: header,
+            programBase: absoluteProgramBase(path))
     }
-    if results.isEmpty { print(" （未找到 |test 测试函数）") }
-    print("结果: \(passed) 通过, \(failed) 失败")
-    if failed > 0 { exit(1) }
+}
+
+/// LLVM 通道的测试运行：发射（测试模式）→ 建链 → 运行 → **退出码透传**。
+///
+/// ⭐ 本函数**不产出报告** —— 报告与退出码都由产物自己给出（发射侧的驱动器按测试模式合成），
+/// 命令行一路透传。这既是「两个后端的报告逐字节同序」的实现方式，也让本函数只剩工具链三件事：
+/// 落盘 `.ll`、调 clang、把子进程状态交出去。
+///
+/// ⚠️⭐ 退出码**必须交出去**（既有实测教训在案）：`compile` 曾把它丢掉，于是「abort 掉」被读成
+/// `rc=0`，任何建在它上面的判据都恒绿。本函数与 `runCompileCommand` 走同一条纪律。
+///
+/// ⛔ 与 `runCompileCommand` 的差别只有一处：本函数**降载时就开了测试模式** —— 模块里没有
+/// `main` 也合法（测试专档是合法形态），而入口由发射器合成。
+func emitAndRunLLVMTests(
+    module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?
+) throws {
+    // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**，⛔ 不是「能看到什么」。
+    // ⚠️ 清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
+    let selection: [String]? = fileScope.map { scope in
+        module.functions.filter { $0.isTest && scope($0.sourceFile) }.map { $0.name }
+    }
+
+    let emitter = IREmitter()
+    emitter.programBase = programBase
+    emitter.testReportHeader = header
+    emitter.testSelection = selection
+    let ir = emitter.emit(module: module)
+
+    let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
+    let tmpBin = "/tmp/pini_\(UUID().uuidString)"
+    try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
+    // 调试出口：把测试模式的产物留一份（与本文件既有 `PINI_RUNTIME_LIB` / 借助 `PINI_LLVM_BIN`
+    // 的惯例同规）。⚠️ 存在的理由很具体：本通道的产物是**合成**出来的（驱动器 + 入口），
+    // 出问题时 clang 的报错只给行号，而临时文件随后就被删了 —— 没有这一手就只能靠猜。
+    if let keep = ProcessInfo.processInfo.environment["PINI_TEST_LLVM_IR"] {
+        try? ir.write(toFile: keep, atomically: true, encoding: .utf8)
+    }
+    defer {
+        try? FileManager.default.removeItem(atPath: tmpIR)
+        try? FileManager.default.removeItem(atPath: tmpBin)
+    }
+
+    guard let clang = LLVMToolchain.clangPath else {
+        throw NSError(
+            domain: "ToolchainError", code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "clang not found. Install LLVM (e.g. `brew install llvm`) or set PINI_LLVM_BIN."])
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: clang)
+    var clangArgs = ["-o", tmpBin, tmpIR]
+    if let dylib = runtimeLibraryPath() {
+        let dir = (dylib as NSString).deletingLastPathComponent
+        clangArgs.insert(contentsOf: ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"], at: 0)
+    }
+    process.arguments = clangArgs
+    let pipe = Pipe()
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    if process.terminationStatus != 0 {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let err = String(data: data, encoding: .utf8) ?? ""
+        throw NSError(
+            domain: "CompileError", code: Int(process.terminationStatus),
+            userInfo: [NSLocalizedDescriptionKey: "clang failed: \(err)"])
+    }
+
+    let run = Process()
+    run.executableURL = URL(fileURLWithPath: tmpBin)
+    try run.run()
+    run.waitUntilExit()
+    exit(childExitStatus(of: run))
 }
 
 /// P4 Phase 5：check / build 接收文件或目录。
@@ -1779,6 +1904,10 @@ case "check", "build":
 case "test":
     // #46-E G41（R1）/ G49：测试子命令——path 可选；无参 = 收集当前目录所属模块根。
     runTestPath(args.count >= 3 ? args[2] : nil)
+case "test-llvm":
+    // 与 `test` **同一套**收集范围、门禁与报告；差别只在最后一步跑在 LLVM 通道上
+    // （发射成原生程序再运行）。命名照 `run` / `run-llvm` 的既有惯例。
+    runTestPath(args.count >= 3 ? args[2] : nil, channel: .llvm)
 case "emit":
     guard args.count >= 3 else {
         printError("Error: emit command requires a file path")
