@@ -629,6 +629,7 @@ func printHelp() {
     print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
     print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
+    print(" parse --sig <file.pini> Parse and print statement signature (SIG) lines")
     print(" tokens <file.pini> Print tokens from lexical analysis")
     print(" emit <file.pini> Emit LLVM IR (.ll) to stdout or -o file")
     print(" compile <file.pini> Compile via clang and run (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
@@ -687,8 +688,14 @@ func runTokensCommand(source: String, fileName: String) throws {
     }
 }
 
-func runParseCommand(source: String, fileName: String) throws {
+func runParseCommand(source: String, fileName: String, signaturesOnly: Bool = false) throws {
     let module = parseOrReport(source: source, fileName: fileName)
+    if signaturesOnly {
+        for line in SignatureSerializer.signatureLines(module: module) {
+            print(line)
+        }
+        return
+    }
     print(describeAST(module))
 }
 
@@ -1866,11 +1873,15 @@ case "tokens":
         exit(1)
     }
 case "parse":
-    guard args.count >= 3 else {
+    var parseRest = Array(args.dropFirst(2))
+    let signaturesOnly = parseRest.contains("--sig")
+    if signaturesOnly {
+        parseRest.removeAll { $0 == "--sig" }
+    }
+    guard let filePath = parseRest.first else {
         printError("Error: parse command requires a file path")
         exit(1)
     }
-    let filePath = args[2]
     let source: String
     do {
         source = try readFile(filePath)
@@ -1879,7 +1890,7 @@ case "parse":
         exit(1)
     }
     do {
-        try runParseCommand(source: source, fileName: filePath)
+        try runParseCommand(source: source, fileName: filePath, signaturesOnly: signaturesOnly)
     } catch {
         printError(formatCLIError(error: error, source: source))
         exit(1)
