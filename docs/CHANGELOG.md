@@ -3,6 +3,11 @@
 > 宿主实现（pini-swift）**实现版本演进记录**。语言版本里程碑见 `spec/CHANGELOG.md`（语言级）；治理变更见 `spec/adr/`（决策记录）与 `spec/issue/`。
 > 版本号与 `pini version` 输出同源：`PiniCore/Common/Version.swift`。
 
+## v0.56.0 (2026-10-13)
+
+- **字符串内建 `trimLeft` / `trimRight` / `indexOf`**（字符串内建提案，语言规范件 §2.10）：三个 String **成员**内建（与 `contains` / `substring` / `split` 同族）——`trimLeft` / `trimRight` 只剥 ASCII 空格 U+0020（⛔ 不含 tab）；`indexOf` 按**字素**单位返首现位置（空 needle ⇒ 0 · 未找到 ⇒ −1）。全链落地：单点登记表成员方法表（类型层派生）→ IR 新节点（`stringTrimLeft` / `stringTrimRight` / `stringIndexOf`，语义登记 IR 契约）→ IRLowerer 成员降载 → IRExecutor 求值 → IREmitter 经运行时段 `bk_string_trim_left` / `bk_string_trim_right` / `bk_string_index_of`（PiniRuntime 新 shim，strdup 契约）发射；解释器 / JIT / AOT 三腿锁步。非破坏性、纯增量：无既有构造的语义变化。
+- 自举侧同批五处同面实现（IR 节点 · 降载 · 解释器 · 发射 · IR 渲染）；自举 5 份层语料的本地 `indexOf` 实现同批删除、调用点改成员形态（切换前后读数逐字节相同）。
+
 ## v0.55.0 (2026-10-12)
 
 - **`pini parse --sig`：结构串（SIG）序列化输出**（结构串派生视图提案）：`PiniCore/Parser` 新增结构串序列化器——对 `parse` 的 AST **直读**发射 main 函数体顶层语句的结构串（⛔ 不做文本再解析）；CLI `parse` 分支支持 `--sig`（独立输出 `SIG|<序号>|<结构串>` 行，不带 flag 时行为零变化）。语义权威在语言规范的结构串派生视图条款。右端 = 判据面手写期望 14 条（优先级/结合性判别式），宿主单测逐条相等 + 驳回性测量（无 main / 空 main ⇒ 零行）。

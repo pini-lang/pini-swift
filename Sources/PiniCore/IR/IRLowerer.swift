@@ -4629,6 +4629,31 @@ public enum IRLowerer {
                 node: .stringSplit(receiver: receiver.node, delim: delim.node, type: arrayType),
                 type: arrayType
             )
+        case "trimLeft":
+            guard arguments.isEmpty else {
+                throw unsupported("trimLeft expects no arguments", at: location)
+            }
+            return LoweredExpr(
+                node: .stringTrimLeft(receiver: receiver.node),
+                type: .string
+            )
+        case "trimRight":
+            guard arguments.isEmpty else {
+                throw unsupported("trimRight expects no arguments", at: location)
+            }
+            return LoweredExpr(
+                node: .stringTrimRight(receiver: receiver.node),
+                type: .string
+            )
+        case "indexOf":
+            guard arguments.count == 1 else {
+                throw unsupported("indexOf expects exactly one argument", at: location)
+            }
+            let needle = try lowerExpr(arguments[0].expression, expected: .string, into: &context)
+            return LoweredExpr(
+                node: .stringIndexOf(receiver: receiver.node, needle: needle.node),
+                type: .i32
+            )
         default:
             throw unsupported("string method '\(memberName)' is outside this grid", at: location)
         }
@@ -4766,10 +4791,13 @@ public enum IRLowerer {
             )
         }
 
-        // String member methods (G9): upper/lower/contains/substring/split.
-        // `slice`/`get` fall through to the G2/G2b tolerant-read channels.
+        // String member methods (G9): upper/lower/contains/substring/split,
+        // plus the trim/index trio (leading/trailing ASCII space stripping and
+        // grapheme-indexed first occurrence). `slice`/`get` fall through to
+        // the G2/G2b tolerant-read channels.
         if case .string = objectType,
-            ["upper", "lower", "contains", "substring", "split"].contains(memberName)
+            ["upper", "lower", "contains", "substring", "split",
+             "trimLeft", "trimRight", "indexOf"].contains(memberName)
         {
             return try lowerStringMethod(
                 receiver: loweredObject, memberName: memberName, arguments: arguments,

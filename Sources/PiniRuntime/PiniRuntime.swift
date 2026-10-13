@@ -1598,6 +1598,63 @@ public func bk_string_contains(
     return 0
 }
 
+/// `s.trimLeft()` —— 剥离**前导**空格。
+///
+/// 权威 = `IRExecutor` 的 `.stringTrimLeft` 分支：**只剥 ASCII 空格 U+0020**
+/// （⛔ 不含 tab 及其他空白——与树渲染约定一致）；空串 / 全空格 ⇒ 空串。
+/// 被剥的一串是单字素空格 ⇒ 字素走查即字节走查；尾部按原字节拷贝。
+/// 分配契约 = strdup、调用方释放（同 `bk_cstr` / `bk_read_file`）。
+@_cdecl("bk_string_trim_left")
+public func bk_string_trim_left(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return _bkStrDup("") }
+    let text = String(cString: s)
+    return _bkStrDup(String(text.drop(while: { $0 == " " })))
+}
+
+/// `s.trimRight()` —— 剥离**尾随**空格。口径同 `bk_string_trim_left`
+/// （只剥 U+0020）；从尾部回走连续空格串，前缀原样拷贝。
+@_cdecl("bk_string_trim_right")
+public func bk_string_trim_right(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+    guard let s else { return _bkStrDup("") }
+    let text = String(cString: s)
+    var end = text.endIndex
+    while end > text.startIndex && text[text.index(before: end)] == " " {
+        end = text.index(before: end)
+    }
+    return _bkStrDup(String(text[..<end]))
+}
+
+/// `s.indexOf(needle)` —— `needle` 首现位置。
+///
+/// 权威 = `IRExecutor` 的 `.stringIndexOf` 分支（与 `.stringContains` 同一
+/// 字素扫描，本条返位置而非存在性）：**字素单位**；空 needle ⇒ 0；未找到 ⇒ −1。
+/// 运行时段实现（⛔ 不在发射器内联）—— 字素簇边界是 Unicode 分段算法，
+/// 发射器发不出来（同 `bk_string_count` / `bk_string_slice` 的立场）。
+@_cdecl("bk_string_index_of")
+public func bk_string_index_of(
+    _ haystack: UnsafePointer<CChar>?, _ needle: UnsafePointer<CChar>?
+) -> Int32 {
+    guard let haystack, let needle else { return -1 }
+    let haystackChars = Array(String(cString: haystack))
+    let needleChars = Array(String(cString: needle))
+    if needleChars.isEmpty { return 0 }
+    var i = 0
+    while i + needleChars.count <= haystackChars.count {
+        var j = 0
+        var matched = true
+        while j < needleChars.count {
+            if haystackChars[i + j] != needleChars[j] {
+                matched = false
+                break
+            }
+            j += 1
+        }
+        if matched { return Int32(i) }
+        i += 1
+    }
+    return -1
+}
+
 /// `s.split(sep)` —— 契约 §2.9 第 23 条**族**的容器通道（`Array<String>`）。
 ///
 /// 权威 = `IRExecutor` 的 `.split` 分支，本函数的循环**逐条镜像**它：
