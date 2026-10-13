@@ -177,6 +177,12 @@ public enum IRPrinter {
             return "\(exprText(receiver)).substring(\(exprText(start)), \(exprText(length)))"
         case .stringSplit(let receiver, let delim, _):
             return "\(exprText(receiver)).split(\(exprText(delim)))"
+        case .stringTrimLeft(let receiver):
+            return "\(exprText(receiver)).trimLeft()"
+        case .stringTrimRight(let receiver):
+            return "\(exprText(receiver)).trimRight()"
+        case .stringIndexOf(let receiver, let needle):
+            return "\(exprText(receiver)).indexOf(\(exprText(needle)))"
         case .arrayJoin(let receiver, let separator):
             return "\(exprText(receiver)).join(\(exprText(separator)))"
         case .stringConcat(let lhs, let rhs):

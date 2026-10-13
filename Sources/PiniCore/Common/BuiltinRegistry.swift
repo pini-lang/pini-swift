@@ -289,6 +289,19 @@ public enum BuiltinRegistry {
         MemberDecl(
             typeName: "String", name: "slice", paramNames: ["start", "end"],
             params: [t("Any"), t("Any")], returns: [t("String")], inTrait: true),
+        // String trim/index builtins: leading/trailing ASCII space stripping
+        // (U+0020 only — a tab is NOT stripped) and grapheme-indexed first
+        // occurrence (empty needle yields 0, absent yields -1).
+        // inTrait = false: extension surface, not the collection trait face.
+        MemberDecl(
+            typeName: "String", name: "trimLeft", paramNames: [],
+            params: [], returns: [t("String")], inTrait: false),
+        MemberDecl(
+            typeName: "String", name: "trimRight", paramNames: [],
+            params: [], returns: [t("String")], inTrait: false),
+        MemberDecl(
+            typeName: "String", name: "indexOf", paramNames: ["needle"],
+            params: [t("String")], returns: [t("I32")], inTrait: false),
         // 批 2（G48 三通道）：安全可选通道 `.get(i)` 与不安全通道 `.getUnchecked(i)`。
         // 动因：下标 `a[i]` 已改为安全断言通道（越界 panic），需要容错取值的显式通道；
         // `getUnchecked` 供已证明界内的热路径跳过检查（调用方以 `unsafe` 消耗点承担义务）。

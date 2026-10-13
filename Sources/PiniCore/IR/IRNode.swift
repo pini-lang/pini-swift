@@ -422,6 +422,21 @@ public indirect enum IRExpr: Equatable {
     /// unlike the legacy emitter which renders a formatted string): strtok
     /// loop feeding bk_array_create/set with strdup'd tokens.
     case stringSplit(receiver: IRExpr, delim: IRExpr, type: IRType)
+    /// `s.trimLeft()` — strip **leading** ASCII spaces (U+0020 only; a tab
+    /// or any other whitespace is NOT stripped). The stripped run is a
+    /// prefix of single-grapheme spaces, so the scan is byte-wise over the
+    /// leading space run; the tail is sliced out in the runtime shim.
+    /// Returns a new string; the receiver is untouched (same stance as
+    /// `stringCase`). Empty or all-space input yields the empty string.
+    case stringTrimLeft(receiver: IRExpr)
+    /// `s.trimRight()` — strip **trailing** ASCII spaces, same rule as
+    /// `stringTrimLeft` (U+0020 only; no tab).
+    case stringTrimRight(receiver: IRExpr)
+    /// `s.indexOf(needle)` — grapheme index of the **first** occurrence of
+    /// needle in the receiver; empty needle yields 0, absent yields -1.
+    /// Same grapheme scan as `stringContains` (grapheme, not byte), but
+    /// reports position instead of existence.
+    case stringIndexOf(receiver: IRExpr, needle: IRExpr)
     /// `arr.join(sep)` (G9) — string-array elements strcat'd with sep.
     case arrayJoin(receiver: IRExpr, separator: IRExpr)
     /// `s1 + s2` string concatenation (G9) — malloc'd join of the two

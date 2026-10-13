@@ -1450,6 +1450,50 @@ public final class IRExecutor: DebugHookHost {
             if !current.isEmpty { parts.append(.string(current)) }
             return .array(parts)
 
+        case .stringTrimLeft(let receiver):
+            // U+0020 only — a tab is NOT stripped. Character-wise drop over
+            // the leading space run (each space is one grapheme, so the
+            // grapheme walk costs nothing extra).
+            let text = try requireString(try evaluate(receiver), for: "trimLeft")
+            return .string(String(text.drop(while: { $0 == " " })))
+
+        case .stringTrimRight(let receiver):
+            // Same rule as trimLeft, from the tail: walk back over the
+            // trailing space run and prefix up to it.
+            let text = try requireString(try evaluate(receiver), for: "trimRight")
+            var end = text.endIndex
+            while end > text.startIndex && text[text.index(before: end)] == " " {
+                end = text.index(before: end)
+            }
+            return .string(String(text[..<end]))
+
+        case .stringIndexOf(let receiver, let needle):
+            // Grapheme-indexed first occurrence — same scan as
+            // `.stringContains`, reporting position instead of existence.
+            // Empty needle yields 0; absent yields -1.
+            let text = try requireString(try evaluate(receiver), for: "indexOf")
+            let needleText = try requireString(try evaluate(needle), for: "indexOf")
+            if needleText.isEmpty { return .int(0) }
+            let chars = Array(text)
+            let needleChars = Array(needleText)
+            let n = chars.count
+            let m = needleChars.count
+            var i = 0
+            while i + m <= n {
+                var j = 0
+                var matched = true
+                while j < m {
+                    if chars[i + j] != needleChars[j] {
+                        matched = false
+                        break
+                    }
+                    j += 1
+                }
+                if matched { return .int(i) }
+                i += 1
+            }
+            return .int(-1)
+
         // MARK: Not implemented yet — fail loud, named.
 
         // MARK: Pointers and LazyRef (P2b grid G8)

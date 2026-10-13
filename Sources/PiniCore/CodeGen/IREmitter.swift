@@ -642,6 +642,9 @@ public final class IREmitter {
             tail += "declare ptr @bk_string_lower(ptr)\n"
             tail += "declare i32 @bk_string_contains(ptr, ptr)\n"
             tail += "declare ptr @bk_string_split(ptr, ptr)\n"
+            tail += "declare ptr @bk_string_trim_left(ptr)\n"
+            tail += "declare ptr @bk_string_trim_right(ptr)\n"
+            tail += "declare i32 @bk_string_index_of(ptr, ptr)\n"
         }
         // 栈串搬到堆（`strdup`）：只有真走插值 / `join` 的模块才带（理由见字段处注释）。
         if usesHeapStringCopy {
@@ -2743,6 +2746,39 @@ public final class IREmitter {
             usesStringShims = true
             return emitStringSplit(source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
 
+        case .stringTrimLeft(let receiver):
+            // Runtime-shim delegation (same stance as `.stringSubstring`):
+            // the shim owns the U+0020-only rule and the allocation, so the
+            // interpreter and this emitter cannot drift.
+            let receiverValue = emitExpr(receiver)
+            usesStringShims = true
+            let trimLeftResult = builder.freshTemp()
+            bodyIR +=
+                " \(trimLeftResult) = call ptr @bk_string_trim_left(ptr \(receiverValue.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: trimLeftResult)
+
+        case .stringTrimRight(let receiver):
+            // Same stance as `.stringTrimLeft`.
+            let receiverValue = emitExpr(receiver)
+            usesStringShims = true
+            let trimRightResult = builder.freshTemp()
+            bodyIR +=
+                " \(trimRightResult) = call ptr @bk_string_trim_right(ptr \(receiverValue.ssaName))\n"
+            return IRValue(llvmType: "i8*", ssaName: trimRightResult)
+
+        case .stringIndexOf(let receiver, let needle):
+            // Same stance as `.stringContains`: the shim runs the grapheme
+            // scan and returns the first-occurrence index (0 for an empty
+            // needle, -1 when absent).
+            let receiverValue = emitExpr(receiver)
+            let needleValue = emitExpr(needle)
+            usesStringShims = true
+            let indexResult = builder.freshTemp()
+            bodyIR +=
+                " \(indexResult) = call i32 @bk_string_index_of(ptr \(receiverValue.ssaName), "
+                + "ptr \(needleValue.ssaName))\n"
+            return IRValue(llvmType: "i32", ssaName: indexResult)
+
         case .arrayJoin(let receiver, let separator):
             let receiverValue = emitExpr(receiver)
             let separatorValue = emitExpr(separator)
@@ -4584,6 +4620,9 @@ public final class IREmitter {
         case .stringContains: return .boolean
         case .stringSubstring: return .string
         case .stringSplit(_, _, let type): return type
+        case .stringTrimLeft: return .string
+        case .stringTrimRight: return .string
+        case .stringIndexOf: return .i32
         case .arrayJoin: return .string
         case .stringConcat: return .string
         case .interpString: return .string
