@@ -194,18 +194,6 @@ public final class IREmitter {
     /// 与解释器同一个模型。⚠️ 语义一律对着解释器那一路写，⛔ 不在这里各造一套。
     private var usesStringShims = false
 
-    /// 是否发射过**把栈上拼出来的串复制到堆**（`strdup`）—— 条件 declare。
-    ///
-    /// ⭐ 2026-10-03（甲路线）：插值与 `join` 的结果会离开产出它的帧，而两者都在本帧的
-    /// `alloca` 上拼串 ⇒ 交出的是**悬垂的栈地址**（详见 `heapCopyOfStackString` 的说明）。
-    /// 与 LazyRef / 文件 IO / 字符族同规 —— **条件 declare**，不用这两条路径的程序
-    /// 其 IR **逐字节不变**。
-    ///
-    /// ⚠️ 这条 declare **不能**放进无条件头部：自举侧自己的发射器（P3 那一格）发的是
-    /// 同一份头部清单，而它**还没有**这条堆复制 ⇒ 无条件发出会让「宿主发射器 ⇄ 自举发射器
-    /// 产物逐字节相同」那条门禁**当场变红**（实测：就只差这一行）。
-    /// ⛔ 本批对自举仓 `src/` 零改动（甲路线的范围外），所以这里取的是**按需发出**。
-    private var usesHeapStringCopy = false
     /// 是否发射过**名义箱的分配**（`bk_nominal_alloc`）—— 只有真构造过名义值的模块才带它的 declare。
     ///
     /// ⭐ 2026-10-01「名义箱上堆」：结构体 / 对象 / 枚举的箱从栈 `alloca` 搬到运行时段堆分配
@@ -645,10 +633,6 @@ public final class IREmitter {
             tail += "declare ptr @bk_string_trim_left(ptr)\n"
             tail += "declare ptr @bk_string_trim_right(ptr)\n"
             tail += "declare i32 @bk_string_index_of(ptr, ptr)\n"
-        }
-        // 栈串搬到堆（`strdup`）：只有真走插值 / `join` 的模块才带（理由见字段处注释）。
-        if usesHeapStringCopy {
-            tail += "declare ptr @strdup(ptr)\n"
         }
         // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
         // 只有真发过派发的模块才带。⚠️ 观测符号 `bk_task_state` **不在这里** ——
@@ -5902,10 +5886,9 @@ public final class IREmitter {
     /// 可被 `bk_str_release` 回收。⛔ 仍要记住它带**一份**引用：本函数把它记进账本，
     /// 由消费点或持有位置决定何时还（漏还只会泄漏，⛔ 不会踩内存）。
     ///
-    /// ⚠️ 本函数置位 `usesHeapStringCopy` —— **这条 declare 是条件发出的**，⛔ 别把置位删掉
-    /// （删了产物里就只有 `call` 没有 `declare`，clang 报 `use of undefined value`）。
+    /// 本函数产出的串**入账**（`adoptOwnedString`）⇒ 置位 `usesStringOwnership`，
+    /// `@bk_str_dup` 的 declare 随之条件发出（删掉入账，产物里就只有 `call` 没有 `declare`）。
     private func heapCopyOfStackString(_ buf: String) -> IRValue {
-        usesHeapStringCopy = true
         let dup = builder.freshTemp()
         bodyIR += " \(dup) = call ptr @bk_str_dup(ptr \(buf))\n"
         adoptOwnedString(dup)

@@ -110,11 +110,11 @@ struct OwnershipLifetimeTests {
     /// `string-escapes-*` 两条**抓不住**「撤掉堆复制」这个变异 —— 撤掉之后它们**仍全绿**，
     /// 因为夹具里那支 `burn` 没覆写到产出帧的那片栈（栈复用是**碰运气**的，
     /// 这恰恰是本缺陷长期被读成「非确定性」的原因）。⇒ 行为判据必要但不充分，
-    /// 补一条**产物结构级**判据：栈缓冲的**交出点**必须紧跟 `@strdup`。
+    /// 补一条**产物结构级**判据：栈缓冲的**交出点**必须紧跟 `@bk_str_dup`。
     ///
     /// ⚠️ 判据的**非退化锚点**：夹具必须真的走栈上拼串（`alloca i8, i64 4096`），
-    /// 否则「没有 `strdup`」与「根本没有拼串」外观相同。
-    @Test("栈上拼串（插值 / join）的产物必须经 @strdup 交出去")
+    /// 否则「没有堆复制」与「根本没有拼串」外观相同。
+    @Test("栈上拼串（插值 / join）的产物必须经 @bk_str_dup 交出去")
     func stackBuiltStringsAreCopiedToTheHeap() throws {
         guard requireCLI(["PINI_CLI_BIN"]) else { return }
         let scratch = FileManager.default.temporaryDirectory
@@ -133,10 +133,10 @@ struct OwnershipLifetimeTests {
                 ir.contains("alloca i8, i64 4096"),
                 "\(fixture)：产物里没有栈上拼串缓冲 ⇒ 本判据会空转")
             #expect(
-                ir.contains("call ptr @strdup(ptr"),
+                ir.contains("call ptr @bk_str_dup(ptr"),
                 """
                 \(fixture)：栈上拼出来的串在**交出之前**必须复制到堆。
-                没有 `@strdup` 调用 ⇒ 交出去的是**栈地址**，帧一退就是悬垂指针
+                没有 `@bk_str_dup` 调用 ⇒ 交出去的是**栈地址**，帧一退就是悬垂指针
                 （自举词法层 `self.emit("int", "\\(parseDecimal(wholeText))")` 正是这种形态）。
                 """)
         }
