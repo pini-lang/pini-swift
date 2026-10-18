@@ -561,6 +561,9 @@ public class Lexer {
 
         var segments: [StringSegment] = []
         var literal = ""
+        // `\0` = 内容终止符：命中后不再追加内容、不再产出插值段；
+        // 但 `\(` 仍要扫过去 —— 边界靠扫描推进，⛔ 不能跳。
+        var truncated = false
 
         func flushLiteral() {
             if !literal.isEmpty {
@@ -581,26 +584,35 @@ public class Lexer {
                     throw LexerError.unterminatedString(loc)
                 }
                 if esc == "(" {
-                    flushLiteral()
                     let exprSource = try scanInterpolationExpression()
-                    segments.append(.expression(exprSource))
+                    if !truncated {
+                        flushLiteral()
+                        segments.append(.expression(exprSource))
+                    }
+                } else if esc == "0" {
+                    flushLiteral()
+                    truncated = true
+                    _ = advance()
                 } else {
-                    switch esc {
-                    case "n": literal.append("\n")
-                    case "t": literal.append("\t")
-                    case "r": literal.append("\r")
-                    case "0": literal.append("\0")
-                    case "\\": literal.append("\\")
-                    case "\"": literal.append("\"")
-                    default:
-                        // 宽松词法：非法转义原样保留（反斜杠 + 字符），不报错
-                        literal.append("\\")
-                        literal.append(esc)
+                    if !truncated {
+                        switch esc {
+                        case "n": literal.append("\n")
+                        case "t": literal.append("\t")
+                        case "r": literal.append("\r")
+                        case "\\": literal.append("\\")
+                        case "\"": literal.append("\"")
+                        default:
+                            // 宽松词法：非法转义原样保留（反斜杠 + 字符），不报错
+                            literal.append("\\")
+                            literal.append(esc)
+                        }
                     }
                     _ = advance()
                 }
             } else {
-                literal.append(char)
+                if !truncated {
+                    literal.append(char)
+                }
                 _ = advance()
             }
         }
@@ -612,6 +624,7 @@ public class Lexer {
         flushLiteral()
 
         // 无插值段时仍发 .stringLiteral，保持向后兼容（不破坏现有测试）
+        // ⚠️ 段表退化（`\0` 截断后只剩一个字面段）也走这条 —— 与自举侧同一约定。
         if segments.count == 1, case .literal(let s) = segments[0] {
             return .stringLiteral(s, loc)
         }
