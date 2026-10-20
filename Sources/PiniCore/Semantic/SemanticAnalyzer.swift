@@ -12,6 +12,13 @@ public final class SemanticAnalyzer {
     private var enumCaseParents: [String: [String]] = [:]
     private var enumAllCases: [String: [String]] = [:]
 
+    /// 名字级「变量 / 参数 / 方法可见字段 → 类型名」登记，`typeNameOf` 的输入。
+    /// 用于让 `match` 按**被匹配值的类型**解析父枚举（而不是按 case 名反查）。
+    /// 判不出类型时**不留登记**，上层据此跳过校验。
+    /// 已知限制：name 级键（同 `usedSymbols`）；进入块 / 函数时快照、离开时回滚，
+    /// 使同名遮蔽不把外层的类型带给内层之后的判断。
+    private var declaredTypes: [String: String] = [:]
+
     /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查时注入 self 字段作用域。
     private var typeFields: [String: [FieldDecl]] = [:]
 
@@ -504,8 +511,12 @@ public final class SemanticAnalyzer {
     }
 
     private func checkFuncDecl(_ funcDecl: FuncDecl, fields: [FieldDecl] = []) throws {
+        let savedTypes = declaredTypes
         symbolTable.enterScope(name: funcDecl.name)
-        defer { symbolTable.exitScope() }
+        defer {
+            declaredTypes = savedTypes
+            symbolTable.exitScope()
+        }
 
         // 方法体作用域：注册 self 与所属类型的字段，使方法体可直接引用字段
         // （P3-1 示例 trait.pini 的 `描述|self() -> (String,)` 返回 `名字` 字段触发此需求）。
@@ -514,12 +525,16 @@ public final class SemanticAnalyzer {
             symbolTable.define(Symbol(name: "self", kind: .variable(isMutable: false), location: funcDecl.location))
             for field in fields {
                 symbolTable.define(Symbol(name: field.name, kind: .variable(isMutable: false), location: field.location))
+                recordDeclaredType(field.name, typeNameOfAnnotation(field.typeAnnotation))
             }
         }
 
         // 注册参数
         for param in funcDecl.params {
             symbolTable.define(Symbol(name: param.name, kind: .parameter, location: funcDecl.location))
+            if let annotation = param.typeAnnotation {
+                recordDeclaredType(param.name, typeNameOfAnnotation(annotation))
+            }
         }
 
         // 检查函数体：包一层 body scope，使局部 var 在独立作用域——B2 未使用检测只在此与嵌套块
@@ -567,7 +582,7 @@ public final class SemanticAnalyzer {
             return
         }
         switch stmt {
-        case .varDecl(let name, _, let initializer, let isMutable, let location):
+        case .varDecl(let name, let annotation, let initializer, let isMutable, let location):
             if let initExpr = initializer {
                 try checkExpression(initExpr)
             }
@@ -576,6 +591,7 @@ public final class SemanticAnalyzer {
             }
             try checkAliasNameConflict(name, location)
             symbolTable.define(Symbol(name: name, kind: .variable(isMutable: isMutable), location: location))
+            recordDeclaredType(name, declaredTypeName(annotation: annotation, initializer: initializer))
 
         case .varDestructure(let names, _, let initializer, let isMutable, let location):
             // 草稿 A1（批次 1）：逐个定义非 `_` 分量（`_` 为占位不定义）；先检查初始值子表达式。
@@ -671,32 +687,123 @@ public final class SemanticAnalyzer {
         }
     }
 
+    // MARK: - 类型名解析（match 的父枚举判据）
+
+    /// 确定不是枚举的内建标量类型名。未列出的名字一律不作「非枚举」判断 —— 判不出就不校验，
+    /// 这样导入 / 内建 / 尚未登记的类型不会被误拒。
+    private static let scalarTypeNames: Set<String> = [
+        "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
+        "F32", "F64", "Bool", "Char", "String", "Nothing",
+    ]
+
+    /// 注解 → 类型名；元组 / 函数 / 指针 / 泛型不判定（返回 ""）。
+    private func typeNameOfAnnotation(_ annotation: TypeAnnotation) -> String {
+        switch annotation {
+        case .simple(let name, _): return name
+        default: return ""
+        }
+    }
+
+    /// 该名字是否已登记为本模块的具名类型（结构体 / 对象 / trait）。
+    private func isNominalTypeName(_ name: String) -> Bool {
+        guard !name.isEmpty, let symbol = symbolTable.resolve(name) else { return false }
+        switch symbol.kind {
+        case .struct, .object, .trait: return true
+        default: return false
+        }
+    }
+
+    /// 该名字是否**确定不是枚举**（内建标量，或本模块已登记的具名类型）。
+    private func isDefinitelyNonEnumType(_ name: String) -> Bool {
+        if Self.scalarTypeNames.contains(name) { return true }
+        return isNominalTypeName(name)
+    }
+
+    /// 表达式 → 类型名；判不出返回 ""。
+    /// 覆盖：标识符（登记表，其次裸枚举用例）、成员（限定用例 `形.甲`，其次字段声明）、
+    /// 构造调用（`形.甲(...)` / `箱(...)`）、四类字面量。
+    private func typeNameOf(_ expr: Expression) -> String {
+        switch expr {
+        case .identifier(let name, _):
+            if let recorded = declaredTypes[name], !recorded.isEmpty { return recorded }
+            // 裸用例构造 `red`：符号是枚举用例 ⇒ 父枚举（仅单父时可判）
+            if let symbol = symbolTable.resolve(name), symbol.kind == .enumCase {
+                let parents = enumCaseParents[name] ?? []
+                if parents.count == 1 { return parents[0] }
+            }
+            return ""
+
+        case .member(let obj, let field, _):
+            if case .identifier(let owner, _) = obj, enumAllCases[owner]?.contains(field) == true {
+                return owner
+            }
+            let ownerType = typeNameOf(obj)
+            if let decl = typeFields[ownerType]?.first(where: { $0.name == field }) {
+                return typeNameOfAnnotation(decl.typeAnnotation)
+            }
+            return ""
+
+        case .call(let callee, _, _):
+            if case .member(let obj, let field, _) = callee, case .identifier(let owner, _) = obj,
+                enumAllCases[owner]?.contains(field) == true
+            {
+                return owner
+            }
+            if case .identifier(let ctor, _) = callee, isNominalTypeName(ctor) { return ctor }
+            return ""
+
+        case .integerLiteral: return "I32"
+        case .floatLiteral: return "F64"
+        case .stringLiteral: return "String"
+        case .boolLiteral: return "Bool"
+        default: return ""
+        }
+    }
+
+    /// 声明的类型名：注解优先，其次按初始化式推断；都没结果返回 ""（⇒ 不留登记）。
+    private func declaredTypeName(annotation: TypeAnnotation?, initializer: Expression?) -> String {
+        if let annotation = annotation {
+            let annotated = typeNameOfAnnotation(annotation)
+            if !annotated.isEmpty { return annotated }
+        }
+        if let initializer = initializer { return typeNameOf(initializer) }
+        return ""
+    }
+
+    /// 写入 / 清除一条声明的类型名（判不出即清除，避免同名旧值残留）。
+    private func recordDeclaredType(_ name: String, _ typeName: String) {
+        if typeName.isEmpty {
+            declaredTypes.removeValue(forKey: name)
+        } else {
+            declaredTypes[name] = typeName
+        }
+    }
+
     // MARK: - R1 穷尽性/可达性检查（D3① 取代 P3 validated 开关）
 
-    /// 穷尽性校验：**总是开启**（R1，2026-08-23 D3①），`case _:` 通配兜底豁免。
-    /// 策略（best-effort，避免误报、不阻断跨枚举/导入场景）：
-    /// 1. 区分每个 case 模式能否解析到本模块已知枚举；
-    /// 2. 若「存在已知 case」却夹带「未知 case」→ 视为拼写错误（`unknownMatchCase`）；
-    /// 3. 全部 case 均无法解析（可能是内建/导入枚举，本模块无登记）→ 跳过（无法校验）；
-    /// 4. 全部 case 解析到同一枚举 → 校验穷尽覆盖，缺 case 且无 `case _:` 通配则 `nonExhaustiveMatch`；
-    /// 5. 跨枚举同名碰撞（多父）→ 退化为仅合法性校验，不报穷尽性（HIGH-1/MED-2 立项前不误报）。
+    /// 穷尽性/可达性校验：**总是开启**（R1，2026-08-23 D3①），`case _:` 通配兜底豁免。
+    ///
+    /// 父枚举的判据只有一条：**被匹配值的类型**（`typeNameOf` 求得）。按 case 名全局反查会把
+    /// 「裸值 + 某枚举的用例臂」误判成该枚举的 match，故类型判不出时一律不校验。三种落点：
+    /// 1. 类型是已知枚举 → 逐臂校验归属（不属本枚举的臂永不匹配 ⇒ `unknownMatchCase`），
+    ///    再校验穷尽覆盖（缺变体且无 `case _:` ⇒ `nonExhaustiveMatch`）；
+    /// 2. 类型确定不是枚举（内建标量 / 已登记具名类型）→ 能解析到枚举的臂永不匹配 ⇒ `unknownMatchCase`；
+    /// 3. 类型判不出（调用结果、导入类型等）→ 不校验。
+    /// 另保留一条与类型无关的合法性检查：已知 case 与解析不到的 case **并存** ⇒ 判后者为拼写错误。
     private func checkMatchExhaustive(
         value: Expression, cases: [MatchCase], location: SourceLocation
     ) throws {
         var resolvedPatterns: [String] = []
         var unresolvedEnumCases: [MatchCase] = []
-        var parentUnion = Set<String>()
         var hasWildcardPattern = false
 
         for mc in cases {
             switch mc.pattern {
             case .enumCase(let name):
-                let parents = enumCaseParents[name] ?? []
-                if parents.isEmpty {
+                if (enumCaseParents[name] ?? []).isEmpty {
                     unresolvedEnumCases.append(mc)
                 } else {
                     resolvedPatterns.append(name)
-                    parentUnion.formUnion(parents)
                 }
             case .wildcard:
                 hasWildcardPattern = true
@@ -713,42 +820,49 @@ public final class SemanticAnalyzer {
             }
         }
 
-        // 无枚举 case 模式可校验（全标量/通配）→ best-effort 跳过
-        if resolvedPatterns.isEmpty {
+        let scrutineeType = typeNameOf(value)
+        if enumAllCases[scrutineeType] != nil {
+            try checkEnumMatch(
+                cases: cases, enumName: scrutineeType, resolved: resolvedPatterns,
+                hasWildcard: hasWildcardPattern, location: location)
             return
         }
 
-        // P5-5 MED-2：若被匹配值是限定枚举构造 形状.圆(...)（.call(.member(.identifier(父), case), ...)）
-        // 且 父 是本模块已知枚举，则穷尽性校验锁定到该枚举——跨枚举同名 case 不再串味
-        // （如 形状.圆 与 几何.圆 共存时，match 形状.圆(...) 只校验 形状 的全部 case）。
-        // 变量/参数匹配（match x）因语义层无变量类型跟踪，仍走下方多父退化逻辑（best-effort）。
-        var pinnedParent: String? = nil
-        if case .call(let callee, _, _) = value,
-            case .member(let objExpr, _, _) = callee,
-            case .identifier(let parentName, _) = objExpr,
-            enumAllCases[parentName] != nil
-        {
-            pinnedParent = parentName
-        }
-
-        // 所有 enum case 解析到同一枚举（或限定值锁定到单父）→ 校验穷尽性；跨枚举碰撞且无
-        // 限定值锁定时 → 退化（不误报穷尽性）。`case _:` 视为覆盖全部（与旧 default 同权）。
-        let exhaustivenessTarget: String? = pinnedParent ?? (parentUnion.count == 1 ? parentUnion.first : nil)
-        if let enumName = exhaustivenessTarget {
-            let allCases = enumAllCases[enumName] ?? []
-            let covered = Set(resolvedPatterns)
-            let missing = allCases.filter { !covered.contains($0) }
-            if missing.isEmpty || hasWildcardPattern {
-                return
+        if isDefinitelyNonEnumType(scrutineeType) {
+            for mc in cases {
+                if case .enumCase(let name) = mc.pattern, !(enumCaseParents[name] ?? []).isEmpty {
+                    throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
+                }
             }
-            throw SemanticError.nonExhaustiveMatch(missingCases: missing, location: location)
         }
     }
 
+    /// 枚举 match 的两项校验：臂归属（`caseName` 必须是 `enumName` 的用例）与穷尽覆盖。
+    private func checkEnumMatch(
+        cases: [MatchCase], enumName: String, resolved: [String], hasWildcard: Bool,
+        location: SourceLocation
+    ) throws {
+        for mc in cases {
+            guard case .enumCase(let name) = mc.pattern else { continue }
+            if !(enumCaseParents[name] ?? []).contains(enumName) {
+                throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
+            }
+        }
+        let allCases = enumAllCases[enumName] ?? []
+        let covered = Set(resolved)
+        let missing = allCases.filter { !covered.contains($0) }
+        if missing.isEmpty || hasWildcard {
+            return
+        }
+        throw SemanticError.nonExhaustiveMatch(missingCases: missing, location: location)
+    }
+
     private func checkBlock(_ block: Block) throws {
+        let savedTypes = declaredTypes
         symbolTable.enterScope(name: "block")
         defer {
             emitUnusedWarnings()  // B2：块作用域结束检测未使用局部变量（参数/顶层/字段/for 模式变量不在本作用域，天然排除）
+            declaredTypes = savedTypes
             symbolTable.exitScope()
         }
         for stmt in block.statements {
