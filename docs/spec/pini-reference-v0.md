@@ -1629,7 +1629,9 @@ match 值:
 - 通配兜底为 `case _:`
 - 无 `default:`
 - 枚举 match 缺变体且无 `case _:` → 编译期错误 `nonExhaustiveMatch`
-- 字面量 match 静态不检查穷尽性
+- 字面量 match 静态不检查穷尽性；未命中且无 `case _:` 时**运行时静默**（不 panic）
+- `case` 的名字按**被匹配值的类型**解析：名字不属于该类型的枚举 → 编译期错误 `unknownMatchCase`
+  （如标量上写枚举用例）；被匹配值的类型判不出时不校验
 
 **枚举解构**：
 
