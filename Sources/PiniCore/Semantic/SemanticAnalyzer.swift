@@ -785,7 +785,7 @@ public final class SemanticAnalyzer {
     ///
     /// 父枚举的判据只有一条：**被匹配值的类型**（`typeNameOf` 求得）。按 case 名全局反查会把
     /// 「裸值 + 某枚举的用例臂」误判成该枚举的 match，故类型判不出时一律不校验。三种落点：
-    /// 1. 类型是已知枚举 → 逐臂校验归属（不属本枚举的臂永不匹配 ⇒ `unknownMatchCase`），
+    /// 1. 类型是已知枚举 → 逐臂校验可达性（不属本枚举的用例、或字面量臂 ⇒ `unknownMatchCase`），
     ///    再校验穷尽覆盖（缺变体且无 `case _:` ⇒ `nonExhaustiveMatch`）；
     /// 2. 类型确定不是枚举（内建标量 / 已登记具名类型）→ 能解析到枚举的臂永不匹配 ⇒ `unknownMatchCase`；
     /// 3. 类型判不出（调用结果、导入类型等）→ 不校验。
@@ -808,7 +808,7 @@ public final class SemanticAnalyzer {
             case .wildcard:
                 hasWildcardPattern = true
             case .intLiteral, .floatLiteral, .stringLiteral, .boolLiteral:
-                break  // 标量模式不参与枚举穷尽性校验
+                break  // 字面量臂不计入覆盖统计；枚举 match 上由 checkEnumMatch 拒绝
             }
         }
 
@@ -837,15 +837,22 @@ public final class SemanticAnalyzer {
         }
     }
 
-    /// 枚举 match 的两项校验：臂归属（`caseName` 必须是 `enumName` 的用例）与穷尽覆盖。
+    /// 枚举 match 的两项校验：臂可达性（枚举用例须属本枚举；字面量臂无匹配可能）与穷尽覆盖。
     private func checkEnumMatch(
         cases: [MatchCase], enumName: String, resolved: [String], hasWildcard: Bool,
         location: SourceLocation
     ) throws {
         for mc in cases {
-            guard case .enumCase(let name) = mc.pattern else { continue }
-            if !(enumCaseParents[name] ?? []).contains(enumName) {
-                throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
+            switch mc.pattern {
+            case .wildcard:
+                continue
+            case .enumCase(let name):
+                if !(enumCaseParents[name] ?? []).contains(enumName) {
+                    throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
+                }
+            case .intLiteral, .floatLiteral, .stringLiteral, .boolLiteral:
+                // 被匹配值是枚举 ⇒ 字面量与任何用例都不相等
+                throw SemanticError.unknownMatchCase(caseName: mc.pattern.description, location: mc.location)
             }
         }
         let allCases = enumAllCases[enumName] ?? []
