@@ -104,7 +104,7 @@
 | 后端路线分段与收口 | `docs/spec/issue/plan-selfhost-llvm-backend-2026-10-01.md` |
 | ⭐ **段 C 的施工作业面**（批次切分 · 依赖序 · 各批判据 · 待裁） | `docs/spec/issue/plan-selfhost-segment-c-2026-10-05.md` |
 | 特性差距（销账以它为准） | `docs/spec/issue/selfhost-gap-ledger-2026-09-30.md` |
-| ⭐ **本批新立的三张工单（⛔ 未占编号 · 待裁：MVP 外 / 延迟 / 立刻）** | `docs/spec/issue/issue-bitwise-ops-not-lowered-2026-10-21.md`（位运算整族不入 IR 降载）· `docs/spec/issue/issue-neg-float-unary-argument-2026-10-21.md`（一元负号做实参 ⇒ 非法 .ll）· `docs/spec/issue/issue-decimal-parse-rounding-2026-10-21.md`（十进制解析非正确舍入） |
+| ⭐ **2026-10-21 立案的三张工单（⛔ 均未占编号 · 用户同日裁定「立刻」⇒ 逐张大到销账）** | `docs/spec/issue/issue-bitwise-ops-not-lowered-2026-10-21.md`（位运算整族不入 IR 降载 · **Open**）· `docs/spec/issue/issue-neg-float-unary-argument-2026-10-21.md`（一元负号做实参 ⇒ 非法 .ll · **Closed 2026-10-21**，读数 = 自举仓读数件 §138）· `docs/spec/issue/issue-decimal-parse-rounding-2026-10-21.md`（十进制解析非正确舍入 · **Open**） |
 
 ## 4. 治理面
 
