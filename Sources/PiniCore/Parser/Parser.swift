@@ -1931,7 +1931,7 @@ public class Parser {
 
         // 标签语法反转（规则 3.13）：`标签|控制流关键字` 前缀 → 带标签语句。
         // 仅当 `IDENT '|'` 后为控制流关键字（if/while/for）时才识别为标签；
-        // 否则（方法调用 `obj|m` / 按位或 `a|b`）回退为表达式，交由 default 分支处理。
+        // 否则（按位或 `a | b`）回退为表达式，由 parseBitwise 认领该记号。
         if case .identifier(let labelName, _) = currentToken,
             case .pipe(_) = peek(),
             case .keyword(let cfKeyword, _) = peek(offset: 2)
@@ -2638,7 +2638,9 @@ public class Parser {
 
     private func isBitwiseOperator() -> Bool {
         switch currentToken {
-        case .bitwiseAnd(_), .bitwiseXor(_), .leftShift(_), .rightShift(_):
+        // `|` 的记号名是 `.pipe`（它与声明修饰、标签、联合类型共用该符号），
+        // 与按位运算符不由名字对齐的那一个。
+        case .bitwiseAnd(_), .bitwiseXor(_), .leftShift(_), .rightShift(_), .pipe(_):
             return true
         default:
             return false
@@ -2651,6 +2653,7 @@ public class Parser {
         case .bitwiseXor(_): return .bitwiseXor
         case .leftShift(_): return .leftShift
         case .rightShift(_): return .rightShift
+        case .pipe(_): return .bitwiseOr
         default:
             throw ParserError.invalidExpression(reason: "无效的位运算符", location: currentLocation)
         }
