@@ -1851,9 +1851,9 @@ public func bk_string_split(
 //
 // ⛔ **两处 `DE-1` 留白，由本段定案并登记**（`IR 契约` §5.2 注 + 提案 §11 执行记录）：
 //   ① `status` 的**取值**（`DE-1` 只写了 `-> status`，没写值）；
-//   ② 「**运行时自己产生的 err**」（取消 / 超时 / leaked 聚合）其**载荷**在 C ABI 面
-//      **构造不出来** —— 这一层没有值构造器、也没有 stringify。本段的处置：取消身份由
-//      `status` 承载、聚合只写 `leaked` 计数，并**明标为待 `DE-3c` 换真实值**。
+//   ② 「**运行时自己产生的 err**」（取消 / 超时 / leaked 聚合）其载荷 = 错误对象的
+//      句柄字（见本文件「Result 的 err 载荷」一节）：三类都带可读消息，`status` 仍是
+//      既有的二值 —— 「取得没取得 Result」，不承载错误身份。
 //   两处都是**补全**（`DE-1` 留了空），**不是**改形状 ⇒ `DE-1` 的符号签名一个都没动。
 //
 // `status` 取值（本段定案）：
@@ -1990,6 +1990,83 @@ private func _bkWord(_ p: UnsafeMutableRawPointer) -> Int64 {
     Int64(bitPattern: UInt64(UInt(bitPattern: p)))
 }
 
+// MARK: - Result 的 err 载荷
+
+/// err 槽里那个字的**所指**：一个错误对象 = 消息 + 是不是取消。
+///
+/// 槽本身是一个 64 位字（契约 §2.15：错误载荷类型擦除为一个机器字），字里放的是本对象的
+/// 句柄位型。⛔ 不要把这个字当指针解引用、也不要把它当计数：读它只有两个入口 ——
+/// `bk_error_is_cancel` 与 `bk_error_message`。
+///
+/// 生命周期 = **进程**：创建点在失败路径上，无释放入口，数量与失败次数同阶。
+/// 消息在创建时复制一份 C 串自持，读侧因此**零分配**、指针在对象存活期内稳定。
+private final class _BkErrorBox {
+    let message: UnsafeMutablePointer<CChar>
+    let isCancel: Bool
+
+    init(_ text: String, isCancel: Bool) {
+        self.message = strdup(text) ?? UnsafeMutablePointer<CChar>.allocate(capacity: 1)
+        self.isCancel = isCancel
+    }
+}
+
+/// 造一个错误对象并按字返回（`isCancel` 区分 `CancelError` 与业务 `Error`）。
+private func _bkMakeError(_ text: String, isCancel: Bool) -> Int64 {
+    let box = _BkErrorBox(text, isCancel: isCancel)
+    return _bkWord(Unmanaged.passRetained(box).toOpaque())
+}
+
+/// 超时归约的消息文案；`nil` 的时限（`bk_task_join` 不设限）不会走到这里。
+private func _bkTimeoutText(_ timeoutMs: Int32?) -> String {
+    "任务超时: \(timeoutMs ?? 0)ms"
+}
+
+/// 字 → 对象。**0 表示无载荷**（`ok` 结果的占位、以及任何未携带错误的槽）⇒ 读侧答
+/// 空消息、非取消，⛔ 不 fail-loud：读一个 ok 结果的 err 槽是调用方的事，不该炸掉进程。
+private func _bkErrorBox(_ word: Int64) -> _BkErrorBox? {
+    guard word != 0,
+        let pointer = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: Int(truncatingIfNeeded: word)))
+    else { return nil }
+    return Unmanaged<_BkErrorBox>.fromOpaque(pointer).takeUnretainedValue()
+}
+
+/// `Error("msg")` —— 业务错误。入参可以是常量串：本函数复制一份自持。
+@_cdecl("bk_error_create")
+public func bk_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
+    _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: false)
+}
+
+/// `CancelError("msg")` —— 取消错误。与 `bk_error_create` 只差那个标志位；
+/// ⛔ 两者的消息面完全同形，区分只经 `bk_error_is_cancel`，不靠消息约定。
+@_cdecl("bk_cancel_error_create")
+public func bk_cancel_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
+    _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: true)
+}
+
+/// `isCancel(e)` —— err 字是不是取消类。无载荷（字为 0）答 `0`。
+@_cdecl("bk_error_is_cancel")
+public func bk_error_is_cancel(_ word: Int64) -> Int32 {
+    guard let box = _bkErrorBox(word) else { return 0 }
+    return box.isCancel ? 1 : 0
+}
+
+/// `e.message` / `print(e)` —— err 字的消息。
+///
+/// Allocation contract: 返回的是**错误对象内部**的 C 串，⛔ 调用方**不得释放**；
+/// 指针在对象存活期（= 进程期）内稳定。无载荷（字为 0）答空串。
+@_cdecl("bk_error_message")
+public func bk_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
+    guard let box = _bkErrorBox(word) else { return _bkEmptyCString }
+    return box.message
+}
+
+/// 无载荷 err 槽的空消息（进程期常量，同样不归调用方释放）。
+private let _bkEmptyCString: UnsafeMutablePointer<CChar> = {
+    let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 1)
+    buffer[0] = 0
+    return buffer
+}()
+
 /// 阻塞等待任务决出（或被取消）。
 ///
 /// - Returns: `true` = 已决或被取消 · `false` = **超时**（`join_within` 用）。
@@ -2060,7 +2137,7 @@ private func _bkTaskJoinOne(
     defer { _bkTaskDetachFromParent(box) }
     if !completed {
         _bkTaskCancelBox(box)
-        _bkWriteResult(out, tag: 1, ok: 0, err: 0)
+        _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError(_bkTimeoutText(timeoutMs), isCancel: true))
         return 1
     }
     box.cond.lock()
@@ -2071,7 +2148,7 @@ private func _bkTaskJoinOne(
     let err = box.errPayload
     box.cond.unlock()
     if cancelled {
-        _bkWriteResult(out, tag: 1, ok: 0, err: 0)
+        _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true))
         return 1
     }
     guard resolved else {
@@ -2474,7 +2551,7 @@ public func bk_task_join_all(
         // 复用单任务 join：它已含「取消 → err(CancelError)」的归一化，这里不重写一遍。
         if _bkTaskJoinOne(box, timeoutMs: nil, out: out) != 0 {
             for rest in boxes.dropFirst(i + 1) { _bkTaskCancelBox(rest) }
-            _bkWriteResult(out, tag: 1, ok: 0, err: 0)
+            _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true))
             return 1
         }
         let tag = out?.load(fromByteOffset: 0, as: Int64.self) ?? 0
@@ -2509,9 +2586,8 @@ public func bk_task_join_all(
 /// ② **已有 `err` 的 `out` 不被覆盖** —— errors-as-data 已经载着一次失败，
 ///    覆盖它等于丢掉「到底哪一次失败了」。
 ///
-/// ⛔ 聚合载荷：解释器后端拼的是一句人读的错误消息（要 stringify 各 leaked 值），
-/// 而 C ABI 面**构造不出值、也没有 stringify** ⇒ 本段只写 **leaked 计数**，
-/// 并明标为待 `DE-3c` 换真实聚合值（见段首 ②）。
+/// 聚合载荷：解释器后端拼的是一句人读的错误消息，本段同样写**一条消息**（带失败条数），
+/// 只是 ⛔ 不逐条 stringify 各 leaked 值 —— 那些值的格式化是另一层的事。
 @_cdecl("bk_scope_close")
 public func bk_scope_close(
     _ scope: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
@@ -2540,7 +2616,7 @@ public func bk_scope_close(
     // ② 有界：只在 `out` 当前是 `ok` 时翻。已有 err ⇒ 原样保留。
     let currentTag = out.load(fromByteOffset: 0, as: Int64.self)
     guard currentTag == 0 else { return 0 }
-    _bkWriteResult(out, tag: 1, ok: 0, err: Int64(leaked))
+    _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("\(leaked) 个子任务失败", isCancel: false))
     return 0
 }
 

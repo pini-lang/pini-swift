@@ -287,10 +287,10 @@ private enum IRYieldPlan {
 ///   registered as an unexercised parity surface.
 /// - **The `try` error binding is type-erased on the other channel.** `err` binds
 ///   the error *payload* here — what the interpreter binds — while the LLVM
-///   emitter stores an `i64` word in the err slot and fails loud if it is printed
-///   (`E6-004`). Byte-for-byte parity therefore covers every use except printing
-///   it. That is the emitter's ABI boundary (LR-12), not a difference to align
-///   away from this side.
+///   emitter stores an `i64` word in the err slot. Reading that word is the only
+///   legal use of it, and both engines answer those reads through the same name
+///   (`pini.err.message`), so `print(e)` and `e.message` are parity surfaces.
+///   The word itself is not: nothing may print it as a number or a pointer.
 /// - **`match` exhaustiveness is a checker duty.** A run-time miss on an enum
 ///   value is `matchNotExhaustive` (the interpreter's rule, and the emitter's
 ///   `bk_panic`); the engine does not try to prove coverage statically.
@@ -882,6 +882,18 @@ public final class IRExecutor: DebugHookHost {
                     )
                 }
                 return .bool(RuntimeOps.isCancelErrorValue(args[0]))
+            }
+            // err 槽的另一个读口：字 → 消息。名字带点 ⇒ 不是语言内建、也不可能是用户函数
+            // 名；它与 LLVM 侧的 `bk_error_message` 是同一条语义的两个落点。
+            if name == "pini.err.message" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IR executor: pini.err.message expects exactly one argument",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                return .string(RuntimeOps.errorMessage(args[0]))
             }
             if name == "joinAll" {
                 let args = try arguments.map { try evaluate($0) }

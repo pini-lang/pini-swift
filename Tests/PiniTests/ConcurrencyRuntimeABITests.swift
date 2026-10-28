@@ -312,7 +312,7 @@ struct ConcurrencyRuntimeABITests {
     func scopeCloseFlipsOkToErrWhenLeaked() throws {
         /// 意图：这是契约里**唯一**允许「改写值」的地方（严格结构化并发的有界 override），
         /// 所以它必须既有正例也有反例。本条的装置：两个子任务，一个 err（leaked）、
-        /// 一个 ok（**不是** leaked）⇒ 计数必须是 1 而不是 2。
+        /// 一个 ok（**不是** leaked）⇒ 聚合消息里的条数必须是 1 而不是 2。
         let parent = _bkTaskMake(), k1 = _bkTaskMake(), k2 = _bkTaskMake()
         defer { bk_handle_release(parent); bk_handle_release(k1); bk_handle_release(k2) }
         _bkTaskAdopt(parent, k1)
@@ -323,7 +323,11 @@ struct ConcurrencyRuntimeABITests {
         o[0] = 0; o[1] = 77
         #expect(bk_scope_close(parent, raw(o)) == 0)
         #expect(o[0] == 1, "有 leaked ⇒ 须翻成 err")
-        #expect(o[2] == 1, "leaked 计数应恰为 1（ok 的子不算）：\(o[2])")
+        /// err 槽装的是**错误对象的句柄字**：条数经 `bk_error_message` 读出，
+        /// ⛔ 不是把数字直接摆在槽里 —— 那样读侧会把它当指针。
+        let aggregate = bk_error_message(o[2]).map { String(cString: $0) } ?? ""
+        #expect(bk_error_is_cancel(o[2]) == 0, "聚合失败不是取消类")
+        #expect(aggregate.contains("1"), "聚合消息应写明失败条数恰为 1：\(aggregate)")
     }
 
     @Test("scope 收口有界：out 已带 err ⇒ 原样保留，不被聚合覆盖")

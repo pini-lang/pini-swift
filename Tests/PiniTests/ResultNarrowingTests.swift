@@ -12,8 +12,8 @@ import Testing
 /// **两侧刻意不对称，且不对称正是这一支存在的理由**：`ok` 侧取**载荷类型**（窄化，本支线要的
 /// 就是它）；`err` 侧取 `try-else` 早已确立的**类型擦除错误字**形态 —— `Result` 的 IR 类型
 /// 只带 ok 侧字段，没有可窄化的错误类型，且 IR ABI 把该槽擦成一个机器字。
-/// ⇒ 后果是**打印 err 绑定仍然被拒**，但拒得**响亮**（既有错误绑定门禁），
-/// 且文案现在说的是真实理由，不再把绑定的类型当替罪羊。
+/// ⇒ 后果是 `err` 绑定**就是一个字**：打印它、读 `e.message` 都得经运行时段那一个读口
+/// （`pini.err.message`），⛔ 不是结构体字段读。
 ///
 /// **两条判据即本支线的验收面**（克制口径：内联、不建夹具、不建整套并发套件）。
 /// 二者都**不依赖并发** —— 分派在降载层完成，与执行后端无关；掺进 `=>` 只会让红因不可归因。
@@ -116,15 +116,14 @@ struct ResultNarrowingTests {
         #expect(try runOutput(source) == ["6"])
     }
 
-    // MARK: - 驳回性：`err` 侧维持既有形态（响亮拒绝，非静默）
+    // MARK: - 驳回性：`err` 侧仍是一擦除字（读它只经那一个读口）
 
-    @Test("err 绑定维持类型擦除形态：打印它被响亮拒绝，而不是静默出错值")
-    func errBindingPrintingStaysLoudlyRejected() throws {
-        /// 意图：钉住本条**刻意不做**的那一半。`err` 侧没有可窄化的类型（IR 类型不带错误
-        /// 类型），故它沿用 `try-else` 已确立的擦除字形态 ⇒ 打印它应报既有诊断，
-        /// **而不是**静默给出一个值。
-        /// ⚠️ 这条是**否定形态**：它断言「不该发生的确实没发生」——若哪天有人把 err 侧
-        /// 改成静默可打印，本用例转红。
+    @Test("err 绑定仍是类型擦除的字：打印它得到消息，而不是那个字本身")
+    func errBindingPrintsItsMessage() throws {
+        /// 意图：`err` 侧没有可窄化的类型（IR 类型不带错误类型），它沿用 `try-else`
+        /// 已确立的擦除字形态 ⇒ 打印**不可能**直接得到那个字：要么经运行时段取消息，
+        /// 要么什么都没有。本条把前者钉死。
+        /// 驳回性：若哪天有人改成直接打印那个字，输出会变成一串数字，本用例转红。
         let source = #"""
         造|func() -> (^I32,):
             return err(Error("boom"))
@@ -138,11 +137,6 @@ struct ResultNarrowingTests {
                     print(e)
             return
         """#
-        let observed = failure { _ = try lowered(source) }
-        #expect(observed?.code == "E6-004", "应报降载期诊断，实际：\(String(describing: observed))")
-        #expect(
-            observed?.message.contains("type-erased") == true,
-            "文案应说明擦除理由，实际：\(String(describing: observed?.message))"
-        )
+        #expect(try runOutput(source) == ["boom"])
     }
 }

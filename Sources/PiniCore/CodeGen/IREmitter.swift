@@ -197,6 +197,13 @@ public final class IREmitter {
     /// 是否在进程入口注入了程序基准（`bk_set_program_base`）—— declare 随之条件出现。
     /// ⛔ 它**不**复用 `usesProcessShims`：注入发生在入口，而入口可能早于任何 IO 调用点发射。
     private var usesProgramBase = false
+    /// 是否发射过**错误载荷**那一族的调用 —— 落点是运行时段的 `bk_error_create` /
+    /// `bk_cancel_error_create` / `bk_error_is_cancel` / `bk_error_message`。
+    ///
+    /// 四者同开关：err 槽是一个类型擦除的字，构造它的程序和读它的程序通常成对出现，
+    /// 分四个开关只会让这里多出三条永远同时翻转的布尔量。declare 全发也无代价 ——
+    /// 未被调用的声明不改变产物语义（不碰 err 的程序四个声明一个都不出现）。
+    private var usesErrorShims = false
     /// 是否发射过**字符串字素簇通道**的调用 —— 落点是运行时段那一族（`bk_substring` /
     /// `bk_string_count` / `bk_string_char_at` / `bk_string_slice` / `bk_string_upper` /
     /// `bk_string_lower` / `bk_string_contains`）。
@@ -458,6 +465,7 @@ public final class IREmitter {
         usesProcessShims = false
         usesModuleRootShim = false
         usesProgramBase = false
+        usesErrorShims = false
         usesStringShims = false
         usesTaskFrame = false
         usesSchedBinding = false
@@ -620,6 +628,14 @@ public final class IREmitter {
         }
         if usesModuleRootShim {
             tail += "declare ptr @bk_module_root()\n"
+        }
+        if usesErrorShims {
+            // err 槽的字：构造侧两个（业务错误 / 取消错误，只差标志位），读侧两个
+            // （判定取消 / 取消息）。⚠️ 三个 `i64` 参数都是**句柄位型**，⛔ 不是指针。
+            tail += "declare i64 @bk_error_create(ptr)\n"
+            tail += "declare i64 @bk_cancel_error_create(ptr)\n"
+            tail += "declare i32 @bk_error_is_cancel(i64)\n"
+            tail += "declare ptr @bk_error_message(i64)\n"
         }
         if usesProgramBase {
             tail += "declare void @bk_set_program_base(ptr)\n"
@@ -2575,6 +2591,18 @@ public final class IREmitter {
             }
             // G14: runtime-shimmed foreign symbols call their bk_ name
             // (the declare pass emits the matching bk_ symbol).
+            // `isCancel` 走**同一条收敛规**：运行时段回 `i32`（0/1），到 `i1` 在这里显式转。
+            // ⛔ 不要让 `call i1` 对上一个 `declare i32` —— 签名不一致在 arm64 上「碰巧能跑」
+            // （读的是同一个返回寄存器的低位），那是运气，不是 ABI。
+            if function == "isCancel" {
+                usesErrorShims = true
+                let raw = builder.freshTemp()
+                bodyIR += " \(raw) = call i32 @bk_error_is_cancel(\(argList))\n"
+                let flag = builder.freshTemp()
+                bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
+                return IRValue(llvmType: "i1", ssaName: flag)
+            }
+
             let symbolName: String
             if function == "cstr" {
                 symbolName = "bk_cstr"
@@ -2601,6 +2629,21 @@ public final class IREmitter {
                 // 接 `bk_list_dir`（一参 String、回**条目名字**数组，排序与错误语义镜像解释器）。
                 usesProcessShims = true
                 symbolName = "bk_list_dir"
+            } else if function == "Error" {
+                // 错误对象构造。err 槽装的是**运行时段对象句柄**（一个 i64 字），
+                // ⛔ 不是名义类型指针：`%struct.Error*` 没有类型定义，落成它就是
+                // `use of undefined type`。
+                usesErrorShims = true
+                symbolName = "bk_error_create"
+            } else if function == "CancelError" {
+                // 与 `Error` 只差那个「是取消」标志；⛔ ABI 上不多传一个参数，而是各一个符号。
+                usesErrorShims = true
+                symbolName = "bk_cancel_error_create"
+            } else if function == "pini.err.message" {
+                // 只由降载层产出（`print(e)` 与 `e.message`），⛔ 不是语言内建。
+                // 名字带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名。
+                usesErrorShims = true
+                symbolName = "bk_error_message"
             } else {
                 symbolName = Self.mangle(function)
             }
