@@ -124,6 +124,8 @@ public final class IREmitter {
 
     private var stringConstantDefs: [String] = []
     private var stringConstants: [String: (name: String, length: Int)] = [:]
+    /// 匿名常量（`@.str<序号>`）已发出几个 —— 具名常量不计入，故不影响它们的编号。
+    private var anonymousStringConstantCount = 0
     private var usesStrCmp = false
 
     // MARK: G6 closure / higher-order state
@@ -184,6 +186,13 @@ public final class IREmitter {
     private var usesCharacterShims = false
     /// 是否调用过宿主环境查询内建（`argv` / `listDir`）—— 同上，落点是 `bk_argv` / `bk_list_dir`。
     private var usesProcessShims = false
+    /// 是否调用过 `moduleRoot` —— 落点是 `bk_module_root`。
+    /// ⛔ 不并入 `usesProcessShims`：那一族的声明是整批固定输出的，共用的代价是只调 `argv`
+    /// 或 `listDir` 的程序凭空多出本符号的声明，而它们的产物必须逐字节不变。
+    private var usesModuleRootShim = false
+    /// 是否在进程入口注入了程序基准（`bk_set_program_base`）—— declare 随之条件出现。
+    /// ⛔ 它**不**复用 `usesProcessShims`：注入发生在入口，而入口可能早于任何 IO 调用点发射。
+    private var usesProgramBase = false
     /// 是否发射过**字符串字素簇通道**的调用 —— 落点是运行时段那一族（`bk_substring` /
     /// `bk_string_count` / `bk_string_char_at` / `bk_string_slice` / `bk_string_upper` /
     /// `bk_string_lower` / `bk_string_contains`）。
@@ -291,20 +300,15 @@ public final class IREmitter {
     private var givenInitializerDefs: [String] = []
     private var givenInitializerNames: Set<String> = []
 
-    /// Program base for compile-time IO path baking — the new-pipeline
-    /// counterpart of the legacy generator's knob of the same name, which
-    /// fed its own IO emitter. An unprefixed relative path *literal* is
-    /// written into the IR as `base + "/" + path`; absolute paths and `./`
-    /// `../` prefixed ones stay as written (the runtime CWD resolves those),
-    /// exactly mirroring both the legacy emitter and the interpreter's
-    /// runtime resolution rule.
+    /// Program base handed to the runtime at entry — the new-pipeline
+    /// counterpart of the legacy generator's knob of the same name. The emitted
+    /// entry calls `bk_set_program_base` once with it, and every IO path —
+    /// literal or not — is resolved there, so no path is baked here.
     ///
     /// Default nil, so an emitter without a configured base — every
     /// pre-existing test that drives the pipeline directly — behaves as
-    /// before and its golden IR is unchanged. Code generation needs the base
-    /// because the emitted program has no runtime notion of where its source
-    /// lived; a non-literal path expression cannot be baked either way and
-    /// keeps resolving against the CWD (known v1 limitation).
+    /// before and its golden IR is unchanged: no setter call is emitted, and
+    /// the runtime leaves relative paths to the CWD.
     ///
     /// This sits in the emitter rather than in the IR tree on purpose: it is
     /// a code-generation environment input, not a language-semantics
@@ -436,6 +440,7 @@ public final class IREmitter {
         bodyIR = ""
         stringConstantDefs = []
         stringConstants = [:]
+        anonymousStringConstantCount = 0
         usesStrCmp = false
         usesLazyRef = false
         usesFileWrite = false
@@ -446,6 +451,8 @@ public final class IREmitter {
         usesSleepShim = false
         usesCharacterShims = false
         usesProcessShims = false
+        usesModuleRootShim = false
+        usesProgramBase = false
         usesStringShims = false
         usesTaskFrame = false
         usesSchedBinding = false
@@ -552,15 +559,10 @@ public final class IREmitter {
             tail += "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)\n"
             tail += "declare ptr @bk_lazyref_value(ptr)\n"
         }
-        // G15: `writeFile`'s declares + mode-string constant, appended only for
-        // modules that actually write. ⚠️ `readFile` is **not** here any more
-        // (2026-10-01): it reads through the runtime shim, so neither `fread`
-        // nor the `"r"` mode string has an emitter-side user left.
+        // G15: `writeFile` 的 declare，只在实际写入的模块里出现。
+        // 落点是运行时 shim 的一次调用 —— 路径解析与写语义都在那一侧，此处不发 libc 写调用。
         if usesFileWrite {
-            tail += "declare ptr @fopen(ptr, ptr)\n"
-            tail += "declare i64 @fwrite(ptr, i64, i64, ptr)\n"
-            tail += "declare i32 @fclose(ptr)\n"
-            tail += "@.fopen_w = private constant [2 x i8] c\"w\\00\"\n"
+            tail += "declare void @bk_write_file(ptr, ptr)\n"
         }
         if usesFileRead {
             tail += "declare ptr @bk_read_file(ptr)\n"
@@ -607,6 +609,12 @@ public final class IREmitter {
             // 探测类：`i32` 返回（0/1），收敛到 `i1` 由调用点做 —— 同谓词那条。
             tail += "declare i32 @bk_exists(ptr)\n"
             tail += "declare i32 @bk_is_dir(ptr)\n"
+        }
+        if usesModuleRootShim {
+            tail += "declare ptr @bk_module_root()\n"
+        }
+        if usesProgramBase {
+            tail += "declare void @bk_set_program_base(ptr)\n"
         }
         if usesCapturedSlots {
             tail += "declare ptr @bk_slot_alloc(i64)\n"
@@ -751,6 +759,13 @@ public final class IREmitter {
         let emittedFunctions = bodyIR
         bodyIR = ""
 
+        // 程序基准的注入点：入口函数体最前，早于任何 Pini 语句。
+        // ⚠️ 判据只看 `programBase`，⛔ 不看 `usesProcessShims` —— 入口可能先于 IO 调用点发射，
+        // 那时该标志尚未置位，据此决定就会漏插（症状是静默回落到进程 CWD）。
+        if currentIsMain {
+            bodyIR += programBaseSetterIR()
+        }
+
         for (index, param) in function.params.enumerated() {
             let spelling = param.type.llvmSpelling
             // ⚠️★ 形参槽走 `freshSlot` 的**同一计数器**，⛔ 不再手工拼 `%<名字>_slot`：
@@ -824,6 +839,16 @@ public final class IREmitter {
     /// 合成的测试驱动器与入口的符号名（`__` 前缀与 `__given_init_*` 同族：
     /// 它们不是 Pini 级名字，故不经 `mangle`，也⛔ 不进任何用户可见的名字域）。
     static let testDriverName = "__pini_test_driver"
+
+    /// 「把程序基准交给运行时」那条调用；`programBase == nil` 时返空串 ⇒ 产物逐字节不变。
+    /// ⚠️ 常量用固定名、地址直取全局（⛔ 不取临时名）：注入点排在所有 Pini 语句之前，
+    /// 一占名字就会把同一程序其余的名字全体推后一位，注入的差异便淹没在改名里。
+    private func programBaseSetterIR() -> String {
+        guard let base = programBase else { return "" }
+        usesProgramBase = true
+        let entry = registerStringConstant(base, named: "@.pini_program_base")
+        return " call void @bk_set_program_base(ptr \(entry.name))\n"
+    }
 
     /// 合成测试驱动器与进程入口。
     ///
@@ -1004,6 +1029,8 @@ public final class IREmitter {
         let nonZero = builder.freshTemp()
         let code = builder.freshTemp()
         d += "define i32 @main() {\n"
+        // 测试模式的进程入口同样是注入点：各 `|test` 函数里的 `moduleRoot` 读的是这里交出去的值。
+        d += programBaseSetterIR()
         d += " \(driverResult) = call i32 @\(Self.testDriverName)()\n"
         d += " \(nonZero) = icmp ne i32 \(driverResult), 0\n"
         d += " \(code) = select i1 \(nonZero), i32 1, i32 0\n"
@@ -2555,6 +2582,12 @@ public final class IREmitter {
                 // 接 `bk_argv`（无参、回字符串数组 = `%bk_array*`）。
                 usesProcessShims = true
                 symbolName = "bk_argv"
+            } else if function == "moduleRoot" {
+                // 程序基准查询：解释器的答案是 `programBase ?? 进程 CWD`，LLVM 侧由入口注入
+                // 同一个值（`bk_set_program_base`），这里取回它，故两通道同一串。
+                usesProcessShims = true
+                usesModuleRootShim = true
+                symbolName = "bk_module_root"
             } else if function == "listDir" {
                 // 自举仓 M8 前置的目录枚举。同上：降载已在册，LLVM 侧此前无符号。
                 // 接 `bk_list_dir`（一参 String、回**条目名字**数组，排序与错误语义镜像解释器）。
@@ -2855,21 +2888,6 @@ public final class IREmitter {
         }
     }
 
-    /// Bake a path *literal* against the program base (see `programBase`).
-    /// Non-literals and paths that the rule exempts come back untouched, so
-    /// every caller can route its path argument through this unconditionally.
-    private func bakedIOPath(_ path: IRExpr) -> IRExpr {
-        guard let base = programBase,
-            case .stringConst(let value) = path,
-            !value.hasPrefix("/"),
-            !value.hasPrefix("./"),
-            !value.hasPrefix("../")
-        else {
-            return path
-        }
-        return .stringConst(value: base + "/" + value)
-    }
-
     /// A libc call or a runtime shim that answers NULL on failure is turned into
     /// a panic here rather than handed on: the legacy emitter passes the NULL
     /// through, and the trap then happens inside libc with no message at all.
@@ -2895,27 +2913,16 @@ public final class IREmitter {
         bodyIR += "\(openLabel):\n"
     }
 
-    /// `writeFile(path, content)` (G15): fopen(path, "w") / strlen /
-    /// fwrite / fclose. Mirrors the legacy emitter byte for byte — no
-    /// trailing newline is appended, matching the interpreter's
-    /// `String.write(toFile:)`. Yields the fclose i32 as the value. The one
-    /// deliberate divergence is the NULL guard: the legacy emitter has none.
+    /// `writeFile(path, content)` (G15): one runtime shim call. The shim writes
+    /// the whole content with the same Foundation call the interpreter's arm
+    /// makes -- in-place truncation, following symlinks, failing loud on an
+    /// unwritable target. Produces no value.
     private func emitFileWrite(path: IRExpr, content: IRExpr) -> IRValue {
         usesFileWrite = true
-        let pathValue = emitExpr(bakedIOPath(path))
+        let pathValue = emitExpr(path)
         let contentValue = emitExpr(content)
-        let mode = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: mode, aggregate: "[2 x i8]", base: "@.fopen_w", indices: [0, 0]) + "\n"
-        let handle = builder.freshTemp()
-        bodyIR += " \(handle) = call ptr @fopen(ptr \(pathValue.ssaName), ptr \(mode))\n"
-        emitNullGuard(handle: handle, message: "Pini runtime error: writeFile could not open the file")
-        let length = builder.freshTemp()
-        bodyIR += " \(length) = call i64 @strlen(ptr \(contentValue.ssaName))\n"
-        let written = builder.freshTemp()
-        bodyIR += " \(written) = call i64 @fwrite(ptr \(contentValue.ssaName), i64 1, i64 \(length), ptr \(handle))\n"
-        let closed = builder.freshTemp()
-        bodyIR += " \(closed) = call i32 @fclose(ptr \(handle))\n"
-        return IRValue(llvmType: "i32", ssaName: closed)
+        bodyIR += " call void @bk_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        return IRValue(llvmType: "void", ssaName: "")
     }
 
     /// `readFile(path)` (G15): the runtime shim reads the whole file and hands
@@ -2931,9 +2938,11 @@ public final class IREmitter {
     ///
     /// The NULL guard stays, and now covers the read as well as the open: a
     /// missing file is reachable from ordinary source, unlike the write path's.
+    /// The path travels as written: resolving it against the program base is
+    /// the runtime's job, so a literal and a variable take the same route.
     private func emitFileRead(path: IRExpr) -> IRValue {
         usesFileRead = true
-        let pathValue = emitExpr(bakedIOPath(path))
+        let pathValue = emitExpr(path)
         let content = builder.freshTemp()
         bodyIR += " \(content) = call ptr @bk_read_file(ptr \(pathValue.ssaName))\n"
         emitNullGuard(handle: content, message: "Pini runtime error: readFile could not read the file")
@@ -5050,10 +5059,19 @@ public final class IREmitter {
     /// ⭐ 与 `emitStringConstant` 分家的理由只有一个：**取串的 GEP 由谁发**。
     /// 那个函数把 GEP 写进 `bodyIR`（当前插入点），而帧序要的是一条能排在任何块之前的取串指令 ——
     /// 由调用方自己发。⛔ 两处**不各算一次**：常量的登记与去重仍然只有这一份实现。
-    private func registerStringConstant(_ value: String) -> (name: String, length: Int) {
+    ///
+    /// `named` 给定时用该名，且**不占**匿名序号 ⇒ 匿名编号与具名常量是否存在无关。
+    private func registerStringConstant(
+        _ value: String, named: String? = nil
+    ) -> (name: String, length: Int) {
         if let existing = stringConstants[value] { return existing }
-        let id = stringConstantDefs.count
-        let name = "@.str\(id)"
+        let name: String
+        if let named {
+            name = named
+        } else {
+            name = "@.str\(anonymousStringConstantCount)"
+            anonymousStringConstantCount += 1
+        }
         let bytes = Array(value.utf8)
         let length = bytes.count + 1
         var hex = ""

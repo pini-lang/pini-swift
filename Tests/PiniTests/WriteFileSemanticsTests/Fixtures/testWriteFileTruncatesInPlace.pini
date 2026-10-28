@@ -1,5 +1,5 @@
 ; 用途：写已有文件是就地截断 —— 旧内容不留尾巴（比新内容长的部分必须消失）。
-; 期望：0
+; 期望：无输出（writeFile 不返回值）
 main|func() -> ():
-    print(writeFile("target.txt", "short"))
+    writeFile("target.txt", "short")
     return

@@ -377,8 +377,8 @@ public indirect enum IRExpr: Equatable {
 
     // MARK: G15 file IO
 
-    /// `writeFile(path, content)` (G15) — fopen("w") / fwrite / fclose.
-    /// Value expression; the legacy emitter yields the fclose i32 result.
+    /// `writeFile(path, content)` (G15) — the whole content, written in place
+    /// (truncating, following symlinks, failing loud). Yields no value.
     case fileWrite(path: IRExpr, content: IRExpr)
     /// `readFile(path)` (G15) -- the whole file, uncapped, yielded as a
     /// String.

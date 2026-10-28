@@ -1580,14 +1580,14 @@ public final class IRExecutor: DebugHookHost {
 
         case .fileWrite(let pathExpr, let contentExpr):
             // Writes in place, truncating an existing file; not an atomic replace.
-            // The path resolves against the program base. A failed write raises
-            // here, so a successful return is the only reachable one and 0 is its code.
+            // The path resolves against the program base. Failing to open or write
+            // raises here, so a successful call yields `()`.
             let rawWritePath = try requireString(evaluate(pathExpr), for: "writeFile")
             let content = try requireString(evaluate(contentExpr), for: "writeFile")
             let writePath = RuntimeOps.resolveIOPath(rawWritePath, programBase: programBase)
             do {
                 try content.write(toFile: writePath, atomically: false, encoding: .utf8)
-                return .int(0)
+                return .null
             } catch {
                 throw RuntimeError.invalidOperation(
                     reason: "IO 错误: 无法写入文件 \(writePath): \(error.localizedDescription)",

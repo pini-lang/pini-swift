@@ -54,7 +54,7 @@ struct WriteFileSemanticsTests {
 
         let lines = try run("testWriteFileTruncatesInPlace", programBase: sandbox)
 
-        #expect(lines == ["0"], "成功写的返回码应为 0，实际：\(lines)")
+        #expect(lines.isEmpty, "writeFile 不返回值，不该有输出，实际：\(lines)")
         let after = try String(contentsOf: target, encoding: .utf8)
         #expect(after == "short", "旧内容未被截断，实际：\(after)")
     }
@@ -98,7 +98,7 @@ struct WriteFileSemanticsTests {
 
         let lines = try run("testWriteFileFollowsSymlink", programBase: sandbox)
 
-        #expect(lines == ["0"], "成功写的返回码应为 0，实际：\(lines)")
+        #expect(lines.isEmpty, "writeFile 不返回值，不该有输出，实际：\(lines)")
         let written = try String(contentsOf: target, encoding: .utf8)
         #expect(written == "through-link", "链接指向的文件未被写入，实际：\(written)")
         let isLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil
