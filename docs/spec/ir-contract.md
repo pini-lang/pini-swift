@@ -359,6 +359,14 @@
 故新增或删除 `@_cdecl` 入口时须同步本表 —— 等式「清单数 = 导出数」是这张表唯一的自检方式。
 ⛔ 不必为已定案但尚未落源码的符号留行：那种行会让等式失真，等落地时再加。
 
+⭐ **零调用点的符号（2026-10-28 普查）**：`bk_ptr_*`（6，LLVM FFI 的预留面，判定 D1 —— 语言层
+`load` / `store` 在 LLVM 侧直出指令、在解释器侧直接操作 Swift 指针）· `bk_dict_contains`（1，
+`collection.contains` 已在类型层声明为 trait 方法但降载未实现，本符号是该特性的接线点）·
+`bk_lazyref_destroy`（1，发射器不产出，LazyRef 句柄由退出钩子统一回收）。另有 7 个**只被 C-ABI
+测试直接调、发射器不产出**：`bk_task_join_all` / `bk_task_join_within` / `bk_task_cancel` /
+`bk_task_is_cancelled` / `bk_str_refcount` / `bk_handle_shares` / `bk_scope_close`。
+⚠️ 「零调用点」不等于「该删」—— 前八个各是某条路线的锚点，删之前得先把锚点搬到别处。
+
 ⭐ **`bk_panic` 的进程退出码**（契约）：运行时陷阱以**退出码 1** 终止进程 —— 与解释器通道对
 `RuntimeError` 的处理同码，故「程序因运行时错误退出」可用单一条判据识别，与走哪条通道无关。
 `exit` 会 flush 标准流 ⇒ 陷阱之前的输出必然落地。环境变量 `PINI_PANIC_ABORT` 非空时为**逃逸**：

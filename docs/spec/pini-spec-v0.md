@@ -716,7 +716,7 @@ indexOf   : (String, String) -> I32   ; s.indexOf(needle)
 
 ### 3.2 运行时 shim 边界与长期愿景（C ABI）
 
-**现状（阶段 1 已落地，维持）**：集合 / COW / LazyRef（G40）运行时采用 Swift 实现的 shim 库 `libPiniRuntime`（`.dynamic` target，`lli --dlopen` / `clang -L/-l` 加载），emitted IR 经 `call @bk_*` 调用。内部以**不透明句柄**（IR `ptr`）承载，类型检查 / 推断层只见 opaque handle，不暴露 Swift 专有类型；`IRBuilder` 对集合与 LazyRef 一律建模为 opaque C-ABI handle。`@bk_*` 仅接受 / 返回 C 兼容类型（`void*`/`i8*` 句柄、`i64`/`i32` 标量、长度）。已实装的 C-ABI 面：`bk_array_*` / `bk_dict_*` / `bk_set_*`（G34 COW）+ `bk_lazyref_*`（G40 S3，统一 `(ptr,ptr,ptr)->ptr` wrapper ABI）+ `bk_panic`（G41 assert）+ `bk_handle_*`（share 管理）。
+**现状（阶段 1 已落地，维持）**：集合 / COW / LazyRef（G40）运行时采用 Swift 实现的 shim 库 `libPiniRuntime`（`.dynamic` target，`lli --dlopen` / `clang -L/-l` 加载），emitted IR 经 `call @bk_*` 调用。内部以**不透明句柄**（IR `ptr`）承载，类型检查 / 推断层只见 opaque handle，不暴露 Swift 专有类型；`IRBuilder` 对集合与 LazyRef 一律建模为 opaque C-ABI handle。`@bk_*` 仅接受 / 返回 C 兼容类型（`void*`/`i8*` 句柄、`i64`/`i32` 标量、长度）。**已实装的 C-ABI 面按族列此，成员名单以 IR 契约 §5.2 为唯一权威**（⛔ 本处不复制成员名 —— 同一份名单的第二个副本必然与源码漂）：容器（`bk_array_*` / `bk_dict_*` / `bk_set_*`，G34 COW）· 句柄共享（`bk_handle_*`）· 惰性值（`bk_lazyref_*`，G40 S3，统一 `(ptr,ptr,ptr)->ptr` wrapper ABI）· 默认实例（`bk_given_*`）· 字符与字符串面（`bk_chars` / `bk_chr` / `bk_ord` / `bk_is_*` / `bk_str_*` / `bk_string_*` / `bk_substring`）· IO 与宿主查询（`bk_read_file` / `bk_write_file` / `bk_list_dir` / `bk_exists` / `bk_is_dir` / `bk_module_root` / `bk_set_program_base` / `bk_argv`）· 任务与并发（`bk_task_*` / `bk_scope_close` / `bk_capabilities` / `bk_sleep`）· 胶水（`bk_nominal_*` / `bk_slot_alloc`）· 展示与陷阱（`bk_cstr` / `bk_double_to_string` / `bk_panic`）· 运行时（`bk_runtime_cleanup`）。⚠️ **指针族 `bk_ptr_*` 当前零调用点**：它是 LLVM FFI 的预留面（见下方前置检查第 3 条），⛔ 不是语言层 `load` / `store` 的实现路径 —— 那两个在 LLVM 侧直出指令、在解释器侧直接操作 Swift 指针。
 
 **硬性约束（MUST，现即生效）**：shim 与用户代码的边界必须是 **C ABI**，不是 Swift 泛型 ABI——违反即锁死自举终态，使 Swift 成为永久依赖。已实证可守住不泄漏 Swift 类型（越界即错误、空数组、双后端逐字节一致等回归门禁锁进 `RuntimeBackendTests（载体已删）`）。
 
@@ -730,7 +730,13 @@ indexOf   : (String, String) -> I32   ; s.indexOf(needle)
 1. **shim 边界 C ABI 不泄漏**——已守住（MUST + `RuntimeBackendTests（载体已删）` 门禁）。
 2. **语言自宿主能力**：Pini 需能表达「重写 `@bk_*`」所需的程序结构（内存布局、互操作、错误收口）——当前 `ok`/`err`、`match`、泛型、`LazyRef`、`|test` 已提供核心构件。
 3. **FFI / 内存管理（T14，最大前置缺口）—— 已部分满足**：自举需要调用 libc（`malloc` / `free` / `memcpy` 等）并操作不透明指针。**解释器优先已落地**（FFI 子系统 Phase 2a）：`[名称|foreign]` 块 + 预注册原生函数表（`malloc` / `free` / `memcpy` / `memset` / `strlen` / `puts` / `strcmp` / `cstr`）+ `*T` / `&` / `unsafe` / `|unsafe` + `load` / `store` / `addressof`。**剩余前置**：LLVM 端 FFI（`dlsym` 动态符号解析已落地：Phase 2b 解释器 + `G-4` 的 IR 通道；shim 表本身仍为 Swift 实现）。
-4. **目标清单**：待用 Pini 重写的 C-ABI 函数集 = `bk_handle_*` + `bk_array_*` + `bk_dict_*` + `bk_set_*` + `bk_lazyref_*`（逐一对照 `PiniRuntime.swift` 的 `@_cdecl` 面）。
+4. **目标清单（按路线分层，⛔ 不是「只重写这五族」）**：族名与成员见 IR 契约 §5.2 的 14 个族（88 个符号），各族的达成路线逐族标注如下 ——
+   - **重写路线（28）**：`bk_handle_*`（4）· `bk_array_*`（7）· `bk_dict_*`（9）· `bk_set_*`（5）· `bk_lazyref_*`（3）。理由：容器与句柄是自举编译器真正走过的面，必须由 Pini 自己的实现替代 Swift 实现。
+   - **直出路线（27）**：字符串面（`bk_str_*` / `bk_string_*` / `bk_substring`，16）· 字符谓词（`bk_chars` / `bk_chr` / `bk_ord` / `bk_is_*`，5）· 展示（`bk_cstr` / `bk_double_to_string`，2）· 胶水（`bk_nominal_*` / `bk_slot_alloc`，4）。这些是「一次分配 + 逐字节操作」，由发射器内联 / 直接生成 IR 更省一层，符号随之消失。
+   - **保留路线（25）**：任务与并发（`bk_task_*` / `bk_scope_close` / `bk_capabilities` / `bk_sleep` / 让出族 / 调度驱动面，16）· IO 与宿主查询（8）· 陷阱（`bk_panic`，1）。它们本就是「向宿主问事」，纯 libc 化没有收益。
+   - **未定路线（8）**：指针族（`bk_ptr_*`，6，随 LLVM FFI 一并定）· 默认实例（`bk_given_get`，1）· 运行时（`bk_runtime_cleanup`，1，随退出清扫方案定）。
+   ⭐ **判据不是「重写了多少个」**，而是**自举编译器的产物里还有没有 `call @bk_*` 打到 Swift 实现**：直出路线靠符号消失达成，保留路线靠「本就该由宿主提供」豁免 —— 两种退出方式不同，混成一条清单会让工作量被误估。
+5. **导出面封闭**：`libPiniRuntime` 今天同时导出 88 个 `bk_*` C 名与 93 个 Swift mangled 名（`public func` + `@_cdecl` 双名导出，`Package.swift` 无导出控制）。阶段 3 开工前须收成**只导出 C 名**，否则「这个符号是谁的实现」在符号层不可判，Swift 实现会顺着 mangled 名焊回来。⛔ 阶段 2 的 ABI 固化之前不动构建。
 
 **执行指引（对日常决策的约束）**：
 1. 任何新增运行时能力（集合 / 并发 / LazyRef / 工具内建）都应走 `@bk_*` C ABI 面——不改签、不引入 Swift 专有类型，保持自举终态可达；

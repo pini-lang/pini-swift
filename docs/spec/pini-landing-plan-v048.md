@@ -96,7 +96,7 @@
 - Lexer：`unsafe`/`foreign`/`detach` 关键字 + `&` + `*T` 指针 token。
 - Parser/AST：`foreign-decl`/`UnsafeExpr`/`PointerType`/地址取/不安全上下文。
 - TypeChecker：`*T` C 兼容性约束（禁 object）+ ARC 隔离保证。
-- Interpreter：`unsafe` 消耗点、`load/store/addressof` 经 runtime `bk_*`（§3.2 C-ABI）、`foreign` 调原生 C（注册原生函数表）。
+- Interpreter：`unsafe` 消耗点、`load/store/addressof` **在解释器内直接以 Swift 指针原语实现**（⇒ 两个通道都不经运行时段：LLVM 侧发射器直出 `load`/`store` 指令；运行时段那组 `bk_ptr_*` 是 LLVM FFI 的预留面，见 §3.2 C-ABI）、`foreign` 调原生 C（注册原生函数表）。
 - Runtime：`libPiniRuntime` 加 `@_cdecl` 指针 primitives。
 - 测试：双后端锁步覆盖解释器部分；LLVM 不支持子集显式 unsupported。
 
