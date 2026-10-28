@@ -2654,6 +2654,26 @@ public enum IRLowerer {
         )
     }
 
+    /// 该节点是不是**一个 err 槽的字**（`try-else` 的 `errorVar`、`match` 的 `case err(e)` 绑定）。
+    ///
+    /// 判据只有绑定表一条：类型层把这些名字的类型写作 `Error` / `CancelError`，而 IR 里它们
+    /// 是 `.i64`，与普通整数同形 ⇒ ⛔ 不能靠 IR 类型反推。
+    private static func isErrorFaced(_ node: IRExpr, _ context: FunctionContext) -> Bool {
+        guard case .load(let name, _) = node else { return false }
+        return context.errorBindings.contains(name)
+    }
+
+    /// err 字 → 消息串。本层两处读（`print(e)` 与 `e.message`）共用它：
+    /// 字里装的是运行时段的错误对象，取消息属运行时段，⛔ 本层不猜它的布局。
+    private static func lowerErrorMessage(
+        _ word: IRExpr, at location: SourceLocation
+    ) -> LoweredExpr {
+        LoweredExpr(
+            node: .call(function: "pini.err.message", arguments: [word], returnType: .string),
+            type: .string
+        )
+    }
+
     /// Lower `let (a, b) = tupleExpr` (M6a D7).
     ///
     /// Interpreter semantics: evaluate the initializer ONCE, require a tuple,
@@ -3130,6 +3150,12 @@ public enum IRLowerer {
             // Nominal field read (G3): `base.field` / `self.field`.
             // Tuple label read (G5 minimal slice): extractvalue by index.
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
+            // err 字上的 `.message`：类型层把 `Error` / `CancelError` 都定义成带 `message`
+            // 字段的结构体，而在 IR 里它只是**一个类型擦除的字** ⇒ 读消息要经运行时段，
+            // ⛔ 不是 GEP（对一个字做 GEP 只会得到无意义地址）。
+            if name == "message", isErrorFaced(loweredBase.node, context) {
+                return lowerErrorMessage(loweredBase.node, at: location)
+            }
             // LazyRef `.value` read (G13 batch 1): `bk_lazyref_value(handle)`
             // returns the cached element box; the caller loads the element.
             if case .lazyRef(let element) = loweredBase.type, name == "value" {
@@ -3469,11 +3495,10 @@ public enum IRLowerer {
                     return LoweredExpr(node: .printMulti(arguments: []), type: .i32)
                 }
                 if loweredArgs.count == 1 {
-                    if case .load(let name, _) = loweredArgs[0].node, context.errorBindings.contains(name) {
-                        throw unsupported(
-                            "printing an error binding is not supported by the LLVM Result ABI this grid (the err slot is type-erased)",
-                            at: location
-                        )
+                    if isErrorFaced(loweredArgs[0].node, context) {
+                        // err 绑定是一个字；`print` 打的是它的**消息**（与 `e.message` 同一个读口）。
+                        let message = lowerErrorMessage(loweredArgs[0].node, at: location)
+                        return LoweredExpr(node: .printCall(argument: message.node), type: .i32)
                     }
                     if case .result = loweredArgs[0].type {
                         throw unsupported("printing a Result value is outside the slice", at: location)
@@ -3600,7 +3625,11 @@ public enum IRLowerer {
                 guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
                     throw unsupported("\(functionName) expects one String argument", at: location)
                 }
-                let errorType = IRType.nominal(name: functionName, isObject: false)
+                // 错误值的 IR 承载 = **一个 i64 字**（契约 §2.15：err 槽是类型擦除的机器字）。
+                // ⛔ 不是名义类型指针：`%struct.Error*` 从来没有类型定义，落到默认改名就是
+                // `use of undefined type`。字里是什么由运行时段定义，读它只有两条路 ——
+                // `isCancel` 与 `e.message`（本层把后者降成 `pini.err.message`）。
+                let errorType = IRType.i64
                 return LoweredExpr(
                     node: .call(
                         function: functionName,
@@ -5265,10 +5294,9 @@ public enum IRLowerer {
     ///   an error word: one machine word, tracked in `errorBindings`. It is
     ///   not a new form. `result(ok:)` carries no error type to narrow to
     ///   (the IR type has one field, the ok type), and the IR ABI erases that
-    ///   slot (LR-12), so the only faithful spelling is the erased word. The
-    ///   consequence is that printing an err binding stays gated — loudly, by
-    ///   the existing error-binding gate, and now with a message that names
-    ///   the real reason instead of blaming the binding's type.
+    ///   slot (LR-12), so the only faithful spelling is the erased word. Reads
+    ///   of that word are the only legal uses: `print(e)` and `e.message` both
+    ///   lower to `pini.err.message`, ⛔ never to a struct field read.
     private static func lowerResultCases(
         _ cases: [MatchCase],
         okType: IRType,

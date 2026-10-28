@@ -147,7 +147,7 @@
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 15 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；**错误载荷类型擦除为一个机器字** | 擦除是 ABI 约定；「错误可为任意类型」是语言语义 |
+| 15 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；**错误载荷类型擦除为一个机器字** | 擦除是 ABI 约定；「错误可为任意类型」是语言语义。⭐ **2026-10-28：那个字有了确定的所指** —— 运行时错误对象的**句柄位型**（`bk_error_create` / `bk_cancel_error_create` 造，`bk_error_is_cancel` / `bk_error_message` 读，见 §5.2）。⚠️ 它既不是可解引用的指针、也不是计数：读它只有那两个入口。字为 `0` = 无载荷（`ok` 结果的占位），读作答空消息、非取消 —— ⛔ 不 fail-loud。构造侧的 IR 类型是 `i64`，⛔ 不是名义类型：`%struct.Error*` / `%struct.CancelError*` 从来没有类型定义，落成它就是 `use of undefined type` |
 | 16 | `optionalConstruct(isSome:payload:type:)` | `Optional` 构造：`isSome=false` 为 `none`（语言级 nil）；`true` 携带载荷 | 切片语法开放边界到达时为 `none` |
 | 17 | `optionalGet(container:index:type:)` | **宽容读通道** `container.get(i)`：越界 → `none`；界内 → `some(v)` | ⚠️ **半语义**：越界返回 `none` 是语义；边界检查方式是约定（E 组，甲类裁决统一到 LLVM 侧） |
 > **语句位指针（不占编号）**：`tryStmt` 见 §3.9。
@@ -325,7 +325,7 @@
 - **每个后端须能自备 shim** —— 既有的「shim 边界必须是 C ABI」MUST 得到强化
   （`pini-spec-v0.md` §3.2），因为多后端下每个后端都需要自己的值层实现面。
 
-### 5.2 `bk_*` 权威清单（88 个，2026-10-28 实测）
+### 5.2 `bk_*` 权威清单（93 个，2026-10-28 实测）
 
 > **口径订正**：`LLVM 后端重写` 两处写「35 个」，**导出符号**实测 **37 个**（2026-09-12）。本清单为该面的
 > 单一权威来源，`LLVM 后端重写` 同步订正（`同步变更`）。
@@ -349,12 +349,13 @@
 | **字符** | `bk_chars` `bk_chr` `bk_is_letter` `bk_is_number` `bk_ord` | 5 |
 | **字符串面** | `bk_str_alloc` `bk_str_dup` `bk_str_refcount` `bk_str_release` `bk_str_retain` `bk_string_char_at` `bk_string_contains` `bk_string_count` `bk_string_index_of` `bk_string_lower` `bk_string_slice` `bk_string_split` `bk_string_trim_left` `bk_string_trim_right` `bk_string_upper` `bk_substring` | 16 |
 | **闭包 / 结构体胶水** | `bk_nominal_alloc` `bk_nominal_release` `bk_nominal_retain` `bk_slot_alloc` | 4 |
-| **IO / 宿主查询** | `bk_argv` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_write_file` | 8 |
+| **IO / 宿主查询** | `bk_append_file` `bk_argv` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_write_file` | 9 |
 | **任务 / 并发**（2026-09-20 新增：`DE-3b` 的 `B-2` 段 8 个 + `B-3` 段 2 个） | `bk_capabilities` `bk_scope_close` `bk_task_cancel` `bk_task_detach` `bk_task_is_cancelled` `bk_task_join` `bk_task_join_all` `bk_task_join_within` `bk_task_spawn` `bk_task_yield` | 10 |
 | **并发内建的运行时落点**（2026-09-21 新增，`DE-3c`） | `bk_sleep` | 1 |
 | ⭐ **让出族**（2026-09-21 新增，`DE-6b`：`DE-6a` 定案的形状落地） | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | ⭐ **调度驱动面**（2026-09-23 新增，`Q-4`） | `bk_task_bind_sched` `bk_task_state` | 2 |
-| **合计** | | **88** |
+| ⭐ **错误载荷**（2026-10-28 新增：err 槽那个类型擦除的字，构造两个 + 读两个） | `bk_cancel_error_create` `bk_error_create` `bk_error_is_cancel` `bk_error_message` | 4 |
+| **合计** | | **93** |
 
 ⭐ **本表的维护条款**：清单口径是**导出符号数**（`@_cdecl("bk_…")` 的匹配数，见上方量具注），
 故新增或删除 `@_cdecl` 入口时须同步本表 —— 等式「清单数 = 导出数」是这张表唯一的自检方式。

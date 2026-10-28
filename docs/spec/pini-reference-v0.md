@@ -2353,6 +2353,21 @@ main() -> ():
 
 **错误即数据**：`CancelError` 经 `Result` 显式传播，不在调用栈上抛异常。
 
+**错误值**（`Error` / `CancelError`）：两者都是**内建名义类型**，各带一个 `message` 字段（`String`）。
+
+| 写法 | 含义 |
+|---|---|
+| `Error("msg")` / `CancelError("msg")` | 构造，恰一个 `String`；两种类型**消息面完全同形** |
+| `isCancel(e)` | `Error -> Bool`：只有 `CancelError` 答真 |
+| `e.message` | 读消息（两者同形） |
+| `print(e)` | 打印的也是那条消息 |
+
+⛔ **区分只经 `isCancel`，不靠消息约定**。
+⛔ **整个 `Result` 不可打印**（`print(r)` 被拒）—— 可打印的是 err 分支里绑定的那个**错误值**。
+⚠️ 运行时自己产生的错误（任务取消、超时、作用域收口的聚合失败）同样是错误值，
+故 `isCancel` 与 `e.message` 对它们一视同仁；它们的**消息文案是诊断信息**，不构成契约。
+⚠️ 错误值**没有自定义载荷**：`Error` / `CancelError` 的构造只收一个消息串。
+
 **await / wait join 结果**：`Future` 求值为 `Result`。
 
 - 成功：`.ok(值)`
@@ -2414,8 +2429,10 @@ let 结果 = try (await 未来) else err:
 以下几项**现行有效**、**尚未钉住** —— 模型的其余部分已由「异步语义契约」定级为 `Provisional`，
 但下列**签名与构造细节**仍属 `Experimental`：
 
-- 并发原语 `cancel` / `isCancel` / `join` / `joinAll` / `joinWithin` 的**函数签名**未钉住
-- 内建错误类型 `Error()` / `CancelError()` / `Result` 的**构造参数与字段细节**待钉定
+- 并发原语 `cancel` / `join` / `joinAll` / `joinWithin` 的**函数签名**未钉住
+  （`isCancel(e) -> Bool` 已钉，见 §8.4）
+- `Result` 的**构造参数与字段细节**待钉定（`Error("msg")` / `CancelError("msg")` 与其
+  `message` 字段已钉，见 §8.4）
 
 ### 8.7 已退役的实现形态（挂起模式）`[Provisional]`
 

@@ -1054,6 +1054,20 @@ public enum RuntimeOps {
         return si.typeName == builtinCancelErrorTypeName
     }
 
+    /// err 槽的**消息** —— 两引擎共用的读口（LLVM 侧对应 `bk_error_message`）。
+    ///
+    /// 解释器侧的错误值就是本文件的 `StructInstance`（`Error` / `CancelError`，字段 `message`），
+    /// 而 IR 里 err 槽是一个类型擦除的字 ⇒ 两层表示不同，但读出来的是同一件事。
+    /// 非错误值 ⇒ 空串，与 LLVM 侧对「无载荷字」的处置同义：⛔ 不 fail-loud ——
+    /// 读一个并不是错误的槽不该让进程炸掉。
+    static func errorMessage(_ value: Value) -> String {
+        guard case .structInstance(let si) = value,
+            si.typeName == builtinErrorTypeName || si.typeName == builtinCancelErrorTypeName,
+            case .string(let message)? = si.fields["message"]
+        else { return "" }
+        return message
+    }
+
     /// Whether a value is already a `Result` case (`ok` / `err`).
     ///
     /// Shared for the same reason: "is this already wrapped?" decides whether a
