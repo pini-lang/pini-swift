@@ -158,6 +158,10 @@ public final class IREmitter {
     /// mode-string constants. Conditional for the same golden-IR reason
     /// as the other optional headers.
     private var usesFileWrite = false
+    /// `appendFile` pulls in the append shim's declare. Kept separate from
+    /// `usesFileWrite` on the same conditional-declare contract: a module that
+    /// never appends must not grow a declare line (golden IR stays put).
+    private var usesFileAppend = false
     /// G15: `readFile` reads the whole file through the runtime shim
     /// (`bk_read_file`) rather than emitted stdio. A whole file does not fit a
     /// fixed stack buffer, and under LLI's JIT the size is not knowable before
@@ -444,6 +448,7 @@ public final class IREmitter {
         usesStrCmp = false
         usesLazyRef = false
         usesFileWrite = false
+        usesFileAppend = false
         usesFileRead = false
         usesReadLine = false
         usesTaskRuntime = false
@@ -563,6 +568,9 @@ public final class IREmitter {
         // 落点是运行时 shim 的一次调用 —— 路径解析与写语义都在那一侧，此处不发 libc 写调用。
         if usesFileWrite {
             tail += "declare void @bk_write_file(ptr, ptr)\n"
+        }
+        if usesFileAppend {
+            tail += "declare void @bk_append_file(ptr, ptr)\n"
         }
         if usesFileRead {
             tail += "declare ptr @bk_read_file(ptr)\n"
@@ -2870,6 +2878,9 @@ public final class IREmitter {
         case .fileWrite(let path, let content):
             return emitFileWrite(path: path, content: content)
 
+        case .fileAppend(let path, let content):
+            return emitFileAppend(path: path, content: content)
+
         case .fileRead(let path):
             return emitFileRead(path: path)
 
@@ -2922,6 +2933,16 @@ public final class IREmitter {
         let pathValue = emitExpr(path)
         let contentValue = emitExpr(content)
         bodyIR += " call void @bk_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        return IRValue(llvmType: "void", ssaName: "")
+    }
+
+    /// `appendFile(path, content)`: 追加到目标末尾；目标不存在则创建（POSIX `"a"`）。
+    /// 与写路径一样只发一次运行时调用 —— 路径解析、创建语义与失败形态都在那一侧。
+    private func emitFileAppend(path: IRExpr, content: IRExpr) -> IRValue {
+        usesFileAppend = true
+        let pathValue = emitExpr(path)
+        let contentValue = emitExpr(content)
+        bodyIR += " call void @bk_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -4643,6 +4664,7 @@ public final class IREmitter {
         case .printMulti: return .i32
         case .assertCall: return .i32
         case .fileWrite: return .i32
+        case .fileAppend: return .i32
         case .fileRead: return .string
         case .readLine: return .string
         case .isAsciiDigit: return .boolean

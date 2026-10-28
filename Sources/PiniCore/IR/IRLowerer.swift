@@ -3799,6 +3799,18 @@ public enum IRLowerer {
                     type: .i32
                 )
             }
+            if functionName == "appendFile" {
+                guard loweredArgs.count == 2 else {
+                    throw unsupported("appendFile expects (path, content)", at: location)
+                }
+                guard loweredArgs[0].type == .string, loweredArgs[1].type == .string else {
+                    throw unsupported("appendFile expects two String arguments", at: location)
+                }
+                return LoweredExpr(
+                    node: .fileAppend(path: loweredArgs[0].node, content: loweredArgs[1].node),
+                    type: .i32
+                )
+            }
             if functionName == "readFile" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("readFile expects (path)", at: location)
