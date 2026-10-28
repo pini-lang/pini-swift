@@ -195,6 +195,14 @@ public enum BuiltinRegistry {
             name: "listDir", group: .io, paramNames: ["path"],
             params: [t("String")],
             returns: [.generic(name: "Array", params: [t("String")], location: builtinLocation)]),
+        // 探测类：路径不存在是该类的**正常答案**，⛔ 不是错误 ⇒ 不 panic。
+        // 与 listDir / readFile 的操作类语义相反；两者同走 readFile 的路径解析。
+        BuiltinDecl(
+            name: "exists", group: .io, paramNames: ["path"],
+            params: [t("String")], returns: [t("Bool")]),
+        BuiltinDecl(
+            name: "isDir", group: .io, paramNames: ["path"],
+            params: [t("String")], returns: [t("Bool")]),
 
         // ---- math ----
         BuiltinDecl(

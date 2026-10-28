@@ -1,0 +1,5 @@
+; 用途：存在且是文件 ⇒ exists 为真（不是「只答目录」）。
+; 期望：true
+main|func() -> ():
+    print(exists("probe-dir/present.txt"))
+    return

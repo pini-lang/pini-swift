@@ -604,6 +604,9 @@ public final class IREmitter {
         if usesProcessShims {
             tail += "declare ptr @bk_argv()\n"
             tail += "declare ptr @bk_list_dir(ptr)\n"
+            // 探测类：`i32` 返回（0/1），收敛到 `i1` 由调用点做 —— 同谓词那条。
+            tail += "declare i32 @bk_exists(ptr)\n"
+            tail += "declare i32 @bk_is_dir(ptr)\n"
         }
         if usesCapturedSlots {
             tail += "declare ptr @bk_slot_alloc(i64)\n"
@@ -2524,6 +2527,16 @@ public final class IREmitter {
                     bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
                     return IRValue(llvmType: "i1", ssaName: flag)
                 }
+            }
+            // 探测类内建：符号返 `i32`（0/1），此处收敛到 `i1` —— 与谓词同规。
+            if function == "exists" || function == "isDir" {
+                usesProcessShims = true
+                let symbol = function == "exists" ? "bk_exists" : "bk_is_dir"
+                let raw = builder.freshTemp()
+                bodyIR += " \(raw) = call i32 @\(symbol)(\(argList))\n"
+                let flag = builder.freshTemp()
+                bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
+                return IRValue(llvmType: "i1", ssaName: flag)
             }
             // G14: runtime-shimmed foreign symbols call their bk_ name
             // (the declare pass emits the matching bk_ symbol).

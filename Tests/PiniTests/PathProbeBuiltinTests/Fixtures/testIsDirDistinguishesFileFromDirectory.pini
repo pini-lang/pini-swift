@@ -1,0 +1,7 @@
+; 用途：isDir 判「是目录」，⛔ 不是「存在」—— 文件与不存在的路径同答假。
+; 期望：true / false / false
+main|func() -> ():
+    print(isDir("probe-dir"))
+    print(isDir("probe-dir/present.txt"))
+    print(isDir("probe-dir/absent.txt"))
+    return

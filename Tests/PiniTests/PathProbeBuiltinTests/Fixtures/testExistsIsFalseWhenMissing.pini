@@ -1,0 +1,6 @@
+; 用途：不存在 ⇒ exists 为假，且**不 panic**（探测类的分界）。
+; 期望：false / false
+main|func() -> ():
+    print(exists("probe-dir/absent.txt"))
+    print(exists("no-such-dir/nope.txt"))
+    return

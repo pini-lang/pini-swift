@@ -1,0 +1,5 @@
+; 用途：存在且是目录 ⇒ exists 为真。
+; 期望：true
+main|func() -> ():
+    print(exists("probe-dir"))
+    return

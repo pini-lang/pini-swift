@@ -1028,6 +1028,24 @@ public final class IRExecutor: DebugHookHost {
                 }
                 return .array(ordered.map { .string($0) })
             }
+            // 探测类：⛔ 不 panic —— 路径不存在是该类的正常答案，不是错误。
+            // 路径解析与上面两条同口径；`isDir` 对「不存在」与「是文件」同答 false。
+            if name == "exists" || name == "isDir" {
+                guard arguments.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IR executor: \(name) expects exactly one argument",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                let rawPath = try requireString(try evaluate(arguments[0]), for: name)
+                let path = RuntimeOps.resolveIOPath(rawPath, programBase: programBase)
+                var isDirectory: ObjCBool = false
+                let present = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                if name == "exists" {
+                    return .bool(present)
+                }
+                return .bool(present && isDirectory.boolValue)
+            }
             throw RuntimeError.invalidOperation(
                 reason: "IR executor: no module-level function named '\(name)' and no "
                     + "type method lowered under that name. Builtin callees are not "
@@ -1561,15 +1579,14 @@ public final class IRExecutor: DebugHookHost {
             }
 
         case .fileWrite(let pathExpr, let contentExpr):
-            // Mirrors the interpreter's `writeFile` arm: the path resolves
-            // against the program base, and the value is the write's integer
-            // result code. A failed write raises here, so a successful return is
-            // the only reachable one and zero is its code.
+            // Writes in place, truncating an existing file; not an atomic replace.
+            // The path resolves against the program base. A failed write raises
+            // here, so a successful return is the only reachable one and 0 is its code.
             let rawWritePath = try requireString(evaluate(pathExpr), for: "writeFile")
             let content = try requireString(evaluate(contentExpr), for: "writeFile")
             let writePath = RuntimeOps.resolveIOPath(rawWritePath, programBase: programBase)
             do {
-                try content.write(toFile: writePath, atomically: true, encoding: .utf8)
+                try content.write(toFile: writePath, atomically: false, encoding: .utf8)
                 return .int(0)
             } catch {
                 throw RuntimeError.invalidOperation(
