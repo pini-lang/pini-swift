@@ -168,6 +168,12 @@ public final class IREmitter {
     /// the read (`fseek` / `ftell` / `fstat` are unreliable there). Conditional
     /// for the same golden-IR reason as the other optional headers.
     private var usesFileRead = false
+    /// 可接住的 IO：`tryReadFile` / `tryWriteFile` / `tryAppendFile` 各拉一条 declare。
+    /// 三个分开而不是一个 flag —— 同一份「从不接错误的模块不得多出 declare 行」的
+    /// 金样契约（与上面三条同规）。
+    private var usesFileTryRead = false
+    private var usesFileTryWrite = false
+    private var usesFileTryAppend = false
     /// G17: `readLine` pulls in the `fgets` declare and the stdin stream
     /// global. Conditional for the same golden-IR reason as the other
     /// optional headers.
@@ -457,6 +463,9 @@ public final class IREmitter {
         usesFileWrite = false
         usesFileAppend = false
         usesFileRead = false
+        usesFileTryRead = false
+        usesFileTryWrite = false
+        usesFileTryAppend = false
         usesReadLine = false
         usesTaskRuntime = false
         usesTaskArgRelease = false
@@ -582,6 +591,18 @@ public final class IREmitter {
         }
         if usesFileRead {
             tail += "declare ptr @bk_read_file(ptr)\n"
+        }
+        // 可接住的 IO：读的成功值走返回值、错误走 out 参数；写与追加没有成功值，
+        // 错误直接是返回值（`0` = 成功）。三者都**不引线程局部隐状态** —— 那个形状
+        // 在嵌套调用下会互相覆盖，而正确性不该靠发射顺序维持。
+        if usesFileTryRead {
+            tail += "declare ptr @bk_try_read_file(ptr, ptr)\n"
+        }
+        if usesFileTryWrite {
+            tail += "declare i64 @bk_try_write_file(ptr, ptr)\n"
+        }
+        if usesFileTryAppend {
+            tail += "declare i64 @bk_try_append_file(ptr, ptr)\n"
         }
         // G17: `readLine` pulls in the libc line reader and the stdin stream
         // global (macOS `__stdinp`, the legacy module header's spelling).
@@ -2927,6 +2948,15 @@ public final class IREmitter {
         case .fileRead(let path):
             return emitFileRead(path: path)
 
+        case .fileTryWrite(let path, let content):
+            return emitFileTryWrite(path: path, content: content)
+
+        case .fileTryAppend(let path, let content):
+            return emitFileTryAppend(path: path, content: content)
+
+        case .fileTryRead(let path):
+            return emitFileTryRead(path: path)
+
         case .readLine:
             return emitReadLine()
 
@@ -3014,6 +3044,93 @@ public final class IREmitter {
         // C string; a bare `ptr` falls into the %d default and prints the
         // address.
         return IRValue(llvmType: "i8*", ssaName: content)
+    }
+
+    /// `tryReadFile(path)` —— 读全文，**失败作为值返回**而不是陷阱。
+    ///
+    /// ABI 为什么与写那两个不对称：读的成功值占住了返回值，错误只能从 out 参数出来；
+    /// 写与追加没有成功值，错误直接就是返回值（`0` = 成功）。两边都**不引线程局部
+    /// 隐状态** —— 那个形状在嵌套调用（`tryReadFile(a) + tryReadFile(b)`）下会互相
+    /// 覆盖，而正确性不该靠发射顺序维持。
+    ///
+    /// 发射形态刻意**线性**：`select` 组 tag 与 ok 槽，三次 `insertvalue` 收尾 ——
+    /// 无分支、无 phi、无结果槽汇聚。这里引入控制流不会让它更对，只会让「这个表达式
+    /// 在哪儿结束」变成一件要读标签才知道的事。
+    private func emitFileTryRead(path: IRExpr) -> IRValue {
+        usesFileTryRead = true
+        let pathValue = emitExpr(path)
+        let errSlot = freshSlot(for: "tryread.err")
+        bodyIR += builder.fmtAlloca(name: errSlot, type: "i64") + "\n"
+        let content = builder.freshTemp()
+        bodyIR +=
+            " \(content) = call ptr @bk_try_read_file(ptr \(pathValue.ssaName), ptr \(errSlot))\n"
+        let errorWord = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: errorWord, type: "i64", ptr: errSlot) + "\n"
+        let spelling = IRType.result(ok: .string).llvmSpelling
+        let failed = builder.freshTemp()
+        bodyIR += " \(failed) = icmp ne i64 \(errorWord), 0\n"
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = select i1 \(failed), i64 1, i64 0\n"
+        // 失败侧塞 null：tag 已经是 1，没有读者会去看 ok 槽 —— 但 SSA 要求每个
+        // `insertvalue` 都有个操作数，而「留 undef」会让产物依赖一个未定义值的位模式。
+        let okPayload = builder.freshTemp()
+        bodyIR += " \(okPayload) = select i1 \(failed), ptr null, ptr \(content)\n"
+        let withTag = builder.freshTemp()
+        bodyIR += " \(withTag) = insertvalue \(spelling) undef, i64 \(tag), 0\n"
+        let withPayload = builder.freshTemp()
+        bodyIR += " \(withPayload) = insertvalue \(spelling) \(withTag), i8* \(okPayload), 1\n"
+        let aggregate = builder.freshTemp()
+        bodyIR +=
+            " \(aggregate) = insertvalue \(spelling) \(withPayload), i64 \(errorWord), 2\n"
+        return IRValue(llvmType: spelling, ssaName: aggregate)
+    }
+
+    /// `tryWriteFile(path, content)` —— 就地截断写，失败**返回** `err`。
+    private func emitFileTryWrite(path: IRExpr, content: IRExpr) -> IRValue {
+        usesFileTryWrite = true
+        let pathValue = emitExpr(path)
+        let contentValue = emitExpr(content)
+        let errorWord = builder.freshTemp()
+        bodyIR +=
+            " \(errorWord) = call i64 @bk_try_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        return emitUnitTryIOResult(errorWord: errorWord)
+    }
+
+    /// `tryAppendFile(path, content)` —— 追加写（目标不存在则创建），失败**返回** `err`。
+    private func emitFileTryAppend(path: IRExpr, content: IRExpr) -> IRValue {
+        usesFileTryAppend = true
+        let pathValue = emitExpr(path)
+        let contentValue = emitExpr(content)
+        let errorWord = builder.freshTemp()
+        bodyIR +=
+            " \(errorWord) = call i64 @bk_try_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        return emitUnitTryIOResult(errorWord: errorWord)
+    }
+
+    /// 两个**成功不产生值**的可接住写共用的收尾：`{ i64 tag, {  } ok, i64 err }`。
+    ///
+    /// ok 槽是**零宽空结构体**，所以「填什么」这个问题不存在 —— 只需 `undef`。
+    /// 载荷形态是用户的裁定：写成功就是成功，⛔ 不编一个字节数当载荷
+    ///（成功时它恒等于入参的 UTF-8 长度，是入参的函数、不是新信息）。
+    private func emitUnitTryIOResult(errorWord: String) -> IRValue {
+        let spelling = IRType.result(ok: .tuple(labels: [], fieldTypes: [])).llvmSpelling
+        let failed = builder.freshTemp()
+        bodyIR += " \(failed) = icmp ne i64 \(errorWord), 0\n"
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = select i1 \(failed), i64 1, i64 0\n"
+        let withTag = builder.freshTemp()
+        bodyIR += " \(withTag) = insertvalue \(spelling) undef, i64 \(tag), 0\n"
+        let withPayload = builder.freshTemp()
+        bodyIR += " \(withPayload) = insertvalue \(spelling) \(withTag), \(emptyTupleSpelling) undef, 1\n"
+        let aggregate = builder.freshTemp()
+        bodyIR += " \(aggregate) = insertvalue \(spelling) \(withPayload), i64 \(errorWord), 2\n"
+        return IRValue(llvmType: spelling, ssaName: aggregate)
+    }
+
+    /// 零宽空元组的 LLVM 拼写，取自类型本身而不是手写常量 ——
+    /// 手写会与 `IRType.tuple` 的拼法漂移，而漂移方向是产物非法。
+    private var emptyTupleSpelling: String {
+        IRType.tuple(labels: [], fieldTypes: []).llvmSpelling
     }
 
     /// `readLine()` (G17): a fixed-size stack buffer filled by `fgets` from the
@@ -4709,6 +4826,9 @@ public final class IREmitter {
         case .fileWrite: return .i32
         case .fileAppend: return .i32
         case .fileRead: return .string
+        case .fileTryWrite, .fileTryAppend:
+            return .result(ok: .tuple(labels: [], fieldTypes: []))
+        case .fileTryRead: return .result(ok: .string)
         case .readLine: return .string
         case .isAsciiDigit: return .boolean
         case .join(_, let type, _): return type

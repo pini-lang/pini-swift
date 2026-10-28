@@ -1200,11 +1200,10 @@ public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
 /// two channels agree byte for byte rather than merely both being "UTF-8-ish".
 @_cdecl("bk_read_file")
 public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
-    guard let path else { return nil }
-    let resolved = _bkResolveIOPath(String(cString: path))
-    guard let text = try? String(contentsOfFile: resolved, encoding: .utf8) else {
-        return nil
-    }
+    // 失败仍返 nil（发射侧把它折成陷阱），而陷阱文案是**不带路径**的通用句：
+    // 非字面量实参不能折进常量，一条只覆盖部分调用形态的消息比不覆盖更糟。
+    // 带路径的详细诊断留给可接住的那条路 —— 它把诊断当值交给调用者。
+    guard case .content(let text) = _bkReadFileCore(path) else { return nil }
     return _bkStrDup(text)
 }
 
@@ -1350,34 +1349,49 @@ public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
     return present && isDirectory.boolValue ? 1 : 0
 }
 
-/// `writeFile(path, content)` —— 整份内容写入 `path`，就地截断（⛔ 非原子替换）、跟随符号链接。
-/// 写入用与解释器写分支**同一个** Foundation 调用 ⇒ 两侧是同一份实现，失败原因串也相同。
-/// 不返回值：写失败即 `bk_panic`，成功没有可回传的结果。
-@_cdecl("bk_write_file")
-public func bk_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
-    guard let path else { bk_panic("Pini runtime error: writeFile: 路径为空") }
+// MARK: - IO 内核（陷阱版与可接住版共用）
+
+/// 写 / 追加的**共用内核**：结局只有「成了」与「没成」，没成的那条带诊断文案。
+///
+/// 为什么要有内核：陷阱版与 `try*` 版是**同一个操作**的两种失败形态 —— 一条把诊断
+/// 当终止理由，一条把它当值。若各写一套，第一次改动就会分叉（写入方式、路径解析、
+/// 文案），而分叉的两侧在**成功路径上都看起来对**，只有失败时才露馅。
+private enum _BkIOWriteOutcome {
+    case done
+    case failure(String)
+}
+
+/// 读的共用内核。与写内核分开是因为**成功带载荷** —— 把两者塞进一个枚举会让写侧
+/// 多出一个永不出现的 `content` case，而那种 case 迟早会被人当成「写也能返回内容」。
+private enum _BkIOReadOutcome {
+    case content(String)
+    case failure(String)
+}
+
+private func _bkWriteFileCore(
+    _ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?
+) -> _BkIOWriteOutcome {
+    guard let path else { return .failure("writeFile: 路径为空") }
     let target = _bkResolveIOPath(String(cString: path))
     let text = content.map { String(cString: $0) } ?? ""
     do {
         try text.write(toFile: target, atomically: false, encoding: .utf8)
+        return .done
     } catch {
-        bk_panic(
-            "Pini runtime error: IO 错误: 无法写入文件 \(target): \(error.localizedDescription)")
+        return .failure(
+            "IO 错误: 无法写入文件 \(target): \(error.localizedDescription)")
     }
 }
 
-/// `appendFile(path, content)` —— 追加到目标末尾；目标不存在则创建（POSIX `"a"`）。
-///
-/// 与 `bk_write_file` **刻意共用同一段打开/写入形状**（解释器侧的 `.fileAppend` 臂逐句同构）：
-/// 两个写内建若各写一套，第一次改动就会分叉。⛔ 本函数不截断，`bk_write_file` 也永不追加。
-@_cdecl("bk_append_file")
-public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
-    guard let path else { bk_panic("Pini runtime error: appendFile: 路径为空") }
+private func _bkAppendFileCore(
+    _ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?
+) -> _BkIOWriteOutcome {
+    guard let path else { return .failure("appendFile: 路径为空") }
     let target = _bkResolveIOPath(String(cString: path))
     let text = content.map { String(cString: $0) } ?? ""
     guard let handle = fopen(target, "a") else {
-        bk_panic(
-            "Pini runtime error: IO 错误: 无法打开文件以追加 \(target): \(String(cString: strerror(errno)))"
+        return .failure(
+            "IO 错误: 无法打开文件以追加 \(target): \(String(cString: strerror(errno)))"
         )
     }
     defer { fclose(handle) }
@@ -1387,10 +1401,88 @@ public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePoint
             fwrite($0.baseAddress, 1, bytes.count, handle)
         }
         if written != bytes.count {
-            bk_panic(
-                "Pini runtime error: IO 错误: 无法追加到文件 \(target): \(String(cString: strerror(errno)))"
+            return .failure(
+                "IO 错误: 无法追加到文件 \(target): \(String(cString: strerror(errno)))"
             )
         }
+    }
+    return .done
+}
+
+private func _bkReadFileCore(_ path: UnsafePointer<CChar>?) -> _BkIOReadOutcome {
+    guard let path else { return .failure("readFile: 路径为空") }
+    let target = _bkResolveIOPath(String(cString: path))
+    do {
+        return .content(try String(contentsOfFile: target, encoding: .utf8))
+    } catch {
+        return .failure("IO 错误: 无法读取文件 \(target): \(error.localizedDescription)")
+    }
+}
+
+/// `writeFile(path, content)` —— 整份内容写入 `path`，就地截断（⛔ 非原子替换）、跟随符号链接。
+/// 写入用与解释器写分支**同一个** Foundation 调用 ⇒ 两侧是同一份实现，失败原因串也相同。
+/// 不返回值：写失败即 `bk_panic`，成功没有可回传的结果。
+@_cdecl("bk_write_file")
+public func bk_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
+    if case .failure(let message) = _bkWriteFileCore(path, content) {
+        bk_panic("Pini runtime error: " + message)
+    }
+}
+
+/// `appendFile(path, content)` —— 追加到目标末尾；目标不存在则创建（POSIX `"a"`）。
+///
+/// 与 `bk_write_file` **刻意共用同一段打开/写入形状**（解释器侧的 `.fileAppend` 臂逐句同构）：
+/// 两个写内建若各写一套，第一次改动就会分叉。⛔ 本函数不截断，`bk_write_file` 也永不追加。
+@_cdecl("bk_append_file")
+public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
+    if case .failure(let message) = _bkAppendFileCore(path, content) {
+        bk_panic("Pini runtime error: " + message)
+    }
+}
+
+// MARK: - 可接住的 IO（`try*` 三兄弟）
+
+// 与上面三个陷阱版**并存**：同一个操作、两种失败形态，选哪个是源码写的名字。
+// 载荷：读是内容，写与追加是**空元组** —— 见 `IRNode` 那三个 case 的裁定理由。
+//
+// ⚠️ ABI 不对称是刻意的：读的成功值占住了返回值，错误只能从 out 参数出来；
+// 写与追加没有成功值，错误直接就是返回值（`0` = 成功）。两边都**不引线程局部
+// 「上次错误」** —— 那个形状在嵌套调用下会互相覆盖，正确性不该靠调用顺序维持。
+
+/// `tryReadFile(path)` —— 读全文；失败写错误对象字到 `outErr` 并返回 null。
+@_cdecl("bk_try_read_file")
+public func bk_try_read_file(
+    _ path: UnsafePointer<CChar>?, _ outErr: UnsafeMutablePointer<Int64>?
+) -> UnsafeMutablePointer<CChar>? {
+    switch _bkReadFileCore(path) {
+    case .content(let text):
+        outErr?.pointee = 0
+        return _bkStrDup(text)
+    case .failure(let message):
+        outErr?.pointee = _bkMakeError(message, isCancel: false)
+        return nil
+    }
+}
+
+/// `tryWriteFile(path, content)` —— 就地截断写；返回 `0` 或错误对象字。
+@_cdecl("bk_try_write_file")
+public func bk_try_write_file(
+    _ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?
+) -> Int64 {
+    switch _bkWriteFileCore(path, content) {
+    case .done: return 0
+    case .failure(let message): return _bkMakeError(message, isCancel: false)
+    }
+}
+
+/// `tryAppendFile(path, content)` —— 追加写；返回 `0` 或错误对象字。
+@_cdecl("bk_try_append_file")
+public func bk_try_append_file(
+    _ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?
+) -> Int64 {
+    switch _bkAppendFileCore(path, content) {
+    case .done: return 0
+    case .failure(let message): return _bkMakeError(message, isCancel: false)
     }
 }
 

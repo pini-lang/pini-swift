@@ -207,6 +207,47 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "isDir", group: .io, paramNames: ["path"],
             params: [t("String")], returns: [t("Bool")]),
+        // 可接住的 IO：三个 `try*` 与上面三个陷阱版**并存**，⛔ 不是替代 ——
+        // 失败形态由**调用点写的名字**决定，不是运行时开关。
+        // 载荷：读是文件内容，写与追加是**空元组** —— 写成功不产生值，⛔ 不为凑载荷
+        // 编造字节数（成功时它恒等于入参的 UTF-8 长度，是入参的函数、不是新信息）。
+        // 与 `ok`/`err` 同族：走专属降载，⛔ 不登记解释器函数值。
+        BuiltinDecl(
+            name: "tryReadFile", group: .io, paramNames: ["path"],
+            params: [t("String")],
+            returns: [
+                .generic(
+                    name: "Result",
+                    params: [t("String"), t("Error")],
+                    location: builtinLocation)
+            ],
+            definesRuntimeValue: false),
+        BuiltinDecl(
+            name: "tryWriteFile", group: .io, paramNames: ["path", "content"],
+            params: [t("String"), t("String")],
+            returns: [
+                .generic(
+                    name: "Result",
+                    params: [
+                        .tuple(labels: [], elements: [], location: builtinLocation),
+                        t("Error"),
+                    ],
+                    location: builtinLocation)
+            ],
+            definesRuntimeValue: false),
+        BuiltinDecl(
+            name: "tryAppendFile", group: .io, paramNames: ["path", "content"],
+            params: [t("String"), t("String")],
+            returns: [
+                .generic(
+                    name: "Result",
+                    params: [
+                        .tuple(labels: [], elements: [], location: builtinLocation),
+                        t("Error"),
+                    ],
+                    location: builtinLocation)
+            ],
+            definesRuntimeValue: false),
 
         // ---- math ----
         BuiltinDecl(

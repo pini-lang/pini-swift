@@ -223,6 +223,12 @@ public enum IRPrinter {
             return "appendFile(\(exprText(path)), \(exprText(content)))"
         case .fileRead(let path):
             return "readFile(\(exprText(path)))"
+        case .fileTryWrite(let path, let content):
+            return "tryWriteFile(\(exprText(path)), \(exprText(content)))"
+        case .fileTryAppend(let path, let content):
+            return "tryAppendFile(\(exprText(path)), \(exprText(content)))"
+        case .fileTryRead(let path):
+            return "tryReadFile(\(exprText(path)))"
         case .readLine:
             return "readLine()"
         case .isAsciiDigit(let argument):
