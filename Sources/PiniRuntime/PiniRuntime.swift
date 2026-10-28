@@ -255,13 +255,17 @@ private func _bkArraySplitStorage(_ box: _BkArrayBox) {
 
 // MARK: - 数组运行时（D0 最小覆盖：I32 元素特化）
 
-/// 运行时致命错误：打印到 stderr 并终止进程。
-/// 与解释器抛 `RuntimeError` 语义对齐——双后端均以「错误」终止（见 并发后端抽象）。
+/// 运行时致命错误：消息写到 stderr，进程以退出码 1 终止（解释器通道同码）。
+/// `exit` 会 flush 标准流 ⇒ 陷阱之前的输出必然落地；`abort` 不 flush。
+/// `PINI_PANIC_ABORT` 非空时改走 `abort()`：退出码 134，产出 core dump 与崩溃栈。
 @_cdecl("bk_panic")
 public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
     if let msg { fputs(String(cString: msg), stderr) }
     fputs("\n", stderr)
-    abort()
+    if let flag = getenv("PINI_PANIC_ABORT"), flag.pointee != 0 {
+        abort()
+    }
+    exit(1)
 }
 
 // MARK: 句柄通用原语（#46-D D4：类型无关的 share count / COW 分裂）
@@ -1189,7 +1193,8 @@ public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
 @_cdecl("bk_read_file")
 public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let path else { return nil }
-    guard let text = try? String(contentsOfFile: String(cString: path), encoding: .utf8) else {
+    let resolved = _bkResolveIOPath(String(cString: path))
+    guard let text = try? String(contentsOfFile: resolved, encoding: .utf8) else {
         return nil
     }
     return _bkStrDup(text)
@@ -1293,13 +1298,12 @@ public func bk_argv() -> UnsafeMutableRawPointer {
 /// 与解释器 `IRExecutor` 的 `listDir` 逐条同义（排序那一条尤其要紧：文件系统返回顺序不稳定，
 /// 不排序则依赖顺序的判据会**假绿**）。
 ///
-/// 路径按 `bk_read_file` 的同一口径解析（相对路径 → 进程 CWD）—— 与解释器在模块口径下
-/// 「相对程序基准」**等价于同一件事**，因为门禁调用前一律 `cd` 到模块根。
+/// 路径按 `bk_read_file` 的同一口径解析（相对路径 → 程序基准，`./` / `../` 与绝对路径原样）。
 /// ⛔ 列不全时 **panic**，⛔ 不返回半个目录（与那些静默截断的旧形态刻意相反）。
 @_cdecl("bk_list_dir")
 public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
     guard let path else { bk_panic("Pini runtime error: listDir: 路径为空") }
-    let dirPath = String(cString: path)
+    let dirPath = _bkResolveIOPath(String(cString: path))
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: dirPath, isDirectory: &isDirectory),
         isDirectory.boolValue
@@ -1324,7 +1328,7 @@ public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointe
 @_cdecl("bk_exists")
 public func bk_exists(_ path: UnsafePointer<CChar>?) -> Int32 {
     guard let path else { return 0 }
-    return FileManager.default.fileExists(atPath: String(cString: path)) ? 1 : 0
+    return FileManager.default.fileExists(atPath: _bkResolveIOPath(String(cString: path))) ? 1 : 0
 }
 
 /// `isDir(String) -> Bool` —— 存在**且**是目录；「不存在」与「是文件」同答 false。
@@ -1334,8 +1338,68 @@ public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
     guard let path else { return 0 }
     var isDirectory: ObjCBool = false
     let present = FileManager.default.fileExists(
-        atPath: String(cString: path), isDirectory: &isDirectory)
+        atPath: _bkResolveIOPath(String(cString: path)), isDirectory: &isDirectory)
     return present && isDirectory.boolValue ? 1 : 0
+}
+
+/// `writeFile(path, content)` —— 整份内容写入 `path`，就地截断（⛔ 非原子替换）、跟随符号链接。
+/// 写入用与解释器写分支**同一个** Foundation 调用 ⇒ 两侧是同一份实现，失败原因串也相同。
+/// 不返回值：写失败即 `bk_panic`，成功没有可回传的结果。
+@_cdecl("bk_write_file")
+public func bk_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
+    guard let path else { bk_panic("Pini runtime error: writeFile: 路径为空") }
+    let target = _bkResolveIOPath(String(cString: path))
+    let text = content.map { String(cString: $0) } ?? ""
+    do {
+        try text.write(toFile: target, atomically: false, encoding: .utf8)
+    } catch {
+        bk_panic(
+            "Pini runtime error: IO 错误: 无法写入文件 \(target): \(error.localizedDescription)")
+    }
+}
+
+/// 程序基准（`moduleRoot` 的答案来源）；`nil` = 未注入，取值回落到进程 CWD。
+/// 写入点只有进程入口的第一句，读取可能来自任务族线程 ⇒ 读写两侧都由 `_bkProgramBaseLock` 配对。
+private var _bkProgramBase: UnsafeMutablePointer<CChar>? = nil
+private let _bkProgramBaseLock = NSLock()
+
+/// 程序基准的当前值；`nil` = 未注入。
+private func _bkProgramBaseSnapshot() -> String? {
+    _bkProgramBaseLock.lock()
+    defer { _bkProgramBaseLock.unlock() }
+    return _bkProgramBase.map { String(cString: $0) }
+}
+
+/// IO 路径的统一解析：`/` 开头、`./` 开头、`../` 开头的路径原样返回，其余拼接程序基准。
+/// 未注入基准时原样返回 ⇒ 相对路径落到进程 CWD 的语义。
+/// 与解释器的 `RuntimeOps.resolveIOPath` 必须同解：本模块不依赖 `PiniCore`，同一条规则只能各存一份。
+private func _bkResolveIOPath(_ path: String) -> String {
+    if path.hasPrefix("/") { return path }
+    if path.hasPrefix("./") || path.hasPrefix("../") { return path }
+    guard let base = _bkProgramBaseSnapshot() else { return path }
+    return base + "/" + path
+}
+
+/// 注入程序基准（绝对路径），入口函数体最前调用一次。
+/// 入参可以是常量串：本函数 `strdup` 一份自持，调用方不必保留。`nil` 清除注入态。
+@_cdecl("bk_set_program_base")
+public func bk_set_program_base(_ base: UnsafePointer<CChar>?) {
+    var copy: UnsafeMutablePointer<CChar>? = nil
+    if let base { copy = strdup(base) }
+    _bkProgramBaseLock.lock()
+    _bkProgramBase = copy
+    _bkProgramBaseLock.unlock()
+}
+
+/// `moduleRoot() -> String` —— 程序基准的绝对路径；未注入时答**进程 CWD**。
+/// 取值式与解释器同一条（`programBase ?? 当前工作目录`）⇒ 两通道同一串。
+/// 分配契约同 `bk_cstr`：`strdup`、**调用方释放**。
+@_cdecl("bk_module_root")
+public func bk_module_root() -> UnsafeMutablePointer<CChar>? {
+    _bkProgramBaseLock.lock()
+    let base = _bkProgramBase.map { String(cString: $0) }
+    _bkProgramBaseLock.unlock()
+    return _bkStrDup(base ?? FileManager.default.currentDirectoryPath)
 }
 
 /// `substring(start, end) -> String` —— 契约 §2.9 第 38 条。

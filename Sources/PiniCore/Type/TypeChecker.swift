@@ -1543,6 +1543,14 @@ public final class TypeChecker {
                 {
                     continue
                 }
+                // 值位：非 void 函数里 `return 无返回值调用(...)` 须报错 —— `f.type` 为 nil，
+                // 下方 `guard let actual` 会静默跳过。`-> ()` 函数体不进入本段（无返回类型可比）。
+                if let e = f.expr, isVoidCall(e) {
+                    let expectedDesc = expected.map { $0.describe() }.joined(separator: ", ")
+                    try report(
+                        TypeError.mismatch(expected: expectedDesc, got: "()", location: f.location))
+                    continue
+                }
                 guard let actual = f.type else { continue }  // 无法推断则跳过
                 if expected.count == 1 {
                     if !expected[0].isStructurallyEquivalent(to: actual) {
@@ -1742,6 +1750,12 @@ public final class TypeChecker {
             let declaredType: TypeAnnotation
             if let initExpr = initializer {
                 try checkExpression(initExpr)
+                // 值位：无返回值调用不能做初值 —— 推断侧返 nil 会让下文整段比对被跳过。
+                if isVoidCall(initExpr) {
+                    try report(
+                        TypeError.mismatch(
+                            expected: annot?.describe() ?? "值", got: "()", location: location))
+                }
                 if let annot = annot {
                     if (try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
                         // 枚举用例构造已按期望类型下推校验
@@ -1802,6 +1816,10 @@ public final class TypeChecker {
 
         case .assign(let target, let value, let location):
             try checkExpression(value)
+            // 值位：无返回值调用不能做赋值右值（推断返 nil，下文各分支的比对会跳过）。
+            if isVoidCall(value) {
+                try report(TypeError.mismatch(expected: "值", got: "()", location: location))
+            }
             switch target {
             case .identifier(let name):
                 // P3-3：`let` 不可变边界静态检查——提前于运行时 immutableVariable 捕获重赋值。
@@ -2356,6 +2374,51 @@ public final class TypeChecker {
 
     // MARK: - 调用点校验辅助（P2-1 / P2-1.4 共用）
 
+    /// 该表达式是否为**无返回值调用**（返回类型为空，即 `()`）。
+    ///
+    /// `TypeInference` 对这类调用返回 `nil`，与「推不出类型」同一出口，而 `nil` 在值位
+    /// 一律按「未知」放行 —— 于是 `()` 会被当成「什么类型都可能」。二者须分开：`nil` 是
+    /// 推不出，`()` 是**没有值可给**。值位消费点用本判定把后者拦下。
+    private func isVoidCall(_ expression: Expression) -> Bool {
+        switch expression {
+        case .call(let callee, _, _):
+            return isVoidCallee(callee)
+        case .unsafe(let operand, _):
+            return isVoidCall(operand)
+        default:
+            return false
+        }
+    }
+
+    /// 被调用者的返回类型是否为空（`()`）：自由函数 / 函数类型变量 / 方法三条登记面。
+    private func isVoidCallee(_ callee: Expression) -> Bool {
+        switch callee {
+        case .identifier(let name, _):
+            if let sig = typeEnv.lookupFunction(name: name) { return sig.returns.isEmpty }
+            if let bound = typeEnv.lookupVariable(name: name),
+                case .function(_, let returns, _, _, _) = bound
+            {
+                return returns.isEmpty
+            }
+            return false
+        case .member(let object, let memberName, _):
+            guard let receiver = inference.infer(expression: object) else { return false }
+            switch receiver {
+            case .simple(let typeName, _):
+                return typeEnv.lookupMethod(typeName: typeName, methodName: memberName)?
+                    .returns.isEmpty ?? false
+            case .generic(let typeName, let typeArgs, _):
+                return typeEnv.lookupSpecializedMethod(
+                    typeName: typeName, typeArgs: typeArgs, methodName: memberName
+                )?.returns.isEmpty ?? false
+            default:
+                return false
+            }
+        default:
+            return false
+        }
+    }
+
     /// 校验一次调用的实参数目与实参类型（结构等价，P2-2.1）。
     /// 跳过未标注形参 "_" 与 Any 形参；实参无法推断则跳过。
     private func validateCallArguments(
@@ -2374,6 +2437,11 @@ public final class TypeChecker {
                         ))
                 }
             }
+        }
+        // 值位：无返回值调用不能做实参 —— 形参宽松（`_` / `Any`）不等于值位宽松。
+        // 独立成一轮，不依赖形参位置映射：变参溢出位的实参不在下方下标循环里。
+        for arg in arguments where isVoidCall(arg.expression) {
+            try report(TypeError.mismatch(expected: "值", got: "()", location: location))
         }
         // ADR-001：`using` 形参的实参可由编译器插入 ⇒ 除「全显式」外「省略式」也合法
         // （实参个数 = 形参个数 − using 个数）。映射助手把两种形态统一成「形参位置序列」，

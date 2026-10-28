@@ -3782,10 +3782,11 @@ public enum IRLowerer {
                     )
                 }
             }
-            // File IO intrinsics (G15): writeFile/readFile. Absolute and
-            // relative literal paths both lower as-is — the legacy emitter's
-            // programBase baking only matters when the harness changes CWD,
-            // and the IO corpus uses absolute paths.
+            // File IO intrinsics (G15): writeFile/readFile. 路径**不在降载侧解析**：
+            // 发射侧把程序基准注入运行时，两条通道都在运行时按同一套规则解析相对路径
+            // （规则见 `RuntimeOps.resolveIOPath` 与运行时段同名函数的互指注释）。
+            // ⚠️ `writeFile` 无返回值，此处仍标 `.i32`：`IRType` 没有 void 成员，
+            // 而该字段对 void 节点不被消费（`print` / `assert` 同此惯例）。
             if functionName == "writeFile" {
                 guard loweredArgs.count == 2 else {
                     throw unsupported("writeFile expects (path, content)", at: location)
