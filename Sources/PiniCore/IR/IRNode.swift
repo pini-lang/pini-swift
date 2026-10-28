@@ -399,6 +399,23 @@ public indirect enum IRExpr: Equatable {
     /// detail and belongs in the emitter, not here.
     case fileRead(path: IRExpr)
 
+    // MARK: 可接住的 IO（`Result` 形态）
+
+    // 三个 `try*` 内建与上面三个陷阱版**并存**，⛔ 不是给陷阱版加开关：
+    // 同一个操作在「失败怎么办」上有两种答案，而答案属于调用者 —— 一次调用只能有一种，
+    // 选哪种是源码写的名字，不是运行时参数。
+    //
+    // 成功载荷：读是文件内容（`String`），写与追加是**空元组** `()` ——
+    // 写成功不产生值，⛔ 不为凑一个载荷编造字节数（成功时它恒等于入参的 UTF-8 长度，
+    // 是入参的函数、不是新信息）。节点只记「这是可接住的写」，载荷类型由类型层推。
+
+    /// `tryWriteFile(path, content)` — 就地截断写；失败**返回** `err` 而不是陷阱。
+    case fileTryWrite(path: IRExpr, content: IRExpr)
+    /// `tryAppendFile(path, content)` — 追加写（目标不存在则创建）；失败**返回** `err`。
+    case fileTryAppend(path: IRExpr, content: IRExpr)
+    /// `tryReadFile(path)` — 读全文；失败**返回** `err`，成功载荷是内容。
+    case fileTryRead(path: IRExpr)
+
     // MARK: G17 builtins
 
     /// `readLine()` (G17) — one stdin line, yielded as a String. Mirrors the

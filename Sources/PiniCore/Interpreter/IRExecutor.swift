@@ -1654,6 +1654,67 @@ public final class IRExecutor: DebugHookHost {
                 )
             }
 
+        case .fileTryWrite(let pathExpr, let contentExpr):
+            // 与 `.fileWrite` **同一个写入调用、同一个路径解析**，唯一的差别是失败去向：
+            // 这里造一个错误值返回，⛔ 不抛。诊断文案与陷阱版同形 —— 两条路的用户看到
+            // 同一句话，只是其中一条把它当值、另一条把它当终止理由。
+            let rawTryWritePath = try requireString(evaluate(pathExpr), for: "tryWriteFile")
+            let tryWriteContent = try requireString(evaluate(contentExpr), for: "tryWriteFile")
+            let tryWritePath = RuntimeOps.resolveIOPath(rawTryWritePath, programBase: programBase)
+            do {
+                try tryWriteContent.write(toFile: tryWritePath, atomically: false, encoding: .utf8)
+                return RuntimeOps.makeResult(
+                    caseName: "ok", payload: .tuple(labels: [], elements: []))
+            } catch {
+                return RuntimeOps.makeResult(
+                    caseName: "err",
+                    payload: RuntimeOps.makeError(
+                        "IO 错误: 无法写入文件 \(tryWritePath): \(error.localizedDescription)"))
+            }
+
+        case .fileTryAppend(let pathExpr, let contentExpr):
+            let rawTryAppendPath = try requireString(evaluate(pathExpr), for: "tryAppendFile")
+            let tryAppendContent = try requireString(evaluate(contentExpr), for: "tryAppendFile")
+            let tryAppendPath = RuntimeOps.resolveIOPath(
+                rawTryAppendPath, programBase: programBase)
+            guard let tryHandle = fopen(tryAppendPath, "a") else {
+                return RuntimeOps.makeResult(
+                    caseName: "err",
+                    payload: RuntimeOps.makeError(
+                        "IO 错误: 无法打开文件以追加 \(tryAppendPath): "
+                            + String(cString: strerror(errno))))
+            }
+            defer { fclose(tryHandle) }
+            let tryAppendBytes = Array(tryAppendContent.utf8)
+            if !tryAppendBytes.isEmpty {
+                let tryWritten = tryAppendBytes.withUnsafeBufferPointer {
+                    fwrite($0.baseAddress, 1, tryAppendBytes.count, tryHandle)
+                }
+                guard tryWritten == tryAppendBytes.count else {
+                    return RuntimeOps.makeResult(
+                        caseName: "err",
+                        payload: RuntimeOps.makeError(
+                            "IO 错误: 无法追加到文件 \(tryAppendPath): "
+                                + String(cString: strerror(errno))))
+                }
+            }
+            return RuntimeOps.makeResult(
+                caseName: "ok", payload: .tuple(labels: [], elements: []))
+
+        case .fileTryRead(let pathExpr):
+            let rawTryReadPath = try requireString(evaluate(pathExpr), for: "tryReadFile")
+            let tryReadPath = RuntimeOps.resolveIOPath(rawTryReadPath, programBase: programBase)
+            do {
+                return RuntimeOps.makeResult(
+                    caseName: "ok",
+                    payload: .string(try String(contentsOfFile: tryReadPath, encoding: .utf8)))
+            } catch {
+                return RuntimeOps.makeResult(
+                    caseName: "err",
+                    payload: RuntimeOps.makeError(
+                        "IO 错误: 无法读取文件 \(tryReadPath): \(error.localizedDescription)"))
+            }
+
         case .readLine:
             // Mirrors the interpreter's arm: the terminator is kept and the line
             // is capped at the contract's byte limit. EOF is the empty string,

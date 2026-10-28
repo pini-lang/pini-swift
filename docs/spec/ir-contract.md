@@ -190,6 +190,9 @@
 | 33 | `fileRead(path:)` | 读取文件的**全部内容**并作为 `String` 返回 | ✅ **A2 裁决：统一到本方**；⭐ **2026-10-01 该上限删除**（`auth-70`）：语义列写的就是「读取**全部内容**」，而 2026-09-14 加上的 65536 字节上限是**另一次裁决** —— 两条互相冲突，且那个数继承自发射器固定栈缓冲、非语言所选（`IOLimits` 头注自陈），越限时还**静默丢弃**（无诊断 · 退出码 0）。⇒ 处置：**两侧同改**读全文件（解释器直接读；发射器经运行时 shim，⛔ 不再 `fread` 进固定缓冲），并把「不许再放一个上限回去」写进 `IOLimits` 头注（若将来要上限，形态照 `listDir` 那条：不静默截断、短缺**报错**）。⚠️ 该上限原立之案 `docs/issue-io-limit-from-emitter-2026-09-12.md`（载体已删）由此**已了**；`readLine` 的 256 字节上限**不动**（那是 `fgets` 的缓冲契约、两侧一致且是登记在案的 A1 行为） |
 | 34 | `readLine` | 从标准输入读**一行**，作为 `String` 返回；**输入耗尽返回空串** | ✅ **A1 裁决：统一到本方** —— **行终止符不剥离**；**上限 256 字节**（可观测值 = **255 字节**，即 `fgets` 的 `size - 1`）。**已对齐**（2026-09-14，IO 语义格）：解释器侧改为不剥 + 上限，**EOF 语义一并钉死**——LLVM 侧此前把 `fgets` 的 NULL 直接交给 `%s`（未定义行为，实测打印 `(null)`，7 字节，而解释器输出空串 1 字节），现两侧均为空串。**IR 侧已实现**（2026-09-14，G9）。⚠️ 上限同上已立案；**超长行的流位置语义仍分歧**（同工单补记）。受害面已改：`Tests/PiniTests/IOTests/testReadLine.pini`（载体已删） 期望 |
 | 50 | `fileAppend(path:content:)` | 追加写文件；目标不存在则创建；⛔ 无返回值 | ⭐ **2026-10-28 新增**（本表编号为**分配序**，⛔ 不随表格位置重排；本条即第 50 号）。语义三条 —— ① **追加**到末尾（⛔ 不截断）；② **目标不存在则创建**（POSIX `"a"` 的语义：日志类程序的**首行**不该因文件不存在而失败）；③ 打开或写入失败 ⇒ **panic**，与 `fileWrite` 同姿态。路径解析与 `fileWrite` 同口径（运行时段按程序基准解析，⛔ 不在降载侧拼）。⭐ 与 `fileWrite` **是两个节点**而不是一个带开关的节点：两者在「目标已存在」这一点上语义**相反**，合并会让本表出现「取决于参数」的一行。⚠️ 实现锚点：两通道**同一个算法**（`fopen("a")` + `fwrite` + `fclose`）—— 运行时段 `bk_append_file` 与执行器 `.fileAppend` 臂逐句同构，⛔ 不许一侧换成别的写入方式 |
+| 51 | `fileTryRead(path:)` | 读全文；失败**返回** `err(Error)`，成功 `ok(内容)` | ⭐ **2026-10-29 新增**（本表编号为**分配序**，⛔ 不随表格位置重排；本条即第 51 号）。⭐ 与第 33 条是**同一操作的两种失败形态**，⛔ 不是它的替代 —— 两者并存，取哪个由**调用点写的名字**决定，⛔ 不发生在运行时。载荷 = 文件内容；错误槽与其它 `Result` 同口径（类型擦除为一个机器字，现为运行时错误对象）。⚠️ C ABI 与写侧**刻意不对称**：读的成功值占住返回值 ⇒ `bk_try_read_file(path, out_err) -> ptr`，`out_err` 指向 `i64` 错误字（`0` = 成功）。⛔ 不引线程局部「上次错误」：它在嵌套调用下互相覆盖，正确性不得依赖调用顺序 |
+| 52 | `fileTryWrite(path:content:)` | 就地截断写（同第 32 条的写语义）；失败**返回** `err(Error)`，成功 `ok(())` | ⭐ **2026-10-29 新增**（同上；本条即第 52 号）。与第 32 条的关系同第 51 条与第 33 条。⭐ **载荷是空元组**（用户裁定）：写成功不产生值，⛔ 不编造字节数 —— 成功路径下该数**恒等于**入参的 UTF-8 长度（`String.write` 全有全无、`fwrite` 不足即失败），是入参的函数而非新信息。⚠️ 实现锚点：运行时段 `bk_try_write_file(ptr, ptr) -> i64`（`0` = 成功），与陷阱版**共用同一段写入内核**，只在失败处置上分岔。⚠️ 失败**不再终止进程** —— 这是它与第 32 条唯一的行为差别 |
+| 53 | `fileTryAppend(path:content:)` | 追加写、目标不存在则创建（同第 50 条）；失败**返回** `err(Error)`，成功 `ok(())` | ⭐ **2026-10-29 新增**（同上；本条即第 53 号）。与第 52 条的关系同第 50 条与第 32 条：**两个节点**，⛔ 不是一个带开关的节点（两者在「目标已存在」上语义相反）。⚠️ 实现锚点：运行时段 `bk_try_append_file(ptr, ptr) -> i64`（`0` = 成功），与第 52 条同规 |
 
 > **A 组裁决的共同性质**（甲类裁决统一到 LLVM 侧/D4）：三项均按判准**统一到 LLVM 侧**；上限本身
 > 的合理性**不在本次裁量范围**，已另立工单。
@@ -325,7 +328,7 @@
 - **每个后端须能自备 shim** —— 既有的「shim 边界必须是 C ABI」MUST 得到强化
   （`pini-spec-v0.md` §3.2），因为多后端下每个后端都需要自己的值层实现面。
 
-### 5.2 `bk_*` 权威清单（93 个，2026-10-28 实测）
+### 5.2 `bk_*` 权威清单（96 个，2026-10-29 实测）
 
 > **口径订正**：`LLVM 后端重写` 两处写「35 个」，**导出符号**实测 **37 个**（2026-09-12）。本清单为该面的
 > 单一权威来源，`LLVM 后端重写` 同步订正（`同步变更`）。
@@ -349,13 +352,13 @@
 | **字符** | `bk_chars` `bk_chr` `bk_is_letter` `bk_is_number` `bk_ord` | 5 |
 | **字符串面** | `bk_str_alloc` `bk_str_dup` `bk_str_refcount` `bk_str_release` `bk_str_retain` `bk_string_char_at` `bk_string_contains` `bk_string_count` `bk_string_index_of` `bk_string_lower` `bk_string_slice` `bk_string_split` `bk_string_trim_left` `bk_string_trim_right` `bk_string_upper` `bk_substring` | 16 |
 | **闭包 / 结构体胶水** | `bk_nominal_alloc` `bk_nominal_release` `bk_nominal_retain` `bk_slot_alloc` | 4 |
-| **IO / 宿主查询** | `bk_append_file` `bk_argv` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_write_file` | 9 |
+| **IO / 宿主查询** | `bk_append_file` `bk_argv` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_try_append_file` `bk_try_read_file` `bk_try_write_file` `bk_write_file` | 12 |
 | **任务 / 并发**（2026-09-20 新增：`DE-3b` 的 `B-2` 段 8 个 + `B-3` 段 2 个） | `bk_capabilities` `bk_scope_close` `bk_task_cancel` `bk_task_detach` `bk_task_is_cancelled` `bk_task_join` `bk_task_join_all` `bk_task_join_within` `bk_task_spawn` `bk_task_yield` | 10 |
 | **并发内建的运行时落点**（2026-09-21 新增，`DE-3c`） | `bk_sleep` | 1 |
 | ⭐ **让出族**（2026-09-21 新增，`DE-6b`：`DE-6a` 定案的形状落地） | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | ⭐ **调度驱动面**（2026-09-23 新增，`Q-4`） | `bk_task_bind_sched` `bk_task_state` | 2 |
 | ⭐ **错误载荷**（2026-10-28 新增：err 槽那个类型擦除的字，构造两个 + 读两个） | `bk_cancel_error_create` `bk_error_create` `bk_error_is_cancel` `bk_error_message` | 4 |
-| **合计** | | **93** |
+| **合计** | | **96** |
 
 ⭐ **本表的维护条款**：清单口径是**导出符号数**（`@_cdecl("bk_…")` 的匹配数，见上方量具注），
 故新增或删除 `@_cdecl` 入口时须同步本表 —— 等式「清单数 = 导出数」是这张表唯一的自检方式。

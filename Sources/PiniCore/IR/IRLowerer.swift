@@ -3849,6 +3849,35 @@ public enum IRLowerer {
                 }
                 return LoweredExpr(node: .fileRead(path: loweredArgs[0].node), type: .string)
             }
+            // 可接住的 IO：与上面三条**同一个操作、另一种失败形态**。判据是源码写的
+            // 那个名字，⛔ 不是运行时开关 —— 一次调用只可能有一种失败形态。
+            // 载荷：读是内容，写与追加是空元组（见 `IRNode` 那三个 case 的注释）。
+            if functionName == "tryWriteFile" || functionName == "tryAppendFile" {
+                guard loweredArgs.count == 2 else {
+                    throw unsupported("\(functionName) expects (path, content)", at: location)
+                }
+                guard loweredArgs[0].type == .string, loweredArgs[1].type == .string else {
+                    throw unsupported("\(functionName) expects two String arguments", at: location)
+                }
+                let node: IRExpr =
+                    functionName == "tryWriteFile"
+                    ? .fileTryWrite(
+                        path: loweredArgs[0].node, content: loweredArgs[1].node)
+                    : .fileTryAppend(
+                        path: loweredArgs[0].node, content: loweredArgs[1].node)
+                return LoweredExpr(
+                    node: node, type: .result(ok: .tuple(labels: [], fieldTypes: [])))
+            }
+            if functionName == "tryReadFile" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("tryReadFile expects (path)", at: location)
+                }
+                guard loweredArgs[0].type == .string else {
+                    throw unsupported("tryReadFile expects a String path", at: location)
+                }
+                return LoweredExpr(
+                    node: .fileTryRead(path: loweredArgs[0].node), type: .result(ok: .string))
+            }
             // G17: the two remaining corpus builtins below the intrinsic
             // gate — `readLine()` (no arguments) and `is_ascii_digit(s)`.
             if functionName == "readLine" {
