@@ -4,7 +4,7 @@
 
 | 类别 | 位置 |
 |---|---|
-| 语言级（SSOT） | `spec/`：pini-spec-v0.md（**工程与治理面**权威 / 首要入口；含项目布局与清单 schema） / pini-reference-v0.md（**语言面**权威 / 成熟成果沉积处） / pini-comment-style-guide.md / pini-glossary.toml / pini-landing-plan-v048.md / diagnostic-codes.md / test-refactoring-principles.md / en-zh-translation-map.md / evidence-table.toml / CHANGELOG.md（语言版本里程碑） |
+| 语言级（SSOT） | `spec/`：pini-spec-v0.md（**工程与治理面**权威 / 首要入口；含项目布局与清单 schema） / pini-reference-v0.md（**语言面**权威 / 成熟成果沉积处） / pini-comment-style-guide.md / pini-glossary.toml / pini-landing-plan-v048.md / diagnostic-codes.md / test-refactoring-principles.md / en-zh-translation-map.md / CHANGELOG.md（语言版本里程碑） |
 | 决策记录（ADR） | `spec/adr/`：`adr-<三位编号>-<slug>.md`（编号**自 001 起**，**只增不改**、不复用）。⚠️ 2026-09-19 编号重置：旧一批（018–043）连同索引表**已整体退役**，见该目录 `README.md` |
 | 语言级 issue | `spec/issue/`：`issue-*.md`（活跃工单）、`proposal-*.md`（待裁决提案）、`archive/`（已 Closed / LANDED，仅留档不维护） |
 | 宿主级 issue | `docs/issue-*.md`（平铺，无归档机制） |
