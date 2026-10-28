@@ -3523,6 +3523,24 @@ public enum IRLowerer {
                     type: .array(element: .string)
                 )
             }
+            // 探测类内建：与 `listDir` 同形（降成既有 `call`，⛔ 不新增节点）。
+            // 与操作类相反 —— 路径不存在是**正常答案**，故不 panic 且不改判 bool 面。
+            if functionName == "exists" || functionName == "isDir" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("\(functionName) expects (path)", at: location)
+                }
+                guard loweredArgs[0].type == .string else {
+                    throw unsupported("\(functionName) expects a String path", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: .boolean
+                    ),
+                    type: .boolean
+                )
+            }
             // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
             // corpus dependency. Other math intrinsics join their own grid.
             // G-2a: the character builtins. Same shape as the other intrinsics --

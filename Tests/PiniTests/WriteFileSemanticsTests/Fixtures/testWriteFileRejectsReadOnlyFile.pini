@@ -1,0 +1,6 @@
+; 用途：目标不可打开（只读文件）⇒ 走错误通道，⛔ 不静默改写。
+; 期望：抛 RuntimeError.invalidOperation（原因含「无法写入」），⛔ 不打印 unreachable。
+main|func() -> ():
+    writeFile("readonly.txt", "x")
+    print("unreachable")
+    return

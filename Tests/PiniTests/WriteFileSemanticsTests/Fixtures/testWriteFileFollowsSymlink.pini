@@ -1,0 +1,5 @@
+; 用途：目标是符号链接 ⇒ 跟随链接写其指向的文件（链接本身保留）。
+; 期望：0
+main|func() -> ():
+    print(writeFile("link.txt", "through-link"))
+    return

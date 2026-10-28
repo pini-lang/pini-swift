@@ -1,0 +1,7 @@
+; 用途：对不存在的路径连续探测，两次都答假且**程序跑到底** —— 与 listDir 的 panic 相反。
+; 期望：false / false / still-running
+main|func() -> ():
+    print(exists("no-such-path"))
+    print(isDir("no-such-path"))
+    print("still-running")
+    return

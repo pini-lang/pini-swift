@@ -1318,6 +1318,26 @@ public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointe
     return _bkStringArray(ordered)
 }
 
+/// `exists(String) -> Bool` —— 路径存在（文件或目录皆可）；⛔ 不 panic。
+/// 与 `listDir` / `readFile` 的操作类语义相反：路径不存在是**正常答案**。
+/// ⚠️ 父目录不可读时底层查询同样答「不存在」，本符号不区分这两者。
+@_cdecl("bk_exists")
+public func bk_exists(_ path: UnsafePointer<CChar>?) -> Int32 {
+    guard let path else { return 0 }
+    return FileManager.default.fileExists(atPath: String(cString: path)) ? 1 : 0
+}
+
+/// `isDir(String) -> Bool` —— 存在**且**是目录；「不存在」与「是文件」同答 false。
+/// 返 `i32` 而非 C 的 `_Bool`：后者在 C ABI 里是零扩展 i8，与本层 Bool 的 i1 对不上。
+@_cdecl("bk_is_dir")
+public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
+    guard let path else { return 0 }
+    var isDirectory: ObjCBool = false
+    let present = FileManager.default.fileExists(
+        atPath: String(cString: path), isDirectory: &isDirectory)
+    return present && isDirectory.boolValue ? 1 : 0
+}
+
 /// `substring(start, end) -> String` —— 契约 §2.9 第 38 条。
 ///
 /// ⭐ 为什么这条要落进运行时段（而不是留在发射器里发 IR）：**两个理由，缺一都不是它**。
