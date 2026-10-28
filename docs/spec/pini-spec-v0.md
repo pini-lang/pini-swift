@@ -734,7 +734,7 @@ indexOf   : (String, String) -> I32   ; s.indexOf(needle)
    - **重写路线（28）**：`bk_handle_*`（4）· `bk_array_*`（7）· `bk_dict_*`（9）· `bk_set_*`（5）· `bk_lazyref_*`（3）。理由：容器与句柄是自举编译器真正走过的面，必须由 Pini 自己的实现替代 Swift 实现。
    - **直出路线（27）**：字符串面（`bk_str_*` / `bk_string_*` / `bk_substring`，16）· 字符谓词（`bk_chars` / `bk_chr` / `bk_ord` / `bk_is_*`，5）· 展示（`bk_cstr` / `bk_double_to_string`，2）· 胶水（`bk_nominal_*` / `bk_slot_alloc`，4）。这些是「一次分配 + 逐字节操作」，由发射器内联 / 直接生成 IR 更省一层，符号随之消失。
    - **保留路线（25）**：任务与并发（`bk_task_*` / `bk_scope_close` / `bk_capabilities` / `bk_sleep` / 让出族 / 调度驱动面，16）· IO 与宿主查询（8）· 陷阱（`bk_panic`，1）。它们本就是「向宿主问事」，纯 libc 化没有收益。
-   - **未定路线（8）**：指针族（`bk_ptr_*`，6，随 LLVM FFI 一并定）· 默认实例（`bk_given_get`，1）· 运行时（`bk_runtime_cleanup`，1，随退出清扫方案定）。
+   - **未定路线（8）**：指针族（`bk_ptr_*`，6，**已裁保留**——2026-10-28 裁定不删：它是 LLVM FFI 的预留面，删掉后接 FFI 时无处接线，且这不代表它在语言层有调用点）· 默认实例（`bk_given_get`，1）· 运行时（`bk_runtime_cleanup`，1，随退出清扫方案定）。
    ⭐ **判据不是「重写了多少个」**，而是**自举编译器的产物里还有没有 `call @bk_*` 打到 Swift 实现**：直出路线靠符号消失达成，保留路线靠「本就该由宿主提供」豁免 —— 两种退出方式不同，混成一条清单会让工作量被误估。
 5. **导出面封闭**：`libPiniRuntime` 今天同时导出 88 个 `bk_*` C 名与 93 个 Swift mangled 名（`public func` + `@_cdecl` 双名导出，`Package.swift` 无导出控制）。阶段 3 开工前须收成**只导出 C 名**，否则「这个符号是谁的实现」在符号层不可判，Swift 实现会顺着 mangled 名焊回来。⛔ 阶段 2 的 ABI 固化之前不动构建。
 
