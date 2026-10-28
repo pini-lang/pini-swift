@@ -550,7 +550,9 @@ public func bk_lazyref_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawP
     return box.cached!
 }
 
-/// 释放 LazyRef 的一份 share（归零才回收；进程退出 cleanup 亦兜底）。
+/// 释放 LazyRef 的一份 share（归零才回收；进程退出 `bk_runtime_cleanup` 亦兜底）。
+/// ⚠️ 发射器目前**不产出**本调用点：LazyRef 句柄只在进程退出时由退出钩子统一回收，
+/// 循环里反复创建会累积到退出。
 @_cdecl("bk_lazyref_destroy")
 public func bk_lazyref_destroy(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
@@ -951,8 +953,9 @@ public func bk_set_at(_ set: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMu
 }
 
 /// 字典是否含指定键（与 `bk_dict_get` 同源的 `_bkBoxesEqual` 判定）。
-/// （2026-09-07：LLVM `print(d[k])` 缺失键 null 特例已随 G48 三通道对齐移除，
-/// 本 shim 无 IR 调用点，保留供运行时内部/测试复用。）
+/// ⚠️ 本 shim 今天**零调用点**：`collection.contains` 已在类型层声明为 trait 方法，
+/// 但降载尚未实现（数组上调用即报 `later grids`），字典在语言层更没有构造入口。
+/// ⇒ 它是该特性落地时的接线点，⛔ 不是某个在用的实现的重复。
 @_cdecl("bk_dict_contains")
 public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32) -> Int32 {
     guard let dict else { return 0 }
@@ -967,10 +970,15 @@ public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawP
 
 // MARK: - Phase 2a（FFI 子系统）：指针原语（C-ABI 面）
 
-/// `*T` 原始指针的 load/store 原语（ `load/store/addressof` 经 runtime `bk_*`）。
+/// `*T` 原始指针的 load/store 原语，供 LLVM 后端将来实现 FFI 时使用。
+///
 /// 语义：`p + offsetBytes` 处读/写标量，字节宽度按类型固定——C ABI 纪律，
-/// 不泄漏 Swift 类型。LLVM 端 FFI 当前显式 unsupported（用户决策 D1），
-/// 这些入口是 C-ABI 面的完整性预留；解释器端直接用 Swift 指针原语实现同语义。
+/// 不泄漏 Swift 类型。
+///
+/// ⚠️ **语言层的 `load` / `store` 两个通道都不经过本族**：LLVM 侧发射器直出
+/// `load` / `store` 指令，解释器侧直接操作 `*T` 的 Swift 指针（`.rawPointer`）。
+/// 本族是 LLVM FFI 的预留面（用户决策 D1：FFI 当前显式 unsupported），
+/// 今天零调用点；接 FFI 时从这里接线，⛔ 不是让现有 `load` / `store` 改道。
 @_cdecl("bk_ptr_load_i8")
 public func bk_ptr_load_i8(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int8 {
     guard let p else { return 0 }
@@ -1373,6 +1381,8 @@ private func _bkProgramBaseSnapshot() -> String? {
 /// IO 路径的统一解析：`/` 开头、`./` 开头、`../` 开头的路径原样返回，其余拼接程序基准。
 /// 未注入基准时原样返回 ⇒ 相对路径落到进程 CWD 的语义。
 /// 与解释器的 `RuntimeOps.resolveIOPath` 必须同解：本模块不依赖 `PiniCore`，同一条规则只能各存一份。
+/// ⚠️ `./` / `../` 这一支是**豁免**：自举仓的相对路径全部带 `./` 前缀，靠本支在两种基准语义下
+/// 都落到 CWD；把它改成同样拼基准会让自举仓失守，且其 `check` 门禁看不出来。
 private func _bkResolveIOPath(_ path: String) -> String {
     if path.hasPrefix("/") { return path }
     if path.hasPrefix("./") || path.hasPrefix("../") { return path }

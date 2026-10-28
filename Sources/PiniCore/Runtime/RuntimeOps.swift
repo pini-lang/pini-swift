@@ -604,6 +604,10 @@ public enum RuntimeOps {
     /// IO 路径解析：`/`、`./`、`../` 开头的路径原样返回，其余拼接程序基准；基准缺省时原样返回。
     /// 运行时段有一份同规则实现（`PiniRuntime` 的 `_bkResolveIOPath`，它不依赖本仓）。
     /// 两侧必须同解 —— 同一份源码在两通道上必须落到同一个文件。
+    ///
+    /// ⚠️ `./` / `../` 这一支是**豁免**，不是书写风格：自举仓的相对路径全部带 `./` 前缀，
+    /// 靠本支在「拼基准」与「落 CWD」两种语义下都落到 CWD。改成同样拼基准 ⇒ 自举仓全线失守，
+    /// 且它的 `check` 门禁看不出来（只有跑原生臂才暴露）。`IOPathExemptionTests` 钉住这四条分支。
     static func resolveIOPath(_ path: String, programBase: String?) -> String {
         if path.hasPrefix("/") { return path }
         if path.hasPrefix("./") || path.hasPrefix("../") { return path }

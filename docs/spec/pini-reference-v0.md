@@ -3423,18 +3423,26 @@ IR 经 `call @bk_*` 调用运行时 shim。
 - `lli --dlopen`
 - `clang -L/-l`
 
-**C-ABI 面**：
+**C-ABI 面**（按族记用途；⭐ 成员名单以 IR 契约 §5.2 为唯一权威，⛔ 本表不复制成员名）：
 
-| 前缀 | 用途 |
-|---|---|
-| `bk_array_*` | 数组操作 |
-| `bk_dict_*` | 字典操作 |
-| `bk_set_*` | 集合操作 |
-| `bk_lazyref_*` | 懒加载 |
-| `bk_panic` | panic |
-| `bk_handle_*` | share 管理 |
-| `bk_ptr_*` | 指针原语 |
-| `bk_double_to_string` | 浮点展示 |
+| 族 | 前缀 / 符号 | 用途 |
+|---|---|---|
+| 数组 | `bk_array_*` | 数组操作 |
+| 字典 | `bk_dict_*` | 字典操作 |
+| 集合 | `bk_set_*` | 集合操作 |
+| 句柄 / COW | `bk_handle_*` | share 管理与写时复制 |
+| LazyRef | `bk_lazyref_*` | 惰性值（求值一次、结果缓存） |
+| 默认实例 | `bk_given_*` | 类型默认实例的惰性物化 |
+| 指针 | `bk_ptr_*` | 指针原语 —— ⚠️ LLVM FFI 的预留面，当前零调用点；语言层 `load` / `store` 不经此处 |
+| 展示 / 陷阱 | `bk_cstr` · `bk_double_to_string` · `bk_panic` | 值展示与运行时陷阱 |
+| 运行时 | `bk_runtime_cleanup` | 进程退出清扫活动句柄 |
+| 字符 | `bk_chars` · `bk_chr` · `bk_ord` · `bk_is_*` | 字符切分、码位与谓词 |
+| 字符串面 | `bk_str_*` · `bk_string_*` · `bk_substring` | 原生字符串的分配、计数与切片 |
+| 闭包 / 结构体胶水 | `bk_nominal_*` · `bk_slot_alloc` | 具名类型与槽位分配 |
+| IO / 宿主查询 | `bk_read_file` · `bk_write_file` · `bk_list_dir` · `bk_exists` · `bk_is_dir` · `bk_module_root` · `bk_set_program_base` · `bk_argv` | 文件读写、目录枚举、路径探测、程序基准与命令行参数 |
+| 任务 / 并发 | `bk_task_*` · `bk_scope_close` · `bk_capabilities` · `bk_sleep` | 任务、作用域、能力位与让出 |
+
+⭐ 本表只承担「有哪些族、各干什么」；**每族的完整符号名与计数在 IR 契约 §5.2**（该表自带「清单数 = 导出数」的自检等式）。⛔ 不要在本表补成员名 —— 同一份名单的第二个副本必然与源码漂。
 
 **硬性约束（MUST）**：
 
