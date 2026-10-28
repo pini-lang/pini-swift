@@ -174,6 +174,11 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "writeFile", group: .io, paramNames: ["path", "content"],
             params: [t("String"), t("String")], returns: []),
+        // appendFile：与 writeFile 是**两个名字两种语义**，⛔ 不是同一个函数的开关。
+        // 目标不存在则创建（同 POSIX 的 `"a"`）；失败即 panic，与 writeFile 同姿态。
+        BuiltinDecl(
+            name: "appendFile", group: .io, paramNames: ["path", "content"],
+            params: [t("String"), t("String")], returns: []),
         BuiltinDecl(
             name: "readLine", group: .io, paramNames: [],
             params: [], returns: [t("String")]),

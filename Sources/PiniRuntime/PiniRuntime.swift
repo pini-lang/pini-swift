@@ -1366,6 +1366,34 @@ public func bk_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointe
     }
 }
 
+/// `appendFile(path, content)` —— 追加到目标末尾；目标不存在则创建（POSIX `"a"`）。
+///
+/// 与 `bk_write_file` **刻意共用同一段打开/写入形状**（解释器侧的 `.fileAppend` 臂逐句同构）：
+/// 两个写内建若各写一套，第一次改动就会分叉。⛔ 本函数不截断，`bk_write_file` 也永不追加。
+@_cdecl("bk_append_file")
+public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
+    guard let path else { bk_panic("Pini runtime error: appendFile: 路径为空") }
+    let target = _bkResolveIOPath(String(cString: path))
+    let text = content.map { String(cString: $0) } ?? ""
+    guard let handle = fopen(target, "a") else {
+        bk_panic(
+            "Pini runtime error: IO 错误: 无法打开文件以追加 \(target): \(String(cString: strerror(errno)))"
+        )
+    }
+    defer { fclose(handle) }
+    let bytes = Array(text.utf8)
+    if !bytes.isEmpty {
+        let written = bytes.withUnsafeBufferPointer {
+            fwrite($0.baseAddress, 1, bytes.count, handle)
+        }
+        if written != bytes.count {
+            bk_panic(
+                "Pini runtime error: IO 错误: 无法追加到文件 \(target): \(String(cString: strerror(errno)))"
+            )
+        }
+    }
+}
+
 /// 程序基准（`moduleRoot` 的答案来源）；`nil` = 未注入，取值回落到进程 CWD。
 /// 写入点只有进程入口的第一句，读取可能来自任务族线程 ⇒ 读写两侧都由 `_bkProgramBaseLock` 配对。
 private var _bkProgramBase: UnsafeMutablePointer<CChar>? = nil

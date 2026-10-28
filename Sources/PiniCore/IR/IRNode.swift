@@ -380,6 +380,13 @@ public indirect enum IRExpr: Equatable {
     /// `writeFile(path, content)` (G15) — the whole content, written in place
     /// (truncating, following symlinks, failing loud). Yields no value.
     case fileWrite(path: IRExpr, content: IRExpr)
+    /// `appendFile(path, content)` — the whole content appended at the end,
+    /// creating the file when it does not exist (POSIX `"a"`), following
+    /// symlinks, failing loud. Yields no value.
+    ///
+    /// ⛔ 与 `fileWrite` 是两个节点而不是一个带开关的节点：写与追加在「目标已存在」
+    /// 这一点上是**相反**的语义，合并会让节点语义表里出现「取决于参数」的一行。
+    case fileAppend(path: IRExpr, content: IRExpr)
     /// `readFile(path)` (G15) -- the whole file, uncapped, yielded as a
     /// String.
     ///

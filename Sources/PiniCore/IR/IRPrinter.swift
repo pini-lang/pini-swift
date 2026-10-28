@@ -219,6 +219,8 @@ public enum IRPrinter {
             return "assert(\(exprText(condition))\(msg))"
         case .fileWrite(let path, let content):
             return "writeFile(\(exprText(path)), \(exprText(content)))"
+        case .fileAppend(let path, let content):
+            return "appendFile(\(exprText(path)), \(exprText(content)))"
         case .fileRead(let path):
             return "readFile(\(exprText(path)))"
         case .readLine:

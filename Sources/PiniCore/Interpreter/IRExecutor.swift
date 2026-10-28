@@ -1595,6 +1595,35 @@ public final class IRExecutor: DebugHookHost {
                 )
             }
 
+        case .fileAppend(let pathExpr, let contentExpr):
+            // Appends at the end, creating the target when it is missing (POSIX "a").
+            // The path resolves against the program base. A failed open or short write
+            // raises here, so a successful call yields `()`.
+            let rawAppendPath = try requireString(evaluate(pathExpr), for: "appendFile")
+            let appended = try requireString(evaluate(contentExpr), for: "appendFile")
+            let appendPath = RuntimeOps.resolveIOPath(rawAppendPath, programBase: programBase)
+            guard let handle = fopen(appendPath, "a") else {
+                throw RuntimeError.invalidOperation(
+                    reason: "IO 错误: 无法打开文件以追加 \(appendPath): \(String(cString: strerror(errno)))",
+                    location: IRExecutor.noLocation
+                )
+            }
+            defer { fclose(handle) }
+            let appendBytes = Array(appended.utf8)
+            if !appendBytes.isEmpty {
+                let written = appendBytes.withUnsafeBufferPointer {
+                    fwrite($0.baseAddress, 1, appendBytes.count, handle)
+                }
+                guard written == appendBytes.count else {
+                    throw RuntimeError.invalidOperation(
+                        reason:
+                            "IO 错误: 无法追加到文件 \(appendPath): \(String(cString: strerror(errno)))",
+                        location: IRExecutor.noLocation
+                    )
+                }
+            }
+            return .null
+
         case .fileRead(let pathExpr):
             // The whole file, uncapped. The cap that used to be applied here was
             // inherited from the emitter's fixed stack buffer rather than chosen,
