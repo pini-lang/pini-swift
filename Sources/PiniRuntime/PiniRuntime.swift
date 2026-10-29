@@ -1383,19 +1383,22 @@ public func bk_substring(
 // MARK: - 名义箱（结构体 / 对象 / 枚举）的堆分配
 
 // 名义值（`%struct` / `%object` / `%enum`）一律上堆：栈形状下返回值与闭包捕获会外逃成垃圾值。
-// 聚合体第 0 格统一为 `i32` 引用计数头（在聚合体内部 ⇒ 字段可被 GEP 直接寻址、索引 +1），
-// 故无常驻注册表、无动态转型；分配在此，retain/release 与逐类型释放胶水在发射层，计数归零后 `free`。
+// 头四格固定为 {强计数, 弱计数, 类型标识, 弱引用旁表}，且留在聚合体内部 ⇒ 字段可被 GEP 直接寻址、
+// 无常驻注册表、无动态转型；分配在此，retain/release 与逐类型释放胶水在发射层，计数归零后 `free`。
 
-/// 名义箱的分配：`malloc(size)`，并把第 0 格（引用计数头）写成 1。
-/// `size` 由发射层用「过尾指针的整数形式」算好（只依赖聚合体定义，不查询目标布局）；
-/// 字段不在这里初始化 —— 构造点逐格覆盖。
+/// 名义箱的分配：`malloc(size)`，写头四格。布局与发射层的聚合体定义逐字节对应：
+/// 强计数 @0、弱计数 @4、类型标识 @8、旁表指针 @16（12–15 是指针 8 字节对齐的填充）。
+/// `size` 由发射层用「过尾指针的整数形式」算好；字段不在这里初始化 —— 构造点逐格覆盖。
 @_cdecl("bk_nominal_alloc")
-public func bk_nominal_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
+public func bk_nominal_alloc(_ size: Int64, _ typeID: Int32) -> UnsafeMutableRawPointer? {
     guard size > 0 else { bk_panic("Pini runtime error: nominal box size must be positive") }
     guard let raw = malloc(Int(size)) else {
         bk_panic("Pini runtime error: nominal box allocation failed")
     }
-    raw.storeBytes(of: Int32(1), as: Int32.self)
+    raw.storeBytes(of: Int32(1), toByteOffset: 0, as: Int32.self)
+    raw.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
+    raw.storeBytes(of: typeID, toByteOffset: 8, as: Int32.self)
+    raw.storeBytes(of: UInt(0), toByteOffset: 16, as: UInt.self)
     return raw
 }
 

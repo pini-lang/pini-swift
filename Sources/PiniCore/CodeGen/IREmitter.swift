@@ -14,6 +14,13 @@ private enum FunctionFrameMode {
 /// stdout 语义与解释器一致（print 带换行、布尔为 true/false、double 走 %f）。
 public final class IREmitter {
 
+    // MARK: - 名义箱头布局
+
+    /// 头四格的 LLVM 拼写，顺序同 `PiniHeader`：强计数 · 弱计数 · 类型标识 · 弱引用旁表指针。
+    private static let nominalHeaderSpellings = ["i32", "i32", "i32", "ptr"]
+    /// 头占的槽数；字段、枚举标签与载荷的索引基准都由它推，改头只改这一处。
+    private static let headerSlotCount = 4
+
     // MARK: - Per-function state
 
     /// Block-nested variable slots: scopes.last is the innermost block.
@@ -81,6 +88,10 @@ public final class IREmitter {
     private var moduleEnums: [IREnumDecl] = []
 
     // MARK: - Module-level collected pieces
+
+    /// 名义类型 → 模块内类型标识。0 保留给「未知」，故编号从 1 起；结构体与枚举共用一段连续编号。
+    private var structTypeIDs: [String: Int32] = [:]
+    private var enumTypeIDs: [String: Int32] = [:]
 
     private var stringConstantDefs: [String] = []
     private var stringConstants: [String: (name: String, length: Int)] = [:]
@@ -399,18 +410,23 @@ public final class IREmitter {
             }
         }
         /// 名义类型定义（`%struct.X` / `%object.X` / 标签联合 `%enum.X`）先于其取值点发射，
-        /// 故字段 GEP 面对的是完整类型。三族名义箱第 0 格一律 `i32` 引用计数，
-        /// 头固定在 0 格是刻意的：分配 / retain / release / 释放胶水都只认这一个偏移。
-        for typeDecl in module.types {
+        /// 故字段 GEP 面对的是完整类型。头四格由 `nominalHeaderSpellings` 统一给出，
+        /// 分配 / retain / release / 释放胶水都只认它 ⇒ 三族偏移不会各自漂移。
+        structTypeIDs = [:]
+        for (index, typeDecl) in module.types.enumerated() {
             let aggregate = "%\(typeDecl.isObject ? "object" : "struct").\(IRName.mangle(typeDecl.name))"
-            var fieldTypes = ["i32"]
+            structTypeIDs[typeDecl.name] = Int32(index + 1)
+            var fieldTypes = Self.nominalHeaderSpellings
             fieldTypes.append(contentsOf: typeDecl.fields.map { $0.type.llvmSpelling })
             bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
         }
-        for enumDecl in module.enums {
+        enumTypeIDs = [:]
+        for (index, enumDecl) in module.enums.enumerated() {
             let aggregate = "%enum.\(IRName.mangle(enumDecl.name))"
-            /// 第 0 格 = 引用计数头，第 1 格 = 用例标签，其后才是各载荷类型。
-            var fieldTypes = ["i32", "i32"]
+            /// 头四格之后是第 4 格的用例标签，载荷从第 5 格起 —— 与 `emitMatch` 的 enum 分支同一基准。
+            enumTypeIDs[enumDecl.name] = Int32(module.types.count + index + 1)
+            var fieldTypes = Self.nominalHeaderSpellings
+            fieldTypes.append("i32")
             fieldTypes.append(contentsOf: enumDecl.slotTypes.map { $0.llvmSpelling })
             bodyIR += "\(aggregate) = type { \(fieldTypes.joined(separator: ", ")) }\n"
         }
@@ -539,7 +555,7 @@ public final class IREmitter {
             tail += "declare ptr @bk_slot_alloc(i64)\n"
         }
         if usesNominalBoxes {
-            tail += "declare ptr @bk_nominal_alloc(i64)\n"
+            tail += "declare ptr @bk_nominal_alloc(i64, i32)\n"
             tail += "declare void @bk_nominal_retain(ptr)\n"
             tail += "declare i32 @bk_nominal_release(ptr)\n"
         }
@@ -1454,16 +1470,23 @@ public final class IREmitter {
                     return enumCase.payloadTypes[slot].llvmSpelling
                 },
                 loadTag: { [self] base in
-                    /// 标签在第 1 格（第 0 格是引用计数头）。
+                    /// 标签跟在四格头之后，即第 `headerSlotCount` 格。
                     let tagPtr = builder.freshTemp()
-                    bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: base, indices: [0, 1]) + "\n"
+                    bodyIR +=
+                        builder.fmtGEP(
+                            name: tagPtr, aggregate: aggregate, base: base, indices: [0, Self.headerSlotCount])
+                        + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: "i32", ptr: tagPtr) + "\n"
                     return IRValue(llvmType: "i32", ssaName: value)
                 },
                 loadPayload: { [self] _, base, slot, spelling in
                     let fieldPtr = builder.freshTemp()
-                    bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: base, indices: [0, slot + 2]) + "\n"
+                    bodyIR +=
+                        builder.fmtGEP(
+                            name: fieldPtr, aggregate: aggregate, base: base,
+                            indices: [0, slot + Self.headerSlotCount + 1])
+                        + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: spelling, ptr: fieldPtr) + "\n"
                     return IRValue(llvmType: spelling, ssaName: value)
@@ -2346,16 +2369,23 @@ public final class IREmitter {
             guard let aggregate = type.nominalAggregateSpelling else {
                 fatalError("IREmitter: enumConstruct on non-enum type (IRLowerer guarantees)")
             }
-            /// 名义箱：分配器写第 0 格（引用计数 = 1），标签落第 1 格、载荷从第 2 格起 ——
+            /// 名义箱：分配器写四格头，标签落第 `headerSlotCount` 格、载荷从下一格起 ——
             /// 与 `emitMatch` 的 enum 分支同一套偏移。
-            let ptr = emitNominalAllocation(aggregate: aggregate)
+            let ptr = emitNominalAllocation(aggregate: aggregate, typeID: enumTypeIDs[enumName] ?? 0)
             let tagPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, 1]) + "\n"
+            bodyIR +=
+                builder.fmtGEP(
+                    name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, Self.headerSlotCount])
+                + "\n"
             bodyIR += builder.fmtStore(value: String(tag), type: "i32", ptr: tagPtr) + "\n"
             for (index, payload) in payloads.enumerated() {
                 let value = emitExpr(payload)
                 let fieldPtr = builder.freshTemp()
-                bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 2]) + "\n"
+                bodyIR +=
+                    builder.fmtGEP(
+                        name: fieldPtr, aggregate: aggregate, base: ptr,
+                        indices: [0, index + Self.headerSlotCount + 1])
+                    + "\n"
                 /// 载荷槽是持有位置 ⇒ 与 `.fieldStore` 同一规：别名（`.load` 出来的名义值）在这里必须 retain，
                 /// 结构体则深拷贝。裸 store 会让新箱存着旧箱指针却不多一份份额，写前释放旧值便把它收回 ⇒
                 /// 新箱里悬垂，读出来是「match value matched no case」这类非确定性失败。
@@ -2957,9 +2987,9 @@ public final class IREmitter {
             fatalError("IREmitter: unknown nominal field '\(name).\(field)' (IRLowerer guarantees)")
         }
         let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
-        /// 三族名义箱的第 0 格都是引用计数头 ⇒ 字段索引一律 +1。
-        /// `isObject` 仍决定聚合名拼写（`%object` / `%struct` 是两个类型名），但不再影响字段偏移。
-        return (aggregate, decl.fields[index].type, index + 1)
+        /// 三族名义箱共用四格头 ⇒ 字段索引一律加 `headerSlotCount`。
+        /// `isObject` 仍决定聚合名拼写（`%object` / `%struct` 是两个类型名），但不影响字段偏移。
+        return (aggregate, decl.fields[index].type, index + Self.headerSlotCount)
     }
 
     /// 默认实例的取用点：`bk_given_get(槽位, 初始化函数, 字节数)` → 盒指针，再 `memcpy` 一份到本地。
@@ -2981,12 +3011,29 @@ public final class IREmitter {
         let boxed = builder.freshTemp()
         bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
         /// 副本也住堆：它是取用方自己的一份（`using` 的副本语义），但会随帧外逃，不能再落栈。
-        /// `memcpy` 连头一起搬，随后把头重写成 1 —— 副本与源从此各是一次独立持有。
-        let local = emitNominalAllocation(aggregate: aggregate)
-        bodyIR += " call ptr @memcpy(ptr \(local), ptr \(boxed), i64 \(sizeTemp))\n"
-        let rcFix = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: rcFix, aggregate: aggregate, base: local, indices: [0, 0]) + "\n"
-        bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: rcFix) + "\n"
+        /// 只搬载荷 —— 源盒的头是未初始化内存（`bk_given_get` 不写头），连头搬会把垃圾带进
+        /// 新副本的弱计数与旁表指针；头由分配器按本类型写好。
+        let local = emitNominalAllocation(aggregate: aggregate, typeID: nominalTypeID(for: type))
+        let dstPayload = builder.freshTemp()
+        bodyIR +=
+            builder.fmtGEP(
+                name: dstPayload, aggregate: aggregate, base: local, indices: [0, Self.headerSlotCount])
+            + "\n"
+        let srcPayload = builder.freshTemp()
+        bodyIR +=
+            builder.fmtGEP(
+                name: srcPayload, aggregate: aggregate, base: boxed, indices: [0, Self.headerSlotCount])
+            + "\n"
+        let headerPtr = builder.freshTemp()
+        bodyIR +=
+            builder.fmtGEP(
+                name: headerPtr, aggregate: aggregate, base: "null", indices: [0, Self.headerSlotCount])
+            + "\n"
+        let headerBytes = builder.freshTemp()
+        bodyIR += " \(headerBytes) = ptrtoint ptr \(headerPtr) to i64\n"
+        let payloadBytes = builder.freshTemp()
+        bodyIR += " \(payloadBytes) = sub i64 \(sizeTemp), \(headerBytes)\n"
+        bodyIR += " call ptr @memcpy(ptr \(dstPayload), ptr \(srcPayload), i64 \(payloadBytes))\n"
         return IRValue(llvmType: type.llvmSpelling, ssaName: local)
     }
 
@@ -3097,7 +3144,7 @@ public final class IREmitter {
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, index + 1]) + "\n"
+                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, index + Self.headerSlotCount]) + "\n"
             if let defaultValue = field.defaultValue {
                 let value = emitExpr(defaultValue)
                 bodyIR +=
@@ -3126,18 +3173,27 @@ public final class IREmitter {
         return symbol
     }
 
-    /// 名义箱的分配：把聚合体大小的块要进运行时段（`bk_nominal_alloc`），由它写第 0 格引用计数 = 1。
+    /// 名义箱的分配：`bk_nominal_alloc` 写头四格（强计数 1、弱计数 0、类型标识、旁表 null）。
     /// ⛔ 不用栈 `alloca`：栈上的箱活不过创建帧，而名义值会随返回值 / 字段 / 闭包捕获跨帧。
     /// 大小用过尾指针的整数形式，只依赖聚合体定义；与 `bk_given_get` 的单例盒不是同一条通道。
-    private func emitNominalAllocation(aggregate: String) -> String {
+    private func emitNominalAllocation(aggregate: String, typeID: Int32) -> String {
         usesNominalBoxes = true
         let sizeEnd = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: sizeEnd, aggregate: aggregate, base: "null", indices: [1]) + "\n"
         let sizeTemp = builder.freshTemp()
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let ptr = builder.freshTemp()
-        bodyIR += " \(ptr) = call ptr @bk_nominal_alloc(i64 \(sizeTemp))\n"
+        bodyIR += " \(ptr) = call ptr @bk_nominal_alloc(i64 \(sizeTemp), i32 \(typeID))\n"
         return ptr
+    }
+
+    /// 名义类型在模块内的类型标识；未登记的类型答 0（= 未知）。
+    private func nominalTypeID(for type: IRType) -> Int32 {
+        switch type {
+        case .nominal(let name, _): return structTypeIDs[name] ?? 0
+        case .enumeration(let name): return enumTypeIDs[name] ?? 0
+        default: return 0
+        }
     }
 
     /// MARK: - 释放胶水（名义箱的寿命）
@@ -3254,11 +3310,12 @@ public final class IREmitter {
         let sizeTemp = builder.freshTemp()
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let dst = builder.freshTemp()
-        bodyIR += " \(dst) = call ptr @bk_nominal_alloc(i64 \(sizeTemp))\n"
+        let copyTypeID = nominalTypeID(for: type)
+        bodyIR += " \(dst) = call ptr @bk_nominal_alloc(i64 \(sizeTemp), i32 \(copyTypeID))\n"
         for (index, field) in decl.fields.enumerated() {
             let srcPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: srcPtr, aggregate: aggregate, base: "%src", indices: [0, index + 1]) + "\n"
+                builder.fmtGEP(name: srcPtr, aggregate: aggregate, base: "%src", indices: [0, index + Self.headerSlotCount]) + "\n"
             let value = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: srcPtr) + "\n"
             let stored: String
@@ -3295,7 +3352,7 @@ public final class IREmitter {
             }
             let dstPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: dstPtr, aggregate: aggregate, base: dst, indices: [0, index + 1]) + "\n"
+                builder.fmtGEP(name: dstPtr, aggregate: aggregate, base: dst, indices: [0, index + Self.headerSlotCount]) + "\n"
             bodyIR += builder.fmtStore(value: stored, type: field.type.llvmSpelling, ptr: dstPtr) + "\n"
         }
         bodyIR += " ret ptr \(dst)\n"
@@ -3376,7 +3433,7 @@ public final class IREmitter {
                 guard let callee = releaseCallee(for: field.type) else { continue }
                 let fieldPtr = builder.freshTemp()
                 bodyIR +=
-                    builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, index + 1])
+                    builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, index + Self.headerSlotCount])
                     + "\n"
                 let value = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
@@ -3390,7 +3447,10 @@ public final class IREmitter {
                 fatalError("IREmitter: release glue for unregistered enum (IRLowerer guarantees)")
             }
             let tagPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: "%box", indices: [0, 1]) + "\n"
+            bodyIR +=
+                builder.fmtGEP(
+                    name: tagPtr, aggregate: aggregate, base: "%box", indices: [0, Self.headerSlotCount])
+                + "\n"
             let tagValue = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tagValue, type: "i32", ptr: tagPtr) + "\n"
             /// ⚠️ 判据必须用 case 自己的 `payloadTypes`，不能用 `slotTypes`：同一个槽在不同 case 里可以是不同
@@ -3416,7 +3476,9 @@ public final class IREmitter {
                     let slotSpelling = payloadType.llvmSpelling
                     let fieldPtr = builder.freshTemp()
                     bodyIR +=
-                        builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, slot + 2])
+                        builder.fmtGEP(
+                            name: fieldPtr, aggregate: aggregate, base: "%box",
+                            indices: [0, slot + Self.headerSlotCount + 1])
                         + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: slotSpelling, ptr: fieldPtr) + "\n"
@@ -3455,13 +3517,13 @@ public final class IREmitter {
         else {
             fatalError("IREmitter: construct of unknown nominal type (IRLowerer guarantees)")
         }
-        /// 名义箱：分配器写第 0 格（引用计数 = 1），字段从第 1 格起。
+        /// 名义箱：分配器写四格头，字段从第 `headerSlotCount` 格起。
         /// `isObject` 只影响聚合名拼写 —— 头两边都有，字段偏移不再分类讨论。
-        let ptr = emitNominalAllocation(aggregate: aggregate)
+        let ptr = emitNominalAllocation(aggregate: aggregate, typeID: nominalTypeID(for: type))
         let zero = zeroConst(for:)
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + 1]) + "\n"
+            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + Self.headerSlotCount]) + "\n"
             if let defaultValue = field.defaultValue {
                 let value = emitExpr(defaultValue)
                 bodyIR += builder.fmtStore(value: value.ssaName, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
@@ -4406,7 +4468,11 @@ public final class IREmitter {
                 fatalError("IREmitter: printing unregistered enum (IRLowerer guarantees)")
             }
             let tagPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: tagPtr, aggregate: aggregate, base: value.ssaName, indices: [0, 1]) + "\n"
+            bodyIR +=
+                builder.fmtGEP(
+                    name: tagPtr, aggregate: aggregate, base: value.ssaName,
+                    indices: [0, Self.headerSlotCount])
+                + "\n"
             let tag = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tag, type: "i32", ptr: tagPtr) + "\n"
             let id = builder.freshLabel()
@@ -4434,7 +4500,11 @@ public final class IREmitter {
                             bodyIR += " call i32 (ptr, ...) @printf(ptr \(separator.ssaName))\n"
                         }
                         let fieldPtr = builder.freshTemp()
-                        bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: value.ssaName, indices: [0, slot + 2]) + "\n"
+                        bodyIR +=
+                            builder.fmtGEP(
+                                name: fieldPtr, aggregate: aggregate, base: value.ssaName,
+                                indices: [0, slot + Self.headerSlotCount + 1])
+                            + "\n"
                         let element = builder.freshTemp()
                         bodyIR += builder.fmtLoad(name: element, type: payloadType.llvmSpelling, ptr: fieldPtr) + "\n"
                         emitValuePrint(
