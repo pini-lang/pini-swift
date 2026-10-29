@@ -5,22 +5,50 @@ import Foundation
 /// 打印形态不在此表：`CEmitter` 逐类型镜像 LLVM 侧，两处必须逐字一致。
 public enum CTypeMap {
 
+    /// 名义类型的 C 拼写基准。⛔ 不加前缀的话，`IRName.mangle` 的产物以 `_` 开头，
+    /// 在 C 的文件作用域下属保留标识符；加了前缀也顺带躲开 C23 那批新关键字。
+    public static let aggregatePrefix = "pini_"
+
+    public static func aggregateName(_ piniName: String) -> String {
+        aggregatePrefix + IRName.mangle(piniName)
+    }
+
     public static func spelling(of type: IRType) throws -> String {
         switch type {
+        case .i8: return "int8_t"
+        case .u8: return "uint8_t"
         case .i32: return "int32_t"
         case .i64: return "int64_t"
         case .u64: return "uint64_t"
         case .f64: return "double"
         case .boolean: return "bool"
         case .string, .char: return "char *"
+        // 名义值一律住堆，故拼写恒为指针 —— 与 LLVM 侧的 `%struct.X*` / `%enum.X*` 同形。
+        case .nominal(let name, _): return aggregateName(name) + " *"
+        case .enumeration(let name): return aggregateName(name) + " *"
         default: throw CBackendError(message: "C 后端尚未支持的类型：\(label(of: type))")
         }
     }
 
+    /// 零值。`null` 只对指针成立；名义 / 字符串 / 容器都是指针，标量走各自的零。
+    public static func zeroLiteral(of type: IRType) throws -> String {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64: return "0"
+        case .f64: return "0.0"
+        case .boolean: return "false"
+        case .string, .char, .nominal, .enumeration: return "NULL"
+        default:
+            throw CBackendError(message: "C 后端尚未支持的零值类型：\(label(of: type))")
+        }
+    }
+
     /// 整数字面量。后缀随宽度走：无后缀的十进制在 C 里是 `int`，
-    /// 拿它初始化 `int64_t` 会在 32 位目标上截断。
+    /// 拿它初始化 `int64_t` 会在 32 位目标上截断。窄整数一律带强转，
+    /// 否则 `int8_t f = 200` 在不同编译器上给的诊断不同。
     public static func integerLiteral(_ value: Int, type: IRType) throws -> String {
         switch type {
+        case .i8: return "(int8_t)\(value)"
+        case .u8: return "(uint8_t)\(value)"
         case .i32:
             // `-2147483648` 会被解析成「一元负号作用于 2147483648」，那是个越界的 int 常量，
             // 故最小值写成 `(-2147483647 - 1)`。
