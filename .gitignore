@@ -3,6 +3,9 @@
 .workbuddy/
 .DS_Store
 
+# C 后端的产物目录 —— `pini build --c-backend` 默认落这里，中间件与被检产物都不进仓
+pini-build/
+
 # Python 字节码缓存 —— 本仓 tools/ 下有多个辅助脚本，跑一次就会生成
 # ⚠️ 2026-09-18（G-6c-1）实证：缺这一行时 `git add -A` 把 tools/__pycache__/*.pyc 收进了提交
 __pycache__/

@@ -41,10 +41,10 @@ public indirect enum IRType: Equatable {
     /// `none` cases; `none` is the language-level nil (user adjudication).
     case optional(wrapped: IRType)
     /// 用户名义类型：结构体（值布局，以栈指针携带，ABI 形态 `%struct.<mangled>*`）
-    /// 或对象（引用，`%object.<mangled>*`，第 0 字段是 i32 引用计数头）。
+    /// 或对象（引用，`%object.<mangled>*`）；两者头四格同为 {强计数, 弱计数, 类型标识, 旁表}。
     case nominal(name: String, isObject: Bool)
-    /// User enum (G4): tagged union `%enum.<mangled>*` — i32 tag at field 0,
-    /// payload slots typed by the max-arity case (direct by-value store).
+    /// 用户枚举：标签联合 `%enum.<mangled>*`，标签落在头四格之后（第 4 格），
+    /// 载荷槽按最大元数的用例定型、直接按值存放。
     case enumeration(name: String)
     /// `Dictionary<K, V>` (G5): opaque handle `%bk_dict*`, keys/values boxed
     /// through the `bk_dict_*` C ABI.

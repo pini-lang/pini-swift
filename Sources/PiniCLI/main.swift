@@ -626,6 +626,7 @@ func printHelp() {
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Type check (alias of check) a file or directory/module")
+    print(" build <path> --c-backend [--emit-c] [--out <dir>] Emit C and compile it; --emit-c stops after writing sources")
     print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
     print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
@@ -1519,7 +1520,7 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
 
 /// LLVM 管线先类型检查，再以类型推断结果降载到 IR：零类型信息的 codegen 解构不了 Optional.some。
 /// 与解释器同一套静态校验；类型错误一次性同报并退出（同 `runCheckCommand` 的收集模式）。
-private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
+private func lowerSingleFile(source: String, fileName: String) throws -> IRModule {
     let module = parseOrReport(source: source, fileName: fileName)
     // The semantic layer gates here for the same reason `check` runs it before the type layer:
     // it enforces capture declarations, undefined names and visibility. A check that runs ahead of
@@ -1543,7 +1544,11 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
     }
     // 开启持久表兜底：codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+}
+
+private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
+    let irModule = try lowerSingleFile(source: source, fileName: fileName)
     let emitter = IREmitter()
     // 注入程序基准，与解释器同规则。
     emitter.programBase = absoluteProgramBase(fileName)
@@ -1611,6 +1616,197 @@ private func runtimeLibraryPath() -> String? {
     }
     return nil
 }
+
+// MARK: - C 后端
+
+/// `pini build` 的选项。未知 `--` 选项必须报错：本命令只读第一个位置参数，
+/// 沉默接受会让 `--c-backnd` 这类笔误打出「检查通过」并返回 0。
+struct CBuildOptions {
+    var path = ""
+    var cBackend = false
+    var emitC = false
+    var outputDir: String?
+    var unknown: String?
+}
+
+func parseCBuildOptions(_ rest: [String]) -> CBuildOptions {
+    var options = CBuildOptions()
+    var index = 0
+    var sawPath = false
+    while index < rest.count {
+        let arg = rest[index]
+        switch arg {
+        case "--c-backend":
+            options.cBackend = true
+        case "--emit-c":
+            options.emitC = true
+        case "--out":
+            index += 1
+            guard index < rest.count, !rest[index].hasPrefix("--") else {
+                options.unknown = "--out 需要一个目录参数"
+                return options
+            }
+            options.outputDir = rest[index]
+        default:
+            if arg.hasPrefix("--") {
+                options.unknown = arg
+                return options
+            }
+            if !sawPath {
+                options.path = arg
+                sawPath = true
+            }
+        }
+        index += 1
+    }
+    if options.emitC { options.cBackend = true }
+    if options.outputDir != nil && !options.cBackend {
+        options.unknown = "--out 只在 --c-backend 下有效"
+    }
+    return options
+}
+
+/// 产物基名取输入路径末段（文件去后缀、目录取末段）。⛔ 不取清单里的 package 名：
+/// 命令行上就能推导，且清单改名不该移动产物。
+func cProgramName(for path: String) -> String {
+    var name = (path as NSString).lastPathComponent
+    if name.hasSuffix(LangConfig.sourceSuffix) {
+        name = String(name.dropLast(LangConfig.sourceSuffix.count))
+    }
+    if name.isEmpty || name == "." || name == "/" { name = "pini-out" }
+    return name
+}
+
+/// 包级降载。目录必须是带 `pini.toml` 的模块，包内成员文件按所属模块整体降载 ——
+/// 单文件入口看不见同包兄弟文件，直接降得到的是「未定义符号」而不是一条可读的拒绝。
+func lowerForCBackend(path: String) throws -> (module: IRModule, programBase: String, programName: String) {
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
+        throw CBackendError(message: "路径不存在：\(path)")
+    }
+
+    func lowerPackage(_ package: Package) throws -> IRModule {
+        let analyzer = SemanticAnalyzer()
+        try analyzer.analyze(package: package)
+        let checker = TypeChecker()
+        try checker.check(package: package)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        return try IRLowerer.lower(package: package, typeInference: checker.typeInference)
+    }
+
+    if isDir.boolValue {
+        guard let manifest = try FileLoader.loadManifest(directory: path) else {
+            throw CBackendError(message: "目录不含 pini.toml，无法确定程序入口：\(path)")
+        }
+        let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+        let module = try lowerPackage(package)
+        return (module, absoluteProgramBase(path), cProgramName(for: path))
+    }
+    if let loaded = try loadOwningPackageIfModule(path: path) {
+        let module = try lowerPackage(loaded.package)
+        return (module, absoluteProgramBase(loaded.moduleRoot), cProgramName(for: path))
+    }
+    let source = try readFile(path)
+    let module = try lowerSingleFile(source: source, fileName: path)
+    return (module, absoluteProgramBase(path), cProgramName(for: path))
+}
+
+/// C 编译器：优先 `PINI_CC`，否则系统 `cc`。⛔ 不走 `LLVMToolchain.clangPath` ——
+/// 这条通道的存在理由之一就是不依赖 LLVM，把 LLVM 的 clang 变成硬依赖会自相矛盾。
+func cCompilerPath() -> String? {
+    if let override = ProcessInfo.processInfo.environment["PINI_CC"],
+        !override.isEmpty, FileManager.default.isExecutableFile(atPath: override)
+    {
+        return override
+    }
+    for candidate in ["/usr/bin/cc", "/usr/bin/gcc", "/usr/bin/clang"] {
+        if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+    }
+    return nil
+}
+
+/// 产物路径打 stderr：stdout 留给程序自己，与 `cargo build` / `go build` 同规。
+func noteArtifact(_ text: String) {
+    FileHandle.standardError.write(Data("产物 \(text)\n".utf8))
+}
+
+func writeCFiles(_ files: [CFile], to directory: String, includeHeader: Bool) throws {
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    for file in files {
+        let target = (directory as NSString).appendingPathComponent(file.name)
+        try file.contents.write(toFile: target, atomically: true, encoding: .utf8)
+    }
+    if includeHeader {
+        let target = (directory as NSString).appendingPathComponent(PiniRTHeader.fileName)
+        try PiniRTHeader.source.write(toFile: target, atomically: true, encoding: .utf8)
+    }
+}
+
+/// 中间件落临时目录，成功即删；`cc` 失败时保留并把路径打到 stderr ——
+/// 报错给的是行号，总得有个文件能翻，否则只能靠猜。
+func compileCFiles(_ files: [CFile], programName: String, directory: String) throws {
+    let fm = FileManager.default
+    try fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    let tmpDir = (NSTemporaryDirectory() as NSString)
+        .appendingPathComponent("pini-c-\(UUID().uuidString)")
+    try writeCFiles(files, to: tmpDir, includeHeader: true)
+    var keepTemp = true
+    defer { if !keepTemp { try? fm.removeItem(atPath: tmpDir) } }
+
+    guard let compiler = cCompilerPath() else {
+        throw CBackendError(message: "未找到 C 编译器；安装 cc 或设 PINI_CC")
+    }
+    let product = (tmpDir as NSString).appendingPathComponent(programName)
+    var arguments = ["-std=c23", "-O2", "-o", product]
+    if let dylib = runtimeLibraryPath() {
+        let dir = (dylib as NSString).deletingLastPathComponent
+        arguments.insert(contentsOf: ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"], at: 0)
+    }
+    arguments.append((tmpDir as NSString).appendingPathComponent(files[0].name))
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: compiler)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let err = String(data: data, encoding: .utf8) ?? ""
+        throw CBackendError(
+            message: "cc 失败（退出码 \(process.terminationStatus)）：\n\(err)生成的 C 保留在 \(tmpDir)")
+    }
+
+    let destination = (directory as NSString).appendingPathComponent(programName)
+    try? fm.removeItem(atPath: destination)
+    try fm.copyItem(atPath: product, toPath: destination)
+    keepTemp = false
+    noteArtifact(destination)
+}
+
+func runCBuild(_ options: CBuildOptions) {
+    do {
+        let lowered = try lowerForCBackend(path: options.path)
+        let emitter = CEmitter()
+        emitter.programBase = lowered.programBase
+        let files = try emitter.emit(module: lowered.module, programName: lowered.programName)
+        let directory = options.outputDir ?? "pini-build"
+        if options.emitC {
+            try writeCFiles(files, to: directory, includeHeader: true)
+            noteArtifact("\(directory)/")
+        } else {
+            try compileCFiles(files, programName: lowered.programName, directory: directory)
+        }
+    } catch let error as CBackendError {
+        printError("Error: \(error.message)")
+        exit(1)
+    } catch {
+        printError(formatCLIError(error: error, source: nil))
+        exit(1)
+    }
+}
+
 
 func runCompileCommand(source: String, fileName: String) throws {
     let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
@@ -1824,7 +2020,21 @@ case "check", "build":
         printError("Error: \(command) command requires a file or directory path")
         exit(1)
     }
-    runCheckPath(args[2])
+    let buildOptions = parseCBuildOptions(Array(args.dropFirst(2)))
+    if let unknown = buildOptions.unknown {
+        printError("Error: \(unknown)")
+        printError("  合法选项：--c-backend、--emit-c、--out <目录>")
+        exit(1)
+    }
+    if command == "check" && buildOptions.cBackend {
+        printError("Error: check 只做类型检查，不接受 --c-backend；请改用 pini build")
+        exit(1)
+    }
+    if buildOptions.cBackend {
+        runCBuild(buildOptions)
+    } else {
+        runCheckPath(buildOptions.path)
+    }
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块根。
     runTestPath(args.count >= 3 ? args[2] : nil)
