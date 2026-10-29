@@ -1,26 +1,8 @@
 import Foundation
 
-/// 语法降层（desugar / lowering）通道。
-///
-/// ## 职责
-/// 将 Parser 产出的「富语法 AST」转换为「核心 AST」——仅保留语义必要的节点，
-/// 糖语法在解析后立即被消除，永不到达类型检查器 / 解释器 / 代码生成器。
-///
-/// ## 这是语言演化的减震器
-/// 新增语法糖 = 改 `Parser`（产出糖节点）+ 在**此处**加一条降层规则；
-/// 类型检查器、解释器、双后端代码生成器**零改动**。
-/// 反之，若无此层，每个糖都要在 10 个文件的 10 个 switch 里各写一遍，且易漂移分叉。
-///
-/// ## 当前已降糖
-/// - `paren`：`(e)` 括号分组语义为零，已直接在 `Parser.parseTupleOrParen` 处消解
-/// （不再构造 `.paren` 节点），并从核心 `Expression` 枚举移除。
-/// 本通道保留对 `paren` 的递归兜底（见 `desugar(_:Expression)` 注释），未来若任何
-/// 代码路径仍产出分组节点，会在此统一消除。
-///
-/// ## 扩展方式
-/// 新增糖时：在 `Expression`（或 `Statement`）枚举加糖节点 → `Parser` 产出它 →
-/// 在下方对应 `desugar(_:)` 重载里把它降为已有核心节点。所有节点遍历都在此集中，
-/// 且重载的穷尽性由编译器强制（漏掉新节点会编译报错）。
+/// 语法降层通道：把 Parser 产出的富语法 AST 转成核心 AST，糖在解析后立即消除，永不到达类型检查器、
+/// 解释器与代码生成器。故新增一条糖 = 改 `Parser` + 在此加一条降层规则，下游零改动；否则每个糖都要在
+/// 各处 switch 里写一遍并漂移。节点遍历集中于此，重载的穷尽性由编译器强制（漏掉新节点即编译报错）。
 public enum Desugar {
 
     // MARK: - 模块入口
@@ -117,7 +99,7 @@ public enum Desugar {
             location: o.location)
     }
 
-    /// ADR-001：给定块体与对象体同构 ⇒ 同规去糖（字段初值里的糖也要降）。
+    // 给定块体与对象体同构 ⇒ 同规去糖（字段初值里的糖也要降）。
     public static func desugar(_ g: GivenDecl) -> GivenDecl {
         return GivenDecl(
             name: g.name,
@@ -255,10 +237,8 @@ public enum Desugar {
     // MARK: - 表达式
 
     /// 递归降层单个表达式。
-    ///
-    /// `paren` 已由 `Parser` 在语法边界消解、不再出现在核心 `Expression` 枚举，
-    /// 故此处无需 `.paren` 分支；但若未来任何路径仍产出 `Expression.paren`，
-    /// 应在此加：`case .paren(let inner, _): return desugar(inner)`。
+    /// `paren` 已由 `Parser` 在语法边界消解、不再出现在核心枚举，故此处无 `.paren` 分支；
+    /// 若将来任何路径仍产出它，应在此加 `case .paren(let inner, _): return desugar(inner)`。
     public static func desugar(_ expr: Expression) -> Expression {
         switch expr {
         case .identifier, .integerLiteral, .floatLiteral, .stringLiteral,

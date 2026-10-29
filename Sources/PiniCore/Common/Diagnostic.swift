@@ -1,9 +1,7 @@
 import Foundation
 
-/// T1 诊断体系（2026-08-24 批次 A）：为全部错误类型附加 code / severity / span / suggestion。
-///
-/// 设计：最小侵入——错误枚举自身结构不变（payload + location），经 `DiagnosticProviding`
-/// 协议扩展附加诊断元数据；`ErrorFormatter` 消费协议渲染（错误码 + 跨度 + 建议）。
+/// 诊断体系：为全部错误类型附加 code / severity / span / suggestion。最小侵入——错误枚举结构不变
+/// （payload + location），元数据经 `DiagnosticProviding` 协议扩展，`ErrorFormatter` 消费协议渲染。
 /// 错误码域：E0 通用 / E1 词法 / E2 语法 / E3 语义 / E4 类型 / E5 运行时 / E6 IR 生成。
 
 /// 诊断码域前缀（枚举级段号）。
@@ -291,10 +289,9 @@ extension RuntimeError: DiagnosticProviding {
     }
 }
 
-/// The capability gate uses the irgen code domain for its "unsupported
-/// feature" bucket. Those codes are registered in the diagnostic catalogue,
-/// and keeping the domain means they survive the change of producer instead
-/// of being retired by accident.
+/// The capability gate uses the irgen code domain for its "unsupported feature" bucket. Those
+/// codes are registered in the diagnostic catalogue, and keeping the domain means they survive
+/// the change of producer instead of being retired by accident.
 extension IRLowerer.IRLoweringError: DiagnosticProviding {
     public var diagnosticCode: String { code }
     public var diagnosticSeverity: DiagnosticSeverity { .error }

@@ -2,19 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 
-/// IO 面的**路径解析**判据：相对路径一律相对**脚本所在目录**（程序基准），与写法的形状无关。
-///
-/// 靶 = 同一份逻辑的两种等价写法 —— 字面量 `readFile("a.txt")` 与变量 `var p = "a.txt"` +
-/// `readFile(p)` —— 必须落到同一个文件，且两通道给出同一结论。字面量在编译期拼接、变量落到
-/// 进程 CWD 的实现，会在两种写法上给出**相反**的答案。
-///
-/// ⚠️ 每条用例都让**进程 CWD 与脚本目录是两个不同目录**，且两边各放一个会给出不同答案的同名条目
-/// —— CWD 与脚本目录相同时，「解析到基准」与「解析到 CWD」答案相同，本套件整条失去分辨力。
-///
-/// 参照物是**手写期望**，⛔ 不是另一条通道的输出：两条同时错会互相认证。
-///
-/// ⚠️ 串行：每条用例都要起 `pini run` / `pini run-llvm` 子进程，并行跑会把机器占满
-/// —— 并行的其它套件里有时序敏感的用例，抢不到线程就报出与自身无关的红。
+/// IO 面的路径解析判据：相对路径一律相对脚本所在目录（程序基准），与写法的形状无关。靶 = 同一份逻辑的
+/// 两种等价写法（字面量 `readFile("a.txt")` 与变量 `readFile(p)`）必须落到同一个文件，且两通道给出同一结论。
+/// 每条用例让进程 CWD 与脚本目录是两个目录、各放一个答案不同的同名条目，否则本套件整条失去分辨力。
 @Suite(.serialized)
 struct IOBaseParityTests {
 
@@ -42,17 +32,9 @@ struct IOBaseParityTests {
         return base
     }
 
-    /// 布一个 CWD 与脚本目录**不同**的沙盒，两边都放会给出不同答案的条目：
-    ///
-    /// | 条目 | `scripts/` 下 | `cwd/` 下 |
-    /// |---|---|---|
-    /// | `a.txt` | 文件，内容 `script-a` | 文件，内容 `cwd-a` |
-    /// | `probe.txt` | 文件 | **目录** |
-    /// | `cwd-only.txt` | 无 | 文件 |
-    /// | `dot.txt` | 无 | 文件（供 `./dot.txt`） |
-    /// | `sub/` | 目录，内含 `inner.txt` | 无 |
-    ///
-    /// 另有沙盒根上的 `up.txt`（供 `../up.txt`：CWD 的上一级）。
+    /// 布一个 CWD 与脚本目录不同的沙盒，两边都放会给出不同答案的条目：`a.txt` 两边各一份（`script-a` / `cwd-a`）；
+    /// `probe.txt` 在 `scripts/` 是文件、在 `cwd/` 是目录；`cwd-only.txt` 与 `dot.txt` 只在 `cwd/`；`sub/inner.txt`
+    /// 只在 `scripts/`；沙盒根上有 `up.txt` 供 `../up.txt`。
     private func seedLayout(_ base: URL) throws -> (scripts: URL, cwd: URL) {
         let scripts = base.appendingPathComponent("scripts")
         let cwd = base.appendingPathComponent("cwd")

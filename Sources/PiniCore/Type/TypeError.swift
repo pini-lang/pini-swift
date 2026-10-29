@@ -25,17 +25,14 @@ public enum TypeError: Error, Equatable {
     /// 但访问点不在该字段**声明类型自身的方法**内（同文件普通函数 / 跨类型方法 / 跨文件均不可访问）。
     /// `typeName` 为字段声明所在类型，`fieldName` 为被访问的 `_` 字段。
     case inaccessibleField(typeName: String, fieldName: String, location: SourceLocation)
-    /// 任务隔离违规（B3-1，消解 R6）：把引用类型（object）作为实参传过 `=>` 并发进程的
-    /// 调用边界，会让两个线程持有同一 `ObjectReference` 并发改写其字段——那是内存不安全（实测 SIGABRT），
-    /// 而非仅仅"计数不准"。`typeName` 为触发隔离的引用类型（可能藏在 struct 字段或容器实参里，
-    /// 此时它是递归找到的那个引用类型），`paramName` 为并发函数的形参名，`functionName` 为被调并发进程。
+    /// 任务隔离违规：引用类型（object）作为实参越过 `=>` 并发进程边界，两线程会共持同一
+    /// `ObjectReference` 并发改写字段，属内存不安全（实测 SIGABRT），非仅计数不准。
+    /// `typeName` 为递归找到的引用类型，`paramName` 为并发函数形参名，`functionName` 为被调并发进程。
     case sharedReferenceAcrossTasks(typeName: String, paramName: String, functionName: String, location: SourceLocation)
     /// 3.15：枚举用例构造为位置式，不允许具名实参（如 `圆(半径: 5.0)`）。
     case enumCaseArgumentLabel(label: String, caseName: String, location: SourceLocation)
-    /// ADR-001 `P3`：**给定块的类型名**出现在值位（`取(配置)` / `配置.方法()`）。
-    ///
-    /// 默认实例**只能**经 `using` 形参取得 —— 类型名不是值。此前这条路落到 IRGen 层报
-    /// 「未声明的变量 '配置'」（误导：读起来像拼错了变量名）；本诊断把它提前到静态层，
-    /// 并把该怎么做**写进文案**。⚠️ 这不是新增约束：该通路本来就不可行（`P3` 开工实测）。
+    /// 给定块的类型名出现在值位（`取(配置)` / `配置.方法()`）：类型名不是值，默认实例只能经
+    /// `using` 形参取得；此诊断在静态层拒绝，避免落到 IRGen 报出误导性的「未声明变量 '配置'」。
+    /// 同一通路本就不可行，故这不是新增约束，只是把报错提前并把做法写进文案。
     case givenBlockTypeInValuePosition(typeName: String, location: SourceLocation)
 }

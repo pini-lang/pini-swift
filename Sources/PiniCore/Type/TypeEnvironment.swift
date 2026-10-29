@@ -13,11 +13,9 @@ public final class TypeEnvironment {
         public let params: [TypeAnnotation]
         public let returns: [TypeAnnotation]
         public let isVariadic: Bool
-        /// ADR-001：`using` 形参在 `params` 里的**位置**（0 基）。
-        ///
-        /// WHY 存位置而不是一个布尔数组：调用点要判「实参个数是否等于形参个数 − using 个数」，
-        /// 并据**同一个**集合把实参按非 using 形参逐位对上 —— 两处用的是同一个量。
-        /// 空集 = 无 `using` 形参 ⇒ 判据退化为 ADR-001 之前的原式，逐字不变。
+        /// `using` 形参在 `params` 里的位置（0 基）。存位置而非布尔数组：调用点既要判实参个数是否
+        /// 等于形参个数 − using 个数，又要用同一个集合把实参按非 using 形参逐位对上。
+        /// 空集 = 无 `using` 形参，判据退化为全显式一式的原样。
         public let usingParamIndices: Set<Int>
         /// 多值返回各分量的**声明标签**（`-> (商: I32, 余: I32,)` 的 `["商", "余"]`）；
         /// 位置返回为 `[]`。调用点据此构造带标签的元组类型——标签既决定 `.名称` 能否
@@ -38,15 +36,9 @@ public final class TypeEnvironment {
             self.usingParamIndices = usingParamIndices
         }
 
-        /// ADR-001：把「实参个数」映射到「形参位置」。
-        ///
-        /// 两种合法形态，其余一律 nil（= arity 错）：
-        ///   · **全显式**（个数 == 形参个数）⇒ 恒等映射，`using` 位由调用点自己给；
-        ///   · **省略式**（个数 == 形参个数 − `using` 个数）⇒ 实参只落在**非 using** 形参上，
-        ///     `using` 位留给编译器插入默认实例。
-        ///
-        /// ⚠️ 两式**必然可区分**：`using` 个数 > 0 时两式的右端不相等 ⇒ 不存在歧义形态。
-        /// 空 `using` 集合时只剩第一式，行为与 ADR-001 之前逐字相同。
+        /// 把「实参个数」映射到「形参位置」；两种合法形态，其余一律 nil（= arity 错）。
+        /// 全显式（个数 == 形参个数）⇒ 恒等映射，`using` 位由调用点自己给；省略式（个数 == 形参个数 − using
+        /// 个数）⇒ 实参只落在非 using 形参上。两式右端不等，故无歧义形态；空 using 集只剩第一式。
         public func argumentToParamIndices(argumentCount: Int) -> [Int]? {
             if argumentCount == params.count { return Array(params.indices) }
             guard !usingParamIndices.isEmpty,
@@ -60,16 +52,14 @@ public final class TypeEnvironment {
     private var typeFields: [String: [String: TypeAnnotation]] = [:]
     private var typeMethods: [String: [String: FunctionSignature]] = [:]
 
-    /// 持久变量类型表：供 **codegen 事后 re-infer** 使用（#46-optional / Task #1）。
-    /// `defineVariable` 同时写入此表且**作用域 pop 不清除**——因为 `TypeChecker.check`
-    /// 在函数体退出时会 pop 子作用域，局部变量从作用域栈消失，若 codegen 再经
-    /// `TypeInference.infer(.identifier)` 重推 scrutinee 类型会取不到。此表保留定义处类型，
-    /// 作为 `lookupVariable` 的兜底（check 期间作用域栈优先，本表仅在栈中查不到时生效）。
+    /// 持久变量类型表：供 codegen 事后 re-infer 使用。`defineVariable` 写入且作用域 pop 不清除——
+    /// `TypeChecker.check` 退出函数体时 pop 子作用域，局部变量离开作用域栈，codegen 重推就取不到。
+    /// 作为 `lookupVariable` 的兜底：check 期间作用域栈优先，本表仅在栈中查不到时生效。
     private var persistentVarTypes: [String: TypeAnnotation] = [:]
 
-    /// #46-optional：持久表兜底开关。**默认 false**——保持「作用域弹出后变量不可见」语义
-    /// （`TypeCheckerTests.testTypeEnvVariableDefineAndLookup` 等单测依赖），不污染类型检查。
-    /// 仅在 LLVM codegen 重推阶段由 CLI / run-llvm 测试显式置 true（check 结束后作用域栈已收敛）。
+    // 持久表兜底开关。**默认 false**——保持「作用域弹出后变量不可见」语义
+    // （`TypeCheckerTests.testTypeEnvVariableDefineAndLookup` 等单测依赖），不污染类型检查。
+    // 仅在 LLVM codegen 重推阶段由 CLI / run-llvm 测试显式置 true（check 结束后作用域栈已收敛）。
     public var persistAcrossScopesForCodegen = false
 
     public init() {}
@@ -87,15 +77,9 @@ public final class TypeEnvironment {
 
     // MARK: - Variables
 
-    /// 登记一个名字的类型。
-    ///
-    /// `persistent` 决定这个名字是否进**跨作用域**_re-infer_ 兜底表。默认进（形参、
-    /// 局部绑定、模块级值都要靠它），但**类型作用域注入**的名字必须传 `false`：
-    /// 那张表按**裸名**索引且模块内共享，而字段名是**每个类型各自的成员**，不同
-    /// 类型完全可能各有一个同名字段。放进去就会让「甲类型有个 `本行` 字段」替
-    /// 换掉「乙文件里那个叫 `本行` 的局部变量」的类型，且**只在多文件模块里发作**
-    /// （单文件时同名不会跨类型出现，缺陷因此藏了很久）。字段的类型本该由字段表
-    /// 回答，不是由变量表回答。
+    /// 登记一个名字的类型。`persistent` 决定是否进跨作用域 re-infer 兜底表：形参、局部绑定、
+    /// 模块级值都要靠它，类型作用域注入的名字必须传 `false`——那张表按裸名索引且模块内共享，
+    /// 而字段名是每个类型各自的成员，混入会让同名局部变量被别的类型的字段类型顶替。
     public func defineVariable(
         name: String, type: TypeAnnotation, isMutable: Bool = true, persistent: Bool = true
     ) {
@@ -217,10 +201,8 @@ public final class TypeEnvironment {
 
     // MARK: - 内建类型 conformance 标记（内建特征化 步骤 A）
 
-    /// 内建类型的特征遵循标记（typeName -> trait 集合）。仅承载声明：
-    /// 用户源码里的 `实现: 特征` 仍走 verifyTraitConformance 严格校验，
-    /// 内建标记不触发校验（内建方法由 registerBuiltinTypes 的 defineMethod
-    /// 路径供给，逐方法严格校验随步骤 B 特征派发切换一并启用）。
+    /// 内建类型的特征遵循标记（typeName -> trait 集合）。仅承载声明：用户源码的 `实现: 特征`
+    /// 仍走 verifyTraitConformance 严格校验；内建方法经 registerBuiltinTypes 的 defineMethod 供给。
     private var builtinConformances: [String: Set<String>] = [:]
 
     public func markConformance(typeName: String, traits: [String]) {
@@ -299,11 +281,9 @@ public final class TypeEnvironment {
             if method.name == methodName {
                 let subParams = method.params.map { substitutor.substitute(type: $0) }
                 let subReturns = method.returns.map { substitutor.substitute(type: $0) }
-                // Generic *method* templates store their methods as plain
-                // `(name:params:returns:)` tuples, so there are no declared labels to
-                // carry here — a specialised generic method's named returns stay
-                // positional. Recorded, not fixed: no measured case, and closing it
-                // means widening the template tuple type in `defineGenericStruct`.
+                /// Generic method templates keep methods as plain `(name:params:returns:)` tuples, so no declared
+                /// labels survive specialisation — a specialised generic method's named returns stay positional.
+                /// Left as is: no measured case, and closing it means widening the template tuple in `defineGenericStruct`.
                 return FunctionSignature(params: subParams, returns: subReturns)
             }
         }

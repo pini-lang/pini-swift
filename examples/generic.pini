@@ -1,6 +1,4 @@
-; 泛型类型 generic type：盒<T> 真正持有并使用类型参数 T
-; 运行：pini run examples/generic.pini
-; 预期：7 / 泛型值
+; 泛型类型：盒<T> 真正持有并使用类型参数 T
 ; 运行：pini run examples/generic.pini
 ; 预期输出：7（I32 盒）、泛型值（String 盒）
 

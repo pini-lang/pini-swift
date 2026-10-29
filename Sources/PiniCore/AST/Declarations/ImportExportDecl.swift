@@ -1,15 +1,8 @@
 import Foundation
 
-/// `import` 块声明（G52 批 1，2026-08-31）：引入一个外部模块，绑定到别名。
-///
-/// 语法（唯一顶级形态；裸语句已移除）：
-/// ```
-/// [当前文件名|import]
-/// 别名 = "包路径"
-/// ```
-/// 块头名 = 当前文件名（去 `.pini` 后缀，解析器校验一致）——自识性标签，
-/// 不进访问路径（G52 R4）。别名是静态限定符：`别名.符号` 限定访问，
-/// 不参与运行时值命名空间（D-2 静态互斥：本地符号禁止与别名同名）。
+/// `import` 块声明：引入一个外部模块并绑定到别名，是唯一的顶级导入形态（裸语句已移除）。
+/// 块头名 = 当前文件名（去 `.pini` 后缀，解析器校验一致），属自识性标签，不进访问路径。
+/// 别名是静态限定符（`别名.符号`），不参与运行时值命名空间；本地符号禁止与别名同名。
 public struct ImportDecl: Equatable, ASTNode {
     /// import 别名（静态限定符，`别名.符号` 的前缀）。
     public let alias: String
@@ -37,14 +30,8 @@ public struct ExportRename: Equatable, ASTNode {
     }
 }
 
-/// `export` 块声明（G52 批 1）：显式导出表（覆盖默认可见性规则的逃生舱，
-/// 语义 enforce 随可见性定稿表批次落地；本批解析并携带）。
-///
-/// 语法：
-/// ```
-/// [当前文件名|export]
-/// 可见别名 = 原符号
-/// ```
+/// `export` 块声明：显式导出表，用可见别名覆盖默认的可见性推导规则，是可见性规则的逃生舱。
+/// 绑定表随 AST 携带；跨模块导出的语义 enforce 不在解析层，由可见性定稿表决定。
 public struct ExportDecl: Equatable, ASTNode {
     public let renames: [ExportRename]
     public let location: SourceLocation

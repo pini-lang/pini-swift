@@ -1,13 +1,9 @@
 import Foundation
 import Testing
 
-/// 可接住的 IO（`tryReadFile` / `tryWriteFile` / `tryAppendFile`）的**两通道**判据。
-///
-/// 靶 = 「同一个 IO 操作，失败作为值返回而不是终止进程」。与陷阱版**并存**：
-/// 两条路的差别只在调用点写的名字，所以本套件同时钉住两侧 —— 一条要 status 0 并拿到
-/// `err`，另一条要 status 1。只钉一侧的判据会让「顺手把陷阱版也改成返回值」判绿。
-///
-/// ⚠️ 串行：每条用例都起 `run` / `run-llvm` 子进程，并行会把机器占满。
+// 可接住的 IO（`tryReadFile` / `tryWriteFile` / `tryAppendFile`）的两通道判据。靶 = 同一个 IO 操作，
+// 失败作为值返回而不是终止进程。与陷阱版并存：两条路的差别只在调用点写的名字，故同时钉住两侧 ——
+// 一条要 status 0 并拿到 `err`，另一条要 status 1。只钉一侧会让「陷阱版也返回 err」判绿。
 @Suite(.serialized)
 struct TryIOBuiltinTests {
 
@@ -35,12 +31,9 @@ struct TryIOBuiltinTests {
         return base
     }
 
-    /// 兜底产物**是否认识本批三个内建**。
-    ///
-    /// ⚠️ 为什么需要这一问：仓内的 `.build/debug/pini` 是主树产物，可能**早于**新内建
-    /// （本仓构建常落独立 scratch，仓内那份因此长期陈旧）。拿一份不认识 `try*` 的二进制
-    /// 跑本套件，红在「内建不存在」，读起来却像「实现错了」—— 那是假红。
-    /// 环境变量明示时不探测：那是「我知道自己在测什么」的信号。
+    /// 兜底产物是否认识三个 `try*` 内建。仓内的 `.build/debug/pini` 是主树产物，可能早于新内建（构建常落
+    /// 独立 scratch，仓内那份因此长期陈旧）⇒ 拿一份不认识 `try*` 的二进制跑本套件，红在「内建不存在」，
+    /// 读起来却像「实现错了」。环境变量明示时不探测：那是「我知道自己在测什么」的信号。
     private static func cliUnderstandsTryIO(_ cli: String) -> Bool {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("pini-try-io-probe-" + UUID().uuidString)
@@ -262,9 +255,9 @@ struct TryIOBuiltinTests {
 
     @Test("同一份读不到的输入：try 版返回 err，陷阱版仍然终止进程")
     func bothFailureFormsCoexistOnTheSameInput() throws {
-        /// 意图：本批新增的是**名字**，不是语义替换 —— 陷阱版一字未动，两条路并存。
-        /// 驳回性：`try` 版 status 必须是 0、陷阱版必须是 1；两侧相等即说明有一侧被改错了
-        /// （要么新增的接不住，要么旧的被顺手改成返回值 —— 后者是静默的破坏性变更）。
+        // 意图：`try` 版与陷阱版并存，差别只在名字，不是语义替换 —— 陷阱版一字未动。
+        // 驳回性：`try` 版 status 必须是 0、陷阱版必须是 1；两侧相等即说明有一侧错了
+        // （要么新增的接不住，要么陷阱版被换成返回值 —— 后者是静默的破坏性变更）。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
 

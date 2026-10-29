@@ -1,7 +1,5 @@
-; 判据：split 的源串远超实现曾用的固定缓冲（1024 字节）
-; 归因：旧实现的两次暂存拷贝写在 `alloca i8, i64 1024` 上 + 无界 memcpy ⇒
-;   源串一长就砸栈（自举 `makeScanner` 拿整份文件文本调用它）。
-; 权威 = 解释器的读数（2800 / 40）。见同目录用例 `splitLongSourceMatchesInterpreter`。
+; 判据：源串远超 1024 字节 —— 两次暂存拷贝若写在 `alloca i8, i64 1024` 上且 memcpy 无界，源串一长就砸栈
+;   （自举 `makeScanner` 拿整份文件文本调用它）。权威 = 解释器的读数（2800 / 40）。
 main|func() -> ():
     var s = ""
     var i = 0

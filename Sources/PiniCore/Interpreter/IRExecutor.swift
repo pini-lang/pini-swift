@@ -1,14 +1,8 @@
 import Foundation
 
-/// How a `break` / `continue` / `return` leaves the statement layer.
-///
-/// The IR carries an unwind **depth** (`breakStmt(depth:)`), never a label: the
-/// lowerer resolves labels to depths (标签语法反转) and turns a target it cannot
-/// resolve into a `panicStmt`. So this engine's control vocabulary is depths, and
-/// it deliberately does *not* reuse the AST channel's `ControlSignal`, whose
-/// vocabulary is labels — squeezing a depth into a label field would mean
-/// re-deciding the mapping inside every loop, which is how two channels drift
-/// apart while both look correct.
+/// How `break` / `continue` / `return` leaves the statement layer: the IR carries an unwind depth, not a label.
+/// The lowerer maps labels to depths and turns an unresolvable one into `panicStmt`, so depth is the vocabulary.
+/// The AST channel's `ControlSignal` speaks labels, so reusing it would re-decide the mapping inside every loop.
 enum IRControlSignal: Error {
     /// Leave the enclosing function with this value; `nil` = void return.
     case returnSignal(Value?)
@@ -18,17 +12,9 @@ enum IRControlSignal: Error {
     case continueSignal(depth: Int)
 }
 
-/// The half of a callable that a function *value* cannot carry.
-///
-/// `Value.function` holds a `FunctionValue`, and a `FunctionValue` holds an AST
-/// `Block?` — it has no room for the lowered `[IRStmt]` a closure body is. So
-/// the body lives beside the value, in a table on the executor, and the value
-/// keeps only what it is good for here: identity, the environment it closes
-/// over, and the name a `print` shows.
-///
-/// No environment field: a closure's environment is fixed at the moment the
-/// closure is created, so it belongs with the value rather than with the body,
-/// and two closures over the same body must not share one.
+/// The half of a callable a function *value* cannot carry: `Value.function` holds an AST `Block?`, not `[IRStmt]`.
+/// So the body sits in a table on the executor; the value keeps identity, its closed-over environment, and its name.
+/// No environment field here: it is fixed at creation, belongs with the value, and two closures must not share one.
 private struct IRCallableBody {
     /// Parameter names in declaration order — the order the arguments bind in.
     let paramNames: [String]
@@ -36,13 +22,9 @@ private struct IRCallableBody {
     /// Component labels of a declared named-tuple return; empty when the return
     /// carries none, which is what the return-site rule reads.
     let returnLabels: [String?]
-    /// `=>` dispatch: this body runs on a worker thread and its caller receives
-    /// a pending Future instead of the body's value.
-    ///
-    /// A closure body stays false on this channel: the lowered closure node
-    /// carries no async flag, and plumbing one in would change the node's shape
-    /// for a form no fixture reaches. That is a boundary, not an oversight —
-    /// recorded here so the next reader finds it rather than deduces it.
+    /// `=>` dispatch: this body runs on a worker thread and its caller receives a pending Future, not the value.
+    /// A closure body stays false on this channel: the lowered closure node carries no async flag, and no fixture reaches it.
+    /// That is a boundary, not an oversight.
     let isAsync: Bool
 
     init(paramNames: [String], body: IRBlock, returnLabels: [String?], isAsync: Bool = false) {
@@ -53,33 +35,17 @@ private struct IRCallableBody {
     }
 }
 
-/// What one run of a body produced.
-///
-/// Two outcomes and no tird: a body either reached its end, or it stopped at a
-/// join and gave the task up. The distinction has to exist *somewhere* above the
-/// statement loop, because a caller that cannot tell them apart has no way to
-/// leave the worker thread — which is the whole difference between `await` and
-/// `wait`.
+/// What one run of a body produced: two outcomes and no third.
+/// A body either reached its end, or it stopped at a join and gave the task up.
+/// A caller that cannot tell them apart cannot leave the worker thread — that is `await` versus `wait`.
 private enum IRBodyStep {
     case finished(Value)
     case givenUp(IRYieldFrame)
 }
 
-/// A body that gave its task up, together with everything needed to pick it up.
-///
-/// WHY THE CONTEXT IS IN HERE
-///
-/// A suspension returns from the Swift call that was running the body, so every
-/// piece of execution state that lived in Swift locals or thread-locals goes away
-/// with it. Thread-locals are the sharp edge: giving up does not unwind them the
-/// way a normal return does (the enclosing `defer`s in `invokeBodyStep` are
-/// deliberately not taken on this path), so if the frame did not carry them, the
-/// body would resume with empty call-depth, empty call stack and — worse —
-/// an empty defer stack, and its `defer`s would never run.
-///
-/// The environment is here for the same reason, plus one of its own: it is not
-/// actually lost, it is *reachable* from the frame, and the resume path must put
-/// back the exact one the body was using rather than one rebuilt from arguments.
+/// A body that gave its task up, with everything needed to pick it up.
+/// A suspension returns from the Swift call that ran the body, so locals and thread-locals go with it.
+/// It carries call depth, call stack and defer stack — else the resume runs no `defer`s — plus the exact environment.
 private struct IRYieldFrame {
     /// The callable whose body is part-way through.
     let callable: IRCallableBody
@@ -91,13 +57,8 @@ private struct IRYieldFrame {
     let awaited: FutureValue
     let env: Environment
     /// The environment to hand back to the caller when the body finally ends.
-    ///
-    /// In the frame rather than recomputed, because it belongs to the *run* and
-    /// not to the body: a resumed run's Swift caller is a continuation, not the
-    /// frame that entered the body, so there is nothing left to restore to unless
-    /// the value travelled. Getting this wrong is quiet — the body completes and
-    /// returns correctly, and only the *next* statement on that thread reads a
-    /// stale environment.
+    /// Carried, not recomputed: it belongs to the run, and the resumed Swift caller is a continuation, not the entering frame.
+    /// Getting this wrong is quiet: only the next statement on that thread reads a stale environment.
     let previousEnv: Environment
     /// The `lastValue` accumulator at the moment of suspension — see
     /// `driveStatements` for why it is part of where the body was.
@@ -108,20 +69,9 @@ private struct IRYieldFrame {
     let currentFuture: FutureValue?
 }
 
-/// The statement positions a join may actually give the task up at.
-///
-/// This is the driver's half of the yield envelope; the lowerer's half is the
-/// refusal that keeps anything else from ever arriving here. The two must agree,
-/// and the agreement is load-bearing in one direction only: if the lowerer admits
-/// a position the driver has no plan for, the join silently degrades to a blocking
-/// wait — which is exactly the failure the envelope exists to prevent. So the
-/// driver is written as a `switch` with no `default` over the positions it plans
-/// for, and anything else falls through to ordinary execution only because the
-/// lowerer has already refused it.
-///
-/// The two halves cover the four shapes the corpus actually uses: a bare
-/// statement, a `var` initializer, a `match` scrutinee, and the operand of a
-/// try-else. See the proposal's section 7.5.8.2 for the measurement.
+/// The statement positions a join may give the task up at: the driver's half of the yield envelope.
+/// The lowerer refuses everything else; an unplanned position here would degrade the join to a blocking wait.
+/// Hence a `switch` with no `default`: bare statement, `var` initializer, `match` scrutinee, try-else operand.
 private enum IRYieldPlan {
     /// S1 — the join is the whole expression statement, so its value is the
     /// statement's value.
@@ -146,164 +96,9 @@ private enum IRYieldPlan {
     }
 }
 
-/// Runs a lowered `IRModule` directly — the tird live channel of the LR-4
-/// unification, alongside the AST interpreter and IR → LLVM.
-///
-/// WHY THIS EXISTS
-///
-/// The IR was built to serve the LLVM backend alone (LR-2/LR-3). LR-4 makes it
-/// the single IR for *every* backend, so that "the same program means the same
-/// thing on every channel" stops being an assumption and becomes testable: this
-/// engine and the AST interpreter run the same source, and their output is
-/// compared byte for byte. Structure-level trust comes from the IR contract
-/// (IR 契约); execution-level trust comes from that
-/// cross-check. Neither replaces the other.
-///
-/// GRID NUMBERS — TWO SCHEMES, ONE LETTER
-///
-/// The grids named in this file are the **P2 plan's** node-family grids (G1…G9,
-/// the ones P2a and P2b work through in order). They are *not* the grid numbers
-/// of the LLVM rewrite plan, which use the same letters for different work, and
-/// the two schemes collide head-on: `G2` is "tuples" here and "Array / Optional"
-/// there, `G3` is "closures" here and "named types" there, `G6` is the enum
-/// family here and the closure family there.
-///
-/// This file carries 25 grid references. 23 of them mean the P2 scheme; 2 — the
-/// `min` / `max` and `abs` notes beside the operator mapping — mean the LLVM
-/// one, because they say what the *emitter* does with an operator this engine
-/// reaches through a shared interpreter helper. Every reference here now says
-/// which scheme it means. The LLVM-side files are deliberately left alone: that
-/// scheme has its own home in the rewrite plan, and relabelling it from here
-/// would be one file's opinion about another file's plan.
-///
-/// SCOPE — P1-2 SKELETON
-///
-/// Two properties, deliberately kept apart:
-///
-/// 1. **Coverage is a compile-time fact.** Every node in the contract is
-///    *dispatched* here, with no `default:`. Adding a case to `IRExpr` or
-///    `IRStmt` breaks this file until the node is acknowledged, which is what
-///    `tools/ir-contract-check.py` asserts from the outside.
-/// 2. **Only the delivered node set is *implemented*.** Grids land here a family
-///    at a time: P1-2 (the scalar core — the four constants, `load`, `binary`,
-///    `unary`, `call`, `printCall`, and `allocVar` / `storeVar` / `ifStmt` /
-///    `whileStmt` / `returnStmt` / `exprStmt`), P2a G4 (collections and
-///    subscripts), P2a G2 (tuples and their label model), P2a G1 (control flow —
-///    `forInStmt`, `deferStmt`, `breakStmt`, `continueStmt`, `panicStmt`, plus
-///    the `stringConcat` the defer fixtures need to build their expected string),
-///    P2a G6 (enums, Optional, Result and try — `resultConstruct`,
-///    `optionalConstruct`, `optionalGet`, `enumConstruct`, `tryStmt`,
-///    `matchStmt`, which also carried the two Optional nodes the slice and
-///    value-format fixtures reach through, so those fixtures keep corpus
-///    coverage rather than validating nothing — decision `D-P2-5`),
-///    P2a G5 (nominal types and fields — `construct`, `fieldGet`, `fieldStore`),
-///    and P2a G3 (closures and function values — `closureLiteral`,
-///    `functionValue`, `indirectCall`).
-///    That grid is what makes a struct or object method call observable at all:
-///    method dispatch is itself an ordinary `call` whose receiver travels as the
-///    first argument (the lowerer mangles `接收者.方法(…)` into `call(方法__类型, …)`),
-///    so the grid also had to teach `call` to consult a type-method table after
-///    the module-level one. That widening is a **range correction** of the same
-///    shape as the `stringConcat` grid P2a G1 turned up.
-///    P2a G3 is what makes a *function* a value: until it landed every callable
-///    this engine could reach was a declaration it looked up by name, so the call
-///    engine could reach was a declaration it looked up by name, so the call
-///    path could assume its callee's environment was the global one. A closure
-///    carries the environment it was created in, so the grid parameterised that
-///    path (`invoke`) rather than adding a second one, and gave function values
-///    somewhere to keep a lowered body — `Value.function` holds an AST `Block?`,
-///    which is not a shape a lowered body fits into.
-///    Everything else failed loud, naming the node, until P2b G9 implemented the
-///    last three (`fileWrite` / `fileRead` / `readLine`) and that mechanism went
-///    with them. A silent `.null` would have made this engine look finished and
-///    let the differential probes compare against a fiction.
-///
-/// SEMANTIC PARITY
-///
-/// Value rendering and operator semantics are **not** re-implemented here: they
-/// are `Interpreter.stringifyValue` / `binaryValue` / `unaryValue`, extracted to
-/// statics in P1-2 for exactly this reuse. There is one place where "what `+`
-/// does" and "what a value prints as" are decided, so the channels cannot drift.
-/// What stays here is the IR's own knowledge: which interpreter operator an
-/// `IRBinaryOp` corresponds to (`operatorFor`).
-///
-/// P2a grid G6 added two more shared semantics rather than restating them:
-/// `Interpreter.matchArmMatches` ("does this arm fire on this value" — the
-/// value-level core the AST pattern predicate, the CPS evaluator and this engine
-/// all call) and `Interpreter.builtinGet` (the Optional read rules: negative
-/// tail-count, dictionary key equality, out-of-range → `none`). What the IR
-/// knows on its own is only the *shape*: an arm is "literal, wildcard, or case
-/// name" and a `match` scrutinee's static type, both of which the lowerer
-/// resolved already.
-///
-/// Execution shape mirrors the interpreter's statement layer as well:
-///
-/// - Block bodies do **not** push a variable scope — the interpreter's
-///   `executeBlock` does not either, so a `let` inside an `if` body leaks to the
-///   enclosing function body on both channels. Copied, not fixed: parity first,
-///   adjudication later.
-/// - A function body that runs off its end yields the value of its last
-///   expression statement (`.null` if it has none) — the interpreter's
-///   `lastValue` rule in `executeFunctionBody`.
-/// - `while`'s step block runs after the body on normal completion *and* on an
-///   unlabeled `continue`; an unlabeled `break` returns without running it
-///   (标签语法反转, `Interpreter.executeWhile`).
-/// - Control-flow bodies and both `if` branches run through `executeBlock`,
-///   which opens a **defer scope** exactly where the interpreter's `executeBlock`
-///   does; a function body opens one too, mirroring `executeFunctionBody`. Block
-///   bodies still push no *variable* scope — the two are separate on both
-///   channels, and only the defer one is new here.
-/// - `break` / `continue` carry an unwind **depth**, not a label. This engine
-///   consumes depth 1 and rethrows `depth - 1` with the current loop's step
-///   skipped — which is exactly what a label mismatch does on the AST channel,
-///   so the depth is the same contract expressed in the vocabulary the IR has.
-///
-/// REGISTERED GAPS AT THIS STAGE
-///
-/// - **Positions live on the block, not on the node** (P4-3). `IRBlock`
-///   carries a parallel `positions` array the lowerer fills, so a pause can name
-///   the line a statement came from — the same `Statement.location` the
-///   interpreter reports. Nodes stay position-free by design (the LLVM path
-///   reports positions at *lowering* time), so a `RuntimeError` raised outside a
-///   statement loop — and IR built by hand — still points at `noLocation`,
-///   which remains a placeholder rather than a line number.
-/// - ~~**No struct value-copy.**~~ ✅ **CLOSED** — re-measured `G-6c`, 2026-09-18.
-///   The rule lives in `RuntimeOps.copyIfStruct` and **is** applied at all four
-///   sites this entry used to list as missing (`allocVar` / `storeVar` /
-///   `fieldStore` / `subscriptStore`). The gap's own minimal witness — `var b = a`
-///   on a struct, then `b.x = 99`, then printing `a.x` — printed `99` while the
-///   hole was open and prints `1` now. The ticket that carried it is closed with
-///   that evidence.
-///   ⚠️ One caveat kept rather than tidied away: its *second* witness (a struct
-///   written into a struct-typed field) was **not** reproduced during the
-///   re-check — the reconstructed fixture is rejected with a type error — so that
-///   site rests on the applied call alone, not on a witness.
-/// - **`panicStmt`'s text has no cross-channel counterpart.** The node is
-///   compiler-generated (an unresolvable `break`/`continue`), and on the AST
-///   channel the same program ends in an escaped `ControlSignal` whose top-level
-///   rendering is Foundation's, not the language's — so no byte-equality claim
-///   is made for it, and the corpus never reaches it (`panic` occurs in the
-///   fixtures only inside comments). Gated for "fails loud with its message",
-///   registered as an unexercised parity surface.
-/// - **The `try` error binding is type-erased on the other channel.** `err` binds
-///   the error *payload* here — what the interpreter binds — while the LLVM
-///   emitter stores an `i64` word in the err slot. Reading that word is the only
-///   legal use of it, and both engines answer those reads through the same name
-///   (`pini.err.message`), so `print(e)` and `e.message` are parity surfaces.
-///   The word itself is not: nothing may print it as a number or a pointer.
-/// - **`match` exhaustiveness is a checker duty.** A run-time miss on an enum
-///   value is `matchNotExhaustive` (the interpreter's rule, and the emitter's
-///   `bk_panic`); the engine does not try to prove coverage statically.
-///
-/// This is grid P1-2 of the LR-4 interpreter unification, extended by
-/// P2a G4 (collections), P2a G2 (tuples), P2a G1 (control flow), P2a G6 (enums
-/// and the error model), P2a G5 (nominal types and fields) and P2a G3 (closures
-/// and function values): the IR (IR 契约) gains an execution engine that is not
-/// the LLVM emitter.
-///
-/// Its debug surface conforms to `DebugHookHost`, the same shape the AST
-/// interpreter exposes, and both halves of it are live: `outputSink`, and a
-/// `debugHook` consulted before each statement on that statement's source line.
+/// Runs a lowered `IRModule` directly: the third live channel beside the AST interpreter and IR → LLVM.
+/// Every node is dispatched with no `default:`, so a new `IRExpr` or `IRStmt` case breaks this file until acknowledged.
+/// Rendering and operators are the interpreter's (`stringifyValue` / `binaryValue` / `unaryValue`); `operatorFor` is ours.
 public final class IRExecutor: DebugHookHost {
 
     // MARK: - Host surface
@@ -312,128 +107,52 @@ public final class IRExecutor: DebugHookHost {
     /// redirect both engines' stdout through the same funnel and diff them.
     public var outputSink: (String) -> Void = { line in print(line) }
 
-    /// Debug pause hook — the other half of the surface `DebugHookHost` names,
-    /// and the same type the interpreter exposes.
-    ///
-    /// Consulted from `executeStatements` before each statement runs: the same
-    /// point in the control flow the interpreter uses, with the same context and
-    /// the same `.quit` contract. The line comes from that statement's entry in
-    /// the block's `positions`, which the lowerer filled from
-    /// `Statement.location` — the very thing the interpreter's pause site reads.
-    /// The two engines therefore stop on the same lines by construction rather
-    /// than by agreement, and `DebuggerTests` asserts it for both engines at once.
-    ///
-    /// This was declared in P1-5 S1 and deliberately left unwired until
-    /// positions existed: a pause that cannot name a line reports `noLocation`,
-    /// and since the debugger matches a breakpoint by line equality, no
-    /// breakpoint could fire while entry-stop and stepping would stop at a line
-    /// that does not exist — a debugger lying about where the program is, which
-    /// is worse than a debugger that is not there yet. Wiring it was a call at
-    /// the statement loop plus the position carrier, and the dormancy assertion
-    /// in `IRExecutorTests` was inverted when that landed, so the boundary
-    /// stays witnessed from both sides rather than being crossed silently.
+    /// Debug pause hook — the other half of `DebugHookHost`, the same type the interpreter exposes.
+    /// Consulted in `executeStatements` before each statement, on the line its `positions` entry names, so both engines agree.
+    /// A pause with no line reports `noLocation`, and breakpoints match by line, so the hook needs positions.
     public var debugHook: ((DebugContext) throws -> DebugAction)? = nil
 
     // MARK: - Module state
 
-    /// Module-level functions by name. The IR carries no closures at module
-    /// level: `main` and its peers are the only callables. Closure values are
-    /// their own node family and live in `callableBodies` instead.
-    ///
-    /// Trait default bodies arrive here too: the lowerer materialises them into
-    /// module-level functions rather than into a type's method list.
+    /// Module-level functions by name. The IR has no module-level closures: `main` and its peers are the only callables.
+    /// Closure values live in `callableBodies`; the lowerer materialises trait default bodies here, not into a type.
     private var functions: [String: IRFunction] = [:]
 
-    /// Type methods by **lowered** name (`方法__类型`), flattened out of every
-    /// `IRTypeDecl`.
-    ///
-    /// A method is not a module-level function and is kept in its own table for
-    /// that reason — but a call to one is an ordinary `.call`, because the
-    /// lowerer mangles `接收者.方法(…)` into `call(方法__类型, [接收者, …])` and
-    /// the receiver travels as the first argument. So this table exists to answer
-    /// the question the call node asks, and the two are consulted in that order.
-    ///
-    /// Keys come from each `IRFunction.name` as lowered, never re-derived here:
-    /// a generic type's methods live under its specialised name (`盒_I32`), and
-    /// re-mangling on this side would be a second, drifting source of truth.
+    /// Type methods by **lowered** name (`方法__类型`), flattened out of every `IRTypeDecl`.
+    /// A call to one is an ordinary `.call` — the receiver travels as first argument — so the module table is consulted first.
+    /// Keys are the lowered name, never re-derived: a generic type's methods live under `盒_I32`, and re-mangling would drift.
     private var methods: [String: IRFunction] = [:]
 
     private var types: [String: IRTypeDecl] = [:]
-    /// ADR-001 `P2b`：默认实例的**记忆表**（类型名 → 物化好的实例）。
-    ///
-    /// 「恰一次」在这里是**自然**的：走查单线 ⇒ 首次取用物化并记住，之后直接返回缓存值。
-    /// 与发射层那张「槽位 + 两级锁」的表同一语义，只是一个靠锁、一个靠单线。
-    /// ⚠️ 表挂在走查器实例上 ⇒ 生命周期 = 一次运行，与「程序级唯一」在解释器语境下等价
-    /// （一次 `run` 就是一个程序）。
+    /// 默认实例的**记忆表**（类型名 → 物化好的实例）。
+    /// 走查是单线，所以「恰一次」是自然的：首次取用物化并记住，之后直接返回缓存值；与发射层「槽位 + 两级锁」同语义，只是一靠锁、一靠单线。
+    /// 表挂在走查器实例上 ⇒ 生命周期 = 一次运行，在解释器语境下与「程序级唯一」等价。
     private var givenInstances: [String: Value] = [:]
     private var enums: [String: IREnumDecl] = [:]
 
-    /// The foreign callees this module declared, from `[名称|foreign]` blocks,
-    /// keyed by callee name.
-    ///
-    /// The gate matters: these names are answered by the shared libc shim
-    /// table, and answering them unconditionally would let a program that never
-    /// declared `malloc` call it here while the AST channel rejects the same
-    /// program. Declared-foreign beats the generic builtin guesses below
-    /// because it is the program's own declaration.
-    ///
-    /// A map and not a set because the second resolution stage needs the
-    /// **library**: a shim miss means a raw C binding, resolved with `dlsym`
-    /// against the block name (`[ffilib|foreign]` → `libffilib.dylib`), and the
-    /// thunk wrapping the address needs the declared signature. A set could
-    /// answer "is this foreign" but not "foreign to what, and shaped how".
+    /// The foreign callees this module declared, from `[名称|foreign]` blocks, keyed by callee name.
+    /// The gate matters: otherwise a program that never declared `malloc` could call it here, and the AST channel refuses that.
+    /// A map, not a set: a shim miss falls to a raw C binding, and the thunk needs the declared library and signature.
     private var foreignDecls: [String: (library: String, function: IRForeignFunction)] = [:]
 
     /// Library handles for raw C bindings, cached by library name.
-    ///
-    /// Per engine, not process-wide. The interpreter keeps its own `FFILoader`
-    /// on its instance; sharing one handle table between engines would make a
-    /// handle's lifetime — and so "when is it safe to close" — a cross-engine
-    /// question with no owner. Two engines, two caches, one resolution routine.
+    /// Per engine, not process-wide: a shared handle table would make "when is it safe to close" a question with no owner.
+    /// Two engines, two caches, one resolution routine.
     private let ffiLoader = FFILoader()
 
     /// The package's `[ffi]` table, for `search_paths`.
     private let ffiConfig: FFIConfig
 
-    /// Bodies of the function *values* built while running, keyed by value
-    /// identity — see `IRCallableBody` for why the body cannot travel inside
-    /// the value itself.
-    ///
-    /// Identity is the key, not the name: a closure literal has no name of its
-    /// own (`<anon>` is what the parser gives every one of them), so a program
-    /// with three closures would have three entries under one key and two of
-    /// them would silently call the tird's body. Identity is also what this
-    /// codebase already means by "the same function value" — `Value.==` decides
-    /// two function values are equal exactly when they are the same reference.
-    ///
-    /// Per-run state, not module state: the values in it are created during
-    /// execution, so `prepare` clears it and nothing here survives a run.
+    /// Bodies of the function *values* built while running, keyed by value identity.
+    /// Not by name: every closure literal is `<anon>`, so a name key would let one closure run another's body.
+    /// That is the notion `Value.==` already uses; per-run state, cleared by `prepare`.
     private var callableBodies: [ObjectIdentifier: IRCallableBody] = [:]
 
     private let globalEnv: Environment
 
-    /// Where an async body is dispatched (G-3c-1).
-    ///
-    /// The **blocking** back end, and that is the production semantics rather
-    /// than a simplification: the flag that selected the alternative had no
-    /// assignment point anywhere in `Sources/` — every assignment lived in the
-    /// tests — so no published program ever took anything but the blocking join.
-    /// `挂起模式退役` retired that alternative along with the walk it was built on.
-    /// This is what the language does; it is not a placeholder for a suspend
-    /// branch that has yet to arrive.
-    /// Injected rather than hardcoded so a criterion can stand a back end in that
-    /// declines to yield. That is not a test seam for its own sake: "a back end
-    /// that cannot hand the thread back degrades instead of failing" is a
-    /// normative discipline (DE-1 §6.2), and a discipline with no criterion on it
-    /// is a sentence, not a rule.
-    ///
-    /// ⭐ **派发点与语言侧接线**：生产路径上后端**不再硬编码**，而是由语言侧的默认实例
-    /// 解析而来（见 `resolveSchedulerFromLanguage`）—— 那就是「派发点用哪个调度器」这条
-    /// 语言侧表面的内容。本属性只剩**注入覆盖**这一职：非空时它赢，解析不发生。
-    ///
-    /// ⚠️ 为什么注入要先于解析：注入是宿主在**构造期**说的，而语言侧实例要到
-    /// 模块装载后才取得到。若有注入值仍去解析，判据就再也摆不进一个替身后端 ——
-    /// 而「降级而不失败」这条纪律的判据正是那么摆进去的。
+    /// Where an async body is dispatched: the blocking back end, which is the production semantics and not a placeholder.
+    /// An injected value wins over the language-side default (`resolveSchedulerFromLanguage`) and skips resolution entirely.
+    /// The seam exists so a criterion can stand in a back end that declines to yield and witness the degrade-not-fail rule.
     private let injectedScheduler: Scheduler?
 
     /// 派发点实际用的后端。**只在 `prepare` 里被改写一次** —— 那之后才可能有工作线程
@@ -443,96 +162,58 @@ public final class IRExecutor: DebugHookHost {
     // MARK: - Per-thread execution state
 
     /// These four describe *the thread that is executing*, not the engine.
-    ///
-    /// `=>` dispatch puts a body on a worker thread while its caller waits in the
-    /// join, so both are live at once and both touch this state. As plain
-    /// instance properties they were correct only while nothing spawned; the
-    /// moment one does, they are a shared mutable context. The failure is not
-    /// hypothetical: the AST interpreter already paid for it, and its own note
-    /// records what it cost (unconditional `+=` / `-=` from worker threads
-    /// racing the main thread's, ending in SIGTRAP/SIGSEGV), which is why it
-    /// moved the same four behind `ThreadLocal`.
-    ///
-    /// Wrapping the storage rather than renaming the properties is deliberate:
-    /// a computed property over a per-thread box means every existing read and
-    /// write kept its shape, so the fix did not have to travel through the whole
-    /// file.
+    /// `=>` dispatch keeps a worker and its joining caller live at once, both touching this state.
+    /// The interpreter's same four raced into SIGTRAP/SIGSEGV; `ThreadLocal` fixes it without changing any read's shape.
     private let currentEnvStorage = ThreadLocal<Environment>()
     private let callDepthStorage = ThreadLocal<Int>()
     private let callStackStorage = ThreadLocal<[String]>()
     private let deferStackStorage = ThreadLocal<[[IRBlock]]>()
 
     /// The task this thread runs inside, when it runs inside one.
-    ///
-    /// Spawn links the new task here, which is what makes the dispatch tree and
-    /// the cancellation tree one tree — the same job it does on the AST side.
-    /// Thread-local for the same reason as the four below: a worker must not
-    /// adopt its caller's task, or a child would be booked under the wrong
-    /// parent and the parent's return would cancel the wrong set.
+    /// Spawn links the new task here, which makes the dispatch tree and the cancellation tree one tree, as on the AST side.
+    /// Thread-local: a worker must not adopt its caller's task, or the parent's return would cancel the wrong set.
     private let currentFutureStorage = ThreadLocal<FutureValue>()
     private var currentFuture: FutureValue? {
         get { currentFutureStorage.value }
         set { currentFutureStorage.value = newValue }
     }
 
-    /// The environment the current thread is executing in. A thread that has not
-    /// entered anything yet reads the global one — a worker's first act is to
-    /// enter its own call environment, so the seed is only ever what a read
-    /// before any entry deserves.
+    /// The environment the current thread is executing in.
+    /// A thread that entered nothing reads the global one; a worker's first act is to enter its own call environment.
     private var currentEnv: Environment {
         get { currentEnvStorage.value ?? globalEnv }
         set { currentEnvStorage.value = newValue }
     }
 
     /// How many bodies the host is currently inside.
-    ///
-    /// Reported rather than decided on: whether one more may be entered is
-    /// settled by the stack left on the running thread, because only that knows
-    /// what the shape of the call costs. A frame count was the decision once,
-    /// and the heavy shapes reached the smash before they ever reached the count
-    /// (`G-P9`). The depth survives as the number the diagnostic and the
-    /// debugger quote.
+    /// Reported, not decided on: the stack left on the running thread settles whether one more may be entered.
+    /// The count once decided that, but heavy shapes smashed the stack first; the depth survives for diagnostics.
     private var callDepth: Int {
         get { callDepthStorage.value ?? 0 }
         set { callDepthStorage.value = newValue }
     }
 
-    /// Names of the functions currently entered, innermost last.
-    ///
-    /// Mirrors `Interpreter.callStackNames` — the list a debugger reads for a
-    /// backtrace. Pushed and popped around a body exactly where `callDepth` is,
-    /// so the two cannot drift out of step: a depth without a name would be a
-    /// backtrace with a hole in it.
+    /// Names of the functions currently entered, innermost last — the backtrace a debugger reads.
+    /// Pushed and popped around a body exactly where `callDepth` is, so a depth never names a hole.
     private var callStackNames: [String] {
         get { callStackStorage.value ?? [] }
         set { callStackStorage.value = newValue }
     }
 
-    /// Open defer scopes, innermost last: a scope holds its `defer` statements in
-    /// registration order, and each `defer` holds the **group** of statements it
-    /// wraps.
-    ///
-    /// The grouping is what keeps LIFO honest. Popping runs the *groups* in
-    /// reverse and, inside one group, its statements in source order; a flat
-    /// reversed list would also invert a defer whose body lowered to more than
-    /// one node — a difference that only shows up once such a body exists, which
-    /// is the worst time to find it.
+    /// Open defer scopes, innermost last; a scope holds its `defer` statements in registration order.
+    /// Each `defer` holds the group it wraps, so popping runs groups in reverse and statements within one in source order.
+    /// A flat reversed list would invert a defer whose body lowered to several nodes.
     private var deferStack: [[IRBlock]] {
         get { deferStackStorage.value ?? [] }
         set { deferStackStorage.value = newValue }
     }
 
-    /// Directory an unprefixed relative IO path resolves against, mirroring
-    /// `Interpreter.programBase`. The emitter already carries this base; the
-    /// engine needs it too, or the two channels disagree about which file a
-    /// program named with a bare relative path means — and they would disagree
-    /// silently, by reading the CWD copy instead of failing.
-    ///
-    /// Defaulted to nil so an executor that never touches IO behaves exactly as
-    /// before, and so the many test hosts that construct one bare keep working.
+    /// Directory an unprefixed relative IO path resolves against, mirroring `Interpreter.programBase`.
+    /// Without it the channels would silently disagree, reading the CWD copy instead of failing.
+    /// Optional so an executor that never touches IO, and bare test hosts, behave as before.
     private let programBase: String?
 
-    /// P4-1b: 命令行参数（脚本路径之后的裸参数），与解释器的同名属性同义 ——
+    /// 命令行参数（脚本路径之后的裸参数），与解释器的同名属性同义 ——
     /// `argv()` 内建的唯一来源，镜像而不另造。
     public var processArguments: [String] = []
 
@@ -540,39 +221,24 @@ public final class IRExecutor: DebugHookHost {
         self.init(programBase: programBase, ffiConfig: ffiConfig, scheduler: nil)
     }
 
-    /// The engine with an explicit back end, or with `nil` and therefore with the
-    /// language's own default (see `resolveSchedulerFromLanguage`).
-    ///
-    /// Production takes the line above with `nil`; passing a back end overrides the
-    /// language's choice — which is how a criterion stands in one that answers `0`
-    /// to `yieldTask()`. Nothing branches on the difference: the back end answers,
-    /// the engine obeys.
+    /// The engine with an explicit back end, or with `nil` and therefore with the language's own default.
+    /// Production passes `nil`; an explicit back end overrides the language's choice, e.g. one answering `0` to `yieldTask()`.
+    /// Nothing branches on the difference: the back end answers, the engine obeys.
     init(programBase: String?, ffiConfig: FFIConfig, scheduler: Scheduler?) {
         self.globalEnv = Environment()
         self.programBase = programBase
         self.ffiConfig = ffiConfig
         self.injectedScheduler = scheduler
         self.scheduler = scheduler ?? GCDScheduler.shared
-        // `currentEnv` is deliberately not seeded here. Its per-thread box
-        // answers `globalEnv` until a thread enters something, so a seed would
-        // be the same value written the hard way — and writing through the
-        // computed property during initialisation reads `self` before every
-        // stored property is in place, which the compiler refuses outright.
+        // `currentEnv` is deliberately not seeded: its per-thread box answers `globalEnv` until a thread enters.
+        // A seed would write the same value the hard way, and init-time writes through a computed property read `self` unbuilt.
     }
 
     // MARK: - Entry points
 
-    /// Register a module without running it. Mirrors
-    /// `Interpreter.prepare(module:)`; lower-then-run is *not* folded into one
-    /// call on purpose — lowering stays the caller's explicit step
-    /// (`IRLowerer.lower(module:typeInference:)`), same split as the
-    /// interpreter taking an already-checked AST.
-    /// 派发点当前后端的**能力自述**（只读，供诊断与判据）。
-    ///
-    /// 它是语言侧接线（`resolveSchedulerFromLanguage`）的**读侧**，而这一侧不是可有可无的：
-    /// 降级后的程序**结果不变**（那是「语义保持、只降执行策略」的内容）
-    /// ⇒ 光看程序的输出，区分不出「声明被读到了」与「引擎根本没理那句声明」。
-    /// 没有本属性，「派发点用语言侧那个调度器」这句话就**没有可观测面**。
+    /// 派发点当前后端的**能力自述**（只读，供诊断与判据），是语言侧接线 `resolveSchedulerFromLanguage` 的读侧。
+    /// 降级后的程序结果不变，故光看输出区分不出「声明被读到了」与「引擎根本没理那句声明」。
+    /// 没有本属性，「派发点用语言侧那个调度器」这句话就没有可观测面。
     var dispatchBackEndCapabilities: ConcurrencyCapabilities { scheduler.capabilities }
 
     public func prepare(module: IRModule) throws {
@@ -593,29 +259,17 @@ public final class IRExecutor: DebugHookHost {
             }
         }
         try resolveForeignsEagerly()
-        // 派发点的后端由**语言侧**决定（见 `resolveSchedulerFromLanguage`）。解析落在这里，
-        // 因为语言侧那份声明要到本模块的类型表装好之后才读得到 —— 构造器里没有它可读。
-        // ⇒ 也正因为落在装载期、任何工作线程出现之前，`scheduler` 那个 `var` 不需要锁。
-        // 注入值在场时不解析：注入是宿主在构造期说的，而判据正是经它摆进替身后端的。
+        // 派发点的后端由语言侧决定（`resolveSchedulerFromLanguage`）：解析落在这里，因为那份声明要等类型表装好才读得到。
+        // 也正因为落在装载期、任何工作线程出现之前，`scheduler` 那个 `var` 不需要锁。
+        // 注入值在场时不解析：注入是宿主在构造期说的，判据正是经它摆进替身后端的。
         if injectedScheduler == nil {
             scheduler = resolveSchedulerFromLanguage()
         }
     }
 
-    /// Resolves every declared foreign symbol now, in the interpreter's order:
-    /// the shared libc shim table first, then a raw `dlsym`.
-    ///
-    /// The interpreter resolves these while registering declarations, so a name
-    /// that does not resolve fails there — and `symbolNotFound` is a
-    /// registration-time code. Resolving only at the call site instead let the
-    /// same program pass silently until its first call, which diverges from the
-    /// interpreter on the *failure* behaviour of one program rather than on
-    /// what it can do. `FFILoader` caches resolved handles, so the work here is
-    /// not repeated by the call sites below.
-    ///
-    /// The shim table is consulted first for the same reason the call site
-    /// does: those names have no C symbol to find, so asking `dlsym` for them
-    /// would report a failure for a declaration that is perfectly resolvable.
+    /// Resolves every declared foreign symbol now: libc shim table first, then a raw `dlsym`, as the interpreter does.
+    /// The interpreter fails at registration with `symbolNotFound`; resolving only at call sites would defer that failure.
+    /// `FFILoader` caches handles, so the call sites do not repeat the work.
     private func resolveForeignsEagerly() throws {
         for (name, foreign) in foreignDecls where RuntimeOps.libcShims[name] == nil {
             _ = try ffiLoader.resolve(
@@ -625,15 +279,9 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// Run a module's `main`, mirroring `Interpreter.run(module:)`.
-    ///
-    /// ⚠️ 本入口是**解释器后端**这条腿上唯一「跑一个程序」的地方，故让出读数的挂点也在这里
-    /// （见 `reportInterpreterYieldsIfGated`）。用 `defer` 而**不是**在末行调用：对侧的读数挂在
-    /// **进程退出钩子**上，程序无论正常结束还是出错结束都会打 ⇒ 本处照同一时刻报，
-    /// 否则两份读数在「出错的那次运行」上不可比，而可比是这条通道存在的全部理由。
-    /// ⚠️ 代价如实说：`prepare` 就抛出时也会打一行（那一次**没有执行**），
-    /// 读数于是是**上一次运行留下的累计值** —— 闸门只由测试器械置位，而器械是「一个进程跑一个程序」，
-    /// 故这一格今天不可达；⛔ 但它不是「不会发生」，是**今天用不到**。
+    /// 跑模块的 `main`，与 `Interpreter.run(module:)` 镜像。
+    /// 本入口是解释器后端唯一「跑一个程序」的地方，故让出读数的挂点也在这里：用 `defer` 与对侧的进程退出钩子同一时刻报，否则出错那次两份读数不可比。
+    /// 代价：`prepare` 就抛出时也会打一行，读数是上一次运行留下的累计值；闸门只由「一进程一程序」的器械置位，故今天不可达。
     public func run(module: IRModule) throws {
         defer { reportInterpreterYieldsIfGated() }
         try prepare(module: module)
@@ -648,15 +296,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Call one module-level function by name.
-    ///
-    /// `run(module:)` reaches exactly one function and it is always `main`; a
-    /// test run reaches every `|test` function instead, so the entry point has
-    /// to be per-name rather than fixed. Nothing else differs — same `invoke`,
-    /// same argument protocol — which is what makes a test body meet the same
-    /// runtime an ordinary call would, rather than a second execution mode.
-    ///
-    /// The caller must have called `prepare(module:)` first, exactly as for
-    /// `run(module:)`; lowering stays the caller's explicit step on this engine.
+    /// `run(module:)` reaches `main` only; a test run reaches every `|test` function, hence per-name entry.
+    /// Same `invoke` and argument protocol as any call, so a test body meets the same runtime; `prepare` must run first.
     public func callFunction(named name: String, args: [Value]) throws -> Value {
         guard let function = functions[name] else {
             throw RuntimeError.invalidOperation(
@@ -670,10 +311,7 @@ public final class IRExecutor: DebugHookHost {
     // MARK: - Diagnostics
 
     /// Placeholder position for every diagnostic out of this engine.
-    ///
-    /// The file name says `<ir>` rather than `""` so that a diagnostic cannot be
-    /// mistaken for one with a real (if empty) file attached. See the class
-    /// header's "no positions" gap.
+    /// The file name is `<ir>` rather than `""`, so a diagnostic cannot be mistaken for one with a real, empty file attached.
     static let noLocation = SourceLocation(line: 0, column: 0, fileName: "<ir>")
 
     // MARK: - Expressions
@@ -681,10 +319,8 @@ public final class IRExecutor: DebugHookHost {
     private func evaluate(_ expr: IRExpr) throws -> Value {
         switch expr {
 
-        // MARK: Scalar constants
-        // All integer widths collapse onto one runtime `int`, exactly as the
-        // interpreter models them (IRType.u8/i8/u64 are ABI widths, not runtime
-        // distinctions) — so `intConst` ignores its carried type here.
+        // All integer widths collapse onto one runtime `int`, as the interpreter models them: u8/i8/u64 are ABI widths.
+        // `intConst` therefore ignores its carried type.
 
         case .intConst(let value, _):
             return .int(value)
@@ -704,7 +340,7 @@ public final class IRExecutor: DebugHookHost {
         case .binary(let op, let lhs, let rhs, _):
             let left = try evaluate(lhs)
             let right = try evaluate(rhs)
-            // P4-0: min/max lower to IR operators but reach the interpreter as
+            // min/max lower to IR operators but reach the interpreter as
             // builtin calls, so they have no operator to map onto. Call the
             // shared builtin instead of failing.
             switch op {
@@ -722,7 +358,7 @@ public final class IRExecutor: DebugHookHost {
             return try RuntimeOps.binaryValue(left, mapped, right)
 
         case .unary(let op, let operand, _):
-            // P4-0: same reason as min/max above -- abs lowers to a IR unary
+            // same reason as min/max above -- abs lowers to an IR unary
             // operator but is a builtin call on the interpreter channel.
             if case .abs = op {
                 return try RuntimeOps.builtinAbs(try evaluate(operand))
@@ -737,51 +373,15 @@ public final class IRExecutor: DebugHookHost {
             return try RuntimeOps.unaryValue(mapped, try evaluate(operand))
 
         case .call(let name, let arguments, _):
-            // The callee is resolved **before** the arguments are evaluated, so an
-            // unknown name is reported without running any argument expression —
-            // the same order the interpreter uses.
-            //
-            // Three kinds of callee reach this node, and the IR does not
-            // distinguish them (the lowerer emits one node shape):
-            //
-            // - a module-level function, including the trait default bodies the
-            //   lowerer materialises into that table;
-            // - a type method, mangled into `方法__类型` with the receiver
-            //   prepended to the arguments;
-            // - a registered builtin (`sqrt`, `abs`, `argv`, the file IO …),
-            //   whose bodies live in the interpreter's `if fv.name == …` chain
-            //   rather than anywhere in the IR.
-            //
-            // The first two are executed here. The tird is **not answered, on
-            // purpose** — a scope decision of this grid, not an oversight:
-            // delegating the callee to a live `Interpreter` would run genuine
-            // builtin semantics, file IO included, inside a channel whose own IO
-            // semantics are still one of the four unsettled decision grids; and
-            // reimplementing a builtin here would be a second definition of it.
-            // Two fixtures need a bare builtin (a `sqrt` call) and stay pending
-            // because of this — recorded at closeout as a boundary that **no grid
-            // of P2a owns**, since the nine grids are divided by node families and
-            // this is a callee-resolution rule.
+            // The callee is resolved before the arguments are evaluated, so an unknown name is reported without running any argument.
+            // Three kinds share one node shape: module-level function, type method mangled to `方法__类型`, and builtin.
+            // Functions and methods execute here; builtins come from the shared `RuntimeOps` tables, not a live interpreter.
             if let target = functions[name] ?? methods[name] {
                 return try call(target, args: try arguments.map { try evaluate($0) })
             }
-            // P4-0: sqrt is intrinsic on this channel -- the LLVM side declares
-            // @sqrt and the interpreter answers it as a builtin. Call the shared
-            // builtin rather than delegating the callee to a live interpreter,
-            // which is what the note above rules out.
-            // A callee declared in a `[名称|foreign]` block resolves in two
-            // stages, and this engine now runs both in the interpreter's order:
-            //
-            //   ① the libc shim table, shared with the AST channel — one
-            //      definition, two engines;
-            //   ② otherwise a raw C binding: `dlsym` against the block name,
-            //      then a per-signature thunk over the resolved address.
-            //
-            // Stage ② used to fail loud here, because the loader lived only on
-            // the interpreter instance. Running the same chain on both channels
-            // is the point of doing it at all: a shim added on one side and not
-            // the other, or a symbol resolving differently between them, is
-            // exactly the class of divergence this migration exists to remove.
+            // A callee declared in a `[名称|foreign]` block resolves in two stages, in the interpreter's order.
+            // The libc shim table comes first — shared with the AST channel, one definition for two engines.
+            // Otherwise it is a raw C binding: `dlsym` against the block name, then a per-signature thunk over the address.
             if let foreign = foreignDecls[name] {
                 let args = try arguments.map { try evaluate($0) }
                 if let shim = RuntimeOps.libcShims[name] { return try shim(args) }
@@ -815,10 +415,8 @@ public final class IRExecutor: DebugHookHost {
                 )
                 return try thunk(args)
             }
-            // P4-0: sin/cos lower to LLVM intrinsics, so the names that arrive here
-            // are `llvm.sin.f64` / `llvm.cos.f64` and `tan` arrives as a division
-            // between the two. Answer them from the shared trigonometric builtins
-            // instead of reporting a missing module-level function.
+            // sin / cos arrive as `llvm.sin.f64` / `llvm.cos.f64`, and `tan` as a division between the two.
+            // They are answered from the shared trigonometric builtins, not reported as a missing module-level function.
             if name.hasPrefix("llvm.") {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
@@ -837,7 +435,7 @@ public final class IRExecutor: DebugHookHost {
                     )
                 }
             }
-            // G-2a: the character builtins, answered from the same implementation
+            // The character builtins, answered from the same implementation
             // the AST channel calls -- one definition, two engines.
             if let character = RuntimeOps.characterBuiltins[name] {
                 let args = try arguments.map { try evaluate($0) }
@@ -850,29 +448,17 @@ public final class IRExecutor: DebugHookHost {
                 return try character(args)
             }
 
-            // G-3a: the concurrency builtins a plain call can carry, answered from the
-            // same table the lowerer's whitelist reads -- one definition, two engines,
-            // exactly like the character builtins above.
-            //
-            // `sleep` blocks this thread and yields nothing; that is the whole of its
-            // IR-side semantics. Its cancellation checkpoints are a no-op here, and
-            // deliberately so: this engine is single-threaded and holds no task
-            // handle, so there is no context to check against. The shared rule takes
-            // the checkpoint as a parameter precisely so the suspension grid can plug
-            // a real one in without touching the sleeping loop.
+            // The concurrency builtins a plain call can carry, answered from the same table the lowerer's whitelist reads.
+            // `sleep` blocks this thread and yields nothing: that is its whole IR-side semantics here.
+            // Cancellation checkpoints are a no-op here — no task handle — so the shared rule takes one as a parameter.
             if let concurrency = RuntimeOps.concurrencyBuiltins[name] {
                 let args = try arguments.map { try evaluate($0) }
                 return try concurrency(args)
             }
 
-            // G-3c-1: the Future-valued concurrency builtins. They are matched
-            // here rather than added to the shared table above because deciding
-            // them needs a scheduler and a task handle, which a stateless
-            // closure cannot reach — the lowerer matches the same names for the
-            // same reason, so the two sides are read together.
-            //
-            // What they compute lives in `RuntimeOps`: waiting, aggregating and
-            // the leaked-failure flip are one definition used by both engines.
+            // The Future-valued concurrency builtins: matched here, not in the shared table, because they need a task handle.
+            // The lowerer matches the same names for the same reason, so the two sides are read together.
+            // Waiting, aggregating and the leaked-failure flip live in `RuntimeOps`: one definition for both engines.
             if name == "isCancel" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
@@ -967,10 +553,8 @@ public final class IRExecutor: DebugHookHost {
                 }
                 return try RuntimeOps.builtinF64(args[0])
             }
-            // G-2S: the Array member face (`append` / `last` / `pop`), answered
-            // from the same rules the AST walk applies -- one definition, two
-            // engines, exactly like the character builtins above. The receiver
-            // rides as the first argument.
+            // The Array member face (`append` / `last` / `pop`): the same rules the AST walk applies, one definition for two engines.
+            // The receiver rides as the first argument.
             if let arrayMethod = RuntimeOps.arrayMethods[name] {
                 let args = try arguments.map { try evaluate($0) }
                 return try arrayMethod(args)
@@ -985,7 +569,7 @@ public final class IRExecutor: DebugHookHost {
                 }
                 return try RuntimeOps.builtinSqrt(args[0])
             }
-            // P4-1b: 宿主环境查询内建。两行都与解释器的同名内建**逐字同义**（镜像，不另造）：
+            // 宿主环境查询内建。两行都与解释器的同名内建**逐字同义**（镜像，不另造）：
             // 参数数组直接来自执行器持有的 `processArguments`；模块根即程序基准，
             // 未注入基准时如实返回进程 CWD，不伪造。
             if name == "argv" || name == "moduleRoot" {
@@ -1000,14 +584,9 @@ public final class IRExecutor: DebugHookHost {
                 }
                 return .string(programBase ?? FileManager.default.currentDirectoryPath)
             }
-            // 自举仓 M8 的前置：目录枚举。条目 = **名字**（不含目录部分）—— 调用方已经
-            // 知道目录，自己拼路径比让这里替它猜更灵活。
-            //
-            // 路径按 IO 三段式解析（同 `readFile`）：相对路径相对**程序基准**，不是进程 CWD。
-            // 排序钉在 UTF-8 字节序升序：文件系统的返回顺序不稳定，不排序则依赖顺序的
-            // 判据会假绿 —— 而假绿比报错贵得多（它不报警，只让人以为通过了）。
-            // ⛔ 不截断，列不全时**报错**，不返回半个目录。（`readFile` 曾是这里的对照，
-            // 它自己的静默截断已于 2026-10-01 删除 —— 见 `IOLimits` 头注。）
+            // 目录枚举：条目只给**名字**（不含目录部分）—— 调用方知道目录，自己拼路径比让这里代猜更灵活。
+            // 路径按 IO 三段式解析，相对路径相对**程序基准**而非进程 CWD；排序钉在 UTF-8 字节序升序，否则依赖顺序的判据会假绿。
+            // 不截断：列不全时**报错**，不返回半个目录。
             if name == "listDir" {
                 guard arguments.count == 1 else {
                     throw RuntimeError.invalidOperation(
@@ -1073,7 +652,7 @@ public final class IRExecutor: DebugHookHost {
             outputSink(RuntimeOps.stringifyValue(try evaluate(argument)))
             return .null
 
-        // MARK: Collections (P2a grid G4)
+        // MARK: Collections
 
         case .arrayLiteral(let elements, _):
             // Source order, one fresh array. No `copyIfStruct` here: the
@@ -1120,7 +699,7 @@ public final class IRExecutor: DebugHookHost {
                 end: try evaluate(end)
             )
 
-        // MARK: Tuples (P2a grid G2)
+        // MARK: Tuples
 
         case .tupleConstruct(let labels, let elements, _):
             // Source order, labels passed through verbatim. A positional literal
@@ -1131,12 +710,8 @@ public final class IRExecutor: DebugHookHost {
             return .tuple(labels: labels, elements: values)
 
         case .tupleIndexGet(let base, let index, _):
-            // The bound is resolved statically by the lowerer — `.0` and the
-            // labelled `.name` form both arrive here as an integer — so this arm
-            // only has to agree with the interpreter on what indexing a tuple
-            // *means*. It does that by calling the interpreter's rule instead of
-            // restating it, which is also what keeps the interpreter's own
-            // diagnostic for a base the static type called a tuple and is not.
+            // The bound is resolved statically: `.0` and the labelled `.name` form both arrive here as an integer.
+            // So this arm only agrees on what indexing means, by calling the interpreter's rule rather than restating it.
             return try RuntimeOps.tupleElement(
                 try evaluate(base),
                 index: index,
@@ -1146,36 +721,26 @@ public final class IRExecutor: DebugHookHost {
         // MARK: Strings
 
         case .stringConcat(let lhs, let rhs):
-            // `s1 + s2` has one meaning, and it is the interpreter's: this arm
-            // routes through the same `binaryValue` the `.binary` arm uses, so
-            // "what `+` does to two strings" is decided in one place.
-            //
-            // The node exists separately from `.binary` because the contract
-            // sinks concatenation to a byte-semantics channel (contract row 41,
-            // group C — same results, different allocation). It is in *this*
-            // grid because the defer fixtures build their expected string by
-            // concatenating, so the P2a G1 fixtures cannot flip without it.
+            // `s1 + s2` has one meaning and it is the interpreter's: this arm routes through the same `binaryValue`.
+            // The node is separate from `.binary` because the contract sinks concatenation to a byte-semantics channel.
+            // It sits in this grid because the defer fixtures build their expected string by concatenating.
             return try RuntimeOps.binaryValue(
                 try evaluate(lhs), .plus, try evaluate(rhs)
             )
 
-        // MARK: Optional / Result / enum values (P2a grid G6)
+        // MARK: Optional / Result / enum values
 
         case .resultConstruct(let isOk, let payload, _):
-            // Same value the interpreter's `ok` / `err` builtins build — the one
-            // `makeResult`, so the two channels cannot disagree on what a Result
-            // *is*. The err payload is one type-erased machine word on the LLVM
-            // side (LR-12); see the class header's P2a G6 boundary note.
+            // The one `makeResult`, so the two channels cannot disagree on what a Result *is*.
+            // The err payload is one type-erased machine word on the LLVM side; reads go through the same `pini.err.message` name.
             return RuntimeOps.makeResult(
                 caseName: isOk ? "ok" : "err",
                 payload: try evaluate(payload)
             )
 
         case .optionalConstruct(let isSome, let payload, _):
-            // The runtime form of an Optional *is* the two cases `some` / `none`
-            // (no parent enum), the same value the interpreter builds for a `nil`
-            // literal, for `Optional.none`, and for `.get` falling off the end.
-            // The open-bound spelling in slice syntax arrives here as `none` too.
+            // The runtime form of an Optional *is* the two cases `some` / `none`, with no parent enum.
+            // Same value for `nil`, `Optional.none`, a `.get` past the end, and the open-bound slice spelling.
             guard isSome else {
                 return .enumValue(EnumValue(caseName: "none", associatedValues: []))
             }
@@ -1188,10 +753,8 @@ public final class IRExecutor: DebugHookHost {
             return .enumValue(EnumValue(caseName: "some", associatedValues: [try evaluate(payload)]))
 
         case .optionalGet(let container, let index, _):
-            // The rule lives in the interpreter (`builtinGet`): negative tail-count,
-            // dictionary key equality, out-of-range → `none`. This node is the
-            // *named* spelling of `.get(i)` and the lowerer emits it for Array and
-            // String only, always the checked arm — hence `checked: true`.
+            // The rule lives in the interpreter's `builtinGet`: negative tail-count, dictionary key equality, out-of-range → `none`.
+            // This node is the *named* spelling of `.get(i)`; the lowerer emits it for Array and String only, always checked.
             return try RuntimeOps.builtinGet(
                 receiver: try evaluate(container),
                 index: try evaluate(index),
@@ -1200,11 +763,8 @@ public final class IRExecutor: DebugHookHost {
             )
 
         case .enumConstruct(let enumName, let caseName, let tag, let payloads, _, _):
-            // Associated-value names come from the declaration, matching what the
-            // interpreter writes on the constructor value
-            // (`fv.params.map { $0.name }`) — the same declaration order, and the
-            // same single reader (`match` named bindings; rendering never looks at
-            // them, per the project's naming decision).
+            // Associated-value names come from the declaration, the same order the interpreter writes on the constructor value.
+            // The same single reader consumes them — `match` named bindings; rendering never looks at them.
             guard let enumCase = resolveEnumCase(enumName: enumName, caseName: caseName, tag: tag)
             else {
                 throw RuntimeError.invalidOperation(
@@ -1221,7 +781,7 @@ public final class IRExecutor: DebugHookHost {
                     parentEnum: enumName
                 ))
 
-        // MARK: Nominal instances and their fields (P2a grid G5)
+        // MARK: Nominal instances and their fields
 
         case .construct(let type):
             return try constructValue(type)
@@ -1232,20 +792,12 @@ public final class IRExecutor: DebugHookHost {
             // way `Interpreter.evaluateMember` decides it.
             return try fieldRead(from: try evaluate(base), field: field)
 
-        // MARK: Closures and function values (P2a grid G3)
+        // MARK: Closures and function values
 
         case .closureLiteral(_, let paramNames, _, _, _, let body, _):
-            // The node's own closure id and capture list are deliberately unused
-            // here, and neither is an oversight. The id is the compiled side's
-            // registry key. The capture list describes the env struct a compiled
-            // closure carries — but an environment on this side *is* a reference,
-            // so hanging the value off the environment current at this point
-            // captures every name in scope, by reference, with nothing copied:
-            // exactly what `Interpreter`'s own func-literal arm does, and what
-            // makes a write to a captured variable after creation stay visible
-            // through the closure. Building a capture list into a fresh
-            // environment instead would be a second, snapshot-shaped model of
-            // the same thing.
+            // The closure id and capture list are deliberately unused: the id keys the compiled side's registry.
+            // An environment here *is* a reference, so hanging the value off the current one captures every name by reference.
+            // Same as the interpreter's func-literal arm: later writes to a captured name stay visible; a list would snapshot.
             return makeFunctionValue(
                 name: "<anon>",
                 paramNames: paramNames,
@@ -1265,10 +817,8 @@ public final class IRExecutor: DebugHookHost {
                     location: IRExecutor.noLocation
                 )
             }
-            // A named function closes over nothing: the interpreter registers
-            // its value against the global environment, and this mirrors that
-            // rather than inventing a creation-point environment there is none
-            // of.
+            // A named function closes over nothing: the interpreter registers its value against the global environment.
+            // This mirrors that rather than inventing a creation-point environment there is none of.
             return makeFunctionValue(
                 name: name,
                 paramNames: target.params.map { $0.name },
@@ -1278,26 +828,20 @@ public final class IRExecutor: DebugHookHost {
             )
 
         case .indirectCall(let callee, let arguments, _):
-            // Callee before arguments, which is the interpreter's order at its
-            // own indirect-call arm; argument evaluation is observable, so the
-            // order is part of the semantics rather than an implementation
-            // detail.
+            // Callee before arguments, the interpreter's own order at its indirect-call arm.
+            // Argument evaluation is observable, so the order is semantics rather than an implementation detail.
             let calleeValue = try evaluate(callee)
             guard case .function(let function) = calleeValue else {
                 throw RuntimeError.notCallable(location: IRExecutor.noLocation)
             }
             return try callFunctionValue(function, args: try arguments.map { try evaluate($0) })
 
-        // MARK: Strings and builtins (P2b grid G7)
+        // MARK: Strings and builtins
 
         case .interpString(let parts):
-            // Mirrors the interpreter's `.stringInterpolation` arm. The lowerer
-            // has already flattened the segment list: literal segments arrive as
-            // `stringConst`, expression segments as their own node, and an
-            // all-literal run was folded into one constant before it got here.
-            // `stringifyValue` is the interpreter's own rendering, and a string
-            // value renders verbatim, so a literal segment contributes its text
-            // unchanged — which is what the interpreter's `.literal` branch does.
+            // Mirrors the interpreter's `.stringInterpolation` arm; the lowerer has already flattened the segments.
+            // Literals arrive as `stringConst`, expressions as their own node, an all-literal run already folded into one.
+            // A string renders verbatim under `stringifyValue`, so a literal segment contributes its text unchanged.
             var text = ""
             for part in parts {
                 text += RuntimeOps.stringifyValue(try evaluate(part))
@@ -1305,31 +849,22 @@ public final class IRExecutor: DebugHookHost {
             return .string(text)
 
         case .isAsciiDigit(let argument):
-            // Mirrors `Interpreter`'s `is_ascii_digit` arm verbatim, including
-            // its non-fail-loud behaviour outside the ASCII domain: `Character`
-            // comparison puts every non-ASCII scalar above "9", so the predicate
-            // is effectively ASCII-only without a second range check. The empty
-            // string is false, not an error.
-            // G67: the parameter face moved from `String` to `Char`; `requireChar`
-            // takes either, because the two share a representation.
+            // Mirrors the interpreter's `is_ascii_digit` arm, including its non-fail-loud behaviour outside ASCII.
+            // Every non-ASCII scalar compares above "9", so no second range check is needed; the empty string is false.
             let s = try requireChar(try evaluate(argument), for: "is_ascii_digit")
             guard let first = s.first else { return .bool(false) }
             return .bool(first >= "0" && first <= "9")
 
         case .printMulti(let arguments):
-            // The interpreter's multi-argument `print`: every value rendered,
-            // joined with a single space, handed to the sink as one line (so a
-            // concurrent task cannot interleave inside it). Arguments are
-            // evaluated left to right — their evaluation is observable.
+            // The interpreter's multi-argument `print`: every value rendered, joined with one space, handed to the sink as one line.
+            // One line, so a concurrent task cannot interleave inside it; arguments are evaluated left to right, which is observable.
             let values = try arguments.map { try evaluate($0) }
             outputSink(values.map { RuntimeOps.stringifyValue($0) }.joined(separator: " "))
             return .null
 
         case .assertCall(let condition, let message):
-            // Mirrors the interpreter's `assert` arm. Both operands are
-            // evaluated before the condition is judged, because that is what the
-            // interpreter does — argument evaluation happens at the call site,
-            // and only then does the arm look at the values.
+            // Mirrors the interpreter's `assert` arm: both operands are evaluated before the condition is judged.
+            // The interpreter evaluates arguments at the call site, and only then does the arm look at the values.
             let conditionValue = try evaluate(condition)
             let messageValue = try message.map { try evaluate($0) }
             guard case .bool(let passed) = conditionValue else {
@@ -1354,11 +889,8 @@ public final class IRExecutor: DebugHookHost {
             throw RuntimeError.assertionFailed(message: text, location: IRExecutor.noLocation)
 
         case .arrayJoin(let receiver, let separator):
-            // Mirrors the interpreter's `join` arm: `stringify` each element and
-            // interpose the separator. Elements are stringified with the shared
-            // renderer rather than assumed to be strings — `[String]` is what the
-            // lowerer requires, but the value that arrives is whatever the array
-            // holds, and the interpreter stringifies unconditionally.
+            // Mirrors the interpreter's `join` arm: stringify each element and interpose the separator.
+            // The shared renderer runs unconditionally: the lowerer requires `[String]`, but the array holds whatever it holds.
             guard case .array(let elements) = try evaluate(receiver) else {
                 throw RuntimeError.invalidOperation(
                     reason: "join needs an Array receiver",
@@ -1370,28 +902,15 @@ public final class IRExecutor: DebugHookHost {
 
         case .stringCase(let isUpper, let receiver):
             // Contract §2.36: **Unicode-aware**, and the receiver is unchanged.
-            // The authority is the interpreter's `upper`/`lower` arms
-            // (`Interpreter.swift`, the `fv.name == "upper"` / `"lower"`
-            // branches), which are `String.uppercased()` / `.lowercased()`; the
-            // LLVM emitter's byte-wise ASCII-only pass is the deviating side and
-            // is filed as a B-group defect. Mirroring the contract here is
-            // therefore mirroring the interpreter, not choosing a tird reading.
+            // The authority is the interpreter's `upper` / `lower` arms — `String.uppercased()` / `.lowercased()`.
+            // The emitter's ASCII-only byte pass is the deviating side, so this mirrors the contract, not a third reading.
             let text = try requireString(try evaluate(receiver), for: "upper/lower")
             return .string(isUpper ? text.uppercased() : text.lowercased())
 
         case .stringContains(let receiver, let needle):
-            // The AST channel serves `contains` from `StdlibPini`'s Pini source
-            // (内建双层结构 sank it), so *that* file is the authority, not a Swift
-            // arm — the interpreter's native chain has a standing instruction not
-            // to reintroduce a by-name branch for a sunk method. The loop below is
-            // the same algorithm over `[Character]` (graphemes, 字符模型 = Grapheme Cluster):
-            // empty needle is true, otherwise scan for a grapheme-wise match.
-            //
-            // This is the structural cost of a sunk method: the authority is Pini
-            // source, which cannot be called from here without a cross-engine
-            // call, so the grid carries a second copy of the algorithm. The copy
-            // is guarded by `IRExecutorTests`' both-channel fixtures, which fail
-            // the moment the two readings drift. Same shape as G4's `sliceCall`.
+            // `contains` is served on the AST channel from `StdlibPini` (内建双层结构 sank it), so that source is the authority.
+            // The loop below is the same algorithm: empty needle is true, otherwise scan for a grapheme-wise match.
+            // A sunk method costs this second copy, which cannot call Pini from here; both-channel fixtures catch it drifting.
             let haystack = Array(try requireString(try evaluate(receiver), for: "contains"))
             let needleChars = Array(try requireString(try evaluate(needle), for: "contains"))
             if needleChars.isEmpty { return .bool(true) }
@@ -1412,19 +931,9 @@ public final class IRExecutor: DebugHookHost {
             return .bool(false)
 
         case .stringSubstring(let receiver, let start, let end):
-            // Contract §2.38: the second argument is an **end**, not a length —
-            // the registry declares `paramNames: ["start", "end"]` and the
-            // contract's note records that the emitter still reads it as a length
-            // (a filed B-group deviation). The enum's label is the misleading
-            // one; the binding is named `end` so the rule below is readable.
-            //
-            // Authority is `StdlibPini.substring`: negative bounds tail-count,
-            // both bounds clamp into `[0, len]`, and `hi < lo` yields the empty
-            // string. `len` is the grapheme count.
-            //
-            // ⚠️ 计数与切片都改走 `GraphemeCursor`：此前每次调用都 `Array(整串)`（O(整串长)），
-            //    而切片的真实下界只需 O(切片长)。⇒ `while i < n: s.substring(i, i+1)`
-            //    这种逐字符取片从 O(n²) 降到 O(n)。规则本身（下面这套夹取）一字未改。
+            // Contract §2.38: the second argument is an **end**, not a length, though the emitter still reads a length.
+            // Authority is `StdlibPini.substring`: negative bounds tail-count, both bounds clamp into `[0, len]`.
+            // `hi < lo` yields the empty string; counting and slicing go through `GraphemeCursor`, so slicing is O(n), not O(n²).
             let receiverText = try requireString(try evaluate(receiver), for: "substring")
             let n = GraphemeCursor.count(of: receiverText)
             var lo = try requireInt(try evaluate(start), for: "substring start")
@@ -1439,16 +948,9 @@ public final class IRExecutor: DebugHookHost {
             return .string(GraphemeCursor.slice(of: receiverText, from: lo, to: hi))
 
         case .stringSplit(let receiver, let delim, _):
-            // Contract §2.39 (A4): the result is a **real `Array<String>`** and
-            // **empty tokens are skipped**, which is what the LLVM arm's `strtok`
-            // loop already does. Stated as a decision, not a preference: the
-            // interpreter-side alignment (it currently keeps the empty segments —
-            // `StdlibPini.split` appends unconditionally) is the `stringSplit`
-            // grid's job and is registered there. This node follows the contract,
-            // which is where the authority sits.
-            //
-            // An empty separator yields one element per grapheme, mirroring
-            // `StdlibPini`'s explicit `m == 0` branch.
+            // Contract §2.39: a **real `Array<String>`** with empty tokens skipped, as the LLVM `strtok` loop does.
+            // The interpreter keeps them; aligning that is the `stringSplit` grid's job, so this node follows the contract.
+            // An empty separator yields one element per grapheme, as `StdlibPini`'s explicit `m == 0` branch does.
             let text = try requireString(try evaluate(receiver), for: "split")
             let characters = Array(text)
             let delimChars = Array(try requireString(try evaluate(delim), for: "split"))
@@ -1526,13 +1028,11 @@ public final class IRExecutor: DebugHookHost {
 
         // MARK: Not implemented yet — fail loud, named.
 
-        // MARK: Pointers and LazyRef (P2b grid G8)
+        // MARK: Pointers and LazyRef
 
         case .pointerLoad(let pointer, _):
-            // Mirrors the interpreter's `load` builtin. The element type comes
-            // from the pointer value rather than this node's own `type`
-            // payload: the lowerer derives that payload from the same argument,
-            // so the pointer stays the single source and the two cannot drift.
+            // Mirrors the interpreter's `load` builtin: the element type comes from the pointer, not this node's `type` payload.
+            // The lowerer derives that payload from the same argument, so the pointer stays the single source.
             guard case .rawPointer(let raw) = try evaluate(pointer) else {
                 throw RuntimeError.invalidOperation(
                     reason: "pointerLoad expects a *T pointer operand",
@@ -1554,12 +1054,8 @@ public final class IRExecutor: DebugHookHost {
             return .null
 
         case .addressOfVar(let name, _):
-            // Interpreter parity: `&x` snapshots the value into fresh memory, so
-            // writing through the pointer does not reach the variable. The
-            // contract's true-reference semantics is the address-of grid's
-            // delivery and is deliberately not taken here — taking it would put
-            // this arm in disagreement with the frozen AST arm and turn a
-            // non-blocking slot into a flip blocker.
+            // Interpreter parity: `&x` snapshots the value into fresh memory, so a write through the pointer misses the variable.
+            // True-reference semantics belongs to the address-of grid; taking it here would disagree with the frozen AST arm.
             return try RuntimeOps.snapshotPointer(
                 of: try currentEnv.get(name: name),
                 location: IRExecutor.noLocation
@@ -1637,12 +1133,8 @@ public final class IRExecutor: DebugHookHost {
             return .null
 
         case .fileRead(let pathExpr):
-            // The whole file, uncapped. The cap that used to be applied here was
-            // inherited from the emitter's fixed stack buffer rather than chosen,
-            // and it dropped everything past itself with no diagnostic and exit
-            // code 0 -- the shape that made a source file unreadable by the
-            // language for no stated reason. Both sides read it out now; the
-            // removal is documented in `IOLimits`.
+            // The whole file, uncapped: nothing is dropped and no truncation is silent.
+            // Both channels read it out whole, so a source file is never unreadable by the language for no stated reason.
             let rawReadPath = try requireString(evaluate(pathExpr), for: "readFile")
             let readPath = RuntimeOps.resolveIOPath(rawReadPath, programBase: programBase)
             do {
@@ -1716,10 +1208,8 @@ public final class IRExecutor: DebugHookHost {
             }
 
         case .readLine:
-            // Mirrors the interpreter's arm: the terminator is kept and the line
-            // is capped at the contract's byte limit. EOF is the empty string,
-            // which is distinguishable from an empty line precisely because the
-            // terminator is no longer stripped.
+            // Mirrors the interpreter's arm: the terminator is kept and the line is capped at the contract's byte limit.
+            // EOF is the empty string, distinguishable from an empty line precisely because the terminator is not stripped.
             guard let line = readLine(strippingNewline: false) else {
                 return .string("")
             }
@@ -1727,26 +1217,12 @@ public final class IRExecutor: DebugHookHost {
 
         // MARK: join
 
-        /// `await f` / `wait f`: the suspension engine is the CPS evaluator,
-        /// which this engine does not have. The arm is here because the node
-        /// set and the contract entry move together — the coverage check reads
-        /// both directions, so an unacknowledged node fails the build rather
-        /// than sliding through. It fails loud instead of returning a silent
-        /// `.null`: a lowerer rule without the engine behind it must show up
-        /// as an error, not as a plausible-looking wrong value.
+        // `await f` / `wait f`: the suspension engine is the CPS evaluator, which this engine does not have.
+        // The arm exists because the node set and the contract entry move together — the coverage check reads both directions.
+        // It fails loud rather than returning a silent `.null`, so a lowerer rule without an engine shows up as an error.
         case .join(let futureExpr, _, let form):
-            // `await f` / `wait f` (G-3c-1): evaluate the operand, then wait for it
-            // to resolve and deconstruct the carried ok / err.
-            //
-            // `form` says which keyword the site was written with, and that is now
-            // the only thing that can: the mode flag the retired implementation
-            // consulted had no assignment point outside the tests, and it left with
-            // the walk. Both forms still wait the same way — giving the task up
-            // across a join needs a body that can be resumed part-way through, and
-            // this engine walks the body on the machine stack. The form is carried
-            // through anyway so the difference has somewhere to land, and so a
-            // reader can tell the two apart at the one place that matters.
-            //
+            // `await f` / `wait f`: evaluate the operand, wait for it to resolve, then deconstruct the carried ok / err.
+            // `form` records which keyword the site used; both forms wait the same way — giving the task up needs a resumable body.
             // A `join` that is not given a future is a run-time type mismatch.
             let operand = try evaluate(futureExpr)
             guard case .future(let fut) = operand else {
@@ -1758,26 +1234,20 @@ public final class IRExecutor: DebugHookHost {
             }
             return RuntimeOps.joinFuture(fut, timeoutMs: nil, form: form)
 
-        // MARK: 默认实例取用（ADR-001）
+        // MARK: 默认实例取用
 
-        /// 取某类型的默认实例（契约 §2.46）。`P2a` 只落节点面：**没有降载入口**
-        /// ⇒ 本臂当前不可达，而它必须存在 —— 契约器械的覆盖检查**双向对账**
-        /// （未认领的节点直接让构建失败）。故这里 **fail-loud**、不静默返回一个
-        /// 看起来合理的值：物化面（存放位 + once + `bk_given_get`）属 `P2b`。
+        // 取某类型的默认实例（契约 §2.46）。本臂**没有降载入口** ⇒ 当前不可达，但必须存在：契约器械的覆盖检查双向对账。
+        // 故 fail-loud，不静默返回一个看起来合理的值；物化面属 `P2b`。
         case .givenInstance(let type):
-            // ADR-001 `P2b`：物化面已落 —— 与发射层同语义（惰性 · 恰一次 · 取副本）。
+            // 物化面：与发射层同语义（惰性 · 恰一次 · 取副本）。
             return try materializeGivenInstance(type)
         }
     }
 
     // MARK: - G7 operand helpers
 
-    /// One `String` operand, or a loud error naming the caller.
-    ///
-    /// The AST channel reaches these as builtin/member calls that typecheck the
-    /// argument before the arm reads it; this engine only has the value. A wrong
-    /// type is a genuine inconsistency (a module not produced by the lowerer),
-    /// so it fails loud rather than coercing.
+    // One `String` operand, or a loud error naming the caller.
+    // The AST channel typechecks first; a wrong type here means the module did not come from the lowerer, so it fails loud.
     private func requireString(_ value: Value, for what: String) throws -> String {
         guard case .string(let text) = value else {
             throw RuntimeError.invalidOperation(
@@ -1788,12 +1258,8 @@ public final class IRExecutor: DebugHookHost {
         return text
     }
 
-    /// One `Char` operand as its grapheme text, or a loud error naming the caller.
-    ///
-    /// G67: `Char` and `String` share a representation, and `Char` widening to
-    /// `String` is legal (see the implicit-conversion rule), so a `String` value
-    /// is accepted here too — a `Char`-faced operand that reached us through a
-    /// `String` position is still the same one grapheme.
+    // One `Char` operand as its grapheme text, or a loud error naming the caller.
+    // `Char` and `String` share a representation and widening is legal, so a `String` is accepted too: still one grapheme.
     private func requireChar(_ value: Value, for what: String) throws -> String {
         switch value {
         case .char(let text), .string(let text): return text
@@ -1816,13 +1282,9 @@ public final class IRExecutor: DebugHookHost {
         return number
     }
 
-    /// The declaration an `enumConstruct` names, by case name with the tag as a
-    /// fallback.
-    ///
-    /// The lowerer carries both because they come from the same declaration; a
-    /// miss on both is a real inconsistency (a module assembled by hand, or a
-    /// declaration dropped between lowering and execution), so the caller fails
-    /// loud rather than inventing an empty associated-value list.
+    // The declaration an `enumConstruct` names, by case name with the tag as a fallback.
+    // The lowerer carries both, so a miss on both is a real inconsistency: a hand-built module, or a dropped declaration.
+    // The caller fails loud rather than inventing an empty associated-value list.
     private func resolveEnumCase(enumName: String, caseName: String, tag: Int) -> IREnumCase? {
         guard let decl = enums[enumName] else { return nil }
         if let named = decl.cases.first(where: { $0.name == caseName }) { return named }
@@ -1830,37 +1292,11 @@ public final class IRExecutor: DebugHookHost {
         return decl.cases[tag]
     }
 
-    // MARK: - Nominal instances (P2a grid G5)
+    // MARK: - Nominal instances
 
-    /// The implicit constructor `名()`: one fresh instance whose fields hold
-    /// their declared defaults, and `.null` where a field declares none.
-    ///
-    /// Mirrors `Interpreter.createInstance` — including *where* the default
-    /// expressions run: the interpreter evaluates a field initializer against
-    /// the environment current at the construction site, so this does too. (The
-    /// lowerer compiles every field default in a scratch context with no
-    /// parameters, so a default can only be a closed expression; the site is
-    /// still the mirror of the interpreter's, not a free choice.)
-    ///
-    /// The value/reference split comes from the declaration: `isObject` picks
-    /// `ObjectReference` (whose refcount starts at 1) over `StructInstance`.
-    /// The interpreter registers such an object with its ARC manager so that
-    /// `WeakRef.isAlive` has something to answer; this engine has no ARC
-    /// surface at all (`weakRef` nodes are not implemented), so nothing here
-    /// reads that registry and nothing is registered in it. Recorded with the
-    /// grid rather than guessed at.
-    ///
-    /// A nominal with no declaration in this module yields an instance with no
-    /// fields — the interpreter's behaviour when its type registry has no entry
-    /// either, not a silent success invented here.
-    /// ADR-001 `P2b`：默认实例的物化（解释器臂）。
-    ///
-    /// 物化本身**复用 `constructValue`** —— 给定块的字段初值走的就是普通复合类型那条路，
-    /// 没有第二条算法（这是本批刻意做的：两条算法必然漂）。本函数只多管「记住」与「取副本」。
-    ///
-    /// ⚠️ 取副本是**白拿**的：`Value.structInstance` 是值类型，返回缓存值即得一份拷贝
-    /// （用户 2026-09-19 裁定：取实参的副本，与函数传参一致）。写实例自身字段因此不留痕，
-    /// 而经引用字段往下写对所有取用点可见 —— 与发射层逐字同语义。
+    // 默认实例的物化（解释器臂）—— 名义类型才可物化，其余报错。
+    // 物化复用 `constructValue`，本函数只多管「记住」与「取副本」：命中缓存即返回，否则构造后入表。
+    // `Value.structInstance` 是值类型，返回缓存值即得一份拷贝；写实例自身字段不留痕，经引用字段往下写则对所有取用点可见。
     private func materializeGivenInstance(_ type: IRType) throws -> Value {
         guard case .nominal(let name, _) = type else {
             throw RuntimeError.invalidOperation(
@@ -1874,26 +1310,9 @@ public final class IRExecutor: DebugHookHost {
         return materialized
     }
 
-    /// 派发点的后端：从**语言侧的默认声明**解析而来。
-    ///
-    /// 这条接线的内容 —— 程序可以在语言里说明它的调度器（那个预置给定块），而派发点读它：
-    /// 于是「用哪个调度器、它能做什么」由**程序**说了算，而不是由引擎写死一个常量。
-    /// 在此之前，唯一能改动派发点后端的办法是宿主注入一个替身，而那种改动**语言看不见**。
-    ///
-    /// ⚠️ **只读声明，不物化实例** —— 这不是优化，是正确性要求。
-    /// 本函数跑在装载期，而装载期的契约是**只注册、不运行**：
-    /// 在这里求值（哪怕只是读一个字段初值）会去碰一套**尚未就绪**的执行状态。
-    /// 实测代价是响亮的：改成本实现之前的那版在装载期物化实例，
-    /// 让同进程里另一条「取用默认实例」的判据**超时**、整个测试进程**段错误**。
-    /// ⇒ 读字段的**声明值**（一个已折叠的字面量）而不是它的**运行值**。
-    ///
-    /// ⚠️ **读法刻意宽容**：字段缺席、或它的值不是布尔字面量，一律取**语言默认**（可让出）。
-    /// 理由不是省事 —— 用户可以整块替换那份声明，若他替换时没提到这个字段就判红，
-    /// 等于拿一处**没写**去罚一处**没改**的地方，而这类名字的处置有一条承诺是「零破坏性」。
-    /// ⇒ 判据的区分力不靠这条路：靠的是「显式声明不能让出」那条，它会真的变红。
-    ///
-    /// ⚠️ 内层仍是宿主那**唯一**的后端（原语层的事，语言今天说不了）。
-    /// 本函数换的不是后端本体，而是**它按谁的声明作答**。
+    /// 派发点的后端从**语言侧的默认声明**解析而来：程序在语言里说明它的调度器（预置给定块），派发点读它。
+    /// **只读声明，不物化实例**：本函数跑在装载期，而装载期只注册不运行，此处求值会碰尚未就绪的执行状态。
+    /// 读法刻意宽容：字段缺席、或值不是布尔字面量，一律取语言默认（可让出），否则等于拿「没写」去罚「没改」。
     private func resolveSchedulerFromLanguage() -> Scheduler {
         SchedulerWithDeclaredCapability(
             inner: GCDScheduler.shared, canYield: declaredYieldCapability())
@@ -1933,30 +1352,9 @@ public final class IRExecutor: DebugHookHost {
         return .structInstance(StructInstance(typeName: name, fields: fieldValues))
     }
 
-    /// `base.field` — the read half of `Interpreter.evaluateMember`'s member
-    /// branch, for the two receivers that carry fields.
-    ///
-    /// A read of a field the receiver does not carry is *unreachable from Pini
-    /// source*: the lowerer resolves the field statically and refuses to build
-    /// this node when the nominal declares no such field. Reaching it here
-    /// therefore means the module and the engine disagree, and it says so
-    /// instead of yielding `.null` — a silently wrong value is the one outcome
-    /// this engine must never produce.
-    ///
-    /// Two interpreter rules are deliberately NOT mirrored, and both are
-    /// unreachable from a program that *typechecks* — not merely absent from the
-    /// corpus:
-    ///
-    /// - the type-private gate on `_`-prefixed names
-    ///   (`RuntimeError.inaccessibleField`): the checker already enforces it on
-    ///   **both** sides of the member rule (`TypeChecker.enforceFieldVisibility`,
-    ///   read and write), reporting `E3-012`, so mirroring it here would be a
-    ///   duplicate of a static rejection. The checker skips the gate when it
-    ///   cannot infer the receiver's static type, which is the one slit through
-    ///   which a program could still reach this node — recorded with the grid's
-    ///   judging gaps rather than implemented unverified.
-    /// - the bound-method fallback (reading a method as a value): the lowerer
-    ///   rejects a method outside call position, so no such node is ever built.
+    /// `base.field` — the read half of the interpreter's member branch; a miss reports the disagreement, never `.null`.
+    /// A missing field is unreachable: the lowerer resolves the field statically and refuses to build this node.
+    /// Not mirrored: the `_`-visibility gate and the bound-method fallback — the checker and the lowerer reject both.
     private func fieldRead(from base: Value, field: String) throws -> Value {
         switch base {
         case .structInstance(let instance):
@@ -1978,38 +1376,16 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// `base.field = value` — the write half of the interpreter's
-    /// `performMemberAssign`, arm for arm.
-    ///
-    /// The `let`-bound struct rule is here with the interpreter's own trigger:
-    /// only a receiver written as an identifier other than `self`. `self` is
-    /// exempt on purpose — a method body exists to write its receiver's fields,
-    /// and its binding is immutable by construction.
-    ///
-    /// The interpreter does two more things on this path and neither is
-    /// mirrored here, both recorded with the grid:
-    ///
-    /// - it deep-copies the incoming value (`copyIfStruct`). No differential
-    ///   fixture stores a struct into a field, so the rule has no observable
-    ///   consequence *today* on either channel; it is a real hole the moment
-    ///   IR replaces the AST engine, which is why it is filed as a defect
-    ///   instead of either implemented blind or left unmentioned.
-    /// - it applies the type-private gate to `_`-prefixed names — unreachable
-    ///   for the reason `fieldRead` records (the checker rejects it statically,
-    ///   `E3-012`), so it is not duplicated here.
-    ///
-    /// This node is only ever reached for the nominal family: the lowerer
-    /// resolves the base and refuses non-nominal receivers, so the trailing
-    /// branch reports an internal inconsistency with the interpreter's own
-    /// wording, not a new rule.
+    /// `base.field = value` — the write half of the interpreter's `performMemberAssign`, arm for arm.
+    /// The `let`-bound struct rule triggers on a receiver written as an identifier other than `self`; `self` is exempt.
+    /// Not mirrored: the deep copy of the incoming value (no fixture observes it) and the `_` gate (rejected statically).
     private func storeField(base: IRExpr, field: String, value: Value) throws {
         try storeField(on: try evaluate(base), base: base, field: field, value: value)
     }
 
-    /// `storeField` 的**已求值接收者**那一半 —— 拆出来是为了让 `obj.field[i] = v`
-    /// 那条链复用**同一次**接收者求值：它先读字段、写下标，再把新容器写回同一个接收者。
-    /// ⛔ 若那里改调 `storeField(base:…)`，`base` 会被**求值两次** ⇒ 接收者带副作用时
-    /// （`f().xs[i] = v` 一类）会多跑一次调用，而发射侧只求值一次 ⇒ 两腿不等价。
+    /// `storeField` 的**已求值接收者**那一半：让 `obj.field[i] = v` 复用**同一次**接收者求值。
+    /// 那里若改调 `storeField(base:…)`，接收者会被求值两次，带副作用时（`f().xs[i] = v`）会多跑一次调用。
+    /// 发射侧只求值一次，故两腿不等价 —— 拆分正是为了避免这一点。
     private func storeField(on receiver: Value, base: IRExpr, field: String, value: Value) throws {
         if case .load(let rootName, _) = base, rootName != "self",
             case .structInstance = receiver,
@@ -2040,22 +1416,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// `container.slice(start, end)` — the slice-sugar semantics.
-    ///
-    /// The AST channel does **not** implement this in Swift: `slice` sank to the
-    /// language-level stdlib (`StdlibPini.source`, the `((String))` and
-    /// `((Array))` blocks, 内建双层结构), so its reference implementation is Pini
-    /// source this engine cannot run. The bodies below are a native mirror of
-    /// that source, and the two are held together by the differential probe
-    /// rather than by shared code:
-    ///
-    /// - an open bound (`none`, or `.null`) means "the whole container" on that
-    ///   side, which is how the slice sugar spells `a[:2]` / `a[3:]` / `a[:]`;
-    /// - an integer bound is tail-counted when negative;
-    /// - both bounds are clamped to `[0, len]`, and `hi < lo` yields empty;
-    /// - `String` walks **grapheme clusters** (the AST channel's `self[k]` is a
-    ///   grapheme subscript), which is the contract (`字符模型 = Grapheme Cluster`). The LLVM side
-    ///   still slices bytes — the registered B-group deviation, and not something
-    ///   to "align" from this engine.
+    /// `slice` sank to `StdlibPini`, whose Pini source this engine cannot call, so the bodies below mirror it.
+    /// Open bound = whole, negative = tail-count, clamp to `[0, len]`, `hi < lo` empty; `String` slices graphemes.
     private func sliceValue(container: Value, start: Value, end: Value) throws -> Value {
         switch container {
         case .array(let elements):
@@ -2100,12 +1462,8 @@ public final class IRExecutor: DebugHookHost {
         return offset < 0 ? count + offset : offset
     }
 
-    /// `IRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the
-    /// operation through a builtin call instead of an operator.
-    ///
-    /// This mapping is IR vocabulary and lives here; the *meaning* of each
-    /// operator lives in `Interpreter.binaryValue`, so the two channels cannot
-    /// drift into two semantics.
+    /// `IRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the operation through a builtin call instead.
+    /// The mapping is IR vocabulary; each operator's meaning lives in `Interpreter.binaryValue`, so the channels cannot drift.
     static func operatorFor(_ op: IRBinaryOp) -> BinaryOperator? {
         switch op {
         case .add: return .plus
@@ -2124,8 +1482,8 @@ public final class IRExecutor: DebugHookHost {
         case .bitwiseXor: return .bitwiseXor
         case .leftShift: return .leftShift
         case .rightShift: return .rightShift
-        // LLVM grid G9: min/max lower to LLVM selects; the interpreter reaches
-        // them as builtin function calls, so there is no operator to map onto.
+        // LLVM: min/max lower to selects; the interpreter reaches them as
+        // builtin calls, so there is no operator to map onto.
         case .minOf, .maxOf: return nil
         }
     }
@@ -2135,11 +1493,10 @@ public final class IRExecutor: DebugHookHost {
         switch op {
         case .negate: return .minus
         case .logicalNot: return .not
-        // G-2c: `~` maps to the interpreter's own `.bitwiseNot`, so both
+        // `~` maps to the interpreter's own `.bitwiseNot`, so both
         // engines reach the shared `RuntimeOps.unaryValue` entry.
         case .bitwiseNot: return .bitwiseNot
-        // LLVM grid G9: `abs` is a builtin call on the AST channel, not a unary
-        // operator.
+        // `abs` is a builtin call on the AST channel, not a unary operator.
         case .abs: return nil
         }
     }
@@ -2152,12 +1509,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Mirror of `Interpreter.popDeferScope`: run this scope's defers LIFO.
-    ///
-    /// Two details are copied rather than chosen, because both are observable.
-    /// The scope is removed *before* its defers run, so a `defer` inside a
-    /// deferred statement registers in the scope that encloses this one (or
-    /// errors, if there is none). And the caller swallows whatever the defers
-    /// throw — see `executeBlock`.
+    /// The scope is removed before its defers run, so a `defer` inside a deferred statement registers in the enclosing scope.
+    /// The caller swallows whatever the defers throw — see `executeBlock`.
     private func popDeferScope() throws {
         guard !deferStack.isEmpty else { return }
         let groups = deferStack.removeLast()
@@ -2166,19 +1519,9 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// Run a statement list as a **block**: open a defer scope, run, close it on
-    /// every exit path.
-    ///
-    /// This is the interpreter's `executeBlock`, and it is called at exactly the
-    /// same boundaries — `if` / `else` branches, and `while` and `for-in` bodies
-    /// and steps. The function-body path does *not* come through here: it opens
-    /// its own scope inline, as `executeFunctionBody` does, because that path also
-    /// owns the `lastValue` rule and the environment restore.
-    ///
-    /// The `try?` on the close is deliberate. It is what the interpreter does, and
-    /// what it means is: a signal thrown by a deferred statement is discarded, and
-    /// whatever error is already unwinding keeps unwinding. "Fixing" this into a
-    /// propagated error would invent a divergence rather than remove one.
+    /// Run a statement list as a **block**: open a defer scope, run, close it on every exit path.
+    /// Called at `executeBlock`'s boundaries — `if` / `else`, `while`, `for-in`; a function body opens its own scope inline.
+    /// The `try?` on the close is deliberate: a deferred signal is discarded and the error already unwinding keeps unwinding.
     private func executeBlock(_ block: IRBlock) throws {
         pushDeferScope()
         defer { try? popDeferScope() }
@@ -2187,20 +1530,9 @@ public final class IRExecutor: DebugHookHost {
 
     // MARK: - Statements
 
-    /// Runs a statement list in order, yielding the value of the last expression
-    /// statement (`.null` when there is none).
-    ///
-    /// This is the interpreter's `lastValue` rule from `executeFunctionBody`, and
-    /// it is why control-flow bodies and function bodies can share one runner: a
-    /// body that is not a function body simply discards the result.
-    ///
-    /// This is also the pause site. The interpreter consults its debug hook
-    /// before each statement it is about to run, and so does this: same point in
-    /// the control flow, same context, same `.quit` contract — which is what
-    /// makes "the debugger works the same on both engines" a fact rather than a
-    /// hope. The position comes from the block, not from the node: a block that
-    /// carries none is skipped rather than reported with an invented line, so an
-    /// unwired block can never make the debugger stop somewhere fictional.
+    /// Runs a statement list in order, yielding the value of the last expression statement (`.null` when there is none).
+    /// The interpreter's `lastValue` rule, so control-flow and function bodies share one runner; others discard it.
+    /// Also the pause site: a block with no position is skipped, never stopped at an invented line.
     @discardableResult
     private func executeStatements(_ block: IRBlock) throws -> Value {
         var lastValue: Value = .null
@@ -2218,15 +1550,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Consult the debugger before a statement runs.
-    ///
-    /// Mirrors `Interpreter.debugPause(at:)`: the position is given by the
-    /// caller rather than read off a node, so the pause action does not depend
-    /// on statement shape — that is the half of the debug surface the two
-    /// engines genuinely share. `.quit` unwinds as `DebuggerError.quit`, the
-    /// same signal the interpreter throws.
-    ///
-    /// The hook is tested before the context is built, so an engine with no
-    /// debugger attached pays nothing — the interpreter's guard buys the same.
+    /// Mirrors `Interpreter.debugPause(at:)`: the position comes from the caller, not the node, so shape does not matter.
+    /// `.quit` unwinds as `DebuggerError.quit`; the hook is tested first, so an engine with no debugger pays nothing.
     private func debugPause(at location: SourceLocation) throws {
         guard let hook = debugHook else { return }
         let context = DebugContext(
@@ -2246,57 +1571,26 @@ public final class IRExecutor: DebugHookHost {
         switch statement {
 
         case .allocVar(let name, let type, let mutable, let initializer):
-            // Registered even without an initializer, as `.null` — the
-            // interpreter's `varDecl` does the same, so an uninitialized read is
-            // a value, not an "undefined variable" error, on both channels.
-            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
-            // field by field -- the rule the interpreter applies at the same
-            // point. Without it both engines share one storage, and a write
-            // through the copy surfaces in the original, silently.
+            // Registered even without an initializer, as `.null`: an uninitialized read is a value, not an undefined-variable error.
+            // Structs are copied field by field; without it a write through the copy reaches the original, silently.
             var value = try initializer.map { RuntimeOps.copyIfStruct(try evaluate($0)) } ?? .null
-            // P2a G2: binding-site relabel — the second of the interpreter's two
-            // label rules (`applyTypeAnnotationLabels`, which its `varDecl`
-            // calls). A value bound to a slot type that names components
-            // adopts those names; the declaration is the only thing that can
-            // supply them, since the literal wrote `(3, 2)` and meant it.
-            //
-            // The test is "the slot type names at least one component", not
-            // "the label array is non-empty": an unlabelled tuple type still
-            // carries one entry per field (`[nil, nil]`), and relabelling with
-            // those nils would *wipe* names the value already had. Which slot
-            // types arrive here named is decided at lowering time
-            // (`IRLowerer.slotType`), because only there is the initializer's
-            // static type still visible — the deciding fact is whether the
-            // declaration names more than the value-producing expression's own
-            // type does, and two bindings otherwise identical can differ on it.
-            //
-            // Synthetic allocVars (destructure slots, loop variables, try
-            // targets) carry types derived from the value itself, so their
-            // labels already agree and this is a no-op for them.
+            // Binding-site relabel: a value bound to a slot type that names components adopts those names.
+            // The test is "at least one named", not "non-empty": `[nil, nil]` would wipe names the value already had.
+            // Which slots arrive named is decided at lowering; for synthetic `allocVar`s this is a no-op.
             if case .tuple(let labels, _) = type, labels.contains(where: { $0 != nil }) {
                 value = RuntimeOps.relabelled(value, with: labels)
             }
             currentEnv.define(name: name, value: value, isMutable: mutable)
 
         case .storeVar(let name, _, let value):
-            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
-            // field by field -- the rule the interpreter applies at the same
-            // point. Without it both engines share one storage, and a write
-            // through the copy surfaces in the original, silently.
+            // Structs are copied field by field, the interpreter's rule at the same point.
+            // Without it both engines share one storage, and a write through the copy surfaces in the original, silently.
             try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
-            // Each branch is its own defer scope. The IR folds `elif` chains
-            // into a nested `ifStmt` in `elseBody`, so a chain of three branches
-            // is three scopes here for the same reason it is three on the AST
-            // channel — the interpreter reaches each `Block` through
-            // `executeBlock` too.
-            //
-            // 标签 break 定向范围: a labeled `if` is an interruptible frame, so its branch
-            // runs under a catch — mirroring `Interpreter.executeIf`, which
-            // wraps `executeIfBody` for exactly this reason. An unlabeled `if`
-            // runs bare: it has no signal of its own to consume, and catching
-            // for it would swallow a depth-1 signal aimed at an enclosing loop.
+            // Each branch is its own defer scope: `elif` chains fold into a nested `ifStmt`, so three branches are three scopes.
+            // 标签 break 定向范围: a labeled `if` is an interruptible frame, so its branch runs under a catch.
+            // An unlabeled `if` runs bare — catching for it would swallow a depth-1 signal aimed at an enclosing loop.
             if label == nil {
                 try executeIfBranch(condition: condition, thenBody: thenBody, elseBody: elseBody)
             } else {
@@ -2305,16 +1599,12 @@ public final class IRExecutor: DebugHookHost {
                 } catch let signal as IRControlSignal {
                     switch signal {
                     case .breakSignal(let depth):
-                        // `depth == 1` ⇒ this frame is the target: the `break`
-                        // leaves the block and control resumes after the `if`.
-                        // Anything deeper belongs to an enclosing frame and is
-                        // rethrown one level shallower.
+                        // `depth == 1` ⇒ this frame is the target: the `break` leaves the block and control resumes after the `if`.
+                        // Anything deeper belongs to an enclosing frame and is rethrown one level shallower.
                         if depth > 1 { throw IRControlSignal.breakSignal(depth: depth - 1) }
                     case .continueSignal(let depth):
-                        // An `if` frame is never a `continue` target
-                        // (`continue` resolves to loop frames only), so a
-                        // signal reaching here is aimed further out and its
-                        // residual depth is >= 2.
+                        // An `if` frame is never a `continue` target — `continue` resolves to loop frames only.
+                        // So a signal reaching here is aimed further out, and its residual depth is >= 2.
                         throw IRControlSignal.continueSignal(depth: depth - 1)
                     default:
                         throw signal
@@ -2335,42 +1625,29 @@ public final class IRExecutor: DebugHookHost {
 
         case .captureMarker(let name):
             // Not "unimplemented": the contract says this node lowers to nothing.
-            // Captures are resolved at the closure-literal creation point by
-            // free-variable analysis, and the interpreter's `captureStatement` is
-            // likewise a no-op (H-1: `capture` is a static purity declaration).
+            // Captures are resolved at the closure literal by free-variable analysis; `captureStatement` is likewise a no-op.
             // Failing loud here would misreport a defined no-op as a gap.
             _ = name
 
         case .subscriptStore(let container, let index, let value, _):
-            // Order copied from the interpreter's `.assign` on a subscript target:
-            // the VALUE is evaluated first, then the index, then the container
-            // chain. Side-effecting subexpressions (a call that prints) can
-            // observe the order, so it is mirrored rather than chosen.
-            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
-            // field by field -- the rule the interpreter applies at the same
-            // point. Without it both engines share one storage, and a write
-            // through the copy surfaces in the original, silently.
+            // Order copied from the interpreter: value first, then index, then the container chain — side effects observe it.
+            // Structs are copied field by field; without it a write through the copy surfaces in the original.
             let newValue = RuntimeOps.copyIfStruct(try evaluate(value))
             let targetIndex = try evaluate(index)
             try storeSubscript(target: container, index: targetIndex, newValue: newValue)
 
-        // MARK: Control flow (P2a grid G1)
+        // MARK: Control flow
 
         case .forInStmt(let pattern, _, let kind, let iterable, let body, let step):
-            // `elementTypes` is lowering-time information only. The contract's
-            // "`_` still occupies a slot and carries its type" is about the
-            // lowerer's arity check; at run time the row decomposition is the
-            // interpreter's, reused rather than restated.
+            // `elementTypes` is lowering-time only: the row decomposition at run time is the interpreter's, reused not restated.
             try executeForIn(
                 pattern: pattern, kind: kind, iterable: iterable,
                 body: body, step: step
             )
 
         case .deferStmt(let body):
-            // Registered, not run: LIFO order belongs to the scope
-            // (`popDeferScope`). The guard is the interpreter's — a `defer` with
-            // no enclosing block scope is an error, not a silent no-op — and it
-            // cannot fire for lowered source, since a function body is a scope.
+            // Registered, not run: LIFO order belongs to the scope (`popDeferScope`).
+            // The guard is the interpreter's: a `defer` with no enclosing scope is an error, and lowered source cannot reach it.
             guard !deferStack.isEmpty else {
                 throw RuntimeError.invalidOperation(
                     reason: "defer 必须在块作用域内使用",
@@ -2386,15 +1663,9 @@ public final class IRExecutor: DebugHookHost {
             throw IRControlSignal.continueSignal(depth: depth)
 
         case .detachStmt(let inner):
-            // `detach <expr>` (G-3c-1): prune the task from its parent so the
-            // parent's return stops cancelling it — fire-and-forget's only
-            // sanctioned exit, and the counterpart the strict structured rule
-            // needs to stay reversible.
-            //
-            // The operand is evaluated first and a non-future one is a run-time
-            // type mismatch, exactly where the interpreter reports it: refusing
-            // it at lowering time would place the error on the wrong side of
-            // the run-time boundary the two engines are being kept equal across.
+            // `detach <expr>`: prune the task from its parent so its return stops cancelling it — fire-and-forget's sanctioned exit.
+            // The operand is evaluated first, and a non-future is a run-time type mismatch, exactly where the interpreter reports it.
+            // Refusing it at lowering would move the error off the run-time boundary the two engines are kept equal across.
             let operand = try evaluate(inner)
             guard case .future(let fut) = operand else {
                 throw RuntimeError.typeMismatch(
@@ -2413,62 +1684,39 @@ public final class IRExecutor: DebugHookHost {
                 location: IRExecutor.noLocation
             )
 
-        // MARK: Try / match (P2a grid G6)
+        // MARK: Try / match
 
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, _):
-            // Mirrors the interpreter's `Expression.tryExpression` — the sole error
-            // propagation primitive since the try-else migration: the operand is
-            // statically a `Result`; `ok` yields its payload, `err` binds the
-            // payload and runs the handler. The handler statements run *here*
-            // (not as a block), so `return` / `break` / `continue` inside it leave
-            // as signals for the enclosing function or loop to catch, and their
-            // bare `pass` terminator just ends the statement — both are the
-            // interpreter's shape.
+            // Mirrors the interpreter's `tryExpression`: `ok` yields the payload, `err` binds it and runs the handler.
+            // The handler statements run here, not as a block, so their `return` / `break` / `continue` leave as signals.
+            // Their bare `pass` terminator just ends the statement — both are the interpreter's shape.
             let result = try evaluate(operand)
             try runTryResult(result, errorVar: errorVar, handler: handler, okTarget: okTarget)
 
         case .matchStmt(let scrutinee, let cases, _):
-            // The carried `scrutineeType` is deliberately not consulted: the
-            // interpreter's rule is value-based (what the value *is* decides which
-            // arm fires), and the static type has already done its work in the
-            // lowerer, where it chose which arm family to build. Reading it here
-            // would create a second dispatch that could disagree with the value.
+            // The carried `scrutineeType` is deliberately not consulted: the interpreter's rule is value-based.
+            // The static type already chose the arm family; reading it here would risk a second, disagreeing dispatch.
             let scrutineeValue = try evaluate(scrutinee)
             try runMatch(cases, scrutinee: scrutineeValue)
 
-        // MARK: Nominal field store (P2a grid G5)
+        // MARK: Nominal field store
 
         case .fieldStore(let base, let field, let value, _):
-            // Right-hand side first, receiver second — the order the interpreter's
-            // assignment path uses (it evaluates the value, then the member base).
-            // Observable only when both have effects, which is exactly when a
-            // mirror that guessed would be caught late.
-            // Value-type copy (LR-4 G-2R): a struct reaching a slot is copied
-            // field by field -- the rule the interpreter applies at the same
-            // point. Without it both engines share one storage, and a write
-            // through the copy surfaces in the original, silently.
+            // Right-hand side first, receiver second — the order the interpreter's assignment path uses.
+            // Observable only when both have effects, which is exactly when a guessed mirror would be caught late.
+            // Structs are copied field by field; without it a write through the copy reaches the original, silently.
             try storeField(base: base, field: field, value: RuntimeOps.copyIfStruct(try evaluate(value)))
         }
     }
 
-    /// One `match` arm, run the way `Interpreter.executeMatch` runs one: the arm's
-    /// bindings live in a fresh environment chained to the current one, the body
-    /// is a *block* (its defers run LIFO when it ends), and the arm environment is
-    /// dropped on **every** exit path — normal end, `return`, and the loop
-    /// signals, which is why the restore is a `defer` and not a trailing
-    /// statement.
-    ///
-    /// Bindings are positional by payload index: the lowerer already resolved
-    /// `case c(名: x)` to declaration order and rejected the out-of-order forms,
-    /// so the interpreter's run-time name lookup has no counterpart here. `nil` is
-    /// the `_` placeholder — it holds a position without binding anything.
+    /// One `match` arm, run the way `Interpreter.executeMatch` runs one.
+    /// Bindings live in a fresh chained environment and the body is a *block*; a `defer` drops the arm env on every exit.
+    /// Bindings are positional by payload index — the lowerer resolved declaration order — and `nil` is the `_` placeholder.
     private func executeArm(_ arm: IRMatchCase, scrutinee value: Value) throws {
         let caseEnv = Environment(enclosing: currentEnv)
         if case .enumValue(let ev) = value {
-            // The interpreter's arity gate, kept: bindings that do not line up with
-            // the associated values are a run-time error, not a silent `.null`
-            // (ADR named-associated-value decision, 2026-08-29). An arm with no
-            // bindings (a zero-payload case, a literal, a wildcard) is exempt.
+            // The interpreter's arity gate: mismatched bindings are a run-time error, not a silent `.null`.
+            // An arm with no bindings (a zero-payload case, a literal, a wildcard) is exempt.
             guard arm.bindings.isEmpty || arm.bindings.count == ev.associatedValues.count else {
                 throw RuntimeError.arityMismatch(
                     expected: ev.associatedValues.count,
@@ -2487,23 +1735,9 @@ public final class IRExecutor: DebugHookHost {
         try executeBlock(arm.body)
     }
 
-    /// `target[index] = newValue`, with the container value semantics the
-    /// interpreter uses: containers are values, so one write yields a **new**
-    /// container that is rebound at every level of the chain.
-    ///
-    /// Mirrors `Interpreter.writeSubscript` arm for arm:
-    ///
-    /// - variable target → rebind through `Environment.assign`, so an immutable
-    ///   binding is rejected here for the same reason and with the same error;
-    /// - nested target → write into the inner container, then recursively store
-    ///   that new inner value at the enclosing level. The inner index is
-    ///   evaluated *before* the inner container and therefore twice in total —
-    ///   that double evaluation is the interpreter's shape, kept as-is.
-    ///
-    /// The LLVM side reaches the same observable state by a different mechanism
-    /// (top-down COW: `bk_handle_ensure_unique` on the root slot, in-place
-    /// `*_ensure_unique_at` for the intermediate levels). The two chains are
-    /// compared on the output, not on the mechanism.
+    /// `target[index] = newValue`, with value semantics: a write yields a **new** container rebound at every level.
+    /// Mirrors `Interpreter.writeSubscript`: a variable target rebinds via `Environment.assign`, so `let` is rejected.
+    /// Nested: write into the inner container, store it back; the inner index is evaluated twice, as the interpreter does.
     private func storeSubscript(target: IRExpr, index: Value, newValue: Value) throws {
         switch target {
         case .load(let name, _):
@@ -2529,10 +1763,8 @@ public final class IRExecutor: DebugHookHost {
 
         case .fieldGet(let baseExpr, let field, _):
             // `obj.field[i] = v` —— 对**字段值**写下标，再把新容器**写回该字段**。
-            // ⚠️ 写回是必需的：容器写入可能分裂出新句柄（写时复制），不回写则那次写
-            //   会**静默丢失** —— 发射侧同一处的回写规则正是为这个存在的。
-            // ⚠️ `base` 只求值**一次**（同一个接收者用于读字段与写回），理由见
-            //   `storeField(on:base:field:value:)` 的说明。
+            // 写回是必需的：容器写入可能分裂出新句柄，不回写则那次写会**静默丢失**。
+            // `base` 只求值**一次**（同一接收者用于读字段与写回），理由见 `storeField(on:base:field:value:)`。
             let receiver = try evaluate(baseExpr)
             let containerValue = try fieldRead(from: receiver, field: field)
             let updated = try SubscriptWriteStrategy.write(
@@ -2555,23 +1787,9 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// Evaluate a condition and insist on `Bool`, mirroring the interpreter's
-    /// `guard case .bool` at both `executeIfBody` and `executeWhile` (a non-bool
-    /// condition is a `typeMismatch`, not a truthiness coercion).
-    /// A `match`'s arm selection, once the scrutinee value is in hand.
-    ///
-    /// Extracted from the `matchStmt` arm so the yield driver can finish a
-    /// suspended `match` by calling the same code rather than a second copy of
-    /// it. That matters more than it looks: the tail rule below is subtle enough
-    /// that a copy would be free to differ, and the difference would show up as
-    /// two engines disagreeing about whether an unmatched enum is an error —
-    /// exactly the kind of drift the LR-4 unification exists to prevent.
-    ///
-    /// The carried `scrutineeType` is deliberately not consulted: the
-    /// interpreter's rule is value-based (what the value *is* decides which arm
-    /// fires), and the static type has already done its work in the lowerer,
-    /// where it chose which arm family to build. Reading it here would create a
-    /// second dispatch that could disagree with the value.
+    /// A `match` arm selection, once the scrutinee value is in hand.
+    /// Extracted so the yield driver finishes a suspended `match` through the same code; the tail rule is too subtle to copy.
+    /// A copy would drift into two engines disagreeing about whether an unmatched enum is an error.
     private func runMatch(_ cases: [IRMatchCase], scrutinee value: Value) throws {
         for arm in cases {
             guard
@@ -2582,13 +1800,9 @@ public final class IRExecutor: DebugHookHost {
             try executeArm(arm, scrutinee: value)
             return
         }
-        // No arm fired — the interpreter's tail rule (D3①, R3): an enum value
-        // means the match was not exhaustive *at run time*, and says so with the
-        // case name; a bare value keeps the silent fall-through, because a
-        // literal's value space is infinite and `case _:` is how the language
-        // spells "everything else". Exhaustiveness itself is a checker duty
-        // (E3-007), so a shape that reaches here with an enum was not statically
-        // coverable.
+        // No arm fired: an enum value means the match was not exhaustive at run time, and says so with its case name.
+        // A bare value falls through silently, since a literal's value space is infinite and `case _:` spells the rest.
+        // Exhaustiveness is a checker duty (`E3-007`), so an enum reaching here was not statically coverable.
         if case .enumValue(let ev) = value {
             throw RuntimeError.matchNotExhaustive(
                 value: ev.caseName, location: IRExecutor.noLocation
@@ -2616,21 +1830,16 @@ public final class IRExecutor: DebugHookHost {
         let payload = ev.associatedValues.first ?? .null
 
         if ev.caseName == "ok" {
-            // Expression position (`let x = try f() else e: return`) arrives as
-            // `allocVar(x, initializer: nil)` followed by this node with
-            // `okTarget: x`, so this write is the *initialization* of an
-            // already-declared slot. `assign` would misread it as assigning to
-            // a `let` and reject a legal program.
+            // Expression position arrives as `allocVar(x, initializer: nil)` plus this node carrying `okTarget: x`.
+            // So this write is the *initialization* of a declared slot; `assign` would misread it as assigning to a `let`.
             if let okTarget = okTarget {
                 try currentEnv.initialize(name: okTarget, value: payload)
             }
             return
         }
 
-        // The handler statements run *here* (not as a block), so `return` /
-        // `break` / `continue` inside them leave as signals for the enclosing
-        // function or loop to catch, and their bare `pass` terminator just ends
-        // the statement.
+        // The handler statements run *here*, not as a block, so `return` / `break` / `continue` leave as signals.
+        // Their bare `pass` terminator just ends the statement.
         let handlerEnv = Environment(enclosing: currentEnv)
         handlerEnv.define(name: errorVar, value: payload, isMutable: true)
         let previousEnv = currentEnv
@@ -2666,18 +1875,9 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// Mirrors `Interpreter.executeWhile` (标签语法反转 step contract), with the
-    /// unwind spoken in depths instead of labels:
-    ///
-    /// - body completes normally → step runs;
-    /// - `continue` for this loop → step runs;
-    /// - `break` for this loop → return without running step;
-    /// - a `break`/`continue` aimed at an **outer** loop → rethrown one level
-    ///   shallower, and this loop's step is skipped. That skip is not an
-    ///   oversight: on the AST channel such a signal arrives with a label this
-    ///   loop does not match, and a mismatched label is rethrown from the body
-    ///   or the step without the step ever running.
-    /// - a `return` propagates unchanged, depths being a loop affair only.
+    /// Mirrors `Interpreter.executeWhile`, with unwind spoken in depths instead of labels.
+    /// Body completes normally, or a `continue` for this loop → step runs; a `break` for this loop → return without it.
+    /// A signal aimed at an outer loop is rethrown shallower with this step skipped, and a `return` propagates unchanged.
     private func executeWhile(condition: IRExpr, body: IRBlock, step: IRBlock?) throws {
         while true {
             if try !evaluateCondition(condition) { break }
@@ -2720,21 +1920,9 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// Mirrors `Interpreter.executeFor`:
-    ///
-    /// - the whole iterable is decomposed **before** the first iteration, so a
-    ///   pattern/element arity mismatch is an error even over an empty
-    ///   collection (that is why `decomposePatternRow` is shared, not restated);
-    /// - a dictionary row is `(key, value)` positionally and is *not* run
-    ///   through the per-element decomposition, so its 2-field guard is the only
-    ///   arity check on that path;
-    /// - each iteration gets a fresh `Environment` chained onto the current one,
-    ///   with `_` slots binding nothing and pattern names bound mutable;
-    /// - the step block runs **inside that same environment**, so a pattern name
-    ///   is still visible there (`testDiffStep` pins it);
-    /// - `break` skips the step of the loop being left, `continue` runs it, and
-    ///   an outer-aimed signal is rethrown shallower with this step skipped —
-    ///   the same rule as `executeWhile`, so the two loops are one contract.
+    /// Mirrors `Interpreter.executeFor`: the iterable is decomposed first, so an arity mismatch errors even when empty.
+    /// A dictionary row is `(key, value)` and skips the per-element decomposition; that 2-field guard is its only arity check.
+    /// Each iteration gets a fresh chained environment; the step runs inside it, and the unwind follows `executeWhile`'s rule.
     private func executeForIn(
         pattern: [String],
         kind: IRForIterableKind,
@@ -2828,12 +2016,8 @@ public final class IRExecutor: DebugHookHost {
     // MARK: - Calls
 
     /// Build the value half of a callable and register its body half beside it.
-    ///
-    /// The one place a function value is created, so the two halves cannot be
-    /// built apart: every `.function` that reaches the engine's own lookup was
-    /// registered here, and the lookup failing therefore means the value came
-    /// from somewhere else (a hand-built module) rather than from a missing
-    /// `make` call somewhere.
+    /// The one place a function value is created, so the halves cannot be built apart.
+    /// A lookup miss therefore means the value came from elsewhere — a hand-built module — not a missing `make` call.
     private func makeFunctionValue(
         name: String,
         paramNames: [String],
@@ -2854,21 +2038,16 @@ public final class IRExecutor: DebugHookHost {
         return .function(function)
     }
 
-    /// The component names a declared return type carries, when it is a named
-    /// tuple (`-> (商: I32, 余: I32,)`). A scalar, a positional tuple and a
-    /// void return all yield nothing, and `applyReturnLabels` then leaves the
-    /// value untouched.
+    /// The component names a declared return type carries, when it is a named tuple (`-> (商: I32, 余: I32,)`).
+    /// A scalar, a positional tuple and a void return yield nothing, and `applyReturnLabels` leaves the value untouched.
     private static func declaredReturnLabels(_ type: IRType?) -> [String?] {
         guard let type = type, case .tuple(let labels, _) = type else { return [] }
         return labels
     }
 
     /// Call a module-level function by its declaration.
-    ///
-    /// A module-level function is an ordinary case of the call path: its parent
-    /// environment is the global one and its labels come from its declared
-    /// return type. Together with the function-value case in `evaluate` this is
-    /// the whole of "how a call happens" — see `invoke` for why that matters.
+    /// Its parent is the global environment and its labels come from its return type — an ordinary case of the call path.
+    /// With the function-value case in `evaluate` this is the whole of how a call happens.
     private func call(_ function: IRFunction, args: [Value]) throws -> Value {
         try invoke(
             IRCallableBody(
@@ -2883,35 +2062,9 @@ public final class IRExecutor: DebugHookHost {
         )
     }
 
-    /// Run a lowered body against an argument list — the single call path,
-    /// shared by module-level functions and by function values.
-    ///
-    /// This was `call` until P2a grid G3, and it could be `call` because every
-    /// callable was a module-level function and its parent environment could be
-    /// written down as the global one. A closure's parent is the environment it
-    /// closed over instead, so the parent became a parameter. Extracting the
-    /// path rather than writing a second one is the point: the arity check, the
-    /// depth guard, the defer scope, the return-label rule and the trailing
-    /// expression rule are each a rule that two call paths would otherwise be
-    /// free to disagree about, and the disagreement would show up as one channel
-    /// computing something the other cannot.
-    ///
-    /// Argument binding mirrors `Interpreter.executeFunctionBody`: parameters
-    /// bound mutable, `return` caught here and unwrapped to the returned value
-    /// (`nil` → `.null`). The one deliberate difference from the module-level
-    /// case is *where the parent comes from*, and that is the caller's argument.
-    /// Calls a function value the engine holds a body for.
-    ///
-    /// The body is keyed by identity rather than by name: the parser gives every
-    /// anonymous `func` the name `<anon>`, so a name index would let two
-    /// closures overwrite each other. The parent environment is the value's own,
-    /// not the global one — that is the single rule separating a closure call
-    /// from a module-level one, and the reason the call path is parameterised
-    /// rather than copied.
-    ///
-    /// Shared by the indirect-call arm and `lazyRefValue`: the latter is the
-    /// same operation with a different trigger, so giving it its own copy would
-    /// create a second place for the rule to be got wrong.
+    /// Calls a function value the engine holds a body for: keyed by identity, since every anonymous `func` is `<anon>`.
+    /// Its parent is the value's own environment, not global — the one rule separating a closure call from a module-level one.
+    /// Both go through `invoke`, so arity, depth guard, defer scope, return labels and the trailing-expression rule exist once.
     private func callFunctionValue(_ function: FunctionValue, args: [Value]) throws -> Value {
         guard let callable = callableBodies[ObjectIdentifier(function)] else {
             throw RuntimeError.invalidOperation(
@@ -2937,10 +2090,8 @@ public final class IRExecutor: DebugHookHost {
             )
         }
 
-        // The arity check stays above the dispatch on purpose: it is a property
-        // of the call, not of the thread the body ends up on, and a spawned
-        // body's arity error would otherwise surface as a rejected Future the
-        // caller may never inspect rather than as a failure at the call site.
+        // The arity check stays above the dispatch on purpose: it is a property of the call, not of the thread the body lands on.
+        // Below the dispatch, a spawned body's arity error would surface as a rejected Future the caller may never inspect.
         if callable.isAsync {
             return try spawnAsync(callable, parent: parent, args: args, name: name)
         }
@@ -2948,14 +2099,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Run an async body on a worker thread; hand the caller a pending Future.
-    ///
-    /// Mirrors the interpreter's `isAsync` branch, because the two engines have
-    /// to agree about more than the value: linking the child to its parent
-    /// *before* the body can run, setting the task handle on the worker rather
-    /// than the caller, and closing the scope on **both** exits are each a rule
-    /// a second copy would be free to get wrong — and getting the scope close
-    /// wrong shows up as a leak warning at best and a silently dropped failure
-    /// at worst.
+    /// Mirrors the interpreter's `isAsync` branch: link the child before the body runs, put the handle on the worker.
+    /// Closing the scope on both exits is the third such rule; getting it wrong leaks or drops a failure silently.
     private func spawnAsync(
         _ callable: IRCallableBody, parent: Environment, args: [Value], name: String
     ) throws -> Value {
@@ -2984,10 +2129,8 @@ public final class IRExecutor: DebugHookHost {
                     // surface at this boundary instead of vanishing.
                     return .finished(IRExecutor.closeTask(future, value: result))
                 case .givenUp(let frame):
-                    // The thread goes back to the pool with nothing sent to the
-                    // future. The body is not done, and the resumer owns
-                    // completion from here — which is the entire content of
-                    // "the task was given up".
+                    // The thread goes back to the pool with nothing sent to the future: the body is not done.
+                    // The resumer owns completion from here — that is the entire content of "the task was given up".
                     self.attachResume(frame, task: future)
                     return .suspended
                 }
@@ -3006,18 +2149,9 @@ public final class IRExecutor: DebugHookHost {
         RuntimeOps.flipIfLeaked(value, leaked: future.closeScope())
     }
 
-    /// The synchronous body path: bind the arguments, run the statements, unwrap
-    /// the return signal.
-    ///
-    /// Since `DE-2b` this is a wrapper over `invokeBodyStep` rather than the body
-    /// loop itself, so that the two callers share one prologue and one exit rule.
-    /// The unwrap below is the whole of what being synchronous means here, and
-    /// since the driver tries yielding only inside an async body it can no longer
-    /// fire on a program: a synchronous body keeps occupying the thread at a
-    /// join, `await` and `wait` alike. It stays as a guard on this engine rather
-    /// than on its inputs — a suspension arriving here means the driver offered a
-    /// resume where none can exist, which is a defect in the driver and not a
-    /// program outcome, so it is named rather than papered over.
+    /// The synchronous body path: bind the arguments, run the statements, unwrap the return signal.
+    /// A wrapper over `invokeBodyStep` for a shared prologue and exit rule; the unwrap is the whole of what synchronous means.
+    /// A suspension arriving here is a driver defect, since a sync body keeps the thread at a join, so it is named.
     private func invokeBody(
         _ callable: IRCallableBody,
         parent: Environment,
@@ -3037,13 +2171,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Enter a body and run it, reporting a suspension rather than hiding it.
-    ///
-    /// The prologue is `invokeBody`'s, unchanged: stack guard, argument binding,
-    /// environment, defer scope. What differs is the exit. A body that finished
-    /// unwinds exactly as before. A body that gave the task up must **not** unwind
-    /// — running its `defer`s at a suspension would be a semantic change, not a
-    /// cleanup — and must leave the worker thread clean, which `standDown` does
-    /// and the comment there explains.
+    /// The prologue is `invokeBody`'s: stack guard, argument binding, environment, defer scope; what differs is the exit.
+    /// A given-up body must not unwind: its `defer`s would run at a suspension; `standDown` leaves the thread clean.
     private func invokeBodyStep(
         _ callable: IRCallableBody,
         parent: Environment,
@@ -3064,13 +2193,9 @@ public final class IRExecutor: DebugHookHost {
         let previousEnv = currentEnv
         currentEnv = callEnv
 
-        // A function body is a defer scope of its own — the interpreter opens one
-        // in `executeFunctionBody` rather than routing through `executeBlock`,
-        // because it also owns the `lastValue` rule. Registration order is the
-        // interpreter's and is load-bearing: the defers run *before* the
-        // environment restore, so they still see the function's own environment.
-        // That order is now spelled out in `exitBody` instead of by two Swift
-        // `defer`s, because a suspended body must not take either of them.
+        // A function body is a defer scope of its own, as in `executeFunctionBody`, since it also owns `lastValue`.
+        // Defers run before the environment restore, so they still see the function's own environment.
+        // `exitBody` spells that out instead of two `defer`s, because a suspended body must not take either.
         pushDeferScope()
 
         let step: IRBodyStep
@@ -3103,13 +2228,9 @@ public final class IRExecutor: DebugHookHost {
         return step
     }
 
-    /// Pick a given-up body back up, on whichever thread the awaited future
-    /// settled on.
-    ///
-    /// No prologue: the arguments were bound before the body gave the task up,
-    /// and their environment is the one in the frame. Re-entering through the
-    /// prologue would rebind them over a body that has already moved past them,
-    /// which is how a resumed body would quietly restart with fresh parameters.
+    /// Pick a given-up body back up, on whichever thread the awaited future settled on.
+    /// No prologue: the arguments were bound before the suspension and their environment is the one in the frame.
+    /// Re-entering the prologue would rebind them over a body already past them, restarting it with fresh parameters.
     private func resumeBody(_ frame: IRYieldFrame, awaited: Value) throws -> IRBodyStep {
         currentEnv = frame.env
         callDepth = frame.callDepth
@@ -3147,15 +2268,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Leave the worker thread with nothing of this body left on it.
-    ///
-    /// The four thread-locals are *cleared* rather than restored, and that is not
-    /// tidiness: a suspended body has no outer frame to restore to, because the
-    /// thread it was on goes back to the pool and the body continues somewhere
-    /// else. Leaving them set would let the next task to land on this thread
-    /// enter with a non-zero call depth, a stranger's backtrace and a stranger's
-    /// defer scopes — and the depth one would present as a recursion-guard error
-    /// on an unrelated task, which is about the least diagnosable shape a bug can
-    /// take. The frame carries the real values, so nothing is lost by clearing.
+    /// The four thread-locals are *cleared*, not restored: a suspended body has no outer frame on that thread.
+    /// Left set, the next task inherits a stranger's depth, backtrace and defers; the frame carries the real values.
     private func standDown() {
         callDepthStorage.value = nil
         callStackNames = []
@@ -3163,10 +2277,8 @@ public final class IRExecutor: DebugHookHost {
         currentEnvStorage.value = nil
     }
 
-    /// The body loop's signal rule, shared so the first run and every resumed run
-    /// apply it once instead of twice: a `return` is the body's own and becomes
-    /// the value, with the interpreter's return-site labels applied; every other
-    /// signal belongs to a loop or a function further out and is rethrown intact.
+    /// The body loop's signal rule, shared so the first run and every resume apply it once.
+    /// A `return` is the body's own and becomes the value, with return-site labels applied; every other signal is rethrown.
     private func bodyOutcome(
         returnLabels: [String?],
         _ run: () throws -> IRBodyStep
@@ -3175,42 +2287,18 @@ public final class IRExecutor: DebugHookHost {
             return try run()
         } catch let signal as IRControlSignal {
             if case .returnSignal(let value) = signal {
-                // P2a G2: the interpreter's return-site rule, fed from the declared
-                // return type instead of the AST's `returnLabels` (the engine
-                // has no AST). Only the explicit `return` path is relabelled:
-                // an implicit trailing expression is left alone because the
-                // interpreter leaves it alone too, and relabelling it here
-                // would invent a difference rather than remove one.
-                //
-                // A closure passes no labels, and that is a mirror rather than a
-                // shortcut: the interpreter builds a closure's `FunctionValue`
-                // with no declaration attached, so its return-label list is empty
-                // and the rule has nothing to apply there either.
+                // The interpreter's return-site rule, fed from the declared return type instead of the AST's `returnLabels`.
+                // Only the explicit `return` path is relabelled; an implicit trailing expression is left alone, as the interpreter does.
+                // A closure passes no labels, mirroring a `FunctionValue` built with no declaration attached.
                 return .finished(RuntimeOps.applyReturnLabels(returnLabels, to: value ?? .null))
             }
             throw signal
         }
     }
 
-    /// Run a body's statements, and report a suspension instead of causing one.
-    ///
-    /// `pending` is how a resumed run rejoins the loop: the statement at `from`
-    /// was already started before the task was given up, so it is finished with
-    /// the awaited value and the loop carries on from the statement after it. The
-    /// `lastValue` accumulator travels in the frame for the same reason the index
-    /// does — it is part of where the body was, and a resumed body that dropped it
-    /// would return the wrong value for a body whose last statement is an
-    /// expression.
-    /// - Parameter yieldable: whether the body this loop belongs to may give the
-    ///   task up at all. Only an async body may, and the reason is semantic rather
-    ///   than mechanical: `await` says the *site* may yield, but yielding needs a
-    ///   body that can be resumed part-way, and only an async body has a task to
-    ///   give up in the first place. A synchronous body has none, so an `await`
-    ///   written there keeps the older behaviour — it occupies the thread, exactly
-    ///   as `wait` does. That is not a fallback invented here: an existing
-    ///   criterion pins it (`ConcurrencyJoinFormTests`, "both forms agree while
-    ///   yielding is absent"), so treating it as an error would have this batch
-    ///   change a program's meaning instead of adding a capability to it.
+    /// Run a body's statements, reporting a suspension; `lastValue` travels in the frame, since it is where the body was.
+    /// `pending` rejoins a resumed run: the statement at `from` is finished with the awaited value, then the loop carries on.
+    /// - Parameter yieldable: only an async body may give the task up; a sync body keeps the thread, exactly as `wait` does.
     private func driveStatements(
         _ callable: IRCallableBody,
         previousEnv: Environment,
@@ -3234,10 +2322,8 @@ public final class IRExecutor: DebugHookHost {
             }
 
             if yieldable, let plan = yieldPlan(for: statement) {
-                // The operand is evaluated synchronously and deliberately: it is
-                // the thing that *produces* the future, so it cannot itself be
-                // waiting on one. A join nested inside it is refused by the
-                // lowerer, which is what keeps this call off the recursive path.
+                // The operand is evaluated synchronously and deliberately: it *produces* the future, so it cannot wait on one.
+                // A join nested inside it is refused by the lowerer, which keeps this call off the recursive path.
                 let operand = try evaluate(plan.operand)
                 guard case .future(let fut) = operand else {
                     throw RuntimeError.typeMismatch(
@@ -3247,23 +2333,9 @@ public final class IRExecutor: DebugHookHost {
                     )
                 }
 
-                // A settled future is not a reason to give the task up. Taking
-                // the value straight away keeps `await` on the same path as `wait`
-                // whenever there is nothing to wait for — which is both cheaper
-                // and observably calmer, since it costs no task switch to collect
-                // a child that has already finished.
-                //
-                // The tird case is the back end answering "not this time". `await`
-                // promises to give the task up, but that promise needs a back end
-                // that can hand the OS thread back, and a back end that cannot is
-                // not a broken configuration — it is a compliant one (DE-1 §6.2
-                // discipline 3: degrade, do not fail). So the wait is taken
-                // occupying the thread instead, exactly as `wait` would, and
-                // nothing is reported. Giving the task up here would be worse than
-                // degrading: a suspended body whose future can only be settled by
-                // someone this back end will never schedule is a deadlock, and a
-                // deadlock is not a "supported with reduced semantics" reading of
-                // `await` — it is a program that stops.
+                // A settled future is no reason to give the task up: taking the value keeps `await` on `wait`'s path, with no task switch.
+                // The third case is the back end saying "not this time": compliant, not broken, so the wait occupies the thread silently.
+                // Suspending there would deadlock, which is not a reduced reading of `await` but a program that stops.
                 if fut.isFinished {
                     let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
                     if let updated = try finishYield(plan, value: value) { last = updated }
@@ -3274,17 +2346,9 @@ public final class IRExecutor: DebugHookHost {
                             index: position,
                             finish: { [weak self] value in
                                 guard let self = self else { return nil }
-                                // The child's lifetime is consumed here, and this is the
-                                // one way into `finishYield` that has to say so itself:
-                                // the other two arrive from `joinFuture`, whose exit is a
-                                // `detachFromParent()`. Without it the child stays in this
-                                // body's scope, and the return boundary reads a failure
-                                // that was waited for as one nobody joined -- so the body's
-                                // own `ok` comes out as `err(aggregate)` and whatever the
-                                // body did with the error is discarded. Coming back to
-                                // collect the value is what consumes it; that is the same
-                                // moment `joinFuture` prunes at, not the moment the body
-                                // gives the task up.
+                                // The child's lifetime is consumed here, and this is the one way into `finishYield` that must say so itself.
+                                // Without it the child stays in this body's scope, so the return boundary reads a waited-for failure as unjoined.
+                                // Then the body's own `ok` comes out as `err(aggregate)` and whatever it did with the error is discarded.
                                 fut.detachFromParent()
                                 return try self.finishYield(plan, value: value)
                             },
@@ -3336,19 +2400,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// Finish the statement a given-up body stopped in, from the awaited value.
-    ///
-    /// The `var` case is the one that is not a one-liner, and it is the one worth
-    /// reading. The initializer is **not** the last thing that statement does:
-    /// two further steps follow it inside the same arm — the value-type copy and
-    /// the binding-site relabel — and both are load-bearing. A resume that only
-    /// remembered "the initializer is done" would skip them and bind a value that
-    /// is neither copied nor relabelled, and the difference would not show up in
-    /// the output of an ordinary program: it surfaces only where a value type
-    /// shares storage with its copy. So the whole tail of the arm is replayed
-    /// here, and this function is the one place that knows it.
-    ///
-    /// Returning `nil` means "this statement did not contribute a value", which is
-    /// the loop's `lastValue` rule: only an expression statement does.
+    /// The `var` case replays the arm's whole tail — the struct copy and the relabel — which a naive resume would skip.
+    /// Returning `nil` means the statement contributed no value, as `lastValue` counts only expression statements.
     private func finishYield(_ plan: IRYieldPlan, value: Value) throws -> Value? {
         switch plan {
         case .expressionStatement:
@@ -3374,10 +2427,9 @@ public final class IRExecutor: DebugHookHost {
 
     // MARK: - 就绪队列的驱动面（`Q-3`：结果决出 ⇒ 入队，而非直接重入体）
 
-    /// 一个**已决出、待续跑**的任务 —— 策略层那份队列里那个句柄背后所指的东西。
-    ///
-    /// ⚠️ 它是**驱动层的私面**：队列元素按裁定只是**不透明标量句柄**，句柄在这边映射到
-    /// 哪件东西是驱动层自己的事 ⇒ 策略层那份队列**不必**认识任务、也不必认识帧。
+    /// 一个**已决出、待续跑**的任务 —— 策略层队列里那个句柄所指的东西。
+    /// 它是**驱动层的私面**：队列元素只是不透明标量句柄，句柄映射到哪件东西由驱动层决定。
+    /// ⇒ 策略层不必认识任务，也不必认识帧。
     private struct ReadyItem {
         let task: FutureValue
         let frame: IRYieldFrame
@@ -3386,10 +2438,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// 这次去问策略层，得到了什么。
-    ///
-    /// ⚠️ 「空」与「缺陷」**必须分开**：前者是正常状态（刚建好的队列就是空的），
-    /// 后者是策略给了一个**从没发出去过**的句柄。混成一个读数就会把缺陷读成「暂时没活」，
-    /// 于是**静默地什么都不做** —— 那是本引擎最不能出的结果。
+    /// 「空」与「缺陷」必须分开：前者是正常状态（刚建好的队列就是空的），后者是策略给了个从没发出去过的句柄。
+    /// 混成一个读数会把缺陷读成「暂时没活」，于是静默什么都不做 —— 那是本引擎最不能出的结果。
     private enum ReadyTake {
         case item(ReadyItem)
         case empty
@@ -3397,39 +2447,26 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// 句柄 → 待续跑项。
-    ///
-    /// ⚠️ **跨线程共享**：谁把结果决出，就由谁把任务入队 ⇒ **写入方是多条工作线程**，
-    /// 而读取方是驱动循环。故它由 `readyLock` 守护，⛔ 不是「反正单线」——
-    /// 「同族的既有状态已有隔离」这条**推不到**新状态上。
+    /// **跨线程共享**：谁把结果决出就由谁入队，故写入方是多条工作线程，读取方是驱动循环。
+    /// 由 `readyLock` 守护 —— 「同族既有状态已有隔离」这条推不到新状态上。
     private var readyItems: [Int: ReadyItem] = [:]
 
     /// 下一个要发的句柄。
-    ///
-    /// ⭐ 取值约定**沿语言层既有约定**：那句「没有下一个」在降载后是一个**整数零**
-    /// ⇒ 这里保留 `0`、真任务从 `1` 起。⛔ 不引入指针承载 —— 队列元素按裁定只是
-    /// **不透明标量**，换成地址反而要自己管它的生命周期。
+    /// 「没有下一个」在降载后是一个**整数零** ⇒ 这里保留 `0`、真任务从 `1` 起。
+    /// 不引入指针承载：队列元素只是**不透明标量**，换成地址反而要自己管生命周期。
     private var nextReadyHandle = 1
 
     /// 「趟」的两笔账：**有人要挑**、**已经有一趟在挑**。
-    ///
-    /// ⚠️ 为什么需要它们：一批任务**全部入队之后**才请挑选循环，但请挑选这件事本身
-    /// 可能落在**另一条线程**上（同一时刻可能有多批）⇒ 用「已有循环在跑就只记一笔」把它收成
-    /// **同一时刻只跑一趟**，那一笔由收工的那趟兑现（见 `runReadyLoop` 尾部的对账）。
+    /// 一批任务全部入队后才请挑选循环，而请挑选可能落在另一条线程上（同一时刻可能有多批）。
+    /// ⇒ 用「已有循环在跑就只记一笔」收成同一时刻只跑一趟，那一笔由收工的那趟兑现。
     private var readyDrainRequested = false
     private var readyDrainScheduled = false
     private var readyDraining = false
     private let readyLock = NSLock()
 
-    /// 一批待续跑项：**同一个被等的未来**上挂着的全部帧。
-    ///
-    /// ⭐ 一个未来**只挂一个**回调 —— 这是「顺序由策略决定」成立的**前提**，不是优化：
-    /// 一次决出会**同步地、依次**唤醒所有在等它的任务。若让**每个**唤醒各自去入队、
-    /// 各自去请挑选，第一趟挑选就可能发生在这批里**还有任务没入队**的时刻 ⇒
-    /// 第一个醒来的被挑走 ⇒ 挑选顺序退回**决出顺序**，策略层**无选择可言**，
-    /// 那条判据（顺序 = 策略给的顺序）也就**失去对象**。
-    /// ⇒ 按「被等的未来」**并批**：一个回调负责把这一批**先全部入队、再挑**。
-    ///
-    /// ⚠️ 帧与任务**成对**存：同一批里的帧属于**不同的任务**（一个任务同时只有一个未决帧）。
+    /// 一批待续跑项：**同一个被等的未来**上挂着的全部帧，帧与任务**成对**存（一个任务同时只有一个未决帧）。
+    /// 一个未来只挂一个回调，是「顺序由策略决定」成立的前提：漏了它，挑选顺序会退回决出顺序。
+    /// 故按「被等的未来」并批：一个回调负责把这一批**先全部入队、再挑**。
     private struct PendingFrame {
         let frame: IRYieldFrame
         let task: FutureValue
@@ -3437,19 +2474,15 @@ public final class IRExecutor: DebugHookHost {
     private var framesAwaitingSettle: [ObjectIdentifier: [PendingFrame]] = [:]
 
     /// 调策略层那两个方法的**串行面**。
-    ///
-    /// ⚠️ 那两个方法碰的是**同一个对象**（策略层那份队列）：入队来自决出方、
-    /// 取一个来自驱动循环 ⇒ 两条线程会同时碰它。
-    /// ⛔ 这不是「给队列换个主人」—— 队列仍归策略层；本锁只管**调用不重叠**。
+    /// 那两个方法碰的是同一个对象：入队来自决出方、取一个来自驱动循环 ⇒ 两条线程会同时碰它。
+    /// 队列仍归策略层，本锁只管**调用不重叠**。
     private let strategyLock = NSLock()
 
     /// 语言层那句「没有下一个」在运行期的样子。
     private static let emptyHandle = 0
 
     /// 策略层那两个方法在方法表里的键。
-    ///
-    /// ⚠️ 键**用降载器同一个改名函数**算，⛔ 不在这里手写一份拼法：
-    /// 手写的那份改名时不出声，而它错的那一刻症状是「执行器找不到自己程序里的方法」。
+    /// 键用**降载器同一个改名函数**算，不在这里手写拼法：手写的那份改名时不出声，错时的症状是找不到自己程序里的方法。
     private var strategyMethodKeys: (accept: String, pick: String) {
         let typeName = IRName.mangle(PredefinedDecls.schedulerTypeName)
         return (
@@ -3540,10 +2573,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// 把一个策略层给的答案读成句柄号。
-    ///
-    /// ⚠️ 那一格的声明是**单元素元组**，而「单元素返回」在本语言里不写括号 ⇒
-    /// 两种形态都得认。⛔ 认不出就报缺陷 —— 静默当成「没有下一个」会把
-    /// 「策略坏了」读成「暂时没活」。
+    /// 那一格的声明是**单元素元组**，而「单元素返回」在本语言里不写括号 ⇒ 两种形态都得认。
+    /// 认不出就报缺陷 —— 静默当成「没有下一个」会把「策略坏了」读成「暂时没活」。
     private static func handleNumber(_ value: Value) -> Int? {
         if case .int(let handle) = value { return handle }
         if case .tuple(_, let elements) = value, elements.count == 1,
@@ -3621,23 +2652,9 @@ public final class IRExecutor: DebugHookHost {
         print("[scheduler] ⛔ 策略层给出的答案不可用，就绪队列停止驱动：\(detail)")
     }
 
-    /// Wait for the future a body gave the task up on, and hand the bodies to the
-    /// policy when it settles.
-    ///
-    /// `Q-3`: settling no longer resumes a body **directly** — it offers the task
-    /// to the scheduler's queue, and the driver loop picks it back up in the order
-    /// the policy gives. That indirection is the difference between "the scheduler
-    /// can be replaced" and "the completion order decides everything": on the
-    /// direct path there is nothing for a policy to choose between.
-    ///
-    /// The registration is **per awaited future, not per frame** — see
-    /// `framesAwaitingSettle` for why that grouping is what makes a policy's
-    /// choice observable at all.
-    ///
-    /// The old note holds for everything else: no thread is held on this side
-    /// while the body waits, so a task that awaits a child costs a continuation
-    /// instead of a worker — which is what makes the bounded pool a bound rather
-    /// than a queue of parked threads.
+    /// Wait for the future a body gave the task up on, and hand the bodies to the policy when it settles.
+    /// Settling offers the task to the scheduler's queue rather than resuming it, so the policy's order decides.
+    /// Registration is per awaited future, not per frame, and no thread is held while the body waits.
     private func attachResume(_ frame: IRYieldFrame, task: FutureValue) {
         let key = ObjectIdentifier(frame.awaited)
         readyLock.lock()
@@ -3653,9 +2670,8 @@ public final class IRExecutor: DebugHookHost {
     }
 
     /// 一个被等的未来有了结果（或失败）⇒ 处置它名下那一批。
-    ///
-    /// ⭐ 顺序是「**先全部入队、再请挑选**」，两步分开且都在这一个回调里 ⇒
-    /// 策略层看到的是**整批**，而不是「先醒来的那一个」。
+    /// 顺序是「**先全部入队、再请挑选**」，两步分开且都在这一个回调里。
+    /// ⇒ 策略层看到的是**整批**，而不是「先醒来的那一个」。
     private func settleBatch(key: ObjectIdentifier, outcome: Result<Value, RuntimeError>) {
         readyLock.lock()
         let batch = framesAwaitingSettle.removeValue(forKey: key) ?? []
@@ -3672,13 +2688,8 @@ public final class IRExecutor: DebugHookHost {
             guard enqueuedAny else { return }
             scheduleReadyDrain()
         case .failure(let error):
-            // The body never gets its value, so it never reaches its own
-            // closing act; the scope has to be closed here or its children
-            // keep running under a task that is already over. Whatever the
-            // close reports as leaked is dropped on purpose: this task is
-            // failing on its own account, and folding an aggregate of
-            // nobody-joined children into the error would replace the reason
-            // the await failed with a list of bystanders.
+            // The body never gets its value, so it never reaches its closing act; the scope is closed here or children keep running.
+            // Leaks the close reports are dropped: this task fails on its own account, and an aggregate would replace that reason.
             for item in batch {
                 _ = item.task.closeScope()
                 item.task.reject(error)
@@ -3694,18 +2705,14 @@ public final class IRExecutor: DebugHookHost {
                 task.resolve(IRExecutor.closeTask(task, value: result))
             case .givenUp(let next):
                 // 续跑这一趟也让出了，而它不由派发口驱动 ⇒ 记账要在这里补一次。
-                // ⚠️ 漏掉这一句，本后端的让出计数就只数得到**首跑那一趟**，
-                // 而 LLVM 后端数的是每一次 —— 各后端在「一个体内让出多次」的语料上会分岔，
-                // 且两边各自的数都看不出错。
+                // 漏掉这一句，本后端就只数得到**首跑那一趟**，而 LLVM 后端数的是每一次。
+                // 各后端在「一个体内让出多次」的语料上会分岔，且两边各自的数都看不出错。
                 scheduler.noteYield()
                 attachResume(next, task: task)
             }
         } catch {
-            // `resumeBody` turns a return signal into a value, so a control
-            // signal arriving here is one that escaped past the body it belonged
-            // to — a defect in the driver rather than a program outcome. It is
-            // reported as such instead of being read as a failure of the await.
-            // Leaked children are dropped for the same reason as above.
+            // `resumeBody` turns a return signal into a value, so a control signal here escaped past its body — a driver defect.
+            // It is reported as such, not read as an await failure; leaked children are dropped for the same reason as above.
             _ = task.closeScope()
             task.reject(GCDScheduler.coerce(error))
         }

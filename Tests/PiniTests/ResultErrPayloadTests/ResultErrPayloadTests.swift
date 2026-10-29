@@ -2,18 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 
-/// `Result` 的 **err 载荷**的判据。
-///
-/// 靶 = 「err 槽那一个类型擦除的字」在**四面**上都可用：构造（`err(Error(...))` /
+/// `Result` 的 err 载荷判据：err 槽那一个类型擦除的字在四面都可用 —— 构造（`err(Error(...))` /
 /// `err(CancelError(...))`）· 判别（`isCancel`）· 读消息（`e.message`）· 打印（`print(e)`）。
-///
-/// ⚠️ 本套件的前身是一个**双未定义**的发射形态：`err(CancelError("x"))` 曾产出
-/// `call %struct.CancelError* @CancelError(i8*)` —— 类型没有定义、函数也没有实现，
-/// lli 在 `use of undefined type` 处回绝。故 `emitUsesRuntimeErrorShims` 那一条守的是
-/// 「产物里不再出现那个名字」，而不只是「输出对不对」。
-///
-/// ⭐ 两通道都用**手写期望**当参照物，⛔ 不以「另一条通道的输出」为判据 —— 两条同时错
-/// 会互相认证。
+/// 产物侧另守一条：`@CancelError` / `@Error` / `struct.CancelError` 不该出现，那会是未定义类型与未实现函数。
 struct ResultErrPayloadTests {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
@@ -158,10 +149,9 @@ struct ResultErrPayloadTests {
 
     @Test("发射产物只经运行时 shim 碰 err 字，不再出现未定义的名义类型")
     func emitUsesRuntimeErrorShims() throws {
-        /// 意图：钉住本批**修掉的那个形态本身** —— 旧产物里的 `@CancelError` / `@Error` /
-        /// `struct.CancelError` 三者必须一个都不剩。
-        /// 驳回性：只要把符号映射删掉（回到默认改名），本条立刻红，而上面的行为用例
-        /// 在解释器通道上**不会**红 —— 这就是本条不可替代的理由。
+        // 意图：产物里的 `@CancelError` / `@Error` / `struct.CancelError` 三者必须一个都不剩。
+        // 驳回性：符号映射一去掉（退回默认改名）本条立刻红，而上方的行为用例在解释器通道上不会红 ——
+        // 这就是本条不可替代的理由。
         let ir = try emitIR(readBindings("CancelError", "cmsg"))
         #expect(!ir.contains("@CancelError"), "产物里仍有未定义的 @CancelError")
         #expect(!ir.contains("struct.CancelError"), "产物里仍有未定义的名义类型 struct.CancelError")

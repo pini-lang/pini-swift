@@ -1,10 +1,9 @@
 import Foundation
 import Testing
 
-/// `appendFile` 的判据：追加语义、创建语义、失败形态、路径解析，以及发射面的条件 declare。
-///
-/// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），⛔ 不往仓库里建文件。
-/// 比对物是**手写期望**，⛔ 不是另一条通道的输出 —— 两条同时错会互相认证。
+/// `appendFile` 的判据：追加语义、创建语义、失败形态、路径解析，以及发射面的条件 declare。每条用例自建
+/// 临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），不往仓库里建文件。比对物是手写期望，不是另一条
+/// 通道的输出 —— 两条同时错会互相认证。
 struct AppendFileTests {
 
     // MARK: - 私有 helper
@@ -182,10 +181,8 @@ struct AppendFileTests {
 
     @Test("路径解析与其余内建同口径：无前缀落脚本目录、`./` 落 CWD")
     func appendFollowsTheSamePathRule() throws {
-        /// 意图：新增的写内建不许自成一套路径规则。
-        /// 驳回性：只认字面量或只认 CWD 的实现会把两处之一写到错目录，盘上断言随即失败。
-        ///
-        /// ⚠️ 前提：CWD 与脚本目录必须不同，否则两条分支落到同一处、测不出差别。
+        /// 意图：新增的写内建不许自成一套路径规则。驳回性：只认字面量或只认 CWD 的实现会把两处之一写到错目录，
+        /// 盘上断言随即失败。前提：CWD 与脚本目录必须不同，否则两条分支落到同一处、测不出差别。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }

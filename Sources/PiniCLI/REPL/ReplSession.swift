@@ -1,19 +1,9 @@
 import Foundation
 import PiniCore
 
-/// P7-1 REPL：交互循环 + 续行检测 + 特殊命令。
-///
-/// 求值（声明累积、表达式包装、跑哪个引擎）在 P4-4 移到了 `PiniCore` 的
-/// `ReplEvaluator`。理由见该类型的文档：求值此前与本类同处，于是它既绑死了
-/// 某一台引擎、又因为测试 target 只依赖 `PiniCore` 而**完全不可测**（既有 REPL
-/// 用例只覆盖解析）。
-///
-/// `G-6c`：引擎开关随 AST 走查一并退役，本类不再持有引擎。
-///
-/// 本类保留的是**交互**那一半：
-/// 1. **续行检测**——未闭合的括号、INDENT 续行（`:` 结尾）、反斜杠续行
-/// 2. **特殊命令**——`:quit` / `:help` / `:clear`
-/// 3. **错误恢复**——错误打印并回 loop，不退出
+// REPL：交互循环 + 续行检测 + 特殊命令。求值（声明累积、表达式包装、跑哪个引擎）在
+// `PiniCore` 的 `ReplEvaluator`——本类只保留交互那一半，故不绑引擎、可被测试 target 覆盖。
+// 本类职责：续行检测、`:quit`/`:help`/`:clear`、错误恢复。
 final class ReplSession {
 
     /// 求值核：承担「输入 → 跑一段程序」。
@@ -83,16 +73,9 @@ final class ReplSession {
 
     // MARK: - 续行检测
 
-    /// 判断当前累积行是否需要继续读取。
-    ///
-    /// 规则：
-    /// 1. 括号未闭合 `() [] {} <>`
-    /// 2. INDENT 块：累积行中存在 `:` 结尾的非注释行，且最后一行有缩进（或空行）
-    /// 3. 反斜杠续行
-    ///
-    /// INDENT 规则的对标：Python REPL 的 `>>>` → `...` 切换基于 `compile(..., 'single')`。
-    /// Pini 没有 compile('single') 模式，故用缩进检测近似——`:` 语句后只要下一行有缩进
-    /// 就继续累积，直到遇到无缩进的非空行。
+    // 判断当前累积行是否需要继续读取：括号未闭合 `() [] {} <>`、INDENT 块（`:` 结尾的非注释行
+    // 之后还有缩进或空行）、反斜杠续行。Pini 没有 compile('single') 模式，故用缩进检测近似：
+    // 以 `:` 结尾的语句后只要下一行有缩进就继续累积，直到遇到无缩进的非空行。
     private func needsContinuation(accumulated lines: [String]) -> Bool {
         guard let last = lines.last else { return false }
         let trimmed = last.trimmingCharacters(in: .whitespaces)

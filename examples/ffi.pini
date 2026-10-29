@@ -1,14 +1,6 @@
-; Phase 2a（FFI 子系统）：FFI & unsafe 子系统示例（解释器优先，用户决策 D1）。
-;
-; 特性演示：
-;   1. `[libc|foreign]` 块声明外部 C 函数签名（块内函数自动视为 |unsafe）
-;   2. `unsafe <expr>` 不安全消耗点前缀
-;   3. `&x` 不安全取地址（解释器快照语义）
-;   4. `load` / `store` / `addressof` 指针原语
-;   5. `|unsafe` 自由函数（函数体自动处于不安全上下文）
-;   6. `*T` 指针类型与 C 兼容性约束（禁 object，ARC 隔离）
-;
-; 运行：pini run examples/ffi.pini
+; FFI & unsafe 子系统示例：`[libc|foreign]` 声明外部 C 签名（块内函数自动 |unsafe）、
+; `unsafe <expr>` 不安全消耗点、`&x` 取地址、load/store/addressof 指针原语、`|unsafe` 自由函数，
+; `*T` 指针类型禁 object（ARC 隔离）。运行：pini run examples/ffi.pini
 
 [libc|foreign]
 malloc(size: U64,) -> (*U8,)

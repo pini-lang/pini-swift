@@ -1,18 +1,9 @@
 import Foundation
 import Testing
 
-/// `split` 的两条分配判据。
-///
-/// 存在理由（2026-10-01 实测）：LLVM 侧的切分路径有两处分配缺陷，且**两条的可见性不同** ——
-/// ① 两次暂存拷贝按固定 1024 字节栈缓冲分配 + 无界 `memcpy` ⇒ 源串一长就砸栈。
-///    自举的扫描器正是拿**整份文件文本**调用它（`makeScanner` 里 `source.split("\n")`），
-///    于是这条缺陷是「自举整包编得出的原生二进制跑不起来」的直接原因之一。
-/// ② token 复制按 `strlen` 分配后 `strcpy` ⇒ 终止符写到区外一字节（ASan：85 写进 84 区）。
-///
-/// ⚠️ 两条的判据形态不同，理由写在各自的用例里：① 有行为签名（跑两路对比即现形）；
-/// ② **没有**行为签名（越界的那一字节通常无声），只有 ASan 或产物结构能判
-/// ⇒ ② 由「产出的 IR 里，`malloc` 的尺寸不得直接取 `strlen` 结果」承担 ——
-///    `strlen` 只给出内容长度，而写入方要的是内容 + 终止符。
+/// `split` 的两条分配判据，对应 LLVM 侧切分路径的两处分配缺陷，可见性不同：
+/// ① 两次暂存拷贝按固定 1024 字节栈缓冲分配、无界 `memcpy` ⇒ 源串一长就砸栈；自举扫描器拿整份文件文本调它。
+/// ② token 复制按 `strlen` 分配后 `strcpy` ⇒ 终止符写到区外一字节。② 无行为签名，故判产物里 `malloc` 尺寸。
 struct SplitPathTests {
 
     private static var fixturesDirectory: String {
@@ -85,7 +76,7 @@ struct SplitPathTests {
         }
     }
 
-    // MARK: - ①′ 定界符**语义**（2026-10-03 · 甲路线）
+    // MARK: - ①′ 定界符语义
 
     @Test("split 的定界符语义两路一致：空定界符 ⇒ 逐字素 · 多字符 ⇒ 子串匹配")
     func splitDelimiterSemanticsMatchInterpreter() throws {
@@ -101,7 +92,7 @@ struct SplitPathTests {
             "LLVM 后端未跑通（rc=\(compiled.status)）：\(compiled.stderr)")
 
         // 非退化锚点：判据必须在**这一组真的被拆过**时才有意义。
-        // ⚠️ 旧实现（`strtok`）在空定界符上返回**整串**，所以 `4-empty-delim|len=2` 会变 1。
+        // ⚠️ 空定界符若按 `strtok` 语义处理会返回**整串**，`4-empty-delim|len=2` 就会变 1 ⇒ 本判据转红。
         #expect(
             interpreted.stdout.contains("1-single|len=3\n"),
             "夹具自身没跑出预期形状 ⇒ 本判据会空转：\(interpreted.stdout.debugDescription)")
@@ -133,10 +124,8 @@ struct SplitPathTests {
             try #require(emit.status == 0, "\(fixture)：emit 未通过：\(emit.stderr)")
             let ir = try String(contentsOf: out, encoding: .utf8)
 
-            // 非退化：本判据只在切分路径真的被发射时才有意义。
-            // ⚠️ 锚点 2026-10-03 换过：改前是 `@strtok`，而切分自本批起**委派给运行时段**
-            //    （`@bk_string_split`），`@strtok` 只剩头部的**无条件声明** ⇒ 那个锚点从此
-            //    恒真、判据会退化。新锚点认**调用**，不认声明。
+            // 非退化：本判据只在切分路径真的被发射时才有意义。锚点认调用不认声明 —— 切分委派给运行时段
+            // （`@bk_string_split`），`@strtok` 只剩头部的无条件声明，锚它恒真、判据会退化。
             #expect(ir.contains("@bk_string_split"), "\(fixture)：产物里没有切分路径 ⇒ 本判据会空转")
 
             let offenders = Self.mallocSizesTakenStraightFromStrlen(in: ir)
@@ -146,11 +135,8 @@ struct SplitPathTests {
         }
     }
 
-    /// `%tN = call i64 @strlen(ptr …)` ⇒ `%tN`
-    ///
-    /// ⚠️ 发射器写出的 IR 行**以空格起头**（`" %tN = …"`），所以必须先 trim ——
-    /// 首版漏了这一步，`hasPrefix("%")` 恒假 ⇒ 集合恒空 ⇒ 判据恒绿（空转）。
-    /// 抓出它的正是变异反证：把 `malloc(strlen+1)` 退回 `malloc(strlen)` 时它**没有红**。
+    // `%tN = call i64 @strlen(ptr …)` ⇒ `%tN`。发射器写出的 IR 行以空格起头（`" %tN = …"`），
+    // 故必须先 trim：漏这一步 `hasPrefix("%")` 恒假 ⇒ 集合恒空 ⇒ 判据恒绿（空转）。
     static func strlenResult(_ line: String) -> String? {
         let text = line.trimmingCharacters(in: .whitespaces)
         guard let arrow = text.range(of: " = call i64 @strlen(") else { return nil }
@@ -167,12 +153,9 @@ struct SplitPathTests {
         return String(rest[rest.startIndex..<close])
     }
 
-    /// 尺寸直接取自 `strlen` 结果的 `malloc` 行。
-    ///
-    /// 为什么这条能抓住「少一字节」：二者是不同的量 —— `strlen` 给内容长度，
-    /// 而 `memcpy`/`strcpy`/`strcat` 这些写入方要的是内容 + 终止符。尺寸等于内容长度，
-    /// 就是在说「终止符写在区外」。⚠️ 它只判「直接取自」，不判算错：`strlen+1` 与
-    /// `更宽裕的常量` 都放行。
+    /// 尺寸直接取自 `strlen` 结果的 `malloc` 行。为什么这条能抓住「少一字节」：二者是不同的量 ——
+    /// `strlen` 给内容长度，而 `memcpy`/`strcpy`/`strcat` 要的是内容 + 终止符；尺寸等于内容长度就是在说
+    /// 「终止符写在区外」。它只判「直接取自」，不判算错：`strlen+1` 与更宽裕的常量都放行。
     static func mallocSizesTakenStraightFromStrlen(in ir: String) -> [String] {
         var strlenResults = Set<String>()
         for line in ir.split(separator: "\n") {

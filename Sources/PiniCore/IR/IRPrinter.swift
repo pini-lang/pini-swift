@@ -238,8 +238,8 @@ public enum IRPrinter {
             // dump 就得回显哪个词，否则两种形态在唯一能看见降载结果的地方又混成一样。
             return "\(form.keyword)(\(exprText(future)))"
         case .givenInstance(let type):
-            // ADR-001 `P2a`：内部节点，**无源形态**（默认实例在源语言里由 `using` 参数
-            // 省略实参时**隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-ir` 读。
+            /// 内部节点，**无源形态**（默认实例在源语言里由 `using` 参数省略实参时
+            /// **隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-ir` 读。
             return "givenInstance(\(type.llvmSpelling))"
         }
     }

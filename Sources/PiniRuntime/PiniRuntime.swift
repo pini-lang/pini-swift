@@ -11,30 +11,17 @@ import Foundation
 
 // MARK: - 并发后端抽象 阶段1：集合/COW 运行时 shim（Swift 实现，C ABI 边界）
 
-// MARK: - #46-D D4：显式 share count 与写时复制（COW）基础设施
-//
-// 为何不用 `isKnownUniquelyReferenced`：LLVM 后端里 `var b = a` 只是把**不透明句柄**
-// （裸 `ptr`）从一个 alloca 槽复制到另一个槽——Swift ARC 完全看不到这次别名，box 的
-// 引用计数恒为 1（仅 `_liveHandles` 持有），`isKnownUniquelyReferenced` 恒为 true，
-// 分裂永不触发。故 D4 改为**运行时显式 share count**：codegen 在别名绑定处发射
-// `bk_handle_retain`，写入前发射 `bk_handle_ensure_unique`（或经 set 的返回句柄），
-// 由运行时按 `shares` 判定是否分裂。解释器侧则由 Swift 集合原生 COW 保证（见 值分裂与 COW 判定）。
+// MARK: - 显式 share count 与写时复制（COW）基础设施
+// 句柄的 share count 住在运行时而非 ARC：LLVM 后端里 `var b = a` 只把不透明句柄（裸 `ptr`）复制到另一个
+// alloca 槽，ARC 看不见这次别名 ⇒ `isKnownUniquelyReferenced` 恒真；故按 `shares` 判分裂：别名点 retain、写前 ensure_unique。
 
-// 所有权契约（codegen 与运行时的分工，务必遵守）：
-// 1. `bk_*_create` 产出 shares == 1 的 box，所有权归**接收该句柄的那个所有者**
-// （变量槽，或作为元素被写入的父容器）。
-// 2. `bk_*_set` / `bk_set_add` 对句柄型内容只做**字节复制（移动语义）**，不 retain。
-// 故 `[[1,2],[3,4]]` 这种「内层字面量是临时值」的构造是所有权转移，零额外计数。
-// 3. 若被写入的句柄**同时仍被别处持有**（如 `var outer = [inner]` 中的 `inner` 变量），
-// 则由 **codegen 在读取该标识符句柄时发射 `bk_handle_retain`**——「别名点 retain」
-// 是 codegen 的责任，运行时不猜测。
-// 4. box `deinit` 对句柄型元素递减一份 share（与 2 的移动语义配对闭环）。
+// 所有权契约（codegen 与运行时的分工）：`bk_*_create` 产出 shares == 1 的 box，所有权归接收该句柄的
+// 所有者（变量槽或被写入的父容器）；`bk_*_set` / `bk_set_add` 对句柄型内容只做字节复制（移动语义）、
+// 不 retain，故别名点的 `bk_handle_retain` 由 codegen 负责；box `deinit` 对句柄型元素递减一份 share。
 
 /// 所有容器 box 的公共基类：携带 share count 与深拷协议。
-///
-/// 以基类承载使 `bk_handle_*` 系列可**类型无关**地操作任意容器句柄
-/// （`Unmanaged<_BkBox>.fromOpaque` 后动态转型），无需 IR 侧按类型分派 retain/split，
-/// 也避免查三张 live 表的 O(n) 判型。
+/// 以基类承载使 `bk_handle_*` 系列可类型无关地操作任意容器句柄（`fromOpaque` 后动态转型），
+/// 无需 IR 侧按类型分派 retain/split，也免去查三张 live 表的 O(n) 判型。
 private class _BkBox {
     /// 持有此句柄的「变量槽」数目（显式 share count）。
     /// 创建时为 1；`bk_handle_retain` 递增；分裂或 `bk_*_destroy` 递减。
@@ -57,10 +44,8 @@ private func _bkRegister(_ box: _BkBox) -> UnsafeMutableRawPointer {
 }
 
 /// 递减句柄的 share count；归零则从登记表摘出并释放。
-///
-/// 「先从数组摘出、再 release」的顺序是必要的：release 可能触发 `deinit`，其中会对
-/// 嵌套 handle 元素递归调用本函数、再次修改 `_liveHandles`。摘出动作先于 release 完成，
-/// 故递归修改发生在数组访问之外，不触发独占性冲突。
+/// 顺序必须是「先摘出、再 release」：release 会触发 `deinit`，其中对嵌套句柄递归调用本函数并再改
+/// `_liveHandles`；先摘出使递归修改落在数组访问之外，不触发独占性冲突。
 private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
     guard let h else { return }
     let box = Unmanaged<_BkBox>.fromOpaque(h).takeUnretainedValue()
@@ -72,12 +57,9 @@ private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
     }
 }
 
-/// 元素 box 内容若为可计数引用（嵌套句柄 **或** 字符串），递增其计数。
-/// 供 `cowCopy` 使用：字节复制会让两个容器持有同一内层值，必须计入共享。
-///
-/// ⭐ N76 起 `.str` 与 `.handle` **同走这一条通道**：两者都是「槽持有一份引用」的引用型内容，
-/// 差别只在计数住在哪（容器在 `_BkBox.shares`，字符串在它自己的头格里）。
-/// ⚠️ 常量串（`@.strN` 的 GEP）在 `bk_str_retain` 里是无操作 ⇒ 这里不必分辨。
+/// 元素 box 内容若为可计数引用（嵌套句柄或字符串），递增其计数；供 `cowCopy` 用：字节复制会让两个
+/// 容器持有同一内层值，必须计入共享。`.str` 与 `.handle` 同走这一条通道，差别只在计数住在哪
+/// （容器在 `_BkBox.shares`，字符串在自己的头格）；常量串的 retain 是无操作，故不必分辨。
 private func _bkRetainIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
     if _BkTag(rawValue: tag) == .str {
         bk_str_retain(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
@@ -117,34 +99,15 @@ private func _bkEnsureUnique(_ h: UnsafeMutableRawPointer) -> UnsafeMutableRawPo
     return _bkRegister(box.cowCopy())
 }
 
-/// 数组的**元素存储**——一块可由多个数组 box **共享**的槽表。
-///
-/// 为何要把槽表从 box 里抽出来单独承载（#74）：`append` 的契约是**产出新数组、输入数组不受影响**，
-/// 而语言层自建容器的发射形态是 `append` → `destroy(旧句柄)` → `store(新句柄)`
-/// （见 `IREmitter.emitArrayAppend`）⇒ 旧句柄**当场就被丢掉**。逐个深拷的旧实现于是为
-/// n 次追加付 n²/2 次 `_bkAllocBox`（实测：三张 8192 项表在原生臂上 45 s，比解释路径慢 11×）。
-/// 抽出存储后 `append` 分两条路：
-///   ① **存储独占**（`refs == 1`，即输入句柄是它唯一的持有者）⇒ **就地增长**（容量不足则倍增），
-///      旧元素一个都不动 ⇒ 开销摊销 O(1)，元素 box 总数由 n²/2 降为 n；
-///   ② 存储被共享 ⇒ 走原有那条逐元素深拷路（语义与改动前逐字相同）。
-/// ⚠️ 两条路下**输入数组的长度与内容都不变**：长度记在 box 的 `count` 上，⛔ 不在存储上
-/// （容量可因追加而大于长度，也可被更长的兄弟 box 共享）。
-/// ⚠️ 写入路径（`bk_array_set` / `bk_array_ensure_unique_at`）动存储前先按 `refs` 分裂
-/// （`_bkArraySplitStorage`）⇒「共享存储」对语言层不可见，语义与逐次深拷一致。
-///
-/// 所有对外函数经 `@_cdecl` 导出为 C ABI：句柄为 `void*`（LLVM IR 中 `ptr`），
-/// 在模块内以 `%bk_array*`（= `type { ptr }`）承载，仅作类型区分；IR 中从不解引用，
-/// 所有访问经下方 `@bk_array_*` 调用完成。C ABI 为 MUST 硬约束（见 并发后端抽象），
-/// 否则阶段3 纯 libc 重写时被锁死。
+/// 数组元素存储——可由多个数组 box 共享的槽表；长度不在这里，而在 box 的 `count` 上（容量可大于长度）。
+/// 独立成层是为 `append`：契约要求产出新数组、输入不变，而发射形态 append → destroy(旧) → store(新)
+/// 当场丢弃旧句柄 ⇒ 深拷退化成二次方；`refs == 1` 就地增长，否则深拷。对外函数均经 `@_cdecl` 导出 C ABI。
 private final class _BkArrayStorage {
-    /// #46-D D1：装箱-raw 存储——每槽是一个由运行时拥有的堆 box（`UnsafeMutableRawPointer`），
-    /// box 内 memcpy 存元素原始字节。无论元素类型是 Int/F64/Bool/String 还是嵌套数组，
-    /// 均以 `ptr` 承载，与 并发后端抽象「一切经 C ABI 的 `ptr`」哲学一致，且天然支持任意宽度元素
-    /// （由 codegen 在 `@bk_array_set` 时传入 `elemBytes`）。元素 box 的生命周期由**本存储**持有，
-    /// 最后一个持有者离开时统一释放（`releaseAllElements`），配合 `bk_array_destroy` /
-    /// `bk_runtime_cleanup` 实现精确/进程级回收。
+    /// 装箱-raw 存储：每槽是一个由本存储拥有的堆 box（`UnsafeMutableRawPointer`），box 内 memcpy 存元素
+    /// 原始字节 ⇒ 对元素类型无关，宽度由 codegen 的 `elemBytes` 传入。元素 box 的生命周期由本存储持有，
+    /// 最后一个持有者离开时经 `releaseAllElements` 统一释放。
     var elements: [UnsafeMutableRawPointer?]
-    /// #46-D D4：每槽内容的类型标签（与 `_BkTag` 对齐）。COW 深拷时据此识别嵌套句柄元素
+    /// 每槽内容的类型标签（与 `_BkTag` 对齐）。COW 深拷时据此识别嵌套句柄元素
     /// 并递增其 share count——否则字节复制会让两个数组共享同一内层句柄，
     /// 而内层写因 `shares == 1` 原地生效，污染另一侧（嵌套 COW 的关键）。
     var tags: [Int32]
@@ -238,12 +201,9 @@ private final class _BkArrayBox: _BkBox {
     }
 }
 
-/// 写入前确保 box 的元素存储**独占**：共享（`refs > 1`）则深拷出一块私有存储并就地换装。
-///
-/// ⭐ 与 box 那层的 `_bkEnsureUnique`（变量槽别名）**是两件事**：那一层管「同一句柄被两个变量槽
-/// 持有」，这一层管「`append` 产出的新容器与输入容器共享同一块存储」。两层都必须守，
-/// 缺任一层就会出现「改一个数组、另一个跟着变」。
-/// ⚠️ 就地改写 `box.storage`（⛔ 不换句柄）⇒ 调用方持有的句柄仍然有效。
+/// 写入前确保 box 的元素存储独占：共享（`refs > 1`）则深拷一块私有存储并就地换装。
+/// 与 `_bkEnsureUnique`（变量槽别名）是两件事：那层管「同一句柄被两个槽持有」，这层管「`append` 产出的
+/// 新容器与输入共享同一块存储」。缺任一层就会出现「改一个数组、另一个跟着变」；句柄不换，调用方仍有效。
 private func _bkArraySplitStorage(_ box: _BkArrayBox) {
     guard box.storage.refs > 1 else { return }
     let old = box.storage
@@ -268,7 +228,7 @@ public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
     exit(1)
 }
 
-// MARK: 句柄通用原语（#46-D D4：类型无关的 share count / COW 分裂）
+// MARK: 句柄通用原语（类型无关的 share count / COW 分裂）
 
 /// 别名绑定（`var b = a`、容器传参等）：递增 share count，使后续任一侧的写触发分裂。
 /// codegen 在容器句柄被复制进新变量槽时发射本调用；不发射则退化为「共享且原地改」（错误语义）。
@@ -286,15 +246,9 @@ public func bk_handle_ensure_unique(_ h: UnsafeMutableRawPointer?) -> UnsafeMuta
     return _bkEnsureUnique(h)
 }
 
-/// 嵌套写路径的**中间层**独占化：确保 `parent[i]` 处的嵌套句柄独占，并就地更新父槽。
-///
-/// 为何需要独立入口而非「ensure_unique + bk_array_set 写回」：`_bkEnsureUnique` 的语义是
-/// 「把调用方持有的那一份 share 从原句柄转移给副本」（已 decrement）；若随后再经
-/// `bk_array_set` 写回父槽，其 `_bkReleaseIfHandle(old)` 会**第二次**递减同一份 share，
-/// 导致内层被提前回收（use-after-free）。故此处就地改写句柄字节、**不**释放旧句柄。
-///
-/// 前置条件：`parent` 必须已独占（由自顶向下的调用链保证）。违反则 `bk_panic` 立即暴露
-/// codegen 缺陷，而非静默破坏别名语义。
+/// 嵌套写路径的中间层独占化：确保 `parent[i]` 处的嵌套句柄独占，并就地更新父槽。
+/// 不能拆成 ensure_unique + `bk_array_set`：后者会 `_bkReleaseIfHandle(old)` 再递减一次同一份 share，
+/// 导致内层提前回收。故只改写句柄字节、不释放旧句柄；前置条件是 `parent` 已独占，违反即 panic 暴露缺陷。
 @_cdecl("bk_array_ensure_unique_at")
 public func bk_array_ensure_unique_at(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer? {
     guard let arr else { return nil }
@@ -347,10 +301,9 @@ public func bk_array_len(_ arr: UnsafeMutableRawPointer?) -> Int32 {
     return Int32(box.count)
 }
 
-/// 读取下标 `i` 处的元素 box（返回运行时拥有的稳定 `ptr`，codegen 据此 `load T`）。
-/// 越界或槽未初始化经 `bk_panic` 终止（与解释器越界抛错一致）。
-/// ⚠️ 稳定期：直到本数组的**该槽被重写**（`bk_array_set`）或本数组被释放为止
-/// —— 与兄弟数组共享存储的写入**不会**动到它（那条路会先分裂成私有存储）。
+/// 读取下标 `i` 处的元素 box，返回运行时拥有的稳定 `ptr`，codegen 据此 `load T`；越界或槽未初始化
+/// 经 `bk_panic` 终止（与解释器报错一致）。稳定期到该槽被 `bk_array_set` 重写或本数组被释放为止；
+/// 与兄弟数组共享存储的写入不会动到它（那条路先分裂成私有存储）。
 @_cdecl("bk_array_get")
 public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer {
     guard let arr else { bk_panic("Pini runtime error: array handle is null") }
@@ -365,15 +318,9 @@ public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeM
     return ptr
 }
 
-/// 写入下标 `i` 处的元素：将 `src` 处 `elemBytes` 字节 memcpy 进运行时新分配的堆 box
-/// （先释放该槽旧 box），与 并发后端抽象「一切经 `ptr` C ABI」一致，支持任意宽度/类型元素。
-/// 越界经 `bk_panic` 终止（与解释器越界抛错一致）。
-///
-/// #46-D D4（COW）：写前先 `_bkEnsureUnique` —— 句柄被共享（`shares > 1`）时深拷分裂，
-/// 写入落在**副本**上，原 box 不受影响；返回实际被写入的句柄，**调用方必须写回变量槽**。
-/// #74：再叠一层 `_bkArraySplitStorage` —— 追加产出的兄弟数组与本数组共享元素存储时同样要分裂
-/// （两层分别对应「变量槽别名」与「容器存储共享」，见 `_bkArraySplitStorage`）。
-/// `elemTag` 供深拷时识别嵌套句柄元素（见 `_BkArrayStorage.tags`）。
+/// 写入下标 `i` 处的元素：把 `src` 处 `elemBytes` 字节 memcpy 进新分配的堆 box（先释放该槽旧 box）。
+/// 写前两层分裂：`_bkEnsureUnique` 管变量槽别名、`_bkArraySplitStorage` 管容器存储共享，缺一即别名污染；
+/// 返回实际被写入的句柄，调用方必须写回变量槽。`elemTag` 供深拷识别嵌套句柄元素。
 @_cdecl("bk_array_set")
 public func bk_array_set(
     _ arr: UnsafeMutableRawPointer?, _ i: Int32, _ src: UnsafeRawPointer,
@@ -400,24 +347,9 @@ public func bk_array_set(
     return target
 }
 
-/// 追加一个元素，返回**新数组**（函数式：输入句柄与其内容都不受影响）。
-///
-/// 与语言层内建数组方法的 `append` 同契约：追加**不就地**发生，调用方必须用返回值替换原句柄
-/// （`元素 = 元素.append(任务)`）。与 `bk_array_set` 的分工是刻意的 ——
-/// 后者是**写既有容器**（故写前必须分裂），前者是**产出新容器**。
-/// ⚠️⭐ 与改动前的一处**实质差别**（#74）：新数组可能仍与输入**共享元素存储**（`refs > 1`）
-/// —— 因为「输入不受影响」只要求**长度与既有元素**不变，而共享的槽本就没有人会写（长度在
-/// box 的 `count` 上，追加写在 ≥ 输入长度的格）。故**写入路径必须补一层 `_bkArraySplitStorage`**
-/// （`bk_array_set` / `bk_array_ensure_unique_at` 都已带上），否则会退化成「改一个数组、
-/// 另一个跟着变」。⛔ 别把这里的共享读成「省掉了分裂义务」。
-///
-/// 元素宽度与 tag 由 codegen 的元素 ABI 传入（与 `bk_array_set` 同一对参数），
-/// 故本函数对元素类型无关：新元素按 `elemBytes` 字节装箱，`elemTag` 供嵌套句柄识别。
-/// ⚠️ 与 `bk_array_set` 同规：对句柄型内容只做**字节复制（移动语义）**、不 retain ——
-/// 别名点 retain 是 codegen 的责任（它按同一个判定发射）。
-///
-/// ⛔ 空句柄（`nil`）上追加视作**从空数组开始**：与「长度为 0 的容器」行为一致，
-/// 而不是报错 —— 调用方拿到的仍是长度为 1 的新数组。
+/// 追加一个元素，返回新数组：输入句柄与其内容都不受影响（调用方须用返回值替换原句柄）；空句柄视作空数组。
+/// 与 `bk_array_set` 分工：后者写既有容器（写前必分裂），前者产出新容器。新数组可能与输入共享元素存储，
+/// 故写入路径必须补 `_bkArraySplitStorage`；对句柄型内容只做字节复制、不 retain（别名 retain 归 codegen）。
 @_cdecl("bk_array_append")
 public func bk_array_append(
     _ arr: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer,
@@ -430,12 +362,9 @@ public func bk_array_append(
     }
     let source = arr.map { Unmanaged<_BkArrayBox>.fromOpaque($0).takeUnretainedValue() }
     let count = source?.count ?? 0
-    // ⭐ #74 的分岔点。**存储独占**（`refs == 1` ⇒ 输入句柄是这块存储唯一的持有者）⇒ 就地增长：
-    // 旧元素一个都不动，只有追加的那一格是新分配的（容量不足时倍增）⇒ 单次摊销 O(1)，
-    // 元素 box 总数由 n²/2 降为 n。⛔ 判据不是「长度 == 容量」：容量可因先前的追加而更大，
-    // 那些槽仍由本存储拥有（故先把该格的旧内容释放掉，免得泄漏）。
-    // ⚠️ 就地增长的**前提**是「输入数组不受影响」仍成立：长度在 box 的 `count` 上，
-    // 写入的槽恒 ≥ 输入的长度 ⇒ 输入侧的长度与元素（0..<count）逐字节不变。
+    // 分岔点：存储独占（`refs == 1`）⇒ 就地增长，旧元素一个都不动，只有追加那格新分配（容量不足则倍增）
+    // ⇒ 单次摊销 O(1)。判据不是「长度 == 容量」：容量可更大，那些槽仍由本存储拥有，故先释放该格旧内容。
+    // 就地增长仍保证输入不受影响：写入槽恒 ≥ 输入长度，长度记在 box 的 `count` 上。
     if let source, source.storage.refs == 1 {
         let storage = source.storage
         storage.grow(to: count + 1)
@@ -473,17 +402,11 @@ public func bk_array_destroy(_ arr: UnsafeMutableRawPointer?) {
     _bkReleaseShare(arr)
 }
 
-// MARK: - #46-E G40（LazyRef，S3 LLVM 端）：懒加载引用语义（once 锁 + 缓存）
+// MARK: - 懒加载引用语义（LazyRef，LLVM 端：once 锁 + 缓存）
 
-/// LazyRef 的引用语义承载：闭包 code/env + 元素类型 + once 锁 + 缓存 box。
-///
-/// 闭包调用 ABI（codegen 生成类型特化 wrapper 统一装箱）：
-/// `define ptr @__lazyref_wrapper_<T>(ptr %code, ptr %env)`——内部 `call T %code(ptr %env)`
-/// 后把 T 存进栈 box 并返回 box 指针；运行时 `bk_lazyref_value` 以统一 `(ptr, ptr) -> ptr`
-/// C ABI 调用 wrapper 并立即 memcpy 到堆缓存。规避「不同 T 返回寄存器不一致」的 ABI 差异
-/// （I32/F64/指针在 arm64 上分别走 x0/d0，统一为 ptr 后恒走 x0）。
-/// 引用语义：不参与 COW 分裂（cowCopy 默认 fatalError，codegen 不对其发 ensure_unique）；
-/// 复制共享同一 box（Swift ARC 强引用）；生命周期由 `bk_runtime_cleanup` 兜底回收。
+/// LazyRef 的引用语义承载：闭包 code/env + 元素类型 + once 锁 + 缓存 box，惰性物化恰一次、地址稳定。
+/// 闭包调用走 codegen 的类型特化 wrapper（统一 `ptr` 返回，规避 I32/F64/指针的返回寄存器差异），
+/// 运行时取回后 memcpy 到堆缓存。不参与 COW 分裂、复制共享同一 box，生命周期由 `bk_runtime_cleanup` 兜底。
 private final class _BkLazyRefBox: _BkBox {
     let wrapper: UnsafeMutableRawPointer?
     let code: UnsafeMutableRawPointer?
@@ -558,13 +481,11 @@ public func bk_lazyref_destroy(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
 }
 
-// MARK: - 默认实例取用（ADR-001，契约 §2.46）
+// MARK: - 默认实例取用（契约 §2.46）
 
-/// 「某类型的默认实例」的**存放位盒**。
-///
-/// 与 `_BkLazyRefBox` 的差别只在持有物：那边持 wrapper/code/env（一个闭包的调用面），
-/// 这边只需要 `initFn` 与字节数 —— 「谁来跑各字段初值」由发射层合成的具名函数承担。
-/// 锁与缓存的形态照抄，因为**语义要求相同**：惰性物化、恰一次、地址稳定。
+/// 「某类型的默认实例」的存放位盒。
+/// 与 `_BkLazyRefBox` 的差别只在持有物：那边持 wrapper/code/env（一个闭包的调用面），这边只需要
+/// `initFn` 与字节数——「谁来跑各字段初值」由发射层合成的具名函数承担；锁与缓存同形（语义要求相同）。
 private final class _BkGivenSlotBox {
     let initFn: UnsafeMutableRawPointer?
     let bytes: Int
@@ -578,22 +499,13 @@ private final class _BkGivenSlotBox {
 }
 
 /// 保护「判空 + 建盒 + 写 slot」这一段的全局锁。
-///
-/// 必须是**独立于盒内锁**的第二级：两个线程同时看到一个空 slot 会各建一个盒，
-/// 于是同一个类型物化出**两个实例**、地址不稳定 —— 而地址稳定是契约写明的语义。
-/// 建盒之后物化仍归盒内锁管（那才是「恰一次」发生的地方）。
+/// 必须是独立于盒内锁的第二级：两个线程同时看到空 slot 会各建一个盒，同一类型就物化出两个实例、
+/// 地址不稳定，而地址稳定是契约语义。建盒之后物化仍归盒内锁管（那才是「恰一次」的地方）。
 private let _bkGivenSlotLock = NSLock()
 
-/// 取某类型的**默认实例**（ADR-001；契约 §2.46）。`slot` 是发射层定义的静态全局
-/// （`@__given_<T>`），首调时由 `initFn` 写入初值，此后永远返回同一地址。
-///
-/// `init_fn` 的 ABI 与 LazyRef 的 wrapper 同形：`ptr (ptr out) -> ptr` —— 运行时把
-/// 分配好的输出缓冲交给它，它写入 T 并返回该缓冲（规避「wrapper 内 alloca 返回栈
-/// 地址」的逃逸 UB）。
-///
-/// ⚠️ **不得持 `_bkGivenSlotLock` 调 `initFn`**：`initFn` 会跑各字段初值，而那些初值
-/// 自己可能取用**另一个**类型的默认实例 ⇒ 持锁调用就是一次可复现的自死锁。
-/// 故建盒与物化分成两段，中间放锁。
+/// 取某类型的默认实例：`slot` 是发射层定义的静态全局（`@__given_<T>`），首调时由 `initFn` 写入初值，
+/// 此后永远返回同一地址。`init_fn` 的 ABI 为 `ptr (ptr out) -> ptr`：运行时把分配好的输出缓冲交给它，
+/// 它写入 T 并返回该缓冲。⛔ 不得持 `_bkGivenSlotLock` 调 `initFn`（初值可能取用另一类型的默认实例 ⇒ 自死锁）。
 @_cdecl("bk_given_get")
 public func bk_given_get(
     _ slot: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
@@ -636,11 +548,9 @@ public func bk_runtime_cleanup() {
     for u in all { u.release() }
 }
 
-/// 进程退出统一回收活动句柄（D0 阶段；D4 改为作用域精确销毁）。
-///
-/// ⭐ 让出的观测汇总行（`DE-6a` §3.6）挂在这里 —— 经**既有**的退出钩子那条路径，⛔ 不新起
-/// 退出路径。顺序放在回收之前：回收会碰句柄表，而汇总只读一个计数器，先打完更不容易被
-/// 回收路径上的意外打断。
+/// 进程退出钩子：先打让出观测汇总，再统一回收活动句柄。
+/// 汇总走既有的退出路径、⛔ 不新起退出路径；顺序放在回收之前：回收会碰句柄表，而汇总只读一个计数器，
+/// 先打完更不容易被回收路径上的意外打断。
 private func _bkAtExitCleanup() {
     _bkReportYields()
     bk_runtime_cleanup()
@@ -648,20 +558,14 @@ private func _bkAtExitCleanup() {
 
 private let _bkAtExitToken = atexit(_bkAtExitCleanup)
 
-/// 保证进程退出钩子**真的被登记**。
-///
-/// ⛔ 这一句不是仪式。Swift 的全局 `let` 是**惰性**初始化：`atexit(_bkAtExitCleanup)` 只有在那句
-/// 声明被**求值**时才发生，而它此前**没有任何读者** ⇒ 那个退出钩子**一次也没有生效过** ——
-/// 文件看着对，行为上不存在（本仓最防的一类形态）。★ 它是 `DE-6b` 落地观测通道时逐处实测发现的：
-/// 让出计数打了 0 行，顺着读下去才发现登记本身没发生。
-///
-/// ⚠️ 由运行时的**首个真实并发入口**触发（`bk_task_spawn`）。⇒ 如实登记一条边界：**不用任务的
-/// 程序**不会走到这里，故那条「活动句柄兜底回收」对它们仍然不生效（本批不改，只登记）。
+/// 保证进程退出钩子真的被登记。
+/// Swift 全局 `let` 惰性初始化：`atexit(_bkAtExitCleanup)` 仅在该声明被求值时发生，没有读者就永不生效。
+/// 由首个真实并发入口（`bk_task_spawn`）触发 ⇒ 不用任务的程序不受「活动句柄兜底回收」保护。
 private func _bkEnsureProcessExitHook() {
     _ = _bkAtExitToken
 }
 
-// MARK: - 字典 / 集合 运行时（#46-D D2）
+// MARK: - 字典 / 集合 运行时
 
 /// box 内容的类型标签：用于跨后端一致地比较键/元素相等性（与指针身份解耦）。
 /// 解决了 `generateStringLiteral` 不为相同文本复用全局（每次新建 `@.strN`）导致的
@@ -672,13 +576,9 @@ private enum _BkTag: Int32 {
     case bool = 2
     case str = 3
     case handle = 4
-    /// **不透明的 i64 字**（`DE-3b` · `B-2` 新增）。
-    ///
-    /// 用途单一：`bk_task_join_all` 的聚合结果是一个「成员 ok 载荷」的数组，而
-    /// `DE-1` §3.1 把载荷**擦除为 i64 宽度** ⇒ 那些元素是 8 字节的不透明字，
-    /// 它们的类型身份**不在本层**（由发射层解释，见 `DE-3c`）。
-    /// ⛔ 因此它**不是** `.i32` 也不是 `.handle`：前者的比较宽度是 4 字节，
-    /// 后者会让 COW 把字里的位型当成句柄去 retain/release（灾难）。
+    /// 不透明的 i64 字：8 字节载荷字，其类型身份不在本层（由发射层解释）。
+    /// 用途单一：`bk_task_join_all` 的聚合结果是「成员 ok 载荷」的数组，而载荷被擦除为 i64 宽度。
+    /// ⛔ 不是 `.i32`（比较宽度 4）也不是 `.handle`（COW 会把字里的位型当句柄 retain/release）。
     case i64 = 5
 }
 
@@ -753,10 +653,9 @@ public func bk_dict_len(_ dict: UnsafeMutableRawPointer?) -> Int32 {
     return Int32(Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue().entries.count)
 }
 
-/// 写入键值：将 `val` 处 `valBytes` 字节 memcpy 进新 box（替换则先释放旧值），按
-/// (keyBytes, keyTag) 经 `_bkBoxesEqual` 定位既有条目（命中则替换，否则追加）。
-/// 越界/空句柄经 `bk_panic` 终止（与解释器一致）。
-/// #46-D D4（COW）：写前 `_bkEnsureUnique` 分裂，返回实际被写入的句柄（调用方须写回槽）。
+/// 写入键值：`val` 处 `valBytes` 字节 memcpy 进新 box（替换则先释放旧值），按 (keyBytes, keyTag)
+/// 经 `_bkBoxesEqual` 定位既有条目（命中替换、否则追加）。写前 `_bkEnsureUnique` 分裂并返回实际被写入的
+/// 句柄（调用方须写回槽）；空句柄或零宽经 panic 终止。
 @_cdecl("bk_dict_set")
 public func bk_dict_set(
     _ dict: UnsafeMutableRawPointer?,
@@ -810,14 +709,9 @@ public func bk_dict_get(
     return entry.val
 }
 
-/// 嵌套写路径的**中间层**独占化（字典版，#46-D D4.2.2）：确保 `parent[key]` 处的嵌套句柄
-/// 独占，并就地更新该条目的值 box 字节。
-///
-/// 与 `bk_array_ensure_unique_at` 完全同契约（含「**不**释放旧句柄」的理由：`_bkEnsureUnique`
-/// 已把本槽持有的那一份 share 转移给副本，再 release 旧句柄会二次递减 → use-after-free）。
-///
-/// 前置条件：`parent` 已独占（由自顶向下调用链保证）；键必须存在且值为嵌套句柄。
-/// 违反一律 `bk_panic`，让 codegen 缺陷立即暴露而非静默破坏别名语义。
+/// 嵌套写路径的中间层独占化（字典版）：确保 `parent[key]` 处的嵌套句柄独占，并就地更新条目值 box。
+/// 与 `bk_array_ensure_unique_at` 同契约：`_bkEnsureUnique` 已把本槽的 share 转移给副本，故只改写字节、
+/// 不再 release 旧句柄（否则二次递减 → use-after-free）；`parent` 已独占、键存在是前置条件。
 @_cdecl("bk_dict_ensure_unique_at")
 public func bk_dict_ensure_unique_at(
     _ dict: UnsafeMutableRawPointer?,
@@ -890,7 +784,7 @@ public func bk_set_len(_ set: UnsafeMutableRawPointer?) -> Int32 {
 }
 
 /// 插入元素（去重）：`elem` 处 `elemBytes` 字节按 (bytes, tag) 经 `_bkBoxesEqual` 判定是否已存在。
-/// #46-D D4（COW）：写前 `_bkEnsureUnique` 分裂，返回实际被写入的句柄（调用方须写回槽）。
+/// COW：写前 `_bkEnsureUnique` 分裂，返回实际被写入的句柄（调用方须写回槽）。
 @_cdecl("bk_set_add")
 public func bk_set_add(
     _ set: UnsafeMutableRawPointer?, _ elem: UnsafeRawPointer,
@@ -914,7 +808,7 @@ public func bk_set_destroy(_ set: UnsafeMutableRawPointer?) {
     _bkReleaseShare(set)
 }
 
-// MARK: 容器格式化迭代（#46-D D3：LLVM `print` 对齐解释器 `stringify`）
+// MARK: 容器格式化迭代（LLVM `print` 对齐解释器 `stringify`）
 
 /// 字典第 `idx` 个条目的「键 box」指针（运行时拥有，稳定）。越界经 `bk_panic` 终止（与解释器一致）。
 @_cdecl("bk_dict_key_at")
@@ -953,9 +847,8 @@ public func bk_set_at(_ set: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMu
 }
 
 /// 字典是否含指定键（与 `bk_dict_get` 同源的 `_bkBoxesEqual` 判定）。
-/// ⚠️ 本 shim 今天**零调用点**：`collection.contains` 已在类型层声明为 trait 方法，
-/// 但降载尚未实现（数组上调用即报 `later grids`），字典在语言层更没有构造入口。
-/// ⇒ 它是该特性落地时的接线点，⛔ 不是某个在用的实现的重复。
+/// 本 shim 目前零调用点：`collection.contains` 已声明为 trait 方法但尚未降载，字典在语言层也没有
+/// 构造入口 ⇒ 它是该特性落地时的接线点，不是某个在用实现的重复。
 @_cdecl("bk_dict_contains")
 public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32) -> Int32 {
     guard let dict else { return 0 }
@@ -970,15 +863,9 @@ public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawP
 
 // MARK: - Phase 2a（FFI 子系统）：指针原语（C-ABI 面）
 
-/// `*T` 原始指针的 load/store 原语，供 LLVM 后端将来实现 FFI 时使用。
-///
-/// 语义：`p + offsetBytes` 处读/写标量，字节宽度按类型固定——C ABI 纪律，
-/// 不泄漏 Swift 类型。
-///
-/// ⚠️ **语言层的 `load` / `store` 两个通道都不经过本族**：LLVM 侧发射器直出
-/// `load` / `store` 指令，解释器侧直接操作 `*T` 的 Swift 指针（`.rawPointer`）。
-/// 本族是 LLVM FFI 的预留面（用户决策 D1：FFI 当前显式 unsupported），
-/// 今天零调用点；接 FFI 时从这里接线，⛔ 不是让现有 `load` / `store` 改道。
+/// `*T` 原始指针的 load/store 原语，供 LLVM 后端接 FFI：在 `p + offsetBytes` 处读写标量，
+/// 字节宽度按类型固定（C ABI 纪律，不泄漏 Swift 类型）。语言层的 `load` / `store` 不经过本族
+/// （发射器直出指令、解释器直操作 Swift 指针）⇒ 本族零调用点，是 FFI 的接线面（当前显式 unsupported）。
 @_cdecl("bk_ptr_load_i8")
 public func bk_ptr_load_i8(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int8 {
     guard let p else { return 0 }
@@ -1017,26 +904,9 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
     memcpy(p.advanced(by: Int(offsetBytes)), src, n)
 }
 
-// MARK: - N76：原生字符串的**引用计数所有权**（运行时段侧）
-//
-// 缺陷形态（开放项册 `N76`）：native 字符串是裸 `char*`，本运行时段**不导出任何释放入口**，
-// 而发射出来的拼接是 `strlen` ×2 + `malloc` + `strcpy` + `strcat` —— 每产出一个新串，
-// 上一个就被丢掉、**无人回收** ⇒ `self.buf = self.buf + line` 这类累积形态的峰值
-// = Σ(各次拼接结果长度) = **二次方**（实测：N=4000 ⇒ 206 MB，整包面 62 s 涨到 4.2 GB）。
-//
-// 本段给字符串加**计数头**：分配时多要 `MemoryLayout<Int>.size` 字节，头里放引用计数，
-// **用户指针 = 基址 + 头长**。
-// ⚠️ 用户指针仍是 NUL 结尾的 C 串 ⇒ `printf("%s")` / `strlen` / `strcmp` / `strcat`
-// 等**一切既有消费点逐字不变**（于是 IR 契约里 `string` 表示钉的 `i8*` 也不动）。
-//
-// ⭐ **与容器那套（`_liveHandles`）的一处刻意差异**：**释放一个不是本运行时段分配的指针是无操作**。
-// 判据是「它在不在登记表里」，⛔ **不是**读计数头里的魔数 —— 后者对**全局字符串常量**
-// （`@.strN` 的 GEP）会读到紧邻的别的常量字节，据此判定即段错误。
-// ⇒ 这条性质使「常量串与堆串混走同一批代码路径」自动安全：槽里是常量时，
-// retain / release 两侧都退化成空操作。它同时把「双重释放」变成无操作（第二次查表即失配）。
-//
-// ⚠️ **本段只做分配 / 计数 / 回收**（片 1）。**谁在什么时候 retain / release 由发射器决定**
-// （片 2 / 片 3），规则与容器族同一条：别名点 retain · 槽退出与被覆盖时 release · 逃逸点转移。
+// 原生字符串的引用计数所有权：分配时多要 `MemoryLayout<Int>.size` 字节做计数头，用户指针 = 基址 + 头长，
+// 仍是 NUL 结尾 C 串（既有消费点与 IR 的 `i8*` 表示都不变）；释放不在登记表里的指针是无操作，⛔ 不读头里
+// 的魔数（全局常量会读到紧邻字节）⇒ 常量串与堆串同路安全。本段只管分配/计数/回收，retain/release 由发射器定。
 
 /// 计数头长度（字节）。分配块 = 头 + 载荷，用户指针指在头之后。
 private let _bkStrHeaderBytes = MemoryLayout<Int>.size
@@ -1046,11 +916,8 @@ private let _bkStrHeaderBytes = MemoryLayout<Int>.size
 private var _bkStrLive: Set<UnsafeMutableRawPointer> = []
 
 /// 保护 `_bkStrLive` 的锁。
-///
-/// ⚠️ 与容器族的 `_liveHandles`（无锁）**刻意不同**：那张表在本片之前就存在且不带锁，
-/// 本片不去动它；而本表是**新引入**的数据结构，且分配 / 释放串是多线程（任务族）也会走的路
-/// ⇒ 让新表自己带锁，⛔ 不把一类新的并发崩溃引进来。
-/// 临界区只含表的读写与头格加减，`deallocate` 故意放在**锁外**。
+/// 与容器族的 `_liveHandles`（无锁）刻意不同：本表是新引入的数据结构，分配/释放串在多线程（任务族）
+/// 路径上 ⇒ 让新表自带锁；临界区只含表的读写与头格加减，`deallocate` 故意放在锁外。
 private let _bkStrLock = NSLock()
 
 /// 分配一个带计数头的 C 串，计数 = 1，返回**用户指针**（基址 + 头长）。
@@ -1128,20 +995,17 @@ public func bk_str_release(_ p: UnsafeMutablePointer<CChar>?) {
     base.deallocate()
 }
 
-/// 分配一个 `byteCount` 字节（含 NUL 位）的**带计数头** C 串，计数 = 1，返回用户指针。
-///
-/// 发射器的字符串拼接用它**替代裸 `malloc`**：拼接本身（`strlen` ×2 + `strcpy` + `strcat`）
-/// 的形状逐字不变，只有分配入口换成本运行时段 ⇒ 产出的串从此进入登记表、
-/// 可被 `bk_str_release` 回收。⛔ 载荷由调用方写（本入口不置零、也不写 NUL）—— 与 `malloc` 同契约。
+/// 分配一个 `byteCount` 字节（含 NUL 位）的带计数头 C 串，计数 = 1，返回用户指针。
+/// 发射器的字符串拼接用它替代裸 `malloc`：拼接形状不变，但产出的串进入登记表、可被 `bk_str_release`
+/// 回收。⛔ 载荷由调用方写（本入口不置零、也不写 NUL）—— 与 `malloc` 同契约。
 @_cdecl("bk_str_alloc")
 public func bk_str_alloc(_ byteCount: Int64) -> UnsafeMutablePointer<CChar> {
     return _bkStrAlloc(Int(byteCount)).assumingMemoryBound(to: CChar.self)
 }
 
-/// 把一条既有 C 串（通常是栈上拼出来的缓冲）复制成**带计数头**的新串，计数 = 1。
-///
-/// 发射器里 `heapCopyOfStackString` 用它替代裸 `strdup`（插值与 `join` 那条路）：
-/// 复制语义逐字不变，但结果进入登记表 ⇒ 可被 `bk_str_release` 回收。
+/// 把一条既有 C 串（通常是栈上拼出来的缓冲）复制成带计数头的新串，计数 = 1。
+/// 发射器的 `heapCopyOfStackString` 用它替代裸 `strdup`（插值与 `join` 那条路）：复制语义不变，
+/// 但结果进入登记表 ⇒ 可被 `bk_str_release` 回收。
 @_cdecl("bk_str_dup")
 public func bk_str_dup(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
     guard let source else { return _bkStrDup("") }
@@ -1159,17 +1023,11 @@ public func bk_str_refcount(_ p: UnsafeMutablePointer<CChar>?) -> Int32 {
     return Int32(_bkStrBase(user).load(as: Int.self))
 }
 
-// MARK: - LR-8：F64 最短往返展示（spec「值展示语义」节）
+// MARK: - F64 最短往返展示（spec「值展示语义」节）
 
-/// `print(F64)` 的文本展示（spec「值展示语义」注的四条形态规则）。
-///
-/// 单源方式 = 委托宿主标准库：`String(Double)` 即最短往返表示（往返恒等、
-/// 定点/指数切换阈值、定点恒带小数点、`e±NN` 两位指数均由标准库保证），
-/// 解释器通道 stringify 同样走 `String(Double)`——两后端委托同一语义，
-/// 规范权威是 spec 的四条规则，实现零漂移空间。
-///
-/// 返回 malloc 分配的 NUL 结尾 C 串，**调用方负责 free**（发射的 IR 在
-/// printf 消费后调 `@free` 释放；单值即用即弃，无别名）。
+/// `print(F64)` 的文本展示：委托 `String(Double)`，即最短往返表示（往返恒等、定点/指数切换阈值、
+/// 定点恒带小数点、`e±NN` 两位指数由标准库保证）。解释器 stringify 同样走它 ⇒ 两后端同一语义。
+/// 返回 malloc 分配的 NUL 结尾 C 串，调用方负责 free（发射的 IR 在 printf 消费后调 `@free`；无别名）。
 @_cdecl("bk_double_to_string")
 public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
     return _bkStrDup(String(v))
@@ -1177,27 +1035,9 @@ public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
 
 // MARK: - G15: whole-file read for the LLVM leg
 
-/// `readFile(path)`: the whole file as a NUL-terminated, malloc-allocated C
-/// string (UTF-8), or NULL when it cannot be read (missing, unreadable, or not
-/// valid UTF-8). The emitted IR calls this instead of `fread`-ing into a fixed
-/// buffer; see `IOLimits` for why the cap went away.
-///
-/// Why the runtime and not emitted IR: reading a whole file needs a buffer
-/// sized from the file, and under LLI's JIT the size is not knowable before the
-/// read (`fseek` / `ftell` / `fstat` are unreliable there). A chunked
-/// grow-and-retry loop would be expressible in IR, but this is the same shape
-/// the other `bk_` shims already use, so there is one place that knows the
-/// allocation contract instead of two.
-///
-/// Allocation contract: `strdup`, **caller frees** -- identical to `bk_cstr`
-/// and `bk_double_to_string`. ⚠️ The emitted IR does not free string values
-/// anywhere today (it has exactly one `free` call, for a print temporary), so
-/// this adds no new *class* of leak; it does mean a large read stays resident
-/// for the process lifetime on the LLVM leg. The interpreter leg is unaffected
-/// (it returns a Swift `String`).
-///
-/// Decoding uses the **same** Foundation call as the interpreter's arm, so the
-/// two channels agree byte for byte rather than merely both being "UTF-8-ish".
+/// `readFile(path)`: the whole file as a NUL-terminated, malloc-allocated UTF-8 C string, or NULL if it
+/// cannot be read (missing, unreadable, not valid UTF-8). Runs in the runtime because the size is unknowable
+/// before the read under LLI's JIT; `strdup` contract, caller frees; same Foundation decode as interpreter.
 @_cdecl("bk_read_file")
 public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     // 失败仍返 nil（发射侧把它折成陷阱），而陷阱文案是**不带路径**的通用句：
@@ -1209,34 +1049,22 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
 
 // MARK: - G14 FFI: Pini String -> C string (interpreter "cstr" shim parity)
 
-/// Materializes a Swift String as a NUL-terminated, malloc-allocated C
-/// string (UTF-8 bytes). Mirrors the interpreter's `cstr` shim exactly:
-/// same allocation contract (caller frees), same UTF-8 encoding, same
-/// null terminator. The emitted IR calls this for foreign-declared
-/// `cstr` symbols — libc has no such function, so it must come from the
-/// runtime dylib.
+/// Materializes a Swift String as a NUL-terminated, malloc-allocated UTF-8 C string: same allocation
+/// contract (caller frees), encoding and terminator as the interpreter's `cstr` shim. Emitted IR calls
+/// this for foreign-declared `cstr` symbols — libc has none, so it must come from the runtime dylib.
 @_cdecl("bk_cstr")
 public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return nil }
     return _bkStrDup(s)
 }
 
-// MARK: - 字符内建（G-3a）与宿主环境查询内建（P4-1b / M8）的 **LLVM 侧**运行时段
-//
-// 为什么需要这一段：这几个名字在**解释器侧**早已有实现（`RuntimeOps.characterBuiltins` 的
-// 表、`IRExecutor` 里 `argv` / `listDir` / `moduleRoot` 的按名回答），而降载侧也早已把它们
-// 降成既有的 `call` 节点 —— 缺的**只有 LLVM 侧的符号**。缺法的形态值得记住：
-// `emit` **rc=0**、照常产出 `call @chars(...)`，直到 clang 才以 `use of undefined value`
-// 拒绝（静默产出不可用 IR，与本仓在册的同类形态一致）。
-//
-// 语义**一律镜像解释器那一路**（出处逐个写在函数上），⛔ 不另造第二套解释。
-// ⚠️ 元素 ABI 与发射器 `arrayElementABI` 同表：`String` 元素 = `i8*` · 宽度 8 · tag 3（裸指针，
-// ⛔ 不是 handle —— 字符串不可变、无 share count）。
+// MARK: - 字符内建与宿主环境查询内建的 LLVM 侧运行时段
+// 这组名字在解释器侧已有实现、降载侧也已降成 `call` 节点，缺的只有 LLVM 侧符号：缺则 emit 照常产出
+// `call`，直到 clang 才以 `use of undefined value` 拒绝。语义一律镜像解释器，⛔ 不另造第二套解释。
 
-/// 把一组 Swift 字符串装成语言层 `Array<String>`：每槽是一个 8 字节的 **C 串指针** box。
-///
-/// ⚠️ 与「把字节直接塞进槽里」不是一回事：发射层读数组元素是 `bk_array_get` 拿 box 指针、
-/// 再 `load i8*` ⇒ box 内容必须是**指针**，宽度必须是 8。
+/// 把一组 Swift 字符串装成语言层 `Array<String>`：每槽是一个 8 字节的 C 串指针 box。
+/// ⚠️ 不能把字节直接塞进槽：发射层读元素是先 `bk_array_get` 拿 box 指针、再 `load i8*`
+/// ⇒ box 内容必须是指针、宽度必须是 8。
 private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     let box = _BkArrayBox(count: items.count)
     for (index, item) in items.enumerated() {
@@ -1291,22 +1119,17 @@ public func bk_is_number(_ c: UnsafePointer<CChar>?) -> Int32 {
     return first.isNumber ? 1 : 0
 }
 
-/// `argv() -> Array<String>` —— 进程参数里**去掉可执行文件自己**之后的裸参数数组。
-///
-/// ⭐ 为什么是「去掉第一个」：解释器那一路的 `argv` 是「**脚本路径之后**的裸参数」，
-/// 而原生二进制没有脚本路径 —— 两边的**第一个元素都是「层名」**，这正是调用方
-/// （自举 `main.pini` 的分派）依赖的那一条。
+/// `argv() -> Array<String>` —— 进程参数里去掉可执行文件自己之后的裸参数数组。
+/// 两边对称的判据是「第一个元素是层名」：解释器的 `argv` 是脚本路径之后的裸参数，而原生二进制
+/// 没有脚本路径 ⇒ 同样去掉第一个；自举 `main.pini` 的分派依赖这一条。
 @_cdecl("bk_argv")
 public func bk_argv() -> UnsafeMutableRawPointer {
     return _bkStringArray(Array(CommandLine.arguments.dropFirst()))
 }
 
-/// `listDir(String) -> Array<String>` —— 目录**条目名**（不含目录部分）+ UTF-8 字节序升序，
-/// 与解释器 `IRExecutor` 的 `listDir` 逐条同义（排序那一条尤其要紧：文件系统返回顺序不稳定，
-/// 不排序则依赖顺序的判据会**假绿**）。
-///
-/// 路径按 `bk_read_file` 的同一口径解析（相对路径 → 程序基准，`./` / `../` 与绝对路径原样）。
-/// ⛔ 列不全时 **panic**，⛔ 不返回半个目录（与那些静默截断的旧形态刻意相反）。
+/// `listDir(String) -> Array<String>` —— 目录条目名（不含目录部分）+ UTF-8 字节序升序，与解释器
+/// `IRExecutor` 的 `listDir` 同义（排序要紧：文件系统返回顺序不稳定，不排序则顺序相关判据会假绿）。
+/// 路径按 `bk_read_file` 的口径解析；列不全时 panic，⛔ 不返回半个目录。
 @_cdecl("bk_list_dir")
 public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
     guard let path else { bk_panic("Pini runtime error: listDir: 路径为空") }
@@ -1351,11 +1174,9 @@ public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
 
 // MARK: - IO 内核（陷阱版与可接住版共用）
 
-/// 写 / 追加的**共用内核**：结局只有「成了」与「没成」，没成的那条带诊断文案。
-///
-/// 为什么要有内核：陷阱版与 `try*` 版是**同一个操作**的两种失败形态 —— 一条把诊断
-/// 当终止理由，一条把它当值。若各写一套，第一次改动就会分叉（写入方式、路径解析、
-/// 文案），而分叉的两侧在**成功路径上都看起来对**，只有失败时才露馅。
+/// 写 / 追加的共用内核：结局只有「成了」与「没成」，没成的那条带诊断文案。
+/// 陷阱版与 `try*` 版是同一操作的两种失败形态（一个当终止理由、一个当值），各写一套就会在写入方式、
+/// 路径解析与文案上分叉，而分叉的两侧在成功路径上都看起来对，只有失败时才露馅。
 private enum _BkIOWriteOutcome {
     case done
     case failure(String)
@@ -1430,9 +1251,8 @@ public func bk_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointe
 }
 
 /// `appendFile(path, content)` —— 追加到目标末尾；目标不存在则创建（POSIX `"a"`）。
-///
-/// 与 `bk_write_file` **刻意共用同一段打开/写入形状**（解释器侧的 `.fileAppend` 臂逐句同构）：
-/// 两个写内建若各写一套，第一次改动就会分叉。⛔ 本函数不截断，`bk_write_file` 也永不追加。
+/// 与 `bk_write_file` 共用同一段打开/写入形状（解释器侧的 `.fileAppend` 臂逐句同构），否则第一次改动
+/// 就会分叉。⛔ 本函数不截断，`bk_write_file` 也永不追加。
 @_cdecl("bk_append_file")
 public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
     if case .failure(let message) = _bkAppendFileCore(path, content) {
@@ -1442,12 +1262,9 @@ public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePoint
 
 // MARK: - 可接住的 IO（`try*` 三兄弟）
 
-// 与上面三个陷阱版**并存**：同一个操作、两种失败形态，选哪个是源码写的名字。
-// 载荷：读是内容，写与追加是**空元组** —— 见 `IRNode` 那三个 case 的裁定理由。
-//
-// ⚠️ ABI 不对称是刻意的：读的成功值占住了返回值，错误只能从 out 参数出来；
-// 写与追加没有成功值，错误直接就是返回值（`0` = 成功）。两边都**不引线程局部
-// 「上次错误」** —— 那个形状在嵌套调用下会互相覆盖，正确性不该靠调用顺序维持。
+/// 与上面三个陷阱版并存：同一个操作、两种失败形态，选哪个是源码写的名字。载荷：读是内容，写与追加是
+/// 空元组。⚠️ ABI 不对称是刻意的：读的成功值占住返回值，错误只能走 out 参数；写与追加没有成功值，
+/// 错误就是返回值（`0` = 成功）。两边都不引线程局部「上次错误」——嵌套调用下会互相覆盖。
 
 /// `tryReadFile(path)` —— 读全文；失败写错误对象字到 `outErr` 并返回 null。
 @_cdecl("bk_try_read_file")
@@ -1498,11 +1315,9 @@ private func _bkProgramBaseSnapshot() -> String? {
     return _bkProgramBase.map { String(cString: $0) }
 }
 
-/// IO 路径的统一解析：`/` 开头、`./` 开头、`../` 开头的路径原样返回，其余拼接程序基准。
-/// 未注入基准时原样返回 ⇒ 相对路径落到进程 CWD 的语义。
-/// 与解释器的 `RuntimeOps.resolveIOPath` 必须同解：本模块不依赖 `PiniCore`，同一条规则只能各存一份。
-/// ⚠️ `./` / `../` 这一支是**豁免**：自举仓的相对路径全部带 `./` 前缀，靠本支在两种基准语义下
-/// 都落到 CWD；把它改成同样拼基准会让自举仓失守，且其 `check` 门禁看不出来。
+/// IO 路径的统一解析：`/`、`./`、`../` 开头的路径原样返回，其余拼接程序基准；未注入基准时原样返回
+/// ⇒ 相对路径落到进程 CWD。与解释器的 `RuntimeOps.resolveIOPath` 必须同解，故各存一份。
+/// ⚠️ `./` / `../` 这一支是豁免：自举仓的相对路径全带 `./`，靠本支在两种基准语义下都落到 CWD。
 private func _bkResolveIOPath(_ path: String) -> String {
     if path.hasPrefix("/") { return path }
     if path.hasPrefix("./") || path.hasPrefix("../") { return path }
@@ -1532,23 +1347,9 @@ public func bk_module_root() -> UnsafeMutablePointer<CChar>? {
     return _bkStrDup(base ?? FileManager.default.currentDirectoryPath)
 }
 
-/// `substring(start, end) -> String` —— 契约 §2.9 第 38 条。
-///
-/// ⭐ 为什么这条要落进运行时段（而不是留在发射器里发 IR）：**两个理由，缺一都不是它**。
-///   ① **语义**：第 2 参数是 **end（绝对下标）**、不是 length；且按**字素簇**切、负值尾计数、
-///      双端夹取到 `[0, len]`、`hi <= lo` 得空串。逐字节的 `memcpy` **表达不了**字素语义。
-///   ② **分配**：旧形状在**调用点**发 `alloca i8, len+1`，而循环里的 `alloca` 不到函数返回
-///      不回收 ⇒ 循环 N 次吃 N²/2 字节栈。自举 `splitLines` 就是这样撞上栈保护页
-///      （`KERN_PROTECTION_FAILURE`，帧落 `_platform_memmove`）。非变长的分配位置
-///      本身就是一处缺陷，与语义那半**独立**。
-///
-/// 语义**逐条镜像** `IRExecutor.stringSubstring`（同一份规则，两个后端不再各写一份）。
-/// 分配契约：`strdup`，**调用方释放** —— 与 `bk_cstr` / `bk_read_file` 一致。
-///
-/// ⚠️ 同族的一处常数改善（2026-10-02）：改前 `Array(String(cString: s))` 把**整串**物化成
-/// `Character` 数组（O(len) 时间 + O(len) 空间），而切片的下界只需 O(切片长)；
-/// 现改为**走到 `end` 即停**（空间 O(1)）。⛔ 阶未变（C 串无长度 ⇒ 下界 O(len)），
-/// 规则本身（下面这套夹取）一字未改。
+/// `substring(start, end) -> String`：第 2 参数是 end（绝对下标）而非长度，按字素簇切、负值尾计数、
+/// 双端夹取到 `[0, len]`、`hi <= lo` 得空串——逐字节 memcpy 表达不了字素语义。分配也必须在此发生：
+/// 调用点 `alloca` 在循环里不到函数返回不回收。语义镜像 `IRExecutor.stringSubstring`；结果 strdup、调用方释放。
 @_cdecl("bk_substring")
 public func bk_substring(
     _ s: UnsafePointer<CChar>?, _ start: Int32, _ end: Int32
@@ -1579,29 +1380,15 @@ public func bk_substring(
     return _bkStrDup(String(text[a..<b]))
 }
 
-// MARK: - 名义箱（结构体 / 对象 / 枚举）的堆分配（2026-10-01「名义箱上堆」）
+// MARK: - 名义箱（结构体 / 对象 / 枚举）的堆分配
 
-// 背景（实测，取宿主侧「聚合值的返回与拷贝」调研件的第 9 节 —— 按主题指认，⛔ 不引路径）：
-// LLVM 路径上，名义值此前是**创建帧里的一块栈 `alloca`**，值 = 指向它的指针。于是
-// 「结构体返回 / 对象返回 / 带载荷枚举返回后 match / 闭包捕获随闭包外逃」五条探针全红
-// （垃圾值 / `match no case`），而五条**同帧对照**全绿 ⇒ 洞的准确表述是
-// 「**名义箱与捕获槽都分配在创建帧里**」，不是某一种返回值写法的问题。
-//
-// 处置：三族名义箱（`%struct` / `%object` / `%enum`）**一律上堆**，聚合体第 0 格统一为
-// `i32` 引用计数头（`%object` 原本就有，`%struct` / `%enum` 本批补上，见发射器的类型定义段）。
-// 分配从这里出；retain / release 的插入点与逐类型释放胶水在发射层。
-//
-// ⚠️ 与容器句柄（`bk_handle_*`）**不是**同一套：容器的 box 是运行时对象、句柄是
-// `%bk_array` 之类的**包装类型**；名义箱就是裸聚合体本身，头在聚合体内部第 0 格，
-// 因此字段可被 LLVM 的 GEP 直接寻址（索引 +1），无常驻注册表、无动态转型。
-//
-// ⚠️ 分配契约：`malloc` 出来的块，**释放由发射层合成的释放胶水负责**（`free`），
-// 判据是引用计数归零 —— ⛔ 运行时这里不做任何记账（没有 live 表）。
+// 名义值（`%struct` / `%object` / `%enum`）一律上堆：栈形状下返回值与闭包捕获会外逃成垃圾值。
+// 聚合体第 0 格统一为 `i32` 引用计数头（在聚合体内部 ⇒ 字段可被 GEP 直接寻址、索引 +1），
+// 故无常驻注册表、无动态转型；分配在此，retain/release 与逐类型释放胶水在发射层，计数归零后 `free`。
 
 /// 名义箱的分配：`malloc(size)`，并把第 0 格（引用计数头）写成 1。
-///
-/// `size` 由发射层用「**过尾指针的整数形式**」算好（只依赖聚合体定义，不依赖目标布局查询）。
-/// 字段本身**不在这里初始化** —— 构造点逐格覆盖，与旧的栈形状同规。
+/// `size` 由发射层用「过尾指针的整数形式」算好（只依赖聚合体定义，不查询目标布局）；
+/// 字段不在这里初始化 —— 构造点逐格覆盖。
 @_cdecl("bk_nominal_alloc")
 public func bk_nominal_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
     guard size > 0 else { bk_panic("Pini runtime error: nominal box size must be positive") }
@@ -1612,13 +1399,9 @@ public func bk_nominal_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
     return raw
 }
 
-/// 被闭包捕获的变量槽（2026-10-01 · 片 D「捕获装箱」）：**闭包与帧共享同一个盒**。
-///
-/// 形状与 `bk_nominal_alloc` 刻意不同：**没有引用计数头** —— 槽是一个裸的、零初始化的
-/// 数据块，读写由发射层直接 `load`/`store`（盒子本体不参与计数）。
-///
-/// ⚠️ 分配契约：`malloc` 出来的块，**本批不释放**（寿命归闭包 —— 如实登记的边界）。
-/// 闭包自身的 env 本来就是 `malloc` 且不释放（`emitClosureLiteral`），两者寿命同阶。
+/// 被闭包捕获的变量槽：闭包与帧共享同一个盒。
+/// 与 `bk_nominal_alloc` 刻意不同：没有引用计数头，槽是裸的零初始化数据块，读写由发射层直接
+/// `load`/`store`（盒子本体不参与计数）。分配为 `malloc`，不释放：寿命归闭包，与闭包 env 同阶。
 @_cdecl("bk_slot_alloc")
 public func bk_slot_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
     guard size > 0 else { bk_panic("Pini runtime error: captured slot size must be positive") }
@@ -1631,22 +1414,18 @@ public func bk_slot_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
     return raw
 }
 
-/// 名义箱的**别名点 retain**：头格 +1。
-///
-/// ⚠️ 只需要箱指针 —— 三族名义箱的头都在**同一个偏移**（第 0 格），所以这一条
-/// **不需要类型分派**（与释放胶水那半不同：那个要按类型递归，见发射器合成的 `__release_*`）。
+/// 名义箱的别名点 retain：头格 +1。
+/// 只需要箱指针——三族名义箱的头都在同一偏移（第 0 格），故不需要类型分派；按类型递归的是释放胶水
+/// （发射层合成的 `__release_*`）。
 @_cdecl("bk_nominal_retain")
 public func bk_nominal_retain(_ box: UnsafeMutableRawPointer?) {
     guard let box else { return }
     box.assumingMemoryBound(to: Int32.self).pointee += 1
 }
 
-/// 名义箱的**引用计数递减**：返回 1 表示**归零**（调用方负责释放字段并 `free`），0 表示还有其他持有者。
-///
-/// ⭐ 归零后的动作**不在这里**：字段要按**静态类型**递归释放，而那是发射层知道的事
-/// （逐类型合成的 `__release_*` 胶水）。运行时这一层只碰头格，保持类型无关。
-/// ⚠️ `null` 入参返回 0（不崩）—— 释放胶水因此可以对「可能为空的字段」直接递归调用，
-/// 无需在每个字段前判空。
+/// 名义箱的引用计数递减：返回 1 表示归零（调用方负责释放字段并 `free`），0 表示还有其他持有者。
+/// 归零后的动作不在这里：字段要按静态类型递归释放，那是发射层逐类型合成 `__release_*` 的事，
+/// 运行时只碰头格、保持类型无关。⚠️ `null` 入参返回 0，故胶水可对「可能为空的字段」直接递归。
 @_cdecl("bk_nominal_release")
 public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
     guard let box else { return 0 }
@@ -1657,50 +1436,22 @@ public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
 
 // MARK: - 字符串的**字素簇**通道（IR 契约 §2.9 第 22/23/36/37 条的 LLVM 侧落地）
 
-// 契约 `字符模型 = Grapheme Cluster`，而 C 字符串这一层只能按**字节**碰。字素簇边界是
-// Unicode 分段算法（组合序列、ZWJ 表情、区域旗标…），拿字节循环复现不了 —— 发射器此前
-// 正是用字节循环近似它，于是与解释器在非 ASCII 文本上分歧：**切点落进多字节序列内部**，
-// 自举 `splitLines` 由此切错行。
-//
-// ⇒ 这一族一律**下沉到运行时段**，用 `String` / `Character` —— 那是编译器与解释器
-// **同一个**模型，⛔ 不再各写一份近似。
-//
-// ⚠️ 每条都写明权威出处（解释器那一路的哪一处），改动时对着那边改。
-// 分配契约与 `bk_substring` 一致：`strdup`，**调用方释放**。
+/// 契约 `字符模型 = Grapheme Cluster`，而 C 字符串只能按字节碰；字素簇边界是 Unicode 分段算法
+/// （组合序列、ZWJ 表情、区域旗标…），字节循环复现不了——切点会落进多字节序列内部。
+/// ⇒ 这一族一律下沉到运行时段，用 `String` / `Character`，与解释器同一模型。分配同 `bk_substring`。
 
-/// `len(s)` —— 契约 §2.9 第 22 条。
-///
-/// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）：数的是
-/// **字素簇**。⚠️ 发射器旧形状数的是「非续字节」（= Unicode 标量），两者只在组合序列
-/// 上分歧（分解式变音符、ZWJ 表情、区域旗标），纯 ASCII 与 CJK 上同值 —— 所以它长期
-/// 没被发现，直到与 `s[i]` 的字节寻址**叠在一起**才把自举切错。
+/// `len(s)`：数的是字素簇。
+/// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）。⚠️ 数「非续字节」得到的是
+/// Unicode 标量，两者只在组合序列上分歧（分解式变音符、ZWJ 表情、区域旗标），纯 ASCII 与 CJK 同值。
 @_cdecl("bk_string_count")
 public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
     guard let s else { return 0 }
     return Int32(String(cString: s).count)
 }
 
-/// `s[i]` 读一个字符 —— 契约 §2.9 第 23 条（下标与切片共用同一个「字符」定义）。
-///
-/// 权威 = `SubscriptReadStrategy` 的 `.string` 策略：负值尾计数；越界走**安全断言
-/// 通道**（E5-005）⇒ `bk_panic`，与数组下标同规。
-/// 返回单字符（`Char 表示与 String 同构`，方案 A），`strdup` 交调用方。
-/// ⚠️ 报文沿用发射器旧形状那一句 —— 这一层拿不到源位置，措辞与解释器的
-/// `RuntimeError.indexOutOfRange` 不同，是**既有的**独立差异，本通道不改它。
-///
-/// ⚠️⭐ **本通道的代价下界，与一处 100× 的常数改善（2026-10-02 实测）**：
-/// C 串没有长度 ⇒ 任何访问都要先 `String(cString:)` 走一遍（找 NUL + UTF-8 校验），
-/// 实测它随规模**线性**（4× 规模比 3.33，26 KB 约 2.4 µs）⇒ **单次 `s[i]` 的下界就是 O(len)**，
-/// 与取第几个无关。⇒ 在 C 串 ABI 下，逐字符扫描**必然是 O(n²)**；这是**表示**问题，
-/// ⛔ 不是这一层写得不好。要线性化只有一条路：让字符串值自带长度与缓存槽（改 ABI）。
-///
-/// ⭐ 但**旧写法比这个下界还贵 100 倍**：它先 `Array(String(cString:))` **物化整串的
-/// `Character` 数组**（O(len) 时间 **+ O(len) 空间**，且逐字素构造 `Character` 很贵）。
-/// 实测（同一 C 串重复取同一个中段下标，2000 次）：
-///     6.6 KB 第 100 个：建数组 **146.8 ms** · 走 i 步 **1.7 ms**（0.01×）
-///     26.4 KB 第 400 个：建数组 **521.8 ms** · 走 i 步 **6.3 ms**（0.01×）
-/// ⇒ 改为**走到目标下标即停**：空间 O(1)，时间 O(len + i)（`cString` 那一遍无法省）。
-/// ⚠️ 这一条**没有改阶**（O(n²) 仍是 O(n²)）—— 如实标注，⛔ 别把它读成「原生臂已线性化」。
+/// `s[i]` 读一个字符：负值尾计数，越界走安全断言通道 ⇒ `bk_panic`（与数组下标同规）；返回单字符
+/// （`strdup`，调用方释放）。⚠️ 代价下界是 O(len)：C 串无长度 ⇒ 先 `String(cString:)` 找 NUL 并校验
+/// UTF-8，故逐字符扫描必然 O(n²)——表示问题，不是实现问题；实现走到目标下标即停（空间 O(1)）。
 @_cdecl("bk_string_char_at")
 public func bk_string_char_at(
     _ s: UnsafePointer<CChar>?, _ index: Int32
@@ -1722,18 +1473,9 @@ public func bk_string_char_at(
     return _bkStrDup(String(text[p]))
 }
 
-/// 字符串切片 —— 契约 §2.9 第 23 条。
-///
-/// 语义**逐条镜像** `IRExecutor.sliceValue` 的 `.string` 分支（那是权威）：
-/// 开界取默认（`hasStart == 0` ⇒ 0；`hasEnd == 0` ⇒ 字数），负值尾计数
-/// （`offset < 0 ? count + offset : offset`），两端夹到 `[0, count]`，`hi <= lo` 得空串。
-///
-/// ⚠️ 两个 `has*` 是**开界标志**，⛔ 不是 `Int32` 哨兵值 —— 哨兵会与真实下标撞车
-/// （`s[-1...]` 是合法写法）。
-///
-/// ⚠️ 同 `bk_string_char_at` 的代价说明：改前 `Array(String(cString: s))` 物化整串
-/// （O(len) 时间 + **O(len) 空间**）⇒ 现改为**走到边界即停**（空间 O(1)，
-/// 时间 O(len + hi)）。⛔ 阶未变（C 串无长度 ⇒ 下界 O(len)）。
+/// 字符串切片：开界取默认（`hasStart == 0` ⇒ 0，`hasEnd == 0` ⇒ 字数）、负值尾计数、两端夹到
+/// `[0, count]`、`hi <= lo` 得空串——逐条镜像 `IRExecutor.sliceValue` 的 `.string` 分支（权威）。
+/// ⚠️ 两个 `has*` 是开界标志而非 `Int32` 哨兵（哨兵会与真实下标撞车）；实现走到边界即停，阶不变。
 @_cdecl("bk_string_slice")
 public func bk_string_slice(
     _ s: UnsafePointer<CChar>?, _ hasStart: Int32, _ start: Int32,
@@ -1763,11 +1505,9 @@ public func bk_string_slice(
     return _bkStrDup(String(text[a..<b]))
 }
 
-/// `s.upper()` / `s.lower()` —— 契约 §2.9 第 36 条（**Unicode 感知**，接收者不变）。
-///
-/// 权威 = `IRExecutor` 的 `.stringCase` 分支（`String.uppercased()` / `.lowercased()`）。
-/// ⚠️ 发射器旧形状逐字节 `toupper`/`tolower` 是 **ASCII-only** —— 实测
-/// `"café".upper()` 得 `CAFé`（`é` 原样），且对带变音符的拉丁字母整词错。
+/// `s.upper()` / `s.lower()`：Unicode 感知，接收者不变。权威 = `IRExecutor` 的 `.stringCase` 分支
+/// （`String.uppercased()` / `.lowercased()`）。
+/// ⚠️ 逐字节 `toupper`/`tolower` 是 ASCII-only：`"café".upper()` 得 `CAFé`，带变音符的整词错。
 @_cdecl("bk_string_upper")
 public func bk_string_upper(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
@@ -1780,13 +1520,9 @@ public func bk_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
     return _bkStrDup(String(cString: s).lowercased())
 }
 
-/// `s.contains(needle)` —— 契约 §2.9 第 37 条。
-///
-/// 权威 = `IRExecutor` 的 `.stringContains` 分支（它自己镜像 `StdlibPini` 的 Pini 源，
-/// 见那里「内建双层结构」的说明）：**字素级**扫描，空 needle 为真。
-/// ⚠️ 发射器旧形状是 `strstr`（字节查找），分解式 Unicode 下与字素判定分歧。
-/// 返回 `i32` 而非 C 的 `_Bool` —— 后者是零扩展的 `i8`，与语言侧 `i1` 对不上；
-/// 收敛到 `i1` 由调用点做（同 `bk_is_letter` 一族）。
+/// `s.contains(needle)`：字素级扫描，空 needle 为真。权威 = `IRExecutor` 的 `.stringContains` 分支
+/// （其自身镜像 `StdlibPini` 的 Pini 源）。⚠️ `strstr` 是字节查找，分解式 Unicode 下与字素判定分歧。
+/// 返回 `i32` 而非 C 的 `_Bool`（零扩展 `i8`，与语言侧 `i1` 对不上）；收敛到 `i1` 由调用点做。
 @_cdecl("bk_string_contains")
 public func bk_string_contains(
     _ haystack: UnsafePointer<CChar>?, _ needle: UnsafePointer<CChar>?
@@ -1812,12 +1548,9 @@ public func bk_string_contains(
     return 0
 }
 
-/// `s.trimLeft()` —— 剥离**前导**空格。
-///
-/// 权威 = `IRExecutor` 的 `.stringTrimLeft` 分支：**只剥 ASCII 空格 U+0020**
-/// （⛔ 不含 tab 及其他空白——与树渲染约定一致）；空串 / 全空格 ⇒ 空串。
-/// 被剥的一串是单字素空格 ⇒ 字素走查即字节走查；尾部按原字节拷贝。
-/// 分配契约 = strdup、调用方释放（同 `bk_cstr` / `bk_read_file`）。
+/// `s.trimLeft()`：剥离前导空格。权威 = `IRExecutor` 的 `.stringTrimLeft` 分支：只剥 ASCII 空格 U+0020
+/// （⛔ 不含 tab 及其他空白，与树渲染约定一致）；空串 / 全空格 ⇒ 空串。被剥的是单字素空格 ⇒
+/// 字素走查即字节走查。分配契约 = strdup、调用方释放。
 @_cdecl("bk_string_trim_left")
 public func bk_string_trim_left(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
@@ -1838,12 +1571,9 @@ public func bk_string_trim_right(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePoi
     return _bkStrDup(String(text[..<end]))
 }
 
-/// `s.indexOf(needle)` —— `needle` 首现位置。
-///
-/// 权威 = `IRExecutor` 的 `.stringIndexOf` 分支（与 `.stringContains` 同一
-/// 字素扫描，本条返位置而非存在性）：**字素单位**；空 needle ⇒ 0；未找到 ⇒ −1。
-/// 运行时段实现（⛔ 不在发射器内联）—— 字素簇边界是 Unicode 分段算法，
-/// 发射器发不出来（同 `bk_string_count` / `bk_string_slice` 的立场）。
+/// `s.indexOf(needle)`：`needle` 首现位置（字素单位）；空 needle ⇒ 0；未找到 ⇒ −1。权威 =
+/// `IRExecutor` 的 `.stringIndexOf` 分支，与 `.stringContains` 同一套字素扫描。运行时段实现：
+/// 字素簇边界是 Unicode 分段算法，发射器发不出来（同 `bk_string_count` / `bk_string_slice`）。
 @_cdecl("bk_string_index_of")
 public func bk_string_index_of(
     _ haystack: UnsafePointer<CChar>?, _ needle: UnsafePointer<CChar>?
@@ -1869,22 +1599,9 @@ public func bk_string_index_of(
     return -1
 }
 
-/// `s.split(sep)` —— 契约 §2.9 第 23 条**族**的容器通道（`Array<String>`）。
-///
-/// 权威 = `IRExecutor` 的 `.split` 分支，本函数的循环**逐条镜像**它：
-///   · **空定界符 ⇒ 逐字素**，一个元素恰一字素（自举 `textAtoms` 靠这一条建原子数组）；
-///   · 非空定界符走**子串**匹配（⛔ 不是字符集匹配），步长 = 定界符的字素数；
-///   · **省略空子序列**（`"".split(",")` ⇒ 0 个元素 · `"a\n".split("\n")` ⇒ `["a"]`）。
-///
-/// ⚠️⭐ 为什么整族下沉（2026-10-03 实测，甲路线）：发射器旧形状是**两遍 `strtok`**，
-/// 而 `strtok` 把定界符当**字符集**且空集**不匹配任何字符** ⇒ `"ab\ncd".split("")`
-/// 得 **1** 个元素（整串），解释器得 **5**（逐字素）。自举 `common.pini` 的 `textAtoms`
-/// 正是 `text.split("")` ⇒ 原生路径下整份资源表解析成**空表**（实测：`TABLE` 值全空 ·
-/// `CODES|zh|` 空），即自举 `common` 层两路对照失败的直接原因。
-/// ⛔ 这不是「性能取舍」—— 是**语义**：字素簇边界是 Unicode 分段算法，发射器发不出来，
-/// 所以这一族一律在运行时段里实现（同 `bk_string_count` / `bk_string_slice` 的立场）。
-///
-/// 元素形态与发射器旧形状**逐位一致**：长度 8 字节的 `.str`（tag 3）槽，内容 `strdup`。
+/// `s.split(sep)`：循环逐条镜像 `IRExecutor` 的 `.split` 分支——空定界符 ⇒ 逐字素（一个元素恰一字素，
+/// 自举 `textAtoms` 靠它建原子数组）；非空定界符走子串匹配（⛔ 不是字符集），步长 = 定界符字素数；
+/// 省略空子序列（`"".split(",")` ⇒ 0 个元素）。元素形态 = 8 字节 `.str`（tag 3）槽，内容 `strdup`。
 @_cdecl("bk_string_split")
 public func bk_string_split(
     _ s: UnsafePointer<CChar>?, _ delim: UnsafePointer<CChar>?
@@ -1926,54 +1643,24 @@ public func bk_string_split(
     return handle
 }
 
-// MARK: - 并发原语的 C ABI 面（`DE-3b` · `B-2` 段：8 个无悔符号）
-//
-// 「无悔」= 形状与**让出机制**无关。`DE-1` §3 的 10 个符号里，`bk_task_spawn` 与
-// `bk_task_yield` 受机制选择影响（2026-09-20 定案**走乙**：让出是**体的 `return`**，
-// 不是一次调用）⇒ 已由 `B-1` 标为**待重议**，**不在本段**；其余 8 个
-// （`join` · `join_within` · `join_all` · `cancel` · `is_cancelled` · `detach` ·
-// `scope_close` · `capabilities`）的形状与机制无关，故本段交付。
-//
-// 语义**一律对齐解释器后端**，不做第二套解释（出处逐个写明）：
-//   `RuntimeOps.joinFuture`        —— 阻塞 join 的三态归一化（`RuntimeOps.swift`）
-//   `RuntimeOps.makeJoinAllFuture` —— fail-fast 聚合
-//   `FutureValue.closeScope` + `RuntimeOps.flipIfLeaked` —— 唯一有界 override
-//   `RuntimeOps.checkCancellation` —— 协作式检查点
-//   `FutureValue` 的 `parent` / `children` —— 取消树的形状与传播
-//
-// ⛔ **两处 `DE-1` 留白，由本段定案并登记**（`IR 契约` §5.2 注 + 提案 §11 执行记录）：
-//   ① `status` 的**取值**（`DE-1` 只写了 `-> status`，没写值）；
-//   ② 「**运行时自己产生的 err**」（取消 / 超时 / leaked 聚合）其载荷 = 错误对象的
-//      句柄字（见本文件「Result 的 err 载荷」一节）：三类都带可读消息，`status` 仍是
-//      既有的二值 —— 「取得没取得 Result」，不承载错误身份。
-//   两处都是**补全**（`DE-1` 留了空），**不是**改形状 ⇒ `DE-1` 的符号签名一个都没动。
-//
-// `status` 取值（本段定案）：
-//   `0` = `out` 已写（任务的 `Result`，或聚合结果）
-//   `1` = **未取得 `Result`**：任务被取消 / 超时归约 ⇒ 调用方按 `err(CancelError)` 处置
-// 非法用法（空句柄 / 越界）**不走 `status`**，一律 `bk_panic` —— 与既有 `bk_array_get` /
-// `bk_dict_get` 同一条通道（本仓错误分三通道：panic / status / 值，此处沿用 panic）。
+// MARK: - 并发原语的 C ABI 面
+// 语义对齐解释器后端（`joinFuture` 三态归一化、`makeJoinAllFuture` fail-fast、`closeScope` 有界
+// override、`checkCancellation`）。`status`：0 = `out` 已写；1 = 未取得 `Result`（取消/超时）；空句柄/越界一律 panic。
 
-/// 任务盒 —— `FutureValue`（解释器后端）在 C ABI 面的对应物。
-///
-/// 继承 `_BkBox` 是**刻意的复用**，不是顺手：`_bkRegister` / `_bkReleaseShare` /
-/// `bk_runtime_cleanup` 那套「活动句柄登记 + 进程退出兜底回收」对任务句柄**同样成立**
-/// ⇒ 任务句柄不必新造第二套生命周期（`DE-1` §2：并发面照抄既有形态，不新造第二套）。
-/// ⚠️ 它**不参与 COW**：`cowCopy` 落基类的 `fatalError`，谁也不该对任务句柄发 `ensure_unique`。
+/// 任务盒 —— 解释器后端 `FutureValue` 在 C ABI 面的对应物。
+/// 继承 `_BkBox` 是刻意复用：`_bkRegister` / `_bkReleaseShare` / `bk_runtime_cleanup` 那套「活动句柄登记 +
+/// 退出兜底回收」对任务句柄同样成立，故不新造第二套生命周期。⚠️ 不参与 COW，谁也不该对它发 ensure_unique。
 private final class _BkTaskBox: _BkBox {
     /// 阻塞 join 的等待 / 唤醒。
-    ///
-    /// 与 `FutureValue.wait()` 同构，但用 `NSCondition` 而非 `DispatchGroup`：后者为每个
-    /// 等待者引入一次队列跳转，而这里的等待者往往就是同一台后端上的发射代码，不需要那层调度。
-    /// ⛔ **所有状态改动都在本锁下进行** —— 否则「置位 + broadcast」与「判位 + wait」之间
-    /// 会出现丢唤醒的窗口，而那正是阻塞 join 最经典的竞态。
+    /// 与 `FutureValue.wait()` 同构，但用 `NSCondition` 而非 `DispatchGroup`：后者为每个等待者引入一次队列
+    /// 跳转，而等待者往往就是同后端上的发射代码。⛔ 所有状态改动都在本锁下 —— 否则丢唤醒。
     let cond = NSCondition()
 
     /// 是否已决（`ok` / `err` 之一已写入）。三槽在**未决**时无意义。
     var resolved = false
-    /// 结果三槽（`DE-1` §3.1）：槽 0 = tag（`ok=0` / `err=1`）· 槽 1 = ok 载荷 · 槽 2 = err 载荷，
+    /// 结果三槽：槽 0 = tag（`ok=0` / `err=1`）· 槽 1 = ok 载荷 · 槽 2 = err 载荷，
     /// 载荷一律**擦除为 i64 宽度**。
-    /// ⛔ 本层**不解释**它们的语义，只搬运 —— 解释权在发射层（`DE-3c`）。
+    /// ⛔ 本层**不解释**它们的语义，只搬运 —— 解释权在发射层。
     var resultTag: Int64 = 0
     var okPayload: Int64 = 0
     var errPayload: Int64 = 0
@@ -1988,46 +1675,38 @@ private final class _BkTaskBox: _BkBox {
 
     // MARK: 任务体（`B-3` 的 `bk_task_spawn` 记入）
 
-    /// 体的 wrapper / code / env（`DE-1` §3.1 的实参，原样存下）。
+    /// 体的 wrapper / code / env（任务体实参，原样存下）。
     var wrapper: UnsafeMutableRawPointer?
     var code: UnsafeMutableRawPointer?
     var env: UnsafeMutableRawPointer?
 
-    /// 载荷类型描述（`DE-1` §3.1 的 `elemBytes` / `elemTag`）—— 本层**不解释**它们，
-    /// 与三槽同理：只搬运，解释权在发射层（`DE-3c`）。
+    /// 载荷类型描述（`elemBytes` / `elemTag`）—— 本层**不解释**它们，
+    /// 与三槽同理：只搬运，解释权在发射层。
     var elemBytes: Int32 = 0
     var elemTag: Int32 = 0
 
-    /// ⭐ **体是否已让出**（wrapper 返回非 `0`）。
-    ///
-    /// ⛔ 它**不是**结束状态 —— 让出之后 `future` 仍**未决**，由**续跑方**决出（`DE-3c`）。
-    /// 记它的用途只有一个：让「体让出过」这件事可被**外部观测**（判据与诊断），
-    /// 否则本层的让出是**静默**的，而静默正是本仓反复消灭的东西。
+    /// 体是否已让出（wrapper 返回非 `0`）。
+    /// ⛔ 它不是结束状态：让出后 `future` 仍未决，由续跑方决出。记它只为让「体让出过」可被外部观测，
+    /// 否则本层的让出是静默的。
     var suspended = false
 
     /// 体已经跑过（无论跑完还是让出）。防同一句柄被跑第二次。
     var bodyStarted = false
 
-    // MARK: 可恢复帧（`DE-6b`）
+    // MARK: 可恢复帧
 
     /// 指向自己的句柄。⭐ 只为**续跑**存在：决出方手里是「等待者盒子」，而起一条线程重入体需要
     /// 的是**句柄**（`_bkTaskRunBody` 的实参）⇒ 没有它就得反查登记表。
     var selfHandle: UnsafeMutableRawPointer?
 
-    /// 帧里**局部槽**的块表 —— `bk_task_slot` 每次取槽追加一块，体真跑完（或让出态被取消）时
-    /// 一次性交还。
-    ///
-    /// ⛔ **为什么不一次性算好整块**：发射层**没有**「类型 → 字节数」的通用能力（容器元素那两张
-    /// 表都只枚举有限类型、聚合一律拒绝），若在 Swift 侧另算一套布局，就成了「同一件事两处各算
-    /// 一次」—— 一旦不一致就是**静默错位的帧**，比崩溃难查得多。⇒ 尺寸由 IR 侧的常量表达式自己
-    /// 算，本层只管搬运。
+    /// 帧里局部槽的块表 —— `bk_task_slot` 每次取槽追加一块，体真跑完（或让出态被取消）时一次性交还。
+    /// ⛔ 不一次性算好整块：发射层没有「类型 → 字节数」的通用能力，在 Swift 侧另算一套布局就会两处各算
+    /// 一次，一旦不一致就是静默错位的帧。⇒ 尺寸由 IR 侧常量表达式算，本层只管搬运。
     var frameChunks: [UnsafeMutableRawPointer] = []
 
-    /// `bk_task_slot` 的**重放游标**：每次进入体都归零（见 `_bkTaskRunBody`）。
-    ///
-    /// ⭐ 这不是优化，是**续跑正确性的前提**：让出时体从栈返回、槽指针全部丢失，续跑靠重新执行
-    /// 同一段取槽代码把它拿回来 ⇒ 只有「第 n 次进入的第 k 次取槽必得同一地址」，续跑才拿得到
-    /// 上次那些槽。
+    /// `bk_task_slot` 的重放游标：每次进入体都归零（见 `_bkTaskRunBody`）。
+    /// 这不是优化，是续跑正确性的前提：让出时体从栈返回、槽指针全部丢失，续跑靠重新执行同一段取槽代码
+    /// 拿回来 ⇒ 只有「第 n 次进入的第 k 次取槽必得同一地址」，续跑才拿得到上次那些槽。
     var frameCursor = 0
 
     /// 我已经把控制流交还出去、正等 `awaiting` 决出。⛔ 它**不是**结束状态 —— `future` 仍**未决**。
@@ -2045,14 +1724,9 @@ private final class _BkTaskBox: _BkBox {
     /// ⛔ 它关的是一扇**丢唤醒**的窗，不是缓存：没有它，「等我的任务」会在窄缝里永远不再被调度。
     var resumePending = false
 
-    /// ⭐ **我此刻在就绪队列里等着被挑**（`Q-4`）。
-    ///
-    /// ⛔ 它与 `suspended` **不是同一件事的两面**：`suspended` 说「体交出了控制流」，
-    /// 而本位置说「它已经交给策略层、策略层还没挑它」—— 一个已决出**待挑**的任务两者**同时**成立。
-    /// ⚠️ 它正是 `bk_task_state` 那一格里「**可跑**」的落点（裁定 50 的四态之一），
-    /// 而这个身份**是本路新引入的**：此前的驱动形态里没有「排队等挑」这一段
-    /// ⇒ 四态表上那个成员在此之前**没有承载**。
-    /// 由**入队**写、由**出队**（挑走）清。
+    /// 我此刻在就绪队列里等着被挑。
+    /// ⛔ 与 `suspended` 不是同一件事：后者说「体交出了控制流」，本位置说「已交给策略层、尚未被挑」
+    /// —— 一个待挑的任务两者同时成立。它正是 `bk_task_state` 里「可跑」的落点；由入队写、出队清。
     var queued = false
 
     /// 帧是否已交还。幂等守卫 —— 「跑完」与「让出态被取消」两条路径都会来收，而**只能收一次**。
@@ -2060,15 +1734,14 @@ private final class _BkTaskBox: _BkBox {
 }
 
 /// 句柄 → 任务盒。
-///
-/// 与既有 `bk_array_get` / `bk_dict_get` 同一条路：句柄是 `Unmanaged` 的裸指针，
-/// 这里按**具体子类**取回（该先例在 `bk_dict_ensure_unique_at` 等处已经在用）。
+/// 与 `bk_array_get` / `bk_dict_get` 同一条路：句柄是 `Unmanaged` 的裸指针，这里按具体子类取回
+/// （`bk_dict_ensure_unique_at` 等处已是同一先例）。
 private func _bkTaskBox(_ h: UnsafeMutableRawPointer?) -> _BkTaskBox? {
     guard let h else { return nil }
     return Unmanaged<_BkTaskBox>.fromOpaque(h).takeUnretainedValue()
 }
 
-/// 写 `Result` 三槽（`DE-1` §3.1 的**唯一**写入点，避免三处各写各的）。
+/// 写 `Result` 三槽（**唯一**写入点，避免三处各写各的）。
 /// `out` 由调用方提供、至少 24 字节。
 private func _bkWriteResult(_ out: UnsafeMutableRawPointer?, tag: Int64, ok: Int64, err: Int64) {
     guard let out else { return }
@@ -2084,14 +1757,9 @@ private func _bkWord(_ p: UnsafeMutableRawPointer) -> Int64 {
 
 // MARK: - Result 的 err 载荷
 
-/// err 槽里那个字的**所指**：一个错误对象 = 消息 + 是不是取消。
-///
-/// 槽本身是一个 64 位字（契约 §2.15：错误载荷类型擦除为一个机器字），字里放的是本对象的
-/// 句柄位型。⛔ 不要把这个字当指针解引用、也不要把它当计数：读它只有两个入口 ——
-/// `bk_error_is_cancel` 与 `bk_error_message`。
-///
-/// 生命周期 = **进程**：创建点在失败路径上，无释放入口，数量与失败次数同阶。
-/// 消息在创建时复制一份 C 串自持，读侧因此**零分配**、指针在对象存活期内稳定。
+/// err 槽里那个字的所指：一个错误对象 = 消息 + 是不是取消。槽本身是 64 位字（载荷类型擦除为一个
+/// 机器字），字里放的是本对象的句柄位型。⛔ 不要把它当指针解引用、也不要当计数：读它只有
+/// `bk_error_is_cancel` 与 `bk_error_message` 两个入口。生命周期 = 进程；消息创建时复制自持，读侧零分配。
 private final class _BkErrorBox {
     let message: UnsafeMutablePointer<CChar>
     let isCancel: Bool
@@ -2143,9 +1811,8 @@ public func bk_error_is_cancel(_ word: Int64) -> Int32 {
 }
 
 /// `e.message` / `print(e)` —— err 字的消息。
-///
-/// Allocation contract: 返回的是**错误对象内部**的 C 串，⛔ 调用方**不得释放**；
-/// 指针在对象存活期（= 进程期）内稳定。无载荷（字为 0）答空串。
+/// 返回的是错误对象内部的 C 串，⛔ 调用方不得释放；指针在对象存活期（= 进程期）内稳定。
+/// 无载荷（字为 0）答空串。
 @_cdecl("bk_error_message")
 public func bk_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
     guard let box = _bkErrorBox(word) else { return _bkEmptyCString }
@@ -2178,9 +1845,8 @@ private func _bkTaskWait(_ box: _BkTaskBox, timeoutMs: Int32?) -> Bool {
 }
 
 /// 递归取消（照 `FutureValue.cancel()`）。
-///
-/// ⛔ **先取快照、解锁、再向下传播** —— 持锁递归会与剪枝的反向加锁（子 → 父）
-/// 形成锁序死锁。解释器后端的 `cancel()` 也是这个形状（取快照 → 解锁 → 传播）。
+/// ⛔ 先取快照、解锁、再向下传播 —— 持锁递归会与剪枝的反向加锁（子 → 父）形成锁序死锁。
+/// 解释器后端的 `cancel()` 也是这个形状。
 private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     box.cond.lock()
     if box.cancelled { box.cond.unlock(); return }
@@ -2189,9 +1855,9 @@ private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     let wasSuspended = box.suspended
     box.cond.broadcast()   // 唤醒阻塞中的 join —— 它读到标志后归一为 err(CancelError)
     box.cond.unlock()
-    // `DE-1` §3.2.2 的第二条连带：**让出态被取消 ⇒ 体不会再被进入** ⇒ 帧必须由运行时交还。
-    // ⛔ 落地顺序有讲究：先把取消位置起（上面的锁内），再交还帧 —— 反过来的话，一条已经在
-    // 「续跑」路上的线程会带着已释放的帧进入体，而那是**静默内存错**，不是崩溃。
+    /// **让出态被取消 ⇒ 体不会再被进入** ⇒ 帧必须由运行时交还。
+    /// ⛔ 落地顺序有讲究：先把取消位置起（上面的锁内），再交还帧 —— 反过来的话，一条已经在
+    /// 「续跑」路上的线程会带着已释放的帧进入体，而那是**静默内存错**，不是崩溃。
     if wasSuspended { _bkTaskReleaseFrame(box) }
     // 等我的那些任务：我已经被取消 ⇒ 它们的等待应当**现在**归约为 `err(CancelError)`，
     // 而不是等我（永不）决出。它们醒来后走的是 `bk_task_await` 的「已决 ⇒ 直线取值」那条路。
@@ -2213,15 +1879,9 @@ private func _bkTaskDetachFromParent(_ box: _BkTaskBox) {
     p.cond.unlock()
 }
 
-/// 单任务 join（`bk_task_join` 与 `bk_task_join_within` 的唯一实现体）。
-///
-/// 归一化照 `RuntimeOps.joinFuture`：
-/// - 已决 → 直通它的三槽（`ok` 与任务自己产生的 `err` 都原样搬运）；
-/// - 超时 → **取消该任务**并归约为 `err(CancelError)`；
-/// - 被取消 → 归约为 `err(CancelError)`（取消优先于结果，与 `FutureValue.wait()` 同序）。
-///
-/// ⚠️ 无论成败都**剪枝**（`joinFuture` 的 `defer { detachFromParent() }`）：
-/// 生命周期已被显式消费 ⇒ 父返回时不该再取消它，长任务的 `children` 也不该无界增长。
+/// 单任务 join（`bk_task_join` 与 `bk_task_join_within` 的唯一实现体），归一化照 `RuntimeOps.joinFuture`：
+/// 已决 → 直通三槽；超时 → 取消该任务并归约为 `err(CancelError)`；被取消 → 同样归约为 `err(CancelError)`
+/// （取消优先于结果）。⚠️ 无论成败都剪枝：生命周期已被显式消费，父返回时不该再取消它。
 private func _bkTaskJoinOne(
     _ box: _BkTaskBox, timeoutMs: Int32?, out: UnsafeMutableRawPointer?
 ) -> Int32 {
@@ -2252,25 +1912,9 @@ private func _bkTaskJoinOne(
 
 // MARK: 进程级能力自述
 
-/// 后端能力位图（`DE-1` §3.4 / §6）。**启动时解析一次、此后固化** —— 文件级 `let` 天然满足
-/// 纪律 1（不逐调用点判）与纪律 2（进程生命周期内不变）。
-///
-/// 位值照 `DE-1` §3.4 的定案表（`DE-2b-3` 补遗）：位 0 = **L0 调度** `1` ·
-/// 位 1 = **L1 让出** `2` · 位 2 = **L2 抢占** `4`。
-///
-/// ⛔ **L2 一律不许宣称**（裁定 29：登记不实现）⇒ 这里没有它的位。
-///
-/// ⭐ **本后端自 `DE-6b` 起宣称 L0 + L1**。为什么此刻才敢宣称：L1 的定义是「`bk_task_yield`
-/// 能**真让出**」，而走乙之下「让出」是**异步体的 `return`**、由驱动器接住 —— 那件事与申报位
-/// **同批落地**：发射层在异步体的语句根 `await` 处交出控制流（帧 + 续跑点），运行时由**决出方**
-/// 续跑。⛔ 此前「只宣称 L0」是合规降级、不是遗漏；如今反过来 —— 若再宣 L0 就是**低报**，
-/// 而低报同样会让判据失真（能力位的用处正是让各后端可被对照）。
-///
-/// ⚠️ 本 target **不依赖 `PiniCore`**（`Package.swift`），故位值在此**重述**；权威定义在解释器后端
-/// （`Sources/PiniCore/Interpreter/ConcurrencyCapabilities.swift`）。**重述不漂开**由判据钉住：
-/// `ConcurrencyRuntimeABITests` 断言本后端的置位是解释器后端的**子集**（即位定义一致）。
-/// 能力位的**位值**（`DE-1` §3.4 定案表，`DE-2b-3` 补遗）。命名而非散落字面量：
-/// `bk_task_yield` 的答案就取自 L1 位（见该函数），两处必须是**同一个**位。
+/// 后端能力位图：启动时解析一次、此后固化（文件级 `let` 天然满足「不逐调用点判」与「进程内不变」）。
+/// 位 0 = L0 调度 `1` · 位 1 = L1 让出 `2` · 位 2 = L2 抢占 `4`；⛔ L2 一律不许宣称（登记不实现）。
+/// 本后端宣称 L0 + L1（`bk_task_yield` 能真让出）；本 target 不依赖 `PiniCore`，故位值在此重述并由判据钉住一致。
 private enum ConcurrencyTierBits {
     static let dispatch: UInt32 = 1  // L0 调度
     static let yield: UInt32 = 2     // L1 让出
@@ -2279,13 +1923,13 @@ private enum ConcurrencyTierBits {
 private let _bkCapabilities: UInt32 =
     ConcurrencyTierBits.dispatch | ConcurrencyTierBits.yield  // L0 + L1（L2 永不给）
 
-/// 后端能力位图（`DE-1` §3.4）。
+/// 后端能力位图。
 @_cdecl("bk_capabilities")
 public func bk_capabilities() -> UInt32 { _bkCapabilities }
 
 // MARK: 协作式取消
 
-/// 取消任务（`DE-1` §3.3）：**协作式**，不强杀，于下一检查点生效。
+/// 取消任务：**协作式**，不强杀，于下一检查点生效。
 /// 取消沿取消树向下传播，并唤醒正阻塞在该任务上的 join。
 @_cdecl("bk_task_cancel")
 public func bk_task_cancel(_ h: UnsafeMutableRawPointer?) {
@@ -2293,13 +1937,9 @@ public func bk_task_cancel(_ h: UnsafeMutableRawPointer?) {
     _bkTaskCancelBox(box)
 }
 
-/// 取消检查点（`DE-1` §3.3）：回答**当前任务**是否已被取消。
-///
-/// 无参形态对应解释器后端的检查点 `RuntimeOps.checkCancellation` —— 该后端在岗的是
-/// **异步体入口**与 **`joinAll` 聚合**；该后端 `sleep` 的检查点**有意留空**（单线程、
-/// 不持任务句柄），按片真查取消位的是发射层的 `bk_sleep`。⛔ 各后端都**没有**
-/// 「循环头」检查点（2026-09-21 逐处实测）。⛔ **无当前任务时回 `0`** —— 与
-/// `checkCancellation(nil)`「不做事」同义，也即「没有任务在跑 ⇒ 没有被取消」。
+/// 取消检查点：回答当前任务是否已被取消。
+/// 无参形态对应 `RuntimeOps.checkCancellation`；在岗的检查点是异步体入口与 `joinAll` 聚合，`sleep` 的
+/// 检查点按片真查取消位。⛔ 无当前任务时回 `0` —— 与 `checkCancellation(nil)`「不做事」同义。
 @_cdecl("bk_task_is_cancelled")
 public func bk_task_is_cancelled() -> Int32 {
     guard let box = _bkTaskCurrent else { return 0 }
@@ -2309,41 +1949,28 @@ public func bk_task_is_cancelled() -> Int32 {
     return c ? 1 : 0
 }
 
-/// 从父 scope 剪枝、主动退出所有权（`DE-1` §3.3）—— fire-and-forget 的唯一合法出口。
+/// 从父 scope 剪枝、主动退出所有权 —— fire-and-forget 的唯一合法出口。
 @_cdecl("bk_task_detach")
 public func bk_task_detach(_ h: UnsafeMutableRawPointer?) {
     guard let box = _bkTaskBox(h) else { return }
     _bkTaskDetachFromParent(box)
 }
 
-// MARK: spawn 与让出（`B-3` —— `DE-1` §3 里仅有的两个**受形状影响**的符号）
+// MARK: spawn 与让出（任务族里仅有的两个**受形状影响**的符号）
 
-/// 任务体的 wrapper 调用形态（`B-1` 订正后的**两态**形状）。
-///
-/// ⛔ **与 LazyRef / 给定块的 wrapper ABI 不同形，这是刻意的**：那条统一 ABI 的返回是
-/// **单个 `ptr`**，**表达不了「跑完 / 已让出」两态**，而两态正是让出在走乙之下的全部内容
-/// （`B-1` 的订正结论，见 `DE-1` §3.1 的订正注）。⇒ 本族必须自带**一个状态位**。
-///
-/// - Returns: `0` = 体跑到底（三槽已写）· 非 `0` = **体已让出**（`out` **未**写，
-///   控制流已交还驱动器）。⇒ 续跑入口是 `DE-3c` 的事，本段**不**替它定。
+/// 任务体的 wrapper 调用形态：两态（跑完 / 已让出）。
+/// ⛔ 与 LazyRef / 给定块的 wrapper ABI 不同形是刻意的：那条统一 ABI 只返回单个 `ptr`，表达不了两态，
+/// 而两态正是让出的全部内容。返回值 `0` = 体跑到底（三槽已写），非 `0` = 已让出（`out` 未写）。
 private typealias _BkTaskBody = @convention(c) (
     UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
 ) -> Int32
 
-/// `Result` 三槽的字节数（`DE-1` §3.1：tag + ok + err，载荷一律擦除为 i64 宽度）。
+/// `Result` 三槽的字节数（tag + ok + err，载荷一律擦除为 i64 宽度）。
 private let _bkResultSlotsBytes = 24
 
-/// 派发任务体（`DE-1` §3.1）。
-///
-/// ⭐ **「调用即派发」**（裁定 37 糖读法）：本符号是**一次异步调用的落点** ——
-/// 它的实参就是该次调用的实参 ⇒ **它自己另无「形状」待定**。
-///
-/// 三件事按序做完再返回，故调用方**立刻**拿到句柄（急切派发）：
-/// ① 建盒 · ② **认父**（父已取消 ⇒ 新子立即取消，见 `_bkTaskAdopt`）· ③ 起线程跑体。
-///
-/// ⚠️ **线程归本后端的「原语层」**（`DE-1` §4：让出 / 恢复 · 续体保存 · 任务树 · 取消树 = 原语）。
-/// **策略层**（队列 / 优先级 / 归约阈值 / **选择下一个任务**）**不住在这里** —— 那是 Pini 值、
-/// 经 IR 执行（裁定 28）。本函数只回答「体在哪条 OS 线程上开始跑」，不回答「下一个跑谁」。
+/// 派发任务体：调用即派发，实参就是该次异步调用的实参，故它自己没有待定的形状。
+/// 三件事按序做完再返回，调用方立刻拿到句柄（急切派发）：建盒 · 认父（父已取消 ⇒ 新子立即取消）· 起线程跑体。
+/// ⚠️ 线程归原语层；策略层（队列/优先级/归约阈值/选下一个）不住在这里，本函数只回答「体在哪条线程上开始跑」。
 @_cdecl("bk_task_spawn")
 public func bk_task_spawn(
     _ wrapper: UnsafeMutableRawPointer?, _ code: UnsafeMutableRawPointer?,
@@ -2371,13 +1998,9 @@ public func bk_task_spawn(
     return h
 }
 
-/// 体的一次运行：登记当前任务 → 调 wrapper → 按返回的**两态**收尾。
-///
-/// ⭐ `DE-6b` 起它同时是**续跑**的入口（首跑与续跑走同一条路径，这是「不需要第二个入口函数」
-/// 的落地处，`DE-1` §3.2.2）。
-///
-/// ⚠️ 归出（让出）时**不**决出 `future` —— 那是续跑方的责任；本层在这里做的是**让这件事
-/// 可观测**（`box.suspended`）并为观测面计数。
+/// 体的一次运行：登记当前任务 → 调 wrapper → 按返回的两态收尾。
+/// 首跑与续跑走同一条路径（续跑不需要第二个入口函数）。
+/// ⚠️ 让出时不决出 `future` —— 那是续跑方的责任；本层只让这件事可观测（`box.suspended`）并计数。
 private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
     guard let box = _bkTaskBox(h), let wrapper = box.wrapper else { return }
     let restore = _bkTaskEnter(h)
@@ -2410,7 +2033,7 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
         let tag = out.load(fromByteOffset: 0, as: Int64.self)
         let ok = out.load(fromByteOffset: 8, as: Int64.self)
         let err = out.load(fromByteOffset: 16, as: Int64.self)
-        // 真跑完才交还帧（`DE-1` §3.2.2）；先读三槽再交还，免得交还后又去读它。
+        /// 真跑完才交还帧；先读三槽再交还，免得交还后又去读它。
         _bkTaskReleaseFrame(box)
         if tag == 0 {
             _bkTaskResolveOk(h, ok)
@@ -2429,47 +2052,24 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
     box.cond.broadcast()
     box.cond.unlock()
     if resumeNow {
-        // `Q-4`：兑现方式由「起一条新线程重入体」改为「**入队**」——「谁跑下一个」归策略层，
-        // ⛔ 不在这里抢跑。⚠️ 这一处与 `_bkTaskResume` 的那一处是**同一个改道的两侧**：
-        // 漏掉任何一侧，被漏的那条路上挑选顺序就退回决出顺序。
+        /// 兑现方式是**入队**：「谁跑下一个」归策略层，
+        /// ⛔ 不在这里抢跑。⚠️ 这一处与 `_bkTaskResume` 的那一处是**同一个入队路径的两侧**：
+        /// 漏掉任何一侧，被漏的那条路上挑选顺序就退回决出顺序。
         if _bkTaskOffer(box) { _bkTaskScheduleDrain() }
     }
 }
 
-/// 问后端**能否让出**（`DE-1` §3.2.1 订正后的**查询**语义）。
-///
-/// ⛔ 它**不执行**让出 —— 走乙之下让出是**异步体的 `return`**（`DE-1` §3.2.1），
-/// 由驱动器接住。调用它只回答一个问题：**这次让出能不能真的发生**。
-///
-/// - Returns: `1` = 能真让出 · `0` = **合规降级** ⇒ 本次等待按**占用**处理。
-///   ⛔ `0` **不是错误**（`DE-1` §6.2 纪律 3：无合格版本则降级，不失败）。
-///
-/// ⭐ **答案取自 L1 位，与解释器后端同源**：解释器后端的对应物就是
-/// `GCDScheduler.capabilities.supports(.yield) ? 1 : 0`（`Scheduler.swift`）。
-/// ⇒ 各后端在这一位上由**同一条规则**决定，不会各说各话 —— 这正是 `DE-1` §3.2 要求的
-/// 「各后端必须在这一位上一致」。
-///
-/// ⭐ **`DE-6b` 起本后端宣称 L1**（`_bkCapabilities` 含 `yield` 位）⇒ 本函数回 `1`。
-/// 它之所以能宣称，是因为让出的**执行路径**真的接上了：发射层在异步体的语句根 `await` 处
-/// 交出控制权（帧+续跑点），运行时由决出方续跑 —— 即「申报」与「可用」同批成立。
+/// 问后端能否让出（查询语义）：它不执行让出 —— 让出是异步体的 `return`，由驱动器接住。
+/// 返回 `1` = 能真让出；`0` = 合规降级，本次等待按占用处理（⛔ 不是错误）。
+/// 答案取自 L1 位，与解释器后端同源（`capabilities.supports(.yield)`），各后端由同一条规则决定。
 @_cdecl("bk_task_yield")
 public func bk_task_yield() -> Int32 {
     (_bkCapabilities & ConcurrencyTierBits.yield) != 0 ? 1 : 0
 }
 
-/// 帧的取用（`DE-6b`）：**一个概念、两种用途**，两者的区别只在 `bytes`。
-///
-/// - `bytes > 0` —— **派发点用**：新建一块属于运行时的帧（`bytes` 字节、**已清零**），并登记
-///   所有权。⛔ 清零不是顺手：帧的第一个字是**续跑点**（`0` = 首次进入），清零即把「首次进入」
-///   写进去，发射层因而不必额外发一条 `store`。
-/// - `bytes == 0` —— **体内用**：取当前任务的帧。⛔ 无论第几次进入都是**同一块**，
-///   这也正是「续跑能拿回上次的上下文」的地方。
-///
-/// ⭐ 为什么由运行时分配、而不是让派发点 `malloc`（`DE-1` §3.2.2：`env` 升格为**体的持久帧**）：
-/// 帧的生命周期跨让出，而「让出态被取消 ⇒ 体不会再被进入 ⇒ 帧必须由**运行时**释放」
-/// 是同一节的明文连带 ⇒ 所有权必须在运行时这一侧，否则那条路径上没有人能安全地收这块内存。
-/// ⚠️ 由此**取消了一处旧分工**：`env` 原先由体 wrapper 在跑完后 `free`，自 `DE-6b` 起改由
-/// 运行时在真跑完时交还 —— 两处都释放会 double free，故 wrapper 侧那一条已删。
+/// 帧的取用：一个概念、两种用途，区别只在 `bytes`。
+/// `bytes > 0` 派发点用：新建一块属于运行时的帧（已清零，首字是续跑点、`0` = 首次进入，故不必再 store）；
+/// `bytes == 0` 体内用：取当前任务的帧，无论第几次进入都是同一块。所有权在运行时，否则取消路径上无人释放。
 @_cdecl("bk_task_frame")
 public func bk_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
     guard bytes > 0 else {
@@ -2481,15 +2081,9 @@ public func bk_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
     return p
 }
 
-/// 帧内取一个**局部槽**（`DE-6b`）。
-///
-/// ⭐ **可重放**是它的全部要点：让出时体从栈返回、槽指针全部丢失，续跑靠重新执行同一段取槽
-/// 代码把它们拿回来 ⇒ 本函数必须保证「同一体第 n 次进入的第 k 次调用得到同一地址」，故游标在
-/// **每次进入体时归零**（`_bkTaskRunBody`），命中已发的块就原样返回。
-///
-/// ⚠️ 尺寸由**调用方**（发射层）给：本层没有类型知识，也不该有（见 `frameChunks` 的注释）。
-/// ⚠️ 如实边界：对齐按 **8 字节** —— 帧与各块都以 8 对齐，故凡对齐要求 ≤ 8 的类型都对；
-/// 超 8 对齐的类型**今天没有通道**（不静默降级：发射层侧由类型表把关）。
+/// 帧内取一个局部槽：可重放是全部要点。
+/// 让出时槽指针全丢，续跑靠重执行同一段取槽代码 ⇒ 必须保证「同一体第 n 次进入的第 k 次调用得到同一
+/// 地址」（游标每次进入体时归零，命中已发的块原样返回）。尺寸由发射层给；对齐按 8 字节，超 8 无通道。
 @_cdecl("bk_task_slot")
 public func bk_task_slot(_ bytes: Int64) -> UnsafeMutableRawPointer {
     let size = max(1, Int(bytes))
@@ -2511,21 +2105,9 @@ public func bk_task_slot(_ bytes: Int64) -> UnsafeMutableRawPointer {
     return fresh
 }
 
-/// **可让出的等待**（`DE-6a` 定案 · `DE-6b` 落地）。
-///
-/// 与 `bk_task_join` 的唯一区别是它**可以拒绝阻塞**：
-/// - `0` / `1` —— 归一化与 `bk_task_join` **同一套**（`0` = 三槽已写 · `1` = 未取得 `Result`，
-///   取消 / 超时归约）；
-/// - ⭐ `2` —— **本次会让出**：`out` **一个字节都不许写**，控制流交还驱动器，调用方据此返回非 `0`
-///   且**不得交还帧**。
-///
-/// ⛔ **谁决定「这次会让出」**：编译期事实。发射层**只在**「异步体 · 语句根 · `form = awaits`」
-/// 处发射本符号，其余位置（含同步体的 `wait`）一律沿用 `bk_task_join` —— 因为「调用方是不是
-/// 异步体」运行时刻判不出来（`DE-1` §3.1 末尾那处补注）。本函数因而**不校验**这个前置。
-///
-/// ⭐ **登记在等待对象上**（`target.awaiters`）而不是只记在自己身上：决出方是**被等的那个**，
-/// 只有它知道「现在该把谁叫醒」。登记与「对象是否已决」的判定**在同一把锁下**完成 ——
-/// 否则「登记」与「决出」之间会有一个丢唤醒的窗口，而症状是**永久阻塞**。
+/// 可让出的等待：与 `bk_task_join` 的区别是它可以拒绝阻塞。`0` / `1` 的归一化与 join 同一套；
+/// `2` = 本次会让出：`out` 一个字节都不许写，控制流交还驱动器，调用方据此返回非 `0` 且不得交还帧。
+/// ⛔ 「这次会让出」是编译期事实（运行时刻判不出调用方是不是异步体）；登记在 `target.awaiters`，与已决判定同锁。
 @_cdecl("bk_task_await")
 public func bk_task_await(
     _ handle: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
@@ -2533,8 +2115,8 @@ public func bk_task_await(
     guard let target = _bkTaskBox(handle) else {
         bk_panic("Pini runtime error: task await got a null handle")
     }
-    // ⛔ 两处**合规降级**（都不是错误）：不在任何任务里 ⇒ 没有「当前任务」可让出；
-    // L1 位缺席 ⇒ 后端不能真让出（`DE-1` §6.2 纪律 3：降级，不失败）。
+    /// ⛔ 两处**合规降级**（都不是错误）：不在任何任务里 ⇒ 没有「当前任务」可让出；
+    /// L1 位缺席 ⇒ 后端不能真让出（降级，不失败）。
     guard let current = _bkTaskCurrent,
         (_bkCapabilities & ConcurrencyTierBits.yield) != 0
     else {
@@ -2553,18 +2135,9 @@ public func bk_task_await(
     return 2
 }
 
-/// `sleep(ms)` 的原语层落点 —— **按片睡**，每片醒来查一次取消位。
-///
-/// ⛔ 为什么不做成 libc 的睡眠：解释器后端的对应物（`RuntimeOps.builtinSleep`）是把长睡
-/// 拆成小片、每片回来查一次取消 / 超时，因此「取消一个正在睡的任务」在**一片之内**生效，
-/// 而不是等它睡完。一条直通的 libc 睡眠会让各后端在**取消时机**上分岔，而那个分岔在
-/// 只跑成功的样板里看不出来。睡眠本就属原语层（`DE-1` §4：让出 / 恢复 / 续体保存归宿主），
-/// 故它住在这里、而不是被降载成一条 libc 调用。
-///
-/// ⚠️ **一处如实的边界**：解释器后端在检查点发现取消时是**抛**（abort 体），而 C ABI 面
-/// 没有异常通道 ⇒ 本函数只能**提前结束睡眠**，体随后仍会跑完。差别只在「取消后体还能跑几步」，
-/// 而**等待侧的归约是同一套**：盒子已被置取消，`bk_task_join` 照旧返回 `status = 1`
-/// （⇒ `err(CancelError)`）。体被真正中断要等发射层的检查点接线，属后置批次。
+/// `sleep(ms)` 的原语层落点：按片睡，每片醒来查一次取消位。
+/// ⛔ 不做成直通的 libc 睡眠：解释器后端把长睡拆片，取消在「一片之内」生效；直通会让各后端在取消时机
+/// 上分岔。⚠️ C ABI 面没有异常通道 ⇒ 发现取消只能提前结束睡眠，体仍会跑完；等待侧归约是同一套。
 @_cdecl("bk_sleep")
 public func bk_sleep(_ ms: Int32) {
     guard ms > 0 else { return }
@@ -2580,7 +2153,7 @@ public func bk_sleep(_ ms: Int32) {
 
 // MARK: join
 
-/// 阻塞 join（`DE-1` §3.1，现行唯一形态）。`out` 收 `Result`（三槽，见 `_bkWriteResult`）。
+/// 阻塞 join（现行唯一形态）。`out` 收 `Result`（三槽，见 `_bkWriteResult`）。
 /// - Returns: 见段首 `status` 取值表。
 @_cdecl("bk_task_join")
 public func bk_task_join(
@@ -2592,7 +2165,7 @@ public func bk_task_join(
     return _bkTaskJoinOne(box, timeoutMs: nil, out: out)
 }
 
-/// 带超时的阻塞 join（`DE-1` §3.1）。超时**归约为取消**（与解释器后端 `joinFuture(timeoutMs:)`
+/// 带超时的阻塞 join。超时**归约为取消**（与解释器后端 `joinFuture(timeoutMs:)`
 /// 同构：取消该任务 + `err(CancelError)`）⇒ 超时时返回 `status = 1`。
 @_cdecl("bk_task_join_within")
 public func bk_task_join_within(
@@ -2604,14 +2177,9 @@ public func bk_task_join_within(
     return _bkTaskJoinOne(box, timeoutMs: ms, out: out)
 }
 
-/// 聚合 join（`DE-1` §3.1），**fail-fast**：任一成员的 `err` 即决定聚合，其余成员被取消
-/// （照 `RuntimeOps.makeJoinAllFuture` —— 没人在等它们，就不该继续占线程）。
-///
-/// ⚠️ **成员的父链不动**：解释器后端用 `onCancel` 做取消联动，而非改写父链 —— 改写会让某个
-/// 调用方的返回取消掉**它从未拥有过**的任务。本段同此：只对成员调取消，不 `adopt`。
-///
-/// ⚠️ 全 `ok` 时聚合载荷是一个**数组句柄**，元素是各成员的 ok 载荷（8 字节不透明字，
-/// tag = `.i64`）。⛔ 那些字的类型身份**不在本层** —— 见 `.i64` 的注释。
+/// 聚合 join，fail-fast：任一成员的 `err` 即决定聚合，其余成员被取消（没人在等它们，就不该继续占线程）。
+/// ⚠️ 成员的父链不动：只对成员调取消，不 `adopt` —— 改写父链会让调用方的返回取消掉它从未拥有过的任务。
+/// ⚠️ 全 `ok` 时聚合载荷是数组句柄，元素是各成员 ok 载荷（8 字节不透明字、tag = `.i64`），类型身份不在本层。
 @_cdecl("bk_task_join_all")
 public func bk_task_join_all(
     _ handles: UnsafeMutableRawPointer?, _ count: Int32, _ out: UnsafeMutableRawPointer?
@@ -2666,20 +2234,9 @@ public func bk_task_join_all(
 
 // MARK: scope 收口
 
-/// 关闭范围（`DE-1` §3.3）：收集 **leaked 失败**并上浮 —— `ok(v)` 翻 `err(aggregate)`，
-/// 契约里的**唯一有界 override**（照 `FutureValue.closeScope` + `RuntimeOps.flipIfLeaked`）。
-///
-/// ⚠️ **`out` 是 in-out**：调用方**先**把自己的 `Result` 写进 `out`，本函数在有 leaked 时
-/// 把它翻成 `err`。签名只有 `(scope, out)`，而「翻」必须知道被翻的那个值 ⇒ 这是唯一与签名
-/// 相容的读法（`DE-1` 未写明，本段定案并登记）。
-///
-/// 「有界」体现在两处，缺一不可（两条都各有可执行判据）：
-/// ① **未完成**的子任务 → 取消，**不计** leaked（它是预期行为，不是失败）；
-/// ② **已有 `err` 的 `out` 不被覆盖** —— errors-as-data 已经载着一次失败，
-///    覆盖它等于丢掉「到底哪一次失败了」。
-///
-/// 聚合载荷：解释器后端拼的是一句人读的错误消息，本段同样写**一条消息**（带失败条数），
-/// 只是 ⛔ 不逐条 stringify 各 leaked 值 —— 那些值的格式化是另一层的事。
+/// 关闭范围：收集 leaked 失败并上浮 —— `ok(v)` 翻 `err(aggregate)`，契约里的唯一有界 override。
+/// ⚠️ `out` 是 in-out（调用方先写自己的 `Result`）；「有界」两处：未完成的子任务被取消、不计 leaked；
+/// 已有 `err` 的 `out` 不被覆盖（否则丢掉哪次失败）。聚合载荷是一条带失败条数的人读消息。
 @_cdecl("bk_scope_close")
 public func bk_scope_close(
     _ scope: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
@@ -2712,18 +2269,13 @@ public func bk_scope_close(
     return 0
 }
 
-// MARK: - 并发面的**非导出**入口（`B-2` 判据与 `B-3` 的 `bk_task_spawn` 共用）
-//
-// ⛔ 这些函数**没有 `@_cdecl`** ⇒ **不是** `bk_*` 导出符号，**不计入** `IR 契约` §5.2 的清单。
-// 它们的存在是为了让「造盒 / 决出 / 认父 / 登记当前任务」这四件事各只有**一个**实现点：
-// `B-2` 的判据经它们造出被 join 的对象，而 `B-3` 的 `bk_task_spawn` 落地后将经**同一批**
-// 入口做同样的事 —— 于是两条使用方不会各造一套语义。
+// MARK: - 并发面的非导出入口
+// 这些函数没有 `@_cdecl` ⇒ 不是 `bk_*` 导出符号，不计入 IR 契约清单。它们存在是为让「造盒 / 决出 /
+// 认父 / 登记当前任务」各只有一个实现点，故判据与 `bk_task_spawn` 不会各造一套语义。
 
-/// 「当前线程正在跑的任务」的线程本地存放位（`bk_task_is_cancelled` 的无参形态读它）。
-///
-/// ⚠️ **只存弱引用、不 retain**：当前任务一定同时被别处持有（造它的那一帧、或父的
-/// `children`），本存放位只是「谁在跑」的读数面，不参与所有权 —— 若在此 retain，就多出
-/// 一条与注册表并行的所有权边，反而要再定义它的释放时机。线程退出由 POSIX 销毁器清位。
+/// 当前线程正在跑的任务的线程本地存放位（`bk_task_is_cancelled` 的无参形态读它）。
+/// ⚠️ 只存弱引用、不 retain：当前任务一定同时被别处持有，本存放位只是「谁在跑」的读数面、不参与所有权；
+/// 若在此 retain 就多出一条与注册表并行的所有权边，还要再定义释放时机。线程退出由 POSIX 销毁器清位。
 private let _bkCurrentTaskKey: pthread_key_t = {
     var k = pthread_key_t()
     let destructor: @convention(c) (UnsafeMutableRawPointer) -> Void = { _ in }
@@ -2751,7 +2303,7 @@ func _bkTaskMake() -> UnsafeMutableRawPointer {
     return h
 }
 
-/// 把任务标记为已决（`ok`）。写入方是任务体（`DE-3c` 接线）。
+/// 把任务标记为已决（`ok`）。写入方是任务体。
 func _bkTaskResolveOk(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
     guard let box = _bkTaskBox(h) else { return }
     box.cond.lock()
@@ -2763,12 +2315,12 @@ func _bkTaskResolveOk(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
         box.cond.broadcast()
     }
     box.cond.unlock()
-    // `DE-6b`：决出方**续跑**在等我的那些任务 —— 这是 L1 的驱动侧（`DE-6a` §3.2.2 用户选定
-    // 的「决出方触发」）。放在锁外：续跑会起线程，不该持锁做。
+    /// 决出方**续跑**在等我的那些任务 —— 这是 L1 的驱动侧（「决出方触发」）。
+    /// 放在锁外：续跑会起线程，不该持锁做。
     _bkTaskResumeAwaiters(box)
 }
 
-/// 把任务标记为已决（`err`）。写入方是任务体（`DE-3c` 接线）。
+/// 把任务标记为已决（`err`）。写入方是任务体。
 func _bkTaskResolveErr(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
     guard let box = _bkTaskBox(h) else { return }
     box.cond.lock()
@@ -2783,13 +2335,11 @@ func _bkTaskResolveErr(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
     _bkTaskResumeAwaiters(box)
 }
 
-// MARK: 可恢复帧与续跑（`DE-6b`）
+// MARK: 可恢复帧与续跑
 
-/// 运行时**自有**帧的地址集 —— 由 `bk_task_frame(bytes > 0)` 登记，交还时摘除。
-///
-/// ⚠️ 这张表存在的理由是**归属**：帧必须由运行时释放（让出态被取消那条路径上没有别人能安全
-/// 地收它），而 `env` 也可能是**调用方直接给的**（进程内单测就这么做：把 Swift 对象的指针当作
-/// 体的观测箱传进来）。⛔ 无条件释放后者会立即崩溃 ⇒ 只有本表里登记过的才释放。
+/// 运行时自有帧的地址集 —— 由 `bk_task_frame(bytes > 0)` 登记，交还时摘除。
+/// 这张表的理由是归属：帧必须由运行时释放，而 `env` 也可能是调用方直接给的（单测把 Swift 对象指针当
+/// 观测箱传进来）。⛔ 无条件释放后者会立即崩溃 ⇒ 只有本表登记过的才释放。
 private var _bkOwnedFrames: Set<UInt> = []
 private let _bkOwnedFramesLock = NSLock()
 
@@ -2799,10 +2349,8 @@ private func _bkAdoptFrame(_ p: UnsafeMutableRawPointer) {
     _bkOwnedFramesLock.unlock()
 }
 
-/// 交还一个任务的全部帧内存（`env` 那一块 + `bk_task_slot` 发出的各块）。幂等。
-///
-/// ⭐ 两条路径都会来这里：**真跑完**（`_bkTaskRunBody` 的 `status == 0` 分支）与
-/// **让出态被取消**（`_bkTaskCancelBox`）—— `DE-1` §3.2.2 的两条明文连带。
+/// 交还一个任务的全部帧内存（`env` 那一块 + `bk_task_slot` 发出的各块），幂等。
+/// ⭐ 两条路径都来这里：真跑完（`status == 0` 分支）与让出态被取消（`_bkTaskCancelBox`）。
 private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
     box.cond.lock()
     guard !box.frameReleased else {
@@ -2824,18 +2372,9 @@ private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
     if owned { env.deallocate() }
 }
 
-/// 取走等待者快照并逐个交给队列（先快照、解锁、再动作 —— 与取消传播同一条定式：
-/// 持锁递归会与反向加锁形成死锁）。
-///
-/// ⭐ **改道落在这里**（本段的「决策点不再直接重入体」）：这个函数是**一次决出的全部后果**，
-/// 而它现在做的是「把这一批交给策略层」，⛔ 不是「把这一批跑掉」。
-///
-/// ⭐⭐ 顺序是「**先全部入队、再请挑选**」，两步分开 —— 这不是优化，是「顺序由策略决定」
-/// 成立的**前提**：一次决出会**同步地、依次**唤醒所有等它的任务，若让**每个**唤醒各自去请挑选，
-/// 第一趟挑选就可能发生在这批里**还有任务没入队**的时刻 ⇒ 第一个醒来的被挑走
-/// ⇒ 挑选顺序退回**决出顺序**，策略层**无选择可言**。
-/// ⚠️ 这条与解释器后端同源（那个后端为此把登记改成「按被等的未来并批」）；本后端的快照**本来就是整批**，
-/// 故只需把「两步分开」写对。
+/// 取走等待者快照并逐个交给队列（先快照、解锁、再动作 —— 与取消传播同一条定式，持锁递归会死锁）。
+/// 这个函数是一次决出的全部后果，它做的是「把这一批交给策略层」，⛔ 不是「把这一批跑掉」。
+/// ⭐ 顺序是「先全部入队、再请挑选」，两步分开：否则第一个醒来的被挑走，顺序即退回决出顺序，策略无选择。
 private func _bkTaskResumeAwaiters(_ box: _BkTaskBox) {
     box.cond.lock()
     let waiters = box.awaiters
@@ -2849,21 +2388,9 @@ private func _bkTaskResumeAwaiters(_ box: _BkTaskBox) {
     _bkTaskScheduleDrain()
 }
 
-/// 让一个**已让出**的任务接着跑 —— 在改道之后，「接着跑」= **交给策略层的队列**（`Q-4`）。
-///
-/// ⛔ **本函数不再起线程**：那正是本段改掉的东西。此前它 `Thread { _bkTaskRunBody(h) }`
-/// 直接重入体 ⇒ 顺序完全由**决出顺序**决定，策略层没有任何可挑的余地
-/// （与解释器后端在 `Q-3` 之前同构）。⇒ 「调度器可替换」这句话在各后端上从此有**对象**。
-///
-/// ⛔ 两道守卫各挡一件事：`resolved` / `cancelled` 挡「已经收口了，别再排队」。
-///
-/// ⭐⭐ **`resumePending` 仍然是这里最要紧的一行，它不是优化**：等待方登记「我在等谁」与它把
-/// 自己标成「已让出」**不是同一个原子步** —— 中间隔着体的返回。若被等方恰好在这条缝里决出，
-/// 「谁来叫醒它」这一问就会落空：决出方看到的还是一个**没让出**的任务，于是既不入队、
-/// 也不留记号 ⇒ **等待方永远不再被调度**。⚠️ 症状是**永久阻塞**而不是崩溃，所以这个窗口
-/// 必须由记号关掉，不能靠「缝很窄」侥幸：让出态未到就先**挂记号**，等体交还控制流时自取自跑。
-///
-/// - Returns: 它这次**真的入了队** ⇒ `true`（没让出而只挂了记号 ⇒ `false`，那不是「没接上」）。
+/// 让一个已让出的任务接着跑：改道之后「接着跑」= 交给策略层的队列，⛔ 不再起线程（起线程会让顺序
+/// 完全由决出顺序决定，策略层没有可挑的余地）。`resolved` / `cancelled` 守卫挡「已收口，别再排队」。
+/// ⭐ `resumePending` 不是优化：登记「在等谁」与标「已让出」隔着体的返回，缝里决出就没人叫醒 ⇒ 先挂记号。
 private func _bkTaskResume(_ box: _BkTaskBox) -> Bool {
     box.cond.lock()
     let alive = !box.resolved && !box.cancelled
@@ -2874,23 +2401,13 @@ private func _bkTaskResume(_ box: _BkTaskBox) -> Bool {
     return _bkTaskOffer(box)
 }
 
-// MARK: 就绪队列的驱动面（`Q-4`：决出 ⇒ 入队，由策略层决定谁跑）
-//
-// ⛔ 本段与解释器后端**同形**（对应物在 `IRExecutor` 的同名一节）—— 决出不再直接续跑体，
-// 而是把任务**交给策略层的队列**，再由挑选循环按策略给的顺序推进。
-// ⚠️ 各后端在**句柄承载**上不同，这是架构使然、⛔ 不是偏差：
-//   · 解释器后端的任务是宿主对象，塞不进语言层的 `*U8` ⇒ 用**整数句柄 + 一张映射表**；
-//   · LLVM 后端的任务句柄**本来就是一个不透明指针**（造盒时登记所得），与语言层的 `*U8` 同形
-//     ⇒ **零映射表**：直接把那个指针交给策略层，拿回来即任务。
-//   ⇒ 「推进一次」的跨后端契约定的是**语义**，明文不固定各后端的入口形状。
+// MARK: 就绪队列的驱动面（决出 ⇒ 入队，由策略层决定谁跑）
+// ⛔ 与解释器后端同形：决出不再直接续跑体，而是把任务交给策略层的队列，再由挑选循环按策略顺序推进。
+// ⚠️ 句柄承载不同是架构使然：解释器用整数句柄 + 映射表，LLVM 的任务句柄本就是裸指针 ⇒ 零映射表。
 
-/// 策略层的绑定记录（裁定 **57** 取甲：**运行时持挑选循环**，发射层交出**可调用的入口**）。
-///
-/// ⭐ **布局即 ABI** —— 三个机器字：策略实例 · 「收下」入口 · 「选择下一个任务」入口。
-/// 发射层在派发点就地构造这三个字、把地址交进来。⛔ 本层**不解释**第一个字是什么
-/// （它是默认实例的盒指针，本层只把它原样回传给那两个入口）。
-/// ⚠️ 为什么不写成三个独立实参：一个记录指针是**一处**形状，将来加一格只动那一处；
-/// 且它与「绑定记录」这个已裁的形态**同名同实**。
+/// 策略层的绑定记录：布局即 ABI——三个机器字（策略实例 · 「收下」入口 · 「选择下一个任务」入口）。
+/// 发射层在派发点就地构造这三个字并把地址交进来。⛔ 本层不解释第一个字（它是默认实例的盒指针，只原样回传）。
+/// 写成一个记录指针而非三个实参：形状只此一处，将来加一格只动那一处。
 private struct _BkSchedBinding {
     /// 调策略层的「收下」：`(策略实例, 任务句柄) -> ()`。
     typealias Accept = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void
@@ -2903,10 +2420,8 @@ private struct _BkSchedBinding {
 }
 
 /// 一次「问策略层要一个」的结果。
-///
-/// ⚠️ **「空」与「缺陷」必须分开**（与解释器后端同一条纪律）：前者是正常状态（刚建好的队列
-/// 就是空的），后者是策略给了一个**从没发出去过**的句柄。混成一个读数就会把缺陷读成
-/// 「暂时没活」⇒ 于是**静默地什么都不做** —— 那是本引擎最不能出的结果。
+/// ⚠️ 「空」与「缺陷」必须分开（与解释器后端同一条纪律）：前者是正常状态（刚建好的队列就是空的），
+/// 后者是策略给了从没发出过的句柄。混成一个读数就会把缺陷读成「暂时没活」⇒ 静默地什么都不做。
 private enum _BkReadyTake {
     case task(UnsafeMutableRawPointer)
     case empty
@@ -2915,27 +2430,22 @@ private enum _BkReadyTake {
     case defect(String)
 }
 
-/// 就绪队列 —— 元素是**任务盒句柄**（造盒时登记所得的那个裸指针）。
-///
-/// ⚠️ 写入方是**决出方所在的那条线程**（决出 ⇒ 入队），读取方是挑选循环 ⇒ 由 `_bkReadyLock`
-/// 守护。⛔ **不是「反正单线」**：「同族的既有状态已有隔离」这条**推不到**新状态上。
+/// 就绪队列 —— 元素是任务盒句柄（造盒时登记所得的那个裸指针）。
+/// ⚠️ 写入方是决出方那条线程（决出 ⇒ 入队），读取方是挑选循环 ⇒ 由 `_bkReadyLock` 守护。
+/// ⛔ 不能以「反正单线」或「同族状态已有隔离」为由省掉这层。
 private var _bkReadyQueue: [UnsafeMutableRawPointer] = []
 private let _bkReadyLock = NSLock()
 
-/// 「趟」的两笔账（照解释器后端）：**有人要挑** · **已经有一趟在挑**。
-///
-/// ⚠️ 为什么需要它们：一批任务**全部入队之后**才请挑选循环，但请挑选这件事本身可能落在
-/// **另一条线程**上（同一时刻可能有多批）⇒ 用「已有循环在跑就只记一笔」把它收成
-/// **同一时刻只跑一趟**，那一笔由收工的那趟兑现（见 `_bkTaskDrain` 尾部的对账）。
+/// 「趟」的两笔账（照解释器后端）：有人要挑 · 已经有一趟在挑。
+/// 一批任务全部入队之后才请挑选，而请挑选可能落在另一条线程上（同一时刻可能有多批）⇒ 用「已有循环
+/// 在跑就只记一笔」收成同一时刻只跑一趟，那一笔由收工的那趟兑现（见 `_bkTaskDrain` 尾部的对账）。
 private var _bkReadyRequested = false
 private var _bkReadyScheduled = false
 private var _bkReadyDraining = false
 
 /// 进程内最近一次的绑定 —— 挑选循环用它问策略。
-///
-/// ⚠️ **今天只有一个调度实例**（预置那份，或用户替换的那一份）⇒ 「用哪份绑定」不构成问题。
-/// ⛔ 本层**不做**「按调度器分组的多队列」—— 那是设计里另立的一段，今天**无对象**
-/// （登记在案，⛔ 不在本段顺手做）。
+/// ⚠️ 今天只有一个调度实例（预置那份或用户替换的那份）⇒「用哪份绑定」不构成问题；⛔ 本层不做按调度器
+/// 分组的多队列（那是设计里另立的一段，今天无对象）。
 private var _bkSchedBinding: _BkSchedBinding?
 
 /// 从绑定记录的三个字里读出它的三个字段（布局见 `_BkSchedBinding`）。
@@ -2951,16 +2461,9 @@ private func _bkReadBinding(_ p: UnsafeMutableRawPointer?) -> _BkSchedBinding? {
         pick: unsafeBitCast(pickRaw, to: _BkSchedBinding.Pick.self))
 }
 
-/// 把调度器绑定交给运行时（乙段）。
-///
-/// - Parameters:
-///   - handle: 该次派发得到的任务句柄 —— ⚠️ **今天只作校验用**：绑定存在**运行时**那一份上
-///     （见 `_bkSchedBinding` 的注释），⛔ 不逐任务存。理由是今天只有一个调度实例，
-///     逐任务存会得到一个**没有读者**的字段，而那正是本仓反复消灭的东西。
-///   - binding: 指向绑定记录的指针（布局见 `_BkSchedBinding`）。⭐ **传空即解绑** ——
-///     这条路径不是为生产代码留的，而是为判据留的：替身策略住在一个测试对象里，
-///     它一旦释放而绑定还在，后续任何入队都会调到一个**悬垂的函数指针**。
-/// - Returns: `0` = 已接受（或已解绑）。⛔ 今天**不定义**别的取值 —— 语义未裁 ⇒ 不作承诺。
+/// 把调度器绑定交给运行时：`handle` 只作校验用（绑定存在运行时那一份上，不逐任务存——今天只有一个
+/// 调度实例，逐任务存会得到没有读者的字段）；`binding` 传空即解绑（替身策略释放后绑定还在，后续入队
+/// 会调到悬垂的函数指针）。返回 `0` = 已接受或已解绑，今天不定义别的取值。
 @_cdecl("bk_task_bind_sched")
 public func bk_task_bind_sched(
     _ handle: UnsafeMutableRawPointer?, _ binding: UnsafeMutableRawPointer?
@@ -2977,14 +2480,9 @@ public func bk_task_bind_sched(
     return 0
 }
 
-/// 任务的可观测态（裁定 **50** 的**四态**；丙段）。
-///
-/// ⚠️ 一经采纳即成**可观测承诺**（受「使用者会依赖一切可见行为」约束）⇒ 改它须走**破坏性**流程。
-/// ⛔ 与「能力位查询」**不同族**：那是**可叠加的位图**，这是**互斥的状态**。
-///
-/// ⭐ 四态与盒子上那几个位的关系（三处**如实登记**的空洞，都在下表的脚注里）：
-/// `3` 已决 = 有结果或其取消已归约 · `1` 可跑 = **在就绪队列里**（这个成员身份是本路新引入的，
-/// 此前无承载）· `2` 等待中 = 体已交出控制流、等某个未来决出 · `0` 未起 = 体从未进入。
+/// 任务的可观测态：四态、互斥（与「能力位查询」那种可叠加的位图不同族）。
+/// `3` 已决 = 有结果或其取消已归约 · `1` 可跑 = 在就绪队列里 · `2` 等待中 = 体已交出控制流、等某个未来
+/// 决出 · `0` 未起 = 体从未进入。⚠️ 一经采纳即成可观测承诺 ⇒ 改它须走破坏性流程。
 @_cdecl("bk_task_state")
 public func bk_task_state(_ h: UnsafeMutableRawPointer?) -> Int32 {
     guard let box = _bkTaskBox(h) else { return 0 }
@@ -3007,11 +2505,9 @@ public func bk_task_state(_ h: UnsafeMutableRawPointer?) -> Int32 {
     return 0
 }
 
-/// 把一个任务**交给策略层的队列**（甲段）。
-///
-/// ⚠️ 调「收下」在锁**外**：那跑的是用户代码（策略是 Pini 值），⛔ 不该持本层的锁调它。
-///
-/// - Returns: 真的入了队 ⇒ `true`（入不了队时已就地处置，见下）。
+/// 把一个任务交给策略层的队列。
+/// ⚠️ 调「收下」在锁外：那跑的是用户代码（策略是 Pini 值），⛔ 不该持本层的锁调它。
+/// 返回真的入了队 ⇒ `true`（入不了队时已就地处置）。
 @discardableResult
 private func _bkTaskOffer(_ box: _BkTaskBox) -> Bool {
     guard let h = box.selfHandle else { return false }
@@ -3019,17 +2515,9 @@ private func _bkTaskOffer(_ box: _BkTaskBox) -> Bool {
     let binding = _bkSchedBinding
     guard let binding else {
         _bkReadyLock.unlock()
-        // ⚠️ **没有策略层 ⇒ 降级为直接续跑**，⛔ 不是把任务归约掉。
-        //
-        // 依据是本仓的既有纪律：**无合格版本则降级，不失败**（与 `bk_task_await` 在
-        // 「不在任何任务里」时走直线等待同族）。⭐ 这条降级另有一个**具体用处**：
-        // 进程内直接调这一族符号的用法（判据就是这么做的）从不绑策略，而那些用法在改道
-        // 之前是能跑的 —— 「没有绑定就归约」会让它们**从能跑变成不能跑**，是退化不是改进。
-        //
-        // ⚠️ 两处**如实登记**：① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」而非「可跑」
-        // （没有队列就无所谓「在队列里」，那个成员身份在这条路上**不成立**）；
-        // ② 解释器后端**没有**这条降级路径（那个后端总有策略 —— 预置默认实例），
-        // 故各后端在这一格上不对称，收敛它须另行点名。
+        /// ⚠️ 没有策略层 ⇒ 降级为直接续跑，⛔ 不是把任务归约掉（纪律：无合格版本则降级，不失败）。
+        /// 具体用处：进程内直接调这一族符号的用法（判据就是这么做的）从不绑策略，归约会让他们从能跑变成不能跑。
+        /// ⚠️ ① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」；② 解释器后端没有这条路径，两后端在此不对称。
         let thread = Thread { _bkTaskRunBody(h) }
         thread.start()
         return false
@@ -3128,23 +2616,18 @@ private func _bkTaskDrain() {
 }
 
 /// 策略层坏了 —— 响亮说，⛔ 不静默降级成「没有下一个」。
-///
-/// ⚠️ **走 stderr 而不是 stdout**：这一层程序的 stdout 是**被断言的东西**（判据逐字节比它），
-/// 在它上面打诊断会把「程序输出」与「引擎抱怨」混成一个读数。
-/// ⚠️ 与解释器后端的对应物**一处不对称**如实登记：那个后端打的是 stdout
-/// （本后端的 stdout 承载着 `printf` 的程序输出，故不能照搬）。
+/// ⚠️ 走 stderr 而非 stdout：这一层程序的 stdout 是被断言的东西（判据逐字节比它），混在一起会毁掉读数。
+/// ⚠️ 与解释器后端的对应物一处不对称：那个后端打 stdout（本后端 stdout 承载 `printf` 的程序输出）。
 private func _bkReportSchedulerDefect(_ detail: String) {
     FileHandle.standardError.write(
         Data("[scheduler] ⛔ 策略层给出的答案不可用，就绪队列停止驱动：\(detail)\n".utf8))
 }
 
-// MARK: 让出的可观测通道（`DE-6a` §3.6）
+// MARK: 让出的可观测通道
 
-/// 闸门：**仅在环境变量置位时**输出，未置位 ⇒ **零输出**。
-///
-/// ⛔ 性质：它是**测试器械专用**的观测面 —— **不是** ABI、**不是**诊断通道、**不是**给用户的
-/// 功能（`DE-6a` §3.6 的明文声明）。本仓另有一笔**已登记的**「诊断通道」缺口，**二者不是一件
-/// 事** —— 这条声明的作用正是防止有人把它当成那个缺口的补丁。
+/// 闸门：仅在环境变量置位时输出，未置位 ⇒ 零输出。
+/// ⛔ 它是测试器械专用的观测面——不是 ABI、不是诊断通道、不是给用户的功能；本仓另有已登记的
+/// 「诊断通道」缺口，二者不是一件事，这条声明正是防止有人把它当成那个缺口的补丁。
 private let _bkYieldReportEnabled: Bool = {
     guard let raw = ProcessInfo.processInfo.environment["PINI_YIELD_REPORT"] else { return false }
     return !(raw.isEmpty || raw == "0")
@@ -3162,11 +2645,9 @@ private func _bkTaskNoteYield() {
     _bkYieldCountLock.unlock()
 }
 
-/// 进程退出时打**一行**汇总（经**既有**的退出钩子那条路径，⛔ 不新起退出路径）。
-///
-/// ⚠️ 为什么是汇总一行而不是逐次一行：逐次打点会与程序自身输出交错 ⇒ 读起来**非确定**；
-/// 汇总一行**逐字节可断言**。代价如实说：**只有置位的运行可见** ⇒ 「不置位时也让出」这一半
-/// 测不到 —— 这与本仓「**跳过必须可见**」同向（必须显式开闸，否则读数不可信）。
+/// 进程退出时打一行汇总（经既有的退出钩子那条路径，⛔ 不新起退出路径）。
+/// ⚠️ 汇总而非逐次：逐次打点会与程序自身输出交错 ⇒ 读数非确定；汇总一行逐字节可断言。
+/// 代价如实说：只有置位的运行可见 ⇒「不置位时也让出」这一半测不到（跳过必须可见）。
 private func _bkReportYields() {
     guard _bkYieldReportEnabled else { return }
     _bkYieldCountLock.lock()

@@ -1,28 +1,9 @@
 import Foundation
 import Testing
 
-/// 裸值受试的 `match` 里，**通配臂**（`case _:`）的执行判据。
-///
-/// **修的是哪一层**：`IREmitter.emitMatch` 的 `default`（裸值）分支，原先只在
-/// 「存在字面量臂」时才进 `emitScalarMatch`：
-///
-/// ```swift
-/// if cases.contains(where: { $0.literal != nil }) { emitScalarMatch(...) }
-/// ```
-///
-/// 于是 `match x:` 只写一条 `case _:` 时**一个臂都不发**——函数落到 `ret i32 undef`。
-/// 静默，且 `rc=0`。
-///
-/// **为什么它是缺陷而不是取舍**：同一条通配臂，在「有字面量臂」时由
-/// `emitScalarMatch` 的 default 块执行、在「没有字面量臂」时被整个丢掉 ——
-/// 而通配臂**能**匹配裸值（这正是 `emitScalarMatch` 里那段 `if let wildcardArm`
-/// 在干的事）。旧注释从「enum-case 臂打不中裸值」推到了「所有臂都死」，
-/// 漏掉的那一类恰是唯一活得下来的那种臂。
-///
-/// ⚠️ **本判据的对象是发射层**（`IREmitter`），所以三条都走**两腿对比**：
-/// 解释器腿与 LLVM 腿在同一份语料上必须读出同一串输出。⛔ 不用 IR 节点断言 ——
-/// `IRLowerer` 侧本来就是对的（它产 `matchStmt` 带全部 cases），坏的只在发射。
-/// ✔ 因此判据 1、2 **修前必红**；判据 3 钉「修復不得越过自己的边界」（回归）。
+/// 裸值受试的 `match` 里，通配臂（`case _:`）的执行判据。`IREmitter.emitMatch` 的裸值分支只在「存在字面量臂」
+/// 时才进 `emitScalarMatch` ⇒ `match x:` 只写一条 `case _:` 时一个臂都不发，函数落到 `ret i32 undef`，静默且 `rc=0`。
+/// 通配臂本就能匹配裸值，被丢的恰是唯一活得下来的那种臂；判据对象是发射层，故三条都走两腿对比同输出。
 struct ScalarWildcardMatchTests {
 
     private static var fixturesDirectory: String {

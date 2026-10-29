@@ -1,10 +1,7 @@
 import Foundation
 
-/// 语言级配置：集中管理此前散落在源码各处的魔法值（如源文件后缀），避免硬编码。
-///
-/// 资源：`Resources/LangConfig.toml`，经 SwiftPM `Bundle.module` 加载
-/// （见 `Package.swift` 的 `resources: [.process("Resources")]`）。
-/// 资源缺失或解析失败时回退到内建默认值，保证 CLI 不依赖资源文件一定存在。
+/// 语言级配置：集中管理魔法值（如源文件后缀），避免硬编码。资源为 `Resources/LangConfig.toml`，
+/// 经 SwiftPM `Bundle.module` 加载；缺失或解析失败时回退内建默认值，保证 CLI 不依赖资源文件存在。
 public enum LangConfig {
     /// 源文件后缀（不含前导点），如 `bk` ⇒ 识别 `.pini` 文件。
     /// 后续如需切换源文件后缀，仅改 `LangConfig.toml` 一处即可，无需改动加载器 / CLI。

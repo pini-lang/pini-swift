@@ -1,11 +1,8 @@
 import Foundation
 
-/// G52 批 1（2026-08-31）：模块依赖加载器——R1 物理边界 + R2 依赖图无环。
-///
-/// 职责：按 import 项的包路径加载被引入模块（根须有 `pini.toml`，R1），
-/// 解析其全部根级 `.pini` 源文件，产出声明表与 public 符号集（跨模块引入
-/// 门槛 = 仅 public，G52 D8）。加载栈 + 规范路径缓存实现环检测（R2：
-/// import 即依赖、依赖图禁环）。
+/// 模块依赖加载器：按 import 的包路径加载被引入模块——模块根须有 `pini.toml`（物理边界），
+/// 解析其根级 `.pini` 源文件，产出声明表与 public 符号集（跨模块引入的门槛只认 public）。
+/// 加载栈 + 规范路径缓存实现环检测：import 即依赖，依赖图禁环。
 public final class ModuleDependencyLoader {
 
     public struct LoadedModule {
@@ -60,13 +57,9 @@ public final class ModuleDependencyLoader {
             throw SemanticError.moduleRootMissing(path: canonical)
         }
 
-        // G52 §9 Def-11：**双策略按来源划分**。
-        // - 远程落地（D23 `deps/<name>/`）→ 只扫根级：解析这份清单只为拿到它的声明与
-        //   public 符号集，为一个「只用其接口」的依赖递归整棵子树是白付的解析代价。
-        // - 本地目录 → 递归扫描，与 `FileLoader.loadDirectory` 共用同一套 R1 嵌套剔除
-        //   （自带 `pini.toml` 的子目录是独立模块，不进本模块）。
-        // ⚠ 此前的划分轴是「主模块 vs 被引入」——于是本地被引入的模块拿到了远程策略，
-        //   自带 `src/` 布局的依赖被 import 时源码静默不加载。轴已改为「远程 vs 本地」。
+        // 双策略按来源划分：远程落地（`deps/<name>/`）只扫根级，只为拿到声明与 public 符号集——
+        // 为一个只用其接口的依赖递归整棵子树是白付的解析代价；本地目录则递归扫描，
+        // 与 `FileLoader.loadDirectory` 共用同一套嵌套剔除：自带 `pini.toml` 的子目录是独立模块，不进本模块。
         let units: [FileUnit] =
             try Self.isRemoteLanding(canonical)
             ? Self.scanRootLevel(at: canonical)
@@ -116,10 +109,9 @@ public final class ModuleDependencyLoader {
 
     // MARK: - 扫描策略（G52 §9 Def-11）
 
-    /// 是否位于远程依赖的落地根（D23：`<模块根>/deps/<name>/`）。
-    ///
-    /// 判据取「**父目录名** == `deps`」而非「路径里出现过 `deps` 分量」：后者会误伤
-    /// 自身目录树里恰好有 `deps/` 的本地模块，而 D23 的落地位置是精确的一层。
+    /// 是否位于远程依赖的落地根（`<模块根>/deps/<name>/`）。判据取「父目录名 == `deps`」，
+    /// 而非「路径里出现过 `deps` 分量」：后者会误伤自身目录树里恰好有 `deps/` 的本地模块，
+    /// 而落地位置是精确的一层。
     private static func isRemoteLanding(_ canonical: String) -> Bool {
         (canonical as NSString).deletingLastPathComponent
             .components(separatedBy: "/").last == "deps"
@@ -138,7 +130,7 @@ public final class ModuleDependencyLoader {
             }
     }
 
-    /// 顶级声明的符号名（extension 无名——方法随宿主类型派发，批 1 不跨模块携带）。
+    /// 顶级声明的符号名（extension 无名——方法随宿主类型派发，不跨模块携带）。
     static func declName(_ decl: TopLevelDecl) -> String? {
         switch decl {
         case .funcDecl(let f): return f.name

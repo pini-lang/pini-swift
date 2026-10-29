@@ -1,17 +1,10 @@
-/// MiniTOML——批 6（G52 批 3）：清单（`pini.toml`）与锁文件（`pini-summary.toml`）共用的
-/// 最小 TOML 两级收集器。从 `FileLoader.parseManifest` 抽出（原实现仅服务清单）。
-///
-/// 覆盖面：`[a]` / `[a.b]` 平表（点分即嵌套路径，按字符串键保存）、`[[a]]` 数组表（G52 §5.1，
-/// 锁文件 `[[module]]`/`[[resource]]` 用）、`key = "value"` / `key = ["a", "b"]` 内联数组、
-/// `#` 注释（整行与行内，引号感知——行内剥离修复见
-/// 工单 issue-minitoml-inline-comment-2026-09-07）。**不做**：多行字符串、类型系统（一切值皆字符串）、转义序列。
-/// 未知表**容错保留**（调用方自行取舍——清单解析忽略未知表，锁文件解析全量消费）。
+/// 清单（`pini.toml`）与锁文件（`pini-summary.toml`）共用的最小 TOML 两级收集器。
+/// 覆盖 `[a]` / `[a.b]` 平表（点分即嵌套路径）、`[[a]]` 数组表、`key = "value"` 与内联数组，
+/// 以及引号感知的 `#` 注释；不做多行字符串、类型系统、转义序列。未知表容错保留，调用方自行取舍。
 internal enum MiniTOML {
 
-    /// 引号感知地剥离一行内的行内注释：首个「未处于引号串内」的 `#` 起截断。
-    /// MiniTOML 不支持转义序列——`"` 简单翻转引号态即可。整行注释剥空后由调用方按
-    /// 空行跳过（工单 issue-minitoml-inline-comment-2026-09-07：原实现只跳
-    /// 整行注释，行内残片污染值致 G52 Def-3 入口校验误报 E5-018）。
+    /// 引号感知地剥离行内注释：首个未处于引号串内的 `#` 起截断。不支持转义序列，故 `"` 翻转引号态即可；
+    /// 整行注释剥空后由调用方按空行跳过。不剥行内残片会污染值，令入口校验误报。
     static func strippingInlineComment(_ line: String) -> String {
         var inQuote = false
         for (offset, ch) in line.enumerated() {

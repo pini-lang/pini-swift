@@ -1,21 +1,6 @@
 ; 控制流 while step：每轮循环体结束后执行的步进块（类 C for 的步进子句）
-; 运行：pini run examples/step.pini
-; 预期：
-;   0
-;   step
-;   1
-;   step
-;   2
-;   step
-;   0
-;   步进块
-;   1
-;   步进块
-;   2
-;
-; 说明：
-;   - step: 紧跟 while 的缩进块，在每轮循环体正常结束后执行一次。
-;   - 循环体内 continue 仍会触发 step；break 直接跳出，跳过 step。
+; 运行 pini run examples/step.pini；预期（逐行）：0 step 1 step 2 step 0 步进块 1 步进块 2
+; 说明：`step:` 紧跟 while 的缩进块，每轮体正常结束后执行一次；体内 continue 仍触发 step，break 直接跳出、跳过 step。
 
 main|func() -> ():
     ; 基础：step 在每轮后执行

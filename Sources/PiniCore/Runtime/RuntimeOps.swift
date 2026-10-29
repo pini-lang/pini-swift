@@ -5,45 +5,13 @@
 #endif
 import Foundation
 
-/// Runtime operations both engines need: the value-level helpers, builtins and
-/// runtime predicates that used to live as statics on `Interpreter`.
-///
-/// WHY THIS EXISTS (LR-4 G-1)
-///
-/// `P4-gamma` deletes the AST walk, and `Interpreter` with it. But `Interpreter`
-/// also carried helpers the *surviving* engine uses: `IRExecutor` references
-/// two dozen of them, `Value` another two. They are the leftover of the P4-0 and
-/// P4-1b single-sourcing -- the implementations were extracted into one place,
-/// and that place was still `Interpreter`.
-///
-/// Deleting first would have produced a screen of compile errors unrelated to
-/// deleting the walk, dressing a structural change up as an overhaul. So they
-/// move here first, and `Interpreter` keeps thin forwarders, which is what keeps
-/// its own thousands of lines -- and `SuspendEvaluator`'s -- untouched.
-///
-/// WHAT BELONGS HERE
-///
-/// Only what survives the flip, and nothing here may reference `Interpreter`.
-/// Every member is pure over `Value`: no `self` occurs in any of them, which is
-/// what makes this a move rather than a redesign. The five private helpers that
-/// came along (see `typeMismatch`, `intArg`, `trigArgument`) are the internal
-/// dependencies of the rest; they are module-internal here because their
-/// forwarders live in `Interpreter.swift`, while `Interpreter`'s own copies stay
-/// private.
+/// Runtime operations both engines need: the value-level helpers, builtins and predicates the surviving engine shares.
+/// Nothing here may reference `Interpreter`; every member is pure over `Value`, so this is a move, not a redesign.
+/// The private helpers below (`typeMismatch`, `intArg`, `trigArgument`) are their internal dependencies.
 public enum RuntimeOps {
 
-    /// Value-type copy rule: a `structInstance` is copied field by field,
-    /// recursively; everything else -- objects included -- is returned as-is,
-    /// which is what makes object aliasing correct rather than accidental.
-    ///
-    /// WHY IT IS HERE (LR-4 G-2R)
-    ///
-    /// Both engines owe this rule at every binding and store site, and the AST
-    /// walk used to be its only home -- as an *instance* method, which is also why
-    /// the IR executor could not reach it. The flip deletes that home, so the rule
-    /// moves to the shared carrier and `Interpreter` keeps a forwarder. The body
-    /// never touches `self` and is pure over `Value`, so this is a move rather than
-    /// a redesign -- the test every member of this enum has to pass.
+    /// Value-type copy: a `structInstance` is copied field by field, recursively; everything else passes through.
+    /// Objects are aliased on purpose, which is what makes aliasing correct; both engines owe this rule at every store site.
     static func copyIfStruct(_ value: Value) -> Value {
         if case .structInstance(let si) = value {
             var copiedFields: [String: Value] = [:]
@@ -82,9 +50,8 @@ public enum RuntimeOps {
         case (.float(let a), .float(let b), .minus): return .float(a - b)
         case (.float(let a), .float(let b), .multiply): return .float(a * b)
         case (.float(let a), .float(let b), .divide): return .float(a / b)
-        // F64 同型比较六算符（与 int 分派形态一致）：原缺失导致 float 比较
-        // 落 default 抛 typeMismatch，解释器通道 F64 只能算不能比
-        // （issue-interpreter-float-compare-2026-09-07 收口）。
+        /// F64 同型比较六算符，与 int 分派形态一致：`==` / `!=` / `<` / `<=` / `>` / `>=`。
+        /// 缺一条就会落到 `default` 抛 `typeMismatch`，F64 于是只能算不能比。
         case (.float(let a), .float(let b), .equal): return .bool(a == b)
         case (.float(let a), .float(let b), .notEqual): return .bool(a != b)
         case (.float(let a), .float(let b), .lessThan): return .bool(a < b)
@@ -92,10 +59,9 @@ public enum RuntimeOps {
         case (.float(let a), .float(let b), .greaterThan): return .bool(a > b)
         case (.float(let a), .float(let b), .greaterThanOrEqual): return .bool(a >= b)
         case (.string(let a), .string(let b), .plus): return .string(a + b)
-        // G68（P0d-D）：`Char` 搭 `String` 的车 —— 凡 `String` 支持的算符，`Char` 参与时
-        // 行为一致（拼接出 `String`、比较按字素内容）。分派是按值 case 的**元组形状**做的，
-        // `Char` 与 `String` 是两个不同的 case、无法靠一条通配覆盖 ⇒ 3 算符 × 3 组合写全。
-        // ⚠️ 漏写会落到下面的 `default: throw`，编译器同样不报 —— 只能按清单逐处勾。
+        /// `Char` 搭 `String` 的车：凡 `String` 支持的算符，`Char` 参与时行为一致（拼接出 `String`、比较按字素内容）。
+        /// 分派按值 case 的元组形状做，`Char` 与 `String` 是两个 case ⇒ 3 算符 × 3 组合写全。
+        /// 漏写会落到 `default: throw`，编译器同样不报 —— 只能按清单逐处勾。
         case (.char(let a), .char(let b), .plus): return .string(a + b)
         case (.char(let a), .string(let b), .plus): return .string(a + b)
         case (.string(let a), .char(let b), .plus): return .string(a + b)
@@ -143,10 +109,8 @@ public enum RuntimeOps {
         }
     }
 
-    /// `F64(value)` -- the numeric value constructor (`BuiltinRegistry` `F64`,
-    /// group `.value`). A float passes through unchanged; an integer widens. The
-    /// AST walk used to do this inline (G-P1), but the IR executor owes the same
-    /// rule, and this is where the shared members live now.
+    /// `F64(value)` — the numeric value constructor (`BuiltinRegistry` `F64`, group `.value`).
+    /// A float passes through unchanged and an integer widens; the IR executor owes the same rule as the AST walk.
     static func builtinF64(_ value: Value) throws -> Value {
         switch value {
         case .float(let f): return .float(f)
@@ -159,10 +123,8 @@ public enum RuntimeOps {
         }
     }
 
-    /// The Array member face the IR path answers by name (`G-2S`). Each entry
-    /// takes the receiver first and then the call's arguments, and returns exactly
-    /// what the AST walk's member dispatch returns -- these are its rules, moved to
-    /// the shared carrier so the two engines cannot drift apart.
+    /// The Array member face the IR path answers by name: the receiver first, then the call's arguments.
+    /// Each entry returns exactly what the AST walk's member dispatch returns, so the two engines cannot drift.
     static let arrayMethods: [String: ([Value]) throws -> Value] = [
         "Array.append": builtinArrayAppend,
         "Array.last": builtinArrayLast,
@@ -234,8 +196,7 @@ public enum RuntimeOps {
             }
             return .enumValue(EnumValue(caseName: "none", associatedValues: []))
         }
-        // 字典键是任意值（字符串/整数…），数组与字符串下标才是整数索引——先按接收者
-        // 类型分流，再各自校验参数，避免把键误当索引（批 2 遗留缺陷，批 3 取证发现）。
+        // 类型分流，再各自校验参数，避免把键误当索引。
         if case .dictionary(let entries) = receiver {
             for (k, v) in entries where k == index {
                 return checked ? some(v) : v
@@ -251,10 +212,8 @@ public enum RuntimeOps {
             guard idx >= 0, idx < arr.count else { return try outOfRange() }
             return checked ? some(arr[idx]) : arr[idx]
         case .string(let s):
-            // 字素簇语义不变，但「数出总字数」与「定位第 i 个字素」都改走 `GraphemeCursor`
-            // （均摊 O(1)，**空间 O(1)**）—— 此前 `s.count` 每次 O(len)、
-            // `s.index(_:offsetBy:)` 每次 O(i) ⇒ 逐字符扫描整体 O(n²)。
-            // 语义与边界判定一字未改（含负值尾计数）。
+            /// 字素簇语义不变，但「数总字数」与「定位第 i 个字素」都走 `GraphemeCursor`（均摊 O(1)、空间 O(1)）。
+            /// ⇒ 逐字符扫描整体 O(n) 而非 O(n²)；语义与边界判定（含负值尾计数）一字未改。
             let n = GraphemeCursor.count(of: s)
             let idx = raw < 0 ? n + raw : raw
             guard idx >= 0, idx < n else { return try outOfRange() }
@@ -337,10 +296,8 @@ public enum RuntimeOps {
             case "F32": return .float(Double(rp.pointer.load(as: Float.self)))
             case "F64": return .float(rp.pointer.load(as: Double.self))
             case "Bool": return .bool(rp.pointer.load(as: Bool.self))
-            // `CChar` = the C single byte character, renamed from `Char` (FFI 的 Char 改名 CChar).
-            // Unreachable in practice today: the checker accepts `*CChar`, but no
-            // engine resolves the element type, so no program reaches this decode.
-            // Kept because the day that face is implemented, this line is the decode.
+            /// `CChar` = the C single byte character.
+            /// Unreachable today: the checker accepts `*CChar`, but no engine resolves the element type to reach this decode.
             case "CChar": return .int(Int(rp.pointer.load(as: UInt8.self)))
             default:
                 throw RuntimeError.invalidOperation(reason: "load：不支持的指针元素类型 `\(name)`", location: loc)
@@ -601,13 +558,8 @@ public enum RuntimeOps {
         return .tuple(labels: labels, elements: elements)
     }
 
-    /// IO 路径解析：`/`、`./`、`../` 开头的路径原样返回，其余拼接程序基准；基准缺省时原样返回。
-    /// 运行时段有一份同规则实现（`PiniRuntime` 的 `_bkResolveIOPath`，它不依赖本仓）。
-    /// 两侧必须同解 —— 同一份源码在两通道上必须落到同一个文件。
-    ///
-    /// ⚠️ `./` / `../` 这一支是**豁免**，不是书写风格：自举仓的相对路径全部带 `./` 前缀，
-    /// 靠本支在「拼基准」与「落 CWD」两种语义下都落到 CWD。改成同样拼基准 ⇒ 自举仓全线失守，
-    /// 且它的 `check` 门禁看不出来（只有跑原生臂才暴露）。`IOPathExemptionTests` 钉住这四条分支。
+    // 运行时段有一份同规则实现（`_bkResolveIOPath`），两侧必须同解：同一份源码在两通道上要落到同一个文件。
+    // `./` / `../` 这一支是**豁免**：自举仓的相对路径全带 `./` 前缀，拼上基准会全线失守。
     static func resolveIOPath(_ path: String, programBase: String?) -> String {
         if path.hasPrefix("/") { return path }
         if path.hasPrefix("./") || path.hasPrefix("../") { return path }
@@ -634,10 +586,8 @@ public enum RuntimeOps {
         case .int(let v): return String(v)
         case .float(let v): return String(v)
         case .string(let v): return v
-        /// `Char` (P0d) prints as the character itself, not as a quoted or
-        /// bracketed form — that is what the value layer already did for `s[i]`
-        /// when it handed back a single-grapheme string, so the type change is
-        /// behaviour-preserving here.
+        /// `Char` prints as the character itself, not quoted or bracketed — what the value layer already did for `s[i]`.
+        /// So the type change is behaviour-preserving here.
         case .char(let v): return v
         case .bool(let v): return String(v)
         case .null: return "null"
@@ -680,8 +630,7 @@ public enum RuntimeOps {
             if ev.associatedValues.isEmpty {
                 return "\(ev.caseName)"
             }
-            // 渲染不带关联值名（项目契约：`圆(5.0)` 而非 `圆(r: 5.0)`——paramNames
-            // 仅供 match 具名绑定按名对位，不进渲染；2026-08-29 具名关联值决议）。
+            /// 渲染不带关联值名（`圆(5.0)` 而非 `圆(r: 5.0)`）：`paramNames` 只供 match 具名绑定按名对位，不进渲染。
             let inner = ev.associatedValues.map { stringifyValue($0) }.joined(separator: ", ")
             return "\(ev.caseName)(\(inner))"
         case .function(let fv): return "<\(fv.name)>"
@@ -753,13 +702,8 @@ public enum RuntimeOps {
         }
     }
 
-    /// `chars` — split into grapheme clusters (matching Swift `Character`, so
-    /// surrogate pairs are not split); the empty string gives an empty array.
-    /// `len(chars(s)) == len(s)` holds by construction.
-    ///
-    /// G67: the parameter stays a `String` — the whole point of `chars` is to
-    /// cut a string apart, and taking a `Char` would collapse it to an
-    /// always-single-element array. What changed is the *element* type.
+    /// `chars` — split into grapheme clusters (matching Swift `Character`, so surrogate pairs stay whole); empty gives empty.
+    /// `len(chars(s)) == len(s)` holds by construction; the parameter stays `String`, since `Char` would collapse it.
     static func builtinChars(_ args: [Value]) throws -> Value {
         guard case .string(let s) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -771,11 +715,8 @@ public enum RuntimeOps {
     }
 
     /// `chr` — code point to a `Char`.
-    ///
-    /// G67: out of range (negative, past the scalar maximum, or a surrogate)
-    /// now **panics** through the same channel as an out-of-range `s[i]`. The
-    /// empty-string sentinel this used to return is gone on purpose: a `Char`
-    /// always holds exactly one grapheme, so it has no value to mean "nothing".
+    /// Out of range — negative, past the scalar maximum, or a surrogate — panics as an out-of-range `s[i]` does.
+    /// A `Char` always holds exactly one grapheme, so there is no sentinel value meaning "nothing".
     static func builtinChr(_ args: [Value]) throws -> Value {
         guard case .int(let code) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -793,14 +734,9 @@ public enum RuntimeOps {
         return .char(String(scalar))
     }
 
-    /// `ord` — the first Unicode scalar's code point. A multi-scalar grapheme
-    /// yields its first scalar (the registered grapheme model, 字符模型 = Grapheme Cluster).
-    ///
-    /// G67: the `-1` empty-string sentinel is obsolete — a `Char` holds exactly
-    /// one grapheme, so "empty" is not a value this signature can be handed.
-    /// The guard stays as a floor rather than an assertion: it is unreachable
-    /// for a well-typed `Char`, and a `null` (the injected test-parameter zero
-    /// value) should read as an error, not as a crash.
+    /// `ord` — the first Unicode scalar's code point; a multi-scalar grapheme yields its first scalar.
+    /// "Empty" is not a value this signature can be handed, so the guard is a floor rather than an assertion.
+    /// It is unreachable for a well-typed `Char`; a `null` injected by a test should read as an error, not a crash.
     static func builtinOrd(_ args: [Value]) throws -> Value {
         guard case .char(let c) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -840,45 +776,20 @@ public enum RuntimeOps {
     }
 
     /// Bytes of host stack that must remain before one more body may be entered.
-    ///
-    /// A share of the stack rather than a constant, because "enough left" means
-    /// nothing without knowing how much there was: on this host a main thread
-    /// carries 8 MB while one detached through `Thread` starts with 512 KB. An
-    /// eighth is held back so that raising the diagnostic and unwinding the
-    /// frames still have room, with a floor for the stacks small enough that an
-    /// eighth of them would leave nothing at all.
+    /// A share rather than a constant: main carries 8 MB, a `Thread` 512 KB, and "enough" means nothing without the total.
+    /// An eighth is held back so the diagnostic and unwinding still fit, with a floor for stacks too small to spare one.
     static func freeStackFloor(stackSize: Int) -> Int {
         max(stackSize / 8, 256 * 1024)
     }
 
     /// The ceiling the guard falls back to where the stack cannot be read.
-    ///
-    /// Deliberately the conservative number the guard used on its own: the
-    /// fallback's only job is to keep a silent stack smash impossible on a
-    /// platform that cannot report what is left, and a generous ceiling would
-    /// defeat exactly that. It is not the decision a normal run makes — where a
-    /// reading is available the remaining stack decides, and this is never
-    /// consulted.
+    /// Deliberately conservative: its only job is to keep a silent smash impossible where the stack cannot be read.
+    /// Where a reading is available the remaining stack decides, and this is never consulted.
     static let fallbackCallCeiling = 120
 
     /// Whether one more body may be entered at `depth`.
-    ///
-    /// WHY A FRAME COUNT COULD NOT BE THE DECISION (G-P9)
-    ///
-    /// What one Pini call costs the host stack depends on the shape of that
-    /// call, and by enough to matter: a recursion over scalars spends about
-    /// 47 KB per frame here, while one that returns a user-declared enum, takes
-    /// a struct argument and runs a `match` spends about 80 KB. A single count is
-    /// therefore wrong in both directions at once — high enough that the heavy
-    /// shape smashes the stack before the guard is reached, which reports
-    /// nothing at all and takes the buffered output down with it, yet low enough
-    /// that a legal scalar recursion is refused as "suspected infinite" with
-    /// most of the stack still free. The stack left on the running thread is
-    /// what the decision actually needs.
-    ///
-    /// The fallback is not a second opinion: it answers only where no reading is
-    /// available, so that a platform which cannot report the stack still gets a
-    /// diagnosable refusal rather than the smash.
+    /// A frame count cannot decide: a scalar recursion costs about 47 KB per frame, an enum-returning `match` about 80 KB.
+    /// So a count is wrong both ways — smashing on the heavy shape, refusing a legal one as infinite; the stack left decides.
     static func mayEnterAnotherBody(depth: Int) -> Bool {
         guard let stack = hostStack() else {
             return depth < fallbackCallCeiling
@@ -889,11 +800,8 @@ public enum RuntimeOps {
     }
 
     /// The running thread's stack, or `nil` where the platform cannot report it.
-    ///
-    /// Read once per thread and cached for its life: the bounds do not move
-    /// while the thread runs, and on Linux asking for them walks the process
-    /// maps — too much work to repeat on every call. A thread whose bounds
-    /// cannot be read is cached as such, so it is not asked again either.
+    /// Read once per thread and cached for its life: the bounds do not move, and on Linux asking walks the process maps.
+    /// A thread whose bounds cannot be read is cached as such, so it is not asked again.
     static func hostStack() -> (low: Int, size: Int)? {
         let bounds: HostStackBounds
         if let cached = hostStackBounds.value {
@@ -908,12 +816,8 @@ public enum RuntimeOps {
     }
 
     /// The error the guard raises when it refuses a call.
-    ///
-    /// One construction site, because the wording is load-bearing: the guard's
-    /// contract is "a diagnosable error instead of a stack overflow", and a
-    /// caller matching on the reason can only match one wording. The depth is
-    /// carried in the text because it is what separates a runaway recursion from
-    /// a merely deep one.
+    /// One construction site, since a caller matching on the reason can only match one wording.
+    /// The depth is carried in the text because it separates a runaway recursion from a merely deep one.
     static func recursionGuardError(depth: Int) -> RuntimeError {
         RuntimeError.invalidOperation(
             reason: "宿主栈余量不足，无法再进入一层调用（深度 \(depth)），疑似无限递归或递归过深",
@@ -922,11 +826,8 @@ public enum RuntimeOps {
     }
 
     /// The character builtins, by name.
-    ///
-    /// One table serves both engines: the lowerer's whitelist reads it (a name is
-    /// either supported or it is not), and the executor dispatches through it.
-    /// That is deliberate -- a name cannot end up half-supported, with a
-    /// lowering rule on one side and no answer on the other.
+    /// One table serves both engines: the lowerer's whitelist reads it and the executor dispatches through it.
+    /// A name therefore cannot be half-supported, with a lowering rule on one side and no answer on the other.
     static let characterBuiltins: [String: ([Value]) throws -> Value] = [
         "chars": builtinChars,
         "chr": builtinChr,
@@ -936,11 +837,7 @@ public enum RuntimeOps {
     ]
 
     /// Where the builtin constructors report from.
-    ///
-    /// One constant, read by both engines: the interpreter's own
-    /// `builtinLocation` now points here. The two channels' error text for a
-    /// mistyped builtin argument therefore cannot diverge at the location field
-    /// — and it used to be possible, because each side held its own literal.
+    /// One constant read by both engines, so the two channels' error text cannot diverge at the location field.
     static let builtinLocation = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
 
     /// The `sleep` argument rule. Shared so both channels reject the same
@@ -957,19 +854,8 @@ public enum RuntimeOps {
     }
 
     /// `sleep(ms)` — block the calling thread for that long.
-    ///
-    /// Sleeps in slices rather than one long call so the caller can check a
-    /// cancellation flag between them: an interrupted task stops within one
-    /// slice instead of after the full duration, which is what makes "cancel a
-    /// task that is sleeping" take effect in milliseconds.
-    ///
-    /// The checkpoint is a parameter because the two engines legitimately
-    /// differ here. The AST channel holds a task handle and passes a real
-    /// check; the IR channel has no cancellation context yet and passes a
-    /// no-op. That difference is recorded rather than hidden — when the
-    /// suspension grid gives the IR executor a task handle, this is the one
-    /// place it plugs into, and until then a no-op is the honest answer
-    /// instead of a check against a context that does not exist.
+    /// It sleeps in slices so cancellation is checked between them, stopping within a slice, not after the whole duration.
+    /// The checkpoint is a parameter: the AST channel passes a real check, the IR channel a no-op until it holds a task handle.
     static func builtinSleep(milliseconds ms: Int, checkpoint: () throws -> Void) throws -> Value {
         try checkpoint()
         var remaining = max(0, Double(ms)) / 1000.0
@@ -1008,10 +894,7 @@ public enum RuntimeOps {
     }
 
     /// The cancellation error value.
-    ///
-    /// Moved out of the interpreter so the constructor's two callers — the AST
-    /// channel's by-name chain and the IR executor's table — build the same
-    /// value from the same rule rather than from two copies of it.
+    /// Both callers — the AST channel's by-name chain and the IR executor's table — build it here, so the rule has one home.
     static func makeCancelError(_ message: String) -> Value {
         .structInstance(
             StructInstance(
@@ -1021,17 +904,8 @@ public enum RuntimeOps {
     }
 
     /// The concurrency builtins this grid answers synchronously, by name.
-    ///
-    /// Same contract as `characterBuiltins`: the lowerer's whitelist reads this
-    /// table and the executor dispatches through it, so a name cannot be
-    /// lowered on one side and go unanswered on the other.
-    ///
-    /// What is here is what a plain call can express with no context: `sleep`
-    /// blocks, `Error` / `CancelError` build a value. `joinAll`, `joinWithin`
-    /// and `isCancel` stay out even now that the async pipeline is connected —
-    /// answering them needs a scheduler and a task handle, which a stateless
-    /// closure cannot reach, so each engine matches those names itself and the
-    /// rules they share live in the section below.
+    /// Same contract as `characterBuiltins`: the lowerer's whitelist reads it and the executor dispatches through it.
+    /// Only what a plain call can express: `sleep` blocks, `Error` / `CancelError` build a value; joins need a task handle.
     static let concurrencyBuiltins: [String: ([Value]) throws -> Value] = [
         "sleep": { args in
             try builtinSleep(milliseconds: try sleepMilliseconds(args), checkpoint: {})
@@ -1043,23 +917,15 @@ public enum RuntimeOps {
     // MARK: - G-3c-1: Future-valued concurrency, shared by both engines
 
     /// Whether a value is a cancellation error — the `isCancel(e)` predicate.
-    ///
-    /// Moved out of the interpreter so the AST channel's by-name chain and the
-    /// IR executor's arm read one rule. `Error` and `CancelError` are
-    /// structurally identical (one `message` field each), and this type name is
-    /// the only thing that tells them apart — which is why the predicate exists
-    /// at all rather than a string comparison at every call site.
+    /// `Error` and `CancelError` are structurally identical, so the type name is the only thing telling them apart.
     static func isCancelErrorValue(_ value: Value) -> Bool {
         guard case .structInstance(let si) = value else { return false }
         return si.typeName == builtinCancelErrorTypeName
     }
 
     /// err 槽的**消息** —— 两引擎共用的读口（LLVM 侧对应 `bk_error_message`）。
-    ///
-    /// 解释器侧的错误值就是本文件的 `StructInstance`（`Error` / `CancelError`，字段 `message`），
-    /// 而 IR 里 err 槽是一个类型擦除的字 ⇒ 两层表示不同，但读出来的是同一件事。
-    /// 非错误值 ⇒ 空串，与 LLVM 侧对「无载荷字」的处置同义：⛔ 不 fail-loud ——
-    /// 读一个并不是错误的槽不该让进程炸掉。
+    /// 解释器侧的错误值是 `StructInstance`（字段 `message`），IR 里 err 槽是类型擦除的字 ⇒ 表示不同，读出的是同一件事。
+    /// 非错误值 ⇒ 空串，与 LLVM 侧对「无载荷字」的处置同义：读一个不是错误的槽不该让进程炸掉。
     static func errorMessage(_ value: Value) -> String {
         guard case .structInstance(let si) = value,
             si.typeName == builtinErrorTypeName || si.typeName == builtinCancelErrorTypeName,
@@ -1069,10 +935,7 @@ public enum RuntimeOps {
     }
 
     /// Whether a value is already a `Result` case (`ok` / `err`).
-    ///
-    /// Shared for the same reason: "is this already wrapped?" decides whether a
-    /// join boxes its value or passes it through, and two answers to that would
-    /// give the two engines different results for the same async body.
+    /// It decides whether a join boxes its value or passes it through; two answers would give the engines different results.
     static func isResultValue(_ value: Value) -> Bool {
         guard case .enumValue(let ev) = value else { return false }
         return ev.parentEnum == builtinResultEnumName
@@ -1084,21 +947,9 @@ public enum RuntimeOps {
         return ev.parentEnum == builtinResultEnumName && ev.caseName == "err"
     }
 
-    /// Cooperative cancellation checkpoint: a task cancelled while it was waiting
-    /// ends here rather than at an arbitrary instruction.
-    ///
-    /// Shared for the same reason as the predicates above, and it was the last
-    /// one still copied: the interpreter held one and the IR executor held a
-    /// private one, so the rule could not be asserted from the outside without
-    /// naming one of the two engines. A cancellation that ended a task on one
-    /// engine and not the other would be a difference in the language rather
-    /// than in the implementation — and the join site turns either into the same
-    /// `err(CancelError)`, so the two are one rule or they are wrong.
-    ///
-    /// Inlined because it sits on the entry path of every async body: the
-    /// synchronous case is a nil check, and it has to cost nothing when no task
-    /// owns the thread. ⛔ Not "the loop-header path" — there is no checkpoint
-    /// there (measured 2026-09-21; see the language reference, §8.3).
+    /// Cooperative cancellation checkpoint: a task cancelled while waiting ends here, not at an arbitrary instruction.
+    /// Shared, so the rule is assertable without naming an engine: cancelling on one side only would be a language difference.
+    /// Inlined: it sits on every async body's entry path, where the synchronous case is a nil check that must cost nothing.
     @inline(__always)
     static func checkCancellation(_ owner: FutureValue?) throws {
         if let owner = owner, owner.isCancelled {
@@ -1106,32 +957,9 @@ public enum RuntimeOps {
         }
     }
 
-    /// Block until `fut` resolves and normalise the outcome to a `Result` value
-    /// — errors as data, never thrown across the join.
-    ///
-    /// Three outcomes, and the shape each takes is the contract:
-    /// - the body already produced a `Result` → pass it through untouched;
-    /// - the body produced an ordinary value (a `=> ()` body's `.null` included)
-    ///   → box it as `ok(v)`;
-    /// - the body threw, the task was cancelled, or a timeout expired → `err`,
-    ///   with cancellation always normalised to `CancelError` so a caller cannot
-    ///   tell a manual cancel from a timeout by anything but the message.
-    ///
-    /// The join happens on both engines and the normalisation is exactly the
-    /// part that would drift: a second copy would agree on the happy path and
-    /// disagree about which catch clause wins.
-    ///
-    /// `form` is which keyword the site was written with — the one thing the
-    /// grammar distinguishes and the pipeline used to drop. The two forms differ
-    /// in exactly one respect: whether the site may give the current task up
-    /// while it waits. **That difference is not implemented yet**, so both forms
-    /// take the blocking path below. It cannot be implemented here: a
-    /// tree-walking body's state *is* the machine stack, so resuming one part-way
-    /// through needs a resumable body form first. Until that lands, `await`
-    /// degrades to `wait` — the compliant direction, since yielding is optional
-    /// while the join is not (see the C ABI face, `DE-1`, for the primitive that
-    /// will carry it and the layering rule that makes degradation the required
-    /// behaviour rather than a bug).
+    /// Block until `fut` resolves and normalise the outcome to a `Result` value — errors as data, never thrown across the join.
+    /// An existing `Result` passes through, an ordinary value is boxed as `ok(v)`, and a throw or timeout becomes `err`.
+    /// `form` records the keyword; both forms block, because yielding needs a resumable body and a tree-walker has none.
     static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .waits) -> Value {
         // A joined child leaves its parent: its lifetime has been consumed
         // explicitly, so the parent's return must stop cancelling it.
@@ -1162,17 +990,8 @@ public enum RuntimeOps {
     }
 
     /// `joinAll([a, b, c])` → an aggregate future over every member.
-    ///
-    /// fail-fast: the first member to yield `err` decides the aggregate and the
-    /// remaining ones are cancelled — nobody is waiting for them, so they must
-    /// not keep burning threads. A member keeps its own parent: the aggregate
-    /// links to it for cancellation only, because rewriting a member's parent
-    /// would make some caller's return cancel a task it never owned.
-    ///
-    /// The scheduler, the owning task and the two engine hooks arrive as
-    /// parameters rather than fields because this type holds no state: each
-    /// engine passes its own back end and its own thread-local task handle, and
-    /// neither ends up with a second copy of the rule to disagree with.
+    /// Fail-fast: the first `err` decides the aggregate and the rest are cancelled, since nobody is waiting for them.
+    /// A member keeps its own parent, the aggregate linking only for cancellation; scheduler and hooks arrive as parameters.
     static func makeJoinAllFuture(
         argument: Value,
         scheduler: Scheduler,
@@ -1221,12 +1040,8 @@ public enum RuntimeOps {
                     for rest in captured.dropFirst(index + 1) where !rest.isFinished {
                         rest.cancel()
                     }
-                    // Resolve explicitly rather than by returning: this task
-                    // decides its own outcome at the decision point, and the
-                    // `Value` it hands back would otherwise be the thing the
-                    // scheduler reads. Reporting `.finished` afterwards is
-                    // harmless for the same reason a second `resolve` is — it
-                    // is ignored once the future is settled.
+                    // Resolve explicitly rather than by returning: this task decides its own outcome at the decision point.
+                    // Reporting `.finished` afterwards is harmless, since a second `resolve` is ignored once the future is settled.
                     aggregate.resolve(joined)
                     return .finished(.null)
                 }
@@ -1238,13 +1053,9 @@ public enum RuntimeOps {
         return .future(aggregate)
     }
 
-    /// The strict structured rule's one bounded override: a body that finished
-    /// `ok` while a child nobody joined had failed comes out as `err(aggregate)`.
-    ///
-    /// Bounded on purpose — a body that produced its own `err` keeps it, because
-    /// errors-as-data already carries a failure and overwriting it would lose
-    /// which one happened. The flip happens at the return boundary, as a value,
-    /// and stays inspectable by `match`: nothing is injected into the call stack.
+    /// The structured rule's bounded override: a body that finished `ok` beside an unjoined failed child comes out `err`.
+    /// Bounded on purpose — a body that produced its own `err` keeps it, or the failure that happened would be lost.
+    /// The flip happens at the return boundary as a value, so `match` can inspect it; nothing enters the call stack.
     static func flipIfLeaked(_ result: Value, leaked: [Value]) -> Value {
         guard !leaked.isEmpty else { return result }
         if isErrResultValue(result) { return result }
@@ -1257,10 +1068,7 @@ public enum RuntimeOps {
 }
 
 /// The stack bounds of one thread, cached for the life of that thread.
-///
-/// Both fields are optional so that "this platform cannot answer" is a value
-/// that can be cached too: without that, a platform which cannot report its
-/// stack would be asked again on every single call.
+/// Both fields are optional so "cannot answer" is a cacheable value too; otherwise every call would ask again.
 private final class HostStackBounds {
     let low: Int?
     let size: Int?
@@ -1275,10 +1083,7 @@ private final class HostStackBounds {
 private let hostStackBounds = ThreadLocal<HostStackBounds>()
 
 /// Ask the platform where the running thread's stack begins and how big it is.
-///
-/// `low` is the lowest address that stack can reach, which is what a reading of
-/// the current frame is measured against: the stack grows downward, so a frame
-/// closer to `low` has less room left beneath it.
+/// `low` is the lowest address the stack can reach: it grows downward, so a frame closer to `low` has less room left.
 private func readHostStack() -> (low: Int, size: Int)? {
     #if canImport(Darwin)
         let thread = pthread_self()

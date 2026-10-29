@@ -37,10 +37,9 @@ public final class TypeInference {
             // 算术运算符返回操作数类型
             switch op {
             case .plus:
-                // G68（P0d-D）：`Char` 参与 `+` ⇒ 结果是 `String` 面。任一操作数为 `Char` 时
-                // 拼接结果都可能超过一个字素（`c + c` / `c + s` / `s + c`），若仍按「结果 =
-                // 左操作数类型」算成 `Char`，`Char 表示与 String 同构` 的「恰含 1 个字素」不变式就会被这类
-                // 表达式绕开 —— 那是本类型存在的理由，不能交出去。其余组合沿用下面的既有规则。
+                /// `Char` 参与 `+` ⇒ 结果是 `String` 面：任一操作数为 `Char` 时拼接都可能超过一个字素
+                /// （`c + c` / `c + s` / `s + c`），若仍按「结果 = 左操作数类型」算成 `Char`，
+                /// `Char` 的「恰含 1 个字素」不变式就会被绕开。其余组合沿用下面的规则。
                 if isCharTyped(leftType)
                     || isCharTyped(infer(expression: right, scopedParams: scopedParams))
                 {
@@ -104,12 +103,9 @@ public final class TypeInference {
             }
             if let sp = scopedParams, let t = sp[name] { return t }
             if let bound = environment?.lookupVariable(name: name) { return bound }
-            // 无实参枚举用例的**裸名**形态（`名`，不带括号）：调用形态 `名(...)` 的识别只写在
-            // `.call` 分支里，故本支此前一律返 nil。而 nil 在**无线程期望类型**的位置（局部变量
-            // 初值位最典型）会被 `varDecl` 落成 `Any` ⇒ 错误迟发在**最后用它的地方**，报错点
-            // 与被推断的名字无关（实测：`var x = 某用例` 的报错落在「后续拿 x 做参数」那行）。
-            // 口径与 `.call` 分支同一档：父枚举唯一 ⇒ 取父枚举类型；歧义 ⇒ 仍返 nil，
-            // 交期望类型路径处置（不猜）。
+            /// 无实参枚举用例的裸名形态（`名`，不带括号）：`名(...)` 的识别只写在 `.call` 分支，故本支返 nil。
+            /// nil 在无期望类型处（局部变量初值位最典型）会被 `varDecl` 落成 `Any`，错误迟发在最后用它的地方。
+            /// 口径同 `.call`：父枚举唯一 ⇒ 取父枚举类型；歧义 ⇒ 返 nil，交期望类型路径处置（不猜）。
             if let env = environment {
                 let caseParents = env.parentEnums(of: name)
                 if caseParents.count == 1 {
@@ -148,10 +144,9 @@ public final class TypeInference {
                 return .simple(name: typeName, location: loc)
             }
 
-            // 点号用例构造（proposal-dot-case-construction，成员意图）：推断优先级为
-            // 期望类型命中候选 > 唯一父枚举（与裸名构造的唯一优先相反——前导点即声明
-            // 「这是某枚举的成员」）。期望不可知且歧义时返回例名占位，报错交 TypeChecker；
-            // 用户枚举候选为空时内建 some/none 直达 Optional（与 `nil` 的推断对齐）。
+            /// 点号用例构造：推断优先级为期望类型命中候选 > 唯一父枚举（与裸名构造相反——前导点已声明
+            /// 「这是某枚举的成员」）。期望不可知且歧义时返回例名占位，报错交 TypeChecker；
+            /// 用户枚举候选为空时内建 some/none 直达 Optional（与 `nil` 的推断对齐）。
             if case .dotCaseRef(let caseName, _) = callee, let env = environment {
                 let caseParents = env.parentEnums(of: caseName)
                 if let exp = expected {
@@ -208,7 +203,7 @@ public final class TypeInference {
                     }
                 }
                 // 高阶函数：被调者是函数类型参数/变量（f(x)）——返回其声明返回类型。
-                // 此前此处退化为 .simple(name) 导致 return f(x) 类型误判为「类型 f」。
+                // ⛔ 退化为 .simple(name) 会把 return f(x) 的类型误判成「类型 f」。
                 if case .function(_, let returns, _, _, _) = env.lookupVariable(name: name) {
                     if returns.count == 1 {
                         return returns[0]
@@ -225,8 +220,8 @@ public final class TypeInference {
                     return .simple(name: caseParents[0], location: loc)
                 }
                 // 裸名 case 消歧（静态收敛版）（实参位补全）：歧义 case 名且期望类型命中候选 → 按期望解析。
-                // 此前实参位置不线程期望类型，跨枚举同名 case（如两个 none）在实参位
-                // 无法构造——S4.9 宿主对等改名回退的前置。
+                // 实参位若不下推期望类型，跨枚举同名 case（如两个 none）在实参位无法构造 ——
+                // 而那是宿主对等改名的前置。
                 if let exp = expected {
                     switch exp {
                     case .simple(let en, _):
@@ -308,8 +303,8 @@ public final class TypeInference {
             return nil
 
         case .subscript(let container, let index, let loc):
-            // 批 2（G48 三通道）：下标是**安全断言通道**——静态类型 = 元素类型 `T`（越界 panic，
-            // E5-005），不再是 Optional<T>（旧 P2-E 行为）。容错通道为 `.get(i)`（Optional<T>）。
+            // 下标是**安全断言通道**——静态类型 = 元素类型 `T`（越界 panic，
+            // E5-005），不是 Optional<T>。容错通道为 `.get(i)`（Optional<T>）。
             // 仅当容器类型可静态解析时给出精确元素类型；否则回退 nil（未知），不报错。
             guard let containerType = infer(expression: container, scopedParams: scopedParams) else { return nil }
             switch containerType {
@@ -402,10 +397,9 @@ public final class TypeInference {
             collectLambdaParamConstraints(in: body, paramNames: paramNames, into: &bottomUp)
         }
 
-        // 返回类型标注（单一具体、非通配）→ 作为未标注参数的回退。
-        // 与顶层函数「参数无标注→从返回类型推断」规则一致（spec G29）；仅当无标注/无体反推/无期望时生效，
-        // 修复 closures.pini 中 `func (n,) -> (I32,): return n * n` 因 n*n 两操作数皆变量、无字面量，
-        // 自底向上收不到约束而把 n 推成 `_`，进而 `应用(sq, 7)` 比对 `(I32)->(I32)` 报 mismatch 的缺口。
+        /// 返回类型标注（单一具体、非通配）→ 作为未标注参数的回退，与顶层函数「参数无标注则从返回
+        /// 类型推断」一致。仅当无标注、无体反推、无期望时生效：否则 `n * n` 这类两操作数皆变量、
+        /// 无字面量的体收不到约束，`n` 会被推成 `_`，与调用点的 `(I32)->(I32)` 比对时报 mismatch。
         let fallbackReturnType: TypeAnnotation?
         if decl.returnTypes.count == 1,
             case .simple(let rn, _) = decl.returnTypes[0], rn != "_"
@@ -438,10 +432,9 @@ public final class TypeInference {
             returnTypes = [.simple(name: "_", location: location)]
         }
 
-        // 捕获（自由变量）类型分析（缺口②修复）：闭包体标识符 − (参数 ∪ 局部 var)，
-        // 余下即在创建点作用域可见、被闭包捕获的外层变量；取其在当前环境下的类型填入 captured。
-        // 与阶段 B 已落地的 IRGenerator free-variable 分析同算法（修复方案）。
-        // 仅取类型可解析者（不可解析的哨兵/未知名跳过，不误报）。
+        /// 捕获（自由变量）类型分析：闭包体标识符 − (参数 ∪ 局部 var)，余下即在创建点作用域可见、
+        /// 被闭包捕获的外层变量，取其当前类型填入 captured。与 IRGenerator 的 free-variable 分析同算法。
+        /// 仅取类型可解析者，不可解析的哨兵/未知名跳过，不误报。
         var capturedTypes: [TypeAnnotation] = []
         if let body = decl.body {
             let used = collectIdentifiers(in: decl)

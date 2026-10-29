@@ -41,10 +41,8 @@ RUN_TIMEOUT = 10
 def run(args, extra_env=None, cwd=None):
     env = dict(os.environ)
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
-    # Drop any inherited engine: every channel states its engine explicitly, so
-    # a value in the caller's shell cannot relabel a channel.
-    # No engine is selected per channel any more: G-6c retired the switch with
-    # the AST walk, so there is exactly one engine to label.
+        # Drop any inherited engine: every channel states its engine explicitly, and
+        # there is only one engine to label.
     if extra_env:
         env.update(extra_env)
     # Own process group so a timeout takes down lli (pini's child) too —
@@ -77,10 +75,8 @@ def show(label, rc, out, err):
 def probe(path):
     path = os.path.abspath(path)
     print(f"===== {path}")
-    # Copy the fixture into a scratch dir and run the copy: pini resolves
-    # relative I/O against the SOURCE FILE's directory, not the cwd, so a
-    # fixture carrying an unreplaced harness placeholder (e.g. __PATH__)
-    # would otherwise litter the real fixture directory with its output.
+        # Run the copy in a scratch dir: pini resolves relative I/O against the source
+        # file's directory, so an unreplaced placeholder would litter the fixture dir.
     with tempfile.TemporaryDirectory() as scratch:
         copy = os.path.join(scratch, os.path.basename(path))
         shutil.copy(path, copy)

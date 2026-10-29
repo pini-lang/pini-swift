@@ -5,28 +5,25 @@ import Foundation
 public final class SemanticAnalyzer {
     public var symbolTable: SymbolTable
 
-    /// P3 validated 匹配模式：本模块枚举的「case 名 → 父枚举名列表」与「枚举名 → 全部 case 名」。
-    /// 在 `registerTopLevelDecl` 预登记阶段填充，供 `checkValidatedMatch` 做 best-effort 穷尽性校验。
-    /// P5-5 HIGH-1 之后 case 名已按枚举命名空间隔离（跨枚举同名共存），故此处天然为「多父」映射，
-    /// 穷尽性校验据此对跨枚举同名碰撞做退化处理（不误报穷尽性）。
+    /// 本模块枚举的「case 名 → 父枚举名列表」与「枚举名 → 全部 case 名」，在
+    /// `registerTopLevelDecl` 预登记阶段填充，供 `checkValidatedMatch` 做 best-effort 穷尽性校验。
+    /// case 名按枚举命名空间隔离，故天然是多父映射，穷尽性校验对跨枚举同名碰撞做退化处理。
     private var enumCaseParents: [String: [String]] = [:]
     private var enumAllCases: [String: [String]] = [:]
 
-    /// 名字级「变量 / 参数 / 方法可见字段 → 类型名」登记，`typeNameOf` 的输入。
-    /// 用于让 `match` 按**被匹配值的类型**解析父枚举（而不是按 case 名反查）。
-    /// 判不出类型时**不留登记**，上层据此跳过校验。
-    /// 已知限制：name 级键（同 `usedSymbols`）；进入块 / 函数时快照、离开时回滚，
-    /// 使同名遮蔽不把外层的类型带给内层之后的判断。
+    /// 名字级「变量 / 参数 / 方法可见字段 → 类型名」登记，`typeNameOf` 的输入：让 `match` 按被匹配
+    /// 值的类型解析父枚举，而不是按 case 名反查。判不出类型时不留登记，上层据此跳过校验。
+    /// 进入块 / 函数时快照、离开时回滚，使同名遮蔽不把外层类型带给内层之后的判断。
     private var declaredTypes: [String: String] = [:]
 
     /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查时注入 self 字段作用域。
     private var typeFields: [String: [FieldDecl]] = [:]
 
-    /// T1/B2（2026-08-24）：语义警告（非致命）。首版=未使用局部变量（`emitUnusedWarnings` 检测点=块作用域）。
+    /// 语义警告（非致命）：目前只含未使用局部变量，检测点在块作用域。
     public private(set) var warnings: [SemanticWarning] = []
 
-    // 批 6 D-4：当前文件的注入导入（`_` 前缀别名 → 目标 public 符号集）与裸名集。
-    // 注入 = 全导入：目标 public 符号进入本文件裸名空间（文件级，#2）；冲突即 E3-013（#3）。
+    // 当前文件的注入导入（`_` 前缀别名 → 目标 public 符号集）与裸名集。
+    // 注入 = 全导入：目标 public 符号进入本文件裸名空间（文件级）；冲突即 E3-013。
     private struct InjectedImport {
         let alias: String
         let symbols: Set<String>
@@ -40,9 +37,8 @@ public final class SemanticAnalyzer {
     /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——首版接受，待符号表结构化（唯一 id）后升级。
     private var usedSymbols: Set<String> = []
 
-    /// G52 批 1（2026-08-31）：import 别名登记表——
-    /// 别名 → (publicSymbols 跨模块可引入集, allSymbols 全部顶级符号)。
-    /// D-2 静态互斥：本地符号声明与别名同名 → 重声明错误。
+    /// import 别名登记表：别名 → (publicSymbols 跨模块可引入集, allSymbols 全部顶级符号)。
+    /// D-2 静态互斥：本地符号声明与别名同名即重声明错误。
     private var importAliasInfos: [String: (publicSymbols: Set<String>, allSymbols: Set<String>)] = [:]
     /// 点号用例构造（成员意图）的名字登记集：全部已见枚举用例名（含内建 Optional 的
     /// some/none）。与前导点解析配套——`.name` 只要求名字是某枚举的用例，不受本地位
@@ -74,15 +70,9 @@ public final class SemanticAnalyzer {
 
     private func registerBuiltins() {
         let dummyLoc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
-        // 内建单点登记：内建符号从单点登记表（BuiltinRegistry）派生——
-        // 名字与归组只声明一次，解释器 / 类型检查 / 本层各自取用。
-        // 静态分析层须先登记，否则示例/用户代码中调用这些自由函数会被误报
-        // undefinedFunction。字符串成员方法（s.upper() 等）走成员调用路径，
-        // 不经符号表查找，无需在此登记。
-        //
-        // ⚠️ 形态不止一种：表里除函数外还有**值**（策略层的空句柄即其一）。值也要登记 ——
-        // 漏了它，裸名字读会被判「未定义的变量」，而那个名字确实存在，读起来却像拼错了名字。
-        // 两者按同一条规则分流：带值类型的登记为变量，其余登记为函数。
+        /// 内建符号从单点登记表（BuiltinRegistry）派生：名字与归组只声明一次，解释器 / 类型检查 /
+        /// 本层各自取用。本层不登记则示例或用户代码调用这些自由函数会被误报 undefinedFunction；
+        /// 字符串成员方法走成员调用路径、不经符号表，无需登记。表里除函数还有值，按值类型分流登记。
         for decl in BuiltinRegistry.decls where decl.definesSymbol {
             let kind: SymbolKind = decl.valueType == nil
                 ? .function
@@ -95,7 +85,7 @@ public final class SemanticAnalyzer {
     public func analyze(module: Module) throws {
         warnings = []  // B2：每次分析重置（实例可复用）
         usedSymbols = []
-        // G52 批 1：登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
+        // 登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
         for imp in module.imports {
             let dir = (imp.location.fileName as NSString).deletingLastPathComponent
             let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
@@ -104,15 +94,9 @@ public final class SemanticAnalyzer {
 
         try setupInjections(for: module)
         defer { teardownInjections() }
-        // 预置声明（宿主提供）先注册：让**语言预置的名字在本文件里存在**。
-        // ⚠️ 缺了这一步，那个名字落在值位会被判「未定义的变量」—— 一条**旧式**诊断，
-        // 读起来像拼错了名字，而它不是：那个名字确实存在，只是不能作值。
-        // 实测形态：同一个名字，用户自己声明成给定块时给的是可行动诊断，
-        // 而语言预置的那份给的是「未定义」⇒ 两处对同一件事给出两种答案。
-        //
-        // ⚠️ 顺序与判据都不是随意：「未被本模块占名的那些」是先决条件 ——
-        // 若连用户已占名的那份也注册，用户自己的声明会被判**重声明**，
-        // 而这类名字的处置有一条承诺是「用户声明优先」（让位规则，与降载层同源）。
+        /// 预置声明（宿主提供）先注册，让语言预置的名字在本文件里存在——缺了这步，该名字落在值位会被
+        /// 判「未定义变量」，而它确实存在、只是不能作值。只注册未被本模块占名的那些：用户已占名时
+        /// 再注册会被判重声明，而这类名字的处置承诺是用户声明优先（让位规则，与降载层同源）。
         for decl in PredefinedDecls.effective(in: module.declarations) {
             try registerTopLevelDecl(decl)
         }
@@ -128,11 +112,9 @@ public final class SemanticAnalyzer {
         if let c = deferredInjectConflict { throw c }
     }
 
-    /// P4 Phase 3：分析包（多文件 / 单文件统一入口）。
-    ///
-    /// - 单文件包（`fileUnits.count <= 1`）直接委托 `analyze(module:)`，行为与旧单文件世界完全等价。
-    /// - 多文件包：构建包级符号索引（跨文件重声明在此抛出），随后逐文件分析——
-    /// 每个文件用干净符号表承载**自身**顶级声明，跨文件引用经索引解析并 enforce 4 级可见性。
+    /// 分析包（多文件 / 单文件统一入口）。单文件包直接委托 `analyze(module:)`，行为等价；多文件包
+    /// 先建包级符号索引（跨文件重声明在此抛出），再逐文件分析——每个文件用干净符号表承载自身
+    /// 顶级声明，跨文件引用经索引解析并 enforce 4 级可见性。
     public func analyze(package: Package) throws {
         warnings = []  // B2：每包重置（实例可复用）
         if package.fileUnits.count <= 1 {
@@ -170,13 +152,11 @@ public final class SemanticAnalyzer {
         }
     }
 
-    // MARK: - 批 6 D-4：隐式别名注入（全导入 + 裸调用，冲突即 E3-013）
+    // MARK: - 隐式别名注入（全导入 + 裸调用，冲突即 E3-013）
 
-    /// 收集本文件的注入导入并安装哨兵。语义（用户裁决 2026-09-02）：
-    /// - `_别名 = path`（#1）：别名不必等于目标模块名——不一致仅发 E7-002 弱警告；
-    /// - 注入的 public 符号进入**本文件**裸名空间（#2 文件级），可裸调用或 `_别名.符号` 限定；
-    /// - 注入符号与本文件任何可裸引用名（顶级/局部声明、其他注入、显式别名、内建）相撞 → E3-013（#3），
-    ///   修复 = 改写显式别名并限定调用（不再裸调用）。
+    /// 收集本文件的注入导入并安装哨兵。`_别名 = path` 的别名不必等于目标模块名，不一致仅发弱警告；
+    /// 注入的 public 符号进入本文件裸名空间，可裸调用或 `_别名.符号` 限定；与本文件任何可裸引用名
+    /// 相撞即报错，修复方式是改写显式别名并限定调用。
     private func setupInjections(for module: Module) throws {
         currentInjections = []
         currentInjectNames = []
@@ -280,7 +260,7 @@ public final class SemanticAnalyzer {
                 name: name, definedIn: entry.fileName, level: entry.visibility, location: location
             )
         }
-        // 批 6 D-4：未命中本地/包级时，注入的 public 符号可裸引用（文件级全导入；冲突已由哨兵排除）
+        // 未命中本地/包级时，注入的 public 符号可裸引用（文件级全导入；冲突已由哨兵排除）
         if currentInjectNames.contains(name) { return }
         if isFunction {
             throw SemanticError.undefinedFunction(name: name, location: location)
@@ -289,15 +269,14 @@ public final class SemanticAnalyzer {
         }
     }
 
-    /// 收集模式分析（P2-4.3 / 呼应 analyze 顶部预留钩子）：不抛出，返回模块内全部语义错误。
-    /// 用于『多错误同报』——单文件可一次性报出多个重声明 / 未定义符号等。
-    /// 注册阶段逐顶级声明 catch 并继续（遇重声明仍尝试登记该名，避免后续误报未定义）；
-    /// 检查阶段逐顶级声明 catch 并继续（函数体内仍『遇错即抛』单错误，不跨函数累积）。
+    /// 收集模式分析：不抛出，返回模块内全部语义错误，用于多错误同报。注册阶段逐顶级声明 catch 并
+    /// 继续（遇重声明仍尝试登记该名，避免后续误报未定义）；检查阶段同样逐声明继续，但函数体内
+    /// 仍遇错即抛，不跨函数累积。
     public func analyzeCollecting(module: Module) -> [SemanticError] {
         warnings = []  // B2：收集模式同样重置（实例可复用）
         usedSymbols = []
         var errors: [SemanticError] = []
-        // G52 批 1：登记 import 别名（与 analyze(module:) 同规则）；加载失败收集为诊断
+        // 登记 import 别名（与 analyze(module:) 同规则）；加载失败收集为诊断
         for imp in module.imports {
             let dir = (imp.location.fileName as NSString).deletingLastPathComponent
             do {
@@ -366,7 +345,7 @@ public final class SemanticAnalyzer {
         case .traitDecl(let t):
             symbolTable.define(Symbol(name: t.name, kind: .trait, location: t.location))
         case .givenDecl(let g):
-            // ADR-001：给定块是具名复合类型 ⇒ 纳入包级符号表（与对象同族）。
+            // 给定块是具名复合类型 ⇒ 纳入包级符号表（与对象同族）。
             symbolTable.define(Symbol(name: g.name, kind: .object, location: g.location))
         case .extensionDecl, .foreignDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
@@ -376,7 +355,7 @@ public final class SemanticAnalyzer {
     // MARK: - 注册阶段（P2-3 重声明检测）
 
     // 第一遍预注册：若同名顶级符号已存在则抛出 redeclaredSymbol。
-    // 注：当前为「遇错即抛」单错误模式；待接入「错误收集」(P2-4.1) 后可改为累积多错误。
+    // 注：当前为「遇错即抛」单错误模式；错误收集接入后可累积多错误。
     private func registerTopLevelDecl(_ decl: TopLevelDecl) throws {
         switch decl {
         case .structDecl(let s):
@@ -386,15 +365,14 @@ public final class SemanticAnalyzer {
             typeFields[o.name] = o.fields
             return try registerStructLike(o.name, fields: o.fields, methods: o.methods, location: o.location)
         case .givenDecl(let g):
-            // ADR-001：给定块与对象体同规 ⇒ 同路径注册（字段表 / 符号表 / 重声明检测 / 成员名冲突）。
+            // 给定块与对象体同规 ⇒ 同路径注册（字段表 / 符号表 / 重声明检测 / 成员名冲突）。
             typeFields[g.name] = g.fields
             return try registerStructLike(g.name, fields: g.fields, methods: g.methods, location: g.location)
         case .enumDecl(let e):
             try defineUnique(name: e.name, kind: .enum, location: e.location)
-            // P5-5 HIGH-1：case 名按枚举命名空间隔离，不再全局唯一。
-            // 仅检测「同一枚举内」case 名重复；跨枚举同名 case（如 形状.圆 与 几何.圆）允许共存。
-            // case 名仍以 symbolTable.define 登记（覆盖、不抛错），保证未限定构造 圆(5.0) 的
-            // requireDefined 解析通过；全局唯一性硬拒改由「同枚举内查重」承担。
+            /// case 名按枚举命名空间隔离，只检测同一枚举内重名；跨枚举同名 case 允许共存。
+            /// case 名仍以 `symbolTable.define` 登记（覆盖、不抛错），保证未限定构造 `圆(5.0)` 的
+            /// requireDefined 能解析通过。
             var seenInEnum: Set<String> = []
             for enumCase in e.cases {
                 if seenInEnum.contains(enumCase.name) {
@@ -497,8 +475,8 @@ public final class SemanticAnalyzer {
                 try checkFuncDecl(method, fields: targetFields)
             }
         case .givenDecl(let g):
-            // ADR-001：给定块的方法体按字段作用域检查（本批 `methods` 恒空 —— 方法写扩展块，
-            // 归并属 `P1b`；此处按同规处理，使归并批次无需回改本处）。
+            // 给定块的方法体按字段作用域检查（`methods` 目前恒空 —— 方法写扩展块再归并；
+            // 此处按同规处理，归并实装后无需回改本处）。
             for method in g.methods {
                 try checkFuncDecl(method, fields: g.fields)
             }
@@ -668,8 +646,7 @@ public final class SemanticAnalyzer {
                 try checkBlock(matchCase.block)
                 symbolTable.exitScope()
             }
-            // R1（D3①，2026-08-23）：穷尽性/可达性检查总是开启（取代 validated pass 开关），
-            // `case _:` 通配兜底豁免；default:/pass 通配子块已随字段删除。
+            /// 穷尽性 / 可达性检查总是开启，`case _:` 通配兜底豁免；`default:` / `pass` 通配子块不受支持。
             try checkMatchExhaustive(value: value, cases: cases, location: location)
 
         case .expressionStmt(let expr, _):
@@ -781,15 +758,9 @@ public final class SemanticAnalyzer {
 
     // MARK: - R1 穷尽性/可达性检查（D3① 取代 P3 validated 开关）
 
-    /// 穷尽性/可达性校验：**总是开启**（R1，2026-08-23 D3①），`case _:` 通配兜底豁免。
-    ///
-    /// 父枚举的判据只有一条：**被匹配值的类型**（`typeNameOf` 求得）。按 case 名全局反查会把
-    /// 「裸值 + 某枚举的用例臂」误判成该枚举的 match，故类型判不出时一律不校验。三种落点：
-    /// 1. 类型是已知枚举 → 逐臂校验可达性（不属本枚举的用例、或字面量臂 ⇒ `unknownMatchCase`），
-    ///    再校验穷尽覆盖（缺变体且无 `case _:` ⇒ `nonExhaustiveMatch`）；
-    /// 2. 类型确定不是枚举（内建标量 / 已登记具名类型）→ 能解析到枚举的臂永不匹配 ⇒ `unknownMatchCase`；
-    /// 3. 类型判不出（调用结果、导入类型等）→ 不校验。
-    /// 另保留一条与类型无关的合法性检查：已知 case 与解析不到的 case **并存** ⇒ 判后者为拼写错误。
+    /// 穷尽性 / 可达性校验，总是开启，`case _:` 通配兜底豁免。父枚举的唯一判据是被匹配值的类型
+    /// （`typeNameOf`）——按 case 名全局反查会把裸值误判成某枚举的 match。已知枚举则逐臂校验可达性
+    /// 并查穷尽；确定非枚举则能解析到枚举的臂永不匹配；判不出类型则跳过。另查已知与未知 case 并存。
     private func checkMatchExhaustive(
         value: Expression, cases: [MatchCase], location: SourceLocation
     ) throws {
@@ -926,7 +897,7 @@ public final class SemanticAnalyzer {
             if case .identifier(let name, let location) = callee {
                 try requireDefined(name, location, isFunction: true)
             }
-            // G52 批 1：`别名.符号(...)` 跨模块限定调用——符号存在性 + public 门槛
+            // `别名.符号(...)` 跨模块限定调用——符号存在性 + public 门槛
             if case .member(let objExpr, let memberName, _) = callee,
                 case .identifier(let aliasName, let aliasLoc) = objExpr,
                 let info = importAliasInfos[aliasName]
@@ -938,7 +909,7 @@ public final class SemanticAnalyzer {
                     throw SemanticError.crossModuleAccessDenied(symbol: "\(aliasName).\(memberName)", location: aliasLoc)
                 }
             } else if case .member(let receiver, _, _) = callee {
-                // E7-001 假阳性根因：成员调用的**接收者**此前不被检查，于是「只作为
+                // 成员调用的**接收者**必须被检查，否则「只作为
                 // 接收者被读」的变量不会被登记为已使用，误报未使用变量。非限定的接收者
                 // 是本文件内的表达式，须与独立成员表达式走同一条检查路径。
                 try checkExpression(receiver)
@@ -948,7 +919,7 @@ public final class SemanticAnalyzer {
             }
 
         case .member(let object, _, _):
-            // G52 批 1：别名 base 不走本地 requireDefined（限定访问只走跨模块通道，D-2）
+            // 别名 base 不走本地 requireDefined（限定访问只走跨模块通道）
             if case .identifier(let aliasName, _) = object, importAliasInfos[aliasName] == nil {
                 try checkExpression(object)
             }

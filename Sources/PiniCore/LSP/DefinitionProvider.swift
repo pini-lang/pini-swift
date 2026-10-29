@@ -3,13 +3,12 @@ import Foundation
 /// 跳转定义提供器：根据标识符查找定义位置。
 public struct DefinitionProvider {
 
-    /// 查找标识符的定义位置
-    /// - Parameters:
-    /// - name: 要查找的标识符名
-    /// - scope: 当前位置的作用域（用于本地查找）
-    /// - index: 包级符号索引（用于跨文件查找）
-    /// - uri: 当前文档 URI
-    /// - Returns: 定义位置，未找到返回 nil
+    /// 查找标识符的定义位置：先本地作用域，再包级符号索引（跨文件），都未命中返回 nil。
+    ///
+    /// - Parameter name: 要查找的标识符名。
+    /// - Parameter scope: 当前位置的作用域，用于本地查找。
+    /// - Parameter index: 包级符号索引，用于跨文件查找。
+    /// - Parameter currentURI: 当前文档 URI，用于生成本文件内的位置。
     public func findDefinition(
         name: String,
         scope: Scope?,

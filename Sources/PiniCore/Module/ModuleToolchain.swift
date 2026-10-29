@@ -1,19 +1,8 @@
 import Foundation
 
-/// 批 6（G52 批 3）阶段 3：模块工具链核心——版本约束、MVS 求解、SHA-256 校验和、
-/// `pini-summary.toml` 读写。语义权威 = G52 决议（模块系统规则工单）的字段规范与命令规范；
-/// 本文件只实现，不改语义。
-///
-/// v1 边界（如实记录）：
-/// - **批 7**：远程 tap（`github:`/`git:`）由 `TapFetcher` 抓取，抓取**只发生在 refresh**
-///   （`resolveFetching`）；`resolve` / `graph` 等只读路径不联网，只能读已落地的依赖。
-/// - `file:` tap 仍是「来源元数据 + git submodule / 手工拷贝落地」（批 6 已 Landed 语义，批 7 不动）。
-/// - 依赖落地 `deps/<name>/`（D23：无全局缓存）。远程依赖的候选版本来自 tag，
-///   经典 MVS 在其中取满足全部约束的最小版本（`TapFetcher.selectVersion`）。
-/// - 依赖的版本决定它自己的 `[require]` 内容 ⇒ 约束集随选择而变 ⇒ 求解须**迭代到不动点**
-///   （`resolveFetching`，上限 `fetchIterationLimit`，不收敛即报错不静默取某一轮）。
-/// - `[replace]`（G52 D13）三种形态全部生效：`"<约束>"`（只换版本）/ `"file:<路径>"`（换本地目录）/
-///   `"github:<org>/<repo>[@<版本>]"`、`"git:<url>[@<版本>]"`（换 fork）。**仅主模块生效**。
+/// 模块工具链核心：版本约束与 MVS 求解、SHA-256 校验和、`pini-summary.toml` 读写；只实现，不改语义。
+/// 依赖落 `deps/<name>/`（无全局缓存）；远程 tap 只在 refresh 路径抓取，`resolve` / `graph` 等只读路径不联网，
+/// 只能读已落地的依赖。依赖的版本决定它自己的 `[require]`，故求解须迭代到不动点，不收敛即报错。
 public enum ModuleToolchain {
 
     // MARK: - 错误
@@ -22,9 +11,9 @@ public enum ModuleToolchain {
         /// 依赖目录缺失（deps/<name>/ 无 pini.toml）——v1 无下载，须先 submodule/手工落地。
         case missingDependency(name: String, requirer: String, expectedPath: String)
         /// 远程 tap 的依赖尚未落地，且本次解析不抓取（抓取只发生在 refresh）。
-        /// 批 6 的 D-A 是「远程一律不支持」，批 7 后收窄为这一种情形：依赖还没抓下来。
+        /// 「远程不支持」因此收窄为这一种情形：依赖还没抓下来。
         case remoteTapNotMaterialized(name: String, tap: String)
-        /// 资源未落地（批 7 前是静默跳过，现改为显式报错）。
+        /// 资源未落地：显式报错，不静默跳过。
         case resourceNotMaterialized(name: String, path: String)
         /// **R7 根检（D20/D26 反向）**：`resources X` 而 X 的根含 `pini.toml` ⇒ 它是 Pini 模块，
         /// 应改用 `[require]`。只查根、不查深层。
@@ -41,7 +30,7 @@ public enum ModuleToolchain {
         case summaryIdentityMismatch(path: String)
     }
 
-    // MARK: - 抓取会话（批 7）
+    // MARK: - 抓取会话
 
     /// 跨迭代缓存「已选版本 / 已取 commit」，并标记本轮是否发生过重新选择。
     ///
@@ -76,21 +65,14 @@ public enum ModuleToolchain {
     /// 不动点迭代上限。超过即报错——不静默取某一轮的结果。
     static let fetchIterationLimit = 8
 
-    /// fork 替换写进锁文件 `tap` 字段的值。
-    ///
-    /// 该模块的来源由 `[replace]` 声明，**不由任何 tap 声明**——写回原 tap 名会让锁文件
-    /// 自相矛盾（`tap = "vendor"` 但 `source` 并非 vendor 的展开结果），故显式记 `replace`。
+    /// 替换来源的模块写进锁文件 `tap` 字段的值：来源由 `[replace]` 声明、不由任何 tap 声明，
+    /// 写回原 tap 名会让锁文件自相矛盾（`tap = "vendor"` 但 `source` 并非 vendor 的展开结果）。
     static let replaceTapName = "replace"
 
     // MARK: - [replace] 三种形态（G52 D13）
 
-    /// `[replace]` 值的形态（D13）。批 7 前只有 `file:` 生效，另两种**静默落空**。
-    ///
-    /// | 形态 | 用例 | 语义 |
-    /// |---|---|---|
-    /// | `.version` | `uni = "3.2.0"` | 只换版本，来源不变（等价 npm `overrides`） |
-    /// | `.local` | `dev = "file:../dev"` | 换来源为本地目录（不动远端，也不抓取） |
-    /// | `.fork` | `fork = "github:me/fork@v1.0"` | 换来源为 fork / 镜像，`@` 后为版本 |
+    /// `[replace]` 值的形态：`.version` 只换版本、来源不变；`.local` 换成本地目录（不动远端、也不抓取）；
+    /// `.fork` 换来源为 fork 或镜像，`@` 后为版本。三者只读主模块的清单，依赖清单里的 `[replace]` 一概不认。
     enum Replacement: Equatable {
         case version(String)
         /// 已展开 `<name>` 占位符的路径（相对路径由调用方拼到模块根上）。
@@ -99,12 +81,9 @@ public enum ModuleToolchain {
         case fork(spec: String, pin: String?)
     }
 
-    /// `[replace]` 值 → 形态。
-    ///
-    /// 两种非本地形态的**版本都并入 MVS 约束**（requirer 记为 `<replace>`），而不是绕过
-    /// MVS 直接检出——理由：① 与 requirer 约束同路合成，冲突时能得到「谁要求什么」的完整
-    /// 诊断；② 不引入第二条选择路径。代价：`@1.0` 是**下界**而非精确钉（MVS 取满足全部
-    /// 约束的最低版本），fork 上若无 `1.0` 但有 `1.1`，会选中 `1.1` 而非报错。
+    /// `[replace]` 值 → 形态。两种非本地形态的版本都并入 MVS 约束（requirer 记为 `<replace>`），不绕过 MVS 直接检出：
+    /// 与 requirer 约束同路合成才能给出「谁要求什么」的完整诊断，也不引入第二条选择路径。
+    /// 代价是 `@1.0` 只是下界：fork 上若无 `1.0` 但有 `1.1`，会选中 `1.1` 而非报错。
     static func parseReplace(_ raw: String, name: String) -> Replacement {
         let s = raw.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("file:") {
@@ -124,9 +103,8 @@ public enum ModuleToolchain {
         return .version(stripVersionPrefix(s))
     }
 
-    /// 剥 `v` / `V` 前缀——**规范化**，不是解析兜底：剥出的串会存进 `Constraint.raw`
-    /// （进而出现在报错文本与锁文件里），故必须是 `1.0` 而非 `v1.0`。
-    /// 解析侧的 v 前缀容忍由 `Constraint.versionComponents` 统一负责（G52 §9 Def-9）。
+    /// 剥 `v` / `V` 前缀属规范化而非解析兜底：剥出的串会存进 `Constraint.raw` 并写进锁文件，
+    /// 故必须是不带前缀的形式；解析侧的 v 前缀容忍由 `Constraint.versionComponents` 统一负责。
     private static func stripVersionPrefix(_ s: String) -> String {
         (s.hasPrefix("v") || s.hasPrefix("V")) ? String(s.dropFirst()) : s
     }
@@ -199,16 +177,9 @@ public enum ModuleToolchain {
             return true
         }
 
-        /// 版本字符串 → 分量数组（`1.2` → [1,2]；非数字段忽略）。
-        ///
-        /// **容忍 `v` / `V` 前缀**（G52 §9 Def-9）：此前用 `compactMap { Int($0) }`，
-        /// `Int("v1")` 为 nil 被**静默丢弃** ⇒ `"v1.0"` 只剩 `[0]`，带前缀的版本被当成**版本 0**，
-        /// MVS 下界完全错误且无任何提示。逐分量剥而非整串剥，`"1.v0"` 这类畸形串同样能救回。
-        ///
-        /// ⚠ 这里是**解析侧的健壮性**，与调用方的剥前缀是两回事：
-        /// `TapFetcher.availableVersions` 与 `parseReplace` 剥前缀是**规范化**——它们剥掉后
-        /// 得到的串会写进锁文件与 tag 名，故必须是 `1.0.0` 而非 `v1.0.0`。两处职责不同，
-        /// 不要因为「已经有两处在剥」而撤掉本处的容忍。
+        /// 版本字符串 → 分量数组（`1.2` → [1,2]；非数字段丢弃）。逐分量容忍 `v` / `V` 前缀，`"1.v0"` 这类畸形串也能救回：
+        /// 整串只认 `Int("v1")` 会得 nil 而被静默丢弃，带前缀的版本于是只剩 `[0]`、被当成版本 0，MVS 下界全错且无提示。
+        /// 本处的容忍属解析侧健壮性，与调用方剥前缀（规范化后写进锁文件与 tag 名）职责不同，不可互相替代。
         static func versionComponents(_ s: String) -> [Int]? {
             let parts = s.split(separator: ".").compactMap { comp -> Int? in
                 var t = comp
@@ -267,12 +238,9 @@ public enum ModuleToolchain {
     public struct Resolution: Equatable {
         public let modules: [ResolvedModule]
         public let resources: [ResolvedResource]
-        /// 拓扑序（依赖在前，根最后；环已在批 1 的 R2 检测拦截）。
-        ///
-        /// G52 §9 Def-2（2026-09-04 裁决）：本字段是**导出视图**——供外部工具（build 调度 /
-        /// 诊断展示）读取，**不是解释器的输入**。解释器的跨模块注册顺序由
-        /// `Interpreter.loadImports` 的递归结构保证（依赖先于依赖者完全就绪），
-        /// 不消费此字段；两套解析合流属架构改动，不与该字段绑定。
+        /// 拓扑序（依赖在前，根最后；环已由依赖加载的检测拦截）。它是导出视图，供 build 调度与诊断读取，
+        /// 不是解释器的输入：跨模块注册顺序由 `Interpreter.loadImports` 的递归结构保证，不消费此字段，
+        /// 两套解析合流属架构改动，不与该字段绑定。
         public let graphOrder: [String]
     }
 
@@ -302,10 +270,9 @@ public enum ModuleToolchain {
         // spec 在入队时按 **requirer 自己的清单**解析（平表 → 其 [tap] default，具名子表 → 对应 tap；
         // D11：缺 [tap] 即报错，带 requirer 信息）。
         var pending: [(name: String, from: String, constraint: String?, spec: String, tap: String)] = []
-        // 写进 summary 的「谁声明了这个依赖」。G52 §9 Def-12：此前每条边都覆写，
-        // 多 requirer 时取到的是**最后遍历到的**边——遍历是 LIFO（`popLast`），
-        // 「最后遍历到」=「最先入队」，与「离根最近」恰好相反，且遍历策略一改（DFS→BFS）
-        // 锁文件就变 ⇒ 不可复现。
+        // 写进 summary 的「谁声明了这个依赖」。不能让每条边都覆写：遍历是 LIFO，最后遍历到的边即最先入队，
+        // 与「离根最近」相反，且遍历策略一改锁文件就变，结果不可复现。
+        // 故另以 requirer 名的字典序定胜者（见下），与遍历顺序无关。
         var sourceByName: [String: String] = [:]
         var tapNameByName: [String: String] = [:]
         /// 上面两个字段取自哪条边（requirer 名），用于实现定序规则。
@@ -349,10 +316,8 @@ public enum ModuleToolchain {
             importedBy[name, default: []].append(from)
             edges[from, default: []].insert(name)
 
-            // v1 落地模型（D23）：依赖固定落 deps/<name>/。
-            // - [replace] 的 file: 形式可把本地 fork 指为落地目录（批 6 已 Landed 语义）；
-            // - file: tap 仍是「来源元数据 + 手工/submodule 落地」（批 7 不动）；
-            // - 远程 tap（github:/git:）由 TapFetcher 抓取——仅当 session 存在（即 refresh）。
+            // 落地模型：依赖固定落 deps/<name>/。[replace] 的 file: 形式可把本地 fork 指为落地目录；
+            // file: tap 仍是「来源元数据 + 手工/submodule 落地」；远程 tap 由 TapFetcher 抓取，仅当 session 存在（即 refresh）。
             var depDir = rootDir + "/deps/" + name
             var spec = specStr  // requirer 侧 tap 展开的源
             var tap = edgeTap  // 锁文件 tap 字段
@@ -364,9 +329,8 @@ public enum ModuleToolchain {
                         throw ToolchainError.replaceTargetMissing(name: name, path: p)
                     }
                     depDir = p
-                    // ⚠ 来源一并改写为本地路径——**否则会往用户的本地目录里 git clone / checkout**
-                    // （批 7 引入的回归：抓取只看 tap 的 spec，不看 depDir 已被替换）：
-                    // 本地目录往往自带 `.git`，`materialize` 会判定「已存在检出」转而 fetch + checkout，
+                    // 来源一并改写为本地路径，否则会往用户的本地目录里 git clone / checkout：抓取只看 spec，
+                    // 不看 depDir 已被替换，而本地目录往往自带 `.git`，会被判成「已存在检出」转而 fetch + checkout，
                     // 直接改动用户的开发工作区。锁文件的 `source` 也由此如实反映内容来自本地。
                     spec = "file:" + p
                     tap = Self.replaceTapName
@@ -433,7 +397,7 @@ public enum ModuleToolchain {
                 return !c.satisfies(comps)
             }
             if !failed.isEmpty {
-                // 本轮发生过重新选择 ⇒ 清单是**旧版本**的，约束集还在变——交给下一轮复核，
+                // 本轮发生过重新选择 ⇒ 清单反映的是**上一轮**的约束，还在变——交给下一轮复核，
                 // 不能据此判「不可满足」（否则不动点迭代永远走不到第二轮）。
                 if session?.selectionChanged == true { continue }
                 throw ToolchainError.unsatisfiable(
@@ -478,8 +442,8 @@ public enum ModuleToolchain {
             // 仅 refresh（session 存在）时才抓取；只读路径（graph/resolve）不落盘。
             // `file:` 源无远端可抓，其目录由用户手工/submodule 准备。
             if session != nil, !specStr.hasPrefix("file:") {
-                // 批 7：资源也由 refresh 落地（G52 §4.2「下载缺失的依赖与资源」）。
-                // **不参与 MVS**（§3.3）：默认取 HEAD；仅当声明串本身就是一个已存在的 tag 时检出它
+                // 资源也由 refresh 落地（「下载缺失的依赖与资源」）。
+                // **不参与 MVS**：默认取 HEAD；仅当声明串本身就是一个已存在的 tag 时检出它
                 // ——那是「显式指定」，不是「求解」。
                 let source = try TapFetcher.expand(spec: specStr, name: entry.name)
                 let declared = entry.spec.trimmingCharacters(in: .whitespaces)
@@ -488,7 +452,7 @@ public enum ModuleToolchain {
                 displaySource = source.display
             }
             guard FileManager.default.fileExists(atPath: dir) else {
-                // 批 7 前是静默跳过——资源因此可能永远不进锁文件。改为显式报错。
+                // 目录未落地即显式报错：非 `file:` 源归因于抓取未发生，`file:` 源归因于资源缺失。
                 guard specStr.hasPrefix("file:") else {
                     throw ToolchainError.remoteTapNotMaterialized(name: entry.name, tap: tapName)
                 }
@@ -510,7 +474,7 @@ public enum ModuleToolchain {
                     path: ".pini/resources/" + entry.name))
         }
 
-        // 拓扑序：DAG 上依赖在前（环已由批 1 R2 拦截；此处再防御一次）。
+        // 拓扑序：DAG 上依赖在前（环已由加载侧拦截；此处再防御一次）。
         var topo: [String] = []
         var visited: Set<String> = []
         func visit(_ name: String, _ stack: inout Set<String>) throws {
@@ -532,16 +496,11 @@ public enum ModuleToolchain {
         return Resolution(modules: resolved, resources: resolvedResources, graphOrder: topo.filter { $0 != "<root>" })
     }
 
-    // MARK: - 抓取与不动点迭代（批 7）
+    // MARK: - 抓取与不动点迭代
 
-    /// **首次**抓取一个远程依赖（遍历期调用）。
-    ///
-    /// ⚠ 这里**只看当时已知的约束**，因此绝不能在已选过之后再调用——
-    /// 后到的更严约束会把选择改小，下一轮遍历又从部分约束重新选大 ⇒ **振荡不收敛**。
-    /// 已选过的一律交给 `reconcileSelection`（在约束齐全后统一复核）。
-    ///
-    /// - `file:` tap 直接返回——批 6 的「元数据 + 手工/submodule 落地」语义批 7 不动。
-    /// - `session == nil` 时直接返回——只读路径不抓取，缺落地由调用方报错。
+    /// 首次抓取一个远程依赖（遍历期调用）。只看当时已知的约束，故绝不能在已选过之后再调用：
+    /// 后到的更严约束会把选择改小、下一轮又从部分约束重新选大，振荡不收敛；已选过的一律交给
+    /// `reconcileSelection` 在约束齐全后复核。`file:` tap 与 `session == nil` 都直接返回，不抓取。
     private static func ensureMaterialized(
         name: String, spec: String, dir: String,
         constraints: [String],
@@ -586,11 +545,9 @@ public enum ModuleToolchain {
         session.record(name: name, version: picked, commit: commit, source: source.display)
     }
 
-    /// 抓取 + 求解到不动点。
-    ///
-    /// 依赖的版本决定它自己的 `[require]` 内容 ⇒ 约束集随选择而变 ⇒ 一轮不够。
-    /// 故重复「解析（顺带抓取 / 重新选择）」直到某轮不再发生重新选择。
-    /// 不收敛（超过 `fetchIterationLimit`）即报错——不静默取某一轮的结果。
+    /// 抓取 + 求解到不动点：依赖的版本决定它自己的 `[require]`，约束集随选择而变，故一轮不够——
+    /// 反复解析（顺带抓取与重新选择）直到某轮不再发生重新选择。
+    /// 超过 `fetchIterationLimit` 仍不收敛即报错，不静默取某一轮的结果。
     public static func resolveFetching(rootDir: String, manifest: ModuleManifest) throws -> Resolution {
         let session = FetchSession()
         var last: Resolution?
@@ -690,9 +647,9 @@ public enum ModuleToolchain {
     public struct Summary {
         public var toolchain: String = ""
         public var generated: String = ""
-        /// ⚠ 批 7 补齐 `commit` / `tap` / `source`：此前锁文件写了这三项、解析时全部丢弃——
-        /// 批 7 前 `commit` 恒为 `"-"`，故无人察觉；现在它是真实的来源定位符（G52 D12），
-        /// 读不回来等于字段形同虚设。`tap` / `source` 回读后供 `verify` 报错时回显来源。
+        // ⚠ 锁文件里的 `commit` / `tap` / `source` 三项若解析时丢弃就等于形同虚设：
+        // `commit` 是真实的来源定位符，读不回来就无法核对；`tap` / `source` 回读后供
+        // `verify` 报错时回显来源。
         public var modules:
             [(
                 name: String, version: String, sum: String, manifestSum: String, path: String,
@@ -912,9 +869,9 @@ extension ModuleToolchain {
 
     // MARK: refresh（写锁文件）
 
-    /// `pini mod refresh` 的宿主侧：抓取 → 求解 → 写 `pini-summary.toml`（G52 §4.2）。
-    /// 这是**唯一**会抓取 / 联网的路径（批 7 前只服务本地 tap，现覆盖 github:/git:）。
-    /// 返回写入的锁文件文本。
+    // `pini mod refresh` 的宿主侧：抓取 → 求解 → 写 `pini-summary.toml`。
+    // 这是**唯一**会抓取 / 联网的路径（覆盖本地 tap 与 github:/git:）。
+    // 返回写入的锁文件文本。
     @discardableResult
     public static func refresh(
         rootDir: String, manifest: ModuleManifest,
@@ -968,7 +925,7 @@ extension ModuleToolchain {
             mismatches: mismatches)
     }
 
-    /// 报错里回显来源——锁文件的 `source` 此前只写不读，篡改时无法判断该去哪里核对。
+    // 报错里回显来源——否则篡改时无法判断该去哪里核对。
     private static func originSuffix(_ source: String) -> String {
         source.isEmpty ? "" : "；来源 \(source)"
     }
@@ -1043,9 +1000,9 @@ extension ModuleToolchain {
         public var hasDrift: Bool { !missingInRequire.isEmpty || !extraInRequire.isEmpty }
     }
 
-    /// require ↔ import 集合一致性（**只读**；不符由调用方报错并提示 `pini mod tidy`）。
-    /// 仅对采用依赖通道的清单生效（[tap]/[require]/[replace] 任一存在）——
-    /// 批 1 落地的旧模块未采用通道，无 drift 概念，静默跳过（向后兼容，如实记录）。
+    // require ↔ import 集合一致性（**只读**；不符由调用方报错并提示 `pini mod tidy`）。
+    // 仅对采用依赖通道的清单生效（[tap]/[require]/[replace] 任一存在）——
+    // 未采用通道的模块没有 drift 概念，静默跳过。
     public static func checkRequireImportAlignment(
         rootDir: String, manifest: ModuleManifest,
         package: Package

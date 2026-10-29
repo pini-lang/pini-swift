@@ -2,17 +2,9 @@ import Foundation
 import PiniRuntime
 import Testing
 
-/// ADR-001 `P2a` 运行时符号 `bk_given_get` 的判据（契约 §2.46 的**实现面**）。
-///
-/// **为什么单独一件**：`GivenUsingTests` 钉的是语言面（AST / 降载 / 诊断），本件钉的是
-/// **运行时符号的并发与重入语义** —— 两者的失败形态不同，混在一起会让「谁红了」无从定位。
-///
-/// ⚠️ **本批的节点不可达**（无降载规则）⇒ 这四条判据**不是**端到端验收，而是对
-/// 「照抄来的 once 骨架在本场景下仍然成立」的直接测量。把语言侧打通的验收属 `P2b`。
-///
-/// ⚠️ **`.serialized` 不是风格选择**：C 函数指针不能捕获上下文 ⇒ 要写入的值与调用计数
-/// 只能走**文件级状态**，而 Swift Testing 默认**并行执行测试** ⇒ 并行会让探针互相污染，
-/// 判据变成随机通过。串行是这个设计成立的前提。
+// `bk_given_get` 的运行时判据（契约 §2.46 的实现面）。与语言面分开立件：那边钉 AST / 降载 / 诊断，
+// 本件钉运行时符号的并发与重入语义 —— 两者失败形态不同，混在一起会让「谁红了」无从定位。
+// `.serialized` 是前提：C 函数指针不能捕获上下文 ⇒ 写入值与调用计数只能走文件级状态，并行会互相污染。
 @Suite(.serialized)
 struct GivenInstanceRuntimeTests {
 
@@ -53,10 +45,8 @@ struct GivenInstanceRuntimeTests {
 
     private static let probe = Probe()
 
-    /// 符合契约 ABI（`ptr (ptr out) -> ptr`）的初始化函数。
-    ///
-    /// ⚠️ **只读静态状态、不读任何局部量** —— 读局部量就是捕获上下文，而
-    /// `@convention(c)` 闭包不允许捕获（第一次写法正是栽在这里，编译器当场拦下）。
+    /// 符合契约 ABI（`ptr (ptr out) -> ptr`）的初始化函数。只读静态状态、不读任何局部量 —— 读局部量就是
+    /// 捕获上下文，而 `@convention(c)` 闭包不允许捕获（编译器当场拦下）。
     private func makeInitializer() -> UnsafeMutableRawPointer {
         let fn: @convention(c) (UnsafeMutableRawPointer) -> UnsafeMutableRawPointer = { out in
             Self.probe.bump()
@@ -123,18 +113,9 @@ struct GivenInstanceRuntimeTests {
 
     @Test("并发取用：初始化函数仍恰一次，且全部拿到同一地址（自旋栅栏）")
     func concurrentMaterializationStaysOnce() throws {
-        /// 意图：两级锁的存在理由 —— 若只有盒内锁，两个线程会各建一个盒，
-        /// 于是一个类型物化出**两份**实例（地址不稳定）；本条钉的就是这个。
-        ///
-        /// ⚠️ **判据形态经过两轮加固，这一版的形态不是随手写的**：
-        /// ① 初版 `concurrentPerform(64)` 单轮 ⇒ 实测**抓不住**「去掉全局锁」的变异；
-        /// ② 改成信号量栅栏 + 40 轮 ⇒ **仍然抓不住**：竞态窗口 = 「判空 + 分配」，约 100ns，
-        ///    而信号量唤醒线程的散布是**微秒级** —— 比窗口宽一个量级，冲不进去；
-        /// ③ 本版 = **自旋栅栏**（线程不挂起、停在 CPU 上等令）+ 显式队列 + 主线程也参与。
-        ///    自旋把同时性压到纳秒级，才真正让 32 个线程在同一个窗口里判空。
-        ///
-        /// ⚠️ 线程数取 `activeProcessorCount`：自旋线程数超过核数会让它们**轮流**上 CPU，
-        /// 反而失去同时性。同理自旋带次数上限 —— 卡住时退化为普通等待而不是空转到底。
+        /// 意图：两级锁的存在理由 —— 若只有盒内锁，两个线程会各建一个盒，一个类型物化出两份实例（地址不稳定）。
+        /// 判据用自旋栅栏（线程不挂起、停在 CPU 上等令）+ 显式队列 + 主线程参与，把同时性压到纳秒级，才让 32 个线程
+        /// 在同一个「判空 + 分配」窗口里撞上（信号量栅栏的唤醒散布是微秒级，冲不进去）。线程数取 `activeProcessorCount`。
         let cores = max(4, ProcessInfo.processInfo.activeProcessorCount)
         let rounds = 60
         let queues = (0..<cores).map { DispatchQueue(label: "p2a-given-probe-\($0)") }
@@ -176,15 +157,9 @@ struct GivenInstanceRuntimeTests {
 
     @Test("重入取用不自死锁：初始化函数内再取另一个类型的默认实例")
     func reentrantMaterializationDoesNotDeadlock() throws {
-        /// 意图：钉住实现里那条**注释所声明的约束** —— 「不得持全局锁调 `init_fn`」。
-        /// 各字段的初值自己可能取用另一个类型的默认实例；持锁调用就是一次**可复现的自死锁**。
-        /// 判据形态 = **带超时的等待**：死锁表现为超时失败，而不是把测试进程挂住。
-        ///
-        /// ⚠️ **这个形态只有在「本测试独占全局锁」时才干净**：若实现真的持锁调 `init_fn`，
-        /// 那把锁就被**永久持有** ⇒ 同一进程里后续任何取用默认实例的测试都会卡住，
-        /// 整份套件表现为**挂死**（实测：变异 M2 下进程被超时杀掉，退出码 137）。
-        /// 换言之，超时判据是第一道信号，挂死是第二道 —— 两者都响，但第二道不好看。
-        /// 如实登记于此，不假装它是个干净的失败。
+        /// 意图：钉住实现里那条声明的约束 —— 「不得持全局锁调 `init_fn`」。各字段初值自己可能取用另一个类型的
+        /// 默认实例，持锁调用就是一次可复现的自死锁。判据 = 带超时的等待：死锁表现为超时失败，而不是挂住进程。
+        /// ⚠️ 但这只在「本测试独占全局锁」时才干净：真持锁则锁被永久持有，后续取用默认实例的测试都会卡住。
         Self.probe.reset()
         let outerSlot = makeSlot()
         let innerSlot = makeSlot()

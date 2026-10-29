@@ -96,9 +96,8 @@ missing_total = [c for c in classes if c not in set(suites_all)]
 print()
 print('合计跑到类数 =', reached, '/', len(classes))
 
-# ── 读数有效性护栏（2026-09-17 两次事故后固化）
-# 跑到类数为 0，或有类根本没跑到，一律判作废：不写清单、删掉该路径上的旧清单、
-# 非零退出。旧清单必须删 —— 留着它，下一次的读者会把上一轮的读数当成本轮结果。
+# 读数有效性护栏：类数为 0 或有类没跑到，一律判作废——不写清单、清掉该路径上的旧清单并非零退出。
+# 旧清单必须清掉，否则下一次的读者会把上一轮读数当成本轮结果。
 if reached == 0 or missing_total:
     out_json = pathlib.Path(f'{prefix}-fails.json')
     stale = out_json.exists()

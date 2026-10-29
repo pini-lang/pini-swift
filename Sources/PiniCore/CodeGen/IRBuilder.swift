@@ -25,8 +25,7 @@ public enum IRName {
 }
 
 /// LLVM IR 中的 SSA 值：类型 + 名字（`%tN` / 全局名 / 标签）。
-/// #46-A 起作为 codegen 各层（IRGenerator 及未来的 Emitters）共享的值类型，
-/// 取代原先散落在 IRGenerator 内的私有 `struct IRValue`。
+/// codegen 各层（IRGenerator 与各 Emitter）共享这一个值类型。
 public struct IRValue: Hashable, CustomStringConvertible {
     public let llvmType: String
     public let ssaName: String
@@ -39,19 +38,11 @@ public struct IRValue: Hashable, CustomStringConvertible {
     public var description: String { "\(llvmType) \(ssaName)" }
 }
 
-// MARK: - IR 构建器（#46-A）
+// MARK: - IR 构建器
 
-/// #46-A IR 构建器：集中所有「手写字符串 IR」的格式，消除 GEP-i8 字节偏移 / phi 误用 /
-/// 类过早闭合类 typo（设计依据见 并发后端抽象）。
-///
-/// 设计要点：
-/// - **不持有 IR 缓冲区**。调用方（IRGenerator）仍持有 `ir` 并以 `emitLine` 落盘；
-/// 本构建器仅产出**字节级确定**的指令行字符串（与迁移前内联插值逐字符一致），
-/// 保证现有 golden IR 零差异、回归被字节级门禁拦死。
-/// - **temp/label 计数器由本构建器独占**，为全局唯一编号源；IRGenerator 经
-/// `freshTemp` / `nextTemp`（Int 兼容） / `freshLabel` 取用，杜绝双计数源漂移。
-/// - 字段 GEP 统一经 `fmtGEP`（强制 `i32 0, i32 N` 模式），与 `fmtGEPByteOffset`
-/// （显式 `i8*` 指针算术）严格区分，从类型系统层面消除「字段偏移误用 i8 字节」类 bug。
+/// IR 构建器：集中所有手写字符串 IR 的格式，产出字节级确定的指令行，使 golden IR 可逐字符比对。
+/// 不持有缓冲区——调用方持 `ir` 并 `emitLine` 落盘；temp/label 计数器由本构建器独占，避免双计数源漂移。
+/// 字段 GEP 一律走 `fmtGEP`（`i32 0, i32 N`），与 `fmtGEPByteOffset` 的 `i8*` 指针算术严格分开，防偏移误用。
 public struct IRBuilder {
 
     private var tempCounter = 0
@@ -112,7 +103,7 @@ public struct IRBuilder {
         " store \(type) \(value), ptr \(ptr)"
     }
 
-    // MARK: - 调用（#46-A 后续迁移 call 站点时使用；callee 含 @ / 函数指针，retType 含 vararg 签名）
+    // MARK: - 调用（callee 含 @ / 函数指针，retType 含 vararg 签名）
 
     public func fmtCall(name: String, retType: String, callee: String, args: [(type: String, value: String)]) -> String {
         let argList = args.map { "\($0.type) \($0.value)" }.joined(separator: ", ")

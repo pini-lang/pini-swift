@@ -5,16 +5,9 @@ import Testing
 /// 遮蔽 `Testing.Expression`，使本文件内 `Expression` 无歧义地指向 `PiniCore.Expression`。
 private typealias Expression = PiniCore.Expression
 
-/// 语法接受面的回归判据（来源：2026-09-05 的规范反录勘测探针语料）。
-///
-/// 组织：**一个夹具一条用例**，夹具在本文件同目录的 `Fixtures/` 下、文件名即消费它的用例名 ——
-/// 于是「有夹具而无用例」与「有用例而无夹具」都能一眼看出（前者另有一条判据机械检查）。
-/// ⚠️ 夹具之所以独占一层，是为了让清单能**一条** `exclude` 排掉 SwiftPM 的 unhandled 告警
-/// （`exclude` 只能按路径、不能按扩展名）；理由与实测见 `PiniFixtureLoader.swift`。
-///
-/// 每条用例三要素齐备：意图写在显示名与首行注释；接受态断言解析结构、类型结论与
-/// 运行产物（推进性测量）；拒绝态断言错误的**类型与判定码**（驳回性测量）。
-/// 判定码取首条诊断 —— 解析器会在根因之后级联补报，首条才是根因。
+/// 语法接受面的回归判据。一个夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即消费它的用例名 —— 缺一边一眼看出。
+/// 夹具独占一层，是为了让清单能用一条 `exclude` 排掉 SwiftPM 的 unhandled 告警（它只能按路径）。
+/// 接受态断言解析结构、类型结论与运行产物；拒绝态断错误的类型与判定码，判定码取首条 —— 解析器会在根因之后级联补报。
 struct GrammarAcceptanceTests {
 
     /// 套件目录（夹具在本文件同目录下的 `Fixtures/` 子目录）。
@@ -56,11 +49,9 @@ struct GrammarAcceptanceTests {
         return module
     }
 
-    /// 运行夹具，返回标准输出逐行。
-    ///
-    /// 镜像命令行 `run` 的**单文件**路径：解析（含常量折叠）→ 语义门禁 → 类型收集 →
-    /// 降载 → 执行。刻意不走包级运行器 —— 它对「没有 main」报的是运行期判定码，
-    /// 而命令行报降载判定码，两条入口对同一份夹具给出的结论不同（对账用例会把它抓出来）。
+    /// 运行夹具，返回标准输出逐行。镜像命令行 `run` 的单文件路径：解析（含常量折叠）→ 语义门禁 →
+    /// 类型收集 → 降载 → 执行。刻意不走包级运行器 —— 它对「没有 main」报的是运行期判定码，
+    /// 而命令行报降载判定码，两条入口对同一份夹具给出的结论不同。
     private func runFixture(_ name: String) throws -> [String] {
         let (module, errors) = try parse(name)
         guard errors.isEmpty else { throw errors[0] }
@@ -440,7 +431,7 @@ struct GrammarAcceptanceTests {
 
     @Test("trait 块后的类型体被解析（抽象方法）")
     func testParserClosesTraitBodyBeforeStructDecl() throws {
-        /// 意图：抽象方法的 trait 块之后接类型体，两条顶级声明都要在（此前的解析失败点）。
+        // 意图：抽象方法的 trait 块之后接类型体，两条顶级声明都要在（trait 体须在该处闭合）。
         let module = try checkedModule("testParserClosesTraitBodyBeforeStructDecl")
         #expect(module.declarations.count == 2, "trait 块应在其后的类型体之前闭合")
         guard case .traitDecl(let trait) = module.declarations.first,

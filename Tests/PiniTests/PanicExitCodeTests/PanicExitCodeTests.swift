@@ -208,8 +208,8 @@ struct PanicExitCodeTests {
 
     @Test("数组下标越界时，两通道退出码都是 1")
     func arrayIndexOutOfBoundsExitsWithOneOnBothChannels() throws {
-        /// 意图：越界与 IO 失败同属运行时陷阱 ⇒ 同一退出码，与该陷阱由哪一层判定无关。
-        /// 驳回性：只把 IO 那条路改成 `exit(1)`、越界仍 `abort()` 的实现让本用例红。
+        // 意图：越界与 IO 失败同属运行时陷阱 ⇒ 同一退出码，与该陷阱由哪一层判定无关。
+        // 驳回性：只让 IO 那条路 `exit(1)`、越界仍 `abort()` 的实现让本用例红。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
 

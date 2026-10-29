@@ -1,19 +1,8 @@
 import Foundation
 
-/// High-level intermediate representation shared by every backend
-/// (LR-2/LR-3 built it for one; LR-4 made it the single one).
-///
-/// The IR is a **typed tree**: every expression node carries its resolved
-/// scalar type, every variable access carries the declared type of the
-/// variable. All type decisions live in `IRLowerer`; consumers (the
-/// emitters) translate nodes to IR text mechanically and never re-derive
-/// types. This is the structural replacement for the old IRGenerator's
-/// shadow type tables.
-///
-/// Scope note: this began as the M4 vertical slice (scalars, arithmetic,
-/// control flow, function calls) and grew family by family as the grids
-/// landed. The contract is the authority on what the set holds now; anything
-/// outside it is rejected by the single capability gate in `IRLowerer`.
+/// High-level IR shared by every backend: a typed tree where every expression carries its resolved
+/// scalar type and every variable access its declared type. All type decisions live in `IRLowerer`;
+/// consumers translate mechanically and never re-derive types; the capability gate rejects the rest.
 
 /// Resolved scalar types carried by IR nodes (slice set).
 public indirect enum IRType: Equatable {
@@ -26,40 +15,22 @@ public indirect enum IRType: Equatable {
     /// `U8` (G14): 8-bit unsigned integer — same `i8` spelling as I8;
     /// signedness rides on the operations.
     case u8
-    /// `I8` (G11): 8-bit signed integer. Struct fields / method returns /
-    /// field reads are the in-slice surface; arithmetic on i8 widens to i32
-    /// at emission (the interpreter models all integers as one int value,
-    /// so no i8-specific arithmetic exists to mirror).
+    /// `I8`: 8-bit signed integer. Struct fields / method returns / field reads are the in-slice surface;
+    /// arithmetic on i8 widens to i32 at emission, since the interpreter models all integers as one value.
     case i8
     case f64
     case boolean
     case string
-    /// `Char` (P0d): one extended grapheme cluster — the user-perceived
-    /// "one character", not a code point and not a byte. Its representation
-    /// is the same as `String` (Char 表示与 String 同构 takes option A), so the LLVM
-    /// spelling is `i8*` and no new ABI travels through aggregates, calls or
-    /// the runtime boundary. The invariant "exactly one grapheme" is the type
-    /// system's job; the representation does not enforce it.
+    /// `Char`: one extended grapheme cluster — the user-perceived "one character", not a code point
+    /// and not a byte. It shares `String`'s representation, so the LLVM spelling is `i8*` and no new ABI
+    /// travels through aggregates, calls or the runtime. "Exactly one grapheme" is the type system's job.
     case char
-    /// `Result<T, E>` (try-else 迁移). Only the ok payload type is statically
-    /// carried: Pini's surface form `^T` pins T but leaves E unconstrained
-    /// (the checker accepts any err payload), so the error slot is
-    /// type-erased to a machine word in the IR ABI (LR-12).
+    /// `Result<T, E>`: only the ok payload type is statically carried — Pini's `^T` pins T but leaves E
+    /// unconstrained, so the error slot is type-erased to a machine word in the IR ABI.
     case result(ok: IRType)
-    /// `Future<T, E>`：`=>` 函数**对外签名**的返回类型 —— 运行中的并发进程句柄。
-    ///
-    /// 与 `result` 平行，但两者**不可互换**：`result` 是「已经结算的值」，
-    /// `future` 是「还没结算的句柄」。加它是因为一个后端要真派发任务时，
-    /// 必须能静态分辨这两者 —— 在它缺席时，一次异步调用与一次「返回 Result
-    /// 的同步调用」在中间表示里逐字相同，发射层无从决定该直接调用还是该
-    /// 交给线程。
-    ///
-    /// 这不是新定的规则，而是让本层与类型层对齐：类型层早已把 `=> (T,)` 的
-    /// 签名返回定为 `Future<T, Error>`（`=> T` 是语法糖）。
-    ///
-    /// 仅携带 ok 载荷：错误槽与 `result` 同口径（擦除为一个机器字）。
-    /// ⚠️ 表示是**不透明句柄**，与 `array` / `dict` / `lazyRef` 同族 ——
-    /// 句柄形状归后端，而「等一次、结果恰一次」是语义、不归后端。
+    /// `Future<T, E>`：`=>` 函数对外签名的返回类型 —— 运行中的并发进程句柄，表示是不透明句柄。
+    /// 与 `result` 不可互换：那是已结算的值，这是未结算的句柄；发射层要静态分辨两者，否则一次异步调用
+    /// 与「返回 Result 的同步调用」逐字相同。仅携带 ok 载荷，错误槽与 `result` 同口径（擦除为一个机器字）。
     case future(ok: IRType)
     /// `Array<T>` (G2). The array itself is an opaque runtime handle
     /// (`%bk_array*`, 并发后端抽象); elements are boxed through the `bk_array_*`
@@ -69,9 +40,8 @@ public indirect enum IRType: Equatable {
     /// 1 = none. The interpreter models Optional as an enum with `some` /
     /// `none` cases; `none` is the language-level nil (user adjudication).
     case optional(wrapped: IRType)
-    /// User nominal type (G3): struct (value layout carried as a stack
-    /// pointer, legacy ABI `%struct.<mangled>*`) or object (reference,
-    /// `%object.<mangled>*` with an i32 refcount header at field 0).
+    /// 用户名义类型：结构体（值布局，以栈指针携带，ABI 形态 `%struct.<mangled>*`）
+    /// 或对象（引用，`%object.<mangled>*`，第 0 字段是 i32 引用计数头）。
     case nominal(name: String, isObject: Bool)
     /// User enum (G4): tagged union `%enum.<mangled>*` — i32 tag at field 0,
     /// payload slots typed by the max-arity case (direct by-value store).
@@ -88,16 +58,13 @@ public indirect enum IRType: Equatable {
     /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
     /// member access via extractvalue by label index.
     case tuple(labels: [String?], fieldTypes: [IRType])
-    /// Function value (G6): closures / lambdas / named functions used as
-    /// values. Unified fat-pointer ABI `{ ptr, ptr }` = { code, env }; the
-    /// param/return shapes are carried for parity checking only — the IR
+    /// Function value: closures / lambdas / named functions used as values. Unified fat-pointer ABI
+    /// `{ ptr, ptr }` = { code, env }; the param/return shapes are carried for parity checking only — the
     /// call protocol is fixed (first arg is always the env pointer).
     case function(params: [IRType], returnType: IRType?, usingIndices: Set<Int>)
-    /// `*T` (G14, FFI 子系统): raw pointer. Opaque `ptr` in LLVM IR —
-    /// load/store take the element type; address-of produces it from an
-    /// alloca. Element rides along for load/store typing (mirrors the
-    /// interpreter's snapshot/decode semantics: `*U8` loads sign-extend to
-    /// one int value).
+    /// `*T`: raw pointer, opaque `ptr` in LLVM IR — load/store take the element type, address-of produces
+    /// it from an alloca. The element rides along for load/store typing (mirroring the interpreter's
+    /// snapshot/decode: `*U8` loads sign-extend to one int value).
     case pointer(element: IRType)
 
     /// LLVM type spelling used by the emitters.
@@ -155,12 +122,9 @@ public indirect enum IRType: Equatable {
         return nil
     }
 
-    /// The `Result` a join site yields when this is a Future type.
-    ///
-    /// A join consumes the handle and produces the settled value, so the site's
-    /// type is the Result that the Future was standing in for. Keeping the
-    /// translation here rather than at the join site means the two types cannot
-    /// drift: a Future whose ok payload changed would move its join site with it.
+    /// The `Result` a join site yields when this is a Future type. A join consumes the handle and produces
+    /// the settled value, so the site's type is the Result the Future stood in for; keeping the
+    /// translation here means the two types cannot drift.
     public var joinedResultType: IRType? {
         if case .future(let ok) = self { return .result(ok: ok) }
         return nil
@@ -184,11 +148,9 @@ public indirect enum IRType: Equatable {
         return false
     }
 
-    /// `G68`：本类型是否属于「字符串面」—— `String` 与 `Char`。
-    ///
-    /// 二者共用表示（`Char 表示与 String 同构` 方案 A），故凡按「字符串」处理的通道
-    /// （拼接、拼接式比较、字符串常量池）都按本判定收，而不是逐个列 `.string`；
-    /// 漏一处就会让 `Char` 落到某个 `default:` 上静默走错路。
+    /// 本类型是否属于「字符串面」：`String` 与 `Char`。
+    /// 二者共用表示，故凡按「字符串」处理的通道（拼接、拼接式比较、常量池）都按本判定收；
+    /// 逐处列 `.string` 漏一处，就会让 `Char` 落到某个 `default:` 上静默走错路。
     public var isStringFaced: Bool {
         switch self {
         case .string, .char: return true
@@ -196,10 +158,8 @@ public indirect enum IRType: Equatable {
         }
     }
 
-    /// `G68`：本类型与给定类型是否构成 `Char` / `String` 相容对（**对称**）。
-    ///
-    /// 用于二元运算与比较：此处没有「哪一侧是期望」，故不看方向；
-    /// 单方向的**加宽**判定在类型检查器（`Char → String`，反向拒绝）。
+    /// 本类型与给定类型是否构成 `Char` / `String` 相容对（对称）—— 二元运算与比较没有「哪一侧是期望」，
+    /// 故不看方向；单方向的加宽判定在类型检查器（`Char → String`，反向拒绝）。
     public func formsCharStringPair(with other: IRType) -> Bool {
         (self == .char && other == .string) || (self == .string && other == .char)
     }
@@ -281,8 +241,8 @@ public indirect enum IRExpr: Equatable {
     case call(function: String, arguments: [IRExpr], returnType: IRType?)
     /// Intrinsic `print(expr)` — one scalar argument, void result.
     case printCall(argument: IRExpr)
-    /// `ok(v)` / `err(e)` Result case construction. The err payload is
-    /// widened to a machine word at emission (type-erased ABI, LR-12).
+    /// `ok(v)` / `err(e)` 的 Result 构造。err 载荷在发射时加宽到一个机器字
+    /// （ABI 上类型擦除）。
     case resultConstruct(isOk: Bool, payload: IRExpr, type: IRType)
     /// Array literal `[e1, e2, ...]` (G2). `type` is `.array(element:)`; the
     /// emitter builds the handle via `bk_array_create` + per-element
@@ -302,11 +262,9 @@ public indirect enum IRExpr: Equatable {
     /// (the slice-sugar open bound arrives as `Optional.none`); `isSome=true`
     /// carries the wrapped payload. Mirrors `resultConstruct`.
     case optionalConstruct(isSome: Bool, payload: IRExpr?, type: IRType)
-    /// `container.slice(start, end)` (G2b) — the slice-sugar desugaring.
-    /// `type` is `.array(element:)` or `.string`; open bounds arrive as
-    /// `optionalConstruct(isSome: false, ...)`. Semantics are the sunk
-    /// stdlib slice: tail-counted negative bounds, clamp to [0, len],
-    /// empty result when hi < lo.
+    /// `container.slice(start, end)` — the slice-sugar desugaring. `type` is `.array(element:)` or
+    /// `.string`; open bounds arrive as `optionalConstruct(isSome: false, ...)`. Semantics are the sunk
+    /// stdlib slice: tail-counted negative bounds, clamp to [0, len], empty result when hi < lo.
     case sliceCall(container: IRExpr, start: IRExpr, end: IRExpr, type: IRType)
     /// Nominal constructor `名()` (G3). Fields take their declared defaults
     /// (or zero); constructor arguments are not part of the slice surface.
@@ -329,14 +287,9 @@ public indirect enum IRExpr: Equatable {
 
     // MARK: G6 closures / higher-order functions
 
-    /// A closure value (G6): the lowered body of a `func` literal plus its
-    /// creation-point capture list. Captures are reference-captured (the env
-    /// field holds a pointer to the captured variable's storage slot, sharing
-    /// semantics with the interpreter's currentEnv); `captures` is ordered by
-    /// first use in the body and carries each captured variable's declared
-    /// type. `paramNames` parallels `paramTypes` (body references go through
-    /// these names); an unannotated param adopts the return-annotation
-    /// fallback, matching the checker's G29 inference.
+    /// A closure value: the lowered body of a `func` literal plus its creation-point capture list, ordered
+    /// by first use, each with its declared type; captures are by reference (the env field points at the
+    /// variable's slot). `paramNames` parallels `paramTypes`; an unannotated param takes the inferred one.
     case closureLiteral(
         id: Int, paramNames: [String], paramTypes: [IRType], returnType: IRType?,
         captures: [IRCapture], body: IRBlock, type: IRType)
@@ -359,20 +312,15 @@ public indirect enum IRExpr: Equatable {
     /// the pointer's element type (mirrors the interpreter's encode:
     /// truncating store for narrow elements). Value expression.
     case pointerStore(pointer: IRExpr, value: IRExpr, type: IRType)
-    /// `&x` (G14, D-B adjudication: true pointer semantics): the address of
-    /// a variable's alloca slot. The interpreter's snapshot aliasing gap
-    /// (write-back does not update the original) is the documented
-    /// divergence covered by the read-only corpus.
+    /// `&x`: the address of a variable's alloca slot — true pointer semantics. The interpreter's snapshot
+    /// aliasing gap (write-back does not update the original) is the documented divergence, covered by the
+    /// read-only corpus.
     case addressOfVar(name: String, type: IRType)
-    /// `print(a, b, ...)` multi-argument form (G14, D-A=A1): the
-    /// interpreter's semantics are per-argument stringify joined with a
-    /// single space on one line; the emitter realizes the same byte stream
-    /// (value, space, value, ..., newline).
+    /// `print(a, b, ...)`: per-argument stringify joined with a single space on one line; the emitter
+    /// realizes the same byte stream (value, space, value, ..., newline).
     case printMulti(arguments: [IRExpr])
-    /// `assert(cond)` / `assert(cond, message)` (G41 surface): boolean
-    /// trap — false raises the runtime panic with the message. Only needed
-    /// so `|test` blocks lower; the differential harness never executes
-    /// them.
+    /// `assert(cond)` / `assert(cond, message)`: boolean trap — false raises the runtime panic with the
+    /// message. Only needed so `|test` blocks lower; the differential harness never executes them.
     case assertCall(condition: IRExpr, message: IRExpr?)
 
     // MARK: G15 file IO
@@ -380,34 +328,19 @@ public indirect enum IRExpr: Equatable {
     /// `writeFile(path, content)` (G15) — the whole content, written in place
     /// (truncating, following symlinks, failing loud). Yields no value.
     case fileWrite(path: IRExpr, content: IRExpr)
-    /// `appendFile(path, content)` — the whole content appended at the end,
-    /// creating the file when it does not exist (POSIX `"a"`), following
-    /// symlinks, failing loud. Yields no value.
-    ///
-    /// ⛔ 与 `fileWrite` 是两个节点而不是一个带开关的节点：写与追加在「目标已存在」
-    /// 这一点上是**相反**的语义，合并会让节点语义表里出现「取决于参数」的一行。
+    /// `appendFile(path, content)` — the whole content appended at the end, creating the file when it
+    /// does not exist (POSIX "a"), following symlinks, failing loud. Yields no value.
+    /// ⛔ A separate node from `fileWrite`, not a flag: the two are opposite when the target exists.
     case fileAppend(path: IRExpr, content: IRExpr)
-    /// `readFile(path)` (G15) -- the whole file, uncapped, yielded as a
-    /// String.
-    ///
-    /// ⚠️ This node used to `fread` into a **64 KiB stack buffer** and drop the
-    /// rest, silently. §0.2 of the IR contract keeps that wording as its worked
-    /// example of a buffer size written down as node semantics -- and the
-    /// example became real: that number did not stay in a comment, it became the
-    /// language limit. It was removed on both sides on 2026-10-01 (see the
-    /// `IOLimits` head note). How the read is emitted is an implementation
-    /// detail and belongs in the emitter, not here.
+    /// `readFile(path)`: the whole file, uncapped, yielded as a String. How the read is emitted is an
+    /// implementation detail and belongs in the emitter — the node carries no buffer size or cap.
     case fileRead(path: IRExpr)
 
     // MARK: 可接住的 IO（`Result` 形态）
 
-    // 三个 `try*` 内建与上面三个陷阱版**并存**，⛔ 不是给陷阱版加开关：
-    // 同一个操作在「失败怎么办」上有两种答案，而答案属于调用者 —— 一次调用只能有一种，
-    // 选哪种是源码写的名字，不是运行时参数。
-    //
-    // 成功载荷：读是文件内容（`String`），写与追加是**空元组** `()` ——
-    // 写成功不产生值，⛔ 不为凑一个载荷编造字节数（成功时它恒等于入参的 UTF-8 长度，
-    // 是入参的函数、不是新信息）。节点只记「这是可接住的写」，载荷类型由类型层推。
+    /// 三个 `try*` 内建与陷阱版并存，⛔ 不是给陷阱版加开关：同一个操作在「失败怎么办」上有两种答案，
+    /// 而答案属于调用者 —— 一次调用只能有一种，选哪种是源码写的名字，不是运行时参数。
+    /// 成功载荷：读是文件内容，写与追加是空元组（写成功不产生值，不编造字节数）；载荷类型由类型层推。
 
     /// `tryWriteFile(path, content)` — 就地截断写；失败**返回** `err` 而不是陷阱。
     case fileTryWrite(path: IRExpr, content: IRExpr)
@@ -418,19 +351,13 @@ public indirect enum IRExpr: Equatable {
 
     // MARK: G17 builtins
 
-    /// `readLine()` (G17) — one stdin line, yielded as a String. Mirrors the
-    /// legacy emitter byte for byte: `fgets` into a 256-byte stack buffer and
-    /// the buffer pointer as the value, so a trailing newline is NOT stripped.
-    /// The interpreter's `readLine()` does strip it; that divergence predates
-    /// this grid (the flip preserves the legacy behaviour) and is registered
-    /// in the rewrite plan — the differential fixture injects newline-free
-    /// stdin, the slice on which byte parity holds.
+    /// `readLine()`: one stdin line, yielded as a String — `fgets` into a 256-byte stack buffer, the buffer
+    /// pointer as the value, so a trailing newline is NOT stripped. The interpreter does strip it; that
+    /// divergence is registered, and the differential fixture injects newline-free stdin.
     case readLine
-    /// `is_ascii_digit(s)` (G17) — first byte in ASCII [0-9]. C-string
-    /// semantics: the empty string reads its NUL terminator and is false,
-    /// matching the interpreter's "first grapheme" rule inside the ASCII
-    /// domain (outside it the interpreter's grapheme model takes over and the
-    /// remaining Unicode predicates stay fail-loud, 谓词集三层对齐).
+    /// `is_ascii_digit(s)`: first byte in ASCII [0-9]. C-string semantics — the empty string reads its NUL
+    /// terminator and is false, matching the interpreter's "first grapheme" rule in the ASCII domain;
+    /// outside it the grapheme model takes over and the remaining Unicode predicates stay fail-loud.
     case isAsciiDigit(argument: IRExpr)
 
     // MARK: G9 string deepening
@@ -442,43 +369,34 @@ public indirect enum IRExpr: Equatable {
     case stringContains(receiver: IRExpr, needle: IRExpr)
     /// `s.substring(start, length)` (G9) — memcpy out of the receiver.
     case stringSubstring(receiver: IRExpr, start: IRExpr, length: IRExpr)
-    /// `s.split(delim)` (G9) — a REAL `Array<String>` (interpreter parity,
-    /// unlike the legacy emitter which renders a formatted string): strtok
-    /// loop feeding bk_array_create/set with strdup'd tokens.
+    /// `s.split(delim)` —— 真的 `Array<String>`（与解释器同形，不是格式化串）：
+    /// strtok 循环把切出的 token 经 strdup 喂给 bk_array_create/set。
     case stringSplit(receiver: IRExpr, delim: IRExpr, type: IRType)
-    /// `s.trimLeft()` — strip **leading** ASCII spaces (U+0020 only; a tab
-    /// or any other whitespace is NOT stripped). The stripped run is a
-    /// prefix of single-grapheme spaces, so the scan is byte-wise over the
-    /// leading space run; the tail is sliced out in the runtime shim.
-    /// Returns a new string; the receiver is untouched (same stance as
-    /// `stringCase`). Empty or all-space input yields the empty string.
+    /// `s.trimLeft()` — strip leading ASCII spaces (U+0020 only; tabs and other whitespace are NOT
+    /// stripped). The run is single-grapheme spaces, so a byte-wise scan is exact; the tail is sliced out
+    /// in the runtime shim. Returns a new string; the receiver is untouched. All-space input yields "".
     case stringTrimLeft(receiver: IRExpr)
     /// `s.trimRight()` — strip **trailing** ASCII spaces, same rule as
     /// `stringTrimLeft` (U+0020 only; no tab).
     case stringTrimRight(receiver: IRExpr)
-    /// `s.indexOf(needle)` — grapheme index of the **first** occurrence of
-    /// needle in the receiver; empty needle yields 0, absent yields -1.
-    /// Same grapheme scan as `stringContains` (grapheme, not byte), but
-    /// reports position instead of existence.
+    /// `s.indexOf(needle)`: grapheme index of the first occurrence; an empty needle yields 0, absent
+    /// yields -1. Same grapheme scan as `stringContains`, but it reports position instead of existence.
     case stringIndexOf(receiver: IRExpr, needle: IRExpr)
     /// `arr.join(sep)` (G9) — string-array elements strcat'd with sep.
     case arrayJoin(receiver: IRExpr, separator: IRExpr)
     /// `s1 + s2` string concatenation (G9) — malloc'd join of the two
     /// C strings (byte semantics, matching the sunk concat channel).
     case stringConcat(lhs: IRExpr, rhs: IRExpr)
-    /// String interpolation `"x=\(expr)"` (G9): parts are already-lowered
-    /// expressions of scalar/string/array types; each converts to a C
-    /// string and pieces strcat into a stack buffer. F64 renders via
-    /// bk_double_to_string (shortest round-trip — LR-8; the legacy emitter
-    /// still uses %f here and diverges from the interpreter).
+    /// String interpolation `"x=\(expr)"`: parts are already-lowered expressions of scalar/string/array
+    /// types; each converts to a C string and the pieces strcat into a stack buffer. F64 renders via
+    /// `bk_double_to_string` (shortest round-trip), not `%f`.
     case interpString(parts: [IRExpr])
 
     // MARK: G13 batch 1 — LazyRef
 
-    /// `LazyRef<T>(closure)` (G13): creates the once-evaluated handle via
-    /// `bk_lazyref_create(wrapper, code, env, bytes, tag)`. `closure` is the
-    /// lowered initializer fat pointer; the wrapper (per element type,
-    /// deduplicated) is buffered at module end by the emitter.
+    /// `LazyRef<T>(closure)`: creates the once-evaluated handle via `bk_lazyref_create(wrapper, code, env,
+    /// bytes, tag)`. `closure` is the lowered initializer fat pointer; the per-element-type wrapper is
+    /// buffered at module end by the emitter.
     case lazyRefConstruct(closure: IRExpr, type: IRType)
     /// `handle.value` (G13): `bk_lazyref_value(handle)` returns the cached
     /// element box; the caller loads the element type out of it.
@@ -486,30 +404,16 @@ public indirect enum IRExpr: Equatable {
 
     // MARK: G3c — join
 
-    /// `await f` / `wait f` (G3c): the node face the suspension semantics
-    /// hang off. `future` evaluates to a `Future`; once it resolves the join
-    /// site deconstructs the carried `ok` / `err`, so `type` is the
-    /// `Result<T>` the site yields.
-    ///
-    /// `form` is which keyword was written. It is the only thing that tells the
-    /// two apart, and the engines must be able to read it: the retired
-    /// implementation asked a mode flag instead, and with the flag gone there is
-    /// nothing left for a downstream reader to consult.
+    /// `await f` / `wait f`: the node the suspension semantics hang off. `future` evaluates to a `Future`;
+    /// once it resolves the join site deconstructs the carried ok / err, so `type` is the Result it yields.
+    /// `form` is which keyword was written — the only thing telling the two apart, and back ends must read it.
     case join(future: IRExpr, type: IRType, form: JoinForm)
 
-    // MARK: ADR-001 — 默认实例取用
+    // MARK: - 默认实例取用
 
-    /// 取某类型的**默认实例**（ADR-001 `P2a`；契约 §2.46）。
-    ///
-    /// 语义（后端无关）：该实例**由类型决定** —— 编译器按类型解析，**无运行时查找、无 vtable**；
-    /// **惰性物化、恰一次、地址稳定**；取到的是**该实例本身**（非副本、非模板）。
-    ///
-    /// ⚠️ 与 `lazyRefValue`（§2.44）**不是同一件事**：后者是**字段内**的细粒度缓冲，
-    /// 本条是**类型级**的默认实例取用（用户裁定：`LazyRef` 不承担默认实例的物化）。
-    /// 命名不得含 `bk_` 前缀（那是实现面）。
-    ///
-    /// 中间态（`P2a`）：**无降载入口** ⇒ 本节点当前**不可达**；两台引擎起步 **fail-loud**
-    /// （照 §2.45 `join` / §3.17 `detachStmt` 的先例）。物化面与 `using` 解析属 `P2b`。
+    /// 取某类型的默认实例：该实例由类型决定 —— 编译器按类型解析，无运行时查找、无 vtable；
+    /// 惰性物化、恰一次、地址稳定；取到的是实例本身（非副本、非模板）。它与 `lazyRefValue` 不是一件事：
+    /// 后者是字段内的细粒度缓冲，本条是类型级取用。目前无降载入口，两台引擎起步 fail-loud。
     case givenInstance(type: IRType)
 }
 
@@ -553,10 +457,9 @@ public struct IRDictEntry: Equatable {
     }
 }
 
-/// One reference capture of a closure (G6): the captured outer variable's
-/// name and declared type. The env field stores a pointer to the variable's
-/// storage slot (reference capture — later writes to the outer variable are
-/// visible through the closure, interpreter currentEnv parity).
+/// One reference capture of a closure: the captured outer variable's name and declared type. The env
+/// field stores a pointer to the variable's storage slot, so later writes to the outer variable stay
+/// visible through the closure (interpreter currentEnv parity).
 public struct IRCapture: Equatable {
     public let name: String
     public let type: IRType
@@ -567,11 +470,9 @@ public struct IRCapture: Equatable {
     }
 }
 
-/// One match arm (G2 general case skeleton). `caseName` is the enum-case
-/// name the scrutinee's tag is compared against ("some" / "none" for an
-/// Optional scrutinee; user enum cases via the same node — G4). `bindings`
-/// are the per-payload variable names (`nil` = `_` placeholder), positional
-/// by payload index; the arm body sees them as scoped variables.
+/// One match arm. `caseName` is the enum-case name the scrutinee's tag is compared against ("some" /
+/// "none" for an Optional scrutinee; user enum cases via the same node). `bindings` are the per-payload
+/// variable names (`nil` = `_` placeholder), positional by payload index; the arm body sees them scoped.
 public struct IRMatchCase: Equatable {
     public let caseName: String
     /// Literal-pattern operand of a bare-scrutinee arm, nil for enum-case and
@@ -588,11 +489,9 @@ public struct IRMatchCase: Equatable {
     }
 }
 
-/// Literal-pattern operand of a match arm over a bare (neither Optional nor
-/// enum) scrutinee — `case 1:` / `case "hi":` / `case 1.5:` / `case true:`.
-/// The interpreter compares such an arm by value (`matchCaseMatches`), so the
-/// emitter must dispatch on it; the operand is carried structurally rather
-/// than re-parsed out of `caseName`'s rendered text.
+/// Literal-pattern operand of a match arm over a bare (neither Optional nor enum) scrutinee —
+/// `case 1:` / `case "hi":` / `case 1.5:` / `case true:`. The interpreter compares such an arm by
+/// value, so the emitter must dispatch on it; the operand is carried structurally, not re-parsed.
 public enum IRMatchLiteral: Equatable {
     case int(Int)
     case float(Double)
@@ -607,40 +506,9 @@ public enum IRForIterableKind: Equatable {
     case array, set, dict
 }
 
-/// Typed statement tree (slice set).
-/// A statement list **with the source position of every statement**.
-///
-/// WHY THIS TYPE EXISTS (LR-4 P4-3)
-///
-/// An `[IRStmt]` list is everything an emitter needs and not enough for a
-/// debugger. The AST carries a `SourceLocation` on every statement; the IR
-/// carried none, so the IR engine could not answer "which line is this?" and
-/// its debug hook had to stay dormant (`IRExecutor.debugHook` documents that
-/// state). A pause that cannot name a line is worse than no pause, so the
-/// position has to land in the representation before the hook can be wired.
-///
-/// The carrier is the **block**, not the node. A position on each of the 60
-/// node cases would touch every construction site and every pattern match on
-/// both the executor and the LLVM emitter; a block-level parallel array
-/// touches one lowering function — `IRLowerer.lowerBlock`, the single place
-/// where a `Block` becomes IR statements — and nothing else changes shape.
-/// Positions are therefore at **AST-statement granularity**, which is exactly
-/// what the interpreter reports: its own pause site reads `Statement.location`
-/// the same way, so the two engines stop on the same lines by construction.
-///
-/// `positions` is parallel to `statements` when non-empty and empty when the
-/// block was built without them (hand-built IR in tests). `position(at:)`
-/// answers `nil` in that case instead of inventing a line: an engine that
-/// cannot name a line must stay silent rather than stop somewhere fictional.
-///
-/// `Equatable` compares **statements only**. Two blocks of the same shape are
-/// the same block; letting a coordinate decide would make every existing
-/// structural assertion in the suite depend on source positions.
-///
-/// Conforming to `ExpressibleByArrayLiteral` and `RandomAccessCollection` is
-/// deliberate: `[stmt, stmt]` still builds a block and `for stmt in block`
-/// still iterates one, so the emitter, printer and executor keep reading what
-/// they read before, and only the places that *want* positions changed.
+/// 语句表 + 每条语句的源码位置：`positions` 与 `statements` 平行，未带位置时为空（测试里手搭的 IR），
+/// `position(at:)` 那时返回 nil 而不是编一行。位置挂在块级而非每个节点上 —— 只在 `lowerBlock` 落地，
+/// 故与解释器同粒度、同起点。`Equatable` 只比语句：让坐标参与比较会让既有结构断言全部依赖位置。
 public struct IRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollection {
     public typealias Element = IRStmt
     public typealias Index = Int
@@ -658,13 +526,9 @@ public struct IRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollect
         self.init(elements)
     }
 
-    /// A block whose every statement carries the same source position.
-    ///
-    /// The shape a construct needs when one source statement lowers into
-    /// several IR statements: they all came from that one line, so a pause on
-    /// any of them is a pause on that line. Used by the `defer` body and the
-    /// try-else handler, which `lowerStatement` expands in place rather than
-    /// through `lowerBlock`.
+    /// A block whose every statement carries the same source position — the shape a construct needs when
+    /// one source statement lowers into several IR statements. Used by the `defer` body and the try-else
+    /// handler, which `lowerStatement` expands in place rather than through `lowerBlock`.
     public static func at(_ statements: [IRStmt], _ location: SourceLocation) -> IRBlock {
         IRBlock(
             statements,
@@ -699,23 +563,17 @@ public indirect enum IRStmt: Equatable {
     case allocVar(name: String, type: IRType, mutable: Bool, initializer: IRExpr?)
     /// Store into an existing variable; `type` is the declared variable type.
     case storeVar(name: String, type: IRType, value: IRExpr)
-    /// `[label|] if cond: then [else: else]`. `label` is what makes this an
-    /// **interruptible frame** (标签 break 定向范围): `break <label>` may leave the `if`
-    /// block. It is not a `continue` target — `continue-stmt ::= 'continue'
-    /// [IDENT]` carries the note *仅循环标签有效*, and `break-stmt` carries no
-    /// such restriction. The label itself is never read at run time: as with
-    /// loops, only the resolved depth travels, and `label != nil` is what the
-    /// back ends test to decide whether to catch a signal here.
+    /// `[label|] if cond: then [else: else]`. `label` makes this an interruptible frame: `break <label>`
+    /// may leave the `if` block, while `continue` accepts loop labels only. The label text is never read
+    /// at run time — only the resolved depth travels, and `label != nil` is what back ends test.
     case ifStmt(label: String?, condition: IRExpr, thenBody: IRBlock, elseBody: IRBlock?)
     /// `while cond: body [step: block]`. The step block (标签语法反转) runs once
     /// per iteration after the body — on normal completion *and* on
     /// unlabeled `continue` (interpreter parity); `break` skips it.
     case whileStmt(condition: IRExpr, body: IRBlock, step: IRBlock?)
-    /// `for (pattern,) in iterable: body [step: block]` (G15).
-    /// `kind` selects the runtime accessor family; `elementTypes` are
-    /// parallel to `pattern` (`"_"` entries still occupy a slot and carry
-    /// the slot's type). Break/continue follow the same step contract as
-    /// whileStmt.
+    /// `for (pattern,) in iterable: body [step: block]`. `kind` selects the runtime accessor family;
+    /// `elementTypes` are parallel to `pattern` (`"_"` entries still occupy a slot and carry its type).
+    /// Break/continue follow the same step contract as `whileStmt`.
     case forInStmt(
         pattern: [String],
         elementTypes: [IRType],
@@ -727,30 +585,21 @@ public indirect enum IRStmt: Equatable {
     /// Slice set: single-value return; nil for void functions.
     case returnStmt(value: IRExpr?)
     case exprStmt(IRExpr)
-    /// `defer stmt` (G9): the wrapped statements run LIFO when the
-    /// enclosing block scope exits (each loop-iteration end included).
-    /// `break`/`return` interplay **is** gated as of grid G1: both channels
-    /// run the defers on the unwinding path too, because a block's scope
-    /// closes on every exit, not only the normal one.
+    /// `defer stmt`: the wrapped statements run LIFO when the enclosing block scope exits (each
+    /// loop-iteration end included). A block's scope closes on every exit, so `break` and `return` run
+    /// the defers on the unwinding path too.
     case deferStmt(body: IRBlock)
-    /// `try operand else errorVar: handler` (try-else 迁移). The operand's type is
-    /// `result(ok:)`; the error path binds the type-erased error word to
-    /// `errorVar` and runs `handler`. `okTarget` is set for expression
-    /// position (the ok payload is stored into that variable); nil for
-    /// statement position.
+    /// `try operand else errorVar: handler`. The operand's type is `result(ok:)`; the error path binds the
+    /// type-erased error word to `errorVar` and runs `handler`. `okTarget` is set for expression position
+    /// (the ok payload is stored there) and nil for statement position.
     case tryStmt(operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?, type: IRType)
-    /// Subscript store `container[index] = value` (G2). The container may be
-    /// a nested subscript chain (the emitter walks the COW split chain);
-    /// compound assignment (`a[i] += k`) lowers to read-modify-write with the
-    /// same node. `elementType` is the boxed element's static type.
+    /// Subscript store `container[index] = value`. The container may be a nested subscript chain (the
+    /// emitter walks the COW split chain); compound assignment (`a[i] += k`) lowers to read-modify-write
+    /// with the same node. `elementType` is the boxed element's static type.
     case subscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType)
-    /// `break` (G2; labeled form G15). `depth` = how many enclosing loops to
-    /// unwind (1 = innermost). Labeled `break outer` lowers to the depth the
-    /// lowerer resolved from the label stack (标签语法反转). An *unresolvable*
-    /// target (bare break with no enclosing loop, or a label that matches no
-    /// enclosing loop) lowers to `panicStmt` instead — the interpreter lets
-    /// the signal escape and errors at the top level, so this is fail-loud
-    /// parity, not a silent skip.
+    /// `break`, with the labeled form. `depth` = how many enclosing loops to unwind (1 = innermost);
+    /// labeled `break outer` lowers to the depth the lowerer resolved from the label stack. An unresolvable
+    /// target lowers to `panicStmt` instead — the interpreter errors at the top level, so this is fail-loud.
     case breakStmt(depth: Int)
     /// `continue` (G15). `depth` mirrors breakStmt: 1 = innermost loop's
     /// condition re-test; N = the depth-th enclosing loop's header (labeled
@@ -760,30 +609,19 @@ public indirect enum IRStmt: Equatable {
     /// control-flow escapes the interpreter only detects at run time
     /// (break/continue outside any loop). The block is terminated.
     case panicStmt(message: String)
-    /// `match scrutinee: case name(binding): body ...` (G2 general skeleton).
-    /// The scrutinee type decides the tag ABI: Optional arms compare the
-    /// `{ i64, T }` tag (some=0, none=1); enum scrutinees join their own grid
-    /// through the same node. Unmatched scrutinee values panic at runtime
-    /// (interpreter matchNotExhaustive parity).
+    /// `match scrutinee: case name(binding): body ...`. The scrutinee type decides the tag ABI: Optional
+    /// arms compare the `{ i64, T }` tag (some=0, none=1); enum scrutinees use their own tag layout through
+    /// the same node. Unmatched values panic at runtime (interpreter matchNotExhaustive parity).
     case matchStmt(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType)
     /// Nominal field store `base.field = value` (G3). GEP + store through
     /// the base pointer; objects offset past the refcount header.
     case fieldStore(base: IRExpr, field: String, value: IRExpr, fieldType: IRType)
-    /// `capture name` (G6): a marker statement inside a closure body. The
-    /// capture itself is resolved at the closure-literal creation point
-    /// (IRLowerer free-variable analysis mirrors the checker's G29 set),
-    /// so this lowers to nothing — it exists so the statement kind is
-    /// accepted inside lowered closure bodies rather than gated.
+    /// `capture name`: a marker statement inside a closure body. The capture itself resolves at the
+    /// closure-literal creation point, so this lowers to nothing — it exists so the statement kind is
+    /// accepted inside lowered bodies rather than gated.
     case captureMarker(name: String)
-    /// `detach <expr>` — prune the task the operand evaluates to from its
-    /// parent, so the parent's return no longer cancels it (fire-and-forget's
-    /// only sanctioned exit). The operand must evaluate to a `Future`; a
-    /// non-future operand is a runtime type mismatch, not a lowerer error.
-    ///
-    /// No `type` rides along, unlike `join(future:type:)`: a statement
-    /// position produces no value, so there is no site type to pin, and the
-    /// operand's own type lives inside its node (typed tree). Note that no
-    /// `IRType` case denotes a future — `Future` is a runtime value
-    /// (`Value.future`), which is the same position `IR join 节点` took for `join`.
+    /// `detach <expr>` — prune the task from its parent, so the parent's return no longer cancels it
+    /// (fire-and-forget's only sanctioned exit). The operand must evaluate to a `Future`; a non-future is a
+    /// runtime type mismatch, not a lowerer error. No `type` rides along: a statement produces no value.
     case detachStmt(inner: IRExpr)
 }

@@ -13,20 +13,17 @@ public indirect enum Statement: Equatable {
     case ifStatement(condition: Expression, thenBlock: Block, elifs: [ElifBranch], elseBlock: Block?, label: String?, location: SourceLocation)
     case whileStatement(condition: Expression, body: Block, step: Block?, label: String?, location: SourceLocation)
     case forStatement(pattern: [String], iterable: Expression, body: Block, step: Block?, label: String?, location: SourceLocation)
-    /// match 子块结构（D3①/G28 更新，2026-08-23）：case 缩进进 match 子块，通配 `case _:`。
-    /// defaultCase/wildcardBlock 已随 default:/pass 通配子块移除（R2=删除）。
+    /// match 子块结构：case 缩进进 match 子块，通配写作 `case _:`，没有独立的 default 或通配子块。
     case matchStatement(value: Expression, cases: [MatchCase], location: SourceLocation)
     case scopedBlock(label: String?, body: Block, location: SourceLocation)
-    /// try-else 迁移 迁移批 M2：旧 `try`/`except` 语句已移除，错误传播由
-    /// Expression.tryExpression 承载（语句位 = expressionStmt 包装，spec『try-else 错误传播』节）。
-    /// detach 语句（任务 #13， detach-expr-stmt）：`detach <expr>` 把子任务
-    /// 从父 scope 剪枝、主动退出所有权（fire-and-forget 唯一合法出口）。expr 求值为 Future。
+    /// 错误传播由 `Expression.tryExpression` 单点承载，语句位只是 expressionStmt 包装，没有独立的 try/except 语句。
+    /// detach 语句 `detach <expr>` 把子任务从父 scope 剪枝、主动退出所有权（fire-and-forget 的唯一合法出口），
+    /// expr 求值为 Future。
     case detachStatement(expression: Expression, location: SourceLocation)
     case expressionStmt(expr: Expression, location: SourceLocation)
     case deferStatement(statement: Statement, location: SourceLocation)
     case passStatement(location: SourceLocation)
-    /// capture 声明（H-1/A1，2026-08-31）：匿名函数体内部、每行恰一个外部标识符。
-    /// 仅在匿名函数体顶层语句位合法（解析器强制）；语句序上须先于所列名字在
-    /// 体内的首次使用（语义层强制，偏弱纯定位：闭包显式声明其捕获）。
+    /// capture 声明：匿名函数体内部、每行恰一个外部标识符，显式声明闭包捕获。
+    /// 仅在匿名函数体顶层语句位合法（解析器强制）；须先于所列名字在体内的首次使用（语义层强制）。
     case captureStatement(name: String, location: SourceLocation)
 }

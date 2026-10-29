@@ -1,47 +1,8 @@
 import Foundation
 
-/// Runs a Pini program or package: the engine-agnostic entry point the test
-/// suite drives, and the successor to `Interpreter`'s execution role.
-///
-/// WHY THIS EXISTS (LR-4 P4-beta)
-///
-/// "Run this program" used to be reached only through `Interpreter`, which
-/// evaluates the AST directly. That made the test suite the last place still
-/// pinned to the AST walk: 429 cases across 51 files drove `Interpreter` for
-/// execution alone, so deleting the walk (P4-gamma) would have taken them with
-/// it — and with them the only evidence that the IR engine runs real
-/// programs, as opposed to selected corpus fixtures.
-///
-/// This type keeps the surface those callers actually use and implements it as
-///
-///     check -> lower -> execute
-///
-/// on the engine the default flip (`P4-alpha`) selected. The front end is the
-/// same `TypeChecker` and the same `IRLowerer` the CLI's other IR paths use,
-/// which is what makes this a migration rather than a second implementation.
-///
-/// WHAT IT DOES NOT OFFER
-///
-/// The suspension back end that released the OS thread across an `await` is not
-/// here, and that is a decision rather than a gap: `挂起模式退役` retired it, nothing
-/// published ever reached it, and it went out with the walk it was built on. The
-/// blocking join is the semantics this entry point runs.
-///
-/// The `runTests` entry point and dynamic-library FFI loading used to be on
-/// this list. Both landed in P4-gamma `G-4`: the test entry points are
-/// implemented on this type, and raw C bindings resolve through the same
-/// `FFILoader` + `ForeignThunk` chain the interpreter uses. The list stays a
-/// list of *what is missing* rather than being deleted, so the next reader can
-/// still tell a deliberate boundary from an unbuilt one.
-///
-/// BEHAVIOUR CHANGE, STATED
-///
-/// This entry point type-checks before running. The AST walk's single-file path
-/// ran the semantic gate only, so a type-incorrect program could run and
-/// produce a value; here it is refused with the same type errors `pini run`
-/// reports. That asymmetry is the change the P4-2 survey registered, met here
-/// in its test-suite form; the cases it turns red are counted in the batch
-/// record instead of being papered over.
+/// 运行 Pini 程序或包：测试套件与 CLI 共用的引擎无关入口，流程为 检查 → 降低 → 执行。
+/// 执行前先过类型检查，类型错误因此在此被拒而非产出值；`await` 期间不释放线程，join 即阻塞语义。
+/// `runTests` 与动态库 FFI 已在本类型落地：后者经 `FFILoader` + `ForeignThunk`，与解释器同一链路。
 public final class ProgramRunner: DebugHookHost {
 
     /// Receives the program's own line output.
@@ -57,14 +18,8 @@ public final class ProgramRunner: DebugHookHost {
     /// narrow the search for `main`" (G52 Def-3).
     public var entryFiles: Set<String> = []
 
-    /// The package's `[ffi]` table, carried so callers keep one construction
-    /// shape.
-    ///
-    /// Consumed on both the run and test paths since P4-gamma `G-4`: it reaches
-    /// the executor, which resolves raw C bindings against `search_paths`. That
-    /// is what made a module with vendored libraries behave the same on both
-    /// engines — before `G-4` the IR side refused such a symbol outright,
-    /// which was a capability regression on the default engine.
+    /// 包的 `[ffi]` 表，随类型下传，使运行与测试两条路径共用一种构造形状。
+    /// 执行器据此按 `search_paths` 解析裸 C 绑定，故带随附库的模块在两个引擎上行为一致。
     public let ffiConfig: FFIConfig
 
     /// Directory the program's relative paths resolve against.
@@ -95,14 +50,8 @@ public final class ProgramRunner: DebugHookHost {
         // scrutinees after the checker popped its scopes, so the table that
         // inference built has to outlive them.
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        // Import declarations live in the module itself, so a single file can
-        // be a cross-module caller: `[main|import] helper = "../helper"` then
-        // `helper.加法(1, 2)`. The package path merges the import targets
-        // before lowering; this path used to go straight to the module
-        // lowering, leaving the alias unresolved -- the alias name was then
-        // read as a variable and reported as "reference to undeclared
-        // variable 'helper'". Same merge, same entry, so the two paths cannot
-        // disagree about what an import brings in.
+        // 单文件也能跨模块调用：import 声明在模块内，别名需在降载前并入模块。
+        // 与包路径共用同一合并入口，故两条路径对「import 带进来什么」不会给出不同答案。
         let (merged, aliasMap) = try IRLowerer.mergedWithImports(module)
         let lowered = try IRLowerer.lower(
             module: merged, typeInference: checker.typeInference, moduleAliases: aliasMap
@@ -110,12 +59,8 @@ public final class ProgramRunner: DebugHookHost {
         try execute(lowered)
     }
 
-    /// Runs a package.
-    ///
-    /// Mirrors `Interpreter.run(package:)`: a single-unit package *is* one
-    /// module and goes down the module path; anything larger merges into one
-    /// virtual module through `IRLowerer.lower(package:)` — the same entry the
-    /// LLVM package channel already uses.
+    /// 运行一个包：单单元包即一个模块，走模块路径；多单元经 `IRLowerer.lower(package:)`
+    /// 合并为一个虚拟模块，与 LLVM 包通道同一入口。
     public func run(package: Package) throws {
         guard package.fileUnits.count > 1 else {
             let module =
@@ -147,12 +92,8 @@ public final class ProgramRunner: DebugHookHost {
 
     // MARK: - Test blocks
 
-    /// One `|test` block's outcome, as `pini test` reports it.
-    ///
-    /// Declared here rather than on `Interpreter` because it has to outlive
-    /// that type: `G-6` removes the AST walk, and a report shape both engines
-    /// produce cannot go with one of them. Moving it now, while both are live,
-    /// keeps the move checkable against the old definition.
+    /// 一个 `|test` 块的结果，`pini test` 按此报告。放在此处而非 `Interpreter`：
+    /// 它是两个引擎共用的报告形状，不应随任一引擎退役。
     public struct TestRunResult {
         public let name: String
         public let passed: Bool
@@ -165,34 +106,15 @@ public final class ProgramRunner: DebugHookHost {
         }
     }
 
-    /// Runs every top-level `|test` function of one module.
-    ///
-    /// Mirrors `Interpreter.runTests(module:)` — collect, inject a zero value
-    /// per declared parameter, run, record a failure instead of stopping, and
-    /// never run `main` — with one deliberate difference: lowering is asked for
-    /// `requiresMain: false`. A test-only file is a legitimate module with no
-    /// `main` (two of the fixtures are exactly that), so requiring an entry
-    /// function here would delete a working program shape rather than migrate
-    /// it.
-    ///
-    /// Type checking happens first, and not to tighten anything: the IR is a
-    /// typed tree, so lowering cannot proceed without the checker's inference.
-    /// The AST path's `runTests` did no checking of its own either — its
-    /// callers checked — and that division is unchanged.
+    /// 降载传 `requiresMain: false`：只有测试的文件是合法模块，强求入口会砍掉一种可用程序形状。
+    /// 类型检查先行，因为 IR 是带类型的树——没有检查器的推断就无法降载。
     public func runTests(module: Module) throws -> [TestRunResult] {
         try runCollectedTests(lowerTests(module: module))
     }
 
-    /// 测试模式的**降载**（不执行）：把模块交给另一条通道。
-    ///
-    /// ⭐ 抽出来的理由只有一个，但它是本批的核心：**两条通道的「跑哪些测试」必须出自同一处**。
-    /// 收窄范围所依据的事实（`isTest` 与 `sourceFile`）、零值注入的规则、以及函数表的顺序，
-    /// 全都在这一步定下来；只要两条通道各降载一次，「哪些测试、什么顺序」就有两个答案，
-    /// 而它们会随任一侧的改动各自漂移 —— 那正是「两个后端行为一致」最容易被破坏的方式
-    /// （而且破坏得很安静：两侧都自洽，只是不一致）。故这里**只有一份**降载，
-    /// 解释器通道执行它，LLVM 通道把它发射出去。
-    ///
-    /// ⚠️ 与执行通道的边界：本函数**不跑任何测试**、不碰运行时段、不建执行器。
+    /// 测试模式的降载（不执行）：两条通道的「跑哪些测试、什么顺序」都出自这一步。
+    /// 收窄范围（`isTest`/`sourceFile`）、零值注入规则与函数表顺序在此一次定下；
+    /// 解释器通道执行它、LLVM 通道发射它，故两侧不会各自漂移。不跑测试、不建执行器。
     public func lowerTests(module: Module) throws -> IRModule {
         let checker = TypeChecker()
         let errors = checker.checkCollecting(module: module)
@@ -209,14 +131,8 @@ public final class ProgramRunner: DebugHookHost {
         )
     }
 
-    /// Runs the `|test` functions of a package.
-    ///
-    /// `fileScope` narrows *which* tests run, never what they can see: the whole
-    /// package is lowered into one module, so a test in one file still reaches
-    /// another file's symbols, and only the selected files' tests are executed.
-    /// That is the interpreter's rule — `pini test <path>` is a filter, not a
-    /// smaller program — and the reason each lowered function carries the file
-    /// it came from.
+    /// 跑一个包里被 `fileScope` 选中的 `|test`。筛选只决定跑哪些，不缩小可见范围：
+    /// 整包降载为一个模块，跨文件符号仍可达，故每个降载函数都带着它的来源文件。
     public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
         try runCollectedTests(lowerTests(package: package), fileScope: fileScope)
     }
@@ -232,10 +148,7 @@ public final class ProgramRunner: DebugHookHost {
         )
     }
 
-    /// Prepares the lowered module and runs only its `|test` functions.
-    ///
-    /// `prepare` (not `run`) on purpose: `run` would go looking for `main`,
-    /// which a test-only module does not have.
+    /// 在已降载的模块上只跑 `|test`：用 `prepare` 而非 `run`，后者会去找 `main`。
     private func runCollectedTests(
         _ module: IRModule,
         fileScope: ((String) -> Bool)? = nil
@@ -252,18 +165,9 @@ public final class ProgramRunner: DebugHookHost {
         return results
     }
 
-    /// One collected test: inject the parameters' zero values, then call it.
-    ///
-    /// A failing test is a result, not an abort — one failure must not hide the
-    /// tests after it. Same rule as the AST path's `executeCollectedTest`.
-    ///
-    /// ⭐ 断言失败的消息**只取消息本体**（⛔ 不带 `RuntimeError.description` 里那截
-    /// `at <SourceLocation>`）。两条理由，缺一条它都不该这么写：
-    /// ① 那截位置是**空位置**（行列全零、`fileName` 是 `"<ir>"`）—— 对读者零信息；
-    /// ② **另一个后端要出同一格报告**：LLVM 通道的报告由发射出的驱动器写，而它手里只有
-    ///    源里的那个消息串 ⇒ 报告要逐字节相同，两侧的消息就必须是同一个东西。
-    /// ⚠️ 其余错误照旧 `"\(error)"` —— 那些不是「测试判定」而是运行时段出了问题，
-    /// 完整描述（含位置）恰是那时最需要的。
+    /// 跑一个收集到的测试：按参数类型注入零值后调用。失败是一条结果，不中断后续测试。
+    /// 断言失败只取消息本体（不带 `at <位置>`）：那是空位置，且另一后端的报告须逐字节相同。
+    /// 其余错误保留完整描述，含位置——那属于运行时故障，正是最需要位置的时候。
     private func runOneTest(_ function: IRFunction, on executor: IRExecutor) -> TestRunResult {
         let args = function.params.map { Self.zeroValue(forTestParam: $0.type) }
         do {
@@ -279,26 +183,16 @@ public final class ProgramRunner: DebugHookHost {
         }
     }
 
-    /// R4 parameter injection: the zero value of each declared type.
-    ///
-    /// Kept identical to `Interpreter.zeroValueForTestParam` (String → `""`,
-    /// integer → `0`, Bool → `false`, float → `0.0`, anything else → `null`),
-    /// because a test that passes on one engine and fails on the other would
-    /// make the two channels disagree about the language rather than about the
-    /// implementation.
+    /// 测试参数注入：整数 `0`、浮点 `0.0`、布尔 `false`、字符串 `""`、其余 `null`。
+    /// 须与解释器侧逐项一致：同一测试在两引擎上结论不同，等于两通道对语言本身有分歧。
     static func zeroValue(forTestParam type: IRType) -> Value {
         switch type {
         case .i8, .u8, .i32, .i64, .u64: return .int(0)
         case .f64: return .float(0)
         case .boolean: return .bool(false)
         case .string: return .string("")
-        /// `Char` (P0d) is declared rather than defaulted, and it keeps
-        /// returning `null`. That is deliberate: the language has no "empty
-        /// character", so any injected zero would itself violate the
-        /// one-grapheme invariant, and inventing one here would put a value
-        /// the type system calls impossible into the shared engine. The arm
-        /// is written out so the choice is visible rather than absorbed by
-        /// the default, and the open question is filed separately.
+        /// `Char` 单列一臂并返回 `null`：语言没有「空字符」，任何注入零值都会违反单字素不变量。
+        /// 写出来是为了让这个选择可见，而不是被 `default` 吸收。
         case .char: return .null
         default: return .null
         }
@@ -306,21 +200,15 @@ public final class ProgramRunner: DebugHookHost {
 
     // MARK: - Entry consistency
 
-    /// G52 Def-3: when the manifest declares entry files, `main` must be in one.
-    ///
-    /// Declaring an entry is a promise that "the program starts here"; a `main`
-    /// elsewhere is configuration disagreeing with code, not a licence to find
-    /// some other `main`. An empty set means undeclared and does not intervene.
+    /// 清单声明了入口文件时，`main` 必须落在其中之一：声明入口即承诺「程序从这里开始」，
+    /// 别处的 `main` 是配置与代码不一致。空集表示未声明，不干预。
     private func checkEntryConsistency(_ module: Module) throws {
         guard !entryFiles.isEmpty else { return }
         guard let declared = mainDeclaringLocation(module) else { return }
         try validateEntry(declared)
     }
 
-    /// The same rule for a package. Checked on both paths because both paths
-    /// can run a package: omitting it here would let a package whose manifest
-    /// declares an entry run a `main` from some other file — exactly the
-    /// configuration/code disagreement the check exists to catch.
+    /// 包路径的同一条规则：两条路径都能跑包，漏掉这里就会放过配置与代码不一致。
     private func checkEntryConsistency(in package: Package) throws {
         guard !entryFiles.isEmpty else { return }
         guard let declared = mainDeclaringLocation(of: package) else { return }
@@ -359,14 +247,8 @@ public final class ProgramRunner: DebugHookHost {
 
     // MARK: - Main presence
 
-    /// Parity with the AST path's `RuntimeError.mainNotFound`.
-    ///
-    /// The two engines meet the same condition in different phases: the AST
-    /// path runs a program and throws `mainNotFound` from `executeMain`, while
-    /// the lowerer refuses a `main`-less module *while lowering*, because what
-    /// it is building is an executable program. Asking the condition here —
-    /// rather than catching the lowerer's error and matching its message —
-    /// keeps the error type callers already assert on and survives a reword.
+    /// 与 AST 路径的 `RuntimeError.mainNotFound` 对齐：两个引擎在不同阶段遇到同一条件，
+    /// 这里主动判条件而不是捕获降载器的报错再匹配文案，调用方断言的错误类型因此不变。
     private func requireMain(_ module: Module) throws {
         guard mainDeclaringLocation(module) == nil else { return }
         throw RuntimeError.mainNotFound(
@@ -381,10 +263,8 @@ public final class ProgramRunner: DebugHookHost {
         )
     }
 
-    /// Collapses repeated separators and drops a leading `./`, for entry
-    /// comparison. Not absolutised: both sides are built on the module root and
-    /// the comparison also accepts a suffix match, which tolerates an absolute
-    /// prefix on the caller's side.
+    /// 折叠重复分隔符并去掉前导 `./`，供入口比较。不做绝对化：两侧都以模块根为基，
+    /// 比较还接受后缀匹配，调用方的绝对前缀不影响结论。
     static func normalizeEntryPath(_ path: String) -> String {
         var normalized = path
         while normalized.contains("//") {
@@ -401,9 +281,7 @@ public final class ProgramRunner: DebugHookHost {
 
 /// What can refuse a program before it runs on the IR path.
 public enum ProgramRunError: LocalizedError {
-    /// The program does not type-check. The AST walk's single-file path did not
-    /// check, so this is a new refusal rather than a new defect — see the
-    /// "behaviour change" note on `ProgramRunner`.
+    /// 程序未通过类型检查：AST 单文件路径不检查，故这是新增的拒绝，不是新增的缺陷。
     case typeCheck([String])
 
     public var errorDescription: String? {

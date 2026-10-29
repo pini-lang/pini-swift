@@ -86,10 +86,8 @@ public struct DebugContext {
 
 // MARK: - 调试器核心
 
-/// 源码级调试器：管理断点与单步状态，在停止时驱动交互。
-///
-/// 设计：与 I/O 解耦。断点/单步判定为纯逻辑（可单测）；
-/// 交互展示通过 `output` 闭包输出，默认打到 stdout，测试可替换为静默。
+/// 源码级调试器：管理断点与单步状态，在停止时驱动交互。断点/单步判定是纯逻辑（可单测），
+/// 展示经 `output` 闭包输出：默认打 stdout，测试可换成静默。
 public final class Debugger {
     public var breakpoints = Set<Breakpoint>()
     public var sourceMap: SourceMap?

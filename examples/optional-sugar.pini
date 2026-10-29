@@ -1,12 +1,6 @@
-; optional-sugar.pini -- nil 关键字（= Optional.none 等效常量）、?T 可选类型糖（= Optional<T>）与 Optional 双向互通
-; 运行：pini run examples/optional-sugar.pini
-; 预期输出：
-; none
-; none
-; matched-nil
-; none
-; q-none
-; q-assign
+; nil 关键字（= Optional.none 等效常量）、?T 可选类型糖（= Optional<T>）与 Optional 双向互通
+; 运行 pini run examples/optional-sugar.pini
+; 预期输出（逐行）：none / none / matched-nil / none / q-none / q-assign
 main|func() -> ():
     ; nil 等价于 Optional.none（表达式位置）
     var a = nil

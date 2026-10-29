@@ -50,10 +50,8 @@ public final class LSPServer {
     // MARK: - Message dispatch
 
     private func handleMessage(_ data: Data) {
-        // 通知与请求都含 jsonrpc/method，但请求必有 id；
-        // 因 RequestMessage.id 可选，通知也会成功解码成 RequestMessage(id==nil)，
-        // 必须以 id 是否存在区分，否则通知会被 dispatchRequest 的 guard 直接吞掉，
-        // 导致 didOpen/didChange/exit 等通知永不生效（诊断在真实编辑器里失效）。
+        // 通知与请求都含 jsonrpc/method，但只有请求有 id；`RequestMessage.id` 可选，故通知也能解码成 RequestMessage，
+        // 必须按 id 是否存在区分——否则通知会被 dispatchRequest 的 guard 吞掉，didOpen/didChange/exit 全部失效。
         if let req = try? transport.decodeRequest(data), req.id != nil {
             dispatchRequest(req)
             return
@@ -321,11 +319,10 @@ public final class LSPServer {
 
     // MARK: - Utility
 
-    /// 从文本中提取光标位置处的标识符（字母/数字/下划线连续串）。
-    /// - Parameter before: true=只取光标前的部分，false=取完整标识符
-    /// - Note: LSP `character` 是 **UTF-16 码元偏移**，必须用 `utf16` 视图索引，
-    /// 不能用 Swift `String` 的 grapheme/Character 索引——非 ASCII 标识符
-    /// （如中文名）在两者下偏移不同，用错会补全/跳转错位。
+    /// 提取光标位置处的标识符（字母 / 数字 / 下划线连续串）。
+    /// - Parameter before: true 只取光标前的部分，false 取完整标识符。
+    /// - Parameter character: LSP 的 `character` 是 UTF-16 码元偏移，必须用 `utf16` 视图索引；
+    /// 非 ASCII 标识符在两种索引下偏移不同，用错会让补全与跳转错位。
     func extractWordAt(text: String, line: Int, character: Int, before: Bool) -> String {
         let lines = text.components(separatedBy: "\n")
         guard line < lines.count else { return "" }

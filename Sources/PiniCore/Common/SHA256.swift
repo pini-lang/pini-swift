@@ -1,9 +1,8 @@
 import Foundation
 
-/// 批 6（G52 §3.6）：SHA-256 纯 Swift 实现（FIPS 180-4）。
-/// 为什么不用 CryptoKit / CommonCrypto：`Package.swift` 声明支持 macOS / Linux / Windows
-/// 且项目零外部依赖；两者均为 Apple 独占。算法为公开标准，实现按规范逐条对照。
-/// 验证：空串 / "abc" / 百万 'a' 的标准测试向量见 ModuleToolchainTests。
+/// SHA-256 纯 Swift 实现（FIPS 180-4）。不用 CryptoKit / CommonCrypto：Package 声明支持
+/// macOS / Linux / Windows 且零外部依赖，二者均为 Apple 独占。算法是公开标准，逐条对照规范实现，
+/// 标准测试向量（空串 / "abc" / 百万 'a'）见 ModuleToolchainTests。
 internal enum SHA256 {
 
     private static let k: [UInt32] = [

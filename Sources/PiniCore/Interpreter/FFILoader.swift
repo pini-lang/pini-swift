@@ -1,11 +1,7 @@
 import Foundation
 
-/// Phase 2b（解释器 dlsym 加载）：库名 → 路径解析 + 句柄缓存 + 符号查找。
-///
-/// 库名（`[名称|foreign]` 的 `名称`，`fd.name` 升级为真实库绑定键）解析顺序：
-/// 1. `libc` 保留名 → 直连系统 C 库（进程已加载映像，`SystemDL.openDefault`），不经路径搜索。
-/// 2. 含路径分隔符（`/`）→ 直当路径加载。
-/// 3. 否则按 `search_paths` 搜索 `lib<名称>.{dylib,so}`（子模块→根→系统默认）。
+/// 库名 → 路径解析 + 句柄缓存 + 符号查找。解析顺序：`libc` 保留名直连进程已加载的系统 C 库，
+/// 含 `/` 的当路径加载，否则按 `search_paths` 搜 `lib<名称>.{dylib,so}`（子模块 → 根 → 系统默认）。
 /// 句柄按库名缓存，避免重复 `dlopen`。
 final class FFILoader {
     private var handles: [String: UnsafeMutableRawPointer] = [:]

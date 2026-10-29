@@ -2,16 +2,9 @@ import Foundation
 @testable import PiniCore
 import Testing
 
-/// 字符串内建 `trimLeft` / `trimRight` / `indexOf` 的宿主单测。
-///
-/// 右端 = **手写期望**（⛔ 不是从某次运行输出抄来的）；语料与期望同源同版。
-/// 三条腿：解释器（进程内 `ProgramRunner`，恒跑）· 命令行 `run` · 命令行
-/// `run-llvm`（后两腿经构建产物，自寻二进制；取不到 ⇒ 响亮跳过，⛔ 不静默通过）。
-///
-/// 覆盖：三内建逐行判别式 + 边界（空串 / 全空格 / 首尾混合 / tab 不剥 /
-/// 空 needle ⇒ 0 / 未找到 ⇒ −1 / 多字节字素单位）+ LLVM 腿的发射器与
-/// 新运行时段 shim（`bk_string_trim_left` / `bk_string_trim_right` /
-/// `bk_string_index_of`）。
+/// 字符串内建 `trimLeft` / `trimRight` / `indexOf` 的宿主单测。右端 = 手写期望（不是从某次运行输出抄来的）。
+/// 三条腿：解释器（进程内 `ProgramRunner`，恒跑）· 命令行 `run` · 命令行 `run-llvm`（自寻二进制，取不到则响亮跳过）。
+/// 覆盖三内建的逐行判别式与边界：空串 / 全空格 / 首尾混合 / tab 不剥 / 空 needle ⇒ 0 / 未找到 ⇒ −1 / 字素单位。
 @Suite("StringBuiltins")
 struct StringBuiltinTests {
 
@@ -40,12 +33,9 @@ struct StringBuiltinTests {
         return
     """#
 
-    /// 手写期望（逐行；⛔ 不含尾换行——raw 串的尾换行被闭合符吃掉）。
-    ///
-    /// 其中三条同时是**驳回性测量**的落点：`t3`/`t4` 钉住「tab 不被剥」
-    /// （只剥空格的实现会得 2）；`i2` 钉住「未找到是 −1 而非 0」；
-    /// `i3` 钉住「空 needle 是 0 而非 −1」；`i5` 钉住「单位是字素而非字节」
-    /// （按字节实现会得 6）。
+    /// 手写期望（逐行；不含尾换行 —— raw 串的尾换行被闭合符吃掉）。其中几条同时是驳回性测量的落点：
+    /// `t3`/`t4` 钉「tab 不被剥」（只剥空格的实现会得 2）；`i2` 钉「未找到是 −1 而非 0」；`i3` 钉「空 needle 是 0」；
+    /// `i5` 钉「单位是字素而非字节」（按字节实现会得 6）。
     private static let expected = #"""
     t1 [ab  ]
     t2 [  ab]

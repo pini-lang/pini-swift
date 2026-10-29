@@ -20,11 +20,9 @@ public struct GenericParam: Equatable {
 public struct Parameter: Equatable {
     public let name: String
     public let typeAnnotation: TypeAnnotation?
-    /// ADR-001（取用参数 `using`，P1）：参数写成 `using 名: 类型` 时为真。
-    ///
-    /// 只记「这个参数是由取用位引入的」这一事实；**由谁来提供实参**（默认实例的物化）
-    /// 与**强制规则**（值位引用即须声明）都不在此层，属后续批次。
-    /// 缺省 `false` ⇒ 既有构造点零改动，且非取用参数与今日逐字同形。
+    /// 参数写成 `using 名: 类型`（取用位）时为真。
+    /// 只记「这个参数由取用位引入」这一事实；谁来提供实参（默认实例物化）与值位的强制规则都不在此层。
+    /// 缺省 `false`，故非取用参数的构造点与结构不受影响。
     public let isUsing: Bool
 
     public init(name: String, typeAnnotation: TypeAnnotation? = nil, isUsing: Bool = false) {
@@ -64,10 +62,8 @@ extension TypeAnnotation {
                 && pa.count == pb.count
                 && zip(pa, pb).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
         case (.function(let ap, let ar, _, _, _), .function(let bp, let br, _, _, _)):
-            // ⚠️ 第 4 个关联值（取用下标集合，ADR-001 §2.6）**刻意用 `_` 接住、不参与比较**：
-            // 取用位是「声明 ↔ 调用」的配对信息，不是类型恒等的一部分（用户 2026-09-19 裁定）。
-            // IR 面的同口径落在 `IRLowerer.labelInsensitiveEqual` 的 `.function` 分支，
-            // 两处必须同口径 —— 判据各钉一条。
+            // 第 4 个关联值（取用下标集合）刻意用 `_` 接住、不参与比较：取用位是「声明 ↔ 调用」的配对信息，
+            // 不是类型恒等的一部分。IR 面同口径落在 `IRLowerer.labelInsensitiveEqual` 的 `.function` 分支，两处必须一致。
             return ap.count == bp.count
                 && zip(ap, bp).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
                 && ar.count == br.count
