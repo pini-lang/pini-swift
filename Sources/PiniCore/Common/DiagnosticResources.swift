@@ -1,13 +1,8 @@
 import Foundation
 
-/// T1/T11（2026-08-24）：TOML 语言资源驱动的诊断消息。
-///
-/// - 资源：`Resources/Diagnostics.{zh,en}.toml`（`[错误码] message = "模板" [suggestion = "模板"]`），
-/// 经 SwiftPM `Bundle.module` 加载（见 Package.swift `resources: [.process("Resources")]`）。
-/// - 模板占位：`{param}`，param = 错误 case 关联值的 label（如 `name`/`expected`/`got`）。
-/// - 回退：目标语言未覆盖某码 → 回退 zh；zh 亦未覆盖 → 调用方硬编码兜底。
-/// - 约定：错误码表 append-only，**本 TOML（en/zh）为权威映射**；新增错误码只须登记
-/// TOML，诊断码文档为派生的迟维护视图（可落后，不纳入门禁）。
+/// TOML 资源驱动的诊断消息：`Resources/Diagnostics.{zh,en}.toml` 经 `Bundle.module` 加载，
+/// 模板占位 `{param}` 取错误 case 关联值 label。目标语言未覆盖则回退 zh，再回退调用方硬编码。
+/// 错误码表 append-only，TOML 为权威映射；新增码只须登记 TOML。
 
 public enum DiagnosticLanguage: String {
     case zh

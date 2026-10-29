@@ -1,11 +1,6 @@
-; match 穷尽性示例（D3①，G28 更新）
-;
-; `case` 缩进进 `match` 子块；通配兜底统一为 `case _:`
-; （旧 `pass` 通配子块与 `default:` 已一次性移除）。
-;
-; 穷尽性检查为 match 内建契约（R1）：枚举 match 缺变体且无 `case _:`，
-; `pini check` 会报 nonExhaustiveMatch。本例四个方向全部覆盖，因此通过校验。
-; 若删除任一 `case`，又不加 `case _:`，`pini check` 会报错。
+; match 穷尽性示例：`case` 缩进进 `match` 子块，通配兜底统一为 `case _:`。
+; 穷尽性检查是 match 内建契约：枚举 match 缺变体且无 `case _:` 时 `pini check` 报 nonExhaustiveMatch。
+; 本例四个方向全部覆盖故通过；删任一 `case` 又不加 `case _:` 即报错。
 
 [方向]
 东

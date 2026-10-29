@@ -60,7 +60,7 @@ CHANNELS = [
 def run(argv, extra_env, cwd):
     env = dict(os.environ)
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
-    # Single engine since G-6c; the switch this used to clear is gone.
+        # Single engine: no channel switch to clear.
     if extra_env:
         env.update(extra_env)
     # Own process group so a timeout also reaps lli, which would otherwise

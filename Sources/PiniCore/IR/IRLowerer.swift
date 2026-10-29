@@ -1,30 +1,18 @@
 import Foundation
 
-/// Lowers a type-checked `Module` (AST) plus the checker's `TypeInference`
-/// into a typed `IRModule`. This is the single point where all type
-/// decisions are made for every backend, and the single place allowed to
-/// say "unsupported": every capability gap surfaces as one
-/// `IRLoweringError.unsupported` thrown from this file. The old IRGenerator
-/// scattered ~108 such decisions across emitters; they consolidate here.
+/// Lowers a type-checked `Module` plus the checker's `TypeInference` into a typed `IRModule`.
+/// Every backend's type decisions are made here, and this is the only place allowed to say
+/// "unsupported": each capability gap throws one `IRLoweringError` from this file.
 public enum IRLowerer {
 
-    /// The single capability-gate error for the new pipeline: free-form
-    /// English detail plus the source position of the construct that gate
-    /// rejected. The CLI renders it through the diagnostic resource layer,
-    /// which dispatches on a code and a position rather than on the message
-    /// text, so the type carries both (see the `DiagnosticProviding`
-    /// conformance in the common diagnostic layer).
-    ///
-    /// Every gate reports the same thing — "this construct is not lowered
-    /// yet" — so they share one code from the legacy E6 surface rather than
-    /// being classified one by one. `LocalizedError` is kept because the
-    /// description is the only text a caller without the resource layer gets.
+    /// The single capability-gate error: free-form detail plus the position of the construct rejected.
+    /// Every gate shares one diagnostic code (the unsupported-feature bucket); the resource layer
+    /// dispatches on code and position, not message text. `LocalizedError` stays for callers without it.
     public struct IRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
-        /// Diagnostic code, defaulted to the E6 unsupported-feature bucket.
-        /// The domain enum is the same source the legacy generator's codes
-        /// come from, so switching pipelines does not change the code domain.
+        /// Diagnostic code，默认落在 E6「不支持特性」桶。
+        /// 域枚举与生成器取码同源，故换管线不改变 code 的取值域。
         public var code: String = "\(DiagnosticDomain.irgen.rawValue)-004"
 
         public var description: String {
@@ -42,27 +30,24 @@ public enum IRLowerer {
         let type: IRType
     }
 
-    /// G10 monomorphization scratch: one specialization per concrete
-    /// type-argument combination, keyed by the specialized source name
-    /// (`盒_I32`, `身份_I32`). Struct specializations carry the substitution
-    /// map so extension methods can be re-specialized per instance.
+    /// Monomorphization scratch: one specialization per concrete type-argument combination, keyed by
+    /// the specialized source name (`盒_I32`, `身份_I32`). Struct instances carry their substitution map
+    /// so extension methods can be re-specialized per instance.
     fileprivate struct G10SpecializationState {
         var structSpecializations: [String: StructDecl] = [:]
-        /// ADR-001 `P2b`：泛型**给定块**的特化体（按特化名键，形如 `匣_I32`）。
+        /// 泛型**给定块**的特化体（按特化名键，形如 `匣_I32`）。
         /// 与结构体那一格分开：给定块不是 `StructDecl`，且它还要驱动默认实例的取用。
         var givenSpecializations: [String: GivenDecl] = [:]
         var funcSpecializations: [String: FuncDecl] = [:]
         /// Specialized-name -> substitution used for that struct instance
         /// (generic param name -> concrete annotation).
         var structSubstitutions: [String: [String: TypeAnnotation]] = [:]
-        /// G-2d: specialized generic-enum bodies, keyed the same way
+        /// Specialized generic-enum bodies, keyed the same way
         /// (`结果_I32_String`).
         var enumSpecializations: [String: EnumDecl] = [:]
-        /// G-2d: what the pre-pass resolves enum construction sites against.
-        /// Carried here rather than threaded through every recursive call of
-        /// `precollectGenericUses` -- the scan already passes this state
-        /// everywhere, and a fourth by-value table would have to be added to
-        /// each of its ~40 call sites for no gain.
+        /// What the pre-pass resolves enum construction sites against. Carried inside the state rather than
+        /// threaded through every recursive call of `precollectGenericUses`, which already passes the state
+        /// everywhere; a separate by-value table would have to be added at each of its call sites.
         var genericEnums: IRGenericEnumIndex = .empty
     }
 
@@ -93,8 +78,8 @@ public enum IRLowerer {
             switch decl {
             case .structDecl(let sd): return sd.fields
             case .objectDecl(let od): return od.fields
-            // ADR-001 `P1b`：给定块与对象同规 —— 块内字段即其字段表（`[[T]]` 追加的
-            // 只有方法，从不追加字段，故这里不含 `extensionMethods` 对应物）。
+            /// 给定块与对象同规 —— 块内字段即其字段表（`[[T]]` 追加的
+            /// 只有方法，从不追加字段，故这里不含 `extensionMethods` 对应物）。
             case .givenDecl(let gd): return gd.fields
             default: return []
             }
@@ -105,31 +90,17 @@ public enum IRLowerer {
             switch decl {
             case .structDecl(let sd): own = sd.methods
             case .objectDecl(let od): own = od.methods
-            // ADR-001 `P1b`：给定块**自带的方法**与 `[[给定块名]]` 归并进来的方法合成
-            // 一张表 —— 须显式列出，`default:` 分支只给 `extensionMethods`，会丢块内方法。
+            /// 给定块**自带的方法**与 `[[给定块名]]` 归并进来的方法合成一张表 ——
+            /// 须显式列出；`default:` 分支只给 `extensionMethods`，会丢块内方法。
             case .givenDecl(let gd): own = gd.methods
             default: own = []
             }
             return Self.merging(own: own, extensions: extensionMethods)
         }
 
-        /// 合并一个名义类型的两处方法来源：**类型自身**（给定块把自己的真实现带在身上）
-        /// 与**各扩展块**（按声明顺序归并进来的）。
-        ///
-        /// ⭐ **按名合并、同名者后者胜** —— 两半都不可省：
-        /// - **按名**：本语言不支持重载 ⇒ 一个类型上一个名字至多对应一个体，
-        ///   而调用点本就只按名字取。
-        /// - **后者胜**：扩展块声明在类型之后 ⇒ 用户写的覆盖块压过自身那一份，
-        ///   这正是「默认实现可被替换」的兑现面。
-        ///
-        /// ⚠️ 不去重的后果不在本层：重名两条会一路走到发射，成为同名的两个函数定义，
-        /// 而模块在被执行之前就被拒。解释器后端按字典收表、后写者胜，因而**看不出**这件事
-        /// —— 各后端在此的差别不是分工，是一个后端替另一个后端把缺陷兜住了。
-        ///
-        /// ⚠️ 与组合扁平化那一格的规则**同向**（那里也是子类同名的方法把父类的滤掉）：
-        /// 两处问的是同一个问题 —— 同一个名字上谁说了算。
-        ///
-        /// 位置取**首次出现**处：只换内容、不挪位置 ⇒ 发射顺序与方法表顺序与从前一致。
+        /// 合并一个名义类型的两处方法来源：类型自身带的方法，与各扩展块按声明顺序归并进来的方法。
+        /// 按名合并、同名者后者胜：无重载 ⇒ 一名一体；扩展块声明在后 ⇒ 覆盖块压过自身那份。位置取首次
+        /// 出现处，故发射顺序与方法表顺序稳定。不去重则同名两条成为两个同名定义，模块被执行前即被拒。
         static func merging(own: [FuncDecl], extensions: [FuncDecl]) -> [FuncDecl] {
             var byName: [String: FuncDecl] = [:]
             var order: [String] = []
@@ -147,10 +118,9 @@ public enum IRLowerer {
             }
         }
 
-        /// Rebuild this entry with merged fields/methods (composition
-        /// flattening result). The full merged method list (own + extension
-        /// + inherited) is stored back as extension methods so `methods`
-        /// keeps its "own + extension" shape and mangling stays child-side.
+        /// Rebuild this entry with merged fields/methods (composition flattening result). The full merged
+        /// list (own + extension + inherited) goes back in as extension methods, so `methods` keeps its
+        /// "own + extension" shape and mangling stays child-side.
         func replacing(fields: [FieldDecl], methods: [FuncDecl]) -> NominalInfo {
             var copy = self
             switch decl {
@@ -174,11 +144,9 @@ public enum IRLowerer {
         }
     }
 
-    /// G11: resolve struct composition by merging the composed parent's
-    /// fields/methods into the child nominal — child members first, then the
-    /// parent's non-overridden ones (interpreter mergeComposedType parity).
-    /// Nested composition recurses; `visited` breaks cycles. Object parents
-    /// are rejected (interpreter checkComposedTypeAllowed parity).
+    /// Resolve struct composition: merge the composed parent's fields/methods into the child nominal —
+    /// child members first, then the parent's non-overridden ones. Nested composition recurses under a
+    /// `visited` cycle guard; only structs carry `composedType`, so object parents never reach here.
     private static func flattenComposedNominals(_ nominals: inout [String: NominalInfo]) {
         func merged(_ info: NominalInfo, _ visited: inout Set<String>) -> NominalInfo {
             guard let parentName = info.composedParent,
@@ -204,7 +172,7 @@ public enum IRLowerer {
         }
     }
 
-    /// G12: module-level trait registry. Trait default bodies lower once
+    /// Module-level trait registry. Trait default bodies lower once
     /// per implementing type at the dispatch site; abstract signatures are
     /// skipped (conformance is the checker's contract).
     struct TraitRegistry {
@@ -212,7 +180,7 @@ public enum IRLowerer {
         let typeTraits: [String: [String]]
     }
 
-    /// G12: collector for trait default bodies specialized at dispatch
+    /// Collector for trait default bodies specialized at dispatch
     /// sites. Reference type — appends from nested contexts (function bodies
     /// inside main) reach the module assembly in `lower()`.
     final class TraitDefaultCollector {
@@ -225,22 +193,9 @@ public enum IRLowerer {
         }
     }
 
-    /// G13 batch 2: lower a checked multi-file package. Callers must run the
-    /// package-level semantic + type-check passes first (same contract as
-    /// `check(package:)`). The checker's package context has already enforced
-    /// cross-file visibility (D4: the IR channel re-enforces nothing).
-    ///
-    /// D1 implementation: merge every file's declarations into one virtual
-    /// module and run the existing single-module pre-pass chain on the
-    /// union. All pre-passes (trait/nominal/enum registries, signature
-    /// table, closure pre-collection, monomorphization) become global
-    /// pre-scans for free — cross-file references resolve exactly like
-    /// same-file forward references. No redeclaration risk: the semantic
-    /// layer's `PackageSymbolIndex.build` already rejects cross-file
-    /// duplicate top-level names.
-    ///
-    /// File ordering follows `FileLoader.loadDirectory`'s deterministic sort
-    /// (fileName ascending), so pre-pass registration order is stable.
+    /// Lower a checked multi-file package: callers must run the package-level semantic and type-check
+    /// passes first. All files merge into one virtual module, so every pre-pass becomes a global scan and
+    /// cross-file references resolve like forward references; file order (name ascending) keeps it stable.
     public static func lower(
         package: Package, typeInference: TypeInference?,
         requiresMain: Bool = true
@@ -257,36 +212,18 @@ public enum IRLowerer {
             moduleAliases: aliasMap, requiresMain: requiresMain)
     }
 
-    /// P4-1c: 把 `import` 目标的声明并入虚拟模块，并返回「别名 → 可引入符号名」表。
-    ///
-    /// 为什么需要它：整包降载合并的是**本包**各文件的声明，而 `import` 目标的声明在
-    /// **另一份清单**之下 —— 目录加载器按「嵌套模块」规则把自带清单的子目录剔出本包，
-    /// 于是依赖符号根本不在 `Package.fileUnits` 里。解释器侧无此问题，它给每个别名建一个
-    /// 子解释器（运行时机制）；本侧是静态降载，故改为**把依赖声明并入同一个虚拟模块**：
-    /// 裸调用从此按前向引用解析，限定调用按 `别名.符号` 键解析。
-    ///
-    /// 传递性：依赖自身的 `import` 一并递归（`pending` 队列），环由加载器的 R2 检测兜住。
-    /// 只并入 **public** 符号的声明（跨模块可引入门槛与解释器一致）。
-    /// Public because the single-module run path needs it too: a lone file may
-    /// carry `[main|import] helper = "../helper"` and then call
-    /// `helper.加法(1, 2)`. The package path merged imports for it; the module
-    /// path did not, so the alias had nothing to key off and was read as a
-    /// variable. One merge, both paths.
+    /// 把 `import` 目标的声明并入虚拟模块，返回「别名 → 可引入符号名」表。依赖声明不在本包清单里
+    /// （加载器把自带清单的子目录剔出本包），故静态降载并进同一虚拟模块：裸调用走前向引用，限定调用走
+    /// `别名.符号`；只并 public 符号，传递性靠 `pending` 队列。单文件路径也走此处，否则别名无键可查。
     public static func mergedWithImports(_ module: Module) throws -> (Module, [String: Set<String>]) {
         guard !module.imports.isEmpty else { return (module, [:]) }
         let loader = ModuleDependencyLoader.shared
         var aliasMap: [String: Set<String>] = [:]
         var extraDecls: [TopLevelDecl] = []
         var seenRoots = Set<String>()
-        // Which module supplied each merged top-level name.
-        //
-        // Flat merging gives every imported module one shared namespace, so two
-        // modules exporting the same public name would collapse into whichever
-        // arrived last -- a *wrong value* rather than a missing one, which is
-        // the worse failure of the two. The three-level fixture exists to pin
-        // exactly this (frontend and syntax both export 取值, 100 and 10): with
-        // the collapse the program prints 20 instead of 110. Tracking the
-        // supplier lets the merge refuse instead.
+        // Which module supplied each merged top-level name. Flat merging gives all imported modules one
+        // namespace, so two of them exporting the same public name would collapse into whichever arrived
+        // last — a wrong value rather than a missing one. Tracking the supplier lets the merge refuse instead.
         var supplier: [String: String] = [:]
         var pending = module.imports
         var index = 0
@@ -321,26 +258,17 @@ public enum IRLowerer {
         return (merged, aliasMap)
     }
 
-    /// Lower a checked module. `typeInference` is the TypeChecker's inference
-    /// output; callers must run the checker first (same contract as the old
-    /// `typeCheckThenGenerate` pipeline).
-    /// - Parameter requiresMain: whether the lowered module must carry `main`.
-    ///   The default is the executable-program contract, so every existing
-    ///   caller keeps it. `pini test` passes `false`: a test-only file is a
-    ///   legitimate module with no `main` at all (two of the `|test` fixtures
-    ///   are exactly that), and refusing one would delete a working program
-    ///   shape rather than migrate it. The requirement is the *runner's*, not
-    ///   the IR's — which is why it is a parameter here and not a property of
-    ///   every lowered module.
+    /// Lower a checked module; `typeInference` is the checker's output, so callers must run the checker first.
+    /// - Parameter requiresMain: `pini test` passes `false` for test-only files, which are legitimate
+    ///   modules without `main`; the requirement belongs to the runner, not to the IR.
     public static func lower(
         module: Module, typeInference: TypeInference?,
         moduleAliases: [String: Set<String>] = [:],
         requiresMain: Bool = true
     ) throws -> IRModule {
-        // G12 pre-pass: trait registry. Trait default-implementation bodies
-        // (signatures with a body) join the signature table like any named
-        // function; abstract signatures (body == nil) are skipped — the type
-        // checker already verified conformance (verifyTraitConformance).
+        // Trait registry pre-pass: default-implementation bodies (signatures with a body) join the signature
+        // table like any named function; abstract signatures are skipped since the checker already verified
+        // conformance. Both tables are module-wide.
         var traits: [String: TraitDecl] = [:]
         var typeTraits: [String: [String]] = [:]
         for decl in module.declarations {
@@ -358,15 +286,14 @@ public enum IRLowerer {
         var nominals: [String: NominalInfo] = [:]
         var genericStructTemplates: [String: StructDecl] = [:]
         var genericFuncTemplates: [String: FuncDecl] = [:]
-        // G-2d: generic enum templates, plus the case -> owner index that the
+        // Generic enum templates, plus the case -> owner index that the
         // bare construction spelling resolves through (泛型枚举构造形态). The qualified
         // spelling names the enum itself, so it needs no index.
         var genericEnumTemplates: [String: EnumDecl] = [:]
         var genericEnumCaseOwners: [String: [String]] = [:]
-        // 预置声明（**宿主提供**）中、**未被本模块占用名字**的那些 —— 见 `visiblePredefined`。
-        // ⚠️ 落在这里而不是各入口：整包降载会把各文件摊平成一个模块再走本函数 ⇒
-        // 此处一处覆盖单模块与整包两条路。名义表又是 `userTypes` 的来源，故这一步同时让
-        // `using` 形参的类型标注找得到这个名字。
+        // 预置声明（宿主提供）中未被本模块占用名字的那些 —— 见 `visiblePredefined`。落在这里而非各入口：
+        // 整包降载会把各文件摊平成一个模块再走本函数，一处即覆盖两条路。名义表又是 `userTypes` 的来源，
+        // 故这一步同时让 `using` 形参的类型标注找得到这个名字。
         let predefined = IRLowerer.visiblePredefined(in: module)
         for decl in predefined {
             guard case .givenDecl(let gd) = decl else { continue }
@@ -381,12 +308,9 @@ public enum IRLowerer {
                     genericStructTemplates[sd.name] = sd
                 }
             case .objectDecl(let od): nominals[od.name] = NominalInfo(name: od.name, isObject: true, decl: decl)
-            // ADR-001 `P1b`：给定块与结构 / 对象**同规进入归并表** ⇒ `[[给定块名]]`
-            // 的方法能归并进来。`[[X]]` 的覆盖范围由这张表决定，与括号形无关。
-            // ⚠️ `isObject: false` **不是**新语义承诺，而是与类型层现状对齐：`TypeChecker`
-            // 显式不把给定块登记进 `referenceTypeNames`（值 / 引用语义属 `P2` 未裁项），
-            // 故此处取「非引用」= 忠实反映现状，而非替 `P2` 预裁。后批若裁定给定块为
-            // 引用类型，改这一处即可（`userTypes` 与 self 类型随之）。
+            // 给定块与结构 / 对象同规进入归并表 ⇒ `[[给定块名]]` 的方法能归并进来；`[[X]]` 的覆盖面由这张表
+            // 决定，与括号形无关。`isObject: false` 与类型层现状对齐：`TypeChecker` 不把给定块登记进
+            // `referenceTypeNames`，故此处不预裁值 / 引用语义；将来若改判，改这一处即可。
             case .givenDecl(let gd): nominals[gd.name] = NominalInfo(name: gd.name, isObject: false, decl: decl)
             case .funcDecl(let fd) where !fd.genericParams.isEmpty:
                 genericFuncTemplates[fd.name] = fd
@@ -401,10 +325,8 @@ public enum IRLowerer {
         let genericEnums = IRGenericEnumIndex(
             templates: genericEnumTemplates, caseOwners: genericEnumCaseOwners
         )
-        // ADR-001 `P1b`：三形扩展的目标按**实际注册类别**分三类处置。
-        // 「放过但今日也不归并」的名单 = 已声明、却不在 `nominals` 里的类型名：枚举
-        // （含泛型枚举）与泛型结构模板 —— 前者今日即无归并路径（`P1a` 登记的不覆盖面，
-        // 逐字维持），后者在 `G10` 特化段落按 `盒_<实参>` 另行归并。两者都**不是**本批要动的面。
+        // 三形扩展的目标按实际注册类别分三类处置。放过但不归并的名单 = 已声明、却不在 `nominals` 里的
+        // 类型名：枚举（含泛型枚举）无归并路径；泛型结构模板在特化段落按 `盒_<实参>` 另行归并。
         var toleratedExtensionTargets: Set<String> = []
         for decl in module.declarations {
             switch decl {
@@ -415,19 +337,9 @@ public enum IRLowerer {
             }
         }
         for decl in module.declarations {
-            // ADR-001：`.bracketExt`（方括号 = 通用扩展形）与 `((` / `{{` 两形**同权**。
-            // 归并条件从来只看「目标是否注册为名义类型」，不看 kind 本身 —— 实测（2026-09-19）
-            // `((` 与 `{{` 对结构 / 对象目标**互通**，即是一例。
-            //
-            // ⚠️ **订正**（`P1b`，2026-09-19）：`P1a` 此处曾写「故 `[[X]]` 对结构 / 对象 /
-            // **给定块**生效」—— 当时**失实**：给定块根本没进 `nominals`（落 `default: break`），
-            // 其方法在归并处被**静默丢弃**。`P1b` 把给定块收编进表后，那句话才成立。
-            //
-            // 三类处置：① 在 `nominals` 里（结构 / 对象 / 给定块）⇒ 归并；
-            // ② 在 `toleratedExtensionTargets` 里（枚举 / 泛型模板）⇒ 放过，维持今日行为；
-            // ③ 其余 —— 名字谁都不是，或指向**特征**（特征名不在这两份名单里）⇒ **响亮拒绝**
-            //    （新码 `E6-006`）。今日为静默丢弃；`P1b` 按用户裁定改为出声 ——
-            //    静默会让「写对了却没效果」无从定位。
+            // `.bracketExt`（方括号）与 `((` / `{{` 两形同权：归并条件只看「目标是否注册为名义类型」，不看
+            // kind 本身。三类处置：在 `nominals` 里 ⇒ 归并；在 `toleratedExtensionTargets` 里（枚举 / 泛型
+            // 模板）⇒ 放过；其余（未知名，或指向特征）⇒ 响亮拒绝 —— 静默丢弃会让写对却没效果无从定位。
             if case .extensionDecl(let ext) = decl,
                 ext.kind == .structExt || ext.kind == .objectExt || ext.kind == .bracketExt
             {
@@ -447,19 +359,12 @@ public enum IRLowerer {
             }
         }
 
-        // G11: struct composition flattening (mirror of the interpreter's
-        // mergeComposedType / legacy mergeComposedStructTypes). A struct body
-        // whose first line is a bare parent type name (`计数器`) embeds that
-        // parent: the child keeps its own fields/methods first, then the
-        // parent's non-overridden ones are appended (child overrides same-name
-        // parent members). Nested composition recurses with cycle guard.
-        // Parent methods are re-lowered with the child's self type (the
-        // interpreter shares the receiver environment; the flattened method
-        // mangles to `方法__子类型` and dispatches through the child nominal).
+        // Struct composition flattening: a struct body whose first line is a bare parent type name embeds that
+        // parent — child fields/methods first, then the parent's non-overridden ones appended. Parent methods
+        // are re-lowered with the child's self type, so the flattened name is `方法__子类型`.
         flattenComposedNominals(&nominals)
 
-        // G6 pre-pass: assign every funcLiteral a stable closure id (source
-        // order, keyed by "行:列" — legacy ClosureEmitter registry contract).
+        /// 前处理给每个 funcLiteral 分配稳定闭包 id，键为 "行:列"，按源码顺序编号。
         var closureIds: [String: Int] = [:]
         var closureCounter = 0
         for decl in module.declarations {
@@ -476,11 +381,9 @@ public enum IRLowerer {
             }
         }
 
-        // G10 pre-pass: monomorphization. Scan the whole module for generic
-        // construction / call sites (`盒<I32>()`, `身份<I32>(...)`), register
-        // a specialized nominal (fields substituted) or function decl per
-        // type-argument combination, and merge the specializations into the
-        // registries so the rest of lowering sees only concrete types.
+        // Monomorphization pre-pass: scan the module for generic construction / call sites (`盒<I32>()`),
+        // register a specialized nominal (fields substituted) or function decl per type-argument combination,
+        // and merge them into the registries so the rest of lowering sees only concrete types.
         var specializationState = G10SpecializationState()
         specializationState.genericEnums = genericEnums
         for decl in module.declarations {
@@ -494,10 +397,9 @@ public enum IRLowerer {
         for (specializedName, specialized) in specializationState.structSpecializations {
             nominals[specializedName] = NominalInfo(name: specializedName, isObject: false, decl: .structDecl(specialized))
             let substitution = specializationState.structSubstitutions[specializedName] ?? [:]
-            // `((盒<T>))` parses with targetType `盒` (type params stripped);
-            // the specialized instance is `盒_I32`, so match the template by
-            // prefix `盒_` / exact name `盒` (non-generic extensions on a
-            // concrete struct of the same name cannot exist alongside it).
+            // `((盒<T>))` parses with targetType `盒` (type params stripped) while the instance is `盒_I32`, so the
+            // template is matched by prefix `盒_` or exact name `盒`; a non-generic struct of the same name cannot
+            // coexist with the template.
             for decl in module.declarations {
                 if case .extensionDecl(let ext) = decl, ext.kind == .structExt,
                     specializedName == ext.targetType || specializedName.hasPrefix("\(ext.targetType)_")
@@ -516,24 +418,13 @@ public enum IRLowerer {
             }
         }
 
-        // G4 pre-pass: enum registry + the user-type name table (structs,
-        // objects, enums) used for annotation resolution. Names collect
-        // first; payload annotations resolve second (they may reference
-        // other user types).
-        //
-        // G-2d: a generic enum is a template, not a type -- its payload types
-        // name the type parameters, so they only resolve per specialization.
-        // Registering the template here is what failed on the first `T`, and it
-        // failed at the declaration, for every module that merely declared a
-        // generic enum. The specializations the G10 pre-pass registered take
-        // its place (added below, before any lookup can see them).
+        // Enum registry plus the user-type table used for annotation resolution: names collect first, payload
+        // annotations second (they may reference other user types). A generic enum is a template, not a type —
+        // its payloads name type parameters — so only its specializations are registered, not the template.
         var enums: [String: IREnumDecl] = [:]
-        // ⚠️ 声明序**单独记一份**：`IRModule.enums` 是数组，而 `Array(enums.values)`
-        // 取的是 Swift 字典的遍历序 —— **String 哈希带逐进程随机种子** ⇒ 多枚举的
-        // 模块每次运行产出的类型定义段顺序都不同（实测：同一份源连跑三次三个序，
-        // `.ll` 的哈希随之变）。发射器逐条发定义 ⇒ 顺序直接进产物 ⇒
-        // **产物不可复现**。这里改记声明序，特化枚举排在声明枚举之后（按特化名
-        // 定序，同样是确定的）。
+        // 声明序单独记一份：`IRModule.enums` 是数组，而 `Array(enums.values)` 取字典遍历序 —— String 哈希
+        // 带逐进程随机种子 ⇒ 多枚举模块每次运行的类型定义段顺序都不同，发射器逐条发定义 ⇒ 产物不可复现。
+        // 这里记声明序，特化枚举按特化名定序排在声明枚举之后，两者都确定。
         var enumOrder: [String] = []
         var userTypes: [String: IRType] = [:]
         for decl in module.declarations {
@@ -565,10 +456,9 @@ public enum IRLowerer {
                 enums[ed.name] = try resolveEnumPayloads(ed, userTypes: userTypes)
             }
         }
-        // G-2d: the specialized bodies are ordinary enums by now (no type
-        // parameters left), so they resolve through the same call.
-        // ⚠️ 遍历用 `.sorted()`：这个字典的键序同样带哈希随机性，而它们会进
-        // `IRModule.enums` 的尾部 ⇒ 不排序就还是不可复现。
+        // The specialized bodies are ordinary enums by now (no type parameters left), so they resolve through
+        // the same call. Iteration uses `.sorted()`: this dictionary's key order is hash-random too and these
+        // names go to the tail of `IRModule.enums`, so an unsorted walk would again be irreproducible.
         for specializedName in specializationState.enumSpecializations.keys.sorted() {
             guard let specialized = specializationState.enumSpecializations[specializedName] else {
                 continue
@@ -577,21 +467,9 @@ public enum IRLowerer {
             enumOrder.append(specializedName)
         }
 
-        // Signature pre-pass (after type registries so enum/struct/object
-        // parameter annotations resolve): captures every declared function's
-        // signature so bodies can call functions declared later in the file.
-        // ADR-001 `P2b`：泛型给定块的**模板**与被用到的**特化**。
-        //
-        // ⚠️ **位置是承重的**：必须排在**签名表构造之前**。签名表要解析每个形参的类型标注，
-        // 而 `using 箱: 匣<I32>` 的标注是泛型形 ⇒ 特化得先登记进 `userTypes`，否则
-        // 「parameter lacks a resolvable scalar type」当场就报（实测踩过一次）。
-        // 这里也正好是「类型表已就绪、签名还没建」的那一档。
-        // ADR-001 `P2b`：泛型给定块的**模板**与被用到的**特化**。
-        //
-        // 为什么在这里扫而不是进 `precollectGenericUses` 的递归：泛型给定块只有**一个**
-        // 可达入口 —— `using` 形参的类型标注（它没有构造点、没有调用点，故语句级预扫看不见它）。
-        // 一个入口就一段扫描，硬塞进预扫要给它的递归加一层参数；参数一多，那条链上每处都要跟。
-        // ⚠️ 本扫描只登记「被 `using` 用到的」特化（= 可达集合），不做全量枚举。
+        // 泛型给定块的模板与被用到的特化。位置是承重的：必须排在签名表构造之前 —— 签名表要解析每个形参的
+        // 类型标注，而 `using 箱: 匣<I32>` 的标注是泛型形，特化得先登记进 `userTypes`，否则当场报「缺可解析
+        // 标量类型」。只有 `using` 形参这一个可达入口（无构造点、无调用点），故在此单独扫一段，只登记可达集合。
         var genericGivenTemplates: [String: GivenDecl] = [:]
         for decl in module.declarations {
             guard case .givenDecl(let gd) = decl, !gd.genericParams.isEmpty else { continue }
@@ -621,7 +499,7 @@ public enum IRLowerer {
 
         var signatures: [String: IRLowererSignatureInfo] = [:]
 
-        /// G12: signature info for a trait default implementation. The
+        /// Signature info for a trait default implementation. The
         /// leading `self` parameter (annotation nil — trait bodies do not
         /// annotate it) is stripped; remaining parameters resolve normally.
         func traitSignatureInfo(_ sig: FuncDecl, userTypes: [String: IRType]) throws -> IRLowererSignatureInfo {
@@ -646,7 +524,7 @@ public enum IRLowerer {
         for decl in module.declarations {
             switch decl {
             case .traitDecl(let td):
-                // G12: default-implementation bodies enter the signature
+                // Default-implementation bodies enter the signature
                 // table (bodies may call top-level functions declared
                 // later); abstract signatures are skipped.
                 for sig in td.signatures where sig.body != nil && sig.genericParams.isEmpty {
@@ -661,10 +539,8 @@ public enum IRLowerer {
                 let returnType = try resolveReturnType(
                     funcDecl, userTypes: userTypes, subject: "'\(funcDecl.name)'"
                 )
-                // G13 batch 2: effective return for void-declared top-level
-                // functions that return a value (interpreter-faithful; the
-                // signature table drives call sites, so it must agree with
-                // the definition side's upgrade).
+                // Effective return for void-declared top-level functions that actually return a value: the signature
+                // table drives call sites, so it must agree with the definition side's upgrade.
                 let effectiveReturn =
                     try effectiveReturnType(
                         decl: funcDecl, userTypes: userTypes, nominals: nominals
@@ -679,7 +555,7 @@ public enum IRLowerer {
                     usingParamIndices: usingParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
-                // G14: foreign block signatures join the shared table so
+                // Foreign block signatures join the shared table so
                 // call sites resolve them like any top-level function.
                 for funcDecl in foreignDecl.funcs {
                     let paramTypes = try funcDecl.params.map { parameter -> IRType in
@@ -703,7 +579,7 @@ public enum IRLowerer {
             default: break
             }
         }
-        // G10: specialized generic functions join the signature table (their
+        // Specialized generic functions join the signature table (their
         // bodies reference only concrete types now).
         for (_, specialized) in specializationState.funcSpecializations {
             let paramTypes = try resolveParamTypes(specialized, userTypes: userTypes)
@@ -716,9 +592,9 @@ public enum IRLowerer {
             )
         }
 
-        // P4-1c: 跨模块限定名键。`别名.符号` 与裸名**共用同一份签名**，只在键上带别名前缀 ——
-        // 于是限定调用不必另开一条解析路径，也不会与变量的成员访问混淆
-        // （变量 `a.b(...)` 的键永远不会出现在签名表里）。
+        /// 跨模块限定名键：`别名.符号` 与裸名共用同一份签名，只在键上带别名前缀。
+        /// 于是限定调用不必另开解析路径，也不会与变量的成员访问混淆 ——
+        /// 变量 `a.b(...)` 的键永远不会出现在签名表里。
         for (alias, symbols) in moduleAliases {
             for symbol in symbols {
                 if let info = signatures[symbol] { signatures["\(alias).\(symbol)"] = info }
@@ -727,19 +603,9 @@ public enum IRLowerer {
 
         var functions: [IRFunction] = []
 
-        // H-3 三级派发（用户扩展 > 语言内标准库 > 宿主原生）的第一级。
-        //
-        // 内建类型（`String` / `Array`）不是名义声明 ⇒ 上面那轮扩展注册收不到它们，
-        // 方法体从未被降载：新增方法在 `lowerMemberCall` 落到「later grids」兜底，
-        // 覆盖同名成员则读不到用户实现（派发直接走内建表）。
-        //
-        // 这里把方法体降载成普通 `IRFunction`（IR 名 `方法__类型`，与名义类型同一
-        // mangle 规则），调用点按名分派 ⇒ 执行期不需要第二份实现。
-        //
-        // ⚠️ **必须先于**函数降载跑：函数降载要把这张表带进 `FunctionContext`，
-        // 同序遍历会让先降载的函数拿到空表。
-        // ⚠️ `Array` 在扩展块里不署名元素类型，self 取 i32 占位。本批的对象不使用
-        // self 的元素，故占位不参与语义；元素敏感的扩展方法需要调用点特化。
+        // 三级派发（用户扩展 > 标准库 > 宿主原生）的第一级。内建类型（`String` / `Array`）不是名义声明，
+        // 上面的扩展注册收不到它们，方法体从未降载 ⇒ 这里降载成普通 `IRFunction`（IR 名 `方法__类型`），
+        // 调用点按名分派。必须先于函数降载跑，否则该表进不了先降载函数的上下文。`Array` 的 self 取 i32 占位。
         var builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
         for decl in module.declarations {
             guard case .extensionDecl(let ext) = decl,
@@ -780,18 +646,13 @@ public enum IRLowerer {
                 // default bodies specialize at their dispatch sites (G12).
                 continue
             case .foreignDecl:
-                // G14: declare-only surface — lowered into `foreigns` below,
+                // Declare-only surface — lowered into `foreigns` below,
                 // no function body to emit.
                 continue
             case .givenDecl(let givenDecl):
-                // ADR-001 `P2b`：中间态结束 —— 给定块不再是「能解析、不能跑」。它现在与
-                // 结构 / 对象同规进入类型面（下面的类型装配），默认实例由 `using` 取用点物化。
-                //
-                // ⚠️ **字段初值必须齐全**：默认实例的定义就是「各字段初值合起来」（ADR §2.2）
-                // ⇒ 缺一个就没有完整默认值。用户 2026-09-19 裁定：**降载期对每个给定块报**，
-                // 不做「用到了才报」—— 于是未被任何 `using` 使用的给定块**也**会因此报错。
-                // 这是**行为收紧**，已在那条裁定里登记；代价是「字段留空、以后显式构造」这种
-                // 写法不再合法（要它就写显式初值）。
+                // 给定块与结构 / 对象同规进入类型面，默认实例由 `using` 取用点物化。字段初值必须齐全：默认实例的
+                // 定义就是「各字段初值合起来」⇒ 缺一个就没有完整默认值，故降载期对每个给定块报错，不区分是否被用到
+                // —— 未被任何 `using` 使用的给定块同样报错：字段留空、以后显式构造这种写法因此不被接受。
                 for field in givenDecl.fields where field.initializer == nil {
                     throw rejected(
                         "给定块 `\(givenDecl.name)` 的字段 `\(field.name)` 缺初值"
@@ -807,7 +668,7 @@ public enum IRLowerer {
                 )
             }
         }
-        // G10: emit the specialized generic function bodies.
+        // Emit the specialized generic function bodies.
         for (_, specialized) in specializationState.funcSpecializations {
             functions.append(
                 try lowerFunction(
@@ -824,18 +685,13 @@ public enum IRLowerer {
             }
         }
 
-        // G3: lower nominal type declarations (field defaults via a scratch
-        // context; methods as self-parameterized functions with mangled IR
-        // names `方法__类型` so they cannot collide with top-level functions).
-        // Fields come from the registry, not the raw declaration: G11
-        // composition flattening has already merged inherited members there.
+        // Lower nominal type declarations: field defaults via a scratch context, methods as self-parameterized
+        // functions with IR names `方法__类型` so they cannot collide with top-level functions. Fields come from
+        // the registry, not the raw declaration — composition flattening already merged inherited members there.
         var typeDecls: [IRTypeDecl] = []
-        // 预置声明（**宿主提供**）也进本表：名义表只让类型名可解析，而**本表**才是
-        // 执行器建类型表、并据以物化默认实例的来源 —— 只进名义表会让实例
-        // 「类型上存在、字段上空」（实测形态：字段读得出类型、运行时却报该类型无此字段）。
-        //
-        // ⚠️ 用**同一份** `predefined`：本表是**数组**，两条同名项会让下游拿到两份定义
-        // （执行器按名字建表会后者胜，而发射器按条发定义会发两份）⇒ 在入口处消歧。
+        // 预置声明（宿主提供）也进本表：名义表只让类型名可解析，本表才是执行器建类型表并物化默认实例的
+        // 来源 —— 只进名义表会让实例「类型上存在、字段上空」。用同一份 `predefined`：本表是数组，两条同名项
+        // 会让下游拿到两份定义（执行器后者胜、发射器发两份）⇒ 在入口处消歧。
         for decl in predefined + module.declarations {
             switch decl {
             case .structDecl(let sd):
@@ -864,9 +720,9 @@ public enum IRLowerer {
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                     ))
             case .givenDecl(let gd):
-                // ADR-001 `P2b`：给定块**进类型面**。此前它只进 `nominals`（`P1b`）而进不了
-                // `types` ⇒ 既没有聚合体、也不可构造（`配置()` 曾直接报错），默认实例更无从
-                // 物化。`isObject: false` 与 `P1b` 的登记一致：值 / 引用语义仍不预裁。
+                /// 给定块进**类型面**：既登记 `nominals`，也进 `types` ⇒ 有聚合体、可构造
+                /// （`配置()` 合法），默认实例才物化得出来。`isObject: false` 与 `nominals` 的
+                /// 登记一致：值 / 引用语义不预裁。
                 let info = nominals[gd.name]!
                 typeDecls.append(
                     try lowerNominal(
@@ -883,8 +739,7 @@ public enum IRLowerer {
             }
         }
 
-        // ADR-001 `P2b`：泛型给定块的**特化**进同一张类型表。只到降载面（用户 2026-09-19
-        // 裁定「含泛型但只到降载」）—— 发射与引擎沿用非泛型路径，故这里只保证「类型存在且
+        // 泛型给定块的特化进同一张类型表，只到降载面：发射与引擎沿用非泛型路径，故这里只保证「类型存在且
         // 字段已替换」，不新增特化专属的槽位或初始化函数。
         for specializedName in specializationState.givenSpecializations.keys.sorted() {
             let info = nominals[specializedName]!
@@ -899,7 +754,7 @@ public enum IRLowerer {
                 ))
         }
 
-        // G10: emit typeDecls for specialized struct instances (fields +
+        // Emit typeDecls for specialized struct instances (fields +
         // re-specialized extension methods, both registered in `nominals`).
         for specializedName in specializationState.structSpecializations.keys {
             let info = nominals[specializedName]!
@@ -913,11 +768,11 @@ public enum IRLowerer {
                     closureIds: closureIds
                 ))
         }
-        // G12: trait default bodies specialized at dispatch sites join the
+        // Trait default bodies specialized at dispatch sites join the
         // function list (dedup by IR name already applied at the dispatch).
         functions.append(contentsOf: traitDefaultsCollector.functions)
 
-        // G14: lower foreign blocks into the declare-only surface.
+        // Lower foreign blocks into the declare-only surface.
         var foreigns: [IRForeignBlock] = []
         for decl in module.declarations {
             guard case .foreignDecl(let foreignDecl) = decl else { continue }
@@ -955,17 +810,15 @@ public enum IRLowerer {
             functions: functions, types: typeDecls,
             enums: enumOrder.compactMap { enums[$0] },
             foreigns: foreigns,
-            // ADR-001（用户第 5 条裁定的余量）：物化依赖留痕。当期**不产诊断** ——
-            // 环检测本体是后置的，这里只保证「后置的检测是加一条遍历，而不是重扫降载结果」。
+            /// 物化依赖留痕：这里**不产诊断**。环检测是后置的，此表只保证后置检测
+            /// 加一条遍历即可，不必重扫降载结果。
             givenReferences: Self.givenReferences(of: functions))
     }
 
     // MARK: - G10 monomorphization
 
-    /// Whole-module scan for generic construction / call sites, registering
-    /// specializations (legacy precollectGenericStructUses mirror, extended
-    /// to generic functions). Idempotent: the state deduplicates by the
-    /// specialized source name.
+    /// Whole-module scan for generic construction / call sites that registers specializations (structs,
+    /// enums and functions). Idempotent: the state deduplicates by the specialized source name.
     private static func precollectGenericUses(
         in decl: TopLevelDecl,
         genericStructTemplates: [String: StructDecl],
@@ -1127,11 +980,9 @@ public enum IRLowerer {
                     genericFuncTemplates[typeName]!, typeArgs: typeArgs, state: &state
                 )
             }
-            // G-2d: a generic enum's case carries the type arguments in the
-            // bare spelling (`ok<I32, String>(42)`), so this is where it lands
-            // — neither branch above matches a case name. The qualified
-            // spelling (`结果<I32, String>.ok(42)`) reaches this same case
-            // through the member's receiver, so both spellings register here.
+            // A generic enum's case carries its type arguments in the bare spelling (`ok<I32, String>(42)`), which
+            // matches neither branch above, so the case-name lookup happens here. The qualified spelling
+            // (`结果<I32, String>.ok(42)`) reaches the same branch through the member's receiver.
             if genericStructTemplates[typeName] == nil, genericFuncTemplates[typeName] == nil,
                 let enumTemplate = state.genericEnums.parentTemplate(qualifier: typeName, caseName: typeName)
             {
@@ -1281,11 +1132,9 @@ public enum IRLowerer {
         state.structSubstitutions[specializedName] = substitution
     }
 
-    /// ADR-001 `P2b`：登记一份**给定块**特化（字段经同一套替换）。
-    ///
-    /// 与结构体那条的差别只有两点：类型参数换成 `GivenDecl`；**方法一并带上**
-    /// （给定块的方法表要参与默认实例的成员访问，丢掉就不是同一个类型了）。
-    /// 字段初值原样保留 —— 替换只动类型标注，不动初值表达式。
+    /// 登记一份给定块特化（字段经同一套替换）。与结构体那条的差别只有两点：模板是 `GivenDecl`；
+    /// 方法一并带上 —— 给定块的方法表要参与默认实例的成员访问，丢掉就不是同一个类型了。
+    /// 字段初值原样保留：替换只动类型标注，不动初值表达式。
     private static func registerGivenSpecialization(
         _ template: GivenDecl,
         typeArgs: [TypeAnnotation],
@@ -1341,12 +1190,9 @@ public enum IRLowerer {
         return specialized
     }
 
-    /// G-2d: one specialized enum body per concrete type-argument combination
-    /// (`结果` + [I32, String] -> `结果_I32_String`), with every case payload
-    /// replaced through the same substitution the struct path uses. Case order
-    /// and therefore every tag is inherited unchanged from the template, which
-    /// is what lets the value-based `match` keep working without knowing about
-    /// specialization at all.
+    /// One specialized enum body per concrete type-argument combination (`结果` + [I32, String] ->
+    /// `结果_I32_String`), every payload replaced by the same substitution the struct path uses. Case order,
+    /// and hence every tag, is inherited unchanged — which is what lets value-based `match` keep working.
     private static func registerEnumSpecialization(
         _ template: EnumDecl,
         typeArgs: [TypeAnnotation],
@@ -1474,21 +1320,9 @@ public enum IRLowerer {
 
     // MARK: - Functions
 
-    /// The type of the value an async (`=>`) body hands to its caller's join --
-    /// that is, the **body's** own return type, the one its `return ok(v)` sites
-    /// are checked against.
-    ///
-    /// The checker already pins this from the front end: `bodyReturns` requires
-    /// `Result<T, Error>` at a `=>` body's return position, which is why the
-    /// written forms there are `return ok(v)` / `return err(e)`, and why a bare
-    /// `=> ()` process keeps the void path. The interpreter states the same rule
-    /// from the other side -- its join passes a Result through untouched and
-    /// boxes anything else into `ok(v)` -- so narrowing this position to Result
-    /// is that rule written statically, not a second rule.
-    ///
-    /// This is **not** the type a caller sees. See `asyncSignatureReturnType`:
-    /// the two used to be one function, and that collapse is what kept a handle
-    /// from being tellable apart from a settled value.
+    /// The type an async (`=>`) body hands to its caller's join: the body's own return type, the one its
+    /// `return ok(v)` / `return err(e)` sites are checked against (the checker requires `Result<T, Error>`
+    /// there, and a bare `=> ()` keeps the void path). Callers see `asyncSignatureReturnType` instead.
     private static func asyncBodyReturnType(
         declared: IRType?, isAsync: Bool
     ) -> IRType? {
@@ -1496,19 +1330,9 @@ public enum IRLowerer {
         return .result(ok: ok)
     }
 
-    /// The type a **caller** sees for an async (`=>`) function: a handle to a
-    /// running process, not the value that process will settle on.
-    ///
-    /// The type layer has said this all along -- `=> (T,)` types as
-    /// `Future<T, Error>` there, with `=> T` as sugar -- so this is the IR
-    /// catching up to a decision that was already made, not a new one.
-    ///
-    /// Why it has to be a distinct IR type rather than a note on the callee:
-    /// a value's type is what a backend reads when it decides how to move that
-    /// value. With both positions typed as a Result, an async call and a call to
-    /// a function that merely returns a Result were the same shape in the IR,
-    /// and a backend that must dispatch the first to a worker while calling the
-    /// second directly had nothing to dispatch on.
+    /// The type a caller sees for an async (`=>`) function: a handle to a running process, not the value it
+    /// will settle on. It must be a distinct IR type — a backend moves a value by its type, so typing both
+    /// positions as a Result leaves a fork-to-worker call indistinguishable from an ordinary one.
     private static func asyncSignatureReturnType(
         declared: IRType?, isAsync: Bool
     ) -> IRType? {
@@ -1589,11 +1413,8 @@ public enum IRLowerer {
 
     // MARK: - Annotation resolution (G3/G4 user types)
 
-    /// Resolve a type annotation: the built-in slice set first, then the
-    /// module's user types (structs / objects / enums) by simple name.
-    /// G-2d: build the IR enum registry entry for one enum declaration whose
-    /// payload annotations are expected to resolve. Shared by the module's own
-    /// (non-generic) enums and by the specialized generic bodies, which are
+    /// Build the IR enum registry entry for one enum declaration whose payload annotations are expected to
+    /// resolve. Shared by the module's own non-generic enums and by specialized generic bodies, which are
     /// indistinguishable from the former by the time they reach here.
     private static func resolveEnumPayloads(
         _ ed: EnumDecl,
@@ -1632,23 +1453,9 @@ public enum IRLowerer {
         return nil
     }
 
-    /// Resolve a function definition's parameter types, applying the
-    /// unannotated-parameter fallback the legacy emitter established (P6-4a):
-    /// a parameter that carries no annotation adopts the function's single
-    /// declared return type when there is exactly one, and I32 otherwise (the
-    /// interpreter's default numeric type). Both corpus shapes are covered by
-    /// the two branches — `f(x, y) -> ()` and `f(x, y) -> (I32,)` both land on
-    /// I32. Annotated parameters resolve as before, and an annotation that
-    /// does not resolve stays a gate error.
-    ///
-    /// Used by both ends of a definition: the signature pre-pass (so call
-    /// sites see the fallback) and the body lowering (so the definition
-    /// agrees). `foreign` and trait-default declarations keep their own
-    /// resolution — neither surface allows an unannotated parameter.
-    /// Positions of parameters declared without a type annotation.
-    ///
-    /// One source for the call-site rule: the signature builders record these,
-    /// and the call-site comparison skips exactly these positions.
+    /// Positions of parameters declared without a type annotation. One source for the call-site rule: the
+    /// signature builders record these, and the call-site comparison skips exactly these positions. Their slot
+    /// type still comes from the declaration's fallback (single declared return type, else I32).
     private static func untypedParamIndices(_ decl: FuncDecl) -> Set<Int> {
         Set(
             decl.params.enumerated().compactMap { index, parameter in
@@ -1656,10 +1463,8 @@ public enum IRLowerer {
             })
     }
 
-    /// ADR-001 `P2b`：一个顶层声明里**全部参数表**（自由函数 / 方法 / 特征默认体 / 扩展方法）。
-    ///
-    /// 泛型给定块的特化只在 `using` 形参的类型标注上出现，故扫描面就是参数表本身；
-    /// 语句级预扫看不见类型标注，两者是**互补**的，不是重复。
+    /// 一个顶层声明里全部参数表（自由函数 / 方法 / 特征默认体 / 扩展方法）。泛型给定块的特化只出现在
+    /// `using` 形参的类型标注上，故扫描面就是参数表本身：语句级预扫看不见类型标注，两者互补而非重复。
     private static func usingAnnotationParamLists(of decl: TopLevelDecl) -> [[Parameter]] {
         switch decl {
         case .funcDecl(let fd): return [fd.params]
@@ -1674,10 +1479,8 @@ public enum IRLowerer {
         }
     }
 
-    /// ADR-001：`using` 形参的位置（0 基）。
-    ///
-    /// 与 `untypedParamIndices` 并列，理由相同：这个量在**声明侧**成立（AST 上记着），
-    /// 调用侧只是照它判合法性并补实参 —— 两处必须来自同一个函数，否则会漂。
+    /// `using` 形参的位置（0 基）。与 `untypedParamIndices` 并列，理由相同：这个量在声明侧成立，
+    /// 调用侧照它判合法性并补实参 —— 两处必须来自同一个函数，否则会漂。
     private static func usingParamIndices(_ decl: FuncDecl) -> Set<Int> {
         Set(
             decl.params.enumerated().compactMap { index, parameter in
@@ -1685,7 +1488,7 @@ public enum IRLowerer {
             })
     }
 
-    /// ADR-001 `P2b`：依赖留痕的聚合 —— 函数名 → 它取用过的给定块类型（升序）。
+    /// 依赖留痕的聚合 —— 函数名 → 它取用过的给定块类型（升序）。
     private static func givenReferences(of functions: [IRFunction]) -> [String: [String]] {
         var edges: [String: [String]] = [:]
         for function in functions where !function.givenReferenceNames.isEmpty {
@@ -1694,11 +1497,8 @@ public enum IRLowerer {
         return edges
     }
 
-    /// ADR-001 `P2b`：把一次调用的实参映射到**形参位**。
-    ///
-    /// 与检查器 `FunctionSignature.argumentToParamIndices` 同口径（那份判合法性，这份真插入）：
-    /// 全显式 ⇒ 恒等；省略式（个数 = 形参个数 − using 个数）⇒ 实参只落非 using 位。
-    /// 两者都不成立 ⇒ arity 错，**文案与改动前逐字相同**（`using` 为空时两式合一）。
+    /// 把一次调用的实参映射到形参位，口径与检查器 `FunctionSignature.argumentToParamIndices` 一致：
+    /// 全显式 ⇒ 恒等；省略式（个数 = 形参个数 − using 个数）⇒ 实参只落非 using 位；都不成立 ⇒ arity 错。
     private static func usingParamMapping(
         callee: String,
         paramCount: Int,
@@ -1716,10 +1516,8 @@ public enum IRLowerer {
         return (0..<paramCount).filter { !usingParamIndices.contains($0) }
     }
 
-    /// ADR-001 `P2b`：`using` 形参的类型 —— 通用路径之外多一条**泛型给定块特化**的路。
-    ///
-    /// `IRType(from:)` / `resolveAnnotationType` 只吃简单名；泛型给定块在标注位写的是
-    /// `匣<I32>`，故先按特化名查一次（特化由预扫描登记进 `userTypes`）。
+    /// `using` 形参的类型：通用路径之外多一条泛型给定块特化的路。`IRType(from:)` 与
+    /// `resolveAnnotationType` 只吃简单名，而标注位写的是 `匣<I32>`，故先按特化名查一次 `userTypes`。
     private static func resolveUsingParamType(
         _ annotation: TypeAnnotation,
         userTypes: [String: IRType]
@@ -1732,12 +1530,9 @@ public enum IRLowerer {
         return IRType(from: annotation) ?? resolveAnnotationType(annotation, userTypes: userTypes)
     }
 
-    /// ADR-001 §2.6：把**推断出的函数类型标注**逐位解析成 IR 函数类型。
-    ///
-    /// ⚠️ 不能直接用 `IRType(from:)` —— 它只吃**内建简单名**，而匿名函数的参数类型
-    /// 可以是用户类型（给定块 `配置`、结构、对象…）。这与 `P2b` 在函数签名处遇到的是
-    /// 同一个坑，故复用 `resolveUsingParamType` 逐位解析。
-    /// 取用下标集合**原样透传** —— 它正是本批要让它活起来的那一位。
+    /// 把推断出的函数类型标注逐位解析成 IR 函数类型。不能直接用 `IRType(from:)` —— 它只吃内建简单名，
+    /// 而匿名函数的参数类型可以是用户类型（给定块、结构、对象…），故逐位走 `resolveUsingParamType`。
+    /// 取用下标集合原样透传。
     private static func resolvedFunctionType(
         _ annotation: TypeAnnotation,
         userTypes: [String: IRType]
@@ -1751,11 +1546,8 @@ public enum IRLowerer {
         return .function(params: params, returnType: returns.first, usingIndices: usingIndices)
     }
 
-    /// ADR-001 `P2b`：一个 `using` 形参的取用点。
-    ///
-    /// 只判一件事 —— **该类型有默认实例**，即它得是给定块（`[名|given]`）。
-    /// ⚠️ 字段是否齐全**不在**这里判：那条判据在声明处按「降载期对每个给定块」执行
-    /// （用户 2026-09-19 裁定），跑到调用点时声明早已过一遍 ⇒ 齐的。
+    /// 一个 `using` 形参的取用点：只判该类型有默认实例，即它得是给定块（`[名|given]`）。字段是否齐全
+    /// 不在这里判 —— 那条判据在声明处对每个给定块执行，跑到调用点时声明早已过一遍。
     private static func givenInstanceNode(
         forParamType type: IRType,
         callee: String,
@@ -1776,7 +1568,7 @@ public enum IRLowerer {
         return LoweredExpr(node: .givenInstance(type: type), type: type)
     }
 
-    /// ADR-001 `P2b`：把降载好的实参放回形参位，并在 `using` 位补取用点。
+    /// 把降载好的实参放回形参位，并在 `using` 位补取用点。
     private static func fillUsingArguments(
         retypedArgs: [LoweredExpr],
         paramIndices: [Int],
@@ -1787,10 +1579,8 @@ public enum IRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> [IRExpr] {
-        // ⚠️ **全显式形态下一位都不注入**：那种形态里每个形参位都有调用点给的实参，
-        // 在 `using` 位再插一个取用点会把它**顶掉**（`取(5, 6,)` 会变成「5 被忽略、
-        // 甲 取默认实例」）。ADR 说显式提供合法 ⇒ 这条守卫就是那句「允许」的落地。
-        // 本缺陷是被既有判据抓到的（`usingPrefixMarksOnlyItsOwnParameter`），不是想出来的。
+        // 全显式形态下一位都不注入：那种形态里每个形参位都有调用点给的实参，在 `using` 位再插一个取用点会
+        // 把它顶掉（`取(5, 6,)` 会变成「5 被忽略、甲 取默认实例」）。显式提供合法，这条守卫就是它的落地。
         guard omittedForm else { return retypedArgs.map(\.node) }
         var nodes: [IRExpr] = []
         var next = 0
@@ -1823,9 +1613,9 @@ public enum IRLowerer {
         }
         return try decl.params.map { parameter in
             guard let annotation = parameter.typeAnnotation else { return fallback }
-            // ADR-001 `P2b`：走 `resolveUsingParamType` —— 它比 `resolveAnnotationType`
-            // 多一条**泛型给定块特化**的路（`using 箱: 匣<I32>` 的类型标注是泛型形，
-            // 通用解析只吃简单名）。非泛型标注两条路等价，故这是纯放宽。
+            /// 走 `resolveUsingParamType`：它比 `resolveAnnotationType` 多一条**泛型给定块
+            /// 特化**的路（`using 箱: 匣<I32>` 的类型标注是泛型形，通用解析只吃简单名）。
+            /// 非泛型标注两条路等价，故这只是放宽。
             guard let type = resolveUsingParamType(annotation, userTypes: userTypes) else {
                 throw unsupported(
                     "parameter '\(parameter.name)' of '\(decl.name)' lacks a resolvable scalar type",
@@ -1836,19 +1626,9 @@ public enum IRLowerer {
         }
     }
 
-    /// Declared return type in IR terms.
-    ///
-    /// Several return slots (`-> (I32, I32,)`) collapse into ONE tuple value —
-    /// the representation the single-slot tuple form (`-> ((I32, I32,),)`)
-    /// already uses. Call sites, the return statement and the IR ABI therefore
-    /// need no second path: the call's value type is the tuple, exactly as if
-    /// the declaration had written the tuple annotation directly. The elements
-    /// are positional, so their labels are all nil — the same label shape the
-    /// call-site inference produces for a multi-value call (IRType's tuple
-    /// branch normalises the annotation layer's empty label list to all-nil).
-    ///
-    /// `subject` names the declaration kind for diagnostics ("'f'", "foreign
-    /// 'f'", "trait default 'f'", "method 'f'").
+    /// Declared return type in IR terms. Several return slots (`-> (I32, I32,)`) collapse into one tuple
+    /// value — the representation `-> ((I32, I32,),)` already uses — so call sites, the return statement and
+    /// the ABI need no second path. Elements are positional, hence all-nil labels; `subject` names the kind.
     private static func resolveReturnType(
         _ decl: FuncDecl,
         userTypes: [String: IRType],
@@ -1870,19 +1650,9 @@ public enum IRLowerer {
             return try resolve(decl.returnTypes[0])
         default:
             let fieldTypes = try decl.returnTypes.map(resolve)
-            // G2: the declared component names ride along. `-> (商: I32, 余:
-            // I32,)` is not decoration — the interpreter relabels the returned
-            // value from `decl.returnLabels` at the function boundary, the
-            // executor does the same off this type, and the emitter prints a
-            // tuple's labels straight from the type it was handed. Dropping
-            // them here un-names the value on *both* IR arms while the AST
-            // engine keeps the names: measured, `print(r)` gave `[3, 2]` on
-            // both arms and `[商: 3, 余: 2]` on the reference.
-            //
-            // Only a genuinely named signature switches this on. A positional
-            // multi-return keeps the all-nil list it had before, which matters
-            // because `IRType(from: annotation)` reads an *empty* label list
-            // as "positional" and expands it to all-nil.
+            // The declared component names ride along: `-> (商: I32, 余: I32,)` is not decoration. The interpreter
+            // relabels from `decl.returnLabels` at the boundary, the executor does so off this type, and the emitter
+            // prints a tuple's labels straight from it. Only a genuinely named signature switches this on.
             let named = decl.returnLabels.contains { $0 != nil }
             return .tuple(
                 labels: named && decl.returnLabels.count == fieldTypes.count
@@ -1895,10 +1665,9 @@ public enum IRLowerer {
 
     // MARK: - Nominal types (G3)
 
-    /// Lower one struct/object declaration: field defaults via a scratch
-    /// context, methods as self-parameterized IRFunctions with IR names
-    /// `方法__类型` (double-underscore separator cannot collide with
-    /// mangle output, which never emits underscores for ASCII names).
+    /// Lower one struct/object declaration: field defaults via a scratch context, methods as
+    /// self-parameterized `IRFunction`s named `方法__类型` (the double-underscore separator cannot collide
+    /// with mangle output, which never emits underscores for ASCII names).
     private static func lowerNominal(
         name: String,
         isObject: Bool,
@@ -1978,21 +1747,17 @@ public enum IRLowerer {
         let returnType = try resolveReturnType(
             decl, userTypes: userTypes, subject: "'\(decl.name)'"
         )
-        // G13 batch 2: a void-declared method whose body returns a value
-        // (package-demo corpus documents the interpreter flows it out)
-        // upgrades to the effective return type — body returns and call
-        // sites both use it.
+        // A void-declared method whose body returns a value upgrades to the effective return type; body returns
+        // and call sites both use it.
         let effectiveReturn =
             try effectiveReturnType(
                 decl: decl, userTypes: userTypes, nominals: nominalTypes,
                 selfTypeName: typeName
             ) ?? returnType
         var params = [IRFunction.IRParam(name: "self", type: selfType)]
-        // The receiver may also be written as an explicit leading `self`
-        // parameter (trait default bodies are written that way). It is the
-        // receiver marker rather than a parameter: the interpreter, the type
-        // checker and the trait signature pre-pass all drop it. Lowering it
-        // as an ordinary parameter made it look like an unannotated one.
+        // The receiver may also be written as an explicit leading `self` parameter (trait default bodies are).
+        // It is the receiver marker, not a parameter: the interpreter, the checker and the trait signature
+        // pre-pass all drop it, and lowering it as an ordinary one would make it look unannotated.
         let declaredParams =
             decl.params.first?.name == "self"
             ? Array(decl.params.dropFirst()) : decl.params
@@ -2024,10 +1789,9 @@ public enum IRLowerer {
             traitDefaultsCollector: traitDefaultsCollector
         )
         context.isAsync = decl.isAsync
-        // G12: bare field names resolve against the receiver's fields inside
-        // method bodies (interpreter bindInstanceFields parity — trait.pini's
-        // default body reads `名字` without a `self.` prefix). Emission goes
-        // through an explicit self load + fieldGet at the identifier site.
+        // Bare field names resolve against the receiver's fields inside method bodies (trait default bodies read
+        // `名字` without a `self.` prefix). Emission goes through an explicit self load + fieldGet at the
+        // identifier site.
         if case .nominal(let selfTypeName, let selfIsObject) = selfType,
             let info = nominalTypes[selfTypeName]
         {
@@ -2051,9 +1815,8 @@ public enum IRLowerer {
         _ block: Block,
         into context: inout FunctionContext
     ) throws -> IRBlock {
-        // 体嵌套深度（2026-09-24 裁定）：**体那一层是 1**，任何控制流的体都使之上浮一格。
-        // 与发射层同名计数同一含义，但两者是**独立实现** —— 它们必须对同一条规则给出同一个
-        // 答案，否则就回到「两层口径差」那种形态（见 `allowedAwaitLocation`）。
+        // 体嵌套深度：体那一层是 1，任何控制流的体都使之上浮一格。与发射层的同名计数含义相同，但两者是
+        // 独立实现 —— 必须对同一条规则给出同一个答案，否则就回到两层口径差（见 `allowedAwaitLocation`）。
         context.bodyDepth += 1
         defer { context.bodyDepth -= 1 }
         var statements: [IRStmt] = []
@@ -2061,11 +1824,9 @@ public enum IRLowerer {
         for statement in block.statements {
             let lowered = try lowerStatement(statement, into: &context)
             statements.append(contentsOf: lowered)
-            // P4-3: every statement this source statement lowered to carries
-            // that statement's own position. One `Block` statement can expand
-            // into several IR statements (a try-else variable initializer
-            // yields the allocation plus the try), and all of them are *this*
-            // line — which is what the interpreter reports for the same code.
+            // Every statement this source statement lowered to carries that statement's own position. One `Block`
+            // statement can expand into several IR statements (a try-else initializer yields the allocation plus the
+            // try), and all of them are this line — which is what the interpreter reports for the same code.
             let location = statement.location
             positions.append(contentsOf: Array(repeating: location, count: lowered.count))
         }
@@ -2074,19 +1835,9 @@ public enum IRLowerer {
 
     // MARK: - Statements
 
-    /// 一条语句**根位置**上被允许的可让出 `await` 的位置（`nil` = 这条语句没有这样的位置）。
-    ///
-    /// 四类与运行时的让出计划**同源**（`IRExecutor.IRYieldPlan`）：裸表达式语句 ·
-    /// `var` 初值 · `match` 判别式 · try-else 的 operand。两处必须一致，否则会出现
-    /// 「检查器说合法、运行时静默按阻塞处理」—— 那正是这条规则要消灭的东西。
-    ///
-    /// `try` 是**透明**的：`try await f() else …` 的求值点就是 `await f()` 的求值点，
-    /// 所以剥掉包装再判。⚠️ 赋值语句与解构语句**不在**此列，这是刻意的：运行时的让出计划
-    /// 里没有这两形，放行只会造出上面那种混合，所以按 fail-closed 拒绝。
-    ///
-    /// ⚠️ ⭐ **这四形还须落在「体那一层」**（2026-09-24 裁定，见 `lowerStatement` 里的深度判据）：
-    /// 嵌在 `if` / `match` 的 case / 循环体里的那四形**同属此列也不放行**。本函数只判**句法形态**，
-    /// 深度由调用方判 —— 两者缺一即回到「降载层放行、发射层拒绝」的旧形态。
+    /// 一条语句根位置上被允许的可让出 `await` 的位置（`nil` = 没有这样的位置）。四类与运行时的让出计划同源
+    /// （`IRExecutor.IRYieldPlan`）：裸表达式语句 · `var` 初值 · `match` 判别式 · try-else 的 operand。`try`
+    /// 透明，剥掉包装再判；赋值与解构不放行。本函数只判句法形态，体深度由调用方合取判。
     private static func allowedAwaitLocation(in statement: Statement) -> SourceLocation? {
         var root: Expression?
         switch statement {
@@ -2113,17 +1864,9 @@ public enum IRLowerer {
         _ statement: Statement,
         into context: inout FunctionContext
     ) throws -> [IRStmt] {
-        // `await` 的**位置**判定（2026-09-20，裁定 35）：本次语句降载里，只有语句根表达式
-        // 本身（剥掉 `try` 包装之后）算可让出位置。判定放在语句层而不是表达式层，是因为
-        // 「语句根」本来就是**语句**的性质 —— 表达式层看不到它。
-        //
-        // ⭐ **且须落在体那一层**（2026-09-24 裁定）：嵌在 `if` / `match` 的 case / 循环体里的
-        // 语句根**不是**可让出位置。理由与发射层同一条 —— 续跑的跳转只跳得回体那一层的那一块，
-        // 嵌套块的进入条件在那条路径上被整段跳过，故那些值不支配续跑块。
-        // ⚠️ 在此之前这里是**只看句法形态**的，而发射层另按深度拒 ⇒ 两层对同一条规则给出不同
-        // 答案，且那处拒绝是**内部断言**（编译器直接崩）。本条把两层收口到同一个答案上。
-        //
-        // 嵌套语句（`if` 体、`match` 各臂）各自走到这里，各自设置、各自恢复。
+        // `await` 的位置判定：本次语句降载里，只有语句根表达式本身（剥掉 `try` 包装之后）算可让出位置。判定放在
+        // 语句层而非表达式层 —— 「语句根」本就是语句的性质。且须落在体那一层：嵌在 `if` / `match` case / 循环体
+        // 里的语句根不是可让出位置，续跑跳转只跳得回体那一层的块，那些值不支配续跑块。嵌套语句各自设置与恢复。
         let previousAllowedAwaitAt = context.allowedAwaitAt
         context.allowedAwaitAt = context.bodyDepth == 1 ? allowedAwaitLocation(in: statement) : nil
         defer { context.allowedAwaitAt = previousAllowedAwaitAt }
@@ -2189,12 +1932,9 @@ public enum IRLowerer {
 
         case .returnStatement(let value, let location):
             if let value = value {
-                // A bare error binding (`return err` in a handler, the `^e`
-                // sugar shape): the interpreter flows the RAW error payload
-                // out (a type hole — issue-try-else-raw-err-return-2026-09-08).
-                // Void functions drop the value (interpreter-faithful: silent
-                // return); non-void returns are gated — the type-erased err
-                // word cannot flow out as a typed payload without guessing.
+                // A bare error binding (`return err` in a handler, the `^e` sugar): the interpreter flows the raw error
+                // payload out, which is a registered semantic hole. Void functions drop the value (silent return);
+                // non-void returns are gated — the type-erased err word cannot flow out as a typed payload without guessing.
                 if case .identifier(let name, _) = value, context.errorBindings.contains(name) {
                     if context.returnType == nil {
                         return [.returnStmt(value: nil)]
@@ -2227,20 +1967,17 @@ public enum IRLowerer {
             guard cond.type == .boolean else {
                 throw unsupported("if condition is not Bool", at: conditionLocation(condition))
             }
-            // 标签 break 定向范围: a labeled `if` is an interruptible frame, so `break 标签`
-            // may leave the block. It is not a `continue` target (`isLoop:
-            // false`). The frame covers every branch — `then`, each `elif` and
-            // `else` — because the AST channel's `executeIf` wraps the whole of
-            // `executeIfBody` in its catch.
+            // A labeled `if` is an interruptible frame, so `break 标签` may leave the block; it is not a `continue`
+            // target (`isLoop: false`). The frame covers every branch — `then`, each `elif` and `else` — because the
+            // AST channel's `executeIf` wraps the whole of `executeIfBody` in its catch.
             if let label = label {
                 context.controlFrames.append(ControlFrame(label: label, isLoop: false))
             }
             defer { if label != nil { context.controlFrames.removeLast() } }
             let thenBody = try lowerBlock(thenBlock, into: &context)
-            // Elif chains lower to nested ifs (tree shape keeps them structural).
-            // The chain is nested *inside* this frame and therefore carries no
-            // label of its own: `break label` in an `elif` body leaves the whole
-            // `if`, which is where `executeIf`'s catch sits.
+            // Elif chains lower to nested ifs (tree shape keeps them structural). The chain is nested inside this
+            // frame and carries no label of its own: `break label` in an `elif` body leaves the whole `if`, which is
+            // where `executeIf`'s catch sits.
             var chain: IRBlock? = nil
             if let elseBlock = elseBlock {
                 chain = try lowerBlock(elseBlock, into: &context)
@@ -2275,12 +2012,9 @@ public enum IRLowerer {
             ]
 
         case .breakStatement(let label, _):
-            // Unresolvable target: fail-loud at run time, exactly like the
-            // interpreter (the signal escapes past every frame and errors at
-            // the top level). Lowering it hard here would reject programs the
-            // interpreter accepts. "Unresolvable" means no enclosing
-            // interruptible frame carries the label — a labeled `if` counts
-            // (标签 break 定向范围), so this set is narrower than it was before that ADR.
+            // Unresolvable target: fail loud at run time, exactly like the interpreter — the signal escapes past every
+            // frame and errors at the top level. Lowering it hard here would reject programs the interpreter accepts.
+            // The lookup walks enclosing interruptible frames, so a labeled `if` on the way out counts as one.
             guard
                 let depth = resolveControlDepth(
                     label: label, target: .anyFrame, into: &context
@@ -2307,15 +2041,9 @@ public enum IRLowerer {
             return [try lowerMatch(value: value, cases: cases, at: location, into: &context)]
 
         case .deferStatement(let wrapped, _):
-            // G9: defer runs at the enclosing block scope's normal end,
-            // LIFO across the defers of that scope (emitter block protocol).
-            //
-            // G-2f: `defer:` with an indented body parses as a *scoped block*,
-            // not as a single statement, so lowering the wrapped statement
-            // reached the catch-all and reported "statement 'scoped block'".
-            // The body is what has to be deferred, and it is a real block --
-            // it carries its own positions -- so it lowers through lowerBlock
-            // rather than statement by statement.
+            // `defer` runs at the enclosing block scope's normal end, LIFO across that scope's defers (emitter block
+            // protocol). `defer:` with an indented body parses as a scoped block, not a single statement, so the body
+            // itself is deferred and it lowers through `lowerBlock` — it is a real block and carries its own positions.
             if case .scopedBlock(_, let body, _) = wrapped {
                 return [.deferStmt(body: try lowerBlock(body, into: &context))]
             }
@@ -2361,20 +2089,15 @@ public enum IRLowerer {
             return [.exprStmt(.intConst(value: 0, type: .i32))]
 
         case .captureStatement(let name, _):
-            // G6: marker only — the capture set is resolved at the enclosing
+            // Marker only — the capture set is resolved at the enclosing
             // closure literal's creation point (free-variable analysis); the
             // statement itself carries no runtime effect.
             return [.captureMarker(name: name)]
 
         case .detachStatement(let expr, _):
-            // `detach <expr>` (G-3c-1): evaluate the operand and prune the task
-            // it yields from its parent, so the parent's return no longer cancels
-            // it — fire-and-forget's only sanctioned exit.
-            //
-            // A non-future operand is refused by the engine at run time, not
-            // here: the interpreter reports the same condition from its own
-            // detach arm, so a lowering-time refusal would be the earlier of
-            // the two rather than the equal one.
+            // `detach <expr>`: evaluate the operand and prune the task it yields from its parent, so the parent's
+            // return cannot cancel it — fire-and-forget's sanctioned exit. A non-future operand is refused by the
+            // engine at run time, matching the interpreter's detach arm rather than rejecting earlier here.
             let inner = try lowerExpr(expr, expected: nil, into: &context)
             return [.detachStmt(inner: inner.node)]
 
@@ -2386,11 +2109,9 @@ public enum IRLowerer {
         }
     }
 
-    /// G15: lower `for (pattern,) in iterable: body [step:]`. The iterable is
-    /// lowered once; its IR type decides the container kind and the
-    /// per-field element types, which must line up with the pattern arity
-    /// (`_` placeholders included — the interpreter requires an exact
-    /// field-count match, decomposePatternRow).
+    /// Lower `for (pattern,) in iterable: body [step:]`. The iterable is lowered once; its IR type decides the
+    /// container kind and the per-field element types, which must line up with the pattern arity — `_`
+    /// placeholders included, since the interpreter requires an exact field-count match.
     private static func lowerForIn(
         pattern: [String],
         iterable: Expression,
@@ -2456,17 +2177,9 @@ public enum IRLowerer {
         case loopOnly
     }
 
-    /// Resolve a break/continue to its unwind depth (标签语法反转 labeled control
-    /// flow, widened by 标签 break 定向范围). Depth counts **frames unwound from the
-    /// innermost one, target included**, so it doubles as the number of
-    /// `depth - 1` decrements the signal makes on its way out.
-    ///
-    /// An unlabeled signal targets the innermost **loop**, not the innermost
-    /// frame: a labeled `if` on the way out is stepped over, because on the
-    /// AST channel the signal arrives there as `nil != label` and is rethrown
-    /// unchanged. Unresolvable targets (no frame of the required kind, no
-    /// matching label) return `nil` — the caller lowers those to a runtime
-    /// panic, matching the interpreter's escape-to-top-level error.
+    /// Resolve a break/continue to its unwind depth, counting frames from the innermost one with the target
+    /// included — the number of decrements the signal makes on its way out. An unlabeled signal targets the
+    /// innermost loop, stepping over labeled `if` frames; no match returns `nil`, lowered to a runtime panic.
     private static func resolveControlDepth(
         label: String?,
         target: ControlTarget,
@@ -2503,10 +2216,9 @@ public enum IRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> [IRStmt] {
-        // `var m = ++n`: the initializer writes back to n and yields the value
-        // it wrote, so the statement expands to the write followed by the
-        // allocation that consumes it (G-2c). The written value is I32, which
-        // is the only target type `lowerIncDec` accepts.
+        // `var m = ++n`: the initializer writes back to n and yields the value it wrote, so the statement expands
+        // to the write followed by the allocation that consumes it. The written value is I32, the only target type
+        // `lowerIncDec` accepts.
         if case .unary(let op, let target, let unaryLocation)? = initializer,
             op == .increment || op == .decrement
         {
@@ -2576,11 +2288,9 @@ public enum IRLowerer {
             {
                 declaredType = type
             } else {
-                // Checker inference miss (collection literals, checker-untracked
-                // identifiers): derive the type by lowering the initializer
-                // without an expectation — same fallback contract as the
-                // legacy codegen (G2). The result is discarded; the real
-                // lowering below re-lowers with the resolved expectation.
+                // Checker inference miss (collection literals, checker-untracked identifiers): derive the type by lowering
+                // the initializer without an expectation. The result is discarded; the real lowering below re-lowers with
+                // the resolved expectation.
                 declaredType = try lowerExpr(initializer, expected: nil, into: &context).type
             }
         } else {
@@ -2613,34 +2323,9 @@ public enum IRLowerer {
         ]
     }
 
-    /// The type a binding's slot actually stores.
-    ///
-    /// The interpreter attaches tuple component names at exactly two points:
-    /// an explicit `return` (the engine mirrors it at its own return site, fed
-    /// from the declared return type), and an explicit tuple annotation on a
-    /// binding (`applyTypeAnnotationLabels`). A declaration that names no more
-    /// than the initializer's type already names is therefore the annotation
-    /// case only when it names *something else* — a named declaration sitting
-    /// over an initializer of the very same named type adds nothing, and the
-    /// engine's binding-site relabel (which fires on a slot type that names a
-    /// component) must not fire on it.
-    ///
-    /// "Do not relabel" is encoded as an all-`nil` label list rather than an
-    /// empty one: the arity of the label list is load-bearing for the emitter's
-    /// tuple rendering, so the field count is preserved and only the names go.
-    ///
-    /// The case that makes this observable: a function whose declared return
-    /// type is a named tuple, entered through its implicit trailing
-    /// expression. The interpreter's implicit path returns the last value
-    /// untouched — it relabels on the `return` statement only — so an inferred
-    /// binding over such a call holds an unlabelled value, even though the
-    /// call's static type is labelled.
-    ///
-    /// A positional annotation over an initializer of the same arity but a
-    /// named type (`let t: (I32, I32,) = namedCall()`) keeps the declared
-    /// names, which is the one shape where this test and the interpreter's
-    /// syntactic rule can disagree — registered as an open issue (tuple label
-    /// binding rule, 2026-09-13) rather than papered over here.
+    /// The type a binding's slot actually stores. The interpreter attaches tuple component names at two points
+    /// only — an explicit `return` and an explicit tuple annotation — so a declaration naming the initializer's
+    /// own type adds nothing and is relabelled with an all-`nil` list: names go, field count stays.
     private static func slotType(declared: IRType, initializer: IRType?) -> IRType {
         guard case .tuple(let labels, let fieldTypes) = declared, !labels.isEmpty else {
             return declared
@@ -2654,10 +2339,8 @@ public enum IRLowerer {
         )
     }
 
-    /// 该节点是不是**一个 err 槽的字**（`try-else` 的 `errorVar`、`match` 的 `case err(e)` 绑定）。
-    ///
-    /// 判据只有绑定表一条：类型层把这些名字的类型写作 `Error` / `CancelError`，而 IR 里它们
-    /// 是 `.i64`，与普通整数同形 ⇒ ⛔ 不能靠 IR 类型反推。
+    /// 该节点是不是一个 err 槽的字（`try-else` 的 `errorVar`、`match` 的 `case err(e)` 绑定）。判据只有绑定表
+    /// 一条：类型层把这些名字写作 `Error` / `CancelError`，IR 里却是 `.i64`，与整数同形 ⇒ 不能靠类型反推。
     private static func isErrorFaced(_ node: IRExpr, _ context: FunctionContext) -> Bool {
         guard case .load(let name, _) = node else { return false }
         return context.errorBindings.contains(name)
@@ -2674,16 +2357,9 @@ public enum IRLowerer {
         )
     }
 
-    /// Lower `let (a, b) = tupleExpr` (M6a D7).
-    ///
-    /// Interpreter semantics: evaluate the initializer ONCE, require a tuple,
-    /// require the name count to equal the arity, then bind each non-`_` name.
-    /// Lowering mirrors that literally — the initializer goes into a synthetic
-    /// slot (so a call with side effects still runs exactly once) and each name
-    /// is bound to an extractvalue off that slot. `_` placeholders still occupy
-    /// a position but bind nothing, matching the interpreter's
-    /// `where name != "_"` filter. A destructure with no static tuple shape is
-    /// not resolvable here (the interpreter's arity error is a run-time one).
+    /// Lower `let (a, b) = tupleExpr`. The initializer is evaluated once, must be a tuple, and the name count
+    /// must equal its arity; each non-`_` name then binds an extractvalue off a synthetic slot holding it, so a
+    /// call with side effects still runs once. A destructure with no static tuple shape is not resolvable here.
     private static func lowerVarDestructure(
         names: [String],
         initializer: Expression?,
@@ -2744,15 +2420,9 @@ public enum IRLowerer {
         return false
     }
 
-    /// Lower `try operand else errorVar: handler`.
-    ///
-    /// Error binding: the ABI type-erases the err slot to a machine word
-    /// (LR-12 — Pini's `^T` surface leaves E unconstrained, so no static err
-    /// type exists), so the bound name carries type i64. The binding scopes
-    /// to the handler only; shadowing an existing variable is rejected this
-    /// grid. Handler statements are restricted to return/pass (break/continue
-    /// need the labeled-control-flow grid); expression position (okTarget)
-    /// additionally requires the handler to end in return.
+    /// Lower `try operand else errorVar: handler`. The ABI type-erases the err slot to a machine word (no static
+    /// err type exists), so the bound name carries i64 and scopes to the handler only. Handler statements are
+    /// restricted to return/pass; expression position (`okTarget`) additionally requires an ending return.
     private static func lowerTry(
         operand: Expression,
         errorVar: String,
@@ -2761,18 +2431,9 @@ public enum IRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> IRStmt {
-        // A bare `ok(x)` / `err(x)` operand has no expected Result type to
-        // adopt: Pini's `^T` surface constrains neither half, so the general
-        // `ok`/`err` rule (which reads the expectation) has nothing to read.
-        // The two halves are not equally knowable, though -- `ok`'s payload
-        // fixes the ok half outright -- so the operand is built here with that
-        // type rather than being sent through the expectation channel.
-        //
-        // For `err` no ok type exists at all. I32 stands in, which is the same
-        // device `pass` uses to stay total without a node of its own: the ok
-        // half of a literal `err(...)` operand is unreachable (the handler owns
-        // control flow, and statement position is the only place this shape
-        // reaches), so the stand-in never carries a value.
+        // A bare `ok(x)` / `err(x)` operand has no expected Result to adopt: `^T` constrains neither half, so the
+        // general ok/err rule has nothing to read. `ok`'s payload fixes its half, so the operand is built here with
+        // that type; for `err` I32 stands in and is never read, since the handler owns control flow.
         let loweredOperand: LoweredExpr
         if case .call(let callee, let arguments, _) = operand,
             case .identifier(let calleeName, _) = callee,
@@ -2860,13 +2521,9 @@ public enum IRLowerer {
             return LoweredExpr(node: .intConst(value: value, type: type), type: type)
 
         case .floatLiteral(let value, _):
-            // Declaration width alignment (the legacy emitter's convertNumeric
-            // contract): a float literal sitting in an integer-typed slot
-            // folds to the truncated integer constant — the constant form of
-            // the legacy `fptosi`. Out-of-range or non-finite literals fall
-            // through to the float path, where requireAssignable reports the
-            // mismatch as an ordinary gate error instead of trapping here.
-            // Non-literal float expressions in integer slots stay fail-loud.
+            // Declaration width alignment: a float literal in an integer-typed slot folds to the truncated integer
+            // constant. Out-of-range or non-finite ones fall through to the float path, where `requireAssignable`
+            // reports an ordinary gate error; non-literal float expressions in integer slots stay fail-loud.
             if let expected, expected.isIntegerNumeric, value.isFinite,
                 value >= -9.223372036854776e18, value <= 9.223372036854776e18
             {
@@ -2883,7 +2540,7 @@ public enum IRLowerer {
             return LoweredExpr(node: .stringConst(value: value), type: .string)
 
         case .stringInterpolation(let segments, let location):
-            // G9: each expression part goes through the value display
+            // Each expression part goes through the value display
             // pipeline at emission (stringify parity, interpreter channel).
             var parts: [IRExpr] = []
             for segment in segments {
@@ -2910,11 +2567,9 @@ public enum IRLowerer {
             return try lowerArrayLiteral(elements, expected: expected, at: location, into: &context)
 
         case .subscript(let container, let index, let location):
-            // Array subscript read (G2): safe-assert channel — out of bounds
-            // panics at runtime, matching the interpreter. String subscript
-            // read (G2b) yields the single character as a String, same
-            // panic channel. Negative indices tail-count in both. The
-            // tolerant `.get` channel (Optional) is the member-call path.
+            // Array subscript read: the safe-assert channel — out of bounds panics at run time, matching the
+            // interpreter. A String subscript yields the single character as a String on the same channel, and negative
+            // indices tail-count in both. The tolerant `.get` channel belongs to the member-call path.
             let loweredContainer = try lowerExpr(container, expected: nil, into: &context)
             let elementType: IRType
             switch loweredContainer.type {
@@ -2955,19 +2610,16 @@ public enum IRLowerer {
             if let type = context.variableTypes[name] {
                 return LoweredExpr(node: .load(name: name, type: type), type: type)
             }
-            // 内建**值**：裸名字直出常量。
-            //
-            // ⚠️ 位置在变量表**之后**是刻意的：用户自己声明了同名变量时，读到的是用户那份
-            // —— 与预置声明的让位规则同向，不另立一套优先级。
-            // ⚠️ 那个常量恒为零，而它**不是一个可解引用的地址**：它的含义是「这个句柄
-            // 没有指向任何东西」。这句话由类型层承重（它只被比较、不被解引用）。
+            // 内建值：裸名字直出常量。位置在变量表之后是刻意的 —— 用户声明了同名变量时读到的是用户那份，与预置
+            // 声明的让位规则同向。那个常量恒为零，且不是一个可解引用的地址：含义是「这个句柄没有指向任何东西」，
+            // 由类型层承重（它只被比较、不被解引用）。
             if let valueType = BuiltinRegistry.builtinValueType(named: name) {
                 guard let irType = IRType(from: valueType) else {
                     throw unsupported("builtin value '\(name)' has no IR type", at: location)
                 }
                 return LoweredExpr(node: .intConst(value: 0, type: irType), type: irType)
             }
-            // G12: bare field name inside a method body (interpreter
+            // Bare field name inside a method body (interpreter
             // bindInstanceFields parity) — lower as `self.<field>`.
             if let fieldType = context.selfFieldTypes[name] {
                 let selfType = IRType.nominal(
@@ -3019,11 +2671,9 @@ public enum IRLowerer {
                     type: .boolean
                 )
             }
-            // String concatenation `s1 + s2` (G9): defer semantics build
-            // strings incrementally; concat joins the two C strings.
-            // G68（P0d-D）：判据从「两侧都是 `.string`」放宽为「两侧都是**字符串面**」
-            // —— `Char` 与 `String` 表示同构（都是 `i8*`），拼接语义完全相同，
-            // 而结果类型取 `String`（`c + c` 是两个字节，不再是单个字素）。
+            // 字符串拼接 `s1 + s2`：defer 语义逐个拼串，concat 连接两个 C 串。判据是「两侧都是字符串面」而非「都是
+            // `.string`」—— `Char` 与 `String` 表示同构（都是 `i8*`），拼接语义相同，结果取 `String`
+            // （`c + c` 是两个字节，不是单个字素）。
             if irOp == .add, lhs.type.isStringFaced, rhs.type.isStringFaced {
                 return LoweredExpr(
                     node: .stringConcat(lhs: lhs.node, rhs: rhs.node),
@@ -3042,21 +2692,18 @@ public enum IRLowerer {
             )
 
         case .unary(let op, let operand, let location):
-            // Prefix `++`/`--` are read-modify-write on an assignable target
-            // and yield the value they wrote. A store cannot live inside an
-            // expression node (the IR declares none), so statement position
-            // lowers them — see `lowerIncDec`. Reaching here means an
-            // expression position the read-modify-write shape does not cover.
+            // Prefix `++`/`--` are read-modify-write on an assignable target and yield the value written. A store
+            // cannot live inside an expression node (the IR declares none), so statement position and variable
+            // initializers lower them — see `lowerIncDec`. Reaching here means an uncovered expression position.
             if op == .increment || op == .decrement {
                 throw unsupported(
                     "prefix '\(op)' outside statement or variable-initializer position",
                     at: location
                 )
             }
-            // `+v` is the numeric identity: the interpreter's single-source
-            // `unaryValue` hands back the operand unchanged, so this lowers to
-            // the operand itself rather than to a node of its own. The guard
-            // keeps the rejection the interpreter raises for non-numbers.
+            // `+v` is the numeric identity: the interpreter's `unaryValue` hands back the operand unchanged, so this
+            // lowers to the operand itself rather than to a node of its own. The guard keeps the rejection the
+            // interpreter raises for non-numbers.
             if op == .plus {
                 let identity = try lowerExpr(operand, expected: nil, into: &context)
                 guard identity.type.isNumeric else {
@@ -3123,11 +2770,9 @@ public enum IRLowerer {
                     type: .optional(wrapped: .i32)
                 )
             }
-            // 枚举型名限定的**零参用例** `色彩.绿`：接收者是**类型名**、不是值，
-            // 故必须在 lower receiver 之前拦截（否则按变量解析 ⇒
-            // `reference to undeclared variable '色彩'`）。
-            // 与 `lowerMemberCall` 的限定构造支（`Enum.Case(实参)`）同一条决议次序：
-            // **先查枚举表、再看变量** —— 带参形态早已如此，本处补无参形态。
+            // 枚举型名限定的零参用例 `色彩.绿`：接收者是类型名、不是值，故必须在降载 receiver 之前拦截（否则按变量
+            // 解析 ⇒ `reference to undeclared variable '色彩'`）。与限定构造支（`Enum.Case(实参)`）同一决议次序：
+            // 先查枚举表、再看变量。
             if case .identifier(let enumTypeName, _) = object,
                 let enumDecl = context.enums[enumTypeName],
                 let enumCase = enumDecl.cases.first(where: { $0.name == name })
@@ -3185,12 +2830,9 @@ public enum IRLowerer {
             )
 
         case .tupleIndex(let object, let index, let location):
-            // `.0` positional read (M6a D7): the numeric counterpart of the
-            // labelled member read above — same extractvalue node, index taken
-            // from the syntax instead of a label lookup. The interpreter
-            // resolves out-of-range indices by raising a runtime error; a
-            // statically known index outside the arity is unresolvable at
-            // lowering time, so it fails loud here.
+            // `.0` positional read: the numeric counterpart of the labelled member read above — same extractvalue
+            // node, index taken from the syntax instead of a label lookup. An index outside the static arity is
+            // refused here; the interpreter only discovers it at run time.
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
             guard case .tuple(_, let fieldTypes) = loweredBase.type else {
                 throw unsupported("tuple index '.\(index)' on '\(loweredBase.type)'", at: location)
@@ -3207,10 +2849,8 @@ public enum IRLowerer {
             )
 
         case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
-            // G13 batch 1: `LazyRef<T>(closure)` — built-in lazy reference,
-            // not a user generic template. Checked before the template
-            // dispatch so a user `LazyRef` template cannot shadow it
-            // (parity with the legacy emitter's builtin-first contract).
+            // `LazyRef<T>(closure)` is a built-in lazy reference, not a user generic template. Checked before the
+            // template dispatch so a user `LazyRef` template cannot shadow it — builtin names win.
             if typeName == "LazyRef" {
                 guard typeArgs.count == 1, let element = IRType(from: typeArgs[0]) else {
                     throw unsupported("LazyRef requires 1 resolvable type arg", at: location)
@@ -3228,21 +2868,16 @@ public enum IRLowerer {
                     type: type
                 )
             }
-            // G10 monomorphization call site: `盒<I32>()` (struct template ->
-            // nominal construction of the specialized instance) or
-            // `身份<I32>(x = 100)` (function template -> call to the
-            // pre-registered specialization). The pre-pass has already
-            // registered both; here we only dispatch.
+            // Monomorphized construction: `盒<I32>()` builds the specialized struct nominal, `身份<I32>(x = 100)`
+            // calls the specialized function. The pre-pass has registered both; this only dispatches.
             if let template = context.genericFuncTemplates[typeName] {
                 return try lowerGenericFuncCall(
                     template: template, typeArgs: typeArgs, arguments: arguments,
                     at: location, into: &context
                 )
             }
-            // G-2d: generic enum case construction — the bare spelling, where
-            // the case name carries the type arguments (`ok<I32, String>(42)`,
-            // 泛型枚举构造形态). Neither template table above holds a case name, which
-            // is why this is where it lands.
+            // Generic enum case in the bare spelling, where the case name carries the type arguments
+            // (`ok<I32, String>(42)`). Neither template table holds a case name, which is why it lands here.
             if let constructed = try lowerGenericEnumCaseConstruct(
                 qualifier: typeName, caseName: typeName, typeArgs: typeArgs,
                 arguments: arguments, at: location, into: &context
@@ -3300,7 +2935,7 @@ public enum IRLowerer {
             throw unsupported("undefined enum case '.\(caseName)'", at: location)
 
         case .dictionaryLiteral(let entries, let location):
-            // G5: dict literal — key/value types derived from the lowered
+            // Dict literal — key/value types derived from the lowered
             // first entry (homogeneity required, checker does not infer).
             var loweredEntries: [IRDictEntry] = []
             var keyType: IRType? = nil
@@ -3356,13 +2991,9 @@ public enum IRLowerer {
             return LoweredExpr(node: .tupleConstruct(labels: labels, elements: loweredElements, type: tupleType), type: tupleType)
 
         case .call(let callee, let arguments, let location):
-            // Member calls: the tolerant read channel `arr.get(i)` (G2) and
-            // the slice channel `base.slice(start, end)` (G2b, the slice-
-            // sugar desugaring). All other method calls stay gated.
-            // Dot-case construction `.Case(args)` (G4, proposal-dot-case-
-            // construction): member-intent marker resolved by unique case
-            // name or the checker's expected-type registry.
-            // `.none` / `.some` resolve to the built-in Optional first.
+            // Member calls: the tolerant read channel `arr.get(i)` and the slice channel `base.slice(start, end)`
+            // (sugar desugaring); other method calls stay gated. Dot-case construction `.Case(args)` is a member
+            // marker resolved by unique case name or expected type, with `.none` / `.some` going to Optional first.
             if case .dotCaseRef(let dotName, _) = callee {
                 if dotName == "none" {
                     return LoweredExpr(
@@ -3392,13 +3023,9 @@ public enum IRLowerer {
                     at: location
                 )
             }
-            // G-2d: the qualified generic enum case construction
-            // (`结果<I32, String>.ok(42)`, 泛型枚举构造形态) reaches here as a member
-            // call whose receiver is the *no-argument* generic construct: the
-            // qualifier names the enum, so both the parent and the type
-            // arguments are written down rather than inferred. An empty
-            // argument list is what separates it from a member access on a
-            // generic value, which this slice does not lower anyway.
+            // Qualified generic enum case construction (`结果<I32, String>.ok(42)`) arrives as a member call on a
+            // no-argument generic construct: the qualifier names the enum, so parent and type arguments are both
+            // written down. That empty argument list is what separates it from member access on a generic value.
             if case .member(let object, let memberName, _) = callee,
                 case .genericConstruct(let enumName, let enumTypeArgs, let enumArguments, _) = object,
                 enumArguments.isEmpty,
@@ -3445,23 +3072,18 @@ public enum IRLowerer {
                 else {
                     throw unsupported("store expects (pointer, value) arguments", at: location)
                 }
-                // The value re-lowers against the pointer's element type so
-                // untyped literals adopt it (store(p, 42) on *U8 → u8).
-                // A declared-typed value keeps its own type — the encode
-                // semantics are truncating (interpreter parity: store of an
-                // I32 into *U8 writes the low byte).
+                // The value re-lowers against the pointer's element type so untyped literals adopt it (`store(p, 42)` on
+                // `*U8` writes a u8). A declared-typed value keeps its own type — encoding truncates, so an I32 stored
+                // into `*U8` writes the low byte, as the interpreter does.
                 let value = try lowerExpr(arguments[1].expression, expected: element, into: &context)
                 return LoweredExpr(
                     node: .pointerStore(pointer: loweredArgs[0].node, value: value.node, type: element),
                     type: .i32
                 )
             }
-            // Intrinsic assert (G41 surface, needed by |test blocks in the
-            // FFI corpus): assert(cond) / assert(cond, message). The cond
-            // must be boolean; false traps via the runtime's panic path —
-            // a failing assert is outside the differential baseline anyway
-            // (assert only fires in test blocks, which the harness never
-            // runs, but the lowering must still exist).
+            // Intrinsic `assert`: `assert(cond)` or `assert(cond, message)`. The condition must be Bool and a false
+            // one traps through the runtime's panic path; test blocks are never run by the harness, but the lowering
+            // must still exist.
             if functionName == "assert" {
                 guard loweredArgs.count == 1 || loweredArgs.count == 2 else {
                     throw unsupported("assert expects (condition) or (condition, message)", at: location)
@@ -3482,11 +3104,9 @@ public enum IRLowerer {
                     type: .i32
                 )
             }
-            // Intrinsic print: single-argument form keeps the existing
-            // gates; the multi-argument form (G14, D-A=A1) joins the
-            // stringified arguments with spaces on one line — no Result /
-            // nominal gates there yet (the FFI corpus only prints scalars,
-            // strings, and pointers).
+            // Intrinsic `print`: the single-argument form keeps its gates; the multi-argument form stringifies each
+            // argument and joins them with spaces on one line. There are no Result or nominal gates on that path —
+            // the FFI corpus prints scalars, strings and pointers.
             if functionName == "print" {
                 // The zero-argument form is a bare newline: the interpreter
                 // joins an empty argument list and hands the empty string to
@@ -3507,10 +3127,8 @@ public enum IRLowerer {
                 }
                 return LoweredExpr(node: .printMulti(arguments: loweredArgs.map { $0.node }), type: .i32)
             }
-            // P4-1b: 宿主环境查询内建。二者零参、由**执行器**按名回答，故降成同形的 `call`
-            //（与 `print` 一样不需要新节点）；解释器侧同名内建即镜像源
-            //（`argv` → 参数字符串数组；`moduleRoot` → 程序基准的绝对路径）。
-            // ⚠️ LLVM 侧尚未实现（须新增运行时段），发射器对它 fail-loud，见在册工单。
+            // 宿主环境查询内建：二者零参、由执行器按名回答，故降成同形的 `call`（与 `print` 一样不需要新节点）。
+            // `argv` 取参数字符串数组，`moduleRoot` 取程序基准的绝对路径；值由运行时段给，本层不解析。
             if functionName == "argv" || functionName == "moduleRoot" {
                 guard loweredArgs.isEmpty else {
                     throw unsupported("\(functionName) takes no arguments", at: location)
@@ -3524,14 +3142,8 @@ public enum IRLowerer {
                     type: queryType
                 )
             }
-            // 自举仓 M8 的前置：目录枚举。与上面两条**同形** —— 降成既有 `call`，
-            // 由执行器按名回答，⛔ 不新增 IR 节点（⇒ 节点集与契约不动、覆盖检查不受影响）。
-            //
-            // ⚠️ LLVM 侧未实现，其表现为：`emit` **照常产出** `@listDir()` 调用（静默），
-            // 由 clang 在 `compile` 时以 `use of undefined value` 拒绝。
-            // ⭐ 这与 `argv` / `moduleRoot` **完全同形**（本批实测）。
-            // ⛔ 注意：本节上方两条的注释写「发射器对它 fail-loud」——**实测不成立**，
-            //    发射器并不 fail-loud，它静默产出未定义调用。该措辞已随本批登记为待订正。
+            // 目录枚举内建：与上面两条同形 —— 降成既有 `call`，由执行器按名回答，不新增 IR 节点
+            // （节点集与契约因此不动，覆盖检查不受影响）。路径由运行时段解释，本层只透传。
             if functionName == "listDir" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("listDir expects (path)", at: location)
@@ -3566,12 +3178,9 @@ public enum IRLowerer {
                     type: .boolean
                 )
             }
-            // Intrinsic sqrt (G3): libc math, F64 only — the struct.pini
-            // corpus dependency. Other math intrinsics join their own grid.
-            // G-2a: the character builtins. Same shape as the other intrinsics --
-            // lowered to a `call` the executor answers by name -- and the name
-            // whitelist is the table itself, so a builtin cannot be lowered here
-            // and then go unanswered there.
+            // The character builtins. Same shape as the other intrinsics — lowered to a `call` the executor answers
+            // by name — and the name whitelist is the table itself, so a builtin cannot be lowered here and then
+            // go unanswered there.
             if RuntimeOps.characterBuiltins[functionName] != nil {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("\(functionName) expects exactly one argument", at: location)
@@ -3594,15 +3203,9 @@ public enum IRLowerer {
                 )
             }
 
-            // G-3a: the concurrency builtins a plain call can carry -- `sleep`
-            // blocks, `Error` / `CancelError` build a value. Same shape as the
-            // character builtins above, and the same rule that the whitelist is the
-            // table: a name cannot be lowered on this side and go unanswered by the
-            // executor.
-            //
-            // The names that traffic in `Future` values (`joinAll`, `joinWithin`,
-            // `isCancel`) stay out. The IR has no representation for a Future yet,
-            // so lowering them would accept an argument the channel cannot produce.
+            // The concurrency builtins a plain call can carry: `sleep` blocks, `Error` / `CancelError` build a
+            // value. The whitelist is the table, so a name cannot be lowered here and go unanswered by the executor.
+            // Names that traffic in `Future` values stay out: the IR cannot represent one yet.
             if RuntimeOps.concurrencyBuiltins[functionName] != nil {
                 if functionName == "sleep" {
                     // Blocks and yields nothing; the value is discarded. A call with
@@ -3625,10 +3228,9 @@ public enum IRLowerer {
                 guard loweredArgs.count == 1, loweredArgs[0].type == .string else {
                     throw unsupported("\(functionName) expects one String argument", at: location)
                 }
-                // 错误值的 IR 承载 = **一个 i64 字**（契约 §2.15：err 槽是类型擦除的机器字）。
-                // ⛔ 不是名义类型指针：`%struct.Error*` 从来没有类型定义，落到默认改名就是
-                // `use of undefined type`。字里是什么由运行时段定义，读它只有两条路 ——
-                // `isCancel` 与 `e.message`（本层把后者降成 `pini.err.message`）。
+                // 错误值的 IR 承载 = 一个 i64 字（err 槽是类型擦除的机器字）。不是名义类型指针：`%struct.Error*`
+                // 从来没有类型定义，落到默认改名就是 `use of undefined type`。字里是什么由运行时段定义，本层读它
+                // 只有两条路 —— `isCancel` 与 `e.message`（后者降成 `pini.err.message`）。
                 let errorType = IRType.i64
                 return LoweredExpr(
                     node: .call(
@@ -3638,15 +3240,9 @@ public enum IRLowerer {
                     type: errorType
                 )
             }
-            // G-3c-1: the Future-valued concurrency builtins. They stay out of
-            // the shared builtin table because answering them needs a scheduler
-            // and a task context, which a stateless table cannot carry — the two
-            // sides match the names side by side instead, and both read the same
-            // rule.
-            //
-            // The IR denotes a Future by the `Result<T>` an async call already
-            // returns (G-3b): the value is a future at run time, the type on the
-            // node is what its join will yield.
+            // The Future-valued concurrency builtins. They stay out of the shared table because answering them needs
+            // a scheduler and a task context a stateless table cannot carry; both sides match the names side by
+            // side. The IR denotes a future by the `Result<T>` an async call returns — the node type is its join value.
             if functionName == "isCancel" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("isCancel expects exactly one argument", at: location)
@@ -3685,12 +3281,8 @@ public enum IRLowerer {
                     type: bounded
                 )
             }
-            // G-2R: `F64(x)` -- the numeric value constructor. The AST channel
-            // has answered it since G-P1 and the lowering layer never did, so
-            // `F64(3)` was "an unknown function". A float passes through, an
-            // integer widens through one `call` the executor answers by name
-            // (the same shape the character builtins use); anything else is
-            // refused here, matching the runtime's own refusal.
+            // `F64(x)`: the numeric value constructor. A float passes through, an integer widens through one `call`
+            // the executor answers by name, and anything else is refused here, matching the runtime's own refusal.
             if functionName == "F64" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported("F64 expects exactly one argument", at: location)
@@ -3710,12 +3302,9 @@ public enum IRLowerer {
                     throw unsupported("F64 expects a numeric argument (int or float)", at: location)
                 }
             }
-            // G-2R: `LazyRef(closure)` -- the inferred spelling (the G40 D1
-            // sugar), sibling of the `LazyRef<T>(closure)` form the
-            // generic-construct arm already lowers. "Inferred" here means the
-            // element type is read off the initialiser closure's own return
-            // type; a closure whose return type cannot be read is refused
-            // rather than guessed.
+            // `LazyRef(closure)`: the inferred spelling, sibling of `LazyRef<T>(closure)` lowered by the
+            // generic-construct arm. The element type is read off the initializer closure's own return type; a
+            // closure whose return type cannot be read is refused rather than guessed.
             if functionName == "LazyRef" {
                 guard loweredArgs.count == 1 else {
                     throw unsupported(
@@ -3745,8 +3334,7 @@ public enum IRLowerer {
                     type: .f64
                 )
             }
-            // Math intrinsics (G9, stdlib.pini corpus): sin/cos via llvm
-            // intrinsics, tan = sin/cos (legacy parity), abs/min/max on I32.
+            /// 数学内建：sin/cos 走 llvm intrinsics，tan 展开为 sin/cos，abs/min/max 落在 I32。
             if functionName == "sin" || functionName == "cos" {
                 guard loweredArgs.count == 1, loweredArgs[0].type == .f64 else {
                     throw unsupported("\(functionName) expects exactly one F64 argument", at: location)
@@ -3811,11 +3399,9 @@ public enum IRLowerer {
                     )
                 }
             }
-            // File IO intrinsics (G15): writeFile/readFile. 路径**不在降载侧解析**：
-            // 发射侧把程序基准注入运行时，两条通道都在运行时按同一套规则解析相对路径
-            // （规则见 `RuntimeOps.resolveIOPath` 与运行时段同名函数的互指注释）。
-            // ⚠️ `writeFile` 无返回值，此处仍标 `.i32`：`IRType` 没有 void 成员，
-            // 而该字段对 void 节点不被消费（`print` / `assert` 同此惯例）。
+            // File IO intrinsics: writeFile/readFile. Paths are not resolved here — the emitter injects the program
+            // base into the runtime, and both channels resolve relative paths by one rule (`RuntimeOps.resolveIOPath`).
+            // `writeFile` returns nothing yet is typed `.i32`: `IRType` has no void member and the field is unused.
             if functionName == "writeFile" {
                 guard loweredArgs.count == 2 else {
                     throw unsupported("writeFile expects (path, content)", at: location)
@@ -3878,7 +3464,7 @@ public enum IRLowerer {
                 return LoweredExpr(
                     node: .fileTryRead(path: loweredArgs[0].node), type: .result(ok: .string))
             }
-            // G17: the two remaining corpus builtins below the intrinsic
+            // The two remaining corpus builtins below the intrinsic
             // gate — `readLine()` (no arguments) and `is_ascii_digit(s)`.
             if functionName == "readLine" {
                 guard loweredArgs.isEmpty else {
@@ -3897,10 +3483,9 @@ public enum IRLowerer {
                     node: .isAsciiDigit(argument: loweredArgs[0].node), type: .boolean
                 )
             }
-            // Result case construction (ok/err): requires a Result-typed
-            // context (return position, Result-typed assignment) so the
-            // static Result type is known — Pini's `^T` surface leaves the
-            // error type unconstrained, so `err(e)` adopts the context.
+            // Result case construction (`ok` / `err`): requires a Result-typed context (return position, Result-typed
+            // assignment) so the static Result type is known. `^T` leaves the error type unconstrained, so `err(e)`
+            // adopts the context's.
             if functionName == "ok" || functionName == "err" {
                 guard let contextType = expected, case .result(let okType) = contextType else {
                     throw unsupported(
@@ -3919,13 +3504,9 @@ public enum IRLowerer {
                     type: contextType
                 )
             }
-            // Indirect call through a function value (G6): the callee is a
-            // variable holding a closure / named-function value (function-
-            // typed parameter `f(x)` or closure variable `sq(6)`). Named
-            // top-level functions resolve through the signature table below;
-            // a bare `加倍(x)` call never reaches this branch.
-            // ADR-001 §2.6：**经变量**调用拿得到取用位（它随函数类型走）⇒
-            // 按两式判 arity，并在省略式下于取用位插入取用点。
+            // Indirect call through a function value: the callee is a variable holding a closure or named function
+            // (function-typed parameter `f(x)`, closure variable `sq(6)`); the using positions travel with that
+            // function type, so the omitted spelling has them filled with instance nodes. Bare calls go below.
             if let signature = context.variableTypes[functionName],
                 case .function(let paramTypes, let functionReturn, let variableUsing) = signature
             {
@@ -3951,9 +3532,8 @@ public enum IRLowerer {
                     type: functionReturn ?? .i32
                 )
             }
-            // Direct call on an immediate closure literal `sq(6)` where sq
-            // was just created inline — `f(...)` with a funcLiteral callee.
-            // ADR-001 §2.6：内联字面量的取用位**就在声明里**（比经变量更直接）。
+            /// 内联闭包字面量上的直接调用 `sq(6)`：callee 是 `.funcLiteral`，没有具名符号。
+            /// 内联字面量的取用位**就在声明里**，比经变量更直接。
             if case .funcLiteral(let literalDecl, let literalLocation) = callee {
                 let loweredCallee = try lowerFuncLiteral(
                     decl: literalDecl, expected: nil, at: literalLocation, into: &context
@@ -4016,11 +3596,8 @@ public enum IRLowerer {
                     at: location
                 )
             }
-            // G14: lower arguments with each parameter type as the expected
-            // context so untyped integer literals adopt non-I32 parameter
-            // slots (U64 param → literal 64 is u64) — mirroring the checker's
-            // ADR-001 `P2b`：`using` 形参的实参可由编译器插入 ⇒ 先问「实参对哪些形参位」，
-            // 再逐位降载；`using` 位在填充阶段补取用点。
+            // 用每个形参的类型作为期望上下文逐位降载实参，无标注的整数字面量因此采用非 I32 的槽位（U64 形参下 64 是 u64）。
+            // `using` 形参的实参可由编译器插入：先问实参对哪些形参位，再逐位降载，`using` 位在填充阶段补取用点。
             let paramIndices = try usingParamMapping(
                 callee: functionName, paramCount: signature.paramTypes.count,
                 usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
@@ -4057,18 +3634,14 @@ public enum IRLowerer {
             return try lowerFuncLiteral(decl: decl, expected: expected, at: location, into: &context)
 
         case .unsafe(let operand, _):
-            // G11 multidim corpus: the zero-scatter `unsafe (...)` context
-            // marker is a parse/check-level concept only — the wrapped
-            // expression lowers identically (the safe-assert subscript
-            // channel needs no unsafe distinction at emission).
+            // `unsafe (...)` is a parse/check-level marker only: the wrapped expression lowers identically, since the
+            // safe-assert subscript channel needs no unsafe distinction at emission.
             return try lowerExpr(operand, expected: expected, into: &context)
 
         case .addressOf(let operand, let location):
-            // G14 (D-B adjudication: true pointer semantics): `&x` yields
-            // the variable's storage address. Only the identifier form is
-            // in the corpus slice — `&expr.value` and friends are later
-            // grids. The pointer element type mirrors the variable's type
-            // (the interpreter labels the snapshot with the value's type).
+            // `&x` yields the variable's storage address. Only the identifier form is accepted here; the pointer
+            // element type mirrors the variable's type, the way the interpreter labels its snapshot with the value's
+            // type.
             guard case .identifier(let name, _) = operand else {
                 throw unsupported(
                     "address-of supports only a plain variable this grid",
@@ -4084,15 +3657,9 @@ public enum IRLowerer {
             )
 
         case .join(let inner, let joinLocation, let form):
-            // `await`/`wait` 的上下文与位置判定（2026-09-20，裁定 35）。
-            //
-            // 两个关键字各自绑定自己的上下文，`await` 还额外要求**可让出位置**：它承诺
-            // 让出，只有在能兑现的地方才诚实。三条拒绝理由的修法各不相同 —— 上下文不符的人
-            // 该改函数签名或换关键字，位置越界的人该改写法 —— 所以用两个码分开。
-            //
-            // 位置上为什么必须拒：`await` 与 `wait` 的唯一运行区别就是让不让出，而让出需要
-            // **可恢复的体**（`DE-2b` 的挂起帧）。语句根之外没有续跑点，于是同一个 `await`
-            // 会在 A 处让出、B 处静默按阻塞处理，使用者无从知道。
+            // `await` / `wait` 的上下文与位置判定。两个关键字各自绑定自己的上下文，`await` 还额外要求可让出位置：
+            // 它承诺让出，只有在能兑现的地方才诚实。位置越界必须拒 —— 让出需要可恢复的体，语句根之外没有续跑点，
+            // 同一个 `await` 就会有的让出、有的静默按阻塞处理。两种拒绝理由修法不同，故用两个码分开。
             switch form {
             case .awaits:
                 guard context.isAsync else {
@@ -4123,30 +3690,13 @@ public enum IRLowerer {
                 }
             }
 
-            // `await f` / `wait f` (G-3c-1). The operand evaluates to a handle and
-            // the site yields the `Result<T>` its join deconstructs.
-            //
-            // This comment used to end the opposite way: that nothing here had
-            // to denote a future and no IR type case had to be added, because
-            // the shape could ride on the call node. That was true and it was
-            // the design -- but it also meant the two positions carried one type,
-            // and a backend that must dispatch an async call to a worker instead
-            // of calling it had no way to tell that call from an ordinary
-            // Result-returning one. The two positions are separate types now
-            // (handle in, settled value out), which is the shape the type layer
-            // already had.
-            //
-            // The operand is lowered with no expectation, not with a Result
-            // expectation: an operand that is *not* a future is a run-time type
-            // mismatch on the other engine too (its join arm guards the same
-            // way), so refusing it here would move the error earlier than the
-            // channel it is being kept equal to.
+            // `await f` / `wait f`: the operand evaluates to a handle and the site yields the `Result<T>` its join
+            // deconstructs — handle in, settled value out, two distinct IR types on purpose so a backend can tell an
+            // async call from an ordinary Result one. The operand takes no expectation: a non-future fails at run time.
             let future = try lowerExpr(inner, expected: nil, into: &context)
-            // One handle in, one settled value out. The fallback keeps the old
-            // pass-through for an operand that is not a handle: the checker
-            // already rejects that, and the other engine only notices at run
-            // time, so refusing it here would move the error earlier than the
-            // channel this is being kept equal to.
+            // One handle in, one settled value out. The fallback passes a non-handle operand through unchanged: the
+            // checker already rejects it and the other engine notices only at run time, so refusing here would move
+            // the error earlier than the channel this is kept equal to.
             let siteType = future.type.joinedResultType ?? future.type
             return LoweredExpr(
                 node: .join(future: future.node, type: siteType, form: form),
@@ -4163,12 +3713,9 @@ public enum IRLowerer {
 
     // MARK: - Closures / higher-order functions (G6)
 
-    /// Collect funcLiteral ids in source order (module pre-pass). Mirrors the
-    /// legacy registry: every literal gets a stable id keyed by "行:列", even
-    /// nested ones — traversal must not descend into funcLiteral bodies for
-    /// id assignment of the nested literal itself... it must: nested closure
-    /// ids are assigned outer-first, inner-after (same contract as the legacy
-    /// collector which visits the literal node then returns).
+    /// Collect funcLiteral ids in source order, keyed by "行:列" so every literal gets a stable id. Traversal
+    /// does descend into funcLiteral bodies: nested closure ids are assigned outer-first, inner-after, because
+    /// the collector visits the literal node and returns.
     private static func precollectClosureIds(
         in statements: [Statement],
         counter: inout Int,
@@ -4271,14 +3818,9 @@ public enum IRLowerer {
         }
     }
 
-    /// Lower a `func` literal (G6): capture analysis at the creation point,
-    /// body lowered with the closure's own scope (captures pre-seeded into
-    /// variableTypes so free references resolve; `capture` marker statements
-    /// inside the body drop out). The param types adopt the checker's G29
-    /// fallback chain through the annotation mapping — an unannotated param
-    /// falls back to the return annotation (single concrete return), then
-    /// the expected function type, then I32 (matching the legacy emitter's
-    /// final fallback).
+    /// Lower a `func` literal: capture analysis at the creation point, then the body in the closure's own
+    /// scope (captures pre-seeded into `variableTypes` so free references resolve; `capture` markers drop
+    /// out). Param types come from the checker's chain: return annotation, then expected type, then I32.
     private static func lowerFuncLiteral(
         decl: FuncDecl,
         expected: IRType?,
@@ -4293,10 +3835,9 @@ public enum IRLowerer {
             throw unsupported("anonymous function has no body", at: location)
         }
 
-        // Resolve the literal's function type: the checker's inference
-        // (G29 bidirectional: annotations > body inversion > expected >
-        // return-annotation fallback > wildcard) mapped through the same
-        // annotation conversion as declared signatures.
+        // Resolve the literal's function type: the checker's bidirectional inference (annotations > body inversion
+        // > expected > return-annotation fallback > wildcard) mapped through the same annotation conversion as
+        // declared signatures.
         let inferredAnnotation = context.inferType(of: .funcLiteral(decl: decl, location: location))
         let functionType: IRType
         if let annotation = inferredAnnotation,
@@ -4321,14 +3862,9 @@ public enum IRLowerer {
             )
         }
 
-        // Capture analysis (creation point): identifiers used in the body,
-        // minus the literal's own params and block-declared vars, minus
-        // function-typed references that are named top-level functions
-        // (those become adapters at their use site, not captures). Captures
-        // are reference-captured: the env field holds the variable's slot
-        // pointer. Only variables visible in the creation-point scope are
-        // captured (declared but out-of-scope names cannot occur through
-        // the checker).
+        // Capture analysis at the creation point: identifiers used in the body, minus the literal's own params and
+        // block-declared vars, minus function-typed references to named top-level functions (those become adapters
+        // at the use site). Captures are by reference: the env field holds the variable's slot pointer.
         let used = collectBodyIdentifiers(in: decl)
         let localBound = Set(decl.params.map { $0.name })
             .union(declaredLocalVars(in: decl.body?.statements ?? []))
@@ -4375,9 +3911,8 @@ public enum IRLowerer {
         )
     }
 
-    /// Identifiers referenced by a closure body (including callee names);
-    /// funcLiteral sub-expressions are opaque — their own captures are
-    /// resolved at their own creation point (legacy collector contract).
+    /// 闭包体引用到的标识符（含 callee 名）。`funcLiteral` 子表达式**不透明**：
+    /// 它们自己的捕获在各自的创建点结算。
     private static func collectBodyIdentifiers(in decl: FuncDecl) -> Set<String> {
         collectBodyIdentifiers(in: decl.body?.statements ?? [])
     }
@@ -4482,18 +4017,9 @@ public enum IRLowerer {
 
     // MARK: - Enum family (G4)
 
-    /// Resolve a case name to (enum decl, case) — exact qualified
-    /// `Enum.case` first, then unique unqualified fallback; ambiguous
-    /// unqualified names resolve through the checker's static registry
-    /// (裸名 case 消歧（静态收敛版）: call-site location → parent enum) and are gated
-    /// when unresolved.
-    /// G-2d: a generic enum case construction in either spelling (泛型枚举构造形态).
-    ///
-    /// Returns nil when the spelling names no generic enum at all, so callers
-    /// can fall through to their other paths. Once the spelling *is* a generic
-    /// enum, a failure is an error rather than a fall-through: the pre-pass
-    /// registers every use site it can see, so reaching here without a
-    /// specialization means the site and the registration disagree.
+    /// Lower a generic enum case construction in either spelling. Returns `nil` when the spelling names no
+    /// generic enum, so callers can fall through. Once it does name one, a missing specialization is an error:
+    /// the pre-pass registers every use site it can see, so the site and the registration disagree.
     private static func lowerGenericEnumCaseConstruct(
         qualifier: String,
         caseName: String,
@@ -4506,10 +4032,8 @@ public enum IRLowerer {
         if let found = context.genericEnums.parentTemplate(qualifier: qualifier, caseName: caseName) {
             template = found
         } else if context.genericEnums.isAmbiguousCase(caseName) {
-            // The bare spelling resolves its parent by name alone (裸名 case 消歧（静态收敛版）'s
-            // second tier), so two enums sharing a case name cannot be told
-            // apart -- that is the tier-3 situation the qualified form exists
-            // for, and the message has to say which spelling to write.
+            // The bare spelling resolves its parent by case name alone, so two enums sharing that name cannot be told
+            // apart — the qualified form exists for exactly this, and the message must say which spelling to write.
             throw unsupported(
                 "ambiguous generic enum case '\(caseName)' needs the qualified form "
                     + "(write 枚举名<实参…>.\(caseName)(…))",
@@ -4603,10 +4127,8 @@ public enum IRLowerer {
         )
     }
 
-    /// Enum case construction with associated values: positional or labeled
-    /// (`text= "x"`) arguments, resolved against the case's parameter names.
-    /// Missing arguments fall back to declared default expressions
-    /// (legacy createInstance parity).
+    /// Enum case construction with associated values: positional or labeled (`text= "x"`) arguments, resolved
+    /// against the case's parameter names. Missing arguments fall back to declared default expressions.
     private static func lowerEnumCaseConstructor(
         enumDecl: IREnumDecl,
         enumCase: IREnumCase,
@@ -4664,15 +4186,9 @@ public enum IRLowerer {
 
     // MARK: - Member .get & match (G2 batch 3)
 
-    /// Member calls on built-in receivers. `.get(i)`: the tolerant read
-    /// channel — out of bounds yields none (the language-level nil), in
-    /// bounds some(value); negative indices tail-count (G2b fix: batch 3
-    /// missed the tail count). `.slice(s, e)`: the slice-sugar desugaring;
-    /// bounds are ints or the none literal. Only Array/String receivers are
-    /// wired; Dictionary and other methods join their own grids.
-    /// String member methods (G9): the five corpus surface forms. `split`
-    /// produces a real `Array<String>` (interpreter parity — the legacy
-    /// emitter renders a formatted string instead, a recorded divergence).
+    /// String member methods: the five corpus surface forms plus the trim/index trio (leading/trailing ASCII
+    /// space stripping, grapheme-indexed first occurrence). `split` produces a real `Array<String>`, matching
+    /// the interpreter; `slice` / `get` fall through to the tolerant-read channels.
     private static func lowerStringMethod(
         receiver: LoweredExpr,
         memberName: String,
@@ -4748,8 +4264,8 @@ public enum IRLowerer {
         }
     }
 
-    /// P4-1c: 降低 `别名.符号(…)`。合并之后它本就是同一张表里的具名函数，
-    /// 故形状与 `lowerCall` 的具名分支**逐字同构**（参数按签名逐个给期望类型）。
+    /// 降低 `别名.符号(…)`：它本就是签名表里的具名函数，故形状与 `lowerCall` 的
+    /// 具名分支**逐字同构**（参数按签名逐个给期望类型）。
     private static func lowerModuleQualifiedCall(
         functionName: String,
         signature: IRLowererSignatureInfo,
@@ -4757,8 +4273,8 @@ public enum IRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
-        // ADR-001 `P2b`：与具名分支同一份映射与填充助手（两条路径必须同口径，
-        // 否则同一个函数经裸名与经别名调用会得到不同的实参个数）。
+        /// 与具名分支共用同一份映射与填充助手：两条路径必须同口径，否则同一个函数
+        /// 经裸名与经别名调用会得到不同的实参个数。
         let paramIndices = try usingParamMapping(
             callee: functionName, paramCount: signature.paramTypes.count,
             usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
@@ -4786,11 +4302,8 @@ public enum IRLowerer {
         )
     }
 
-    /// H-3 三级派发的类型映射：内建接收者类型名 → `IRType`。
-    ///
-    /// ⚠️ `Array` 在扩展块里不署名元素类型 ⇒ 取 i32 占位。这个值只用于**登记**
-    /// 扩展方法（`lowerMethod` 需要一个 self 类型），调用点的接收者类型仍由实际
-    /// 值决定 ⇒ 本批的对象不使用 self 的元素，占位不参与语义。
+    /// 内建接收者类型名 → `IRType`。`Array` 在扩展块里不署名元素类型 ⇒ 取 i32 占位；这个值只用于登记扩展
+    /// 方法（`lowerMethod` 需要一个 self 类型），调用点的接收者类型由实际值决定，故占位不参与语义。
     private static func builtinReceiverType(named name: String) -> IRType? {
         switch name {
         case "String": return .string
@@ -4816,8 +4329,8 @@ public enum IRLowerer {
         at location: SourceLocation,
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
-        // P4-1c: 跨模块限定调用 `别名.符号(…)` —— receiver 是 import 别名、**不是变量**，
-        // 故必须在 lower receiver 之前拦截（否则会按变量解析并报「未声明变量」）。
+        /// 跨模块限定调用 `别名.符号(…)`：receiver 是 import 别名、**不是变量**，
+        /// 故必须在 lower receiver 之前拦截（否则会按变量解析并报「未声明变量」）。
         if case .identifier(let aliasName, _) = object,
             let signature = context.moduleSignatures["\(aliasName).\(memberName)"]
         {
@@ -4860,10 +4373,9 @@ public enum IRLowerer {
         let loweredObject = try lowerExpr(object, expected: nil, into: &context)
         let objectType = loweredObject.type
 
-        // H-3 三级派发的第一级：内建类型（`String` / `Array`）的**用户扩展方法**
-        // 排在语言内标准库（下面那些按名硬编码的分支）与宿主原生之前。
-        // 缺这一支时：新增方法会落到尾部兜底报「later grids」，覆盖同名成员则
-        // 直接读到内建结果（用户实现被静默压过）。
+        // 三级派发的第一级：内建类型（`String` / `Array`）的用户扩展方法排在语言内标准库（下面按名硬编码的
+        // 分支）与宿主原生之前。缺这一支时，新增方法会落到尾部兜底报「later grids」，覆盖同名成员则直接读到
+        // 内建结果 —— 用户实现被静默压过。
         if let receiverName = builtinReceiverName(of: objectType),
             let ext = context.builtinExtensionMethods[receiverName]?[memberName]
         {
@@ -4880,10 +4392,9 @@ public enum IRLowerer {
             )
         }
 
-        // String member methods (G9): upper/lower/contains/substring/split,
-        // plus the trim/index trio (leading/trailing ASCII space stripping and
-        // grapheme-indexed first occurrence). `slice`/`get` fall through to
-        // the G2/G2b tolerant-read channels.
+        // String member methods: upper/lower/contains/substring/split, plus the trim/index trio (leading/trailing
+        // ASCII space stripping, grapheme-indexed first occurrence). `slice` / `get` fall through to the
+        // tolerant-read channels.
         if case .string = objectType,
             ["upper", "lower", "contains", "substring", "split",
              "trimLeft", "trimRight", "indexOf"].contains(memberName)
@@ -4893,11 +4404,9 @@ public enum IRLowerer {
                 at: location, into: &context
             )
         }
-        // Array member methods (G9): join. G-2b lifted the `[String]`-only
-        // restriction -- the node's own semantics are "stringify each element
-        // and interpose the separator", which is what the interpreter's `join`
-        // arm does to whatever the array holds, so the element type never had
-        // to be a string.
+        // Array member method `join`: the node stringifies each element and interposes the separator, which is
+        // what the interpreter's `join` arm does to whatever the array holds — so the element type need not be a
+        // string.
         if case .array = objectType, memberName == "join" {
             guard arguments.count == 1 else {
                 throw unsupported("join expects exactly one argument", at: location)
@@ -4922,16 +4431,14 @@ public enum IRLowerer {
             )
         }
 
-        // Nominal method dispatch (G3): the receiver is the implicit first
-        // argument; the callee is the mangled IR name `方法__类型`.
-        // G12: when the nominal has no own/extension method of that name,
-        // fall back to an implemented trait's default body, specialized to
-        // the receiver type (legacy tryTraitMethodDispatch mirror).
+        // Nominal method dispatch: the receiver is the implicit first argument and the callee is the mangled IR
+        // name `方法__类型`. When the nominal has no own or extension method of that name, fall back to an
+        // implemented trait's default body, specialized to the receiver type.
         if case .nominal(let typeName, _) = objectType {
             let dispatchInfo = context.nominalTypes[typeName]
             if let method = dispatchInfo?.methods.first(where: { $0.name == memberName }) {
-                // ADR-001 `P2b`：方法位与自由函数位同规 —— `using` 形参可省略，
-                // 实参由编译器在该位插入默认实例取用。
+                /// 方法位与自由函数位同规 —— `using` 形参可省略，
+                /// 实参由编译器在该位插入默认实例取用。
                 let methodParamTypes: [IRType] = try method.params.map { parameter -> IRType in
                     guard let annotation = parameter.typeAnnotation,
                         let paramType = resolveUsingParamType(annotation, userTypes: context.userTypes)
@@ -4948,26 +4455,9 @@ public enum IRLowerer {
                     callee: memberName, paramCount: methodParamTypes.count,
                     usingParamIndices: methodUsingIndices, argumentCount: arguments.count,
                     at: location)
-                // G13 batch 2: the call site uses the method's EFFECTIVE
-                // return type (void-declared value-returning methods upgrade
-                // to the body's returned type — same computation as the
-                // definition side, so body and calls agree).
-                //
-                // G87 (2026-09-26): the declared-type fallback must go through
-                // `resolveReturnType`, not the narrower `IRType(from:)`. The
-                // narrower one only knows builtin scalars and the builtin
-                // generic container names, so a method declared to return a
-                // USER-declared type (struct / enum) threw right here even
-                // though the very same annotation resolves fine on the
-                // definition side (`resolveAnnotationType` falls back to
-                // `userTypes[name]`). Both the definition side and the trait
-                // default path already use the wide resolver — this call site
-                // was the only one that did not.
-                //
-                // ⚠️ For multi-slot returns (`-> (I32, I32,)`) this also
-                // aligns the call site with the definition side: the value
-                // type is the collapsed TUPLE, not the first element
-                // (`resolveReturnType`'s own doc records that contract).
+                // The call site uses the method's effective return type: a void-declared method whose body returns a value
+                // upgrades to that type, as on the definition side. The fallback goes through the wide `resolveReturnType`
+                // — the narrow `IRType(from:)` rejects user-declared types — so multi-slot returns collapse to the tuple.
                 let returnType =
                     try effectiveReturnType(
                         decl: method, userTypes: context.userTypes,
@@ -4997,11 +4487,9 @@ public enum IRLowerer {
                     type: returnType ?? .i32
                 )
             }
-            // G12 trait-default fallback: own/extension method missed — walk
-            // the receiver type's trait list for a default body of this name.
-            // The default body is re-lowered with the receiver's nominal as
-            // self (parity with the interpreter: own methods first, then
-            // trait defaults; the body sees the receiver's fields).
+            // Trait-default fallback: after an own/extension method misses, walk the receiver type's trait list for a
+            // default body of this name. The body is re-lowered with the receiver's nominal as self, so it sees the
+            // receiver's fields — own methods first, then trait defaults, matching the interpreter.
             if let traitNames = context.traitRegistry.typeTraits[typeName] {
                 for traitName in traitNames {
                     guard let trait = context.traitRegistry.traits[traitName],
@@ -5026,7 +4514,7 @@ public enum IRLowerer {
             guard arguments.count == 1 else {
                 throw unsupported("get expects exactly one argument", at: location)
             }
-            // G-2b: a dictionary's `.get` keys off any value the dictionary
+            // A dictionary's `.get` keys off any value the dictionary
             // accepts, so the index expectation follows the key type and the
             // I32 requirement is the Array/String arm's alone.
             let wrapped: IRType
@@ -5091,14 +4579,9 @@ public enum IRLowerer {
             )
         }
 
-        // G-2S: the rest of the Array member face the registry already lists
-        // (`append` / `pop` in the collection trait, plus `last`). `get` and
-        // `slice` above became dedicated nodes because they predate the frozen
-        // contract; these three keep the node set at 60 by lowering to a named
-        // call the executor answers -- the shape `argv` and the character
-        // builtins already use. The types are the ones the runtime produces:
-        // append yields a new array, last the element or null, pop the pair
-        // (arrayWithoutLast, lastOrNull).
+        // The rest of the Array member face: `append` / `pop` and `last`, lowered to a named `call` the executor
+        // answers rather than to new nodes, so the node set stays frozen. The types are the runtime's: append
+        // yields a new array, last the element or null, pop the pair (arrayWithoutLast, lastOrNull).
         if case .array(let element) = objectType,
             memberName == "append" || memberName == "last" || memberName == "pop"
         {
@@ -5150,10 +4633,8 @@ public enum IRLowerer {
             }
         }
 
-        // G-3c-1: `t.cancel()` — the one Future member the corpus reaches. The
-        // receiver rides as the first argument, exactly as the array member face
-        // above does, and the result is discarded (the interpreter's cancel
-        // returns null).
+        // `t.cancel()`: the one Future member the corpus reaches. The receiver rides as the first argument, as on
+        // the array member face, and the result is discarded (the interpreter's cancel returns null).
         if memberName == "cancel" {
             guard arguments.isEmpty else {
                 throw unsupported("cancel takes no arguments", at: location)
@@ -5167,10 +4648,9 @@ public enum IRLowerer {
         throw unsupported("method '\(memberName)' calls are later grids", at: location)
     }
 
-    /// `match scrutinee: case name(binding): body ...` — the general case
-    /// skeleton, with the Optional scrutinee wired this grid (some/none;
-    /// `none` is the language-level nil, user adjudication D-G2-1). Literal
-    /// / wildcard patterns and user enums join through the same node later.
+    /// `match scrutinee: case name(binding): body ...` — the general case skeleton. The scrutinee's type picks
+    /// the arm family: Optional (some/none, with `none` as the language-level nil), enum, Result, or the bare
+    /// value path. Every family emits the same `matchStmt` node, differing only in scrutinee and case types.
     private static func lowerMatch(
         value: Expression,
         cases: [MatchCase],
@@ -5189,28 +4669,15 @@ public enum IRLowerer {
             let irCases = try lowerEnumCases(cases, enumDecl: enumDecl, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         case .result(let okType):
-            // Result scrutinee (`G72`): without this arm the family fell to
-            // `default` below, whose binding adopts the scrutinee type — so
-            // `case ok(v)` bound `v` as a Result and every use of it (a
-            // print, an arithmetic operand, a typed copy) was rejected against
-            // a type the source never names.
+            // Result scrutinee: without this arm the case falls to `default` below, whose binding adopts the scrutinee
+            // type — so `case ok(v)` would bind `v` as a Result and every use of it (print, arithmetic, typed copy)
+            // would be rejected against a type the source never names.
             let irCases = try lowerResultCases(cases, okType: okType, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         default:
-            // Bare scrutinee — neither Optional nor enum (a direct subscript
-            // read: the interpreter yields a plain value there, verified).
-            // Two arm families share this node:
-            //   · enum-case arms (`some` / `none`) never match a bare value —
-            //     the interpreter's matchCaseMatches compares an enum case
-            //     only against an enum value — so those arms never fire and
-            //     the match falls through silently (G11 multidim corpus,
-            //     probe-verified at any scrutinee depth: outer `match m[1]`
-            //     on array(I32), inner `match row[2]` on I32).
-            //   · literal arms (`case 1:`) DO compare by value and must
-            //     dispatch; the operand rides along as `IRMatchLiteral` so
-            //     the emitter never re-parses rendered pattern text.
-            // Either way each body lowers with its binding typed by the
-            // scrutinee itself (the value a live some-arm would bind).
+            // Bare scrutinee — neither Optional nor enum (a direct subscript read yields a plain value). Enum-case arms
+            // (`some` / `none`) never match a bare value, so they fall through silently; literal arms (`case 1:`) do
+            // compare by value and dispatch, with the operand riding along as `IRMatchLiteral` instead of pattern text.
             var irCases: [IRMatchCase] = []
             for matchCase in cases {
                 let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
@@ -5238,12 +4705,9 @@ public enum IRLowerer {
         }
     }
 
-    /// One arm body of a match whose scrutinee is neither Optional nor enum
-    /// (the bare-value family, see `lowerMatch`). The body lowers so its
-    /// bindings scope-resolve; whether the arm actually dispatches at emission
-    /// follows from its pattern — literal arms do, enum-case arms cannot.
-    /// Each binding adopts the scrutinee type (the value a live some-arm would
-    /// bind), wildcard/none arms bind nothing.
+    /// One arm body of a match whose scrutinee is neither Optional nor enum (see `lowerMatch`). The body lowers
+    /// so its bindings scope-resolve; whether the arm dispatches at emission follows from its pattern — literal
+    /// arms do, enum-case arms cannot. Each binding adopts the scrutinee type, wildcard/none arms bind nothing.
     private static func lowerBareScrutineeArmBody(
         _ matchCase: MatchCase,
         bindingType: IRType,
@@ -5312,20 +4776,9 @@ public enum IRLowerer {
         return irCases
     }
 
-    /// Result scrutinee arms (`G72`): ok/err, single positional binding. The
-    /// two sides are deliberately asymmetric, and the asymmetry is the whole
-    /// point of the arm family:
-    ///
-    /// - the **ok** binding takes the payload type — that narrowing is what
-    ///   this family exists for, and it is what makes a print / arithmetic
-    ///   operand / typed copy of `v` legal;
-    /// - the **err** binding takes the shape try-else already established for
-    ///   an error word: one machine word, tracked in `errorBindings`. It is
-    ///   not a new form. `result(ok:)` carries no error type to narrow to
-    ///   (the IR type has one field, the ok type), and the IR ABI erases that
-    ///   slot (LR-12), so the only faithful spelling is the erased word. Reads
-    ///   of that word are the only legal uses: `print(e)` and `e.message` both
-    ///   lower to `pini.err.message`, ⛔ never to a struct field read.
+    /// Result scrutinee arms: ok/err, single positional binding. The asymmetry is the point: the ok binding
+    /// takes the payload type (that narrowing is what makes a print, arithmetic operand or typed copy legal),
+    /// while the err binding is the erased machine word try-else already uses, readable only via `pini.err.message`.
     private static func lowerResultCases(
         _ cases: [MatchCase],
         okType: IRType,
@@ -5466,18 +4919,9 @@ public enum IRLowerer {
 
     // MARK: - Prefix increment / decrement (G-2c)
 
-    /// Lower prefix `++`/`--` to a read-modify-write on its target.
-    ///
-    /// The interpreter defines these in `evaluateIncDec` as "read the target,
-    /// add or subtract one, write it back, yield the written value" — I32
-    /// only, three assignable target shapes (variable, field, subscript). The
-    /// same three are lowered here, which is why one helper serves both
-    /// statement position and a variable initializer (`var m = ++n`): the
-    /// second form needs the written value as well as the write.
-    ///
-    /// The write lives in a statement because no IR expression node carries a
-    /// side effect, and the returned `newValue` is the very node the write
-    /// stores rather than a re-read, so the two cannot drift apart.
+    /// Lower prefix `++`/`--` to a read-modify-write: read, add or subtract one, write back, yield the written
+    /// value — I32 only, over variable, field and subscript targets, as `evaluateIncDec` defines it. One helper
+    /// serves both statement position and `var m = ++n`, and the returned value is the node the write stores.
     private static func lowerIncDec(
         op: UnaryOperator,
         target: Expression,
@@ -5502,10 +4946,9 @@ public enum IRLowerer {
                 op: baseOp, lhs: .load(name: name, type: varType),
                 rhs: one, type: varType
             )
-            // The read-back is the value the write just left. The interpreter
-            // returns the value it computed instead; for the I32 targets this
-            // grid accepts the two are the same, and reading back is what
-            // keeps `var m = ++n` from running the arithmetic a second time.
+            // The read-back is the value the write just left. The interpreter returns the value it computed; for the
+            // I32 targets accepted here the two are equal, and reading back keeps `var m = ++n` from running the
+            // arithmetic twice.
             let readBack = IRExpr.load(name: name, type: varType)
             return (.storeVar(name: name, type: varType, value: value), readBack, varType)
 
@@ -5610,10 +5053,8 @@ public enum IRLowerer {
         )
     }
 
-    /// Lower `target op= value` in statement position: read-modify-write.
-    /// Subscript targets reuse the read's container/index nodes so the
-    /// container is emitted exactly twice (read + write), matching the
-    /// legacy emitter's evaluation shape.
+    /// Lower `target op= value` in statement position: read-modify-write. Subscript targets reuse the read's
+    /// container and index nodes, so the container is emitted exactly twice (read + write).
     private static func lowerCompoundAssign(
         left: Expression,
         baseOp: IRBinaryOp,
@@ -5660,11 +5101,9 @@ public enum IRLowerer {
 
     // MARK: - Array literals (G2)
 
-    /// Lower an array literal. The checker does not infer collection literal
-    /// types, so the element type is derived from the lowered elements
-    /// (homogeneity required — same contract as the legacy codegen fallback).
-    /// An expected `.array(element:)` context (annotation / nested literal)
-    /// drives empty-literal and integer-literal adoption.
+    /// Lower an array literal. The checker does not infer collection literal types, so the element type comes
+    /// from the lowered elements, which must be homogeneous. An expected `.array(element:)` context (annotation
+    /// or enclosing literal) drives empty-literal and integer-literal adoption.
     private static func lowerArrayLiteral(
         _ elements: [Expression],
         expected: IRType?,
@@ -5672,11 +5111,9 @@ public enum IRLowerer {
         into context: inout FunctionContext
     ) throws -> LoweredExpr {
         let elementExpected = expected?.arrayElementType
-        // An empty literal with no expected element type adopts I32. Runtime
-        // construction is element-type free — `[]` lowers to an empty handle
-        // (the legacy contract), so the choice only fixes the static element
-        // type for later reads and writes. I32 is the language's default
-        // numeric type, the same fallback an unannotated parameter uses.
+        // An empty literal with no expected element type adopts I32. Runtime construction is element-type free —
+        // `[]` lowers to an empty handle — so the choice only fixes the static element type for later reads and
+        // writes; I32 is the language's default numeric type.
         if elements.isEmpty {
             let element = elementExpected ?? .i32
             return LoweredExpr(
@@ -5711,11 +5148,9 @@ public enum IRLowerer {
 
     // MARK: - G12 trait default dispatch
 
-    /// Lower a member call through an implemented trait's default body
-    /// (legacy tryTraitMethodDispatch mirror): the body is specialized to
-    /// the receiver type as a method `方法__类型` (self = receiver), queued
-    /// in `pendingTraitDefaults` for module emission, and the call site
-    /// invokes it with the receiver as the implicit first argument.
+    /// Lower a member call through an implemented trait's default body: the body is specialized to the receiver
+    /// type as a method `方法__类型` (self = receiver), queued in `pendingTraitDefaults` for module emission,
+    /// and the call site invokes it with the receiver as the implicit first argument.
     private static func lowerTraitDefaultCall(
         _ defaultMethod: FuncDecl,
         receiver: IRExpr,
@@ -5797,28 +5232,9 @@ public enum IRLowerer {
         return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
     }
 
-    /// Slice set: exact match only, **plus one named exception**.
-    ///
-    /// The exception is `G68`'s implicit widening (`Char` into a `String` slot).
-    /// It is admitted here rather than left to the literal level because it is a
-    /// **declared rule about two types**, not a literal-coercion convenience, and
-    /// the checker already admits it — a lowering gate that refused it would turn
-    /// a legal program into a loud `E6-004`. No coercion is emitted: the two share
-    /// an ABI (`i8*`), so this is the same value in the same slot. The reverse
-    /// direction is *not* admitted, matching the checker: narrowing is what the
-    /// three constructors are for.
-    ///
-    /// Widening at the literal level (I32 literal into I64 slot) is handled via
-    /// `expected`; other non-matching composite coercions are later grids.
-    ///
-    /// G2 exception, tuples only: component *names* are not part of the shape.
-    /// A positional literal `(3, 2)` satisfies `(商: I32, 余: I32,)`. The
-    /// checker's own tuple assignability already reads labels that way, and a
-    /// tuple's LLVM spelling is `{ i32, i32 }` with the names nowhere in it, so
-    /// a label-only difference is not an ABI difference either. The names are
-    /// reconciled where the language says they are: the executor stamps the
-    /// declared labels onto the value, exactly as the interpreter does at the
-    /// two same sites.
+    /// Slice set: exact match only, plus one exception — `Char` widens into `String`, a declared rule the checker
+    /// admits and both share an ABI for (`i8*`), so no coercion is emitted; narrowing is not admitted here.
+    /// Tuples ignore component names: LLVM's spelling has none, and the executor stamps the declared labels on.
     private static func requireAssignable(_ from: IRType, to: IRType, at location: SourceLocation) throws {
         guard labelInsensitiveEqual(from, to) || (from == .char && to == .string) else {
             throw unsupported("type mismatch: \(from) is not \(to)", at: location)
@@ -5859,11 +5275,9 @@ public enum IRLowerer {
         }
     }
 
-    /// 预置声明里，**名字未被本模块占用**的那些 —— **让位规则的唯一落点**。
-    ///
-    /// ⚠️ 规则本身（什么算「占用」、什么刻意不算）住在预置声明的出处里，⛔ 本处不另写一份：
-    /// 类型层那条「给定块类型名不是值」的诊断问的是**同一个问题**，
-    /// 两处各写一份必然漂，而漂的那一刻**不会有一条判据变红**。
+    /// 预置声明里名字未被本模块占用的那些 —— 让位规则的唯一落点。规则本身（什么算占用、什么刻意不算）住在
+    /// 预置声明的出处，此处不另写一份：类型层那条「给定块类型名不是值」的诊断问的是同一个问题，两处各写一份
+    /// 必然漂，而漂的那一刻不会有一条判据变红。
     private static func visiblePredefined(in module: Module) -> [TopLevelDecl] {
         PredefinedDecls.effective(in: module.declarations)
     }
@@ -5872,19 +5286,15 @@ public enum IRLowerer {
         IRLoweringError(message: message, location: location)
     }
 
-    /// ADR-001 `P2b`：默认实例相关的**用户错误**（不是「还没做」）。
-    ///
-    /// 与 `E6-004`（「不支持的特性」）分开是刻意的 —— 那一条的意思是「语言有了、编译器还没做」，
-    /// 而这两条说的是「程序写错了」。混在一个码里，CLI 上就分不开「我该改程序」与「等它做完」。
+    /// 默认实例相关的用户错误（不是「还没做」）。与「不支持的特性」那条码分开是刻意的 —— 后者意思是「语言
+    /// 有了、编译器还没做」，这里说的是「程序写错了」；混在一个码里，CLI 上就分不开「该改程序」与「等它做完」。
     private static let noDefaultInstanceCode = "\(DiagnosticDomain.irgen.rawValue)-007"
 
-    /// `await`/`wait` 与所在体不匹配（2026-09-20，裁定 35）。
-    ///
-    /// 与下面那条**位置**码分开是刻意的，理由同 `E6-006` 与 `E6-004` 的分家：两者修法不同。
-    /// 上下文不符的人改的是函数签名（或换关键字），位置越界的人改的是写法。
+    /// `await` / `wait` 与所在体不匹配。与下面那条位置码分开是刻意的：两者修法不同 —— 上下文不符要改函数
+    /// 签名或换关键字，位置越界要改写法。
     private static let awaitOutsideAsyncBodyCode = "\(DiagnosticDomain.irgen.rawValue)-009"
 
-    /// `await` 落在没有可恢复续跑点的位置（2026-09-20，裁定 35）。
+    /// `await` 落在没有可恢复续跑点的位置。
     private static let awaitUnrecoverablePositionCode = "\(DiagnosticDomain.irgen.rawValue)-010"
 
     private static func rejected(
@@ -5893,28 +5303,17 @@ public enum IRLowerer {
         IRLoweringError(message: message, location: location, code: code)
     }
 
-    /// Stable funcLiteral identity: file + line + column. The legacy
-    /// ClosureEmitter registry contract was "行:列"; the file component was
-    /// implicit (single-file world). G13 batch 2 makes it explicit so a
-    /// merged multi-file package cannot collide two files' literals.
+    /// Stable funcLiteral identity: file + line + column. The `行:列` pair alone would let a merged multi-file
+    /// package collide two files' literals, so the file component is explicit.
     private static func closureIdKey(_ location: SourceLocation) -> String {
         "\(location.fileName):\(location.line):\(location.column)"
     }
 
     // MARK: - Effective return type (G13 batch 2, package-demo parity)
 
-    /// Scans a body for `return <expr>` statements and returns the type of
-    /// the first returned value expression, resolved without a full
-    /// lowering pass. Only the narrow slice the corpus exercises (field
-    /// reads / calls / literals through annotations) is supported; anything
-    /// else fails the full lowering later with the ordinary gate error.
-    ///
-    /// Why this exists: the interpreter flows a void-declared method's
-    /// returned value out at runtime (the package-demo corpus documents
-    /// this as "void, 返回值运行时照常返回"), while the LLVM ABI needs one
-    /// concrete return type at definition. The effective type upgrades the
-    /// declared-void signature for both the body's return statements and
-    /// the call sites — interpreter-faithful, statically decided.
+    /// Scan a body for `return <expr>` and return the type of the first returned value, resolved without a
+    /// full lowering pass. The interpreter flows a void-declared method's value out at run time, while the LLVM
+    /// ABI needs one concrete return type at definition — so the effective type upgrades the declared signature.
     private static func effectiveReturnType(
         decl: FuncDecl,
         userTypes: [String: IRType],
@@ -6046,8 +5445,7 @@ extension IRType {
             default: return nil
             }
         case .generic(let name, let params, _):
-            // `^T` surface form (Result type sugar, try-else 迁移): pins the ok
-            // payload; the error slot is type-erased in the IR ABI (LR-12).
+            /// `^T` 源形态（Result 类型的糖）：钉住 ok 载荷；错误槽在 IR ABI 里类型擦除。
             if name == "Result", let first = params.first,
                 let ok = IRType(from: first)
             {
@@ -6084,11 +5482,9 @@ extension IRType {
                 guard let fieldType = IRType(from: element) else { return nil }
                 fieldTypes.append(fieldType)
             }
-            // The annotation layer writes `labels: []` for element lists whose
-            // members are all positional (the multi-value producers: call-site
-            // inference and the checker's payload shape). IR keeps labels
-            // index-aligned with fieldTypes, so expand the empty list to
-            // all-nil; a genuinely partial label list is passed through as-is.
+            // The annotation layer writes `labels: []` for element lists whose members are all positional (call-site
+            // inference and the checker's payload shape). IR keeps labels index-aligned with field types, so the empty
+            // list expands to all-nil; a genuinely partial list passes through as-is.
             let resolvedLabels =
                 labels.isEmpty && !fieldTypes.isEmpty
                 ? [String?](repeating: nil, count: fieldTypes.count)
@@ -6142,10 +5538,8 @@ extension IRBinaryOp {
         }
     }
 
-    /// Map an AST binary operator onto the slice set; nil for operators the
-    /// slice does not carry. Bitwise/shift joined in G15 (the `&`, `^`, `<<`,
-    /// `>>` spellings; single-pipe `|` bitwise-or has no parse path — host
-    /// gap, `|` lexes as pipe/orAssign/logicalOr only).
+    /// Map an AST binary operator onto the slice set; nil for operators it does not carry. Bitwise and shift
+    /// are included, but single-pipe `|` bitwise-or has no parse path — it lexes as pipe, orAssign or logicalOr.
     init?(from op: BinaryOperator) {
         switch op {
         case .plus: self = .add
@@ -6204,12 +5598,9 @@ extension Expression {
 }
 
 extension Statement {
-    /// The statement's source position.
-    ///
-    /// Mirrors `Interpreter.statementLocation`: every `Statement` case carries
-    /// a location, and this switch has no `default:` on purpose — a new
-    /// statement case fails to compile here, so there is no path where a
-    /// statement reaches lowering with no position to record (P4-3).
+    /// The statement's source position. Every `Statement` case carries a location and this switch has no
+    /// `default:` on purpose — a new statement case fails to compile here, so no statement can reach lowering
+    /// with no position to record.
     var location: SourceLocation {
         switch self {
         case .varDecl(_, _, _, _, let l): return l
@@ -6258,37 +5649,20 @@ extension Statement {
 /// call functions declared later in the file.
 struct IRLowererSignatureInfo {
     let paramTypes: [IRType]
-    /// The type a caller of this function sees.
-    ///
-    /// For an async (`=>`) function this is `future(ok:)` -- a handle to a
-    /// running process -- so the two differ exactly where a backend has to
-    /// treat the call differently. Everywhere else the defaults below make the
-    /// two equal, which is why the split costs existing call sites nothing.
+    /// The type a caller of this function sees. For an async (`=>`) function that is `future(ok:)` — a handle
+    /// to a running process — so the two differ exactly where a backend must treat the call differently;
+    /// everywhere else the defaults make them equal.
     let returnType: IRType?
-    /// The type carried on the emitted `.call` node: the value the callee's
-    /// body actually produces, which is an `ok(v)` / `err(e)` Result even for
-    /// an async function.
-    ///
-    /// Kept apart from `returnType` because they answer different questions and
-    /// are read by different consumers: a value's type is what a backend moves
-    /// values by, while the call node's protocol is what the callee really
-    /// returns. Collapsing them would put a handle's type on a call that
-    /// produces an aggregate.
+    /// The type carried on the emitted `.call` node: the value the callee's body actually produces, an
+    /// `ok(v)` / `err(e)` Result even for an async function. Kept apart from `returnType` because a value's
+    /// type is what a backend moves values by, while the call node's protocol is what the callee really returns.
     let bodyReturnType: IRType?
-    /// Parameter positions declared without a type annotation.
-    ///
-    /// WHY (LR-4 G-2R): the checker does not constrain these positions -- its
-    /// return-consistency note says unannotated parameters stay inferred and the
-    /// body check skips them -- so a call site must not reject them either.
-    /// `greet(name,)` is legal, and `name` may arrive as a string. The slot type
-    /// still comes from the declaration's fallback, because the body's own
-    /// lowering needs *a* type; only the call-site comparison is skipped.
+    /// Parameter positions declared without a type annotation. The checker leaves these inferred and skips them
+    /// in the body check, so a call site must not reject them either — `greet(name,)` is legal and `name` may
+    /// arrive as a string. The slot still gets the declaration's fallback type; only the comparison is skipped.
     let untypedParamIndices: Set<Int>
-    /// ADR-001：`using` 形参的位置（0 基）。
-    ///
-    /// 与检查器的 `FunctionSignature.usingParamIndices` 是**同一口径的两份**：调用点按
-    /// 「实参个数 == 形参个数 − using 个数」认省略式调用，并把实参按非 using 形参逐位对上。
-    /// 空集 ⇒ 与 ADR-001 之前逐字同形（既有构造点靠默认值零改动）。
+    /// `using` 形参的位置（0 基）。与检查器的 `FunctionSignature.usingParamIndices` 同一口径：调用点按「实参
+    /// 个数 == 形参个数 − using 个数」认省略式调用，并把实参按非 using 形参逐位对上；空集即无 `using` 形参。
     let usingParamIndices: Set<Int>
 
     init(
@@ -6306,19 +5680,9 @@ struct IRLowererSignatureInfo {
     }
 }
 
-/// Per-function lowering context: variable slot types, the enclosing
-/// function's return type, the module-wide signatures from the pre-pass,
-/// the nominal type registry (G3), the user-type name table and enum
-/// registry (G4).
-/// `errorBindings` tracks names currently bound to a try-else error word so
-/// `return err` can re-box and print can gate on the type-erased ABI.
-/// G-2d: the module's generic-enum templates plus the case -> owner index.
-/// 泛型枚举构造形态 gives two construction spellings: the qualified form names the enum
-/// (`结果<I32, String>.ok(42)`) and needs only `templates`; the bare form names
-/// the case (`ok<I32, String>(42)`) and resolves its parent through the
-/// 裸名 case 消歧（静态收敛版） ladder, which is what `caseOwners` answers — exactly one owner
-/// means no expected type is needed, more than one means the spelling is
-/// ambiguous and the qualified form is required.
+/// The module's generic-enum templates plus the case → owner index. The qualified spelling
+/// (`结果<I32, String>.ok(42)`) names the enum and needs only `templates`; the bare one (`ok<I32, String>(42)`)
+/// names the case and resolves its parent through `caseOwners` — one owner settles it, more means ambiguous.
 private struct IRGenericEnumIndex {
     let templates: [String: EnumDecl]
     let caseOwners: [String: [String]]
@@ -6341,10 +5705,9 @@ private struct IRGenericEnumIndex {
     }
 }
 
-/// One enclosing construct a `break`/`continue` may leave. Loops are
-/// `continue` targets as well; a labeled `if` block is not (标签 break 定向范围; the
-/// `continue-stmt` production carries the note *仅循环标签有效* while
-/// `break-stmt` carries no such restriction).
+/// One enclosing construct a `break` / `continue` may leave. Loops are `continue` targets as well; a
+/// labeled `if` block is not, because only loop labels satisfy `continue` while `break` accepts any
+/// labeled frame.
 private struct ControlFrame {
     let label: String?
     let isLoop: Bool
@@ -6355,30 +5718,27 @@ private struct FunctionContext {
     let returnType: IRType?
     let typeInference: TypeInference?
     var variableTypes: [String: IRType]
-    /// ADR-001 `P2b`：函数体里取用过的给定块类型（留痕，见 `IRFunction.givenReferenceNames`）。
+    /// 函数体里取用过的给定块类型（见 `IRFunction.givenReferenceNames`）。
     /// 值字段即可 —— 调用点全都在**同一个**函数的 `context` 上写，不需要跨函数共享。
     var givenReferenceNames: Set<String> = []
     let moduleSignatures: [String: IRLowererSignatureInfo]
     let nominalTypes: [String: IRLowerer.NominalInfo]
     let userTypes: [String: IRType]
     let enums: [String: IREnumDecl]
-    /// G-2d: the module's generic-enum templates plus the case -> owner index,
-    /// used to place a generic enum case construction and to find the
-    /// specialized body the pre-pass registered (泛型枚举构造形态).
+    /// 模块的泛型枚举模板 + case → 属主索引：给泛型枚举构造定形，
+    /// 并找到前处理登记的专用体。
     let genericEnums: IRGenericEnumIndex
-    /// G10: generic function templates by source name, for call-site
+    /// Generic function templates by source name, for call-site
     /// dispatch of `身份<I32>(...)` (the specialization itself is
     /// pre-registered during the monomorphization pre-pass).
     let genericFuncTemplates: [String: FuncDecl]
-    /// G6: closure literal ids keyed by `funcLiteral.location` "行:列"
-    /// (stable AST-node identity, legacy ClosureEmitter contract). Assigned
-    /// by a module-level pre-pass so emission order is source-order stable.
+    /// 闭包字面量 id，键为 `funcLiteral.location` 的 "行:列" —— AST 节点级稳定身份。
+    /// 由模块级前处理统一分配，故发射顺序与源码顺序一致。
     let closureIds: [String: Int]
-    /// G12: trait registry — trait bodies by name plus per-type trait lists.
-    /// Read-only at lowering time; drives the member-call trait-default
-    /// fallback (legacy tryTraitMethodDispatch mirror).
+    /// trait 注册表：按名的 trait 体 + 每类型的 trait 列表。降载期只读，
+    /// 供成员调用在无具体实现时回落到 trait 默认方法。
     let traitRegistry: IRLowerer.TraitRegistry
-    /// G12: trait default bodies specialized at dispatch sites (IR name
+    /// Trait default bodies specialized at dispatch sites (IR name
     /// `方法__类型`), collected here for module emission. Reference type so
     /// appends from nested FunctionContexts propagate to `lower()`.
     let traitDefaultsCollector: IRLowerer.TraitDefaultCollector
@@ -6386,48 +5746,35 @@ private struct FunctionContext {
     /// 接收者类型名 → 方法名 → （降载后的 IR 函数名, 返回类型）。由模块级预扫描填
     /// （见 `lower(module:)` 的扩展块分支）；空表即「本模块没有内建扩展」。
     var builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
-    /// G12: receiver field types for bare-name resolution inside method
+    /// Receiver field types for bare-name resolution inside method
     /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
     var selfFieldTypes: [String: IRType] = [:]
     var selfTypeNameLowered: String?
     var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
 
-    /// Enclosing interruptible frames, innermost last (`nil` = unlabeled
-    /// loop). Drives labeled break/continue depth resolution (标签语法反转 for the
-    /// loops-only era, 标签 break 定向范围 once a labeled `if` became a frame too): a
-    /// label matches the nearest enclosing frame carrying that label.
+    /// Enclosing interruptible frames, innermost last (`nil` = unlabeled loop). Drives labeled break/continue
+    /// depth resolution: a label matches the nearest enclosing frame carrying that label.
     var controlFrames: [ControlFrame] = []
 
-    /// M6a D7: counter for synthetic slot names (`$destructureN`) so several
-    /// destructures in one function cannot share a slot. `$` is not a
-    /// source-identifier character (identifiers are letters/digits/`_`), so
-    /// these never collide with user names — and unlike angle brackets it is
-    /// legal in an unquoted LLVM local name, which mangling leaves untouched.
+    /// Counter for synthetic slot names (`$destructureN`), so several destructures in one function cannot share
+    /// a slot. `$` is not a source-identifier character, so these never collide with user names, and unlike
+    /// angle brackets it is legal in an unquoted LLVM local name.
     var tempCounter: Int = 0
 
-    /// `await`/`wait` 的**上下文**判定（2026-09-20，裁定 35）：**最近的体**是否异步。
-    ///
-    /// 「最近的体」而不是「整条链」是刻意的。一个同步闭包嵌在 `=>` 体里时，闭包体自己
-    /// 没有可让出的任务，`await` 写在那里兑现不了 —— `DE-2b` 实测过的帧栈是**一个任务一个**，
-    /// 穿透闭包挂起会打破这个前提。所以每个体各判各的，闭包体用它自己的 `isAsync` 覆盖。
+    /// `await` / `wait` 的上下文判定：最近的体是否异步。「最近的体」而非整条链是刻意的 —— 同步闭包嵌在
+    /// `=>` 体里时，闭包体自己没有可让出的任务，`await` 写在那里兑现不了（帧栈是一个任务一个，穿透闭包挂起
+    /// 会打破这个前提）。故每个体各判各的，闭包体用自己的 `isAsync` 覆盖。
     var isAsync: Bool = false
 
-    /// 本次语句降载里**唯一**被允许出现可让出 `await` 的位置（`nil` = 这条语句不允许）。
-    ///
-    /// 用**位置**而不是布尔标志：布尔标志要么在表达式入口一次性消费（那 `try` 包装位就会
-    /// 误伤），要么得改遍每个表达式分支才能正确传播（漏一个就静默放行，正是这条规则要防的
-    /// 失败模式）。位置比较不必碰任何表达式分支 —— 子表达式里的 `await` 位置天然不同。
+    /// 本次语句降载里唯一被允许出现可让出 `await` 的位置（`nil` = 这条语句不允许）。用位置而非布尔标志：
+    /// 标志要么在表达式入口一次性消费（`try` 包装位会被误伤），要么得改遍每个表达式分支才能正确传播（漏
+    /// 一个就静默放行）。位置比较不必碰任何分支 —— 子表达式里的 `await` 位置天然不同。
     var allowedAwaitAt: SourceLocation?
 
-    /// 体嵌套深度：**函数 / 闭包体的那一层是 1**，每进一层控制流的体加一（`lowerBlock` 里维护）。
-    ///
-    /// ⭐ 它只有一个用途 —— 与 `allowedAwaitLocation` 的句法判定**合取**，把「可让出位置」
-    /// 收到体那一层（`DE-6b` 的让出点只能落在那里）。
-    ///
-    /// ⚠️ 与发射层那个同名计数**同一含义但不是同一个变量**：两者是独立实现，必须对同一条规则
-    /// 给出同一个答案。这个「两个独立实现给同一答案」的要求不是洁癖 ——
-    /// 2026-09-24 之前正因两者答案不同，才出现「降载层放行、发射层拒绝且以内部断言崩溃」的形态。
+    /// 体嵌套深度：函数 / 闭包体的那一层是 1，每进一层控制流的体加一。它只用于与 `allowedAwaitLocation` 的
+    /// 句法判定合取，把可让出位置收到体那一层。与发射层的同名计数同一含义但不是同一个变量：两者是独立实现，
+    /// 必须对同一条规则给出同一个答案，答案一旦分叉就会出现「降载层放行、发射层拒绝」。
     var bodyDepth: Int = 0
 
     /// G13 batch 2: alias for the effective-return pre-scan (same dictionary,

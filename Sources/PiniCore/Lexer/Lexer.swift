@@ -11,19 +11,14 @@ public class Lexer {
     /// 避免 `t.0.1` 中 `0.1` 被读成浮点字面量（`0.1` 本应拆为 `.0` `.1`）。
     private var prevTokenIsDot = false
 
-    /// 行首判定标志（`<<T>>` 特征扩展开的词法消歧判据，2026-09-06 重新引入落地）：
-    /// 本行尚未产出任何 token 时为 true——行首 `<<` 拆为两个 `.lessThan`（Parser
-    /// parseTopLevelDecl 分派期望的正是该 token 对 → traitExt 扩展块）；行内 `<<`
-    /// 维持移位合并。每行开工置位、产出 token 后清除；整行注释不发 token，不影响。
+    /// 行首判定：本行尚未产出 token 时为 true，此时行首 `<<` 拆成两个 `.lessThan`——正是 Parser
+    /// `parseTopLevelDecl` 分派特征扩展块所需的 token 对；行内 `<<` 仍按移位合并。每行开工置位、
+    /// 产出 token 后清除；整行注释不发 token，故不影响判定。
     private var awaitingFirstTokenOfLine = true
 
-    /// 批 1.5（A12 方案 B / 路 C 裁决）：括号栈——每项记录开括号字符与是否「块携带」。
-    /// 块携带 = 开括号后同行紧跟块开启关键字 `func`（草稿「原地调用 IIFE」与实参位
-    /// 函数字面量的包裹括号形态）。布局抑制判据 = **栈顶（最内层开括号）为普通括号**：
-    /// 此时行尾不发 newline、行首旁路缩进处理（换行等同空白、缩进不参与，括号深度即结构）。
-    /// 栈顶为块携带括号时布局完全照常——IIFE / LazyRef 式块体的 token 流与抑制前逐字节相同。
-    /// 边界（已裁决）：`< >` 不参与深度跟踪；前瞻仅限同行；`` `func` `` 反引号转义不算
-    /// 块携带；未闭合括号到 EOF 宽松静默（宽松词法 契约）；不匹配 closer 一律 pop（限制级联）。
+    /// 括号栈：每项记开括号字符与是否「块携带」（开括号后同行紧跟 `func`，即 IIFE 与实参位函数字面量）。
+    /// 布局抑制判据 = 栈顶为普通括号：行尾不发 newline、行首跳过缩进，括号深度即结构；栈顶块携带则布局照常。
+    /// 边界：`< >` 不跟踪深度，前瞻仅限同行，反引号转义的 `func` 不算块携带，未闭合到 EOF 静默，不匹配 closer 一律 pop。
     private var bracketStack: [(char: Character, blockCarrying: Bool)] = []
 
     public init(source: String, fileName: String) {
@@ -48,7 +43,7 @@ public class Lexer {
                 break
             }
 
-            // 批 1.5：栈顶为普通括号 → 布局抑制：前导空白仅消费、不触缩进栈（不发 INDENT/DEDENT）
+            // 栈顶为普通括号 → 布局抑制：前导空白仅消费、不触缩进栈（不发 INDENT/DEDENT）
             if suppressesLayout {
                 while let c = currentChar, c == " " || c == "\t" {
                     _ = advance()
@@ -82,7 +77,7 @@ public class Lexer {
                 updateBracketStack(with: token)
             }
 
-            // 批 1.5：栈顶为普通括号 → 行尾不发 newline（换行在括号内等同空白）。
+            // 栈顶为普通括号 → 行尾不发 newline（换行在括号内等同空白）。
             // 在此时刻求值：若本行内括号已闭合，栈顶已变，newline 照常发射。
             if !isAtEnd && currentChar == "\n" {
                 if !suppressesLayout {
@@ -105,15 +100,15 @@ public class Lexer {
         return position >= chars.count
     }
 
-    /// 批 1.5：布局抑制判据——栈顶（最内层未闭合括号）存在且为普通括号（非块携带）。
-    /// 栈为空（不在任何括号内）或栈顶为块携带括号 → 布局照常。
+    // 布局抑制判据——栈顶（最内层未闭合括号）存在且为普通括号（非块携带）。
+    // 栈为空（不在任何括号内）或栈顶为块携带括号 → 布局照常。
     private var suppressesLayout: Bool {
         return bracketStack.last?.blockCarrying == false
     }
 
-    /// 批 1.5：token 发射点维护括号栈（唯一汇聚处——字符串/插值/反引号内部括号
-    /// 不经此处，天然不参与深度跟踪）。
-    /// closer 一律 pop（不校验种类匹配，D-7 裁决：宽松、限制级联）。
+    // token 发射点维护括号栈（唯一汇聚处——字符串/插值/反引号内部括号
+    // 不经此处，天然不参与深度跟踪）。
+    // closer 一律 pop（不校验种类匹配：宽松、限制级联）。
     private func updateBracketStack(with token: Token) {
         switch token {
         case .leftParen:
@@ -131,9 +126,9 @@ public class Lexer {
         }
     }
 
-    /// 批 1.5：判断刚发射的开括号是否「块携带」——其后同行（仅跳过空格/制表符，
-    /// 不跨行）紧跟关键字 `func`（边界：后随字符不得为 IDENT 续字符）。
-    /// `` `func` `` 反引号转义在此处表现为反引号字符 → 不满足 → 不算块携带。
+    // 判断刚发射的开括号是否「块携带」——其后同行（仅跳过空格/制表符，
+    // 不跨行）紧跟关键字 `func`（边界：后随字符不得为 IDENT 续字符）。
+    // `` `func` `` 反引号转义在此处表现为反引号字符 → 不满足 → 不算块携带。
     private func isBlockCarryingOpen() -> Bool {
         var idx = position
         while idx < chars.count, chars[idx] == " " || chars[idx] == "\t" {
@@ -285,10 +280,8 @@ public class Lexer {
             _ = advance()
             return .at(loc)
         case "`":
-            // 反引号转义产生式：反引号转义——`名称` 整体产出 IDENT token（跳过关键字
-            // 分类），允许关键字作标识符/构造标签（自举探针 G-P5，用户提案）。
-            // D2：未闭合（行尾/EOF）或空内容回退 宽松词法 兜底（单字符 IDENT），
-            // 保持「词法器零错误」契约；L0 语料第 95 行的裸反引号即此兜底。
+            // 反引号转义：`` `名称` `` 整体产出 IDENT token 并跳过关键字分类，使关键字可作标识符与构造标签。
+            // 未闭合（行尾 / EOF）或空内容回退为单字符 IDENT，保持「词法器零错误」的契约。
             _ = advance()
             var escaped = ""
             var closed = false
@@ -371,11 +364,9 @@ public class Lexer {
             return .bitwiseXor(loc)
         case "<":
             _ = advance()
-            // 行首 `<<` → 特征扩展开（2026-09-06 重新引入落地，见提案工单）：
-            // 只消费第一个 `<` 返回 `.lessThan`，第二个 `<` 由下一轮正常路径产出 `.lessThan`——
-            // 恰为 Parser parseTopLevelDecl 分派期望的 lessThan 对；行内 `<<` 维持移位合并。
-            // 排除 `<<=`（行首 `<<=` 在合法语句中不可达，但保留其移位赋值读法——词法层
-            // 最长匹配契约不变，LexerTests.testTokenizeLongestMatchOperator 钉定）。
+            // 行首 `<<` 是特征扩展：只消费第一个 `<` 返回 `.lessThan`，第二个由下一轮正常路径产出，
+            // 恰为 `parseTopLevelDecl` 分派期望的 lessThan 对；行内 `<<` 仍按移位合并。
+            // 排除 `<<=`（行首 `<<=` 在合法语句中不可达），词法层最长匹配契约不变。
             if awaitingFirstTokenOfLine, currentChar == "<", peekAfter(offset: 1) != "=" {
                 return .lessThan(loc)
             }

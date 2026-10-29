@@ -15,7 +15,7 @@ public struct Block: Equatable, ASTNode {
 public enum AssignTarget: Equatable {
     case identifier(name: String)
     case member(object: Expression, name: String)
-    /// 下标写目标 `a[i] = v`（#46-D D1.5：数组下标写）。
+    /// 下标写目标 `a[i] = v`。
     /// - `expr`：容器表达式（任意表达式，非 identifier-only）
     /// - `index`：索引表达式
     case `subscript`(expr: Expression, index: Expression)

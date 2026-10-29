@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
-# M6 triage probe (2026-09-10).
-# Purpose: measure the IR channel against the TEST FIXTURE corpus (not just
-# examples/) and separate TRUE flip blockers from front-end rejects.
-#
-#   A true blocker = legacy emit PASSES but IR emit FAILS
-#                    (i.e. a capability IR lacks, would regress on flip)
-#   Not a blocker  = both fail (front-end/checker rejects it; not a backend gap)
-#
-# Usage: bash tools/m6-triage-probe.sh
-#   PINI_SWEEP_BIN overrides the CLI path; requires a build with --product pini.
-#   REPO_ROOT overrides the repo location (default: the repo this script sits in,
-#   else the pinned absolute path below).
-# Output: /tmp/ir-fixture-sweep.tsv, /tmp/m6-blockers.tsv  (regenerated)
+# M6 triage probe: measure the IR channel over the test fixtures and separate true flip
+# blockers (AST emit passes, IR emit fails) from front-end rejects.
+# Usage: PINI_SWEEP_BIN=… REPO_ROOT=… bash tools/m6-triage-probe.sh → /tmp/{ir-fixture-sweep,m6-blockers}.tsv
 set -u
 
 if [[ -z "${REPO_ROOT:-}" ]]; then
@@ -50,16 +40,13 @@ while IFS= read -r -d '' f; do
 done < <(find "$REPO_ROOT/Tests" -name '*.pini' -print0 | sort -z)
 echo "pass1 (IR emit): total=$total pass=$pass fail=$fail"
 
-# Zero corpus is not a clean sweep. This pass reads the test surface, and that
-# surface can be emptied by a deletion; "total=0 pass=0 fail=0" then reads
-# exactly like a run that found nothing wrong, and the two must not share an
-# output shape. Say which one happened.
+# Zero corpus is not a clean sweep: "total=0" reads like a pass, so say which happened.
 if [[ "$total" -eq 0 ]]; then
   echo "pass1: NO CORPUS -- 0 .pini under $REPO_ROOT/Tests. Not a pass." >&2
   exit 2
 fi
 
-# ---- pass 2: classify each FAIL by the legacy channel --------------------
+# ---- pass 2: classify each FAIL by the AST channel ----
 : > "$BLOCK"
 while IFS=$'\t' read -r rel status msg; do
   [[ "$status" == "FAIL" ]] || continue

@@ -1,17 +1,6 @@
-; 控制流 while + break / continue / 带标签跳出
-; 运行：pini run examples/control_while.pini
-; 预期：0
-;       1
-;       2
-;       1
-;       3
-;       5
-;       0
-;       1
-;
-; 说明：
-;   - break 跳出最近的 while；continue 跳到循环头。
-;   - 标签|控制流: 给控制流语句打标签（标签落在 while/for 上）；break 标签 / continue 标签 可跳出/续行到指定层（标签语法反转）。
+; 控制流 while + break / continue / 带标签跳出。运行 pini run examples/control_while.pini
+; 预期：0 / 1 / 2 / 1 / 3 / 5 / 0 / 1（逐行）
+; 说明：break 跳出最近的 while，continue 跳到循环头；`标签|控制流:` 给 while/for 打标签，break 标签 / continue 标签 可跳出或续行到指定层。
 
 main|func() -> ():
     ; 基础 while

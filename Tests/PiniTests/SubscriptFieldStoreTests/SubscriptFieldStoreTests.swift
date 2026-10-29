@@ -1,24 +1,9 @@
 import Foundation
 import Testing
 
-/// `obj.field[i] = v` —— **字段作容器的下标写**（N79 第一半）。
-///
-/// 存在理由（2026-10-04 实测）：该形态此前**两条腿都做不成**，而失败形态**相反** ——
-/// · 解释器（`IRExecutor.storeSubscript`）对非变量 / 非嵌套下标的目标**响亮拒绝**：
-///   `E5-006`「invalid operation: subscript store target is neither a variable …」；
-/// · 发射器（`IREmitter.emitSubscriptStore`）落到「原样 `emitExpr(container)`」那一支：
-///   它把**字段值**当容器交出去，却**不把分裂出的新句柄写回字段**
-///   ⇒ 写时复制一旦分裂，那次写**静默丢失**（与「不回写变量槽」是同一条契约义务）。
-///
-/// 归属：IR 契约把 `subscriptStore` 的容器定义为**可嵌套链**，字段是链的一环
-/// ⇒ 这是**覆盖缺口**，⛔ 不是契约要改。
-///
-/// 两份夹具的**判别力不同**，⛔ 别只跑一份：
-/// · `field-subscript-store`（非别名）：值就地改对、邻居不动；
-///   ⚠️ 它**区分不出**「回写字段」与否 —— 独占时写路径可能就地改。
-/// · `field-subscript-store-alias`（别名）：先取快照再写 ⇒ 分裂必然发生
-///   ⇒ 只有「新句柄写回了字段」才可能既改到字段又不动快照。
-///   ⭐ 这一份才是「回写」那条义务的**唯一见证**。
+/// `obj.field[i] = v` —— 字段作容器的下标写。IR 契约把 `subscriptStore` 的容器定义为可嵌套链，字段是链的一环
+/// ⇒ 这是覆盖缺口，不是契约要改。解释器对非变量 / 非嵌套目标响亮拒绝 `E5-006`；发射器把字段值当容器交出去
+/// 却不回写分裂出的新句柄 ⇒ 写时复制一旦分裂，那次写静默丢失。故别名夹具是「回写」义务的唯一见证。
 struct SubscriptFieldStoreTests {
 
     private static var fixturesDirectory: String {

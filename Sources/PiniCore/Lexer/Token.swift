@@ -287,11 +287,9 @@ public enum Keyword: String, CaseIterable {
     // `Self` 降级为普通标识符，旧代码须迁移为 `own`。
     case `own` = "own"
     case `defer` = "defer"
-    // 异步 join 表层：异步表层 `<=` 前缀 join（立场 B）逆转，由 `await`/`wait` 关键字承载。
-    // `await` 用于异步函数体（=>` 派发）内的挂起等待；`wait` 用于同步上下文的阻塞 join；
-    // 二者均映射到既有 `.join` AST 节点（运行时按 suspendMode 上下文敏感，脊柱 并发调度脊柱 不变）。
-    // 块标签语法（已撤销）：块标签模型由 `while@label`/`for@label` 逆转，新增 `scope` 关键字
-    // 开启带标签无条件子块（`scope 块标签:`），`break`/`continue` 按标签名定向。见 异步 join 表层 / 块标签语法（已撤销）。
+    // join 表层由 `await` / `wait` 关键字承载：前者用于异步函数体内的挂起等待，后者用于同步上下文的阻塞 join，
+    // 二者都映射到既有 `.join` AST 节点，运行时按上下文区分。`scope` 开启带标签的无条件子块，
+    // `break` / `continue` 按标签名定向——块标签不走 `while@label` 形式。
     case `import` = "import"
     case `export` = "export"
     case `pass` = "pass"
@@ -303,20 +301,18 @@ public enum Keyword: String, CaseIterable {
     case `await` = "await"
     case `wait` = "wait"
     case `scope` = "scope"
-    // 声明上下文收紧/任务 #13：detach 语句形式 `detach <expr>`（ detach-expr-stmt），
-    // 从内建函数升格为保留关键字——fire-and-forget 唯一合法出口。
+    /// detach 语句形式 `detach <expr>`（detach-expr-stmt）——保留关键字，
+    /// fire-and-forget 的唯一合法出口。
     case `detach` = "detach"
-    // Phase 2a（FFI 子系统）：`unsafe` 前缀表达式 / `|unsafe` 函数修饰符 + `foreign` 块声明。
-    // 关键字集 31→33（FFI 子系统）；补 `test`（G51）后计 34；2026-09-07 `except` 随 try-else
-    // 迁移退役 ⇒ 33。计数与规范侧 `KEYWORD` 产生式**两侧同值**：改一处必须改另一处。
+    // `unsafe` 前缀表达式 / `|unsafe` 函数修饰符与 `foreign` 块声明。关键字计数与规范侧 `KEYWORD`
+    // 产生式两侧同值：改一处必须改另一处。
     case `unsafe` = "unsafe"
     case `foreign` = "foreign"
     // G51（spec KEYWORD 收口）：测试函数块修饰符关键字——宿主词法对齐自举
     //（自举 lexer 关键字表本就含 kw_test）；`名称|test` 修饰符位经 parseIdentifier
     // 白名单接出为修饰符串 "test"（Interpreter.runTests 收集路径不变）。
     case `test` = "test"
-    // ADR-001（给定块 `given` / 取用参数 `using`，P1）：`using` **入**关键字表 —— 它占
-    // **参数位前缀**（`using 名: 类型`）。与 `given` 分工不同：后者只出现在 `|` 右侧的
-    // 修饰符位、走既有标识符白名单，故**不入**表。本项把计数推到 34，规范侧同批改。
+    /// `using` **入**关键字表 —— 它占**参数位前缀**（`using 名: 类型`）。
+    /// 与 `given` 分工不同：后者只出现在 `|` 右侧的修饰符位、走既有标识符白名单，故**不入**表。
     case `using` = "using"
 }

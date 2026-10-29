@@ -2,11 +2,9 @@ import Foundation
 
 // MARK: - DAP 调试驱动
 
-/// DAP 调试驱动：作为 `DebugDriver` 接入 `Debugger`。
-///
-/// `Debugger.consult` 在每次停下时调用 `nextCommand`，本驱动用 `NSCondition` 阻塞之，
-/// 直到 DAP 读取线程处理 `continue`/`next`/`stepIn` 请求时调用 `resume(_:)` 唤醒。
-/// 这样解释器线程在「停止态」挂起，DAP 线程（主线程）持续收发协议消息，二者解耦。
+/// DAP 调试驱动：作为 `DebugDriver` 接进 `Debugger`。`consult` 每次停下都调 `nextCommand`，
+/// 本驱动用 `NSCondition` 阻塞它，直到 DAP 线程处理 continue/next/stepIn 时调 `resume(_:)` 唤醒。
+/// 于是解释器线程停在「停止态」，DAP 线程持续收发协议消息，两者解耦。
 public final class DAPDebugDriver: DebugDriver {
     private let condition = NSCondition()
     private var pending: DebugCommand? = nil
@@ -35,34 +33,18 @@ public final class DAPDebugDriver: DebugDriver {
 
 // MARK: - DAP 调试适配器（P7-4 P4）
 
-/// VS Code / 任意 DAP 客户端调试适配器。
-///
-/// 传输：stdio + `Content-Length` 分帧（与 LSP 同形）。协议流与 debuggee 的 `print`
-/// 输出严格分离——debuggee stdout 经引擎的 output sink（`DebugHookHost` 的那一面）
-/// 重定向为 DAP `output` 事件，绝不污染协议流（避免 stdio 分帧错乱）。
-///
-/// 生命周期（标准 DAP 交互）：
-/// 1. `initialize` → 响应 capabilities + 发送 `initialized` 事件
-/// 2. `launch` → 载入程序、装配解释器/调试器（不启动）
-/// 3. `setBreakpoints`（每源文件）→ 设置/清除断点
-/// 4. `configurationDone` → 启动解释器线程
-/// 5. 解释器遇断点/入口/单步停下 → `stopped` 事件 → 客户端 `threads`/`stackTrace`/`scopes`/`variables` 检视
-/// 6. 客户端 `continue`/`next`/`stepIn` → `resume` 唤醒解释器线程
-/// 7. 程序结束 → `exited` + `terminated` 事件；客户端 `disconnect` → 退出
+/// VS Code / 任意 DAP 客户端的调试适配器：stdio + `Content-Length` 分帧（与 LSP 同形），协议流与 debuggee 输出严格分离。
+/// 引擎 output sink 把 `print` 重定向成 DAP `output` 事件，不污染分帧。生命周期是标准 DAP 交互：initialize →
+/// launch（只装配不启动）→ setBreakpoints → configurationDone 起线程；停下发 `stopped` 供检视、`resume` 唤醒，结束发 `exited`。
 public final class DAPServer {
 
     private let driver = DAPDebugDriver()
     private var debugger: Debugger!
     private var launchRun: DebugRun?
 
-    /// 引擎装配点（LR-4 P4-3）。默认 nil = 本适配器自建引擎（见 `launch` 里那条默认路径）。
-    ///
-    /// 之所以是可注入的闭包而不是一个「引擎种类」枚举：源码要先检查再 lower，而「谁来
-    /// lower」的答案是**调用方**（见 `DebugRun`）。注入方本来就握着那份信息，所以由它把
-    /// 「引擎 + 启动动作」一并交进来，适配器不为此多知道任何事。
-    ///
-    /// `G-6c` 之后只剩一台引擎，但**注入点保留**：它服务的是「调用方决定怎么 lower」
-    /// 这件事（测试注入自己那份、生产走默认），不是「选哪台引擎」。
+    /// 引擎装配点：注入方交进「引擎 + 启动动作」，默认 nil 时适配器自建。之所以是可注入的闭包而不是引擎种类枚举，
+    /// 是因为源码要先检查再 lower，而「谁来 lower」的答案在调用方（见 `DebugRun`），注入方本来就握着那份信息。
+    /// 注入点在只剩一台引擎之后仍保留：它服务的是「调用方决定怎么 lower」，不是「选哪台引擎」。
     public var makeRun: ((Module?, Package?) -> DebugRun)?
     private var module: Module?
     private var package: Package?
@@ -181,10 +163,9 @@ public final class DAPServer {
             sources = [program: src]
         }
 
-        // 引擎在这里装：适配器只拿到「协议面 + 一个开始跑的动作」，于是它不认识
-        // 任何一种引擎（LR-4 P4-3，见 `DebugRun`）。lowering 的归属不变 —— 仍是调用方。
-        // `G-6a`：默认引擎由 AST 走查改指 IR（那条 AST 默认路径要随走查一起删除）。
-        // `makeRun` 仍供调用方注入引擎 —— 双引擎验证与将来的默认切换都只动这一处。
+        // 引擎在这里装：适配器只拿到「协议面 + 一个开始跑的动作」，故它不认识任何一种引擎（见 `DebugRun`），
+        // lowering 的归属仍在调用方。无注入时默认自建 IR 引擎并在 `start` 里完成 check 与 lower，
+        // 错误与运行期失败走同一条上报通道；`makeRun` 供调用方注入引擎，双引擎验证与将来的默认切换都只动这一处。
         let launchPackage = package
         let launchModule = module
         let launch: DebugRun
@@ -363,11 +344,8 @@ public final class DAPServer {
     // MARK: - 传输层（Content-Length 分帧）
 
     /// 从 stdin 读取一条完整的 Content-Length 分帧消息。
-    ///
-    /// 注意：`FileHandle.readData(ofLength: n)` 会**阻塞直至读满 n 字节或 EOF**。
-    /// 若对端通过常开管道（如 VS Code / 测试中的子进程）发送，管道不会立即 EOF，
-    /// 用大块 `readData(ofLength: 4096)` 会永远等不满 4096 字节而挂死。
-    /// 因此头部逐字节读取（有数据即返回），body 按已知长度读取（字节通常已在管道中，立即返回）。
+    /// `FileHandle.readData(ofLength: n)` 会阻塞至读满 n 字节或 EOF，而常开管道（VS Code、测试子进程）不会立即 EOF，
+    /// 用大块读取会永远等不满而挂死；故头部逐字节读（有数据即返回），body 按已知长度读（通常已在管道中）。
     private func readMessage() -> [String: Any]? {
         var buffer = Data()
         // 1) 逐字节累积，直至定位头部结束符（\r\n\r\n 或 \n\n）。

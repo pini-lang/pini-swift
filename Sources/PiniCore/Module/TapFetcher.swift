@@ -1,26 +1,8 @@
 import Foundation
 
-/// 批 7（G52）：远端 tap 抓取器——把 `[tap]` 声明的源变成 `deps/<name>/` 里的一次真实检出。
-///
-/// tap 沿用 Homebrew 的心智模型（`brew tap user/repo`）：**tap 即一个 git 仓库**，默认源为 github。
-/// 三协议见 `expand`：
-///
-/// | spec | 展开为 | 备注 |
-/// |---|---|---|
-/// | `github:<org>` | `https://github.com/<org>/<name>.git` | org **必须显式书写**（G52 D11，可复现性） |
-/// | `git:<url>` | 原样 | git 能懂的 URL 均可，**含本地路径**——故整条链路可离线端到端测试 |
-/// | `file:<path>` | 原样路径 | 批 7 **不落地**它（见下） |
-///
-/// `<name>` 为占位符，展开时替换为模块名（G52 §3.1）。
-///
-/// v1 边界（如实记录，不假装已解决）：
-/// - **`file:` 不由本文件落地**——批 6 已 Landed 的语义是「tap 作来源元数据 + 依赖由
-///   git submodule / 手工拷贝到 `deps/<name>/`」，本批**不动**该语义（用户裁决 2026-09-04）。
-///   `expand` 仍解析 `file:`，以便调用方判定通道；`materialize` 对它显式报错而非静默跳过。
-/// - 抓取经 `Process` 调 git 子进程。git 缺失或非零退出**一律抛错**，不静默降级——
-///   延续批 6 D-A 的判据：半成品依赖比报错更危险。
-/// - 无中心化 sumdb（v1 不做）。`commit` 只是**来源定位符**，内容凭证仍是 `sum`（G52 D6/D12）。
-/// - 本文件只提供能力，**不接进 `ModuleToolchain.resolve`**（接线属批 7 的阶段 4）。
+/// 远端 tap 抓取器：把 `[tap]` 声明的源变成 `deps/<name>/` 里的一次真实检出；tap 即一个 git 仓库。
+/// `expand` 认三种 spec：`github:<org>` 拼出 github URL（org 须显式书写，不从环境推断）、
+/// `git:<url>` 原样（含本地路径，故链路可离线自测）、`file:<path>` 只解析不落地，`materialize` 对它显式报错。
 public enum TapFetcher {
 
     // MARK: - 错误
@@ -40,7 +22,7 @@ public enum TapFetcher {
         case versionNotFound(version: String, source: String)
         /// 目标目录已存在但不是 git 检出——不代为删除（避免吞掉用户数据）。
         case destinationOccupied(path: String)
-        /// `materialize` 收到 `file:`：批 7 不落地它，显式报错而非静默跳过。
+        /// `materialize` 收到 `file:`：不落地它，显式报错而非静默跳过。
         case fileTapNotMaterialized(path: String)
     }
 
@@ -82,9 +64,7 @@ public enum TapFetcher {
 
     // MARK: - 候选版本（tag 列举）
 
-    /// 可用版本：远端 tag 剥掉 `v` 前缀后**可解析为版本号**者，去重并按版本升序。
-    ///
-    /// 经 `git ls-remote --tags`——本地路径同样适用，故可离线测试。
+    /// 可用版本：远端 tag 剥掉 `v` 前缀后能解析为版本号者，去重并按版本升序；经 `git ls-remote --tags`。
     /// 剥不出的 tag（如 `nightly`、带非数字段的）不进候选：它们无法参与 MVS 比较。
     public static func availableVersions(_ source: Source) throws -> [String] {
         guard source.scheme != .file else { return [] }  // file: 无版本图可解（G52 §3.3）
@@ -97,9 +77,8 @@ public enum TapFetcher {
             let tag = String(cols[1].dropFirst("refs/tags/".count))
             // 附注 tag 会多出一条 `^{}` 解引用行，指向同一对象——跳过，避免重复候选。
             if tag.hasSuffix("^{}") { continue }
-            // 剥 `v` 前缀是**规范化**而非解析兜底：剥出的串既是 MVS 候选、也用于拼 `refs/tags/v<v>`、
-            // 并写进锁文件，故必须是 `1.0.0` 而非 `v1.0.0`。解析侧的 v 前缀容忍由
-            // `Constraint.versionComponents` 统一负责（G52 §9 Def-9）。
+            // 剥 `v` 前缀是规范化而非解析兜底：剥出的串既是 MVS 候选、也用于拼 `refs/tags/` 路径并写进锁文件，
+            // 故必须写成不带前缀的形式；解析侧的 v 前缀容忍由 `Constraint.versionComponents` 统一负责。
             var v = tag
             if v.hasPrefix("v") { v = String(v.dropFirst()) }
             guard ModuleToolchain.Constraint.versionComponents(v) != nil else { continue }
@@ -114,18 +93,9 @@ public enum TapFetcher {
 
     // MARK: - 经典 MVS（G52 R3）
 
-    /// 经典 MVS：在升序候选里返回**满足全部约束的最小版本**。
-    ///
-    /// 「最小」是相对于「取最新版」而言——每个约束给出一个下界，MVS 取所有下界的最大值
-    /// 再向上对齐到可用版本，等价于「升序候选中第一个全部满足者」。
-    ///
-    /// - 约束不可解析 → 返回 `nil`（宁严勿纵，与 `ModuleToolchain.resolve` 侧一致：
-    ///   无法解析的约束按不满足处理，不静默当作 `*`）。
-    /// - **全为 `*` / 空约束 → 返回最高可用版本**。这不是经典 MVS 的推论，而是 D21 的
-    ///   回填语义：`tidy` 为新增 import 写的 `*` 表示「版本未知」，`refresh` 回填时取最新。
-    ///   ⚠ 两种策略在同一函数内由「是否存在非空约束」分派——若将来要分离，这是切点。
-    ///
-    /// - Returns: 选中的版本字符串；无满足候选时 `nil`（调用方据此报 `unsatisfiable`）。
+    /// 经典 MVS：升序候选里第一个满足全部约束的版本——每个约束给一个下界，取最大下界再向上对齐。
+    /// 约束不可解析返回 `nil`（宁严勿纵，不当作 `*`）；全为 `*` 或空约束返回最高可用版本。
+    /// 后者是回填语义而非 MVS 推论：`tidy` 为新增 import 写 `*` 表示版本未知，`refresh` 回填时取最新。
     public static func selectVersion(candidates: [String], constraints: [String]) -> String? {
         typealias C = ModuleToolchain.Constraint
         let parsed: [(version: String, comps: [Int])] = candidates.compactMap { v in

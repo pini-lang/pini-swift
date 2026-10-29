@@ -1,12 +1,8 @@
 import Foundation
 
-/// 并发工作节点 = 取消节点（G12 / 异步语义契约：统一 `Future` 树，不另立 `CancelScope`）。
-///
-/// 一个 `FutureValue` 同时承担三重身份：
-/// 1. **结果载体**：`resolve` / `reject` / `wait`（P5 Phase 1）；
-/// 2. **取消节点**：`isCancelled` 原子标志 + 递归 `cancel()`（B2-1）；
-/// 3. **树节点**：`parent` / `children`——在 **spawn 时**建立链接，与调用方是否保留句柄无关，
-/// 因此即便子 Future 句柄被丢弃，父被取消时子仍会一并停止（类 Kotlin/Swift `Job`/`Task`）。
+/// 并发工作节点同时是取消节点：取消沿 `Future` 树传播，不另立 `CancelScope`。
+/// 三重身份——结果载体（`resolve`/`reject`/`wait`）、取消节点（`isCancelled` + 递归 `cancel()`）、
+/// 树节点（`parent`/`children`，spawn 时即建链，故子句柄被丢弃也不影响父取消时连带停止）。
 public final class FutureValue {
     // MARK: - 同步原语（后端实现细节，并发后端抽象 / 并发调度脊柱 ）
 
@@ -78,11 +74,8 @@ public final class FutureValue {
         child.parent = nil
     }
 
-    /// B2-2 父返回自动取消：任务体结束（正常返回 / 抛错 / 被取消）时，
-    /// 取消所有**未 join 且未完成**的子任务，保证子任务生命周期不超出父任务，零泄漏。
-    ///
-    /// - 已 join 的子：`joinFuture` 已 `detachFromParent()`，不在册；
-    /// - 已完成未 join 的子：无资源占用，不取消（其结果仍可被读取）。
+    /// 父返回自动取消：任务体结束（正常返回 / 抛错 / 被取消）时取消所有未 join 且未完成的子任务，
+    /// 保证子任务生命周期不超出父任务。已 join 的子已脱钩不在册；已完成未 join 的子无占用，不取消。
     public func cancelUnjoinedChildren() {
         lock.lock()
         let kids = children
@@ -93,16 +86,9 @@ public final class FutureValue {
         }
     }
 
-    /// （甲）scope 收口：与 `cancelUnjoinedChildren` 统一为单一例程（并发调度脊柱）。
-    ///
-    /// 快照 `children` → 分区：
-    /// - 未完成 → `cancel()`（B2-2 预期，不计失败）；
-    /// - 已完成且为 `err(...)` 值（errors-as-data 的失败）/ 已 `reject`（抛错或取消）→ 收集为 leaked；
-    /// - 已完成且为 `ok(...)` → 不泄漏（结果仍可读，取消不是追溯性失效）。
-    ///
-    /// 返回 leaked 错误值列表，供调用方在 `return` 边界经 `Interpreter.flipIfLeaked`
-    /// 翻转为 `err(aggregate)`（甲）。已 join（`joinFuture` 内 `detachFromParent`）或已 `detach`
-    /// 的子不在 `children` 中，天然不计入——这正是（甲）与 escape hatch 的衔接点。
+    /// scope 收口：快照 `children` 后分区——未完成则 `cancel()`；已完成且为 `err(...)` 值或已 `reject` 的收集为 leaked。
+    /// 已完成 `ok(...)` 不算泄漏：结果仍可读，取消不是追溯性失效。
+    /// 返回 leaked 供 `return` 边界翻转成 `err(aggregate)`；已脱钩的子不在 `children`，天然不计入。
     public func closeScope() -> [Value] {
         lock.lock()
         let kids = children
@@ -127,9 +113,8 @@ public final class FutureValue {
     }
 
     /// 递归取消：标记自身 → 唤醒所有阻塞的 `wait()` → 逐个递归取消子任务。
-    ///
-    /// 取消是**协作式**的：worker 线程不会被强杀，而是在下一个检查点（**异步体入口** /
-    /// join 前）看到标志后提前结束（见 `RuntimeOps.checkCancellation`）。因此取消是最终一致的。
+    /// 取消是协作式的：worker 不会被强杀，而是在下一个检查点（异步体入口 / join 前）看到标志后提前结束，
+    /// 故取消是最终一致的。
     public func cancel() {
         lock.lock()
         if cancelled { lock.unlock(); return }
@@ -200,12 +185,9 @@ public final class FutureValue {
         lock.unlock()
     }
 
-    /// 阻塞当前线程直至 Future resolve / reject / 被取消。
-    /// - resolve → 返回值；reject → 抛出该运行时错误；
-    /// - 被取消 → 抛出 `RuntimeError.taskCancelled`（取消可打入阻塞中的 join，B2-1）。
-    ///
-    /// 注：取消优先级高于结果——一旦 `cancelled`，即使 worker 随后正常 resolve，
-    /// join 仍恒得 `err(CancelError)`，保证「取消后结果确定」而非竞态。
+    /// 阻塞当前线程直至 resolve / reject / 被取消：resolve 返回值，reject 与取消都抛出运行时错误。
+    /// 取消优先级高于结果——一旦 `cancelled`，即使 worker 随后正常 resolve，join 仍恒得取消错误，
+    /// 保证「取消后结果确定」而非竞态。
     public func wait() throws -> Value {
         lock.lock()
         if cancelled {
@@ -234,16 +216,9 @@ public final class FutureValue {
         return r ?? .null
     }
 
-    /// 自建续体挂起（Strategy B：零 Swift 并发运行时依赖，保持「无平台限制 / Swift 5.9+」）。
-    ///
-    /// 注册续体到 future；若已 resolved 立即回调，否则待 `resolve`/`reject` 时由 executor 唤醒。
-    /// 调用方在调用后应「返回并释放 OS 线程」，把续体交给 executor 后续驱动——
-    /// 这正是 `await`/`wait` 在阶段 B-2 真正「挂起」要复用的底层机制（区别于阻塞的 `wait()`）。
-    ///
-    /// - 已 resolved：同步回调（fast-path）。
-    /// - 未 resolved：登记续体，待 resolve/reject 回调。
-    /// - 取消语义留待 B-3（resume 路径统一 `checkCancellation`）；当前子任务被取消会自行
-    /// `reject(CancelError)`，本回调自然得到 `.failure`，无需在此特判。
+    /// 自建续体挂起，零 Swift 并发运行时依赖。已 resolve 时同步回调，否则登记续体待 resolve/reject 唤醒。
+    /// 调用方随后应返回并释放 OS 线程，由 executor 驱动续体——这是 `await` 不阻塞线程的底层机制。
+    /// 子任务被取消会自行 `reject`，回调自然得到 `.failure`，此处无需特判。
     func whenResolved(_ cb: @escaping (Result<Value, RuntimeError>) -> Void) {
         lock.lock()
         if isResolved {
@@ -258,10 +233,8 @@ public final class FutureValue {
         lock.unlock()
     }
 
-    /// 带超时的阻塞等待（B2-5 `joinWithin` 用）。
-    /// - 期内完成 → 与 `wait()` 同语义（resolve 返回值 / reject 抛出）；
-    /// - 超时 → 返回 `nil`，**不改变** Future 状态；是否取消由调用方决定（契约：超时归约到取消）；
-    /// - 等待期间被取消 → 抛 `taskCancelled`。
+    /// 带超时的阻塞等待：期内完成则与 `wait()` 同语义；超时返回 `nil` 且不改变 Future 状态，
+    /// 取消与否由调用方决定；等待期间被取消则抛出 `taskCancelled`。
     public func wait(timeout seconds: Double) throws -> Value? {
         lock.lock()
         if cancelled {
@@ -301,12 +274,9 @@ public enum Value {
     case int(Int)
     case float(Double)
     case string(String)
-    /// `Char` (P0d): one extended grapheme cluster. Same payload type as
-    /// `string` because Char 表示与 String 同构 takes option A — the representation is
-    /// shared and the "exactly one grapheme" invariant is the type system's.
-    /// Keeping the payload a `String` is what makes that sharing real: every
-    /// existing string path (printing, concatenation, runtime handles) can be
-    /// reused without a conversion step.
+    /// `Char`: one extended grapheme cluster. Payload type is `String`, shared with `string`, so every
+    /// existing string path (printing, concatenation, runtime handles) applies without conversion;
+    /// the "exactly one grapheme" invariant is the type system's, not the representation's.
     case char(String)
     case bool(Bool)
     /// 元组值。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素；位置元组为全 nil 或空数组）。
@@ -320,20 +290,18 @@ public enum Value {
     case enumValue(EnumValue)
     case function(FunctionValue)
     case future(FutureValue)
-    /// #46-E G42（Ref 系引用语义）：弱引用包装——引用语义承载（class），复制共享同一 box。
+    /// 弱引用包装——引用语义承载（class），复制共享同一 box。
     case weakRef(WeakRefBox)
-    /// #46-E G40（LazyRef）：懒加载包装——引用语义承载（class），复制共享同一「锁 + once 标志 + 缓存」。
+    /// 懒加载包装——引用语义承载（class），复制共享同一「锁 + once 标志 + 缓存」。
     case lazyRef(LazyRefBox)
     /// Phase 2a（FFI 子系统）：原始指针 `*T`——引用语义承载（class），复制共享同一地址。
     case rawPointer(RawPointerValue)
     case null
 }
 
-/// Phase 2a（FFI 子系统）：`*T` 原始指针的运行时承载。
-/// - `pointer`：裸内存地址（C ABI， 不泄漏 Swift 类型）。
-/// - `elemType`：`*T` 的元素类型（load/store 编解码宽度）；`nil` = 未知（如 `malloc` 的 `*U8` 之外）。
-/// - `ownsMemory`：是否由解释器负责释放（`&` 快照内存；`malloc` 内存由用户 `free`，C 语义）。
-/// 引用语义：复制指针共享同一地址（`copyIfStruct` 对非 `.structInstance` 原样返回）。
+/// `*T` 原始指针的运行时承载：`pointer` 是裸地址（C ABI，不泄漏 Swift 类型），`elemType` 给 load/store 的编解码宽度，
+/// `ownsMemory` 表示解释器是否负责释放（`&` 快照内存归解释器，`malloc` 内存归用户的 `free`）。
+/// 引用语义：复制共享同一地址，`copyIfStruct` 对非 `.structInstance` 原样返回。
 public final class RawPointerValue {
     public let pointer: UnsafeMutableRawPointer
     public let elemType: TypeAnnotation?
@@ -383,12 +351,9 @@ public final class RawPointerValue {
     }
 }
 
-/// #46-E G40（LazyRef，2026-08-24 拍板 D1/D2/D4；`.valueFuture` 已于 2026-08-24 抛弃）：`LazyRef<T>` 的引用语义承载。
-///
-/// - 引用语义：独立 class box（非 `.structInstance`），`copyIfStruct` 对非 `.structInstance` 原样返回
-/// → `var b = a` 复制共享同一 box（锁 / once 标志 / 缓存 / 初始化闭包全部共享）。
-/// - `.value`（D2）：同步阻塞获取，内部锁保证 once——首访加锁执行初始化闭包并缓存，后续返回缓存；
-/// 多线程首访竞争仅一个线程执行初始化（D4：NSLock 临界区）。
+/// `LazyRef<T>` 的引用语义承载：独立 class box（非 `.structInstance`），`var b = a` 复制共享同一 box，
+/// 锁、once 标志、缓存、初始化闭包全部共享。`.value` 同步阻塞获取，首访加锁执行初始化闭包并缓存，
+/// 后续返回缓存；多线程首访竞争只有一个线程执行初始化。
 public final class LazyRefBox {
     public let initializer: FunctionValue
     private let lock = NSLock()
@@ -418,14 +383,9 @@ public final class LazyRefBox {
     }
 }
 
-/// #46-E G42（Ref 系引用语义）：`WeakRef` 的引用语义承载。
-///
-/// 为何不用 `StructInstance`：`copyIfStruct` 对 `.structInstance` 深拷贝 → `var b = a`
-/// 会复制出**新包装**（值语义分裂），且构造 `weakRetain` 恰 1 次、复制 N 份不 retain、
-/// `weakRelease` 无调用点（弱引用表泄漏）。改为独立 class box 后：
-/// - 复制共享同一 box（引用语义，`copyIfStruct` 对非 `.structInstance` 原样返回）；
-/// - `weakRetain`（init）与 `weakRelease`（deinit）对称配对：Swift ARC 保证最后一份引用
-/// 释放时 deinit 恰执行一次 → 弱引用计数对称、无泄漏、无过度释放。
+/// `WeakRef` 的引用语义承载：独立 class box 而非 `StructInstance`——后者会被 `copyIfStruct` 深拷贝，
+/// 复制出值语义分裂的新包装，且 `weakRetain` 只在构造时调一次、`weakRelease` 无调用点，弱引用表随之泄漏。
+/// 独立 box 让复制共享同一份，`weakRetain`（init）与 `weakRelease`（deinit）由 ARC 保证对称、无泄漏。
 public final class WeakRefBox {
     public let target: ObjectReference
     private weak var manager: ARCManager?

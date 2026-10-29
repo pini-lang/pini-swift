@@ -1,16 +1,8 @@
 import Foundation
 
-/// 内建单点登记/D4：内建单点登记表。
-///
-/// 每个内建在此**声明一次**（名字 + 归组 + 各层登记开关），三个消费方从本表派生：
-/// - `SemanticAnalyzer.registerBuiltins`：符号表登记（`definesSymbol`）
-/// - `TypeChecker.registerBuiltinTypes`：静态签名登记（`typeSignature` 非空）
-/// - `Interpreter.registerBuiltins`：运行时 FunctionValue（`definesRuntimeValue`）
-///
-/// 本表只承载「声明」，不承载「实现」：运行时分发仍由 Interpreter 按函数值名字分派。
-/// 专属路径（指针内建 `registerPointerBuiltins`、并发 `registerConcurrencyBuiltins`、
-/// 枚举构造器 `registerEnumCaseConstructor`）保留原有登记，表中以开关位标记归属，
-/// 使本表同时是 内建归组表 归组清单的**唯一事实源**。
+/// 内建单点登记表：每个内建在此声明一次（名字 + 归组 + 各层登记开关），三个消费方从本表派生。
+/// 语义层按 `definesSymbol` 登记符号、类型层按 `typeSignature` 登记签名、解释器按
+/// `definesRuntimeValue` 定义函数值。本表只承载声明：指针、并发、枚举构造器走专属路径。
 public enum BuiltinGroup: String, CaseIterable {
     case collection
     case char
@@ -29,10 +21,8 @@ public struct BuiltinDecl {
     public let paramNames: [String]
     /// nil = 类型层签名由专属路径登记（泛型/指针/构造器特化），本表只记名与组
     public let typeSignature: (params: [TypeAnnotation], returns: [TypeAnnotation], isVariadic: Bool)?
-    /// ⭐ 本条目是**值**时它的类型；非 nil ⇒ 本条目不是函数。
-    ///
-    /// 本表此前只有函数一种形态。值是第二种，理由不是「方便」而是**语言里有这样一批名字**：
-    /// 它们**本身就是值**，按名读到即可，没有调用点、没有形参、也没有「调用它才得到值」这一步。
+    /// 本条目是**值**时它的类型；非 nil ⇒ 本条目不是函数。值是函数的第二种形态，理由不是方便，而是
+    /// 语言里确有这样一批名字：它们本身就是值，按名读到即可，没有调用点、形参或「调用才得到值」。
     /// 消费方据此分流：语义层按值登记符号 · 类型层按值登记类型 · 降载层对它直出常量。
     public let valueType: TypeAnnotation?
     /// 是否由 SemanticAnalyzer 在符号表登记（调用点 undefinedFunction 检查依赖）
@@ -65,10 +55,8 @@ public struct BuiltinDecl {
 public enum BuiltinRegistry {
     public static let builtinLocation = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
 
-    /// 空句柄的**语言可见名** —— 策略层「队列为空」那个返回值。
-    ///
-    /// ⭐ 单一出处：语义层（登记为变量）· 类型层（登记类型）· 降载层（裸名字直出常量）
-    /// 三处都从这里取 —— 各写一份必然漂，而漂的那一刻**不会有一条判据变红**。
+    /// 空句柄的语言可见名——策略层「队列为空」的返回值。单一出处：语义层（登记为变量）· 类型层
+    /// （登记类型）· 降载层（裸名字直出常量）三处都从这里取，各写一份必然漂，且漂时无判据会变红。
     public static let emptyHandleName = "空句柄"
 
     /// 按名取内建**值**的类型；不是值（或没有这个名字）⇒ nil。
@@ -104,18 +92,15 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "ok", group: .value, paramNames: ["value"], definesRuntimeValue: false),
         BuiltinDecl(name: "err", group: .value, paramNames: ["value"], definesRuntimeValue: false),
         BuiltinDecl(name: "Error", group: .value, paramNames: ["message"], definesRuntimeValue: false),
-        // G-P1（自举探针批次 4）：F64 值构造——此前无 I32→F64 转换路径，
-        // 整型表达式无法参与浮点算术（E5-003 混合算术拒绝）；按 内建特征化
-        // 内建快速路径补齐（最小面：int→float、float 原样，字符串解析另行提案）。
+        // F64 值构造——没有它整型表达式无法参与浮点算术（E5-003 混合算术拒绝）。
+        // 最小面：int→float、float 原样；字符串解析另行提案。
         BuiltinDecl(
             name: "F64", group: .value, paramNames: ["value"],
             params: [t("Any")], returns: [t("F64")]),
         BuiltinDecl(name: "CancelError", group: .value, paramNames: ["message"], definesRuntimeValue: false),
 
-        // ---- char ----
-        // G67（P0d）：字符谓词与 `ord` 取 `Char` 参数面（原 `String`）；`chars` **保持**
-        // `String` 参数（其契约是 len(chars(s)) == len(s)，改收 `Char` 会退化成恒返回
-        // 单元素数组），只把**元素**改为 `Char`；`chr` 返回 `Char`。
+        // 字符谓词与 `ord` 取 `Char` 参数面；`chars` 仍收 `String`（契约是 len(chars(s)) == len(s)，
+        // 收 `Char` 会退化成恒返回单元素数组）：只有元素类型是 `Char`；`chr` 返回 `Char`。
         BuiltinDecl(
             name: "is_letter", group: .char, paramNames: ["value"],
             params: [t("Char")], returns: [t("Bool")]),
@@ -128,11 +113,9 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "chars", group: .char, paramNames: ["value"],
             params: [t("String")], returns: [.generic(name: "Array", params: [t("Char")], location: builtinLocation)]),
-        // 词法门禁 H1（lexer 缺口审计）：码点原语——解锁字符范围判定（hex 判定等）
-        // 与 upper/lower 下沉。grapheme 模型对齐（字符模型 = Grapheme Cluster）：ord 取首 Unicode scalar。
-        // ⚠️ G67（P0d）两条边界裁决：① `ord` 的**空串哨兵作废** —— `Char` 参数恒为
-        // 1 个字素，「空串」在该签名下**不可表达**；② `chr` 越界/代理区由「返回空串」
-        // 改为 **panic**（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。
+        /// 码点原语：解锁字符范围判定（hex 判定等）与 upper/lower 下沉；ord 取首 Unicode scalar，
+        /// 对齐 grapheme 模型。`Char` 参数恒为 1 个字素，故 ord 的「空串」哨兵不可表达；
+        /// `chr` 越界 / 代理区 panic（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。
         BuiltinDecl(
             name: "ord", group: .char, paramNames: ["value"],
             params: [t("Char")], returns: [t("I32")]),
@@ -144,22 +127,16 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "load", group: .pointer, paramNames: ["p"], definesRuntimeValue: false),
         BuiltinDecl(name: "store", group: .pointer, paramNames: ["p", "v"], definesRuntimeValue: false),
         BuiltinDecl(name: "addressof", group: .pointer, paramNames: ["value"], definesRuntimeValue: false),
-        // ⭐ **本表第一个非函数条目**：策略层的空句柄 —— 就绪队列为空时那个返回值。
-        //
-        // 为什么它必须存在：队列元素是**不透明标量句柄**，而语言里今天**构造不出**这种值
-        // （`addressof` 未实现；`nil` 在那一格上类型不匹配）⇒ 空队列分支本没有可返回的东西。
-        // ⚠️ 它不能只住在默认方法体里：用户写自己的策略时同样要写空队列分支，
-        // 拿不到这个值就写不出来 —— 那正是「策略层是可替换的」这句话所要求的。
-        //
-        // ⚠️ `definesRuntimeValue: false`：值不是函数，解释器侧不为它定义函数值。
-        // 它由降载层直出常量 ⇒ 解释器**没有新增求值分支**（整数常量那条路已有）。
+        /// 本表第一个非函数条目：策略层的空句柄，即就绪队列为空时的返回值。队列元素是不透明标量句柄，
+        /// 而语言目前构造不出这种值（`addressof` 未实现，`nil` 类型不匹配），且用户写自己的策略时也要
+        /// 写空队列分支。`definesRuntimeValue: false`——它由降载层直出常量，解释器无新增求值分支。
         BuiltinDecl(
             name: emptyHandleName, group: .pointer,
             valueType: .pointer(element: t("U8"), location: builtinLocation),
             definesRuntimeValue: false),
 
         // ---- io ----
-        // 批 5（G58，D-2）：程序基准查询——模块根（单文件=入口文件所在目录），绝对路径。
+        // 程序基准查询——模块根（单文件=入口文件所在目录），绝对路径。
         BuiltinDecl(
             name: "moduleRoot", group: .io, paramNames: [],
             params: [], returns: [t("String")]),
@@ -182,19 +159,9 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "readLine", group: .io, paramNames: [],
             params: [], returns: [t("String")]),
-        // ⭐ 目录枚举（自举仓 M8 的前置）。此前 `.pini` 源码**写不出**「列出目录」——
-        // 宿主能列目录的地方全在 Swift 侧（CLI / 调试器 / 模块工具链），语言面没有。
-        // 而自举仓的 module 层要「以目录为输入编译自身源码」，第一步就是列目录 ⇒ 该缺口
-        // 卡在语言面，不是自举仓的任务。
-        //
-        // 条目数**无上限**，且列不全**报错**，⛔ 不静默截断。
-        // ⚠️ 本条原先以 `readFile` 的 64 KiB 上限作**对照**，那个对照已于 2026-10-01 失效：
-        //    该上限被删除（同一条理由 —— 它继承自发射器固定栈缓冲、不是语言选的；
-        //    见 `IOLimits` 头注）。⇒ 本仓两个「读入」类内建现在都不设上限，
-        //    「⛔ 不平白引进一个任意数字」这条口径仍成立，只是不再需要对照。
-        //
-        // 排序语义（**语言语义**，不是实现细节）：按 UTF-8 字节序升序。
-        // 必须钉死 —— 文件系统的返回顺序不稳定，不排序则任何依赖顺序的判据都是假绿。
+        /// 目录枚举：`.pini` 源码经此才写得出「列出目录」，自举仓的 module 层要以目录为输入编译自身源码。
+        /// 条目数无上限，列不全即报错，不静默截断（本仓「读入」类内建都不设上限，不平白引进任意数字）。
+        /// 排序语义属语言语义：按 UTF-8 字节序升序——文件系统返回顺序不稳定，不排序则顺序类判据都是假绿。
         BuiltinDecl(
             name: "listDir", group: .io, paramNames: ["path"],
             params: [t("String")],
@@ -207,11 +174,9 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "isDir", group: .io, paramNames: ["path"],
             params: [t("String")], returns: [t("Bool")]),
-        // 可接住的 IO：三个 `try*` 与上面三个陷阱版**并存**，⛔ 不是替代 ——
-        // 失败形态由**调用点写的名字**决定，不是运行时开关。
-        // 载荷：读是文件内容，写与追加是**空元组** —— 写成功不产生值，⛔ 不为凑载荷
-        // 编造字节数（成功时它恒等于入参的 UTF-8 长度，是入参的函数、不是新信息）。
-        // 与 `ok`/`err` 同族：走专属降载，⛔ 不登记解释器函数值。
+        /// 可接住的 IO：三个 `try*` 与陷阱版并存，不是替代——失败形态由调用点写的名字决定，不是运行时开关。
+        /// 载荷：读是文件内容，写与追加是空元组（写成功不产生值，不编造字节数——它恒为入参的 UTF-8 长度）。
+        /// 与 `ok`/`err` 同族：走专属降载，不登记解释器函数值。
         BuiltinDecl(
             name: "tryReadFile", group: .io, paramNames: ["path"],
             params: [t("String")],
@@ -283,11 +248,9 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "joinWithin", group: .concurrency, paramNames: ["future", "ms"], definesRuntimeValue: false),
     ]
 
-    /// 内建特征化 步骤 A（D1/D7）：内建类型 conformance 声明（声明面）。
-    /// 特征方法派发（步骤 B）落地前，成员方法仍走 evaluateMember 既有路径；
-    /// 此处仅使 String/Array 在类型环境中可查询「遵循 collection」。
-    /// 方法面 = D1 最小集的成员方法部分（append/pop/slice/join/contains）+
-    /// len（现为自由函数，方法化随步骤 B 裁决）；下标读属运算符通道，不入方法表。
+    /// 内建类型 conformance 声明面：使 String/Array 在类型环境中可查询「遵循 collection」。
+    /// 特征方法派发落地前，成员方法仍走 evaluateMember 既有路径。方法集为 append/pop/slice/join/
+    /// contains 加 len（len 现为自由函数）；下标读属运算符通道，不入方法表。
     public static let conformances: [String: [String]] = [
         "String": ["collection"],
         "Array": ["collection"],
@@ -318,10 +281,9 @@ public enum BuiltinRegistry {
         }
     }
 
-    /// 内建成员方法全集（唯一事实源；TypeChecker.defineMethod 与
-    /// Interpreter.evaluateMember 均从本表派生）。
-    /// `inTrait = true` 的方法属于 collection 特征面（D1）；其余为类型扩展面。
-    /// slice 参数用 Any 通配——开放边界传 nil = Optional.none（P2-B）。
+    /// 内建成员方法全集（唯一事实源：TypeChecker.defineMethod 与 Interpreter.evaluateMember 都从
+    /// 本表派生）。`inTrait = true` 的方法属 collection 特征面，其余为类型扩展面；slice 参数用 Any
+    /// 通配——开放边界传 nil = Optional.none。
     public static let memberMethods: [MemberDecl] = [
         // String（collection 子集：contains/slice；扩展面：upper/lower/substring/split）
         MemberDecl(
@@ -342,10 +304,9 @@ public enum BuiltinRegistry {
         MemberDecl(
             typeName: "String", name: "slice", paramNames: ["start", "end"],
             params: [t("Any"), t("Any")], returns: [t("String")], inTrait: true),
-        // String trim/index builtins: leading/trailing ASCII space stripping
-        // (U+0020 only — a tab is NOT stripped) and grapheme-indexed first
-        // occurrence (empty needle yields 0, absent yields -1).
-        // inTrait = false: extension surface, not the collection trait face.
+        /// String trim/index builtins: leading/trailing ASCII space stripping (U+0020 only — a tab is NOT
+        /// stripped) and grapheme-indexed first occurrence (empty needle yields 0, absent yields -1).
+        /// `inTrait = false`: extension surface, not the collection trait face.
         MemberDecl(
             typeName: "String", name: "trimLeft", paramNames: [],
             params: [], returns: [t("String")], inTrait: false),
@@ -355,10 +316,9 @@ public enum BuiltinRegistry {
         MemberDecl(
             typeName: "String", name: "indexOf", paramNames: ["needle"],
             params: [t("String")], returns: [t("I32")], inTrait: false),
-        // 批 2（G48 三通道）：安全可选通道 `.get(i)` 与不安全通道 `.getUnchecked(i)`。
-        // 动因：下标 `a[i]` 已改为安全断言通道（越界 panic），需要容错取值的显式通道；
-        // `getUnchecked` 供已证明界内的热路径跳过检查（调用方以 `unsafe` 消耗点承担义务）。
-        // `inTrait = false`：不作为 collection 特征面，避免用户类型被要求实现这两个方法。
+        /// 三通道取值：安全可选通道 `.get(i)` 与不安全通道 `.getUnchecked(i)`。下标 `a[i]` 是安全断言
+        /// （越界 panic），容错取值须显式走 `get`；`getUnchecked` 供已证明界内的热路径跳过检查，
+        /// 调用方以 `unsafe` 消耗点承担义务。`inTrait = false`，故用户类型不被要求实现这两个方法。
         MemberDecl(
             typeName: "String", name: "get", paramNames: ["index"],
             params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Char")], location: builtinLocation)], inTrait: false),
@@ -387,8 +347,7 @@ public enum BuiltinRegistry {
         MemberDecl(
             typeName: "Array", name: "getUnchecked", paramNames: ["index"],
             params: [t("I32")], returns: [t("Any")], inTrait: false),
-        // Dictionary：此前无成员面（下标为语法级）。批 2 依 D-5（三通道对三种容器一致）
-        // 补 `get`/`getUnchecked`——缺失键与越界同义。
+        // Dictionary 的成员面只有 `get`/`getUnchecked`（下标是语法级的）——缺失键与越界同义。
         MemberDecl(
             typeName: "Dictionary", name: "get", paramNames: ["key"],
             params: [t("Any")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Any")], location: builtinLocation)], inTrait: false),

@@ -2,28 +2,16 @@ import Foundation
 @testable import PiniCore
 import Testing
 
-/// 并发能力的**分层自述**与**让出原语**（`DE-2b-3`：与 `DE-1` 的 ABI 形状对齐，解释器后端侧）。
-///
-/// **这一件测什么**：`DE-1` 定了两件事的**形状** —— `bk_task_yield() -> i32`
-/// （`1` = 真让出 / `0` = 合规降级）与 `bk_capabilities() -> u32`（位图，启动解析一次、固化）
-/// —— 以及一条 **MUST 纪律**：**后端兑现不了让出时降级，不失败**。
-/// 形状若只在契约文件里写、执行路径读不到，那么纪律就只是一句话。本件钉的是它**读得到**。
-///
-/// ⚠️ 本件**不测让出是否发生**（那是 `ConcurrencyYieldTests`），也不测上下文与位置
-/// （那是 `ConcurrentAwaitContextTests`）。本件只管：能力说自己有什么、让出原语回了什么、
-/// 以及**回 `0` 的时候程序还跑不跑得完**。
+/// 并发能力的分层自述与让出原语：`bk_task_yield() -> i32`（`1` = 真让出 / `0` = 合规降级）与
+/// `bk_capabilities() -> u32`（位图，启动解析一次、固化），外加一条纪律：后端兑现不了让出时降级，不失败。
+/// 本件只管能力说自己有什么、让出原语回了什么、以及回 `0` 时程序还跑不跑得完。
 struct ConcurrencyCapabilitiesTests {
 
     // MARK: - 替身后端：有调度、无让出
 
-    /// 一个**兑现不了让出**的后端（`yieldTask()` 恒返 `0`）。
-    ///
-    /// 它模拟的不是坏配置，而是 `DE-1` §6.1 分层里「**L0 在场、L1 缺席**」这类**合规**后端 ——
-    /// 最近的实例就是 `DE-3` 落地之前的 LLVM 后端。所以判据跑在它上面，等于提前跑了一遍
-    /// 「新后端还没实现让出时，语言是什么行为」。
-    ///
-    /// 它照常用 `DispatchQueue` 异步派发（L0 要真的在场，否则测的就不是降级而是单线程），
-    /// 只是**不让出**：`yieldTask()` 返 `0`，于是引擎走「占用线程等它决」那条路。
+    /// 一个兑现不了让出的后端（`yieldTask()` 恒返 `0`）：模拟「L0 在场、L1 缺席」这类合规后端，
+    /// 等于提前跑一遍「新后端还没实现让出时，语言是什么行为」。它照常用 `DispatchQueue` 异步派发
+    /// （L0 要真的在场，否则测的就不是降级而是单线程），只是不让出 ⇒ 引擎走「占用线程等它决」那条路。
     private final class DispatchOnlyScheduler: Scheduler {
         private let lock = NSLock()
         private var spawnedCount = 0
@@ -99,12 +87,9 @@ struct ConcurrencyCapabilitiesTests {
         return lines
     }
 
-    /// 一份**两后端共用**的语料 —— `DE-4` 的契约参照就长这样：
-    /// 各后端 vs **同一份**期望输出，而不是各后端互相对拍。
-    ///
-    /// 子任务先睡一会儿，是为了让 `await` 到达时它**确实未决**；
-    /// 否则走的是「已决直接取值」那条路，两个后端都会给出正确结果，
-    /// 但那条路测不到让出判定本身。
+    /// 一份两后端共用的语料 —— 契约参照就长这样：各后端 vs 同一份期望输出，而不是各后端互相对拍。
+    /// 子任务先睡一会儿，是为了让 `await` 到达时它确实未决；否则走「已决直接取值」那条路，
+    /// 两后端都会给出正确结果，但那条路测不到让出判定本身。
     private static let 共用语料 = """
     慢|func(n: I32,) => (I32,):
         sleep(40)
@@ -143,11 +128,9 @@ struct ConcurrencyCapabilitiesTests {
 
     @Test("有让出 ⇒ 必有调度；反过来不成立 —— 分层不是矩阵")
     func tiersAreNestedNotAMatrix() throws {
-        /// 意图：`DE-1` §6.1 说「一层套一层」。这是**不变式**，所以对两种解析结果
-        /// 都要成立，而不是只对当前后端成立的巧合。
-        /// 「反过来不成立」那一半同样要钉：无线程**不是**「什么都没有」——
-        /// 调度仍在，只是让出没了。若哪天有人把无线程后端解析成「空位图」，
-        /// 这一条会红，而那种实现会让 `await` 连**降级**的路都没有。
+        /// 意图：「一层套一层」是不变式，故对两种解析结果都要成立，而不是只对当前后端成立的巧合。
+        /// 「反过来不成立」那一半同样要钉：无线程不是「什么都没有」—— 调度仍在，只是让出没了；
+        /// 若把无线程后端解析成空位图，`await` 连降级的路都没有，本条会红。
         let threaded = ConcurrencyCapabilities.resolve(threadsAvailable: true)
         let threadless = ConcurrencyCapabilities.resolve(threadsAvailable: false)
         #expect(threaded.supports(.yield) && threaded.supports(.dispatch))
@@ -164,9 +147,9 @@ struct ConcurrencyCapabilitiesTests {
 
     @Test("让出原语在主后端回 1、在兑现不了的后端回 0 —— 两个后端各答各的")
     func yieldTaskReportsPerBackEnd() throws {
-        /// 意图：`1` / `0` 是 `DE-1` §3.2 定下的**同一位**。各后端若在这一位上不一致，
-        /// 「`await` 让出 / `wait` 占用」这条可观测差异跨后端就没有共同基准。
-        /// ⛔ 注意断言的是 `0` **不是错误** —— 它是纪律 3 的合规答案。
+        // 意图：`1` / `0` 是契约 §3.2 定下的同一位。各后端若在这一位上不一致，
+        // 「`await` 让出 / `wait` 占用」这条可观测差异跨后端就没有共同基准。
+        // ⛔ 断言的是 `0` 不是错误 —— 它是纪律 3 的合规答案。
         #expect(GCDScheduler.shared.yieldTask() == 1)
         #expect(DispatchOnlyScheduler().yieldTask() == 0)
     }
@@ -175,14 +158,9 @@ struct ConcurrencyCapabilitiesTests {
 
     @Test("兑现不了让出的后端：程序仍跑完、结果正确，且体从未让出")
     func backEndWithoutYieldDegradesInsteadOfFailing() throws {
-        /// 意图：这是本件**最重要**的一条 —— `DE-1` §6.2 纪律 3 说
-        /// 「**无合格版本则降级，不失败**」，本判据把它钉在可执行的证据上。
-        ///
-        /// 两条断言分工：**推进性**（输出正确 ⇒ 降级真的走通了，而不是把程序搞死）；
-        /// **驳回性**（体让出次数为 0 ⇒ 降级路径是「从不让出」，而不是「让出了再补救」）。
-        /// 后者才是这条纪律的**内容**：若某实现改成「照样挂起、指望别人来续跑」，
-        /// 输出那一半可能仍然通过（子任务夺在别处），但这一半会红 ——
-        /// 而在真无线程宿主上，那种实现是**死锁**，不是一个跑得通的分支。
+        // 意图：本件最重要的一条 —— 「无合格版本则降级，不失败」钉在可执行的证据上。两条断言分工：
+        // 推进性（输出正确 ⇒ 降级真的走通了）；驳回性（体让出次数为 0 ⇒ 降级是从不让出，
+        // 而不是让出了再补救）。后者才是纪律的内容：照样挂起、指望别人续跑在真无线程宿主上是死锁。
         let scheduler = DispatchOnlyScheduler()
         let lines = try runOutput(Self.共用语料, scheduler: scheduler)
         #expect(lines == ["7"], "degraded back end produced \(lines)")
@@ -194,12 +172,9 @@ struct ConcurrencyCapabilitiesTests {
 
     @Test("同一份语料在两个后端上给出同一份输出 —— 契约参照的雏形")
     func theSameCorpusAgreesAcrossBackEnds() throws {
-        /// 意图：`DE-1` §7 要求 `DE-4` 的判据取**契约参照**（各后端 vs **同一份**期望输出），
-        /// 而**不是各后端互相对拍**（那种写法在各后端同错时会绿）。本判据是那个形态的最小实例：
-        /// 同一个语料在「能让出」与「不能让它出」两个后端上都必须得到 `7`。
-        ///
-        /// ⭐ 它顺手证明了一件对 `DE-3` 有用的事：**让出是执行策略，不是语义**。
-        /// 后端换掉让出能力，程序的**值**不受影响 —— 这正是「语义保持、只降执行策略」。
+        /// 意图：契约参照的形态 —— 各后端 vs 同一份期望输出，而不是各后端互相对拍（同错时会绿）。
+        /// 本判据是它的最小实例：同一语料在「能让出」与「不能让它出」两个后端上都必须得到 `7`。
+        /// 它顺手证明让出是执行策略、不是语义：后端换掉让出能力，程序的值不受影响。
         let yielding = try runOutput(Self.共用语料, scheduler: GCDScheduler.shared)
         let degrading = try runOutput(Self.共用语料, scheduler: DispatchOnlyScheduler())
         #expect(yielding == ["7"], "yielding back end produced \(yielding)")

@@ -7,51 +7,29 @@ public struct IRFunction: Equatable {
     public let params: [IRParam]
     public let returnType: IRType?
     public let body: IRBlock
-    /// `=>` dispatch (G-3c-1): the body runs on a worker thread and the caller
-    /// receives a pending `Future` instead of the body's own value.
-    ///
-    /// This note used to add that the flag had to live here rather than be
-    /// re-derived from `returnType`, because an async body's return type was
-    /// the same `Result<T>` a synchronous Result-returning function carried and
-    /// the type alone could not tell the two call protocols apart. Half of that
-    /// still holds and half of it has moved: the IR now types an async
-    /// *signature* as `future(ok:)`, so a caller could read the type instead --
-    /// but the flag remains the callee's own fact, and it is the only one that
-    /// survives the positions where a type has been rewritten or is absent (a
-    /// call node carries the body protocol, not the signature; an unannotated
-    /// parameter has no type at all).
+    /// `=>` dispatch: the body runs on a worker thread and the caller receives a pending `Future`, not the body's value.
+    /// The flag stays on the callee instead of being re-derived from `returnType`: a call node carries the body protocol
+    /// rather than the signature, and an unannotated parameter has no type at all — so a type cannot answer it.
     public let isAsync: Bool
-    /// `|test` (G41): the function block is a language-level test case, not a
-    /// callee of the program. `pini test` collects exactly these and runs each
-    /// one, and nothing else calls them.
-    ///
-    /// Carried because the collection rule lived only on the AST side: the
-    /// interpreter read `FuncDecl.modifiers`, which has no IR counterpart, so
-    /// the fact had to travel or the IR engine could not tell a test from an
-    /// ordinary function. The name is not a substitute — a program may freely
-    /// name a function `测试` and mean it as production code.
+    /// `|test`: the block is a language-level test case, not a callee. `pini test` collects exactly these and nothing else
+    /// calls them. The fact must travel in the IR because the collection rule lives on `FuncDecl.modifiers`, which has no
+    /// IR counterpart; the name is no substitute — a program may name a function `测试` and mean it as production code.
     public let isTest: Bool
-    /// The file this function was declared in (`FuncDecl.location.fileName`).
-    ///
-    /// Carried because `lower(package:)` merges every file's declarations into
-    /// one virtual module, and the merge is exactly what erases the answer to
-    /// "which file was this from". `pini test <path>` narrows by file, so the
+    /// The file this function was declared in. Carried because `lower(package:)` merges every file's declarations into one
+    /// virtual module, and the merge erases which file each one came from; `pini test <path>` narrows by file, so the
     /// merged module has to keep it or the narrowing cannot be honoured.
     public let sourceFile: String
-    /// ADR-001（`P2b`）：本函数的**物化依赖** —— 函数体里出现的默认实例取用所指向的给定块类型。
-    ///
-    /// 由函数体降载时逐点收集（`FunctionContext.givenReferenceNames`），在构造 `IRFunction`
-    /// 时取出。留痕的用途是后置的环检测（见 `IRModule.givenReferences`）；本批一条诊断都不产。
+    /// 本函数的物化依赖：函数体里出现的默认实例取用所指向的给定块类型，降载时逐点收集
+    /// （`FunctionContext.givenReferenceNames`）后在构造时取出。留痕是给后置的环检测用的
+    /// （`IRModule.givenReferences`），本期不产任何诊断。
     public let givenReferenceNames: Set<String>
 
     public struct IRParam: Equatable {
         public let name: String
         public let type: IRType
-        /// ADR-001（取用参数 `using`，P1）：AST 面 `Parameter.isUsing` 的随行者。
-        ///
-        /// 与 `isAsync` / `isTest` / `sourceFile` 同族 —— **AST 面上有的事实，IR 面必须随行**，
-        /// 否则降载是首个丢失它的地方，而后端再也问不出「这个参数是谁提供的」。
-        /// 本批只做**携带**：物化与强制规则属后续批次，故它今天没有消费点。
+        /// AST 面 `Parameter.isUsing` 的随行者：与 `isAsync` / `isTest` / `sourceFile` 同族——AST 上有的字段 IR 必须随行，
+        /// 否则降载是首个丢失它的地方，后端再也问不出「这个参数是谁提供的」。
+        /// 目前只做携带：物化与强制规则属后续，故它今天没有消费点。
         public let isUsing: Bool
         public init(name: String, type: IRType, isUsing: Bool = false) {
             self.name = name
@@ -125,9 +103,8 @@ public struct IRForeignFunction: Equatable {
     }
 }
 
-/// A lowered foreign block (G14): the group name (`[libc|foreign]` 的 `libc`)
-/// plus its signature-only bindings. Note: symbol resolution happens on the
-/// interpreter/ffi side (shim whitelist first, then dlsym); the IR layer
+/// A lowered foreign block: the group name (the label left of `|` in `[libc|foreign]`) plus its signature-only
+/// bindings. Symbol resolution happens on the interpreter/ffi side (shim whitelist first, then dlsym); the IR layer
 /// only carries the declare surface.
 public struct IRForeignBlock: Equatable {
     public let name: String
@@ -139,10 +116,8 @@ public struct IRForeignBlock: Equatable {
     }
 }
 
-/// A lowered module: the ordered list of functions plus the nominal type
-/// declarations (G3) and enum declarations (G4). The entry function is
-/// `main` (required by the slice emitter); methods live inside their
-/// `IRTypeDecl` and are emitted as regular functions by the emitter.
+/// A lowered module: the ordered functions plus the nominal type and enum declarations. The entry function is `main`
+/// (required by the slice emitter); methods live inside their `IRTypeDecl` and are emitted as regular functions.
 public struct IRModule: Equatable {
     public let functions: [IRFunction]
     public let types: [IRTypeDecl]
@@ -150,15 +125,9 @@ public struct IRModule: Equatable {
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [IRForeignBlock]
 
-    /// ADR-001（`P2b` 交付，用户第 5 条裁定的「余量」第 1 条）：**谁引用了哪个给定块**。
-    ///
-    /// 键 = 引用方（函数名 / 给定块名 / `类型.方法`），值 = 它引用的给定块类型名（升序去重）。
-    /// 引用面 = 函数体里出现的默认实例取用点 + 给定块字段初值里的引用 —— 正是**物化依赖**
-    /// 的两条边，环只会从这两条边里长出来。
-    ///
-    /// WHY 现在就要有：环检测本体是后置的（用户裁定「降为警告级服务」），但**留痕**当期就要做对。
-    /// 有了这张表，后置的检测是**加一条遍历**；没有它，就得回头重扫一遍降载结果。
-    /// ⚠️ 这是**可观测面**而非诊断：当期一条诊断都不产（ADR §7 第 4 项）。
+    /// 谁引用了哪个给定块：键是引用方（函数名 / 给定块名 / `类型.方法`），值是它引用的给定块类型名（升序去重）。
+    /// 引用面 = 函数体里的默认实例取用点 + 给定块字段初值里的引用，即物化依赖的两条边，环只从这两条边长出来。
+    /// 这是可观测面而非诊断：环检测本体后置，但留痕当期就要做对，有表则后置检测只是加一条遍历。
     public let givenReferences: [String: [String]]
 
     public init(

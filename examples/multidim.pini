@@ -1,12 +1,6 @@
-; 多维数组（严格枚举 + 强制解包 `!` 用法示范）—— issue-host-optional-slice-2026-08-28
-; 运行：pini run examples/multidim.pini
-;
-; 核心规则：
-;   · 下标读返回 Optional<T>（越界/缺键 → none，界内 → some(x)）；元素须靠 match 或 `!` 取出。
-;   · 强制解包 `!` 剥开 some(x) 取裸值，命中 none 即 trap；`a[i]` 是只读右值，不能作 lvalue。
-;   · `!` 与 `&` 同构，须处于 unsafe 上下文——可用 `|unsafe` 函数体，也可用零散的 `unsafe (...)`
-;     消耗点局部消费。本例采用后者：函数本身是安全的 `|func`，仅那一处 `!` 被 `unsafe` 包住。
-;   · 嵌套 `a[i][j]` 无隐式语法糖：必须先 `a[i]` 显式剥出内层数组，再下标。
+; 多维数组：严格枚举 + 强制解包 `!` 示范。运行 pini run examples/multidim.pini；`a[i]` 是只读右值，不能作 lvalue。
+; 规则：下标读返回 Optional<T>（越界/缺键 → none，界内 → some(x)），元素须靠 match 或 `!` 取出，`!` 命中 none 即 trap。
+; `!` 与 `&` 同构、须在 unsafe 上下文：可用 `|unsafe` 函数体，也可用零散 `unsafe (...)` 消耗点；嵌套 `a[i][j]` 无隐式语法糖。
 
 main|func() -> ():
     var m = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]

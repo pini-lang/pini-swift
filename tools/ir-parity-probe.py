@@ -289,10 +289,8 @@ _scratch_root = [None]
 _lli_baseline = set()
 # Stray .ll files present before the sweep; anything newer is our litter.
 _stray_baseline = set()
-# Every .ll removed by a reaper, including the per-timeout ones. The final
-# pass usually finds nothing left, so reporting only its result would print
-# "0 killed" for a sweep that killed several — a number that contradicts the
-# clean /tmp next to it.
+# Every .ll removed by a reaper, including the per-timeout ones. Reporting only
+# the final pass would print "0 killed" for a sweep that killed several.
 _reaped = []
 
 
@@ -453,17 +451,13 @@ def drain(proc):
 def run(argv, env_extra=None, cwd=None):
     env = dict(os.environ)
     env.setdefault("PINI_LLVM_BIN", LLVM_BIN)
-    # No engine is selected here any more: G-6c retired `PINI_INTERP_ENGINE`
-    # with the AST walk, so a channel cannot be relabelled by a caller's shell
-    # because there is only one engine to label. The pop that used to guard
-    # against exactly that went with the switch.
+    # No engine is selected here: there is only one engine to label, so a caller's
+    # shell cannot relabel a channel.
     if env_extra:
         env.update(env_extra)
-    # Own process group: `pini run-llvm` spawns lli as a child, so a plain
-    # subprocess timeout would kill only the direct child. The group kill is a
-    # first attempt, NOT a guarantee — measured 2026-09-11: pini dies and lli
-    # survives in a group of its own (Foundation's Process gives the child
-    # one), still holding the inherited pipe. The reaper is what contains it.
+    # Own process group: `pini run-llvm` spawns lli as a child, so a plain timeout
+    # kills only the direct child. The group kill is a first attempt, not a guarantee —
+    # a surviving lli still holds the inherited pipe; the reaper contains it.
     proc = subprocess.Popen(
         argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -479,10 +473,8 @@ def run(argv, env_extra=None, cwd=None):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-        # BOUNDED drain. The group kill is not guaranteed to reach lli, and a
-        # surviving lli holds the inherited pipe open, so the unbounded
-        # communicate() this replaces deadlocked the whole sweep with no
-        # diagnostic at all.
+        # BOUNDED drain: the group kill may leave lli holding the inherited pipe open,
+        # so an unbounded `communicate()` would deadlock the whole sweep without a diagnostic.
         try:
             proc.communicate(timeout=DRAIN_TIMEOUT)
         except subprocess.TimeoutExpired:
@@ -538,11 +530,8 @@ def collect(roots, needle=None):
     for root in roots:
         base = os.path.join(REPO, root)
         if not os.path.isdir(base):
-            # Do NOT return in silence here. A root that has gone away -- after
-            # a test surface is deleted, say -- used to be skipped without a
-            # word, so the sweep still finished with a verdict over whatever
-            # was left. The corpus a parity verdict rests on is part of the
-            # verdict: a green over one surviving root is not a green over six.
+            # Do not return in silence: a missing root must be reported. The corpus a parity
+            # verdict rests on is part of the verdict — green over one root is not green over six.
             missing.append(root)
             continue
         for dirpath, dirnames, filenames in os.walk(base):
@@ -594,11 +583,8 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     # 1. A file inside a module cannot run standalone at all.
     if in_module(rel):
         return "PACKAGE_MEMBER", ""
-    # 2. Wall-clock verdicts come FIRST, ahead of the front-end rule. A hung
-    #    channel reports rc 124, which the front-end rule would file as
-    #    FRONTEND_FAIL and drop out of the blocker count entirely — measured:
-    #    six hangs from an earlier sweep hid in that bucket and were only
-    #    found by fingerprinting the stray .ll files they left behind.
+    # 2. Wall-clock verdicts come first: a hung channel reports rc 124, which the
+    # front-end rule would file as FRONTEND_FAIL and drop out of the blocker count.
     if h_rc == 124 and l_rc != 124:
         return "GAP_HANG", "llvm-ir terminated in time, interp-ir did not"
     if l_rc == 124 and h_rc == 124:
@@ -609,28 +595,18 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     #    this is the front end and the emitter agreeing to refuse.
     if l_rc != 0:
         return "FRONTEND_FAIL", first_line(l_err)
-    # 4. interp-ir names a node the engine has not implemented yet. Those
-    #    nodes are the P2 work list, NOT a defect: counting them as blockers
-    #    would print the same non-zero number on every sweep until P2 finishes,
-    #    and a number that never moves stops being read. Checked BEFORE the
-    #    parity rule, which would otherwise file such a run as parity whenever
-    #    both arms are equally loud for unrelated reasons.
+    # 4. interp-ir names a node the engine has not built yet: that is the work list,
+    # not a defect. Checked before the parity rule, which would otherwise file such a
+    # run as parity when both arms are equally loud for unrelated reasons.
     m = IR_TODO.search(h_err)
     if m:
         return "IR_ENGINE_TODO", "interp-ir: node '%s' not implemented" % m.group(1)
-    # 5. The IR arm failed, whatever stdout says. This runs BEFORE the parity
-    #    rule on purpose (2026-09-15). It used to run after, so a run whose
-    #    stdout matched while the IR arm exited non-zero reached the parity
-    #    test and was filed OK_HARNESS — equal on two EMPTY stdout strings,
-    #    which is not evidence of anything.
+    # 5. The IR arm failed, whatever stdout says — checked before the parity rule:
+    # equal stdout on two failed arms is not evidence of parity.
     if h_rc != 0:
-        # 5a. The LLVM arm ALSO reports a failure on stderr, so both paths agree
-        #     the program fails; the LLVM arm's rc 0 is the harness discarding
-        #     lli's exit status, not a success. Previously this also required a
-        #     failing reference arm; that clause is gone with the reference, and
-        #     the docstring states the weakening rather than hiding it. The
-        #     condition that matters is unchanged: a fixture that only fails on
-        #     the IR arm still reaches GAP_EXEC below.
+        # 5a. Both arms report a failure on stderr, so the LLVM arm's rc 0 is the harness
+        # discarding lli's exit status, not a success. The condition that matters:
+        # a fixture that only fails on the IR arm still reaches GAP_EXEC below.
         if l_err.strip():
             return "WARN_LLVM_RC_UNPROPAGATED", first_line(h_err)
         return "GAP_EXEC", first_line(h_err)
@@ -647,13 +623,9 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     #    cannot judge this fixture; excluding it is honest, not lenient.
     if l_err.strip():
         return "HARNESS_DEPENDENT", first_line(l_err)
-    # 8. The diagnostic-channel asymmetry, and the only slot that consults the
-    #    front-end instrument. Reaching here with equal stdout means the stderr
-    #    *shapes* differed: the LLVM arm is silent (rule 7) and the IR arm is
-    #    loud. The question is whether that warning belongs to the engine or to
-    #    the front end both arms run -- and `check` answers it, provided it
-    #    reports the SAME code. Same code -> shared front end -> not a gap;
-    #    different or absent -> rule 9, where it is an engine difference.
+    # 8. Diagnostic-channel asymmetry: equal stdout means the stderr shapes differed.
+    # `check` answers whether that warning belongs to the shared front end; the same
+    # code means front end (not a gap), different or absent falls through to rule 9.
     if h_err.strip() and l_out == h_out and diag_code(c_err) and \
             diag_code(c_err) == diag_code(h_err):
         return "WARN_CHANNEL_ASYMMETRY", first_line(h_err)
@@ -714,10 +686,8 @@ def main():
             cwd, run_path = scratch_copy(rel)
             l_rc, l_out, l_err = run([BIN, "run-llvm", run_path], cwd=cwd)
             h_rc, h_out, h_err = run([BIN, "run", run_path], cwd=cwd)
-            # The front-end instrument. Not a judgement of behaviour -- it runs
-            # nothing -- so it is consulted by exactly one rule, for the one
-            # question the two execution channels cannot answer: whether a
-            # diagnostic belongs to the shared front end or to the engine.
+            # The front-end instrument runs nothing; exactly one rule consults it, for the
+            # question the two execution channels cannot answer: shared front end or engine.
             c_rc, _c_out, c_err = run([BIN, "check", run_path], cwd=cwd)
             verdict, note = classify(rel, l_rc, l_out, l_err, h_rc, h_out,
                                      h_err, c_rc, c_err)
@@ -754,14 +724,9 @@ def main():
         n = sum(1 for r in rows if r["verdict"] == v)
         if n:
             print("  %-15s %d" % (v, n))
-    # BLOCKERS = "do the two remaining implementations disagree", i.e. the
-    # M6b-style question in its two-arm form. IR_ENGINE_TODO answers a
-    # different one — how much of the IR engine P2 has left to build — and
-    # merging the two would make this line unreadable while P2 is in flight.
-    # Combining them is the P3 judging-upgrade grid's job.
-    # WARN_CHANNEL_ASYMMETRY and WARN_LLVM_RC_UNPROPAGATED are not in the set:
-    # each is printed with its count and its fixture list below, so leaving
-    # them out is a readable decision rather than a disappearance.
+    # BLOCKERS = "do the two implementations disagree"; IR_ENGINE_TODO answers how much
+    # of the engine is left to build, and merging them would make this line unreadable.
+    # WARN_* counts are printed with their fixture lists below instead of being summed in.
     blockers = [r for r in rows if r["verdict"] in
                 ("GAP_EXEC", "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_HANG")]
     unknown = [r for r in rows if r["verdict"] == "GAP_UNKNOWN"]
@@ -799,11 +764,8 @@ def main():
 
     asym = [r for r in rows if r["verdict"] == "WARN_CHANNEL_ASYMMETRY"]
     if asym:
-        # Its own section rather than a line in the blocker list: it is not a
-        # blocker (the flip does not move it) but it must not vanish either,
-        # which is what moving a slot out of the total without a replacement
-        # report would do. Grouped by error code so the reader sees at a glance
-        # that this is one diagnosis, not twenty.
+        # Its own section, not a blocker line: the flip does not move it, but it must not
+        # vanish either. Grouped by error code, so one diagnosis does not read as twenty.
         by_code = {}
         for r in asym:
             code = r["note"].split("[")[-1].split("]")[0] if "[" in r["note"] else "?"

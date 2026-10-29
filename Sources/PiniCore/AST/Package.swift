@@ -1,10 +1,7 @@
 import Foundation
 
-/// 单个源文件编译单元（P4 多文件模型基础）。
-///
-/// 携带源文件**路径**（`fileName`），作为后续阶段按「文件名 / 目录名 `_` 前缀」
-/// 计算可见性级别（`private` / `internal` / `package` / `public`）的物理锚点。
-/// 当前阶段仅承载解析结果，跨文件解析与可见性 enforce 在 P4 后续阶段落地。
+/// 单个源文件编译单元：源文件路径 `fileName` 是可见性判定的物理锚点（与 `SourceLocation.fileName` 同源），
+/// 后续阶段据此按「文件名 / 目录名 `_` 前缀」算可见性级别；本类型只承载解析结果，不做跨文件解析。
 public struct FileUnit: Equatable, ASTNode {
     /// 源文件绝对/相对路径；可见性判定的物理锚点（与 `SourceLocation.fileName` 同源）。
     public let fileName: String
@@ -19,14 +16,9 @@ public struct FileUnit: Equatable, ASTNode {
     }
 }
 
-/// 包（编译单元集合）——P4 之前 Pini 为纯单文件世界，
-/// `Package` 以**向后兼容**的方式包裹一个或多个 `FileUnit`：
-/// - 单文件模式：`Package.singleFile(...)` 包裹 1 个 `FileUnit`，等价于旧 `Module` 世界；
-/// - 目录 / 模块模式：`Package(name:fileUnits:)` 聚合多文件，供后续阶段做跨文件
-/// 符号解析与可见性 enforce。
-///
-/// 设计约束（用户指令）：本类型**仅做聚合与路径归属**，不在本阶段改变
-/// `Module` 消费管线（`SemanticAnalyzer` / `TypeChecker` / `Interpreter` 仍吃 `Module`）。
+/// 包 = 编译单元集合，用一个或多个 `FileUnit` 包裹，`singleFile(...)` 是单文件模式的入口。
+/// 本类型仅做聚合与路径归属：`SemanticAnalyzer` / `TypeChecker` / `Interpreter` 仍吃单文件 `Module`，
+/// 跨文件符号解析与可见性 enforce 由上层以 `FileUnit` 集合为输入完成。
 public struct Package: Equatable, ASTNode {
     /// 模块名：来自 `pini.toml`，或在无清单时由目录名推导（隐式根模块兜底）。
     public let name: String

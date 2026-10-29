@@ -1,13 +1,6 @@
-; closures.pini -- 阶段 B：LLVM 一等函数 + 闭包（捕获 / 高阶 / 具名函数作为值）
-; 运行：pini run examples/closures.pini
-;       pini run-llvm examples/closures.pini   （两端输出应一致）
-; 预期输出：
-; 36
-; 15
-; 105
-; 42
-; 49
-; 103
+; 闭包与一等函数：捕获、高阶、具名函数作为值。运行 pini run examples/closures.pini（或 run-llvm，两端输出应一致）
+; 预期输出（逐行）：36 / 15 / 105 / 42 / 49 / 103
+; 语法点：闭包捕获外层变量；函数类型是普通值，可作实参传入高阶函数。
 
 ; 高阶函数：把函数类型参数 f 应用于 x
 应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,):

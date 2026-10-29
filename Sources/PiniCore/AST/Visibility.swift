@@ -1,9 +1,7 @@
 import Foundation
 
-/// 4 级可见性：`private < internal < package < public`。
-///
-/// 严格度排序用于「多信号同现时取最严格」：文件内 ⊂ 包内 ⊂ 全局，
-/// 故 internal 优先于 package、package 优先于 public。
+/// 4 级可见性：`private < internal < package < public`，严格度排序用于「多信号同现时取最严格」。
+/// 文件内 ⊂ 包内 ⊂ 全局，故 internal 优先于 package、package 优先于 public。
 public enum VisibilityLevel: Int, Comparable {
     case `private` = 0
     case `internal` = 1
@@ -26,17 +24,11 @@ public enum VisibilityLevel: Int, Comparable {
 }
 
 extension VisibilityLevel {
-    /// 依 spec 由「符号名 + 文件名 + 目录名」的 `_` 前缀推导可见性，取最严格者：
-    /// - 符号以 `_` 开头 → **硬私有**（覆盖文件 / 目录逻辑）；
-    /// - 否则文件名以 `_` 开头 → **internal**（仅文件内）；
-    /// - 否则目录名以 `_` 开头 → **package**（同模块内， 锚定模块身份）；
-    /// - 否则 → **public**（全局，跨模块）。
-    /// - `main` 恒全局可见、豁免整套规则。
+    /// 由「符号名 + 文件名 + 目录名」的 `_` 前缀推导可见性，取最严：符号 `_` → private，文件名 `_` → internal，
+    /// 目录名 `_` → package，否则 public；`main` 恒 public、豁免整套规则。
     ///
-    /// - Parameters:
-    /// - name: 符号名（函数 / 类型 / 顶层变量）。
-    /// - fileName: 定义该符号的源文件路径（与 `SourceLocation.fileName` 同源），
-    /// 用于抽取文件名前缀与父目录前缀。
+    /// - Parameter name: 符号名（函数 / 类型 / 顶层变量）。
+    /// - Parameter fileName: 定义该符号的源文件路径，用于抽取文件名与父目录前缀。
     public static func forSymbol(name: String, fileName: String) -> VisibilityLevel {
         // ⑥ main 恒全局可见、豁免整套规则
         if name == "main" { return .public }
@@ -66,26 +58,18 @@ public struct PackageSymbol: Equatable {
     /// 符号在源文件中的定义位置（用于 LSP 跳转定义等场景）。
     public let location: SourceLocation
 
-    /// 从 `referencingFile` 视角看，该符号是否可见：
-    /// - 同文件恒可见（private/internal/package/public 在文件内均满足）；
-    /// - 不同文件仅 `package` / `public` 可见（private/internal 跨文件不可见）。
-    ///
-    /// 注：Phase 3 仅处理「同模块多文件」场景——一个 `Package` 内所有 `FileUnit`
-    /// 同属一个模块（pini.toml 边界锚定），故 `package` 级符号跨文件可见；
-    /// 跨模块（import/export）边界的 enforce 留待 P4 后续阶段（运行时 import 解析）。
+    /// 从 `referencingFile` 视角看该符号是否可见：同文件恒可见；跨文件仅 `package` / `public` 可见。
+    /// 同模块内所有 `FileUnit` 同属一个包（`pini.toml` 边界锚定），故 package 级符号跨文件可见；
+    /// 跨模块（import/export）边界的 enforce 尚未接入，此处一律按同包口径判定。
     public func isVisible(from referencingFile: String) -> Bool {
         if referencingFile == fileName { return true }
         return visibility == .package || visibility == .public
     }
 }
 
-/// 包级符号索引：将 `Package` 内所有 `FileUnit` 的顶级声明聚合成
-/// 「名字 → 定义文件 + 可见性」的映射，供语义 / 类型层做跨文件解析与可见性 enforce。
-///
-/// 设计约束（用户指令 + 计划）：
-/// - Phase 6 已移除 `Token` 符号制（`^^`/`_^`/`__` 已删除，彻底硬切换），可见性**仅按文件 / 目录 `_` 前缀**计算（约定制）；
-/// - 单文件 `Package`（`fileUnits.count <= 1`）由 `analyze(module:)` / `check(module:)` 原样处理，
-/// 本索引仅服务于多文件场景，故**不引入任何单文件回归**。
+/// 包级符号索引：把 `Package` 内所有 `FileUnit` 的顶级声明聚成「名字 → 定义文件 + 可见性」，
+/// 供语义 / 类型层做跨文件解析与可见性 enforce；可见性仅按文件 / 目录 `_` 前缀计算。
+/// 单文件 `Package` 由 `analyze(module:)` / `check(module:)` 原样处理，本索引只服务多文件场景。
 public struct PackageSymbolIndex: Equatable {
     private let byName: [String: PackageSymbol]
     /// 枚举 case 名 → 父枚举名集合。case 名按枚举命名空间隔离（P5-5 HIGH-1：
@@ -192,8 +176,8 @@ private func topLevelSymbolInfo(_ decl: TopLevelDecl) -> (name: String, kind: Sy
     switch decl {
     case .structDecl(let s): return (s.name, .struct, s.location)
     case .objectDecl(let o): return (o.name, .object, o.location)
-    /// ADR-001：给定块是**具名复合类型** ⇒ 与对象同族纳入包级符号表（用户第 6 条：
-    /// 可见性规则保持一致）。细分种类（值 / 引用语义）属 `P2` 未裁项 ⇒ 暂按 `.object` 归类。
+    // 给定块是**具名复合类型** ⇒ 与对象同族纳入包级符号表（可见性规则保持一致）。
+    // 细分种类（值 / 引用语义）尚未裁定 ⇒ 暂按 `.object` 归类。
     case .givenDecl(let g): return (g.name, .object, g.location)
     case .enumDecl(let e): return (e.name, .enum, e.location)
     case .funcDecl(let f): return (f.name, .function, f.location)

@@ -1,24 +1,11 @@
 import Foundation
 
-/// Phase 2b（解释器 dlsym 加载）：每签名 thunk 工厂。
-///
-/// 因 Phase 2a已将顶层签名收敛为**封闭集**（标量 + 指针 + `()`），
-/// 在 foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包，
-/// 经 `@convention(c)` 函数指针调用 `dlsym` 得到的裸地址。
-///
-/// 实现策略（避免 libffi 依赖、分支可枚举）：
-/// - **GPR 路径**：整数 / 指针参数与返回统一经 8 个 `UInt64` 通用寄存器传递
-/// （AArch64 `x0–x7` / System V `rdi–r9`）；按参数宽度取低位、指针取地址位模式，
-/// 调用后按返回宽度回填 `Value`。超出 8 参数、混用浮点者走浮点路径 / 拒绝。
-/// - **浮点路径**：`F64` / `F32` 签名各自经 `Double` / `Float` 寄存器（VFP）传递，
-/// 要求参数与返回同宽（混合 GPR+浮点暂不支持，抛「unsupported signature」已知限制）。
+/// thunk 工厂：foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包，
+/// 经 `@convention(c)` 函数指针调用 `dlsym` 拿到的裸地址。顶层签名收敛为封闭集（标量 + 指针 + `()`），
+/// 故分支可枚举、不依赖 libffi：整数与指针走 GPR 路径，`F64`/`F32` 走浮点寄存器，混用则拒绝。
 enum ForeignThunk {
-    /// 为裸 C 符号地址生成调用闭包。签名取自 `decl`（已通过 静态校验）。
-    // 按 AST 声明生成调用闭包（解释器侧的入口）。
-    //
-    // 本入口只做「解构」——实现全在下面那个核心入口里。拆开的理由不是好看：
-    // IR 侧只携带签名（`IRForeignFunction`），没有 `FuncDecl`，故 ABI 逻辑
-    // 必须能被离散地传进来，否则就得在 IR 侧写第二份 —— 而第二份会漂。
+    /// 为裸 C 符号地址生成调用闭包，签名取自 `decl`（已过静态校验）。本入口只做解构，实现全在核心入口：
+    /// IR 侧只携带签名（`IRForeignFunction`）没有 `FuncDecl`，ABI 逻辑必须能离散传入，否则 IR 侧要再写一份，两份必然漂。
     static func make(symbol sym: UnsafeMutableRawPointer, decl: FuncDecl, location: SourceLocation) throws -> ([Value]) throws -> Value {
         try make(
             symbol: sym, name: decl.name,
@@ -127,12 +114,9 @@ enum ForeignThunk {
 
     // MARK: - 类型编解码
 
-    /// IR 类型 → C 顶层类型标注（IR 侧入口的桥）。
-    ///
-    /// IR 只携带解析后的 `IRType`，而 thunk 按 AST 的**类型标注**决定 ABI 路径。
-    /// 本桥只认 `IRType` 里能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil，
-    /// 由调用方**报错** —— 不许退化成「无返回」：静默降级会让声明与调用悄悄不一致，
-    /// 而这类不一致不会在调用点显形，只会在读回值时变成垃圾。
+    /// IR 类型 → C 顶层类型标注的桥：thunk 按 AST 类型标注决定 ABI 路径，而 IR 只携带解析后的 `IRType`。
+    /// 只认能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil 由调用方报错——不许退化成「无返回」：
+    /// 静默降级会让声明与调用悄悄不一致，而这种不一致不在调用点显形，只在读回值时变成垃圾。
     static func annotation(for type: IRType) -> TypeAnnotation? {
         let location = SourceLocation(line: 0, column: 0, fileName: "<ir>")
         switch type {

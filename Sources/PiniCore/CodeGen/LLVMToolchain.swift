@@ -1,13 +1,7 @@
 import Foundation
 
-/// 探测 LLVM 工具链（clang / lli / opt）路径。
-///
-/// 优先级：
-/// 1. 环境变量 `PINI_LLVM_BIN`（指向含工具的目录）
-/// 2. `llvm-config --bindir`
-/// 3. PATH 中的 `which <tool>`
-///
-/// 这样 P6 后端不再依赖任何硬编码路径，可在 macOS / Linux / Windows 上自适应。
+/// 探测 LLVM 工具链（clang / lli / opt）路径，不依赖任何硬编码路径，可在 macOS / Linux / Windows 自适应。
+/// 优先级：环境变量 `PINI_LLVM_BIN` → `llvm-config --bindir` → PATH 里的 `which <tool>`。
 public struct LLVMToolchain {
 
     public static var clangPath: String? { resolve("clang") }

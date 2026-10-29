@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Capability sweep: measure LLVM-backend pass rate over the examples corpus.
-# For each .pini file records: legacy emit status, run-llvm status, IR-pipeline
-# emit status, interpreter status.
-# Output: TSV at tools/capability-sweep.tsv
-#   (file \t emit \t llvm \t ir-emit \t interp \t note)
-# Re-run after each grid lands (LLVM rewrite M5) to refresh the matrix.
-# Every channel now runs the same pipeline: the M6 flip removed the
-# migration switch along with the legacy generator.
+# Capability sweep: per .pini in the examples corpus, record emit / run-llvm / ir-emit / interp status.
+# Output: tools/capability-sweep.tsv, one row per file (file, emit, llvm, ir-emit, interp, note).
+# Every channel runs the same pipeline, so the columns differ only in how the program was executed.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

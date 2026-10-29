@@ -1,9 +1,6 @@
-; G41 test 块 + assert 内建（#46-E）
-; 运行：
-;   pini test examples/test.pini   → 收集顶级 |test 函数并逐一执行（assert 判定，汇总报告）
-;   pini run examples/test.pini    → main 直接调用测试函数演示（test 修饰符函数即普通函数，可被调用）
-; 预期（run，剥离换行后）：
-;   全部测试通过
+; 语言级 `|test` 块 + assert 内建：`pini test` 收集顶级 |test 函数逐一执行（assert 判定、汇总报告），
+; `pini run` 则由 main 直接调用（test 修饰符函数即普通函数，可被调用）。
+; 预期（run，剥离换行后）：全部测试通过
 
 ; 测试函数块必须显式声明 |test：`名称|test(形式参数元组,)->(返回元组,)`
 加法测试|test() -> ():

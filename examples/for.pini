@@ -1,13 +1,6 @@
-; for-in 迭代（G36）—— 双后端（解释器 / LLVM JIT / AOT）可用
-; 运行：pini run examples/for.pini        （解释器）
-;        pini run-llvm examples/for.pini   （LLVM JIT）
-;        pini compile examples/for.pini    （LLVM AOT）
+; for-in 迭代（解释器 / LLVM JIT / AOT 三通道可用）。运行：pini run examples/for.pini（或 run-llvm / compile）
 ; 预期（双后端一致，剥离换行后）：6 55 10 3 9 3 10
-; 说明：
-;   - 模式元组与集合元素一一对应绑定：数组/集合=1 字段、字典=2 字段 (k, v)。
-;   - `_` 占位忽略绑定（仅迭代次数）。
-;   - `step:` 与 `标签|控制流` 与 while 一致（break label 可跳出指定层，标签语法反转）。
-;   - 嵌套集合迭代：数组元素为数组时，集合型模式变量每轮 body 末精确释放。
+; 说明：模式元组与元素一一对应绑定（数组/集合=1 字段、字典=2 字段），`_` 忽略绑定，`step:` / `标签|控制流` 与 while 一致。
 
 main|func() -> ():
     ; 1) 数组：单字段绑定元素值

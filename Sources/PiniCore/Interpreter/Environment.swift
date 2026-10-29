@@ -57,15 +57,9 @@ public class Environment {
         throw RuntimeError.undefinedVariable(name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
     }
 
-    /// 就地初始化一个**已声明**的绑定，保留其可变性。
-    ///
-    /// 与 `assign` 的区别只在一点：这里不做可变性检查。它不是「更宽松的 assign」，
-    /// 而是语言里客观存在的第三种写：**声明处的一次初始化**（`let x = ...`）。`assign`
-    /// 在这里会误判——把「初始化一个 `let`」当成「给 `let` 赋值」而拒绝。
-    ///
-    /// 存在的理由是降载形状：`let x = try ... else e:` 被拆成
-    /// `allocVar(x, initializer: nil)` + `tryStmt(okTarget: x)` 两条语句，ok 臂必须写进
-    /// 前一条已经声明的槽。查找顺序与 `assign` 一致（内层优先，未找到抛 undefinedVariable）。
+    /// 就地初始化一个已声明的绑定并保留其可变性。与 `assign` 的唯一差别是不做可变性检查：这里写的是
+    /// 声明处的那一次初始化（`let x = ...`），用 `assign` 会把「初始化 `let`」误判成「给 `let` 赋值」。
+    /// `let x = try ... else e:` 降载后 ok 臂要写进已声明的槽；查找顺序同 `assign`，未找到抛 undefinedVariable。
     public func initialize(name: String, value: Value) throws {
         for i in (0..<scopes.count).reversed() {
             if let binding = scopes[i][name] {

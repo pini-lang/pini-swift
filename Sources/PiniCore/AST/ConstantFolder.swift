@@ -1,10 +1,8 @@
 import Foundation
 
-/// P7-5 常量折叠 AST 重写 pass。
-///
-/// 在解析后、类型检查前对字面量二元/一元运算做编译期求值折叠，生成等价但更简单的 AST。
-/// 严格保持语义：仅折叠「两侧均为同类型字面量」的节点，不改变类型、不消除运行时错误
-/// （如除零）、不折叠可能含副作用/短路语义的 `&&`/`||`、不折叠函数调用。
+/// 常量折叠 pass：解析后、类型检查前，对字面量的一元/二元运算做编译期求值，产出等价而更简单的 AST。
+/// 严格保语义：只折叠两侧同为该类型字面量的节点，不改类型、不消除除零这类运行时错误，
+/// 不折叠可能含副作用或短路语义的 `&&`/`||`，也不折叠函数调用。
 public enum ConstantFolder {
 
     public static func foldConstants(in module: Module) -> Module {
@@ -30,7 +28,7 @@ public enum ConstantFolder {
                     fields: o.fields.map { FieldDecl(name: $0.name, typeAnnotation: $0.typeAnnotation, initializer: $0.initializer.map(fold), location: $0.location) },
                     methods: o.methods.map(fold), traits: o.traits, location: o.location))
         case .givenDecl(let g):
-            // ADR-001：与对象体同规，字段初值里的常量表达式同样折叠。
+            // 与对象体同规，字段初值里的常量表达式同样折叠。
             return .givenDecl(
                 GivenDecl(
                     name: g.name, genericParams: g.genericParams,

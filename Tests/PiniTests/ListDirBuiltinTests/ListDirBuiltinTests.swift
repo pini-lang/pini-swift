@@ -2,19 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 
-/// `listDir` 内建的判据（自举仓 M8 的前置：`.pini` 源码此前**写不出**「列出目录」）。
-///
-/// 组织：一夹具一条用例，夹具在本文件同目录的 `Fixtures/` 下、文件名即消费它的用例名 ——
-/// 「有夹具而无用例」与「有用例而无夹具」都能一眼看出（同 `GrammarAcceptanceTests` 的约定）。
-///
-/// ⚠️ **与其它套件的一处结构性不同**：本套件的被测对象是**文件系统**。
-/// ⇒ 每条用例**自建一个临时目录**当程序基准，⛔ 不在仓库里建任何文件，
-///   ⛔ 也不把基准指向夹具目录 —— 后者会让用例互相看见对方的产物，
-///   于是「列出的条目数」这类断言会随夹具增减而漂，**而漂的那一刻不会有判据变红**。
-///
-/// ⚠️ 本套件**不断言**「列不全时截断」，因为实现**不截断**：判据是「无上限」本身
-///   （`testListDirHasNoEntryCountCap`）。要证明一条**不存在**的行为只能靠规模，
-///   这也是那条用例取 300 个文件的原因。
+/// `listDir` 内建的判据。一夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即消费它的用例名 —— 缺一边一眼看出。
+/// 被测对象是文件系统 ⇒ 每条用例自建临时目录当程序基准，不在仓库建文件、也不指向夹具目录（条目数会随夹具增减漂）。
+/// 本套件不断言「列不全时截断」，因为实现不截断：判据是无上限本身，故那条用例取 300 个文件靠规模证明。
 struct ListDirBuiltinTests {
 
     // MARK: - 私有 helper
@@ -28,10 +18,8 @@ struct ListDirBuiltinTests {
     }
 
     /// 解析（含常量折叠）→ 语义门禁 → 类型检查 → 降载 → 在指定基准上执行，返回标准输出逐行。
-    ///
-    /// 与 `GrammarAcceptanceTests.runFixture` 的差别只有一处：`programBase` 由调用方给定。
-    /// 那正是本套件需要的自由度 —— IO 相对路径按**程序基准**解析（不是进程 CWD），
-    /// 故基准指向哪里，`listDir` 就列哪里。
+    /// 与 `GrammarAcceptanceTests.runFixture` 的差别只有一处：`programBase` 由调用方给定 —— 那正是需要的自由度：
+    /// IO 相对路径按程序基准解析（不是进程 CWD），故基准指向哪里，`listDir` 就列哪里。
     private func run(_ fixture: String, programBase: URL) throws -> [String] {
         let source = try loadPiniFixture(fixture + ".pini", filePath: #filePath)
         let lexer = Lexer(source: source, fileName: fixture + ".pini")
@@ -143,12 +131,8 @@ struct ListDirBuiltinTests {
 
     @Test("无条目数上限：300 个条目全部返回")
     func testListDirHasNoEntryCountCap() throws {
-        /// 意图：钉住**语义决定**（见规范内建清单那段）——`listDir` 刻意不设上限。
-        /// ⚠️ 本条原先以 `readFile` 的 64 KiB 上限作**对照**，那个对照已于 2026-10-01 失效：
-        /// 该上限被删除（与本条同一条理由 —— 它继承自发射器栈缓冲、不是语言选的，
-        /// 见 `Sources/PiniCore/Common/IOLimits.swift` 头注）⇒ 本仓**两个**目录/文件读入内建
-        /// 现在都不设上限。`readFile` 那一侧有自己的判据：`ReadFileBuiltinTests`。
-        /// ⇒ 将来若有人给任一侧加上限，这条（或那条）红得**正确**：那是语义变更，不是优化。
+        /// 意图：钉住语义决定 —— `listDir` 刻意不设上限。本仓两个目录/文件读入内建现在都不设上限，
+        /// `readFile` 那一侧有自己的判据；将来若有人给任一侧加上限，这条（或那条）红得正确：那是语义变更，不是优化。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         let names = (0..<300).map { String(format: "f%03d.txt", $0) }

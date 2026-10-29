@@ -1,12 +1,6 @@
-; 数组基础（LLVM 后端 / 解释器双后端可用）
-; 运行：pini run-llvm examples/array_basic.pini  （或 pini run）
+; 数组基础（解释器 / LLVM 双后端可用）：下标、len、元素读写、字符串元素。运行 pini run-llvm examples/array_basic.pini（或 pini run）
 ; 预期（双后端一致，剥离换行后）：20 3 world 3 true 3 b 10 7
-; 说明：#46-D D1 —— 数组以 opaque handle 经运行时 shim（@bk_array_*）承载；
-;       元素类型支持 I32 / F64 / Bool / String（装箱-raw 模型，任意宽度元素）。
-;       #46-D D1.5 —— 数组下标写 a[i]=v / 复合 a[i]+=k 双后端对齐（见末尾 w 演示）。
-;       注意：F64 打印差异（G-IR-enum-print）已按最短往返收敛于 IR 管线
-;       （经 @bk_double_to_string 单源）；旧后端维持 %f 格式直至 M6 消亡。
-;       其余类型（Int / Bool / String / 嵌套数组）双后端精确对齐。字典 / 集合见 examples/collections.pini。
+; 说明：数组以 opaque handle 经运行时 shim（@bk_array_*）承载，元素支持 I32 / F64 / Bool / String；下标写与复合赋值双后端对齐。
 
 main|func() -> ():
     let a = [10, 20, 30]
@@ -19,11 +13,11 @@ main|func() -> ():
     print(b[0])
     print(len(b))
     let m = [["a", "b"], ["c", "d"]]
-    ; 批 2（G48 通道 1）：下标读返回元素本身，嵌套下标可直接连写（旧写法 `unsafe m[0]![1]!` 已失效）。
+    ; 下标读返回元素本身，嵌套下标可直接连写：`m[0][1]`。
     print(m[0][1])
     var w = [1, 2, 3]
     w[0] = 10
-    ; 批 2（G48 通道 2）：需要 Optional 参与 match 时走 `.get(i)`（越界返回 .none）；
+    ; 需要 Optional 参与 match 时走 `.get(i)`（越界返回 .none）；
     ; 下标 `w[i]` 直接给元素，越界 panic。
     match w.get(1):
         case some(v):

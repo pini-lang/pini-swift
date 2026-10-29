@@ -320,7 +320,7 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
         for s in body.statements {
             result += describeStatement(s, indent: indent + " ") + "\n"
         }
-        // G-P7：step 块此前不渲染（宿主 AST 明明持有），补齐为 for 同款
+        // step 块与 body 同形渲染：`step:` 段内每条语句一行，缩进与 body 一致。
         if let step = step {
             result += "\n\(indent) step:\n"
             for s in step.statements {
@@ -437,7 +437,7 @@ func describeFuncDecl(_ funcDecl: FuncDecl, indent: String = "") -> String {
 
 func describeFieldDecl(_ field: FieldDecl, indent: String = "") -> String {
     var result = "\(indent)field \(field.name): \(describeTypeAnnotation(field.typeAnnotation))"
-    // G-P7：字段初始化器此前不渲染，补齐
+    // 字段带初始化器时追加 ` = <表达式>`。
     if let initExpr = field.initializer {
         result += " = \(describeExpression(initExpr, indent: ""))"
     }
@@ -468,7 +468,7 @@ func describeStructDecl(_ structDecl: StructDecl, indent: String = "") -> String
     return String(result.dropLast())
 }
 
-/// ADR-001：给定块的 AST dump（`pini parse` 面）。与对象同构 ⇒ 同形渲染。
+/// 给定块的 AST dump（`pini parse` 面）：与对象同构，故同形渲染。
 func describeGivenDecl(_ givenDecl: GivenDecl, indent: String = "") -> String {
     var result = "\(indent)given \(givenDecl.name)"
 
@@ -575,10 +575,10 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
     case .statement(let stmt):
         return describeStatement(stmt, indent: indent)
     case .importDecl(let importDecl):
-        // G52 批 1：块形式 AST dump——`import 别名 = 路径`
+        // 块形式 import 的 dump 形态：`import 别名 = 路径`，一行一条。
         return "\(indent)import \(importDecl.alias) = \(importDecl.packagePath)"
     case .exportDecl(let exportDecl):
-        // G52 批 1：块形式 AST dump——每个重命名项一行
+        // 块形式 export 的 dump 形态：每个重命名项一行。
         var out = ""
         for r in exportDecl.renames {
             out += "\(indent)export \(r.alias) = \(r.symbol)\n"
@@ -601,8 +601,8 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
 
 func describeAST(_ module: Module) -> String {
     var result = "Module:\n"
-    // G-P7：import/export 此前不渲染（存于 Module.imports/exports 而非
-    // declarations），补齐；顺序信息宿主未保留，按 imports/declarations/exports 输出
+    // import/export 存于 `Module.imports`/`exports` 而非 `declarations`，故在此单独遍历。
+    // 宿主未保留三者交错的顺序，固定按 imports → declarations → exports 输出。
     for imp in module.imports {
         result += describeTopLevelDecl(.importDecl(imp), indent: " ") + "\n"
     }
@@ -699,11 +699,9 @@ func runParseCommand(source: String, fileName: String, signaturesOnly: Bool = fa
     print(describeAST(module))
 }
 
-/// 批 6（G52 批 3，阶段 4）：`pini mod {tidy, refresh, verify, graph}`。
-/// - tidy：离线对齐 [require] ↔ 代码 import（D21；新增约束写 `*`）
-/// - refresh：重解版本 + 写 `pini-summary.toml`（批 6 仅本地 file: tap，远程报错退出= D-A）
-/// - verify：锁文件校验和比对（D6 执行点；只读）
-/// - graph [--cycles]：依赖图缩进树（D-C）/ 环路径列表（R2 诊断入口）
+// `pini mod {tidy, refresh, verify, graph}`：依赖清单的离线维护入口。
+// tidy 对齐 [require] ↔ 代码 import；refresh 重解版本并写 `pini-summary.toml`（远程 tap 报错退出）；
+// verify 只读比对锁文件校验和；graph 输出依赖树，`--cycles` 时列环路径。
 func runModCommand(_ rest: [String]) {
     guard let sub = rest.first else {
         print("用法: pini mod {tidy|refresh|verify|graph} [--cycles] [模块根]")
@@ -778,8 +776,8 @@ func runModCommand(_ rest: [String]) {
     }
 }
 
-/// 批 6 D-4：输出语义警告（E7 段，弱警告不阻断 run/check，exit 0）。
-/// 走 stderr——不污染 stdout（golden 测试按 stdout 对账）。
+// 输出语义警告（E7 段，弱警告不阻断 run/check，exit 0）。走 stderr，不污染 stdout——
+// golden 测试按 stdout 对账。
 func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
     for w in analyzer.warnings {
         let msg: String
@@ -799,8 +797,8 @@ func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
     }
 }
 
-/// 批 5（G58，D-1 方案 A）：程序基准——相对给定的文件/目录路径求**绝对**基准：
-/// 目录 → 自身；文件 → 所在目录。相对输入先按当前 CWD 绝对化并标准化。
+// 程序基准：相对给定的文件/目录路径求绝对基准——目录取自身，文件取所在目录。
+// 相对输入先按当前 CWD 绝对化并标准化。
 func absoluteProgramBase(_ path: String) -> String {
     var abs = path
     if !abs.hasPrefix("/") {
@@ -814,27 +812,15 @@ func absoluteProgramBase(_ path: String) -> String {
     return abs
 }
 
-// MARK: - 执行引擎（LR-4 P4-γ）
+// MARK: - 执行引擎
 
-// ⛔ 此处原有一个引擎开关（环境变量 `PINI_INTERP_ENGINE`，取值 `ast | ir`）。
-// `G-6c` 按 D-B6 把它随 AST 走查一并退役：走查删除后只剩一台引擎，「选哪台」
-// 不再有第二个答案。取值的合法性检查也一并消失 —— 它当初防的是「静默回退到另一台
-// 引擎跑出结果，而调用方以为测的是另一台」，没有第二台引擎就没有那个失败方式。
-// 刻意**不做**「读到 ast 就报错」的兼容闸：本项目不设 CLI 兼容开关（LR-5），
-// 且一个已无意义的变量名不构成契约。
+// 引擎开关随 AST 走查一并退役：走查删除后只剩一台引擎，「选哪台」没有第二个答案。
+// 取值合法性检查也一并消失——它防的是「静默回退到另一台引擎跑出结果」，没有第二台就没这个失败方式。
+// 刻意不做「读到 ast 就报错」的兼容闸：本项目不设 CLI 兼容开关，已无意义的变量名不构成契约。
 
-/// 单文件走 IR 执行引擎（LR-4 P1-3）。
-///
-/// 前段与 `typeCheckThenGenerate` 一致，理由也相同：lowering 需要 checker 的
-/// `typeInference`，故本路径**必须跑类型检查**。单文件 run 的类型层因此比语义层更严
-/// （语义门禁之上又过一遍类型）——IR 是类型化树，没有推断出的类型就 lower 不出来，
-/// 这是该形态**固有的**，不是可抹平的实现细节。
-///
-/// 目录/模块运行由 `runIRPackageEngine` 承担：整包 lower 再执行，见该函数。
-///
-/// `programBase` 与 AST 通道取同一个值（入口文件所在目录）：IO 节点的非前缀相对路径
-/// 必须两通道解析到同一份文件。否则同一程序在两条通道上读到的不是同一个文件，而且不会
-/// 报错——只会静默读到 CWD 里的同名文件。
+// 单文件走 IR 执行引擎；目录/模块由 `runIRPackageEngine` 整包 lower 再执行。
+// 前段与 `typeCheckThenGenerate` 一致：lowering 需要 checker 的 `typeInference`，故本路径必须跑
+// 类型检查（IR 是类型化树，没有推断出的类型就 lower 不出来）。`programBase` 取入口文件所在目录。
 private func runIREngine(
     module: Module, source: String, programBase: String?,
     argv: [String] = []
@@ -856,20 +842,9 @@ private func runIREngine(
     try executor.run(module: irModule)
 }
 
-/// IR 引擎的包运行入口（LR-4 P4-1a）。
-///
-/// 整包降载（`IRLowerer.lower(package:)`）早已存在，且已在 LLVM 的包 emit 通道上使用；
-/// 本函数把同一条降载结果交给 IR 执行器，使 `pini run <目录>` 与单文件路径一样走
-/// 「共享前端 → 执行」。调用方**必须**已完成包级语义与类型检查
-/// （与 `runIRPackageEmit` 同一个前置约定）。
-///
-/// ⚠️ 与 AST 时代的包路径有一处**已立案的行为差**：清单声明了入口（`[[bin]].entry` /
-/// `[lib].entry`）时，旧路径会给引擎注入 `entryFiles` 并校验「`main` 是否定义在声明入口里」，
-/// 本路径不校验。实测该检查**自 P4 翻转起在默认路径上已不执行**（默认即本路径），
-/// 故删除 AST 走查并不改变用户可见行为；缺陷与处置见工单 `issue-cli-package-entry-check-2026-09-18`。
-///
-/// `moduleRoot` 取与解释器模块路径同一个基准（含清单的目录）：IO 节点的非前缀相对路径
-/// 必须两通道解析到同一份文件，否则会静默读到 CWD 里的同名文件，且不报错。
+// IR 引擎的包运行入口：整包降载（`IRLowerer.lower(package:)`）后交给 IR 执行器，
+// 与单文件路径同走「共享前端 → 执行」；调用方必须已完成包级语义与类型检查。
+// `moduleRoot` 取含清单的目录：IO 的非前缀相对路径须两通道解析到同一份文件，否则静默读错。
 private func runIRPackageEngine(
     package: Package, moduleRoot: String,
     typeInference: TypeInference,
@@ -882,10 +857,8 @@ private func runIRPackageEngine(
     try executor.run(module: irModule)
 }
 
-/// P4 Phase 5：run 接收文件或目录。
-/// - 文件 → 单文件运行（零回归）。
-/// - 目录含 `pini.toml` → 多文件模块运行（跨文件运行时链接，Phase 4）。
-/// - 目录无 `pini.toml` → 无法定位单一入口，报错（运行一组独立程序无意义）。
+// run 接收文件或目录：文件 → 单文件运行（零回归）；目录含 `pini.toml` → 多文件模块运行
+// （跨文件运行时链接）；目录无清单 → 无法定位单一入口，报错（运行一组独立程序无意义）。
 func runRunPath(_ path: String, argv: [String] = []) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -898,8 +871,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
             printError("Error: \(error.localizedDescription)"); exit(1)
         }
         let module = parseOrReport(source: source, fileName: path)
-        // 批 6 Def-3 消化：单文件 run 过语义门禁（此前 parse 即 run，语义错误漏到运行时）。
-        // 仅语义层（E3）；类型层维持单文件宽松现状（如实记录，不假装全检）。
+        // 单文件 run 过语义门禁（仅语义层 E3）；类型层维持单文件宽松，不假装全检。
         do {
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(module: module)
@@ -907,16 +879,15 @@ func runRunPath(_ path: String, argv: [String] = []) {
         } catch {
             printError(formatCLIError(error: error, source: source)); exit(1)
         }
-        // 批 5（G58，D-3）：单文件基准 = 入口文件所在目录。IO 节点的非前缀相对路径
-        // 以它为基准解析，否则会在 IR 侧静默读到 CWD 里的同名文件。
+        // 单文件基准 = 入口文件所在目录：IO 节点的非前缀相对路径以此为根，
+        // 否则会在 IR 侧静默读到 CWD 里的同名文件。
         let programBase = absoluteProgramBase(path)
         do { try runIREngine(module: module, source: source, programBase: programBase, argv: argv) } catch { printError(formatCLIError(error: error, source: source)); exit(1) }
         return
     }
 
-    // 目录
-    // LR-4 P4-1a：此处不再早退。包路径改为与单文件路径同一形态——
-    // 共享前端（清单 / 漂移 / 语义 / 类型）之后，再按开关分派执行引擎。
+    // 目录/包路径：与单文件共用同一前端（清单 / 漂移 / 语义 / 类型），
+    // 之后由 `runIRPackageEngine` 整包 lower 再执行。
     let manifest: ModuleManifest?
     do { manifest = try FileLoader.loadManifest(directory: path) } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
@@ -929,8 +900,8 @@ func runRunPath(_ path: String, argv: [String] = []) {
     do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
-    // 批 6（G52 §4.3）：build 时 require ↔ import 一致性校验（与 verify 的防篡改是两个检查）。
-    // 仅对采用依赖通道的清单生效；不符报错并提示 pini mod tidy。
+    // build 时校验 require ↔ import 一致性（与 verify 的防篡改是两个检查）。
+    // 仅对采用依赖通道的清单生效；不符报错并提示 `pini mod tidy`。
     let driftResult = Result {
         try ModuleToolchain.checkRequireImportAlignment(
             rootDir: absoluteProgramBase(path), manifest: manifest, package: pkg)
@@ -946,9 +917,8 @@ func runRunPath(_ path: String, argv: [String] = []) {
         printError("Error: 依赖清单与代码漂移——\(parts.joined(separator: "；"))。请运行 `pini mod tidy`")
         exit(1)
     }
-    // 与 runCheckPath 模块分支对齐：run 前先执行语义 + 类型层可见性 enforce，
-    // 避免 `pini run` 绕过 4 级访问控制（P4 复审 HIGH：模块 run 路径此前不 enforce）。
-    // LR-4 P4-1a：门禁之后执行，与单文件路径同形。
+    // 与 runCheckPath 模块分支对齐：run 前先做语义 + 类型层可见性 enforce，
+    // 使 `pini run` 同样受 4 级访问控制约束；门禁通过后才执行，与单文件路径同形。
     do {
         let analyzer = SemanticAnalyzer()
         try analyzer.analyze(package: pkg)
@@ -958,7 +928,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
         // 降载会在 checker 弹出作用域之后重推 match scrutinee 的类型，
         // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        // 批 5（G58，D-1）：模块基准 = 模块根（含 pini.toml 的目录）。
+        // 模块基准 = 模块根（含 pini.toml 的目录），IO 相对路径以此为根。
         try runIRPackageEngine(
             package: pkg, moduleRoot: path,
             typeInference: checker.typeInference,
@@ -1031,11 +1001,8 @@ func runDebugPath(_ path: String) {
     }
 }
 
-/// 单文件调试：直接解析并用 SourceMap(sources:) 承载该文件源码。
-///
-/// `G-6a` 把引擎从 AST 走查接到 IR（`check → lower → execute`）。调试入口是该
-/// 能力的**唯一实现**、没有第二条臂可换，所以删除 AST 走查之前必须先接上它 ——
-/// 否则 `pini dbg` 会随走查一起消失，那是用户可见能力净减。
+// 单文件调试：直接解析并用 SourceMap(sources:) 承载该文件源码。引擎走 `check → lower → execute`，
+// 调试入口是该能力的唯一实现、没有第二条臂可换，故换引擎时必须先把它接上（否则能力净减）。
 private func runDebugFile(_ path: String) {
     let source: String
     do { source = try readFile(path) } catch {
@@ -1060,11 +1027,8 @@ private func runDebugFile(_ path: String) {
         }, sources: sources, primaryName: path)
 }
 
-/// 目录/模块调试（P7-4 P3）：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，
-/// 供 SourceMap 跨文件展示断点上下文；运行时 `SourceLocation.fileName` 为全路径，
-/// 与 CLI 用户输入的基名通过 `Debugger.breakpointMatches` 容差匹配。
-///
-/// `G-6a` 同 `runDebugFile`：引擎改接 IR，包走整包降载。
+// 目录/模块调试：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，供 SourceMap 跨文件
+// 展示断点上下文；运行时 `SourceLocation.fileName` 为全路径，由 `Debugger.breakpointMatches` 容差匹配。
 private func runDebugDirectory(_ path: String) {
     let pkg: Package
     do { pkg = try FileLoader.loadDirectory(path: path) } catch {
@@ -1090,11 +1054,8 @@ private func runDebugDirectory(_ path: String) {
         }, sources: sources, primaryName: sources.keys.first ?? path)
 }
 
-/// 装配一次调试会话（LR-4 P4-3）。
-///
-/// 入参是 `DebugRun` 而不是具体引擎：装配只认协议面与「开始跑」的动作，
-/// 所以同一份样板同时服务两条输入形状（此前 module 版 / package 版各一份同形样板），
-/// 而换默认引擎时这里不动 —— 引擎由调用方选、并连同启动动作一起交进来。
+// 装配一次调试会话：入参是 `DebugRun` 而非具体引擎，装配只认协议面与「开始跑」的动作，
+// 故同一份样板同时服务两条输入形状，换默认引擎时这里不动——引擎由调用方选并随启动动作交进来。
 private func startDebugger(run: DebugRun, sources: [String: String], primaryName: String) {
     let debugger = Debugger(driver: CLIDebugDriver())
     debugger.stopAtEntry = true
@@ -1121,7 +1082,7 @@ func checkSingleFileDiagnostics(source: String, fileName: String) -> [String] {
     var diagnostics: [String] = semanticErrors.map {
         ErrorFormatter.formatSemanticError($0, source: source)
     }
-    // 批 6 D-4：语义警告随单文件 check 一并输出（E7 段，弱警告不阻断）。
+    // 语义警告随单文件 check 一并输出（E7 段，弱警告不阻断）。
     for w in analyzer.warnings {
         let wmsg: String
         switch w {
@@ -1160,12 +1121,8 @@ func runCheckCommand(source: String, fileName: String) throws {
     print("检查通过：\(fileName)")
 }
 
-/// 测试执行通道：同一套收集范围与门禁，两条后端。
-///
-/// ⭐ 它只决定**最后一步怎么跑**（解释器执行 / 发射成原生程序再运行），
-/// ⛔ 不影响「收集哪些」与「门禁怎么做」—— 那两件事两条通道走的是同一份代码，
-/// 否则「两个后端行为一致」就成了一句没有载体的话（而两侧各自自洽、彼此不一致，
-/// 是最难发现的一类偏离）。
+// 测试执行通道：同一套收集范围与门禁，两条后端。它只决定最后一步怎么跑（解释器执行 / 发射后运行），
+// 不影响「收集哪些」与「门禁怎么做」——那两件事两条通道共用同一份代码，否则「两后端一致」没有载体。
 enum TestChannel {
     case interpreter
     case llvm
@@ -1179,19 +1136,9 @@ enum TestChannel {
     }
 }
 
-/// #46-E G41（R1）：`pini test [path]` —— 收集顶级 `|test` 函数块逐一执行并汇总报告。
-///
-/// G49（issue-tdd-module-blockers-2026-08-28）：收集单位 = 模块（回归 G41「收集所有 |test」原意）。
-/// - 无 `path`：收集当前目录所属模块根（向上定位清单），模块全量收集；
-/// - `path` 为目录：定位所属模块后，收集范围限定该目录；
-/// - `path` 为文件：定位所属模块后，收集范围限定该文件；
-/// - 显式 `path` 可加回 `[build] exclude` 排除目录（测试目标可检视排除区）；
-/// - 模块外单文件：保持单文件行为（向后兼容）。
-/// 语义/类型门禁：模块模式整包 analyze/check（与 check 目录模式一致）；失败退出码 1。
-/// 退出码：全部通过 0；存在失败测试 1；文件/解析/框架错误 2。
-///
-/// `channel`（本批新增）：本函数负责的是**收集范围**，两条通道共用它；
-/// 差别只在 `gateAndRunTests` / `runSingleFileTests` 的最后一步。
+// `pini test [path]`：收集顶级 `|test` 函数块逐一执行并汇总报告，收集单位 = 模块（向上定位清单）。
+// 无 path → 模块全量；目录 / 文件 → 限定范围（显式 path 可加回 `[build] exclude`）；模块外单文件保持单文件行为。
+// 模块模式整包语义/类型门禁，失败退出 1；全通过 0、有失败测试 1、文件/解析/框架错误 2。
 func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
     do {
         // 无参：收集当前目录所属模块根
@@ -1305,7 +1252,7 @@ private func gateAndRunTests(
         header = "测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件）"
     }
 
-    // 批 5（G58）：测试运行注入程序基准（模块根 / 显式目录）——IO 相对路径与 run 一致。
+    // 测试运行注入程序基准（模块根 / 显式目录），IO 相对路径与 run 一致。
     let runner = ProgramRunner(ffiConfig: ffiConfig, programBase: programBase)
 
     switch channel {
@@ -1350,7 +1297,7 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
     // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
     let dir = (path as NSString).deletingLastPathComponent
     let manifest = try? FileLoader.loadManifest(directory: dir)
-    // 批 5（G58，D-3）：单文件测试基准 = 该文件所在目录。
+    // 单文件测试基准 = 该文件所在目录。
     let runner = ProgramRunner(
         ffiConfig: manifest?.ffi ?? .default,
         programBase: absoluteProgramBase(path))
@@ -1384,17 +1331,9 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
     }
 }
 
-/// LLVM 通道的测试运行：发射（测试模式）→ 建链 → 运行 → **退出码透传**。
-///
-/// ⭐ 本函数**不产出报告** —— 报告与退出码都由产物自己给出（发射侧的驱动器按测试模式合成），
-/// 命令行一路透传。这既是「两个后端的报告逐字节同序」的实现方式，也让本函数只剩工具链三件事：
-/// 落盘 `.ll`、调 clang、把子进程状态交出去。
-///
-/// ⚠️⭐ 退出码**必须交出去**（既有实测教训在案）：`compile` 曾把它丢掉，于是「abort 掉」被读成
-/// `rc=0`，任何建在它上面的判据都恒绿。本函数与 `runCompileCommand` 走同一条纪律。
-///
-/// ⛔ 与 `runCompileCommand` 的差别只有一处：本函数**降载时就开了测试模式** —— 模块里没有
-/// `main` 也合法（测试专档是合法形态），而入口由发射器合成。
+// LLVM 通道的测试运行：发射（测试模式）→ 建链 → 运行 → 退出码透传。本函数不产出报告，
+// 报告由产物自己给出（发射侧按测试模式合成），故它只剩落盘 `.ll`、调 clang、交子进程状态三件事。
+// 退出码必须透传（丢掉会让 abort 被读成 rc=0、判据恒绿）；测试模式允许模块无 `main`，入口由发射器合成。
 func emitAndRunLLVMTests(
     module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?
 ) throws {
@@ -1456,11 +1395,8 @@ func emitAndRunLLVMTests(
     exit(childExitStatus(of: run))
 }
 
-/// P4 Phase 5：check / build 接收文件或目录。
-/// - 文件 → 单文件收集式 check（零回归）。
-/// - 目录含 `pini.toml` → 显式多文件模块，跨文件 analyze/check（首个错误即报，见 Phase 3/4）。
-/// - 目录无 `pini.toml` → 视为一组**独立程序**，逐 `.pini` 独立 check；
-/// 跳过含自身 pini.toml 的嵌套模块子目录（避免 examples/multifile 被当独立文件误报未定义符号）。
+// check / build 接收文件或目录：文件 → 单文件收集式 check；目录含 `pini.toml` → 显式多文件模块，
+// 跨文件 analyze/check 首个错误即报；目录无清单 → 逐 `.pini` 独立 check，并跳过嵌套模块子目录。
 func runCheckPath(_ path: String) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -1493,7 +1429,7 @@ func runCheckPath(_ path: String) {
         do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
             printError(formatCLIError(error: error, source: nil)); exit(1)
         }
-        // 批 6（G52 §4.3）：build 漂移检查（run 同款；仅对采用依赖通道的清单生效）。
+        // build 漂移检查（run 同款；仅对采用依赖通道的清单生效）。
         let driftResult = Result {
             try ModuleToolchain.checkRequireImportAlignment(
                 rootDir: absoluteProgramBase(path), manifest: manifest, package: pkg)
@@ -1581,17 +1517,13 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
     return false
 }
 
-/// #46-optional / Task #2：LLVM 管线先类型检查，再以类型推断结果降载到 IR。
-/// 与解释器对齐做静态校验（零类型信息的 codegen 无法解构 Optional.some，需此前提）。
-/// 类型错误一次性同报并退出（沿用 `runCheckCommand` 的收集模式风格）。
+/// LLVM 管线先类型检查，再以类型推断结果降载到 IR：零类型信息的 codegen 解构不了 Optional.some。
+/// 与解释器同一套静态校验；类型错误一次性同报并退出（同 `runCheckCommand` 的收集模式）。
 private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
     let module = parseOrReport(source: source, fileName: fileName)
-    // The semantic layer gates here for the same reason `check` runs it before
-    // the type layer: it is where capture declarations, undefined names and
-    // visibility are enforced. Without it the LLVM entry points accepted
-    // sources the interpreter rejects -- measured: one source gave E3-008
-    // under `check`/`run` and emitted IR under `emit`/`compile`. A check that
-    // runs ahead of only one backend is not a check, it is a backend trait.
+    // The semantic layer gates here for the same reason `check` runs it before the type layer:
+    // it enforces capture declarations, undefined names and visibility. A check that runs ahead of
+    // only one backend is not a check, it is a backend trait -- it hides E3-008 divergences.
     let analyzer = SemanticAnalyzer()
     let semanticErrors = analyzer.analyzeCollecting(module: module)
     if !semanticErrors.isEmpty {
@@ -1609,11 +1541,11 @@ private func typeCheckThenGenerate(source: String, fileName: String) throws -> S
         }
         exit(1)
     }
-    // #46-optional：开启持久表兜底，使 codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
+    // 开启持久表兜底：codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     let emitter = IREmitter()
-    // 批 5（G58，D-4）：注入程序基准，与解释器同规则。
+    // 注入程序基准，与解释器同规则。
     emitter.programBase = absoluteProgramBase(fileName)
     return emitter.emit(module: irModule)
 }
@@ -1628,14 +1560,9 @@ func runEmitCommand(source: String, fileName: String, outputPath: String?) throw
     }
 }
 
-/// G13 batch 2 (D2): if `path` sits inside a manifest module (a `pini.toml`
-/// at or above its directory), load that whole module as a `Package` — the
-/// same entry `pini run <dir>` uses. Returns nil when the file is outside
-/// any module (bare single-file mode) or the path itself is a directory.
-/// Nested dirs (`_internals/`) resolve upward via locateModuleRoot, matching
-/// the checker's visibility anchoring. The module root comes back alongside
-/// the package so a caller can derive the program base the way the module
-/// run/test paths do; `Package` itself carries no root.
+// If `path` sits inside a manifest module (a `pini.toml` at or above its directory), load that
+// whole module as a `Package` -- the same entry `pini run <dir>` uses; nil for a bare file or a
+// directory path. Nested dirs resolve upward like the checker; the root returns with the package.
 private func loadOwningPackageIfModule(path: String) throws -> (package: Package, moduleRoot: String)? {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
@@ -1646,23 +1573,19 @@ private func loadOwningPackageIfModule(path: String) throws -> (package: Package
     return try (FileLoader.loadDirectory(path: moduleRoot, manifest: manifest), moduleRoot)
 }
 
-/// G13 batch 2: package-level IR emit — package semantic + type-check,
-/// then `IRLowerer.lower(package:)` -> IREmitter. Visibility was already
-/// enforced by the checker (D4); the IR channel re-enforces nothing.
-/// `moduleRoot` is the package's own directory: the module run and test
-/// paths anchor the program base there, and the IR channel follows them
-/// rather than the entry file's directory, because the whole package is
-/// lowered as one unit.
+// Package-level IR emit: package semantic + type-check, then `IRLowerer.lower(package:)` ->
+// IREmitter. The checker already enforced visibility (D4), so the IR channel re-enforces nothing.
+// `moduleRoot` is the package's own directory: the whole package is lowered as one unit.
 private func runIRPackageEmit(package: Package, moduleRoot: String, outputPath: String?) throws {
     let analyzer = SemanticAnalyzer()
     try analyzer.analyze(package: package)
     let checker = TypeChecker()
     try checker.check(package: package)
-    // #46-optional: same persistent-table fallback as the single-file pipeline.
+    // Same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
     let emitter = IREmitter()
-    // 批 5（G58，D-1）：模块基准 = 模块根，与解释器模块路径一致。
+    // 模块基准 = 模块根，与解释器模块路径一致。
     emitter.programBase = absoluteProgramBase(moduleRoot)
     let ir = emitter.emit(module: irModule)
     if let out = outputPath {
@@ -1672,10 +1595,8 @@ private func runIRPackageEmit(package: Package, moduleRoot: String, outputPath: 
     }
 }
 
-/// 定位集合运行时动态库（并发后端抽象 阶段1）。
-/// 优先 env `PINI_RUNTIME_LIB`；否则取 CLI 可执行文件同级目录的
-/// `libPiniRuntime.{dylib,so}`（swift build 产物默认同目录）。
-/// 找不到时返回 nil —— 调用方据此 best-effort 跳过加载（非集合程序本就无需运行时）。
+// 定位集合运行时动态库：优先 env `PINI_RUNTIME_LIB`，否则取 CLI 可执行文件
+// 同级目录的 `libPiniRuntime.{dylib,so}`；找不到返回 nil，调用方据此 best-effort 跳过加载。
 private func runtimeLibraryPath() -> String? {
     if let override = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
         !override.isEmpty, FileManager.default.fileExists(atPath: override)
@@ -1735,11 +1656,8 @@ func runCompileCommand(source: String, fileName: String) throws {
     run.executableURL = URL(fileURLWithPath: tmpBin)
     try run.run()
     run.waitUntilExit()
-    // ⚠️⭐ **把子进程的退出码交出去**（2026-10-03 实测修正）。此前这里把状态**丢掉**了，
-    // 于是 `pini compile` 对一个 **abort 掉**的程序报 **rc=0** —— 而本仓的门禁形态正是
-    // 「看退出码」（三态 0/1/2）。⇒ 任何建在 `compile` / `run-llvm` 上的判据都会**恒绿**
-    // （实测：既有 `SplitPathTests` 里 `compiled.status == 0` 那条断言就是这样恒真的）。
-    // ⛔ 甲路线 scope ⑦（门禁接原生臂）读的正是这条臂 ⇒ 不修它，门禁接上去等于没接。
+    // 把子进程的退出码交出去：丢掉它会让 `pini compile` 对一个 abort 掉的程序报 rc=0，而本仓门禁
+    // 正是看退出码（三态 0/1/2），任何建在 `compile` / `run-llvm` 上的判据都会恒绿。
     exit(childExitStatus(of: run))
 }
 
@@ -1806,14 +1724,9 @@ func formatCLIError(error: Error, source: String?) -> String {
 
 // MARK: - Main Entry Point
 
-// ⭐ 执行线程栈放大（宿主侧解锁批——递归守卫诊断的修法）。
-//
-// 深递归命令（run/check 对大模块）在主线程 8MB 栈上被递归守卫限深：
-// 解释器单帧 ≈47–80KB（RuntimeOps.freeStackFloor 的注释实测），有效深度 ~85。
-// 守卫语义本身健康（1/8 栈安全垫 + 实况读数），瓶颈是**栈供给**——
-// ⇒ 把 CLI 逻辑搬进 64MB 栈的工作线程重入一次，守卫读实况自动适配（深度 ×8），
-//   语义零改动。重入标记走进程环境（setenv）；`exit()` 在线程内照常终止进程，
-//   自然结束路径由主线程 wait 后统一 exit(0)。
+// 执行线程栈放大：深递归命令在主线程 8MB 栈上被递归守卫限深（单帧 ≈47–80KB，有效深度 ~85）。
+// 守卫语义健康（1/8 栈安全垫 + 实况读数），瓶颈是栈供给 ⇒ 把 CLI 逻辑搬进 64MB 栈的工作线程
+// 重入一次，守卫读实况自动适配（深度 ×8），语义零改动；重入标记走 setenv，主线程 wait 后统一退。
 let alreadyWidened = ProcessInfo.processInfo.environment["PINI_STACK_WIDENED"] != nil
 if !alreadyWidened {
     setenv("PINI_STACK_WIDENED", "1", 1)
@@ -1913,7 +1826,7 @@ case "check", "build":
     }
     runCheckPath(args[2])
 case "test":
-    // #46-E G41（R1）/ G49：测试子命令——path 可选；无参 = 收集当前目录所属模块根。
+    // 测试子命令：path 可选；无参 = 收集当前目录所属模块根。
     runTestPath(args.count >= 3 ? args[2] : nil)
 case "test-llvm":
     // 与 `test` **同一套**收集范围、门禁与报告；差别只在最后一步跑在 LLVM 通道上
@@ -1925,10 +1838,9 @@ case "emit":
         exit(1)
     }
     do {
-        // G13 batch 2 (D2): a file inside a manifest module runs through the
-        // package pipeline, which lowers the whole package. A bare file outside
-        // any module keeps single-file behavior. Directory arguments were never
-        // accepted here, so no directory branch is added.
+        // A file inside a manifest module runs through the package pipeline, which lowers the whole
+        // package; a bare file outside any module keeps single-file behavior. Directory arguments are
+        // not accepted here, so no directory branch is added.
         if let loaded = try loadOwningPackageIfModule(path: args[2]) {
             try runIRPackageEmit(
                 package: loaded.package, moduleRoot: loaded.moduleRoot,

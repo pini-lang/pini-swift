@@ -5,13 +5,9 @@
 #endif
 import Foundation
 
-/// 跨平台线程本地存储（macOS / Linux 通用）。
-///
-/// 替代 Foundation 仅 macOS/iOS 提供的 `Thread.current.threadDictionary`，使解释器可在 Linux 编译通过。
-/// 底层用 POSIX `pthread_key_t`：每个线程持有一份独立副本；线程退出时由注册销毁器自动释放值盒子，无泄漏。
-///
-/// 用途：并发任务隔离——每个 `=>` worker 线程维护独立的 `currentEnv` / `deferStack` / `currentFuture` /
-/// `debugDepth` / `callStackNames`，互不污染共享解释器状态（D1 修复策略，原以 `threadDictionary` 实现）。
+/// 跨平台线程本地存储：底层是 POSIX `pthread_key_t`，每线程一份独立副本，线程退出时由注册的
+/// 销毁器释放值盒子，无泄漏。可替代仅 Apple 平台可用的 `Thread.current.threadDictionary`，
+/// 使解释器在 Linux 编译通过；并发任务隔离即靠它给每个 `=>` worker 维护独立的环境状态。
 final class ThreadLocal<T> {
     private var key: pthread_key_t
 

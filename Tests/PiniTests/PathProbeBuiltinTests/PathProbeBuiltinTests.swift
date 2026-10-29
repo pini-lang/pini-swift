@@ -2,16 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 
-/// `exists` / `isDir` 内建的判据（路径探测面）。
-///
-/// 组织：一夹具一条用例，夹具在本文件同目录的 `Fixtures/` 下、文件名即消费它的用例名 ——
-/// 「有夹具而无用例」与「有用例而无夹具」都能一眼看出（同 `GrammarAcceptanceTests` 的约定）。
-///
-/// ⚠️ 本套件被测对象是**文件系统** ⇒ 每条用例自建临时目录当程序基准，
-/// ⛔ 不在仓库里建任何文件，⛔ 也不把基准指向夹具目录（后者会让用例互相看见对方的产物）。
-///
-/// ⚠️ 靶 = **探测类与操作类的分界**：`listDir` / `readFile` 对坏路径 panic，而本组答 false。
-/// 只查「存在」的实现会在 `isDir` 的文件用例上给出 true ⇒ 那条用例专抓这个。
+/// `exists` / `isDir` 内建的判据（路径探测面）。一夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即用例名。
+/// 被测对象是文件系统 ⇒ 每条用例自建临时目录当程序基准，不在仓库建文件、也不指向夹具目录（会让用例互相看见产物）。
+/// 靶 = 探测类与操作类的分界：`listDir` / `readFile` 对坏路径 panic，而本组答 false；只查「存在」的实现在 isDir 上会错。
 struct PathProbeBuiltinTests {
 
     // MARK: - 私有 helper
@@ -81,8 +74,8 @@ struct PathProbeBuiltinTests {
 
     @Test("不存在 ⇒ exists 为假，且不 panic")
     func testExistsIsFalseWhenMissing() throws {
-        /// 意图：走**返回值**通道、⛔ 不走错误通道 —— 这是探测类与操作类的分界。
-        /// 驳回性：若实现改成 panic，本用例会以抛错而非断言失败告终。
+        // 意图：走**返回值**通道、⛔ 不走错误通道 —— 这是探测类与操作类的分界。
+        // 驳回性：若实现走 panic，本用例会以抛错而非断言失败告终。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         try seedProbeDirectory(sandbox)

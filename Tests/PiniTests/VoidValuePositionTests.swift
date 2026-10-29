@@ -2,11 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 
-/// `()` 出现在**值位**时的判据：无返回值调用没有值可给。
-///
-/// 语言面把它与「推不出类型」分开：推断侧对 void 调用返 `nil`，而 `nil` 在初值位 / 实参位
-/// 一律按「未知」放行 ⇒ 静默把 `Any` 绑定给 `var`。本套件钉住两侧：语句位**仍合法**，
-/// 值位**必须报 `E4-001`**（`got` 为 `()`）。
+/// `()` 出现在值位时的判据：无返回值调用没有值可给。语言面把它与「推不出类型」分开 —— 推断侧对 void 调用返 `nil`，
+/// 而 `nil` 在初值位 / 实参位一律按「未知」放行 ⇒ 静默把 `Any` 绑定给 `var`。
+/// 本套件钉住两侧：语句位仍合法，值位必须报 `E4-001`（`got` 为 `()`）。
 struct VoidValuePositionTests {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
@@ -64,7 +62,7 @@ struct VoidValuePositionTests {
 
     @Test("无返回值调用作无标注变量初值被拒")
     func voidCallAsUnannotatedInitializerIsRejected() throws {
-        /// 意图：无标注初值位此前把 nil 推断落成 `Any` ⇒ `x` 被静默绑定。
+        /// 意图：无标注初值位若把 nil 推断落成 `Any`，`x` 就被静默绑定；本条要求报 E4-001 且报文指 `()`。
         let source = #"""
         main|func() -> ():
             var x = print("a")

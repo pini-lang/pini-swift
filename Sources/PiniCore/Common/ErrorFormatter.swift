@@ -1,8 +1,7 @@
 import Foundation
 
-/// 错误格式化器（T1/T11，2026-08-24 批次 A 重写）
-/// 诊断驱动渲染：错误码 + 严重级别 + 源码行 + 跨度下划线（多字符 `~~~`）+ 修复建议 + 可选 ANSI 颜色。
-/// 语言策略：消息统一中文（T11；此前 ErrorFormatter 英文 vs RuntimeError.description 中文的双轨已收敛）。
+/// 错误格式化器：诊断驱动渲染——错误码 + 严重级别 + 源码行 + 跨度下划线（多字符 `~~~`）+
+/// 修复建议 + 可选 ANSI 颜色。消息统一中文，与 `RuntimeError.description` 同一种语言。
 public enum ErrorFormatter {
 
     // MARK: - 核心渲染

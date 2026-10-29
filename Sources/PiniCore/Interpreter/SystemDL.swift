@@ -6,11 +6,9 @@ import Foundation
     import Glibc
 #endif
 
-/// Phase 2b（解释器 dlsym 加载）：跨平台动态链接封装（Darwin / Linux）。
-///
-/// 屏蔽 macOS `.dylib` 与 Linux `.so` 差异，提供 `dlopen`/`dlsym`/`dlclose` 薄封装。
-/// 仅返回裸地址（`UnsafeMutableRawPointer`）；调用侧（`ForeignThunk`）负责按精确 C 签名
-/// 转成 `@convention(c)` 函数指针——本层不涉 ABI 语义。
+/// 跨平台动态链接薄封装（Darwin `.dylib` / Linux `.so`），只提供 `dlopen`/`dlsym`/`dlclose`。
+/// 仅返回裸地址（`UnsafeMutableRawPointer`），调用侧 `ForeignThunk` 负责按精确 C 签名转成
+/// `@convention(c)` 函数指针，故本层不涉 ABI 语义。
 enum SystemDL {
     /// 打开动态库；`path` 为库文件路径。失败返回 `nil`（错误经 `error()` 获取）。
     static func open(_ path: String) -> UnsafeMutableRawPointer? {

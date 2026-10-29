@@ -1,14 +1,9 @@
 import Foundation
 import Testing
 
-/// 路径解析的三条**豁免支**与基准支的判据。
-///
-/// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），⛔ 不往仓库里建文件。
-/// 比对物是**手写期望**，⛔ 不是另一条通道的输出 —— 两条同时错会互相认证。
-///
-/// ⚠️ 本套件守的是一条**外部依赖**：自举仓的相对路径全部带 `./` 前缀，靠 `./` / `../`
-/// 这一支在「程序基准」与「进程 CWD」两种语义下都落到 CWD。若把这一支改成同样拼基准，
-/// 自举仓会全线失守，而它的 `check` 门禁看不出来（只有跑原生臂才暴露）⇒ 本套件就是那道拦截。
+/// 路径解析的三条豁免支与基准支的判据。每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），
+/// 不往仓库里建文件。比对物是手写期望，不是另一条通道的输出 —— 两条同时错会互相认证。
+/// 守的是一条外部依赖：自举仓的相对路径全带 `./` 前缀，靠 `./` / `../` 这一支在两种语义下都落到 CWD。
 struct IOPathExemptionTests {
 
     // MARK: - 私有 helper
@@ -20,11 +15,8 @@ struct IOPathExemptionTests {
         return base
     }
 
-    /// 三种基准各自的同名文件，内容互不相同 —— 只看输出即可判出解析用了哪一支。
-    /// - 基准支（无前缀）⇒ `scripts/a.txt` = `script-a`
-    /// - `./` 豁免（CWD）⇒ `cwd/a.txt` = `cwd-a`
-    /// - `../` 豁免（CWD 的父）⇒ `<沙盒>/a.txt` = `root-a`
-    /// - 绝对路径 ⇒ `<沙盒>/abs/abs.txt` = `abs-a`
+    /// 三种基准各自的同名文件，内容互不相同 —— 只看输出即可判出解析用了哪一支：基准支（无前缀）落
+    /// `scripts/a.txt`，`./` 豁免落 `cwd/a.txt`，`../` 豁免落 `<沙盒>/a.txt`，绝对路径落 `<沙盒>/abs/abs.txt`。
     private func seedLayout(_ base: URL) throws -> (scripts: URL, cwd: URL, abs: String) {
         let scripts = base.appendingPathComponent("scripts")
         let cwd = base.appendingPathComponent("cwd")
@@ -88,10 +80,9 @@ struct IOPathExemptionTests {
 
     @Test("无前缀走基准、./ 与 ../ 走 CWD、绝对路径原样：四种形态两通道各与手写期望相符")
     func fourPathFormsResolveToTheirOwnBase() throws {
-        /// 意图：把四条分支一次钉死 —— 前两条判「基准支是否真的拼了基准」，后两条判「豁免支是否真的没拼」。
-        /// 驳回性：四条里任一条被改成另一支的语义，对应行就会读到别处的同名文件，输出与期望不符。
-        ///
-        /// ⚠️ 前提：CWD 与脚本目录必须不同，且两者各有同名文件 —— 否则「拼没拼基准」看不出差别。
+        // 意图：四条分支一次钉死 —— 前两条判基准支真的拼了基准，后两条判豁免支真的没拼。
+        // 任一条若走成另一支的语义，对应行就会读到别处的同名文件，输出与期望不符。
+        // 前提：CWD 与脚本目录不同，且各有同名文件。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -126,10 +117,8 @@ struct IOPathExemptionTests {
 
     @Test("写路径与读路径同规则：无前缀落在脚本目录、./ 落在 CWD")
     func writePathFollowsTheSameRuleAsRead() throws {
-        /// 意图：解析规则是**一套**、不是读写各一套 —— 写侧同样要过同一条。
-        /// 驳回性：写侧只认字面量或只认 CWD 的实现，会把两处之一写到错目录，盘上断言随即失败。
-        ///
-        /// ⚠️ 两通道各跑一次前先清掉上一次留下的产物，否则第二条通道可能读到第一条写的文件而假绿。
+        /// 意图：解析规则是一套、不是读写各一套 —— 写侧同样要过同一条。只认字面量或只认 CWD 的实现，会把两处之一
+        /// 写到错目录，盘上断言随即失败。两通道各跑一次前先清掉上一次的产物，否则第二条可能读到第一条写的文件而假绿。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }

@@ -1,7 +1,5 @@
 ; 访问：字段直接访问 + 方法访问（方法内通过 self 读取字段）
 ; 运行：pini run examples/access.pini
-; 预期：秒表 / 60 / 60
-; 运行：pini run examples/access.pini
 ; 预期输出：秒表、60、60（字段 周期 与方法 获取周期 读到同一值）
 
 (计数器)

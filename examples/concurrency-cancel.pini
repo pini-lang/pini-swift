@@ -1,14 +1,6 @@
-; 并发取消与超时（Experimental-ish）：cancel / joinWithin / isCancel
-; 运行：pini run examples/concurrency-cancel.pini
-; 预期：已超时取消
-;       已手动取消
-;
-; 语义要点（与 concurrency.pini 同体系）：
-;   `=>` 声明 = 调用即派发到 worker 线程，返回运行中的 Future。
-;   `joinWithin(t, ms)` = 带超时阻塞 join；超时归约为取消，返回 err(CancelError)。
-;   `isCancel(e)` = 判断错误是否为取消类（超时与手动取消同为 true）。
-;   `t.cancel()` = 取消某个 Future（含其派生子任务）。
-; 注：涉及真实线程调度；本示例仅演示取消语义，时限内整体会快速返回。
+; 并发取消与超时：cancel / joinWithin / isCancel。运行 pini run examples/concurrency-cancel.pini，预期「已超时取消」「已手动取消」
+; `=>` 声明 = 调用即派发到 worker 线程，返回运行中的 Future；`joinWithin(t, ms)` = 带超时阻塞 join，
+; 超时归约为取消、返回 err(CancelError)；`isCancel(e)` 判取消类（两种取消同为 true）；`t.cancel()` 取消该 Future 及其派生任务。
 
 慢任务|func() => (I32,):
     sleep(3000)

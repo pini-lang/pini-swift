@@ -1,12 +1,6 @@
-; 点号用例构造演示：`.caseName` / `.caseName(args)` = 成员意图标记
-; （proposal-dot-case-construction，D-1 与 Swift UnresolvedMemberExpr 同构）
-; 运行：pini run examples/enum-dot-case.pini
-; 预期：开 / none / some(7) / 轮子(4)
-;
-; 注 1：唯一名与内建 Optional 场景单文件即可运行。
-; 注 2：歧义名 + 期望类型标注的静态决议须类型层参与（`pini check` / package 通道）；
-;       单文件 `pini run` 类型层宽松（既有行为，与裸名构造对称），歧义名在运行期报错。
-;       该场景覆盖见 Tests/PiniTests/DotCaseConstructionTests/。
+; 点号用例构造：`.caseName` / `.caseName(args)` = 成员意图标记（与 Swift UnresolvedMemberExpr 同构）
+; 运行 pini run examples/enum-dot-case.pini；预期：开 / none / some(7) / 轮子(4)
+; 注：歧义名 + 期望类型标注的静态决议须类型层参与（`pini check` / package 通道），单文件 run 类型层宽松，歧义名在运行期报错。
 
 [形状]
 圆(F64,)

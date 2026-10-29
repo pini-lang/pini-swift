@@ -1,12 +1,8 @@
 import Foundation
 
-/// ARC 引用计数管理器
-/// 负责对象块的引用计数管理
-/// 当前三步走计划中 Swift ARC 自动管理内存，此管理器提供引用计数追踪与回收接口
-///
-/// D1 修复：原实现 `table` / `refCount` 无同步，而 `arcManager` 是解释器共享单例，
-/// 并发任务在 worker 线程上 `register` / `retain` / `release` / `weakRetain` 时会产生数据竞争。
-/// 现以 NSLock 串行化所有状态访问（含 `ObjectReference.refCount` 的读写），消除竞态。
+/// 对象块的引用计数管理器：追踪 `register` / `retain` / `release` / `weakRetain` 并给出回收接口。
+/// 它是解释器共享单例，并发任务在 worker 线程上调用，故所有状态访问（含 `ObjectReference.refCount` 的读写）
+/// 一律由 `NSLock` 串行化——绕过锁即数据竞争，弱引用表与计数会互不一致。
 public final class ARCManager {
     private class ARCEntry {
         let object: ObjectReference

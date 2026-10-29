@@ -65,11 +65,8 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 EXECUTED = re.compile(r"Executed (\d+) tests?, with (\d+) failures?")
-# Swift Testing 的汇总行与 XCTest 完全不同，且**不产出** `Executed ...`：
-#   Test run with 32 tests in 2 suites passed after 0.83 seconds.
-#   Test run with 4 tests in 1 suite failed after 0.42 seconds with 3 issues.
-#   Test run with 4 tests in 1 suite passed after 0.01 seconds with 1 known issue.
-# 只认 XCTest 会把 Swift Testing 的套件读成「0 run」，而那是未测、不是通过。
+# Swift Testing 的汇总行不产出 `Executed ...`：只认 XCTest 会把它的套件读成「0 run」，
+# 而 0 run 是未测、不是通过。
 SWIFT_TESTING_SUMMARY = re.compile(
     r"Test run with (\d+) tests? in (\d+) suites? (passed|failed)"
     r"(?: after [\d.]+ seconds)?(?: with (\d+) (?:known )?issues?)?")
