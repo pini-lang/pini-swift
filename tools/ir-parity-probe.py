@@ -11,34 +11,25 @@ aggregate prints rejected at emit time, ...). Measured 2026-09-11: the
 emit-only judge called all of them PASS.
 
 This probe changes the unit of judgement from "can we emit it" to "does it
-run, and does it behave the same". Three execution arms per fixture:
+run, and does it behave the same". Two execution channels per fixture:
 
-    interp-ir    `pini run <file>`              the IR execution engine
-    llvm-ir      `pini run-llvm <file>`         IR -> LLVM
-    c-backend    `--emit-c`, then cc, then run  IR -> C (judged only when the
-                                                first two agree)
+    interp-ir   `pini run <file>`        the IR execution engine
+    llvm-ir     `pini run-llvm <file>`   IR -> LLVM
 
 They are separate implementations of the same semantics — one walks the IR
-tree, the second lowers it to LLVM IR, the third translates it to C and lets a
-host compiler finish the job — so the cross-check compares engines rather than
-one pipeline with itself.
+tree, the other lowers it to LLVM IR and runs that — so the cross-check compares
+two engines rather than one pipeline with itself.
 
-TWO EXECUTION CHANNELS, PLUS A THIRD ARM
+TWO CHANNELS, NOT ONE, AND NOT THREE (G-6c, 2026-09-18)
 
-Until that batch there was a third channel: `interp-ast`, the AST walk, held as
+Until that batch there was a tird channel: `interp-ast`, the AST walk, held as
 a *frozen reference* — a second interpreter whose agreement was the standard.
 G-6c deleted the walk, so both the channel and the thing it was a reference to
-are gone. What remains is IR-executor against LLVM, which is a real comparison;
-what is lost is the third opinion, and the two fixtures where the reference had
-been the odd one out are recorded in the batch that removed it rather than
-carried as a permanent exception table.
-
-The C backend is a genuinely third implementation, so it earns an arm of its
-own. It is consulted only after the first two agree: a disagreement there is
-attributable to the C emitter, whereas a disagreement between the first two
-leaves the third without a reference to be judged against. Its source comes
-from `--emit-c` and is compiled by this probe rather than by the CLI, so the
-file that is judged is the file that ran.
+are gone, and with one implementation left there would be nothing to compare.
+What remains is IR-executor against LLVM, which is a real comparison; what is
+lost is the tird opinion, and the two fixtures where the reference had been the
+odd one out are recorded in the batch that removed it rather than carried as a
+permanent exception table.
 
 A DIAGNOSTIC-ORIGIN INSTRUMENT, WHICH IS NOT A CHANNEL
 
@@ -92,16 +83,6 @@ VERDICTS
                        blocker column until P2 finishes, and a number that
                        never moves stops being read. Reported separately and
                        aggregated by node
-    C_TODO            the two channels agree and the C backend refuses the
-                       fixture by name. Same standing as IR_ENGINE_TODO: a
-                       progress list for that channel, not a flip blocker
-    C_BUILD_FAIL      the C backend emitted a source that cc rejects, or it
-                       failed for a reason other than "not supported yet". The
-                       two channels run this fixture fine, so the defect is in
-                       the emitter — a blocker
-    GAP_C_BACKEND     the C backend ran and its stdout or exit status differs
-                       from the other two. Judged only where those two agree,
-                       which is what makes the divergence attributable to it
     GAP_EXEC           interp-ir exits non-zero while llvm-ir does not, and
                        not because of an unimplemented node. As of 2026-09-15 this
                        test runs BEFORE the parity test, so it also absorbs a run
@@ -510,58 +491,6 @@ def first_line(text):
     return ""
 
 
-# --- C 后端臂 -------------------------------------------------------------
-# 第三条执行通道。用 `--emit-c` 只发源，再由本探针自己交给 cc：这样「被检查的那份 C」
-# 与「真正跑起来的那份」是同一个文件，判据出现分歧时不必去临时目录里找副本。
-C_REFUSAL_MARK = "尚未支持"
-
-
-def cc_path():
-    return os.environ.get("PINI_CC") or "/usr/bin/cc"
-
-
-def c_channel_arm(run_path, slot, runtime_dir):
-    """把 C 后端当一条执行臂跑一遍：发源、编译、运行。
-
-    返回的 `state` 决定判据落哪个槽：refused = 骨架期明确拒绝（工作清单），
-    emit_failed / cc_failed = 发射器产出了编不过的东西（真缺陷），ran = 有读数可比。
-    """
-    out_dir = os.path.join(slot, "cbuild")
-    rc, _out, err = run(
-        [BIN, "build", run_path, "--c-backend", "--emit-c", "--out", out_dir], cwd=slot)
-    if rc != 0:
-        state = "refused" if C_REFUSAL_MARK in err else "emit_failed"
-        return {"state": state, "note": first_line(err)}
-    name = os.path.splitext(os.path.basename(run_path))[0]
-    src = os.path.join(out_dir, name + ".c")
-    if not os.path.isfile(src):
-        return {"state": "emit_failed", "note": "no .c emitted for %s" % name}
-    product = os.path.join(out_dir, name)
-    rc, _out, err = run(
-        [cc_path(), "-std=c23", "-O2", "-o", product, src,
-         "-L" + runtime_dir, "-lPiniRuntime", "-Wl,-rpath," + runtime_dir], cwd=slot)
-    if rc != 0:
-        return {"state": "cc_failed", "note": first_line(err)}
-    rc, out, err = run([product], cwd=slot)
-    return {"state": "ran", "rc": rc, "out": out, "err": err}
-
-
-def apply_c_channel(verdict, note, arm, ref_rc, ref_out):
-    """在两条执行通道已经一致的前提下，判 C 这一臂。
-
-    只在基准判据是 OK / OK_HARNESS 时调用：前两条自己不一致时，C 的读数没有参照物，
-    强行归因会把一个分歧记成两个。
-    """
-    state = arm.get("state")
-    if state == "refused":
-        return "C_TODO", arm.get("note", "")
-    if state in ("emit_failed", "cc_failed"):
-        return "C_BUILD_FAIL", arm.get("note", "")
-    if state == "ran" and (arm["rc"] != ref_rc or arm["out"] != ref_out):
-        return "GAP_C_BACKEND", ""
-    return verdict, note
-
-
 def scratch_copy(rel):
     """Copy the fixture and its sibling .pini files into a scratch slot.
 
@@ -740,8 +669,6 @@ def main():
     # Named on every run: with the path resolved rather than written down, the
     # first question about any reading is which build produced it.
     print("binary under test: %s" % BIN)
-    # C 臂要链接的运行时库就在 CLI 旁边，与 CLI 自己的查找规则同源。
-    runtime_dir = os.path.dirname(os.path.abspath(BIN))
 
     _lli_baseline.update(live_lli_pids())
     _stray_baseline.update(strays())
@@ -764,17 +691,11 @@ def main():
             c_rc, _c_out, c_err = run([BIN, "check", run_path], cwd=cwd)
             verdict, note = classify(rel, l_rc, l_out, l_err, h_rc, h_out,
                                      h_err, c_rc, c_err)
-            # 第三条执行臂只在两条通道已经一致时才判：见 apply_c_channel 的说明。
-            arm = {"state": "skipped"}
-            if verdict in ("OK", "OK_HARNESS"):
-                arm = c_channel_arm(run_path, cwd, runtime_dir)
-                verdict, note = apply_c_channel(verdict, note, arm, h_rc, h_out)
             rows.append({
                 "verdict": verdict, "note": note, "root": root, "fixture": rel,
                 "l_rc": l_rc, "h_rc": h_rc, "c_rc": c_rc,
-                "cb_state": arm.get("state", ""),
                 "l_len": len(l_out), "h_len": len(h_out),
-                "l_out": l_out, "h_out": h_out, "cb_out": arm.get("out", ""),
+                "l_out": l_out, "h_out": h_out,
                 "l_err": l_err, "h_err": h_err, "c_err": c_err,
             })
             if n % 50 == 0 or n == len(fixtures):
@@ -786,7 +707,7 @@ def main():
         if _scratch_root[0] and os.path.isdir(_scratch_root[0]):
             shutil.rmtree(_scratch_root[0], ignore_errors=True)
 
-    cols = ["verdict", "root", "fixture", "l_rc", "h_rc", "c_rc", "cb_state",
+    cols = ["verdict", "root", "fixture", "l_rc", "h_rc", "c_rc",
             "l_len", "h_len", "note"]
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write("\t".join(cols) + "\n")
@@ -797,8 +718,7 @@ def main():
              "HARNESS_DEPENDENT", "IR_ENGINE_TODO", "GAP_EXEC",
              "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG",
              "TIMEOUT_ALL", "TIMEOUT_LLVM", "WARN_CHANNEL_ASYMMETRY",
-             "WARN_LLVM_RC_UNPROPAGATED", "C_TODO", "C_BUILD_FAIL",
-             "GAP_C_BACKEND"]
+             "WARN_LLVM_RC_UNPROPAGATED"]
     print("\n=== summary ===")
     for v in order:
         n = sum(1 for r in rows if r["verdict"] == v)
@@ -808,8 +728,7 @@ def main():
     # of the engine is left to build, and merging them would make this line unreadable.
     # WARN_* counts are printed with their fixture lists below instead of being summed in.
     blockers = [r for r in rows if r["verdict"] in
-                ("GAP_EXEC", "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_HANG",
-                 "GAP_C_BACKEND", "C_BUILD_FAIL")]
+                ("GAP_EXEC", "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_HANG")]
     unknown = [r for r in rows if r["verdict"] == "GAP_UNKNOWN"]
     print("  %-15s %d" % ("FLIP BLOCKERS", len(blockers) + len(unknown)))
     left = []
@@ -842,17 +761,6 @@ def main():
             if len(fixtures) > 3:
                 shown += ", ... (+%d)" % (len(fixtures) - 3)
             print("  %-22s %3d  %s" % (node, len(fixtures), shown))
-
-    c_todo = [r for r in rows if r["verdict"] == "C_TODO"]
-    if c_todo:
-        # 与 IR_ENGINE_TODO 同性质：两条通道都跑得通的语料里，C 后端还没覆盖的那部分。
-        # 它是骨架期的进度表，不是翻转阻塞项 —— 这几条在其余通道上是绿的。
-        print("\n=== C backend not implemented yet: %d fixture(s) "
-              "(work list, not a flip blocker) ===" % len(c_todo))
-        for r in c_todo:
-            print("  %-14s %s" % (r["verdict"], r["fixture"]))
-            if r["note"]:
-                print("        %s" % r["note"])
 
     asym = [r for r in rows if r["verdict"] == "WARN_CHANNEL_ASYMMETRY"]
     if asym:
@@ -898,9 +806,6 @@ def main():
             print("  %-14s %s" % (r["verdict"], r["fixture"]))
             if r["note"]:
                 print("        %s" % r["note"])
-            elif r["verdict"] == "GAP_C_BACKEND":
-                print("        interp-ir=%r  c-backend=%r"
-                      % (r["h_out"][:60], r["cb_out"][:60]))
             elif r["verdict"].startswith("GAP_"):
                 print("        llvm-ir=%r  interp-ir=%r"
                       % (r["l_out"][:60], r["h_out"][:60]))
