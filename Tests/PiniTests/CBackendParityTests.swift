@@ -13,12 +13,17 @@ struct CBackendParityTests {
         let source: String
         /// 完整的标准输出，含末尾换行 —— 逐字节比对，不裁剪。
         let expected: String
+        /// 退出码。陷阱类语料走 1；带 `assert` 的那条也在这里体现。
+        var status: Int32 = 0
+        /// 完整的标准错误。只有陷阱类语料有内容 —— `bk_panic(NULL)` 会补一个换行。
+        var stderr = ""
 
         var description: String { label }
     }
 
-    /// 语料覆盖骨架期开出来的类型面与控件流面：字符串 · 整数 · 分支 · 循环 ·
-    /// 跨层跳出（要 `goto`）· 多函数递归 · 布尔与浮点（要运行时段）。全部以 `main` 为入口。
+    /// 语料覆盖已开出来的类型面与控件流面：字符串 · 整数 · 分支 · 循环 ·
+    /// 跨层跳出（要 `goto`）· 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配。
+    /// 全部以 `main` 为入口。
     private static let corpora: [Corpus] = [
         Corpus(
             label: "问候",
@@ -87,6 +92,101 @@ struct CBackendParityTests {
             """#,
             expected: "true\n3.5\n"
         ),
+        Corpus(
+            label: "陷阱",
+            source: #"""
+            main|func() -> ():
+                print("before")
+                assert(1 == 2, "断言失败")
+                print("after")
+                return
+            """#,
+            expected: "before\n断言失败\n",
+            status: 1,
+            stderr: "\n"
+        ),
+        Corpus(
+            label: "结构体与字段",
+            source: #"""
+            (点)
+            x: F64 = 0.0
+            y: F64 = 0.0
+
+            ((点))
+            距离原点|self() -> (F64,):
+                return sqrt(self.x * self.x + self.y * self.y)
+
+            main|func() -> ():
+                var p = 点()
+                p.x = 3.0
+                p.y = 4.0
+                print(p.距离原点())
+                return
+            """#,
+            expected: "5.0\n"
+        ),
+        Corpus(
+            label: "结构体按值拷贝",
+            source: #"""
+            (点)
+            x: I32 = 0
+
+            main|func() -> ():
+                var a = 点()
+                a.x = 1
+                var b = a
+                b.x = 2
+                print(a.x)
+                print(b.x)
+                return
+            """#,
+            expected: "1\n2\n"
+        ),
+        Corpus(
+            label: "枚举与匹配",
+            source: #"""
+            [形状]
+            圆(F64,)
+            矩形(F64, F64,)
+
+            面积|func(s: 形状,) -> (F64,):
+                match s:
+                    case 圆(r,):
+                        return 3.14 * r * r
+                    case 矩形(w, h):
+                        return w * h
+                return 0.0
+
+            main|func() -> ():
+                print(面积(圆(2.0,)))
+                print(面积(矩形(3.0, 4.0,)))
+                print(圆(1.0,))
+                return
+            """#,
+            expected: "12.56\n12.0\n圆(1.0)\n"
+        ),
+        Corpus(
+            label: "引用类型与字段默认值",
+            source: #"""
+            {计数器}
+            名称: String = "起点"
+            数值: I32 = 0
+
+            {{计数器}}
+            增加|self() -> ():
+                self.数值 = self.数值 + 1
+                return
+
+            main|func() -> ():
+                let c = 计数器()
+                c.增加()
+                c.增加()
+                print(c.名称)
+                print(c.数值)
+                return
+            """#,
+            expected: "起点\n2\n"
+        ),
     ]
 
     @Test("每条语料的 C 产物跑出的字节与手写期望相同")
@@ -95,8 +195,9 @@ struct CBackendParityTests {
         guard let cc = cCompilerPath() else { return }
         for corpus in Self.corpora {
             let result = try runThroughCBackend(corpus, cli: cli, cc: cc)
-            #expect(result.status == 0, "\(corpus.label)：退出码 \(result.status) \(result.stderr)")
+            #expect(result.status == corpus.status, "\(corpus.label)：退出码 \(result.status) \(result.stderr)")
             #expect(result.stdout == corpus.expected, "\(corpus.label)：输出与手写期望不符")
+            #expect(result.stderr == corpus.stderr, "\(corpus.label)：标准错误与手写期望不符")
         }
     }
 
@@ -125,6 +226,30 @@ struct CBackendParityTests {
         #expect(text.contains("int main(void) {"), "入口签名不是 int main(void)")
         // 驳回性：预置声明里的调度器方法体不该进产物（进了就说明按来源剪枝没生效）。
         #expect(!text.contains("pini__u6536"), "预置声明的函数进了产物")
+    }
+
+    /// 名义类型的布局判据必须落在产物里。这条不跑 cc：`_Static_assert` 编译不过时 cc 才拦得住，
+    /// 而它是否被生成，只有看源才知道 —— 少了它，布局漂移一路走到运行期才现形。
+    @Test("名义类型的布局断言写进了产物")
+    func layoutAssertionsAreEmitted() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        // 用「按值拷贝」那条：它同时要求断言与拷贝胶水，两样都在这一份源里可查。
+        let corpus = Self.corpora.first { $0.label == "结构体按值拷贝" }!
+        try corpus.source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("_Static_assert(sizeof(pini_"), "没有总大小断言")
+        #expect(text.contains("offsetof(pini_"), "没有字段偏移断言")
+        #expect(text.contains("pini_copy_"), "结构体没有拷贝胶水，值语义会退化成共享")
     }
 
     // MARK: - 驱动

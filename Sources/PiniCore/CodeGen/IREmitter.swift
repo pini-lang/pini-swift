@@ -4425,8 +4425,8 @@ public final class IREmitter {
             }
             let open = emitStringConstant("\(name){")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
-            /// 引用计数头占第 0 格 ⇒ 字段基准一律 1。
-            let fieldBase = 1
+            /// 四格头占前 4 格 ⇒ 字段基准与其余 GEP 同源，⛔ 不能写死 1。
+            let fieldBase = Self.headerSlotCount
             let orderedFields = decl.fields.enumerated().sorted {
                 $0.element.name < $1.element.name
             }
