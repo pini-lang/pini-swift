@@ -1619,6 +1619,20 @@ private func runtimeLibraryPath() -> String? {
 
 // MARK: - C 后端
 
+/// 产物目录。名字不是语言约定 —— `--out` 优先，其次 `PINI_BUILD_DIR`，最后才是这里的默认值。
+/// 三处取值收敛在一个函数里，是为了让「默认叫什么」只有一个答案可改。
+enum CBuildLayout {
+    static let defaultDirectory = "pini-build"
+
+    static func resolvedDirectory(override: String?) -> String {
+        if let override, !override.isEmpty { return override }
+        if let env = ProcessInfo.processInfo.environment["PINI_BUILD_DIR"], !env.isEmpty {
+            return env
+        }
+        return defaultDirectory
+    }
+}
+
 /// `pini build` 的选项。未知 `--` 选项必须报错：本命令只读第一个位置参数，
 /// 沉默接受会让 `--c-backnd` 这类笔误打出「检查通过」并返回 0。
 struct CBuildOptions {
@@ -1791,7 +1805,7 @@ func runCBuild(_ options: CBuildOptions) {
         let emitter = CEmitter()
         emitter.programBase = lowered.programBase
         let files = try emitter.emit(module: lowered.module, programName: lowered.programName)
-        let directory = options.outputDir ?? "pini-build"
+        let directory = CBuildLayout.resolvedDirectory(override: options.outputDir)
         if options.emitC {
             try writeCFiles(files, to: directory, includeHeader: true)
             noteArtifact("\(directory)/")
