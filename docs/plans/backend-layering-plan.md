@@ -293,6 +293,8 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 4. 返回：先 adopt，再由清理栈归还全部开放帧。
 5. `panicStmt` 之后不清理：进程不返回，释放无对象。
 6. pass 必须幂等：对输出再跑一次，`IRModule` 必须相等。
+7. 判不准时按借用处理（不释放）：宁可漏一份，不可悬垂。pass 不产出诊断、不拒绝程序 —— 语言面
+   是「部分信任开发者」，插入动作不改变可编译集合。
 
 四条边界已裁：
 
@@ -325,7 +327,7 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 |---|---|---|---|
 | 所有权契约 | 契约第 7 节 + 参考 6.5 的次序段；第 2/3 节签名随 pass 同批 | 每条可判定；不出现 `bk_*` / `alloca` | 删节即回退 |
 | 类型分类 | `IROwnership` 的 `ownershipClass`（四族）；发射层的 `boxFamily` 与 `collectionDestroySymbol` 改读分类 | 21 个 case 全覆盖；可发射语料的产物不变 | 新旧两路并存 |
-| 释放点落地 | `OwnershipPass` + 存储点注解 + 两栈合一 | 43 处归零；`OwnershipLifetimeTests` 全绿；117 份语料两通道输出不变 | 旧账本保留一个版本 |
+| 释放点落地 | `OwnershipPass` + 存储点注解 + 两栈合一 | 43 处归零；`OwnershipLifetimeTests` 全绿；117 份语料两通道输出不变；语料诊断逐字不变 | 旧账本保留一个版本 |
 | 旧账清除 | 删账本与独立 defer 栈；门禁白名单去掉已归零符号 | 读数 77 → 34 | 按符号逐条回退 |
 | 临时具名 | `bindStmt` / `temp` / `retainStmt` | 语句 17 → 19；表达式 53 → 54 | 注解态可用 |
 | 临时归位 | 实参 · 拼接 · 打印 · 容器元素 | 31 处归零；效果表全覆盖 | 按消费点逐个切 |
