@@ -4,7 +4,7 @@ import Testing
 /// 路径解析的三条豁免支与基准支的判据。每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），
 /// 不往仓库里建文件。比对物是手写期望，不是另一条通道的输出 —— 两条同时错会互相认证。
 /// 守的是一条外部依赖：自举仓的相对路径全带 `./` 前缀，靠 `./` / `../` 这一支在两种语义下都落到 CWD。
-struct IOPathExemptionTests {
+struct IOPathExemptionTests: Sendable {
 
     // MARK: - 私有 helper
 

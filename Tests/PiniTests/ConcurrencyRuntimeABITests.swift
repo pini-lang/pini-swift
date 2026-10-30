@@ -7,7 +7,7 @@ import Testing
 /// 故「存在」那一半被「可用」这一半盖住。 行不通  本件全绿不等于 LLVM 后端能跑并发：发射层接线另有一层判据。
 /// `.serialized` 是前提而非风格：`bk_task_is_cancelled()` 读线程本地的「当前任务」，并行会让用例互相污染。
 @Suite(.serialized)
-struct ConcurrencyRuntimeABITests {
+struct ConcurrencyRuntimeABITests: Sendable {
 
     // MARK: - 跨线程传参包
     // 这些类型是为了如实声明：测试要把 C 句柄交给另一线程去阻塞 / 决出，而指针不是 `Sendable`，裸捕获会给

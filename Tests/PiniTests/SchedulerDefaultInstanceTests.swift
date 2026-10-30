@@ -5,7 +5,7 @@ import Testing
 /// 调度特征的预置默认实例：它由宿主给出，且必须取得到 —— 一个 `using` 形参声明成该类型、调用点省略
 /// 那个实参就能拿到它；取不到的东西谈不上是默认值。本件只管取得到 · 实例带着声明的字段 · 名字不是保留字 · 可被顶掉。
 /// 判据读到字段而不只断「不报错」：类型表与名义表是两张表，只进后者时静态期读得出、运行时却报无此字段。
-struct SchedulerDefaultInstanceTests {
+struct SchedulerDefaultInstanceTests: Sendable {
 
     // MARK: - 私有 helper
 

@@ -5,7 +5,7 @@ import Testing
 /// 每个后端各自与同一份手写期望逐字节比，不是各后端互相比：同时错会互相认证，两两比还按平方膨胀。
 /// 期望值取自语义、不从任一后端回抄。解释器后端进程内零依赖；LLVM 后端走子进程，缺 `PINI_LLVM_BIN` 只记 known issue，不静默跳过。
 /// 让出读数两侧口径不同（每次让出 / 派发那一趟），故语料只放一处 `await`；接多处让出前须先归一，否则两支读数分岔。
-struct ContractReferenceTests {
+struct ContractReferenceTests: Sendable {
 
     // MARK: - 受守卫的那一格
 
@@ -712,7 +712,7 @@ enum ContractGuardError: Error, CustomStringConvertible {
 /// 只数本次运行让出次数的后端：委派生产后端，只在体的结局上挂一个计数。刻意非私有 ——
 /// 两处判据都要构造它、且须读出同一个数。进程级单例的增量会被并行用例挪走，本件断精确值，包装一层才只数自己的。
 /// 派发与续跑两源都收在此（续跑不经派发口），少一侧就只数首跑那趟；本类型照常让出、只记次数，不验降级纪律。
-final class YieldCountingScheduler: Scheduler {
+final class YieldCountingScheduler: Scheduler, @unchecked Sendable {
     private let inner: GCDScheduler
     private let lock = NSLock()
     private var suspensions = 0
@@ -726,7 +726,7 @@ final class YieldCountingScheduler: Scheduler {
         return suspensions
     }
 
-    func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
+    func spawn(_ future: FutureValue, work: @escaping @Sendable () throws -> TaskRunOutcome) {
         inner.spawn(future) {
             let outcome = try work()
             if case .suspended = outcome { self.noteYield() }

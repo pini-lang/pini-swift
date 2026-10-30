@@ -6,7 +6,7 @@ import Testing
 /// 不经发射层）。守的是机制的配对性 —— 它测不出泄漏（泄漏不改任何可观察行为），故由引用计数自身判：新分配恰为 1 ·
 /// 归零后读数回 0 · 外来串与双重释放都是无操作 · 元素槽与容器句柄同通道 —— 常量串没有计数头，靠登记表判定才不野读。
 @Suite(.serialized)
-struct StringOwnershipRuntimeTests {
+struct StringOwnershipRuntimeTests: Sendable {
 
     /// 分配一个 `count` 字节的串（载荷由调用方写；本入口与 `malloc` 同契约）。
     private func alloc(_ count: Int64) -> UnsafeMutablePointer<CChar> {

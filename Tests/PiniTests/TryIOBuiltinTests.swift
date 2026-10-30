@@ -5,11 +5,11 @@ import Testing
 // 失败作为值返回而不是终止进程。与陷阱版并存：两条路的差别只在调用点写的名字，故同时钉住两侧 ——
 // 一条要 status 0 并拿到 `err`，另一条要 status 1。只钉一侧会让「陷阱版也返回 err」判绿。
 @Suite(.serialized)
-struct TryIOBuiltinTests {
+struct TryIOBuiltinTests: Sendable {
 
     // MARK: - 私有 helper
 
-    private struct RunResult {
+    struct RunResult: Sendable {
         let label: String
         let status: Int32
         let stdout: String

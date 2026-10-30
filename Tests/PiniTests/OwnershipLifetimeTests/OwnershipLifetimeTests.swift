@@ -4,7 +4,7 @@ import Testing
 /// 名义值的所有权与寿命：三条都属同一族 —— 「值活不过它应该活过的那个位置」，且都只在原生路径上发作
 /// （解释器用 Swift 值，帧退不掉内容）⇒ 判据以解释器的行为为权威。三条归因：枚举构造对载荷只做裸 store ·
 /// 插值在帧栈缓冲上拼串后存进堆箱 · `join` 同样在栈缓冲上拼；后两条各带 `burn` 压栈，否则判据会碰运气变绿。
-struct OwnershipLifetimeTests {
+struct OwnershipLifetimeTests: Sendable {
 
     private static var fixturesDirectory: String {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()

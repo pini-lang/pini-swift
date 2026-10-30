@@ -2281,7 +2281,12 @@ public func bk_scope_close(
 /// 若在此 retain 就多出一条与注册表并行的所有权边，还要再定义释放时机。线程退出由 POSIX 销毁器清位。
 private let _bkCurrentTaskKey: pthread_key_t = {
     var k = pthread_key_t()
-    let destructor: @convention(c) (UnsafeMutableRawPointer) -> Void = { _ in }
+    // Glibc 的销毁器形参可空、Darwin 不可空；语义相同，两处签名只能各写一遍。
+    #if canImport(Glibc)
+        let destructor: @convention(c) (UnsafeMutableRawPointer?) -> Void = { _ in }
+    #else
+        let destructor: @convention(c) (UnsafeMutableRawPointer) -> Void = { _ in }
+    #endif
     pthread_key_create(&k, destructor)
     return k
 }()

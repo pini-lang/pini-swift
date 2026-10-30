@@ -6,7 +6,7 @@ import Testing
 /// 观测面是 `GCDScheduler.activeTaskCount`（池里任务数），即 `bk_task_yield` 返回 `1`/`0` 在解释器侧的对应物。
 /// 光读那个数会读到假的（父 spawn 子之前池里也只有一个）⇒ 语料让子任务先打标记，测试等标记后再判读。串行化。
 @Suite(.serialized)
-struct ConcurrencyYieldTests {
+struct ConcurrencyYieldTests: Sendable {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
 
@@ -121,7 +121,6 @@ struct ConcurrencyYieldTests {
         let module = try lowered(source)
         let lock = NSLock()
         var lines: [String] = []
-        var finished = false
 
         let executor = IRExecutor(programBase: NSTemporaryDirectory())
         executor.outputSink = { line in
@@ -130,10 +129,11 @@ struct ConcurrencyYieldTests {
             lock.unlock()
         }
         let before = GCDScheduler.shared.yieldedTaskCount
+        let run = SendableBox((executor: executor, module: module, finished: false))
         DispatchQueue.global().async {
-            _ = try? executor.run(module: module)
+            _ = try? run.value.executor.run(module: run.value.module)
             lock.lock()
-            finished = true
+            run.value.finished = true
             lock.unlock()
         }
 
@@ -141,7 +141,7 @@ struct ConcurrencyYieldTests {
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
             lock.lock()
-            let done = finished
+            let done = run.value.finished
             lock.unlock()
             if done { break }
             usleep(2000)

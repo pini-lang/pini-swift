@@ -5,7 +5,7 @@ import Testing
 /// `listDir` 内建的判据。一夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即消费它的用例名 —— 缺一边一眼看出。
 /// 被测对象是文件系统 ⇒ 每条用例自建临时目录当程序基准，不在仓库建文件、也不指向夹具目录（条目数会随夹具增减漂）。
 /// 本套件不断言「列不全时截断」，因为实现不截断：判据是无上限本身，故那条用例取 300 个文件靠规模证明。
-struct ListDirBuiltinTests {
+struct ListDirBuiltinTests: Sendable {
 
     // MARK: - 私有 helper
 

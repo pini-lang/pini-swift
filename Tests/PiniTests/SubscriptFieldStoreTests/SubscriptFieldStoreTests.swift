@@ -4,7 +4,7 @@ import Testing
 /// `obj.field[i] = v` —— 字段作容器的下标写。IR 契约把 `subscriptStore` 的容器定义为可嵌套链，字段是链的一环
 /// ⇒ 这是覆盖缺口，不是契约要改。解释器对非变量 / 非嵌套目标响亮拒绝 `E5-006`；发射器把字段值当容器交出去
 /// 却不回写分裂出的新句柄 ⇒ 写时复制一旦分裂，那次写静默丢失。故别名夹具是「回写」义务的唯一见证。
-struct SubscriptFieldStoreTests {
+struct SubscriptFieldStoreTests: Sendable {
 
     private static var fixturesDirectory: String {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()

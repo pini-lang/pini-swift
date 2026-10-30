@@ -4,7 +4,7 @@ import Testing
 /// 入口判读一致性：同一条规则必须由四条入口同判。闭包捕获的声明检查（`E3-008`）只在一条路上生效时，
 /// 同一份源 `check` / `run` 拒绝而 `emit` / `compile` 照跑并产出目标码 —— 检查的位置在两路之前，
 /// 只跑在一条路之前的检查不是检查。两个方向都锁：拒绝要四条都拒且码相同，接受要四条都放行。
-struct EntryParityTests {
+struct EntryParityTests: Sendable {
 
     /// 四条入口。前两条不带工具链，后两条要 clang/LLVM。
     private static let entries = ["check", "run", "emit", "compile"]

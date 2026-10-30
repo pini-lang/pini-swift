@@ -3,7 +3,8 @@ import Foundation
 /// 并发工作节点同时是取消节点：取消沿 `Future` 树传播，不另立 `CancelScope`。
 /// 三重身份——结果载体（`resolve`/`reject`/`wait`）、取消节点（`isCancelled` + 递归 `cancel()`）、
 /// 树节点（`parent`/`children`，spawn 时即建链，故子句柄被丢弃也不影响父取消时连带停止）。
-public final class FutureValue {
+public final class FutureValue: @unchecked Sendable {
+    // 全部可变状态由 `lock` 保护；句柄的设计目的就是跨线程传递 ⇒ 手工声明，不由编译器推断。
     // MARK: - 同步原语（后端实现细节，并发后端抽象 / 并发调度脊柱 ）
 
     // `lock` 及其保护的 `wait` / `resolve` / `reject` 临界区，当前以 Foundation `NSLock`

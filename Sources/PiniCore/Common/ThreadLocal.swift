@@ -15,9 +15,17 @@ final class ThreadLocal<T> {
         var k = pthread_key_t()
         // 销毁器：线程退出时释放当前线程持有的盒子（匹配下方 set 中的 passRetained）。
         // 用 AnyObject 类型擦除避免捕获泛型 T（否则无法形成 C 函数指针）。
-        let destructor: @convention(c) (UnsafeMutableRawPointer) -> Void = { raw in
-            Unmanaged<AnyObject>.fromOpaque(raw).release()
-        }
+        // Glibc 的形参可空、Darwin 不可空；语义相同，两处签名只能各写一遍。
+        #if canImport(Glibc)
+            let destructor: @convention(c) (UnsafeMutableRawPointer?) -> Void = { raw in
+                guard let raw else { return }
+                Unmanaged<AnyObject>.fromOpaque(raw).release()
+            }
+        #else
+            let destructor: @convention(c) (UnsafeMutableRawPointer) -> Void = { raw in
+                Unmanaged<AnyObject>.fromOpaque(raw).release()
+            }
+        #endif
         pthread_key_create(&k, destructor)
         self.key = k
     }

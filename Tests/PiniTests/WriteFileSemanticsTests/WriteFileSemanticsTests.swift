@@ -5,7 +5,7 @@ import Testing
 /// `writeFile` 的写语义判据：就地截断（与 `fopen("w")` 同义），不是原子替换。一夹具一条用例，夹具在同目录
 /// `Fixtures/` 下。测的是盘上发生了什么，不是返回值 —— 三条各钉一个只在该语义下成立的事实：截断（旧尾巴消失）·
 /// 不可打开时抛错（不绕过权限）· 符号链接被跟随（不替换链接）；原子替换在三条上全部给出相反答案。
-struct WriteFileSemanticsTests {
+struct WriteFileSemanticsTests: Sendable {
 
     // MARK: - 私有 helper
 

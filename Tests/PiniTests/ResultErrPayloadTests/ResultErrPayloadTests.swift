@@ -5,7 +5,7 @@ import Testing
 /// `Result` 的 err 载荷判据：err 槽那一个类型擦除的字在四面都可用 —— 构造（`err(Error(...))` /
 /// `err(CancelError(...))`）· 判别（`isCancel`）· 读消息（`e.message`）· 打印（`print(e)`）。
 /// 产物侧另守一条：`@CancelError` / `@Error` / `struct.CancelError` 不该出现，那会是未定义类型与未实现函数。
-struct ResultErrPayloadTests {
+struct ResultErrPayloadTests: Sendable {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
 

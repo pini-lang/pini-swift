@@ -6,7 +6,7 @@ import Testing
 /// 三条腿：解释器（进程内 `ProgramRunner`，恒跑）· 命令行 `run` · 命令行 `run-llvm`（自寻二进制，取不到则响亮跳过）。
 /// 覆盖三内建的逐行判别式与边界：空串 / 全空格 / 首尾混合 / tab 不剥 / 空 needle ⇒ 0 / 未找到 ⇒ −1 / 字素单位。
 @Suite("StringBuiltins")
-struct StringBuiltinTests {
+struct StringBuiltinTests: Sendable {
 
     // MARK: - 语料与手写期望
 

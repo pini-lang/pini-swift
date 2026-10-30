@@ -6,7 +6,7 @@ import Testing
 /// 共享元素存储（独占时就地增长、共享时不深拷）⇒ 输入侧长度与元素不变 · 共享本身可观测 · 写一侧不改另一侧 ·
 /// 分裂时 retain 与 release 两端配对 · 追加过的槽归存储所有 · 两层分裂叠加不串味 · 跨扩容点的前沿与内容。
 @Suite(.serialized)
-struct ArrayStorageSharingTests {
+struct ArrayStorageSharingTests: Sendable {
 
     // MARK: - 工具
 

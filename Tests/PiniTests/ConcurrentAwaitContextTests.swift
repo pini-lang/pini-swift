@@ -5,7 +5,7 @@ import Testing
 /// `await` / `wait` 的上下文与位置判定：`await` 只许在异步函数体（`=>`）内、`wait` 只许在同步体（`->`）内，
 /// 且 `await` 还须落在语句根位置。上下文不符报 `E6-009`（改签名或关键字），位置越界报 `E6-010`（改写写法）。
 /// 位置也要拒：语句根之外没有续跑点，同一个 `await` 会在一处让出、另一处静默阻塞。驳回与推进两组互为对照。
-struct ConcurrentAwaitContextTests {
+struct ConcurrentAwaitContextTests: Sendable {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
 
