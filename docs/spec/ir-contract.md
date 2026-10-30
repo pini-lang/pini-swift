@@ -1,0 +1,236 @@
+# IR 节点语义契约
+
+- 性质：**宿主级规范**。IR 节点语义的**唯一权威载体**。
+- 适用范围：所有消费 `IRModule` 的执行通道（解释器、LLVM，以及将来的任何后端）。
+  **任一后端都不是定义处。**
+- 变更：条目一经落地不得随实现漂移。新增或修改节点语义先改本件，再改代码。
+
+## 0. 定位与判读规则
+
+### 0.1 权威次序
+
+1. **语言面语义**（用户可见行为）以 `pini-reference-v0.md` 为准 —— 本契约不得与之冲突；
+2. **IR 节点语义**（后端间的契约）以**本契约**为准；
+3. 各后端实现与本契约一致。
+
+### 0.2 表述纪律
+
+- **语义列只写后端无关的行为约定**。不得出现 `bk_*`、`alloca`、`fgets`、GEP、
+  引用计数布局、fat pointer 形状这类实现细节。
+- 实现细节只出现在「注记」列，其地位是**一种实现**，不是语义。
+- 禁止以某个运行时段的行为定义语义 —— 那等于把一条通道的实现选择升格为全体后端的义务。
+
+> 反例（立此存照）：`fileRead` 的早期注释写「读进 64 KiB 栈缓冲」，把缓冲尺寸写成了节点语义；
+> 那个数后来真的成了两侧共用的上限，并静默丢弃越限部分。一条把实现选择写成语义的注释，
+> 是那条上限的源头。
+
+### 0.3 三方对照核验
+
+```
+本契约条目  ↔  IRNode.swift 的节点集  ↔  各后端实现锚点
+```
+
+核验须能双向报缺口：**有节点无契约条目** / **有契约条目无实现锚点**。
+器械是 `tools/ir-contract-check.py`，它同时检查条目编号是否为无缺口的一段连续整数。
+
+### 0.4 计数基线
+
+**53 个表达式节点 + 17 个语句节点 = 70**。表内编号即条目号，与节点数严格相等。
+语句位的两个指针（`tryStmt`、`matchStmt`）不占表达式编号。
+
+## 1. 类型层（IRType，21 case）
+
+| 类型 | 语义（后端无关） | 实现注记 |
+|---|---|---|
+| `i32` / `i64` | 32 / 64 位有符号整数 | 原生标量 |
+| `u64` / `u8` | 64 / 8 位无符号整数 | 与 `i64` / `i8` 同拼写，符号性由运算承载 |
+| `i8` | 8 位有符号整数 | 算术在发射期拓宽到 `i32` |
+| `f64` | 64 位 IEEE-754 浮点 | 原生双精度 |
+| `boolean` | 布尔 | 一位或一字节，由后端定 |
+| `string` | 字节串值 | 指针 |
+| `char` | **一个字素簇**（用户感知的「一个字符」），不是码点、不是字节；表示与 `string` 同构，「恰含一个字素」由类型系统承担 | 与 `string` 同拼写，零新 ABI |
+| `result(ok:)` | `Result<ok, E>`；**错误槽类型擦除** | 三槽 `{ tag, ok, err }`，槽序是布局约定 |
+| `future(ok:)` | `Future<ok, E>`：运行中的任务句柄。与 `result` 不可互换 —— 后者是已结算的值，本条是未结算的句柄。**一次等待、结果恰一次**是语义 | 不透明句柄 |
+| `array(element:)` | 有序、可重复、值语义集合 | 不透明句柄（`bk_array_*` 族） |
+| `optional(wrapped:)` | 有 / 无二态容器 | 带 tag 的按值聚合；tag 0 = some、1 = none 是布局约定 |
+| `nominal(name:isObject:)` | 用户具名类型。`isObject=true` 为引用语义；`false` 为值语义，四个存储点即时深拷贝（见 1.1） | 头四格之后是字段；值类型与对象同形 |
+| `enumeration(name:)` | 用户枚举（带关联值的 tagged union），引用语义 | 头四格之后是用例标签，载荷按最大元数定型 |
+| `dict(key:value:)` | 键到值的映射，键唯一 | 不透明句柄（`bk_dict_*` 族） |
+| `set(element:)` | 唯一元素集合 | 不透明句柄（`bk_set_*` 族） |
+| `lazyRef(element:)` | 一次求值、引用拷贝语义的惰性引用 | 不透明句柄（`bk_lazyref_*` 族） |
+| `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 按值聚合；标签序即字段序 |
+| `function(params:returnType:usingIndices:)` | 函数是一等值；取用下标集合标出哪些参数位可取用，由推断产生、用户写不出、不参与类型等价 | fat pointer `{code, env}`；首参恒为 env 是调用协议；取用位不进运行时表示 |
+| `pointer(element:)` | `*T` 原始指针（FFI） | 不透明指针；load / store 按元素类型解码 |
+
+> 注意 **布局约定与语义的分界**：标「布局约定」者为后端可选表示；标「语义」者为必须实现的行为。
+
+### 1.1 名义值类型的值语义：绑定即即时深拷贝
+
+`isObject=false` 的结构体在**四个存储点**取**即时深拷贝**（不是写时复制）：
+
+| 点 | 形态 | 规则 |
+|---|---|---|
+| 绑定 | `var b = a` | 新箱 + 递归拷贝 |
+| 赋值 | `d = c` | 同上；顺序是先让新值站住，再释放旧值，最后写槽 |
+| 字段存 | `h.p = expr` | 同上，顺序同赋值 |
+| 返回 | `return 局部` | 拷贝交出，原局部随作用域释放 |
+
+递归规则：结构体字段递归拷贝；对象与枚举字段原样共享并留一份份额；容器字段共享，
+写时复制由容器自己管；标量与字符串直接复制。
+
+注意 **形参是共享**（被调方改形参、调用方看得见）—— 这是已裁定的可观察行为，与「绑定即拷贝」
+并存：拷贝只发生在上表四处，不在形参入口。也正因它是可观察行为，写时复制被排除。
+
+## 2. 表达式节点（53 条）
+
+### 2.1 标量常量
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 1 | `intConst(value:type:)` | 整数字面量，类型由 `type` 给定 | — |
+| 2 | `floatConst(value:)` | 浮点字面量（`F64`） | — |
+| 3 | `boolConst(value:)` | 布尔字面量 | — |
+| 4 | `stringConst(value:)` | 字符串字面量（字节串） | — |
+
+### 2.2 变量与运算
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 5 | `load(name:type:)` | 读变量当前值；`type` 为变量声明类型 | 不改变变量状态 |
+| 6 | `binary(op:lhs:rhs:type:)` | 二元运算：算术 / 比较 / 逻辑 / 位运算；关系运算结果为 `boolean` | 运算语义由语言定义，不由后端指令集定义 |
+| 7 | `unary(op:operand:type:)` | 一元运算：`negate` / `logicalNot` / `bitwiseNot` / `abs` | `abs` 为选择式取绝对值 |
+
+### 2.3 调用
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 8 | `call(function:arguments:returnType:)` | 调用模块级具名函数；`returnType=nil` 表示返回空 | 实参求值序与错误传播同语言定义 |
+| 9 | `printCall(argument:)` | 内建 `print` 单实参：逐字展示后跟一个行终止符，结果为空 | 值展示规则见参考件的浮点展示一节 |
+| 10 | `printMulti(arguments:)` | 多参 `print`：逐参展示，以单个空格连接，末尾一个行终止符 | 「以空格连接」是语义，拼接方式是实现 |
+| 11 | `indirectCall(callee:arguments:returnType:)` | 经函数值间接调用；`callee` 为闭包 / 具名函数值 / 函数类型变量 | env 首参是调用协议 |
+| 12 | `functionValue(functionName:type:)` | 具名顶层函数作为值使用 | 与 `closureLiteral` 共用调用协议 |
+| 13 | `closureLiteral(id:paramNames:paramTypes:returnType:captures:body:type:)` | 闭包值：体 + 创建点捕获表；捕获为**引用捕获** | `captures` 按体内首次使用排序 |
+| 14 | `assertCall(condition:message:)` | 断言：条件为假即运行时陷阱并带消息 | 仅 `\|test` 块使用 |
+
+### 2.4 Result 与 Optional
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 15 | `resultConstruct(isOk:payload:type:)` | `ok(v)` / `err(e)` 构造；错误载荷类型擦除为一个机器字 | 该字是运行时错误对象的句柄位型，只有构造与读取两组入口；字为 0 表示无载荷，读作空消息、非取消。构造侧 IR 类型是 `i64`，不是名义类型 |
+| 16 | `optionalConstruct(isSome:payload:type:)` | `Optional` 构造：`isSome=false` 为 `none`；`true` 携带载荷 | 切片语法的开放边界到达时为 `none` |
+| 17 | `optionalGet(container:index:type:)` | 宽容读 `container.get(i)`：越界得 `none`，界内得 `some(v)` | 越界返回 `none` 是语义；边界检查方式是约定 |
+
+### 2.5 集合
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 18 | `arrayLiteral(elements:type:)` | 数组字面量，元素保序 | — |
+| 19 | `dictLiteral(entries:type:)` | 字典字面量，键值对已预降级 | — |
+| 20 | `setLiteral(elements:type:)` | 集合字面量，元素唯一 | — |
+| 21 | `subscriptGet(container:index:type:)` | 安全断言读 `c[i]`：越界即 panic（`E5-005`） | 负索引尾部计数；String 的元素按字素簇 |
+| 22 | `lenCall(argument:)` | 容器长度 | String 的「字符」是字素簇，不是码点也不是字节 |
+| 23 | `sliceCall(container:start:end:type:)` | 切片：负界尾部计数，夹到 `[0, len]`，`hi < lo` 得空 | String 切片按字素簇；开放边界以标志位表达，不用哨兵 |
+| 24 | `tupleConstruct(labels:elements:type:)` | 带标签元组构造 | — |
+| 25 | `tupleIndexGet(base:index:type:)` | 元组成员读，按字段序 | — |
+
+### 2.6 具名类型与枚举
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 26 | `construct(type:)` | 具名类型构造；字段取声明默认值，无默认则零值；对象获得新的同一性 | 引用计数初值是实现 |
+| 27 | `enumConstruct(enumName:caseName:tag:payloads:payloadTypes:type:)` | 枚举 case 构造；`tag` 为 case 的声明序索引 | 载荷按值存入 tagged union |
+| 28 | `fieldGet(base:field:type:)` | 具名字段读，按声明序 | 布局是约定 |
+
+### 2.7 指针与取址
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 29 | `pointerLoad(pointer:type:)` | 经 `*T` 读元素值，按元素类型解码 | 窄元素的扩展规则属约定，尚未上提为语义 |
+| 30 | `pointerStore(pointer:value:type:)` | 经 `*T` 写值，按元素类型编码 | 窄元素为截断写 |
+| 31 | `addressOfVar(name:type:)` | `&x`：变量存储槽的地址，真指针语义 | 解释器通道为快照语义，属已知偏离 |
+
+### 2.8 文件 IO
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 32 | `fileWrite(path:content:)` | 就地截断写，无返回值；打开或写入失败即陷阱 | 不是原子替换；跟随符号链接；路径由运行时段按程序基准解析 |
+| 33 | `fileRead(path:)` | 读取文件全部内容，作为 `String` 返回 | 无长度上限；越限不静默截断 |
+| 34 | `readLine` | 从标准输入读一行，保留行终止符；输入耗尽返回空串 | 上限 256 字节（可观测 255），按字节截断 |
+| 35 | `fileAppend(path:content:)` | 追加到末尾，目标不存在则创建，无返回值；失败即陷阱 | 与 `fileWrite` 是两个节点：两者在「目标已存在」上语义相反 |
+
+### 2.9 可接住的 IO
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 36 | `fileTryRead(path:)` | 读全文；失败返回 `err`，成功 `ok(内容)` | 与 §2.33 是同一操作的两种失败形态，不是替代 |
+| 37 | `fileTryWrite(path:content:)` | 就地截断写；失败返回 `err`，成功 `ok(())` | 载荷是空元组：写成功不产生值 |
+| 38 | `fileTryAppend(path:content:)` | 追加写、目标不存在则创建；失败返回 `err`，成功 `ok(())` | 与 §2.35 的关系同 §2.37 与 §2.32 |
+
+### 2.10 字符串与内建
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 39 | `isAsciiDigit(argument:)` | 首字符是否 ASCII `[0-9]`；空串为假 | 域外由谓词对齐规则管辖，fail-loud |
+| 40 | `stringCase(isUpper:receiver:)` | 大小写转换，接收者不变，返回新串 | 按字素簇与 Unicode 大小写映射 |
+| 41 | `stringContains(receiver:needle:)` | 子串包含判定 | 字素级扫描；空 needle 为真 |
+| 42 | `stringSubstring(receiver:start:end:)` | 取子串：字素簇、负界尾部计数、双端夹到 `[0, len]`、`hi <= lo` 得空串 | — |
+| 43 | `stringSplit(receiver:delim:type:)` | 按分隔符切分为真数组，跳过空 token | 空分隔符按字素切；非空按子串匹配 |
+| 44 | `arrayJoin(receiver:separator:)` | 字符串数组按分隔符连接 | — |
+| 45 | `stringConcat(lhs:rhs:)` | 字符串拼接，字节语义 | — |
+| 46 | `interpString(parts:)` | 字符串插值：各部分转串后拼接 | F64 渲染走最短往返 |
+| 47 | `stringTrimLeft(receiver:)` | 剥离前导空格：只剥 U+0020，不含 tab；全空格得空串 | 字素模型同 §2.42；返回新串 |
+| 48 | `stringTrimRight(receiver:)` | 剥离尾随空格，口径同 §2.47 | — |
+| 49 | `stringIndexOf(receiver:needle:)` | needle 的首现位置，单位是字素；空 needle 得 0，未找到得 −1 | 与 §2.41 同一个字素扫描口径 |
+
+### 2.11 LazyRef
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 50 | `lazyRefConstruct(closure:type:)` | 创建一次求值的惰性引用 | 求值时机是语义；wrapper 去重是实现 |
+| 51 | `lazyRefValue(handle:type:)` | 读惰性引用的值，触发首次求值并缓存 | — |
+
+### 2.12 并发与挂起
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 52 | `join(future:type:form:)` | `await f`（异步体内等待，可以让出当前任务）/ `wait f`（任意上下文等待，占用当前线程）：求值 future，待其决后解构 `ok` / `err`；`type` 为站点所得的 `Result<T>` | `form` 记录源码写的是哪个关键字，是两个形态唯一的分野。操作数是 `future` 句柄，站点是结算值，两者不可同形 |
+
+### 2.13 默认实例取用
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 53 | `givenInstance(type:)` | 取该类型的默认实例：由类型决定，无运行时查找、无 vtable；惰性物化、恰一次、地址稳定；取到的是实例本身 | 取副本的规则与函数传参一致；本节点无源形态，由编译器在省略实参处插入 |
+
+## 3. 语句节点（17 条）
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 1 | `allocVar(name:type:mutable:initializer:)` | 声明变量槽；有初值则在分配后立即存入 | 可变性是语言约束，不靠后端 |
+| 2 | `storeVar(name:type:value:)` | 向既有变量写值 | — |
+| 3 | `ifStmt(label:condition:thenBody:elseBody:)` | 条件分支。`label` 非空时本节点是可中断帧，`break` 可定向到它 | 条件为布尔；`label` 运行时不读，只有解析好的深度随信号走；`if` 帧不是 `continue` 目标 |
+| 4 | `whileStmt(condition:body:step:)` | `while` 循环；`step` 块每轮体后执行一次 —— 正常完成与无标签 `continue` 时均执行，`break` 跳过 | 带标签且深度大于 1 的 `continue` 跳到循环头，该臂不执行 `step`，属已知偏离 |
+| 5 | `forInStmt(pattern:elementTypes:kind:iterable:body:step:)` | `for` 遍历；`kind` 决定元素读取方式；`_` 占位仍占槽位并带类型 | 同一处偏离在此更重：深度大于 1 的 `continue` 跳过索引自增 |
+| 6 | `returnStmt(value:)` | 返回值；`nil` 表示空返回 | — |
+| 7 | `exprStmt(IRExpr)` | 表达式求值并丢弃结果 | — |
+| 8 | `deferStmt(body:)` | 语句块离开作用域时按 LIFO 执行，含每轮循环结束 | 与 `break` / `return` 的交互尚无门控面 |
+| 9 | `tryStmt(operand:errorVar:handler:okTarget:type:)` | `try e else err: ...`；操作数为 `result(ok:)`；错误路径把类型擦除的错误字绑定到 `errorVar` 并运行 handler；表达式位把 ok 载荷存入 `okTarget` | `okTarget` 为 `nil` 表示语句位 |
+| 10 | `subscriptStore(container:index:value:elementType:)` | 下标写 `c[i] = v`；可嵌套；复合赋值降级为读改写 | 越界写报错，不得经赋值扩容 |
+| 11 | `breakStmt(depth:)` | 跳出第 `depth` 个可中断帧；帧 = 循环 + 带标签的 `if` | 目标不可解析时降级为 `panicStmt`，fail-loud |
+| 12 | `continueStmt(depth:)` | 继续第 `depth` 个帧 | 目标只能是循环帧，不能是 `if` 帧 |
+| 13 | `panicStmt(message:)` | 无条件运行时陷阱，固定消息，块终止 | 用于解释器仅在运行时才发现的逃逸 |
+| 14 | `matchStmt(scrutinee:cases:scrutineeType:)` | `match` 分派；可分派于枚举、Optional 与裸值字面量 | 枚举 / Optional 未匹配即 panic；裸值字面量未匹配且无通配时静默落到 match 之后 |
+| 15 | `fieldStore(base:field:value:fieldType:)` | 具名字段写 | 对象需越过引用头 |
+| 16 | `captureMarker(name:)` | 闭包体内的 `capture` 标记；捕获在闭包创建点解析，本节点降级为无操作 | 存在意义是让该语句种类在闭包体内被接受 |
+| 17 | `detachStmt(inner:)` | 求值操作数（须为 `Future`），把它从父任务剪枝，父返回时不再取消它 | 剪枝在各后端都没有可观测的输出差异，判据只能是结构级 |
+
+## 4. 待办与已知偏离
+
+| 项 | 状态 | 类型 |
+|---|---|---|
+| `whileStmt` / `forInStmt` 的深层 `continue` 跳过 `step` | 未修 | 偏离，后端与解释器相反 |
+| `addressOfVar` 的解释器快照语义 | 未修 | 偏离，已裁「统一到真引用」 |
+| `deferStmt` 与 `break` / `return` 的交互 | 未门控 | 覆盖缺口 |
+| `pointerLoad` 窄元素的扩展规则 | 未裁 | 半语义，须上提为语义或标为约定 |
+| `optionalGet` 的边界检查方式 | 未裁 | 半语义，同上 |
+| `readLine` 的 256 字节上限 | 已裁保留 | 语言级尺寸语义，`IOLimits` 为单一源 |
+| 警告通道的跨通道一致性 | 缺口 | 诊断面 |
