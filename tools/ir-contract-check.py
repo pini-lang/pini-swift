@@ -5,9 +5,9 @@ WHY THIS EXISTS
 ---------------
 `IR 契约` makes `docs/spec/ir-contract.md` the semantic authority for IR nodes
 and requires every backend to agree with it. That claim is only worth something
-if drift is detectable without a human reading 60 entries every time. This is
-the mechanical half of the judging stack (plan section 8, layer 2); the probe
-(`tools/ir-parity-probe.py`) covers the behavioural half by running code.
+if drift is detectable without a human reading every entry. This is the
+mechanical half of the judging stack; the probe (`tools/ir-parity-probe.py`)
+covers the behavioural half by running code.
 
 WHY THE FIRST RUN MATTERED
 --------------------------
