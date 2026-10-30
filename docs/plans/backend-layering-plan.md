@@ -4,7 +4,8 @@
 - 适用范围：编译器自身的分层与后端接缝。
 - 权威次序：语言面语义以 `../spec/pini-reference-v0.md` 为准；IR 节点语义以 `../spec/ir-contract.md`
   为准；运行时段符号面以 `../spec/runtime-abi.md` 为准。本件只排工程动作，不定义语义。
-- 状态：**已采纳**，方案取「先薄化后端，后硬化边界」。执行未开始。
+- 状态：**执行中**，方案取「先薄化后端，后硬化边界」。立契约 · 布局先决 · 布局归位已完成；
+  所有权归位的详细设计见 6.3.1–6.3.8，落码未开始。
 - 判据来源：2026-10-30 对工作树的实测，读数见「基础读数」。
 
 注意 本计划**不引入第二套 IR**。参考件把 IR 定为单层、唯一的分析 IR；下文所有 pass 都作用在
@@ -176,21 +177,24 @@ protocol PiniBackend {
 
 | 动作 | 产出 | 验收标准（通过线） | 判定方式 | 回退 |
 |---|---|---|---|---|
-| **立契约** | `../spec/ir-contract.md` 增「后端义务」一节（已成文：该件第 5 节；警告级门禁未接） | 五条契约各有一条可判定的表述；条目里不出现 `bk_*` · `alloca` · 引用计数布局 | 人工逐条核 + 一条警告级门禁：发射器出现 retain 合成时报出 | 无代码改动，删节即回退 |
-| **布局归位** | 新增 `IRLayout`；降载产出；发射器改读 | 发射器里槽位推导归零；51 个示例与 58 个夹具的两通道输出逐字节不变 | `rg 'Self\.headerSlotCount\|fieldLayout' IREmitter` = 0；`tools/ir-parity-probe.py` 全量 MATCH。注意 类型的字节尺寸不在此列：那是目标表示，留在后端 | 新旧两路并存，发射器断言两者相等，跑一轮全量再删旧路 |
+| **立契约** | `../spec/ir-contract.md` 增「后端义务」一节（已成文：该件第 5 节；警告级门禁已接，读数 77 处） | 五条契约各有一条可判定的表述；条目里不出现 `bk_*` · `alloca` · 引用计数布局 | 人工逐条核 + 一条警告级门禁：发射器出现 retain 合成时报出 | 无代码改动，删节即回退 |
+| **布局归位** | 新增 `IRLayout`；降载产出；发射器改读 | 发射器里槽位推导归零；59 个示例与 58 个夹具（117 份）的发射产物逐字节不变 | `rg 'Self\.headerSlotCount\|fieldLayout' IREmitter` = 0；`tools/ir-parity-probe.py` 全量 MATCH。注意 类型的字节尺寸不在此列：那是目标表示，留在后端 | 新旧两路并存，发射器断言两者相等，跑一轮全量再删旧路 |
 | **所有权归位** | `OwnershipPass`（IR→IR） | 决策族函数从发射器移除（现存 15 个里的决策部分，翻译族保留并注明只翻译不决策）；所有权寿命套件全绿；哑后端跑通全语料且源码无 retain 字样 | `rg 'pendingReleases\|emitReleases\|emitReassignRelease\|emitRetainIfAliased\|releaseOwnedTemporary' IREmitter` = 0；`OwnershipLifetimeTests` 全绿；哑后端 100 行以内接得上 | 断言保留到 pass 有独立测试后，再逐条删 |
 | **后端接缝** | `PiniBackend` 协议 + 能力声明 + CLI 注册表 | 新增一个哑后端只加 1 个文件 + 1 行注册，不改既有文件 | 按此新增一次，`git diff --stat` 出现文件数 = 2 | 注册表可先并存：旧字符串分派保留一个版本 |
 | **内建清单** | `BuiltinSpec` 表；三方对照脚本 | 脚本能双向报缺口：清单有而运行时无导出 / 有导出而无降级点 | 脚本自造两条缺口各报一次；正常树零报 | 脚本先只报不拦，稳定后转门禁 |
 | **拆边界** | 六个 target：`Syntax` / `Semantics` / `IR` / `BackendLLVM` / `RuntimeABI` / `CLI` | 依赖方向由编译期强制：`Syntax` 引不到 `BackendLLVM` | `swift build` 通过；故意加一行越界 import，编译必须失败；构建时长前后各留一次读数 | 拆分之一旦卡住，保留已拆的叶子，未拆的暂留 `Core` |
 | **试点后端** | 字节码 `embedded_min` 26 条指令的最小通道 | 接入生产代码不超过 1,000 行；能力矩阵改为活表进 CI | `git diff --stat` 数新增行；能力矩阵在 CI 里产出三列并随提交更新 | 试点失败即回查「所有权归位」的 pass 边界 |
 
+注意 「所有权归位」的两处收尾线已按 6.3.1 与 6.3.6 收窄：胶水合成 3 处保留、不参与归零；哑后端
+不在本行内，验收改由 6.3.7 的甲三以两通道输出代替。
+
 ### 6.1 立契约
 
 先把「后端不许推导什么」写成条目，再动代码。该节只写义务，不写实现：不出现 `bk_*`、
 不出现 `alloca`。条目一旦落地，后续各行的验收标准全部引用它，不再各自表述。
 
-状态：**已成文**，落在该件第 5 节，五条各带一条源码形状判据。**未完成的是警告级门禁** ——
-它归「门禁随行」，不与文档同批；门禁接上之前，本行验收只满足前一半。
+状态：**已完成**。契约第 5、6 节已成文；警告级门禁挂在 `ci/entrypoint.sh`，对现有发射器报 11 个
+符号 77 处，自检可证它会响，退出码不拦。
 
 ### 6.2 布局归位
 
@@ -203,6 +207,10 @@ protocol PiniBackend {
 验收的可证伪形态分两层：发射器里再也搜不到布局推导（结构），且两通道输出逐字节不变（回归）。
 只满足后者说明布局只是搬了个位置。
 
+状态：**完成（按计划的字形判据）**。发射器的布局推导归零；89/117 份语料发射产物字节相同（余 28 份
+两版同败）。Result / Optional 的槽位仍是 0/1/2 字面量，`resultSlotCount` / `optionalSlotCount` 无消费点；
+这两条要么改读布局，要么从布局表移出 —— 待裁，不阻塞所有权。
+
 ### 6.3 所有权归位
 
 新增 `OwnershipPass`：消费降载产物，产出同一套 IR，节点上多出显式的所有权指令与释放点。
@@ -210,6 +218,124 @@ protocol PiniBackend {
 
 注意 该 pass 会改变 IR 的节点集（语句节点 17 之后追加）。`../spec/ir-contract.md` 的计数基线
 是按「节点数 = 条目数」钉死的等式，必须同步重编；编号 append-only，不复用已分配的段。
+
+### 6.3.1 现状构成
+
+门禁的 11 个符号共 77 处，按「它回答什么」分三族：
+
+| 族 | 符号 | 处数 | 归位后 |
+|---|---|---|---|
+| 作用域与覆盖 | `pendingReleases` 27 · `emitReleases` 8 · `emitReassignRelease` 4 · `emitFieldReassignRelease` 2 · `registerReleasedHandle` 2 | 43 | 由 `releaseStmt` 与存储点注解取代 |
+| 别名与临时 | `emitRetainIfAliased` 11 · `releaseCallArguments` 8 · `releaseOwnedString` 5 · `releaseOwnedTemporary` 5 · `retainIfOwningContainer` 2 | 31 | 由 `retainStmt` 与具名临时取代 |
+| 胶水合成 | `ensureReleaseFunction` | 3 | **保留**：按类型生成释放体，是翻译不是决策 |
+
+注意 第三族不归零。计划的收尾线写「命中归零」，与该行正文「翻译族保留并注明」矛盾；本设计把
+收尾线改成 74 处归零、3 处白名单。
+
+### 6.3.2 模型
+
+三个状态：**持有**（当前求值握一份 +1）· **借用**（不握份额，不得释放）· **别名**（别处已握一份，
+落进新存储点前要 copy 或 retain）。
+
+四个动作：`take`（移交，零额外动作）· `copy`（结构体深拷贝）· `retain`（对象 / 枚举 / 容器 /
+字符串留一份）· `release`（还一份）。
+
+五个存储点：`allocVar` · `storeVar` · `fieldStore` · `subscriptStore` · `returnStmt`。
+四个别名点沿用现有 `yieldsAlias`：`load` · `subscriptGet` · `fieldGet` · `optionalGet`。
+
+注意 解释器也消费 `IRModule`。新增的所有权语句对它是无操作（Swift 值由运行时管理），但它必须
+认得这些节点，否则 `IRExecutor` 的穷尽分派编不过；契约要写明「执行型通道忽略这些动作」。
+
+### 6.3.3 两条路线
+
+| | 甲 注解式 | 乙 具名临时式 |
+|---|---|---|
+| 做法 | 五个存储点加 `adopt` 注解；pass 在块尾与退出边插 `releaseStmt`；表达式形状不动 | 再把子表达式提成 `bindStmt` 临时，临时值也进动作 |
+| 改动面 | `IRStmt` 增 1 条（17 → 18）+ 5 个字段；发射器删账本与作用域栈；降载不动 | 甲的全部 + `IRExpr` 增 `temp`（53 → 54） |
+| 命中下降 | 43 / 77 | 74 / 77 |
+| 风险 | 低：产物只多释放调用，顺序可与旧账本对照 | 高：提命名改所有表达式的发射顺序，字节比对全失效 |
+| 适用 | 作用域 · 覆盖 · 返回 | 调用实参 · 拼接操作数 · 打印 · 容器元素 |
+
+建议 **甲先行、乙随后**。甲搬完 43 处后，发射器只剩「翻译 `releaseStmt`」与「临时账本」；乙只
+处理 31 处，且此时甲已有独立测试，能做结构断言。
+
+### 6.3.4 节点草案（拟议，落码前须复核）
+
+```
+case allocVar(name: String, type: IRType, mutable: Bool, initializer: IRExpr?, adopt: IRAdopt)
+case storeVar(name: String, type: IRType, value: IRExpr, adopt: IRAdopt, releaseOld: Bool)
+case fieldStore(base: IRExpr, field: String, value: IRExpr, fieldType: IRType, adopt: IRAdopt, releaseOld: Bool)
+case subscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType, adopt: IRAdopt)
+case returnStmt(value: IRExpr?, adopt: IRAdopt)
+case releaseStmt(name: String, type: IRType)
+```
+
+`IRAdopt` = `.take` · `.copyStruct` · `.retain` · `.none`。
+
+注意 `releaseOld` 是布尔而不是另插一条 `releaseStmt`：`a = a` 要求新值先站住、再释放旧值。顺序由
+pass 决定、由后端按固定三步翻译；拆成两条语句会把顺序交给语句排列。
+
+阶段乙再增 `bindStmt(temp:value:type:)` · `temp(name:type:)` · `retainStmt(name:type:)`。计数基线：
+语句 17 → 18（甲）→ 20（乙）；表达式 53 → 54（乙）。契约第 2/3 节条目、`IRStmt` / `IRExpr`、
+`tools/ir-contract-check.py` 三处同批改。
+
+### 6.3.5 pass 算法与四个边界
+
+算法：
+
+1. 作用域帧与 `IRBlock` 同构；`allocVar` 入帧，帧随块弹出。
+2. 退出边插 `releaseStmt`：块尾 · `returnStmt` · `breakStmt` · `continueStmt`，由内向外、同帧逆序。
+   与今天 `emitReleases` 的六个调用点一一对应（727 / 1091 / 1314 / 1397 / 1417 / 5359）。
+3. 存储点按别名点判 `adopt`；标量与外部指针 `.none`。
+4. 返回：先 adopt，再对全部开放帧插 release。
+5. `panicStmt` 之后不插：进程不返回，释放无对象。
+6. pass 必须幂等：对输出再跑一次，`IRModule` 必须相等。
+
+四个边界未定，须在「甲一」裁掉：
+
+| 边界 | 问题 | 两个选项 |
+|---|---|---|
+| `defer` | 退出时 defer 体先于释放；pass 插在跳转前的释放会排在 defer 之前 | 先把 defer 降成显式语句再跑 pass；或 pass 带 `scopeExit` 动作、由后端按「冲刷 defer → 释放」翻译 |
+| `subscriptStore` | COW 分裂会替换容器本身，旧容器的份额在发射器内处理 | 判为实现细节留在后端；或 pass 为分裂点插显式动作 |
+| 闭包捕获 | env 指向变量槽、不 retain；捕获外逃时谁持有 | 判为借用、由被捕获变量的作用域负责；或捕获点 retain |
+| 任务实参 | `retainIfOwningContainer` 在派发点留份额，wrapper 跑完还 | 算调用点所有权（进乙）；或算运行时协议（留在后端） |
+
+### 6.3.6 两个前置缺口
+
+**内建效果表**。pass 要知道每个产值节点给的是持有还是借用。今天发射器的账本只认 `stringConcat` ·
+`interpString` · `join` · `construct` · `enumConstruct` · 三个集合字面量；`stringCase`（5399）·
+`stringSubstring`（2473）· `stringTrimLeft/Right` · `stringSplit`（5410）都返回运行时新分配的计数串
+或句柄，却没有入账 ⇒ 临时值（直接打印、作实参、作拼接操作数）每次泄漏一份。按源码推断，未跑泄漏读数。
+
+注意 pass 不得照抄这本账 —— 账本身是缺口。清单落地前，乙阶段无法开工。
+
+**哑后端**。本行验收要求「哑后端跑通全语料」，而哑后端属「后端接缝」。两条器械都不在本行内 ⇒
+本行收尾线改写为「两通道输出不变 + 决策族归零」，接缝仍按计划次序走。
+
+### 6.3.7 分片
+
+| 片 | 内容 | 通过线 | 回退 |
+|---|---|---|---|
+| 甲一 契约 | 契约第 7 节「所有权约定」+ 第 2/3 节条目；四个边界裁定 | 每条可判定；不出现 `bk_*` / `alloca` | 删节即回退 |
+| 甲二 分类器 | `IRType` → 所有权族，替换 `boxFamily(ofValueSpelling:)` 与 `collectionDestroySymbol(for:)` | 21 个 case 全覆盖；发射产物不变 | 新旧两路并存 |
+| 甲三 pass | `OwnershipPass` + `releaseStmt` + 存储点注解 | 43 处归零；`OwnershipLifetimeTests` 全绿；117 份语料两通道输出不变 | 旧账本保留一个版本 |
+| 甲四 收口 | 删账本与作用域栈；门禁白名单去掉已归零符号 | 读数 77 → 34 | 按符号逐条回退 |
+| 乙一 具名临时 | `bindStmt` / `temp` / `retainStmt` | 表达式 53 → 54；计数基线同批 | 甲态可用 |
+| 乙二 临时归位 | 实参 · 拼接 · 打印 · 容器元素 | 31 处归零；效果表全覆盖 | 按消费点逐个切 |
+| 乙三 收口 | `ensureReleaseFunction` 注明「只合成」；门禁转 `--strict` | 74 处归零，3 处白名单 | 门禁退回警告级 |
+
+注意 甲三与甲四之间必须留一次全量读数，不能同批：甲三是行为判据，甲四只是删旧路；同批红了
+分不清是 pass 错还是删错。
+
+### 6.3.8 风险
+
+| 风险 | 触发 | 处置 |
+|---|---|---|
+| 新语句让解释器编不过 | 甲三 | 解释器按无操作分派；契约写明执行型通道忽略 |
+| `a = a` 顺序颠倒 | 覆盖点拆成两条语句 | 用 `releaseOld` 字段，不拆语句 |
+| 临时泄漏被 pass 继承 | 照抄发射器账本 | 先落效果表；补 `stringCase` 一族的判据 |
+| 字节比对全失效 | 乙一 | 甲阶段保留字节判据；乙改用行为判据 + 结构断言 |
+| pass 非幂等 | 二次运行 | 对输出再跑一次，`IRModule` 必须相等 |
 
 ### 6.4 后端接缝
 

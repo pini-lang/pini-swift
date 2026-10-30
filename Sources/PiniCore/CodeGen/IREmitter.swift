@@ -4495,8 +4495,7 @@ public final class IREmitter {
             }
             let open = emitStringConstant("\(name){")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
-            /// 四格头占前 4 格 ⇒ 字段基准与其余 GEP 同源， 行不通  不能写死 1。
-            let fieldBase = layout.headerSlotCount
+            /// 字段槽一律问布局；四格头之后是第 0 个字段， 行不通  不能写死 1。
             let orderedFields = decl.fields.enumerated().sorted {
                 $0.element.name < $1.element.name
             }
@@ -4511,7 +4510,7 @@ public final class IREmitter {
                 bodyIR +=
                     builder.fmtGEP(
                         name: fieldPtr, aggregate: aggregate, base: value.ssaName,
-                        indices: [0, fieldBase + entry.offset]
+                        indices: [0, layout.fieldSlot(of: entry.offset)]
                     ) + "\n"
                 let fieldValue = builder.freshTemp()
                 bodyIR +=
@@ -4541,7 +4540,7 @@ public final class IREmitter {
             bodyIR +=
                 builder.fmtGEP(
                     name: tagPtr, aggregate: aggregate, base: value.ssaName,
-                    indices: [0, layout.headerSlotCount])
+                    indices: [0, layout.enumTagSlot])
                 + "\n"
             let tag = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tag, type: "i32", ptr: tagPtr) + "\n"
