@@ -155,8 +155,8 @@ Tests/PiniTests/CodeGen/                <- subject group (IR / LLVM)
 
 Grouping is **by subject, not by compiler pass**. Measured 2026-09-03: 61 of 111 test
 files (55%) drive the whole Lexer → Parser → interpreter pipeline and only 8 (7%) touch
-a single pass, so pass-based buckets collapse into one oversized bucket. See
-`docs/spec/test-dir-taxonomy-2026-09-03.md`（载体已删） for the measured proposal.
+a single pass, so pass-based buckets collapse into one oversized bucket. The measured
+proposal lived in a batch note that is no longer in this repository（载体不在本仓）.
 
 ## Coverage Strategy
 
@@ -507,7 +507,7 @@ func testErrorPayload() {
 
 ## 注释风格（与代码注释指南协和）
 
-本规范的「意图 / 推进性 / 驳回性」三要素**保持不变**；代码注释的通用风格见姊妹指南 `pini-comment-style-guide.md`（受 spec v0 §7 治理，本规范受 §6 治理），二者关系如下：
+本规范的「意图 / 推进性 / 驳回性」三要素**保持不变**；代码注释的通用风格见姊妹指南（该件不在本仓，原受 spec v0 §7 治理，本规范受 §6 治理），二者关系如下：
 
 - **意图注释（每条测试首行）** 即该指南「自包含行为陈述」在测试代码上的具体实例 → 保留并鼓励。一句话说清验证什么行为，不额外嵌入行号 / 跨文件章节号 / 代码片段。
 - **显示名与意图注释同义**：显示名进测试报告的读数面，意图注释留在源码里；两者都用一句话，不叙事。

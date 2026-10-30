@@ -28,6 +28,12 @@ jobs:
       - name: Doc Link Check
         run: bash tools/check-doc-links.sh
 
+      - name: IR Contract Check
+        run: python3 tools/ir-contract-check.py
+
+      - name: Runtime ABI Check
+        run: python3 tools/runtime-abi-check.py
+
       - name: Build
         run: swift build --disable-sandbox
 
