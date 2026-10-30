@@ -187,6 +187,44 @@ struct CBackendParityTests {
             """#,
             expected: "起点\n2\n"
         ),
+        Corpus(
+            label: "两分支都终止",
+            source: #"""
+            选|func(n: I32,) -> (I32,):
+                if n > 0:
+                    print("正")
+                    return 1
+                else:
+                    print("非正")
+                    return 2
+
+            main|func() -> ():
+                print(选(0))
+                return
+            """#,
+            expected: "非正\n2\n"
+        ),
+        Corpus(
+            label: "别名与覆盖",
+            source: #"""
+            {盒}
+            v: I32 = 0
+
+            main|func() -> ():
+                let a = 盒()
+                let b = a
+                a.v = 7
+                print(b.v)
+                var c = 盒()
+                c.v = 1
+                c = c
+                c = a
+                print(c.v)
+                print(a.v)
+                return
+            """#,
+            expected: "7\n7\n7\n"
+        ),
     ]
 
     @Test("每条语料的 C 产物跑出的字节与手写期望相同")
@@ -250,6 +288,29 @@ struct CBackendParityTests {
         #expect(text.contains("_Static_assert(sizeof(pini_"), "没有总大小断言")
         #expect(text.contains("offsetof(pini_"), "没有字段偏移断言")
         #expect(text.contains("pini_copy_"), "结构体没有拷贝胶水，值语义会退化成共享")
+    }
+
+    /// 所有权三件事都得在产物里：别名点留份额、覆盖前释放旧值、作用域退出释放。
+    /// 少了任何一条，产物都不崩也不报错，只是漏内存或提前回收 —— 只能从源里看。
+    @Test("所有权镜像的保留与释放写进了产物")
+    func ownershipCallsAreEmitted() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let corpus = Self.corpora.first { $0.label == "别名与覆盖" }!
+        try corpus.source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("bk_nominal_retain"), "别名点没有留份额")
+        #expect(text.contains("bk_nominal_release"), "释放胶水没有减计数")
+        #expect(text.contains("pini_release_object_"), "没有为对象合成释放函数")
     }
 
     // MARK: - 驱动
