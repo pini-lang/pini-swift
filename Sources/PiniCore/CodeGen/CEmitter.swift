@@ -64,9 +64,13 @@ public final class CEmitter {
         out += try scope.aggregateDefinitions()
         out += try scope.layoutAssertions()
         out += scope.copyFunctionDeclarations()
+        out += scope.releaseFunctionDeclarations()
         out += scope.copyFunctionDefinitions()
+        out += scope.releaseFunctionDefinitions()
         for constant in scope.constants {
-            out += "static const char \(constant.name)[] = \(Self.cLiteral(constant.value));\n"
+            // 不加 `const`：字符串变量要参与 `bk_str_retain` / `bk_str_release`，两者都收 `char *`。
+            // 常量串不在运行时的登记表里，那两个调用对它是无操作 —— 不会写这块只读之外的内存。
+            out += "static char \(constant.name)[] = \(Self.cLiteral(constant.value));\n"
         }
         out += "\n"
         var prototypes = ""
@@ -134,6 +138,8 @@ final class CModuleScope {
     private var usedSet: Set<String> = []
     private var copySymbols: Set<String> = []
     private(set) var copyBodies: [(symbol: String, aggregate: String, source: String)] = []
+    private var releaseSymbols: Set<String> = []
+    private(set) var releaseBodies: [(symbol: String, pointer: String, source: String)] = []
 
     init(module: IRModule, defined: Set<String>) {
         self.types = module.types
@@ -193,6 +199,14 @@ final class CModuleScope {
 
     func appendCopyBody(symbol: String, aggregate: String, source: String) {
         copyBodies.append((symbol, aggregate, source))
+    }
+
+    func reserveReleaseSymbol(_ symbol: String) -> Bool {
+        releaseSymbols.insert(symbol).inserted
+    }
+
+    func appendReleaseBody(symbol: String, pointer: String, source: String) {
+        releaseBodies.append((symbol, pointer, source))
     }
 
     /// 全部聚合体的前向声明。⛔ 顺序无关紧要：名义字段一律是指针，
@@ -284,6 +298,20 @@ final class CModuleScope {
         guard !copyBodies.isEmpty else { return "" }
         return copyBodies.map(\.source).joined(separator: "\n") + "\n\n"
     }
+
+    func releaseFunctionDeclarations() -> String {
+        guard !releaseBodies.isEmpty else { return "" }
+        var out = ""
+        for entry in releaseBodies {
+            out += "static void \(entry.symbol)(\(entry.pointer)box);\n"
+        }
+        return out
+    }
+
+    func releaseFunctionDefinitions() -> String {
+        guard !releaseBodies.isEmpty else { return "" }
+        return releaseBodies.map(\.source).joined(separator: "\n") + "\n\n"
+    }
 }
 
 /// 名义聚合体的 C 布局模型：按 ABI 的对齐规则推偏移，供 `_Static_assert` 比对。
@@ -348,7 +376,21 @@ final class CFunctionEmitter {
     private var frames: [Frame] = []
     private var labelSeq = 0
     private var tempSeq = 0
+    private var slotSeq = 0
     private var terminated = false
+
+    /// 作用域栈：Pini 名 → C 局部名。遮蔽必须换名，否则内层 `var x` 与外层同名时，
+    /// 释放账本分不清两个持有者 —— 按名字查会释放错的那个。
+    private var scopes: [[String: String]] = []
+    /// 形参名 → C 名。形参不登记释放（调用方持有它的份额），但 `lookupVar` 要能找到它们。
+    private let paramLocals: [String: String]
+    /// 持有者账本：每层一个帧，与 `emitBlock` 同序压栈。块尾按逆序释放，`return` / `break` / `continue` 各发一份。
+    private var releaseFrames: [[ReleaseEntry]] = []
+
+    private struct ReleaseEntry {
+        let local: String
+        let type: IRType
+    }
 
     private struct Frame {
         let exit: String
@@ -356,12 +398,19 @@ final class CFunctionEmitter {
         let isLoop: Bool
         let needsExit: Bool
         let needsHeader: Bool
+        /// 本帧入栈时的账本深度：跳出本帧要释放 `releaseFrames[releaseBase...]`。
+        let releaseBase: Int
     }
 
     init(function: IRFunction, scope: CModuleScope, programBase: String?) {
         self.function = function
         self.scope = scope
         self.programBase = programBase
+        var params: [String: String] = [:]
+        for param in function.params {
+            params[param.name] = "v_\(IRName.mangle(param.name))"
+        }
+        paramLocals = params
     }
 
     private var isMain: Bool { function.name == "main" }
@@ -374,6 +423,8 @@ final class CFunctionEmitter {
         }
         try emitBlock(function.body)
         if !terminated {
+            // 顶层作用域的持有者在落空边上释放；`return` 那条边自己发过一份，两条边不会同时走。
+            try emitReleases(downTo: 0)
             if isMain {
                 writer.line("return 0;")
             } else if let returnType = function.returnType {
@@ -400,30 +451,119 @@ final class CFunctionEmitter {
 
     // MARK: - 语句
 
+    /// 发射一个语句块：压入名字作用域与释放帧，块尾按落空 / 终止分别收口。
+    /// 顶层块（`releaseBase == 0`）的持有者归函数出口处理，⛔ 不在此释放 —— 那样 `return` 那条边会双份。
     private func emitBlock(_ block: IRBlock) throws {
+        let releaseBase = releaseFrames.count
+        releaseFrames.append([])
+        scopes.append([:])
         for statement in block.statements {
+            if terminated { break }
             try emitStmt(statement)
         }
+        if terminated {
+            // `return` / `break` / `continue` 已各发过一份它所跳过的帧；本块尾部不可达，只丢帧。
+            if releaseBase > 0 { releaseFrames.removeLast() }
+        } else {
+            if releaseBase > 0 {
+                try emitReleases(downTo: releaseBase)
+                releaseFrames.removeLast()
+            }
+        }
+        scopes.removeLast()
+    }
+
+    /// 一个持有者在退出 / 被覆盖时要调的释放；nil = 该类型不参与计数。
+    private func releaseSymbol(for type: IRType) throws -> String? {
+        switch type {
+        case .nominal, .enumeration: return try releaseFunction(for: type)
+        case .string, .char: return "bk_str_release"
+        default: return nil
+        }
+    }
+
+    /// 声明一个局部。同名遮蔽换后缀：两个持有者必须是两个 C 变量，否则账本按名字查会释放错的那个。
+    private func declareLocal(_ name: String) -> String {
+        let base = "v_\(IRName.mangle(name))"
+        let taken = scopes.contains { $0.values.contains(base) } || paramLocals.values.contains(base)
+        var local = base
+        if taken {
+            slotSeq += 1
+            local = "\(base)_\(slotSeq)"
+        }
+        scopes[scopes.count - 1][name] = local
+        return local
+    }
+
+    /// 变量名解析：内层作用域优先，其次形参。
+    private func lookupVar(_ name: String) -> String {
+        for frame in scopes.reversed() {
+            if let hit = frame[name] { return hit }
+        }
+        if let param = paramLocals[name] { return param }
+        return "v_\(IRName.mangle(name))"
+    }
+
+    /// 把本块新声明的持有者登记进当前帧。
+    private func registerRelease(local: String, type: IRType) throws {
+        guard try releaseSymbol(for: type) != nil else { return }
+        guard !releaseFrames.isEmpty else { return }
+        releaseFrames[releaseFrames.count - 1].append(ReleaseEntry(local: local, type: type))
+    }
+
+    /// 发一组释放：帧从内到外、帧内按声明的逆序。与 LLVM 侧的 `emitReleases(downTo:)` 同序 ——
+    /// 顺序反了会在「两个持有者其实是同一个箱」时提前归零。
+    private func emitReleases(downTo base: Int) throws {
+        guard base < releaseFrames.count else { return }
+        for frame in releaseFrames[base...].reversed() {
+            for entry in frame.reversed() {
+                guard let call = try releaseCall(local: entry.local, type: entry.type) else { continue }
+                writer.line("\(call);")
+            }
+        }
+    }
+
+    private func releaseCall(local: String, type: IRType) throws -> String? {
+        guard let symbol = try releaseSymbol(for: type) else { return nil }
+        return "\(symbol)(\(local))"
+    }
+
+    /// 局部被覆盖前释放它持有的份额。只对已登记的持有者做 —— 标量不在账本里，一个字节也不碰。
+    private func emitReassignRelease(local: String, type: IRType) throws {
+        let registered = releaseFrames.contains { frame in
+            frame.contains { $0.local == local }
+        }
+        guard registered, let call = try releaseCall(local: local, type: type) else { return }
+        writer.line("\(call);")
     }
 
     private func emitStmt(_ statement: IRStmt) throws {
         switch statement {
         case .allocVar(let name, let type, _, let initializer):
             let spelling = try CTypeMap.spelling(of: type)
-            let local = "v_\(IRName.mangle(name))"
+            let local = declareLocal(name)
             if let initializer {
                 let value = try emitExpr(initializer)
                 let stored = try emitValueForStorage(initializer, value, type: type)
                 writer.line("\(spelling) \(local) = \(stored);")
+            } else if try releaseSymbol(for: type) != nil {
+                // 无初值也必须落零：登记成持有者之后，退出时会对槽里的内容发释放，
+                // 未初始化指针进去就是 SIGBUS。`NULL` / 0 对释放路径是无操作。
+                writer.line("\(spelling) \(local) = \(try CTypeMap.zeroLiteral(of: type));")
             } else {
                 writer.line("\(spelling) \(local);")
             }
+            try registerRelease(local: local, type: type)
             terminated = false
 
         case .storeVar(let name, let type, let value):
+            let local = lookupVar(name)
             let lowered = try emitExpr(value)
+            // 三行的顺序就是语义：新值先站住（拷贝 / retain），再释放旧值，最后写。
+            // 颠倒则 `a = a` 先回收掉新值要读的箱。
             let stored = try emitValueForStorage(value, lowered, type: type)
-            writer.line("v_\(IRName.mangle(name)) = \(stored);")
+            try emitReassignRelease(local: local, type: type)
+            writer.line("\(local) = \(stored);")
             terminated = false
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
@@ -441,15 +581,19 @@ final class CFunctionEmitter {
         case .returnStmt(let value):
             if let value {
                 let lowered = try emitExpr(value)
-                // 与 LLVM 侧同规：交出去的值先按值语义落定（结构体别名拷新箱），再 ret。
+                // 与 LLVM 侧同规：交出去的值先按值语义落定（结构体别名拷新箱），再释放、再 ret。
                 let stored = try function.returnType.map {
                     try emitValueForStorage(value, lowered, type: $0)
                 } ?? lowered
+                try emitReleases(downTo: 0)
                 writer.line("return \(stored);")
-            } else if isMain {
-                writer.line("return 0;")
             } else {
-                writer.line("return;")
+                try emitReleases(downTo: 0)
+                if isMain {
+                    writer.line("return 0;")
+                } else {
+                    writer.line("return;")
+                }
             }
             terminated = true
 
@@ -470,12 +614,17 @@ final class CFunctionEmitter {
             let baseText = try emitExpr(base)
             let access = try fieldAccess(base: base, field: field, baseText: baseText)
             let lowered = try emitExpr(value)
+            // 顺序同 `storeVar`：新值先站住，再释放字段旧值，最后写。字段是持有者。
             let stored = try emitValueForStorage(value, lowered, type: fieldType)
+            if let call = try releaseCall(local: access, type: fieldType) {
+                writer.line("\(call);")
+            }
             writer.line("\(access) = \(stored);")
             terminated = false
 
         case .breakStmt(let depth):
             let frame = try frame(at: depth)
+            try emitReleases(downTo: frame.releaseBase)
             if frame.isLoop && depth == 1 {
                 writer.line("break;")
             } else if frame.needsExit {
@@ -487,6 +636,7 @@ final class CFunctionEmitter {
 
         case .continueStmt(let depth):
             let frame = try frame(at: depth)
+            try emitReleases(downTo: frame.releaseBase)
             if frame.isLoop && depth == 1 {
                 writer.line("continue;")
             } else if frame.isLoop && frame.needsHeader {
@@ -514,13 +664,17 @@ final class CFunctionEmitter {
                 scan(thenBody, nesting: 0, direct: true).brk
                 || scan(elseBody, nesting: 0, direct: true).brk
             let pushed = Frame(
-                exit: exit, header: exit, isLoop: false, needsExit: needsExit, needsHeader: false)
+                exit: exit, header: exit, isLoop: false, needsExit: needsExit, needsHeader: false,
+                releaseBase: releaseFrames.count)
             frames.append(pushed)
             frame = pushed
         }
         writer.open("if (\(cond))")
         try emitBlock(thenBody)
         if let elseBody {
+            // `terminated` 属于上一条分支：不清掉的话 `emitBlock` 会在第一条语句前就 break，
+            // 整个 else 体消失 —— 编译能过，只是那半边永远不执行。
+            terminated = false
             writer.elseOpen()
             try emitBlock(elseBody)
             writer.close()
@@ -545,7 +699,7 @@ final class CFunctionEmitter {
         frames.append(
             Frame(
                 exit: exit, header: header, isLoop: true,
-                needsExit: info.brk, needsHeader: info.cont))
+                needsExit: info.brk, needsHeader: info.cont, releaseBase: releaseFrames.count))
         let cond = bareCondition(try emitExpr(condition))
         if info.cont {
             writer.open("for (;;)")
@@ -580,6 +734,9 @@ final class CFunctionEmitter {
         var isFirst = true
         var hasWildcard = false
         for arm in cases {
+            // 臂自带一层名字作用域：绑定只在臂内可见，且不登记释放 —— 它们是枚举箱里的载荷，箱由扫描对象持有。
+            scopes.append([:])
+            terminated = false
             if arm.caseName == "_" {
                 hasWildcard = true
                 if isFirst { writer.open("if (1)") } else { writer.elseOpen() }
@@ -592,6 +749,7 @@ final class CFunctionEmitter {
                 try emitBindings(arm: arm, enumCase: enumCase, decl: decl, pointer: pointer, enumName: name)
             }
             try emitBlock(arm.body)
+            scopes.removeLast()
             isFirst = false
         }
         if !hasWildcard {
@@ -613,8 +771,8 @@ final class CFunctionEmitter {
             }
             let type = enumCase.payloadTypes[slot]
             try checkSlotType(type, slot: slot, decl: decl, owner: "枚举 \(enumName) 的用例 \(enumCase.name)")
-            writer.line(
-                "\(try CTypeMap.spelling(of: type)) v_\(IRName.mangle(binding)) = \(pointer)->f\(slot);")
+            let local = declareLocal(binding)
+            writer.line("\(try CTypeMap.spelling(of: type)) \(local) = \(pointer)->f\(slot);")
         }
     }
 
@@ -649,7 +807,7 @@ final class CFunctionEmitter {
             return scope.registerString(value)
 
         case .load(let name, _):
-            return "v_\(IRName.mangle(name))"
+            return lookupVar(name)
 
         case .binary(let op, let lhs, let rhs, _):
             let left = try emitExpr(lhs)
@@ -901,20 +1059,38 @@ final class CFunctionEmitter {
         }
     }
 
-    /// 把求值出来的值按值语义落到一个持有位置：结构体别名拷出新箱，其余直接接管。
-    /// 释放胶水不在本期 —— 名义箱只分配不回收，这条差异不影响输出字节，但会漏内存。
+    /// 把求值出来的值按值语义落到一个持有位置：结构体别名拷出新箱，对象 / 枚举 / 字符串别名留一份份额，
+    /// 临时值直接接管。⛔ 结构体那一支必须排在 retain 之前 —— 拷贝本身就是一次独立持有。
     private func emitValueForStorage(_ node: IRExpr, _ text: String, type: IRType) throws -> String {
         guard Self.yieldsAlias(node) else { return text }
-        guard case .nominal(let name, let isObject) = type, !isObject else { return text }
-        guard let symbol = try copyFunction(for: type) else { return text }
-        let aggregate = CTypeMap.aggregateName(name)
-        let temp = "t_\(nextTempSeq())"
-        writer.line("\(aggregate) *\(temp) = \(symbol)(\(text));")
-        return temp
+        if case .nominal(let name, let isObject) = type, !isObject,
+            let symbol = try copyFunction(for: type)
+        {
+            let aggregate = CTypeMap.aggregateName(name)
+            let temp = "t_\(nextTempSeq())"
+            writer.line("\(aggregate) *\(temp) = \(symbol)(\(text));")
+            return temp
+        }
+        if let retain = try retainSymbol(for: type) {
+            writer.line("\(retain)(\(text));")
+        }
+        return text
     }
 
-    /// 结构体的逐类型拷贝胶水：新箱 + 逐字段搬（嵌套结构体递归拷，其余共享指针）。
-    /// 与 LLVM 侧的 `__copy_struct_*` 同形；缺了它，`var b = a` 之后改 `b` 会连 `a` 一起改。
+    /// 别名点要调的留份额符号。结构体不走这条（它拷新箱），容器尚未支持。
+    private func retainSymbol(for type: IRType) throws -> String? {
+        switch type {
+        case .nominal, .enumeration:
+            return "bk_nominal_retain"
+        case .string, .char:
+            return "bk_str_retain"
+        default:
+            return nil
+        }
+    }
+
+    /// 结构体的逐类型拷贝胶水：新箱 + 逐字段搬。嵌套结构体递归拷；对象 / 枚举 / 字符串字段共享并留一份。
+    /// 与 LLVM 侧的 `__copy_struct_*` 同形；缺了 retain 那一半，拷贝与原件会争同一份份额 —— 先到者释放即悬垂。
     private func copyFunction(for type: IRType) throws -> String? {
         guard case .nominal(let name, let isObject) = type, !isObject else { return nil }
         guard let decl = scope.typeDecl(named: name) else {
@@ -934,12 +1110,84 @@ final class CFunctionEmitter {
                 lines.append("    dst->f\(index) = \(sub)(src->f\(index));")
             } else {
                 lines.append("    dst->f\(index) = src->f\(index);")
+                if let retain = try retainSymbol(for: field.type) {
+                    lines.append("    \(retain)(dst->f\(index));")
+                }
             }
         }
         lines.append("    return dst;")
         lines.append("}")
         scope.appendCopyBody(symbol: symbol, aggregate: aggregate, source: lines.joined(separator: "\n"))
         return symbol
+    }
+
+    /// 逐类型合成的释放胶水：先减头格，返回非零（归零）才进清仓、逐字段释放、`free`。
+    /// 枚举按标签分派，未选中 case 的载荷槽不碰 —— 那些槽里是别的类型的字节。
+    private func releaseFunction(for type: IRType) throws -> String {
+        let symbol = "pini_release_" + Self.glueSuffix(type)
+        guard scope.reserveReleaseSymbol(symbol) else { return symbol }
+        var lines: [String] = []
+        lines.append("static void \(symbol)(\(try CTypeMap.spelling(of: type))box) {")
+        lines.append("    if (box == NULL) { return; }")
+        lines.append("    if (!bk_nominal_release(box)) { return; }")
+        switch type {
+        case .nominal(let name, _):
+            guard let decl = scope.typeDecl(named: name) else {
+                throw CBackendError(message: "C 后端：为未声明的名义类型合成释放函数 \(name)")
+            }
+            scope.markUsed(name)
+            for (index, field) in decl.fields.enumerated() {
+                guard let call = try releaseCall(local: "box->f\(index)", type: field.type) else { continue }
+                lines.append("    \(call);")
+            }
+        case .enumeration(let name):
+            guard let decl = scope.enumDecl(named: name) else {
+                throw CBackendError(message: "C 后端：为未声明的枚举合成释放函数 \(name)")
+            }
+            scope.markUsed(name)
+            let releasing = decl.cases.filter { entry in
+                entry.payloadTypes.contains { Self.needsRelease($0) }
+            }
+            if !releasing.isEmpty {
+                lines.append("    switch (box->tag) {")
+                for enumCase in releasing {
+                    lines.append("    case \(enumCase.tag):")
+                    for (slot, payloadType) in enumCase.payloadTypes.enumerated() {
+                        try checkSlotType(payloadType, slot: slot, decl: decl, owner: "枚举 \(name)")
+                        guard let call = try releaseCall(local: "box->f\(slot)", type: payloadType)
+                        else { continue }
+                        lines.append("        \(call);")
+                    }
+                    lines.append("        break;")
+                }
+                lines.append("    default: break;")
+                lines.append("    }")
+            }
+        default:
+            throw CBackendError(message: "C 后端：为非聚合类型合成释放函数")
+        }
+        lines.append("    free(box);")
+        lines.append("}")
+        scope.appendReleaseBody(symbol: symbol, pointer: try CTypeMap.spelling(of: type), source: lines.joined(separator: "\n"))
+        return symbol
+    }
+
+    /// 胶水符号的后缀。结构体与枚举同名时不能撞在一起，故带族前缀。
+    private static func glueSuffix(_ type: IRType) -> String {
+        switch type {
+        case .nominal(let name, let isObject): return (isObject ? "object_" : "struct_") + IRName.mangle(name)
+        case .enumeration(let name): return "enum_" + IRName.mangle(name)
+        default: return "scalar"
+        }
+    }
+
+    /// 该类型在释放胶水里有没有动作。分派结构必须在合成之前算出来，
+    /// 否则会为只有标量载荷的 case 生成空 arm。
+    private static func needsRelease(_ type: IRType) -> Bool {
+        switch type {
+        case .nominal, .enumeration, .string, .char: return true
+        default: return false
+        }
     }
 
     // MARK: - 辅助

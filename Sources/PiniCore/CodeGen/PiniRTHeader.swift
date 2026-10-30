@@ -45,6 +45,7 @@ int32_t bk_nominal_release(void *box);
 _Noreturn void bk_panic(const char *message);
 void bk_set_program_base(const char *base);
 char *bk_double_to_string(double value);
+void bk_str_retain(char *text);
 void bk_str_release(char *text);
 
 #endif
