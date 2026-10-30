@@ -1082,6 +1082,14 @@ private final class HostStackBounds {
 /// One cache per thread — read by `RuntimeOps.hostStack()`.
 private let hostStackBounds = ThreadLocal<HostStackBounds>()
 
+#if canImport(Glibc)
+    // Glibc 的 Swift 模块不导出这个 GNU 扩展；按符号名直连，签名与 <pthread.h> 一致。
+    @_silgen_name("pthread_getattr_np")
+    private func piniPthreadGetattrNp(
+        _ thread: pthread_t, _ attributes: UnsafeMutablePointer<pthread_attr_t>
+    ) -> Int32
+#endif
+
 /// Ask the platform where the running thread's stack begins and how big it is.
 /// `low` is the lowest address the stack can reach: it grows downward, so a frame closer to `low` has less room left.
 private func readHostStack() -> (low: Int, size: Int)? {
@@ -1093,7 +1101,7 @@ private func readHostStack() -> (low: Int, size: Int)? {
         return (high - size, size)
     #elseif canImport(Glibc)
         var attributes = pthread_attr_t()
-        guard pthread_getattr_np(pthread_self(), &attributes) == 0 else { return nil }
+        guard piniPthreadGetattrNp(pthread_self(), &attributes) == 0 else { return nil }
         defer { pthread_attr_destroy(&attributes) }
         var base: UnsafeMutableRawPointer?
         var size = 0
