@@ -57,7 +57,7 @@ struct IRFutureTypeTests: Sendable {
         named name: String, in block: IRBlock
     ) throws -> (type: IRType, initializer: IRExpr?) {
         for statement in block {
-            if case .allocVar(let slotName, let type, _, let initializer) = statement,
+            if case .allocVar(let slotName, let type, _, let initializer, _) = statement,
                 slotName == name
             {
                 return (type, initializer)

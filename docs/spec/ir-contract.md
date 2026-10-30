@@ -205,21 +205,21 @@
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
-| 1 | `allocVar(name:type:mutable:initializer:)` | 声明变量槽；有初值则在分配后立即存入 | 可变性是语言约束，不靠后端 |
-| 2 | `storeVar(name:type:value:)` | 向既有变量写值 | — |
+| 1 | `allocVar(name:type:mutable:initializer:adopt:)` | 声明变量槽；有初值则在分配后立即存入，`adopt` 是初值的接收动作 | 可变性是语言约束，不靠后端 |
+| 2 | `storeVar(name:type:value:adopt:releaseOld:)` | 向既有变量写值；`releaseOld` 说槽里旧值要不要还 | — |
 | 3 | `ifStmt(label:condition:thenBody:elseBody:)` | 条件分支。`label` 非空时本节点是可中断帧，`break` 可定向到它 | 条件为布尔；`label` 运行时不读，只有解析好的深度随信号走；`if` 帧不是 `continue` 目标 |
 | 4 | `whileStmt(condition:body:step:)` | `while` 循环；`step` 块每轮体后执行一次 —— 正常完成与无标签 `continue` 时均执行，`break` 跳过 | 带标签且深度大于 1 的 `continue` 跳到循环头，该臂不执行 `step`，属已知偏离 |
 | 5 | `forInStmt(pattern:elementTypes:kind:iterable:body:step:)` | `for` 遍历；`kind` 决定元素读取方式；`_` 占位仍占槽位并带类型 | 同一处偏离在此更重：深度大于 1 的 `continue` 跳过索引自增 |
-| 6 | `returnStmt(value:)` | 返回值；`nil` 表示空返回 | — |
+| 6 | `returnStmt(value:adopt:)` | 返回值；`nil` 表示空返回；`adopt` 是返回值的接收动作 | — |
 | 7 | `exprStmt(IRExpr)` | 表达式求值并丢弃结果 | — |
 | 8 | `deferStmt(body:)` | 语句块离开作用域时按 LIFO 执行，含每轮循环结束 | 与局部释放共栈，次序见 7.4；与 `break` / `return` 的交互尚无门控面 |
 | 9 | `tryStmt(operand:errorVar:handler:okTarget:type:)` | `try e else err: ...`；操作数为 `result(ok:)`；错误路径把类型擦除的错误字绑定到 `errorVar` 并运行 handler；表达式位把 ok 载荷存入 `okTarget` | `okTarget` 为 `nil` 表示语句位 |
-| 10 | `subscriptStore(container:index:value:elementType:)` | 下标写 `c[i] = v`；可嵌套；复合赋值降级为读改写 | 越界写报错，不得经赋值扩容 |
+| 10 | `subscriptStore(container:index:value:elementType:adopt:)` | 下标写 `c[i] = v`；可嵌套；复合赋值降级为读改写 | 越界写报错，不得经赋值扩容 |
 | 11 | `breakStmt(depth:)` | 跳出第 `depth` 个可中断帧；帧 = 循环 + 带标签的 `if` | 目标不可解析时降级为 `panicStmt`，fail-loud |
 | 12 | `continueStmt(depth:)` | 继续第 `depth` 个帧 | 目标只能是循环帧，不能是 `if` 帧 |
 | 13 | `panicStmt(message:)` | 无条件运行时陷阱，固定消息，块终止 | 用于解释器仅在运行时才发现的逃逸 |
 | 14 | `matchStmt(scrutinee:cases:scrutineeType:)` | `match` 分派；可分派于枚举、Optional 与裸值字面量 | 枚举 / Optional 未匹配即 panic；裸值字面量未匹配且无通配时静默落到 match 之后 |
-| 15 | `fieldStore(base:field:value:fieldType:)` | 具名字段写 | 对象需越过引用头 |
+| 15 | `fieldStore(base:field:value:fieldType:adopt:releaseOld:)` | 具名字段写；字段是持有者，`releaseOld` 管旧值 | 对象需越过引用头 |
 | 16 | `captureMarker(name:)` | 闭包体内的 `capture` 标记；捕获在闭包创建点解析，本节点降级为无操作 | 存在意义是让该语句种类在闭包体内被接受 |
 | 17 | `detachStmt(inner:)` | 求值操作数（须为 `Future`），把它从父任务剪枝，父返回时不再取消它 | 剪枝在各后端都没有可观测的输出差异，判据只能是结构级 |
 

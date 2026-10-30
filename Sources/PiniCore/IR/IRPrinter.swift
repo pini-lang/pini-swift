@@ -34,11 +34,11 @@ public enum IRPrinter {
     private static func dumpStmt(_ statement: IRStmt, indent level: Int) -> [String] {
         let pad = indent(level)
         switch statement {
-        case .allocVar(let name, let type, let mutable, let initializer):
+        case .allocVar(let name, let type, let mutable, let initializer, _):
             let kw = mutable ? "var" : "let"
             let initPart = initializer.map { " = \(exprText($0))" } ?? ""
             return ["\(pad)\(kw) \(name): \(type.llvmSpelling)\(initPart)"]
-        case .storeVar(let name, _, let value):
+        case .storeVar(let name, _, let value, _, _):
             return ["\(pad)\(name) = \(exprText(value))"]
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
             // 标签 break 定向范围: a labeled `if` prints its label, mirroring the source
@@ -74,7 +74,7 @@ public enum IRPrinter {
                 lines.append(contentsOf: dumpBody(step, indent: level + 1))
             }
             return lines
-        case .returnStmt(let value):
+        case .returnStmt(let value, _):
             return ["\(pad)return\(value.map { " " + exprText($0) } ?? "")"]
         case .exprStmt(let expression):
             return ["\(pad)\(exprText(expression))"]
@@ -87,7 +87,7 @@ public enum IRPrinter {
             var lines = ["\(pad)try \(exprText(operand)) else \(errorVar)\(bind):"]
             lines.append(contentsOf: dumpBody(handler, indent: level + 1))
             return lines
-        case .subscriptStore(let container, let index, let value, _):
+        case .subscriptStore(let container, let index, let value, _, _):
             return ["\(pad)\(exprText(container))[\(exprText(index))] = \(exprText(value))"]
         case .breakStmt(let depth):
             return ["\(pad)break\(depth > 1 ? " (x\(depth))" : "")"]
@@ -104,7 +104,7 @@ public enum IRPrinter {
                 lines.append(contentsOf: dumpBody(matchCase.body, indent: level + 2))
             }
             return lines
-        case .fieldStore(let base, let field, let value, _):
+        case .fieldStore(let base, let field, let value, _, _, _):
             return ["\(pad)\(exprText(base)).\(field) = \(exprText(value))"]
         case .captureMarker(let name):
             return ["\(pad)capture \(name)"]

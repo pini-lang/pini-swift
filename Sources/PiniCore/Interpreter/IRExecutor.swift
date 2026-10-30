@@ -1573,7 +1573,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     private func execute(_ statement: IRStmt) throws {
         switch statement {
 
-        case .allocVar(let name, let type, let mutable, let initializer):
+        case .allocVar(let name, let type, let mutable, let initializer, _):
             // Registered even without an initializer, as `.null`: an uninitialized read is a value, not an undefined-variable error.
             // Structs are copied field by field; without it a write through the copy reaches the original, silently.
             var value = try initializer.map { RuntimeOps.copyIfStruct(try evaluate($0)) } ?? .null
@@ -1585,7 +1585,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             }
             currentEnv.define(name: name, value: value, isMutable: mutable)
 
-        case .storeVar(let name, _, let value):
+        case .storeVar(let name, _, let value, _, _):
             // Structs are copied field by field, the interpreter's rule at the same point.
             // Without it both engines share one storage, and a write through the copy surfaces in the original, silently.
             try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
@@ -1618,7 +1618,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .whileStmt(let condition, let body, let step):
             try executeWhile(condition: condition, body: body, step: step)
 
-        case .returnStmt(let value):
+        case .returnStmt(let value, _):
             throw IRControlSignal.returnSignal(try value.map { try evaluate($0) })
 
         case .exprStmt(let expr):
@@ -1632,7 +1632,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             // Failing loud here would misreport a defined no-op as a gap.
             _ = name
 
-        case .subscriptStore(let container, let index, let value, _):
+        case .subscriptStore(let container, let index, let value, _, _):
             // Order copied from the interpreter: value first, then index, then the container chain — side effects observe it.
             // Structs are copied field by field; without it a write through the copy surfaces in the original.
             let newValue = RuntimeOps.copyIfStruct(try evaluate(value))
@@ -1704,7 +1704,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
         // MARK: Nominal field store
 
-        case .fieldStore(let base, let field, let value, _):
+        case .fieldStore(let base, let field, let value, _, _, _):
             // Right-hand side first, receiver second — the order the interpreter's assignment path uses.
             // Observable only when both have effects, which is exactly when a guessed mirror would be caught late.
             // Structs are copied field by field; without it a write through the copy reaches the original, silently.
@@ -2388,7 +2388,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .exprStmt(.join(let operand, _, .awaits)):
             plan = .expressionStatement(operand: operand)
 
-        case .allocVar(let name, let type, let mutable, .some(.join(let operand, _, .awaits))):
+        case .allocVar(let name, let type, let mutable, .some(.join(let operand, _, .awaits)), _):
             plan = .varInitializer(operand: operand, name: name, type: type, mutable: mutable)
 
         case .matchStmt(.join(let operand, _, .awaits), let cases, _):
