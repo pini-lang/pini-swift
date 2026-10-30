@@ -6,36 +6,43 @@ on:
   pull_request:
     branches: [ main ]
 
+# 同一分支的新推送取消旧运行：判的是最新提交，排队的旧运行只会占机器。
+concurrency:
+  group: linux-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   linux-test:
-    name: Swift Test (Ubuntu)
+    name: Linux · Docker · Swift 6.4
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        swift: ["6.2-noble", "6.3-noble"]
-    container:
-      image: swift:${{ matrix.swift }}
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure python3
-        run: command -v python3 >/dev/null || (apt-get update && apt-get install -y python3)
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Comment Style Lint
-        run: bash hooks/comment-lint.sh
+      # 镜像里钉死工具链与系统依赖；运行时不装任何东西。
+      # 用 GHA 层缓存：绝大多数提交只改源码，apt 那一层直接命中。
+      - name: Build CI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ci/Dockerfile
+          tags: pini-ci:local
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
 
-      - name: Doc Link Check
-        run: bash tools/check-doc-links.sh
-
-      - name: IR Contract Check
-        run: python3 tools/ir-contract-check.py
-
-      - name: Runtime ABI Check
-        run: python3 tools/runtime-abi-check.py
-
-      - name: Build
-        run: swift build --disable-sandbox
-
-      - name: Test
-        run: swift test --disable-sandbox
+      # 不以 root 跑：只读文件的权限判据在 root 下恒真，那一条会退化成空判。
+      # HOME 指到 /tmp：容器用户与宿主同 UID，但没有对应的家目录。
+      - name: Gates, build, test
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$PWD":/src -w /src pini-ci:local

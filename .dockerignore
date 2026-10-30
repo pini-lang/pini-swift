@@ -1,0 +1,6 @@
+# 构建上下文只用于 ci/Dockerfile 的 apt 层，源码不进镜像（运行时挂载）。
+# 排除构建产物，免得每次 docker build 先把 470 MB 的 .build 传一遍。
+.build
+.swiftpm
+.git
+.DS_Store
