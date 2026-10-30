@@ -16,19 +16,16 @@ let package = Package(
             name: "PiniCore",
             path: "Sources/PiniCore",
             // T1/T11（2026-08-24）：诊断语言资源（Diagnostics.{zh,en}.toml）随 Bundle.module 分发。
-            resources: [.process("Resources")],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            resources: [.process("Resources")]
         ),
         .target(
             name: "PiniRuntime",
-            path: "Sources/PiniRuntime",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            path: "Sources/PiniRuntime"
         ),
         .executableTarget(
             name: "PiniCLI",
             dependencies: ["PiniCore"],
-            path: "Sources/PiniCLI",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            path: "Sources/PiniCLI"
         ),
         .testTarget(
             name: "PiniTests",

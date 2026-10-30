@@ -33,10 +33,10 @@ public final class DAPDebugDriver: DebugDriver {
 
 // MARK: - DAP 调试适配器（P7-4 P4）
 
-/// VS Code / 任意 DAP 客户端的调试适配器：stdio + `Content-Length` 分帧（与 LSP 同形），协议流与 debuggee 输出严格分离。
-/// 引擎 output sink 把 `print` 重定向成 DAP `output` 事件，不污染分帧。生命周期是标准 DAP 交互：initialize →
-/// launch（只装配不启动）→ setBreakpoints → configurationDone 起线程；停下发 `stopped` 供检视、`resume` 唤醒，结束发 `exited`。
-public final class DAPServer {
+/// VS Code / 任意 DAP 客户端的调试适配器：stdio + `Content-Length` 分帧（与 LSP 同形），协议流与 debuggee 输出严格分离 ——
+/// 引擎 output sink 把 `print` 重定向成 `output` 事件。生命周期：initialize → launch（只装配）→ setBreakpoints → configurationDone。
+/// 状态分两片：`stateLock` 守可观测状态、`writeLock` 串行化出站写；两条线程是固定形状，故免隔离由这两把锁承担。
+public final class DAPServer: @unchecked Sendable {
 
     private let driver = DAPDebugDriver()
     private var debugger: Debugger!

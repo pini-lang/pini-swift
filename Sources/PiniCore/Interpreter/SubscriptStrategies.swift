@@ -14,7 +14,8 @@ enum SubscriptReadStrategy {
     typealias ReadStrategy = (Value, Value, SourceLocation) throws -> Value
 
     /// 注册表：键为容器分类，值为读策略。首次访问时初始化默认策略集。
-    private static var registry: [ContainerKind: ReadStrategy] = {
+    /// 初始化后不再改写；策略是无捕获的纯函数，多线程同时调用不共享可变状态，故免隔离是安全的。
+    nonisolated(unsafe) private static let registry: [ContainerKind: ReadStrategy] = {
         var r: [ContainerKind: ReadStrategy] = [:]
 
         r[.array] = { container, index, loc in
@@ -99,7 +100,8 @@ enum SubscriptWriteStrategy {
     typealias WriteStrategy = (Value, Value, Value, SourceLocation) throws -> Value
 
     /// 注册表：键复用 `SubscriptReadStrategy.ContainerKind`（容器分类维度一致）。
-    private static var registry: [SubscriptReadStrategy.ContainerKind: WriteStrategy] = {
+    /// 初始化后不再改写；策略是无捕获的纯函数，多线程同时调用不共享可变状态，故免隔离是安全的。
+    nonisolated(unsafe) private static let registry: [SubscriptReadStrategy.ContainerKind: WriteStrategy] = {
         var r: [SubscriptReadStrategy.ContainerKind: WriteStrategy] = [:]
 
         r[.array] = { container, index, newValue, loc in

@@ -10,7 +10,7 @@ struct IOBaseParityTests: Sendable {
 
     // MARK: - 私有 helper
 
-    struct RunResult: Sendable {
+    private struct RunResult: Sendable {
         let label: String
         let status: Int32
         let stdout: String

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 结构块声明（值类型）
-public struct StructDecl: Equatable, ASTNode {
+public struct StructDecl: Equatable, ASTNode, Sendable {
     public let name: String
     public let genericParams: [GenericParam]
     public let fields: [FieldDecl]

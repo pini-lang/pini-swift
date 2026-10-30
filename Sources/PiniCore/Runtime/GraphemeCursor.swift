@@ -15,7 +15,7 @@ private final class CursorState {
     var cursorOffset = -1
 }
 
-private final class Store {
+private final class Store: @unchecked Sendable {
     static let shared = Store()
     private let box = ThreadLocal<CursorState>()
 

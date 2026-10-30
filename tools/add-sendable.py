@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""给 struct 补上 Sendable 遵循 —— Swift 6 迁移的机械步骤。
+"""给 struct 或 enum 补上 Sendable 遵循 —— Swift 6 迁移的机械步骤。
 
 WHY THIS EXISTS
 ---------------
@@ -13,6 +13,7 @@ Swift 6 的严格并发检查要求跨隔离域传递的值是 Sendable。逐个
     python3 tools/add-sendable.py Tests            # 就地改写
     python3 tools/add-sendable.py Tests --dry-run  # 只报不写
     python3 tools/add-sendable.py Tests --check    # 有未加注的即以 1 退出
+    python3 tools/add-sendable.py Sources --enums  # 改注 enum（含 indirect enum）
 """
 
 import argparse
@@ -20,14 +21,27 @@ import pathlib
 import re
 import sys
 
-# 声明头：可选的访问级、struct 关键字、名字、可选泛型参数、可选继承子句，直到 `{`。
+# 声明头：可选的访问级、关键字、名字、可选泛型参数、可选继承子句，直到 `{`。
 # 继承子句里可能有 `where`，插入点必须在它之前，故单独捕获。
+# 访问级必须捕获后原样写回：丢了就是静默降可见性，编译照过的改动。
+ACCESS = r"(?P<access>(?:(?:public|internal|fileprivate|private|package)\s+)?)"
+
 DECL = re.compile(
-    r"(?m)^([ \t]*)"
-    r"(?:(?:public|internal|fileprivate|private|package)\s+)?"
-    r"struct\s+([A-Za-z_][A-Za-z0-9_]*)"
-    r"\s*(<[^{}]*?>)?"
-    r"([^{}]*?)"
+    r"(?m)^(?P<indent>[ \t]*)"
+    + ACCESS
+    + r"struct\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*(?P<generic><[^{}]*?>)?"
+    r"(?P<clause>[^{}]*?)"
+    r"\{"
+)
+
+# enum 版：多一个可选的 `indirect`。两版分开写，免得 struct 路径被间接地放宽。
+ENUM_DECL = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)"
+    + ACCESS
+    + r"(?P<indirect>indirect\s+)?enum\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*(?P<generic><[^{}]*?>)?"
+    r"(?P<clause>[^{}]*?)"
     r"\{"
 )
 
@@ -73,7 +87,7 @@ def add_to_clause(clause: str) -> str | None:
     return body + ", Sendable "
 
 
-def process(path: pathlib.Path, dry_run: bool) -> tuple[int, int, list[str]]:
+def process(path: pathlib.Path, dry_run: bool, enums: bool) -> tuple[int, int, list[str]]:
     text = path.read_text(encoding="utf-8")
     flags = comment_line_flags(text)
     line_starts = [0]
@@ -90,28 +104,36 @@ def process(path: pathlib.Path, dry_run: bool) -> tuple[int, int, list[str]]:
                 hi = mid - 1
         return lo
 
+    pattern = ENUM_DECL if enums else DECL
+    kind_word = "enum" if enums else "struct"
+
     edits: list[tuple[int, int, str]] = []
     seen = 0
     already = 0
     reported: list[str] = []
 
-    for m in DECL.finditer(text):
+    for m in pattern.finditer(text):
         if flags[line_of(m.start())]:
             continue
         seen += 1
-        clause = m.group(4)
+        clause = m.group("clause")
         if SENDABLE_WORD.search(clause):
             already += 1
             continue
         new_clause = add_to_clause(clause)
+        name = m.group("name")
         if new_clause is None:
             reported.append(
-                f"{path}:{line_of(m.start()) + 1}: struct {m.group(2)}（跨行声明，需人工加注）"
+                f"{path}:{line_of(m.start()) + 1}: {kind_word} {name}（跨行声明，需人工加注）"
             )
             continue
-        header = f"{m.group(1)}struct {m.group(2)}{m.group(3) or ''}{new_clause}{{"
+        indirect = (m.group("indirect") or "") if enums else ""
+        header = (
+            f"{m.group('indent')}{m.group('access')}{indirect}{kind_word} {name}"
+            f"{m.group('generic') or ''}{new_clause}{{"
+        )
         edits.append((m.start(), m.end(), header))
-        reported.append(f"{path}:{line_of(m.start()) + 1}: struct {m.group(2)}")
+        reported.append(f"{path}:{line_of(m.start()) + 1}: {kind_word} {name}")
 
     if edits and not dry_run:
         out = []
@@ -131,6 +153,7 @@ def main() -> int:
     parser.add_argument("paths", nargs="*", default=["Tests"])
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--enums", action="store_true", help="改注 enum（含 indirect enum）")
     args = parser.parse_args()
 
     targets: list[pathlib.Path] = []
@@ -141,12 +164,13 @@ def main() -> int:
     total_decls = total_already = 0
     changes: list[str] = []
     for path in targets:
-        seen, already, reported = process(path, args.dry_run or args.check)
+        seen, already, reported = process(path, args.dry_run or args.check, args.enums)
         total_decls += seen
         total_already += already
         changes.extend(reported)
 
-    print(f"扫描 {len(targets)} 个文件 · struct 声明 {total_decls} 处 · 已遵循 {total_already} 处")
+    kind = "enum" if args.enums else "struct"
+    print(f"扫描 {len(targets)} 个文件 · {kind} 声明 {total_decls} 处 · 已遵循 {total_already} 处")
     for line in changes:
         print("  + " + line)
     print(f"待加注 {len(changes)} 处（{args.paths}）")

@@ -1,4 +1,4 @@
-public struct SourceLocation: Equatable {
+public struct SourceLocation: Equatable, Sendable {
     public let line: Int
     public let column: Int
     public let endLine: Int

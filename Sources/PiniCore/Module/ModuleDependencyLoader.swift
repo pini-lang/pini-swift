@@ -2,8 +2,8 @@ import Foundation
 
 /// 模块依赖加载器：按 import 的包路径加载被引入模块——模块根须有 `pini.toml`（物理边界），
 /// 解析其根级 `.pini` 源文件，产出声明表与 public 符号集（跨模块引入的门槛只认 public）。
-/// 加载栈 + 规范路径缓存实现环检测：import 即依赖，依赖图禁环。
-public final class ModuleDependencyLoader {
+/// 加载栈 + 规范路径缓存实现环检测：import 即依赖，依赖图禁环；缓存读写都在 `cacheLock` 内。
+public final class ModuleDependencyLoader: @unchecked Sendable {
 
     public struct LoadedModule {
         public let rootPath: String
@@ -17,7 +17,21 @@ public final class ModuleDependencyLoader {
 
     public static let shared = ModuleDependencyLoader()
 
+    private let cacheLock = NSLock()
     private var cache: [String: LoadedModule] = [:]
+
+    /// 缓存读写不跨递归：锁只裹「取/存」两小段，加载本身在锁外跑，故不会自锁。
+    private func cachedModule(_ key: String) -> LoadedModule? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cache[key]
+    }
+
+    private func cacheModule(_ module: LoadedModule, at key: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cache[key] = module
+    }
 
     public init() {}
 
@@ -49,7 +63,7 @@ public final class ModuleDependencyLoader {
             let cycleChain = (chain + [canonical]).map { ($0 as NSString).lastPathComponent }
             throw SemanticError.moduleDependencyCycle(chain: cycleChain)
         }
-        if let cached = cache[canonical] { return cached }
+        if let cached = cachedModule(canonical) { return cached }
 
         // R1：物理边界——模块根须有清单 pini.toml
         let manifest = canonical + "/pini.toml"
@@ -103,7 +117,7 @@ public final class ModuleDependencyLoader {
             let dir = (imp.location.fileName as NSString).deletingLastPathComponent
             _ = try load(packagePath: imp.packagePath, relativeTo: dir, chain: chain + [canonical])
         }
-        cache[canonical] = loaded
+        cacheModule(loaded, at: canonical)
         return loaded
     }
 

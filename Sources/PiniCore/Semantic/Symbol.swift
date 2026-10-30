@@ -15,7 +15,7 @@ public struct Symbol {
 }
 
 /// 符号种类
-public enum SymbolKind: Equatable {
+public enum SymbolKind: Equatable, Sendable {
     case variable(isMutable: Bool)
     case function
     case `struct`

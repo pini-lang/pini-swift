@@ -16,7 +16,7 @@
 |---|---|---|
 | 构建系统 | SwiftPM | `Package.swift` |
 | Swift 工具链声明 | `swift-tools-version:6.4` | `Package.swift` 第 1 行 |
-| 语言模式 | 包级 `v6`；源码 target 覆写为 `v5`；测试 target 走包级 `v6` | `Package.swift` |
+| 语言模式 | 包级 `v6`，四个 target 均不再覆写 | `Package.swift` |
 | 第三方依赖 | 无 | `Package.swift` 无 `dependencies` |
 | Linux CI 镜像 | `swift:6.4-noble`（Swift 6.4.1 · Ubuntu 24.04.5） | `ci/Dockerfile` |
 | Linux CI 系统依赖 | `python3` · `clang-18` · `llvm-18`（含 `lli`） | `ci/Dockerfile` |
@@ -123,8 +123,26 @@ CI 的三条口径：
   （它确实跨线程），跨线程共享的可变状态装进 `SendableBox`。
 - 理由：这些声明是**事实**的登记，不是让编译器闭嘴的开关 —— 握手处本来就有锁与信号量。
   批量脚本只负责机械部分，判断仍逐点做。
-- 代价：源码 target 仍是 `v5`，包级迁移只完成了一半；`spawn` 的 `@Sendable` 会在源码翻 v6 时
-  把一批旧闭包的捕获逐个暴露出来，届时须按同一口径修，不能改回 `@escaping` 了事。
+- 代价：源码 target 当时仍是 `v5`，包级迁移只完成了一半；`spawn` 的 `@Sendable` 会在源码翻 v6 时
+  把一批旧闭包的捕获逐个暴露出来，届时须按同一口径修，不能改回 `@escaping` 了事。后一半见下一条。
+
+### ADR-009 源码三个 target 翻 Swift 6
+
+状态：**生效并实测**（2026-10-30）
+
+- 场景：ADR-008 把测试目标挽回 `v6` 后源码仍停在 `v5` —— 同一段语义在两处受不同强度的检查，
+  而 `Scheduler.spawn` 的 `@Sendable` 在源码侧没有对应约束。
+- 决策：去掉三个 target 的语言模式覆写，全包走 `v6`。机械部分交给 `tools/add-sendable.py`
+  （本轮扩到 `enum`，含 `indirect`）：AST 的 40 个值类型全部显式遵循 `Sendable`；其余逐个定性 ——
+  已有锁的类写 `@unchecked Sendable`（`GCDScheduler` · `IRExecutor` · `DiagnosticResources` ·
+  `ModuleDependencyLoader` · `DAPServer` · `ThreadLocal`），已有锁的全局表写 `nonisolated(unsafe)`
+  并在注释里点名守护者；派发口引入 `WorkHandoff`，把「这一趟归工作者」写在跨线程那一行。
+- 理由：AST 全是值类型、无 `class`，跨线程传递本就安全，缺的只是声明；需要判断的是那几个持有
+  可变状态的类，它们每一处都已经有锁，由锁承担而不是由编译器猜。
+- 代价：`Value` 仍未声明 `Sendable`，`ControlSignal` / `IRControlSignal` 因 `Error` 隐含 `Sendable`
+  留下两条警告 —— 要不要给 `Value` 定性是语义裁决（`ObjectReference` 可变），不是迁移动作。
+  另有三处平台差异被这次迁移逼出来：Glibc 的 `stdout` / `stderr` 是可变全局量（改走 `fflush(nil)`
+  与 `write(2, …)`），裸指针进 `Thread` 闭包以位模式过界。
 
 ## 4. 模块清单与进度
 
@@ -196,7 +214,8 @@ CI 的三条口径：
 | 拆 target 会暴露一批「为测试而 public」的 API | 预警 | 清理量单列，不混进结构改动评 |
 | 两份运行时实现长期漂移 | 既有 | 三方对照脚本（内建清单） |
 | 降载耗时未测 | 缺口 | 所有权归位后留一次读数 |
-| 测试目标已回 v6，源码 target 仍 v5 | 半程 | 两个 target 口径不同，同一段语义在两处受不同强度的检查；源码翻 v6 时按 ADR-008 的口径逐点修 |
+| 四个 target 语言模式不一致 | **已闭合** | ADR-009：全包 `v6`，两端口径一致 |
+| `Value` 未声明 `Sendable`，两条控制信号带警告 | 既有 | `Error` 隐含 `Sendable`；给 `Value` 定性属语义裁决，须单独立项 |
 | 并行的套件共享全局让出计数 | 已修一处 | 读数改用「只归本次运行」的计数后端；同类写法再加时按同一口径 |
 
 ## 7. 待办
@@ -208,6 +227,7 @@ CI 的三条口径：
    不在 workflow 里另写一遍。
 4. 升级工具链时同步改 `ci/Dockerfile` 与 `Package.swift`，两处必须同一次提交 —— 分开改就是
    重演旧 CI 的版本错配。
-5. **源码 target 翻 `v6`**：排在拆边界之后 —— 先按 `Syntax` / `Semantics` / `IR` / `BackendLLVM`
-   切开，再逐 target 收紧，才不会一次性面对三千行报告。`Scheduler.spawn` 的 `@Sendable` 已经
-   先行，届时会指出第一批要修的捕获点。
+5. **拆边界的准备**：源码已在 `v6`（ADR-009），拆 target 时不必再为语言模式分批，一次把 import
+   与 `public` 面收拢即可；切分顺序仍按 `Syntax` / `Semantics` / `IR` / `BackendLLVM`。
+6. **`Value` 的定性**：要清掉两条控制信号警告，须先决定 `ObjectReference` 跨线程可变怎么算 ——
+   这是语义裁决，单独立项，不混进结构改动。

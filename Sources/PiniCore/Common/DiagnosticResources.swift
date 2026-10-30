@@ -9,7 +9,8 @@ public enum DiagnosticLanguage: String {
     case en
 }
 
-public final class DiagnosticResources {
+/// `tables` 在 `init` 内一次建满、此后只读；`language` 只在启动期由 `--lang` 写入，编译与运行期只读。
+public final class DiagnosticResources: @unchecked Sendable {
 
     public static let shared = DiagnosticResources()
 

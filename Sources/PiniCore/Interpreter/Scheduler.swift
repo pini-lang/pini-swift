@@ -8,6 +8,17 @@ enum TaskRunOutcome {
     case suspended
 }
 
+/// 派发一次任务的工作体：调度器只收 `@Sendable` 闭包，而一次任务要带走的捕获（环境、实参、可调用体）
+/// 都是解释器的对象图，编译期证不出所有权已转移。本盒把「这一趟归工作者」写在派发点，由调用方署名；
+/// 盒内闭包只跑一次，调用方交出后不得再动其中捕获 —— 这条是约定，编译器不查。
+struct WorkHandoff: @unchecked Sendable {
+    let run: () throws -> TaskRunOutcome
+
+    init(_ run: @escaping () throws -> TaskRunOutcome) {
+        self.run = run
+    }
+}
+
 /// 派发任务的唯一契约边界：调用方只依赖 `spawn`，不感知底层是 GCD、pthread 还是别的执行器。
 /// 不含 GCD 专有类型，便于跨平台后端接入；让出与否由 `TaskRunOutcome` 加能力位表达。
 /// 各后端须在「能不能让出」这一位上一致，否则 `await`/`wait` 的可观测差异跨后端就没有共同基准。
@@ -42,8 +53,8 @@ extension Scheduler {
 
 /// GCD 后端：异步体派发到有界并发池，防线程爆炸与池饥饿；池满时派发方阻塞形成背压。
 /// `wait` 占用当前线程直至决，`await` 让出并即刻归还池子——池子有界，让出才有意义。
-/// 池大小 = max(4, 核数×2)，并发上限 = 池大小×4；GCD 按需额外建线程，信号量给出可观测上界。
-final class GCDScheduler: Scheduler {
+/// 池大小 = max(4, 核数×2)，上限 = 池×4；唯一实例跨线程共享，可变量都在 `countLock` 内读写。
+final class GCDScheduler: Scheduler, @unchecked Sendable {
     static let shared = GCDScheduler()
 
     /// 基线池大小（常规并发度）。

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum BinaryOperator: Equatable {
+public enum BinaryOperator: Equatable, Sendable {
     case plus
     case minus
     case multiply

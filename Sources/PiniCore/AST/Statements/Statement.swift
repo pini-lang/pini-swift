@@ -1,7 +1,7 @@
 import Foundation
 
 /// 语句 AST 节点
-public indirect enum Statement: Equatable {
+public indirect enum Statement: Equatable, Sendable {
     case varDecl(name: String, typeAnnotation: TypeAnnotation?, initializer: Expression?, isMutable: Bool, location: SourceLocation)
     /// 元组解构 `var (t, e) = rhs`（草稿 A1，批次 1）：左值模式元组逐分量绑定右值元组；
     /// `_` 为占位（不定义变量）。names 与右值元组分量一一对应。

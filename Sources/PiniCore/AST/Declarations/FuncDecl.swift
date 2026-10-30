@@ -1,7 +1,7 @@
 import Foundation
 
 /// 函数声明
-public struct FuncDecl: Equatable, ASTNode {
+public struct FuncDecl: Equatable, ASTNode, Sendable {
     public let name: String
     public let modifiers: [String]
     public let genericParams: [GenericParam]
@@ -30,7 +30,7 @@ public struct FuncDecl: Equatable, ASTNode {
 }
 
 /// 字段声明
-public struct FieldDecl: Equatable, ASTNode {
+public struct FieldDecl: Equatable, ASTNode, Sendable {
     public let name: String
     public let typeAnnotation: TypeAnnotation
     public let initializer: Expression?

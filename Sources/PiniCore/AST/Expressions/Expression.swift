@@ -14,7 +14,7 @@ public enum JoinForm: String, Sendable, Equatable {
 }
 
 /// 函数调用参数（支持命名参数）
-public struct CallArgument: Equatable {
+public struct CallArgument: Equatable, Sendable {
     public let label: String?
     public let expression: Expression
 
@@ -25,7 +25,7 @@ public struct CallArgument: Equatable {
 }
 
 /// 字典字面量条目（用于规避元组类型不支持 Equatable 的限制）
-public struct DictEntry: Equatable {
+public struct DictEntry: Equatable, Sendable {
     public let key: Expression
     public let value: Expression
 
@@ -36,13 +36,13 @@ public struct DictEntry: Equatable {
 }
 
 /// 字符串插值段（literal 为普通文本，expression 为待求值子表达式）
-public enum InterpolationSegment: Equatable {
+public enum InterpolationSegment: Equatable, Sendable {
     case literal(String)
     case expression(Expression)
 }
 
 /// 表达式 AST 节点
-public indirect enum Expression: Equatable {
+public indirect enum Expression: Equatable, Sendable {
     case identifier(name: String, location: SourceLocation)
     case integerLiteral(value: Int, location: SourceLocation)
     case floatLiteral(value: Double, location: SourceLocation)

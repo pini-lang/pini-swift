@@ -7,7 +7,7 @@ import Foundation
 
 /// Runtime operations both engines need: the value-level helpers, builtins and predicates the surviving engine shares.
 /// Nothing here may reference `Interpreter`; every member is pure over `Value`, so this is a move, not a redesign.
-/// The private helpers below (`typeMismatch`, `intArg`, `trigArgument`) are their internal dependencies.
+/// Name tables are filled once at load and never rewritten; their closures capture nothing, so unguarded reads are safe.
 public enum RuntimeOps {
 
     /// Value-type copy: a `structInstance` is copied field by field, recursively; everything else passes through.
@@ -125,7 +125,7 @@ public enum RuntimeOps {
 
     /// The Array member face the IR path answers by name: the receiver first, then the call's arguments.
     /// Each entry returns exactly what the AST walk's member dispatch returns, so the two engines cannot drift.
-    static let arrayMethods: [String: ([Value]) throws -> Value] = [
+    nonisolated(unsafe) static let arrayMethods: [String: ([Value]) throws -> Value] = [
         "Array.append": builtinArrayAppend,
         "Array.last": builtinArrayLast,
         "Array.pop": builtinArrayPop,
@@ -406,7 +406,7 @@ public enum RuntimeOps {
         return v
     }
 
-    static let libcShims: [String: ([Value]) throws -> Value] = {
+    nonisolated(unsafe) static let libcShims: [String: ([Value]) throws -> Value] = {
         var shims: [String: ([Value]) throws -> Value] = [:]
         #if canImport(Darwin) || canImport(Glibc)
             let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -828,7 +828,7 @@ public enum RuntimeOps {
     /// The character builtins, by name.
     /// One table serves both engines: the lowerer's whitelist reads it and the executor dispatches through it.
     /// A name therefore cannot be half-supported, with a lowering rule on one side and no answer on the other.
-    static let characterBuiltins: [String: ([Value]) throws -> Value] = [
+    nonisolated(unsafe) static let characterBuiltins: [String: ([Value]) throws -> Value] = [
         "chars": builtinChars,
         "chr": builtinChr,
         "ord": builtinOrd,
@@ -906,7 +906,7 @@ public enum RuntimeOps {
     /// The concurrency builtins this grid answers synchronously, by name.
     /// Same contract as `characterBuiltins`: the lowerer's whitelist reads it and the executor dispatches through it.
     /// Only what a plain call can express: `sleep` blocks, `Error` / `CancelError` build a value; joins need a task handle.
-    static let concurrencyBuiltins: [String: ([Value]) throws -> Value] = [
+    nonisolated(unsafe) static let concurrencyBuiltins: [String: ([Value]) throws -> Value] = [
         "sleep": { args in
             try builtinSleep(milliseconds: try sleepMilliseconds(args), checkpoint: {})
         },
@@ -1023,7 +1023,7 @@ public enum RuntimeOps {
         aggregate.onCancel { members.forEach { $0.cancel() } }
 
         let captured = members
-        scheduler.spawn(aggregate) {
+        let work = WorkHandoff {
             let restore = enterTask(aggregate)
             // Registration order matches the AST side: the scope close runs
             // before the task handle is restored, so the close still sees the
@@ -1050,6 +1050,7 @@ public enum RuntimeOps {
             aggregate.resolve(makeResult(caseName: "ok", payload: .array(values)))
             return .finished(.null)
         }
+        scheduler.spawn(aggregate) { try work.run() }
         return .future(aggregate)
     }
 

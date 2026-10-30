@@ -1,6 +1,6 @@
 import Foundation
 
-public enum UnaryOperator: Equatable {
+public enum UnaryOperator: Equatable, Sendable {
     case minus
     case plus
     case logicalNot

@@ -112,9 +112,9 @@ public enum ModuleToolchain {
     // MARK: - 版本约束（G52 §3.2：^ / ~ / = / 区间 / * / 裸版本）
 
     /// 约束 = 原子列表（全部满足才算满足）。
-    public struct Constraint: Equatable {
-        public enum Op: Equatable { case ge, lt, eq }
-        public struct Atom: Equatable { let op: Op; let version: [Int] }
+    public struct Constraint: Equatable, Sendable {
+        public enum Op: Equatable, Sendable { case ge, lt, eq }
+        public struct Atom: Equatable, Sendable { let op: Op; let version: [Int] }
         let atoms: [Atom]
         let raw: String
 

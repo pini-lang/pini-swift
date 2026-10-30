@@ -2,7 +2,7 @@ import Foundation
 
 /// 4 级可见性：`private < internal < package < public`，严格度排序用于「多信号同现时取最严格」。
 /// 文件内 ⊂ 包内 ⊂ 全局，故 internal 优先于 package、package 优先于 public。
-public enum VisibilityLevel: Int, Comparable {
+public enum VisibilityLevel: Int, Comparable, Sendable {
     case `private` = 0
     case `internal` = 1
     case `package` = 2
@@ -47,7 +47,7 @@ extension VisibilityLevel {
 }
 
 /// 包级符号索引条目：记录符号名、定义文件与推导出的可见性级别。
-public struct PackageSymbol: Equatable {
+public struct PackageSymbol: Equatable, Sendable {
     public let name: String
     /// 定义该符号的源文件路径（物理锚点）。
     public let fileName: String
@@ -70,7 +70,7 @@ public struct PackageSymbol: Equatable {
 /// 包级符号索引：把 `Package` 内所有 `FileUnit` 的顶级声明聚成「名字 → 定义文件 + 可见性」，
 /// 供语义 / 类型层做跨文件解析与可见性 enforce；可见性仅按文件 / 目录 `_` 前缀计算。
 /// 单文件 `Package` 由 `analyze(module:)` / `check(module:)` 原样处理，本索引只服务多文件场景。
-public struct PackageSymbolIndex: Equatable {
+public struct PackageSymbolIndex: Equatable, Sendable {
     private let byName: [String: PackageSymbol]
     /// 枚举 case 名 → 父枚举名集合。case 名按枚举命名空间隔离（P5-5 HIGH-1：
     /// 跨枚举同名 case 允许共存），故同名可映射到多个父枚举；多于一个即**歧义**，
