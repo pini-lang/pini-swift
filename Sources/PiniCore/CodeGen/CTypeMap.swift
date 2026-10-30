@@ -34,6 +34,8 @@ public enum CTypeMap {
         case .function: return "PiniClosure"
         // 元组是按值聚合体（不是句柄）：每个形状一个具名结构体，字段序即 LLVM 的 `{ ... }` 字段序。
         case .tuple(_, let fieldTypes): return try tupleName(fieldTypes)
+        // Result 同样按值：`{ tag, ok, err }` 三格，与 LLVM 的 `{ i64, <ok>, i64 }` 逐格对齐。
+        case .result(let ok): return try resultName(ok)
         // LazyRef 与三族容器同为不透明句柄，元素只决定装箱 ABI 与 `.value` 的读出宽度。
         case .lazyRef: return "void *"
         default: throw CBackendError(message: "C 后端尚未支持的类型：\(label(of: type))")
@@ -94,6 +96,57 @@ public enum CTypeMap {
         "PiniOpt_" + (try optionalSuffix(wrapped))
     }
 
+    /// Result 的按值结构体名。只按 ok 载荷特化：错误槽是擦除的一个机器字，不参与命名。
+    public static func resultName(_ ok: IRType) throws -> String {
+        "PiniResult_" + (try resultSuffix(ok))
+    }
+
+    /// ok 载荷的类型后缀。与 `tupleSuffix` / `optionalSuffix` 分开维护：三处名字服务三族聚合体，
+    /// 合表会让一族的具名规则被另一族牵动；词汇相同是巧合，不是契约。
+    public static func resultSuffix(_ type: IRType) throws -> String {
+        switch type {
+        case .i8: return "i8"
+        case .u8: return "u8"
+        case .i32: return "i32"
+        case .i64: return "i64"
+        case .u64: return "u64"
+        case .f64: return "f64"
+        case .boolean: return "bool"
+        case .string: return "str"
+        case .char: return "chr"
+        case .nominal(let name, _): return "nom_" + IRName.mangle(name)
+        case .enumeration(let name): return "enum_" + IRName.mangle(name)
+        case .array(let element): return "arr_" + (try resultSuffix(element))
+        case .set(let element): return "set_" + (try resultSuffix(element))
+        case .dict(let key, let value):
+            return "dict_" + (try resultSuffix(key)) + "_" + (try resultSuffix(value))
+        case .optional(let wrapped): return "opt_" + (try resultSuffix(wrapped))
+        case .lazyRef(let element): return "lazy_" + (try resultSuffix(element))
+        case .function: return "fn"
+        case .tuple(_, let fields):
+            return "tup_" + (try fields.map { try resultSuffix($0) }.joined(separator: "_"))
+        case .result(let ok): return "res_" + (try resultSuffix(ok))
+        default:
+            throw CBackendError(message: "C 后端尚未支持的 Result 载荷：\(label(of: type))")
+        }
+    }
+
+    /// Result 的结构体定义。三格与 LLVM 的 `{ i64, ok, i64 }` 同序同对齐：tag 在 0、载荷在 1、错误字在 2。
+    /// 注意 —— 错误槽声明成 `int64_t`：ABI 上它是类型擦除的一个机器字，不是指针。
+    public static func resultDefinition(_ type: IRType) throws -> (name: String, source: String) {
+        guard case .result(let ok) = type else {
+            throw CBackendError(message: "C 后端：为非 Result 类型请求 Result 定义")
+        }
+        let name = try resultName(ok)
+        let source =
+            "typedef struct \(name) {\n"
+            + "    int64_t tag;\n"
+            + "    \(try spelling(of: ok)) ok;\n"
+            + "    int64_t err;\n"
+            + "} \(name);\n"
+        return (name, source)
+    }
+
     /// 载荷类型的后缀。容器与名义类型递归展开，故嵌套容器的 Optional 也有稳定的独立名字。
     public static func optionalSuffix(_ type: IRType) throws -> String {
         switch type {
@@ -148,6 +201,9 @@ public enum CTypeMap {
         // 元组是聚合体：只给第一个字段一个 0，其余按 C 的聚合初始化落零（与 LLVM 的零聚合同值）。
         case .tuple(_, let fieldTypes):
             return "((\(try tupleName(fieldTypes))){ 0 })"
+        // 同 Optional 的取法：tag = 1 即 err（没有值的那个分支），两格载荷按聚合初始化落零。
+        case .result(let ok):
+            return "((\(try resultName(ok))){ 1 })"
         // 句柄：NULL 对 `bk_lazyref_destroy` / 任何读口都是明确的空值。
         case .lazyRef: return "NULL"
         default:

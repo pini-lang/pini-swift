@@ -45,8 +45,8 @@ public final class CEmitter {
         methods = methods.filter { $0.sourceFile != PredefinedDecls.sourceName }
 
         let scope = CModuleScope(module: module, defined: Set((functions + methods).map(\.name)))
-        // 声明面上的 Optional 先登记：签名与布局里出现的结构体名要先有定义，否则产物编不过。
-        try Self.noteDeclaredOptionals(scope: scope, functions: functions + methods, module: module)
+        // 声明面上要落结构体的类型先登记：签名与布局里出现的结构体名要先有定义，否则产物编不过。
+        try Self.noteDeclaredTypes(scope: scope, functions: functions + methods, module: module)
         var bodies: [String] = []
         for function in functions {
             bodies.append(try CFunctionEmitter(function: function, scope: scope, programBase: programBase).emit())
@@ -66,9 +66,11 @@ public final class CEmitter {
         out += scope.forwardDeclarations()
         out += scope.optionalDefinitions()
         out += scope.tupleDefinitions()
+        out += scope.resultDefinitions()
         out += try scope.aggregateDefinitions()
         out += try scope.layoutAssertions()
         out += try scope.tupleLayoutAssertions()
+        out += try scope.resultLayoutAssertions()
         out += try scope.closureEnvDefinitions()
         out += scope.lazyRefWrapperDefinitions()
         out += scope.copyFunctionDeclarations()
@@ -110,9 +112,9 @@ public final class CEmitter {
     """#
 
 
-    /// 声明面上出现的可选类型逐个登记：签名、字段与枚举载荷槽都在这个面上。
+    /// 声明面上出现的聚合体（Optional / 元组 / Result）逐个登记：签名、字段与枚举载荷槽都在这个面上。
     /// 只在构造 / 取值点登记的写法会漏掉「声明了但从没构造过」的那种签名。
-    private static func noteDeclaredOptionals(
+    private static func noteDeclaredTypes(
         scope: CModuleScope, functions: [IRFunction], module: IRModule
     ) throws {
         for function in functions {
@@ -193,6 +195,10 @@ final class CModuleScope {
     private var tupleNames: Set<String> = []
     private(set) var tupleBodies: [String] = []
     private var tupleShapes: [(name: String, fieldTypes: [IRType])] = []
+    /// 用到的 Result 形状：名字与 ok 载荷。与元组同规 —— 一行定义、一份布局判据。
+    private var resultNames: Set<String> = []
+    private(set) var resultBodies: [String] = []
+    private var resultShapes: [(name: String, ok: IRType)] = []
     /// LazyRef 的装箱入口，按元素类型去重。
     private var lazyRefWrapperNames: Set<String> = []
     private var lazyRefWrappers: [String] = []
@@ -323,13 +329,17 @@ final class CModuleScope {
         return definition.name
     }
 
-    /// 类型需要在产物里落一个结构体定义就登记（Optional / 元组）。声明面上的类型要在这里过一遍：
+    /// 类型需要在产物里落一个结构体定义就登记（Optional / 元组 / Result）。声明面上的类型要在这里过一遍：
     /// 只在使用点登记的写法会漏掉「声明了但没构造」的签名。
     func noteType(_ type: IRType) throws {
         // 函数类型出现在签名面也要算一次使用：`PiniClosure` 的 typedef 得排在原型之前。
         if case .function = type { usesClosureValues = true }
         if case .tuple = type {
             _ = try registerTuple(type)
+            return
+        }
+        if case .result = type {
+            _ = try registerResult(type)
             return
         }
         guard case .optional = type else { return }
@@ -358,6 +368,47 @@ final class CModuleScope {
     /// 全部元组结构体定义。排在 Optional 之后、名义聚合体之前：名义字段可能就是一个元组。
     func tupleDefinitions() -> String {
         tupleBodies.isEmpty ? "" : tupleBodies.joined(separator: "\n") + "\n"
+    }
+
+    /// 登记一个 Result 形状，返回它的 C 结构体名。ok 载荷先递归登记 —— 载荷是元组时，
+    /// 那个结构体必须排在本结构体之前。同形状再次登记只是复用名字。
+    func registerResult(_ type: IRType) throws -> String {
+        guard case .result(let ok) = type else {
+            throw CBackendError(message: "C 后端：为非 Result 类型请求 Result 定义")
+        }
+        let definition = try CTypeMap.resultDefinition(type)
+        guard resultNames.insert(definition.name).inserted else { return definition.name }
+        try noteType(ok)
+        resultBodies.append(definition.source)
+        resultShapes.append((name: definition.name, ok: ok))
+        return definition.name
+    }
+
+    /// 全部 Result 结构体定义。排在元组之后：ok 载荷可以是元组，反过来不行（元组形状表不认识 Result）。
+    func resultDefinitions() -> String {
+        resultBodies.isEmpty ? "" : resultBodies.joined(separator: "\n") + "\n"
+    }
+
+    /// Result 的布局判据：总字节数与三格偏移。字段序就是 tag / 载荷 / 错误字的语义，
+    /// 错一格 `try` 会读到载荷的字节当错误字 —— 只在产物跑起来后看得见。
+    func resultLayoutAssertions() throws -> String {
+        var out = ""
+        for shape in resultShapes {
+            let layout = try CLayout.tuple([.i64, shape.ok, .i64])
+            out +=
+                "_Static_assert(sizeof(\(shape.name)) == \(layout.size),"
+                + " \"Result 布局漂移：\(shape.name)\");\n"
+            out +=
+                "_Static_assert(offsetof(\(shape.name), tag) == \(layout.offsets[0]),"
+                + " \"Result 布局漂移：\(shape.name).tag\");\n"
+            out +=
+                "_Static_assert(offsetof(\(shape.name), ok) == \(layout.offsets[1]),"
+                + " \"Result 布局漂移：\(shape.name).ok\");\n"
+            out +=
+                "_Static_assert(offsetof(\(shape.name), err) == \(layout.offsets[2]),"
+                + " \"Result 布局漂移：\(shape.name).err\");\n"
+        }
+        return out
     }
 
     /// 元组的布局判据：总字节数与逐字段偏移。少了它，字段序或宽度漂了只能到运行期看见。
@@ -580,6 +631,10 @@ enum CLayout {
         // 元组的尺寸与对齐由字段表推出，与 LLVM 对同一份 `{ ... }` 的结论同源。
         case .tuple(_, let fieldTypes):
             let layout = try self.tuple(fieldTypes)
+            return (layout.size, layout.align)
+        // Result 就是 `{ i64, ok, i64 }`：按同一张字段表的规则推，不另立一套对齐假设。
+        case .result(let ok):
+            let layout = try self.tuple([.i64, ok, .i64])
             return (layout.size, layout.align)
         default: throw CBackendError(message: "C 后端尚未支持的类型布局：\(CTypeMap.label(of: type))")
         }
@@ -1095,6 +1150,11 @@ final class CFunctionEmitter {
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             try emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
 
+        case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
+            try emitTry(
+                operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget,
+                type: type)
+
         case .fieldStore(let base, let field, let value, let fieldType):
             let baseText = try emitExpr(base)
             let access = try fieldAccess(base: base, field: field, baseText: baseText)
@@ -1315,6 +1375,37 @@ final class CFunctionEmitter {
         terminated = false
     }
 
+    /// `try operand else e: handler`。操作数先整体落临时变量（只求值一次），再按 tag 分派：
+    /// 0 = ok ⇒ 表达式位把载荷写进 okTarget 槽；非 0 ⇒ 错误字绑进 errorVar，再跑 handler。
+    /// 所有权照抄 LLVM：两侧都是裸赋值 —— Result 不在任何计数族里，retain 与 release 一条也不发。
+    private func emitTry(
+        operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?, type: IRType
+    ) throws {
+        guard case .result = type else {
+            throw CBackendError(
+                message: "C 后端：try 的操作数类型不是 Result（\(CTypeMap.label(of: type))）")
+        }
+        _ = try scope.registerResult(type)
+        let value = try materialize(try emitExpr(operand), type: type)
+
+        writer.open("if (\(value).tag != 0)")
+        scopes.append([:])
+        terminated = false
+        /// 错误变量就是擦除后的那个机器字（降载层把它声明成 `i64`），只在 handler 里可见。
+        let bound = declareLocal(errorVar)
+        writer.line("int64_t \(bound) = \(value).err;")
+        try emitBlock(handler)
+        scopes.removeLast()
+        if let okTarget {
+            writer.elseOpen()
+            writer.line("\(lookupVar(okTarget)) = \(value).ok;")
+            writer.close()
+        } else {
+            writer.close()
+        }
+        terminated = false
+    }
+
     private func emitBindings(        arm: IRMatchCase, enumCase: IREnumCase, decl: IREnumDecl, pointer: String, enumName: String
     ) throws {
         for (slot, binding) in arm.bindings.enumerated() {
@@ -1374,6 +1465,9 @@ final class CFunctionEmitter {
 
         case .tupleConstruct(_, let elements, let type):
             return try emitTupleConstruct(elements: elements, type: type)
+
+        case .resultConstruct(let isOk, let payload, let type):
+            return try emitResultConstruct(isOk: isOk, payload: payload, type: type)
 
         case .tupleIndexGet(let base, let index, let type):
             return try emitTupleIndexGet(base: base, index: index, type: type)
@@ -2011,6 +2105,62 @@ final class CFunctionEmitter {
             writer.line("\(temp).f\(index) = \(try emitExpr(element));")
         }
         return temp
+    }
+
+    /// `ok(v)` / `err(e)`：按值聚合体，tag 0 = ok、1 = err；载荷落第 1 格，错误载荷擦成一个机器字落第 2 格。
+    /// 与 LLVM 的 insertvalue 序列同序：载荷表达式先求值，它那两行再落。不 retain 也不认领临时值 ——
+    /// LLVM 侧 Result 不属于任何计数族，载荷的份额随聚合体一起漂走，两边漏得一样。
+    private func emitResultConstruct(isOk: Bool, payload: IRExpr, type: IRType) throws -> String {
+        guard case .result(let okType) = type else {
+            throw CBackendError(
+                message: "C 后端：Result 构造的类型不是 Result（\(CTypeMap.label(of: type))）")
+        }
+        let name = try scope.registerResult(type)
+        let lowered = try emitExpr(payload)
+        let temp = "t_\(nextTempSeq())"
+        /// 起点清零：LLVM 从 `undef` 起 `insertvalue`，没写的那一格是任意字节；这里落零 —— 没有读者，同效。
+        writer.line("\(name) \(temp) = { 0 };")
+        if isOk {
+            /// 只在两边都说得清时才拦：载荷节点不携带类型是发射层的既有限制，不该因此拒一条正确程序。
+            if let payloadType = Self.type(of: payload),
+                payloadType.llvmSpelling != okType.llvmSpelling
+            {
+                throw CBackendError(
+                    message: "C 后端：ok 载荷的类型与 Result 的 ok 类型不一致（\(CTypeMap.label(of: okType))）")
+            }
+            writer.line("\(temp).tag = 0;")
+            writer.line("\(temp).ok = \(lowered);")
+        } else {
+            writer.line("\(temp).tag = 1;")
+            writer.line("\(temp).err = \(try errorWord(lowered, of: payload));")
+        }
+        return temp
+    }
+
+    /// 把 err 载荷擦成一个机器字 —— 与 LLVM 的 `widenToWord` 逐条同宽同号：窄整数符号扩展、指针转整数、
+    /// 浮点按位搬。注意 —— 浮点不能用数值转换：那改的是字节，而错误字只承诺「原样搬过去」。
+    private func errorWord(_ text: String, of node: IRExpr) throws -> String {
+        guard let type = Self.type(of: node) else {
+            throw CBackendError(message: "C 后端：err 载荷没有携带类型，无法擦成一个机器字")
+        }
+        switch type {
+        case .i8, .u8:
+            /// 两种窄整数在 LLVM 侧同为 `i8`，故一律符号扩展 —— 与 `sext i8` 逐字节相同。
+            return "(int64_t)(int8_t)(\(text))"
+        case .i32, .i64, .u64, .boolean:
+            return "(int64_t)(\(text))"
+        case .string, .char, .nominal, .enumeration, .array, .dict, .set, .lazyRef:
+            return "(int64_t)(uintptr_t)(\(text))"
+        case .f64:
+            let word = try materialize(text, type: .f64)
+            let temp = "t_\(nextTempSeq())"
+            writer.line("int64_t \(temp) = 0;")
+            writer.line("memcpy(&\(temp), &\(word), 8);")
+            return temp
+        default:
+            throw CBackendError(
+                message: "C 后端尚未支持的 err 载荷类型：\(CTypeMap.label(of: type))")
+        }
     }
 
     /// `base.label`：按声明序取字段。基址先落临时变量，保证带副作用的基址只求值一次。
@@ -2840,6 +2990,7 @@ final class CFunctionEmitter {
         case .optionalConstruct(_, _, let type): return type
         case .optionalGet(_, _, let type): return type
         case .tupleConstruct(_, _, let type): return type
+        case .resultConstruct(_, _, let type): return type
         case .tupleIndexGet(_, _, let type): return type
         case .sliceCall(_, _, _, let type): return type
         case .lazyRefConstruct(_, let type): return type
