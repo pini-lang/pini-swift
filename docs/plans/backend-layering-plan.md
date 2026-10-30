@@ -5,7 +5,7 @@
 - 权威次序：语言面语义以 `../spec/pini-reference-v0.md` 为准；IR 节点语义以 `../spec/ir-contract.md`
   为准；运行时段符号面以 `../spec/runtime-abi.md` 为准。本件只排工程动作，不定义语义。
 - 状态：**执行中**，方案取「先薄化后端，后硬化边界」。立契约 · 布局先决 · 布局归位已完成；
-  所有权归位的详细设计见 6.3.1–6.3.8，落码未开始。
+  所有权归位的契约与类型分类已落地，释放点落地未开始（分片见 6.3.7）。
 - 判据来源：2026-10-30 对工作树的实测，读数见「基础读数」。
 
 注意 本计划**不引入第二套 IR**。参考件把 IR 定为单层、唯一的分析 IR；下文所有 pass 都作用在
@@ -324,7 +324,7 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 | 片 | 内容 | 通过线 | 回退 |
 |---|---|---|---|
 | 所有权契约 | 契约第 7 节 + 参考 6.5 的次序段；第 2/3 节签名随 pass 同批 | 每条可判定；不出现 `bk_*` / `alloca` | 删节即回退 |
-| 类型分类 | `IRType` → 所有权族，替换 `boxFamily(ofValueSpelling:)` 与 `collectionDestroySymbol(for:)` | 21 个 case 全覆盖；发射产物不变 | 新旧两路并存 |
+| 类型分类 | `IROwnership` 的 `ownershipClass`（四族）；发射层的 `boxFamily` 与 `collectionDestroySymbol` 改读分类 | 21 个 case 全覆盖；可发射语料的产物不变 | 新旧两路并存 |
 | 释放点落地 | `OwnershipPass` + 存储点注解 + 两栈合一 | 43 处归零；`OwnershipLifetimeTests` 全绿；117 份语料两通道输出不变 | 旧账本保留一个版本 |
 | 旧账清除 | 删账本与独立 defer 栈；门禁白名单去掉已归零符号 | 读数 77 → 34 | 按符号逐条回退 |
 | 临时具名 | `bindStmt` / `temp` / `retainStmt` | 语句 17 → 19；表达式 53 → 54 | 注解态可用 |
@@ -333,6 +333,19 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 
 注意 「释放点落地」与「旧账清除」之间必须留一次全量读数，不能同批：前者是行为判据，后者只是
 删旧路；同批红了分不清是 pass 错还是删错。
+
+状态：**所有权契约 · 类型分类已完成**。分类落在 `Sources/PiniCore/IR/IROwnership.swift`：`ownershipClass`
+分四族（不参与 · 整块 · 值语义 · 计数），发射层的两处判定改读分类，拼写不再参与。读数：`swift test`
+273 tests / 45 suites 全绿；117 份语料里 88 份逐字节相同，`examples/generic-func.pini` 的输出在两版下
+都随机换序（输出集合相同），28 份两版同败。
+
+注意 逐字节比对盖不住 `generic-func`：同一个二进制重复运行就会给出两种函数次序 —— 泛型特化的排队
+来自无序容器。要让它成为判据，得先修发射顺序；在那之前这份语料只比输出集合。
+
+注意 分类过程暴露一处缺口：`LazyRef` 句柄在运行时带计数与销毁符号，但发射器的释放表里没有它 ⇒
+局部句柄永不回收。读数：`examples/lazyref.pini` 的产物里 `bk_lazyref_create` 两次、`destroy` 零次。
+它归「释放点落地」的第一笔，本片不改 —— 一改就动发射产物，与本片「产物不变」的判据冲突。
+已记入契约第 4 节。
 
 ### 6.3.8 风险
 

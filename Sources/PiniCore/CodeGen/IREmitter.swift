@@ -1130,15 +1130,17 @@ public final class IREmitter {
     /// function body's own frame is released at the function exit instead.
     private var pendingReleases: [[ReleasedHandle]] = []
 
-    /// The `bk_*_destroy` symbol that drops one share of an opaque collection handle, or nil for
-    /// spellings outside the three refcounted families. LazyRef and foreign pointers carry no share
-    /// count and are not tracked here.
-    private static func collectionDestroySymbol(for typeSpelling: String) -> String? {
-        switch typeSpelling {
-        case "%bk_array*": return "bk_array_destroy"
-        case "%bk_dict*": return "bk_dict_destroy"
-        case "%bk_set*": return "bk_set_destroy"
-        default: return nil
+    /// 该类型在退出 / 被覆盖时要调的销毁符号，nil = 本层不释放它。判定来自 `IRType.ownershipClass`：
+    /// 拼写是后端的表示，换表示就会变，而变了的形态是「某族不再释放」。
+    ///  注意  `LazyRef` 归在计数族，但其销毁符号尚未登记 —— 契约第 4 节记的缺口，不是它不用释放。
+    private static func collectionDestroySymbol(for type: IRType) -> String? {
+        switch type.ownershipClass {
+        case .retained(.array): return "bk_array_destroy"
+        case .retained(.dict): return "bk_dict_destroy"
+        case .retained(.set): return "bk_set_destroy"
+        case .retained(.string), .retained(.object), .retained(.enumeration), .retained(.lazyRef),
+            .valueBox, .aggregate, .inert:
+            return nil
         }
     }
 
@@ -1164,7 +1166,7 @@ public final class IREmitter {
             usesStringOwnership = true
             return "bk_str_release"
         }
-        return Self.collectionDestroySymbol(for: type.llvmSpelling)
+        return Self.collectionDestroySymbol(for: type)
     }
 
     /// 该类型在发射层是否按字符串参与引用计数：判据是 IR 类型为 `string` 或 `char`。
@@ -1305,7 +1307,8 @@ public final class IREmitter {
                 if let returnType = currentReturnType {
                     returnedValue = emitValueForStorage(returnedNode, current, type: returnType)
                 } else {
-                    emitRetainIfAliased(returnedNode, current)
+                    /// 没有声明返回类型时只剩别名点保留，类型取自节点自身。
+                    emitRetainIfAliased(returnedNode, current, type: irType(of: returnedNode))
                 }
             }
             // Returning leaves the function outright, abandoning every
@@ -1731,7 +1734,7 @@ public final class IREmitter {
             let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
             let indexValue = emitExpr(index)
             let loweredValue = emitExpr(value)
-            emitRetainIfAliased(value, loweredValue)
+            emitRetainIfAliased(value, loweredValue, type: valueType)
             let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
             let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
             let keyBox = boxValue(indexValue, spelling: keySpelling)
@@ -1757,7 +1760,7 @@ public final class IREmitter {
         let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
         let indexValue = emitExpr(index)
         let loweredValue = emitExpr(value)
-        emitRetainIfAliased(value, loweredValue)
+        emitRetainIfAliased(value, loweredValue, type: elementType)
         let boxPtr = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
         bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
@@ -2075,7 +2078,7 @@ public final class IREmitter {
             bodyIR += " \(slot) = alloca \(spelling)\n"
             bodyIR += builder.fmtStore(value: loaded, type: spelling, ptr: slot) + "\n"
             scopes[scopes.count - 1][name] = slot
-            if let symbol = Self.collectionDestroySymbol(for: spelling) {
+            if let symbol = Self.collectionDestroySymbol(for: elementType) {
                 patternReleases.append(
                     ReleasedHandle(slot: slot, typeSpelling: spelling, destroySymbol: symbol)
                 )
@@ -3277,7 +3280,7 @@ public final class IREmitter {
             usesStringOwnership = true
             return ("bk_str_release", true)
         }
-        if let destroy = Self.collectionDestroySymbol(for: type.llvmSpelling) {
+        if let destroy = Self.collectionDestroySymbol(for: type) {
             return (destroy, true)
         }
         return nil
@@ -3288,7 +3291,7 @@ public final class IREmitter {
     private func needsReleaseAction(for type: IRType) -> Bool {
         if nominalKindSpelling(type) != nil { return true }
         if isRefcountedString(type) { return true }
-        return Self.collectionDestroySymbol(for: type.llvmSpelling) != nil
+        return Self.collectionDestroySymbol(for: type) != nil
     }
 
     /// 在胶水体里发一次「释放这个值」的调用；需要判空的那一族先生成分支。
@@ -3350,7 +3353,7 @@ public final class IREmitter {
             let value = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: srcPtr) + "\n"
             let stored: String
-            switch boxFamily(ofValueSpelling: field.type.llvmSpelling) {
+            switch boxFamily(of: field.type) {
             case .container:
                 // 容器：共享 + 留一份份额（COW 的分裂逻辑在运行时那一层）
                 let raw = builder.freshTemp()
@@ -3425,7 +3428,7 @@ public final class IREmitter {
             bodyIR += " \(typed) = bitcast ptr \(copied) to \(type.llvmSpelling)\n"
             return IRValue(llvmType: type.llvmSpelling, ssaName: typed)
         }
-        emitRetainIfAliased(node, value)
+        emitRetainIfAliased(node, value, type: type)
         return value
     }
 
@@ -3684,7 +3687,7 @@ public final class IREmitter {
         receiver: IRValue, elementNode: IRExpr, elementValue: IRValue, elementType: IRType
     ) -> IRValue {
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
-        emitRetainIfAliased(elementNode, elementValue)
+        emitRetainIfAliased(elementNode, elementValue, type: elementType)
         let boxPtr = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
         bodyIR += builder.fmtStore(value: elementValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
@@ -3849,12 +3852,12 @@ public final class IREmitter {
         }
     }
 
-    /// Alias-point retain: `.load` of a container-typed variable and `.subscriptGet` whose result is a
-    /// container handle both mean the source still holds its share, so the copy retains one — otherwise
-    /// `var row = g[0]` would share with `g` and the next write could not split. Temporaries transfer.
-    private func emitRetainIfAliased(_ valueNode: IRExpr, _ value: IRValue) {
-        guard let family = boxFamily(ofValueSpelling: value.llvmType) else { return }
+    /// 别名点保留：`load` / `subscriptGet` / `fieldGet` / `optionalGet` 的来源仍握着自己那一份，
+    /// 落进新持有位置前要先留一份 —— 否则 `var row = g[0]` 与 `g` 共享，下一次写入无法分裂。
+    /// 临时值移交份额，不在这里动手。`type` 是来源位置的静态类型，不是值的拼写：拼写属后端。
+    private func emitRetainIfAliased(_ valueNode: IRExpr, _ value: IRValue, type: IRType) {
         guard yieldsAlias(valueNode) else { return }
+        guard let family = boxFamily(of: type) else { return }
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
         switch family {
@@ -3928,23 +3931,19 @@ public final class IREmitter {
         for value in values { releaseOwnedTemporary(value) }
     }
 
-    /// 值在发射层的计数族：容器句柄与名义箱走两套 C ABI（`bk_handle_*` / `bk_nominal_*`），
-    /// 但所有权规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
-    /// 返回 nil = 该类型不参与计数（标量 / 字符串 / 外呼指针 / 任务句柄 …）。
+    /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`bk_handle_*` / `bk_nominal_*` /
+    /// `bk_str_*`），所有权规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
+    /// 返回 nil = 该类型不在计数族（标量 · 外部指针 · 聚合 · `LazyRef` 缺口 …）。
     private enum BoxFamily { case container, nominal, string }
 
-    private func boxFamily(ofValueSpelling spelling: String) -> BoxFamily? {
-        if ["%bk_array*", "%bk_dict*", "%bk_set*"].contains(spelling) { return .container }
-        if spelling.hasPrefix("%struct.") || spelling.hasPrefix("%object.")
-            || spelling.hasPrefix("%enum.")
-        {
-            return .nominal
+    private func boxFamily(of type: IRType) -> BoxFamily? {
+        switch type.ownershipClass {
+        case .retained(.string): return .string
+        case .retained(.array), .retained(.dict), .retained(.set): return .container
+        case .retained(.object), .retained(.enumeration), .valueBox: return .nominal
+        /// `LazyRef` 归在计数族，但其销毁符号尚未登记 ⇒ 发射层接不了它的别名点 —— 契约第 4 节的缺口。
+        case .retained(.lazyRef), .aggregate, .inert: return nil
         }
-        /// 字符串族（`String` 与 `Char`，两者拼写同为 `i8*`）。
-        ///  注意  `*T` 外部指针的拼写也是 `i8*`，也会落到这一支 —— 那在运行时段是无操作（不在登记表里），
-        /// 故判错族的方向是安全的（最多不释放）， 行不通  不会踩内存。
-        if spelling == "i8*" { return .string }
-        return nil
     }
 
     private func emitArrayLiteral(elements: [IRExpr], type: IRType) -> IRValue {
@@ -3962,7 +3961,7 @@ public final class IREmitter {
             let boxPtr = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
             bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
-            emitRetainIfAliased(element, value)
+            emitRetainIfAliased(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw
@@ -4073,13 +4072,13 @@ public final class IREmitter {
             let valueNode = entry.value
             let keyValue = emitExpr(keyNode)
             let keyBox = boxValue(keyValue, spelling: keySpelling)
-            emitRetainIfAliased(keyNode, keyValue)
+            emitRetainIfAliased(keyNode, keyValue, type: keyType)
             let dictValue = IRValue(llvmType: "%bk_dict*", ssaName: curRaw)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_dict* \(dictValue.ssaName) to ptr\n"
             let value = emitExpr(valueNode)
             let valueBox = boxValue(value, spelling: valueSpelling)
-            emitRetainIfAliased(valueNode, value)
+            emitRetainIfAliased(valueNode, value, type: valueType)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
             curRaw = nextRaw
@@ -4102,7 +4101,7 @@ public final class IREmitter {
         for element in elements {
             let value = emitExpr(element)
             let box = boxValue(value, spelling: elemSpelling)
-            emitRetainIfAliased(element, value)
+            emitRetainIfAliased(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_set_add(ptr \(curRaw), ptr \(box), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw
