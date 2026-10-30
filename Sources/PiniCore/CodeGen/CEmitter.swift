@@ -1052,9 +1052,8 @@ final class CFunctionEmitter {
             let cond = try emitExpr(condition)
             let text = try message.map { try emitExpr($0) } ?? scope.registerString("assert failed")
             writer.open("if (!(\(cond)))")
-            writer.line("printf(\"%s\", \(text));")
-            writer.line("printf(\"\\n\");")
-            writer.line("bk_panic(NULL);")
+            /// 陷阱去向与 `panicStmt` 同规：消息进 stderr、退出码 1、stdout 一个字节不动。
+            writer.line("bk_panic(\(text));")
             writer.close()
             return ""
 

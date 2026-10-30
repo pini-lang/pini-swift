@@ -100,9 +100,9 @@ struct CBackendParityTests {
                 print("after")
                 return
             """#,
-            expected: "before\n断言失败\n",
+            expected: "before\n",
             status: 1,
-            stderr: "\n"
+            stderr: "断言失败\n"
         ),
         Corpus(
             label: "结构体与字段",

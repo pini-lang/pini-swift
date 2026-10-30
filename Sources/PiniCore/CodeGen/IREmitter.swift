@@ -2797,9 +2797,9 @@ public final class IREmitter {
             bodyIR += " store i32 1, ptr @\(Self.testFailedGlobal)\n"
             bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
         } else {
-            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered.ssaName))\n"
-            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
-            bodyIR += " call ptr @bk_panic(ptr null)\n"
+            /// 陷阱去向与 `panicStmt` 同规：消息进 stderr、退出码 1、stdout 一个字节不动。
+            /// 先 `printf` 再 `bk_panic(null)` 会把断言消息塞进程序输出流，并给 stderr 留一个空行。
+            bodyIR += " call void @bk_panic(ptr \(rendered.ssaName))\n"
             bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
         }
         bodyIR += "\(passLabel):\n"
