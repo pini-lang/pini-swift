@@ -50,17 +50,17 @@ extension IRType {
         }
     }
 
-    /// 这个类型的一个值落进存储点时，接收方要做的动作。三种输入决定它：目标类型（要不要占份额）·
-    /// 来源是否别名（占的话拷贝还是保留）· 其余情况移交。标量与聚合一律 `.none`，不记账。
-    /// `sharingStructs` 给容器元素用：容器元素按箱共享（保留），变量 / 字段 / 返回才拷出独立的箱。
+    /// 这个类型的一个值落进存储点时，接收方要做的动作。它只问两件事：目标类型要不要占份额，
+    /// 以及来源是不是新份额（`ownershipEffect`）。是 ⇒ 移交；不是 ⇒ 拷贝或保留。
+    /// `sharingStructs` 给容器元素用：元素按箱共享（保留），变量 / 字段 / 返回才拷出独立的箱。
     public func adoption(of source: IRExpr?, sharingStructs: Bool = false) -> IRAdopt {
         guard let source else { return .none }
         switch ownershipClass {
         case .inert, .aggregate: return .none
         case .valueBox:
-            guard source.yieldsAlias else { return .take }
-            return sharingStructs ? .retain : .copyStruct
-        case .retained: return source.yieldsAlias ? .retain : .take
+            return source.ownershipEffect == .fresh ? .take : (sharingStructs ? .retain : .copyStruct)
+        case .retained:
+            return source.ownershipEffect == .fresh ? .take : .retain
         }
     }
 
@@ -93,6 +93,54 @@ extension IRExpr {
         switch self {
         case .load, .subscriptGet, .fieldGet, .optionalGet: return true
         default: return false
+        }
+    }
+}
+
+/// 求值效果：一个表达式求值之后，求值方与这份值之间是什么关系。它说的是**求值方**，不是类型 ——
+/// 同一个 `String` 可以是新造的（`s.upper()`），也可以是借来的（`load`）。
+public enum IROwnershipEffect: Equatable, Sendable {
+    /// 新份额：求值方持有 +1。它必须交给存储位，或在消费位用完归还 —— 二者必居其一。
+    case fresh
+    /// 借用：份额在别处，只保证使用期内存活，求值方不得归还。
+    case borrowed
+    /// 不参与计数：标量 · 外部指针 · 整块聚合。存储与退出都零动作。
+    case inert
+}
+
+extension IRExpr {
+    /// 这个表达式求值之后，求值方是不是新造了一份份额。
+    ///  注意  判错的后果不对称：把 `fresh` 判成 `borrowed` 是漏一份，把 `borrowed` 判成 `fresh` 是
+    /// 悬垂。拿不准时选 `borrowed` —— 与契约 7.9 的保守方向同一条。
+    public var ownershipEffect: IROwnershipEffect {
+        switch self {
+        // 常量与标量运算：值不是份额。
+        case .intConst, .floatConst, .boolConst, .binary, .unary, .lenCall, .isAsciiDigit,
+            .stringContains, .stringIndexOf, .pointerLoad, .pointerStore, .addressOfVar,
+            .printCall, .printMulti, .assertCall, .fileWrite, .fileAppend:
+            return .inert
+        // 全局常量与变量 / 字段 / 元素槽：份额在别处。
+        case .stringConst, .load, .subscriptGet, .optionalGet, .fieldGet, .tupleIndexGet,
+            .lazyRefValue, .functionValue, .givenInstance:
+            return .borrowed
+        /// `call` 与 `indirectCall` 的返回一律按新份额：`returnStmt` 的 `adopt` 已在被调方
+        /// 安排好 —— 交临时值就是移交，交别名就先保留。故调用方接手的一定是干净的一份。
+        case .call, .indirectCall:
+            return .fresh
+        // 本次求值新造的份额。
+        case .arrayLiteral, .dictLiteral, .setLiteral, .sliceCall, .construct, .enumConstruct,
+            .stringCase, .stringSubstring, .stringSplit, .stringTrimLeft, .stringTrimRight,
+            .arrayJoin, .stringConcat, .interpString, .fileRead, .lazyRefConstruct,
+            .closureLiteral:
+            return .fresh
+        // 整块聚合：成员份额尚未单独保留（契约第 4 节的缺口），故整块不记账。
+        case .resultConstruct, .optionalConstruct, .tupleConstruct, .fileTryWrite,
+            .fileTryAppend, .fileTryRead, .join:
+            return .inert
+        /// `readLine` 返回 `fgets` 填的栈缓冲：既不是新份额，也不会在帧外存活。
+        /// 这是一条独立缺口（契约第 4 节），不在这里假装它是 `fresh`。
+        case .readLine:
+            return .borrowed
         }
     }
 }

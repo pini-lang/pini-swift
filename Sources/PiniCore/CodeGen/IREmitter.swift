@@ -480,6 +480,7 @@ public final class IREmitter {
             tail += "%bk_lazyref = type { ptr }\n"
             tail += "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)\n"
             tail += "declare ptr @bk_lazyref_value(ptr)\n"
+            tail += "declare void @bk_lazyref_destroy(ptr)\n"
         }
         // `writeFile` 的 declare，只在实际写入的模块里出现。
         // 落点是运行时 shim 的一次调用 —— 路径解析与写语义都在那一侧，此处不发 libc 写调用。
@@ -1142,7 +1143,8 @@ public final class IREmitter {
         case .retained(.array): return "bk_array_destroy"
         case .retained(.dict): return "bk_dict_destroy"
         case .retained(.set): return "bk_set_destroy"
-        case .retained(.string), .retained(.object), .retained(.enumeration), .retained(.lazyRef),
+        case .retained(.lazyRef): return "bk_lazyref_destroy"
+        case .retained(.string), .retained(.object), .retained(.enumeration),
             .valueBox, .aggregate, .inert:
             return nil
         }
@@ -1243,7 +1245,9 @@ public final class IREmitter {
                 if let returnType = currentReturnType {
                     returnedValue = applyAdopt(adopt, current, type: returnType)
                 } else {
-                    emitRetainIfAliased(returnedNode, current, type: irType(of: returnedNode))
+                    _ = applyAdopt(
+                        irType(of: returnedNode).adoption(of: returnedNode),
+                        current, type: irType(of: returnedNode))
                 }
             }
             // Returning abandons every open scope; the fall-through cleanup already ran at the block
@@ -1696,6 +1700,8 @@ public final class IREmitter {
             }
             //  重要  字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `bk_dict_set` 之后。
             emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
+            /// 键被 `bk_dict_set` 拷进自己的箱：临时的键串读到这里就用完了。
+            releaseOperand(index, indexValue)
             return
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
@@ -2069,7 +2075,27 @@ public final class IREmitter {
 
     // MARK: - Expressions
 
+    /// 求值的唯一出口：先求值，再按中端的表给新份额入账。入账在这里做而不是在各构造点 ——
+    /// 构造点有七处，出口只有一个，而漏一处的后果是每次求值都漏一份。
     private func emitExpr(_ expr: IRExpr) -> IRValue {
+        let value = emitExprValue(expr)
+        if expr.ownershipEffect == .fresh, irType(of: expr).holdsAShare {
+            adoptFreshShare(value, type: irType(of: expr))
+        }
+        return value
+    }
+
+    /// 记下一个刚造出来、还没有持有者的份额。它的去路只有两条：存储位接管（`applyAdopt`），
+    /// 或消费位用完归还（`releaseOwnedTemporary`）。两条都不走，就是漏一份。
+    private func adoptFreshShare(_ value: IRValue, type: IRType) {
+        switch type.ownershipClass {
+        case .retained(.string): adoptOwnedString(value.ssaName)
+        case .valueBox, .retained: adoptOwnedBox(name: value.ssaName, type: type)
+        case .inert, .aggregate: break
+        }
+    }
+
+    private func emitExprValue(_ expr: IRExpr) -> IRValue {
         switch expr {
         case .intConst(let value, let type):
             //  注意  指针类型上不能写整数字面量：`ret ptr 0` 会让**整个模块**被 lli 拒
@@ -2133,7 +2159,9 @@ public final class IREmitter {
                 let bodyReturn = callee.returnType, case .result = bodyReturn
             {
                 /// 派发不走借用：帧把实参整体搬走，名义箱那份 +1 就此归任务 ⇒ 调用点一条也不还。
-                return emitTaskSpawn(callee: callee, mangled: Self.mangle(function), args: args)
+                return emitTaskSpawn(
+                    callee: callee, mangled: Self.mangle(function), args: args,
+                    argEffects: arguments.map(\.ownershipEffect))
             }
             /// `F64(x)` is an instruction, not a symbol: falling through to `call @F64` would reference an
             /// undefined value while the command still exits zero. A double is already there; anything
@@ -2341,8 +2369,7 @@ public final class IREmitter {
             /// 名义箱：分配器写四格头，标签落在头之后的第一格、载荷从下一格起 —— 槽位问布局。
             /// 与 `emitMatch` 的 enum 分支同一套偏移。
             let ptr = emitNominalAllocation(aggregate: aggregate, typeID: enumTypeIDs[enumName] ?? 0)
-            /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
-            adoptOwnedBox(name: ptr, type: type)
+            /// 新箱起始 +1；入账由求值出口按效果表统一做。
             let tagPtr = builder.freshTemp()
             bodyIR +=
                 builder.fmtGEP(
@@ -2400,7 +2427,9 @@ public final class IREmitter {
 
         case .stringCase(let isUpper, let receiver):
             let receiverValue = emitExpr(receiver)
-            return emitStringCase(isUpper: isUpper, source: receiverValue.ssaName)
+            let converted = emitStringCase(isUpper: isUpper, source: receiverValue.ssaName)
+            releaseOperand(receiver, receiverValue)
+            return converted
 
         case .stringContains(let receiver, let needle):
             // 契约 §2.9 第 37 条：**字素级**判定。 行不通  旧形状的 `strstr` 是字节查找 ——
@@ -2413,6 +2442,8 @@ public final class IREmitter {
             bodyIR +=
                 " \(hit) = call i32 @bk_string_contains(ptr \(receiverValue.ssaName), "
                 + "ptr \(needleValue.ssaName))\n"
+            releaseOperand(receiver, receiverValue)
+            releaseOperand(needle, needleValue)
             let found = builder.freshTemp()
             bodyIR += " \(found) = icmp ne i32 \(hit), 0\n"
             return IRValue(llvmType: "i1", ssaName: found)
@@ -2429,6 +2460,7 @@ public final class IREmitter {
             bodyIR +=
                 " \(substringResult) = call ptr @bk_substring(ptr \(receiverValue.ssaName), "
                 + "i32 \(startValue.ssaName), i32 \(endValue.ssaName))\n"
+            releaseOperand(receiver, receiverValue)
             return IRValue(llvmType: "i8*", ssaName: substringResult)
 
         case .stringSplit(let receiver, let delim, let type):
@@ -2437,7 +2469,11 @@ public final class IREmitter {
             ///  注意  本条**必须**置位：委派到运行时段之后，declare 靠这个标志出现。漏了它 ⇒
             /// 产物里只有 `call`，没有 `declare` ⇒ clang 报 `use of undefined value '@bk_string_split'`。
             usesStringShims = true
-            return emitStringSplit(source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
+            let parts = emitStringSplit(
+                source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
+            releaseOperand(receiver, receiverValue)
+            releaseOperand(delim, delimValue)
+            return parts
 
         case .stringTrimLeft(let receiver):
             // Runtime-shim delegation (same stance as `.stringSubstring`):
@@ -2448,6 +2484,7 @@ public final class IREmitter {
             let trimLeftResult = builder.freshTemp()
             bodyIR +=
                 " \(trimLeftResult) = call ptr @bk_string_trim_left(ptr \(receiverValue.ssaName))\n"
+            releaseOperand(receiver, receiverValue)
             return IRValue(llvmType: "i8*", ssaName: trimLeftResult)
 
         case .stringTrimRight(let receiver):
@@ -2457,6 +2494,7 @@ public final class IREmitter {
             let trimRightResult = builder.freshTemp()
             bodyIR +=
                 " \(trimRightResult) = call ptr @bk_string_trim_right(ptr \(receiverValue.ssaName))\n"
+            releaseOperand(receiver, receiverValue)
             return IRValue(llvmType: "i8*", ssaName: trimRightResult)
 
         case .stringIndexOf(let receiver, let needle):
@@ -2470,12 +2508,17 @@ public final class IREmitter {
             bodyIR +=
                 " \(indexResult) = call i32 @bk_string_index_of(ptr \(receiverValue.ssaName), "
                 + "ptr \(needleValue.ssaName))\n"
+            releaseOperand(receiver, receiverValue)
+            releaseOperand(needle, needleValue)
             return IRValue(llvmType: "i32", ssaName: indexResult)
 
         case .arrayJoin(let receiver, let separator):
             let receiverValue = emitExpr(receiver)
             let separatorValue = emitExpr(separator)
-            return emitArrayJoin(array: receiverValue, sep: separatorValue.ssaName)
+            let joined = emitArrayJoin(array: receiverValue, sep: separatorValue.ssaName)
+            releaseOperand(receiver, receiverValue)
+            releaseOperand(separator, separatorValue)
+            return joined
 
         case .stringConcat(let lhs, let rhs):
             let lhsValue = emitExpr(lhs)
@@ -2499,7 +2542,6 @@ public final class IREmitter {
             /// 这一步就是二次方项的处置：`a + b + c` 的中间串既不落槽也不是最终值，除这里没有别的回收点。
             releaseOwnedString(lhsValue)
             releaseOwnedString(rhsValue)
-            adoptOwnedString(buf)
             return IRValue(llvmType: "i8*", ssaName: buf)
 
         case .interpString(let parts):
@@ -2584,6 +2626,8 @@ public final class IREmitter {
         let pathValue = emitExpr(path)
         let contentValue = emitExpr(content)
         bodyIR += " call void @bk_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        releaseOperand(path, pathValue)
+        releaseOperand(content, contentValue)
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -2592,8 +2636,10 @@ public final class IREmitter {
     private func emitFileAppend(path: IRExpr, content: IRExpr) -> IRValue {
         usesFileAppend = true
         let pathValue = emitExpr(path)
+        defer { releaseOperand(path, pathValue) }
         let contentValue = emitExpr(content)
         bodyIR += " call void @bk_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        releaseOperand(content, contentValue)
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -2603,6 +2649,7 @@ public final class IREmitter {
     private func emitFileRead(path: IRExpr) -> IRValue {
         usesFileRead = true
         let pathValue = emitExpr(path)
+        defer { releaseOperand(path, pathValue) }
         let content = builder.freshTemp()
         bodyIR += " \(content) = call ptr @bk_read_file(ptr \(pathValue.ssaName))\n"
         emitNullGuard(handle: content, message: "Pini runtime error: readFile could not read the file")
@@ -2718,6 +2765,7 @@ public final class IREmitter {
     /// first-grapheme rule gives in the ASCII domain.
     private func emitIsAsciiDigit(_ argument: IRExpr) -> IRValue {
         let subject = emitExpr(argument)
+        defer { releaseOperand(argument, subject) }
         let byte = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: byte, type: "i8", ptr: subject.ssaName) + "\n"
         let lowerBound = builder.freshTemp()
@@ -3342,14 +3390,7 @@ public final class IREmitter {
         return symbol
     }
 
-    /// 该表达式节点给的是已有箱的别名（要按值语义拷贝 / 按引用语义 retain），还是一个新箱的所有权
-    /// （直接接管）。`.fieldGet` 在列：`var g = h.p` 必须拷贝。本条只服务表达式级的容器元素落槽，
-    /// 语句级存储点读中端注解（`applyAdopt`）。
-    private func yieldsAlias(_ node: IRExpr) -> Bool { node.yieldsAlias }
-
     /// 按中端填的接收动作落值。发射层不再判「该拷贝还是该保留」—— 只翻译注解。
-    ///  注意  `LazyRef` 分类上是计数族，但发射层还没有它的保留 / 销毁通道 ⇒ `.retain` 在那里是空操作，
-    /// 宁可按借用放过（漏一份），也不猜一个可能双释放的动作。缺口记在契约第 4 节。
     @discardableResult
     private func applyAdopt(_ adopt: IRAdopt, _ value: IRValue, type: IRType) -> IRValue {
         switch adopt {
@@ -3514,8 +3555,7 @@ public final class IREmitter {
         /// 名义箱：分配器写四格头，字段从头之后的第一格起 —— 槽位问布局。
         /// `isObject` 只影响聚合名拼写 —— 头两边都有，字段偏移不再分类讨论。
         let ptr = emitNominalAllocation(aggregate: aggregate, typeID: nominalTypeID(for: type))
-        /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
-        adoptOwnedBox(name: ptr, type: type)
+        /// 新箱起始 +1；入账由求值出口按效果表统一做。
         let zero = zeroConst(for:)
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
@@ -3647,7 +3687,7 @@ public final class IREmitter {
         receiver: IRValue, elementNode: IRExpr, elementValue: IRValue, elementType: IRType
     ) -> IRValue {
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
-        emitRetainIfAliased(elementNode, elementValue, type: elementType)
+        adoptElement(elementNode, elementValue, type: elementType)
         let boxPtr = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
         bodyIR += builder.fmtStore(value: elementValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
@@ -3812,12 +3852,10 @@ public final class IREmitter {
         }
     }
 
-    /// 表达式级的别名点保留（容器元素落槽）：`load` / `subscriptGet` / `fieldGet` / `optionalGet`
-    /// 的来源仍握着自己那一份，落进元素槽前要留一份 —— 否则 `var row = g[0]` 与 `g` 共享，下一次写入
-    /// 无法分裂。语句级存储点走注解，不经过这里。
-    private func emitRetainIfAliased(_ valueNode: IRExpr, _ value: IRValue, type: IRType) {
-        guard valueNode.yieldsAlias else { return }
-        _ = retainCounted(value, type: type)
+    /// 容器元素落槽：元素按箱共享 ⇒ 结构体也保留而不拷；临时元素移交，账本随之清掉。
+    /// 与语句级存储点同一条规则（`IRType.adoption`），差别只在 `sharingStructs`。
+    private func adoptElement(_ node: IRExpr, _ value: IRValue, type: IRType) {
+        _ = applyAdopt(type.adoption(of: node, sharingStructs: true), value, type: type)
     }
 
     // MARK: - N76：字符串临时值的账本
@@ -3871,6 +3909,13 @@ public final class IREmitter {
         bodyIR += " call void @\(symbol)(ptr \(value.ssaName))\n"
     }
 
+    /// 一个只读操作数用完了：它若是本层新造的份额，就地归还；借用值不在账上 ⇒ 无操作。
+    /// 与实参同规 —— 内建的操作数也是消费位，只是它不出现在 `call` 的实参表里。
+    private func releaseOperand(_ node: IRExpr, _ value: IRValue) {
+        guard node.ownershipEffect == .fresh else { return }
+        releaseOwnedTemporary(value)
+    }
+
     /// 调用点的收尾：实参一律**借用**。被调方既不 retain 也不在出口释放（形参槽不进释放账本），
     /// 于是临时值的 +1 份额留在调用方，返回后当场还；变量 / 字段的别名份额不在账上，一条也不碰。
     private func releaseCallArguments(_ values: [IRValue]) {
@@ -3887,8 +3932,9 @@ public final class IREmitter {
         case .retained(.string): return .string
         case .retained(.array), .retained(.dict), .retained(.set): return .container
         case .retained(.object), .retained(.enumeration), .valueBox: return .nominal
-        /// `LazyRef` 归在计数族，但其销毁符号尚未登记 ⇒ 发射层接不了它的别名点 —— 契约第 4 节的缺口。
-        case .retained(.lazyRef), .aggregate, .inert: return nil
+        /// `LazyRef` 的句柄与他族同一个 `_BkBox` 计数头 ⇒ 保留走通用入口，释放走自己的符号。
+        case .retained(.lazyRef): return .container
+        case .aggregate, .inert: return nil
         }
     }
 
@@ -3907,15 +3953,14 @@ public final class IREmitter {
             let boxPtr = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
             bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
-            emitRetainIfAliased(element, value, type: elementType)
+            adoptElement(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw
         }
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_array*\n"
-        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
-        adoptOwnedBox(name: handle, type: type)
+        /// 新句柄起始 shares == 1；入账由求值出口按效果表统一做。
         return IRValue(llvmType: "%bk_array*", ssaName: handle)
     }
 
@@ -3965,6 +4010,7 @@ public final class IREmitter {
 
     private func emitLen(_ argument: IRExpr) -> IRValue {
         let value = emitExpr(argument)
+        defer { releaseOperand(argument, value) }
         switch irType(of: argument) {
         case .dict:
             let raw = builder.freshTemp()
@@ -4018,21 +4064,20 @@ public final class IREmitter {
             let valueNode = entry.value
             let keyValue = emitExpr(keyNode)
             let keyBox = boxValue(keyValue, spelling: keySpelling)
-            emitRetainIfAliased(keyNode, keyValue, type: keyType)
+            adoptElement(keyNode, keyValue, type: keyType)
             let dictValue = IRValue(llvmType: "%bk_dict*", ssaName: curRaw)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_dict* \(dictValue.ssaName) to ptr\n"
             let value = emitExpr(valueNode)
             let valueBox = boxValue(value, spelling: valueSpelling)
-            emitRetainIfAliased(valueNode, value, type: valueType)
+            adoptElement(valueNode, value, type: valueType)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
             curRaw = nextRaw
         }
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_dict*\n"
-        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
-        adoptOwnedBox(name: handle, type: type)
+        /// 新句柄起始 shares == 1；入账由求值出口按效果表统一做。
         return IRValue(llvmType: "%bk_dict*", ssaName: handle)
     }
 
@@ -4047,15 +4092,14 @@ public final class IREmitter {
         for element in elements {
             let value = emitExpr(element)
             let box = boxValue(value, spelling: elemSpelling)
-            emitRetainIfAliased(element, value, type: elementType)
+            adoptElement(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
             bodyIR += " \(nextRaw) = call ptr @bk_set_add(ptr \(curRaw), ptr \(box), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw
         }
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_set*\n"
-        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
-        adoptOwnedBox(name: handle, type: type)
+        /// 新句柄起始 shares == 1；入账由求值出口按效果表统一做。
         return IRValue(llvmType: "%bk_set*", ssaName: handle)
     }
 
@@ -5019,7 +5063,9 @@ public final class IREmitter {
     /// 一次异步调用在发射层的落点 = 一次派发：建盒、认父、起线程三件做完才返回，故调用方拿到句柄时
     /// 体已在自己推进。实参经堆上的缓冲交给体 —— 体跑在另一条线程，detach 后调用方的帧可能不在，
     /// 栈上实参会悬垂。那块缓冲就是体的持久帧（运行时分配且已清零，故续跑点 = 0 不必再 store）。
-    private func emitTaskSpawn(callee: IRFunction, mangled: String, args: [IRValue]) -> IRValue {
+    private func emitTaskSpawn(
+        callee: IRFunction, mangled: String, args: [IRValue], argEffects: [IROwnershipEffect]
+    ) -> IRValue {
         usesTaskRuntime = true
         emitTaskBodyWrapper(callee: callee, mangled: mangled)
         let envRaw = builder.freshTemp()
@@ -5030,10 +5076,9 @@ public final class IREmitter {
             bodyIR += builder.fmtGEPByteOffset(name: slot, base: envRaw, offset: "\(8 + index * 8)") + "\n"
             let word = widenToWord(arg)
             bodyIR += builder.fmtStore(value: word.ssaName, type: "i64", ptr: slot) + "\n"
-            // 容器形参必须**留一份自己的份额**：体可能晚于调用方起跑，而 `detach` 之后
-            // 调用方的帧已经不在了。份额由 wrapper 在体**真跑完**时还回（配对点见该函数；
-            // 让出时**不**还 —— 体还在用它们）。
-            retainIfOwningContainer(arg, type: callee.params[index].type)
+            // 容器形参的份额由 wrapper 在体**真跑完**时还回（配对点见该函数；让出时不还 ——
+            // 体还在用它们）。借用实参要留一份，临时实参直接把这一份交过去。
+            handTaskArgument(arg, type: callee.params[index].type, effect: argEffects[index])
         }
         /// `code` 按空指针传：体的入口是**每函数一个**的 wrapper，调用点不需要再指定一份。
         /// 末尾两个实参是 ok 载荷描述（`elemBytes` / `elemTag`）——
@@ -5149,18 +5194,27 @@ public final class IREmitter {
     }
 
     /// 需要**份额**的句柄类型（容器）：它们的生命周期由运行时的份额计数管，
-    /// 跨线程借用必须自己留一份。字符串是裸 C 串、标量是值，都不在此列
-    /// （与 `emitRetainIfAliased` 认定的集合一致）。
+    /// 跨线程借用必须自己留一份。字符串是裸 C 串、标量是值，都不在此列。
     private func isOwningContainer(_ type: IRType) -> Bool {
-        ["%bk_array*", "%bk_dict*", "%bk_set*"].contains(type.llvmSpelling)
+        switch type.ownershipClass {
+        case .retained(.array), .retained(.dict), .retained(.set): return true
+        case .valueBox, .inert, .aggregate, .retained: return false
+        }
     }
 
-    private func retainIfOwningContainer(_ value: IRValue, type: IRType) {
+    /// 派发点的实参处置。借用的留一份自己的份额（`detach` 之后调用方的帧可能已不在）；临时值
+    /// 把手上那一份直接交过去，不再 retain，也不在调用方归还 —— 两次动作会多出一份谁都不还的账。
+    private func handTaskArgument(_ value: IRValue, type: IRType, effect: IROwnershipEffect) {
         guard isOwningContainer(type) else { return }
         usesTaskArgRelease = true
-        let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
-        bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+        switch effect {
+        case .fresh:
+            claimOwnedBox(value)
+        case .borrowed, .inert:
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
+            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+        }
     }
 
     /// ok 载荷能否住进**一个字**（三槽 ABI 的宽度）。聚合值（元组 / optional / 嵌套 Result）
@@ -5410,11 +5464,10 @@ public final class IREmitter {
 
     /// 把栈上拼出来的串交出去之前复制到堆（返回堆指针）：插值与 `join` 都在本帧栈缓冲上拼串，
     /// 而结果会离开本帧（如存进 Token 的 `text` 字段）⇒ 不复制就留下悬垂的栈地址。
-    /// 复制走 `bk_str_dup`（带计数头）并记进账本，由消费点或持有位置决定何时还。
+    /// 复制走 `bk_str_dup`（带计数头）。入账不在本函数：求值出口按效果表统一记。
     private func heapCopyOfStackString(_ buf: String) -> IRValue {
         let dup = builder.freshTemp()
         bodyIR += " \(dup) = call ptr @bk_str_dup(ptr \(buf))\n"
-        adoptOwnedString(dup)
         return IRValue(llvmType: "i8*", ssaName: dup)
     }
 
