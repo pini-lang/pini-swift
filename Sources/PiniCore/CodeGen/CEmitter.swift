@@ -439,6 +439,10 @@ final class CFunctionEmitter {
     /// 持有者账本：每层一个帧，与 `emitBlock` 同序压栈。块尾按逆序释放，`return` / `break` / `continue` 各发一份。
     private var releaseFrames: [[ReleaseEntry]] = []
 
+    /// 本层新分配、尚无持有者的临时箱 / 句柄：C 局部名 → 类型。字符串族在 C 侧没有产出点，
+    /// 故账上只有名义箱与容器句柄。入账：构造点；出账：被持有位置接管，或在调用点 / 打印点就地还。
+    private var ownedBoxes: [String: IRType] = [:]
+
     private struct ReleaseEntry {
         let local: String
         let type: IRType
@@ -585,6 +589,46 @@ final class CFunctionEmitter {
     private func releaseCall(local: String, type: IRType) throws -> String? {
         guard let symbol = try releaseSymbol(for: type) else { return nil }
         return "\(symbol)(\(local))"
+    }
+
+    /// 记下一个本层亲手分配、当前持有 +1 的临时箱。只由构造点调用：借用值（变量 / 字段 / 形参）从不入账。
+    private func adoptOwnedBox(_ local: String, type: IRType) {
+        ownedBoxes[local] = type
+    }
+
+    /// 交出所有权：该值已被某个持有位置（槽 / 字段 / 返回位 / 载荷槽）接管，此后由那里释放。
+    /// 它与 `emitOwnedTemporaryRelease` 互斥，一个值只走一条；错成 claim 是泄漏（安全），错成 release 是悬垂。
+    private func claimOwnedBox(_ text: String) {
+        ownedBoxes.removeValue(forKey: text)
+    }
+
+    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。⛔ 借用值不在账里 ⇒ 无操作。
+    /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
+    private func emitOwnedTemporaryRelease(_ text: String) throws {
+        guard let type = ownedBoxes.removeValue(forKey: text) else { return }
+        guard let symbol = try releaseSymbol(for: type) else { return }
+        writer.line("\(symbol)(\(text));")
+    }
+
+    /// 调用点的收尾：实参一律**借用**。被调方既不 retain 也不在出口释放（形参不登记），
+    /// 于是临时值的 +1 份额留在调用方，返回后当场还；变量 / 字段的别名份额不在账上，一条也不碰。
+    /// C 的一个表达式里塞不下「调用 + 释放」⇒ 调用先落进临时变量，调用点因此多一行。
+    private func materializeCallReleasingArguments(
+        _ call: String, returnType: IRType?, arguments: [String]
+    ) throws -> String {
+        let owed = arguments.filter { ownedBoxes[$0] != nil }
+        guard !owed.isEmpty else { return call }
+        guard let returnType else {
+            writer.line("\(call);")
+            for text in owed { try emitOwnedTemporaryRelease(text) }
+            return ""
+        }
+        /// 拼不出返回类型（聚合 / Result）就不落临时变量：宁可留一份泄漏，也不让产物编不过。
+        guard let spelling = try? CTypeMap.spelling(of: returnType) else { return call }
+        let temp = "t_\(nextTempSeq())"
+        writer.line("\(spelling) \(temp) = \(call);")
+        for text in owed { try emitOwnedTemporaryRelease(text) }
+        return temp
     }
 
     /// 局部被覆盖前释放它持有的份额。只对已登记的持有者做 —— 标量不在账本里，一个字节也不碰。
@@ -988,7 +1032,9 @@ final class CFunctionEmitter {
                 callee = "pini_\(IRName.mangle(name))"
                 scope.calledNames.insert(name)
             }
-            return "\(callee)(\(args.joined(separator: ", ")))"
+            /// 调用点的所有权：实参一律**借用** —— 被调方不 retain 也不在出口释放（形参不登记）。
+            return try materializeCallReleasingArguments(
+                "\(callee)(\(args.joined(separator: ", ")))", returnType: returnType, arguments: args)
 
         case .construct(let type):
             return try emitConstruct(type)
@@ -1036,6 +1082,8 @@ final class CFunctionEmitter {
         let temp = "t_\(nextTempSeq())"
         writer.line(
             "\(aggregate) *\(temp) = bk_nominal_alloc(sizeof(\(aggregate)), \(scope.typeID(of: type)));")
+        /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(temp, type: type)
         for (index, field) in decl.fields.enumerated() {
             let value: String
             if let defaultValue = field.defaultValue {
@@ -1059,6 +1107,8 @@ final class CFunctionEmitter {
         let temp = "t_\(nextTempSeq())"
         writer.line(
             "\(aggregate) *\(temp) = bk_nominal_alloc(sizeof(\(aggregate)), \(scope.typeID(of: type)));")
+        /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(temp, type: type)
         writer.line("\(temp)->tag = \(tag);")
         for (index, payload) in payloads.enumerated() {
             try checkSlotType(payloadTypes[index], slot: index, decl: decl, owner: "枚举 \(enumName)")
@@ -1239,6 +1289,8 @@ final class CFunctionEmitter {
             throw CBackendError(message: "C 后端：打印的实参没有携带类型，无法选定格式")
         }
         try emitValuePrint(text, type: type)
+        /// 打印是消费点：临时值印完即还，变量 / 字段的份额不在账上 ⇒ 那一条不动作。
+        try emitOwnedTemporaryRelease(text)
         if newline { writer.line("printf(\"\\n\");") }
     }
 
@@ -1320,6 +1372,8 @@ final class CFunctionEmitter {
         let (spelling, width, tag) = try elementABI(elementType)
         let handle = "t_\(nextTempSeq())"
         writer.line("void *\(handle) = bk_array_create(\(elements.count));")
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(handle, type: type)
         for (index, element) in elements.enumerated() {
             let box = "b_\(nextTempSeq())"
             writer.line("\(spelling) \(box) = \(try emitExpr(element));")
@@ -1338,6 +1392,8 @@ final class CFunctionEmitter {
         let (valueSpelling, valueWidth, valueTag) = try elementABI(valueType)
         let handle = "t_\(nextTempSeq())"
         writer.line("void *\(handle) = bk_dict_create();")
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(handle, type: type)
         for entry in entries {
             let key = try boxValue(try emitExpr(entry.key), type: keyType)
             try emitRetainIfAliased(entry.key, local: key, type: keyType)
@@ -1359,6 +1415,8 @@ final class CFunctionEmitter {
         let (spelling, width, tag) = try elementABI(elementType)
         let handle = "t_\(nextTempSeq())"
         writer.line("void *\(handle) = bk_set_create();")
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(handle, type: type)
         for element in elements {
             let box = "b_\(nextTempSeq())"
             writer.line("\(spelling) \(box) = \(try emitExpr(element));")
@@ -1632,7 +1690,11 @@ final class CFunctionEmitter {
     /// 把求值出来的值按值语义落到一个持有位置：结构体别名拷出新箱，对象 / 枚举 / 字符串别名留一份份额，
     /// 临时值直接接管。⛔ 结构体那一支必须排在 retain 之前 —— 拷贝本身就是一次独立持有。
     private func emitValueForStorage(_ node: IRExpr, _ text: String, type: IRType) throws -> String {
-        guard Self.yieldsAlias(node) else { return text }
+        guard Self.yieldsAlias(node) else {
+            /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它。
+            claimOwnedBox(text)
+            return text
+        }
         if case .nominal(let name, let isObject) = type, !isObject,
             let symbol = try copyFunction(for: type)
         {
