@@ -43,16 +43,22 @@ EMITTER = "Sources/PiniCore/CodeGen/IREmitter.swift"
 # 决策族：它们回答「此刻要不要 retain / release」。归位之后这些判断属于中端，
 # 后端只剩翻译。名字取自契约第 5 节的口径，不按代码形状匹。
 DECISION_SITES = [
-    "pendingReleases",
-    "emitReleases",
-    "emitReassignRelease",
-    "emitFieldReassignRelease",
     "emitRetainIfAliased",
     "releaseOwnedString",
     "releaseOwnedTemporary",
     "releaseCallArguments",
     "retainIfOwningContainer",
     "ensureReleaseFunction",
+]
+
+# 已归位：作用域与覆盖那五族搬进存储点注解之后，这些名字要么已从发射器消失，
+# 要么只剩翻译（按 `releaseOld` 发一次调用，不再自己判断要不要发）。留名是为了核账 ——
+# 它们的处数必须是 0，任何一处回来都说明决策又渗回了后端。
+RETIRED_SITES = [
+    "pendingReleases",
+    "emitReleases",
+    "emitReassignRelease",
+    "emitFieldReassignRelease",
     "registerReleasedHandle",
 ]
 
@@ -74,10 +80,10 @@ def read(path):
 
 def self_test():
     """The detector must fire on a planted hit and stay silent on a translation."""
-    planted = "private var pendingReleases: [[ReleasedHandle]] = []\n"
+    planted = "private func emitRetainIfAliased() {}\n"
     translation = "private func releaseSymbol(for type: IRType) -> String? {}\n"
     ok = True
-    if scan(planted, DECISION_SITES).get("pendingReleases") != 1:
+    if scan(planted, DECISION_SITES).get("emitRetainIfAliased") != 1:
         print("self-test FAIL: 植入的决策族符号未被识别")
         ok = False
     if scan(translation, DECISION_SITES):
@@ -96,8 +102,10 @@ def main():
         print("backend duty check: 找不到 %s，判为不通过" % EMITTER)
         return 1
 
-    found = scan(read(path), DECISION_SITES)
+    text = read(path)
+    found = scan(text, DECISION_SITES)
     total = sum(found.values())
+    retired = scan(text, RETIRED_SITES)
 
     print("后端义务检查（警告级）· 所有权归位")
     print("  文件: %s" % EMITTER)
@@ -105,8 +113,10 @@ def main():
     for sym in DECISION_SITES:
         if sym in found:
             print("    %-26s %d" % (sym, found[sym]))
+    if retired:
+        print("  已归位符号又出现: %s" % ", ".join(sorted(retired)))
 
-    if total:
+    if total or retired:
         print()
         print("  这些点在「所有权归位」落地后应归零。现在只报，不拦。")
         if "--strict" in sys.argv:

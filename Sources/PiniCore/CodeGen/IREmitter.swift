@@ -47,12 +47,9 @@ public final class IREmitter {
         /// `false` for a labeled `if` block: a frame `break` may leave but
         /// `continue` may not target.
         let isLoop: Bool
-        /// 本帧函数体在 `pendingDefers` 中 defer 帧的起始下标。从此帧跳出时由内向外冲刷到
-        /// 该下标（含两端），与解释器沿 `executeBlock` 弹出 defer 作用域等价。
-        let deferBase: Int
-        /// 本帧函数体在 `pendingReleases` 中释放帧的起始下标，与 `deferBase` 对称：跳出时
-        /// 释放由内到该下标（含两端）登记的集合句柄——离开体块后没有别的持有者。
-        let releaseBase: Int
+        /// 本帧在清理栈中的起始下标。跳出时由内向外执行到该下标（含两端），
+        /// 与解释器沿 `executeBlock` 弹出作用域等价。
+        let cleanupBase: Int
     }
 
     private var controlStack: [ControlFrame] = []
@@ -61,9 +58,9 @@ public final class IREmitter {
     /// 而离开 `if` 的 `break` 本身是终止指令却仍落该标签，故必须发射。只有非循环帧记录。
     private var breakMergeLabels: Set<String> = []
 
-    /// 当前函数（或闭包）的 defer 帧在 `pendingDefers` 中的起点。`return` 只冲刷到此处，
-    /// 故闭包内的 return 不执行外层函数的 defer。
-    private var deferScopeBase = 0
+    /// 当前函数（或闭包）在清理栈中的起点。`return` 只冲刷到此处，
+    /// 故闭包内的 return 不执行外层函数的清理。
+    private var cleanupScopeBase = 0
 
     private var currentIsMain = false
     private var currentReturnType: IRType? = nil
@@ -646,7 +643,7 @@ public final class IREmitter {
         slotCounters = [:]
         controlStack = []
         breakMergeLabels = []
-        deferScopeBase = 0
+        cleanupScopeBase = 0
         /// 字符串账本每函数一份：进体前压栈、换上空账本，函数发射结束时还原。
         /// 少了这一步账本会跨函数累积 —— 上个函数未出账的 SSA 名留在本函数账上却无人释放，
         /// 症状只是编译期集合变大。压栈是为了让「账本 = 本函数的持有量」这句话成立。
@@ -654,11 +651,9 @@ public final class IREmitter {
         ownedStrings = []
         ownedBoxesStack.append(ownedBoxes)
         ownedBoxes = [:]
-        pendingDefers.removeAll()
-        // Frame 0 of this function is its body block, pushed by the
-        // `emitBlock` call below; `emitBlock` leaves that frame to the exit
-        // paths here (see `emitReleases` in the fall-through tail).
-        pendingReleases.removeAll()
+        // Frame 0 of this function is its body block, pushed by the `emitBlock` call below;
+        // that block runs its own cleanup at the tail, so nothing is left for `exit_block`.
+        pendingCleanup.removeAll()
         terminated = false
         /// 测试模式下「是不是入口」按角色判，不只看名字：恰好叫 `main` 的 `|test` 函数是测试。
         /// 只看名字会让它拿到入口的 i32 返回口径，而驱动器仍按它声明的返回类型调用 ⇒ 签名对不上。
@@ -721,10 +716,8 @@ public final class IREmitter {
         if !terminated {
             bodyIR += builder.fmtBr(labelName: "exit_block") + "\n"
             bodyIR += "exit_block:\n"
-            // The top-level scope's handles are released here, on the
-            // fall-through edge. A `return` emits its own copy before its
-            // `ret`, so the two paths never both run.
-            emitReleases(downTo: 0)
+            // 根帧的清理已在块尾执行完；`return` 也在自己的 `ret` 前发过一份副本，
+            // 两条路径不会都跑。此标签只剩返回。
             if currentIsMain {
                 bodyIR += " ret i32 0\n"
             } else if let returnType = function.returnType {
@@ -1057,78 +1050,89 @@ public final class IREmitter {
 
     // MARK: - Statements
 
-    /// 发射一个语句块：压入 defer 帧与释放帧，块尾按落空或终止分别收口。
-    /// `seedingReleases` 预置那些声明代码早于本块发射的句柄：`for … in` 的元素绑定先于体 alloca，
+    /// 进入一个块作用域：压一层清理帧，跑完语句后按登记顺序逆序执行。
+    /// `seed` 预置那些声明代码早于本块发射的条目：`for … in` 的元素绑定先于体 alloca，
     /// 故它们属于体块的帧，尽管并不是块内的语句。
-    private func emitBlock(_ block: IRBlock, seedingReleases seed: [ReleasedHandle] = []) {
-        /// Defers registered in this block run LIFO at its normal end (loop bodies: every iteration).
-        /// A terminator's emitter already flushed them before its jump and a panic skips defers; a
-        /// return/break/continue pops every frame it unwinds, so drop this one here only if still present.
-        let frameBase = pendingDefers.count
-        pendingDefers.append([])
-        let releaseBase = pendingReleases.count
-        pendingReleases.append(seed)
+    private func emitBlock(_ block: IRBlock, seeding seed: [CleanupEntry] = []) {
+        let frameBase = pendingCleanup.count
+        pendingCleanup.append(seed)
         blockDepth += 1
         defer { blockDepth -= 1 }
         for statement in block {
             if terminated { break }
             emitStatement(statement)
         }
+        /// 终止路径（panic · return · break · continue）已在跳转前发过自己那一份副本，块尾不可达
+        /// ⇒ 弃帧。根帧（`frameBase == 0`）属于函数顶层作用域，不弹；它的清理已在这里执行完。
         if terminated {
-            /// A panic never runs defers — drop the frame. A return/break/continue already flushed copies of
-            /// the frames it unwound through before its jump, and this block's tail is unreachable. The root
-            /// frame (releaseBase == 0) belongs to the function's top-level scope and outlives its block.
-            if releaseBase > 0 {
-                _ = pendingReleases.removeLast()
-            }
-            _ = pendingDefers.removeLast()
+            if frameBase > 0 { _ = pendingCleanup.removeLast() }
         } else {
-            flushDefers(downTo: frameBase)
-            /// A block's own handles drop their shares as control falls out of it, before the caller emits
-            /// its jump — a loop body does this every iteration. The function body's own frame is the
-            /// exception: its handles belong to the top-level scope and are released at the function exit.
-            if releaseBase > 0 {
-                emitReleases(downTo: releaseBase)
-                _ = pendingReleases.removeLast()
-            }
-            _ = pendingDefers.removeLast()
+            emitCleanup(downTo: frameBase)
+            if frameBase > 0 { _ = pendingCleanup.removeLast() }
         }
     }
 
-    /// Emit one copy of the defer frames from the innermost down to `base` (both included), bodies in
-    /// LIFO order, WITHOUT popping: a terminator and a block tail are separate runtime paths over the
-    /// same statically emitted code, so each needs its own copy. Frame ownership stays with `emitBlock`.
-    private func flushDefers(downTo base: Int) {
+    /// 由内向外、每帧逆序执行到 `base`（含两端），不弹栈：终止路径与块尾是两条运行路径，
+    /// 各发一份。`defer` 体与局部释放共用这一条栈 —— 登记顺序即源码顺序，逆序即退出次序。
+    private func emitCleanup(downTo base: Int) {
+        guard base < pendingCleanup.count else { return }
         let wasTerminated = terminated
         terminated = false
-        for frame in pendingDefers[base...].reversed() {
-            for deferredBody in frame.reversed() {
-                for statement in deferredBody {
-                    if terminated { break }
-                    emitStatement(statement)
+        for frame in pendingCleanup[base...].reversed() {
+            for entry in frame.reversed() {
+                if terminated { break }
+                switch entry {
+                case .release(let handle):
+                    let loaded = builder.freshTemp()
+                    bodyIR +=
+                        builder.fmtLoad(
+                            name: loaded, type: handle.typeSpelling, ptr: handle.slot
+                        ) + "\n"
+                    bodyIR += " call void @\(handle.destroySymbol)(ptr \(loaded))\n"
+                case .deferBody(let body):
+                    for statement in body {
+                        if terminated { break }
+                        emitStatement(statement)
+                    }
                 }
             }
         }
         terminated = wasTerminated
     }
 
-    /// Deferred statement bodies per open block scope (G9 deferStmt):
-    /// scope -> defer (LIFO at scope end) -> wrapped statements.
-    private var pendingDefers: [[IRBlock]] = []
+    /// 一条退出时要执行的动作：还一份份额，或跑一段 `defer` 体。
+    private enum CleanupEntry {
+        case release(ReleasedHandle)
+        case deferBody(IRBlock)
+    }
 
-    /// A local holding one share of a refcounted collection handle, dropped when its block exits
-    /// (`pendingDefers`' sibling). `slot` and `typeSpelling` are snapshotted at registration so a
-    /// later same-name redeclaration cannot release through the wrong slot.
+    /// 每个打开的块一层，元素按登记顺序。根帧（函数体那一层）由块尾自己执行。
+    private var pendingCleanup: [[CleanupEntry]] = []
+
+    /// A local holding one share of a refcounted handle, dropped when its block exits.
+    /// `slot` and the spelling are snapshotted at registration so a later same-name
+    /// redeclaration cannot release through the wrong slot.
     private struct ReleasedHandle {
         let slot: String
         let typeSpelling: String
         let destroySymbol: String
     }
 
-    /// Collection handles to release per open block scope, in declaration order (release runs in
-    /// reverse). Frames are pushed by `emitBlock`, so the stack tracks block scopes exactly; the
-    /// function body's own frame is released at the function exit instead.
-    private var pendingReleases: [[ReleasedHandle]] = []
+    /// 把一个新声明的本地推进当前清理帧：退出时还掉它那一份。
+    ///  注意  这是翻译，不是决策 —— 「这个槽持有份额」由 `allocVar` 的类型与 `IRType.ownershipClass` 给出。
+    /// 同帧同槽只登记一次：遮蔽后的重声明会让名字重复，双释放会多扣一份（use-after-free）。
+    private func ownSlot(_ slot: String, type: IRType) {
+        guard let symbol = releaseSymbol(for: type) else { return }
+        guard !pendingCleanup.isEmpty else { return }
+        let frame = pendingCleanup.count - 1
+        guard !pendingCleanup[frame].contains(where: { entry in
+            if case .release(let handle) = entry { return handle.slot == slot }
+            return false
+        }) else { return }
+        pendingCleanup[frame].append(
+            .release(ReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling, destroySymbol: symbol))
+        )
+    }
 
     /// 该类型在退出 / 被覆盖时要调的销毁符号，nil = 本层不释放它。判定来自 `IRType.ownershipClass`：
     /// 拼写是后端的表示，换表示就会变，而变了的形态是「某族不再释放」。
@@ -1142,19 +1146,6 @@ public final class IREmitter {
             .valueBox, .aggregate, .inert:
             return nil
         }
-    }
-
-    /// Register a freshly declared local so its block exit drops its share of the handle. Same-slot
-    /// duplicates within one frame are skipped: a shadowing redeclaration reuses the name, and a
-    /// double release would drop two shares for one holder (over-release → use-after-free).
-    private func registerReleasedHandle(slot: String, type: IRType) {
-        guard let symbol = releaseSymbol(for: type) else { return }
-        guard !pendingReleases.isEmpty else { return }
-        let frame = pendingReleases.count - 1
-        guard !pendingReleases[frame].contains(where: { $0.slot == slot }) else { return }
-        pendingReleases[frame].append(
-            ReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling, destroySymbol: symbol)
-        )
     }
 
     /// 一个持有者槽在退出 / 被覆盖时要调的释放符号；nil = 该类型不在计数族里。
@@ -1171,50 +1162,12 @@ public final class IREmitter {
 
     /// 该类型在发射层是否按字符串参与引用计数：判据是 IR 类型为 `string` 或 `char`。
     /// `Char` 与 `String` 同构（运行时段都是带计数头的 C 串，元素 tag 都钉在 3）⇒ 同一条释放通道。
-    /// `*T` 指针不算：它的拼写也是 `i8*` 但指向外部内存；本条按 `IRType` 判，`.pointer` 天然排除。
+    /// `*T` 指针不算：它是外部内存，与计数头无关；本条按 `IRType` 判，`.pointer` 天然排除。
     private func isRefcountedString(_ type: IRType) -> Bool {
         switch type {
         case .string, .char: return true
         default: return false
         }
-    }
-
-    /// Emit one `bk_*_destroy` per registered handle in frames `base...`, innermost frame first and
-    /// within a frame in reverse declaration order, WITHOUT popping. A terminator and a block tail
-    /// are separate runtime paths, so each emits its own copy — the contract `flushDefers` follows.
-    private func emitReleases(downTo base: Int) {
-        guard base < pendingReleases.count else { return }
-        for frame in pendingReleases[base...].reversed() {
-            for handle in frame.reversed() {
-                let loaded = builder.freshTemp()
-                bodyIR +=
-                    builder.fmtLoad(
-                        name: loaded, type: handle.typeSpelling, ptr: handle.slot
-                    ) + "\n"
-                bodyIR += " call void @\(handle.destroySymbol)(ptr \(loaded))\n"
-            }
-        }
-    }
-
-    /// Drop the share held by `slot` before a new value overwrites it: reassignment is a release
-    /// point, not just a store. 判据是中端填的 `releaseOld`；符号由类型分类决定。借来的槽
-    /// （形参 · `match` 绑定）不会被标成持有者，故不会被误释放。
-    private func emitReassignRelease(slot: String, type: IRType) {
-        guard let symbol = releaseSymbol(for: type) else { return }
-        let loaded = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: slot) + "\n"
-        bodyIR += " call void @\(symbol)(ptr \(loaded))\n"
-    }
-
-    /// 字段被覆盖前释放旧值 —— `emitReassignRelease` 的字段版。
-    /// 与槽那版的结构差异：槽的符号在登记时固定，字段当场问类型；对同一字段的两次写必是同一类型。
-    /// 旧值可能是 null（无默认值字段刚构造出来）：容器一族因此走判空分支，名义一族不必。
-    private func emitFieldReassignRelease(fieldPtr: String, type: IRType) {
-        guard let callee = releaseCallee(for: type) else { return }
-        let old = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: old, type: type.llvmSpelling, ptr: fieldPtr) + "\n"
-        emitReleaseCall(
-            callee: callee, valueName: old, spelling: type.llvmSpelling, tag: "w\(builder.freshLabel())")
     }
 
     private func emitStatement(_ statement: IRStmt) {
@@ -1249,9 +1202,8 @@ public final class IREmitter {
                     bodyIR += builder.fmtStore(value: zeroConst(for: type), type: type.llvmSpelling, ptr: address) + "\n"
                 }
             }
-            // The fresh local holds one share of its handle; drop it
-            // when the declaring block exits.
-            registerReleasedHandle(slot: address, type: type)
+            // 新本地握着一份份额：登记进本块清理帧，退出时还掉。
+            ownSlot(address, type: type)
 
         case .storeVar(let name, let type, let value, let adopt, let releaseOld):
             guard let slot = lookupSlot(name) else {
@@ -1261,9 +1213,11 @@ public final class IREmitter {
             /// 三行的顺序就是语义：先让新值站住（注解说的移交 / 拷贝 / 保留），
             /// 再释放旧值，最后才写槽。顺序颠倒则 `a = a` 这类自赋值先回收掉新值要读的箱，读已释放内存。
             let stored = applyAdopt(adopt, lowered, type: type)
-            // 旧值要不要还，判据是中端填的 `releaseOld`（借来的槽不还），不是「这个槽在不在账本里」。
-            if releaseOld {
-                emitReassignRelease(slot: slot, type: type)
+            /// 覆盖点：旧值先还掉。要不要还由中端填的 `releaseOld` 说（借来的槽不会被标成持有者）。
+            if releaseOld, let symbol = releaseSymbol(for: type) {
+                let old = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: old, type: type.llvmSpelling, ptr: slot) + "\n"
+                bodyIR += " call void @\(symbol)(ptr \(old))\n"
             }
             bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
 
@@ -1280,13 +1234,9 @@ public final class IREmitter {
             )
 
         case .returnStmt(let value, let adopt):
-            // Defers of every open block of this function run before the
-            // return (interpreter: the signal unwinds through each
-            // executeBlock's popDeferScope, innermost first).
-            flushDefers(downTo: deferScopeBase)
-            /// 下面的顺序就是语义，不是风格：求值 → 若与局部别名则留一份 → 再释放 → ret。
-            /// 释放排在求值之前时，`return <局部容器>` 交出的是已被回收的悬垂句柄，调用方第一次 `len()` 就撞进去。
-            /// `var` 亦非风格：值语义那一步会换掉交出去的值，写成 `let` 则拷贝做了、`ret` 交的仍是原件。
+            /// 清理排在返回值站住之后：先求值、留一份，再按登记逆序执行到函数基址。
+            /// 释放排在求值之前时，`return <局部容器>` 交出的就是已回收的悬垂句柄。
+            /// `var` 亦非风格：值语义会换掉交出去的值，写成 `let` 则拷贝做了、`ret` 交的仍是原件。
             var returnedValue: IRValue? = value.map { emitExpr($0) }
             if let returnedNode = value, let current = returnedValue {
                 /// 接收动作来自中端注解；没有声明返回类型时只剩别名点保留 —— 那条路不交值。
@@ -1296,10 +1246,9 @@ public final class IREmitter {
                     emitRetainIfAliased(returnedNode, current, type: irType(of: returnedNode))
                 }
             }
-            // Returning leaves the function outright, abandoning every
-            // open scope; the fall-through `exit_block` cleanup is only
-            // reached when control does NOT return, so the two never both run.
-            emitReleases(downTo: 0)
+            // Returning abandons every open scope; the fall-through cleanup already ran at the block
+            // tail, and only one of the two paths is reachable, so they never both run.
+            emitCleanup(downTo: cleanupScopeBase)
             if let returnedValue {
                 bodyIR += " ret \(returnedValue.llvmType) \(returnedValue.ssaName)\n"
             } else if currentIsMain {
@@ -1320,7 +1269,7 @@ public final class IREmitter {
             }
 
         case .deferStmt(let body):
-            pendingDefers[pendingDefers.count - 1].append(body)
+            pendingCleanup[pendingCleanup.count - 1].append(.deferBody(body))
 
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
             emitTry(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget, type: type)
@@ -1353,9 +1302,14 @@ public final class IREmitter {
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
             //  注意  顺序同 `storeVar`：新值先站住（注解给的接收动作），**再**释放字段旧值，最后写。
             let stored = applyAdopt(adopt, loweredValue, type: fieldType)
-            // 字段是**持有者**：被覆盖前先释放旧值；借来的字段由 `releaseOld` 说不还。
-            if releaseOld {
-                emitFieldReassignRelease(fieldPtr: fieldPtr, type: fieldType)
+            /// 字段是持有者：被覆盖前先还旧值；要不要还由 `releaseOld` 说。
+            /// 旧值可能是 null（无默认值字段刚构造出来）⇒ 容器一族走判空分支，名义一族不必。
+            if releaseOld, let callee = releaseCallee(for: fieldType) {
+                let old = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: old, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
+                emitReleaseCall(
+                    callee: callee, valueName: old, spelling: fieldType.llvmSpelling,
+                    tag: "w\(builder.freshLabel())")
             }
             bodyIR += builder.fmtStore(value: stored.ssaName, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
 
@@ -1382,11 +1336,10 @@ public final class IREmitter {
     private func emitBreak(depth: Int) {
         if controlStack.count >= depth {
             let frame = controlStack[controlStack.count - depth]
-            flushDefers(downTo: frame.deferBase)
-            /// Breaking abandons the body scope (and every scope nested in it), so their handles are released
-            /// here. Iterations that end normally release the same handles at the body block's tail —
-            /// separate runtime paths, separate copies of the same release code.
-            emitReleases(downTo: frame.releaseBase)
+            /// Breaking abandons the body scope (and every scope nested in it): its `defer` bodies run and
+            /// its handles are released here, in the one registered order. Normal iterations do the same at
+            /// the body block's tail — separate runtime paths, separate copies of the same cleanup code.
+            emitCleanup(downTo: frame.cleanupBase)
             if !frame.isLoop { breakMergeLabels.insert(frame.exit) }
             bodyIR += builder.fmtBr(labelName: frame.exit) + "\n"
         } else {
@@ -1403,10 +1356,9 @@ public final class IREmitter {
     private func emitContinue(depth: Int) {
         if controlStack.count >= depth {
             let frame = controlStack[controlStack.count - depth]
-            flushDefers(downTo: frame.deferBase)
-            // Ending the iteration early abandons the scopes it held;
-            // release them before the jump (same contract as emitBreak).
-            emitReleases(downTo: frame.releaseBase)
+            // Ending the iteration early abandons the scopes it held; clean them before the jump
+            // (same contract as emitBreak).
+            emitCleanup(downTo: frame.cleanupBase)
             let target = depth == 1 ? frame.continueTarget : frame.header
             bodyIR += builder.fmtBr(labelName: target) + "\n"
         } else {
@@ -1890,7 +1842,7 @@ public final class IREmitter {
 
         /// A labeled `if` is an interruptible frame, so `break 标签` inside either branch jumps to
         /// `endLabel`. It is not a `continue` target, so its resume labels are never read and point at the
-        /// merge block. Each branch pushes its own frame so `deferBase`/`releaseBase` name that branch.
+        /// merge block. Each branch pushes its own frame so `cleanupBase` names that branch.
         let isFrame = label != nil
 
         bodyIR += "\(thenLabel):\n"
@@ -1898,7 +1850,7 @@ public final class IREmitter {
             controlStack.append(
                 ControlFrame(
                     exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
-                    deferBase: pendingDefers.count, releaseBase: pendingReleases.count
+                    cleanupBase: pendingCleanup.count
                 ))
         }
         scopes.append([:])
@@ -1918,7 +1870,7 @@ public final class IREmitter {
                 controlStack.append(
                     ControlFrame(
                         exit: endLabel, header: endLabel, continueTarget: endLabel, isLoop: false,
-                        deferBase: pendingDefers.count, releaseBase: pendingReleases.count
+                        cleanupBase: pendingCleanup.count
                     ))
             }
             scopes.append([:])
@@ -1962,7 +1914,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : condLabel
-        controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+        controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, isLoop: true, cleanupBase: pendingCleanup.count))
         scopes.append([:])
         terminated = false
         emitBlock(loopBody)
@@ -1976,7 +1928,7 @@ public final class IREmitter {
             bodyIR += "\(stepLabel):\n"
             // Inside the step, an unlabeled continue goes to its own end
             // (interpreter: continue in the step block → next iteration).
-            controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+            controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, isLoop: true, cleanupBase: pendingCleanup.count))
             scopes.append([:])
             terminated = false
             emitBlock(step)
@@ -2040,7 +1992,7 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let continueTarget = step != nil ? stepLabel : incLabel
-        controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+        controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: continueTarget, isLoop: true, cleanupBase: pendingCleanup.count))
         scopes.append([:])
         terminated = false
         // Pattern bindings: a fresh slot per iteration (the loop scope makes
@@ -2050,7 +2002,7 @@ public final class IREmitter {
         bodyIR += builder.fmtLoad(name: indexForBind, type: "i32", ptr: indexSlot) + "\n"
         // Element bindings that are collection handles hold one share
         // for the iteration; collect them for the body block's release frame.
-        var patternReleases: [ReleasedHandle] = []
+        var patternReleases: [CleanupEntry] = []
         for (position, name) in pattern.enumerated() {
             guard name != "_" else { continue }
             let elementType = elementTypes[position]
@@ -2071,7 +2023,7 @@ public final class IREmitter {
             scopes[scopes.count - 1][name] = slot
             if let symbol = Self.collectionDestroySymbol(for: elementType) {
                 patternReleases.append(
-                    ReleasedHandle(slot: slot, typeSpelling: spelling, destroySymbol: symbol)
+                    .release(ReleasedHandle(slot: slot, typeSpelling: spelling, destroySymbol: symbol))
                 )
             }
         }
@@ -2079,7 +2031,7 @@ public final class IREmitter {
         /// `currentEnv = loopEnv`), so pattern variables stay visible there — a bare `v` in `step:`
         /// resolves to the body's slot. Hand the same bindings to the step scope.
         let patternBindings = scopes[scopes.count - 1]
-        emitBlock(body, seedingReleases: patternReleases)
+        emitBlock(body, seeding: patternReleases)
         controlStack.removeLast()
         if !terminated {
             bodyIR += builder.fmtBr(labelName: step != nil ? stepLabel : incLabel) + "\n"
@@ -2088,7 +2040,7 @@ public final class IREmitter {
 
         if let step = step {
             bodyIR += "\(stepLabel):\n"
-            controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, isLoop: true, deferBase: pendingDefers.count, releaseBase: pendingReleases.count))
+            controlStack.append(ControlFrame(exit: exitLabel, header: condLabel, continueTarget: stepEndLabel, isLoop: true, cleanupBase: pendingCleanup.count))
             scopes.append(patternBindings)
             terminated = false
             emitBlock(step)
@@ -3139,11 +3091,11 @@ public final class IREmitter {
         let savedTerminated = terminated
         let savedControlStack = controlStack
         let savedBreakMergeLabels = breakMergeLabels
-        let savedDeferScopeBase = deferScopeBase
+        let savedCleanupScopeBase = cleanupScopeBase
         let savedReturnType = currentReturnType
         let savedIsMain = currentIsMain
         let savedCaptureSlots = captureSlots
-        let savedPendingReleases = pendingReleases
+        let savedPendingCleanup = pendingCleanup
 
         builder = IRBuilder()
         bodyIR = ""
@@ -3152,11 +3104,11 @@ public final class IREmitter {
         terminated = false
         controlStack = []
         breakMergeLabels = []
-        deferScopeBase = 0
+        cleanupScopeBase = 0
         currentReturnType = nil
         currentIsMain = false
         captureSlots = [:]
-        pendingReleases = []
+        pendingCleanup = []
         /// 给定初始化器也是独立体（新 `IRBuilder`）⇒ 临时箱账本同样换一份。
         ownedBoxesStack.append(ownedBoxes)
         ownedBoxes = [:]
@@ -3190,11 +3142,11 @@ public final class IREmitter {
         terminated = savedTerminated
         controlStack = savedControlStack
         breakMergeLabels = savedBreakMergeLabels
-        deferScopeBase = savedDeferScopeBase
+        cleanupScopeBase = savedCleanupScopeBase
         currentReturnType = savedReturnType
         currentIsMain = savedIsMain
         captureSlots = savedCaptureSlots
-        pendingReleases = savedPendingReleases
+        pendingCleanup = savedPendingCleanup
         ownedBoxes = ownedBoxesStack.popLast() ?? [:]
         return symbol
     }
@@ -5278,7 +5230,7 @@ public final class IREmitter {
         let savedTerminated = terminated
         let savedControlStack = controlStack
         let savedBreakMergeLabels = breakMergeLabels
-        let savedDeferScopeBase = deferScopeBase
+        let savedCleanupScopeBase = cleanupScopeBase
         let savedReturnType = currentReturnType
         let savedIsMain = currentIsMain
         let savedBodyIR = bodyIR
@@ -5288,7 +5240,7 @@ public final class IREmitter {
         /// A closure is its own release scope: its body block is frame 0 of a fresh stack, exactly like a
         /// function body. Otherwise it would inherit the enclosing frames, and a `return` inside it (which
         /// releases down to frame 0) would drop the enclosing function's top-level handles — over-release.
-        let savedPendingReleases = pendingReleases
+        let savedPendingCleanup = pendingCleanup
         /// 闭包体是**自己的函数**，而它不是任务 ⇒ 没有帧可依。 行不通  不继承外层体的帧式：
         /// 外层的帧槽是外层的，闭包体内的局部槽若发成「帧槽」，取的会是**外层那一块**（或者根本没有）。
         /// 深度的重置同理 —— 闭包的函数体那一层也应该是 1。
@@ -5302,15 +5254,14 @@ public final class IREmitter {
         terminated = false
         controlStack = []
         breakMergeLabels = []
-        // A return inside the closure must not run the enclosing function's
-        // defers: defer frames opened by the closure live above this base.
-        deferScopeBase = pendingDefers.count
+        /// 闭包体是它自己的函数：清理栈换成空的，`return` 只洗到 0，不碰外层函数的清理。
+        cleanupScopeBase = 0
         currentReturnType = returnType
         currentIsMain = false
         builder = IRBuilder()
         bodyIR = ""
         captureSlots = [:]
-        pendingReleases = []
+        pendingCleanup = []
         /// 闭包体重建 `IRBuilder` ⇒ SSA 名从 `%t1` 重新编号，账本必须换新的，否则同名条目指向外层的值。
         ownedBoxesStack.append(ownedBoxes)
         ownedBoxes = [:]
@@ -5346,9 +5297,7 @@ public final class IREmitter {
         if !terminated {
             bodyIR += builder.fmtBr(labelName: "exit_block") + "\n"
             bodyIR += "exit_block:\n"
-            // Drop the closure's own top-level handles on the
-            // fall-through edge (a `return` emits its own copy before its ret).
-            emitReleases(downTo: 0)
+            // 根帧的清理已在块尾执行完（`return` 也在自己的 ret 前发过一份副本）。
             if let returnType = returnType {
                 bodyIR += " ret \(returnType.llvmSpelling) undef\n"
             } else {
@@ -5370,13 +5319,13 @@ public final class IREmitter {
         terminated = savedTerminated
         controlStack = savedControlStack
         breakMergeLabels = savedBreakMergeLabels
-        deferScopeBase = savedDeferScopeBase
+        cleanupScopeBase = savedCleanupScopeBase
         currentReturnType = savedReturnType
         currentIsMain = savedIsMain
         bodyIR = savedBodyIR
         builder = savedBuilder
         captureSlots = savedCaptureSlots
-        pendingReleases = savedPendingReleases
+        pendingCleanup = savedPendingCleanup
         ownedBoxes = ownedBoxesStack.popLast() ?? [:]
         capturedNamesInFunction = savedCapturedNames
         frameMode = savedFrameMode
