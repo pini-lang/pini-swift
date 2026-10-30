@@ -5,7 +5,7 @@ import Foundation
 /// 打印形态不在此表：`CEmitter` 逐类型镜像 LLVM 侧，两处必须逐字一致。
 public enum CTypeMap {
 
-    /// 名义类型的 C 拼写基准。⛔ 不加前缀的话，`IRName.mangle` 的产物以 `_` 开头，
+    /// 名义类型的 C 拼写基准。注意 —— 不加前缀的话，`IRName.mangle` 的产物以 `_` 开头，
     /// 在 C 的文件作用域下属保留标识符；加了前缀也顺带躲开 C23 那批新关键字。
     public static let aggregatePrefix = "pini_"
 
@@ -30,8 +30,63 @@ public enum CTypeMap {
         case .array, .dict, .set: return "void *"
         // Optional 是按值的标签联合 `{ tag, value }`，故每个载荷类型一个具名结构体。
         case .optional(let wrapped): return try optionalName(wrapped)
+        // 函数值是 `{ code, env }` 两个机器字，与 LLVM 的 `{ ptr, ptr }` 同宽同序。
+        case .function: return "PiniClosure"
+        // 元组是按值聚合体（不是句柄）：每个形状一个具名结构体，字段序即 LLVM 的 `{ ... }` 字段序。
+        case .tuple(_, let fieldTypes): return try tupleName(fieldTypes)
+        // LazyRef 与三族容器同为不透明句柄，元素只决定装箱 ABI 与 `.value` 的读出宽度。
+        case .lazyRef: return "void *"
         default: throw CBackendError(message: "C 后端尚未支持的类型：\(label(of: type))")
         }
+    }
+
+    /// 元组结构体名：由字段类型的后缀拼成 —— 同形状必得同名，字段数或任一字段类型变了就换名。
+    /// 标签不参与命名：两个只有标签不同的元组布局相同，在 C 里本就该是同一个类型。
+    public static func tupleName(_ fieldTypes: [IRType]) throws -> String {
+        guard !fieldTypes.isEmpty else {
+            throw CBackendError(message: "C 后端尚未支持的零字段元组")
+        }
+        return "PiniTuple_" + (try fieldTypes.map { try tupleSuffix($0) }.joined(separator: "_"))
+    }
+
+    /// 元组字段的类型后缀。与 `optionalSuffix` 分开维护：两处名字服务的对象不同，
+    /// 合表会让 Optional 的具名规则被元组的规则牵动。
+    public static func tupleSuffix(_ type: IRType) throws -> String {
+        switch type {
+        case .i8: return "i8"
+        case .u8: return "u8"
+        case .i32: return "i32"
+        case .i64: return "i64"
+        case .u64: return "u64"
+        case .f64: return "f64"
+        case .boolean: return "bool"
+        case .string: return "str"
+        case .char: return "chr"
+        case .nominal(let name, _): return "nom_" + IRName.mangle(name)
+        case .enumeration(let name): return "enum_" + IRName.mangle(name)
+        case .array(let element): return "arr_" + (try tupleSuffix(element))
+        case .set(let element): return "set_" + (try tupleSuffix(element))
+        case .dict(let key, let value):
+            return "dict_" + (try tupleSuffix(key)) + "_" + (try tupleSuffix(value))
+        case .optional(let wrapped): return "opt_" + (try tupleSuffix(wrapped))
+        case .lazyRef(let element): return "lazy_" + (try tupleSuffix(element))
+        case .function: return "fn"
+        case .tuple(_, let fields):
+            return "tup_" + (try fields.map { try tupleSuffix($0) }.joined(separator: "_"))
+        default:
+            throw CBackendError(message: "C 后端尚未支持的元组字段：\(label(of: type))")
+        }
+    }
+
+    /// 元组的按值结构体定义。字段按序落 `f0…fn`，宽度取各自的 C 拼写 ——
+    /// LLVM 的 `{ i32, i8* }` 与这里的 `{ int32_t, char * }` 必须是同一套对齐规则下的同一布局。
+    public static func tupleDefinition(_ fieldTypes: [IRType]) throws -> (name: String, source: String) {
+        let name = try tupleName(fieldTypes)
+        var source = "typedef struct \(name) {\n"
+        for (index, type) in fieldTypes.enumerated() {
+            source += "    \(try spelling(of: type)) f\(index);\n"
+        }
+        return (name, source + "} \(name);\n")
     }
 
     /// `{ i64, T }` 的 C 具名结构体名。按载荷类型特化 —— 名字由载荷的拼写派生，同类型必得同名。
@@ -88,6 +143,13 @@ public enum CTypeMap {
         // 复合字面量：只给 tag，载荷按 C 的聚合初始化落零。`tag = 1` 即 none。
         case .optional(let wrapped):
             return "((\(try optionalName(wrapped))){ 1 })"
+        // 空函数值：code 与 env 同为 NULL，与 LLVM 侧「未初始化即 null」同形。
+        case .function: return "((PiniClosure){ NULL, NULL })"
+        // 元组是聚合体：只给第一个字段一个 0，其余按 C 的聚合初始化落零（与 LLVM 的零聚合同值）。
+        case .tuple(_, let fieldTypes):
+            return "((\(try tupleName(fieldTypes))){ 0 })"
+        // 句柄：NULL 对 `bk_lazyref_destroy` / 任何读口都是明确的空值。
+        case .lazyRef: return "NULL"
         default:
             throw CBackendError(message: "C 后端尚未支持的零值类型：\(label(of: type))")
         }
@@ -129,7 +191,7 @@ public enum CTypeMap {
         return text
     }
 
-    /// 错误信息与 `_Static_assert` 里用的类型名。⛔ 不用 `String(describing:)`：
+    /// 错误信息与 `_Static_assert` 里用的类型名。注意 —— 不用 `String(describing:)`：
     /// 那是 Swift 的调试形态，对着 IR 找不到同名节点。
     public static func label(of type: IRType) -> String {
         switch type {

@@ -88,8 +88,14 @@ struct CEmitterTests {
         // 容器是运行时段的不透明句柄；Optional 按载荷类型特化出一个具名结构体。
         #expect(try CTypeMap.spelling(of: .array(element: .i32)) == "void *")
         #expect(try CTypeMap.spelling(of: .optional(wrapped: .i32)) == "PiniOpt_i32")
+        // 元组是按值聚合体，名字由字段类型派生；LazyRef 与容器同为不透明句柄。
+        #expect(
+            try CTypeMap.spelling(of: .tuple(labels: [nil, nil], fieldTypes: [.i32, .i32]))
+                == "PiniTuple_i32_i32")
+        #expect(try CTypeMap.spelling(of: .lazyRef(element: .i32)) == "void *")
+        // 表外的类型仍然拒绝：静默退化成 `void *` 会让产物编得过而在运行时读错位。
         #expect(throws: CBackendError.self) {
-            _ = try CTypeMap.spelling(of: .tuple(labels: [nil], fieldTypes: [.i32]))
+            _ = try CTypeMap.spelling(of: .result(ok: .i32))
         }
     }
 

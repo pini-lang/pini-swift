@@ -11,7 +11,7 @@ public struct CFile: Equatable {
     }
 }
 
-/// C 后端的失败信号。遇到未支持的节点一律抛它，⛔ 不静默降级：
+/// C 后端的失败信号。遇到未支持的节点一律抛它，注意 —— 不静默降级：
 /// 降级产出的 C 能编译、能运行，只是算错，那是比编译失败昂贵得多的失败模式。
 public struct CBackendError: Error, CustomStringConvertible {
     public let message: String
@@ -62,10 +62,15 @@ public final class CEmitter {
 
         var out = "// 由 Pini 编译器生成，勿手改。\n"
         out += "#include \"\(PiniRTHeader.fileName)\"\n\n"
+        if scope.usesClosureValues { out += Self.closureValueDeclaration }
         out += scope.forwardDeclarations()
         out += scope.optionalDefinitions()
+        out += scope.tupleDefinitions()
         out += try scope.aggregateDefinitions()
         out += try scope.layoutAssertions()
+        out += try scope.tupleLayoutAssertions()
+        out += try scope.closureEnvDefinitions()
+        out += scope.lazyRefWrapperDefinitions()
         out += scope.copyFunctionDeclarations()
         out += scope.releaseFunctionDeclarations()
         out += scope.copyFunctionDefinitions()
@@ -81,10 +86,29 @@ public final class CEmitter {
             prototypes += try CFunctionEmitter.prototype(of: function) + ";\n"
         }
         out += prototypes
+        out += scope.closurePrototypesText()
         out += "\n"
         out += bodies.joined(separator: "\n")
+        out += scope.closureBodies()
         return [CFile(name: "\(programName).c", contents: out)]
     }
+
+    /// 函数值的按值表示。与 LLVM 的 `{ ptr, ptr }` 同宽同序：`code` 在 0、`env` 在 8。
+    /// 这段注释随产物落盘：平台边界必须写在读者看得到的地方，而不是只留在发射器源码里。
+    static let closureValueDeclaration = #"""
+    // 函数值 = { code, env }，与 LLVM 的 `{ ptr, ptr }` 同宽同序：code 在 0、env 在 8。
+    // 注意 —— 平台边界：code 存成 `void *` 再转回函数指针调用，ISO C 不保证、POSIX 保证 —— 产物只承诺 POSIX。
+    // env 是指向捕获变量槽的指针数组，malloc 分配；与 LLVM 侧同一分配器，同样不在出口回收。
+    typedef struct PiniClosure {
+        void *code;
+        void *env;
+    } PiniClosure;
+    _Static_assert(sizeof(PiniClosure) == 16, "闭包值布局漂移");
+    _Static_assert(offsetof(PiniClosure, code) == 0, "闭包值布局漂移：code");
+    _Static_assert(offsetof(PiniClosure, env) == 8, "闭包值布局漂移：env");
+
+    """#
+
 
     /// 声明面上出现的可选类型逐个登记：签名、字段与枚举载荷槽都在这个面上。
     /// 只在构造 / 取值点登记的写法会漏掉「声明了但从没构造过」的那种签名。
@@ -132,6 +156,8 @@ final class CModuleScope {
     let types: [IRTypeDecl]
     let enums: [IREnumDecl]
     let defined: Set<String>
+    /// 按源码名索引的函数（含方法）：函数值的适配器要照着原函数的形参生成签名。
+    private let functions: [String: IRFunction]
     /// 类型标识：结构按声明序 1 起，枚举接在结构之后 —— 与 LLVM 侧同一套编号，
     /// 差一位就是两个通道写进对象头的 id 不同。
     private let structIDs: [String: Int32]
@@ -141,7 +167,7 @@ final class CModuleScope {
     private(set) var constants: [(name: String, value: String)] = []
     var calledNames: Set<String> = []
 
-    /// LLVM 头里以裸名 declare、由 libc / libm 提供的那些符号。⛔ 不按「不在本模块 ⇒ 外部」
+    /// LLVM 头里以裸名 declare、由 libc / libm 提供的那些符号。注意 —— 不按「不在本模块 ⇒ 外部」
     /// 推断：那会把真用户函数也当外部符号放过，错到链接期才现形。
     static let libcFunctions: Set<String> = [
         "printf", "sqrt", "free", "strlen", "strcat", "strcpy", "memcpy",
@@ -163,11 +189,33 @@ final class CModuleScope {
     /// 用到的 Optional 结构体定义，按登记序（被引用的载荷先于引用它的那个）。
     private var optionalNames: Set<String> = []
     private(set) var optionalBodies: [String] = []
+    /// 用到的元组形状：名字与其字段表。名字去重，字段表留作 `_Static_assert` 的输入。
+    private var tupleNames: Set<String> = []
+    private(set) var tupleBodies: [String] = []
+    private var tupleShapes: [(name: String, fieldTypes: [IRType])] = []
+    /// LazyRef 的装箱入口，按元素类型去重。
+    private var lazyRefWrapperNames: Set<String> = []
+    private var lazyRefWrappers: [String] = []
+    /// 每个闭包字面量一个 env 结构体：字段数即捕获数，按捕获序排。
+    private var closureEnvNames: Set<String> = []
+    private var closureEnvs: [(name: String, count: Int)] = []
+    private var closurePrototypes: [String] = []
+    private var closureBodyTexts: [String] = []
+    /// 具名函数的适配器已生成过的（每个函数最多一份，与 LLVM 侧同一条去重账）。
+    private var adapterSymbols: Set<String> = []
+    private var adapterTexts: [String] = []
+    /// 产物里出现过函数值：只有此时才落 `PiniClosure` 的 typedef 与布局断言。
+    private(set) var usesClosureValues = false
 
     init(module: IRModule, defined: Set<String>) {
         self.types = module.types
         self.enums = module.enums
         self.defined = defined
+        var table: [String: IRFunction] = [:]
+        for function in module.functions + module.types.flatMap(\.methods) {
+            table[function.name] = function
+        }
+        functions = table
         var ids: [String: Int32] = [:]
         for (index, decl) in module.types.enumerated() { ids[decl.name] = Int32(index + 1) }
         structIDs = ids
@@ -190,6 +238,78 @@ final class CModuleScope {
 
     func enumDecl(named name: String) -> IREnumDecl? { enums.first { $0.name == name } }
 
+    func function(named name: String) -> IRFunction? { functions[name] }
+
+    /// 闭包字面量 `id` 的 env 结构体名，顺带登记其字段数。名字由 id 派生，
+    /// 与 LLVM 的 `%__closure_env_<id>` 一一对应。
+    func registerClosureEnv(id: Int, captureCount: Int) -> String {
+        usesClosureValues = true
+        let name = "PiniEnv_\(id)"
+        guard closureEnvNames.insert(name).inserted else { return name }
+        closureEnvs.append((name: name, count: captureCount))
+        return name
+    }
+
+    /// 全部 env 结构体定义与逐字段偏移断言。env 的字宽与顺序必须与 LLVM 的 `{ ptr, ... }` 一致：
+    /// 捕获变量的槽指针按捕获序落在 8 字节一格上，错一格闭包就读到别人的变量。
+    func closureEnvDefinitions() throws -> String {
+        guard !closureEnvs.isEmpty else { return "" }
+        var out = ""
+        for env in closureEnvs {
+            out += "typedef struct \(env.name) {\n"
+            for index in 0..<env.count { out += "    void *f\(index);\n" }
+            out += "} \(env.name);\n"
+            out += "_Static_assert(sizeof(\(env.name)) == \(env.count * 8), \"闭包环境布局漂移：\(env.name)\");\n"
+            for index in 0..<env.count {
+                out +=
+                    "_Static_assert(offsetof(\(env.name), f\(index)) == \(index * 8),"
+                    + " \"闭包环境布局漂移：\(env.name).f\(index)\");\n"
+            }
+        }
+        return out + "\n"
+    }
+
+    func addClosure(prototype: String, body: String) {
+        closurePrototypes.append(prototype)
+        closureBodyTexts.append(body)
+    }
+
+    /// 闭包体的签名要排在所有函数体之前：闭包在创建点被引用，C 不允许用到未声明的函数。
+    func closurePrototypesText() -> String {
+        closurePrototypes.isEmpty ? "" : closurePrototypes.map { $0 + ";\n" }.joined()
+    }
+
+    func closureBodies() -> String {
+        let all = closureBodyTexts + adapterTexts
+        return all.isEmpty ? "" : "\n" + all.joined(separator: "\n")
+    }
+
+    /// 具名函数当值用时的适配器：间接调用的约定是 `代码(env, 实参...)`，而原函数没有 env 槽，
+    /// 直接把它的地址塞进闭包会让每个实参错位一格 —— 这层转发补齐 env（与 LLVM 的 `__adapter_` 同形）。
+    func registerAdapter(for function: IRFunction) throws -> String {
+        usesClosureValues = true
+        let mangled = IRName.mangle(function.name)
+        let symbol = "pini_adapter_\(mangled)"
+        guard adapterSymbols.insert(symbol).inserted else { return symbol }
+        var params: [String] = ["void *env"]
+        var callArgs: [String] = []
+        for (index, param) in function.params.enumerated() {
+            try noteType(param.type)
+            params.append("\(try CTypeMap.spelling(of: param.type)) a\(index)")
+            callArgs.append("a\(index)")
+        }
+        let returnSpelling = try function.returnType.map { try CTypeMap.spelling(of: $0) } ?? "void"
+        closurePrototypes.append("static \(returnSpelling) \(symbol)(\(params.joined(separator: ", ")))")
+        var lines: [String] = []
+        lines.append("static \(returnSpelling) \(symbol)(\(params.joined(separator: ", "))) {")
+        lines.append("    (void)env;")
+        let call = "pini_\(mangled)(\(callArgs.joined(separator: ", ")))"
+        lines.append(function.returnType == nil ? "    \(call);" : "    return \(call);")
+        lines.append("}")
+        adapterTexts.append(lines.joined(separator: "\n"))
+        return symbol
+    }
+
     /// 登记一个 Optional 载荷类型的具名结构体，返回结构体名。载荷本身也是 Optional 时先递归登记，
     /// 使定义序里被引用的那个在前；同载荷再次登记只是复用名字。
     func registerOptional(_ type: IRType) throws -> String {
@@ -203,16 +323,91 @@ final class CModuleScope {
         return definition.name
     }
 
-    /// 类型需要在产物里落一个结构体定义就登记（Optional 之外什么也不做）。
-    /// 声明面上的可选类型要在这里过一遍：只在使用点登记的写法会漏掉「声明了但没构造」的签名。
+    /// 类型需要在产物里落一个结构体定义就登记（Optional / 元组）。声明面上的类型要在这里过一遍：
+    /// 只在使用点登记的写法会漏掉「声明了但没构造」的签名。
     func noteType(_ type: IRType) throws {
+        // 函数类型出现在签名面也要算一次使用：`PiniClosure` 的 typedef 得排在原型之前。
+        if case .function = type { usesClosureValues = true }
+        if case .tuple = type {
+            _ = try registerTuple(type)
+            return
+        }
         guard case .optional = type else { return }
         _ = try registerOptional(type)
     }
 
-    /// 全部 Optional 结构体定义。⛔ 排在聚合体前向声明之后：载荷可能是指向名义结构体的指针。
+    /// 全部 Optional 结构体定义。注意 —— 排在聚合体前向声明之后：载荷可能是指向名义结构体的指针。
     func optionalDefinitions() -> String {
         optionalBodies.isEmpty ? "" : optionalBodies.joined(separator: "\n") + "\n"
+    }
+
+    /// 登记一个元组形状，返回它的 C 结构体名。字段类型先递归登记，使被嵌套的那个排在前面 ——
+    /// C 要求被嵌的聚合体在使用点之前已有完整定义。
+    func registerTuple(_ type: IRType) throws -> String {
+        guard case .tuple(_, let fieldTypes) = type else {
+            throw CBackendError(message: "C 后端：为非元组类型请求元组定义")
+        }
+        let definition = try CTypeMap.tupleDefinition(fieldTypes)
+        guard tupleNames.insert(definition.name).inserted else { return definition.name }
+        for fieldType in fieldTypes { try noteType(fieldType) }
+        tupleBodies.append(definition.source)
+        tupleShapes.append((name: definition.name, fieldTypes: fieldTypes))
+        return definition.name
+    }
+
+    /// 全部元组结构体定义。排在 Optional 之后、名义聚合体之前：名义字段可能就是一个元组。
+    func tupleDefinitions() -> String {
+        tupleBodies.isEmpty ? "" : tupleBodies.joined(separator: "\n") + "\n"
+    }
+
+    /// 元组的布局判据：总字节数与逐字段偏移。少了它，字段序或宽度漂了只能到运行期看见。
+    func tupleLayoutAssertions() throws -> String {
+        var out = ""
+        for shape in tupleShapes {
+            let layout = try CLayout.tuple(shape.fieldTypes)
+            out += "_Static_assert(sizeof(\(shape.name)) == \(layout.size), \"元组布局漂移：\(shape.name)\");\n"
+            for (index, offset) in layout.offsets.enumerated() {
+                out +=
+                    "_Static_assert(offsetof(\(shape.name), f\(index)) == \(offset),"
+                    + " \"元组布局漂移：\(shape.name).f\(index)\");\n"
+            }
+        }
+        return out
+    }
+
+    /// LazyRef 的装箱入口：运行时段按统一 ABI 回调 `(code, env, out) -> out`，
+    /// 元素类型决定调用的签名与写出的宽度 —— 后缀与 LLVM 的 `__lazyref_wrapper_<T>` 同源。
+    func registerLazyRefWrapper(element: IRType) throws -> String {
+        let suffix = Self.lazyRefWrapperSuffix(element)
+        let name = "pini_lazyref_wrapper_\(suffix)"
+        guard lazyRefWrapperNames.insert(name).inserted else { return name }
+        let spelling = try CTypeMap.spelling(of: element)
+        let parameter = "v_\(suffix)"
+        var lines: [String] = []
+        lines.append(
+            "// LazyRef 的装箱入口：间接调用初始化闭包（首参恒为 env），把元素写进运行时给的堆盒再交回。")
+        lines.append("static void *\(name)(void *code, void *env, void *out) {")
+        lines.append("    \(spelling) \(parameter) = ((\(spelling) (*)(void *))code)(env);")
+        lines.append("    *(\(spelling) *)out = \(parameter);")
+        lines.append("    return out;")
+        lines.append("}")
+        lazyRefWrappers.append(lines.joined(separator: "\n"))
+        return name
+    }
+
+    /// 后缀：字符串与字符同拼写故共用一个入口（ABI 相同即同一个 wrapper），其余按元素类型派生。
+    static func lazyRefWrapperSuffix(_ element: IRType) -> String {
+        switch element {
+        case .i32: return "i32"
+        case .f64: return "f64"
+        case .boolean: return "i1"
+        case .string, .char: return "ptr"
+        default: return CTypeMap.label(of: element)
+        }
+    }
+
+    func lazyRefWrapperDefinitions() -> String {
+        lazyRefWrappers.isEmpty ? "" : lazyRefWrappers.joined(separator: "\n") + "\n\n"
     }
 
     func typeID(of type: IRType) -> Int32 {
@@ -256,7 +451,7 @@ final class CModuleScope {
         releaseBodies.append((symbol, pointer, source))
     }
 
-    /// 全部聚合体的前向声明。⛔ 顺序无关紧要：名义字段一律是指针，
+    /// 全部聚合体的前向声明。注意 —— 顺序无关紧要：名义字段一律是指针，
     /// 完整定义可以出现在使用点之后。
     func forwardDeclarations() -> String {
         var out = ""
@@ -305,7 +500,7 @@ final class CModuleScope {
     }
 
     /// 逐类型的布局判据：发射层算出的偏移与总字节数写成常量，C 侧 `sizeof` / `offsetof` 对不上就编译失败。
-    /// ⛔ 这一条是名义类型期唯一能把「字段顺序或宽度漂了」挡在产物之外的机制。
+    /// 注意 —— 这一条是名义类型期唯一能把「字段顺序或宽度漂了」挡在产物之外的机制。
     func layoutAssertions() throws -> String {
         var out = ""
         for name in usedAggregates {
@@ -362,7 +557,7 @@ final class CModuleScope {
 }
 
 /// 名义聚合体的 C 布局模型：按 ABI 的对齐规则推偏移，供 `_Static_assert` 比对。
-/// 只覆盖生成器会用到的类型 —— 表外的类型抛错，⛔ 不猜一个宽度。
+/// 只覆盖生成器会用到的类型 —— 表外的类型抛错，注意 —— 不猜一个宽度。
 enum CLayout {
     static let headerSize = 24
     static let headerAlign = 8
@@ -375,11 +570,35 @@ enum CLayout {
         case .string, .char, .nominal, .enumeration: return (8, 8)
         // 容器字段是句柄指针；Optional 字段是「8 字节标签 + 载荷」的按值结构体。
         case .array, .dict, .set: return (8, 8)
+        // 函数值字段是 `{ code, env }` 两个指针，按值嵌进聚合体。
+        case .function: return (16, 8)
+        // LazyRef 是句柄。
+        case .lazyRef: return (8, 8)
         case .optional(let wrapped):
             let (size, align) = try self.size(of: wrapped)
             return (roundUp(8 + size, max(8, align)), max(8, align))
+        // 元组的尺寸与对齐由字段表推出，与 LLVM 对同一份 `{ ... }` 的结论同源。
+        case .tuple(_, let fieldTypes):
+            let layout = try self.tuple(fieldTypes)
+            return (layout.size, layout.align)
         default: throw CBackendError(message: "C 后端尚未支持的类型布局：\(CTypeMap.label(of: type))")
         }
+    }
+
+    /// 元组的 ABI 布局：从 0 起逐字段按各自对齐前推，总尺寸补齐到最大对齐。
+    ///  注意 —— 起点是 0 而不是 `headerSize`：元组没有对象头，它不是名义箱。
+    static func tuple(_ fieldTypes: [IRType]) throws -> (size: Int, align: Int, offsets: [Int]) {
+        var offset = 0
+        var maxAlign = 1
+        var offsets: [Int] = []
+        for type in fieldTypes {
+            let (size, align) = try self.size(of: type)
+            offset = roundUp(offset, align)
+            offsets.append(offset)
+            offset += size
+            maxAlign = max(maxAlign, align)
+        }
+        return (roundUp(offset, maxAlign), maxAlign, offsets)
     }
 
     static func structure(_ decl: IRTypeDecl) throws -> (size: Int, fieldOffsets: [Int]) {
@@ -421,7 +640,7 @@ enum CLayout {
 /// 单个函数的发射器。帧栈记的是「谁可以被 break / continue 指向」——
 /// 带标签的 `if` 也是帧（`break 标签` 能跳出它），故不能只压循环。
 final class CFunctionEmitter {
-    private let function: IRFunction
+    private let function: IRFunction?
     private let scope: CModuleScope
     private let programBase: String?
     private let writer = CWriter()
@@ -430,6 +649,26 @@ final class CFunctionEmitter {
     private var tempSeq = 0
     private var slotSeq = 0
     private var terminated = false
+
+    /// 本发射器要落地的体与它的返回类型。闭包体与具名函数体共用同一套语句 / 表达式通道，
+    /// 差别只在签名（闭包多一个 env 形参）与捕获名的解析。
+    private let body: IRBlock
+    private let bodyReturnType: IRType?
+    /// 闭包体专用：`id` 定 env 结构体名；形参的 C 名与类型平行于 IR 的形参表。
+    private let closureID: Int?
+    private let closureParamNames: [String]
+    private let closureParamTypes: [IRType]
+
+    /// 捕获名 → 一次解引用拿到值、值本身就是槽指针。体里对捕获变量的读写都走这两条文本，
+    /// 与 LLVM 侧 `load / store` 同一块外层存储 —— 引用捕获的可见性正来自这里。
+    private var captureSlots: [String: CaptureSlot] = [:]
+
+    private struct CaptureSlot {
+        /// 读：`(*(T *)c_env->f0)`。
+        let deref: String
+        /// 再被内层闭包捕获时交给它的槽指针：就是 `c_env->f0` 里那个指针本身。
+        let address: String
+    }
 
     /// 作用域栈：Pini 名 → C 局部名。遮蔽必须换名，否则内层 `var x` 与外层同名时，
     /// 释放账本分不清两个持有者 —— 按名字查会释放错的那个。
@@ -440,7 +679,7 @@ final class CFunctionEmitter {
     private var releaseFrames: [[ReleaseEntry]] = []
     /// 每个打开作用域的 defer 体，与释放帧同序压栈。块尾按后进先出重放，终止边各发一份副本。
     private var deferFrames: [[IRBlock]] = []
-    /// 正在重放 defer 体。⛔ 重放期间的终止边（`defer` 体里写 `return`）不再触发重放 ——
+    /// 正在重放 defer 体。注意 —— 重放期间的终止边（`defer` 体里写 `return`）不再触发重放 ——
     /// 否则同一帧被逐层再进一次，产物还没写出，编译器先栈溢出。
     private var isReplayingDefers = false
 
@@ -449,7 +688,7 @@ final class CFunctionEmitter {
     private var ownedBoxes: [String: IRType] = [:]
 
     /// 本层亲手分配、尚无持有者的字符串临时值（C 局部名）。只有拼接与插值的产出点入账；
-    /// ⛔ 借来的值（常量串 / 变量槽 / 形参）不入账 —— 账本正是把两者分开，错判即提前释放。
+    /// 注意 —— 借来的值（常量串 / 变量槽 / 形参）不入账 —— 账本正是把两者分开，错判即提前释放。
     private var ownedStrings: Set<String> = []
 
     private struct ReleaseEntry {
@@ -476,6 +715,11 @@ final class CFunctionEmitter {
         self.function = function
         self.scope = scope
         self.programBase = programBase
+        body = function.body
+        bodyReturnType = function.returnType
+        closureID = nil
+        closureParamNames = []
+        closureParamTypes = []
         var params: [String: String] = [:]
         for param in function.params {
             params[param.name] = "v_\(IRName.mangle(param.name))"
@@ -483,7 +727,34 @@ final class CFunctionEmitter {
         paramLocals = params
     }
 
-    private var isMain: Bool { function.name == "main" }
+    /// 闭包体：形参按 `a_` 前缀落成 C 形参，捕获按 env 字段序解引用。注意 —— 捕获不登记释放 ——
+    /// 槽归外层变量持有，闭包只是借用（与 LLVM 侧「captureSlots 不入 pendingReleases」同规）。
+    init(
+        closureID: Int, captures: [IRCapture], paramNames: [String], paramTypes: [IRType],
+        returnType: IRType?, body: IRBlock, scope: CModuleScope, programBase: String?
+    ) throws {
+        self.function = nil
+        self.scope = scope
+        self.programBase = programBase
+        self.body = body
+        self.bodyReturnType = returnType
+        self.closureID = closureID
+        self.closureParamTypes = paramTypes
+        self.closureParamNames = paramNames.map { "a_\(IRName.mangle($0))" }
+        var params: [String: String] = [:]
+        for (index, name) in paramNames.enumerated() where index < paramTypes.count {
+            params[name] = "a_\(IRName.mangle(name))"
+        }
+        paramLocals = params
+        for (index, capture) in captures.enumerated() {
+            let spelling = try CTypeMap.spelling(of: capture.type)
+            captureSlots[capture.name] = CaptureSlot(
+                deref: "(*(\(spelling) *)c_env->f\(index))",
+                address: "(void *)c_env->f\(index)")
+        }
+    }
+
+    private var isMain: Bool { function?.name == "main" }
 
     func emit() throws -> String {
         writer.open(try signature())
@@ -491,18 +762,55 @@ final class CFunctionEmitter {
             let constant = scope.registerString(base)
             writer.line("bk_set_program_base((void *)\(constant));")
         }
-        try emitBlock(function.body)
+        try emitBlock(body)
         if !terminated {
             // 顶层作用域的持有者在落空边上释放；`return` 那条边自己发过一份，两条边不会同时走。
             try emitReleases(downTo: 0)
             if isMain {
                 writer.line("return 0;")
-            } else if let returnType = function.returnType {
+            } else if let returnType = bodyReturnType {
                 writer.line("return \(try CTypeMap.zeroLiteral(of: returnType));")
+            } else if function != nil || closureID != nil {
+                writer.line("return;")
             }
         }
         writer.close()
         return writer.output
+    }
+
+    /// 闭包体的定义：签名多一个 `void *env` 首参，体内先把 env 转成这一号 env 结构体。
+    /// 三件事与 LLVM 侧逐条对齐：形参落栈、捕获取槽、落空边先释放再返回。
+    func emitClosureDefinition() throws {
+        let prototype = "static " + (try closureSignature())
+        writer.open(prototype)
+        if let id = closureID, !captureSlots.isEmpty {
+            writer.line("PiniEnv_\(id) *c_env = (PiniEnv_\(id) *)env;")
+        } else {
+            writer.line("(void)env;")
+        }
+        try emitBlock(body)
+        if !terminated {
+            try emitReleases(downTo: 0)
+            if let returnType = bodyReturnType {
+                writer.line("return \(try CTypeMap.zeroLiteral(of: returnType));")
+            } else {
+                writer.line("return;")
+            }
+        }
+        writer.close()
+        scope.addClosure(prototype: prototype, body: writer.output)
+    }
+
+    /// `static <ret> pini_closure_<id>(void *env, <形参>...)`。返回类型是体自己声明的那个。
+    private func closureSignature() throws -> String {
+        var parts = ["void *env"]
+        for (index, type) in closureParamTypes.enumerated() {
+            try scope.noteType(type)
+            let name = index < closureParamNames.count ? closureParamNames[index] : "a\(index)"
+            parts.append("\(try CTypeMap.spelling(of: type)) \(name)")
+        }
+        let ret = try bodyReturnType.map { try CTypeMap.spelling(of: $0) } ?? "void"
+        return "\(ret) pini_closure_\(closureID ?? 0)(\(parts.joined(separator: ", ")))"
     }
 
     static func prototype(of function: IRFunction) throws -> String {
@@ -516,13 +824,16 @@ final class CFunctionEmitter {
 
     private func signature() throws -> String {
         if isMain { return "int main(void)" }
+        guard let function else {
+            throw CBackendError(message: "C 后端：闭包体不走函数签名通道")
+        }
         return try Self.prototype(of: function)
     }
 
     // MARK: - 语句
 
     /// 发射一个语句块：压入名字作用域与释放帧，块尾按落空 / 终止分别收口。
-    /// 顶层块（`releaseBase == 0`）的持有者归函数出口处理，⛔ 不在此释放 —— 那样 `return` 那条边会双份。
+    /// 顶层块（`releaseBase == 0`）的持有者归函数出口处理，注意 —— 不在此释放 —— 那样 `return` 那条边会双份。
     private func emitBlock(_ block: IRBlock) throws {
         let deferBase = deferFrames.count
         deferFrames.append([])
@@ -550,7 +861,7 @@ final class CFunctionEmitter {
     }
 
     /// 把一个作用域的 defer 体按后进先出逐条重放：内层帧在先、帧内逆序，与 LLVM 侧 `flushDefers` 同序。
-    /// ⛔ 只重放不弹栈 —— 帧的归属仍留在 `emitBlock`，每条终止边各发一份副本。
+    /// 注意 —— 只重放不弹栈 —— 帧的归属仍留在 `emitBlock`，每条终止边各发一份副本。
     private func emitDefers(downTo base: Int) throws {
         guard base < deferFrames.count, !isReplayingDefers else { return }
         let wasTerminated = terminated
@@ -594,12 +905,13 @@ final class CFunctionEmitter {
         return local
     }
 
-    /// 变量名解析：内层作用域优先，其次形参。
+    /// 变量名解析：内层作用域优先，其次形参，最后闭包捕获。
     private func lookupVar(_ name: String) -> String {
         for frame in scopes.reversed() {
             if let hit = frame[name] { return hit }
         }
         if let param = paramLocals[name] { return param }
+        if let slot = captureSlots[name] { return slot.deref }
         return "v_\(IRName.mangle(name))"
     }
 
@@ -638,7 +950,7 @@ final class CFunctionEmitter {
         ownedBoxes.removeValue(forKey: text)
     }
 
-    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。⛔ 借用值不在账里 ⇒ 无操作。
+    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。注意 —— 借用值不在账里 ⇒ 无操作。
     /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
     private func emitOwnedTemporaryRelease(_ text: String) throws {
         if ownedStrings.remove(text) != nil {
@@ -650,7 +962,7 @@ final class CFunctionEmitter {
         writer.line("\(symbol)(\(text));")
     }
 
-    /// 就地还掉一个字符串临时值 —— 拼接的两个操作数与内建实参。⛔ 只在账上的才发调用：
+    /// 就地还掉一个字符串临时值 —— 拼接的两个操作数与内建实参。注意 —— 只在账上的才发调用：
     /// 常量串与槽值都在账外，错发一次就是读已回收内存。
     private func emitOwnedStringRelease(_ text: String) {
         guard ownedStrings.remove(text) != nil else { return }
@@ -747,7 +1059,7 @@ final class CFunctionEmitter {
             if let value {
                 let lowered = try emitExpr(value)
                 // 与 LLVM 侧同规：交出去的值先按值语义落定（结构体别名拷新箱），再释放、再 ret。
-                let stored = try function.returnType.map {
+                let stored = try bodyReturnType.map {
                     try emitValueForStorage(value, lowered, type: $0)
                 } ?? lowered
                 try emitReleases(downTo: 0)
@@ -775,6 +1087,10 @@ final class CFunctionEmitter {
         case .deferStmt(let body):
             // 只登记，不发射：体在离开本作用域时按后进先出重放（`emitDefers`）。
             deferFrames[deferFrames.count - 1].append(body)
+
+        case .captureMarker:
+            // 捕获在字面量的创建点就落进 env 了，标记语句本身不产生代码（与 LLVM 侧同）。
+            break
 
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             try emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
@@ -863,7 +1179,7 @@ final class CFunctionEmitter {
     }
 
     /// `while cond: body [step: block]`。带 step 时它坐在体与回边之间：体内无标签的 `continue` 落到 step 入口，
-    /// 两块的 `break` 都直接跳出并跳过 step。⛔ 有内层跳出指向本循环时换成 `for (;;)`，C 没给条件挂标号的语法。
+    /// 两块的 `break` 都直接跳出并跳过 step。注意 —— 有内层跳出指向本循环时换成 `for (;;)`，C 没给条件挂标号的语法。
     private func emitWhile(condition: IRExpr, body: IRBlock, step: IRBlock?) throws {
         let info = scan(body, nesting: 0, direct: false)
         let stepInfo = scan(step, nesting: 0, direct: false)
@@ -909,7 +1225,7 @@ final class CFunctionEmitter {
         terminated = false
     }
 
-    /// `match`：枚举按标签派发。⛔ 不用 `switch` —— 臂里的 `break` 在 C 里会绑到 `switch` 上，
+    /// `match`：枚举按标签派发。注意 —— 不用 `switch` —— 臂里的 `break` 在 C 里会绑到 `switch` 上，
     /// 而 Pini 的 `break` 指的是外层循环；`if` 链没有这个问题，也与 LLVM 侧的标签链同构。
     private func emitMatch(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType) throws {
         if case .optional(let wrapped) = scrutineeType {
@@ -1056,6 +1372,21 @@ final class CFunctionEmitter {
         case .setLiteral(let elements, let type):
             return try emitSetLiteral(elements: elements, type: type)
 
+        case .tupleConstruct(_, let elements, let type):
+            return try emitTupleConstruct(elements: elements, type: type)
+
+        case .tupleIndexGet(let base, let index, let type):
+            return try emitTupleIndexGet(base: base, index: index, type: type)
+
+        case .sliceCall(let container, let start, let end, let type):
+            return try emitSliceCall(container: container, start: start, end: end, type: type)
+
+        case .lazyRefConstruct(let closure, let type):
+            return try emitLazyRefConstruct(closure: closure, type: type)
+
+        case .lazyRefValue(let handle, let type):
+            return try emitLazyRefValue(handle: handle, type: type)
+
         case .subscriptGet(let container, let index, let type):
             return try emitSubscriptGet(container: container, index: index, type: type)
 
@@ -1152,6 +1483,17 @@ final class CFunctionEmitter {
             return try materializeCallReleasingArguments(
                 "\(callee)(\(args.joined(separator: ", ")))", returnType: returnType, arguments: args)
 
+        case .closureLiteral(let id, let paramNames, let paramTypes, let returnType, let captures, let body, _):
+            return try emitClosureLiteral(
+                id: id, paramNames: paramNames, paramTypes: paramTypes, returnType: returnType,
+                captures: captures, body: body)
+
+        case .functionValue(let functionName, _):
+            return try emitFunctionValue(functionName)
+
+        case .indirectCall(let callee, let arguments, let returnType):
+            return try emitIndirectCall(callee: callee, arguments: arguments, returnType: returnType)
+
         case .construct(let type):
             return try emitConstruct(type)
 
@@ -1186,8 +1528,101 @@ final class CFunctionEmitter {
         }
     }
 
+    // MARK: - 闭包与函数值
+
+    /// 闭包字面量：先按捕获序把外层变量的槽指针塞进 env（`malloc` 分配，与 LLVM 侧同一分配器），
+    /// 再拼出 `{ code, env }`。体落成模块末尾一个独立函数，创建点只留一句取值。
+    /// 注意 —— 捕获不留份额、env 不回收 —— 与 LLVM 侧逐条相同：外层槽自有其持有者，闭包只是借用。
+    private func emitClosureLiteral(
+        id: Int, paramNames: [String], paramTypes: [IRType], returnType: IRType?,
+        captures: [IRCapture], body: IRBlock
+    ) throws -> String {
+        let env: String
+        if captures.isEmpty {
+            env = "NULL"
+        } else {
+            let envName = scope.registerClosureEnv(id: id, captureCount: captures.count)
+            let temp = "t_\(nextTempSeq())"
+            writer.line("\(envName) *\(temp) = malloc(sizeof(\(envName)));")
+            for (index, capture) in captures.enumerated() {
+                try scope.noteType(capture.type)
+                writer.line("\(temp)->f\(index) = \(try captureAddress(capture.name));")
+            }
+            env = "(void *)\(temp)"
+        }
+        let child = try CFunctionEmitter(
+            closureID: id, captures: captures, paramNames: paramNames, paramTypes: paramTypes,
+            returnType: returnType, body: body, scope: scope, programBase: programBase)
+        try child.emitClosureDefinition()
+        let value = "t_\(nextTempSeq())"
+        writer.line("PiniClosure \(value) = { (void *)pini_closure_\(id), \(env) };")
+        return value
+    }
+
+    /// 捕获点要交给 env 的槽指针：本层局部取地址；已是本层的捕获就把它那一格里的指针原样传下去
+    /// （再取一层地址会让内层闭包写到 env 结构体上，而不是外层变量）。
+    private func captureAddress(_ name: String) throws -> String {
+        for frame in scopes.reversed() {
+            if let hit = frame[name] { return "(void *)&\(hit)" }
+        }
+        if let param = paramLocals[name] { return "(void *)&\(param)" }
+        if let slot = captureSlots[name] { return slot.address }
+        throw CBackendError(message: "C 后端：捕获 '\(name)' 在本层找不到可见的槽")
+    }
+
+    /// 具名函数当值用：交出适配器的地址（env 为空）。适配器补上间接调用的 env 槽，
+    /// 与原函数共享同一套参数与所有权规则 —— 它不做 retain，也不在出口释放任何实参。
+    private func emitFunctionValue(_ functionName: String) throws -> String {
+        guard functionName != "main" else {
+            throw CBackendError(message: "C 后端尚未支持：把 main 当函数值传递")
+        }
+        guard let target = scope.function(named: functionName), scope.defined.contains(functionName) else {
+            throw CBackendError(message: "C 后端尚未支持：函数值引用了本模块之外的函数 \(functionName)")
+        }
+        let symbol = try scope.registerAdapter(for: target)
+        let value = "t_\(nextTempSeq())"
+        writer.line("PiniClosure \(value) = { (void *)\(symbol), NULL };")
+        return value
+    }
+
+    /// 间接调用：从 `{ code, env }` 取出两格，按函数类型拼出具体签名再调。
+    /// 实参求值一次、按位置传；`using` 形参在本 IR 里不改变调用约定（LLVM 侧同样不读它），故一律按值。
+    private func emitIndirectCall(
+        callee: IRExpr, arguments: [IRExpr], returnType: IRType?
+    ) throws -> String {
+        guard let calleeType = Self.type(of: callee), case .function(let params, _, _) = calleeType else {
+            throw CBackendError(message: "C 后端：间接调用的被调值不是函数类型")
+        }
+        guard params.count == arguments.count else {
+            throw CBackendError(
+                message: "C 后端：间接调用给了 \(arguments.count) 个实参，函数类型要 \(params.count) 个")
+        }
+        let signature = try closureSignature(params: params, returnType: returnType)
+        let closure = try materialize(try emitExpr(callee), type: calleeType)
+        var callArguments = ["\(closure).env"]
+        var argumentTexts: [String] = []
+        for (index, argument) in arguments.enumerated() {
+            try scope.noteType(params[index])
+            let text = try emitExpr(argument)
+            argumentTexts.append(text)
+            callArguments.append(text)
+        }
+        if let returnType { try scope.noteType(returnType) }
+        let call = "((\(signature))\(closure).code)(\(callArguments.joined(separator: ", ")))"
+        return try materializeCallReleasingArguments(
+            call, returnType: returnType, arguments: argumentTexts)
+    }
+
+    /// 间接调用点的函数指针类型：首参恒为 env（与 LLVM 的 `call ret code(ptr env, args...)` 同形）。
+    private func closureSignature(params: [IRType], returnType: IRType?) throws -> String {
+        var parts = ["void *"]
+        for type in params { parts.append(try CTypeMap.spelling(of: type)) }
+        let ret = try returnType.map { try CTypeMap.spelling(of: $0) } ?? "void"
+        return "\(ret) (*)(\(parts.joined(separator: ", ")))"
+    }
+
     /// 名义箱的构造：分配器写四格头，随后逐字段落初值（无默认值时落零）。
-    /// ⛔ 与 LLVM 侧同规：默认值直接落槽，不经过 `emitValueForStorage` —— 那边也没绕。
+    /// 注意 —— 与 LLVM 侧同规：默认值直接落槽，不经过 `emitValueForStorage` —— 那边也没绕。
     private func emitConstruct(_ type: IRType) throws -> String {
         guard case .nominal(let name, _) = type, let decl = scope.typeDecl(named: name) else {
             throw CBackendError(message: "C 后端：构造了未声明的名义类型 \(CTypeMap.label(of: type))")
@@ -1292,9 +1727,25 @@ final class CFunctionEmitter {
                 handle: try materialize(text, type: type), keyType: keyType, valueType: valueType)
         case .optional(let wrapped):
             try emitOptionalPrint(text, wrapped: wrapped)
+        case .tuple(let labels, let fieldTypes):
+            try emitTuplePrint(try materialize(text, type: type), labels: labels, fieldTypes: fieldTypes)
         default:
             throw CBackendError(message: "C 后端尚未支持的打印类型：\(CTypeMap.label(of: type))")
         }
+    }
+
+    /// `[v1, v2]`，带标签的字段写成 `label: v` —— 与解释器 stringify、LLVM 的 `.tuple` 分支同形。
+    /// 元素之间一个 `", "`，标签与值之间一个 `": "`，两侧方括号各一次。
+    private func emitTuplePrint(_ local: String, labels: [String?], fieldTypes: [IRType]) throws {
+        writer.line("printf(\"%s\", \(scope.registerString("[")));")
+        for (index, fieldType) in fieldTypes.enumerated() {
+            if index > 0 { writer.line("printf(\"%s\", \(scope.registerString(", ")));") }
+            if index < labels.count, let label = labels[index] {
+                writer.line("printf(\"%s\", \(scope.registerString("\(label): ")));")
+            }
+            try emitValuePrint("\(local).f\(index)", type: fieldType)
+        }
+        writer.line("printf(\"%s\", \(scope.registerString("]")));")
     }
 
     /// `[a, b]` / `{a, b}`：长度取一次、逐下标取元素、元素之间一个 `", "` —— 与解释器 stringify 同形。
@@ -1541,6 +1992,164 @@ final class CFunctionEmitter {
         return handle
     }
 
+    // MARK: - 元组 / 切片 / LazyRef
+
+    /// `(a, b)`：先落一个按值结构体，再按序写字段。逐个赋值的顺序与 LLVM 逐条 `insertvalue` 相同 ——
+    /// 元素表达式带副作用时，顺序就是语义。注意 —— 不在这里 retain：LLVM 也不 retain，元组不持有份额。
+    private func emitTupleConstruct(elements: [IRExpr], type: IRType) throws -> String {
+        guard case .tuple(_, let fieldTypes) = type else {
+            throw CBackendError(message: "C 后端：元组构造的类型不是 Tuple（\(CTypeMap.label(of: type))）")
+        }
+        guard elements.count == fieldTypes.count else {
+            throw CBackendError(
+                message: "C 后端：元组给了 \(elements.count) 个元素，类型要 \(fieldTypes.count) 个")
+        }
+        let name = try scope.registerTuple(type)
+        let temp = "t_\(nextTempSeq())"
+        writer.line("\(name) \(temp);")
+        for (index, element) in elements.enumerated() {
+            writer.line("\(temp).f\(index) = \(try emitExpr(element));")
+        }
+        return temp
+    }
+
+    /// `base.label`：按声明序取字段。基址先落临时变量，保证带副作用的基址只求值一次。
+    private func emitTupleIndexGet(base: IRExpr, index: Int, type: IRType) throws -> String {
+        guard let baseType = Self.type(of: base), case .tuple(_, let fieldTypes) = baseType else {
+            throw CBackendError(message: "C 后端：元组读字段的基址不是 Tuple")
+        }
+        guard index >= 0, index < fieldTypes.count else {
+            throw CBackendError(message: "C 后端：元组字段下标 \(index) 超出 \(fieldTypes.count) 个字段")
+        }
+        guard fieldTypes[index].llvmSpelling == type.llvmSpelling else {
+            throw CBackendError(
+                message: "C 后端：元组字段 \(index) 的类型与读取处不一致"
+                    + "（\(CTypeMap.label(of: type)) vs \(CTypeMap.label(of: fieldTypes[index]))）")
+        }
+        _ = try scope.registerTuple(baseType)
+        let local = try materialize(try emitExpr(base), type: baseType)
+        return "\(local).f\(index)"
+    }
+
+    /// `c.slice(lo, hi)`：数组是组合出来的（create / 逐格 get+set），字符串整段交给运行时段。
+    /// 负值尾计数与两端夹取都在本层做 —— 与 LLVM 的 select 链同一个顺序，夹在谁之后决定结果。
+    private func emitSliceCall(
+        container: IRExpr, start: IRExpr, end: IRExpr, type: IRType
+    ) throws -> String {
+        let containerText = try emitExpr(container)
+        switch type {
+        case .array(let elementType):
+            guard let containerType = Self.type(of: container) else {
+                throw CBackendError(message: "C 后端：切片的容器没有携带类型")
+            }
+            let (_, width, tag) = try elementABI(elementType)
+            let raw = try materialize(containerText, type: containerType)
+            let count = "t_\(nextTempSeq())"
+            writer.line("int32_t \(count) = bk_array_len(\(raw));")
+            let low = try resolveSliceBound(start, count: count, defaultValue: "0")
+            let high = try resolveSliceBound(end, count: count, defaultValue: count)
+            let length = "t_\(nextTempSeq())"
+            writer.line("int32_t \(length) = \(high) - \(low);")
+            let handle = "t_\(nextTempSeq())"
+            writer.line("void *\(handle) = bk_array_create(\(length));")
+            let index = "i_\(nextTempSeq())"
+            writer.open("for (int32_t \(index) = 0; \(index) < \(length); \(index) = \(index) + 1)")
+            let box = "b_\(nextTempSeq())"
+            writer.line("void *\(box) = bk_array_get(\(raw), \(low) + \(index));")
+            /// 嵌套容器元素：源数组仍持有它那一份，故新数组额外留一份 —— 判据与 LLVM 逐字相同。
+            if case .array = elementType {
+                writer.line("bk_handle_retain(*(void **)\(box));")
+            }
+            writer.line(
+                "\(handle) = bk_array_set(\(handle), \(index), \(box), \(width), \(tag));")
+            writer.close()
+            return handle
+        case .string:
+            /// 开界传标志位而不传哨兵：`s[-1:]` 合法，拿 -1 当「开」会与真实下标撞车；开界也不求值。
+            let startOpen = Self.sliceBoundIsOpen(start)
+            let endOpen = Self.sliceBoundIsOpen(end)
+            let startOperand = startOpen ? "0" : "(int32_t)(\(try emitExpr(start)))"
+            let endOperand = endOpen ? "0" : "(int32_t)(\(try emitExpr(end)))"
+            let sliced = "t_\(nextTempSeq())"
+            writer.line(
+                "char *\(sliced) = bk_string_slice(\(containerText), \(startOpen ? 0 : 1), \(startOperand),"
+                    + " \(endOpen ? 0 : 1), \(endOperand));")
+            return sliced
+        default:
+            throw CBackendError(
+                message: "C 后端尚未支持的切片类型：\(CTypeMap.label(of: type))")
+        }
+    }
+
+    /// 切片的界是开界吗。判据是语法节点（`optionalConstruct` 的 `isSome == false`）而不是值 ⇒
+    /// 发射期即可定死，与 LLVM 的 `sliceBoundIsOpen` 同一条判据。
+    private static func sliceBoundIsOpen(_ bound: IRExpr) -> Bool {
+        if case .optionalConstruct(let isSome, _, _) = bound, !isSome { return true }
+        return false
+    }
+
+    /// 一个数组切片界：缺省取默认值，整数负值转尾计数，再夹到 `[0, count]` —— 三步顺序不能换。
+    ///  注意 —— 字符串切片不走这里：它的界与夹取全在运行时段（`bk_string_slice`）。
+    private func resolveSliceBound(
+        _ bound: IRExpr, count: String, defaultValue: String
+    ) throws -> String {
+        if case .optionalConstruct(let isSome, _, _) = bound, !isSome { return defaultValue }
+        let raw = "t_\(nextTempSeq())"
+        writer.line("int32_t \(raw) = (int32_t)(\(try emitExpr(bound)));")
+        let adjusted = "t_\(nextTempSeq())"
+        writer.line("int32_t \(adjusted) = \(count) + \(raw);")
+        let tailCounted = "t_\(nextTempSeq())"
+        writer.line("int32_t \(tailCounted) = (\(raw) < 0) ? \(adjusted) : \(raw);")
+        let floored = "t_\(nextTempSeq())"
+        writer.line("int32_t \(floored) = (\(tailCounted) < 0) ? 0 : \(tailCounted);")
+        let clamped = "t_\(nextTempSeq())"
+        writer.line("int32_t \(clamped) = (\(floored) > \(count)) ? \(count) : \(floored);")
+        return clamped
+    }
+
+    /// LazyRef 的元素装箱 ABI（字节数 + 元素 tag）。与容器的 `elementABI` 差在字符串：
+    /// 这里用裸指针 tag 4 而不是数组族的 3 —— 字符串没有 share 计数，按句柄回收会踩坏账。
+    private func lazyRefElemABI(_ type: IRType) throws -> (spelling: String, bytes: Int, tag: Int) {
+        switch type {
+        case .i32: return ("int32_t", 4, 0)
+        case .f64: return ("double", 8, 1)
+        case .boolean: return ("bool", 1, 2)
+        // Char 与 String 表示相同，故同一个 tag：一个字素同样没有 share 计数。
+        case .string, .char: return ("char *", 8, 4)
+        default:
+            throw CBackendError(
+                message: "C 后端尚未支持的 LazyRef 元素类型：\(CTypeMap.label(of: type))")
+        }
+    }
+
+    /// `LazyRef<T>(closure)`：取出闭包的两格交给运行时段，换回不透明句柄。
+    /// 句柄的回收不在此处记账 —— LLVM 侧同样不产 `bk_lazyref_destroy` 调用点。
+    private func emitLazyRefConstruct(closure: IRExpr, type: IRType) throws -> String {
+        guard case .lazyRef(let element) = type else {
+            throw CBackendError(message: "C 后端：LazyRef 构造的类型不是 LazyRef")
+        }
+        let (_, bytes, tag) = try lazyRefElemABI(element)
+        let closureType = Self.type(of: closure) ?? .function(params: [], returnType: nil, usingIndices: [])
+        try scope.noteType(closureType)
+        let wrapper = try scope.registerLazyRefWrapper(element: element)
+        let value = try materialize(try emitExpr(closure), type: closureType)
+        let handle = "t_\(nextTempSeq())"
+        writer.line(
+            "void *\(handle) = bk_lazyref_create((void *)\(wrapper), \(value).code, \(value).env,"
+                + " \(bytes), \(tag));")
+        return handle
+    }
+
+    /// `r.value`：运行时段保证「恰一次」初始化，交回元素盒；本层只把元素读出来。
+    private func emitLazyRefValue(handle: IRExpr, type: IRType) throws -> String {
+        guard let handleType = Self.type(of: handle), case .lazyRef = handleType else {
+            throw CBackendError(message: "C 后端：LazyRef 取值的手柄不是 LazyRef 类型")
+        }
+        let box = "b_\(nextTempSeq())"
+        writer.line("void *\(box) = bk_lazyref_value(\(try emitExpr(handle)));")
+        return try boxLoad(box, type: type)
+    }
+
     /// 下标读。字典按键、数组按下标；负数下标从尾部计数（安全断言通道留在运行时里）。
     private func emitSubscriptGet(container: IRExpr, index: IRExpr, type: IRType) throws -> String {
         guard let containerType = Self.type(of: container) else {
@@ -1570,7 +2179,7 @@ final class CFunctionEmitter {
     }
 
     /// 下标写（COW 契约）：容器句柄 → 值（别名点 retain）→ `bk_*_set` → 把分裂出的句柄写回槽。
-    /// ⛔ 不回写 ⇒ 新句柄没人接住 ⇒ 这次写会静默丢失。
+    /// 注意 —— 不回写 ⇒ 新句柄没人接住 ⇒ 这次写会静默丢失。
     private func emitSubscriptStore(
         container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType
     ) throws {
@@ -1637,26 +2246,42 @@ final class CFunctionEmitter {
         return temp
     }
 
-    /// `arr.get(i)`：容错读。界内给 some(元素)、界外（含尾计数后仍越界）给 none。
+    /// `arr.get(i)` / `s.get(i)`：容错读。界内给 some(元素)、界外（含尾计数后仍越界）给 none。
+    /// 字符串的「字符」= 字素簇（与 `len` 同一定义），取值走运行时段，与数组同一个夹取顺序。
     private func emitOptionalGet(container: IRExpr, index: IRExpr, type: IRType) throws -> String {
         guard case .optional(let wrapped) = type else {
             throw CBackendError(message: "C 后端：容错读的类型不是 Optional（\(CTypeMap.label(of: type))）")
         }
-        guard let containerType = Self.type(of: container), case .array = containerType else {
-            throw CBackendError(message: "C 后端尚未支持的容错读容器：只实现了数组句柄")
+        guard let containerType = Self.type(of: container) else {
+            throw CBackendError(message: "C 后端：容错读的容器没有携带类型")
+        }
+        let isString = containerType.isStringFaced
+        switch containerType {
+        case .string, .char, .array: break
+        default:
+            throw CBackendError(
+                message: "C 后端尚未支持的容错读容器：\(CTypeMap.label(of: containerType))")
         }
         let handle = try materialize(try emitExpr(container), type: containerType)
         let indexText = try emitExpr(index)
         let count = "t_\(nextTempSeq())"
-        writer.line("int32_t \(count) = bk_array_len(\(handle));")
+        writer.line(
+            "int32_t \(count) = \(isString ? "bk_string_count" : "bk_array_len")(\(handle));")
         let effective = try emitTailCountIndex(indexText, count: count)
         let result = "t_\(nextTempSeq())"
         writer.line("\(try scope.registerOptional(type)) \(result);")
         writer.open("if (\(effective) >= 0 && \(effective) < \(count))")
         let box = "b_\(nextTempSeq())"
-        writer.line("void *\(box) = bk_array_get(\(handle), \(effective));")
-        writer.line("\(result).tag = 0;")
-        writer.line("\(result).value = \(try boxLoad(box, type: wrapped));")
+        if isString {
+            // 到此 `effective` 必在 `[0, count)` ⇒ 运行时段不会 panic（容错通道）。
+            writer.line("char *\(box) = bk_string_char_at(\(handle), \(effective));")
+            writer.line("\(result).tag = 0;")
+            writer.line("\(result).value = \(box);")
+        } else {
+            writer.line("void *\(box) = bk_array_get(\(handle), \(effective));")
+            writer.line("\(result).tag = 0;")
+            writer.line("\(result).value = \(try boxLoad(box, type: wrapped));")
+        }
         writer.elseOpen()
         writer.line("\(result).tag = 1;")
         writer.line("\(result).value = \(try CTypeMap.zeroLiteral(of: wrapped));")
@@ -1680,7 +2305,7 @@ final class CFunctionEmitter {
     }
 
     /// `arr.join(sep)`：逐元素 strcat 进栈缓冲，交出前复制到堆 —— 结果会离开本帧。
-    /// ⛔ 元素必须是字符串面：解释器对任意元素先 stringify，本层只搬裸 C 串，别的类型一律拒绝。
+    /// 注意 —— 元素必须是字符串面：解释器对任意元素先 stringify，本层只搬裸 C 串，别的类型一律拒绝。
     private func emitArrayJoin(receiver: IRExpr, separator: IRExpr) throws -> String {
         guard let receiverType = Self.type(of: receiver), case .array(let elementType) = receiverType,
             elementType.isStringFaced
@@ -1839,7 +2464,7 @@ final class CFunctionEmitter {
     }
 
     /// 值 → 文本，镜像 LLVM 侧 `stringifyValue`：标量落一块栈缓冲，数组按 `[a, b]` 递归。
-    /// ⛔ 规则必须与 `emitValuePrint` 一致，否则插值与 print 会给出两种文本。
+    /// 注意 —— 规则必须与 `emitValuePrint` 一致，否则插值与 print 会给出两种文本。
     private func stringify(_ text: String, type: IRType) throws -> String {
         switch type {
         case .i32:
@@ -1955,7 +2580,7 @@ final class CFunctionEmitter {
     }
 
     /// 把求值出来的值按值语义落到一个持有位置：结构体别名拷出新箱，对象 / 枚举 / 字符串别名留一份份额，
-    /// 临时值直接接管。⛔ 结构体那一支必须排在 retain 之前 —— 拷贝本身就是一次独立持有。
+    /// 临时值直接接管。注意 —— 结构体那一支必须排在 retain 之前 —— 拷贝本身就是一次独立持有。
     private func emitValueForStorage(_ node: IRExpr, _ text: String, type: IRType) throws -> String {
         guard Self.yieldsAlias(node) else {
             /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它。
@@ -2190,7 +2815,7 @@ final class CFunctionEmitter {
     }
 
     /// 表达式自带的类型。返回 nil 表示该节点不在当前的表达式面内 ——
-    /// ⛔ 不退化成 `I32`：那会让一个聚合值按整数打出来，编得过、跑得通、结果是错的。
+    /// 注意 —— 不退化成 `I32`：那会让一个聚合值按整数打出来，编得过、跑得通、结果是错的。
     static func type(of expr: IRExpr) -> IRType? {
         switch expr {
         case .intConst(_, let type): return type
@@ -2209,8 +2834,16 @@ final class CFunctionEmitter {
         case .setLiteral(_, let type): return type
         case .subscriptGet(_, _, let type): return type
         case .lenCall: return .i32
+        case .closureLiteral(_, _, _, _, _, _, let type): return type
+        case .functionValue(_, let type): return type
+        case .indirectCall(_, _, let returnType): return returnType ?? .i32
         case .optionalConstruct(_, _, let type): return type
         case .optionalGet(_, _, let type): return type
+        case .tupleConstruct(_, _, let type): return type
+        case .tupleIndexGet(_, _, let type): return type
+        case .sliceCall(_, _, _, let type): return type
+        case .lazyRefConstruct(_, let type): return type
+        case .lazyRefValue(_, let type): return type
         case .arrayJoin: return .string
         case .stringConcat, .interpString, .stringCase, .stringSubstring: return .string
         case .stringContains: return .boolean

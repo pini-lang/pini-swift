@@ -78,6 +78,8 @@ void bk_set_destroy(void *set);
 
 // 字符串的长度按字素簇计（与解释器的 `text.count` 同一定义），不在 C 侧按字节数。
 int32_t bk_string_count(const char *text);
+// 取第 i 个字素簇（负值尾计数，越界即陷阱）；交出的是新分配串，与其余抬串同族。
+char *bk_string_char_at(const char *text, int32_t index);
 
 // 抬串一族：返回值都是带计数头的新分配串（`bk_str_alloc` 那块），释放走 `bk_str_release`。
 // 语义（字素簇 · Unicode 大小写 · 负值尾计数）一律在运行时段，C 侧只搬运。
@@ -88,6 +90,13 @@ int32_t bk_string_contains(const char *haystack, const char *needle);
 char *bk_substring(const char *text, int32_t start, int32_t end);
 // 切出的数组与 `bk_array_create` 同族：元素是 8 字节 C 串槽（tag 3），句柄走 `bk_array_destroy`。
 void *bk_string_split(const char *text, const char *delim);
+// 切片：两个 has* 是开界标志（不是下标哨兵 —— 哨兵会与真实 -1 撞车）；负值尾计数与夹取在运行时段。
+char *bk_string_slice(const char *text, int32_t hasStart, int32_t start, int32_t hasEnd, int32_t end);
+
+// LazyRef：不透明句柄，首访同步求值并缓存（内部锁保证恰一次），复制即共享同一盒。
+// wrapper 是发射层合成的类型特化装箱函数，ABI `void *(void *code, void *env, void *out)`。
+void *bk_lazyref_create(void *wrapper, void *code, void *env, int32_t elemBytes, int32_t elemTag);
+void *bk_lazyref_value(void *handle);
 
 // 整文件 IO：读失败返回 NULL（发射侧的陷阱判据）；写与追加不返回值，失败即 `bk_panic`。
 char *bk_read_file(const char *path);
