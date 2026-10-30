@@ -93,9 +93,11 @@ struct CEmitterTests {
             try CTypeMap.spelling(of: .tuple(labels: [nil, nil], fieldTypes: [.i32, .i32]))
                 == "PiniTuple_i32_i32")
         #expect(try CTypeMap.spelling(of: .lazyRef(element: .i32)) == "void *")
+        // Result 也是按值聚合体，名字只按 ok 载荷特化（错误槽是擦除的一个机器字）。
+        #expect(try CTypeMap.spelling(of: .result(ok: .i32)) == "PiniResult_i32")
         // 表外的类型仍然拒绝：静默退化成 `void *` 会让产物编得过而在运行时读错位。
         #expect(throws: CBackendError.self) {
-            _ = try CTypeMap.spelling(of: .result(ok: .i32))
+            _ = try CTypeMap.spelling(of: .future(ok: .i32))
         }
     }
 

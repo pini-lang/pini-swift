@@ -518,6 +518,79 @@ struct CBackendParityTests {
             """#,
             expected: "init\n7\n7\n"
         ),
+        /// err 路径的钉子：`try` 语句位（无 okTarget）落进 handler，handler 里的 `return` 结束整个函数，
+        /// 故「读取成功」一个字节都不该出现。若 tag 判反或错误字与载荷格错位，这一行会变成另一行。
+        Corpus(
+            label: "try-else 错误路径",
+            source: #"""
+            读取文件|func(路径: String,) -> (^String,):
+                return err("模拟错误")
+
+            main|func() -> ():
+                try 读取文件("data.txt") else 错误:
+                    print("读取失败")
+                    return
+                print("读取成功")
+                return
+            """#,
+            expected: "读取失败\n"
+        ),
+        /// ok 路径的钉子：表达式位（okTarget）把载荷写进 `内容` 槽，接着读到的是原串。
+        /// 载荷格若与错误字错位，`内容` 会是那个擦除后的机器字，第二行也就打不出「结束」。
+        Corpus(
+            label: "try-else 成功路径",
+            source: #"""
+            读取文件|func(路径: String,) -> (^String,):
+                return ok("内容")
+
+            main|func() -> ():
+                let 内容 = try 读取文件("data.txt") else 错误:
+                    print("读取失败")
+                    return
+                print(内容)
+                print("结束")
+                return
+            """#,
+            expected: "内容\n结束\n"
+        ),
+        /// 吞错惯用法：handler 以 `pass` 收尾 ⇒ 落空边继续往下走。这条盯的是「err 分支不终止」那一支，
+        /// 与上两条（handler 里 return）是两条不同的边。
+        Corpus(
+            label: "try-else 吞掉错误",
+            source: #"""
+            尝试|func() -> (^I32,):
+                return err("失败")
+
+            main|func() -> ():
+                try 尝试() else 错误: pass
+                print("继续")
+                return
+            """#,
+            expected: "继续\n"
+        ),
+        /// 标量载荷的布局钉子：`{ i64, i32, i64 }` 里 ok 占 4 字节、错误字仍在 16 —— 中间那格的
+        /// 对齐填充若算错，第二行的 `-1` 会走 ok 边并把垃圾当值打出来。
+        Corpus(
+            label: "try-else 标量载荷与两条边",
+            source: #"""
+            加倍|func(n: I32,) -> (^I32,):
+                if n < 0:
+                    return err("负数")
+                return ok(n * 2)
+
+            main|func() -> ():
+                let a = try 加倍(21) else 错误:
+                    print("负")
+                    return
+                print(a)
+                let b = try 加倍(-1) else 错误:
+                    print("负")
+                    return
+                print(b)
+                return
+            """#,
+            expected: "42\n负\n"
+        ),
     ]
 
     @Test("每条语料的 C 产物跑出的字节与手写期望相同")
@@ -707,6 +780,31 @@ struct CBackendParityTests {
         #expect(text.contains("_Static_assert(sizeof(PiniTuple_"), "没有元组总大小断言")
         #expect(text.contains("offsetof(PiniTuple_"), "没有元组字段偏移断言")
         #expect(text.contains(".f1"), "没有按序写字段")
+    }
+
+    /// Result 也是按值聚合体：三格的总大小与逐格偏移都得进产物。少了它，tag 与载荷的次序、
+    /// 或 `{ i64, ok, i64 }` 的中间填充漂了，只有产物跑起来才看得见。
+    @Test("Result 的布局断言写进了产物")
+    func resultLayoutAssertionsAreEmitted() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let corpus = Self.corpora.first { $0.label == "try-else 标量载荷与两条边" }!
+        try corpus.source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("_Static_assert(sizeof(PiniResult_"), "没有 Result 总大小断言")
+        #expect(text.contains("offsetof(PiniResult_"), "没有 Result 字段偏移断言")
+        #expect(text.contains("offsetof(PiniResult_i32, ok) == 8"), "ok 载荷不在第 8 字节")
+        #expect(text.contains("offsetof(PiniResult_i32, err) == 16"), "错误字不在第 16 字节")
+        #expect(text.contains(".ok = "), "ok 边没有写载荷格")
     }
 
     // MARK: - 驱动    /// 发源 → cc → 跑产物。三步都用 `--emit-c` 落出的那份 `.c`，中途不重新发射。
