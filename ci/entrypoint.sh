@@ -49,6 +49,11 @@ python3 tools/ir-contract-check.py
 step "运行时 ABI 门禁"
 python3 tools/runtime-abi-check.py
 
+step "后端义务门禁（警告级）"
+# 只报不拦：所有权 pass 尚未落地，此刻必然有命中。接在这里是为了让推送即得读数，
+# 归位后同一脚本应报零 —— 转硬拦截是那一步的事，不是今天。
+python3 tools/backend-duty-check.py
+
 step "构建"
 swift build --disable-sandbox
 
