@@ -125,6 +125,9 @@ public struct IRModule: Equatable {
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [IRForeignBlock]
 
+    /// 布局事实：名义头、字段与载荷各在第几槽。后端只读不算 —— 契约第 5 节「布局归位」。
+    public let layout: IRLayout
+
     /// 谁引用了哪个给定块：键是引用方（函数名 / 给定块名 / `类型.方法`），值是它引用的给定块类型名（升序去重）。
     /// 引用面 = 函数体里的默认实例取用点 + 给定块字段初值里的引用，即物化依赖的两条边，环只从这两条边长出来。
     /// 这是可观测面而非诊断：环检测本体后置，但留痕当期就要做对，有表则后置检测只是加一条遍历。
@@ -132,12 +135,14 @@ public struct IRModule: Equatable {
 
     public init(
         functions: [IRFunction], types: [IRTypeDecl] = [], enums: [IREnumDecl] = [],
-        foreigns: [IRForeignBlock] = [], givenReferences: [String: [String]] = [:]
+        foreigns: [IRForeignBlock] = [], layout: IRLayout = .standard,
+        givenReferences: [String: [String]] = [:]
     ) {
         self.functions = functions
         self.types = types
         self.enums = enums
         self.foreigns = foreigns
+        self.layout = layout
         self.givenReferences = givenReferences
     }
 

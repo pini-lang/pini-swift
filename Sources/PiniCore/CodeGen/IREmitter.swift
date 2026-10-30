@@ -18,8 +18,8 @@ public final class IREmitter {
 
     /// 头四格的 LLVM 拼写，顺序同 `PiniHeader`：强计数 · 弱计数 · 类型标识 · 弱引用旁表指针。
     private static let nominalHeaderSpellings = ["i32", "i32", "i32", "ptr"]
-    /// 头占的槽数；字段、枚举标签与载荷的索引基准都由它推，改头只改这一处。
-    private static let headerSlotCount = 4
+    /// 当前模块的布局事实，`emit` 入口处取自 `module.layout`；槽位一律问它，发射器不再自己推。
+    private var layout: IRLayout = .standard
 
     // MARK: - Per-function state
 
@@ -406,6 +406,10 @@ public final class IREmitter {
         currentTestExitLabel = nil
         moduleTypes = module.types
         moduleEnums = module.enums
+        layout = module.layout
+        precondition(
+            Self.nominalHeaderSpellings.count == layout.headerSlotCount,
+            "头槽数与头拼写不符：布局说 \(layout.headerSlotCount) 槽，拼写给了 \(Self.nominalHeaderSpellings.count) 个")
         // Record every top-level function's ABI by mangled IR name so
         // adapter generation can mirror the original signature.
         moduleFunctions = [:]
@@ -1354,7 +1358,7 @@ public final class IREmitter {
         case .fieldStore(let base, let field, let value, let fieldType):
             let baseValue = emitExpr(base)
             let loweredValue = emitExpr(value)
-            let (aggregate, _, fieldIndex) = fieldLayout(of: base, field: field)
+            let (aggregate, _, fieldIndex) = nominalField(of: base, field: field)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
             //  注意  顺序同 `storeVar`：新值先站住（拷贝 / retain），**再**释放字段旧值，最后写。
@@ -1481,11 +1485,11 @@ public final class IREmitter {
                     return enumCase.payloadTypes[slot].llvmSpelling
                 },
                 loadTag: { [self] base in
-                    /// 标签跟在四格头之后，即第 `headerSlotCount` 格。
+                    /// 标签槽与载荷槽都问布局：标签紧随四格头，载荷从标签之后起。
                     let tagPtr = builder.freshTemp()
                     bodyIR +=
                         builder.fmtGEP(
-                            name: tagPtr, aggregate: aggregate, base: base, indices: [0, Self.headerSlotCount])
+                            name: tagPtr, aggregate: aggregate, base: base, indices: [0, layout.enumTagSlot])
                         + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: "i32", ptr: tagPtr) + "\n"
@@ -1496,7 +1500,7 @@ public final class IREmitter {
                     bodyIR +=
                         builder.fmtGEP(
                             name: fieldPtr, aggregate: aggregate, base: base,
-                            indices: [0, slot + Self.headerSlotCount + 1])
+                            indices: [0, layout.enumPayloadSlot(of: slot)])
                         + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: spelling, ptr: fieldPtr) + "\n"
@@ -1693,7 +1697,7 @@ public final class IREmitter {
         }
         if case .fieldGet(let baseExpr, let field, let fieldType) = container {
             let baseValue = emitExpr(baseExpr)
-            let (aggregate, _, fieldIndex) = fieldLayout(of: baseExpr, field: field)
+            let (aggregate, _, fieldIndex) = nominalField(of: baseExpr, field: field)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(
                 name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName,
@@ -2388,7 +2392,7 @@ public final class IREmitter {
             guard let aggregate = type.nominalAggregateSpelling else {
                 fatalError("IREmitter: enumConstruct on non-enum type (IRLowerer guarantees)")
             }
-            /// 名义箱：分配器写四格头，标签落第 `headerSlotCount` 格、载荷从下一格起 ——
+            /// 名义箱：分配器写四格头，标签落在头之后的第一格、载荷从下一格起 —— 槽位问布局。
             /// 与 `emitMatch` 的 enum 分支同一套偏移。
             let ptr = emitNominalAllocation(aggregate: aggregate, typeID: enumTypeIDs[enumName] ?? 0)
             /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
@@ -2396,7 +2400,7 @@ public final class IREmitter {
             let tagPtr = builder.freshTemp()
             bodyIR +=
                 builder.fmtGEP(
-                    name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, Self.headerSlotCount])
+                    name: tagPtr, aggregate: aggregate, base: ptr, indices: [0, layout.enumTagSlot])
                 + "\n"
             bodyIR += builder.fmtStore(value: String(tag), type: "i32", ptr: tagPtr) + "\n"
             for (index, payload) in payloads.enumerated() {
@@ -2405,7 +2409,7 @@ public final class IREmitter {
                 bodyIR +=
                     builder.fmtGEP(
                         name: fieldPtr, aggregate: aggregate, base: ptr,
-                        indices: [0, index + Self.headerSlotCount + 1])
+                        indices: [0, layout.enumPayloadSlot(of: index)])
                     + "\n"
                 /// 载荷槽是持有位置 ⇒ 与 `.fieldStore` 同一规：别名（`.load` 出来的名义值）在这里必须 retain，
                 /// 结构体则深拷贝。裸 store 会让新箱存着旧箱指针却不多一份份额，写前释放旧值便把它收回 ⇒
@@ -2440,7 +2444,7 @@ public final class IREmitter {
 
         case .fieldGet(let base, let field, let type):
             let baseValue = emitExpr(base)
-            let (aggregate, _, fieldIndex) = fieldLayout(of: base, field: field)
+            let (aggregate, _, fieldIndex) = nominalField(of: base, field: field)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
             let value = builder.freshTemp()
@@ -2999,7 +3003,7 @@ public final class IREmitter {
     /// Field layout resolution for a nominal base expression: aggregate
     /// spelling, the field's type, and its GEP index (objects offset past
     /// the refcount header at field 0).
-    private func fieldLayout(of base: IRExpr, field: String) -> (aggregate: String, fieldType: IRType, index: Int) {
+    private func nominalField(of base: IRExpr, field: String) -> (aggregate: String, fieldType: IRType, index: Int) {
         let baseType = irType(of: base)
         guard case .nominal(let name, let isObject) = baseType else {
             fatalError("IREmitter: field access on non-nominal base (IRLowerer guarantees)")
@@ -3010,9 +3014,9 @@ public final class IREmitter {
             fatalError("IREmitter: unknown nominal field '\(name).\(field)' (IRLowerer guarantees)")
         }
         let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
-        /// 三族名义箱共用四格头 ⇒ 字段索引一律加 `headerSlotCount`。
+        /// 三族名义箱共用四格头 ⇒ 字段槽位一律问布局，发射器不再做加法。
         /// `isObject` 仍决定聚合名拼写（`%object` / `%struct` 是两个类型名），但不影响字段偏移。
-        return (aggregate, decl.fields[index].type, index + Self.headerSlotCount)
+        return (aggregate, decl.fields[index].type, layout.fieldSlot(of: index))
     }
 
     /// 默认实例的取用点：`bk_given_get(槽位, 初始化函数, 字节数)` → 盒指针，再 `memcpy` 一份到本地。
@@ -3040,17 +3044,17 @@ public final class IREmitter {
         let dstPayload = builder.freshTemp()
         bodyIR +=
             builder.fmtGEP(
-                name: dstPayload, aggregate: aggregate, base: local, indices: [0, Self.headerSlotCount])
+                name: dstPayload, aggregate: aggregate, base: local, indices: [0, layout.headerSlotCount])
             + "\n"
         let srcPayload = builder.freshTemp()
         bodyIR +=
             builder.fmtGEP(
-                name: srcPayload, aggregate: aggregate, base: boxed, indices: [0, Self.headerSlotCount])
+                name: srcPayload, aggregate: aggregate, base: boxed, indices: [0, layout.headerSlotCount])
             + "\n"
         let headerPtr = builder.freshTemp()
         bodyIR +=
             builder.fmtGEP(
-                name: headerPtr, aggregate: aggregate, base: "null", indices: [0, Self.headerSlotCount])
+                name: headerPtr, aggregate: aggregate, base: "null", indices: [0, layout.headerSlotCount])
             + "\n"
         let headerBytes = builder.freshTemp()
         bodyIR += " \(headerBytes) = ptrtoint ptr \(headerPtr) to i64\n"
@@ -3170,7 +3174,7 @@ public final class IREmitter {
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, index + Self.headerSlotCount]) + "\n"
+                builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%out", indices: [0, layout.fieldSlot(of: index)]) + "\n"
             if let defaultValue = field.defaultValue {
                 let value = emitExpr(defaultValue)
                 bodyIR +=
@@ -3342,7 +3346,7 @@ public final class IREmitter {
         for (index, field) in decl.fields.enumerated() {
             let srcPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: srcPtr, aggregate: aggregate, base: "%src", indices: [0, index + Self.headerSlotCount]) + "\n"
+                builder.fmtGEP(name: srcPtr, aggregate: aggregate, base: "%src", indices: [0, layout.fieldSlot(of: index)]) + "\n"
             let value = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: srcPtr) + "\n"
             let stored: String
@@ -3379,7 +3383,7 @@ public final class IREmitter {
             }
             let dstPtr = builder.freshTemp()
             bodyIR +=
-                builder.fmtGEP(name: dstPtr, aggregate: aggregate, base: dst, indices: [0, index + Self.headerSlotCount]) + "\n"
+                builder.fmtGEP(name: dstPtr, aggregate: aggregate, base: dst, indices: [0, layout.fieldSlot(of: index)]) + "\n"
             bodyIR += builder.fmtStore(value: stored, type: field.type.llvmSpelling, ptr: dstPtr) + "\n"
         }
         bodyIR += " ret ptr \(dst)\n"
@@ -3460,7 +3464,7 @@ public final class IREmitter {
                 guard let callee = releaseCallee(for: field.type) else { continue }
                 let fieldPtr = builder.freshTemp()
                 bodyIR +=
-                    builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, index + Self.headerSlotCount])
+                    builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: "%box", indices: [0, layout.fieldSlot(of: index)])
                     + "\n"
                 let value = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: value, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
@@ -3476,7 +3480,7 @@ public final class IREmitter {
             let tagPtr = builder.freshTemp()
             bodyIR +=
                 builder.fmtGEP(
-                    name: tagPtr, aggregate: aggregate, base: "%box", indices: [0, Self.headerSlotCount])
+                    name: tagPtr, aggregate: aggregate, base: "%box", indices: [0, layout.enumTagSlot])
                 + "\n"
             let tagValue = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tagValue, type: "i32", ptr: tagPtr) + "\n"
@@ -3505,7 +3509,7 @@ public final class IREmitter {
                     bodyIR +=
                         builder.fmtGEP(
                             name: fieldPtr, aggregate: aggregate, base: "%box",
-                            indices: [0, slot + Self.headerSlotCount + 1])
+                            indices: [0, layout.enumPayloadSlot(of: slot)])
                         + "\n"
                     let value = builder.freshTemp()
                     bodyIR += builder.fmtLoad(name: value, type: slotSpelling, ptr: fieldPtr) + "\n"
@@ -3544,7 +3548,7 @@ public final class IREmitter {
         else {
             fatalError("IREmitter: construct of unknown nominal type (IRLowerer guarantees)")
         }
-        /// 名义箱：分配器写四格头，字段从第 `headerSlotCount` 格起。
+        /// 名义箱：分配器写四格头，字段从头之后的第一格起 —— 槽位问布局。
         /// `isObject` 只影响聚合名拼写 —— 头两边都有，字段偏移不再分类讨论。
         let ptr = emitNominalAllocation(aggregate: aggregate, typeID: nominalTypeID(for: type))
         /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
@@ -3552,7 +3556,7 @@ public final class IREmitter {
         let zero = zeroConst(for:)
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
-            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, index + Self.headerSlotCount]) + "\n"
+            bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: ptr, indices: [0, layout.fieldSlot(of: index)]) + "\n"
             if let defaultValue = field.defaultValue {
                 let value = emitExpr(defaultValue)
                 bodyIR += builder.fmtStore(value: value.ssaName, type: field.type.llvmSpelling, ptr: fieldPtr) + "\n"
@@ -4492,7 +4496,7 @@ public final class IREmitter {
             let open = emitStringConstant("\(name){")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
             /// 四格头占前 4 格 ⇒ 字段基准与其余 GEP 同源， 行不通  不能写死 1。
-            let fieldBase = Self.headerSlotCount
+            let fieldBase = layout.headerSlotCount
             let orderedFields = decl.fields.enumerated().sorted {
                 $0.element.name < $1.element.name
             }
@@ -4537,7 +4541,7 @@ public final class IREmitter {
             bodyIR +=
                 builder.fmtGEP(
                     name: tagPtr, aggregate: aggregate, base: value.ssaName,
-                    indices: [0, Self.headerSlotCount])
+                    indices: [0, layout.headerSlotCount])
                 + "\n"
             let tag = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tag, type: "i32", ptr: tagPtr) + "\n"
@@ -4569,7 +4573,7 @@ public final class IREmitter {
                         bodyIR +=
                             builder.fmtGEP(
                                 name: fieldPtr, aggregate: aggregate, base: value.ssaName,
-                                indices: [0, slot + Self.headerSlotCount + 1])
+                                indices: [0, layout.enumPayloadSlot(of: slot)])
                             + "\n"
                         let element = builder.freshTemp()
                         bodyIR += builder.fmtLoad(name: element, type: payloadType.llvmSpelling, ptr: fieldPtr) + "\n"
