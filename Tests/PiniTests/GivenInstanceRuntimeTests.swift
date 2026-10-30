@@ -97,7 +97,7 @@ struct GivenInstanceRuntimeTests {
         let fnB = makeInitializer()
         defer { slotA.deallocate(); slotB.deallocate() }
 
-        // ⚠️ 值必须在**取用之前**设定：两个初始化函数是同一个闭包体，它在**调用时刻**
+        //  注意  值必须在**取用之前**设定：两个初始化函数是同一个闭包体，它在**调用时刻**
         // 读 `currentValue`，而不是在自己被造出来时绑定。真实发射层里每个类型有**自己的
         // 具名函数**、各写各的常量的，所以这个形态只是测试脚手架的简化。
         Self.probe.currentValue = 1
@@ -159,7 +159,7 @@ struct GivenInstanceRuntimeTests {
     func reentrantMaterializationDoesNotDeadlock() throws {
         /// 意图：钉住实现里那条声明的约束 —— 「不得持全局锁调 `init_fn`」。各字段初值自己可能取用另一个类型的
         /// 默认实例，持锁调用就是一次可复现的自死锁。判据 = 带超时的等待：死锁表现为超时失败，而不是挂住进程。
-        /// ⚠️ 但这只在「本测试独占全局锁」时才干净：真持锁则锁被永久持有，后续取用默认实例的测试都会卡住。
+        ///  注意  但这只在「本测试独占全局锁」时才干净：真持锁则锁被永久持有，后续取用默认实例的测试都会卡住。
         Self.probe.reset()
         let outerSlot = makeSlot()
         let innerSlot = makeSlot()
@@ -190,7 +190,8 @@ struct GivenInstanceRuntimeTests {
             observed = bk_given_get(outerSlot, outerFnPtr, MemoryLayout<Int32>.size)
             finished.signal()
         }
-        let ok = finished.wait(timeout: .now() + 5) == .success
+        /// 预算 30 秒：整包并行时全局队列会被上百个用例抢占，5 秒曾稳定误报（单跑 0.001 秒）。
+        let ok = finished.wait(timeout: .now() + 30) == .success
 
         #expect(ok, "重入取用发生死锁（超时）—— 说明实现持全局锁调用了初始化函数")
         guard ok else { return }  // 死锁时以下断言都无意义

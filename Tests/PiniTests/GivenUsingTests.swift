@@ -197,7 +197,7 @@ struct GivenUsingTests {
     func generalFormLeavesEnumTargetsAlone() throws {
         /// 意图：`[[色彩]]` 的目标是**枚举**（不在名义类型注册表里）⇒ 方法不归并 ⇒
         /// 与通用形落地**前**的行为逐字相同（调用点报既定缺口判定码）。
-        /// ⚠️ 这条钉的是「不扩大改动面」：用户裁定枚举目标的语义维持今日、另行登记。
+        ///  注意  这条钉的是「不扩大改动面」：用户裁定枚举目标的语义维持今日、另行登记。
         let source = #"""
         [色彩]
             红
@@ -476,7 +476,7 @@ struct GivenUsingTests {
     func usingOnATypeWithoutDefaultInstanceIsRejected() throws {
         /// 意图：默认实例**只由给定块提供**（ADR §3：`object` 没有这个概念，故 `using` 无从解析）。
         /// ⇒ `using 甲: I32` 在省略式调用下必须报错，而不是静默给个零值。
-        /// ⚠️ 全显式调用同一签名是**合法**的（见本件「取用前缀只标记它自己那一个参数」）。
+        ///  注意  全显式调用同一签名是**合法**的（见本件「取用前缀只标记它自己那一个参数」）。
         let source = #"""
         取|func(using 甲: I32,) -> (I32,):
             return 甲
@@ -497,7 +497,7 @@ struct GivenUsingTests {
     func givenReferencesAreRecorded() throws {
         /// 意图：用户第 5 条裁定的余量第 1 条 —— 环检测后置，但**留痕当期就要做对**。
         /// 没有这张表，后置的检测要重扫降载结果；有了它，检测是加一条遍历。
-        /// ⚠️ 当期**不产任何诊断** —— 这条留痕是纯观测面。
+        ///  注意  当期**不产任何诊断** —— 这条留痕是纯观测面。
         let source = #"""
         [计数块|given]
             值: I32 = 1
@@ -518,7 +518,7 @@ struct GivenUsingTests {
             module.givenReferences.values.allSatisfy { !$0.contains("未用块") },
             "未取用的给定块不该留痕：\(module.givenReferences)"
         )
-        // ⭐ **边的方向是「调用方 → 给定块」，不是被调用方**：`using` 的实参由编译器在
+        //  重要  **边的方向是「调用方 → 给定块」，不是被调用方**：`using` 的实参由编译器在
         // **调用点**插入 ⇒ 取用点长在 `main` 的体内。这条期望本身就是那句设计的观测面。
         #expect(module.givenReferences["main"] == ["计数块"], "实际：\(module.givenReferences)")
         // 驳回性①：被调用方 `甲` 体内没有取用点 —— 「有 `using` 形参」不等于「自己取用」，
@@ -573,7 +573,7 @@ struct GivenUsingTests {
         }
         #expect(decl.methods.count == 2, "两条扩展方法都应进方法表，实际：\(decl.methods.map(\.name))")
         // 驳回性：方法名要对得上 —— 计数对了但名字错了同样是「归并未生效」。
-        // ⚠️ 类型面里存的是 IR 名（`方法__类型`），不是源名 —— 断言按同一 mangle 算期望，
+        //  注意  类型面里存的是 IR 名（`方法__类型`），不是源名 —— 断言按同一 mangle 算期望，
         // 而不是拿源名去比；比源名只会红一次，再退化成「只数个数」就失去判别力。
         let expected: Set<String> = Set(
             ["取名", "改名"].map { "\(IRName.mangle($0))__\(IRName.mangle("配置"))" })
@@ -705,7 +705,7 @@ struct GivenUsingTests {
         ] {
             let failed = failure { _ = try typeChecked(source) }
             #expect(failed?.code == "E4-015", "\(label)：实际判定码 \(failed?.code ?? "无（被接受了）")")
-            /// ⚠️ 可断言面按错误族分：本 case 带载荷（`typeName`），而本件 helper 的 `message` 取自
+            ///  注意  可断言面按错误族分：本 case 带载荷（`typeName`），而本件 helper 的 `message` 取自
             /// `String(describing: error)`，是 Swift 描述而非渲染后的用户文案 ⇒ 这里只能钉「载荷带上了类型名」；
             /// 渲染文案是另一个契约面，由命令行探针取证。
             #expect(
@@ -810,7 +810,7 @@ struct GivenUsingTests {
         <可描述>
             {描述}(using 配: 配置,) -> (String,):
         """#
-        // ⚠️ trait **默认方法**（带体）不属用户裁定的四处，但它今天**同样静默失效**
+        //  注意  trait **默认方法**（带体）不属用户裁定的四处，但它今天**同样静默失效**
         // （基线 `rc=0`），与本条同因 ⇒ 一并拒绝并在此登记。若日后裁为「只拒无体」，此条须同步改。
         let defaultMethod = #"""
         [配置|given]
@@ -868,7 +868,7 @@ struct GivenUsingTests {
     func usingParameterSurvivesWhereACallerExists() throws {
         /// 意图：收窄若把合法位也拒了，就是把今日可用的代码打红 ⇒ 这一半比拒收那一半更该盯。
         /// 三个合法位各有取值：顶层普通函数 · 类型扩展方法 · 匿名函数（`P3` 前半的交付）。
-        /// ⚠️ 前两个**真的跑**（断言输出），不止断言「没抛」—— 拒绝面与接受面要能区分。
+        ///  注意  前两个**真的跑**（断言输出），不止断言「没抛」—— 拒绝面与接受面要能区分。
         let topLevel = #"""
         [配置|given]
             名称: String = "默认"
@@ -916,7 +916,7 @@ struct GivenUsingTests {
     func shapesWithoutUsingAreStillAccepted() throws {
         /// 意图：本批只收窄 **`using` 前缀**的合法性。同四个构造的**原形态**（不带 `using`）
         /// 一个字都没动，必须照旧被接受 —— 否则收窄就变成了对 `main` / trait / FFI 的改动。
-        /// ⚠️ 标注位写 `using` 的判定码**不变**（仍是既有的 `E2-008`）：本批没有碰那条路。
+        ///  注意  标注位写 `using` 的判定码**不变**（仍是既有的 `E2-008`）：本批没有碰那条路。
         let traitPlain = #"""
         <可显示>
         描述|self() -> (String,)

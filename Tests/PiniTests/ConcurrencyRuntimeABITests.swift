@@ -4,7 +4,7 @@ import Foundation
 import Testing
 
 /// 并发原语的 C ABI 面判据：把每个符号真调一遍并断言其效果 —— 符号存在性只是辅助证据，`return 0` 的空壳同样存在。
-/// 故「存在」那一半被「可用」这一半盖住。⛔ 本件全绿不等于 LLVM 后端能跑并发：发射层接线另有一层判据。
+/// 故「存在」那一半被「可用」这一半盖住。 行不通  本件全绿不等于 LLVM 后端能跑并发：发射层接线另有一层判据。
 /// `.serialized` 是前提而非风格：`bk_task_is_cancelled()` 读线程本地的「当前任务」，并行会让用例互相污染。
 @Suite(.serialized)
 struct ConcurrencyRuntimeABITests {
@@ -203,7 +203,7 @@ struct ConcurrencyRuntimeABITests {
     @Test("取消检查点：无当前任务回 0 · 有且已取消回 1 · 未取消回 0 · 恢复后回 0")
     func isCancelledReadsTheCurrentTask() throws {
         /// 意图：`bk_task_is_cancelled()` 无参，只能问「当前任务」，与解释器后端 `checkCancellation(owner)` 同职。
-        /// ⛔ 「没有任务在跑」不是「被取消了」：若主线程这一问回 `1`，任何不在任务里的循环都会误退出。
+        ///  行不通  「没有任务在跑」不是「被取消了」：若主线程这一问回 `1`，任何不在任务里的循环都会误退出。
         #expect(bk_task_is_cancelled() == 0, "没有任务在跑 ⇒ 不该报被取消")
         let t = _bkTaskMake(); defer { bk_handle_release(t) }
         let restore = _bkTaskEnter(t)
@@ -274,7 +274,7 @@ struct ConcurrencyRuntimeABITests {
         #expect(bk_scope_close(parent, raw(o)) == 0)
         #expect(o[0] == 1, "有 leaked ⇒ 须翻成 err")
         /// err 槽装的是**错误对象的句柄字**：条数经 `bk_error_message` 读出，
-        /// ⛔ 不是把数字直接摆在槽里 —— 那样读侧会把它当指针。
+        ///  行不通  不是把数字直接摆在槽里 —— 那样读侧会把它当指针。
         let aggregate = bk_error_message(o[2]).map { String(cString: $0) } ?? ""
         #expect(bk_error_is_cancel(o[2]) == 0, "聚合失败不是取消类")
         #expect(aggregate.contains("1"), "聚合消息应写明失败条数恰为 1：\(aggregate)")
@@ -353,7 +353,7 @@ struct ConcurrencyRuntimeABITests {
     func spawnLeavesTheTaskUnresolvedWhenTheBodyYields() throws {
         // 意图：契约 §3.2.1 的唯一内容就是这两态 —— 体返回 `0` 才算跑完；
         // 返回非 `0` 表示「体已让出」，此时 `future` 仍未决。
-        // ⛔ 若把非 0 也当成跑完，本用例会读到 `out` 里的默认值 ⇒ 立刻变红。
+        //  行不通  若把非 0 也当成跑完，本用例会读到 `out` 里的默认值 ⇒ 立刻变红。
         let probe = SpawnProbe()
         probe.status = 1
         probe.payload = 999  // 刻意给一个值：让出态**不许**把它写出去
@@ -371,7 +371,7 @@ struct ConcurrencyRuntimeABITests {
 
     // MARK: - 让出族（frame / slot / await）
 
-    @Test("⭐ 续跑协议：体让出后由**决出方**续跑；续跑拿回同一帧与**同一批槽**；让出时 out 一字节未写")
+    @Test(" 重要  续跑协议：体让出后由**决出方**续跑；续跑拿回同一帧与**同一批槽**；让出时 out 一字节未写")
     func theYieldedBodyIsResumedByWhoeverSettlesTheAwaited() throws {
         /// 意图：两件事各断一条 —— ① 续跑由决出方触发（被等待的任务一决出，让出方就被重入）；
         /// ② 帧与槽可重放（续跑重新取槽必须拿回上次那些地址，否则「上下文留在帧里」是空话）。
@@ -426,11 +426,11 @@ struct ConcurrencyRuntimeABITests {
 
     // MARK: - `Q-4`：决出 ⇒ 入队，推进由策略的答案决定
 
-    @Test("⭐ 改道可观测：决出 ⇒ 入队读作「可跑」，且入队经过策略层")
+    @Test(" 重要  改道可观测：决出 ⇒ 入队读作「可跑」，且入队经过策略层")
     func settlingHandsTheTaskToThePolicyQueue() throws {
         /// 意图：改道（决出 ⇒ 入队）的直接观测面。「决出 ⇒ 直接重入体」的实现里「可跑」永远不出现 ⇒ 本条有区分力。
         /// 四条读数各答一问：状态读得出「可跑」· 入队经过策略层的「收下」· 挑不挑由策略答（输入为答空）· 已决可读。
-        /// ⛔ 不测「两任务一起就绪谁先跑」：那要两次入队落在同一次挑选之前，语言面写不出这种语料。
+        ///  行不通  不测「两任务一起就绪谁先跑」：那要两次入队落在同一次挑选之前，语言面写不出这种语料。
         let policy = Q4PolicyState()
         let target = _bkTaskMake()
         let waiter = spawnQ4Waiter(target: target)
@@ -446,7 +446,7 @@ struct ConcurrencyRuntimeABITests {
 
         #expect(waitForTaskState(waiter.handle, 2), "体在未决的目标上让出 ⇒ 读作「等待中」")
 
-        /// ⚠️ 次序**不可换**：先让等待者真的让出，再绑策略，最后才决出目标。
+        ///  注意  次序**不可换**：先让等待者真的让出，再绑策略，最后才决出目标。
         /// 反过来会把 `bk_task_await` 推上「已决 ⇒ 直线取值」那条路 —— 那条路上没有队列，
         /// 判据就测不到它要测的东西。
         policy.nextAnswer = nil
@@ -470,7 +470,7 @@ struct ConcurrencyRuntimeABITests {
         let flushTarget = _bkTaskMake()
         let flushWaiter = spawnQ4Waiter(target: flushTarget)
         _ = flushWaiter
-        // ⚠️ **必须等它真的让出**再决出它的目标：`spawn` 只是起线程，体还没跑到登记等待者那一步；
+        //  注意  **必须等它真的让出**再决出它的目标：`spawn` 只是起线程，体还没跑到登记等待者那一步；
         // 此时决出会得到一个**空快照** ⇒ 没有入队 ⇒ 挑选循环从不启动 ⇒ 收尾落空。
         #expect(waitForTaskState(flushWaiter.handle, 2), "触发用的那件须先让出")
         _bkTaskResolveOk(flushTarget, 1)
@@ -479,10 +479,10 @@ struct ConcurrencyRuntimeABITests {
         _ = bk_task_bind_sched(waiter.handle, nil)
     }
 
-    @Test("⭐ 推进由策略的答案决定：答出句柄 ⇒ 推进一次 ⇒ 决出（与「答空」互为反证）")
+    @Test(" 重要  推进由策略的答案决定：答出句柄 ⇒ 推进一次 ⇒ 决出（与「答空」互为反证）")
     func thePolicyAnswerDecidesWhetherTheTaskAdvances() throws {
         /// 意图：与上一条**只差策略答什么**（答出句柄 vs 答空），结论必须相反。
-        /// ⚠️ 只看「答出 ⇒ 它跑起来了」这一半，「策略被问了」与「谁来问都一样」在读数上
+        ///  注意  只看「答出 ⇒ 它跑起来了」这一半，「策略被问了」与「谁来问都一样」在读数上
         /// **同形** —— 两条合起来才说明「推不推进」是**策略**说了算。
         let policy = Q4PolicyState()
         let target = _bkTaskMake()
@@ -711,7 +711,7 @@ private final class Q4PolicyState: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return picks
     }
-    /// 「选择下一个任务」的答案，`nil` = 空队列。⛔ 判据**自己**决定答什么 —— 那就是被测的输入。
+    /// 「选择下一个任务」的答案，`nil` = 空队列。 行不通  判据**自己**决定答什么 —— 那就是被测的输入。
     var nextAnswer: UnsafeMutableRawPointer? {
         get { lock.lock(); defer { lock.unlock() }; return answer }
         set { lock.lock(); answer = newValue; lock.unlock() }
@@ -725,7 +725,7 @@ private final class Q4PolicyState: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         picks += 1
         let a = answer
-        // ⭐ **一次性答案**：答过就清。否则挑选循环会拿同一个句柄反复问，而那个句柄早已出队
+        //  重要  **一次性答案**：答过就清。否则挑选循环会拿同一个句柄反复问，而那个句柄早已出队
         // ⇒ 运行时会把它读成「从未发出去过的句柄」并判为缺陷（那条路是**响亮报错**，不是静默）。
         answer = nil
         return a
@@ -759,7 +759,7 @@ private func q4WaiterBody(
     if env.load(fromByteOffset: 0, as: Int64.self) == 0 {
         env.storeBytes(of: Int64(1), toByteOffset: 0, as: Int64.self)
         let target = env.load(fromByteOffset: 8, as: UnsafeMutableRawPointer?.self)
-        // `2` = 真让出 ⇒ 原样把它报给运行时（⛔ 不许改写 `out`）。
+        // `2` = 真让出 ⇒ 原样把它报给运行时（ 行不通  不许改写 `out`）。
         return bk_task_await(target, out) == 2 ? 2 : 0
     }
     out.storeBytes(of: Int64(0), toByteOffset: 0, as: Int64.self)

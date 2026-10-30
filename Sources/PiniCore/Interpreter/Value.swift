@@ -496,7 +496,7 @@ extension Value: Equatable {
         case (.float(let l), .float(let r)): return l == r
         case (.string(let l), .string(let r)): return l == r
         // G68（P0d-D）：`Char` 与 `String` 是**相容对**（同表示，Char 表示与 String 同构 方案 A），
-        // 比较按字素内容进行 ⇒ 三种组合都写出来。⚠️ 不写就会落到下面的
+        // 比较按字素内容进行 ⇒ 三种组合都写出来。 注意  不写就会落到下面的
         // `default: return false` —— 那样 `Char` 与**自身**比较恒为假，而编译器不报。
         case (.char(let l), .char(let r)): return l == r
         case (.char(let l), .string(let r)): return l == r

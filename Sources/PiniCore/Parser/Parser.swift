@@ -1320,7 +1320,7 @@ public class Parser {
         try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
-            /// ⚠️ 调用者只有 `parseTraitDecl` ⇒ 服务的是 trait 抽象签名的「花括号形态」
+            ///  注意  调用者只有 `parseTraitDecl` ⇒ 服务的是 trait 抽象签名的「花括号形态」
             /// `{名}(...)`，与函数名里的「类型体内」无关（名字易误导）。
             /// trait 抽象签名无体 ⇒ 取用点无处插入 ⇒ 拒。
             let param = try parseParameter(position: .traitSignature)

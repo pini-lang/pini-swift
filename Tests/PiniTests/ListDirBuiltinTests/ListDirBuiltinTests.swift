@@ -71,7 +71,7 @@ struct ListDirBuiltinTests {
         #expect(lines == expected,
                 "条目与顺序都不符。实际：\(lines)")
 
-        /// ⭐ 位置断言（不依赖上面那张人写的期望表）—— 期望表本身可能被改错，
+        ///  重要  位置断言（不依赖上面那张人写的期望表）—— 期望表本身可能被改错，
         /// 而这三条各钉住一个**字节序事实**，改错时会单独红。
         #expect(lines.firstIndex(of: "B.txt")! < lines.firstIndex(of: "a.txt")!,
                 "大写 B(0x42) 应排在 a(0x61) 之前 —— 这不是大小写不敏感排序")
@@ -101,7 +101,7 @@ struct ListDirBuiltinTests {
     @Test("路径是文件而非目录时同样响亮拒绝")
     func testListDirRejectsFilePath() throws {
         /// 意图：钉住「检查的是**是目录**，不只是**存在**」。
-        /// ⚠️ 这是本套件最容易被写漏的一条：只查 `fileExists` 的实现在这里**静默返回空数组**。
+        ///  注意  这是本套件最容易被写漏的一条：只查 `fileExists` 的实现在这里**静默返回空数组**。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         try Data().write(to: sandbox.appendingPathComponent("a-file.txt"))

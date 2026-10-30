@@ -290,7 +290,7 @@ public final class SemanticAnalyzer {
         }
 
         // 预置声明先注册 —— 与单错误入口同一规则、同一顺序，理由见那里。
-        // ⚠️ 本入口是 `pini check` 实际走的那个：只在另一处加，命令行探针会**照旧**报
+        //  注意  本入口是 `pini check` 实际走的那个：只在另一处加，命令行探针会**照旧**报
         // 「未定义的变量」，而单元测试（走前者）却绿 ⇒ 一处漏改会伪装成「已修好」。
         for decl in PredefinedDecls.effective(in: module.declarations) {
             do {

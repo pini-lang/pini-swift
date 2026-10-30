@@ -92,7 +92,7 @@ struct SplitPathTests {
             "LLVM 后端未跑通（rc=\(compiled.status)）：\(compiled.stderr)")
 
         // 非退化锚点：判据必须在**这一组真的被拆过**时才有意义。
-        // ⚠️ 空定界符若按 `strtok` 语义处理会返回**整串**，`4-empty-delim|len=2` 就会变 1 ⇒ 本判据转红。
+        //  注意  空定界符若按 `strtok` 语义处理会返回**整串**，`4-empty-delim|len=2` 就会变 1 ⇒ 本判据转红。
         #expect(
             interpreted.stdout.contains("1-single|len=3\n"),
             "夹具自身没跑出预期形状 ⇒ 本判据会空转：\(interpreted.stdout.debugDescription)")

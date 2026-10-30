@@ -18,7 +18,7 @@ struct CrossFileScopeIsolationTests {
     }
 
     /// 甲文件：一个带同名字段的类型。
-    /// ⚠️ 方法不可省：字段只在**方法体作用域**里被登记，无方法的类型不带出这个副作用。
+    ///  注意  方法不可省：字段只在**方法体作用域**里被登记，无方法的类型不带出这个副作用。
     private static let holderWithSameNamedField = """
         (盒)
         本行: String = ""

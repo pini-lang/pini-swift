@@ -25,7 +25,7 @@ struct TestBackendParityTests {
 
     // MARK: - 语料与手写期望
 
-    /// ⚠️ 语料一律 raw 字符串（`#"""`）；内容行与闭合符同一缩进基准即可。
+    ///  注意  语料一律 raw 字符串（`#"""`）；内容行与闭合符同一缩进基准即可。
     private static let corpora: [Corpus] = [
         Corpus(
             label: "全通过",
@@ -290,7 +290,7 @@ struct TestBackendParityTests {
         var body = text.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.hasPrefix("测试文件: ") && !$0.hasPrefix("测试目标: ") }
             .joined(separator: "\n")
-        // ⚠️ 切分保留末尾空段 ⇒ `joined` 会补回一个尾换行，而手写期望（raw 字符串）**不含**它
+        //  注意  切分保留末尾空段 ⇒ `joined` 会补回一个尾换行，而手写期望（raw 字符串）**不含**它
         //（多行字符串的末尾换行被闭合符吃掉）。不对齐这一格，每条用例都会差一个字节。
         if body.hasSuffix("\n") { body.removeLast() }
         return body
@@ -478,8 +478,12 @@ struct TestModeEmissionTests {
         #expect(
             ir.contains("call void @\(IRName.mangle("甲"))()"),
             "驱动器没有调用测试函数")
-        // 驳回性：陷阱路必须消失。
-        #expect(!ir.contains("call ptr @bk_panic"), "测试模式下仍发出陷阱调用")
+        // 驳回性：断言那条陷阱必须消失。预置声明的调度器自带一次 panic，故判「比生产模式恰少一次」——
+        // 直接判「一条都没有」会永远为假，判「不含某个签名」在签名统一后又退化成空断言。
+        let testTraps = ir.components(separatedBy: "call void @bk_panic").count - 1
+        let production = try emitTestMode(Self.corpus, mode: false)
+        let productionTraps = production.components(separatedBy: "call void @bk_panic").count - 1
+        #expect(testTraps == productionTraps - 1, "测试模式下断言仍发陷阱调用")
     }
 
     /// 意图：阳性对照 —— 测试模式关闭时，同一份语料的断言失败仍走陷阱（生产语义不变）。
@@ -489,7 +493,7 @@ struct TestModeEmissionTests {
     func productionSemanticsUnchangedWhenModeOff() throws {
         let ir = try emitTestMode(Self.corpus, mode: false)
 
-        #expect(ir.contains("call ptr @bk_panic"), "生产语义的陷阱调用不见了")
+        #expect(ir.contains("call void @bk_panic"), "生产语义的陷阱调用不见了")
         // 驳回性：测试模式的产物特征一个都不许露头。
         #expect(!ir.contains("define i32 @\(IREmitter.testDriverName)()"), "关闭时仍合成了驱动器")
         #expect(!ir.contains("@\(IREmitter.testFailedGlobal)"), "关闭时仍带失败标志插槽")

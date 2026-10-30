@@ -81,7 +81,7 @@ public final class TypeChecker {
         typeEnv.defineFunction(name: "addressof", params: [anyType], returns: [anyPtr])
 
         // 内建**值**：类型层按**变量**登记它的类型（不是函数签名）。
-        // ⚠️ 形态与上面三个同属指针面，但处置不同：值没有形参与调用点，按名读到它即得。
+        //  注意  形态与上面三个同属指针面，但处置不同：值没有形参与调用点，按名读到它即得。
         // 漏了这一步，那个名字在类型层没有类型 —— 静态侧算不出它参与的表达式的类型。
         for decl in BuiltinRegistry.decls {
             guard let valueType = decl.valueType else { continue }
@@ -252,7 +252,7 @@ public final class TypeChecker {
                 genericParams: [],
                 signatures: [
                     // 默认体**无事**：「收下但不排」是一个合法（虽然无用）的策略，不是错误。
-                    // ⚠️ 它也必须是合法体 —— 一个什么也不做的策略不该因此过不了编译。
+                    //  注意  它也必须是合法体 —— 一个什么也不做的策略不该因此过不了编译。
                     schedulerMethod(
                         "收下",
                         extra: [Parameter(name: "任务", typeAnnotation: schedulerHandleType)],
@@ -1097,7 +1097,7 @@ public final class TypeChecker {
             }
         case .givenDecl(let g):
             /// 给定块与对象**同规注册**（字段表 / 类型环境 / `实现: T` 的方法）。
-            /// ⚠️ 不登记 `referenceTypeNames` —— 值 / 引用语义尚未裁定，只落声明面，
+            ///  注意  不登记 `referenceTypeNames` —— 值 / 引用语义尚未裁定，只落声明面，
             /// 不预设语义（登记与否会改变构造与赋值的行为）。
             typeFieldsByName[g.name] = g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
             if !g.genericParams.isEmpty {

@@ -66,7 +66,7 @@ struct StringOwnershipRuntimeTests {
         #expect(bk_str_refcount(s) == 0)
     }
 
-    /// ⚠️ 如实登记本条判据的一个弱点：`bk_str_refcount` 对「已归零（已摘出登记表）」与「根本不是本运行时段
+    ///  注意  如实登记本条判据的一个弱点：`bk_str_refcount` 对「已归零（已摘出登记表）」与「根本不是本运行时段
     /// 分配的」返回同一个 `0`，两种状态在该读数上同形 ⇒ `归零后不复活` 与 `外来串是惰性的` 靠的是「不崩 +
     /// 计数不回升」，不是「0 与 1 的差别」。要更强地区分得另加分配/回收计数入口；别把这两条读成能区分那两态。
     @Test("重复释放是惰性的：第二次查表即失配，⛔ 不崩")
@@ -86,7 +86,7 @@ struct StringOwnershipRuntimeTests {
         var payload: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(s)
         let arr = bk_array_create(1)
         // tag 3 = `.str`、宽度 8 —— 与发射器 `arrayElementABI` 钉的那一格一致。
-        // ⚠️ `bk_array_set` 对元素内容是**移动语义**（不 retain）：那一份由槽接管。
+        //  注意  `bk_array_set` 对元素内容是**移动语义**（不 retain）：那一份由槽接管。
         withUnsafeBytes(of: &payload) { raw in
             _ = bk_array_set(arr, 0, raw.baseAddress!, 8, 3)
         }

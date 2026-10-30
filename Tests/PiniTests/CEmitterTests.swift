@@ -40,11 +40,28 @@ struct CEmitterTests {
 
     @Test("未支持的语句抛错而不是降级")
     func unsupportedStatementThrows() {
-        let body = IRBlock([.deferStmt(body: IRBlock([.returnStmt(value: nil)]))])
+        let body = IRBlock([
+            .tryStmt(
+                operand: .intConst(value: 0, type: .i32), errorVar: "e",
+                handler: IRBlock([]), okTarget: nil, type: .i32)
+        ])
         let function = IRFunction(name: "main", params: [], returnType: nil, body: body)
         #expect(throws: CBackendError.self) {
             _ = try CEmitter().emit(module: IRModule(functions: [function]), programName: "t")
         }
+    }
+
+    /// `defer` 体里的 `return` 不回头重放自己那一帧：少了这道闸，重放与终止边会互相再进，
+    /// 编译期栈溢出 —— 那不是报错，是把编译器打崩。
+    @Test("defer 体里的 return 不会自递归重放")
+    func deferBodyWithReturnTerminates() throws {
+        let body = IRBlock([
+            .deferStmt(body: IRBlock([.returnStmt(value: nil)])),
+            .returnStmt(value: nil),
+        ])
+        let function = IRFunction(name: "main", params: [], returnType: nil, body: body)
+        let files = try CEmitter().emit(module: IRModule(functions: [function]), programName: "t")
+        #expect(files[0].contents.contains("return 0;"))
     }
 
     @Test("无 main 的模块被拒绝")
@@ -71,8 +88,14 @@ struct CEmitterTests {
         // 容器是运行时段的不透明句柄；Optional 按载荷类型特化出一个具名结构体。
         #expect(try CTypeMap.spelling(of: .array(element: .i32)) == "void *")
         #expect(try CTypeMap.spelling(of: .optional(wrapped: .i32)) == "PiniOpt_i32")
+        // 元组是按值聚合体，名字由字段类型派生；LazyRef 与容器同为不透明句柄。
+        #expect(
+            try CTypeMap.spelling(of: .tuple(labels: [nil, nil], fieldTypes: [.i32, .i32]))
+                == "PiniTuple_i32_i32")
+        #expect(try CTypeMap.spelling(of: .lazyRef(element: .i32)) == "void *")
+        // 表外的类型仍然拒绝：静默退化成 `void *` 会让产物编得过而在运行时读错位。
         #expect(throws: CBackendError.self) {
-            _ = try CTypeMap.spelling(of: .tuple(labels: [nil], fieldTypes: [.i32]))
+            _ = try CTypeMap.spelling(of: .result(ok: .i32))
         }
     }
 

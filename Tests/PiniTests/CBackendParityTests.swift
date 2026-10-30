@@ -22,7 +22,8 @@ struct CBackendParityTests {
     }
 
     /// 语料覆盖已开出来的类型面与控件流面：字符串 · 整数 · 分支 · 循环 · 跨层跳出（要 `goto`）·
-    /// 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配 · 容器三族与 Optional · for-in。全部以 `main` 为入口。
+    /// 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配 · 容器三族与 Optional · for-in ·
+    /// defer 与 while step · 字符串拼接 / 插值 / 内建 · 数学内建。全部以 `main` 为入口。
     private static let corpora: [Corpus] = [
         Corpus(
             label: "问候",
@@ -100,9 +101,9 @@ struct CBackendParityTests {
                 print("after")
                 return
             """#,
-            expected: "before\n断言失败\n",
+            expected: "before\n",
             status: 1,
-            stderr: "\n"
+            stderr: "断言失败\n"
         ),
         Corpus(
             label: "结构体与字段",
@@ -329,6 +330,194 @@ struct CBackendParityTests {
             """#,
             expected: "[1, 2, 3]\nab-cd-ef\n"
         ),
+        Corpus(
+            label: "defer 与 while step",
+            source: #"""
+            main|func() -> ():
+                var result = ""
+                var i = 0
+                while i < 2:
+                    defer result = result + "d"
+                    result = result + "b"
+                    i = i + 1
+                print(result)
+                var k = 0
+                while k < 3:
+                    print(k)
+                    k = k + 1
+                step:
+                    print("s")
+                return
+            """#,
+            expected: "bdbd\n0\ns\n1\ns\n2\ns\n"
+        ),
+        /// 提前释放的钉子：拼接结果被槽接管后再读，也经别名 `u` 在原件被覆盖后仍可读。
+        /// 若账本在交出所有权时又发一次 `bk_str_release`，两行都会变成乱码或崩溃。
+        Corpus(
+            label: "字符串拼接与覆盖",
+            source: #"""
+            main|func() -> ():
+                var s = "x"
+                s = s + "y"
+                print(s)
+                var t = "a" + "b"
+                print(t)
+                print(t + "!")
+                var u = s
+                s = "z"
+                print(u)
+                print(s)
+                return
+            """#,
+            expected: "xy\nab\nab!\nxy\nz\n"
+        ),
+        Corpus(
+            label: "插值与容器片段",
+            source: #"""
+            main|func() -> ():
+                var name = "Pini"
+                var n = 3
+                print("hi \(name) n=\(n)")
+                print("arr=\([1, 2]) len=\(len(name))")
+                return
+            """#,
+            expected: "hi Pini n=3\narr=[1, 2] len=4\n"
+        ),
+        Corpus(
+            label: "字符串内建与数学内建",
+            source: #"""
+            main|func() -> ():
+                var s = "Hello"
+                print(s.upper())
+                print(s.lower())
+                print(s.contains("ell"))
+                print(s.contains("zz"))
+                print(s.substring(1, 3))
+                print(s.split("l"))
+                print(abs(-7))
+                print(min(4, 9))
+                print(max(4, 9))
+                print(sqrt(9.0))
+                print(sin(0.0))
+                print(cos(0.0))
+                print(tan(0.0))
+                return
+            """#,
+            expected: "HELLO\nhello\ntrue\nfalse\nel\n[He, o]\n7\n4\n9\n3.0\n0.0\n1.0\n0.0\n"
+        ),
+        /// 引用捕获的钉子：闭包读的是外层槽本身，故 `base` 改写后同一次调用的结果随之变；
+        /// 捕获的字符串与整数走同一条 env 字段路，`前缀` 两行都该原样打出来。
+        Corpus(
+            label: "闭包捕获与引用语义",
+            source: #"""
+            main|func() -> ():
+                var base = 10
+                var 前缀 = "值="
+                var add = func (n,) -> (I32,):
+                    capture base
+                    capture 前缀
+                    print(前缀)
+                    return n + base
+                print(add(5))
+                base = 100
+                print(add(5))
+                base = 1
+                print(add(2))
+                return
+            """#,
+            expected: "值=\n15\n值=\n105\n值=\n3\n"
+        ),
+        /// 一等函数三条路：具名函数经适配器、内联匿名函数、闭包变量，三种都要穿过同一条 env 首参约定。
+        Corpus(
+            label: "高阶函数与匿名值",
+            source: #"""
+            应用|func(f: (I32,) -> (I32,), x: I32) -> (I32,):
+                return f(x)
+
+            三倍|func(n: I32,) -> (I32,):
+                return n * 3
+
+            main|func() -> ():
+                print(应用(三倍, 7))
+                print(应用(func (n,) -> (I32,): return n + 1, 41))
+                var sq = func (n,) -> (I32,):
+                    return n * n
+                print(应用(sq, 9))
+                return
+            """#,
+            expected: "21\n42\n81\n"
+        ),
+        /// 元组的钉子：多返回值整体返回、整体打印。布局必须是按值聚合体 —— 若退化成句柄，
+        /// 两行的字段次序会随分配顺序漂，且 `{ i32, i32 }` 的 8 字节断言也挡不住。
+        Corpus(
+            label: "元组多返回值",
+            source: #"""
+            除余|func(a: I32, b: I32) -> ((I32, I32,),):
+                return (a / b, a % b)
+
+            main|func() -> ():
+                let r = 除余(17, 5)
+                print(r)
+                let s = 除余(9, 4)
+                print(s)
+                return
+            """#,
+            expected: "[3, 2]\n[2, 1]\n"
+        ),
+        /// 带标签的元组：字段读走 `.标签`（降载成下标），整体打印按声明序带标签。
+        /// 标签只影响打印文本，不参与 C 结构体命名 —— 同形状的两个元组本就是同一个类型。
+        Corpus(
+            label: "带标签的元组",
+            source: #"""
+            main|func() -> ():
+                var t = (姓名 = "皮尼", 版本 = 1,)
+                print(t.姓名)
+                print(t.版本)
+                print(t)
+                return
+            """#,
+            expected: "皮尼\n1\n[姓名: 皮尼, 版本: 1]\n"
+        ),
+        /// 切片与负索引：负值尾计数、越界夹紧、开界取默认，数组与字符串两条路各走一遍。
+        /// 数组是组合出来的（create + 逐格 get/set），字符串整段交给运行时段 —— 两条路的文本必须一致。
+        Corpus(
+            label: "切片与负索引",
+            source: #"""
+            main|func() -> ():
+                var a = [10, 20, 30, 40, 50]
+                print(a[1:3])
+                print(a[-2:])
+                print(a[:-1])
+                print(a[1:100])
+                print(a[100:])
+                print(a[:])
+                var s = "hello"
+                print(s[1:4])
+                print(s[-3:])
+                print(s.get(100))
+                return
+            """#,
+            expected:
+                "[20, 30]\n[40, 50]\n[10, 20, 30, 40]\n[20, 30, 40, 50]\n[]\n"
+                + "[10, 20, 30, 40, 50]\nell\nllo\nnone\n"
+        ),
+        /// LazyRef 的钉子：`init` 只出现一次。首访求值并缓存，复制共享同一盒 ——
+        /// 若复制造了新盒，第二行会再打一次 `init`；若没缓存，第三行也会。
+        Corpus(
+            label: "LazyRef 缓存与引用语义",
+            source: #"""
+            main|func() -> ():
+                var r = LazyRef<I32>(func () -> (I32,):
+                    print("init")
+                    return 7
+                )
+                print(r.value)
+                var s = r
+                print(s.value)
+                return
+            """#,
+            expected: "init\n7\n7\n"
+        ),
     ]
 
     @Test("每条语料的 C 产物跑出的字节与手写期望相同")
@@ -440,9 +629,87 @@ struct CBackendParityTests {
         #expect(text.contains("bk_array_set"), "下标写没有走运行时的分裂通道")
     }
 
-    // MARK: - 驱动
+    /// 字符串账本的漏账钉子：拼接出的临时串被消费后必须回到零 —— 中间结果在下一段拼接后还、
+    /// 末值在打印点还。少一条只是漏内存，产物照跑、输出全对，只能从源里看。
+    @Test("字符串临时值在消费点释放")
+    func stringTemporariesAreReleased() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let source = #"""
+        拼|func(s: String,) -> ():
+            print((s + "b") + "c")
+            return
 
-    /// 发源 → cc → 跑产物。三步都用 `--emit-c` 落出的那份 `.c`，中途不重新发射。
+        main|func() -> ():
+            拼("a")
+            return
+        """#
+        try source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("bk_str_alloc"), "拼接没有走带计数头的分配器，release 会静默变成无操作")
+        let releases = text.components(separatedBy: "bk_str_release(").count - 1
+        #expect(releases == 2, "两条临时串（中间结果 + 末值）应各还一份，实际发了 \(releases) 条")
+    }
+
+    /// 闭包值的布局判据与平台边界都得落在产物里：`{ code, env }` 的宽度 / 偏移、每个 env 结构体的
+    /// 字段偏移，以及「`void *` 与函数指针互转只有 POSIX 保证」这条注释。
+    @Test("闭包值与 env 的布局断言写进了产物")
+    func closureLayoutAssertionsAreEmitted() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let corpus = Self.corpora.first { $0.label == "闭包捕获与引用语义" }!
+        try corpus.source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("_Static_assert(sizeof(PiniClosure) == 16"), "没有闭包值总大小断言")
+        #expect(text.contains("offsetof(PiniClosure, env) == 8"), "没有 env 字段偏移断言")
+        #expect(text.contains("_Static_assert(sizeof(PiniEnv_"), "没有 env 结构体总大小断言")
+        #expect(text.contains("offsetof(PiniEnv_"), "没有 env 字段偏移断言")
+        #expect(text.contains("POSIX"), "函数指针转换的平台边界没有写进产物")
+        #expect(text.contains("pini_closure_"), "闭包体没有落成独立函数")
+    }
+
+    /// 元组是按值聚合体，布局判据必须落在产物里：总大小与逐字段偏移。少了它，字段序或宽度漂了
+    /// 只能到运行期读到错位的字段 —— 而那一半正是「与 LLVM 逐字节一致」的全部内容。
+    @Test("元组的布局断言写进了产物")
+    func tupleLayoutAssertionsAreEmitted() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let corpus = Self.corpora.first { $0.label == "元组多返回值" }!
+        try corpus.source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("_Static_assert(sizeof(PiniTuple_"), "没有元组总大小断言")
+        #expect(text.contains("offsetof(PiniTuple_"), "没有元组字段偏移断言")
+        #expect(text.contains(".f1"), "没有按序写字段")
+    }
+
+    // MARK: - 驱动    /// 发源 → cc → 跑产物。三步都用 `--emit-c` 落出的那份 `.c`，中途不重新发射。
     private func runThroughCBackend(
         _ corpus: Corpus, cli: String, cc: String
     ) throws -> (status: Int32, stdout: String, stderr: String) {

@@ -1245,7 +1245,7 @@ private func gateAndRunTests(
     }
 
     // 报告首行：两条通道是**同一个字符串** —— 解释器打印它，LLVM 把它交给产物自己打印。
-    // ⚠️ 两边各拼一次就迟早会不一致，故这里只拼一处。
+    //  注意  两边各拼一次就迟早会不一致，故这里只拼一处。
     let header: String
     if let label = scopeLabel {
         header = "测试目标: 模块 \(pkg.name)（\(pkg.fileUnits.count) 个文件，范围 \(label)）"
@@ -1275,7 +1275,7 @@ private func gateAndRunTests(
         if failed > 0 { exit(1) }
 
     case .llvm:
-        // ⭐ 降载走 `lowerTests` —— 与上面那条通道**同一份**降载（理由见它的注释）。
+        //  重要  降载走 `lowerTests` —— 与上面那条通道**同一份**降载（理由见它的注释）。
         let lowered = try runner.lowerTests(package: pkg)
         try emitAndRunLLVMTests(
             module: lowered, fileScope: scope, header: header, programBase: programBase)
@@ -1338,8 +1338,8 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
 func emitAndRunLLVMTests(
     module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?
 ) throws {
-    // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**，⛔ 不是「能看到什么」。
-    // ⚠️ 清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
+    // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
+    //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
     let selection: [String]? = fileScope.map { scope in
         module.functions.filter { $0.isTest && scope($0.sourceFile) }.map { $0.name }
     }
@@ -1354,7 +1354,7 @@ func emitAndRunLLVMTests(
     let tmpBin = "/tmp/pini_\(UUID().uuidString)"
     try ir.write(toFile: tmpIR, atomically: true, encoding: .utf8)
     // 调试出口：把测试模式的产物留一份（与本文件既有 `PINI_RUNTIME_LIB` / 借助 `PINI_LLVM_BIN`
-    // 的惯例同规）。⚠️ 存在的理由很具体：本通道的产物是**合成**出来的（驱动器 + 入口），
+    // 的惯例同规）。 注意  存在的理由很具体：本通道的产物是**合成**出来的（驱动器 + 入口），
     // 出问题时 clang 的报错只给行号，而临时文件随后就被删了 —— 没有这一手就只能靠猜。
     if let keep = ProcessInfo.processInfo.environment["PINI_TEST_LLVM_IR"] {
         try? ir.write(toFile: keep, atomically: true, encoding: .utf8)
@@ -1680,7 +1680,7 @@ func parseCBuildOptions(_ rest: [String]) -> CBuildOptions {
     return options
 }
 
-/// 产物基名取输入路径末段（文件去后缀、目录取末段）。⛔ 不取清单里的 package 名：
+/// 产物基名取输入路径末段（文件去后缀、目录取末段）。 行不通  不取清单里的 package 名：
 /// 命令行上就能推导，且清单改名不该移动产物。
 func cProgramName(for path: String) -> String {
     var name = (path as NSString).lastPathComponent
@@ -1725,7 +1725,7 @@ func lowerForCBackend(path: String) throws -> (module: IRModule, programBase: St
     return (module, absoluteProgramBase(path), cProgramName(for: path))
 }
 
-/// C 编译器：优先 `PINI_CC`，否则系统 `cc`。⛔ 不走 `LLVMToolchain.clangPath` ——
+/// C 编译器：优先 `PINI_CC`，否则系统 `cc`。 行不通  不走 `LLVMToolchain.clangPath` ——
 /// 这条通道的存在理由之一就是不依赖 LLVM，把 LLVM 的 clang 变成硬依赖会自相矛盾。
 func cCompilerPath() -> String? {
     if let override = ProcessInfo.processInfo.environment["PINI_CC"],
@@ -1904,7 +1904,7 @@ func runLLICommand(source: String, fileName: String) throws {
 
     try process.run()
     process.waitUntilExit()
-    // 同上（`runCompileCommand` 的注释有完整理由）：状态必须交出去，⛔ 不能丢。
+    // 同上（`runCompileCommand` 的注释有完整理由）：状态必须交出去， 行不通  不能丢。
     exit(childExitStatus(of: process))
 }
 

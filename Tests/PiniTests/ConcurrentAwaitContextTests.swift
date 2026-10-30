@@ -122,7 +122,7 @@ struct ConcurrentAwaitContextTests {
 
     @Test("嵌套块里的语句根也报 E6-010 —— 可让出位置收在体那一层")
     func nestedBlockStatementRootIsRejectedToo() throws {
-        /// ⚠️ 这一条钉的是嵌套块里的语句根被拒 —— 受理面收窄到体那一层，理由是发射层给不出嵌套块的续跑点：
+        ///  注意  这一条钉的是嵌套块里的语句根被拒 —— 受理面收窄到体那一层，理由是发射层给不出嵌套块的续跑点：
         /// 续跑的跳转只跳得回体那一层那一块，嵌套块的进入条件在那条路径上被整段跳过。
         /// 与成对的 `theFourStatementRootsStillLower`（顶层四形态照旧合法）合起来才说明收窄没变成砍掉让出。
         let source = Self.子任务 + """

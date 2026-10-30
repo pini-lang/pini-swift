@@ -10,7 +10,7 @@ struct ArrayStorageSharingTests {
 
     // MARK: - 工具
 
-    /// 元素标签的字面量。⚠️ `_BkTag`（运行时段）是 `private`，测试读不到 ⇒ 在此照抄权威表：
+    /// 元素标签的字面量。 注意  `_BkTag`（运行时段）是 `private`，测试读不到 ⇒ 在此照抄权威表：
     /// `i32 = 0` · `double = 1` · `bool = 2` · `str = 3` · `handle = 4` · `i64 = 5`；
     /// 与发射层 `IREmitter.arrayElementABI` 用的是同一张表。
     private enum Tag {
@@ -52,7 +52,7 @@ struct ArrayStorageSharingTests {
     func appendLeavesTheInputUntouched() {
         /// 意图：这条是 `append` 契约的**底线**，也是「就地增长」这条路最容易走错的地方 ——
         /// 若实现图省事把输入也一起变长（共用同一块存储 + 拿存储容量当长度），
-        /// 第一条断言即红。⚠️ 反向也要压：新数组的既有两格必须与输入逐位相同（不是零值）。
+        /// 第一条断言即红。 注意  反向也要压：新数组的既有两格必须与输入逐位相同（不是零值）。
         let a = makeI32Array([1, 2])
         defer { bk_array_destroy(a) }
         let b = appendI32(a, 3)
@@ -121,7 +121,7 @@ struct ArrayStorageSharingTests {
 
         var innerPtr: UnsafeMutableRawPointer? = inner
         var otherPtr: UnsafeMutableRawPointer? = other
-        // ⚠️ 中间那个空数组句柄**必须释放**（与发射形态同序）：不释放则它仍持有那块存储
+        //  注意  中间那个空数组句柄**必须释放**（与发射形态同序）：不释放则它仍持有那块存储
         // ⇒ 下一次追加看到「存储被共享」而走深拷路 —— 本用例第一版正是这么写错的，红在下面那条前置断言。
         let empty = bk_array_create(0)
         let o1 = withUnsafePointer(to: &innerPtr) { bk_array_append(empty, $0, 8, Tag.handle) }

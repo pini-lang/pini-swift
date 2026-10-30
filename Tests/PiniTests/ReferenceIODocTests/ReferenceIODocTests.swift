@@ -30,7 +30,7 @@ struct ReferenceIODocTests {
 
     @Test("参考件 §12.8 列出的 io 内建与登记表逐个相等")
     func sectionListsExactlyTheRegistryIOBuiltins() throws {
-        /// ⚠️ 只取以 ``| ` `` 开头的表格行：本节另有一张「路径解析」表，其首列不是内建名。
+        ///  注意  只取以 ``| ` `` 开头的表格行：本节另有一张「路径解析」表，其首列不是内建名。
         let text = try String(
             contentsOf: repoRoot().appendingPathComponent("docs/spec/pini-reference-v0.md"),
             encoding: .utf8)

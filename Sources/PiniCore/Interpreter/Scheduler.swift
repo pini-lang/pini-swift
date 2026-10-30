@@ -151,7 +151,7 @@ final class GCDScheduler: Scheduler {
         let chans = shared.maxPoolSize
         let ratio = Double(active) / Double(chans)
         guard ratio >= watermarkWarning else { return nil }
-        return "[scheduler] ⚠️ 高并发水位：\(active)/\(chans) 活跃任务 (\(Int(ratio * 100))% 池容)"
+        return "[scheduler]  注意  高并发水位：\(active)/\(chans) 活跃任务 (\(Int(ratio * 100))% 池容)"
     }
 
     /// Coerce anything thrown out of a dispatched body into a `RuntimeError`, so a rejected

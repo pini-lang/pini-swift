@@ -615,7 +615,7 @@ public class Lexer {
         flushLiteral()
 
         // 无插值段时仍发 .stringLiteral，保持向后兼容（不破坏现有测试）
-        // ⚠️ 段表退化（`\0` 截断后只剩一个字面段）也走这条 —— 与自举侧同一约定。
+        //  注意  段表退化（`\0` 截断后只剩一个字面段）也走这条 —— 与自举侧同一约定。
         if segments.count == 1, case .literal(let s) = segments[0] {
             return .stringLiteral(s, loc)
         }

@@ -103,7 +103,7 @@ struct ModuleRootBuiltinTests {
         /// 意图：`moduleRoot()` = **脚本所在目录**的绝对路径，解释器与 LLVM 各验一次。
         /// 驳回性：答进程 CWD 的实现在此给出 `…/cwd`，答空串的实现给出一个空行。
 
-        /// ⚠️ 前提：CWD 与脚本目录必须不同 —— 相同则「答 CWD」照样通过，本用例失去分辨力。
+        ///  注意  前提：CWD 与脚本目录必须不同 —— 相同则「答 CWD」照样通过，本用例失去分辨力。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -136,7 +136,7 @@ struct ModuleRootBuiltinTests {
         /// 意图：绝对路径不经 IO 解析，故本项即可成立 —— 条目集手写，两通道各验一次。
         /// 驳回性：基准答 CWD 的实现列出空目录（`[]`），与期望的四个条目不符。
 
-        /// ⚠️ 条目按 UTF-8 字节序升序，`prog.pini` 排在 `sub` 之前 —— 期望值照此手写。
+        ///  注意  条目按 UTF-8 字节序升序，`prog.pini` 排在 `sub` 之前 —— 期望值照此手写。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -170,7 +170,7 @@ struct ModuleRootBuiltinTests {
         /// 意图：符号映射与基准注入是**两件事** —— 没有基准时查询照样要落到 `bk_module_root`。
         /// 驳回性：落到默认 `mangle` 的实现产出 `call i8* @moduleRoot()`，本用例两条断言同时红。
 
-        /// ⚠️ 判据落在**调用行**上：只看整份 IR 是否含运行时符号名，声明那一行就能把它骗过去。
+        ///  注意  判据落在**调用行**上：只看整份 IR 是否含运行时符号名，声明那一行就能把它骗过去。
         /// ⛔ 未注入态不该带注入点：带了就意味着「默认 nil 时产物逐字节不变」被打破。
         let ir = try emittedIR(
             """
@@ -191,7 +191,7 @@ struct ModuleRootBuiltinTests {
         /// 意图：有基准时，入口第一句把基准交给运行时；声明随之出现一次。
         /// 驳回性：只想改符号映射、忘了注入的实现会让 `bk_module_root` 永远答 CWD。
 
-        /// ⚠️ 只断 ABI 名，⛔ 不断常量名 —— 常量怎么起名不属于对外契约。
+        ///  注意  只断 ABI 名，⛔ 不断常量名 —— 常量怎么起名不属于对外契约。
         let ir = try emittedIR(
             """
             main|func() -> ():

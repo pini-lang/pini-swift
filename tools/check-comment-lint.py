@@ -209,7 +209,7 @@ def main(argv: list[str]) -> int:
                     if os.path.splitext(fn)[1] in EXTS or fn in EXTENSIONLESS:
                         targets.append(os.path.join(dp, fn))
     if not targets:
-        print("⚠️  无可扫描文件，跳过")
+        print(" 注意   无可扫描文件，跳过")
         return 0
 
     def lang_of(path: str) -> str:
@@ -233,7 +233,7 @@ def main(argv: list[str]) -> int:
                     print(f"{path}:{start}: [{h.split()[0]}] {h[len(h.split()[0]) + 1:]}")
                     shown += 1
     if bad_hits:
-        print(f"\n⛔ [注释门禁] {bad_files} 个文件 / {bad_hits} 处违规"
+        print(f"\n 行不通  [注释门禁] {bad_files} 个文件 / {bad_hits} 处违规"
               f"（每块 ≤{MAX_LINES} 行、每行 ≤{MAX_WIDTH} 字；Swift 参数行豁免）")
         if bad_hits > shown:
             print(f"   仅显示前 {shown} 处。")

@@ -10,7 +10,7 @@ every class with no signal at all, and the failure set it produces is equal,
 item by item, to what the per-class sweep produces. Splitting is therefore a
 robust way to *measure*, not a repair of the underlying defect.
 
-⚠️ 上面那两个数字（94 / 115）是 **115 类那棵测试树**的实测，该树已于 2026-09-18 清空、
+ 注意  上面那两个数字（94 / 115）是 **115 类那棵测试树**的实测，该树已于 2026-09-18 清空、
 2026-09-19 起重建（当前只有两个套件）。切块本身仍成立：它是「一次跑不完就分块量」的
 量具，不依赖旧树规模。
 
@@ -21,7 +21,7 @@ FRAMEWORKS
 整体读成「未跑」—— 护栏会据此判作废，于是账目看起来只是「这次读不出来」，
 真实原因是量具认不出框架。改动量具的解析层时，两种形状都要喂一遍。
 
-⚠️ ALWAYS RUN THIS IN THE FOREGROUND.
+ 注意  ALWAYS RUN THIS IN THE FOREGROUND.
 
 Run from a background shell, the sandbox refuses `swift test`'s cleanup of its
 temporary directory. The result is not an error: every class reports zero

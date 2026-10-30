@@ -160,11 +160,11 @@ public final class IREmitter {
     /// 是否调用过宿主环境查询内建（`argv` / `listDir`）—— 同上，落点是 `bk_argv` / `bk_list_dir`。
     private var usesProcessShims = false
     /// 是否调用过 `moduleRoot` —— 落点是 `bk_module_root`。
-    /// ⛔ 不并入 `usesProcessShims`：那一族的声明是整批固定输出的，共用的代价是只调 `argv`
+    ///  行不通  不并入 `usesProcessShims`：那一族的声明是整批固定输出的，共用的代价是只调 `argv`
     /// 或 `listDir` 的程序凭空多出本符号的声明，而它们的产物必须逐字节不变。
     private var usesModuleRootShim = false
     /// 是否在进程入口注入了程序基准（`bk_set_program_base`）—— declare 随之条件出现。
-    /// ⛔ 它**不**复用 `usesProcessShims`：注入发生在入口，而入口可能早于任何 IO 调用点发射。
+    ///  行不通  它**不**复用 `usesProcessShims`：注入发生在入口，而入口可能早于任何 IO 调用点发射。
     private var usesProgramBase = false
     /// 是否发射过错误载荷族调用（`bk_error_create` / `bk_cancel_error_create` /
     /// `bk_error_is_cancel` / `bk_error_message`）。四者同开关：构造与读取成对出现，
@@ -194,7 +194,7 @@ public final class IREmitter {
 
     /// 本层新分配、尚无持有者的名义箱 / 容器句柄：SSA 名 → 类型。与 `ownedStrings` 同一本账的另一半
     /// （字符串族固定走 `bk_str_release`，故那边只记名字）。入账：构造点；出账：被持有位置接管，或就地还。
-    /// 未出账的条目最多是泄漏（现状），⛔ 不会被二次释放 —— 键是双端唯一的 SSA 名。
+    /// 未出账的条目最多是泄漏（现状）， 行不通  不会被二次释放 —— 键是双端唯一的 SSA 名。
     private var ownedBoxes: [String: IRType] = [:]
 
     /// 与 `ownedStringsStack` 同规：函数体 / 闭包体 / 给定初始化器各持一份，`IRBuilder` 重新编号 ⇒ 不能串。
@@ -399,7 +399,7 @@ public final class IREmitter {
         givenSlotNames = []
         givenInitializerDefs = []
         givenInitializerNames = []
-        // 测试模式的两个**每模一次**的状态：模块级重置（⛔ 不放在 `emitFunction` 里 ——
+        // 测试模式的两个**每模一次**的状态：模块级重置（ 行不通  不放在 `emitFunction` 里 ——
         // 一个发射器的实例可以连发多个模块，留在上一个模块的值会让下一个模块的第一个函数
         // 误判自己是不是测试）。
         currentIsTest = false
@@ -454,7 +454,7 @@ public final class IREmitter {
             }
         }
 
-        // ⭐ 测试模式：合成驱动器与入口。位置**必须在下面组 `tail` 之前** ——
+        //  重要  测试模式：合成驱动器与入口。位置**必须在下面组 `tail` 之前** ——
         // 驱动器与报告片段都经 `registerStringConstant` 登记常量，而 `tail` 正是把已登记的
         // 常量刷出去的那一刻 ⇒ 排在它之后就一个常量都刷不出来（产物里只剩裸 `@.strN` 引用）。
         if testMode {
@@ -462,7 +462,7 @@ public final class IREmitter {
         }
 
         var tail = ""
-        // 测试模式的两个模块级插槽（⛔ 不是运行时段符号，见 `testFailedGlobal` 那条注释）。
+        // 测试模式的两个模块级插槽（ 行不通  不是运行时段符号，见 `testFailedGlobal` 那条注释）。
         // `internal` 而非 `private`：驱动器与各测试函数都在本模块内，两者都要读写它们。
         if testMode {
             tail += "@\(Self.testFailedGlobal) = internal global i32 0\n"
@@ -529,8 +529,8 @@ public final class IREmitter {
             tail += "declare void @bk_sleep(i32)\n"
         }
         /// 字符内建与宿主环境查询的**运行时段落地**。
-        /// ⚠️ 与上面同规：只有真调用过才带这几个 declare ⇒ 不碰它们的程序 IR 逐字节不变。
-        /// ⛔ 谓词与 `ord` 一律 `i32` 返回（收敛到 i1 由调用点做，见 `.call` 那条注释）。
+        ///  注意  与上面同规：只有真调用过才带这几个 declare ⇒ 不碰它们的程序 IR 逐字节不变。
+        ///  行不通  谓词与 `ord` 一律 `i32` 返回（收敛到 i1 由调用点做，见 `.call` 那条注释）。
         if usesCharacterShims {
             tail += "declare ptr @bk_chars(ptr)\n"
             tail += "declare ptr @bk_chr(i32)\n"
@@ -550,7 +550,7 @@ public final class IREmitter {
         }
         if usesErrorShims {
             // err 槽的字：构造侧两个（业务错误 / 取消错误，只差标志位），读侧两个
-            // （判定取消 / 取消息）。⚠️ 三个 `i64` 参数都是**句柄位型**，⛔ 不是指针。
+            // （判定取消 / 取消息）。 注意  三个 `i64` 参数都是**句柄位型**， 行不通  不是指针。
             tail += "declare i64 @bk_error_create(ptr)\n"
             tail += "declare i64 @bk_cancel_error_create(ptr)\n"
             tail += "declare i32 @bk_error_is_cancel(i64)\n"
@@ -589,7 +589,7 @@ public final class IREmitter {
             tail += "declare i32 @bk_string_index_of(ptr, ptr)\n"
         }
         // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
-        // 只有真发过派发的模块才带。⚠️ 观测符号 `bk_task_state` **不在这里** ——
+        // 只有真发过派发的模块才带。 注意  观测符号 `bk_task_state` **不在这里** ——
         // 它没有调用点（发射层从不发射它），它是给宿主与判据用的 C ABI 观测面。
         if usesSchedBinding {
             tail += "declare i32 @bk_task_bind_sched(ptr, ptr)\n"
@@ -670,7 +670,7 @@ public final class IREmitter {
         /// 那条路就从静默同步执行变成响亮拒绝。
         frameMode = (function.isAsync && isResultReturning(function)) ? .resumable : .none
         // 片 D：本函数里被闭包捕获的名字 —— 捕获槽由此改走堆分配（`declareValueSlot`）。
-        // ⚠️ 收集范围是整个函数体（含嵌套闭包）⇒ **宁可宽**：同名局部会多上一次堆，
+        //  注意  收集范围是整个函数体（含嵌套闭包）⇒ **宁可宽**：同名局部会多上一次堆，
         // 无害；漏收才会让某个槽留在栈上，而那正是跨帧才炸的那一类。
         capturedNamesInFunction = capturedNames(in: function.body)
 
@@ -694,7 +694,7 @@ public final class IREmitter {
         bodyIR = ""
 
         // 程序基准的注入点：入口函数体最前，早于任何 Pini 语句。
-        // ⚠️ 判据只看 `programBase`，⛔ 不看 `usesProcessShims` —— 入口可能先于 IO 调用点发射，
+        //  注意  判据只看 `programBase`， 行不通  不看 `usesProcessShims` —— 入口可能先于 IO 调用点发射，
         // 那时该标志尚未置位，据此决定就会漏插（症状是静默回落到进程 CWD）。
         if currentIsMain {
             bodyIR += programBaseSetterIR()
@@ -764,11 +764,11 @@ public final class IREmitter {
     }
 
     /// 合成的测试驱动器与入口的符号名（`__` 前缀与 `__given_init_*` 同族：
-    /// 它们不是 Pini 级名字，故不经 `mangle`，也⛔ 不进任何用户可见的名字域）。
+    /// 它们不是 Pini 级名字，故不经 `mangle`，也 行不通  不进任何用户可见的名字域）。
     static let testDriverName = "__pini_test_driver"
 
     /// 「把程序基准交给运行时」那条调用；`programBase == nil` 时返空串 ⇒ 产物逐字节不变。
-    /// ⚠️ 常量用固定名、地址直取全局（⛔ 不取临时名）：注入点排在所有 Pini 语句之前，
+    ///  注意  常量用固定名、地址直取全局（ 行不通  不取临时名）：注入点排在所有 Pini 语句之前，
     /// 一占名字就会把同一程序其余的名字全体推后一位，注入的差异便淹没在改名里。
     private func programBaseSetterIR() -> String {
         guard let base = programBase else { return "" }
@@ -789,7 +789,7 @@ public final class IREmitter {
             for function in module.functions where function.isTest {
                 byName[function.name] = function
             }
-            // ⚠️ 清单里有、模块里没有的名字**静默跳过**而不是崩：清单是从同一个降载结果算的，
+            //  注意  清单里有、模块里没有的名字**静默跳过**而不是崩：清单是从同一个降载结果算的，
             // 对不上只可能是发射器被单独驱动（测试直接构造发射器）。那种情况下少跑一条，
             // 比让整段发射崩掉更容易定位。
             tests = selection.compactMap { byName[$0] }
@@ -817,7 +817,7 @@ public final class IREmitter {
             d += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         }
 
-        // 计数器用 `alloca` 而⛔ 不用全局：驱动器是单次调用，槽只活在本帧内，
+        // 计数器用 `alloca` 而 行不通  不用全局：驱动器是单次调用，槽只活在本帧内，
         // 于是「跨测试的状态」仅剩那两个插槽，可被逐条读清。
         let failsSlot = builder.freshTemp()
         d += "define i32 @\(Self.testDriverName)() {\n"
@@ -844,9 +844,9 @@ public final class IREmitter {
             d += " \(messageSlots[index]) = alloca ptr\n"
         }
 
-        // ── 阶段 1：逐个跑，只收集（⛔ 本阶段一条输出都不产生）────────────────
+        // ── 阶段 1：逐个跑，只收集（ 行不通  本阶段一条输出都不产生）────────────────
         for (index, test) in tests.enumerated() {
-            // 每条测试前把两个插槽归零。⛔ 不归零的话上一条的失败会**污染**下一条 ——
+            // 每条测试前把两个插槽归零。 行不通  不归零的话上一条的失败会**污染**下一条 ——
             // 驱动器问的是「本条跑完之后标志是不是 1」，不是「有没有人为它置过 1」。
             d += " store i32 0, ptr @\(Self.testFailedGlobal)\n"
             d += " store ptr null, ptr @\(Self.testMsgGlobal)\n"
@@ -918,7 +918,7 @@ public final class IREmitter {
             d += "\(endLabel):\n"
         }
 
-        // 收尾行：通过数 = 总数 − 失败数。⚠️ 这里⛔ 不能用 `printString`（那会把格式当普通串打出来）。
+        // 收尾行：通过数 = 总数 − 失败数。 注意  这里 行不通  不能用 `printString`（那会把格式当普通串打出来）。
         let totalFails = builder.freshTemp()
         let totalPass = builder.freshTemp()
         d += " \(totalFails) = load i32, ptr \(failsSlot)\n"
@@ -1011,7 +1011,7 @@ public final class IREmitter {
         ir += " \(frame)_is_null = icmp eq ptr \(frame), null\n"
         ir += " br i1 \(frame)_is_null, label %de6b.frameless, label %de6b.alloc\n"
         ir += "de6b.frameless:\n"
-        // ⚠️ 这里**不能**用 `emitStringConstant`：它把取串的 GEP 写进 `bodyIR`，而帧序排在体之前
+        //  注意  这里**不能**用 `emitStringConstant`：它把取串的 GEP 写进 `bodyIR`，而帧序排在体之前
         // ⇒ 那个 GEP 会落在**不支配**帧序块的另一个块里，IR 非法。故只登记常量、自己发 GEP。
         let message = registerStringConstant(
             "Pini runtime error: an async body was entered without a task — dispatch it instead of calling it")
@@ -1243,7 +1243,7 @@ public final class IREmitter {
                     let value = emitExpr(initializer)
                     scopes[scopes.count - 1][name] = address
                     // 值语义（片 C）：结构体别名 ⇒ 拷出新箱；对象 / 枚举 / 容器别名 ⇒ retain；
-                    // 临时值 ⇒ 直接接管。⛔ 这一步必须在 store **之前** —— 它是「站住」那一步。
+                    // 临时值 ⇒ 直接接管。 行不通  这一步必须在 store **之前** —— 它是「站住」那一步。
                     let stored = emitValueForStorage(initializer, value, type: type)
                     bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: address) + "\n"
                 }
@@ -1297,7 +1297,7 @@ public final class IREmitter {
             var returnedValue: IRValue? = value.map { emitExpr($0) }
             if let returnedNode = value, let current = returnedValue {
                 /// 值语义：结构体别名 ⇒ 拷出新箱交出去；对象 / 枚举 / 容器 ⇒ retain 一份。
-                /// ⚠️ 没有返回类型（`main`）时只剩别名点 retain —— 那条路不交值。
+                ///  注意  没有返回类型（`main`）时只剩别名点 retain —— 那条路不交值。
                 if let returnType = currentReturnType {
                     returnedValue = emitValueForStorage(returnedNode, current, type: returnType)
                 } else {
@@ -1318,8 +1318,8 @@ public final class IREmitter {
             terminated = true
 
         case .exprStmt(let expr):
-            /// ⭐ `await f()` 独占一行 —— 让出，结果按语言语义**丢弃**。
-            /// ⛔ 少这一支的话，这条路会落到 `emitJoin` 的 `.awaits` 拒绝上 —— 一个本该让出的
+            ///  重要  `await f()` 独占一行 —— 让出，结果按语言语义**丢弃**。
+            ///  行不通  少这一支的话，这条路会落到 `emitJoin` 的 `.awaits` 拒绝上 —— 一个本该让出的
             /// 位置被当成「写错了」，而它是降载层明文承诺合法的四个位置之一。
             if frameMode == .resumable, blockDepth == 1, case .join(let awaited, let type, .awaits) = expr {
                 emitYieldPoint(awaited: awaited, type: type, produce: .discard)
@@ -1357,7 +1357,7 @@ public final class IREmitter {
             let (aggregate, _, fieldIndex) = fieldLayout(of: base, field: field)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
-            // ⚠️ 顺序同 `storeVar`：新值先站住（拷贝 / retain），**再**释放字段旧值，最后写。
+            //  注意  顺序同 `storeVar`：新值先站住（拷贝 / retain），**再**释放字段旧值，最后写。
             let stored = emitValueForStorage(value, loweredValue, type: fieldType)
             // 字段是**持有者**：被覆盖前先释放旧值（与 `emitReassignRelease` 同规，落点是字段）。
             emitFieldReassignRelease(fieldPtr: fieldPtr, type: fieldType)
@@ -1403,7 +1403,7 @@ public final class IREmitter {
 
     /// `continue`: unlabeled jumps to the innermost continue-target (step entry if present, else the
     /// header); labeled (depth > 1) goes to the depth-th header; outside any loop it panics. The body
-    /// block's defers run first. ⚠️ `depth > 1` skips the target loop's step, which the interpreter runs.
+    /// block's defers run first.  注意  `depth > 1` skips the target loop's step, which the interpreter runs.
     private func emitContinue(depth: Int) {
         if controlStack.count >= depth {
             let frame = controlStack[controlStack.count - depth]
@@ -1439,7 +1439,7 @@ public final class IREmitter {
     }
 
     private func emitMatch(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType) {
-        /// ⭐ 判别式**只在这里求值一次**（见 `emitMatchSubject`）：四个分派分支拿的都是
+        ///  重要  判别式**只在这里求值一次**（见 `emitMatchSubject`）：四个分派分支拿的都是
         /// 同一个已物化的值，不存在「某条分支漏走让出」的缝。
         let subject = emitMatchSubject(scrutinee, type: scrutineeType)
         switch scrutineeType {
@@ -1526,7 +1526,7 @@ public final class IREmitter {
         default:
             /// Bare scrutinee: literal arms compare by value; a wildcard arm is live even with no literal arm,
             /// so the trigger is "literal arm or wildcard arm". Neither ⇒ dead match: emit for side effects,
-            /// skip the arms. ⛔ Never re-evaluate the scrutinee — an `await` one would dispatch an unjoined task.
+            /// skip the arms.  行不通  Never re-evaluate the scrutinee — an `await` one would dispatch an unjoined task.
             if cases.contains(where: { $0.literal != nil }) || cases.contains(where: { $0.caseName == "_" }) {
                 emitScalarMatch(scrutineeValue: subject, cases: cases)
             }
@@ -1707,7 +1707,7 @@ public final class IREmitter {
     }
 
     /// `bk_*_set` 之后把**新句柄写回字段**（`obj.field[i] = v` 那条链的收尾）。
-    /// ⛔ 它是那半条链的判据所在：不写回 ⇒ COW 分裂出的新句柄没人接住 ⇒ 那次写静默丢失。
+    ///  行不通  它是那半条链的判据所在：不写回 ⇒ COW 分裂出的新句柄没人接住 ⇒ 那次写静默丢失。
     private func emitSubscriptFieldWriteBack(_ wb: (ptr: String, spelling: String)?, newRaw: String) {
         guard let wb = wb else { return }
         let typed = builder.freshTemp()
@@ -1744,12 +1744,12 @@ public final class IREmitter {
                 bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_dict*\n"
                 bodyIR += builder.fmtStore(value: typed, type: "%bk_dict*", ptr: slot) + "\n"
             }
-            // ⭐ 字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `bk_dict_set` 之后。
+            //  重要  字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `bk_dict_set` 之后。
             emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
             return
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
-        // ⭐ 容器求值走统一的 helper —— 它同时交出**字段容器**的写回钩子（`obj.field[i] = v`）。
+        //  重要  容器求值走统一的 helper —— 它同时交出**字段容器**的写回钩子（`obj.field[i] = v`）。
         let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
         let indexValue = emitExpr(index)
         let loweredValue = emitExpr(value)
@@ -1769,8 +1769,8 @@ public final class IREmitter {
             bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
             bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
         }
-        // ⭐ 字段容器的回写（`obj.field[i] = v`）：**同一个**字段指针，时序在 `bk_array_set` 之后。
-        //    ⛔ 不回写 ⇒ 分裂出的新句柄没人接住 ⇒ 那次写静默丢失（与上面变量槽那条同理）。
+        //  重要  字段容器的回写（`obj.field[i] = v`）：**同一个**字段指针，时序在 `bk_array_set` 之后。
+        //     行不通  不回写 ⇒ 分裂出的新句柄没人接住 ⇒ 那次写静默丢失（与上面变量槽那条同理）。
         emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
     }
 
@@ -1818,7 +1818,7 @@ public final class IREmitter {
 
     /// `try` 操作数的求值 —— 与 `emitMatchSubject` 同一条理由、同一种做法：语句根部先求值、后分派。
     /// 可让出的操作数走让出序列，结果落帧槽再读回，因为让出点所在块的 SSA 值不支配续跑块。
-    /// ⛔ 不与判别式合成通用函数：两处分派形态不同（tagged match vs tag→ok/err），能共用的只有求值。
+    ///  行不通  不与判别式合成通用函数：两处分派形态不同（tagged match vs tag→ok/err），能共用的只有求值。
     private func emitTryOperand(_ operand: IRExpr, type: IRType) -> IRValue {
         guard frameMode == .resumable, blockDepth == 1,
             case .join(let awaited, _, .awaits) = operand
@@ -1834,13 +1834,13 @@ public final class IREmitter {
     }
 
     private func emitTry(operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?, type: IRType) {
-        // ⚠️ 错误变量的槽在让出点**之前**声明 —— 若它落在栈上，续跑路径（入口 `switch` →
+        //  注意  错误变量的槽在让出点**之前**声明 —— 若它落在栈上，续跑路径（入口 `switch` →
         // `de6b.resume.k`）**不支配**它，续跑之后读到的就是一块悬垂地址。故与其余局部槽同规：
         // 走 `declareLocalSlot`（可恢复体里 = 帧槽；普通体里 = `alloca`，形状一字未改）。
         let errSlot = declareLocalSlot(named: freshSlot(for: errorVar), spelling: "i64")
         scopes[scopes.count - 1][errorVar] = errSlot
 
-        /// ⭐ `try` 位若是可让出的 `await` ⇒ 走让出序列，结果落帧槽再读回。
+        ///  重要  `try` 位若是可让出的 `await` ⇒ 走让出序列，结果落帧槽再读回。
         let resultValue = emitTryOperand(operand, type: type)
         let aggregate = resultValue.llvmType
         let tag = builder.freshTemp()
@@ -2122,7 +2122,7 @@ public final class IREmitter {
     private func emitExpr(_ expr: IRExpr) -> IRValue {
         switch expr {
         case .intConst(let value, let type):
-            // ⚠️ 指针类型上不能写整数字面量：`ret ptr 0` 会让**整个模块**被 lli 拒
+            //  注意  指针类型上不能写整数字面量：`ret ptr 0` 会让**整个模块**被 lli 拒
             // （integer constant must have integer type）⇒ 指针位的零要写成 `null`。
             // 那个零的**含义**就是空指针 —— 「这个句柄没有指向任何东西」。
             if case .pointer = type, value == 0 {
@@ -2213,7 +2213,7 @@ public final class IREmitter {
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
             /// 字符内建由解释器侧的 `RuntimeOps.characterBuiltins` 按名回答，这里接到 `bk_<名字>` 运行时段上；
             /// 表即白名单，与降载侧同一条规矩 ⇒ 不存在「降下来了却没人答」的名字。
-            /// ⛔ 谓词不用 C 的 `_Bool`（零扩展的 i8）而回 `i32`：本层 Bool 是 i1，收敛在这里显式做掉。
+            ///  行不通  谓词不用 C 的 `_Bool`（零扩展的 i8）而回 `i32`：本层 Bool 是 i1，收敛在这里显式做掉。
             if RuntimeOps.characterBuiltins[function] != nil {
                 usesCharacterShims = true
                 let symbol = "bk_\(function)"
@@ -2292,16 +2292,16 @@ public final class IREmitter {
                 symbolName = "bk_list_dir"
             } else if function == "Error" {
                 // 错误对象构造。err 槽装的是**运行时段对象句柄**（一个 i64 字），
-                // ⛔ 不是名义类型指针：`%struct.Error*` 没有类型定义，落成它就是
+                //  行不通  不是名义类型指针：`%struct.Error*` 没有类型定义，落成它就是
                 // `use of undefined type`。
                 usesErrorShims = true
                 symbolName = "bk_error_create"
             } else if function == "CancelError" {
-                // 与 `Error` 只差那个「是取消」标志；⛔ ABI 上不多传一个参数，而是各一个符号。
+                // 与 `Error` 只差那个「是取消」标志； 行不通  ABI 上不多传一个参数，而是各一个符号。
                 usesErrorShims = true
                 symbolName = "bk_cancel_error_create"
             } else if function == "pini.err.message" {
-                // 只由降载层产出（`print(e)` 与 `e.message`），⛔ 不是语言内建。
+                // 只由降载层产出（`print(e)` 与 `e.message`）， 行不通  不是语言内建。
                 // 名字带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名。
                 usesErrorShims = true
                 symbolName = "bk_error_message"
@@ -2452,7 +2452,7 @@ public final class IREmitter {
             return emitStringCase(isUpper: isUpper, source: receiverValue.ssaName)
 
         case .stringContains(let receiver, let needle):
-            // 契约 §2.9 第 37 条：**字素级**判定。⛔ 旧形状的 `strstr` 是字节查找 ——
+            // 契约 §2.9 第 37 条：**字素级**判定。 行不通  旧形状的 `strstr` 是字节查找 ——
             // 分解式 Unicode 下与字素判定分歧（`"café"` 分解式 vs 预组合）。语义在运行时段，
             // 与解释器的 `.stringContains` 同源。
             let receiverValue = emitExpr(receiver)
@@ -2483,7 +2483,7 @@ public final class IREmitter {
         case .stringSplit(let receiver, let delim, let type):
             let receiverValue = emitExpr(receiver)
             let delimValue = emitExpr(delim)
-            /// ⚠️ 本条**必须**置位：委派到运行时段之后，declare 靠这个标志出现。漏了它 ⇒
+            ///  注意  本条**必须**置位：委派到运行时段之后，declare 靠这个标志出现。漏了它 ⇒
             /// 产物里只有 `call`，没有 `declare` ⇒ clang 报 `use of undefined value '@bk_string_split'`。
             usesStringShims = true
             return emitStringSplit(source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
@@ -2540,7 +2540,7 @@ public final class IREmitter {
             let buf = builder.freshTemp()
             /// 分配入口走运行时段 `bk_str_alloc`，拼接形状逐字不变（`strlen` ×2 → `add` → `add 1` →
             /// 分配 → `strcpy` → `strcat`），差别只在产出的串带引用计数头、进了运行时段登记表。
-            /// ⛔ 退回裸 `malloc` 会让后续 release 静默变成无操作 —— 看起来发了释放，实际一个字节没回收。
+            ///  行不通  退回裸 `malloc` 会让后续 release 静默变成无操作 —— 看起来发了释放，实际一个字节没回收。
             bodyIR += " \(buf) = call ptr @bk_str_alloc(i64 \(sz1))\n"
             bodyIR += " call ptr @strcpy(ptr \(buf), ptr \(lhsValue.ssaName))\n"
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(rhsValue.ssaName))\n"
@@ -2740,7 +2740,7 @@ public final class IREmitter {
 
     /// `readLine()`: a fixed-size stack buffer filled by `fgets` from stdin, yielded as a String; the
     /// cap, the retained line terminator and the buffer size all come from the interpreter's shared limit.
-    /// ⚠️ At EOF `fgets` yields NULL, and printing that as `%s` is undefined, so the guard substitutes "".
+    ///  注意  At EOF `fgets` yields NULL, and printing that as `%s` is undefined, so the guard substitutes "".
     private func emitReadLine() -> IRValue {
         usesReadLine = true
         let bufferSize = IOLimits.lineBufferSize
@@ -2797,9 +2797,9 @@ public final class IREmitter {
             bodyIR += " store i32 1, ptr @\(Self.testFailedGlobal)\n"
             bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
         } else {
-            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered.ssaName))\n"
-            bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
-            bodyIR += " call ptr @bk_panic(ptr null)\n"
+            /// 陷阱去向与 `panicStmt` 同规：消息进 stderr、退出码 1、stdout 一个字节不动。
+            /// 先 `printf` 再 `bk_panic(null)` 会把断言消息塞进程序输出流，并给 stderr 留一个空行。
+            bodyIR += " call void @bk_panic(ptr \(rendered.ssaName))\n"
             bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
         }
         bodyIR += "\(passLabel):\n"
@@ -3085,7 +3085,7 @@ public final class IREmitter {
     /// ABI、拿不到方法表 ⇒ 由发射层交出三个机器字（策略实例 · 收下入口 · 选择下一任务入口）。
     /// 策略实例取盒指针而非副本（见 `emitGivenBoxPointer`）；方法不存在时不检查，由 `lli` 报未定义符号。
     private func emitSchedulerBinding(handle: String) {
-        // 调度器类型不在本模块 ⇒ 没有策略可绑。⛔ 此时不绑：运行时的处置是
+        // 调度器类型不在本模块 ⇒ 没有策略可绑。 行不通  此时不绑：运行时的处置是
         // 「没有绑定 ⇒ 该任务按取消归约」，而那条路只有在**真有人 await** 时才有对象。
         guard moduleTypes.contains(where: { $0.name == PredefinedDecls.schedulerTypeName }) else {
             return
@@ -3163,7 +3163,7 @@ public final class IREmitter {
         ownedBoxes = [:]
 
         // 引用计数头（第 0 格）：`%out` 是运行时给的**程序级单例盒**，头格写 1；
-        // ⚠️ 它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
+        //  注意  它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
         let rcPtr = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: rcPtr, aggregate: aggregate, base: "%out", indices: [0, 0]) + "\n"
         bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: rcPtr) + "\n"
@@ -3201,7 +3201,7 @@ public final class IREmitter {
     }
 
     /// 名义箱的分配：`bk_nominal_alloc` 写头四格（强计数 1、弱计数 0、类型标识、旁表 null）。
-    /// ⛔ 不用栈 `alloca`：栈上的箱活不过创建帧，而名义值会随返回值 / 字段 / 闭包捕获跨帧。
+    ///  行不通  不用栈 `alloca`：栈上的箱活不过创建帧，而名义值会随返回值 / 字段 / 闭包捕获跨帧。
     /// 大小用过尾指针的整数形式，只依赖聚合体定义；与 `bk_given_get` 的单例盒不是同一条通道。
     private func emitNominalAllocation(aggregate: String, typeID: Int32) -> String {
         usesNominalBoxes = true
@@ -3370,7 +3370,7 @@ public final class IREmitter {
                 }
             case .string:
                 // N76：**字符串字段**在结构体拷贝里也要留一份 —— 源箱与新箱是两个持有者。
-                // ⚠️ 与另两族同规：`bk_str_retain` 对非本时段分配的串（全局常量）是无操作。
+                //  注意  与另两族同规：`bk_str_retain` 对非本时段分配的串（全局常量）是无操作。
                 usesStringOwnership = true
                 bodyIR += " call void @bk_str_retain(ptr \(value))\n"
                 stored = value
@@ -3480,7 +3480,7 @@ public final class IREmitter {
                 + "\n"
             let tagValue = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: tagValue, type: "i32", ptr: tagPtr) + "\n"
-            /// ⚠️ 判据必须用 case 自己的 `payloadTypes`，不能用 `slotTypes`：同一个槽在不同 case 里可以是不同
+            ///  注意  判据必须用 case 自己的 `payloadTypes`，不能用 `slotTypes`：同一个槽在不同 case 里可以是不同
             /// 类型（如槽 0 在 `simple` 里是 `String`、在 `tupleType` 里是 `TypeAnnotationList`），按槽统一
             /// 判断会给「槽里其实是字符串常量」的 case 也生成释放。另一半判据是只挑真有释放动作的 case。
             let payloadCases = enumDecl.cases.enumerated().filter { entry in
@@ -3655,7 +3655,7 @@ public final class IREmitter {
         case .string:
             /// 契约 §2.9 第 23 条：String 切片按字素簇，语义与分配一起交给运行时段，与 `IRExecutor.sliceValue`
             /// 的 `.string` 分支同源。按字节切会在非 ASCII 上落进多字节序列内部，自举 `splitLines` 由此切错行。
-            /// ⚠️ 开界传标志位而不传哨兵：`s[-1...]` 合法，拿 `-1` 当「开」会与真实下标撞车；开界也不求值。
+            ///  注意  开界传标志位而不传哨兵：`s[-1...]` 合法，拿 `-1` 当「开」会与真实下标撞车；开界也不求值。
             let startOpen = sliceBoundIsOpen(start)
             let endOpen = sliceBoundIsOpen(end)
             let startOperand = startOpen ? "0" : emitExpr(start).ssaName
@@ -3703,7 +3703,7 @@ public final class IREmitter {
 
     /// One Array slice bound: `none` takes the default (start → "0", end → the runtime count); an integer
     /// is tail-counted when negative, then clamped into [0, count] — all via select chains, no branches.
-    /// ⚠️ String slices do not come here: their bounds and clamp live in the runtime (`bk_string_slice`).
+    ///  注意  String slices do not come here: their bounds and clamp live in the runtime (`bk_string_slice`).
     private func resolveSliceBound(_ bound: IRExpr, count: String, defaultValue: String) -> String {
         if case .optionalConstruct(let isSome, _, _) = bound, !isSome {
             return defaultValue
@@ -3831,9 +3831,9 @@ public final class IREmitter {
         case .array: return ("%bk_array*", 8, 4)
         case .dict: return ("%bk_dict*", 8, 4)
         case .set: return ("%bk_set*", 8, 4)
-        // ⭐ `*T` 原始指针走**裸指针 tag**（与 String / Char 同格），不是容器句柄那一格：
+        //  重要  `*T` 原始指针走**裸指针 tag**（与 String / Char 同格），不是容器句柄那一格：
         // 它不参与引用计数，而运行时那两条钩子（retain / release）只在 handle tag 上动手。
-        // ⚠️ 装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
+        //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
         case .pointer: return ("i8*", 8, 3)
         case .future:
             // 句柄数组（`joinAll` 的实参形态）需要一条把句柄搬进运行时容器的通道，
@@ -3871,7 +3871,7 @@ public final class IREmitter {
 
     /// 记下一个本层亲手分配、当前持有 +1 引用的字符串 SSA 名。
     /// 只有三类产出入账：`stringConcat` / `interpString` 的拼接结果，以及运行时段返回新分配串的内建。
-    /// ⛔ 借来的值（`load` / 全局常量 / 形参）不入账 —— 账本正是把这两类分开。
+    ///  行不通  借来的值（`load` / 全局常量 / 形参）不入账 —— 账本正是把这两类分开。
     private func adoptOwnedString(_ name: String) {
         usesStringOwnership = true
         ownedStrings.insert(name)
@@ -3886,7 +3886,7 @@ public final class IREmitter {
     }
 
     /// 就地消费掉一个字符串值（用完即扔，没有持有者接管它）：拼接的两个操作数、打印、长度查询、
-    /// 作为内建实参。⛔ 对借用值（不在账里）是无操作 ⇒ 常量串、`load` 出的槽值、形参都不会被误释放。
+    /// 作为内建实参。 行不通  对借用值（不在账里）是无操作 ⇒ 常量串、`load` 出的槽值、形参都不会被误释放。
     @discardableResult
     private func releaseOwnedString(_ value: IRValue) -> Bool {
         guard value.llvmType == "i8*" else { return false }
@@ -3909,7 +3909,7 @@ public final class IREmitter {
         ownedBoxes.removeValue(forKey: value.ssaName)
     }
 
-    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。⛔ 借用值不在账里 ⇒ 无操作。
+    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。 行不通  借用值不在账里 ⇒ 无操作。
     /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
     private func releaseOwnedTemporary(_ value: IRValue) {
         if releaseOwnedString(value) { return }
@@ -3937,8 +3937,8 @@ public final class IREmitter {
             return .nominal
         }
         /// 字符串族（`String` 与 `Char`，两者拼写同为 `i8*`）。
-        /// ⚠️ `*T` 外部指针的拼写也是 `i8*`，也会落到这一支 —— 那在运行时段是无操作（不在登记表里），
-        /// 故判错族的方向是安全的（最多不释放），⛔ 不会踩内存。
+        ///  注意  `*T` 外部指针的拼写也是 `i8*`，也会落到这一支 —— 那在运行时段是无操作（不在登记表里），
+        /// 故判错族的方向是安全的（最多不释放）， 行不通  不会踩内存。
         if spelling == "i8*" { return .string }
         return nil
     }
@@ -4031,7 +4031,7 @@ public final class IREmitter {
             return IRValue(llvmType: "i32", ssaName: count)
         case .string:
             // 契约 §2.9 第 22 条：**字素簇**计数，与解释器的 `text.count` 同一定义。
-            // ⛔ 旧形状数的是「非续字节」（= Unicode 标量）：纯 ASCII 与 CJK 上同值，
+            //  行不通  旧形状数的是「非续字节」（= Unicode 标量）：纯 ASCII 与 CJK 上同值，
             // 只在组合序列上分歧 —— 但正是它与下标的字节寻址**叠在一起**，把自举切错。
             usesStringShims = true
             let charCount = builder.freshTemp()
@@ -4348,8 +4348,8 @@ public final class IREmitter {
             bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered))\n"
             // N76：这处临时串由本运行时段分配（`bk_double_to_string` 走带头的分配器）
-            // ⇒ 释放入口跟着换族。⚠️ 它是**当场消费掉**的临时值，故直接还，
-            // ⛔ 不进账本（账本记的是待决定归属的那些）。
+            // ⇒ 释放入口跟着换族。 注意  它是**当场消费掉**的临时值，故直接还，
+            //  行不通  不进账本（账本记的是待决定归属的那些）。
             usesStringOwnership = true
             bodyIR += " call void @bk_str_release(ptr \(rendered))\n"
         case "i8*":
@@ -4491,7 +4491,7 @@ public final class IREmitter {
             }
             let open = emitStringConstant("\(name){")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
-            /// 四格头占前 4 格 ⇒ 字段基准与其余 GEP 同源，⛔ 不能写死 1。
+            /// 四格头占前 4 格 ⇒ 字段基准与其余 GEP 同源， 行不通  不能写死 1。
             let fieldBase = Self.headerSlotCount
             let orderedFields = decl.fields.enumerated().sorted {
                 $0.element.name < $1.element.name
@@ -4729,7 +4729,7 @@ public final class IREmitter {
 
     /// 登记一个字符串常量（去重），返回它的全局名与字节长度。与 `emitStringConstant` 只差一点：
     /// 取串的 GEP 由谁发 —— 那个函数写进 `bodyIR`，而帧序要一条能排在任何块之前的取串指令，由调用方发。
-    /// ⛔ 常量登记与去重仍只有这一份实现。`named` 给定时用该名，且不占匿名序号。
+    ///  行不通  常量登记与去重仍只有这一份实现。`named` 给定时用该名，且不占匿名序号。
     private func registerStringConstant(
         _ value: String, named: String? = nil
     ) -> (name: String, length: Int) {
@@ -4971,11 +4971,11 @@ public final class IREmitter {
     /// 抽成档位而不是两份发射函数：四个让出位置只差这一点，其余发射逐字共用；分成两份会让同一条
     /// 约定两处解释，而它（三槽装配、续跑块由入口 switch 跳入）本段只该有一处解释。
     private enum YieldProduce {
-        /// 结果**丢弃** —— `S1`（`await f()` 独占一行）。⚠️ 丢弃的是**结果**，不是**等待**。
+        /// 结果**丢弃** —— `S1`（`await f()` 独占一行）。 注意  丢弃的是**结果**，不是**等待**。
         case discard
         /// 结果**存进给定的帧槽** —— `S2` / `S3` / `S4` 都是这一档，只是槽的用途不同
         /// （分别是变量本身 · 判别式 · `try` 的操作数）。
-        /// ⛔ 必须是**帧槽**：续跑块由入口 `switch` 跳入，让出点所在块里的 SSA 值**不支配**它。
+        ///  行不通  必须是**帧槽**：续跑块由入口 `switch` 跳入，让出点所在块里的 SSA 值**不支配**它。
         case frameSlot(String)
     }
 
@@ -4991,8 +4991,8 @@ public final class IREmitter {
         guard case .result(let okType) = type else {
             fatalError("IREmitter: await site type is not a Result (IRLowerer guarantees)")
         }
-        // ⭐ 载荷宽度只在**真搬运**时才成为约束：`S1` 把结果丢弃 ⇒ 没有搬运通道要过，
-        // 于是聚合载荷的 `await` 在那条路上是合法的。⛔ 不许把这个检查提到前面 ——
+        //  重要  载荷宽度只在**真搬运**时才成为约束：`S1` 把结果丢弃 ⇒ 没有搬运通道要过，
+        // 于是聚合载荷的 `await` 在那条路上是合法的。 行不通  不许把这个检查提到前面 ——
         // 那会让「丢弃」凭空多出一条与它无关的限制。
         if case .frameSlot = produce {
             guard isSingleWordPayload(okType) else {
@@ -5021,7 +5021,7 @@ public final class IREmitter {
 
         bodyIR += "de6b.yield.\(index):\n"
         bodyIR += builder.fmtStore(value: "\(index)", type: "i64", ptr: "%de6b.frame") + "\n"
-        // 让出 = **从栈返回**。⛔ 这里**不**跑 defer、**不**释放句柄：体还没结束。
+        // 让出 = **从栈返回**。 行不通  这里**不**跑 defer、**不**释放句柄：体还没结束。
         let returnSpelling = currentReturnType?.llvmSpelling ?? "void"
         bodyIR += " ret \(returnSpelling) undef\n"
 
@@ -5032,11 +5032,11 @@ public final class IREmitter {
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         // 返回值**刻意丢弃**：与 `emitJoin` 同一条口径 —— 三槽已由运行时归一化，状态位不必再判。
         bodyIR += " call i32 @bk_task_await(ptr \(handleReloaded), ptr \(out))\n"
-        // ⭐ 产出档位在这里分岔 —— 这是本段唯一的形态差异，其余发射**逐字共用**。
+        //  重要  产出档位在这里分岔 —— 这是本段唯一的形态差异，其余发射**逐字共用**。
         switch produce {
         case .discard:
             /// `S1`（`await f()` 独占一行）：结果按语言语义丢弃 ⇒ 续跑块到此为止。
-            /// ⚠️ 仍保留上面那次 `bk_task_await`：丢弃的是结果，不是等待；省掉它会让「丢弃结果」顺带丢掉等待。
+            ///  注意  仍保留上面那次 `bk_task_await`：丢弃的是结果，不是等待；省掉它会让「丢弃结果」顺带丢掉等待。
             break
         case .frameSlot(let slot):
             let filled = collectResult(from: out, type: type, okType: okType)
@@ -5089,11 +5089,11 @@ public final class IREmitter {
         }
         /// `code` 按空指针传：体的入口是**每函数一个**的 wrapper，调用点不需要再指定一份。
         /// 末尾两个实参是 ok 载荷描述（`elemBytes` / `elemTag`）——
-        /// ⛔ 此处**刻意留 0**：本段接线的两个符号都不读它们（消费者是聚合 join）。
+        ///  行不通  此处**刻意留 0**：本段接线的两个符号都不读它们（消费者是聚合 join）。
         let handle = builder.freshTemp()
         bodyIR +=
             " \(handle) = call ptr @bk_task_spawn(ptr @__task_body_\(mangled), ptr null, ptr \(envRaw), i32 0, i32 0)\n"
-        // `Q-4` 乙段：把调度器绑定交给运行时。⭐ 派发点是「这个任务属于哪个调度器」的
+        // `Q-4` 乙段：把调度器绑定交给运行时。 重要  派发点是「这个任务属于哪个调度器」的
         // **唯一知情处** —— 设计里「派发点把调度器写进盒子」那句话的落点就在这一行。
         emitSchedulerBinding(handle: handle)
         return IRValue(llvmType: "ptr", ssaName: handle)
@@ -5128,7 +5128,7 @@ public final class IREmitter {
                 containerArgs.append((spelling, value))
             }
         }
-        /// ⛔ 帧**不在这里释放**：帧跨让出存活，只在体**真跑完**时才该交还，而「真跑完」
+        ///  行不通  帧**不在这里释放**：帧跨让出存活，只在体**真跑完**时才该交还，而「真跑完」
         /// 是下面那个分支才知道的事；何况所有权已归运行时（由它分配、由它交还），
         /// 这里是第二条释放路径的话就是 double free。
         let result = builder.freshTemp()
@@ -5293,7 +5293,7 @@ public final class IREmitter {
         /// function body. Otherwise it would inherit the enclosing frames, and a `return` inside it (which
         /// releases down to frame 0) would drop the enclosing function's top-level handles — over-release.
         let savedPendingReleases = pendingReleases
-        /// 闭包体是**自己的函数**，而它不是任务 ⇒ 没有帧可依。⛔ 不继承外层体的帧式：
+        /// 闭包体是**自己的函数**，而它不是任务 ⇒ 没有帧可依。 行不通  不继承外层体的帧式：
         /// 外层的帧槽是外层的，闭包体内的局部槽若发成「帧槽」，取的会是**外层那一块**（或者根本没有）。
         /// 深度的重置同理 —— 闭包的函数体那一层也应该是 1。
         let savedFrameMode = frameMode
@@ -5458,7 +5458,7 @@ public final class IREmitter {
         bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
         bodyIR += builder.fmtBr(labelName: header) + "\n"
         bodyIR += "\(endLabel):\n"
-        // ⚠️ 结果会**离开本帧**（`let s = xs.join(",")` 之后 s 进变量槽 / 进箱 / 被返回）
+        //  注意  结果会**离开本帧**（`let s = xs.join(",")` 之后 s 进变量槽 / 进箱 / 被返回）
         // ⇒ 交出前必须复制到堆，理由见 `heapCopyOfStackString`。
         return heapCopyOfStackString(buf)
     }

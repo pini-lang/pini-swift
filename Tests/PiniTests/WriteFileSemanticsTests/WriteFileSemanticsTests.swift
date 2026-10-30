@@ -56,7 +56,7 @@ struct WriteFileSemanticsTests {
     @Test("写只读文件走错误通道，不绕过权限")
     func testWriteFileRejectsReadOnlyFile() throws {
         /// 意图：目标**不可打开**必须响亮失败。
-        /// ⚠️ 原子替换在这条会**通过写入**（临时文件 + 改名只需目录权限）⇒ 真值是「静默改写只读文件」。
+        ///  注意  原子替换在这条会**通过写入**（临时文件 + 改名只需目录权限）⇒ 真值是「静默改写只读文件」。
         let sandbox = try makeSandbox()
         let target = sandbox.appendingPathComponent("readonly.txt")
         defer {
@@ -82,7 +82,7 @@ struct WriteFileSemanticsTests {
     @Test("写符号链接是跟随链接，不是替换链接")
     func testWriteFileFollowsSymlink() throws {
         /// 意图：写 `link.txt` 应改到它**指向**的 `target.txt`，而 `link.txt` 仍是链接。
-        /// ⚠️ 原子替换在这条会把链接换成普通文件、且目标文件**一字未动**。
+        ///  注意  原子替换在这条会把链接换成普通文件、且目标文件**一字未动**。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         let target = sandbox.appendingPathComponent("target.txt")

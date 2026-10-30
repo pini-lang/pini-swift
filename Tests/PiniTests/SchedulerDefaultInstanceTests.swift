@@ -76,7 +76,7 @@ struct SchedulerDefaultInstanceTests {
     func theDefaultInstanceIsObtainableAndCarriesItsField() throws {
         /// 意图：这是一条**通路**判据。断言的是运行结果，不是「没报错」——
         /// 因为默认实例要先被物化、字段才读得出，而物化走的是普通复合类型那条路。
-        /// ⚠️ 本判据在预置声明缺席时**必红**（实测形态：`using` 形参的类型解析不出来）。
+        ///  注意  本判据在预置声明缺席时**必红**（实测形态：`using` 形参的类型解析不出来）。
         let lines = try runOutput(Self.corpus(field: "名称"))
         #expect(lines == ["默认"], "the default instance was not obtained, or its field was empty: \(lines)")
     }
