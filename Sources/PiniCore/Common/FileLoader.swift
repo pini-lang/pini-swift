@@ -144,7 +144,7 @@ public struct FileLoader {
 
 /// FFI 模块配置（`pini.toml` 的 `[ffi]` 表，解释器 dlsym 加载用）。`abi` 全局唯一、默认 `"C"`、
 /// 子模块不可覆盖；`searchPaths` 分层追加（子模块追加在父模块之后）；`libs` 全局统一链接。
-public struct FFIConfig: Equatable {
+public struct FFIConfig: Equatable, Sendable {
     public let abi: String
     public let searchPaths: [String]
     public let libs: [String]

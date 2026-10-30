@@ -1,7 +1,7 @@
 import Foundation
 
 /// 枚举块声明
-public struct EnumDecl: Equatable, ASTNode {
+public struct EnumDecl: Equatable, ASTNode, Sendable {
     public let name: String
     public let genericParams: [GenericParam]
     public let cases: [EnumCase]
@@ -18,7 +18,7 @@ public struct EnumDecl: Equatable, ASTNode {
 }
 
 /// 枚举用例
-public struct EnumCase: Equatable, ASTNode {
+public struct EnumCase: Equatable, ASTNode, Sendable {
     public let name: String
     public let associatedParams: [AssociatedParam]
     public let location: SourceLocation
@@ -31,7 +31,7 @@ public struct EnumCase: Equatable, ASTNode {
 }
 
 /// 枚举关联参数（可选命名 + 类型 + 可选默认表达式）
-public struct AssociatedParam: Equatable {
+public struct AssociatedParam: Equatable, Sendable {
     public let name: String?
     public let type: TypeAnnotation
     /// 可选默认表达式（如字面量 `0`）。仅在枚举 case 关联值位置求值，供构造期按默认补位。

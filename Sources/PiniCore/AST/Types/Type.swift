@@ -1,13 +1,13 @@
 import Foundation
 
 /// 类型系统基础定义
-public enum MethodType: Equatable {
+public enum MethodType: Equatable, Sendable {
     case instance
     case `static`
     case unspecified
 }
 
-public struct GenericParam: Equatable {
+public struct GenericParam: Equatable, Sendable {
     public let name: String
     public let constraint: TypeAnnotation?
 
@@ -17,7 +17,7 @@ public struct GenericParam: Equatable {
     }
 }
 
-public struct Parameter: Equatable {
+public struct Parameter: Equatable, Sendable {
     public let name: String
     public let typeAnnotation: TypeAnnotation?
     /// 参数写成 `using 名: 类型`（取用位）时为真。
@@ -33,7 +33,7 @@ public struct Parameter: Equatable {
 }
 
 /// 类型注解。`indirect`：`.pointer(element:)` 递归引用自身（Phase 2a `*T`，FFI 子系统）。
-public indirect enum TypeAnnotation: Equatable {
+public indirect enum TypeAnnotation: Equatable, Sendable {
     case simple(name: String, location: SourceLocation)
     /// 元组类型。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素）；
     /// 命名元组 `(a: I32, b: String,)` 的 labels = ["a", "b"]（草稿 A2，批次 1.3，D1）。

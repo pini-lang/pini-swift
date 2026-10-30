@@ -3,7 +3,7 @@ import Foundation
 /// 内建单点登记表：每个内建在此声明一次（名字 + 归组 + 各层登记开关），三个消费方从本表派生。
 /// 语义层按 `definesSymbol` 登记符号、类型层按 `typeSignature` 登记签名、解释器按
 /// `definesRuntimeValue` 定义函数值。本表只承载声明：指针、并发、枚举构造器走专属路径。
-public enum BuiltinGroup: String, CaseIterable {
+public enum BuiltinGroup: String, CaseIterable, Sendable {
     case collection
     case char
     case pointer
@@ -13,7 +13,7 @@ public enum BuiltinGroup: String, CaseIterable {
     case value
 }
 
-public struct BuiltinDecl {
+public struct BuiltinDecl: Sendable {
     public let name: String
     public let group: BuiltinGroup
     /// Interpreter 侧 FunctionValue 的形参名（须与既有分发实现一致）。
@@ -259,7 +259,7 @@ public enum BuiltinRegistry {
     // MARK: - 内建成员方法表（内建特征化 步骤 B）
 
     /// 内建成员方法声明：类型层签名与运行时派发共用同一张表。
-    public struct MemberDecl {
+    public struct MemberDecl: Sendable {
         public let typeName: String
         public let name: String
         public let paramNames: [String]

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 顶级声明枚举
-public enum TopLevelDecl: Equatable {
+public enum TopLevelDecl: Equatable, Sendable {
     case structDecl(StructDecl)
     case objectDecl(ObjectDecl)
     /// `[名称|given]` 块——带字段初值的具名复合类型，
@@ -22,7 +22,7 @@ public enum TopLevelDecl: Equatable {
 }
 
 /// 模块
-public struct Module: Equatable, ASTNode {
+public struct Module: Equatable, ASTNode, Sendable {
     public let declarations: [TopLevelDecl]
     /// P4 模块化：原始 `import` 声明（仅暂存，不解析 / 不 enforce）。
     public let imports: [ImportDecl]

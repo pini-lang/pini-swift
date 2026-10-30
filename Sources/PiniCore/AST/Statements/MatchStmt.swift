@@ -4,7 +4,7 @@ import Foundation
 /// matchStatement(value: Expression, cases: [MatchCase], defaultCase: Block?, location: SourceLocation)
 
 /// match 模式（P5-4 HIGH-2）：枚举 case 名 / 整数字面量 / 浮点字面量 / 字符串字面量 / 布尔字面量 / 通配 `_`
-public enum MatchPattern: Equatable, CustomStringConvertible {
+public enum MatchPattern: Equatable, CustomStringConvertible, Sendable {
     case enumCase(String)
     case intLiteral(Int)
     case floatLiteral(Double)
@@ -25,7 +25,7 @@ public enum MatchPattern: Equatable, CustomStringConvertible {
 }
 
 /// match case
-public struct MatchCase: Equatable, ASTNode {
+public struct MatchCase: Equatable, ASTNode, Sendable {
     public let pattern: MatchPattern
     public let bindings: [MatchBinding]
     public let block: Block
@@ -40,7 +40,7 @@ public struct MatchCase: Equatable, ASTNode {
 }
 
 /// match 绑定（命名或位置）
-public struct MatchBinding: Equatable {
+public struct MatchBinding: Equatable, Sendable {
     public let paramName: String?
     public let varName: String
 

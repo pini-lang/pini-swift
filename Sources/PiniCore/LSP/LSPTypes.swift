@@ -25,7 +25,7 @@ extension Scope {
 
 // MARK: - JSON-RPC Base Types
 
-public enum JSONValue: Codable, Equatable {
+public enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case int(Int)
     case double(Double)
@@ -60,14 +60,14 @@ public enum JSONValue: Codable, Equatable {
     }
 }
 
-public struct RequestMessage: Codable {
+public struct RequestMessage: Codable, Sendable {
     let jsonrpc: String
     let id: JSONValue?
     let method: String
     let params: JSONValue?
 }
 
-public struct ResponseMessage: Codable {
+public struct ResponseMessage: Codable, Sendable {
     let jsonrpc: String
     let id: JSONValue
     let result: JSONValue?
@@ -88,7 +88,7 @@ public struct ResponseMessage: Codable {
     }
 }
 
-public struct ResponseError: Codable {
+public struct ResponseError: Codable, Sendable {
     let code: Int
     let message: String
     let data: JSONValue?
@@ -99,7 +99,7 @@ public struct ResponseError: Codable {
     static let internalError = ResponseError(code: -32603, message: "Internal error", data: nil)
 }
 
-public struct NotificationMessage: Codable {
+public struct NotificationMessage: Codable, Sendable {
     let jsonrpc: String
     let method: String
     let params: JSONValue?
@@ -107,29 +107,29 @@ public struct NotificationMessage: Codable {
 
 // MARK: - LSP Protocol Types
 
-public struct Position: Codable {
+public struct Position: Codable, Sendable {
     let line: Int  // 0-based
     let character: Int  // 0-based
 }
 
-public struct LSPRange: Codable {
+public struct LSPRange: Codable, Sendable {
     let start: Position
     let end: Position
 }
 
-public struct Location: Codable {
+public struct Location: Codable, Sendable {
     let uri: String
     let range: LSPRange
 }
 
-public enum DiagnosticSeverity: Int, Codable {
+public enum DiagnosticSeverity: Int, Codable, Sendable {
     case error = 1
     case warning = 2
     case information = 3
     case hint = 4
 }
 
-public struct Diagnostic: Codable {
+public struct Diagnostic: Codable, Sendable {
     let range: LSPRange
     let severity: DiagnosticSeverity?
     let code: String?
@@ -145,34 +145,34 @@ public struct Diagnostic: Codable {
     }
 }
 
-public struct TextDocumentIdentifier: Codable {
+public struct TextDocumentIdentifier: Codable, Sendable {
     let uri: String
 }
 
-public struct TextDocumentItem: Codable {
+public struct TextDocumentItem: Codable, Sendable {
     let uri: String
     let languageId: String
     let version: Int
     let text: String
 }
 
-public struct VersionedTextDocumentIdentifier: Codable {
+public struct VersionedTextDocumentIdentifier: Codable, Sendable {
     let uri: String
     let version: Int
 }
 
-public struct TextDocumentContentChangeEvent: Codable {
+public struct TextDocumentContentChangeEvent: Codable, Sendable {
     let text: String
 }
 
 // MARK: - Completion Types
 
-public struct CompletionParams: Codable {
+public struct CompletionParams: Codable, Sendable {
     let textDocument: TextDocumentIdentifier
     let position: Position
 }
 
-public enum CompletionItemKind: Int, Codable {
+public enum CompletionItemKind: Int, Codable, Sendable {
     case text = 1
     case method = 2
     case function = 3
@@ -200,7 +200,7 @@ public enum CompletionItemKind: Int, Codable {
     case typeParameter = 25
 }
 
-public struct CompletionItem: Codable {
+public struct CompletionItem: Codable, Sendable {
     let label: String
     let kind: CompletionItemKind?
     let detail: String?
@@ -214,40 +214,40 @@ public struct CompletionItem: Codable {
     }
 }
 
-public struct CompletionList: Codable {
+public struct CompletionList: Codable, Sendable {
     let isIncomplete: Bool
     let items: [CompletionItem]
 }
 
 // MARK: - Definition Types
 
-public struct DefinitionParams: Codable {
+public struct DefinitionParams: Codable, Sendable {
     let textDocument: TextDocumentIdentifier
     let position: Position
 }
 
 // MARK: - Capabilities
 
-public struct TextDocumentSyncOptions: Codable {
+public struct TextDocumentSyncOptions: Codable, Sendable {
     let openClose: Bool
     let change: Int  // 1 = Full
 
     static let full = TextDocumentSyncOptions(openClose: true, change: 1)
 }
 
-public struct CompletionOptions: Codable {
+public struct CompletionOptions: Codable, Sendable {
     let triggerCharacters: [String]?
 
     static let `default` = CompletionOptions(triggerCharacters: [".", ":"])
 }
 
-public struct DefinitionOptions: Codable {
+public struct DefinitionOptions: Codable, Sendable {
     let workDoneProgress: Bool?
 
     static let `default` = DefinitionOptions(workDoneProgress: false)
 }
 
-public struct ServerCapabilities: Codable {
+public struct ServerCapabilities: Codable, Sendable {
     let textDocumentSync: TextDocumentSyncOptions
     let completionProvider: CompletionOptions?
     let definitionProvider: DefinitionOptions?
@@ -261,26 +261,26 @@ public struct ServerCapabilities: Codable {
 
 // MARK: - Initialize
 
-public struct InitializeParams: Codable {
+public struct InitializeParams: Codable, Sendable {
     let processId: Int?
     let capabilities: JSONValue?
     /// LSP 规范：客户端 locale（如 "en-US" / "zh-CN"）。Pini 据此决定诊断消息语言（T11 解耦，不随 CLI --lang）。
     let locale: String?
 }
 
-public struct InitializeResult: Codable {
+public struct InitializeResult: Codable, Sendable {
     let capabilities: ServerCapabilities
     let serverInfo: ServerInfo?
 }
 
-public struct ServerInfo: Codable {
+public struct ServerInfo: Codable, Sendable {
     let name: String
     let version: String?
 }
 
 // MARK: - Diagnostics Publish
 
-public struct PublishDiagnosticsParams: Codable {
+public struct PublishDiagnosticsParams: Codable, Sendable {
     let uri: String
     let version: Int?
     let diagnostics: [Diagnostic]
