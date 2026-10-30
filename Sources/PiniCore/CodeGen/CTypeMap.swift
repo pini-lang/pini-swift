@@ -26,8 +26,55 @@ public enum CTypeMap {
         // 名义值一律住堆，故拼写恒为指针 —— 与 LLVM 侧的 `%struct.X*` / `%enum.X*` 同形。
         case .nominal(let name, _): return aggregateName(name) + " *"
         case .enumeration(let name): return aggregateName(name) + " *"
+        // 三个容器族在 C 侧都是不透明句柄：布局与 share 记账全在运行时段，本层只搬指针。
+        case .array, .dict, .set: return "void *"
+        // Optional 是按值的标签联合 `{ tag, value }`，故每个载荷类型一个具名结构体。
+        case .optional(let wrapped): return try optionalName(wrapped)
         default: throw CBackendError(message: "C 后端尚未支持的类型：\(label(of: type))")
         }
+    }
+
+    /// `{ i64, T }` 的 C 具名结构体名。按载荷类型特化 —— 名字由载荷的拼写派生，同类型必得同名。
+    public static func optionalName(_ wrapped: IRType) throws -> String {
+        "PiniOpt_" + (try optionalSuffix(wrapped))
+    }
+
+    /// 载荷类型的后缀。容器与名义类型递归展开，故嵌套容器的 Optional 也有稳定的独立名字。
+    public static func optionalSuffix(_ type: IRType) throws -> String {
+        switch type {
+        case .i8: return "i8"
+        case .u8: return "u8"
+        case .i32: return "i32"
+        case .i64: return "i64"
+        case .u64: return "u64"
+        case .f64: return "f64"
+        case .boolean: return "bool"
+        case .string: return "str"
+        case .char: return "chr"
+        case .nominal(let name, _): return "nom_" + IRName.mangle(name)
+        case .enumeration(let name): return "enum_" + IRName.mangle(name)
+        case .array(let element): return "arr_" + (try optionalSuffix(element))
+        case .set(let element): return "set_" + (try optionalSuffix(element))
+        case .dict(let key, let value):
+            return "dict_" + (try optionalSuffix(key)) + "_" + (try optionalSuffix(value))
+        case .optional(let wrapped): return "opt_" + (try optionalSuffix(wrapped))
+        default:
+            throw CBackendError(message: "C 后端尚未支持的 Optional 载荷：\(label(of: type))")
+        }
+    }
+
+    /// Optional 的结构体定义。标签与载荷与 LLVM 侧 `{ i64, T }` 同序：tag 0 = some、1 = none。
+    public static func optionalDefinition(_ type: IRType) throws -> (name: String, source: String) {
+        guard case .optional(let wrapped) = type else {
+            throw CBackendError(message: "C 后端：为非 Optional 类型请求 Optional 定义")
+        }
+        let name = try optionalName(wrapped)
+        let source =
+            "typedef struct \(name) {\n"
+            + "    int64_t tag;\n"
+            + "    \(try spelling(of: wrapped)) value;\n"
+            + "} \(name);\n"
+        return (name, source)
     }
 
     /// 零值。`null` 只对指针成立；名义 / 字符串 / 容器都是指针，标量走各自的零。
@@ -37,6 +84,10 @@ public enum CTypeMap {
         case .f64: return "0.0"
         case .boolean: return "false"
         case .string, .char, .nominal, .enumeration: return "NULL"
+        case .array, .dict, .set: return "NULL"
+        // 复合字面量：只给 tag，载荷按 C 的聚合初始化落零。`tag = 1` 即 none。
+        case .optional(let wrapped):
+            return "((\(try optionalName(wrapped))){ 1 })"
         default:
             throw CBackendError(message: "C 后端尚未支持的零值类型：\(label(of: type))")
         }

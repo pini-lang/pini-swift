@@ -21,9 +21,8 @@ struct CBackendParityTests {
         var description: String { label }
     }
 
-    /// 语料覆盖已开出来的类型面与控件流面：字符串 · 整数 · 分支 · 循环 ·
-    /// 跨层跳出（要 `goto`）· 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配。
-    /// 全部以 `main` 为入口。
+    /// 语料覆盖已开出来的类型面与控件流面：字符串 · 整数 · 分支 · 循环 · 跨层跳出（要 `goto`）·
+    /// 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配 · 容器三族与 Optional · for-in。全部以 `main` 为入口。
     private static let corpora: [Corpus] = [
         Corpus(
             label: "问候",
@@ -225,6 +224,111 @@ struct CBackendParityTests {
             """#,
             expected: "7\n7\n7\n"
         ),
+        Corpus(
+            label: "数组字面量与下标",
+            source: #"""
+            main|func() -> ():
+                let a = [10, 20, 30]
+                print(a[0])
+                print(a[-1])
+                print(len(a))
+                print(a)
+                return
+            """#,
+            expected: "10\n30\n3\n[10, 20, 30]\n"
+        ),
+        Corpus(
+            label: "数组别名与写时复制",
+            source: #"""
+            main|func() -> ():
+                var a = [1, 2, 3]
+                var b = a
+                b[0] = 99
+                print(a)
+                print(b)
+                return
+            """#,
+            expected: "[1, 2, 3]\n[99, 2, 3]\n"
+        ),
+        Corpus(
+            label: "字典与集合",
+            source: #"""
+            main|func() -> ():
+                var d = ["a"= 1, "b"= 2]
+                d["c"] = 3
+                print(d["b"])
+                print(len(d))
+                print(d)
+                let s = {2, 3, 3, 5}
+                print(len(s))
+                print(s)
+                return
+            """#,
+            expected: "2\n3\n{a: 1, b: 2, c: 3}\n3\n{2, 3, 5}\n"
+        ),
+        Corpus(
+            label: "for-in 遍历与 step",
+            source: #"""
+            main|func() -> ():
+                var total = 0
+                for (v,) in [1, 2, 3, 4]:
+                    total = total + v
+                print(total)
+                let d = ["x"= 1, "y"= 2]
+                var sum = 0
+                for (k, v,) in d:
+                    sum = sum + v
+                print(sum)
+                var t = 0
+                for (v,) in [1, 2]:
+                    t = t + 1
+                step:
+                    t = t + v
+                print(t)
+                var c = 0
+                for (_,) in [7, 8, 9]:
+                    c = c + 1
+                print(c)
+                return
+            """#,
+            expected: "10\n3\n5\n3\n"
+        ),
+        Corpus(
+            label: "Optional 与容错读",
+            source: #"""
+            main|func() -> ():
+                var a = Optional.some(42)
+                match a:
+                    case some(v,):
+                        print(v)
+                    case none:
+                        print("none")
+                var b = Optional.none
+                match b:
+                    case some(v,):
+                        print(v)
+                    case none:
+                        print("none")
+                let xs = [10, 20]
+                print(xs.get(1))
+                print(xs.get(5))
+                return
+            """#,
+            expected: "42\nnone\nsome(20)\nnone\n"
+        ),
+        Corpus(
+            label: "数组追加与连接",
+            source: #"""
+            main|func() -> ():
+                var xs = [1, 2]
+                xs = xs.append(3)
+                print(xs)
+                let words = ["ab", "cd", "ef"]
+                print(words.join("-"))
+                return
+            """#,
+            expected: "[1, 2, 3]\nab-cd-ef\n"
+        ),
     ]
 
     @Test("每条语料的 C 产物跑出的字节与手写期望相同")
@@ -311,6 +415,29 @@ struct CBackendParityTests {
         #expect(text.contains("bk_nominal_retain"), "别名点没有留份额")
         #expect(text.contains("bk_nominal_release"), "释放胶水没有减计数")
         #expect(text.contains("pini_release_object_"), "没有为对象合成释放函数")
+    }
+
+    /// 容器句柄的所有权也走同一条账本：别名点 `bk_handle_retain`、块尾 `bk_*_destroy`。
+    /// 漏了 retain 只是「共享且原地改」，漏了 destroy 只是泄漏 —— 两者都不报错，只能从源里看。
+    @Test("容器句柄的保留与释放写进了产物")
+    func containerOwnershipCallsAreEmitted() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let corpus = Self.corpora.first { $0.label == "数组别名与写时复制" }!
+        try corpus.source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("bk_handle_retain"), "容器别名点没有留份额")
+        #expect(text.contains("bk_array_destroy"), "容器句柄在作用域退出时没有释放")
+        #expect(text.contains("bk_array_set"), "下标写没有走运行时的分裂通道")
     }
 
     // MARK: - 驱动

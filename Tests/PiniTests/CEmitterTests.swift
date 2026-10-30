@@ -68,8 +68,11 @@ struct CEmitterTests {
         #expect(try CTypeMap.spelling(of: .i32) == "int32_t")
         #expect(try CTypeMap.spelling(of: .u64) == "uint64_t")
         #expect(try CTypeMap.spelling(of: .string) == "char *")
+        // 容器是运行时段的不透明句柄；Optional 按载荷类型特化出一个具名结构体。
+        #expect(try CTypeMap.spelling(of: .array(element: .i32)) == "void *")
+        #expect(try CTypeMap.spelling(of: .optional(wrapped: .i32)) == "PiniOpt_i32")
         #expect(throws: CBackendError.self) {
-            _ = try CTypeMap.spelling(of: .array(element: .i32))
+            _ = try CTypeMap.spelling(of: .tuple(labels: [nil], fieldTypes: [.i32]))
         }
     }
 

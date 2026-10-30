@@ -192,6 +192,14 @@ public final class IREmitter {
     /// `ownedStrings` 需要跨函数隔离：函数体发射前保存、发射后恢复。
     private var ownedStringsStack: [Set<String>] = []
 
+    /// 本层新分配、尚无持有者的名义箱 / 容器句柄：SSA 名 → 类型。与 `ownedStrings` 同一本账的另一半
+    /// （字符串族固定走 `bk_str_release`，故那边只记名字）。入账：构造点；出账：被持有位置接管，或就地还。
+    /// 未出账的条目最多是泄漏（现状），⛔ 不会被二次释放 —— 键是双端唯一的 SSA 名。
+    private var ownedBoxes: [String: IRType] = [:]
+
+    /// 与 `ownedStringsStack` 同规：函数体 / 闭包体 / 给定初始化器各持一份，`IRBuilder` 重新编号 ⇒ 不能串。
+    private var ownedBoxesStack: [[String: IRType]] = []
+
     /// 本函数（或闭包体）中被闭包捕获的变量名。必须在进体前算出：捕获槽要在分配那一刻
     /// 就知道会被带走，而 `allocVar` 总在闭包字面量之前，事后补不了。
     private var capturedNamesInFunction: Set<String> = []
@@ -640,6 +648,8 @@ public final class IREmitter {
         /// 症状只是编译期集合变大。压栈是为了让「账本 = 本函数的持有量」这句话成立。
         ownedStringsStack.append(ownedStrings)
         ownedStrings = []
+        ownedBoxesStack.append(ownedBoxes)
+        ownedBoxes = [:]
         pendingDefers.removeAll()
         // Frame 0 of this function is its body block, pushed by the
         // `emitBlock` call below; `emitBlock` leaves that frame to the exit
@@ -741,6 +751,7 @@ public final class IREmitter {
         frameMode = .none
         // N76：还原上一个函数的字符串账本（与函数头的压栈配对）。
         ownedStrings = ownedStringsStack.popLast() ?? []
+        ownedBoxes = ownedBoxesStack.popLast() ?? [:]
     }
 
     /// 该函数会不会被 `emitTaskSpawn` 接住（`isAsync` 且返回 `Result`）。
@@ -2171,6 +2182,7 @@ public final class IREmitter {
             if let callee = moduleFunctions[Self.mangle(function)], callee.isAsync,
                 let bodyReturn = callee.returnType, case .result = bodyReturn
             {
+                /// 派发不走借用：帧把实参整体搬走，名义箱那份 +1 就此归任务 ⇒ 调用点一条也不还。
                 return emitTaskSpawn(callee: callee, mangled: Self.mangle(function), args: args)
             }
             /// `F64(x)` is an instruction, not a symbol: falling through to `call @F64` would reference an
@@ -2205,26 +2217,29 @@ public final class IREmitter {
             if RuntimeOps.characterBuiltins[function] != nil {
                 usesCharacterShims = true
                 let symbol = "bk_\(function)"
+                let result: IRValue
                 switch function {
                 case "chars":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
-                    return IRValue(llvmType: "%bk_array*", ssaName: temp)
+                    result = IRValue(llvmType: "%bk_array*", ssaName: temp)
                 case "chr":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
-                    return IRValue(llvmType: "i8*", ssaName: temp)
+                    result = IRValue(llvmType: "i8*", ssaName: temp)
                 case "ord":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call i32 @\(symbol)(\(argList))\n"
-                    return IRValue(llvmType: "i32", ssaName: temp)
+                    result = IRValue(llvmType: "i32", ssaName: temp)
                 default:
                     let raw = builder.freshTemp()
                     bodyIR += " \(raw) = call i32 @\(symbol)(\(argList))\n"
                     let flag = builder.freshTemp()
                     bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
-                    return IRValue(llvmType: "i1", ssaName: flag)
+                    result = IRValue(llvmType: "i1", ssaName: flag)
                 }
+                releaseCallArguments(args)
+                return result
             }
             // 探测类内建：符号返 `i32`（0/1），此处收敛到 `i1` —— 与谓词同规。
             if function == "exists" || function == "isDir" {
@@ -2234,6 +2249,7 @@ public final class IREmitter {
                 bodyIR += " \(raw) = call i32 @\(symbol)(\(argList))\n"
                 let flag = builder.freshTemp()
                 bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
+                releaseCallArguments(args)
                 return IRValue(llvmType: "i1", ssaName: flag)
             }
             /// 运行时段命名的外呼符号（G14 的 shim）在其 `bk_` 名字上调用，declare 由声明段按同一开关发。
@@ -2245,6 +2261,7 @@ public final class IREmitter {
                 bodyIR += " \(raw) = call i32 @bk_error_is_cancel(\(argList))\n"
                 let flag = builder.freshTemp()
                 bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
+                releaseCallArguments(args)
                 return IRValue(llvmType: "i1", ssaName: flag)
             }
 
@@ -2295,9 +2312,11 @@ public final class IREmitter {
             if let returnType = returnType {
                 let temp = builder.freshTemp()
                 bodyIR += " \(temp) = call \(returnType.llvmSpelling) \(callee)(\(argList))\n"
+                releaseCallArguments(args)
                 return IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
             }
             bodyIR += " call void \(callee)(\(argList))\n"
+            releaseCallArguments(args)
             return IRValue(llvmType: "void", ssaName: "")
 
         case .printCall(let argument):
@@ -2372,6 +2391,8 @@ public final class IREmitter {
             /// 名义箱：分配器写四格头，标签落第 `headerSlotCount` 格、载荷从下一格起 ——
             /// 与 `emitMatch` 的 enum 分支同一套偏移。
             let ptr = emitNominalAllocation(aggregate: aggregate, typeID: enumTypeIDs[enumName] ?? 0)
+            /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+            adoptOwnedBox(name: ptr, type: type)
             let tagPtr = builder.freshTemp()
             bodyIR +=
                 builder.fmtGEP(
@@ -2867,6 +2888,8 @@ public final class IREmitter {
             }
             let printed = emitExpr(argument)
             emitValuePrint(value: printed, type: irType(of: argument))
+            /// 与单参打印同规：临时值印完即还。
+            releaseOwnedTemporary(printed)
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
@@ -3135,6 +3158,9 @@ public final class IREmitter {
         currentIsMain = false
         captureSlots = [:]
         pendingReleases = []
+        /// 给定初始化器也是独立体（新 `IRBuilder`）⇒ 临时箱账本同样换一份。
+        ownedBoxesStack.append(ownedBoxes)
+        ownedBoxes = [:]
 
         // 引用计数头（第 0 格）：`%out` 是运行时给的**程序级单例盒**，头格写 1；
         // ⚠️ 它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
@@ -3170,6 +3196,7 @@ public final class IREmitter {
         currentIsMain = savedIsMain
         captureSlots = savedCaptureSlots
         pendingReleases = savedPendingReleases
+        ownedBoxes = ownedBoxesStack.popLast() ?? [:]
         return symbol
     }
 
@@ -3381,10 +3408,10 @@ public final class IREmitter {
     @discardableResult
     private func emitValueForStorage(_ node: IRExpr, _ value: IRValue, type: IRType) -> IRValue {
         guard yieldsAlias(node) else {
-            /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它。
-            /// 字符串的「临时值」判定就是 `yieldsAlias` 的补集：拼接 / 插值 / 运行时段返回新串的内建产出
-            /// 新的一份引用；`load` / 常量 / 形参都是借来的，不在账本里，这一笔对它们是空操作。
+            /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它：字符串与箱各出一笔账。
+            /// 「临时」就是 `yieldsAlias` 的补集；`load` / 常量 / 形参是借来的，不在账上，对它们空操作。
             claimOwnedString(value)
+            claimOwnedBox(value)
             return value
         }
         if case .nominal(_, false) = type, let symbol = ensureCopyFunction(for: type) {
@@ -3520,6 +3547,8 @@ public final class IREmitter {
         /// 名义箱：分配器写四格头，字段从第 `headerSlotCount` 格起。
         /// `isObject` 只影响聚合名拼写 —— 头两边都有，字段偏移不再分类讨论。
         let ptr = emitNominalAllocation(aggregate: aggregate, typeID: nominalTypeID(for: type))
+        /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(name: ptr, type: type)
         let zero = zeroConst(for:)
         for (index, field) in decl.fields.enumerated() {
             let fieldPtr = builder.freshTemp()
@@ -3866,6 +3895,35 @@ public final class IREmitter {
         return true
     }
 
+    // MARK: - 临时箱的账本（名义箱 / 容器句柄）
+
+    /// 记下一个本层亲手分配、当前持有 +1 的临时箱。它还没有持有位置 ⇒ 调用点 / 打印点用完即还。
+    /// 只由构造点（`construct` / `enumConstruct` / 三个字面量）调用：借用值（变量 / 字段 / 形参）从不入账。
+    private func adoptOwnedBox(name: String, type: IRType) {
+        ownedBoxes[name] = type
+    }
+
+    /// 交出所有权：该值已被某个持有位置（槽 / 字段 / 返回位 / 载荷槽）接管，此后由那里释放。
+    /// 它与 `releaseOwnedTemporary` 互斥，一个值只走一条；错成 claim 是泄漏（安全），错成 release 是悬垂。
+    private func claimOwnedBox(_ value: IRValue) {
+        ownedBoxes.removeValue(forKey: value.ssaName)
+    }
+
+    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。⛔ 借用值不在账里 ⇒ 无操作。
+    /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
+    private func releaseOwnedTemporary(_ value: IRValue) {
+        if releaseOwnedString(value) { return }
+        guard let type = ownedBoxes.removeValue(forKey: value.ssaName) else { return }
+        guard let symbol = releaseSymbol(for: type) else { return }
+        bodyIR += " call void @\(symbol)(ptr \(value.ssaName))\n"
+    }
+
+    /// 调用点的收尾：实参一律**借用**。被调方既不 retain 也不在出口释放（形参槽不进释放账本），
+    /// 于是临时值的 +1 份额留在调用方，返回后当场还；变量 / 字段的别名份额不在账上，一条也不碰。
+    private func releaseCallArguments(_ values: [IRValue]) {
+        for value in values { releaseOwnedTemporary(value) }
+    }
+
     /// 值在发射层的计数族：容器句柄与名义箱走两套 C ABI（`bk_handle_*` / `bk_nominal_*`），
     /// 但所有权规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
     /// 返回 nil = 该类型不参与计数（标量 / 字符串 / 外呼指针 / 任务句柄 …）。
@@ -3907,6 +3965,8 @@ public final class IREmitter {
         }
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_array*\n"
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(name: handle, type: type)
         return IRValue(llvmType: "%bk_array*", ssaName: handle)
     }
 
@@ -4022,6 +4082,8 @@ public final class IREmitter {
         }
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_dict*\n"
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(name: handle, type: type)
         return IRValue(llvmType: "%bk_dict*", ssaName: handle)
     }
 
@@ -4043,6 +4105,8 @@ public final class IREmitter {
         }
         let handle = builder.freshTemp()
         bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_set*\n"
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(name: handle, type: type)
         return IRValue(llvmType: "%bk_set*", ssaName: handle)
     }
 
@@ -4194,6 +4258,8 @@ public final class IREmitter {
         let type = irType(of: argument)
         let value = emitExpr(argument)
         emitValuePrint(value: value, type: type)
+        /// 打印是消费点：临时值印完即还，变量 / 字段的份额不在账上 ⇒ 那一条不动作。
+        releaseOwnedTemporary(value)
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
@@ -4841,16 +4907,20 @@ public final class IREmitter {
         let env = builder.freshTemp()
         bodyIR += " \(env) = extractvalue { ptr, ptr } \(closure.ssaName), 1\n"
         var argList = ["ptr \(env)"]
+        var argValues: [IRValue] = []
         for argument in arguments {
             let value = emitExpr(argument)
+            argValues.append(value)
             argList.append("\(value.llvmType) \(value.ssaName)")
         }
         if let returnType = returnType {
             let retTemp = builder.freshTemp()
             bodyIR += " \(retTemp) = call \(returnType.llvmSpelling) \(code)(\(argList.joined(separator: ", ")))\n"
+            releaseCallArguments(argValues)
             return IRValue(llvmType: returnType.llvmSpelling, ssaName: retTemp)
         }
         bodyIR += " call void \(code)(\(argList.joined(separator: ", ")))\n"
+        releaseCallArguments(argValues)
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -5245,6 +5315,9 @@ public final class IREmitter {
         bodyIR = ""
         captureSlots = [:]
         pendingReleases = []
+        /// 闭包体重建 `IRBuilder` ⇒ SSA 名从 `%t1` 重新编号，账本必须换新的，否则同名条目指向外层的值。
+        ownedBoxesStack.append(ownedBoxes)
+        ownedBoxes = [:]
         // 片 D：闭包体是**自己的**函数上下文 —— 它自己的嵌套闭包捕获的名字要在进体前算好
         // （同 `emitFunction` 的理由：声明点在捕获点之前）。
         capturedNamesInFunction = capturedNames(in: body)
@@ -5308,6 +5381,7 @@ public final class IREmitter {
         builder = savedBuilder
         captureSlots = savedCaptureSlots
         pendingReleases = savedPendingReleases
+        ownedBoxes = ownedBoxesStack.popLast() ?? [:]
         capturedNamesInFunction = savedCapturedNames
         frameMode = savedFrameMode
         blockDepth = savedBlockDepth

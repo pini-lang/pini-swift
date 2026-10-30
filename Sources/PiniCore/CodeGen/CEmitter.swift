@@ -45,6 +45,8 @@ public final class CEmitter {
         methods = methods.filter { $0.sourceFile != PredefinedDecls.sourceName }
 
         let scope = CModuleScope(module: module, defined: Set((functions + methods).map(\.name)))
+        // 声明面上的 Optional 先登记：签名与布局里出现的结构体名要先有定义，否则产物编不过。
+        try Self.noteDeclaredOptionals(scope: scope, functions: functions + methods, module: module)
         var bodies: [String] = []
         for function in functions {
             bodies.append(try CFunctionEmitter(function: function, scope: scope, programBase: programBase).emit())
@@ -61,6 +63,7 @@ public final class CEmitter {
         var out = "// 由 Pini 编译器生成，勿手改。\n"
         out += "#include \"\(PiniRTHeader.fileName)\"\n\n"
         out += scope.forwardDeclarations()
+        out += scope.optionalDefinitions()
         out += try scope.aggregateDefinitions()
         out += try scope.layoutAssertions()
         out += scope.copyFunctionDeclarations()
@@ -81,6 +84,23 @@ public final class CEmitter {
         out += "\n"
         out += bodies.joined(separator: "\n")
         return [CFile(name: "\(programName).c", contents: out)]
+    }
+
+    /// 声明面上出现的可选类型逐个登记：签名、字段与枚举载荷槽都在这个面上。
+    /// 只在构造 / 取值点登记的写法会漏掉「声明了但从没构造过」的那种签名。
+    private static func noteDeclaredOptionals(
+        scope: CModuleScope, functions: [IRFunction], module: IRModule
+    ) throws {
+        for function in functions {
+            for param in function.params { try scope.noteType(param.type) }
+            if let returnType = function.returnType { try scope.noteType(returnType) }
+        }
+        for decl in module.types {
+            for field in decl.fields { try scope.noteType(field.type) }
+        }
+        for decl in module.enums {
+            for slot in decl.slotTypes { try scope.noteType(slot) }
+        }
     }
 
     /// C 字符串字面量。非 ASCII 原样输出（C23 源文件是 UTF-8），控制字符走三位八进制 ——
@@ -140,6 +160,9 @@ final class CModuleScope {
     private(set) var copyBodies: [(symbol: String, aggregate: String, source: String)] = []
     private var releaseSymbols: Set<String> = []
     private(set) var releaseBodies: [(symbol: String, pointer: String, source: String)] = []
+    /// 用到的 Optional 结构体定义，按登记序（被引用的载荷先于引用它的那个）。
+    private var optionalNames: Set<String> = []
+    private(set) var optionalBodies: [String] = []
 
     init(module: IRModule, defined: Set<String>) {
         self.types = module.types
@@ -166,6 +189,31 @@ final class CModuleScope {
     func typeDecl(named name: String) -> IRTypeDecl? { types.first { $0.name == name } }
 
     func enumDecl(named name: String) -> IREnumDecl? { enums.first { $0.name == name } }
+
+    /// 登记一个 Optional 载荷类型的具名结构体，返回结构体名。载荷本身也是 Optional 时先递归登记，
+    /// 使定义序里被引用的那个在前；同载荷再次登记只是复用名字。
+    func registerOptional(_ type: IRType) throws -> String {
+        guard case .optional(let wrapped) = type else {
+            throw CBackendError(message: "C 后端：为非 Optional 类型请求 Optional 定义")
+        }
+        let definition = try CTypeMap.optionalDefinition(type)
+        guard optionalNames.insert(definition.name).inserted else { return definition.name }
+        try noteType(wrapped)
+        optionalBodies.append(definition.source)
+        return definition.name
+    }
+
+    /// 类型需要在产物里落一个结构体定义就登记（Optional 之外什么也不做）。
+    /// 声明面上的可选类型要在这里过一遍：只在使用点登记的写法会漏掉「声明了但没构造」的签名。
+    func noteType(_ type: IRType) throws {
+        guard case .optional = type else { return }
+        _ = try registerOptional(type)
+    }
+
+    /// 全部 Optional 结构体定义。⛔ 排在聚合体前向声明之后：载荷可能是指向名义结构体的指针。
+    func optionalDefinitions() -> String {
+        optionalBodies.isEmpty ? "" : optionalBodies.joined(separator: "\n") + "\n"
+    }
 
     func typeID(of type: IRType) -> Int32 {
         switch type {
@@ -196,7 +244,6 @@ final class CModuleScope {
     func reserveCopySymbol(_ symbol: String) -> Bool {
         copySymbols.insert(symbol).inserted
     }
-
     func appendCopyBody(symbol: String, aggregate: String, source: String) {
         copyBodies.append((symbol, aggregate, source))
     }
@@ -326,6 +373,11 @@ enum CLayout {
         case .i32: return (4, 4)
         case .i64, .u64, .f64: return (8, 8)
         case .string, .char, .nominal, .enumeration: return (8, 8)
+        // 容器字段是句柄指针；Optional 字段是「8 字节标签 + 载荷」的按值结构体。
+        case .array, .dict, .set: return (8, 8)
+        case .optional(let wrapped):
+            let (size, align) = try self.size(of: wrapped)
+            return (roundUp(8 + size, max(8, align)), max(8, align))
         default: throw CBackendError(message: "C 后端尚未支持的类型布局：\(CTypeMap.label(of: type))")
         }
     }
@@ -387,6 +439,10 @@ final class CFunctionEmitter {
     /// 持有者账本：每层一个帧，与 `emitBlock` 同序压栈。块尾按逆序释放，`return` / `break` / `continue` 各发一份。
     private var releaseFrames: [[ReleaseEntry]] = []
 
+    /// 本层新分配、尚无持有者的临时箱 / 句柄：C 局部名 → 类型。字符串族在 C 侧没有产出点，
+    /// 故账上只有名义箱与容器句柄。入账：构造点；出账：被持有位置接管，或在调用点 / 打印点就地还。
+    private var ownedBoxes: [String: IRType] = [:]
+
     private struct ReleaseEntry {
         let local: String
         let type: IRType
@@ -398,6 +454,9 @@ final class CFunctionEmitter {
         let isLoop: Bool
         let needsExit: Bool
         let needsHeader: Bool
+        /// 无标签 `continue` 的落点：for-in 要区分「转到 step 块」与「转到自增」，C 的 `continue` 分不出。
+        /// nil ⇒ 用 C 自己的 `continue`。
+        let continueLabel: String?
         /// 本帧入栈时的账本深度：跳出本帧要释放 `releaseFrames[releaseBase...]`。
         let releaseBase: Int
     }
@@ -474,10 +533,14 @@ final class CFunctionEmitter {
     }
 
     /// 一个持有者在退出 / 被覆盖时要调的释放；nil = 该类型不参与计数。
+    /// 容器句柄走 `bk_*_destroy`（对 NULL 无操作），与名义箱的合成胶水共用同一条登记通道。
     private func releaseSymbol(for type: IRType) throws -> String? {
         switch type {
         case .nominal, .enumeration: return try releaseFunction(for: type)
         case .string, .char: return "bk_str_release"
+        case .array: return "bk_array_destroy"
+        case .dict: return "bk_dict_destroy"
+        case .set: return "bk_set_destroy"
         default: return nil
         }
     }
@@ -528,6 +591,46 @@ final class CFunctionEmitter {
         return "\(symbol)(\(local))"
     }
 
+    /// 记下一个本层亲手分配、当前持有 +1 的临时箱。只由构造点调用：借用值（变量 / 字段 / 形参）从不入账。
+    private func adoptOwnedBox(_ local: String, type: IRType) {
+        ownedBoxes[local] = type
+    }
+
+    /// 交出所有权：该值已被某个持有位置（槽 / 字段 / 返回位 / 载荷槽）接管，此后由那里释放。
+    /// 它与 `emitOwnedTemporaryRelease` 互斥，一个值只走一条；错成 claim 是泄漏（安全），错成 release 是悬垂。
+    private func claimOwnedBox(_ text: String) {
+        ownedBoxes.removeValue(forKey: text)
+    }
+
+    /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。⛔ 借用值不在账里 ⇒ 无操作。
+    /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
+    private func emitOwnedTemporaryRelease(_ text: String) throws {
+        guard let type = ownedBoxes.removeValue(forKey: text) else { return }
+        guard let symbol = try releaseSymbol(for: type) else { return }
+        writer.line("\(symbol)(\(text));")
+    }
+
+    /// 调用点的收尾：实参一律**借用**。被调方既不 retain 也不在出口释放（形参不登记），
+    /// 于是临时值的 +1 份额留在调用方，返回后当场还；变量 / 字段的别名份额不在账上，一条也不碰。
+    /// C 的一个表达式里塞不下「调用 + 释放」⇒ 调用先落进临时变量，调用点因此多一行。
+    private func materializeCallReleasingArguments(
+        _ call: String, returnType: IRType?, arguments: [String]
+    ) throws -> String {
+        let owed = arguments.filter { ownedBoxes[$0] != nil }
+        guard !owed.isEmpty else { return call }
+        guard let returnType else {
+            writer.line("\(call);")
+            for text in owed { try emitOwnedTemporaryRelease(text) }
+            return ""
+        }
+        /// 拼不出返回类型（聚合 / Result）就不落临时变量：宁可留一份泄漏，也不让产物编不过。
+        guard let spelling = try? CTypeMap.spelling(of: returnType) else { return call }
+        let temp = "t_\(nextTempSeq())"
+        writer.line("\(spelling) \(temp) = \(call);")
+        for text in owed { try emitOwnedTemporaryRelease(text) }
+        return temp
+    }
+
     /// 局部被覆盖前释放它持有的份额。只对已登记的持有者做 —— 标量不在账本里，一个字节也不碰。
     private func emitReassignRelease(local: String, type: IRType) throws {
         let registered = releaseFrames.contains { frame in
@@ -540,6 +643,7 @@ final class CFunctionEmitter {
     private func emitStmt(_ statement: IRStmt) throws {
         switch statement {
         case .allocVar(let name, let type, _, let initializer):
+            try scope.noteType(type)
             let spelling = try CTypeMap.spelling(of: type)
             let local = declareLocal(name)
             if let initializer {
@@ -575,8 +679,13 @@ final class CFunctionEmitter {
             }
             try emitWhile(condition: condition, body: body)
 
-        case .forInStmt:
-            throw CBackendError(message: "C 后端尚未支持：for-in（需要容器运行时段）")
+        case .forInStmt(let pattern, let elementTypes, let kind, let iterable, let body, let step):
+            try emitForIn(
+                pattern: pattern, elementTypes: elementTypes, kind: kind,
+                iterable: iterable, body: body, step: step)
+
+        case .subscriptStore(let container, let index, let value, let elementType):
+            try emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
 
         case .returnStmt(let value):
             if let value {
@@ -637,8 +746,11 @@ final class CFunctionEmitter {
         case .continueStmt(let depth):
             let frame = try frame(at: depth)
             try emitReleases(downTo: frame.releaseBase)
-            if frame.isLoop && depth == 1 {
+            if frame.isLoop && depth == 1 && frame.continueLabel == nil {
                 writer.line("continue;")
+            } else if frame.isLoop && depth == 1, let target = frame.continueLabel {
+                // for-in 的 `continue` 分两种落点（step 块 / 自增），C 的 `continue` 表达不了。
+                writer.line("goto \(target);")
             } else if frame.isLoop && frame.needsHeader {
                 writer.line("goto \(frame.header);")
             } else if !frame.isLoop && frame.needsExit {
@@ -665,7 +777,7 @@ final class CFunctionEmitter {
                 || scan(elseBody, nesting: 0, direct: true).brk
             let pushed = Frame(
                 exit: exit, header: exit, isLoop: false, needsExit: needsExit, needsHeader: false,
-                releaseBase: releaseFrames.count)
+                continueLabel: nil, releaseBase: releaseFrames.count)
             frames.append(pushed)
             frame = pushed
         }
@@ -699,7 +811,8 @@ final class CFunctionEmitter {
         frames.append(
             Frame(
                 exit: exit, header: header, isLoop: true,
-                needsExit: info.brk, needsHeader: info.cont, releaseBase: releaseFrames.count))
+                needsExit: info.brk, needsHeader: info.cont, continueLabel: nil,
+                releaseBase: releaseFrames.count))
         let cond = bareCondition(try emitExpr(condition))
         if info.cont {
             writer.open("for (;;)")
@@ -721,7 +834,20 @@ final class CFunctionEmitter {
     /// `match`：枚举按标签派发。⛔ 不用 `switch` —— 臂里的 `break` 在 C 里会绑到 `switch` 上，
     /// 而 Pini 的 `break` 指的是外层循环；`if` 链没有这个问题，也与 LLVM 侧的标签链同构。
     private func emitMatch(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType) throws {
-        guard case .enumeration(let name) = scrutineeType, let decl = scope.enumDecl(named: name) else {
+        if case .optional(let wrapped) = scrutineeType {
+            try emitOptionalMatch(scrutinee: scrutinee, cases: cases, wrapped: wrapped)
+            return
+        }
+        guard case .enumeration(let name) = scrutineeType else {
+            // 裸判别式：字面量臂与通配臂在 LLVM 侧走标量比较，本层还没有那张表（拒绝）；
+            // 两者都没有的 match 是死匹配 —— 只求值判别式，一条臂都不进，与解释器同结论。
+            if cases.contains(where: { $0.literal != nil }) || cases.contains(where: { $0.caseName == "_" }) {
+                throw CBackendError(message: "C 后端尚未支持的标量 match（字面量臂或通配臂）")
+            }
+            _ = try emitExpr(scrutinee)
+            return
+        }
+        guard let decl = scope.enumDecl(named: name) else {
             throw CBackendError(
                 message: "C 后端尚未支持的匹配对象类型：\(CTypeMap.label(of: scrutineeType))")
         }
@@ -760,8 +886,42 @@ final class CFunctionEmitter {
         terminated = false
     }
 
-    private func emitBindings(
-        arm: IRMatchCase, enumCase: IREnumCase, decl: IREnumDecl, pointer: String, enumName: String
+    /// `match opt:`：标签 0 = some、1 = none。臂链用 `if` 而非 `switch` —— 臂里的 `break`
+    /// 指的是外层循环，C 的 `switch` 会把它接走。
+    private func emitOptionalMatch(
+        scrutinee: IRExpr, cases: [IRMatchCase], wrapped: IRType
+    ) throws {
+        let local = try materialize(try emitExpr(scrutinee), type: .optional(wrapped: wrapped))
+        let panicMessage = scope.registerString("Pini runtime error: match value matched no case")
+        var isFirst = true
+        var hasWildcard = false
+        for arm in cases {
+            scopes.append([:])
+            terminated = false
+            if arm.caseName == "_" {
+                hasWildcard = true
+                if isFirst { writer.open("if (1)") } else { writer.elseOpen() }
+            } else {
+                let condition = "\(local).tag == \(arm.caseName == "some" ? 0 : 1)"
+                if isFirst { writer.open("if (\(condition))") } else { writer.elseIfOpen(condition) }
+                if let binding = arm.bindings.first ?? nil {
+                    let name = declareLocal(binding)
+                    writer.line("\(try CTypeMap.spelling(of: wrapped)) \(name) = \(local).value;")
+                }
+            }
+            try emitBlock(arm.body)
+            scopes.removeLast()
+            isFirst = false
+        }
+        if !hasWildcard {
+            if isFirst { writer.open("if (1)") } else { writer.elseOpen() }
+            writer.line("bk_panic(\(panicMessage));")
+        }
+        writer.close()
+        terminated = false
+    }
+
+    private func emitBindings(        arm: IRMatchCase, enumCase: IREnumCase, decl: IREnumDecl, pointer: String, enumName: String
     ) throws {
         for (slot, binding) in arm.bindings.enumerated() {
             guard let binding else { continue }
@@ -809,6 +969,30 @@ final class CFunctionEmitter {
         case .load(let name, _):
             return lookupVar(name)
 
+        case .arrayLiteral(let elements, let type):
+            return try emitArrayLiteral(elements: elements, type: type)
+
+        case .dictLiteral(let entries, let type):
+            return try emitDictLiteral(entries: entries, type: type)
+
+        case .setLiteral(let elements, let type):
+            return try emitSetLiteral(elements: elements, type: type)
+
+        case .subscriptGet(let container, let index, let type):
+            return try emitSubscriptGet(container: container, index: index, type: type)
+
+        case .lenCall(let argument):
+            return try emitLen(argument)
+
+        case .optionalConstruct(let isSome, let payload, let type):
+            return try emitOptionalConstruct(isSome: isSome, payload: payload, type: type)
+
+        case .optionalGet(let container, let index, let type):
+            return try emitOptionalGet(container: container, index: index, type: type)
+
+        case .arrayJoin(let receiver, let separator):
+            return try emitArrayJoin(receiver: receiver, separator: separator)
+
         case .binary(let op, let lhs, let rhs, _):
             let left = try emitExpr(lhs)
             let right = try emitExpr(rhs)
@@ -827,7 +1011,11 @@ final class CFunctionEmitter {
                 throw CBackendError(message: "C 后端尚未支持的一元运算：abs")
             }
 
-        case .call(let name, let arguments, _):
+        case .call(let name, let arguments, let returnType):
+            // `append` 以具名调用到达，不是专门的节点；元素装箱与别名点 retain 与下标写同规。
+            if name == "Array.append" {
+                return try emitArrayAppend(arguments: arguments, returnType: returnType)
+            }
             let args = try arguments.map { try emitExpr($0) }
             if name == "F64", args.count == 1 {
                 return "((double)(\(args[0])))"
@@ -844,7 +1032,9 @@ final class CFunctionEmitter {
                 callee = "pini_\(IRName.mangle(name))"
                 scope.calledNames.insert(name)
             }
-            return "\(callee)(\(args.joined(separator: ", ")))"
+            /// 调用点的所有权：实参一律**借用** —— 被调方不 retain 也不在出口释放（形参不登记）。
+            return try materializeCallReleasingArguments(
+                "\(callee)(\(args.joined(separator: ", ")))", returnType: returnType, arguments: args)
 
         case .construct(let type):
             return try emitConstruct(type)
@@ -892,6 +1082,8 @@ final class CFunctionEmitter {
         let temp = "t_\(nextTempSeq())"
         writer.line(
             "\(aggregate) *\(temp) = bk_nominal_alloc(sizeof(\(aggregate)), \(scope.typeID(of: type)));")
+        /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(temp, type: type)
         for (index, field) in decl.fields.enumerated() {
             let value: String
             if let defaultValue = field.defaultValue {
@@ -915,6 +1107,8 @@ final class CFunctionEmitter {
         let temp = "t_\(nextTempSeq())"
         writer.line(
             "\(aggregate) *\(temp) = bk_nominal_alloc(sizeof(\(aggregate)), \(scope.typeID(of: type)));")
+        /// 新箱起始 +1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(temp, type: type)
         writer.line("\(temp)->tag = \(tag);")
         for (index, payload) in payloads.enumerated() {
             try checkSlotType(payloadTypes[index], slot: index, decl: decl, owner: "枚举 \(enumName)")
@@ -970,9 +1164,75 @@ final class CFunctionEmitter {
             try emitAggregatePrint(try materialize(text, type: type), name: name)
         case .enumeration(let name):
             try emitEnumPrint(try materialize(text, type: type), name: name)
+        case .array(let elementType):
+            try emitSequencePrint(
+                handle: try materialize(text, type: type), elementType: elementType,
+                open: "[", close: "]", lengthSymbol: "bk_array_len", accessor: "bk_array_get")
+        case .set(let elementType):
+            try emitSequencePrint(
+                handle: try materialize(text, type: type), elementType: elementType,
+                open: "{", close: "}", lengthSymbol: "bk_set_len", accessor: "bk_set_at")
+        case .dict(let keyType, let valueType):
+            try emitDictPrint(
+                handle: try materialize(text, type: type), keyType: keyType, valueType: valueType)
+        case .optional(let wrapped):
+            try emitOptionalPrint(text, wrapped: wrapped)
         default:
             throw CBackendError(message: "C 后端尚未支持的打印类型：\(CTypeMap.label(of: type))")
         }
+    }
+
+    /// `[a, b]` / `{a, b}`：长度取一次、逐下标取元素、元素之间一个 `", "` —— 与解释器 stringify 同形。
+    private func emitSequencePrint(
+        handle: String, elementType: IRType, open: String, close: String,
+        lengthSymbol: String, accessor: String
+    ) throws {
+        writer.line("printf(\"%s\", \(scope.registerString(open)));")
+        let count = "t_\(nextTempSeq())"
+        writer.line("int32_t \(count) = \(lengthSymbol)(\(handle));")
+        let index = "i_\(nextTempSeq())"
+        writer.open("for (int32_t \(index) = 0; \(index) < \(count); \(index) = \(index) + 1)")
+        writer.open("if (\(index) > 0)")
+        writer.line("printf(\"%s\", \(scope.registerString(", ")));")
+        writer.close()
+        let box = "b_\(nextTempSeq())"
+        writer.line("void *\(box) = \(accessor)(\(handle), \(index));")
+        try emitValuePrint(try boxLoad(box, type: elementType), type: elementType)
+        writer.close()
+        writer.line("printf(\"%s\", \(scope.registerString(close)));")
+    }
+
+    /// `{k: v, ...}`：键与值按下标成对取出，各自按自己的类型递归打印。
+    private func emitDictPrint(handle: String, keyType: IRType, valueType: IRType) throws {
+        writer.line("printf(\"%s\", \(scope.registerString("{")));")
+        let count = "t_\(nextTempSeq())"
+        writer.line("int32_t \(count) = bk_dict_len(\(handle));")
+        let index = "i_\(nextTempSeq())"
+        writer.open("for (int32_t \(index) = 0; \(index) < \(count); \(index) = \(index) + 1)")
+        writer.open("if (\(index) > 0)")
+        writer.line("printf(\"%s\", \(scope.registerString(", ")));")
+        writer.close()
+        let keyBox = "b_\(nextTempSeq())"
+        writer.line("void *\(keyBox) = bk_dict_key_at(\(handle), \(index));")
+        try emitValuePrint(try boxLoad(keyBox, type: keyType), type: keyType)
+        writer.line("printf(\"%s\", \(scope.registerString(": ")));")
+        let valueBox = "b_\(nextTempSeq())"
+        writer.line("void *\(valueBox) = bk_dict_val_at(\(handle), \(index));")
+        try emitValuePrint(try boxLoad(valueBox, type: valueType), type: valueType)
+        writer.close()
+        writer.line("printf(\"%s\", \(scope.registerString("}")));")
+    }
+
+    /// `some(v)` / `none`：按标签分支，载荷按声明类型递归打印。
+    private func emitOptionalPrint(_ text: String, wrapped: IRType) throws {
+        let local = try materialize(text, type: .optional(wrapped: wrapped))
+        writer.open("if (\(local).tag == 0)")
+        writer.line("printf(\"%s\", \(scope.registerString("some(")));")
+        try emitValuePrint("\(local).value", type: wrapped)
+        writer.line("printf(\"%s\", \(scope.registerString(")")));")
+        writer.elseOpen()
+        writer.line("printf(\"%s\", \(scope.registerString("none")));")
+        writer.close()
     }
 
     /// `Name{field: value, ...}`，字段按名字排序 —— 与解释器的 stringify 同序。
@@ -1029,6 +1289,8 @@ final class CFunctionEmitter {
             throw CBackendError(message: "C 后端：打印的实参没有携带类型，无法选定格式")
         }
         try emitValuePrint(text, type: type)
+        /// 打印是消费点：临时值印完即还，变量 / 字段的份额不在账上 ⇒ 那一条不动作。
+        try emitOwnedTemporaryRelease(text)
         if newline { writer.line("printf(\"\\n\");") }
     }
 
@@ -1049,12 +1311,378 @@ final class CFunctionEmitter {
         return temp
     }
 
+    // MARK: - 容器族与 Optional
+
+    /// 容器元素的装箱 ABI：与 LLVM 侧的 `arrayElementABI` 逐格对齐。宽度与 tag 必须一致，
+    /// 否则运行时深拷 / 释放会按错的族处理同一个 box。
+    private func elementABI(_ type: IRType) throws -> (spelling: String, width: Int, tag: Int32) {
+        switch type {
+        case .i32: return ("int32_t", 4, 0)
+        case .f64: return ("double", 8, 1)
+        case .boolean: return ("bool", 1, 2)
+        case .string, .char: return ("char *", 8, 3)
+        case .array, .dict, .set: return ("void *", 8, 4)
+        default:
+            throw CBackendError(message: "C 后端尚未支持的容器元素类型：\(CTypeMap.label(of: type))")
+        }
+    }
+
+    private static func isContainer(_ type: IRType) -> Bool {
+        switch type {
+        case .array, .dict, .set: return true
+        default: return false
+        }
+    }
+
+    /// 读一个运行时 box：box 是 `void *`，值按自己的拼写重解释。对齐由运行时分配器保证。
+    private func boxLoad(_ box: String, type: IRType) throws -> String {
+        "*(\(try CTypeMap.spelling(of: type)) *)\(box)"
+    }
+
+    /// 把值放进一个可取址的临时变量：运行时的 `*_set` / `*_add` 都要「值的地址 + 宽度」。
+    private func boxValue(_ text: String, type: IRType) throws -> String {
+        let local = "b_\(nextTempSeq())"
+        writer.line("\(try CTypeMap.spelling(of: type)) \(local) = \(text);")
+        return local
+    }
+
+    /// 别名点留份额。临时值被箱接管，不再有动作 —— 与 LLVM 侧 `emitRetainIfAliased` 同判据。
+    private func emitRetainIfAliased(_ node: IRExpr, local: String, type: IRType) throws {
+        guard Self.yieldsAlias(node), let retain = try retainSymbol(for: type) else { return }
+        writer.line("\(retain)(\(local));")
+    }
+
+    /// 负值尾计数：`i < 0 ? count + i : i`。下标在调用点先求值、这里只落临时变量，保证只求值一次。
+    private func emitTailCountIndex(_ indexText: String, count: String) throws -> String {
+        let raw = "t_\(nextTempSeq())"
+        writer.line("int32_t \(raw) = (int32_t)(\(indexText));")
+        let adjusted = "t_\(nextTempSeq())"
+        writer.line("int32_t \(adjusted) = \(count) + \(raw);")
+        let effective = "t_\(nextTempSeq())"
+        writer.line("int32_t \(effective) = (\(raw) < 0) ? \(adjusted) : \(raw);")
+        return effective
+    }
+
+    /// `[e1, e2, ...]`：先造句柄，逐元素装箱写进第 i 格。`bk_array_set` 返回的句柄必须接住，
+    /// 它可能与入参不同（COW 分裂）。
+    private func emitArrayLiteral(elements: [IRExpr], type: IRType) throws -> String {
+        guard case .array(let elementType) = type else {
+            throw CBackendError(message: "C 后端：数组字面量的类型不是 Array（\(CTypeMap.label(of: type))）")
+        }
+        let (spelling, width, tag) = try elementABI(elementType)
+        let handle = "t_\(nextTempSeq())"
+        writer.line("void *\(handle) = bk_array_create(\(elements.count));")
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(handle, type: type)
+        for (index, element) in elements.enumerated() {
+            let box = "b_\(nextTempSeq())"
+            writer.line("\(spelling) \(box) = \(try emitExpr(element));")
+            try emitRetainIfAliased(element, local: box, type: elementType)
+            writer.line("\(handle) = bk_array_set(\(handle), \(index), (void *)&\(box), \(width), \(tag));")
+        }
+        return handle
+    }
+
+    /// `[k = v, ...]`：空字典起手，逐条写入。键与值各自按自己的类型装箱。
+    private func emitDictLiteral(entries: [IRDictEntry], type: IRType) throws -> String {
+        guard case .dict(let keyType, let valueType) = type else {
+            throw CBackendError(message: "C 后端：字典字面量的类型不是 Dictionary（\(CTypeMap.label(of: type))）")
+        }
+        let (_, keyWidth, keyTag) = try elementABI(keyType)
+        let (valueSpelling, valueWidth, valueTag) = try elementABI(valueType)
+        let handle = "t_\(nextTempSeq())"
+        writer.line("void *\(handle) = bk_dict_create();")
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(handle, type: type)
+        for entry in entries {
+            let key = try boxValue(try emitExpr(entry.key), type: keyType)
+            try emitRetainIfAliased(entry.key, local: key, type: keyType)
+            let value = "b_\(nextTempSeq())"
+            writer.line("\(valueSpelling) \(value) = \(try emitExpr(entry.value));")
+            try emitRetainIfAliased(entry.value, local: value, type: valueType)
+            writer.line(
+                "\(handle) = bk_dict_set(\(handle), (void *)&\(key), \(keyWidth), \(keyTag),"
+                + " (void *)&\(value), \(valueWidth), \(valueTag));")
+        }
+        return handle
+    }
+
+    /// `{e1, e2, ...}`：保序去重由运行时做，本层只逐元素 `bk_set_add`。
+    private func emitSetLiteral(elements: [IRExpr], type: IRType) throws -> String {
+        guard case .set(let elementType) = type else {
+            throw CBackendError(message: "C 后端：集合字面量的类型不是 Set（\(CTypeMap.label(of: type))）")
+        }
+        let (spelling, width, tag) = try elementABI(elementType)
+        let handle = "t_\(nextTempSeq())"
+        writer.line("void *\(handle) = bk_set_create();")
+        /// 新句柄起始 shares == 1，此刻没有持有者 ⇒ 入账，等持有位置接管或在调用点就地还。
+        adoptOwnedBox(handle, type: type)
+        for element in elements {
+            let box = "b_\(nextTempSeq())"
+            writer.line("\(spelling) \(box) = \(try emitExpr(element));")
+            try emitRetainIfAliased(element, local: box, type: elementType)
+            writer.line("\(handle) = bk_set_add(\(handle), (void *)&\(box), \(width), \(tag));")
+        }
+        return handle
+    }
+
+    /// 下标读。字典按键、数组按下标；负数下标从尾部计数（安全断言通道留在运行时里）。
+    private func emitSubscriptGet(container: IRExpr, index: IRExpr, type: IRType) throws -> String {
+        guard let containerType = Self.type(of: container) else {
+            throw CBackendError(message: "C 后端：下标读的容器没有携带类型")
+        }
+        switch containerType {
+        case .dict(let keyType, _):
+            let (_, keyWidth, keyTag) = try elementABI(keyType)
+            let handle = try materialize(try emitExpr(container), type: containerType)
+            let key = try boxValue(try emitExpr(index), type: keyType)
+            let box = "b_\(nextTempSeq())"
+            writer.line("void *\(box) = bk_dict_get(\(handle), (void *)&\(key), \(keyWidth), \(keyTag));")
+            return try boxLoad(box, type: type)
+        case .array:
+            let handle = try materialize(try emitExpr(container), type: containerType)
+            let indexText = try emitExpr(index)
+            let count = "t_\(nextTempSeq())"
+            writer.line("int32_t \(count) = bk_array_len(\(handle));")
+            let effective = try emitTailCountIndex(indexText, count: count)
+            let box = "b_\(nextTempSeq())"
+            writer.line("void *\(box) = bk_array_get(\(handle), \(effective));")
+            return try boxLoad(box, type: type)
+        default:
+            throw CBackendError(
+                message: "C 后端尚未支持的取下标的容器类型：\(CTypeMap.label(of: containerType))")
+        }
+    }
+
+    /// 下标写（COW 契约）：容器句柄 → 值（别名点 retain）→ `bk_*_set` → 把分裂出的句柄写回槽。
+    /// ⛔ 不回写 ⇒ 新句柄没人接住 ⇒ 这次写会静默丢失。
+    private func emitSubscriptStore(
+        container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType
+    ) throws {
+        guard case .load(let name, let slotType) = container else {
+            throw CBackendError(
+                message: "C 后端尚未支持：非变量槽容器的下标写（嵌套或字段容器）")
+        }
+        let local = lookupVar(name)
+        if case .dict(let keyType, let valueType) = slotType {
+            let (_, keyWidth, keyTag) = try elementABI(keyType)
+            let (valueSpelling, valueWidth, valueTag) = try elementABI(valueType)
+            let key = try boxValue(try emitExpr(index), type: keyType)
+            let box = "b_\(nextTempSeq())"
+            writer.line("\(valueSpelling) \(box) = \(try emitExpr(value));")
+            try emitRetainIfAliased(value, local: box, type: valueType)
+            writer.line(
+                "\(local) = bk_dict_set(\(local), (void *)&\(key), \(keyWidth), \(keyTag),"
+                + " (void *)&\(box), \(valueWidth), \(valueTag));")
+            return
+        }
+        let (spelling, width, tag) = try elementABI(elementType)
+        let indexText = "t_\(nextTempSeq())"
+        writer.line("int32_t \(indexText) = (int32_t)(\(try emitExpr(index)));")
+        let box = "b_\(nextTempSeq())"
+        writer.line("\(spelling) \(box) = \(try emitExpr(value));")
+        try emitRetainIfAliased(value, local: box, type: elementType)
+        writer.line("\(local) = bk_array_set(\(local), \(indexText), (void *)&\(box), \(width), \(tag));")
+    }
+
+    /// `len(x)`：三个容器族各问自己的长度；字符串按字素簇计（运行时段同一份实现）。
+    private func emitLen(_ argument: IRExpr) throws -> String {
+        guard let type = Self.type(of: argument) else {
+            throw CBackendError(message: "C 后端：len 的实参没有携带类型")
+        }
+        let symbol: String
+        switch type {
+        case .dict: symbol = "bk_dict_len"
+        case .set: symbol = "bk_set_len"
+        case .array: symbol = "bk_array_len"
+        case .string, .char: symbol = "bk_string_count"
+        default:
+            throw CBackendError(message: "C 后端尚未支持的 len 实参类型：\(CTypeMap.label(of: type))")
+        }
+        let value = try materialize(try emitExpr(argument), type: type)
+        let count = "t_\(nextTempSeq())"
+        writer.line("int32_t \(count) = \(symbol)(\(value));")
+        return count
+    }
+
+    /// `Optional.some(v)` / `Optional.none`：标签 0 = some、1 = none，与 LLVM 侧同一编号。
+    /// 载荷是裸值插入，不在这里留份额（与 LLVM 侧同一个插入点）。
+    private func emitOptionalConstruct(isSome: Bool, payload: IRExpr?, type: IRType) throws -> String {
+        guard case .optional(let wrapped) = type else {
+            throw CBackendError(message: "C 后端：Optional 构造的类型不是 Optional（\(CTypeMap.label(of: type))）")
+        }
+        let temp = "t_\(nextTempSeq())"
+        writer.line("\(try scope.registerOptional(type)) \(temp);")
+        writer.line("\(temp).tag = \(isSome ? 0 : 1);")
+        if isSome, let payload {
+            writer.line("\(temp).value = \(try emitExpr(payload));")
+        } else {
+            writer.line("\(temp).value = \(try CTypeMap.zeroLiteral(of: wrapped));")
+        }
+        return temp
+    }
+
+    /// `arr.get(i)`：容错读。界内给 some(元素)、界外（含尾计数后仍越界）给 none。
+    private func emitOptionalGet(container: IRExpr, index: IRExpr, type: IRType) throws -> String {
+        guard case .optional(let wrapped) = type else {
+            throw CBackendError(message: "C 后端：容错读的类型不是 Optional（\(CTypeMap.label(of: type))）")
+        }
+        guard let containerType = Self.type(of: container), case .array = containerType else {
+            throw CBackendError(message: "C 后端尚未支持的容错读容器：只实现了数组句柄")
+        }
+        let handle = try materialize(try emitExpr(container), type: containerType)
+        let indexText = try emitExpr(index)
+        let count = "t_\(nextTempSeq())"
+        writer.line("int32_t \(count) = bk_array_len(\(handle));")
+        let effective = try emitTailCountIndex(indexText, count: count)
+        let result = "t_\(nextTempSeq())"
+        writer.line("\(try scope.registerOptional(type)) \(result);")
+        writer.open("if (\(effective) >= 0 && \(effective) < \(count))")
+        let box = "b_\(nextTempSeq())"
+        writer.line("void *\(box) = bk_array_get(\(handle), \(effective));")
+        writer.line("\(result).tag = 0;")
+        writer.line("\(result).value = \(try boxLoad(box, type: wrapped));")
+        writer.elseOpen()
+        writer.line("\(result).tag = 1;")
+        writer.line("\(result).value = \(try CTypeMap.zeroLiteral(of: wrapped));")
+        writer.close()
+        return result
+    }
+
+    /// `arr.append(x)`：产出**新**句柄，输入句柄与其内容都不动；元素 ABI 与下标写同一张表。
+    private func emitArrayAppend(arguments: [IRExpr], returnType: IRType?) throws -> String {
+        guard arguments.count == 2, case .array(let elementType)? = returnType else {
+            throw CBackendError(message: "C 后端：append 需要接收者加一个元素，且结果类型是 Array")
+        }
+        let (spelling, width, tag) = try elementABI(elementType)
+        let handle = try materialize(try emitExpr(arguments[0]), type: .array(element: elementType))
+        let box = "b_\(nextTempSeq())"
+        writer.line("\(spelling) \(box) = \(try emitExpr(arguments[1]));")
+        try emitRetainIfAliased(arguments[1], local: box, type: elementType)
+        let next = "t_\(nextTempSeq())"
+        writer.line("void *\(next) = bk_array_append(\(handle), (void *)&\(box), \(width), \(tag));")
+        return next
+    }
+
+    /// `arr.join(sep)`：逐元素 strcat 进栈缓冲，交出前复制到堆 —— 结果会离开本帧。
+    /// ⛔ 元素必须是字符串面：解释器对任意元素先 stringify，本层只搬裸 C 串，别的类型一律拒绝。
+    private func emitArrayJoin(receiver: IRExpr, separator: IRExpr) throws -> String {
+        guard let receiverType = Self.type(of: receiver), case .array(let elementType) = receiverType,
+            elementType.isStringFaced
+        else {
+            throw CBackendError(message: "C 后端尚未支持：非字符串元素数组的 join（元素要先 stringify）")
+        }
+        let handle = try materialize(try emitExpr(receiver), type: receiverType)
+        let sep = try materialize(try emitExpr(separator), type: .string)
+        let buffer = "c_\(nextTempSeq())"
+        writer.line("char \(buffer)[4096];")
+        writer.line("\(buffer)[0] = 0;")
+        let count = "t_\(nextTempSeq())"
+        writer.line("int32_t \(count) = bk_array_len(\(handle));")
+        let index = "i_\(nextTempSeq())"
+        writer.open("for (int32_t \(index) = 0; \(index) < \(count); \(index) = \(index) + 1)")
+        writer.open("if (\(index) > 0)")
+        writer.line("strcat(\(buffer), \(sep));")
+        writer.close()
+        let box = "b_\(nextTempSeq())"
+        writer.line("void *\(box) = bk_array_get(\(handle), \(index));")
+        writer.line("strcat(\(buffer), \(try boxLoad(box, type: .string)));")
+        writer.close()
+        let dup = "t_\(nextTempSeq())"
+        writer.line("char *\(dup) = bk_str_dup(\(buffer));")
+        return dup
+    }
+
+    /// `for (pattern,) in iterable`：长度取一次、每轮按下标取元素。模式绑定是持有者，
+    /// 一轮一份份额、body 尾按逆序释放 —— 与 LLVM 侧的种子帧同序。
+    private func emitForIn(
+        pattern: [String], elementTypes: [IRType], kind: IRForIterableKind,
+        iterable: IRExpr, body: IRBlock, step: IRBlock?
+    ) throws {
+        guard let iterableType = Self.type(of: iterable) else {
+            throw CBackendError(message: "C 后端：for-in 的被迭代值没有携带类型")
+        }
+        let lengthSymbol: String
+        switch kind {
+        case .array: lengthSymbol = "bk_array_len"
+        case .set: lengthSymbol = "bk_set_len"
+        case .dict: lengthSymbol = "bk_dict_len"
+        }
+        let handle = try materialize(try emitExpr(iterable), type: iterableType)
+        let count = "t_\(nextTempSeq())"
+        writer.line("int32_t \(count) = \(lengthSymbol)(\(handle));")
+        let index = "i_\(nextTempSeq())"
+        writer.line("int32_t \(index) = 0;")
+
+        let info = scan(body, nesting: 0, direct: false)
+        let stepInfo = scan(step, nesting: 0, direct: false)
+        let id = nextLabelSeq()
+        let header = "for_inc_\(id)"
+        let stepLabel = "for_step_\(id)"
+        let exit = "for_end_\(id)"
+        frames.append(
+            Frame(
+                exit: exit, header: header, isLoop: true, needsExit: info.brk || stepInfo.brk,
+                needsHeader: true, continueLabel: step != nil ? stepLabel : header,
+                releaseBase: releaseFrames.count))
+
+        writer.open("for (;;)")
+        writer.line("if (!(\(index) < \(count))) break;")
+        scopes.append([:])
+        var seeded: [ReleaseEntry] = []
+        for (position, name) in pattern.enumerated() {
+            guard name != "_" else { continue }
+            guard position < elementTypes.count else {
+                throw CBackendError(message: "C 后端：for-in 的模式第 \(position) 位没有元素类型")
+            }
+            let elementType = elementTypes[position]
+            let accessor = try forInAccessor(kind: kind, position: position)
+            let local = declareLocal(name)
+            let box = "b_\(nextTempSeq())"
+            writer.line("void *\(box) = \(accessor)(\(handle), \(index));")
+            writer.line("\(try CTypeMap.spelling(of: elementType)) \(local) = \(try boxLoad(box, type: elementType));")
+            // 只有容器元素进账本：与 LLVM 侧同一个判据（`collectionDestroySymbol` 只覆盖三族）。
+            if Self.isContainer(elementType) { seeded.append(ReleaseEntry(local: local, type: elementType)) }
+        }
+        releaseFrames.append(seeded)
+        try emitBlock(body)
+        if !terminated { try emitReleases(downTo: releaseFrames.count - 1) }
+        releaseFrames.removeLast()
+        if let step {
+            terminated = false
+            writer.line("\(stepLabel): ;")
+            frames.append(
+                Frame(
+                    exit: exit, header: header, isLoop: true, needsExit: stepInfo.brk,
+                    needsHeader: true, continueLabel: header, releaseBase: releaseFrames.count))
+            try emitBlock(step)
+            frames.removeLast()
+        }
+        terminated = false
+        writer.line("\(header):")
+        writer.line("\(index) = \(index) + 1;")
+        writer.close()
+        frames.removeLast()
+        scopes.removeLast()
+        if info.brk || stepInfo.brk { writer.line("\(exit): ;") }
+        terminated = false
+    }
+
+    private func forInAccessor(kind: IRForIterableKind, position: Int) throws -> String {
+        switch kind {
+        case .array: return "bk_array_get"
+        case .set: return "bk_set_at"
+        case .dict: return position == 0 ? "bk_dict_key_at" : "bk_dict_val_at"
+        }
+    }
+
     // MARK: - 所有权镜像
 
     /// 该表达式节点给的是已有箱的别名（结构体要按值拷贝），还是一个新箱的所有权（直接接管）。
+    /// 与 LLVM 侧同一组节点：下标读与容错读交出的也是别的持有者的份额。
     private static func yieldsAlias(_ node: IRExpr) -> Bool {
         switch node {
-        case .load, .fieldGet: return true
+        case .load, .subscriptGet, .fieldGet, .optionalGet: return true
         default: return false
         }
     }
@@ -1062,7 +1690,11 @@ final class CFunctionEmitter {
     /// 把求值出来的值按值语义落到一个持有位置：结构体别名拷出新箱，对象 / 枚举 / 字符串别名留一份份额，
     /// 临时值直接接管。⛔ 结构体那一支必须排在 retain 之前 —— 拷贝本身就是一次独立持有。
     private func emitValueForStorage(_ node: IRExpr, _ text: String, type: IRType) throws -> String {
-        guard Self.yieldsAlias(node) else { return text }
+        guard Self.yieldsAlias(node) else {
+            /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它。
+            claimOwnedBox(text)
+            return text
+        }
         if case .nominal(let name, let isObject) = type, !isObject,
             let symbol = try copyFunction(for: type)
         {
@@ -1077,13 +1709,16 @@ final class CFunctionEmitter {
         return text
     }
 
-    /// 别名点要调的留份额符号。结构体不走这条（它拷新箱），容器尚未支持。
+    /// 别名点要调的留份额符号。结构体不走这条（它拷新箱）。
     private func retainSymbol(for type: IRType) throws -> String? {
         switch type {
         case .nominal, .enumeration:
             return "bk_nominal_retain"
         case .string, .char:
             return "bk_str_retain"
+        // 三个容器族共用类型无关的 share 计数。
+        case .array, .dict, .set:
+            return "bk_handle_retain"
         default:
             return nil
         }
@@ -1138,7 +1773,12 @@ final class CFunctionEmitter {
             scope.markUsed(name)
             for (index, field) in decl.fields.enumerated() {
                 guard let call = try releaseCall(local: "box->f\(index)", type: field.type) else { continue }
-                lines.append("    \(call);")
+                // 容器字段可能是 NULL（没写过）：与 LLVM 侧的字段释放同形，先判空再调。
+                if Self.isContainer(field.type) {
+                    lines.append("    if (box->f\(index) != NULL) { \(call); }")
+                } else {
+                    lines.append("    \(call);")
+                }
             }
         case .enumeration(let name):
             guard let decl = scope.enumDecl(named: name) else {
@@ -1182,10 +1822,10 @@ final class CFunctionEmitter {
     }
 
     /// 该类型在释放胶水里有没有动作。分派结构必须在合成之前算出来，
-    /// 否则会为只有标量载荷的 case 生成空 arm。
+    /// 否则会为只有标量载荷的 case 生成空 arm。容器载荷也是持有者。
     private static func needsRelease(_ type: IRType) -> Bool {
         switch type {
-        case .nominal, .enumeration, .string, .char: return true
+        case .nominal, .enumeration, .string, .char, .array, .dict, .set: return true
         default: return false
         }
     }
@@ -1296,6 +1936,14 @@ final class CFunctionEmitter {
         case .construct(let type): return type
         case .fieldGet(_, _, let type): return type
         case .enumConstruct(_, _, _, _, _, let type): return type
+        case .arrayLiteral(_, let type): return type
+        case .dictLiteral(_, let type): return type
+        case .setLiteral(_, let type): return type
+        case .subscriptGet(_, _, let type): return type
+        case .lenCall: return .i32
+        case .optionalConstruct(_, _, let type): return type
+        case .optionalGet(_, _, let type): return type
+        case .arrayJoin: return .string
         case .assertCall: return .i32
         case .printCall, .printMulti: return .i32
         default: return nil

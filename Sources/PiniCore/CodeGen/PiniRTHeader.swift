@@ -47,6 +47,37 @@ void bk_set_program_base(const char *base);
 char *bk_double_to_string(double value);
 void bk_str_retain(char *text);
 void bk_str_release(char *text);
+char *bk_str_dup(const char *source);
+
+// 容器句柄：三个族共用同一套 share 记账，句柄在 C 侧一律是不透明 `void *`。
+// `*_set` / `*_add` 收的是「值的地址 + 字节宽 + 元素 tag」，返回写回的句柄（COW 可能换箱）。
+void bk_handle_retain(void *handle);
+
+void *bk_array_create(int32_t len);
+int32_t bk_array_len(void *array);
+void *bk_array_get(void *array, int32_t index);
+void *bk_array_set(void *array, int32_t index, void *source, int32_t elemBytes, int32_t elemTag);
+void *bk_array_append(void *array, void *source, int32_t elemBytes, int32_t elemTag);
+void bk_array_destroy(void *array);
+
+void *bk_dict_create(void);
+int32_t bk_dict_len(void *dict);
+void *bk_dict_key_at(void *dict, int32_t index);
+void *bk_dict_val_at(void *dict, int32_t index);
+void *bk_dict_get(void *dict, void *key, int32_t keyBytes, int32_t keyTag);
+void *bk_dict_set(
+    void *dict, void *key, int32_t keyBytes, int32_t keyTag,
+    void *value, int32_t valueBytes, int32_t valueTag);
+void bk_dict_destroy(void *dict);
+
+void *bk_set_create(void);
+int32_t bk_set_len(void *set);
+void *bk_set_at(void *set, int32_t index);
+void *bk_set_add(void *set, void *element, int32_t elemBytes, int32_t elemTag);
+void bk_set_destroy(void *set);
+
+// 字符串的长度按字素簇计（与解释器的 `text.count` 同一定义），不在 C 侧按字节数。
+int32_t bk_string_count(const char *text);
 
 #endif
 """#
