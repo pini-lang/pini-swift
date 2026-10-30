@@ -90,16 +90,18 @@ struct ConcurrencyYieldTests: Sendable {
         return
     """
 
+    /// 「子任务已决」这一前提靠时间差立住：子睡 100ms、父睡 1500ms，余量 1.4 秒。
+    /// 余量须远大于并行套件造成的抖动，否则前提不成立，读数会凭空多一次让出。
     private static let 探针已决 = """
     慢|func(n: I32,) => (I32,):
         print("S-start")
-        sleep(250)
+        sleep(100)
         print("S-done")
         return ok(n)
 
     父|func(n: I32,) => (I32,):
         let a = 慢(n)
-        sleep(400)
+        sleep(1500)
         let x = try await a else e:
             return err(Error("failed"))
         return ok(x)
