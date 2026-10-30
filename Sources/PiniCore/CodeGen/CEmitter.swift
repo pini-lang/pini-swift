@@ -438,10 +438,19 @@ final class CFunctionEmitter {
     private let paramLocals: [String: String]
     /// 持有者账本：每层一个帧，与 `emitBlock` 同序压栈。块尾按逆序释放，`return` / `break` / `continue` 各发一份。
     private var releaseFrames: [[ReleaseEntry]] = []
+    /// 每个打开作用域的 defer 体，与释放帧同序压栈。块尾按后进先出重放，终止边各发一份副本。
+    private var deferFrames: [[IRBlock]] = []
+    /// 正在重放 defer 体。⛔ 重放期间的终止边（`defer` 体里写 `return`）不再触发重放 ——
+    /// 否则同一帧被逐层再进一次，产物还没写出，编译器先栈溢出。
+    private var isReplayingDefers = false
 
-    /// 本层新分配、尚无持有者的临时箱 / 句柄：C 局部名 → 类型。字符串族在 C 侧没有产出点，
-    /// 故账上只有名义箱与容器句柄。入账：构造点；出账：被持有位置接管，或在调用点 / 打印点就地还。
+    /// 本层新分配、尚无持有者的临时箱 / 句柄：C 局部名 → 类型。入账：构造点；出账：被持有位置接管，
+    /// 或在调用点 / 打印点就地还。
     private var ownedBoxes: [String: IRType] = [:]
+
+    /// 本层亲手分配、尚无持有者的字符串临时值（C 局部名）。只有拼接与插值的产出点入账；
+    /// ⛔ 借来的值（常量串 / 变量槽 / 形参）不入账 —— 账本正是把两者分开，错判即提前释放。
+    private var ownedStrings: Set<String> = []
 
     private struct ReleaseEntry {
         let local: String
@@ -459,6 +468,8 @@ final class CFunctionEmitter {
         let continueLabel: String?
         /// 本帧入栈时的账本深度：跳出本帧要释放 `releaseFrames[releaseBase...]`。
         let releaseBase: Int
+        /// 本帧入栈时的 defer 帧深度：跳出本帧要把 `deferFrames[deferBase...]` 的体重放一遍。
+        let deferBase: Int
     }
 
     init(function: IRFunction, scope: CModuleScope, programBase: String?) {
@@ -513,6 +524,8 @@ final class CFunctionEmitter {
     /// 发射一个语句块：压入名字作用域与释放帧，块尾按落空 / 终止分别收口。
     /// 顶层块（`releaseBase == 0`）的持有者归函数出口处理，⛔ 不在此释放 —— 那样 `return` 那条边会双份。
     private func emitBlock(_ block: IRBlock) throws {
+        let deferBase = deferFrames.count
+        deferFrames.append([])
         let releaseBase = releaseFrames.count
         releaseFrames.append([])
         scopes.append([:])
@@ -523,13 +536,36 @@ final class CFunctionEmitter {
         if terminated {
             // `return` / `break` / `continue` 已各发过一份它所跳过的帧；本块尾部不可达，只丢帧。
             if releaseBase > 0 { releaseFrames.removeLast() }
+            deferFrames.removeLast()
         } else {
+            // defers 排在释放之前：与 LLVM 侧逐句同序 —— 先跑完本作用域的 defer，再交还本块的持有者。
+            try emitDefers(downTo: deferBase)
             if releaseBase > 0 {
                 try emitReleases(downTo: releaseBase)
                 releaseFrames.removeLast()
             }
+            deferFrames.removeLast()
         }
         scopes.removeLast()
+    }
+
+    /// 把一个作用域的 defer 体按后进先出逐条重放：内层帧在先、帧内逆序，与 LLVM 侧 `flushDefers` 同序。
+    /// ⛔ 只重放不弹栈 —— 帧的归属仍留在 `emitBlock`，每条终止边各发一份副本。
+    private func emitDefers(downTo base: Int) throws {
+        guard base < deferFrames.count, !isReplayingDefers else { return }
+        let wasTerminated = terminated
+        isReplayingDefers = true
+        terminated = false
+        for frame in deferFrames[base...].reversed() {
+            for body in frame.reversed() {
+                for statement in body.statements {
+                    if terminated { break }
+                    try emitStmt(statement)
+                }
+            }
+        }
+        isReplayingDefers = false
+        terminated = wasTerminated
     }
 
     /// 一个持有者在退出 / 被覆盖时要调的释放；nil = 该类型不参与计数。
@@ -605,9 +641,30 @@ final class CFunctionEmitter {
     /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。⛔ 借用值不在账里 ⇒ 无操作。
     /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
     private func emitOwnedTemporaryRelease(_ text: String) throws {
+        if ownedStrings.remove(text) != nil {
+            writer.line("bk_str_release(\(text));")
+            return
+        }
         guard let type = ownedBoxes.removeValue(forKey: text) else { return }
         guard let symbol = try releaseSymbol(for: type) else { return }
         writer.line("\(symbol)(\(text));")
+    }
+
+    /// 就地还掉一个字符串临时值 —— 拼接的两个操作数与内建实参。⛔ 只在账上的才发调用：
+    /// 常量串与槽值都在账外，错发一次就是读已回收内存。
+    private func emitOwnedStringRelease(_ text: String) {
+        guard ownedStrings.remove(text) != nil else { return }
+        writer.line("bk_str_release(\(text));")
+    }
+
+    /// 记下一个本层亲手分配、当前持有 +1 的字符串。只由产出点（拼接 / 插值）调用。
+    private func adoptOwnedString(_ local: String) {
+        ownedStrings.insert(local)
+    }
+
+    /// 交出字符串的所有权：价值已被持有位置接管，此后由那里释放。与就地还互斥，一个值只走一条。
+    private func claimOwnedString(_ text: String) {
+        ownedStrings.remove(text)
     }
 
     /// 调用点的收尾：实参一律**借用**。被调方既不 retain 也不在出口释放（形参不登记），
@@ -674,10 +731,7 @@ final class CFunctionEmitter {
             try emitIf(label: label, condition: condition, thenBody: thenBody, elseBody: elseBody)
 
         case .whileStmt(let condition, let body, let step):
-            guard step == nil else {
-                throw CBackendError(message: "C 后端尚未支持：带 step 块的 while")
-            }
-            try emitWhile(condition: condition, body: body)
+            try emitWhile(condition: condition, body: body, step: step)
 
         case .forInStmt(let pattern, let elementTypes, let kind, let iterable, let body, let step):
             try emitForIn(
@@ -688,6 +742,8 @@ final class CFunctionEmitter {
             try emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
 
         case .returnStmt(let value):
+            // defers 先跑、返回值后求值：与 LLVM 侧同序 —— defer 体改过的变量，返回值读到的就是改后的值。
+            try emitDefers(downTo: 0)
             if let value {
                 let lowered = try emitExpr(value)
                 // 与 LLVM 侧同规：交出去的值先按值语义落定（结构体别名拷新箱），再释放、再 ret。
@@ -716,6 +772,10 @@ final class CFunctionEmitter {
             writer.line("bk_panic(\(constant));")
             terminated = true
 
+        case .deferStmt(let body):
+            // 只登记，不发射：体在离开本作用域时按后进先出重放（`emitDefers`）。
+            deferFrames[deferFrames.count - 1].append(body)
+
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             try emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
 
@@ -733,6 +793,7 @@ final class CFunctionEmitter {
 
         case .breakStmt(let depth):
             let frame = try frame(at: depth)
+            try emitDefers(downTo: frame.deferBase)
             try emitReleases(downTo: frame.releaseBase)
             if frame.isLoop && depth == 1 {
                 writer.line("break;")
@@ -745,6 +806,7 @@ final class CFunctionEmitter {
 
         case .continueStmt(let depth):
             let frame = try frame(at: depth)
+            try emitDefers(downTo: frame.deferBase)
             try emitReleases(downTo: frame.releaseBase)
             if frame.isLoop && depth == 1 && frame.continueLabel == nil {
                 writer.line("continue;")
@@ -777,7 +839,7 @@ final class CFunctionEmitter {
                 || scan(elseBody, nesting: 0, direct: true).brk
             let pushed = Frame(
                 exit: exit, header: exit, isLoop: false, needsExit: needsExit, needsHeader: false,
-                continueLabel: nil, releaseBase: releaseFrames.count)
+                continueLabel: nil, releaseBase: releaseFrames.count, deferBase: deferFrames.count)
             frames.append(pushed)
             frame = pushed
         }
@@ -800,19 +862,22 @@ final class CFunctionEmitter {
         terminated = false
     }
 
-    /// `while cond: body`。无标号需求时原样落 `while`，产物最好读；
-    /// 一旦有内层 `break`/`continue` 指向它，就换成 `for (;;)`,以便开出显式标号 ——
-    /// C 没有给条件挂标号的语法，`continue 标签` 要靠 `goto` 回到循环头。
-    private func emitWhile(condition: IRExpr, body: IRBlock) throws {
+    /// `while cond: body [step: block]`。带 step 时它坐在体与回边之间：体内无标签的 `continue` 落到 step 入口，
+    /// 两块的 `break` 都直接跳出并跳过 step。⛔ 有内层跳出指向本循环时换成 `for (;;)`，C 没给条件挂标号的语法。
+    private func emitWhile(condition: IRExpr, body: IRBlock, step: IRBlock?) throws {
         let info = scan(body, nesting: 0, direct: false)
+        let stepInfo = scan(step, nesting: 0, direct: false)
         let id = nextLabelSeq()
         let exit = "end_\(id)"
         let header = "cont_\(id)"
+        let stepLabel = "while_step_\(id)"
+        let stepEnd = "while_step_end_\(id)"
         frames.append(
             Frame(
                 exit: exit, header: header, isLoop: true,
-                needsExit: info.brk, needsHeader: info.cont, continueLabel: nil,
-                releaseBase: releaseFrames.count))
+                needsExit: info.brk || stepInfo.brk, needsHeader: info.cont,
+                continueLabel: step != nil ? stepLabel : nil,
+                releaseBase: releaseFrames.count, deferBase: deferFrames.count))
         let cond = bareCondition(try emitExpr(condition))
         if info.cont {
             writer.open("for (;;)")
@@ -825,9 +890,22 @@ final class CFunctionEmitter {
             writer.open("while (\(cond))")
         }
         try emitBlock(body)
+        if let step {
+            // 体的终止不封住 step：它还有 `continue` 那条入口，故照样落标号并重放。
+            terminated = false
+            writer.line("\(stepLabel): ;")
+            frames.append(
+                Frame(
+                    exit: exit, header: header, isLoop: true, needsExit: stepInfo.brk,
+                    needsHeader: true, continueLabel: stepEnd,
+                    releaseBase: releaseFrames.count, deferBase: deferFrames.count))
+            try emitBlock(step)
+            frames.removeLast()
+            writer.line("\(stepEnd): ;")
+        }
         writer.close()
         frames.removeLast()
-        if info.brk { writer.line("\(exit): ;") }
+        if info.brk || stepInfo.brk { writer.line("\(exit): ;") }
         terminated = false
     }
 
@@ -993,7 +1071,40 @@ final class CFunctionEmitter {
         case .arrayJoin(let receiver, let separator):
             return try emitArrayJoin(receiver: receiver, separator: separator)
 
+        case .stringConcat(let lhs, let rhs):
+            return try emitStringConcat(lhs: lhs, rhs: rhs)
+
+        case .interpString(let parts):
+            return try emitInterpString(parts: parts)
+
+        case .stringCase(let isUpper, let receiver):
+            return try emitStringCase(isUpper: isUpper, receiver: receiver)
+
+        case .stringContains(let receiver, let needle):
+            return try emitStringContains(receiver: receiver, needle: needle)
+
+        case .stringSubstring(let receiver, let start, let end):
+            return try emitStringSubstring(receiver: receiver, start: start, end: end)
+
+        case .stringSplit(let receiver, let delim, let type):
+            return try emitStringSplit(receiver: receiver, delim: delim, type: type)
+
+        case .fileWrite(let path, let content):
+            return try emitFileWrite(path: path, content: content, append: false)
+
+        case .fileAppend(let path, let content):
+            return try emitFileWrite(path: path, content: content, append: true)
+
+        case .fileRead(let path):
+            return try emitFileRead(path: path)
+
         case .binary(let op, let lhs, let rhs, _):
+            // min/max 是 I32 上的选择，不是运算符：两侧各求值一次，再比一次 —— 与 LLVM 的 select 同形。
+            if op == .minOf || op == .maxOf {
+                let left = try materialize(try emitExpr(lhs), type: .i32)
+                let right = try materialize(try emitExpr(rhs), type: .i32)
+                return "(\(left) \(op == .minOf ? "<" : ">") \(right) ? \(left) : \(right))"
+            }
             let left = try emitExpr(lhs)
             let right = try emitExpr(rhs)
             guard let spelling = Self.binarySpelling(op) else {
@@ -1002,6 +1113,11 @@ final class CFunctionEmitter {
             return "((\(left)) \(spelling) (\(right)))"
 
         case .unary(let op, let operand, _):
+            if op == .abs {
+                // `sub 0, x` 同形：负值取反走无符号，`-INT_MIN` 在 C 里是未定义、在 LLVM 里是回绕。
+                let value = try materialize(try emitExpr(operand), type: .i32)
+                return "(\(value) < 0 ? (int32_t)(0u - (uint32_t)(\(value))) : \(value))"
+            }
             let value = try emitExpr(operand)
             switch op {
             case .negate: return "(-(\(value)))"
@@ -1623,7 +1739,7 @@ final class CFunctionEmitter {
             Frame(
                 exit: exit, header: header, isLoop: true, needsExit: info.brk || stepInfo.brk,
                 needsHeader: true, continueLabel: step != nil ? stepLabel : header,
-                releaseBase: releaseFrames.count))
+                releaseBase: releaseFrames.count, deferBase: deferFrames.count))
 
         writer.open("for (;;)")
         writer.line("if (!(\(index) < \(count))) break;")
@@ -1653,7 +1769,8 @@ final class CFunctionEmitter {
             frames.append(
                 Frame(
                     exit: exit, header: header, isLoop: true, needsExit: stepInfo.brk,
-                    needsHeader: true, continueLabel: header, releaseBase: releaseFrames.count))
+                    needsHeader: true, continueLabel: header,
+                    releaseBase: releaseFrames.count, deferBase: deferFrames.count))
             try emitBlock(step)
             frames.removeLast()
         }
@@ -1675,6 +1792,157 @@ final class CFunctionEmitter {
         }
     }
 
+    // MARK: - 字符串族与文件 IO
+
+    /// `s1 + s2`：两次 `strlen` 后分配一条带计数头的新串，`strcpy` + `strcat` 拼进去 —— 与 LLVM 侧同形。
+    /// 两个操作数到此用完（只被读过，没有持有者接管），在账上的就地还；新串入账，等持有位置接管。
+    private func emitStringConcat(lhs: IRExpr, rhs: IRExpr) throws -> String {
+        let left = try emitExpr(lhs)
+        let right = try emitExpr(rhs)
+        let buffer = "t_\(nextTempSeq())"
+        writer.line(
+            "char *\(buffer) = bk_str_alloc("
+                + "(int64_t)strlen(\(left)) + (int64_t)strlen(\(right)) + 1);")
+        writer.line("strcpy(\(buffer), \(left));")
+        writer.line("strcat(\(buffer), \(right));")
+        emitOwnedStringRelease(left)
+        emitOwnedStringRelease(right)
+        adoptOwnedString(buffer)
+        return buffer
+    }
+
+    /// `"x=\(e)"`：片段各自转成 C 串，`strcat` 进栈缓冲；结果要离开本帧 ⇒ 交出前复制到堆并入账。
+    private func emitInterpString(parts: [IRExpr]) throws -> String {
+        let buffer = "c_\(nextTempSeq())"
+        writer.line("char \(buffer)[4096];")
+        writer.line("\(buffer)[0] = 0;")
+        for part in parts {
+            let piece = try emitStringPiece(part)
+            writer.line("strcat(\(buffer), \(piece));")
+        }
+        let copy = "t_\(nextTempSeq())"
+        writer.line("char *\(copy) = bk_str_dup(\(buffer));")
+        adoptOwnedString(copy)
+        return copy
+    }
+
+    /// 一个插值片段的 C 串。字符串面直接给；别的类型走 `stringify`（与 print 同一套渲染规则）。
+    private func emitStringPiece(_ part: IRExpr) throws -> String {
+        guard let type = Self.type(of: part) else {
+            throw CBackendError(message: "C 后端：插值片段没有携带类型，无法选定渲染")
+        }
+        let text = try emitExpr(part)
+        switch type {
+        case .string, .char: return text
+        default: return try stringify(text, type: type)
+        }
+    }
+
+    /// 值 → 文本，镜像 LLVM 侧 `stringifyValue`：标量落一块栈缓冲，数组按 `[a, b]` 递归。
+    /// ⛔ 规则必须与 `emitValuePrint` 一致，否则插值与 print 会给出两种文本。
+    private func stringify(_ text: String, type: IRType) throws -> String {
+        switch type {
+        case .i32:
+            let buffer = "c_\(nextTempSeq())"
+            writer.line("char \(buffer)[32];")
+            writer.line("snprintf(\(buffer), 32, \"%d\", \(text));")
+            return buffer
+        case .f64:
+            // 运行时段渲染，与 `print(F64)` 同一个入口 ⇒ 定点 / 指数切换规则不会分叉。
+            let rendered = "t_\(nextTempSeq())"
+            writer.line("char *\(rendered) = bk_double_to_string(\(text));")
+            return rendered
+        case .boolean:
+            return "((\(text)) ? \"true\" : \"false\")"
+        case .string, .char:
+            return text
+        case .array(let elementType):
+            let handle = try materialize(text, type: type)
+            let buffer = "c_\(nextTempSeq())"
+            writer.line("char \(buffer)[4096];")
+            writer.line("\(buffer)[0] = 0;")
+            writer.line("strcat(\(buffer), \(scope.registerString("[")));")
+            let count = "t_\(nextTempSeq())"
+            writer.line("int32_t \(count) = bk_array_len(\(handle));")
+            let index = "i_\(nextTempSeq())"
+            writer.open("for (int32_t \(index) = 0; \(index) < \(count); \(index) = \(index) + 1)")
+            writer.open("if (\(index) > 0)")
+            writer.line("strcat(\(buffer), \(scope.registerString(", ")));")
+            writer.close()
+            let box = "b_\(nextTempSeq())"
+            writer.line("void *\(box) = bk_array_get(\(handle), \(index));")
+            let piece = try stringify(try boxLoad(box, type: elementType), type: elementType)
+            writer.line("strcat(\(buffer), \(piece));")
+            writer.close()
+            writer.line("strcat(\(buffer), \(scope.registerString("]")));")
+            return buffer
+        default:
+            throw CBackendError(
+                message: "C 后端尚未支持的插值片段类型：\(CTypeMap.label(of: type))")
+        }
+    }
+
+    /// `s.upper()` / `s.lower()`：Unicode 语义在运行时段（逐字节 `toupper` 在非 ASCII 上就错）。
+    private func emitStringCase(isUpper: Bool, receiver: IRExpr) throws -> String {
+        let source = try emitExpr(receiver)
+        let symbol = isUpper ? "bk_string_upper" : "bk_string_lower"
+        let converted = "t_\(nextTempSeq())"
+        writer.line("char *\(converted) = \(symbol)(\(source));")
+        return converted
+    }
+
+    /// `s.contains(needle)`：字素级判定在运行时段，回 i32 ⇒ 这里收敛成布尔表达式（条件里不求值第二次）。
+    private func emitStringContains(receiver: IRExpr, needle: IRExpr) throws -> String {
+        let haystack = try emitExpr(receiver)
+        let needleText = try emitExpr(needle)
+        let hit = "t_\(nextTempSeq())"
+        writer.line("int32_t \(hit) = bk_string_contains(\(haystack), \(needleText));")
+        return "(\(hit) != 0)"
+    }
+
+    /// `s.substring(start, end)`：第 2 个参数是**绝对下标**；负值尾计数与双端夹取都在运行时段。
+    private func emitStringSubstring(receiver: IRExpr, start: IRExpr, end: IRExpr) throws -> String {
+        let source = try emitExpr(receiver)
+        let startText = try emitExpr(start)
+        let endText = try emitExpr(end)
+        let slice = "t_\(nextTempSeq())"
+        writer.line(
+            "char *\(slice) = bk_substring(\(source), (int32_t)(\(startText)), (int32_t)(\(endText)));")
+        return slice
+    }
+
+    /// `s.split(sep)`：切出真的 `Array<String>`；空定界符逐字素、省略空子串都由运行时段定。
+    private func emitStringSplit(receiver: IRExpr, delim: IRExpr, type: IRType) throws -> String {
+        guard case .array = type else {
+            throw CBackendError(
+                message: "C 后端：split 的结果类型不是 Array（\(CTypeMap.label(of: type))）")
+        }
+        let source = try emitExpr(receiver)
+        let delimiter = try emitExpr(delim)
+        let handle = "t_\(nextTempSeq())"
+        writer.line("void *\(handle) = bk_string_split(\(source), \(delimiter));")
+        return handle
+    }
+
+    /// `writeFile` / `appendFile`：整份内容一次交给运行时段，失败即陷阱。两个实参都是借用，
+    /// 且都不产生值 —— 返回空串，调用方据此不再补分号。
+    private func emitFileWrite(path: IRExpr, content: IRExpr, append: Bool) throws -> String {
+        let pathText = try emitExpr(path)
+        let contentText = try emitExpr(content)
+        writer.line("\(append ? "bk_append_file" : "bk_write_file")(\(pathText), \(contentText));")
+        return ""
+    }
+
+    /// `readFile`：整份读回，NULL 即陷阱 —— 消息与出口同 LLVM 侧，路径不进文案。
+    private func emitFileRead(path: IRExpr) throws -> String {
+        let pathText = try emitExpr(path)
+        let content = "t_\(nextTempSeq())"
+        writer.line("char *\(content) = bk_read_file(\(pathText));")
+        let message = scope.registerString("Pini runtime error: readFile could not read the file")
+        writer.line("if (\(content) == NULL) { bk_panic(\(message)); }")
+        return content
+    }
+
     // MARK: - 所有权镜像
 
     /// 该表达式节点给的是已有箱的别名（结构体要按值拷贝），还是一个新箱的所有权（直接接管）。
@@ -1692,6 +1960,7 @@ final class CFunctionEmitter {
         guard Self.yieldsAlias(node) else {
             /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它。
             claimOwnedBox(text)
+            claimOwnedString(text)
             return text
         }
         if case .nominal(let name, let isObject) = type, !isObject,
@@ -1943,6 +2212,11 @@ final class CFunctionEmitter {
         case .optionalConstruct(_, _, let type): return type
         case .optionalGet(_, _, let type): return type
         case .arrayJoin: return .string
+        case .stringConcat, .interpString, .stringCase, .stringSubstring: return .string
+        case .stringContains: return .boolean
+        case .stringSplit(_, _, let type): return type
+        case .fileRead: return .string
+        case .fileWrite, .fileAppend: return .i32
         case .assertCall: return .i32
         case .printCall, .printMulti: return .i32
         default: return nil

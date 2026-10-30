@@ -40,11 +40,28 @@ struct CEmitterTests {
 
     @Test("未支持的语句抛错而不是降级")
     func unsupportedStatementThrows() {
-        let body = IRBlock([.deferStmt(body: IRBlock([.returnStmt(value: nil)]))])
+        let body = IRBlock([
+            .tryStmt(
+                operand: .intConst(value: 0, type: .i32), errorVar: "e",
+                handler: IRBlock([]), okTarget: nil, type: .i32)
+        ])
         let function = IRFunction(name: "main", params: [], returnType: nil, body: body)
         #expect(throws: CBackendError.self) {
             _ = try CEmitter().emit(module: IRModule(functions: [function]), programName: "t")
         }
+    }
+
+    /// `defer` 体里的 `return` 不回头重放自己那一帧：少了这道闸，重放与终止边会互相再进，
+    /// 编译期栈溢出 —— 那不是报错，是把编译器打崩。
+    @Test("defer 体里的 return 不会自递归重放")
+    func deferBodyWithReturnTerminates() throws {
+        let body = IRBlock([
+            .deferStmt(body: IRBlock([.returnStmt(value: nil)])),
+            .returnStmt(value: nil),
+        ])
+        let function = IRFunction(name: "main", params: [], returnType: nil, body: body)
+        let files = try CEmitter().emit(module: IRModule(functions: [function]), programName: "t")
+        #expect(files[0].contents.contains("return 0;"))
     }
 
     @Test("无 main 的模块被拒绝")

@@ -22,7 +22,8 @@ struct CBackendParityTests {
     }
 
     /// 语料覆盖已开出来的类型面与控件流面：字符串 · 整数 · 分支 · 循环 · 跨层跳出（要 `goto`）·
-    /// 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配 · 容器三族与 Optional · for-in。全部以 `main` 为入口。
+    /// 多函数递归 · 布尔与浮点 · 陷阱 · 名义类型与枚举匹配 · 容器三族与 Optional · for-in ·
+    /// defer 与 while step · 字符串拼接 / 插值 / 内建 · 数学内建。全部以 `main` 为入口。
     private static let corpora: [Corpus] = [
         Corpus(
             label: "问候",
@@ -329,6 +330,81 @@ struct CBackendParityTests {
             """#,
             expected: "[1, 2, 3]\nab-cd-ef\n"
         ),
+        Corpus(
+            label: "defer 与 while step",
+            source: #"""
+            main|func() -> ():
+                var result = ""
+                var i = 0
+                while i < 2:
+                    defer result = result + "d"
+                    result = result + "b"
+                    i = i + 1
+                print(result)
+                var k = 0
+                while k < 3:
+                    print(k)
+                    k = k + 1
+                step:
+                    print("s")
+                return
+            """#,
+            expected: "bdbd\n0\ns\n1\ns\n2\ns\n"
+        ),
+        /// 提前释放的钉子：拼接结果被槽接管后再读，也经别名 `u` 在原件被覆盖后仍可读。
+        /// 若账本在交出所有权时又发一次 `bk_str_release`，两行都会变成乱码或崩溃。
+        Corpus(
+            label: "字符串拼接与覆盖",
+            source: #"""
+            main|func() -> ():
+                var s = "x"
+                s = s + "y"
+                print(s)
+                var t = "a" + "b"
+                print(t)
+                print(t + "!")
+                var u = s
+                s = "z"
+                print(u)
+                print(s)
+                return
+            """#,
+            expected: "xy\nab\nab!\nxy\nz\n"
+        ),
+        Corpus(
+            label: "插值与容器片段",
+            source: #"""
+            main|func() -> ():
+                var name = "Pini"
+                var n = 3
+                print("hi \(name) n=\(n)")
+                print("arr=\([1, 2]) len=\(len(name))")
+                return
+            """#,
+            expected: "hi Pini n=3\narr=[1, 2] len=4\n"
+        ),
+        Corpus(
+            label: "字符串内建与数学内建",
+            source: #"""
+            main|func() -> ():
+                var s = "Hello"
+                print(s.upper())
+                print(s.lower())
+                print(s.contains("ell"))
+                print(s.contains("zz"))
+                print(s.substring(1, 3))
+                print(s.split("l"))
+                print(abs(-7))
+                print(min(4, 9))
+                print(max(4, 9))
+                print(sqrt(9.0))
+                print(sin(0.0))
+                print(cos(0.0))
+                print(tan(0.0))
+                return
+            """#,
+            expected: "HELLO\nhello\ntrue\nfalse\nel\n[He, o]\n7\n4\n9\n3.0\n0.0\n1.0\n0.0\n"
+        ),
     ]
 
     @Test("每条语料的 C 产物跑出的字节与手写期望相同")
@@ -440,8 +516,38 @@ struct CBackendParityTests {
         #expect(text.contains("bk_array_set"), "下标写没有走运行时的分裂通道")
     }
 
-    // MARK: - 驱动
+    /// 字符串账本的漏账钉子：拼接出的临时串被消费后必须回到零 —— 中间结果在下一段拼接后还、
+    /// 末值在打印点还。少一条只是漏内存，产物照跑、输出全对，只能从源里看。
+    @Test("字符串临时值在消费点释放")
+    func stringTemporariesAreReleased() throws {
+        guard let cli = cliPath() else { return }
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let fixture = scratch.appendingPathComponent("fixture.pini")
+        let source = #"""
+        拼|func(s: String,) -> ():
+            print((s + "b") + "c")
+            return
 
+        main|func() -> ():
+            拼("a")
+            return
+        """#
+        try source.write(to: fixture, atomically: true, encoding: .utf8)
+        let outDir = scratch.appendingPathComponent("cbuild")
+
+        let emit = try launch(
+            cli, ["build", fixture.path, "--c-backend", "--emit-c", "--out", outDir.path])
+        #expect(emit.status == 0, "--emit-c 失败：\(emit.stderr)")
+
+        let text = try String(
+            contentsOf: outDir.appendingPathComponent("fixture.c"), encoding: .utf8)
+        #expect(text.contains("bk_str_alloc"), "拼接没有走带计数头的分配器，release 会静默变成无操作")
+        let releases = text.components(separatedBy: "bk_str_release(").count - 1
+        #expect(releases == 2, "两条临时串（中间结果 + 末值）应各还一份，实际发了 \(releases) 条")
+    }
+
+    // MARK: - 驱动
     /// 发源 → cc → 跑产物。三步都用 `--emit-c` 落出的那份 `.c`，中途不重新发射。
     private func runThroughCBackend(
         _ corpus: Corpus, cli: String, cc: String

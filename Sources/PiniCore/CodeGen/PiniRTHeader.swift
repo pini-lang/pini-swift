@@ -79,6 +79,21 @@ void bk_set_destroy(void *set);
 // 字符串的长度按字素簇计（与解释器的 `text.count` 同一定义），不在 C 侧按字节数。
 int32_t bk_string_count(const char *text);
 
+// 抬串一族：返回值都是带计数头的新分配串（`bk_str_alloc` 那块），释放走 `bk_str_release`。
+// 语义（字素簇 · Unicode 大小写 · 负值尾计数）一律在运行时段，C 侧只搬运。
+char *bk_str_alloc(int64_t byte_count);
+char *bk_string_upper(const char *text);
+char *bk_string_lower(const char *text);
+int32_t bk_string_contains(const char *haystack, const char *needle);
+char *bk_substring(const char *text, int32_t start, int32_t end);
+// 切出的数组与 `bk_array_create` 同族：元素是 8 字节 C 串槽（tag 3），句柄走 `bk_array_destroy`。
+void *bk_string_split(const char *text, const char *delim);
+
+// 整文件 IO：读失败返回 NULL（发射侧的陷阱判据）；写与追加不返回值，失败即 `bk_panic`。
+char *bk_read_file(const char *path);
+void bk_write_file(const char *path, const char *content);
+void bk_append_file(const char *path, const char *content);
+
 #endif
 """#
 }
