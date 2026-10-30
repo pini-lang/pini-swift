@@ -559,10 +559,11 @@ public struct IRBlock: Equatable, ExpressibleByArrayLiteral, RandomAccessCollect
 
 public indirect enum IRStmt: Equatable {
     /// Variable slot. Emitting allocates the slot; a non-nil initializer
-    /// stores into it right after allocation.
-    case allocVar(name: String, type: IRType, mutable: Bool, initializer: IRExpr?)
-    /// Store into an existing variable; `type` is the declared variable type.
-    case storeVar(name: String, type: IRType, value: IRExpr)
+    /// stores into it right after allocation. `adopt` is the initializer's receive action.
+    case allocVar(name: String, type: IRType, mutable: Bool, initializer: IRExpr?, adopt: IRAdopt)
+    /// Store into an existing variable; `type` is the declared variable type. `releaseOld` says the slot
+    /// already holds a share, so the old value is dropped after the new one stands.
+    case storeVar(name: String, type: IRType, value: IRExpr, adopt: IRAdopt, releaseOld: Bool)
     /// `[label|] if cond: then [else: else]`. `label` makes this an interruptible frame: `break <label>`
     /// may leave the `if` block, while `continue` accepts loop labels only. The label text is never read
     /// at run time — only the resolved depth travels, and `label != nil` is what back ends test.
@@ -582,8 +583,8 @@ public indirect enum IRStmt: Equatable {
         body: IRBlock,
         step: IRBlock?
     )
-    /// Slice set: single-value return; nil for void functions.
-    case returnStmt(value: IRExpr?)
+    /// Slice set: single-value return; nil for void functions. `adopt` is the returned value's receive action.
+    case returnStmt(value: IRExpr?, adopt: IRAdopt)
     case exprStmt(IRExpr)
     /// `defer stmt`: the wrapped statements run LIFO when the enclosing block scope exits (each
     /// loop-iteration end included). A block's scope closes on every exit, so `break` and `return` run
@@ -595,8 +596,8 @@ public indirect enum IRStmt: Equatable {
     case tryStmt(operand: IRExpr, errorVar: String, handler: IRBlock, okTarget: String?, type: IRType)
     /// Subscript store `container[index] = value`. The container may be a nested subscript chain (the
     /// emitter walks the COW split chain); compound assignment (`a[i] += k`) lowers to read-modify-write
-    /// with the same node. `elementType` is the boxed element's static type.
-    case subscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType)
+    /// with the same node. `elementType` is the boxed element's static type; `adopt` its receive action.
+    case subscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType, adopt: IRAdopt)
     /// `break`, with the labeled form. `depth` = how many enclosing loops to unwind (1 = innermost);
     /// labeled `break outer` lowers to the depth the lowerer resolved from the label stack. An unresolvable
     /// target lowers to `panicStmt` instead — the interpreter errors at the top level, so this is fail-loud.
@@ -614,8 +615,9 @@ public indirect enum IRStmt: Equatable {
     /// the same node. Unmatched values panic at runtime (interpreter matchNotExhaustive parity).
     case matchStmt(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType)
     /// Nominal field store `base.field = value` (G3). GEP + store through
-    /// the base pointer; objects offset past the refcount header.
-    case fieldStore(base: IRExpr, field: String, value: IRExpr, fieldType: IRType)
+    /// the base pointer; objects offset past the refcount header. `releaseOld` mirrors `storeVar`:
+    /// a field is a holder, so an overwrite drops what it held.
+    case fieldStore(base: IRExpr, field: String, value: IRExpr, fieldType: IRType, adopt: IRAdopt, releaseOld: Bool)
     /// `capture name`: a marker statement inside a closure body. The capture itself resolves at the
     /// closure-literal creation point, so this lowers to nothing — it exists so the statement kind is
     /// accepted inside lowered bodies rather than gated.

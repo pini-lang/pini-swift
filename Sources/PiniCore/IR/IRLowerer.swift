@@ -1819,6 +1819,8 @@ public enum IRLowerer {
         // 独立实现 —— 必须对同一条规则给出同一个答案，否则就回到两层口径差（见 `allowedAwaitLocation`）。
         context.bodyDepth += 1
         defer { context.bodyDepth -= 1 }
+        context.ownedScopes.append([])
+        defer { context.ownedScopes.removeLast() }
         var statements: [IRStmt] = []
         var positions: [SourceLocation] = []
         for statement in block.statements {
@@ -1913,7 +1915,9 @@ public enum IRLowerer {
                 return [
                     .fieldStore(
                         base: loweredBase.node, field: fieldName,
-                        value: loweredValue.node, fieldType: fieldType
+                        value: loweredValue.node, fieldType: fieldType,
+                        adopt: fieldType.adoption(of: loweredValue.node),
+                        releaseOld: fieldType.holdsAShare
                     )
                 ]
             }
@@ -1928,7 +1932,13 @@ public enum IRLowerer {
             }
             let lowered = try lowerExpr(value, expected: varType, into: &context)
             try requireAssignable(lowered.type, to: varType, at: location)
-            return [.storeVar(name: name, type: varType, value: lowered.node)]
+            return [
+                .storeVar(
+                    name: name, type: varType, value: lowered.node,
+                    adopt: varType.adoption(of: lowered.node),
+                    releaseOld: context.isOwned(name)
+                )
+            ]
 
         case .returnStatement(let value, let location):
             if let value = value {
@@ -1937,7 +1947,7 @@ public enum IRLowerer {
                 // non-void returns are gated — the type-erased err word cannot flow out as a typed payload without guessing.
                 if case .identifier(let name, _) = value, context.errorBindings.contains(name) {
                     if context.returnType == nil {
-                        return [.returnStmt(value: nil)]
+                        return [.returnStmt(value: nil, adopt: .none)]
                     }
                     throw unsupported(
                         "returning a bare error binding from '\(context.functionName)' is gated this grid: the interpreter returns the raw error payload (unboxed), which is a registered semantic hole",
@@ -1952,7 +1962,7 @@ public enum IRLowerer {
                 }
                 let lowered = try lowerExpr(value, expected: returnType, into: &context)
                 try requireAssignable(lowered.type, to: returnType, at: location)
-                return [.returnStmt(value: lowered.node)]
+                return [.returnStmt(value: lowered.node, adopt: returnType.adoption(of: lowered.node))]
             }
             guard context.returnType == nil else {
                 throw unsupported(
@@ -1960,7 +1970,7 @@ public enum IRLowerer {
                     at: location
                 )
             }
-            return [.returnStmt(value: nil)]
+            return [.returnStmt(value: nil, adopt: .none)]
 
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, let label, _):
             let cond = try lowerExpr(condition, expected: .boolean, into: &context)
@@ -2153,12 +2163,19 @@ public enum IRLowerer {
         // Environment). `_` placeholders bind nothing.
         let boundNames = pattern.enumerated().filter { $0.element != "_" }.map { $0.element }
         let previousTypes = boundNames.map { context.variableTypes[$0] }
+        let previousOwnership = boundNames.map { context.isOwned($0) }
         for (position, name) in pattern.enumerated() where name != "_" {
             context.variableTypes[name] = elementTypes[position]
+            context.declareOwned(name)
         }
         defer {
             for (index, name) in boundNames.enumerated() {
                 context.variableTypes[name] = previousTypes[index]
+                if previousOwnership[index] {
+                    context.declareOwned(name)
+                } else {
+                    context.retractOwned(name)
+                }
             }
         }
         let bodyStmts = try lowerBlock(body, into: &context)
@@ -2234,11 +2251,13 @@ public enum IRLowerer {
                 op: op, target: target, at: unaryLocation, into: &context
             )
             context.variableTypes[name] = lowered.type
+            context.declareOwned(name)
             return [
                 lowered.statement,
                 .allocVar(
                     name: name, type: lowered.type, mutable: isMutable,
-                    initializer: lowered.value
+                    initializer: lowered.value,
+                    adopt: lowered.type.adoption(of: lowered.value)
                 ),
             ]
         }
@@ -2264,12 +2283,13 @@ public enum IRLowerer {
             guard let okType = operandType.resultOkType else {
                 throw unsupported("try operand is not a Result", at: location)
             }
-            let alloc = IRStmt.allocVar(name: name, type: okType, mutable: isMutable, initializer: nil)
+            let alloc = IRStmt.allocVar(name: name, type: okType, mutable: isMutable, initializer: nil, adopt: .none)
             let tryStmt = try lowerTry(
                 operand: operand, errorVar: errorVar, handler: handler,
                 okTarget: name, at: location, into: &context
             )
             context.variableTypes[name] = okType
+            context.declareOwned(name)
             return [alloc, tryStmt]
         }
 
@@ -2313,12 +2333,15 @@ public enum IRLowerer {
         // The static view keeps the declared names (member reads resolve
         // against it); the slot itself stores the type computed below.
         context.variableTypes[name] = varType
+        context.declareOwned(name)
+        let storedType = slotType(declared: varType, initializer: initializerType)
         return [
             .allocVar(
                 name: name,
-                type: slotType(declared: varType, initializer: initializerType),
+                type: storedType,
                 mutable: isMutable,
-                initializer: loweredInit
+                initializer: loweredInit,
+                adopt: storedType.adoption(of: loweredInit)
             )
         ]
     }
@@ -2385,17 +2408,23 @@ public enum IRLowerer {
         }
         let tempName = "$destructure\(context.tempCounter)"
         context.tempCounter += 1
+        context.declareOwned(tempName)
         var statements: [IRStmt] = [
-            .allocVar(name: tempName, type: lowered.type, mutable: false, initializer: lowered.node)
+            .allocVar(
+                name: tempName, type: lowered.type, mutable: false, initializer: lowered.node,
+                adopt: lowered.type.adoption(of: lowered.node))
         ]
         let base = IRExpr.load(name: tempName, type: lowered.type)
         for (index, name) in names.enumerated() where name != "_" {
             context.variableTypes[name] = fieldTypes[index]
+            context.declareOwned(name)
             let element = IRExpr.tupleIndexGet(
                 base: base, index: index, type: fieldTypes[index]
             )
             statements.append(
-                .allocVar(name: name, type: fieldTypes[index], mutable: isMutable, initializer: element)
+                .allocVar(
+                    name: name, type: fieldTypes[index], mutable: isMutable, initializer: element,
+                    adopt: fieldTypes[index].adoption(of: element))
             )
         }
         return statements
@@ -4950,7 +4979,13 @@ public enum IRLowerer {
             // I32 targets accepted here the two are equal, and reading back keeps `var m = ++n` from running the
             // arithmetic twice.
             let readBack = IRExpr.load(name: name, type: varType)
-            return (.storeVar(name: name, type: varType, value: value), readBack, varType)
+            return (
+                .storeVar(
+                    name: name, type: varType, value: value,
+                    adopt: varType.adoption(of: value), releaseOld: context.isOwned(name)
+                ),
+                readBack, varType
+            )
 
         case .member(let base, let fieldName, _):
             let loweredBase = try lowerExpr(base, expected: nil, into: &context)
@@ -4977,7 +5012,8 @@ public enum IRLowerer {
             return (
                 .fieldStore(
                     base: loweredBase.node, field: fieldName,
-                    value: value, fieldType: fieldType
+                    value: value, fieldType: fieldType,
+                    adopt: fieldType.adoption(of: value), releaseOld: fieldType.holdsAShare
                 ),
                 .fieldGet(base: loweredBase.node, field: fieldName, type: fieldType),
                 fieldType
@@ -4996,7 +5032,8 @@ public enum IRLowerer {
             )
             return (
                 .subscriptStore(
-                    container: container, index: index, value: value, elementType: .i32
+                    container: container, index: index, value: value, elementType: .i32,
+                    adopt: IRType.i32.adoption(of: value)
                 ),
                 .subscriptGet(container: container, index: index, type: .i32),
                 .i32
@@ -5049,7 +5086,8 @@ public enum IRLowerer {
         try requireAssignable(loweredValue.type, to: elementType, at: location)
         return .subscriptStore(
             container: loweredContainer.node, index: loweredIndex.node,
-            value: loweredValue.node, elementType: elementType
+            value: loweredValue.node, elementType: elementType,
+            adopt: elementType.adoption(of: loweredValue.node, sharingStructs: true)
         )
     }
 
@@ -5073,7 +5111,10 @@ public enum IRLowerer {
             let combined = IRExpr.binary(
                 op: baseOp, lhs: .load(name: name, type: varType), rhs: rhs.node, type: varType
             )
-            return .storeVar(name: name, type: varType, value: combined)
+            return .storeVar(
+                name: name, type: varType, value: combined,
+                adopt: varType.adoption(of: combined), releaseOld: context.isOwned(name)
+            )
         }
         if case .subscript = left {
             let read = try lowerExpr(left, expected: nil, into: &context)
@@ -5090,7 +5131,8 @@ public enum IRLowerer {
             }
             return .subscriptStore(
                 container: containerNode, index: indexNode,
-                value: combined, elementType: read.type
+                value: combined, elementType: read.type,
+                adopt: read.type.adoption(of: combined)
             )
         }
         throw unsupported(
@@ -5752,6 +5794,27 @@ private struct FunctionContext {
     var selfTypeNameLowered: String?
     var selfIsObjectLowered: Bool = false
     var errorBindings: Set<String> = []
+
+    /// 作用域内的**持有者**名字：由 `allocVar` 或 `for` 绑定引入的局部。参数 · `match` 绑定 · `try` 的
+    /// 错误名不在此列 —— 它们借自别处，覆盖时不得释放旧值。逐块压栈以跟随遮蔽。
+    var ownedScopes: [Set<String>] = []
+
+    /// 这个名字是否由本函数的某层作用域持有（可释放）。
+    func isOwned(_ name: String) -> Bool {
+        ownedScopes.contains { $0.contains(name) }
+    }
+
+    /// 登记一个持有者；调用点在其初始化式求值**之后**，与发射层的登记时序一致。
+    mutating func declareOwned(_ name: String) {
+        if ownedScopes.isEmpty { ownedScopes.append([]) }
+        ownedScopes[ownedScopes.count - 1].insert(name)
+    }
+
+    /// 撤销本层登记（`for` 绑定用完即还时用）：只动最内层，外层同名的持有者不受影响。
+    mutating func retractOwned(_ name: String) {
+        guard !ownedScopes.isEmpty else { return }
+        ownedScopes[ownedScopes.count - 1].remove(name)
+    }
 
     /// Enclosing interruptible frames, innermost last (`nil` = unlabeled loop). Drives labeled break/continue
     /// depth resolution: a label matches the nearest enclosing frame carrying that label.

@@ -49,4 +49,50 @@ extension IRType {
         case .future, .pointer: return .inert
         }
     }
+
+    /// 这个类型的一个值落进存储点时，接收方要做的动作。三种输入决定它：目标类型（要不要占份额）·
+    /// 来源是否别名（占的话拷贝还是保留）· 其余情况移交。标量与聚合一律 `.none`，不记账。
+    /// `sharingStructs` 给容器元素用：容器元素按箱共享（保留），变量 / 字段 / 返回才拷出独立的箱。
+    public func adoption(of source: IRExpr?, sharingStructs: Bool = false) -> IRAdopt {
+        guard let source else { return .none }
+        switch ownershipClass {
+        case .inert, .aggregate: return .none
+        case .valueBox:
+            guard source.yieldsAlias else { return .take }
+            return sharingStructs ? .retain : .copyStruct
+        case .retained: return source.yieldsAlias ? .retain : .take
+        }
+    }
+
+    /// 这个类型的槽 / 字段是否握着一份份额 —— 覆盖它之前要先释放旧值。与 `adoption` 分开：
+    /// 那个说「新值怎么进来」，这个说「旧值要不要走」。
+    public var holdsAShare: Bool {
+        switch ownershipClass {
+        case .valueBox, .retained: return true
+        case .inert, .aggregate: return false
+        }
+    }
+}
+
+/// 存储点的接收动作。它由中端填、后端翻译 —— 后端不再自己判「这里该 retain 还是直接接管」。
+public enum IRAdopt: Equatable, Sendable {
+    /// 不接份额：标量 · 聚合 · 外部指针。落槽零动作。
+    case none
+    /// 移交：来源是临时值，份额直接转给存储点，零额外动作。
+    case take
+    /// 拷贝：来源是结构体别名，值语义要求拷出独立的一份。
+    case copyStruct
+    /// 保留：来源是计数族的别名，来源仍握着自己那一份。
+    case retain
+}
+
+extension IRExpr {
+    /// 这个表达式读的是别处的持有位置（别名点）：变量读 · 下标读 · 字段读 · 可空读。
+    /// 它的补集是「本次求值新造出来的值」，那类值可以把份额直接交出去。
+    public var yieldsAlias: Bool {
+        switch self {
+        case .load, .subscriptGet, .fieldGet, .optionalGet: return true
+        default: return false
+        }
+    }
 }

@@ -1197,26 +1197,13 @@ public final class IREmitter {
     }
 
     /// Drop the share held by `slot` before a new value overwrites it: reassignment is a release
-    /// point, not just a store. Only registered slots are eligible, so a non-handle variable is
-    /// never touched.
-    private func emitReassignRelease(slot: String) {
-        guard
-            pendingReleases.contains(where: { frame in
-                frame.contains(where: { $0.slot == slot })
-            })
-        else { return }
-        guard
-            let registered =
-                pendingReleases
-                .flatMap({ $0 })
-                .first(where: { $0.slot == slot })
-        else { return }
+    /// point, not just a store. 判据是中端填的 `releaseOld`；符号由类型分类决定。借来的槽
+    /// （形参 · `match` 绑定）不会被标成持有者，故不会被误释放。
+    private func emitReassignRelease(slot: String, type: IRType) {
+        guard let symbol = releaseSymbol(for: type) else { return }
         let loaded = builder.freshTemp()
-        bodyIR +=
-            builder.fmtLoad(
-                name: loaded, type: registered.typeSpelling, ptr: slot
-            ) + "\n"
-        bodyIR += " call void @\(registered.destroySymbol)(ptr \(loaded))\n"
+        bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: slot) + "\n"
+        bodyIR += " call void @\(symbol)(ptr \(loaded))\n"
     }
 
     /// 字段被覆盖前释放旧值 —— `emitReassignRelease` 的字段版。
@@ -1232,7 +1219,7 @@ public final class IREmitter {
 
     private func emitStatement(_ statement: IRStmt) {
         switch statement {
-        case .allocVar(let name, let type, _, let initializer):
+        case .allocVar(let name, let type, _, let initializer, let adopt):
             let slot = freshSlot(for: name)
             // 片 D：被闭包捕获的变量走**堆槽**（闭包与帧共享同一个盒）。
             let address = declareValueSlot(
@@ -1248,9 +1235,9 @@ public final class IREmitter {
                 } else {
                     let value = emitExpr(initializer)
                     scopes[scopes.count - 1][name] = address
-                    // 值语义（片 C）：结构体别名 ⇒ 拷出新箱；对象 / 枚举 / 容器别名 ⇒ retain；
-                    // 临时值 ⇒ 直接接管。 行不通  这一步必须在 store **之前** —— 它是「站住」那一步。
-                    let stored = emitValueForStorage(initializer, value, type: type)
+                    // 接收动作由中端填（`IRType.adoption(of:)`），这里只翻译：移交 / 拷贝 / 保留，
+                    // 顺序必须是「先让新值站住」再 store。
+                    let stored = applyAdopt(adopt, value, type: type)
                     bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: address) + "\n"
                 }
             } else {
@@ -1266,18 +1253,18 @@ public final class IREmitter {
             // when the declaring block exits.
             registerReleasedHandle(slot: address, type: type)
 
-        case .storeVar(let name, let type, let value):
+        case .storeVar(let name, let type, let value, let adopt, let releaseOld):
             guard let slot = lookupSlot(name) else {
                 fatalError("IREmitter: store to undeclared variable '\(name)' (IRLowerer guarantees declarations)")
             }
             let lowered = emitExpr(value)
-            /// 三行的顺序就是语义：先让新值站住（结构体 ⇒ 拷出新箱；对象/枚举/容器别名 ⇒ retain），
+            /// 三行的顺序就是语义：先让新值站住（注解说的移交 / 拷贝 / 保留），
             /// 再释放旧值，最后才写槽。顺序颠倒则 `a = a` 这类自赋值先回收掉新值要读的箱，读已释放内存。
-            let stored = emitValueForStorage(value, lowered, type: type)
-            // Overwriting a handle-typed local drops the share it held
-            // before the store replaces it. The runtime only decrements, so an
-            // alias still holding the old handle keeps it alive.
-            emitReassignRelease(slot: slot)
+            let stored = applyAdopt(adopt, lowered, type: type)
+            // 旧值要不要还，判据是中端填的 `releaseOld`（借来的槽不还），不是「这个槽在不在账本里」。
+            if releaseOld {
+                emitReassignRelease(slot: slot, type: type)
+            }
             bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
@@ -1292,7 +1279,7 @@ public final class IREmitter {
                 iterable: iterable, body: body, step: step
             )
 
-        case .returnStmt(let value):
+        case .returnStmt(let value, let adopt):
             // Defers of every open block of this function run before the
             // return (interpreter: the signal unwinds through each
             // executeBlock's popDeferScope, innermost first).
@@ -1302,12 +1289,10 @@ public final class IREmitter {
             /// `var` 亦非风格：值语义那一步会换掉交出去的值，写成 `let` 则拷贝做了、`ret` 交的仍是原件。
             var returnedValue: IRValue? = value.map { emitExpr($0) }
             if let returnedNode = value, let current = returnedValue {
-                /// 值语义：结构体别名 ⇒ 拷出新箱交出去；对象 / 枚举 / 容器 ⇒ retain 一份。
-                ///  注意  没有返回类型（`main`）时只剩别名点 retain —— 那条路不交值。
+                /// 接收动作来自中端注解；没有声明返回类型时只剩别名点保留 —— 那条路不交值。
                 if let returnType = currentReturnType {
-                    returnedValue = emitValueForStorage(returnedNode, current, type: returnType)
+                    returnedValue = applyAdopt(adopt, current, type: returnType)
                 } else {
-                    /// 没有声明返回类型时只剩别名点保留，类型取自节点自身。
                     emitRetainIfAliased(returnedNode, current, type: irType(of: returnedNode))
                 }
             }
@@ -1340,8 +1325,10 @@ public final class IREmitter {
         case .tryStmt(let operand, let errorVar, let handler, let okTarget, let type):
             emitTry(operand: operand, errorVar: errorVar, handler: handler, okTarget: okTarget, type: type)
 
-        case .subscriptStore(let container, let index, let value, let elementType):
-            emitSubscriptStore(container: container, index: index, value: value, elementType: elementType)
+        case .subscriptStore(let container, let index, let value, let elementType, let adopt):
+            emitSubscriptStore(
+                container: container, index: index, value: value, elementType: elementType,
+                adopt: adopt)
 
         case .breakStmt(let depth):
             emitBreak(depth: depth)
@@ -1358,16 +1345,18 @@ public final class IREmitter {
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
 
-        case .fieldStore(let base, let field, let value, let fieldType):
+        case .fieldStore(let base, let field, let value, let fieldType, let adopt, let releaseOld):
             let baseValue = emitExpr(base)
             let loweredValue = emitExpr(value)
             let (aggregate, _, fieldIndex) = nominalField(of: base, field: field)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
-            //  注意  顺序同 `storeVar`：新值先站住（拷贝 / retain），**再**释放字段旧值，最后写。
-            let stored = emitValueForStorage(value, loweredValue, type: fieldType)
-            // 字段是**持有者**：被覆盖前先释放旧值（与 `emitReassignRelease` 同规，落点是字段）。
-            emitFieldReassignRelease(fieldPtr: fieldPtr, type: fieldType)
+            //  注意  顺序同 `storeVar`：新值先站住（注解给的接收动作），**再**释放字段旧值，最后写。
+            let stored = applyAdopt(adopt, loweredValue, type: fieldType)
+            // 字段是**持有者**：被覆盖前先释放旧值；借来的字段由 `releaseOld` 说不还。
+            if releaseOld {
+                emitFieldReassignRelease(fieldPtr: fieldPtr, type: fieldType)
+            }
             bodyIR += builder.fmtStore(value: stored.ssaName, type: fieldType.llvmSpelling, ptr: fieldPtr) + "\n"
 
         case .captureMarker:
@@ -1725,7 +1714,9 @@ public final class IREmitter {
     /// 下标写入 `container[index] = value`（COW 契约）：先自上而下拆开嵌套容器
     /// （父独占在前、子在后）；`.load` 值在搬箱前 retain 一份；`bk_*_set` 回的分裂句柄
     /// 必须写回，否则这次写入会静默丢失。
-    private func emitSubscriptStore(container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType) {
+    private func emitSubscriptStore(
+        container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType, adopt: IRAdopt
+    ) {
         // Dictionary store (G5): keys/values boxed by their own types; the
         // returned handle is written back to the owning slot (COW parity).
         if case .dict(let keyType, let valueType) = irType(of: container) {
@@ -1734,11 +1725,11 @@ public final class IREmitter {
             let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
             let indexValue = emitExpr(index)
             let loweredValue = emitExpr(value)
-            emitRetainIfAliased(value, loweredValue, type: valueType)
+            let storedValue = applyAdopt(adopt, loweredValue, type: valueType)
             let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
             let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
             let keyBox = boxValue(indexValue, spelling: keySpelling)
-            let valueBox = boxValue(loweredValue, spelling: valueSpelling)
+            let valueBox = boxValue(storedValue, spelling: valueSpelling)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_dict* \(containerValue.ssaName) to ptr\n"
             let newRaw = builder.freshTemp()
@@ -1760,10 +1751,10 @@ public final class IREmitter {
         let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
         let indexValue = emitExpr(index)
         let loweredValue = emitExpr(value)
-        emitRetainIfAliased(value, loweredValue, type: elementType)
+        let storedValue = applyAdopt(adopt, loweredValue, type: elementType)
         let boxPtr = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
-        bodyIR += builder.fmtStore(value: loweredValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
+        bodyIR += builder.fmtStore(value: storedValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
         let newRaw = builder.freshTemp()
@@ -2417,7 +2408,8 @@ public final class IREmitter {
                 /// 载荷槽是持有位置 ⇒ 与 `.fieldStore` 同一规：别名（`.load` 出来的名义值）在这里必须 retain，
                 /// 结构体则深拷贝。裸 store 会让新箱存着旧箱指针却不多一份份额，写前释放旧值便把它收回 ⇒
                 /// 新箱里悬垂，读出来是「match value matched no case」这类非确定性失败。
-                let stored = emitValueForStorage(payload, value, type: payloadTypes[index])
+                let stored = applyAdopt(
+                    payloadTypes[index].adoption(of: payload), value, type: payloadTypes[index])
                 bodyIR += builder.fmtStore(value: stored.ssaName, type: payloadTypes[index].llvmSpelling, ptr: fieldPtr) + "\n"
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
@@ -3398,37 +3390,53 @@ public final class IREmitter {
         return symbol
     }
 
-    /// 该表达式节点给的是已有箱的别名（要按值语义拷贝 / 按引用语义 retain），还是一个新箱的
-    /// 所有权（直接接管）。`.fieldGet` 在列：读字段给的是指向父箱字段的指针，不是自己的存储，
-    /// `var g = h.p` 因此必须拷贝；而 `h.p.x = 9` 里的 `h.p` 走发射 base 的分支，不经过这里。
-    private func yieldsAlias(_ node: IRExpr) -> Bool {
-        switch node {
-        case .load, .subscriptGet, .fieldGet, .optionalGet:
-            return true
-        default:
-            return false
-        }
-    }
+    /// 该表达式节点给的是已有箱的别名（要按值语义拷贝 / 按引用语义 retain），还是一个新箱的所有权
+    /// （直接接管）。`.fieldGet` 在列：`var g = h.p` 必须拷贝。本条只服务表达式级的容器元素落槽，
+    /// 语句级存储点读中端注解（`applyAdopt`）。
+    private func yieldsAlias(_ node: IRExpr) -> Bool { node.yieldsAlias }
 
-    /// 把求值出来的值按值语义落到一个持有位置（变量槽 / 字段 / 返回值）：结构体别名拷出新箱
-    /// （`__copy_struct_*`）；对象 / 枚举 / 容器别名 retain 一份；临时值直接接管，零额外动作。
+    /// 按中端填的接收动作落值。发射层不再判「该拷贝还是该保留」—— 只翻译注解。
+    ///  注意  `LazyRef` 分类上是计数族，但发射层还没有它的保留 / 销毁通道 ⇒ `.retain` 在那里是空操作，
+    /// 宁可按借用放过（漏一份），也不猜一个可能双释放的动作。缺口记在契约第 4 节。
     @discardableResult
-    private func emitValueForStorage(_ node: IRExpr, _ value: IRValue, type: IRType) -> IRValue {
-        guard yieldsAlias(node) else {
+    private func applyAdopt(_ adopt: IRAdopt, _ value: IRValue, type: IRType) -> IRValue {
+        switch adopt {
+        case .none:
+            return value
+        case .take:
             /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它：字符串与箱各出一笔账。
-            /// 「临时」就是 `yieldsAlias` 的补集；`load` / 常量 / 形参是借来的，不在账上，对它们空操作。
             claimOwnedString(value)
             claimOwnedBox(value)
             return value
-        }
-        if case .nominal(_, false) = type, let symbol = ensureCopyFunction(for: type) {
+        case .copyStruct:
+            guard let symbol = ensureCopyFunction(for: type) else {
+                return retainCounted(value, type: type)
+            }
             let copied = builder.freshTemp()
             bodyIR += " \(copied) = call ptr @\(symbol)(ptr \(value.ssaName))\n"
             let typed = builder.freshTemp()
             bodyIR += " \(typed) = bitcast ptr \(copied) to \(type.llvmSpelling)\n"
             return IRValue(llvmType: type.llvmSpelling, ssaName: typed)
+        case .retain:
+            return retainCounted(value, type: type)
         }
-        emitRetainIfAliased(node, value, type: type)
+    }
+
+    /// 计数族留一份；不在计数族的（标量 · 聚合 · `LazyRef` 缺口）零动作。
+    private func retainCounted(_ value: IRValue, type: IRType) -> IRValue {
+        guard let family = boxFamily(of: type) else { return value }
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
+        switch family {
+        case .container:
+            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+        case .nominal:
+            usesNominalBoxes = true
+            bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+        case .string:
+            usesStringOwnership = true
+            bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
+        }
         return value
     }
 
@@ -3852,26 +3860,12 @@ public final class IREmitter {
         }
     }
 
-    /// 别名点保留：`load` / `subscriptGet` / `fieldGet` / `optionalGet` 的来源仍握着自己那一份，
-    /// 落进新持有位置前要先留一份 —— 否则 `var row = g[0]` 与 `g` 共享，下一次写入无法分裂。
-    /// 临时值移交份额，不在这里动手。`type` 是来源位置的静态类型，不是值的拼写：拼写属后端。
+    /// 表达式级的别名点保留（容器元素落槽）：`load` / `subscriptGet` / `fieldGet` / `optionalGet`
+    /// 的来源仍握着自己那一份，落进元素槽前要留一份 —— 否则 `var row = g[0]` 与 `g` 共享，下一次写入
+    /// 无法分裂。语句级存储点走注解，不经过这里。
     private func emitRetainIfAliased(_ valueNode: IRExpr, _ value: IRValue, type: IRType) {
-        guard yieldsAlias(valueNode) else { return }
-        guard let family = boxFamily(of: type) else { return }
-        let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
-        switch family {
-        case .container:
-            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
-        case .nominal:
-            usesNominalBoxes = true
-            bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
-        case .string:
-            // N76：字符串的别名点 —— 源那个槽仍持有它那一份，故新槽留一份。
-            // `raw` 的 `bitcast i8* … to ptr` 是空操作型 cast，与另两族同形。
-            usesStringOwnership = true
-            bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
-        }
+        guard valueNode.yieldsAlias else { return }
+        _ = retainCounted(value, type: type)
     }
 
     // MARK: - N76：字符串临时值的账本
