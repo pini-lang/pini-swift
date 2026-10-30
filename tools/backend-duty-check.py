@@ -40,26 +40,31 @@ ROOT = os.environ.get(
 
 EMITTER = "Sources/PiniCore/CodeGen/IREmitter.swift"
 
-# 决策族：它们回答「此刻要不要 retain / release」。归位之后这些判断属于中端，
-# 后端只剩翻译。名字取自契约第 5 节的口径，不按代码形状匹。
-DECISION_SITES = [
-    "emitRetainIfAliased",
-    "releaseOwnedString",
-    "releaseOwnedTemporary",
-    "releaseCallArguments",
-    "retainIfOwningContainer",
-    "ensureReleaseFunction",
-]
+# 决策族：回答「这个值归谁、此刻要不要 retain / release」。这些判断已全部归位到中端的
+# `IROwnership`（类型分类 · 求值效果 · 接收动作），发射器只翻译注解。列表留空是这个分片的
+# 验收目标本身 —— 再有名字进来，说明判断又长回了后端。
+DECISION_SITES = []
 
-# 已归位：作用域与覆盖那五族搬进存储点注解之后，这些名字要么已从发射器消失，
-# 要么只剩翻译（按 `releaseOld` 发一次调用，不再自己判断要不要发）。留名是为了核账 ——
-# 它们的处数必须是 0，任何一处回来都说明决策又渗回了后端。
+# 已归位：这些名字必须为 0。作用域与覆盖一族搬进存储点注解，别名与临时一族搬进求值效果表 ——
+# 两组都以「发射器不再自己回答」收口。任何一处回来都算回归。
 RETIRED_SITES = [
     "pendingReleases",
     "emitReleases",
     "emitReassignRelease",
     "emitFieldReassignRelease",
     "registerReleasedHandle",
+    "emitRetainIfAliased",
+    "retainIfOwningContainer",
+]
+
+# 翻译点：把中端的判定译成一次调用，不判断「要不要」。只报读数、不设上限 ——
+# 上限会逼着人删注释或改名，而判据是「判断住在哪一层」，不是「这层有几个调用」。
+TRANSLATION_SITES = [
+    "releaseOwnedString",
+    "releaseOwnedTemporary",
+    "releaseCallArguments",
+    "releaseOperand",
+    "ensureReleaseFunction",
 ]
 
 
@@ -79,14 +84,14 @@ def read(path):
 
 
 def self_test():
-    """The detector must fire on a planted hit and stay silent on a translation."""
+    """The detector must fire on a planted retired symbol and stay silent on a translation."""
     planted = "private func emitRetainIfAliased() {}\n"
     translation = "private func releaseSymbol(for type: IRType) -> String? {}\n"
     ok = True
-    if scan(planted, DECISION_SITES).get("emitRetainIfAliased") != 1:
-        print("self-test FAIL: 植入的决策族符号未被识别")
+    if scan(planted, RETIRED_SITES).get("emitRetainIfAliased") != 1:
+        print("self-test FAIL: 植入的已归位符号未被识别")
         ok = False
-    if scan(translation, DECISION_SITES):
+    if scan(translation, RETIRED_SITES + DECISION_SITES):
         print("self-test FAIL: 翻译族符号被误判为决策")
         ok = False
     print("self-test %s" % ("PASS" if ok else "FAIL"))
@@ -106,6 +111,7 @@ def main():
     found = scan(text, DECISION_SITES)
     total = sum(found.values())
     retired = scan(text, RETIRED_SITES)
+    translation = scan(text, TRANSLATION_SITES)
 
     print("后端义务检查（警告级）· 所有权归位")
     print("  文件: %s" % EMITTER)
@@ -115,14 +121,15 @@ def main():
             print("    %-26s %d" % (sym, found[sym]))
     if retired:
         print("  已归位符号又出现: %s" % ", ".join(sorted(retired)))
+    if translation:
+        print("  翻译点（只报读数）: %s" % ", ".join(
+            "%s %d" % (sym, translation[sym]) for sym in TRANSLATION_SITES if sym in translation))
 
     if total or retired:
         print()
-        print("  这些点在「所有权归位」落地后应归零。现在只报，不拦。")
+        print("  决策族与已归位符号都必须为 0。现在只报，不拦。")
         if "--strict" in sys.argv:
             return 1
-    else:
-        print("  未发现决策族符号：后端只翻译，不决定。")
     return 0
 
 
