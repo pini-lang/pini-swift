@@ -5,7 +5,7 @@ import Testing
 /// `await` / `wait` 的形态载体判据：语法把一次 join 分成两种形态 —— `await`（异步体内等待、可以让出当前任务）
 /// 与 `wait`（任意上下文等待、占用当前线程）。载体是 `form` 字段，从 `Parser` 一路带到 IR 节点。
 /// 本件钉载体不丢：`form` 必须到得了 IR（否则下游无从分辨），且两种形态各自落在自己的上下文里、结果一致。
-struct ConcurrencyJoinFormTests {
+struct ConcurrencyJoinFormTests: Sendable {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
 

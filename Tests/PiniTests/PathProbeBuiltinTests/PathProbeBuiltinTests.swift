@@ -5,7 +5,7 @@ import Testing
 /// `exists` / `isDir` 内建的判据（路径探测面）。一夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即用例名。
 /// 被测对象是文件系统 ⇒ 每条用例自建临时目录当程序基准，不在仓库建文件、也不指向夹具目录（会让用例互相看见产物）。
 /// 靶 = 探测类与操作类的分界：`listDir` / `readFile` 对坏路径 panic，而本组答 false；只查「存在」的实现在 isDir 上会错。
-struct PathProbeBuiltinTests {
+struct PathProbeBuiltinTests: Sendable {
 
     // MARK: - 私有 helper
 

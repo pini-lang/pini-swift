@@ -5,7 +5,7 @@ import Testing
 /// `moduleRoot()` 内建的判据（程序基准面）。
 /// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），⛔ 不往仓库里建文件。
 /// 比对物是**手写期望**，⛔ 不是另一条通道的输出 —— 两条同时错会互相认证。
-struct ModuleRootBuiltinTests {
+struct ModuleRootBuiltinTests: Sendable {
 
     // MARK: - 私有 helper
 

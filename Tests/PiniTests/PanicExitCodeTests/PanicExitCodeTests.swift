@@ -5,11 +5,11 @@ import Testing
 /// 靶 = 「程序因运行时错误退出」在进程边界上的可观察形态 —— 退出码与 stderr 那一条消息。
 ///  注意  串行：每条用例都要起 `pini run` / `pini run-llvm` 子进程，并行跑会把机器占满。
 @Suite(.serialized)
-struct PanicExitCodeTests {
+struct PanicExitCodeTests: Sendable {
 
     // MARK: - 私有 helper
 
-    private struct RunResult {
+    struct RunResult: Sendable {
         let label: String
         let status: Int32
         let stdout: String

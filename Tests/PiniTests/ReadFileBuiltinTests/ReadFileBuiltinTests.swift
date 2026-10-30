@@ -5,7 +5,7 @@ import Testing
 /// `readFile` 内建的判据：契约说读取文件的全部内容 ⇒ 判据只有一条，就是没有上限，判据本身不含任何上限。
 /// 要证明一条不存在的行为只能靠规模，故正向用例取探针尺寸的数倍而非「恰好等于」；那个尺寸只作探针，不作语义。
 /// 被测对象同时是文件系统与两条执行腿：前者自建临时基准、不在仓库建文件；后者要 `lli`，只在可用时才跑。
-struct ReadFileBuiltinTests {
+struct ReadFileBuiltinTests: Sendable {
 
     // MARK: - 探针尺寸
 

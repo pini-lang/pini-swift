@@ -5,7 +5,7 @@ import Testing
 /// `Result` 型 scrutinee 的 `match` 分派判据：`case ok(v)` 的绑定取载荷类型（窄化），而不是保留 scrutinee 类型。
 /// `err` 侧取 `try-else` 已确立的类型擦除错误字 —— `Result` 的 IR 类型只带 ok 侧字段，没有可窄化的错误类型。
 /// 故 `err` 绑定就是一个字，读消息须经 `pini.err.message`。分派在降载层完成，与执行后端无关；本件只覆盖解释器臂。
-struct ResultNarrowingTests {
+struct ResultNarrowingTests: Sendable {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
 

@@ -5,7 +5,7 @@ import Testing
 /// 枚举型名限定的零参用例（`色彩.绿`，不带括号）作表达式时的降载判据。`IRLowerer` 的 `.member` 分支只认三种
 /// 接收者（Optional 型名 · 名义值 · 元组），没有「接收者是枚举型名」这一支 ⇒ 落到兜底标识符降载，
 /// 报 `E6-004`。带参写法（`色彩.绿(载荷)`）经 `lowerMemberCall` 早已接线，缺口只在无参这一半。
-struct QualifiedEnumCaseExpressionTests {
+struct QualifiedEnumCaseExpressionTests: Sendable {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
 

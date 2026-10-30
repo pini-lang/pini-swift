@@ -5,14 +5,15 @@ import Testing
 /// 并发能力的分层自述与让出原语：`bk_task_yield() -> i32`（`1` = 真让出 / `0` = 合规降级）与
 /// `bk_capabilities() -> u32`（位图，启动解析一次、固化），外加一条纪律：后端兑现不了让出时降级，不失败。
 /// 本件只管能力说自己有什么、让出原语回了什么、以及回 `0` 时程序还跑不跑得完。
-struct ConcurrencyCapabilitiesTests {
+struct ConcurrencyCapabilitiesTests: Sendable {
 
     // MARK: - 替身后端：有调度、无让出
 
     /// 一个兑现不了让出的后端（`yieldTask()` 恒返 `0`）：模拟「L0 在场、L1 缺席」这类合规后端，
     /// 等于提前跑一遍「新后端还没实现让出时，语言是什么行为」。它照常用 `DispatchQueue` 异步派发
     /// （L0 要真的在场，否则测的就不是降级而是单线程），只是不让出 ⇒ 引擎走「占用线程等它决」那条路。
-    private final class DispatchOnlyScheduler: Scheduler {
+    private final class DispatchOnlyScheduler: Scheduler, @unchecked Sendable {
+        // 计数都由 `lock` 保护，派发经并发队列 ⇒ 手工声明，不改替身的行为。
         private let lock = NSLock()
         private var spawnedCount = 0
         private var suspensionTotal = 0
@@ -37,7 +38,7 @@ struct ConcurrencyCapabilitiesTests {
 
         func yieldTask() -> Int32 { 0 }
 
-        func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
+        func spawn(_ future: FutureValue, work: @escaping @Sendable () throws -> TaskRunOutcome) {
             lock.lock()
             spawnedCount += 1
             lock.unlock()

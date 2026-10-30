@@ -6,7 +6,7 @@ import Testing
 /// ⇒ 同时钉「位或可达」与「其余角色不被抢走」。右端 = 手写期望。优先级取规范 A.3 表：
 /// `& | ^ << >>` 同级左结合（与 C 系不同）⇒ `1 | 2 << 2` = 12、`5 | 3 & 1` = 1；按 C 的分层会得 9 与 5。
 @Suite("位或直写")
-struct BitwiseOrOperatorTests {
+struct BitwiseOrOperatorTests: Sendable {
 
     // MARK: - 语料与手写期望
 

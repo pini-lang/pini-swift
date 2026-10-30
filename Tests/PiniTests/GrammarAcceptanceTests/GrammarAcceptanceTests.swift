@@ -8,7 +8,7 @@ private typealias Expression = PiniCore.Expression
 /// 语法接受面的回归判据。一个夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即消费它的用例名 —— 缺一边一眼看出。
 /// 夹具独占一层，是为了让清单能用一条 `exclude` 排掉 SwiftPM 的 unhandled 告警（它只能按路径）。
 /// 接受态断言解析结构、类型结论与运行产物；拒绝态断错误的类型与判定码，判定码取首条 —— 解析器会在根因之后级联补报。
-struct GrammarAcceptanceTests {
+struct GrammarAcceptanceTests: Sendable {
 
     /// 套件目录（夹具在本文件同目录下的 `Fixtures/` 子目录）。
     static var suiteDirectory: String {

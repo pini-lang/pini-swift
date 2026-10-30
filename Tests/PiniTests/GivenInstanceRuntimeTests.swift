@@ -6,7 +6,7 @@ import Testing
 // 本件钉运行时符号的并发与重入语义 —— 两者失败形态不同，混在一起会让「谁红了」无从定位。
 // `.serialized` 是前提：C 函数指针不能捕获上下文 ⇒ 写入值与调用计数只能走文件级状态，并行会互相污染。
 @Suite(.serialized)
-struct GivenInstanceRuntimeTests {
+struct GivenInstanceRuntimeTests: Sendable {
 
     // MARK: - 探针状态（C 函数指针不能捕获上下文 ⇒ 一切上下文走文件级）
 
@@ -128,13 +128,15 @@ struct GivenInstanceRuntimeTests {
             let gate = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
             gate.pointee = 0
             let done = DispatchGroup()
+            let handoff = SendableBox((gate: gate, slot: slot, fn: fn))
             for i in 0..<cores {
                 done.enter()
                 queues[i].async {
                     // 自旋就位：不挂起 ⇒ 发令后同时进入取用。上限防止意外空转。
                     var spins = 0
-                    while gate.pointee == 0 && spins < 500_000_000 { spins += 1 }
-                    Self.probe.record(bk_given_get(slot, fn, MemoryLayout<Int32>.size))
+                    while handoff.value.gate.pointee == 0 && spins < 500_000_000 { spins += 1 }
+                    Self.probe.record(
+                        bk_given_get(handoff.value.slot, handoff.value.fn, MemoryLayout<Int32>.size))
                     done.leave()
                 }
             }
@@ -184,10 +186,12 @@ struct GivenInstanceRuntimeTests {
         }
         let outerFnPtr = unsafeBitCast(outerFn, to: UnsafeMutableRawPointer.self)
 
-        var observed: UnsafeMutableRawPointer?
+        let handoff = SendableBox((slot: outerSlot, fn: outerFnPtr))
+        let observed = SendableBox<UnsafeMutableRawPointer?>(nil)
         let finished = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
-            observed = bk_given_get(outerSlot, outerFnPtr, MemoryLayout<Int32>.size)
+            observed.value = bk_given_get(
+                handoff.value.slot, handoff.value.fn, MemoryLayout<Int32>.size)
             finished.signal()
         }
         /// 预算 30 秒：整包并行时全局队列会被上百个用例抢占，5 秒曾稳定误报（单跑 0.001 秒）。
@@ -195,8 +199,8 @@ struct GivenInstanceRuntimeTests {
 
         #expect(ok, "重入取用发生死锁（超时）—— 说明实现持全局锁调用了初始化函数")
         guard ok else { return }  // 死锁时以下断言都无意义
-        #expect(observed != nil, "重入路径应正常返回")
-        #expect(observed?.load(as: Int32.self) == 5, "外层实例的值应为 5")
+        #expect(observed.value != nil, "重入路径应正常返回")
+        #expect(observed.value?.load(as: Int32.self) == 5, "外层实例的值应为 5")
         #expect(innerSlot.pointee != nil, "内层实例也应被物化（重入确实发生了）")
         #expect(innerSlot.pointee != outerSlot.pointee, "内外两个存放位不得是同一个实例")
     }

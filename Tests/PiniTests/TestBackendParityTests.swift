@@ -6,7 +6,7 @@ import Testing
 /// 故每条语料写死「输出 + 报告 + 退出码」，两条通道各自与它比；彼此相等是推论，不是判据。
 /// 三条语义要点：`main` 不执行（测试入口与程序入口互斥）· 失败断言中止本测试但不中止这一轮 · 输出全在报告之前。
 @Suite("测试两通道锁步")
-struct TestBackendParityTests {
+struct TestBackendParityTests: Sendable {
 
     /// 一条语料 + 它的手写期望。`expectedBody` 是去掉报告首行之后的全部输出 —— 首行含临时文件绝对路径，
     /// 逐次运行都不同，故不写进期望值。访问级不是 private：它出现在 `@Test` 参数签名里，
@@ -437,7 +437,7 @@ struct TestBackendParityTests {
 /// 故在任何环境都跑，守的是「发射器有没有按测试模式合成该合成的东西」；那套守的是「行为一致」。
 /// 两套都在，是因为前者能定位（错在哪一处合成），后者能定论（真跑起来一致不一致）。
 @Suite("测试模式发射")
-struct TestModeEmissionTests {
+struct TestModeEmissionTests: Sendable {
 
     private func emitTestMode(_ source: String, mode: Bool) throws -> String {
         let lexer = Lexer(source: source, fileName: "inline.pini")

@@ -4,7 +4,7 @@ import Testing
 /// `split` 的两条分配判据，对应 LLVM 侧切分路径的两处分配缺陷，可见性不同：
 /// ① 两次暂存拷贝按固定 1024 字节栈缓冲分配、无界 `memcpy` ⇒ 源串一长就砸栈；自举扫描器拿整份文件文本调它。
 /// ② token 复制按 `strlen` 分配后 `strcpy` ⇒ 终止符写到区外一字节。② 无行为签名，故判产物里 `malloc` 尺寸。
-struct SplitPathTests {
+struct SplitPathTests: Sendable {
 
     private static var fixturesDirectory: String {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()

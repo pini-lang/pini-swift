@@ -6,11 +6,11 @@ import Testing
 /// 两种等价写法（字面量 `readFile("a.txt")` 与变量 `readFile(p)`）必须落到同一个文件，且两通道给出同一结论。
 /// 每条用例让进程 CWD 与脚本目录是两个目录、各放一个答案不同的同名条目，否则本套件整条失去分辨力。
 @Suite(.serialized)
-struct IOBaseParityTests {
+struct IOBaseParityTests: Sendable {
 
     // MARK: - 私有 helper
 
-    private struct RunResult {
+    struct RunResult: Sendable {
         let label: String
         let status: Int32
         let stdout: String

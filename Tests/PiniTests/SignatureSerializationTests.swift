@@ -6,7 +6,7 @@ import Testing
 /// 右端 = 判据面手写期望（优先级/结合性判别式 14 条，逐字取自判据夹具的判别式段），
 /// ⛔ 不是从某次运行输出抄来的；语料与期望同源同版。
 @Suite("SignatureSerialization")
-struct SignatureSerializationTests {
+struct SignatureSerializationTests: Sendable {
 
     /// 判据夹具判别式段的逐字语料（main 块内前 14 个语句 + return）。
     private static let corpus = #"""

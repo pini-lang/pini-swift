@@ -4,7 +4,7 @@ import Testing
 /// `appendFile` 的判据：追加语义、创建语义、失败形态、路径解析，以及发射面的条件 declare。每条用例自建
 /// 临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），不往仓库里建文件。比对物是手写期望，不是另一条
 /// 通道的输出 —— 两条同时错会互相认证。
-struct AppendFileTests {
+struct AppendFileTests: Sendable {
 
     // MARK: - 私有 helper
 

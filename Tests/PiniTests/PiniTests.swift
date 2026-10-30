@@ -1,6 +1,6 @@
 import Testing
 
-struct PiniTests {
+struct PiniTests: Sendable {
     @Test func initialization() {
 
     }

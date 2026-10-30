@@ -5,7 +5,7 @@ import Testing
 /// 递归守卫按宿主栈余量判定，不按调用层数。
 /// 条数上限两头出错且同因：轻的形态误杀（栈还剩大半，合法递归被读成疑似无限递归），重的形态漏判
 /// （栈在守卫够得着之前就崩，且毫无诊断）。判据必须成对，两侧都钉住才堵死调高与调低两条捷径。
-struct RecursionGuardTests {
+struct RecursionGuardTests: Sendable {
 
     /// 一段程序跑出来的结果。
     private enum Outcome: Equatable {

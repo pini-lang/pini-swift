@@ -15,7 +15,7 @@ protocol Scheduler {
     /// 派发 `work` 执行。`work` 返回 `.finished` 时由**调度器**把它送到 `future`；
     /// 返回 `.suspended` 时 `future` 仍待决、由续跑方送值。
     /// 具体实现决定「工作跑在哪、如何背压、如何观测」，调用方不感知。
-    func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome)
+    func spawn(_ future: FutureValue, work: @escaping @Sendable () throws -> TaskRunOutcome)
 
     /// 当前并发活跃任务数（可观测、可诊断）。供饥饿/背压诊断使用。
     var activeTaskCount: Int { get }
@@ -76,7 +76,7 @@ final class GCDScheduler: Scheduler {
     /// 派发 `work` 到有界池；池满则阻塞调用线程直至有空槽——这就是背压，等价于生产者暂停。
     /// 返回 `.suspended` 时此处不做任何事：送值责任已随让出移交续跑方，不送值也不报错。
     /// 这一趟只跑一半就归还槽位，正是让出要的效果；`defer` 里的信号量归还照常执行。
-    func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
+    func spawn(_ future: FutureValue, work: @escaping @Sendable () throws -> TaskRunOutcome) {
         semaphore.wait()
         countLock.lock()
         let current = activeCount + 1
@@ -181,7 +181,7 @@ final class SchedulerWithDeclaredCapability: Scheduler {
         self.capabilities = ConcurrencyCapabilities.resolve(threadsAvailable: canYield)
     }
 
-    func spawn(_ future: FutureValue, work: @escaping () throws -> TaskRunOutcome) {
+    func spawn(_ future: FutureValue, work: @escaping @Sendable () throws -> TaskRunOutcome) {
         inner.spawn(future, work: work)
     }
 
