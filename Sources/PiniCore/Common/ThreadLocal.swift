@@ -7,9 +7,9 @@ import Foundation
 
 /// 跨平台线程本地存储：底层是 POSIX `pthread_key_t`，每线程一份独立副本，线程退出时由注册的
 /// 销毁器释放值盒子，无泄漏。可替代仅 Apple 平台可用的 `Thread.current.threadDictionary`，
-/// 使解释器在 Linux 编译通过；并发任务隔离即靠它给每个 `=>` worker 维护独立的环境状态。
-final class ThreadLocal<T> {
-    private var key: pthread_key_t
+/// 使解释器在 Linux 编译通过，并给每个 `=>` worker 独立环境；共享的只有 init 写定的 key。
+final class ThreadLocal<T>: @unchecked Sendable {
+    private let key: pthread_key_t
 
     init() {
         var k = pthread_key_t()

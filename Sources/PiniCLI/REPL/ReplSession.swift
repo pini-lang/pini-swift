@@ -26,7 +26,8 @@ final class ReplSession {
         while true {
             let prompt = linesBuffer.isEmpty ? Self.promptMain : Self.promptCont
             print(prompt, terminator: "")
-            fflush(stdout)
+            // fflush(nil) 冲刷全部流：Glibc 的 stdout 是可变全局量，直接引用按共享可变状态判错。
+            fflush(nil)
 
             guard let line = readLine() else { print(); break }  // ctrl+d → exit
 

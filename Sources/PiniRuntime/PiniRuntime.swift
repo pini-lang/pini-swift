@@ -34,12 +34,16 @@ private class _BkBox {
 
 /// 活动句柄统一登记表（数组/字典/集合共用）：平衡 `bk_*_create` 的 `passRetained`。
 /// 统一表使 `bk_handle_*` 与 `bk_runtime_cleanup` 无需按类型分派。
-private var _liveHandles: [Unmanaged<_BkBox>] = []
+/// 建句柄与释放句柄都可能落在任一任务线程，故表的增删由 `_liveHandlesLock` 守护；释放动作在锁外做。
+nonisolated(unsafe) private var _liveHandles: [Unmanaged<_BkBox>] = []
+private let _liveHandlesLock = NSLock()
 
 /// 登记新建 box，返回其不透明句柄。
 private func _bkRegister(_ box: _BkBox) -> UnsafeMutableRawPointer {
     let u = Unmanaged.passRetained(box)
+    _liveHandlesLock.lock()
     _liveHandles.append(u)
+    _liveHandlesLock.unlock()
     return u.toOpaque()
 }
 
@@ -51,10 +55,12 @@ private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
     let box = Unmanaged<_BkBox>.fromOpaque(h).takeUnretainedValue()
     box.shares -= 1
     guard box.shares <= 0 else { return }
-    if let idx = _liveHandles.firstIndex(where: { $0.toOpaque() == h }) {
-        let u = _liveHandles.remove(at: idx)
-        u.release()
-    }
+    // 摘出在锁内、释放在锁外：release 触发的 deinit 会递归回到这里，持锁递归必自锁。
+    _liveHandlesLock.lock()
+    let idx = _liveHandles.firstIndex(where: { $0.toOpaque() == h })
+    let removed = idx.map { _liveHandles.remove(at: $0) }
+    _liveHandlesLock.unlock()
+    removed?.release()
 }
 
 /// 元素 box 内容若为可计数引用（嵌套句柄或字符串），递增其计数；供 `cowCopy` 用：字节复制会让两个
@@ -216,12 +222,25 @@ private func _bkArraySplitStorage(_ box: _BkArrayBox) {
 // MARK: - 数组运行时（D0 最小覆盖：I32 元素特化）
 
 /// 运行时致命错误：消息写到 stderr，进程以退出码 1 终止（解释器通道同码）。
-/// `exit` 会 flush 标准流 ⇒ 陷阱之前的输出必然落地；`abort` 不 flush。
-/// `PINI_PANIC_ABORT` 非空时改走 `abort()`：退出码 134，产出 core dump 与崩溃栈。
+/// `exit` 会 flush 标准流 ⇒ 陷阱之前的输出必然落地；`abort` 不 flush；`PINI_PANIC_ABORT` 非空时改走它。
+/// stderr 在 Glibc 里是可变全局量，直接引用按共享可变状态判错 ⇒ 走 `write(2, …)`，绕开 stdio 的全局表。
+private func _bkWriteStderr(_ text: String) {
+    var bytes = Array(text.utf8)
+    bytes.withUnsafeMutableBufferPointer { buf in
+        guard let base = buf.baseAddress else { return }
+        var offset = 0
+        while offset < buf.count {
+            let n = write(2, base + offset, buf.count - offset)
+            if n <= 0 { break }
+            offset += n
+        }
+    }
+}
+
 @_cdecl("bk_panic")
 public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
-    if let msg { fputs(String(cString: msg), stderr) }
-    fputs("\n", stderr)
+    if let msg { _bkWriteStderr(String(cString: msg)) }
+    _bkWriteStderr("\n")
     if let flag = getenv("PINI_PANIC_ABORT"), flag.pointee != 0 {
         abort()
     }
@@ -543,8 +562,10 @@ public func bk_given_get(
 @_cdecl("bk_runtime_cleanup")
 public func bk_runtime_cleanup() {
     // deinit 会递归修改 `_liveHandles`（释放嵌套句柄的 share），故先整体摘出再逐个 release。
+    _liveHandlesLock.lock()
     let all = _liveHandles
     _liveHandles.removeAll()
+    _liveHandlesLock.unlock()
     for u in all { u.release() }
 }
 
@@ -913,7 +934,7 @@ private let _bkStrHeaderBytes = MemoryLayout<Int>.size
 
 /// 本运行时段分配过、且**尚未归零**的字符串（键 = 用户指针）。
 /// 判据见件头：**不在表里 = 无操作** —— 这条同时兜住全局常量与已释放指针。
-private var _bkStrLive: Set<UnsafeMutableRawPointer> = []
+nonisolated(unsafe) private var _bkStrLive: Set<UnsafeMutableRawPointer> = []
 
 /// 保护 `_bkStrLive` 的锁。
 /// 与容器族的 `_liveHandles`（无锁）刻意不同：本表是新引入的数据结构，分配/释放串在多线程（任务族）
@@ -1305,7 +1326,7 @@ public func bk_try_append_file(
 
 /// 程序基准（`moduleRoot` 的答案来源）；`nil` = 未注入，取值回落到进程 CWD。
 /// 写入点只有进程入口的第一句，读取可能来自任务族线程 ⇒ 读写两侧都由 `_bkProgramBaseLock` 配对。
-private var _bkProgramBase: UnsafeMutablePointer<CChar>? = nil
+nonisolated(unsafe) private var _bkProgramBase: UnsafeMutablePointer<CChar>? = nil
 private let _bkProgramBaseLock = NSLock()
 
 /// 程序基准的当前值；`nil` = 未注入。
@@ -1823,7 +1844,7 @@ public func bk_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
 }
 
 /// 无载荷 err 槽的空消息（进程期常量，同样不归调用方释放）。
-private let _bkEmptyCString: UnsafeMutablePointer<CChar> = {
+nonisolated(unsafe) private let _bkEmptyCString: UnsafeMutablePointer<CChar> = {
     let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 1)
     buffer[0] = 0
     return buffer
@@ -1996,9 +2017,19 @@ public func bk_task_spawn(
     if let parent = _bkTaskCurrent {
         _bkTaskAdopt(Unmanaged.passUnretained(parent).toOpaque(), h)
     }
-    let thread = Thread { _bkTaskRunBody(h) }
-    thread.start()
+    _bkSpawnTaskThread(h)
     return h
+}
+
+/// 起一条线程跑任务体。`Thread` 的闭包按 `@Sendable` 检查，裸指针不 Sendable ⇒ 以位模式过界。
+/// 进程内地址不变，出界即重建指针；这样「指针归这条新线程独有」不必写成对类型系统的断言。
+private func _bkSpawnTaskThread(_ h: UnsafeMutableRawPointer) {
+    let bits = UInt(bitPattern: h)
+    let thread = Thread {
+        guard let raw = UnsafeMutableRawPointer(bitPattern: bits) else { return }
+        _bkTaskRunBody(raw)
+    }
+    thread.start()
 }
 
 /// 体的一次运行：登记当前任务 → 调 wrapper → 按返回的两态收尾。
@@ -2348,7 +2379,7 @@ func _bkTaskResolveErr(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
 /// 运行时自有帧的地址集 —— 由 `bk_task_frame(bytes > 0)` 登记，交还时摘除。
 /// 这张表的理由是归属：帧必须由运行时释放，而 `env` 也可能是调用方直接给的（单测把 Swift 对象指针当
 /// 观测箱传进来）。 行不通  无条件释放后者会立即崩溃 ⇒ 只有本表登记过的才释放。
-private var _bkOwnedFrames: Set<UInt> = []
+nonisolated(unsafe) private var _bkOwnedFrames: Set<UInt> = []
 private let _bkOwnedFramesLock = NSLock()
 
 private func _bkAdoptFrame(_ p: UnsafeMutableRawPointer) {
@@ -2441,20 +2472,20 @@ private enum _BkReadyTake {
 /// 就绪队列 —— 元素是任务盒句柄（造盒时登记所得的那个裸指针）。
 ///  注意  写入方是决出方那条线程（决出 ⇒ 入队），读取方是挑选循环 ⇒ 由 `_bkReadyLock` 守护。
 ///  行不通  不能以「反正单线」或「同族状态已有隔离」为由省掉这层。
-private var _bkReadyQueue: [UnsafeMutableRawPointer] = []
+nonisolated(unsafe) private var _bkReadyQueue: [UnsafeMutableRawPointer] = []
 private let _bkReadyLock = NSLock()
 
 /// 「趟」的两笔账（照解释器后端）：有人要挑 · 已经有一趟在挑。
 /// 一批任务全部入队之后才请挑选，而请挑选可能落在另一条线程上（同一时刻可能有多批）⇒ 用「已有循环
 /// 在跑就只记一笔」收成同一时刻只跑一趟，那一笔由收工的那趟兑现（见 `_bkTaskDrain` 尾部的对账）。
-private var _bkReadyRequested = false
-private var _bkReadyScheduled = false
-private var _bkReadyDraining = false
+nonisolated(unsafe) private var _bkReadyRequested = false
+nonisolated(unsafe) private var _bkReadyScheduled = false
+nonisolated(unsafe) private var _bkReadyDraining = false
 
 /// 进程内最近一次的绑定 —— 挑选循环用它问策略。
 ///  注意  今天只有一个调度实例（预置那份或用户替换的那份）⇒「用哪份绑定」不构成问题； 行不通  本层不做按调度器
 /// 分组的多队列（那是设计里另立的一段，今天无对象）。
-private var _bkSchedBinding: _BkSchedBinding?
+nonisolated(unsafe) private var _bkSchedBinding: _BkSchedBinding?
 
 /// 从绑定记录的三个字里读出它的三个字段（布局见 `_BkSchedBinding`）。
 private func _bkReadBinding(_ p: UnsafeMutableRawPointer?) -> _BkSchedBinding? {
@@ -2526,8 +2557,7 @@ private func _bkTaskOffer(_ box: _BkTaskBox) -> Bool {
         ///  注意  没有策略层 ⇒ 降级为直接续跑， 行不通  不是把任务归约掉（纪律：无合格版本则降级，不失败）。
         /// 具体用处：进程内直接调这一族符号的用法（判据就是这么做的）从不绑策略，归约会让他们从能跑变成不能跑。
         ///  注意  ① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」；② 解释器后端没有这条路径，两后端在此不对称。
-        let thread = Thread { _bkTaskRunBody(h) }
-        thread.start()
+        _bkSpawnTaskThread(h)
         return false
     }
     box.cond.lock()
@@ -2641,7 +2671,7 @@ private let _bkYieldReportEnabled: Bool = {
     return !(raw.isEmpty || raw == "0")
 }()
 
-private var _bkYieldCount = 0
+nonisolated(unsafe) private var _bkYieldCount = 0
 private let _bkYieldCountLock = NSLock()
 
 /// 体**真让出**一次（wrapper 返回非 `0`，且运行时已接受）。计数在闸门之外也累加 ——

@@ -97,9 +97,9 @@ private enum IRYieldPlan {
 }
 
 /// Runs a lowered `IRModule` directly: the third live channel beside the AST interpreter and IR → LLVM.
-/// Every node is dispatched with no `default:`, so a new `IRExpr` or `IRStmt` case breaks this file until acknowledged.
-/// Rendering and operators are the interpreter's (`stringifyValue` / `binaryValue` / `unaryValue`); `operatorFor` is ours.
-public final class IRExecutor: DebugHookHost {
+/// Every node is dispatched with no `default:`; rendering and operators are the interpreter's (`stringifyValue`).
+/// 跨线程可达（异步体与就绪循环都捕获本实例）：模块表装载后只读，运行时状态在 ThreadLocal 与 `instanceLock` 内。
+public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
     // MARK: - Host surface
 
@@ -125,8 +125,9 @@ public final class IRExecutor: DebugHookHost {
 
     private var types: [String: IRTypeDecl] = [:]
     /// 默认实例的**记忆表**（类型名 → 物化好的实例）。
-    /// 走查是单线，所以「恰一次」是自然的：首次取用物化并记住，之后直接返回缓存值；与发射层「槽位 + 两级锁」同语义，只是一靠锁、一靠单线。
-    /// 表挂在走查器实例上 ⇒ 生命周期 = 一次运行，在解释器语境下与「程序级唯一」等价。
+    /// 首次取用物化并记住，之后直接返回缓存值；与发射层「槽位 + 两级锁」同语义。
+    /// 异步体的取用可能落在工作者线程，故用可重入锁包住「查—造—存」整段，保证恰一次。
+    private let instanceLock = NSRecursiveLock()
     private var givenInstances: [String: Value] = [:]
     private var enums: [String: IREnumDecl] = [:]
 
@@ -1304,6 +1305,8 @@ public final class IRExecutor: DebugHookHost {
                 location: IRExecutor.noLocation
             )
         }
+        instanceLock.lock()
+        defer { instanceLock.unlock() }
         if let cached = givenInstances[name] { return cached }
         let materialized = try constructValue(type)
         givenInstances[name] = materialized
@@ -2108,7 +2111,7 @@ public final class IRExecutor: DebugHookHost {
         currentFuture?.addChild(future)
         let captured = callable
         let boundArgs = args
-        scheduler.spawn(future) { [weak self] in
+        let work = WorkHandoff { [weak self] in
             guard let self = self else {
                 throw RuntimeError.invalidOperation(
                     reason: "IR executor: the engine was released while an async body ran",
@@ -2141,6 +2144,7 @@ public final class IRExecutor: DebugHookHost {
                 throw error
             }
         }
+        scheduler.spawn(future) { try work.run() }
         return .future(future)
     }
 
