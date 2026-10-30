@@ -11,7 +11,7 @@ struct StringBuiltinTests {
     // MARK: - 语料与手写期望
 
     /// 一行一个读数，全部经 `print` 出可观测文本。
-    /// ⚠️ raw 字符串：`\t` 在此是**两字符**字面（到 Pini 词法层才成为制表符）——
+    ///  注意  raw 字符串：`\t` 在此是**两字符**字面（到 Pini 词法层才成为制表符）——
     /// 普通多行串会把它静默变成真制表符，语料被悄悄改写。
     private static let corpus = #"""
     main|func() -> ():

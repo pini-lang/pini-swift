@@ -171,7 +171,7 @@ whose stdout matched while the IR arm exited non-zero was filed OK_HARNESS —
 
 Both orderings were measured on the full 319-fixture corpus before choosing,
 together with the two other changes of the same grid (a_out in the parity test,
-and the two new slots). ⚠️ `a_out` and the comparison it participated in were
+and the two new slots).  注意  `a_out` and the comparison it participated in were
 removed in G-6c along with the reference arm; what follows is the measurement as
 it was taken, kept for the record.
 

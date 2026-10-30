@@ -3,7 +3,7 @@ import Testing
 
 /// 运行时陷阱的**进程退出码**判据：解释器与 LLVM 两通道给同一个码（1）。
 /// 靶 = 「程序因运行时错误退出」在进程边界上的可观察形态 —— 退出码与 stderr 那一条消息。
-/// ⚠️ 串行：每条用例都要起 `pini run` / `pini run-llvm` 子进程，并行跑会把机器占满。
+///  注意  串行：每条用例都要起 `pini run` / `pini run-llvm` 子进程，并行跑会把机器占满。
 @Suite(.serialized)
 struct PanicExitCodeTests {
 
@@ -160,7 +160,7 @@ struct PanicExitCodeTests {
         /// 意图：退出前标准流被 flush ⇒ 先 `print` 再触发陷阱，那一行仍在 stdout 里。
         /// 驳回性：不 flush 的终止路径（`abort()`）在 stdout 是管道时丢掉整行，只剩下陷阱消息。
 
-        /// ⚠️ stdout 指向管道时 libc 的缓冲是满块而非行缓冲 —— 这一条才有分辨力。
+        ///  注意  stdout 指向管道时 libc 的缓冲是满块而非行缓冲 —— 这一条才有分辨力。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
 
@@ -180,8 +180,8 @@ struct PanicExitCodeTests {
     @Test("`PINI_PANIC_ABORT` 非空时 LLVM 通道退出码回到 134")
     func abortEscapeHatchRestoresSignalExitCode() throws {
         /// 意图：逃逸通道交出 core dump，退出码随之不再是 1；忽略该变量的实现无法与判据 1 区分。
-        /// ⚠️ 134 = 128 + SIGABRT(6)：`lli` 被信号终止，命令行按信号量回传。
-        /// ⚠️ 该变量只管运行时 shim 的陷阱点；解释器通道的退出码出自命令行对 `RuntimeError` 的处理，仍为 1。
+        ///  注意  134 = 128 + SIGABRT(6)：`lli` 被信号终止，命令行按信号量回传。
+        ///  注意  该变量只管运行时 shim 的陷阱点；解释器通道的退出码出自命令行对 `RuntimeError` 的处理，仍为 1。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
 

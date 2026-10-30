@@ -33,7 +33,7 @@ enum PredefinedDecls {
             returnTypes: [],
             body: Block(
                 statements: [
-                    // ⚠️ 队列字段走**函数式**更新（`append` 返回新数组）⇒ 必须写回字段，
+                    //  注意  队列字段走**函数式**更新（`append` 返回新数组）⇒ 必须写回字段，
                     // 否则收到的任务静默丢掉，而调用方看不出任何异常。
                     .assign(
                         target: .member(object: selfExpr, name: queueField),
@@ -66,7 +66,7 @@ enum PredefinedDecls {
                             ],
                             location: loc),
                         isMutable: false, location: loc),
-                    // ⚠️ 取出来的**是 Optional**（`get` 的契约：越界给 none）⇒ 必须解包。
+                    //  注意  取出来的**是 Optional**（`get` 的契约：越界给 none）⇒ 必须解包。
                     // 两支都返回 `*U8`：有货给货，无货给空句柄 —— 空队列那一格就落在这里。
                     .matchStatement(
                         value: .identifier(name: "队首", location: loc),
@@ -131,9 +131,9 @@ enum PredefinedDecls {
                         initializer: .boolLiteral(value: true, location: loc),
                         location: loc
                     ),
-                    // ⭐ 就绪队列 —— 策略层的**状态**，也是「选择下一个任务」可挑的那个集合。
+                    //  重要  就绪队列 —— 策略层的**状态**，也是「选择下一个任务」可挑的那个集合。
                     // 元素是**不透明标量句柄** ⇒ 本层不解释它指向什么。
-                    // ⚠️ 初值空数组就是「刚建好的调度器」的实况，不是占位。
+                    //  注意  初值空数组就是「刚建好的调度器」的实况，不是占位。
                     FieldDecl(
                         name: queueField,
                         typeAnnotation: .generic(
@@ -193,7 +193,7 @@ enum PredefinedDecls {
 
     /// 预置声明里，**名字未被本模块占用**的那些。**让位规则的唯一落点。**
     ///
-    /// ⚠️ 局部名不参与判定：同名的局部变量 / 形参本就由作用域遮蔽类型名，与此无关。
+    ///  注意  局部名不参与判定：同名的局部变量 / 形参本就由作用域遮蔽类型名，与此无关。
     static func effective(in declarations: [TopLevelDecl]) -> [TopLevelDecl] {
         let claimed = claimedNames(in: declarations)
         return all.filter { decl in

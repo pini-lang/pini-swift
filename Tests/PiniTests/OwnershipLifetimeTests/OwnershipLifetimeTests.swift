@@ -59,7 +59,7 @@ struct OwnershipLifetimeTests {
             interpreted.status == 0, "解释器未跑通 \(fixture)（rc=\(interpreted.status)）：\(interpreted.stderr)")
         try #require(
             compiled.status == 0,
-            "\(fixture)：原生腿未跑通（rc=\(compiled.status)，⛔ 不是宿主 CLI 的 0）：\(compiled.stderr)")
+            "\(fixture)：原生腿未跑通（rc=\(compiled.status)， 行不通  不是宿主 CLI 的 0）：\(compiled.stderr)")
         #expect(
             compiled.stdout == interpreted.stdout,
             """
@@ -89,7 +89,7 @@ struct OwnershipLifetimeTests {
 
     // MARK: - 产物结构级：栈上拼串的**交出点**必须经堆复制
 
-    /// ⚠️⭐ 为什么还要这一条：行为级的 `string-escapes-*` 抓不住「撤掉堆复制」这个变异 —— 撤掉之后它们仍全绿，
+    ///  注意  重要  为什么还要这一条：行为级的 `string-escapes-*` 抓不住「撤掉堆复制」这个变异 —— 撤掉之后它们仍全绿，
     /// 因为夹具里那支 `burn` 没覆写到产出帧的那片栈（栈复用是碰运气的）⇒ 行为判据必要但不充分，
     /// 补一条产物结构级判据：栈缓冲的交出点必须紧跟 `@bk_str_dup`。非退化锚点：夹具须真走 `alloca i8, i64 4096`。
     @Test("栈上拼串（插值 / join）的产物必须经 @bk_str_dup 交出去")

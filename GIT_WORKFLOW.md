@@ -41,11 +41,11 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 
 - **主干保护：** `main` 为受保护分支，**任何会话都不得直接提交到 `main`**。所有改动走特性分支。
 - **分支命名：**
-  - 特性：`feature/<id>/<slug>`（例：`feature/human/winterarch/stdlib-io`）
-  - 修复：`fix/<id>/<slug>`
-  - AI 会话临时工作：`agent/<id>/<slug>`
+  - 特性：`feature-<id>-<slug>`
+  - 修复：`fix-<id>-<slug>`
+  - AI 会话临时工作：`dev-agent-<id>-<slug>`
   - 其中 `<id>` 取 §2 注册的唯一 ID，`<slug>` 为短横线小写描述。
-  - ⚠️ **引用名禁用字符：** git 不允许 `:` 出现在分支名中。因此在分支名里把注册 ID 的 `:` 替换为 `/`。例如注册 ID `human:winterarch` 对应分支前缀 `human/winterarch`；AI 默认会话 `agent:pini-dev` 对应 `agent/pini-dev`。
+  - 注意 **引用名禁用字符：** git 不允许 `:` 出现在分支名中。因此在分支名里把注册 ID 的 `:` 替换为 `-`。例如注册 ID `human:winterarch` 对应分支前缀 `human/winterarch`；AI 默认会话 `agent:pini-dev` 对应 `dev-agent-pini-dev`。
 - **基线：** 从最新的 `main` 切出；开工前先 `git fetch`（若存在远程）确认基线最新。
 - **集成回 `main`：**
   - 推荐 `git merge --no-ff <branch>`（保留分支拓扑，便于回溯）。
@@ -98,7 +98,7 @@ git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
 Linux 上经 apt/snap 安装的 rg 必在 `PATH`（`command -v` 先命中），候选不会生效 ——
 它是 macOS 例外通道，不是跨平台兜底。
 
-> ⚠️ **为什么不能只查 `PATH`**：本仓对「工具装着但 `PATH` 里看不见」有明确规定
+> 注意 **为什么不能只查 `PATH`**：本仓对「工具装着但 `PATH` 里看不见」有明确规定
 > （LLVM 后端重写 约束 6：`command -v lli` 曾两次造出假「门关」结论，并规定自动化/代理
 > 环境的默认 `PATH` 不得作为依据）。只在 `PATH` 里找 rg，会让脚本**静默回退**到
 > 最慢后端；若该后端的 `grep` 又被代理存根接管，7 趟全树扫描会从 1 秒膨胀到约 9 分钟。
@@ -120,7 +120,7 @@ PINI_RG=/path/to/rg git commit -m "..."
 4. 从 `main` 切出特性分支，按 §3 / §4 工作。
 5. 完成后合回 `main` 并（若有远程）推送。
 
-> ⚠️ **开工前先 `git status -sb` 确认所在分支**：本仓库主干为 `main`，改动一律走特性分支（§3）。
+> 注意 **开工前先 `git status -sb` 确认所在分支**：本仓库主干为 `main`，改动一律走特性分支（§3）。
 
 ---
 
@@ -134,21 +134,3 @@ PINI_RG=/path/to/rg git commit -m "..."
 git worktree add <path> -b worktree/<purpose> main
 git worktree remove <path>    # 摘除务必用命令，勿直接 rm
 ```
-
-### 自举仓：与本仓**平级**的独立仓（2026-10-07 迁）
-
-自举项目（探针）是**独立 git 仓库**（自有 `.git`）。⚠️ **2026-10-07 起它从「嵌套于本仓树内」迁为「与本仓平级」**：
-
-- **位置**：与 `pini-swift/` 并列的 `pini-bootstrap/`（⚠️ 在本仓**树外**，故 `.gitignore` 里⛔ **不再有** `/examples/selfhost` 那条 —— 那条已随迁移删除）
-- **独立性更强**：它在git 面**与文件扫描面**上都够不到本仓 ⇒ 本仓的 clone、归档、四道提交门禁**天然不覆盖**它
-- ⛔ **不要**在本仓 `git add` 它（它根本不在本仓树内）；⛔ 不要用 `git clean -ffdx`（双 `f`）清工作区时波及仓外目录
-- 本仓 clone 不含它；新环境须单独获取（它是**本地唯一副本**，无远端）
-- 它有自己的 GIT_WORKFLOW 与身份注册表（§3/§4 纪律同样适用于其内提交）
-
-⚠️ **一处曾存在的风险已随迁移消失**：嵌套时代若误 `add` 嵌套仓，git 会记下**悬空 gitlink**
-（提交里存一个指向不存在的路径）⇒ 现象是「本仓历史里有个永远拉不到的 gitlink」。
-⚠️ 平级之后**结构上不可能**再发生 ⇒ 不再需要那条 ignore 规则来兜底。
-
----
-
-*本文件由 `agent:pini-dev` 于仓库初始化协作约定时建立，随仓库提交，所有会话默认读取。§3 分支命名修正（去除 git 禁用的 `:`）、§5 改为绝对 `hooksPath`（2026-08-09）；§7 由多工作树改写为单工作树 + 嵌套独立仓拓扑、主干 `master`→`main`（2026-08-30，规范治理归位）。*

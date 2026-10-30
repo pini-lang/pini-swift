@@ -619,7 +619,7 @@ public final class IRExecutor: DebugHookHost {
                 }
                 return .array(ordered.map { .string($0) })
             }
-            // 探测类：⛔ 不 panic —— 路径不存在是该类的正常答案，不是错误。
+            // 探测类： 行不通  不 panic —— 路径不存在是该类的正常答案，不是错误。
             // 路径解析与上面两条同口径；`isDir` 对「不存在」与「是文件」同答 false。
             if name == "exists" || name == "isDir" {
                 guard arguments.count == 1 else {
@@ -1148,7 +1148,7 @@ public final class IRExecutor: DebugHookHost {
 
         case .fileTryWrite(let pathExpr, let contentExpr):
             // 与 `.fileWrite` **同一个写入调用、同一个路径解析**，唯一的差别是失败去向：
-            // 这里造一个错误值返回，⛔ 不抛。诊断文案与陷阱版同形 —— 两条路的用户看到
+            // 这里造一个错误值返回， 行不通  不抛。诊断文案与陷阱版同形 —— 两条路的用户看到
             // 同一句话，只是其中一条把它当值、另一条把它当终止理由。
             let rawTryWritePath = try requireString(evaluate(pathExpr), for: "tryWriteFile")
             let tryWriteContent = try requireString(evaluate(contentExpr), for: "tryWriteFile")
@@ -1428,7 +1428,7 @@ public final class IRExecutor: DebugHookHost {
             return .array(lo < hi ? Array(elements[lo..<hi]) : [])
 
         case .string(let text):
-            // ⚠️ 同 `stringSubstring`：计数与切片都走 `GraphemeCursor`，
+            //  注意  同 `stringSubstring`：计数与切片都走 `GraphemeCursor`，
             //    代价从 O(整串长) 降到 O(切片长)。夹取规则一字未改。
             let n = GraphemeCursor.count(of: text)
             let lower = try sliceBound(start, count: n, defaultWhenOpen: 0)
@@ -1777,7 +1777,7 @@ public final class IRExecutor: DebugHookHost {
 
         default:
             // 兜底：本引擎到此仍不认的目标形态（既非变量、非嵌套下标、也非字段）。
-            // ⚠️ 它**不再是**「字段目标还没做」那条说明 —— 字段目标现在走上面那一臂，
+            //  注意  它**不再是**「字段目标还没做」那条说明 —— 字段目标现在走上面那一臂，
             //   `fieldGet` 不再落到这里。留着它是为了**响亮**：写成静默会丢一次写。
             throw RuntimeError.invalidOperation(
                 reason: "IR executor: subscript store target is neither a variable, a "
@@ -2491,7 +2491,7 @@ public final class IRExecutor: DebugHookHost {
         )
     }
 
-    /// 策略层那个值。⭐ **运行期物化** —— 装载期的契约是「只注册、不运行」，
+    /// 策略层那个值。 重要  **运行期物化** —— 装载期的契约是「只注册、不运行」，
     /// 故它不能在 `prepare` 里求（那条路的代价已经实测过一次）。
     private func strategyInstance() throws -> Value {
         try materializeGivenInstance(
@@ -2514,7 +2514,7 @@ public final class IRExecutor: DebugHookHost {
             try strategyAccept(handle: handle)
         } catch {
             // 入不了队 ⇒ 这件任务**永远不会被推进**，而它手里的等待者会一直等下去。
-            // ⛔ 不静默丢掉：当作那个任务自己的一次失败交出去，让调用方看得见。
+            //  行不通  不静默丢掉：当作那个任务自己的一次失败交出去，让调用方看得见。
             readyLock.lock()
             readyItems.removeValue(forKey: handle)
             readyLock.unlock()
@@ -2586,7 +2586,7 @@ public final class IRExecutor: DebugHookHost {
 
     /// 请一趟驱动循环来把这批活挑完。**同一时刻只排一趟**。
     ///
-    /// ⚠️ 排的是**另起一趟**而不是就地跑 —— 理由见 `readyDrainRequested` 的说明。
+    ///  注意  排的是**另起一趟**而不是就地跑 —— 理由见 `readyDrainRequested` 的说明。
     private func scheduleReadyDrain() {
         readyLock.lock()
         if readyDraining || readyDrainScheduled {
@@ -2606,7 +2606,7 @@ public final class IRExecutor: DebugHookHost {
         readyDraining = true
         readyLock.unlock()
 
-        // ⚠️ 策略给的答案**可不可信**要分开记：不可信时**不得**再排下一趟，
+        //  注意  策略给的答案**可不可信**要分开记：不可信时**不得**再排下一趟，
         // 否则「策略每次都答同一个我们不认识的句柄」会转成一个不停循环。
         var trustworthy = true
         drain: while true {
@@ -2620,7 +2620,7 @@ public final class IRExecutor: DebugHookHost {
             }
             switch take {
             case .item(let item):
-                // ⚠️ 在队列里等着的这段时间里它可能被取消 ⇒ **出队即丢弃**：
+                //  注意  在队列里等着的这段时间里它可能被取消 ⇒ **出队即丢弃**：
                 // 一个从未被进入的体没有检查点，取消只能在**这里**被看见。
                 if item.task.isCancelled { continue drain }
                 completeResumedRun(item.frame, task: item.task, value: item.value)
@@ -2647,9 +2647,9 @@ public final class IRExecutor: DebugHookHost {
         }
     }
 
-    /// 策略层坏了 —— 响亮说，⛔ 不静默降级成「没有下一个」。
+    /// 策略层坏了 —— 响亮说， 行不通  不静默降级成「没有下一个」。
     private static func reportStrategyDefect(_ detail: String) {
-        print("[scheduler] ⛔ 策略层给出的答案不可用，就绪队列停止驱动：\(detail)")
+        print("[scheduler]  行不通  策略层给出的答案不可用，就绪队列停止驱动：\(detail)")
     }
 
     /// Wait for the future a body gave the task up on, and hand the bodies to the policy when it settles.

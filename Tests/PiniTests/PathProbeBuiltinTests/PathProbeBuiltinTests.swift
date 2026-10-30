@@ -49,7 +49,7 @@ struct PathProbeBuiltinTests {
 
     @Test("存在的文件 ⇒ exists 为真")
     func testExistsIsTrueForFile() throws {
-        /// 意图：`exists` 收**文件**，⛔ 不是「只答目录」。
+        /// 意图：`exists` 收**文件**， 行不通  不是「只答目录」。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         try seedProbeDirectory(sandbox)
@@ -74,7 +74,7 @@ struct PathProbeBuiltinTests {
 
     @Test("不存在 ⇒ exists 为假，且不 panic")
     func testExistsIsFalseWhenMissing() throws {
-        // 意图：走**返回值**通道、⛔ 不走错误通道 —— 这是探测类与操作类的分界。
+        // 意图：走**返回值**通道、 行不通  不走错误通道 —— 这是探测类与操作类的分界。
         // 驳回性：若实现走 panic，本用例会以抛错而非断言失败告终。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -87,7 +87,7 @@ struct PathProbeBuiltinTests {
     @Test("isDir 判「是目录」，文件与不存在的路径同答假")
     func testIsDirDistinguishesFileFromDirectory() throws {
         /// 意图：钉住「检查的是**是目录**，不只是**存在**」。
-        /// ⚠️ 只查 `fileExists` 的实现会在第二行给出 true ⇒ 本用例专抓这个。
+        ///  注意  只查 `fileExists` 的实现会在第二行给出 true ⇒ 本用例专抓这个。
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
         try seedProbeDirectory(sandbox)
@@ -154,7 +154,7 @@ struct PathProbeBuiltinTests {
     @Test("两通道：同一份探测语料在解释器与 LLVM 上一致")
     func testProbesAgreeAcrossBothChannels() throws {
         /// 意图：`exists` / `isDir` 在两个后端上给出**同一份**手写期望。
-        /// ⭐ 参照物是手写期望，⛔ 不是「另一条通道」—— 两条同时错会互相认证。
+        ///  重要  参照物是手写期望， 行不通  不是「另一条通道」—— 两条同时错会互相认证。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }

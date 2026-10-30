@@ -25,7 +25,7 @@ struct TestBackendParityTests {
 
     // MARK: - 语料与手写期望
 
-    /// ⚠️ 语料一律 raw 字符串（`#"""`）；内容行与闭合符同一缩进基准即可。
+    ///  注意  语料一律 raw 字符串（`#"""`）；内容行与闭合符同一缩进基准即可。
     private static let corpora: [Corpus] = [
         Corpus(
             label: "全通过",
@@ -290,7 +290,7 @@ struct TestBackendParityTests {
         var body = text.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.hasPrefix("测试文件: ") && !$0.hasPrefix("测试目标: ") }
             .joined(separator: "\n")
-        // ⚠️ 切分保留末尾空段 ⇒ `joined` 会补回一个尾换行，而手写期望（raw 字符串）**不含**它
+        //  注意  切分保留末尾空段 ⇒ `joined` 会补回一个尾换行，而手写期望（raw 字符串）**不含**它
         //（多行字符串的末尾换行被闭合符吃掉）。不对齐这一格，每条用例都会差一个字节。
         if body.hasSuffix("\n") { body.removeLast() }
         return body

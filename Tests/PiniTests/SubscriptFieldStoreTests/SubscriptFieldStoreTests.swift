@@ -97,7 +97,7 @@ struct SubscriptFieldStoreTests {
             interpreted.stdout == "7\n20\n",
             """
             解释器读数不符：字段要变 7、快照要留 20。实得 \(interpreted.stdout.debugDescription)
-            ⚠️ 若字段那格是 20 ⇒ 写丢了；若快照那格是 7 ⇒ 值语义破了（两者都不是「差一点」）。
+             注意  若字段那格是 20 ⇒ 写丢了；若快照那格是 7 ⇒ 值语义破了（两者都不是「差一点」）。
             """)
         #expect(
             compiled.stdout == interpreted.stdout,

@@ -17,7 +17,7 @@ public struct BuiltinDecl {
     public let name: String
     public let group: BuiltinGroup
     /// Interpreter 侧 FunctionValue 的形参名（须与既有分发实现一致）。
-    /// ⚠️ 值条目为空数组 —— 一个值没有形参可标。
+    ///  注意  值条目为空数组 —— 一个值没有形参可标。
     public let paramNames: [String]
     /// nil = 类型层签名由专属路径登记（泛型/指针/构造器特化），本表只记名与组
     public let typeSignature: (params: [TypeAnnotation], returns: [TypeAnnotation], isVariadic: Bool)?

@@ -249,7 +249,7 @@ struct IOBaseParityTests {
         /// 写路径也不再是 `fopen` / `fwrite` / `fclose` 那一组调用。
         /// 驳回性：在发射侧烘焙字面量的实现会让最后一条断言红；退回 libc 写的实现让第三条红。
 
-        /// ⚠️ 判据落在**调用行**上：只查整份 IR 是否含某个符号，声明那一行就能把它骗过去。
+        ///  注意  判据落在**调用行**上：只查整份 IR 是否含某个符号，声明那一行就能把它骗过去。
         let base = "/tmp/pini-io-base-baked"
         let ir = try emittedIR(
             """

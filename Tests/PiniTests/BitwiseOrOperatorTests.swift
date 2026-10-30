@@ -12,7 +12,7 @@ struct BitwiseOrOperatorTests {
 
     /// 一行一个读数。`o5`–`o7` 是优先级/结合性判别式，`o8` 钉无空格形态，
     /// `o9` 钉同符号的标签角色（`outer|while`）仍归标签分派。
-    /// ⚠️ raw 字符串：语料里若有 `\t` 一类转义，普通多行串会把它静默改写。
+    ///  注意  raw 字符串：语料里若有 `\t` 一类转义，普通多行串会把它静默改写。
     private static let corpus = #"""
     main|func() -> ():
         var a: I32 = 5

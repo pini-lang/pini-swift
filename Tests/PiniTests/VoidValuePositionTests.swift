@@ -169,7 +169,7 @@ struct VoidValuePositionTests {
     @Test("void 函数体内 return 无返回值调用不被类型层拒绝")
     func voidCallAsReturnValueOfVoidFunctionIsNotATypeError() throws {
         /// 意图：`-> ()` 函数体内 return 的值不参与返回类型比对（既有规则）⇒ 不得收紧成误报。
-        /// ⚠️ 本用例只判类型层：降载对「返回值类型不可静态解析」另有拒绝（与 void 无关）。
+        ///  注意  本用例只判类型层：降载对「返回值类型不可静态解析」另有拒绝（与 void 无关）。
         let source = #"""
         g|func() -> ():
             return print("g")

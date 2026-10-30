@@ -18,7 +18,7 @@ if [ -z "$PINI_BIN" ]; then
     done
 fi
 if [ -z "$PINI_BIN" ] || [ ! -x "$PINI_BIN" ]; then
-    echo "⚠️ 无法判定：种子二进制取不到（⛔ 这不是「判据不过」）"
+    echo " 注意  无法判定：种子二进制取不到（ 行不通  这不是「判据不过」）"
     echo "   ⇒ 报 2 不报 1：前提缺失 ≠ 违规。先构建宿主，或把 PINI_BIN 指对。"
     exit 2
 fi
@@ -167,7 +167,7 @@ for m in read read-local index-base concat slices; do
         verdict="O(len²)"
         measured_secondary="$measured_secondary $m"
     else
-        verdict="⚠️ 落在两档之间（分辨率不足）"
+        verdict=" 注意  落在两档之间（分辨率不足）"
     fi
     printf '%-14s %9s %9s %8s   %s\n' "$m" "$s" "$l" "$r" "$verdict"
 done
@@ -183,14 +183,14 @@ for m in $LINEAR_ARMS; do
     esac
 done
 
-# ── 判据二：已声明二次的臂若变线性 ⇒ 声明已过时（须知会，⛔ 不是「红」）──
+# ── 判据二：已声明二次的臂若变线性 ⇒ 声明已过时（须知会， 行不通  不是「红」）──
 for m in $PENDING_ARMS; do
     case " $measured_secondary " in
         *" $m "*) : ;;
         *)  case " $measured_linear " in
-                *" $m "*) echo "⭐ 提示：臂 \`$m\` 已实测为线性 —— 它所在的那处站点大概已经被修好了，"
+                *" $m "*) echo " 重要  提示：臂 \`$m\` 已实测为线性 —— 它所在的那处站点大概已经被修好了，"
                           echo "   ⇒ 请把 \`$m\` 从 PENDING_ARMS 移到 LINEAR_ARMS（本件头也一并刷新）。" ;;
-              *)  echo "⚠️ 提示：臂 \`$m\` 落在两档之间（既非线性也非二次）⇒ 本次读数不足以判定它。" ;;
+              *)  echo " 注意  提示：臂 \`$m\` 落在两档之间（既非线性也非二次）⇒ 本次读数不足以判定它。" ;;
             esac ;;
     esac
 done

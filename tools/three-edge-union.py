@@ -45,7 +45,7 @@ line reading "0 failures" over a suite that never ran is the "shape-legal false
 green" this project has already paid for twice. Skips are counted, printed as
 their own state, and make the exit code non-zero.
 
-⚠️ 测试框架 2026-09-19 起迁到 Swift Testing：本器械的 `swift test` 两处解析已同时认
+ 注意  测试框架 2026-09-19 起迁到 Swift Testing：本器械的 `swift test` 两处解析已同时认
 两个框架的套件行 / 失败行 / 汇总行。但**这两条边的对象在 G-6c 与测试树清空后已不存在**
 （`IRExecutorTests` / `IRDifferentialTests` 均已删），所以它们今天读作「0 run」⇒
 UNMEASURED。这是既存状态，不是本次迁移造成的 —— 要复活得先给这两条边重新指定对象。

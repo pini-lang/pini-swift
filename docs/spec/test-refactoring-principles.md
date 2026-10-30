@@ -132,7 +132,7 @@ Rules:
   把「夹具名 ↔ 用例名」逐条断言，不必只靠肉眼。）
 - **Fixtures are located by path, not by bundle resource.** `PiniFixtureLoader` derives
   the fixture directory from `#filePath`, so a directory can be relocated without
-  touching a single call site. ⛔ Do **not** declare a suite directory as a `resources:`
+  touching a single call site. Do **not** declare a suite directory as a `resources:`
   entry to silence the unhandled-file warning: SwiftPM then stops compiling the `.swift`
   inside it and silently drops the whole suite, while the build still exits 0 and the
   warning still disappears. A path-shaped `exclude:` in the manifest is the supported way.
@@ -314,7 +314,7 @@ func testFeatureViaLLI() throws {
 }
 ```
 
-⚠️ 没有「静默跳过」这一档：`swift test` 的汇总行会把已知问题数一并打出
+ 注意  没有「静默跳过」这一档：`swift test` 的汇总行会把已知问题数一并打出
 （`… with 1 known issue`），因此「没跑」与「通过」在读数上必须分得开。
 
 ## Regression Testing
