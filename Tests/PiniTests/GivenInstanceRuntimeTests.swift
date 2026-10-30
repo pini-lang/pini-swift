@@ -190,7 +190,8 @@ struct GivenInstanceRuntimeTests {
             observed = bk_given_get(outerSlot, outerFnPtr, MemoryLayout<Int32>.size)
             finished.signal()
         }
-        let ok = finished.wait(timeout: .now() + 5) == .success
+        /// 预算 30 秒：整包并行时全局队列会被上百个用例抢占，5 秒曾稳定误报（单跑 0.001 秒）。
+        let ok = finished.wait(timeout: .now() + 30) == .success
 
         #expect(ok, "重入取用发生死锁（超时）—— 说明实现持全局锁调用了初始化函数")
         guard ok else { return }  // 死锁时以下断言都无意义
