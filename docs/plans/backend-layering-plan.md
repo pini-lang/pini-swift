@@ -51,7 +51,7 @@
 | IR 节点 | 表达式 53 + 语句 17 = 70（基线记在 `../spec/ir-contract.md`） |
 | `IRType` case | 21 |
 | `IREmitter.swift` | 5,581 行 · 133 个方法 · 52 处 `fatalError` |
-| 发射器内所有权函数 | 12 个（名字含 `Release` / `Retain`） |
+| 发射器内所有权函数 | 15 个（名字含 `Release` / `Retain`，含决策与翻译两类） |
 | 发射器内布局函数 | 6 个（名字含 `Layout` / `Size` / `Spelling`） |
 | `PiniRuntime` | 2,682 行 · 96 个 `@_cdecl` 导出（与 `../spec/runtime-abi.md` 的清单数相等） |
 | `RuntimeOps` | 1,107 行（解释器侧内建） |
@@ -74,7 +74,7 @@ IR 里没有「布局」这一概念，后端问不出「这个结构的第三�
 ### 3.2 所有权寄居
 
 `pendingReleases` · `releaseFunctionDefs` · `emitReleases` · `ensureReleaseFunction` 等
-12 个函数在发射器内合成 retain / release / 逐类型释放胶水。
+15 个名字含 `Release` / `Retain` 的函数里，决定「何时插入所有权动作」的那一半在发射器内完成。
 
 后果：每加一个后端就重做一遍所有权插入。C 通道的提交标题把这件事写在明面上
 （`feat(cbackend): mirror the ownership insertion points`）。参考件已把这条登记为偏离，
@@ -178,7 +178,7 @@ protocol PiniBackend {
 |---|---|---|---|---|
 | **立契约** | `../spec/ir-contract.md` 增「后端义务」一节（已成文：该件第 5 节；警告级门禁未接） | 五条契约各有一条可判定的表述；条目里不出现 `bk_*` · `alloca` · 引用计数布局 | 人工逐条核 + 一条警告级门禁：发射器出现 retain 合成时报出 | 无代码改动，删节即回退 |
 | **布局归位** | 新增 `IRLayout`；降载产出；发射器改读 | 发射器里布局推导归零；51 个示例与 58 个夹具的两通道输出逐字节不变 | `rg 'headerSlotCount\|slotSizeExpression\|fieldLayout' IREmitter` = 0；`tools/ir-parity-probe.py` 全量 MATCH | 新旧两路并存，发射器断言两者相等，跑一轮全量再删旧路 |
-| **所有权归位** | `OwnershipPass`（IR→IR） | 12 个所有权函数从发射器移除；所有权寿命套件全绿；哑后端跑通全语料且源码无 retain 字样 | `rg 'pendingReleases\|emitReleases' IREmitter` = 0；`OwnershipLifetimeTests` 全绿；哑后端 100 行以内接得上 | 断言保留到 pass 有独立测试后，再逐条删 |
+| **所有权归位** | `OwnershipPass`（IR→IR） | 决策族函数从发射器移除（现存 15 个里的决策部分，翻译族保留并注明只翻译不决策）；所有权寿命套件全绿；哑后端跑通全语料且源码无 retain 字样 | `rg 'pendingReleases\|emitReleases\|emitReassignRelease\|emitRetainIfAliased\|releaseOwnedTemporary' IREmitter` = 0；`OwnershipLifetimeTests` 全绿；哑后端 100 行以内接得上 | 断言保留到 pass 有独立测试后，再逐条删 |
 | **后端接缝** | `PiniBackend` 协议 + 能力声明 + CLI 注册表 | 新增一个哑后端只加 1 个文件 + 1 行注册，不改既有文件 | 按此新增一次，`git diff --stat` 出现文件数 = 2 | 注册表可先并存：旧字符串分派保留一个版本 |
 | **内建清单** | `BuiltinSpec` 表；三方对照脚本 | 脚本能双向报缺口：清单有而运行时无导出 / 有导出而无降级点 | 脚本自造两条缺口各报一次；正常树零报 | 脚本先只报不拦，稳定后转门禁 |
 | **拆边界** | 六个 target：`Syntax` / `Semantics` / `IR` / `BackendLLVM` / `RuntimeABI` / `CLI` | 依赖方向由编译期强制：`Syntax` 引不到 `BackendLLVM` | `swift build` 通过；故意加一行越界 import，编译必须失败；构建时长前后各留一次读数 | 拆分之一旦卡住，保留已拆的叶子，未拆的暂留 `Core` |
