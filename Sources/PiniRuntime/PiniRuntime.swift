@@ -1892,6 +1892,19 @@ private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     for k in kids { _bkTaskCancelBox(k) }
 }
 
+/// 取消是协作式的：调用点返回时，任务体可能还在自己的一步里。等它停下再走，
+/// 免得进程退出时线程仍在运行时代码里；上限 200ms，等不到也不把 join 卡死。
+private func _bkTaskWaitQuiescent(_ box: _BkTaskBox) {
+    let deadline = Date().addingTimeInterval(0.2)
+    while Date() < deadline {
+        box.cond.lock()
+        let running = box.running
+        box.cond.unlock()
+        if !running { return }
+        Thread.sleep(forTimeInterval: 0.005)
+    }
+}
+
 /// 从父 scope 剪枝（照 `FutureValue.detachFromParent`）。
 ///  行不通  加锁顺序是**子 → 父**，且**不同时持两把锁** —— 与取消传播（父 → 子）方向相反，
 /// 同时持锁就会死锁。
@@ -1916,6 +1929,7 @@ private func _bkTaskJoinOne(
     defer { _bkTaskDetachFromParent(box) }
     if !completed {
         _bkTaskCancelBox(box)
+        _bkTaskWaitQuiescent(box)
         _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError(_bkTimeoutText(timeoutMs), isCancel: true))
         return 1
     }
@@ -1927,6 +1941,7 @@ private func _bkTaskJoinOne(
     let err = box.errPayload
     box.cond.unlock()
     if cancelled {
+        _bkTaskWaitQuiescent(box)
         _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true))
         return 1
     }
