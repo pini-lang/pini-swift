@@ -25,6 +25,8 @@ let package = Package(
             // T1/T11（2026-08-24）：诊断语言资源（Diagnostics.{zh,en}.toml）随 Bundle.module 分发。
             resources: [.process("Resources")]
         ),
+        // 运行时 ABI 叶子：不依赖包内任何 target，只 import 系统框架；
+        // 生成代码经 C ABI 调用它，编译器侧只在清单里记符号名。
         .target(
             name: "PiniRuntime",
             path: "Sources/PiniRuntime"
