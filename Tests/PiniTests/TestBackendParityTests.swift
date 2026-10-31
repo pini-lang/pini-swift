@@ -236,24 +236,11 @@ struct TestBackendParityTests: Sendable {
 
     // MARK: - 装置
 
-    /// 取被测命令行，优先环境变量，其次自寻构建产物：常规跑法是裸 `swift test`（不设变量），
+    /// 取被测命令行，优先环境变量，其次仓内构建产物：常规跑法是裸 `swift test`（不设变量），
     /// 若只在 `PINI_CLI_BIN` 存在时才跑，这一族判据在默认读数里会全部被跳过。
-    /// 故缺席时从 `#filePath` 反推仓根再找产物；两者都取不到时记一条已知问题，不让用例静默通过。
+    /// 仓根由 `PiniTestEnvironment` 向上找 `Package.swift` 确定；两者都取不到时记一条已知问题。
     private func cliPath() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
-        if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv) {
-            return fromEnv
-        }
-        // `#filePath` → <仓根>/Tests/PiniTests/TestBackendParityTests.swift ⇒ 上溯三层取仓根。
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().path
-        let candidates = ["/.build/debug/pini", "/.build/out/Products/Debug/pini"]
-            .map { repoRoot + $0 }
-        for candidate in candidates
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
+        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
         withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 本套件本次未取（跳过 +1）") {
             Issue.record("测试两通道锁步未取：本批判据本次没有跑")
         }

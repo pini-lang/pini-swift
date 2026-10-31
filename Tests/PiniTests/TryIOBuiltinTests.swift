@@ -64,16 +64,11 @@ struct TryIOBuiltinTests: Sendable {
 
     /// 定位命令行产物：先看环境变量，再按仓根兜底（兜底那一支要先验它认识新内建）。
     private func cliPath() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
-        if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv) {
-            return fromEnv
+        let fromEnvironment = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
+        if !fromEnvironment.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnvironment) {
+            return fromEnvironment
         }
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().path
-        let candidates = ["/.build/debug/pini", "/.build/out/Products/Debug/pini"]
-            .map { repoRoot + $0 }
-        for candidate in candidates
+        for candidate in PiniTestEnvironment.repositoryCLICandidates
         where FileManager.default.isExecutableFile(atPath: candidate) {
             if Self.cliUnderstandsTryIO(candidate) { return candidate }
             withKnownIssue("仓内兜底产物早于 `try*` 三内建 ⇒ 两通道用例本次未取（PINI_CLI_BIN 可指定当前构建）")
