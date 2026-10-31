@@ -1,0 +1,13 @@
+255
+10
+15
+1500.0
+0.02
+300.0
+line1
+line2	tab
+backslash:\ and quote:"
+lang=Pini, version=0.2
+sum=3, half=2.5
+nested array=[1, 2, 3]
+mixed=Pini has 4 chars
