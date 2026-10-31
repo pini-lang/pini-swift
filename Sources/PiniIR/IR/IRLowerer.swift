@@ -1328,8 +1328,9 @@ public enum IRLowerer {
     private static func asyncBodyReturnType(
         declared: IRType?, isAsync: Bool
     ) -> IRType? {
-        guard isAsync, let ok = declared else { return declared }
-        return .result(ok: ok)
+        guard isAsync else { return declared }
+        /// `=> ()` 没有载荷，但体的每条出口都要写三槽 Result ⇒ void 也占一个 i32 槽。
+        return .result(ok: declared ?? .i32)
     }
 
     /// The type a caller sees for an async (`=>`) function: a handle to a running process, not the value it
@@ -1338,8 +1339,9 @@ public enum IRLowerer {
     private static func asyncSignatureReturnType(
         declared: IRType?, isAsync: Bool
     ) -> IRType? {
-        guard isAsync, let ok = declared else { return declared }
-        return .future(ok: ok)
+        guard isAsync else { return declared }
+        /// 与体的三槽一致：void 载荷同样占一个 i32 槽，调用点才拿得到句柄。
+        return .future(ok: declared ?? .i32)
     }
 
     private static func lowerFunction(
@@ -1401,6 +1403,7 @@ public enum IRLowerer {
             builtinExtensionMethods: builtinExtensionMethods
         )
         context.isAsync = decl.isAsync
+        context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
         let body = try lowerBlock(decl.body!, into: &context)
         return IRFunction(
             name: decl.name, params: params, returnType: bodyReturn, body: body,
@@ -1965,6 +1968,14 @@ public enum IRLowerer {
                 let lowered = try lowerExpr(value, expected: returnType, into: &context)
                 try requireAssignable(lowered.type, to: returnType, at: location)
                 return [.returnStmt(value: lowered.node, adopt: returnType.adoption(of: lowered.node))]
+            }
+            if context.isAsyncVoid, let returnType = context.returnType {
+                /// 异步 void 体的裸 `return` 就是 `return ok(())`：三槽 ABI 要求每条出口都写 Result，
+                /// 载荷没有值，占位槽给 0。
+                return [.returnStmt(
+                    value: .resultConstruct(
+                        isOk: true, payload: .intConst(value: 0, type: .i32), type: returnType),
+                    adopt: .none)]
             }
             guard context.returnType == nil else {
                 throw unsupported(
@@ -5836,6 +5847,10 @@ private struct FunctionContext {
     /// `=>` 体里时，闭包体自己没有可让出的任务，`await` 写在那里兑现不了（帧栈是一个任务一个，穿透闭包挂起
     /// 会打破这个前提）。故每个体各判各的，闭包体用自己的 `isAsync` 覆盖。
     var isAsync: Bool = false
+
+    /// 本体的声明是 `=> ()`（异步且无载荷）。`returnType` 已被占位成 `Result<i32>`，
+    /// 单看它分不出「真返回 i32」与「void 占位」⇒ 裸 `return` 的合法性只能靠这一位。
+    var isAsyncVoid: Bool = false
 
     /// 本次语句降载里唯一被允许出现可让出 `await` 的位置（`nil` = 这条语句不允许）。用位置而非布尔标志：
     /// 标志要么在表达式入口一次性消费（`try` 包装位会被误伤），要么得改遍每个表达式分支才能正确传播（漏
