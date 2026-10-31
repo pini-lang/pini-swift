@@ -48,7 +48,7 @@ struct ScalarWildcardMatchTests: Sendable {
     }
 
     /// 两腿在同一份语料上必须读出同一串输出（各自逐字节）。
-    /// `expected` 由**语料头的手写期望**给出 —— ⛔ 不从任何一腿回抄。
+    /// `expected` 由**语料头的手写期望**给出 ——  行不通  不从任何一腿回抄。
     private func expectBothLegs(_ fixture: String, expected: String) throws {
         let file = fixtureFile(fixture)
         let interpreted = try launch(["run", file.path])

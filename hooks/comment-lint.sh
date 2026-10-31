@@ -14,7 +14,7 @@ for candidate in python3 python; do
     fi
 done
 if [ -z "$py" ]; then
-    echo "⛔ [注释门禁] 未找到 python3 —— 判据无法执行，不等于通过" >&2
+    echo " 行不通  [注释门禁] 未找到 python3 —— 判据无法执行，不等于通过" >&2
     exit 1
 fi
 

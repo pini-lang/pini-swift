@@ -553,7 +553,7 @@ public class Lexer {
         var segments: [StringSegment] = []
         var literal = ""
         // `\0` = 内容终止符：命中后不再追加内容、不再产出插值段；
-        // 但 `\(` 仍要扫过去 —— 边界靠扫描推进，⛔ 不能跳。
+        // 但 `\(` 仍要扫过去 —— 边界靠扫描推进， 行不通  不能跳。
         var truncated = false
 
         func flushLiteral() {

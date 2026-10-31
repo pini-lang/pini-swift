@@ -29,7 +29,7 @@ private final class Store: @unchecked Sendable {
 
 /// 解释器侧字符串的 O(1) 入口。调用方仍然负责**负值尾计数**与**越界判定** ——
 /// 本层只把「数出总字数」与「数出第 i 个字素」这两件事从 O(len) 降到均摊 O(1)，
-/// ⛔ 不改任何下标语义。
+///  行不通  不改任何下标语义。
 enum GraphemeCursor {
 
     /// `len(s)` 的均摊 O(1) 形态（首次 O(len)，此后命中即 O(1)）。

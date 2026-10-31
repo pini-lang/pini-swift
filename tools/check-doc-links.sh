@@ -53,7 +53,7 @@ for f in $cand; do
       if sed -n "${lineno}p" "$f" | grep -q "不在本仓"; then
         continue
       fi
-      echo "⛔ 引用空缺载体: $f:$lineno -> \`$ref\`（该件不在本仓；要么改指向，要么在该行写明「不在本仓」）" >&2
+      echo " 行不通  引用空缺载体: $f:$lineno -> \`$ref\`（该件不在本仓；要么改指向，要么在该行写明「不在本仓」）" >&2
       gone=$((gone + 1))
       fail=1
     fi
@@ -61,8 +61,8 @@ for f in $cand; do
 done
 
 if [ "$fail" -eq 0 ]; then
-  echo "✅ 文档链接校验通过（检查 $checked 个引用）"
+  echo " 完成  文档链接校验通过（检查 $checked 个引用）"
 else
-  echo "⛔ 文档链接校验失败（过时 $stale 处 · 空缺载体 $gone 处）" >&2
+  echo " 行不通  文档链接校验失败（过时 $stale 处 · 空缺载体 $gone 处）" >&2
 fi
 exit "$fail"

@@ -9,11 +9,11 @@ cd "$root" || exit 1
 name="$(git config user.name 2>/dev/null || true)"
 email="$(git config user.email 2>/dev/null || true)"
 if [ -z "$name" ] || [ -z "$email" ]; then
-    echo "⛔ [身份] user.name / user.email 未设置；先按 GIT_WORKFLOW 登记并配置" >&2
+    echo " 行不通  [身份] user.name / user.email 未设置；先按 GIT_WORKFLOW 登记并配置" >&2
     exit 1
 fi
 if ! grep -Fq "| $name | $email |" GIT_WORKFLOW.md 2>/dev/null; then
-    echo "⛔ [身份] $name <$email> 未在 GIT_WORKFLOW.md 注册表登记" >&2
+    echo " 行不通  [身份] $name <$email> 未在 GIT_WORKFLOW.md 注册表登记" >&2
     echo "   已登记身份见该文件的贡献者注册表；登记后才允许提交。" >&2
     exit 1
 fi

@@ -34,7 +34,7 @@ struct StringOwnershipRuntimeTests: Sendable {
         bk_str_release(s)
     }
 
-    @Test("归零后读数回零：指针已摘出登记表，⛔ 不是停在 1")
+    @Test("归零后读数回零：指针已摘出登记表， 行不通  不是停在 1")
     func 归零后读数回零() {
         let s = alloc(2)
         bk_str_release(s)
@@ -53,7 +53,7 @@ struct StringOwnershipRuntimeTests: Sendable {
             }
             bk_str_retain(base)
             #expect(bk_str_refcount(base) == 0, "外来串不该有计数")
-            bk_str_release(base)  // ⛔ 不崩，也不释放
+            bk_str_release(base)  //  行不通  不崩，也不释放
             #expect(bk_str_refcount(base) == 0)
         }
     }
@@ -69,7 +69,7 @@ struct StringOwnershipRuntimeTests: Sendable {
     ///  注意  如实登记本条判据的一个弱点：`bk_str_refcount` 对「已归零（已摘出登记表）」与「根本不是本运行时段
     /// 分配的」返回同一个 `0`，两种状态在该读数上同形 ⇒ `归零后不复活` 与 `外来串是惰性的` 靠的是「不崩 +
     /// 计数不回升」，不是「0 与 1 的差别」。要更强地区分得另加分配/回收计数入口；别把这两条读成能区分那两态。
-    @Test("重复释放是惰性的：第二次查表即失配，⛔ 不崩")
+    @Test("重复释放是惰性的：第二次查表即失配， 行不通  不崩")
     func 重复释放是惰性的() {
         let s = alloc(2)
         bk_str_release(s)

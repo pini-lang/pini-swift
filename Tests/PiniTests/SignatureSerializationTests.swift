@@ -5,7 +5,7 @@ import PiniSyntax
 
 /// 结构串（SIG）序列化器的宿主单测。
 /// 右端 = 判据面手写期望（优先级/结合性判别式 14 条，逐字取自判据夹具的判别式段），
-/// ⛔ 不是从某次运行输出抄来的；语料与期望同源同版。
+///  行不通  不是从某次运行输出抄来的；语料与期望同源同版。
 @Suite("SignatureSerialization")
 struct SignatureSerializationTests: Sendable {
 
@@ -16,7 +16,7 @@ main|func() -> ():
     a - b - c
     ; 2  `a + b * c` 乘优先于加
     a + b * c
-    ; 3  `a & b == c` 位运算高于相等比较（ 注意  依据是 §A.3 总表，⛔ 不是 §A.6.3 的措辞）
+    ; 3  `a & b == c` 位运算高于相等比较（ 注意  依据是 §A.3 总表， 行不通  不是 §A.6.3 的措辞）
     a & b == c
     ; 4  `a << b + c` 加减高于移位
     a << b + c
@@ -38,7 +38,7 @@ main|func() -> ():
     a[i][j] = v
     ; 13 `await f()` 前缀挂起 join
     await f()
-    ; 14 `a <= b` 中缀比较（⛔ 不拆成 `<` `=`）
+    ; 14 `a <= b` 中缀比较（ 行不通  不拆成 `<` `=`）
     a <= b
     return
 """#
@@ -90,7 +90,7 @@ main|func() -> ():
                 "第 \(index) 条判别式不符：实得 <\(lines[index - 1])>")
     }
 
-    /// 意图：语料的语句位计数与 14 条判别式 + return 相符（⛔ 不是空转的少条数）。
+    /// 意图：语料的语句位计数与 14 条判别式 + return 相符（ 行不通  不是空转的少条数）。
     @Test("语料语句位计数")
     func statementCount() throws {
         let lines = signatures(of: Self.corpus)
@@ -117,7 +117,7 @@ main|func() -> ():
 
     // MARK: - 驳回性测量
 
-    /// 意图：无 main 的模块零行产出（⛔ 不伪造占位行）。
+    /// 意图：无 main 的模块零行产出（ 行不通  不伪造占位行）。
     @Test("无 main ⇒ 零行")
     func noMainYieldsNoSignatures() throws {
         let lines = signatures(of: #"""
@@ -127,7 +127,7 @@ helper|func() -> ():
         #expect(lines.isEmpty, "无 main 的模块应零行产出，实得 \(lines.count) 行")
     }
 
-    /// 意图：op: 行被取值剥离——结构串里⛔ 不出现 op: 行原文。
+    /// 意图：op: 行被取值剥离——结构串里 行不通  不出现 op: 行原文。
     @Test("运算符行只留取值")
     func operatorLinesCarryValueOnly() throws {
         let lines = signatures(of: Self.corpus)
@@ -136,7 +136,7 @@ helper|func() -> ():
         #expect(lines[0].contains("minus@2"), "第一条应含剥离出的运算符名 minus@2：<\(lines[0])>")
     }
 
-    /// 意图：成员名头部内联——后缀链那条⛔ 不出现 name: 行，也⛔ 不出现 g 的成员元素。
+    /// 意图：成员名头部内联——后缀链那条 行不通  不出现 name: 行，也 行不通  不出现 g 的成员元素。
     @Test("成员名不进元素")
     func memberNameIsNotAnElement() throws {
         let lines = signatures(of: Self.corpus)

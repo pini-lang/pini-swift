@@ -101,7 +101,7 @@ struct StringBuiltinTests: Sendable {
         #expect(lines.joined(separator: "\n") == Self.expected)
     }
 
-    /// 意图：成员内建实参个数错配在静态层被拒（⛔ 不静默按零值跑）。
+    /// 意图：成员内建实参个数错配在静态层被拒（ 行不通  不静默按零值跑）。
     /// 这是驳回性测量：断言「不该发生的确实没发生」——错配形态不得跑出读数。
     @Test(arguments: [
         #""ab".indexOf("a", "b")"#,
@@ -124,7 +124,7 @@ struct StringBuiltinTests: Sendable {
     // MARK: - 命令行两腿
 
     /// 取被测命令行：优先环境变量，其次自寻构建产物。
-    /// 两者都取不到 ⇒ 响亮跳过（⛔ 不静默通过）。
+    /// 两者都取不到 ⇒ 响亮跳过（ 行不通  不静默通过）。
     private func cliPath() -> String? {
         let fromEnv = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
         if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv) {
@@ -209,7 +209,7 @@ struct StringBuiltinTests: Sendable {
     }
 
     /// 意图：同一语料经 `run-llvm`（发射器 + 运行时段 shim）逐行等于同一份期望。
-    /// lli 取不到 ⇒ 响亮跳过（⛔ 不静默通过）。
+    /// lli 取不到 ⇒ 响亮跳过（ 行不通  不静默通过）。
     @Test("命令行 run-llvm 腿：trim/indexOf 逐行等于手写期望")
     func cliLLVMLegMatchesExpectation() throws {
         guard let cli = cliPath() else { return }

@@ -10,7 +10,7 @@ public enum ConcurrencyTier: UInt32, Sendable, CaseIterable {
     /// 依赖 L0 **且有线程**。
     case yield = 2
     /// **L2 抢占** —— 时间片 / 分层抢占。依赖 L1 **且多线程**。
-    /// ⛔ **一律不授予**（裁定 29：登记不实现 —— 语言远未成熟时任何等级都承诺不出来）。
+    ///  行不通  **一律不授予**（裁定 29：登记不实现 —— 语言远未成熟时任何等级都承诺不出来）。
     case preemption = 4
 }
 

@@ -7,8 +7,8 @@ import PiniSyntax
 @testable import PiniBackendLLVM
 
 /// `moduleRoot()` 内建的判据（程序基准面）。
-/// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），⛔ 不往仓库里建文件。
-/// 比对物是**手写期望**，⛔ 不是另一条通道的输出 —— 两条同时错会互相认证。
+/// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`）， 行不通  不往仓库里建文件。
+/// 比对物是**手写期望**， 行不通  不是另一条通道的输出 —— 两条同时错会互相认证。
 struct ModuleRootBuiltinTests: Sendable {
 
     // MARK: - 私有 helper
@@ -175,7 +175,7 @@ struct ModuleRootBuiltinTests: Sendable {
         /// 驳回性：落到默认 `mangle` 的实现产出 `call i8* @moduleRoot()`，本用例两条断言同时红。
 
         ///  注意  判据落在**调用行**上：只看整份 IR 是否含运行时符号名，声明那一行就能把它骗过去。
-        /// ⛔ 未注入态不该带注入点：带了就意味着「默认 nil 时产物逐字节不变」被打破。
+        ///  行不通  未注入态不该带注入点：带了就意味着「默认 nil 时产物逐字节不变」被打破。
         let ir = try emittedIR(
             """
             main|func() -> ():
@@ -195,7 +195,7 @@ struct ModuleRootBuiltinTests: Sendable {
         /// 意图：有基准时，入口第一句把基准交给运行时；声明随之出现一次。
         /// 驳回性：只想改符号映射、忘了注入的实现会让 `bk_module_root` 永远答 CWD。
 
-        ///  注意  只断 ABI 名，⛔ 不断常量名 —— 常量怎么起名不属于对外契约。
+        ///  注意  只断 ABI 名， 行不通  不断常量名 —— 常量怎么起名不属于对外契约。
         let ir = try emittedIR(
             """
             main|func() -> ():

@@ -27,7 +27,7 @@ struct SchedulerWiringTests: Sendable {
         return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 
-    /// 只装载、不运行，返回引擎。⭐ 本件的主测量形态（见类型说明）。
+    /// 只装载、不运行，返回引擎。 重要  本件的主测量形态（见类型说明）。
     private func prepared(_ source: String, scheduler: Scheduler? = nil) throws -> IRExecutor {
         let executor = IRExecutor(
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: scheduler)

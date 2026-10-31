@@ -327,7 +327,7 @@ struct TestBackendParityTests: Sendable {
         let aBody = strippingReportHeader(a.stdout)
         let bBody = strippingReportHeader(b.stdout)
 
-        // 推进性测量：两条通道**各自**与手写期望比（⛔ 不是互相比 —— 同时错会互相认证）。
+        // 推进性测量：两条通道**各自**与手写期望比（ 行不通  不是互相比 —— 同时错会互相认证）。
         #expect(aBody == corpus.expectedBody, "解释器通道的输出与期望不符")
         #expect(bBody == corpus.expectedBody, "LLVM 通道的输出与期望不符")
         #expect(a.status == corpus.expectedStatus, "解释器通道退出码 \(a.status) ≠ 期望 \(corpus.expectedStatus)")

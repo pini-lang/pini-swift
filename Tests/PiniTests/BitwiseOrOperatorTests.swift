@@ -34,7 +34,7 @@ struct BitwiseOrOperatorTests: Sendable {
         return
     """#
 
-    /// 手写期望（逐行；⛔ 不含尾换行 —— raw 串的尾换行被闭合符吃掉）。
+    /// 手写期望（逐行； 行不通  不含尾换行 —— raw 串的尾换行被闭合符吃掉）。
     private static let expected = #"""
     o1 7
     o2 5

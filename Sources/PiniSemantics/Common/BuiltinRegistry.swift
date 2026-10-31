@@ -62,7 +62,7 @@ public enum BuiltinRegistry {
 
     /// 按名取内建**值**的类型；不是值（或没有这个名字）⇒ nil。
     ///
-    /// 与 `member(typeName:name:)` 同形：消费方按需查询，⛔ 不各自遍历 `decls` 重写一遍判定。
+    /// 与 `member(typeName:name:)` 同形：消费方按需查询， 行不通  不各自遍历 `decls` 重写一遍判定。
     public static func builtinValueType(named name: String) -> TypeAnnotation? {
         for decl in decls where decl.valueType != nil && decl.name == name {
             return decl.valueType
@@ -152,7 +152,7 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "writeFile", group: .io, paramNames: ["path", "content"],
             params: [t("String"), t("String")], returns: []),
-        // appendFile：与 writeFile 是**两个名字两种语义**，⛔ 不是同一个函数的开关。
+        // appendFile：与 writeFile 是**两个名字两种语义**， 行不通  不是同一个函数的开关。
         // 目标不存在则创建（同 POSIX 的 `"a"`）；失败即 panic，与 writeFile 同姿态。
         BuiltinDecl(
             name: "appendFile", group: .io, paramNames: ["path", "content"],
@@ -167,7 +167,7 @@ public enum BuiltinRegistry {
             name: "listDir", group: .io, paramNames: ["path"],
             params: [t("String")],
             returns: [.generic(name: "Array", params: [t("String")], location: builtinLocation)]),
-        // 探测类：路径不存在是该类的**正常答案**，⛔ 不是错误 ⇒ 不 panic。
+        // 探测类：路径不存在是该类的**正常答案**， 行不通  不是错误 ⇒ 不 panic。
         // 与 listDir / readFile 的操作类语义相反；两者同走 readFile 的路径解析。
         BuiltinDecl(
             name: "exists", group: .io, paramNames: ["path"],
