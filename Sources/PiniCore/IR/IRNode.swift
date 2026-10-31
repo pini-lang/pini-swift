@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// High-level IR shared by every backend: a typed tree where every expression carries its resolved
 /// scalar type and every variable access its declared type. All type decisions live in `IRLowerer`;

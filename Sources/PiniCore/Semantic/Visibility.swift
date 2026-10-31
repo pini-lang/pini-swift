@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 4 级可见性：`private < internal < package < public`，严格度排序用于「多信号同现时取最严格」。
 /// 文件内 ⊂ 包内 ⊂ 全局，故 internal 优先于 package、package 优先于 public。

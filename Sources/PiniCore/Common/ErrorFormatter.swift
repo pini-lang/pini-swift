@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 错误格式化器：诊断驱动渲染——错误码 + 严重级别 + 源码行 + 跨度下划线（多字符 `~~~`）+
 /// 修复建议 + 可选 ANSI 颜色。消息统一中文，与 `RuntimeError.description` 同一种语言。

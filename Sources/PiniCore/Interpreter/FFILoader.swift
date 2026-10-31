@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 库名 → 路径解析 + 句柄缓存 + 符号查找。解析顺序：`libc` 保留名直连进程已加载的系统 C 库，
 /// 含 `/` 的当路径加载，否则按 `search_paths` 搜 `lib<名称>.{dylib,so}`（子模块 → 根 → 系统默认）。

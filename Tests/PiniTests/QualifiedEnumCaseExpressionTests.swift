@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// 枚举型名限定的零参用例（`色彩.绿`，不带括号）作表达式时的降载判据。`IRLowerer` 的 `.member` 分支只认三种
 /// 接收者（Optional 型名 · 名义值 · 元组），没有「接收者是枚举型名」这一支 ⇒ 落到兜底标识符降载，

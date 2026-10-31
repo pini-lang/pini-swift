@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// 结构串（SIG）序列化器的宿主单测。
 /// 右端 = 判据面手写期望（优先级/结合性判别式 14 条，逐字取自判据夹具的判别式段），

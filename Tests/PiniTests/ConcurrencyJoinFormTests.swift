@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// `await` / `wait` 的形态载体判据：语法把一次 join 分成两种形态 —— `await`（异步体内等待、可以让出当前任务）
 /// 与 `wait`（任意上下文等待、占用当前线程）。载体是 `form` 字段，从 `Parser` 一路带到 IR 节点。

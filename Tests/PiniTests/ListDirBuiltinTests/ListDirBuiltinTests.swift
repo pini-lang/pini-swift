@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// `listDir` 内建的判据。一夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即消费它的用例名 —— 缺一边一眼看出。
 /// 被测对象是文件系统 ⇒ 每条用例自建临时目录当程序基准，不在仓库建文件、也不指向夹具目录（条目数会随夹具增减漂）。

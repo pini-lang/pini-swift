@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// `moduleRoot()` 内建的判据（程序基准面）。
 /// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），⛔ 不往仓库里建文件。

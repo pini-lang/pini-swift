@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 语义分析器
 /// 负责语义检查：变量是否定义、函数是否定义、类型是否定义等
@@ -699,7 +700,7 @@ public final class SemanticAnalyzer {
     /// 表达式 → 类型名；判不出返回 ""。
     /// 覆盖：标识符（登记表，其次裸枚举用例）、成员（限定用例 `形.甲`，其次字段声明）、
     /// 构造调用（`形.甲(...)` / `箱(...)`）、四类字面量。
-    private func typeNameOf(_ expr: Expression) -> String {
+    private func typeNameOf(_ expr: PiniSyntax.Expression) -> String {
         switch expr {
         case .identifier(let name, _):
             if let recorded = declaredTypes[name], !recorded.isEmpty { return recorded }
@@ -738,7 +739,7 @@ public final class SemanticAnalyzer {
     }
 
     /// 声明的类型名：注解优先，其次按初始化式推断；都没结果返回 ""（⇒ 不留登记）。
-    private func declaredTypeName(annotation: TypeAnnotation?, initializer: Expression?) -> String {
+    private func declaredTypeName(annotation: TypeAnnotation?, initializer: PiniSyntax.Expression?) -> String {
         if let annotation = annotation {
             let annotated = typeNameOfAnnotation(annotation)
             if !annotated.isEmpty { return annotated }
@@ -762,7 +763,7 @@ public final class SemanticAnalyzer {
     /// （`typeNameOf`）——按 case 名全局反查会把裸值误判成某枚举的 match。已知枚举则逐臂校验可达性
     /// 并查穷尽；确定非枚举则能解析到枚举的臂永不匹配；判不出类型则跳过。另查已知与未知 case 并存。
     private func checkMatchExhaustive(
-        value: Expression, cases: [MatchCase], location: SourceLocation
+        value: PiniSyntax.Expression, cases: [MatchCase], location: SourceLocation
     ) throws {
         var resolvedPatterns: [String] = []
         var unresolvedEnumCases: [MatchCase] = []
@@ -862,7 +863,7 @@ public final class SemanticAnalyzer {
 
     // MARK: - 表达式检查
 
-    private func checkExpression(_ expr: Expression) throws {
+    private func checkExpression(_ expr: PiniSyntax.Expression) throws {
         switch expr {
         case .identifier(let name, let location):
             try requireDefined(name, location, isFunction: false)

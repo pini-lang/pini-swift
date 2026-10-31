@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// did-you-mean 建议引擎：建议在 `ErrorFormatter` 渲染 undefined*（E3-001/002/003）时计算，
 /// 输入源码文本 + 未定义名，输出编辑距离 ≤ 2 的最近标识符，不侵入语义层与错误构造点。

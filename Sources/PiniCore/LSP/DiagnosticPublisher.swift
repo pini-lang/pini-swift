@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 诊断发布器：将 Pini 三类错误映射为 LSP Diagnostic 数组。
 public struct DiagnosticPublisher {

@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 跳转定义提供器：根据标识符查找定义位置。
 public struct DefinitionProvider {

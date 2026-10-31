@@ -5,7 +5,7 @@
 - 权威次序：语言面语义以 `../spec/pini-reference-v0.md` 为准；IR 节点语义以 `../spec/ir-contract.md`
   为准；运行时段符号面以 `../spec/runtime-abi.md` 为准。本件只排工程动作，不定义语义。
 - 状态：**执行中**，方案取「先薄化后端，后硬化边界」。立契约 · 布局先决 · 布局归位已完成；
-  所有权归位六片 · 后端接缝 · 内建清单已落地（见 6.3.7 / 6.4 / 6.5），拆边界未开始。
+  所有权归位六片 · 后端接缝 · 内建清单已落地（见 6.3.7 / 6.4 / 6.5）；拆边界进行中，语法层已独立（6.6）。
 - 判据来源：2026-10-30 对工作树的实测，读数见「基础读数」。
 
 注意 本计划**不引入第二套 IR**。参考件把 IR 定为单层、唯一的分析 IR；下文所有 pass 都作用在
@@ -182,7 +182,7 @@ protocol PiniBackend {
 | **所有权归位** | 存储点注解 + 求值效果表（见 6.3.7；未引入 IR→IR 的 pass） | 决策族函数从发射器移除，翻译点保留并注明只翻译不决策；所有权寿命套件全绿 | `tools/backend-duty-check.py` 决策族 0 处、已归位符号 0 处；`OwnershipLifetimeTests` 全绿 | 断言保留到新路有独立测试后，再逐条删 |
 | **后端接缝** | `PiniBackend` 协议 + 能力声明 + CLI 注册表 | 新增一个哑后端只加 1 个文件 + 1 行注册，不改既有文件 | 按此新增一次，实测文件数 = 2（13 行新文件 + 注册 1 行），验完回滚 | 注册表可先并存：旧字符串分派保留一个版本 |
 | **内建清单** | `BuiltinSpec` 表；三方对照脚本 | 脚本能双向报缺口：清单有而运行时无导出 / 有导出而无降级点 | 实测：`--self-test` 两条植入缺口各报一次，正常树零报（96 = 79 + 17）；已接进 CI | 脚本先只报不拦，稳定后转门禁 |
-| **拆边界** | 六个 target：`Syntax` / `Semantics` / `IR` / `BackendLLVM` / `RuntimeABI` / `CLI` | 依赖方向由编译期强制：`Syntax` 引不到 `BackendLLVM` | `swift build` 通过；故意加一行越界 import，编译必须失败；构建时长前后各留一次读数 | 拆分之一旦卡住，保留已拆的叶子，未拆的暂留 `Core` |
+| **拆边界** | 六个 target：`Syntax` / `Semantics` / `IR` / `BackendLLVM` / `RuntimeABI` / `CLI`；语法层已独立 | 依赖方向由编译期强制：`Syntax` 引不到 `BackendLLVM` | `swift build` 通过；往 `PiniSyntax` 加一行越界 import，实测报 `module dependency cycle`；117 份语料 87 份逐字节相同 | 拆分之一旦卡住，保留已拆的叶子，未拆的暂留 `Core` |
 | **试点后端** | 字节码 `embedded_min` 26 条指令的最小通道 | 接入生产代码不超过 1,000 行；能力矩阵改为活表进 CI | `git diff --stat` 数新增行；能力矩阵在 CI 里产出三列并随提交更新 | 试点失败即回查「所有权归位」的 pass 边界 |
 
 注意 「所有权归位」的两处收尾线已按 6.3.1 与 6.3.6 收窄：胶水合成 3 处保留、不参与归零；哑后端
@@ -431,6 +431,25 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 
 注意 拆 target 会暴露一批「只是为了跨文件可见而写 `public`」的 API。清理量要单列一笔，
 不混进结构改动里评。
+
+状态：**进行中**，语法层已独立。`PiniSyntax` 与 `PiniCore` 并列，`Package.swift` 里零依赖，
+内含 AST · 词法 · 语法 · `SourceLocation` · `Desugar`（糖在解析后立即消除，属语法层）。
+`PiniCore` 40 个文件加 `import PiniSyntax`，CLI 1 个、测试 32 个。
+
+读数：46 个文件整体搬移，内容零改动 —— `git diff -M` 只见 import 与清单；`PiniSyntax` 46 文件
+6,497 行，`PiniCore` 72 文件 30,170 行；`swift test` 298 tests / 50 suites 全绿；117 份语料 87 份
+逐字节相同，2 份是既有的泛型换序，28 份两版同败。边界实测：往 `PiniSyntax` 里加一行
+`import PiniCore`，构建报 `module dependency cycle` —— 这是本行判据在编译期的形态。
+
+注意 `RuntimeABI` 一片无需新拆：`PiniRuntime` 已是独立 target，`Package.swift` 里零依赖，
+源文件只 import Foundation / Darwin / Glibc，它就是运行时 ABI 的叶子。剩下的两刀是
+`Semantics`（Semantic · Type · Visibility）与 `IR` · `BackendLLVM`（CodeGen · Backend）；
+`Common` · `Module` · `Run` · `Interpreter` · `Debugger` · `LSP` · `REPL` 的归属在下一刀前要定。
+
+注意 搬移暴露一处同名冲突：`Foundation` 自 macOS 15 起导出 `Expression`（谓词表达式），与语法树
+的同名节点撞车。`PiniCore` 保留一条 `public typealias Expression = PiniSyntax.Expression`，
+包外仍写 `PiniCore.Expression`，包内 45 处无前缀引用因此不必逐个限定。搬移本身没有新增 `public`：
+语法层的 214 条 `public` 声明在拆分前就存在。
 
 ### 6.7 试点后端
 

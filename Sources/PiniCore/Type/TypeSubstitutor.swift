@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 public final class TypeSubstitutor {
     public let bindings: [String: TypeAnnotation]
