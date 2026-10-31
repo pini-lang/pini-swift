@@ -28,23 +28,23 @@ struct BackendSeamTests: Sendable {
 
     @Test("注册表里的名字与后端自报的名字一致")
     func registryNamesMatchTheBackendsOwn() throws {
-        #expect(!BackendRegistry.entries.isEmpty)
-        for entry in BackendRegistry.entries {
-            let backend = try #require(BackendRegistry.make(entry.identifier))
+        #expect(!Backends.registry.entries.isEmpty)
+        for entry in Backends.registry.entries {
+            let backend = try #require(Backends.registry.make(entry.identifier))
             #expect(type(of: backend).identifier == entry.identifier)
         }
     }
 
     @Test("认不出的名字返回 nil —— 不猜一个近似通道")
     func anUnknownNameYieldsNil() {
-        #expect(BackendRegistry.make("no-such-backend") == nil)
-        #expect(BackendRegistry.make("") == nil)
+        #expect(Backends.registry.make("no-such-backend") == nil)
+        #expect(Backends.registry.make("") == nil)
     }
 
     /// 默认通道必须是产目标码的那一条：`pini emit` 不带 `--backend` 时行为不变。
     @Test("默认通道产目标码")
     func theDefaultBackendProducesMachineCode() throws {
-        let backend = try #require(BackendRegistry.make(BackendRegistry.defaultIdentifier))
+        let backend = try #require(Backends.registry.make(Backends.registry.defaultIdentifier))
         #expect(type(of: backend).capabilities.output == .machineCode)
     }
 
@@ -81,7 +81,7 @@ struct BackendSeamTests: Sendable {
                 print(name.upper(), total, len(xs))
                 return
             """#)
-        let dump = JSONBackend().emit(module: module)
+        let dump = try JSONBackend().emit(module: module)
         #expect(dump.hasPrefix("{\"backend\":\"json\""))
         for kind in ["allocVar", "storeVar", "forInStmt", "ifStmt", "continueStmt", "deferStmt",
                      "exprStmt", "returnStmt"] {
@@ -105,26 +105,28 @@ struct BackendSeamTests: Sendable {
                 print("a\"b")
                 return
             """#)
-        let dump = JSONBackend().emit(module: module)
+        let dump = try JSONBackend().emit(module: module)
         let parsed = try #require(
             try JSONSerialization.jsonObject(with: Data(dump.utf8)) as? [String: Any])
         #expect(parsed["backend"] as? String == "json")
         #expect((parsed["functions"] as? [Any])?.count == 1)
     }
 
-    /// 换通道不该改变「能不能编过」以外的东西：两条通道对同一模块都必须给出非空输出。
-    @Test("两条通道对同一模块都产出非空文本")
-    func bothBackendsEmitSomething() throws {
+    /// 换通道不该改变「能不能编过」以外的东西：每条通道对同一模块都必须给出非空输出。
+    /// 样例取各通道能力声明的交集（标量与变量），故一条只认子集的通道也能参与这条判据。
+    @Test("每条通道对同一模块都产出非空文本")
+    func everyBackendEmitsSomething() throws {
         let module = try lowered(
             #"""
             main|func() -> ():
-                let xs: Array<I32> = [1, 2]
-                print(len(xs))
+                var n = 1
+                n = n + 2
+                print(n)
                 return
             """#)
-        for entry in BackendRegistry.entries {
-            let backend = try #require(BackendRegistry.make(entry.identifier))
-            #expect(!backend.emit(module: module).isEmpty, "\(entry.identifier) 产出了空文本")
+        for entry in Backends.registry.entries {
+            let backend = try #require(Backends.registry.make(entry.identifier))
+            #expect(try !backend.emit(module: module).isEmpty, "\(entry.identifier) 产出了空文本")
         }
     }
 }

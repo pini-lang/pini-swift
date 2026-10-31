@@ -61,6 +61,10 @@ python3 tools/backend-duty-check.py
 step "构建"
 swift build --disable-sandbox
 
+step "能力矩阵门禁"
+# 表由各通道自报（pini backends），检出件与之逐行比对：改了能力声明不改表即红。
+PINI_BIN="$PWD/.build/debug/pini" python3 tools/capability-matrix.py
+
 step "测试"
 swift test --disable-sandbox
 

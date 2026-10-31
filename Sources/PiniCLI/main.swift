@@ -636,7 +636,8 @@ func printHelp() {
     print(" parse <file.pini> Parse and print the AST")
     print(" parse --sig <file.pini> Parse and print statement signature (SIG) lines")
     print(" tokens <file.pini> Print tokens from lexical analysis")
-    print(" emit <file.pini> Emit LLVM IR (.ll) to stdout or -o file")
+    print(" emit <file.pini> [--backend <name>] Emit a target listing to stdout or -o file")
+    print(" backends [--tsv] Print the backend capability matrix (family x channel)")
     print(" compile <file.pini> Compile via clang and run (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
     print(" run-llvm <file.pini> Run via LLVM JIT (lli) (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
     print(" (LLVM backend requires clang/lli on PATH or PINI_LLVM_BIN. For interpreter-only execution, use 'run'.)")
@@ -650,6 +651,39 @@ func printHelp() {
     print("Directory / module mode:")
     print(" A directory containing pini.toml is treated as one multi-file module.")
     print(" A directory without pini.toml is checked file-by-file as independent programs.")
+}
+
+/// 能力矩阵：行是节点族，列是装配表里的通道。产出由各通道自己声明，故这张表不会与实现漂移。
+func printBackendMatrix(tsv: Bool) {
+    let registry = Backends.registry
+    let channels = registry.entries.compactMap { registry.make($0.identifier) }
+    let families = BackendCapabilities.Family.allCases
+    if tsv {
+        print((["family"] + registry.identifiers).joined(separator: "\t"))
+        var outputs = ["output"]
+        for channel in channels {
+            outputs.append(type(of: channel).capabilities.output.rawValue)
+        }
+        print(outputs.joined(separator: "\t"))
+        for family in families {
+            var row = [family.rawValue]
+            for channel in channels {
+                row.append(type(of: channel).capabilities.supports(family) ? "yes" : "no")
+            }
+            print(row.joined(separator: "\t"))
+        }
+        return
+    }
+    var header = ["family"]
+    for name in registry.identifiers { header.append(name) }
+    print(header.joined(separator: "\t"))
+    for family in families {
+        var row = [family.rawValue]
+        for channel in channels {
+            row.append(type(of: channel).capabilities.supports(family) ? "yes" : "no")
+        }
+        print(row.joined(separator: "\t"))
+    }
 }
 
 func printVersion() {
@@ -1557,7 +1591,7 @@ private func typeCheckThenGenerate(
     let irModule = try lowerSingleFile(source: source, fileName: fileName)
     // 注入程序基准，与解释器同规则。需要它的通道自己覆写，其余保持默认。
     backend.setProgramBase(absoluteProgramBase(fileName))
-    return backend.emit(module: irModule)
+    return try backend.emit(module: irModule)
 }
 
 func runEmitCommand(
@@ -1601,7 +1635,7 @@ private func runIRPackageEmit(
     let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
     // 模块基准 = 模块根，与解释器模块路径一致。
     backend.setProgramBase(absoluteProgramBase(moduleRoot))
-    let ir = backend.emit(module: irModule)
+    let ir = try backend.emit(module: irModule)
     if let out = outputPath {
         try ir.write(toFile: out, atomically: true, encoding: .utf8)
     } else {
@@ -1734,6 +1768,10 @@ func formatCLIError(error: Error, source: String?) -> String {
         _ = d
         return ErrorFormatter.formatDiagnostic(error, source: source ?? "")
     }
+    // 通道拒绝不是语言诊断：它说的是「这条路走不了」，故按通道自己的话说，不套诊断码。
+    if let backend = error as? BackendError {
+        return "Error: \(backend.description)"
+    }
     return "Error: \(error.localizedDescription)"
 }
 
@@ -1852,6 +1890,8 @@ case "test-llvm":
     // 与 `test` **同一套**收集范围、门禁与报告；差别只在最后一步跑在 LLVM 通道上
     // （发射成原生程序再运行）。命名照 `run` / `run-llvm` 的既有惯例。
     runTestPath(args.count >= 3 ? args[2] : nil, channel: .llvm)
+case "backends":
+    printBackendMatrix(tsv: args.contains("--tsv"))
 case "emit":
     guard args.count >= 3 else {
         printError("Error: emit command requires a file path")
@@ -1860,7 +1900,7 @@ case "emit":
     do {
         // 通道选择：`--backend <name>` 从位置参数里挑出来，剩下的是路径与可选输出文件。
         //  注意  名字不认识时报错并列出可选值，不猜一个近似通道 —— 猜错会让人以为换通道没生效。
-        var backendName = BackendRegistry.defaultIdentifier
+        var backendName = Backends.registry.defaultIdentifier
         var positional: [String] = []
         var cursor = 2
         while cursor < args.count {
@@ -1872,10 +1912,10 @@ case "emit":
                 cursor += 1
             }
         }
-        guard let backend = BackendRegistry.make(backendName) else {
+        guard let backend = Backends.registry.make(backendName) else {
             printError(
                 "Error: unknown backend '\(backendName)'. Available: "
-                    + BackendRegistry.identifiers.joined(separator: ", "))
+                    + Backends.registry.identifiers.joined(separator: ", "))
             exit(1)
         }
         guard let path = positional.first else {

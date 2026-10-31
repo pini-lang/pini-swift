@@ -34,11 +34,29 @@ let package = Package(
             dependencies: ["PiniSemantics"],
             path: "Sources/PiniIR"
         ),
-        // 发射层：LLVM 文本生成与后端接缝（协议 · 能力声明 · 注册表）。只认识 IR。
+        // 发射层：LLVM 文本生成。只认识 IR 与接缝，不认识其它通道。
         .target(
             name: "PiniBackendLLVM",
-            dependencies: ["PiniIR"],
+            dependencies: ["PiniBackendKit"],
             path: "Sources/PiniBackendLLVM"
+        ),
+        // 后端接缝：协议 · 能力声明 · 装配表的形状。不认识任何具体通道 —— 认识谁，加一条通道就得改它。
+        .target(
+            name: "PiniBackendKit",
+            dependencies: ["PiniIR"],
+            path: "Sources/PiniBackendKit"
+        ),
+        // 试点通道：embedded_min 字节码，26 条指令。
+        .target(
+            name: "PiniBackendEmbedded",
+            dependencies: ["PiniBackendKit"],
+            path: "Sources/PiniBackendEmbedded"
+        ),
+        // 装配点：全部通道在此登记。放最上层，故通道之间互不认识。
+        .target(
+            name: "PiniBackends",
+            dependencies: ["PiniBackendKit", "PiniBackendLLVM", "PiniBackendEmbedded"],
+            path: "Sources/PiniBackends"
         ),
         // 宿主层：解释执行 · 调试协议 · 语言服务 · REPL · 包工具链。它消费编译产物而不生产，
         // 故不在编译管道上，管道也不认识它。
@@ -51,7 +69,10 @@ let package = Package(
         // 包内各层之间必须显式声明依赖 —— 这就是分层在编译期的形态。
         .target(
             name: "PiniCore",
-            dependencies: ["PiniSemantics", "PiniIR", "PiniBackendLLVM", "PiniHost"],
+            dependencies: [
+                "PiniSemantics", "PiniIR", "PiniBackendKit", "PiniBackendLLVM",
+                "PiniBackendEmbedded", "PiniBackends", "PiniHost",
+            ],
             path: "Sources/PiniCore"
         ),
         // 运行时 ABI 叶子：不依赖包内任何 target，只 import 系统框架；
@@ -70,8 +91,8 @@ let package = Package(
             // 测试逐层 @testable 引入：伞只重导出 public，看不见 package 与 internal，
             // 而分类表 · 清理栈 · 能力矩阵这些判据恰恰钉在内部约定上。
             dependencies: [
-                "PiniSyntax", "PiniSemantics", "PiniIR", "PiniBackendLLVM", "PiniHost",
-                "PiniCore", "PiniRuntime",
+                "PiniSyntax", "PiniSemantics", "PiniIR", "PiniBackendKit", "PiniBackendLLVM",
+                "PiniBackendEmbedded", "PiniBackends", "PiniHost", "PiniCore", "PiniRuntime",
             ],
             path: "Tests/PiniTests",
             // 夹具（.pini）集中在各套件目录的 Fixtures/ 下。SwiftPM 把目标目录内的非源文件判为
