@@ -111,10 +111,10 @@ zh = "差分测试"
 status = "stable"
 since = "2026-08-28"
 
-[term.ownership]
-en = "ownership"
-zh = "资源归属"
-alt_zh = ["所有权", "RAII 归还责任"]
+[term.share]
+en = "share"
+zh = "份额"
+alt_zh = ["所有权（仅指 RAII 归还责任）"]
 pos = "noun"
 contexts = ["编译器实现 · 不是语言特性"]
 status = "stable"

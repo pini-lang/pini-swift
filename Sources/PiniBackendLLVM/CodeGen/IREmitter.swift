@@ -182,23 +182,23 @@ public final class IREmitter {
     /// 是否发射过字符串引用计数调用（`bk_str_retain` / `bk_str_release`）。累积形态
     /// `self.buf = self.buf + line` 每次丢弃旧串，没人回收的话峰值等于各次结果长度之和；
     /// 本条即为此而开。不涉计数字符串的模块 IR 逐字节不变。
-    private var usesStringOwnership = false
+    private var usesStringRefcount = false
 
     /// 本层当前持有 +1 引用的字符串 SSA 名（发射器侧账本）。入账：本层分配的堆串；
     /// 出账：交出份额（存槽/return/存元素/存字段）或就地消费（打印/运算/传内建）。
     /// 中间串既不落槽也非最终值，没有这本账就无人释放，正是二次方项的来源。
-    private var ownedStrings: Set<String> = []
+    private var heldStrings: Set<String> = []
 
-    /// `ownedStrings` 需要跨函数隔离：函数体发射前保存、发射后恢复。
-    private var ownedStringsStack: [Set<String>] = []
+    /// `heldStrings` 需要跨函数隔离：函数体发射前保存、发射后恢复。
+    private var heldStringsStack: [Set<String>] = []
 
-    /// 本层新分配、尚无持有者的名义箱 / 容器句柄：SSA 名 → 类型。与 `ownedStrings` 同一本账的另一半
+    /// 本层新分配、尚无持有者的名义箱 / 容器句柄：SSA 名 → 类型。与 `heldStrings` 同一本账的另一半
     /// （字符串族固定走 `bk_str_release`，故那边只记名字）。入账：构造点；出账：被持有位置接管，或就地还。
     /// 未出账的条目最多是泄漏（现状）， 行不通  不会被二次释放 —— 键是双端唯一的 SSA 名。
-    private var ownedBoxes: [String: IRType] = [:]
+    private var heldBoxes: [String: IRType] = [:]
 
-    /// 与 `ownedStringsStack` 同规：函数体 / 闭包体 / 给定初始化器各持一份，`IRBuilder` 重新编号 ⇒ 不能串。
-    private var ownedBoxesStack: [[String: IRType]] = []
+    /// 与 `heldStringsStack` 同规：函数体 / 闭包体 / 给定初始化器各持一份，`IRBuilder` 重新编号 ⇒ 不能串。
+    private var heldBoxesStack: [[String: IRType]] = []
 
     /// 本函数（或闭包体）中被闭包捕获的变量名。必须在进体前算出：捕获槽要在分配那一刻
     /// 就知道会被带走，而 `allocVar` 总在闭包字面量之前，事后补不了。
@@ -586,7 +586,7 @@ public final class IREmitter {
         }
         // N76：字符串的引用计数。与上一条同规 —— 只有真发过 retain / release 的模块才带，
         // 故「不碰计数字符串」的程序 IR 逐字节不变。
-        if usesStringOwnership {
+        if usesStringRefcount {
             tail += Builtins.declaration(for: "bk_str_alloc")
             tail += Builtins.declaration(for: "bk_str_dup")
             tail += Builtins.declaration(for: "bk_str_retain")
@@ -663,10 +663,10 @@ public final class IREmitter {
         /// 字符串账本每函数一份：进体前压栈、换上空账本，函数发射结束时还原。
         /// 少了这一步账本会跨函数累积 —— 上个函数未出账的 SSA 名留在本函数账上却无人释放，
         /// 症状只是编译期集合变大。压栈是为了让「账本 = 本函数的持有量」这句话成立。
-        ownedStringsStack.append(ownedStrings)
-        ownedStrings = []
-        ownedBoxesStack.append(ownedBoxes)
-        ownedBoxes = [:]
+        heldStringsStack.append(heldStrings)
+        heldStrings = []
+        heldBoxesStack.append(heldBoxes)
+        heldBoxes = [:]
         // Frame 0 of this function is its body block, pushed by the `emitBlock` call below;
         // that block runs its own cleanup at the tail, so nothing is left for `exit_block`.
         pendingCleanup.removeAll()
@@ -763,8 +763,8 @@ public final class IREmitter {
         }
         frameMode = .none
         // N76：还原上一个函数的字符串账本（与函数头的压栈配对）。
-        ownedStrings = ownedStringsStack.popLast() ?? []
-        ownedBoxes = ownedBoxesStack.popLast() ?? [:]
+        heldStrings = heldStringsStack.popLast() ?? []
+        heldBoxes = heldBoxesStack.popLast() ?? [:]
     }
 
     /// 该函数会不会被 `emitTaskSpawn` 接住（`isAsync` 且返回 `Result`）。
@@ -1135,7 +1135,7 @@ public final class IREmitter {
     }
 
     /// 把一个新声明的本地推进当前清理帧：退出时还掉它那一份。
-    ///  注意  这是翻译，不是决策 —— 「这个槽持有份额」由 `allocVar` 的类型与 `IRType.ownershipClass` 给出。
+    ///  注意  这是翻译，不是决策 —— 「这个槽持有份额」由 `allocVar` 的类型与 `IRType.shareClass` 给出。
     /// 同帧同槽只登记一次：遮蔽后的重声明会让名字重复，双释放会多扣一份（use-after-free）。
     private func ownSlot(_ slot: String, type: IRType) {
         guard let symbol = releaseSymbol(for: type) else { return }
@@ -1150,11 +1150,11 @@ public final class IREmitter {
         )
     }
 
-    /// 该类型在退出 / 被覆盖时要调的销毁符号，nil = 本层不释放它。判定来自 `IRType.ownershipClass`：
+    /// 该类型在退出 / 被覆盖时要调的销毁符号，nil = 本层不释放它。判定来自 `IRType.shareClass`：
     /// 拼写是后端的表示，换表示就会变，而变了的形态是「某族不再释放」。
     ///  注意  `LazyRef` 归在计数族，但其销毁符号尚未登记 —— 契约第 4 节记的缺口，不是它不用释放。
     private static func collectionDestroySymbol(for type: IRType) -> String? {
-        switch type.ownershipClass {
+        switch type.shareClass {
         case .retained(.array): return "bk_array_destroy"
         case .retained(.dict): return "bk_dict_destroy"
         case .retained(.set): return "bk_set_destroy"
@@ -1171,7 +1171,7 @@ public final class IREmitter {
     private func releaseSymbol(for type: IRType) -> String? {
         if nominalKindSpelling(type) != nil { return ensureReleaseFunction(for: type) }
         if isRefcountedString(type) {
-            usesStringOwnership = true
+            usesStringRefcount = true
             return "bk_str_release"
         }
         return Self.collectionDestroySymbol(for: type)
@@ -2094,18 +2094,18 @@ public final class IREmitter {
     /// 构造点有七处，出口只有一个，而漏一处的后果是每次求值都漏一份。
     private func emitExpr(_ expr: IRExpr) -> IRValue {
         let value = emitExprValue(expr)
-        if expr.ownershipEffect == .fresh, irType(of: expr).holdsAShare {
+        if expr.shareEffect == .fresh, irType(of: expr).holdsAShare {
             adoptFreshShare(value, type: irType(of: expr))
         }
         return value
     }
 
     /// 记下一个刚造出来、还没有持有者的份额。它的去路只有两条：存储位接管（`applyAdopt`），
-    /// 或消费位用完归还（`releaseOwnedTemporary`）。两条都不走，就是漏一份。
+    /// 或消费位用完归还（`releaseHeldTemporary`）。两条都不走，就是漏一份。
     private func adoptFreshShare(_ value: IRValue, type: IRType) {
-        switch type.ownershipClass {
-        case .retained(.string): adoptOwnedString(value.ssaName)
-        case .valueBox, .retained: adoptOwnedBox(name: value.ssaName, type: type)
+        switch type.shareClass {
+        case .retained(.string): holdString(value.ssaName)
+        case .valueBox, .retained: holdBox(name: value.ssaName, type: type)
         case .inert, .aggregate: break
         }
     }
@@ -2176,7 +2176,7 @@ public final class IREmitter {
                 /// 派发不走借用：帧把实参整体搬走，名义箱那份 +1 就此归任务 ⇒ 调用点一条也不还。
                 return emitTaskSpawn(
                     callee: callee, mangled: Self.mangle(function), args: args,
-                    argEffects: arguments.map(\.ownershipEffect))
+                    argEffects: arguments.map(\.shareEffect))
             }
             /// `F64(x)` is an instruction, not a symbol: falling through to `call @F64` would reference an
             /// undefined value while the command still exits zero. A double is already there; anything
@@ -2560,8 +2560,8 @@ public final class IREmitter {
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(rhsValue.ssaName))\n"
             /// 两个操作数到此用完：只被 `strlen` / `strcpy` / `strcat` 读过，没有持有者接管 ⇒ 就地还掉。
             /// 这一步就是二次方项的处置：`a + b + c` 的中间串既不落槽也不是最终值，除这里没有别的回收点。
-            releaseOwnedString(lhsValue)
-            releaseOwnedString(rhsValue)
+            releaseHeldString(lhsValue)
+            releaseHeldString(rhsValue)
             return IRValue(llvmType: "i8*", ssaName: buf)
 
         case .interpString(let parts):
@@ -2908,7 +2908,7 @@ public final class IREmitter {
             let printed = emitExpr(argument)
             emitValuePrint(value: printed, type: irType(of: argument))
             /// 与单参打印同规：临时值印完即还。
-            releaseOwnedTemporary(printed)
+            releaseHeldTemporary(printed)
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
@@ -3178,8 +3178,8 @@ public final class IREmitter {
         captureSlots = [:]
         pendingCleanup = []
         /// 给定初始化器也是独立体（新 `IRBuilder`）⇒ 临时箱账本同样换一份。
-        ownedBoxesStack.append(ownedBoxes)
-        ownedBoxes = [:]
+        heldBoxesStack.append(heldBoxes)
+        heldBoxes = [:]
 
         // 引用计数头（第 0 格）：`%out` 是运行时给的**程序级单例盒**，头格写 1；
         //  注意  它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
@@ -3215,7 +3215,7 @@ public final class IREmitter {
         currentIsMain = savedIsMain
         captureSlots = savedCaptureSlots
         pendingCleanup = savedPendingCleanup
-        ownedBoxes = ownedBoxesStack.popLast() ?? [:]
+        heldBoxes = heldBoxesStack.popLast() ?? [:]
         return symbol
     }
 
@@ -3289,7 +3289,7 @@ public final class IREmitter {
         /// 字符串字段的释放：`self.字段 = 新串` 的覆盖必须发释放，否则累积形态（`self.buf`）原样二次方。
         /// `needsNullGuard = true`：结构体的字符串字段可能还没写过，是 null。
         if isRefcountedString(type) {
-            usesStringOwnership = true
+            usesStringRefcount = true
             return ("bk_str_release", true)
         }
         if let destroy = Self.collectionDestroySymbol(for: type) {
@@ -3390,7 +3390,7 @@ public final class IREmitter {
             case .string:
                 // N76：**字符串字段**在结构体拷贝里也要留一份 —— 源箱与新箱是两个持有者。
                 //  注意  与另两族同规：`bk_str_retain` 对非本时段分配的串（全局常量）是无操作。
-                usesStringOwnership = true
+                usesStringRefcount = true
                 bodyIR += " call void @bk_str_retain(ptr \(value))\n"
                 stored = value
             case nil:
@@ -3418,8 +3418,8 @@ public final class IREmitter {
             return value
         case .take:
             /// 临时值被持有位置接管 ⇒ 份额转移，本层不再负责释放它：字符串与箱各出一笔账。
-            claimOwnedString(value)
-            claimOwnedBox(value)
+            claimHeldString(value)
+            claimHeldBox(value)
             return value
         case .copyStruct:
             guard let symbol = ensureCopyFunction(for: type) else {
@@ -3447,7 +3447,7 @@ public final class IREmitter {
             usesNominalBoxes = true
             bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
         case .string:
-            usesStringOwnership = true
+            usesStringRefcount = true
             bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
         }
         return value
@@ -3652,7 +3652,7 @@ public final class IREmitter {
             bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(srcIndex))\n"
             if elementType.llvmSpelling == "%bk_array*" {
                 // Nested handle element: the source array still holds its
-                // share, so the copy retains one (ownership contract 3).
+                // share, so the copy retains one (resource contract 3).
                 let inner = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: inner, type: "%bk_array*", ptr: boxPtr) + "\n"
                 let innerRaw = builder.freshTemp()
@@ -3702,7 +3702,7 @@ public final class IREmitter {
 
     /// Append one element, yielding a NEW array handle: the input handle and its contents are left alone,
     /// the same functional shape `slice` produces. The element ABI (width + tag) and the alias rule come
-    /// from the table the subscript store uses — a source-owned value is retained, a temporary transfers.
+    /// from the table the subscript store uses — a borrowed value is retained, a fresh one transfers.
     private func emitArrayAppend(
         receiver: IRValue, elementNode: IRExpr, elementValue: IRValue, elementType: IRType
     ) -> IRValue {
@@ -3883,25 +3883,25 @@ public final class IREmitter {
     /// 记下一个本层亲手分配、当前持有 +1 引用的字符串 SSA 名。
     /// 只有三类产出入账：`stringConcat` / `interpString` 的拼接结果，以及运行时段返回新分配串的内建。
     ///  行不通  借来的值（`load` / 全局常量 / 形参）不入账 —— 账本正是把这两类分开。
-    private func adoptOwnedString(_ name: String) {
-        usesStringOwnership = true
-        ownedStrings.insert(name)
+    private func holdString(_ name: String) {
+        usesStringRefcount = true
+        heldStrings.insert(name)
     }
 
     /// 交出份额：该值已被某个持有位置（变量槽 / 返回位 / 数组元素槽 / 字段）接管，此后由那里释放。
-    /// 它与 `releaseOwnedString` 互斥，一个值只能走一条；错成 claim 是泄漏（安全），错成 release 是
+    /// 它与 `releaseHeldString` 互斥，一个值只能走一条；错成 claim 是泄漏（安全），错成 release 是
     /// 悬垂（危险）⇒ 凡「这个值要存下去」的位置，宁可用 claim。
-    private func claimOwnedString(_ value: IRValue) {
+    private func claimHeldString(_ value: IRValue) {
         guard value.llvmType == "i8*" else { return }
-        ownedStrings.remove(value.ssaName)
+        heldStrings.remove(value.ssaName)
     }
 
     /// 就地消费掉一个字符串值（用完即扔，没有持有者接管它）：拼接的两个操作数、打印、长度查询、
     /// 作为内建实参。 行不通  对借用值（不在账里）是无操作 ⇒ 常量串、`load` 出的槽值、形参都不会被误释放。
     @discardableResult
-    private func releaseOwnedString(_ value: IRValue) -> Bool {
+    private func releaseHeldString(_ value: IRValue) -> Bool {
         guard value.llvmType == "i8*" else { return false }
-        guard ownedStrings.remove(value.ssaName) != nil else { return false }
+        guard heldStrings.remove(value.ssaName) != nil else { return false }
         bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
         return true
     }
@@ -3910,21 +3910,21 @@ public final class IREmitter {
 
     /// 记下一个本层亲手分配、当前持有 +1 的临时箱。它还没有持有位置 ⇒ 调用点 / 打印点用完即还。
     /// 只由构造点（`construct` / `enumConstruct` / 三个字面量）调用：借用值（变量 / 字段 / 形参）从不入账。
-    private func adoptOwnedBox(name: String, type: IRType) {
-        ownedBoxes[name] = type
+    private func holdBox(name: String, type: IRType) {
+        heldBoxes[name] = type
     }
 
     /// 交出份额：该值已被某个持有位置（槽 / 字段 / 返回位 / 载荷槽）接管，此后由那里释放。
-    /// 它与 `releaseOwnedTemporary` 互斥，一个值只走一条；错成 claim 是泄漏（安全），错成 release 是悬垂。
-    private func claimOwnedBox(_ value: IRValue) {
-        ownedBoxes.removeValue(forKey: value.ssaName)
+    /// 它与 `releaseHeldTemporary` 互斥，一个值只走一条；错成 claim 是泄漏（安全），错成 release 是悬垂。
+    private func claimHeldBox(_ value: IRValue) {
+        heldBoxes.removeValue(forKey: value.ssaName)
     }
 
     /// 就地还掉一个本层持有的临时值 —— 调用点与打印点的「用完即扔」。 行不通  借用值不在账里 ⇒ 无操作。
     /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
-    private func releaseOwnedTemporary(_ value: IRValue) {
-        if releaseOwnedString(value) { return }
-        guard let type = ownedBoxes.removeValue(forKey: value.ssaName) else { return }
+    private func releaseHeldTemporary(_ value: IRValue) {
+        if releaseHeldString(value) { return }
+        guard let type = heldBoxes.removeValue(forKey: value.ssaName) else { return }
         guard let symbol = releaseSymbol(for: type) else { return }
         bodyIR += " call void @\(symbol)(ptr \(value.ssaName))\n"
     }
@@ -3932,14 +3932,14 @@ public final class IREmitter {
     /// 一个只读操作数用完了：它若是本层新造的份额，就地归还；借用值不在账上 ⇒ 无操作。
     /// 与实参同规 —— 内建的操作数也是消费位，只是它不出现在 `call` 的实参表里。
     private func releaseOperand(_ node: IRExpr, _ value: IRValue) {
-        guard node.ownershipEffect == .fresh else { return }
-        releaseOwnedTemporary(value)
+        guard node.shareEffect == .fresh else { return }
+        releaseHeldTemporary(value)
     }
 
     /// 调用点的收尾：实参一律**借用**。被调方既不 retain 也不在出口释放（形参槽不进释放账本），
     /// 于是临时值的 +1 份额留在调用方，返回后当场还；变量 / 字段的别名份额不在账上，一条也不碰。
     private func releaseCallArguments(_ values: [IRValue]) {
-        for value in values { releaseOwnedTemporary(value) }
+        for value in values { releaseHeldTemporary(value) }
     }
 
     /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`bk_handle_*` / `bk_nominal_*` /
@@ -3948,7 +3948,7 @@ public final class IREmitter {
     private enum BoxFamily { case container, nominal, string }
 
     private func boxFamily(of type: IRType) -> BoxFamily? {
-        switch type.ownershipClass {
+        switch type.shareClass {
         case .retained(.string): return .string
         case .retained(.array), .retained(.dict), .retained(.set): return .container
         case .retained(.object), .retained(.enumeration), .valueBox: return .nominal
@@ -4272,7 +4272,7 @@ public final class IREmitter {
         let value = emitExpr(argument)
         emitValuePrint(value: value, type: type)
         /// 打印是消费点：临时值印完即还，变量 / 字段的份额不在账上 ⇒ 那一条不动作。
-        releaseOwnedTemporary(value)
+        releaseHeldTemporary(value)
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
@@ -4363,7 +4363,7 @@ public final class IREmitter {
             // N76：这处临时串由本运行时段分配（`bk_double_to_string` 走带头的分配器）
             // ⇒ 释放入口跟着换族。 注意  它是**当场消费掉**的临时值，故直接还，
             //  行不通  不进账本（账本记的是待决定归属的那些）。
-            usesStringOwnership = true
+            usesStringRefcount = true
             bodyIR += " call void @bk_str_release(ptr \(rendered))\n"
         case "i8*":
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(value.ssaName))\n"
@@ -5084,7 +5084,7 @@ public final class IREmitter {
     /// 体已在自己推进。实参经堆上的缓冲交给体 —— 体跑在另一条线程，detach 后调用方的帧可能不在，
     /// 栈上实参会悬垂。那块缓冲就是体的持久帧（运行时分配且已清零，故续跑点 = 0 不必再 store）。
     private func emitTaskSpawn(
-        callee: IRFunction, mangled: String, args: [IRValue], argEffects: [IROwnershipEffect]
+        callee: IRFunction, mangled: String, args: [IRValue], argEffects: [IRShareEffect]
     ) -> IRValue {
         usesTaskRuntime = true
         emitTaskBodyWrapper(callee: callee, mangled: mangled)
@@ -5216,7 +5216,7 @@ public final class IREmitter {
     /// 需要**份额**的句柄类型（容器）：它们的生命周期由运行时的份额计数管，
     /// 跨线程借用必须自己留一份。字符串是裸 C 串、标量是值，都不在此列。
     private func isOwningContainer(_ type: IRType) -> Bool {
-        switch type.ownershipClass {
+        switch type.shareClass {
         case .retained(.array), .retained(.dict), .retained(.set): return true
         case .valueBox, .inert, .aggregate, .retained: return false
         }
@@ -5224,12 +5224,12 @@ public final class IREmitter {
 
     /// 派发点的实参处置。借用的留一份自己的份额（`detach` 之后调用方的帧可能已不在）；临时值
     /// 把手上那一份直接交过去，不再 retain，也不在调用方归还 —— 两次动作会多出一份谁都不还的账。
-    private func handTaskArgument(_ value: IRValue, type: IRType, effect: IROwnershipEffect) {
+    private func handTaskArgument(_ value: IRValue, type: IRType, effect: IRShareEffect) {
         guard isOwningContainer(type) else { return }
         usesTaskArgRelease = true
         switch effect {
         case .fresh:
-            claimOwnedBox(value)
+            claimHeldBox(value)
         case .borrowed, .inert:
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
@@ -5337,8 +5337,8 @@ public final class IREmitter {
         captureSlots = [:]
         pendingCleanup = []
         /// 闭包体重建 `IRBuilder` ⇒ SSA 名从 `%t1` 重新编号，账本必须换新的，否则同名条目指向外层的值。
-        ownedBoxesStack.append(ownedBoxes)
-        ownedBoxes = [:]
+        heldBoxesStack.append(heldBoxes)
+        heldBoxes = [:]
         // 片 D：闭包体是**自己的**函数上下文 —— 它自己的嵌套闭包捕获的名字要在进体前算好
         // （同 `emitFunction` 的理由：声明点在捕获点之前）。
         capturedNamesInFunction = capturedNames(in: body)
@@ -5400,7 +5400,7 @@ public final class IREmitter {
         builder = savedBuilder
         captureSlots = savedCaptureSlots
         pendingCleanup = savedPendingCleanup
-        ownedBoxes = ownedBoxesStack.popLast() ?? [:]
+        heldBoxes = heldBoxesStack.popLast() ?? [:]
         capturedNamesInFunction = savedCapturedNames
         frameMode = savedFrameMode
         blockDepth = savedBlockDepth

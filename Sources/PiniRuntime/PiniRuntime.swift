@@ -2379,13 +2379,13 @@ func _bkTaskResolveErr(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
 /// 运行时自有帧的地址集 —— 由 `bk_task_frame(bytes > 0)` 登记，交还时摘除。
 /// 这张表的理由是归属：帧必须由运行时释放，而 `env` 也可能是调用方直接给的（单测把 Swift 对象指针当
 /// 观测箱传进来）。 行不通  无条件释放后者会立即崩溃 ⇒ 只有本表登记过的才释放。
-nonisolated(unsafe) private var _bkOwnedFrames: Set<UInt> = []
-private let _bkOwnedFramesLock = NSLock()
+nonisolated(unsafe) private var _bkAllocatedFrames: Set<UInt> = []
+private let _bkAllocatedFramesLock = NSLock()
 
 private func _bkAdoptFrame(_ p: UnsafeMutableRawPointer) {
-    _bkOwnedFramesLock.lock()
-    _bkOwnedFrames.insert(UInt(bitPattern: p))
-    _bkOwnedFramesLock.unlock()
+    _bkAllocatedFramesLock.lock()
+    _bkAllocatedFrames.insert(UInt(bitPattern: p))
+    _bkAllocatedFramesLock.unlock()
 }
 
 /// 交还一个任务的全部帧内存（`env` 那一块 + `bk_task_slot` 发出的各块），幂等。
@@ -2405,10 +2405,10 @@ private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
     box.cond.unlock()
     for chunk in chunks { chunk.deallocate() }
     guard let env else { return }
-    _bkOwnedFramesLock.lock()
-    let owned = _bkOwnedFrames.remove(UInt(bitPattern: env)) != nil
-    _bkOwnedFramesLock.unlock()
-    if owned { env.deallocate() }
+    _bkAllocatedFramesLock.lock()
+    let allocated = _bkAllocatedFrames.remove(UInt(bitPattern: env)) != nil
+    _bkAllocatedFramesLock.unlock()
+    if allocated { env.deallocate() }
 }
 
 /// 取走等待者快照并逐个交给队列（先快照、解锁、再动作 —— 与取消传播同一条定式，持锁递归会死锁）。

@@ -201,7 +201,7 @@ enum ForeignThunk {
             if bits == 0 { return .null }
             var b = bits
             let ptr = withUnsafeBytes(of: &b) { $0.load(as: UnsafeMutableRawPointer.self) }
-            return .rawPointer(RawPointerValue(pointer: ptr, elemType: elemType, ownsMemory: false))
+            return .rawPointer(RawPointerValue(pointer: ptr, elemType: elemType, freesMemory: false))
         case .bool: return .bool(bits != 0)
         case .i8: return .int(Int(Int8(bitPattern: UInt8(bits & 0xFF))))
         case .u8: return .int(Int(bits & 0xFF))

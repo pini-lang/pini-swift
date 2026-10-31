@@ -1821,8 +1821,8 @@ public enum IRLowerer {
         // 独立实现 —— 必须对同一条规则给出同一个答案，否则就回到两层口径差（见 `allowedAwaitLocation`）。
         context.bodyDepth += 1
         defer { context.bodyDepth -= 1 }
-        context.ownedScopes.append([])
-        defer { context.ownedScopes.removeLast() }
+        context.heldScopes.append([])
+        defer { context.heldScopes.removeLast() }
         var statements: [IRStmt] = []
         var positions: [SourceLocation] = []
         for statement in block.statements {
@@ -1938,7 +1938,7 @@ public enum IRLowerer {
                 .storeVar(
                     name: name, type: varType, value: lowered.node,
                     adopt: varType.adoption(of: lowered.node),
-                    releaseOld: context.isOwned(name)
+                    releaseOld: context.isHeld(name)
                 )
             ]
 
@@ -2165,18 +2165,18 @@ public enum IRLowerer {
         // Environment). `_` placeholders bind nothing.
         let boundNames = pattern.enumerated().filter { $0.element != "_" }.map { $0.element }
         let previousTypes = boundNames.map { context.variableTypes[$0] }
-        let previousOwnership = boundNames.map { context.isOwned($0) }
+        let previouslyHeld = boundNames.map { context.isHeld($0) }
         for (position, name) in pattern.enumerated() where name != "_" {
             context.variableTypes[name] = elementTypes[position]
-            context.declareOwned(name)
+            context.declareHeld(name)
         }
         defer {
             for (index, name) in boundNames.enumerated() {
                 context.variableTypes[name] = previousTypes[index]
-                if previousOwnership[index] {
-                    context.declareOwned(name)
+                if previouslyHeld[index] {
+                    context.declareHeld(name)
                 } else {
-                    context.retractOwned(name)
+                    context.retractHeld(name)
                 }
             }
         }
@@ -2253,7 +2253,7 @@ public enum IRLowerer {
                 op: op, target: target, at: unaryLocation, into: &context
             )
             context.variableTypes[name] = lowered.type
-            context.declareOwned(name)
+            context.declareHeld(name)
             return [
                 lowered.statement,
                 .allocVar(
@@ -2291,7 +2291,7 @@ public enum IRLowerer {
                 okTarget: name, at: location, into: &context
             )
             context.variableTypes[name] = okType
-            context.declareOwned(name)
+            context.declareHeld(name)
             return [alloc, tryStmt]
         }
 
@@ -2335,7 +2335,7 @@ public enum IRLowerer {
         // The static view keeps the declared names (member reads resolve
         // against it); the slot itself stores the type computed below.
         context.variableTypes[name] = varType
-        context.declareOwned(name)
+        context.declareHeld(name)
         let storedType = slotType(declared: varType, initializer: initializerType)
         return [
             .allocVar(
@@ -2410,7 +2410,7 @@ public enum IRLowerer {
         }
         let tempName = "$destructure\(context.tempCounter)"
         context.tempCounter += 1
-        context.declareOwned(tempName)
+        context.declareHeld(tempName)
         var statements: [IRStmt] = [
             .allocVar(
                 name: tempName, type: lowered.type, mutable: false, initializer: lowered.node,
@@ -2419,7 +2419,7 @@ public enum IRLowerer {
         let base = IRExpr.load(name: tempName, type: lowered.type)
         for (index, name) in names.enumerated() where name != "_" {
             context.variableTypes[name] = fieldTypes[index]
-            context.declareOwned(name)
+            context.declareHeld(name)
             let element = IRExpr.tupleIndexGet(
                 base: base, index: index, type: fieldTypes[index]
             )
@@ -4984,7 +4984,7 @@ public enum IRLowerer {
             return (
                 .storeVar(
                     name: name, type: varType, value: value,
-                    adopt: varType.adoption(of: value), releaseOld: context.isOwned(name)
+                    adopt: varType.adoption(of: value), releaseOld: context.isHeld(name)
                 ),
                 readBack, varType
             )
@@ -5115,7 +5115,7 @@ public enum IRLowerer {
             )
             return .storeVar(
                 name: name, type: varType, value: combined,
-                adopt: varType.adoption(of: combined), releaseOld: context.isOwned(name)
+                adopt: varType.adoption(of: combined), releaseOld: context.isHeld(name)
             )
         }
         if case .subscript = left {
@@ -5799,23 +5799,23 @@ private struct FunctionContext {
 
     /// 作用域内的**持有者**名字：由 `allocVar` 或 `for` 绑定引入的局部。参数 · `match` 绑定 · `try` 的
     /// 错误名不在此列 —— 它们借自别处，覆盖时不得释放旧值。逐块压栈以跟随遮蔽。
-    var ownedScopes: [Set<String>] = []
+    var heldScopes: [Set<String>] = []
 
     /// 这个名字是否由本函数的某层作用域持有（可释放）。
-    func isOwned(_ name: String) -> Bool {
-        ownedScopes.contains { $0.contains(name) }
+    func isHeld(_ name: String) -> Bool {
+        heldScopes.contains { $0.contains(name) }
     }
 
     /// 登记一个持有者；调用点在其初始化式求值**之后**，与发射层的登记时序一致。
-    mutating func declareOwned(_ name: String) {
-        if ownedScopes.isEmpty { ownedScopes.append([]) }
-        ownedScopes[ownedScopes.count - 1].insert(name)
+    mutating func declareHeld(_ name: String) {
+        if heldScopes.isEmpty { heldScopes.append([]) }
+        heldScopes[heldScopes.count - 1].insert(name)
     }
 
     /// 撤销本层登记（`for` 绑定用完即还时用）：只动最内层，外层同名的持有者不受影响。
-    mutating func retractOwned(_ name: String) {
-        guard !ownedScopes.isEmpty else { return }
-        ownedScopes[ownedScopes.count - 1].remove(name)
+    mutating func retractHeld(_ name: String) {
+        guard !heldScopes.isEmpty else { return }
+        heldScopes[heldScopes.count - 1].remove(name)
     }
 
     /// Enclosing interruptible frames, innermost last (`nil` = unlabeled loop). Drives labeled break/continue

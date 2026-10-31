@@ -302,21 +302,21 @@ public enum Value {
 }
 
 /// `*T` 原始指针的运行时承载：`pointer` 是裸地址（C ABI，不泄漏 Swift 类型），`elemType` 给 load/store 的编解码宽度，
-/// `ownsMemory` 表示解释器是否负责释放（`&` 快照内存归解释器，`malloc` 内存归用户的 `free`）。
+/// `freesMemory` 表示解释器是否负责释放（`&` 快照内存归解释器，`malloc` 内存归用户的 `free`）。
 /// 引用语义：复制共享同一地址，`copyIfStruct` 对非 `.structInstance` 原样返回。
 public final class RawPointerValue {
     public let pointer: UnsafeMutableRawPointer
     public let elemType: TypeAnnotation?
-    private let ownsMemory: Bool
+    private let freesMemory: Bool
 
-    public init(pointer: UnsafeMutableRawPointer, elemType: TypeAnnotation?, ownsMemory: Bool) {
+    public init(pointer: UnsafeMutableRawPointer, elemType: TypeAnnotation?, freesMemory: Bool) {
         self.pointer = pointer
         self.elemType = elemType
-        self.ownsMemory = ownsMemory
+        self.freesMemory = freesMemory
     }
 
     deinit {
-        if ownsMemory { pointer.deallocate() }
+        if freesMemory { pointer.deallocate() }
     }
 
     /// 指针算术（`p + n`）：按元素 stride 偏移（stride 从 elemType 推断，未知元素类型按 1 字节）。
