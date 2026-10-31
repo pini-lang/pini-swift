@@ -28,7 +28,7 @@ let package = Package(
             // 随 Bundle.module 分发，故资源跟随消费它们的这一层，不留在伞 target。
             resources: [.process("Resources")]
         ),
-        // 中间表示层：节点 · 布局 · 资源归属分类 · 降载。只认识语义层，不认识发射器。
+        // 中间表示层：节点 · 布局 · 份额类别 · 降载。只认识语义层，不认识发射器。
         .target(
             name: "PiniIR",
             dependencies: ["PiniSemantics"],
@@ -105,7 +105,7 @@ let package = Package(
                 "EntryParityTests/Fixtures",
                 "GrammarAcceptanceTests/Fixtures",
                 "ListDirBuiltinTests/Fixtures",
-                "OwnershipLifetimeTests/Fixtures",
+                "ShareLifetimeTests/Fixtures",
                 "ReadFileBuiltinTests/Fixtures",
                 "ScalarWildcardMatchTests/Fixtures",
                 "SplitPathTests/Fixtures",

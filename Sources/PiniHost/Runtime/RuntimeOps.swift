@@ -306,7 +306,7 @@ public enum RuntimeOps {
             }
         case .pointer:
             let p = rp.pointer.load(as: UnsafeMutableRawPointer.self)
-            return .rawPointer(RawPointerValue(pointer: p, elemType: elem, ownsMemory: false))
+            return .rawPointer(RawPointerValue(pointer: p, elemType: elem, freesMemory: false))
         default:
             throw RuntimeError.invalidOperation(reason: "load：不支持的指针元素类型 `\(elem.describe())`", location: loc)
         }
@@ -423,7 +423,7 @@ public enum RuntimeOps {
                     RawPointerValue(
                         pointer: p,
                         elemType: .simple(name: "U8", location: loc),
-                        ownsMemory: false
+                        freesMemory: false
                     ))
             }
 
@@ -496,7 +496,7 @@ public enum RuntimeOps {
                     RawPointerValue(
                         pointer: ptr,
                         elemType: .simple(name: "U8", location: loc),
-                        ownsMemory: false
+                        freesMemory: false
                     ))
             }
         #endif
@@ -579,7 +579,7 @@ public enum RuntimeOps {
             let stride = RawPointerValue.stride(of: elem) ?? 1
             let ptr = UnsafeMutableRawPointer.allocate(byteCount: stride, alignment: 1)
             try Self.encode(value, to: ptr, type: elem)
-            return .rawPointer(RawPointerValue(pointer: ptr, elemType: elem, ownsMemory: true))
+            return .rawPointer(RawPointerValue(pointer: ptr, elemType: elem, freesMemory: true))
         }
     }
 

@@ -1,7 +1,7 @@
-/// 资源归属分类（RAII 的归还面）：一个类型在存储点上的接收规则。它是 IR 事实，不是目标表示 —— 后端据此选动作与运行时
+/// 份额类别（RAII 的归还面）：一个类型在存储点上的接收规则。它是 IR 事实，不是目标表示 —— 后端据此选动作与运行时
 /// 符号，不再按 LLVM 拼写反推。拼写属后端，换表示（改聚合形态、换目标）时它会变，而分类一变，
 /// 失效的形态是「某一族悄悄不再释放」，不是报错。
-public enum IROwnershipClass: Equatable, Sendable {
+public enum IRShareClass: Equatable, Sendable {
     /// 不握份额：标量 · 外部指针 · 任务句柄。落槽零动作，退出不释放。
     case inert
     /// 寄存器聚合：`Result` · `Optional` · 元组 · 函数值。整块按值搬移。
@@ -35,7 +35,7 @@ public enum IRShareKind: Equatable, Sendable {
 extension IRType {
     /// 这个类型的接收规则。每个 case 逐一表态，不留 `default`：新增类型必须在这里选一族，
     /// 否则编不过 —— 兜底归族会让新类型静默继承一套它未必成立的归还规则。
-    public var ownershipClass: IROwnershipClass {
+    public var shareClass: IRShareClass {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean: return .inert
         case .string, .char: return .retained(.string)
@@ -51,23 +51,23 @@ extension IRType {
     }
 
     /// 这个类型的一个值落进存储点时，接收方要做的动作。它只问两件事：目标类型要不要占份额，
-    /// 以及来源是不是新份额（`ownershipEffect`）。是 ⇒ 移交；不是 ⇒ 拷贝或保留。
+    /// 以及来源是不是新份额（`shareEffect`）。是 ⇒ 移交；不是 ⇒ 拷贝或保留。
     /// `sharingStructs` 给容器元素用：元素按箱共享（保留），变量 / 字段 / 返回才拷出独立的箱。
     public func adoption(of source: IRExpr?, sharingStructs: Bool = false) -> IRAdopt {
         guard let source else { return .none }
-        switch ownershipClass {
+        switch shareClass {
         case .inert, .aggregate: return .none
         case .valueBox:
-            return source.ownershipEffect == .fresh ? .take : (sharingStructs ? .retain : .copyStruct)
+            return source.shareEffect == .fresh ? .take : (sharingStructs ? .retain : .copyStruct)
         case .retained:
-            return source.ownershipEffect == .fresh ? .take : .retain
+            return source.shareEffect == .fresh ? .take : .retain
         }
     }
 
     /// 这个类型的槽 / 字段是否握着一份份额 —— 覆盖它之前要先释放旧值。与 `adoption` 分开：
     /// 那个说「新值怎么进来」，这个说「旧值要不要走」。
     public var holdsAShare: Bool {
-        switch ownershipClass {
+        switch shareClass {
         case .valueBox, .retained: return true
         case .inert, .aggregate: return false
         }
@@ -99,7 +99,7 @@ extension IRExpr {
 
 /// 求值效果：一个表达式求值之后，求值方与这份值之间是什么关系。它说的是**求值方**，不是类型 ——
 /// 同一个 `String` 可以是新造的（`s.upper()`），也可以是借来的（`load`）。
-public enum IROwnershipEffect: Equatable, Sendable {
+public enum IRShareEffect: Equatable, Sendable {
     /// 新份额：求值方持有 +1。它必须交给存储位，或在消费位用完归还 —— 二者必居其一。
     case fresh
     /// 借用：份额在别处，只保证使用期内存活，求值方不得归还。
@@ -112,7 +112,7 @@ extension IRExpr {
     /// 这个表达式求值之后，求值方是不是新造了一份份额。
     ///  注意  判错的后果不对称：把 `fresh` 判成 `borrowed` 是漏一份，把 `borrowed` 判成 `fresh` 是
     /// 悬垂。拿不准时选 `borrowed` —— 与契约 7.9 的保守方向同一条。
-    public var ownershipEffect: IROwnershipEffect {
+    public var shareEffect: IRShareEffect {
         switch self {
         // 常量与标量运算：值不是份额。
         case .intConst, .floatConst, .boolConst, .binary, .unary, .lenCall, .isAsciiDigit,

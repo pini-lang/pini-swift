@@ -9,7 +9,7 @@ import PiniSyntax
 /// 临时值的去路：求值方新造的份额，要么被存储位接管，要么在消费位用完归还。
 /// 判据取 `main` 的函数体切片 —— 产物里还有入口与内建装配的释放，混在一起数会失真。
 @Suite("临时值的归位")
-struct TemporaryOwnershipTests: Sendable {
+struct TemporaryShareTests: Sendable {
 
     private func emitted(_ source: String) throws -> String {
         let lexer = Lexer(source: source, fileName: "inline.pini")

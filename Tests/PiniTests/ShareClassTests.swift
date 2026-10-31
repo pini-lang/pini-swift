@@ -3,14 +3,14 @@ import Testing
 @testable import PiniCore
 @testable import PiniIR
 
-/// 所有权分类的判据钉在 `IRType` 上，不钉 LLVM 拼写：拼写是后端的表示，换表示时它变，而分类一变，
+/// 份额类别的判据钉在 `IRType` 上，不钉 LLVM 拼写：拼写是后端的表示，换表示时它变，而分类一变，
 /// 失效的形态是「某一族悄悄不再释放」。故每个 case 都要在表里表态，新增类型时这张表会先红。
-@Suite("类型的所有权分类")
-struct OwnershipClassificationTests: Sendable {
+@Suite("类型的份额类别")
+struct ShareClassTests: Sendable {
 
     /// 21 个 case 对应 22 行：名义箱按两种语义各占一行（结构体值语义、对象引用语义），它仍是同一个 case。
     /// 表由函数现取而不是静态属性：`IRType` 尚未声明 `Sendable`，静态属性在 Swift 6 下编不过。
-    private static func cases() -> [(label: String, type: IRType, expected: IROwnershipClass)] {
+    private static func cases() -> [(label: String, type: IRType, expected: IRShareClass)] {
         [
             ("I8", .i8, .inert),
             ("U8", .u8, .inert),
@@ -43,8 +43,8 @@ struct OwnershipClassificationTests: Sendable {
         #expect(table.count == 22, "表应有 22 行（21 个 case，名义箱占两行）")
         for row in table {
             #expect(
-                row.type.ownershipClass == row.expected,
-                "\(row.label) 的分类应是 \(row.expected)，实际是 \(row.type.ownershipClass)"
+                row.type.shareClass == row.expected,
+                "\(row.label) 的分类应是 \(row.expected)，实际是 \(row.type.shareClass)"
             )
         }
         /// 行内不得重复：复制一行改标签是最容易犯的错，而它会让某个 case 从未被真正检查。
@@ -55,8 +55,8 @@ struct OwnershipClassificationTests: Sendable {
 
     @Test("结构体与对象分成两族 —— 值语义要拷贝，引用语义要保留")
     func valueBoxAndObjectPartCompany() {
-        #expect(IRType.nominal(name: "P", isObject: false).ownershipClass == .valueBox)
-        #expect(IRType.nominal(name: "P", isObject: true).ownershipClass == .retained(.object))
+        #expect(IRType.nominal(name: "P", isObject: false).shareClass == .valueBox)
+        #expect(IRType.nominal(name: "P", isObject: true).shareClass == .retained(.object))
     }
 
     @Test("计数族只分符号不分规则 —— 七种都在 retained 里")
@@ -67,8 +67,8 @@ struct OwnershipClassificationTests: Sendable {
             .nominal(name: "P", isObject: true), .enumeration(name: "E"),
         ]
         for type in counted {
-            guard case .retained = type.ownershipClass else {
-                Issue.record("\(type) 应归在计数族，实际是 \(type.ownershipClass)")
+            guard case .retained = type.shareClass else {
+                Issue.record("\(type) 应归在计数族，实际是 \(type.shareClass)")
                 return
             }
         }
@@ -77,17 +77,17 @@ struct OwnershipClassificationTests: Sendable {
     @Test("拼写不参与分类 —— 外部指针与任务句柄都不计数，尽管它们会被拼成与计数族相同的字面")
     func spellingDoesNotDecideTheClass() {
         // `*T` 在元素的装箱 ABI 里拼成 `i8*`（与 String 同字面），但它是外呼指针，不握份额。
-        #expect(IRType.pointer(element: .i32).ownershipClass == .inert)
+        #expect(IRType.pointer(element: .i32).shareClass == .inert)
         // 任务句柄拼成 `ptr`，同样不在计数族。
-        #expect(IRType.future(ok: .i32).ownershipClass == .inert)
+        #expect(IRType.future(ok: .i32).shareClass == .inert)
     }
 
     @Test("聚合按整块搬移 —— 内部的计数成员尚未单独保留，是缺口而不是可以不要份额")
     func aggregatesDoNotInheritTheirMembers() {
-        #expect(IRType.optional(wrapped: .string).ownershipClass == .aggregate)
-        #expect(IRType.result(ok: .array(element: .i32)).ownershipClass == .aggregate)
+        #expect(IRType.optional(wrapped: .string).shareClass == .aggregate)
+        #expect(IRType.result(ok: .array(element: .i32)).shareClass == .aggregate)
         // 这一条钉的是现状：聚合里的字符串 / 句柄不单独进账。若日后实现递归保留，这里会红，
         // 而它就是「缺口是否已被补上」的读数点。
-        #expect(IRType.tuple(labels: ["s"], fieldTypes: [.string]).ownershipClass == .aggregate)
+        #expect(IRType.tuple(labels: ["s"], fieldTypes: [.string]).shareClass == .aggregate)
     }
 }

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Check that a backend does not decide ownership on its own.
+"""Check that a backend does not decide resource actions on its own.
 
 WHY THIS EXISTS
 ---------------
-`docs/spec/ir-contract.md` section 5 says ownership actions are inserted upstream
+`docs/spec/ir-contract.md` section 5 says resource actions are inserted upstream
 and a backend only translates them. That claim is worth something only if the day
 it stops being true is visible. This is the warning-level half: it names the
 functions in the emitter that decide *when* to retain or release, so the list can
-be watched down to zero while the ownership pass lands.
+be watched down to zero while the resource pass lands.
 
 WARNING LEVEL, ON PURPOSE
 -------------------------
@@ -41,7 +41,7 @@ ROOT = os.environ.get(
 EMITTER = "Sources/PiniBackendLLVM/CodeGen/IREmitter.swift"
 
 # 决策族：回答「这个值归谁、此刻要不要 retain / release」。这些判断已全部归位到中端的
-# `IROwnership`（类型分类 · 求值效果 · 接收动作），发射器只翻译注解。列表留空是这个分片的
+# `IRShare`（份额类别 · 份额效果 · 接收动作），发射器只翻译注解。列表留空是这个分片的
 # 验收目标本身 —— 再有名字进来，说明判断又长回了后端。
 DECISION_SITES = []
 
@@ -60,8 +60,8 @@ RETIRED_SITES = [
 # 翻译点：把中端的判定译成一次调用，不判断「要不要」。只报读数、不设上限 ——
 # 上限会逼着人删注释或改名，而判据是「判断住在哪一层」，不是「这层有几个调用」。
 TRANSLATION_SITES = [
-    "releaseOwnedString",
-    "releaseOwnedTemporary",
+    "releaseHeldString",
+    "releaseHeldTemporary",
     "releaseCallArguments",
     "releaseOperand",
     "ensureReleaseFunction",
@@ -113,7 +113,7 @@ def main():
     retired = scan(text, RETIRED_SITES)
     translation = scan(text, TRANSLATION_SITES)
 
-    print("后端义务检查（警告级）· 所有权归位")
+    print("后端义务检查（警告级）· 资源归位")
     print("  文件: %s" % EMITTER)
     print("  决策族符号: %d 个，共 %d 处" % (len(found), total))
     for sym in DECISION_SITES:
