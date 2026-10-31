@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 类型推断
 /// 负责推断表达式的类型

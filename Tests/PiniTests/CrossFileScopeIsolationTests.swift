@@ -1,6 +1,7 @@
 import Foundation
 @testable import PiniCore
 import Testing
+import PiniSyntax
 
 /// 跨文件同名不串味。缺陷只在多文件模块里发作 —— 单文件时「甲类型的字段」与「乙文件的局部变量」不可能同处一个编译单元。
 /// 形状：字段名与 `self` 为让裸名可推断被按变量登记，而兜底表按裸名索引、模块内共享 ⇒ 甲类型的字段类型顶掉

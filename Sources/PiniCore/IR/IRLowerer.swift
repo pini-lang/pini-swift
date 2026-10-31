@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// Lowers a type-checked `Module` plus the checker's `TypeInference` into a typed `IRModule`.
 /// Every backend's type decisions are made here, and this is the only place allowed to say

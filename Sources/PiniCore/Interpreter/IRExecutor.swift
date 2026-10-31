@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// How `break` / `continue` / `return` leaves the statement layer: the IR carries an unwind depth, not a label.
 /// The lowerer maps labels to depths and turns an unresolvable one into `panicStmt`, so depth is the vocabulary.

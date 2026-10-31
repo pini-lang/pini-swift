@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 模块工具链核心：版本约束与 MVS 求解、SHA-256 校验和、`pini-summary.toml` 读写；只实现，不改语义。
 /// 依赖落 `deps/<name>/`（无全局缓存）；远程 tap 只在 refresh 路径抓取，`resolve` / `graph` 等只读路径不联网，

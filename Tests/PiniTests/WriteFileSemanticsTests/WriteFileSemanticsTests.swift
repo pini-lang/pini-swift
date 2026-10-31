@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// `writeFile` 的写语义判据：就地截断（与 `fopen("w")` 同义），不是原子替换。一夹具一条用例，夹具在同目录
 /// `Fixtures/` 下。测的是盘上发生了什么，不是返回值 —— 三条各钉一个只在该语义下成立的事实：截断（旧尾巴消失）·

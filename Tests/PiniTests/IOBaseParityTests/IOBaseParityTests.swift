@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+import PiniSyntax
 
 /// IO 面的路径解析判据：相对路径一律相对脚本所在目录（程序基准），与写法的形状无关。靶 = 同一份逻辑的
 /// 两种等价写法（字面量 `readFile("a.txt")` 与变量 `readFile(p)`）必须落到同一个文件，且两通道给出同一结论。

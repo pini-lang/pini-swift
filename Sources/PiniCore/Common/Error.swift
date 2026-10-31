@@ -1,3 +1,4 @@
+import PiniSyntax
 public enum PiniError: Error {
     case lexer(details: String, location: SourceLocation)
     case parser(details: String, location: SourceLocation)

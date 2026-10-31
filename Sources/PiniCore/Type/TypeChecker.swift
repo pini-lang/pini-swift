@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 类型检查器
 /// 负责静态类型检查，验证表达式和语句的类型正确性

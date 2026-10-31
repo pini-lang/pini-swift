@@ -12,8 +12,15 @@ let package = Package(
         .library(name: "PiniRuntime", type: .dynamic, targets: ["PiniRuntime"]),
     ],
     targets: [
+        // 语法层：词法 · 语法 · AST。叶子 target，不依赖包内任何其它 target ——
+        // 依赖方向由此处强制：谁能 import 谁由 `dependencies` 决定，写不出越界引用。
+        .target(
+            name: "PiniSyntax",
+            path: "Sources/PiniSyntax"
+        ),
         .target(
             name: "PiniCore",
+            dependencies: ["PiniSyntax"],
             path: "Sources/PiniCore",
             // T1/T11（2026-08-24）：诊断语言资源（Diagnostics.{zh,en}.toml）随 Bundle.module 分发。
             resources: [.process("Resources")]
@@ -29,7 +36,7 @@ let package = Package(
         ),
         .testTarget(
             name: "PiniTests",
-            dependencies: ["PiniCore", "PiniRuntime"],
+            dependencies: ["PiniSyntax", "PiniCore", "PiniRuntime"],
             path: "Tests/PiniTests",
             // 夹具（.pini）集中在各套件目录的 Fixtures/ 下。SwiftPM 把目标目录内的非源文件判为
             // unhandled，而 exclude 只能按路径、不能按扩展名 ⇒ 夹具独占一层才排得掉。

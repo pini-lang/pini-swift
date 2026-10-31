@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 模块依赖加载器：按 import 的包路径加载被引入模块——模块根须有 `pini.toml`（物理边界），
 /// 解析其根级 `.pini` 源文件，产出声明表与 public 符号集（跨模块引入的门槛只认 public）。

@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 内建单点登记表：每个内建在此声明一次（名字 + 归组 + 各层登记开关），三个消费方从本表派生。
 /// 语义层按 `definesSymbol` 登记符号、类型层按 `typeSignature` 登记签名、解释器按

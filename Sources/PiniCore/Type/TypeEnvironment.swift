@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 类型环境
 /// 管理作用域栈，追踪变量类型、函数签名、类型字段与方法

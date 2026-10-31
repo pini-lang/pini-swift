@@ -1,6 +1,7 @@
 import Foundation
 @testable import PiniCore
 import Testing
+import PiniSyntax
 
 /// 字符串内建 `trimLeft` / `trimRight` / `indexOf` 的宿主单测。右端 = 手写期望（不是从某次运行输出抄来的）。
 /// 三条腿：解释器（进程内 `ProgramRunner`，恒跑）· 命令行 `run` · 命令行 `run-llvm`（自寻二进制，取不到则响亮跳过）。

@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 符号
 /// 用于语义分析阶段的符号表条目

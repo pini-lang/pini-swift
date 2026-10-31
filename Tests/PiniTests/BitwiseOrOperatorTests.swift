@@ -1,6 +1,7 @@
 import Foundation
 @testable import PiniCore
 import Testing
+import PiniSyntax
 
 /// 按位或 `|` 的直写形态（`a | b`）：解析、结合性、执行三面。`|` 还与声明修饰、标签、联合类型共用该符号
 /// ⇒ 同时钉「位或可达」与「其余角色不被抢走」。右端 = 手写期望。优先级取规范 A.3 表：

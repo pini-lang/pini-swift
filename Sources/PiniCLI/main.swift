@@ -1,5 +1,6 @@
 import Foundation
 import PiniCore
+import PiniSyntax
 
 // MARK: - Token Description
 

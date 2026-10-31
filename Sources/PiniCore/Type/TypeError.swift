@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 类型错误
 public enum TypeError: Error, Equatable {

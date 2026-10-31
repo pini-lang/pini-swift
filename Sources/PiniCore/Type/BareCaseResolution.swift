@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 裸名 case 消歧的静态决议交接：checker 在期望类型命中候选的构造位记录「调用点位置 → 父枚举」，
 /// 解释器对歧义名的裸名构造查此表——查到按静态决议构造，查不到报「需限定形式」。

@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 并发工作节点同时是取消节点：取消沿 `Future` 树传播，不另立 `CancelScope`。
 /// 三重身份——结果载体（`resolve`/`reject`/`wait`）、取消节点（`isCancelled` + 递归 `cancel()`）、
@@ -451,7 +452,7 @@ public class FunctionValue {
     public var isEnumCaseConstructor: Bool = false
     public var enumCaseName: String = ""
     /// 枚举 case 关联值默认表达式（字面量默认，注册期原样保留）。
-    public var enumParamDefaults: [Expression?] = []
+    public var enumParamDefaults: [PiniSyntax.Expression?] = []
     public var enumIsGeneric: Bool = false
     public var enumParentName: String = ""
     public var enumGenericParamCount: Int = 0

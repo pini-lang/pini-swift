@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 运行 Pini 程序或包：测试套件与 CLI 共用的引擎无关入口，流程为 检查 → 降低 → 执行。
 /// 执行前先过类型检查，类型错误因此在此被拒而非产出值；`await` 期间不释放线程，join 即阻塞语义。

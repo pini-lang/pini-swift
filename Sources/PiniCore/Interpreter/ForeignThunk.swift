@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// thunk 工厂：foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包，
 /// 经 `@convention(c)` 函数指针调用 `dlsym` 拿到的裸地址。顶层签名收敛为封闭集（标量 + 指针 + `()`），

@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 语义警告（非致命诊断，`severity: .warning`，不阻断 run/check，exit 0）。
 /// 目前只检测 `emitUnusedWarnings` 里函数/块作用域内的局部 `var`/`let` 未使用——

@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 下标读策略注册表（解释器侧）：按容器运行时值类型注册策略，新增容器只需 `register` 一条，分派逻辑不动。
 /// 注册表首次访问时初始化默认策略集；查不到策略即抛 unsupported，故新容器忘了注册会在此处暴露。

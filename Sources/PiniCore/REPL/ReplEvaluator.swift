@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// One REPL evaluation: turn input lines into a run of a program. Evaluation sits outside the I/O loop so it can be
 /// driven and asserted without a session; the engine is fixed and lowering reads the checker's inference, so an

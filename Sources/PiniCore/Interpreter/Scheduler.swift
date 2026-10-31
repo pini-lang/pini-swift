@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 一次派发的结果：`.finished(v)` 由调度器把值送进 future，`.suspended` 表示体已让出、future 仍待决。
 /// 后者是 `await` 的唯一载体：只返回 `Value` 的签名表达不出「这次没跑完」，引擎就只能靠阻塞假装让出。

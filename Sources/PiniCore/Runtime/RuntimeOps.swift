@@ -4,6 +4,7 @@
     import Glibc
 #endif
 import Foundation
+import PiniSyntax
 
 /// Runtime operations both engines need: the value-level helpers, builtins and predicates the surviving engine shares.
 /// Nothing here may reference `Interpreter`; every member is pure over `Value`, so this is a move, not a redesign.

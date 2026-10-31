@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 文件 / 目录加载器：把磁盘上的源文件（后缀见 `LangConfig.sourceSuffix`）解析为 `Package`。
 /// 只负责读取、词法/语法解析与聚合——跨文件符号解析、可见性 enforce、清单语义化由

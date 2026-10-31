@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// LSP 服务主循环：stdio JSON-RPC 收发 + method dispatch。
 /// 覆盖 LSP method 子集：initialize / didOpen / didChange / completion / definition / shutdown / exit。

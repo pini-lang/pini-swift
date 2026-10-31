@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 诊断体系：为全部错误类型附加 code / severity / span / suggestion。最小侵入——错误枚举结构不变
 /// （payload + location），元数据经 `DiagnosticProviding` 协议扩展，`ErrorFormatter` 消费协议渲染。
