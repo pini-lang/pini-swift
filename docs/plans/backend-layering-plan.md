@@ -5,7 +5,7 @@
 - 权威次序：语言面语义以 `../spec/pini-reference-v0.md` 为准；IR 节点语义以 `../spec/ir-contract.md`
   为准；运行时段符号面以 `../spec/runtime-abi.md` 为准。本件只排工程动作，不定义语义。
 - 状态：**执行中**，方案取「先薄化后端，后硬化边界」。立契约 · 布局先决 · 布局归位已完成；
-  所有权归位六片与后端接缝已落地（分片见 6.3.7 / 6.4），内建清单未开始。
+  所有权归位六片 · 后端接缝 · 内建清单已落地（见 6.3.7 / 6.4 / 6.5），拆边界未开始。
 - 判据来源：2026-10-30 对工作树的实测，读数见「基础读数」。
 
 注意 本计划**不引入第二套 IR**。参考件把 IR 定为单层、唯一的分析 IR；下文所有 pass 都作用在
@@ -179,9 +179,9 @@ protocol PiniBackend {
 |---|---|---|---|---|
 | **立契约** | `../spec/ir-contract.md` 增「后端义务」一节（已成文：该件第 5 节；警告级门禁已接，读数 77 处） | 五条契约各有一条可判定的表述；条目里不出现 `bk_*` · `alloca` · 引用计数布局 | 人工逐条核 + 一条警告级门禁：发射器出现 retain 合成时报出 | 无代码改动，删节即回退 |
 | **布局归位** | 新增 `IRLayout`；降载产出；发射器改读 | 发射器里槽位推导归零；59 个示例与 58 个夹具（117 份）的发射产物逐字节不变 | `rg 'Self\.headerSlotCount\|fieldLayout' IREmitter` = 0；`tools/ir-parity-probe.py` 全量 MATCH。注意 类型的字节尺寸不在此列：那是目标表示，留在后端 | 新旧两路并存，发射器断言两者相等，跑一轮全量再删旧路 |
-| **所有权归位** | `OwnershipPass`（IR→IR） | 决策族函数从发射器移除（现存 15 个里的决策部分，翻译族保留并注明只翻译不决策）；所有权寿命套件全绿；哑后端跑通全语料且源码无 retain 字样 | `rg 'pendingReleases\|emitReleases\|emitReassignRelease\|emitRetainIfAliased\|releaseOwnedTemporary' IREmitter` = 0；`OwnershipLifetimeTests` 全绿；哑后端 100 行以内接得上 | 断言保留到 pass 有独立测试后，再逐条删 |
+| **所有权归位** | 存储点注解 + 求值效果表（见 6.3.7；未引入 IR→IR 的 pass） | 决策族函数从发射器移除，翻译点保留并注明只翻译不决策；所有权寿命套件全绿 | `tools/backend-duty-check.py` 决策族 0 处、已归位符号 0 处；`OwnershipLifetimeTests` 全绿 | 断言保留到新路有独立测试后，再逐条删 |
 | **后端接缝** | `PiniBackend` 协议 + 能力声明 + CLI 注册表 | 新增一个哑后端只加 1 个文件 + 1 行注册，不改既有文件 | 按此新增一次，实测文件数 = 2（13 行新文件 + 注册 1 行），验完回滚 | 注册表可先并存：旧字符串分派保留一个版本 |
-| **内建清单** | `BuiltinSpec` 表；三方对照脚本 | 脚本能双向报缺口：清单有而运行时无导出 / 有导出而无降级点 | 脚本自造两条缺口各报一次；正常树零报 | 脚本先只报不拦，稳定后转门禁 |
+| **内建清单** | `BuiltinSpec` 表；三方对照脚本 | 脚本能双向报缺口：清单有而运行时无导出 / 有导出而无降级点 | 实测：`--self-test` 两条植入缺口各报一次，正常树零报（96 = 79 + 17）；已接进 CI | 脚本先只报不拦，稳定后转门禁 |
 | **拆边界** | 六个 target：`Syntax` / `Semantics` / `IR` / `BackendLLVM` / `RuntimeABI` / `CLI` | 依赖方向由编译期强制：`Syntax` 引不到 `BackendLLVM` | `swift build` 通过；故意加一行越界 import，编译必须失败；构建时长前后各留一次读数 | 拆分之一旦卡住，保留已拆的叶子，未拆的暂留 `Core` |
 | **试点后端** | 字节码 `embedded_min` 26 条指令的最小通道 | 接入生产代码不超过 1,000 行；能力矩阵改为活表进 CI | `git diff --stat` 数新增行；能力矩阵在 CI 里产出三列并随提交更新 | 试点失败即回查「所有权归位」的 pass 边界 |
 
@@ -409,6 +409,19 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 
 `BuiltinSpec`：名字、签名、语义标签、各后端的降级键。三方对照沿用
 `../spec/runtime-abi.md` 已有的「清单数 = 导出数」自检，扩成三方：清单 ↔ 导出 ↔ 降级点。
+
+状态：**已完成**。表落在 `Sources/PiniCore/CodeGen/BuiltinInventory.swift`，一条一款：符号 · 签名 ·
+族 · 降级点，79 条覆盖编译器能发出的全部 `bk_*`。发射器的 77 条手写 `declare` 改为查表拼出，
+签名只剩一处。跨后端的键是符号名，签名只在 LLVM 这一侧有意义，故表随后端放，不随 IR 放。
+
+检查器 `tools/builtin-inventory-check.py` 做七件事：清单 ⊆ 契约 · 清单 ⊆ 导出 · 降级点 ⇔ 清单 ·
+族名与契约一致 · 降级点名要么是 IR 节点名要么是伪站点 · 契约第 4 节与清单互补 · 零调用点表不陈旧。
+已接进 `ci/entrypoint.sh`。读数：契约 96 = 清单 79 + 零调用点 17。
+
+注意 对照第一次跑就抓出两类真缺口。其一是名不副实：`t.cancel()` 降成 `@cancel`，运行时导出的是
+`bk_task_cancel`，模块到 clang 才报「use of undefined value」。其二是状态漂移：`bk_lazyref_destroy`
+与 `bk_task_cancel` 已接线，第 4 节还挂着「零调用点」。同形的 `joinWithin` / `joinAll` 未修 ——
+两者要状态字加 out 槽，不是一次普通调用，已在第 4 节单列。
 
 ### 6.6 拆边界
 

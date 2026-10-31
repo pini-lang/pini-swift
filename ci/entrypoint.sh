@@ -49,9 +49,13 @@ python3 tools/ir-contract-check.py
 step "运行时 ABI 门禁"
 python3 tools/runtime-abi-check.py
 
+step "内建清单门禁"
+# 三方对照：运行时 ABI 契约 · 编译器清单 · CodeGen 的降级点。任一处不等即失败。
+python3 tools/builtin-inventory-check.py
+
 step "后端义务门禁（警告级）"
-# 只报不拦：所有权 pass 尚未落地，此刻必然有命中。接在这里是为了让推送即得读数，
-# 归位后同一脚本应报零 —— 转硬拦截是那一步的事，不是今天。
+# 只报不拦：决策族归零之后，这个脚本用来盯「旧的判断有没有长回来」。
+# 读数稳定一段再转硬拦截，好过在门禁上先红一次。
 python3 tools/backend-duty-check.py
 
 step "构建"

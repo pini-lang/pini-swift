@@ -237,6 +237,12 @@ public final class IREmitter {
     /// 是否发射过帧的取用 —— `bk_task_frame` / `bk_task_slot` 的 declare 随之条件出现。
     private var usesTaskFrame = false
 
+    /// 是否发射过 `cancel` —— 落点是运行时的取消入口，声明与派发族分开：不取消的模块不多一行。
+    private var usesTaskCancel = false
+
+    /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
+    private var usesCStrShim = false
+
     /// 是否把调度器绑定交给过运行时；declare 随它条件出现，只有真发过的模块才带。
     /// 它是「派发点会取用默认调度实例」的唯一征兆，与让出族那几个开关同规。
     private var usesSchedBinding = false
@@ -281,7 +287,7 @@ public final class IREmitter {
     public func emit(module: IRModule) -> String {
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
-        header += "declare ptr @bk_double_to_string(double)\n"
+        header += Builtins.declaration(for: "bk_double_to_string")
         header += "declare ptr @free(ptr)\n"
         header += "declare double @sqrt(double)\n"
         header += "@fmt_int = private constant [3 x i8] c\"%d\\00\"\n"
@@ -292,37 +298,37 @@ public final class IREmitter {
         /// 数组族：不透明句柄类型 + 运行时 C ABI 声明。LLVM IR 模块允许前向引用，
         /// 故 declare 一律无条件发射，未用到时只是无害的前向声明。
         header += "%bk_array = type { ptr }\n"
-        header += "declare ptr @bk_array_create(i32)\n"
-        header += "declare i32 @bk_array_len(ptr)\n"
-        header += "declare ptr @bk_array_get(ptr, i32)\n"
-        header += "declare ptr @bk_array_set(ptr, i32, ptr, i32, i32)\n"
-        header += "declare ptr @bk_array_append(ptr, ptr, i32, i32)\n"
-        header += "declare void @bk_handle_retain(ptr)\n"
-        header += "declare ptr @bk_handle_ensure_unique(ptr)\n"
-        header += "declare ptr @bk_array_ensure_unique_at(ptr, i32)\n"
-        header += "declare void @bk_panic(ptr) noreturn\n"
+        header += Builtins.declaration(for: "bk_array_create")
+        header += Builtins.declaration(for: "bk_array_len")
+        header += Builtins.declaration(for: "bk_array_get")
+        header += Builtins.declaration(for: "bk_array_set")
+        header += Builtins.declaration(for: "bk_array_append")
+        header += Builtins.declaration(for: "bk_handle_retain")
+        header += Builtins.declaration(for: "bk_handle_ensure_unique")
+        header += Builtins.declaration(for: "bk_array_ensure_unique_at")
+        header += Builtins.declaration(for: "bk_panic")
         /// 默认实例取用（`slot` = 存放位地址，`init_fn` = 合成初始化函数，`bytes` = 聚合体大小）。
         /// 与 `bk_array_*` 同规：无条件声明，未用到时是无害的前向声明。
-        header += "declare ptr @bk_given_get(ptr, ptr, i64)\n"
+        header += Builtins.declaration(for: "bk_given_get")
         // Dict / set family (G5): opaque handles + runtime C ABI declares.
         header += "%bk_dict = type { ptr }\n"
         header += "%bk_set = type { ptr }\n"
-        header += "declare ptr @bk_dict_create()\n"
-        header += "declare i32 @bk_dict_len(ptr)\n"
-        header += "declare ptr @bk_dict_get(ptr, ptr, i32, i32)\n"
-        header += "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)\n"
-        header += "declare ptr @bk_dict_ensure_unique_at(ptr, ptr, i32, i32)\n"
-        header += "declare ptr @bk_dict_key_at(ptr, i32)\n"
-        header += "declare ptr @bk_dict_val_at(ptr, i32)\n"
-        header += "declare ptr @bk_set_create()\n"
-        header += "declare i32 @bk_set_len(ptr)\n"
-        header += "declare ptr @bk_set_add(ptr, ptr, i32, i32)\n"
-        header += "declare ptr @bk_set_at(ptr, i32)\n"
+        header += Builtins.declaration(for: "bk_dict_create")
+        header += Builtins.declaration(for: "bk_dict_len")
+        header += Builtins.declaration(for: "bk_dict_get")
+        header += Builtins.declaration(for: "bk_dict_set")
+        header += Builtins.declaration(for: "bk_dict_ensure_unique_at")
+        header += Builtins.declaration(for: "bk_dict_key_at")
+        header += Builtins.declaration(for: "bk_dict_val_at")
+        header += Builtins.declaration(for: "bk_set_create")
+        header += Builtins.declaration(for: "bk_set_len")
+        header += Builtins.declaration(for: "bk_set_add")
+        header += Builtins.declaration(for: "bk_set_at")
         // Collection release: the runtime owns the share count, so a destroy
         // on a handle that is still aliased only drops this holder's share.
-        header += "declare void @bk_array_destroy(ptr)\n"
-        header += "declare void @bk_dict_destroy(ptr)\n"
-        header += "declare void @bk_set_destroy(ptr)\n"
+        header += Builtins.declaration(for: "bk_array_destroy")
+        header += Builtins.declaration(for: "bk_dict_destroy")
+        header += Builtins.declaration(for: "bk_set_destroy")
         // libc + LLVM intrinsics (G9 string deepening / math intrinsics).
         header += "declare i64 @strlen(ptr)\n"
         header += "declare ptr @strcat(ptr, ptr)\n"
@@ -478,32 +484,32 @@ public final class IREmitter {
         /// LazyRef 句柄类型 + C ABI 声明：只在模块真的创建 / 读取惰性引用时才追加。
         if usesLazyRef {
             tail += "%bk_lazyref = type { ptr }\n"
-            tail += "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)\n"
-            tail += "declare ptr @bk_lazyref_value(ptr)\n"
-            tail += "declare void @bk_lazyref_destroy(ptr)\n"
+            tail += Builtins.declaration(for: "bk_lazyref_create")
+            tail += Builtins.declaration(for: "bk_lazyref_value")
+            tail += Builtins.declaration(for: "bk_lazyref_destroy")
         }
         // `writeFile` 的 declare，只在实际写入的模块里出现。
         // 落点是运行时 shim 的一次调用 —— 路径解析与写语义都在那一侧，此处不发 libc 写调用。
         if usesFileWrite {
-            tail += "declare void @bk_write_file(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_write_file")
         }
         if usesFileAppend {
-            tail += "declare void @bk_append_file(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_append_file")
         }
         if usesFileRead {
-            tail += "declare ptr @bk_read_file(ptr)\n"
+            tail += Builtins.declaration(for: "bk_read_file")
         }
         // 可接住的 IO：读的成功值走返回值、错误走 out 参数；写与追加没有成功值，
         // 错误直接是返回值（`0` = 成功）。三者都**不引线程局部隐状态** —— 那个形状
         // 在嵌套调用下会互相覆盖，而正确性不该靠发射顺序维持。
         if usesFileTryRead {
-            tail += "declare ptr @bk_try_read_file(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_try_read_file")
         }
         if usesFileTryWrite {
-            tail += "declare i64 @bk_try_write_file(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_try_write_file")
         }
         if usesFileTryAppend {
-            tail += "declare i64 @bk_try_append_file(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_try_append_file")
         }
         /// `readLine` 会拉进 libc 行读取器与 stdin 流全局（macOS 上拼作 `__stdinp`）。
         if usesReadLine {
@@ -514,87 +520,93 @@ public final class IREmitter {
         /// （派发 · 阻塞等待 · 剪枝）；`join_within` / `join_all` / `cancel` /
         /// `is_cancelled` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
         if usesTaskRuntime {
-            tail += "declare ptr @bk_task_spawn(ptr, ptr, ptr, i32, i32)\n"
-            tail += "declare i32 @bk_task_join(ptr, ptr)\n"
-            tail += "declare void @bk_task_detach(ptr)\n"
+            tail += Builtins.declaration(for: "bk_task_spawn")
+            tail += Builtins.declaration(for: "bk_task_join")
+            tail += Builtins.declaration(for: "bk_task_detach")
             if usesTaskArgRelease {
-                tail += "declare void @bk_handle_release(ptr)\n"
+                tail += Builtins.declaration(for: "bk_handle_release")
             }
         }
         /// 让出族：帧的取用、帧内取槽、可让出的等待。与上面同规 —— 只有真发过的模块才带。
+        if usesTaskCancel {
+            tail += Builtins.declaration(for: "bk_task_cancel")
+        }
         if usesTaskFrame {
-            tail += "declare ptr @bk_task_frame(i64)\n"
-            tail += "declare ptr @bk_task_slot(i64)\n"
-            tail += "declare i32 @bk_task_await(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_task_frame")
+            tail += Builtins.declaration(for: "bk_task_slot")
+            tail += Builtins.declaration(for: "bk_task_await")
         }
         if usesSleepShim {
-            tail += "declare void @bk_sleep(i32)\n"
+            tail += Builtins.declaration(for: "bk_sleep")
         }
         /// 字符内建与宿主环境查询的**运行时段落地**。
         ///  注意  与上面同规：只有真调用过才带这几个 declare ⇒ 不碰它们的程序 IR 逐字节不变。
         ///  行不通  谓词与 `ord` 一律 `i32` 返回（收敛到 i1 由调用点做，见 `.call` 那条注释）。
         if usesCharacterShims {
-            tail += "declare ptr @bk_chars(ptr)\n"
-            tail += "declare ptr @bk_chr(i32)\n"
-            tail += "declare i32 @bk_ord(ptr)\n"
-            tail += "declare i32 @bk_is_letter(ptr)\n"
-            tail += "declare i32 @bk_is_number(ptr)\n"
+            tail += Builtins.declaration(for: "bk_chars")
+            tail += Builtins.declaration(for: "bk_chr")
+            tail += Builtins.declaration(for: "bk_ord")
+            tail += Builtins.declaration(for: "bk_is_letter")
+            tail += Builtins.declaration(for: "bk_is_number")
         }
         if usesProcessShims {
-            tail += "declare ptr @bk_argv()\n"
-            tail += "declare ptr @bk_list_dir(ptr)\n"
+            tail += Builtins.declaration(for: "bk_argv")
+            tail += Builtins.declaration(for: "bk_list_dir")
             // 探测类：`i32` 返回（0/1），收敛到 `i1` 由调用点做 —— 同谓词那条。
-            tail += "declare i32 @bk_exists(ptr)\n"
-            tail += "declare i32 @bk_is_dir(ptr)\n"
+            tail += Builtins.declaration(for: "bk_exists")
+            tail += Builtins.declaration(for: "bk_is_dir")
         }
         if usesModuleRootShim {
-            tail += "declare ptr @bk_module_root()\n"
+            tail += Builtins.declaration(for: "bk_module_root")
         }
         if usesErrorShims {
             // err 槽的字：构造侧两个（业务错误 / 取消错误，只差标志位），读侧两个
             // （判定取消 / 取消息）。 注意  三个 `i64` 参数都是**句柄位型**， 行不通  不是指针。
-            tail += "declare i64 @bk_error_create(ptr)\n"
-            tail += "declare i64 @bk_cancel_error_create(ptr)\n"
-            tail += "declare i32 @bk_error_is_cancel(i64)\n"
-            tail += "declare ptr @bk_error_message(i64)\n"
+            tail += Builtins.declaration(for: "bk_error_create")
+            tail += Builtins.declaration(for: "bk_cancel_error_create")
+            tail += Builtins.declaration(for: "bk_error_is_cancel")
+            tail += Builtins.declaration(for: "bk_error_message")
         }
         if usesProgramBase {
-            tail += "declare void @bk_set_program_base(ptr)\n"
+            tail += Builtins.declaration(for: "bk_set_program_base")
+        }
+        if usesCStrShim {
+            tail += Builtins.declaration(for: "bk_cstr")
         }
         if usesCapturedSlots {
-            tail += "declare ptr @bk_slot_alloc(i64)\n"
+            tail += Builtins.declaration(for: "bk_slot_alloc")
         }
         if usesNominalBoxes {
-            tail += "declare ptr @bk_nominal_alloc(i64, i32)\n"
-            tail += "declare void @bk_nominal_retain(ptr)\n"
-            tail += "declare i32 @bk_nominal_release(ptr)\n"
+            tail += Builtins.declaration(for: "bk_nominal_alloc")
+            tail += Builtins.declaration(for: "bk_nominal_retain")
+            tail += Builtins.declaration(for: "bk_nominal_release")
         }
         // N76：字符串的引用计数。与上一条同规 —— 只有真发过 retain / release 的模块才带，
         // 故「不碰字符串所有权」的程序 IR 逐字节不变。
         if usesStringOwnership {
-            tail += "declare ptr @bk_str_alloc(i64)\n"
-            tail += "declare ptr @bk_str_dup(ptr)\n"
-            tail += "declare void @bk_str_retain(ptr)\n"
-            tail += "declare void @bk_str_release(ptr)\n"
+            tail += Builtins.declaration(for: "bk_str_alloc")
+            tail += Builtins.declaration(for: "bk_str_dup")
+            tail += Builtins.declaration(for: "bk_str_retain")
+            tail += Builtins.declaration(for: "bk_str_release")
         }
         if usesStringShims {
-            tail += "declare ptr @bk_substring(ptr, i32, i32)\n"
-            tail += "declare i32 @bk_string_count(ptr)\n"
-            tail += "declare ptr @bk_string_char_at(ptr, i32)\n"
-            tail += "declare ptr @bk_string_slice(ptr, i32, i32, i32, i32)\n"
-            tail += "declare ptr @bk_string_upper(ptr)\n"
-            tail += "declare ptr @bk_string_lower(ptr)\n"
-            tail += "declare i32 @bk_string_contains(ptr, ptr)\n"
-            tail += "declare ptr @bk_string_split(ptr, ptr)\n"
-            tail += "declare ptr @bk_string_trim_left(ptr)\n"
-            tail += "declare ptr @bk_string_trim_right(ptr)\n"
-            tail += "declare i32 @bk_string_index_of(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_substring")
+            tail += Builtins.declaration(for: "bk_string_count")
+            tail += Builtins.declaration(for: "bk_string_char_at")
+            tail += Builtins.declaration(for: "bk_string_slice")
+            tail += Builtins.declaration(for: "bk_string_upper")
+            tail += Builtins.declaration(for: "bk_string_lower")
+            tail += Builtins.declaration(for: "bk_string_contains")
+            tail += Builtins.declaration(for: "bk_string_split")
+            tail += Builtins.declaration(for: "bk_string_trim_left")
+            tail += Builtins.declaration(for: "bk_string_trim_right")
+            tail += Builtins.declaration(for: "bk_string_index_of")
         }
         // 调度驱动面（`Q-4` 乙段）：派发点把调度器绑定交给运行时。与上面同规 ——
         // 只有真发过派发的模块才带。 注意  观测符号 `bk_task_state` **不在这里** ——
         // 它没有调用点（发射层从不发射它），它是给宿主与判据用的 C ABI 观测面。
         if usesSchedBinding {
-            tail += "declare i32 @bk_task_bind_sched(ptr, ptr)\n"
+            tail += Builtins.declaration(for: "bk_task_bind_sched")
         }
         /// 默认实例的存放位：模块级全局、初值 null ⇒ 首调由运行时建盒。
         for def in givenSlotDefs {
@@ -2245,6 +2257,7 @@ public final class IREmitter {
 
             let symbolName: String
             if function == "cstr" {
+                usesCStrShim = true
                 symbolName = "bk_cstr"
             } else if function == "sleep" {
                 // `sleep` 是并发内建里**唯一**被降载成一条普通调用、却又必须由后端实现的：
@@ -2278,6 +2291,10 @@ public final class IREmitter {
                 // 与 `Error` 只差那个「是取消」标志； 行不通  ABI 上不多传一个参数，而是各一个符号。
                 usesErrorShims = true
                 symbolName = "bk_cancel_error_create"
+            } else if function == "cancel" {
+                /// `Future.cancel()` 降载成一条普通调用；落点是运行时的取消入口，不是同名外部符号。
+                usesTaskCancel = true
+                symbolName = "bk_task_cancel"
             } else if function == "pini.err.message" {
                 // 只由降载层产出（`print(e)` 与 `e.message`）， 行不通  不是语言内建。
                 // 名字带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名。
