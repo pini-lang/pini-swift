@@ -5,7 +5,10 @@
 @_exported import PiniSyntax
 @_exported import PiniSemantics
 @_exported import PiniIR
+@_exported import PiniBackendKit
 @_exported import PiniBackendLLVM
+@_exported import PiniBackendEmbedded
+@_exported import PiniBackends
 @_exported import PiniHost
 
 /// `Foundation` 自 macOS 15 起导出同名 `Expression`（谓词表达式）。包外按

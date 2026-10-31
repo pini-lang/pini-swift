@@ -1,3 +1,4 @@
+import PiniBackendKit
 import PiniIR
 
 /// 哑后端：把 `IRModule` 转成结构转储，不产目标码。价值不在输出，在**穷尽分派** —— `IRStmt` 的
