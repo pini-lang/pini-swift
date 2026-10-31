@@ -2,6 +2,7 @@ import Foundation
 @testable import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
 
 /// 语言预置的调度特征名。调度面提案要把调度做成语言可见的可替换点，第一步是让 `调度器` 这个名字在语言里存在、
 /// 且可被引用 ⇒ 本件钉的就是它已被登记为特征。本件不测派发点如何取得默认实例，也不测默认实现的行为。

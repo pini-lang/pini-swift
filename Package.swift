@@ -18,12 +18,41 @@ let package = Package(
             name: "PiniSyntax",
             path: "Sources/PiniSyntax"
         ),
+        // 语义层：诊断 · 内建声明 · 符号表 · 类型检查 · 包清单与源码装载。往上是 IR 与执行，
+        // 往下只有语法层；它不认识任何后端。
+        .target(
+            name: "PiniSemantics",
+            dependencies: ["PiniSyntax"],
+            path: "Sources/PiniSemantics",
+            // T1/T11（2026-08-24）：诊断与语言配置资源（Diagnostics.{zh,en}.toml · LangConfig.toml）
+            // 随 Bundle.module 分发，故资源跟随消费它们的这一层，不留在伞 target。
+            resources: [.process("Resources")]
+        ),
+        // 中间表示层：节点 · 布局 · 所有权分类 · 降载。只认识语义层，不认识发射器。
+        .target(
+            name: "PiniIR",
+            dependencies: ["PiniSemantics"],
+            path: "Sources/PiniIR"
+        ),
+        // 发射层：LLVM 文本生成与后端接缝（协议 · 能力声明 · 注册表）。只认识 IR。
+        .target(
+            name: "PiniBackendLLVM",
+            dependencies: ["PiniIR"],
+            path: "Sources/PiniBackendLLVM"
+        ),
+        // 宿主层：解释执行 · 调试协议 · 语言服务 · REPL · 包工具链。它消费编译产物而不生产，
+        // 故不在编译管道上，管道也不认识它。
+        .target(
+            name: "PiniHost",
+            dependencies: ["PiniSemantics", "PiniIR"],
+            path: "Sources/PiniHost"
+        ),
+        // 伞 target：只做重导出，不含实现。包外仍 import PiniCore 一处即拿到全部层；
+        // 包内各层之间必须显式声明依赖 —— 这就是分层在编译期的形态。
         .target(
             name: "PiniCore",
-            dependencies: ["PiniSyntax"],
-            path: "Sources/PiniCore",
-            // T1/T11（2026-08-24）：诊断语言资源（Diagnostics.{zh,en}.toml）随 Bundle.module 分发。
-            resources: [.process("Resources")]
+            dependencies: ["PiniSemantics", "PiniIR", "PiniBackendLLVM", "PiniHost"],
+            path: "Sources/PiniCore"
         ),
         // 运行时 ABI 叶子：不依赖包内任何 target，只 import 系统框架；
         // 生成代码经 C ABI 调用它，编译器侧只在清单里记符号名。
@@ -38,7 +67,12 @@ let package = Package(
         ),
         .testTarget(
             name: "PiniTests",
-            dependencies: ["PiniSyntax", "PiniCore", "PiniRuntime"],
+            // 测试逐层 @testable 引入：伞只重导出 public，看不见 package 与 internal，
+            // 而分类表 · 清理栈 · 能力矩阵这些判据恰恰钉在内部约定上。
+            dependencies: [
+                "PiniSyntax", "PiniSemantics", "PiniIR", "PiniBackendLLVM", "PiniHost",
+                "PiniCore", "PiniRuntime",
+            ],
             path: "Tests/PiniTests",
             // 夹具（.pini）集中在各套件目录的 Fixtures/ 下。SwiftPM 把目标目录内的非源文件判为
             // unhandled，而 exclude 只能按路径、不能按扩展名 ⇒ 夹具独占一层才排得掉。

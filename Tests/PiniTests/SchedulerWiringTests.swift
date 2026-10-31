@@ -2,6 +2,9 @@ import Foundation
 @testable import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// 派发点的后端由语言侧决定：程序说明它用哪个调度器，派发点照着办。判据不能只看程序输出 ——
 /// 声明不能让出时等待退化为占用线程、结果分毫不变 ⇒ 输出区分不出「声明被读到」与「引擎没理那句声明」。

@@ -2,6 +2,7 @@ import Foundation
 @testable import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniHost
 
 /// 递归守卫按宿主栈余量判定，不按调用层数。
 /// 条数上限两头出错且同因：轻的形态误杀（栈还剩大半，合法递归被读成疑似无限递归），重的形态漏判

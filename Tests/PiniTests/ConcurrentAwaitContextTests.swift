@@ -2,6 +2,8 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
 
 /// `await` / `wait` 的上下文与位置判定：`await` 只许在异步函数体（`=>`）内、`wait` 只许在同步体（`->`）内，
 /// 且 `await` 还须落在语句根位置。上下文不符报 `E6-009`（改签名或关键字），位置越界报 `E6-010`（改写写法）。

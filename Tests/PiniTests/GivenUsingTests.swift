@@ -2,6 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 // 给定块 `given` / 取用参数 `using` 的判据：给定块进类型面与方法表，默认实例只在 `using` 取用点物化，
 // 取用位随函数类型走（声明位与调用位配对，经参数或字段传递即失去）。`using` 是保留字，`given` 走标识符白名单不入表。

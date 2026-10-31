@@ -1,6 +1,10 @@
 import Foundation
 import PiniCore
 import PiniSyntax
+import PiniSemantics
+import PiniIR
+import PiniBackendLLVM
+import PiniHost
 
 // MARK: - Token Description
 

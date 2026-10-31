@@ -8,7 +8,7 @@ WHY THIS EXISTS
 called, or called under a name the runtime does not export. The second failure is invisible in the
 source because the call site spells the name once, as a string.
 
-`Sources/PiniCore/CodeGen/BuiltinInventory.swift` is the compiler's answer to "what can this backend
+`Sources/PiniBackendLLVM/CodeGen/BuiltinInventory.swift` is the compiler's answer to "what can this backend
 emit". This script joins it with the other two sides:
 
     contract   the family table in runtime-abi.md section 2 (parsed by runtime-abi-check.py)
@@ -45,9 +45,9 @@ ROOT = os.environ.get(
 RUNTIME_ABI_CHECK = os.path.join(ROOT, "tools/runtime-abi-check.py")
 CONTRACT = os.path.join(ROOT, "docs/spec/runtime-abi.md")
 RUNTIME = os.path.join(ROOT, "Sources/PiniRuntime/PiniRuntime.swift")
-INVENTORY = os.path.join(ROOT, "Sources/PiniCore/CodeGen/BuiltinInventory.swift")
-CODEGEN = os.path.join(ROOT, "Sources/PiniCore/CodeGen")
-IRNODE = os.path.join(ROOT, "Sources/PiniCore/IR/IRNode.swift")
+INVENTORY = os.path.join(ROOT, "Sources/PiniBackendLLVM/CodeGen/BuiltinInventory.swift")
+CODEGEN = os.path.join(ROOT, "Sources/PiniBackendLLVM/CodeGen")
+IRNODE = os.path.join(ROOT, "Sources/PiniIR/IR/IRNode.swift")
 
 FAMILY = {
     "array": "数组",

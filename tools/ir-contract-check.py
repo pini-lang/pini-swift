@@ -60,14 +60,14 @@ ROOT = os.environ.get(
 )
 
 CONTRACT = os.path.join(ROOT, "docs/spec/ir-contract.md")
-NODE_FILE = os.path.join(ROOT, "Sources/PiniCore/IR/IRNode.swift")
+NODE_FILE = os.path.join(ROOT, "Sources/PiniIR/IR/IRNode.swift")
 
 # name -> (relative paths, required). A required anchor whose files are missing is
 # an error; an optional one is simply reported as not-yet-present.
 ANCHORS = [
-    ("llvm", (["Sources/PiniCore/CodeGen/IREmitter.swift"], True)),
-    ("printer", (["Sources/PiniCore/IR/IRPrinter.swift"], True)),
-    ("interp-ir", (["Sources/PiniCore/Interpreter/IRExecutor.swift"], False)),
+    ("llvm", (["Sources/PiniBackendLLVM/CodeGen/IREmitter.swift"], True)),
+    ("printer", (["Sources/PiniIR/IR/IRPrinter.swift"], True)),
+    ("interp-ir", (["Sources/PiniHost/Interpreter/IRExecutor.swift"], False)),
 ]
 
 EXPR_HEAD = "## 2. 表达式节点"

@@ -432,24 +432,45 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 注意 拆 target 会暴露一批「只是为了跨文件可见而写 `public`」的 API。清理量要单列一笔，
 不混进结构改动里评。
 
-状态：**进行中**，语法层已独立。`PiniSyntax` 与 `PiniCore` 并列，`Package.swift` 里零依赖，
-内含 AST · 词法 · 语法 · `SourceLocation` · `Desugar`（糖在解析后立即消除，属语法层）。
-`PiniCore` 40 个文件加 `import PiniSyntax`，CLI 1 个、测试 32 个。
+状态：**完成**。编译管道拆成六层，外加一个只做重导出的伞 target。依赖方向由 `dependencies`
+强制，越界引用写不出来：
 
-读数：46 个文件整体搬移，内容零改动 —— `git diff -M` 只见 import 与清单；`PiniSyntax` 46 文件
-6,497 行，`PiniCore` 72 文件 30,170 行；`swift test` 298 tests / 50 suites 全绿；117 份语料 87 份
-逐字节相同，2 份是既有的泛型换序，28 份两版同败。边界实测：往 `PiniSyntax` 里加一行
-`import PiniCore`，构建报 `module dependency cycle` —— 这是本行判据在编译期的形态。
+| target | 内容 | 文件 · 行数 | 依赖 |
+|---|---|---|---|
+| `PiniSyntax` | AST · 词法 · 语法 · `SourceLocation` · `Desugar` | 46 · 6,497 | 无 |
+| `PiniSemantics` | 诊断 · 内建声明 · 符号表 · 类型检查 · 包清单与源码装载 | 27 · 6,723 | Syntax |
+| `PiniIR` | 节点 · 布局 · 所有权分类 · 降载 | 9 · 7,174 | Semantics |
+| `PiniBackendLLVM` | LLVM 文本发射 · 后端接缝 | 7 · 6,469 | IR |
+| `PiniHost` | 解释执行 · 调试 · 语言服务 · REPL · 包工具链 | 36 · 9,867 | Semantics · IR |
+| `PiniRuntime` | 运行时 ABI 叶子（动态库） | 1 · 2,717 | 无 |
+| `PiniCore` | 只做 `@_exported import` 的伞 | 1 · 13 | 上面五层 |
+
+`PiniHost` 只消费编译产物、不生产，故不在管道上，管道也不认识它 —— 这是「宿主面」与「编译器面」
+在依赖图上的分界。伞 target 里不许添逻辑：一旦添了函数，它就会重新长成第二个 `PiniCore`。
+
+读数：130 个文件按目录整体 `git mv`，正文零改动 —— `git diff -M` 只见 import 与访问级。
+越界实测：往 `PiniSemantics` 里加一行 `import PiniBackendLLVM`，构建报
+`module dependency cycle: PiniSemantics -> PiniBackendLLVM -> PiniIR -> PiniSemantics`。
+`swift test` 300 tests / 51 suites 全绿；109 份语料 86 份逐字节相同、1 份（`generic`）两版都是
+两种换序且集合相同、22 份两版同败，无一版单败。三支门禁读数不变：决策族 0 处、翻译点 44 处、
+契约 70/70、清单 96 = 79 + 17。
+
+注意 跨层可见改用 `package`（27 处），没有为分层新增一条 `public`：包外仍只看得到原本就公开的
+那批 API，分层没有把内部约定变成对外承诺。
+
+注意 拆之前先解了四处纠缠，否则依赖图闭不上环。诊断严重级归诊断核心（原在语言服务层）；
+运行时与 IR 的诊断元数据跟着错误类型走（原集中在诊断核心里认领各层错误）；内建名白名单下沉为
+`BuiltinSurface`（原借用解释器的分发表做白名单，IR 因此反向认识执行层）；`IRName` 归 IR
+（原在发射层，解释器拼调度器方法名时反向引用它）。另有两处借道被就地收窄：`ErrorFormatter`
+与 `FileLoader` 都上移宿主层 —— 它们要认全部错误类型与全部前端阶段，本就属于驱动侧。
 
 注意 `RuntimeABI` 一片无需新拆：`PiniRuntime` 已是独立 target，`Package.swift` 里零依赖，
-源文件只 import Foundation / Darwin / Glibc，它就是运行时 ABI 的叶子。剩下的两刀是
-`Semantics`（Semantic · Type · Visibility）与 `IR` · `BackendLLVM`（CodeGen · Backend）；
-`Common` · `Module` · `Run` · `Interpreter` · `Debugger` · `LSP` · `REPL` 的归属在下一刀前要定。
+源文件只 import Foundation / Darwin / Glibc，它就是运行时 ABI 的叶子。
 
-注意 搬移暴露一处同名冲突：`Foundation` 自 macOS 15 起导出 `Expression`（谓词表达式），与语法树
-的同名节点撞车。`PiniCore` 保留一条 `public typealias Expression = PiniSyntax.Expression`，
-包外仍写 `PiniCore.Expression`，包内 45 处无前缀引用因此不必逐个限定。搬移本身没有新增 `public`：
-语法层的 214 条 `public` 声明在拆分前就存在。
+注意 `Expression` 同名冲突（`Foundation` 自 macOS 15 起导出谓词表达式）改了处理方式：每层
+声明一条**内部**别名遮住导入名，只有语义层保留 `public` 那条；伞里再声明一条显式的
+`public typealias`，包外按 `PiniCore.Expression` 取。若只在语义层留 `public`，中间层会同时看见
+两个 `Expression` 而报歧义。
 
 ### 6.7 试点后端
 

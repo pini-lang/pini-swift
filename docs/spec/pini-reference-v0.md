@@ -3212,7 +3212,7 @@ return .err(CancelError())
 唯一权威映射在 TOML 资源：
 
 ```
-Sources/PiniCore/Resources/Diagnostics.{en,zh}.toml
+Sources/PiniSemantics/Resources/Diagnostics.{en,zh}.toml
 ```
 
 经 `Bundle.module` 加载；`--lang zh|en` 切换，未覆盖码回退 zh。

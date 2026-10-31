@@ -1,6 +1,7 @@
 import Testing
 
 @testable import PiniCore
+@testable import PiniIR
 
 /// 所有权分类的判据钉在 `IRType` 上，不钉 LLVM 拼写：拼写是后端的表示，换表示时它变，而分类一变，
 /// 失效的形态是「某一族悄悄不再释放」。故每个 case 都要在表里表态，新增类型时这张表会先红。

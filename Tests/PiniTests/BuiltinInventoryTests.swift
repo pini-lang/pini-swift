@@ -3,6 +3,9 @@ import Testing
 import PiniSyntax
 
 @testable import PiniCore
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniBackendLLVM
 
 /// 内建清单的三个判据：符号唯一、声明由签名拼出、发射器调用到的符号都带声明。
 @Suite("内建清单")

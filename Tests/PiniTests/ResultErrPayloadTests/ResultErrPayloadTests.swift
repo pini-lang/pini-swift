@@ -2,6 +2,10 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniBackendLLVM
+@testable import PiniHost
 
 /// `Result` 的 err 载荷判据：err 槽那一个类型擦除的字在四面都可用 —— 构造（`err(Error(...))` /
 /// `err(CancelError(...))`）· 判别（`isCancel`）· 读消息（`e.message`）· 打印（`print(e)`）。

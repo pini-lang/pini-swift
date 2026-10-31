@@ -2,6 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// `Result` 型 scrutinee 的 `match` 分派判据：`case ok(v)` 的绑定取载荷类型（窄化），而不是保留 scrutinee 类型。
 /// `err` 侧取 `try-else` 已确立的类型擦除错误字 —— `Result` 的 IR 类型只带 ok 侧字段，没有可窄化的错误类型。

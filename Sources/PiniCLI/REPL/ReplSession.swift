@@ -1,5 +1,6 @@
 import Foundation
 import PiniCore
+import PiniHost
 
 // REPL：交互循环 + 续行检测 + 特殊命令。求值（声明累积、表达式包装、跑哪个引擎）在
 // `PiniCore` 的 `ReplEvaluator`——本类只保留交互那一半，故不绑引擎、可被测试 target 覆盖。
