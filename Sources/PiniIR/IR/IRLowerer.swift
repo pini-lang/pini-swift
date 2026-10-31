@@ -2977,8 +2977,8 @@ public enum IRLowerer {
             throw unsupported("undefined enum case '.\(caseName)'", at: location)
 
         case .dictionaryLiteral(let entries, let location):
-            // Dict literal — key/value types derived from the lowered
-            // first entry (homogeneity required, checker does not infer).
+            // Dict literal — key/value types derived from the lowered entries
+            // (homogeneity required; the checker's inference only covers the static side).
             var loweredEntries: [IRDictEntry] = []
             var keyType: IRType? = nil
             var valueType: IRType? = nil
@@ -3298,8 +3298,16 @@ public enum IRLowerer {
                 )
             }
             if functionName == "joinAll" {
-                guard loweredArgs.count == 1, case .array(let element) = loweredArgs[0].type else {
-                    throw unsupported("joinAll expects one array of futures", at: location)
+                /// 句柄数组只接**非空字面量**：变量形态要在运行时逐个取元素，本层还没有那条遍历；
+                /// 空字面量则取不到元素类型（会默认成 I32），与运行时的空聚合不是一回事。
+                /// 两种形态都在这里给诊断，不让发射器以 fatalError 兜底。
+                guard loweredArgs.count == 1,
+                    case .arrayLiteral(let elements, _) = loweredArgs[0].node,
+                    !elements.isEmpty,
+                    case .array(let element) = loweredArgs[0].type
+                else {
+                    throw unsupported(
+                        "joinAll currently needs a non-empty array literal of futures", at: location)
                 }
                 /// 聚合结果是各成员 **ok 载荷** 的数组，不是句柄数组：`wait` 之后元素已结算。
                 let memberOK: IRType
@@ -5161,9 +5169,9 @@ public enum IRLowerer {
 
     // MARK: - Array literals (G2)
 
-    /// Lower an array literal. The checker does not infer collection literal types, so the element type comes
-    /// from the lowered elements, which must be homogeneous. An expected `.array(element:)` context (annotation
-    /// or enclosing literal) drives empty-literal and integer-literal adoption.
+    /// Lower an array literal. The checker infers `Array<T>` for the static side; here the element type comes
+    /// from the lowered elements, because that is what the IR stores, and every element must agree. An expected
+    /// `.array(element:)` context drives empty-literal and integer-literal adoption.
     private static func lowerArrayLiteral(
         _ elements: [Expression],
         expected: IRType?,

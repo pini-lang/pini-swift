@@ -129,7 +129,7 @@ public final class TypeChecker {
 
         /// 内建成员方法签名从 BuiltinRegistry.memberMethods 派生，与运行时 evaluateMember 的表驱动
         /// 派发共用同一张表：未知成员由类型层报 unknownMember，早于运行时的 undefinedVariable。
-        /// 数组字面量推断为 nil，故 Array 成员校验仅在接收者类型可解析时生效。
+        /// 集合字面量按元素推断；空数组取 I32，空字典 / 集合无期望时仍是未知，成员校验只对可解析者生效。
         for m in BuiltinRegistry.memberMethods {
             typeEnv.defineMethod(typeName: m.typeName, methodName: m.name, params: m.params, returns: m.returns)
         }
@@ -185,11 +185,18 @@ public final class TypeChecker {
         )
 
         // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await`/`wait` joinAll([...])` 得 Result<[T], Error>。
-        // 参数登记为裸 `Array`：数组字面量在类型层推断为 nil（见 TypeInference.arrayLiteral），
-        // 元素类型此刻不可知，故此处只锚定「是数组」，元素为 Future 的校验落在运行时。
+        // 形参锚定 `Array<Future<_, _>>`：元素类型由数组字面量按元素推断给出，`_` 只定住
+        // Future 的构造子与元数。写成裸 `Array` 会把推断出的 `Array<Future<...>>` 判成不匹配。
+        let wildcard = TypeAnnotation.simple(name: "_", location: loc)
         typeEnv.defineFunction(
             name: "joinAll",
-            params: [.simple(name: "Array", location: loc)],
+            params: [
+                .generic(
+                    name: "Array",
+                    params: [.generic(name: "Future", params: [wildcard, wildcard], location: loc)],
+                    location: loc
+                )
+            ],
             returns: [
                 .generic(
                     name: "Future",
@@ -205,7 +212,6 @@ public final class TypeChecker {
         // joinWithin（B2-5 / Q5·超时）：(Future<_, _>, I32) → Result<_, Error>。
         // 本身即阻塞 join，故返回 Result 而非 Future；超时归约为 err(CancelError)。
         // 载荷类型此刻不可解（无泛型函数推断），用 `_` 通配位锚定构造子与元数。
-        let wildcard = TypeAnnotation.simple(name: "_", location: loc)
         typeEnv.defineFunction(
             name: "joinWithin",
             params: [
@@ -1738,8 +1744,8 @@ public final class TypeChecker {
                     try report(TypeError.reassignmentToImmutable(variableName: name, location: location))
                 }
                 if let varType = typeEnv.lookupVariable(name: name) {
-                    // [T] 元素标注（D-β）：字面量右值按声明元素类型逐项校验（推断对数组字面量
-                    // 返 nil，通用比对天然跳过——此处是字面量赋值位的唯一检查通道）
+                    // [T] 元素标注（D-β）：标注位仍逐项校验 —— 推断只给出共同元素类型，
+                    // 混合元素会收敛成 `Array<Any>`，单靠通用比对看不出「哪一项不合标注」。
                     if try refineCollectionLiteral(expr: value, expected: varType, location: location) {
                         // 集合字面量已逐元素校验
                     } else if let valType = inference.infer(expression: value) {

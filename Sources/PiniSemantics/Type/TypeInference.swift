@@ -307,8 +307,40 @@ public final class TypeInference {
             }
             return .simple(name: name, location: loc)
 
-        case .arrayLiteral, .dictionaryLiteral, .setLiteral:
-            return nil
+        case .arrayLiteral(let elements, let loc):
+            guard let element = collectionElementType(
+                elements,
+                expected: expectedGenericArgument(expected, "Array", at: 0),
+                defaultElement: .simple(name: "I32", location: loc),
+                scopedParams: scopedParams,
+                location: loc
+            ) else { return nil }
+            return .generic(name: "Array", params: [element], location: loc)
+
+        case .dictionaryLiteral(let entries, let loc):
+            guard let key = collectionElementType(
+                    entries.map(\.key),
+                    expected: expectedGenericArgument(expected, "Dictionary", at: 0),
+                    scopedParams: scopedParams,
+                    location: loc
+                ),
+                let value = collectionElementType(
+                    entries.map(\.value),
+                    expected: expectedGenericArgument(expected, "Dictionary", at: 1),
+                    scopedParams: scopedParams,
+                    location: loc
+                )
+            else { return nil }
+            return .generic(name: "Dictionary", params: [key, value], location: loc)
+
+        case .setLiteral(let elements, let loc):
+            guard let element = collectionElementType(
+                elements,
+                expected: expectedGenericArgument(expected, "Set", at: 0),
+                scopedParams: scopedParams,
+                location: loc
+            ) else { return nil }
+            return .generic(name: "Set", params: [element], location: loc)
 
         case .subscript(let container, let index, let loc):
             // 下标是**安全断言通道**——静态类型 = 元素类型 `T`（越界 panic，
@@ -368,6 +400,41 @@ public final class TypeInference {
         } else {
             return .tuple(labels: sig.returnLabels, elements: sig.returns, location: loc)
         }
+    }
+
+    /// 集合字面量的共同元素类型：逐元素推断，全部结构等价才算收敛。空字面量按期望元素类型，
+    /// 其次按容器默认元素类型（数组为 I32，与降载器同口径）；不一致时取 `Any`，让调用点
+    /// 按 `Array<Any>` 报不匹配，而不是退回「未知」把整段检查跳过。
+    private func collectionElementType(
+        _ elements: [Expression],
+        expected: TypeAnnotation?,
+        defaultElement: TypeAnnotation? = nil,
+        scopedParams: [String: TypeAnnotation]?,
+        location: SourceLocation
+    ) -> TypeAnnotation? {
+        guard !elements.isEmpty else { return expected ?? defaultElement }
+        var unified: TypeAnnotation?
+        for element in elements {
+            guard let inferred = infer(
+                expression: element, expected: expected, scopedParams: scopedParams
+            ) else { return nil }
+            if let unified, !unified.isStructurallyEquivalent(to: inferred) {
+                return .simple(name: "Any", location: location)
+            }
+            unified = unified ?? inferred
+        }
+        return unified
+    }
+
+    /// 期望类型是 `Array<T>` / `Dictionary<K, V>` / `Set<T>` 时取第 `index` 个实参。
+    /// 形状不符或越界一律 `nil`：没有期望就不猜元素类型。
+    private func expectedGenericArgument(
+        _ expected: TypeAnnotation?, _ name: String, at index: Int
+    ) -> TypeAnnotation? {
+        guard case .generic(let expectedName, let params, _)? = expected,
+            expectedName == name, params.indices.contains(index)
+        else { return nil }
+        return params[index]
     }
 
     /// G68（`P0d-D`）：推断出的类型是否为 `Char`。
