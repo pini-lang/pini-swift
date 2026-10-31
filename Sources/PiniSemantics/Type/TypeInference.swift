@@ -194,6 +194,13 @@ public final class TypeInference {
             }
 
             if case .identifier(let name, _) = callee, let env = environment {
+                /// 指针读：`load(p)` 的元素类型由实参的 `*T` 给出，静态签名只登记了 Any 参数。
+                /// 不在这里定，`print("x", load(p))` 的第二参会按 void 判成类型不符。
+                if name == "load", arguments.count == 1,
+                    case .pointer(let element, _)? = infer(expression: arguments[0].expression)
+                {
+                    return element
+                }
                 if let sig = env.lookupFunction(name: name) {
                     if sig.returns.count == 1 {
                         return sig.returns[0]

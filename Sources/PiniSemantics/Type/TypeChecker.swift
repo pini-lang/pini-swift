@@ -77,6 +77,8 @@ public final class TypeChecker {
         // load/store 参数用 Any 通配——接受任意 `*T`（元素类型由运行时指针值自描述，静态层不约束）。
         let anyType = TypeAnnotation.simple(name: "Any", location: loc)
         let anyPtr = TypeAnnotation.pointer(element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
+        // `load` 的返回类型按实参的 `*T` 元素在 `TypeInference` 里给出；静态签名只登记参数，
+        // 登记成具体类型会与指针元素脱钩（`*U8` 与 `*I64` 共用一个签名）。
         typeEnv.defineFunction(name: "load", params: [anyType], returns: [])
         typeEnv.defineFunction(name: "store", params: [anyType, anyType], returns: [])
         typeEnv.defineFunction(name: "addressof", params: [anyType], returns: [anyPtr])
@@ -1946,6 +1948,24 @@ public final class TypeChecker {
             case .identifier(let calleeName, _):
                 // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
                 try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
+                // 指针读：返回类型由实参的 `*T` 元素给出（TypeInference 特判）。这里钉住实参形态，
+                // 让 `load(1)` 在静态层就红，而不是等到降载才报 "expects a *T pointer"。
+                if calleeName == "load", arguments.count == 1,
+                    let argumentType = inference.infer(expression: arguments[0].expression)
+                {
+                    let isPointerOrWildcard: Bool
+                    switch argumentType {
+                    case .pointer: isPointerOrWildcard = true
+                    case .simple(let typeName, _): isPointerOrWildcard = typeName == "Any" || typeName == "_"
+                    default: isPointerOrWildcard = false
+                    }
+                    if !isPointerOrWildcard {
+                        try report(
+                            TypeError.mismatch(
+                                expected: "*T 指针", got: argumentType.describe(), location: location))
+                        return
+                    }
+                }
                 if let sig = typeEnv.lookupFunction(name: calleeName) {
                     // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
                     // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
@@ -2298,6 +2318,8 @@ public final class TypeChecker {
     private func isVoidCallee(_ callee: Expression) -> Bool {
         switch callee {
         case .identifier(let name, _):
+            // `load` 有返回值（元素类型由实参的 `*T` 给出）；静态签名登记为空只为不绑死元素类型。
+            if name == "load" { return false }
             if let sig = typeEnv.lookupFunction(name: name) { return sig.returns.isEmpty }
             if let bound = typeEnv.lookupVariable(name: name),
                 case .function(_, let returns, _, _, _) = bound
