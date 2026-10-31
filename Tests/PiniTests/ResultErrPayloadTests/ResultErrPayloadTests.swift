@@ -40,7 +40,7 @@ struct ResultErrPayloadTests: Sendable {
         return lines
     }
 
-    /// 只到降载 → 发射，拿 IR 文本（⛔ 不跑 lli）。
+    /// 只到降载 → 发射，拿 IR 文本（ 行不通  不跑 lli）。
     private func emitIR(_ source: String) throws -> String {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
@@ -189,7 +189,7 @@ struct ResultErrPayloadTests: Sendable {
     @Test("两通道：err 载荷的四面在手写期望上一致")
     func errPayloadAgreesAcrossChannels() throws {
         /// 意图：同一份语料在两个后端上给出**同一份**手写期望。
-        ///  注意  参照物是手写期望，⛔ 不是「另一条通道」。
+        ///  注意  参照物是手写期望， 行不通  不是「另一条通道」。
         guard let cli = cliPath() else { return }
         let sandbox = FileManager.default.temporaryDirectory
             .appendingPathComponent("pini-errpay-" + UUID().uuidString)

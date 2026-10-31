@@ -84,11 +84,11 @@ struct ReadFileBuiltinTests: Sendable {
 
         let lines = try run("testReadFileReadsWholeFilePastTheOldCap", programBase: sandbox)
 
-        /// 期望值由**用例自己写下的内容**算出（⛔ 不是从任何后端回抄）。
+        /// 期望值由**用例自己写下的内容**算出（ 行不通  不是从任何后端回抄）。
         let expected = ["\(content.utf8.count)", "true"]
         #expect(lines == expected, "读取结果不符。实际：\(lines)")
 
-        /// ⭐ 再加一条**不依赖上面那张表**的断言：表本身可能被改错，
+        ///  重要  再加一条**不依赖上面那张表**的断言：表本身可能被改错，
         /// 而这一条钉的是「文件确实远大于旧上限」这个**事实**（探针尺寸有效的前提）。
         #expect(content.utf8.count > 64 * 1024 * 3,
                 "探针文件的规模失效了（\(content.utf8.count) 字节）⇒ 本用例已不再能证明「超过旧上限」")
@@ -115,7 +115,7 @@ struct ReadFileBuiltinTests: Sendable {
     @Test("LLVM 腿读同一份文件：与同一份手写期望逐字节相符")
     func testReadFileReadsPastTheOldCapOnTheLLVMLeg() throws {
         /// 意图：本条钉的是另一条腿。两条腿读同一份文件的结果必须一致 —— 只改一侧会制造新的两侧偏离，
-        /// 而两侧一致正是 `IOLimits` 存在的全部理由 ⇒ 两侧各与同一份手写期望比一次，⛔ 不两腿互比（同错会互相认证）。
+        /// 而两侧一致正是 `IOLimits` 存在的全部理由 ⇒ 两侧各与同一份手写期望比一次， 行不通  不两腿互比（同错会互相认证）。
         /// 期望值由用例自己写下的内容算出，两条腿用同一个 `expected`。
         let environment = ProcessInfo.processInfo.environment
         let cli = environment["PINI_CLI_BIN"] ?? ""

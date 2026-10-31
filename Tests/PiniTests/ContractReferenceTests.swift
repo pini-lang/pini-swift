@@ -22,7 +22,7 @@ struct ContractReferenceTests: Sendable {
     /// `await` ⇒ 期望取精确值 `1` 而非「`> 0`」：能量精确值的判据强一档。
     private static let expectedYields = 1
 
-    // 闸门置位时运行时打的那一行（契约 §3.6 的形态）。⛔ 逐字节比：汇总行是确定的，
+    // 闸门置位时运行时打的那一行（契约 §3.6 的形态）。 行不通  逐字节比：汇总行是确定的，
     // 而「读一个数再比大小」会把「通道没输出」与「输出 0」并成一类，那正是要分开的两种。
     private static let yieldReportPrefix = "pini-yield-report: bodies-suspended="
 
@@ -31,7 +31,7 @@ struct ContractReferenceTests: Sendable {
         try assertBothLegsProduceTheExpectation(of: "concurrency-async-contagion-end")
     }
 
-    @Test("⭐ 让出可观测：同一台机器上 `await` 版计数 > 0、`wait` 版 = 0 —— 有区分力才算判据")
+    @Test(" 重要  让出可观测：同一台机器上 `await` 版计数 > 0、`wait` 版 = 0 —— 有区分力才算判据")
     func theYieldChannelTellsTheTwoAwaitFormsApart() throws {
         /// 意图：观测通道有形状不等于有区分力。`await`（承诺让出）与 `wait`（承诺占用）在同一个体上
         /// 跑，读数必须不同；相同则通道只是打了一行字，「可观测差异」那条判据就成了空话。
@@ -90,7 +90,7 @@ struct ContractReferenceTests: Sendable {
             return
         """
 
-    @Test("⭐ 解释器后端有同形的让出读数：闸门置位 ⇒ 一行、未置位 ⇒ 零输出")
+    @Test(" 重要  解释器后端有同形的让出读数：闸门置位 ⇒ 一行、未置位 ⇒ 零输出")
     func theInterpreterLegReportsYieldsInTheSameShapeAsTheEmitter() throws {
         /// 意图：解释器后端有与发射腿同形的让出读数 —— 同一闸门、同一行、同样打到 stderr，形态一致两份读数才可比；
         /// 挂点不同（对侧进程退出钩子，本后端运行入口返回）。判据三档、一律逐字节比：有让出 ⇒ `1`；
@@ -132,7 +132,7 @@ struct ContractReferenceTests: Sendable {
         #expect(ungated.stderr.isEmpty, "未置位时不许有任何输出：\(ungated.stderr)")
     }
 
-    @Test("⭐ 嵌套控制流里的 `await` 响亮拒绝：位置不合法的那些写法不静默阻塞")
+    @Test(" 重要  嵌套控制流里的 `await` 响亮拒绝：位置不合法的那些写法不静默阻塞")
     func awaitsInNestedControlFlowAreRefusedLoudly() throws {
         /// 意图：续跑靠入口 `switch` 直接跳回让出点那一块 ⇒ 只有体那一层的语句根部能当让出点。
         /// 嵌在 `if` / `case` / 循环体里的 `await` 若照旧发射成阻塞等待，程序照样跑出结果，只是让出承诺打了折。
@@ -255,15 +255,15 @@ struct ContractReferenceTests: Sendable {
             "\(label)：各后端须同输出，解释器后端得 \(interpreted.stdout.debugDescription)")
     }
 
-    @Test("⭐ `S1` 让出形态：顶层裸语句 `await f()` —— 让出，结果按语义丢弃")
+    @Test(" 重要  `S1` 让出形态：顶层裸语句 `await f()` —— 让出，结果按语义丢弃")
     func bareStatementAwaitYields() throws {
-        /// 形态：`await f()` 独占一行（`S1`）。⭐ 它是四形态里**唯一没有产出**的那种 ——
+        /// 形态：`await f()` 独占一行（`S1`）。 重要  它是四形态里**唯一没有产出**的那种 ——
         /// 结果丢弃，因而让出序列的产出档位是「丢弃」。
         try assertYieldFormYieldsOnce(
             Self.bareAwaitProgram, expecting: "7\n", label: "`S1` 顶层裸语句")
     }
 
-    @Test("⭐ `S3` 让出形态：`match await f():` 的判别式位 —— 判别式跨过让出存活")
+    @Test(" 重要  `S3` 让出形态：`match await f():` 的判别式位 —— 判别式跨过让出存活")
     func matchSubjectAwaitYields() throws {
         /// 形态：`await` 落在 `match` 的判别式位。关键在判别式的结果必须跨过让出：紧接的分派要读它，
         /// 而续跑从函数入口跳回 ⇒ 那个值只能经帧槽。`err` 臂本段测不了：LLVM 后端上 `Error(...)` 构造
@@ -272,7 +272,7 @@ struct ContractReferenceTests: Sendable {
             Self.matchSubjectAwaitProgram, expecting: "3\n", label: "`S3` 判别式位")
     }
 
-    @Test("⭐ `S4` 让出形态：`try await f() else …` 的 try 位 —— 操作数跨过让出存活")
+    @Test(" 重要  `S4` 让出形态：`try await f() else …` 的 try 位 —— 操作数跨过让出存活")
     func tryOperandAwaitYields() throws {
         /// 形态：`await` 落在 `try` 位，与判别式位同一条理由（求值在前、分派在后），但分派形态不同
         /// （tag → ok / else 两支）⇒ 单独一条判据。错误变量的槽在让出点之前声明，留栈则续跑路径不支配它；
@@ -356,7 +356,7 @@ struct ContractReferenceTests: Sendable {
         let expected = Self.expectedOutput
         let source = try fixtureSource(fixture)
 
-        // 后端一：进程内。⭐ 让出读数取**只归本次运行**的后端（理由见该类型的注释）——
+        // 后端一：进程内。 重要  让出读数取**只归本次运行**的后端（理由见该类型的注释）——
         // 进程级单例的计数会被并行跑的别的用例挪走，读出来的是别人的数。
         let counting = YieldCountingScheduler(inner: GCDScheduler.shared)
         let (lines, yields) = try runInProcess(source: source, named: fixture, yielding: counting)
@@ -469,7 +469,7 @@ struct ContractReferenceTests: Sendable {
             return
         """
 
-    @Test("⭐ 给定实例的取用：各后端各自与手写期望逐字节相符 —— 这条路径先前只有解释器后端在守")
+    @Test(" 重要  给定实例的取用：各后端各自与手写期望逐字节相符 —— 这条路径先前只有解释器后端在守")
     func givenInstanceUseIsAcceptedByBothLegs() throws {
         /// 意图：`using` 取用预置默认实例这条路，其缺陷形态是发射出的 IR 在解析期被拒，而那段 IR 只在
         /// 程序真的取用给定实例时才发射 —— 不取用的程序、以及没有 IR 的解释器腿都读不到它。
@@ -542,7 +542,7 @@ struct ContractReferenceTests: Sendable {
             return
         """
 
-    @Test("⭐ 两处来源的同名方法按名合并：后声明者胜 —— 且阴性对照读出不同的数")
+    @Test(" 重要  两处来源的同名方法按名合并：后声明者胜 —— 且阴性对照读出不同的数")
     func laterDeclarationWinsAcrossMethodSources() throws {
         try assertBothLegsMatch(
             Self.duplicateMethodProgram, expecting: ["2"], label: "两处同名（后声明者胜）")
@@ -609,7 +609,7 @@ struct ContractReferenceTests: Sendable {
         """
     }
 
-    @Test("⭐ 顺序由策略决定（LLVM 后端那一半）：覆盖成后进先出后，先跑的是后决出的那个")
+    @Test(" 重要  顺序由策略决定（LLVM 后端那一半）：覆盖成后进先出后，先跑的是后决出的那个")
     func thePolicyDecidesTheOrderOnTheEmittingLeg() throws {
         /// 意图：一份替换掉调度器的程序要在 LLVM 后端被接受（同名方法按名合并），才问得出「先跑谁由谁定」。
         /// 推进性：默认策略下顺序等于决出顺序（甲先于乙），这同时证明两个闸确实先后决出。

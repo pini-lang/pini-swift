@@ -2372,7 +2372,7 @@ public enum IRLowerer {
     }
 
     /// err 字 → 消息串。本层两处读（`print(e)` 与 `e.message`）共用它：
-    /// 字里装的是运行时段的错误对象，取消息属运行时段，⛔ 本层不猜它的布局。
+    /// 字里装的是运行时段的错误对象，取消息属运行时段， 行不通  本层不猜它的布局。
     private static func lowerErrorMessage(
         _ word: IRExpr, at location: SourceLocation
     ) -> LoweredExpr {
@@ -2828,7 +2828,7 @@ public enum IRLowerer {
             let loweredBase = try lowerExpr(object, expected: nil, into: &context)
             // err 字上的 `.message`：类型层把 `Error` / `CancelError` 都定义成带 `message`
             // 字段的结构体，而在 IR 里它只是**一个类型擦除的字** ⇒ 读消息要经运行时段，
-            // ⛔ 不是 GEP（对一个字做 GEP 只会得到无意义地址）。
+            //  行不通  不是 GEP（对一个字做 GEP 只会得到无意义地址）。
             if name == "message", isErrorFaced(loweredBase.node, context) {
                 return lowerErrorMessage(loweredBase.node, at: location)
             }
@@ -3191,7 +3191,7 @@ public enum IRLowerer {
                     type: .array(element: .string)
                 )
             }
-            // 探测类内建：与 `listDir` 同形（降成既有 `call`，⛔ 不新增节点）。
+            // 探测类内建：与 `listDir` 同形（降成既有 `call`， 行不通  不新增节点）。
             // 与操作类相反 —— 路径不存在是**正常答案**，故不 panic 且不改判 bool 面。
             if functionName == "exists" || functionName == "isDir" {
                 guard loweredArgs.count == 1 else {
@@ -3467,7 +3467,7 @@ public enum IRLowerer {
                 return LoweredExpr(node: .fileRead(path: loweredArgs[0].node), type: .string)
             }
             // 可接住的 IO：与上面三条**同一个操作、另一种失败形态**。判据是源码写的
-            // 那个名字，⛔ 不是运行时开关 —— 一次调用只可能有一种失败形态。
+            // 那个名字， 行不通  不是运行时开关 —— 一次调用只可能有一种失败形态。
             // 载荷：读是内容，写与追加是空元组（见 `IRNode` 那三个 case 的注释）。
             if functionName == "tryWriteFile" || functionName == "tryAppendFile" {
                 guard loweredArgs.count == 2 else {

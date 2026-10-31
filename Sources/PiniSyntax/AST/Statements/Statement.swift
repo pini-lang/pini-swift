@@ -17,7 +17,7 @@ public indirect enum Statement: Equatable, Sendable {
     case matchStatement(value: Expression, cases: [MatchCase], location: SourceLocation)
     case scopedBlock(label: String?, body: Block, location: SourceLocation)
     /// 错误传播由 `Expression.tryExpression` 单点承载，语句位只是 expressionStmt 包装，没有独立的 try/except 语句。
-    /// detach 语句 `detach <expr>` 把子任务从父 scope 剪枝、主动退出所有权（fire-and-forget 的唯一合法出口），
+    /// detach 语句 `detach <expr>` 把子任务从父 scope 剪枝、不再由父任务收回（fire-and-forget 的唯一合法出口），
     /// expr 求值为 Future。
     case detachStatement(expression: Expression, location: SourceLocation)
     case expressionStmt(expr: Expression, location: SourceLocation)

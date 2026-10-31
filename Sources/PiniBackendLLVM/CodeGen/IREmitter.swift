@@ -181,11 +181,11 @@ public final class IREmitter {
 
     /// 是否发射过字符串引用计数调用（`bk_str_retain` / `bk_str_release`）。累积形态
     /// `self.buf = self.buf + line` 每次丢弃旧串，没人回收的话峰值等于各次结果长度之和；
-    /// 本条即为此而开。不涉所有权的模块 IR 逐字节不变。
+    /// 本条即为此而开。不涉计数字符串的模块 IR 逐字节不变。
     private var usesStringOwnership = false
 
     /// 本层当前持有 +1 引用的字符串 SSA 名（发射器侧账本）。入账：本层分配的堆串；
-    /// 出账：交出所有权（存槽/return/存元素/存字段）或就地消费（打印/运算/传内建）。
+    /// 出账：交出份额（存槽/return/存元素/存字段）或就地消费（打印/运算/传内建）。
     /// 中间串既不落槽也非最终值，没有这本账就无人释放，正是二次方项的来源。
     private var ownedStrings: Set<String> = []
 
@@ -585,7 +585,7 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_nominal_release")
         }
         // N76：字符串的引用计数。与上一条同规 —— 只有真发过 retain / release 的模块才带，
-        // 故「不碰字符串所有权」的程序 IR 逐字节不变。
+        // 故「不碰计数字符串」的程序 IR 逐字节不变。
         if usesStringOwnership {
             tail += Builtins.declaration(for: "bk_str_alloc")
             tail += Builtins.declaration(for: "bk_str_dup")
@@ -745,7 +745,7 @@ public final class IREmitter {
 
         /// 测试出口：失败断言的假边跳到这里，放弃本函数剩余语句，但把控制交回驱动器。
         /// 它与 `exit_block` 不能合并：那条走正常落空路径并带句柄释放，而本块从体内半途跳来，
-        /// 所有权台账停在分支点状态，故只返回一个不用的值；失败测试的局部容器因此不在本函数释放。
+        /// 归还台账停在分支点状态，故只返回一个不用的值；失败测试的局部容器因此不在本函数释放。
         if currentIsTest, let exitLabel = currentTestExitLabel {
             bodyIR += "\(exitLabel):\n"
             if let returnType = function.returnType {
@@ -1338,7 +1338,7 @@ public final class IREmitter {
             break
 
         case .detachStmt(let inner):
-            /// `detach` 是剪枝：从父 scope 摘掉、主动退出所有权，是 fire-and-forget 的唯一合法出口。
+            /// `detach` 是剪枝：从父 scope 摘掉、不再由父任务收回，是 fire-and-forget 的唯一合法出口。
             /// 它与等待不同 —— 不消费结果，于是没有 `out` 缓冲，也不解构任何东西。
             usesTaskRuntime = true
             let handle = emitExpr(inner)
@@ -3417,7 +3417,7 @@ public final class IREmitter {
         case .none:
             return value
         case .take:
-            /// 临时值被持有位置接管 ⇒ 所有权转移，本层不再负责释放它：字符串与箱各出一笔账。
+            /// 临时值被持有位置接管 ⇒ 份额转移，本层不再负责释放它：字符串与箱各出一笔账。
             claimOwnedString(value)
             claimOwnedBox(value)
             return value
@@ -3888,7 +3888,7 @@ public final class IREmitter {
         ownedStrings.insert(name)
     }
 
-    /// 交出所有权：该值已被某个持有位置（变量槽 / 返回位 / 数组元素槽 / 字段）接管，此后由那里释放。
+    /// 交出份额：该值已被某个持有位置（变量槽 / 返回位 / 数组元素槽 / 字段）接管，此后由那里释放。
     /// 它与 `releaseOwnedString` 互斥，一个值只能走一条；错成 claim 是泄漏（安全），错成 release 是
     /// 悬垂（危险）⇒ 凡「这个值要存下去」的位置，宁可用 claim。
     private func claimOwnedString(_ value: IRValue) {
@@ -3914,7 +3914,7 @@ public final class IREmitter {
         ownedBoxes[name] = type
     }
 
-    /// 交出所有权：该值已被某个持有位置（槽 / 字段 / 返回位 / 载荷槽）接管，此后由那里释放。
+    /// 交出份额：该值已被某个持有位置（槽 / 字段 / 返回位 / 载荷槽）接管，此后由那里释放。
     /// 它与 `releaseOwnedTemporary` 互斥，一个值只走一条；错成 claim 是泄漏（安全），错成 release 是悬垂。
     private func claimOwnedBox(_ value: IRValue) {
         ownedBoxes.removeValue(forKey: value.ssaName)
@@ -3943,7 +3943,7 @@ public final class IREmitter {
     }
 
     /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`bk_handle_*` / `bk_nominal_*` /
-    /// `bk_str_*`），所有权规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
+    /// `bk_str_*`），归还规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
     /// 返回 nil = 该类型不在计数族（标量 · 外部指针 · 聚合 · `LazyRef` 缺口 …）。
     private enum BoxFamily { case container, nominal, string }
 
@@ -5142,7 +5142,7 @@ public final class IREmitter {
             }
         }
         ///  行不通  帧**不在这里释放**：帧跨让出存活，只在体**真跑完**时才该交还，而「真跑完」
-        /// 是下面那个分支才知道的事；何况所有权已归运行时（由它分配、由它交还），
+        /// 是下面那个分支才知道的事；何况份额已归运行时（由它分配、由它交还），
         /// 这里是第二条释放路径的话就是 double free。
         let result = builder.freshTemp()
         body += " \(result) = call \(resultType) @\(mangled)(\(callArgs.joined(separator: ", ")))\n"

@@ -1,11 +1,11 @@
 import Foundation
 
 /// 结构串（SIG）序列化器：把模块 AST 机械派生成结构串行。
-/// 语义权威在语言规范的结构串派生视图条款；本件只实现机械发射，⛔ 不做任何文本再解析。
+/// 语义权威在语言规范的结构串派生视图条款；本件只实现机械发射， 行不通  不做任何文本再解析。
 public enum SignatureSerializer {
 
     /// 对模块内 main 函数的每个顶层语句产出一行 `SIG|<序号>|<结构串>`。
-    /// 模块无 main 函数 ⇒ 零行（⛔ 不产占位行）。
+    /// 模块无 main 函数 ⇒ 零行（ 行不通  不产占位行）。
     public static func signatureLines(module: Module) -> [String] {
         guard let main = module.declarations.compactMap({ decl -> FuncDecl? in
             if case .funcDecl(let f) = decl { return f }

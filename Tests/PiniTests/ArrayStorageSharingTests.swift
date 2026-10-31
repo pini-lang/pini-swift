@@ -95,13 +95,13 @@ struct ArrayStorageSharingTests: Sendable {
         var nine: Int32 = 9
         withUnsafePointer(to: &nine) { b = bk_array_set(b, 0, $0, 4, Tag.i32) ?? b }
         #expect(loadI32(b, 0) == 9, "写进新数组的必须生效")
-        #expect(loadI32(a, 0) == 1, "⛔ 输入侧不许看到新数组的写")
+        #expect(loadI32(a, 0) == 1, " 行不通  输入侧不许看到新数组的写")
         #expect(bk_array_len(a) == 2, "输入侧长度不变")
 
         var seven: Int32 = 7
         _ = withUnsafePointer(to: &seven) { bk_array_set(a, 1, $0, 4, Tag.i32) }
         #expect(loadI32(a, 1) == 7, "写进输入侧的必须生效")
-        #expect(loadI32(b, 1) == 2, "⛔ 新数组不许看到输入侧的写")
+        #expect(loadI32(b, 1) == 2, " 行不通  新数组不许看到输入侧的写")
         #expect(bk_array_len(b) == 3, "新数组长度不变")
     }
 
@@ -133,7 +133,7 @@ struct ArrayStorageSharingTests: Sendable {
         let base = bk_handle_shares(inner)
         withUnsafePointer(to: &otherPtr) { o2 = bk_array_set(o2, 0, $0, 8, Tag.handle) ?? o2 }
         let after = bk_handle_shares(inner)
-        #expect(after == base, "⛔ 内层份额必须回到基线（深拷 +1 与新框释放 −1 配对）：base=\(base) after=\(after)")
+        #expect(after == base, " 行不通  内层份额必须回到基线（深拷 +1 与新框释放 −1 配对）：base=\(base) after=\(after)")
         #expect(bk_array_get(o1, 0) != bk_array_get(o2, 0), "写后必须已分裂（各自私有元素框）")
         #expect(loadHandle(o1, 0) == inner, "输入侧的槽仍指向内层原句柄")
         #expect(loadHandle(o2, 0) == other, "新数组的槽指向被写入的那个句柄")
@@ -155,7 +155,7 @@ struct ArrayStorageSharingTests: Sendable {
         defer { bk_array_destroy(c) }
         #expect(bk_array_len(a) == 2, "a 仍是两格")
         #expect(bk_array_len(c) == 3, "c 应是三格，实际 \(bk_array_len(c))")
-        #expect(loadI32(c, 0) == 1 && loadI32(c, 1) == 2 && loadI32(c, 2) == 4, "⛔ 末格必须是新追加的值")
+        #expect(loadI32(c, 0) == 1 && loadI32(c, 1) == 2 && loadI32(c, 2) == 4, " 行不通  末格必须是新追加的值")
         #expect(loadI32(a, 0) == 1 && loadI32(a, 1) == 2, "a 的内容不被覆盖")
     }
 
@@ -183,7 +183,7 @@ struct ArrayStorageSharingTests: Sendable {
         var nine: Int32 = 9
         _ = withUnsafePointer(to: &nine) { bk_array_set(copy, 2, $0, 4, Tag.i32) }
         #expect(loadI32(copy, 2) == 9, "写副本必须生效")
-        #expect(loadI32(b, 2) == 3, "⛔ 源侧不许看到副本的写")
+        #expect(loadI32(b, 2) == 3, " 行不通  源侧不许看到副本的写")
     }
 
     // MARK: - 不变量七：跨扩容点

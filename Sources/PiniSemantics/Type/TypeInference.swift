@@ -204,7 +204,7 @@ public final class TypeInference {
                     }
                 }
                 // 高阶函数：被调者是函数类型参数/变量（f(x)）——返回其声明返回类型。
-                // ⛔ 退化为 .simple(name) 会把 return f(x) 的类型误判成「类型 f」。
+                //  行不通  退化为 .simple(name) 会把 return f(x) 的类型误判成「类型 f」。
                 if case .function(_, let returns, _, _, _) = env.lookupVariable(name: name) {
                     if returns.count == 1 {
                         return returns[0]

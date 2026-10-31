@@ -207,7 +207,7 @@ done
 
 echo
 if [ "$fail" -eq 0 ]; then
-    echo "✅ 声明与实际一致（线性：${LINEAR_ARMS# } · 待修：${PENDING_ARMS# }）"
+    echo " 完成  声明与实际一致（线性：${LINEAR_ARMS# } · 待修：${PENDING_ARMS# }）"
     exit 0
 fi
 echo "❌ 有臂退化（逐条见上）"

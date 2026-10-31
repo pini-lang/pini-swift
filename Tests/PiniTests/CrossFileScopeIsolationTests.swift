@@ -90,7 +90,7 @@ struct CrossFileScopeIsolationTests: Sendable {
         #expect(lines == ["d=3"], "跨文件同名使局部绑定的类型被顶掉：\(lines)")
     }
 
-    @Test("⛔ 同名在场时，真正的类型不符仍被拒 —— 上一条因此有区分力")
+    @Test(" 行不通  同名在场时，真正的类型不符仍被拒 —— 上一条因此有区分力")
     func aGenuinelyMismatchedTypeIsStillRefused() throws {
         /// 意图：阴性对照，不是重复。上一条戒的是「**沿用**错类型」，不是
         /// 「不检查类型」；若有人把这一族的检查整个关掉，上一条照样绿。

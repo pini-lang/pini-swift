@@ -331,7 +331,7 @@ public indirect enum IRExpr: Equatable {
     case fileWrite(path: IRExpr, content: IRExpr)
     /// `appendFile(path, content)` — the whole content appended at the end, creating the file when it
     /// does not exist (POSIX "a"), following symlinks, failing loud. Yields no value.
-    /// ⛔ A separate node from `fileWrite`, not a flag: the two are opposite when the target exists.
+    ///  行不通  A separate node from `fileWrite`, not a flag: the two are opposite when the target exists.
     case fileAppend(path: IRExpr, content: IRExpr)
     /// `readFile(path)`: the whole file, uncapped, yielded as a String. How the read is emitted is an
     /// implementation detail and belongs in the emitter — the node carries no buffer size or cap.
@@ -339,7 +339,7 @@ public indirect enum IRExpr: Equatable {
 
     // MARK: 可接住的 IO（`Result` 形态）
 
-    /// 三个 `try*` 内建与陷阱版并存，⛔ 不是给陷阱版加开关：同一个操作在「失败怎么办」上有两种答案，
+    /// 三个 `try*` 内建与陷阱版并存， 行不通  不是给陷阱版加开关：同一个操作在「失败怎么办」上有两种答案，
     /// 而答案属于调用者 —— 一次调用只能有一种，选哪种是源码写的名字，不是运行时参数。
     /// 成功载荷：读是文件内容，写与追加是空元组（写成功不产生值，不编造字节数）；载荷类型由类型层推。
 
