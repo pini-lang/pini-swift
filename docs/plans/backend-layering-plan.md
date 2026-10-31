@@ -5,7 +5,7 @@
 - 权威次序：语言面语义以 `../spec/pini-reference-v0.md` 为准；IR 节点语义以 `../spec/ir-contract.md`
   为准；运行时段符号面以 `../spec/runtime-abi.md` 为准。本件只排工程动作，不定义语义。
 - 状态：**执行中**，方案取「先薄化后端，后硬化边界」。立契约 · 布局先决 · 布局归位已完成；
-  所有权归位六片全部落地（分片见 6.3.7），后端接缝未开始。
+  所有权归位六片与后端接缝已落地（分片见 6.3.7 / 6.4），内建清单未开始。
 - 判据来源：2026-10-30 对工作树的实测，读数见「基础读数」。
 
 注意 本计划**不引入第二套 IR**。参考件把 IR 定为单层、唯一的分析 IR；下文所有 pass 都作用在
@@ -180,7 +180,7 @@ protocol PiniBackend {
 | **立契约** | `../spec/ir-contract.md` 增「后端义务」一节（已成文：该件第 5 节；警告级门禁已接，读数 77 处） | 五条契约各有一条可判定的表述；条目里不出现 `bk_*` · `alloca` · 引用计数布局 | 人工逐条核 + 一条警告级门禁：发射器出现 retain 合成时报出 | 无代码改动，删节即回退 |
 | **布局归位** | 新增 `IRLayout`；降载产出；发射器改读 | 发射器里槽位推导归零；59 个示例与 58 个夹具（117 份）的发射产物逐字节不变 | `rg 'Self\.headerSlotCount\|fieldLayout' IREmitter` = 0；`tools/ir-parity-probe.py` 全量 MATCH。注意 类型的字节尺寸不在此列：那是目标表示，留在后端 | 新旧两路并存，发射器断言两者相等，跑一轮全量再删旧路 |
 | **所有权归位** | `OwnershipPass`（IR→IR） | 决策族函数从发射器移除（现存 15 个里的决策部分，翻译族保留并注明只翻译不决策）；所有权寿命套件全绿；哑后端跑通全语料且源码无 retain 字样 | `rg 'pendingReleases\|emitReleases\|emitReassignRelease\|emitRetainIfAliased\|releaseOwnedTemporary' IREmitter` = 0；`OwnershipLifetimeTests` 全绿；哑后端 100 行以内接得上 | 断言保留到 pass 有独立测试后，再逐条删 |
-| **后端接缝** | `PiniBackend` 协议 + 能力声明 + CLI 注册表 | 新增一个哑后端只加 1 个文件 + 1 行注册，不改既有文件 | 按此新增一次，`git diff --stat` 出现文件数 = 2 | 注册表可先并存：旧字符串分派保留一个版本 |
+| **后端接缝** | `PiniBackend` 协议 + 能力声明 + CLI 注册表 | 新增一个哑后端只加 1 个文件 + 1 行注册，不改既有文件 | 按此新增一次，实测文件数 = 2（13 行新文件 + 注册 1 行），验完回滚 | 注册表可先并存：旧字符串分派保留一个版本 |
 | **内建清单** | `BuiltinSpec` 表；三方对照脚本 | 脚本能双向报缺口：清单有而运行时无导出 / 有导出而无降级点 | 脚本自造两条缺口各报一次；正常树零报 | 脚本先只报不拦，稳定后转门禁 |
 | **拆边界** | 六个 target：`Syntax` / `Semantics` / `IR` / `BackendLLVM` / `RuntimeABI` / `CLI` | 依赖方向由编译期强制：`Syntax` 引不到 `BackendLLVM` | `swift build` 通过；故意加一行越界 import，编译必须失败；构建时长前后各留一次读数 | 拆分之一旦卡住，保留已拆的叶子，未拆的暂留 `Core` |
 | **试点后端** | 字节码 `embedded_min` 26 条指令的最小通道 | 接入生产代码不超过 1,000 行；能力矩阵改为活表进 CI | `git diff --stat` 数新增行；能力矩阵在 CI 里产出三列并随提交更新 | 试点失败即回查「所有权归位」的 pass 边界 |
@@ -391,6 +391,19 @@ case returnStmt(value: IRExpr?, adopt: IRAdopt)
 
 注意 能力声明的来源必须是**一张表**，不是散在后端各处的 `if`。表的读法要与
 `../spec/ir-contract.md` 的节点编号对齐，这样「某后端不支持 X」能直接落到条目号上。
+
+状态：**已完成**。三件落在 `Sources/PiniCore/Backend/`：`PiniBackend` 协议（名字 · 能力声明 ·
+产出入口 · 可选的模块基准）、`BackendCapabilities`（十四个族，与契约第 2 节的小节同名，另加
+「控制流」；产出档次单列）、`BackendRegistry`（一行注册）。CLI 的 `emit` 加 `--backend <name>`，
+默认仍是 LLVM。
+
+哑后端 `JSONBackend` 一个文件：`IRStmt` 的 17 条与 `IRExpr` 的 53 条逐一列出、不留 `default`，
+转储 JSON。读数：117 份语料 **91 份成功、26 份失败、0 份坏 JSON**；26 份全是前端或降载层的错
+（`Semantic Error` / `IRGen Error`），与通道无关 —— LLVM 通道可发射 89 份，哑后端多出的两份
+是 LLVM 特有的失败（聚合打印等）。
+
+注意 验收「新增一个后端只加 1 个文件 + 1 行注册」实际测过一次：临时加一个只数节点的通道，
+改动是 1 个新文件（13 行）+ 注册表 1 行，没有第三个文件被碰；验完即回滚，不留一个没人用的通道。
 
 ### 6.5 内建清单
 
