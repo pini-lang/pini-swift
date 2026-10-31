@@ -1,6 +1,5 @@
 # 示例门禁的已知失败：条目 <TAB> 腿 <TAB> 原因。只许缩小 —— 某行变绿时门禁会红，提示删掉它。
 package-demo	check	取 / 查主人 的签名写成 -> ()，却 return I32
-ffi.pini	run-llvm	bk_cstr 重复声明（lli: invalid redefinition of function）
 concurrency-cancel.pini	run-llvm	joinWithin 未接线（lli: use of undefined value）
 concurrency-future-handle.pini	run-llvm	同 joinWithin 未接线
 concurrency-joinall.pini	run-llvm	任务句柄数组的元素 ABI 未接线（IREmitter fatalError）

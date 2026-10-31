@@ -291,7 +291,7 @@ public final class IREmitter {
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += Builtins.declaration(for: "bk_double_to_string")
-        header += "declare ptr @free(ptr)\n"
+        header += "declare void @free(ptr)\n"
         header += "declare double @sqrt(double)\n"
         header += "@fmt_int = private constant [3 x i8] c\"%d\\00\"\n"
         header += "@fmt_bool_true = private constant [6 x i8] c\"true\\00\\00\"\n"
@@ -346,15 +346,14 @@ public final class IREmitter {
         header += "declare double @llvm.sin.f64(double)\n"
         header += "declare double @llvm.cos.f64(double)\n"
         /// Foreign blocks declare their external signatures; symbols resolve at JIT link time (libc via
-        /// the process image, dlopened libraries via `--dlopen`). Names already in the fixed header
-        /// (malloc/free/strlen) are skipped, since LLVM rejects redefinition.
+        /// the process image, dlopened libraries via `--dlopen`). Symbols declared elsewhere are skipped:
+        /// libc ones by the fixed header above, runtime shims by the conditional tail below.
         let predeclared: Set<String> = ["printf", "malloc", "free", "strlen", "memcpy"]
-        // Runtime-provided shims: not libc, resolved from the runtime dylib
-        // (--dlopen in the harness). Emit the bk_ symbol declare.
         let runtimeShims: Set<String> = ["cstr"]
         for foreignBlock in module.foreigns {
-            for func_ in foreignBlock.funcs where !predeclared.contains(func_.name) {
-                let symbol = runtimeShims.contains(func_.name) ? "bk_\(func_.name)" : IRName.mangle(func_.name)
+            for func_ in foreignBlock.funcs
+            where !predeclared.contains(func_.name) && !runtimeShims.contains(func_.name) {
+                let symbol = IRName.mangle(func_.name)
                 let params = func_.paramTypes.map { $0.llvmSpelling }.joined(separator: ", ")
                 let ret = func_.returnType?.llvmSpelling ?? "void"
                 header += "declare \(ret) @\(symbol)(\(params))\n"

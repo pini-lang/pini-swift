@@ -1070,13 +1070,16 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
 
 // MARK: - G14 FFI: Pini String -> C string (interpreter "cstr" shim parity)
 
-/// Materializes a Swift String as a NUL-terminated, malloc-allocated UTF-8 C string: same allocation
-/// contract (caller frees), encoding and terminator as the interpreter's `cstr` shim. Emitted IR calls
-/// this for foreign-declared `cstr` symbols — libc has none, so it must come from the runtime dylib.
+/// Materializes a Swift String as a NUL-terminated, malloc-allocated UTF-8 C string: the caller
+/// frees it, same as the interpreter's `cstr` shim. A counted `_bkStrAlloc` block would return an
+/// interior pointer, which libc `free` rejects.
 @_cdecl("bk_cstr")
 public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return nil }
-    return _bkStrDup(s)
+    let length = strlen(s)
+    guard let raw = malloc(length + 1) else { return nil }
+    memcpy(raw, s, length + 1)
+    return raw.assumingMemoryBound(to: CChar.self)
 }
 
 // MARK: - 字符内建与宿主环境查询内建的 LLVM 侧运行时段
