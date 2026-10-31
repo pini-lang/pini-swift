@@ -348,6 +348,10 @@ public enum Builtins {
             family: .task, lowerings: ["join"]
         ),
         BuiltinSpec(
+            symbol: "bk_task_join_within", signature: .init(result: "i32", parameters: ["ptr", "i32", "ptr"]),
+            family: .task, lowerings: ["call"]
+        ),
+        BuiltinSpec(
             symbol: "bk_task_spawn",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "ptr", "i32", "i32"]),
             family: .task, lowerings: ["call"]

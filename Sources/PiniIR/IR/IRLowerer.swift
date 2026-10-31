@@ -3303,7 +3303,9 @@ public enum IRLowerer {
                 guard loweredArgs.count == 2, loweredArgs[1].type == .i32 else {
                     throw unsupported("joinWithin expects a future and an I32 timeout", at: location)
                 }
-                let bounded = loweredArgs[0].type
+                /// 与 `wait` 同一条翻译：句柄进、`Result` 出。沿用实参类型会把 Future 当成站点类型，
+                /// 而三槽装配要的是 Result。
+                let bounded = loweredArgs[0].type.joinedResultType ?? loweredArgs[0].type
                 return LoweredExpr(
                     node: .call(
                         function: functionName,

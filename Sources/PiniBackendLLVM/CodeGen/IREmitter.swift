@@ -243,6 +243,9 @@ public final class IREmitter {
     /// 是否发射过 `cancel` —— 落点是运行时的取消入口，声明与派发族分开：不取消的模块不多一行。
     private var usesTaskCancel = false
 
+    /// 是否发射过 `joinWithin` —— 三槽装配与 `join` 同形，只是多一个时限参数，声明也分开。
+    private var usesTaskJoinWithin = false
+
     /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
@@ -518,9 +521,8 @@ public final class IREmitter {
             tail += "declare ptr @fgets(ptr, i32, ptr)\n"
             tail += "@__stdinp = external global ptr\n"
         }
-        /// 任务族的 C ABI。只有真发过派发 / 等待 / 剪枝的模块才带它们。本段只接三个符号
-        /// （派发 · 阻塞等待 · 剪枝）；`join_within` / `join_all` / `cancel` /
-        /// `is_cancelled` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
+        /// 任务族的 C ABI。只有真发过派发 / 等待 / 剪枝的模块才带它们。本段接派发、阻塞等待、
+        /// 剪枝三个符号；`join_all` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
         if usesTaskRuntime {
             tail += Builtins.declaration(for: "bk_task_spawn")
             tail += Builtins.declaration(for: "bk_task_join")
@@ -528,6 +530,9 @@ public final class IREmitter {
             if usesTaskArgRelease {
                 tail += Builtins.declaration(for: "bk_handle_release")
             }
+        }
+        if usesTaskJoinWithin {
+            tail += Builtins.declaration(for: "bk_task_join_within")
         }
         /// 让出族：帧的取用、帧内取槽、可让出的等待。与上面同规 —— 只有真发过的模块才带。
         if usesTaskCancel {
@@ -2200,6 +2205,17 @@ public final class IREmitter {
                 return emitArrayAppend(
                     receiver: args[0], elementNode: arguments[1], elementValue: args[1],
                     elementType: elementType)
+            }
+
+            /// `joinWithin(future, ms)` 是三槽 join 的带时限形态：超时归约为取消在运行时做，
+            /// 调用点只多传一个毫秒值。
+            if function == "joinWithin", args.count == 2 {
+                guard let type = returnType, case .result(let okType) = type else {
+                    fatalError(
+                        "IREmitter: joinWithin needs a Result return type (IRLowerer guarantees)")
+                }
+                return emitJoinWithin(
+                    handle: args[0], timeout: args[1], type: type, okType: okType)
             }
 
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
@@ -5209,6 +5225,25 @@ public final class IREmitter {
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         bodyIR += " call i32 @bk_task_join(ptr \(handle.ssaName), ptr \(out))\n"
         /// 三槽 → `Result` 的装配与让出路径**共用一份**实现：这条约定只该有一处解释。
+        return collectResult(from: out, type: type, okType: okType)
+    }
+
+    /// `joinWithin(future, ms)`：与 `bk_task_join` 共用三槽装配与 `Result` 收尾，
+    /// 只多传一个时限；超时归约为取消由运行时保证。
+    private func emitJoinWithin(
+        handle: IRValue, timeout: IRValue, type: IRType, okType: IRType
+    ) -> IRValue {
+        usesTaskJoinWithin = true
+        guard handle.llvmType == "ptr" else {
+            fatalError("IREmitter: joinWithin operand is not a task handle (IRLowerer guarantees)")
+        }
+        guard isSingleWordPayload(okType) else {
+            fatalError(
+                "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
+        }
+        let out = builder.freshTemp()
+        bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
+        bodyIR += " call i32 @bk_task_join_within(ptr \(handle.ssaName), i32 \(timeout.ssaName), ptr \(out))\n"
         return collectResult(from: out, type: type, okType: okType)
     }
 
