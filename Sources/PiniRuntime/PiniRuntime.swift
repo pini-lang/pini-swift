@@ -15,7 +15,7 @@ import Foundation
 // 句柄的 share count 住在运行时而非 ARC：LLVM 后端里 `var b = a` 只把不透明句柄（裸 `ptr`）复制到另一个
 // alloca 槽，ARC 看不见这次别名 ⇒ `isKnownUniquelyReferenced` 恒真；故按 `shares` 判分裂：别名点 retain、写前 ensure_unique。
 
-// 所有权契约（codegen 与运行时的分工）：`bk_*_create` 产出 shares == 1 的 box，所有权归接收该句柄的
+// 份额契约（codegen 与运行时的分工）：`bk_*_create` 产出 shares == 1 的 box，归还责任在接收该句柄的
 // 所有者（变量槽或被写入的父容器）；`bk_*_set` / `bk_set_add` 对句柄型内容只做字节复制（移动语义）、
 // 不 retain，故别名点的 `bk_handle_retain` 由 codegen 负责；box `deinit` 对句柄型元素递减一份 share。
 
@@ -133,7 +133,7 @@ private final class _BkArrayStorage {
     }
 
     /// 扩容到至少容纳 `needed` 个槽（容量倍增；增量追加 ⇒ 单次摊销 O(1)）。
-    ///  注意  **只搬指针**：已存在的元素 box 继续原地被引用，所有权不变
+    ///  注意  **只搬指针**：已存在的元素 box 继续原地被引用，份额不变
     /// ——  行不通  **不**为它们重新分配 box，那正是改动前那条二次方路径。
     func grow(to needed: Int) {
         var capacity = max(elements.count, 1)
@@ -925,7 +925,7 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
     memcpy(p.advanced(by: Int(offsetBytes)), src, n)
 }
 
-// 原生字符串的引用计数所有权：分配时多要 `MemoryLayout<Int>.size` 字节做计数头，用户指针 = 基址 + 头长，
+// 原生字符串的引用计数：分配时多要 `MemoryLayout<Int>.size` 字节做计数头，用户指针 = 基址 + 头长，
 // 仍是 NUL 结尾 C 串（既有消费点与 IR 的 `i8*` 表示都不变）；释放不在登记表里的指针是无操作， 行不通  不读头里
 // 的魔数（全局常量会读到紧邻字节）⇒ 常量串与堆串同路安全。本段只管分配/计数/回收，retain/release 由发射器定。
 
@@ -977,7 +977,7 @@ private func _bkStrBase(_ user: UnsafeMutableRawPointer) -> UnsafeMutableRawPoin
     return user.advanced(by: -_bkStrHeaderBytes)
 }
 
-/// 字符串的**别名点 retain**（与 `bk_handle_retain` 同一条所有权规则的不同族）。
+/// 字符串的**别名点 retain**（与 `bk_handle_retain` 同一条归还规则的不同族）。
 /// 非本运行时段分配的指针（全局常量 · 外呼 C 串）⇒ 无操作。
 @_cdecl("bk_str_retain")
 public func bk_str_retain(_ p: UnsafeMutablePointer<CChar>?) {
@@ -1973,7 +1973,7 @@ public func bk_task_is_cancelled() -> Int32 {
     return c ? 1 : 0
 }
 
-/// 从父 scope 剪枝、主动退出所有权 —— fire-and-forget 的唯一合法出口。
+/// 从父 scope 剪枝、不再由父任务收回 —— fire-and-forget 的唯一合法出口。
 @_cdecl("bk_task_detach")
 public func bk_task_detach(_ h: UnsafeMutableRawPointer?) {
     guard let box = _bkTaskBox(h) else { return }
@@ -2103,7 +2103,7 @@ public func bk_task_yield() -> Int32 {
 
 /// 帧的取用：一个概念、两种用途，区别只在 `bytes`。
 /// `bytes > 0` 派发点用：新建一块属于运行时的帧（已清零，首字是续跑点、`0` = 首次进入，故不必再 store）；
-/// `bytes == 0` 体内用：取当前任务的帧，无论第几次进入都是同一块。所有权在运行时，否则取消路径上无人释放。
+/// `bytes == 0` 体内用：取当前任务的帧，无论第几次进入都是同一块。份额在运行时，否则取消路径上无人释放。
 @_cdecl("bk_task_frame")
 public func bk_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
     guard bytes > 0 else {
@@ -2308,8 +2308,8 @@ public func bk_scope_close(
 // 认父 / 登记当前任务」各只有一个实现点，故判据与 `bk_task_spawn` 不会各造一套语义。
 
 /// 当前线程正在跑的任务的线程本地存放位（`bk_task_is_cancelled` 的无参形态读它）。
-///  注意  只存弱引用、不 retain：当前任务一定同时被别处持有，本存放位只是「谁在跑」的读数面、不参与所有权；
-/// 若在此 retain 就多出一条与注册表并行的所有权边，还要再定义释放时机。线程退出由 POSIX 销毁器清位。
+///  注意  只存弱引用、不 retain：当前任务一定同时被别处持有，本存放位只是「谁在跑」的读数面、不参与计数；
+/// 若在此 retain 就多出一条与注册表并行的持有边，还要再定义释放时机。线程退出由 POSIX 销毁器清位。
 private let _bkCurrentTaskKey: pthread_key_t = {
     var k = pthread_key_t()
     // Glibc 的销毁器形参可空、Darwin 不可空；语义相同，两处签名只能各写一遍。
@@ -2334,7 +2334,7 @@ private var _bkTaskCurrent: _BkTaskBox? {
     }
 }
 
-/// 造一个**未决**任务盒并返回句柄。所有权 = 调用方（用完经 `bk_handle_release` 归还）。
+/// 造一个**未决**任务盒并返回句柄。归还责任 = 调用方（用完经 `bk_handle_release` 归还）。
 func _bkTaskMake() -> UnsafeMutableRawPointer {
     let box = _BkTaskBox()
     let h = _bkRegister(box)

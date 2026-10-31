@@ -1,4 +1,4 @@
-/// 所有权分类：一个类型在存储点上的接收规则。它是 IR 事实，不是目标表示 —— 后端据此选动作与运行时
+/// 资源归属分类（RAII 的归还面）：一个类型在存储点上的接收规则。它是 IR 事实，不是目标表示 —— 后端据此选动作与运行时
 /// 符号，不再按 LLVM 拼写反推。拼写属后端，换表示（改聚合形态、换目标）时它会变，而分类一变，
 /// 失效的形态是「某一族悄悄不再释放」，不是报错。
 public enum IROwnershipClass: Equatable, Sendable {
@@ -14,7 +14,7 @@ public enum IROwnershipClass: Equatable, Sendable {
     case retained(IRShareKind)
 }
 
-/// 计数族的细分。七种都按「保留 / 释放」计数，只是符号不同 —— 故它不改变所有权规则。
+/// 计数族的细分。七种都按「保留 / 释放」计数，只是符号不同 —— 故它不改变归还规则。
 public enum IRShareKind: Equatable, Sendable {
     /// `String` · `Char`：带计数头的 C 串，两者同构。
     case string
@@ -34,7 +34,7 @@ public enum IRShareKind: Equatable, Sendable {
 
 extension IRType {
     /// 这个类型的接收规则。每个 case 逐一表态，不留 `default`：新增类型必须在这里选一族，
-    /// 否则编不过 —— 兜底归族会让新类型静默继承一套它未必成立的所有权。
+    /// 否则编不过 —— 兜底归族会让新类型静默继承一套它未必成立的归还规则。
     public var ownershipClass: IROwnershipClass {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean: return .inert
