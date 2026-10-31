@@ -1546,16 +1546,19 @@ private func lowerSingleFile(source: String, fileName: String) throws -> IRModul
     return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
 }
 
-private func typeCheckThenGenerate(source: String, fileName: String) throws -> String {
+private func typeCheckThenGenerate(
+    source: String, fileName: String, backend: any PiniBackend = IREmitter()
+) throws -> String {
     let irModule = try lowerSingleFile(source: source, fileName: fileName)
-    let emitter = IREmitter()
-    // 注入程序基准，与解释器同规则。
-    emitter.programBase = absoluteProgramBase(fileName)
-    return emitter.emit(module: irModule)
+    // 注入程序基准，与解释器同规则。需要它的通道自己覆写，其余保持默认。
+    backend.setProgramBase(absoluteProgramBase(fileName))
+    return backend.emit(module: irModule)
 }
 
-func runEmitCommand(source: String, fileName: String, outputPath: String?) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
+func runEmitCommand(
+    source: String, fileName: String, outputPath: String?, backend: any PiniBackend = IREmitter()
+) throws {
+    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, backend: backend)
 
     if let out = outputPath {
         try ir.write(toFile: out, atomically: true, encoding: .utf8)
@@ -1580,7 +1583,10 @@ private func loadOwningPackageIfModule(path: String) throws -> (package: Package
 // Package-level IR emit: package semantic + type-check, then `IRLowerer.lower(package:)` ->
 // IREmitter. The checker already enforced visibility (D4), so the IR channel re-enforces nothing.
 // `moduleRoot` is the package's own directory: the whole package is lowered as one unit.
-private func runIRPackageEmit(package: Package, moduleRoot: String, outputPath: String?) throws {
+private func runIRPackageEmit(
+    package: Package, moduleRoot: String, outputPath: String?,
+    backend: any PiniBackend = IREmitter()
+) throws {
     let analyzer = SemanticAnalyzer()
     try analyzer.analyze(package: package)
     let checker = TypeChecker()
@@ -1588,10 +1594,9 @@ private func runIRPackageEmit(package: Package, moduleRoot: String, outputPath: 
     // Same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
-    let emitter = IREmitter()
     // 模块基准 = 模块根，与解释器模块路径一致。
-    emitter.programBase = absoluteProgramBase(moduleRoot)
-    let ir = emitter.emit(module: irModule)
+    backend.setProgramBase(absoluteProgramBase(moduleRoot))
+    let ir = backend.emit(module: irModule)
     if let out = outputPath {
         try ir.write(toFile: out, atomically: true, encoding: .utf8)
     } else {
@@ -1848,18 +1853,42 @@ case "emit":
         exit(1)
     }
     do {
+        // 通道选择：`--backend <name>` 从位置参数里挑出来，剩下的是路径与可选输出文件。
+        //  注意  名字不认识时报错并列出可选值，不猜一个近似通道 —— 猜错会让人以为换通道没生效。
+        var backendName = BackendRegistry.defaultIdentifier
+        var positional: [String] = []
+        var cursor = 2
+        while cursor < args.count {
+            if args[cursor] == "--backend", cursor + 1 < args.count {
+                backendName = args[cursor + 1]
+                cursor += 2
+            } else {
+                positional.append(args[cursor])
+                cursor += 1
+            }
+        }
+        guard let backend = BackendRegistry.make(backendName) else {
+            printError(
+                "Error: unknown backend '\(backendName)'. Available: "
+                    + BackendRegistry.identifiers.joined(separator: ", "))
+            exit(1)
+        }
+        guard let path = positional.first else {
+            printError("Error: emit command requires a file path")
+            exit(1)
+        }
+        let outputPath = positional.count >= 2 ? positional[1] : nil
         // A file inside a manifest module runs through the package pipeline, which lowers the whole
         // package; a bare file outside any module keeps single-file behavior. Directory arguments are
         // not accepted here, so no directory branch is added.
-        if let loaded = try loadOwningPackageIfModule(path: args[2]) {
+        if let loaded = try loadOwningPackageIfModule(path: path) {
             try runIRPackageEmit(
                 package: loaded.package, moduleRoot: loaded.moduleRoot,
-                outputPath: args.count >= 4 ? args[3] : nil)
+                outputPath: outputPath, backend: backend)
         } else {
-            let source = try readFile(args[2])
+            let source = try readFile(path)
             try runEmitCommand(
-                source: source, fileName: args[2],
-                outputPath: args.count >= 4 ? args[3] : nil)
+                source: source, fileName: path, outputPath: outputPath, backend: backend)
         }
     } catch {
         printError(formatCLIError(error: error, source: nil))
