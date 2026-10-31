@@ -3290,7 +3290,10 @@ public enum IRLowerer {
                 guard loweredArgs.count == 1, case .array(let element) = loweredArgs[0].type else {
                     throw unsupported("joinAll expects one array of futures", at: location)
                 }
-                let aggregated = IRType.result(ok: .array(element: element))
+                /// 聚合结果是各成员 **ok 载荷** 的数组，不是句柄数组：`wait` 之后元素已结算。
+                let memberOK: IRType
+                if case .future(let ok) = element { memberOK = ok } else { memberOK = element }
+                let aggregated = IRType.result(ok: .array(element: memberOK))
                 return LoweredExpr(
                     node: .call(
                         function: functionName,

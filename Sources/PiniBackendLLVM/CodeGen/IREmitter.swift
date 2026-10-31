@@ -246,6 +246,9 @@ public final class IREmitter {
     /// 是否发射过 `joinWithin` —— 三槽装配与 `join` 同形，只是多一个时限参数，声明也分开。
     private var usesTaskJoinWithin = false
 
+    /// 是否发射过 `joinAll` —— 聚合 join 另走一条入口，声明同样只在用时出现。
+    private var usesTaskJoinAll = false
+
     /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
@@ -533,6 +536,9 @@ public final class IREmitter {
         }
         if usesTaskJoinWithin {
             tail += Builtins.declaration(for: "bk_task_join_within")
+        }
+        if usesTaskJoinAll {
+            tail += Builtins.declaration(for: "bk_task_join_all")
         }
         /// 让出族：帧的取用、帧内取槽、可让出的等待。与上面同规 —— 只有真发过的模块才带。
         if usesTaskCancel {
@@ -2170,6 +2176,11 @@ public final class IREmitter {
             return IRValue(llvmType: type.llvmSpelling, ssaName: temp)
 
         case .call(let function, let arguments, let returnType):
+            /// `joinAll([a, b, ...])` 吃的是**句柄数组**而不是一个普通实参：字面量形态直接展开，
+            /// 免得先建一个数组再拆回来。
+            if function == "joinAll" {
+                return emitJoinAll(arguments: arguments, returnType: returnType)
+            }
             let args = arguments.map { emitExpr($0) }
             /// 异步被调者的调用点就是派发点：判据取被调者自己的 `isAsync`，不取类型。
             /// 调用节点上带的是体协议（`Result`，被调方真的返回什么），句柄类型只活在签名表里 ——
@@ -3878,10 +3889,8 @@ public final class IREmitter {
         //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
         case .pointer: return ("i8*", 8, 3)
         case .future:
-            // 句柄数组（`joinAll` 的实参形态）需要一条把句柄搬进运行时容器的通道，
-            // 而聚合 join 尚未接线 ⇒ 这里给一个点名的拒绝，而不是笼统的「没有这条 ABI」。
-            fatalError(
-                "IREmitter: an array of task handles has no element ABI yet — the aggregate join is not wired (this batch covers dispatch, blocking wait and pruning)")
+            /// 任务句柄是指针字，生命周期由 join / detach 管，数组只暂存 ⇒ 裸指针 tag，不计数。
+            return ("ptr", 8, 3)
         default:
             fatalError("IREmitter: no array element ABI for '\(type)' (IRLowerer gates element types)")
         }
@@ -5206,7 +5215,6 @@ public final class IREmitter {
                     + " (an async body with no declared Result return, or a closure body)."
                     + " Nested and in-expression positions are refused earlier, in lowering")
         }
-        usesTaskRuntime = true
         guard case .result(let okType) = type else {
             fatalError("IREmitter: join site type is not a Result (IRLowerer guarantees)")
         }
@@ -5218,9 +5226,9 @@ public final class IREmitter {
                 "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
         }
         let handle = emitExpr(future)
-        guard handle.llvmType == "ptr" else {
-            fatalError("IREmitter: join operand is not a task handle (IRLowerer guarantees)")
-        }
+        /// 已在结算值上 `wait`（`wait joinAll(...)` 这类）：没有句柄可等，原样透传。
+        if handle.llvmType != "ptr" { return handle }
+        usesTaskRuntime = true
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         bodyIR += " call i32 @bk_task_join(ptr \(handle.ssaName), ptr \(out))\n"
@@ -5244,6 +5252,36 @@ public final class IREmitter {
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         bodyIR += " call i32 @bk_task_join_within(ptr \(handle.ssaName), i32 \(timeout.ssaName), ptr \(out))\n"
+        return collectResult(from: out, type: type, okType: okType)
+    }
+
+    /// `joinAll([a, b, ...])`：把每个成员的句柄排进一块连续区，交给运行时逐个 join。
+    /// 只接数组字面量 —— 变量形态要走运行时遍历，本后端尚未提供。
+    private func emitJoinAll(arguments: [IRExpr], returnType: IRType?) -> IRValue {
+        guard let type = returnType, case .result(let okType) = type, case .array = okType else {
+            fatalError(
+                "IREmitter: joinAll needs a Result<Array<...>> return type (IRLowerer guarantees)")
+        }
+        guard arguments.count == 1, case .arrayLiteral(let elements, _) = arguments[0],
+            !elements.isEmpty
+        else {
+            fatalError("IREmitter: joinAll expects a non-empty array literal of futures")
+        }
+        usesTaskJoinAll = true
+        let handles = builder.freshTemp()
+        bodyIR += " \(handles) = alloca [\(elements.count) x ptr], align 8\n"
+        for (index, element) in elements.enumerated() {
+            let value = emitExpr(element)
+            guard value.llvmType == "ptr" else {
+                fatalError("IREmitter: joinAll member is not a task handle (IRLowerer guarantees)")
+            }
+            let slot = builder.freshTemp()
+            bodyIR += " \(slot) = getelementptr inbounds [\(elements.count) x ptr], ptr \(handles), i64 0, i64 \(index)\n"
+            bodyIR += " store ptr \(value.ssaName), ptr \(slot)\n"
+        }
+        let out = builder.freshTemp()
+        bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
+        bodyIR += " call i32 @bk_task_join_all(ptr \(handles), i32 \(elements.count), ptr \(out))\n"
         return collectResult(from: out, type: type, okType: okType)
     }
 

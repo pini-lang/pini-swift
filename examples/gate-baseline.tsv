@@ -1,3 +1,2 @@
 # 示例门禁的已知失败：条目 <TAB> 腿 <TAB> 原因。只许缩小 —— 某行变绿时门禁会红，提示删掉它。
-concurrency-joinall.pini	run-llvm	任务句柄数组的元素 ABI 未接线（IREmitter fatalError）
 concurrency.pini	run-llvm	join 站点类型不是 Result（IREmitter fatalError）
