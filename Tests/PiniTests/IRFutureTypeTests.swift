@@ -2,6 +2,8 @@ import Testing
 import PiniSyntax
 
 @testable import PiniCore
+@testable import PiniSemantics
+@testable import PiniIR
 
 /// 句柄与结算值是两个类型：一次异步调用的结果在中间表示里是一个句柄（不是 `Result`），好让后端分辨
 /// 「该派发到线程的调用」与「该直接调用的调用」。改动落在类型上，故判据也钉类型，不钉运行输出。

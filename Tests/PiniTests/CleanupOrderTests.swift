@@ -2,6 +2,9 @@ import Testing
 import PiniSyntax
 
 @testable import PiniCore
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniBackendLLVM
 
 /// `defer` 体与局部释放共用一条清理栈：登记顺序即源码顺序，退出时逆序执行。
 /// 判据钉发射产物的先后——两条都只差「defer 与局部谁先登记」，输出里的次序必须相反。

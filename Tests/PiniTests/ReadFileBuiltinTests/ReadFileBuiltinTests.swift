@@ -2,6 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// `readFile` 内建的判据：契约说读取文件的全部内容 ⇒ 判据只有一条，就是没有上限，判据本身不含任何上限。
 /// 要证明一条不存在的行为只能靠规模，故正向用例取探针尺寸的数倍而非「恰好等于」；那个尺寸只作探针，不作语义。

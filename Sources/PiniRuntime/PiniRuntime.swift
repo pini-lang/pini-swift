@@ -1,6 +1,6 @@
 import Foundation
 
-// POSIX 线程本地存储（`pthread_key_t`）的取用口。与 `Sources/PiniCore/Common/ThreadLocal.swift`
+// POSIX 线程本地存储（`pthread_key_t`）的取用口。与 `Sources/PiniHost/Common/ThreadLocal.swift`
 // 用同一套系统头，理由相同：`Thread.current.threadDictionary` 只在 Apple 平台存在，
 // 而运行时组件是**跨平台**目标（见 `Package.swift`）。
 #if canImport(Darwin)

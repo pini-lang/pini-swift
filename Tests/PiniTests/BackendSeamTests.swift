@@ -4,6 +4,9 @@ import Testing
 import PiniSyntax
 
 @testable import PiniCore
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniBackendLLVM
 
 /// 后端接缝：一条通道要接进 CLI，靠的是这份协议、这张注册表与一张能力表。
 /// 判据钉在「接得上」的三件事上：名字与注册表不漂移、能力声明成表、哑后端能消费全部节点。

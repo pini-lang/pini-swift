@@ -2,6 +2,9 @@ import Foundation
 @testable import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// 并发能力的分层自述与让出原语：`bk_task_yield() -> i32`（`1` = 真让出 / `0` = 合规降级）与
 /// `bk_capabilities() -> u32`（位图，启动解析一次、固化），外加一条纪律：后端兑现不了让出时降级，不失败。

@@ -2,6 +2,9 @@ import Foundation
 @testable import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// 每个后端各自与同一份手写期望逐字节比，不是各后端互相比：同时错会互相认证，两两比还按平方膨胀。
 /// 期望值取自语义、不从任一后端回抄。解释器后端进程内零依赖；LLVM 后端走子进程，缺 `PINI_LLVM_BIN` 只记 known issue，不静默跳过。

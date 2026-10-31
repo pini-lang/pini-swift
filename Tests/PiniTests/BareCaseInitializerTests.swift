@@ -2,6 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// 无实参枚举用例的裸名形态（`某用例`，不带括号）作局部变量初值时的类型推断判据。`infer` 对调用形态
 /// `名(...)` 按「父枚举唯一 ⇒ 取父枚举类型」识别，而裸名走不到那条分支、返 nil；nil 在无线程期望类型的

@@ -2,6 +2,7 @@ import Foundation
 @testable import PiniCore
 @testable import PiniRuntime
 import Testing
+@testable import PiniHost
 
 /// 并发原语的 C ABI 面判据：把每个符号真调一遍并断言其效果 —— 符号存在性只是辅助证据，`return 0` 的空壳同样存在。
 /// 故「存在」那一半被「可用」这一半盖住。 行不通  本件全绿不等于 LLVM 后端能跑并发：发射层接线另有一层判据。

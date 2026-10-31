@@ -38,7 +38,7 @@ ROOT = os.environ.get(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 
-EMITTER = "Sources/PiniCore/CodeGen/IREmitter.swift"
+EMITTER = "Sources/PiniBackendLLVM/CodeGen/IREmitter.swift"
 
 # 决策族：回答「这个值归谁、此刻要不要 retain / release」。这些判断已全部归位到中端的
 # `IROwnership`（类型分类 · 求值效果 · 接收动作），发射器只翻译注解。列表留空是这个分片的

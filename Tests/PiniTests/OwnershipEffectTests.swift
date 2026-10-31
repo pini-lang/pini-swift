@@ -1,6 +1,7 @@
 import Testing
 
 @testable import PiniCore
+@testable import PiniIR
 
 /// 求值效果表：一个表达式求值之后，求值方是不是新造了一份份额。
 /// 这张表决定「临时值要不要在消费点归还」，所以它的每一条都要能被单独钉住。

@@ -1,6 +1,7 @@
 import Foundation
 import PiniCore
 import Testing
+@testable import PiniSemantics
 
 /// 参考件 §12.8（宿主 IO）与登记表的一致性判据。这一节是读者唯一的说明书，写错等于把错的签名交给使用者，
 /// 而新增 io 内建时最容易漏的也正是这一节。判据把「文档列的」与「登记表里的」直接对成集合：

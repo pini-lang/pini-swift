@@ -2,6 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// `exists` / `isDir` 内建的判据（路径探测面）。一夹具一条用例，夹具在同目录 `Fixtures/` 下、文件名即用例名。
 /// 被测对象是文件系统 ⇒ 每条用例自建临时目录当程序基准，不在仓库建文件、也不指向夹具目录（会让用例互相看见产物）。

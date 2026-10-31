@@ -2,6 +2,9 @@ import Foundation
 import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// 遮蔽 `Testing.Expression`，使本文件内 `Expression` 无歧义地指向 `PiniCore.Expression`。
 private typealias Expression = PiniCore.Expression

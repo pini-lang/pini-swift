@@ -2,6 +2,9 @@ import Foundation
 @testable import PiniCore
 import Testing
 import PiniSyntax
+@testable import PiniSemantics
+@testable import PiniIR
+@testable import PiniHost
 
 /// 让出判据：`await` 一个未决子任务时，父体提前退出、把工作线程还回池子，等它决了再从精确恢复点续跑。
 /// 观测面是 `GCDScheduler.activeTaskCount`（池里任务数），即 `bk_task_yield` 返回 `1`/`0` 在解释器侧的对应物。
