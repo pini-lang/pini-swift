@@ -7,8 +7,8 @@ import PiniSyntax
 @testable import PiniHost
 
 /// 让出判据：`await` 一个未决子任务时，父体提前退出、把工作线程还回池子，等它决了再从精确恢复点续跑。
-/// 观测面是 `GCDScheduler.activeTaskCount`（池里任务数），即 `bk_task_yield` 返回 `1`/`0` 在解释器侧的对应物。
-/// 光读那个数会读到假的（父 spawn 子之前池里也只有一个）⇒ 语料让子任务先打标记，测试等标记后再判读。串行化。
+/// 观测面是 `GCDScheduler.yieldedTaskCount`：每次让出记一次，只由让出动作驱动。
+/// 计数按调度器实例隔离 —— 进程级单例的读数会落进并行套件的让出，串行化本套件也挡不住别的套件。
 @Suite(.serialized)
 struct ConcurrencyYieldTests: Sendable {
 
@@ -121,41 +121,18 @@ struct ConcurrencyYieldTests: Sendable {
         return
     """
 
-    /// 跑一次探针，返回（本次运行里让出发生的次数，全部输出）。判据读的是增量而不是池的水平线：
-    /// 水平线是「整台机器现在有几个任务」，并行用例会把读数挪走；让出计数只由让出驱动，取增量即可判定。
+    /// 跑一次探针，返回（本次运行里让出发生的次数，全部输出）。每次各建一个调度器实例：
+    /// 读数只归本次运行，不必靠「前后增量」把窗口缩小到一次运行 —— 那个窗口里仍会落进别的套件。
     private func runYieldProbe(_ source: String) throws -> (yields: Int, lines: [String]) {
         let module = try lowered(source)
-        let lock = NSLock()
         var lines: [String] = []
-
-        let executor = IRExecutor(programBase: NSTemporaryDirectory())
-        executor.outputSink = { line in
-            lock.lock()
-            lines.append(line)
-            lock.unlock()
-        }
-        let before = GCDScheduler.shared.yieldedTaskCount
-        let run = SendableBox((executor: executor, module: module, finished: false))
-        DispatchQueue.global().async {
-            _ = try? run.value.executor.run(module: run.value.module)
-            lock.lock()
-            run.value.finished = true
-            lock.unlock()
-        }
-
-        // 等程序跑完再收读数：判据不该靠「提前读」拿结论，那样量到的是过程中的某一瞬。
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            lock.lock()
-            let done = run.value.finished
-            lock.unlock()
-            if done { break }
-            usleep(2000)
-        }
-        lock.lock()
-        let seen = lines
-        lock.unlock()
-        return (GCDScheduler.shared.yieldedTaskCount - before, seen)
+        let scheduler = GCDScheduler.isolated()
+        let executor = IRExecutor(
+            programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: scheduler)
+        executor.outputSink = { lines.append($0) }
+        try executor.run(module: module)
+        // 读在运行之后：`main` 的 `wait` 把整条链等到决 ⇒ 此刻所有让出都已发生。
+        return (scheduler.yieldedTaskCount, lines)
     }
 
     /// 同一份语料，但让出读数取自只归本次运行的后端（替身）：它把生产后端整个委派出去、只在体的结局
@@ -225,19 +202,20 @@ struct ConcurrencyYieldTests: Sendable {
 
     // MARK: - 判据 4：替身与生产后端必须是同一个量（两侧同时跟上口径）
 
-    @Test("替身也数续跑那一次 ⇒ 读数 = 2（与生产后端同一个量）")
+    @Test("替身也数续跑那一次 ⇒ 与生产后端读数相同")
     func theCountingBackendCountsResumedRunsToo() throws {
-        /// 意图：口径归要求两侧同时跟上。只改生产后端会让「替身与生产后端读数一致」这条前提静默失效 ——
-        /// 两边的数各自都看不出错，差别只在「一个体内让出多次」的语料上显形。
-        /// 本条读替身的读数、上一条读生产后端的读数，两条断的是同一个精确值 ⇒ 合起来等价于「两侧相等」。
-        let counting = YieldCountingScheduler(inner: GCDScheduler.shared)
-        let probe = try runYieldProbe(Self.探针两处让出, via: counting)
+        /// 意图：口径归要求两侧同时跟上。只改生产后端会让「替身与生产后端读数一致」这条前提静默失效。
+        /// 推进性：两侧各跑一遍同一份语料，都必须读出 2。驳回性：两侧读数不等即报出两个数 ——
+        /// 只断替身一侧的话，「生产漏数续跑」在替身读数里看不见。
+        let production = try runYieldProbe(Self.探针两处让出)
+        let counting = try runYieldProbe(
+            Self.探针两处让出, via: YieldCountingScheduler(inner: GCDScheduler.isolated()))
 
+        #expect(production.yields == 2, "生产后端漏了续跑那一次：读数 \(production.yields)")
         #expect(
-            probe.yields == 2,
-            "the counting backend saw \(probe.yields) give-ups — the resumed one did not land here"
-        )
-        #expect(probe.lines.contains("7"), "the second await did not carry its value to the end")
+            counting.yields == production.yields,
+            "两侧口径不同：生产 \(production.yields)，替身 \(counting.yields)")
+        #expect(production.lines.contains("7"), "the second await did not carry its value to the end")
     }
 
     // MARK: - 判据 5：顺序由**策略**决定，而不是由**决出顺序**决定（改道那一格的验收面）
