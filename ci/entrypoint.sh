@@ -58,6 +58,10 @@ step "后端义务门禁（警告级）"
 # 读数稳定一段再转硬拦截，好过在门禁上先红一次。
 python3 tools/backend-duty-check.py
 
+step "能力普查门禁"
+# 拒绝所标的族必须等于该节点在契约里的小节：标错就把读者送到不含该节点的那一节。
+python3 tools/capability-census.py --check
+
 step "构建"
 swift build --disable-sandbox
 
