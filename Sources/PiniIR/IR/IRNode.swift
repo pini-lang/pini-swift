@@ -107,6 +107,57 @@ public indirect enum IRType: Equatable {
         }
     }
 
+    /// Pini 面类型拼写，用于诊断消息；与 `llvmSpelling`（后端拼写）不可互换。
+    /// 措辞与 `TypeAnnotation.describe()` 一致：`Optional<T>` / `Array<T>` / `(A, B) -> (C)`。
+    /// 取用位以 `using ` 前标记出：它写在声明里、写不进标注，漏标则两侧为何不等看不出来。
+    public func describe() -> String {
+        switch self {
+        case .i8: return "I8"
+        case .u8: return "U8"
+        case .i32: return "I32"
+        case .i64: return "I64"
+        case .u64: return "U64"
+        case .f64: return "F64"
+        case .boolean: return "Bool"
+        case .string: return "String"
+        case .char: return "Char"
+        case .result(let ok):
+            return "Result<\(ok.describe())>"
+        case .future(let ok):
+            return "Future<\(ok.describe())>"
+        case .array(let element):
+            return "Array<\(element.describe())>"
+        case .optional(let wrapped):
+            return "Optional<\(wrapped.describe())>"
+        case .nominal(let name, _):
+            return name
+        case .enumeration(let name):
+            return name
+        case .dict(let key, let value):
+            return "Dictionary<\(key.describe()), \(value.describe())>"
+        case .lazyRef(let element):
+            return "LazyRef<\(element.describe())>"
+        case .set(let element):
+            return "Set<\(element.describe())>"
+        case .tuple(let labels, let fieldTypes):
+            let parts = fieldTypes.enumerated().map { index, type -> String in
+                if labels.indices.contains(index), let label = labels[index] {
+                    return "\(label): \(type.describe())"
+                }
+                return type.describe()
+            }
+            return "(" + parts.joined(separator: ", ") + ")"
+        case .function(let params, let returnType, let usingIndices):
+            let marked = params.enumerated().map { index, type in
+                usingIndices.contains(index) ? "using \(type.describe())" : type.describe()
+            }
+            let returned = returnType.map { $0.describe() } ?? ""
+            return "(" + marked.joined(separator: ", ") + ") -> (\(returned))"
+        case .pointer(let element):
+            return "*\(element.describe())"
+        }
+    }
+
     /// Unpointed aggregate spelling for alloca / GEP (nominal and enum types).
     public var nominalAggregateSpelling: String? {
         switch self {
@@ -183,12 +234,24 @@ public indirect enum IRType: Equatable {
         }
     }
 
-    /// 相等判定抹掉元组标签这一维：标签只活在下标访问里，不参与拼写与等价。
-    /// 其余类型逐字相等 —— 递归到元组内部，故嵌套元组同规。
+    /// 相等判定抹掉两维不进类型恒等的装饰：元组标签只活在下标访问里，函数取用位只标「哪个参数位
+    /// 由给定块填」。其余类型逐字相等 —— 递归到内部，故嵌套同规。
     public func isLabelInsensitivelyEqual(to other: IRType) -> Bool {
         if case .tuple(_, let mine) = self, case .tuple(_, let theirs) = other {
             guard mine.count == theirs.count else { return false }
             return zip(mine, theirs).allSatisfy { $0.isLabelInsensitivelyEqual(to: $1) }
+        }
+        if case .function(let mineParams, let mineReturn, _) = self,
+            case .function(let theirsParams, let theirsReturn, _) = other
+        {
+            guard mineParams.count == theirsParams.count,
+                zip(mineParams, theirsParams).allSatisfy({ $0.isLabelInsensitivelyEqual(to: $1) })
+            else { return false }
+            switch (mineReturn, theirsReturn) {
+            case (nil, nil): return true
+            case (let a?, let b?): return a.isLabelInsensitivelyEqual(to: b)
+            default: return false
+            }
         }
         return self == other
     }

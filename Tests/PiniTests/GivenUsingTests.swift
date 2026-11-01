@@ -945,4 +945,93 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             "标注位的判定码应保持既有形态，实际：\(annotationFailed?.code ?? "无（被接受了）")"
         )
     }
+
+    @Test("标注写错参数个数仍被类型层拒 —— 取用位不是绕过 arity 的通道")
+    func usingParameterCannotFitAnExplicitAnnotation() throws {
+        /// 意图：标注写不出取用位，但标注必须写对参数与返回。`() -> (I32)`（0 参数）与
+        /// `(using 块: 计数块,) -> (I32)`（1 参数）arity 不等，类型层必须报 —— 取用位不绕过 arity。
+        /// 驳回性：该错误不许落到降载层 —— 落到那里说明 check 又静默跳过了一次赋值比对。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var f: () -> (I32,) = 取块
+            return
+        """#
+        let rejected = failure { _ = try typeChecked(source) }
+        guard let rejected else {
+            Issue.record("带 using 形参的函数不该通过显式标注的赋值检查")
+            return
+        }
+        #expect(rejected.code == "E4-001", "应由类型层拒，实际码 \(rejected.code)")
+        #expect(rejected.message.contains("() -> (I32)"), "消息须写出期望类型，实际：\(rejected.message)")
+        #expect(
+            rejected.message.contains("(计数块) -> (I32)"),
+            "消息须写出实际类型，实际：\(rejected.message)"
+        )
+    }
+
+    @Test("无标注时取用位随推断类型走，调用点自动插默认实例")
+    func usingParameterSurvivesInference() throws {
+        /// 意图：不写标注时变量类型取自推断，取用位随之保留 ⇒ `f()` 省略实参仍拿得到默认实例。
+        /// 与上一条互为对照：被拒的是「写成标注」，不是「using 本身」。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var f = 取块
+            print(f())
+            return
+        """#
+        let lines = try runOutput(source)
+        #expect(lines == ["7"], "默认实例应被插入并读出 7，实际：\(lines)")
+    }
+
+    @Test("标注写对参数与返回后，取用位随函数值保留 —— 调用仍可省略")
+    func explicitAnnotationKeepsTheCallingConvention() throws {
+        /// 意图：标注给出参数与返回，函数自己带着「哪个参数位由给定块填」。给定块类型在值位
+        /// 无法显式构造，故切断这条关系等于产出一个永远调不动的死值。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var f: (计数块,) -> (I32,) = 取块
+            print(f())
+            return
+        """#
+        let lines = try runOutput(source)
+        #expect(lines == ["7"], "标注不该抹掉取用位，实际：\(lines)")
+    }
+
+    @Test("取用位跨变量传递：标注从一个变量接住它，同样保留")
+    func usingSurvivesAssignmentThroughAVariable() throws {
+        /// 意图：补位的来源不止具名函数，`var h = 取块` 的 h 也带着取用位，再赋给带标注的变量须照旧。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var h = 取块
+            var f: (计数块,) -> (I32,) = h
+            print(f())
+            return
+        """#
+        let lines = try runOutput(source)
+        #expect(lines == ["7"], "经变量的取用位丢失了，实际：\(lines)")
+    }
 }

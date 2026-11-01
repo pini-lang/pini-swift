@@ -698,6 +698,54 @@ public final class TypeChecker {
         }
     }
 
+    /// 表达式作为「函数值」时的类型：只识具名函数标识符（`let f = 某函数`）。
+    /// 推断层只查变量表与枚举用例，具名函数不在其中 ⇒ 这里补一次函数表查。
+    /// 形参含未标注的 `_` 时返 nil：通配只在期望侧放行，实参侧的 `_` 无判据可用。
+    private func functionValueType(of expr: Expression, location: SourceLocation) -> TypeAnnotation? {
+        guard case .identifier(let name, _) = expr,
+            let sig = typeEnv.lookupFunction(name: name)
+        else { return nil }
+        let unannotated = sig.params.contains { param in
+            if case .simple(let typeName, _) = param { return typeName == "_" }
+            return false
+        }
+        if unannotated { return nil }
+        return .function(
+            params: sig.params, returns: sig.returns, captured: [],
+            usingIndices: sig.usingParamIndices, location: location
+        )
+    }
+
+    /// 标注给出参数与返回，函数值补上自己的调用约定（哪些参数位由给定块填）。
+    /// 取用位不参与类型等价，但它属于函数本身 —— 写标注不该把它切断：给定块类型在值位
+    /// 无法显式构造，切断后这个变量永远调不动。
+    private func annotationCarryingUsing(
+        _ annotation: TypeAnnotation, from expr: Expression, location: SourceLocation
+    ) -> TypeAnnotation {
+        guard case .function(let params, let returns, let captured, _, let loc) = annotation,
+            let usingIndices = usingIndicesInValue(of: expr, location: location)
+        else { return annotation }
+        return .function(
+            params: params, returns: returns, captured: captured,
+            usingIndices: usingIndices, location: loc
+        )
+    }
+
+    /// 值的取用位：先查变量表（`var h = 取块` 的 h），再查函数表（`取块` 本身）。
+    private func usingIndicesInValue(of expr: Expression, location: SourceLocation) -> Set<Int>? {
+        if let inferred = inference.infer(expression: expr),
+            case .function(_, _, _, let usingIndices, _) = inferred
+        {
+            return usingIndices
+        }
+        if let signature = functionValueType(of: expr, location: location),
+            case .function(_, _, _, let usingIndices, _) = signature
+        {
+            return usingIndices
+        }
+        return nil
+    }
+
     private func isAssignable(actual: TypeAnnotation, expected: TypeAnnotation) -> Bool {
         if actual.isStructurallyEquivalent(to: expected) { return true }
         /// 隐式整型宽度转换（对齐解释器 leniency）：整型 primitive 族（I8..I64/U8..U64）之间可互相
@@ -1687,15 +1735,26 @@ public final class TypeChecker {
                                         expected: annot.describe(), got: actual.describe(), location: location
                                     ))
                             }
+                        } else if let actual = functionValueType(of: initExpr, location: location) {
+                            // 具名函数作值：推断层只查变量表与枚举用例，具名函数不在其中 ⇒ 补查函数表。
+                            // 不补则整段比对被跳过，赋值点的类型错误要漂到降载层才报。
+                            if !isAssignable(actual: actual, expected: annot) {
+                                try report(
+                                    TypeError.mismatch(
+                                        expected: annot.describe(), got: actual.describe(), location: location
+                                    ))
+                            }
                         }
                     }
-                    declaredType = annot
+                    declaredType = annotationCarryingUsing(annot, from: initExpr, location: location)
                 } else {
                     let actual = inference.infer(expression: initExpr)
                     if let actual = actual {
                         try noteBareCaseOutcome(initExpr, actual: actual, location: location)
                     }
-                    declaredType = actual ?? .simple(name: "Any", location: location)
+                    declaredType =
+                        actual ?? functionValueType(of: initExpr, location: location)
+                        ?? .simple(name: "Any", location: location)
                 }
             } else {
                 declaredType = annot ?? .simple(name: "Any", location: location)

@@ -148,9 +148,15 @@ public enum ErrorFormatter {
 
     /// 从错误 case 关联值提取模板参数（label → String）。位置参数不入参。
     static func diagnosticArgs(of error: Error) -> [String: String] {
-        // IR 门控错误是「自由文本消息 + 位置」的结构体，反射走查取不到带标签的
-        // 载荷（String 无镜像子节点），故显式落到其码面模板需要的那一槽。
-        if let e = error as? IRLowerer.IRLoweringError { return ["feature": e.message] }
+        // IR 门控错误按字段显式取槽 —— 模板槽名与字段名不同（{feature} ← message），反射猜不出来。
+        if let e = error as? IRLowerer.IRLoweringError {
+            // E6-005 的模板要 {expected} / {got} 两槽。未填的占位符不会被隐藏（fill 只替换传入的
+            // key），故两值缺一就退回 {feature}，免得把 '{expected}' 字面量印给用户。
+            if let expected = e.expected, let got = e.got {
+                return ["expected": expected, "got": got]
+            }
+            return ["feature": e.message]
+        }
         // 验证器的违约同理：整份报告进 {feature}，一处不落地带在消息里。
         if let e = error as? IRValidator.Failure { return ["feature": e.report] }
         guard let child = Mirror(reflecting: error).children.first else { return [:] }

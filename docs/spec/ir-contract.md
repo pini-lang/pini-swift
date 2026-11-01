@@ -59,7 +59,7 @@
 | `set(element:)` | 唯一元素集合 | 不透明句柄（`bk_set_*` 族） |
 | `lazyRef(element:)` | 一次求值、引用拷贝语义的惰性引用 | 不透明句柄（`bk_lazyref_*` 族） |
 | `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 按值聚合；标签序即字段序 |
-| `function(params:returnType:usingIndices:)` | 函数是一等值；取用下标集合标出哪些参数位可取用，由推断产生、用户写不出、不参与类型等价 | fat pointer `{code, env}`；首参恒为 env 是调用协议；取用位不进运行时表示 |
+| `function(params:returnType:usingIndices:)` | 函数是一等值；取用下标集合标出哪些参数位由给定块填。类型标注写不出它，它也不参与类型等价 —— 但随函数值保留，标注不得把它抹掉 | fat pointer `{code, env}`；首参恒为 env 是调用协议；取用位不进运行时表示 |
 | `pointer(element:)` | `*T` 原始指针（FFI） | 不透明指针；load / store 按元素类型解码 |
 
 > 注意 **布局约定与语义的分界**：标「布局约定」者为后端可选表示；标「语义」者为必须实现的行为。
