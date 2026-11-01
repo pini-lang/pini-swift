@@ -35,6 +35,32 @@ def binary():
     return path
 
 
+def llvm_bin_directory():
+    """The LLVM bin directory the CLI would itself pick, so the gate and the child agree.
+
+    Mirrors Sources/PiniBackendLLVM/CodeGen/LLVMToolchain.swift: env var, llvm-config,
+    PATH, then the two Homebrew prefixes. Resolving twice by different rules would let
+    the gate report a skip while `pini run-llvm` works, or run a leg the CLI cannot.
+    """
+    candidates = []
+    explicit = os.environ.get("PINI_LLVM_BIN", "")
+    if explicit:
+        candidates.append(explicit)
+    try:
+        found = subprocess.run(
+            ["llvm-config", "--bindir"], capture_output=True, text=True, timeout=10)
+        if found.returncode == 0 and found.stdout.strip():
+            candidates.append(found.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    candidates += [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    candidates += ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin"]
+    for directory in candidates:
+        if os.access(os.path.join(directory, "lli"), os.X_OK):
+            return directory
+    return None
+
+
 def entries():
     """Top-level .pini files plus directories carrying a pini.toml."""
     found = []
@@ -80,11 +106,11 @@ def load_baseline(labels, packages):
     return known
 
 
-def execute(argv, cwd):
+def execute(argv, cwd, env):
     try:
         result = subprocess.run(
             argv, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True,
-            text=True, timeout=TIMEOUT)
+            text=True, timeout=TIMEOUT, env=env)
         detail = (result.stderr or result.stdout).strip().splitlines()
         return result.returncode == 0, detail[0] if detail else "", result.stdout
     except subprocess.TimeoutExpired:
@@ -151,6 +177,10 @@ def main():
             return 2
 
     path = binary()
+    llvm = llvm_bin_directory()
+    child_env = dict(os.environ)
+    if llvm:
+        child_env["PINI_LLVM_BIN"] = llvm
     found = entries()
     labels = {label for label, _, _ in found}
     packages = {label for label, _, is_package in found if is_package}
@@ -183,13 +213,17 @@ def main():
                   f"{sum(1 for _, _, p in found if p)} 个包")
         regression, stale = [], []
         for leg in legs:
-            if leg == "run-llvm" and not os.environ.get("PINI_LLVM_BIN"):
-                print(f"  {leg:<10} 跳过（未配置 PINI_LLVM_BIN）")
+            if leg == "run-llvm" and llvm is None:
+                reason = "找不到 lli：环境变量 / llvm-config / PATH / Homebrew 前缀都没有"
+                if os.environ.get("PINI_REQUIRE_TOOLCHAIN") == "1":
+                    print(f"示例门禁：PINI_REQUIRE_TOOLCHAIN=1，{reason}", file=sys.stderr)
+                    return 2
+                print(f"  {leg:<10} 跳过（{reason}）")
                 continue
             if leg == "golden":
                 passed, diffs = 0, []
                 for label, golden_path in golden.items():
-                    ok, detail, out = execute([path, "run", f"examples/{label}"], scratch)
+                    ok, detail, out = execute([path, "run", f"examples/{label}"], scratch, child_env)
                     if not ok:
                         diffs.append((label, f"运行失败：{detail}"))
                         continue
@@ -212,7 +246,7 @@ def main():
             for label, _, is_package in found:
                 if is_package and leg != "check":
                     continue
-                ok, detail, _ = execute([path, leg, f"examples/{label}"], scratch)
+                ok, detail, _ = execute([path, leg, f"examples/{label}"], scratch, child_env)
                 if ok:
                     passed += 1
                     if (label, leg) in known:
