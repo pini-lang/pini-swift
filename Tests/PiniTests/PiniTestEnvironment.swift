@@ -1,4 +1,5 @@
 import Foundation
+import PiniBackendLLVM
 import PiniIR
 import PiniSemantics
 import PiniSyntax
@@ -36,25 +37,10 @@ enum PiniTestEnvironment {
         }
     }
 
-    /// LLVM 工具链目录（`lli` / `clang` 所在处）：环境变量优先，其次 Homebrew 的两个标准前缀，最后扫 PATH。
+    /// LLVM 工具链目录（`lli` 所在处）：复用 CLI 的同一个解析器，不另立一份。
+    /// 各解析各的会让「测试齐备、CLI 找不到」同时成立 —— 判据绿着，用户那条路却是断的。
     static func llvmBinDirectory() -> String? {
-        let environment = ProcessInfo.processInfo.environment
-        if let fromEnvironment = environment["PINI_LLVM_BIN"], !fromEnvironment.isEmpty,
-            FileManager.default.isExecutableFile(atPath: fromEnvironment + "/lli")
-        {
-            return fromEnvironment
-        }
-        let prefixes = ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin"]
-        if let found = prefixes.first(where: { FileManager.default.isExecutableFile(atPath: $0 + "/lli") }) {
-            return found
-        }
-        for entry in (environment["PATH"] ?? "").split(separator: ":") {
-            let directory = String(entry)
-            if FileManager.default.isExecutableFile(atPath: directory + "/lli") {
-                return directory
-            }
-        }
-        return nil
+        LLVMToolchain.lliPath.map { ($0 as NSString).deletingLastPathComponent }
     }
 
     /// 子进程的环境：写入解析出来的两个路径。`run-llvm` 缺 `PINI_LLVM_BIN` 时会静默空跑，

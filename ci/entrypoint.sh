@@ -37,6 +37,10 @@ if [ "$(printf '%s\n%s\n' "$declared" "$actual" | sort -V | head -1)" != "$decla
     exit 1
 fi
 
+# 缺工具链即失败：跳过在本地可以容忍，在 CI 不行 —— 否则「全绿」与「这批根本没跑」在读数上
+# 长得一样。示例门禁与测试读同一位：前者缺 lli 时拒跑，后者缺产物时记失败。
+export PINI_REQUIRE_TOOLCHAIN=1
+
 step "注释门禁"
 bash hooks/comment-lint.sh
 
@@ -86,10 +90,8 @@ fi
 
 step "测试"
 # 测试里的命令行与 LLVM 判据从 `PiniTestEnvironment` 取产物（环境变量优先，仓根兜底）。
-# 这里指向本次构建产物，并把「缺工具链即失败」打开：跳过在本地可以容忍，在 CI 不行 ——
-# 否则「全绿」与「这批根本没跑」在读数上长得一样。
+# 这里指向本次构建产物；「缺工具链即失败」已在文件开头打开。
 export PINI_CLI_BIN="$PWD/.build/debug/pini"
-export PINI_REQUIRE_TOOLCHAIN=1
 swift test --disable-sandbox
 
 printf '\n=== 全绿 ===\n'
