@@ -442,7 +442,7 @@ struct TestModeEmissionTests: Sendable {
             module: module, typeInference: checker.typeInference, requiresMain: false)
         let emitter = IREmitter()
         if mode { emitter.testReportHeader = "测试文件: inline.pini" }
-        return emitter.emit(module: lowered)
+        return try emitter.emit(module: lowered)
     }
 
     private static let corpus = #"""

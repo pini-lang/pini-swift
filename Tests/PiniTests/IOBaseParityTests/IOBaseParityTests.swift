@@ -280,6 +280,6 @@ struct IOBaseParityTests: Sendable {
         let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
         let emitter = IREmitter()
         emitter.programBase = programBase
-        return emitter.emit(module: lowered)
+        return try emitter.emit(module: lowered)
     }
 }

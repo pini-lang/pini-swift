@@ -1,4 +1,5 @@
 import Foundation
+import PiniBackendKit
 import PiniSyntax
 import PiniSemantics
 import PiniIR
@@ -296,7 +297,8 @@ public final class IREmitter {
 
     // MARK: - Module
 
-    public func emit(module: IRModule) -> String {
+    public func emit(module: IRModule) throws -> String {
+        refusals.removeAll()
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += Builtins.declaration(for: "bk_double_to_string")
@@ -664,7 +666,17 @@ public final class IREmitter {
         if !closureEnvTypeDecls.isEmpty {
             envHeader += "\n"
         }
+        /// 本通道搬不动的地方在发射期只记账：产物反正要丢，收尾一次抛出即可 ——
+        /// 比先走一趟预检少一棵树的遍历，判定表仍只有一份。
+        if let refusal = refusals.first { throw refusal }
         return header + envHeader + tail + "\n" + bodyIR + closureTail
+    }
+
+    /// 本通道搬不动的地方。`BackendError` 是能力声明的执行面：族取契约小节，reason 说缺哪种能力。
+    private var refusals: [BackendError] = []
+
+    private func refuse(node: String, family: BackendCapabilities.Family, reason: String) {
+        refusals.append(BackendError(node: node, family: family, reason: reason))
     }
 
     // MARK: - Functions
@@ -3015,7 +3027,10 @@ public final class IREmitter {
         /// is the same, so the raw-ptr tag applies for the reason above — a grapheme has no share count.
         case .char: return ("i8*", 8, 4)
         default:
-            fatalError("IREmitter: no LazyRef element ABI for '\(type)' (IRLowerer gates element types)")
+            refuse(
+                node: "lazyRefConstruct", family: .lazyRef,
+                reason: "元素类型 \(type.llvmSpelling) 没有装箱 ABI（本通道能装的是 I32 / F64 / Bool / String / Char）")
+            return ("i32", 4, 0)
         }
     }
 
@@ -3898,7 +3913,11 @@ public final class IREmitter {
             /// 任务句柄是指针字，生命周期由 join / detach 管，数组只暂存 ⇒ 裸指针 tag，不计数。
             return ("ptr", 8, 3)
         default:
-            fatalError("IREmitter: no array element ABI for '\(type)' (IRLowerer gates element types)")
+            /// 占位 ABI 只为了让发射走完：产物随即因 `refusals` 非空被丢掉，不会有人读到它。
+            refuse(
+                node: "arrayLiteral", family: .collections,
+                reason: "元素类型 \(type.llvmSpelling) 没有装箱 ABI（本通道能装的是整数字 / F64 / Bool / String / 容器句柄 / 指针）")
+            return ("i32", 4, 0)
         }
     }
 
@@ -4190,7 +4209,10 @@ public final class IREmitter {
                 bodyIR += " \(t) = ptrtoint \(value.llvmType) \(value.ssaName) to i64\n"
                 return IRValue(llvmType: "i64", ssaName: t)
             }
-            fatalError("IREmitter: no word widening for '\(value.llvmType)' (IRLowerer gates non-scalar payloads)")
+            refuse(
+                node: "join", family: .concurrency,
+                reason: "载荷 \(value.llvmType) 装不进三槽任务 ABI 的一个字（聚合载荷没有搬运通道）")
+            return IRValue(llvmType: "i64", ssaName: "0")
         }
     }
 
@@ -5620,7 +5642,10 @@ public final class IREmitter {
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(close.ssaName))\n"
             return IRValue(llvmType: "i8*", ssaName: buf)
         default:
-            fatalError("IREmitter: stringify of '\(type)' outside the G9 grid (IRLowerer gates interpolation parts)")
+            refuse(
+                node: "interpString", family: .strings,
+                reason: "\(type.llvmSpelling) 不在字符串化网格里（标量 / String / Char / 数组 / Optional 之外没有渲染通道）")
+            return emitStringConstant("")
         }
     }
 }

@@ -31,7 +31,7 @@ struct ResultErrPayloadTests: Sendable, PiniSourceLowering {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-        return IREmitter().emit(module: lowered)
+        return try IREmitter().emit(module: lowered)
     }
 
     /// 把「抛出的诊断」摊平成「判定码 + 文案」；没抛则返回 nil。

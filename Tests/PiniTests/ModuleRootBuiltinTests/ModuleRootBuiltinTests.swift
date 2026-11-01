@@ -51,7 +51,7 @@ struct ModuleRootBuiltinTests: Sendable {
         let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
         let emitter = IREmitter()
         emitter.programBase = programBase
-        return emitter.emit(module: lowered)
+        return try emitter.emit(module: lowered)
     }
 
     /// 定位命令行产物：先看环境变量，再按仓根兜底。

@@ -1387,7 +1387,7 @@ func emitAndRunLLVMTests(
     emitter.programBase = programBase
     emitter.testReportHeader = header
     emitter.testSelection = selection
-    let ir = emitter.emit(module: module)
+    let ir = try emitter.emit(module: module)
 
     let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
     let tmpBin = "/tmp/pini_\(UUID().uuidString)"

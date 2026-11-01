@@ -49,7 +49,7 @@ struct BuiltinInventoryTests: Sendable, PiniSourceLowering {
                 print(s.upper(), s.substring(0, 2), len(xs), len(names), total)
                 return
             """#)
-        let ir = IREmitter().emit(module: module)
+        let ir = try IREmitter().emit(module: module)
         let called = Self.symbols(in: ir) { $0.contains("call ") }
         let declared = Self.symbols(in: ir) { $0.hasPrefix("declare ") }
         #expect(!called.isEmpty)
@@ -69,7 +69,7 @@ struct BuiltinInventoryTests: Sendable, PiniSourceLowering {
                 t.cancel()
                 return
             """#)
-        let ir = IREmitter().emit(module: module)
+        let ir = try IREmitter().emit(module: module)
         #expect(ir.contains("@bk_task_cancel("))
         #expect(!ir.contains("@cancel("))
     }
