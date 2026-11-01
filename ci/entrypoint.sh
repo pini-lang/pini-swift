@@ -73,6 +73,17 @@ step "示例门禁"
 # 三腿：check / run / run-llvm。已知失败在 examples/gate-baseline.tsv，只许缩小。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py
 
+step "差分探针门禁"
+# 两通道对照：同一份语料在解释器与 LLVM 上必须读出同一串输出。已知缺口在
+# tools/ir-parity-baseline.tsv，只许缩小 —— 某行转绿时这一步会红，提示删掉它。
+# 镜像没有 lli 时明确跳过并说出原因：跳过不等于通过，故这一行必须打出来。
+if [ -n "${PINI_LLVM_BIN:-}" ] || command -v lli >/dev/null 2>&1; then
+    PINI_SWEEP_BIN="$PWD/.build/debug/pini" python3 tools/ir-parity-probe.py \
+        --root examples --baseline tools/ir-parity-baseline.tsv
+else
+    echo "  跳过：镜像里没有 lli（未设 PINI_LLVM_BIN，PATH 里也没有）"
+fi
+
 step "测试"
 # 测试里的命令行与 LLVM 判据从 `PiniTestEnvironment` 取产物（环境变量优先，仓根兜底）。
 # 这里指向本次构建产物，并把「缺工具链即失败」打开：跳过在本地可以容忍，在 CI 不行 ——
