@@ -4,50 +4,116 @@ import Testing
 @testable import PiniIR
 
 /// 求值效果表：一个表达式求值之后，求值方是不是新造了一份份额。
-/// 这张表决定「临时值要不要在消费点归还」，所以它的每一条都要能被单独钉住。
+/// 这张表决定「临时值要不要在消费点归还」，所以每个节点都要能被单独钉住 ——
+/// 判定改一处，这里就得跟着改一处，改的人必须看见那一行。
 @Suite("求值效果表")
 struct ShareEffectTests: Sendable {
 
-    private static func aString() -> IRExpr { .stringConst(value: "x") }
-    private static func anArray() -> IRExpr { .arrayLiteral(elements: [], type: .array(element: .i32)) }
-
-    @Test("标量与整块聚合不参与计数")
-    func scalarsAndAggregatesAreInert() {
-        #expect(IRExpr.intConst(value: 1, type: .i32).shareEffect == .inert)
-        #expect(IRExpr.boolConst(value: true).shareEffect == .inert)
-        #expect(IRExpr.lenCall(argument: Self.anArray()).shareEffect == .inert)
-        #expect(IRExpr.resultConstruct(isOk: true, payload: .intConst(value: 1, type: .i32),
-                                       type: .result(ok: .i32)).shareEffect == .inert)
+    private static var scalar: IRExpr { .intConst(value: 1, type: .i32) }
+    private static var text: IRExpr { .stringConst(value: "x") }
+    private static var array: IRExpr { .arrayLiteral(elements: [], type: .array(element: .i32)) }
+    private static var strings: IRExpr { .arrayLiteral(elements: [], type: .array(element: .string)) }
+    private static var construct: IRExpr { .construct(type: .nominal(name: "P", isObject: false)) }
+    private static var address: IRExpr { .addressOfVar(name: "x", type: .i32) }
+    private static var functionType: IRType { .function(params: [], returnType: nil, usingIndices: []) }
+    private static var closure: IRExpr {
+        .closureLiteral(
+            id: 1, paramNames: [], paramTypes: [], returnType: nil, captures: [], body: IRBlock([]),
+            type: functionType)
+    }
+    private static var result: IRExpr {
+        .resultConstruct(isOk: true, payload: scalar, type: .result(ok: .i32))
+    }
+    private static var tuple: IRExpr {
+        .tupleConstruct(labels: [nil], elements: [scalar], type: .tuple(labels: [nil], fieldTypes: [.i32]))
+    }
+    private static var optional: IRExpr {
+        .optionalConstruct(isSome: false, payload: nil, type: .optional(wrapped: .i32))
     }
 
-    @Test("变量读与全局常量是借用 —— 份额在别处")
-    func loadsAndConstantsAreBorrowed() {
-        #expect(IRExpr.load(name: "s", type: .string).shareEffect == .borrowed)
-        #expect(Self.aString().shareEffect == .borrowed)
-    }
+    /// 一行一个表达式节点：节点名 · 代表实例 · 期望效果。行数与契约第 2 节的 53 条相等。
+    private static var catalogue: [(String, IRExpr, IRShareEffect)] { [
+        ("intConst", scalar, .inert),
+        ("floatConst", .floatConst(value: 1.5), .inert),
+        ("boolConst", .boolConst(value: true), .inert),
+        ("stringConst", text, .borrowed),
+        ("load", .load(name: "s", type: .string), .borrowed),
+        ("binary", .binary(op: .add, lhs: scalar, rhs: scalar, type: .i32), .inert),
+        ("unary", .unary(op: .negate, operand: scalar, type: .i32), .inert),
+        ("call", .call(function: "f", arguments: [], returnType: .i32), .fresh),
+        ("printCall", .printCall(argument: scalar), .inert),
+        ("resultConstruct", result, .inert),
+        ("arrayLiteral", array, .fresh),
+        ("subscriptGet", .subscriptGet(container: array, index: scalar, type: .i32), .borrowed),
+        ("lenCall", .lenCall(argument: array), .inert),
+        (
+            "optionalGet",
+            .optionalGet(container: array, index: scalar, type: .optional(wrapped: .i32)),
+            .borrowed
+        ),
+        ("optionalConstruct", optional, .inert),
+        ("sliceCall", .sliceCall(container: array, start: scalar, end: scalar, type: .array(element: .i32)), .fresh),
+        ("construct", construct, .fresh),
+        (
+            "enumConstruct",
+            .enumConstruct(
+                enumName: "E", caseName: "c", tag: 0, payloads: [], payloadTypes: [],
+                type: .enumeration(name: "E")), .fresh
+        ),
+        ("fieldGet", .fieldGet(base: construct, field: "f", type: .i32), .borrowed),
+        ("dictLiteral", .dictLiteral(entries: [], type: .dict(key: .string, value: .i32)), .fresh),
+        ("setLiteral", .setLiteral(elements: [], type: .set(element: .i32)), .fresh),
+        ("tupleConstruct", tuple, .inert),
+        ("tupleIndexGet", .tupleIndexGet(base: tuple, index: 0, type: .i32), .borrowed),
+        ("closureLiteral", closure, .fresh),
+        ("functionValue", .functionValue(functionName: "f", type: functionType), .borrowed),
+        ("indirectCall", .indirectCall(callee: closure, arguments: [], returnType: .i32), .fresh),
+        ("pointerLoad", .pointerLoad(pointer: address, type: .i32), .inert),
+        ("pointerStore", .pointerStore(pointer: address, value: scalar, type: .i32), .inert),
+        ("addressOfVar", address, .inert),
+        ("printMulti", .printMulti(arguments: [scalar]), .inert),
+        ("assertCall", .assertCall(condition: .boolConst(value: true), message: nil), .inert),
+        ("fileWrite", .fileWrite(path: text, content: text), .inert),
+        ("fileAppend", .fileAppend(path: text, content: text), .inert),
+        ("fileRead", .fileRead(path: text), .fresh),
+        ("fileTryWrite", .fileTryWrite(path: text, content: text), .inert),
+        ("fileTryAppend", .fileTryAppend(path: text, content: text), .inert),
+        ("fileTryRead", .fileTryRead(path: text), .inert),
+        ("readLine", .readLine, .borrowed),
+        ("isAsciiDigit", .isAsciiDigit(argument: text), .inert),
+        ("stringCase", .stringCase(isUpper: true, receiver: text), .fresh),
+        ("stringContains", .stringContains(receiver: text, needle: text), .inert),
+        ("stringSubstring", .stringSubstring(receiver: text, start: scalar, length: scalar), .fresh),
+        ("stringSplit", .stringSplit(receiver: text, delim: text, type: .array(element: .string)), .fresh),
+        ("stringTrimLeft", .stringTrimLeft(receiver: text), .fresh),
+        ("stringTrimRight", .stringTrimRight(receiver: text), .fresh),
+        ("stringIndexOf", .stringIndexOf(receiver: text, needle: text), .inert),
+        ("arrayJoin", .arrayJoin(receiver: strings, separator: text), .fresh),
+        ("stringConcat", .stringConcat(lhs: text, rhs: text), .fresh),
+        ("interpString", .interpString(parts: [text]), .fresh),
+        ("lazyRefConstruct", .lazyRefConstruct(closure: closure, type: .lazyRef(element: .i32)), .fresh),
+        (
+            "lazyRefValue",
+            .lazyRefValue(handle: .load(name: "l", type: .lazyRef(element: .i32)), type: .i32),
+            .borrowed
+        ),
+        (
+            "join",
+            .join(
+                future: .load(name: "h", type: .future(ok: .i32)), type: .result(ok: .i32),
+                form: .waits), .inert
+        ),
+        ("givenInstance", .givenInstance(type: .nominal(name: "P", isObject: false)), .borrowed),
+    ] }
 
-    @Test("本次求值新造的份额：字符串内建 · 字面量 · 构造")
-    func freshNodes() {
-        #expect(IRExpr.stringSubstring(receiver: Self.aString(), start: .intConst(value: 0, type: .i32),
-                                       length: .intConst(value: 1, type: .i32))
-            .shareEffect == .fresh)
-        #expect(IRExpr.stringCase(isUpper: true, receiver: Self.aString()).shareEffect == .fresh)
-        #expect(IRExpr.stringTrimLeft(receiver: Self.aString()).shareEffect == .fresh)
-        #expect(IRExpr.stringSplit(receiver: Self.aString(), delim: Self.aString(),
-                                   type: .array(element: .string)).shareEffect == .fresh)
-        #expect(IRExpr.stringConcat(lhs: Self.aString(), rhs: Self.aString()).shareEffect == .fresh)
-        #expect(Self.anArray().shareEffect == .fresh)
-        #expect(IRExpr.construct(type: .nominal(name: "Point", isObject: false)).shareEffect == .fresh)
-    }
-
-    /// `returnStmt` 的 `adopt` 已在被调方安排好份额，故调用点接手的一定是干净的一份。
-    @Test("调用返回按新份额：交临时就是移交，交别名先保留")
-    func callResultsAreFresh() {
-        #expect(IRExpr.call(function: "f", arguments: [], returnType: .string).shareEffect == .fresh)
-        let callee = IRExpr.load(
-            name: "g", type: .function(params: [], returnType: .string, usingIndices: []))
-        #expect(IRExpr.indirectCall(callee: callee, arguments: [], returnType: .string)
-            .shareEffect == .fresh)
+    @Test("53 个表达式节点逐一表态，一个不漏")
+    func everyExpressionNodeIsPinned() {
+        #expect(Self.catalogue.count == 53, "契约第 2 节是 53 个表达式节点，表里少了或多了一条")
+        for (name, expression, expected) in Self.catalogue {
+            #expect(
+                expression.shareEffect == expected,
+                "\(name) 的求值效果是 \(expression.shareEffect)，表里写的是 \(expected)")
+        }
     }
 
     /// 结构不变式：别名点必然是借用 —— 反过来说，任何被判成「新份额」的节点都不能是别名点，
@@ -56,21 +122,13 @@ struct ShareEffectTests: Sendable {
     func aliasPointsImplyBorrowed() {
         let aliases: [IRExpr] = [
             .load(name: "s", type: .string),
-            .subscriptGet(container: Self.anArray(), index: .intConst(value: 0, type: .i32), type: .i32),
-            .fieldGet(base: .construct(type: .nominal(name: "P", isObject: false)),
-                      field: "s", type: .string),
-            .optionalGet(container: Self.anArray(), index: .intConst(value: 0, type: .i32), type: .i32),
+            .subscriptGet(container: Self.array, index: Self.scalar, type: .i32),
+            .fieldGet(base: Self.construct, field: "s", type: .string),
+            .optionalGet(container: Self.array, index: Self.scalar, type: .optional(wrapped: .i32)),
         ]
         for node in aliases {
             #expect(node.yieldsAlias, "\(node) 应判为别名点")
             #expect(node.shareEffect == .borrowed, "\(node) 的来源在别处，只能是借用")
         }
-    }
-
-    /// `readLine` 返回 `fgets` 填的栈缓冲：既不是新份额，也不会在帧外存活。
-    /// 把它判成 `fresh` 会让消费点去释放一块栈内存。
-    @Test("readLine 的栈缓冲不是可释放的份额")
-    func readLineIsBorrowed() {
-        #expect(IRExpr.readLine.shareEffect == .borrowed)
     }
 }
