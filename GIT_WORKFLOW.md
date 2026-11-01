@@ -19,7 +19,7 @@
 | 唯一 ID | 类型 | 规范 `user.name` | 规范 `user.email` | 说明 |
 |---|---|---|---|---|
 | `human:winterarch` | 人 | WinterArch | winterarch@foxmail.com | 项目所有者 / 主力开发者（可选采用，便于区分归属） |
-| `agent:pini-dev` | 自动化代理 | Pini Dev | dev@pini.local | 通用 AI 助手会话（默认）；与历史提交保持一致，避免弹跳 |
+| `agent:pini` | 自动化代理 | Pini Dev | dev@pini.local | 通用 AI 助手会话（默认）；与历史提交保持一致，避免弹跳 |
 | `agent:<session-id>` | 自动化代理 | Pini Dev | dev@pini.local | 其他 AI 会话：在 `agent:` 后追加唯一片段以区分 |
 
 **注册新贡献者：** 复制上表任意一行，填入唯一 ID、类型与规范身份，然后提交本文件。
@@ -45,7 +45,7 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
   - 修复：`fix-<id>-<slug>`
   - AI 会话临时工作：`dev-agent-<id>-<slug>`
   - 其中 `<id>` 取 §2 注册的唯一 ID，`<slug>` 为短横线小写描述。
-  - 注意 **引用名禁用字符：** git 不允许 `:` 出现在分支名中。因此在分支名里把注册 ID 的 `:` 替换为 `-`。例如注册 ID `human:winterarch` 对应分支前缀 `human/winterarch`；AI 默认会话 `agent:pini-dev` 对应 `dev-agent-pini-dev`。
+  - 注意 **引用名禁用字符：** git 不允许 `:` 出现在分支名中。因此在分支名里把注册 ID 的 `:` 替换为 `-`。例如注册 ID `human:winterarch` 对应分支前缀 `human/winterarch`；AI 默认会话 `agent:pini` 对应 `dev-agent-pini`。
 - **基线：** 从最新的 `main` 切出；开工前先 `git fetch`（若存在远程）确认基线最新。
 - **集成回 `main`：**
   - 推荐 `git merge --no-ff <branch>`（保留分支拓扑，便于回溯）。
