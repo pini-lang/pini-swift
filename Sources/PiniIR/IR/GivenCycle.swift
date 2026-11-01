@@ -1,12 +1,13 @@
 import Foundation
 
 /// 给定块物化环：只看边表，不碰编译器状态。
-/// 边表即 `IRModule.givenReferences` —— 键是引用方，值是它直接取用的给定块。函数没有入边，进不了环。
+/// 边表 = `IRModule.givenReferences` ∪ `IRModule.callReferences`：前者连「谁取用了哪个给定块」，
+/// 后者连「谁调用了哪个函数」。函数与方法由此都能入环，路径里会同时出现它们。
 public enum GivenCycleDetector {
 
-    /// 边表里所有的环。每条路径首尾同名（如 `["甲块", "乙块", "甲块"]`），结果按字典序排列。
-    /// 同一环从不同起点到达只报一次：环一律旋转到最小名字开头，便于比对与展示。
-    public static func cycles(in edges: [String: [String]]) -> [[String]] {
+    /// 边表里所有**含给定块**的环。不含给定块的环是普通递归，不报 —— 那是运行时栈的事，不是物化的事。
+    /// 每条路径首尾同名（如 `["甲块", "取数", "甲块"]`），起点一律旋转到环里最小的给定块。
+    public static func cycles(in edges: [String: [String]], givenBlocks: Set<String>) -> [[String]] {
         var marks: [String: Mark] = [:]
         var stack: [String] = []
         var depth: [String: Int] = [:]
@@ -20,7 +21,10 @@ public enum GivenCycleDetector {
                 if let mark = marks[next] {
                     // 回边：栈上从 next 到栈顶是一条链，补上 next 即闭合。
                     if mark == .onStack {
-                        found.insert(rotatedToSmallest(Array(stack[depth[next]!...]) + [next]))
+                        let cycle = Array(stack[depth[next]!...]) + [next]
+                        if cycle.dropLast().contains(where: givenBlocks.contains) {
+                            found.insert(rotatedToSmallestGiven(cycle, givenBlocks: givenBlocks))
+                        }
                     }
                 } else {
                     visit(next)
@@ -37,17 +41,22 @@ public enum GivenCycleDetector {
         return found.sorted { $0.lexicographicallyPrecedes($1) }
     }
 
-    /// 栈上的节点标「在栈里」，收敛了的标「已完成」—— 无标记即未访问。深度等于最长取用链，递归撑得住。
+    /// 栈上的节点标「在栈里」，收敛了的标「已完成」—— 无标记即未访问。深度等于最长依赖链，递归撑得住。
     private enum Mark: Equatable {
         case onStack
         case done
     }
 
-    /// 环旋转到最小名字开头；自环只有两个元素，原样返回。
-    private static func rotatedToSmallest(_ path: [String]) -> [String] {
+    /// 环旋转到**最小的给定块**开头。定位与展示共用这一种旋转：告警按起点回 AST 取声明位置，
+    /// 旋转到函数名开头会让那条查找落空，也读不出「是哪个块要物化自己」。
+    private static func rotatedToSmallestGiven(_ path: [String], givenBlocks: Set<String>) -> [String] {
         guard path.count > 2 else { return path }
         let body = path.dropLast()
-        guard let pivot = body.indices.min(by: { body[$0] < body[$1] }) else { return path }
+        guard
+            let pivot = body.indices
+                .filter({ givenBlocks.contains(body[$0]) })
+                .min(by: { body[$0] < body[$1] })
+        else { return path }
         let rotated = Array(body[pivot...]) + Array(body[..<pivot])
         return rotated + [rotated[0]]
     }

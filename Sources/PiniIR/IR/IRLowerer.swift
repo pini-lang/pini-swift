@@ -695,9 +695,9 @@ public enum IRLowerer {
         // functions with IR names `方法__类型` so they cannot collide with top-level functions. Fields come from
         // the registry, not the raw declaration — composition flattening already merged inherited members there.
 
-        // 给定块字段初值里的取用边：键是给定块名，值是它直接取用的给定块（升序）。与函数体的取用边同表，
-        // 环检测读的就是这张表。
-        var givenEdges: [String: [String]] = [:]
+        // 给定块字段初值里的两类边：取了哪个给定块、调了哪个顶层函数。键都是给定块名，与函数体的同类边
+        // 合成同两张表，环检测读的就是它们。
+        var edges = DependencyEdges()
         var typeDecls: [IRTypeDecl] = []
         // 预置声明（宿主提供）也进本表：名义表只让类型名可解析，本表才是执行器建类型表并物化默认实例的
         // 来源 —— 只进名义表会让实例「类型上存在、字段上空」。用同一份 `predefined`：本表是数组，两条同名项
@@ -714,7 +714,7 @@ public enum IRLowerer {
                         name: sd.name, isObject: false, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                        userTypes: userTypes, enums: enums, edges: &edges,
                         genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
@@ -726,7 +726,7 @@ public enum IRLowerer {
                         name: od.name, isObject: true, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                        userTypes: userTypes, enums: enums, edges: &edges,
                         genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
@@ -741,7 +741,7 @@ public enum IRLowerer {
                         name: gd.name, isObject: false, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges, recordsGivenEdges: true,
+                        userTypes: userTypes, enums: enums, edges: &edges, recordsDependencyEdges: true,
                         genericEnums: genericEnums,
                         genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
@@ -761,7 +761,7 @@ public enum IRLowerer {
                     name: specializedName, isObject: false, fields: info.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, givenEdges: &givenEdges, recordsGivenEdges: true,
+                    userTypes: userTypes, enums: enums, edges: &edges, recordsDependencyEdges: true,
                     genericEnums: genericEnums,
                     genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
@@ -778,7 +778,7 @@ public enum IRLowerer {
                     name: specializedName, isObject: false, fields: sd.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                    userTypes: userTypes, enums: enums, edges: &edges,
                     genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
                 ))
@@ -822,15 +822,19 @@ public enum IRLowerer {
         }
 
         // 两路键不同源（函数名 / 给定块名），合成一张表而不做覆盖检查：符号表已禁止两者同名。
-        var references = Self.givenReferences(of: functions)
-        for (name, targets) in givenEdges { references[name] = targets }
+        // 方法体不在 `functions` 里，要单独并进来：漏了它，经方法的环在方法那里断成两截，整条看不见。
+        let methodFunctions = typeDecls.flatMap(\.methods)
+        var references = Self.givenReferences(of: functions + methodFunctions)
+        for (name, targets) in edges.given { references[name] = targets }
+        var calls = Self.callReferences(of: functions + methodFunctions)
+        for (name, targets) in edges.call { calls[name] = targets }
         return IRModule(
             functions: functions, types: typeDecls,
             enums: enumOrder.compactMap { enums[$0] },
             foreigns: foreigns,
             /// 物化依赖留痕：这里**不产诊断**。环检测是后置的，此表只保证后置检测
             /// 加一条遍历即可，不必重扫降载结果。
-            givenReferences: references)
+            givenReferences: references, callReferences: calls)
     }
 
     // MARK: - G10 monomorphization
@@ -1326,6 +1330,7 @@ public enum IRLowerer {
         for (index, argument) in loweredArgs.enumerated() where !signature.untypedParamIndices.contains(index) {
             try requireAssignable(argument.type, to: signature.paramTypes[index], at: location)
         }
+        context.recordCall(specializedName)
         return LoweredExpr(
             node: .call(
                 function: specializedName,
@@ -1428,7 +1433,8 @@ public enum IRLowerer {
             // block's keyword to this canonical spelling (Token.swift).
             isTest: decl.modifiers.contains("test"),
             sourceFile: decl.location.fileName,
-            givenReferenceNames: context.givenReferenceNames
+            givenReferenceNames: context.givenReferenceNames,
+            calledFunctionNames: context.calledFunctionNames
         )
     }
 
@@ -1530,6 +1536,16 @@ public enum IRLowerer {
         var edges: [String: [String]] = [:]
         for function in functions where !function.givenReferenceNames.isEmpty {
             edges[function.name] = function.givenReferenceNames.sorted()
+        }
+        return edges
+    }
+
+    /// 调用留痕的聚合 —— 函数名 → 它直接调用过的顶层函数（升序）。与上面那张表分开聚合，
+    /// 因为环检测要能只凭值的面判定「哪些节点是给定块」。
+    private static func callReferences(of functions: [IRFunction]) -> [String: [String]] {
+        var edges: [String: [String]] = [:]
+        for function in functions where !function.calledFunctionNames.isEmpty {
+            edges[function.name] = function.calledFunctionNames.sorted()
         }
         return edges
     }
@@ -1702,6 +1718,13 @@ public enum IRLowerer {
 
     // MARK: - Nominal types (G3)
 
+    /// 降载期收集的两类边，键都是「谁」，值都是「它依赖谁」。给定块字段初值与函数体共用同一套收集器；
+    /// 结构体与对象块的初值发生在构造时、不是载入时，故它们的边只在开关打开时才写出。
+    struct DependencyEdges {
+        var given: [String: [String]] = [:]
+        var call: [String: [String]] = [:]
+    }
+
     /// Lower one struct/object declaration: field defaults via a scratch context, methods as
     /// self-parameterized `IRFunction`s named `方法__类型` (the double-underscore separator cannot collide
     /// with mangle output, which never emits underscores for ASCII names).
@@ -1715,8 +1738,8 @@ public enum IRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: IRType],
         enums: [String: IREnumDecl],
-        givenEdges: inout [String: [String]],
-        recordsGivenEdges: Bool = false,
+        edges: inout DependencyEdges,
+        recordsDependencyEdges: Bool = false,
         genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
@@ -1757,9 +1780,14 @@ public enum IRLowerer {
                 ))
         }
         // 字段初值里的取用点记在临时上下文上，函数返回时本该随上下文丢弃。给定块那一路要把它带出去：
-        // 默认实例正是由这些初值物化出来的，取用即「载入期依赖」；结构体与对象块的同类取用发生在构造时，不算。
-        if recordsGivenEdges, !scratch.givenReferenceNames.isEmpty {
-            givenEdges[name] = scratch.givenReferenceNames.sorted()
+        // 默认实例正是由这些初值物化出来的，取用与调用都是「载入期依赖」；结构体与对象块的同类边发生在构造时，不算。
+        if recordsDependencyEdges {
+            if !scratch.givenReferenceNames.isEmpty {
+                edges.given[name] = scratch.givenReferenceNames.sorted()
+            }
+            if !scratch.calledFunctionNames.isEmpty {
+                edges.call[name] = scratch.calledFunctionNames.sorted()
+            }
         }
         return IRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
     }
@@ -1852,7 +1880,8 @@ public enum IRLowerer {
         let body = try lowerBlock(decl.body!, into: &context)
         return IRFunction(
             name: irName, params: params, returnType: effectiveReturn, body: body,
-            sourceFile: decl.location.fileName, givenReferenceNames: context.givenReferenceNames)
+            sourceFile: decl.location.fileName, givenReferenceNames: context.givenReferenceNames,
+            calledFunctionNames: context.calledFunctionNames, displayName: "\(typeName).\(decl.name)")
     }
 
     private static func lowerBlock(
@@ -3731,6 +3760,7 @@ public enum IRLowerer {
                 paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
                 omittedForm: arguments.count != signature.paramTypes.count,
                 callee: functionName, at: location, into: &context)
+            context.recordCall(functionName)
             return LoweredExpr(
                 node: .call(
                     function: functionName,
@@ -4016,6 +4046,9 @@ public enum IRLowerer {
             closureContext.variableTypes[capture.name] = capture.type
         }
         let body = try lowerBlock(decl.body!, into: &closureContext)
+        // 闭包与外层共用一个 functionName，故它体内的调用记到外层头上。物化期是否真调到这个闭包不在此判：
+        // 静态检测不判可达性，代价是一条可能跑不出来的警告，收益是别把包在闭包里的环漏掉。
+        context.calledFunctionNames.formUnion(closureContext.calledFunctionNames)
 
         return LoweredExpr(
             node: .closureLiteral(
@@ -4408,6 +4441,7 @@ public enum IRLowerer {
             paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
             omittedForm: arguments.count != signature.paramTypes.count,
             callee: functionName, at: location, into: &context)
+        context.recordCall(functionName)
         return LoweredExpr(
             node: .call(
                 function: functionName,
@@ -4498,6 +4532,7 @@ public enum IRLowerer {
             let loweredArgs = try arguments.map {
                 try lowerExpr($0.expression, expected: nil, into: &context)
             }
+            context.recordCall(ext.irName)
             return LoweredExpr(
                 node: .call(
                     function: ext.irName,
@@ -4598,6 +4633,7 @@ public enum IRLowerer {
                         omittedForm: arguments.count != methodParamTypes.count,
                         callee: memberName, at: location, into: &context))
                 let irName = "\(IRName.mangle(memberName))__\(IRName.mangle(typeName))"
+                context.recordCall(irName)
                 return LoweredExpr(
                     node: .call(function: irName, arguments: arguments_ir, returnType: returnType),
                     type: returnType ?? .i32
@@ -5343,6 +5379,7 @@ public enum IRLowerer {
                 enums: context.enums, genericFuncTemplates: context.genericFuncTemplates,
                 closureIds: context.closureIds
             ))
+        context.recordCall(irName)
         return LoweredExpr(
             node: .call(
                 function: irName,
@@ -5851,6 +5888,12 @@ private struct FunctionContext {
     /// 函数体里取用过的给定块类型（见 `IRFunction.givenReferenceNames`）。
     /// 值字段即可 —— 调用点全都在**同一个**函数的 `context` 上写，不需要跨函数共享。
     var givenReferenceNames: Set<String> = []
+    /// 函数体里直接调用的函数名（见 `IRFunction.calledFunctionNames`），含方法：方法落的是 mangle 过的
+    /// `方法__类型`，与它自己的 `IRFunction.name` 同一个串。呈现时由 `IRModule.displayNames` 翻回源码写法。
+    var calledFunctionNames: Set<String> = []
+
+    /// 记一条调用边。具名调用的三条路径都要过这里 —— 漏一处，该路径上的间接环就看不见了。
+    mutating func recordCall(_ name: String) { calledFunctionNames.insert(name) }
     let moduleSignatures: [String: IRLowererSignatureInfo]
     let nominalTypes: [String: IRLowerer.NominalInfo]
     let userTypes: [String: IRType]
