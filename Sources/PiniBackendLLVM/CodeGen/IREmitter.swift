@@ -249,6 +249,9 @@ public final class IREmitter {
     /// 是否发射过 `joinAll` —— 聚合 join 另走一条入口，声明同样只在用时出现。
     private var usesTaskJoinAll = false
 
+    /// 是否发射过变量数组形态的 `joinAll` —— 它让运行时逐槽取句柄，符号与上一条不同。
+    private var usesTaskJoinAllBox = false
+
     /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
@@ -539,6 +542,9 @@ public final class IREmitter {
         }
         if usesTaskJoinAll {
             tail += Builtins.declaration(for: "bk_task_join_all")
+        }
+        if usesTaskJoinAllBox {
+            tail += Builtins.declaration(for: "bk_task_join_all_box")
         }
         /// 让出族：帧的取用、帧内取槽、可让出的等待。与上面同规 —— 只有真发过的模块才带。
         if usesTaskCancel {
@@ -5255,33 +5261,36 @@ public final class IREmitter {
         return collectResult(from: out, type: type, okType: okType)
     }
 
-    /// `joinAll([a, b, ...])`：把每个成员的句柄排进一块连续区，交给运行时逐个 join。
-    /// 只接数组字面量 —— 变量形态要走运行时遍历，本后端尚未提供。
+    /// `joinAll`：字面量形态把成员句柄排进连续区，变量形态把数组盒交给运行时逐槽取。
     private func emitJoinAll(arguments: [IRExpr], returnType: IRType?) -> IRValue {
         guard let type = returnType, case .result(let okType) = type, case .array = okType else {
             fatalError(
                 "IREmitter: joinAll needs a Result<Array<...>> return type (IRLowerer guarantees)")
         }
-        guard arguments.count == 1, case .arrayLiteral(let elements, _) = arguments[0],
-            !elements.isEmpty
-        else {
-            fatalError("IREmitter: joinAll expects a non-empty array literal of futures")
-        }
-        usesTaskJoinAll = true
-        let handles = builder.freshTemp()
-        bodyIR += " \(handles) = alloca [\(elements.count) x ptr], align 8\n"
-        for (index, element) in elements.enumerated() {
-            let value = emitExpr(element)
-            guard value.llvmType == "ptr" else {
-                fatalError("IREmitter: joinAll member is not a task handle (IRLowerer guarantees)")
-            }
-            let slot = builder.freshTemp()
-            bodyIR += " \(slot) = getelementptr inbounds [\(elements.count) x ptr], ptr \(handles), i64 0, i64 \(index)\n"
-            bodyIR += " store ptr \(value.ssaName), ptr \(slot)\n"
+        guard arguments.count == 1 else {
+            fatalError("IREmitter: joinAll takes exactly one array (IRLowerer guarantees)")
         }
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
-        bodyIR += " call i32 @bk_task_join_all(ptr \(handles), i32 \(elements.count), ptr \(out))\n"
+        if case .arrayLiteral(let elements, _) = arguments[0], !elements.isEmpty {
+            usesTaskJoinAll = true
+            let handles = builder.freshTemp()
+            bodyIR += " \(handles) = alloca [\(elements.count) x ptr], align 8\n"
+            for (index, element) in elements.enumerated() {
+                let value = emitExpr(element)
+                guard value.llvmType == "ptr" else {
+                    fatalError("IREmitter: joinAll member is not a task handle (IRLowerer guarantees)")
+                }
+                let slot = builder.freshTemp()
+                bodyIR += " \(slot) = getelementptr inbounds [\(elements.count) x ptr], ptr \(handles), i64 0, i64 \(index)\n"
+                bodyIR += " store ptr \(value.ssaName), ptr \(slot)\n"
+            }
+            bodyIR += " call i32 @bk_task_join_all(ptr \(handles), i32 \(elements.count), ptr \(out))\n"
+        } else {
+            usesTaskJoinAllBox = true
+            let box = emitExpr(arguments[0])
+            bodyIR += " call i32 @bk_task_join_all_box(ptr \(box.ssaName), ptr \(out))\n"
+        }
         return collectResult(from: out, type: type, okType: okType)
     }
 

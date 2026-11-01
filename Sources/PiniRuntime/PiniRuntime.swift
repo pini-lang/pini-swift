@@ -2232,27 +2232,22 @@ public func bk_task_join_within(
 /// 聚合 join，fail-fast：任一成员的 `err` 即决定聚合，其余成员被取消（没人在等它们，就不该继续占线程）。
 ///  注意  成员的父链不动：只对成员调取消，不 `adopt` —— 改写父链会让调用方的返回取消掉它从未拥有过的任务。
 ///  注意  全 `ok` 时聚合载荷是数组句柄，元素是各成员 ok 载荷（8 字节不透明字、tag = `.i64`），类型身份不在本层。
-@_cdecl("bk_task_join_all")
-public func bk_task_join_all(
-    _ handles: UnsafeMutableRawPointer?, _ count: Int32, _ out: UnsafeMutableRawPointer?
+private func _bkJoinAll(
+    _ handles: [UnsafeMutableRawPointer?], _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
-    let n = Int(count)
+    let n = handles.count
     guard n > 0 else {
         // 空集合的聚合是**空数组**，不是错误：`joinAll([])` 在解释器后端返回 ok([])。
         let arr = bk_array_create(0)
         _bkWriteResult(out, tag: 0, ok: _bkWord(arr), err: 0)
         return 0
     }
-    guard let handles else {
-        bk_panic("Pini runtime error: task joinAll got null handles")
-    }
-    let base = handles.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
     // 先把**全部**句柄解出来再动手：fail-fast 会在中途返回，若那时才发现某个成员句柄是空的，
     // 报错点就落在「已经取消了一半」之后，调用方拿到的是半成品世界的解释。
     var boxes: [_BkTaskBox] = []
     boxes.reserveCapacity(n)
     for i in 0..<n {
-        guard let b = _bkTaskBox(base[i]) else {
+        guard let b = _bkTaskBox(handles[i]) else {
             bk_panic("Pini runtime error: task joinAll got a null member handle at \(i)")
         }
         boxes.append(b)
@@ -2282,6 +2277,39 @@ public func bk_task_join_all(
     }
     _bkWriteResult(out, tag: 0, ok: _bkWord(arr), err: 0)
     return 0
+}
+
+/// 字面量形态的入口：codegen 已把各成员的句柄排进一块连续区，这里只管解地址。
+@_cdecl("bk_task_join_all")
+public func bk_task_join_all(
+    _ handles: UnsafeMutableRawPointer?, _ count: Int32, _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    let n = Int(count)
+    guard n > 0 else { return _bkJoinAll([], out) }
+    guard let handles else {
+        bk_panic("Pini runtime error: task joinAll got null handles")
+    }
+    let base = handles.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+    return _bkJoinAll(Array(UnsafeBufferPointer(start: base, count: n)), out)
+}
+
+/// 变量数组的入口：句柄还在数组盒里，逐槽取出再走同一段聚合。
+///  注意  元素槽存的是「装着句柄字的 box」，故先解一层 box 再读那一个字。
+@_cdecl("bk_task_join_all_box")
+public func bk_task_join_all_box(
+    _ array: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let array else { return _bkJoinAll([], out) }
+    let box = Unmanaged<_BkArrayBox>.fromOpaque(array).takeUnretainedValue()
+    var handles: [UnsafeMutableRawPointer?] = []
+    handles.reserveCapacity(box.count)
+    for index in 0..<box.count {
+        guard let cell = box.storage.elements[index] else {
+            bk_panic("Pini runtime error: task joinAll got an uninitialized member at \(index)")
+        }
+        handles.append(cell.load(as: UnsafeMutableRawPointer?.self))
+    }
+    return _bkJoinAll(handles, out)
 }
 
 // MARK: scope 收口

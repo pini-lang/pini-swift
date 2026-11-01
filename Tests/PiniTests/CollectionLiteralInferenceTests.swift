@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import PiniSyntax
 
+@testable import PiniBackendLLVM
 @testable import PiniCore
 @testable import PiniIR
 @testable import PiniSemantics
@@ -145,24 +146,24 @@ struct CollectionLiteralInferenceTests: Sendable {
         }
     }
 
-    @Test("joinAll 接受变量数组的静态类型；变量形态由降载层给诊断，不进发射器")
-    func joinAllVariableArrayIsRejectedByLowering() throws {
+    @Test("joinAll 的变量数组走运行时遍历：降载通过，发射出数组盒入口")
+    func joinAllVariableArrayUsesTheBoxEntry() throws {
         let source = #"""
         快|func() => (I32,):
             return ok(1)
 
         main|func() -> ():
-            var a = [快(), 快()]
-            var r = joinAll(a)
+            var a = 快()
+            var b = 快()
+            var xs = [a, b]
+            var all = joinAll(xs)
             return
         """#
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        do {
-            _ = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-            Issue.record("变量数组应被降载层拒绝，却降载成功")
-        } catch let error as IRLowerer.IRLoweringError {
-            #expect(error.message.contains("non-empty array literal"))
-        }
+        let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let listing = try IREmitter().emit(module: lowered)
+        #expect(listing.contains("call i32 @bk_task_join_all_box(ptr"))
+        #expect(!listing.contains("call i32 @bk_task_join_all(ptr"))
     }
 }

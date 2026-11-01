@@ -3298,20 +3298,15 @@ public enum IRLowerer {
                 )
             }
             if functionName == "joinAll" {
-                /// 句柄数组只接**非空字面量**：变量形态要在运行时逐个取元素，本层还没有那条遍历；
-                /// 空字面量则取不到元素类型（会默认成 I32），与运行时的空聚合不是一回事。
-                /// 两种形态都在这里给诊断，不让发射器以 fatalError 兜底。
+                /// 字面量与变量两种形态都接：前者由发射器排成连续句柄区，后者由运行时遍历数组盒。
+                /// 元素必须是 `Future` —— 不是就到此为止，不让发射器以 fatalError 兜底。
                 guard loweredArgs.count == 1,
-                    case .arrayLiteral(let elements, _) = loweredArgs[0].node,
-                    !elements.isEmpty,
-                    case .array(let element) = loweredArgs[0].type
+                    case .array(let element) = loweredArgs[0].type,
+                    case .future(let memberOK) = element
                 else {
-                    throw unsupported(
-                        "joinAll currently needs a non-empty array literal of futures", at: location)
+                    throw unsupported("joinAll expects one array of futures", at: location)
                 }
                 /// 聚合结果是各成员 **ok 载荷** 的数组，不是句柄数组：`wait` 之后元素已结算。
-                let memberOK: IRType
-                if case .future(let ok) = element { memberOK = ok } else { memberOK = element }
                 let aggregated = IRType.result(ok: .array(element: memberOK))
                 return LoweredExpr(
                     node: .call(
