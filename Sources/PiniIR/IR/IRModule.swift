@@ -23,6 +23,9 @@ public struct IRFunction: Equatable {
     /// （`FunctionContext.givenReferenceNames`）后在构造时取出。留痕是给后置的环检测用的
     /// （`IRModule.givenReferences`），本期不产任何诊断。
     public let givenReferenceNames: Set<String>
+    /// 本函数体直接调用的顶层函数（IR 名），降载时逐点收集。环检测靠它穿透普通函数：
+    /// 没有「函数 → 函数」这条边，字段初值经中间函数绕回来的环就走不通。
+    public let calledFunctionNames: Set<String>
 
     public struct IRParam: Equatable {
         public let name: String
@@ -41,7 +44,7 @@ public struct IRFunction: Equatable {
     public init(
         name: String, params: [IRParam], returnType: IRType?, body: IRBlock,
         isAsync: Bool = false, isTest: Bool = false, sourceFile: String = "",
-        givenReferenceNames: Set<String> = []
+        givenReferenceNames: Set<String> = [], calledFunctionNames: Set<String> = []
     ) {
         self.name = name
         self.params = params
@@ -50,6 +53,7 @@ public struct IRFunction: Equatable {
         self.isAsync = isAsync
         self.isTest = isTest
         self.givenReferenceNames = givenReferenceNames
+        self.calledFunctionNames = calledFunctionNames
         self.sourceFile = sourceFile
     }
 }
@@ -133,10 +137,15 @@ public struct IRModule: Equatable {
     /// （方法不进 `functions`）。这是可观测面而非诊断：环检测读它，留痕当期就要做对。
     public let givenReferences: [String: [String]]
 
+    /// 谁调用了哪个顶层函数：键是调用方（函数名 / 给定块名），值是它直接调用的函数名（升序去重）。
+    /// 与 `givenReferences` 分表是刻意的：那张表的值面恒为给定块，环检测据此判定「哪些节点是给定块」，
+    /// 混进函数名会让这条判据失效。
+    public let callReferences: [String: [String]]
+
     public init(
         functions: [IRFunction], types: [IRTypeDecl] = [], enums: [IREnumDecl] = [],
         foreigns: [IRForeignBlock] = [], layout: IRLayout = .standard,
-        givenReferences: [String: [String]] = [:]
+        givenReferences: [String: [String]] = [:], callReferences: [String: [String]] = [:]
     ) {
         self.functions = functions
         self.types = types
@@ -144,6 +153,7 @@ public struct IRModule: Equatable {
         self.foreigns = foreigns
         self.layout = layout
         self.givenReferences = givenReferences
+        self.callReferences = callReferences
     }
 
     public func function(named name: String) -> IRFunction? {
