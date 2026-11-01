@@ -9,31 +9,9 @@ import PiniSyntax
 // 给定块 `given` / 取用参数 `using` 的判据：给定块进类型面与方法表，默认实例只在 `using` 取用点物化，
 // 取用位随函数类型走（声明位与调用位配对，经参数或字段传递即失去）。`using` 是保留字，`given` 走标识符白名单不入表。
 // 运行面判据走解释器臂，发射臂另由命令行探针取证。每条用例三要素齐备：意图、推进性、驳回性。
-struct GivenUsingTests: Sendable {
+struct GivenUsingTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 常量折叠 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    /// 返回类型检查器本身：降载需要它的 `typeInference`（与命令行同序）。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {
@@ -530,6 +508,55 @@ struct GivenUsingTests: Sendable {
         #expect(module.givenReferences["甲"] == nil, "甲 的实参由调用方给，不该留痕：\(module.givenReferences)")
     }
 
+    @Test("补图：给定块字段初值里的取用点进边表，结构体的不进")
+    func givenFieldInitializerEdgesAreRecorded() throws {
+        /// 意图：环检测要读的那张表必须含「给定块 → 它取用的给定块」这条边 —— 原实现里这个集合随临时上下文丢弃。
+        /// 驳回性：同一形态下结构体的字段初值取用不进表，它在构造时求值，不是载入期物化。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 1
+
+        [甲块|given]
+            值: I32 = 取乙()
+
+        取乙|func(using 乙: 计数块,) -> (I32,):
+            return 乙.值
+
+        (盒)
+            值: I32 = 取乙()
+
+        main|func() -> ():
+            print(1)
+            return
+        """#
+        let module = try lowered(source)
+        #expect(module.givenReferences["甲块"] == ["计数块"], "实际：\(module.givenReferences)")
+        #expect(module.givenReferences["盒"] == nil, "结构体的字段初值不该进表：\(module.givenReferences)")
+        // 驳回性②：给定块不生成函数 ⇒ 表里不该出现同名的函数行，边只挂在给定块名上。
+        #expect(
+            module.functions.contains { $0.name == "甲块" } == false,
+            "实际：\(module.functions.map(\.name))")
+    }
+
+    @Test("补图：字段初值直接取用自己所在的给定块时，边是自环")
+    func givenSelfEdgeIsRecorded() throws {
+        /// 意图：最小环的形态 —— 字段初值省略式调用一个函数，那个 `using` 形参由本给定块填。
+        /// 边是 A → A；它进得了图，检测才看得见。这条程序今天 `run` 会被信号 10 杀掉。
+        let source = #"""
+        [甲块|given]
+            值: I32 = 读甲()
+
+        读甲|func(using 甲: 甲块,) -> (I32,):
+            return 甲.值
+
+        main|func() -> ():
+            print(1)
+            return
+        """#
+        let module = try lowered(source)
+        #expect(module.givenReferences["甲块"] == ["甲块"], "实际：\(module.givenReferences)")
+    }
+
     @Test("泛型给定块：特化按用到的类型参数各进一份（含泛型但只到降载）")
     func genericGivenBlockSpecializesOnDemand() throws {
         /// 意图：`[匣<T>|given]` 的特化只有 `using` 形参的类型标注这一个入口（没有构造点、没有调用点），
@@ -966,5 +993,94 @@ struct GivenUsingTests: Sendable {
             annotationFailed?.code == "E2-008",
             "标注位的判定码应保持既有形态，实际：\(annotationFailed?.code ?? "无（被接受了）")"
         )
+    }
+
+    @Test("标注写错参数个数仍被类型层拒 —— 取用位不是绕过 arity 的通道")
+    func usingParameterCannotFitAnExplicitAnnotation() throws {
+        /// 意图：标注写不出取用位，但标注必须写对参数与返回。`() -> (I32)`（0 参数）与
+        /// `(using 块: 计数块,) -> (I32)`（1 参数）arity 不等，类型层必须报 —— 取用位不绕过 arity。
+        /// 驳回性：该错误不许落到降载层 —— 落到那里说明 check 又静默跳过了一次赋值比对。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var f: () -> (I32,) = 取块
+            return
+        """#
+        let rejected = failure { _ = try typeChecked(source) }
+        guard let rejected else {
+            Issue.record("带 using 形参的函数不该通过显式标注的赋值检查")
+            return
+        }
+        #expect(rejected.code == "E4-001", "应由类型层拒，实际码 \(rejected.code)")
+        #expect(rejected.message.contains("() -> (I32)"), "消息须写出期望类型，实际：\(rejected.message)")
+        #expect(
+            rejected.message.contains("(计数块) -> (I32)"),
+            "消息须写出实际类型，实际：\(rejected.message)"
+        )
+    }
+
+    @Test("无标注时取用位随推断类型走，调用点自动插默认实例")
+    func usingParameterSurvivesInference() throws {
+        /// 意图：不写标注时变量类型取自推断，取用位随之保留 ⇒ `f()` 省略实参仍拿得到默认实例。
+        /// 与上一条互为对照：被拒的是「写成标注」，不是「using 本身」。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var f = 取块
+            print(f())
+            return
+        """#
+        let lines = try runOutput(source)
+        #expect(lines == ["7"], "默认实例应被插入并读出 7，实际：\(lines)")
+    }
+
+    @Test("标注写对参数与返回后，取用位随函数值保留 —— 调用仍可省略")
+    func explicitAnnotationKeepsTheCallingConvention() throws {
+        /// 意图：标注给出参数与返回，函数自己带着「哪个参数位由给定块填」。给定块类型在值位
+        /// 无法显式构造，故切断这条关系等于产出一个永远调不动的死值。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var f: (计数块,) -> (I32,) = 取块
+            print(f())
+            return
+        """#
+        let lines = try runOutput(source)
+        #expect(lines == ["7"], "标注不该抹掉取用位，实际：\(lines)")
+    }
+
+    @Test("取用位跨变量传递：标注从一个变量接住它，同样保留")
+    func usingSurvivesAssignmentThroughAVariable() throws {
+        /// 意图：补位的来源不止具名函数，`var h = 取块` 的 h 也带着取用位，再赋给带标注的变量须照旧。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 7
+
+        取块|func(using 块: 计数块,) -> (I32,):
+            return 块.值
+
+        main|func() -> ():
+            var h = 取块
+            var f: (计数块,) -> (I32,) = h
+            print(f())
+            return
+        """#
+        let lines = try runOutput(source)
+        #expect(lines == ["7"], "经变量的取用位丢失了，实际：\(lines)")
     }
 }

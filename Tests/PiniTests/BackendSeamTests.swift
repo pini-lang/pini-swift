@@ -11,20 +11,7 @@ import PiniSyntax
 /// 后端接缝：一条通道要接进 CLI，靠的是这份协议、这张注册表与一张能力表。
 /// 判据钉在「接得上」的三件事上：名字与注册表不漂移、能力声明成表、哑后端能消费全部节点。
 @Suite("后端接缝")
-struct BackendSeamTests: Sendable {
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
+struct BackendSeamTests: Sendable, PiniSourceLowering {
 
     @Test("注册表里的名字与后端自报的名字一致")
     func registryNamesMatchTheBackendsOwn() throws {
@@ -127,6 +114,30 @@ struct BackendSeamTests: Sendable {
         for entry in Backends.registry.entries {
             let backend = try #require(Backends.registry.make(entry.identifier))
             #expect(try !backend.emit(module: module).isEmpty, "\(entry.identifier) 产出了空文本")
+        }
+    }
+
+    /// 搬不动的元素类型必须是**拒绝**，不是崩溃：`Array<I64>` 的解释器臂跑得通，
+    /// LLVM 臂没有 I64 的装箱 ABI —— 这条判据盯的是「用户拿到诊断还是拿到一个进程信号」。
+    @Test("元素类型没有装箱 ABI 时抛 BackendError")
+    func unboxableElementRefuses() throws {
+        let module = try lowered(
+            #"""
+            main|func() -> ():
+                var x: I64 = 7
+                var a = [x, x]
+                print(a[0])
+                return
+            """#)
+        do {
+            _ = try IREmitter().emit(module: module)
+            #expect(Bool(false), "应当拒绝")
+        } catch let refusal as BackendError {
+            #expect(refusal.family == .collections)
+            #expect(refusal.node == "arrayLiteral")
+            #expect(refusal.reason.contains("i64"))
+        } catch {
+            #expect(Bool(false), "抛的不是 BackendError：\(error)")
         }
     }
 }

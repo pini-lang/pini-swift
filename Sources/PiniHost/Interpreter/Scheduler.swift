@@ -58,6 +58,10 @@ extension Scheduler {
 final class GCDScheduler: Scheduler, @unchecked Sendable {
     static let shared = GCDScheduler()
 
+    /// 独立实例：池参数与 `shared` 相同，计数、信号量与队列各自独立。
+    /// 供嵌入与测试隔离用 —— 读 `yieldedTaskCount` 时不受其他实例的让出影响。
+    static func isolated() -> GCDScheduler { GCDScheduler() }
+
     /// 基线池大小（常规并发度）。
     let basePoolSize: Int
     /// 最大并发任务数（溢出容限）。

@@ -1,4 +1,5 @@
 import Foundation
+import PiniBackendKit
 import PiniSyntax
 import PiniSemantics
 import PiniIR
@@ -243,6 +244,15 @@ public final class IREmitter {
     /// 是否发射过 `cancel` —— 落点是运行时的取消入口，声明与派发族分开：不取消的模块不多一行。
     private var usesTaskCancel = false
 
+    /// 是否发射过 `joinWithin` —— 三槽装配与 `join` 同形，只是多一个时限参数，声明也分开。
+    private var usesTaskJoinWithin = false
+
+    /// 是否发射过 `joinAll` —— 聚合 join 另走一条入口，声明同样只在用时出现。
+    private var usesTaskJoinAll = false
+
+    /// 是否发射过变量数组形态的 `joinAll` —— 它让运行时逐槽取句柄，符号与上一条不同。
+    private var usesTaskJoinAllBox = false
+
     /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
@@ -287,11 +297,12 @@ public final class IREmitter {
 
     // MARK: - Module
 
-    public func emit(module: IRModule) -> String {
+    public func emit(module: IRModule) throws -> String {
+        refusals.removeAll()
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += Builtins.declaration(for: "bk_double_to_string")
-        header += "declare ptr @free(ptr)\n"
+        header += "declare void @free(ptr)\n"
         header += "declare double @sqrt(double)\n"
         header += "@fmt_int = private constant [3 x i8] c\"%d\\00\"\n"
         header += "@fmt_bool_true = private constant [6 x i8] c\"true\\00\\00\"\n"
@@ -346,15 +357,14 @@ public final class IREmitter {
         header += "declare double @llvm.sin.f64(double)\n"
         header += "declare double @llvm.cos.f64(double)\n"
         /// Foreign blocks declare their external signatures; symbols resolve at JIT link time (libc via
-        /// the process image, dlopened libraries via `--dlopen`). Names already in the fixed header
-        /// (malloc/free/strlen) are skipped, since LLVM rejects redefinition.
+        /// the process image, dlopened libraries via `--dlopen`). Symbols declared elsewhere are skipped:
+        /// libc ones by the fixed header above, runtime shims by the conditional tail below.
         let predeclared: Set<String> = ["printf", "malloc", "free", "strlen", "memcpy"]
-        // Runtime-provided shims: not libc, resolved from the runtime dylib
-        // (--dlopen in the harness). Emit the bk_ symbol declare.
         let runtimeShims: Set<String> = ["cstr"]
         for foreignBlock in module.foreigns {
-            for func_ in foreignBlock.funcs where !predeclared.contains(func_.name) {
-                let symbol = runtimeShims.contains(func_.name) ? "bk_\(func_.name)" : IRName.mangle(func_.name)
+            for func_ in foreignBlock.funcs
+            where !predeclared.contains(func_.name) && !runtimeShims.contains(func_.name) {
+                let symbol = IRName.mangle(func_.name)
                 let params = func_.paramTypes.map { $0.llvmSpelling }.joined(separator: ", ")
                 let ret = func_.returnType?.llvmSpelling ?? "void"
                 header += "declare \(ret) @\(symbol)(\(params))\n"
@@ -519,9 +529,8 @@ public final class IREmitter {
             tail += "declare ptr @fgets(ptr, i32, ptr)\n"
             tail += "@__stdinp = external global ptr\n"
         }
-        /// 任务族的 C ABI。只有真发过派发 / 等待 / 剪枝的模块才带它们。本段只接三个符号
-        /// （派发 · 阻塞等待 · 剪枝）；`join_within` / `join_all` / `cancel` /
-        /// `is_cancelled` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
+        /// 任务族的 C ABI。只有真发过派发 / 等待 / 剪枝的模块才带它们。本段接派发、阻塞等待、
+        /// 剪枝三个符号；`join_all` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
         if usesTaskRuntime {
             tail += Builtins.declaration(for: "bk_task_spawn")
             tail += Builtins.declaration(for: "bk_task_join")
@@ -529,6 +538,15 @@ public final class IREmitter {
             if usesTaskArgRelease {
                 tail += Builtins.declaration(for: "bk_handle_release")
             }
+        }
+        if usesTaskJoinWithin {
+            tail += Builtins.declaration(for: "bk_task_join_within")
+        }
+        if usesTaskJoinAll {
+            tail += Builtins.declaration(for: "bk_task_join_all")
+        }
+        if usesTaskJoinAllBox {
+            tail += Builtins.declaration(for: "bk_task_join_all_box")
         }
         /// 让出族：帧的取用、帧内取槽、可让出的等待。与上面同规 —— 只有真发过的模块才带。
         if usesTaskCancel {
@@ -648,7 +666,17 @@ public final class IREmitter {
         if !closureEnvTypeDecls.isEmpty {
             envHeader += "\n"
         }
+        /// 本通道搬不动的地方在发射期只记账：产物反正要丢，收尾一次抛出即可 ——
+        /// 比先走一趟预检少一棵树的遍历，判定表仍只有一份。
+        if let refusal = refusals.first { throw refusal }
         return header + envHeader + tail + "\n" + bodyIR + closureTail
+    }
+
+    /// 本通道搬不动的地方。`BackendError` 是能力声明的执行面：族取契约小节，reason 说缺哪种能力。
+    private var refusals: [BackendError] = []
+
+    private func refuse(node: String, family: BackendCapabilities.Family, reason: String) {
+        refusals.append(BackendError(node: node, family: family, reason: reason))
     }
 
     // MARK: - Functions
@@ -2166,6 +2194,11 @@ public final class IREmitter {
             return IRValue(llvmType: type.llvmSpelling, ssaName: temp)
 
         case .call(let function, let arguments, let returnType):
+            /// `joinAll([a, b, ...])` 吃的是**句柄数组**而不是一个普通实参：字面量形态直接展开，
+            /// 免得先建一个数组再拆回来。
+            if function == "joinAll" {
+                return emitJoinAll(arguments: arguments, returnType: returnType)
+            }
             let args = arguments.map { emitExpr($0) }
             /// 异步被调者的调用点就是派发点：判据取被调者自己的 `isAsync`，不取类型。
             /// 调用节点上带的是体协议（`Result`，被调方真的返回什么），句柄类型只活在签名表里 ——
@@ -2201,6 +2234,17 @@ public final class IREmitter {
                 return emitArrayAppend(
                     receiver: args[0], elementNode: arguments[1], elementValue: args[1],
                     elementType: elementType)
+            }
+
+            /// `joinWithin(future, ms)` 是三槽 join 的带时限形态：超时归约为取消在运行时做，
+            /// 调用点只多传一个毫秒值。
+            if function == "joinWithin", args.count == 2 {
+                guard let type = returnType, case .result(let okType) = type else {
+                    fatalError(
+                        "IREmitter: joinWithin needs a Result return type (IRLowerer guarantees)")
+                }
+                return emitJoinWithin(
+                    handle: args[0], timeout: args[1], type: type, okType: okType)
             }
 
             let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
@@ -2983,7 +3027,10 @@ public final class IREmitter {
         /// is the same, so the raw-ptr tag applies for the reason above — a grapheme has no share count.
         case .char: return ("i8*", 8, 4)
         default:
-            fatalError("IREmitter: no LazyRef element ABI for '\(type)' (IRLowerer gates element types)")
+            refuse(
+                node: "lazyRefConstruct", family: .lazyRef,
+                reason: "元素类型 \(type.llvmSpelling) 没有装箱 ABI（本通道能装的是 I32 / F64 / Bool / String / Char）")
+            return ("i32", 4, 0)
         }
     }
 
@@ -3863,12 +3910,14 @@ public final class IREmitter {
         //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
         case .pointer: return ("i8*", 8, 3)
         case .future:
-            // 句柄数组（`joinAll` 的实参形态）需要一条把句柄搬进运行时容器的通道，
-            // 而聚合 join 尚未接线 ⇒ 这里给一个点名的拒绝，而不是笼统的「没有这条 ABI」。
-            fatalError(
-                "IREmitter: an array of task handles has no element ABI yet — the aggregate join is not wired (this batch covers dispatch, blocking wait and pruning)")
+            /// 任务句柄是指针字，生命周期由 join / detach 管，数组只暂存 ⇒ 裸指针 tag，不计数。
+            return ("ptr", 8, 3)
         default:
-            fatalError("IREmitter: no array element ABI for '\(type)' (IRLowerer gates element types)")
+            /// 占位 ABI 只为了让发射走完：产物随即因 `refusals` 非空被丢掉，不会有人读到它。
+            refuse(
+                node: "arrayLiteral", family: .collections,
+                reason: "元素类型 \(type.llvmSpelling) 没有装箱 ABI（本通道能装的是整数字 / F64 / Bool / String / 容器句柄 / 指针）")
+            return ("i32", 4, 0)
         }
     }
 
@@ -4160,7 +4209,10 @@ public final class IREmitter {
                 bodyIR += " \(t) = ptrtoint \(value.llvmType) \(value.ssaName) to i64\n"
                 return IRValue(llvmType: "i64", ssaName: t)
             }
-            fatalError("IREmitter: no word widening for '\(value.llvmType)' (IRLowerer gates non-scalar payloads)")
+            refuse(
+                node: "join", family: .concurrency,
+                reason: "载荷 \(value.llvmType) 装不进三槽任务 ABI 的一个字（聚合载荷没有搬运通道）")
+            return IRValue(llvmType: "i64", ssaName: "0")
         }
     }
 
@@ -4277,64 +4329,10 @@ public final class IREmitter {
         return IRValue(llvmType: "void", ssaName: "")
     }
 
-    /// Resolved IR type of a lowered expression node (every case carries
-    /// its type — the typed-tree contract).
+    /// 表达式的静态类型；无值节点（`print`、写文件一类）取 `.i32` 垫底。
+    /// 类型表只有一份，住在 `IRExpr.staticType`：本处再写一份必然与它漂。
     private func irType(of expr: IRExpr) -> IRType {
-        switch expr {
-        case .intConst(_, let type): return type
-        case .floatConst: return .f64
-        case .boolConst: return .boolean
-        case .stringConst: return .string
-        case .load(_, let type): return type
-        case .binary(_, _, _, let type): return type
-        case .unary(_, _, let type): return type
-        case .call(_, _, let returnType): return returnType ?? .i32
-        case .printCall: return .i32
-        case .resultConstruct(_, _, let type): return type
-        case .arrayLiteral(_, let type): return type
-        case .subscriptGet(_, _, let type): return type
-        case .lenCall: return .i32
-        case .optionalGet(_, _, let type): return type
-        case .optionalConstruct(_, _, let type): return type
-        case .sliceCall(_, _, _, let type): return type
-        case .construct(let type): return type
-        case .fieldGet(_, _, let type): return type
-        case .enumConstruct(_, _, _, _, _, let type): return type
-        case .dictLiteral(_, let type): return type
-        case .setLiteral(_, let type): return type
-        case .tupleConstruct(_, _, let type): return type
-        case .tupleIndexGet(_, _, let type): return type
-        case .stringCase: return .string
-        case .stringContains: return .boolean
-        case .stringSubstring: return .string
-        case .stringSplit(_, _, let type): return type
-        case .stringTrimLeft: return .string
-        case .stringTrimRight: return .string
-        case .stringIndexOf: return .i32
-        case .arrayJoin: return .string
-        case .stringConcat: return .string
-        case .interpString: return .string
-        case .closureLiteral(_, _, _, _, _, _, let type): return type
-        case .functionValue(_, let type): return type
-        case .indirectCall(_, _, let returnType): return returnType ?? .i32
-        case .lazyRefConstruct(_, let type): return type
-        case .lazyRefValue(_, let type): return type
-        case .pointerLoad(_, let type): return type
-        case .pointerStore: return .i32
-        case .addressOfVar(_, let type): return .pointer(element: type)
-        case .printMulti: return .i32
-        case .assertCall: return .i32
-        case .fileWrite: return .i32
-        case .fileAppend: return .i32
-        case .fileRead: return .string
-        case .fileTryWrite, .fileTryAppend:
-            return .result(ok: .tuple(labels: [], fieldTypes: []))
-        case .fileTryRead: return .result(ok: .string)
-        case .readLine: return .string
-        case .isAsciiDigit: return .boolean
-        case .join(_, let type, _): return type
-        case .givenInstance(let type): return type
-        }
+        expr.staticType ?? .i32
     }
 
     /// Print one scalar value by its IR spelling (no newline).
@@ -5191,7 +5189,6 @@ public final class IREmitter {
                     + " (an async body with no declared Result return, or a closure body)."
                     + " Nested and in-expression positions are refused earlier, in lowering")
         }
-        usesTaskRuntime = true
         guard case .result(let okType) = type else {
             fatalError("IREmitter: join site type is not a Result (IRLowerer guarantees)")
         }
@@ -5203,13 +5200,65 @@ public final class IREmitter {
                 "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
         }
         let handle = emitExpr(future)
-        guard handle.llvmType == "ptr" else {
-            fatalError("IREmitter: join operand is not a task handle (IRLowerer guarantees)")
-        }
+        /// 已在结算值上 `wait`（`wait joinAll(...)` 这类）：没有句柄可等，原样透传。
+        if handle.llvmType != "ptr" { return handle }
+        usesTaskRuntime = true
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         bodyIR += " call i32 @bk_task_join(ptr \(handle.ssaName), ptr \(out))\n"
         /// 三槽 → `Result` 的装配与让出路径**共用一份**实现：这条约定只该有一处解释。
+        return collectResult(from: out, type: type, okType: okType)
+    }
+
+    /// `joinWithin(future, ms)`：与 `bk_task_join` 共用三槽装配与 `Result` 收尾，
+    /// 只多传一个时限；超时归约为取消由运行时保证。
+    private func emitJoinWithin(
+        handle: IRValue, timeout: IRValue, type: IRType, okType: IRType
+    ) -> IRValue {
+        usesTaskJoinWithin = true
+        guard handle.llvmType == "ptr" else {
+            fatalError("IREmitter: joinWithin operand is not a task handle (IRLowerer guarantees)")
+        }
+        guard isSingleWordPayload(okType) else {
+            fatalError(
+                "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
+        }
+        let out = builder.freshTemp()
+        bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
+        bodyIR += " call i32 @bk_task_join_within(ptr \(handle.ssaName), i32 \(timeout.ssaName), ptr \(out))\n"
+        return collectResult(from: out, type: type, okType: okType)
+    }
+
+    /// `joinAll`：字面量形态把成员句柄排进连续区，变量形态把数组盒交给运行时逐槽取。
+    private func emitJoinAll(arguments: [IRExpr], returnType: IRType?) -> IRValue {
+        guard let type = returnType, case .result(let okType) = type, case .array = okType else {
+            fatalError(
+                "IREmitter: joinAll needs a Result<Array<...>> return type (IRLowerer guarantees)")
+        }
+        guard arguments.count == 1 else {
+            fatalError("IREmitter: joinAll takes exactly one array (IRLowerer guarantees)")
+        }
+        let out = builder.freshTemp()
+        bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
+        if case .arrayLiteral(let elements, _) = arguments[0], !elements.isEmpty {
+            usesTaskJoinAll = true
+            let handles = builder.freshTemp()
+            bodyIR += " \(handles) = alloca [\(elements.count) x ptr], align 8\n"
+            for (index, element) in elements.enumerated() {
+                let value = emitExpr(element)
+                guard value.llvmType == "ptr" else {
+                    fatalError("IREmitter: joinAll member is not a task handle (IRLowerer guarantees)")
+                }
+                let slot = builder.freshTemp()
+                bodyIR += " \(slot) = getelementptr inbounds [\(elements.count) x ptr], ptr \(handles), i64 0, i64 \(index)\n"
+                bodyIR += " store ptr \(value.ssaName), ptr \(slot)\n"
+            }
+            bodyIR += " call i32 @bk_task_join_all(ptr \(handles), i32 \(elements.count), ptr \(out))\n"
+        } else {
+            usesTaskJoinAllBox = true
+            let box = emitExpr(arguments[0])
+            bodyIR += " call i32 @bk_task_join_all_box(ptr \(box.ssaName), ptr \(out))\n"
+        }
         return collectResult(from: out, type: type, okType: okType)
     }
 
@@ -5593,7 +5642,10 @@ public final class IREmitter {
             bodyIR += " call ptr @strcat(ptr \(buf), ptr \(close.ssaName))\n"
             return IRValue(llvmType: "i8*", ssaName: buf)
         default:
-            fatalError("IREmitter: stringify of '\(type)' outside the G9 grid (IRLowerer gates interpolation parts)")
+            refuse(
+                node: "interpString", family: .strings,
+                reason: "\(type.llvmSpelling) 不在字符串化网格里（标量 / String / Char / 数组 / Optional 之外没有渲染通道）")
+            return emitStringConstant("")
         }
     }
 }

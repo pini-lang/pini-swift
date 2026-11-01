@@ -107,6 +107,57 @@ public indirect enum IRType: Equatable {
         }
     }
 
+    /// Pini 面类型拼写，用于诊断消息；与 `llvmSpelling`（后端拼写）不可互换。
+    /// 措辞与 `TypeAnnotation.describe()` 一致：`Optional<T>` / `Array<T>` / `(A, B) -> (C)`。
+    /// 取用位以 `using ` 前标记出：它写在声明里、写不进标注，漏标则两侧为何不等看不出来。
+    public func describe() -> String {
+        switch self {
+        case .i8: return "I8"
+        case .u8: return "U8"
+        case .i32: return "I32"
+        case .i64: return "I64"
+        case .u64: return "U64"
+        case .f64: return "F64"
+        case .boolean: return "Bool"
+        case .string: return "String"
+        case .char: return "Char"
+        case .result(let ok):
+            return "Result<\(ok.describe())>"
+        case .future(let ok):
+            return "Future<\(ok.describe())>"
+        case .array(let element):
+            return "Array<\(element.describe())>"
+        case .optional(let wrapped):
+            return "Optional<\(wrapped.describe())>"
+        case .nominal(let name, _):
+            return name
+        case .enumeration(let name):
+            return name
+        case .dict(let key, let value):
+            return "Dictionary<\(key.describe()), \(value.describe())>"
+        case .lazyRef(let element):
+            return "LazyRef<\(element.describe())>"
+        case .set(let element):
+            return "Set<\(element.describe())>"
+        case .tuple(let labels, let fieldTypes):
+            let parts = fieldTypes.enumerated().map { index, type -> String in
+                if labels.indices.contains(index), let label = labels[index] {
+                    return "\(label): \(type.describe())"
+                }
+                return type.describe()
+            }
+            return "(" + parts.joined(separator: ", ") + ")"
+        case .function(let params, let returnType, let usingIndices):
+            let marked = params.enumerated().map { index, type in
+                usingIndices.contains(index) ? "using \(type.describe())" : type.describe()
+            }
+            let returned = returnType.map { $0.describe() } ?? ""
+            return "(" + marked.joined(separator: ", ") + ") -> (\(returned))"
+        case .pointer(let element):
+            return "*\(element.describe())"
+        }
+    }
+
     /// Unpointed aggregate spelling for alloca / GEP (nominal and enum types).
     public var nominalAggregateSpelling: String? {
         switch self {
@@ -181,6 +232,35 @@ public indirect enum IRType: Equatable {
         case .i8, .u8, .i32, .i64, .u64: return true
         default: return false
         }
+    }
+
+    /// 相等判定抹掉两维不进类型恒等的装饰：元组标签只活在下标访问里，函数取用位只标「哪个参数位
+    /// 由给定块填」。其余类型逐字相等 —— 递归到内部，故嵌套同规。
+    public func isLabelInsensitivelyEqual(to other: IRType) -> Bool {
+        if case .tuple(_, let mine) = self, case .tuple(_, let theirs) = other {
+            guard mine.count == theirs.count else { return false }
+            return zip(mine, theirs).allSatisfy { $0.isLabelInsensitivelyEqual(to: $1) }
+        }
+        if case .function(let mineParams, let mineReturn, _) = self,
+            case .function(let theirsParams, let theirsReturn, _) = other
+        {
+            guard mineParams.count == theirsParams.count,
+                zip(mineParams, theirsParams).allSatisfy({ $0.isLabelInsensitivelyEqual(to: $1) })
+            else { return false }
+            switch (mineReturn, theirsReturn) {
+            case (nil, nil): return true
+            case (let a?, let b?): return a.isLabelInsensitivelyEqual(to: b)
+            default: return false
+            }
+        }
+        return self == other
+    }
+
+    /// 赋值方向的接收判据：元组忽略标签、`Char` 放宽到 `String`（两者共用 `i8*`，不发出转换），
+    /// 其余必须逐字相等；`String` 不接受 `Char`，加宽是单向的。降载的接收检查与验证器的值位
+    /// 比对共用这一把尺子 —— 两处各写一份，漂的那一刻没有判据会变红。
+    public func isAssignable(to target: IRType) -> Bool {
+        isLabelInsensitivelyEqual(to: target) || (self == .char && target == .string)
     }
 }
 
@@ -416,6 +496,67 @@ public indirect enum IRExpr: Equatable {
     /// 惰性物化、恰一次、地址稳定；取到的是实例本身（非副本、非模板）。它与 `lazyRefValue` 不是一件事：
     /// 后者是字段内的细粒度缓冲，本条是类型级取用。目前无降载入口，两台引擎起步 fail-loud。
     case givenInstance(type: IRType)
+}
+
+extension IRExpr {
+    /// 节点产出的值类型；`nil` 表示这个位置不产出值（`print`、写文件、`store` 一类）。
+    /// 唯一判据是节点自带的 `type`，不从用法或上下文再推一次（契约 5.1）；两个消费方
+    /// （发射器、验证器）都取这里，不各写一份 switch。
+    public var staticType: IRType? {
+        switch self {
+        case .intConst(_, let type): return type
+        case .floatConst: return .f64
+        case .boolConst: return .boolean
+        case .stringConst: return .string
+        case .load(_, let type): return type
+        case .binary(_, _, _, let type): return type
+        case .unary(_, _, let type): return type
+        case .call(_, _, let returnType): return returnType
+        case .printCall: return nil
+        case .resultConstruct(_, _, let type): return type
+        case .arrayLiteral(_, let type): return type
+        case .subscriptGet(_, _, let type): return type
+        case .lenCall: return .i32
+        case .optionalGet(_, _, let type): return type
+        case .optionalConstruct(_, _, let type): return type
+        case .sliceCall(_, _, _, let type): return type
+        case .construct(let type): return type
+        case .fieldGet(_, _, let type): return type
+        case .enumConstruct(_, _, _, _, _, let type): return type
+        case .dictLiteral(_, let type): return type
+        case .setLiteral(_, let type): return type
+        case .tupleConstruct(_, _, let type): return type
+        case .tupleIndexGet(_, _, let type): return type
+        case .stringCase: return .string
+        case .stringContains: return .boolean
+        case .stringSubstring: return .string
+        case .stringSplit(_, _, let type): return type
+        case .stringTrimLeft, .stringTrimRight: return .string
+        case .stringIndexOf: return .i32
+        case .arrayJoin: return .string
+        case .stringConcat: return .string
+        case .interpString: return .string
+        case .closureLiteral(_, _, _, _, _, _, let type): return type
+        case .functionValue(_, let type): return type
+        case .indirectCall(_, _, let returnType): return returnType
+        case .lazyRefConstruct(_, let type): return type
+        case .lazyRefValue(_, let type): return type
+        case .pointerLoad(_, let type): return type
+        case .pointerStore: return nil
+        case .addressOfVar(_, let type): return .pointer(element: type)
+        case .printMulti: return nil
+        case .assertCall: return nil
+        case .fileWrite, .fileAppend: return nil
+        case .fileRead: return .string
+        /// 写成功的载荷是空元组：写不产出值，也不编造字节数。
+        case .fileTryWrite, .fileTryAppend: return .result(ok: .tuple(labels: [], fieldTypes: []))
+        case .fileTryRead: return .result(ok: .string)
+        case .readLine: return .string
+        case .isAsciiDigit: return .boolean
+        case .join(_, let type, _): return type
+        case .givenInstance(let type): return type
+        }
+    }
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +

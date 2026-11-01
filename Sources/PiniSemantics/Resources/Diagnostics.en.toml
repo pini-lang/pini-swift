@@ -10,6 +10,7 @@ semanticWarning = "Semantic Warning"
 type = "Type Error"
 runtime = "Runtime Error"
 irgen = "IRGen Error"
+validator = "IR Structure Error"
 io = "IO Error"
 general = "Error"
 
@@ -20,6 +21,10 @@ suggestion = "remove it, or prefix with `_` if intentionally unused"
 [E7-002]
 message = "implicit alias '{alias}' does not match the target module name '{targetName}'"
 suggestion = "rename the alias, or ignore if intentional (advisory only)"
+
+[E7-003]
+message = "given block materialization cycle: {path}"
+suggestion = "materializing it requires itself, so `pini run` will crash; break the field initializer's dependency on itself"
 
 [E2-001]
 message = "expected {expected}, got {actual}"
@@ -196,3 +201,7 @@ suggestion = "use the keyword that matches the body, or change the function's as
 [E6-010]
 message = "`await` sits where there is no resumable point: it gives the task up, and nothing here can pick the body back up"
 suggestion = "move the wait to a statement root at the top level of the body: a bare `await f()` · `var x = await f()` · `try await f() else …` · `match await f():`. The same four forms nested inside `if`, a loop body or a `match` case do not qualify either -- the resume jump cannot reach into a nested block"
+
+[E6-011]
+message = "IR structure invariant broken: {feature}"
+suggestion = "this is a compiler defect, not a program error: report it together with the source file that reproduces it"

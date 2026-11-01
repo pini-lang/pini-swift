@@ -51,24 +51,12 @@ struct ModuleRootBuiltinTests: Sendable {
         let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
         let emitter = IREmitter()
         emitter.programBase = programBase
-        return emitter.emit(module: lowered)
+        return try emitter.emit(module: lowered)
     }
 
     /// 定位命令行产物：先看环境变量，再按仓根兜底。
     private func cliPath() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
-        if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv) {
-            return fromEnv
-        }
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().path
-        let candidates = ["/.build/debug/pini", "/.build/out/Products/Debug/pini"]
-            .map { repoRoot + $0 }
-        for candidate in candidates
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
+        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
         withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 两通道用例本次未取") {
             Issue.record("程序基准内建的两通道判据本次没有跑")
         }

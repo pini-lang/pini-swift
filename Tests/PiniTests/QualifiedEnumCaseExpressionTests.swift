@@ -9,28 +9,9 @@ import PiniSyntax
 /// 枚举型名限定的零参用例（`色彩.绿`，不带括号）作表达式时的降载判据。`IRLowerer` 的 `.member` 分支只认三种
 /// 接收者（Optional 型名 · 名义值 · 元组），没有「接收者是枚举型名」这一支 ⇒ 落到兜底标识符降载，
 /// 报 `E6-004`。带参写法（`色彩.绿(载荷)`）经 `lowerMemberCall` 早已接线，缺口只在无参这一半。
-struct QualifiedEnumCaseExpressionTests: Sendable {
+struct QualifiedEnumCaseExpressionTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     private func runOutput(_ source: String) throws -> [String] {
         var lines: [String] = []

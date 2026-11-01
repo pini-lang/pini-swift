@@ -10,23 +10,9 @@ import PiniSyntax
 /// `Result` 的 err 载荷判据：err 槽那一个类型擦除的字在四面都可用 —— 构造（`err(Error(...))` /
 /// `err(CancelError(...))`）· 判别（`isCancel`）· 读消息（`e.message`）· 打印（`print(e)`）。
 /// 产物侧另守一条：`@CancelError` / `@Error` / `struct.CancelError` 不该出现，那会是未定义类型与未实现函数。
-struct ResultErrPayloadTests: Sendable {
+struct ResultErrPayloadTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
 
     /// 完整跑一遍解释器通道，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {
@@ -45,7 +31,7 @@ struct ResultErrPayloadTests: Sendable {
         let (module, checker) = try typeChecked(source)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let lowered = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-        return IREmitter().emit(module: lowered)
+        return try IREmitter().emit(module: lowered)
     }
 
     /// 把「抛出的诊断」摊平成「判定码 + 文案」；没抛则返回 nil。
@@ -60,19 +46,7 @@ struct ResultErrPayloadTests: Sendable {
 
     /// 定位命令行产物：先看环境变量，再按仓根兜底。
     private func cliPath() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
-        if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv) {
-            return fromEnv
-        }
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().path
-        let candidates = ["/.build/debug/pini", "/.build/out/Products/Debug/pini"]
-            .map { repoRoot + $0 }
-        for candidate in candidates
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
+        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
         withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 两通道用例本次未取") {
             Issue.record("err 载荷的两通道判据本次没有跑")
         }

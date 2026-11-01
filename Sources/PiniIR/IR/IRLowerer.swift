@@ -8,14 +8,18 @@ import PiniSemantics
 public enum IRLowerer {
 
     /// The single capability-gate error: free-form detail plus the position of the construct rejected.
-    /// Every gate shares one diagnostic code (the unsupported-feature bucket); the resource layer
-    /// dispatches on code and position, not message text. `LocalizedError` stays for callers without it.
+    /// The default code is the unsupported-feature bucket (E6-004); a gate whose cause is a user error
+    /// rather than a missing capability carries its own code, so the CLI can tell the two apart.
     public struct IRLoweringError: Error, CustomStringConvertible, LocalizedError {
         public let message: String
         public let location: SourceLocation
         /// Diagnostic code，默认落在 E6「不支持特性」桶。
         /// 域枚举与生成器取码同源，故换管线不改变 code 的取值域。
         public var code: String = "\(DiagnosticDomain.irgen.rawValue)-004"
+        /// E6-005「类型不匹配」的两个槽。非空时诊断模板按 `{expected}` / `{got}` 填，
+        /// 不再借用 `{feature}` 塞自由文本；其余码留 nil，维持单槽。
+        public var expected: String?
+        public var got: String?
 
         public var description: String {
             "IR lowering error at \(location.line):\(location.column): \(message)"
@@ -690,6 +694,10 @@ public enum IRLowerer {
         // Lower nominal type declarations: field defaults via a scratch context, methods as self-parameterized
         // functions with IR names `方法__类型` so they cannot collide with top-level functions. Fields come from
         // the registry, not the raw declaration — composition flattening already merged inherited members there.
+
+        // 给定块字段初值里的取用边：键是给定块名，值是它直接取用的给定块（升序）。与函数体的取用边同表，
+        // 环检测读的就是这张表。
+        var givenEdges: [String: [String]] = [:]
         var typeDecls: [IRTypeDecl] = []
         // 预置声明（宿主提供）也进本表：名义表只让类型名可解析，本表才是执行器建类型表并物化默认实例的
         // 来源 —— 只进名义表会让实例「类型上存在、字段上空」。用同一份 `predefined`：本表是数组，两条同名项
@@ -706,7 +714,8 @@ public enum IRLowerer {
                         name: sd.name, isObject: false, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                        genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                     ))
@@ -717,7 +726,8 @@ public enum IRLowerer {
                         name: od.name, isObject: true, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                        genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                     ))
@@ -731,7 +741,8 @@ public enum IRLowerer {
                         name: gd.name, isObject: false, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges, recordsGivenEdges: true,
+                        genericEnums: genericEnums,
                         genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
@@ -750,7 +761,8 @@ public enum IRLowerer {
                     name: specializedName, isObject: false, fields: info.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                    userTypes: userTypes, enums: enums, givenEdges: &givenEdges, recordsGivenEdges: true,
+                    genericEnums: genericEnums,
                     genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
                 ))
@@ -766,7 +778,8 @@ public enum IRLowerer {
                     name: specializedName, isObject: false, fields: sd.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                    userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                    genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
                 ))
         }
@@ -808,13 +821,16 @@ public enum IRLowerer {
             foreigns.append(IRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
         }
 
+        // 两路键不同源（函数名 / 给定块名），合成一张表而不做覆盖检查：符号表已禁止两者同名。
+        var references = Self.givenReferences(of: functions)
+        for (name, targets) in givenEdges { references[name] = targets }
         return IRModule(
             functions: functions, types: typeDecls,
             enums: enumOrder.compactMap { enums[$0] },
             foreigns: foreigns,
             /// 物化依赖留痕：这里**不产诊断**。环检测是后置的，此表只保证后置检测
             /// 加一条遍历即可，不必重扫降载结果。
-            givenReferences: Self.givenReferences(of: functions))
+            givenReferences: references)
     }
 
     // MARK: - G10 monomorphization
@@ -1328,8 +1344,9 @@ public enum IRLowerer {
     private static func asyncBodyReturnType(
         declared: IRType?, isAsync: Bool
     ) -> IRType? {
-        guard isAsync, let ok = declared else { return declared }
-        return .result(ok: ok)
+        guard isAsync else { return declared }
+        /// `=> ()` 没有载荷，但体的每条出口都要写三槽 Result ⇒ void 也占一个 i32 槽。
+        return .result(ok: declared ?? .i32)
     }
 
     /// The type a caller sees for an async (`=>`) function: a handle to a running process, not the value it
@@ -1338,8 +1355,9 @@ public enum IRLowerer {
     private static func asyncSignatureReturnType(
         declared: IRType?, isAsync: Bool
     ) -> IRType? {
-        guard isAsync, let ok = declared else { return declared }
-        return .future(ok: ok)
+        guard isAsync else { return declared }
+        /// 与体的三槽一致：void 载荷同样占一个 i32 槽，调用点才拿得到句柄。
+        return .future(ok: declared ?? .i32)
     }
 
     private static func lowerFunction(
@@ -1401,6 +1419,7 @@ public enum IRLowerer {
             builtinExtensionMethods: builtinExtensionMethods
         )
         context.isAsync = decl.isAsync
+        context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
         let body = try lowerBlock(decl.body!, into: &context)
         return IRFunction(
             name: decl.name, params: params, returnType: bodyReturn, body: body,
@@ -1448,6 +1467,22 @@ public enum IRLowerer {
         _ annotation: TypeAnnotation,
         userTypes: [String: IRType]
     ) -> IRType? {
+        // 函数标注的形参可以是用户类型（如取用参数的给定块），`IRType(from:)` 只认内建，故逐位过
+        // `resolveUsingParamType`。多返回不在 slice 集内，与内建路径同样拒绝。
+        if case .function(let aParams, let aReturns, _, let usingIndices, _) = annotation {
+            guard aReturns.count <= 1 else { return nil }
+            var paramTypes: [IRType] = []
+            for param in aParams {
+                guard let resolved = resolveUsingParamType(param, userTypes: userTypes) else { return nil }
+                paramTypes.append(resolved)
+            }
+            var resolvedReturn: IRType?
+            if let first = aReturns.first {
+                guard let resolved = resolveUsingParamType(first, userTypes: userTypes) else { return nil }
+                resolvedReturn = resolved
+            }
+            return .function(params: paramTypes, returnType: resolvedReturn, usingIndices: usingIndices)
+        }
         if let builtin = IRType(from: annotation) { return builtin }
         if case .simple(let name, _) = annotation {
             return userTypes[name]
@@ -1680,6 +1715,8 @@ public enum IRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: IRType],
         enums: [String: IREnumDecl],
+        givenEdges: inout [String: [String]],
+        recordsGivenEdges: Bool = false,
         genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
@@ -1718,6 +1755,11 @@ public enum IRLowerer {
                     closureIds: closureIds, traitRegistry: traitRegistry,
                     traitDefaultsCollector: traitDefaultsCollector
                 ))
+        }
+        // 字段初值里的取用点记在临时上下文上，函数返回时本该随上下文丢弃。给定块那一路要把它带出去：
+        // 默认实例正是由这些初值物化出来的，取用即「载入期依赖」；结构体与对象块的同类取用发生在构造时，不算。
+        if recordsGivenEdges, !scratch.givenReferenceNames.isEmpty {
+            givenEdges[name] = scratch.givenReferenceNames.sorted()
         }
         return IRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
     }
@@ -1965,6 +2007,14 @@ public enum IRLowerer {
                 let lowered = try lowerExpr(value, expected: returnType, into: &context)
                 try requireAssignable(lowered.type, to: returnType, at: location)
                 return [.returnStmt(value: lowered.node, adopt: returnType.adoption(of: lowered.node))]
+            }
+            if context.isAsyncVoid, let returnType = context.returnType {
+                /// 异步 void 体的裸 `return` 就是 `return ok(())`：三槽 ABI 要求每条出口都写 Result，
+                /// 载荷没有值，占位槽给 0。
+                return [.returnStmt(
+                    value: .resultConstruct(
+                        isOk: true, payload: .intConst(value: 0, type: .i32), type: returnType),
+                    adopt: .none)]
             }
             guard context.returnType == nil else {
                 throw unsupported(
@@ -2303,7 +2353,7 @@ public enum IRLowerer {
                     at: location
                 )
             }
-            declaredType = type
+            declaredType = Self.carryingUsing(from: initializer, in: context, over: type)
         } else if let initializer = initializer {
             if let inferred = context.inferType(of: initializer),
                 let type = IRType(from: inferred)
@@ -2346,6 +2396,33 @@ public enum IRLowerer {
                 adopt: storedType.adoption(of: loweredInit)
             )
         ]
+    }
+
+    /// 标注给出参数与返回，函数值补上自己的调用约定（哪些参数位由给定块填）。取用位不进类型等价，
+    /// 但它属于函数本身 —— 写标注不该把它切断：给定块类型在值位无法显式构造，切断后变量永远调不动。
+    private static func carryingUsing(
+        from initializer: Expression?, in context: FunctionContext, over type: IRType
+    ) -> IRType {
+        guard case .function(let params, let returnType, let marked) = type, marked.isEmpty,
+            let initializer = initializer,
+            let usingIndices = usingIndicesInValue(of: initializer, in: context),
+            !usingIndices.isEmpty
+        else { return type }
+        return .function(params: params, returnType: returnType, usingIndices: usingIndices)
+    }
+
+    /// 值的取用位：具名函数查签名表，变量查变量表。
+    private static func usingIndicesInValue(
+        of expression: Expression, in context: FunctionContext
+    ) -> Set<Int>? {
+        guard case .identifier(let name, _) = expression else { return nil }
+        if let signature = context.moduleSignatures[name] { return signature.usingParamIndices }
+        if let variable = context.variableTypes[name],
+            case .function(_, _, let usingIndices) = variable
+        {
+            return usingIndices
+        }
+        return nil
     }
 
     /// The type a binding's slot actually stores. The interpreter attaches tuple component names at two points
@@ -2966,8 +3043,8 @@ public enum IRLowerer {
             throw unsupported("undefined enum case '.\(caseName)'", at: location)
 
         case .dictionaryLiteral(let entries, let location):
-            // Dict literal — key/value types derived from the lowered
-            // first entry (homogeneity required, checker does not infer).
+            // Dict literal — key/value types derived from the lowered entries
+            // (homogeneity required; the checker's inference only covers the static side).
             var loweredEntries: [IRDictEntry] = []
             var keyType: IRType? = nil
             var valueType: IRType? = nil
@@ -3287,10 +3364,16 @@ public enum IRLowerer {
                 )
             }
             if functionName == "joinAll" {
-                guard loweredArgs.count == 1, case .array(let element) = loweredArgs[0].type else {
+                /// 字面量与变量两种形态都接：前者由发射器排成连续句柄区，后者由运行时遍历数组盒。
+                /// 元素必须是 `Future` —— 不是就到此为止，不让发射器以 fatalError 兜底。
+                guard loweredArgs.count == 1,
+                    case .array(let element) = loweredArgs[0].type,
+                    case .future(let memberOK) = element
+                else {
                     throw unsupported("joinAll expects one array of futures", at: location)
                 }
-                let aggregated = IRType.result(ok: .array(element: element))
+                /// 聚合结果是各成员 **ok 载荷** 的数组，不是句柄数组：`wait` 之后元素已结算。
+                let aggregated = IRType.result(ok: .array(element: memberOK))
                 return LoweredExpr(
                     node: .call(
                         function: functionName,
@@ -3303,7 +3386,9 @@ public enum IRLowerer {
                 guard loweredArgs.count == 2, loweredArgs[1].type == .i32 else {
                     throw unsupported("joinWithin expects a future and an I32 timeout", at: location)
                 }
-                let bounded = loweredArgs[0].type
+                /// 与 `wait` 同一条翻译：句柄进、`Result` 出。沿用实参类型会把 Future 当成站点类型，
+                /// 而三槽装配要的是 Result。
+                let bounded = loweredArgs[0].type.joinedResultType ?? loweredArgs[0].type
                 return LoweredExpr(
                     node: .call(
                         function: functionName,
@@ -4706,9 +4791,14 @@ public enum IRLowerer {
             let irCases = try lowerResultCases(cases, okType: okType, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         default:
-            // Bare scrutinee — neither Optional nor enum (a direct subscript read yields a plain value). Enum-case arms
-            // (`some` / `none`) never match a bare value, so they fall through silently; literal arms (`case 1:`) do
-            // compare by value and dispatch, with the operand riding along as `IRMatchLiteral` instead of pattern text.
+            // Bare scrutinee — neither Optional nor enum (a direct subscript read yields a plain value). Literal arms
+            // (`case 1:`) compare by value and dispatch; an enum-case arm cannot: the name belongs to no enum the
+            // scrutinee has, so the reference rejects it here rather than letting it become an arm that never runs.
+            for matchCase in cases {
+                if case .enumCase(let name) = matchCase.pattern {
+                    throw SemanticError.unknownMatchCase(caseName: name, location: matchCase.location)
+                }
+            }
             var irCases: [IRMatchCase] = []
             for matchCase in cases {
                 let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
@@ -5145,9 +5235,9 @@ public enum IRLowerer {
 
     // MARK: - Array literals (G2)
 
-    /// Lower an array literal. The checker does not infer collection literal types, so the element type comes
-    /// from the lowered elements, which must be homogeneous. An expected `.array(element:)` context (annotation
-    /// or enclosing literal) drives empty-literal and integer-literal adoption.
+    /// Lower an array literal. The checker infers `Array<T>` for the static side; here the element type comes
+    /// from the lowered elements, because that is what the IR stores, and every element must agree. An expected
+    /// `.array(element:)` context drives empty-literal and integer-literal adoption.
     private static func lowerArrayLiteral(
         _ elements: [Expression],
         expected: IRType?,
@@ -5276,27 +5366,19 @@ public enum IRLowerer {
         return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
     }
 
-    /// Slice set: exact match only, plus one exception — `Char` widens into `String`, a declared rule the checker
-    /// admits and both share an ABI for (`i8*`), so no coercion is emitted; narrowing is not admitted here.
-    /// Tuples ignore component names: LLVM's spelling has none, and the executor stamps the declared labels on.
+    /// Slice set: exact match only, plus `Char → String` (shared ABI, no coercion); the rule lives on
+    /// `IRType.isAssignable(to:)` so the validator judges value slots by the same ruler. Types in the message
+    /// come from `describe()`: `IRType` has no custom description, so `"\(type)"` would leak `Set([0])`.
     private static func requireAssignable(_ from: IRType, to: IRType, at location: SourceLocation) throws {
-        guard labelInsensitiveEqual(from, to) || (from == .char && to == .string) else {
-            throw unsupported("type mismatch: \(from) is not \(to)", at: location)
+        guard from.isAssignable(to: to) else {
+            throw IRLoweringError(
+                message: "\(from.describe()) is not assignable to \(to.describe())",
+                location: location,
+                code: typeMismatchCode,
+                expected: to.describe(),
+                got: from.describe()
+            )
         }
-    }
-
-    /// `==` everywhere except inside a tuple, where the label dimension is
-    /// dropped and the element types still have to match one by one (nesting
-    /// included).
-    private static func labelInsensitiveEqual(_ from: IRType, _ to: IRType) -> Bool {
-        if case .tuple(_, let fromFields) = from, case .tuple(_, let toFields) = to {
-            guard fromFields.count == toFields.count else { return false }
-            for (a, b) in zip(fromFields, toFields) where !labelInsensitiveEqual(a, b) {
-                return false
-            }
-            return true
-        }
-        return from == to
     }
 
     /// The top-level name a declaration binds, for the import merge's
@@ -5329,6 +5411,10 @@ public enum IRLowerer {
     private static func unsupported(_ message: String, at location: SourceLocation) -> IRLoweringError {
         IRLoweringError(message: message, location: location)
     }
+
+    /// 赋值位置的类型不匹配：程序写错了，不是「编译器还没做」。与 E6-004 分桶，CLI 才不会把
+    /// 「该改程序」读成「等它做完」；模板按 `{expected}` / `{got}` 两槽填，故构造时两值都要给。
+    private static let typeMismatchCode = "\(DiagnosticDomain.irgen.rawValue)-005"
 
     /// 默认实例相关的用户错误（不是「还没做」）。与「不支持的特性」那条码分开是刻意的 —— 后者意思是「语言
     /// 有了、编译器还没做」，这里说的是「程序写错了」；混在一个码里，CLI 上就分不开「该改程序」与「等它做完」。
@@ -5831,6 +5917,10 @@ private struct FunctionContext {
     /// `=>` 体里时，闭包体自己没有可让出的任务，`await` 写在那里兑现不了（帧栈是一个任务一个，穿透闭包挂起
     /// 会打破这个前提）。故每个体各判各的，闭包体用自己的 `isAsync` 覆盖。
     var isAsync: Bool = false
+
+    /// 本体的声明是 `=> ()`（异步且无载荷）。`returnType` 已被占位成 `Result<i32>`，
+    /// 单看它分不出「真返回 i32」与「void 占位」⇒ 裸 `return` 的合法性只能靠这一位。
+    var isAsyncVoid: Bool = false
 
     /// 本次语句降载里唯一被允许出现可让出 `await` 的位置（`nil` = 这条语句不允许）。用位置而非布尔标志：
     /// 标志要么在表达式入口一次性消费（`try` 包装位会被误伤），要么得改遍每个表达式分支才能正确传播（漏

@@ -22,6 +22,7 @@ extension PiniBackend {
 }
 
 /// 打通不了的那一处：节点名 · 所属族 · 一句为什么。能力表是声明，本类型是声明的执行面。
+/// 所属族取契约里该节点所在的小节（§2.x 或 §3），供读者翻回节点表；缺的是哪种能力写在 reason 里。
 public struct BackendError: Error, Equatable, CustomStringConvertible, LocalizedError {
     public let node: String
     public let family: BackendCapabilities.Family

@@ -11,20 +11,7 @@ import PiniSyntax
 /// 试点通道的三条判据：清单正好是声明的那 26 条、声明支持的族真能发射、声明之外的节点按族拒绝。
 /// 判据盯的是「声明与实现不漂移」，不是覆盖率 —— 覆盖率由能力矩阵那张表说话。
 @Suite("试点后端 embedded_min")
-struct EmbeddedMinBackendTests: Sendable {
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
+struct EmbeddedMinBackendTests: Sendable, PiniSourceLowering {
 
     private func listing(_ source: String) throws -> String {
         try EmbeddedMinBackend().emit(module: try lowered(source))

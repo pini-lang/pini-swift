@@ -62,8 +62,8 @@ extension TypeAnnotation {
                 && pa.count == pb.count
                 && zip(pa, pb).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
         case (.function(let ap, let ar, _, _, _), .function(let bp, let br, _, _, _)):
-            // 第 4 个关联值（取用下标集合）刻意用 `_` 接住、不参与比较：取用位是「声明 ↔ 调用」的配对信息，
-            // 不是类型恒等的一部分。IR 面同口径落在 `IRLowerer.labelInsensitiveEqual` 的 `.function` 分支，两处必须一致。
+            // 第 4 个关联值（取用下标集合）刻意用 `_` 接住、不参与比较：它标的是「哪个参数位由给定块
+            // 填」，属于函数的调用约定而非类型恒等。IR 面按同一口径比（isLabelInsensitivelyEqual）。
             return ap.count == bp.count
                 && zip(ap, bp).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
                 && ar.count == br.count

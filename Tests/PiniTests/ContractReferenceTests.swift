@@ -36,9 +36,8 @@ struct ContractReferenceTests: Sendable {
         /// 意图：观测通道有形状不等于有区分力。`await`（承诺让出）与 `wait`（承诺占用）在同一个体上
         /// 跑，读数必须不同；相同则通道只是打了一行字，「可观测差异」那条判据就成了空话。
         /// 负控程序刻意内联：它最小到只剩「有任务、没 `await`」，落进语料面只会多一份要维护的文件。
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
-        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+        let cli = PiniTestEnvironment.cliPath() ?? ""
+        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
             withKnownIssue("未提供 \(missing) ⇒ 让出读数本次未取（跳过 +1）") {
                 Issue.record("让出读数未取：本批的 L1 判据本次没有跑")
@@ -95,8 +94,7 @@ struct ContractReferenceTests: Sendable {
         /// 意图：解释器后端有与发射腿同形的让出读数 —— 同一闸门、同一行、同样打到 stderr，形态一致两份读数才可比；
         /// 挂点不同（对侧进程退出钩子，本后端运行入口返回）。判据三档、一律逐字节比：有让出 ⇒ `1`；
         /// 有派发无 `await` ⇒ `0`（证明读数有区分力）；闸门未置位 ⇒ 零输出（不许污染 stderr）。
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
+        let cli = PiniTestEnvironment.cliPath() ?? ""
         guard !cli.isEmpty else {
             withKnownIssue("未提供 PINI_CLI_BIN ⇒ 解释器后端读数本次未取（跳过 +1）") {
                 Issue.record("解释器后端读数未取：这一条判据本次没有跑")
@@ -137,8 +135,7 @@ struct ContractReferenceTests: Sendable {
         /// 意图：续跑靠入口 `switch` 直接跳回让出点那一块 ⇒ 只有体那一层的语句根部能当让出点。
         /// 嵌在 `if` / `case` / 循环体里的 `await` 若照旧发射成阻塞等待，程序照样跑出结果，只是让出承诺打了折。
         /// 故钉「响亮拒绝」而非「能编译」：非零退出 + 降载层诊断码 `E6-010` —— 码只有诊断产生，abort 不产生。
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
+        let cli = PiniTestEnvironment.cliPath() ?? ""
         guard !cli.isEmpty else {
             withKnownIssue("未提供 PINI_CLI_BIN ⇒ 嵌套位置拒绝本次未验（跳过 +1）") {
                 Issue.record("嵌套位置拒绝未验：本段的边界判据本次没有跑")
@@ -225,9 +222,8 @@ struct ContractReferenceTests: Sendable {
     private func assertYieldFormYieldsOnce(
         _ program: String, expecting expected: String, label: String
     ) throws {
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
-        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+        let cli = PiniTestEnvironment.cliPath() ?? ""
+        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
             withKnownIssue("未提供 \(missing) ⇒ \(label) 的让出读数本次未取（跳过 +1）") {
                 Issue.record("\(label) 的让出读数未取：本段的形态判据本次没有跑")
@@ -367,11 +363,10 @@ struct ContractReferenceTests: Sendable {
             yields == Self.expectedYields,
             "解释器后端的让出读数与手写期望（\(Self.expectedYields)）不符：\(fixture) ⇒ \(yields)")
 
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
+        let cli = PiniTestEnvironment.cliPath() ?? ""
         // 两条前置缺任一都算「LLVM 后端未参与」：既要找得到命令行，又要找得到 lli。后端一零环境依赖、
         // 已在上方判完 ⇒ 此处跳过只抹掉 LLVM 那一维。跳过要可见：静默通过会把「只有一腿在守」读成守住了。
-        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
             withKnownIssue("未提供 \(missing) ⇒ LLVM 后端的输出与让出两维本次未验（跳过 +1）") {
                 Issue.record("LLVM 后端未参与：这一格本次只有解释器后端在守")
@@ -476,9 +471,8 @@ struct ContractReferenceTests: Sendable {
         /// 本格不看让出读数（语料零处 `await`，那维恒 `0` 是空维），也不只比退出码：输出才是判据。
         let expected = "1\n0\n"
 
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
-        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+        let cli = PiniTestEnvironment.cliPath() ?? ""
+        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
             withKnownIssue("未提供 \(missing) ⇒ 给定实例取用这一格本批未验（跳过 +1）") {
                 Issue.record("给定实例取用：这一格本次没有 LLVM 后端在守")
@@ -628,9 +622,8 @@ struct ContractReferenceTests: Sendable {
     private func assertBothLegsMatch(
         _ program: String, expecting expected: [String], label: String
     ) throws -> String {
-        let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
-        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+        let cli = PiniTestEnvironment.cliPath() ?? ""
+        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
             withKnownIssue("未提供 \(missing) ⇒ \(label) 各后端本次未验（跳过 +1）") {
                 Issue.record("\(label)：这一格本次没有后端在守")

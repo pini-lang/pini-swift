@@ -9,30 +9,9 @@ import PiniSyntax
 /// `Result` 型 scrutinee 的 `match` 分派判据：`case ok(v)` 的绑定取载荷类型（窄化），而不是保留 scrutinee 类型。
 /// `err` 侧取 `try-else` 已确立的类型擦除错误字 —— `Result` 的 IR 类型只带 ok 侧字段，没有可窄化的错误类型。
 /// 故 `err` 绑定就是一个字，读消息须经 `pini.err.message`。分派在降载层完成，与执行后端无关；本件只覆盖解释器臂。
-struct ResultNarrowingTests: Sendable {
+struct ResultNarrowingTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 常量折叠 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {

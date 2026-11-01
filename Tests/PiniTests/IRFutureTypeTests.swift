@@ -9,7 +9,7 @@ import PiniSyntax
 /// 「该派发到线程的调用」与「该直接调用的调用」。改动落在类型上，故判据也钉类型，不钉运行输出。
 /// 五条里两条是驳回性的，守「这次分叉不许越界」：体协议那一侧不能被一起改掉，结算翻译也不许臆造结果。
 @Suite("IR 的句柄类型")
-struct IRFutureTypeTests: Sendable {
+struct IRFutureTypeTests: Sendable, PiniSourceLowering {
 
     /// 语料刻意**只用一个维度**：一个异步函数、一个同步函数、两条等待。
     /// 同步那一条是阳性对照 —— 它证明分叉是**只在异步上**发生的，不是「所有调用都变了」。
@@ -29,25 +29,6 @@ struct IRFutureTypeTests: Sendable {
         print(s)
         return
     """#
-
-    /// 每个测试件各持一份（本仓惯例）：语料内联，不落夹具文件。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        return (module, checker)
-    }
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     private func function(_ name: String, in module: IRModule) throws -> IRFunction {
         try #require(

@@ -168,7 +168,7 @@ try return break continue
 self own defer import export
 nil capture await wait
 unsafe test foreign detach
-scope pass
+scope pass using
 ```
 
 共 34 个。
@@ -176,6 +176,9 @@ scope pass
 **反引号转义**：关键字可用反引号包裹作标识符。
 
 **`scope`**：保留但不再使用。
+
+**`using`**：参数位前缀，标该参数由给定块的默认实例填充，调用方可省略。只在有 Pini 调用方的
+声明位合法 —— `main`、`|test`、`|foreign`、特征抽象签名均拒绝，那里没有调用点可插默认实例。
 
 ### 2.7 运算符与定界符 `[Provisional]`
 
@@ -346,7 +349,7 @@ false
 
 **消歧锚点**：当前以「是否出现在行首」为**唯一**规则。该锚点**已知脆弱**——同一记号靠位置分派，位置判断一错则整类声明走岔；本版本固定该法，未来若换算法属破坏性变更。
 
-四类块声明的字段、扩展、组合与初始化规则见 §3.3–§3.5、§4.3–§4.6；本节只给分派形式（行首记号 → 声明类型），语义在那里。
+块声明的字段、扩展、组合与初始化规则见 §3.3–§3.5、§4.3–§4.6、§4.11；本节只给分派形式（行首记号 → 声明类型），语义在那里。
 
 ---
 
@@ -839,6 +842,7 @@ x: I32 = 0
 | `{名称}` | 对象块（糖） |
 | `[名称]` | 枚举块 |
 | `[名称\|object]` | 对象块 |
+| `[名称\|given]` | 给定块（字段即默认实例，供 `using` 参数取用，见 §4.11） |
 | `<名称>` | 特征块 |
 | `((名称))` | 结构扩展块 |
 | `{{名称}}` | 对象扩展块 |
@@ -1092,6 +1096,18 @@ y: I32 = 0
     ...
 ```
 
+**取用参数**：
+
+```
+应用(using 配置: 配置块,) -> I32:
+    return 配置.值
+```
+
+参数前写 `using`，标该参数由 `[配置块|given]` 的默认实例填充（给定块见 §4.11），调用方可省略；
+显式给实参时不触默认实例。只在有 Pini 调用方的声明位合法 —— `main`、`|test`、`|foreign`、特征抽象
+签名一律拒绝，那里没有调用点可插默认实例。取用位写不进类型标注，也不参与类型等价，但随函数值保留：
+写标注不会让它失去默认来源。
+
 **泛型函数**：
 
 ```
@@ -1162,6 +1178,59 @@ _周期: I8 = 60
 ```
 
 `_周期` 为 private，仅类型内部可见。
+
+### 4.11 给定声明 `[Experimental]`
+
+**声明**：
+
+```
+[配置|given]
+    名称: String = "默认"
+    重试: I32 = 3
+```
+
+方括号头写 `名称|given`。体内**每个字段必须带初值** —— 各字段初值合起来就是该类型的默认实例，
+缺任一初值即拒绝：判据落在降载期、对每个给定块报，不看它是否被取用。
+
+**体内不许写方法**：数据与逻辑分离，方法写通用扩展块（`[[配置]]`），与对象体同规。
+
+**取用**：
+
+```
+取名|func(using 配: 配置,) -> (String,):
+    return 配.名称
+```
+
+`using` 形参的实参可由编译器在调用点插入，插入的就是默认实例；语法与位置限定见 §4.8。
+形参类型必须是给定块 —— 换成 `I32` 这类无默认实例的类型，省略式调用即被拒。
+
+**物化时机**：
+
+- 惰性：从未被取用的给定块，字段初值永不求值
+- 恰一次：无论几个调用点取用同一类型，默认实例只物化一次
+- 显式自备实例（`配置()`）时不插取用点，只物化自备的那一份
+
+**环检测**：字段初值要求物化它自己所在的块时，物化会无限递归。`pini check` 对这类程序发一条
+`E7-003` 警告，退出码仍为 0：
+
+```
+[甲块|given]
+    值: I32 = 读甲()
+
+读甲|func(using 甲: 甲块,) -> (I32,):
+    return 甲.值
+```
+
+上面这段在 `pini check` 下打印「给定块物化环：甲块 → 甲块」，`pini run` 依旧会崩。射程只到
+直接取用 —— 字段初值经普通函数绕回来的环不报。
+
+注意 —— 环不阻断：语言允许写环，工具只负责把位置指出来。
+
+**类型名不进值位**：裸写 `配置` 当值（作实参、作接收者）被拒 —— 默认实例只能经 `using` 取用，
+类型名本身不是值。显式构造 `配置()` 是合法的。
+
+**泛型给定块**：带类型参数的给定块按 `using` 形参用到的实参类型各特化一份；特化的唯一入口就是
+那个形参的类型标注。
 
 ---
 
@@ -3809,7 +3878,7 @@ KEYWORD      ::= 'var' | 'let' | 'func' | 'enum' | 'object'
                | 'self' | 'own' | 'defer' | 'import' | 'export'
                | 'nil' | 'capture' | 'await' | 'wait'
                | 'unsafe' | 'test' | 'foreign' | 'detach'
-               | 'scope' | 'pass';
+               | 'scope' | 'pass' | 'using';
 ```
 
 共 34 个。
@@ -3869,7 +3938,7 @@ COMMENT ::= ';' { (* 除换行外任意字符 *) }
 module          ::= { NEWLINE } { top-level-decl NEWLINE } EOF;
 
 top-level-decl  ::= import-decl | export-decl
-                  | struct-decl | object-decl | object-decl-sugar | enum-decl
+                  | struct-decl | object-decl | object-decl-sugar | enum-decl | given-decl
                   | bare-func-decl | trait-decl | extension-decl | foreign-decl;
 
 import-decl     ::= '[' IDENT '|' 'import' ']' NEWLINE { import-item };
@@ -3886,6 +3955,7 @@ struct-decl     ::= '(' IDENT ['<' generic-params '>'] ')' NEWLINE struct-body;
 
 object-decl     ::= '[' IDENT ['<' generic-params '>'] ['|' 'object'] ']' type-body;
 enum-decl       ::= '[' IDENT ['<' generic-params '>'] ['|' 'enum'] ']' enum-body;
+given-decl      ::= '[' IDENT ['<' generic-params '>'] '|' 'given' ']' type-body;
 
 object-decl-sugar ::= '{' IDENT '}' type-body;
 
@@ -3925,8 +3995,8 @@ func-signature  ::= ['<' generic-params '>'] '(' [param {',' param} [',']] ')'
                     [('->' | '=>') '(' [ret-item {',' ret-item} [',']] ')']
                     [':' func-body];
 
-param           ::= IDENT [':' type-annotation]
-                  | IDENT '=' expression;
+param           ::= ['using'] IDENT [':' type-annotation]
+                  | ['using'] IDENT '=' expression;
 
 ret-item        ::= [IDENT ':'] type-annotation;
 

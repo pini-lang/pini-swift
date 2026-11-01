@@ -3,13 +3,12 @@
 > 本目录是「示例即文档」的落地处：每个 `.pini` 文件演示一个（或一组紧密相关的）语言构造，
 > 且**必须真实可运行、真实触发它所声明的特性**（不得只 `print("X 运行成功")`）。
 >
-> 自动化护栏（**要求在场，载体重建中**）：
-> - **合规门**：全部示例必须零错误通过 `check`（解析+语义+类型）。
-> - **黄金输出门**：精选子集断言 `run` 输出 == 黄金输出，并守卫「占位 print」死灰复燃。
->
->  注意  **这两道门原先的测试载体已在 2026-09-18 随测试面整体删除**，正在按新的**内联 source** 口径重建。
-> 在重建完成前，**上列要求没有机械执行者** —— 新增 / 改动示例时请手工跑一遍，不要假定护栏还在。
-> 重建后本节应改为指向新载体（不要引用已消失的文件名）。
+> 自动化护栏（`tools/examples-gate.py`，CI 与本地同一条命令）：
+> - **合规门**：全部示例零错误通过 `check`（解析+语义+类型）；三个包按包级 `check`。
+> - **运行门**：全部顶层示例经 `run` 与 `run-llvm` 跑通，退出码为 0、不超时。
+> - **黄金输出门**：`run` 的 stdout 与 `examples/golden/<示例>.out` 逐字节相同；
+>   无法逐字节比对的示例登记在 `examples/golden/EXEMPT.tsv`，其余示例缺期望文件即红。
+> - 已知失败登记在 `examples/gate-baseline.tsv`，只许缩小：某行变绿时门禁会红，提示删掉它。
 
 ## 命名约定
 
@@ -39,9 +38,9 @@
 | `comments.pini` | `;` 行注释 | `Pini` | Stable |
 | `lexical.pini` | 词法补全（数值进制 / 科学计数 / 字符串转义 / 插值 `\(...)`） | `255 / 10 / 15 / 1500` / 转义 / 插值 | Provisional |
 | `control-if.pini` | `if` / `elif` / `else` | `大于5` | Stable |
-| `control-while.pini` | `while` + `break`/`continue`/`scope 块标签` | `0 1 2` / `1 3 5` / `0 1` | Stable |
+| `control-while.pini` | `while` + `break`/`continue`/`标签\|while` 定向跳出 | `0 1 2` / `1 3 5` / `0 1` | Stable |
 | `step.pini` | `while step` 步进块（每轮后执行 / `break` 跳过 / `continue` 仍触发） | `0 step 1 step 2 step` / `0 步进块 1 步进块 2` | Provisional |
-| `for.pini` | `for-in` 迭代（数组/字典/集合 + `_` 占位 + `step:` + `scope 块标签` + 嵌套集合，G36） | `6 / 55 / 10 / 3 / 9 / 3 / 10` | Provisional |
+| `for.pini` | `for-in` 迭代（数组/字典/集合 + `_` 占位 + `step:` + `标签\|for` 定向跳出 + 嵌套集合，G36） | `6 / 55 / 10 / 3 / 9 / 3 / 10` | Provisional |
 | `compound-assign.pini` | 复合赋值 `+= -= *= /= %=` | `15 / 12 / 24 / 6 / 2 / 8 / 9 / 10 / 40 / 20` | Stable |
 | `operators.pini` | 算术 / 比较运算符 | `30 / 10 / 200 / 2` | Stable |
 | `defer.pini` | `defer` 延迟执行（LIFO） | `bodyfirstmiddlelast` / `blockinnerouter` | Stable |
@@ -62,12 +61,12 @@
 | `collections.pini` | 数组 / 字典 / 集合、下标、`len` | `[1, 2, 3, 4, 5]` / `{Alice: 30, ...}` | Stable |
 | `array-basic.pini` | 数组基础（构造 / 下标读 / 下标写 / 复合写 `a[i]+=k`） | `20 3 world 3 true 3 b 10 7` | Stable |
 | `slice.pini` | 切片 `a[i:j]` / `a[i:]` / `a[:j]` / `a[:]`（半开区间 / 开放边界 / 负索引 / 越界夹紧，G48） | `[20, 30]` … `none` | Provisional |
-| `multidim.pini` | 多维数组（下标读返回 `Optional<T>`、越界 `none`；强制解包 `!` 须处 unsafe 上下文） | 见文件 | Provisional |
+| `multidim.pini` | 多维数组（`.get` 取 `Optional` + `match` 解构、嵌套下标读写、`unsafe` 消耗点） | 见文件 | Provisional |
 | `cow.pini` | 集合 COW 写时复制值语义（数组 / 字典 / 集合 / 嵌套写） | `[1, 2, 3] [99, 2, 3] {a: 1} {a: 9}` | Provisional |
 | `dict-set.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
 | `stdlib.pini` | 标准库 字符串方法 + 数学函数 | `HELLO, WORLD` / `42 / 3 / 9 / 5.0` | Stable |
 | `access.pini` | 字段访问 vs 方法访问 | `秒表 / 60 / 60` | Stable |
-| `try.pini` | 错误处理 `try`/`except`（返回元组） | `读取失败` | Stable |
+| `try.pini` | 错误处理 `try`-`else`（`Result` 显式传播） | `读取失败` | Stable |
 | `tuple.pini` | 元组 多返回值分组与整体传参 | `[3, 2]` | Provisional |
 | `recursion.pini` | 递归（阶乘 / 斐波那契） | `120 / 55` | Stable |
 | `optional.pini` | `Optional.some`/`none`（裸 `none` 字面量）+ `match` 解构 | `42 / none` | Experimental |

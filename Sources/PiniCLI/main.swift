@@ -815,25 +815,84 @@ func runModCommand(_ rest: [String]) {
     }
 }
 
+/// 警告的中文消息。CLI 的三个出口共用这一份：switch 分三处写，改文案时必有漏网。
+func semanticWarningMessage(_ warning: SemanticWarning) -> String {
+    switch warning {
+    case .implicitAliasNameMismatch(let alias, let target, _):
+        return "隐式别名 '\(alias)' 与目标模块名 '\(target)' 不一致（仅提醒）"
+    case .unusedVariable(let name, _):
+        return "未使用的变量 '\(name)'"
+    case .givenCycle:
+        return "给定块物化环：" + (warning.cyclePathText ?? "")
+    }
+}
+
+/// 一条警告的完整渲染：一个出口写 stderr，另一个并进 check 结果，源码片段两处都要。
+func renderedWarning(_ warning: SemanticWarning, source: String) -> String {
+    ErrorFormatter.format(
+        errorType: "语义警告", message: semanticWarningMessage(warning),
+        location: warning.diagnosticLocation, source: source,
+        code: warning.diagnosticCode, severity: .warning, suggestion: warning.suggestion)
+}
+
 // 输出语义警告（E7 段，弱警告不阻断 run/check，exit 0）。走 stderr，不污染 stdout——
 // golden 测试按 stdout 对账。
 func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
-    for w in analyzer.warnings {
-        let msg: String
-        switch w {
-        case .implicitAliasNameMismatch(let alias, let target, _):
-            msg = "隐式别名 '\(alias)' 与目标模块名 '\(target)' 不一致（仅提醒）"
-        case .unusedVariable(let name, _):
-            msg = "未使用的变量 '\(name)'"
-        }
-        FileHandle.standardError.write(
-            Data(
-                (ErrorFormatter.format(
-                    errorType: "语义警告", message: msg,
-                    location: w.diagnosticLocation, source: "",
-                    code: w.diagnosticCode, severity: .warning,
-                    suggestion: w.suggestion) + "\n").utf8))
+    for w in analyzer.warnings { emitSemanticWarning(w) }
+}
+
+func emitSemanticWarning(_ warning: SemanticWarning) {
+    FileHandle.standardError.write(Data((renderedWarning(warning, source: sourceFor(warning)) + "\n").utf8))
+}
+
+/// 诊断所在文件的源码。模块检查没有单一 source，但位置自带文件名 —— 回读一次比传一份全文省事。
+/// 读不到（预置声明、文件已不在）就返回空串，渲染退回无片段的形态。
+func sourceFor(_ error: Error) -> String {
+    guard let diagnostic = error as? any DiagnosticProviding else { return "" }
+    return (try? readFile(diagnostic.diagnosticLocation.fileName)) ?? ""
+}
+
+/// 给定块声明的位置表：键是块名。环警告要指到声明处，而边表里只有名字。
+func givenBlockLocations(in declarations: [TopLevelDecl]) -> [String: SourceLocation] {
+    var locations: [String: SourceLocation] = [:]
+    for decl in declarations {
+        if case .givenDecl(let given) = decl { locations[given.name] = given.location }
     }
+    return locations
+}
+
+/// 环 → 警告：位置取环起点（旋转后的最小名字）的声明处。预置块不在声明表里，取不到位置就跳过。
+func givenCycleWarnings(
+    references: [String: [String]], declarations: [TopLevelDecl]
+) -> [SemanticWarning] {
+    let locations = givenBlockLocations(in: declarations)
+    return GivenCycleDetector.cycles(in: references).compactMap { path in
+        guard let start = path.first, let location = locations[start] else { return nil }
+        return .givenCycle(path: path, location: location)
+    }
+}
+
+/// 空降载一次，取边表找环。降载抛错就静默跳过 —— check 不看降载层错误，显示它们会收窄通过面。
+/// 代价明写：含其他降载错误的文件拿不到环检测。
+func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarning] {
+    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+    guard
+        let ir = try? IRLowerer.lower(
+            module: module, typeInference: checker.typeInference, requiresMain: false)
+    else { return [] }
+    return givenCycleWarnings(references: ir.givenReferences, declarations: module.declarations)
+}
+
+/// 整包版本：环只可能在同一模块内出现，位置取各文件声明的并集（import 进来的外部声明不参与）。
+func givenCycleWarnings(package: Package, checker: TypeChecker) -> [SemanticWarning] {
+    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+    guard
+        let ir = try? IRLowerer.lower(
+            package: package, typeInference: checker.typeInference, requiresMain: false)
+    else { return [] }
+    return givenCycleWarnings(
+        references: ir.givenReferences,
+        declarations: package.fileUnits.flatMap { $0.module.declarations })
 }
 
 // 程序基准：相对给定的文件/目录路径求绝对基准——目录取自身，文件取所在目录。
@@ -1111,30 +1170,29 @@ private func startDebugger(run: DebugRun, sources: [String: String], primaryName
     }
 }
 
-/// 单文件收集式 check：返回诊断数组（空=通过），**不在此处退出**——
+/// 单文件 check 的结果：诊断行按输出顺序排好，另带一位「有没有阻断性诊断」。
+/// 警告与错误混在一个数组会逼调用方按「非空」定退出码 ⇒ 一条未使用变量就让 check 返回 1。
+/// 退出码只认这一位；输出顺序与文案不变。
+struct FileCheckResult {
+    var diagnostics: [String] = []
+    var hasBlockingDiagnostics = false
+}
+
+/// 单文件收集式 check：返回诊断与阻断位，**不在此处退出**——
 /// 供目录逐文件聚合场景复用（见 `runCheckPath`）。
-func checkSingleFileDiagnostics(source: String, fileName: String) -> [String] {
+func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckResult {
     let module = parseOrReport(source: source, fileName: fileName)
 
     let analyzer = SemanticAnalyzer()
     let semanticErrors = analyzer.analyzeCollecting(module: module)
-    var diagnostics: [String] = semanticErrors.map {
+    var result = FileCheckResult()
+    result.diagnostics = semanticErrors.map {
         ErrorFormatter.formatSemanticError($0, source: source)
     }
+    result.hasBlockingDiagnostics = !semanticErrors.isEmpty
     // 语义警告随单文件 check 一并输出（E7 段，弱警告不阻断）。
     for w in analyzer.warnings {
-        let wmsg: String
-        switch w {
-        case .implicitAliasNameMismatch(let alias, let target, _):
-            wmsg = "隐式别名 '" + alias + "' 与目标模块名 '" + target + "' 不一致（仅提醒）"
-        case .unusedVariable(let name, _):
-            wmsg = "未使用的变量 '" + name + "'"
-        }
-        diagnostics.append(
-            ErrorFormatter.format(
-                errorType: "语义警告", message: wmsg,
-                location: w.diagnosticLocation, source: source,
-                code: w.diagnosticCode, severity: .warning, suggestion: w.suggestion))
+        result.diagnostics.append(renderedWarning(w, source: source))
     }
 
     // 类型检查阶段（P2-4 收尾）：收集模式一次性同报多错；
@@ -1142,21 +1200,26 @@ func checkSingleFileDiagnostics(source: String, fileName: String) -> [String] {
     if semanticErrors.isEmpty {
         let checker = TypeChecker()
         let typeErrors = checker.checkCollecting(module: module)
-        diagnostics += typeErrors.map {
+        result.diagnostics += typeErrors.map {
             ErrorFormatter.formatTypeError($0, source: source)
         }
+        if typeErrors.isEmpty {
+            for w in givenCycleWarnings(module: module, checker: checker) {
+                result.diagnostics.append(renderedWarning(w, source: source))
+            }
+        } else {
+            result.hasBlockingDiagnostics = true
+        }
     }
-    return diagnostics
+    return result
 }
 
 func runCheckCommand(source: String, fileName: String) throws {
-    let diagnostics = checkSingleFileDiagnostics(source: source, fileName: fileName)
-    if !diagnostics.isEmpty {
-        for d in diagnostics {
-            FileHandle.standardError.write(Data((d + "\n").utf8))
-        }
-        exit(1)
+    let result = checkSingleFileDiagnostics(source: source, fileName: fileName)
+    for d in result.diagnostics {
+        FileHandle.standardError.write(Data((d + "\n").utf8))
     }
+    if result.hasBlockingDiagnostics { exit(1) }
     print("检查通过：\(fileName)")
 }
 
@@ -1323,11 +1386,11 @@ private func gateAndRunTests(
 /// G41 原单文件语义（模块外单文件向后兼容路径）。
 private func runSingleFileTests(path: String, channel: TestChannel = .interpreter) throws {
     let source = try readFile(path)
-    let diagnostics = checkSingleFileDiagnostics(source: source, fileName: path)
-    if !diagnostics.isEmpty {
-        for d in diagnostics { FileHandle.standardError.write(Data((d + "\n").utf8)) }
-        exit(1)
+    let checkResult = checkSingleFileDiagnostics(source: source, fileName: path)
+    for d in checkResult.diagnostics {
+        FileHandle.standardError.write(Data((d + "\n").utf8))
     }
+    if checkResult.hasBlockingDiagnostics { exit(1) }
     let lexer = Lexer(source: source, fileName: path)
     let tokens = try lexer.tokenize()
     let parser = Parser(tokens: tokens, fileName: path)
@@ -1378,6 +1441,7 @@ func emitAndRunLLVMTests(
 ) throws {
     // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
     //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
+    try IRValidator.check(module)
     let selection: [String]? = fileScope.map { scope in
         module.functions.filter { $0.isTest && scope($0.sourceFile) }.map { $0.name }
     }
@@ -1386,7 +1450,7 @@ func emitAndRunLLVMTests(
     emitter.programBase = programBase
     emitter.testReportHeader = header
     emitter.testSelection = selection
-    let ir = emitter.emit(module: module)
+    let ir = try emitter.emit(module: module)
 
     let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
     let tmpBin = "/tmp/pini_\(UUID().uuidString)"
@@ -1490,6 +1554,9 @@ func runCheckPath(_ path: String) {
             emitSemanticWarnings(analyzer)
             let checker = TypeChecker()
             try checker.check(package: pkg)
+            for warning in givenCycleWarnings(package: pkg, checker: checker) {
+                emitSemanticWarning(warning)
+            }
             print("检查通过（模块 \(pkg.name)，\(pkg.fileUnits.count) 个文件）：\(path)")
         } catch let err as SemanticError {
             handleSemanticError(err); exit(1)
@@ -1526,13 +1593,13 @@ func runCheckPath(_ path: String) {
             continue
         }
         let fileName = (full as NSString).lastPathComponent
-        let diags = checkSingleFileDiagnostics(source: source, fileName: fileName)
-        if !diags.isEmpty {
-            failed.append(fileName)
-            for d in diags {
+        let checkResult = checkSingleFileDiagnostics(source: source, fileName: fileName)
+        if !checkResult.diagnostics.isEmpty {
+            for d in checkResult.diagnostics {
                 FileHandle.standardError.write(Data(("\(fileName): " + d + "\n").utf8))
             }
         }
+        if checkResult.hasBlockingDiagnostics { failed.append(fileName) }
     }
     if !failed.isEmpty { exit(1) }
     print("检查通过（\(files.count) 个独立文件）：\(path)")
@@ -1582,7 +1649,10 @@ private func lowerSingleFile(source: String, fileName: String) throws -> IRModul
     }
     // 开启持久表兜底：codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
+    try IRValidator.check(irModule)
+    return irModule
 }
 
 private func typeCheckThenGenerate(
@@ -1633,6 +1703,7 @@ private func runIRPackageEmit(
     // Same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
+    try IRValidator.check(irModule)
     // 模块基准 = 模块根，与解释器模块路径一致。
     backend.setProgramBase(absoluteProgramBase(moduleRoot))
     let ir = try backend.emit(module: irModule)
@@ -1748,12 +1819,12 @@ func runLLICommand(source: String, fileName: String) throws {
 }
 
 func handleSemanticError(_ error: SemanticError) {
-    // T11（A4）：收敛消息源——check 多文件路径复用 ErrorFormatter（无单一 source，源码行省略）。
-    printError(ErrorFormatter.formatSemanticError(error, source: ""))
+    // T11（A4）：收敛消息源——check 多文件路径复用 ErrorFormatter，源码按诊断位置回读。
+    printError(ErrorFormatter.formatSemanticError(error, source: sourceFor(error)))
 }
 
 func handleTypeError(_ error: TypeError) {
-    printError(ErrorFormatter.formatTypeError(error, source: ""))
+    printError(ErrorFormatter.formatTypeError(error, source: sourceFor(error)))
 }
 
 // MARK: - Error Helpers

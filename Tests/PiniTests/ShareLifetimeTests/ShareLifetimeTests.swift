@@ -18,10 +18,12 @@ struct ShareLifetimeTests: Sendable {
     private func launch(_ arguments: [String]) throws
         -> (status: Int32, stdout: String, stderr: String)
     {
-        let binary = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
+        let binary = PiniTestEnvironment.cliPath() ?? ""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = PiniTestEnvironment.childEnvironment()
+        process.environment = PiniTestEnvironment.childEnvironment()
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -34,17 +36,6 @@ struct ShareLifetimeTests: Sendable {
             String(decoding: outData, as: UTF8.self),
             String(decoding: errData, as: UTF8.self)
         )
-    }
-
-    private func requireCLI(_ needed: [String]) -> Bool {
-        let environment = ProcessInfo.processInfo.environment
-        for key in needed where (environment[key] ?? "").isEmpty {
-            withKnownIssue("未提供 \(key) ⇒ 本批判据本次未取（跳过 +1）") {
-                Issue.record("名义值持有判据未取：\(key) 缺失")
-            }
-            return false
-        }
-        return true
     }
 
     /// 两路对照的公共体：解释器必须跑通，原生必须跑通，且输出逐字节相同。这里走 `compile`（clang / AOT 腿）
@@ -71,19 +62,19 @@ struct ShareLifetimeTests: Sendable {
 
     @Test("枚举载荷占用自己那一份份额：源变量重赋值之后仍可读")
     func enumPayloadKeepsItsShare() throws {
-        guard requireCLI(["PINI_CLI_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         try expectTwoPathsAgree("enum-payload-alias")
     }
 
     @Test("插值串活过产出它的帧（栈被压掉之后仍可读）")
     func interpolatedStringOutlivesItsFrame() throws {
-        guard requireCLI(["PINI_CLI_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         try expectTwoPathsAgree("string-escapes-interp")
     }
 
     @Test("join 结果活过产出它的帧（栈被压掉之后仍可读）")
     func joinedStringOutlivesItsFrame() throws {
-        guard requireCLI(["PINI_CLI_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         try expectTwoPathsAgree("string-escapes-join")
     }
 
@@ -94,7 +85,7 @@ struct ShareLifetimeTests: Sendable {
     /// 补一条产物结构级判据：栈缓冲的交出点必须紧跟 `@bk_str_dup`。非退化锚点：夹具须真走 `alloca i8, i64 4096`。
     @Test("栈上拼串（插值 / join）的产物必须经 @bk_str_dup 交出去")
     func stackBuiltStringsAreCopiedToTheHeap() throws {
-        guard requireCLI(["PINI_CLI_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         let scratch = FileManager.default.temporaryDirectory
             .appendingPathComponent("pini-stack-str-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)

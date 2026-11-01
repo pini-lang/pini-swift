@@ -20,8 +20,8 @@ THREE SIDES
     total-mismatch            the stated total is not the sum of the rows
 
 The doc records a known measuring trap: `@_cdecl` appears twice in prose without
-exporting anything, so counting occurrences gives 98 while the export count is
-96. This script counts `@_cdecl("<name>")` only, which is the documented unit.
+exporting anything, so counting occurrences gives 99 while the export count is
+97. This script counts `@_cdecl("<name>")` only, which is the documented unit.
 
 Usage:
     python3 tools/runtime-abi-check.py [--quiet]

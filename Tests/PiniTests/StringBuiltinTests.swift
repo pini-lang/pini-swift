@@ -126,19 +126,7 @@ struct StringBuiltinTests: Sendable {
     /// 取被测命令行：优先环境变量，其次自寻构建产物。
     /// 两者都取不到 ⇒ 响亮跳过（ 行不通  不静默通过）。
     private func cliPath() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
-        if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv) {
-            return fromEnv
-        }
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().path
-        let candidates = ["/.build/debug/pini", "/.build/out/Products/Debug/pini"]
-            .map { repoRoot + $0 }
-        for candidate in candidates
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
+        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
         withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 命令行两腿本次未取（跳过）") {
             Issue.record("字符串内建的命令行两腿本次没有跑")
         }
@@ -148,7 +136,7 @@ struct StringBuiltinTests: Sendable {
     /// 解析 LLVM 工具链**目录**（`PINI_LLVM_BIN` 是目录，不是可执行文件路径）；
     /// 取不到 ⇒ nil（调用方响亮跳过 `run-llvm` 腿）。
     private func llvmToolchainDir() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_LLVM_BIN"] ?? ""
+        let fromEnv = PiniTestEnvironment.llvmBinDirectory() ?? ""
         if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv + "/lli") {
             return fromEnv
         }

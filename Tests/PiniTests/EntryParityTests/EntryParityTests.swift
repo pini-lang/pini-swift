@@ -43,10 +43,12 @@ struct EntryParityTests: Sendable {
     private func launch(_ arguments: [String]) throws
         -> (status: Int32, stdout: String, stderr: String)
     {
-        let binary = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
+        let binary = PiniTestEnvironment.cliPath() ?? ""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = PiniTestEnvironment.childEnvironment()
+        process.environment = PiniTestEnvironment.childEnvironment()
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -61,19 +63,6 @@ struct EntryParityTests: Sendable {
         )
     }
 
-    /// 缺 `PINI_CLI_BIN` 时**响亮跳过**（同 `ContractReferenceTests` 的既有形态）：
-    /// 记一条已知问题，而不是让用例静默通过 —— 静默通过与「判据跑过了且是绿的」外观相同。
-    private func requireCLI() -> String? {
-        let cli = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
-        guard !cli.isEmpty, FileManager.default.isExecutableFile(atPath: cli) else {
-            withKnownIssue("未提供可执行的 PINI_CLI_BIN ⇒ 入口一致性判据本次未取（跳过 +1）") {
-                Issue.record("入口一致性未取：本批判据本次没有跑")
-            }
-            return nil
-        }
-        return cli
-    }
-
     private func scratchDirectory() throws -> URL {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("pini-entry-parity-" + UUID().uuidString)
@@ -83,7 +72,7 @@ struct EntryParityTests: Sendable {
 
     @Test("闭包捕获未声明：四条入口同判拒绝，且判定码都是 E3-008")
     func undeclaredCaptureRejectedByEveryEntry() throws {
-        guard requireCLI() != nil else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         let scratch = try scratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratch) }
         let fixture = fixtureFile("closure-capture-undeclared")
@@ -98,7 +87,7 @@ struct EntryParityTests: Sendable {
 
     @Test("闭包捕获已声明：四条入口全部放行")
     func declaredCaptureAcceptedByEveryEntry() throws {
-        guard requireCLI() != nil else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         let scratch = try scratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratch) }
         let fixture = fixtureFile("closure-capture-declared")

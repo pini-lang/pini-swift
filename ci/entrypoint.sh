@@ -58,6 +58,10 @@ step "后端义务门禁（警告级）"
 # 读数稳定一段再转硬拦截，好过在门禁上先红一次。
 python3 tools/backend-duty-check.py
 
+step "能力普查门禁"
+# 拒绝所标的族必须等于该节点在契约里的小节：标错就把读者送到不含该节点的那一节。
+python3 tools/capability-census.py --check
+
 step "构建"
 swift build --disable-sandbox
 
@@ -65,7 +69,27 @@ step "能力矩阵门禁"
 # 表由各通道自报（pini backends），检出件与之逐行比对：改了能力声明不改表即红。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/capability-matrix.py
 
+step "示例门禁"
+# 三腿：check / run / run-llvm。已知失败在 examples/gate-baseline.tsv，只许缩小。
+PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py
+
+step "差分探针门禁"
+# 两通道对照：同一份语料在解释器与 LLVM 上必须读出同一串输出。已知缺口在
+# tools/ir-parity-baseline.tsv，只许缩小 —— 某行转绿时这一步会红，提示删掉它。
+# 镜像没有 lli 时明确跳过并说出原因：跳过不等于通过，故这一行必须打出来。
+if [ -n "${PINI_LLVM_BIN:-}" ] || command -v lli >/dev/null 2>&1; then
+    PINI_SWEEP_BIN="$PWD/.build/debug/pini" python3 tools/ir-parity-probe.py \
+        --root examples --baseline tools/ir-parity-baseline.tsv
+else
+    echo "  跳过：镜像里没有 lli（未设 PINI_LLVM_BIN，PATH 里也没有）"
+fi
+
 step "测试"
+# 测试里的命令行与 LLVM 判据从 `PiniTestEnvironment` 取产物（环境变量优先，仓根兜底）。
+# 这里指向本次构建产物，并把「缺工具链即失败」打开：跳过在本地可以容忍，在 CI 不行 ——
+# 否则「全绿」与「这批根本没跑」在读数上长得一样。
+export PINI_CLI_BIN="$PWD/.build/debug/pini"
+export PINI_REQUIRE_TOOLCHAIN=1
 swift test --disable-sandbox
 
 printf '\n=== 全绿 ===\n'

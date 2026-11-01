@@ -1,0 +1,5 @@
+buf =  42
+buf =  100
+x =  7
+len =  5
+hello, FFI

@@ -77,6 +77,8 @@ public final class TypeChecker {
         // load/store 参数用 Any 通配——接受任意 `*T`（元素类型由运行时指针值自描述，静态层不约束）。
         let anyType = TypeAnnotation.simple(name: "Any", location: loc)
         let anyPtr = TypeAnnotation.pointer(element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
+        // `load` 的返回类型按实参的 `*T` 元素在 `TypeInference` 里给出；静态签名只登记参数，
+        // 登记成具体类型会与指针元素脱钩（`*U8` 与 `*I64` 共用一个签名）。
         typeEnv.defineFunction(name: "load", params: [anyType], returns: [])
         typeEnv.defineFunction(name: "store", params: [anyType, anyType], returns: [])
         typeEnv.defineFunction(name: "addressof", params: [anyType], returns: [anyPtr])
@@ -127,7 +129,7 @@ public final class TypeChecker {
 
         /// 内建成员方法签名从 BuiltinRegistry.memberMethods 派生，与运行时 evaluateMember 的表驱动
         /// 派发共用同一张表：未知成员由类型层报 unknownMember，早于运行时的 undefinedVariable。
-        /// 数组字面量推断为 nil，故 Array 成员校验仅在接收者类型可解析时生效。
+        /// 集合字面量按元素推断；空数组取 I32，空字典 / 集合无期望时仍是未知，成员校验只对可解析者生效。
         for m in BuiltinRegistry.memberMethods {
             typeEnv.defineMethod(typeName: m.typeName, methodName: m.name, params: m.params, returns: m.returns)
         }
@@ -183,11 +185,18 @@ public final class TypeChecker {
         )
 
         // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await`/`wait` joinAll([...])` 得 Result<[T], Error>。
-        // 参数登记为裸 `Array`：数组字面量在类型层推断为 nil（见 TypeInference.arrayLiteral），
-        // 元素类型此刻不可知，故此处只锚定「是数组」，元素为 Future 的校验落在运行时。
+        // 形参锚定 `Array<Future<_, _>>`：元素类型由数组字面量按元素推断给出，`_` 只定住
+        // Future 的构造子与元数。写成裸 `Array` 会把推断出的 `Array<Future<...>>` 判成不匹配。
+        let wildcard = TypeAnnotation.simple(name: "_", location: loc)
         typeEnv.defineFunction(
             name: "joinAll",
-            params: [.simple(name: "Array", location: loc)],
+            params: [
+                .generic(
+                    name: "Array",
+                    params: [.generic(name: "Future", params: [wildcard, wildcard], location: loc)],
+                    location: loc
+                )
+            ],
             returns: [
                 .generic(
                     name: "Future",
@@ -203,7 +212,6 @@ public final class TypeChecker {
         // joinWithin（B2-5 / Q5·超时）：(Future<_, _>, I32) → Result<_, Error>。
         // 本身即阻塞 join，故返回 Result 而非 Future；超时归约为 err(CancelError)。
         // 载荷类型此刻不可解（无泛型函数推断），用 `_` 通配位锚定构造子与元数。
-        let wildcard = TypeAnnotation.simple(name: "_", location: loc)
         typeEnv.defineFunction(
             name: "joinWithin",
             params: [
@@ -688,6 +696,54 @@ public final class TypeChecker {
                     ))
             }
         }
+    }
+
+    /// 表达式作为「函数值」时的类型：只识具名函数标识符（`let f = 某函数`）。
+    /// 推断层只查变量表与枚举用例，具名函数不在其中 ⇒ 这里补一次函数表查。
+    /// 形参含未标注的 `_` 时返 nil：通配只在期望侧放行，实参侧的 `_` 无判据可用。
+    private func functionValueType(of expr: Expression, location: SourceLocation) -> TypeAnnotation? {
+        guard case .identifier(let name, _) = expr,
+            let sig = typeEnv.lookupFunction(name: name)
+        else { return nil }
+        let unannotated = sig.params.contains { param in
+            if case .simple(let typeName, _) = param { return typeName == "_" }
+            return false
+        }
+        if unannotated { return nil }
+        return .function(
+            params: sig.params, returns: sig.returns, captured: [],
+            usingIndices: sig.usingParamIndices, location: location
+        )
+    }
+
+    /// 标注给出参数与返回，函数值补上自己的调用约定（哪些参数位由给定块填）。
+    /// 取用位不参与类型等价，但它属于函数本身 —— 写标注不该把它切断：给定块类型在值位
+    /// 无法显式构造，切断后这个变量永远调不动。
+    private func annotationCarryingUsing(
+        _ annotation: TypeAnnotation, from expr: Expression, location: SourceLocation
+    ) -> TypeAnnotation {
+        guard case .function(let params, let returns, let captured, _, let loc) = annotation,
+            let usingIndices = usingIndicesInValue(of: expr, location: location)
+        else { return annotation }
+        return .function(
+            params: params, returns: returns, captured: captured,
+            usingIndices: usingIndices, location: loc
+        )
+    }
+
+    /// 值的取用位：先查变量表（`var h = 取块` 的 h），再查函数表（`取块` 本身）。
+    private func usingIndicesInValue(of expr: Expression, location: SourceLocation) -> Set<Int>? {
+        if let inferred = inference.infer(expression: expr),
+            case .function(_, _, _, let usingIndices, _) = inferred
+        {
+            return usingIndices
+        }
+        if let signature = functionValueType(of: expr, location: location),
+            case .function(_, _, _, let usingIndices, _) = signature
+        {
+            return usingIndices
+        }
+        return nil
     }
 
     private func isAssignable(actual: TypeAnnotation, expected: TypeAnnotation) -> Bool {
@@ -1679,15 +1735,26 @@ public final class TypeChecker {
                                         expected: annot.describe(), got: actual.describe(), location: location
                                     ))
                             }
+                        } else if let actual = functionValueType(of: initExpr, location: location) {
+                            // 具名函数作值：推断层只查变量表与枚举用例，具名函数不在其中 ⇒ 补查函数表。
+                            // 不补则整段比对被跳过，赋值点的类型错误要漂到降载层才报。
+                            if !isAssignable(actual: actual, expected: annot) {
+                                try report(
+                                    TypeError.mismatch(
+                                        expected: annot.describe(), got: actual.describe(), location: location
+                                    ))
+                            }
                         }
                     }
-                    declaredType = annot
+                    declaredType = annotationCarryingUsing(annot, from: initExpr, location: location)
                 } else {
                     let actual = inference.infer(expression: initExpr)
                     if let actual = actual {
                         try noteBareCaseOutcome(initExpr, actual: actual, location: location)
                     }
-                    declaredType = actual ?? .simple(name: "Any", location: location)
+                    declaredType =
+                        actual ?? functionValueType(of: initExpr, location: location)
+                        ?? .simple(name: "Any", location: location)
                 }
             } else {
                 declaredType = annot ?? .simple(name: "Any", location: location)
@@ -1736,8 +1803,8 @@ public final class TypeChecker {
                     try report(TypeError.reassignmentToImmutable(variableName: name, location: location))
                 }
                 if let varType = typeEnv.lookupVariable(name: name) {
-                    // [T] 元素标注（D-β）：字面量右值按声明元素类型逐项校验（推断对数组字面量
-                    // 返 nil，通用比对天然跳过——此处是字面量赋值位的唯一检查通道）
+                    // [T] 元素标注（D-β）：标注位仍逐项校验 —— 推断只给出共同元素类型，
+                    // 混合元素会收敛成 `Array<Any>`，单靠通用比对看不出「哪一项不合标注」。
                     if try refineCollectionLiteral(expr: value, expected: varType, location: location) {
                         // 集合字面量已逐元素校验
                     } else if let valType = inference.infer(expression: value) {
@@ -1946,6 +2013,24 @@ public final class TypeChecker {
             case .identifier(let calleeName, _):
                 // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
                 try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
+                // 指针读：返回类型由实参的 `*T` 元素给出（TypeInference 特判）。这里钉住实参形态，
+                // 让 `load(1)` 在静态层就红，而不是等到降载才报 "expects a *T pointer"。
+                if calleeName == "load", arguments.count == 1,
+                    let argumentType = inference.infer(expression: arguments[0].expression)
+                {
+                    let isPointerOrWildcard: Bool
+                    switch argumentType {
+                    case .pointer: isPointerOrWildcard = true
+                    case .simple(let typeName, _): isPointerOrWildcard = typeName == "Any" || typeName == "_"
+                    default: isPointerOrWildcard = false
+                    }
+                    if !isPointerOrWildcard {
+                        try report(
+                            TypeError.mismatch(
+                                expected: "*T 指针", got: argumentType.describe(), location: location))
+                        return
+                    }
+                }
                 if let sig = typeEnv.lookupFunction(name: calleeName) {
                     // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
                     // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
@@ -2298,6 +2383,8 @@ public final class TypeChecker {
     private func isVoidCallee(_ callee: Expression) -> Bool {
         switch callee {
         case .identifier(let name, _):
+            // `load` 有返回值（元素类型由实参的 `*T` 给出）；静态签名登记为空只为不绑死元素类型。
+            if name == "load" { return false }
             if let sig = typeEnv.lookupFunction(name: name) { return sig.returns.isEmpty }
             if let bound = typeEnv.lookupVariable(name: name),
                 case .function(_, let returns, _, _, _) = bound

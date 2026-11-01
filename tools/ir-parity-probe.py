@@ -640,6 +640,32 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     return "GAP_UNKNOWN", ""
 
 
+def compare_with(path, open_gaps):
+    """基线与本次读数对撞：新缺口红，转绿的旧条目也红（棘轮只许缩小）。
+
+    返回 (已知条目集合, 问题行)。问题行非空即判失败。
+    """
+    known, problems = set(), []
+    if not os.path.isfile(path):
+        return known, ["基线缺失：%s（新增 --baseline 时先落一份）" % path]
+    with open(path, encoding="utf-8-sig") as handle:
+        for number, line in enumerate(handle, 1):
+            body = line.rstrip("\n")
+            if not body.strip() or body.lstrip().startswith("#"):
+                continue
+            cells = body.split("\t")
+            if len(cells) < 2:
+                problems.append("基线第 %d 行字段不足：%r" % (number, body))
+                continue
+            known.add((cells[0].strip(), cells[1].strip()))
+    seen = {(r["fixture"], r["verdict"]) for r in open_gaps}
+    for fixture, verdict in sorted(seen - known):
+        problems.append("新增缺口 %-14s %s" % (verdict, fixture))
+    for fixture, verdict in sorted(known - seen):
+        problems.append("基线已过期（该条转绿或消失，删掉它）%-14s %s" % (verdict, fixture))
+    return known, problems
+
+
 def main():
     global RUN_TIMEOUT, OUT, BIN
     ap = argparse.ArgumentParser()
@@ -650,6 +676,9 @@ def main():
                     help="per-channel wall clock, seconds (default %d)" % RUN_TIMEOUT)
     ap.add_argument("--out", default=OUT,
                     help="per-fixture TSV destination (default %s)" % OUT)
+    ap.add_argument("--baseline", default=None,
+                    help="known-gap TSV: a blocker not listed fails the sweep, "
+                         "and a listed one that turns clean fails it too (shrink-only)")
     ap.add_argument("--scratch-path", default=None,
                     help="where the CLI was built: passed to `swift build "
                          "--show-bin-path` so the probe reads that build, and "
@@ -810,9 +839,18 @@ def main():
                 print("        llvm-ir=%r  interp-ir=%r"
                       % (r["l_out"][:60], r["h_out"][:60]))
     print("\ndetail -> %s" % OUT)
+    status = 1 if left else 0
+    if args.baseline:
+        known, problems = compare_with(args.baseline, blockers + unknown)
+        status = 1 if problems else status
+        print("\n=== baseline: %d known gap(s) ===" % len(known))
+        for line in problems:
+            print("  " + line)
+        if not problems:
+            print("  no new gap, no stale entry")
     # A surviving lli is a tool failure, not a fixture verdict: exit non-zero
     # so a sweep can never be read as clean while a process is still spinning.
-    return 1 if left else 0
+    return status
 
 
 if __name__ == "__main__":

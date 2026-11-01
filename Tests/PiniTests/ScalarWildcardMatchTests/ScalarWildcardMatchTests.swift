@@ -18,10 +18,12 @@ struct ScalarWildcardMatchTests: Sendable {
     private func launch(_ arguments: [String]) throws
         -> (status: Int32, stdout: String, stderr: String)
     {
-        let binary = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
+        let binary = PiniTestEnvironment.cliPath() ?? ""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = PiniTestEnvironment.childEnvironment()
+        process.environment = PiniTestEnvironment.childEnvironment()
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -34,17 +36,6 @@ struct ScalarWildcardMatchTests: Sendable {
             String(decoding: outData, as: UTF8.self),
             String(decoding: errData, as: UTF8.self)
         )
-    }
-
-    private func requireCLI() -> Bool {
-        let environment = ProcessInfo.processInfo.environment
-        for key in ["PINI_CLI_BIN", "PINI_LLVM_BIN"] where (environment[key] ?? "").isEmpty {
-            withKnownIssue("未提供 \(key) ⇒ 本批判据本次未取（跳过 +1）") {
-                Issue.record("裸值通配臂判据未取：\(key) 缺失")
-            }
-            return false
-        }
-        return true
     }
 
     /// 两腿在同一份语料上必须读出同一串输出（各自逐字节）。
@@ -71,7 +62,7 @@ struct ScalarWildcardMatchTests: Sendable {
 
     @Test("裸值 + 只有 case _: ⇒ 该臂执行，函数返回值来自它")
     func wildcardOnlyArmRuns() throws {
-        guard requireCLI() else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
         try expectBothLegs("wildcard-only", expected: "1\n")
     }
 
@@ -79,7 +70,7 @@ struct ScalarWildcardMatchTests: Sendable {
 
     @Test("裸值 + case _: 之后还有语句 ⇒ 控制流停在臂内，不穿透（返回 1 而非 9）")
     func wildcardArmDoesNotFallThrough() throws {
-        guard requireCLI() else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
         try expectBothLegs("wildcard-then-tail", expected: "1\n")
     }
 
@@ -87,7 +78,7 @@ struct ScalarWildcardMatchTests: Sendable {
 
     @Test("裸值 + 字面量臂 + 通配臂 ⇒ 字面量臂仍先命中，通配仍作兜底")
     func literalArmsKeepTheirPrecedence() throws {
-        guard requireCLI() else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
         try expectBothLegs("literal-plus-wildcard", expected: "1\n2\n")
     }
 }

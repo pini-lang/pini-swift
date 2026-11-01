@@ -18,10 +18,12 @@ struct SubscriptFieldStoreTests: Sendable {
     private func launch(_ arguments: [String]) throws
         -> (status: Int32, stdout: String, stderr: String)
     {
-        let binary = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
+        let binary = PiniTestEnvironment.cliPath() ?? ""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = PiniTestEnvironment.childEnvironment()
+        process.environment = PiniTestEnvironment.childEnvironment()
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -36,22 +38,11 @@ struct SubscriptFieldStoreTests: Sendable {
         )
     }
 
-    private func requireCLI(_ needed: [String]) -> Bool {
-        let environment = ProcessInfo.processInfo.environment
-        for key in needed where (environment[key] ?? "").isEmpty {
-            withKnownIssue("未提供 \(key) ⇒ 本批判据本次未取（跳过 +1）") {
-                Issue.record("字段下标写判据未取：\(key) 缺失")
-            }
-            return false
-        }
-        return true
-    }
-
     // MARK: - ① 非别名：值就地改对，且只在目标下标
 
     @Test("字段作容器的下标写：值改对、邻居不动（旧实现 E5-006 拒绝）")
     func fieldSubscriptStoreWritesInPlace() throws {
-        guard requireCLI(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
 
         let file = fixtureFile("field-subscript-store")
         let interpreted = try launch(["run", file.path])
@@ -80,7 +71,7 @@ struct SubscriptFieldStoreTests: Sendable {
 
     @Test("字段作容器的下标写在写时复制分裂后仍生效（不回写则那次写静默丢失）")
     func fieldSubscriptStoreSurvivesCopyOnWriteSplit() throws {
-        guard requireCLI(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
 
         let file = fixtureFile("field-subscript-store-alias")
         let interpreted = try launch(["run", file.path])
