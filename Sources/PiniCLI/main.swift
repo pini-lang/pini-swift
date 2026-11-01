@@ -842,7 +842,14 @@ func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
 }
 
 func emitSemanticWarning(_ warning: SemanticWarning) {
-    FileHandle.standardError.write(Data((renderedWarning(warning, source: "") + "\n").utf8))
+    FileHandle.standardError.write(Data((renderedWarning(warning, source: sourceFor(warning)) + "\n").utf8))
+}
+
+/// 诊断所在文件的源码。模块检查没有单一 source，但位置自带文件名 —— 回读一次比传一份全文省事。
+/// 读不到（预置声明、文件已不在）就返回空串，渲染退回无片段的形态。
+func sourceFor(_ error: Error) -> String {
+    guard let diagnostic = error as? any DiagnosticProviding else { return "" }
+    return (try? readFile(diagnostic.diagnosticLocation.fileName)) ?? ""
 }
 
 /// 给定块声明的位置表：键是块名。环警告要指到声明处，而边表里只有名字。
@@ -1812,12 +1819,12 @@ func runLLICommand(source: String, fileName: String) throws {
 }
 
 func handleSemanticError(_ error: SemanticError) {
-    // T11（A4）：收敛消息源——check 多文件路径复用 ErrorFormatter（无单一 source，源码行省略）。
-    printError(ErrorFormatter.formatSemanticError(error, source: ""))
+    // T11（A4）：收敛消息源——check 多文件路径复用 ErrorFormatter，源码按诊断位置回读。
+    printError(ErrorFormatter.formatSemanticError(error, source: sourceFor(error)))
 }
 
 func handleTypeError(_ error: TypeError) {
-    printError(ErrorFormatter.formatTypeError(error, source: ""))
+    printError(ErrorFormatter.formatTypeError(error, source: sourceFor(error)))
 }
 
 // MARK: - Error Helpers
