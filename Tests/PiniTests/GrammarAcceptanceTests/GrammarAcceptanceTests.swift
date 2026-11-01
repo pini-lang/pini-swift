@@ -575,7 +575,7 @@ struct GrammarAcceptanceTests: Sendable {
     func testCommandLineAgreesWithTheFrontEndOnEveryFixture() throws {
         /// 意图：两侧对同一夹具必须给出同一结论 —— 钉住命令行的接线，绝对值另由各夹具的用例钉住。
         let names = try fixtureNames()
-        guard let cli = ProcessInfo.processInfo.environment["PINI_CLI_BIN"], !cli.isEmpty else {
+        guard let cli = PiniTestEnvironment.cliPath() else {
             withKnownIssue("未提供 PINI_CLI_BIN ⇒ 命令行面本次未参与核对（0/\(names.count) 条）") {
                 Issue.record("这批结论只由进程内前端得出，命令行接线未参与核对")
             }

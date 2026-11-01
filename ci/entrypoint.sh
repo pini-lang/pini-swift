@@ -74,9 +74,11 @@ step "示例门禁"
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py
 
 step "测试"
-# 测试里的命令行判据从 `PINI_CLI_BIN` 取产物；不设时多数套件按仓根兜底，子目录套件会兜空。
-# 这里指向本次构建产物，使 CI 的读数与本地「设了 PINI_CLI_BIN」的那一档一致。
+# 测试里的命令行与 LLVM 判据从 `PiniTestEnvironment` 取产物（环境变量优先，仓根兜底）。
+# 这里指向本次构建产物，并把「缺工具链即失败」打开：跳过在本地可以容忍，在 CI 不行 ——
+# 否则「全绿」与「这批根本没跑」在读数上长得一样。
 export PINI_CLI_BIN="$PWD/.build/debug/pini"
+export PINI_REQUIRE_TOOLCHAIN=1
 swift test --disable-sandbox
 
 printf '\n=== 全绿 ===\n'

@@ -136,7 +136,7 @@ struct StringBuiltinTests: Sendable {
     /// 解析 LLVM 工具链**目录**（`PINI_LLVM_BIN` 是目录，不是可执行文件路径）；
     /// 取不到 ⇒ nil（调用方响亮跳过 `run-llvm` 腿）。
     private func llvmToolchainDir() -> String? {
-        let fromEnv = ProcessInfo.processInfo.environment["PINI_LLVM_BIN"] ?? ""
+        let fromEnv = PiniTestEnvironment.llvmBinDirectory() ?? ""
         if !fromEnv.isEmpty, FileManager.default.isExecutableFile(atPath: fromEnv + "/lli") {
             return fromEnv
         }

@@ -18,10 +18,12 @@ struct SplitPathTests: Sendable {
     private func launch(_ arguments: [String]) throws
         -> (status: Int32, stdout: String, stderr: String)
     {
-        let binary = ProcessInfo.processInfo.environment["PINI_CLI_BIN"] ?? ""
+        let binary = PiniTestEnvironment.cliPath() ?? ""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = PiniTestEnvironment.childEnvironment()
+        process.environment = PiniTestEnvironment.childEnvironment()
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -36,17 +38,6 @@ struct SplitPathTests: Sendable {
         )
     }
 
-    private func requireCLI(_ needed: [String]) -> Bool {
-        let environment = ProcessInfo.processInfo.environment
-        for key in needed where (environment[key] ?? "").isEmpty {
-            withKnownIssue("未提供 \(key) ⇒ 本批判据本次未取（跳过 +1）") {
-                Issue.record("切分路径分配判据未取：\(key) 缺失")
-            }
-            return false
-        }
-        return true
-    }
-
     private func scratchDirectory() throws -> URL {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("pini-split-path-" + UUID().uuidString)
@@ -58,7 +49,7 @@ struct SplitPathTests: Sendable {
 
     @Test("长源串：LLVM 侧的读数与解释器逐字节相同（旧实现砸栈）")
     func splitLongSourceMatchesInterpreter() throws {
-        guard requireCLI(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
 
         for fixture in ["split-long-source", "split-long-token"] {
             let file = fixtureFile(fixture)
@@ -80,7 +71,7 @@ struct SplitPathTests: Sendable {
 
     @Test("split 的定界符语义两路一致：空定界符 ⇒ 逐字素 · 多字符 ⇒ 子串匹配")
     func splitDelimiterSemanticsMatchInterpreter() throws {
-        guard requireCLI(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
 
         let file = fixtureFile("split-delimiter-semantics")
         let interpreted = try launch(["run", file.path])
@@ -113,7 +104,7 @@ struct SplitPathTests: Sendable {
 
     @Test("切分路径的 malloc 尺寸不得直接取 strlen 结果（终止符要位置）")
     func splitAllocationsReserveRoomForTheTerminator() throws {
-        guard requireCLI(["PINI_CLI_BIN"]) else { return }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         let scratch = try scratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratch) }
 

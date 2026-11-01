@@ -2,6 +2,7 @@ import Foundation
 import PiniIR
 import PiniSemantics
 import PiniSyntax
+import Testing
 
 /// 测试面的仓根与命令行产物定位。仓根由「向上找到 Package.swift」确定，不按 `#filePath` 数层数 ——
 /// 数层数在顶层套件成立、在子目录套件少一层，症状是仓内明明有产物却记一条「未找到」。
@@ -33,6 +34,57 @@ enum PiniTestEnvironment {
         return repositoryCLICandidates.first {
             FileManager.default.isExecutableFile(atPath: $0)
         }
+    }
+
+    /// LLVM 工具链目录（`lli` / `clang` 所在处）：环境变量优先，其次 Homebrew 的两个标准前缀，最后扫 PATH。
+    static func llvmBinDirectory() -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        if let fromEnvironment = environment["PINI_LLVM_BIN"], !fromEnvironment.isEmpty,
+            FileManager.default.isExecutableFile(atPath: fromEnvironment + "/lli")
+        {
+            return fromEnvironment
+        }
+        let prefixes = ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin"]
+        if let found = prefixes.first(where: { FileManager.default.isExecutableFile(atPath: $0 + "/lli") }) {
+            return found
+        }
+        for entry in (environment["PATH"] ?? "").split(separator: ":") {
+            let directory = String(entry)
+            if FileManager.default.isExecutableFile(atPath: directory + "/lli") {
+                return directory
+            }
+        }
+        return nil
+    }
+
+    /// 子进程的环境：写入解析出来的两个路径。`run-llvm` 缺 `PINI_LLVM_BIN` 时会静默空跑，
+    /// 故判据与子进程必须看同一份解析结果，各读各的环境变量就会一个说齐备、一个空跑。
+    static func childEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        if let cli = cliPath() { environment["PINI_CLI_BIN"] = cli }
+        if let llvm = llvmBinDirectory() { environment["PINI_LLVM_BIN"] = llvm }
+        return environment
+    }
+
+    /// 工具链齐备与否。缺一份时：`PINI_REQUIRE_TOOLCHAIN=1` 记一条**失败**，否则记一条 known issue。
+    /// 裸跑允许跳过，CI 不允许 —— 否则「绿了」与「根本没跑」在读数上长得一样。
+    static func requireToolchain(_ keys: [String]) -> Bool {
+        let missing = keys.first { key in
+            switch key {
+            case "PINI_CLI_BIN": return cliPath() == nil
+            case "PINI_LLVM_BIN": return llvmBinDirectory() == nil
+            default: return (ProcessInfo.processInfo.environment[key] ?? "").isEmpty
+            }
+        }
+        guard let missing else { return true }
+        if ProcessInfo.processInfo.environment["PINI_REQUIRE_TOOLCHAIN"] == "1" {
+            Issue.record("工具链缺 \(missing)：本批判据本次未取，而 PINI_REQUIRE_TOOLCHAIN=1 不允许跳过")
+            return false
+        }
+        withKnownIssue("未提供 \(missing) ⇒ 本批判据本次未取（跳过 +1）") {
+            Issue.record("判据未取：\(missing) 缺失")
+        }
+        return false
     }
 }
 

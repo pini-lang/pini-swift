@@ -118,8 +118,8 @@ struct ReadFileBuiltinTests: Sendable {
         /// 而两侧一致正是 `IOLimits` 存在的全部理由 ⇒ 两侧各与同一份手写期望比一次， 行不通  不两腿互比（同错会互相认证）。
         /// 期望值由用例自己写下的内容算出，两条腿用同一个 `expected`。
         let environment = ProcessInfo.processInfo.environment
-        let cli = environment["PINI_CLI_BIN"] ?? ""
-        guard !cli.isEmpty, !(environment["PINI_LLVM_BIN"] ?? "").isEmpty else {
+        let cli = PiniTestEnvironment.cliPath() ?? ""
+        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
             let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
             withKnownIssue("未提供 \(missing) ⇒ LLVM 腿本次未取（跳过 +1）") {
                 Issue.record("LLVM 腿的 readFile 判据本次没有跑")
