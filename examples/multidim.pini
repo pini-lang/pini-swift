@@ -1,6 +1,6 @@
-; 多维数组：严格枚举 + 强制解包 `!` 示范。运行 pini run examples/multidim.pini；`a[i]` 是只读右值，不能作 lvalue。
-; 规则：下标读返回 Optional<T>（越界/缺键 → none，界内 → some(x)），元素须靠 match 或 `!` 取出，`!` 命中 none 即 trap。
-; `!` 与 `&` 同构、须在 unsafe 上下文：可用 `|unsafe` 函数体，也可用零散 `unsafe (...)` 消耗点；嵌套 `a[i][j]` 无隐式语法糖。
+; 多维数组：`.get` 取 Optional + match 解构、嵌套下标读、写回外层槽。运行 pini run examples/multidim.pini
+; 预期（解释器 / LLVM 一致）：6 / 8 / [[100, 2, 3], [4, 5, 6], [7, 8, 9]]
+; 下标通道与越界语义见语言参考「下标访问」一节。
 
 main|func() -> ():
     var m = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
