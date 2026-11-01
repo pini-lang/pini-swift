@@ -501,7 +501,6 @@ public class Parser {
 
         // 检查是否有 | 修饰符
         var isObject = false
-        var isEnum = false
         var isGiven = false
 
         if case .pipe(_) = currentToken {
@@ -511,7 +510,6 @@ public class Parser {
                 isObject = true
             } else if checkKeyword(.enum) {
                 advance()
-                isEnum = true
             } else if case .identifier("given", _) = currentToken {
                 /// `[名称|given]`。`given` **不入关键字表**——它只出现在 `|` 右侧的修饰符位，
                 /// 与 `|foreign` / `|import` / `|export` 同走标识符白名单路径。
@@ -521,28 +519,27 @@ public class Parser {
             } else if checkKeyword(.foreign) {
                 // Phase 2a（FFI 子系统， foreign-decl）：`[名称|foreign]` 外部 C 函数声明块。
                 advance()
-                try expect(.rightBracket(loc))
+                _ = try expect(.rightBracket(loc))
                 return .foreignDecl(try parseForeignDecl(name: name, location: loc))
             } else if checkKeyword(.import) {
                 /// `[当前文件名|import]` 块——引入外部模块。
                 advance()
-                try expect(.rightBracket(loc))
+                _ = try expect(.rightBracket(loc))
                 return .importDecl(try parseImportBlock(headerName: name, location: loc))
             } else if checkKeyword(.export) {
                 /// `[当前文件名|export]` 块——显式导出表。
                 advance()
-                try expect(.rightBracket(loc))
+                _ = try expect(.rightBracket(loc))
                 return .exportDecl(try parseExportBlock(headerName: name, location: loc))
             } else {
                 throw ParserError.invalidDeclaration(reason: "无效的方括号声明修饰符", location: loc)
             }
         } else {
             // 缺省关键字，默认为枚举
-            isEnum = true
         }
 
         // 期望 ]
-        try expect(.rightBracket(loc))
+        _ = try expect(.rightBracket(loc))
 
         if isGiven {
             let givenDecl = try parseGivenDeclContent(name: name, genericParams: genericParams, location: loc)
@@ -574,7 +571,7 @@ public class Parser {
             // 类型 / 扩展块 / import 等声明头 → foreign 块结束。
             // 注意：不能用 isTopLevelDeclStart() 整体判断——裸函数签名（foreign 签名）也会命中。
             if isForeignBlockEndMarker() { break }
-            guard case .identifier(_) = currentToken, isBareFunctionDeclStart() else {
+            guard case .identifier = currentToken, isBareFunctionDeclStart() else {
                 throw ParserError.invalidStatement(
                     reason: "foreign 块内只允许外部 C 函数签名（无函数体）：块名 `\(name)`",
                     location: currentLocation
@@ -611,7 +608,7 @@ public class Parser {
     /// Phase 2a（FFI 子系统）：判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。
     /// 用于 foreign 块循环区分「纯外部签名」与「顶层函数定义」——二者同为 `IDENT(...) -> (...)` 形态。
     private func isBareFunctionWithBodyStart() -> Bool {
-        guard case .identifier(_) = currentToken else { return false }
+        guard case .identifier = currentToken else { return false }
         var offset = 1
         // 跳过可选的 |修饰符
         if case .pipe(_) = peek(offset: offset) {
@@ -701,10 +698,9 @@ public class Parser {
 
         let target = try parseIdentifier()
 
-        // 可选泛型参数（`((盒<T>))` 泛型扩展；消费并校验，合并仍按 targetType 名称匹配）
-        var genericParams: [GenericParam] = []
+        // 可选泛型参数（`((盒<T>))` 泛型扩展）：只消费并校验，合并按 targetType 名称匹配
         if case .lessThan(_) = currentToken {
-            genericParams = try parseGenericParams()
+            _ = try parseGenericParams()
         }
 
         // 可选的 `: type-annotation`（泛型特化扩展限定，暂只解析存储，合并按 targetType 名称匹配）
@@ -717,19 +713,19 @@ public class Parser {
         // 闭合定界符：)) / }} / ]] / >>
         switch kind {
         case .structExt:
-            try expect(.rightParen(loc)); try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc)); _ = try expect(.rightParen(loc))
         case .objectExt:
-            try expect(.rightBrace(loc)); try expect(.rightBrace(loc))
+            _ = try expect(.rightBrace(loc)); _ = try expect(.rightBrace(loc))
         case .bracketExt:
-            try expect(.rightBracket(loc)); try expect(.rightBracket(loc))
+            _ = try expect(.rightBracket(loc)); _ = try expect(.rightBracket(loc))
         case .traitExt:
             /// `>>` 闭合双态：词法合并的 `.rightShift`（`<<T>>` 紧邻形态，行内 `>>` 恒合并）与
             /// 空格分隔的 `.greaterThan` ×2（`<<T >>`）都接受。
             if case .rightShift(_) = currentToken {
                 advance()
             } else {
-                try expect(.greaterThan(loc))
-                try expect(.greaterThan(loc))
+                _ = try expect(.greaterThan(loc))
+                _ = try expect(.greaterThan(loc))
             }
         }
 
@@ -741,7 +737,7 @@ public class Parser {
         while !isEOF() {
             if case .dedent(_) = currentToken { advance(); break }
             let isTraitExt = (kind == .traitExt)
-            if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
+            if case .identifier = currentToken, isBareFunctionDeclStart() {
                 if !isTraitExt && !isSelfMethodStart() {
                     // 类型扩展：顶格非 `|self`/`|own`（如 `main|func`、字段）→ 扩展块结束
                     break
@@ -773,7 +769,7 @@ public class Parser {
 
     /// 当前是否为 `方法名|self(...)` / `方法名|own(...)` 的方法声明头（扩展块方法预判；G50：Self 更名 own）。
     private func isSelfMethodStart() -> Bool {
-        guard case .identifier(_) = currentToken else { return false }
+        guard case .identifier = currentToken else { return false }
         guard case .pipe(_) = peek(offset: 1) else { return false }
         if case .keyword(.self, _) = peek(offset: 2) { return true }
         if case .keyword(.own, _) = peek(offset: 2) { return true }
@@ -800,7 +796,7 @@ public class Parser {
         }
 
         // 期望 )
-        try expect(.rightParen(loc))
+        _ = try expect(.rightParen(loc))
 
         // 解析内容态（声明上下文收紧·规则 3.2：类型体内只允许字段，方法移至扩展块）
         var fields: [FieldDecl] = []
@@ -850,7 +846,7 @@ public class Parser {
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `((\(name)))` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
-            } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
+            } else if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
@@ -876,7 +872,7 @@ public class Parser {
     private func isBraceFuncDecl() -> Bool {
         var offset = 1  // 跳过 {
         // 跳过标识符
-        guard case .identifier(_) = peek(offset: offset) else { return false }
+        guard case .identifier = peek(offset: offset) else { return false }
         offset += 1
         // 跳过可选的 |修饰符（如 {name|func}、{name|self}、{name|test}）
         // 注：func/self/test 是关键字，需同时接受 identifier 与 keyword
@@ -917,8 +913,8 @@ public class Parser {
     // 名称 token：identifier 或 keyword（用于修饰符位置，因为 func/self/Self 是关键字）
     private func isNameToken(_ token: Token) -> Bool {
         switch token {
-        case .identifier(_): return true
-        case .keyword(_): return true
+        case .identifier: return true
+        case .keyword: return true
         default: return false
         }
     }
@@ -926,7 +922,7 @@ public class Parser {
     // 解析花括号对象声明 `{name}` 或 `{name|modifier}` 的头部，然后交由 parseObjectDeclContent 解析内容态
     private func parseObjectDecl() throws -> ObjectDecl {
         let loc = currentLocation
-        try expect(.leftBrace(loc))  // 跳过 {
+        _ = try expect(.leftBrace(loc))  // 跳过 {
 
         // 解析名称
         let name = try parseIdentifier()
@@ -944,7 +940,7 @@ public class Parser {
         }
 
         // 期望 }
-        try expect(.rightBrace(loc))
+        _ = try expect(.rightBrace(loc))
 
         return try parseObjectDeclContent(name: name, genericParams: genericParams, location: loc)
     }
@@ -982,7 +978,7 @@ public class Parser {
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
-            } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
+            } else if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
@@ -1044,7 +1040,7 @@ public class Parser {
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
-            } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
+            } else if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
@@ -1109,7 +1105,7 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         }
 
         return EnumCase(name: name, associatedParams: associatedParams, location: loc)
@@ -1151,7 +1147,7 @@ public class Parser {
         let name = try parseIdentifier()
 
         // 期望 :
-        try expect(.colon(loc))
+        _ = try expect(.colon(loc))
 
         // 类型
         let type = try parseTypeAnnotation()
@@ -1174,7 +1170,7 @@ public class Parser {
     /// 裸声明函数（parseBareFuncDecl）与匿名函数（parseFuncLiteral）共用。
     private func parseFunctionSignature(loc: SourceLocation, position: UsingParamPosition) throws -> (params: [Parameter], returnTypes: [TypeAnnotation], returnLabels: [String?], isAsync: Bool) {
         // 参数元组
-        try expect(.leftParen(loc))
+        _ = try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
             let param = try parseParameter(position: position)
@@ -1185,7 +1181,7 @@ public class Parser {
                 break
             }
         }
-        try expect(.rightParen(loc))
+        _ = try expect(.rightParen(loc))
 
         // 返回类型
         var returnTypes: [TypeAnnotation] = []
@@ -1193,7 +1189,7 @@ public class Parser {
         var isAsync = false
         if case .arrow(_) = currentToken {
             advance()
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) && !isEOF() {
                 // 可能是 "名称: 类型" 或直接 "类型"（草稿 A2，批次 1.3：命名返回的分量标签记录进 returnLabels）
                 if case .identifier(let name, _) = currentToken {
@@ -1220,11 +1216,11 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         } else if case .doubleArrow(_) = currentToken {
             advance()
             isAsync = true
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) {
                 let returnType = try parseTypeAnnotation()
                 returnTypes.append(returnType)
@@ -1235,7 +1231,7 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         }
         return (params, returnTypes, returnLabels, isAsync)
     }
@@ -1255,7 +1251,7 @@ public class Parser {
         let (params, returnTypes, returnLabels, isAsync) = try parseFunctionSignature(loc: loc, position: .anonymousFunction)
 
         // 匿名函数是「引导子块关键字」，带 `:` 尾缀
-        try expect(.colon(loc))
+        _ = try expect(.colon(loc))
         skipNewlines()
         // H-1：capture 声明的合法性上下文——仅本匿名函数缩进体的顶层语句位。
         // 深度基准清零后，parseBlock 逐层 +1，parseCaptureStmt 要求深度恰为 1。
@@ -1308,7 +1304,7 @@ public class Parser {
         }
 
         // 期望 }
-        try expect(.rightBrace(loc))
+        _ = try expect(.rightBrace(loc))
 
         // 解析泛型参数（可选）
         var genericParams: [GenericParam] = []
@@ -1317,7 +1313,7 @@ public class Parser {
         }
 
         // 参数元组
-        try expect(.leftParen(loc))
+        _ = try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
             ///  注意  调用者只有 `parseTraitDecl` ⇒ 服务的是 trait 抽象签名的「花括号形态」
@@ -1331,17 +1327,17 @@ public class Parser {
                 break
             }
         }
-        try expect(.rightParen(loc))
+        _ = try expect(.rightParen(loc))
 
         // 返回类型
         var returnTypes: [TypeAnnotation] = []
         var isAsync = false
         if case .arrow(_) = currentToken {
             advance()
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) && !isEOF() {
                 // 可能是 "名称: 类型" 或直接 "类型"
-                if case .identifier(_) = currentToken {
+                if case .identifier = currentToken {
                     let nextTok = peek(offset: 1)
                     if case .colon(_) = nextTok {
                         advance()  // 跳过名称
@@ -1362,11 +1358,11 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         } else if case .doubleArrow(_) = currentToken {
             advance()
             isAsync = true
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) {
                 let returnType = try parseTypeAnnotation()
                 returnTypes.append(returnType)
@@ -1376,7 +1372,7 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         }
 
         // 解析方法体（Block）
@@ -1418,7 +1414,7 @@ public class Parser {
     // 策略：预读 `name[(params)] ->` 或 `name[(params)] =>`，即参数元组后跟返回箭头
     // 用于区分字段声明（`name: Type = value`）与裸函数声明（`name|self(...) -> (...)`）
     private func isBareFunctionDeclStart() -> Bool {
-        guard case .identifier(_) = currentToken else { return false }
+        guard case .identifier = currentToken else { return false }
 
         var offset = 1  // 跳过标识符
         // 跳过可选的 |修饰符（func/self/Self 是关键字，需用 isNameToken）
@@ -1467,7 +1463,7 @@ public class Parser {
     /// 判断是否是 `name|func(...)` 形式的裸函数（顶级自由函数，类型体内遇到即结束类型体）。
     /// 声明上下文收紧·规则 3.2 后类型体循环用它区分「顶级函数（break）」与「类型体内方法/函数（报错）」。
     private func isBareFuncWithFuncModifierStart() -> Bool {
-        guard case .identifier(_) = currentToken else { return false }
+        guard case .identifier = currentToken else { return false }
         guard case .pipe(_) = peek(offset: 1) else { return false }
         guard case .keyword(.func, _) = peek(offset: 2) else { return false }
         var offset = 3
@@ -1530,7 +1526,7 @@ public class Parser {
         }
 
         // 参数元组
-        try expect(.leftParen(loc))
+        _ = try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
             let param = try parseParameter(position: paramPosition)
@@ -1541,7 +1537,7 @@ public class Parser {
                 break
             }
         }
-        try expect(.rightParen(loc))
+        _ = try expect(.rightParen(loc))
 
         // 返回类型
         var returnTypes: [TypeAnnotation] = []
@@ -1549,7 +1545,7 @@ public class Parser {
         var isAsync = false
         if case .arrow(_) = currentToken {
             advance()
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) && !isEOF() {
                 if case .identifier(let name, _) = currentToken {
                     let nextTok = peek(offset: 1)
@@ -1575,11 +1571,11 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         } else if case .doubleArrow(_) = currentToken {
             advance()
             isAsync = true
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) {
                 let returnType = try parseTypeAnnotation()
                 returnTypes.append(returnType)
@@ -1590,7 +1586,7 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         }
 
         // 解析函数体（Block）
@@ -1645,7 +1641,7 @@ public class Parser {
         let name = try parseIdentifier()
 
         // 期望 >
-        try expect(.greaterThan(loc))
+        _ = try expect(.greaterThan(loc))
 
         // 泛型参数（可选，暂不处理）
         let genericParams: [GenericParam] = []
@@ -1676,13 +1672,13 @@ public class Parser {
 
             if justDedented {
                 if isTopLevelDeclStart() { break }
-                if case .identifier(_) = currentToken, isBareFunctionDeclStart() { break }
+                if case .identifier = currentToken, isBareFunctionDeclStart() { break }
             }
 
             if case .leftBrace(_) = currentToken {
                 let sig = try parseFuncDeclInTypeContext()
                 signatures.append(sig)
-            } else if case .identifier(_) = currentToken, isBareFunctionDeclStart() {
+            } else if case .identifier = currentToken, isBareFunctionDeclStart() {
                 let sig = try parseBareFuncDecl(position: .traitSignature, allowEmptyBody: true)
                 signatures.append(sig)
             } else if isTopLevelDeclStart() {
@@ -1716,10 +1712,10 @@ public class Parser {
         let name = try parseIdentifier()
 
         // 期望 }
-        try expect(.rightBrace(loc))
+        _ = try expect(.rightBrace(loc))
 
         // 参数元组
-        try expect(.leftParen(loc))
+        _ = try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
             let param = try parseParameter(position: .traitSignature)
@@ -1730,16 +1726,16 @@ public class Parser {
                 break
             }
         }
-        try expect(.rightParen(loc))
+        _ = try expect(.rightParen(loc))
 
         // 返回类型
         var returnTypes: [TypeAnnotation] = []
         if case .arrow(_) = currentToken {
             advance()
-            try expect(.leftParen(loc))
+            _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) && !isEOF() {
                 // 可能是 "名称: 类型" 或直接 "类型"
-                if case .identifier(_) = currentToken {
+                if case .identifier = currentToken {
                     let nextTok = peek(offset: 1)
                     if case .colon(_) = nextTok {
                         advance()  // 跳过名称
@@ -1760,7 +1756,7 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
         }
 
         return FuncDecl(
@@ -1787,7 +1783,7 @@ public class Parser {
         let name = try parseIdentifier()
 
         // 期望 :
-        try expect(.colon(loc))
+        _ = try expect(.colon(loc))
 
         // 类型
         let type = try parseTypeAnnotation()
@@ -1807,7 +1803,6 @@ public class Parser {
                 location: currentLocation
             )
         }
-        let loc = currentLocation
         advance()  // 跳过 capture
         guard case .identifier(let name, let nameLoc) = currentToken else {
             throw ParserError.invalidStatement(
@@ -1838,7 +1833,7 @@ public class Parser {
         defer { anonCaptureDepth = savedCaptureDepth }
 
         // INDENT
-        try expect(.indent(loc))
+        _ = try expect(.indent(loc))
 
         var statements: [Statement] = []
 
@@ -1853,7 +1848,7 @@ public class Parser {
 
         // DEDENT（收集模式下若已到 EOF 则容错收尾，避免假性 DEDENT 错误）
         if !collectMode {
-            try expect(.dedent(loc))
+            _ = try expect(.dedent(loc))
         } else if check(.dedent(loc)) {
             advance()
         }
@@ -1865,7 +1860,7 @@ public class Parser {
         let loc = currentLocation
 
         // 期望 :
-        try expect(.colon(loc))
+        _ = try expect(.colon(loc))
 
         skipNewlines()
 
@@ -1878,7 +1873,7 @@ public class Parser {
         }
 
         // INDENT 开始
-        try expect(.indent(loc))
+        _ = try expect(.indent(loc))
         // H-1：控制块同样离开「匿名函数体顶层」——深度 +1，退出恢复
         let savedCaptureDepth = anonCaptureDepth
         if savedCaptureDepth != nil { anonCaptureDepth = savedCaptureDepth! + 1 }
@@ -1897,7 +1892,7 @@ public class Parser {
 
         // DEDENT（收集模式下若已到 EOF 则容错收尾，避免假性 DEDENT 错误）
         if !collectMode {
-            try expect(.dedent(loc))
+            _ = try expect(.dedent(loc))
         } else if check(.dedent(loc)) {
             advance()
         }
@@ -1908,8 +1903,6 @@ public class Parser {
     // MARK: - Statement解析
 
     private func parseStatement() throws -> Statement {
-        let loc = currentLocation
-
         // H-1：capture 声明（合法性上下文见 parseCaptureStmt）
         if case .keyword(.capture, _) = currentToken {
             return try parseCaptureStmt()
@@ -2289,7 +2282,7 @@ public class Parser {
 
         let value = try parseExpression()
 
-        try expect(.colon(loc))
+        _ = try expect(.colon(loc))
         skipNewlines()
 
         /// match 子块结构：`match 值:` 后必须缩进子块，`case` 在子块内（比 `match` 深一级）；
@@ -2357,7 +2350,7 @@ public class Parser {
                 advance()
                 while !check(.rightParen(caseLoc)) {
                     let firstTok = currentToken
-                    if case .identifier(let possibleName, let nameLoc) = firstTok {
+                    if case .identifier(let possibleName, _) = firstTok {
                         let nextTok = peek(offset: 1)
                         if case .colon(let colonLoc) = nextTok {
                             /// 具名绑定 `关联值名: 变量`：按关联值名对位绑定，与位置绑定并存。
@@ -2386,7 +2379,7 @@ public class Parser {
                         break
                     }
                 }
-                try expect(.rightParen(caseLoc))
+                _ = try expect(.rightParen(caseLoc))
             }
 
             let caseBlock = try parseControlBlock()
@@ -2404,7 +2397,7 @@ public class Parser {
 
         // DEDENT（收集模式下若已到 EOF 则容错收尾，避免假性 DEDENT 错误）
         if !collectMode {
-            try expect(.dedent(loc))
+            _ = try expect(.dedent(loc))
         } else if check(.dedent(loc)) {
             advance()
         }
@@ -2961,7 +2954,7 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(parenLoc))
+            _ = try expect(.rightParen(parenLoc))
         }
 
         return .genericConstruct(typeName: typeName, typeArgs: typeArgs, arguments: arguments, location: location)
@@ -3039,13 +3032,13 @@ public class Parser {
                 }
             }
 
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
             return .tuple(labels: labels, elements: elements, location: loc)
         }
 
         // 优先结合表达式：括号仅为分组，语义为零，直接返回内层表达式（不在核心 AST 构造 paren 节点）。
         // 例外：单元素命名元组 `(a: 1)` 无逗号，仍须保留为命名元组（标签信息不可丢）。
-        try expect(.rightParen(loc))
+        _ = try expect(.rightParen(loc))
         if labels.count == 1, labels[0] != nil {
             return .tuple(labels: labels, elements: elements, location: loc)
         }
@@ -3086,7 +3079,7 @@ public class Parser {
                 let v = try parseExpression()
                 entries.append(DictEntry(key: k, value: v))
             }
-            try expect(.rightBracket(loc))
+            _ = try expect(.rightBracket(loc))
             return .dictionaryLiteral(entries: entries, location: loc)
         } else {
             // 数组
@@ -3096,7 +3089,7 @@ public class Parser {
                 guard !check(.rightBracket(loc)) else { break }
                 elements.append(try parseExpression())
             }
-            try expect(.rightBracket(loc))
+            _ = try expect(.rightBracket(loc))
             return .arrayLiteral(elements: elements, location: loc)
         }
     }
@@ -3120,7 +3113,7 @@ public class Parser {
                 break
             }
         }
-        try expect(.rightBrace(loc))
+        _ = try expect(.rightBrace(loc))
         return .setLiteral(elements: elements, location: loc)
     }
 
@@ -3159,7 +3152,7 @@ public class Parser {
                         break
                     }
                 }
-                try expect(.rightParen(loc))
+                _ = try expect(.rightParen(loc))
                 result = Expression.call(callee: result, arguments: arguments, location: loc)
                 continue
             }
@@ -3194,7 +3187,7 @@ public class Parser {
                         advance()  // 消费 ]
                     } else {
                         end = try parseExpression()
-                        try expect(.rightBracket(loc))
+                        _ = try expect(.rightBracket(loc))
                     }
                     result = sliceSugar(base: result, start: start, end: end, location: loc)
                     continue
@@ -3209,12 +3202,12 @@ public class Parser {
                         advance()  // 消费 ]
                     } else {
                         end = try parseExpression()
-                        try expect(.rightBracket(loc))
+                        _ = try expect(.rightBracket(loc))
                     }
                     result = sliceSugar(base: result, start: indexExpr, end: end, location: loc)
                     continue
                 }
-                try expect(.rightBracket(loc))
+                _ = try expect(.rightBracket(loc))
                 result = Expression.subscript(expr: result, index: indexExpr, location: loc)
                 continue
             }
@@ -3291,10 +3284,10 @@ public class Parser {
                 // 字典类型 [K: V]
                 advance()
                 let valType = try parseTypeAnnotation()
-                try expect(.rightBracket(loc))
+                _ = try expect(.rightBracket(loc))
                 return .generic(name: "Dictionary", params: [elemType, valType], location: loc)
             }
-            try expect(.rightBracket(loc))
+            _ = try expect(.rightBracket(loc))
             return .generic(name: "Array", params: [elemType], location: loc)
         }
 
@@ -3302,7 +3295,7 @@ public class Parser {
         if case .leftBrace(_) = currentToken {
             advance()
             let elemType = try parseTypeAnnotation()
-            try expect(.rightBrace(loc))
+            _ = try expect(.rightBrace(loc))
             return .generic(name: "Set", params: [elemType], location: loc)
         }
 
@@ -3362,12 +3355,12 @@ public class Parser {
                     break
                 }
             }
-            try expect(.rightParen(loc))
+            _ = try expect(.rightParen(loc))
 
             // 检查是否是函数类型
             if case .arrow(_) = currentToken {
                 advance()
-                try expect(.leftParen(loc))
+                _ = try expect(.leftParen(loc))
                 var returns: [TypeAnnotation] = []
                 while !check(.rightParen(loc)) {
                     let returnType = try parseTypeAnnotation()
@@ -3378,12 +3371,12 @@ public class Parser {
                         break
                     }
                 }
-                try expect(.rightParen(loc))
+                _ = try expect(.rightParen(loc))
                 // 函数类型参数元组中的 `名: 类型` 视为参数名，不落入 tuple labels（.function 用 elements）。
                 return .function(params: elements, returns: returns, captured: [], usingIndices: [], location: loc)
             } else if case .doubleArrow(_) = currentToken {
                 advance()
-                try expect(.leftParen(loc))
+                _ = try expect(.leftParen(loc))
                 var returns: [TypeAnnotation] = []
                 while !check(.rightParen(loc)) {
                     let returnType = try parseTypeAnnotation()
@@ -3394,7 +3387,7 @@ public class Parser {
                         break
                     }
                 }
-                try expect(.rightParen(loc))
+                _ = try expect(.rightParen(loc))
                 return .function(params: elements, returns: returns, captured: [], usingIndices: [], location: loc)
             }
 
@@ -3583,7 +3576,7 @@ public class Parser {
                 }
             }
             return false
-        case .identifier(_):
+        case .identifier:
             // 裸函数声明：`name(params,) -> (ret,)`
             return isBareFunctionDeclStart()
         default:
