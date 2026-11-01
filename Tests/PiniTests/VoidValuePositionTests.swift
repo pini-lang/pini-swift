@@ -9,23 +9,9 @@ import PiniSyntax
 /// `()` 出现在值位时的判据：无返回值调用没有值可给。语言面把它与「推不出类型」分开 —— 推断侧对 void 调用返 `nil`，
 /// 而 `nil` 在初值位 / 实参位一律按「未知」放行 ⇒ 静默把 `Any` 绑定给 `var`。
 /// 本套件钉住两侧：语句位仍合法，值位必须报 `E4-001`（`got` 为 `()`）。
-struct VoidValuePositionTests: Sendable {
+struct VoidValuePositionTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {

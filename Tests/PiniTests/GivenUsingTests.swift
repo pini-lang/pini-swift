@@ -9,31 +9,9 @@ import PiniSyntax
 // 给定块 `given` / 取用参数 `using` 的判据：给定块进类型面与方法表，默认实例只在 `using` 取用点物化，
 // 取用位随函数类型走（声明位与调用位配对，经参数或字段传递即失去）。`using` 是保留字，`given` 走标识符白名单不入表。
 // 运行面判据走解释器臂，发射臂另由命令行探针取证。每条用例三要素齐备：意图、推进性、驳回性。
-struct GivenUsingTests: Sendable {
+struct GivenUsingTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 常量折叠 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    /// 返回类型检查器本身：降载需要它的 `typeInference`（与命令行同序）。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {

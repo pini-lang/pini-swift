@@ -9,30 +9,9 @@ import PiniSyntax
 /// `await` / `wait` 的形态载体判据：语法把一次 join 分成两种形态 —— `await`（异步体内等待、可以让出当前任务）
 /// 与 `wait`（任意上下文等待、占用当前线程）。载体是 `form` 字段，从 `Parser` 一路带到 IR 节点。
 /// 本件钉载体不丢：`form` 必须到得了 IR（否则下游无从分辨），且两种形态各自落在自己的上下文里、结果一致。
-struct ConcurrencyJoinFormTests: Sendable {
+struct ConcurrencyJoinFormTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 常量折叠 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {

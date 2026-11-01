@@ -9,23 +9,9 @@ import PiniSyntax
 /// 派发点的后端由语言侧决定：程序说明它用哪个调度器，派发点照着办。判据不能只看程序输出 ——
 /// 声明不能让出时等待退化为占用线程、结果分毫不变 ⇒ 输出区分不出「声明被读到」与「引擎没理那句声明」。
 /// 故读引擎侧的能力自述；且零派发：接线在装载期就定，后端又是进程级单例，并行派发会耗尽线程。
-struct SchedulerWiringTests: Sendable {
+struct SchedulerWiringTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 只装载、不运行，返回引擎。 重要  本件的主测量形态（见类型说明）。
     private func prepared(_ source: String, scheduler: Scheduler? = nil) throws -> IRExecutor {

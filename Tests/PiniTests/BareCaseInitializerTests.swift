@@ -9,30 +9,9 @@ import PiniSyntax
 /// 无实参枚举用例的裸名形态（`某用例`，不带括号）作局部变量初值时的类型推断判据。`infer` 对调用形态
 /// `名(...)` 按「父枚举唯一 ⇒ 取父枚举类型」识别，而裸名走不到那条分支、返 nil；nil 在无线程期望类型的
 /// 位置会落成 `Any` ⇒ 错误换个地方发，报错点与被推断的名字无关。结局只由初值形态决定，与声明位置无关。
-struct BareCaseInitializerTests: Sendable {
+struct BareCaseInitializerTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 常量折叠 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    /// 跑到降载层为止，返回可执行模块。
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 完整跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {

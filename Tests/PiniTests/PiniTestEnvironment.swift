@@ -1,4 +1,7 @@
 import Foundation
+import PiniIR
+import PiniSemantics
+import PiniSyntax
 
 /// 测试面的仓根与命令行产物定位。仓根由「向上找到 Package.swift」确定，不按 `#filePath` 数层数 ——
 /// 数层数在顶层套件成立、在子目录套件少一层，症状是仓内明明有产物却记一条「未找到」。
@@ -30,5 +33,36 @@ enum PiniTestEnvironment {
         return repositoryCLICandidates.first {
             FileManager.default.isExecutableFile(atPath: $0)
         }
+    }
+}
+
+/// 测试面共用的两级入口：源码 → 类型检查后的模块，再 → IR。
+/// 每个套件各抄一份的话，抄的那份最容易与 CLI 的流水线分叉（少一次常量折叠、少开持久表），
+/// 而分叉那天没有判据会响 —— 套件里降载出来的树，与真实编译走的那棵树不再是同一棵。
+protocol PiniSourceLowering {}
+
+extension PiniSourceLowering {
+
+    /// 词法 → 语法 → 常量折叠 → 语义 → 类型检查。错误按 `TypeError` 抛出，与套件的 `throws:` 断言同型。
+    func typeChecked(
+        _ source: String, fileName: String = "inline.pini"
+    ) throws -> (module: Module, checker: TypeChecker) {
+        let lexer = Lexer(source: source, fileName: fileName)
+        let parsed = Parser(tokens: try lexer.tokenize(), fileName: fileName)
+            .parseModuleCollectingErrors()
+        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
+        let module = ConstantFolder.foldConstants(in: parsed.module)
+        try SemanticAnalyzer().analyze(module: module)
+        let checker = TypeChecker()
+        let errors = checker.checkCollecting(module: module)
+        guard errors.isEmpty else { throw errors[0] }
+        return (module, checker)
+    }
+
+    /// 降载：开持久表兜底，与 CLI 的 codegen 路径同规。
+    func lowered(_ source: String, fileName: String = "inline.pini") throws -> IRModule {
+        let (module, checker) = try typeChecked(source, fileName: fileName)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
     }
 }

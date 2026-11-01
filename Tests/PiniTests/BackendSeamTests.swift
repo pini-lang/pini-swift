@@ -11,20 +11,7 @@ import PiniSyntax
 /// 后端接缝：一条通道要接进 CLI，靠的是这份协议、这张注册表与一张能力表。
 /// 判据钉在「接得上」的三件事上：名字与注册表不漂移、能力声明成表、哑后端能消费全部节点。
 @Suite("后端接缝")
-struct BackendSeamTests: Sendable {
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
+struct BackendSeamTests: Sendable, PiniSourceLowering {
 
     @Test("注册表里的名字与后端自报的名字一致")
     func registryNamesMatchTheBackendsOwn() throws {

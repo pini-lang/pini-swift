@@ -10,28 +10,9 @@ import PiniSyntax
 /// 观测面是 `GCDScheduler.yieldedTaskCount`：每次让出记一次，只由让出动作驱动。
 /// 计数按调度器实例隔离 —— 进程级单例的读数会落进并行套件的让出，串行化本套件也挡不住别的套件。
 @Suite(.serialized)
-struct ConcurrencyYieldTests: Sendable {
+struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let (module, checker) = try typeChecked(source)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 同一段程序，两个关键字只差一个词。三处标记都是判据的一部分：子任务先打 `S-start`（测试等它，
     /// 把判读起点挪到 spawn 之后），睡一段够判读跑完的时间，再打 `S-done`（睡完了、下一次判读该走了）。

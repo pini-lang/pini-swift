@@ -9,7 +9,7 @@ import PiniSyntax
 /// 并发能力的分层自述与让出原语：`bk_task_yield() -> i32`（`1` = 真让出 / `0` = 合规降级）与
 /// `bk_capabilities() -> u32`（位图，启动解析一次、固化），外加一条纪律：后端兑现不了让出时降级，不失败。
 /// 本件只管能力说自己有什么、让出原语回了什么、以及回 `0` 时程序还跑不跑得完。
-struct ConcurrencyCapabilitiesTests: Sendable {
+struct ConcurrencyCapabilitiesTests: Sendable, PiniSourceLowering {
 
     // MARK: - 替身后端：有调度、无让出
 
@@ -67,20 +67,6 @@ struct ConcurrencyCapabilitiesTests: Sendable {
     }
 
     // MARK: - 私有 helper
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 跑一遍，返回标准输出逐行。
     private func runOutput(_ source: String, scheduler: Scheduler) throws -> [String] {

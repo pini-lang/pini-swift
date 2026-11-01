@@ -10,23 +10,9 @@ import PiniSyntax
 /// `Result` 的 err 载荷判据：err 槽那一个类型擦除的字在四面都可用 —— 构造（`err(Error(...))` /
 /// `err(CancelError(...))`）· 判别（`isCancel`）· 读消息（`e.message`）· 打印（`print(e)`）。
 /// 产物侧另守一条：`@CancelError` / `@Error` / `struct.CancelError` 不该出现，那会是未定义类型与未实现函数。
-struct ResultErrPayloadTests: Sendable {
+struct ResultErrPayloadTests: Sendable, PiniSourceLowering {
 
     // MARK: - 私有 helper（内联语料，不落夹具文件）
-
-    /// 前端四道门：词法 → 语法 → 语义 → 类型。任一拒绝即抛出首条诊断。
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
-        guard typeErrors.isEmpty else { throw typeErrors[0] }
-        return (module, checker)
-    }
 
     /// 完整跑一遍解释器通道，返回标准输出逐行。
     private func runOutput(_ source: String) throws -> [String] {

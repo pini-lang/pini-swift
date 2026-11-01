@@ -10,19 +10,7 @@ import PiniSyntax
 /// `load(p)` 的静态类型是 `*T` 的元素类型，不是 `()`。判据分三面：值位可用、参与算术、
 /// 非指针实参在静态层被拒 —— 只测第一面的话，「返回一个占位值」也能过。
 @Suite("load 的返回值")
-struct LoadReturnValueTests: Sendable {
-
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        return (module, checker)
-    }
+struct LoadReturnValueTests: Sendable, PiniSourceLowering {
 
     private func run(_ source: String) throws -> [String] {
         let (module, checker) = try typeChecked(source)

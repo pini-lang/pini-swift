@@ -9,20 +9,7 @@ import PiniSyntax
 
 /// 内建清单的三个判据：符号唯一、声明由签名拼出、发射器调用到的符号都带声明。
 @Suite("内建清单")
-struct BuiltinInventoryTests: Sendable {
-
-    private func lowered(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
+struct BuiltinInventoryTests: Sendable, PiniSourceLowering {
 
     @Test("符号唯一，每条都有降级点，族名可枚举")
     func theInventoryIsAKeyedTable() {

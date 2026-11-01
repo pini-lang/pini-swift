@@ -10,22 +10,9 @@ import PiniSyntax
 /// 验证器的判据分两面：阳性面是「真程序降载出来必须零违约」（含全部示例的巡检），
 /// 阴性面是「每条规则各有一条手搭的违约 IR 能触发它」。只测阳性面的话，规则全删了也是绿的。
 @Suite("IR 结构验证器")
-struct IRValidatorTests: Sendable {
+struct IRValidatorTests: Sendable, PiniSourceLowering {
 
     // MARK: - 夹具
-
-    private func lower(_ source: String) throws -> IRModule {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
-    }
 
     /// 手搭的最小模块：一个 `main`，语句由调用方给。阴性夹具只关心形状，不关心它能不能跑。
     private func handBuilt(
@@ -46,7 +33,7 @@ struct IRValidatorTests: Sendable {
 
     @Test("降载出来的程序零违约：变量、分支、循环、闭包、集合、match")
     func loweredProgramIsClean() throws {
-        let module = try lower(
+        let module = try lowered(
             #"""
             (盒子)
             v: I32
@@ -97,7 +84,7 @@ struct IRValidatorTests: Sendable {
             let path = directory.appendingPathComponent(name)
             let source = try String(contentsOf: path, encoding: .utf8)
             do {
-                let issues = IRValidator.validate(try lower(source))
+                let issues = IRValidator.validate(try lowered(source))
                 if !issues.isEmpty {
                     failures.append("\(name): \(issues.map(\.description).joined(separator: "；"))")
                 }
@@ -189,6 +176,21 @@ struct IRValidatorTests: Sendable {
                         payloadTypes: [.i32, .i32], type: .enumeration(name: "形状")))
             ], enums: [decl])
         #expect(rules(module) == [.enumPayloadArity])
+    }
+
+    @Test("枚举构造的用例名不在声明里 ⇒ unknown-enum-case")
+    func unknownEnumCase() {
+        let decl = IREnumDecl(
+            name: "形状",
+            cases: [IREnumCase(name: "点", tag: 0, paramNames: [], payloadTypes: [])])
+        let module = handBuilt(
+            [
+                .exprStmt(
+                    .enumConstruct(
+                        enumName: "形状", caseName: "线", tag: 0, payloads: [], payloadTypes: [],
+                        type: .enumeration(name: "形状")))
+            ], enums: [decl])
+        #expect(rules(module) == [.unknownEnumCase])
     }
 
     @Test("match 的分支名不在枚举里 ⇒ match-case")

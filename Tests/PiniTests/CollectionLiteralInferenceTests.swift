@@ -10,19 +10,7 @@ import PiniSyntax
 /// 集合字面量的类型由元素给出，不是 `Any`。判据分三面：推断出的类型、作为实参是否被接受、
 /// 混合元素是否收敛成 `Array<Any>` 并报不匹配 —— 只测「能通过」的话，把 `Any` 换个名字也能过。
 @Suite("集合字面量的类型推断")
-struct CollectionLiteralInferenceTests: Sendable {
-
-    private func typeChecked(_ source: String) throws -> (module: Module, checker: TypeChecker) {
-        let lexer = Lexer(source: source, fileName: "inline.pini")
-        let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
-            .parseModuleCollectingErrors()
-        guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
-        try SemanticAnalyzer().analyze(module: module)
-        let checker = TypeChecker()
-        try checker.check(module: module)
-        return (module, checker)
-    }
+struct CollectionLiteralInferenceTests: Sendable, PiniSourceLowering {
 
     private func variableType(_ name: String, in source: String) throws -> String? {
         let (_, checker) = try typeChecked(source)
