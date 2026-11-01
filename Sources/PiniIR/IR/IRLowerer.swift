@@ -4725,9 +4725,14 @@ public enum IRLowerer {
             let irCases = try lowerResultCases(cases, okType: okType, into: &context)
             return .matchStmt(scrutinee: loweredValue.node, cases: irCases, scrutineeType: loweredValue.type)
         default:
-            // Bare scrutinee — neither Optional nor enum (a direct subscript read yields a plain value). Enum-case arms
-            // (`some` / `none`) never match a bare value, so they fall through silently; literal arms (`case 1:`) do
-            // compare by value and dispatch, with the operand riding along as `IRMatchLiteral` instead of pattern text.
+            // Bare scrutinee — neither Optional nor enum (a direct subscript read yields a plain value). Literal arms
+            // (`case 1:`) compare by value and dispatch; an enum-case arm cannot: the name belongs to no enum the
+            // scrutinee has, so the reference rejects it here rather than letting it become an arm that never runs.
+            for matchCase in cases {
+                if case .enumCase(let name) = matchCase.pattern {
+                    throw SemanticError.unknownMatchCase(caseName: name, location: matchCase.location)
+                }
+            }
             var irCases: [IRMatchCase] = []
             for matchCase in cases {
                 let body = try lowerBareScrutineeArmBody(matchCase, bindingType: loweredValue.type, into: &context)
