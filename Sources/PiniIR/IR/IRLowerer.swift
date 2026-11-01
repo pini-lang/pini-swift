@@ -694,6 +694,10 @@ public enum IRLowerer {
         // Lower nominal type declarations: field defaults via a scratch context, methods as self-parameterized
         // functions with IR names `方法__类型` so they cannot collide with top-level functions. Fields come from
         // the registry, not the raw declaration — composition flattening already merged inherited members there.
+
+        // 给定块字段初值里的取用边：键是给定块名，值是它直接取用的给定块（升序）。与函数体的取用边同表，
+        // 环检测读的就是这张表。
+        var givenEdges: [String: [String]] = [:]
         var typeDecls: [IRTypeDecl] = []
         // 预置声明（宿主提供）也进本表：名义表只让类型名可解析，本表才是执行器建类型表并物化默认实例的
         // 来源 —— 只进名义表会让实例「类型上存在、字段上空」。用同一份 `predefined`：本表是数组，两条同名项
@@ -710,7 +714,8 @@ public enum IRLowerer {
                         name: sd.name, isObject: false, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                        genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                     ))
@@ -721,7 +726,8 @@ public enum IRLowerer {
                         name: od.name, isObject: true, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                        genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
                     ))
@@ -735,7 +741,8 @@ public enum IRLowerer {
                         name: gd.name, isObject: false, fields: info.fields,
                         methods: info.methods,
                         typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                        userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                        userTypes: userTypes, enums: enums, givenEdges: &givenEdges, recordsGivenEdges: true,
+                        genericEnums: genericEnums,
                         genericFuncTemplates: genericFuncTemplates,
                         closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector
@@ -754,7 +761,8 @@ public enum IRLowerer {
                     name: specializedName, isObject: false, fields: info.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericEnums: genericEnums,
+                    userTypes: userTypes, enums: enums, givenEdges: &givenEdges, recordsGivenEdges: true,
+                    genericEnums: genericEnums,
                     genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
                 ))
@@ -770,7 +778,8 @@ public enum IRLowerer {
                     name: specializedName, isObject: false, fields: sd.fields,
                     methods: info.methods,
                     typeInference: typeInference, moduleSignatures: signatures, nominalTypes: nominals,
-                    userTypes: userTypes, enums: enums, genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                    userTypes: userTypes, enums: enums, givenEdges: &givenEdges,
+                    genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
                     closureIds: closureIds
                 ))
         }
@@ -812,13 +821,16 @@ public enum IRLowerer {
             foreigns.append(IRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
         }
 
+        // 两路键不同源（函数名 / 给定块名），合成一张表而不做覆盖检查：符号表已禁止两者同名。
+        var references = Self.givenReferences(of: functions)
+        for (name, targets) in givenEdges { references[name] = targets }
         return IRModule(
             functions: functions, types: typeDecls,
             enums: enumOrder.compactMap { enums[$0] },
             foreigns: foreigns,
             /// 物化依赖留痕：这里**不产诊断**。环检测是后置的，此表只保证后置检测
             /// 加一条遍历即可，不必重扫降载结果。
-            givenReferences: Self.givenReferences(of: functions))
+            givenReferences: references)
     }
 
     // MARK: - G10 monomorphization
@@ -1703,6 +1715,8 @@ public enum IRLowerer {
         nominalTypes: [String: NominalInfo],
         userTypes: [String: IRType],
         enums: [String: IREnumDecl],
+        givenEdges: inout [String: [String]],
+        recordsGivenEdges: Bool = false,
         genericEnums: IRGenericEnumIndex = .empty,
         genericFuncTemplates: [String: FuncDecl] = [:],
         closureIds: [String: Int] = [:],
@@ -1741,6 +1755,11 @@ public enum IRLowerer {
                     closureIds: closureIds, traitRegistry: traitRegistry,
                     traitDefaultsCollector: traitDefaultsCollector
                 ))
+        }
+        // 字段初值里的取用点记在临时上下文上，函数返回时本该随上下文丢弃。给定块那一路要把它带出去：
+        // 默认实例正是由这些初值物化出来的，取用即「载入期依赖」；结构体与对象块的同类取用发生在构造时，不算。
+        if recordsGivenEdges, !scratch.givenReferenceNames.isEmpty {
+            givenEdges[name] = scratch.givenReferenceNames.sorted()
         }
         return IRTypeDecl(name: name, isObject: isObject, fields: loweredFields, methods: loweredMethods)
     }

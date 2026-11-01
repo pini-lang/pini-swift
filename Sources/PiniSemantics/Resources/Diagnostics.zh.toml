@@ -22,6 +22,10 @@ suggestion = "删除它；若有意保留，加 `_` 前缀"
 message = "隐式别名 '{alias}' 与目标模块名 '{targetName}' 不一致"
 suggestion = "重命名别名；若有意为之可忽略（仅提醒，不强制）"
 
+[E7-003]
+message = "给定块物化环：{path}"
+suggestion = "物化时它会要求自己 ⇒ `pini run` 必崩；把字段初值改成不依赖自身"
+
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。

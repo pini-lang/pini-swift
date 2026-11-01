@@ -159,6 +159,8 @@ public enum ErrorFormatter {
         }
         // 验证器的违约同理：整份报告进 {feature}，一处不落地带在消息里。
         if let e = error as? IRValidator.Failure { return ["feature": e.report] }
+        // 环路径是名字列表，Mirror 会印成 `["甲块", "乙块"]` ⇒ 按展示形填 {path}。
+        if let w = error as? SemanticWarning, let path = w.cyclePathText { return ["path": path] }
         guard let child = Mirror(reflecting: error).children.first else { return [:] }
         var args: [String: String] = [:]
         for case let (label?, value) in Mirror(reflecting: child.value).children where label != "location" {
@@ -184,6 +186,14 @@ public enum ErrorFormatter {
             return typeMessage(e)
         case let e as RuntimeError:
             return runtimeMessage(e)
+        case let e as SemanticWarning:
+            switch e {
+            case .givenCycle(let path, _):
+                return "given block materialization cycle: " + path.joined(separator: " → ")
+            case .unusedVariable(let name, _): return "unused variable '\(name)'"
+            case .implicitAliasNameMismatch(let alias, let target, _):
+                return "implicit alias '\(alias)' does not match the target module name '\(target)'"
+            }
         case let e as IRValidator.Failure:
             return e.report
         case let e as PiniError:

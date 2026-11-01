@@ -508,6 +508,55 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         #expect(module.givenReferences["甲"] == nil, "甲 的实参由调用方给，不该留痕：\(module.givenReferences)")
     }
 
+    @Test("补图：给定块字段初值里的取用点进边表，结构体的不进")
+    func givenFieldInitializerEdgesAreRecorded() throws {
+        /// 意图：环检测要读的那张表必须含「给定块 → 它取用的给定块」这条边 —— 原实现里这个集合随临时上下文丢弃。
+        /// 驳回性：同一形态下结构体的字段初值取用不进表，它在构造时求值，不是载入期物化。
+        let source = #"""
+        [计数块|given]
+            值: I32 = 1
+
+        [甲块|given]
+            值: I32 = 取乙()
+
+        取乙|func(using 乙: 计数块,) -> (I32,):
+            return 乙.值
+
+        (盒)
+            值: I32 = 取乙()
+
+        main|func() -> ():
+            print(1)
+            return
+        """#
+        let module = try lowered(source)
+        #expect(module.givenReferences["甲块"] == ["计数块"], "实际：\(module.givenReferences)")
+        #expect(module.givenReferences["盒"] == nil, "结构体的字段初值不该进表：\(module.givenReferences)")
+        // 驳回性②：给定块不生成函数 ⇒ 表里不该出现同名的函数行，边只挂在给定块名上。
+        #expect(
+            module.functions.contains { $0.name == "甲块" } == false,
+            "实际：\(module.functions.map(\.name))")
+    }
+
+    @Test("补图：字段初值直接取用自己所在的给定块时，边是自环")
+    func givenSelfEdgeIsRecorded() throws {
+        /// 意图：最小环的形态 —— 字段初值省略式调用一个函数，那个 `using` 形参由本给定块填。
+        /// 边是 A → A；它进得了图，检测才看得见。这条程序今天 `run` 会被信号 10 杀掉。
+        let source = #"""
+        [甲块|given]
+            值: I32 = 读甲()
+
+        读甲|func(using 甲: 甲块,) -> (I32,):
+            return 甲.值
+
+        main|func() -> ():
+            print(1)
+            return
+        """#
+        let module = try lowered(source)
+        #expect(module.givenReferences["甲块"] == ["甲块"], "实际：\(module.givenReferences)")
+    }
+
     @Test("泛型给定块：特化按用到的类型参数各进一份（含泛型但只到降载）")
     func genericGivenBlockSpecializesOnDemand() throws {
         /// 意图：`[匣<T>|given]` 的特化只有 `using` 形参的类型标注这一个入口（没有构造点、没有调用点），
