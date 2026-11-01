@@ -227,37 +227,37 @@ private struct Builder {
 
         case .forInStmt:
             throw BackendError(
-                node: "forInStmt", family: .collections,
+                node: "forInStmt", family: .controlFlow,
                 reason: "迭代按容器访问器族降级，本 profile 不含容器")
 
         case .tryStmt:
             throw BackendError(
-                node: "tryStmt", family: .resultAndOptional,
+                node: "tryStmt", family: .controlFlow,
                 reason: "错误路径要靠 Result 三槽布局，本 profile 不含聚合")
 
         case .subscriptStore:
             throw BackendError(
-                node: "subscriptStore", family: .collections,
+                node: "subscriptStore", family: .controlFlow,
                 reason: "元素写入要 COW 唯一化，本 profile 不含容器")
 
         case .matchStmt:
             throw BackendError(
-                node: "matchStmt", family: .nominals,
+                node: "matchStmt", family: .controlFlow,
                 reason: "标签位与载荷槽属枚举布局，本 profile 不含具名类型")
 
         case .fieldStore:
             throw BackendError(
-                node: "fieldStore", family: .nominals,
+                node: "fieldStore", family: .controlFlow,
                 reason: "字段偏移属名义类型布局，本 profile 不含具名类型")
 
         case .captureMarker(let name):
             throw BackendError(
-                node: "captureMarker(\(name))", family: .calls,
+                node: "captureMarker(\(name))", family: .controlFlow,
                 reason: "捕获槽要独立环境对象，本 profile 不含闭包")
 
         case .detachStmt:
             throw BackendError(
-                node: "detachStmt", family: .concurrency,
+                node: "detachStmt", family: .controlFlow,
                 reason: "任务边界属于并发 profile")
         }
     }
@@ -403,8 +403,10 @@ private struct Builder {
             throw unsupported("optionalGet/optionalConstruct", .resultAndOptional, "Optional 标签槽不在本 profile")
         case .arrayLiteral, .lenCall, .sliceCall, .subscriptGet, .dictLiteral, .setLiteral:
             throw unsupported("容器节点", .collections, "容器要有运行时句柄与 COW 规则")
-        case .construct, .enumConstruct, .fieldGet, .tupleConstruct, .tupleIndexGet:
+        case .construct, .enumConstruct, .fieldGet:
             throw unsupported("具名类型节点", .nominals, "字段偏移与标签位属名义布局")
+        case .tupleConstruct, .tupleIndexGet:
+            throw unsupported("元组节点", .collections, "聚合布局不在本 profile")
         case .closureLiteral, .functionValue, .indirectCall:
             throw unsupported("函数值节点", .calls, "函数值要环境对象与间接调用协议")
         case .pointerLoad, .pointerStore, .addressOfVar:
