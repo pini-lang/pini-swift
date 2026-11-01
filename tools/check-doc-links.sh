@@ -23,8 +23,10 @@ cand="$( { find docs -name '*.md' -not -path '*/.build/*' 2>/dev/null; ls ./*.md
 for f in $cand; do
   [ -f "$f" ] || continue
   dir="$(dirname "$f")"
-  # 反引号内的 .md/.toml 路径（排除含空格与 URL）；带行号，供墓碑豁免判行
-  refs="$(grep -noE '\`[^ \`[:space:]]+\.(md|toml)\`' "$f" 2>/dev/null | sort -u)"
+  # 反引号内的 .md/.toml 路径（排除含空格与 URL）；带行号，供墓碑豁免判行。
+  # 反引号在 ERE 里不是元字符，单引号内也不经 shell ⇒ 直接写，不加反斜杠；
+  # 写成 \` 会变成字面「反斜杠 + 反引号」，GNU grep 零匹配而 BSD grep 宽松放行。
+  refs="$(grep -noE '`[^ `[:space:]]+\.(md|toml)`' "$f" 2>/dev/null | sort -u)"
   for entry in $refs; do
     lineno="${entry%%:*}"
     ref="${entry#*:}"
@@ -59,6 +61,13 @@ for f in $cand; do
     fi
   done
 done
+
+# 判据空转自检：docs/ 下恒有引用，匹配数为 0 只可能是模式或 grep 语义坏了。
+# 此时「通过」是假绿，按失败处理；阳性对照因此随每次运行生效。
+if [ "$checked" -eq 0 ]; then
+  echo " 行不通  文档链接校验未匹配到任何引用（模式失效或 grep 语义不符，判据空转）" >&2
+  exit 1
+fi
 
 if [ "$fail" -eq 0 ]; then
   echo " 完成  文档链接校验通过（检查 $checked 个引用）"
