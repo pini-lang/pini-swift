@@ -822,9 +822,11 @@ public enum IRLowerer {
         }
 
         // 两路键不同源（函数名 / 给定块名），合成一张表而不做覆盖检查：符号表已禁止两者同名。
-        var references = Self.givenReferences(of: functions)
+        // 方法体不在 `functions` 里，要单独并进来：漏了它，经方法的环在方法那里断成两截，整条看不见。
+        let methodFunctions = typeDecls.flatMap(\.methods)
+        var references = Self.givenReferences(of: functions + methodFunctions)
         for (name, targets) in edges.given { references[name] = targets }
-        var calls = Self.callReferences(of: functions)
+        var calls = Self.callReferences(of: functions + methodFunctions)
         for (name, targets) in edges.call { calls[name] = targets }
         return IRModule(
             functions: functions, types: typeDecls,
@@ -1879,7 +1881,7 @@ public enum IRLowerer {
         return IRFunction(
             name: irName, params: params, returnType: effectiveReturn, body: body,
             sourceFile: decl.location.fileName, givenReferenceNames: context.givenReferenceNames,
-            calledFunctionNames: context.calledFunctionNames)
+            calledFunctionNames: context.calledFunctionNames, displayName: "\(typeName).\(decl.name)")
     }
 
     private static func lowerBlock(
@@ -4530,6 +4532,7 @@ public enum IRLowerer {
             let loweredArgs = try arguments.map {
                 try lowerExpr($0.expression, expected: nil, into: &context)
             }
+            context.recordCall(ext.irName)
             return LoweredExpr(
                 node: .call(
                     function: ext.irName,
@@ -4630,6 +4633,7 @@ public enum IRLowerer {
                         omittedForm: arguments.count != methodParamTypes.count,
                         callee: memberName, at: location, into: &context))
                 let irName = "\(IRName.mangle(memberName))__\(IRName.mangle(typeName))"
+                context.recordCall(irName)
                 return LoweredExpr(
                     node: .call(function: irName, arguments: arguments_ir, returnType: returnType),
                     type: returnType ?? .i32
@@ -5375,6 +5379,7 @@ public enum IRLowerer {
                 enums: context.enums, genericFuncTemplates: context.genericFuncTemplates,
                 closureIds: context.closureIds
             ))
+        context.recordCall(irName)
         return LoweredExpr(
             node: .call(
                 function: irName,
@@ -5883,8 +5888,8 @@ private struct FunctionContext {
     /// 函数体里取用过的给定块类型（见 `IRFunction.givenReferenceNames`）。
     /// 值字段即可 —— 调用点全都在**同一个**函数的 `context` 上写，不需要跨函数共享。
     var givenReferenceNames: Set<String> = []
-    /// 函数体里直接调用的顶层函数名（见 `IRFunction.calledFunctionNames`）。只收具名调用：
-    /// 成员调用落的是 mangle 过的 `方法__类型`，那条射程在环检测里明写不收。
+    /// 函数体里直接调用的函数名（见 `IRFunction.calledFunctionNames`），含方法：方法落的是 mangle 过的
+    /// `方法__类型`，与它自己的 `IRFunction.name` 同一个串。呈现时由 `IRModule.displayNames` 翻回源码写法。
     var calledFunctionNames: Set<String> = []
 
     /// 记一条调用边。具名调用的三条路径都要过这里 —— 漏一处，该路径上的间接环就看不见了。

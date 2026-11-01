@@ -109,6 +109,40 @@ struct GivenCycleDetectorTests: Sendable, PiniSourceLowering {
             "实际：\(module.givenReferences) + \(module.callReferences)")
     }
 
+    @Test("端到端：环穿过方法体，路径翻成源码写法")
+    func loweredSourceYieldsCycleThroughMethod() throws {
+        /// 意图：方法体不在 `functions` 里，得单独并进图 —— 漏了它，这条环在方法那里断成两截。
+        /// 而方法名在 IR 里是 `方法名__类型名` 的 mangle 形态，告警必须翻回 `类型.方法` 才读得懂。
+        let source = #"""
+        [甲块|given]
+            值: I32 = 取数()
+
+        (工具)
+        数: I32 = 0
+
+        ((工具))
+        读数|self() -> (I32,):
+            return 读甲()
+
+        读甲|func(using 甲: 甲块,) -> (I32,):
+            return 甲.值
+
+        取数|func() -> (I32,):
+            return 工具().读数()
+
+        main|func() -> ():
+            print(1)
+            return
+        """#
+        let module = try lowered(source)
+        let cycles = GivenCycleDetector.cycles(in: merged(module), givenBlocks: ["甲块"])
+        let shown = cycles.map { path in path.map { module.displayNames[$0] ?? $0 } }
+        #expect(shown == [["甲块", "取数", "工具.读数", "甲块"]], "实际：\(shown)")
+        #expect(
+            module.displayNames.values.contains("工具.读数"),
+            "方法没有记下源码写法：\(module.displayNames)")
+    }
+
     @Test("警告元数据：E7-003、warning 级、位置透传、{path} 取展示形")
     func warningMetadataIsRouted() {
         let loc = SourceLocation(line: 2, column: 5, fileName: "a.pini")

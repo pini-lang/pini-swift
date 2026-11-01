@@ -2,7 +2,7 @@ import Foundation
 
 /// 给定块物化环：只看边表，不碰编译器状态。
 /// 边表 = `IRModule.givenReferences` ∪ `IRModule.callReferences`：前者连「谁取用了哪个给定块」，
-/// 后者连「谁调用了哪个函数」。普通函数由此也能入环，路径里会同时出现函数名。
+/// 后者连「谁调用了哪个函数」。函数与方法由此都能入环，路径里会同时出现它们。
 public enum GivenCycleDetector {
 
     /// 边表里所有**含给定块**的环。不含给定块的环是普通递归，不报 —— 那是运行时栈的事，不是物化的事。

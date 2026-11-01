@@ -863,7 +863,8 @@ func givenBlockLocations(in declarations: [TopLevelDecl]) -> [String: SourceLoca
 
 /// 环 → 警告：位置取环起点（旋转后的最小给定块）的声明处。预置块不在声明表里，取不到位置就跳过。
 func givenCycleWarnings(
-    references: [String: [String]], calls: [String: [String]], declarations: [TopLevelDecl]
+    references: [String: [String]], calls: [String: [String]],
+    declarations: [TopLevelDecl], labels: [String: String]
 ) -> [SemanticWarning] {
     let locations = givenBlockLocations(in: declarations)
     // 给定块的名单取自声明面，不从边表推：图上函数名与给定块名混在一起，值面已分不出谁是谁。
@@ -871,7 +872,8 @@ func givenCycleWarnings(
     for (name, targets) in calls { edges[name, default: []] += targets }
     return GivenCycleDetector.cycles(in: edges, givenBlocks: Set(locations.keys)).compactMap { path in
         guard let start = path.first, let location = locations[start] else { return nil }
-        return .givenCycle(path: path, location: location)
+        // 环的身份仍用 IR 名（去重与旋转都按它），只在呈现时翻成源码写法。
+        return .givenCycle(path: path.map { labels[$0] ?? $0 }, location: location)
     }
 }
 
@@ -884,7 +886,8 @@ func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarnin
             module: module, typeInference: checker.typeInference, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
-        references: ir.givenReferences, calls: ir.callReferences, declarations: module.declarations)
+        references: ir.givenReferences, calls: ir.callReferences,
+        declarations: module.declarations, labels: ir.displayNames)
 }
 
 /// 整包版本：环只可能在同一模块内出现，位置取各文件声明的并集（import 进来的外部声明不参与）。
@@ -896,7 +899,8 @@ func givenCycleWarnings(package: Package, checker: TypeChecker) -> [SemanticWarn
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
-        declarations: package.fileUnits.flatMap { $0.module.declarations })
+        declarations: package.fileUnits.flatMap { $0.module.declarations },
+        labels: ir.displayNames)
 }
 
 // 程序基准：相对给定的文件/目录路径求绝对基准——目录取自身，文件取所在目录。
