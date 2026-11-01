@@ -246,6 +246,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     var dispatchBackEndCapabilities: ConcurrencyCapabilities { scheduler.capabilities }
 
     public func prepare(module: IRModule) throws {
+        /// 结构不变量先过一遍：解释器与发射器同样按槽名、字段名、用例名取用，破了不该等运行时撞。
+        try IRValidator.check(module)
         callableBodies.removeAll()
         for function in module.functions { functions[function.name] = function }
         for decl in module.types {

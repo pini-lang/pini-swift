@@ -4307,64 +4307,10 @@ public final class IREmitter {
         return IRValue(llvmType: "void", ssaName: "")
     }
 
-    /// Resolved IR type of a lowered expression node (every case carries
-    /// its type — the typed-tree contract).
+    /// 表达式的静态类型；无值节点（`print`、写文件一类）取 `.i32` 垫底。
+    /// 类型表只有一份，住在 `IRExpr.staticType`：本处再写一份必然与它漂。
     private func irType(of expr: IRExpr) -> IRType {
-        switch expr {
-        case .intConst(_, let type): return type
-        case .floatConst: return .f64
-        case .boolConst: return .boolean
-        case .stringConst: return .string
-        case .load(_, let type): return type
-        case .binary(_, _, _, let type): return type
-        case .unary(_, _, let type): return type
-        case .call(_, _, let returnType): return returnType ?? .i32
-        case .printCall: return .i32
-        case .resultConstruct(_, _, let type): return type
-        case .arrayLiteral(_, let type): return type
-        case .subscriptGet(_, _, let type): return type
-        case .lenCall: return .i32
-        case .optionalGet(_, _, let type): return type
-        case .optionalConstruct(_, _, let type): return type
-        case .sliceCall(_, _, _, let type): return type
-        case .construct(let type): return type
-        case .fieldGet(_, _, let type): return type
-        case .enumConstruct(_, _, _, _, _, let type): return type
-        case .dictLiteral(_, let type): return type
-        case .setLiteral(_, let type): return type
-        case .tupleConstruct(_, _, let type): return type
-        case .tupleIndexGet(_, _, let type): return type
-        case .stringCase: return .string
-        case .stringContains: return .boolean
-        case .stringSubstring: return .string
-        case .stringSplit(_, _, let type): return type
-        case .stringTrimLeft: return .string
-        case .stringTrimRight: return .string
-        case .stringIndexOf: return .i32
-        case .arrayJoin: return .string
-        case .stringConcat: return .string
-        case .interpString: return .string
-        case .closureLiteral(_, _, _, _, _, _, let type): return type
-        case .functionValue(_, let type): return type
-        case .indirectCall(_, _, let returnType): return returnType ?? .i32
-        case .lazyRefConstruct(_, let type): return type
-        case .lazyRefValue(_, let type): return type
-        case .pointerLoad(_, let type): return type
-        case .pointerStore: return .i32
-        case .addressOfVar(_, let type): return .pointer(element: type)
-        case .printMulti: return .i32
-        case .assertCall: return .i32
-        case .fileWrite: return .i32
-        case .fileAppend: return .i32
-        case .fileRead: return .string
-        case .fileTryWrite, .fileTryAppend:
-            return .result(ok: .tuple(labels: [], fieldTypes: []))
-        case .fileTryRead: return .result(ok: .string)
-        case .readLine: return .string
-        case .isAsciiDigit: return .boolean
-        case .join(_, let type, _): return type
-        case .givenInstance(let type): return type
-        }
+        expr.staticType ?? .i32
     }
 
     /// Print one scalar value by its IR spelling (no newline).

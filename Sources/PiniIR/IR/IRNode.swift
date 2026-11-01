@@ -182,6 +182,23 @@ public indirect enum IRType: Equatable {
         default: return false
         }
     }
+
+    /// 相等判定抹掉元组标签这一维：标签只活在下标访问里，不参与拼写与等价。
+    /// 其余类型逐字相等 —— 递归到元组内部，故嵌套元组同规。
+    public func isLabelInsensitivelyEqual(to other: IRType) -> Bool {
+        if case .tuple(_, let mine) = self, case .tuple(_, let theirs) = other {
+            guard mine.count == theirs.count else { return false }
+            return zip(mine, theirs).allSatisfy { $0.isLabelInsensitivelyEqual(to: $1) }
+        }
+        return self == other
+    }
+
+    /// 赋值方向的接收判据：元组忽略标签、`Char` 放宽到 `String`（两者共用 `i8*`，不发出转换），
+    /// 其余必须逐字相等；`String` 不接受 `Char`，加宽是单向的。降载的接收检查与验证器的值位
+    /// 比对共用这一把尺子 —— 两处各写一份，漂的那一刻没有判据会变红。
+    public func isAssignable(to target: IRType) -> Bool {
+        isLabelInsensitivelyEqual(to: target) || (self == .char && target == .string)
+    }
 }
 
 /// Binary operators in the slice set.
@@ -416,6 +433,67 @@ public indirect enum IRExpr: Equatable {
     /// 惰性物化、恰一次、地址稳定；取到的是实例本身（非副本、非模板）。它与 `lazyRefValue` 不是一件事：
     /// 后者是字段内的细粒度缓冲，本条是类型级取用。目前无降载入口，两台引擎起步 fail-loud。
     case givenInstance(type: IRType)
+}
+
+extension IRExpr {
+    /// 节点产出的值类型；`nil` 表示这个位置不产出值（`print`、写文件、`store` 一类）。
+    /// 唯一判据是节点自带的 `type`，不从用法或上下文再推一次（契约 5.1）；两个消费方
+    /// （发射器、验证器）都取这里，不各写一份 switch。
+    public var staticType: IRType? {
+        switch self {
+        case .intConst(_, let type): return type
+        case .floatConst: return .f64
+        case .boolConst: return .boolean
+        case .stringConst: return .string
+        case .load(_, let type): return type
+        case .binary(_, _, _, let type): return type
+        case .unary(_, _, let type): return type
+        case .call(_, _, let returnType): return returnType
+        case .printCall: return nil
+        case .resultConstruct(_, _, let type): return type
+        case .arrayLiteral(_, let type): return type
+        case .subscriptGet(_, _, let type): return type
+        case .lenCall: return .i32
+        case .optionalGet(_, _, let type): return type
+        case .optionalConstruct(_, _, let type): return type
+        case .sliceCall(_, _, _, let type): return type
+        case .construct(let type): return type
+        case .fieldGet(_, _, let type): return type
+        case .enumConstruct(_, _, _, _, _, let type): return type
+        case .dictLiteral(_, let type): return type
+        case .setLiteral(_, let type): return type
+        case .tupleConstruct(_, _, let type): return type
+        case .tupleIndexGet(_, _, let type): return type
+        case .stringCase: return .string
+        case .stringContains: return .boolean
+        case .stringSubstring: return .string
+        case .stringSplit(_, _, let type): return type
+        case .stringTrimLeft, .stringTrimRight: return .string
+        case .stringIndexOf: return .i32
+        case .arrayJoin: return .string
+        case .stringConcat: return .string
+        case .interpString: return .string
+        case .closureLiteral(_, _, _, _, _, _, let type): return type
+        case .functionValue(_, let type): return type
+        case .indirectCall(_, _, let returnType): return returnType
+        case .lazyRefConstruct(_, let type): return type
+        case .lazyRefValue(_, let type): return type
+        case .pointerLoad(_, let type): return type
+        case .pointerStore: return nil
+        case .addressOfVar(_, let type): return .pointer(element: type)
+        case .printMulti: return nil
+        case .assertCall: return nil
+        case .fileWrite, .fileAppend: return nil
+        case .fileRead: return .string
+        /// 写成功的载荷是空元组：写不产出值，也不编造字节数。
+        case .fileTryWrite, .fileTryAppend: return .result(ok: .tuple(labels: [], fieldTypes: []))
+        case .fileTryRead: return .result(ok: .string)
+        case .readLine: return .string
+        case .isAsciiDigit: return .boolean
+        case .join(_, let type, _): return type
+        case .givenInstance(let type): return type
+        }
+    }
 }
 
 /// One nominal type declaration (G3): layout + lowered field defaults +

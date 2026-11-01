@@ -1378,6 +1378,7 @@ func emitAndRunLLVMTests(
 ) throws {
     // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
     //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
+    try IRValidator.check(module)
     let selection: [String]? = fileScope.map { scope in
         module.functions.filter { $0.isTest && scope($0.sourceFile) }.map { $0.name }
     }
@@ -1582,7 +1583,10 @@ private func lowerSingleFile(source: String, fileName: String) throws -> IRModul
     }
     // 开启持久表兜底：codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    return try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
+    try IRValidator.check(irModule)
+    return irModule
 }
 
 private func typeCheckThenGenerate(
@@ -1633,6 +1637,7 @@ private func runIRPackageEmit(
     // Same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
+    try IRValidator.check(irModule)
     // 模块基准 = 模块根，与解释器模块路径一致。
     backend.setProgramBase(absoluteProgramBase(moduleRoot))
     let ir = try backend.emit(module: irModule)

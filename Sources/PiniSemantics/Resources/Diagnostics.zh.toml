@@ -10,6 +10,7 @@ semanticWarning = "语义警告"
 type = "类型错误"
 runtime = "运行时错误"
 irgen = "IR 生成错误"
+validator = "IR 结构错误"
 io = "IO 错误"
 general = "错误"
 
@@ -195,3 +196,7 @@ suggestion = "改用与所在体匹配的关键字，或改函数的异步声明
 [E6-010]
 message = "`await` 落在没有可恢复续跑点的位置：它会让出当前任务，而这里回不到精确的续跑点"
 suggestion = "把这次等待挪到**函数体那一层**的一条语句根部：`await f()` 独占一行 · `var x = await f()` · `try await f() else …` · `match await f():`。同样的四形**嵌在** `if` / 循环体 / `match` 的 case 体里也不行 —— 续跑跳不回嵌套块"
+
+[E6-011]
+message = "IR 结构不变量被破坏：{feature}"
+suggestion = "这是编译器缺陷，不是程序写错：把这条诊断连同复现用的源文件一并上报"

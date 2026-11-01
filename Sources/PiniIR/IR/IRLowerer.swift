@@ -5297,25 +5297,11 @@ public enum IRLowerer {
 
     /// Slice set: exact match only, plus one exception — `Char` widens into `String`, a declared rule the checker
     /// admits and both share an ABI for (`i8*`), so no coercion is emitted; narrowing is not admitted here.
-    /// Tuples ignore component names: LLVM's spelling has none, and the executor stamps the declared labels on.
+    /// The rule itself lives on `IRType.isAssignable(to:)` so the validator judges value slots by the same ruler.
     private static func requireAssignable(_ from: IRType, to: IRType, at location: SourceLocation) throws {
-        guard labelInsensitiveEqual(from, to) || (from == .char && to == .string) else {
+        guard from.isAssignable(to: to) else {
             throw unsupported("type mismatch: \(from) is not \(to)", at: location)
         }
-    }
-
-    /// `==` everywhere except inside a tuple, where the label dimension is
-    /// dropped and the element types still have to match one by one (nesting
-    /// included).
-    private static func labelInsensitiveEqual(_ from: IRType, _ to: IRType) -> Bool {
-        if case .tuple(_, let fromFields) = from, case .tuple(_, let toFields) = to {
-            guard fromFields.count == toFields.count else { return false }
-            for (a, b) in zip(fromFields, toFields) where !labelInsensitiveEqual(a, b) {
-                return false
-            }
-            return true
-        }
-        return from == to
     }
 
     /// The top-level name a declaration binds, for the import merge's
