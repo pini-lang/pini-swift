@@ -1448,7 +1448,8 @@ private func gateAndRunTests(
         //  重要  降载走 `lowerTests` —— 与上面那条通道**同一份**降载（理由见它的注释）。
         let lowered = try runner.lowerTests(package: pkg)
         try emitAndRunLLVMTests(
-            module: lowered, fileScope: scope, header: header, programBase: programBase)
+            module: lowered, fileScope: scope, header: header, programBase: programBase,
+            ffiConfig: ffiConfig)
     }
 }
 
@@ -1498,7 +1499,8 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
         let lowered = try runner.lowerTests(module: module)
         try emitAndRunLLVMTests(
             module: lowered, fileScope: nil, header: header,
-            programBase: absoluteProgramBase(path))
+            programBase: absoluteProgramBase(path),
+            ffiConfig: manifest?.ffi)
     }
 }
 
@@ -1506,7 +1508,8 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
 // 报告由产物自己给出（发射侧按测试模式合成），故它只剩落盘 `.ll`、调 clang、交子进程状态三件事。
 // 退出码必须透传（丢掉会让 abort 被读成 rc=0、判据恒绿）；测试模式允许模块无 `main`，入口由发射器合成。
 func emitAndRunLLVMTests(
-    module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?
+    module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?,
+    ffiConfig: FFIConfig? = nil
 ) throws {
     // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
     //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
@@ -1547,6 +1550,9 @@ func emitAndRunLLVMTests(
         let dir = (dylib as NSString).deletingLastPathComponent
         clangArgs.insert(contentsOf: ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"], at: 0)
     }
+    // 测试跑在 LLVM 通道上时，foreign 符号同样要靠清单里的 `libs` 落定。
+    let foreign = foreignLinkArguments(ffiConfig)
+    if !foreign.isEmpty { clangArgs.insert(contentsOf: foreign, at: 0) }
     process.arguments = clangArgs
     let pipe = Pipe()
     process.standardError = pipe
@@ -1862,6 +1868,40 @@ private func runtimeLibraryPath() -> String? {
 }
 
 
+/// 清单 `[ffi]` 的链接口径。块名不参与：foreign 块名只决定解释器默认加载 `lib<块名>`，
+/// 与链接哪几个库无关 —— 库名由 `libs` 显式给出，两者可以脱钩。
+/// 没有清单或清单没写 `[ffi]` 时答 nil：没有声明过的库，就没有链接参数可加。
+private func foreignConfig(around path: String) throws -> FFIConfig? {
+    guard let root = try FileLoader.locateModuleRoot(for: path) else { return nil }
+    return try FileLoader.loadManifest(directory: root)?.ffi
+}
+
+/// `search_paths` → `-L`（非系统目录另加 rpath），`libs` → `-l`。
+/// rpath 只给非系统目录：vendored 库的 install name 常是裸文件名，缺它在编译期看不出来，
+/// 运行期才报找不到映像。
+private func foreignLinkArguments(_ config: FFIConfig?) -> [String] {
+    guard let config else { return [] }
+    let systemDirs: Set<String> = ["/usr/lib", "/usr/local/lib"]
+    var args: [String] = []
+    for dir in config.searchPaths where FileManager.default.fileExists(atPath: dir) {
+        args.append("-L\(dir)")
+        if !systemDirs.contains(dir) { args.append("-Wl,-rpath,\(dir)") }
+    }
+    args += config.libs.map { "-l\($0)" }
+    return args
+}
+
+/// 按 `search_paths` 找 `lib<名称>.{dylib,so}`，与解释器 `FFILoader` 的命名同规。
+private func libraryPath(named name: String, in searchPaths: [String]) -> String? {
+    for dir in searchPaths {
+        for ext in ["dylib", "so"] {
+            let candidate = (dir as NSString).appendingPathComponent("lib\(name).\(ext)")
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+    }
+    return nil
+}
+
 func runCompileCommand(source: String, fileName: String) throws {
     let ir = try typeCheckThenGenerate(source: source, fileName: fileName, policy: .required)
 
@@ -1887,6 +1927,9 @@ func runCompileCommand(source: String, fileName: String) throws {
         let dir = (dylib as NSString).deletingLastPathComponent
         clangArgs.insert(contentsOf: ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"], at: 0)
     }
+    // `[ffi]` 声明的外部库：解释器经 dlsym，这里经链接器，两条通道读同一份清单。
+    let foreign = foreignLinkArguments(try foreignConfig(around: fileName))
+    if !foreign.isEmpty { clangArgs.insert(contentsOf: foreign, at: 0) }
     process.arguments = clangArgs
     let pipe = Pipe()
     process.standardError = pipe
@@ -1951,7 +1994,8 @@ func runBuildShared(path: String, outputPath: String?) {
             try FileManager.default.createDirectory(
                 atPath: parent, withIntermediateDirectories: true)
         }
-        try linkSharedLibrary(irPath: irPath, outputPath: libraryPath)
+        try linkSharedLibrary(
+            irPath: irPath, outputPath: libraryPath, ffiConfig: try foreignConfig(around: path))
         print("已生成 \(libraryPath)")
         CommentStyleHint.emit()
     } catch {
@@ -2015,7 +2059,9 @@ private func sharedLibraryPath(_ outputPath: String?, blockName: String) -> Stri
 
 /// 交给 clang 链成动态库：运行时动态链接，并把它的目录写进 rpath，否则调用方加载时找不到符号。
 /// 缺 clang 或运行时直接失败 —— 发一个注定加载不了的库，比不发更难排查。
-private func linkSharedLibrary(irPath: String, outputPath: String) throws {
+private func linkSharedLibrary(
+    irPath: String, outputPath: String, ffiConfig: FFIConfig? = nil
+) throws {
     guard let clang = LLVMToolchain.clangPath else {
         throw SharedBuildError(
             message: "clang not found. Install LLVM (e.g. `brew install llvm`) or set PINI_LLVM_BIN.")
@@ -2029,6 +2075,8 @@ private func linkSharedLibrary(irPath: String, outputPath: String) throws {
         "-shared", "-o", outputPath, irPath,
         "-L\(runtimeDir)", "-lPiniRuntime", "-Wl,-rpath,\(runtimeDir)",
     ]
+    // 库自己也可能调外部 C：`[ffi]` 的 `libs` 决定链接什么，缺了它符号落不下来。
+    clangArgs.insert(contentsOf: foreignLinkArguments(ffiConfig), at: 0)
     #if !os(macOS)
     // Darwin 的 `-shared` 默认就要求符号全部落定；GNU ld 相反，不加这条会把缺符号的库静默发出去。
     clangArgs.insert("-Wl,--no-undefined", at: 0)
@@ -2064,6 +2112,15 @@ func runLLICommand(source: String, fileName: String) throws {
     // 并发后端抽象 阶段1：加载集合运行时（best-effort，找不到则跳过——非集合程序无需）。
     if let dylib = runtimeLibraryPath() {
         lliArgs.insert("--dlopen=\(dylib)", at: 0)
+    }
+    // `[ffi]` 的库：lli 没有链接期，只能把映像预载进 JIT。找不到的不报错 ——
+    // 系统库在 macOS 上位于共享缓存、磁盘上没有文件，抢先报错会误伤它们；
+    // 真缺符号时 lli 自己的 undefined symbol 更准确。
+    let ffi = try foreignConfig(around: fileName)
+    for lib in ffi?.libs ?? [] {
+        if let path = libraryPath(named: lib, in: ffi?.searchPaths ?? []) {
+            lliArgs.insert("--dlopen=\(path)", at: 0)
+        }
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: lli)

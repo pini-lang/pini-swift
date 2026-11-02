@@ -1,4 +1,5 @@
 import Foundation
+import PiniBackendLLVM
 import Testing
 
 #if canImport(Darwin)
@@ -204,6 +205,103 @@ struct CSharedLibraryTests {
         #expect(strerror(code).map { String(cString: $0) } == "文件错误.不存在")
         #expect(strerror(0).map { String(cString: $0) } == "success")
         #expect(strerror(999) == nil, "未登记的码应返回 NULL")
+    }
+
+    @Test("清单的 libs 进链接：库与可执行四条命令都能调到外部 C")
+    func linksDeclaredForeignLibraries() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        guard let clang = LLVMToolchain.clangPath, LLVMToolchain.lliPath != nil else {
+            _ = PiniTestEnvironment.requireToolchain(["PINI_LLVM_BIN"])
+            return
+        }
+        let dir = try makeTemporaryDirectory(tag: "shared-ffi-link")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let libDir = dir.appendingPathComponent("lib")
+        try FileManager.default.createDirectory(at: libDir, withIntermediateDirectories: true)
+
+        // 外部库：install name 带 @rpath，产物运行期才找得到它。
+        let source = dir.appendingPathComponent("demo.c")
+        try "int demo_twice(int x) { return x * 2; }\n"
+            .write(to: source, atomically: true, encoding: .utf8)
+        let libPath = libDir.appendingPathComponent("libdemo.\(librarySuffix)")
+        var libArgs = ["-shared", "-o", libPath.path, source.path]
+        #if os(macOS)
+        libArgs.insert(contentsOf: ["-install_name", "@rpath/libdemo.\(librarySuffix)"], at: 1)
+        #endif
+        let buildLibrary = Process()
+        buildLibrary.executableURL = URL(fileURLWithPath: clang)
+        buildLibrary.arguments = libArgs
+        try buildLibrary.run()
+        buildLibrary.waitUntilExit()
+        #expect(buildLibrary.terminationStatus == 0, "外部库构建失败")
+
+        try """
+        [package]
+        name = "ffilink"
+        version = "0.1.0"
+
+        [ffi]
+        search_paths = ["lib"]
+        libs = ["demo"]
+        """.write(to: dir.appendingPathComponent("pini.toml"), atomically: true, encoding: .utf8)
+
+        // 两个文件各声明一次同一个外部符号：同名 declare 只能发一次，否则 clang 判重定义。
+        try """
+        [demo|foreign]
+        demo_twice: (I32,) -> (I32,)
+
+        翻倍|unsafe(x: I32,) -> (I32,):
+            return demo_twice(x)
+        """.write(to: dir.appendingPathComponent("ffi.pini"), atomically: true, encoding: .utf8)
+        try """
+        [demo|foreign]
+        demo_twice: (I32,) -> (I32,)
+
+        双倍|unsafe(x: I32,) -> (I32,):
+            return demo_twice(x)
+
+        [calc|export]
+        calc_twice|c = 双倍
+        """.write(to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
+
+        let result = try runCLI(cli, arguments: ["build", "--shared", dir.path], cwd: dir)
+        #expect(result.status == 0, "构建失败（rc=\(result.status)）：\(result.stderr)")
+        let library = dir.appendingPathComponent("libcalc.\(librarySuffix)")
+        let handle = try #require(dlopen(library.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
+        defer { _ = dlclose(handle) }
+        let symbol = try #require(dlsym(handle, "calc_twice"), "找不到 calc_twice")
+        let twice = unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Int32).self)
+        #expect(twice(21) == 42, "外部库没被链上：算出来的不是 demo_twice 的结果")
+
+        // 可执行侧同规：`compile` 走 clang 链接，`run-llvm` 走 lli 的 `--dlopen`。
+        try """
+        [demo|foreign]
+        demo_twice: (I32,) -> (I32,)
+
+        main|unsafe() -> (I32,):
+            print(demo_twice(21))
+            return 0
+        """.write(to: dir.appendingPathComponent("prog.pini"), atomically: true, encoding: .utf8)
+        let compiled = try runCLI(cli, arguments: ["compile", "prog.pini"], cwd: dir)
+        #expect(
+            compiled.stdout.contains("42"),
+            "compile 没链上外部库：\(compiled.stdout)\(compiled.stderr)")
+        let jitted = try runCLI(cli, arguments: ["run-llvm", "prog.pini"], cwd: dir)
+        #expect(
+            jitted.stdout.contains("42"),
+            "run-llvm 没预载外部库：\(jitted.stdout)\(jitted.stderr)")
+
+        try """
+        [demo|foreign]
+        demo_twice: (I32,) -> (I32,)
+
+        翻倍是四十二|test() -> (Bool,):
+            return 翻倍(21) == 42
+        """.write(to: dir.appendingPathComponent("probe.pini"), atomically: true, encoding: .utf8)
+        let tested = try runCLI(cli, arguments: ["test-llvm"], cwd: dir)
+        #expect(
+            tested.stdout.contains("1 通过"),
+            "test-llvm 没链上外部库：\(tested.stdout)\(tested.stderr)")
     }
 
     // MARK: - helper

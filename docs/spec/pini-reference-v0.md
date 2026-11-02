@@ -2711,8 +2711,12 @@ libs = ["m", "pthread"]
 | 配置 | 说明 |
 |---|---|
 | `abi` | 全局唯一，默认 `"C"`，子模块不可覆盖 |
-| `search_paths` | 库搜索路径，分层追加 |
-| `libs` | 需链接的库列表 |
+| `search_paths` | 库搜索路径，分层追加；相对项按模块目录解析 |
+| `libs` | 需链接的库列表，名字不带 `-l`：LLVM 通道拼成 `-l<名>`，解释器不使用它 |
+
+`libs` 与 foreign 块名允许脱钩：块名只决定解释器默认 `dlopen` 哪个 `lib<块名>`，链接什么库完全由 `libs` 说。四条 LLVM 命令（`compile`、`run-llvm`、`test-llvm`、`build --shared`）读的都是这一份清单。
+
+注意 清单只影响编译器发的链接参数，不改 dylib 自身的 install name。用 `clang -shared -o libx.dylib` 造出来的库记的是裸文件名，运行期 dyld 可能找不到；这类库应带 `@rpath/libx.dylib` 或绝对 install name。
 
 **类型白名单（顶层签名）**：
 
