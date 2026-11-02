@@ -228,6 +228,7 @@ extension TypeError: DiagnosticProviding {
         case .sharedReferenceAcrossTasks: return "\(DiagnosticDomain.type.rawValue)-013"
         case .enumCaseArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-014"
         case .givenBlockTypeInValuePosition: return "\(DiagnosticDomain.type.rawValue)-015"
+        case .exportCInvalid: return "\(DiagnosticDomain.type.rawValue)-026"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -247,6 +248,8 @@ extension TypeError: DiagnosticProviding {
             .sharedReferenceAcrossTasks(_, _, _, let loc),
             .enumCaseArgumentLabel(_, _, let loc),
             .givenBlockTypeInValuePosition(_, let loc):
+            return loc
+        case .exportCInvalid(_, let loc):
             return loc
         }
     }

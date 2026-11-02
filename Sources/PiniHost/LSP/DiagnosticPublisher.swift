@@ -158,6 +158,7 @@ public struct DiagnosticPublisher {
         case .sharedReferenceAcrossTasks(_, _, _, let loc): return loc
         case .enumCaseArgumentLabel(_, _, let loc): return loc
         case .givenBlockTypeInValuePosition(_, let loc): return loc
+        case .exportCInvalid(_, let loc): return loc
         }
     }
 }

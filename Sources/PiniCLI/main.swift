@@ -600,6 +600,17 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
             result += "\(indent) \(symbol.name)\(flags): \(symbol.annotation.describe())\n"
         }
         return String(result.dropLast())
+    case .exportCDecl(let block):
+        var result = "\(indent)c \(block.name):\n"
+        for item in block.items {
+            switch item {
+            case .function(let cName, let pinName, _):
+                result += "\(indent) \(cName) = \(pinName)\n"
+            case .storage(let cName, let typeName, _):
+                result += "\(indent) \(cName): \(typeName)\n"
+            }
+        }
+        return String(result.dropLast())
     }
 }
 

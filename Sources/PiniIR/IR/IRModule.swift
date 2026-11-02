@@ -167,6 +167,92 @@ public struct IRForeignBlock: Equatable {
     }
 }
 
+/// 一个导出形参：`isUsing` 位不进 C 原型，由转发层在边界内用默认实例填。
+/// 顺序即 Pini 函数的形参顺序，转发层照它排实参。
+public struct IRExportParam: Equatable {
+    public let type: IRType
+    public let isUsing: Bool
+
+    public init(type: IRType, isUsing: Bool) {
+        self.type = type
+        self.isUsing = isUsing
+    }
+}
+
+/// 一个 C 导出函数项：C 名、Pini 名、形参计划与返回。
+/// `returnType` 为 `.result` 时按「状态码 + 出参」发布，头文件与发射层读同一条判据。
+public struct IRExportFunction: Equatable {
+    public let cName: String
+    public let pinName: String
+    public let params: [IRExportParam]
+    public let returnType: IRType?
+
+    public init(cName: String, pinName: String, params: [IRExportParam], returnType: IRType?) {
+        self.cName = cName
+        self.pinName = pinName
+        self.params = params
+        self.returnType = returnType
+    }
+
+    /// C 原型上的形参：取用位不在其中。
+    public var cParamTypes: [IRType] {
+        params.filter { !$0.isUsing }.map(\.type)
+    }
+
+    /// `^T` 的载荷：非 nil 即 C 侧看到 `int32_t f(..., T* out)`，0 成功、1 失败。
+    public var statusPayload: IRType? {
+        guard case .result(let ok)? = returnType else { return nil }
+        return ok
+    }
+}
+
+/// 一个 C 导出的给定块：结构体只镜像字段区，取址函数返回它的首地址。
+/// 字段名已转写为 C 标识符，后端不再改名。
+public struct IRExportStorage: Equatable {
+    public struct Field: Equatable {
+        public let name: String
+        public let type: IRType
+
+        public init(name: String, type: IRType) {
+            self.name = name
+            self.type = type
+        }
+    }
+
+    public let cName: String
+    public let typeName: String
+    public let fields: [Field]
+    public let getterName: String
+
+    public init(cName: String, typeName: String, fields: [Field], getterName: String) {
+        self.cName = cName
+        self.typeName = typeName
+        self.fields = fields
+        self.getterName = getterName
+    }
+}
+
+/// 一个 C 导出块：函数转发项、给定块取址项，以及两个生成的生命周期符号。
+/// 块名只命名产物与这两个符号，不参与条目符号名。
+public struct IRExportBlock: Equatable {
+    public let name: String
+    public let functions: [IRExportFunction]
+    public let storages: [IRExportStorage]
+    public let initName: String
+    public let shutdownName: String
+
+    public init(
+        name: String, functions: [IRExportFunction], storages: [IRExportStorage],
+        initName: String, shutdownName: String
+    ) {
+        self.name = name
+        self.functions = functions
+        self.storages = storages
+        self.initName = initName
+        self.shutdownName = shutdownName
+    }
+}
+
 /// A lowered module: the ordered functions plus the nominal type and enum declarations. The entry function is `main`
 /// (required by the slice emitter); methods live inside their `IRTypeDecl` and are emitted as regular functions.
 public struct IRModule: Equatable {
@@ -175,6 +261,9 @@ public struct IRModule: Equatable {
     public let enums: [IREnumDecl]
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [IRForeignBlock]
+
+    /// C 导出面：至多一块，条目名字已转成 C 标识符。
+    public let export: IRExportBlock?
 
     /// 布局事实：名义头、字段与载荷各在第几槽。后端只读不算 —— 契约第 5 节「布局归位」。
     public let layout: IRLayout
@@ -191,13 +280,14 @@ public struct IRModule: Equatable {
 
     public init(
         functions: [IRFunction], types: [IRTypeDecl] = [], enums: [IREnumDecl] = [],
-        foreigns: [IRForeignBlock] = [], layout: IRLayout = .standard,
+        foreigns: [IRForeignBlock] = [], export: IRExportBlock? = nil, layout: IRLayout = .standard,
         givenReferences: [String: [String]] = [:], callReferences: [String: [String]] = [:]
     ) {
         self.functions = functions
         self.types = types
         self.enums = enums
         self.foreigns = foreigns
+        self.export = export
         self.layout = layout
         self.givenReferences = givenReferences
         self.callReferences = callReferences

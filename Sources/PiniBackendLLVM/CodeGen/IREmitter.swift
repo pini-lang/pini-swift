@@ -479,6 +479,12 @@ public final class IREmitter {
             }
         }
 
+        /// C 导出面：函数项补同名转发，量项交出盒的字段区首地址。
+        /// 位置在所有 Pini 函数之后：转发体只是调用，前向引用本来也成立，但这样读起来与产物同序。
+        if let export = module.export {
+            emitExportStubs(export)
+        }
+
         //  重要  测试模式：合成驱动器与入口。位置**必须在下面组 `tail` 之前** ——
         // 驱动器与报告片段都经 `registerStringConstant` 登记常量，而 `tail` 正是把已登记的
         // 常量刷出去的那一刻 ⇒ 排在它之后就一个常量都刷不出来（产物里只剩裸 `@.strN` 引用）。
@@ -3180,6 +3186,112 @@ public final class IREmitter {
         }
         let ignored = builder.freshTemp()
         bodyIR += " \(ignored) = call i32 @bk_task_bind_sched(ptr \(handle), ptr \(binding))\n"
+    }
+
+    // MARK: - C 导出面
+
+    /// 导出转发：函数项补一层同名转发，量项交出盒的字段区首地址，再补两个生命周期符号。
+    /// 转发体只做搬运 —— Pini 函数已是朴素 ABI，签名与 C 同形，不需要新的调用约定。
+    private func emitExportStubs(_ block: IRExportBlock) {
+        for function in block.functions { emitExportFunction(function) }
+        for storage in block.storages { emitExportGetter(storage) }
+        emitExportLifecycle(block)
+    }
+
+    /// 一个导出函数的转发体。取用位在边界内填默认实例，交给被调的是副本（与取用点同语义），
+    /// 故盒本身不外借 —— 被调方释放形参时不会碰到进程级单例。
+    private func emitExportFunction(_ function: IRExportFunction) {
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = ""
+        var signature: [String] = []
+        for (index, type) in function.cParamTypes.enumerated() {
+            signature.append("\(type.llvmSpelling) %a\(index)")
+        }
+        let statusPayload = function.statusPayload
+        if statusPayload != nil { signature.append("ptr %out") }
+        let returnSpelling =
+            statusPayload != nil ? "i32" : (function.returnType?.llvmSpelling ?? "void")
+        bodyIR = "define \(returnSpelling) @\(function.cName)(\(signature.joined(separator: ", "))) {\n"
+
+        var args: [String] = []
+        var valueIndex = 0
+        for param in function.params {
+            if param.isUsing {
+                let instance = emitGivenInstance(type: param.type)
+                args.append("\(instance.llvmType) \(instance.ssaName)")
+            } else {
+                args.append("\(param.type.llvmSpelling) %a\(valueIndex)")
+                valueIndex += 1
+            }
+        }
+        let call = "@\(Self.mangle(function.pinName))(\(args.joined(separator: ", ")))"
+
+        if let payload = statusPayload, let resultType = function.returnType?.llvmSpelling {
+            /// `^T` 的 C 形态：状态码返回、载荷走出参。标签 0 为 ok，与 `resultConstruct` 同一约定。
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = call \(resultType) \(call)\n"
+            let tag = builder.freshTemp()
+            bodyIR += " \(tag) = extractvalue \(resultType) \(result), 0\n"
+            let isOk = builder.freshTemp()
+            bodyIR += " \(isOk) = icmp eq i64 \(tag), 0\n"
+            let okLabel = "export.ok.\(builder.freshLabel())"
+            let errLabel = "export.err.\(builder.freshLabel())"
+            let doneLabel = "export.done.\(builder.freshLabel())"
+            bodyIR += " br i1 \(isOk), label %\(okLabel), label %\(errLabel)\n"
+            bodyIR += "\(okLabel):\n"
+            let value = builder.freshTemp()
+            bodyIR += " \(value) = extractvalue \(resultType) \(result), 1\n"
+            bodyIR += " store \(payload.llvmSpelling) \(value), ptr %out\n"
+            bodyIR += " br label %\(doneLabel)\n"
+            bodyIR += "\(errLabel):\n"
+            bodyIR += " br label %\(doneLabel)\n"
+            bodyIR += "\(doneLabel):\n"
+            let code = builder.freshTemp()
+            bodyIR += " \(code) = phi i32 [ 0, %\(okLabel) ], [ 1, %\(errLabel) ]\n"
+            bodyIR += " ret i32 \(code)\n"
+        } else if let returnType = function.returnType {
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = call \(returnType.llvmSpelling) \(call)\n"
+            bodyIR += " ret \(returnType.llvmSpelling) \(result)\n"
+        } else {
+            bodyIR += " call void \(call)\n"
+            bodyIR += " ret void\n"
+        }
+        bodyIR += "}\n\n"
+        bodyIR = savedBody + bodyIR
+    }
+
+    /// 给定块的取址函数：物化由 `bk_given_get` 负责，返回的是盒的字段区首地址。
+    /// C 看到的结构体只镜像字段，箱头在指针之前，调用方不需要知道它多宽。
+    private func emitExportGetter(_ storage: IRExportStorage) {
+        let type = IRType.nominal(name: storage.typeName, isObject: false)
+        guard let aggregate = type.nominalAggregateSpelling else { return }
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = "define ptr @\(storage.getterName)() {\n"
+        let boxed = emitGivenBoxPointer(type: type)
+        let payload = builder.freshTemp()
+        bodyIR +=
+            builder.fmtGEP(
+                name: payload, aggregate: aggregate, base: boxed.ssaName,
+                indices: [0, layout.headerSlotCount]) + "\n"
+        bodyIR += " ret ptr \(payload)\n}\n\n"
+        bodyIR = savedBody + bodyIR
+    }
+
+    /// 两个生命周期符号。`init` 把每个导出的给定块物化一遍，否则 C 可能在首次取用之前读到空槽；
+    /// `shutdown` 空实现，盒持有到进程结束，但符号要留 —— 后补必需调用是破坏性 ABI 变更。
+    private func emitExportLifecycle(_ block: IRExportBlock) {
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = "define void @\(block.initName)() {\n"
+        for storage in block.storages {
+            _ = emitGivenBoxPointer(type: IRType.nominal(name: storage.typeName, isObject: false))
+        }
+        bodyIR += " ret void\n}\n\n"
+        bodyIR += "define void @\(block.shutdownName)() {\n ret void\n}\n\n"
+        bodyIR = savedBody + bodyIR
     }
 
     /// 取（并在首次需要时定义）某类型的存放位符号。

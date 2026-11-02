@@ -19,6 +19,8 @@ public enum TopLevelDecl: Equatable, Sendable {
     case statement(Statement)
     case importDecl(ImportDecl)
     case exportDecl(ExportDecl)
+    /// `[库|c]`——C 导出面：函数转发与给定块取址，符号名在导出期转成 ASCII。
+    case exportCDecl(ExportCDecl)
 }
 
 /// 模块

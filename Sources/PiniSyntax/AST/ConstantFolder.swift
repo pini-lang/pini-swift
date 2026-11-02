@@ -61,6 +61,9 @@ public enum ConstantFolder {
             return .importDecl(i)
         case .exportDecl(let e):
             return .exportDecl(e)
+        case .exportCDecl(let e):
+            // 只有名字与类型引用，没有表达式可折叠。
+            return .exportCDecl(e)
         }
     }
 

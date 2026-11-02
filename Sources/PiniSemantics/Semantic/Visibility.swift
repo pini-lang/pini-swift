@@ -197,7 +197,7 @@ private func topLevelSymbolInfo(_ decl: TopLevelDecl) -> (name: String, kind: Sy
             return (name, .variable(isMutable: true), loc)
         }
         return nil
-    case .importDecl, .exportDecl:
+    case .importDecl, .exportDecl, .exportCDecl:
         return nil
     }
 }

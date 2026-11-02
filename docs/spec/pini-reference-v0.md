@@ -2845,6 +2845,54 @@ _容量: I64 = 0
 | `errno` / 线程局部访问 | 不支持 |
 | 非 C 的 ABI | 不支持 |
 
+### 9.7 C 导出块 `[Experimental]`
+
+**声明**：
+
+```
+[calc|c]
+calc_add = 加法
+calc_state: 计数器状态
+```
+
+**语义**：
+
+- 等号右端是本模块的自由函数，发布成一个 C 函数；冒号右端是给定块，发布成结构体加取址函数。
+- 键是 C 符号名，类型由被引用的定义派生，块内不重写签名。
+- 块名命名产物与三个生命周期符号（`calc_init` / `calc_shutdown`），不参与条目符号名。
+- 模块内至多一块；方法、泛型、异步、`|test`、`main` 不进导出面。
+- 键与字段名过 `CName.escape`：ASCII 原样，其余写成 `_u` 加 6 位大写十六进制。
+
+**可导出的类型**：
+
+| Pini | C |
+|---|---|
+| `I8` / `U8` / `I32` / `I64` / `U64` | `int8_t` / `uint8_t` / `int32_t` / `int64_t` / `uint64_t` |
+| `F64` / `Bool` | `double` / `bool` |
+| `*T` | `T*`；目标不透明时 `void*` |
+| `^T` | 状态码 `int32_t` 返回，`T` 走出参 |
+| `()` | `void` |
+
+`using` 形参不进 C 原型：它在边界内由默认实例填充，交给被调的是副本。
+
+**发射物**：
+
+```
+pini emit <模块内文件> calc.h --backend c    ; 头文件
+pini emit <模块内文件> calc.ll               ; LLVM IR，再 clang -shared 出库
+```
+
+`calc_init` 把每个导出的给定块物化一遍，C 侧不必等 Pini 先取用。给定块的字段区由 C 直接读写；Pini 侧经 `using` 拿到的是副本，所以 C 写入对 Pini 的下一次取用可见，Pini 侧写字段则不回写。
+
+**限制**：
+
+| 限制 | 说明 |
+|---|---|
+| 错误消息不跨边界 | `^T` 只交状态码，`calc_last_error` 未发 |
+| 不生成 C 实现 | 只出头文件，实现是 LLVM 产物 |
+| 布局即 ABI | 字段顺序与类型一改就是破坏性变更，头文件的 `_Static_assert` 在 C 编译期拦下 |
+| 边界不校验 | C 直写字段可以造出 Pini 认为不可能的状态，导出块只放配置 |
+
 ---
 
 ## 第 10 章 模块系统
@@ -3951,7 +3999,7 @@ module          ::= { NEWLINE } { top-level-decl NEWLINE } EOF;
 
 top-level-decl  ::= import-decl | export-decl
                   | struct-decl | object-decl | object-decl-sugar | enum-decl | given-decl
-                  | bare-func-decl | trait-decl | extension-decl | foreign-decl;
+                  | bare-func-decl | trait-decl | extension-decl | foreign-decl | export-c-decl;
 
 import-decl     ::= '[' IDENT '|' 'import' ']' NEWLINE { import-item };
 
@@ -3998,6 +4046,10 @@ enum-case       ::= IDENT ['(' type-annotation {',' type-annotation} [','] ')'];
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
 foreign-symbol  ::= IDENT { '|' IDENT } ':' type-annotation;
+
+export-c-decl   ::= '[' IDENT '|' 'c' ']' export-c-body;
+export-c-body   ::= { export-c-item };
+export-c-item   ::= IDENT '=' IDENT | IDENT ':' IDENT;
 ```
 
 #### 函数声明

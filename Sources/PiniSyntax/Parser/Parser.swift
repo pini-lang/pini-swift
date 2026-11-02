@@ -466,6 +466,44 @@ public class Parser {
         return ExportDecl(renames: renames, location: location)
     }
 
+    /// 解析 `[库|c]` 块：`C名 = Pini名` 为函数项，`C名: 类型名` 为给定块项。
+    /// 两种右端各是一种名字，条目形状因此不同；块内不许混入其它形态。
+    private func parseExportCBlock(name: String, location: SourceLocation) throws -> ExportCDecl {
+        var items: [ExportCItem] = []
+        skipNewlines()
+        itemLoop: while !isEOF() {
+            guard case .identifier(let cName, let itemLoc) = currentToken else { break itemLoop }
+            switch peek() {
+            case .assign(_):
+                advance()
+                advance()
+                guard case .identifier(let pinName, _) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "C 导出函数项须为 `C名 = Pini函数名`：`\(cName)`", location: currentLocation)
+                }
+                advance()
+                items.append(.function(cName: cName, pinName: pinName, location: itemLoc))
+            case .colon(_):
+                advance()
+                advance()
+                guard case .identifier(let typeName, _) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "C 导出的量项须为 `C名: 给定块类型名`：`\(cName)`", location: currentLocation)
+                }
+                advance()
+                items.append(.storage(cName: cName, typeName: typeName, location: itemLoc))
+            default:
+                break itemLoop
+            }
+            skipNewlines()
+        }
+        guard !items.isEmpty else {
+            throw ParserError.invalidDeclaration(
+                reason: "C 导出块至少需要一项 `C名 = Pini名` 或 `C名: 类型名`", location: location)
+        }
+        return ExportCDecl(name: name, items: items, location: location)
+    }
+
     private func parseBracketDecl() throws -> TopLevelDecl {
         let loc = currentLocation
         advance()  // 跳过 [
@@ -511,6 +549,11 @@ public class Parser {
                 advance()
                 _ = try expect(.rightBracket(loc))
                 return .exportDecl(try parseExportBlock(headerName: name, location: loc))
+            } else if case .identifier("c", _) = currentToken {
+                /// `[库|c]` 块——C 导出面。`c` 不入关键字表，与 `given` / `foreign` 同走标识符白名单路径。
+                advance()
+                _ = try expect(.rightBracket(loc))
+                return .exportCDecl(try parseExportCBlock(name: name, location: loc))
             } else {
                 throw ParserError.invalidDeclaration(reason: "无效的方括号声明修饰符", location: loc)
             }

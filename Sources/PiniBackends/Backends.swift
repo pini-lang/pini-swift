@@ -12,6 +12,7 @@ public enum Backends {
     nonisolated(unsafe) public static let registry = BackendRegistry(
         entries: [
             BackendEntry(identifier: IREmitter.identifier) { IREmitter() },
+            BackendEntry(identifier: CHeaderBackend.identifier) { CHeaderBackend() },
             BackendEntry(identifier: JSONBackend.identifier) { JSONBackend() },
             BackendEntry(identifier: EmbeddedMinBackend.identifier) { EmbeddedMinBackend() },
         ],

@@ -348,7 +348,7 @@ public final class SemanticAnalyzer {
         case .givenDecl(let g):
             // 给定块是具名复合类型 ⇒ 纳入包级符号表（与对象同族）。
             symbolTable.define(Symbol(name: g.name, kind: .object, location: g.location))
-        case .extensionDecl, .foreignDecl, .varDecl, .statement, .importDecl, .exportDecl:
+        case .extensionDecl, .foreignDecl, .varDecl, .statement, .importDecl, .exportDecl, .exportCDecl:
             break
         }
     }
@@ -410,7 +410,7 @@ public final class SemanticAnalyzer {
                 try defineUnique(name: symbol.name, kind: .function, location: symbol.location)
             }
             return
-        case .varDecl, .statement, .importDecl, .exportDecl:
+        case .varDecl, .statement, .importDecl, .exportDecl, .exportCDecl:
             break
         }
     }
@@ -483,7 +483,7 @@ public final class SemanticAnalyzer {
         case .foreignDecl:
             // Phase 2a（FFI 子系统）：仅签名、无函数体，无检查项。
             break
-        case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
+        case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl, .exportCDecl:
             break
         }
     }
