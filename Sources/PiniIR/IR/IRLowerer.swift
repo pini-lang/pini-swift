@@ -1367,6 +1367,7 @@ public enum IRLowerer {
             genericParams: [],
             cases: specializedCases,
             methods: [],
+            traits: template.traits,
             location: template.location
         )
     }

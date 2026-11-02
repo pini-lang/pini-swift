@@ -6,13 +6,19 @@ public struct EnumDecl: Equatable, ASTNode, Sendable {
     public let genericParams: [GenericParam]
     public let cases: [EnumCase]
     public let methods: [FuncDecl]
+    /// `实现:` 声明的特征名。枚举体只收用例，故这一项由解析器在体内单独摘出。
+    public let traits: [String]
     public let location: SourceLocation
 
-    public init(name: String, genericParams: [GenericParam], cases: [EnumCase], methods: [FuncDecl], location: SourceLocation) {
+    public init(
+        name: String, genericParams: [GenericParam], cases: [EnumCase], methods: [FuncDecl],
+        traits: [String] = [], location: SourceLocation
+    ) {
         self.name = name
         self.genericParams = genericParams
         self.cases = cases
         self.methods = methods
+        self.traits = traits
         self.location = location
     }
 }

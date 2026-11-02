@@ -38,7 +38,7 @@ public enum ConstantFolder {
             return .enumDecl(
                 EnumDecl(
                     name: e.name, genericParams: e.genericParams, cases: e.cases,
-                    methods: e.methods.map(fold), location: e.location))
+                    methods: e.methods.map(fold), traits: e.traits, location: e.location))
         case .funcDecl(let f):
             return .funcDecl(fold(f))
         case .traitDecl(let t):

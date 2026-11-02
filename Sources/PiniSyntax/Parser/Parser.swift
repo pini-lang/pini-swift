@@ -1016,6 +1016,8 @@ public class Parser {
     private func parseEnumDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> EnumDecl {
         // 解析内容态（声明上下文收紧·规则 3.2：枚举体内只允许用例，方法移至扩展块）
         var cases: [EnumCase] = []
+        /// `实现:` 与用例同属体内声明，但形状是「名: 特征」，故在用例分支之前摘出。
+        var traits: [String] = []
 
         skipNewlines()
 
@@ -1042,6 +1044,17 @@ public class Parser {
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
+            } else if case .identifier("实现", _) = currentToken, case .colon(_) = peek() {
+                /// 枚举体的特征声明：`实现: 错误`。与 struct 体同形，只是枚举体不收字段，
+                /// 故不能走字段解析，需在此单独消费。
+                advance()
+                advance()
+                guard case .identifier(let traitName, _) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`实现:` 后须跟特征名", location: currentLocation)
+                }
+                traits.append(traitName)
+                advance()
             } else {
                 // 用例声明
                 let enumCase = try parseEnumCase()
@@ -1050,7 +1063,9 @@ public class Parser {
             skipNewlines()
         }
 
-        return EnumDecl(name: name, genericParams: genericParams, cases: cases, methods: [], location: location)
+        return EnumDecl(
+            name: name, genericParams: genericParams, cases: cases, methods: [], traits: traits,
+            location: location)
     }
 
     private func parseEnumCase() throws -> EnumCase {

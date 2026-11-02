@@ -521,6 +521,10 @@ func describeEnumDecl(_ enumDecl: EnumDecl, indent: String = "") -> String {
 
     result += ":\n"
 
+    if !enumDecl.traits.isEmpty {
+        result += "\(indent) 实现: " + enumDecl.traits.joined(separator: ", ") + "\n"
+    }
+
     for c in enumDecl.cases {
         result += "\(indent) case \(c.name)"
         if !c.associatedParams.isEmpty {

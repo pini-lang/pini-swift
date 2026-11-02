@@ -68,6 +68,8 @@ public final class TypeChecker {
     private var exportCForeignNames: Set<String> = []
     private var cSurfaceCount = 0
     private var cSurfaceFile: String?
+    /// 实现内置 `错误` 特征的类型名。错误集与码表的取值范围由它给出。
+    private var errorTypes: Set<String> = []
 
     private func registerBuiltinTypes() {
         let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -180,7 +182,6 @@ public final class TypeChecker {
             params: [string],
             returns: [.simple(name: "Error", location: loc)]
         )
-
         // CancelError（B2-1 / Q5 表示法 A）：取消专用错误，与业务 Error 并列的独立类型。
         // 结构与 Error 相同（message: String），因此 `e.message` 在两者上都可读；
         // 判别靠内建谓词 isCancel(e)，而非字符串约定。
@@ -195,6 +196,15 @@ public final class TypeChecker {
             params: [.simple(name: "Error", location: loc)],
             returns: [.simple(name: "Bool", location: loc)]
         )
+
+        // 错误特征：标记式，没有成员。`实现: 错误` 是类型进入错误集的唯一入口，
+        // 消息与错误码由编译器派生，不由特征约束。
+        typeEnv.defineTrait(
+            name: Self.errorTraitName,
+            trait: TraitDecl(
+                name: Self.errorTraitName, genericParams: [], signatures: [], location: loc))
+        typeEnv.markConformance(typeName: "Error", traits: [Self.errorTraitName])
+        typeEnv.markConformance(typeName: cancelErrorTypeName, traits: [Self.errorTraitName])
 
         // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await`/`wait` joinAll([...])` 得 Result<[T], Error>。
         // 形参锚定 `Array<Future<_, _>>`：元素类型由数组字面量按元素推断给出，`_` 只定住
@@ -366,10 +376,16 @@ public final class TypeChecker {
         exportCForeignNames = []
         cSurfaceCount = 0
         cSurfaceFile = nil
+        errorTypes = ["Error", cancelErrorTypeName]
         for decl in declarations {
             switch decl {
             case .funcDecl(let f): exportCFunctions[f.name] = f
-            case .givenDecl(let g): exportCGivenBlocks[g.name] = g
+            case .givenDecl(let g):
+                exportCGivenBlocks[g.name] = g
+                collectErrorType(name: g.name, traits: g.traits)
+            case .structDecl(let s): collectErrorType(name: s.name, traits: s.traits)
+            case .objectDecl(let o): collectErrorType(name: o.name, traits: o.traits)
+            case .enumDecl(let e): collectErrorType(name: e.name, traits: e.traits)
             case .foreignDecl(let block):
                 for symbol in block.symbols { exportCForeignNames.insert(symbol.name) }
             default: break
@@ -377,8 +393,16 @@ public final class TypeChecker {
         }
     }
 
+    /// 特征列表里出现 `错误` 即入错误集。标记式特征没有成员，故判据只有这一条。
+    private func collectErrorType(name: String, traits: [String]) {
+        if traits.contains(Self.errorTraitName) { errorTypes.insert(name) }
+    }
+
     /// 跨 C 边界的标量白名单。名字即头文件里的 C 类型来源，也是语义期的准入表。
     private static let cExportScalars: Set<String> = ["I8", "U8", "I32", "I64", "U64", "F64", "Bool"]
+
+    /// 内置错误特征的名字。标记式：没有成员，`实现:` 即入错误集。
+    static let errorTraitName = "错误"
 
     /// export 块里 `|c` 条目的静态判据：引用的名字在册、形态可发布、C 名转写后不撞。
     /// 类型能否跨边界在这一层定死；降载层只按同一张表求拼写，不再改判。
@@ -1479,6 +1503,9 @@ public final class TypeChecker {
             } else {
                 typeEnv.defineEnum(name: e.name, cases: caseMap, defaultedCounts: defaultedCounts)
             }
+            if !e.traits.isEmpty {
+                registerTraitMethods(for: e.name, traits: e.traits, location: e.location)
+            }
         case .traitDecl(let t):
             typeEnv.defineTrait(name: t.name, trait: t)
         case .extensionDecl(let x):
@@ -1665,6 +1692,7 @@ public final class TypeChecker {
             if !o.traits.isEmpty { try verifyTraitConformance(typeName: o.name, traits: o.traits, location: o.location) }
         case .enumDecl(let e):
             for method in e.methods { try checkFuncBody(method) }
+            if !e.traits.isEmpty { try verifyTraitConformance(typeName: e.name, traits: e.traits, location: e.location) }
         case .extensionDecl(let x):
             // 扩展方法体检查：注入目标类型字段（同文件扩展块可访问私有字段）。
             let targetFields = typeFieldsByName[x.targetType] ?? []

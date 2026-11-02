@@ -129,6 +129,7 @@ public enum Desugar {
                     location: c.location)
             },
             methods: e.methods.map(desugar),
+            traits: e.traits,
             location: e.location)
     }
 
