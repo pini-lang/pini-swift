@@ -585,7 +585,7 @@ public class Parser {
     // MARK: - foreign 块解析（Phase 2a FFI 子系统， foreign-decl）
 
     /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）：块内是一张外部符号表。
-    /// 条目只有一形 `名{｜标志}: 类型`，类型为函数类型即外部函数。
+    /// 条目只有一形 `名{|标志}: 类型`，类型为函数类型即外部函数。
     private func parseForeignDecl(name: String, location: SourceLocation) throws -> ForeignDecl {
         var symbols: [ForeignSymbol] = []
         skipNewlines()
@@ -611,7 +611,7 @@ public class Parser {
         return ForeignDecl(name: name, symbols: symbols, location: location)
     }
 
-    /// 解析一条外部符号条目：`名{｜标志}: 类型`。
+    /// 解析一条外部符号条目：`名{|标志}: 类型`。
     /// 标志是封闭白名单；数据符号的类型在此放行，由语义层决定是否接通。
     private func parseForeignSymbolEntry() throws -> ForeignSymbol {
         let loc = currentLocation

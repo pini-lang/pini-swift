@@ -38,7 +38,7 @@ public struct ForeignSymbol: Equatable, ASTNode, Sendable {
     }
 }
 
-/// 外部 C 声明块 `[名称|foreign]`：块内是一张外部符号表，条目形如 `名{｜标志}: 类型`。
+/// 外部 C 声明块 `[名称|foreign]`：块内是一张外部符号表，条目形如 `名{|标志}: 类型`。
 /// 库绑定由块名给出，块内的名字就是外部符号名。
 public struct ForeignDecl: Equatable, ASTNode, Sendable {
     /// 块名（`[libc|foreign]` 的 `libc`）——库绑定键，不参与符号解析。

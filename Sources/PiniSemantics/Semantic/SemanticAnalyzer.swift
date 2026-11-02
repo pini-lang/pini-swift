@@ -153,7 +153,7 @@ public final class SemanticAnalyzer {
             if let c = deferredInjectConflict { throw c }
         }
         /// 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
-        /// 否则「导出函数在甲文件、错误类型在乙文件」的包永远不提醒。
+        /// 否则「导出函数与错误类型分处两文件」的包永远不提醒。
         appendErrorCodeWarnings(
             Module(
                 declarations: package.fileUnits.flatMap { $0.module.declarations },
