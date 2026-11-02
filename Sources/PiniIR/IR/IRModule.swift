@@ -126,6 +126,25 @@ public struct IRForeignData: Equatable {
     }
 }
 
+/// 宏常量的构建期值。它没有存储：读它就是读这个字面量，取址无从谈起。
+public enum IRForeignConstantValue: Equatable {
+    case integer(Int)
+    case float(Double)
+}
+
+/// 一条宏常量：名字、声明类型、构建期求出的值。
+public struct IRForeignConstant: Equatable {
+    public let name: String
+    public let type: IRType
+    public let value: IRForeignConstantValue
+
+    public init(name: String, type: IRType, value: IRForeignConstantValue) {
+        self.name = name
+        self.type = type
+        self.value = value
+    }
+}
+
 /// A lowered foreign block: the group name (the label left of `|` in `[libc|foreign]`) plus its signature-only
 /// bindings. Symbol resolution happens on the interpreter/ffi side (shim whitelist first, then dlsym); the IR layer
 /// only carries the declare surface.
@@ -134,11 +153,17 @@ public struct IRForeignBlock: Equatable {
     public let funcs: [IRForeignFunction]
     /// 数据符号：`名: 类型` 条目，读、取址、写都落到这一张表上。
     public let data: [IRForeignData]
+    /// 宏常量：`名|macro: 类型` 条目，值在构建期由 C 预处理器给出。
+    public let constants: [IRForeignConstant]
 
-    public init(name: String, funcs: [IRForeignFunction], data: [IRForeignData] = []) {
+    public init(
+        name: String, funcs: [IRForeignFunction], data: [IRForeignData] = [],
+        constants: [IRForeignConstant] = []
+    ) {
         self.name = name
         self.funcs = funcs
         self.data = data
+        self.constants = constants
     }
 }
 

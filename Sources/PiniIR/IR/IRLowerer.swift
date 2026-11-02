@@ -204,6 +204,7 @@ public enum IRLowerer {
     /// cross-file references resolve like forward references; file order (name ascending) keeps it stable.
     public static func lower(
         package: Package, typeInference: TypeInference?,
+        foreignConstants: [IRForeignConstant] = [],
         requiresMain: Bool = true
     ) throws -> IRModule {
         let base = Module(
@@ -215,7 +216,7 @@ public enum IRLowerer {
         let (merged, aliasMap) = try mergedWithImports(base)
         return try lower(
             module: merged, typeInference: typeInference,
-            moduleAliases: aliasMap, requiresMain: requiresMain)
+            moduleAliases: aliasMap, foreignConstants: foreignConstants, requiresMain: requiresMain)
     }
 
     /// 把 `import` 目标的声明并入虚拟模块，返回「别名 → 可引入符号名」表。依赖声明不在本包清单里
@@ -270,6 +271,7 @@ public enum IRLowerer {
     public static func lower(
         module: Module, typeInference: TypeInference?,
         moduleAliases: [String: Set<String>] = [:],
+        foreignConstants: [IRForeignConstant] = [],
         requiresMain: Bool = true
     ) throws -> IRModule {
         // Trait registry pre-pass: default-implementation bodies (signatures with a body) join the signature
@@ -620,15 +622,29 @@ public enum IRLowerer {
         }
 
         // 外部数据符号先建表再降载函数体：声明块可以在文件里写在函数之后，边降载边查会漏。
+        // 宏常量不进这张表——它没有存储，读它是读一个字面量，取址更无从谈起。
         var foreignData: [String: IRType] = [:]
+        var constantTable: [String: IRForeignConstant] = [:]
+        for constant in foreignConstants { constantTable[constant.name] = constant }
         for decl in module.declarations {
             guard case .foreignDecl(let block) = decl else { continue }
-            for symbol in block.symbols where !symbol.isFunction {
+            for symbol in block.symbols
+            where !symbol.isFunction && !symbol.flags.contains("macro") {
                 guard let type = resolveAnnotationType(symbol.annotation, userTypes: userTypes) else {
                     throw unsupported(
                         "外部数据符号 '\(symbol.name)' 的类型无法解析", at: symbol.location)
                 }
                 foreignData[symbol.name] = type
+            }
+        }
+        for decl in module.declarations {
+            guard case .foreignDecl(let block) = decl else { continue }
+            for symbol in block.symbols where symbol.flags.contains("macro") {
+                guard constantTable[symbol.name] != nil else {
+                    throw unsupported(
+                        "宏常量 '\(symbol.name)' 没有求值结果：它需要 [ffi].headers 与一次 C 预处理器展开",
+                        at: symbol.location)
+                }
             }
         }
 
@@ -645,7 +661,7 @@ public enum IRLowerer {
                         genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
                         builtinExtensionMethods: builtinExtensionMethods,
-                        foreignData: foreignData)
+                        foreignData: foreignData, foreignConstants: constantTable)
                 )
             case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below; trait
@@ -682,7 +698,8 @@ public enum IRLowerer {
                     nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                     genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                     traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
-                    builtinExtensionMethods: builtinExtensionMethods)
+                    builtinExtensionMethods: builtinExtensionMethods,
+                    foreignData: foreignData, foreignConstants: constantTable)
             )
         }
         if requiresMain {
@@ -800,7 +817,8 @@ public enum IRLowerer {
                         name: symbol.name, paramTypes: signature.paramTypes, returnType: signature.returnType
                     ))
             }
-            for symbol in foreignDecl.symbols where !symbol.isFunction {
+            for symbol in foreignDecl.symbols
+            where !symbol.isFunction && !symbol.flags.contains("macro") {
                 guard let type = foreignData[symbol.name] else {
                     throw unsupported("外部数据符号 '\(symbol.name)' 没有可解析的类型", at: symbol.location)
                 }
@@ -809,9 +827,18 @@ public enum IRLowerer {
                         name: symbol.name, type: type,
                         isReadonly: symbol.flags.contains("readonly")))
             }
+            var constantEntries: [IRForeignConstant] = []
+            for symbol in foreignDecl.symbols where symbol.flags.contains("macro") {
+                guard let constant = constantTable[symbol.name] else {
+                    throw unsupported(
+                        "宏常量 '\(symbol.name)' 没有求值结果", at: symbol.location)
+                }
+                constantEntries.append(constant)
+            }
             foreigns.append(
                 IRForeignBlock(
-                    name: foreignDecl.name, funcs: foreignFuncs, data: foreignDataEntries))
+                    name: foreignDecl.name, funcs: foreignFuncs, data: foreignDataEntries,
+                    constants: constantEntries))
         }
 
         // 两路键不同源（函数名 / 给定块名），合成一张表而不做覆盖检查：符号表已禁止两者同名。
@@ -1371,7 +1398,8 @@ public enum IRLowerer {
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
         traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector(),
         builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:],
-        foreignData: [String: IRType] = [:]
+        foreignData: [String: IRType] = [:],
+        foreignConstants: [String: IRForeignConstant] = [:]
     ) throws -> IRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -1418,6 +1446,7 @@ public enum IRLowerer {
             builtinExtensionMethods: builtinExtensionMethods
         )
         context.foreignData = foreignData
+        context.foreignConstants = foreignConstants
         context.isAsync = decl.isAsync
         context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
         let body = try lowerBlock(decl.body!, into: &context)
@@ -2775,6 +2804,16 @@ public enum IRLowerer {
             if let type = context.variableTypes[name] {
                 return LoweredExpr(node: .load(name: name, type: type), type: type)
             }
+            // 宏常量：构建期已经算出，读它就是读那个字面量，没有存储可以让路。
+            if let constant = context.foreignConstants[name] {
+                switch constant.value {
+                case .integer(let value):
+                    return LoweredExpr(
+                        node: .intConst(value: value, type: constant.type), type: constant.type)
+                case .float(let value):
+                    return LoweredExpr(node: .floatConst(value: value), type: .f64)
+                }
+            }
             // 外部数据符号：读的是符号存储的当前值，不是声明处的任何初值。
             if let type = context.foreignData[name] {
                 return LoweredExpr(
@@ -3835,6 +3874,10 @@ public enum IRLowerer {
                     return LoweredExpr(
                         node: .foreignDataAddress(name: name, type: foreignType),
                         type: .pointer(element: foreignType))
+                }
+                if context.foreignConstants[name] != nil {
+                    throw unsupported(
+                        "`&\(name)`：宏常量是构建期的值，没有地址可取", at: location)
                 }
                 throw unsupported("address-of on unknown variable '\(name)'", at: location)
             }
@@ -5963,6 +6006,8 @@ private struct FunctionContext {
     /// 外部数据符号的类型表：标识符与 `&` 命中它时走符号地址，不走变量槽。
     /// 空表即「本模块没有外部数据符号」，此时命中不了任何名字。
     var foreignData: [String: IRType] = [:]
+    /// 宏常量的构建期值：标识符命中它时直接出字面量，不产生任何存储访问。
+    var foreignConstants: [String: IRForeignConstant] = [:]
     /// Receiver field types for bare-name resolution inside method
     /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
     var selfFieldTypes: [String: IRType] = [:]

@@ -880,9 +880,13 @@ func givenCycleWarnings(
 /// 代价明写：含其他降载错误的文件拿不到环检测。
 func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+    /// 宏常量求不出就照样跳过环检测：这条通道本来就是 best-effort，缺值不该把它变成错误。
     guard
+        let constants = try? evaluateForeignMacros(
+            symbols: foreignSymbols(in: module), config: .default),
         let ir = try? IRLowerer.lower(
-            module: module, typeInference: checker.typeInference, requiresMain: false)
+            module: module, typeInference: checker.typeInference,
+            foreignConstants: constants, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
@@ -893,8 +897,12 @@ func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarnin
 func givenCycleWarnings(package: Package, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     guard
+        let constants = try? evaluateForeignMacros(
+            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: .default),
         let ir = try? IRLowerer.lower(
-            package: package, typeInference: checker.typeInference, requiresMain: false)
+            package: package, typeInference: checker.typeInference,
+            foreignConstants: constants, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
@@ -941,7 +949,10 @@ private func runIREngine(
     // 与 emit / compile / run-llvm 同款：lowering 会在 checker 弹出作用域之后重推
     // match scrutinee 的类型，需持久表兜底。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(
+        module: module, typeInference: checker.typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: foreignSymbols(in: module), config: .default))
     let executor = IRExecutor(programBase: programBase)
     executor.processArguments = argv
     try executor.run(module: irModule)
@@ -956,7 +967,11 @@ private func runIRPackageEngine(
     ffiConfig: FFIConfig,
     argv: [String] = []
 ) throws {
-    let irModule = try IRLowerer.lower(package: package, typeInference: typeInference)
+    let irModule = try IRLowerer.lower(
+        package: package, typeInference: typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: ffiConfig))
     let executor = IRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConfig: ffiConfig)
     executor.processArguments = argv
     try executor.run(module: irModule)
@@ -1127,7 +1142,10 @@ private func runDebugFile(_ path: String) {
     let executor = IRExecutor(programBase: absoluteProgramBase(path))
     startDebugger(
         run: DebugRun(host: executor) {
-            let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+            let ir = try IRLowerer.lower(
+                module: module, typeInference: checker.typeInference,
+                foreignConstants: try evaluateForeignMacros(
+                    symbols: foreignSymbols(in: module), config: .default))
             try executor.run(module: ir)
         }, sources: sources, primaryName: path)
 }
@@ -1154,7 +1172,11 @@ private func runDebugDirectory(_ path: String) {
     let executor = IRExecutor(programBase: absoluteProgramBase(path))
     startDebugger(
         run: DebugRun(host: executor) {
-            let ir = try IRLowerer.lower(package: pkg, typeInference: checker.typeInference)
+            let ir = try IRLowerer.lower(
+                package: pkg, typeInference: checker.typeInference,
+                foreignConstants: try evaluateForeignMacros(
+                    symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+                    config: .default))
             try executor.run(module: ir)
         }, sources: sources, primaryName: sources.keys.first ?? path)
 }
@@ -1187,6 +1209,23 @@ struct FileCheckResult {
 
 /// 单文件收集式 check：返回诊断与阻断位，**不在此处退出**——
 /// 供目录逐文件聚合场景复用（见 `runCheckPath`）。
+/// 模块里声明的全部外部符号（各 foreign 块摊平）。
+func foreignSymbols(in module: Module) -> [ForeignSymbol] {
+    module.declarations.flatMap { decl -> [ForeignSymbol] in
+        guard case .foreignDecl(let block) = decl else { return [] }
+        return block.symbols
+    }
+}
+
+/// 求值宏常量：没有 `|macro` 的模块不碰工具链，返回值恒空。
+/// check 与运行路径都先过这一关，免得「check 通过、run 才报宏展不开」。
+func evaluateForeignMacros(
+    symbols: [ForeignSymbol], config: FFIConfig
+) throws -> [IRForeignConstant] {
+    guard symbols.contains(where: { $0.flags.contains("macro") }) else { return [] }
+    return try ForeignMacroEvaluator.evaluate(symbols: symbols, config: config)
+}
+
 func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckResult {
     let module = parseOrReport(source: source, fileName: fileName)
 
@@ -1211,6 +1250,14 @@ func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckRe
             ErrorFormatter.formatTypeError($0, source: source)
         }
         if typeErrors.isEmpty {
+            /// 宏常量：单文件没有 `pini.toml`，声明了就只能报「缺 headers」—— 值没有别的来源。
+            do {
+                _ = try evaluateForeignMacros(
+                    symbols: foreignSymbols(in: module), config: .default)
+            } catch {
+                result.diagnostics.append("Error: \(error)")
+                result.hasBlockingDiagnostics = true
+            }
             for w in givenCycleWarnings(module: module, checker: checker) {
                 result.diagnostics.append(renderedWarning(w, source: source))
             }
@@ -1562,6 +1609,10 @@ func runCheckPath(_ path: String) {
             emitSemanticWarnings(analyzer)
             let checker = TypeChecker()
             try checker.check(package: pkg)
+            /// 宏常量在检查阶段就求值：值展不开是声明或配置的问题，不该等到运行才显形。
+            _ = try evaluateForeignMacros(
+                symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+                config: manifest.ffi ?? .default)
             for warning in givenCycleWarnings(package: pkg, checker: checker) {
                 emitSemanticWarning(warning)
             }
@@ -1659,7 +1710,10 @@ private func lowerSingleFile(source: String, fileName: String) throws -> IRModul
     }
     // 开启持久表兜底：codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(
+        module: module, typeInference: checker.typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: foreignSymbols(in: module), config: .default))
     /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
     return irModule
@@ -1712,7 +1766,11 @@ private func runIRPackageEmit(
     try checker.check(package: package)
     // Same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(
+        package: package, typeInference: checker.typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default))
     try IRValidator.check(irModule)
     // 模块基准 = 模块根，与解释器模块路径一致。
     backend.setProgramBase(absoluteProgramBase(moduleRoot))

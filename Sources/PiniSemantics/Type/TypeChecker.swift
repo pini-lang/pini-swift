@@ -58,6 +58,8 @@ public final class TypeChecker {
     private var foreignSymbolNames: Set<String> = []
     /// 声明了 `|readonly` 的外部数据符号：写侧禁令的判据来源。
     private var readonlyForeignData: Set<String> = []
+    /// 声明了 `|macro` 的外部符号：构建期常量，没有存储，故取址一律拒。
+    private var macroForeignNames: Set<String> = []
 
     private func registerBuiltinTypes() {
         let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -1225,6 +1227,9 @@ public final class TypeChecker {
                     if symbol.flags.contains("readonly") {
                         readonlyForeignData.insert(symbol.name)
                     }
+                    if symbol.flags.contains("macro") {
+                        macroForeignNames.insert(symbol.name)
+                    }
                 }
             }
         case .varDecl, .statement, .importDecl, .exportDecl:
@@ -1939,7 +1944,8 @@ public final class TypeChecker {
         // 取址（`&符号`）由 `.addressOf` 分支先判上下文，走到这里时深度已 > 0，不会重复报。
         if unsafeContextDepth == 0,
             case .identifier(let foreignName, let foreignLoc) = expr,
-            typeEnv.lookupForeignData(name: foreignName) != nil
+            typeEnv.lookupForeignData(name: foreignName) != nil,
+            !macroForeignNames.contains(foreignName)
         {
             try report(
                 TypeError.mismatch(
@@ -2371,6 +2377,13 @@ public final class TypeChecker {
                 return
             }
             try checkExpression(operand)
+            if case .identifier(let macroName, _) = operand, macroForeignNames.contains(macroName) {
+                try report(
+                    TypeError.mismatch(
+                        expected: "有存储的外部符号",
+                        got: "`\(macroName)` 是 |macro 宏常量，没有地址可取",
+                        location: location))
+            }
         }
     }
 
