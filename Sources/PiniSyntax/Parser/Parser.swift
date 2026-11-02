@@ -536,10 +536,10 @@ public class Parser {
 
     // MARK: - foreign 块解析（Phase 2a FFI 子系统， foreign-decl）
 
-    /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）。
-    /// 块内只允许外部 C 函数签名（无函数体）；块内函数自动视为 `|unsafe`。
+    /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）：块内是一张外部符号表。
+    /// 条目只有一形 `名{｜标志}: 类型`，类型为函数类型即外部函数。
     private func parseForeignDecl(name: String, location: SourceLocation) throws -> ForeignDecl {
-        var funcs: [FuncDecl] = []
+        var symbols: [ForeignSymbol] = []
         skipNewlines()
         if case .indent(_) = currentToken { advance(); skipNewlines() }
         while !isEOF() {
@@ -549,40 +549,63 @@ public class Parser {
             // 顶层函数 `name|func(...)` 或「裸函数签名 + 缩进体」→ foreign 块结束
             if isBareFuncWithFuncModifierStart() || isBareFunctionWithBodyStart() { break }
             // 类型 / 扩展块 / import 等声明头 → foreign 块结束。
-            // 注意：不能用 isTopLevelDeclStart() 整体判断——裸函数签名（foreign 签名）也会命中。
+            // 注意：不能用 isTopLevelDeclStart() 整体判断——符号条目也以标识符起头。
             if isForeignBlockEndMarker() { break }
-            guard case .identifier = currentToken, isBareFunctionDeclStart() else {
+            guard case .identifier = currentToken else {
                 throw ParserError.invalidStatement(
-                    reason: "foreign 块内只允许外部 C 函数签名（无函数体）：块名 `\(name)`",
+                    reason: "foreign 块内只允许外部符号条目 `名: 类型`：块名 `\(name)`",
                     location: currentLocation
                 )
             }
-            var sig = try parseBareFuncDecl(position: .foreignBlock, allowEmptyBody: true, allowUnsafeModifier: true)
-            if sig.body != nil {
-                throw ParserError.invalidStatement(
-                    reason: "foreign 块内函数不可带函数体（仅签名声明外部 C 函数）：`\(sig.name)`",
-                    location: sig.location
-                )
-            }
-            // ：块内函数自动视为 `|unsafe`。
-            if !sig.modifiers.contains("unsafe") {
-                sig = FuncDecl(
-                    name: sig.name,
-                    modifiers: sig.modifiers + ["unsafe"],
-                    genericParams: sig.genericParams,
-                    params: sig.params,
-                    returnTypes: sig.returnTypes,
-                    returnLabels: sig.returnLabels,
-                    isAsync: sig.isAsync,
-                    body: sig.body,
-                    location: sig.location,
-                    captured: sig.captured
-                )
-            }
-            funcs.append(sig)
+            symbols.append(try parseForeignSymbolEntry())
             skipNewlines()
         }
-        return ForeignDecl(name: name, funcs: funcs, location: location)
+        return ForeignDecl(name: name, symbols: symbols, location: location)
+    }
+
+    /// 解析一条外部符号条目：`名{｜标志}: 类型`。
+    /// 标志是封闭白名单；数据符号的类型在此放行，由语义层决定是否接通。
+    private func parseForeignSymbolEntry() throws -> ForeignSymbol {
+        let loc = currentLocation
+        let symbolName = try parseIdentifier()
+        var flags: [String] = []
+        while case .pipe(_) = currentToken {
+            advance()
+            let flagLoc = currentLocation
+            let flag = try parseIdentifier()
+            guard ForeignSymbol.knownFlags.contains(flag) else {
+                throw ParserError.invalidStatement(
+                    reason: "未知的外部符号标志 `|\(flag)`：可用的是 "
+                        + ForeignSymbol.knownFlags.map { "|\($0)" }.joined(separator: " / "),
+                    location: flagLoc
+                )
+            }
+            guard !flags.contains(flag) else {
+                throw ParserError.invalidStatement(
+                    reason: "外部符号标志 `|\(flag)` 重复：`\(symbolName)`", location: flagLoc)
+            }
+            flags.append(flag)
+        }
+        guard case .colon(_) = currentToken else {
+            throw ParserError.invalidStatement(
+                reason: "外部符号条目缺少 `:` 与类型：`\(symbolName)`", location: currentLocation)
+        }
+        advance()
+        let annotation = try parseTypeAnnotation()
+        let symbol = ForeignSymbol(name: symbolName, annotation: annotation, flags: flags, location: loc)
+        if symbol.isFunction, let first = flags.first {
+            throw ParserError.invalidStatement(
+                reason: "标志只适用于数据符号，函数类型条目不可带 `|\(first)`：`\(symbolName)`",
+                location: loc
+            )
+        }
+        guard symbol.isFunction else {
+            throw ParserError.invalidStatement(
+                reason: "外部数据符号尚未接通：`\(symbolName): \(annotation.describe())`，当前只收函数类型",
+                location: loc
+            )
+        }
+        return symbol
     }
 
     /// Phase 2a（FFI 子系统）：判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。

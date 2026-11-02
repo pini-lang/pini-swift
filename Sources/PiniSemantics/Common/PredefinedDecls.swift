@@ -183,7 +183,7 @@ package enum PredefinedDecls {
             case .enumDecl(let d): names.insert(d.name)
             case .traitDecl(let d): names.insert(d.name)
             case .foreignDecl(let d):
-                for foreignFunc in d.funcs { names.insert(foreignFunc.name) }
+                for symbol in d.symbols { names.insert(symbol.name) }
             case .varDecl(let statement), .statement(let statement):
                 if case .varDecl(let name, _, _, _, _) = statement { names.insert(name) }
             case .extensionDecl, .importDecl, .exportDecl: break

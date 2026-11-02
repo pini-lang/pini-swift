@@ -4,15 +4,15 @@
 
 ; ── ① 外部接口声明（配置点：哪些 C 符号可用，签名即契约；均来自项目内 lib/ffilib）──
 [ffilib|foreign]
-ffi_malloc(size: U64,) -> (*U8,)
-ffi_free(p: *U8,) -> ()
-ffi_strlen(s: *U8,) -> (U64,)
-cstr(s: String,) -> (*U8,) ; shim 白名单：Pini String → 调用方拥有的 C 字符串
-ffi_puts(s: *U8,) -> (I32,)
-ffi_memcpy(dst: *U8, src: *U8, n: U64,) -> (*U8,)
-ffi_memset(p: *U8, v: I32, n: U64,) -> (*U8,)
-ffi_atoi(s: *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解析
-ffi_strcmp(a: *U8, b: *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解析
+ffi_malloc: (U64,) -> (*U8,)
+ffi_free: (*U8,) -> ()
+ffi_strlen: (*U8,) -> (U64,)
+cstr: (String,) -> (*U8,) ; shim 白名单：Pini String → 调用方拥有的 C 字符串
+ffi_puts: (*U8,) -> (I32,)
+ffi_memcpy: (*U8, *U8, U64,) -> (*U8,)
+ffi_memset: (*U8, I32, U64,) -> (*U8,)
+ffi_atoi: (*U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解析
+ffi_strcmp: (*U8, *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解析
 
 ; ── ② 安全封装层：unsafe 内核（|unsafe 自由函数，函数体自动不安全上下文）──
 ; 把 Pini String 转 C 串量长度后立即释放，调用方无需触碰指针（返回 U64，由 strlen 提供）。

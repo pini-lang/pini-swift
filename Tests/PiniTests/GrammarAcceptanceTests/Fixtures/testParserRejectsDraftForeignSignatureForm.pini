@@ -1,2 +1,3 @@
+; 旧写法 `名|unsafe(参数) -> (返回)` 已退役：`|unsafe` 不再是合法标志。
 [libc|foreign]
 malloc|unsafe(大小: I64) -> *I8

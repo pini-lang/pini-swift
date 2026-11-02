@@ -405,10 +405,9 @@ public final class SemanticAnalyzer {
             }
             return
         case .foreignDecl(let fd):
-            // Phase 2a（FFI 子系统）：foreign 函数注册为模块级函数符号（调用点可解析）；
-            // 块本身不引入新符号，外部 C 符号运行时经原生函数表解析。
-            for f in fd.funcs {
-                try defineUnique(name: f.name, kind: .function, location: f.location)
+            // 外部符号注册为模块级函数（调用点可解析）；块本身不引入新符号，C 符号运行时解析。
+            for symbol in fd.symbols {
+                try defineUnique(name: symbol.name, kind: .function, location: symbol.location)
             }
             return
         case .varDecl, .statement, .importDecl, .exportDecl:

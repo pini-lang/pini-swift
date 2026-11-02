@@ -595,8 +595,9 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
         return String(result.dropLast())
     case .foreignDecl(let fd):
         var result = "\(indent)foreign \(fd.name):\n"
-        for f in fd.funcs {
-            result += describeFuncDecl(f, indent: indent + " ") + "\n"
+        for symbol in fd.symbols {
+            let flags = symbol.flags.map { "|" + $0 }.joined()
+            result += "\(indent) \(symbol.name)\(flags): \(symbol.annotation.describe())\n"
         }
         return String(result.dropLast())
     }

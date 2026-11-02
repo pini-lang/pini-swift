@@ -34,12 +34,9 @@ public enum Desugar {
         }
     }
 
+    /// 外部符号表只有名字与类型，没有可降的糖：原样返回。
     public static func desugar(_ fd: ForeignDecl) -> ForeignDecl {
-        return ForeignDecl(
-            name: fd.name,
-            funcs: fd.funcs.map(desugar),
-            location: fd.location
-        )
+        return fd
     }
 
     public static func desugar(_ x: ExtensionDecl) -> ExtensionDecl {

@@ -2680,13 +2680,16 @@ unsafe 存储(p, 值)
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
-free|unsafe(指针: *I8,) -> ()
-memcpy|unsafe(目标: *I8, 源: *I8, 大小: I64,) -> ()
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
+memcpy: (*I8, *I8, I64,) -> ()
 ```
 
 **语义**：
 
+- 块内是一张外部符号表，条目只有一形 `名{｜标志}: 类型`
+- 类型是函数类型即外部函数，其余为外部数据符号
+- 标识符就是外部符号名，不提供别名
 - 声明外部 C 函数签名
 - 块内函数自动视为 `|unsafe`
 - 不接收内联 ABI 参数
@@ -2744,8 +2747,8 @@ libs = ["m", "pthread"]
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
-free|unsafe(指针: *I8,) -> ()
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
 
 安全分配(大小: I64,) -> ^*I8:
     let 指针 = unsafe malloc(大小)
@@ -3984,7 +3987,7 @@ struct-body     ::= [composition-line] { field-decl };
 type-body       ::= { field-decl };
 enum-body       ::= { enum-case };
 method-body     ::= { method-decl };
-foreign-body    ::= { foreign-signature };
+foreign-body    ::= { foreign-symbol };
 
 composition-line ::= IDENT;
 
@@ -3994,7 +3997,7 @@ enum-case       ::= IDENT ['(' type-annotation {',' type-annotation} [','] ')'];
 
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
-foreign-signature ::= IDENT func-signature;
+foreign-symbol  ::= IDENT { '|' IDENT } ':' type-annotation;
 ```
 
 #### 函数声明

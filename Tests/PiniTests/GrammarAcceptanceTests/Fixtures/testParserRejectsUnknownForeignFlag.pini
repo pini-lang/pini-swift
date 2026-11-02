@@ -1,0 +1,3 @@
+; 标志是封闭白名单：`|threadlocal` 尚未开放，必须在解析期报错。
+[libc|foreign]
+status|threadlocal: *U8

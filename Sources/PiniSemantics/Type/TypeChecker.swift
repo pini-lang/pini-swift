@@ -449,11 +449,10 @@ public final class TypeChecker {
             }
             for rt in f.returnTypes { try enforceAnnotationVisibility(rt) }
         case .foreignDecl(let fd):
-            for f in fd.funcs {
-                for p in f.params {
-                    if let ta = p.typeAnnotation { try enforceAnnotationVisibility(ta) }
-                }
-                for rt in f.returnTypes { try enforceAnnotationVisibility(rt) }
+            for symbol in fd.symbols {
+                for ta in symbol.paramTypes { try enforceAnnotationVisibility(ta) }
+                for rt in symbol.returnTypes { try enforceAnnotationVisibility(rt) }
+                if !symbol.isFunction { try enforceAnnotationVisibility(symbol.annotation) }
             }
         case .givenDecl(let g):
             /// 给定块与对象同规 —— 字段类型与 `实现: T` 都是类型名引用，须过可见性 enforce。
@@ -1213,11 +1212,11 @@ public final class TypeChecker {
             // 声明上下文收紧·规则 3.2/3.14：扩展块方法注册到目标类型（与类型自身方法同等对待）。
             registerExtensionMethods(x)
         case .foreignDecl(let fd):
-            // Phase 2a（FFI 子系统）：外部 C 函数签名注册为模块级函数（块内函数自动 |unsafe）。
-            foreignFunctionNames.formUnion(fd.funcs.map { $0.name })
-            for f in fd.funcs {
-                let paramTypes = f.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: f.location) }
-                typeEnv.defineFunction(name: f.name, params: paramTypes, returns: f.returnTypes)
+            // 外部符号注册为模块级函数，并登记进不安全门禁用名集。
+            foreignFunctionNames.formUnion(fd.symbols.map { $0.name })
+            for symbol in fd.symbols {
+                typeEnv.defineFunction(
+                    name: symbol.name, params: symbol.paramTypes, returns: symbol.returnTypes)
             }
         case .varDecl, .statement, .importDecl, .exportDecl:
             break
@@ -1247,7 +1246,10 @@ public final class TypeChecker {
         case .extensionDecl(let x):
             for m in x.methods { try validateFuncDeclPointerTypes(m) }
         case .foreignDecl(let fd):
-            for f in fd.funcs { try validateFuncDeclPointerTypes(f) }
+            for symbol in fd.symbols {
+                for ta in symbol.paramTypes { try validatePointerAnnotations(ta) }
+                for rt in symbol.returnTypes { try validatePointerAnnotations(rt) }
+            }
         case .givenDecl(let g):
             /// 给定块字段与对象字段同规过 `*T` C 兼容校验。
             for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
@@ -1416,11 +1418,9 @@ public final class TypeChecker {
     /// 函数指针、泛型；标量与指针、shim 友好的 String/Optional/Result 放行，后者由解析期的
     /// 原声函数表 fail-fast 与裸绑定 C 兼容校验兜底。
     private func checkForeignDeclSignatures(_ fd: ForeignDecl) throws {
-        for f in fd.funcs {
-            for p in f.params {
-                if let ta = p.typeAnnotation { try checkFFITopLevelType(ta, location: f.location) }
-            }
-            for r in f.returnTypes { try checkFFITopLevelType(r, location: f.location) }
+        for symbol in fd.symbols {
+            for ta in symbol.paramTypes { try checkFFITopLevelType(ta, location: symbol.location) }
+            for rt in symbol.returnTypes { try checkFFITopLevelType(rt, location: symbol.location) }
         }
     }
 

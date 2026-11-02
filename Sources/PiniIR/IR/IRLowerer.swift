@@ -561,25 +561,11 @@ public enum IRLowerer {
                     usingParamIndices: usingParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
-                // Foreign block signatures join the shared table so
-                // call sites resolve them like any top-level function.
-                for funcDecl in foreignDecl.funcs {
-                    let paramTypes = try funcDecl.params.map { parameter -> IRType in
-                        guard let annotation = parameter.typeAnnotation,
-                            let type = resolveAnnotationType(annotation, userTypes: userTypes)
-                        else {
-                            throw unsupported(
-                                "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
-                                at: funcDecl.location
-                            )
-                        }
-                        return type
-                    }
-                    let returnType = try resolveReturnType(
-                        funcDecl, userTypes: userTypes, subject: "foreign '\(funcDecl.name)'"
-                    )
-                    signatures[funcDecl.name] = IRLowererSignatureInfo(
-                        paramTypes: paramTypes, returnType: returnType
+                // 外部函数签名并入共享签名表，调用点照常解析。
+                for symbol in foreignDecl.symbols {
+                    let signature = try resolveForeignSignature(symbol, userTypes: userTypes)
+                    signatures[symbol.name] = IRLowererSignatureInfo(
+                        paramTypes: signature.paramTypes, returnType: signature.returnType
                     )
                 }
             default: break
@@ -792,30 +778,11 @@ public enum IRLowerer {
         for decl in module.declarations {
             guard case .foreignDecl(let foreignDecl) = decl else { continue }
             var foreignFuncs: [IRForeignFunction] = []
-            for funcDecl in foreignDecl.funcs {
-                let paramTypes = try funcDecl.params.map { parameter -> IRType in
-                    guard let annotation = parameter.typeAnnotation,
-                        let type = resolveAnnotationType(annotation, userTypes: userTypes)
-                    else {
-                        throw unsupported(
-                            "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
-                let returnType: IRType? = try funcDecl.returnTypes.first.map { annotation in
-                    guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                        throw unsupported(
-                            "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(funcDecl.name)'",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
+            for symbol in foreignDecl.symbols {
+                let signature = try resolveForeignSignature(symbol, userTypes: userTypes)
                 foreignFuncs.append(
                     IRForeignFunction(
-                        name: funcDecl.name, paramTypes: paramTypes, returnType: returnType
+                        name: symbol.name, paramTypes: signature.paramTypes, returnType: signature.returnType
                     ))
             }
             foreigns.append(IRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
@@ -1517,7 +1484,7 @@ public enum IRLowerer {
         case .extensionDecl(let x): return x.methods.map(\.params)
         case .traitDecl(let td): return td.signatures.filter { $0.body != nil }.map(\.params)
         case .enumDecl(let ed): return ed.methods.map(\.params)
-        case .foreignDecl(let fd): return fd.funcs.map(\.params)
+        case .foreignDecl: return []
         case .varDecl, .statement, .importDecl, .exportDecl: return []
         }
     }
@@ -1677,6 +1644,39 @@ public enum IRLowerer {
             }
             return type
         }
+    }
+
+    /// 解析一条外部函数的签名：形参逐位求 IR 类型，返回取首位。
+    /// 多返回在降载期就拒绝——只取首位会让声明与调用悄悄不一致，而这种不一致只在读回值时显形。
+    private static func resolveForeignSignature(
+        _ symbol: ForeignSymbol,
+        userTypes: [String: IRType]
+    ) throws -> (paramTypes: [IRType], returnType: IRType?) {
+        let paramTypes = try symbol.paramTypes.enumerated().map { index, annotation -> IRType in
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                throw unsupported(
+                    "parameter \(index + 1) of foreign '\(symbol.name)' lacks a resolvable type",
+                    at: symbol.location
+                )
+            }
+            return type
+        }
+        guard symbol.returnTypes.count <= 1 else {
+            throw unsupported(
+                "foreign '\(symbol.name)' declares \(symbol.returnTypes.count) return values; only one is supported",
+                at: symbol.location
+            )
+        }
+        let returnType: IRType? = try symbol.returnTypes.first.map { annotation in
+            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
+                throw unsupported(
+                    "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(symbol.name)'",
+                    at: symbol.location
+                )
+            }
+            return type
+        }
+        return (paramTypes, returnType)
     }
 
     /// Declared return type in IR terms. Several return slots (`-> (I32, I32,)`) collapse into one tuple
