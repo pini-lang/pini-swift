@@ -1696,11 +1696,33 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
     return false
 }
 
+/// 入口要求的三种口径：`main` 只有「要落地成进程」时才必需，库模块没有它是常态。
+/// 判「是不是库」只看有没有 `[名|c]` 导出块 —— 那是模块对外发布的唯一声明。
+private enum EntryPolicy {
+    /// 可执行程序：`compile` 与 `run-llvm` 都要跑起来，缺 `main` 就到不了。
+    case required
+    /// 发布面：带导出块时放行，其余模块照旧要求入口，免得漏写 `main` 的程序安静出产物。
+    case waivedForLibrary
+    /// 共享库：产物是库，与模块内容无关。
+    case notRequired
+
+    func requiresMain(declarations: [TopLevelDecl]) -> Bool {
+        switch self {
+        case .required:
+            return true
+        case .waivedForLibrary:
+            return !declarations.contains { if case .exportCDecl = $0 { return true } else { return false } }
+        case .notRequired:
+            return false
+        }
+    }
+}
+
 /// LLVM 管线先类型检查，再以类型推断结果降载到 IR：零类型信息的 codegen 解构不了 Optional.some。
 /// 与解释器同一套静态校验；类型错误一次性同报并退出（同 `runCheckCommand` 的收集模式）。
-/// - Parameter requiresMain: 共享库没有进程入口，`build --shared` 传 `false`；其余入口保持要求。
+/// - Parameter policy: 入口要求，由命令决定；判据见 `EntryPolicy`。
 private func lowerSingleFile(
-    source: String, fileName: String, requiresMain: Bool = true
+    source: String, fileName: String, policy: EntryPolicy
 ) throws -> IRModule {
     let module = parseOrReport(source: source, fileName: fileName)
     // The semantic layer gates here for the same reason `check` runs it before the type layer:
@@ -1729,16 +1751,17 @@ private func lowerSingleFile(
         module: module, typeInference: checker.typeInference,
         foreignConstants: try evaluateForeignMacros(
             symbols: foreignSymbols(in: module), config: .default),
-        requiresMain: requiresMain)
+        requiresMain: policy.requiresMain(declarations: module.declarations))
     /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
     return irModule
 }
 
+/// - Parameter policy: 入口要求，与 `lowerSingleFile` 同一口径。
 private func typeCheckThenGenerate(
-    source: String, fileName: String, backend: any PiniBackend = IREmitter()
+    source: String, fileName: String, policy: EntryPolicy, backend: any PiniBackend = IREmitter()
 ) throws -> String {
-    let irModule = try lowerSingleFile(source: source, fileName: fileName)
+    let irModule = try lowerSingleFile(source: source, fileName: fileName, policy: policy)
     // 注入程序基准，与解释器同规则。需要它的通道自己覆写，其余保持默认。
     backend.setProgramBase(absoluteProgramBase(fileName))
     return try backend.emit(module: irModule)
@@ -1747,7 +1770,9 @@ private func typeCheckThenGenerate(
 func runEmitCommand(
     source: String, fileName: String, outputPath: String?, backend: any PiniBackend = IREmitter()
 ) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, backend: backend)
+    // 发布面两种模块都收：程序有 `main`，库有导出块，各自都是完整声明，故按内容判入口。
+    let ir = try typeCheckThenGenerate(
+        source: source, fileName: fileName, policy: .waivedForLibrary, backend: backend)
 
     if let out = outputPath {
         try ir.write(toFile: out, atomically: true, encoding: .utf8)
@@ -1776,7 +1801,7 @@ private func runIRPackageEmit(
     package: Package, moduleRoot: String, outputPath: String?,
     backend: any PiniBackend = IREmitter()
 ) throws {
-    let irModule = try lowerPackage(package: package, moduleRoot: moduleRoot)
+    let irModule = try lowerPackage(package: package, moduleRoot: moduleRoot, policy: .waivedForLibrary)
     // 模块基准 = 模块根，与解释器模块路径一致。
     backend.setProgramBase(absoluteProgramBase(moduleRoot))
     let ir = try backend.emit(module: irModule)
@@ -1789,9 +1814,9 @@ private func runIRPackageEmit(
 
 /// 包级降载：语义 → 类型 → IR → 结构校验。`emit` 与 `build --shared` 共用这一份 —— 各抄一份就会在
 /// 「少一次语义分析」这类分叉上静默漂移，而两条命令读的必须是同一棵树。
-/// - Parameter requiresMain: 共享库没有进程入口，`build --shared` 传 `false`。
+/// - Parameter policy: 入口要求，与 `lowerSingleFile` 同一口径。
 private func lowerPackage(
-    package: Package, moduleRoot: String, requiresMain: Bool = true
+    package: Package, moduleRoot: String, policy: EntryPolicy
 ) throws -> IRModule {
     let analyzer = SemanticAnalyzer()
     try analyzer.analyze(package: package)
@@ -1804,7 +1829,8 @@ private func lowerPackage(
         foreignConstants: try evaluateForeignMacros(
             symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
             config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default),
-        requiresMain: requiresMain)
+        requiresMain: policy.requiresMain(
+            declarations: package.fileUnits.flatMap { $0.module.declarations }))
     try IRValidator.check(irModule)
     return irModule
 }
@@ -1828,7 +1854,7 @@ private func runtimeLibraryPath() -> String? {
 
 
 func runCompileCommand(source: String, fileName: String) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
+    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, policy: .required)
 
     let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
     let tmpBin = "/tmp/pini_\(UUID().uuidString)"
@@ -1939,20 +1965,20 @@ private func lowerForShared(path: String) throws -> (module: IRModule, programBa
         }
         let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
         return (
-            try lowerPackage(package: package, moduleRoot: path, requiresMain: false),
+            try lowerPackage(package: package, moduleRoot: path, policy: .notRequired),
             absoluteProgramBase(path)
         )
     }
     if let loaded = try loadOwningPackageIfModule(path: path) {
         return (
             try lowerPackage(
-                package: loaded.package, moduleRoot: loaded.moduleRoot, requiresMain: false),
+                package: loaded.package, moduleRoot: loaded.moduleRoot, policy: .notRequired),
             absoluteProgramBase(loaded.moduleRoot)
         )
     }
     let source = try readFile(path)
     return (
-        try lowerSingleFile(source: source, fileName: path, requiresMain: false),
+        try lowerSingleFile(source: source, fileName: path, policy: .notRequired),
         absoluteProgramBase(path)
     )
 }
@@ -2014,7 +2040,7 @@ private func linkSharedLibrary(irPath: String, outputPath: String) throws {
 }
 
 func runLLICommand(source: String, fileName: String) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
+    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, policy: .required)
 
     let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
     defer { try? FileManager.default.removeItem(atPath: tmpIR) }

@@ -23,17 +23,8 @@ struct CSharedLibraryTests {
         guard let cli = cliPathOrSkip() else { return }
         let dir = try makeTemporaryDirectory(tag: "shared-build")
         defer { try? FileManager.default.removeItem(at: dir) }
-        try """
-        [消息|given]
-            n: I32 = 0
-
-        加法(a: I32, b: I32,) -> (I32,):
-            return a + b
-
-        [calc|c]
-        calc_add = 加法
-        calc_state: 消息
-        """.write(to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
+        try librarySource.write(
+            to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
 
         let result = try runCLI(cli, arguments: ["build", "--shared", "calc.pini"], cwd: dir)
         #expect(result.status == 0, "构建失败（rc=\(result.status)）：\(result.stderr)")
@@ -55,6 +46,27 @@ struct CSharedLibraryTests {
         #expect(field.pointee == 0)
         field.pointee = 42
         #expect(getState()?.pointee == 42, "C 写进字段区的值，下一次取址必须读到")
+    }
+
+    @Test("库模块不要求 main：头文件与动态库都能从同一份声明出")
+    func emitsBothArtifactsForLibraryModule() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        let dir = try makeTemporaryDirectory(tag: "shared-header")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try librarySource.write(
+            to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
+
+        let header = try runCLI(
+            cli, arguments: ["emit", "calc.pini", "calc.h", "--backend", "c"], cwd: dir)
+        #expect(header.status == 0, "出头文件失败（rc=\(header.status)）：\(header.stderr)")
+        let text = try String(contentsOf: dir.appendingPathComponent("calc.h"), encoding: .utf8)
+        #expect(text.contains("int32_t calc_add(int32_t, int32_t);"), "头文件缺函数原型")
+        #expect(text.contains("calc_state_t* calc_state_get(void);"), "头文件缺量的取址函数")
+
+        let library = try runCLI(cli, arguments: ["build", "--shared", "calc.pini"], cwd: dir)
+        #expect(library.status == 0, "出库失败（rc=\(library.status)）：\(library.stderr)")
+        let artifact = dir.appendingPathComponent("libcalc.\(librarySuffix)")
+        #expect(FileManager.default.fileExists(atPath: artifact.path), "产物不在当前目录")
     }
 
     @Test("模块目录与 -o 一起生效，产物落在指定路径")
@@ -97,9 +109,29 @@ struct CSharedLibraryTests {
         #expect(result.stderr.contains("导出块"), "诊断没说到点子上：\(result.stderr)")
         let stray = dir.appendingPathComponent("libplain.\(librarySuffix)")
         #expect(!FileManager.default.fileExists(atPath: stray.path), "拒绝之后仍留下了产物")
+
+        // 既没有 `main` 也没有导出块的模块两头不靠：`emit` 照旧要求入口，不能借放行悄悄出产物。
+        let emitted = try runCLI(cli, arguments: ["emit", "plain.pini"], cwd: dir)
+        #expect(emitted.status != 0, "无 main 又无导出块的模块不该通过 emit")
+        #expect(emitted.stderr.contains("main"), "诊断应指向缺入口：\(emitted.stderr)")
     }
 
     // MARK: - helper
+
+    /// 无 `main` 的库模块：导出面就位、给定块可读，正好压到「库不需要进程入口」这条口径。
+    private var librarySource: String {
+        """
+        [消息|given]
+            n: I32 = 0
+
+        加法(a: I32, b: I32,) -> (I32,):
+            return a + b
+
+        [calc|c]
+        calc_add = 加法
+        calc_state: 消息
+        """
+    }
 
     private var librarySuffix: String {
         #if os(macOS)

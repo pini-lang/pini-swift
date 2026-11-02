@@ -2882,7 +2882,7 @@ pini emit <模块内文件> calc.h --backend c        ; 头文件
 pini build --shared <模块内文件或模块目录>        ; 动态库 libcalc.{dylib,so}，落在当前目录
 ```
 
-`build --shared` 不要求模块有 `main`：库没有进程入口。产物名取自块名，`-o` 可改落点；运行时动态链接 `libPiniRuntime`，其目录写进 rpath。头文件仍由 `emit --backend c` 出，那条路要求 `main`。
+`build --shared` 不要求模块有 `main`：库没有进程入口。产物名取自块名，`-o` 可改落点；运行时动态链接 `libPiniRuntime`，其目录写进 rpath。头文件由 `emit --backend c` 出，带导出块的模块同样不必写 `main`。
 
 `calc_init` 把每个导出的给定块物化一遍，C 侧不必等 Pini 先取用。给定块的字段区由 C 直接读写；Pini 侧经 `using` 拿到的是副本，所以 C 写入对 Pini 的下一次取用可见，Pini 侧写字段则不回写。
 
