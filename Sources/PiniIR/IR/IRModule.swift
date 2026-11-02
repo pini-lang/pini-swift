@@ -112,16 +112,33 @@ public struct IRForeignFunction: Equatable {
     }
 }
 
+/// 一个外部数据符号：名字即符号名，`type` 是该存储的静态类型。
+/// `readonly` 只是一条写侧禁令，进 IR 是为了让发射层区分可写与只读，链接期无判据。
+public struct IRForeignData: Equatable {
+    public let name: String
+    public let type: IRType
+    public let isReadonly: Bool
+
+    public init(name: String, type: IRType, isReadonly: Bool) {
+        self.name = name
+        self.type = type
+        self.isReadonly = isReadonly
+    }
+}
+
 /// A lowered foreign block: the group name (the label left of `|` in `[libc|foreign]`) plus its signature-only
 /// bindings. Symbol resolution happens on the interpreter/ffi side (shim whitelist first, then dlsym); the IR layer
 /// only carries the declare surface.
 public struct IRForeignBlock: Equatable {
     public let name: String
     public let funcs: [IRForeignFunction]
+    /// 数据符号：`名: 类型` 条目，读、取址、写都落到这一张表上。
+    public let data: [IRForeignData]
 
-    public init(name: String, funcs: [IRForeignFunction]) {
+    public init(name: String, funcs: [IRForeignFunction], data: [IRForeignData] = []) {
         self.name = name
         self.funcs = funcs
+        self.data = data
     }
 }
 

@@ -130,6 +130,8 @@ private struct Walker {
     let functions: [String: IRFunction]
     let types: [String: IRTypeDecl]
     let enums: [String: IREnumDecl]
+    /// 外部数据符号的声明类型：不在函数作用域里，故单独一张表。
+    let foreignData: [String: IRType]
 
     var issues: [Issue] = []
 
@@ -162,10 +164,15 @@ private struct Walker {
         }
         var enumTable: [String: IREnumDecl] = [:]
         for decl in module.enums { enumTable[decl.name] = decl }
+        var foreignDataTable: [String: IRType] = [:]
+        for block in module.foreigns {
+            for entry in block.data { foreignDataTable[entry.name] = entry.type }
+        }
         self.functionNames = names
         self.functions = bodies
         self.types = table
         self.enums = enumTable
+        self.foreignData = foreignDataTable
     }
 
     mutating func run() {
@@ -612,6 +619,18 @@ private struct Walker {
 
         case .addressOfVar(let name, let type):
             checkName(name, declaredType: type, node: "取址", at: location)
+
+        case .foreignDataAddress(let name, let type):
+            guard let declared = foreignData[name] else {
+                report(.undeclaredVariable, "取址引用了未声明的外部符号 '\(name)'", at: location)
+                break
+            }
+            if !declared.isAssignable(to: type), !type.isAssignable(to: declared) {
+                report(
+                    .typeMismatch,
+                    "外部符号 '\(name)' 的类型是 \(declared.display)，取址写成 \(type.display)",
+                    at: location)
+            }
 
         case .binary(_, let lhs, let rhs, _):
             walk(lhs, at: location)

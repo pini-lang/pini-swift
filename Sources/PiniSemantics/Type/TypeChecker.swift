@@ -55,7 +55,9 @@ public final class TypeChecker {
     private var unsafeContextDepth: Int = 0
     // F5（issue-unsafe-gate-foreign）：foreign 函数名集——调用位门禁用。
     // foreignDecl 注册进通用函数表时无 foreign 标记，故在此并行登记。
-    private var foreignFunctionNames: Set<String> = []
+    private var foreignSymbolNames: Set<String> = []
+    /// 声明了 `|readonly` 的外部数据符号：写侧禁令的判据来源。
+    private var readonlyForeignData: Set<String> = []
 
     private func registerBuiltinTypes() {
         let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -1212,11 +1214,18 @@ public final class TypeChecker {
             // 声明上下文收紧·规则 3.2/3.14：扩展块方法注册到目标类型（与类型自身方法同等对待）。
             registerExtensionMethods(x)
         case .foreignDecl(let fd):
-            // 外部符号注册为模块级函数，并登记进不安全门禁用名集。
-            foreignFunctionNames.formUnion(fd.symbols.map { $0.name })
+            // 一条外部符号要么是函数、要么是数据：种类由类型决定，两张表分开登记。
             for symbol in fd.symbols {
-                typeEnv.defineFunction(
-                    name: symbol.name, params: symbol.paramTypes, returns: symbol.returnTypes)
+                foreignSymbolNames.insert(symbol.name)
+                if symbol.isFunction {
+                    typeEnv.defineFunction(
+                        name: symbol.name, params: symbol.paramTypes, returns: symbol.returnTypes)
+                } else {
+                    typeEnv.defineForeignData(name: symbol.name, type: symbol.annotation)
+                    if symbol.flags.contains("readonly") {
+                        readonlyForeignData.insert(symbol.name)
+                    }
+                }
             }
         case .varDecl, .statement, .importDecl, .exportDecl:
             break
@@ -1926,6 +1935,20 @@ public final class TypeChecker {
         {
             try report(TypeError.givenBlockTypeInValuePosition(typeName: givenName, location: givenLoc))
         }
+        // 读外部数据符号与调 foreign 函数是同一条门禁：两者都触碰宿主内存，只应在 unsafe 上下文里发生。
+        // 取址（`&符号`）由 `.addressOf` 分支先判上下文，走到这里时深度已 > 0，不会重复报。
+        if unsafeContextDepth == 0,
+            case .identifier(let foreignName, let foreignLoc) = expr,
+            typeEnv.lookupForeignData(name: foreignName) != nil
+        {
+            try report(
+                TypeError.mismatch(
+                    expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
+                    got: "外部数据符号 `\(foreignName)` 出现在非 unsafe 上下文",
+                    location: foreignLoc
+                ))
+            return
+        }
         switch expr {
         case .binary(let left, let op, let right, let location):
             try checkExpression(left)
@@ -2031,11 +2054,25 @@ public final class TypeChecker {
                         return
                     }
                 }
+                // `|readonly` 的写侧禁令：只认「取址结果直接作 store 目标」这一形。先存进变量再写追不到来源，
+                // 静态检查到这里就是边界 —— 声明方的承诺在 C 侧，Pini 侧挡的是最直白的那一笔。
+                if calleeName == "store", arguments.count == 2,
+                    case .addressOf(let target, _) = arguments[0].expression,
+                    case .identifier(let symbolName, _) = target,
+                    readonlyForeignData.contains(symbolName)
+                {
+                    try report(
+                        TypeError.mismatch(
+                            expected: "可写的外部符号",
+                            got: "`\(symbolName)` 声明为 |readonly",
+                            location: location))
+                    return
+                }
                 if let sig = typeEnv.lookupFunction(name: calleeName) {
                     // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
                     // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
                     // `|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 |unsafe 放行。
-                    if foreignFunctionNames.contains(calleeName), unsafeContextDepth == 0 {
+                    if foreignSymbolNames.contains(calleeName), unsafeContextDepth == 0 {
                         try report(
                             TypeError.mismatch(
                                 expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",

@@ -599,12 +599,6 @@ public class Parser {
                 location: loc
             )
         }
-        guard symbol.isFunction else {
-            throw ParserError.invalidStatement(
-                reason: "外部数据符号尚未接通：`\(symbolName): \(annotation.describe())`，当前只收函数类型",
-                location: loc
-            )
-        }
         return symbol
     }
 

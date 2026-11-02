@@ -126,7 +126,7 @@ public struct JSONBackend: PiniBackend {
         }
     }
 
-    /// 53 条表达式逐一列出、不留 `default`。分支体为空是刻意的：本函数要的只是「编译器确认这一条
+    /// 全部表达式逐一列出、不留 `default`。分支体为空是刻意的：本函数要的只是「编译器确认这一条
     /// 被处理过」，名字从 `String(describing:)` 的前缀取，避免手抄一份节点名表 —— 那会成为第二份
     /// 节点表，而它正是本文件要防的东西。
     private func exprKind(_ expr: IRExpr) -> String {
@@ -136,7 +136,7 @@ public struct JSONBackend: PiniBackend {
             .optionalGet, .optionalConstruct, .sliceCall, .construct, .enumConstruct,
             .fieldGet, .dictLiteral, .setLiteral, .tupleConstruct, .tupleIndexGet,
             .closureLiteral, .functionValue, .indirectCall, .pointerLoad, .pointerStore,
-            .addressOfVar, .printMulti, .assertCall, .fileWrite, .fileAppend, .fileRead,
+            .addressOfVar, .foreignDataAddress, .printMulti, .assertCall, .fileWrite, .fileAppend, .fileRead,
             .fileTryWrite, .fileTryAppend, .fileTryRead, .readLine, .isAsciiDigit,
             .stringCase, .stringContains, .stringSubstring, .stringSplit, .stringTrimLeft,
             .stringTrimRight, .stringIndexOf, .arrayJoin, .stringConcat, .interpString,

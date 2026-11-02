@@ -369,6 +369,11 @@ public final class IREmitter {
                 let ret = func_.returnType?.llvmSpelling ?? "void"
                 header += "declare \(ret) @\(symbol)(\(params))\n"
             }
+            /// 数据符号是全局存储本身：取址就是这个名字，读写成 load / store。
+            for entry in foreignBlock.data {
+                header +=
+                    "@\(IRName.mangle(entry.name)) = external global \(entry.type.llvmSpelling)\n"
+            }
         }
         header += "\n"
 
@@ -2625,6 +2630,9 @@ public final class IREmitter {
 
         case .addressOfVar(let name, let type):
             return emitAddressOfVar(name: name, type: type)
+
+        case .foreignDataAddress(let name, _):
+            return IRValue(llvmType: "ptr", ssaName: "@\(IRName.mangle(name))")
 
         case .printMulti(let arguments):
             return emitPrintMulti(arguments: arguments)

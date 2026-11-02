@@ -211,6 +211,8 @@ public enum IRPrinter {
             return "store(\(exprText(pointer)), \(exprText(value)))"
         case .addressOfVar(let name, _):
             return "&\(name)"
+        case .foreignDataAddress(let name, _):
+            return "@\(name)"
         case .printMulti(let arguments):
             let items = arguments.map(exprText).joined(separator: ", ")
             return "print(\(items))"

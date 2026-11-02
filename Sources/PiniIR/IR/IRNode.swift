@@ -397,6 +397,9 @@ public indirect enum IRExpr: Equatable {
     /// aliasing gap (write-back does not update the original) is the documented divergence, covered by the
     /// read-only corpus.
     case addressOfVar(name: String, type: IRType)
+    /// 外部数据符号的地址：符号自身的存储位置，不是它的值的快照。
+    /// 读走 `pointerLoad`、写走 `pointerStore`，与 `&变量` 的区别只在地址来源。
+    case foreignDataAddress(name: String, type: IRType)
     /// `print(a, b, ...)`: per-argument stringify joined with a single space on one line; the emitter
     /// realizes the same byte stream (value, space, value, ..., newline).
     case printMulti(arguments: [IRExpr])
@@ -544,6 +547,7 @@ extension IRExpr {
         case .pointerLoad(_, let type): return type
         case .pointerStore: return nil
         case .addressOfVar(_, let type): return .pointer(element: type)
+        case .foreignDataAddress(_, let type): return .pointer(element: type)
         case .printMulti: return nil
         case .assertCall: return nil
         case .fileWrite, .fileAppend: return nil

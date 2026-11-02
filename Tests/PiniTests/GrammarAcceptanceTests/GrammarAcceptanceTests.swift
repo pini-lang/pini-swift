@@ -595,14 +595,19 @@ struct GrammarAcceptanceTests: Sendable {
         #expect(reason.contains("|threadlocal"), "拒绝理由应点出未知标志，实际：\(reason)")
     }
 
-    @Test("foreign 数据符号条目暂被显式拒绝")
-    func testParserRejectsForeignDataSymbolForNow() throws {
-        /// 意图：`stdout: *U8` 在数据符号接通前必须报错，不许解析成功后语义层静默忽略。
-        let (_, errors) = try parse("testParserRejectsForeignDataSymbolForNow")
-        guard case .invalidStatement(let reason, _) = errors.first else {
-            Issue.record("首条应为 invalidStatement，实际：\(String(describing: errors.first))"); return
+    @Test("foreign 数据符号条目被接受")
+    func testParserAcceptsForeignDataSymbolForm() throws {
+        /// 意图：类型不是函数类型即数据符号，`|readonly` 随条目保留；种类由类型决定，不另设关键字。
+        let module = try checkedModule("testParserAcceptsForeignDataSymbolForm")
+        guard case .foreignDecl(let foreign) = module.declarations.first else {
+            Issue.record("唯一声明应为 foreign 块"); return
         }
-        #expect(reason.contains("数据符号"), "拒绝理由应指向未接通的降载，实际：\(reason)")
+        #expect(foreign.symbols.count == 2)
+        guard foreign.symbols.count == 2 else { return }
+        #expect(foreign.symbols[0].name == "optind")
+        #expect(!foreign.symbols[0].isFunction)
+        #expect(foreign.symbols[0].flags.isEmpty)
+        #expect(foreign.symbols[1].flags == ["readonly"], "只读标志应随条目保留")
     }
 
     @Test("旧 foreign 函数签名形态被拒")

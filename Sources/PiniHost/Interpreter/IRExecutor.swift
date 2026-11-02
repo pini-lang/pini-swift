@@ -139,6 +139,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     /// A map, not a set: a shim miss falls to a raw C binding, and the thunk needs the declared library and signature.
     private var foreignDecls: [String: (library: String, function: IRForeignFunction)] = [:]
 
+    /// 外部数据符号的声明：库名、类型、只读。地址在装载期解析一次，与函数同一时机。
+    private var foreignDataDecls: [String: (library: String, type: IRType, isReadonly: Bool)] = [:]
+    /// 已解析的符号地址。与声明分开：装载期只填这张表，求值只读它，两者生命周期不同。
+    private var foreignDataAddresses: [String: RawPointerValue] = [:]
+
     /// Library handles for raw C bindings, cached by library name.
     /// Per engine, not process-wide: a shared handle table would make "when is it safe to close" a question with no owner.
     /// Two engines, two caches, one resolution routine.
@@ -259,9 +264,14 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         // would be ambiguous and the semantic layer already rejects that; were
         // it ever to arrive, last-wins is the rule the function tables use.
         foreignDecls = [:]
+        foreignDataDecls = [:]
         for block in module.foreigns {
             for function in block.funcs {
                 foreignDecls[function.name] = (library: block.name, function: function)
+            }
+            for entry in block.data {
+                foreignDataDecls[entry.name] = (
+                    library: block.name, type: entry.type, isReadonly: entry.isReadonly)
             }
         }
         try resolveForeignsEagerly()
@@ -282,6 +292,36 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 library: foreign.library, symbol: name,
                 searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
             )
+        }
+        /// 数据符号没有 shim 表可让位：声明了就必须解析得到，否则读到的地址无处可来。
+        foreignDataAddresses = [:]
+        for (name, entry) in foreignDataDecls {
+            let symbol = try ffiLoader.resolve(
+                library: entry.library, symbol: name,
+                searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
+            )
+            foreignDataAddresses[name] = RawPointerValue(
+                pointer: symbol, elemType: annotation(for: entry.type), freesMemory: false)
+        }
+    }
+
+    /// 外部数据符号的字节读写按声明宽度走，而指针原语吃 `TypeAnnotation`。
+    /// 只映射 C 兼容标量与指针：其余类型在语义期已被 FFI 顶层校验拒掉，落到 nil 即报错。
+    private func annotation(for type: IRType) -> TypeAnnotation? {
+        let loc = IRExecutor.noLocation
+        switch type {
+        case .i8: return .simple(name: "I8", location: loc)
+        case .u8: return .simple(name: "U8", location: loc)
+        case .i32: return .simple(name: "I32", location: loc)
+        case .i64: return .simple(name: "I64", location: loc)
+        case .u64: return .simple(name: "U64", location: loc)
+        case .f64: return .simple(name: "F64", location: loc)
+        case .boolean: return .simple(name: "Bool", location: loc)
+        case .pointer(let element):
+            guard let inner = annotation(for: element) else { return nil }
+            return .pointer(element: inner, location: loc)
+        default:
+            return nil
         }
     }
 
@@ -1058,6 +1098,14 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             }
             try RuntimeOps.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
             return .null
+
+        case .foreignDataAddress(let name, _):
+            /// 符号地址本身，不是快照：写进去的值外部可见，外部写的值这里读得到。
+            guard let address = foreignDataAddresses[name] else {
+                throw RuntimeError.invalidOperation(
+                    reason: "外部数据符号 '\(name)' 没有解析到地址", location: IRExecutor.noLocation)
+            }
+            return .rawPointer(address)
 
         case .addressOfVar(let name, _):
             // Interpreter parity: `&x` snapshots the value into fresh memory, so a write through the pointer misses the variable.

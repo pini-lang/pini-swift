@@ -80,7 +80,7 @@ foreign-flag     ::= 'readonly';
 
 | 标志 | 适用 | 语义 | 状态 |
 |---|---|---|---|
-| `readonly` | 数据符号 | 禁写：赋值与 `store` 在语义期拒绝 | v1 |
+| `readonly` | 数据符号 | 禁写：`store(&符号, ...)` 在语义期拒绝 | v1 |
 | `macro` | 任意类型条目 | 不解析符号，构建期由 C 预处理器求值并烘成常量；蕴含 `readonly`，不可取址 | v1 |
 | `threadlocal` | 数据符号 | 每次访问重新取地址（TLS 描述符不是普通符号地址） | 缓；v1 报错并提示写 shim 函数 |
 | `weak` | 函数 | `dlsym` 未命中不 fail-fast，返回空句柄 | 缓；先确认空句柄在 Pini 侧怎么表达 |
@@ -114,6 +114,8 @@ unsafe store(p, 3)             ; 写：走既有指针原语
 写不另造语句形态。`unsafe` 是表达式前缀（`unsafe 表达式`），不是语句前缀；为写操作新增 `unsafe x = 1` 这类语句形态，会破掉「不安全消耗点 = 表达式」这条既有规则。地址加 `store` 已经够用。
 
 注意 —— `&局部变量` 是快照（解释器实现如此，写回不更新原变量），`&外部数据符号` 是符号地址本身。同一个前缀内建按操作数改变语义，这是 `&` 唯一一处这样。理由：外部存储没有 Pini 副本可快照。
+
+注意 —— `readonly` 只挡得住「取址结果直接作 `store` 目标」这一形。先 `var p = unsafe &符号` 再 `unsafe store(p, ...)` 追不到来源：类型里不携带「这个指针指向只读符号」。声明方的承诺在 C 侧，Pini 侧只挡最直白的那一笔。
 
 ### 常量
 
@@ -378,8 +380,8 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 
 | 分片 | 状态 | 内容 | 验收 |
 |---|---|---|---|
-| 符号表 | 已落地 | `ForeignDecl.funcs: [FuncDecl]` 换成 `symbols: [ForeignSymbol]`；解析只收 `标识符{\|标志}: 类型`；登记、诊断、IR 同步 | 4 个引用 foreign 的 `.pini` 改写，新增函数 / 未知标志 / 数据符号门 / 旧写法拒绝五类 fixture，全量 376 条测试绿 |
-| 数据符号 | 待做 | IR 增 `IRForeignData` 与符号地址节点；读走左值，取址与 `store` 复用指针原语；LLVM 发 `@sym = external global`；摘掉解析层的数据符号门 | 读、取址、写入各一条 fixture；`readonly` 的赋值被拒 |
+| 符号表 | 已落地 | `ForeignDecl.funcs: [FuncDecl]` 换成 `symbols: [ForeignSymbol]`；解析只收 `标识符{\|标志}: 类型`；登记、诊断、IR 同步 | 4 个引用 foreign 的 `.pini` 改写，新增函数 / 未知标志 / 旧写法拒绝三类 fixture，全量 376 条测试绿 |
+| 数据符号 | 已落地 | `IRForeignData` 与符号地址节点；读走 `pointerLoad`，取址与 `store` 复用指针原语；LLVM 发 `@sym = external global`；解析层不再拦数据符号条目；`\|readonly` 在语义期拒直接写入 | 两条通道各跑「取址写回后读到新值」；`\|readonly` 的 `store` 被拒；全量 378 条测试绿 |
 | 宏常量 | 待做 | `[ffi]` 增 `headers` / `include_paths`；`cc -E` 探针、标记行读回、常量表达式求值；IR 常量节点 | `EOF` 与 `M_PI` 各一条；`errno` 报错且带展开原文；写了 `\|macro` 却没配 headers 报错 |
 | 导出面 | 待做 | IR 增 `IRExportBlock`（函数项与量项两类）；`CName.escape` 与撞名检查；给定块导出的取址转发与物化；`--backend c` 出头文件；`--shared` 出产物；C 侧 smoke | 一个 C 调用方经 `cc caller.c -lcalc` 跑通四条路径：标量函数、Result 函数、读给定块字段、写给定块字段后被 Pini 侧读到 |
 

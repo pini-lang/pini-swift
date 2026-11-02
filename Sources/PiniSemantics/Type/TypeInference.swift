@@ -104,6 +104,8 @@ public final class TypeInference {
             }
             if let sp = scopedParams, let t = sp[name] { return t }
             if let bound = environment?.lookupVariable(name: name) { return bound }
+            // 外部数据符号：模块级，读它是取符号当前值，类型即声明类型。
+            if let foreign = environment?.lookupForeignData(name: name) { return foreign }
             /// 无实参枚举用例的裸名形态（`名`，不带括号）：`名(...)` 的识别只写在 `.call` 分支，故本支返 nil。
             /// nil 在无期望类型处（局部变量初值位最典型）会被 `varDecl` 落成 `Any`，错误迟发在最后用它的地方。
             /// 口径同 `.call`：父枚举唯一 ⇒ 取父枚举类型；歧义 ⇒ 返 nil，交期望类型路径处置（不猜）。
