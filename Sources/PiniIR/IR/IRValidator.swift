@@ -648,7 +648,7 @@ private struct Walker {
         case .printMulti(let arguments):
             for argument in arguments { walk(argument, at: location) }
 
-        case .resultConstruct(_, let payload, let type):
+        case .resultConstruct(_, let payload, _, let type):
             if type.resultOkType == nil {
                 report(.nodeShape, "ok/err 构造成员的 type 是 \(type.display)，不是 Result", at: location)
             }

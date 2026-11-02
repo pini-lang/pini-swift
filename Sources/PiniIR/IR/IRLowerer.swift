@@ -274,6 +274,9 @@ public enum IRLowerer {
         foreignConstants: [IRForeignConstant] = [],
         requiresMain: Bool = true
     ) throws -> IRModule {
+        /// 码表只依赖声明与导出面，先于函数体降载建好：`err(...)` 造 Result 时要按载荷类型查基址。
+        let errorCodeTable = Self.buildErrorCodeTable(
+            declarations: module.declarations, exports: module.exports)
         // Trait registry pre-pass: default-implementation bodies (signatures with a body) join the signature
         // table like any named function; abstract signatures are skipped since the checker already verified
         // conformance. Both tables are module-wide.
@@ -661,7 +664,8 @@ public enum IRLowerer {
                         genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
                         builtinExtensionMethods: builtinExtensionMethods,
-                        foreignData: foreignData, foreignConstants: constantTable)
+                        foreignData: foreignData, foreignConstants: constantTable,
+                        errorCodeByType: errorCodeTable.byType)
                 )
             case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below; trait
@@ -859,7 +863,8 @@ public enum IRLowerer {
         }
         if let block = cBlocks.first {
             exportBlock = try Self.lowerExportBlock(
-                block, declarations: module.declarations, userTypes: userTypes)
+                block, declarations: module.declarations, userTypes: userTypes,
+                errorCodes: errorCodeTable.entries)
         }
         return IRModule(
             functions: functions, types: typeDecls,
@@ -871,10 +876,106 @@ public enum IRLowerer {
             givenReferences: references, callReferences: calls)
     }
 
+    /// 导出函数的 E：`Result<T, E>` 写明就用它，`^T`（只带 ok）视作 `Result<T, Error>`。
+    /// 返回 nil 表示返回类型根本不是 Result，不产生错误码。
+    private static func declaredErrorType(of function: FuncDecl) -> String? {
+        guard let declared = function.returnTypes.first else { return nil }
+        guard case .generic(let name, let params, _) = declared, name == "Result" else { return nil }
+        if params.count >= 2, case .simple(let errorName, _) = params[1] { return errorName }
+        return "Error"
+    }
+
+    /// 码表：只收导出函数写明的错误类型。enum 按类型序与用例 tag 派生，
+    /// 非 enum 取作者写的 `码()` 常量，没有就落自动区并留给上层发警告。
+    private static func buildErrorCodeTable(
+        declarations: [TopLevelDecl], exports: [ExportDecl]
+    ) -> (byType: [String: Int32], entries: [IRErrorCode]) {
+        var reachable: Set<String> = []
+        for block in exports {
+            for entry in block.entries where entry.target == .c {
+                guard let function = freeFunction(named: entry.symbol, in: declarations),
+                    let errorType = declaredErrorType(of: function)
+                else { continue }
+                reachable.insert(errorType)
+            }
+        }
+        var enumCases: [String: [String]] = [:]
+        var nonEnums: [String] = []
+        for decl in declarations {
+            switch decl {
+            case .enumDecl(let enumDecl) where enumDecl.traits.contains(TypeChecker.errorTraitName):
+                if reachable.contains(enumDecl.name) {
+                    enumCases[enumDecl.name] = enumDecl.cases.map { $0.name }
+                }
+            case .structDecl(let structDecl) where structDecl.traits.contains(TypeChecker.errorTraitName):
+                if reachable.contains(structDecl.name) { nonEnums.append(structDecl.name) }
+            case .objectDecl(let objectDecl) where objectDecl.traits.contains(TypeChecker.errorTraitName):
+                if reachable.contains(objectDecl.name) { nonEnums.append(objectDecl.name) }
+            default:
+                break
+            }
+        }
+        var byType: [String: Int32] = [:]
+        var entries: [IRErrorCode] = []
+        for (index, name) in enumCases.keys.sorted().enumerated() {
+            let base = Int32(index + 1) << 8
+            byType[name] = base
+            for (tag, caseName) in (enumCases[name] ?? []).enumerated() {
+                entries.append(
+                    IRErrorCode(
+                        typeName: name, caseName: caseName, code: base | Int32(tag),
+                        source: .derived))
+            }
+        }
+        var nextAutomatic = Int32(0x4000)
+        for name in nonEnums.sorted() {
+            if let declared = declaredErrorCode(typeName: name, declarations: declarations) {
+                byType[name] = declared
+                entries.append(
+                    IRErrorCode(typeName: name, caseName: nil, code: declared, source: .declared))
+            } else {
+                byType[name] = nextAutomatic
+                entries.append(
+                    IRErrorCode(
+                        typeName: name, caseName: nil, code: nextAutomatic, source: .automatic))
+                nextAutomatic += 1
+            }
+        }
+        return (byType, entries)
+    }
+
+    /// 作者写的固定码：扩展块里 `码()` 的函数体只有一条 `return <整数字面量>`。
+    /// 其余形态视为未申报——写了却没写对由上层诊断，降载层不猜。
+    private static func declaredErrorCode(
+        typeName: String, declarations: [TopLevelDecl]
+    ) -> Int32? {
+        for decl in declarations {
+            guard case .extensionDecl(let ext) = decl, ext.targetType == typeName else { continue }
+            for method in ext.methods where method.name == "码" && method.params.isEmpty {
+                guard let body = method.body, body.statements.count == 1,
+                    case .returnStatement(.integerLiteral(let value, _), _) = body.statements[0],
+                    value >= 0, value <= Int(Int32.max)
+                else { continue }
+                return Int32(value)
+            }
+        }
+        return nil
+    }
+
+    /// 错误载荷所属类型的码基址。查不到（类型不在导出面的错误集里）按未归类 `1`。
+    private static func errorBaseCode(for type: IRType, in context: FunctionContext) -> Int32 {
+        switch type {
+        case .enumeration(let name): return context.errorCodeByType[name] ?? 1
+        case .nominal(let name, _): return context.errorCodeByType[name] ?? 1
+        default: return 1
+        }
+    }
+
     /// 把 export 块的 `|c` 条目降载成发布面：函数取去掉取用位后的签名，给定块取字段表。
     /// 名字在这里转成 C 标识符，后端只认转写后的名字，不再各自改名。
     private static func lowerExportBlock(
-        _ block: ExportDecl, declarations: [TopLevelDecl], userTypes: [String: IRType]
+        _ block: ExportDecl, declarations: [TopLevelDecl], userTypes: [String: IRType],
+        errorCodes: [IRErrorCode]
     ) throws -> IRExportBlock {
         var functions: [IRExportFunction] = []
         var storages: [IRExportStorage] = []
@@ -918,7 +1019,7 @@ public enum IRLowerer {
         }
         let blockName = CName.escape(block.name)
         return IRExportBlock(
-            name: blockName, functions: functions, storages: storages,
+            name: blockName, functions: functions, storages: storages, errorCodes: errorCodes,
             initName: "\(blockName)_init", shutdownName: "\(blockName)_shutdown")
     }
 
@@ -1493,7 +1594,8 @@ public enum IRLowerer {
         traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector(),
         builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:],
         foreignData: [String: IRType] = [:],
-        foreignConstants: [String: IRForeignConstant] = [:]
+        foreignConstants: [String: IRForeignConstant] = [:],
+        errorCodeByType: [String: Int32] = [:]
     ) throws -> IRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -1540,6 +1642,7 @@ public enum IRLowerer {
             builtinExtensionMethods: builtinExtensionMethods
         )
         context.foreignData = foreignData
+        context.errorCodeByType = errorCodeByType
         context.foreignConstants = foreignConstants
         context.isAsync = decl.isAsync
         context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
@@ -2193,7 +2296,8 @@ public enum IRLowerer {
                 /// 载荷没有值，占位槽给 0。
                 return [.returnStmt(
                     value: .resultConstruct(
-                        isOk: true, payload: .intConst(value: 0, type: .i32), type: returnType),
+                        isOk: true, payload: .intConst(value: 0, type: .i32), errorBaseCode: 0,
+                        type: returnType),
                     adopt: .none)]
             }
             guard context.returnType == nil else {
@@ -2730,9 +2834,11 @@ public enum IRLowerer {
         {
             let payload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
             let resultType = IRType.result(ok: calleeName == "ok" ? payload.type : .i32)
+            let base = calleeName == "err" ? Self.errorBaseCode(for: payload.type, in: context) : 0
             loweredOperand = LoweredExpr(
                 node: .resultConstruct(
-                    isOk: calleeName == "ok", payload: payload.node, type: resultType
+                    isOk: calleeName == "ok", payload: payload.node, errorBaseCode: base,
+                    type: resultType
                 ),
                 type: resultType
             )
@@ -3813,7 +3919,11 @@ public enum IRLowerer {
                     try requireAssignable(loweredArgs[0].type, to: okType, at: location)
                 }
                 return LoweredExpr(
-                    node: .resultConstruct(isOk: functionName == "ok", payload: loweredArgs[0].node, type: contextType),
+                    node: .resultConstruct(
+                        isOk: functionName == "ok", payload: loweredArgs[0].node,
+                        errorBaseCode: functionName == "ok"
+                            ? 0 : Self.errorBaseCode(for: loweredArgs[0].type, in: context),
+                        type: contextType),
                     type: contextType
                 )
             }
@@ -6102,6 +6212,8 @@ private struct FunctionContext {
     var foreignData: [String: IRType] = [:]
     /// 宏常量的构建期值：标识符命中它时直接出字面量，不产生任何存储访问。
     var foreignConstants: [String: IRForeignConstant] = [:]
+    /// 错误类型名 → 码基址。`err(...)` 按载荷类型查它，查不到按未归类 `1`。
+    var errorCodeByType: [String: Int32] = [:]
     /// Receiver field types for bare-name resolution inside method
     /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
     var selfFieldTypes: [String: IRType] = [:]

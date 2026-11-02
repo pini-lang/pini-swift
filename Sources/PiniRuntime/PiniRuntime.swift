@@ -1300,7 +1300,7 @@ public func bk_try_read_file(
         outErr?.pointee = 0
         return _bkStrDup(text)
     case .failure(let message):
-        outErr?.pointee = _bkMakeError(message, isCancel: false)
+        outErr?.pointee = _bkMakeError(message, isCancel: false, code: 1)
         return nil
     }
 }
@@ -1312,7 +1312,7 @@ public func bk_try_write_file(
 ) -> Int64 {
     switch _bkWriteFileCore(path, content) {
     case .done: return 0
-    case .failure(let message): return _bkMakeError(message, isCancel: false)
+    case .failure(let message): return _bkMakeError(message, isCancel: false, code: 1)
     }
 }
 
@@ -1323,7 +1323,7 @@ public func bk_try_append_file(
 ) -> Int64 {
     switch _bkAppendFileCore(path, content) {
     case .done: return 0
-    case .failure(let message): return _bkMakeError(message, isCancel: false)
+    case .failure(let message): return _bkMakeError(message, isCancel: false, code: 1)
     }
 }
 
@@ -1790,16 +1790,19 @@ private func _bkWord(_ p: UnsafeMutableRawPointer) -> Int64 {
 private final class _BkErrorBox {
     let message: UnsafeMutablePointer<CChar>
     let isCancel: Bool
+    /// C 边界的码：`Error`/`CancelError` 固定 `1`/`2`，枚举错误由基址与用例 tag 组合。
+    let code: Int32
 
-    init(_ text: String, isCancel: Bool) {
+    init(_ text: String, isCancel: Bool, code: Int32) {
         self.message = strdup(text) ?? UnsafeMutablePointer<CChar>.allocate(capacity: 1)
         self.isCancel = isCancel
+        self.code = code
     }
 }
 
 /// 造一个错误对象并按字返回（`isCancel` 区分 `CancelError` 与业务 `Error`）。
-private func _bkMakeError(_ text: String, isCancel: Bool) -> Int64 {
-    let box = _BkErrorBox(text, isCancel: isCancel)
+private func _bkMakeError(_ text: String, isCancel: Bool, code: Int32) -> Int64 {
+    let box = _BkErrorBox(text, isCancel: isCancel, code: code)
     return _bkWord(Unmanaged.passRetained(box).toOpaque())
 }
 
@@ -1820,14 +1823,37 @@ private func _bkErrorBox(_ word: Int64) -> _BkErrorBox? {
 /// `Error("msg")` —— 业务错误。入参可以是常量串：本函数复制一份自持。
 @_cdecl("bk_error_create")
 public func bk_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
-    _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: false)
+    _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: false, code: 1)
 }
 
 /// `CancelError("msg")` —— 取消错误。与 `bk_error_create` 只差那个标志位；
 ///  行不通  两者的消息面完全同形，区分只经 `bk_error_is_cancel`，不靠消息约定。
 @_cdecl("bk_cancel_error_create")
 public func bk_cancel_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
-    _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: true)
+    _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: true, code: 2)
+}
+
+/// `err(枚举值)` —— 载荷是枚举：码 = 类型基址或上用例 tag，消息用类型名。
+/// 枚举布局是 `{ i32, i32, i32, ptr, i32 }`：前三格箱头、第四格旁表指针、第五格是 tag，
+/// 故 tag 落在偏移 24。布局若调整，这里与 `IREmitter` 的枚举声明必须一起改。
+@_cdecl("bk_error_from_enum")
+public func bk_error_from_enum(
+    _ payload: Int64, _ base: Int32, _ name: UnsafePointer<CChar>?
+) -> Int64 {
+    let text = name.map { String(cString: $0) } ?? ""
+    guard payload != 0,
+        let pointer = UnsafeMutableRawPointer(
+            bitPattern: UInt(bitPattern: Int(truncatingIfNeeded: payload)))
+    else { return _bkMakeError(text, isCancel: false, code: base) }
+    let tag = pointer.load(fromByteOffset: 24, as: Int32.self)
+    return _bkMakeError(text, isCancel: false, code: base | tag)
+}
+
+/// 错误对象上的码：导出桩据它回填状态码。无载荷答 `0`。
+@_cdecl("bk_error_code")
+public func bk_error_code(_ word: Int64) -> Int32 {
+    guard let box = _bkErrorBox(word) else { return 0 }
+    return box.code
 }
 
 /// `isCancel(e)` —— err 字是不是取消类。无载荷（字为 0）答 `0`。
@@ -1930,7 +1956,7 @@ private func _bkTaskJoinOne(
     if !completed {
         _bkTaskCancelBox(box)
         _bkTaskWaitQuiescent(box)
-        _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError(_bkTimeoutText(timeoutMs), isCancel: true))
+        _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError(_bkTimeoutText(timeoutMs), isCancel: true, code: 2))
         return 1
     }
     box.cond.lock()
@@ -1942,7 +1968,7 @@ private func _bkTaskJoinOne(
     box.cond.unlock()
     if cancelled {
         _bkTaskWaitQuiescent(box)
-        _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true))
+        _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true, code: 2))
         return 1
     }
     guard resolved else {
@@ -2258,7 +2284,7 @@ private func _bkJoinAll(
         // 复用单任务 join：它已含「取消 → err(CancelError)」的归一化，这里不重写一遍。
         if _bkTaskJoinOne(box, timeoutMs: nil, out: out) != 0 {
             for rest in boxes.dropFirst(i + 1) { _bkTaskCancelBox(rest) }
-            _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true))
+            _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("任务已取消", isCancel: true, code: 2))
             return 1
         }
         let tag = out?.load(fromByteOffset: 0, as: Int64.self) ?? 0
@@ -2345,7 +2371,7 @@ public func bk_scope_close(
     // ② 有界：只在 `out` 当前是 `ok` 时翻。已有 err ⇒ 原样保留。
     let currentTag = out.load(fromByteOffset: 0, as: Int64.self)
     guard currentTag == 0 else { return 0 }
-    _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("\(leaked) 个子任务失败", isCancel: false))
+    _bkWriteResult(out, tag: 1, ok: 0, err: _bkMakeError("\(leaked) 个子任务失败", isCancel: false, code: 1))
     return 0
 }
 

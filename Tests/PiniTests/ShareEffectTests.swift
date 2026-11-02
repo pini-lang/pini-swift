@@ -22,7 +22,7 @@ struct ShareEffectTests: Sendable {
             type: functionType)
     }
     private static var result: IRExpr {
-        .resultConstruct(isOk: true, payload: scalar, type: .result(ok: .i32))
+        .resultConstruct(isOk: true, payload: scalar, errorBaseCode: 0, type: .result(ok: .i32))
     }
     private static var tuple: IRExpr {
         .tupleConstruct(labels: [nil], elements: [scalar], type: .tuple(labels: [nil], fieldTypes: [.i32]))

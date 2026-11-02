@@ -776,7 +776,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
         // MARK: Optional / Result / enum values
 
-        case .resultConstruct(let isOk, let payload, _):
+        case .resultConstruct(let isOk, let payload, _, _):
             // The one `makeResult`, so the two channels cannot disagree on what a Result *is*.
             // The err payload is one type-erased machine word on the LLVM side; reads go through the same `pini.err.message` name.
             return RuntimeOps.makeResult(

@@ -598,6 +598,9 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_cancel_error_create")
             tail += Builtins.declaration(for: "bk_error_is_cancel")
             tail += Builtins.declaration(for: "bk_error_message")
+            // 枚举错误：把载荷的用例 tag 或上类型基址，得到一个带码的错误对象。
+            tail += Builtins.declaration(for: "bk_error_from_enum")
+            tail += Builtins.declaration(for: "bk_error_code")
         }
         if usesProgramBase {
             tail += Builtins.declaration(for: "bk_set_program_base")
@@ -2387,7 +2390,7 @@ public final class IREmitter {
         case .indirectCall(let callee, let arguments, let returnType):
             return emitIndirectCall(callee: callee, arguments: arguments, returnType: returnType)
 
-        case .resultConstruct(let isOk, let payload, let type):
+        case .resultConstruct(let isOk, let payload, let errorBaseCode, let type):
             guard case .result = type else {
                 fatalError("IREmitter: resultConstruct type is not a Result (IRLowerer guarantees)")
             }
@@ -2399,7 +2402,17 @@ public final class IREmitter {
             if isOk {
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
             } else {
-                let word = widenToWord(p)
+                var word = widenToWord(p)
+                // 枚举载荷没有错误盒：这里换成带码的盒子，码 = 类型基址或上用例 tag。
+                // 非枚举载荷（Error / CancelError）已经由各自的构造入口造好盒子，原样入槽。
+                if errorBaseCode >= 0x0100 {
+                    usesErrorShims = true
+                    let boxed = builder.freshTemp()
+                    bodyIR +=
+                        " \(boxed) = call i64 @bk_error_from_enum(i64 \(word.ssaName),"
+                        + " i32 \(errorBaseCode), ptr null)\n"
+                    word = IRValue(llvmType: "i64", ssaName: boxed)
+                }
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
             }
             return IRValue(llvmType: aggregate, ssaName: filled)
@@ -3245,10 +3258,16 @@ public final class IREmitter {
             bodyIR += " store \(payload.llvmSpelling) \(value), ptr %out\n"
             bodyIR += " br label %\(doneLabel)\n"
             bodyIR += "\(errLabel):\n"
+            // 失败码从错误对象上取：Error/CancelError 是 1/2，枚举错误是「基址或 tag」。
+            usesErrorShims = true
+            let errWord = builder.freshTemp()
+            bodyIR += " \(errWord) = extractvalue \(resultType) \(result), 2\n"
+            let errCode = builder.freshTemp()
+            bodyIR += " \(errCode) = call i32 @bk_error_code(i64 \(errWord))\n"
             bodyIR += " br label %\(doneLabel)\n"
             bodyIR += "\(doneLabel):\n"
             let code = builder.freshTemp()
-            bodyIR += " \(code) = phi i32 [ 0, %\(okLabel) ], [ 1, %\(errLabel) ]\n"
+            bodyIR += " \(code) = phi i32 [ 0, %\(okLabel) ], [ \(errCode), %\(errLabel) ]\n"
             bodyIR += " ret i32 \(code)\n"
         } else if let returnType = function.returnType {
             let result = builder.freshTemp()

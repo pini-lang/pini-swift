@@ -402,7 +402,7 @@ public final class TypeChecker {
     private static let cExportScalars: Set<String> = ["I8", "U8", "I32", "I64", "U64", "F64", "Bool"]
 
     /// 内置错误特征的名字。标记式：没有成员，`实现:` 即入错误集。
-    static let errorTraitName = "错误"
+    public static let errorTraitName = "错误"
 
     /// export 块里 `|c` 条目的静态判据：引用的名字在册、形态可发布、C 名转写后不撞。
     /// 类型能否跨边界在这一层定死；降载层只按同一张表求拼写，不再改判。
@@ -599,9 +599,16 @@ public final class TypeChecker {
                 return nil
             }
             return "指针目标 `\(element.describe())` 不是 C 标量；非标量目标在 C 侧只能写成 `void*`"
-        case .generic(let name, let params, _) where name == "Result" && params.count == 1:
+        case .generic(let name, let params, _)
+        where name == "Result" && (params.count == 1 || params.count == 2):
             guard allowResult else { return "`^T` 只能作返回类型" }
             guard let payload = params.first else { return "`^T` 缺载荷类型" }
+            if params.count == 2 {
+                /// 两参数形态是「带错误集的 Result」：E 必须实现 `错误`，否则 C 侧没有码可回填。
+                guard case .simple(let errorType, _) = params[1], errorTypes.contains(errorType) else {
+                    return "`Result` 的错误位须是实现 `错误` 特征的类型"
+                }
+            }
             if case .simple(let scalar, _) = payload, Self.cExportScalars.contains(scalar) { return nil }
             return "`^T` 的载荷须是 C 兼容标量"
         case .tuple(_, let elements, _) where elements.isEmpty:

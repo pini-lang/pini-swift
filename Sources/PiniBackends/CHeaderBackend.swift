@@ -24,12 +24,46 @@ public struct CHeaderBackend: PiniBackend {
         for storage in export.storages {
             out += try structDeclaration(storage)
         }
+        if !export.errorCodes.isEmpty {
+            out += errorCodeConstants(export)
+        }
         for function in export.functions {
             out += functionDeclaration(function) + "\n"
         }
         out += "void \(export.initName)(void);\n"
         out += "void \(export.shutdownName)(void);\n\n"
         out += "#endif /* \(guardName) */\n"
+        return out
+    }
+
+    // MARK: - 错误码
+
+    /// 错误码常量。名字取用例名（非 enum 取类型名）的 ASCII 形式，值就是导出桩返回的码。
+    /// `automatic` 来源的码不承诺跨版本稳定，注释里逐条标出。
+    private func errorCodeConstants(_ export: IRExportBlock) -> String {
+        var out = "/* 错误码：0 成功，1 未归类，2 取消；其余由错误集分配。 */\n"
+        for entry in export.errorCodes where entry.code != 0 {
+            let base = entry.caseName ?? entry.typeName
+            let note = entry.source == .automatic ? "（自动分配，不承诺跨版本稳定）" : ""
+            out += "/* \(entry.display)\(note) */\n"
+            out += "#define \(export.name)_err_\(asciiName(base)) \(entry.code)\n"
+        }
+        return out + "\n"
+    }
+
+    /// 非 ASCII 转 `_u` 加 6 位十六进制，ASCII 原样——与导出名的转写规则一致。
+    /// 这里单独一份是因为头文件通道只依赖 IR，不引语义层的 `CName`。
+    private func asciiName(_ text: String) -> String {
+        var out = ""
+        for scalar in text.unicodeScalars {
+            let isASCII = scalar.value < 128
+            let isWord = CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
+            if isASCII && isWord {
+                out.unicodeScalars.append(scalar)
+            } else {
+                out += String(format: "_u%06X", scalar.value)
+            }
+        }
         return out
     }
 

@@ -408,6 +408,15 @@ public enum Builtins {
             symbol: "bk_error_message", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .error, lowerings: ["call"]
         ),
+        BuiltinSpec(
+            symbol: "bk_error_from_enum",
+            signature: .init(result: "i64", parameters: ["i64", "i32", "ptr"]),
+            family: .error, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_error_code", signature: .init(result: "i32", parameters: ["i64"]),
+            family: .error, lowerings: ["call"]
+        ),
     ]
 
     private static let bySymbol: [String: BuiltinSpec] = Dictionary(

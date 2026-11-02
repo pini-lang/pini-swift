@@ -232,22 +232,56 @@ public struct IRExportStorage: Equatable {
     }
 }
 
-/// export 块 `|c` 条目的落地形态：函数转发项、给定块取址项，以及两个生成的生命周期符号。
+/// 一条 C 边界错误码。
+/// `derived` 来自 enum 的用例 tag，`declared` 来自作者写的 `码()` 常量，
+/// `automatic` 是非 enum 未申报时编译器兜底分配的——后者不承诺跨版本稳定。
+public struct IRErrorCode: Equatable {
+    public enum Source: String, Equatable {
+        case derived
+        case declared
+        case automatic
+    }
+
+    public let typeName: String
+    /// enum 用例名；非 enum 载体为 nil。
+    public let caseName: String?
+    public let code: Int32
+    public let source: Source
+
+    public init(typeName: String, caseName: String?, code: Int32, source: Source) {
+        self.typeName = typeName
+        self.caseName = caseName
+        self.code = code
+        self.source = source
+    }
+
+    /// `calc_strerror` 返回的名字：`类型名.用例名`，非 enum 只有类型名。
+    public var display: String {
+        if let caseName { return "\(typeName).\(caseName)" }
+        return typeName
+    }
+}
+
+/// export 块 `|c` 条目的落地形态：函数转发项、给定块取址项、错误码表，以及两个生成的生命周期符号。
 /// 名字取文件名，产物与这两个符号据此命名，不参与条目符号名。
 public struct IRExportBlock: Equatable {
     public let name: String
     public let functions: [IRExportFunction]
     public let storages: [IRExportStorage]
+    /// C 边界的错误码表：派生、手写、自动三种来源同处一张表。
+    public let errorCodes: [IRErrorCode]
     public let initName: String
     public let shutdownName: String
 
     public init(
         name: String, functions: [IRExportFunction], storages: [IRExportStorage],
+        errorCodes: [IRErrorCode] = [],
         initName: String, shutdownName: String
     ) {
         self.name = name
         self.functions = functions
         self.storages = storages
+        self.errorCodes = errorCodes
         self.initName = initName
         self.shutdownName = shutdownName
     }
