@@ -1,0 +1,7 @@
+main|func() -> ():
+    let s = {1, 2,}
+    let d = {1 = 2,}
+    print(len(s),)
+    print(len(d),)
+    print(d[1],)
+    return

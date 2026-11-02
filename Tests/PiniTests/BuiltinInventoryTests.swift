@@ -41,7 +41,7 @@ struct BuiltinInventoryTests: Sendable, PiniSourceLowering {
             #"""
             main|func() -> ():
                 let xs: Array<I32> = [1, 2, 3]
-                let names = ["a" = 1, "b" = 2]
+                let names = {"a" = 1, "b" = 2}
                 var total = 0
                 for (x,) in xs:
                     total = total + x

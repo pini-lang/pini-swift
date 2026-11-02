@@ -139,7 +139,7 @@ struct GrammarAcceptanceTests: Sendable {
 
     @Test("字典字面量容忍尾逗号")
     func testParserAcceptsTrailingCommaInDictionaryLiteral() throws {
-        /// 意图：`["x" = 1, "y" = 2,]` 解析为两条目的字典字面量。
+        /// 意图：`{"x" = 1, "y" = 2,}` 解析为两条目的字典字面量。
         let (module, errors) = try parse("testParserAcceptsTrailingCommaInDictionaryLiteral")
         #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
         guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module).first,
@@ -149,6 +149,108 @@ struct GrammarAcceptanceTests: Sendable {
         }
         #expect(entries.count == 2, "尾逗号不应吞条目，实际 \(entries.count) 条")
         #expect(try runFixture("testParserAcceptsTrailingCommaInDictionaryLiteral") == ["{x: 1, y: 2}"])
+    }
+
+    @Test("字典类型用花括号，集合类型仍为花括号")
+    func testParserAcceptsBraceDictionaryType() throws {
+        /// 意图：`{String: I32,}` / `{String: ?I32,}` / `{I32: [String,],}` / 嵌套形态都是字典，
+        /// `{I32,}` 是集合；五条标注逐条核对，防止类型位被误判成集合。
+        let module = try checkedModule("testParserAcceptsBraceDictionaryType")
+        var annotations: [TypeAnnotation] = []
+        for stmt in statements(ofMainIn: module) {
+            if case .varDecl(_, let annotation, _, _, _) = stmt, let annotation {
+                annotations.append(annotation)
+            }
+        }
+        #expect(annotations.map { $0.describe() } == [
+            "Dictionary<String, I32>",
+            "Dictionary<String, Optional<I32>>",
+            "Dictionary<I32, Array<String>>",
+            "Dictionary<String, Dictionary<I32, String>>",
+            "Set<I32>",
+        ])
+    }
+
+    @Test("显式类型条目记录标注并参与值校验")
+    func testParserAcceptsTypedDictionaryEntry() throws {
+        /// 意图：`{"a": I32 = 1, "b" = 2,}` 首条携带 `I32`，第二条无显式类型；
+        /// 常量折叠后类型信息不丢，运行输出 1 / 2。
+        let (module, errors) = try parse("testParserAcceptsTypedDictionaryEntry")
+        #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
+        guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module).first,
+            case .dictionaryLiteral(let entries, _) = initializer
+        else {
+            Issue.record("初始化器应为字典字面量"); return
+        }
+        #expect(entries.count == 2)
+        #expect(entries[0].valueType?.describe() == "I32")
+        #expect(entries[1].valueType == nil)
+        #expect(try runFixture("testParserAcceptsTypedDictionaryEntry") == ["1", "2"])
+    }
+
+    @Test("花括号集合与字典按条目记号消歧")
+    func testParserAcceptsBraceSetAndDictionaryDisambiguation() throws {
+        /// 意图：`{1, 2,}` 是集合、`{1 = 2,}` 是字典；同一文件内共存，运行结果可区分。
+        let (module, errors) = try parse("testParserAcceptsBraceSetAndDictionaryDisambiguation")
+        #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
+        let stmts = statements(ofMainIn: module)
+        guard case .varDecl(_, _, let setInit, _, _) = stmts.first,
+            case .setLiteral = setInit,
+            case .varDecl(_, _, let dictInit, _, _) = stmts[1],
+            case .dictionaryLiteral = dictInit
+        else {
+            Issue.record("首两条应分别为集合与字典字面量"); return
+        }
+        #expect(try runFixture("testParserAcceptsBraceSetAndDictionaryDisambiguation") == ["2", "1", "2"])
+    }
+
+    @Test("多行字典接在 `=` 之后可解析")
+    func testParserAcceptsMultilineBraceDictionary() throws {
+        /// 意图：`let d = {` 后换行的多行字典按 `=` 消歧，换行不切断条目。
+        let (module, errors) = try parse("testParserAcceptsMultilineBraceDictionary")
+        #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
+        guard case .varDecl(_, _, let initializer, _, _) = statements(ofMainIn: module).first,
+            case .dictionaryLiteral(let entries, _) = initializer
+        else {
+            Issue.record("初始化器应为字典字面量"); return
+        }
+        #expect(entries.count == 2)
+        #expect(try runFixture("testParserAcceptsMultilineBraceDictionary") == ["2"])
+    }
+
+    @Test("方括号字典字面量被拒并提示花括号")
+    func testParserRejectsBracketDictionaryLiteral() throws {
+        /// 意图：旧写法 `["x" = 1]` 报 E2-006，文案指向花括号，不静默当数组。
+        let (_, errors) = try parse("testParserRejectsBracketDictionaryLiteral")
+        guard case .invalidExpression(let reason, _) = errors.first else {
+            Issue.record("首条应为 invalidExpression，实际：\(String(describing: errors.first))"); return
+        }
+        #expect(errors.first?.diagnosticCode == "E2-006")
+        #expect(reason.contains("花括号"), "报错应指向花括号，实际：\(reason)")
+    }
+
+    @Test("方括号字典类型被拒并提示花括号")
+    func testParserRejectsBracketDictionaryType() throws {
+        /// 意图：旧写法 `[String: I32]` 报 E2-008，文案指向花括号，不落成数组类型。
+        let (_, errors) = try parse("testParserRejectsBracketDictionaryType")
+        guard case .invalidType(let reason, _) = errors.first else {
+            Issue.record("首条应为 invalidType，实际：\(String(describing: errors.first))"); return
+        }
+        #expect(errors.first?.diagnosticCode == "E2-008")
+        #expect(reason.contains("花括号"), "报错应指向花括号，实际：\(reason)")
+    }
+
+    @Test("显式类型条目的值与标注不符时报 mismatch")
+    func testTypeCheckerRejectsTypedDictionaryEntryValue() throws {
+        /// 意图：`{"a": I32 = "x",}` 在类型层报 `expected I32, got String`，不漂到降载层。
+        let (module, errors) = try parse("testTypeCheckerRejectsTypedDictionaryEntryValue")
+        #expect(errors.isEmpty, "实际首条：\(errors.first.map(String.init(describing:)) ?? "无")")
+        let types = typeErrors(in: module)
+        guard case .mismatch(let expected, let got, _) = types.first else {
+            Issue.record("首条应为 mismatch，实际：\(String(describing: types.first))"); return
+        }
+        #expect(expected == "I32")
+        #expect(got == "String")
     }
 
     @Test("集合字面量容忍尾逗号")

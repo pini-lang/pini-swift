@@ -24,14 +24,17 @@ public struct CallArgument: Equatable, Sendable {
     }
 }
 
-/// 字典字面量条目（用于规避元组类型不支持 Equatable 的限制）
+/// 字典字面量条目（用于规避元组类型不支持 Equatable 的限制）。
+/// `valueType` 承载 `{键: 类型 = 值,}` 的显式约束；它只供类型检查读取，降载与运行期忽略。
 public struct DictEntry: Equatable, Sendable {
     public let key: Expression
     public let value: Expression
+    public let valueType: TypeAnnotation?
 
-    public init(key: Expression, value: Expression) {
+    public init(key: Expression, value: Expression, valueType: TypeAnnotation? = nil) {
         self.key = key
         self.value = value
+        self.valueType = valueType
     }
 }
 

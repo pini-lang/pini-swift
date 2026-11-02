@@ -1,6 +1,6 @@
 ; 集合：数组 / 字典 / 集合、下标、len、嵌套、print 格式化；运行 `pini run examples/collections.pini`
 ; 预期：[1, 2, 3, 4, 5] / 1 / 5 / [[1, 2], [3, 4], [5, 6]] / 5 / {Alice: 30, Bob: 25, Carol: 41}
-; 预期续：{2, 3, 5, 7, 11} / 5 / 3 / 5 / 7；语法点：表达式位 [ ] = 数组或字典，{ } = 集合，行首仍是块声明
+; 预期续：{2, 3, 5, 7, 11} / 5 / 3 / 5 / 7；语法点：表达式位 [ ] = 数组，{ } = 集合或字典，字典条目用 =
 
 main|func() -> ():
 ; 数组
@@ -16,7 +16,7 @@ main|func() -> ():
     print(matrix[2][0])
 
 ; 字典（key: value）
-    var ages = ["Alice"= 30, "Bob"= 25, "Carol"= 41]
+    var ages = {"Alice"= 30, "Bob"= 25, "Carol"= 41}
     print(ages)
     print(ages["Bob"])
 

@@ -94,11 +94,11 @@ struct CollectionLiteralInferenceTests: Sendable, PiniSourceLowering {
     func dictionaryLiteralInfersKeyAndValueTypes() throws {
         let source = #"""
         main|func() -> ():
-            let ages = ["Alice" = 30, "Bob" = 25]
+            let ages = {"Alice" = 30, "Bob" = 25}
             print(取键数(ages))
             return
 
-        取键数|func(ages: [I32: String],) -> (I32,):
+        取键数|func(ages: {I32: String,},) -> (I32,):
             return len(ages)
         """#
         do {

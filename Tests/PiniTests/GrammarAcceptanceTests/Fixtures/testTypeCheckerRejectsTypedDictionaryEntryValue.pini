@@ -1,0 +1,4 @@
+main|func() -> ():
+    let d = {"a": I32 = "x",}
+    print(d["a"],)
+    return

@@ -1,0 +1,12 @@
+main|func() -> ():
+    let a: {String: I32,} = {"x" = 1,}
+    let b: {String: ?I32,} = {"x" = nil,}
+    let c: {I32: [String,],} = {1 = ["a",],}
+    let n: {String: {I32: String,},} = {"x" = {1 = "v",},}
+    let s: {I32,} = {1, 2,}
+    print(len(a),)
+    print(len(b),)
+    print(len(c),)
+    print(len(n),)
+    print(len(s),)
+    return

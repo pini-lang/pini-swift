@@ -167,7 +167,10 @@ public enum ConstantFolder {
         case .arrayLiteral(let elems, let loc):
             return .arrayLiteral(elements: elems.map(fold), location: loc)
         case .dictionaryLiteral(let entries, let loc):
-            return .dictionaryLiteral(entries: entries.map { DictEntry(key: fold($0.key), value: fold($0.value)) }, location: loc)
+            return .dictionaryLiteral(
+                entries: entries.map {
+                    DictEntry(key: fold($0.key), value: fold($0.value), valueType: $0.valueType)
+                }, location: loc)
         case .setLiteral(let elems, let loc):
             return .setLiteral(elements: elems.map(fold), location: loc)
         case .subscript(let e, let idx, let loc):
