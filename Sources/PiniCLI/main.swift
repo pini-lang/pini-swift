@@ -1228,6 +1228,7 @@ func runCheckCommand(source: String, fileName: String) throws {
     }
     if result.hasBlockingDiagnostics { exit(1) }
     print("检查通过：\(fileName)")
+    CommentStyleHint.emit()
 }
 
 // 测试执行通道：同一套收集范围与门禁，两条后端。它只决定最后一步怎么跑（解释器执行 / 发射后运行），
@@ -1565,6 +1566,7 @@ func runCheckPath(_ path: String) {
                 emitSemanticWarning(warning)
             }
             print("检查通过（模块 \(pkg.name)，\(pkg.fileUnits.count) 个文件）：\(path)")
+            CommentStyleHint.emit()
         } catch let err as SemanticError {
             handleSemanticError(err); exit(1)
         } catch let err as TypeError {
@@ -1610,6 +1612,7 @@ func runCheckPath(_ path: String) {
     }
     if !failed.isEmpty { exit(1) }
     print("检查通过（\(files.count) 个独立文件）：\(path)")
+    CommentStyleHint.emit()
 }
 
 /// 判断某 `.pini`（相对路径）是否位于「含自身 pini.toml 的嵌套模块目录」内；
