@@ -285,7 +285,8 @@ public enum Desugar {
                 entries: entries.map {
                     DictEntry(
                         key: desugar($0.key),
-                        value: desugar($0.value))
+                        value: desugar($0.value),
+                        valueType: $0.valueType)
                 },
                 location: loc)
         case .setLiteral(let elems, let loc):

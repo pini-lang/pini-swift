@@ -1008,7 +1008,7 @@ public final class TypeChecker {
 
     /// 集合字面量的期望类型下推：标注只做检查，内建签名契约不动。与 `refineEnumCaseConstruction`
     /// 同轨——形态匹配则逐元素校验（推断 + isAssignable），不符报 mismatch 并返回 true；不匹配返回
-    /// false 走原路径。通配元素类型（`_` / `Any`）放行，覆盖 `[T]` / `[K: V]` / `{T}` 三族。
+    /// false 走原路径。通配元素类型（`_` / `Any`）放行，覆盖 `[T]` / `{T,}` / `{K: V,}` 三族。
     private func refineCollectionLiteral(expr: Expression, expected: TypeAnnotation, location: SourceLocation) throws -> Bool {
         // 元素级校验助手：单值对期望元素类型
         func checkElement(_ elem: Expression, expected elementType: TypeAnnotation) throws -> Bool {
@@ -1725,7 +1725,7 @@ public final class TypeChecker {
                     if (try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
                         // 枚举用例构造已按期望类型下推校验
                     } else if try refineCollectionLiteral(expr: initExpr, expected: annot, location: location) {
-                        // 集合字面量已按 [T]/[K: V]/{T} 逐元素校验（[T] 元素标注，D-β）
+                        // 集合字面量已按 [T]/{T,}/{K: V,} 逐元素校验（[T] 元素标注，D-β）
                     } else {
                         if let actual = inference.infer(expression: initExpr, expected: annot) {
                             try noteBareCaseOutcome(initExpr, actual: actual, location: location)
@@ -2207,8 +2207,23 @@ public final class TypeChecker {
         case .arrayLiteral(let elements, _):
             for elem in elements { try checkExpression(elem) }
 
-        case .dictionaryLiteral(let entries, _):
-            for entry in entries { try checkExpression(entry.key); try checkExpression(entry.value) }
+        case .dictionaryLiteral(let entries, let location):
+            for entry in entries {
+                try checkExpression(entry.key)
+                try checkExpression(entry.value)
+                /// 显式类型条目（`{k: T = v,}`）只在此处约束值，不进入降载。
+                if let declared = entry.valueType,
+                    let actual = inference.infer(expression: entry.value, expected: declared),
+                    !isAssignable(actual: actual, expected: declared)
+                {
+                    try report(
+                        TypeError.mismatch(
+                            expected: declared.describe(),
+                            got: actual.describe(),
+                            location: location
+                        ))
+                }
+            }
 
         case .setLiteral(let elements, _):
             for elem in elements { try checkExpression(elem) }

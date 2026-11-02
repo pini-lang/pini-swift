@@ -319,18 +319,31 @@ public final class TypeInference {
 
         case .dictionaryLiteral(let entries, let loc):
             guard let key = collectionElementType(
-                    entries.map(\.key),
-                    expected: expectedGenericArgument(expected, "Dictionary", at: 0),
-                    scopedParams: scopedParams,
-                    location: loc
-                ),
-                let value = collectionElementType(
-                    entries.map(\.value),
-                    expected: expectedGenericArgument(expected, "Dictionary", at: 1),
-                    scopedParams: scopedParams,
-                    location: loc
-                )
-            else { return nil }
+                entries.map(\.key),
+                expected: expectedGenericArgument(expected, "Dictionary", at: 0),
+                scopedParams: scopedParams,
+                location: loc
+            ) else { return nil }
+            /// 值类型：显式条目类型优先（`{k: T = v,}`），其余按值推断；
+            /// 候选不等价 ⇒ `Any`，交由调用点按 `Dictionary<K, Any>` 报不匹配。
+            let valueExpected = expectedGenericArgument(expected, "Dictionary", at: 1)
+            var value: TypeAnnotation?
+            for entry in entries {
+                let candidate: TypeAnnotation?
+                if let declared = entry.valueType {
+                    candidate = declared
+                } else {
+                    candidate = infer(
+                        expression: entry.value, expected: valueExpected, scopedParams: scopedParams)
+                }
+                guard let candidate else { return nil }
+                if let unified = value, !unified.isStructurallyEquivalent(to: candidate) {
+                    value = .simple(name: "Any", location: loc)
+                    break
+                }
+                value = value ?? candidate
+            }
+            guard let value else { return nil }
             return .generic(name: "Dictionary", params: [key, value], location: loc)
 
         case .setLiteral(let elements, let loc):

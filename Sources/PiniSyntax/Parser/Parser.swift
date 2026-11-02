@@ -2855,7 +2855,7 @@ public class Parser {
         case .leftBracket(_):
             return try parseCollectionLiteral()
         case .leftBrace(_):
-            return try parseSetLiteral()
+            return try parseBraceLiteral()
         case .dot(_):
             /// 点号用例构造：前导点标记成员意图，解析期只产出携带名字的未解析节点，决议在类型检查阶段
             /// 按期望类型完成（命中 → 该枚举；唯一父枚举 → 回退；歧义或无 → 报错要求限定或期望类型）。
@@ -3045,7 +3045,7 @@ public class Parser {
         return firstElement
     }
 
-    /// 解析集合字面量：数组 [a, b] 或字典 [k: v, ...]（靠元素是否含 : 消歧）
+    /// 解析数组字面量 `[a, b,]`。方括号只承载数组：字典条目（`[k = v]`）已迁至花括号。
     private func parseCollectionLiteral() throws -> Expression {
         let loc = currentLocation
         advance()  // 消费 [
@@ -3056,46 +3056,30 @@ public class Parser {
         }
 
         let first = try parseExpression()
-        /// 字典条目用 `=`（键 → 值的关联与实参绑定同记号）；`[:]` 全切片不受影响。
         if case .colon(_) = currentToken {
             throw ParserError.invalidExpression(
-                reason: "字典条目须用 `=`（如 `[键 = 值]`）；旧写法 `[键: 值]` 已废弃（`[:]` 为全切片）",
+                reason: "字典字面量已改用花括号：`{键 = 值,}`（方括号只用于数组与下标）",
                 location: loc)
         }
         if case .assign(_) = currentToken {
-            // 字典
-            advance()  // 消费 =
-            var entries: [DictEntry] = []
-            let firstVal = try parseExpression()
-            entries.append(DictEntry(key: first, value: firstVal))
-            while case .comma(_) = currentToken {
-                advance()
-                guard !check(.rightBracket(loc)) else { break }
-                let k = try parseExpression()
-                guard case .assign(_) = currentToken else {
-                    throw ParserError.invalidExpression(reason: "字典元素必须是 键 = 值", location: loc)
-                }
-                advance()
-                let v = try parseExpression()
-                entries.append(DictEntry(key: k, value: v))
-            }
-            _ = try expect(.rightBracket(loc))
-            return .dictionaryLiteral(entries: entries, location: loc)
-        } else {
-            // 数组
-            var elements: [Expression] = [first]
-            while case .comma(_) = currentToken {
-                advance()
-                guard !check(.rightBracket(loc)) else { break }
-                elements.append(try parseExpression())
-            }
-            _ = try expect(.rightBracket(loc))
-            return .arrayLiteral(elements: elements, location: loc)
+            throw ParserError.invalidExpression(
+                reason: "字典字面量已改用花括号：`{键 = 值,}`；旧写法 `[键 = 值]` 已废弃",
+                location: loc)
         }
+
+        var elements: [Expression] = [first]
+        while case .comma(_) = currentToken {
+            advance()
+            guard !check(.rightBracket(loc)) else { break }
+            elements.append(try parseExpression())
+        }
+        _ = try expect(.rightBracket(loc))
+        return .arrayLiteral(elements: elements, location: loc)
     }
 
-    /// 解析集合字面量：集合 {a, b, c}
-    private func parseSetLiteral() throws -> Expression {
+    /// 解析花括号字面量：集合 `{a, b,}` 或字典 `{k = v,}` / `{k: T = v,}`。
+    /// 消歧只认条目首记号：`=` 或 `:` → 字典，否则 → 集合；`{}` 恒为空集合（空字典无字面量）。
+    private func parseBraceLiteral() throws -> Expression {
         let loc = currentLocation
         advance()  // 消费 {
 
@@ -3104,17 +3088,61 @@ public class Parser {
             return .setLiteral(elements: [], location: loc)
         }
 
-        var elements: [Expression] = []
-        while !check(.rightBrace(loc)) && !isEOF() {
-            elements.append(try parseExpression())
-            if case .comma(_) = currentToken {
-                advance()
-            } else {
-                break
+        let first = try parseExpression()
+        switch currentToken {
+        case .assign(_), .colon(_):
+            return try parseDictionaryLiteral(firstKey: first, location: loc)
+        default:
+            break
+        }
+
+        var elements: [Expression] = [first]
+        while case .comma(_) = currentToken {
+            advance()
+            guard !check(.rightBrace(loc)) else { break }
+            let element = try parseExpression()
+            /// 集合中途出现 `=` / `:` ⇒ 集合与字典混写，按字典条目提示，不静默吞成集合元素。
+            if case .assign(_) = currentToken {
+                throw ParserError.invalidExpression(
+                    reason: "集合字面量中不得出现键值对（`=`）；集合与字典不可混写",
+                    location: currentLocation)
             }
+            if case .colon(_) = currentToken {
+                throw ParserError.invalidExpression(
+                    reason: "集合字面量中不得出现显式类型条目（`:`）；集合与字典不可混写",
+                    location: currentLocation)
+            }
+            elements.append(element)
         }
         _ = try expect(.rightBrace(loc))
         return .setLiteral(elements: elements, location: loc)
+    }
+
+    /// 解析字典条目串：首键已消费，逐条读 `键 = 值` 或 `键: 类型 = 值`，允许尾逗号。
+    private func parseDictionaryLiteral(firstKey: Expression, location: SourceLocation) throws -> Expression {
+        var entries: [DictEntry] = []
+        var key = firstKey
+        while true {
+            var valueType: TypeAnnotation? = nil
+            if case .colon(_) = currentToken {
+                advance()
+                valueType = try parseTypeAnnotation()
+            }
+            guard case .assign(_) = currentToken else {
+                throw ParserError.invalidExpression(
+                    reason: "字典条目须写 `键 = 值` 或 `键: 类型 = 值`；该条目缺少 `=`",
+                    location: currentLocation)
+            }
+            advance()
+            let value = try parseExpression()
+            entries.append(DictEntry(key: key, value: value, valueType: valueType))
+            guard case .comma(_) = currentToken else { break }
+            advance()
+            guard !check(.rightBrace(location)) else { break }
+            key = try parseExpression()
+        }
+        _ = try expect(.rightBrace(location))
+        return .dictionaryLiteral(entries: entries, location: location)
     }
 
     private func parsePrimarySuffix(expr: Expression) throws -> Expression {
@@ -3276,27 +3304,39 @@ public class Parser {
             return .pointer(element: inner, location: loc)
         }
 
-        // 数组类型 [T]
+        // 数组类型 [T] / [T,]
         if case .leftBracket(_) = currentToken {
             advance()
             let elemType = try parseTypeAnnotation()
             if case .colon(_) = currentToken {
-                // 字典类型 [K: V]
-                advance()
-                let valType = try parseTypeAnnotation()
-                _ = try expect(.rightBracket(loc))
-                return .generic(name: "Dictionary", params: [elemType, valType], location: loc)
+                throw ParserError.invalidType(
+                    reason: "字典类型已改用花括号：`{键: 值,}`（方括号只用于数组类型）",
+                    location: loc)
             }
+            if case .comma(_) = currentToken { advance() }
             _ = try expect(.rightBracket(loc))
             return .generic(name: "Array", params: [elemType], location: loc)
         }
 
-        // 集合类型 {T}
+        // 集合 / 字典类型：条目含 `:` → 字典，否则 → 集合；尾逗号可选。
         if case .leftBrace(_) = currentToken {
             advance()
-            let elemType = try parseTypeAnnotation()
+            if case .rightBrace(_) = currentToken {
+                throw ParserError.invalidType(
+                    reason: "空类型位 `{}` 无组件类型；集合写 `{T,}`，字典写 `{K: V,}`",
+                    location: loc)
+            }
+            let first = try parseTypeAnnotation()
+            if case .colon(_) = currentToken {
+                advance()
+                let value = try parseTypeAnnotation()
+                if case .comma(_) = currentToken { advance() }
+                _ = try expect(.rightBrace(loc))
+                return .generic(name: "Dictionary", params: [first, value], location: loc)
+            }
+            if case .comma(_) = currentToken { advance() }
             _ = try expect(.rightBrace(loc))
-            return .generic(name: "Set", params: [elemType], location: loc)
+            return .generic(name: "Set", params: [first], location: loc)
         }
 
         // 简单类型

@@ -261,10 +261,10 @@ scope pass using
 
 | 记号 | 方向 | 出现处 |
 |---|---|---|
-| `=` | **值的注入方向** | 实参标签 `f(a = 1)`、字典条目 `["k" = 1]`、元组标签 `(a = 1,)`、默认参数 `n: I32 = 1`、枚举具名构造 `E(x = 1)` |
+| `=` | **值的注入方向** | 实参标签 `f(a = 1)`、字典条目 `{"k" = 1,}`、元组标签 `(a = 1,)`、默认参数 `n: I32 = 1`、枚举具名构造 `E(x = 1)` |
 | `:` | **类型与块的标注方向 + 值的取出方向** | 类型标注 `n: I32`、块开启 `if c:`、match 具名绑定 `case A(x: v):` |
 
-旧写法 `f(a: 1)` / `[k: v]` / `(a: 1,)` / `E(x: 1)` **已废弃**，解析器给迁移提示。
+旧写法 `f(a: 1)` / `(a: 1,)` / `E(x: 1)` **已废弃**，解析器给迁移提示；方括号承载的字典条目同批迁至花括号。
 
 切片 `a[i:j]` 的 `:` 是**分隔符**，不属关联记号，不受本规则约束。
 
@@ -343,8 +343,8 @@ false
 | 记号 | 行首 | 非行首 |
 |---|---|---|
 | `(` | 结构声明 | 元组 / 优先结合 |
-| `[` | 枚举/对象声明 | 数组 / 字典 |
-| `{` | 对象声明糖 | 集合 |
+| `[` | 枚举/对象声明 | 数组 |
+| `{` | 对象声明糖 | 集合 / 字典 |
 | `<` | 特征声明 | 泛型实参 / 比较 |
 
 **消歧锚点**：当前以「是否出现在行首」为**唯一**规则。该锚点**已知脆弱**——同一记号靠位置分派，位置判断一错则整类声明走岔；本版本固定该法，未来若换算法属破坏性变更。
@@ -601,7 +601,7 @@ let (t, e) = some_thing_error()
 | 类型 | 语法 | 语义 |
 |---|---|---|
 | 数组 | `[T,]` | 默认变长，堆分配 |
-| 字典 | `[K:V,]` | 散列 |
+| 字典 | `{K: V,}` | 散列；`V` 可为 `?T` |
 | 集合 | `{T,}` | 散列 |
 | 定长数组 | 走内置 | 编译期固定 |
 
@@ -610,12 +610,17 @@ let (t, e) = some_thing_error()
 **字面量**：
 
 ```
-[1, 2, 3,]              ; 数组
-["k" = 1, "j" = 2,]     ; 字典
-{1, 2, 3,}              ; 集合
+[1, 2, 3,]                  ; 数组
+{"k" = 1, "j" = 2,}         ; 字典
+{1, 2, 3,}                  ; 集合
 ```
 
-**空字典**：无字面量形态；用类型构造 `字典<K, V>()`。
+**消歧**：类型位条目含 `:` → 字典，否则集合（`{I32: I32,}` 是字典，`{I32,}` 是集合）；
+值位条目含 `=` 或 `:` → 字典，否则集合（`{1 = 2,}` 是字典，`{1, 2,}` 是集合）。
+
+**空字典**：无字面量形态（方案 A）；`{}` 恒为空集合。当前实现未提供空字典构造入口。
+
+注意 顶级行首 `{` 恒为对象声明糖，字典字面量不得顶格；多行字典写成 `let x = {` 后换行。
 
 **下标**：见 §5.6。
 
@@ -1466,14 +1471,19 @@ a[i] = 值
 **字典**：
 
 ```
-["k" = 1, "j" = 2,]
-[
-    "k" = 1,
-    "j" = 2,
-]
+{"k" = 1, "j" = 2,}
 ```
 
-字典条目记号用 `=`。
+多行形态接在 `=` 之后（顶级行首 `{` 是对象声明糖）：
+
+```
+let d = {
+    "k" = 1,
+    "j" = 2,
+}
+```
+
+字典条目记号用 `=`；需要显式约束条目值类型时写 `{键: 类型 = 值,}`（如 `{"a": ?I32 = nil,}`）。
 
 **集合**：
 
@@ -1481,7 +1491,7 @@ a[i] = 值
 {1, 2, 3,}
 ```
 
-**空字典**：无字面量形态；用类型构造 `字典<K, V>()`。
+**空字典**：无字面量形态（方案 A）；`{}` 恒为空集合。当前实现未提供空字典构造入口。
 
 ### 5.9 函数字面量 `[Provisional]`
 
@@ -4099,8 +4109,8 @@ primary-atom    ::= IDENT [generic-construct]
                   | INT | FLOAT | STRING | INTERP | BOOL
                   | 'nil'
                   | '(' [tuple-element {',' tuple-element} [',']] ')'
-                  | '[' collection-literal ']'
-                  | '{' [expression {',' expression} [',']] '}'
+                  | array-literal
+                  | brace-literal
                   | '.' IDENT
                   | builtin-call;
 
@@ -4109,9 +4119,14 @@ tuple-element   ::= [IDENT '='] expression;
 generic-construct ::= '<' type-annotation {',' type-annotation} '>'
                       ('(' [call-arg {',' call-arg} [',']] ')' | '.');
 
-collection-literal ::= ']'
-                     | expression '=' expression {',' expression '=' expression} [','] ']'
-                     | expression {',' expression} [','] ']';
+array-literal   ::= '[' [expression {',' expression} [',']] ']';
+
+brace-literal   ::= '{' '}'
+                  | '{' dict-entry {',' dict-entry} [','] '}'
+                  | '{' expression {',' expression} [','] '}';
+
+dict-entry      ::= expression '=' expression
+                  | expression ':' type-annotation '=' expression;
 
 builtin-call    ::= 'LazyRef' ['<' type-annotation '>'] '(' func-literal ')'
                   | 'assert' '(' expression [',' STRING] ')';
@@ -4123,9 +4138,9 @@ builtin-call    ::= 'LazyRef' ['<' type-annotation '>'] '(' func-literal ')'
 type-annotation ::= '?' type-annotation
                   | '^' type-annotation
                   | '*' type-annotation
-                  | '[' type-annotation ']'
-                  | '[' type-annotation ':' type-annotation ']'
-                  | '{' type-annotation '}'
+                  | '[' type-annotation [','] ']'
+                  | '{' type-annotation [','] '}'
+                  | '{' type-annotation ':' type-annotation [','] '}'
                   | IDENT ['<' type-annotation {',' type-annotation} '>']
                   | '(' [type-annotation {',' type-annotation} [',']] ')'
                     [('->' | '=>') '(' [type-annotation {',' type-annotation} [',']] ')']
@@ -4172,6 +4187,7 @@ generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]
 | 3.15 | 枚举关联参数 | 具名 `IDENT ':' type` 或位置 `type`；构造实参用 `IDENT '=' expression` |
 | 3.16 | 下标 vs 切片消歧 | `[` 内首个非空白 token：`:` → 切片；否则先解析 expression，后跟 `:` → 切片 |
 | 3.17 | 切片开放边界语义 | 省略边界脱糖为 `nil`；半开区间 `[i, j)`；负索引尾部计数 |
+| 3.18 | 花括号集合 vs 字典 | 类型位条目含 `:` → 字典，否则集合；值位条目含 `=` / `:` → 字典，否则集合 |
 
 **规则 3.13 与 3.14 的上下文区分**：
 
