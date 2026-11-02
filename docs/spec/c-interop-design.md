@@ -438,4 +438,4 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 
 **首版不做**：函数式宏、含 `sizeof` 或类型转换的宏、变参、回调、非 C ABI。
 
-**错误通道**：错误槽目前指向被调函数的栈帧，跨一次调用即失效，所以 C 侧只能拿状态码。修法与边界形态的候选、取舍与分步见 `docs/plans/2026-11-02-error-channel-research.md`。
+**错误通道**：错误值是运行时段自持的堆盒（`bk_error_create` 交出句柄，消息进程期有效），`e.message` 与 `isCancel` 已是纯访问器；C 侧缺的只是导出面把那个字交出去。候选、值域缺陷与分步见 `docs/plans/2026-11-02-error-channel-research.md`。
