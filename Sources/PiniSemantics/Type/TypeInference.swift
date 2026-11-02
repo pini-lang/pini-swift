@@ -387,7 +387,7 @@ public final class TypeInference {
             return nil
 
         case .tryExpression(let operand, _, _, _):
-            // try-else 迁移 迁移批 M2：try-else 的类型 = Result 的第一个泛型参数（载荷 T）。
+            // try-else 的类型 = Result 的第一个泛型参数（载荷 T）。
             guard let t = infer(expression: operand) else { return nil }
             if case .generic(let name, let params, _) = t, name == "Result", !params.isEmpty {
                 return params[0]

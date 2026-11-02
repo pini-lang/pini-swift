@@ -351,20 +351,7 @@ public class Parser {
     // MARK: - 顶级声明解析
 
     private func parseTopLevelDecl() throws -> TopLevelDecl {
-        /// 顶级只有块形式这一种：裸 `import X` / `export X` 在此直接拒 —— 合法形态是
-        /// `[当前文件名|import]` 加 `别名 = 包路径字符串`。
-        if checkKeyword(.import) {
-            throw ParserError.invalidDeclaration(
-                reason: "顶级裸 import 已移除（G52 批 1）：改用块形式 `[当前文件名|import]` 加 `别名 = 包路径字符串`",
-                location: currentLocation
-            )
-        }
-        if checkKeyword(.export) {
-            throw ParserError.invalidDeclaration(
-                reason: "顶级裸 export 已移除（G52 批 1）：改用块形式 `[当前文件名|export]` + `可见别名 = 原符号`",
-                location: currentLocation
-            )
-        }
+        // 顶级导入导出只有块形式：`[当前文件名|import]` / `[当前文件名|export]`。
 
         // 根据括号类型分派（声明上下文收紧·规则 3.2/3.14：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块）
         switch currentToken {
@@ -382,14 +369,7 @@ public class Parser {
             if case .leftBrace(_) = peek(offset: 1) {
                 return .extensionDecl(try parseExtensionDecl())
             }
-            /// `{名}` 行首恒为对象声明糖，故 `{名}(...)` 与 `{名|test}(签名)` 都是非法形态：
-            /// 函数一律写裸声明 `名|func(...)`，测试函数写 `名|test(...)`，类型方法写进扩展块并显式 `|self`。
-            if isBraceFuncDecl() {
-                throw ParserError.invalidDeclaration(
-                    reason: "花括号函数声明 `{名}(...)` 已移除（过时语法，G51② 裁决）：请改用裸声明 `名|func(...)`；测试函数用 `名|test(...)`；类型方法移至扩展块并显式 `|self`",
-                    location: currentLocation
-                )
-            }
+            /// 行首 `{名}` 恒为对象声明糖。
             return .objectDecl(try parseObjectDecl())
         case .lessThan(_):
             // 行首 `<<` → 特征扩展；`<名称>` → 特征声明
@@ -785,8 +765,7 @@ public class Parser {
         // 解析名称
         let name = try parseIdentifier()
 
-        // 内嵌组合：父类型名以「结构体内首行裸标识符」形式给出（下方 A3 检测），
-        // 不再使用 (新|原) 管道语法（已移除）。
+        // 内嵌组合：父类型名以「结构体内首行裸标识符」形式给出（下方检测）。
         var composedType: String? = nil
 
         // 检查泛型参数
@@ -867,49 +846,6 @@ public class Parser {
 
     // MARK: - 对象块解析
 
-    /// 判断左花括号开头的是函数声明还是对象声明：预读 `{name}` 后，下一个非换行 token 是 `(`
-    /// 即花括号函数形态（仅用于 E2-005 迁移检测并报错），否则为对象声明糖。
-    private func isBraceFuncDecl() -> Bool {
-        var offset = 1  // 跳过 {
-        // 跳过标识符
-        guard case .identifier = peek(offset: offset) else { return false }
-        offset += 1
-        // 跳过可选的 |修饰符（如 {name|func}、{name|self}、{name|test}）
-        // 注：func/self/test 是关键字，需同时接受 identifier 与 keyword
-        if case .pipe(_) = peek(offset: offset) {
-            offset += 1
-            if !isNameToken(peek(offset: offset)) { return false }
-            offset += 1  // 跳过修饰符本身（2026-09-05 修正批补回：原实现漏此步，带修饰符形态检测失效）
-        }
-        // 跳过可选的泛型参数 <T,>
-        if case .lessThan(_) = peek(offset: offset) {
-            offset += 1
-            var depth = 1
-            while depth > 0 && offset < tokens.count {
-                let tok = peek(offset: offset)
-                if case .lessThan(_) = tok { depth += 1 }
-                if case .greaterThan(_) = tok { depth -= 1 }
-                offset += 1
-            }
-        }
-        // 期望 }
-        guard case .rightBrace(_) = peek(offset: offset) else { return false }
-        offset += 1
-        // } 之后第一个非换行 token 是 ( → 旧函数形态
-        while offset < tokens.count {
-            let tok = peek(offset: offset)
-            if case .newline(_) = tok {
-                offset += 1
-                continue
-            }
-            if case .leftParen(_) = tok {
-                return true
-            }
-            return false
-        }
-        return false
-    }
-
     // 名称 token：identifier 或 keyword（用于修饰符位置，因为 func/self/Self 是关键字）
     private func isNameToken(_ token: Token) -> Bool {
         switch token {
@@ -926,12 +862,6 @@ public class Parser {
 
         // 解析名称
         let name = try parseIdentifier()
-
-        // 解析可选的修饰符（兼容旧语法 `{name|object}`，但修饰符本身不影响对象语义）
-        if case .pipe(_) = currentToken {
-            advance()
-            _ = try parseIdentifier()  // 消费修饰符，不存储
-        }
 
         // 解析泛型参数（可选）
         var genericParams: [GenericParam] = []
@@ -1950,9 +1880,6 @@ public class Parser {
             return try parseWhile()
         case .keyword(.for, _):
             return try parseFor()
-        case .keyword(.scope, let l):
-            /// 带标签控制流写作 `标签|控制流关键字`（规则 3.13）；`scope 块标签:` 形式在此报错。
-            throw ParserError.invalidStatement(reason: "scope 关键字已废弃：带标签控制流改用 `标签|while`/`标签|for`/`标签|if`（见规则 3.13）", location: l)
         case .keyword(.match, _):
             return try parseMatch()
         case .keyword(.try, _):
@@ -2286,10 +2213,10 @@ public class Parser {
         skipNewlines()
 
         /// match 子块结构：`match 值:` 后必须缩进子块，`case` 在子块内（比 `match` 深一级）；
-        /// 通配写作 `case _:`，`default:` / `pass` 通配子块不受支持。
+        /// 通配写作 `case _:`。
         guard case .indent(_) = currentToken else {
             throw ParserError.invalidStatement(
-                reason: "match 后必须缩进子块：`case` 分支须与 `match` 差一级缩进（case 与 match 同级写法已随 G28 更新废弃）",
+                reason: "match 后必须缩进子块：`case` 分支须与 `match` 差一级缩进",
                 location: loc
             )
         }
@@ -2301,15 +2228,8 @@ public class Parser {
             if check(.dedent(loc)) { break }
 
             guard checkKeyword(.case) else {
-                /// `default:` / `pass` 通配子块不被接受，此处给出专属提示。
-                if case .identifier("default", let dl) = currentToken {
-                    throw ParserError.invalidStatement(
-                        reason: "`default:` 已废弃，请改用 `case _:` 通配兜底",
-                        location: dl
-                    )
-                }
                 throw ParserError.invalidStatement(
-                    reason: "match 子块内只允许 `case` 分支（pass 通配子块已随 G28 更新移除，请改用 `case _:`）",
+                    reason: "match 子块内只允许 `case` 分支",
                     location: currentLocation
                 )
             }
@@ -2409,9 +2329,8 @@ public class Parser {
         )
     }
 
-    /// try-else 迁移 迁移批 M2（spec『try-else 错误传播』节 / EBNF try-stmt ::= try-expr）：
-    /// 语句位 try-else——`try <expr> else <IDENT> <handler>`，包装为 expressionStmt。
-    /// 旧 try 块/except 已一步删除（D2）：缺 else 报常规解析错误，无迁移提示。
+    /// 语句位 try-else：`try <expr> else <IDENT> <handler>`，包装为 expressionStmt。
+    /// 缺 `else` 报常规解析错误。
     private func parseTry() throws -> Statement {
         let loc = currentLocation
         advance()  // 跳过 try
@@ -2686,9 +2605,8 @@ public class Parser {
     private func parseUnary() throws -> Expression {
         let loc = currentLocation
 
-        // try-else 迁移 迁移批 M2（spec 附录表达式文法）：表达式位 try-expr——挂 primary 位，
-        // 不占优先级层（`else` 关键字天然终止操作数，无贪婪歧义）。语句位 try 由
-        // parseStatement 派发到 parseTry（包装 expressionStmt），二者共用 handler 解析。
+        // 表达式位 try-expr 挂 primary 位，不占优先级层（`else` 天然终止操作数，无贪婪歧义）。
+        // 语句位 try 由 parseStatement 派发到 parseTry，二者共用 handler 解析。
         if checkKeyword(.try) {
             advance()
             let operand = try parseExpression()
@@ -2803,7 +2721,7 @@ public class Parser {
         case .keyword(.self, _):
             advance()
             return .selfKeyword(location: loc)
-        // G50：`own`（原 Self）在表达式位置仍产出 selfTypeKeyword 节点（AST case 名暂不改，最小迁移面）
+        // `own` 在表达式位置产出 selfTypeKeyword 节点（AST case 名保持 selfTypeKeyword）
         case .keyword(.own, _):
             advance()
             return .selfTypeKeyword(location: loc)
@@ -2934,16 +2852,11 @@ public class Parser {
                 var label: String? = nil
                 if case .identifier(let possibleLabel, _) = firstTok {
                     let nextTok = peek(offset: 1)
-                    /// 实参标签用 `=`（值的注入方向统一为 `=`）；`f(a: 1)` 这种冒号写法
-                    /// 在此给迁移提示后报错。
+                    /// 实参标签用 `=`（值的注入方向统一为 `=`）。
                     if case .assign(_) = nextTok {
                         advance()
                         advance()
                         label = possibleLabel
-                    } else if case .colon(_) = nextTok {
-                        throw ParserError.invalidExpression(
-                            reason: "实参标签须用 `=`（如 `f(\(possibleLabel) = 值)`）；旧写法 `f(\(possibleLabel): 值)` 已废弃",
-                            location: currentLocation)
                     }
                 }
                 let expr = try parseExpression()
@@ -3003,13 +2916,6 @@ public class Parser {
                 labels.append(name)
                 return try parseExpression()
             }
-            if case .identifier(let name, _) = currentToken,
-                case .colon(_) = peek(offset: 1)
-            {
-                throw ParserError.invalidExpression(
-                    reason: "元组标签须用 `=`（如 `(\(name) = 值,)`）；旧写法 `(\(name): 值,)` 已废弃",
-                    location: currentLocation)
-            }
             labels.append(nil)
             return try parseExpression()
         }
@@ -3045,7 +2951,7 @@ public class Parser {
         return firstElement
     }
 
-    /// 解析数组字面量 `[a, b,]`。方括号只承载数组：字典条目（`[k = v]`）已迁至花括号。
+    /// 解析数组字面量 `[a, b,]`。
     private func parseCollectionLiteral() throws -> Expression {
         let loc = currentLocation
         advance()  // 消费 [
@@ -3056,16 +2962,6 @@ public class Parser {
         }
 
         let first = try parseExpression()
-        if case .colon(_) = currentToken {
-            throw ParserError.invalidExpression(
-                reason: "字典字面量已改用花括号：`{键 = 值,}`（方括号只用于数组与下标）",
-                location: loc)
-        }
-        if case .assign(_) = currentToken {
-            throw ParserError.invalidExpression(
-                reason: "字典字面量已改用花括号：`{键 = 值,}`；旧写法 `[键 = 值]` 已废弃",
-                location: loc)
-        }
 
         var elements: [Expression] = [first]
         while case .comma(_) = currentToken {
@@ -3160,16 +3056,11 @@ public class Parser {
                     var label: String? = nil
                     if case .identifier(let possibleLabel, _) = firstTok {
                         let nextTok = peek(offset: 1)
-                        /// 实参标签用 `=`（值的注入方向统一为 `=`）；`f(a: 1)` 这种冒号写法
-                        /// 在此给迁移提示后报错。
+                        /// 实参标签用 `=`（值的注入方向统一为 `=`）。
                         if case .assign(_) = nextTok {
                             advance()
                             advance()
                             label = possibleLabel
-                        } else if case .colon(_) = nextTok {
-                            throw ParserError.invalidExpression(
-                                reason: "实参标签须用 `=`（如 `f(\(possibleLabel) = 值)`）；旧写法 `f(\(possibleLabel): 值)` 已废弃",
-                                location: currentLocation)
                         }
                     }
                     let expr = try parseExpression()
@@ -3308,11 +3199,6 @@ public class Parser {
         if case .leftBracket(_) = currentToken {
             advance()
             let elemType = try parseTypeAnnotation()
-            if case .colon(_) = currentToken {
-                throw ParserError.invalidType(
-                    reason: "字典类型已改用花括号：`{键: 值,}`（方括号只用于数组类型）",
-                    location: loc)
-            }
             if case .comma(_) = currentToken { advance() }
             _ = try expect(.rightBracket(loc))
             return .generic(name: "Array", params: [elemType], location: loc)

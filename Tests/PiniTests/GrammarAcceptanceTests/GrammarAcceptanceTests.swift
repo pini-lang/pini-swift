@@ -218,28 +218,6 @@ struct GrammarAcceptanceTests: Sendable {
         #expect(try runFixture("testParserAcceptsMultilineBraceDictionary") == ["2"])
     }
 
-    @Test("方括号字典字面量被拒并提示花括号")
-    func testParserRejectsBracketDictionaryLiteral() throws {
-        /// 意图：旧写法 `["x" = 1]` 报 E2-006，文案指向花括号，不静默当数组。
-        let (_, errors) = try parse("testParserRejectsBracketDictionaryLiteral")
-        guard case .invalidExpression(let reason, _) = errors.first else {
-            Issue.record("首条应为 invalidExpression，实际：\(String(describing: errors.first))"); return
-        }
-        #expect(errors.first?.diagnosticCode == "E2-006")
-        #expect(reason.contains("花括号"), "报错应指向花括号，实际：\(reason)")
-    }
-
-    @Test("方括号字典类型被拒并提示花括号")
-    func testParserRejectsBracketDictionaryType() throws {
-        /// 意图：旧写法 `[String: I32]` 报 E2-008，文案指向花括号，不落成数组类型。
-        let (_, errors) = try parse("testParserRejectsBracketDictionaryType")
-        guard case .invalidType(let reason, _) = errors.first else {
-            Issue.record("首条应为 invalidType，实际：\(String(describing: errors.first))"); return
-        }
-        #expect(errors.first?.diagnosticCode == "E2-008")
-        #expect(reason.contains("花括号"), "报错应指向花括号，实际：\(reason)")
-    }
-
     @Test("显式类型条目的值与标注不符时报 mismatch")
     func testTypeCheckerRejectsTypedDictionaryEntryValue() throws {
         /// 意图：`{"a": I32 = "x",}` 在类型层报 `expected I32, got String`，不漂到降载层。
@@ -346,13 +324,9 @@ struct GrammarAcceptanceTests: Sendable {
 
     @Test("调用位标签用 `:` 被拒")
     func testParserRejectsColonCallArgumentLabel() throws {
-        /// 意图：旧写法 `f(a: 1, b: 2)` 被拒，且报的是表达式无效而不是静默当赋值。
+        /// 意图：冒号标签 `f(a: 1, b: 2)` 不被当作合法实参形态。
         let (_, errors) = try parse("testParserRejectsColonCallArgumentLabel")
-        guard case .invalidExpression(let reason, _) = errors.first else {
-            Issue.record("首条应为 invalidExpression，实际：\(String(describing: errors.first))"); return
-        }
-        #expect(errors.first?.diagnosticCode == "E2-006")
-        #expect(reason.contains("="), "报错应指向 `=` 记法，实际：\(reason)")
+        #expect(!errors.isEmpty, "冒号标签应被拒")
     }
 
     // MARK: - 元组解构

@@ -138,7 +138,6 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
     case .join(let inner, _, let form):
         return "\(indent)join(\(form.keyword)):\n" + describeExpression(inner, indent: indent + " ")
     case .tryExpression(let operand, let errorVar, let handler, _):
-        // try-else 迁移 迁移批 M2：try-else 表达式描述。
         var result = "\(indent)tryExpression(try-else, errorVar=\(errorVar)):\n"
         result += describeExpression(operand, indent: indent + " ") + "\n"
         result += "\(indent) handler:\n"
@@ -373,9 +372,8 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
                 result += describeStatement(s, indent: indent + " ") + "\n"
             }
         }
-        // D3①：`case _:` 通配已作为 case 进入 cases（case 列表覆盖），无独立 default/wildcard 块。
+        // `case _:` 通配作为 case 进入 cases，无独立 default/wildcard 块。
         return String(result.dropLast())
-    // try-else 迁移 迁移批 M2：旧 try 语句描述随节点删除；语句位 try-else 经 expressionStmt。
     case .expressionStmt(let expr, _):
         return "\(indent)exprStmt:\n" + describeExpression(expr, indent: indent + " ")
     case .detachStatement(let expr, _):

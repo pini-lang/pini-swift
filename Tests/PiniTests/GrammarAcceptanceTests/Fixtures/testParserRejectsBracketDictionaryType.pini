@@ -1,3 +1,0 @@
-main|func() -> ():
-    let d: [String: I32] = {"x" = 1,}
-    return

@@ -65,7 +65,7 @@ public struct FileLoader {
     /// 模块清单文件名。模块边界以「目录内是否存在此文件」作哨兵判定，故文件名必须语言级特异：
     /// 通名（如 `module.toml`）会被外来工程携带的同名文件误判。
     public static let manifestFileName = "pini.toml"
-    /// R8：G52 之前的旧名。命中一律**报错**而非静默忽略——旧名若被当作「无清单」，
+    /// 清单文件的备用名 `module.toml`。命中一律**报错**而非静默忽略——若被当作「无清单」，
     /// 该目录会从「模块边界」退化为「普通文件」，其下源码被父模块扫入且**全程不报错**，
     /// 症状（"这目录的文件怎么被扫进去了"）离原因很远。
     public static let legacyManifestFileName = "module.toml"
@@ -222,12 +222,11 @@ public struct ModuleManifest: Equatable {
 public enum LoaderError: Error, Equatable {
     case cannotReadDirectory(path: String)
     case invalidManifest(path: String)
-    /// R8：命中旧名 `module.toml`。必须报错而非静默当作「无清单」——
+    /// 清单文件名是 `module.toml`。必须报错而非静默当作「无清单」——
     /// 否则该目录会从模块边界退化为普通文件，源码被父模块扫入。
     case legacyManifestName(path: String)
-    /// 清单里出现 `[dependencies]` 节即命中的错误：报错指引迁移到 `[require]`，
-    /// 不静默忽略——静默等于复活已死语义。
-    case legacyDependenciesSection(path: String)
+    /// 清单里出现 `[dependencies]` 节即报错；该节不参与解析，静默忽略会吞掉依赖声明。
+    case unsupportedDependenciesSection(path: String)
     /// 单文件解析产生的多个错误（聚合一次性抛出，避免只报首个而吞没其余）。
     case parseErrors(file: String, errors: [ParserError])
 }
@@ -240,11 +239,10 @@ extension LoaderError: LocalizedError {
         case .invalidManifest(let path):
             return "非法的 pini.toml：\(path)"
         case .legacyManifestName(let path):
-            return "模块清单已由 module.toml 更名为 pini.toml，请将 \(path) 重命名为 pini.toml"
-                + "（旧名不会被静默忽略：否则该目录将从模块边界退化为普通文件，其下源码被父模块扫入）"
-        case .legacyDependenciesSection(let path):
-            return "\(path)：`[dependencies]` 节已移除（G52）：模块依赖改用 `[require]`（条目集合由代码中的"
-                + " `import` 生成，人工只覆盖版本约束），非 Pini 资源改用 `[resources]`；随后 `pini mod tidy` 对齐集合"
+            return "\(path)：模块清单只接受 pini.toml"
+                + "（否则该目录会从模块边界退化为普通文件，其下源码被父模块扫入）"
+        case .unsupportedDependenciesSection(let path):
+            return "\(path)：不支持 `[dependencies]` 节；模块依赖写 `[require]`，非 Pini 资源写 `[resources]`"
         case .parseErrors(let file, let errors):
             let details = errors.map { " - \(String(describing: $0))" }.joined(separator: "\n")
             return "解析错误（\(file)）：\n\(details)"
@@ -258,9 +256,9 @@ extension LoaderError: LocalizedError {
 private func parseManifest(_ text: String, path: String) throws -> ModuleManifest {
     let doc = MiniTOML.parse(text)
 
-    // [dependencies] 报错须在容错判断**之前**——该节已从 spec 移除，静默 = 复活已死语义（D-B）。
+    // [dependencies] 的拒绝须在容错判断之前，否则会被当作未知表忽略。
     if doc.tables.keys.contains("dependencies") {
-        throw LoaderError.legacyDependenciesSection(path: path)
+        throw LoaderError.unsupportedDependenciesSection(path: path)
     }
     guard let n = doc.plain("package")["name"], !n.isEmpty else {
         throw LoaderError.invalidManifest(path: path)

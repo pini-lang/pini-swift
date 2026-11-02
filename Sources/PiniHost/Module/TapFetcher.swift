@@ -197,8 +197,8 @@ extension TapFetcher.TapError: LocalizedError {
         case .destinationOccupied(let path):
             return "'\(path)' 已存在且不是 git 检出——工具不会代为删除，请手工处理后再重试"
         case .fileTapNotMaterialized(let path):
-            return "file: 源 '\(path)' 不由 refresh 落地（批 7 范围）：依赖请改用 git submodule 或手工拷贝，"
-                + "本地替换请用 [replace] 的 file: 形态"
+            return "file: 源 '\(path)' 不由 refresh 落地：依赖用 git submodule 或手工拷贝，"
+                + "本地替换用 [replace] 的 file: 形态"
         }
     }
 }

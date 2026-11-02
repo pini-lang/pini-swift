@@ -101,7 +101,7 @@ public enum ConstantFolder {
         case .forStatement(let pattern, let iterable, let body, let stepBlk, let lbl, let loc):
             return .forStatement(pattern: pattern, iterable: fold(iterable), body: fold(body), step: stepBlk.map(fold), label: lbl, location: loc)
         case .matchStatement(let val, let cases, let loc):
-            // D3①：case 列表携带通配（case _:），default/pass 通配字段已移除。
+            // match 的通配兜底以 `case _:` 进入 cases，无独立字段。
             return .matchStatement(
                 value: fold(val),
                 cases: cases.map { MatchCase(pattern: $0.pattern, bindings: $0.bindings, block: fold($0.block), location: $0.location) },
@@ -149,8 +149,7 @@ public enum ConstantFolder {
         case .member(let obj, let name, let loc):
             return .member(object: fold(obj), name: name, location: loc)
         case .tryExpression(let operand, let errorVar, let handler, let loc):
-            // try-else 迁移 迁移批 M2：递归折叠 operand 与 handler 块（handler 限控制流语句，
-            // 含调用则折叠自然跳过）。
+            // 递归折叠 operand 与 handler 块（handler 限控制流语句，含调用则折叠自然跳过）。
             return .tryExpression(
                 operand: fold(operand), errorVar: errorVar,
                 handler: fold(handler), location: loc)

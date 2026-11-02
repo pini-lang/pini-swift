@@ -757,7 +757,7 @@ public final class SemanticAnalyzer {
         }
     }
 
-    // MARK: - R1 穷尽性/可达性检查（D3① 取代 P3 validated 开关）
+    // MARK: - R1 穷尽性/可达性检查
 
     /// 穷尽性 / 可达性校验，总是开启，`case _:` 通配兜底豁免。父枚举的唯一判据是被匹配值的类型
     /// （`typeNameOf`）——按 case 名全局反查会把裸值误判成某枚举的 match。已知枚举则逐臂校验可达性
@@ -886,7 +886,7 @@ public final class SemanticAnalyzer {
             try checkExpression(operand)
 
         case .tryExpression(let operand, let errorVar, let handler, _):
-            // try-else 迁移 迁移批 M2：递归检查 operand；handler 内 errorVar 绑定到子作用域。
+            // 递归检查 operand；handler 内 errorVar 绑定到子作用域。
             try checkExpression(operand)
             symbolTable.enterScope(name: "try-handler")
             symbolTable.define(Symbol(name: errorVar, kind: .variable(isMutable: true), location: handler.location))
