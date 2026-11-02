@@ -411,7 +411,8 @@ unsafe &变量          ; 取地址
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
 
 let 缓冲 = unsafe malloc(1024)
 defer unsafe free(缓冲)
@@ -2756,7 +2757,7 @@ free: (*I8,) -> ()
 安全分配(大小: I64,) -> ^*I8:
     let 指针 = unsafe malloc(大小)
     if 指针 == nil:
-        return .err("分配失败")
+        return .err(Error("分配失败"))
     return .ok(指针)
 ```
 
@@ -2797,8 +2798,8 @@ let v = unsafe 加载(p)
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
-free|unsafe(指针: *I8,) -> ()
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
 
 写入原始|unsafe(目标: *I8, 偏移: I64, 数据: [I32],) -> ():
     for (值, 索引) in 数据:
@@ -2811,7 +2812,7 @@ _容量: I64 = 0
 
 写入|self(偏移: I64, 数据: [I32],) -> (^(),):
     if 偏移 < 0 || 偏移 + len(数据) > self._容量:
-        return err("越界")
+        return err(Error("越界"))
     unsafe 写入原始(self._指针, 偏移, 数据)
     return ok(())
 ```
@@ -2895,7 +2896,7 @@ pini build --shared calc.pini                 ; 动态库 libcalc.{dylib,so}，�
 
 | 限制 | 说明 |
 |---|---|
-| 错误消息不跨边界 | `^T` 只交状态码，`calc_last_error` 未发 |
+| 错误消息不跨边界 | `^T` 只交状态码；`last_error` 不预留，要消息就另导出访问器 |
 | 不生成 C 实现 | 只出头文件，实现是 LLVM 产物 |
 | 布局即 ABI | 字段顺序与类型一改就是破坏性变更，头文件的 `_Static_assert` 在 C 编译期拦下 |
 | 边界不校验 | C 直写字段可以造出 Pini 认为不可能的状态，C 面只放配置 |
@@ -3259,7 +3260,7 @@ try 表达式 else 错误绑定名:
 
 ```
 读取文件(路径: String,) -> (^String,):
-    return .err("模拟错误")
+    return .err(Error("模拟错误"))
 ```
 
 调用方：

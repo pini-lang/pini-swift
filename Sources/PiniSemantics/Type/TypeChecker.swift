@@ -402,8 +402,10 @@ public final class TypeChecker {
                     reason: "文件名 `\(block.name)` 转写后是 `\(blockName)`，不是合法 C 标识符（须以字母或下划线开头）",
                     location: block.location))
         }
+        /// 只含真正会发出去的符号。`_last_error` 不在此列：该符号从未实现，占着名字只会挡住
+        /// 想自己导出错误访问器的库。
         let lifecycleNames: Set<String> = [
-            "\(blockName)_init", "\(blockName)_shutdown", "\(blockName)_last_error",
+            "\(blockName)_init", "\(blockName)_shutdown",
         ]
         var seen: [String: String] = [:]
         for entry in cEntries {

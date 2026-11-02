@@ -247,6 +247,23 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         #expect(failed?.message.contains("生命周期符号") == true)
     }
 
+    @Test("错误访问器名不预留，库可自行导出")
+    func testLastErrorNameIsAvailableToTheLibrary() throws {
+        let module = try lowered(
+            """
+            f() -> (I32,):
+                return 1
+            [calc|export]
+            calc_last_error|c = f
+
+            main|func() -> (I32,):
+                return 0
+            """,
+            fileName: "calc.pini")
+        let export = try #require(module.export)
+        #expect(export.functions.map(\.cName) == ["calc_last_error"])
+    }
+
     @Test("非 C 兼容的形参被拒")
     func testNonCParameterIsRejected() {
         let failed = failure {
