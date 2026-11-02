@@ -2,7 +2,7 @@ import Foundation
 import PiniBackendKit
 import PiniIR
 
-/// C 头文件通道：把 `[库|c]` 的发布面写成一份 C 声明，不产实现。
+/// C 头文件通道：把 export 块的 `|c` 条目写成一份 C 声明，不产实现。
 /// 结构体只镜像给定块的字段区，取址函数返回它的首地址；布局断言让错位在 C 编译期就红。
 public struct CHeaderBackend: PiniBackend {
 
@@ -135,7 +135,7 @@ public struct CHeaderBackend: PiniBackend {
     }
 }
 
-/// 没有导出块时不出空文件：静默产出一个空头文件，调用方要等 C 编译报错才发现名字不对。
+/// 没有 `|c` 条目时不出空文件：静默产出一个空头文件，调用方要等 C 编译报错才发现名字不对。
 public enum CHeaderError: Error, CustomStringConvertible, LocalizedError {
     case noExportBlock
     case unrepresentableField(type: String)
@@ -143,7 +143,7 @@ public enum CHeaderError: Error, CustomStringConvertible, LocalizedError {
     public var description: String {
         switch self {
         case .noExportBlock:
-            return "模块没有 `[库|c]` 声明，头文件无内容"
+            return "模块没有带 `|c` 条目的 export 块，头文件无内容"
         case .unrepresentableField(let type):
             return "给定块 `\(type)` 有字段无法写成 C 类型"
         }

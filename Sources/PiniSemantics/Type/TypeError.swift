@@ -36,7 +36,7 @@ public enum TypeError: Error, Equatable {
     /// `using` 形参取得；此诊断在静态层拒绝，避免落到 IRGen 报出误导性的「未声明变量 '配置'」。
     /// 同一通路本就不可行，故这不是新增约束，只是把报错提前并把做法写进文案。
     case givenBlockTypeInValuePosition(typeName: String, location: SourceLocation)
-    /// C 导出面：条目引用的声明不合格，或两个条目转写后撞成同一个 C 名。
+    /// export 块 `|c` 条目：引用的声明不合格，或两个条目转写后撞成同一个 C 名。
     /// `reason` 是一句自成句子的说明，诊断头由格式化层加。
     case exportCInvalid(reason: String, location: SourceLocation)
 }

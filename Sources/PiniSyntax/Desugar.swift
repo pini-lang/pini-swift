@@ -31,7 +31,6 @@ public enum Desugar {
         case .statement(let stmt): return .statement(desugar(stmt))
         case .importDecl(let i): return .importDecl(i)
         case .exportDecl(let e): return .exportDecl(e)
-        case .exportCDecl(let e): return .exportCDecl(e)
         }
     }
 

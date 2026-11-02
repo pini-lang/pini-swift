@@ -19,8 +19,6 @@ public enum TopLevelDecl: Equatable, Sendable {
     case statement(Statement)
     case importDecl(ImportDecl)
     case exportDecl(ExportDecl)
-    /// `[库|c]`——C 导出面：函数转发与给定块取址，符号名在导出期转成 ASCII。
-    case exportCDecl(ExportCDecl)
 }
 
 /// 模块
@@ -28,7 +26,7 @@ public struct Module: Equatable, ASTNode, Sendable {
     public let declarations: [TopLevelDecl]
     /// P4 模块化：原始 `import` 声明（仅暂存，不解析 / 不 enforce）。
     public let imports: [ImportDecl]
-    /// P4 模块化：原始 `export` 声明（仅暂存，不解析 / 不 enforce）。
+    /// export 块：`|pini` 条目沿用可见性语义，`|c` 条目由类型检查与降载消费。
     public let exports: [ExportDecl]
     public let location: SourceLocation
 

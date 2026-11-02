@@ -29,7 +29,7 @@ public enum CName {
     }
 
     /// C 保留给实现的标识符：`__` 开头，或 `_` 加一个大写字母开头。
-    /// 这些名字 C 编译器不会报错，但属于未定义行为，导出面不往外发。
+    /// 这些名字 C 编译器不会报错，但属于未定义行为，C 面不往外发。
     public static func isReserved(_ name: String) -> Bool {
         let scalars = Array(name.unicodeScalars)
         guard scalars.first == "_", scalars.count >= 2 else { return false }

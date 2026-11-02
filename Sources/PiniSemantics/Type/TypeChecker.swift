@@ -61,12 +61,13 @@ public final class TypeChecker {
     /// 声明了 `|macro` 的外部符号：构建期常量，没有存储，故取址一律拒。
     private var macroForeignNames: Set<String> = []
 
-    /// C 导出面的声明上下文：条目只能引用本模块已声明的自由函数与给定块。
-    /// 三张表在整模块预扫描时填一次，故导出块写在被引用声明之前也能判定。
+    /// C 面的声明上下文：条目只能引用本模块已声明的自由函数与给定块。
+    /// 三张表在整模块预扫描时填一次，故 export 块写在被引用声明之前也能判定。
     private var exportCFunctions: [String: FuncDecl] = [:]
     private var exportCGivenBlocks: [String: GivenDecl] = [:]
     private var exportCForeignNames: Set<String> = []
-    private var exportCBlockCount = 0
+    private var cSurfaceCount = 0
+    private var cSurfaceFile: String?
 
     private func registerBuiltinTypes() {
         let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -357,13 +358,14 @@ public final class TypeChecker {
         givenBlockTypeNames = names
     }
 
-    /// 预扫描 C 导出面能引用的声明：自由函数、给定块、外部符号名。
-    /// 导出块可以写在被引用声明之前，判据因此不能依赖声明顺序。
+    /// 预扫描 C 面能引用的声明：自由函数、给定块、外部符号名。
+    /// export 块可以写在被引用声明之前，判据因此不能依赖声明顺序。
     private func collectExportCContext(_ declarations: [TopLevelDecl]) {
         exportCFunctions = [:]
         exportCGivenBlocks = [:]
         exportCForeignNames = []
-        exportCBlockCount = 0
+        cSurfaceCount = 0
+        cSurfaceFile = nil
         for decl in declarations {
             switch decl {
             case .funcDecl(let f): exportCFunctions[f.name] = f
@@ -378,48 +380,82 @@ public final class TypeChecker {
     /// 跨 C 边界的标量白名单。名字即头文件里的 C 类型来源，也是语义期的准入表。
     private static let cExportScalars: Set<String> = ["I8", "U8", "I32", "I64", "U64", "F64", "Bool"]
 
-    /// C 导出块的静态判据：引用的名字在册、形态可导出、C 名转写后不撞。
+    /// export 块里 `|c` 条目的静态判据：引用的名字在册、形态可发布、C 名转写后不撞。
     /// 类型能否跨边界在这一层定死；降载层只按同一张表求拼写，不再改判。
-    private func checkExportCBlock(_ block: ExportCDecl) throws {
-        exportCBlockCount += 1
-        if exportCBlockCount > 1 {
+    private func checkExportSurface(_ block: ExportDecl) throws {
+        let cEntries = block.entries.filter { $0.target == .c }
+        guard !cEntries.isEmpty else { return }
+        cSurfaceCount += 1
+        if cSurfaceCount > 1 {
+            let first = cSurfaceFile ?? "另一个文件"
             try report(
                 TypeError.exportCInvalid(
-                    reason: "模块内最多一个 C 导出块，`[\(block.name)|c]` 是第二个", location: block.location))
+                    reason: "`\(first)` 与 `\(block.location.fileName)` 都带 `|c` 条目；一个模块只出一个 C 面",
+                    location: block.location))
         }
-        var seen: [String: String] = [:]
+        cSurfaceFile = block.location.fileName
         let blockName = CName.escape(block.name)
+        try checkCMachineName(block.name, location: block.location)
+        if let first = blockName.unicodeScalars.first, !Self.isCIdentifierStart(first) {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "文件名 `\(block.name)` 转写后是 `\(blockName)`，不是合法 C 标识符（须以字母或下划线开头）",
+                    location: block.location))
+        }
         let lifecycleNames: Set<String> = [
             "\(blockName)_init", "\(blockName)_shutdown", "\(blockName)_last_error",
         ]
-        for item in block.items {
-            let cName = CName.escape(item.cName)
+        var seen: [String: String] = [:]
+        for entry in cEntries {
+            let cName = CName.escape(entry.name)
             if lifecycleNames.contains(cName) {
                 try report(
                     TypeError.exportCInvalid(
-                        reason: "`\(cName)` 与生成的生命周期符号同名，换一个键", location: item.location))
+                        reason: "`\(cName)` 与生成的生命周期符号同名，换一个名字",
+                        location: entry.location))
             }
             if let first = seen[cName] {
                 try report(
                     TypeError.exportCInvalid(
-                        reason: "`\(first)` 与 `\(item.cName)` 转写后同为 C 名 `\(cName)`",
-                        location: item.location))
+                        reason: "`\(first)` 与 `\(entry.name)` 转写后同为 C 名 `\(cName)`",
+                        location: entry.location))
             }
-            seen[cName] = item.cName
-            try checkCMachineName(item.cName, location: item.location)
-            if exportCForeignNames.contains(item.cName) {
+            seen[cName] = entry.name
+            try checkCMachineName(entry.name, location: entry.location)
+            if exportCForeignNames.contains(entry.name) {
                 try report(
                     TypeError.exportCInvalid(
-                        reason: "`\(item.cName)` 已被导入的外部符号占用，导出会定义同一个符号",
-                        location: item.location))
+                        reason: "`\(entry.name)` 已被导入的外部符号占用，发布它会定义同一个符号",
+                        location: entry.location))
             }
-            switch item {
-            case .function(_, let pinName, let location):
-                try checkExportCFunction(pinName: pinName, location: location)
-            case .storage(_, let typeName, let location):
-                try checkExportCStorage(typeName: typeName, location: location)
-            }
+            try checkExportEntryTarget(symbolName: entry.symbol, location: entry.location)
         }
+    }
+
+    /// C 标识符首字符：ASCII 字母或下划线。转义后的文件名不能以数字开头。
+    private static func isCIdentifierStart(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar == "_" { return true }
+        switch scalar {
+        case "A"..."Z", "a"..."z": return true
+        default: return false
+        }
+    }
+
+    /// 一条 `|c` 条目的右端：自由函数按函数判，给定块按量判，其余给出能落地的下一步。
+    /// 模块内同名重声明已被语义层拦下，故这里的查表只有一个答案。
+    private func checkExportEntryTarget(symbolName: String, location: SourceLocation) throws {
+        if exportCFunctions[symbolName] != nil {
+            try checkExportCFunction(pinName: symbolName, location: location)
+            return
+        }
+        if exportCGivenBlocks[symbolName] != nil {
+            try checkExportCStorage(typeName: symbolName, location: location)
+            return
+        }
+        let hint = typeFieldsByName[symbolName] != nil ? "它是结构体，给不出模块级存储" : "未声明为函数或给定块"
+        try report(
+            TypeError.exportCInvalid(
+                reason: "`\(symbolName)` 不能发布：\(hint)；C 面只收自由函数与给定块", location: location))
     }
 
     /// 一个对外名字的两条形态禁令：与转义输出同形（解码歧义），以及落进 C 保留区。
@@ -445,21 +481,21 @@ public final class TypeChecker {
         guard let function = exportCFunctions[pinName] else {
             try report(
                 TypeError.exportCInvalid(
-                    reason: "`\(pinName)` 不是本模块的自由函数（方法、外部符号与内建都不进导出面）",
+                    reason: "`\(pinName)` 不是本模块的自由函数（方法、外部符号与内建都不进 C 面）",
                     location: location))
             return
         }
         if pinName == "main" {
-            try report(TypeError.exportCInvalid(reason: "`main` 是程序入口，不进导出面", location: location))
+            try report(TypeError.exportCInvalid(reason: "`main` 是程序入口，不进 C 面", location: location))
         }
         if function.modifiers.contains("test") {
-            try report(TypeError.exportCInvalid(reason: "`|test` 函数不进导出面", location: location))
+            try report(TypeError.exportCInvalid(reason: "`|test` 函数不进 C 面", location: location))
         }
         if !function.genericParams.isEmpty {
-            try report(TypeError.exportCInvalid(reason: "泛型函数不进导出面", location: location))
+            try report(TypeError.exportCInvalid(reason: "泛型函数不进 C 面", location: location))
         }
         if function.isAsync {
-            try report(TypeError.exportCInvalid(reason: "异步函数不进导出面", location: location))
+            try report(TypeError.exportCInvalid(reason: "异步函数不进 C 面", location: location))
         }
         if function.returnTypes.count > 1 {
             try report(
@@ -492,18 +528,18 @@ public final class TypeChecker {
             let hint = typeFieldsByName[typeName] != nil ? "是结构体，不是给定块" : "未声明为给定块"
             try report(
                 TypeError.exportCInvalid(
-                    reason: "`\(typeName)` \(hint)，导出的量只能取给定块", location: location))
+                    reason: "`\(typeName)` \(hint)，C 面的量只能取给定块", location: location))
             return
         }
         if given.fields.isEmpty {
             try report(
                 TypeError.exportCInvalid(
-                    reason: "给定块 `\(typeName)` 没有字段，导出的结构体在 C 里无成员", location: location))
+                    reason: "给定块 `\(typeName)` 没有字段，C 结构体无成员", location: location))
         }
         if !given.genericParams.isEmpty {
             try report(
                 TypeError.exportCInvalid(
-                    reason: "泛型给定块 `\(typeName)` 要按实参特化，v1 不进导出面", location: location))
+                    reason: "泛型给定块 `\(typeName)` 要按实参特化，v1 不进 C 面", location: location))
         }
         var seenFields: [String: String] = [:]
         for field in given.fields {
@@ -566,6 +602,9 @@ public final class TypeChecker {
         for decl in module.declarations {
             try checkTopLevelDecl(decl)
         }
+        for block in module.exports {
+            try checkExportSurface(block)
+        }
     }
 
     /// 检查包（多文件 / 单文件统一入口）。单文件包直接委托 `check(module:)`，行为等价；
@@ -600,6 +639,10 @@ public final class TypeChecker {
             for decl in unit.module.declarations {
                 try enforceDeclTypeVisibility(decl)
                 try checkTopLevelDecl(decl)
+            }
+            for block in unit.module.exports {
+                try enforceExportBlockVisibility(block)
+                try checkExportSurface(block)
             }
         }
     }
@@ -669,12 +712,14 @@ public final class TypeChecker {
             for t in g.traits { try enforceTypeVisibility(name: t, location: g.location) }
         case .traitDecl, .extensionDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
-        case .exportCDecl(let block):
-            /// 量项右端是类型名引用：跨文件可见性与其它类型引用同规。
-            for item in block.items {
-                if case .storage(_, let typeName, let location) = item {
-                    try enforceTypeVisibility(name: typeName, location: location)
-                }
+        }
+    }
+
+    /// `|c` 条目的给定块右端是类型名引用：跨文件可见性与其它类型引用同规。
+    private func enforceExportBlockVisibility(_ block: ExportDecl) throws {
+        for entry in block.entries where entry.target == .c {
+            if exportCGivenBlocks[entry.symbol] != nil {
+                try enforceTypeVisibility(name: entry.symbol, location: entry.location)
             }
         }
     }
@@ -731,6 +776,15 @@ public final class TypeChecker {
         for decl in module.declarations {
             do {
                 try checkTopLevelDecl(decl)
+            } catch let error as TypeError {
+                diagnostics.append(error)
+            } catch {
+                // 非 TypeError 不应发生；保持防御
+            }
+        }
+        for block in module.exports {
+            do {
+                try checkExportSurface(block)
             } catch let error as TypeError {
                 diagnostics.append(error)
             } catch {
@@ -1445,7 +1499,7 @@ public final class TypeChecker {
                     }
                 }
             }
-        case .varDecl, .statement, .importDecl, .exportDecl, .exportCDecl:
+        case .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
     }
@@ -1481,7 +1535,7 @@ public final class TypeChecker {
             /// 给定块字段与对象字段同规过 `*T` C 兼容校验。
             for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
             for m in g.methods { try validateFuncDeclPointerTypes(m) }
-        case .varDecl, .statement, .importDecl, .exportDecl, .exportCDecl:
+        case .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
     }
@@ -1628,8 +1682,6 @@ public final class TypeChecker {
             if !g.traits.isEmpty { try verifyTraitConformance(typeName: g.name, traits: g.traits, location: g.location) }
         case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
-        case .exportCDecl(let block):
-            try checkExportCBlock(block)
         }
     }
 

@@ -479,7 +479,7 @@ public final class IREmitter {
             }
         }
 
-        /// C 导出面：函数项补同名转发，量项交出盒的字段区首地址。
+        /// export 块的 `|c` 条目：函数补同名转发，量交出盒的字段区首地址。
         /// 位置在所有 Pini 函数之后：转发体只是调用，前向引用本来也成立，但这样读起来与产物同序。
         if let export = module.export {
             emitExportStubs(export)
@@ -3188,7 +3188,7 @@ public final class IREmitter {
         bodyIR += " \(ignored) = call i32 @bk_task_bind_sched(ptr \(handle), ptr \(binding))\n"
     }
 
-    // MARK: - C 导出面
+    // MARK: - export 块的 C 面
 
     /// 导出转发：函数项补一层同名转发，量项交出盒的字段区首地址，再补两个生命周期符号。
     /// 转发体只做搬运 —— Pini 函数已是朴素 ABI，签名与 C 同形，不需要新的调用约定。

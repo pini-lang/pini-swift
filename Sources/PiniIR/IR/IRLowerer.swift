@@ -667,7 +667,7 @@ public enum IRLowerer {
                 // Handled by the nominal-type / enum passes below; trait
                 // default bodies specialize at their dispatch sites (G12).
                 continue
-            case .foreignDecl, .exportCDecl:
+            case .foreignDecl:
                 // Declare-only surface — lowered into `foreigns` below,
                 // no function body to emit.
                 continue
@@ -849,10 +849,17 @@ public enum IRLowerer {
         var calls = Self.callReferences(of: functions + methodFunctions)
         for (name, targets) in edges.call { calls[name] = targets }
         var exportBlock: IRExportBlock?
-        for decl in module.declarations {
-            guard case .exportCDecl(let exportDecl) = decl else { continue }
+        let cBlocks = module.exports.filter { block in
+            block.entries.contains { $0.target == .c }
+        }
+        if cBlocks.count > 1 {
+            throw unsupported(
+                "模块内最多一个文件带 `|c` 条目；`\(cBlocks[1].location.fileName)` 是第二个",
+                at: cBlocks[1].location)
+        }
+        if let block = cBlocks.first {
             exportBlock = try Self.lowerExportBlock(
-                exportDecl, declarations: module.declarations, userTypes: userTypes)
+                block, declarations: module.declarations, userTypes: userTypes)
         }
         return IRModule(
             functions: functions, types: typeDecls,
@@ -864,55 +871,52 @@ public enum IRLowerer {
             givenReferences: references, callReferences: calls)
     }
 
-    /// 把 `[库|c]` 降载成发布面：函数项取去掉取用位后的签名，量项取给定块的字段表。
+    /// 把 export 块的 `|c` 条目降载成发布面：函数取去掉取用位后的签名，给定块取字段表。
     /// 名字在这里转成 C 标识符，后端只认转写后的名字，不再各自改名。
     private static func lowerExportBlock(
-        _ decl: ExportCDecl, declarations: [TopLevelDecl], userTypes: [String: IRType]
+        _ block: ExportDecl, declarations: [TopLevelDecl], userTypes: [String: IRType]
     ) throws -> IRExportBlock {
         var functions: [IRExportFunction] = []
         var storages: [IRExportStorage] = []
-        for item in decl.items {
-            switch item {
-            case .function(let cName, let pinName, let location):
-                guard let function = freeFunction(named: pinName, in: declarations) else {
-                    throw unsupported(
-                        "导出项 '\(pinName)' 不是本模块的自由函数", at: location)
-                }
+        for entry in block.entries where entry.target == .c {
+            if let function = freeFunction(named: entry.symbol, in: declarations) {
                 let params = try function.params.map { param -> IRExportParam in
                     guard let annotation = param.typeAnnotation,
                         let type = resolveAnnotationType(annotation, userTypes: userTypes)
                     else {
                         throw unsupported(
-                            "导出函数 '\(pinName)' 的形参 '\(param.name)' 没有可解析的类型", at: location)
+                            "导出函数 '\(entry.symbol)' 的形参 '\(param.name)' 没有可解析的类型",
+                            at: entry.location)
                     }
                     return IRExportParam(type: type, isUsing: param.isUsing)
                 }
                 functions.append(
                     IRExportFunction(
-                        cName: CName.escape(cName), pinName: pinName,
+                        cName: CName.escape(entry.name), pinName: entry.symbol,
                         params: params,
                         returnType: try exportReturnType(function, userTypes: userTypes)))
-            case .storage(let cName, let typeName, let location):
-                guard let given = givenBlock(named: typeName, in: declarations) else {
-                    throw unsupported(
-                        "导出项 '\(typeName)' 不是给定块，导出的量只能取给定块", at: location)
-                }
-                let fields = try given.fields.map { field -> IRExportStorage.Field in
-                    guard let type = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes)
-                    else {
-                        throw unsupported(
-                            "导出的量 '\(typeName)' 的字段 '\(field.name)' 没有可解析的类型", at: location)
-                    }
-                    return IRExportStorage.Field(name: CName.escape(field.name), type: type)
-                }
-                let escaped = CName.escape(cName)
-                storages.append(
-                    IRExportStorage(
-                        cName: escaped, typeName: typeName, fields: fields,
-                        getterName: "\(escaped)_get"))
+                continue
             }
+            guard let given = givenBlock(named: entry.symbol, in: declarations) else {
+                throw unsupported(
+                    "导出项 '\(entry.symbol)' 不是本模块的自由函数或给定块", at: entry.location)
+            }
+            let fields = try given.fields.map { field -> IRExportStorage.Field in
+                guard let type = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes)
+                else {
+                    throw unsupported(
+                        "C 面的量 '\(entry.symbol)' 的字段 '\(field.name)' 没有可解析的类型",
+                        at: entry.location)
+                }
+                return IRExportStorage.Field(name: CName.escape(field.name), type: type)
+            }
+            let escaped = CName.escape(entry.name)
+            storages.append(
+                IRExportStorage(
+                    cName: escaped, typeName: entry.symbol, fields: fields,
+                    getterName: "\(escaped)_get"))
         }
-        let blockName = CName.escape(decl.name)
+        let blockName = CName.escape(block.name)
         return IRExportBlock(
             name: blockName, functions: functions, storages: storages,
             initName: "\(blockName)_init", shutdownName: "\(blockName)_shutdown")
@@ -1631,7 +1635,7 @@ public enum IRLowerer {
         case .traitDecl(let td): return td.signatures.filter { $0.body != nil }.map(\.params)
         case .enumDecl(let ed): return ed.methods.map(\.params)
         case .foreignDecl: return []
-        case .varDecl, .statement, .importDecl, .exportDecl, .exportCDecl: return []
+        case .varDecl, .statement, .importDecl, .exportDecl: return []
         }
     }
 
@@ -5608,7 +5612,6 @@ public enum IRLowerer {
             if case .varDecl(let name, _, _, _, _) = statement { return name }
             return nil
         case .importDecl, .exportDecl: return nil
-        case .exportCDecl: return nil
         }
     }
 

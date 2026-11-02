@@ -7,8 +7,8 @@ import Darwin
 import Glibc
 #endif
 
-/// `build --shared` 的判据：一条命令出库，C 侧能按导出块的键找到符号并调用。
-/// 只看产物能不能加载、能不能调 —— 头文件契约由导出面套件钉住，这里不重复。
+/// `build --shared` 的判据：一条命令出库，C 侧能按 `|c` 条目的对外名找到符号并调用。
+/// 只看产物能不能加载、能不能调 —— 头文件契约由 C 面套件钉住，这里不重复。
 @Suite("共享库产物")
 struct CSharedLibraryTests {
 
@@ -80,8 +80,8 @@ struct CSharedLibraryTests {
             .write(to: module.appendingPathComponent("pini.toml"), atomically: true, encoding: .utf8)
         try "乘法(a: I32, b: I32,) -> (I32,):\n    return a * b\n"
             .write(to: module.appendingPathComponent("core.pini"), atomically: true, encoding: .utf8)
-        try "[calcmod|c]\ncm_mul = 乘法\n"
-            .write(to: module.appendingPathComponent("surface.pini"), atomically: true, encoding: .utf8)
+        try "[calcmod|export]\ncm_mul|c = 乘法\n"
+            .write(to: module.appendingPathComponent("calcmod.pini"), atomically: true, encoding: .utf8)
 
         let output = dir.appendingPathComponent("out/libcalcmod.\(librarySuffix)")
         let result = try runCLI(
@@ -96,8 +96,8 @@ struct CSharedLibraryTests {
         #expect(multiply(3, 4) == 12)
     }
 
-    @Test("没有导出块时响亮拒绝，不产出匿名库")
-    func rejectsModuleWithoutExportBlock() throws {
+    @Test("没有 |c 条目时响亮拒绝，不产出匿名库")
+    func rejectsModuleWithoutCSurface() throws {
         guard let cli = cliPathOrSkip() else { return }
         let dir = try makeTemporaryDirectory(tag: "shared-reject")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -105,20 +105,71 @@ struct CSharedLibraryTests {
             .write(to: dir.appendingPathComponent("plain.pini"), atomically: true, encoding: .utf8)
 
         let result = try runCLI(cli, arguments: ["build", "--shared", "plain.pini"], cwd: dir)
-        #expect(result.status != 0, "没有导出块却报成功：\(result.stdout)")
-        #expect(result.stderr.contains("导出块"), "诊断没说到点子上：\(result.stderr)")
+        #expect(result.status != 0, "没有 |c 条目却报成功：\(result.stdout)")
+        #expect(result.stderr.contains("|c"), "诊断没说到点子上：\(result.stderr)")
         let stray = dir.appendingPathComponent("libplain.\(librarySuffix)")
         #expect(!FileManager.default.fileExists(atPath: stray.path), "拒绝之后仍留下了产物")
 
-        // 既没有 `main` 也没有导出块的模块两头不靠：`emit` 照旧要求入口，不能借放行悄悄出产物。
+        // 只有 pini 条目的模块同样不算库：放行只认 `|c`，不认 export 块本身。
+        try """
+        [plain|export]
+        公开 = f
+
+        f() -> (I32,):
+            return 1
+        """.write(to: dir.appendingPathComponent("plain.pini"), atomically: true, encoding: .utf8)
+        let piniOnly = try runCLI(cli, arguments: ["build", "--shared", "plain.pini"], cwd: dir)
+        #expect(piniOnly.status != 0, "只有 pini 条目却报成功：\(piniOnly.stdout)")
+        #expect(piniOnly.stderr.contains("|c"), "诊断没说到点子上：\(piniOnly.stderr)")
+
         let emitted = try runCLI(cli, arguments: ["emit", "plain.pini"], cwd: dir)
-        #expect(emitted.status != 0, "无 main 又无导出块的模块不该通过 emit")
+        #expect(emitted.status != 0, "无 main 又无 |c 条目的模块不该通过 emit")
         #expect(emitted.stderr.contains("main"), "诊断应指向缺入口：\(emitted.stderr)")
+    }
+
+    @Test("同模块两个 C 面被拒，不留产物")
+    func rejectsTwoCSurfacesInOneModule() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        let dir = try makeTemporaryDirectory(tag: "shared-two-faces")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let module = dir.appendingPathComponent("mod")
+        try FileManager.default.createDirectory(at: module, withIntermediateDirectories: true)
+        try "[package]\nname = \"two\"\nversion = \"0.1.0\"\n"
+            .write(to: module.appendingPathComponent("pini.toml"), atomically: true, encoding: .utf8)
+        try "fa() -> (I32,):\n    return 1\n\n[a|export]\na_f|c = fa\n"
+            .write(to: module.appendingPathComponent("a.pini"), atomically: true, encoding: .utf8)
+        try "fb() -> (I32,):\n    return 2\n\n[b|export]\nb_f|c = fb\n"
+            .write(to: module.appendingPathComponent("b.pini"), atomically: true, encoding: .utf8)
+
+        let output = dir.appendingPathComponent("out/libtwo.\(librarySuffix)")
+        let result = try runCLI(
+            cli, arguments: ["build", "--shared", module.path, "-o", output.path], cwd: dir)
+        #expect(result.status != 0, "两个 C 面却报成功：\(result.stdout)")
+        #expect(result.stderr.contains("都带"), "诊断没点名两个文件：\(result.stderr)")
+        #expect(result.stderr.contains("a.pini"), "诊断缺第一个文件名：\(result.stderr)")
+        #expect(result.stderr.contains("b.pini"), "诊断缺第二个文件名：\(result.stderr)")
+        #expect(!FileManager.default.fileExists(atPath: output.path), "拒绝之后仍留下了产物")
+    }
+
+    @Test("--extern 已取消，提示语言写在条目上")
+    func rejectsRemovedExternFlag() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        let dir = try makeTemporaryDirectory(tag: "shared-extern-flag")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try librarySource.write(
+            to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
+
+        let result = try runCLI(
+            cli, arguments: ["build", "--shared", "calc.pini", "--extern", "c"], cwd: dir)
+        #expect(result.status != 0, "已取消的参数却报成功：\(result.stdout)")
+        #expect(result.stderr.contains("--extern 已取消"), "诊断没给迁移方向：\(result.stderr)")
+        let stray = dir.appendingPathComponent("libcalc.\(librarySuffix)")
+        #expect(!FileManager.default.fileExists(atPath: stray.path), "拒绝之后仍留下了产物")
     }
 
     // MARK: - helper
 
-    /// 无 `main` 的库模块：导出面就位、给定块可读，正好压到「库不需要进程入口」这条口径。
+    /// 无 `main` 的库模块：`|c` 条目就位、给定块可读，正好压到「库不需要进程入口」这条口径。
     private var librarySource: String {
         """
         [消息|given]
@@ -127,9 +178,9 @@ struct CSharedLibraryTests {
         加法(a: I32, b: I32,) -> (I32,):
             return a + b
 
-        [calc|c]
-        calc_add = 加法
-        calc_state: 消息
+        [calc|export]
+        calc_add|c = 加法
+        calc_state|c = 消息
         """
     }
 

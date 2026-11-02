@@ -236,6 +236,12 @@ public class Parser {
                 case .importDecl(let imp):
                     imports.append(imp)
                 case .exportDecl(let exp):
+                    /// 每个文件一张发布表：第二块并进去，不另起一套条目。
+                    guard exports.isEmpty else {
+                        throw ParserError.invalidDeclaration(
+                            reason: "每个文件最多一个 export 块；把第二个块的条目并进第一个块",
+                            location: exp.location)
+                    }
                     exports.append(exp)
                 default:
                     declarations.append(decl)
@@ -436,72 +442,66 @@ public class Parser {
         return ImportDecl(alias: first.alias, packagePath: first.path, location: location)
     }
 
-    /// 解析 `[当前文件名|export]` 块：`可见别名 = 原符号` 项集。
+    /// 解析 `[当前文件名|export]` 块：条目写 `名 = 原符号` 或 `名|目标 = 原符号`。
+    /// 省略目标即 `pini`；`c` 走 C 发布面。块头须等于文件名，C 产物名由此而来。
     private func parseExportBlock(headerName: String, location: SourceLocation) throws -> ExportDecl {
         guard headerName == currentFileBaseName else {
             throw ParserError.invalidDeclaration(
-                reason: "export 块头名须为当前文件名 `\(currentFileBaseName)`（D-1：自识性标签），实际 `\(headerName)`",
+                reason: "export 块头名须为当前文件名 `\(currentFileBaseName)`（块头名即文件名，C 产物名也取它），实际 `\(headerName)`",
                 location: location
             )
         }
-        var renames: [ExportRename] = []
+        var entries: [ExportEntry] = []
         skipNewlines()
-        while !isEOF() {
-            // 项行形态：IDENT = IDENT（下一顶级形态的行首即闭合——先看后吃）
-            guard case .identifier(let alias, let itemLoc) = currentToken else { break }
-            guard case .assign(_) = peek() else { break }
-            advance()
-            advance()
-            guard case .identifier(let symbol, _) = currentToken else {
-                throw ParserError.invalidDeclaration(
-                    reason: "export 项须为 `可见别名 = 原符号`", location: currentLocation)
-            }
-            advance()
-            renames.append(ExportRename(alias: alias, symbol: symbol, location: itemLoc))
-            skipNewlines()
-        }
-        guard !renames.isEmpty else {
-            throw ParserError.invalidDeclaration(reason: "export 块至少需要一项 `可见别名 = 原符号`", location: location)
-        }
-        return ExportDecl(renames: renames, location: location)
-    }
-
-    /// 解析 `[库|c]` 块：`C名 = Pini名` 为函数项，`C名: 类型名` 为给定块项。
-    /// 两种右端各是一种名字，条目形状因此不同；块内不许混入其它形态。
-    private func parseExportCBlock(name: String, location: SourceLocation) throws -> ExportCDecl {
-        var items: [ExportCItem] = []
-        skipNewlines()
-        itemLoop: while !isEOF() {
-            guard case .identifier(let cName, let itemLoc) = currentToken else { break itemLoop }
+        entryLoop: while !isEOF() {
+            guard case .identifier(let name, let itemLoc) = currentToken else { break entryLoop }
+            var target = ExportTarget.pini
             switch peek() {
             case .assign(_):
                 advance()
                 advance()
-                guard case .identifier(let pinName, _) = currentToken else {
+            case .pipe(_):
+                /// `名|目标 = 符号` 才是条目；`main|func(...)` 这类下一顶级声明在这里闭合。
+                guard case .assign(_) = peek(offset: 3) else { break entryLoop }
+                advance()
+                advance()
+                guard case .identifier(let targetName, _) = currentToken else {
                     throw ParserError.invalidDeclaration(
-                        reason: "C 导出函数项须为 `C名 = Pini函数名`：`\(cName)`", location: currentLocation)
+                        reason: "`\(name)|` 后要写目标：`c` 或 `pini`", location: currentLocation)
+                }
+                guard let parsed = ExportTarget(name: targetName) else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`|\(targetName)` 不是可用的导出目标；目标只能写 `pini` 或 `c`",
+                        location: currentLocation)
+                }
+                target = parsed
+                advance()
+                guard case .assign(_) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`\(name)|\(targetName)` 后须写 `= 原符号`", location: currentLocation)
                 }
                 advance()
-                items.append(.function(cName: cName, pinName: pinName, location: itemLoc))
             case .colon(_):
-                advance()
-                advance()
-                guard case .identifier(let typeName, _) = currentToken else {
-                    throw ParserError.invalidDeclaration(
-                        reason: "C 导出的量项须为 `C名: 给定块类型名`：`\(cName)`", location: currentLocation)
-                }
-                advance()
-                items.append(.storage(cName: cName, typeName: typeName, location: itemLoc))
+                throw ParserError.invalidDeclaration(
+                    reason: "export 条目一律写 `名|目标 = 原符号`；冒号在导入块与字段里表示类型",
+                    location: currentLocation)
             default:
-                break itemLoop
+                break entryLoop
             }
+            guard case .identifier(let symbol, _) = currentToken else {
+                throw ParserError.invalidDeclaration(
+                    reason: "export 项的右端须是本模块的符号名：`\(name)`", location: currentLocation)
+            }
+            advance()
+            entries.append(
+                ExportEntry(name: name, target: target, symbol: symbol, location: itemLoc))
             skipNewlines()
         }
-        guard !items.isEmpty else {
+        guard !entries.isEmpty else {
             throw ParserError.invalidDeclaration(
-                reason: "C 导出块至少需要一项 `C名 = Pini名` 或 `C名: 类型名`", location: location)
+                reason: "export 块至少需要一项 `名 = 原符号` 或 `名|目标 = 原符号`", location: location)
         }
-        return ExportCDecl(name: name, items: items, location: location)
+        return ExportDecl(name: headerName, entries: entries, location: location)
     }
 
     private func parseBracketDecl() throws -> TopLevelDecl {
@@ -550,10 +550,15 @@ public class Parser {
                 _ = try expect(.rightBracket(loc))
                 return .exportDecl(try parseExportBlock(headerName: name, location: loc))
             } else if case .identifier("c", _) = currentToken {
-                /// `[库|c]` 块——C 导出面。`c` 不入关键字表，与 `given` / `foreign` 同走标识符白名单路径。
-                advance()
-                _ = try expect(.rightBracket(loc))
-                return .exportCDecl(try parseExportCBlock(name: name, location: loc))
+                /// `|c` 不是块标记：C 面写在 export 条目上，块级只给迁移提示。
+                throw ParserError.invalidDeclaration(
+                    reason: "`|c` 不是块标记；C 导出写在 export 条目上：`calc_add|c = 加法`",
+                    location: loc)
+            } else if case .identifier("extern", _) = currentToken {
+                /// `|extern` 不是块标记：对外发布统一写在 `|export` 的条目上。
+                throw ParserError.invalidDeclaration(
+                    reason: "`|extern` 已并入 `|export`：写 `[文件名|export]`，条目 `对外名|c = 本模块符号`",
+                    location: loc)
             } else {
                 throw ParserError.invalidDeclaration(reason: "无效的方括号声明修饰符", location: loc)
             }

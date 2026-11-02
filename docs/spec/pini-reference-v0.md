@@ -853,7 +853,7 @@ x: I32 = 0
 | `<<名称>>` | 特征扩展块 |
 | `名称\|func(...)` | 裸函数 |
 | `[名称\|import]` | 导入块 |
-| `[名称\|export]` | 导出块 |
+| `[名称\|export]` | 发布块（C 面与模块面） |
 | `[名称\|foreign]` | 外部函数块 |
 
 ### 4.2 导入与导出 `[Provisional]`
@@ -876,13 +876,16 @@ _隐式 = "模块路径"
 
 ```
 [文件名|export]
-公开名 = 原符号
-_私有名 = 原符号
+公开名 = 原符号          ; 目标 pini（缺省）
+公开名|pini = 原符号     ; 同上，显式写法
+对外名|c = 原符号        ; 目标 c
 ```
 
-- 块头名 = 当前文件名
-- `公开名 = 原符号`：提升私有符号为公开
-- `_私有名 = 原符号`：抑制导出
+- 块头名 = 当前文件名；C 产物与生命周期符号取文件名。
+- 省略目标等价于 `|pini`；`|c` 落地为 C 符号，语言写在条目上。
+- `|pini`：`公开名 = 原符号` 提升私有符号为公开，`_私有名 = 原符号` 抑制导出。
+- `|c`：右端须是自由函数或给定块，类型由定义派生；详见 §9.7。
+- 每个文件至多一个 export 块；每个模块至多一个文件带 `|c` 条目。
 
 #### 依赖规则
 
@@ -2845,23 +2848,25 @@ _容量: I64 = 0
 | `errno` / 线程局部访问 | 不支持 |
 | 非 C 的 ABI | 不支持 |
 
-### 9.7 C 导出块 `[Experimental]`
+### 9.7 对外发布：export 块的 `|c` 条目 `[Experimental]`
 
 **声明**：
 
 ```
-[calc|c]
-calc_add = 加法
-calc_state: 计数器状态
+; calc.pini
+[calc|export]
+calc_add|c = 加法
+calc_state|c = 计数器状态
 ```
 
 **语义**：
 
-- 等号右端是本模块的自由函数，发布成一个 C 函数；冒号右端是给定块，发布成结构体加取址函数。
-- 键是 C 符号名，类型由被引用的定义派生，块内不重写签名。
-- 块名命名产物与三个生命周期符号（`calc_init` / `calc_shutdown`），不参与条目符号名。
-- 模块内至多一块；方法、泛型、异步、`|test`、`main` 不进导出面。
-- 键与字段名过 `CName.escape`：ASCII 原样，其余写成 `_u` 加 6 位大写十六进制。
+- `|c` 条目的左端是 C 符号名，右端是本模块的自由函数或给定块，种类由被引用的声明决定。
+- 函数发布成一个 C 函数；给定块发布成结构体视图加取址函数。类型由定义派生，块内不重写签名。
+- 块头必须等于文件名，产物与两个生命周期符号（`calc_init` / `calc_shutdown`）据此命名。
+- 一个模块至多一个文件带 `|c` 条目；方法、泛型、异步、`|test`、`main` 不进 C 面。
+- `|c` 名字、字段名与文件名过 `CName.escape`：ASCII 原样，其余写成 `_u` 加 6 位大写十六进制；文件名转写后须以字母或下划线开头。
+- 同一个块里的 `|pini` 条目只走模块可见性，不进 C 面。
 
 **可导出的类型**：
 
@@ -2878,11 +2883,11 @@ calc_state: 计数器状态
 **发射物**：
 
 ```
-pini emit <模块内文件> calc.h --backend c        ; 头文件
-pini build --shared <模块内文件或模块目录>        ; 动态库 libcalc.{dylib,so}，落在当前目录
+pini emit calc.pini calc.h --backend c        ; 头文件
+pini build --shared calc.pini                 ; 动态库 libcalc.{dylib,so}，落在当前目录
 ```
 
-`build --shared` 不要求模块有 `main`：库没有进程入口。产物名取自块名，`-o` 可改落点；运行时动态链接 `libPiniRuntime`，其目录写进 rpath。头文件由 `emit --backend c` 出，带导出块的模块同样不必写 `main`。
+`build --shared` 不要求模块有 `main`：库没有进程入口。产物名取自文件名，`-o` 可改落点；运行时动态链接 `libPiniRuntime`，其目录写进 rpath。头文件由 `emit --backend c` 出，带 `|c` 条目的模块同样不必写 `main`。
 
 `calc_init` 把每个导出的给定块物化一遍，C 侧不必等 Pini 先取用。给定块的字段区由 C 直接读写；Pini 侧经 `using` 拿到的是副本，所以 C 写入对 Pini 的下一次取用可见，Pini 侧写字段则不回写。
 
@@ -2893,7 +2898,7 @@ pini build --shared <模块内文件或模块目录>        ; 动态库 libcalc.
 | 错误消息不跨边界 | `^T` 只交状态码，`calc_last_error` 未发 |
 | 不生成 C 实现 | 只出头文件，实现是 LLVM 产物 |
 | 布局即 ABI | 字段顺序与类型一改就是破坏性变更，头文件的 `_Static_assert` 在 C 编译期拦下 |
-| 边界不校验 | C 直写字段可以造出 Pini 认为不可能的状态，导出块只放配置 |
+| 边界不校验 | C 直写字段可以造出 Pini 认为不可能的状态，C 面只放配置 |
 
 ---
 
@@ -4001,13 +4006,12 @@ module          ::= { NEWLINE } { top-level-decl NEWLINE } EOF;
 
 top-level-decl  ::= import-decl | export-decl
                   | struct-decl | object-decl | object-decl-sugar | enum-decl | given-decl
-                  | bare-func-decl | trait-decl | extension-decl | foreign-decl | export-c-decl;
+                  | bare-func-decl | trait-decl | extension-decl | foreign-decl;
 
 import-decl     ::= '[' IDENT '|' 'import' ']' NEWLINE { import-item };
 
 export-decl     ::= '[' IDENT '|' 'export' ']' NEWLINE { export-item };
-export-item     ::= IDENT '=' IDENT
-                  | IDENT ':' type-annotation;
+export-item     ::= IDENT [ '|' ('c' | 'pini') ] '=' IDENT;
 ```
 
 #### 类型声明
@@ -4048,10 +4052,6 @@ enum-case       ::= IDENT ['(' type-annotation {',' type-annotation} [','] ')'];
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
 foreign-symbol  ::= IDENT { '|' IDENT } ':' type-annotation;
-
-export-c-decl   ::= '[' IDENT '|' 'c' ']' export-c-body;
-export-c-body   ::= { export-c-item };
-export-c-item   ::= IDENT '=' IDENT | IDENT ':' IDENT;
 ```
 
 #### 函数声明

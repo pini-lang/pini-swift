@@ -232,8 +232,8 @@ public struct IRExportStorage: Equatable {
     }
 }
 
-/// 一个 C 导出块：函数转发项、给定块取址项，以及两个生成的生命周期符号。
-/// 块名只命名产物与这两个符号，不参与条目符号名。
+/// export 块 `|c` 条目的落地形态：函数转发项、给定块取址项，以及两个生成的生命周期符号。
+/// 名字取文件名，产物与这两个符号据此命名，不参与条目符号名。
 public struct IRExportBlock: Equatable {
     public let name: String
     public let functions: [IRExportFunction]
@@ -262,7 +262,7 @@ public struct IRModule: Equatable {
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [IRForeignBlock]
 
-    /// C 导出面：至多一块，条目名字已转成 C 标识符。
+    /// C 面：至多一块，条目名字已转成 C 标识符。
     public let export: IRExportBlock?
 
     /// 布局事实：名义头、字段与载荷各在第几槽。后端只读不算 —— 契约第 5 节「布局归位」。

@@ -17,27 +17,47 @@ public struct ImportDecl: Equatable, ASTNode, Sendable {
     }
 }
 
-/// `export` 块中的重命名导出项：`可见别名 = 原符号`。
-public struct ExportRename: Equatable, ASTNode, Sendable {
-    public let alias: String
+/// 条目目标：`pini` 走模块可见性，`c` 走 C 发布面；省略目标即 `pini`。
+public enum ExportTarget: Equatable, Sendable {
+    case pini
+    case c
+
+    /// 目标标识符的两种写法；其余值返回 nil，由解析器给迁移消息。
+    public init?(name: String) {
+        switch name {
+        case "pini": self = .pini
+        case "c": self = .c
+        default: return nil
+        }
+    }
+}
+
+/// `export` 块的一条：`名|目标 = 原符号`。目标决定左名进哪个命名空间：
+/// `|c` 是 C 符号名，`|pini` 是可见性别名；省略 `|目标` 等价于 `|pini`。
+public struct ExportEntry: Equatable, ASTNode, Sendable {
+    public let name: String
+    public let target: ExportTarget
     public let symbol: String
     public let location: SourceLocation
 
-    public init(alias: String, symbol: String, location: SourceLocation) {
-        self.alias = alias
+    public init(name: String, target: ExportTarget, symbol: String, location: SourceLocation) {
+        self.name = name
+        self.target = target
         self.symbol = symbol
         self.location = location
     }
 }
 
-/// `export` 块声明：显式导出表，用可见别名覆盖默认的可见性推导规则，是可见性规则的逃生舱。
-/// 绑定表随 AST 携带；跨模块导出的语义 enforce 不在解析层，由可见性定稿表决定。
+/// `export` 块声明：本文件对外发布什么。块头 = 文件名，C 产物与生命周期符号据此命名。
+/// `|pini` 条目是可见性逃生舱，`|c` 条目落成 C 符号；两条通道互不影响。
 public struct ExportDecl: Equatable, ASTNode, Sendable {
-    public let renames: [ExportRename]
+    public let name: String
+    public let entries: [ExportEntry]
     public let location: SourceLocation
 
-    public init(renames: [ExportRename], location: SourceLocation) {
-        self.renames = renames
+    public init(name: String, entries: [ExportEntry], location: SourceLocation) {
+        self.name = name
+        self.entries = entries
         self.location = location
     }
 }

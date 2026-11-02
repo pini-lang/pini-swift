@@ -6,7 +6,7 @@ import PiniSyntax
 @testable import PiniIR
 @testable import PiniBackends
 
-/// C 导出面的判据：块解析、名字转写、语义闸门与头文件产物。
+/// export 块 `|c` 条目的判据：目标解析、名字转写、语义闸门与头文件产物。
 /// 端到端（`cc caller.c -lcalc`）另由命令行探针取证，这里只钉住降载与文本两层的形状。
 struct CInteropExportTests: Sendable, PiniSourceLowering {
 
@@ -24,11 +24,11 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         累加(using 状态: 计数器状态, n: I32,) -> (I32,):
             return 状态.count + n
 
-        [calc|c]
-        calc_add = 加法
-        calc_div = 除法
-        calc_add_with = 累加
-        calc_state: 计数器状态
+        [calc|export]
+        calc_add|c = 加法
+        calc_div|c = 除法
+        calc_add_with|c = 累加
+        calc_state|c = 计数器状态
 
         main|func() -> (I32,):
             return 0
@@ -36,33 +36,112 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
 
     // MARK: - 语法
 
-    @Test("C 导出块收两类条目")
-    func testExportBlockParsesBothItemShapes() throws {
-        let (module, _) = try typeChecked(source)
-        guard case .exportCDecl(let block) = module.declarations.first(where: {
-            if case .exportCDecl = $0 { return true }
-            return false
-        }) else {
-            Issue.record("应有 C 导出块"); return
-        }
+    @Test("export 块收带目标的条目，块头即文件名")
+    func testExportBlockParsesEntries() throws {
+        let (module, _) = try typeChecked(source, fileName: "calc.pini")
+        let block = try #require(module.exports.first)
         #expect(block.name == "calc")
-        #expect(block.items.count == 4)
-        guard case .function(let cName, let pinName, _) = block.items.first else {
-            Issue.record("首项应为函数项"); return
-        }
-        #expect(cName == "calc_add")
-        #expect(pinName == "加法")
-        guard case .storage(let storageName, let typeName, _) = block.items.last else {
-            Issue.record("末项应为量项"); return
-        }
-        #expect(storageName == "calc_state")
-        #expect(typeName == "计数器状态")
+        #expect(block.entries.count == 4)
+        #expect(block.entries.first?.name == "calc_add")
+        #expect(block.entries.first?.target == .c)
+        #expect(block.entries.first?.symbol == "加法")
+        #expect(block.entries.last?.name == "calc_state")
+        #expect(block.entries.last?.symbol == "计数器状态")
     }
 
-    @Test("空导出块被拒")
-    func testEmptyExportBlockIsRejected() {
-        let failed = failure { _ = try typeChecked("[calc|c]\n\nmain|func() -> (I32,):\n    return 0\n") }
-        #expect(failed != nil, "空块应报错")
+    @Test("省略目标与显式 |pini 等价")
+    func testDefaultTargetEqualsExplicitPini() throws {
+        let plain = """
+            f() -> (I32,):
+                return 1
+
+            [calc|export]
+            公开 = f
+
+            main|func() -> (I32,):
+                return 0
+            """
+        let explicit = plain.replacingOccurrences(of: "公开 = f", with: "公开|pini = f")
+        let (left, _) = try typeChecked(plain, fileName: "calc.pini")
+        let (right, _) = try typeChecked(explicit, fileName: "calc.pini")
+        let leftEntry = try #require(left.exports.first?.entries.first)
+        let rightEntry = try #require(right.exports.first?.entries.first)
+        #expect(leftEntry.name == rightEntry.name)
+        #expect(leftEntry.target == .pini)
+        #expect(leftEntry.target == rightEntry.target)
+        #expect(leftEntry.symbol == rightEntry.symbol)
+    }
+
+    @Test("空块与冒号条目被拒")
+    func testEmptyBlockAndColonEntryAreRejected() {
+        let empty = failure {
+            _ = try typeChecked(
+                "[calc|export]\n\nmain|func() -> (I32,):\n    return 0\n", fileName: "calc.pini")
+        }
+        #expect(empty != nil, "空块应报错")
+        let colon = failure {
+            _ = try typeChecked(
+                "[calc|export]\ncalc_state: 计数器状态\n\nmain|func() -> (I32,):\n    return 0\n",
+                fileName: "calc.pini")
+        }
+        #expect(colon?.message.contains("冒号") == true, "实际：\(String(describing: colon))")
+    }
+
+    @Test("旧块标记给迁移消息")
+    func testOldBlockMarkersAreRejected() {
+        let oldC = failure {
+            _ = try typeChecked(
+                "[calc|c]\ncalc_add = f\n\nmain|func() -> (I32,):\n    return 0\n", fileName: "calc.pini")
+        }
+        #expect(oldC?.message.contains("不是块标记") == true, "实际：\(String(describing: oldC))")
+        let oldExtern = failure {
+            _ = try typeChecked(
+                "[calc|extern]\ncalc_add = f\n\nmain|func() -> (I32,):\n    return 0\n",
+                fileName: "calc.pini")
+        }
+        #expect(oldExtern?.message.contains("已并入") == true, "实际：\(String(describing: oldExtern))")
+    }
+
+    @Test("未知目标被拒并列出可用值")
+    func testUnknownTargetIsRejected() {
+        let failed = failure {
+            _ = try typeChecked(
+                "[calc|export]\ncalc_add|rust = f\n\nmain|func() -> (I32,):\n    return 0\n",
+                fileName: "calc.pini")
+        }
+        #expect(failed?.message.contains("`pini` 或 `c`") == true, "实际：\(String(describing: failed))")
+    }
+
+    @Test("同文件第二个 export 块被拒")
+    func testSecondExportBlockIsRejected() {
+        let failed = failure {
+            _ = try typeChecked(
+                """
+                f() -> (I32,):
+                    return 1
+                [calc|export]
+                calc_a|c = f
+
+                [calc|export]
+                calc_b|c = f
+
+                main|func() -> (I32,):
+                    return 0
+                """,
+                fileName: "calc.pini")
+        }
+        #expect(failed?.message.contains("最多一个 export 块") == true, "实际：\(String(describing: failed))")
+    }
+
+    @Test("块头与文件名不符被拒，消息指向产物名")
+    func testBlockHeaderMustMatchFileName() {
+        let failed = failure {
+            _ = try typeChecked(
+                "[calc|export]\ncalc_add|c = f\n\nmain|func() -> (I32,):\n    return 0\n",
+                fileName: "surface.pini")
+        }
+        #expect(failed?.message.contains("当前文件名") == true, "实际：\(String(describing: failed))")
+        #expect(failed?.message.contains("C 产物名") == true, "实际：\(String(describing: failed))")
     }
 
     // MARK: - 名字转写
@@ -84,34 +163,68 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         #expect(!CName.isReserved("x_y"))
     }
 
-    // MARK: - 语义闸门
-
-    @Test("未声明的函数与量被拒")
-    func testUnknownTargetsAreRejected() {
-        let unknownFunction = failure {
-            _ = try typeChecked("[calc|c]\ncalc_ghost = 没有这个函数\n\nmain|func() -> (I32,):\n    return 0\n")
+    @Test("转写在允许域内单射：不同名字不会撞成同一个对外名")
+    func testEscapeIsInjectiveOnAllowedDomain() {
+        // 允许域 = 不含字面转义形状、转写后不落保留区。单射若只靠禁令而没有判据，
+        // 哪天转义表改了宽度或前缀，撞名会以「两个 C 符号同名」的形态出现在链接期。
+        let alphabet = ["a", "Z", "0", "_", "点", "算", "é", "β"]
+        var samples = [""]
+        var frontier = [""]
+        for _ in 0..<3 {
+            var next: [String] = []
+            for prefix in frontier {
+                for character in alphabet { next.append(prefix + character) }
+            }
+            samples.append(contentsOf: next)
+            frontier = next
         }
-        #expect(unknownFunction?.message.contains("不是本模块的自由函数") == true)
-        let unknownStorage = failure {
-            _ = try typeChecked("[calc|c]\ncalc_ghost: 没有这个块\n\nmain|func() -> (I32,):\n    return 0\n")
+        var owners: [String: String] = [:]
+        for name in samples where !CName.collidesWithEscape(name) && !CName.isReserved(CName.escape(name)) {
+            let escaped = CName.escape(name)
+            if let first = owners[escaped] {
+                Issue.record("`\(first)` 与 `\(name)` 都转写成 `\(escaped)`")
+            }
+            owners[escaped] = name
         }
-        #expect(unknownStorage?.message.contains("导出的量只能取给定块") == true)
+        #expect(owners.count > 500, "样本太少（\(owners.count)），这条判据没压到东西")
     }
 
-    @Test("C 名重复被拒")
+    // MARK: - 语义闸门
+
+    @Test("目标不在册被拒：C 面只收自由函数与给定块")
+    func testUnknownTargetsAreRejected() {
+        let unknown = failure {
+            _ = try typeChecked(
+                "[calc|export]\ncalc_ghost|c = 没有这个函数\n\nmain|func() -> (I32,):\n    return 0\n",
+                fileName: "calc.pini")
+        }
+        #expect(unknown?.message.contains("不能发布") == true, "实际：\(String(describing: unknown))")
+    }
+
+    @Test("pini 条目不进 C 面判据")
+    func testPiniEntriesSkipCValidation() {
+        #expect(throws: Never.self) {
+            _ = try typeChecked(
+                "[calc|export]\n公开 = 没有这个符号\n\nmain|func() -> (I32,):\n    return 0\n",
+                fileName: "calc.pini")
+        }
+    }
+
+    @Test("对外名重复被拒")
     func testDuplicateMachineNamesAreRejected() {
         let failed = failure {
             _ = try typeChecked(
                 """
                 f() -> (I32,):
                     return 1
-                [calc|c]
-                calc_a = f
-                calc_a = f
+                [calc|export]
+                calc_a|c = f
+                calc_a|c = f
 
                 main|func() -> (I32,):
                     return 0
-                """)
+                """,
+                fileName: "calc.pini")
         }
         #expect(failed?.message.contains("转写后同为 C 名") == true)
     }
@@ -123,12 +236,13 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
                 """
                 f() -> (I32,):
                     return 1
-                [calc|c]
-                calc_init = f
+                [calc|export]
+                calc_init|c = f
 
                 main|func() -> (I32,):
                     return 0
-                """)
+                """,
+                fileName: "calc.pini")
         }
         #expect(failed?.message.contains("生命周期符号") == true)
     }
@@ -140,12 +254,13 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
                 """
                 f(s: String,) -> (I32,):
                     return 1
-                [calc|c]
-                calc_f = f
+                [calc|export]
+                calc_f|c = f
 
                 main|func() -> (I32,):
                     return 0
-                """)
+                """,
+                fileName: "calc.pini")
         }
         #expect(failed?.message.contains("不是 C 兼容标量") == true)
     }
@@ -154,10 +269,11 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
 
     @Test("取用位不进 C 原型，Result 走状态码")
     func testLoweredExportBlockShape() throws {
-        let module = try lowered(source)
+        let module = try lowered(source, fileName: "calc.pini")
         guard let export = module.export else {
-            Issue.record("IR 应携带导出块"); return
+            Issue.record("IR 应携带 C 面"); return
         }
+        #expect(export.name == "calc")
         #expect(export.functions.count == 3)
         let addWith = try #require(export.functions.first { $0.cName == "calc_add_with" })
         #expect(addWith.cParamTypes.count == 1, "取用位不进 C 原型")
@@ -172,7 +288,7 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
 
     @Test("头文件含结构体、原型与布局断言")
     func testHeaderContainsStructPrototypesAndAssertions() throws {
-        let module = try lowered(source)
+        let module = try lowered(source, fileName: "calc.pini")
         let header = try CHeaderBackend().emit(module: module)
         #expect(header.contains("typedef struct calc_state_s {"))
         #expect(header.contains("} calc_state_t;"))
@@ -185,9 +301,9 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         #expect(header.contains("void calc_init(void);"))
     }
 
-    @Test("没有导出块时头文件报错，不出空文件")
-    func testHeaderBackendRejectsModuleWithoutExportBlock() throws {
-        let module = try lowered("main|func() -> (I32,):\n    return 0\n")
+    @Test("没有 |c 条目时头文件报错，不出空文件")
+    func testHeaderBackendRejectsModuleWithoutCSurface() throws {
+        let module = try lowered("main|func() -> (I32,):\n    return 0\n", fileName: "plain.pini")
         #expect(throws: CHeaderError.self) {
             _ = try CHeaderBackend().emit(module: module)
         }

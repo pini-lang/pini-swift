@@ -581,10 +581,11 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
         // 块形式 import 的 dump 形态：`import 别名 = 路径`，一行一条。
         return "\(indent)import \(importDecl.alias) = \(importDecl.packagePath)"
     case .exportDecl(let exportDecl):
-        // 块形式 export 的 dump 形态：每个重命名项一行。
+        // dump 形态：`export 名|c = 原符号`；pini 目标省略标签，与源码默认一致。
         var out = ""
-        for r in exportDecl.renames {
-            out += "\(indent)export \(r.alias) = \(r.symbol)\n"
+        for entry in exportDecl.entries {
+            let target = entry.target == .c ? "|c" : ""
+            out += "\(indent)export \(entry.name)\(target) = \(entry.symbol)\n"
         }
         return out.hasSuffix("\n") ? String(out.dropLast()) : out
     case .extensionDecl(let ext):
@@ -598,17 +599,6 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
         for symbol in fd.symbols {
             let flags = symbol.flags.map { "|" + $0 }.joined()
             result += "\(indent) \(symbol.name)\(flags): \(symbol.annotation.describe())\n"
-        }
-        return String(result.dropLast())
-    case .exportCDecl(let block):
-        var result = "\(indent)c \(block.name):\n"
-        for item in block.items {
-            switch item {
-            case .function(let cName, let pinName, _):
-                result += "\(indent) \(cName) = \(pinName)\n"
-            case .storage(let cName, let typeName, _):
-                result += "\(indent) \(cName): \(typeName)\n"
-            }
         }
         return String(result.dropLast())
     }
@@ -641,7 +631,7 @@ func printHelp() {
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Type check (alias of check) a file or directory/module")
-    print(" build --shared <path> [-o out] Link the [name|c] export block into lib<name>.{dylib,so}")
+    print(" build --shared <path> [-o out] Link the export block's |c entries into lib<file>.{dylib,so}")
     print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
     print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
@@ -1697,24 +1687,31 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
 }
 
 /// 入口要求的三种口径：`main` 只有「要落地成进程」时才必需，库模块没有它是常态。
-/// 判「是不是库」只看有没有 `[名|c]` 导出块 —— 那是模块对外发布的唯一声明。
+/// 判「是不是库」只看 export 块里有没有 `|c` 条目 —— 那是模块对外发布 C 面的唯一声明。
 private enum EntryPolicy {
     /// 可执行程序：`compile` 与 `run-llvm` 都要跑起来，缺 `main` 就到不了。
     case required
-    /// 发布面：带导出块时放行，其余模块照旧要求入口，免得漏写 `main` 的程序安静出产物。
+    /// 发布面：带 `|c` 条目时放行，其余模块照旧要求入口，免得漏写 `main` 的程序安静出产物。
     case waivedForLibrary
     /// 共享库：产物是库，与模块内容无关。
     case notRequired
 
-    func requiresMain(declarations: [TopLevelDecl]) -> Bool {
+    func requiresMain(hasCSurface: Bool) -> Bool {
         switch self {
         case .required:
             return true
         case .waivedForLibrary:
-            return !declarations.contains { if case .exportCDecl = $0 { return true } else { return false } }
+            return !hasCSurface
         case .notRequired:
             return false
         }
+    }
+}
+
+/// 模块里有没有 `|c` 条目：这是「算不算 C 库」的唯一判据，单文件与包共用。
+private func hasCSurface(_ exports: [ExportDecl]) -> Bool {
+    exports.contains { block in
+        block.entries.contains { $0.target == .c }
     }
 }
 
@@ -1751,7 +1748,7 @@ private func lowerSingleFile(
         module: module, typeInference: checker.typeInference,
         foreignConstants: try evaluateForeignMacros(
             symbols: foreignSymbols(in: module), config: .default),
-        requiresMain: policy.requiresMain(declarations: module.declarations))
+        requiresMain: policy.requiresMain(hasCSurface: hasCSurface(module.exports)))
     /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
     return irModule
@@ -1770,7 +1767,7 @@ private func typeCheckThenGenerate(
 func runEmitCommand(
     source: String, fileName: String, outputPath: String?, backend: any PiniBackend = IREmitter()
 ) throws {
-    // 发布面两种模块都收：程序有 `main`，库有导出块，各自都是完整声明，故按内容判入口。
+    // 发布面两种模块都收：程序有 `main`，库有 `|c` 条目，各自都是完整声明，故按内容判入口。
     let ir = try typeCheckThenGenerate(
         source: source, fileName: fileName, policy: .waivedForLibrary, backend: backend)
 
@@ -1830,7 +1827,7 @@ private func lowerPackage(
             symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
             config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default),
         requiresMain: policy.requiresMain(
-            declarations: package.fileUnits.flatMap { $0.module.declarations }))
+            hasCSurface: package.fileUnits.contains { hasCSurface($0.module.exports) }))
     try IRValidator.check(irModule)
     return irModule
 }
@@ -1914,20 +1911,20 @@ func childExitStatus(of process: Process) -> Int32 {
 
 // MARK: - 共享库产物
 
-/// `build --shared` 的失败面：路径、导出块、工具链与链接器各一类，消息直接指向下一步动作。
+/// `build --shared` 的失败面：路径、C 面、工具链与链接器各一类，消息直接指向下一步动作。
 struct SharedBuildError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
 }
 
 /// `build --shared` 一条命令出库：降载 → 发 IR → clang 链成动态库。库没有进程入口，故不要求 `main`。
-/// 产物名取自 `[名|c]` 的块名（已转写成 C 标识符），调用方按同一个名字写 `-l`。
+/// 产物名取自 export 块的文件名（已转写成 C 标识符），调用方按同一个名字写 `-l`。
 func runBuildShared(path: String, outputPath: String?) {
     do {
         let (irModule, programBase) = try lowerForShared(path: path)
         guard let export = irModule.export else {
             throw SharedBuildError(
-                message: "模块没有 `[名|c]` 导出块 —— 对外符号与产物名都由它决定，不能从文件名猜")
+                message: "模块没有带 `|c` 条目的 export 块 —— C 符号由条目决定，产物名取文件名")
         }
         let emitter = IREmitter()
         emitter.setProgramBase(programBase)
@@ -1952,7 +1949,7 @@ func runBuildShared(path: String, outputPath: String?) {
 }
 
 /// 共享库的降载入口：单文件、模块内文件、含 `pini.toml` 的目录三条路都收。
-/// 目录没有清单时拒绝 —— 散放的多份文件各是独立程序，拼不出一个导出面。
+/// 目录没有清单时拒绝 —— 散放的多份文件各是独立程序，拼不出一个 C 面。
 private func lowerForShared(path: String) throws -> (module: IRModule, programBase: String) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -2219,6 +2216,9 @@ case "build":
             }
             outputPath = args[cursor + 1]
             cursor += 2
+        case "--extern":
+            printError("Error: --extern 已取消：语言写在 export 条目上，如 `calc_add|c = 加法`")
+            exit(1)
         default:
             guard !args[cursor].hasPrefix("-") else {
                 printError("Error: \(args[cursor])")
