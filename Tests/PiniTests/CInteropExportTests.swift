@@ -282,6 +282,68 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         #expect(failed?.message.contains("不是 C 兼容标量") == true)
     }
 
+    @Test("指针目标必须是 C 标量")
+    func testPointerTargetMustBeAScalar() {
+        let failed = failure {
+            _ = try typeChecked(
+                """
+                [状态|given]
+                    n: I32 = 0
+
+                f(p: *状态,) -> (I32,):
+                    return 0
+                [calc|export]
+                calc_f|c = f
+
+                main|func() -> (I32,):
+                    return 0
+                """,
+                fileName: "calc.pini")
+        }
+        #expect(failed?.message.contains("指针目标") == true)
+        #expect(failed?.message.contains("void*") == true, "诊断要说明为什么不能过")
+    }
+
+    @Test("给定块的指针字段同样按指针目标判")
+    func testPointerFieldTargetMustBeAScalar() {
+        let failed = failure {
+            _ = try typeChecked(
+                """
+                [甲|given]
+                    n: I32 = 0
+
+                [乙|given]
+                    p: *甲 = nil
+
+                [calc|export]
+                calc_b|c = 乙
+
+                main|func() -> (I32,):
+                    return 0
+                """,
+                fileName: "calc.pini")
+        }
+        #expect(failed?.message.contains("指针目标") == true)
+    }
+
+    @Test("标量指针过检查，头文件写成具体指针")
+    func testScalarPointerReachesTheHeader() throws {
+        let module = try lowered(
+            """
+            f(p: *U8,) -> (I32,):
+                return 0
+
+            [calc|export]
+            calc_f|c = f
+
+            main|func() -> (I32,):
+                return 0
+            """,
+            fileName: "calc.pini")
+        let header = try CHeaderBackend().emit(module: module)
+        #expect(header.contains("int32_t calc_f(uint8_t*);"))
+    }
+
     // MARK: - 降载
 
     @Test("取用位不进 C 原型，Result 走状态码")

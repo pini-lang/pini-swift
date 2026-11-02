@@ -569,12 +569,12 @@ public final class TypeChecker {
         case .simple(let name, _):
             return Self.cExportScalars.contains(name) ? nil : "`\(name)` 不是 C 兼容标量"
         case .pointer(let element, _):
-            if case .simple(let name, _) = element,
-                Self.cExportScalars.contains(name) || exportCGivenBlocks[name] != nil
-            {
+            /// 指针目标必须是 C 标量。给定块之类的目标在头文件里只能退化成 `void*`，而 IR 也搬不动
+            /// 它（形参解析不出标量类型）—— 放行只会把失败从检查期推到发射期。
+            if case .simple(let name, _) = element, Self.cExportScalars.contains(name) {
                 return nil
             }
-            return "指针元素 `\(element.describe())` 不可导出（只收 C 标量与给定块）"
+            return "指针目标 `\(element.describe())` 不是 C 标量；非标量目标在 C 侧只能写成 `void*`"
         case .generic(let name, let params, _) where name == "Result" && params.count == 1:
             guard allowResult else { return "`^T` 只能作返回类型" }
             guard let payload = params.first else { return "`^T` 缺载荷类型" }
