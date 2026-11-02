@@ -26,6 +26,10 @@ suggestion = "rename the alias, or ignore if intentional (advisory only)"
 message = "given block materialization cycle: {path}"
 suggestion = "materializing it requires itself, so `pini run` will crash; break the field initializer's dependency on itself"
 
+[E7-004]
+message = "type '{typeName}' declares no error code; {code} was assigned automatically"
+suggestion = "that code is not stable across versions; write `码() -> (I32,)` in an extension block to pin it"
+
 [E2-001]
 message = "expected {expected}, got {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（无法提取参数名），走英文硬编码兜底。

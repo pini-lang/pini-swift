@@ -1833,12 +1833,13 @@ public func bk_cancel_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
     _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: true, code: 2)
 }
 
-/// `err(枚举值)` —— 载荷是枚举：码 = 类型基址或上用例 tag，消息用类型名。
-/// 枚举布局是 `{ i32, i32, i32, ptr, i32 }`：前三格箱头、第四格旁表指针、第五格是 tag，
-/// 故 tag 落在偏移 24。布局若调整，这里与 `IREmitter` 的枚举声明必须一起改。
+/// `err(枚举值)` —— 载荷是枚举：码 = 类型基址或上用例 tag，消息用类型名。枚举布局
+/// `{ i32, i32, i32, ptr, i32 }`：tag 在偏移 24，布局调整时这里与 `IREmitter` 一起改。
+/// `codes` 非 nil 时按 tag 查它（稳定码类型）：表由编译器按用例声明序生成，长度即用例数。
 @_cdecl("bk_error_from_enum")
 public func bk_error_from_enum(
-    _ payload: Int64, _ base: Int32, _ name: UnsafePointer<CChar>?
+    _ payload: Int64, _ base: Int32, _ name: UnsafePointer<CChar>?,
+    _ codes: UnsafePointer<Int32>?
 ) -> Int64 {
     let text = name.map { String(cString: $0) } ?? ""
     guard payload != 0,
@@ -1846,7 +1847,14 @@ public func bk_error_from_enum(
             bitPattern: UInt(bitPattern: Int(truncatingIfNeeded: payload)))
     else { return _bkMakeError(text, isCancel: false, code: base) }
     let tag = pointer.load(fromByteOffset: 24, as: Int32.self)
-    return _bkMakeError(text, isCancel: false, code: base | tag)
+    let code = codes.map { $0[Int(tag)] } ?? (base | tag)
+    return _bkMakeError(text, isCancel: false, code: code)
+}
+
+/// `err(非枚举错误值)` —— 载体没有 tag 槽，码就是编译器给的基址。消息留空：类型名不进 ABI。
+@_cdecl("bk_error_with_code")
+public func bk_error_with_code(_ code: Int32) -> Int64 {
+    _bkMakeError("", isCancel: false, code: code)
 }
 
 /// 错误对象上的码：导出桩据它回填状态码。无载荷答 `0`。

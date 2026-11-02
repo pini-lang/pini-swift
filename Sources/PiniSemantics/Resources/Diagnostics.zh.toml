@@ -26,6 +26,10 @@ suggestion = "重命名别名；若有意为之可忽略（仅提醒，不强制
 message = "给定块物化环：{path}"
 suggestion = "物化时它会要求自己 ⇒ `pini run` 必崩；把字段初值改成不依赖自身"
 
+[E7-004]
+message = "类型 '{typeName}' 未指定错误码，已自动分配 {code}"
+suggestion = "该码不保证跨版本稳定；要固定它，在扩展块写 `码() -> (I32,)` 返回一个常量"
+
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。

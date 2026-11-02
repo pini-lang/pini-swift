@@ -110,6 +110,7 @@ public final class SemanticAnalyzer {
         for decl in module.declarations {
             try checkTopLevelDecl(decl)
         }
+        appendAutomaticErrorCodeWarnings(module)
         if let c = deferredInjectConflict { throw c }
     }
 
@@ -150,6 +151,23 @@ public final class SemanticAnalyzer {
                 try checkTopLevelDecl(decl)
             }
             if let c = deferredInjectConflict { throw c }
+        }
+        /// 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
+        /// 否则「导出函数在甲文件、错误类型在乙文件」的包永远不提醒。
+        appendAutomaticErrorCodeWarnings(
+            Module(
+                declarations: package.fileUnits.flatMap { $0.module.declarations },
+                exports: package.fileUnits.flatMap { $0.module.exports },
+                location: package.location))
+    }
+
+    /// 非 enum 错误类型的自动码：每条一条 E7-004，位置指向类型声明。
+    /// 码表分配在 `ErrorCodePlan`，与降载层共用；这里只负责把结果翻成诊断。
+    private func appendAutomaticErrorCodeWarnings(_ module: Module) {
+        for entry in ErrorCodePlan.build(module: module).automaticEntries {
+            warnings.append(
+                .automaticErrorCode(
+                    typeName: entry.typeName, code: entry.code, location: entry.location))
         }
     }
 
@@ -324,6 +342,7 @@ public final class SemanticAnalyzer {
             }
         }
 
+        appendAutomaticErrorCodeWarnings(module)
         return errors
     }
 

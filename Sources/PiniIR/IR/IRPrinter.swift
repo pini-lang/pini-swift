@@ -130,7 +130,7 @@ public enum IRPrinter {
             return "\(function)(\(args))"
         case .printCall(let argument):
             return "print(\(exprText(argument)))"
-        case .resultConstruct(let isOk, let payload, _, _):
+        case .resultConstruct(let isOk, let payload, _, _, _, _):
             return "\(isOk ? "ok" : "err")(\(exprText(payload)))"
         case .arrayLiteral(let elements, _):
             let items = elements.map(exprText).joined(separator: ", ")

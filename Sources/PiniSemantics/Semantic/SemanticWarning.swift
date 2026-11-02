@@ -10,6 +10,9 @@ public enum SemanticWarning: Error, Equatable {
     case implicitAliasNameMismatch(alias: String, targetName: String, location: SourceLocation)
     /// 给定块物化环：路径首尾同名（`甲块 → 乙块 → 甲块`）。环在物化时必然无限递归，警告只负责指出来。
     case givenCycle(path: [String], location: SourceLocation)
+    /// 非 enum 错误类型没有写 `码()`：编译器兜底分配了一个码。该码不承诺跨版本稳定，
+    /// 警告写明档位与固定办法——不静默是这条规则的全部意义。
+    case automaticErrorCode(typeName: String, code: Int32, location: SourceLocation)
 }
 
 extension SemanticWarning {
@@ -26,6 +29,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .unusedVariable: return "\(DiagnosticDomain.warning.rawValue)-001"
         case .implicitAliasNameMismatch: return "\(DiagnosticDomain.warning.rawValue)-002"
         case .givenCycle: return "\(DiagnosticDomain.warning.rawValue)-003"
+        case .automaticErrorCode: return "\(DiagnosticDomain.warning.rawValue)-004"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .warning }
@@ -35,6 +39,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .unusedVariable(_, let loc): return loc
         case .implicitAliasNameMismatch(_, _, let loc): return loc
         case .givenCycle(_, let loc): return loc
+        case .automaticErrorCode(_, _, let loc): return loc
         }
     }
 }

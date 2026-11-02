@@ -193,6 +193,8 @@ public enum ErrorFormatter {
             case .unusedVariable(let name, _): return "unused variable '\(name)'"
             case .implicitAliasNameMismatch(let alias, let target, _):
                 return "implicit alias '\(alias)' does not match the target module name '\(target)'"
+            case .automaticErrorCode(let typeName, let code, _):
+                return "type '\(typeName)' declares no error code; \(code) was assigned automatically"
             }
         case let e as IRValidator.Failure:
             return e.report

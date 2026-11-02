@@ -38,13 +38,23 @@ public struct CHeaderBackend: PiniBackend {
 
     // MARK: - 错误码
 
-    /// 错误码常量。名字取用例名（非 enum 取类型名）的 ASCII 形式，值就是导出桩返回的码。
-    /// `automatic` 来源的码不承诺跨版本稳定，注释里逐条标出。
+    /// 错误码常量。名字是「块名_err_类型名_用例名」，非 enum 载体到类型名为止；
+    /// 类型名入名是为了两个类型的同名用例各自成常量，不会在预处理期互相覆盖。
+    /// 注释逐条标出来源：自动码不承诺跨版本稳定，散列码只在名字不撞时稳定。
     private func errorCodeConstants(_ export: IRExportBlock) -> String {
         var out = "/* 错误码：0 成功，1 未归类，2 取消；其余由错误集分配。 */\n"
         for entry in export.errorCodes where entry.code != 0 {
-            let base = entry.caseName ?? entry.typeName
-            let note = entry.source == .automatic ? "（自动分配，不承诺跨版本稳定）" : ""
+            let base = entry.caseName.map { "\(entry.typeName)_\($0)" } ?? entry.typeName
+            let note: String
+            switch entry.source {
+            case .automatic: note = "（自动分配，不承诺跨版本稳定）"
+            case .hashed:
+                note =
+                    entry.probeSteps == 0
+                    ? "（名字散列，跨版本稳定）"
+                    : "（名字散列；落点被占用，顺延 \(entry.probeSteps) 步）"
+            case .derived, .declared: note = ""
+            }
             out += "/* \(entry.display)\(note) */\n"
             out += "#define \(export.name)_err_\(asciiName(base)) \(entry.code)\n"
         }
@@ -131,7 +141,7 @@ public struct CHeaderBackend: PiniBackend {
         let list = params.isEmpty ? "void" : params.joined(separator: ", ")
         var out = "\(returnSpelling) \(function.cName)(\(list));\n"
         if function.statusPayload != nil {
-            out += "/* 返回 0 成功、1 失败；错误消息不跨边界。 */\n"
+            out += "/* 返回 0 成功，其余是错误码（常量见上）；错误消息不跨边界。 */\n"
         }
         return out
     }

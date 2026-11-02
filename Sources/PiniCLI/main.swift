@@ -829,6 +829,10 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return "未使用的变量 '\(name)'"
     case .givenCycle:
         return "给定块物化环：" + (warning.cyclePathText ?? "")
+    case .automaticErrorCode(let typeName, let code, _):
+        return
+            "类型 '\(typeName)' 未指定错误码，已自动分配 \(code)。该码不保证跨版本稳定；"
+            + "要固定它，在扩展块写 `码() -> (I32,)` 返回一个常量"
     }
 }
 

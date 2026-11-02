@@ -323,9 +323,11 @@ public indirect enum IRExpr: Equatable {
     /// Intrinsic `print(expr)` — one scalar argument, void result.
     case printCall(argument: IRExpr)
     /// `ok(v)` / `err(e)` 的 Result 构造。err 载荷在发射时加宽到一个机器字（ABI 上类型擦除）。
-    /// `errorBaseCode` 是载荷所属错误类型的码基址：enum 的用例 tag 由运行时从载荷读并相或；
-    /// 非 enum 与固定码直接用基址。
-    case resultConstruct(isOk: Bool, payload: IRExpr, errorBaseCode: Int32, type: IRType)
+    /// `errorBaseCode` 是载荷所属错误类型的码基址；`errorTagged` 表示载荷是枚举、tag 要由运行时读；
+    /// `errorCodes` 非 nil 时改用按 tag 索引的码表（稳定码类型），此时基址只作兜底。
+    case resultConstruct(
+        isOk: Bool, payload: IRExpr, errorBaseCode: Int32, errorTagged: Bool,
+        errorCodes: [Int32]?, type: IRType)
     /// Array literal `[e1, e2, ...]` (G2). `type` is `.array(element:)`; the
     /// emitter builds the handle via `bk_array_create` + per-element
     /// `bk_array_set` (boxed through the C ABI).
@@ -517,7 +519,7 @@ extension IRExpr {
         case .unary(_, _, let type): return type
         case .call(_, _, let returnType): return returnType
         case .printCall: return nil
-        case .resultConstruct(_, _, _, let type): return type
+        case .resultConstruct(_, _, _, _, _, let type): return type
         case .arrayLiteral(_, let type): return type
         case .subscriptGet(_, _, let type): return type
         case .lenCall: return .i32

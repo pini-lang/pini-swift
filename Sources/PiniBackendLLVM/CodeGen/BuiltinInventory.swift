@@ -410,7 +410,12 @@ public enum Builtins {
         ),
         BuiltinSpec(
             symbol: "bk_error_from_enum",
-            signature: .init(result: "i64", parameters: ["i64", "i32", "ptr"]),
+            signature: .init(result: "i64", parameters: ["i64", "i32", "ptr", "ptr"]),
+            family: .error, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_error_with_code",
+            signature: .init(result: "i64", parameters: ["i32"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(

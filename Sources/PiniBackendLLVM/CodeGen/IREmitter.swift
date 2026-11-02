@@ -96,6 +96,10 @@ public final class IREmitter {
 
     private var stringConstantDefs: [String] = []
     private var stringConstants: [String: (name: String, length: Int)] = [:]
+    /// 稳定码类型的码表：按用例 tag 索引，作为模块级常量发一次，构造点只传指针。
+    /// 键是码的拼接串（`[Int32]` 不是 `Hashable`），值是全局符号名。
+    private var errorCodeConstantDefs: [String] = []
+    private var errorCodeTableNames: [String: String] = [:]
     /// 匿名常量（`@.str<序号>`）已发出几个 —— 具名常量不计入，故不影响它们的编号。
     private var anonymousStringConstantCount = 0
     private var usesStrCmp = false
@@ -380,6 +384,8 @@ public final class IREmitter {
         bodyIR = ""
         stringConstantDefs = []
         stringConstants = [:]
+        errorCodeConstantDefs = []
+        errorCodeTableNames = [:]
         anonymousStringConstantCount = 0
         usesStrCmp = false
         usesLazyRef = false
@@ -502,6 +508,9 @@ public final class IREmitter {
         for def in stringConstantDefs {
             tail += def + "\n"
         }
+        for def in errorCodeConstantDefs {
+            tail += def + "\n"
+        }
         if usesStrCmp {
             tail += "declare i32 @strcmp(ptr, ptr)\n"
         }
@@ -600,6 +609,7 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_error_message")
             // 枚举错误：把载荷的用例 tag 或上类型基址，得到一个带码的错误对象。
             tail += Builtins.declaration(for: "bk_error_from_enum")
+            tail += Builtins.declaration(for: "bk_error_with_code")
             tail += Builtins.declaration(for: "bk_error_code")
         }
         if usesProgramBase {
@@ -2390,7 +2400,9 @@ public final class IREmitter {
         case .indirectCall(let callee, let arguments, let returnType):
             return emitIndirectCall(callee: callee, arguments: arguments, returnType: returnType)
 
-        case .resultConstruct(let isOk, let payload, let errorBaseCode, let type):
+        case .resultConstruct(
+            let isOk, let payload, let errorBaseCode, let errorTagged, let errorCodes, let type
+        ):
             guard case .result = type else {
                 fatalError("IREmitter: resultConstruct type is not a Result (IRLowerer guarantees)")
             }
@@ -2403,14 +2415,23 @@ public final class IREmitter {
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
             } else {
                 var word = widenToWord(p)
-                // 枚举载荷没有错误盒：这里换成带码的盒子，码 = 类型基址或上用例 tag。
-                // 非枚举载荷（Error / CancelError）已经由各自的构造入口造好盒子，原样入槽。
-                if errorBaseCode >= 0x0100 {
+                // 枚举载荷（含散列档）走 bk_error_from_enum：默认码 = 基址或 tag，散列档查码表。
+                // 非枚举载体没有 tag 槽，码就是基址；固定码 1/2 的载荷已造好盒子，原样入槽。
+                if errorCodes != nil || errorTagged {
+                    if errorBaseCode >= 0x0100 {
+                        usesErrorShims = true
+                        let boxed = builder.freshTemp()
+                        let table = errorCodes.map { errorCodeTablePointer($0) } ?? "null"
+                        bodyIR +=
+                            " \(boxed) = call i64 @bk_error_from_enum(i64 \(word.ssaName),"
+                            + " i32 \(errorBaseCode), ptr null, ptr \(table))\n"
+                        word = IRValue(llvmType: "i64", ssaName: boxed)
+                    }
+                } else if errorBaseCode >= 0x0100 {
                     usesErrorShims = true
                     let boxed = builder.freshTemp()
                     bodyIR +=
-                        " \(boxed) = call i64 @bk_error_from_enum(i64 \(word.ssaName),"
-                        + " i32 \(errorBaseCode), ptr null)\n"
+                        " \(boxed) = call i64 @bk_error_with_code(i32 \(errorBaseCode))\n"
                     word = IRValue(llvmType: "i64", ssaName: boxed)
                 }
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
@@ -4900,6 +4921,19 @@ public final class IREmitter {
         let entry = (name: name, length: length)
         stringConstants[value] = entry
         return entry
+    }
+
+    /// 登记一张错误码表（按用例 tag 索引），返回全局符号名。同内容的表只发一次：
+    /// 同一 enum 的多个 `err(...)` 构造点共用它，产物里不会出现 N 份相同的数组。
+    private func errorCodeTablePointer(_ codes: [Int32]) -> String {
+        let key = codes.map(String.init).joined(separator: ",")
+        if let existing = errorCodeTableNames[key] { return existing }
+        let name = "@__pini_err_codes_\(errorCodeTableNames.count)"
+        let values = codes.map { "i32 \($0)" }.joined(separator: ", ")
+        errorCodeConstantDefs.append(
+            "\(name) = private constant [\(codes.count) x i32] [\(values)]")
+        errorCodeTableNames[key] = name
+        return name
     }
 
     private func emitStringConstant(_ value: String) -> IRValue {

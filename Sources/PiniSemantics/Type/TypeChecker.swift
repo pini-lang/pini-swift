@@ -203,6 +203,12 @@ public final class TypeChecker {
             name: Self.errorTraitName,
             trait: TraitDecl(
                 name: Self.errorTraitName, genericParams: [], signatures: [], location: loc))
+        /// 稳定码：标记式，与 `错误` 同用。写它表示该 enum 的用例码按「块名-类型名-用例名」散列，
+        /// 不随类型序漂移；非 enum 载体没有用例名，固定码仍走扩展块的 `码()`。
+        typeEnv.defineTrait(
+            name: Self.stableCodeTraitName,
+            trait: TraitDecl(
+                name: Self.stableCodeTraitName, genericParams: [], signatures: [], location: loc))
         typeEnv.markConformance(typeName: "Error", traits: [Self.errorTraitName])
         typeEnv.markConformance(typeName: cancelErrorTypeName, traits: [Self.errorTraitName])
 
@@ -403,6 +409,8 @@ public final class TypeChecker {
 
     /// 内置错误特征的名字。标记式：没有成员，`实现:` 即入错误集。
     public static let errorTraitName = "错误"
+    /// 稳定码特征的名字。标记式：只有它出现在 enum 的 `实现:` 里，用例码才走名字散列。
+    public static let stableCodeTraitName = "稳定码"
 
     /// export 块里 `|c` 条目的静态判据：引用的名字在册、形态可发布、C 名转写后不撞。
     /// 类型能否跨边界在这一层定死；降载层只按同一张表求拼写，不再改判。
@@ -945,6 +953,28 @@ public final class TypeChecker {
                     }
                 }
             }
+        }
+    }
+
+    /// `稳定码` 的两条前置：只有 enum 有用例名可散列；离开 `错误` 它没有码可稳定。
+    /// 单独写 `稳定码` 在特征层并不报错（标记式特征存在），语义约束只能在这一层补。
+    private func checkStableCodeTrait(
+        typeName: String, traits: [String], isEnum: Bool, location: SourceLocation
+    ) throws {
+        guard traits.contains(Self.stableCodeTraitName) else { return }
+        guard isEnum else {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`稳定码` 只用于 enum：非 enum 载体没有用例名，固定码请写 `码() -> (I32,)`",
+                    location: location))
+            return
+        }
+        guard traits.contains(Self.errorTraitName) else {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`稳定码` 只对错误类型有意义：`实现:` 里同时写 `错误`",
+                    location: location))
+            return
         }
     }
 
@@ -1692,14 +1722,20 @@ public final class TypeChecker {
                 try checkFuncBody(method, fields: s.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: s.name)
             }
             if !s.traits.isEmpty { try verifyTraitConformance(typeName: s.name, traits: s.traits, location: s.location) }
+            try checkStableCodeTrait(
+                typeName: s.name, traits: s.traits, isEnum: false, location: s.location)
         case .objectDecl(let o):
             for method in o.methods {
                 try checkFuncBody(method, fields: o.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: o.name)
             }
             if !o.traits.isEmpty { try verifyTraitConformance(typeName: o.name, traits: o.traits, location: o.location) }
+            try checkStableCodeTrait(
+                typeName: o.name, traits: o.traits, isEnum: false, location: o.location)
         case .enumDecl(let e):
             for method in e.methods { try checkFuncBody(method) }
             if !e.traits.isEmpty { try verifyTraitConformance(typeName: e.name, traits: e.traits, location: e.location) }
+            try checkStableCodeTrait(
+                typeName: e.name, traits: e.traits, isEnum: true, location: e.location)
         case .extensionDecl(let x):
             // 扩展方法体检查：注入目标类型字段（同文件扩展块可访问私有字段）。
             let targetFields = typeFieldsByName[x.targetType] ?? []
@@ -1717,6 +1753,8 @@ public final class TypeChecker {
                 try checkFuncBody(method, fields: g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: g.name)
             }
             if !g.traits.isEmpty { try verifyTraitConformance(typeName: g.name, traits: g.traits, location: g.location) }
+            try checkStableCodeTrait(
+                typeName: g.name, traits: g.traits, isEnum: false, location: g.location)
         case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
