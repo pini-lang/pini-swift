@@ -1630,7 +1630,7 @@ public final class TypeChecker {
         }
     }
 
-    /// try-else 迁移 迁移批 M2：try-else handler 内的 return 语句计入返回完整性收集
+    /// try-else handler 内的 return 语句计入返回完整性收集
     /// （handler 是表达式内嵌块，语句级 switch 不会自然递归到它）。
     private func collectReturnFindingsInTryExpression(_ expr: Expression, into result: inout [ReturnFinding]) throws {
         switch expr {
@@ -1679,9 +1679,9 @@ public final class TypeChecker {
                         try collectReturnFindings(in: c.block, into: &result)
                     }
                 }
-            // D3①：`case _:` 通配已作为 case 进入 cases（case 循环覆盖），无独立 default/wildcard 块。
+            // `case _:` 通配作为 case 进入 cases，无独立 default/wildcard 块。
             case .varDecl(_, _, let initializer, _, _), .varDestructure(_, _, let initializer, _, _):
-                // try-else 迁移：try-else 常驻 let 初始化式（`let x = try f() else e: return err`），
+                // try-else 常驻 let 初始化式（`let x = try f() else e: return err`），
                 // handler 内 return 亦计入返回完整性收集。
                 if let initExpr = initializer {
                     try collectReturnFindingsInTryExpression(initExpr, into: &result)
@@ -1893,7 +1893,7 @@ public final class TypeChecker {
                     for s in c.block.statements { try checkStatement(s) }
                 }
             }
-        // D3①：`case _:` 通配已作为 case 进入 cases（case 循环覆盖），无独立 default/wildcard 块。
+        // `case _:` 通配作为 case 进入 cases，无独立 default/wildcard 块。
 
         case .expressionStmt(let expr, _):
             try checkExpression(expr)
@@ -1977,7 +1977,7 @@ public final class TypeChecker {
             try checkExpression(operand)
 
         case .tryExpression(let operand, let errorVar, let handler, let location):
-            // try-else 迁移 迁移批 M2（spec『try-else 错误传播』节）：try-else 操作数静态要求 Result<T, E>（静态拦截）；
+            // try-else 操作数静态要求 Result<T, E>（静态拦截）；
             // `ok(...)`/`err(...)` 为 Result 的用例构造（推断为 case 名），同样放行；推断不可达时由运行时兜底。
             try checkExpression(operand)
             if let t = inference.infer(expression: operand) {

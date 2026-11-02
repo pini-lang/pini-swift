@@ -278,18 +278,15 @@ public enum Keyword: String, CaseIterable {
     case `case` = "case"
     case `while` = "while"
     case `try` = "try"
-    // try-else 迁移 迁移批 M2：`except` 随 try-else 迁移退出关键字表（D2 一步删，降级普通标识符）。
     case `return` = "return"
     case `break` = "break"
     case `continue` = "continue"
     case `self` = "self"
-    // G50：`Self` 更名 `own`——类型内自指 + 扩展块方法修饰符 `|own`（与 `|self` 配对）；
-    // `Self` 降级为普通标识符，旧代码须迁移为 `own`。
+    // `own`：类型内自指 + 扩展块方法修饰符 `|own`（与 `|self` 配对）。
     case `own` = "own"
     case `defer` = "defer"
     // join 表层由 `await` / `wait` 关键字承载：前者用于异步函数体内的挂起等待，后者用于同步上下文的阻塞 join，
-    // 二者都映射到既有 `.join` AST 节点，运行时按上下文区分。`scope` 开启带标签的无条件子块，
-    // `break` / `continue` 按标签名定向——块标签不走 `while@label` 形式。
+    // 二者都映射到既有 `.join` AST 节点，运行时按上下文区分。
     case `import` = "import"
     case `export` = "export"
     case `pass` = "pass"

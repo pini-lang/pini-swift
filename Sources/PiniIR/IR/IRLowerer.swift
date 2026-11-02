@@ -2141,7 +2141,7 @@ public enum IRLowerer {
             return [.deferStmt(body: .at(try lowerStatement(wrapped, into: &context), wrapped.location))]
 
         case .expressionStmt(let expr, let location):
-            // Statement-position try-else: ok value discarded (try-else 迁移).
+            // Statement-position try-else: the ok value is discarded.
             if case .tryExpression(let operand, let errorVar, let handler, _) = expr {
                 return [
                     try lowerTry(
@@ -2538,7 +2538,7 @@ public enum IRLowerer {
         return statements
     }
 
-    // MARK: - Try-else (try-else 迁移, G1)
+    // MARK: - Try-else
 
     /// The static Result type of a try operand: annotation-derived when
     /// resolvable, otherwise via the checker's inference (Result -> params[0]).

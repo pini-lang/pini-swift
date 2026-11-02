@@ -111,16 +111,16 @@
 故无法作为「必须通过 `check`」的 `examples/` 示例存在（会破坏示例一致性测试门）。
 列为已知缺口，待语言静态层补齐后可补示例：
 
-- **内联匿名函数作实参**：`应用(func (n,) -> (I32,): return n * 2, 5)` 单行体形式已支持（spec G29 落地）。
-  旧 `应用((n) => n*2, 5)` 的 `=>` 轻量内联写法不成立——`=>` 箭头专用于并发任务；匿名函数统一为
-  `func` + 块体（含 async `=>`）后，内联实参用单行体 `func (n,) -> (T,): return 表达式`（见 `lambda-typed.pini`）。
-- **匿名函数类型推断（已闭合）**：匿名函数绑定变量传强类型函数参数，`TypeInference.inferFuncLiteral`
+- **内联匿名函数作实参**：`应用(func (n,) -> (I32,): return n * 2, 5)` 单行体形式可用；`=>` 箭头专用于并发任务，
+  匿名函数统一为 `func` + 块体（含 async `=>`），内联实参用单行体 `func (n,) -> (T,): return 表达式`
+  （见 `lambda-typed.pini`）。
+- **匿名函数类型推断**：匿名函数绑定变量传强类型函数参数，`TypeInference.inferFuncLiteral`
   做双向推断：参数优先读标注 `p.typeAnnotation`、否则体运算符自底向上、再否则调用点期望自顶向下；
   返回优先读 `decl.returnTypes`（见 `lambda-typed.pini` / `FuncLiteralTests`）。
-- **匿名函数统一（已落地 v0.31.0，spec G29）**：匿名函数放弃 `lambda` 关键字，统一为 `func` 关键字 + 块体，
-  与具名函数基本一致——含 async（`=>`/`wait`/`await`）与参数标注（`(n: I32,)`，`inferFuncLiteral` 消费标注、
-  调用点校验实参）。旧 `lambda` 关键字与 `Expression.lambda`/`Statement.lambdaDecl` 均已移除。
-- **match 子块结构（D3①，2026-08-23 落地）**：`case` 缩进进 `match` 子块，通配兜底统一为 `case _:`；`default:` 与 `match 值:` 后 `pass` 通配子块一次性移除（G28 更新）。穷尽性检查内建（R1）：枚举 match 缺变体且无 `case _:` → `nonExhaustiveMatch`。
+- **匿名函数形态**：匿名函数用 `func` 关键字 + 块体，与具名函数一致，含 async（`=>`/`wait`/`await`）
+  与参数标注（`(n: I32,)`，`inferFuncLiteral` 消费标注、调用点校验实参）。
+- **match 子块结构**：`case` 缩进进 `match` 子块，通配兜底为 `case _:`；穷尽性检查内建（R1）：
+  枚举 match 缺变体且无 `case _:` → `nonExhaustiveMatch`。
 
 ## 稳定性分级说明
 - **Stable**：语法与语义已钉定，示例长期有效。

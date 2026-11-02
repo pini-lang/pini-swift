@@ -17,8 +17,8 @@ public enum ModuleToolchain {
         case remoteTapNotMaterialized(name: String, tap: String)
         /// 资源未落地：显式报错，不静默跳过。
         case resourceNotMaterialized(name: String, path: String)
-        /// **R7 根检（D20/D26 反向）**：`resources X` 而 X 的根含 `pini.toml` ⇒ 它是 Pini 模块，
-        /// 应改用 `[require]`。只查根、不查深层。
+        /// `resources X` 而 X 的根含 `pini.toml` ⇒ 它是 Pini 模块，不能作为非 Pini 资源。
+        /// 只查根、不查深层。
         case resourceTargetIsModule(name: String, path: String)
         /// 版本求解在限定迭代内未收敛（依赖的约束集随其版本而变）。
         case resolutionDidNotConverge(limit: Int)
@@ -460,8 +460,8 @@ public enum ModuleToolchain {
                 }
                 throw ToolchainError.resourceNotMaterialized(name: entry.name, path: dir)
             }
-            // R7 根检（D20/D26）——双通道分区的另一半：写错一侧即报错并指引到另一侧。
-            // **只查根**：`.pini/resources/` 不被扫描，深层清单物理上无害（R7 明定不查深层）。
+            // 双通道分区：资源目标的根含 pini.toml ⇒ 它属于模块通道。
+            // **只查根**：`.pini/resources/` 不被扫描，深层清单物理上无害。
             if FileManager.default.fileExists(atPath: dir + "/pini.toml") {
                 throw ToolchainError.resourceTargetIsModule(name: entry.name, path: dir)
             }
@@ -710,8 +710,7 @@ extension ModuleToolchain.ToolchainError: LocalizedError {
         case .resourceNotMaterialized(let name, let path):
             return "资源 '\(name)' 尚未落地到 \(path)（file: 通道需手工放置，远程通道由 `pini mod refresh` 抓取）"
         case .resourceTargetIsModule(let name, let path):
-            return "资源 '\(name)'（\(path)）的根含 pini.toml —— 它是 **Pini 模块**，应改用 [require]"
-                + "（G52 R7/D20：双通道以「有无 pini.toml」为判据，双向强制；本检查只看目标根，不查深层）"
+            return "资源 '\(name)'（\(path)）的根含 pini.toml —— 它是 Pini 模块，不能作为非 Pini 资源"
         case .resolutionDidNotConverge(let limit):
             return "版本求解在 \(limit) 轮迭代内未收敛：依赖的约束随其版本变化，可能构成互相抬升的约束环。"
                 + "请钉住其中一方的版本（[replace] 或精确约束）后重试"

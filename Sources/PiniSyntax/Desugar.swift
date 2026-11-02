@@ -197,7 +197,7 @@ public enum Desugar {
                 label: label,
                 location: loc)
         case .matchStatement(let value, let cases, let loc):
-            // D3①：case 列表携带通配（case _:），default/pass 通配字段已移除。
+            // match 的通配兜底以 `case _:` 进入 cases，无独立字段。
             return .matchStatement(
                 value: desugar(value),
                 cases: cases.map {
@@ -268,7 +268,7 @@ public enum Desugar {
         case .member(let obj, let name, let loc):
             return .member(object: desugar(obj), name: name, location: loc)
         case .tryExpression(let operand, let errorVar, let handler, let loc):
-            // try-else 迁移 迁移批 M2：递归降层 operand 与 handler 块。
+            // 递归降层 operand 与 handler 块。
             return .tryExpression(
                 operand: desugar(operand), errorVar: errorVar,
                 handler: desugar(handler), location: loc)
