@@ -110,7 +110,7 @@ public final class SemanticAnalyzer {
         for decl in module.declarations {
             try checkTopLevelDecl(decl)
         }
-        appendAutomaticErrorCodeWarnings(module)
+        appendErrorCodeWarnings(module)
         if let c = deferredInjectConflict { throw c }
     }
 
@@ -154,20 +154,41 @@ public final class SemanticAnalyzer {
         }
         /// 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
         /// 否则「导出函数在甲文件、错误类型在乙文件」的包永远不提醒。
-        appendAutomaticErrorCodeWarnings(
+        appendErrorCodeWarnings(
             Module(
                 declarations: package.fileUnits.flatMap { $0.module.declarations },
                 exports: package.fileUnits.flatMap { $0.module.exports },
                 location: package.location))
     }
 
-    /// 非 enum 错误类型的自动码：每条一条 E7-004，位置指向类型声明。
-    /// 码表分配在 `ErrorCodePlan`，与降载层共用；这里只负责把结果翻成诊断。
-    private func appendAutomaticErrorCodeWarnings(_ module: Module) {
-        for entry in ErrorCodePlan.build(module: module).automaticEntries {
+    /// 码表的两类提醒同源：自动码不承诺稳定，撞码让 C 侧分不清。排一次表，两条都从结果里读 ——
+    /// 分开排会让警告与导出面看到的不是同一张表。
+    private func appendErrorCodeWarnings(_ module: Module) {
+        let plan = ErrorCodePlan.build(module: module)
+        for entry in plan.automaticEntries {
             warnings.append(
                 .automaticErrorCode(
                     typeName: entry.typeName, code: entry.code, location: entry.location))
+        }
+        appendDuplicateErrorCodeWarnings(plan)
+    }
+
+    /// 同一个码落在两个条目上，且至少一方是手写码：能自动避让的来源（自动、散列）已经避开了，
+    /// 剩下的相撞只可能是作者写重或手写码压到了派生码上。合并成同一状态可能是有意的，故只提醒。
+    private func appendDuplicateErrorCodeWarnings(_ plan: ErrorCodePlan) {
+        var grouped: [Int32: [PiniErrorCode]] = [:]
+        for entry in plan.entries { grouped[entry.code, default: []].append(entry) }
+        for code in grouped.keys.sorted() {
+            guard let group = grouped[code], group.count > 1,
+                group.contains(where: { $0.source == .declared }),
+                let anchor = group.first(where: { $0.source == .declared })
+            else { continue }
+            let others = group.filter { $0.display != anchor.display }
+                .map { "'\($0.display)'" }.sorted().joined(separator: "、")
+            warnings.append(
+                .duplicateErrorCode(
+                    code: code, first: anchor.display, others: others,
+                    location: anchor.location))
         }
     }
 
@@ -342,7 +363,7 @@ public final class SemanticAnalyzer {
             }
         }
 
-        appendAutomaticErrorCodeWarnings(module)
+        appendErrorCodeWarnings(module)
         return errors
     }
 

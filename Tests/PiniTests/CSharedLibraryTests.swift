@@ -167,6 +167,45 @@ struct CSharedLibraryTests {
         #expect(!FileManager.default.fileExists(atPath: stray.path), "拒绝之后仍留下了产物")
     }
 
+    @Test("错误码经 strerror 还原成名字，未登记的码答空")
+    func strerrorMapsCodesBackToNames() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        let dir = try makeTemporaryDirectory(tag: "shared-strerror")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try """
+        [文件错误]
+            实现: 错误
+            不存在
+
+        读() -> (Result<I32, 文件错误>,):
+            return err(文件错误.不存在)
+
+        [calc|export]
+        calc_read|c = 读
+        """.write(to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
+
+        let result = try runCLI(cli, arguments: ["build", "--shared", "calc.pini"], cwd: dir)
+        #expect(result.status == 0, "构建失败（rc=\(result.status)）：\(result.stderr)")
+        let library = dir.appendingPathComponent("libcalc.\(librarySuffix)")
+        let handle = try #require(dlopen(library.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
+        defer { _ = dlclose(handle) }
+
+        let readSymbol = try #require(dlsym(handle, "calc_read"), "找不到 calc_read")
+        let read = unsafeBitCast(
+            readSymbol,
+            to: (@convention(c) (Int32, UnsafeMutablePointer<Int32>?) -> Int32).self)
+        var out: Int32 = -1
+        let code = read(0, &out)
+        #expect(code == 0x0100, "派生码应是类型序 1 的基址，实际 \(code)")
+
+        let strerrorSymbol = try #require(dlsym(handle, "calc_strerror"), "找不到 calc_strerror")
+        let strerror = unsafeBitCast(
+            strerrorSymbol, to: (@convention(c) (Int32) -> UnsafePointer<CChar>?).self)
+        #expect(strerror(code).map { String(cString: $0) } == "文件错误.不存在")
+        #expect(strerror(0).map { String(cString: $0) } == "success")
+        #expect(strerror(999) == nil, "未登记的码应返回 NULL")
+    }
+
     // MARK: - helper
 
     /// 无 `main` 的库模块：`|c` 条目就位、给定块可读，正好压到「库不需要进程入口」这条口径。

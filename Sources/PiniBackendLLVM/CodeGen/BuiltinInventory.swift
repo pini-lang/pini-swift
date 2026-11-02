@@ -422,6 +422,11 @@ public enum Builtins {
             symbol: "bk_error_code", signature: .init(result: "i32", parameters: ["i64"]),
             family: .error, lowerings: ["call"]
         ),
+        BuiltinSpec(
+            symbol: "bk_error_lookup",
+            signature: .init(result: "ptr", parameters: ["i32", "ptr", "ptr", "i32"]),
+            family: .error, lowerings: ["call"]
+        ),
     ]
 
     private static let bySymbol: [String: BuiltinSpec] = Dictionary(

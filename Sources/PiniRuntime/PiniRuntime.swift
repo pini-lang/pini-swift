@@ -1864,6 +1864,39 @@ public func bk_error_code(_ word: Int64) -> Int32 {
     return box.code
 }
 
+/// `calc_strerror` 的三个固定答案。进程期常驻：C 侧拿到的是静态地址， 行不通  不归调用方释放。
+nonisolated(unsafe) private let _bkFixedErrorNames: (success: UnsafePointer<CChar>, unclassified: UnsafePointer<CChar>, cancelled: UnsafePointer<CChar>) = {
+    func permanent(_ text: String) -> UnsafePointer<CChar> {
+        let bytes = Array(text.utf8CString)
+        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bytes.count)
+        buffer.initialize(from: bytes, count: bytes.count)
+        return UnsafePointer(buffer)
+    }
+    return (permanent("success"), permanent("unclassified error"), permanent("cancelled"))
+}()
+
+/// 导出面的 `calc_strerror`：码 → 名字。固定码 `0`/`1`/`2` 先答，其余按表线性查（错误集通常几十条，
+/// 线性扫比维护「表必须有序」这条隐式不变量便宜）。查不到答 NULL，是否兜底由 C 侧决定。
+@_cdecl("bk_error_lookup")
+public func bk_error_lookup(
+    _ code: Int32, _ codes: UnsafePointer<Int32>?, _ names: UnsafePointer<UnsafePointer<CChar>?>?,
+    _ count: Int32
+) -> UnsafePointer<CChar>? {
+    switch code {
+    case 0: return _bkFixedErrorNames.success
+    case 1: return _bkFixedErrorNames.unclassified
+    case 2: return _bkFixedErrorNames.cancelled
+    default: break
+    }
+    guard let codes, let names else { return nil }
+    var index = 0
+    while index < Int(count) {
+        if codes[index] == code { return names[index] }
+        index += 1
+    }
+    return nil
+}
+
 /// `isCancel(e)` —— err 字是不是取消类。无载荷（字为 0）答 `0`。
 @_cdecl("bk_error_is_cancel")
 public func bk_error_is_cancel(_ word: Int64) -> Int32 {

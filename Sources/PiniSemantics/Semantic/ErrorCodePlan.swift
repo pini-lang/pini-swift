@@ -46,11 +46,29 @@ public enum ErrorCodeSpace {
     public static let success: Int32 = 0
     public static let unclassified: Int32 = 1
     public static let cancelled: Int32 = 2
+    /// 手写码的下界：三个固定值不可占用，占了这个错误就与成功/取消无从分辨。
+    public static let reservedBelow: Int32 = 3
     public static let derivedBase: Int32 = 0x0100
     public static let derivedLimit: Int32 = 0x4000
+    /// 派生区容量：类型序占一个字节，超出就从 `0x4000` 起与自动区重叠。
+    public static let derivedCapacity = 63
+    /// 单个类型可用的 tag 数：用例序占一个字节，超出就溢到下一个类型的基址。
+    public static let casesPerType = 256
     public static let automaticBase: Int32 = 0x4000
     public static let hashedBase: Int32 = 0x1000_0000
     public static let hashedSpan: Int32 = 0x3000_0000
+}
+
+/// 码表发现的问题。校验与分配同源：只有真的排过码，才知道区间满没满、载体写没写对。
+/// `reason` 是一句自成句子的说明，诊断头由格式化层加。
+public struct ErrorCodeIssue: Equatable, Sendable {
+    public let reason: String
+    public let location: SourceLocation
+
+    public init(reason: String, location: SourceLocation) {
+        self.reason = reason
+        self.location = location
+    }
 }
 
 /// 导出面的错误码表。派生、手写、自动、散列四种来源同处一张表，查重也在一处做。
@@ -63,15 +81,18 @@ public struct ErrorCodePlan: Equatable, Sendable {
     public let hashedTables: [String: [Int32]]
     /// 导出面的块名（= 文件名），散列三段的第一段；没有 C 面时为 nil。
     public let surface: String?
+    /// 阻碍这张表发出去的缺陷：非空时语义层报错，降载仍照常进行（诊断已在上游给出）。
+    public let issues: [ErrorCodeIssue]
 
     public init(
         entries: [PiniErrorCode], byType: [String: Int32],
-        hashedTables: [String: [Int32]], surface: String?
+        hashedTables: [String: [Int32]], surface: String?, issues: [ErrorCodeIssue] = []
     ) {
         self.entries = entries
         self.byType = byType
         self.hashedTables = hashedTables
         self.surface = surface
+        self.issues = issues
     }
 
     /// 自动分配的非 enum 码：E7-004 警告的输入。
@@ -79,6 +100,8 @@ public struct ErrorCodePlan: Equatable, Sendable {
         entries.filter { $0.source == .automatic }
     }
 
+    /// 排码：派生区按类型序，手写码先占位（手动优先），散列与自动让开已占的位。
+    /// 校验与分配同源 —— 区间满、用例溢出、载体写错都在排码时才看得见。
     public static func build(module: Module) -> ErrorCodePlan {
         let cBlocks = module.exports.filter { block in
             block.entries.contains { $0.target == .c }
@@ -89,10 +112,12 @@ public struct ErrorCodePlan: Equatable, Sendable {
         var derivedEnums: [(name: String, cases: [String], location: SourceLocation)] = []
         var hashedEnums: [HashedType] = []
         var nonEnums: [(name: String, location: SourceLocation)] = []
+        var errorEnums: Set<String> = []
         for decl in module.declarations {
             switch decl {
             case .enumDecl(let e) where e.traits.contains(TypeChecker.errorTraitName):
                 guard reachable.contains(e.name) else { continue }
+                errorEnums.insert(e.name)
                 let cases = e.cases.map { $0.name }
                 if e.traits.contains(TypeChecker.stableCodeTraitName) {
                     hashedEnums.append(
@@ -111,10 +136,39 @@ public struct ErrorCodePlan: Equatable, Sendable {
             }
         }
 
+        var issues: [ErrorCodeIssue] = []
+        for decl in module.declarations {
+            guard case .extensionDecl(let ext) = decl, errorEnums.contains(ext.targetType),
+                ext.methods.contains(where: { $0.name == "码" && $0.params.isEmpty })
+            else { continue }
+            issues.append(
+                ErrorCodeIssue(
+                    reason:
+                        "`码()` 在 enum 上不生效：用例码由类型序与用例 tag 派生，"
+                        + "要跨版本稳定请改写 `实现: 稳定码`",
+                    location: ext.location))
+        }
+
         var entries: [PiniErrorCode] = []
         var byType: [String: Int32] = [:]
         var used: Set<Int32> = []
         for (index, entry) in derivedEnums.sorted(by: { $0.name < $1.name }).enumerated() {
+            if index == ErrorCodeSpace.derivedCapacity {
+                issues.append(
+                    ErrorCodeIssue(
+                        reason:
+                            "派生区只容 \(ErrorCodeSpace.derivedCapacity) 个错误类型，"
+                            + "从 '\(entry.name)' 起与自动区重叠：多出的类型改用 `稳定码` 或手写码",
+                        location: entry.location))
+            }
+            if entry.cases.count > ErrorCodeSpace.casesPerType {
+                issues.append(
+                    ErrorCodeIssue(
+                        reason:
+                            "'\(entry.name)' 有 \(entry.cases.count) 个用例，超出一个字节的 tag 空间"
+                            + "（\(ErrorCodeSpace.casesPerType)）：多出的用例码会溢到下一个类型的基址",
+                        location: entry.location))
+            }
             let base = Int32(index + 1) << 8
             byType[entry.name] = base
             for (tag, caseName) in entry.cases.enumerated() {
@@ -127,27 +181,36 @@ public struct ErrorCodePlan: Equatable, Sendable {
             }
         }
 
+        /// 申报过码的类型名（含申报不合格的）：这些类型不再进自动区。
+        /// 不合格的码已由 E4-027 报出，再补一个「已自动分配」的警告只会自相矛盾。
+        var claimedNames: Set<String> = []
+        for entry in nonEnums.sorted(by: { $0.name < $1.name }) {
+            switch declaredErrorCode(typeName: entry.name, declarations: module.declarations) {
+            case .absent:
+                continue
+            case .invalid(let reason):
+                claimedNames.insert(entry.name)
+                issues.append(ErrorCodeIssue(reason: reason, location: entry.location))
+            case .value(let code):
+                claimedNames.insert(entry.name)
+                byType[entry.name] = code
+                used.insert(code)
+                entries.append(
+                    PiniErrorCode(
+                        typeName: entry.name, caseName: nil, code: code,
+                        source: .declared, location: entry.location))
+            }
+        }
+
         let hashed = allocateHashed(
             hashedEnums, surface: surface ?? "", occupied: used)
         entries += hashed.entries
         byType.merge(hashed.byType) { first, _ in first }
         used.formUnion(hashed.entries.map { $0.code })
 
-        let declaredCodes = nonEnums.compactMap { entry in
-            declaredErrorCode(typeName: entry.name, declarations: module.declarations)
-                .map { (name: entry.name, code: $0, location: entry.location) }
-        }
-        for entry in declaredCodes {
-            byType[entry.name] = entry.code
-            used.insert(entry.code)
-            entries.append(
-                PiniErrorCode(
-                    typeName: entry.name, caseName: nil, code: entry.code,
-                    source: .declared, location: entry.location))
-        }
         var nextAutomatic = ErrorCodeSpace.automaticBase
         for entry in nonEnums.sorted(by: { $0.name < $1.name })
-        where !declaredCodes.contains(where: { $0.name == entry.name }) {
+        where !claimedNames.contains(entry.name) {
             while used.contains(nextAutomatic) { nextAutomatic += 1 }
             byType[entry.name] = nextAutomatic
             used.insert(nextAutomatic)
@@ -158,7 +221,8 @@ public struct ErrorCodePlan: Equatable, Sendable {
             nextAutomatic += 1
         }
         return ErrorCodePlan(
-            entries: entries, byType: byType, hashedTables: hashed.tables, surface: surface)
+            entries: entries, byType: byType, hashedTables: hashed.tables, surface: surface,
+            issues: issues)
     }
 
     /// 散列分配的单位：一个错误类型及其用例。
@@ -259,20 +323,36 @@ public struct ErrorCodePlan: Equatable, Sendable {
     }
 
     /// 作者写的固定码：扩展块里 `码()` 的函数体只有一条 `return <整数字面量>`。
-    /// 其余形态视为未申报 —— 写了却没写对由上层诊断，这里不猜。
+    /// 写了却没写对时报出来， 行不通  不能当作未申报 —— 作者会以为码已固定，实际拿到的是自动码。
+    private enum DeclaredCode {
+        case absent
+        case invalid(String)
+        case value(Int32)
+    }
+
     private static func declaredErrorCode(
         typeName: String, declarations: [TopLevelDecl]
-    ) -> Int32? {
+    ) -> DeclaredCode {
         for decl in declarations {
             guard case .extensionDecl(let ext) = decl, ext.targetType == typeName else { continue }
             for method in ext.methods where method.name == "码" && method.params.isEmpty {
-                guard let body = method.body, body.statements.count == 1,
-                    case .returnStatement(.integerLiteral(let value, _), _) = body.statements[0],
-                    value >= 0, value <= Int(Int32.max)
-                else { continue }
-                return Int32(value)
+                guard let body = method.body else {
+                    return .invalid("`码()` 需要函数体：一条 `return <整数字面量>`")
+                }
+                guard body.statements.count == 1,
+                    case .returnStatement(.integerLiteral(let value, _), _) = body.statements[0]
+                else {
+                    return .invalid("`码()` 的函数体只能是一条 `return <整数字面量>`：表达式算不出稳定码")
+                }
+                guard value >= Int(ErrorCodeSpace.reservedBelow) else {
+                    return .invalid("手写码 \(value) 与固定码相撞：0 是成功、1 未归类、2 取消，三者不可占用")
+                }
+                guard value <= Int(Int32.max) else {
+                    return .invalid("手写码 \(value) 超出 i32 范围")
+                }
+                return .value(Int32(value))
             }
         }
-        return nil
+        return .absent
     }
 }

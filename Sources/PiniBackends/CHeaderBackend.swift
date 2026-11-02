@@ -27,6 +27,8 @@ public struct CHeaderBackend: PiniBackend {
         if !export.errorCodes.isEmpty {
             out += errorCodeConstants(export)
         }
+        out += "/* 错误码 → 名字：UTF-8 静态串，进程期有效且勿释放；未登记的码返回 NULL。 */\n"
+        out += "const char* \(export.name)_strerror(int32_t code);\n\n"
         for function in export.functions {
             out += functionDeclaration(function) + "\n"
         }

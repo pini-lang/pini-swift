@@ -467,6 +467,210 @@ struct ErrorCodeTableTests: Sendable, PiniSourceLowering {
         #expect(listing.contains("ptr null)"))
     }
 
+    // MARK: - 申报校验
+
+    @Test("`码()` 写在 enum 上报错：用例码由 tag 派生，申报不会生效")
+    func testCodeMethodOnEnumIsRejected() {
+        let error = failure {
+            _ = try typeChecked(
+                """
+                [甲错误]
+                    实现: 错误
+                    不存在
+
+                [[甲错误]]
+                    码|self() -> (I32,):
+                        return 20001
+
+                读() -> (Result<I32, 甲错误>,):
+                    return err(甲错误.不存在)
+
+                [calc|export]
+                calc_read|c = 读
+
+                main|func() -> (I32,):
+                    return 0
+                """,
+                fileName: "calc.pini")
+        }
+        #expect(error?.code == "E4-027", "实际：\(String(describing: error))")
+        #expect(error?.message.contains("enum 上不生效") == true, "实际：\(String(describing: error))")
+    }
+
+    @Test("`码()` 的函数体不是单条整数字面量时报错，不静默按未申报处理")
+    func testMalformedCodeMethodIsRejected() {
+        let error = failure {
+            _ = try typeChecked(
+                """
+                [文件错误|object]
+                    实现: 错误
+                    message: String = ""
+
+                [[文件错误]]
+                    码|self() -> (I32,):
+                        print("定位")
+                        return 20001
+
+                读() -> (Result<I32, 文件错误>,):
+                    return err(文件错误())
+
+                [calc|export]
+                calc_read|c = 读
+
+                main|func() -> (I32,):
+                    return 0
+                """,
+                fileName: "calc.pini")
+        }
+        #expect(error?.code == "E4-027", "实际：\(String(describing: error))")
+        #expect(error?.message.contains("整数字面量") == true, "实际：\(String(describing: error))")
+    }
+
+    @Test("手写码占 0/1/2 时报错：三个固定值不可占用")
+    func testDeclaredCodeCannotTakeFixedValues() {
+        for value in [0, 1, 2] {
+            let error = failure {
+                _ = try typeChecked(
+                    """
+                    [文件错误|object]
+                        实现: 错误
+                        message: String = ""
+
+                    [[文件错误]]
+                        码|self() -> (I32,):
+                            return \(value)
+
+                    读() -> (Result<I32, 文件错误>,):
+                        return err(文件错误())
+
+                    [calc|export]
+                    calc_read|c = 读
+
+                    main|func() -> (I32,):
+                        return 0
+                    """,
+                    fileName: "calc.pini")
+            }
+            #expect(error?.code == "E4-027", "码 \(value) 未被拦下：\(String(describing: error))")
+            #expect(error?.message.contains("固定码") == true, "实际：\(String(describing: error))")
+        }
+    }
+
+    @Test("两个类型手写同一个码：发 E7-005，不阻断检查")
+    func testDuplicateDeclaredCodesWarn() throws {
+        let warnings = try warnings(
+            """
+            [甲错误|object]
+                实现: 错误
+                message: String = ""
+
+            [乙错误|object]
+                实现: 错误
+                message: String = ""
+
+            [[甲错误]]
+                码|self() -> (I32,):
+                    return 20001
+
+            [[乙错误]]
+                码|self() -> (I32,):
+                    return 20001
+
+            读甲() -> (Result<I32, 甲错误>,):
+                return err(甲错误())
+
+            读乙() -> (Result<I32, 乙错误>,):
+                return err(乙错误())
+
+            [calc|export]
+            calc_a|c = 读甲
+            calc_b|c = 读乙
+
+            main|func() -> (I32,):
+                return 0
+            """,
+            fileName: "calc.pini")
+        let warning = try #require(warnings.first { $0.diagnosticCode == "E7-005" })
+        guard case .duplicateErrorCode(let code, let first, let others, _) = warning else {
+            Issue.record("E7-005 应是撞码警告，实际 \(warning)")
+            return
+        }
+        #expect(code == 20001)
+        let names = [first] + others.replacingOccurrences(of: "'", with: "")
+            .components(separatedBy: "、")
+        #expect(Set(names) == ["甲错误", "乙错误"], "实际：\(names)")
+    }
+
+    @Test("派生区只容 63 个类型，第 64 个报错而不是静默挤进自动区")
+    func testDerivedZoneCapacityIsChecked() {
+        var lines: [String] = []
+        for index in 1...64 {
+            lines += ["[错\(index)]", "    实现: 错误", "    甲用例", ""]
+        }
+        for index in 1...64 {
+            lines += [
+                "读\(index)() -> (Result<I32, 错\(index)>,):",
+                "    return err(错\(index).甲用例)", "",
+            ]
+        }
+        lines.append("[calc|export]")
+        for index in 1...64 { lines.append("calc_\(index)|c = 读\(index)") }
+        let error = failure { _ = try typeChecked(lines.joined(separator: "\n"), fileName: "calc.pini") }
+        #expect(error?.code == "E4-027", "实际：\(String(describing: error))")
+        #expect(error?.message.contains("63") == true, "实际：\(String(describing: error))")
+    }
+
+    @Test("一个类型的用例超出一个字节即报错：tag 会溢到下一个类型的基址")
+    func testCaseTagSpaceIsChecked() {
+        var lines = ["[大错误]", "    实现: 错误"]
+        for index in 0..<257 { lines.append("    用例\(index)") }
+        lines += [
+            "", "读() -> (Result<I32, 大错误>,):", "    return err(大错误.用例0)", "",
+            "[calc|export]", "calc_read|c = 读",
+        ]
+        let error = failure { _ = try typeChecked(lines.joined(separator: "\n"), fileName: "calc.pini") }
+        #expect(error?.code == "E4-027", "实际：\(String(describing: error))")
+        #expect(error?.message.contains("256") == true, "实际：\(String(describing: error))")
+    }
+
+    // MARK: - 名字表
+
+    @Test("头文件声明 strerror，发射层出码表、名字表与查表调用")
+    func testStrerrorSurface() throws {
+        let (module, checker) = try typeChecked(
+            stableSource(caseOrder: ["不存在", "权限不足"]), fileName: "calc.pini")
+        let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let header = try CHeaderBackend().emit(module: ir)
+        #expect(header.contains("const char* calc_strerror(int32_t code);"), "头文件缺 strerror 原型")
+        let listing = try IREmitter().emit(module: ir)
+        #expect(listing.contains("define ptr @calc_strerror(i32 %code)"), "发射层缺 strerror 函数")
+        #expect(listing.contains("@__pini_error_codes_calc = private constant [2 x i32]"))
+        #expect(listing.contains("@__pini_error_names_calc = private constant [2 x ptr]"))
+        #expect(listing.contains("declare ptr @bk_error_lookup(i32, ptr, ptr, i32)"))
+    }
+
+    @Test("没有错误集时 strerror 仍存在：固定码 0/1/2 由运行时答")
+    func testStrerrorExistsWithoutErrorSet() throws {
+        let (module, checker) = try typeChecked(
+            """
+            读() -> (^I32,):
+                return err(Error("坏"))
+
+            [calc|export]
+            calc_read|c = 读
+
+            main|func() -> (I32,):
+                return 0
+            """,
+            fileName: "calc.pini")
+        let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+        let header = try CHeaderBackend().emit(module: ir)
+        #expect(header.contains("const char* calc_strerror(int32_t code);"))
+        let listing = try IREmitter().emit(module: ir)
+        #expect(listing.contains("define ptr @calc_strerror(i32 %code)"))
+        #expect(listing.contains("ptr null, ptr null, i32 0"), "空表应传空指针与零长度")
+    }
+
     // MARK: - helper
 
     private func stableSource(caseOrder: [String]) -> String {

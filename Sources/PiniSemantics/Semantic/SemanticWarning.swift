@@ -13,6 +13,8 @@ public enum SemanticWarning: Error, Equatable {
     /// 非 enum 错误类型没有写 `码()`：编译器兜底分配了一个码。该码不承诺跨版本稳定，
     /// 警告写明档位与固定办法——不静默是这条规则的全部意义。
     case automaticErrorCode(typeName: String, code: Int32, location: SourceLocation)
+    /// 两个错误的码撞在一起：C 侧拿到这个值分不清是谁。手写码可能是有意合并成一个状态，故只提醒。
+    case duplicateErrorCode(code: Int32, first: String, others: String, location: SourceLocation)
 }
 
 extension SemanticWarning {
@@ -30,6 +32,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .implicitAliasNameMismatch: return "\(DiagnosticDomain.warning.rawValue)-002"
         case .givenCycle: return "\(DiagnosticDomain.warning.rawValue)-003"
         case .automaticErrorCode: return "\(DiagnosticDomain.warning.rawValue)-004"
+        case .duplicateErrorCode: return "\(DiagnosticDomain.warning.rawValue)-005"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .warning }
@@ -40,6 +43,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .implicitAliasNameMismatch(_, _, let loc): return loc
         case .givenCycle(_, let loc): return loc
         case .automaticErrorCode(_, _, let loc): return loc
+        case .duplicateErrorCode(_, _, _, let loc): return loc
         }
     }
 }

@@ -646,6 +646,7 @@ public final class TypeChecker {
         for block in module.exports {
             try checkExportSurface(block)
         }
+        try checkErrorCodeTable(module)
     }
 
     /// 检查包（多文件 / 单文件统一入口）。单文件包直接委托 `check(module:)`，行为等价；
@@ -685,6 +686,19 @@ public final class TypeChecker {
                 try enforceExportBlockVisibility(block)
                 try checkExportSurface(block)
             }
+        }
+        try checkErrorCodeTable(
+            Module(
+                declarations: package.fileUnits.flatMap { $0.module.declarations },
+                exports: package.fileUnits.flatMap { $0.module.exports },
+                location: package.location))
+    }
+
+    /// 码表缺陷（载体写错、码值撞固定码、派生区或 tag 空间溢出）只有在整张表排出来时才成立，
+    /// 故合成整个模块查一次；警告侧走同一个 `ErrorCodePlan`，两边看到的是同一张表。
+    private func checkErrorCodeTable(_ module: Module) throws {
+        for issue in ErrorCodePlan.build(module: module).issues {
+            try report(TypeError.errorCodeInvalid(reason: issue.reason, location: issue.location))
         }
     }
 
@@ -831,6 +845,13 @@ public final class TypeChecker {
             } catch {
                 // 非 TypeError 不应发生；保持防御
             }
+        }
+        do {
+            try checkErrorCodeTable(module)
+        } catch let error as TypeError {
+            diagnostics.append(error)
+        } catch {
+            // 非 TypeError 不应发生；保持防御
         }
         return diagnostics
     }

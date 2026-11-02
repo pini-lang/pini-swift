@@ -195,6 +195,8 @@ public enum ErrorFormatter {
                 return "implicit alias '\(alias)' does not match the target module name '\(target)'"
             case .automaticErrorCode(let typeName, let code, _):
                 return "type '\(typeName)' declares no error code; \(code) was assigned automatically"
+            case .duplicateErrorCode(let code, let first, let others, _):
+                return "error code \(code) belongs to both '\(first)' and \(others)"
             }
         case let e as IRValidator.Failure:
             return e.report
@@ -280,6 +282,7 @@ public enum ErrorFormatter {
         case .enumCaseArgumentLabel(let label, let caseName, _): return "枚举用例 '\(caseName)' 的构造为位置式，不允许具名实参 '\(label):'（请改为位置实参，如 `\(caseName)(值)`）"
         case .givenBlockTypeInValuePosition(let typeName, _): return "给定块类型名 '\(typeName)' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: \(typeName)`，体内用 `名.字段`（ADR-001）"
         case .exportCInvalid(let reason, _): return "对外发布：\(reason)"
+        case .errorCodeInvalid(let reason, _): return "错误码无效：\(reason)"
         }
     }
 

@@ -30,6 +30,10 @@ suggestion = "materializing it requires itself, so `pini run` will crash; break 
 message = "type '{typeName}' declares no error code; {code} was assigned automatically"
 suggestion = "that code is not stable across versions; write `码() -> (I32,)` in an extension block to pin it"
 
+[E7-005]
+message = "error code {code} belongs to both '{first}' and {others}"
+suggestion = "the C side cannot tell them apart; change one of the declared codes, or ignore if the merge is intentional"
+
 [E2-001]
 message = "expected {expected}, got {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（无法提取参数名），走英文硬编码兜底。
@@ -129,6 +133,9 @@ message = "enum case '{caseName}' is constructed positionally; named argument '{
 
 [E4-015]
 message = "the given block type name '{typeName}' cannot be used as a value -- take its default instance through a `using` parameter instead"
+
+[E4-027]
+message = "invalid error code: {reason}"
 
 [E5-001]
 message = "undefined variable '{name}'"

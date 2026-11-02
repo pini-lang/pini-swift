@@ -611,6 +611,8 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_error_from_enum")
             tail += Builtins.declaration(for: "bk_error_with_code")
             tail += Builtins.declaration(for: "bk_error_code")
+            // `calc_strerror` 的查表入口：码表与名字表由发射层按导出面生成，运行时只负责扫。
+            tail += Builtins.declaration(for: "bk_error_lookup")
         }
         if usesProgramBase {
             tail += Builtins.declaration(for: "bk_set_program_base")
@@ -3230,6 +3232,7 @@ public final class IREmitter {
         for function in block.functions { emitExportFunction(function) }
         for storage in block.storages { emitExportGetter(storage) }
         emitExportLifecycle(block)
+        emitExportStrerror(block)
     }
 
     /// 一个导出函数的转发体。取用位在边界内填默认实例，交给被调的是副本（与取用点同语义），
@@ -3331,6 +3334,37 @@ public final class IREmitter {
         }
         bodyIR += " ret void\n}\n\n"
         bodyIR += "define void @\(block.shutdownName)() {\n ret void\n}\n\n"
+        bodyIR = savedBody + bodyIR
+    }
+
+    /// 码 → 名字：两张模块级常量（码、名字指针）加一层查表转发。名字取条目上的 `类型.用例`，
+    /// 与头文件注释同源；固定码 `0`/`1`/`2` 由运行时答，不进表。
+    private func emitExportStrerror(_ block: IRExportBlock) {
+        let entries = block.errorCodes
+        var codePointer = "null"
+        var namePointer = "null"
+        if !entries.isEmpty {
+            let codeName = "@__pini_error_codes_\(block.name)"
+            let nameName = "@__pini_error_names_\(block.name)"
+            let codes = entries.map { "i32 \($0.code)" }.joined(separator: ", ")
+            errorCodeConstantDefs.append(
+                "\(codeName) = private constant [\(entries.count) x i32] [\(codes)]")
+            let names = entries.map { "ptr \(registerStringConstant($0.display).name)" }
+                .joined(separator: ", ")
+            errorCodeConstantDefs.append(
+                "\(nameName) = private constant [\(entries.count) x ptr] [\(names)]")
+            codePointer = codeName
+            namePointer = nameName
+        }
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = "define ptr @\(block.name)_strerror(i32 %code) {\n"
+        usesErrorShims = true
+        let result = builder.freshTemp()
+        bodyIR +=
+            " \(result) = call ptr @bk_error_lookup(i32 %code, ptr \(codePointer),"
+            + " ptr \(namePointer), i32 \(entries.count))\n"
+        bodyIR += " ret ptr \(result)\n}\n\n"
         bodyIR = savedBody + bodyIR
     }
 

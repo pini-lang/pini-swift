@@ -39,4 +39,7 @@ public enum TypeError: Error, Equatable {
     /// export 块 `|c` 条目：引用的声明不合格，或两个条目转写后撞成同一个 C 名。
     /// `reason` 是一句自成句子的说明，诊断头由格式化层加。
     case exportCInvalid(reason: String, location: SourceLocation)
+    /// 错误码申报不合格：`码()` 的载体、函数体或码值越界。不合格的申报一旦被忽略，
+    /// 作者会以为码已固定，实际发出去的是自动码 —— 那正是这一层要拦的沉默。
+    case errorCodeInvalid(reason: String, location: SourceLocation)
 }

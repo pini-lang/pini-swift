@@ -159,6 +159,7 @@ public struct DiagnosticPublisher {
         case .enumCaseArgumentLabel(_, _, let loc): return loc
         case .givenBlockTypeInValuePosition(_, let loc): return loc
         case .exportCInvalid(_, let loc): return loc
+        case .errorCodeInvalid(_, let loc): return loc
         }
     }
 }

@@ -833,6 +833,10 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return
             "类型 '\(typeName)' 未指定错误码，已自动分配 \(code)。该码不保证跨版本稳定；"
             + "要固定它，在扩展块写 `码() -> (I32,)` 返回一个常量"
+    case .duplicateErrorCode(let code, let first, let others, _):
+        return
+            "错误码 \(code) 同时属于 '\(first)' 与 \(others)：C 侧无法据此区分两者。"
+            + "改掉其中一个手写码；若有意合并成同一个状态，可忽略"
     }
 }
 
