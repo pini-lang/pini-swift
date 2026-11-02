@@ -365,23 +365,26 @@ public final class IREmitter {
         /// libc ones by the fixed header above, runtime shims by the conditional tail below.
         let predeclared: Set<String> = ["printf", "malloc", "free", "strlen", "memcpy"]
         let runtimeShims: Set<String> = ["cstr"]
-        /// 同名符号只声明一次：外部声明是文件级的，两个文件各写一遍是常态，
-        /// 而重复 `declare` 在 clang 眼里是重定义，整个模块直接编不过。
-        var declaredForeignSymbols: Set<String> = []
+        /// 外部声明是文件级的，两个文件各写一遍是常态，重复 `declare` 在 clang 眼里是重定义。
+        /// 去重按整条声明：同名同签名只发一次，同名不同签名两条都留，交给 clang 报错 ——
+        /// 那是配置错，不能由「先到先得」吞掉。
+        var emittedForeignDeclarations: Set<String> = []
         for foreignBlock in module.foreigns {
             for func_ in foreignBlock.funcs
             where !predeclared.contains(func_.name) && !runtimeShims.contains(func_.name) {
                 let symbol = IRName.mangle(func_.name)
-                guard declaredForeignSymbols.insert(symbol).inserted else { continue }
                 let params = func_.paramTypes.map { $0.llvmSpelling }.joined(separator: ", ")
                 let ret = func_.returnType?.llvmSpelling ?? "void"
-                header += "declare \(ret) @\(symbol)(\(params))\n"
+                let declaration = "declare \(ret) @\(symbol)(\(params))"
+                guard emittedForeignDeclarations.insert(declaration).inserted else { continue }
+                header += declaration + "\n"
             }
             /// 数据符号是全局存储本身：取址就是这个名字，读写成 load / store。
             for entry in foreignBlock.data {
-                let symbol = IRName.mangle(entry.name)
-                guard declaredForeignSymbols.insert(symbol).inserted else { continue }
-                header += "@\(symbol) = external global \(entry.type.llvmSpelling)\n"
+                let declaration =
+                    "@\(IRName.mangle(entry.name)) = external global \(entry.type.llvmSpelling)"
+                guard emittedForeignDeclarations.insert(declaration).inserted else { continue }
+                header += declaration + "\n"
             }
         }
         header += "\n"
