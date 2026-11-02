@@ -72,34 +72,13 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         #expect(leftEntry.symbol == rightEntry.symbol)
     }
 
-    @Test("空块与冒号条目被拒")
-    func testEmptyBlockAndColonEntryAreRejected() {
+    @Test("空块被拒")
+    func testEmptyBlockIsRejected() {
         let empty = failure {
             _ = try typeChecked(
                 "[calc|export]\n\nmain|func() -> (I32,):\n    return 0\n", fileName: "calc.pini")
         }
         #expect(empty != nil, "空块应报错")
-        let colon = failure {
-            _ = try typeChecked(
-                "[calc|export]\ncalc_state: 计数器状态\n\nmain|func() -> (I32,):\n    return 0\n",
-                fileName: "calc.pini")
-        }
-        #expect(colon?.message.contains("冒号") == true, "实际：\(String(describing: colon))")
-    }
-
-    @Test("旧块标记给迁移消息")
-    func testOldBlockMarkersAreRejected() {
-        let oldC = failure {
-            _ = try typeChecked(
-                "[calc|c]\ncalc_add = f\n\nmain|func() -> (I32,):\n    return 0\n", fileName: "calc.pini")
-        }
-        #expect(oldC?.message.contains("不是块标记") == true, "实际：\(String(describing: oldC))")
-        let oldExtern = failure {
-            _ = try typeChecked(
-                "[calc|extern]\ncalc_add = f\n\nmain|func() -> (I32,):\n    return 0\n",
-                fileName: "calc.pini")
-        }
-        #expect(oldExtern?.message.contains("已并入") == true, "实际：\(String(describing: oldExtern))")
     }
 
     @Test("未知目标被拒并列出可用值")

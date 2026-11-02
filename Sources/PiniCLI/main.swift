@@ -2285,9 +2285,6 @@ case "build":
             }
             outputPath = args[cursor + 1]
             cursor += 2
-        case "--extern":
-            printError("Error: --extern 已取消：语言写在 export 条目上，如 `calc_add|c = 加法`")
-            exit(1)
         default:
             guard !args[cursor].hasPrefix("-") else {
                 printError("Error: \(args[cursor])")

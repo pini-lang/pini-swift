@@ -22,7 +22,7 @@ public enum ExportTarget: Equatable, Sendable {
     case pini
     case c
 
-    /// 目标标识符的两种写法；其余值返回 nil，由解析器给迁移消息。
+    /// 目标标识符的两种写法；其余值返回 nil，由解析器报错。
     public init?(name: String) {
         switch name {
         case "pini": self = .pini

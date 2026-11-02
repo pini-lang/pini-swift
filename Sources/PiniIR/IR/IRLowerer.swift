@@ -896,7 +896,7 @@ public enum IRLowerer {
     /// 名字在这里转成 C 标识符，后端只认转写后的名字，不再各自改名。
     private static func lowerExportBlock(
         _ block: ExportDecl, declarations: [TopLevelDecl], userTypes: [String: IRType],
-        errorCodes: [IRErrorCode]
+        errorCodes: [PiniErrorCode]
     ) throws -> IRExportBlock {
         var functions: [IRExportFunction] = []
         var storages: [IRExportStorage] = []

@@ -481,10 +481,6 @@ public class Parser {
                         reason: "`\(name)|\(targetName)` 后须写 `= 原符号`", location: currentLocation)
                 }
                 advance()
-            case .colon(_):
-                throw ParserError.invalidDeclaration(
-                    reason: "export 条目一律写 `名|目标 = 原符号`；冒号在导入块与字段里表示类型",
-                    location: currentLocation)
             default:
                 break entryLoop
             }
@@ -549,16 +545,6 @@ public class Parser {
                 advance()
                 _ = try expect(.rightBracket(loc))
                 return .exportDecl(try parseExportBlock(headerName: name, location: loc))
-            } else if case .identifier("c", _) = currentToken {
-                /// `|c` 不是块标记：C 面写在 export 条目上，块级只给迁移提示。
-                throw ParserError.invalidDeclaration(
-                    reason: "`|c` 不是块标记；C 导出写在 export 条目上：`calc_add|c = 加法`",
-                    location: loc)
-            } else if case .identifier("extern", _) = currentToken {
-                /// `|extern` 不是块标记：对外发布统一写在 `|export` 的条目上。
-                throw ParserError.invalidDeclaration(
-                    reason: "`|extern` 已并入 `|export`：写 `[文件名|export]`，条目 `对外名|c = 本模块符号`",
-                    location: loc)
             } else {
                 throw ParserError.invalidDeclaration(reason: "无效的方括号声明修饰符", location: loc)
             }

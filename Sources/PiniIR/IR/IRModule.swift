@@ -233,10 +233,6 @@ public struct IRExportStorage: Equatable {
     }
 }
 
-/// 一条 C 边界错误码。定义在语义层（`ErrorCodePlan`）：码表是编译期的事，IR 只是搬运。
-/// 别名保留此名，后端与既有测试按这个名字读，不必知道计划层怎么分配。
-public typealias IRErrorCode = PiniErrorCode
-
 /// export 块 `|c` 条目的落地形态：函数转发项、给定块取址项、错误码表，以及两个生成的生命周期符号。
 /// 名字取文件名，产物与这两个符号据此命名，不参与条目符号名。
 public struct IRExportBlock: Equatable {
@@ -244,13 +240,13 @@ public struct IRExportBlock: Equatable {
     public let functions: [IRExportFunction]
     public let storages: [IRExportStorage]
     /// C 边界的错误码表：派生、手写、自动三种来源同处一张表。
-    public let errorCodes: [IRErrorCode]
+    public let errorCodes: [PiniErrorCode]
     public let initName: String
     public let shutdownName: String
 
     public init(
         name: String, functions: [IRExportFunction], storages: [IRExportStorage],
-        errorCodes: [IRErrorCode] = [],
+        errorCodes: [PiniErrorCode] = [],
         initName: String, shutdownName: String
     ) {
         self.name = name

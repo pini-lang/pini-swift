@@ -152,22 +152,6 @@ struct CSharedLibraryTests {
         #expect(!FileManager.default.fileExists(atPath: output.path), "拒绝之后仍留下了产物")
     }
 
-    @Test("--extern 已取消，提示语言写在条目上")
-    func rejectsRemovedExternFlag() throws {
-        guard let cli = cliPathOrSkip() else { return }
-        let dir = try makeTemporaryDirectory(tag: "shared-extern-flag")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try librarySource.write(
-            to: dir.appendingPathComponent("calc.pini"), atomically: true, encoding: .utf8)
-
-        let result = try runCLI(
-            cli, arguments: ["build", "--shared", "calc.pini", "--extern", "c"], cwd: dir)
-        #expect(result.status != 0, "已取消的参数却报成功：\(result.stdout)")
-        #expect(result.stderr.contains("--extern 已取消"), "诊断没给迁移方向：\(result.stderr)")
-        let stray = dir.appendingPathComponent("libcalc.\(librarySuffix)")
-        #expect(!FileManager.default.fileExists(atPath: stray.path), "拒绝之后仍留下了产物")
-    }
-
     @Test("错误码经 strerror 还原成名字，未登记的码答空")
     func strerrorMapsCodesBackToNames() throws {
         guard let cli = cliPathOrSkip() else { return }

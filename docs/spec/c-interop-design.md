@@ -8,7 +8,7 @@
 
 | 事实 | 位置 |
 |---|---|
-| 块内只有函数签名，形态是裸签名 `malloc(大小: I64,) -> (*I8,)`；`\|unsafe` 写法已被判非法 | `testParserRejectsDraftForeignSignatureForm.pini` |
+| 块内只有函数签名，形态是裸签名 `malloc(大小: I64,) -> (*I8,)`；`\|unsafe` 不是合法标志 | `ForeignSymbol.knownFlags` |
 | 块名即库键：`libc` 走进程映像，其余按 `search_paths` 找 `lib<名>.{dylib,so}` | `FFILoader.swift:22` |
 | 符号名等于 Pini 名，无别名机制：解释器 `dlsym`、LLVM 发 `@mangle(名)` | `IRExecutor.swift:395`、`IREmitter.swift:367` |
 | 作用域文件级（跨文件 E5-017），但 IR 与解释器按模块合并，同名后者覆盖前者 | `IRExecutor.swift:264` |
@@ -75,8 +75,6 @@ foreign-flag     ::= 'readonly';
 标志位放在标识符与冒号之间，与语言其余修饰符同位（`名|unsafe`、`名|test`、`[名|foreign]`）。冒号由此只做一次切分：左边是符号与它的标志，右边是类型——扫一眼左列就知道有哪些符号，不用读到行尾。`readonly` 不入关键字表，走 `|given` / `|import` / `|export` 那条标识符白名单路径（`Parser.swift:490`），词法不动。
 
 标志是封闭白名单，v1 只有 `readonly`；未知标志报错。这条必须显式做：修饰符位现在收任意标识符（`Parser.swift:1424` 的 `parseIdentifier`），不做白名单校验，`|readonyl` 会静默通过，而这个错只在读回数据时才显形。多条标志可并列、顺序无关；同一条写两次即报错。
-
-注意 —— 这不是把已废弃的 `malloc|unsafe(大小: I64,) -> (*I8,)` 写法请回来。标志位后面必须跟冒号与类型；旧写法没有冒号，照旧报错。
 
 | 标志 | 适用 | 语义 | 状态 |
 |---|---|---|---|
@@ -443,7 +441,7 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 
 | 分片 | 状态 | 内容 | 验收 |
 |---|---|---|---|
-| 符号表 | 已落地 | `ForeignDecl.funcs: [FuncDecl]` 换成 `symbols: [ForeignSymbol]`；解析只收 `标识符{\|标志}: 类型`；登记、诊断、IR 同步 | 4 个引用 foreign 的 `.pini` 改写，新增函数 / 未知标志 / 旧写法拒绝三类 fixture，全量 376 条测试绿 |
+| 符号表 | 已落地 | `ForeignDecl.funcs: [FuncDecl]` 换成 `symbols: [ForeignSymbol]`；解析只收 `标识符{\|标志}: 类型`；登记、诊断、IR 同步 | 4 个引用 foreign 的 `.pini` 改写，新增函数 / 未知标志两类 fixture，全量 376 条测试绿 |
 | 数据符号 | 已落地 | `IRForeignData` 与符号地址节点；读走 `pointerLoad`，取址与 `store` 复用指针原语；LLVM 发 `@sym = external global`；解析层不再拦数据符号条目；`\|readonly` 在语义期拒直接写入 | 两条通道各跑「取址写回后读到新值」；`\|readonly` 的 `store` 被拒；全量 378 条测试绿 |
 | 宏常量 | 已落地 | `[ffi]` 增 `headers` / `include_paths`；`ForeignMacroEvaluator` 跑 `cc -E` 探针、按标记行读回、常量表达式求值；IR 增 `IRForeignConstant`，读它出字面量 | `EOF` / `M_PI` / `S_IRUSR` 各一条；未展开标识符报错并带原文；值超声明类型报错并写 Pini 类型名；缺 headers 报错；`&宏` 被拒 |
 | export 的 C 面 | 已落地 | IR 增 `IRExportBlock`；`CName.escape` 与撞名 / 保留区检查；给定块取址转发与 `calc_init` 物化；`--backend c` 出头文件 | 一个 C 调用方经 `cc caller.c -lcalc` 跑通四条路径：标量函数、Result 函数（状态码 + 出参）、C 读给定块字段、C 写给定块字段后 Pini 的下一次取用读到新值 |

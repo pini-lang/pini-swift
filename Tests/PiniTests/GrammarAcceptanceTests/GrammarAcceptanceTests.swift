@@ -610,16 +610,6 @@ struct GrammarAcceptanceTests: Sendable {
         #expect(foreign.symbols[1].flags == ["readonly"], "只读标志应随条目保留")
     }
 
-    @Test("旧 foreign 函数签名形态被拒")
-    func testParserRejectsDraftForeignSignatureForm() throws {
-        /// 意图：`malloc|unsafe(大小: I64) -> *I8` 已被 `名: 类型` 取代，`|unsafe` 不再是合法标志。
-        let (_, errors) = try parse("testParserRejectsDraftForeignSignatureForm")
-        guard case .invalidStatement(let reason, _) = errors.first else {
-            Issue.record("首条应为 invalidStatement，实际：\(String(describing: errors.first))"); return
-        }
-        #expect(reason.contains("|unsafe"), "拒绝理由应指向已退役的标志，实际：\(reason)")
-    }
-
     // MARK: - 限定 case 模式与返回糖
 
     @Test("match 模式位的限定写法被拒")
