@@ -641,6 +641,7 @@ func printHelp() {
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Type check (alias of check) a file or directory/module")
+    print(" build --shared <path> [-o out] Link the [name|c] export block into lib<name>.{dylib,so}")
     print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
     print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
@@ -1697,7 +1698,10 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
 
 /// LLVM 管线先类型检查，再以类型推断结果降载到 IR：零类型信息的 codegen 解构不了 Optional.some。
 /// 与解释器同一套静态校验；类型错误一次性同报并退出（同 `runCheckCommand` 的收集模式）。
-private func lowerSingleFile(source: String, fileName: String) throws -> IRModule {
+/// - Parameter requiresMain: 共享库没有进程入口，`build --shared` 传 `false`；其余入口保持要求。
+private func lowerSingleFile(
+    source: String, fileName: String, requiresMain: Bool = true
+) throws -> IRModule {
     let module = parseOrReport(source: source, fileName: fileName)
     // The semantic layer gates here for the same reason `check` runs it before the type layer:
     // it enforces capture declarations, undefined names and visibility. A check that runs ahead of
@@ -1724,7 +1728,8 @@ private func lowerSingleFile(source: String, fileName: String) throws -> IRModul
     let irModule = try IRLowerer.lower(
         module: module, typeInference: checker.typeInference,
         foreignConstants: try evaluateForeignMacros(
-            symbols: foreignSymbols(in: module), config: .default))
+            symbols: foreignSymbols(in: module), config: .default),
+        requiresMain: requiresMain)
     /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
     return irModule
@@ -1771,6 +1776,23 @@ private func runIRPackageEmit(
     package: Package, moduleRoot: String, outputPath: String?,
     backend: any PiniBackend = IREmitter()
 ) throws {
+    let irModule = try lowerPackage(package: package, moduleRoot: moduleRoot)
+    // 模块基准 = 模块根，与解释器模块路径一致。
+    backend.setProgramBase(absoluteProgramBase(moduleRoot))
+    let ir = try backend.emit(module: irModule)
+    if let out = outputPath {
+        try ir.write(toFile: out, atomically: true, encoding: .utf8)
+    } else {
+        print(ir)
+    }
+}
+
+/// 包级降载：语义 → 类型 → IR → 结构校验。`emit` 与 `build --shared` 共用这一份 —— 各抄一份就会在
+/// 「少一次语义分析」这类分叉上静默漂移，而两条命令读的必须是同一棵树。
+/// - Parameter requiresMain: 共享库没有进程入口，`build --shared` 传 `false`。
+private func lowerPackage(
+    package: Package, moduleRoot: String, requiresMain: Bool = true
+) throws -> IRModule {
     let analyzer = SemanticAnalyzer()
     try analyzer.analyze(package: package)
     let checker = TypeChecker()
@@ -1781,16 +1803,10 @@ private func runIRPackageEmit(
         package: package, typeInference: checker.typeInference,
         foreignConstants: try evaluateForeignMacros(
             symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-            config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default))
+            config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default),
+        requiresMain: requiresMain)
     try IRValidator.check(irModule)
-    // 模块基准 = 模块根，与解释器模块路径一致。
-    backend.setProgramBase(absoluteProgramBase(moduleRoot))
-    let ir = try backend.emit(module: irModule)
-    if let out = outputPath {
-        try ir.write(toFile: out, atomically: true, encoding: .utf8)
-    } else {
-        print(ir)
-    }
+    return irModule
 }
 
 // 定位集合运行时动态库：优先 env `PINI_RUNTIME_LIB`，否则取 CLI 可执行文件
@@ -1868,6 +1884,133 @@ func childExitStatus(of process: Process) -> Int32 {
         return 128 + process.terminationStatus
     }
     return process.terminationStatus
+}
+
+// MARK: - 共享库产物
+
+/// `build --shared` 的失败面：路径、导出块、工具链与链接器各一类，消息直接指向下一步动作。
+struct SharedBuildError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+/// `build --shared` 一条命令出库：降载 → 发 IR → clang 链成动态库。库没有进程入口，故不要求 `main`。
+/// 产物名取自 `[名|c]` 的块名（已转写成 C 标识符），调用方按同一个名字写 `-l`。
+func runBuildShared(path: String, outputPath: String?) {
+    do {
+        let (irModule, programBase) = try lowerForShared(path: path)
+        guard let export = irModule.export else {
+            throw SharedBuildError(
+                message: "模块没有 `[名|c]` 导出块 —— 对外符号与产物名都由它决定，不能从文件名猜")
+        }
+        let emitter = IREmitter()
+        emitter.setProgramBase(programBase)
+        let ir = try emitter.emit(module: irModule)
+        let irPath = NSTemporaryDirectory() + "pini_\(UUID().uuidString).ll"
+        defer { try? FileManager.default.removeItem(atPath: irPath) }
+        try ir.write(toFile: irPath, atomically: true, encoding: .utf8)
+        let libraryPath = sharedLibraryPath(outputPath, blockName: export.name)
+        // 父目录不存在时先建：`-o out/libx.dylib` 是最常见的写法，让链接器去报 open() 失败读不出原因。
+        let parent = (libraryPath as NSString).deletingLastPathComponent
+        if !parent.isEmpty {
+            try FileManager.default.createDirectory(
+                atPath: parent, withIntermediateDirectories: true)
+        }
+        try linkSharedLibrary(irPath: irPath, outputPath: libraryPath)
+        print("已生成 \(libraryPath)")
+        CommentStyleHint.emit()
+    } catch {
+        printError(formatCLIError(error: error, source: nil))
+        exit(1)
+    }
+}
+
+/// 共享库的降载入口：单文件、模块内文件、含 `pini.toml` 的目录三条路都收。
+/// 目录没有清单时拒绝 —— 散放的多份文件各是独立程序，拼不出一个导出面。
+private func lowerForShared(path: String) throws -> (module: IRModule, programBase: String) {
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
+        throw SharedBuildError(message: "路径不存在：\(path)")
+    }
+    if isDir.boolValue {
+        guard let manifest = try FileLoader.loadManifest(directory: path) else {
+            throw SharedBuildError(
+                message: "目录里没有 pini.toml：共享库要一个模块，散放的多份文件各是独立程序")
+        }
+        let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+        return (
+            try lowerPackage(package: package, moduleRoot: path, requiresMain: false),
+            absoluteProgramBase(path)
+        )
+    }
+    if let loaded = try loadOwningPackageIfModule(path: path) {
+        return (
+            try lowerPackage(
+                package: loaded.package, moduleRoot: loaded.moduleRoot, requiresMain: false),
+            absoluteProgramBase(loaded.moduleRoot)
+        )
+    }
+    let source = try readFile(path)
+    return (
+        try lowerSingleFile(source: source, fileName: path, requiresMain: false),
+        absoluteProgramBase(path)
+    )
+}
+
+/// 产物落点：`-o` 说了算；没给时按块名落在当前目录。`-o` 指到已存在的目录时，文件名仍按块名补。
+private func sharedLibraryPath(_ outputPath: String?, blockName: String) -> String {
+    #if os(macOS)
+    let suffix = "dylib"
+    #else
+    let suffix = "so"
+    #endif
+    let fileName = "lib\(blockName).\(suffix)"
+    guard let outputPath, !outputPath.isEmpty else {
+        return (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(fileName)
+    }
+    var isDir: ObjCBool = false
+    let pointsAtDirectory =
+        (FileManager.default.fileExists(atPath: outputPath, isDirectory: &isDir) && isDir.boolValue)
+        || outputPath.hasSuffix("/")
+    if pointsAtDirectory {
+        return (outputPath as NSString).appendingPathComponent(fileName)
+    }
+    return outputPath
+}
+
+/// 交给 clang 链成动态库：运行时动态链接，并把它的目录写进 rpath，否则调用方加载时找不到符号。
+/// 缺 clang 或运行时直接失败 —— 发一个注定加载不了的库，比不发更难排查。
+private func linkSharedLibrary(irPath: String, outputPath: String) throws {
+    guard let clang = LLVMToolchain.clangPath else {
+        throw SharedBuildError(
+            message: "clang not found. Install LLVM (e.g. `brew install llvm`) or set PINI_LLVM_BIN.")
+    }
+    guard let runtime = runtimeLibraryPath() else {
+        throw SharedBuildError(
+            message: "找不到 libPiniRuntime.{dylib,so}：它与 pini 可执行文件同目录，或用 PINI_RUNTIME_LIB 指定")
+    }
+    let runtimeDir = (runtime as NSString).deletingLastPathComponent
+    var clangArgs = [
+        "-shared", "-o", outputPath, irPath,
+        "-L\(runtimeDir)", "-lPiniRuntime", "-Wl,-rpath,\(runtimeDir)",
+    ]
+    #if !os(macOS)
+    // Darwin 的 `-shared` 默认就要求符号全部落定；GNU ld 相反，不加这条会把缺符号的库静默发出去。
+    clangArgs.insert("-Wl,--no-undefined", at: 0)
+    #endif
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: clang)
+    process.arguments = clangArgs
+    let pipe = Pipe()
+    process.standardError = pipe
+    try process.run()
+    let errData = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        let err = String(decoding: errData, as: UTF8.self)
+        throw SharedBuildError(
+            message: "clang 链接失败（rc=\(process.terminationStatus)）：\(err)")
+    }
 }
 
 func runLLICommand(source: String, fileName: String) throws {
@@ -2022,7 +2165,7 @@ case "mod":
 case "repl":
     ReplSession().run()
     exit(0)
-case "check", "build":
+case "check":
     guard args.count >= 3 else {
         printError("Error: \(command) command requires a file or directory path")
         exit(1)
@@ -2033,6 +2176,46 @@ case "check", "build":
         exit(1)
     }
     runCheckPath(args[2])
+case "build":
+    var shared = false
+    var outputPath: String?
+    var positional: [String] = []
+    var cursor = 2
+    while cursor < args.count {
+        switch args[cursor] {
+        case "--shared":
+            shared = true
+            cursor += 1
+        case "-o":
+            guard cursor + 1 < args.count else {
+                printError("Error: -o 需要一个输出路径")
+                exit(1)
+            }
+            outputPath = args[cursor + 1]
+            cursor += 2
+        default:
+            guard !args[cursor].hasPrefix("-") else {
+                printError("Error: \(args[cursor])")
+                printError("  合法用法：pini build <路径>｜pini build --shared <路径> [-o <产物路径>]")
+                exit(1)
+            }
+            positional.append(args[cursor])
+            cursor += 1
+        }
+    }
+    guard let path = positional.first else {
+        printError("Error: build command requires a file or directory path")
+        exit(1)
+    }
+    if shared {
+        runBuildShared(path: path, outputPath: outputPath)
+    } else {
+        guard outputPath == nil else {
+            printError("Error: -o 只跟 --shared 一起用")
+            exit(1)
+        }
+        runCheckPath(path)
+    }
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块根。
     runTestPath(args.count >= 3 ? args[2] : nil)

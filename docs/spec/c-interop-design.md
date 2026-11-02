@@ -359,8 +359,16 @@ void calc_shutdown(void);
 | 产物 | 来源 | 现状 |
 |---|---|---|
 | `calc.h` | `pini emit <模块内文件> calc.h --backend c` | 已落地：走既有后端接缝，含函数原型、量与结构体、`_Static_assert` |
-| `libcalc.dylib` | `pini emit <模块内文件> calc.ll` 后 `clang -shared calc.ll -lPiniRuntime` | 暂无内置产物模式；`build` 仍是 `check` 的别名 |
+| `libcalc.dylib` | `pini build --shared <模块内文件或模块目录>` | 已落地：发 IR 与链接并成一条命令，产物名取自块名，默认落在当前目录，`-o` 可改 |
 | 不生成 C 实现 | — | 见下 |
+
+共享库这条路有四处与 `emit` 不同，都不出新的语义：
+
+- 降载不要求 `main`。库没有进程入口，`build --shared` 传 `requiresMain: false`；其余命令保持要求，`pini emit` 对一个无 `main` 的库模块仍会拒。
+- 产物名是 `lib<块名>.<后缀>`，块名先过 `CName.escape`，与头文件里的生命周期符号同源，调用方按同一个名字写 `-l`。
+- 运行时按 `-lPiniRuntime` 动态链接，其目录写进 rpath；找不到运行时直接失败，不发一个注定加载不了的库。
+- 链接在缺符号时失败：Darwin 的 `-shared` 默认如此，Linux 补 `-Wl,--no-undefined`。
+
 
 #### 头文件路线与 C 后端路线
 
@@ -399,6 +407,7 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 | 数据符号 | 已落地 | `IRForeignData` 与符号地址节点；读走 `pointerLoad`，取址与 `store` 复用指针原语；LLVM 发 `@sym = external global`；解析层不再拦数据符号条目；`\|readonly` 在语义期拒直接写入 | 两条通道各跑「取址写回后读到新值」；`\|readonly` 的 `store` 被拒；全量 378 条测试绿 |
 | 宏常量 | 已落地 | `[ffi]` 增 `headers` / `include_paths`；`ForeignMacroEvaluator` 跑 `cc -E` 探针、按标记行读回、常量表达式求值；IR 增 `IRForeignConstant`，读它出字面量 | `EOF` / `M_PI` / `S_IRUSR` 各一条；未展开标识符报错并带原文；值超声明类型报错并写 Pini 类型名；缺 headers 报错；`&宏` 被拒 |
 | 导出面 | 已落地 | IR 增 `IRExportBlock`；`CName.escape` 与撞名 / 保留区检查；给定块取址转发与 `calc_init` 物化；`--backend c` 出头文件 | 一个 C 调用方经 `cc caller.c -lcalc` 跑通四条路径：标量函数、Result 函数（状态码 + 出参）、C 读给定块字段、C 写给定块字段后 Pini 的下一次取用读到新值 |
+| 共享库产物 | 已落地 | `build` 从 `check` 的别名里分出 `--shared`：降载不要求 `main`，发 IR 后交 clang `-shared`，产物名取自块名，运行时走 rpath | 单文件、模块内文件、模块目录三条路各出一条可加载的库；无导出块时报错且不留产物；全量 396 条测试绿 |
 
 落地不设兼容期：旧写法与 `funcs` 桥在同一片里删除，语料、消费者、测试一次改完。项目未到稳定态，双形并存会把「迁移没做完」固化成语法，之后每一片都要替它付维护费。
 
