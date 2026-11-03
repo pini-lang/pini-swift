@@ -319,8 +319,15 @@ struct StringHandleTests: Sendable, PiniSourceLowering {
             cli, arguments: ["emit", "calc.pini", "calc.h", "--backend", "c"], cwd: directory)
         #expect(header.status == 0, "头文件失败：\(header.stderr)")
 
+        guard let runtime = Self.runtimeLibrary(near: cli) else {
+            Issue.record("找不到 libPiniRuntime ⇒ 本判据本次未取")
+            return
+        }
         let compile = try runProcess(
-            cc, arguments: Self.callerArguments, cwd: directory)
+            cc,
+            arguments: Self.callerArguments(
+                runtimeDirectory: (runtime as NSString).deletingLastPathComponent),
+            cwd: directory)
         #expect(compile.status == 0, "C 调用方编译失败：\(compile.stderr)")
         let run = try runProcess(
             directory.appendingPathComponent("caller").path, arguments: [], cwd: directory)
@@ -330,15 +337,28 @@ struct StringHandleTests: Sendable, PiniSourceLowering {
 
     // MARK: - 辅助
 
-    /// C 调用方要直接调运行时段的 `bk_str_handle_*`：它们不在 libcalc 的导出面里，
-    /// 故让链接器把这三个符号留到运行期，由 libcalc 依赖的 libPiniRuntime 提供。
-    private static var callerArguments: [String] {
-        #if canImport(Darwin)
-        let link = "-Wl,-undefined,dynamic_lookup"
-        #else
-        let link = "-Wl,--unresolved-symbols=ignore-all"
-        #endif
-        return ["caller.c", "-L.", "-lcalc", "-Wl,-rpath,.", link, "-o", "caller"]
+    /// C 调用方要直接调运行时段的 `bk_str_handle_*`：它们定义在运行时库里，libcalc 只是引用、
+    /// 不重导出，故链接时一并带上运行时库。与 CLI 自己链共享库的写法一致。
+    private static func callerArguments(runtimeDirectory: String) -> [String] {
+        [
+            "caller.c", "-L.", "-lcalc", "-Wl,-rpath,.",
+            "-L\(runtimeDirectory)", "-lPiniRuntime", "-Wl,-rpath,\(runtimeDirectory)", "-o", "caller",
+        ]
+    }
+
+    /// 与 CLI 同一套定位：`PINI_RUNTIME_LIB` 优先，否则取 pini 可执行文件同级的运行时库。
+    private static func runtimeLibrary(near cli: String) -> String? {
+        if let override = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
+            !override.isEmpty, FileManager.default.fileExists(atPath: override)
+        {
+            return override
+        }
+        let dir = (cli as NSString).deletingLastPathComponent
+        for ext in ["dylib", "so"] {
+            let candidate = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+        return nil
     }
 
     private func warnings(_ source: String) throws -> [SemanticWarning] {
