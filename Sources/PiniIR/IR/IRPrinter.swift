@@ -198,6 +198,8 @@ public enum IRPrinter {
             return "closure#\(id)(capture: \(names))"
         case .functionValue(let functionName, _):
             return "func@\(functionName)"
+        case .cFunctionAddress(let functionName, _):
+            return "cfunc@\(functionName)"
         case .indirectCall(let callee, let arguments, _):
             let args = arguments.map(exprText).joined(separator: ", ")
             return "\(exprText(callee))(\(args))"

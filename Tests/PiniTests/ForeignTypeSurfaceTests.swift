@@ -118,20 +118,21 @@ struct ForeignTypeSurfaceTests: Sendable, PiniSourceLowering {
         #expect(failed?.code == "E4-030", "实际：\(String(describing: failed))")
     }
 
-    @Test("C 函数指针形参暂被拒：语法认得出，语义层还没接通")
-    func testFunctionPointerParameterIsRejected() {
-        let failed = failure {
-            _ = try typeChecked(
-                """
-                [libc|foreign]
-                qsort: (*U8, U64, U64, (*U8, *U8,) -> (I32,),) -> ()
+    @Test("C 函数指针形参已接通：归一成 callback，不再是表外类型")
+    func testFunctionPointerParameterNormalizesToCallback() throws {
+        let module = try lowered(
+            """
+            [libc|foreign]
+            qsort: (*U8, U64, U64, (*U8, *U8,) -> (I32,),) -> ()
 
-                main|func() -> ():
-                    return
-                """)
-        }
-        #expect(failed?.code == "E4-028", "实际：\(String(describing: failed))")
-        #expect(failed?.message.contains("函数指针") == true, "实际：\(String(describing: failed))")
+            main|func() -> ():
+                return
+            """)
+        let symbol = try #require(module.foreigns.first?.funcs.first { $0.name == "qsort" })
+        #expect(
+            symbol.params.last
+                == .callback(params: [.pointer(.u8), .pointer(.u8)], returnType: .i32),
+            "实际：\(String(describing: symbol.params.last))")
     }
 
     // MARK: - 表内：收下，并落到 IR

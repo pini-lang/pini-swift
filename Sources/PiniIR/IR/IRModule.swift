@@ -115,8 +115,8 @@ public struct IRForeignFunction: Equatable {
 
 extension FFIType {
     /// 值面拼写：`cString` 与 `String` 同为 `i8*`，调用点与 declare 因此对得上。
-    /// 指针统一 `ptr`；标量与 `IRType` 同宽。
-    var irType: IRType {
+    /// 指针统一 `ptr`；标量与 `IRType` 同宽。回调是 `cFunction` —— 与 Pini 函数值的 `{ptr, ptr}` 分开。
+    public var irType: IRType {
         switch self {
         case .i8: return .i8
         case .u8: return .u8
@@ -127,6 +127,9 @@ extension FFIType {
         case .boolean: return .boolean
         case .pointer(let target): return .pointer(element: target.irType)
         case .cString: return .string
+        case .callback(let params, let returnType):
+            return .cFunction(
+                params: params.map { $0.irType }, returnType: returnType?.irType)
         }
     }
 }

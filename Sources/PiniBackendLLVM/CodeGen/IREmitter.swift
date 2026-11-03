@@ -263,6 +263,12 @@ public final class IREmitter {
     /// 是否调用过 `c字符串` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
     private var usesCStrRetrieval = false
 
+    /// 导出回调的适配 thunk：按 C 签名缓存名字，定义攒到转发层之后一次写出。
+    /// 同名同签名的两个导出函数共用一份 —— thunk 只搬参数，与被调方是谁无关。
+    private var exportCallbackThunks: [String: String] = [:]
+    private var exportCallbackThunkDefs: [String] = []
+    private var exportCallbackThunkCount = 0
+
     /// 是否把调度器绑定交给过运行时；declare 随它条件出现，只有真发过的模块才带。
     /// 它是「派发点会取用默认调度实例」的唯一征兆，与让出族那几个开关同规。
     private var usesSchedBinding = false
@@ -383,6 +389,8 @@ public final class IREmitter {
             case .boolean: return "i1"
             case .pointer: return "ptr"
             case .cString: return "i8*"
+            /// 回调在 declare 上就是裸指针：C 的函数指针参数在 LLVM 里没有函数类型。
+            case .callback: return "ptr"
             }
         }
         for foreignBlock in module.foreigns {
@@ -2429,6 +2437,10 @@ public final class IREmitter {
         case .functionValue(let functionName, _):
             return emitFunctionValue(functionName: functionName)
 
+        case .cFunctionAddress(let functionName, _):
+            /// C 要的是这个函数的符号本身：不包适配器，符号名就是 C 侧会拿到的地址。
+            return IRValue(llvmType: "ptr", ssaName: "@\(Self.mangle(functionName))")
+
         case .indirectCall(let callee, let arguments, let returnType):
             return emitIndirectCall(callee: callee, arguments: arguments, returnType: returnType)
 
@@ -3047,7 +3059,7 @@ public final class IREmitter {
             .nominal:
             return false
         case .result, .future, .array, .optional, .enumeration, .dict,
-            .lazyRef, .set, .tuple, .function:
+            .lazyRef, .set, .tuple, .function, .cFunction:
             return true
         }
     }
@@ -3263,6 +3275,45 @@ public final class IREmitter {
         for storage in block.storages { emitExportGetter(storage) }
         emitExportLifecycle(block)
         emitExportStrerror(block)
+        for definition in exportCallbackThunkDefs { bodyIR += definition }
+    }
+
+    /// C 入口上的形参拼写：函数指针写成裸 `ptr`（C 的 `int32_t (*)(int32_t)` 在 LLVM 里就是指针），
+    /// 其余与值的拼写一致。
+    private static func cEntrySpelling(_ type: IRType) -> String {
+        if case .function = type { return "ptr" }
+        return type.llvmSpelling
+    }
+
+    /// 导出回调的适配 thunk：`code(env, args)` 里 env 就是 C 的那个函数地址，
+    /// thunk 直接 `call ret %env(args)`。每个不同的签名一份，按签名缓存。
+    private func exportCallbackThunk(_ type: IRType) -> String {
+        guard case .function(let params, let returnType, _) = type else {
+            fatalError("IREmitter: export callback thunk requires a function type")
+        }
+        let ret = returnType?.llvmSpelling ?? "void"
+        let key = ret + "|" + params.map { $0.llvmSpelling }.joined(separator: ",")
+        if let existing = exportCallbackThunks[key] { return existing }
+        let name = "__pini_cb_\(exportCallbackThunkCount)"
+        exportCallbackThunkCount += 1
+        var entry = ["ptr %env"]
+        var forwarded: [String] = []
+        for (index, param) in params.enumerated() {
+            entry.append("\(param.llvmSpelling) %c\(index)")
+            forwarded.append("\(param.llvmSpelling) %c\(index)")
+        }
+        var definition = "define \(ret) @\(name)(\(entry.joined(separator: ", "))) {\n"
+        let argumentList = forwarded.joined(separator: ", ")
+        if returnType != nil {
+            definition += " %cb.r\(exportCallbackThunkCount) = call \(ret) %env(\(argumentList))\n"
+            definition += " ret \(ret) %cb.r\(exportCallbackThunkCount)\n"
+        } else {
+            definition += " call void %env(\(argumentList))\n ret void\n"
+        }
+        definition += "}\n\n"
+        exportCallbackThunkDefs.append(definition)
+        exportCallbackThunks[key] = name
+        return name
     }
 
     /// 一个导出函数的转发体。取用位在边界内填默认实例，交给被调的是副本（与取用点同语义），
@@ -3273,7 +3324,7 @@ public final class IREmitter {
         bodyIR = ""
         var signature: [String] = []
         for (index, type) in function.cParamTypes.enumerated() {
-            signature.append("\(type.llvmSpelling) %a\(index)")
+            signature.append("\(Self.cEntrySpelling(type)) %a\(index)")
         }
         let statusPayload = function.statusPayload
         if statusPayload != nil { signature.append("ptr %out") }
@@ -3296,6 +3347,16 @@ public final class IREmitter {
                     bodyIR += " \(copy) = call i8* @bk_str_dup(i8* %a\(valueIndex))\n"
                     borrowed.append(copy)
                     args.append("i8* \(copy)")
+                } else if case .function = param.type {
+                    /// C 传进来的是裸地址，Pini 要的是胖指针：配一份适配 thunk，环境位直接放那个地址，
+                    /// thunk 把 env 当函数调。转发层只搬指针，不碰它的生命周期。
+                    let thunk = exportCallbackThunk(param.type)
+                    let code = builder.freshTemp()
+                    bodyIR += " \(code) = insertvalue { ptr, ptr } undef, ptr @\(thunk), 0\n"
+                    let fat = builder.freshTemp()
+                    bodyIR +=
+                        " \(fat) = insertvalue { ptr, ptr } \(code), ptr %a\(valueIndex), 1\n"
+                    args.append("{ ptr, ptr } \(fat)")
                 } else {
                     args.append("\(param.type.llvmSpelling) %a\(valueIndex)")
                 }

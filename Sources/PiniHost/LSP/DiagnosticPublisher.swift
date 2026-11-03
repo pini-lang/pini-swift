@@ -163,6 +163,8 @@ public struct DiagnosticPublisher {
         case .foreignTypeNotRepresentable(_, _, let loc): return loc
         case .foreignTypeWidthNotInIR(_, let loc): return loc
         case .foreignStringInReturnPosition(let loc): return loc
+        case .foreignCallbackNotFreeFunction(_, let loc): return loc
+        case .foreignCallbackBoolean(let loc): return loc
         }
     }
 }

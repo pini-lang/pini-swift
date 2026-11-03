@@ -149,6 +149,14 @@ suggestion = "use one of I8 / I32 / I64 / U8 / U64 / F64; widths such as U32 and
 message = "a foreign function cannot return String: the pointer's ownership is unknowable"
 suggestion = "declare it as `*U8` and copy with `c字符串(pointer)` after the call"
 
+[E4-031]
+message = "the callback argument is not usable: {reason}"
+suggestion = "name a top-level free function whose signature matches the parameter position for position, with no using slots"
+
+[E4-032]
+message = "Bool cannot appear in a callback signature: Pini's i1 and C's _Bool do not share a register convention"
+suggestion = "use I32 on both sides and read 0 / non-zero"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

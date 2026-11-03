@@ -49,4 +49,9 @@ public enum TypeError: Error, Equatable {
     case foreignTypeWidthNotInIR(type: String, location: SourceLocation)
     /// `String` 出现在外部函数的返回位：C 返回的指针归属不明，取回必须显式复制。
     case foreignStringInReturnPosition(location: SourceLocation)
+    /// 回调实参不合格：不是裸标识符、解析不到顶层自由函数，或签名与形参声明不是逐位相同。
+    /// 三种情况都指向同一件事——传出去的地址必须真的能被 C 按那个签名调用。
+    case foreignCallbackNotFreeFunction(reason: String, location: SourceLocation)
+    /// 回调签名里的 `Bool`：`i1` 与 C `_Bool` 的寄存器约定不同，回调方向没有转发层可替它转。
+    case foreignCallbackBoolean(location: SourceLocation)
 }

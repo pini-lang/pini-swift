@@ -15,6 +15,9 @@ public enum FFIType: Equatable, Sendable {
     indirect case pointer(FFIType)
     /// `String` 形参：借出，UTF-8、NUL 结尾，只在本次调用期间有效。
     case cString
+    /// C 函数指针形参：`(A, B) -> C`。与 Pini 的闭包值不是同一个表示 —— 后者是 `{code, env}` 胖指针，
+    /// 调用时先传 env；把 C 指针塞进那条路等于把代码指针当环境指针用。
+    indirect case callback(params: [FFIType], returnType: FFIType?)
 
     /// 标注所在的位置。同一份标注换个位置可能成立也可能不成，判据收在这里。
     public enum Position {
@@ -43,12 +46,56 @@ public enum FFIType: Equatable, Sendable {
             throw FFITypeError.notRepresentable(type: name, reason: "不是 C 兼容标量或指针")
         case .pointer(let element, _):
             return .pointer(try pointerTarget(element))
-        case .function:
-            throw FFITypeError.notRepresentable(
-                type: annotation.describe(), reason: "C 函数指针参数尚未接通")
+        case .function(let params, let returns, let captured, let usingIndices, _):
+            /// 函数类型只在形参位成立：返回位需要一个可持有、可比较、可空的一等函数指针值，
+            /// 而第二版没有这样的值类型 —— 放行只会把「指针存进变量」的坑留给用户。
+            guard position == .parameter else {
+                throw FFITypeError.callbackOutsideParameter
+            }
+            return try callback(params: params, returns: returns, captured: captured, usingIndices: usingIndices)
         case .tuple, .generic:
             throw FFITypeError.notRepresentable(
                 type: annotation.describe(), reason: "C 边界只收标量、指针与借出的 String 形参")
+        }
+    }
+
+    /// 回调签名：参数与返回都只收标量与指针，返回至多一项，`using` 与捕获都是空的。
+    /// `String` 与 `Bool` 在这里各有一句拒绝 —— 它们的问题不是宽度，是表示不同。
+    private static func callback(
+        params: [TypeAnnotation], returns: [TypeAnnotation],
+        captured: [TypeAnnotation], usingIndices: Set<Int>
+    ) throws -> FFIType {
+        guard captured.isEmpty, usingIndices.isEmpty else {
+            throw FFITypeError.notRepresentable(
+                type: "闭包", reason: "回调只能是顶层自由函数：捕获与取用都在 C 侧无从传递")
+        }
+        guard returns.count <= 1 else {
+            throw FFITypeError.notRepresentable(
+                type: "多返回", reason: "C 函数最多返回一个值")
+        }
+        let paramTypes = try params.map { try callbackElement($0, position: "参数") }
+        let returnType = try returns.first.map { try callbackElement($0, position: "返回") }
+        return .callback(params: paramTypes, returnType: returnType)
+    }
+
+    /// 回调签名里的一个位置。标量与指针放行，`Bool` 与 `String` 各自有专门的拒绝理由。
+    private static func callbackElement(_ annotation: TypeAnnotation, position: String) throws -> FFIType {
+        switch annotation {
+        case .simple(let name, _):
+            if name == "Bool" { throw FFITypeError.booleanInCallback }
+            if name == "String" {
+                throw FFITypeError.notRepresentable(
+                    type: "String",
+                    reason: "回调\(position)写 String 不行：C 传的是裸字节，Pini 串是带头的堆对象，两侧表示不同")
+            }
+            if let scalar = scalar(named: name) { return scalar }
+            if Self.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
+            throw FFITypeError.notRepresentable(type: name, reason: "回调\(position)只能是 C 标量或指针")
+        case .pointer(let element, _):
+            return .pointer(try pointerTarget(element))
+        default:
+            throw FFITypeError.notRepresentable(
+                type: annotation.describe(), reason: "回调\(position)只能是 C 标量或指针")
         }
     }
 
@@ -96,13 +143,20 @@ public enum FFIType: Equatable, Sendable {
         case .boolean: return "Bool"
         case .pointer(let target): return "*\(target.describe())"
         case .cString: return "String"
+        case .callback(let params, let returnType):
+            let returned = returnType.map { $0.describe() } ?? ""
+            return "(" + params.map { $0.describe() }.joined(separator: ", ") + ") -> (\(returned)) [C]"
         }
     }
 }
 
-/// 归一失败的原因。分成三类是为了让诊断码能区分「不认识」「宽度不对」「位置不对」。
+/// 归一失败的原因。分成几类是为了让诊断码能区分「不认识」「宽度不对」「位置不对」「表示不同」。
 public enum FFITypeError: Error, Equatable, Sendable {
     case notRepresentable(type: String, reason: String)
     case widthNotInIR(type: String)
     case cStringInReturnPosition
+    /// 函数类型落在形参位之外：返回位与数据位都没有可承载它的值。
+    case callbackOutsideParameter
+    /// 回调签名里的 `Bool`：Pini 的 `i1` 与 C 的 `_Bool`（零扩展的 `i8`）不是一个寄存器约定。
+    case booleanInCallback
 }

@@ -849,6 +849,16 @@ private struct Walker {
                 report(.closureShape, "函数值引用了未知函数 '\(name)'", at: location)
             }
 
+        case .cFunctionAddress(let name, let type):
+            /// 地址必须是本模块里真的存在的函数：外部声明没有 Pini 函数体，取它的地址应当走
+            /// 外部数据符号那条路，不该在这里冒充一个回调。
+            if !functionNames.contains(name) {
+                report(.closureShape, "C 函数指针引用了未知函数 '\(name)'", at: location)
+            }
+            if case .cFunction = type {} else {
+                report(.closureShape, "C 函数指针节点的类型是 \(type.describe())", at: location)
+            }
+
         case .indirectCall(let callee, let arguments, _):
             if let calleeType = effectiveType(of: callee), case .function = calleeType {} else {
                 report(
@@ -1107,6 +1117,9 @@ extension IRType {
         case .function(let params, let returnType, _):
             let inputs = params.map(\.display).joined(separator: ", ")
             return "(\(inputs)) -> \(returnType?.display ?? "()")"
+        case .cFunction(let params, let returnType):
+            let inputs = params.map(\.display).joined(separator: ", ")
+            return "(\(inputs)) -> \(returnType?.display ?? "()") [C]"
         case .pointer(let element): return "*\(element.display)"
         }
     }

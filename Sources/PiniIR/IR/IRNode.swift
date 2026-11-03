@@ -63,6 +63,9 @@ public indirect enum IRType: Equatable {
     /// `{ ptr, ptr }` = { code, env }; the param/return shapes are carried for parity checking only — the
     /// call protocol is fixed (first arg is always the env pointer).
     case function(params: [IRType], returnType: IRType?, usingIndices: Set<Int>)
+    /// C 函数指针：`(A, B) -> C`，LLVM 拼写是裸 `ptr`。
+    /// 与 `function` 明确分开 —— 后者是 `{code, env}` 胖指针、调用先传 env，两者不可互换。
+    case cFunction(params: [IRType], returnType: IRType?)
     /// `*T`: raw pointer, opaque `ptr` in LLVM IR — load/store take the element type, address-of produces
     /// it from an alloca. The element rides along for load/store typing (mirroring the interpreter's
     /// snapshot/decode: `*U8` loads sign-extend to one int value).
@@ -102,6 +105,8 @@ public indirect enum IRType: Equatable {
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         case .function:
             return "{ ptr, ptr }"
+        case .cFunction:
+            return "ptr"
         case .pointer:
             return "ptr"
         }
@@ -153,6 +158,9 @@ public indirect enum IRType: Equatable {
             }
             let returned = returnType.map { $0.describe() } ?? ""
             return "(" + marked.joined(separator: ", ") + ") -> (\(returned))"
+        case .cFunction(let params, let returnType):
+            let returned = returnType.map { $0.describe() } ?? ""
+            return "(" + params.map { $0.describe() }.joined(separator: ", ") + ") -> (\(returned)) [C]"
         case .pointer(let element):
             return "*\(element.describe())"
         }
@@ -219,7 +227,7 @@ public indirect enum IRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
+        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .pointer:
             return false
         }
     }
@@ -381,6 +389,9 @@ public indirect enum IRExpr: Equatable {
     /// env-ignoring adapter fat pointer (`@__adapter_<mangled>`) so direct
     /// and indirect call sites share one calling convention.
     case functionValue(functionName: String, type: IRType)
+    /// 顶层自由函数的地址，作为 C 函数指针传出去：发射成 `ptr @mangled`，不包一层适配器 ——
+    /// 包一层就多了一个 C 侧看不见的名字，而 C 要的正是这个函数的符号。
+    case cFunctionAddress(functionName: String, type: IRType)
     /// Indirect call through a function value (G6): always the closure ABI
     /// `call ret code(ptr env, args...)` — `callee` is a closureLiteral /
     /// functionValue / function-typed variable load.
@@ -544,6 +555,7 @@ extension IRExpr {
         case .interpString: return .string
         case .closureLiteral(_, _, _, _, _, _, let type): return type
         case .functionValue(_, let type): return type
+        case .cFunctionAddress(_, let type): return type
         case .indirectCall(_, _, let returnType): return returnType
         case .lazyRefConstruct(_, let type): return type
         case .lazyRefValue(_, let type): return type

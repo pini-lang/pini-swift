@@ -1861,6 +1861,10 @@ public enum IRLowerer {
             return "外部符号 '\(symbol)' 的类型 `\(type)` 在 IR 里没有对应宽度"
         case .cStringInReturnPosition:
             return "外部符号 '\(symbol)' 不能用 String 作返回类型：C 返回的指针归属不明"
+        case .callbackOutsideParameter:
+            return "外部符号 '\(symbol)' 的函数指针不在形参位：返回位没有可承载它的值类型"
+        case .booleanInCallback:
+            return "外部符号 '\(symbol)' 的回调签名含 Bool：`i1` 与 `_Bool` 的寄存器约定不同"
         }
     }
 
@@ -2980,6 +2984,13 @@ public enum IRLowerer {
             // `取文本(plus)` — unique unqualified reverse lookup.
             if let constructed = try lowerBareEnumCase(name, at: location, into: &context) {
                 return constructed
+            }
+            // 回调实参位：期望类型是 C 函数指针时，名字取的是函数地址本身，不是闭包胖指针。
+            // 判据只看期望类型，不看被调方 —— `.function` 与 `.cFunction` 在 IR 里是两种表示。
+            if case .cFunction = expected, let signature = context.moduleSignatures[name] {
+                let type = IRType.cFunction(
+                    params: signature.paramTypes, returnType: signature.returnType)
+                return LoweredExpr(node: .cFunctionAddress(functionName: name, type: type), type: type)
             }
             // Named top-level function used as a value (G6): `应用(加倍, 21)`.
             // The type comes from the pre-pass signature table; emission goes

@@ -286,6 +286,8 @@ public enum ErrorFormatter {
         case .foreignTypeNotRepresentable(let type, let reason, _): return "外部符号的类型 '\(type)' 不可用：\(reason)"
         case .foreignTypeWidthNotInIR(let type, _): return "外部符号的类型 '\(type)' 在 IR 里没有对应宽度"
         case .foreignStringInReturnPosition: return "外部函数的返回类型不能是 String：C 返回的指针归属不明"
+        case .foreignCallbackNotFreeFunction(let reason, _): return "回调实参不合格：\(reason)"
+        case .foreignCallbackBoolean: return "回调签名里不能出现 Bool：Pini 的 i1 与 C 的 _Bool 寄存器约定不同，改用 I32"
         }
     }
 

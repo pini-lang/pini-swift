@@ -407,7 +407,7 @@ private struct Builder {
             throw unsupported("具名类型节点", .nominals, "字段偏移与标签位属名义布局")
         case .tupleConstruct, .tupleIndexGet:
             throw unsupported("元组节点", .collections, "聚合布局不在本 profile")
-        case .closureLiteral, .functionValue, .indirectCall:
+        case .closureLiteral, .functionValue, .cFunctionAddress, .indirectCall:
             throw unsupported("函数值节点", .calls, "函数值要环境对象与间接调用协议")
         case .pointerLoad, .pointerStore, .addressOfVar, .foreignDataAddress:
             throw unsupported("指针节点", .pointers, "unsafe 指针不在本 profile")

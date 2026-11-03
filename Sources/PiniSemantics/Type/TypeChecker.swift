@@ -60,6 +60,9 @@ public final class TypeChecker {
     private var readonlyForeignData: Set<String> = []
     /// 声明了 `|macro` 的外部符号：构建期常量，没有存储，故取址一律拒。
     private var macroForeignNames: Set<String> = []
+    /// 能交给 C 当回调的顶层自由函数：签名与取用位随声明记下，调用点逐位比对。
+    /// 方法、闭包、泛型、`main` 与 `|test` 都不在表里 —— 它们的地址要么不是 C ABI，要么不该外泄。
+    private var callbackFunctions: [String: (params: [TypeAnnotation], returns: [TypeAnnotation], usingIndices: Set<Int>)] = [:]
 
     /// C 面的声明上下文：条目只能引用本模块已声明的自由函数与给定块。
     /// 三张表在整模块预扫描时填一次，故 export 块写在被引用声明之前也能判定。
@@ -628,12 +631,49 @@ public final class TypeChecker {
             return "`^T` 的载荷须是 C 兼容标量"
         case .tuple(_, let elements, _) where elements.isEmpty:
             return nil
-        case .tuple:
+        case .tuple: 
             return "元组不可跨越 C 边界"
-        case .function:
-            return "函数类型不可跨越 C 边界"
+        case .function(let params, let returns, let captured, let usingIndices, _):
+            /// 函数类型只在形参位成立：C 侧写成 `ret (*)(params)`，转发层把裸地址包成 Pini 函数值。
+            guard position == .parameter else {
+                return "函数类型只作导出函数的形参：返回位没有可承载它的 C 形状"
+            }
+            guard captured.isEmpty, usingIndices.isEmpty else {
+                return "回调不能捕获变量，也不能带 using 形参：C 侧只有一个裸地址"
+            }
+            return callbackExportRejection(params: params, returns: returns)
         case .generic(let name, _, _):
             return "`\(name)` 不可跨越 C 边界"
+        }
+    }
+
+    /// 导出回调的签名：参数与返回都只收 C 标量或指针，返回至多一项。
+    /// `Bool` 单列一条：它在 Pini 是 `i1`、在 C 是 `_Bool`，回调方向没有转发层能替它转。
+    private func callbackExportRejection(
+        params: [TypeAnnotation], returns: [TypeAnnotation]
+    ) -> String? {
+        guard returns.count <= 1 else { return "回调最多返回一个值" }
+        for (index, param) in params.enumerated() {
+            if let why = callbackElementRejection(param) {
+                return "回调第 \(index + 1) 个参数\(why)"
+            }
+        }
+        if let declared = returns.first, let why = callbackElementRejection(declared) {
+            return "回调返回\(why)"
+        }
+        return nil
+    }
+
+    private func callbackElementRejection(_ t: TypeAnnotation) -> String? {
+        switch t {
+        case .simple(let name, _):
+            if name == "Bool" { return "不能是 Bool：`i1` 与 `_Bool` 的约定不同，改用 I32" }
+            return Self.cExportScalars.contains(name) ? nil : " `\(name)` 不是 C 兼容标量"
+        case .pointer(let element, _):
+            if case .simple(let name, _) = element, Self.cExportScalars.contains(name) { return nil }
+            return "的指针目标 `\(element.describe())` 不是 C 标量"
+        default:
+            return " `\(t.describe())` 不是 C 标量或指针"
         }
     }
 
@@ -1450,6 +1490,14 @@ public final class TypeChecker {
                     usingParamIndices: TypeChecker.usingParamIndices(of: f.params)
                 )
             }
+            /// 回调候选表：只收顶层、非泛型、非 `|test`、非 `main` 的自由函数。
+            /// `main` 是进程入口，C 侧回调它没有意义；`|test` 不进发布面。
+            if f.genericParams.isEmpty, !f.modifiers.contains("test"), f.name != "main" {
+                callbackFunctions[f.name] = (
+                    params: paramTypes, returns: returnTypes,
+                    usingIndices: TypeChecker.usingParamIndices(of: f.params)
+                )
+            }
         case .structDecl(let s):
             typeFieldsByName[s.name] = s.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
             if !s.genericParams.isEmpty {
@@ -1826,6 +1874,75 @@ public final class TypeChecker {
             case .cStringInReturnPosition:
                 try report(
                     TypeError.foreignStringInReturnPosition(location: symbol.location))
+            case .callbackOutsideParameter:
+                try report(
+                    TypeError.foreignTypeNotRepresentable(
+                        type: "函数",
+                        reason: "函数指针只作形参：返回位需要一个可持有、可比较的一等值，第二版没有这种值；"
+                            + "要动态取符号走 `build --shared` 的静态导出",
+                        location: symbol.location))
+            case .booleanInCallback:
+                try report(TypeError.foreignCallbackBoolean(location: symbol.location))
+            }
+        }
+    }
+
+    /// 外部函数调用点：函数形参位上的实参必须是一个顶层自由函数的名字，且签名逐位相同。
+    /// 判据放在调用点而不是声明点 —— 声明只说「这里要一个地址」，能不能给出地址由实参决定。
+    private func checkForeignCallbackArguments(
+        callee: String, arguments: [CallArgument],
+        signature: TypeEnvironment.FunctionSignature, location: SourceLocation
+    ) throws {
+        guard signature.params.contains(where: { if case .function = $0 { return true }; return false })
+        else { return }
+        /// 个数与 `using` 的错配已由 `validateCallArguments` 报过；这里只按位置对齐，
+        /// 再报一次同样是错配的二次噪声。
+        guard arguments.count == signature.params.count else { return }
+        for (index, param) in signature.params.enumerated() {
+            guard case .function(let callbackParams, let callbackReturns, _, _, _) = param else { continue }
+            let position = "第 \(index + 1) 个实参"
+            guard case .identifier(let name, let argumentLocation) = arguments[index].expression else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "\(position)是表达式，不是顶层自由函数的名字；C 只接一个可调用的地址",
+                        location: location))
+                return
+            }
+            guard typeEnv.lookupVariable(name: name) == nil else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 在这是变量，不是函数；变量里装的可能是闭包，取址只能取到胖指针的一半",
+                        location: argumentLocation))
+                return
+            }
+            guard let candidate = callbackFunctions[name] else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 不是本模块的顶层自由函数；方法、`main`、`|test` 与泛型函数都没有可交给 C 的地址",
+                        location: argumentLocation))
+                return
+            }
+            guard candidate.usingIndices.isEmpty else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 带 using 形参；C 侧不会替它补给定块",
+                        location: argumentLocation))
+                return
+            }
+            let signatureMatches =
+                candidate.params.count == callbackParams.count
+                && zip(candidate.params, callbackParams).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
+                && candidate.returns.count == callbackReturns.count
+                && zip(candidate.returns, callbackReturns).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
+            guard signatureMatches else {
+                let declared = "(" + callbackParams.map { $0.describe() }.joined(separator: ", ") + ") -> "
+                    + "(" + callbackReturns.map { $0.describe() }.joined(separator: ", ") + ")"
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 的签名与形参位声明的 `\(declared)` 不是逐位相同；"
+                            + "C 会按声明调用它，差一位就是读错寄存器",
+                        location: argumentLocation))
+                return
             }
         }
     }
@@ -2441,6 +2558,12 @@ public final class TypeChecker {
                                 location: location
                             ))
                         return
+                    }
+                    /// 回调实参：外部函数形参位上的函数类型要一个真地址，判据在调用点。
+                    /// 排在校验实参之前 —— 签名差一位时，讲「C 会按声明调用它」比讲「类型不匹配」有用。
+                    if foreignSymbolNames.contains(calleeName) {
+                        try checkForeignCallbackArguments(
+                            callee: calleeName, arguments: arguments, signature: sig, location: location)
                     }
                     try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])
                     // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）

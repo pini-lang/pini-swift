@@ -442,7 +442,10 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     symbol: symbol, name: name,
                     params: foreign.function.params,
                     returnType: foreign.function.returnType,
-                    location: IRExecutor.noLocation
+                    location: IRExecutor.noLocation,
+                    invokeCallback: { [unowned self] function, values in
+                        try self.callFunctionValue(function, args: values)
+                    }
                 )
                 return try thunk(args)
             }
@@ -850,25 +853,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             )
 
         case .functionValue(let name, _):
-            // The lowerer builds this node only for a name it resolved in the
-            // module's signature table, so a miss here means the module and the
-            // engine disagree — not a program error to be tolerated quietly.
-            guard let target = functions[name] else {
-                throw RuntimeError.invalidOperation(
-                    reason: "IR executor: function value '\(name)' names no module-level "
-                        + "function in this module",
-                    location: IRExecutor.noLocation
-                )
-            }
-            // A named function closes over nothing: the interpreter registers its value against the global environment.
-            // This mirrors that rather than inventing a creation-point environment there is none of.
-            return makeFunctionValue(
-                name: name,
-                paramNames: target.params.map { $0.name },
-                body: target.body,
-                returnLabels: IRExecutor.declaredReturnLabels(target.returnType),
-                closure: globalEnv
-            )
+            return try namedFunctionValue(name: name)
+
+        case .cFunctionAddress(let name, _):
+            /// 回调实参：C 要的是地址，解释器交出去的是可调用体 —— 地址由 `CallbackBridge` 的桩提供，
+            /// 绑定时再把这个值挂上去。这里与 `functionValue` 同一个构造，不另造一套。
+            return try namedFunctionValue(name: name)
 
         case .indirectCall(let callee, let arguments, _):
             // Callee before arguments, the interpreter's own order at its indirect-call arm.
@@ -2112,6 +2102,27 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             parent: globalEnv,
             args: args,
             name: function.name
+        )
+    }
+
+    /// 具名函数的运行时值。`functionValue` 与 `cFunctionAddress` 都从这里取：
+    /// 一个进闭包调用协议，一个交给回调桥当可调用体 —— 「这个函数是谁」只有一次查表。
+    private func namedFunctionValue(name: String) throws -> Value {
+        guard let target = functions[name] else {
+            throw RuntimeError.invalidOperation(
+                reason: "IR executor: function value '\(name)' names no module-level "
+                    + "function in this module",
+                location: IRExecutor.noLocation
+            )
+        }
+        // A named function closes over nothing: the interpreter registers its value against the global environment.
+        // This mirrors that rather than inventing a creation-point environment there is none of.
+        return makeFunctionValue(
+            name: name,
+            paramNames: target.params.map { $0.name },
+            body: target.body,
+            returnLabels: IRExecutor.declaredReturnLabels(target.returnType),
+            closure: globalEnv
         )
     }
 

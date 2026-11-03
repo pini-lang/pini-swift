@@ -161,6 +161,11 @@ public struct CHeaderBackend: PiniBackend {
         case .boolean: return "bool"
         /// 导出形参的 `String`：借出的 UTF-8 C 串，只在本次调用期间有效。
         case .string: return "const char*"
+        /// 回调形参：C 侧写成一个函数指针，转发层把裸地址包成 Pini 函数值。
+        case .function(let params, let returnType, _):
+            let returned = returnType.map { cType($0) } ?? "void"
+            let inner = params.map { cType($0) }.joined(separator: ", ")
+            return "\(returned) (*)(\(inner.isEmpty ? "void" : inner))"
         case .pointer(let element):
             /// 目标不透明时给 `void*`：C 侧不需要 Pini 的结构体定义，也不该依赖它。
             if let spelling = cScalar(element) { return "\(spelling)*" }

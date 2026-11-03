@@ -46,7 +46,7 @@ extension IRType {
         case .nominal(_, let isObject): return isObject ? .retained(.object) : .valueBox
         case .enumeration: return .retained(.enumeration)
         case .result, .optional, .tuple, .function: return .aggregate
-        case .future, .pointer: return .inert
+        case .future, .pointer, .cFunction: return .inert
         }
     }
 
@@ -122,7 +122,7 @@ extension IRExpr {
             return .inert
         // 全局常量与变量 / 字段 / 元素槽：份额在别处。
         case .stringConst, .load, .subscriptGet, .optionalGet, .fieldGet, .tupleIndexGet,
-            .lazyRefValue, .functionValue, .givenInstance:
+            .lazyRefValue, .functionValue, .cFunctionAddress, .givenInstance:
             return .borrowed
         /// `call` 与 `indirectCall` 的返回一律按新份额：`returnStmt` 的 `adopt` 已在被调方
         /// 安排好 —— 交临时值就是移交，交别名就先保留。故调用方接手的一定是干净的一份。

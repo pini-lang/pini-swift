@@ -1,6 +1,6 @@
 # C 互操作第二版：字符串 · 回调 · 变参
 
-- 状态：三点已定（2026-11-03）；「收口」「借出」「取回」已落地，其余三片待做。
+- 状态：三点已定（2026-11-03）；「收口」「借出」「取回」「回调」已落地，其余两片待做。
 - 基线：`150660d`；全量 453 条（借出后读数）。
 - 上承：`docs/spec/c-interop-design.md`。首版已落地的事实不重复，本文只定第二版。
 
@@ -175,12 +175,14 @@ Pini 面：形参与返回都可以写 `StringHandle`。创建即复制——`bk
 qsort: (*U8, U64, U64, (*U8, *U8,) -> (I32,),) -> ()
 ```
 
-这一行今天就能解析（见上表「qsort 形参」那条），只差语义放行。落地要动两处类型：
+这一行今天就能解析（见上表「qsort 形参」那条），只差语义放行。落地动两处类型：
 
 | 层 | 增什么 | 说明 |
 |---|---|---|
-| `TypeAnnotation` | `.cFunction(params:returns:)` | 只由 FFI 归一器产出，解析器不产；用户手写不到 |
+| `FFIType` | `.callback(params:returnType:)` | 闭合表的第六个成员；归一器产出，标注本身仍是 `.function` |
 | `IRType` | `.cFunction(params:returnType:)` | `llvmSpelling` 是 `ptr`，与 `.function` 的 `{ ptr, ptr }` 明确分开 |
+
+`TypeAnnotation` 不加新 case：解析器产出的 `.function` 在 FFI 语境里就是函数指针，位置（形参 / 返回 / 数据）由归一器判。加一个用户写不到的 AST 分支，等于给每个遍历 `TypeAnnotation` 的地方都加一处永远不成立的分支。
 
 分开是硬要求：`.function` 是 Pini 的胖指针 `{code, env}`，调用时第一个实参是 env；把 C 指针塞进那条路，等于把代码指针当环境指针用。
 
@@ -207,12 +209,9 @@ unsafe qsort(缓冲, 4, 1, 比较)
 
 ### 4.4 导入侧：调用收到的指针
 
-形参进了函数体就是一个值，`fn(a, b)` 照常写。降载成新节点 `.cCall`，不复用 `.indirectCall`——后者取 `{code, env}` 再先传 env，对 C 指针是错的。
+规划里的 `.cCall` 节点**没有落地**。原因不是省事：v2 没有任何路径能产生一个「裸函数指针值」——外部函数不返回函数指针，形参位的地址在 Pini 侧一进来就被包成函数值（导出侧）或被 C 直接调走（导入侧）。一个没有生产者的 IR 节点进不了契约，也编不出用例。
 
-| 通道 | 发射 / 执行 |
-|---|---|
-| LLVM | `%p = load ptr, ...` 然后 `call i32 %p(i32 %a, i32 %b)` |
-| 解释器 | 与 `ForeignThunk` 同一套位转调用，只是地址来自值而不是 `dlsym` |
+所以「Pini 里调一个回调」只有一条路：C 传进来的裸地址在转发层包成 Pini 函数值，`f(x)` 仍是 `.indirectCall`。这条路的代价写在 4.5，收益是 Pini 函数的签名不因导出而变形 —— 同一个函数照常能被 Pini 用闭包调用。
 
 ### 4.5 导出侧：C 传进来
 
@@ -228,7 +227,8 @@ calc_map|c = 映射
 int32_t calc_map(int32_t (*f)(int32_t), int32_t x);
 ```
 
-头文件按 2.1 的表拼函数指针；导出转发只搬指针，不碰它的生命周期。C 侧传进来的指针在本次调用内有效，Pini 不清算它——这条要写进头文件注释。
+头文件按 2.1 的表拼函数指针；导出转发把裸地址包成函数值：`code` 是适配 thunk，`env` 就是那个地址。转发层只搬指针，不碰它的生命周期 —— C 侧传进来的指针在本次调用内有效，Pini 不清算它。
+不把形参 ABI 直接改成裸指针，是为了让同一个函数仍能被 Pini 用闭包调用：改 ABI 等于给这个函数加一条「只准 C 调用」的隐含限制，而源码上看不出来。
 
 ### 4.6 解释器的桩
 
@@ -236,12 +236,13 @@ C 调用的是地址，地址必须真的能执行，所以解释器得备桩。
 
 | 环节 | 做法 |
 |---|---|
-| 桩 | 按返回类分两组（整数/指针组、浮点组），每组四个槽位；签名用既有的 8 槽位转，与 `ForeignThunk` 同一套编解码 |
+| 桩 | 四个槽位，固定八个机器字的整数签名（`pini_cb_0..3`）；含 `F64` 的回调不走这条路 —— 浮点走向量寄存器，桩读不到 |
 | 登记 | 线程局部的「槽位 → Pini 可调用体」表，调用前压入、`defer` 弹出；嵌套调用自然成栈 |
-| 取体 | `.functionValue` 已经产出 `Value.function(FunctionValue)`（`IRExecutor.swift:855`），桩直接调 `callFunctionValue` |
+| 取体 | `.cFunctionAddress` 与 `.functionValue` 走同一次查表（`namedFunctionValue`），桩直接调 `callFunctionValue` |
 | 上限 | 同一次调用里同类回调最多四路；超过在调用点报错（C 侧没有上下文可区分两个同类指针） |
+| 抛错 | 回调里抛出的错误记在线程局部，C 返回后由 thunk 抛出；穿过 C 栈 unwind 是做不到的 |
 
-桩要能回调进解释器，前提是引擎可重入：`invoke` 每次新建 `Environment`（`IRExecutor.swift:2135`），看起来成立，但这属于「必须先用探针证明」的那一类。**回调分片的第一件事**是写一个 C shim `ffi_apply(fn, a, b)`，手工装桩跑通一次；跑不通就退回「解释器拒绝回调」并在通道表里登记，别先写规则。
+桩要能回调进解释器，前提是引擎可重入。**回调分片的第一件事**是写一个 C shim `ffi_apply(fn, a, b)`，手工装桩跑通一次。探针结论：可重入成立 —— `invoke` 每次新建 `Environment`，而 `currentEnv` / `callDepth` / `deferStack` 全是线程局部；实测两层嵌套（C → 桩 → 带回调的 C → 桩）也成立。浮点组因此没有落地：一个桩读不到向量寄存器，硬加只会做出一个「有时能用」的接口。
 
 ### 4.7 生命周期与线程
 
@@ -302,7 +303,7 @@ LLVM 不做默认实参提升，这一层必须在发射点自己做；指望 `c
 | 收口 | 闭合类型表、单一归一函数、IR 换形、三处消费点收敛 | 对象形参与 `U32` 两条转为 `check` 期报 E4-028 / E4-029；新增 8 条负例逐条对码；全量绿 |
 | 借出 | `String` 形参走借出（导入与导出两侧）；shim 表按形状生效 | `atoi("123")` 在两通道都得 `123`；`strlen: (String,)` 不再撞 shim；导出的函数收 C 串时 Pini 拿到 `String`；`examples/ffi.pini` 的 golden 不变 |
 | 取回 | `c字符串` 内建与 `bk_str_from_cstr` | `getenv` 取回两通道同值；`-> String` 在 `check` 期报 E4-030 |
-| 回调 | `.cFunction` 两处类型、`.cFunctionAddress` / `.cCall` 两节点、导出头文件、解释器桩 | `qsort` 两通道同序；C shim 端到端；`calc_map` 的 C 调用方跑通；六条负例 |
+| 回调 | `.cFunction` 类型、`.cFunctionAddress` 节点、导出适配 thunk、解释器桩 | `qsort` 两通道同序；C shim 端到端；`calc_map` 的 C 调用方跑通；九条负例 |
 | 变参 | 标志位、arity 放宽、提升、declare、解释器拒绝 | `run-llvm` 出 `declare i32 @printf(ptr, ...)`；`I8` / `Bool` 提升正确；`run` 报新码并给出两条出路 |
 | 句柄 | 五个运行时段符号、`StringHandle` 形参/返回、头文件、解释器拒绝 | `build --shared` 的库由 C 侧 retain/release 与读字节；`run` 报新码 |
 | 文档 | 四份规范、文法附录、示例与 golden | 文档链接门禁、注释门禁、契约计数全过 |
@@ -334,9 +335,9 @@ LLVM 不做默认实参提升，这一层必须在发射点自己做；指望 `c
 
 ### 回调
 
-- `TypeAnnotation.cFunction`：`describe()` 写成 `(A,) -> (B,) [C]`，`isStructurallyEquivalent` 与 `.function` 互不相等；解析器不产，纯手写构造要报错。
-- `IRType.cFunction`：`llvmSpelling` 为 `ptr`；`describe()` 同上；`IRType(from:)` 不接受。
-- `.cFunctionAddress(name)` 与 `.cCall` 两个节点：`IRNode`、`IRPrinter`、`IRValidator`、三个后端的 anchor 全部补齐。契约表与三处 anchor 必须同一笔提交——`tools/ir-contract-check.py` 会逐项比「契约有条目 / 枚举有 case / 后端有分派」，缺一项即红。`IRType` 由 21 增到 22。
+- `FFIType.callback`：`describe()` 写成 `(A, B) -> (C) [C]`；`resolve` 只在形参位收函数类型。
+- `IRType.cFunction`：`llvmSpelling` 为 `ptr`；`describe()` 同上；与 `.function` 的 `Equatable` 不相等。
+- `.cFunctionAddress(name)` 一个节点：`IRNode`、`IRPrinter`、`IRValidator`、三个后端的 anchor 全部补齐。契约表与三处 anchor 同一笔提交——`tools/ir-contract-check.py` 逐项比「契约有条目 / 枚举有 case / 后端有分派」，缺一项即红。表达式条目 53 → 55（顺带补上 `foreignDataAddress` 那笔旧账），`IRType` 由 21 增到 22。
 - 语义：`checkForeignDeclSignatures` 放行嵌套函数类型；调用点判「实参是不是顶层自由函数」；导出面判 FFI 类型表。
 - 头文件：函数指针参数的拼写、注释「只在本次调用内有效」。
 - 解释器：桩 + 登记表 + 拒绝跨线程 + 四路上限。
@@ -390,7 +391,7 @@ LLVM 不做默认实参提升，这一层必须在发射点自己做；指望 `c
 
 | 风险 | 说明 | 处置 |
 |---|---|---|
-| 解释器不可重入 | 桩回调进引擎时撞上共享状态 | 回调分片第一件事是 `ffi_apply` 探针；不通就退回通道表登记，别改语义 |
+| 解释器不可重入 | 桩回调进引擎时撞上共享状态 | 已实测：可重入成立（`currentEnv` / `callDepth` / `deferStack` 全是线程局部），两层嵌套也成立；不再需要退回方案 |
 | `Bool` 的 ABI | `i1` 与 `_Bool` 的寄存器约定不同 | 回调签名直接拒（E4-032）；其余位置沿用首版结论（arm64 实测可用），换平台重验 |
 | 句柄的通道缺口 | 解释器没有 `bk_*` 符号 | 声明期警告 + 调用点拒绝；真要求两通道一致，再谈把运行时链进 CLI |
 | 变参的提升做漏 | `i8` 直接传，C 侧读到高位垃圾 | 提升表与诊断同批落地；用例覆盖 `I8` / `U8` / `Bool` |
