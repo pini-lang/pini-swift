@@ -46,7 +46,8 @@ extension IRType {
         case .nominal(_, let isObject): return isObject ? .retained(.object) : .valueBox
         case .enumeration: return .retained(.enumeration)
         case .result, .optional, .tuple, .function: return .aggregate
-        case .future, .pointer, .cFunction: return .inert
+        /// `StringHandle` 也归不握份额：计数由 C 侧那一份说定，Pini 侧既不留也不还。
+        case .future, .pointer, .cFunction, .stringHandle: return .inert
         }
     }
 

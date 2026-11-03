@@ -841,6 +841,10 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return
             "外部函数 '\(name)' 声明为变参：变参调用只在 `run-llvm` 上成立，"
             + "解释器会在调用点拒绝。要两通道都能跑，请在 C 侧写一个固定参数的 shim"
+    case .stringHandleForeignSymbol(let name, _):
+        return
+            "外部函数 '\(name)' 用了字符串句柄：句柄由运行时段持有，只在 `run-llvm` 与 "
+            + "`build --shared` 上成立，解释器会在调用点拒绝"
     }
 }
 

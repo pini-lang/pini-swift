@@ -176,13 +176,22 @@ public final class SemanticAnalyzer {
     }
 
     /// 只在一条通道上成立的能力，在声明处提醒一次：变参调用需要 C 变参 ABI，
-    /// 解释器只能按固定签名转发。写声明时就知道，好过跑起来才发现。
+    /// 句柄要用到运行时段的符号 —— 两者解释器都给不了。写声明时就知道，好过跑起来才发现。
     private func appendForeignPortabilityWarnings(_ module: Module) {
         for decl in module.declarations {
             guard case .foreignDecl(let block) = decl else { continue }
-            for symbol in block.symbols where symbol.isVariadic {
-                warnings.append(
-                    .variadicForeignSymbol(name: symbol.name, location: symbol.location))
+            for symbol in block.symbols {
+                if symbol.isVariadic {
+                    warnings.append(
+                        .variadicForeignSymbol(name: symbol.name, location: symbol.location))
+                }
+                /// 句柄只看函数条目：数据符号的标注位在 `ffiType(.data)` 那一层就已被拒。
+                if symbol.isFunction,
+                    (symbol.paramTypes + symbol.returnTypes).contains(where: \.mentionsStringHandle)
+                {
+                    warnings.append(
+                        .stringHandleForeignSymbol(name: symbol.name, location: symbol.location))
+                }
             }
         }
     }

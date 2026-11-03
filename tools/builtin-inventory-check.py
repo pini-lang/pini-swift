@@ -61,6 +61,7 @@ FAMILY = {
     "runtime": "运行时",
     "character": "字符",
     "string": "字符串面",
+    "stringHandle": "字符串句柄",
     "nominal": "闭包 / 结构体胶水",
     "io": "IO / 宿主查询",
     "task": "任务 / 并发",

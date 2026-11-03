@@ -134,6 +134,8 @@ extension FFIType {
         case .callback(let params, let returnType):
             return .cFunction(
                 params: params.map { $0.irType }, returnType: returnType?.irType)
+        /// 句柄有自己的 IR 类型：与 `*U8` 同为 `ptr` 拼写，但语言层不能互传（`load` / `c字符串` 都不收它）。
+        case .stringHandle: return .stringHandle
         }
     }
 }

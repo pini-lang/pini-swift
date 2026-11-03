@@ -573,7 +573,10 @@ public enum IRLowerer {
                     signatures[symbol.name] = IRLowererSignatureInfo(
                         paramTypes: signature.params.map(\.irType),
                         returnType: signature.returnType?.irType,
-                        isVariadic: symbol.isVariadic
+                        isVariadic: symbol.isVariadic,
+                        handleParamIndices: Set(
+                            signature.params.enumerated()
+                                .filter { $0.element == .stringHandle }.map(\.offset))
                     )
                 }
             default: break
@@ -1797,6 +1800,38 @@ public enum IRLowerer {
         return nodes
     }
 
+    /// 一个实参按形参位降载。句柄位是唯一有转换的方向：Pini 串在这一位包一次 `bk_str_handle_new`，
+    /// 已经是句柄的值原样过，其余位置照旧逐位比对。转换在这里而不是发射层 ——
+    /// 那里只剩 LLVM 拼写，`String` 与 `StringHandle` 都是 `ptr`，分不出该不该包。
+    private static func lowerCallArgument(
+        _ expression: Expression, paramIndex: Int, signature: IRLowererSignatureInfo,
+        at location: SourceLocation, into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard signature.handleParamIndices.contains(paramIndex) else {
+            return try lowerExpr(
+                expression, expected: signature.paramTypes[paramIndex], into: &context)
+        }
+        let lowered = try lowerExpr(expression, expected: .string, into: &context)
+        switch lowered.type {
+        case .stringHandle:
+            return lowered
+        case .string:
+            return LoweredExpr(
+                node: .call(
+                    function: stringHandleMakeName, arguments: [lowered.node],
+                    returnType: .stringHandle),
+                type: .stringHandle)
+        default:
+            throw unsupported(
+                "句柄形参只收 String 或另一个句柄，实际得到 `\(lowered.type.describe())`",
+                at: location)
+        }
+    }
+
+    /// 句柄构造在 IR 里的调用名。带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名；
+    /// 发射层按这个名字接 `bk_str_handle_new`（两侧共用这一份，名字不会各写一遍）。
+    public static let stringHandleMakeName = "pini.str.handle"
+
     /// 变参调用的实参表：固定前缀按签名逐位降载，多出来的只收 C 标量与指针。
     /// 提升不在这里做 —— 同一个值在别处也有自己的宽度，改写留给只看得到调用形状的发射层。
     private static func lowerVariadicArguments(
@@ -1811,9 +1846,12 @@ public enum IRLowerer {
         }
         var nodes: [IRExpr] = []
         for (index, argument) in arguments.prefix(fixed).enumerated() {
-            let lowered = try lowerExpr(
-                argument.expression, expected: signature.paramTypes[index], into: &context)
-            if !signature.untypedParamIndices.contains(index) {
+            let lowered = try lowerCallArgument(
+                argument.expression, paramIndex: index, signature: signature,
+                at: location, into: &context)
+            if !signature.untypedParamIndices.contains(index),
+                !signature.handleParamIndices.contains(index)
+            {
                 try requireAssignable(lowered.type, to: signature.paramTypes[index], at: location)
             }
             nodes.append(lowered.node)
@@ -4042,10 +4080,14 @@ public enum IRLowerer {
                     usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
                     at: location)
                 let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
-                    try lowerExpr(argument.expression, expected: signature.paramTypes[paramIndex], into: &context)
+                    try lowerCallArgument(
+                        argument.expression, paramIndex: paramIndex, signature: signature,
+                        at: location, into: &context)
                 }
                 for (position, argument) in retypedArgs.enumerated()
-                where !signature.untypedParamIndices.contains(paramIndices[position]) {
+                where !signature.untypedParamIndices.contains(paramIndices[position])
+                    && !signature.handleParamIndices.contains(paramIndices[position])
+                {
                     try requireAssignable(
                         argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
                 }
@@ -5914,6 +5956,9 @@ extension IRType {
             case "Bool": self = .boolean
             case "String": self = .string
             case "Char": self = .char
+            /// 句柄只该出现在 C 面上：语义层已把普通代码里的这个名字拦下，这里认它是为了让
+            /// `|c` 导出函数的签名与 `[..|foreign]` 声明解析得出来。
+            case "StringHandle": self = .stringHandle
             default: return nil
             }
         case .generic(let name, let params, _):
@@ -6138,11 +6183,14 @@ struct IRLowererSignatureInfo {
     let usingParamIndices: Set<Int>
     /// C 变参：`paramTypes` 是固定前缀，调用点可以多传。放宽的是上限，不是下限。
     let isVariadic: Bool
+    /// 声明成 `StringHandle` 的形参位置（0 基）。实参是 Pini 串时，调用点在这一位包一次
+    /// `bk_str_handle_new` —— 句柄的创建即复制只发生在边界上，别处没有这条路。
+    let handleParamIndices: Set<Int>
 
     init(
         paramTypes: [IRType], returnType: IRType?, bodyReturnType: IRType? = nil,
         untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = [],
-        isVariadic: Bool = false
+        isVariadic: Bool = false, handleParamIndices: Set<Int> = []
     ) {
         self.paramTypes = paramTypes
         self.returnType = returnType
@@ -6153,6 +6201,7 @@ struct IRLowererSignatureInfo {
         self.untypedParamIndices = untypedParamIndices
         self.usingParamIndices = usingParamIndices
         self.isVariadic = isVariadic
+        self.handleParamIndices = handleParamIndices
     }
 }
 

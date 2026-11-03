@@ -237,6 +237,7 @@ extension TypeError: DiagnosticProviding {
         case .foreignCallbackBoolean: return "\(DiagnosticDomain.type.rawValue)-032"
         case .foreignVarargsOnNonFunction: return "\(DiagnosticDomain.type.rawValue)-033"
         case .foreignVariadicArgument: return "\(DiagnosticDomain.type.rawValue)-034"
+        case .stringHandleOutsideCFace: return "\(DiagnosticDomain.type.rawValue)-035"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -262,7 +263,7 @@ extension TypeError: DiagnosticProviding {
         case .foreignTypeNotRepresentable(_, _, let loc), .foreignTypeWidthNotInIR(_, let loc),
             .foreignStringInReturnPosition(let loc), .foreignCallbackNotFreeFunction(_, let loc),
             .foreignCallbackBoolean(let loc), .foreignVarargsOnNonFunction(_, let loc),
-            .foreignVariadicArgument(_, _, _, let loc):
+            .foreignVariadicArgument(_, _, _, let loc), .stringHandleOutsideCFace(_, let loc):
             return loc
         }
     }

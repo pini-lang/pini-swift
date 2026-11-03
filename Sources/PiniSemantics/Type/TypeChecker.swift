@@ -69,6 +69,9 @@ public final class TypeChecker {
     private var exportCFunctions: [String: FuncDecl] = [:]
     private var exportCGivenBlocks: [String: GivenDecl] = [:]
     private var exportCForeignNames: Set<String> = []
+    /// 被 `|c` 条目引用的本模块自由函数名。`StringHandle` 的合法面就靠它认：只有这些函数的
+    /// 签名会原样写成 C 原型，句柄在那里有确切的形状。
+    private var cExportPiniNames: Set<String> = []
     private var cSurfaceCount = 0
     private var cSurfaceFile: String?
     /// 实现内置 `错误` 特征的类型名。错误集与码表的取值范围由它给出。
@@ -478,6 +481,11 @@ public final class TypeChecker {
         }
     }
 
+    /// `|c` 条目右端的本模块符号名。只认 C 面 —— `|pini` 条目不走 C 原型，句柄在那里没有形状。
+    private static func cExportedPiniNames(_ blocks: [ExportDecl]) -> Set<String> {
+        Set(blocks.flatMap { $0.entries }.filter { $0.target == .c }.map(\.symbol))
+    }
+
     /// 一条 `|c` 条目的右端：自由函数按函数判，给定块按量判，其余给出能落地的下一步。
     /// 模块内同名重声明已被语义层拦下，故这里的查表只有一个答案。
     private func checkExportEntryTarget(symbolName: String, location: SourceLocation) throws {
@@ -605,6 +613,11 @@ public final class TypeChecker {
     private func cExportRejection(_ t: TypeAnnotation, position: CExportPosition) -> String? {
         switch t {
         case .simple(let name, _):
+            if name == "StringHandle" {
+                /// 形参与返回都成立：C 侧两侧都是一个不透明指针，计数归 C 自己。
+                return position == .field
+                    ? "`StringHandle` 不作给定块字段：字段区是进程级存储，句柄的计数无从落账" : nil
+            }
             if name == "String" {
                 return position == .parameter
                     ? nil : "`String` 只在导出函数的形参位成立，C 侧是借出的 `const char*`"
@@ -681,6 +694,7 @@ public final class TypeChecker {
         importAliasNames = Set(module.imports.map { $0.alias })
         collectGivenBlockTypeNames(module)
         collectExportCContext(module.declarations)
+        cExportPiniNames = Self.cExportedPiniNames(module.exports)
         BareCaseResolutionRegistry.reset()
         // 预注册所有 trait 声明，确保后续类型声明（无论出现先后）都能解析其 `traits` 引用
         preregisterTraits(module)
@@ -712,6 +726,7 @@ public final class TypeChecker {
 
         let index = PackageSymbolIndex(package: package)
         collectExportCContext(package.fileUnits.flatMap { $0.module.declarations })
+        cExportPiniNames = Self.cExportedPiniNames(package.fileUnits.flatMap { $0.module.exports })
         // 预注册所有 trait + 顶级签名（全局命名空间，供跨文件解析）
         for unit in package.fileUnits {
             preregisterTraits(unit.module)
@@ -868,6 +883,7 @@ public final class TypeChecker {
         importAliasNames = Set(module.imports.map { $0.alias })
         collectGivenBlockTypeNames(module)
         collectExportCContext(module.declarations)
+        cExportPiniNames = Self.cExportedPiniNames(module.exports)
         diagnostics = []
         collecting = true
         defer { collecting = false }
@@ -1223,6 +1239,8 @@ public final class TypeChecker {
     /// 内建标量名：`Char` / `String`（G68 的两端）。集中一处，避免字面量散落。
     private var charTypeName: String { "Char" }
     private var stringTypeName: String { "String" }
+    /// C 面的不透明句柄名。它不是 Pini 的通用类型：只在 `[..|foreign]` 与 `|c` 签名里成立。
+    private var stringHandleTypeName: String { "StringHandle" }
 
     /// `_` / `Any` 通配的逐位匹配：仅当 `expected` 中出现通配位时才可能放行，
     /// 其余情形返回 false 交回原有结构等价路径（零回归）。
@@ -1788,6 +1806,8 @@ public final class TypeChecker {
     // MARK: - 声明检查
 
     private func checkTopLevelDecl(_ decl: TopLevelDecl) throws {
+        // `StringHandle` 只在 C 面上成立；这一条先跑，免得它在普通函数体里留下一个不可解释的类型。
+        try rejectStringHandleOutsideCFace(decl)
         // Phase 2a（FFI 子系统）：`*T` 元素须为 C 兼容类型（标量/纯值结构体/指针），
         // 禁 object 及含 object 字段的复合类型（ARC 隔离）。此时 register 已完成，类型表完整。
         try validateDeclPointerTypes(decl)
@@ -1859,6 +1879,66 @@ public final class TypeChecker {
                 }
                 try checkFFIType(symbol.annotation, at: .data, symbol: symbol)
             }
+        }
+    }
+
+    /// `StringHandle` 的可用面。它不是 Pini 的通用类型：只活在两句声明里 —— `[..|foreign]` 的符号，
+    /// 以及被 `|c` 条目引用的自由函数签名（C 侧形参与返回两个方向）。其余位置一律报 E4-035：
+    /// 放行会开出第三条字符串路径，而「借出 / 取回 / 句柄」三层各管一段，多一层就没人数账。
+    private func rejectStringHandleOutsideCFace(_ decl: TopLevelDecl) throws {
+        switch decl {
+        case .foreignDecl, .importDecl, .exportDecl, .statement:
+            return
+        case .funcDecl(let f):
+            guard !cExportPiniNames.contains(f.name) else { return }
+            try rejectStringHandle(in: Self.signatureAnnotations(of: f))
+        case .structDecl(let s):
+            try rejectStringHandle(in: s.fields.compactMap(\.typeAnnotation))
+            for method in s.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .objectDecl(let o):
+            try rejectStringHandle(in: o.fields.compactMap(\.typeAnnotation))
+            for method in o.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .givenDecl(let g):
+            try rejectStringHandle(in: g.fields.compactMap(\.typeAnnotation))
+            for method in g.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .extensionDecl(let x):
+            for method in x.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .traitDecl(let t):
+            for signature in t.signatures {
+                try rejectStringHandle(in: Self.signatureAnnotations(of: signature))
+            }
+        case .enumDecl(let e):
+            for enumCase in e.cases {
+                try rejectStringHandle(in: enumCase.associatedParams.map(\.type))
+            }
+            for method in e.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .varDecl(let statement):
+            if case .varDecl(_, let annotation, _, _, _) = statement, let annotation {
+                try rejectStringHandle(in: [annotation])
+            }
+        }
+    }
+
+    /// 一条函数签名上的全部标注：形参与返回。`StringHandle` 的检查面就这两处。
+    private static func signatureAnnotations(of decl: FuncDecl) -> [TypeAnnotation] {
+        decl.params.compactMap(\.typeAnnotation) + decl.returnTypes
+    }
+
+    /// 逐个标注找 `StringHandle`（含嵌套位：`*StringHandle`、`Array<StringHandle>` 都算）。
+    private func rejectStringHandle(in annotations: [TypeAnnotation]) throws {
+        for annotation in annotations {
+            guard annotation.mentionsStringHandle else { continue }
+            try report(
+                TypeError.stringHandleOutsideCFace(
+                    type: annotation.describe(), location: Self.location(of: annotation)))
+        }
+    }
+
+    private static func location(of annotation: TypeAnnotation) -> SourceLocation {
+        switch annotation {
+        case .simple(_, let location), .tuple(_, _, let location), .generic(_, _, let location),
+            .function(_, _, _, _, let location), .pointer(_, let location):
+            return location
         }
     }
 
@@ -1981,6 +2061,15 @@ public final class TypeChecker {
                 continue
             }
             guard let type = inference.infer(expression: arguments[index].expression) else { continue }
+            /// 句柄在变参尾也没有落脚处：创建即复制发生在声明的形参位，C 从变参尾看不出这里要一个句柄。
+            if case .simple(let name, _) = type, name == stringHandleTypeName {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: type.describe(),
+                        reason: "变参尾不收 StringHandle：C 从签名看不出这里要一个句柄，创建即复制的时机没有着落",
+                        location: location))
+                continue
+            }
             /// 回调在变参尾没有落脚处：提升表里没有它的形状，C 也从签名看不出这里要一个函数指针。
             if case .function = type {
                 try report(
@@ -3064,6 +3153,13 @@ public final class TypeChecker {
             if case .simple(let pname, _) = paramType, (pname == "_" || pname == "Any") { continue }
             guard let argType = inference.infer(expression: arg.expression, expected: paramType) else { continue }
             try noteBareCaseOutcome(arg.expression, actual: argType, location: location)
+            /// 句柄位收 Pini 串：边界上复制一份、计数交给 C。方向只有这一条 ——
+            /// 句柄变不回串（要读字节得由 C 侧给它一个入口），故不进 `isAssignable` 的通路。
+            if case .simple(let expectedName, _) = paramType, expectedName == stringHandleTypeName,
+                case .simple(let actualName, _) = argType, actualName == stringTypeName
+            {
+                continue
+            }
             if !isAssignable(actual: argType, expected: paramType) {
                 try report(TypeError.mismatch(expected: paramType.describe(), got: argType.describe(), location: location))
             }

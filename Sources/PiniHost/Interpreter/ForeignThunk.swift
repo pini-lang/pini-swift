@@ -193,6 +193,8 @@ enum ForeignThunk {
             return .pointer(element: inner, location: location)
         case .cString: return nil
         case .callback: return nil
+        /// 句柄不是可解引用的字节地址，没有元素宽度可言。
+        case .stringHandle: return nil
         }
     }
 
@@ -232,6 +234,9 @@ enum ForeignThunk {
         case .pointer: return .ptr
         case .cString: return .cString
         case .callback: return .callback
+        /// 句柄在解释器上没有实现路径：符号只活在运行时段，`pini` 进程里解析不到。
+        /// 调用点（`IRExecutor`）先一步报 E5-020，这里只是把它挡在 thunk 之外。
+        case .stringHandle: return nil
         }
     }
 

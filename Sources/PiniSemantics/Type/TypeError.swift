@@ -58,4 +58,7 @@ public enum TypeError: Error, Equatable {
     case foreignVarargsOnNonFunction(symbol: String, location: SourceLocation)
     /// 变参尾的实参不是 C 标量 / 指针：C 的默认实参提升覆盖不到它，传过去 C 侧读到的宽度是错的。
     case foreignVariadicArgument(position: Int, type: String, reason: String, location: SourceLocation)
+    /// `StringHandle` 出现在 C 面之外：它不是 Pini 的通用类型，只在 `[..|foreign]` 的符号与
+    /// 被 `|c` 引用的函数签名里成立。普通变量 / 字段 / 方法收下它，就等于开出第四条字符串路径。
+    case stringHandleOutsideCFace(type: String, location: SourceLocation)
 }

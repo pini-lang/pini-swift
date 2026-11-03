@@ -18,6 +18,9 @@ public enum SemanticWarning: Error, Equatable {
     /// 声明了 C 变参条目：变参调用只在 LLVM 通道成立，另一个通道会在调用点拒绝。
     /// 警告放在声明处——作者写声明时就知道这条边界，别等跑起来才发现。
     case variadicForeignSymbol(name: String, location: SourceLocation)
+    /// 声明里用了字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号。
+    /// 与变参同一条理由 —— 通道缺口写在声明处，不留给调用点去发现。
+    case stringHandleForeignSymbol(name: String, location: SourceLocation)
 }
 
 extension SemanticWarning {
@@ -37,6 +40,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .automaticErrorCode: return "\(DiagnosticDomain.warning.rawValue)-004"
         case .duplicateErrorCode: return "\(DiagnosticDomain.warning.rawValue)-005"
         case .variadicForeignSymbol: return "\(DiagnosticDomain.warning.rawValue)-006"
+        case .stringHandleForeignSymbol: return "\(DiagnosticDomain.warning.rawValue)-007"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .warning }
@@ -49,6 +53,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .automaticErrorCode(_, _, let loc): return loc
         case .duplicateErrorCode(_, _, _, let loc): return loc
         case .variadicForeignSymbol(_, let loc): return loc
+        case .stringHandleForeignSymbol(_, let loc): return loc
         }
     }
 }

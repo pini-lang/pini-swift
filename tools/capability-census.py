@@ -45,7 +45,12 @@ SECTION_FAMILY = {
     "2.11": "lazyRef",
     "2.12": "concurrency",
     "2.13": "givenInstances",
+    # 2.14 符号地址：符号是给调用准备的地址，拒绝时的族标注也一直写 calls。
+    "2.14": "calls",
 }
+# 契约按「符号」把小节合并，族却按产物分：§2.14 一节两族，按节点拆开。
+# 取函数地址归 calls（它是给调用准备的地址），取数据符号地址归 pointers（产物就是 `*T`）。
+NODE_FAMILY = {"foreignDataAddress": "pointers"}
 FAMILY_ORDER = ["controlFlow"] + list(SECTION_FAMILY.values())
 ROW = re.compile(r"^\|\s*(\d+)\s*\|\s*`([A-Za-z_][A-Za-z0-9_]*)", re.M)
 HEAD = re.compile(r"^### (2\.\d+)\s+", re.M)
@@ -68,7 +73,7 @@ def contract_nodes():
         end = marks[index + 1].start() if index + 1 < len(marks) else len(expr)
         family = SECTION_FAMILY[mark.group(1)]
         for _, node in ROW.findall(expr[start:end]):
-            out[family].append((node, mark.group(1)))
+            out[NODE_FAMILY.get(node, family)].append((node, mark.group(1)))
     for _, node in ROW.findall(stmt):
         out["controlFlow"].append((node, "3"))
     total = sum(len(nodes) for nodes in out.values())
@@ -155,7 +160,7 @@ def check_tags(contract, known):
     bad = []
     for backend in SOURCES:
         for node, (family, line) in sorted(refusals(backend, known).items()):
-            if home.get(section[node]) != family:
+            if NODE_FAMILY.get(node, home.get(section[node])) != family:
                 bad.append((backend, node, section[node], family, line))
     for backend, node, sec, family, line in bad:
         print(f"{backend}:{line} {node} 属 §{sec}（{home.get(sec)}），标了 {family}", file=sys.stderr)

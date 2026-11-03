@@ -199,6 +199,8 @@ public enum ErrorFormatter {
                 return "error code \(code) belongs to both '\(first)' and \(others)"
             case .variadicForeignSymbol(let name, _):
                 return "foreign function '\(name)' is variadic: only the LLVM channel can call it"
+            case .stringHandleForeignSymbol(let name, _):
+                return "foreign function '\(name)' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
             }
         case let e as IRValidator.Failure:
             return e.report
@@ -293,6 +295,8 @@ public enum ErrorFormatter {
         case .foreignVarargsOnNonFunction(let symbol, _): return "`|varargs` 只对函数条目成立：`\(symbol)` 是数据符号"
         case .foreignVariadicArgument(let position, let type, let reason, _):
             return "变参的第 \(position) 个实参类型 `\(type)` 不能传给 C：\(reason)"
+        case .stringHandleOutsideCFace(let type, _):
+            return "`\(type)` 只在 C 面上成立：写在外部函数声明里，或写在带 `|c` 条目的函数签名上"
         }
     }
 
@@ -318,6 +322,8 @@ public enum ErrorFormatter {
         case .entryMainMismatch(let entries, let declaredIn, _): return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，但 main 定义在 \(declaredIn)"
         case .variadicCallUnsupported(let name, _):
             return "变参调用 '\(name)' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
+        case .stringHandleCallUnsupported(let name, _):
+            return "调用 '\(name)' 要用字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号 —— 这条只在 `run-llvm` 与 `build --shared` 上成立"
         }
     }
 

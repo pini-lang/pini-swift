@@ -289,10 +289,19 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     private func resolveForeignsEagerly() throws {
         for (name, foreign) in foreignDecls
         where RuntimeOps.libcShim(named: name, params: foreign.function.params) == nil {
-            _ = try ffiLoader.resolve(
-                library: foreign.library, symbol: name,
-                searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
-            )
+            do {
+                _ = try ffiLoader.resolve(
+                    library: foreign.library, symbol: name,
+                    searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
+                )
+            } catch let error as RuntimeError {
+                /// 句柄符号只活在运行时段里，`pini` 进程解析不到是**预期**而非配置错。
+                /// 让它过：真被调用时，调用点报 E5-020（换通道），比这里报「库里没有这个符号」准确。
+                let mentionsHandle =
+                    foreign.function.params.contains(.stringHandle)
+                    || foreign.function.returnType == .stringHandle
+                guard case .symbolNotFound = error, mentionsHandle else { throw error }
+            }
         }
         /// 数据符号没有 shim 表可让位：声明了就必须解析得到，否则读到的地址无处可来。
         foreignDataAddresses = [:]
@@ -436,6 +445,14 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     throw RuntimeError.variadicCallUnsupported(
                         name: name, location: IRExecutor.noLocation)
                 }
+                /// 句柄的符号只活在运行时段里，`pini` 进程装载不到它 —— 与变参同规，
+                /// 拒绝早于求值实参：要么换通道，要么把句柄留在 C 侧。
+                if foreign.function.params.contains(.stringHandle)
+                    || foreign.function.returnType == .stringHandle
+                {
+                    throw RuntimeError.stringHandleCallUnsupported(
+                        name: name, location: IRExecutor.noLocation)
+                }
                 let args = try arguments.map { try evaluate($0) }
                 if let shim = RuntimeOps.libcShim(named: name, params: foreign.function.params) {
                     return try shim(args)
@@ -485,6 +502,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     )
                 }
                 return try RuntimeOps.stringFromCString(args[0])
+            }
+            /// 句柄构造只由降载层在句柄形参位产出；能走到这里说明外层调用没被识别成外部函数。
+            /// 仍然按「句柄只有运行时段能给」报， 行不通  退回「未知函数」。
+            if name == IRLowerer.stringHandleMakeName {
+                throw RuntimeError.stringHandleCallUnsupported(
+                    name: "StringHandle", location: IRExecutor.noLocation)
             }
 
             // The character builtins, answered from the same implementation

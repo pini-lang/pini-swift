@@ -21,6 +21,10 @@ public struct CHeaderBackend: PiniBackend {
         out += "#ifndef \(guardName)\n#define \(guardName)\n\n"
         out += "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n"
 
+        if usesStringHandle(export) {
+            out += stringHandleDeclarations()
+        }
+
         for storage in export.storages {
             out += try structDeclaration(storage)
         }
@@ -35,6 +39,29 @@ public struct CHeaderBackend: PiniBackend {
         out += "void \(export.initName)(void);\n"
         out += "void \(export.shutdownName)(void);\n\n"
         out += "#endif /* \(guardName) */\n"
+        return out
+    }
+
+    // MARK: - 字符串句柄
+
+    /// 这份头文件有没有碰到句柄：形参与返回都算。只有真用了才发下面那段声明，
+    /// 不碰句柄的库看到的东西与上一版逐字相同。
+    private func usesStringHandle(_ export: IRExportBlock) -> Bool {
+        export.functions.contains { function in
+            function.cParamTypes.contains(.stringHandle) || function.returnType == .stringHandle
+        }
+    }
+
+    /// 句柄的 C 面：一个不透明类型加五个入口。类型与函数都来自运行时段，头文件只是替调用方
+    /// 省一次抄写；`struct bk_str_handle` 的定义不在 C 侧，字段布局是运行时段的私事。
+    private func stringHandleDeclarations() -> String {
+        var out = "/* 字符串句柄：C 侧只拿不透明指针；字节与长度走下面的入口读，用完必须 release。 */\n"
+        out += "typedef struct bk_str_handle bk_str_handle;\n"
+        out += "const uint8_t* bk_str_handle_bytes(const bk_str_handle*);\n"
+        out += "int64_t bk_str_handle_len(const bk_str_handle*);\n"
+        out += "bk_str_handle* bk_str_handle_new(const char*);\n"
+        out += "bk_str_handle* bk_str_handle_retain(bk_str_handle*);\n"
+        out += "void bk_str_handle_release(bk_str_handle*);\n\n"
         return out
     }
 
@@ -161,6 +188,8 @@ public struct CHeaderBackend: PiniBackend {
         case .boolean: return "bool"
         /// 导出形参的 `String`：借出的 UTF-8 C 串，只在本次调用期间有效。
         case .string: return "const char*"
+        /// 句柄：不透明指针。形参与返回同形，计数由 C 自己 retain / release。
+        case .stringHandle: return "bk_str_handle*"
         /// 回调形参：C 侧写成一个函数指针，转发层把裸地址包成 Pini 函数值。
         case .function(let params, let returnType, _):
             let returned = returnType.map { cType($0) } ?? "void"

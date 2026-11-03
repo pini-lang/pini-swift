@@ -1121,6 +1121,7 @@ extension IRType {
             let inputs = params.map(\.display).joined(separator: ", ")
             return "(\(inputs)) -> \(returnType?.display ?? "()") [C]"
         case .pointer(let element): return "*\(element.display)"
+        case .stringHandle: return "StringHandle"
         }
     }
 }

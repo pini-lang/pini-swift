@@ -267,6 +267,9 @@ public final class IREmitter {
     /// 是否调用过 `c字符串` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
     private var usesCStrRetrieval = false
 
+    /// 是否在句柄形参位包过 Pini 串 —— 创建走 `bk_str_handle_new`，声明随它条件出现。
+    private var usesStringHandleNew = false
+
     /// 导出回调的适配 thunk：按 C 签名缓存名字，定义攒到转发层之后一次写出。
     /// 同名同签名的两个导出函数共用一份 —— thunk 只搬参数，与被调方是谁无关。
     private var exportCallbackThunks: [String: String] = [:]
@@ -316,6 +319,9 @@ public final class IREmitter {
 
     public func emit(module: IRModule) throws -> String {
         refusals.removeAll()
+        /// 已由 `[..|foreign]` 声明过的符号：同一模块里再 `declare` 一次，LLVM 判成重定义。
+        /// 条件化的运行时段声明据此让位 —— 用户显式声明运行时段入口是合法写法（如 `bk_str_handle_new`）。
+        let foreignDeclaredSymbols = Set(module.foreigns.flatMap { $0.funcs.map(\.name) })
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += Builtins.declaration(for: "bk_double_to_string")
@@ -395,6 +401,8 @@ public final class IREmitter {
             case .cString: return "i8*"
             /// 回调在 declare 上就是裸指针：C 的函数指针参数在 LLVM 里没有函数类型。
             case .callback: return "ptr"
+            /// 句柄是不透明指针：C 侧只搬它，不解读布局。
+            case .stringHandle: return "ptr"
             }
         }
         for foreignBlock in module.foreigns {
@@ -671,6 +679,9 @@ public final class IREmitter {
         }
         if usesCStrRetrieval {
             tail += Builtins.declaration(for: "bk_str_from_cstr")
+        }
+        if usesStringHandleNew, !foreignDeclaredSymbols.contains("bk_str_handle_new") {
+            tail += Builtins.declaration(for: "bk_str_handle_new")
         }
         if usesCapturedSlots {
             tail += Builtins.declaration(for: "bk_slot_alloc")
@@ -2395,6 +2406,11 @@ public final class IREmitter {
             } else if function == "c字符串" {
                 usesCStrRetrieval = true
                 symbolName = "bk_str_from_cstr"
+            } else if function == IRLowerer.stringHandleMakeName {
+                /// 句柄位上的 Pini 串：运行时段复制一份并记 +1，指针交给 C。
+                /// 名字带点 ⇒ 降载层产出，不可能是用户函数。
+                usesStringHandleNew = true
+                symbolName = "bk_str_handle_new"
             } else if function == "sleep" {
                 // `sleep` 是并发内建里**唯一**被降载成一条普通调用、却又必须由后端实现的：
                 // 它按片睡、每片查一次取消 ⇒ 落点是原语层的运行时符号，不是 libc 的睡眠
@@ -3088,7 +3104,7 @@ public final class IREmitter {
             .nominal:
             return false
         case .result, .future, .array, .optional, .enumeration, .dict,
-            .lazyRef, .set, .tuple, .function, .cFunction:
+            .lazyRef, .set, .tuple, .function, .cFunction, .stringHandle:
             return true
         }
     }

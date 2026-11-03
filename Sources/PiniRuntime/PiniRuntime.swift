@@ -1089,6 +1089,68 @@ public func bk_str_from_cstr(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePo
     return bk_str_dup(source)
 }
 
+// MARK: - 字符串句柄（C 侧可持有的串）
+// 句柄 = 一份自有拷贝 + 一个计数。C 侧只拿不透明指针：字节与长度各一个入口，计数靠 retain / release
+// 成对加减，归零时释放拷贝。Pini 侧不参与计数 —— IR 的 `stringHandle` 归 inert，谁创建谁交给 C。
+
+/// 句柄箱。`storage` 是 NUL 结尾的字节缓冲，`length` 不含 NUL：字节视图按长度读，不以 NUL 定界。
+private final class _BkStringHandle {
+    let storage: UnsafeMutablePointer<CChar>
+    let length: Int
+
+    init(_ source: UnsafePointer<CChar>?) {
+        guard let source else {
+            let empty = UnsafeMutablePointer<CChar>.allocate(capacity: 1)
+            empty[0] = 0
+            storage = empty
+            length = 0
+            return
+        }
+        let count = Int(strlen(source))
+        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: count + 1)
+        memcpy(buffer, source, count + 1)
+        storage = buffer
+        length = count
+    }
+
+    deinit { storage.deallocate() }
+}
+
+/// 创建：复制一条 C 串，计数 = 1。空指针按空串处理（与 `bk_str_dup` 同一约定）。
+@_cdecl("bk_str_handle_new")
+public func bk_str_handle_new(_ source: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
+    return Unmanaged.passRetained(_BkStringHandle(source)).toOpaque()
+}
+
+/// 字节视图（UTF-8，不以 NUL 为界读；字节数见 `bk_str_handle_len`）。句柄释放后即失效。
+@_cdecl("bk_str_handle_bytes")
+public func bk_str_handle_bytes(_ handle: UnsafeRawPointer?) -> UnsafePointer<UInt8>? {
+    guard let handle else { return nil }
+    let box = Unmanaged<_BkStringHandle>.fromOpaque(handle).takeUnretainedValue()
+    return UnsafeRawPointer(box.storage).assumingMemoryBound(to: UInt8.self)
+}
+
+/// 字节数（不是字素数）。空句柄读成 0。
+@_cdecl("bk_str_handle_len")
+public func bk_str_handle_len(_ handle: UnsafeRawPointer?) -> Int64 {
+    guard let handle else { return 0 }
+    return Int64(Unmanaged<_BkStringHandle>.fromOpaque(handle).takeUnretainedValue().length)
+}
+
+/// 保留一份：计数 +1，返回同一个指针，便于链式写法。空句柄原样返回。
+@_cdecl("bk_str_handle_retain")
+public func bk_str_handle_retain(_ handle: UnsafeRawPointer?) -> UnsafeMutableRawPointer? {
+    guard let handle else { return nil }
+    return Unmanaged<_BkStringHandle>.fromOpaque(handle).retain().toOpaque()
+}
+
+/// 释放一份：计数归零时释放拷贝。空句柄是无操作。
+@_cdecl("bk_str_handle_release")
+public func bk_str_handle_release(_ handle: UnsafeRawPointer?) {
+    guard let handle else { return }
+    Unmanaged<_BkStringHandle>.fromOpaque(handle).release()
+}
+
 // MARK: - 字符内建与宿主环境查询内建的 LLVM 侧运行时段
 // 这组名字在解释器侧已有实现、降载侧也已降成 `call` 节点，缺的只有 LLVM 侧符号：缺则 emit 照常产出
 // `call`，直到 clang 才以 `use of undefined value` 拒绝。语义一律镜像解释器， 行不通  不另造第二套解释。

@@ -38,6 +38,10 @@ suggestion = "C 侧无法据此区分两者；改掉其中一个手写码，若�
 message = "外部函数 '{name}' 声明为变参：只有 LLVM 通道能调用它"
 suggestion = "换 `run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
 
+[E7-007]
+message = "外部函数 '{name}' 用了字符串句柄：只有 LLVM 通道与 `build --shared` 提供这些符号"
+suggestion = "换 `run-llvm` 或 `build --shared`；解释器会在调用点拒绝"
+
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。
@@ -169,6 +173,10 @@ suggestion = "把 `|varargs` 写在函数条目上；数据符号只有读与写
 message = "变参的第 {position} 个实参类型 '{type}' 不能传给 C：{reason}"
 suggestion = "变参尾只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / String；对象与集合没有 C 布局"
 
+[E4-035]
+message = "`{type}` 只在 C 面上成立"
+suggestion = "写在 `[名称|foreign]` 的符号声明里，或写在带 `|c` 条目的函数签名上；普通变量、字段与方法不收句柄"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"
@@ -205,6 +213,10 @@ message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
 [E5-019]
 message = "变参调用 '{name}' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
 suggestion = "改用 `pini run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
+
+[E5-020]
+message = "调用 '{name}' 要用字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号 —— 这条只在 `run-llvm` 与 `build --shared` 上成立"
+suggestion = "改用 `pini run-llvm`，或把句柄的创建与读取都放到 C 侧"
 
 [E3-010]
 message = "模块依赖环（R2 禁环）：'{chain}'"

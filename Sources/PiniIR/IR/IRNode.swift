@@ -70,6 +70,9 @@ public indirect enum IRType: Equatable {
     /// it from an alloca. The element rides along for load/store typing (mirroring the interpreter's
     /// snapshot/decode: `*U8` loads sign-extend to one int value).
     case pointer(element: IRType)
+    /// `StringHandle`：运行时段持有的字符串拷贝，C 侧只拿不透明指针，Pini 侧只是一个 token。
+    /// 与 `pointer` 分开 —— 它不是可 load / store 的字节地址，也不是计数串（计数在 C 那一侧）。
+    case stringHandle
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -108,6 +111,8 @@ public indirect enum IRType: Equatable {
         case .cFunction:
             return "ptr"
         case .pointer:
+            return "ptr"
+        case .stringHandle:
             return "ptr"
         }
     }
@@ -163,6 +168,8 @@ public indirect enum IRType: Equatable {
             return "(" + params.map { $0.describe() }.joined(separator: ", ") + ") -> (\(returned)) [C]"
         case .pointer(let element):
             return "*\(element.describe())"
+        case .stringHandle:
+            return "StringHandle"
         }
     }
 
@@ -227,7 +234,7 @@ public indirect enum IRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .pointer:
+        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .pointer, .stringHandle:
             return false
         }
     }

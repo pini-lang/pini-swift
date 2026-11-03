@@ -50,6 +50,9 @@ public enum RuntimeError: Error, CustomStringConvertible {
     /// 变参调用落到解释器上：转发靠把地址位转成固定槽位，而 Apple arm64 把变参放在栈上。
     /// 这不是「还没实现」，是这条路本身走不通 —— 文案给两条能走的路。
     case variadicCallUnsupported(name: String, location: SourceLocation)
+    /// 句柄调用落到解释器上：`bk_str_handle_*` 只活在运行时段里，`pini` 进程没有这些符号。
+    /// 与变参同一条性质 —— 换通道，或把句柄留在 C 侧。
+    case stringHandleCallUnsupported(name: String, location: SourceLocation)
 
     public var description: String {
         switch self {
@@ -94,6 +97,10 @@ public enum RuntimeError: Error, CustomStringConvertible {
             return "变参调用 '\(name)' 需要 C 变参 ABI：解释器只能按固定签名转发，"
                 + "变参在 Apple arm64 上走栈而不走寄存器。改用 `pini run-llvm`，"
                 + "或在 C 侧写一个固定参数的 shim 再声明它 at \(loc)"
+        case .stringHandleCallUnsupported(let name, let loc):
+            return "调用 '\(name)' 要用字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号。"
+                + "改用 `pini run-llvm` 或 `pini build --shared`，"
+                + "或把句柄的创建与读取都留在 C 侧 at \(loc)"
         }
     }
 }

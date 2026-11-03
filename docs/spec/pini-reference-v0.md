@@ -2733,6 +2733,7 @@ libs = ["m", "pthread"]
 | `()` | void 返回 |
 | `*T` | T 为上述标量或另一指针 |
 | `String` | 仅形参：借出成 `const char*`，只在本次调用期间有效 |
+| `StringHandle` | 形参与返回：不透明指针，运行时段持有一份拷贝；C 侧自己 `retain` / `release` |
 | `(A, B,) -> (C,)` | 仅形参：C 函数指针。实参写顶层自由函数名，签名逐位相同且不含 `Bool` |
 
 **禁止**：
@@ -2794,6 +2795,23 @@ main|func() -> (I32,):
 **取回 C 串**：
 
 `c字符串(p)` 把 `*U8` 读到 NUL，复制成 Pini 串；空指针得空串，复制品归 Pini 持有，C 的缓冲随后可释放。它是内建，不必在 foreign 块里声明——与需要声明的 `cstr`（出去那侧，shim 名）方向相反。
+
+**字符串句柄**：
+
+C 要把串存下来时用 `StringHandle`：形参位上 Pini 串被复制一份、计数 +1 交给 C，返回位上 C 交出的句柄在 Pini 里只是一个不透明的 token（不能当 `String`、不能 `load`、不参与计数）。
+
+```
+[libc|foreign]
+bk_str_handle_new: (String,) -> (StringHandle,)
+bk_str_handle_len: (StringHandle,) -> (I64,)
+bk_str_handle_release: (StringHandle,) -> ()
+```
+
+C 面的五个入口是 `bk_str_handle_new` / `bytes` / `len` / `retain` / `release`；字节视图不以 NUL 为界读，长度以 `len` 为准，计数归 C。
+
+注意 句柄只在 LLVM 通道与 `build --shared` 上成立：这些符号活在运行时段里，`pini` 进程不带。`run` 在调用点报 E5-020，声明处另有一条 E7-007 提醒。
+
+注意 `StringHandle` 不是 Pini 的通用类型：它出现在 foreign 块之外、且所在函数没有 `|c` 条目时报 E4-035。
 
 **foreign 符号作用域**：
 
@@ -2906,6 +2924,7 @@ _容量: I64 = 0
 | LLVM 端 FFI | 显式 unsupported |
 | by-value 结构体 ABI | 首版不做 |
 | 变参函数 | 只在 LLVM 通道成立；`run` 在调用点拒绝（E5-019），声明处提醒（E7-006） |
+| 字符串句柄 | 只在 LLVM 通道与 `build --shared` 成立；`run` 在调用点拒绝（E5-020），声明处提醒（E7-007） |
 | `errno` / 线程局部访问 | 不支持 |
 | 非 C 的 ABI | 不支持 |
 
@@ -2937,6 +2956,7 @@ calc_state|c = 计数器状态
 | `F64` / `Bool` | `double` / `bool` |
 | `*T` | `T*`；T 限 C 标量 |
 | `String` | `const char*`；仅形参，入口复制一份 |
+| `StringHandle` | `bk_str_handle*`；形参与返回，C 侧自己 `retain` / `release` |
 | `(A, B,) -> (C,)` | `C (*)(A, B)`；仅形参，转发层把裸地址包成 Pini 函数值 |
 | 给定块 | `<C名>_t` 结构体加 `<C名>_get()`，字段须全 C 兼容 |
 | `^T` | 状态码 `int32_t` 返回，`T` 走出参 |

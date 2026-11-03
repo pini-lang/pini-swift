@@ -2,7 +2,7 @@ import Foundation
 import PiniSyntax
 
 /// C 边界上能出现的类型。闭合集：不在这张表里的标注一律拒绝——没有「也许某个 shim 认得」的中间态。
-/// 位置决定哪些形状成立，`String` 只在形参位作为借出的 `const char*`。
+/// 位置决定哪些形状成立：`String` 只在形参位作为借出的 `const char*`，`StringHandle` 在形参与返回位都成立。
 public enum FFIType: Equatable, Sendable {
     case i8
     case u8
@@ -18,6 +18,9 @@ public enum FFIType: Equatable, Sendable {
     /// C 函数指针形参：`(A, B) -> C`。与 Pini 的闭包值不是同一个表示 —— 后者是 `{code, env}` 胖指针，
     /// 调用时先传 env；把 C 指针塞进那条路等于把代码指针当环境指针用。
     indirect case callback(params: [FFIType], returnType: FFIType?)
+    /// `StringHandle`：运行时段持有的一份字符串拷贝，C 侧只拿不透明指针。
+    /// 形参与返回都成立 —— 句柄能在边界上存活，这正是它和借出的分别。
+    case stringHandle
 
     /// 标注所在的位置。同一份标注换个位置可能成立也可能不成，判据收在这里。
     public enum Position {
@@ -41,6 +44,14 @@ public enum FFIType: Equatable, Sendable {
                 }
                 guard position == .parameter else { throw FFITypeError.cStringInReturnPosition }
                 return .cString
+            }
+            if name == "StringHandle" {
+                /// 数据符号是存储，不是值：句柄的计数归运行时段，读写一个存储位说不清归属。
+                guard position != .data else {
+                    throw FFITypeError.notRepresentable(
+                        type: name, reason: "外部数据符号只能是标量或指针")
+                }
+                return .stringHandle
             }
             if Self.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
             throw FFITypeError.notRepresentable(type: name, reason: "不是 C 兼容标量或指针")
@@ -87,6 +98,11 @@ public enum FFIType: Equatable, Sendable {
                 throw FFITypeError.notRepresentable(
                     type: "String",
                     reason: "回调\(position)写 String 不行：C 传的是裸字节，Pini 串是带头的堆对象，两侧表示不同")
+            }
+            if name == "StringHandle" {
+                throw FFITypeError.notRepresentable(
+                    type: "StringHandle",
+                    reason: "回调\(position)写 StringHandle 不行：计数要落在 C 与 Pini 说定的那一侧，回调没有这条约定")
             }
             if let scalar = scalar(named: name) { return scalar }
             if Self.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
@@ -146,6 +162,26 @@ public enum FFIType: Equatable, Sendable {
         case .callback(let params, let returnType):
             let returned = returnType.map { $0.describe() } ?? ""
             return "(" + params.map { $0.describe() }.joined(separator: ", ") + ") -> (\(returned)) [C]"
+        case .stringHandle: return "StringHandle"
+        }
+    }
+}
+
+extension TypeAnnotation {
+    /// 这条标注里是否出现 `StringHandle`（含嵌套位：`*StringHandle`、`Array<StringHandle>` 都算）。
+    /// 两处消费：C 面归属检查（[TypeChecker]）与声明期通道提醒（[SemanticAnalyzer]）。
+    public var mentionsStringHandle: Bool {
+        switch self {
+        case .simple(let name, _):
+            return name == "StringHandle"
+        case .tuple(_, let elements, _):
+            return elements.contains(where: \.mentionsStringHandle)
+        case .generic(_, let params, _):
+            return params.contains(where: \.mentionsStringHandle)
+        case .function(let params, let returns, let captured, _, _):
+            return (params + returns + captured).contains(where: \.mentionsStringHandle)
+        case .pointer(let element, _):
+            return element.mentionsStringHandle
         }
     }
 }
