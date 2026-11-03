@@ -594,6 +594,11 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 | 码表校验 | 已落地 | `码()` 的四类写错、两个手写码撞值、派生区与 tag 空间溢出各一条诊断；导出面附带 `strerror` 把码还原成名字 | 每类写错各一条负例；`strerror` 端到端还原名字；全量 437 条测试绿 |
 | 链接参数 | 已落地 | `[ffi]` 的 `libs` / `search_paths` 拼成 `-L` / `-l` / rpath，`compile`、`run-llvm`、`test-llvm`、`build --shared` 四条都接上；块名与库名脱钩 | 带外部库的共享库由 C 侧调到；`compile` / `run-llvm` / `test-llvm` 各一条端到端 |
 | 类型面收口 | 已落地 | 导入面收成闭合表：`FFIType` 一份判据，语义校验 / 降载 / 解释器三处读它；对象、未知名、`U32` 与 `I16` 这类宽度、`String` 返回各一条诊断 | 九条负例逐条对码；`atoi: (String,)` 仍只在 LLVM 通道跑通（借出另立一片）；全量 446 条测试绿 |
+| 借出 | 已落地 | `String` 形参在边界编码成临时 C 串，只在本次调用期有效；shim 表从「名字命中」改成「名字 + 形状」双条件；导出面入口先 `bk_str_dup`、返回即 `bk_str_release` | `StringBorrowTests` 七条；`atoi: (String,)` 两通道同值；全量 453 条测试绿 |
+| 取回 | 已落地 | 内建 `c字符串(*U8) -> String` 接 `bk_str_from_cstr`，复制一份归 Pini；运行时段 ABI 台账 97 → 102，补平既有漏登记 | `StringRetrieveTests` 四条；空指针得空串；全量 457 条测试绿 |
+| 回调 | 已落地 | IR 增 `.cFunction` 类型与 `.cFunctionAddress` 节点；`CallbackBridge` 四个固定签名的桩加线程局部槽位表；导出面把裸地址包回 Pini 函数值 | `CallbackTests` 十五条；`qsort` 两通道同序；全量 472 条测试绿 |
+| 变参 | 已落地 | `\|varargs` 标志放开函数条目的标志限制；arity 判据改为「不少于」；尾实参按 C 默认实参提升；调用点写全函数类型 | `VariadicTests` 十三条；C 夹具 `va_sum` 端到端；`run` 报 E5-019、声明处 E7-006；全量 485 条测试绿 |
+| 句柄 | 已落地 | `StringHandle` 形参与返回；运行时段五个入口 `new` / `bytes` / `len` / `retain` / `release`；头文件写不透明类型；调用点在句柄形参位包一次 `bk_str_handle_new` | `StringHandleTests` 十七条；C 调用方 `bk_str_handle_new` → `calc_len` → `release` 跑通；全量 502 条测试绿 |
 
 落地不设兼容期：旧写法与 `funcs` 桥在同一片里删除，语料、消费者、测试一次改完。项目未到稳定态，双形并存会把「迁移没做完」固化成语法，之后每一片都要替它付维护费。定向迁移文案同样不留：旧形状没有共存期，报错交给通用语法诊断。
 
