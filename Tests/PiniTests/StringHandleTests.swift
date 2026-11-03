@@ -366,12 +366,13 @@ struct StringHandleTests: Sendable, PiniSourceLowering {
         text.components(separatedBy: needle).count - 1
     }
 
+    /// C 编译器：CI 镜像里 clang 不在 `/usr/bin`，故由工具链解析兜底。
     private static func cCompiler() -> String? {
         for candidate in ["/usr/bin/cc", "/usr/bin/clang"]
         where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
-        return nil
+        return LLVMToolchain.clangPath
     }
 
     private static func makeTemporaryDirectory() throws -> URL {
@@ -418,6 +419,7 @@ struct StringHandleTests: Sendable, PiniSourceLowering {
         #include "calc.h"
 
         int main(void) {
+            calc_init();
             bk_str_handle *h = bk_str_handle_new("hello");
             printf("%lld %lld\\n", (long long)calc_len(h), (long long)bk_str_handle_len(h));
             bk_str_handle_release(h);

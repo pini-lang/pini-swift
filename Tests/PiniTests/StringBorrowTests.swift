@@ -144,6 +144,10 @@ struct StringBorrowTests: Sendable, PiniSourceLowering {
     @Test("C 传栈缓冲与空指针都安全：入口复制发生在读取之前")
     func testCStackBufferAndNullReachPini() throws {
         guard let cli = cliPathOrSkip(runtimeRequired: true) else { return }
+        guard let cc = cCompiler() else {
+            Issue.record("未找到 C 编译器 ⇒ 本判据本次未取")
+            return
+        }
         let dir = try makeTemporaryDirectory(tag: "borrow-shared")
         defer { try? FileManager.default.removeItem(at: dir) }
         try """
@@ -159,22 +163,45 @@ struct StringBorrowTests: Sendable, PiniSourceLowering {
 
         let build = try runCLI(cli, arguments: ["build", "--shared", "greet.pini"], cwd: dir)
         #expect(build.status == 0, "构建失败：\(build.stderr)")
-        let library = dir.appendingPathComponent("libgreet.\(librarySuffix)")
-        let handle = try #require(dlopen(library.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
-        defer { _ = dlclose(handle) }
+        let header = try runCLI(
+            cli, arguments: ["emit", "greet.pini", "greet.h", "--backend", "c"], cwd: dir)
+        #expect(header.status == 0, "头文件失败：\(header.stderr)")
 
-        let symbol = try #require(dlsym(handle, "greet_len"), "找不到 greet_len")
-        let length = unsafeBitCast(
-            symbol, to: (@convention(c) (UnsafePointer<CChar>?) -> UInt64).self)
-        var buffer = [CChar](repeating: 0, count: 16)
-        for (index, byte) in Array("héllo".utf8).enumerated() {
-            buffer[index] = CChar(bitPattern: byte)
-        }
-        #expect(buffer.withUnsafeBufferPointer { length($0.baseAddress) } == 6, "按字节算，不是字素")
-        #expect(length(nil) == 0, "空指针按空串处理")
+        /// 调用方是独立进程：进程内 `dlopen` 会让测试与库各持一份运行时全局，栈上写坏的地址
+        /// 落在运行时元数据上，Linux 上必崩。
+        try """
+            #include <stdio.h>
+            #include "greet.h"
+
+            int main(void) {
+                greet_init();
+                printf("%llu\\n", (unsigned long long)greet_len("héllo"));
+                printf("%llu\\n", (unsigned long long)greet_len(0));
+                return 0;
+            }
+            """.write(to: dir.appendingPathComponent("caller.c"), atomically: true, encoding: .utf8)
+
+        let compile = try runCLI(
+            cc,
+            arguments: ["caller.c", "-L.", "-lgreet", "-Wl,-rpath,.", "-o", "caller"],
+            cwd: dir)
+        #expect(compile.status == 0, "C 调用方编译失败：\(compile.stderr)")
+
+        let run = try runCLI(dir.appendingPathComponent("caller").path, arguments: [], cwd: dir)
+        #expect(run.status == 0, "C 调用方失败：\(run.stderr)")
+        #expect(run.stdout == "6\n0\n", "按字节算而不是字素；空指针按空串处理。读数：\(run.stdout)")
     }
 
     // MARK: - 命令行
+
+    /// C 编译器：CI 镜像里 clang 不在 `/usr/bin`，故由工具链解析兜底。
+    private func cCompiler() -> String? {
+        for candidate in ["/usr/bin/cc", "/usr/bin/clang"]
+        where FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+        return LLVMToolchain.clangPath
+    }
 
     private var librarySuffix: String {
         #if os(macOS)
