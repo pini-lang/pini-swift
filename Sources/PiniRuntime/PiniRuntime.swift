@@ -1082,6 +1082,13 @@ public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? 
     return raw.assumingMemoryBound(to: CChar.self)
 }
 
+/// 取回：外部 C 串复制成计数串（调用方持有 +1，返回后按 `bk_str_release` 归还）。
+/// 空指针与 `bk_str_dup` 同一约定 —— 读成空串，不让 NUL 读取落到空地址上。
+@_cdecl("bk_str_from_cstr")
+public func bk_str_from_cstr(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+    return bk_str_dup(source)
+}
+
 // MARK: - 字符内建与宿主环境查询内建的 LLVM 侧运行时段
 // 这组名字在解释器侧已有实现、降载侧也已降成 `call` 节点，缺的只有 LLVM 侧符号：缺则 emit 照常产出
 // `call`，直到 clang 才以 `use of undefined value` 拒绝。语义一律镜像解释器， 行不通  不另造第二套解释。

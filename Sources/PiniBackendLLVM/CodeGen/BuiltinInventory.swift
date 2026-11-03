@@ -213,6 +213,10 @@ public enum Builtins {
             family: .string, lowerings: ["interpString", "arrayJoin"]
         ),
         BuiltinSpec(
+            symbol: "bk_str_from_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
+            family: .string, lowerings: ["call"]
+        ),
+        BuiltinSpec(
             symbol: "bk_str_release", signature: .init(result: "void", parameters: ["ptr"]),
             family: .string, lowerings: ["<cleanup>", "<print>"]
         ),

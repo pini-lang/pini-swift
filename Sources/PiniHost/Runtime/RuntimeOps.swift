@@ -253,6 +253,21 @@ public enum RuntimeOps {
 
     static let builtinResultEnumName = "Result"
 
+    /// 取回：C 串复制成 Pini 串。空指针按空串处理，与运行时段 `bk_str_dup` 同一约定。
+    /// 非法 UTF-8 在解释器侧换成 U+FFFD（Swift 串只能持合法 Unicode），LLVM 侧原样搬字节。
+    static func stringFromCString(_ value: Value) throws -> Value {
+        if case .null = value { return .string("") }
+        guard case .rawPointer(let rp) = value else {
+            throw RuntimeError.typeMismatch(
+                expected: "*U8 指针", got: String(describing: value),
+                location: SourceLocation(line: 0, column: 0, fileName: ""))
+        }
+        let length = strlen(rp.pointer.assumingMemoryBound(to: CChar.self))
+        let bytes = UnsafeBufferPointer(
+            start: rp.pointer.assumingMemoryBound(to: UInt8.self), count: length)
+        return .string(String(decoding: bytes, as: UTF8.self))
+    }
+
     static func builtinSin(_ value: Value) throws -> Value {
         return .float(sin(try trigArgument(value, name: "sin")))
     }

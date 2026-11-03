@@ -260,6 +260,9 @@ public final class IREmitter {
     /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
+    /// 是否调用过 `c字符串` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
+    private var usesCStrRetrieval = false
+
     /// 是否把调度器绑定交给过运行时；declare 随它条件出现，只有真发过的模块才带。
     /// 它是「派发点会取用默认调度实例」的唯一征兆，与让出族那几个开关同规。
     private var usesSchedBinding = false
@@ -640,6 +643,9 @@ public final class IREmitter {
         }
         if usesCStrShim {
             tail += Builtins.declaration(for: "bk_cstr")
+        }
+        if usesCStrRetrieval {
+            tail += Builtins.declaration(for: "bk_str_from_cstr")
         }
         if usesCapturedSlots {
             tail += Builtins.declaration(for: "bk_slot_alloc")
@@ -2353,6 +2359,9 @@ public final class IREmitter {
             if function == "cstr" {
                 usesCStrShim = true
                 symbolName = "bk_cstr"
+            } else if function == "c字符串" {
+                usesCStrRetrieval = true
+                symbolName = "bk_str_from_cstr"
             } else if function == "sleep" {
                 // `sleep` 是并发内建里**唯一**被降载成一条普通调用、却又必须由后端实现的：
                 // 它按片睡、每片查一次取消 ⇒ 落点是原语层的运行时符号，不是 libc 的睡眠

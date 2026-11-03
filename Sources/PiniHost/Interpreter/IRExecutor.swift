@@ -466,6 +466,18 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     )
                 }
             }
+            // 取回：`*U8 → String`。与 LLVM 的 `bk_str_from_cstr` 同一条语义，实现留在 `RuntimeOps`。
+            if name == "c字符串" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IR executor: c字符串 expects exactly one argument",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                return try RuntimeOps.stringFromCString(args[0])
+            }
+
             // The character builtins, answered from the same implementation
             // the AST channel calls -- one definition, two engines.
             if let character = RuntimeOps.characterBuiltins[name] {

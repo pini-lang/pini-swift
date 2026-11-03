@@ -128,6 +128,18 @@ foreign-flag     ::= 'readonly';
 
 注意 —— 解释器的 thunk 整条走 GPR 或整条走浮点：`atof: (String,) -> (F64,)` 这类混合签名在 `run` 报错、`run-llvm` 正常。这条限制与形参写 `String` 还是 `*U8` 无关，是既有形状。
 
+### 取回
+
+内建 `c字符串(p: *U8,) -> (String,)`：从指针读到 NUL，复制成 Pini 串。两通道同一语义——解释器按 UTF-8 解码，LLVM 接运行时段 `bk_str_from_cstr`（实现落在 `bk_str_dup`，结果进计数串账）。
+
+- 空指针读成空串，与 `bk_str_dup(nil)` 同一约定：C 侧返回 `NULL` 时不必先判空。
+- 复制品归 Pini 持有，作用域退出时归还；C 的缓冲此后可自由释放。
+- 没有额外的 `unsafe` 门禁：读内存的形参与 `load` 同规——指针怎么来的由那条路负责（foreign 调用本身已在 unsafe 位）。
+
+注意 —— 非法 UTF-8 在解释器侧变成 U+FFFD（Swift 串只能持合法 Unicode），LLVM 侧原样搬字节；两通道对坏字节的展示可能不同，正常 UTF-8 输入无分歧。
+
+`-> String` 在 FFI 返回位仍拒绝（`E4-030`），理由不是保守：C 返回的指针可能是静态缓冲、可能是库内部缓冲、也可能是 `malloc` 的，Pini 侧无从判断归属；复制是唯一不需要猜的形态，而它已经由 `c字符串` 显式写出。
+
 ### 链接口径
 
 解释器与 LLVM 通道各有一套解析方式，读的是同一份清单：解释器按块名 `dlopen` `lib<块名>.{dylib,so}`，LLVM 通道把 `[ffi]` 的 `libs` 拼成 `-l`、`search_paths` 拼成 `-L`（非系统目录另加 rpath）。`compile`、`run-llvm`、`test-llvm`、`build --shared` 四条都走这套。

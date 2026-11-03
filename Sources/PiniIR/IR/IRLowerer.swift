@@ -3427,6 +3427,19 @@ public enum IRLowerer {
                     type: .i32
                 )
             }
+            // 取回：`*U8 → String`，与 `cstr` 反向。读法归运行时段，发射层只接一个调用名。
+            if functionName == "c字符串" {
+                guard loweredArgs.count == 1, case .pointer = loweredArgs[0].type else {
+                    throw unsupported("c字符串 expects one *U8 pointer argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: .string),
+                    type: .string
+                )
+            }
             // Intrinsic `assert`: `assert(cond)` or `assert(cond, message)`. The condition must be Bool and a false
             // one traps through the runtime's panic path; test blocks are never run by the harness, but the lowering
             // must still exist.
