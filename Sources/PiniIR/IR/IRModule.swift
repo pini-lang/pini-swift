@@ -105,11 +105,15 @@ public struct IRForeignFunction: Equatable {
     public let name: String
     public let params: [FFIType]
     public let returnType: FFIType?
+    /// C 变参：`params` 是固定前缀，调用点可以多传。多传的实参在发射层做默认实参提升，
+    /// 解释器没有 C 变参 ABI，遇到即拒绝。
+    public let isVariadic: Bool
 
-    public init(name: String, params: [FFIType], returnType: FFIType?) {
+    public init(name: String, params: [FFIType], returnType: FFIType?, isVariadic: Bool = false) {
         self.name = name
         self.params = params
         self.returnType = returnType
+        self.isVariadic = isVariadic
     }
 }
 

@@ -627,9 +627,11 @@ public class Parser {
         advance()
         let annotation = try parseTypeAnnotation()
         let symbol = ForeignSymbol(name: symbolName, annotation: annotation, flags: flags, location: loc)
-        if symbol.isFunction, let first = flags.first {
+        /// 标志各有归属：`readonly` / `macro` 只对数据符号成立，`|varargs` 只对函数成立。
+        /// 数据标志落在函数上由这一层挡（读不到存储）；变参落在数据上由语义层报 E4-033。
+        if symbol.isFunction, let misplaced = flags.first(where: { $0 != "varargs" }) {
             throw ParserError.invalidStatement(
-                reason: "标志只适用于数据符号，函数类型条目不可带 `|\(first)`：`\(symbolName)`",
+                reason: "`|\(misplaced)` 只适用于数据符号，函数类型条目不可带它：`\(symbolName)`",
                 location: loc
             )
         }

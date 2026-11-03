@@ -34,6 +34,10 @@ suggestion = "that code is not stable across versions; write `码() -> (I32,)` i
 message = "error code {code} belongs to both '{first}' and {others}"
 suggestion = "the C side cannot tell them apart; change one of the declared codes, or ignore if the merge is intentional"
 
+[E7-006]
+message = "foreign function '{name}' is variadic: only the LLVM channel can call it"
+suggestion = "use `run-llvm`, or write a fixed-arity shim on the C side and declare that instead"
+
 [E2-001]
 message = "expected {expected}, got {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（无法提取参数名），走英文硬编码兜底。
@@ -157,6 +161,14 @@ suggestion = "name a top-level free function whose signature matches the paramet
 message = "Bool cannot appear in a callback signature: Pini's i1 and C's _Bool do not share a register convention"
 suggestion = "use I32 on both sides and read 0 / non-zero"
 
+[E4-033]
+message = "`|varargs` applies only to function entries: '{symbol}' is a data symbol"
+suggestion = "put `|varargs` on the function entry; a data symbol is only read and written, never called"
+
+[E4-034]
+message = "variadic argument {position} has type '{type}', which cannot cross into C: {reason}"
+suggestion = "the variadic tail accepts I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / String; objects and collections have no C layout"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"
@@ -189,6 +201,10 @@ message = "assertion failed: {message}"
 message = "FFI library '{library}' not found (searched: {searched})"
 [E5-017]
 message = "symbol '{symbol}' not found in FFI library '{library}'"
+
+[E5-019]
+message = "variadic call '{name}' needs the C variadic ABI; the interpreter can only forward a fixed signature, so this works on `run-llvm` only"
+suggestion = "use `pini run-llvm`, or write a fixed-arity shim on the C side and declare that instead"
 
 [E3-010]
 message = "module dependency cycle (R2): '{chain}'"

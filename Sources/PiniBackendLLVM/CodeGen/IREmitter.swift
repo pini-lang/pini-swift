@@ -122,6 +122,10 @@ public final class IREmitter {
     /// Module function registry by mangled IR name (G6): adapter generation
     /// reads the original ABI (params/return) from here.
     private var moduleFunctions: [String: IRFunction] = [:]
+    /// C 变参函数：符号名（已 mangle）→ 固定形参个数 + 调用点的函数类型拼写。
+    /// 后者不能省：文本 IR 的调用按实参表推函数类型，推出来的 `i64 (i64, i32)` 不是声明的
+    /// `i64 (i64, ...)`，后端会据此按非变参摆放实参，C 侧 `va_arg` 读到的是栈上的旧值。
+    private var variadicForeignFunctions: [String: (fixedCount: Int, callType: String)] = [:]
     /// 是否用到 `%bk_lazyref` 句柄类型与 `bk_lazyref_*` 这组 C ABI：头声明按需追加，
     /// 从不触碰 LazyRef 的模块其 IR 保持逐字节不变。
     private var usesLazyRef = false
@@ -397,7 +401,11 @@ public final class IREmitter {
             for func_ in foreignBlock.funcs
             where !predeclared.contains(func_.name) && !runtimeShims.contains(func_.name) {
                 let symbol = IRName.mangle(func_.name)
-                let params = func_.params.map { llvmSpelling(of: $0) }.joined(separator: ", ")
+                var params = func_.params.map { llvmSpelling(of: $0) }.joined(separator: ", ")
+                /// C 变参在 LLVM 里写成尾部 `...`：有固定前缀时前缀在前，没有前缀时只剩 `...`。
+                if func_.isVariadic {
+                    params += params.isEmpty ? "..." : ", ..."
+                }
                 let ret = func_.returnType.map { llvmSpelling(of: $0) } ?? "void"
                 let declaration = "declare \(ret) @\(symbol)(\(params))"
                 guard emittedForeignDeclarations.insert(declaration).inserted else { continue }
@@ -474,6 +482,15 @@ public final class IREmitter {
         moduleFunctions = [:]
         for function in module.functions {
             moduleFunctions[Self.mangle(function.name)] = function
+        }
+        variadicForeignFunctions = [:]
+        for block in module.foreigns {
+            for entry in block.funcs where entry.isVariadic {
+                let params = entry.params.map { llvmSpelling(of: $0) }.joined(separator: ", ")
+                variadicForeignFunctions[Self.mangle(entry.name)] = (
+                    entry.params.count, params.isEmpty ? "(...)" : "(\(params), ...)"
+                )
+            }
         }
         for typeDecl in module.types {
             for method in typeDecl.methods {
@@ -2308,7 +2325,15 @@ public final class IREmitter {
                     handle: args[0], timeout: args[1], type: type, okType: okType)
             }
 
-            let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
+            /// 变参尾的实参要在调用点按 C 的默认实参提升改写形状；固定前缀原样传。
+            let variadic = variadicForeignFunctions[Self.mangle(function)]
+            let argList: String
+            if let variadic {
+                argList = emitVariadicArguments(
+                    arguments: arguments, values: args, fixedCount: variadic.fixedCount)
+            } else {
+                argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
+            }
             /// 字符内建由解释器侧的 `RuntimeOps.characterBuiltins` 按名回答，这里接到 `bk_<名字>` 运行时段上；
             /// 表即白名单，与降载侧同一条规矩 ⇒ 不存在「降下来了却没人答」的名字。
             ///  行不通  谓词不用 C 的 `_Bool`（零扩展的 i8）而回 `i32`：本层 Bool 是 i1，收敛在这里显式做掉。
@@ -2417,11 +2442,15 @@ public final class IREmitter {
             let callee = "@\(symbolName)"
             if let returnType = returnType {
                 let temp = builder.freshTemp()
-                bodyIR += " \(temp) = call \(returnType.llvmSpelling) \(callee)(\(argList))\n"
+                let head =
+                    variadic.map { "\(returnType.llvmSpelling) \($0.callType)" }
+                    ?? returnType.llvmSpelling
+                bodyIR += " \(temp) = call \(head) \(callee)(\(argList))\n"
                 releaseCallArguments(args)
                 return IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
             }
-            bodyIR += " call void \(callee)(\(argList))\n"
+            let head = variadic.map { "void \($0.callType)" } ?? "void"
+            bodyIR += " call \(head) \(callee)(\(argList))\n"
             releaseCallArguments(args)
             return IRValue(llvmType: "void", ssaName: "")
 
@@ -4293,6 +4322,43 @@ public final class IREmitter {
     /// 于是临时值的 +1 份额留在调用方，返回后当场还；变量 / 字段的别名份额不在账上，一条也不碰。
     private func releaseCallArguments(_ values: [IRValue]) {
         for value in values { releaseHeldTemporary(value) }
+    }
+
+    /// C 变参调用点的实参表。固定前缀原样传，变参尾按 C 的默认实参提升改写形状。
+    /// 这件事必须在这里做：LLVM 看到的是 IR，不是源码，`clang` 替我们补不了。
+    private func emitVariadicArguments(
+        arguments: [IRExpr], values: [IRValue], fixedCount: Int
+    ) -> String {
+        var parts: [String] = []
+        for (index, value) in values.enumerated() {
+            if index < fixedCount {
+                parts.append("\(value.llvmType) \(value.ssaName)")
+            } else {
+                parts.append(promotedVariadicArgument(value, type: arguments[index].staticType))
+            }
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// 一个变参实参的提升：比 `int` 窄的整数升到 `i32`（符号性决定 `sext` / `zext`），
+    /// `Bool` 从 `i1` 零扩展。宽度已经够的形状原样传，表外的形状由降载层拦住，到不了这里。
+    private func promotedVariadicArgument(_ value: IRValue, type: IRType?) -> String {
+        switch type {
+        case .boolean:
+            let temp = builder.freshTemp()
+            bodyIR += " \(temp) = zext i1 \(value.ssaName) to i32\n"
+            return "i32 \(temp)"
+        case .i8:
+            let temp = builder.freshTemp()
+            bodyIR += " \(temp) = sext i8 \(value.ssaName) to i32\n"
+            return "i32 \(temp)"
+        case .u8:
+            let temp = builder.freshTemp()
+            bodyIR += " \(temp) = zext i8 \(value.ssaName) to i32\n"
+            return "i32 \(temp)"
+        default:
+            return "\(value.llvmType) \(value.ssaName)"
+        }
     }
 
     /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`bk_handle_*` / `bk_nominal_*` /

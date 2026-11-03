@@ -837,6 +837,10 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return
             "错误码 \(code) 同时属于 '\(first)' 与 \(others)：C 侧无法据此区分两者。"
             + "改掉其中一个手写码；若有意合并成同一个状态，可忽略"
+    case .variadicForeignSymbol(let name, _):
+        return
+            "外部函数 '\(name)' 声明为变参：变参调用只在 `run-llvm` 上成立，"
+            + "解释器会在调用点拒绝。要两通道都能跑，请在 C 侧写一个固定参数的 shim"
     }
 }
 

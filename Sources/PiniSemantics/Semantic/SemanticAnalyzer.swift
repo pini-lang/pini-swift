@@ -111,6 +111,7 @@ public final class SemanticAnalyzer {
             try checkTopLevelDecl(decl)
         }
         appendErrorCodeWarnings(module)
+        appendForeignPortabilityWarnings(module)
         if let c = deferredInjectConflict { throw c }
     }
 
@@ -150,6 +151,7 @@ public final class SemanticAnalyzer {
             for decl in unit.module.declarations {
                 try checkTopLevelDecl(decl)
             }
+            appendForeignPortabilityWarnings(unit.module)
             if let c = deferredInjectConflict { throw c }
         }
         /// 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
@@ -171,6 +173,18 @@ public final class SemanticAnalyzer {
                     typeName: entry.typeName, code: entry.code, location: entry.location))
         }
         appendDuplicateErrorCodeWarnings(plan)
+    }
+
+    /// 只在一条通道上成立的能力，在声明处提醒一次：变参调用需要 C 变参 ABI，
+    /// 解释器只能按固定签名转发。写声明时就知道，好过跑起来才发现。
+    private func appendForeignPortabilityWarnings(_ module: Module) {
+        for decl in module.declarations {
+            guard case .foreignDecl(let block) = decl else { continue }
+            for symbol in block.symbols where symbol.isVariadic {
+                warnings.append(
+                    .variadicForeignSymbol(name: symbol.name, location: symbol.location))
+            }
+        }
     }
 
     /// 同一个码落在两个条目上，且至少一方是手写码：能自动避让的来源（自动、散列）已经避开了，

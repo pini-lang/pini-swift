@@ -54,4 +54,8 @@ public enum TypeError: Error, Equatable {
     case foreignCallbackNotFreeFunction(reason: String, location: SourceLocation)
     /// 回调签名里的 `Bool`：`i1` 与 C `_Bool` 的寄存器约定不同，回调方向没有转发层可替它转。
     case foreignCallbackBoolean(location: SourceLocation)
+    /// `|varargs` 写在数据条目上：变参是调用点的性质，数据符号没有调用点。
+    case foreignVarargsOnNonFunction(symbol: String, location: SourceLocation)
+    /// 变参尾的实参不是 C 标量 / 指针：C 的默认实参提升覆盖不到它，传过去 C 侧读到的宽度是错的。
+    case foreignVariadicArgument(position: Int, type: String, reason: String, location: SourceLocation)
 }

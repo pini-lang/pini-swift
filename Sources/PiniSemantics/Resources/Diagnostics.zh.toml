@@ -34,6 +34,10 @@ suggestion = "该码不保证跨版本稳定；要固定它，在扩展块写 `�
 message = "错误码 {code} 同时属于 '{first}' 与 {others}"
 suggestion = "C 侧无法据此区分两者；改掉其中一个手写码，若有意合并成同一个状态可忽略"
 
+[E7-006]
+message = "外部函数 '{name}' 声明为变参：只有 LLVM 通道能调用它"
+suggestion = "换 `run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
+
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。
@@ -157,6 +161,14 @@ suggestion = "实参位上写一个顶层自由函数的名字，签名与形参
 message = "回调签名里不能出现 Bool：Pini 的 i1 与 C 的 _Bool 寄存器约定不同"
 suggestion = "把回调的参数与返回改成 I32，两侧都按 0 / 非 0 解释"
 
+[E4-033]
+message = "`|varargs` 只对函数条目成立：'{symbol}' 是数据符号"
+suggestion = "把 `|varargs` 写在函数条目上；数据符号只有读与写，没有调用点"
+
+[E4-034]
+message = "变参的第 {position} 个实参类型 '{type}' 不能传给 C：{reason}"
+suggestion = "变参尾只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / String；对象与集合没有 C 布局"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"
@@ -189,6 +201,10 @@ message = "断言失败：{message}"
 message = "FFI 库 '{library}' 未找到（已搜索：{searched}）"
 [E5-017]
 message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
+
+[E5-019]
+message = "变参调用 '{name}' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
+suggestion = "改用 `pini run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
 
 [E3-010]
 message = "模块依赖环（R2 禁环）：'{chain}'"

@@ -430,6 +430,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             // The libc shim table comes first — shared with the AST channel, one definition for two engines.
             // Otherwise it is a raw C binding: `dlsym` against the block name, then a per-signature thunk over the address.
             if let foreign = foreignDecls[name] {
+                /// 变参在解释器上没有实现路径：转发靠把地址位转成固定槽位，
+                /// 而 Apple arm64 把变参放在栈上，位转调用读到的是垃圾。拒绝要早于求值实参。
+                if foreign.function.isVariadic {
+                    throw RuntimeError.variadicCallUnsupported(
+                        name: name, location: IRExecutor.noLocation)
+                }
                 let args = try arguments.map { try evaluate($0) }
                 if let shim = RuntimeOps.libcShim(named: name, params: foreign.function.params) {
                     return try shim(args)

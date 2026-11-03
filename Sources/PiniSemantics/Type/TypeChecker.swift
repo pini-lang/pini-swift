@@ -1630,7 +1630,8 @@ public final class TypeChecker {
                 foreignSymbolNames.insert(symbol.name)
                 if symbol.isFunction {
                     typeEnv.defineFunction(
-                        name: symbol.name, params: symbol.paramTypes, returns: symbol.returnTypes)
+                        name: symbol.name, params: symbol.paramTypes, returns: symbol.returnTypes,
+                        isVariadic: symbol.isVariadic)
                 } else {
                     typeEnv.defineForeignData(name: symbol.name, type: symbol.annotation)
                     if symbol.flags.contains("readonly") {
@@ -1850,6 +1851,12 @@ public final class TypeChecker {
                     try checkFFIType(annotation, at: .result, symbol: symbol)
                 }
             } else {
+                /// 变参是调用点的性质，数据符号没有调用点；标志写错了就地报，别让它悄悄无效。
+                if symbol.flags.contains("varargs") {
+                    try report(
+                        TypeError.foreignVarargsOnNonFunction(
+                            symbol: symbol.name, location: symbol.location))
+                }
                 try checkFFIType(symbol.annotation, at: .data, symbol: symbol)
             }
         }
@@ -1944,6 +1951,64 @@ public final class TypeChecker {
                         location: argumentLocation))
                 return
             }
+        }
+    }
+
+    /// 变参调用点：固定前缀之外的实参按 C 的默认实参提升传，只收闭合表里的类型。
+    /// 放宽的只是上限——少于固定前缀仍按 arity 错报，因为 C 侧会照声明读那几个槽。
+    private func checkForeignVariadicArguments(
+        callee: String, arguments: [CallArgument],
+        signature: TypeEnvironment.FunctionSignature, location: SourceLocation
+    ) throws {
+        guard signature.isVariadic else { return }
+        let fixed = signature.params.count
+        guard arguments.count >= fixed else {
+            try report(
+                TypeError.argumentCountMismatch(
+                    expected: fixed, got: arguments.count, location: location))
+            return
+        }
+        for index in fixed..<arguments.count {
+            /// 裸函数名不是值，推断给不出类型；它却是最容易写错的那一笔，单独认一次。
+            if case .identifier(let name, _) = arguments[index].expression,
+                typeEnv.lookupFunction(name: name) != nil
+            {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: "函数 `\(name)`",
+                        reason: "变参尾不带类型标记，C 看不出这里要一个函数指针；要传回调就写进声明的形参位",
+                        location: location))
+                continue
+            }
+            guard let type = inference.infer(expression: arguments[index].expression) else { continue }
+            /// 回调在变参尾没有落脚处：提升表里没有它的形状，C 也从签名看不出这里要一个函数指针。
+            if case .function = type {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: type.describe(),
+                        reason: "变参尾不带类型标记，C 看不出这里要一个函数指针；要传回调就写进声明的形参位",
+                        location: location))
+                continue
+            }
+            do {
+                _ = try FFIType.resolve(type, at: .parameter)
+            } catch let error as FFITypeError {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: type.describe(),
+                        reason: Self.variadicRejectionReason(error), location: location))
+            }
+        }
+    }
+
+    /// 归一失败的原因原样搬给变参诊断：它已经是一句自足的说明，这一层不再改写。
+    private static func variadicRejectionReason(_ error: FFITypeError) -> String {
+        switch error {
+        case .notRepresentable(_, let reason): return reason
+        case .widthNotInIR(let name): return "`\(name)` 在 IR 里没有对应宽度"
+        case .cStringInReturnPosition: return "`String` 只能作形参借出"
+        case .callbackOutsideParameter: return "函数类型只能出现在声明的形参位"
+        case .booleanInCallback: return "回调签名里不收 Bool"
         }
     }
 
@@ -2563,6 +2628,9 @@ public final class TypeChecker {
                     /// 排在校验实参之前 —— 签名差一位时，讲「C 会按声明调用它」比讲「类型不匹配」有用。
                     if foreignSymbolNames.contains(calleeName) {
                         try checkForeignCallbackArguments(
+                            callee: calleeName, arguments: arguments, signature: sig, location: location)
+                        /// 变参尾的实参不在 `validateCallArguments` 的下标循环里，判据单独一条。
+                        try checkForeignVariadicArguments(
                             callee: calleeName, arguments: arguments, signature: sig, location: location)
                     }
                     try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])

@@ -165,6 +165,8 @@ public struct DiagnosticPublisher {
         case .foreignStringInReturnPosition(let loc): return loc
         case .foreignCallbackNotFreeFunction(_, let loc): return loc
         case .foreignCallbackBoolean(let loc): return loc
+        case .foreignVarargsOnNonFunction(_, let loc): return loc
+        case .foreignVariadicArgument(_, _, _, let loc): return loc
         }
     }
 }

@@ -572,7 +572,8 @@ public enum IRLowerer {
                     let signature = try resolveForeignSignature(symbol)
                     signatures[symbol.name] = IRLowererSignatureInfo(
                         paramTypes: signature.params.map(\.irType),
-                        returnType: signature.returnType?.irType
+                        returnType: signature.returnType?.irType,
+                        isVariadic: symbol.isVariadic
                     )
                 }
             default: break
@@ -818,7 +819,8 @@ public enum IRLowerer {
                 let signature = try resolveForeignSignature(symbol)
                 foreignFuncs.append(
                     IRForeignFunction(
-                        name: symbol.name, params: signature.params, returnType: signature.returnType
+                        name: symbol.name, params: signature.params, returnType: signature.returnType,
+                        isVariadic: symbol.isVariadic
                     ))
             }
             for symbol in foreignDecl.symbols
@@ -1793,6 +1795,51 @@ public enum IRLowerer {
             }
         }
         return nodes
+    }
+
+    /// 变参调用的实参表：固定前缀按签名逐位降载，多出来的只收 C 标量与指针。
+    /// 提升不在这里做 —— 同一个值在别处也有自己的宽度，改写留给只看得到调用形状的发射层。
+    private static func lowerVariadicArguments(
+        callee: String, arguments: [CallArgument], signature: IRLowererSignatureInfo,
+        at location: SourceLocation, into context: inout FunctionContext
+    ) throws -> [IRExpr] {
+        let fixed = signature.paramTypes.count
+        guard arguments.count >= fixed else {
+            throw unsupported(
+                "call to '\(callee)' expects at least \(fixed) arguments, got \(arguments.count)",
+                at: location)
+        }
+        var nodes: [IRExpr] = []
+        for (index, argument) in arguments.prefix(fixed).enumerated() {
+            let lowered = try lowerExpr(
+                argument.expression, expected: signature.paramTypes[index], into: &context)
+            if !signature.untypedParamIndices.contains(index) {
+                try requireAssignable(lowered.type, to: signature.paramTypes[index], at: location)
+            }
+            nodes.append(lowered.node)
+        }
+        for argument in arguments.dropFirst(fixed) {
+            let lowered = try lowerExpr(argument.expression, expected: nil, into: &context)
+            guard variadicTailAccepts(lowered.type) else {
+                throw unsupported(
+                    "variadic argument of '\(callee)' has type \(lowered.type.describe()); "
+                        + "C's default argument promotions cover only scalars and pointers",
+                    at: location)
+            }
+            nodes.append(lowered.node)
+        }
+        return nodes
+    }
+
+    /// 变参尾能接的形状。`.string` 按借出传；`.cFunction` 不在内 —— 变参尾不带类型标记，
+    /// C 看不出这里要一个函数指针。
+    private static func variadicTailAccepts(_ type: IRType) -> Bool {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func resolveParamTypes(
@@ -3983,23 +4030,31 @@ public enum IRLowerer {
             }
             // 用每个形参的类型作为期望上下文逐位降载实参，无标注的整数字面量因此采用非 I32 的槽位（U64 形参下 64 是 u64）。
             // `using` 形参的实参可由编译器插入：先问实参对哪些形参位，再逐位降载，`using` 位在填充阶段补取用点。
-            let paramIndices = try usingParamMapping(
-                callee: functionName, paramCount: signature.paramTypes.count,
-                usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
-                at: location)
-            let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
-                try lowerExpr(argument.expression, expected: signature.paramTypes[paramIndex], into: &context)
+            let argumentNodes: [IRExpr]
+            if signature.isVariadic {
+                /// 变参放宽的是上限：固定前缀照签名逐位对，多出来的按默认实参提升口径接。
+                argumentNodes = try lowerVariadicArguments(
+                    callee: functionName, arguments: arguments, signature: signature,
+                    at: location, into: &context)
+            } else {
+                let paramIndices = try usingParamMapping(
+                    callee: functionName, paramCount: signature.paramTypes.count,
+                    usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
+                    at: location)
+                let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
+                    try lowerExpr(argument.expression, expected: signature.paramTypes[paramIndex], into: &context)
+                }
+                for (position, argument) in retypedArgs.enumerated()
+                where !signature.untypedParamIndices.contains(paramIndices[position]) {
+                    try requireAssignable(
+                        argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
+                }
+                argumentNodes = try fillUsingArguments(
+                    retypedArgs: retypedArgs, paramIndices: paramIndices,
+                    paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
+                    omittedForm: arguments.count != signature.paramTypes.count,
+                    callee: functionName, at: location, into: &context)
             }
-            for (position, argument) in retypedArgs.enumerated()
-            where !signature.untypedParamIndices.contains(paramIndices[position]) {
-                try requireAssignable(
-                    argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
-            }
-            let argumentNodes = try fillUsingArguments(
-                retypedArgs: retypedArgs, paramIndices: paramIndices,
-                paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
-                omittedForm: arguments.count != signature.paramTypes.count,
-                callee: functionName, at: location, into: &context)
             context.recordCall(functionName)
             return LoweredExpr(
                 node: .call(
@@ -6081,10 +6136,13 @@ struct IRLowererSignatureInfo {
     /// `using` 形参的位置（0 基）。与检查器的 `FunctionSignature.usingParamIndices` 同一口径：调用点按「实参
     /// 个数 == 形参个数 − using 个数」认省略式调用，并把实参按非 using 形参逐位对上；空集即无 `using` 形参。
     let usingParamIndices: Set<Int>
+    /// C 变参：`paramTypes` 是固定前缀，调用点可以多传。放宽的是上限，不是下限。
+    let isVariadic: Bool
 
     init(
         paramTypes: [IRType], returnType: IRType?, bodyReturnType: IRType? = nil,
-        untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = []
+        untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = [],
+        isVariadic: Bool = false
     ) {
         self.paramTypes = paramTypes
         self.returnType = returnType
@@ -6094,6 +6152,7 @@ struct IRLowererSignatureInfo {
         self.bodyReturnType = bodyReturnType ?? returnType
         self.untypedParamIndices = untypedParamIndices
         self.usingParamIndices = usingParamIndices
+        self.isVariadic = isVariadic
     }
 }
 

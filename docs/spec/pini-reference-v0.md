@@ -2698,6 +2698,7 @@ memcpy: (*I8, *I8, I64,) -> ()
 - 标识符就是外部符号名，不提供别名
 - 块内函数自动视为 `|unsafe`
 - `|readonly` 的数据符号在语义期拒写；`|macro` 是构建期常量，不解析符号、不可取址，蕴含 `readonly`
+- `|varargs` 标出 C 变参函数：声明里的形参表是固定前缀，调用点可以多传（只对函数条目成立，见下）
 - 不接收内联 ABI 参数
 - 继承模块级 `pini.toml` 设定的 FFI ABI（默认 `"C"`）
 
@@ -2769,6 +2770,26 @@ main|func() -> (I32,):
 传出去的是函数自己的符号地址，不包适配器。
 
 注意 解释器用固定签名的桩承接回调，因此回调签名含 `F64` 时 `run` 不可用、`run-llvm` 正常。
+
+**变参**：
+
+C 变参函数用 `|varargs` 标出，声明里的形参表是固定前缀：
+
+```
+[libc|foreign]
+printf|varargs: (String,) -> (I32,)
+
+main|func() -> (I32,):
+    unsafe printf("n=%d\n", 42)
+    return 0
+```
+
+调用点可以多传实参，但不少于固定前缀；多出来的进变参尾，只收 C 标量与指针（`String` 按借出），
+其余报 E4-034。尾部实参按 C 的默认实参提升传：`Bool` 与 `I8` / `U8` 升成 `i32`，`I32` /
+`I64` / `U64` / `F64` 保持原宽度。
+
+注意 变参只在 LLVM 通道成立。解释器没有 C 变参 ABI（arm64 把变参放栈上），`run` 在调用点
+报 E5-019；声明处另有一条 E7-006 提醒。要两通道都能跑，在 C 侧写一个固定参数的 shim。
 
 **取回 C 串**：
 
@@ -2884,7 +2905,7 @@ _容量: I64 = 0
 | 解释器 `&` 快照取址 | 写回不更新原变量 |
 | LLVM 端 FFI | 显式 unsupported |
 | by-value 结构体 ABI | 首版不做 |
-| 变参函数 | 不支持 |
+| 变参函数 | 只在 LLVM 通道成立；`run` 在调用点拒绝（E5-019），声明处提醒（E7-006） |
 | `errno` / 线程局部访问 | 不支持 |
 | 非 C 的 ABI | 不支持 |
 
@@ -4125,7 +4146,7 @@ trait-line      ::= '实现' ':' IDENT;
 
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
-foreign-symbol  ::= IDENT { '|' IDENT } ':' type-annotation;
+foreign-symbol  ::= IDENT { '|' ('readonly' | 'macro' | 'varargs') } ':' type-annotation;
 ```
 
 #### 函数声明

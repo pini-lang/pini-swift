@@ -17,13 +17,17 @@ public struct ForeignSymbol: Equatable, ASTNode, Sendable {
     }
 
     /// 认识的标志。不在此列的写法在解析期报错，不留到语义期猜。
-    public static let knownFlags: [String] = ["readonly", "macro"]
+    /// `varargs` 只对函数条目成立：数据符号没有调用点，变参无从谈起。
+    public static let knownFlags: [String] = ["readonly", "macro", "varargs"]
 
     /// 类型是函数类型即外部函数，其余为外部数据符号。
     public var isFunction: Bool {
         if case .function = annotation { return true }
         return false
     }
+
+    /// 这个函数条目是 C 变参函数：声明里的形参表是固定前缀，调用点可以多传。
+    public var isVariadic: Bool { isFunction && flags.contains("varargs") }
 
     /// 函数型条目的形参类型；非函数型为空。
     public var paramTypes: [TypeAnnotation] {

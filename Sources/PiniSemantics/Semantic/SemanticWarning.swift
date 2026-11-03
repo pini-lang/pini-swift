@@ -15,6 +15,9 @@ public enum SemanticWarning: Error, Equatable {
     case automaticErrorCode(typeName: String, code: Int32, location: SourceLocation)
     /// 两个错误的码撞在一起：C 侧拿到这个值分不清是谁。手写码可能是有意合并成一个状态，故只提醒。
     case duplicateErrorCode(code: Int32, first: String, others: String, location: SourceLocation)
+    /// 声明了 C 变参条目：变参调用只在 LLVM 通道成立，另一个通道会在调用点拒绝。
+    /// 警告放在声明处——作者写声明时就知道这条边界，别等跑起来才发现。
+    case variadicForeignSymbol(name: String, location: SourceLocation)
 }
 
 extension SemanticWarning {
@@ -33,6 +36,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .givenCycle: return "\(DiagnosticDomain.warning.rawValue)-003"
         case .automaticErrorCode: return "\(DiagnosticDomain.warning.rawValue)-004"
         case .duplicateErrorCode: return "\(DiagnosticDomain.warning.rawValue)-005"
+        case .variadicForeignSymbol: return "\(DiagnosticDomain.warning.rawValue)-006"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .warning }
@@ -44,6 +48,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .givenCycle(_, let loc): return loc
         case .automaticErrorCode(_, _, let loc): return loc
         case .duplicateErrorCode(_, _, _, let loc): return loc
+        case .variadicForeignSymbol(_, let loc): return loc
         }
     }
 }

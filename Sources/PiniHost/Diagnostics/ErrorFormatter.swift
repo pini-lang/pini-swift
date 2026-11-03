@@ -197,6 +197,8 @@ public enum ErrorFormatter {
                 return "type '\(typeName)' declares no error code; \(code) was assigned automatically"
             case .duplicateErrorCode(let code, let first, let others, _):
                 return "error code \(code) belongs to both '\(first)' and \(others)"
+            case .variadicForeignSymbol(let name, _):
+                return "foreign function '\(name)' is variadic: only the LLVM channel can call it"
             }
         case let e as IRValidator.Failure:
             return e.report
@@ -288,6 +290,9 @@ public enum ErrorFormatter {
         case .foreignStringInReturnPosition: return "外部函数的返回类型不能是 String：C 返回的指针归属不明"
         case .foreignCallbackNotFreeFunction(let reason, _): return "回调实参不合格：\(reason)"
         case .foreignCallbackBoolean: return "回调签名里不能出现 Bool：Pini 的 i1 与 C 的 _Bool 寄存器约定不同，改用 I32"
+        case .foreignVarargsOnNonFunction(let symbol, _): return "`|varargs` 只对函数条目成立：`\(symbol)` 是数据符号"
+        case .foreignVariadicArgument(let position, let type, let reason, _):
+            return "变参的第 \(position) 个实参类型 `\(type)` 不能传给 C：\(reason)"
         }
     }
 
@@ -311,6 +316,8 @@ public enum ErrorFormatter {
         case .libraryNotFound(let library, let searched, _): return "FFI 库 '\(library)' 未找到（已搜索：\(searched.isEmpty ? "（无搜索路径）" : searched.joined(separator: ", "))）"
         case .symbolNotFound(let library, let symbol, _): return "FFI 库 '\(library)' 中未找到符号 '\(symbol)'"
         case .entryMainMismatch(let entries, let declaredIn, _): return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，但 main 定义在 \(declaredIn)"
+        case .variadicCallUnsupported(let name, _):
+            return "变参调用 '\(name)' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
         }
     }
 
