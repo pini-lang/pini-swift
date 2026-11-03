@@ -351,7 +351,7 @@ struct CallbackTests: Sendable, PiniSourceLowering {
         """.write(
             to: directory.appendingPathComponent("caller.c"), atomically: true,
             encoding: .utf8)
-        let library = directory.appendingPathComponent("libcalc.dylib")
+        let library = directory.appendingPathComponent("libcalc.\(Self.librarySuffix)")
         let compile = try runProcess(
             cc, arguments: [
                 "caller.c", "-L.", "-lcalc", "-Wl,-rpath,.", "-o", "caller",
@@ -364,6 +364,15 @@ struct CallbackTests: Sendable, PiniSourceLowering {
     }
 
     // MARK: - 辅助
+
+    /// `pini build --shared` 的产物后缀随平台：Darwin 发 `.dylib`，其余发 `.so`。
+    private static var librarySuffix: String {
+        #if canImport(Darwin)
+        "dylib"
+        #else
+        "so"
+        #endif
+    }
 
     private func firstCall(in module: IRModule) throws -> IRExpr? {
         guard let function = module.functions.first(where: { $0.name == "main" }) else { return nil }
