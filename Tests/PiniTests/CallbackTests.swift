@@ -396,7 +396,7 @@ struct CallbackTests: Sendable, PiniSourceLowering {
         for candidate in ["/usr/bin/cc", "/usr/bin/clang"] where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
-        return nil
+        return LLVMToolchain.clangPath
     }
 
     private static func makeTemporaryDirectory() throws -> URL {

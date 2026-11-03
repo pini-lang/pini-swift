@@ -297,7 +297,7 @@ struct VariadicTests: Sendable, PiniSourceLowering {
         where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
-        return nil
+        return LLVMToolchain.clangPath
     }
 
     private static func makeTemporaryDirectory() throws -> URL {

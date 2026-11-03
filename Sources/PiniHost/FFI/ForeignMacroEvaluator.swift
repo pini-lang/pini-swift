@@ -72,9 +72,8 @@ public enum ForeignMacroEvaluator {
         let file = directory.appendingPathComponent("probe.c")
         try source.write(to: file, atomically: true, encoding: .utf8)
 
-        /// `Process` 只认可执行文件的绝对路径，不查 PATH：默认落在系统 `cc` shim 上，
-        /// 换编译器用 `PINI_CC` 指绝对路径。
-        let compiler = ProcessInfo.processInfo.environment["PINI_CC"] ?? "/usr/bin/cc"
+        /// `Process` 只认可执行文件的绝对路径，不查 PATH，故这里自己按 PATH 找。
+        let compiler = preprocessorPath()
         let arguments = ["-E", "-P"] + config.includePaths.map { "-I\($0)" } + [file.path]
         let process = Process()
         process.executableURL = URL(fileURLWithPath: compiler)
@@ -97,6 +96,25 @@ public enum ForeignMacroEvaluator {
                 output: String(decoding: errData, as: UTF8.self))
         }
         return String(decoding: outData, as: UTF8.self)
+    }
+
+    /// 预处理器：`PINI_CC` 优先，其次 PATH 里的 `cc`、`clang`，末位落回 `/usr/bin/cc`。
+    /// 只有 `cc` 一处兜底会把只装了 clang 的镜像挡在门外，而 clang 本身就是 C 预处理器。
+    private static func preprocessorPath() -> String {
+        let environment = ProcessInfo.processInfo.environment
+        if let override = environment["PINI_CC"], !override.isEmpty,
+            FileManager.default.isExecutableFile(atPath: override)
+        {
+            return override
+        }
+        let directories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        for tool in ["cc", "clang"] {
+            for directory in directories {
+                let candidate = (directory as NSString).appendingPathComponent(tool)
+                if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+            }
+        }
+        return "/usr/bin/cc"
     }
 
     /// 按标记切段：每段从标记之后到下一个标记之前，跨行展开一并收进来。
