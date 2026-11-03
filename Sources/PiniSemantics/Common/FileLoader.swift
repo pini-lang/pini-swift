@@ -145,15 +145,23 @@ public struct FileLoader {
 
 /// FFI 模块配置（`pini.toml` 的 `[ffi]` 表，解释器 dlsym 加载用）。`abi` 全局唯一、默认 `"C"`、
 /// 子模块不可覆盖；`searchPaths` 分层追加（子模块追加在父模块之后）；`libs` 全局统一链接。
+/// `headers` 与 `includePaths` 只服务宏常量求值：`#include` 的实参与 `-I` 路径，空即本模块不声明宏。
 public struct FFIConfig: Equatable, Sendable {
     public let abi: String
     public let searchPaths: [String]
     public let libs: [String]
+    public let headers: [String]
+    public let includePaths: [String]
 
-    public init(abi: String = "C", searchPaths: [String] = [], libs: [String] = []) {
+    public init(
+        abi: String = "C", searchPaths: [String] = [], libs: [String] = [],
+        headers: [String] = [], includePaths: [String] = []
+    ) {
         self.abi = abi
         self.searchPaths = searchPaths
         self.libs = libs
+        self.headers = headers
+        self.includePaths = includePaths
     }
 
     /// 系统默认搜索路径（libc 等系统库无需显式 `[ffi].search_paths`）。
@@ -165,7 +173,10 @@ public struct FFIConfig: Equatable, Sendable {
 
     /// 子模块 `[ffi]` 追加到父模块之后（分层追加语义）；`abi` 以父（根）为准、不可覆盖。
     public func merging(submodule other: FFIConfig) -> FFIConfig {
-        FFIConfig(abi: self.abi, searchPaths: self.searchPaths + other.searchPaths, libs: self.libs + other.libs)
+        FFIConfig(
+            abi: self.abi, searchPaths: self.searchPaths + other.searchPaths,
+            libs: self.libs + other.libs, headers: self.headers + other.headers,
+            includePaths: self.includePaths + other.includePaths)
     }
 }
 
@@ -266,11 +277,14 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
     let pkg = doc.plain("package")
     let ffiRaw = doc.plain("ffi")
     let ffi: FFIConfig? =
-        (ffiRaw["abi"] != nil || !(ffiRaw["search_paths"] ?? "").isEmpty || !(ffiRaw["libs"] ?? "").isEmpty)
+        (ffiRaw["abi"] != nil || !(ffiRaw["search_paths"] ?? "").isEmpty || !(ffiRaw["libs"] ?? "").isEmpty
+            || !(ffiRaw["headers"] ?? "").isEmpty || !(ffiRaw["include_paths"] ?? "").isEmpty)
         ? FFIConfig(
             abi: ffiRaw["abi"] ?? "C",
             searchPaths: MiniTOML.parseArray(ffiRaw["search_paths"] ?? "[]"),
-            libs: MiniTOML.parseArray(ffiRaw["libs"] ?? "[]"))
+            libs: MiniTOML.parseArray(ffiRaw["libs"] ?? "[]"),
+            headers: MiniTOML.parseArray(ffiRaw["headers"] ?? "[]"),
+            includePaths: MiniTOML.parseArray(ffiRaw["include_paths"] ?? "[]"))
         : nil
     // [tap.X] 子表：取其（单一）值的键值并入 taps（X → spec）；[tap] 平表条目同名优先。
     var taps = doc.plain("tap")

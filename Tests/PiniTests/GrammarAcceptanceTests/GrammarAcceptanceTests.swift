@@ -544,19 +544,23 @@ struct GrammarAcceptanceTests: Sendable {
 
     @Test("foreign 元组返回形态被接受")
     func testParserAcceptsForeignTupleReturnForm() throws {
-        /// 意图：`malloc(大小: I64,) -> (*I8,)` 的返回位写元组，且块内函数自动 unsafe。
+        /// 意图：`malloc: (I64,) -> (*I8,)` 的返回位写元组，条目按函数类型收进符号表。
         let module = try checkedModule("testParserAcceptsForeignTupleReturnForm")
         guard case .foreignDecl(let foreign) = module.declarations.first else {
             Issue.record("唯一声明应为 foreign 块"); return
         }
         #expect(foreign.name == "libc")
-        guard let malloc = foreign.funcs.first else {
+        guard let malloc = foreign.symbols.first else {
             Issue.record("foreign 块内应有 malloc"); return
         }
         #expect(malloc.name == "malloc")
-        #expect(malloc.modifiers.contains("unsafe"), "块内函数应自动标记 unsafe，实际 \(malloc.modifiers)")
-        guard case .pointer(let element, _) = malloc.returnTypes.first else {
-            Issue.record("返回类型应为指针，实际：\(String(describing: malloc.returnTypes.first))"); return
+        #expect(malloc.isFunction, "函数类型条目应判为外部函数")
+        guard case .function(let params, let returns, _, _, _) = malloc.annotation else {
+            Issue.record("类型应为函数类型，实际：\(malloc.annotation.describe())"); return
+        }
+        #expect(params.count == 1)
+        guard case .pointer(let element, _) = returns.first else {
+            Issue.record("返回类型应为指针，实际：\(String(describing: returns.first))"); return
         }
         guard case .simple(let elementName, _) = element else {
             Issue.record("指针元素应为简单类型"); return
@@ -564,15 +568,46 @@ struct GrammarAcceptanceTests: Sendable {
         #expect(elementName == "I8")
     }
 
-    @Test("draft foreign 形态被拒")
-    func testParserRejectsDraftForeignSignatureForm() throws {
-        /// 意图：`malloc|unsafe(大小: I64) -> *I8` 被拒 —— 单类型返回位不合法。
-        let (_, errors) = try parse("testParserRejectsDraftForeignSignatureForm")
-        guard case .unexpectedToken(_, let actual, _) = errors.first else {
-            Issue.record("首条应为 unexpectedToken，实际：\(String(describing: errors.first))"); return
+    @Test("foreign 新写法收进符号表且标志为空")
+    func testParserAcceptsForeignSymbolEntryForm() throws {
+        /// 意图：`malloc: (U64,) -> (*U8,)` 与元组返回同形，条目无标志时 flags 为空。
+        let module = try checkedModule("testParserAcceptsForeignSymbolEntryForm")
+        guard case .foreignDecl(let foreign) = module.declarations.first else {
+            Issue.record("唯一声明应为 foreign 块"); return
         }
-        #expect(errors.first?.diagnosticCode == "E2-001")
-        #expect(actual == "*", "拒绝点应落在单类型返回位，实际 \(actual)")
+        #expect(foreign.symbols.count == 1)
+        guard let malloc = foreign.symbols.first else {
+            Issue.record("foreign 块内应有 malloc"); return
+        }
+        #expect(malloc.name == "malloc")
+        #expect(malloc.flags.isEmpty)
+        #expect(malloc.paramTypes.count == 1)
+        #expect(malloc.returnTypes.count == 1)
+    }
+
+    @Test("未知的 foreign 标志被拒")
+    func testParserRejectsUnknownForeignFlag() throws {
+        /// 意图：标志是封闭白名单，`|threadlocal` 未开放即报错，不静默收下。
+        let (_, errors) = try parse("testParserRejectsUnknownForeignFlag")
+        guard case .invalidStatement(let reason, _) = errors.first else {
+            Issue.record("首条应为 invalidStatement，实际：\(String(describing: errors.first))"); return
+        }
+        #expect(reason.contains("|threadlocal"), "拒绝理由应点出未知标志，实际：\(reason)")
+    }
+
+    @Test("foreign 数据符号条目被接受")
+    func testParserAcceptsForeignDataSymbolForm() throws {
+        /// 意图：类型不是函数类型即数据符号，`|readonly` 随条目保留；种类由类型决定，不另设关键字。
+        let module = try checkedModule("testParserAcceptsForeignDataSymbolForm")
+        guard case .foreignDecl(let foreign) = module.declarations.first else {
+            Issue.record("唯一声明应为 foreign 块"); return
+        }
+        #expect(foreign.symbols.count == 2)
+        guard foreign.symbols.count == 2 else { return }
+        #expect(foreign.symbols[0].name == "optind")
+        #expect(!foreign.symbols[0].isFunction)
+        #expect(foreign.symbols[0].flags.isEmpty)
+        #expect(foreign.symbols[1].flags == ["readonly"], "只读标志应随条目保留")
     }
 
     // MARK: - 限定 case 模式与返回糖

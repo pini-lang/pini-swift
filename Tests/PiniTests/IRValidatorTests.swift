@@ -120,7 +120,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
         let module = handBuilt([
             .tryStmt(
                 operand: .resultConstruct(
-                    isOk: true, payload: .intConst(value: 1, type: .i32), type: result),
+                    isOk: true, payload: .intConst(value: 1, type: .i32), errorBaseCode: 0, errorTagged: false, errorCodes: nil, type: result),
                 errorVar: "e",
                 handler: IRBlock([.returnStmt(value: nil, adopt: .none)]),
                 okTarget: "缺",
@@ -134,7 +134,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
         let module = handBuilt([
             .exprStmt(
                 .resultConstruct(
-                    isOk: true, payload: .intConst(value: 1, type: .i32), type: .i32))
+                    isOk: true, payload: .intConst(value: 1, type: .i32), errorBaseCode: 0, errorTagged: false, errorCodes: nil, type: .i32))
         ])
         #expect(rules(module) == [.nodeShape])
     }
@@ -277,7 +277,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
             .allocVar(
                 name: "r", type: result, mutable: true,
                 initializer: .resultConstruct(
-                    isOk: true, payload: .intConst(value: 1, type: .i32), type: result),
+                    isOk: true, payload: .intConst(value: 1, type: .i32), errorBaseCode: 0, errorTagged: false, errorCodes: nil, type: result),
                 adopt: .none),
             .returnStmt(
                 value: .join(future: .load(name: "r", type: result), type: result, form: .awaits),

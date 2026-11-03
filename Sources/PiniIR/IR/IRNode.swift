@@ -63,10 +63,16 @@ public indirect enum IRType: Equatable {
     /// `{ ptr, ptr }` = { code, env }; the param/return shapes are carried for parity checking only — the
     /// call protocol is fixed (first arg is always the env pointer).
     case function(params: [IRType], returnType: IRType?, usingIndices: Set<Int>)
+    /// C 函数指针：`(A, B) -> C`，LLVM 拼写是裸 `ptr`。
+    /// 与 `function` 明确分开 —— 后者是 `{code, env}` 胖指针、调用先传 env，两者不可互换。
+    case cFunction(params: [IRType], returnType: IRType?)
     /// `*T`: raw pointer, opaque `ptr` in LLVM IR — load/store take the element type, address-of produces
     /// it from an alloca. The element rides along for load/store typing (mirroring the interpreter's
     /// snapshot/decode: `*U8` loads sign-extend to one int value).
     case pointer(element: IRType)
+    /// `StringHandle`：运行时段持有的字符串拷贝，C 侧只拿不透明指针，Pini 侧只是一个 token。
+    /// 与 `pointer` 分开 —— 它不是可 load / store 的字节地址，也不是计数串（计数在 C 那一侧）。
+    case stringHandle
 
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
@@ -102,7 +108,11 @@ public indirect enum IRType: Equatable {
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         case .function:
             return "{ ptr, ptr }"
+        case .cFunction:
+            return "ptr"
         case .pointer:
+            return "ptr"
+        case .stringHandle:
             return "ptr"
         }
     }
@@ -153,8 +163,13 @@ public indirect enum IRType: Equatable {
             }
             let returned = returnType.map { $0.describe() } ?? ""
             return "(" + marked.joined(separator: ", ") + ") -> (\(returned))"
+        case .cFunction(let params, let returnType):
+            let returned = returnType.map { $0.describe() } ?? ""
+            return "(" + params.map { $0.describe() }.joined(separator: ", ") + ") -> (\(returned)) [C]"
         case .pointer(let element):
             return "*\(element.describe())"
+        case .stringHandle:
+            return "StringHandle"
         }
     }
 
@@ -219,7 +234,7 @@ public indirect enum IRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .lazyRef, .pointer:
+        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .pointer, .stringHandle:
             return false
         }
     }
@@ -322,9 +337,12 @@ public indirect enum IRExpr: Equatable {
     case call(function: String, arguments: [IRExpr], returnType: IRType?)
     /// Intrinsic `print(expr)` — one scalar argument, void result.
     case printCall(argument: IRExpr)
-    /// `ok(v)` / `err(e)` 的 Result 构造。err 载荷在发射时加宽到一个机器字
-    /// （ABI 上类型擦除）。
-    case resultConstruct(isOk: Bool, payload: IRExpr, type: IRType)
+    /// `ok(v)` / `err(e)` 的 Result 构造。err 载荷在发射时加宽到一个机器字（ABI 上类型擦除）。
+    /// `errorBaseCode` 是载荷所属错误类型的码基址；`errorTagged` 表示载荷是枚举、tag 要由运行时读；
+    /// `errorCodes` 非 nil 时改用按 tag 索引的码表（稳定码类型），此时基址只作兜底。
+    case resultConstruct(
+        isOk: Bool, payload: IRExpr, errorBaseCode: Int32, errorTagged: Bool,
+        errorCodes: [Int32]?, type: IRType)
     /// Array literal `[e1, e2, ...]` (G2). `type` is `.array(element:)`; the
     /// emitter builds the handle via `bk_array_create` + per-element
     /// `bk_array_set` (boxed through the C ABI).
@@ -378,6 +396,9 @@ public indirect enum IRExpr: Equatable {
     /// env-ignoring adapter fat pointer (`@__adapter_<mangled>`) so direct
     /// and indirect call sites share one calling convention.
     case functionValue(functionName: String, type: IRType)
+    /// 顶层自由函数的地址，作为 C 函数指针传出去：发射成 `ptr @mangled`，不包一层适配器 ——
+    /// 包一层就多了一个 C 侧看不见的名字，而 C 要的正是这个函数的符号。
+    case cFunctionAddress(functionName: String, type: IRType)
     /// Indirect call through a function value (G6): always the closure ABI
     /// `call ret code(ptr env, args...)` — `callee` is a closureLiteral /
     /// functionValue / function-typed variable load.
@@ -397,6 +418,9 @@ public indirect enum IRExpr: Equatable {
     /// aliasing gap (write-back does not update the original) is the documented divergence, covered by the
     /// read-only corpus.
     case addressOfVar(name: String, type: IRType)
+    /// 外部数据符号的地址：符号自身的存储位置，不是它的值的快照。
+    /// 读走 `pointerLoad`、写走 `pointerStore`，与 `&变量` 的区别只在地址来源。
+    case foreignDataAddress(name: String, type: IRType)
     /// `print(a, b, ...)`: per-argument stringify joined with a single space on one line; the emitter
     /// realizes the same byte stream (value, space, value, ..., newline).
     case printMulti(arguments: [IRExpr])
@@ -513,7 +537,7 @@ extension IRExpr {
         case .unary(_, _, let type): return type
         case .call(_, _, let returnType): return returnType
         case .printCall: return nil
-        case .resultConstruct(_, _, let type): return type
+        case .resultConstruct(_, _, _, _, _, let type): return type
         case .arrayLiteral(_, let type): return type
         case .subscriptGet(_, _, let type): return type
         case .lenCall: return .i32
@@ -538,12 +562,14 @@ extension IRExpr {
         case .interpString: return .string
         case .closureLiteral(_, _, _, _, _, _, let type): return type
         case .functionValue(_, let type): return type
+        case .cFunctionAddress(_, let type): return type
         case .indirectCall(_, _, let returnType): return returnType
         case .lazyRefConstruct(_, let type): return type
         case .lazyRefValue(_, let type): return type
         case .pointerLoad(_, let type): return type
         case .pointerStore: return nil
         case .addressOfVar(_, let type): return .pointer(element: type)
+        case .foreignDataAddress(_, let type): return .pointer(element: type)
         case .printMulti: return nil
         case .assertCall: return nil
         case .fileWrite, .fileAppend: return nil

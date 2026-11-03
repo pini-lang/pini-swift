@@ -1,0 +1,20 @@
+; FFI 第二版（二）：C 变参调用与字符串句柄。两者都要 C 的变参 ABI / 运行时段符号，
+; 只在 LLVM 通道与 build --shared 上成立：pini run-llvm examples/ffi-v2-llvm.pini
+; 注意 `pini run` 在调用点报 E5-019（变参）与 E5-020（句柄），声明处另有 E7-006 / E7-007 提醒。
+
+[libc|foreign]
+printf|varargs: (String,) -> (I32,) ; 冒号前的 |varargs 放开 arity：固定部分之后可多传
+bk_str_handle_new: (String,) -> (StringHandle,) ; 形参位的 String 借出，运行时段复制一份
+bk_str_handle_len: (StringHandle,) -> (I64,)
+bk_str_handle_release: (StringHandle,) -> ()
+
+main|func() -> ():
+    var 名 = "句柄"
+    var h = unsafe bk_str_handle_new(名)
+
+    ; 变参：固定部分是格式串，尾部实参按 C 默认实参提升传；%s 收的是借出的 String
+    unsafe printf("%s 的字节数 = %lld\n", 名, unsafe bk_str_handle_len(h))
+
+    ; 句柄：Pini 侧不参与计数，创建时那一份 +1 由 C 侧收账
+    unsafe bk_str_handle_release(h)
+    return

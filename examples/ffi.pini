@@ -3,11 +3,11 @@
 ; `*T` 指针类型禁 object（ARC 隔离）。运行：pini run examples/ffi.pini
 
 [libc|foreign]
-malloc(size: U64,) -> (*U8,)
-free(p: *U8,) -> ()
-strlen(s: *U8,) -> (U64,)
-cstr(s: String,) -> (*U8,)
-puts(s: *U8,) -> (I32,)
+malloc: (U64,) -> (*U8,)
+free: (*U8,) -> ()
+strlen: (*U8,) -> (U64,)
+cstr: (String,) -> (*U8,)
+puts: (*U8,) -> (I32,)
 
 ; |unsafe 自由函数：函数体自动处于不安全上下文，内部无需 unsafe 前缀
 量长度|unsafe(s: String,) -> (U64,):

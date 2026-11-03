@@ -158,6 +158,16 @@ public struct DiagnosticPublisher {
         case .sharedReferenceAcrossTasks(_, _, _, let loc): return loc
         case .enumCaseArgumentLabel(_, _, let loc): return loc
         case .givenBlockTypeInValuePosition(_, let loc): return loc
+        case .exportCInvalid(_, let loc): return loc
+        case .errorCodeInvalid(_, let loc): return loc
+        case .foreignTypeNotRepresentable(_, _, let loc): return loc
+        case .foreignTypeWidthNotInIR(_, let loc): return loc
+        case .foreignStringInReturnPosition(let loc): return loc
+        case .foreignCallbackNotFreeFunction(_, let loc): return loc
+        case .foreignCallbackBoolean(let loc): return loc
+        case .foreignVarargsOnNonFunction(_, let loc): return loc
+        case .foreignVariadicArgument(_, _, _, let loc): return loc
+        case .stringHandleOutsideCFace(_, let loc): return loc
         }
     }
 }

@@ -32,6 +32,8 @@ extension BuiltinSpec {
     public enum Family: String, CaseIterable, Sendable {
         case array, dictionary, set, handle, lazyRef, given, pointer, display, runtime
         case character, string, nominal, io, task, blocking, yielding, scheduler, error
+        /// 字符串句柄：C 侧可持有的串。五个入口里只有 `new` 有发射器调用点。
+        case stringHandle
     }
 }
 
@@ -211,6 +213,16 @@ public enum Builtins {
         BuiltinSpec(
             symbol: "bk_str_dup", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["interpString", "arrayJoin"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_str_from_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
+            family: .string, lowerings: ["call"]
+        ),
+        /// 句柄形参位上的 Pini 串：复制一份并记 +1，指针交给 C。降载层产出 `pini.str.handle`，
+        /// 发射层把它接到这里（`call` 是它的降级点，与 `c字符串` 同形）。
+        BuiltinSpec(
+            symbol: "bk_str_handle_new", signature: .init(result: "ptr", parameters: ["ptr"]),
+            family: .stringHandle, lowerings: ["call"]
         ),
         BuiltinSpec(
             symbol: "bk_str_release", signature: .init(result: "void", parameters: ["ptr"]),
@@ -406,6 +418,25 @@ public enum Builtins {
         ),
         BuiltinSpec(
             symbol: "bk_error_message", signature: .init(result: "ptr", parameters: ["i64"]),
+            family: .error, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_error_from_enum",
+            signature: .init(result: "i64", parameters: ["i64", "i32", "ptr", "ptr"]),
+            family: .error, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_error_with_code",
+            signature: .init(result: "i64", parameters: ["i32"]),
+            family: .error, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_error_code", signature: .init(result: "i32", parameters: ["i64"]),
+            family: .error, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_error_lookup",
+            signature: .init(result: "ptr", parameters: ["i32", "ptr", "ptr", "i32"]),
             family: .error, lowerings: ["call"]
         ),
     ]

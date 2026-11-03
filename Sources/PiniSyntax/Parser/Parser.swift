@@ -236,6 +236,12 @@ public class Parser {
                 case .importDecl(let imp):
                     imports.append(imp)
                 case .exportDecl(let exp):
+                    /// 每个文件一张发布表：第二块并进去，不另起一套条目。
+                    guard exports.isEmpty else {
+                        throw ParserError.invalidDeclaration(
+                            reason: "每个文件最多一个 export 块；把第二个块的条目并进第一个块",
+                            location: exp.location)
+                    }
                     exports.append(exp)
                 default:
                     declarations.append(decl)
@@ -436,34 +442,62 @@ public class Parser {
         return ImportDecl(alias: first.alias, packagePath: first.path, location: location)
     }
 
-    /// 解析 `[当前文件名|export]` 块：`可见别名 = 原符号` 项集。
+    /// 解析 `[当前文件名|export]` 块：条目写 `名 = 原符号` 或 `名|目标 = 原符号`。
+    /// 省略目标即 `pini`；`c` 走 C 发布面。块头须等于文件名，C 产物名由此而来。
     private func parseExportBlock(headerName: String, location: SourceLocation) throws -> ExportDecl {
         guard headerName == currentFileBaseName else {
             throw ParserError.invalidDeclaration(
-                reason: "export 块头名须为当前文件名 `\(currentFileBaseName)`（D-1：自识性标签），实际 `\(headerName)`",
+                reason: "export 块头名须为当前文件名 `\(currentFileBaseName)`（块头名即文件名，C 产物名也取它），实际 `\(headerName)`",
                 location: location
             )
         }
-        var renames: [ExportRename] = []
+        var entries: [ExportEntry] = []
         skipNewlines()
-        while !isEOF() {
-            // 项行形态：IDENT = IDENT（下一顶级形态的行首即闭合——先看后吃）
-            guard case .identifier(let alias, let itemLoc) = currentToken else { break }
-            guard case .assign(_) = peek() else { break }
-            advance()
-            advance()
+        entryLoop: while !isEOF() {
+            guard case .identifier(let name, let itemLoc) = currentToken else { break entryLoop }
+            var target = ExportTarget.pini
+            switch peek() {
+            case .assign(_):
+                advance()
+                advance()
+            case .pipe(_):
+                /// `名|目标 = 符号` 才是条目；`main|func(...)` 这类下一顶级声明在这里闭合。
+                guard case .assign(_) = peek(offset: 3) else { break entryLoop }
+                advance()
+                advance()
+                guard case .identifier(let targetName, _) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`\(name)|` 后要写目标：`c` 或 `pini`", location: currentLocation)
+                }
+                guard let parsed = ExportTarget(name: targetName) else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`|\(targetName)` 不是可用的导出目标；目标只能写 `pini` 或 `c`",
+                        location: currentLocation)
+                }
+                target = parsed
+                advance()
+                guard case .assign(_) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`\(name)|\(targetName)` 后须写 `= 原符号`", location: currentLocation)
+                }
+                advance()
+            default:
+                break entryLoop
+            }
             guard case .identifier(let symbol, _) = currentToken else {
                 throw ParserError.invalidDeclaration(
-                    reason: "export 项须为 `可见别名 = 原符号`", location: currentLocation)
+                    reason: "export 项的右端须是本模块的符号名：`\(name)`", location: currentLocation)
             }
             advance()
-            renames.append(ExportRename(alias: alias, symbol: symbol, location: itemLoc))
+            entries.append(
+                ExportEntry(name: name, target: target, symbol: symbol, location: itemLoc))
             skipNewlines()
         }
-        guard !renames.isEmpty else {
-            throw ParserError.invalidDeclaration(reason: "export 块至少需要一项 `可见别名 = 原符号`", location: location)
+        guard !entries.isEmpty else {
+            throw ParserError.invalidDeclaration(
+                reason: "export 块至少需要一项 `名 = 原符号` 或 `名|目标 = 原符号`", location: location)
         }
-        return ExportDecl(renames: renames, location: location)
+        return ExportDecl(name: headerName, entries: entries, location: location)
     }
 
     private func parseBracketDecl() throws -> TopLevelDecl {
@@ -536,10 +570,10 @@ public class Parser {
 
     // MARK: - foreign 块解析（Phase 2a FFI 子系统， foreign-decl）
 
-    /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）。
-    /// 块内只允许外部 C 函数签名（无函数体）；块内函数自动视为 `|unsafe`。
+    /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）：块内是一张外部符号表。
+    /// 条目只有一形 `名{|标志}: 类型`，类型为函数类型即外部函数。
     private func parseForeignDecl(name: String, location: SourceLocation) throws -> ForeignDecl {
-        var funcs: [FuncDecl] = []
+        var symbols: [ForeignSymbol] = []
         skipNewlines()
         if case .indent(_) = currentToken { advance(); skipNewlines() }
         while !isEOF() {
@@ -549,40 +583,59 @@ public class Parser {
             // 顶层函数 `name|func(...)` 或「裸函数签名 + 缩进体」→ foreign 块结束
             if isBareFuncWithFuncModifierStart() || isBareFunctionWithBodyStart() { break }
             // 类型 / 扩展块 / import 等声明头 → foreign 块结束。
-            // 注意：不能用 isTopLevelDeclStart() 整体判断——裸函数签名（foreign 签名）也会命中。
+            // 注意：不能用 isTopLevelDeclStart() 整体判断——符号条目也以标识符起头。
             if isForeignBlockEndMarker() { break }
-            guard case .identifier = currentToken, isBareFunctionDeclStart() else {
+            guard case .identifier = currentToken else {
                 throw ParserError.invalidStatement(
-                    reason: "foreign 块内只允许外部 C 函数签名（无函数体）：块名 `\(name)`",
+                    reason: "foreign 块内只允许外部符号条目 `名: 类型`：块名 `\(name)`",
                     location: currentLocation
                 )
             }
-            var sig = try parseBareFuncDecl(position: .foreignBlock, allowEmptyBody: true, allowUnsafeModifier: true)
-            if sig.body != nil {
-                throw ParserError.invalidStatement(
-                    reason: "foreign 块内函数不可带函数体（仅签名声明外部 C 函数）：`\(sig.name)`",
-                    location: sig.location
-                )
-            }
-            // ：块内函数自动视为 `|unsafe`。
-            if !sig.modifiers.contains("unsafe") {
-                sig = FuncDecl(
-                    name: sig.name,
-                    modifiers: sig.modifiers + ["unsafe"],
-                    genericParams: sig.genericParams,
-                    params: sig.params,
-                    returnTypes: sig.returnTypes,
-                    returnLabels: sig.returnLabels,
-                    isAsync: sig.isAsync,
-                    body: sig.body,
-                    location: sig.location,
-                    captured: sig.captured
-                )
-            }
-            funcs.append(sig)
+            symbols.append(try parseForeignSymbolEntry())
             skipNewlines()
         }
-        return ForeignDecl(name: name, funcs: funcs, location: location)
+        return ForeignDecl(name: name, symbols: symbols, location: location)
+    }
+
+    /// 解析一条外部符号条目：`名{|标志}: 类型`。
+    /// 标志是封闭白名单；数据符号的类型在此放行，由语义层决定是否接通。
+    private func parseForeignSymbolEntry() throws -> ForeignSymbol {
+        let loc = currentLocation
+        let symbolName = try parseIdentifier()
+        var flags: [String] = []
+        while case .pipe(_) = currentToken {
+            advance()
+            let flagLoc = currentLocation
+            let flag = try parseIdentifier()
+            guard ForeignSymbol.knownFlags.contains(flag) else {
+                throw ParserError.invalidStatement(
+                    reason: "未知的外部符号标志 `|\(flag)`：可用的是 "
+                        + ForeignSymbol.knownFlags.map { "|\($0)" }.joined(separator: " / "),
+                    location: flagLoc
+                )
+            }
+            guard !flags.contains(flag) else {
+                throw ParserError.invalidStatement(
+                    reason: "外部符号标志 `|\(flag)` 重复：`\(symbolName)`", location: flagLoc)
+            }
+            flags.append(flag)
+        }
+        guard case .colon(_) = currentToken else {
+            throw ParserError.invalidStatement(
+                reason: "外部符号条目缺少 `:` 与类型：`\(symbolName)`", location: currentLocation)
+        }
+        advance()
+        let annotation = try parseTypeAnnotation()
+        let symbol = ForeignSymbol(name: symbolName, annotation: annotation, flags: flags, location: loc)
+        /// 标志各有归属：`readonly` / `macro` 只对数据符号成立，`|varargs` 只对函数成立。
+        /// 数据标志落在函数上由这一层挡（读不到存储）；变参落在数据上由语义层报 E4-033。
+        if symbol.isFunction, let misplaced = flags.first(where: { $0 != "varargs" }) {
+            throw ParserError.invalidStatement(
+                reason: "`|\(misplaced)` 只适用于数据符号，函数类型条目不可带它：`\(symbolName)`",
+                location: loc
+            )
+        }
+        return symbol
     }
 
     /// Phase 2a（FFI 子系统）：判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。
@@ -951,6 +1004,8 @@ public class Parser {
     private func parseEnumDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> EnumDecl {
         // 解析内容态（声明上下文收紧·规则 3.2：枚举体内只允许用例，方法移至扩展块）
         var cases: [EnumCase] = []
+        /// `实现:` 与用例同属体内声明，但形状是「名: 特征」，故在用例分支之前摘出。
+        var traits: [String] = []
 
         skipNewlines()
 
@@ -977,6 +1032,17 @@ public class Parser {
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
+            } else if case .identifier("实现", _) = currentToken, case .colon(_) = peek() {
+                /// 枚举体的特征声明：`实现: 错误`。与 struct 体同形，只是枚举体不收字段，
+                /// 故不能走字段解析，需在此单独消费。
+                advance()
+                advance()
+                guard case .identifier(let traitName, _) = currentToken else {
+                    throw ParserError.invalidDeclaration(
+                        reason: "`实现:` 后须跟特征名", location: currentLocation)
+                }
+                traits.append(traitName)
+                advance()
             } else {
                 // 用例声明
                 let enumCase = try parseEnumCase()
@@ -985,7 +1051,9 @@ public class Parser {
             skipNewlines()
         }
 
-        return EnumDecl(name: name, genericParams: genericParams, cases: cases, methods: [], location: location)
+        return EnumDecl(
+            name: name, genericParams: genericParams, cases: cases, methods: [], traits: traits,
+            location: location)
     }
 
     private func parseEnumCase() throws -> EnumCase {

@@ -130,6 +130,8 @@ private struct Walker {
     let functions: [String: IRFunction]
     let types: [String: IRTypeDecl]
     let enums: [String: IREnumDecl]
+    /// 外部数据符号的声明类型：不在函数作用域里，故单独一张表。
+    let foreignData: [String: IRType]
 
     var issues: [Issue] = []
 
@@ -162,10 +164,15 @@ private struct Walker {
         }
         var enumTable: [String: IREnumDecl] = [:]
         for decl in module.enums { enumTable[decl.name] = decl }
+        var foreignDataTable: [String: IRType] = [:]
+        for block in module.foreigns {
+            for entry in block.data { foreignDataTable[entry.name] = entry.type }
+        }
         self.functionNames = names
         self.functions = bodies
         self.types = table
         self.enums = enumTable
+        self.foreignData = foreignDataTable
     }
 
     mutating func run() {
@@ -613,6 +620,18 @@ private struct Walker {
         case .addressOfVar(let name, let type):
             checkName(name, declaredType: type, node: "取址", at: location)
 
+        case .foreignDataAddress(let name, let type):
+            guard let declared = foreignData[name] else {
+                report(.undeclaredVariable, "取址引用了未声明的外部符号 '\(name)'", at: location)
+                break
+            }
+            if !declared.isAssignable(to: type), !type.isAssignable(to: declared) {
+                report(
+                    .typeMismatch,
+                    "外部符号 '\(name)' 的类型是 \(declared.display)，取址写成 \(type.display)",
+                    at: location)
+            }
+
         case .binary(_, let lhs, let rhs, _):
             walk(lhs, at: location)
             walk(rhs, at: location)
@@ -629,7 +648,7 @@ private struct Walker {
         case .printMulti(let arguments):
             for argument in arguments { walk(argument, at: location) }
 
-        case .resultConstruct(_, let payload, let type):
+        case .resultConstruct(_, let payload, _, _, _, let type):
             if type.resultOkType == nil {
                 report(.nodeShape, "ok/err 构造成员的 type 是 \(type.display)，不是 Result", at: location)
             }
@@ -828,6 +847,16 @@ private struct Walker {
         case .functionValue(let name, _):
             if !functionNames.contains(name) {
                 report(.closureShape, "函数值引用了未知函数 '\(name)'", at: location)
+            }
+
+        case .cFunctionAddress(let name, let type):
+            /// 地址必须是本模块里真的存在的函数：外部声明没有 Pini 函数体，取它的地址应当走
+            /// 外部数据符号那条路，不该在这里冒充一个回调。
+            if !functionNames.contains(name) {
+                report(.closureShape, "C 函数指针引用了未知函数 '\(name)'", at: location)
+            }
+            if case .cFunction = type {} else {
+                report(.closureShape, "C 函数指针节点的类型是 \(type.describe())", at: location)
             }
 
         case .indirectCall(let callee, let arguments, _):
@@ -1088,7 +1117,11 @@ extension IRType {
         case .function(let params, let returnType, _):
             let inputs = params.map(\.display).joined(separator: ", ")
             return "(\(inputs)) -> \(returnType?.display ?? "()")"
+        case .cFunction(let params, let returnType):
+            let inputs = params.map(\.display).joined(separator: ", ")
+            return "(\(inputs)) -> \(returnType?.display ?? "()") [C]"
         case .pointer(let element): return "*\(element.display)"
+        case .stringHandle: return "StringHandle"
         }
     }
 }

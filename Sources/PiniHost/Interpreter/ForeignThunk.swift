@@ -1,44 +1,51 @@
 import Foundation
+import PiniSemantics
 import PiniSyntax
 import PiniIR
 
 /// thunk 工厂：foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包，
-/// 经 `@convention(c)` 函数指针调用 `dlsym` 拿到的裸地址。顶层签名收敛为封闭集（标量 + 指针 + `()`），
-/// 故分支可枚举、不依赖 libffi：整数与指针走 GPR 路径，`F64`/`F32` 走浮点寄存器，混用则拒绝。
+/// 经 `@convention(c)` 函数指针调用 `dlsym` 拿到的裸地址。签名来自 `FFIType`：类型面已在语义期收口，
+/// 这里只决定走哪条寄存器路径。整数与指针走 GPR，`F64`/`F32` 走浮点，混用则拒绝。
 enum ForeignThunk {
-    /// 为裸 C 符号地址生成调用闭包，签名取自 `decl`（已过静态校验）。本入口只做解构，实现全在核心入口：
-    /// IR 侧只携带签名（`IRForeignFunction`）没有 `FuncDecl`，ABI 逻辑必须能离散传入，否则 IR 侧要再写一份，两份必然漂。
-    static func make(symbol sym: UnsafeMutableRawPointer, decl: FuncDecl, location: SourceLocation) throws -> ([Value]) throws -> Value {
-        try make(
-            symbol: sym, name: decl.name,
-            paramTypes: decl.params.map { $0.typeAnnotation },
-            returnTypes: decl.returnTypes, location: location)
-    }
-
     /// 按「已展开的签名」生成调用闭包 —— 唯一实现，两条通道共用。
     ///
-    /// - Parameter paramTypes: 与形参位置对齐的类型标注。保留可选性只为与 AST 侧
-    /// 同形（`Parameter.typeAnnotation` 是可选的）；IR 侧传进来的必然非 nil。
+    /// - Parameter params: 与形参位置对齐的 FFI 类型，顺序即 C 原型顺序。
+    /// - Parameter returnType: nil 表示 void；其余至多一项。
     static func make(
         symbol sym: UnsafeMutableRawPointer, name: String,
-        paramTypes: [TypeAnnotation?], returnTypes: [TypeAnnotation],
-        location: SourceLocation
+        params: [FFIType], returnType: FFIType?,
+        location: SourceLocation,
+        invokeCallback: @escaping (FunctionValue, [Value]) throws -> Value
     ) throws -> ([Value]) throws -> Value {
-        guard returnTypes.count <= 1 else {
-            throw RuntimeError.invalidOperation(reason: "FFI 裸绑定仅支持单返回（多返回元组已在类型检查期拒绝）：\(name)", location: location)
-        }
-        let paramKinds = try paramTypes.enumerated().map { index, ta -> Kind in
-            guard let ta = ta, let k = kind(of: ta) else {
-                throw RuntimeError.invalidOperation(reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个参数", location: location)
+        let paramKinds = try params.enumerated().map { index, type -> Kind in
+            guard let kind = kind(of: type) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个（\(name)）",
+                    location: location)
             }
-            return k
+            /// 浮点走向量寄存器，而桩是整数约定：含 F64 的回调在解释器上没有可用的桥。
+            /// 这与「GPR 与浮点混合签名」是同一条既有边界，落点写在报错里。
+            if case .callback(let callbackParams, let callbackReturn) = type {
+                if callbackParams.contains(.f64) || callbackReturn == .f64 {
+                    throw RuntimeError.invalidOperation(
+                        reason: "解释器暂不支持含 F64 的回调：浮点走向量寄存器，回调桩是整数约定；"
+                            + "这条在 run-llvm 上可用（\(name)）",
+                        location: location)
+                }
+            }
+            return kind
         }
-        let retKind = returnTypes.first.flatMap { kind(of: $0) }
-        // 指针返回：从签名 `*T` 提取元素类型，回填到运行时指针值，使 store/load
-        // 等指针原语可用（否则 elemType 为 nil，报「指针元素类型未知」）。
+        let retKind = returnType.flatMap { kind(of: $0) }
+        // 声明了返回却说不出宽度 ⇒ 报错，不许退化成「无返回」：静默降级会让调用点读到垃圾。
+        if returnType != nil, retKind == nil, let declared = returnType {
+            throw RuntimeError.invalidOperation(
+                reason: "FFI 裸绑定暂不支持这个返回类型：`\(declared.describe())`（\(name)）",
+                location: location)
+        }
+        // 指针返回：把 `*T` 的元素类型回填到运行时指针值，使 store/load 等原语可用。
         let retElemType: TypeAnnotation? = {
-            guard retKind == .ptr, let rt = returnTypes.first else { return nil }
-            if case .pointer(element: let elem, location: _) = rt { return elem }
+            guard retKind == .ptr, let declared = returnType else { return nil }
+            if case .pointer(let target) = declared { return elemAnnotation(for: target) }
             return nil
         }()
 
@@ -62,11 +69,46 @@ enum ForeignThunk {
                 throw RuntimeError.argumentCountMismatch(name: name, expected: paramKinds.count, got: args.count, location: location)
             }
             var cargs: [UInt64] = []
-            for (arg, kind) in zip(args, paramKinds) {
-                cargs.append(try toUInt64(arg, kind: kind, location: location))
+            var owned: [UnsafeMutableRawPointer] = []
+            var boundSlots: [Int] = []
+            defer {
+                for buffer in owned { free(buffer) }
+                for slot in boundSlots { CallbackBridge.unbind(slot: slot) }
+            }
+            for (index, arg) in args.enumerated() {
+                let type = params[index]
+                if case .callback(let callbackParams, let callbackReturn) = type {
+                    /// 回调：占一个桩位，把 C 要的地址放进去。绑定只活到本次调用结束 ——
+                    /// C 把地址存下来在别的调用里用，是文档里写明的不支持。
+                    guard case .function(let function) = arg else {
+                        throw RuntimeError.typeMismatch(
+                            expected: type.describe(), got: String(describing: arg), location: location)
+                    }
+                    let bound = CallbackBridge.bind(
+                        params: callbackParams.map { $0.irType },
+                        returnType: callbackReturn?.irType,
+                        body: { values in try invokeCallback(function, values) }
+                    )
+                    guard let bound else {
+                        throw RuntimeError.invalidOperation(
+                            reason: "同一次调用里同类回调最多 \(CallbackBridge.slotCount) 路（\(name)）；"
+                                + "C 侧没有上下文区分两个同类指针",
+                            location: location)
+                    }
+                    boundSlots.append(bound.slot)
+                    cargs.append(UInt64(UInt(bitPattern: bound.address)))
+                    continue
+                }
+                if case .cString = type {
+                    cargs.append(try cStringPointer(arg, owned: &owned, location: location))
+                } else {
+                    cargs.append(try toUInt64(arg, kind: paramKinds[index], location: location))
+                }
             }
             while cargs.count < 8 { cargs.append(0) }
             let result = fn(cargs[0], cargs[1], cargs[2], cargs[3], cargs[4], cargs[5], cargs[6], cargs[7])
+            /// 回调里抛出的错误在 C 返回之后浮出来：C 没有错误通道，桥只能先记下来。
+            if let error = CallbackBridge.takePendingError() { throw error }
             if let rk = retKind { return try fromUInt64(result, kind: rk, location: location, elemType: retElemType) }
             return .null
         }
@@ -116,9 +158,8 @@ enum ForeignThunk {
 
     // MARK: - 类型编解码
 
-    /// IR 类型 → C 顶层类型标注的桥：thunk 按 AST 类型标注决定 ABI 路径，而 IR 只携带解析后的 `IRType`。
-    /// 只认能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil 由调用方报错——不许退化成「无返回」：
-    /// 静默降级会让声明与调用悄悄不一致，而这种不一致不在调用点显形，只在读回值时变成垃圾。
+    /// `IRType` → 类型标注的桥：只给外部**数据**符号用（读写宽度来自声明）。
+    /// 调用签名不再经过它——那条路由 `FFIType` 决定 ABI 路径。
     static func annotation(for type: IRType) -> TypeAnnotation? {
         let location = SourceLocation(line: 0, column: 0, fileName: "<ir>")
         switch type {
@@ -136,27 +177,66 @@ enum ForeignThunk {
         }
     }
 
-    private enum Kind { case ptr, i8, u8, i16, u16, i32, u32, i64, u64, f32, f64, bool }
-    /// C 兼容标量 / 指针 → Kind；引用类型 / 未知 → nil（裸绑定不应到达）。
-    private static func kind(of t: TypeAnnotation) -> Kind? {
-        switch t {
-        case .simple(let name, _):
-            switch name {
-            case "I8": return .i8;
-            case "U8": return .u8
-            case "I16": return .i16;
-            case "U16": return .u16
-            case "I32": return .i32;
-            case "U32": return .u32
-            case "I64": return .i64;
-            case "U64": return .u64
-            case "F32": return .f32;
-            case "F64": return .f64
-            case "Bool": return .bool
-            default: return nil
-            }
+    /// FFI 类型 → 指针元素标注：只服务运行时指针值的 load/store 宽度，不参与 ABI 判定。
+    private static func elemAnnotation(for type: FFIType) -> TypeAnnotation? {
+        let location = SourceLocation(line: 0, column: 0, fileName: "<ffi>")
+        switch type {
+        case .i8: return .simple(name: "I8", location: location)
+        case .u8: return .simple(name: "U8", location: location)
+        case .i32: return .simple(name: "I32", location: location)
+        case .i64: return .simple(name: "I64", location: location)
+        case .u64: return .simple(name: "U64", location: location)
+        case .f64: return .simple(name: "F64", location: location)
+        case .boolean: return .simple(name: "Bool", location: location)
+        case .pointer(let target):
+            guard let inner = elemAnnotation(for: target) else { return nil }
+            return .pointer(element: inner, location: location)
+        case .cString: return nil
+        case .callback: return nil
+        /// 句柄不是可解引用的字节地址，没有元素宽度可言。
+        case .stringHandle: return nil
+        }
+    }
+
+    /// 借出的 `String` 形参：按 UTF-8 编码成临时 C 缓冲，指针交给 `owned`，
+    /// 由调用方在本次调用结束后统一释放。分配早于调用 ⇒ 抛错路径也必须归还。
+    private static func cStringPointer(
+        _ v: Value, owned: inout [UnsafeMutableRawPointer], location: SourceLocation
+    ) throws -> UInt64 {
+        guard case .string(let s) = v else {
+            throw RuntimeError.typeMismatch(
+                expected: "String", got: String(describing: v), location: location)
+        }
+        let bytes = Array(s.utf8)
+        guard let buffer = malloc(bytes.count + 1) else {
+            throw RuntimeError.invalidOperation(
+                reason: "FFI 借出：分配 C 字符串失败", location: location)
+        }
+        if !bytes.isEmpty { memcpy(buffer, bytes, bytes.count) }
+        buffer.advanced(by: bytes.count).storeBytes(of: 0, as: UInt8.self)
+        owned.append(buffer)
+        return UInt64(UInt(bitPattern: buffer))
+    }
+
+    private enum Kind { case ptr, i8, u8, i32, i64, u64, f32, f64, bool, cString, callback }
+
+    /// C 标量 / 指针 → Kind；借出的 `String` 走 `cString`，在 GPR 路径里换成临时缓冲。
+    /// 回调走 `callback`：它在同一条路径里换成桩地址，不走标量编码。
+    private static func kind(of type: FFIType) -> Kind? {
+        switch type {
+        case .i8: return .i8
+        case .u8: return .u8
+        case .i32: return .i32
+        case .i64: return .i64
+        case .u64: return .u64
+        case .f64: return .f64
+        case .boolean: return .bool
         case .pointer: return .ptr
-        default: return nil
+        case .cString: return .cString
+        case .callback: return .callback
+        /// 句柄在解释器上没有实现路径：符号只活在运行时段，`pini` 进程里解析不到。
+        /// 调用点（`IRExecutor`）先一步报 E5-020，这里只是把它挡在 thunk 之外。
+        case .stringHandle: return nil
         }
     }
 
@@ -175,14 +255,15 @@ enum ForeignThunk {
             return b ? 1 : 0
         case .i8: return UInt64(UInt8(truncatingIfNeeded: try intVal(v, location: location)))
         case .u8: return UInt64(UInt8(truncatingIfNeeded: try intVal(v, location: location)))
-        case .i16: return UInt64(UInt16(truncatingIfNeeded: try intVal(v, location: location)))
-        case .u16: return UInt64(UInt16(truncatingIfNeeded: try intVal(v, location: location)))
         case .i32: return UInt64(UInt32(truncatingIfNeeded: try intVal(v, location: location)))
-        case .u32: return UInt64(UInt32(truncatingIfNeeded: try intVal(v, location: location)))
         case .i64: return UInt64(bitPattern: Int64(try intVal(v, location: location)))
         case .u64: return UInt64(bitPattern: Int64(try intVal(v, location: location)))
         case .f32, .f64:
             throw RuntimeError.invalidOperation(reason: "浮点参数不应进入 GPR 路径", location: location)
+        case .cString:
+            throw RuntimeError.invalidOperation(reason: "借出的 String 应先换成临时缓冲", location: location)
+        case .callback:
+            throw RuntimeError.invalidOperation(reason: "回调应先换成桩地址", location: location)
         }
     }
 
@@ -205,14 +286,15 @@ enum ForeignThunk {
         case .bool: return .bool(bits != 0)
         case .i8: return .int(Int(Int8(bitPattern: UInt8(bits & 0xFF))))
         case .u8: return .int(Int(bits & 0xFF))
-        case .i16: return .int(Int(Int16(bitPattern: UInt16(bits & 0xFFFF))))
-        case .u16: return .int(Int(bits & 0xFFFF))
         case .i32: return .int(Int(Int32(bitPattern: UInt32(bits & 0xFFFFFFFF))))
-        case .u32: return .int(Int(bits & 0xFFFFFFFF))
         case .i64: return .int(Int(Int64(bitPattern: bits)))
         case .u64: return .int(Int(Int64(bitPattern: bits)))
         case .f32, .f64:
             throw RuntimeError.invalidOperation(reason: "浮点返回不应进入 GPR 路径", location: location)
+        case .cString:
+            throw RuntimeError.invalidOperation(reason: "借出的 String 不出现在返回位", location: location)
+        case .callback:
+            throw RuntimeError.invalidOperation(reason: "外部函数不返回函数指针", location: location)
         }
     }
 }

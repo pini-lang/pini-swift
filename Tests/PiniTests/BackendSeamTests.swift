@@ -103,14 +103,21 @@ struct BackendSeamTests: Sendable, PiniSourceLowering {
     /// 样例取各通道能力声明的交集（标量与变量），故一条只认子集的通道也能参与这条判据。
     @Test("每条通道对同一模块都产出非空文本")
     func everyBackendEmitsSomething() throws {
+        /// 模块带一个 `|c` 条目：头文件通道的前提是 C 面存在，没有它该通道本就该拒。
         let module = try lowered(
             #"""
+            seam_value() -> (I32,):
+                return 7
+
+            [seam|export]
+            seam_get|c = seam_value
+
             main|func() -> ():
                 var n = 1
                 n = n + 2
                 print(n)
                 return
-            """#)
+            """#, fileName: "seam.pini")
         for entry in Backends.registry.entries {
             let backend = try #require(Backends.registry.make(entry.identifier))
             #expect(try !backend.emit(module: module).isEmpty, "\(entry.identifier) 产出了空文本")

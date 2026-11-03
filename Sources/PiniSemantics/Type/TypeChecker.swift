@@ -55,7 +55,27 @@ public final class TypeChecker {
     private var unsafeContextDepth: Int = 0
     // F5（issue-unsafe-gate-foreign）：foreign 函数名集——调用位门禁用。
     // foreignDecl 注册进通用函数表时无 foreign 标记，故在此并行登记。
-    private var foreignFunctionNames: Set<String> = []
+    private var foreignSymbolNames: Set<String> = []
+    /// 声明了 `|readonly` 的外部数据符号：写侧禁令的判据来源。
+    private var readonlyForeignData: Set<String> = []
+    /// 声明了 `|macro` 的外部符号：构建期常量，没有存储，故取址一律拒。
+    private var macroForeignNames: Set<String> = []
+    /// 能交给 C 当回调的顶层自由函数：签名与取用位随声明记下，调用点逐位比对。
+    /// 方法、闭包、泛型、`main` 与 `|test` 都不在表里 —— 它们的地址要么不是 C ABI，要么不该外泄。
+    private var callbackFunctions: [String: (params: [TypeAnnotation], returns: [TypeAnnotation], usingIndices: Set<Int>)] = [:]
+
+    /// C 面的声明上下文：条目只能引用本模块已声明的自由函数与给定块。
+    /// 三张表在整模块预扫描时填一次，故 export 块写在被引用声明之前也能判定。
+    private var exportCFunctions: [String: FuncDecl] = [:]
+    private var exportCGivenBlocks: [String: GivenDecl] = [:]
+    private var exportCForeignNames: Set<String> = []
+    /// 被 `|c` 条目引用的本模块自由函数名。`StringHandle` 的合法面就靠它认：只有这些函数的
+    /// 签名会原样写成 C 原型，句柄在那里有确切的形状。
+    private var cExportPiniNames: Set<String> = []
+    private var cSurfaceCount = 0
+    private var cSurfaceFile: String?
+    /// 实现内置 `错误` 特征的类型名。错误集与码表的取值范围由它给出。
+    private var errorTypes: Set<String> = []
 
     private func registerBuiltinTypes() {
         let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
@@ -168,7 +188,6 @@ public final class TypeChecker {
             params: [string],
             returns: [.simple(name: "Error", location: loc)]
         )
-
         // CancelError（B2-1 / Q5 表示法 A）：取消专用错误，与业务 Error 并列的独立类型。
         // 结构与 Error 相同（message: String），因此 `e.message` 在两者上都可读；
         // 判别靠内建谓词 isCancel(e)，而非字符串约定。
@@ -183,6 +202,21 @@ public final class TypeChecker {
             params: [.simple(name: "Error", location: loc)],
             returns: [.simple(name: "Bool", location: loc)]
         )
+
+        // 错误特征：标记式，没有成员。`实现: 错误` 是类型进入错误集的唯一入口，
+        // 消息与错误码由编译器派生，不由特征约束。
+        typeEnv.defineTrait(
+            name: Self.errorTraitName,
+            trait: TraitDecl(
+                name: Self.errorTraitName, genericParams: [], signatures: [], location: loc))
+        /// 稳定码：标记式，与 `错误` 同用。写它表示该 enum 的用例码按「块名-类型名-用例名」散列，
+        /// 不随类型序漂移；非 enum 载体没有用例名，固定码仍走扩展块的 `码()`。
+        typeEnv.defineTrait(
+            name: Self.stableCodeTraitName,
+            trait: TraitDecl(
+                name: Self.stableCodeTraitName, genericParams: [], signatures: [], location: loc))
+        typeEnv.markConformance(typeName: "Error", traits: [Self.errorTraitName])
+        typeEnv.markConformance(typeName: cancelErrorTypeName, traits: [Self.errorTraitName])
 
         // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await`/`wait` joinAll([...])` 得 Result<[T], Error>。
         // 形参锚定 `Array<Future<_, _>>`：元素类型由数组字面量按元素推断给出，`_` 只定住
@@ -346,9 +380,321 @@ public final class TypeChecker {
         givenBlockTypeNames = names
     }
 
+    /// 预扫描 C 面能引用的声明：自由函数、给定块、外部符号名。
+    /// export 块可以写在被引用声明之前，判据因此不能依赖声明顺序。
+    private func collectExportCContext(_ declarations: [TopLevelDecl]) {
+        exportCFunctions = [:]
+        exportCGivenBlocks = [:]
+        exportCForeignNames = []
+        cSurfaceCount = 0
+        cSurfaceFile = nil
+        errorTypes = ["Error", cancelErrorTypeName]
+        for decl in declarations {
+            switch decl {
+            case .funcDecl(let f): exportCFunctions[f.name] = f
+            case .givenDecl(let g):
+                exportCGivenBlocks[g.name] = g
+                collectErrorType(name: g.name, traits: g.traits)
+            case .structDecl(let s): collectErrorType(name: s.name, traits: s.traits)
+            case .objectDecl(let o): collectErrorType(name: o.name, traits: o.traits)
+            case .enumDecl(let e): collectErrorType(name: e.name, traits: e.traits)
+            case .foreignDecl(let block):
+                for symbol in block.symbols { exportCForeignNames.insert(symbol.name) }
+            default: break
+            }
+        }
+    }
+
+    /// 特征列表里出现 `错误` 即入错误集。标记式特征没有成员，故判据只有这一条。
+    private func collectErrorType(name: String, traits: [String]) {
+        if traits.contains(Self.errorTraitName) { errorTypes.insert(name) }
+    }
+
+    /// 跨 C 边界的标量白名单。名字即头文件里的 C 类型来源，也是语义期的准入表。
+    private static let cExportScalars: Set<String> = ["I8", "U8", "I32", "I64", "U64", "F64", "Bool"]
+
+    /// 内置错误特征的名字。标记式：没有成员，`实现:` 即入错误集。
+    public static let errorTraitName = "错误"
+    /// 稳定码特征的名字。标记式：只有它出现在 enum 的 `实现:` 里，用例码才走名字散列。
+    public static let stableCodeTraitName = "稳定码"
+
+    /// export 块里 `|c` 条目的静态判据：引用的名字在册、形态可发布、C 名转写后不撞。
+    /// 类型能否跨边界在这一层定死；降载层只按同一张表求拼写，不再改判。
+    private func checkExportSurface(_ block: ExportDecl) throws {
+        let cEntries = block.entries.filter { $0.target == .c }
+        guard !cEntries.isEmpty else { return }
+        cSurfaceCount += 1
+        if cSurfaceCount > 1 {
+            let first = cSurfaceFile ?? "另一个文件"
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`\(first)` 与 `\(block.location.fileName)` 都带 `|c` 条目；一个模块只出一个 C 面",
+                    location: block.location))
+        }
+        cSurfaceFile = block.location.fileName
+        let blockName = CName.escape(block.name)
+        try checkCMachineName(block.name, location: block.location)
+        if let first = blockName.unicodeScalars.first, !Self.isCIdentifierStart(first) {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "文件名 `\(block.name)` 转写后是 `\(blockName)`，不是合法 C 标识符（须以字母或下划线开头）",
+                    location: block.location))
+        }
+        /// 只含真正会发出去的符号。`_last_error` 不在此列：该符号从未实现，占着名字只会挡住
+        /// 想自己导出错误访问器的库。
+        let lifecycleNames: Set<String> = [
+            "\(blockName)_init", "\(blockName)_shutdown",
+        ]
+        var seen: [String: String] = [:]
+        for entry in cEntries {
+            let cName = CName.escape(entry.name)
+            if lifecycleNames.contains(cName) {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "`\(cName)` 与生成的生命周期符号同名，换一个名字",
+                        location: entry.location))
+            }
+            if let first = seen[cName] {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "`\(first)` 与 `\(entry.name)` 转写后同为 C 名 `\(cName)`",
+                        location: entry.location))
+            }
+            seen[cName] = entry.name
+            try checkCMachineName(entry.name, location: entry.location)
+            if exportCForeignNames.contains(entry.name) {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "`\(entry.name)` 已被导入的外部符号占用，发布它会定义同一个符号",
+                        location: entry.location))
+            }
+            try checkExportEntryTarget(symbolName: entry.symbol, location: entry.location)
+        }
+    }
+
+    /// C 标识符首字符：ASCII 字母或下划线。转义后的文件名不能以数字开头。
+    private static func isCIdentifierStart(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar == "_" { return true }
+        switch scalar {
+        case "A"..."Z", "a"..."z": return true
+        default: return false
+        }
+    }
+
+    /// `|c` 条目右端的本模块符号名。只认 C 面 —— `|pini` 条目不走 C 原型，句柄在那里没有形状。
+    private static func cExportedPiniNames(_ blocks: [ExportDecl]) -> Set<String> {
+        Set(blocks.flatMap { $0.entries }.filter { $0.target == .c }.map(\.symbol))
+    }
+
+    /// 一条 `|c` 条目的右端：自由函数按函数判，给定块按量判，其余给出能落地的下一步。
+    /// 模块内同名重声明已被语义层拦下，故这里的查表只有一个答案。
+    private func checkExportEntryTarget(symbolName: String, location: SourceLocation) throws {
+        if exportCFunctions[symbolName] != nil {
+            try checkExportCFunction(pinName: symbolName, location: location)
+            return
+        }
+        if exportCGivenBlocks[symbolName] != nil {
+            try checkExportCStorage(typeName: symbolName, location: location)
+            return
+        }
+        let hint = typeFieldsByName[symbolName] != nil ? "它是结构体，给不出模块级存储" : "未声明为函数或给定块"
+        try report(
+            TypeError.exportCInvalid(
+                reason: "`\(symbolName)` 不能发布：\(hint)；C 面只收自由函数与给定块", location: location))
+    }
+
+    /// 一个对外名字的两条形态禁令：与转义输出同形（解码歧义），以及落进 C 保留区。
+    private func checkCMachineName(_ name: String, location: SourceLocation) throws {
+        if CName.collidesWithEscape(name) {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`\(name)` 含有与转义输出同形的 `_u` 加 6 位十六进制，换个名字",
+                    location: location))
+        }
+        let escaped = CName.escape(name)
+        if CName.isReserved(escaped) {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`\(escaped)` 落在 C 保留区（`__` 或 `_` 加大写开头），换个名字",
+                    location: location))
+        }
+    }
+
+    /// 函数项的判据：必须是本模块的自由函数、无泛型、非异步、非 `main` / `|test`，
+    /// 且形参与返回都能写成 C 类型。取用位不进 C 原型，故不参与类型准入。
+    private func checkExportCFunction(pinName: String, location: SourceLocation) throws {
+        guard let function = exportCFunctions[pinName] else {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`\(pinName)` 不是本模块的自由函数（方法、外部符号与内建都不进 C 面）",
+                    location: location))
+            return
+        }
+        if pinName == "main" {
+            try report(TypeError.exportCInvalid(reason: "`main` 是程序入口，不进 C 面", location: location))
+        }
+        if function.modifiers.contains("test") {
+            try report(TypeError.exportCInvalid(reason: "`|test` 函数不进 C 面", location: location))
+        }
+        if !function.genericParams.isEmpty {
+            try report(TypeError.exportCInvalid(reason: "泛型函数不进 C 面", location: location))
+        }
+        if function.isAsync {
+            try report(TypeError.exportCInvalid(reason: "异步函数不进 C 面", location: location))
+        }
+        if function.returnTypes.count > 1 {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "多返回值不跨 C 边界：`\(pinName)` 有 \(function.returnTypes.count) 个返回位",
+                    location: location))
+        }
+        for param in function.params where !param.isUsing {
+            guard let annotation = param.typeAnnotation else {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "形参 `\(param.name)` 缺类型标注，无法写出 C 原型", location: location))
+                continue
+            }
+            if let why = cExportRejection(annotation, position: .parameter) {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "形参 `\(param.name)`：\(why)", location: location))
+            }
+        }
+        if let declared = function.returnTypes.first, let why = cExportRejection(declared, position: .result) {
+            try report(TypeError.exportCInvalid(reason: "返回位：\(why)", location: location))
+        }
+    }
+
+    /// 量项的判据：右端必须是给定块，且字段全部能写成 C 标量或指针。
+    /// 有一个字段不合格就整块拒，不留半布局。
+    private func checkExportCStorage(typeName: String, location: SourceLocation) throws {
+        guard let given = exportCGivenBlocks[typeName] else {
+            let hint = typeFieldsByName[typeName] != nil ? "是结构体，不是给定块" : "未声明为给定块"
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`\(typeName)` \(hint)，C 面的量只能取给定块", location: location))
+            return
+        }
+        if given.fields.isEmpty {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "给定块 `\(typeName)` 没有字段，C 结构体无成员", location: location))
+        }
+        if !given.genericParams.isEmpty {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "泛型给定块 `\(typeName)` 要按实参特化，v1 不进 C 面", location: location))
+        }
+        var seenFields: [String: String] = [:]
+        for field in given.fields {
+            try checkCMachineName(field.name, location: location)
+            let escaped = CName.escape(field.name)
+            if let first = seenFields[escaped] {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "字段 `\(first)` 与 `\(field.name)` 转写后同为 `\(escaped)`",
+                        location: location))
+            }
+            seenFields[escaped] = field.name
+            if let why = cExportRejection(field.typeAnnotation, position: .field) {
+                try report(
+                    TypeError.exportCInvalid(
+                        reason: "字段 `\(typeName).\(field.name)`：\(why)", location: location))
+            }
+        }
+    }
+
+    /// C 导出面上标注出现的位置。三个位置各有一套成立条件，混用一处就会放行错形状。
+    private enum CExportPosition { case parameter, result, field }
+
+    /// 一种类型能不能写成 C 类型；`nil` 表示可以，否则给一句原因。
+    /// 位置是判据的一部分：`String` 只在形参位成立，`^T` 只在返回位成立。
+    private func cExportRejection(_ t: TypeAnnotation, position: CExportPosition) -> String? {
+        switch t {
+        case .simple(let name, _):
+            if name == "StringHandle" {
+                /// 形参与返回都成立：C 侧两侧都是一个不透明指针，计数归 C 自己。
+                return position == .field
+                    ? "`StringHandle` 不作给定块字段：字段区是进程级存储，句柄的计数无从落账" : nil
+            }
+            if name == "String" {
+                return position == .parameter
+                    ? nil : "`String` 只在导出函数的形参位成立，C 侧是借出的 `const char*`"
+            }
+            return Self.cExportScalars.contains(name) ? nil : "`\(name)` 不是 C 兼容标量"
+        case .pointer(let element, _):
+            /// 指针目标必须是 C 标量。给定块之类的目标在头文件里只能退化成 `void*`，而 IR 也搬不动
+            /// 它（形参解析不出标量类型）—— 放行只会把失败从检查期推到发射期。
+            if case .simple(let name, _) = element, Self.cExportScalars.contains(name) {
+                return nil
+            }
+            return "指针目标 `\(element.describe())` 不是 C 标量；非标量目标在 C 侧只能写成 `void*`"
+        case .generic(let name, let params, _)
+        where name == "Result" && (params.count == 1 || params.count == 2):
+            guard position == .result else { return "`^T` 只能作返回类型" }
+            guard let payload = params.first else { return "`^T` 缺载荷类型" }
+            if params.count == 2 {
+                /// 两参数形态是「带错误集的 Result」：E 必须实现 `错误`，否则 C 侧没有码可回填。
+                guard case .simple(let errorType, _) = params[1], errorTypes.contains(errorType) else {
+                    return "`Result` 的错误位须是实现 `错误` 特征的类型"
+                }
+            }
+            if case .simple(let scalar, _) = payload, Self.cExportScalars.contains(scalar) { return nil }
+            return "`^T` 的载荷须是 C 兼容标量"
+        case .tuple(_, let elements, _) where elements.isEmpty:
+            return nil
+        case .tuple:
+            return "元组不可跨越 C 边界"
+        case .function(let params, let returns, let captured, let usingIndices, _):
+            /// 函数类型只在形参位成立：C 侧写成 `ret (*)(params)`，转发层把裸地址包成 Pini 函数值。
+            guard position == .parameter else {
+                return "函数类型只作导出函数的形参：返回位没有可承载它的 C 形状"
+            }
+            guard captured.isEmpty, usingIndices.isEmpty else {
+                return "回调不能捕获变量，也不能带 using 形参：C 侧只有一个裸地址"
+            }
+            return callbackExportRejection(params: params, returns: returns)
+        case .generic(let name, _, _):
+            return "`\(name)` 不可跨越 C 边界"
+        }
+    }
+
+    /// 导出回调的签名：参数与返回都只收 C 标量或指针，返回至多一项。
+    /// `Bool` 单列一条：它在 Pini 是 `i1`、在 C 是 `_Bool`，回调方向没有转发层能替它转。
+    private func callbackExportRejection(
+        params: [TypeAnnotation], returns: [TypeAnnotation]
+    ) -> String? {
+        guard returns.count <= 1 else { return "回调最多返回一个值" }
+        for (index, param) in params.enumerated() {
+            if let why = callbackElementRejection(param) {
+                return "回调第 \(index + 1) 个参数\(why)"
+            }
+        }
+        if let declared = returns.first, let why = callbackElementRejection(declared) {
+            return "回调返回\(why)"
+        }
+        return nil
+    }
+
+    private func callbackElementRejection(_ t: TypeAnnotation) -> String? {
+        switch t {
+        case .simple(let name, _):
+            if name == "Bool" { return "不能是 Bool：`i1` 与 `_Bool` 的约定不同，改用 I32" }
+            return Self.cExportScalars.contains(name) ? nil : " `\(name)` 不是 C 兼容标量"
+        case .pointer(let element, _):
+            if case .simple(let name, _) = element, Self.cExportScalars.contains(name) { return nil }
+            return "的指针目标 `\(element.describe())` 不是 C 标量"
+        default:
+            return " `\(t.describe())` 不是 C 标量或指针"
+        }
+    }
+
     public func check(module: Module) throws {
         importAliasNames = Set(module.imports.map { $0.alias })
         collectGivenBlockTypeNames(module)
+        collectExportCContext(module.declarations)
+        cExportPiniNames = Self.cExportedPiniNames(module.exports)
         BareCaseResolutionRegistry.reset()
         // 预注册所有 trait 声明，确保后续类型声明（无论出现先后）都能解析其 `traits` 引用
         preregisterTraits(module)
@@ -358,6 +704,10 @@ public final class TypeChecker {
         for decl in module.declarations {
             try checkTopLevelDecl(decl)
         }
+        for block in module.exports {
+            try checkExportSurface(block)
+        }
+        try checkErrorCodeTable(module)
     }
 
     /// 检查包（多文件 / 单文件统一入口）。单文件包直接委托 `check(module:)`，行为等价；
@@ -375,6 +725,8 @@ public final class TypeChecker {
         }
 
         let index = PackageSymbolIndex(package: package)
+        collectExportCContext(package.fileUnits.flatMap { $0.module.declarations })
+        cExportPiniNames = Self.cExportedPiniNames(package.fileUnits.flatMap { $0.module.exports })
         // 预注册所有 trait + 顶级签名（全局命名空间，供跨文件解析）
         for unit in package.fileUnits {
             preregisterTraits(unit.module)
@@ -392,6 +744,23 @@ public final class TypeChecker {
                 try enforceDeclTypeVisibility(decl)
                 try checkTopLevelDecl(decl)
             }
+            for block in unit.module.exports {
+                try enforceExportBlockVisibility(block)
+                try checkExportSurface(block)
+            }
+        }
+        try checkErrorCodeTable(
+            Module(
+                declarations: package.fileUnits.flatMap { $0.module.declarations },
+                exports: package.fileUnits.flatMap { $0.module.exports },
+                location: package.location))
+    }
+
+    /// 码表缺陷（载体写错、码值撞固定码、派生区或 tag 空间溢出）只有在整张表排出来时才成立，
+    /// 故合成整个模块查一次；警告侧走同一个 `ErrorCodePlan`，两边看到的是同一张表。
+    private func checkErrorCodeTable(_ module: Module) throws {
+        for issue in ErrorCodePlan.build(module: module).issues {
+            try report(TypeError.errorCodeInvalid(reason: issue.reason, location: issue.location))
         }
     }
 
@@ -449,11 +818,10 @@ public final class TypeChecker {
             }
             for rt in f.returnTypes { try enforceAnnotationVisibility(rt) }
         case .foreignDecl(let fd):
-            for f in fd.funcs {
-                for p in f.params {
-                    if let ta = p.typeAnnotation { try enforceAnnotationVisibility(ta) }
-                }
-                for rt in f.returnTypes { try enforceAnnotationVisibility(rt) }
+            for symbol in fd.symbols {
+                for ta in symbol.paramTypes { try enforceAnnotationVisibility(ta) }
+                for rt in symbol.returnTypes { try enforceAnnotationVisibility(rt) }
+                if !symbol.isFunction { try enforceAnnotationVisibility(symbol.annotation) }
             }
         case .givenDecl(let g):
             /// 给定块与对象同规 —— 字段类型与 `实现: T` 都是类型名引用，须过可见性 enforce。
@@ -461,6 +829,15 @@ public final class TypeChecker {
             for t in g.traits { try enforceTypeVisibility(name: t, location: g.location) }
         case .traitDecl, .extensionDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
+        }
+    }
+
+    /// `|c` 条目的给定块右端是类型名引用：跨文件可见性与其它类型引用同规。
+    private func enforceExportBlockVisibility(_ block: ExportDecl) throws {
+        for entry in block.entries where entry.target == .c {
+            if exportCGivenBlocks[entry.symbol] != nil {
+                try enforceTypeVisibility(name: entry.symbol, location: entry.location)
+            }
         }
     }
 
@@ -505,6 +882,8 @@ public final class TypeChecker {
     public func checkCollecting(module: Module) -> [TypeError] {
         importAliasNames = Set(module.imports.map { $0.alias })
         collectGivenBlockTypeNames(module)
+        collectExportCContext(module.declarations)
+        cExportPiniNames = Self.cExportedPiniNames(module.exports)
         diagnostics = []
         collecting = true
         defer { collecting = false }
@@ -520,6 +899,22 @@ public final class TypeChecker {
             } catch {
                 // 非 TypeError 不应发生；保持防御
             }
+        }
+        for block in module.exports {
+            do {
+                try checkExportSurface(block)
+            } catch let error as TypeError {
+                diagnostics.append(error)
+            } catch {
+                // 非 TypeError 不应发生；保持防御
+            }
+        }
+        do {
+            try checkErrorCodeTable(module)
+        } catch let error as TypeError {
+            diagnostics.append(error)
+        } catch {
+            // 非 TypeError 不应发生；保持防御
         }
         return diagnostics
     }
@@ -642,6 +1037,28 @@ public final class TypeChecker {
                     }
                 }
             }
+        }
+    }
+
+    /// `稳定码` 的两条前置：只有 enum 有用例名可散列；离开 `错误` 它没有码可稳定。
+    /// 单独写 `稳定码` 在特征层并不报错（标记式特征存在），语义约束只能在这一层补。
+    private func checkStableCodeTrait(
+        typeName: String, traits: [String], isEnum: Bool, location: SourceLocation
+    ) throws {
+        guard traits.contains(Self.stableCodeTraitName) else { return }
+        guard isEnum else {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`稳定码` 只用于 enum：非 enum 载体没有用例名，固定码请写 `码() -> (I32,)`",
+                    location: location))
+            return
+        }
+        guard traits.contains(Self.errorTraitName) else {
+            try report(
+                TypeError.exportCInvalid(
+                    reason: "`稳定码` 只对错误类型有意义：`实现:` 里同时写 `错误`",
+                    location: location))
+            return
         }
     }
 
@@ -822,6 +1239,8 @@ public final class TypeChecker {
     /// 内建标量名：`Char` / `String`（G68 的两端）。集中一处，避免字面量散落。
     private var charTypeName: String { "Char" }
     private var stringTypeName: String { "String" }
+    /// C 面的不透明句柄名。它不是 Pini 的通用类型：只在 `[..|foreign]` 与 `|c` 签名里成立。
+    private var stringHandleTypeName: String { "StringHandle" }
 
     /// `_` / `Any` 通配的逐位匹配：仅当 `expected` 中出现通配位时才可能放行，
     /// 其余情形返回 false 交回原有结构等价路径（零回归）。
@@ -1089,6 +1508,14 @@ public final class TypeChecker {
                     usingParamIndices: TypeChecker.usingParamIndices(of: f.params)
                 )
             }
+            /// 回调候选表：只收顶层、非泛型、非 `|test`、非 `main` 的自由函数。
+            /// `main` 是进程入口，C 侧回调它没有意义；`|test` 不进发布面。
+            if f.genericParams.isEmpty, !f.modifiers.contains("test"), f.name != "main" {
+                callbackFunctions[f.name] = (
+                    params: paramTypes, returns: returnTypes,
+                    usingIndices: TypeChecker.usingParamIndices(of: f.params)
+                )
+            }
         case .structDecl(let s):
             typeFieldsByName[s.name] = s.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
             if !s.genericParams.isEmpty {
@@ -1207,17 +1634,31 @@ public final class TypeChecker {
             } else {
                 typeEnv.defineEnum(name: e.name, cases: caseMap, defaultedCounts: defaultedCounts)
             }
+            if !e.traits.isEmpty {
+                registerTraitMethods(for: e.name, traits: e.traits, location: e.location)
+            }
         case .traitDecl(let t):
             typeEnv.defineTrait(name: t.name, trait: t)
         case .extensionDecl(let x):
             // 声明上下文收紧·规则 3.2/3.14：扩展块方法注册到目标类型（与类型自身方法同等对待）。
             registerExtensionMethods(x)
         case .foreignDecl(let fd):
-            // Phase 2a（FFI 子系统）：外部 C 函数签名注册为模块级函数（块内函数自动 |unsafe）。
-            foreignFunctionNames.formUnion(fd.funcs.map { $0.name })
-            for f in fd.funcs {
-                let paramTypes = f.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: f.location) }
-                typeEnv.defineFunction(name: f.name, params: paramTypes, returns: f.returnTypes)
+            // 一条外部符号要么是函数、要么是数据：种类由类型决定，两张表分开登记。
+            for symbol in fd.symbols {
+                foreignSymbolNames.insert(symbol.name)
+                if symbol.isFunction {
+                    typeEnv.defineFunction(
+                        name: symbol.name, params: symbol.paramTypes, returns: symbol.returnTypes,
+                        isVariadic: symbol.isVariadic)
+                } else {
+                    typeEnv.defineForeignData(name: symbol.name, type: symbol.annotation)
+                    if symbol.flags.contains("readonly") {
+                        readonlyForeignData.insert(symbol.name)
+                    }
+                    if symbol.flags.contains("macro") {
+                        macroForeignNames.insert(symbol.name)
+                    }
+                }
             }
         case .varDecl, .statement, .importDecl, .exportDecl:
             break
@@ -1247,7 +1688,10 @@ public final class TypeChecker {
         case .extensionDecl(let x):
             for m in x.methods { try validateFuncDeclPointerTypes(m) }
         case .foreignDecl(let fd):
-            for f in fd.funcs { try validateFuncDeclPointerTypes(f) }
+            for symbol in fd.symbols {
+                for ta in symbol.paramTypes { try validatePointerAnnotations(ta) }
+                for rt in symbol.returnTypes { try validatePointerAnnotations(rt) }
+            }
         case .givenDecl(let g):
             /// 给定块字段与对象字段同规过 `*T` C 兼容校验。
             for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
@@ -1362,6 +1806,8 @@ public final class TypeChecker {
     // MARK: - 声明检查
 
     private func checkTopLevelDecl(_ decl: TopLevelDecl) throws {
+        // `StringHandle` 只在 C 面上成立；这一条先跑，免得它在普通函数体里留下一个不可解释的类型。
+        try rejectStringHandleOutsideCFace(decl)
         // Phase 2a（FFI 子系统）：`*T` 元素须为 C 兼容类型（标量/纯值结构体/指针），
         // 禁 object 及含 object 字段的复合类型（ARC 隔离）。此时 register 已完成，类型表完整。
         try validateDeclPointerTypes(decl)
@@ -1373,13 +1819,20 @@ public final class TypeChecker {
                 try checkFuncBody(method, fields: s.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: s.name)
             }
             if !s.traits.isEmpty { try verifyTraitConformance(typeName: s.name, traits: s.traits, location: s.location) }
+            try checkStableCodeTrait(
+                typeName: s.name, traits: s.traits, isEnum: false, location: s.location)
         case .objectDecl(let o):
             for method in o.methods {
                 try checkFuncBody(method, fields: o.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: o.name)
             }
             if !o.traits.isEmpty { try verifyTraitConformance(typeName: o.name, traits: o.traits, location: o.location) }
+            try checkStableCodeTrait(
+                typeName: o.name, traits: o.traits, isEnum: false, location: o.location)
         case .enumDecl(let e):
             for method in e.methods { try checkFuncBody(method) }
+            if !e.traits.isEmpty { try verifyTraitConformance(typeName: e.name, traits: e.traits, location: e.location) }
+            try checkStableCodeTrait(
+                typeName: e.name, traits: e.traits, isEnum: true, location: e.location)
         case .extensionDecl(let x):
             // 扩展方法体检查：注入目标类型字段（同文件扩展块可访问私有字段）。
             let targetFields = typeFieldsByName[x.targetType] ?? []
@@ -1397,67 +1850,254 @@ public final class TypeChecker {
                 try checkFuncBody(method, fields: g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: g.name)
             }
             if !g.traits.isEmpty { try verifyTraitConformance(typeName: g.name, traits: g.traits, location: g.location) }
+            try checkStableCodeTrait(
+                typeName: g.name, traits: g.traits, isEnum: false, location: g.location)
         case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
     }
 
-    // MARK: - Phase 2a FFI 子系统：顶层签名静态校验
+    // MARK: - FFI 类型面：闭合表
 
-    /// C 兼容标量的已知集合（Void/Unit 亦兼容 void 返回）。它**不是**白名单：`checkFFITopLevelType`
-    /// 对未知简单名同样放行（shim 可能承载，解析期 fail-fast 兜底）。本集合不含 `Char`/`CChar`，
-    /// 单字节字符的真正判据在 `isCScalarType` 的指针目标兼容判定里。
-    private static let ffiTopLevelScalars: Set<String> = [
-        "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
-        "F32", "F64", "Bool", "Void", "Unit",
-    ]
-
-    /// 校验 `[名称|foreign]` 块内每个函数的顶层参数与返回类型：只拒绝 by-value 结构体、元组、
-    /// 函数指针、泛型；标量与指针、shim 友好的 String/Optional/Result 放行，后者由解析期的
-    /// 原声函数表 fail-fast 与裸绑定 C 兼容校验兜底。
+    /// `[名称|foreign]` 块内每一项都过闭合表：函数项按形参 / 返回两个位置判，数据项按数据位判。
+    /// 表本身只有一份（`FFIType`），这里只负责把失败翻成诊断码。
     private func checkForeignDeclSignatures(_ fd: ForeignDecl) throws {
-        for f in fd.funcs {
-            for p in f.params {
-                if let ta = p.typeAnnotation { try checkFFITopLevelType(ta, location: f.location) }
+        for symbol in fd.symbols {
+            if symbol.isFunction {
+                for annotation in symbol.paramTypes {
+                    try checkFFIType(annotation, at: .parameter, symbol: symbol)
+                }
+                for annotation in symbol.returnTypes {
+                    try checkFFIType(annotation, at: .result, symbol: symbol)
+                }
+            } else {
+                /// 变参是调用点的性质，数据符号没有调用点；标志写错了就地报，别让它悄悄无效。
+                if symbol.flags.contains("varargs") {
+                    try report(
+                        TypeError.foreignVarargsOnNonFunction(
+                            symbol: symbol.name, location: symbol.location))
+                }
+                try checkFFIType(symbol.annotation, at: .data, symbol: symbol)
             }
-            for r in f.returnTypes { try checkFFITopLevelType(r, location: f.location) }
         }
     }
 
-    private func checkFFITopLevelType(_ t: TypeAnnotation, location: SourceLocation) throws {
-        switch t {
-        case .simple(let name, let loc):
-            if Self.ffiTopLevelScalars.contains(name) { return }
-            // 引用类型（object，含内建 String 等）：仅 shim 可承载，放行（解析期 fail-fast 兜底）。
-            if referenceTypeNames.contains(name) { return }
-            // by-value 结构体：Phase 2c（可选）才支持；此处已排除 object（referenceTypeNames 先行返回），必为 struct。
-            if typeFieldsByName[name] != nil {
+    /// `StringHandle` 的可用面。它不是 Pini 的通用类型：只活在两句声明里 —— `[..|foreign]` 的符号，
+    /// 以及被 `|c` 条目引用的自由函数签名（C 侧形参与返回两个方向）。其余位置一律报 E4-035：
+    /// 放行会开出第三条字符串路径，而「借出 / 取回 / 句柄」三层各管一段，多一层就没人数账。
+    private func rejectStringHandleOutsideCFace(_ decl: TopLevelDecl) throws {
+        switch decl {
+        case .foreignDecl, .importDecl, .exportDecl, .statement:
+            return
+        case .funcDecl(let f):
+            guard !cExportPiniNames.contains(f.name) else { return }
+            try rejectStringHandle(in: Self.signatureAnnotations(of: f))
+        case .structDecl(let s):
+            try rejectStringHandle(in: s.fields.compactMap(\.typeAnnotation))
+            for method in s.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .objectDecl(let o):
+            try rejectStringHandle(in: o.fields.compactMap(\.typeAnnotation))
+            for method in o.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .givenDecl(let g):
+            try rejectStringHandle(in: g.fields.compactMap(\.typeAnnotation))
+            for method in g.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .extensionDecl(let x):
+            for method in x.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .traitDecl(let t):
+            for signature in t.signatures {
+                try rejectStringHandle(in: Self.signatureAnnotations(of: signature))
+            }
+        case .enumDecl(let e):
+            for enumCase in e.cases {
+                try rejectStringHandle(in: enumCase.associatedParams.map(\.type))
+            }
+            for method in e.methods { try rejectStringHandle(in: Self.signatureAnnotations(of: method)) }
+        case .varDecl(let statement):
+            if case .varDecl(_, let annotation, _, _, _) = statement, let annotation {
+                try rejectStringHandle(in: [annotation])
+            }
+        }
+    }
+
+    /// 一条函数签名上的全部标注：形参与返回。`StringHandle` 的检查面就这两处。
+    private static func signatureAnnotations(of decl: FuncDecl) -> [TypeAnnotation] {
+        decl.params.compactMap(\.typeAnnotation) + decl.returnTypes
+    }
+
+    /// 逐个标注找 `StringHandle`（含嵌套位：`*StringHandle`、`Array<StringHandle>` 都算）。
+    private func rejectStringHandle(in annotations: [TypeAnnotation]) throws {
+        for annotation in annotations {
+            guard annotation.mentionsStringHandle else { continue }
+            try report(
+                TypeError.stringHandleOutsideCFace(
+                    type: annotation.describe(), location: Self.location(of: annotation)))
+        }
+    }
+
+    private static func location(of annotation: TypeAnnotation) -> SourceLocation {
+        switch annotation {
+        case .simple(_, let location), .tuple(_, _, let location), .generic(_, _, let location),
+            .function(_, _, _, _, let location), .pointer(_, let location):
+            return location
+        }
+    }
+
+    /// 三类失败各有一个码：不在表内、宽度 IR 表达不了、`String` 落在返回位。
+    /// 位置一并交给归一函数判，因为同一份标注换个位置成立与否不同。
+    private func checkFFIType(
+        _ annotation: TypeAnnotation, at position: FFIType.Position, symbol: ForeignSymbol
+    ) throws {
+        do {
+            _ = try FFIType.resolve(annotation, at: position)
+        } catch let error as FFITypeError {
+            switch error {
+            case .notRepresentable(let type, let reason):
                 try report(
-                    TypeError.mismatch(
-                        expected: "C 兼容标量 / 指针 / 引用类型（shim）",
-                        got: "by-value 结构体 `\(name)` 不可作为 FFI 顶层类型（Phase 2c 才支持，见 ）",
-                        location: loc
-                    ))
+                    TypeError.foreignTypeNotRepresentable(
+                        type: type, reason: reason, location: symbol.location))
+            case .widthNotInIR(let type):
+                try report(
+                    TypeError.foreignTypeWidthNotInIR(type: type, location: symbol.location))
+            case .cStringInReturnPosition:
+                try report(
+                    TypeError.foreignStringInReturnPosition(location: symbol.location))
+            case .callbackOutsideParameter:
+                try report(
+                    TypeError.foreignTypeNotRepresentable(
+                        type: "函数",
+                        reason: "函数指针只作形参：返回位需要一个可持有、可比较的一等值，第二版没有这种值；"
+                            + "要动态取符号走 `build --shared` 的静态导出",
+                        location: symbol.location))
+            case .booleanInCallback:
+                try report(TypeError.foreignCallbackBoolean(location: symbol.location))
+            }
+        }
+    }
+
+    /// 外部函数调用点：函数形参位上的实参必须是一个顶层自由函数的名字，且签名逐位相同。
+    /// 判据放在调用点而不是声明点 —— 声明只说「这里要一个地址」，能不能给出地址由实参决定。
+    private func checkForeignCallbackArguments(
+        callee: String, arguments: [CallArgument],
+        signature: TypeEnvironment.FunctionSignature, location: SourceLocation
+    ) throws {
+        guard signature.params.contains(where: { if case .function = $0 { return true }; return false })
+        else { return }
+        /// 个数与 `using` 的错配已由 `validateCallArguments` 报过；这里只按位置对齐，
+        /// 再报一次同样是错配的二次噪声。
+        guard arguments.count == signature.params.count else { return }
+        for (index, param) in signature.params.enumerated() {
+            guard case .function(let callbackParams, let callbackReturns, _, _, _) = param else { continue }
+            let position = "第 \(index + 1) 个实参"
+            guard case .identifier(let name, let argumentLocation) = arguments[index].expression else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "\(position)是表达式，不是顶层自由函数的名字；C 只接一个可调用的地址",
+                        location: location))
                 return
             }
-            // 其它已知用户类型（枚举等）与未知简单名：shim 可能承载，放行（解析期 fail-fast 兜底）。
+            guard typeEnv.lookupVariable(name: name) == nil else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 在这是变量，不是函数；变量里装的可能是闭包，取址只能取到胖指针的一半",
+                        location: argumentLocation))
+                return
+            }
+            guard let candidate = callbackFunctions[name] else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 不是本模块的顶层自由函数；方法、`main`、`|test` 与泛型函数都没有可交给 C 的地址",
+                        location: argumentLocation))
+                return
+            }
+            guard candidate.usingIndices.isEmpty else {
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 带 using 形参；C 侧不会替它补给定块",
+                        location: argumentLocation))
+                return
+            }
+            let signatureMatches =
+                candidate.params.count == callbackParams.count
+                && zip(candidate.params, callbackParams).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
+                && candidate.returns.count == callbackReturns.count
+                && zip(candidate.returns, callbackReturns).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
+            guard signatureMatches else {
+                let declared = "(" + callbackParams.map { $0.describe() }.joined(separator: ", ") + ") -> "
+                    + "(" + callbackReturns.map { $0.describe() }.joined(separator: ", ") + ")"
+                try report(
+                    TypeError.foreignCallbackNotFreeFunction(
+                        reason: "`\(name)` 的签名与形参位声明的 `\(declared)` 不是逐位相同；"
+                            + "C 会按声明调用它，差一位就是读错寄存器",
+                        location: argumentLocation))
+                return
+            }
+        }
+    }
+
+    /// 变参调用点：固定前缀之外的实参按 C 的默认实参提升传，只收闭合表里的类型。
+    /// 放宽的只是上限——少于固定前缀仍按 arity 错报，因为 C 侧会照声明读那几个槽。
+    private func checkForeignVariadicArguments(
+        callee: String, arguments: [CallArgument],
+        signature: TypeEnvironment.FunctionSignature, location: SourceLocation
+    ) throws {
+        guard signature.isVariadic else { return }
+        let fixed = signature.params.count
+        guard arguments.count >= fixed else {
+            try report(
+                TypeError.argumentCountMismatch(
+                    expected: fixed, got: arguments.count, location: location))
             return
-        case .pointer:
-            return  // 元素由 validatePointerAnnotations 独立校验（禁 object / 含 object 复合类型）
-        case .tuple:
-            try report(
-                TypeError.mismatch(
-                    expected: "C 兼容标量 / 指针",
-                    got: "元组类型不可作为 FFI 顶层类型（元组 ❌，见 ）",
-                    location: location
-                ))
-        case .generic, .function:
-            try report(
-                TypeError.mismatch(
-                    expected: "C 兼容标量 / 指针",
-                    got: "泛型/函数指针类型不可作为 FFI 顶层类型（函数指针属 Phase 2b，见 ）",
-                    location: location
-                ))
+        }
+        for index in fixed..<arguments.count {
+            /// 裸函数名不是值，推断给不出类型；它却是最容易写错的那一笔，单独认一次。
+            if case .identifier(let name, _) = arguments[index].expression,
+                typeEnv.lookupFunction(name: name) != nil
+            {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: "函数 `\(name)`",
+                        reason: "变参尾不带类型标记，C 看不出这里要一个函数指针；要传回调就写进声明的形参位",
+                        location: location))
+                continue
+            }
+            guard let type = inference.infer(expression: arguments[index].expression) else { continue }
+            /// 句柄在变参尾也没有落脚处：创建即复制发生在声明的形参位，C 从变参尾看不出这里要一个句柄。
+            if case .simple(let name, _) = type, name == stringHandleTypeName {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: type.describe(),
+                        reason: "变参尾不收 StringHandle：C 从签名看不出这里要一个句柄，创建即复制的时机没有着落",
+                        location: location))
+                continue
+            }
+            /// 回调在变参尾没有落脚处：提升表里没有它的形状，C 也从签名看不出这里要一个函数指针。
+            if case .function = type {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: type.describe(),
+                        reason: "变参尾不带类型标记，C 看不出这里要一个函数指针；要传回调就写进声明的形参位",
+                        location: location))
+                continue
+            }
+            do {
+                _ = try FFIType.resolve(type, at: .parameter)
+            } catch let error as FFITypeError {
+                try report(
+                    TypeError.foreignVariadicArgument(
+                        position: index + 1, type: type.describe(),
+                        reason: Self.variadicRejectionReason(error), location: location))
+            }
+        }
+    }
+
+    /// 归一失败的原因原样搬给变参诊断：它已经是一句自足的说明，这一层不再改写。
+    private static func variadicRejectionReason(_ error: FFITypeError) -> String {
+        switch error {
+        case .notRepresentable(_, let reason): return reason
+        case .widthNotInIR(let name): return "`\(name)` 在 IR 里没有对应宽度"
+        case .cStringInReturnPosition: return "`String` 只能作形参借出"
+        case .callbackOutsideParameter: return "函数类型只能出现在声明的形参位"
+        case .booleanInCallback: return "回调签名里不收 Bool"
         }
     }
 
@@ -1926,6 +2566,21 @@ public final class TypeChecker {
         {
             try report(TypeError.givenBlockTypeInValuePosition(typeName: givenName, location: givenLoc))
         }
+        // 读外部数据符号与调 foreign 函数是同一条门禁：两者都触碰宿主内存，只应在 unsafe 上下文里发生。
+        // 取址（`&符号`）由 `.addressOf` 分支先判上下文，走到这里时深度已 > 0，不会重复报。
+        if unsafeContextDepth == 0,
+            case .identifier(let foreignName, let foreignLoc) = expr,
+            typeEnv.lookupForeignData(name: foreignName) != nil,
+            !macroForeignNames.contains(foreignName)
+        {
+            try report(
+                TypeError.mismatch(
+                    expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
+                    got: "外部数据符号 `\(foreignName)` 出现在非 unsafe 上下文",
+                    location: foreignLoc
+                ))
+            return
+        }
         switch expr {
         case .binary(let left, let op, let right, let location):
             try checkExpression(left)
@@ -2031,11 +2686,25 @@ public final class TypeChecker {
                         return
                     }
                 }
+                // `|readonly` 的写侧禁令：只认「取址结果直接作 store 目标」这一形。先存进变量再写追不到来源，
+                // 静态检查到这里就是边界 —— 声明方的承诺在 C 侧，Pini 侧挡的是最直白的那一笔。
+                if calleeName == "store", arguments.count == 2,
+                    case .addressOf(let target, _) = arguments[0].expression,
+                    case .identifier(let symbolName, _) = target,
+                    readonlyForeignData.contains(symbolName)
+                {
+                    try report(
+                        TypeError.mismatch(
+                            expected: "可写的外部符号",
+                            got: "`\(symbolName)` 声明为 |readonly",
+                            location: location))
+                    return
+                }
                 if let sig = typeEnv.lookupFunction(name: calleeName) {
                     // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
                     // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
                     // `|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 |unsafe 放行。
-                    if foreignFunctionNames.contains(calleeName), unsafeContextDepth == 0 {
+                    if foreignSymbolNames.contains(calleeName), unsafeContextDepth == 0 {
                         try report(
                             TypeError.mismatch(
                                 expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
@@ -2043,6 +2712,15 @@ public final class TypeChecker {
                                 location: location
                             ))
                         return
+                    }
+                    /// 回调实参：外部函数形参位上的函数类型要一个真地址，判据在调用点。
+                    /// 排在校验实参之前 —— 签名差一位时，讲「C 会按声明调用它」比讲「类型不匹配」有用。
+                    if foreignSymbolNames.contains(calleeName) {
+                        try checkForeignCallbackArguments(
+                            callee: calleeName, arguments: arguments, signature: sig, location: location)
+                        /// 变参尾的实参不在 `validateCallArguments` 的下标循环里，判据单独一条。
+                        try checkForeignVariadicArguments(
+                            callee: calleeName, arguments: arguments, signature: sig, location: location)
                     }
                     try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])
                     // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
@@ -2334,6 +3012,13 @@ public final class TypeChecker {
                 return
             }
             try checkExpression(operand)
+            if case .identifier(let macroName, _) = operand, macroForeignNames.contains(macroName) {
+                try report(
+                    TypeError.mismatch(
+                        expected: "有存储的外部符号",
+                        got: "`\(macroName)` 是 |macro 宏常量，没有地址可取",
+                        location: location))
+            }
         }
     }
 
@@ -2468,6 +3153,13 @@ public final class TypeChecker {
             if case .simple(let pname, _) = paramType, (pname == "_" || pname == "Any") { continue }
             guard let argType = inference.infer(expression: arg.expression, expected: paramType) else { continue }
             try noteBareCaseOutcome(arg.expression, actual: argType, location: location)
+            /// 句柄位收 Pini 串：边界上复制一份、计数交给 C。方向只有这一条 ——
+            /// 句柄变不回串（要读字节得由 C 侧给它一个入口），故不进 `isAssignable` 的通路。
+            if case .simple(let expectedName, _) = paramType, expectedName == stringHandleTypeName,
+                case .simple(let actualName, _) = argType, actualName == stringTypeName
+            {
+                continue
+            }
             if !isAssignable(actual: argType, expected: paramType) {
                 try report(TypeError.mismatch(expected: paramType.describe(), got: argType.describe(), location: location))
             }

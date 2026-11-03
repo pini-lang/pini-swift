@@ -884,15 +884,21 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         """#
         let foreignBlock = #"""
         [libc|foreign]
-            取数(using 配: I64, x: I64,) -> (I64,)
+            取数: (using 配: I64, x: I64,) -> (I64,)
         """#
 
         for (label, source) in [
-            ("main|func", mainEntry), ("|test 块", testBlock), ("|foreign 块", foreignBlock),
+            ("main|func", mainEntry), ("|test 块", testBlock),
         ] {
             let failed = failure { _ = try decls(source) }
             #expect(failed?.code == "E2-025", "\(label)：实际判定码 \(failed?.code ?? "无（被接受了）")")
         }
+        /// `|foreign` 的实参由 C 侧填，同样无处兑现 `using`。新写法里函数类型不带取用位，
+        /// 这一形在解析期就断了，判定码因此落在 E2-008 而不是 E2-025。
+        let foreignFailed = failure { _ = try decls(foreignBlock) }
+        #expect(
+            foreignFailed?.code == "E2-008",
+            "|foreign 块：实际判定码 \(foreignFailed?.code ?? "无（被接受了）")")
     }
 
     @Test("收窄不扩大改动面：有 Pini 调用方的位置照旧合法，原形态一个不动")

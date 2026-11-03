@@ -228,6 +228,16 @@ extension TypeError: DiagnosticProviding {
         case .sharedReferenceAcrossTasks: return "\(DiagnosticDomain.type.rawValue)-013"
         case .enumCaseArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-014"
         case .givenBlockTypeInValuePosition: return "\(DiagnosticDomain.type.rawValue)-015"
+        case .exportCInvalid: return "\(DiagnosticDomain.type.rawValue)-026"
+        case .errorCodeInvalid: return "\(DiagnosticDomain.type.rawValue)-027"
+        case .foreignTypeNotRepresentable: return "\(DiagnosticDomain.type.rawValue)-028"
+        case .foreignTypeWidthNotInIR: return "\(DiagnosticDomain.type.rawValue)-029"
+        case .foreignStringInReturnPosition: return "\(DiagnosticDomain.type.rawValue)-030"
+        case .foreignCallbackNotFreeFunction: return "\(DiagnosticDomain.type.rawValue)-031"
+        case .foreignCallbackBoolean: return "\(DiagnosticDomain.type.rawValue)-032"
+        case .foreignVarargsOnNonFunction: return "\(DiagnosticDomain.type.rawValue)-033"
+        case .foreignVariadicArgument: return "\(DiagnosticDomain.type.rawValue)-034"
+        case .stringHandleOutsideCFace: return "\(DiagnosticDomain.type.rawValue)-035"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -247,6 +257,13 @@ extension TypeError: DiagnosticProviding {
             .sharedReferenceAcrossTasks(_, _, _, let loc),
             .enumCaseArgumentLabel(_, _, let loc),
             .givenBlockTypeInValuePosition(_, let loc):
+            return loc
+        case .exportCInvalid(_, let loc), .errorCodeInvalid(_, let loc):
+            return loc
+        case .foreignTypeNotRepresentable(_, _, let loc), .foreignTypeWidthNotInIR(_, let loc),
+            .foreignStringInReturnPosition(let loc), .foreignCallbackNotFreeFunction(_, let loc),
+            .foreignCallbackBoolean(let loc), .foreignVarargsOnNonFunction(_, let loc),
+            .foreignVariadicArgument(_, _, _, let loc), .stringHandleOutsideCFace(_, let loc):
             return loc
         }
     }

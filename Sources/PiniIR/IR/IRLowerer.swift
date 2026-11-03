@@ -204,6 +204,7 @@ public enum IRLowerer {
     /// cross-file references resolve like forward references; file order (name ascending) keeps it stable.
     public static func lower(
         package: Package, typeInference: TypeInference?,
+        foreignConstants: [IRForeignConstant] = [],
         requiresMain: Bool = true
     ) throws -> IRModule {
         let base = Module(
@@ -215,7 +216,7 @@ public enum IRLowerer {
         let (merged, aliasMap) = try mergedWithImports(base)
         return try lower(
             module: merged, typeInference: typeInference,
-            moduleAliases: aliasMap, requiresMain: requiresMain)
+            moduleAliases: aliasMap, foreignConstants: foreignConstants, requiresMain: requiresMain)
     }
 
     /// 把 `import` 目标的声明并入虚拟模块，返回「别名 → 可引入符号名」表。依赖声明不在本包清单里
@@ -270,8 +271,12 @@ public enum IRLowerer {
     public static func lower(
         module: Module, typeInference: TypeInference?,
         moduleAliases: [String: Set<String>] = [:],
+        foreignConstants: [IRForeignConstant] = [],
         requiresMain: Bool = true
     ) throws -> IRModule {
+        /// 码表只依赖声明与导出面，先于函数体降载建好：`err(...)` 造 Result 时要按载荷类型取码。
+        /// 分配逻辑在语义层（`ErrorCodePlan`），E7-004 警告与这里共用同一份结果。
+        let errorCodePlan = ErrorCodePlan.build(module: module)
         // Trait registry pre-pass: default-implementation bodies (signatures with a body) join the signature
         // table like any named function; abstract signatures are skipped since the checker already verified
         // conformance. Both tables are module-wide.
@@ -561,25 +566,17 @@ public enum IRLowerer {
                     usingParamIndices: usingParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
-                // Foreign block signatures join the shared table so
-                // call sites resolve them like any top-level function.
-                for funcDecl in foreignDecl.funcs {
-                    let paramTypes = try funcDecl.params.map { parameter -> IRType in
-                        guard let annotation = parameter.typeAnnotation,
-                            let type = resolveAnnotationType(annotation, userTypes: userTypes)
-                        else {
-                            throw unsupported(
-                                "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
-                                at: funcDecl.location
-                            )
-                        }
-                        return type
-                    }
-                    let returnType = try resolveReturnType(
-                        funcDecl, userTypes: userTypes, subject: "foreign '\(funcDecl.name)'"
-                    )
-                    signatures[funcDecl.name] = IRLowererSignatureInfo(
-                        paramTypes: paramTypes, returnType: returnType
+                // 外部函数签名并入共享签名表，调用点照常解析。数据符号不进这张表：
+                // 它不是可调用的，按名读到的是存储而不是函数。
+                for symbol in foreignDecl.symbols where symbol.isFunction {
+                    let signature = try resolveForeignSignature(symbol)
+                    signatures[symbol.name] = IRLowererSignatureInfo(
+                        paramTypes: signature.params.map(\.irType),
+                        returnType: signature.returnType?.irType,
+                        isVariadic: symbol.isVariadic,
+                        handleParamIndices: Set(
+                            signature.params.enumerated()
+                                .filter { $0.element == .stringHandle }.map(\.offset))
                     )
                 }
             default: break
@@ -633,6 +630,30 @@ public enum IRLowerer {
             }
         }
 
+        // 外部数据符号先建表再降载函数体：声明块可以在文件里写在函数之后，边降载边查会漏。
+        // 宏常量不进这张表——它没有存储，读它是读一个字面量，取址更无从谈起。
+        var foreignData: [String: IRType] = [:]
+        var constantTable: [String: IRForeignConstant] = [:]
+        for constant in foreignConstants { constantTable[constant.name] = constant }
+        for decl in module.declarations {
+            guard case .foreignDecl(let block) = decl else { continue }
+            for symbol in block.symbols
+            where !symbol.isFunction && !symbol.flags.contains("macro") {
+                let type = try ffiType(symbol.annotation, at: .data, symbol: symbol)
+                foreignData[symbol.name] = type.irType
+            }
+        }
+        for decl in module.declarations {
+            guard case .foreignDecl(let block) = decl else { continue }
+            for symbol in block.symbols where symbol.flags.contains("macro") {
+                guard constantTable[symbol.name] != nil else {
+                    throw unsupported(
+                        "宏常量 '\(symbol.name)' 没有求值结果：它需要 [ffi].headers 与一次 C 预处理器展开",
+                        at: symbol.location)
+                }
+            }
+        }
+
         for decl in module.declarations {
             switch decl {
             case .funcDecl(let funcDecl):
@@ -645,7 +666,10 @@ public enum IRLowerer {
                         nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                         genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
-                        builtinExtensionMethods: builtinExtensionMethods)
+                        builtinExtensionMethods: builtinExtensionMethods,
+                        foreignData: foreignData, foreignConstants: constantTable,
+                        errorCodeByType: errorCodePlan.byType,
+                        hashedErrorCodes: errorCodePlan.hashedTables)
                 )
             case .traitDecl, .structDecl, .objectDecl, .extensionDecl, .enumDecl:
                 // Handled by the nominal-type / enum passes below; trait
@@ -682,7 +706,8 @@ public enum IRLowerer {
                     nominalTypes: nominals, userTypes: userTypes, enums: enums, genericEnums: genericEnums,
                     genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                     traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
-                    builtinExtensionMethods: builtinExtensionMethods)
+                    builtinExtensionMethods: builtinExtensionMethods,
+                    foreignData: foreignData, foreignConstants: constantTable)
             )
         }
         if requiresMain {
@@ -792,33 +817,37 @@ public enum IRLowerer {
         for decl in module.declarations {
             guard case .foreignDecl(let foreignDecl) = decl else { continue }
             var foreignFuncs: [IRForeignFunction] = []
-            for funcDecl in foreignDecl.funcs {
-                let paramTypes = try funcDecl.params.map { parameter -> IRType in
-                    guard let annotation = parameter.typeAnnotation,
-                        let type = resolveAnnotationType(annotation, userTypes: userTypes)
-                    else {
-                        throw unsupported(
-                            "parameter '\(parameter.name)' of foreign '\(funcDecl.name)' lacks a resolvable type",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
-                let returnType: IRType? = try funcDecl.returnTypes.first.map { annotation in
-                    guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                        throw unsupported(
-                            "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(funcDecl.name)'",
-                            at: funcDecl.location
-                        )
-                    }
-                    return type
-                }
+            var foreignDataEntries: [IRForeignData] = []
+            for symbol in foreignDecl.symbols where symbol.isFunction {
+                let signature = try resolveForeignSignature(symbol)
                 foreignFuncs.append(
                     IRForeignFunction(
-                        name: funcDecl.name, paramTypes: paramTypes, returnType: returnType
+                        name: symbol.name, params: signature.params, returnType: signature.returnType,
+                        isVariadic: symbol.isVariadic
                     ))
             }
-            foreigns.append(IRForeignBlock(name: foreignDecl.name, funcs: foreignFuncs))
+            for symbol in foreignDecl.symbols
+            where !symbol.isFunction && !symbol.flags.contains("macro") {
+                guard let type = foreignData[symbol.name] else {
+                    throw unsupported("外部数据符号 '\(symbol.name)' 没有可解析的类型", at: symbol.location)
+                }
+                foreignDataEntries.append(
+                    IRForeignData(
+                        name: symbol.name, type: type,
+                        isReadonly: symbol.flags.contains("readonly")))
+            }
+            var constantEntries: [IRForeignConstant] = []
+            for symbol in foreignDecl.symbols where symbol.flags.contains("macro") {
+                guard let constant = constantTable[symbol.name] else {
+                    throw unsupported(
+                        "宏常量 '\(symbol.name)' 没有求值结果", at: symbol.location)
+                }
+                constantEntries.append(constant)
+            }
+            foreigns.append(
+                IRForeignBlock(
+                    name: foreignDecl.name, funcs: foreignFuncs, data: foreignDataEntries,
+                    constants: constantEntries))
         }
 
         // 两路键不同源（函数名 / 给定块名），合成一张表而不做覆盖检查：符号表已禁止两者同名。
@@ -828,13 +857,123 @@ public enum IRLowerer {
         for (name, targets) in edges.given { references[name] = targets }
         var calls = Self.callReferences(of: functions + methodFunctions)
         for (name, targets) in edges.call { calls[name] = targets }
+        var exportBlock: IRExportBlock?
+        let cBlocks = module.exports.filter { block in
+            block.entries.contains { $0.target == .c }
+        }
+        if cBlocks.count > 1 {
+            throw unsupported(
+                "模块内最多一个文件带 `|c` 条目；`\(cBlocks[1].location.fileName)` 是第二个",
+                at: cBlocks[1].location)
+        }
+        if let block = cBlocks.first {
+            exportBlock = try Self.lowerExportBlock(
+                block, declarations: module.declarations, userTypes: userTypes,
+                errorCodes: errorCodePlan.entries)
+        }
         return IRModule(
             functions: functions, types: typeDecls,
             enums: enumOrder.compactMap { enums[$0] },
             foreigns: foreigns,
+            export: exportBlock,
             /// 物化依赖留痕：这里**不产诊断**。环检测是后置的，此表只保证后置检测
             /// 加一条遍历即可，不必重扫降载结果。
             givenReferences: references, callReferences: calls)
+    }
+
+    /// 错误载荷的码来源。基址来自 `byType`；枚举载荷由运行时读 tag，非 enum 直接取基址；
+    /// 散列类型另带按 tag 索引的码表，非 nil 时运行时不走「基址或 tag」。
+    private static func errorCodeInfo(
+        for type: IRType, in context: FunctionContext
+    ) -> (base: Int32, tagged: Bool, codes: [Int32]?) {
+        switch type {
+        case .enumeration(let name):
+            return (context.errorCodeByType[name] ?? 1, true, context.hashedErrorCodes[name])
+        case .nominal(let name, _):
+            return (context.errorCodeByType[name] ?? 1, false, nil)
+        default:
+            return (1, false, nil)
+        }
+    }
+
+    /// 把 export 块的 `|c` 条目降载成发布面：函数取去掉取用位后的签名，给定块取字段表。
+    /// 名字在这里转成 C 标识符，后端只认转写后的名字，不再各自改名。
+    private static func lowerExportBlock(
+        _ block: ExportDecl, declarations: [TopLevelDecl], userTypes: [String: IRType],
+        errorCodes: [PiniErrorCode]
+    ) throws -> IRExportBlock {
+        var functions: [IRExportFunction] = []
+        var storages: [IRExportStorage] = []
+        for entry in block.entries where entry.target == .c {
+            if let function = freeFunction(named: entry.symbol, in: declarations) {
+                let params = try function.params.map { param -> IRExportParam in
+                    guard let annotation = param.typeAnnotation,
+                        let type = resolveAnnotationType(annotation, userTypes: userTypes)
+                    else {
+                        throw unsupported(
+                            "导出函数 '\(entry.symbol)' 的形参 '\(param.name)' 没有可解析的类型",
+                            at: entry.location)
+                    }
+                    return IRExportParam(type: type, isUsing: param.isUsing)
+                }
+                functions.append(
+                    IRExportFunction(
+                        cName: CName.escape(entry.name), pinName: entry.symbol,
+                        params: params,
+                        returnType: try exportReturnType(function, userTypes: userTypes)))
+                continue
+            }
+            guard let given = givenBlock(named: entry.symbol, in: declarations) else {
+                throw unsupported(
+                    "导出项 '\(entry.symbol)' 不是本模块的自由函数或给定块", at: entry.location)
+            }
+            let fields = try given.fields.map { field -> IRExportStorage.Field in
+                guard let type = resolveAnnotationType(field.typeAnnotation, userTypes: userTypes)
+                else {
+                    throw unsupported(
+                        "C 面的量 '\(entry.symbol)' 的字段 '\(field.name)' 没有可解析的类型",
+                        at: entry.location)
+                }
+                return IRExportStorage.Field(name: CName.escape(field.name), type: type)
+            }
+            let escaped = CName.escape(entry.name)
+            storages.append(
+                IRExportStorage(
+                    cName: escaped, typeName: entry.symbol, fields: fields,
+                    getterName: "\(escaped)_get"))
+        }
+        let blockName = CName.escape(block.name)
+        return IRExportBlock(
+            name: blockName, functions: functions, storages: storages, errorCodes: errorCodes,
+            initName: "\(blockName)_init", shutdownName: "\(blockName)_shutdown")
+    }
+
+    /// 导出函数的返回位：`-> ()` 与无返回位都是 void，其余按首个返回类型求 IR 类型。
+    /// 多返回在语义期已拒，故这里不再合并元组。
+    private static func exportReturnType(
+        _ function: FuncDecl, userTypes: [String: IRType]
+    ) throws -> IRType? {
+        guard let declared = function.returnTypes.first else { return nil }
+        if case .tuple(_, let elements, _) = declared, elements.isEmpty { return nil }
+        guard let type = resolveAnnotationType(declared, userTypes: userTypes) else {
+            throw unsupported(
+                "导出函数 '\(function.name)' 的返回类型无法解析", at: function.location)
+        }
+        return type
+    }
+
+    private static func freeFunction(named name: String, in declarations: [TopLevelDecl]) -> FuncDecl? {
+        for declaration in declarations {
+            if case .funcDecl(let function) = declaration, function.name == name { return function }
+        }
+        return nil
+    }
+
+    private static func givenBlock(named name: String, in declarations: [TopLevelDecl]) -> GivenDecl? {
+        for declaration in declarations {
+            if case .givenDecl(let given) = declaration, given.name == name { return given }
+        }
+        return nil
     }
 
     // MARK: - G10 monomorphization
@@ -1254,6 +1393,7 @@ public enum IRLowerer {
             genericParams: [],
             cases: specializedCases,
             methods: [],
+            traits: template.traits,
             location: template.location
         )
     }
@@ -1377,7 +1517,11 @@ public enum IRLowerer {
         closureIds: [String: Int] = [:],
         traitRegistry: TraitRegistry = TraitRegistry(traits: [:], typeTraits: [:]),
         traitDefaultsCollector: TraitDefaultCollector = TraitDefaultCollector(),
-        builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
+        builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:],
+        foreignData: [String: IRType] = [:],
+        foreignConstants: [String: IRForeignConstant] = [:],
+        errorCodeByType: [String: Int32] = [:],
+        hashedErrorCodes: [String: [Int32]] = [:]
     ) throws -> IRFunction {
         guard decl.body != nil else {
             throw unsupported("function '\(decl.name)' has no body", at: decl.location)
@@ -1423,6 +1567,10 @@ public enum IRLowerer {
             traitDefaultsCollector: traitDefaultsCollector,
             builtinExtensionMethods: builtinExtensionMethods
         )
+        context.foreignData = foreignData
+        context.errorCodeByType = errorCodeByType
+        context.hashedErrorCodes = hashedErrorCodes
+        context.foreignConstants = foreignConstants
         context.isAsync = decl.isAsync
         context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
         let body = try lowerBlock(decl.body!, into: &context)
@@ -1517,7 +1665,7 @@ public enum IRLowerer {
         case .extensionDecl(let x): return x.methods.map(\.params)
         case .traitDecl(let td): return td.signatures.filter { $0.body != nil }.map(\.params)
         case .enumDecl(let ed): return ed.methods.map(\.params)
-        case .foreignDecl(let fd): return fd.funcs.map(\.params)
+        case .foreignDecl: return []
         case .varDecl, .statement, .importDecl, .exportDecl: return []
         }
     }
@@ -1652,6 +1800,86 @@ public enum IRLowerer {
         return nodes
     }
 
+    /// 一个实参按形参位降载。句柄位是唯一有转换的方向：Pini 串在这一位包一次 `bk_str_handle_new`，
+    /// 已经是句柄的值原样过，其余位置照旧逐位比对。转换在这里而不是发射层 ——
+    /// 那里只剩 LLVM 拼写，`String` 与 `StringHandle` 都是 `ptr`，分不出该不该包。
+    private static func lowerCallArgument(
+        _ expression: Expression, paramIndex: Int, signature: IRLowererSignatureInfo,
+        at location: SourceLocation, into context: inout FunctionContext
+    ) throws -> LoweredExpr {
+        guard signature.handleParamIndices.contains(paramIndex) else {
+            return try lowerExpr(
+                expression, expected: signature.paramTypes[paramIndex], into: &context)
+        }
+        let lowered = try lowerExpr(expression, expected: .string, into: &context)
+        switch lowered.type {
+        case .stringHandle:
+            return lowered
+        case .string:
+            return LoweredExpr(
+                node: .call(
+                    function: stringHandleMakeName, arguments: [lowered.node],
+                    returnType: .stringHandle),
+                type: .stringHandle)
+        default:
+            throw unsupported(
+                "句柄形参只收 String 或另一个句柄，实际得到 `\(lowered.type.describe())`",
+                at: location)
+        }
+    }
+
+    /// 句柄构造在 IR 里的调用名。带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名；
+    /// 发射层按这个名字接 `bk_str_handle_new`（两侧共用这一份，名字不会各写一遍）。
+    public static let stringHandleMakeName = "pini.str.handle"
+
+    /// 变参调用的实参表：固定前缀按签名逐位降载，多出来的只收 C 标量与指针。
+    /// 提升不在这里做 —— 同一个值在别处也有自己的宽度，改写留给只看得到调用形状的发射层。
+    private static func lowerVariadicArguments(
+        callee: String, arguments: [CallArgument], signature: IRLowererSignatureInfo,
+        at location: SourceLocation, into context: inout FunctionContext
+    ) throws -> [IRExpr] {
+        let fixed = signature.paramTypes.count
+        guard arguments.count >= fixed else {
+            throw unsupported(
+                "call to '\(callee)' expects at least \(fixed) arguments, got \(arguments.count)",
+                at: location)
+        }
+        var nodes: [IRExpr] = []
+        for (index, argument) in arguments.prefix(fixed).enumerated() {
+            let lowered = try lowerCallArgument(
+                argument.expression, paramIndex: index, signature: signature,
+                at: location, into: &context)
+            if !signature.untypedParamIndices.contains(index),
+                !signature.handleParamIndices.contains(index)
+            {
+                try requireAssignable(lowered.type, to: signature.paramTypes[index], at: location)
+            }
+            nodes.append(lowered.node)
+        }
+        for argument in arguments.dropFirst(fixed) {
+            let lowered = try lowerExpr(argument.expression, expected: nil, into: &context)
+            guard variadicTailAccepts(lowered.type) else {
+                throw unsupported(
+                    "variadic argument of '\(callee)' has type \(lowered.type.describe()); "
+                        + "C's default argument promotions cover only scalars and pointers",
+                    at: location)
+            }
+            nodes.append(lowered.node)
+        }
+        return nodes
+    }
+
+    /// 变参尾能接的形状。`.string` 按借出传；`.cFunction` 不在内 —— 变参尾不带类型标记，
+    /// C 看不出这里要一个函数指针。
+    private static func variadicTailAccepts(_ type: IRType) -> Bool {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean, .string, .pointer:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func resolveParamTypes(
         _ decl: FuncDecl,
         userTypes: [String: IRType]
@@ -1676,6 +1904,52 @@ public enum IRLowerer {
                 )
             }
             return type
+        }
+    }
+
+    /// 解析一条外部函数的签名：形参逐位求 FFI 类型，返回至多一项。
+    /// 类型面只有 `FFIType` 一份判据，这里只搬运；多返回仍在这里拒绝，因为 IR 只有一个返回位。
+    private static func resolveForeignSignature(
+        _ symbol: ForeignSymbol
+    ) throws -> (params: [FFIType], returnType: FFIType?) {
+        let params = try symbol.paramTypes.map { annotation in
+            try ffiType(annotation, at: .parameter, symbol: symbol)
+        }
+        guard symbol.returnTypes.count <= 1 else {
+            throw unsupported(
+                "foreign '\(symbol.name)' declares \(symbol.returnTypes.count) return values; only one is supported",
+                at: symbol.location
+            )
+        }
+        let returnType = try symbol.returnTypes.first.map { annotation in
+            try ffiType(annotation, at: .result, symbol: symbol)
+        }
+        return (params, returnType)
+    }
+
+    /// 归一失败翻成降载期的 unsupported，措辞与语义期同一套判据、不同的出口。
+    private static func ffiType(
+        _ annotation: TypeAnnotation, at position: FFIType.Position, symbol: ForeignSymbol
+    ) throws -> FFIType {
+        do {
+            return try FFIType.resolve(annotation, at: position)
+        } catch let error as FFITypeError {
+            throw unsupported(Self.message(for: error, symbol: symbol.name), at: symbol.location)
+        }
+    }
+
+    private static func message(for error: FFITypeError, symbol: String) -> String {
+        switch error {
+        case .notRepresentable(let type, let reason):
+            return "外部符号 '\(symbol)' 的类型 `\(type)` 不可用：\(reason)"
+        case .widthNotInIR(let type):
+            return "外部符号 '\(symbol)' 的类型 `\(type)` 在 IR 里没有对应宽度"
+        case .cStringInReturnPosition:
+            return "外部符号 '\(symbol)' 不能用 String 作返回类型：C 返回的指针归属不明"
+        case .callbackOutsideParameter:
+            return "外部符号 '\(symbol)' 的函数指针不在形参位：返回位没有可承载它的值类型"
+        case .booleanInCallback:
+            return "外部符号 '\(symbol)' 的回调签名含 Bool：`i1` 与 `_Bool` 的寄存器约定不同"
         }
     }
 
@@ -2042,7 +2316,9 @@ public enum IRLowerer {
                 /// 载荷没有值，占位槽给 0。
                 return [.returnStmt(
                     value: .resultConstruct(
-                        isOk: true, payload: .intConst(value: 0, type: .i32), type: returnType),
+                        isOk: true, payload: .intConst(value: 0, type: .i32), errorBaseCode: 0,
+                        errorTagged: false, errorCodes: nil,
+                        type: returnType),
                     adopt: .none)]
             }
             guard context.returnType == nil else {
@@ -2579,9 +2855,14 @@ public enum IRLowerer {
         {
             let payload = try lowerExpr(arguments[0].expression, expected: nil, into: &context)
             let resultType = IRType.result(ok: calleeName == "ok" ? payload.type : .i32)
+            let info = calleeName == "err"
+                ? Self.errorCodeInfo(for: payload.type, in: context)
+                : (base: Int32(0), tagged: false, codes: nil)
             loweredOperand = LoweredExpr(
                 node: .resultConstruct(
-                    isOk: calleeName == "ok", payload: payload.node, type: resultType
+                    isOk: calleeName == "ok", payload: payload.node, errorBaseCode: info.base,
+                    errorTagged: info.tagged, errorCodes: info.codes,
+                    type: resultType
                 ),
                 type: resultType
             )
@@ -2747,6 +3028,23 @@ public enum IRLowerer {
             if let type = context.variableTypes[name] {
                 return LoweredExpr(node: .load(name: name, type: type), type: type)
             }
+            // 宏常量：构建期已经算出，读它就是读那个字面量，没有存储可以让路。
+            if let constant = context.foreignConstants[name] {
+                switch constant.value {
+                case .integer(let value):
+                    return LoweredExpr(
+                        node: .intConst(value: value, type: constant.type), type: constant.type)
+                case .float(let value):
+                    return LoweredExpr(node: .floatConst(value: value), type: .f64)
+                }
+            }
+            // 外部数据符号：读的是符号存储的当前值，不是声明处的任何初值。
+            if let type = context.foreignData[name] {
+                return LoweredExpr(
+                    node: .pointerLoad(
+                        pointer: .foreignDataAddress(name: name, type: type), type: type),
+                    type: type)
+            }
             // 内建值：裸名字直出常量。位置在变量表之后是刻意的 —— 用户声明了同名变量时读到的是用户那份，与预置
             // 声明的让位规则同向。那个常量恒为零，且不是一个可解引用的地址：含义是「这个句柄没有指向任何东西」，
             // 由类型层承重（它只被比较、不被解引用）。
@@ -2771,6 +3069,13 @@ public enum IRLowerer {
             // `取文本(plus)` — unique unqualified reverse lookup.
             if let constructed = try lowerBareEnumCase(name, at: location, into: &context) {
                 return constructed
+            }
+            // 回调实参位：期望类型是 C 函数指针时，名字取的是函数地址本身，不是闭包胖指针。
+            // 判据只看期望类型，不看被调方 —— `.function` 与 `.cFunction` 在 IR 里是两种表示。
+            if case .cFunction = expected, let signature = context.moduleSignatures[name] {
+                let type = IRType.cFunction(
+                    params: signature.paramTypes, returnType: signature.returnType)
+                return LoweredExpr(node: .cFunctionAddress(functionName: name, type: type), type: type)
             }
             // Named top-level function used as a value (G6): `应用(加倍, 21)`.
             // The type comes from the pre-pass signature table; emission goes
@@ -3218,6 +3523,19 @@ public enum IRLowerer {
                     type: .i32
                 )
             }
+            // 取回：`*U8 → String`，与 `cstr` 反向。读法归运行时段，发射层只接一个调用名。
+            if functionName == "c字符串" {
+                guard loweredArgs.count == 1, case .pointer = loweredArgs[0].type else {
+                    throw unsupported("c字符串 expects one *U8 pointer argument", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: .string),
+                    type: .string
+                )
+            }
             // Intrinsic `assert`: `assert(cond)` or `assert(cond, message)`. The condition must be Bool and a false
             // one traps through the runtime's panic path; test blocks are never run by the harness, but the lowering
             // must still exist.
@@ -3644,8 +3962,15 @@ public enum IRLowerer {
                 if functionName == "ok" {
                     try requireAssignable(loweredArgs[0].type, to: okType, at: location)
                 }
+                let info = functionName == "ok"
+                    ? (base: Int32(0), tagged: false, codes: nil)
+                    : Self.errorCodeInfo(for: loweredArgs[0].type, in: context)
                 return LoweredExpr(
-                    node: .resultConstruct(isOk: functionName == "ok", payload: loweredArgs[0].node, type: contextType),
+                    node: .resultConstruct(
+                        isOk: functionName == "ok", payload: loweredArgs[0].node,
+                        errorBaseCode: info.base, errorTagged: info.tagged,
+                        errorCodes: info.codes,
+                        type: contextType),
                     type: contextType
                 )
             }
@@ -3743,23 +4068,35 @@ public enum IRLowerer {
             }
             // 用每个形参的类型作为期望上下文逐位降载实参，无标注的整数字面量因此采用非 I32 的槽位（U64 形参下 64 是 u64）。
             // `using` 形参的实参可由编译器插入：先问实参对哪些形参位，再逐位降载，`using` 位在填充阶段补取用点。
-            let paramIndices = try usingParamMapping(
-                callee: functionName, paramCount: signature.paramTypes.count,
-                usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
-                at: location)
-            let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
-                try lowerExpr(argument.expression, expected: signature.paramTypes[paramIndex], into: &context)
+            let argumentNodes: [IRExpr]
+            if signature.isVariadic {
+                /// 变参放宽的是上限：固定前缀照签名逐位对，多出来的按默认实参提升口径接。
+                argumentNodes = try lowerVariadicArguments(
+                    callee: functionName, arguments: arguments, signature: signature,
+                    at: location, into: &context)
+            } else {
+                let paramIndices = try usingParamMapping(
+                    callee: functionName, paramCount: signature.paramTypes.count,
+                    usingParamIndices: signature.usingParamIndices, argumentCount: arguments.count,
+                    at: location)
+                let retypedArgs = try zip(arguments, paramIndices).map { argument, paramIndex in
+                    try lowerCallArgument(
+                        argument.expression, paramIndex: paramIndex, signature: signature,
+                        at: location, into: &context)
+                }
+                for (position, argument) in retypedArgs.enumerated()
+                where !signature.untypedParamIndices.contains(paramIndices[position])
+                    && !signature.handleParamIndices.contains(paramIndices[position])
+                {
+                    try requireAssignable(
+                        argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
+                }
+                argumentNodes = try fillUsingArguments(
+                    retypedArgs: retypedArgs, paramIndices: paramIndices,
+                    paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
+                    omittedForm: arguments.count != signature.paramTypes.count,
+                    callee: functionName, at: location, into: &context)
             }
-            for (position, argument) in retypedArgs.enumerated()
-            where !signature.untypedParamIndices.contains(paramIndices[position]) {
-                try requireAssignable(
-                    argument.type, to: signature.paramTypes[paramIndices[position]], at: location)
-            }
-            let argumentNodes = try fillUsingArguments(
-                retypedArgs: retypedArgs, paramIndices: paramIndices,
-                paramTypes: signature.paramTypes, usingParamIndices: signature.usingParamIndices,
-                omittedForm: arguments.count != signature.paramTypes.count,
-                callee: functionName, at: location, into: &context)
             context.recordCall(functionName)
             return LoweredExpr(
                 node: .call(
@@ -3795,6 +4132,16 @@ public enum IRLowerer {
                 )
             }
             guard let varType = context.variableTypes[name] else {
+                // `&外部符号` 取的是符号自身的存储地址，不是值快照 —— 这正是它和 `&局部变量` 的差别。
+                if let foreignType = context.foreignData[name] {
+                    return LoweredExpr(
+                        node: .foreignDataAddress(name: name, type: foreignType),
+                        type: .pointer(element: foreignType))
+                }
+                if context.foreignConstants[name] != nil {
+                    throw unsupported(
+                        "`&\(name)`：宏常量是构建期的值，没有地址可取", at: location)
+                }
                 throw unsupported("address-of on unknown variable '\(name)'", at: location)
             }
             return LoweredExpr(
@@ -5609,6 +5956,9 @@ extension IRType {
             case "Bool": self = .boolean
             case "String": self = .string
             case "Char": self = .char
+            /// 句柄只该出现在 C 面上：语义层已把普通代码里的这个名字拦下，这里认它是为了让
+            /// `|c` 导出函数的签名与 `[..|foreign]` 声明解析得出来。
+            case "StringHandle": self = .stringHandle
             default: return nil
             }
         case .generic(let name, let params, _):
@@ -5831,10 +6181,16 @@ struct IRLowererSignatureInfo {
     /// `using` 形参的位置（0 基）。与检查器的 `FunctionSignature.usingParamIndices` 同一口径：调用点按「实参
     /// 个数 == 形参个数 − using 个数」认省略式调用，并把实参按非 using 形参逐位对上；空集即无 `using` 形参。
     let usingParamIndices: Set<Int>
+    /// C 变参：`paramTypes` 是固定前缀，调用点可以多传。放宽的是上限，不是下限。
+    let isVariadic: Bool
+    /// 声明成 `StringHandle` 的形参位置（0 基）。实参是 Pini 串时，调用点在这一位包一次
+    /// `bk_str_handle_new` —— 句柄的创建即复制只发生在边界上，别处没有这条路。
+    let handleParamIndices: Set<Int>
 
     init(
         paramTypes: [IRType], returnType: IRType?, bodyReturnType: IRType? = nil,
-        untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = []
+        untypedParamIndices: Set<Int> = [], usingParamIndices: Set<Int> = [],
+        isVariadic: Bool = false, handleParamIndices: Set<Int> = []
     ) {
         self.paramTypes = paramTypes
         self.returnType = returnType
@@ -5844,6 +6200,8 @@ struct IRLowererSignatureInfo {
         self.bodyReturnType = bodyReturnType ?? returnType
         self.untypedParamIndices = untypedParamIndices
         self.usingParamIndices = usingParamIndices
+        self.isVariadic = isVariadic
+        self.handleParamIndices = handleParamIndices
     }
 }
 
@@ -5919,6 +6277,15 @@ private struct FunctionContext {
     /// 接收者类型名 → 方法名 → （降载后的 IR 函数名, 返回类型）。由模块级预扫描填
     /// （见 `lower(module:)` 的扩展块分支）；空表即「本模块没有内建扩展」。
     var builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
+    /// 外部数据符号的类型表：标识符与 `&` 命中它时走符号地址，不走变量槽。
+    /// 空表即「本模块没有外部数据符号」，此时命中不了任何名字。
+    var foreignData: [String: IRType] = [:]
+    /// 宏常量的构建期值：标识符命中它时直接出字面量，不产生任何存储访问。
+    var foreignConstants: [String: IRForeignConstant] = [:]
+    /// 错误类型名 → 码基址。`err(...)` 按载荷类型查它，查不到按未归类 `1`。
+    var errorCodeByType: [String: Int32] = [:]
+    /// 稳定码类型 → 按用例 tag 索引的码表。查得到就压过「基址 | tag」。
+    var hashedErrorCodes: [String: [Int32]] = [:]
     /// Receiver field types for bare-name resolution inside method
     /// bodies (interpreter bindInstanceFields parity). Empty outside methods.
     var selfFieldTypes: [String: IRType] = [:]

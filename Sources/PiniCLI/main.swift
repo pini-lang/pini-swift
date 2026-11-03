@@ -521,6 +521,10 @@ func describeEnumDecl(_ enumDecl: EnumDecl, indent: String = "") -> String {
 
     result += ":\n"
 
+    if !enumDecl.traits.isEmpty {
+        result += "\(indent) 实现: " + enumDecl.traits.joined(separator: ", ") + "\n"
+    }
+
     for c in enumDecl.cases {
         result += "\(indent) case \(c.name)"
         if !c.associatedParams.isEmpty {
@@ -581,10 +585,11 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
         // 块形式 import 的 dump 形态：`import 别名 = 路径`，一行一条。
         return "\(indent)import \(importDecl.alias) = \(importDecl.packagePath)"
     case .exportDecl(let exportDecl):
-        // 块形式 export 的 dump 形态：每个重命名项一行。
+        // dump 形态：`export 名|c = 原符号`；pini 目标省略标签，与源码默认一致。
         var out = ""
-        for r in exportDecl.renames {
-            out += "\(indent)export \(r.alias) = \(r.symbol)\n"
+        for entry in exportDecl.entries {
+            let target = entry.target == .c ? "|c" : ""
+            out += "\(indent)export \(entry.name)\(target) = \(entry.symbol)\n"
         }
         return out.hasSuffix("\n") ? String(out.dropLast()) : out
     case .extensionDecl(let ext):
@@ -595,8 +600,9 @@ func describeTopLevelDecl(_ decl: TopLevelDecl, indent: String = "") -> String {
         return String(result.dropLast())
     case .foreignDecl(let fd):
         var result = "\(indent)foreign \(fd.name):\n"
-        for f in fd.funcs {
-            result += describeFuncDecl(f, indent: indent + " ") + "\n"
+        for symbol in fd.symbols {
+            let flags = symbol.flags.map { "|" + $0 }.joined()
+            result += "\(indent) \(symbol.name)\(flags): \(symbol.annotation.describe())\n"
         }
         return String(result.dropLast())
     }
@@ -629,6 +635,7 @@ func printHelp() {
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Type check (alias of check) a file or directory/module")
+    print(" build --shared <path> [-o out] Link the export block's |c entries into lib<file>.{dylib,so}")
     print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
     print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
@@ -651,7 +658,7 @@ func printHelp() {
     print(" A directory without pini.toml is checked file-by-file as independent programs.")
 }
 
-/// 能力矩阵：行是节点族，列是装配表里的通道。产出由各通道自己声明，故这张表不会与实现漂移。
+/// 后端能力表：行是节点族，列是装配表里的通道。表由各通道自述，此处不做核对。
 func printBackendMatrix(tsv: Bool) {
     let registry = Backends.registry
     let channels = registry.entries.compactMap { registry.make($0.identifier) }
@@ -822,6 +829,22 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return "未使用的变量 '\(name)'"
     case .givenCycle:
         return "给定块物化环：" + (warning.cyclePathText ?? "")
+    case .automaticErrorCode(let typeName, let code, _):
+        return
+            "类型 '\(typeName)' 未指定错误码，已自动分配 \(code)。该码不保证跨版本稳定；"
+            + "要固定它，在扩展块写 `码() -> (I32,)` 返回一个常量"
+    case .duplicateErrorCode(let code, let first, let others, _):
+        return
+            "错误码 \(code) 同时属于 '\(first)' 与 \(others)：C 侧无法据此区分两者。"
+            + "改掉其中一个手写码；若有意合并成同一个状态，可忽略"
+    case .variadicForeignSymbol(let name, _):
+        return
+            "外部函数 '\(name)' 声明为变参：变参调用只在 `run-llvm` 上成立，"
+            + "解释器会在调用点拒绝。要两通道都能跑，请在 C 侧写一个固定参数的 shim"
+    case .stringHandleForeignSymbol(let name, _):
+        return
+            "外部函数 '\(name)' 用了字符串句柄：句柄由运行时段持有，只在 `run-llvm` 与 "
+            + "`build --shared` 上成立，解释器会在调用点拒绝"
     }
 }
 
@@ -879,9 +902,13 @@ func givenCycleWarnings(
 /// 代价明写：含其他降载错误的文件拿不到环检测。
 func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+    /// 宏常量求不出就照样跳过环检测：这条通道本来就是 best-effort，缺值不该把它变成错误。
     guard
+        let constants = try? evaluateForeignMacros(
+            symbols: foreignSymbols(in: module), config: .default),
         let ir = try? IRLowerer.lower(
-            module: module, typeInference: checker.typeInference, requiresMain: false)
+            module: module, typeInference: checker.typeInference,
+            foreignConstants: constants, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
@@ -892,8 +919,12 @@ func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarnin
 func givenCycleWarnings(package: Package, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     guard
+        let constants = try? evaluateForeignMacros(
+            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: .default),
         let ir = try? IRLowerer.lower(
-            package: package, typeInference: checker.typeInference, requiresMain: false)
+            package: package, typeInference: checker.typeInference,
+            foreignConstants: constants, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
@@ -940,7 +971,10 @@ private func runIREngine(
     // 与 emit / compile / run-llvm 同款：lowering 会在 checker 弹出作用域之后重推
     // match scrutinee 的类型，需持久表兜底。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(
+        module: module, typeInference: checker.typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: foreignSymbols(in: module), config: .default))
     let executor = IRExecutor(programBase: programBase)
     executor.processArguments = argv
     try executor.run(module: irModule)
@@ -955,7 +989,11 @@ private func runIRPackageEngine(
     ffiConfig: FFIConfig,
     argv: [String] = []
 ) throws {
-    let irModule = try IRLowerer.lower(package: package, typeInference: typeInference)
+    let irModule = try IRLowerer.lower(
+        package: package, typeInference: typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: ffiConfig))
     let executor = IRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConfig: ffiConfig)
     executor.processArguments = argv
     try executor.run(module: irModule)
@@ -1126,7 +1164,10 @@ private func runDebugFile(_ path: String) {
     let executor = IRExecutor(programBase: absoluteProgramBase(path))
     startDebugger(
         run: DebugRun(host: executor) {
-            let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+            let ir = try IRLowerer.lower(
+                module: module, typeInference: checker.typeInference,
+                foreignConstants: try evaluateForeignMacros(
+                    symbols: foreignSymbols(in: module), config: .default))
             try executor.run(module: ir)
         }, sources: sources, primaryName: path)
 }
@@ -1153,7 +1194,11 @@ private func runDebugDirectory(_ path: String) {
     let executor = IRExecutor(programBase: absoluteProgramBase(path))
     startDebugger(
         run: DebugRun(host: executor) {
-            let ir = try IRLowerer.lower(package: pkg, typeInference: checker.typeInference)
+            let ir = try IRLowerer.lower(
+                package: pkg, typeInference: checker.typeInference,
+                foreignConstants: try evaluateForeignMacros(
+                    symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+                    config: .default))
             try executor.run(module: ir)
         }, sources: sources, primaryName: sources.keys.first ?? path)
 }
@@ -1186,6 +1231,23 @@ struct FileCheckResult {
 
 /// 单文件收集式 check：返回诊断与阻断位，**不在此处退出**——
 /// 供目录逐文件聚合场景复用（见 `runCheckPath`）。
+/// 模块里声明的全部外部符号（各 foreign 块摊平）。
+func foreignSymbols(in module: Module) -> [ForeignSymbol] {
+    module.declarations.flatMap { decl -> [ForeignSymbol] in
+        guard case .foreignDecl(let block) = decl else { return [] }
+        return block.symbols
+    }
+}
+
+/// 求值宏常量：没有 `|macro` 的模块不碰工具链，返回值恒空。
+/// check 与运行路径都先过这一关，免得「check 通过、run 才报宏展不开」。
+func evaluateForeignMacros(
+    symbols: [ForeignSymbol], config: FFIConfig
+) throws -> [IRForeignConstant] {
+    guard symbols.contains(where: { $0.flags.contains("macro") }) else { return [] }
+    return try ForeignMacroEvaluator.evaluate(symbols: symbols, config: config)
+}
+
 func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckResult {
     let module = parseOrReport(source: source, fileName: fileName)
 
@@ -1210,6 +1272,14 @@ func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckRe
             ErrorFormatter.formatTypeError($0, source: source)
         }
         if typeErrors.isEmpty {
+            /// 宏常量：单文件没有 `pini.toml`，声明了就只能报「缺 headers」—— 值没有别的来源。
+            do {
+                _ = try evaluateForeignMacros(
+                    symbols: foreignSymbols(in: module), config: .default)
+            } catch {
+                result.diagnostics.append("Error: \(error)")
+                result.hasBlockingDiagnostics = true
+            }
             for w in givenCycleWarnings(module: module, checker: checker) {
                 result.diagnostics.append(renderedWarning(w, source: source))
             }
@@ -1227,6 +1297,7 @@ func runCheckCommand(source: String, fileName: String) throws {
     }
     if result.hasBlockingDiagnostics { exit(1) }
     print("检查通过：\(fileName)")
+    CommentStyleHint.emit()
 }
 
 // 测试执行通道：同一套收集范围与门禁，两条后端。它只决定最后一步怎么跑（解释器执行 / 发射后运行），
@@ -1385,7 +1456,8 @@ private func gateAndRunTests(
         //  重要  降载走 `lowerTests` —— 与上面那条通道**同一份**降载（理由见它的注释）。
         let lowered = try runner.lowerTests(package: pkg)
         try emitAndRunLLVMTests(
-            module: lowered, fileScope: scope, header: header, programBase: programBase)
+            module: lowered, fileScope: scope, header: header, programBase: programBase,
+            ffiConfig: ffiConfig)
     }
 }
 
@@ -1435,7 +1507,8 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
         let lowered = try runner.lowerTests(module: module)
         try emitAndRunLLVMTests(
             module: lowered, fileScope: nil, header: header,
-            programBase: absoluteProgramBase(path))
+            programBase: absoluteProgramBase(path),
+            ffiConfig: manifest?.ffi)
     }
 }
 
@@ -1443,7 +1516,8 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
 // 报告由产物自己给出（发射侧按测试模式合成），故它只剩落盘 `.ll`、调 clang、交子进程状态三件事。
 // 退出码必须透传（丢掉会让 abort 被读成 rc=0、判据恒绿）；测试模式允许模块无 `main`，入口由发射器合成。
 func emitAndRunLLVMTests(
-    module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?
+    module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?,
+    ffiConfig: FFIConfig? = nil
 ) throws {
     // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
     //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
@@ -1484,6 +1558,9 @@ func emitAndRunLLVMTests(
         let dir = (dylib as NSString).deletingLastPathComponent
         clangArgs.insert(contentsOf: ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"], at: 0)
     }
+    // 测试跑在 LLVM 通道上时，foreign 符号同样要靠清单里的 `libs` 落定。
+    let foreign = foreignLinkArguments(ffiConfig)
+    if !foreign.isEmpty { clangArgs.insert(contentsOf: foreign, at: 0) }
     process.arguments = clangArgs
     let pipe = Pipe()
     process.standardError = pipe
@@ -1560,10 +1637,15 @@ func runCheckPath(_ path: String) {
             emitSemanticWarnings(analyzer)
             let checker = TypeChecker()
             try checker.check(package: pkg)
+            /// 宏常量在检查阶段就求值：值展不开是声明或配置的问题，不该等到运行才显形。
+            _ = try evaluateForeignMacros(
+                symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+                config: manifest.ffi ?? .default)
             for warning in givenCycleWarnings(package: pkg, checker: checker) {
                 emitSemanticWarning(warning)
             }
             print("检查通过（模块 \(pkg.name)，\(pkg.fileUnits.count) 个文件）：\(path)")
+            CommentStyleHint.emit()
         } catch let err as SemanticError {
             handleSemanticError(err); exit(1)
         } catch let err as TypeError {
@@ -1609,6 +1691,7 @@ func runCheckPath(_ path: String) {
     }
     if !failed.isEmpty { exit(1) }
     print("检查通过（\(files.count) 个独立文件）：\(path)")
+    CommentStyleHint.emit()
 }
 
 /// 判断某 `.pini`（相对路径）是否位于「含自身 pini.toml 的嵌套模块目录」内；
@@ -1629,9 +1712,41 @@ private func isInsideNestedModule(_ relativeBkPath: String, root: String) -> Boo
     return false
 }
 
+/// 入口要求的三种口径：`main` 只有「要落地成进程」时才必需，库模块没有它是常态。
+/// 判「是不是库」只看 export 块里有没有 `|c` 条目 —— 那是模块对外发布 C 面的唯一声明。
+private enum EntryPolicy {
+    /// 可执行程序：`compile` 与 `run-llvm` 都要跑起来，缺 `main` 就到不了。
+    case required
+    /// 发布面：带 `|c` 条目时放行，其余模块照旧要求入口，免得漏写 `main` 的程序安静出产物。
+    case waivedForLibrary
+    /// 共享库：产物是库，与模块内容无关。
+    case notRequired
+
+    func requiresMain(hasCSurface: Bool) -> Bool {
+        switch self {
+        case .required:
+            return true
+        case .waivedForLibrary:
+            return !hasCSurface
+        case .notRequired:
+            return false
+        }
+    }
+}
+
+/// 模块里有没有 `|c` 条目：这是「算不算 C 库」的唯一判据，单文件与包共用。
+private func hasCSurface(_ exports: [ExportDecl]) -> Bool {
+    exports.contains { block in
+        block.entries.contains { $0.target == .c }
+    }
+}
+
 /// LLVM 管线先类型检查，再以类型推断结果降载到 IR：零类型信息的 codegen 解构不了 Optional.some。
 /// 与解释器同一套静态校验；类型错误一次性同报并退出（同 `runCheckCommand` 的收集模式）。
-private func lowerSingleFile(source: String, fileName: String) throws -> IRModule {
+/// - Parameter policy: 入口要求，由命令决定；判据见 `EntryPolicy`。
+private func lowerSingleFile(
+    source: String, fileName: String, policy: EntryPolicy
+) throws -> IRModule {
     let module = parseOrReport(source: source, fileName: fileName)
     // The semantic layer gates here for the same reason `check` runs it before the type layer:
     // it enforces capture declarations, undefined names and visibility. A check that runs ahead of
@@ -1655,16 +1770,21 @@ private func lowerSingleFile(source: String, fileName: String) throws -> IRModul
     }
     // 开启持久表兜底：codegen 重推 match scrutinee 类型时不受 check 后作用域 pop 影响。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
+    let irModule = try IRLowerer.lower(
+        module: module, typeInference: checker.typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: foreignSymbols(in: module), config: .default),
+        requiresMain: policy.requiresMain(hasCSurface: hasCSurface(module.exports)))
     /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
     return irModule
 }
 
+/// - Parameter policy: 入口要求，与 `lowerSingleFile` 同一口径。
 private func typeCheckThenGenerate(
-    source: String, fileName: String, backend: any PiniBackend = IREmitter()
+    source: String, fileName: String, policy: EntryPolicy, backend: any PiniBackend = IREmitter()
 ) throws -> String {
-    let irModule = try lowerSingleFile(source: source, fileName: fileName)
+    let irModule = try lowerSingleFile(source: source, fileName: fileName, policy: policy)
     // 注入程序基准，与解释器同规则。需要它的通道自己覆写，其余保持默认。
     backend.setProgramBase(absoluteProgramBase(fileName))
     return try backend.emit(module: irModule)
@@ -1673,7 +1793,9 @@ private func typeCheckThenGenerate(
 func runEmitCommand(
     source: String, fileName: String, outputPath: String?, backend: any PiniBackend = IREmitter()
 ) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, backend: backend)
+    // 发布面两种模块都收：程序有 `main`，库有 `|c` 条目，各自都是完整声明，故按内容判入口。
+    let ir = try typeCheckThenGenerate(
+        source: source, fileName: fileName, policy: .waivedForLibrary, backend: backend)
 
     if let out = outputPath {
         try ir.write(toFile: out, atomically: true, encoding: .utf8)
@@ -1702,14 +1824,7 @@ private func runIRPackageEmit(
     package: Package, moduleRoot: String, outputPath: String?,
     backend: any PiniBackend = IREmitter()
 ) throws {
-    let analyzer = SemanticAnalyzer()
-    try analyzer.analyze(package: package)
-    let checker = TypeChecker()
-    try checker.check(package: package)
-    // Same persistent-table fallback as the single-file pipeline.
-    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let irModule = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
-    try IRValidator.check(irModule)
+    let irModule = try lowerPackage(package: package, moduleRoot: moduleRoot, policy: .waivedForLibrary)
     // 模块基准 = 模块根，与解释器模块路径一致。
     backend.setProgramBase(absoluteProgramBase(moduleRoot))
     let ir = try backend.emit(module: irModule)
@@ -1718,6 +1833,29 @@ private func runIRPackageEmit(
     } else {
         print(ir)
     }
+}
+
+/// 包级降载：语义 → 类型 → IR → 结构校验。`emit` 与 `build --shared` 共用这一份 —— 各抄一份就会在
+/// 「少一次语义分析」这类分叉上静默漂移，而两条命令读的必须是同一棵树。
+/// - Parameter policy: 入口要求，与 `lowerSingleFile` 同一口径。
+private func lowerPackage(
+    package: Package, moduleRoot: String, policy: EntryPolicy
+) throws -> IRModule {
+    let analyzer = SemanticAnalyzer()
+    try analyzer.analyze(package: package)
+    let checker = TypeChecker()
+    try checker.check(package: package)
+    // Same persistent-table fallback as the single-file pipeline.
+    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+    let irModule = try IRLowerer.lower(
+        package: package, typeInference: checker.typeInference,
+        foreignConstants: try evaluateForeignMacros(
+            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default),
+        requiresMain: policy.requiresMain(
+            hasCSurface: package.fileUnits.contains { hasCSurface($0.module.exports) }))
+    try IRValidator.check(irModule)
+    return irModule
 }
 
 // 定位集合运行时动态库：优先 env `PINI_RUNTIME_LIB`，否则取 CLI 可执行文件
@@ -1738,8 +1876,42 @@ private func runtimeLibraryPath() -> String? {
 }
 
 
+/// 清单 `[ffi]` 的链接口径。块名不参与：foreign 块名只决定解释器默认加载 `lib<块名>`，
+/// 与链接哪几个库无关 —— 库名由 `libs` 显式给出，两者可以脱钩。
+/// 没有清单或清单没写 `[ffi]` 时答 nil：没有声明过的库，就没有链接参数可加。
+private func foreignConfig(around path: String) throws -> FFIConfig? {
+    guard let root = try FileLoader.locateModuleRoot(for: path) else { return nil }
+    return try FileLoader.loadManifest(directory: root)?.ffi
+}
+
+/// `search_paths` → `-L`（非系统目录另加 rpath），`libs` → `-l`。
+/// rpath 只给非系统目录：vendored 库的 install name 常是裸文件名，缺它在编译期看不出来，
+/// 运行期才报找不到映像。
+private func foreignLinkArguments(_ config: FFIConfig?) -> [String] {
+    guard let config else { return [] }
+    let systemDirs: Set<String> = ["/usr/lib", "/usr/local/lib"]
+    var args: [String] = []
+    for dir in config.searchPaths where FileManager.default.fileExists(atPath: dir) {
+        args.append("-L\(dir)")
+        if !systemDirs.contains(dir) { args.append("-Wl,-rpath,\(dir)") }
+    }
+    args += config.libs.map { "-l\($0)" }
+    return args
+}
+
+/// 按 `search_paths` 找 `lib<名称>.{dylib,so}`，与解释器 `FFILoader` 的命名同规。
+private func libraryPath(named name: String, in searchPaths: [String]) -> String? {
+    for dir in searchPaths {
+        for ext in ["dylib", "so"] {
+            let candidate = (dir as NSString).appendingPathComponent("lib\(name).\(ext)")
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+    }
+    return nil
+}
+
 func runCompileCommand(source: String, fileName: String) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
+    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, policy: .required)
 
     let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
     let tmpBin = "/tmp/pini_\(UUID().uuidString)"
@@ -1763,6 +1935,9 @@ func runCompileCommand(source: String, fileName: String) throws {
         let dir = (dylib as NSString).deletingLastPathComponent
         clangArgs.insert(contentsOf: ["-L\(dir)", "-lPiniRuntime", "-Wl,-rpath,\(dir)"], at: 0)
     }
+    // `[ffi]` 声明的外部库：解释器经 dlsym，这里经链接器，两条通道读同一份清单。
+    let foreign = foreignLinkArguments(try foreignConfig(around: fileName))
+    if !foreign.isEmpty { clangArgs.insert(contentsOf: foreign, at: 0) }
     process.arguments = clangArgs
     let pipe = Pipe()
     process.standardError = pipe
@@ -1797,8 +1972,140 @@ func childExitStatus(of process: Process) -> Int32 {
     return process.terminationStatus
 }
 
+// MARK: - 共享库产物
+
+/// `build --shared` 的失败面：路径、C 面、工具链与链接器各一类，消息直接指向下一步动作。
+struct SharedBuildError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+/// `build --shared` 一条命令出库：降载 → 发 IR → clang 链成动态库。库没有进程入口，故不要求 `main`。
+/// 产物名取自 export 块的文件名（已转写成 C 标识符），调用方按同一个名字写 `-l`。
+func runBuildShared(path: String, outputPath: String?) {
+    do {
+        let (irModule, programBase) = try lowerForShared(path: path)
+        guard let export = irModule.export else {
+            throw SharedBuildError(
+                message: "模块没有带 `|c` 条目的 export 块 —— C 符号由条目决定，产物名取文件名")
+        }
+        let emitter = IREmitter()
+        emitter.setProgramBase(programBase)
+        let ir = try emitter.emit(module: irModule)
+        let irPath = NSTemporaryDirectory() + "pini_\(UUID().uuidString).ll"
+        defer { try? FileManager.default.removeItem(atPath: irPath) }
+        try ir.write(toFile: irPath, atomically: true, encoding: .utf8)
+        let libraryPath = sharedLibraryPath(outputPath, blockName: export.name)
+        // 父目录不存在时先建：`-o out/libx.dylib` 是最常见的写法，让链接器去报 open() 失败读不出原因。
+        let parent = (libraryPath as NSString).deletingLastPathComponent
+        if !parent.isEmpty {
+            try FileManager.default.createDirectory(
+                atPath: parent, withIntermediateDirectories: true)
+        }
+        try linkSharedLibrary(
+            irPath: irPath, outputPath: libraryPath, ffiConfig: try foreignConfig(around: path))
+        print("已生成 \(libraryPath)")
+        CommentStyleHint.emit()
+    } catch {
+        printError(formatCLIError(error: error, source: nil))
+        exit(1)
+    }
+}
+
+/// 共享库的降载入口：单文件、模块内文件、含 `pini.toml` 的目录三条路都收。
+/// 目录没有清单时拒绝 —— 散放的多份文件各是独立程序，拼不出一个 C 面。
+private func lowerForShared(path: String) throws -> (module: IRModule, programBase: String) {
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
+        throw SharedBuildError(message: "路径不存在：\(path)")
+    }
+    if isDir.boolValue {
+        guard let manifest = try FileLoader.loadManifest(directory: path) else {
+            throw SharedBuildError(
+                message: "目录里没有 pini.toml：共享库要一个模块，散放的多份文件各是独立程序")
+        }
+        let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+        return (
+            try lowerPackage(package: package, moduleRoot: path, policy: .notRequired),
+            absoluteProgramBase(path)
+        )
+    }
+    if let loaded = try loadOwningPackageIfModule(path: path) {
+        return (
+            try lowerPackage(
+                package: loaded.package, moduleRoot: loaded.moduleRoot, policy: .notRequired),
+            absoluteProgramBase(loaded.moduleRoot)
+        )
+    }
+    let source = try readFile(path)
+    return (
+        try lowerSingleFile(source: source, fileName: path, policy: .notRequired),
+        absoluteProgramBase(path)
+    )
+}
+
+/// 产物落点：`-o` 说了算；没给时按块名落在当前目录。`-o` 指到已存在的目录时，文件名仍按块名补。
+private func sharedLibraryPath(_ outputPath: String?, blockName: String) -> String {
+    #if os(macOS)
+    let suffix = "dylib"
+    #else
+    let suffix = "so"
+    #endif
+    let fileName = "lib\(blockName).\(suffix)"
+    guard let outputPath, !outputPath.isEmpty else {
+        return (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(fileName)
+    }
+    var isDir: ObjCBool = false
+    let pointsAtDirectory =
+        (FileManager.default.fileExists(atPath: outputPath, isDirectory: &isDir) && isDir.boolValue)
+        || outputPath.hasSuffix("/")
+    if pointsAtDirectory {
+        return (outputPath as NSString).appendingPathComponent(fileName)
+    }
+    return outputPath
+}
+
+/// 交给 clang 链成动态库：运行时动态链接，并把它的目录写进 rpath，否则调用方加载时找不到符号。
+/// 缺 clang 或运行时直接失败 —— 发一个注定加载不了的库，比不发更难排查。
+private func linkSharedLibrary(
+    irPath: String, outputPath: String, ffiConfig: FFIConfig? = nil
+) throws {
+    guard let clang = LLVMToolchain.clangPath else {
+        throw SharedBuildError(
+            message: "clang not found. Install LLVM (e.g. `brew install llvm`) or set PINI_LLVM_BIN.")
+    }
+    guard let runtime = runtimeLibraryPath() else {
+        throw SharedBuildError(
+            message: "找不到 libPiniRuntime.{dylib,so}：它与 pini 可执行文件同目录，或用 PINI_RUNTIME_LIB 指定")
+    }
+    let runtimeDir = (runtime as NSString).deletingLastPathComponent
+    var clangArgs = [
+        "-shared", "-o", outputPath, irPath,
+        "-L\(runtimeDir)", "-lPiniRuntime", "-Wl,-rpath,\(runtimeDir)",
+    ]
+    // 库自己也可能调外部 C：`[ffi]` 的 `libs` 决定链接什么，缺了它符号落不下来。
+    clangArgs.insert(contentsOf: foreignLinkArguments(ffiConfig), at: 0)
+    #if !os(macOS)
+    // Darwin 的 `-shared` 默认就要求符号全部落定；GNU ld 相反，不加这条会把缺符号的库静默发出去。
+    clangArgs.insert("-Wl,--no-undefined", at: 0)
+    #endif
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: clang)
+    process.arguments = clangArgs
+    let pipe = Pipe()
+    process.standardError = pipe
+    try process.run()
+    let errData = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        let err = String(decoding: errData, as: UTF8.self)
+        throw SharedBuildError(
+            message: "clang 链接失败（rc=\(process.terminationStatus)）：\(err)")
+    }
+}
+
 func runLLICommand(source: String, fileName: String) throws {
-    let ir = try typeCheckThenGenerate(source: source, fileName: fileName)
+    let ir = try typeCheckThenGenerate(source: source, fileName: fileName, policy: .required)
 
     let tmpIR = "/tmp/pini_\(UUID().uuidString).ll"
     defer { try? FileManager.default.removeItem(atPath: tmpIR) }
@@ -1813,6 +2120,15 @@ func runLLICommand(source: String, fileName: String) throws {
     // 并发后端抽象 阶段1：加载集合运行时（best-effort，找不到则跳过——非集合程序无需）。
     if let dylib = runtimeLibraryPath() {
         lliArgs.insert("--dlopen=\(dylib)", at: 0)
+    }
+    // `[ffi]` 的库：lli 没有链接期，只能把映像预载进 JIT。找不到的不报错 ——
+    // 系统库在 macOS 上位于共享缓存、磁盘上没有文件，抢先报错会误伤它们；
+    // 真缺符号时 lli 自己的 undefined symbol 更准确。
+    let ffi = try foreignConfig(around: fileName)
+    for lib in ffi?.libs ?? [] {
+        if let path = libraryPath(named: lib, in: ffi?.searchPaths ?? []) {
+            lliArgs.insert("--dlopen=\(path)", at: 0)
+        }
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: lli)
@@ -1949,7 +2265,7 @@ case "mod":
 case "repl":
     ReplSession().run()
     exit(0)
-case "check", "build":
+case "check":
     guard args.count >= 3 else {
         printError("Error: \(command) command requires a file or directory path")
         exit(1)
@@ -1960,6 +2276,46 @@ case "check", "build":
         exit(1)
     }
     runCheckPath(args[2])
+case "build":
+    var shared = false
+    var outputPath: String?
+    var positional: [String] = []
+    var cursor = 2
+    while cursor < args.count {
+        switch args[cursor] {
+        case "--shared":
+            shared = true
+            cursor += 1
+        case "-o":
+            guard cursor + 1 < args.count else {
+                printError("Error: -o 需要一个输出路径")
+                exit(1)
+            }
+            outputPath = args[cursor + 1]
+            cursor += 2
+        default:
+            guard !args[cursor].hasPrefix("-") else {
+                printError("Error: \(args[cursor])")
+                printError("  合法用法：pini build <路径>｜pini build --shared <路径> [-o <产物路径>]")
+                exit(1)
+            }
+            positional.append(args[cursor])
+            cursor += 1
+        }
+    }
+    guard let path = positional.first else {
+        printError("Error: build command requires a file or directory path")
+        exit(1)
+    }
+    if shared {
+        runBuildShared(path: path, outputPath: outputPath)
+    } else {
+        guard outputPath == nil else {
+            printError("Error: -o 只跟 --shared 一起用")
+            exit(1)
+        }
+        runCheckPath(path)
+    }
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块根。
     runTestPath(args.count >= 3 ? args[2] : nil)

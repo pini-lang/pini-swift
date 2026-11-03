@@ -96,6 +96,10 @@ public final class IREmitter {
 
     private var stringConstantDefs: [String] = []
     private var stringConstants: [String: (name: String, length: Int)] = [:]
+    /// 稳定码类型的码表：按用例 tag 索引，作为模块级常量发一次，构造点只传指针。
+    /// 键是码的拼接串（`[Int32]` 不是 `Hashable`），值是全局符号名。
+    private var errorCodeConstantDefs: [String] = []
+    private var errorCodeTableNames: [String: String] = [:]
     /// 匿名常量（`@.str<序号>`）已发出几个 —— 具名常量不计入，故不影响它们的编号。
     private var anonymousStringConstantCount = 0
     private var usesStrCmp = false
@@ -118,6 +122,10 @@ public final class IREmitter {
     /// Module function registry by mangled IR name (G6): adapter generation
     /// reads the original ABI (params/return) from here.
     private var moduleFunctions: [String: IRFunction] = [:]
+    /// C 变参函数：符号名（已 mangle）→ 固定形参个数 + 调用点的函数类型拼写。
+    /// 后者不能省：文本 IR 的调用按实参表推函数类型，推出来的 `i64 (i64, i32)` 不是声明的
+    /// `i64 (i64, ...)`，后端会据此按非变参摆放实参，C 侧 `va_arg` 读到的是栈上的旧值。
+    private var variadicForeignFunctions: [String: (fixedCount: Int, callType: String)] = [:]
     /// 是否用到 `%bk_lazyref` 句柄类型与 `bk_lazyref_*` 这组 C ABI：头声明按需追加，
     /// 从不触碰 LazyRef 的模块其 IR 保持逐字节不变。
     private var usesLazyRef = false
@@ -256,6 +264,18 @@ public final class IREmitter {
     /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
+    /// 是否调用过 `c字符串` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
+    private var usesCStrRetrieval = false
+
+    /// 是否在句柄形参位包过 Pini 串 —— 创建走 `bk_str_handle_new`，声明随它条件出现。
+    private var usesStringHandleNew = false
+
+    /// 导出回调的适配 thunk：按 C 签名缓存名字，定义攒到转发层之后一次写出。
+    /// 同名同签名的两个导出函数共用一份 —— thunk 只搬参数，与被调方是谁无关。
+    private var exportCallbackThunks: [String: String] = [:]
+    private var exportCallbackThunkDefs: [String] = []
+    private var exportCallbackThunkCount = 0
+
     /// 是否把调度器绑定交给过运行时；declare 随它条件出现，只有真发过的模块才带。
     /// 它是「派发点会取用默认调度实例」的唯一征兆，与让出族那几个开关同规。
     private var usesSchedBinding = false
@@ -299,6 +319,9 @@ public final class IREmitter {
 
     public func emit(module: IRModule) throws -> String {
         refusals.removeAll()
+        /// 已由 `[..|foreign]` 声明过的符号：同一模块里再 `declare` 一次，LLVM 判成重定义。
+        /// 条件化的运行时段声明据此让位 —— 用户显式声明运行时段入口是合法写法（如 `bk_str_handle_new`）。
+        let foreignDeclaredSymbols = Set(module.foreigns.flatMap { $0.funcs.map(\.name) })
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
         header += Builtins.declaration(for: "bk_double_to_string")
@@ -361,13 +384,47 @@ public final class IREmitter {
         /// libc ones by the fixed header above, runtime shims by the conditional tail below.
         let predeclared: Set<String> = ["printf", "malloc", "free", "strlen", "memcpy"]
         let runtimeShims: Set<String> = ["cstr"]
+        /// 外部声明是文件级的，两个文件各写一遍是常态，重复 `declare` 在 clang 眼里是重定义。
+        /// 去重按整条声明：同名同签名只发一次，同名不同签名两条都留，交给 clang 报错 ——
+        /// 那是配置错，不能由「先到先得」吞掉。
+        var emittedForeignDeclarations: Set<String> = []
+        /// FFI 签名的 LLVM 拼写。`cString` 用 `i8*`，与调用点传的串值同形；
+        /// 其余指针是 `ptr`。两处拼写必须一致，否则实参与形参对不上。
+        func llvmSpelling(of type: FFIType) -> String {
+            switch type {
+            case .i8, .u8: return "i8"
+            case .i32: return "i32"
+            case .i64, .u64: return "i64"
+            case .f64: return "double"
+            case .boolean: return "i1"
+            case .pointer: return "ptr"
+            case .cString: return "i8*"
+            /// 回调在 declare 上就是裸指针：C 的函数指针参数在 LLVM 里没有函数类型。
+            case .callback: return "ptr"
+            /// 句柄是不透明指针：C 侧只搬它，不解读布局。
+            case .stringHandle: return "ptr"
+            }
+        }
         for foreignBlock in module.foreigns {
             for func_ in foreignBlock.funcs
             where !predeclared.contains(func_.name) && !runtimeShims.contains(func_.name) {
                 let symbol = IRName.mangle(func_.name)
-                let params = func_.paramTypes.map { $0.llvmSpelling }.joined(separator: ", ")
-                let ret = func_.returnType?.llvmSpelling ?? "void"
-                header += "declare \(ret) @\(symbol)(\(params))\n"
+                var params = func_.params.map { llvmSpelling(of: $0) }.joined(separator: ", ")
+                /// C 变参在 LLVM 里写成尾部 `...`：有固定前缀时前缀在前，没有前缀时只剩 `...`。
+                if func_.isVariadic {
+                    params += params.isEmpty ? "..." : ", ..."
+                }
+                let ret = func_.returnType.map { llvmSpelling(of: $0) } ?? "void"
+                let declaration = "declare \(ret) @\(symbol)(\(params))"
+                guard emittedForeignDeclarations.insert(declaration).inserted else { continue }
+                header += declaration + "\n"
+            }
+            /// 数据符号是全局存储本身：取址就是这个名字，读写成 load / store。
+            for entry in foreignBlock.data {
+                let declaration =
+                    "@\(IRName.mangle(entry.name)) = external global \(entry.type.llvmSpelling)"
+                guard emittedForeignDeclarations.insert(declaration).inserted else { continue }
+                header += declaration + "\n"
             }
         }
         header += "\n"
@@ -375,6 +432,8 @@ public final class IREmitter {
         bodyIR = ""
         stringConstantDefs = []
         stringConstants = [:]
+        errorCodeConstantDefs = []
+        errorCodeTableNames = [:]
         anonymousStringConstantCount = 0
         usesStrCmp = false
         usesLazyRef = false
@@ -432,6 +491,15 @@ public final class IREmitter {
         for function in module.functions {
             moduleFunctions[Self.mangle(function.name)] = function
         }
+        variadicForeignFunctions = [:]
+        for block in module.foreigns {
+            for entry in block.funcs where entry.isVariadic {
+                let params = entry.params.map { llvmSpelling(of: $0) }.joined(separator: ", ")
+                variadicForeignFunctions[Self.mangle(entry.name)] = (
+                    entry.params.count, params.isEmpty ? "(...)" : "(\(params), ...)"
+                )
+            }
+        }
         for typeDecl in module.types {
             for method in typeDecl.methods {
                 moduleFunctions[Self.mangle(method.name)] = method
@@ -474,6 +542,12 @@ public final class IREmitter {
             }
         }
 
+        /// export 块的 `|c` 条目：函数补同名转发，量交出盒的字段区首地址。
+        /// 位置在所有 Pini 函数之后：转发体只是调用，前向引用本来也成立，但这样读起来与产物同序。
+        if let export = module.export {
+            emitExportStubs(export)
+        }
+
         //  重要  测试模式：合成驱动器与入口。位置**必须在下面组 `tail` 之前** ——
         // 驱动器与报告片段都经 `registerStringConstant` 登记常量，而 `tail` 正是把已登记的
         // 常量刷出去的那一刻 ⇒ 排在它之后就一个常量都刷不出来（产物里只剩裸 `@.strN` 引用）。
@@ -489,6 +563,9 @@ public final class IREmitter {
             tail += "@\(Self.testMsgGlobal) = internal global ptr null\n"
         }
         for def in stringConstantDefs {
+            tail += def + "\n"
+        }
+        for def in errorCodeConstantDefs {
             tail += def + "\n"
         }
         if usesStrCmp {
@@ -587,12 +664,24 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_cancel_error_create")
             tail += Builtins.declaration(for: "bk_error_is_cancel")
             tail += Builtins.declaration(for: "bk_error_message")
+            // 枚举错误：把载荷的用例 tag 或上类型基址，得到一个带码的错误对象。
+            tail += Builtins.declaration(for: "bk_error_from_enum")
+            tail += Builtins.declaration(for: "bk_error_with_code")
+            tail += Builtins.declaration(for: "bk_error_code")
+            // `calc_strerror` 的查表入口：码表与名字表由发射层按导出面生成，运行时只负责扫。
+            tail += Builtins.declaration(for: "bk_error_lookup")
         }
         if usesProgramBase {
             tail += Builtins.declaration(for: "bk_set_program_base")
         }
         if usesCStrShim {
             tail += Builtins.declaration(for: "bk_cstr")
+        }
+        if usesCStrRetrieval {
+            tail += Builtins.declaration(for: "bk_str_from_cstr")
+        }
+        if usesStringHandleNew, !foreignDeclaredSymbols.contains("bk_str_handle_new") {
+            tail += Builtins.declaration(for: "bk_str_handle_new")
         }
         if usesCapturedSlots {
             tail += Builtins.declaration(for: "bk_slot_alloc")
@@ -2247,7 +2336,15 @@ public final class IREmitter {
                     handle: args[0], timeout: args[1], type: type, okType: okType)
             }
 
-            let argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
+            /// 变参尾的实参要在调用点按 C 的默认实参提升改写形状；固定前缀原样传。
+            let variadic = variadicForeignFunctions[Self.mangle(function)]
+            let argList: String
+            if let variadic {
+                argList = emitVariadicArguments(
+                    arguments: arguments, values: args, fixedCount: variadic.fixedCount)
+            } else {
+                argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
+            }
             /// 字符内建由解释器侧的 `RuntimeOps.characterBuiltins` 按名回答，这里接到 `bk_<名字>` 运行时段上；
             /// 表即白名单，与降载侧同一条规矩 ⇒ 不存在「降下来了却没人答」的名字。
             ///  行不通  谓词不用 C 的 `_Bool`（零扩展的 i8）而回 `i32`：本层 Bool 是 i1，收敛在这里显式做掉。
@@ -2306,6 +2403,14 @@ public final class IREmitter {
             if function == "cstr" {
                 usesCStrShim = true
                 symbolName = "bk_cstr"
+            } else if function == "c字符串" {
+                usesCStrRetrieval = true
+                symbolName = "bk_str_from_cstr"
+            } else if function == IRLowerer.stringHandleMakeName {
+                /// 句柄位上的 Pini 串：运行时段复制一份并记 +1，指针交给 C。
+                /// 名字带点 ⇒ 降载层产出，不可能是用户函数。
+                usesStringHandleNew = true
+                symbolName = "bk_str_handle_new"
             } else if function == "sleep" {
                 // `sleep` 是并发内建里**唯一**被降载成一条普通调用、却又必须由后端实现的：
                 // 它按片睡、每片查一次取消 ⇒ 落点是原语层的运行时符号，不是 libc 的睡眠
@@ -2353,11 +2458,15 @@ public final class IREmitter {
             let callee = "@\(symbolName)"
             if let returnType = returnType {
                 let temp = builder.freshTemp()
-                bodyIR += " \(temp) = call \(returnType.llvmSpelling) \(callee)(\(argList))\n"
+                let head =
+                    variadic.map { "\(returnType.llvmSpelling) \($0.callType)" }
+                    ?? returnType.llvmSpelling
+                bodyIR += " \(temp) = call \(head) \(callee)(\(argList))\n"
                 releaseCallArguments(args)
                 return IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
             }
-            bodyIR += " call void \(callee)(\(argList))\n"
+            let head = variadic.map { "void \($0.callType)" } ?? "void"
+            bodyIR += " call \(head) \(callee)(\(argList))\n"
             releaseCallArguments(args)
             return IRValue(llvmType: "void", ssaName: "")
 
@@ -2373,10 +2482,16 @@ public final class IREmitter {
         case .functionValue(let functionName, _):
             return emitFunctionValue(functionName: functionName)
 
+        case .cFunctionAddress(let functionName, _):
+            /// C 要的是这个函数的符号本身：不包适配器，符号名就是 C 侧会拿到的地址。
+            return IRValue(llvmType: "ptr", ssaName: "@\(Self.mangle(functionName))")
+
         case .indirectCall(let callee, let arguments, let returnType):
             return emitIndirectCall(callee: callee, arguments: arguments, returnType: returnType)
 
-        case .resultConstruct(let isOk, let payload, let type):
+        case .resultConstruct(
+            let isOk, let payload, let errorBaseCode, let errorTagged, let errorCodes, let type
+        ):
             guard case .result = type else {
                 fatalError("IREmitter: resultConstruct type is not a Result (IRLowerer guarantees)")
             }
@@ -2388,7 +2503,26 @@ public final class IREmitter {
             if isOk {
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
             } else {
-                let word = widenToWord(p)
+                var word = widenToWord(p)
+                // 枚举载荷（含散列档）走 bk_error_from_enum：默认码 = 基址或 tag，散列档查码表。
+                // 非枚举载体没有 tag 槽，码就是基址；固定码 1/2 的载荷已造好盒子，原样入槽。
+                if errorCodes != nil || errorTagged {
+                    if errorBaseCode >= 0x0100 {
+                        usesErrorShims = true
+                        let boxed = builder.freshTemp()
+                        let table = errorCodes.map { errorCodeTablePointer($0) } ?? "null"
+                        bodyIR +=
+                            " \(boxed) = call i64 @bk_error_from_enum(i64 \(word.ssaName),"
+                            + " i32 \(errorBaseCode), ptr null, ptr \(table))\n"
+                        word = IRValue(llvmType: "i64", ssaName: boxed)
+                    }
+                } else if errorBaseCode >= 0x0100 {
+                    usesErrorShims = true
+                    let boxed = builder.freshTemp()
+                    bodyIR +=
+                        " \(boxed) = call i64 @bk_error_with_code(i32 \(errorBaseCode))\n"
+                    word = IRValue(llvmType: "i64", ssaName: boxed)
+                }
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
             }
             return IRValue(llvmType: aggregate, ssaName: filled)
@@ -2625,6 +2759,9 @@ public final class IREmitter {
 
         case .addressOfVar(let name, let type):
             return emitAddressOfVar(name: name, type: type)
+
+        case .foreignDataAddress(let name, _):
+            return IRValue(llvmType: "ptr", ssaName: "@\(IRName.mangle(name))")
 
         case .printMulti(let arguments):
             return emitPrintMulti(arguments: arguments)
@@ -2967,7 +3104,7 @@ public final class IREmitter {
             .nominal:
             return false
         case .result, .future, .array, .optional, .enumeration, .dict,
-            .lazyRef, .set, .tuple, .function:
+            .lazyRef, .set, .tuple, .function, .cFunction, .stringHandle:
             return true
         }
     }
@@ -3172,6 +3309,218 @@ public final class IREmitter {
         }
         let ignored = builder.freshTemp()
         bodyIR += " \(ignored) = call i32 @bk_task_bind_sched(ptr \(handle), ptr \(binding))\n"
+    }
+
+    // MARK: - export 块的 C 面
+
+    /// 导出转发：函数项补一层同名转发，量项交出盒的字段区首地址，再补两个生命周期符号。
+    /// 转发体只做搬运 —— Pini 函数已是朴素 ABI，签名与 C 同形，不需要新的调用约定。
+    private func emitExportStubs(_ block: IRExportBlock) {
+        for function in block.functions { emitExportFunction(function) }
+        for storage in block.storages { emitExportGetter(storage) }
+        emitExportLifecycle(block)
+        emitExportStrerror(block)
+        for definition in exportCallbackThunkDefs { bodyIR += definition }
+    }
+
+    /// C 入口上的形参拼写：函数指针写成裸 `ptr`（C 的 `int32_t (*)(int32_t)` 在 LLVM 里就是指针），
+    /// 其余与值的拼写一致。
+    private static func cEntrySpelling(_ type: IRType) -> String {
+        if case .function = type { return "ptr" }
+        return type.llvmSpelling
+    }
+
+    /// 导出回调的适配 thunk：`code(env, args)` 里 env 就是 C 的那个函数地址，
+    /// thunk 直接 `call ret %env(args)`。每个不同的签名一份，按签名缓存。
+    private func exportCallbackThunk(_ type: IRType) -> String {
+        guard case .function(let params, let returnType, _) = type else {
+            fatalError("IREmitter: export callback thunk requires a function type")
+        }
+        let ret = returnType?.llvmSpelling ?? "void"
+        let key = ret + "|" + params.map { $0.llvmSpelling }.joined(separator: ",")
+        if let existing = exportCallbackThunks[key] { return existing }
+        let name = "__pini_cb_\(exportCallbackThunkCount)"
+        exportCallbackThunkCount += 1
+        var entry = ["ptr %env"]
+        var forwarded: [String] = []
+        for (index, param) in params.enumerated() {
+            entry.append("\(param.llvmSpelling) %c\(index)")
+            forwarded.append("\(param.llvmSpelling) %c\(index)")
+        }
+        var definition = "define \(ret) @\(name)(\(entry.joined(separator: ", "))) {\n"
+        let argumentList = forwarded.joined(separator: ", ")
+        if returnType != nil {
+            definition += " %cb.r\(exportCallbackThunkCount) = call \(ret) %env(\(argumentList))\n"
+            definition += " ret \(ret) %cb.r\(exportCallbackThunkCount)\n"
+        } else {
+            definition += " call void %env(\(argumentList))\n ret void\n"
+        }
+        definition += "}\n\n"
+        exportCallbackThunkDefs.append(definition)
+        exportCallbackThunks[key] = name
+        return name
+    }
+
+    /// 一个导出函数的转发体。取用位在边界内填默认实例，交给被调的是副本（与取用点同语义），
+    /// 故盒本身不外借 —— 被调方释放形参时不会碰到进程级单例。
+    private func emitExportFunction(_ function: IRExportFunction) {
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = ""
+        var signature: [String] = []
+        for (index, type) in function.cParamTypes.enumerated() {
+            signature.append("\(Self.cEntrySpelling(type)) %a\(index)")
+        }
+        let statusPayload = function.statusPayload
+        if statusPayload != nil { signature.append("ptr %out") }
+        let returnSpelling =
+            statusPayload != nil ? "i32" : (function.returnType?.llvmSpelling ?? "void")
+        bodyIR = "define \(returnSpelling) @\(function.cName)(\(signature.joined(separator: ", "))) {\n"
+
+        var args: [String] = []
+        /// 借出的 `String` 形参在转发层复制一份：C 的缓冲归调用方，Pini 侧存下它就得自己持有。
+        var borrowed: [String] = []
+        var valueIndex = 0
+        for param in function.params {
+            if param.isUsing {
+                let instance = emitGivenInstance(type: param.type)
+                args.append("\(instance.llvmType) \(instance.ssaName)")
+            } else {
+                if case .string = param.type {
+                    usesStringRefcount = true
+                    let copy = builder.freshTemp()
+                    bodyIR += " \(copy) = call i8* @bk_str_dup(i8* %a\(valueIndex))\n"
+                    borrowed.append(copy)
+                    args.append("i8* \(copy)")
+                } else if case .function = param.type {
+                    /// C 传进来的是裸地址，Pini 要的是胖指针：配一份适配 thunk，环境位直接放那个地址，
+                    /// thunk 把 env 当函数调。转发层只搬指针，不碰它的生命周期。
+                    let thunk = exportCallbackThunk(param.type)
+                    let code = builder.freshTemp()
+                    bodyIR += " \(code) = insertvalue { ptr, ptr } undef, ptr @\(thunk), 0\n"
+                    let fat = builder.freshTemp()
+                    bodyIR +=
+                        " \(fat) = insertvalue { ptr, ptr } \(code), ptr %a\(valueIndex), 1\n"
+                    args.append("{ ptr, ptr } \(fat)")
+                } else {
+                    args.append("\(param.type.llvmSpelling) %a\(valueIndex)")
+                }
+                valueIndex += 1
+            }
+        }
+        let call = "@\(Self.mangle(function.pinName))(\(args.joined(separator: ", ")))"
+
+        if let payload = statusPayload, let resultType = function.returnType?.llvmSpelling {
+            /// `^T` 的 C 形态：状态码返回、载荷走出参。标签 0 为 ok，与 `resultConstruct` 同一约定。
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = call \(resultType) \(call)\n"
+            releaseBorrowedStrings(borrowed)
+            let tag = builder.freshTemp()
+            bodyIR += " \(tag) = extractvalue \(resultType) \(result), 0\n"
+            let isOk = builder.freshTemp()
+            bodyIR += " \(isOk) = icmp eq i64 \(tag), 0\n"
+            let okLabel = "export.ok.\(builder.freshLabel())"
+            let errLabel = "export.err.\(builder.freshLabel())"
+            let doneLabel = "export.done.\(builder.freshLabel())"
+            bodyIR += " br i1 \(isOk), label %\(okLabel), label %\(errLabel)\n"
+            bodyIR += "\(okLabel):\n"
+            let value = builder.freshTemp()
+            bodyIR += " \(value) = extractvalue \(resultType) \(result), 1\n"
+            bodyIR += " store \(payload.llvmSpelling) \(value), ptr %out\n"
+            bodyIR += " br label %\(doneLabel)\n"
+            bodyIR += "\(errLabel):\n"
+            // 失败码从错误对象上取：Error/CancelError 是 1/2，枚举错误是「基址或 tag」。
+            usesErrorShims = true
+            let errWord = builder.freshTemp()
+            bodyIR += " \(errWord) = extractvalue \(resultType) \(result), 2\n"
+            let errCode = builder.freshTemp()
+            bodyIR += " \(errCode) = call i32 @bk_error_code(i64 \(errWord))\n"
+            bodyIR += " br label %\(doneLabel)\n"
+            bodyIR += "\(doneLabel):\n"
+            let code = builder.freshTemp()
+            bodyIR += " \(code) = phi i32 [ 0, %\(okLabel) ], [ \(errCode), %\(errLabel) ]\n"
+            bodyIR += " ret i32 \(code)\n"
+        } else if let returnType = function.returnType {
+            let result = builder.freshTemp()
+            bodyIR += " \(result) = call \(returnType.llvmSpelling) \(call)\n"
+            releaseBorrowedStrings(borrowed)
+            bodyIR += " ret \(returnType.llvmSpelling) \(result)\n"
+        } else {
+            bodyIR += " call void \(call)\n"
+            releaseBorrowedStrings(borrowed)
+            bodyIR += " ret void\n"
+        }
+        bodyIR += "}\n\n"
+        bodyIR = savedBody + bodyIR
+    }
+
+    /// 转发层复制品的归还点：调用一返回就放，早于任何分支 —— 三条出口都要走到；
+    /// 被调方若把串存进字段，那份 +1 是它自己 retain 的。
+    private func releaseBorrowedStrings(_ copies: [String]) {
+        for copy in copies { bodyIR += " call void @bk_str_release(i8* \(copy))\n" }
+    }
+
+    /// 给定块的取址函数：物化由 `bk_given_get` 负责，返回的是盒的字段区首地址。
+    /// C 看到的结构体只镜像字段，箱头在指针之前，调用方不需要知道它多宽。
+    private func emitExportGetter(_ storage: IRExportStorage) {
+        let type = IRType.nominal(name: storage.typeName, isObject: false)
+        guard let aggregate = type.nominalAggregateSpelling else { return }
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = "define ptr @\(storage.getterName)() {\n"
+        let boxed = emitGivenBoxPointer(type: type)
+        let payload = builder.freshTemp()
+        bodyIR +=
+            builder.fmtGEP(
+                name: payload, aggregate: aggregate, base: boxed.ssaName,
+                indices: [0, layout.headerSlotCount]) + "\n"
+        bodyIR += " ret ptr \(payload)\n}\n\n"
+        bodyIR = savedBody + bodyIR
+    }
+
+    /// 两个生命周期符号。`init` 把每个导出的给定块物化一遍，否则 C 可能在首次取用之前读到空槽；
+    /// `shutdown` 空实现，盒持有到进程结束，但符号要留 —— 后补必需调用是破坏性 ABI 变更。
+    private func emitExportLifecycle(_ block: IRExportBlock) {
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = "define void @\(block.initName)() {\n"
+        for storage in block.storages {
+            _ = emitGivenBoxPointer(type: IRType.nominal(name: storage.typeName, isObject: false))
+        }
+        bodyIR += " ret void\n}\n\n"
+        bodyIR += "define void @\(block.shutdownName)() {\n ret void\n}\n\n"
+        bodyIR = savedBody + bodyIR
+    }
+
+    /// 码 → 名字：两张模块级常量（码、名字指针）加一层查表转发。名字取条目上的 `类型.用例`，
+    /// 与头文件注释同源；固定码 `0`/`1`/`2` 由运行时答，不进表。
+    private func emitExportStrerror(_ block: IRExportBlock) {
+        let entries = block.errorCodes
+        var codePointer = "null"
+        var namePointer = "null"
+        if !entries.isEmpty {
+            let codeName = "@__pini_error_codes_\(block.name)"
+            let nameName = "@__pini_error_names_\(block.name)"
+            let codes = entries.map { "i32 \($0.code)" }.joined(separator: ", ")
+            errorCodeConstantDefs.append(
+                "\(codeName) = private constant [\(entries.count) x i32] [\(codes)]")
+            let names = entries.map { "ptr \(registerStringConstant($0.display).name)" }
+                .joined(separator: ", ")
+            errorCodeConstantDefs.append(
+                "\(nameName) = private constant [\(entries.count) x ptr] [\(names)]")
+            codePointer = codeName
+            namePointer = nameName
+        }
+        builder.reset()
+        let savedBody = bodyIR
+        bodyIR = "define ptr @\(block.name)_strerror(i32 %code) {\n"
+        usesErrorShims = true
+        let result = builder.freshTemp()
+        bodyIR +=
+            " \(result) = call ptr @bk_error_lookup(i32 %code, ptr \(codePointer),"
+            + " ptr \(namePointer), i32 \(entries.count))\n"
+        bodyIR += " ret ptr \(result)\n}\n\n"
+        bodyIR = savedBody + bodyIR
     }
 
     /// 取（并在首次需要时定义）某类型的存放位符号。
@@ -3991,6 +4340,43 @@ public final class IREmitter {
         for value in values { releaseHeldTemporary(value) }
     }
 
+    /// C 变参调用点的实参表。固定前缀原样传，变参尾按 C 的默认实参提升改写形状。
+    /// 这件事必须在这里做：LLVM 看到的是 IR，不是源码，`clang` 替我们补不了。
+    private func emitVariadicArguments(
+        arguments: [IRExpr], values: [IRValue], fixedCount: Int
+    ) -> String {
+        var parts: [String] = []
+        for (index, value) in values.enumerated() {
+            if index < fixedCount {
+                parts.append("\(value.llvmType) \(value.ssaName)")
+            } else {
+                parts.append(promotedVariadicArgument(value, type: arguments[index].staticType))
+            }
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// 一个变参实参的提升：比 `int` 窄的整数升到 `i32`（符号性决定 `sext` / `zext`），
+    /// `Bool` 从 `i1` 零扩展。宽度已经够的形状原样传，表外的形状由降载层拦住，到不了这里。
+    private func promotedVariadicArgument(_ value: IRValue, type: IRType?) -> String {
+        switch type {
+        case .boolean:
+            let temp = builder.freshTemp()
+            bodyIR += " \(temp) = zext i1 \(value.ssaName) to i32\n"
+            return "i32 \(temp)"
+        case .i8:
+            let temp = builder.freshTemp()
+            bodyIR += " \(temp) = sext i8 \(value.ssaName) to i32\n"
+            return "i32 \(temp)"
+        case .u8:
+            let temp = builder.freshTemp()
+            bodyIR += " \(temp) = zext i8 \(value.ssaName) to i32\n"
+            return "i32 \(temp)"
+        default:
+            return "\(value.llvmType) \(value.ssaName)"
+        }
+    }
+
     /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`bk_handle_*` / `bk_nominal_*` /
     /// `bk_str_*`），归还规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
     /// 返回 nil = 该类型不在计数族（标量 · 外部指针 · 聚合 · `LazyRef` 缺口 …）。
@@ -4761,6 +5147,19 @@ public final class IREmitter {
         let entry = (name: name, length: length)
         stringConstants[value] = entry
         return entry
+    }
+
+    /// 登记一张错误码表（按用例 tag 索引），返回全局符号名。同内容的表只发一次：
+    /// 同一 enum 的多个 `err(...)` 构造点共用它，产物里不会出现 N 份相同的数组。
+    private func errorCodeTablePointer(_ codes: [Int32]) -> String {
+        let key = codes.map(String.init).joined(separator: ",")
+        if let existing = errorCodeTableNames[key] { return existing }
+        let name = "@__pini_err_codes_\(errorCodeTableNames.count)"
+        let values = codes.map { "i32 \($0)" }.joined(separator: ", ")
+        errorCodeConstantDefs.append(
+            "\(name) = private constant [\(codes.count) x i32] [\(values)]")
+        errorCodeTableNames[key] = name
+        return name
     }
 
     private func emitStringConstant(_ value: String) -> IRValue {

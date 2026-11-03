@@ -139,6 +139,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     /// A map, not a set: a shim miss falls to a raw C binding, and the thunk needs the declared library and signature.
     private var foreignDecls: [String: (library: String, function: IRForeignFunction)] = [:]
 
+    /// 外部数据符号的声明：库名、类型、只读。地址在装载期解析一次，与函数同一时机。
+    private var foreignDataDecls: [String: (library: String, type: IRType, isReadonly: Bool)] = [:]
+    /// 已解析的符号地址。与声明分开：装载期只填这张表，求值只读它，两者生命周期不同。
+    private var foreignDataAddresses: [String: RawPointerValue] = [:]
+
     /// Library handles for raw C bindings, cached by library name.
     /// Per engine, not process-wide: a shared handle table would make "when is it safe to close" a question with no owner.
     /// Two engines, two caches, one resolution routine.
@@ -259,9 +264,14 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         // would be ambiguous and the semantic layer already rejects that; were
         // it ever to arrive, last-wins is the rule the function tables use.
         foreignDecls = [:]
+        foreignDataDecls = [:]
         for block in module.foreigns {
             for function in block.funcs {
                 foreignDecls[function.name] = (library: block.name, function: function)
+            }
+            for entry in block.data {
+                foreignDataDecls[entry.name] = (
+                    library: block.name, type: entry.type, isReadonly: entry.isReadonly)
             }
         }
         try resolveForeignsEagerly()
@@ -277,11 +287,51 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     /// The interpreter fails at registration with `symbolNotFound`; resolving only at call sites would defer that failure.
     /// `FFILoader` caches handles, so the call sites do not repeat the work.
     private func resolveForeignsEagerly() throws {
-        for (name, foreign) in foreignDecls where RuntimeOps.libcShims[name] == nil {
-            _ = try ffiLoader.resolve(
-                library: foreign.library, symbol: name,
+        for (name, foreign) in foreignDecls
+        where RuntimeOps.libcShim(named: name, params: foreign.function.params) == nil {
+            do {
+                _ = try ffiLoader.resolve(
+                    library: foreign.library, symbol: name,
+                    searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
+                )
+            } catch let error as RuntimeError {
+                /// 句柄符号只活在运行时段里，`pini` 进程解析不到是**预期**而非配置错。
+                /// 让它过：真被调用时，调用点报 E5-020（换通道），比这里报「库里没有这个符号」准确。
+                let mentionsHandle =
+                    foreign.function.params.contains(.stringHandle)
+                    || foreign.function.returnType == .stringHandle
+                guard case .symbolNotFound = error, mentionsHandle else { throw error }
+            }
+        }
+        /// 数据符号没有 shim 表可让位：声明了就必须解析得到，否则读到的地址无处可来。
+        foreignDataAddresses = [:]
+        for (name, entry) in foreignDataDecls {
+            let symbol = try ffiLoader.resolve(
+                library: entry.library, symbol: name,
                 searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
             )
+            foreignDataAddresses[name] = RawPointerValue(
+                pointer: symbol, elemType: annotation(for: entry.type), freesMemory: false)
+        }
+    }
+
+    /// 外部数据符号的字节读写按声明宽度走，而指针原语吃 `TypeAnnotation`。
+    /// 只映射 C 兼容标量与指针：其余类型在语义期已被 FFI 顶层校验拒掉，落到 nil 即报错。
+    private func annotation(for type: IRType) -> TypeAnnotation? {
+        let loc = IRExecutor.noLocation
+        switch type {
+        case .i8: return .simple(name: "I8", location: loc)
+        case .u8: return .simple(name: "U8", location: loc)
+        case .i32: return .simple(name: "I32", location: loc)
+        case .i64: return .simple(name: "I64", location: loc)
+        case .u64: return .simple(name: "U64", location: loc)
+        case .f64: return .simple(name: "F64", location: loc)
+        case .boolean: return .simple(name: "Bool", location: loc)
+        case .pointer(let element):
+            guard let inner = annotation(for: element) else { return nil }
+            return .pointer(element: inner, location: loc)
+        default:
+            return nil
         }
     }
 
@@ -389,35 +439,36 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             // The libc shim table comes first — shared with the AST channel, one definition for two engines.
             // Otherwise it is a raw C binding: `dlsym` against the block name, then a per-signature thunk over the address.
             if let foreign = foreignDecls[name] {
+                /// 变参在解释器上没有实现路径：转发靠把地址位转成固定槽位，
+                /// 而 Apple arm64 把变参放在栈上，位转调用读到的是垃圾。拒绝要早于求值实参。
+                if foreign.function.isVariadic {
+                    throw RuntimeError.variadicCallUnsupported(
+                        name: name, location: IRExecutor.noLocation)
+                }
+                /// 句柄的符号只活在运行时段里，`pini` 进程装载不到它 —— 与变参同规，
+                /// 拒绝早于求值实参：要么换通道，要么把句柄留在 C 侧。
+                if foreign.function.params.contains(.stringHandle)
+                    || foreign.function.returnType == .stringHandle
+                {
+                    throw RuntimeError.stringHandleCallUnsupported(
+                        name: name, location: IRExecutor.noLocation)
+                }
                 let args = try arguments.map { try evaluate($0) }
-                if let shim = RuntimeOps.libcShims[name] { return try shim(args) }
+                if let shim = RuntimeOps.libcShim(named: name, params: foreign.function.params) {
+                    return try shim(args)
+                }
                 let symbol = try ffiLoader.resolve(
                     library: foreign.library, symbol: name,
                     searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
                 )
                 let thunk = try ForeignThunk.make(
                     symbol: symbol, name: name,
-                    paramTypes: try foreign.function.paramTypes.map { type in
-                        guard let annotation = ForeignThunk.annotation(for: type) else {
-                            throw RuntimeError.invalidOperation(
-                                reason: "IR executor: foreign callee \(name) has a parameter "
-                                    + "type that is not a C top-level type",
-                                location: IRExecutor.noLocation
-                            )
-                        }
-                        return annotation
-                    },
-                    returnTypes: try foreign.function.returnType.map { type -> [TypeAnnotation] in
-                        guard let annotation = ForeignThunk.annotation(for: type) else {
-                            throw RuntimeError.invalidOperation(
-                                reason: "IR executor: foreign callee \(name) has a return "
-                                    + "type that is not a C top-level type",
-                                location: IRExecutor.noLocation
-                            )
-                        }
-                        return [annotation]
-                    } ?? [],
-                    location: IRExecutor.noLocation
+                    params: foreign.function.params,
+                    returnType: foreign.function.returnType,
+                    location: IRExecutor.noLocation,
+                    invokeCallback: { [unowned self] function, values in
+                        try self.callFunctionValue(function, args: values)
+                    }
                 )
                 return try thunk(args)
             }
@@ -441,6 +492,24 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     )
                 }
             }
+            // 取回：`*U8 → String`。与 LLVM 的 `bk_str_from_cstr` 同一条语义，实现留在 `RuntimeOps`。
+            if name == "c字符串" {
+                let args = try arguments.map { try evaluate($0) }
+                guard args.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IR executor: c字符串 expects exactly one argument",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                return try RuntimeOps.stringFromCString(args[0])
+            }
+            /// 句柄构造只由降载层在句柄形参位产出；能走到这里说明外层调用没被识别成外部函数。
+            /// 仍然按「句柄只有运行时段能给」报， 行不通  退回「未知函数」。
+            if name == IRLowerer.stringHandleMakeName {
+                throw RuntimeError.stringHandleCallUnsupported(
+                    name: "StringHandle", location: IRExecutor.noLocation)
+            }
+
             // The character builtins, answered from the same implementation
             // the AST channel calls -- one definition, two engines.
             if let character = RuntimeOps.characterBuiltins[name] {
@@ -736,7 +805,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
         // MARK: Optional / Result / enum values
 
-        case .resultConstruct(let isOk, let payload, _):
+        case .resultConstruct(let isOk, let payload, _, _, _, _):
             // The one `makeResult`, so the two channels cannot disagree on what a Result *is*.
             // The err payload is one type-erased machine word on the LLVM side; reads go through the same `pini.err.message` name.
             return RuntimeOps.makeResult(
@@ -813,25 +882,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             )
 
         case .functionValue(let name, _):
-            // The lowerer builds this node only for a name it resolved in the
-            // module's signature table, so a miss here means the module and the
-            // engine disagree — not a program error to be tolerated quietly.
-            guard let target = functions[name] else {
-                throw RuntimeError.invalidOperation(
-                    reason: "IR executor: function value '\(name)' names no module-level "
-                        + "function in this module",
-                    location: IRExecutor.noLocation
-                )
-            }
-            // A named function closes over nothing: the interpreter registers its value against the global environment.
-            // This mirrors that rather than inventing a creation-point environment there is none of.
-            return makeFunctionValue(
-                name: name,
-                paramNames: target.params.map { $0.name },
-                body: target.body,
-                returnLabels: IRExecutor.declaredReturnLabels(target.returnType),
-                closure: globalEnv
-            )
+            return try namedFunctionValue(name: name)
+
+        case .cFunctionAddress(let name, _):
+            /// 回调实参：C 要的是地址，解释器交出去的是可调用体 —— 地址由 `CallbackBridge` 的桩提供，
+            /// 绑定时再把这个值挂上去。这里与 `functionValue` 同一个构造，不另造一套。
+            return try namedFunctionValue(name: name)
 
         case .indirectCall(let callee, let arguments, _):
             // Callee before arguments, the interpreter's own order at its indirect-call arm.
@@ -1058,6 +1114,14 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             }
             try RuntimeOps.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
             return .null
+
+        case .foreignDataAddress(let name, _):
+            /// 符号地址本身，不是快照：写进去的值外部可见，外部写的值这里读得到。
+            guard let address = foreignDataAddresses[name] else {
+                throw RuntimeError.invalidOperation(
+                    reason: "外部数据符号 '\(name)' 没有解析到地址", location: IRExecutor.noLocation)
+            }
+            return .rawPointer(address)
 
         case .addressOfVar(let name, _):
             // Interpreter parity: `&x` snapshots the value into fresh memory, so a write through the pointer misses the variable.
@@ -2067,6 +2131,27 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             parent: globalEnv,
             args: args,
             name: function.name
+        )
+    }
+
+    /// 具名函数的运行时值。`functionValue` 与 `cFunctionAddress` 都从这里取：
+    /// 一个进闭包调用协议，一个交给回调桥当可调用体 —— 「这个函数是谁」只有一次查表。
+    private func namedFunctionValue(name: String) throws -> Value {
+        guard let target = functions[name] else {
+            throw RuntimeError.invalidOperation(
+                reason: "IR executor: function value '\(name)' names no module-level "
+                    + "function in this module",
+                location: IRExecutor.noLocation
+            )
+        }
+        // A named function closes over nothing: the interpreter registers its value against the global environment.
+        // This mirrors that rather than inventing a creation-point environment there is none of.
+        return makeFunctionValue(
+            name: name,
+            paramNames: target.params.map { $0.name },
+            body: target.body,
+            returnLabels: IRExecutor.declaredReturnLabels(target.returnType),
+            closure: globalEnv
         )
     }
 

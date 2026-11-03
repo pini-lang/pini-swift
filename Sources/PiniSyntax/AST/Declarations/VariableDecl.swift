@@ -26,7 +26,7 @@ public struct Module: Equatable, ASTNode, Sendable {
     public let declarations: [TopLevelDecl]
     /// P4 模块化：原始 `import` 声明（仅暂存，不解析 / 不 enforce）。
     public let imports: [ImportDecl]
-    /// P4 模块化：原始 `export` 声明（仅暂存，不解析 / 不 enforce）。
+    /// export 块：`|pini` 条目沿用可见性语义，`|c` 条目由类型检查与降载消费。
     public let exports: [ExportDecl]
     public let location: SourceLocation
 

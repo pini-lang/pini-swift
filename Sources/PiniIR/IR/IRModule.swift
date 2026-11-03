@@ -1,4 +1,5 @@
 import Foundation
+import PiniSemantics
 
 /// A lowered function. `returnType` nil = void; slice set allows at most one
 /// scalar return type (tuple returns are a later grid).
@@ -97,18 +98,78 @@ public struct IREnumDecl: Equatable {
     }
 }
 
-/// One foreign function binding (G14, FFI 子系统): a signature-only entry
-/// from a `[库|foreign]` block. The emitter forwards its declare; the call
-/// site is a plain `.call` resolved through the signature table.
+/// One foreign function binding (G14, FFI 子系统): a signature-only entry from a `[库|foreign]` block.
+/// The emitter forwards its declare; the call site is a plain `.call` resolved through the signature table.
+/// 签名只用 `FFIType`：闭合集之外的类型到不了这里，两个通道读的是同一份判据。
 public struct IRForeignFunction: Equatable {
     public let name: String
-    public let paramTypes: [IRType]
-    public let returnType: IRType?
+    public let params: [FFIType]
+    public let returnType: FFIType?
+    /// C 变参：`params` 是固定前缀，调用点可以多传。多传的实参在发射层做默认实参提升，
+    /// 解释器没有 C 变参 ABI，遇到即拒绝。
+    public let isVariadic: Bool
 
-    public init(name: String, paramTypes: [IRType], returnType: IRType?) {
+    public init(name: String, params: [FFIType], returnType: FFIType?, isVariadic: Bool = false) {
         self.name = name
-        self.paramTypes = paramTypes
+        self.params = params
         self.returnType = returnType
+        self.isVariadic = isVariadic
+    }
+}
+
+extension FFIType {
+    /// 值面拼写：`cString` 与 `String` 同为 `i8*`，调用点与 declare 因此对得上。
+    /// 指针统一 `ptr`；标量与 `IRType` 同宽。回调是 `cFunction` —— 与 Pini 函数值的 `{ptr, ptr}` 分开。
+    public var irType: IRType {
+        switch self {
+        case .i8: return .i8
+        case .u8: return .u8
+        case .i32: return .i32
+        case .i64: return .i64
+        case .u64: return .u64
+        case .f64: return .f64
+        case .boolean: return .boolean
+        case .pointer(let target): return .pointer(element: target.irType)
+        case .cString: return .string
+        case .callback(let params, let returnType):
+            return .cFunction(
+                params: params.map { $0.irType }, returnType: returnType?.irType)
+        /// 句柄有自己的 IR 类型：与 `*U8` 同为 `ptr` 拼写，但语言层不能互传（`load` / `c字符串` 都不收它）。
+        case .stringHandle: return .stringHandle
+        }
+    }
+}
+
+/// 一个外部数据符号：名字即符号名，`type` 是该存储的静态类型。
+/// `readonly` 只是一条写侧禁令，进 IR 是为了让发射层区分可写与只读，链接期无判据。
+public struct IRForeignData: Equatable {
+    public let name: String
+    public let type: IRType
+    public let isReadonly: Bool
+
+    public init(name: String, type: IRType, isReadonly: Bool) {
+        self.name = name
+        self.type = type
+        self.isReadonly = isReadonly
+    }
+}
+
+/// 宏常量的构建期值。它没有存储：读它就是读这个字面量，取址无从谈起。
+public enum IRForeignConstantValue: Equatable {
+    case integer(Int)
+    case float(Double)
+}
+
+/// 一条宏常量：名字、声明类型、构建期求出的值。
+public struct IRForeignConstant: Equatable {
+    public let name: String
+    public let type: IRType
+    public let value: IRForeignConstantValue
+
+    public init(name: String, type: IRType, value: IRForeignConstantValue) {
+        self.name = name
+        self.type = type
+        self.value = value
     }
 }
 
@@ -118,10 +179,109 @@ public struct IRForeignFunction: Equatable {
 public struct IRForeignBlock: Equatable {
     public let name: String
     public let funcs: [IRForeignFunction]
+    /// 数据符号：`名: 类型` 条目，读、取址、写都落到这一张表上。
+    public let data: [IRForeignData]
+    /// 宏常量：`名|macro: 类型` 条目，值在构建期由 C 预处理器给出。
+    public let constants: [IRForeignConstant]
 
-    public init(name: String, funcs: [IRForeignFunction]) {
+    public init(
+        name: String, funcs: [IRForeignFunction], data: [IRForeignData] = [],
+        constants: [IRForeignConstant] = []
+    ) {
         self.name = name
         self.funcs = funcs
+        self.data = data
+        self.constants = constants
+    }
+}
+
+/// 一个导出形参：`isUsing` 位不进 C 原型，由转发层在边界内用默认实例填。
+/// 顺序即 Pini 函数的形参顺序，转发层照它排实参。
+public struct IRExportParam: Equatable {
+    public let type: IRType
+    public let isUsing: Bool
+
+    public init(type: IRType, isUsing: Bool) {
+        self.type = type
+        self.isUsing = isUsing
+    }
+}
+
+/// 一个 C 导出函数项：C 名、Pini 名、形参计划与返回。
+/// `returnType` 为 `.result` 时按「状态码 + 出参」发布，头文件与发射层读同一条判据。
+public struct IRExportFunction: Equatable {
+    public let cName: String
+    public let pinName: String
+    public let params: [IRExportParam]
+    public let returnType: IRType?
+
+    public init(cName: String, pinName: String, params: [IRExportParam], returnType: IRType?) {
+        self.cName = cName
+        self.pinName = pinName
+        self.params = params
+        self.returnType = returnType
+    }
+
+    /// C 原型上的形参：取用位不在其中。
+    public var cParamTypes: [IRType] {
+        params.filter { !$0.isUsing }.map(\.type)
+    }
+
+    /// `^T` 的载荷：非 nil 即 C 侧看到 `int32_t f(..., T* out)`，0 成功、1 失败。
+    public var statusPayload: IRType? {
+        guard case .result(let ok)? = returnType else { return nil }
+        return ok
+    }
+}
+
+/// 一个 C 导出的给定块：结构体只镜像字段区，取址函数返回它的首地址。
+/// 字段名已转写为 C 标识符，后端不再改名。
+public struct IRExportStorage: Equatable {
+    public struct Field: Equatable {
+        public let name: String
+        public let type: IRType
+
+        public init(name: String, type: IRType) {
+            self.name = name
+            self.type = type
+        }
+    }
+
+    public let cName: String
+    public let typeName: String
+    public let fields: [Field]
+    public let getterName: String
+
+    public init(cName: String, typeName: String, fields: [Field], getterName: String) {
+        self.cName = cName
+        self.typeName = typeName
+        self.fields = fields
+        self.getterName = getterName
+    }
+}
+
+/// export 块 `|c` 条目的落地形态：函数转发项、给定块取址项、错误码表，以及两个生成的生命周期符号。
+/// 名字取文件名，产物与这两个符号据此命名，不参与条目符号名。
+public struct IRExportBlock: Equatable {
+    public let name: String
+    public let functions: [IRExportFunction]
+    public let storages: [IRExportStorage]
+    /// C 边界的错误码表：派生、手写、自动三种来源同处一张表。
+    public let errorCodes: [PiniErrorCode]
+    public let initName: String
+    public let shutdownName: String
+
+    public init(
+        name: String, functions: [IRExportFunction], storages: [IRExportStorage],
+        errorCodes: [PiniErrorCode] = [],
+        initName: String, shutdownName: String
+    ) {
+        self.name = name
+        self.functions = functions
+        self.storages = storages
+        self.errorCodes = errorCodes
+        self.initName = initName
+        self.shutdownName = shutdownName
     }
 }
 
@@ -133,6 +293,9 @@ public struct IRModule: Equatable {
     public let enums: [IREnumDecl]
     /// Foreign blocks (G14): declare-only surface, no bodies.
     public let foreigns: [IRForeignBlock]
+
+    /// C 面：至多一块，条目名字已转成 C 标识符。
+    public let export: IRExportBlock?
 
     /// 布局事实：名义头、字段与载荷各在第几槽。后端只读不算 —— 契约第 5 节「布局归位」。
     public let layout: IRLayout
@@ -149,13 +312,14 @@ public struct IRModule: Equatable {
 
     public init(
         functions: [IRFunction], types: [IRTypeDecl] = [], enums: [IREnumDecl] = [],
-        foreigns: [IRForeignBlock] = [], layout: IRLayout = .standard,
+        foreigns: [IRForeignBlock] = [], export: IRExportBlock? = nil, layout: IRLayout = .standard,
         givenReferences: [String: [String]] = [:], callReferences: [String: [String]] = [:]
     ) {
         self.functions = functions
         self.types = types
         self.enums = enums
         self.foreigns = foreigns
+        self.export = export
         self.layout = layout
         self.givenReferences = givenReferences
         self.callReferences = callReferences

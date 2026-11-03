@@ -24,6 +24,8 @@ extension RuntimeError: DiagnosticProviding {
         case .libraryNotFound: return "\(DiagnosticDomain.runtime.rawValue)-016"
         case .symbolNotFound: return "\(DiagnosticDomain.runtime.rawValue)-017"
         case .entryMainMismatch: return "\(DiagnosticDomain.runtime.rawValue)-018"
+        case .variadicCallUnsupported: return "\(DiagnosticDomain.runtime.rawValue)-019"
+        case .stringHandleCallUnsupported: return "\(DiagnosticDomain.runtime.rawValue)-020"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -44,7 +46,8 @@ extension RuntimeError: DiagnosticProviding {
             .undefinedNativeFunction(_, _, let loc),
             .libraryNotFound(_, _, let loc),
             .symbolNotFound(_, _, let loc),
-            .entryMainMismatch(_, _, let loc):
+            .entryMainMismatch(_, _, let loc),
+            .variadicCallUnsupported(_, let loc), .stringHandleCallUnsupported(_, let loc):
             return loc
         }
     }

@@ -1,0 +1,4 @@
+; 类型不是函数类型即外部数据符号：`|readonly` 是它的写侧标志，随条目保留。
+[libc|foreign]
+optind: I32
+stdin_version|readonly: I32

@@ -26,6 +26,22 @@ suggestion = "rename the alias, or ignore if intentional (advisory only)"
 message = "given block materialization cycle: {path}"
 suggestion = "materializing it requires itself, so `pini run` will crash; break the field initializer's dependency on itself"
 
+[E7-004]
+message = "type '{typeName}' declares no error code; {code} was assigned automatically"
+suggestion = "that code is not stable across versions; write `码() -> (I32,)` in an extension block to pin it"
+
+[E7-005]
+message = "error code {code} belongs to both '{first}' and {others}"
+suggestion = "the C side cannot tell them apart; change one of the declared codes, or ignore if the merge is intentional"
+
+[E7-006]
+message = "foreign function '{name}' is variadic: only the LLVM channel can call it"
+suggestion = "use `run-llvm`, or write a fixed-arity shim on the C side and declare that instead"
+
+[E7-007]
+message = "foreign function '{name}' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
+suggestion = "use `run-llvm` or `build --shared`; the interpreter rejects the call site"
+
 [E2-001]
 message = "expected {expected}, got {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（无法提取参数名），走英文硬编码兜底。
@@ -126,6 +142,41 @@ message = "enum case '{caseName}' is constructed positionally; named argument '{
 [E4-015]
 message = "the given block type name '{typeName}' cannot be used as a value -- take its default instance through a `using` parameter instead"
 
+[E4-027]
+message = "invalid error code: {reason}"
+
+[E4-028]
+message = "type '{type}' cannot be used by a foreign symbol: {reason}"
+suggestion = "the C boundary accepts I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T, plus String in parameter position"
+
+[E4-029]
+message = "type '{type}' has no IR counterpart width"
+suggestion = "use one of I8 / I32 / I64 / U8 / U64 / F64; widths such as U32 and I16 disagree across channels"
+
+[E4-030]
+message = "a foreign function cannot return String: the pointer's ownership is unknowable"
+suggestion = "declare it as `*U8` and copy with `c字符串(pointer)` after the call"
+
+[E4-031]
+message = "the callback argument is not usable: {reason}"
+suggestion = "name a top-level free function whose signature matches the parameter position for position, with no using slots"
+
+[E4-032]
+message = "Bool cannot appear in a callback signature: Pini's i1 and C's _Bool do not share a register convention"
+suggestion = "use I32 on both sides and read 0 / non-zero"
+
+[E4-033]
+message = "`|varargs` applies only to function entries: '{symbol}' is a data symbol"
+suggestion = "put `|varargs` on the function entry; a data symbol is only read and written, never called"
+
+[E4-034]
+message = "variadic argument {position} has type '{type}', which cannot cross into C: {reason}"
+suggestion = "the variadic tail accepts I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / String; objects and collections have no C layout"
+
+[E4-035]
+message = "`{type}` exists only on the C face"
+suggestion = "write it in a `[name|foreign]` symbol, or in the signature of a function referenced by a `|c` entry; plain variables, fields and methods do not take handles"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"
@@ -158,6 +209,14 @@ message = "assertion failed: {message}"
 message = "FFI library '{library}' not found (searched: {searched})"
 [E5-017]
 message = "symbol '{symbol}' not found in FFI library '{library}'"
+
+[E5-019]
+message = "variadic call '{name}' needs the C variadic ABI; the interpreter can only forward a fixed signature, so this works on `run-llvm` only"
+suggestion = "use `pini run-llvm`, or write a fixed-arity shim on the C side and declare that instead"
+
+[E5-020]
+message = "calling '{name}' needs a string handle; handles live in the runtime library, whose symbols the `pini` process does not carry — this works on `run-llvm` and `build --shared` only"
+suggestion = "use `pini run-llvm`, or keep handle creation and reads on the C side"
 
 [E3-010]
 message = "module dependency cycle (R2): '{chain}'"

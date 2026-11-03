@@ -9,7 +9,7 @@ import PiniSyntax
 @testable import PiniSemantics
 
 /// 试点通道的三条判据：清单正好是声明的那 26 条、声明支持的族真能发射、声明之外的节点按族拒绝。
-/// 判据盯的是「声明与实现不漂移」，不是覆盖率 —— 覆盖率由能力矩阵那张表说话。
+/// 判据盯的是「声明与实现不漂移」，不是覆盖率。
 @Suite("试点后端 embedded_min")
 struct EmbeddedMinBackendTests: Sendable, PiniSourceLowering {
 

@@ -36,4 +36,29 @@ public enum TypeError: Error, Equatable {
     /// `using` 形参取得；此诊断在静态层拒绝，避免落到 IRGen 报出误导性的「未声明变量 '配置'」。
     /// 同一通路本就不可行，故这不是新增约束，只是把报错提前并把做法写进文案。
     case givenBlockTypeInValuePosition(typeName: String, location: SourceLocation)
+    /// export 块 `|c` 条目：引用的声明不合格，或两个条目转写后撞成同一个 C 名。
+    /// `reason` 是一句自成句子的说明，诊断头由格式化层加。
+    case exportCInvalid(reason: String, location: SourceLocation)
+    /// 错误码申报不合格：`码()` 的载体、函数体或码值越界。不合格的申报一旦被忽略，
+    /// 作者会以为码已固定，实际发出去的是自动码 —— 那正是这一层要拦的沉默。
+    case errorCodeInvalid(reason: String, location: SourceLocation)
+    /// C 边界类型不在闭合表里：未知名、对象、元组、集合，或指针目标不合格。
+    /// 放行会产生「能过 check、换个通道就换行为」的声明，故一律在语义期挡住。
+    case foreignTypeNotRepresentable(type: String, reason: String, location: SourceLocation)
+    /// 语言层有这个宽度，IR 没有对应类型（I16 / U16 / U32 / F32）。
+    case foreignTypeWidthNotInIR(type: String, location: SourceLocation)
+    /// `String` 出现在外部函数的返回位：C 返回的指针归属不明，取回必须显式复制。
+    case foreignStringInReturnPosition(location: SourceLocation)
+    /// 回调实参不合格：不是裸标识符、解析不到顶层自由函数，或签名与形参声明不是逐位相同。
+    /// 三种情况都指向同一件事——传出去的地址必须真的能被 C 按那个签名调用。
+    case foreignCallbackNotFreeFunction(reason: String, location: SourceLocation)
+    /// 回调签名里的 `Bool`：`i1` 与 C `_Bool` 的寄存器约定不同，回调方向没有转发层可替它转。
+    case foreignCallbackBoolean(location: SourceLocation)
+    /// `|varargs` 写在数据条目上：变参是调用点的性质，数据符号没有调用点。
+    case foreignVarargsOnNonFunction(symbol: String, location: SourceLocation)
+    /// 变参尾的实参不是 C 标量 / 指针：C 的默认实参提升覆盖不到它，传过去 C 侧读到的宽度是错的。
+    case foreignVariadicArgument(position: Int, type: String, reason: String, location: SourceLocation)
+    /// `StringHandle` 出现在 C 面之外：它不是 Pini 的通用类型，只在 `[..|foreign]` 的符号与
+    /// 被 `|c` 引用的函数签名里成立。普通变量 / 字段 / 方法收下它，就等于开出第四条字符串路径。
+    case stringHandleOutsideCFace(type: String, location: SourceLocation)
 }

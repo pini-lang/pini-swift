@@ -193,6 +193,14 @@ public enum ErrorFormatter {
             case .unusedVariable(let name, _): return "unused variable '\(name)'"
             case .implicitAliasNameMismatch(let alias, let target, _):
                 return "implicit alias '\(alias)' does not match the target module name '\(target)'"
+            case .automaticErrorCode(let typeName, let code, _):
+                return "type '\(typeName)' declares no error code; \(code) was assigned automatically"
+            case .duplicateErrorCode(let code, let first, let others, _):
+                return "error code \(code) belongs to both '\(first)' and \(others)"
+            case .variadicForeignSymbol(let name, _):
+                return "foreign function '\(name)' is variadic: only the LLVM channel can call it"
+            case .stringHandleForeignSymbol(let name, _):
+                return "foreign function '\(name)' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
             }
         case let e as IRValidator.Failure:
             return e.report
@@ -277,6 +285,18 @@ public enum ErrorFormatter {
         case .sharedReferenceAcrossTasks(let typeName, let paramName, let functionName, _): return "不能把引用类型 '\(typeName)' 传给并发进程 '\(functionName)' 的形参 '\(paramName)'：跨任务共享可变引用不安全。改传值类型（struct），或让 '\(functionName)' 返回结果后用 `joinAll` 汇合"
         case .enumCaseArgumentLabel(let label, let caseName, _): return "枚举用例 '\(caseName)' 的构造为位置式，不允许具名实参 '\(label):'（请改为位置实参，如 `\(caseName)(值)`）"
         case .givenBlockTypeInValuePosition(let typeName, _): return "给定块类型名 '\(typeName)' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: \(typeName)`，体内用 `名.字段`（ADR-001）"
+        case .exportCInvalid(let reason, _): return "对外发布：\(reason)"
+        case .errorCodeInvalid(let reason, _): return "错误码无效：\(reason)"
+        case .foreignTypeNotRepresentable(let type, let reason, _): return "外部符号的类型 '\(type)' 不可用：\(reason)"
+        case .foreignTypeWidthNotInIR(let type, _): return "外部符号的类型 '\(type)' 在 IR 里没有对应宽度"
+        case .foreignStringInReturnPosition: return "外部函数的返回类型不能是 String：C 返回的指针归属不明"
+        case .foreignCallbackNotFreeFunction(let reason, _): return "回调实参不合格：\(reason)"
+        case .foreignCallbackBoolean: return "回调签名里不能出现 Bool：Pini 的 i1 与 C 的 _Bool 寄存器约定不同，改用 I32"
+        case .foreignVarargsOnNonFunction(let symbol, _): return "`|varargs` 只对函数条目成立：`\(symbol)` 是数据符号"
+        case .foreignVariadicArgument(let position, let type, let reason, _):
+            return "变参的第 \(position) 个实参类型 `\(type)` 不能传给 C：\(reason)"
+        case .stringHandleOutsideCFace(let type, _):
+            return "`\(type)` 只在 C 面上成立：写在外部函数声明里，或写在带 `|c` 条目的函数签名上"
         }
     }
 
@@ -300,6 +320,10 @@ public enum ErrorFormatter {
         case .libraryNotFound(let library, let searched, _): return "FFI 库 '\(library)' 未找到（已搜索：\(searched.isEmpty ? "（无搜索路径）" : searched.joined(separator: ", "))）"
         case .symbolNotFound(let library, let symbol, _): return "FFI 库 '\(library)' 中未找到符号 '\(symbol)'"
         case .entryMainMismatch(let entries, let declaredIn, _): return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，但 main 定义在 \(declaredIn)"
+        case .variadicCallUnsupported(let name, _):
+            return "变参调用 '\(name)' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
+        case .stringHandleCallUnsupported(let name, _):
+            return "调用 '\(name)' 要用字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号 —— 这条只在 `run-llvm` 与 `build --shared` 上成立"
         }
     }
 

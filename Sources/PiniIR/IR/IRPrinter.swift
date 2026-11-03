@@ -130,7 +130,7 @@ public enum IRPrinter {
             return "\(function)(\(args))"
         case .printCall(let argument):
             return "print(\(exprText(argument)))"
-        case .resultConstruct(let isOk, let payload, _):
+        case .resultConstruct(let isOk, let payload, _, _, _, _):
             return "\(isOk ? "ok" : "err")(\(exprText(payload)))"
         case .arrayLiteral(let elements, _):
             let items = elements.map(exprText).joined(separator: ", ")
@@ -198,6 +198,8 @@ public enum IRPrinter {
             return "closure#\(id)(capture: \(names))"
         case .functionValue(let functionName, _):
             return "func@\(functionName)"
+        case .cFunctionAddress(let functionName, _):
+            return "cfunc@\(functionName)"
         case .indirectCall(let callee, let arguments, _):
             let args = arguments.map(exprText).joined(separator: ", ")
             return "\(exprText(callee))(\(args))"
@@ -211,6 +213,8 @@ public enum IRPrinter {
             return "store(\(exprText(pointer)), \(exprText(value)))"
         case .addressOfVar(let name, _):
             return "&\(name)"
+        case .foreignDataAddress(let name, _):
+            return "@\(name)"
         case .printMulti(let arguments):
             let items = arguments.map(exprText).joined(separator: ", ")
             return "print(\(items))"

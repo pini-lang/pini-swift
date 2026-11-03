@@ -57,6 +57,8 @@ public final class TypeEnvironment {
     /// `TypeChecker.check` 退出函数体时 pop 子作用域，局部变量离开作用域栈，codegen 重推就取不到。
     /// 作为 `lookupVariable` 的兜底：check 期间作用域栈优先，本表仅在栈中查不到时生效。
     private var persistentVarTypes: [String: TypeAnnotation] = [:]
+    /// 外部数据符号的声明类型：模块级常量，不进作用域栈，也不参与遮蔽裁决（同名冲突在语义期已拒）。
+    private var foreignDataTypes: [String: TypeAnnotation] = [:]
 
     // 持久表兜底开关。**默认 false**——保持「作用域弹出后变量不可见」语义
     // （`TypeCheckerTests.testTypeEnvVariableDefineAndLookup` 等单测依赖），不污染类型检查。
@@ -115,6 +117,16 @@ public final class TypeEnvironment {
             }
         }
         return nil
+    }
+
+    /// 登记一个外部数据符号的类型。模块级、不属于任何作用域：它没有声明处，只有符号名。
+    public func defineForeignData(name: String, type: TypeAnnotation) {
+        foreignDataTypes[name] = type
+    }
+
+    /// 外部数据符号的声明类型；不是外部符号则为 nil。
+    public func lookupForeignData(name: String) -> TypeAnnotation? {
+        foreignDataTypes[name]
     }
 
     // MARK: - Functions

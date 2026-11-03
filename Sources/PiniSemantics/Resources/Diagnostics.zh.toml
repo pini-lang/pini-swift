@@ -26,6 +26,22 @@ suggestion = "重命名别名；若有意为之可忽略（仅提醒，不强制
 message = "给定块物化环：{path}"
 suggestion = "物化时它会要求自己 ⇒ `pini run` 必崩；把字段初值改成不依赖自身"
 
+[E7-004]
+message = "类型 '{typeName}' 未指定错误码，已自动分配 {code}"
+suggestion = "该码不保证跨版本稳定；要固定它，在扩展块写 `码() -> (I32,)` 返回一个常量"
+
+[E7-005]
+message = "错误码 {code} 同时属于 '{first}' 与 {others}"
+suggestion = "C 侧无法据此区分两者；改掉其中一个手写码，若有意合并成同一个状态可忽略"
+
+[E7-006]
+message = "外部函数 '{name}' 声明为变参：只有 LLVM 通道能调用它"
+suggestion = "换 `run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
+
+[E7-007]
+message = "外部函数 '{name}' 用了字符串句柄：只有 LLVM 通道与 `build --shared` 提供这些符号"
+suggestion = "换 `run-llvm` 或 `build --shared`；解释器会在调用点拒绝"
+
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
 # E2-002 expectedToken(token) 为单关联值 case（Mirror 无法提取参数名），走硬编码兜底，不在此登记。
@@ -126,6 +142,41 @@ message = "枚举用例 '{caseName}' 的构造为位置式，不允许具名实�
 [E4-015]
 message = "给定块类型名 '{typeName}' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: {typeName}`，体内用 `名.字段`（ADR-001）"
 
+[E4-027]
+message = "错误码无效：{reason}"
+
+[E4-028]
+message = "外部符号的类型 '{type}' 不可用：{reason}"
+suggestion = "C 边界只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T，以及形参位的 String"
+
+[E4-029]
+message = "外部符号的类型 '{type}' 在 IR 里没有对应宽度"
+suggestion = "换成 I8 / I32 / I64 / U8 / U64 / F64 之一；U32 与 I16 这类宽度三条通道对不上"
+
+[E4-030]
+message = "外部函数的返回类型不能是 String：C 返回的指针归属不明"
+suggestion = "声明成 `*U8`，读出后用 `c字符串(指针)` 复制一份"
+
+[E4-031]
+message = "回调实参不合格：{reason}"
+suggestion = "实参位上写一个顶层自由函数的名字，签名与形参声明逐位相同，且不带 using"
+
+[E4-032]
+message = "回调签名里不能出现 Bool：Pini 的 i1 与 C 的 _Bool 寄存器约定不同"
+suggestion = "把回调的参数与返回改成 I32，两侧都按 0 / 非 0 解释"
+
+[E4-033]
+message = "`|varargs` 只对函数条目成立：'{symbol}' 是数据符号"
+suggestion = "把 `|varargs` 写在函数条目上；数据符号只有读与写，没有调用点"
+
+[E4-034]
+message = "变参的第 {position} 个实参类型 '{type}' 不能传给 C：{reason}"
+suggestion = "变参尾只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / String；对象与集合没有 C 布局"
+
+[E4-035]
+message = "`{type}` 只在 C 面上成立"
+suggestion = "写在 `[名称|foreign]` 的符号声明里，或写在带 `|c` 条目的函数签名上；普通变量、字段与方法不收句柄"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"
@@ -158,6 +209,14 @@ message = "断言失败：{message}"
 message = "FFI 库 '{library}' 未找到（已搜索：{searched}）"
 [E5-017]
 message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
+
+[E5-019]
+message = "变参调用 '{name}' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
+suggestion = "改用 `pini run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
+
+[E5-020]
+message = "调用 '{name}' 要用字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号 —— 这条只在 `run-llvm` 与 `build --shared` 上成立"
+suggestion = "改用 `pini run-llvm`，或把句柄的创建与读取都放到 C 侧"
 
 [E3-010]
 message = "模块依赖环（R2 禁环）：'{chain}'"

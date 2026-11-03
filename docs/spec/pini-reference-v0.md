@@ -411,7 +411,8 @@ unsafe &变量          ; 取地址
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
 
 let 缓冲 = unsafe malloc(1024)
 defer unsafe free(缓冲)
@@ -733,13 +734,15 @@ func 比较<T: 可比较>(a: T, b: T,) -> I32:
 
 ### 3.13 类型标记 `[Provisional]`
 
-**仅 `Raw`**：
+**`Raw`**：
 
 ```
 <<Raw>>
 ```
 
 含义：C 兼容类型。
+
+另有内置标记特征 `错误`：空方法集，类型声明处写 `实现: 错误` 即进 C 边界的错误集（见 §9.7）。
 
 **自动实现**：
 
@@ -853,7 +856,7 @@ x: I32 = 0
 | `<<名称>>` | 特征扩展块 |
 | `名称\|func(...)` | 裸函数 |
 | `[名称\|import]` | 导入块 |
-| `[名称\|export]` | 导出块 |
+| `[名称\|export]` | 发布块（C 面与模块面） |
 | `[名称\|foreign]` | 外部函数块 |
 
 ### 4.2 导入与导出 `[Provisional]`
@@ -876,13 +879,16 @@ _隐式 = "模块路径"
 
 ```
 [文件名|export]
-公开名 = 原符号
-_私有名 = 原符号
+公开名 = 原符号          ; 目标 pini（缺省）
+公开名|pini = 原符号     ; 显式写法
+对外名|c = 原符号        ; 目标 c
 ```
 
-- 块头名 = 当前文件名
-- `公开名 = 原符号`：提升私有符号为公开
-- `_私有名 = 原符号`：抑制导出
+- 块头名 = 当前文件名；C 产物与生命周期符号取文件名
+- 省略目标等价于 `|pini`；`|c` 落地为 C 符号
+- `|pini`：`公开名 = 原符号` 提升私有符号为公开，`_私有名 = 原符号` 抑制导出
+- `|c`：右端须是自由函数或给定块，类型由定义派生；详见 §9.7
+- 每个文件至多一个 export 块；每个模块至多一个文件带 `|c` 条目
 
 #### 依赖规则
 
@@ -2680,15 +2686,19 @@ unsafe 存储(p, 值)
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
-free|unsafe(指针: *I8,) -> ()
-memcpy|unsafe(目标: *I8, 源: *I8, 大小: I64,) -> ()
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
+memcpy: (*I8, *I8, I64,) -> ()
 ```
 
 **语义**：
 
-- 声明外部 C 函数签名
+- 块内是一张外部符号表，条目只有一形 `名{|标志}: 类型`
+- 类型是函数类型即外部函数，其余为外部数据符号
+- 标识符就是外部符号名，不提供别名
 - 块内函数自动视为 `|unsafe`
+- `|readonly` 的数据符号在语义期拒写；`|macro` 是构建期常量，不解析符号、不可取址，蕴含 `readonly`
+- `|varargs` 标出 C 变参函数：声明里的形参表是固定前缀，调用点可以多传（只对函数条目成立，见下）
 - 不接收内联 ABI 参数
 - 继承模块级 `pini.toml` 设定的 FFI ABI（默认 `"C"`）
 
@@ -2704,28 +2714,104 @@ libs = ["m", "pthread"]
 | 配置 | 说明 |
 |---|---|
 | `abi` | 全局唯一，默认 `"C"`，子模块不可覆盖 |
-| `search_paths` | 库搜索路径，分层追加 |
-| `libs` | 需链接的库列表 |
+| `search_paths` | 库搜索路径，分层追加；相对项按模块目录解析 |
+| `libs` | 需链接的库列表，名字不带 `-l`：LLVM 通道拼成 `-l<名>`，解释器不使用它 |
+| `headers` | `\|macro` 条目要 `#include` 的头文件；声明了宏的模块，`check` 与 `run` 需要 C 编译器 |
+| `include_paths` | 头文件搜索路径 |
+
+`libs` 与 foreign 块名允许脱钩：块名只决定解释器默认 `dlopen` 哪个 `lib<块名>`，链接什么库由 `libs` 说。
+`compile`、`run-llvm`、`test-llvm`、`build --shared` 读同一份清单。
+
+注意 清单只影响编译器发的链接参数，不改 dylib 自身的 install name。
+`clang -shared -o libx.dylib` 造出的库记的是裸文件名，运行期可能找不到；这类库应带 `@rpath/libx.dylib` 或绝对 install name。
 
 **类型白名单（顶层签名）**：
 
 | 允许 | 说明 |
 |---|---|
-| 标量 | I8–I64、U8–U64、F32、F64、Bool |
+| 标量 | `I8` `U8` `I32` `I64` `U64` `F64` `Bool` |
 | `()` | void 返回 |
-| `*T` | T 为标量 / 纯值 struct / 另一指针 |
+| `*T` | T 为上述标量或另一指针 |
+| `String` | 仅形参：借出成 `const char*`，只在本次调用期间有效 |
+| `StringHandle` | 形参与返回：不透明指针，运行时段持有一份拷贝；C 侧自己 `retain` / `release` |
+| `(A, B,) -> (C,)` | 仅形参：C 函数指针。实参写顶层自由函数名，签名逐位相同且不含 `Bool` |
 
 **禁止**：
 
 | 禁止 | 原因 |
 |---|---|
-| by-value 结构体 | Phase 2c 范围 |
+| `I16` / `U16` / `U32` / `F32` | IR 无对应类型（E4-029） |
+| `String` 返回 | 指针归属说不清；要取回用内建 `c字符串`（E4-030） |
+| 函数类型返回 | 没有可持有的一等函数指针值（E4-028） |
+| 回调签名含 `Bool` | `i1` 与 `_Bool` 的寄存器约定不同（E4-032） |
+| by-value 结构体 | 首版不做 |
 | `object` | ARC 隔离 |
-| `String` | 非 C 类型 |
 | `Optional` / `Result` | 需标签 |
 | 元组 | 非 C 布局 |
-| 函数类型 | 非 C 布局 |
 | `Char` | C `char` 符号性由实现定义 |
+
+**回调**：
+
+形参位写函数类型即 C 函数指针，实参写顶层自由函数的名字：
+
+```
+[libc|foreign]
+qsort: (*U8, U64, U64, (*U8, *U8,) -> (I32,),) -> ()
+
+比较(a: *U8, b: *U8,) -> (I32,):
+    ...
+
+main|func() -> (I32,):
+    unsafe qsort(缓冲, 4, 1, 比较)
+    return 0
+```
+
+判据在语义期：名字须解析到顶层自由函数（方法、闭包、变量、`main`、`|test`、泛型都不行，E4-031）；
+签名与形参声明逐位相同（E4-031）；回调签名只收标量与指针，且不含 `Bool`（E4-032）。
+传出去的是函数自己的符号地址，不包适配器。
+
+注意 解释器用固定签名的桩承接回调，因此回调签名含 `F64` 时 `run` 不可用、`run-llvm` 正常。
+
+**变参**：
+
+C 变参函数用 `|varargs` 标出，声明里的形参表是固定前缀：
+
+```
+[libc|foreign]
+printf|varargs: (String,) -> (I32,)
+
+main|func() -> (I32,):
+    unsafe printf("n=%d\n", 42)
+    return 0
+```
+
+调用点可以多传实参，但不少于固定前缀；多出来的进变参尾，只收 C 标量与指针（`String` 按借出），
+其余报 E4-034。尾部实参按 C 的默认实参提升传：`Bool` 与 `I8` / `U8` 升成 `i32`，`I32` /
+`I64` / `U64` / `F64` 保持原宽度。
+
+注意 变参只在 LLVM 通道成立。解释器没有 C 变参 ABI（arm64 把变参放栈上），`run` 在调用点
+报 E5-019；声明处另有一条 E7-006 提醒。要两通道都能跑，在 C 侧写一个固定参数的 shim。
+
+**取回 C 串**：
+
+`c字符串(p)` 把 `*U8` 读到 NUL，复制成 Pini 串；空指针得空串，复制品归 Pini 持有，C 的缓冲随后可释放。它是内建，不必在 foreign 块里声明——与需要声明的 `cstr`（出去那侧，shim 名）方向相反。
+
+**字符串句柄**：
+
+C 要把串存下来时用 `StringHandle`：形参位上 Pini 串被复制一份、计数 +1 交给 C，返回位上 C 交出的句柄在 Pini 里只是一个不透明的 token（不能当 `String`、不能 `load`、不参与计数）。
+
+```
+[libc|foreign]
+bk_str_handle_new: (String,) -> (StringHandle,)
+bk_str_handle_len: (StringHandle,) -> (I64,)
+bk_str_handle_release: (StringHandle,) -> ()
+```
+
+C 面的五个入口是 `bk_str_handle_new` / `bytes` / `len` / `retain` / `release`；字节视图不以 NUL 为界读，长度以 `len` 为准，计数归 C。
+
+注意 句柄只在 LLVM 通道与 `build --shared` 上成立：这些符号活在运行时段里，`pini` 进程不带。`run` 在调用点报 E5-020，声明处另有一条 E7-007 提醒。
+
+注意 `StringHandle` 不是 Pini 的通用类型：它出现在 foreign 块之外、且所在函数没有 `|c` 条目时报 E4-035。
 
 **foreign 符号作用域**：
 
@@ -2744,13 +2830,13 @@ libs = ["m", "pthread"]
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
-free|unsafe(指针: *I8,) -> ()
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
 
 安全分配(大小: I64,) -> ^*I8:
     let 指针 = unsafe malloc(大小)
     if 指针 == nil:
-        return .err("分配失败")
+        return .err(Error("分配失败"))
     return .ok(指针)
 ```
 
@@ -2791,8 +2877,8 @@ let v = unsafe 加载(p)
 
 ```
 [libc|foreign]
-malloc|unsafe(大小: I64,) -> *I8
-free|unsafe(指针: *I8,) -> ()
+malloc: (I64,) -> (*I8,)
+free: (*I8,) -> ()
 
 写入原始|unsafe(目标: *I8, 偏移: I64, 数据: [I32],) -> ():
     for (值, 索引) in 数据:
@@ -2805,7 +2891,7 @@ _容量: I64 = 0
 
 写入|self(偏移: I64, 数据: [I32],) -> (^(),):
     if 偏移 < 0 || 偏移 + len(数据) > self._容量:
-        return err("越界")
+        return err(Error("越界"))
     unsafe 写入原始(self._指针, 偏移, 数据)
     return ok(())
 ```
@@ -2836,11 +2922,96 @@ _容量: I64 = 0
 |---|---|
 | 解释器 `&` 快照取址 | 写回不更新原变量 |
 | LLVM 端 FFI | 显式 unsupported |
-| by-value 结构体 ABI | Phase 2c 范围 |
-| 变参函数 | 不支持 |
-| 回调 / 函数指针参数 | 不支持 |
+| by-value 结构体 ABI | 首版不做 |
+| 变参函数 | 只在 LLVM 通道成立；`run` 在调用点拒绝（E5-019），声明处提醒（E7-006） |
+| 字符串句柄 | 只在 LLVM 通道与 `build --shared` 成立；`run` 在调用点拒绝（E5-020），声明处提醒（E7-007） |
 | `errno` / 线程局部访问 | 不支持 |
 | 非 C 的 ABI | 不支持 |
+
+### 9.7 对外发布：export 块的 `|c` 条目 `[Experimental]`
+
+**声明**：
+
+```
+; calc.pini
+[calc|export]
+calc_add|c = 加法
+calc_state|c = 计数器状态
+```
+
+**语义**：
+
+- 左端是 C 符号名，右端是本模块的自由函数或给定块，种类由被引用声明决定
+- 函数发布成 C 函数；给定块发布成结构体视图加取址函数，类型由定义派生
+- 块头必须等于文件名，产物与 `calc_init` / `calc_shutdown` 据此命名
+- 一个模块至多一个文件带 `|c` 条目；方法、泛型、异步、`|test`、`main` 不进 C 面
+- `|c` 名字、字段名与文件名过 `CName.escape`：ASCII 原样，其余写成 `_u` 加 6 位大写十六进制；文件名转写后须以字母或下划线开头
+- `|pini` 条目只走模块可见性，不进 C 面
+
+**可导出的类型**：
+
+| Pini | C |
+|---|---|
+| `I8` / `U8` / `I32` / `I64` / `U64` | `int8_t` / `uint8_t` / `int32_t` / `int64_t` / `uint64_t` |
+| `F64` / `Bool` | `double` / `bool` |
+| `*T` | `T*`；T 限 C 标量 |
+| `String` | `const char*`；仅形参，入口复制一份 |
+| `StringHandle` | `bk_str_handle*`；形参与返回，C 侧自己 `retain` / `release` |
+| `(A, B,) -> (C,)` | `C (*)(A, B)`；仅形参，转发层把裸地址包成 Pini 函数值 |
+| 给定块 | `<C名>_t` 结构体加 `<C名>_get()`，字段须全 C 兼容 |
+| `^T` | 状态码 `int32_t` 返回，`T` 走出参 |
+| `()` | `void` |
+
+形参 `String` 的复制发生在转发层入口：C 传栈上的临时缓冲也安全，Pini 存下的是自己的副本；返回位仍拒，返回的是 Pini 的临时串。
+
+`using` 形参不进 C 原型：由默认实例填充，交给被调的是副本。
+
+**错误码**：
+
+`^T` 的失败码固定 `1`（取消 `2`）。写成 `Result<T, E>` 时 E 进错误集，失败码改由 E 给出。`错误` 是内置标记特征，空方法集，`实现: 错误` 即进错误集：
+
+| 载体 | 码 | 作者要写 |
+|---|---|---|
+| `enum` 且 `实现: 错误` | `0x0100` 起，类型序左移 8 位或上用例 tag | `实现: 错误` |
+| `enum` 且 `实现: 稳定码` | `0x1000_0000` 起，三段名字散列 | 再加 `实现: 稳定码` |
+| 非 `enum` 且 `实现: 错误` | `码()` 的常量；没写则 `0x4000` 起自动分配 | 可选 `码() -> (I32,)` |
+| 内建 `Error` / `CancelError` | `1` / `2` | 无 |
+
+- 码表只收导出面可达的类型：不被任何 `|c` 条目返回位用到的类型不占码
+- 手写码先占位，散列码与自动码跳开已占的位
+- 固定码 `0` / `1` / `2` 不可占用；`码()` 只认一条 `return <整数字面量>`，写错报 `E4-027`
+- `enum` 上写 `码()` 报 `E4-027`；两个手写码同值发 `E7-005`（C 侧分不清是哪一个）
+- 派生区容量 63 个类型 × 256 个用例，越界报 `E4-027`
+- 非 `enum` 未写 `码()`：类型声明处发 `E7-004`，自动码不承诺跨版本稳定
+
+稳定码的三段是「块名 · 类型名 · 用例名」，块名即文件名。改声明顺序不动码，改任一段才动码；同一导出面内撞位按名字字典序顺延一格，头文件注释标「顺延 N 步」。
+
+**头文件**：
+
+- 常量名 `<块>_err_<类型>_<用例>`（非 `enum` 到类型名），各段过 `CName.escape`；类型名进名，避免同名用例的宏互相覆盖
+- `const char* <块>_strerror(int32_t code)` 把码还原成 `<类型名>.<用例名>`（非 `enum` 只答类型名）
+- `0` / `1` / `2` 分别答 `success` / `unclassified error` / `cancelled`
+- 未登记的码答 `NULL`；返回静态串，进程期有效，调用方不得释放
+
+**发射物**：
+
+```
+pini emit calc.pini calc.h --backend c        ; 头文件
+pini build --shared calc.pini                 ; 动态库 libcalc.{dylib,so}，落在当前目录
+```
+
+- `build --shared` 不要求 `main`：库没有进程入口
+- 产物名取自文件名，`-o` 可改落点；运行时经 rpath 链 `libPiniRuntime`
+- `calc_init` 把导出的给定块物化一遍；C 写字段对 Pini 的下一次取用可见，Pini 写字段不回写
+
+**限制**：
+
+| 限制 | 说明 |
+|---|---|
+| 错误消息不跨边界 | `^T` 只交状态码；要消息就另导出访问器 |
+| 不生成 C 实现 | 只出头文件，实现是 LLVM 产物 |
+| 布局即 ABI | 字段顺序与类型一改就是破坏性变更，头文件的 `_Static_assert` 在 C 编译期拦下 |
+| 边界不校验 | C 直写字段可以造出 Pini 认为不可能的状态，C 面只放配置 |
 
 ---
 
@@ -3201,7 +3372,7 @@ try 表达式 else 错误绑定名:
 
 ```
 读取文件(路径: String,) -> (^String,):
-    return .err("模拟错误")
+    return .err(Error("模拟错误"))
 ```
 
 调用方：
@@ -3953,8 +4124,7 @@ top-level-decl  ::= import-decl | export-decl
 import-decl     ::= '[' IDENT '|' 'import' ']' NEWLINE { import-item };
 
 export-decl     ::= '[' IDENT '|' 'export' ']' NEWLINE { export-item };
-export-item     ::= IDENT '=' IDENT
-                  | IDENT ':' type-annotation;
+export-item     ::= IDENT [ '|' ('c' | 'pini') ] '=' IDENT;
 ```
 
 #### 类型声明
@@ -3982,9 +4152,9 @@ foreign-decl    ::= '[' IDENT '|' 'foreign' ']' foreign-body;
 
 struct-body     ::= [composition-line] { field-decl };
 type-body       ::= { field-decl };
-enum-body       ::= { enum-case };
+enum-body       ::= { enum-case | trait-line };
 method-body     ::= { method-decl };
-foreign-body    ::= { foreign-signature };
+foreign-body    ::= { foreign-symbol };
 
 composition-line ::= IDENT;
 
@@ -3992,9 +4162,11 @@ field-decl      ::= IDENT ':' type-annotation ['=' expression];
 
 enum-case       ::= IDENT ['(' type-annotation {',' type-annotation} [','] ')'];
 
+trait-line      ::= '实现' ':' IDENT;
+
 method-decl     ::= IDENT ['|' 'self' | '|' 'own'] func-signature [func-body];
 
-foreign-signature ::= IDENT func-signature;
+foreign-symbol  ::= IDENT { '|' ('readonly' | 'macro' | 'varargs') } ':' type-annotation;
 ```
 
 #### 函数声明

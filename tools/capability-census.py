@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""能力普查：量出每条通道实际接受哪些节点，供三态矩阵取数。
+"""能力普查：从契约节点表与后端源码推出每条通道接受哪些节点。
 
-矩阵原先只镜像声明（`pini backends --tsv` 本身就是 `BackendCapabilities`），
-只能发现「改了声明忘更表」，发现不了「声明说支持、实现却拒绝」。
-
-本脚本把两份既有事实相除：分母取契约第 2、3 节的节点表（谁属于哪一族由小节决定），
-分子取后端源码里「`case …:` 体以 `throw` 开头」的整节点拒绝。两者之差即实际接受数。
+分母取契约第 2、3 节的节点表（谁属于哪一族由小节决定），分子取后端源码里
+「`case …:` 体以 `throw` 开头」的整节点拒绝。两者之差即实际接受数；
+`--check` 用它校验拒绝所标的族与节点所在小节一致。
 
 计量单位是**节点种类**。`binary` 拒位运算、`unary` 拒取反这类操作数形态的限制不计入，
 它们不改变族档位，只在 reason 里由后端自己写明。
@@ -45,7 +43,12 @@ SECTION_FAMILY = {
     "2.11": "lazyRef",
     "2.12": "concurrency",
     "2.13": "givenInstances",
+    # 2.14 符号地址：符号是给调用准备的地址，拒绝时的族标注也一直写 calls。
+    "2.14": "calls",
 }
+# 契约按「符号」把小节合并，族却按产物分：§2.14 一节两族，按节点拆开。
+# 取函数地址归 calls（它是给调用准备的地址），取数据符号地址归 pointers（产物就是 `*T`）。
+NODE_FAMILY = {"foreignDataAddress": "pointers"}
 FAMILY_ORDER = ["controlFlow"] + list(SECTION_FAMILY.values())
 ROW = re.compile(r"^\|\s*(\d+)\s*\|\s*`([A-Za-z_][A-Za-z0-9_]*)", re.M)
 HEAD = re.compile(r"^### (2\.\d+)\s+", re.M)
@@ -68,7 +71,7 @@ def contract_nodes():
         end = marks[index + 1].start() if index + 1 < len(marks) else len(expr)
         family = SECTION_FAMILY[mark.group(1)]
         for _, node in ROW.findall(expr[start:end]):
-            out[family].append((node, mark.group(1)))
+            out[NODE_FAMILY.get(node, family)].append((node, mark.group(1)))
     for _, node in ROW.findall(stmt):
         out["controlFlow"].append((node, "3"))
     total = sum(len(nodes) for nodes in out.values())
@@ -155,7 +158,7 @@ def check_tags(contract, known):
     bad = []
     for backend in SOURCES:
         for node, (family, line) in sorted(refusals(backend, known).items()):
-            if home.get(section[node]) != family:
+            if NODE_FAMILY.get(node, home.get(section[node])) != family:
                 bad.append((backend, node, section[node], family, line))
     for backend, node, sec, family, line in bad:
         print(f"{backend}:{line} {node} 属 §{sec}（{home.get(sec)}），标了 {family}", file=sys.stderr)

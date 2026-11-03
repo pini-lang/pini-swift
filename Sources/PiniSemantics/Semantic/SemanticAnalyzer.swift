@@ -110,6 +110,8 @@ public final class SemanticAnalyzer {
         for decl in module.declarations {
             try checkTopLevelDecl(decl)
         }
+        appendErrorCodeWarnings(module)
+        appendForeignPortabilityWarnings(module)
         if let c = deferredInjectConflict { throw c }
     }
 
@@ -149,7 +151,67 @@ public final class SemanticAnalyzer {
             for decl in unit.module.declarations {
                 try checkTopLevelDecl(decl)
             }
+            appendForeignPortabilityWarnings(unit.module)
             if let c = deferredInjectConflict { throw c }
+        }
+        /// 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
+        /// 否则「导出函数与错误类型分处两文件」的包永远不提醒。
+        appendErrorCodeWarnings(
+            Module(
+                declarations: package.fileUnits.flatMap { $0.module.declarations },
+                exports: package.fileUnits.flatMap { $0.module.exports },
+                location: package.location))
+    }
+
+    /// 码表的两类提醒同源：自动码不承诺稳定，撞码让 C 侧分不清。排一次表，两条都从结果里读 ——
+    /// 分开排会让警告与导出面看到的不是同一张表。
+    private func appendErrorCodeWarnings(_ module: Module) {
+        let plan = ErrorCodePlan.build(module: module)
+        for entry in plan.automaticEntries {
+            warnings.append(
+                .automaticErrorCode(
+                    typeName: entry.typeName, code: entry.code, location: entry.location))
+        }
+        appendDuplicateErrorCodeWarnings(plan)
+    }
+
+    /// 只在一条通道上成立的能力，在声明处提醒一次：变参调用需要 C 变参 ABI，
+    /// 句柄要用到运行时段的符号 —— 两者解释器都给不了。写声明时就知道，好过跑起来才发现。
+    private func appendForeignPortabilityWarnings(_ module: Module) {
+        for decl in module.declarations {
+            guard case .foreignDecl(let block) = decl else { continue }
+            for symbol in block.symbols {
+                if symbol.isVariadic {
+                    warnings.append(
+                        .variadicForeignSymbol(name: symbol.name, location: symbol.location))
+                }
+                /// 句柄只看函数条目：数据符号的标注位在 `ffiType(.data)` 那一层就已被拒。
+                if symbol.isFunction,
+                    (symbol.paramTypes + symbol.returnTypes).contains(where: \.mentionsStringHandle)
+                {
+                    warnings.append(
+                        .stringHandleForeignSymbol(name: symbol.name, location: symbol.location))
+                }
+            }
+        }
+    }
+
+    /// 同一个码落在两个条目上，且至少一方是手写码：能自动避让的来源（自动、散列）已经避开了，
+    /// 剩下的相撞只可能是作者写重或手写码压到了派生码上。合并成同一状态可能是有意的，故只提醒。
+    private func appendDuplicateErrorCodeWarnings(_ plan: ErrorCodePlan) {
+        var grouped: [Int32: [PiniErrorCode]] = [:]
+        for entry in plan.entries { grouped[entry.code, default: []].append(entry) }
+        for code in grouped.keys.sorted() {
+            guard let group = grouped[code], group.count > 1,
+                group.contains(where: { $0.source == .declared }),
+                let anchor = group.first(where: { $0.source == .declared })
+            else { continue }
+            let others = group.filter { $0.display != anchor.display }
+                .map { "'\($0.display)'" }.sorted().joined(separator: "、")
+            warnings.append(
+                .duplicateErrorCode(
+                    code: code, first: anchor.display, others: others,
+                    location: anchor.location))
         }
     }
 
@@ -324,6 +386,7 @@ public final class SemanticAnalyzer {
             }
         }
 
+        appendErrorCodeWarnings(module)
         return errors
     }
 
@@ -405,10 +468,9 @@ public final class SemanticAnalyzer {
             }
             return
         case .foreignDecl(let fd):
-            // Phase 2a（FFI 子系统）：foreign 函数注册为模块级函数符号（调用点可解析）；
-            // 块本身不引入新符号，外部 C 符号运行时经原生函数表解析。
-            for f in fd.funcs {
-                try defineUnique(name: f.name, kind: .function, location: f.location)
+            // 外部符号注册为模块级函数（调用点可解析）；块本身不引入新符号，C 符号运行时解析。
+            for symbol in fd.symbols {
+                try defineUnique(name: symbol.name, kind: .function, location: symbol.location)
             }
             return
         case .varDecl, .statement, .importDecl, .exportDecl:
