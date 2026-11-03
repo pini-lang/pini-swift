@@ -56,6 +56,7 @@ public struct CHeaderBackend: PiniBackend {
     /// 省一次抄写；`struct bk_str_handle` 的定义不在 C 侧，字段布局是运行时段的私事。
     private func stringHandleDeclarations() -> String {
         var out = "/* 字符串句柄：C 侧只拿不透明指针；字节与长度走下面的入口读，用完必须 release。 */\n"
+        out += "/* 下面五个入口由运行时库提供，C 侧链接时要一并带上 -lPiniRuntime。 */\n"
         out += "typedef struct bk_str_handle bk_str_handle;\n"
         out += "const uint8_t* bk_str_handle_bytes(const bk_str_handle*);\n"
         out += "int64_t bk_str_handle_len(const bk_str_handle*);\n"
