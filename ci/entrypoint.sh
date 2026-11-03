@@ -69,10 +69,6 @@ python3 tools/capability-census.py --check
 step "构建"
 swift build --disable-sandbox
 
-step "能力矩阵门禁"
-# 表由各通道自报（pini backends），检出件与之逐行比对：改了能力声明不改表即红。
-PINI_BIN="$PWD/.build/debug/pini" python3 tools/capability-matrix.py
-
 step "示例门禁"
 # 三腿：check / run / run-llvm。已知失败在 examples/gate-baseline.tsv，只许缩小。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py

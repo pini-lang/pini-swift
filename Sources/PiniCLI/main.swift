@@ -658,7 +658,7 @@ func printHelp() {
     print(" A directory without pini.toml is checked file-by-file as independent programs.")
 }
 
-/// 能力矩阵：行是节点族，列是装配表里的通道。产出由各通道自己声明，故这张表不会与实现漂移。
+/// 后端能力表：行是节点族，列是装配表里的通道。表由各通道自述，此处不做核对。
 func printBackendMatrix(tsv: Bool) {
     let registry = Backends.registry
     let channels = registry.entries.compactMap { registry.make($0.identifier) }

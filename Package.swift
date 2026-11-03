@@ -89,7 +89,7 @@ let package = Package(
         .testTarget(
             name: "PiniTests",
             // 测试逐层 @testable 引入：伞只重导出 public，看不见 package 与 internal，
-            // 而分类表 · 清理栈 · 能力矩阵这些判据恰恰钉在内部约定上。
+            // 而分类表 · 清理栈 · 内建清单这些判据恰恰钉在内部约定上。
             dependencies: [
                 "PiniSyntax", "PiniSemantics", "PiniIR", "PiniBackendKit", "PiniBackendLLVM",
                 "PiniBackendEmbedded", "PiniBackends", "PiniHost", "PiniCore", "PiniRuntime",
