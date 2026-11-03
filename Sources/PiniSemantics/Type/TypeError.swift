@@ -42,4 +42,11 @@ public enum TypeError: Error, Equatable {
     /// 错误码申报不合格：`码()` 的载体、函数体或码值越界。不合格的申报一旦被忽略，
     /// 作者会以为码已固定，实际发出去的是自动码 —— 那正是这一层要拦的沉默。
     case errorCodeInvalid(reason: String, location: SourceLocation)
+    /// C 边界类型不在闭合表里：未知名、对象、元组、集合，或指针目标不合格。
+    /// 放行会产生「能过 check、换个通道就换行为」的声明，故一律在语义期挡住。
+    case foreignTypeNotRepresentable(type: String, reason: String, location: SourceLocation)
+    /// 语言层有这个宽度，IR 没有对应类型（I16 / U16 / U32 / F32）。
+    case foreignTypeWidthNotInIR(type: String, location: SourceLocation)
+    /// `String` 出现在外部函数的返回位：C 返回的指针归属不明，取回必须显式复制。
+    case foreignStringInReturnPosition(location: SourceLocation)
 }

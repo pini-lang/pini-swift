@@ -98,18 +98,36 @@ public struct IREnumDecl: Equatable {
     }
 }
 
-/// One foreign function binding (G14, FFI 子系统): a signature-only entry
-/// from a `[库|foreign]` block. The emitter forwards its declare; the call
-/// site is a plain `.call` resolved through the signature table.
+/// One foreign function binding (G14, FFI 子系统): a signature-only entry from a `[库|foreign]` block.
+/// The emitter forwards its declare; the call site is a plain `.call` resolved through the signature table.
+/// 签名只用 `FFIType`：闭合集之外的类型到不了这里，两个通道读的是同一份判据。
 public struct IRForeignFunction: Equatable {
     public let name: String
-    public let paramTypes: [IRType]
-    public let returnType: IRType?
+    public let params: [FFIType]
+    public let returnType: FFIType?
 
-    public init(name: String, paramTypes: [IRType], returnType: IRType?) {
+    public init(name: String, params: [FFIType], returnType: FFIType?) {
         self.name = name
-        self.paramTypes = paramTypes
+        self.params = params
         self.returnType = returnType
+    }
+}
+
+extension FFIType {
+    /// 值面拼写：`cString` 与 `String` 同为 `i8*`，调用点与 declare 因此对得上。
+    /// 指针统一 `ptr`；标量与 `IRType` 同宽。
+    var irType: IRType {
+        switch self {
+        case .i8: return .i8
+        case .u8: return .u8
+        case .i32: return .i32
+        case .i64: return .i64
+        case .u64: return .u64
+        case .f64: return .f64
+        case .boolean: return .boolean
+        case .pointer(let target): return .pointer(element: target.irType)
+        case .cString: return .string
+        }
     }
 }
 

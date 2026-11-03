@@ -283,6 +283,9 @@ public enum ErrorFormatter {
         case .givenBlockTypeInValuePosition(let typeName, _): return "给定块类型名 '\(typeName)' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: \(typeName)`，体内用 `名.字段`（ADR-001）"
         case .exportCInvalid(let reason, _): return "对外发布：\(reason)"
         case .errorCodeInvalid(let reason, _): return "错误码无效：\(reason)"
+        case .foreignTypeNotRepresentable(let type, let reason, _): return "外部符号的类型 '\(type)' 不可用：\(reason)"
+        case .foreignTypeWidthNotInIR(let type, _): return "外部符号的类型 '\(type)' 在 IR 里没有对应宽度"
+        case .foreignStringInReturnPosition: return "外部函数的返回类型不能是 String：C 返回的指针归属不明"
         }
     }
 

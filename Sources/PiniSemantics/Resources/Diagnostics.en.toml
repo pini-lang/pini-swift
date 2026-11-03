@@ -137,6 +137,18 @@ message = "the given block type name '{typeName}' cannot be used as a value -- t
 [E4-027]
 message = "invalid error code: {reason}"
 
+[E4-028]
+message = "type '{type}' cannot be used by a foreign symbol: {reason}"
+suggestion = "the C boundary accepts I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T, plus String in parameter position"
+
+[E4-029]
+message = "type '{type}' has no IR counterpart width"
+suggestion = "use one of I8 / I32 / I64 / U8 / U64 / F64; widths such as U32 and I16 disagree across channels"
+
+[E4-030]
+message = "a foreign function cannot return String: the pointer's ownership is unknowable"
+suggestion = "declare it as `*U8` and copy with `c字符串(pointer)` after the call"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

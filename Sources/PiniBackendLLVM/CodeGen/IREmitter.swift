@@ -369,12 +369,25 @@ public final class IREmitter {
         /// 去重按整条声明：同名同签名只发一次，同名不同签名两条都留，交给 clang 报错 ——
         /// 那是配置错，不能由「先到先得」吞掉。
         var emittedForeignDeclarations: Set<String> = []
+        /// FFI 签名的 LLVM 拼写。`cString` 用 `i8*`，与调用点传的串值同形；
+        /// 其余指针是 `ptr`。两处拼写必须一致，否则实参与形参对不上。
+        func llvmSpelling(of type: FFIType) -> String {
+            switch type {
+            case .i8, .u8: return "i8"
+            case .i32: return "i32"
+            case .i64, .u64: return "i64"
+            case .f64: return "double"
+            case .boolean: return "i1"
+            case .pointer: return "ptr"
+            case .cString: return "i8*"
+            }
+        }
         for foreignBlock in module.foreigns {
             for func_ in foreignBlock.funcs
             where !predeclared.contains(func_.name) && !runtimeShims.contains(func_.name) {
                 let symbol = IRName.mangle(func_.name)
-                let params = func_.paramTypes.map { $0.llvmSpelling }.joined(separator: ", ")
-                let ret = func_.returnType?.llvmSpelling ?? "void"
+                let params = func_.params.map { llvmSpelling(of: $0) }.joined(separator: ", ")
+                let ret = func_.returnType.map { llvmSpelling(of: $0) } ?? "void"
                 let declaration = "declare \(ret) @\(symbol)(\(params))"
                 guard emittedForeignDeclarations.insert(declaration).inserted else { continue }
                 header += declaration + "\n"

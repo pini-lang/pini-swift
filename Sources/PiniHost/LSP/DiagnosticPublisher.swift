@@ -160,6 +160,9 @@ public struct DiagnosticPublisher {
         case .givenBlockTypeInValuePosition(_, let loc): return loc
         case .exportCInvalid(_, let loc): return loc
         case .errorCodeInvalid(_, let loc): return loc
+        case .foreignTypeNotRepresentable(_, _, let loc): return loc
+        case .foreignTypeWidthNotInIR(_, let loc): return loc
+        case .foreignStringInReturnPosition(let loc): return loc
         }
     }
 }

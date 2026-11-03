@@ -437,26 +437,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 )
                 let thunk = try ForeignThunk.make(
                     symbol: symbol, name: name,
-                    paramTypes: try foreign.function.paramTypes.map { type in
-                        guard let annotation = ForeignThunk.annotation(for: type) else {
-                            throw RuntimeError.invalidOperation(
-                                reason: "IR executor: foreign callee \(name) has a parameter "
-                                    + "type that is not a C top-level type",
-                                location: IRExecutor.noLocation
-                            )
-                        }
-                        return annotation
-                    },
-                    returnTypes: try foreign.function.returnType.map { type -> [TypeAnnotation] in
-                        guard let annotation = ForeignThunk.annotation(for: type) else {
-                            throw RuntimeError.invalidOperation(
-                                reason: "IR executor: foreign callee \(name) has a return "
-                                    + "type that is not a C top-level type",
-                                location: IRExecutor.noLocation
-                            )
-                        }
-                        return [annotation]
-                    } ?? [],
+                    params: foreign.function.params,
+                    returnType: foreign.function.returnType,
                     location: IRExecutor.noLocation
                 )
                 return try thunk(args)

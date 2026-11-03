@@ -1,44 +1,39 @@
 import Foundation
+import PiniSemantics
 import PiniSyntax
 import PiniIR
 
 /// thunk 工厂：foreign 注册期为每个函数按精确 C 签名生成 `([Value]) throws -> Value` 闭包，
-/// 经 `@convention(c)` 函数指针调用 `dlsym` 拿到的裸地址。顶层签名收敛为封闭集（标量 + 指针 + `()`），
-/// 故分支可枚举、不依赖 libffi：整数与指针走 GPR 路径，`F64`/`F32` 走浮点寄存器，混用则拒绝。
+/// 经 `@convention(c)` 函数指针调用 `dlsym` 拿到的裸地址。签名来自 `FFIType`：类型面已在语义期收口，
+/// 这里只决定走哪条寄存器路径。整数与指针走 GPR，`F64`/`F32` 走浮点，混用则拒绝。
 enum ForeignThunk {
-    /// 为裸 C 符号地址生成调用闭包，签名取自 `decl`（已过静态校验）。本入口只做解构，实现全在核心入口：
-    /// IR 侧只携带签名（`IRForeignFunction`）没有 `FuncDecl`，ABI 逻辑必须能离散传入，否则 IR 侧要再写一份，两份必然漂。
-    static func make(symbol sym: UnsafeMutableRawPointer, decl: FuncDecl, location: SourceLocation) throws -> ([Value]) throws -> Value {
-        try make(
-            symbol: sym, name: decl.name,
-            paramTypes: decl.params.map { $0.typeAnnotation },
-            returnTypes: decl.returnTypes, location: location)
-    }
-
     /// 按「已展开的签名」生成调用闭包 —— 唯一实现，两条通道共用。
     ///
-    /// - Parameter paramTypes: 与形参位置对齐的类型标注。保留可选性只为与 AST 侧
-    /// 同形（`Parameter.typeAnnotation` 是可选的）；IR 侧传进来的必然非 nil。
+    /// - Parameter params: 与形参位置对齐的 FFI 类型，顺序即 C 原型顺序。
+    /// - Parameter returnType: nil 表示 void；其余至多一项。
     static func make(
         symbol sym: UnsafeMutableRawPointer, name: String,
-        paramTypes: [TypeAnnotation?], returnTypes: [TypeAnnotation],
+        params: [FFIType], returnType: FFIType?,
         location: SourceLocation
     ) throws -> ([Value]) throws -> Value {
-        guard returnTypes.count <= 1 else {
-            throw RuntimeError.invalidOperation(reason: "FFI 裸绑定仅支持单返回（多返回元组已在类型检查期拒绝）：\(name)", location: location)
-        }
-        let paramKinds = try paramTypes.enumerated().map { index, ta -> Kind in
-            guard let ta = ta, let k = kind(of: ta) else {
-                throw RuntimeError.invalidOperation(reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个参数", location: location)
+        let paramKinds = try params.enumerated().map { index, type -> Kind in
+            guard let kind = kind(of: type) else {
+                throw RuntimeError.invalidOperation(
+                    reason: rejection(of: type, index: index, name: name), location: location)
             }
-            return k
+            return kind
         }
-        let retKind = returnTypes.first.flatMap { kind(of: $0) }
-        // 指针返回：从签名 `*T` 提取元素类型，回填到运行时指针值，使 store/load
-        // 等指针原语可用（否则 elemType 为 nil，报「指针元素类型未知」）。
+        let retKind = returnType.flatMap { kind(of: $0) }
+        // 声明了返回却说不出宽度 ⇒ 报错，不许退化成「无返回」：静默降级会让调用点读到垃圾。
+        if returnType != nil, retKind == nil, let declared = returnType {
+            throw RuntimeError.invalidOperation(
+                reason: "FFI 裸绑定暂不支持这个返回类型：`\(declared.describe())`（\(name)）",
+                location: location)
+        }
+        // 指针返回：把 `*T` 的元素类型回填到运行时指针值，使 store/load 等原语可用。
         let retElemType: TypeAnnotation? = {
-            guard retKind == .ptr, let rt = returnTypes.first else { return nil }
-            if case .pointer(element: let elem, location: _) = rt { return elem }
+            guard retKind == .ptr, let declared = returnType else { return nil }
+            if case .pointer(let target) = declared { return elemAnnotation(for: target) }
             return nil
         }()
 
@@ -116,9 +111,8 @@ enum ForeignThunk {
 
     // MARK: - 类型编解码
 
-    /// IR 类型 → C 顶层类型标注的桥：thunk 按 AST 类型标注决定 ABI 路径，而 IR 只携带解析后的 `IRType`。
-    /// 只认能作 C 顶层类型的那一支（标量 + 指针），其余返回 nil 由调用方报错——不许退化成「无返回」：
-    /// 静默降级会让声明与调用悄悄不一致，而这种不一致不在调用点显形，只在读回值时变成垃圾。
+    /// `IRType` → 类型标注的桥：只给外部**数据**符号用（读写宽度来自声明）。
+    /// 调用签名不再经过它——那条路由 `FFIType` 决定 ABI 路径。
     static func annotation(for type: IRType) -> TypeAnnotation? {
         let location = SourceLocation(line: 0, column: 0, fileName: "<ir>")
         switch type {
@@ -136,27 +130,47 @@ enum ForeignThunk {
         }
     }
 
-    private enum Kind { case ptr, i8, u8, i16, u16, i32, u32, i64, u64, f32, f64, bool }
-    /// C 兼容标量 / 指针 → Kind；引用类型 / 未知 → nil（裸绑定不应到达）。
-    private static func kind(of t: TypeAnnotation) -> Kind? {
-        switch t {
-        case .simple(let name, _):
-            switch name {
-            case "I8": return .i8;
-            case "U8": return .u8
-            case "I16": return .i16;
-            case "U16": return .u16
-            case "I32": return .i32;
-            case "U32": return .u32
-            case "I64": return .i64;
-            case "U64": return .u64
-            case "F32": return .f32;
-            case "F64": return .f64
-            case "Bool": return .bool
-            default: return nil
-            }
+    /// FFI 类型 → 指针元素标注：只服务运行时指针值的 load/store 宽度，不参与 ABI 判定。
+    private static func elemAnnotation(for type: FFIType) -> TypeAnnotation? {
+        let location = SourceLocation(line: 0, column: 0, fileName: "<ffi>")
+        switch type {
+        case .i8: return .simple(name: "I8", location: location)
+        case .u8: return .simple(name: "U8", location: location)
+        case .i32: return .simple(name: "I32", location: location)
+        case .i64: return .simple(name: "I64", location: location)
+        case .u64: return .simple(name: "U64", location: location)
+        case .f64: return .simple(name: "F64", location: location)
+        case .boolean: return .simple(name: "Bool", location: location)
+        case .pointer(let target):
+            guard let inner = elemAnnotation(for: target) else { return nil }
+            return .pointer(element: inner, location: location)
+        case .cString: return nil
+        }
+    }
+
+    /// 到了解释器还接不住的形状：目前只有借出的 `String` 形参，文案给出替代写法。
+    private static func rejection(of type: FFIType, index: Int, name: String) -> String {
+        switch type {
+        case .cString:
+            return "FFI 裸绑定暂不支持 String 形参：第 \(index + 1) 个；先用 `cstr` 转成 `*U8` 再传（\(name)）"
+        default:
+            return "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个（\(name)）"
+        }
+    }
+
+    private enum Kind { case ptr, i8, u8, i32, i64, u64, f32, f64, bool }
+    /// C 标量 / 指针 → Kind；借出的 `String` 返回 nil，由调用方报错。
+    private static func kind(of type: FFIType) -> Kind? {
+        switch type {
+        case .i8: return .i8
+        case .u8: return .u8
+        case .i32: return .i32
+        case .i64: return .i64
+        case .u64: return .u64
+        case .f64: return .f64
+        case .boolean: return .bool
         case .pointer: return .ptr
-        default: return nil
+        case .cString: return nil
         }
     }
 
@@ -175,10 +189,7 @@ enum ForeignThunk {
             return b ? 1 : 0
         case .i8: return UInt64(UInt8(truncatingIfNeeded: try intVal(v, location: location)))
         case .u8: return UInt64(UInt8(truncatingIfNeeded: try intVal(v, location: location)))
-        case .i16: return UInt64(UInt16(truncatingIfNeeded: try intVal(v, location: location)))
-        case .u16: return UInt64(UInt16(truncatingIfNeeded: try intVal(v, location: location)))
         case .i32: return UInt64(UInt32(truncatingIfNeeded: try intVal(v, location: location)))
-        case .u32: return UInt64(UInt32(truncatingIfNeeded: try intVal(v, location: location)))
         case .i64: return UInt64(bitPattern: Int64(try intVal(v, location: location)))
         case .u64: return UInt64(bitPattern: Int64(try intVal(v, location: location)))
         case .f32, .f64:
@@ -205,10 +216,7 @@ enum ForeignThunk {
         case .bool: return .bool(bits != 0)
         case .i8: return .int(Int(Int8(bitPattern: UInt8(bits & 0xFF))))
         case .u8: return .int(Int(bits & 0xFF))
-        case .i16: return .int(Int(Int16(bitPattern: UInt16(bits & 0xFFFF))))
-        case .u16: return .int(Int(bits & 0xFFFF))
         case .i32: return .int(Int(Int32(bitPattern: UInt32(bits & 0xFFFFFFFF))))
-        case .u32: return .int(Int(bits & 0xFFFFFFFF))
         case .i64: return .int(Int(Int64(bitPattern: bits)))
         case .u64: return .int(Int(Int64(bitPattern: bits)))
         case .f32, .f64:

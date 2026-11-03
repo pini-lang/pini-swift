@@ -1781,60 +1781,45 @@ public final class TypeChecker {
         }
     }
 
-    // MARK: - Phase 2a FFI 子系统：顶层签名静态校验
+    // MARK: - FFI 类型面：闭合表
 
-    /// C 兼容标量的已知集合（Void/Unit 亦兼容 void 返回）。它**不是**白名单：`checkFFITopLevelType`
-    /// 对未知简单名同样放行（shim 可能承载，解析期 fail-fast 兜底）。本集合不含 `Char`/`CChar`，
-    /// 单字节字符的真正判据在 `isCScalarType` 的指针目标兼容判定里。
-    private static let ffiTopLevelScalars: Set<String> = [
-        "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
-        "F32", "F64", "Bool", "Void", "Unit",
-    ]
-
-    /// 校验 `[名称|foreign]` 块内每个函数的顶层参数与返回类型：只拒绝 by-value 结构体、元组、
-    /// 函数指针、泛型；标量与指针、shim 友好的 String/Optional/Result 放行，后者由解析期的
-    /// 原声函数表 fail-fast 与裸绑定 C 兼容校验兜底。
+    /// `[名称|foreign]` 块内每一项都过闭合表：函数项按形参 / 返回两个位置判，数据项按数据位判。
+    /// 表本身只有一份（`FFIType`），这里只负责把失败翻成诊断码。
     private func checkForeignDeclSignatures(_ fd: ForeignDecl) throws {
         for symbol in fd.symbols {
-            for ta in symbol.paramTypes { try checkFFITopLevelType(ta, location: symbol.location) }
-            for rt in symbol.returnTypes { try checkFFITopLevelType(rt, location: symbol.location) }
+            if symbol.isFunction {
+                for annotation in symbol.paramTypes {
+                    try checkFFIType(annotation, at: .parameter, symbol: symbol)
+                }
+                for annotation in symbol.returnTypes {
+                    try checkFFIType(annotation, at: .result, symbol: symbol)
+                }
+            } else {
+                try checkFFIType(symbol.annotation, at: .data, symbol: symbol)
+            }
         }
     }
 
-    private func checkFFITopLevelType(_ t: TypeAnnotation, location: SourceLocation) throws {
-        switch t {
-        case .simple(let name, let loc):
-            if Self.ffiTopLevelScalars.contains(name) { return }
-            // 引用类型（object，含内建 String 等）：仅 shim 可承载，放行（解析期 fail-fast 兜底）。
-            if referenceTypeNames.contains(name) { return }
-            // by-value 结构体：Phase 2c（可选）才支持；此处已排除 object（referenceTypeNames 先行返回），必为 struct。
-            if typeFieldsByName[name] != nil {
+    /// 三类失败各有一个码：不在表内、宽度 IR 表达不了、`String` 落在返回位。
+    /// 位置一并交给归一函数判，因为同一份标注换个位置成立与否不同。
+    private func checkFFIType(
+        _ annotation: TypeAnnotation, at position: FFIType.Position, symbol: ForeignSymbol
+    ) throws {
+        do {
+            _ = try FFIType.resolve(annotation, at: position)
+        } catch let error as FFITypeError {
+            switch error {
+            case .notRepresentable(let type, let reason):
                 try report(
-                    TypeError.mismatch(
-                        expected: "C 兼容标量 / 指针 / 引用类型（shim）",
-                        got: "by-value 结构体 `\(name)` 不可作为 FFI 顶层类型（Phase 2c 才支持，见 ）",
-                        location: loc
-                    ))
-                return
+                    TypeError.foreignTypeNotRepresentable(
+                        type: type, reason: reason, location: symbol.location))
+            case .widthNotInIR(let type):
+                try report(
+                    TypeError.foreignTypeWidthNotInIR(type: type, location: symbol.location))
+            case .cStringInReturnPosition:
+                try report(
+                    TypeError.foreignStringInReturnPosition(location: symbol.location))
             }
-            // 其它已知用户类型（枚举等）与未知简单名：shim 可能承载，放行（解析期 fail-fast 兜底）。
-            return
-        case .pointer:
-            return  // 元素由 validatePointerAnnotations 独立校验（禁 object / 含 object 复合类型）
-        case .tuple:
-            try report(
-                TypeError.mismatch(
-                    expected: "C 兼容标量 / 指针",
-                    got: "元组类型不可作为 FFI 顶层类型（元组 ❌，见 ）",
-                    location: location
-                ))
-        case .generic, .function:
-            try report(
-                TypeError.mismatch(
-                    expected: "C 兼容标量 / 指针",
-                    got: "泛型/函数指针类型不可作为 FFI 顶层类型（函数指针属 Phase 2b，见 ）",
-                    location: location
-                ))
         }
     }
 

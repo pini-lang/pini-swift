@@ -137,6 +137,18 @@ message = "给定块类型名 '{typeName}' 不能直接当值 —— 默认实�
 [E4-027]
 message = "错误码无效：{reason}"
 
+[E4-028]
+message = "外部符号的类型 '{type}' 不可用：{reason}"
+suggestion = "C 边界只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T，以及形参位的 String"
+
+[E4-029]
+message = "外部符号的类型 '{type}' 在 IR 里没有对应宽度"
+suggestion = "换成 I8 / I32 / I64 / U8 / U64 / F64 之一；U32 与 I16 这类宽度三条通道对不上"
+
+[E4-030]
+message = "外部函数的返回类型不能是 String：C 返回的指针归属不明"
+suggestion = "声明成 `*U8`，读出后用 `c字符串(指针)` 复制一份"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

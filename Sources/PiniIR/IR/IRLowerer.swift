@@ -566,11 +566,13 @@ public enum IRLowerer {
                     usingParamIndices: usingParamIndices(funcDecl)
                 )
             case .foreignDecl(let foreignDecl):
-                // 外部函数签名并入共享签名表，调用点照常解析。
-                for symbol in foreignDecl.symbols {
-                    let signature = try resolveForeignSignature(symbol, userTypes: userTypes)
+                // 外部函数签名并入共享签名表，调用点照常解析。数据符号不进这张表：
+                // 它不是可调用的，按名读到的是存储而不是函数。
+                for symbol in foreignDecl.symbols where symbol.isFunction {
+                    let signature = try resolveForeignSignature(symbol)
                     signatures[symbol.name] = IRLowererSignatureInfo(
-                        paramTypes: signature.paramTypes, returnType: signature.returnType
+                        paramTypes: signature.params.map(\.irType),
+                        returnType: signature.returnType?.irType
                     )
                 }
             default: break
@@ -633,11 +635,8 @@ public enum IRLowerer {
             guard case .foreignDecl(let block) = decl else { continue }
             for symbol in block.symbols
             where !symbol.isFunction && !symbol.flags.contains("macro") {
-                guard let type = resolveAnnotationType(symbol.annotation, userTypes: userTypes) else {
-                    throw unsupported(
-                        "外部数据符号 '\(symbol.name)' 的类型无法解析", at: symbol.location)
-                }
-                foreignData[symbol.name] = type
+                let type = try ffiType(symbol.annotation, at: .data, symbol: symbol)
+                foreignData[symbol.name] = type.irType
             }
         }
         for decl in module.declarations {
@@ -816,10 +815,10 @@ public enum IRLowerer {
             var foreignFuncs: [IRForeignFunction] = []
             var foreignDataEntries: [IRForeignData] = []
             for symbol in foreignDecl.symbols where symbol.isFunction {
-                let signature = try resolveForeignSignature(symbol, userTypes: userTypes)
+                let signature = try resolveForeignSignature(symbol)
                 foreignFuncs.append(
                     IRForeignFunction(
-                        name: symbol.name, paramTypes: signature.paramTypes, returnType: signature.returnType
+                        name: symbol.name, params: signature.params, returnType: signature.returnType
                     ))
             }
             for symbol in foreignDecl.symbols
@@ -1823,20 +1822,13 @@ public enum IRLowerer {
         }
     }
 
-    /// 解析一条外部函数的签名：形参逐位求 IR 类型，返回取首位。
-    /// 多返回在降载期就拒绝——只取首位会让声明与调用悄悄不一致，而这种不一致只在读回值时显形。
+    /// 解析一条外部函数的签名：形参逐位求 FFI 类型，返回至多一项。
+    /// 类型面只有 `FFIType` 一份判据，这里只搬运；多返回仍在这里拒绝，因为 IR 只有一个返回位。
     private static func resolveForeignSignature(
-        _ symbol: ForeignSymbol,
-        userTypes: [String: IRType]
-    ) throws -> (paramTypes: [IRType], returnType: IRType?) {
-        let paramTypes = try symbol.paramTypes.enumerated().map { index, annotation -> IRType in
-            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                throw unsupported(
-                    "parameter \(index + 1) of foreign '\(symbol.name)' lacks a resolvable type",
-                    at: symbol.location
-                )
-            }
-            return type
+        _ symbol: ForeignSymbol
+    ) throws -> (params: [FFIType], returnType: FFIType?) {
+        let params = try symbol.paramTypes.map { annotation in
+            try ffiType(annotation, at: .parameter, symbol: symbol)
         }
         guard symbol.returnTypes.count <= 1 else {
             throw unsupported(
@@ -1844,16 +1836,32 @@ public enum IRLowerer {
                 at: symbol.location
             )
         }
-        let returnType: IRType? = try symbol.returnTypes.first.map { annotation in
-            guard let type = resolveAnnotationType(annotation, userTypes: userTypes) else {
-                throw unsupported(
-                    "return type '\(annotation.simpleName ?? "(non-scalar)")' of foreign '\(symbol.name)'",
-                    at: symbol.location
-                )
-            }
-            return type
+        let returnType = try symbol.returnTypes.first.map { annotation in
+            try ffiType(annotation, at: .result, symbol: symbol)
         }
-        return (paramTypes, returnType)
+        return (params, returnType)
+    }
+
+    /// 归一失败翻成降载期的 unsupported，措辞与语义期同一套判据、不同的出口。
+    private static func ffiType(
+        _ annotation: TypeAnnotation, at position: FFIType.Position, symbol: ForeignSymbol
+    ) throws -> FFIType {
+        do {
+            return try FFIType.resolve(annotation, at: position)
+        } catch let error as FFITypeError {
+            throw unsupported(Self.message(for: error, symbol: symbol.name), at: symbol.location)
+        }
+    }
+
+    private static func message(for error: FFITypeError, symbol: String) -> String {
+        switch error {
+        case .notRepresentable(let type, let reason):
+            return "外部符号 '\(symbol)' 的类型 `\(type)` 不可用：\(reason)"
+        case .widthNotInIR(let type):
+            return "外部符号 '\(symbol)' 的类型 `\(type)` 在 IR 里没有对应宽度"
+        case .cStringInReturnPosition:
+            return "外部符号 '\(symbol)' 不能用 String 作返回类型：C 返回的指针归属不明"
+        }
     }
 
     /// Declared return type in IR terms. Several return slots (`-> (I32, I32,)`) collapse into one tuple

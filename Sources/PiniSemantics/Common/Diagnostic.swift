@@ -230,6 +230,9 @@ extension TypeError: DiagnosticProviding {
         case .givenBlockTypeInValuePosition: return "\(DiagnosticDomain.type.rawValue)-015"
         case .exportCInvalid: return "\(DiagnosticDomain.type.rawValue)-026"
         case .errorCodeInvalid: return "\(DiagnosticDomain.type.rawValue)-027"
+        case .foreignTypeNotRepresentable: return "\(DiagnosticDomain.type.rawValue)-028"
+        case .foreignTypeWidthNotInIR: return "\(DiagnosticDomain.type.rawValue)-029"
+        case .foreignStringInReturnPosition: return "\(DiagnosticDomain.type.rawValue)-030"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -251,6 +254,9 @@ extension TypeError: DiagnosticProviding {
             .givenBlockTypeInValuePosition(_, let loc):
             return loc
         case .exportCInvalid(_, let loc), .errorCodeInvalid(_, let loc):
+            return loc
+        case .foreignTypeNotRepresentable(_, _, let loc), .foreignTypeWidthNotInIR(_, let loc),
+            .foreignStringInReturnPosition(let loc):
             return loc
         }
     }
