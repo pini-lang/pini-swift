@@ -3273,13 +3273,23 @@ public final class IREmitter {
         bodyIR = "define \(returnSpelling) @\(function.cName)(\(signature.joined(separator: ", "))) {\n"
 
         var args: [String] = []
+        /// 借出的 `String` 形参在转发层复制一份：C 的缓冲归调用方，Pini 侧存下它就得自己持有。
+        var borrowed: [String] = []
         var valueIndex = 0
         for param in function.params {
             if param.isUsing {
                 let instance = emitGivenInstance(type: param.type)
                 args.append("\(instance.llvmType) \(instance.ssaName)")
             } else {
-                args.append("\(param.type.llvmSpelling) %a\(valueIndex)")
+                if case .string = param.type {
+                    usesStringRefcount = true
+                    let copy = builder.freshTemp()
+                    bodyIR += " \(copy) = call i8* @bk_str_dup(i8* %a\(valueIndex))\n"
+                    borrowed.append(copy)
+                    args.append("i8* \(copy)")
+                } else {
+                    args.append("\(param.type.llvmSpelling) %a\(valueIndex)")
+                }
                 valueIndex += 1
             }
         }
@@ -3289,6 +3299,7 @@ public final class IREmitter {
             /// `^T` 的 C 形态：状态码返回、载荷走出参。标签 0 为 ok，与 `resultConstruct` 同一约定。
             let result = builder.freshTemp()
             bodyIR += " \(result) = call \(resultType) \(call)\n"
+            releaseBorrowedStrings(borrowed)
             let tag = builder.freshTemp()
             bodyIR += " \(tag) = extractvalue \(resultType) \(result), 0\n"
             let isOk = builder.freshTemp()
@@ -3317,13 +3328,21 @@ public final class IREmitter {
         } else if let returnType = function.returnType {
             let result = builder.freshTemp()
             bodyIR += " \(result) = call \(returnType.llvmSpelling) \(call)\n"
+            releaseBorrowedStrings(borrowed)
             bodyIR += " ret \(returnType.llvmSpelling) \(result)\n"
         } else {
             bodyIR += " call void \(call)\n"
+            releaseBorrowedStrings(borrowed)
             bodyIR += " ret void\n"
         }
         bodyIR += "}\n\n"
         bodyIR = savedBody + bodyIR
+    }
+
+    /// 转发层复制品的归还点：调用一返回就放，早于任何分支 —— 三条出口都要走到；
+    /// 被调方若把串存进字段，那份 +1 是它自己 retain 的。
+    private func releaseBorrowedStrings(_ copies: [String]) {
+        for copy in copies { bodyIR += " call void @bk_str_release(i8* \(copy))\n" }
     }
 
     /// 给定块的取址函数：物化由 `bk_given_get` 负责，返回的是盒的字段区首地址。

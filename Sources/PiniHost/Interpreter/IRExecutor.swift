@@ -287,7 +287,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     /// The interpreter fails at registration with `symbolNotFound`; resolving only at call sites would defer that failure.
     /// `FFILoader` caches handles, so the call sites do not repeat the work.
     private func resolveForeignsEagerly() throws {
-        for (name, foreign) in foreignDecls where RuntimeOps.libcShims[name] == nil {
+        for (name, foreign) in foreignDecls
+        where RuntimeOps.libcShim(named: name, params: foreign.function.params) == nil {
             _ = try ffiLoader.resolve(
                 library: foreign.library, symbol: name,
                 searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
@@ -430,7 +431,9 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             // Otherwise it is a raw C binding: `dlsym` against the block name, then a per-signature thunk over the address.
             if let foreign = foreignDecls[name] {
                 let args = try arguments.map { try evaluate($0) }
-                if let shim = RuntimeOps.libcShims[name] { return try shim(args) }
+                if let shim = RuntimeOps.libcShim(named: name, params: foreign.function.params) {
+                    return try shim(args)
+                }
                 let symbol = try ffiLoader.resolve(
                     library: foreign.library, symbol: name,
                     searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation

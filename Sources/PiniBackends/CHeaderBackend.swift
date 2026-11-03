@@ -159,6 +159,8 @@ public struct CHeaderBackend: PiniBackend {
         case .u64: return "uint64_t"
         case .f64: return "double"
         case .boolean: return "bool"
+        /// 导出形参的 `String`：借出的 UTF-8 C 串，只在本次调用期间有效。
+        case .string: return "const char*"
         case .pointer(let element):
             /// 目标不透明时给 `void*`：C 侧不需要 Pini 的结构体定义，也不该依赖它。
             if let spelling = cScalar(element) { return "\(spelling)*" }

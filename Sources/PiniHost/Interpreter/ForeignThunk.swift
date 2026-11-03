@@ -19,7 +19,8 @@ enum ForeignThunk {
         let paramKinds = try params.enumerated().map { index, type -> Kind in
             guard let kind = kind(of: type) else {
                 throw RuntimeError.invalidOperation(
-                    reason: rejection(of: type, index: index, name: name), location: location)
+                    reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个（\(name)）",
+                    location: location)
             }
             return kind
         }
@@ -57,8 +58,14 @@ enum ForeignThunk {
                 throw RuntimeError.argumentCountMismatch(name: name, expected: paramKinds.count, got: args.count, location: location)
             }
             var cargs: [UInt64] = []
+            var owned: [UnsafeMutableRawPointer] = []
+            defer { for buffer in owned { free(buffer) } }
             for (arg, kind) in zip(args, paramKinds) {
-                cargs.append(try toUInt64(arg, kind: kind, location: location))
+                if kind == .cString {
+                    cargs.append(try cStringPointer(arg, owned: &owned, location: location))
+                } else {
+                    cargs.append(try toUInt64(arg, kind: kind, location: location))
+                }
             }
             while cargs.count < 8 { cargs.append(0) }
             let result = fn(cargs[0], cargs[1], cargs[2], cargs[3], cargs[4], cargs[5], cargs[6], cargs[7])
@@ -148,18 +155,29 @@ enum ForeignThunk {
         }
     }
 
-    /// 到了解释器还接不住的形状：目前只有借出的 `String` 形参，文案给出替代写法。
-    private static func rejection(of type: FFIType, index: Int, name: String) -> String {
-        switch type {
-        case .cString:
-            return "FFI 裸绑定暂不支持 String 形参：第 \(index + 1) 个；先用 `cstr` 转成 `*U8` 再传（\(name)）"
-        default:
-            return "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个（\(name)）"
+    /// 借出的 `String` 形参：按 UTF-8 编码成临时 C 缓冲，指针交给 `owned`，
+    /// 由调用方在本次调用结束后统一释放。分配早于调用 ⇒ 抛错路径也必须归还。
+    private static func cStringPointer(
+        _ v: Value, owned: inout [UnsafeMutableRawPointer], location: SourceLocation
+    ) throws -> UInt64 {
+        guard case .string(let s) = v else {
+            throw RuntimeError.typeMismatch(
+                expected: "String", got: String(describing: v), location: location)
         }
+        let bytes = Array(s.utf8)
+        guard let buffer = malloc(bytes.count + 1) else {
+            throw RuntimeError.invalidOperation(
+                reason: "FFI 借出：分配 C 字符串失败", location: location)
+        }
+        if !bytes.isEmpty { memcpy(buffer, bytes, bytes.count) }
+        buffer.advanced(by: bytes.count).storeBytes(of: 0, as: UInt8.self)
+        owned.append(buffer)
+        return UInt64(UInt(bitPattern: buffer))
     }
 
-    private enum Kind { case ptr, i8, u8, i32, i64, u64, f32, f64, bool }
-    /// C 标量 / 指针 → Kind；借出的 `String` 返回 nil，由调用方报错。
+    private enum Kind { case ptr, i8, u8, i32, i64, u64, f32, f64, bool, cString }
+
+    /// C 标量 / 指针 → Kind；借出的 `String` 走 `cString`，在 GPR 路径里换成临时缓冲。
     private static func kind(of type: FFIType) -> Kind? {
         switch type {
         case .i8: return .i8
@@ -170,7 +188,7 @@ enum ForeignThunk {
         case .f64: return .f64
         case .boolean: return .bool
         case .pointer: return .ptr
-        case .cString: return nil
+        case .cString: return .cString
         }
     }
 
@@ -194,6 +212,8 @@ enum ForeignThunk {
         case .u64: return UInt64(bitPattern: Int64(try intVal(v, location: location)))
         case .f32, .f64:
             throw RuntimeError.invalidOperation(reason: "浮点参数不应进入 GPR 路径", location: location)
+        case .cString:
+            throw RuntimeError.invalidOperation(reason: "借出的 String 应先换成临时缓冲", location: location)
         }
     }
 
@@ -221,6 +241,8 @@ enum ForeignThunk {
         case .u64: return .int(Int(Int64(bitPattern: bits)))
         case .f32, .f64:
             throw RuntimeError.invalidOperation(reason: "浮点返回不应进入 GPR 路径", location: location)
+        case .cString:
+            throw RuntimeError.invalidOperation(reason: "借出的 String 不出现在返回位", location: location)
         }
     }
 }

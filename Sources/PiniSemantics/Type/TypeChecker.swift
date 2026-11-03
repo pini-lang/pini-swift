@@ -544,13 +544,13 @@ public final class TypeChecker {
                         reason: "形参 `\(param.name)` 缺类型标注，无法写出 C 原型", location: location))
                 continue
             }
-            if let why = cExportRejection(annotation, allowResult: false) {
+            if let why = cExportRejection(annotation, position: .parameter) {
                 try report(
                     TypeError.exportCInvalid(
                         reason: "形参 `\(param.name)`：\(why)", location: location))
             }
         }
-        if let declared = function.returnTypes.first, let why = cExportRejection(declared, allowResult: true) {
+        if let declared = function.returnTypes.first, let why = cExportRejection(declared, position: .result) {
             try report(TypeError.exportCInvalid(reason: "返回位：\(why)", location: location))
         }
     }
@@ -586,7 +586,7 @@ public final class TypeChecker {
                         location: location))
             }
             seenFields[escaped] = field.name
-            if let why = cExportRejection(field.typeAnnotation, allowResult: false) {
+            if let why = cExportRejection(field.typeAnnotation, position: .field) {
                 try report(
                     TypeError.exportCInvalid(
                         reason: "字段 `\(typeName).\(field.name)`：\(why)", location: location))
@@ -594,11 +594,18 @@ public final class TypeChecker {
         }
     }
 
+    /// C 导出面上标注出现的位置。三个位置各有一套成立条件，混用一处就会放行错形状。
+    private enum CExportPosition { case parameter, result, field }
+
     /// 一种类型能不能写成 C 类型；`nil` 表示可以，否则给一句原因。
-    /// `allowResult` 只在返回位为真：`^T` 在形参与字段位没有对应形状。
-    private func cExportRejection(_ t: TypeAnnotation, allowResult: Bool) -> String? {
+    /// 位置是判据的一部分：`String` 只在形参位成立，`^T` 只在返回位成立。
+    private func cExportRejection(_ t: TypeAnnotation, position: CExportPosition) -> String? {
         switch t {
         case .simple(let name, _):
+            if name == "String" {
+                return position == .parameter
+                    ? nil : "`String` 只在导出函数的形参位成立，C 侧是借出的 `const char*`"
+            }
             return Self.cExportScalars.contains(name) ? nil : "`\(name)` 不是 C 兼容标量"
         case .pointer(let element, _):
             /// 指针目标必须是 C 标量。给定块之类的目标在头文件里只能退化成 `void*`，而 IR 也搬不动
@@ -609,7 +616,7 @@ public final class TypeChecker {
             return "指针目标 `\(element.describe())` 不是 C 标量；非标量目标在 C 侧只能写成 `void*`"
         case .generic(let name, let params, _)
         where name == "Result" && (params.count == 1 || params.count == 2):
-            guard allowResult else { return "`^T` 只能作返回类型" }
+            guard position == .result else { return "`^T` 只能作返回类型" }
             guard let payload = params.first else { return "`^T` 缺载荷类型" }
             if params.count == 2 {
                 /// 两参数形态是「带错误集的 Result」：E 必须实现 `错误`，否则 C 侧没有码可回填。

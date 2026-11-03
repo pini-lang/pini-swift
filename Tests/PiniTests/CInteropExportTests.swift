@@ -248,7 +248,7 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
         let failed = failure {
             _ = try typeChecked(
                 """
-                f(s: String,) -> (I32,):
+                f(n: I16,) -> (I32,):
                     return 1
                 [calc|export]
                 calc_f|c = f

@@ -5,6 +5,7 @@
 #endif
 import Foundation
 import PiniSyntax
+import PiniSemantics
 import PiniIR
 
 /// Runtime operations both engines need: the value-level helpers, builtins and predicates the surviving engine shares.
@@ -408,13 +409,46 @@ public enum RuntimeOps {
         return v
     }
 
-    nonisolated(unsafe) static let libcShims: [String: ([Value]) throws -> Value] = {
-        var shims: [String: ([Value]) throws -> Value] = [:]
+    /// shim 认的形参形状。声明逐位相容才走 shim：借出的 `String` 与 `*T` 不是一个形状，
+    /// 按名字硬套会把合法声明拒掉。
+    enum ShimShape {
+        case pointer, string, integer, boolean, floating
+
+        func matches(_ type: FFIType) -> Bool {
+            switch (self, type) {
+            case (.pointer, .pointer), (.string, .cString), (.boolean, .boolean), (.floating, .f64):
+                return true
+            case (.integer, .i8), (.integer, .u8), (.integer, .i32), (.integer, .i64), (.integer, .u64):
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    /// 一条 shim：形状与实现捆在一起，命中判据因此只有一处，不会名字对上了形状没对上。
+    struct LibcShim {
+        let shape: [ShimShape]
+        let body: ([Value]) throws -> Value
+
+        func serves(_ params: [FFIType]) -> Bool {
+            shape.count == params.count && zip(shape, params).allSatisfy { $0.matches($1) }
+        }
+    }
+
+    /// 名字与声明形状都对上才给实现；否则调用方落到通用 thunk。
+    static func libcShim(named name: String, params: [FFIType]) -> (([Value]) throws -> Value)? {
+        guard let shim = libcShims[name], shim.serves(params) else { return nil }
+        return shim.body
+    }
+
+    nonisolated(unsafe) static let libcShims: [String: LibcShim] = {
+        var shims: [String: LibcShim] = [:]
         #if canImport(Darwin) || canImport(Glibc)
             let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
 
             // malloc(size: U64) -> *U8：C 语义——内存归用户，free 释放。
-            shims["malloc"] = { args in
+            shims["malloc"] = LibcShim(shape: [.integer]) { args in
                 let n = try RuntimeOps.intArg(args, name: "malloc")
                 guard let p = malloc(n) else {
                     throw RuntimeError.invalidOperation(reason: "malloc 失败：内存不足", location: loc)
@@ -428,14 +462,14 @@ public enum RuntimeOps {
             }
 
             // free(p: *U8) -> ()：C 语义。
-            shims["free"] = { args in
+            shims["free"] = LibcShim(shape: [.pointer]) { args in
                 let p = try RuntimeOps.ptrArg(args, name: "free", self: nil)
                 free(p.pointer)
                 return .null
             }
 
             // memcpy(dst: *U8, src: *U8, n: U64) -> *U8。
-            shims["memcpy"] = { args in
+            shims["memcpy"] = LibcShim(shape: [.pointer, .pointer, .integer]) { args in
                 guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memcpy", expected: 3, got: args.count, location: loc) }
                 guard case .rawPointer(let dst) = args[0] else { throw RuntimeError.invalidOperation(reason: "memcpy 第 1 参须为指针", location: loc) }
                 guard case .rawPointer(let src) = args[1] else { throw RuntimeError.invalidOperation(reason: "memcpy 第 2 参须为指针", location: loc) }
@@ -445,7 +479,7 @@ public enum RuntimeOps {
             }
 
             // memset(p: *U8, v: I32, n: U64) -> *U8。
-            shims["memset"] = { args in
+            shims["memset"] = LibcShim(shape: [.pointer, .integer, .integer]) { args in
                 guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memset", expected: 3, got: args.count, location: loc) }
                 guard case .rawPointer(let p) = args[0] else { throw RuntimeError.invalidOperation(reason: "memset 第 1 参须为指针", location: loc) }
                 let v = try RuntimeOps.intArg(args, name: "memset", offset: 1)
@@ -455,14 +489,14 @@ public enum RuntimeOps {
             }
 
             // strlen(s: *U8) -> U64。
-            shims["strlen"] = { args in
+            shims["strlen"] = LibcShim(shape: [.pointer]) { args in
                 let p = try RuntimeOps.ptrArg(args, name: "strlen", self: nil)
                 let s = p.pointer.assumingMemoryBound(to: CChar.self)
                 return .int(strlen(s))
             }
 
             // puts(s: *U8) -> I32：向 stdout 写一行 C 字符串。
-            shims["puts"] = { args in
+            shims["puts"] = LibcShim(shape: [.pointer]) { args in
                 let p = try RuntimeOps.ptrArg(args, name: "puts", self: nil)
                 let s = p.pointer.assumingMemoryBound(to: CChar.self)
                 let r = puts(s)
@@ -470,7 +504,7 @@ public enum RuntimeOps {
             }
 
             // strcmp(a: *U8, b: *U8) -> I32。
-            shims["strcmp"] = { args in
+            shims["strcmp"] = LibcShim(shape: [.pointer, .pointer]) { args in
                 guard args.count >= 2 else { throw RuntimeError.argumentCountMismatch(name: "strcmp", expected: 2, got: args.count, location: loc) }
                 guard case .rawPointer(let a) = args[0] else { throw RuntimeError.invalidOperation(reason: "strcmp 第 1 参须为指针", location: loc) }
                 guard case .rawPointer(let b) = args[1] else { throw RuntimeError.invalidOperation(reason: "strcmp 第 2 参须为指针", location: loc) }
@@ -481,7 +515,7 @@ public enum RuntimeOps {
             }
 
             // cstr(s: String) -> *U8：把 Pini 字符串转成 null 结尾的 C 字符串（malloc 分配，用户 free）。
-            shims["cstr"] = { args in
+            shims["cstr"] = LibcShim(shape: [.string]) { args in
                 guard args.count >= 1 else { throw RuntimeError.argumentCountMismatch(name: "cstr", expected: 1, got: args.count, location: loc) }
                 guard case .string(let s) = args[0] else {
                     throw RuntimeError.invalidOperation(reason: "cstr：第 1 个参数须为 String", location: loc)
