@@ -631,7 +631,7 @@ public final class TypeChecker {
             return "`^T` 的载荷须是 C 兼容标量"
         case .tuple(_, let elements, _) where elements.isEmpty:
             return nil
-        case .tuple: 
+        case .tuple:
             return "元组不可跨越 C 边界"
         case .function(let params, let returns, let captured, let usingIndices, _):
             /// 函数类型只在形参位成立：C 侧写成 `ret (*)(params)`，转发层把裸地址包成 Pini 函数值。
