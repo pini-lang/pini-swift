@@ -198,6 +198,19 @@ The parity test therefore requires the same stderr *shape* as well as equal
 stdout, and anything that falls through is classified by the ordered rules
 below — a lone interp-ir stderr reaches GAP_IR_ENGINE, not OK.
 
+STDOUT IS NOT A JUDGE, WHERE THE SCHEDULER WRITES IT
+----------------------------------------------------
+One fixture prints from two workers. Byte equality between the arms is then a
+coin flip: not only the order of the lines but the point where one print is cut
+by another belongs to the scheduler — the Linux arm was measured emitting "BA"
+on a single line, because a print is more than one write. A baseline entry for
+such a fixture flips the gate at random, and a line-multiset comparison would
+still fail on the split line. Fixtures named in NONDETERMINISTIC_STDOUT are
+compared as a multiset of characters, which keeps what the program does promise
+(every character it prints, as many times as it prints it) and drops only what
+it never promised. The list is deliberately short: each name is an admission
+that this fixture cannot judge stdout, not a way to quiet a divergence.
+
 PROCESS CONTAINMENT
 -------------------
 `pini run-llvm` writes `/tmp/pini_<uuid>.ll` and then blocks in
@@ -275,6 +288,10 @@ DEFAULT_ROOTS = [
     "Tests/PiniTests/CodeGen/IRTests",
     "examples",
 ]
+
+# stdout 的判据在这一条上不成立：两个 worker 同时打印，行序与行内切分都归调度。
+# 比较降为字符多重集 —— 少打或多打一个字仍失败，排列与换行位置不判。
+NONDETERMINISTIC_STDOUT = {"examples/concurrency.pini": "行序与行内切分由调度决定"}
 
 F64_SIX = re.compile(r"\d+\.\d{6}")
 # The IR execution engine names the node it cannot run yet; that message is the
@@ -563,6 +580,21 @@ def diag_code(text):
     return m.group(1) if m else ""
 
 
+def same_stdout(rel, l_out, h_out):
+    """Whether the two arms printed the same stdout, in the sense this fixture allows.
+
+    Byte equality is the default. A fixture in NONDETERMINISTIC_STDOUT prints from
+    more than one worker, so the order of its lines and the point where one print
+    is cut by another both belong to the scheduler; measured on the Linux arm, two
+    prints landed as "BA" on a single line. Comparing the character multiset drops
+    exactly those two freedoms: a missing, extra or substituted character still
+    fails, a permutation or a different line split does not.
+    """
+    if rel in NONDETERMINISTIC_STDOUT:
+        return sorted(l_out) == sorted(h_out)
+    return l_out == h_out
+
+
 def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     """Verdict for one fixture across the two execution channels.
 
@@ -613,7 +645,7 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     # 6. Parity across BOTH channels. The stderr shape is part of it because a
     #    silent-stdout crash on one side and a silent-stdout success on the other
     #    look identical on stdout alone.
-    if l_out == h_out and bool(l_err.strip()) == bool(h_err.strip()):
+    if same_stdout(rel, l_out, h_out) and bool(l_err.strip()) == bool(h_err.strip()):
         if l_err.strip():
             # parity, but the standalone channel is not the real harness
             # (the test substitutes paths / supplies a program base).
@@ -626,7 +658,7 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
     # 8. Diagnostic-channel asymmetry: equal stdout means the stderr shapes differed.
     # `check` answers whether that warning belongs to the shared front end; the same
     # code means front end (not a gap), different or absent falls through to rule 9.
-    if h_err.strip() and l_out == h_out and diag_code(c_err) and \
+    if h_err.strip() and same_stdout(rel, l_out, h_out) and diag_code(c_err) and \
             diag_code(c_err) == diag_code(h_err):
         return "WARN_CHANNEL_ASYMMETRY", first_line(h_err)
     # 9. The IR arm is loud and the front end does not corroborate it.
@@ -760,6 +792,12 @@ def main():
                 ("GAP_EXEC", "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_HANG")]
     unknown = [r for r in rows if r["verdict"] == "GAP_UNKNOWN"]
     print("  %-15s %d" % ("FLIP BLOCKERS", len(blockers) + len(unknown)))
+    # 判据被放宽的 fixture 必须点名，否则读者分不清「没有分歧」与「不比 stdout」。
+    unordered = sorted(r["fixture"] for r in rows
+                       if r["fixture"] in NONDETERMINISTIC_STDOUT)
+    if unordered:
+        print("  %-15s %d  %s（行序与行内切分由调度决定，按字符多重集比）"
+              % ("unordered", len(unordered), ", ".join(unordered)))
     left = []
     if leaks is None:
         print("  %-15s containment UNAVAILABLE (pgrep not callable); "
