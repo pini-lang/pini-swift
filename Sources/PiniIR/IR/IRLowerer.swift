@@ -6129,6 +6129,7 @@ extension Statement {
         case .ifStatement(_, _, _, _, _, let l): return l
         case .whileStatement(_, _, _, _, let l): return l
         case .forStatement(_, _, _, _, _, let l): return l
+        case .unrollStatement(_, _, _, let l): return l
         case .matchStatement(_, _, let l): return l
         case .detachStatement(_, let l): return l
         case .expressionStmt(_, let l): return l
@@ -6151,6 +6152,7 @@ extension Statement {
         case .ifStatement: return "if"
         case .whileStatement: return "while"
         case .forStatement: return "for-in"
+        case .unrollStatement: return "unroll"
         case .matchStatement: return "match"
         case .scopedBlock: return "scoped block"
         case .detachStatement: return "detach"

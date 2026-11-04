@@ -166,6 +166,29 @@ extension ParserError: DiagnosticProviding {
     }
 }
 
+/// 展开错误的码落在语义域：它们与「声明了什么」「表是不是字面量」同属一次静态检查，
+/// 只是检查点提前到类型检查之前。E7 是警告域，装不下这些致命诊断。
+extension UnrollError: DiagnosticProviding {
+    public var diagnosticCode: String {
+        switch self {
+        case .tableNotLiteral: return "\(DiagnosticDomain.semantic.rawValue)-014"
+        case .rowMismatch: return "\(DiagnosticDomain.semantic.rawValue)-015"
+        case .bodyNameConflict: return "\(DiagnosticDomain.semantic.rawValue)-016"
+        case .emptyTable: return "\(DiagnosticDomain.semantic.rawValue)-017"
+        case .tooManyRows: return "\(DiagnosticDomain.semantic.rawValue)-018"
+        }
+    }
+    public var diagnosticSeverity: DiagnosticSeverity { .error }
+    public var suggestion: String? { nil }
+    public var diagnosticLocation: SourceLocation {
+        switch self {
+        case .tableNotLiteral(let loc), .rowMismatch(_, _, _, let loc),
+            .bodyNameConflict(_, _, let loc), .emptyTable(let loc), .tooManyRows(_, _, let loc):
+            return loc
+        }
+    }
+}
+
 extension SemanticError: DiagnosticProviding {
     public var diagnosticCode: String {
         switch self {

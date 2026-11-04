@@ -152,6 +152,10 @@ public enum SignatureSerializer {
             renderExpression(iterable, depth: depth + 1, into: &into)
             renderStatements(body.statements, depth: depth + 1, into: &into)
             renderStepBlock(step, depth: depth + 1, into: &into)
+        case .unrollStatement(let pattern, let table, let body, _):
+            emit("unroll \(pattern.joined(separator: " ")):", depth: depth, into: &into)
+            renderExpression(table, depth: depth + 1, into: &into)
+            renderStatements(body.statements, depth: depth + 1, into: &into)
         case .matchStatement(let value, let cases, _):
             emit("match:", depth: depth, into: &into)
             renderExpression(value, depth: depth + 1, into: &into)

@@ -263,3 +263,23 @@ suggestion = "把这次等待挪到**函数体那一层**的一条语句根部�
 [E6-011]
 message = "IR 结构不变量被破坏：{feature}"
 suggestion = "这是编译器缺陷，不是程序写错：把这条诊断连同复现用的源文件一并上报"
+
+[E3-014]
+message = "unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量"
+suggestion = "把表写成 `[(1, \"甲\"), (2, \"乙\")]` 这样的字面量；表绑定到变量留到第二版"
+
+[E3-015]
+message = "unroll 第 {row} 行有 {actual} 个分量，模式要 {expected} 个"
+suggestion = "让每行分量数与括号里的名字数相等；某个位置不要时写 `_`"
+
+[E3-016]
+message = "展开体里不能用 '{name}'：{reason}"
+suggestion = "换一个名字；模式名会被替换成字面量，体顶层也不声明局部变量（各轮共用一条语句列表）"
+
+[E3-017]
+message = "unroll 的表是空的，展开零轮"
+suggestion = "删掉这条 unroll，或往表里补至少一行"
+
+[E3-018]
+message = "unroll 展开 {count} 轮，超过上限 {limit}"
+suggestion = "把表拆成几条 unroll，或改用普通循环"

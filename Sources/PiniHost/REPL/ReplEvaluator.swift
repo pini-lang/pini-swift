@@ -139,18 +139,25 @@ public final class ReplEvaluator {
     }
 
     private func parse(_ source: String) throws -> Module {
-        let lexer = Lexer(source: source, fileName: Self.replFileName)
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: Self.replFileName)
-        let result = parser.parseModuleCollectingErrors()
-        if !result.errors.isEmpty {
+        switch FrontEnd.collect(source: source, fileName: Self.replFileName) {
+        case .parsed(let module):
+            return module
+        case .lexFailed(let error):
+            throw error
+        case .parseFailed(_, let errors):
             throw ReplError.parseError(
-                result.errors
+                errors
                     .map { ErrorFormatter.formatParserError($0, source: source) }
                     .joined(separator: "\n")
             )
+        case .expandFailed(let errors):
+            // 整批一次报出：一条 unroll 里表和体可能各错一处，只报首个会让作者来回跑。
+            throw ReplError.parseError(
+                errors
+                    .map { ErrorFormatter.formatDiagnostic($0, source: source) }
+                    .joined(separator: "\n")
+            )
         }
-        return result.module
     }
 }
 

@@ -435,12 +435,9 @@ public final class DAPServer: @unchecked Sendable {
 
     // MARK: - 解析助手
 
-    /// 由源码解析出 `Module`（与 CLI `parseOrReport` 同路径：Lexer + Parser）。
+    /// 由源码解析出 `Module`，走与其余入口同一个 `FrontEnd`。
     /// 调试目标预期为合法程序；解析失败按既定模式直接 fatal（与测试文件解析一致）。
     private func parseModule(source: String, fileName: String) -> Module {
-        let lexer = Lexer(source: source, fileName: fileName)
-        let tokens = try! lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: fileName)
-        return try! parser.parseModule()
+        try! FrontEnd.parse(source: source, fileName: fileName)
     }
 }

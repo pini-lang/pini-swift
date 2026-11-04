@@ -106,6 +106,10 @@ public enum ErrorFormatter {
         switch error {
         case is LexerError: key = "lexer"; fallback = "词法错误"
         case is ParserError: key = "parser"; fallback = "语法错误"
+        // 展开诊断借语义域报出（检查点在类型检查之前，归属同一次静态检查）。
+        case is UnrollError: key = "semantic"; fallback = "语义错误"
+        // 展开诊断借语义域报出（检查点在类型检查之前，归属同一次静态检查）。
+        case is UnrollError: key = "semantic"; fallback = "语义错误"
         case is SemanticError: key = "semantic"; fallback = "语义错误"
         case is SemanticWarning: key = "semanticWarning"; fallback = "语义警告"
         case is TypeError: key = "type"; fallback = "类型错误"
@@ -180,6 +184,10 @@ public enum ErrorFormatter {
             }
         case let e as ParserError:
             return parserMessage(e)
+        case let e as UnrollError:
+            return unrollMessage(e)
+        case let e as UnrollError:
+            return unrollMessage(e)
         case let e as SemanticError:
             return semanticMessage(e)
         case let e as TypeError:
@@ -215,6 +223,22 @@ public enum ErrorFormatter {
             }
         default:
             return error.localizedDescription
+        }
+    }
+
+    /// 展开错误的兜底文案（资源未覆盖该码时使用）。
+    private static func unrollMessage(_ error: UnrollError) -> String {
+        switch error {
+        case .tableNotLiteral:
+            return "unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量"
+        case .rowMismatch(let row, let expected, let actual, _):
+            return "unroll 第 \(row) 行有 \(actual) 个分量，模式要 \(expected) 个"
+        case .bodyNameConflict(let name, let reason, _):
+            return "展开体里不能用 '\(name)'：\(reason)"
+        case .emptyTable:
+            return "unroll 的表是空的，展开零轮"
+        case .tooManyRows(let count, let limit, _):
+            return "unroll 展开 \(count) 轮，超过上限 \(limit)"
         }
     }
 

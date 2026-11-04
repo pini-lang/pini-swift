@@ -31,7 +31,7 @@ struct GrammarAcceptanceTests: Sendable {
         let lexer = Lexer(source: try source(name), fileName: name + ".pini")
         let result = Parser(tokens: try lexer.tokenize(), fileName: name + ".pini")
             .parseModuleCollectingErrors()
-        return (ConstantFolder.foldConstants(in: result.module), result.errors)
+        return (try FrontEnd.passes(module: result.module), result.errors)
     }
 
     private func semanticErrors(in module: Module) -> [SemanticError] {

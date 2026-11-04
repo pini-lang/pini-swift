@@ -249,7 +249,9 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         /// 意图：`using` 是**关键字** —— 实现侧计数 33 → 34，且规范侧同一批改、同值。
         /// 这条钉的是「入表」这个裁定的实现侧一半；集合相同、顺序不作判据。
         #expect(Keyword(rawValue: "using") == .using, "`using` 应在关键字表内")
-        #expect(Keyword.allCases.count == 34, "实际 \(Keyword.allCases.count) 个")
+        // `unroll` 占语句位：`unroll (名, …) in <表>:`，规范侧同一批改、同值。
+        #expect(Keyword(rawValue: "unroll") == .unroll, "`unroll` 应在关键字表内")
+        #expect(Keyword.allCases.count == 35, "实际 \(Keyword.allCases.count) 个")
         // 驳回性：`given` **不入**表（它只在 `|` 右侧修饰符位，走标识符白名单）。
         #expect(Keyword(rawValue: "given") == nil, "`given` 不应是关键字")
     }

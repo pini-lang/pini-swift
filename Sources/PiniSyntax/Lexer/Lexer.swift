@@ -21,6 +21,10 @@ public class Lexer {
     /// 边界：`< >` 不跟踪深度，前瞻仅限同行，反引号转义的 `func` 不算块携带，未闭合到 EOF 静默，不匹配 closer 一律 pop。
     private var bracketStack: [(char: Character, blockCarrying: Bool)] = []
 
+    /// 词法旁路表：注释不进 token 流，只在跳过时登记，供打印器锚回原位。
+    /// 顺序即出现顺序；一次 `tokenize()` 之内只增不改。
+    public private(set) var comments: [CommentEntry] = []
+
     public init(source: String, fileName: String) {
         self.source = source
         self.chars = Array(source)
@@ -66,7 +70,7 @@ public class Lexer {
 
                 if char == ";" || char == "#" {
                     // `;` 行注释 / `#` 文档注释（行首=文档注释，行中=退化行注释）；均持续到行尾（G35）
-                    skipToEndOfLine()
+                    recordComment(column: column, ownLine: awaitingFirstTokenOfLine)
                     break
                 }
 
@@ -209,6 +213,17 @@ public class Lexer {
         }
     }
 
+    /// 登记一条注释并消费到行尾。缩进不进 `text`：打印器按锚点位置重新缩进，原列号只作判别依据。
+    private func recordComment(column: Int, ownLine: Bool) {
+        let start = position
+        skipToEndOfLine()
+        var text = String(chars[start..<min(position, chars.count)])
+        while let last = text.last, last == " " || last == "\t" {
+            text.removeLast()
+        }
+        comments.append(CommentEntry(line: line, column: column, text: text, ownLine: ownLine))
+    }
+
     private func skipBlankOrCommentLine() -> Bool {
         let savedPos = position
         let savedLine = line
@@ -219,6 +234,9 @@ public class Lexer {
         }
 
         if isAtEnd || currentChar == "\n" || currentChar == ";" || currentChar == "#" {
+            if currentChar == ";" || currentChar == "#" {
+                recordComment(column: column, ownLine: true)
+            }
             skipToEndOfLine()
             if !isAtEnd && currentChar == "\n" {
                 _ = advance()

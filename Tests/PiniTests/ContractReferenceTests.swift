@@ -403,7 +403,7 @@ struct ContractReferenceTests: Sendable {
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: fixture + ".pini")
             .parseModuleCollectingErrors()
         guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
+        let module = try FrontEnd.passes(module: parsed.module)
         try SemanticAnalyzer().analyze(module: module)
         let checker = TypeChecker()
         let typeErrors = checker.checkCollecting(module: module)

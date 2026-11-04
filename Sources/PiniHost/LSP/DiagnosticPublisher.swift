@@ -14,6 +14,7 @@ public struct DiagnosticPublisher {
         semanticErrors: [SemanticError],
         typeErrors: [TypeError],
         semanticWarnings: [SemanticWarning] = [],
+        unrollErrors: [UnrollError] = [],
         uri: String,
         source: String = "",
         language: DiagnosticLanguage? = nil
@@ -32,6 +33,9 @@ public struct DiagnosticPublisher {
         for warning in semanticWarnings {
             diagnostics.append(mapSemanticWarning(warning, source: source, language: language))
         }
+        for err in unrollErrors {
+            diagnostics.append(mapUnrollError(err, source: source, language: language))
+        }
 
         return PublishDiagnosticsParams(uri: uri, version: nil, diagnostics: diagnostics)
     }
@@ -44,6 +48,15 @@ public struct DiagnosticPublisher {
             severity: .warning,
             source: "pini-semantic",
             message: ErrorFormatter.formatDiagnostic(warning, source: source, language: language)
+        )
+    }
+
+    private func mapUnrollError(_ err: UnrollError, source: String, language: DiagnosticLanguage?) -> Diagnostic {
+        Diagnostic(
+            range: toLSPRange(err.diagnosticLocation),
+            severity: .error,
+            source: "pini-semantic",
+            message: ErrorFormatter.formatDiagnostic(err, source: source, language: language)
         )
     }
 

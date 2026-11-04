@@ -43,6 +43,7 @@ public enum Desugar {
         return ExtensionDecl(
             kind: x.kind,
             targetType: x.targetType,
+            genericParams: x.genericParams,
             targetTypeAnnotation: x.targetTypeAnnotation,
             methods: x.methods.map(desugar),
             location: x.location
@@ -194,6 +195,10 @@ public enum Desugar {
                 step: step.map(desugar),
                 label: label,
                 location: loc)
+        case .unrollStatement(let pattern, let table, let body, let loc):
+            // 体先降糖再克隆：每一轮的副本因此都已是核心 AST，展开器不必再碰糖。
+            return .unrollStatement(
+                pattern: pattern, table: desugar(table), body: desugar(body), location: loc)
         case .matchStatement(let value, let cases, let loc):
             // match 的通配兜底以 `case _:` 进入 cases，无独立字段。
             return .matchStatement(

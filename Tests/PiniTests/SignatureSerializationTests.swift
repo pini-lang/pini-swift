@@ -64,7 +64,7 @@ main|func() -> ():
     // MARK: - 私有 helper
 
     /// 与命令行同序：解析后折叠常量，再读结构串。
-    private func signatures(of source: String) -> [String] {
+    private func signatures(of source: String) throws -> [String] {
         let lexer = Lexer(source: source, fileName: "signature-test.pini")
         guard let tokens = try? lexer.tokenize() else {
             Issue.record("语料词法失败（语料应可解析）")
@@ -75,7 +75,7 @@ main|func() -> ():
         if !result.errors.isEmpty {
             Issue.record("语料解析失败：\(result.errors.count) 条错误（语料应可解析）")
         }
-        let module = ConstantFolder.foldConstants(in: result.module)
+        let module = try FrontEnd.passes(module: result.module)
         return SignatureSerializer.signatureLines(module: module)
     }
 
@@ -84,7 +84,7 @@ main|func() -> ():
     /// 意图：main 块内前 14 个语句的结构串逐条等于判据④ 的手写期望。
     @Test("判据④ 判别式逐条等于手写期望", arguments: Self.expectedSignatures)
     func precedenceDiscriminant(index: Int, signature: String) throws {
-        let lines = signatures(of: Self.corpus)
+        let lines = try signatures(of: Self.corpus)
         try #require(lines.count >= index, "语句位不足 \(index) 条（实得 \(lines.count)）——判据会空转")
         #expect(lines[index - 1] == "SIG|\(index)|\(signature)",
                 "第 \(index) 条判别式不符：实得 <\(lines[index - 1])>")
@@ -93,7 +93,7 @@ main|func() -> ():
     /// 意图：语料的语句位计数与 14 条判别式 + return 相符（ 行不通  不是空转的少条数）。
     @Test("语料语句位计数")
     func statementCount() throws {
-        let lines = signatures(of: Self.corpus)
+        let lines = try signatures(of: Self.corpus)
         #expect(lines.count == 15, "应为 14 条判别式 + return，实得 \(lines.count)")
         #expect(lines[14] == "SIG|15|(none)@1",
                 "return 语句的结构串不符：实得 <\(lines[14])>")
@@ -102,7 +102,7 @@ main|func() -> ():
     /// 意图：只有 main 进判集——它之前的顶层声明不被抽取。
     @Test("main 之前的顶层声明不进判集")
     func declarationsBeforeMainAreIgnored() throws {
-        let lines = signatures(of: #"""
+        let lines = try signatures(of: #"""
 helper|func() -> ():
     return
 
@@ -120,7 +120,7 @@ main|func() -> ():
     /// 意图：无 main 的模块零行产出（ 行不通  不伪造占位行）。
     @Test("无 main ⇒ 零行")
     func noMainYieldsNoSignatures() throws {
-        let lines = signatures(of: #"""
+        let lines = try signatures(of: #"""
 helper|func() -> ():
     return
 """#)
@@ -130,7 +130,7 @@ helper|func() -> ():
     /// 意图：op: 行被取值剥离——结构串里 行不通  不出现 op: 行原文。
     @Test("运算符行只留取值")
     func operatorLinesCarryValueOnly() throws {
-        let lines = signatures(of: Self.corpus)
+        let lines = try signatures(of: Self.corpus)
         try #require(lines.count >= 1, "语句位为空")
         #expect(!lines[0].contains("op:"), "结构串里出现了 op: 行原文：<\(lines[0])>")
         #expect(lines[0].contains("minus@2"), "第一条应含剥离出的运算符名 minus@2：<\(lines[0])>")
@@ -139,7 +139,7 @@ helper|func() -> ():
     /// 意图：成员名头部内联——后缀链那条 行不通  不出现 name: 行，也 行不通  不出现 g 的成员元素。
     @Test("成员名不进元素")
     func memberNameIsNotAnElement() throws {
-        let lines = signatures(of: Self.corpus)
+        let lines = try signatures(of: Self.corpus)
         try #require(lines.count >= 11, "语句位不足 11 条")
         #expect(!lines[10].contains("name:"), "结构串里出现了 name: 行原文：<\(lines[10])>")
         #expect(!lines[10].contains("g@"), "结构串里出现了成员名元素：<\(lines[10])>")

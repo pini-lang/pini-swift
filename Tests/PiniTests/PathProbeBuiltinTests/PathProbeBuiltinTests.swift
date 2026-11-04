@@ -34,7 +34,7 @@ struct PathProbeBuiltinTests: Sendable {
         let lexer = Lexer(source: source, fileName: fixture + ".pini")
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: fixture + ".pini")
             .parseModuleCollectingErrors()
-        let module = ConstantFolder.foldConstants(in: parsed.module)
+        let module = try FrontEnd.passes(module: parsed.module)
         guard parsed.errors.isEmpty else { throw parsed.errors[0] }
         try SemanticAnalyzer().analyze(module: module)
         let checker = TypeChecker()

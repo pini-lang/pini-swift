@@ -276,7 +276,7 @@ struct VariadicTests: Sendable, PiniSourceLowering {
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
             .parseModuleCollectingErrors()
         guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
+        let module = try FrontEnd.passes(module: parsed.module)
         let analyzer = SemanticAnalyzer()
         try analyzer.analyze(module: module)
         return analyzer.warnings

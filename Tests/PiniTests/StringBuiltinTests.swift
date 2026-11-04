@@ -77,7 +77,7 @@ struct StringBuiltinTests: Sendable {
             }
             let unit = FileUnit(
                 fileName: name,
-                module: ConstantFolder.foldConstants(in: parsed.module))
+                module: try FrontEnd.passes(module: parsed.module))
             let runner = ProgramRunner()
             var lines: [String] = []
             runner.outputSink = { lines.append($0) }

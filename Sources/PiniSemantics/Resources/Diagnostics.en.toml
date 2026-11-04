@@ -264,3 +264,23 @@ suggestion = "move the wait to a statement root at the top level of the body: a 
 [E6-011]
 message = "IR structure invariant broken: {feature}"
 suggestion = "this is a compiler defect, not a program error: report it together with the source file that reproduces it"
+
+[E3-014]
+message = "the unroll table must be a literal collection written in place: an array whose elements are scalar literals or tuple literals"
+suggestion = "write the table inline as `[(1, \"a\"), (2, \"b\")]`; a table bound to a variable is left for the second version"
+
+[E3-015]
+message = "row {row} of the unroll table has {actual} components, the pattern wants {expected}"
+suggestion = "make every row carry as many components as the pattern has names; write `_` for a position you do not need"
+
+[E3-016]
+message = "'{name}' cannot appear in an unroll body: {reason}"
+suggestion = "pick another name; pattern names are replaced by literals, and the body's top level cannot declare locals (all rounds share one statement list)"
+
+[E3-017]
+message = "the unroll table is empty, so it expands to zero rounds"
+suggestion = "drop this unroll, or put at least one row in the table"
+
+[E3-018]
+message = "unroll expands to {count} rounds, over the limit of {limit}"
+suggestion = "split the table across several unroll statements, or use an ordinary loop"

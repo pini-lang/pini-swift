@@ -16,7 +16,7 @@ struct TemporaryShareTests: Sendable {
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
             .parseModuleCollectingErrors()
         guard parsed.errors.isEmpty else { throw parsed.errors[0] }
-        let module = ConstantFolder.foldConstants(in: parsed.module)
+        let module = try FrontEnd.passes(module: parsed.module)
         try SemanticAnalyzer().analyze(module: module)
         let checker = TypeChecker()
         try checker.check(module: module)
