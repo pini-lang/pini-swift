@@ -460,7 +460,11 @@ struct ConcurrencyRuntimeABITests: Sendable {
         #expect(bk_task_state(target) == 3, "已决的目标读作「已决」")
 
         /// 驳回性：策略答「没有下一个」⇒ 挑选循环**问过**、但**不推进**它。
-        Thread.sleep(forTimeInterval: 0.2)
+        ///  注意  挑选在另一次派发里跑：并行套件占满 CPU 时几十毫秒才轮到 ⇒ 轮询，不睡固定时长。
+        let pickDeadline = Date(timeIntervalSinceNow: 2)
+        while policy.pickCalls < 1, Date() < pickDeadline {
+            Thread.sleep(forTimeInterval: 0.005)
+        }
         #expect(policy.pickCalls >= 1, "挑选循环须问过策略：\(policy.pickCalls)")
         #expect(bk_task_state(waiter.handle) == 1, "策略答「没有下一个」⇒ 停在「可跑」，不得被推进")
 
