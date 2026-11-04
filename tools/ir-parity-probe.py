@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""IR execution-parity probe — the judgement upgrade over m6-triage-probe.sh.
+"""IR execution-parity probe — the judgement upgrade over an emit-only triage probe.
 
 WHY THIS EXISTS
 ---------------
-`tools/m6-triage-probe.sh` decides "true flip blocker" by asking whether
+An earlier triage probe decided "true flip blocker" by asking whether
 `emit` *succeeds* — i.e. whether an IR text file can be produced. It never
 runs the IR. That judge is blind to an entire class of gap: the IR is emitted
 fine but *executes differently* (missing defer lowering, wrong len(string),

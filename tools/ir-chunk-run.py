@@ -11,8 +11,7 @@ item by item, to what the per-class sweep produces. Splitting is therefore a
 robust way to *measure*, not a repair of the underlying defect.
 
  注意  上面那两个数字（94 / 115）是 **115 类那棵测试树**的实测，该树已于 2026-09-18 清空、
-2026-09-19 起重建（当前只有两个套件）。切块本身仍成立：它是「一次跑不完就分块量」的
-量具，不依赖旧树规模。
+2026-09-19 起重建。切块本身仍成立：它是「一次跑不完就分块量」的量具，不依赖旧树规模。
 
 FRAMEWORKS
 
