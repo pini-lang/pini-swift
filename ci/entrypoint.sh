@@ -5,8 +5,14 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+script_start=$(date +%s)
 
+# 每一步打印上一步的耗时：冷构建与测试各占多少，事后不用估。
 step() {
+    if [ -n "${last_step:-}" ]; then
+        printf '  上一步 %s 用时 %ss\n' "$last_step" "$SECONDS"
+    fi
+    last_step="$1"
     printf '\n=== %s ===\n' "$1"
     SECONDS=0
 }
@@ -90,4 +96,4 @@ step "测试"
 export PINI_CLI_BIN="$PWD/.build/debug/pini"
 swift test --disable-sandbox
 
-printf '\n=== 全绿 ===\n'
+printf '\n=== 全绿（总耗时 %ss）===\n' "$(( $(date +%s) - script_start ))"
