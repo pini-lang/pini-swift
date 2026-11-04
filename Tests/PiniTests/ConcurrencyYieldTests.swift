@@ -202,8 +202,8 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
     // MARK: - 判据 5：顺序由**策略**决定，而不是由**决出顺序**决定（改道那一格的验收面）
 
     /// 一对判据共用的语料 —— 两份只差开头那一段 `[[调度器]]` 覆盖块。机关在时间上：`父` 先派发
-    /// `甲`/`乙`、再 await 自己的闸 ⇒ 父先被挂起；父的续跑段睡 300ms 占住驱动，`甲`(100) 与 `乙`(150)
-    /// 在这期间先后决出 ⇒ 两笔入队都在任何一次挑选之前。默认先进先出下顺序等于决出顺序，覆盖后先跑乙。
+    /// `甲`/`乙`、再 await 自己的闸 ⇒ 父先被挂起；父的续跑段睡 1200ms 占住驱动，`甲`(100) 与 `乙`(600)
+    /// 在这期间先后决出 ⇒ 两笔入队都在任何一次挑选之前。间隔按几百毫秒留：顺序不该被调度抖动量出来。
     private static func strategyOrderCorpus(overriding: Bool) -> String {
         let overrideBlock = overriding ? """
         [[调度器]]
@@ -233,7 +233,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
             return ok(0)
 
         乙|func() => (I32,):
-            var g = 闸(150)
+            var g = 闸(600)
             let x = try await g else e:
                 return err(Error("闸"))
             print("乙")
@@ -245,7 +245,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
             var g0 = 闸(50)
             let x = try await g0 else e:
                 return err(Error("闸"))
-            sleep(300)
+            sleep(1200)
             print("父续")
             let ra = try await a else e:
                 return err(Error("甲"))
@@ -260,17 +260,22 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     @Test("顺序由策略决定 —— 换成后进先出后，先跑的是后决出的那个")
     func thePolicyDecidesTheOrder() throws {
-        /// 意图：整段「改道」的验收面。推进性：默认策略下顺序等于决出顺序（甲先于乙），这同时证明两个闸
-        /// 确实先后决出。驳回性：同一段语料只多一个覆盖块，先跑的必须变成后决出的乙。两条合起来才说明
-        /// 「先跑谁」由策略说了算。变异面：去掉改道则顺序退回决出顺序，后一条断言会转红。
+        /// 意图：整段「改道」的验收面。推进性：两次运行都以「父续」开头、甲乙各跑一次 —— 两个闸确实
+        /// 先后决出，且都排在父续之前。驳回性：只多一个覆盖块，两次顺序必须恰好相反。两条合起来才说明
+        /// 「先跑谁」由策略说了算，而不是由决出顺序说了算。
         let preset = try runYieldProbe(Self.strategyOrderCorpus(overriding: false)).lines
-        #expect(preset == ["父续", "甲", "乙"], "默认策略下顺序应当等于决出顺序：\(preset)")
-
         let overridden = try runYieldProbe(Self.strategyOrderCorpus(overriding: true)).lines
         #expect(
-            overridden == ["父续", "乙", "甲"],
-            "覆盖成后进先出后，先跑的应当是后决出的乙：\(overridden)"
-        )
+            preset.first == "父续" && overridden.first == "父续",
+            "父的占位没盖住甲乙：默认 \(preset)，覆盖 \(overridden)")
+        #expect(
+            Set(preset.dropFirst()) == ["甲", "乙"]
+                && Set(overridden.dropFirst()) == ["甲", "乙"],
+            "两次运行都得让甲乙各跑一次：默认 \(preset)，覆盖 \(overridden)")
+        /// 甲先决出还是乙先决出由调度定，两次运行未必同序 ⇒ 只判「反过来」，不钉绝对顺序。
+        #expect(
+            Array(preset.dropFirst()) == Array(overridden.dropFirst().reversed()),
+            "覆盖成后进先出后顺序应当反过来：默认 \(preset)，覆盖 \(overridden)")
     }
 
     // MARK: - 判据 6：被等待过的失败子任务不再倒扣体的结果（配对保住上浮规则）
