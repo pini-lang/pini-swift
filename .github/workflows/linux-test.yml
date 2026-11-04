@@ -17,7 +17,9 @@ permissions:
 jobs:
   linux-test:
     name: Linux · Docker · Swift 6.4
-    runs-on: ubuntu-latest
+    # 钉显式发行版：-latest 随上游迁移，钉住后内核与 docker 版本可预期。
+    # 容器基底仍是 swift:6.4-noble，宿主只管编排。
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout
