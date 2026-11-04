@@ -33,8 +33,7 @@ struct CSharedLibraryTests {
         let library = dir.appendingPathComponent("libcalc.\(librarySuffix)")
         #expect(FileManager.default.fileExists(atPath: library.path), "产物不在当前目录：\(result.stdout)")
 
-        let handle = try #require(dlopen(library.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
-        defer { _ = dlclose(handle) }
+        let handle = try openSharedLibrary(library.path)
         let addSymbol = try #require(dlsym(handle, "calc_add"), "找不到 calc_add")
         let add = unsafeBitCast(addSymbol, to: (@convention(c) (Int32, Int32) -> Int32).self)
         #expect(add(2, 3) == 5)
@@ -91,8 +90,7 @@ struct CSharedLibraryTests {
         #expect(result.status == 0, "构建失败（rc=\(result.status)）：\(result.stderr)")
         #expect(FileManager.default.fileExists(atPath: output.path), "产物不在 -o 指定的路径")
 
-        let handle = try #require(dlopen(output.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
-        defer { _ = dlclose(handle) }
+        let handle = try openSharedLibrary(output.path)
         let symbol = try #require(dlsym(handle, "cm_mul"), "找不到 cm_mul")
         let multiply = unsafeBitCast(symbol, to: (@convention(c) (Int32, Int32) -> Int32).self)
         #expect(multiply(3, 4) == 12)
@@ -173,9 +171,7 @@ struct CSharedLibraryTests {
         let result = try runCLI(cli, arguments: ["build", "--shared", "calc.pini"], cwd: dir)
         #expect(result.status == 0, "构建失败（rc=\(result.status)）：\(result.stderr)")
         let library = dir.appendingPathComponent("libcalc.\(librarySuffix)")
-        let handle = try #require(dlopen(library.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
-        defer { _ = dlclose(handle) }
-
+        let handle = try openSharedLibrary(library.path)
         let readSymbol = try #require(dlsym(handle, "calc_read"), "找不到 calc_read")
         let read = unsafeBitCast(
             readSymbol,
@@ -252,8 +248,7 @@ struct CSharedLibraryTests {
         let result = try runCLI(cli, arguments: ["build", "--shared", dir.path], cwd: dir)
         #expect(result.status == 0, "构建失败（rc=\(result.status)）：\(result.stderr)")
         let library = dir.appendingPathComponent("libcalc.\(librarySuffix)")
-        let handle = try #require(dlopen(library.path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
-        defer { _ = dlclose(handle) }
+        let handle = try openSharedLibrary(library.path)
         let symbol = try #require(dlsym(handle, "calc_twice"), "找不到 calc_twice")
         let twice = unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Int32).self)
         #expect(twice(21) == 42, "外部库没被链上：算出来的不是 demo_twice 的结果")
@@ -358,6 +353,12 @@ struct CSharedLibraryTests {
             status: process.terminationStatus,
             stdout: String(decoding: outData, as: UTF8.self),
             stderr: String(decoding: errData, as: UTF8.self))
+    }
+
+    /// 加载共享库，句柄留到进程结束。Linux 的 `dlclose` 会真卸载图像，Swift 运行时的镜像表
+    /// 却仍留着这些段的指针，之后进程里任何一次 `as?` 都会踩已释放的内存。
+    private func openSharedLibrary(_ path: String) throws -> UnsafeMutableRawPointer {
+        return try #require(dlopen(path, RTLD_NOW), "加载失败：\(dlErrorMessage())")
     }
 
     private func dlErrorMessage() -> String {
