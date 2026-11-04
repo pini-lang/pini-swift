@@ -641,7 +641,7 @@ func printHelp() {
     print(" parse <file.pini> Parse and print the AST")
     print(" parse --sig <file.pini> Parse and print statement signature (SIG) lines")
     print(" tokens <file.pini> Print tokens from lexical analysis")
-    print(" emit <file.pini> [--backend <name>] Emit a target listing to stdout or -o file")
+    print(" emit <file.pini> [-o <out>] [--backend <name>] Emit a target listing to stdout or the given file")
     print(" backends [--tsv] Print the backend capability matrix (family x channel)")
     print(" compile <file.pini> Compile via clang and run (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
     print(" run-llvm <file.pini> Run via LLVM JIT (lli) (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
@@ -2331,16 +2331,34 @@ case "emit":
         exit(1)
     }
     do {
-        // 通道选择：`--backend <name>` 从位置参数里挑出来，剩下的是路径与可选输出文件。
-        //  注意  名字不认识时报错并列出可选值，不猜一个近似通道 —— 猜错会让人以为换通道没生效。
+        // 选项从位置参数里挑出来：`--backend <name>` 与 `-o <path>`，剩下的是源文件与可选输出文件。
+        //  注意  不认识的 `-` 开头参数一律报错 —— 当成路径收下会静默写到错误的名字上。
         var backendName = Backends.registry.defaultIdentifier
+        var flagOutput: String?
         var positional: [String] = []
         var cursor = 2
         while cursor < args.count {
-            if args[cursor] == "--backend", cursor + 1 < args.count {
+            switch args[cursor] {
+            case "--backend":
+                guard cursor + 1 < args.count else {
+                    printError("Error: --backend 需要一个名字")
+                    exit(1)
+                }
                 backendName = args[cursor + 1]
                 cursor += 2
-            } else {
+            case "-o":
+                guard cursor + 1 < args.count else {
+                    printError("Error: -o 需要一个输出路径")
+                    exit(1)
+                }
+                flagOutput = args[cursor + 1]
+                cursor += 2
+            default:
+                guard !args[cursor].hasPrefix("-") else {
+                    printError("Error: \(args[cursor])")
+                    printError("  合法用法：pini emit <file.pini> [-o <输出路径>] [--backend <name>]")
+                    exit(1)
+                }
                 positional.append(args[cursor])
                 cursor += 1
             }
@@ -2355,7 +2373,16 @@ case "emit":
             printError("Error: emit command requires a file path")
             exit(1)
         }
-        let outputPath = positional.count >= 2 ? positional[1] : nil
+        guard positional.count <= 2 else {
+            printError("Error: emit 只收一个源文件与一个输出文件")
+            printError("  合法用法：pini emit <file.pini> [-o <输出路径>] [--backend <name>]")
+            exit(1)
+        }
+        guard !(flagOutput != nil && positional.count == 2) else {
+            printError("Error: 输出路径给了两次（位置参数与 -o）")
+            exit(1)
+        }
+        let outputPath = flagOutput ?? (positional.count == 2 ? positional[1] : nil)
         // A file inside a manifest module runs through the package pipeline, which lowers the whole
         // package; a bare file outside any module keeps single-file behavior. Directory arguments are
         // not accepted here, so no directory branch is added.
