@@ -91,6 +91,14 @@ VERDICTS
                        interpreter arms fail while the LLVM arm reports its
                        failure on stderr is no longer counted here — it has its
                        own non-blocking slot below
+    CHANNEL_LIMIT      interp-ir stops at a call shape it declines by design and
+                       names the code for it (E5-019 variadic, E5-020 string
+                       handle) while llvm-ir runs the same fixture. NOT a
+                       blocker: the two engines do not disagree about the
+                       program — one of them documents a boundary and names the
+                       channel that works. Keyed on the code on the `Error:` line,
+                       not the first code in the text, because these fixtures
+                       warn before they stop
     GAP_IR_ENGINE     interp-ir writes to stderr without failing, and the
                        diagnostic is NOT the shared front end's. Narrowed to
                        that residual by the slot below; it stays a rule (not a
@@ -157,6 +165,10 @@ BLOCKERS = GAP_EXEC + GAP_IR_ENGINE + GAP_BEHAVIOR + GAP_HANG + GAP_UNKNOWN.
 IR_ENGINE_TODO is deliberately NOT among them: it measures how much of the IR
 engine P2 has left to build, which is a different question. Merging the two is
 the P3 judging-upgrade grid's job.
+CHANNEL_LIMIT is not a blocker either, and for a reason that would survive a
+stricter reading of the flip: the fixture already runs on the channel the flip
+keeps. Carrying it as GAP_EXEC asked the reader to re-derive that from a
+diagnostic code every time the gate went red.
 TIMEOUT_* (other than GAP_HANG) describe the fixture, not the implementation.
 WARN_CHANNEL_ASYMMETRY is likewise not a blocker, and for a stronger reason
 than "it looks benign": the flip does not move it at all. It is printed with
@@ -297,6 +309,14 @@ F64_SIX = re.compile(r"\d+\.\d{6}")
 DIAG_CODE = re.compile(r"\[([A-Z]\d-\d+)\]")
 IR_TODO = re.compile(
     r"node '([A-Za-z_][A-Za-z0-9_]*)' is dispatched but not implemented yet")
+# 解释器按设计拒绝的调用形态：码由它自己给出，同一 fixture 在 run-llvm 上通过。
+# 标的是通道能力边界（c-interop-design 已登记），不是引擎跑错，故不计 blocker。
+DECLARED_LIMITS = {
+    "E5-019": "变参调用要 C 变参 ABI，解释器只转发固定签名",
+    "E5-020": "字符串句柄由运行时段持有，pini 进程里没有这些符号",
+}
+# 这次运行为什么停下，看 `Error:` 行 —— 它前面可能已经排着若干警告码。
+ERROR_CODE = re.compile(r"^Error: .*?\[([A-Z]\d-\d+)\]", re.MULTILINE)
 
 # Scratch root for isolated runs; created on first use, removed at the end.
 _scratch_root = [None]
@@ -578,6 +598,17 @@ def diag_code(text):
     return m.group(1) if m else ""
 
 
+def failing_code(text):
+    """The code on the `Error:` line, or "" if the run did not name one.
+
+    `diag_code` answers "which code appears first", and on a fixture that warns
+    before it fails that is a warning code. The declared-limit rule needs the
+    other question: what stopped the run.
+    """
+    m = ERROR_CODE.search(text)
+    return m.group(1) if m else ""
+
+
 def same_stdout(rel, l_out, h_out):
     """Whether the two arms printed the same stdout, in the sense this fixture allows.
 
@@ -637,6 +668,12 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
         # a fixture that only fails on the IR arm still reaches GAP_EXEC below.
         if l_err.strip():
             return "WARN_LLVM_RC_UNPROPAGATED", first_line(h_err)
+        # 5b. The interpreter stops at a call shape it declines by design while the
+        # LLVM arm ran the fixture. Keyed on the code that stopped the run, so a
+        # warning printed earlier cannot stand in for the failure.
+        code = failing_code(h_err)
+        if code in DECLARED_LIMITS:
+            return "CHANNEL_LIMIT", "%s：%s" % (code, DECLARED_LIMITS[code])
         return "GAP_EXEC", first_line(h_err)
     # 6. Parity across BOTH channels. The stderr shape is part of it because a
     #    silent-stdout crash on one side and a silent-stdout success on the other
@@ -692,6 +729,35 @@ def compare_with(path, open_gaps):
     for fixture, verdict in sorted(known - seen):
         problems.append("基线已过期（该条转绿或消失，删掉它）%-14s %s" % (verdict, fixture))
     return known, problems
+
+
+def self_test():
+    """What the declared-limit slot must catch, and what it must not swallow.
+
+    Synthetic classifier inputs only — no binary, no fixture, no lli — so the
+    proof costs a moment and can run before a sweep that might never reach the
+    shape. The first two cases carry a warning code ahead of the failing one,
+    which is how these fixtures actually print.
+    """
+    shape = "Warning: 语义警告 [E7-007]\nError: Runtime Error [%s]\n"
+    cases = [
+        ("E5-019", "CHANNEL_LIMIT", "变参调用是已声明的通道边界"),
+        ("E5-020", "CHANNEL_LIMIT", "字符串句柄是已声明的通道边界"),
+        ("E5-003", "GAP_EXEC", "别的运行时错误仍算缺口"),
+    ]
+    bad = []
+    for code, want, why in cases:
+        got, _ = classify("t.pini", 0, "", "", 1, "", shape % code, 0, "")
+        if got != want:
+            bad.append("%s -> %s（应为 %s：%s）" % (code, got, want, why))
+    # LLVM 臂也报错时 5a 先判：这一格不能抢在它前面把双失败读成通道边界。
+    got, _ = classify("t.pini", 0, "", "boom", 1, "", shape % "E5-020", 0, "")
+    if got != "WARN_LLVM_RC_UNPROPAGATED":
+        bad.append("llvm 臂也报错 -> %s（应为 WARN_LLVM_RC_UNPROPAGATED）" % got)
+    for line in bad:
+        print("self-test FAIL: %s" % line)
+    print("self-test %s" % ("PASS" if not bad else "FAIL"))
+    return 1 if bad else 0
 
 
 def main():
@@ -772,7 +838,7 @@ def main():
             fh.write("\t".join(str(r[c]) for c in cols) + "\n")
 
     order = ["OK", "OK_HARNESS", "PACKAGE_MEMBER", "FRONTEND_FAIL",
-             "HARNESS_DEPENDENT", "IR_ENGINE_TODO", "GAP_EXEC",
+             "HARNESS_DEPENDENT", "IR_ENGINE_TODO", "CHANNEL_LIMIT", "GAP_EXEC",
              "GAP_IR_ENGINE", "GAP_BEHAVIOR", "GAP_UNKNOWN", "GAP_HANG",
              "TIMEOUT_ALL", "TIMEOUT_LLVM", "WARN_CHANNEL_ASYMMETRY",
              "WARN_LLVM_RC_UNPROPAGATED"]
@@ -861,6 +927,17 @@ def main():
                      "present" if r["l_err"].strip() else "silent",
                      "rc %d" % r["c_rc"]))
 
+    limited = [r for r in rows if r["verdict"] == "CHANNEL_LIMIT"]
+    if limited:
+        # Same reason as the two slots above: out of the blocker total, still in
+        # the report. The code is the interpreter's own, not an inference.
+        print("\n=== call shapes the interpreter declines by design: %d fixture(s) "
+              "(NOT flip blockers - the LLVM arm runs them) ===" % len(limited))
+        for r in limited:
+            code, _, why = r["note"].partition("：")
+            print("  %-8s %s" % (code, r["fixture"]))
+            print("        %s" % why)
+
     for label, group in [("blockers", blockers + unknown),
                          ("non-terminating fixtures", [r for r in rows
                                                        if r["verdict"].startswith("TIMEOUT_")])]:
@@ -888,4 +965,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 自检要先于 main 的取产物步骤：它不执行任何程序，缺二进制也该能跑。
+    sys.exit(self_test() if "--self-test" in sys.argv[1:] else main())
