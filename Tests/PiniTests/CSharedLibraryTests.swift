@@ -6,6 +6,7 @@ import Testing
 import Darwin
 #else
 import Glibc
+import PiniHost
 #endif
 
 /// `build --shared` 的判据：一条命令出库，C 侧能按 `|c` 条目的对外名找到符号并调用。
@@ -350,8 +351,8 @@ struct CSharedLibraryTests {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return RunResult(
             status: process.terminationStatus,

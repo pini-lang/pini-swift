@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// 运行时陷阱的**进程退出码**判据：解释器与 LLVM 两通道给同一个码（1）。
 /// 靶 = 「程序因运行时错误退出」在进程边界上的可观察形态 —— 退出码与 stderr 那一条消息。
@@ -72,8 +73,8 @@ struct PanicExitCodeTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return RunResult(
             label: channel.label,

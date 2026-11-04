@@ -5,6 +5,7 @@ import PiniSyntax
 @testable import PiniSemantics
 @testable import PiniIR
 @testable import PiniBackendLLVM
+import PiniHost
 
 /// `moduleRoot()` 内建的判据（程序基准面）。
 /// 组织：每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`）， 行不通  不往仓库里建文件。
@@ -74,8 +75,8 @@ struct ModuleRootBuiltinTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

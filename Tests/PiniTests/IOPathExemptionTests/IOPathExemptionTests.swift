@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// 路径解析的三条豁免支与基准支的判据。每条用例自建临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），
 /// 不往仓库里建文件。比对物是手写期望，不是另一条通道的输出 —— 两条同时错会互相认证。
@@ -50,8 +51,8 @@ struct IOPathExemptionTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

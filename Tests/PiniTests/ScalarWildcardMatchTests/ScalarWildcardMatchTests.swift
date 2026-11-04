@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// 裸值受试的 `match` 里，通配臂（`case _:`）的执行判据。`IREmitter.emitMatch` 的裸值分支只在「存在字面量臂」
 /// 时才进 `emitScalarMatch` ⇒ `match x:` 只写一条 `case _:` 时一个臂都不发，函数落到 `ret i32 undef`，静默且 `rc=0`。
@@ -28,8 +29,8 @@ struct ScalarWildcardMatchTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

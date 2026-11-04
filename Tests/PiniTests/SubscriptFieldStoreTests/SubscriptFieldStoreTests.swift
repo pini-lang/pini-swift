@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// `obj.field[i] = v` —— 字段作容器的下标写。IR 契约把 `subscriptStore` 的容器定义为可嵌套链，字段是链的一环
 /// ⇒ 这是覆盖缺口，不是契约要改。解释器对非变量 / 非嵌套目标响亮拒绝 `E5-006`；发射器把字段值当容器交出去
@@ -28,8 +29,8 @@ struct SubscriptFieldStoreTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

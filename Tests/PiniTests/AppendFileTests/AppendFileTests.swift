@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// `appendFile` 的判据：追加语义、创建语义、失败形态、路径解析，以及发射面的条件 declare。每条用例自建
 /// 临时沙盒（脚本放 `scripts/`、进程 CWD 放 `cwd/`），不往仓库里建文件。比对物是手写期望，不是另一条
@@ -34,8 +35,8 @@ struct AppendFileTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,
