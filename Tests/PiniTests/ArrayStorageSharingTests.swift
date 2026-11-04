@@ -131,6 +131,9 @@ struct ArrayStorageSharingTests: Sendable {
         #expect(bk_array_get(o1, 0) == bk_array_get(o2, 0), "前置：两侧此时共享存储")
 
         let base = bk_handle_shares(inner)
+        /// 写入也是一次「把句柄放进容器」⇒ 与发射层同规补一次 adopt.retain。少了这一笔，`o2` 的槽
+        /// 会在销毁时多减一份份额，`defer` 再释放它就成了 UAF（分配器是否立刻复用决定崩不崩）。
+        bk_handle_retain(other)
         withUnsafePointer(to: &otherPtr) { o2 = bk_array_set(o2, 0, $0, 8, Tag.handle) ?? o2 }
         let after = bk_handle_shares(inner)
         #expect(after == base, " 行不通  内层份额必须回到基线（深拷 +1 与新框释放 −1 配对）：base=\(base) after=\(after)")
