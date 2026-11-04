@@ -1,4 +1,3 @@
 ﻿# IR 差分探针的已知缺口：条目 <TAB> 判定。只许缩小 —— 某行转绿时探针会红，提示删掉它。
 # 判定取自 tools/ir-parity-probe.py 的 verdict 列；新增缺口不在表内即失败。
-examples/concurrency.pini	GAP_BEHAVIOR
 examples/ffi-v2-llvm.pini	GAP_EXEC
