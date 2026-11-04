@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// 外部数据符号的三条路径：读、取址、写。
 /// 判据落在「写后再读」上 —— 副本与真符号地址的差别只有写回时才显形，只读一遍两种实现都过。
@@ -44,8 +45,8 @@ struct ForeignDataTests {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return RunResult(
             status: process.terminationStatus,

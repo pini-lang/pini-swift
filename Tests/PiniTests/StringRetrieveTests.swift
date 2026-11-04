@@ -5,6 +5,7 @@ import PiniSyntax
 @testable import PiniSemantics
 @testable import PiniIR
 @testable import PiniBackendLLVM
+import PiniHost
 
 /// 取回的判据：`c字符串(*U8)` 读到 NUL 为止，复制成 Pini 串；C 的缓冲此后可以释放。
 /// 两通道同一语义，空指针读成空串；份额由 Pini 侧持有，作用域退出时归还。
@@ -138,8 +139,8 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

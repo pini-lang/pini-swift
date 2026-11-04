@@ -5,6 +5,7 @@ import PiniSyntax
 @testable import PiniSemantics
 @testable import PiniIR
 @testable import PiniBackendLLVM
+import PiniHost
 
 /// IO 面的路径解析判据：相对路径一律相对脚本所在目录（程序基准），与写法的形状无关。靶 = 同一份逻辑的
 /// 两种等价写法（字面量 `readFile("a.txt")` 与变量 `readFile(p)`）必须落到同一个文件，且两通道给出同一结论。
@@ -83,8 +84,8 @@ struct IOBaseParityTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return RunResult(
             label: channel.label,

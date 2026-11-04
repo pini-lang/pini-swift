@@ -5,6 +5,7 @@ import PiniSyntax
 @testable import PiniSemantics
 @testable import PiniIR
 @testable import PiniBackendLLVM
+import PiniHost
 
 /// `|test` 在两条后端上行为一致。参照物是手写期望，不是「另一条后端」：两条通道同时错会互相认证，
 /// 故每条语料写死「输出 + 报告 + 退出码」，两条通道各自与它比；彼此相等是推论，不是判据。
@@ -258,8 +259,8 @@ struct TestBackendParityTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

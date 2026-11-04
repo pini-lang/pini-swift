@@ -1,6 +1,7 @@
 import Foundation
 import PiniBackendLLVM
 import Testing
+import PiniHost
 
 /// LLVM 工具链的定位判据。编写的理由：`brew install llvm` 是 keg-only，装完不进 PATH，
 /// 而报错文案正是教用户这么装 —— 少了末位兜底，「装好了却找不到」就是常态，且无人发现。
@@ -47,8 +48,8 @@ struct LLVMToolchainTests {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
 
         let stderr = String(decoding: errData, as: UTF8.self)

@@ -32,4 +32,6 @@ main|func() -> ():
     ; fire-and-forget：detach 把句柄从父作用域剪枝，不消费结果（语句形式）。
     var h = slow()
     detach h
+    ; 后台任务还在这条进程里跑；留给它收尾的时间，别让进程带着活线程退出。
+    sleep(200)
     return

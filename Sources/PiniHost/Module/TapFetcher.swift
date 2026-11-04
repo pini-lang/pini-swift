@@ -166,8 +166,8 @@ public enum TapFetcher {
         p.standardOutput = out
         p.standardError = err
         do { try p.run() } catch { throw TapError.gitUnavailable }
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         p.waitUntilExit()
         guard p.terminationStatus == 0 else {
             throw TapError.gitFailed(

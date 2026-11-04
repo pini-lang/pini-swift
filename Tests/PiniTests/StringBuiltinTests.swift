@@ -146,7 +146,7 @@ struct StringBuiltinTests: Sendable {
         let pipe = Pipe()
         process.standardOutput = pipe
         try? process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data = pipe.fileHandleForReading.readAllData()
         process.waitUntilExit()
         guard process.terminationStatus == 0,
               let text = String(decoding: data, as: UTF8.self)
@@ -166,8 +166,8 @@ struct StringBuiltinTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

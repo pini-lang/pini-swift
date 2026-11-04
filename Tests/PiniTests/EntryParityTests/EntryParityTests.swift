@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// 入口判读一致性：同一条规则必须由四条入口同判。闭包捕获的声明检查（`E3-008`）只在一条路上生效时，
 /// 同一份源 `check` / `run` 拒绝而 `emit` / `compile` 照跑并产出目标码 —— 检查的位置在两路之前，
@@ -53,8 +54,8 @@ struct EntryParityTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

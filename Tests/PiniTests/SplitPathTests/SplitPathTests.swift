@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 /// `split` 的两条分配判据，对应 LLVM 侧切分路径的两处分配缺陷，可见性不同：
 /// ① 两次暂存拷贝按固定 1024 字节栈缓冲分配、无界 `memcpy` ⇒ 源串一长就砸栈；自举扫描器拿整份文件文本调它。
@@ -28,8 +29,8 @@ struct SplitPathTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return (
             process.terminationStatus,

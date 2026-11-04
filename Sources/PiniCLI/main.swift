@@ -1567,7 +1567,7 @@ func emitAndRunLLVMTests(
     try process.run()
     process.waitUntilExit()
     if process.terminationStatus != 0 {
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data = pipe.fileHandleForReading.readAllData()
         let err = String(data: data, encoding: .utf8) ?? ""
         throw NSError(
             domain: "CompileError", code: Int(process.terminationStatus),
@@ -1946,7 +1946,7 @@ func runCompileCommand(source: String, fileName: String) throws {
     process.waitUntilExit()
 
     if process.terminationStatus != 0 {
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data = pipe.fileHandleForReading.readAllData()
         let err = String(data: data, encoding: .utf8) ?? ""
         throw NSError(
             domain: "CompileError", code: Int(process.terminationStatus),
@@ -2095,7 +2095,7 @@ private func linkSharedLibrary(
     let pipe = Pipe()
     process.standardError = pipe
     try process.run()
-    let errData = pipe.fileHandleForReading.readDataToEndOfFile()
+    let errData = pipe.fileHandleForReading.readAllData()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
         let err = String(decoding: errData, as: UTF8.self)

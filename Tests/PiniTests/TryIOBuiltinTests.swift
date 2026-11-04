@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PiniHost
 
 // 可接住的 IO（`tryReadFile` / `tryWriteFile` / `tryAppendFile`）的两通道判据。靶 = 同一个 IO 操作，
 // 失败作为值返回而不是终止进程。与陷阱版并存：两条路的差别只在调用点写的名字，故同时钉住两侧 ——
@@ -98,8 +99,8 @@ struct TryIOBuiltinTests: Sendable {
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
         process.waitUntilExit()
         return RunResult(
             label: channel.label,
