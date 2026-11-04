@@ -200,16 +200,14 @@ below — a lone interp-ir stderr reaches GAP_IR_ENGINE, not OK.
 
 STDOUT IS NOT A JUDGE, WHERE THE SCHEDULER WRITES IT
 ----------------------------------------------------
-One fixture prints from two workers. Byte equality between the arms is then a
-coin flip: not only the order of the lines but the point where one print is cut
-by another belongs to the scheduler — the Linux arm was measured emitting "BA"
-on a single line, because a print is more than one write. A baseline entry for
-such a fixture flips the gate at random, and a line-multiset comparison would
-still fail on the split line. Fixtures named in NONDETERMINISTIC_STDOUT are
-compared as a multiset of characters, which keeps what the program does promise
-(every character it prints, as many times as it prints it) and drops only what
-it never promised. The list is deliberately short: each name is an admission
-that this fixture cannot judge stdout, not a way to quiet a divergence.
+One fixture prints from two workers, so the order of its lines belongs to the
+scheduler and not to the program: byte equality between the arms is then a coin
+flip, and a baseline entry for it flips the gate at random. A print is one
+uninterrupted run of writes now, so the lines themselves are whole — the only
+freedom left is their order. Fixtures named in NONDETERMINISTIC_STDOUT are
+therefore compared as a multiset of lines, which still fails on a missing, extra
+or altered line. The list is deliberately short: each name is an admission that
+this fixture cannot judge ordering, not a way to quiet a divergence.
 
 PROCESS CONTAINMENT
 -------------------
@@ -289,9 +287,9 @@ DEFAULT_ROOTS = [
     "examples",
 ]
 
-# stdout 的判据在这一条上不成立：两个 worker 同时打印，行序与行内切分都归调度。
-# 比较降为字符多重集 —— 少打或多打一个字仍失败，排列与换行位置不判。
-NONDETERMINISTIC_STDOUT = {"examples/concurrency.pini": "行序与行内切分由调度决定"}
+# 行序由调度决定、逐字节比对不成立的 fixture：按行多重集比较，不按序列。
+# 行内不再交错（打印整行加锁），故这里只需放过排列，行内容与行数仍判。
+NONDETERMINISTIC_STDOUT = {"examples/concurrency.pini": "行序由调度决定（A/B 交错）"}
 
 F64_SIX = re.compile(r"\d+\.\d{6}")
 # The IR execution engine names the node it cannot run yet; that message is the
@@ -584,14 +582,12 @@ def same_stdout(rel, l_out, h_out):
     """Whether the two arms printed the same stdout, in the sense this fixture allows.
 
     Byte equality is the default. A fixture in NONDETERMINISTIC_STDOUT prints from
-    more than one worker, so the order of its lines and the point where one print
-    is cut by another both belong to the scheduler; measured on the Linux arm, two
-    prints landed as "BA" on a single line. Comparing the character multiset drops
-    exactly those two freedoms: a missing, extra or substituted character still
-    fails, a permutation or a different line split does not.
+    more than one worker, so the order of its lines belongs to the scheduler rather
+    than to the program. Comparing the line multiset drops that one freedom and
+    keeps the rest: a missing, extra or altered line still fails.
     """
     if rel in NONDETERMINISTIC_STDOUT:
-        return sorted(l_out) == sorted(h_out)
+        return sorted(l_out.splitlines()) == sorted(h_out.splitlines())
     return l_out == h_out
 
 
@@ -796,7 +792,7 @@ def main():
     unordered = sorted(r["fixture"] for r in rows
                        if r["fixture"] in NONDETERMINISTIC_STDOUT)
     if unordered:
-        print("  %-15s %d  %s（行序与行内切分由调度决定，按字符多重集比）"
+        print("  %-15s %d  %s（行序由调度决定，按行多重集比）"
               % ("unordered", len(unordered), ", ".join(unordered)))
     left = []
     if leaks is None:
