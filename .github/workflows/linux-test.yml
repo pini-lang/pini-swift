@@ -21,28 +21,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
+      # buildx 只为 gha 层缓存：镜像构建与容器启动都在 ci/run.sh 里，本地跑同一份。
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
-      # 镜像里钉死工具链与系统依赖；运行时不装任何东西。
-      # 用 GHA 层缓存：绝大多数提交只改源码，apt 那一层直接命中。
-      - name: Build CI image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ci/Dockerfile
-          tags: pini-ci:local
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
-
-      # 不以 root 跑：只读文件的权限判据在 root 下恒真，那一条会退化成空判。
-      # HOME 指到 /tmp：容器用户与宿主同 UID，但没有对应的家目录。
-      - name: Gates, build, test
-        run: |
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD":/src -w /src pini-ci:local
+      - name: Run pipeline
+        run: bash ci/run.sh
