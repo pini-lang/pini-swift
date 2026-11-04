@@ -82,6 +82,8 @@ PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py
 step "差分探针门禁"
 # 两通道对照：同一份语料在解释器与 LLVM 上必须读出同一串输出。已知缺口在
 # tools/ir-parity-baseline.tsv，只许缩小 —— 某行转绿时这一步会红，提示删掉它。
+# 判据自检不需要 lli：证明「按设计拒绝」那一格会开火，也不会吞掉真缺口。
+python3 tools/ir-parity-probe.py --self-test
 # 镜像没有 lli 时明确跳过并说出原因：跳过不等于通过，故这一行必须打出来。
 if [ -n "${PINI_LLVM_BIN:-}" ] || command -v lli >/dev/null 2>&1; then
     PINI_SWEEP_BIN="$PWD/.build/debug/pini" python3 tools/ir-parity-probe.py \
