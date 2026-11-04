@@ -15,9 +15,9 @@ import Foundation
 // 句柄的 share count 住在运行时而非 ARC：LLVM 后端里 `var b = a` 只把不透明句柄（裸 `ptr`）复制到另一个
 // alloca 槽，ARC 看不见这次别名 ⇒ `isKnownUniquelyReferenced` 恒真；故按 `shares` 判分裂：别名点 retain、写前 ensure_unique。
 
-// 份额契约（codegen 与运行时的分工）：`bk_*_create` 产出 shares == 1 的 box，归还责任在接收该句柄的
-// 所有者（变量槽或被写入的父容器）；`bk_*_set` / `bk_set_add` 对句柄型内容只做字节复制（移动语义）、
-// 不 retain，故别名点的 `bk_handle_retain` 由 codegen 负责；box `deinit` 对句柄型元素递减一份 share。
+// 份额契约（codegen 与运行时的分工）：`bk_*_create` 产出 shares == 1 的 box，归还责任随句柄走 —— 变量槽或
+// 被写入的父容器。写入口只搬字节、不 retain，故调用方须自带一份（别名先 retain），入口必消费：落槽则接管、
+// 不落槽（重复元素 / 既有键）则归还。box `deinit` 对句柄型元素递减一份 share。
 
 /// 所有容器 box 的公共基类：携带 share count 与深拷协议。
 /// 以基类承载使 `bk_handle_*` 系列可类型无关地操作任意容器句柄（`fromOpaque` 后动态转型），
@@ -47,9 +47,9 @@ private func _bkRegister(_ box: _BkBox) -> UnsafeMutableRawPointer {
     return u.toOpaque()
 }
 
-/// 递减句柄的 share count；归零则从登记表摘出并释放。
-/// 顺序必须是「先摘出、再 release」：release 会触发 `deinit`，其中对嵌套句柄递归调用本函数并再改
-/// `_liveHandles`；先摘出使递归修改落在数组访问之外，不触发独占性冲突。
+/// 递减句柄的 share count；归零则先摘出登记表、再 release（release 触发 `deinit`，会递归回到本函数）。
+/// 先摘出使递归修改落在数组访问之外，不触发独占性冲突。
+/// 不查在册：同一句柄释放两次，第二次会在已回收的 box 上读计数（双释放是调用方错误）。
 private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
     guard let h else { return }
     let box = Unmanaged<_BkBox>.fromOpaque(h).takeUnretainedValue()
@@ -77,8 +77,8 @@ private func _bkRetainIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
     Unmanaged<_BkBox>.fromOpaque(inner).takeUnretainedValue().shares += 1
 }
 
-/// 元素 box 内容若为可计数引用（嵌套句柄 **或** 字符串），递减其计数
-/// （供 `deinit` / `releaseAllElements` 释放本槽持有的那一份）。
+/// 元素 box 内容若为可计数引用（嵌套句柄或字符串），递减其计数（供 `deinit` / `releaseAllElements`）。
+/// `tag` 必须与 box 内容一致：`.str` 与 `.handle` 记在不同计数上，错 tag 会让两族的计数互串。
 private func _bkReleaseIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
     if _BkTag(rawValue: tag) == .str {
         bk_str_release(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
@@ -251,6 +251,7 @@ public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
 
 /// 别名绑定（`var b = a`、容器传参等）：递增 share count，使后续任一侧的写触发分裂。
 /// codegen 在容器句柄被复制进新变量槽时发射本调用；不发射则退化为「共享且原地改」（错误语义）。
+/// 裸份额操作，不校验在册：传入的必须是仍存活的容器句柄，否则计数改到已回收的对象上。
 @_cdecl("bk_handle_retain")
 public func bk_handle_retain(_ h: UnsafeMutableRawPointer?) {
     guard let h else { return }
@@ -301,6 +302,7 @@ public func bk_handle_shares(_ h: UnsafeMutableRawPointer?) -> Int32 {
 }
 
 /// 释放一份 share（归零则回收）。三个类型化 `bk_*_destroy` 均委托至此。
+/// 与 `bk_handle_retain` 成对；多减一次就是双释放，这里不查在册。
 @_cdecl("bk_handle_release")
 public func bk_handle_release(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
@@ -337,15 +339,18 @@ public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeM
     return ptr
 }
 
-/// 写入下标 `i` 处的元素：把 `src` 处 `elemBytes` 字节 memcpy 进新分配的堆 box（先释放该槽旧 box）。
-/// 写前两层分裂：`_bkEnsureUnique` 管变量槽别名、`_bkArraySplitStorage` 管容器存储共享，缺一即别名污染；
-/// 返回实际被写入的句柄，调用方必须写回变量槽。`elemTag` 供深拷识别嵌套句柄元素。
+/// 写下标 `i`：两层分裂后把 `src` 的 `elemBytes` 字节 memcpy 进新箱、先释放该槽旧箱，返回须写回的句柄。
+/// 份额由调用方自带：本入口只搬字节，覆盖或销毁时按 tag 归还旧元素 —— 少带即悬垂，多带即泄漏。
+/// Swift 名带 `_unsafe`；C 符号仍是 `bk_array_set`，生成 IR 不受影响。
 @_cdecl("bk_array_set")
-public func bk_array_set(
+public func bk_array_set_unsafe(
     _ arr: UnsafeMutableRawPointer?, _ i: Int32, _ src: UnsafeRawPointer,
     _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer? {
-    guard let arr else { return nil }
+    guard let arr else {
+        _bkReleaseIfHandle(src, elemTag)
+        return nil
+    }
     let target = _bkEnsureUnique(arr)
     let box = Unmanaged<_BkArrayBox>.fromOpaque(target).takeUnretainedValue()
     //  重要  两层分裂都必须在写入**之前**：一层管变量槽别名（上一行），一层管容器存储共享（本行）。
@@ -366,11 +371,11 @@ public func bk_array_set(
     return target
 }
 
-/// 追加一个元素，返回新数组：输入句柄与其内容都不受影响（调用方须用返回值替换原句柄）；空句柄视作空数组。
-/// 与 `bk_array_set` 分工：后者写既有容器（写前必分裂），前者产出新容器。新数组可能与输入共享元素存储，
-/// 故写入路径必须补 `_bkArraySplitStorage`；对句柄型内容只做字节复制、不 retain（别名 retain 归 codegen）。
+/// 追加一个元素，返回新数组（调用方须用返回值替换原句柄）；输入与其内容不受影响，空句柄视作空数组。
+/// 与 `bk_array_set` 分工：后者写既有容器（写前必分裂），前者产出新容器，故须补 `_bkArraySplitStorage`。
+/// 份额：新数组接管 `src` 那一份，本入口只搬字节、不 retain；别名那份由发射层补。
 @_cdecl("bk_array_append")
-public func bk_array_append(
+public func bk_array_append_unsafe(
     _ arr: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer,
     _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer {
@@ -414,8 +419,8 @@ public func bk_array_append(
     return _bkRegister(grown)
 }
 
-/// 释放数组句柄的一份 share（归零才真正回收）。
-/// D4.2.3 将经 IR 在作用域末尾注入此调用以实现精确释放。
+/// 释放数组句柄的一份 share；归零才真正回收，并按元素 tag 逐格归还。
+/// 与兄弟数组共享元素存储时，归还推迟到最后一个持有者离开。
 @_cdecl("bk_array_destroy")
 public func bk_array_destroy(_ arr: UnsafeMutableRawPointer?) {
     _bkReleaseShare(arr)
@@ -601,6 +606,8 @@ private enum _BkTag: Int32 {
     /// 用途单一：`bk_task_join_all` 的聚合结果是「成员 ok 载荷」的数组，而载荷被擦除为 i64 宽度。
     ///  行不通  不是 `.i32`（比较宽度 4）也不是 `.handle`（COW 会把字里的位型当句柄 retain/release）。
     case i64 = 5
+    /// 裸指针（`*T` / 任务句柄）：不参与计数，比较按指针值；与 `str` 分开，销毁时才不会把指针当串释放。
+    case rawPtr = 6
 }
 
 /// 两个 box 的内容相等性（按 tag 解释字节）。字符串按 C 串内容比较，与指针身份无关。
@@ -620,6 +627,8 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
         // 不透明 i64 字按位型比较。（当前无调用点：聚合数组只被搬运、不被比较；
         // 补这一支是为了让 switch 穷尽，并让将来拿它做键时不至静默落进 .i32 的窄读。）
         return a.load(as: Int64.self) == b.load(as: Int64.self)
+    case .rawPtr:
+        return a.load(as: UnsafeRawPointer.self) == b.load(as: UnsafeRawPointer.self)
     }
 }
 
@@ -674,11 +683,11 @@ public func bk_dict_len(_ dict: UnsafeMutableRawPointer?) -> Int32 {
     return Int32(Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue().entries.count)
 }
 
-/// 写入键值：`val` 处 `valBytes` 字节 memcpy 进新 box（替换则先释放旧值），按 (keyBytes, keyTag)
-/// 经 `_bkBoxesEqual` 定位既有条目（命中替换、否则追加）。写前 `_bkEnsureUnique` 分裂并返回实际被写入的
-/// 句柄（调用方须写回槽）；空句柄或零宽经 panic 终止。
+/// 写键值：`val` 的 `valBytes` 字节 memcpy 进新箱（替换先释放旧值），按 (keyBytes, keyTag) 经 `_bkBoxesEqual`
+/// 定位条目。写前 `_bkEnsureUnique` 分裂，返回须写回的句柄；空句柄或零宽 panic。
+/// 份额：值落槽即接管一份、覆盖时先还旧值；键只在首次插入时接管，键已存在则新键就地归还。
 @_cdecl("bk_dict_set")
-public func bk_dict_set(
+public func bk_dict_set_unsafe(
     _ dict: UnsafeMutableRawPointer?,
     _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32,
     _ val: UnsafeRawPointer, _ valBytes: Int32, _ valTag: Int32
@@ -686,12 +695,22 @@ public func bk_dict_set(
     guard let dict else { bk_panic("Pini runtime error: dict handle is null") }
     let target = _bkEnsureUnique(dict)
     let box = Unmanaged<_BkDictBox>.fromOpaque(target).takeUnretainedValue()
-    let kn = Int(keyBytes); guard kn > 0 else { return target }
-    let vn = Int(valBytes); guard vn > 0 else { return target }
+    let kn = Int(keyBytes)
+    guard kn > 0 else {
+        _bkReleaseIfHandle(val, valTag)
+        return target
+    }
+    let vn = Int(valBytes)
+    guard vn > 0 else {
+        _bkReleaseIfHandle(key, keyTag)
+        return target
+    }
     let newVal = _bkAllocBox(val, vn)
     if let idx = box.entries.firstIndex(where: { stored in
         _bkBoxesEqual(key, keyTag, stored.key, stored.keyTag)
     }) {
+        // 键已存在：新键不落槽，调用方为它带来的那一份在这里归还。
+        _bkReleaseIfHandle(key, keyTag)
         _bkReleaseIfHandle(box.entries[idx].val, box.entries[idx].valTag)
         box.entries[idx].val.deallocate()
         box.entries[idx].val = newVal
@@ -761,7 +780,7 @@ public func bk_dict_ensure_unique_at(
     return new
 }
 
-/// 释放字典句柄的一份 share（归零才回收；D4.2.3 将按作用域注入）。
+/// 释放字典句柄的一份 share；归零才回收，并逐条归还键与值（各按自己的 tag）。
 @_cdecl("bk_dict_destroy")
 public func bk_dict_destroy(_ dict: UnsafeMutableRawPointer?) {
     _bkReleaseShare(dict)
@@ -804,10 +823,11 @@ public func bk_set_len(_ set: UnsafeMutableRawPointer?) -> Int32 {
     return Int32(Unmanaged<_BkSetBox>.fromOpaque(set).takeUnretainedValue().elems.count)
 }
 
-/// 插入元素（去重）：`elem` 处 `elemBytes` 字节按 (bytes, tag) 经 `_bkBoxesEqual` 判定是否已存在。
+/// 插入元素（去重）：`elem` 的 `elemBytes` 字节按 (bytes, tag) 经 `_bkBoxesEqual` 判定是否已存在。
 /// COW：写前 `_bkEnsureUnique` 分裂，返回实际被写入的句柄（调用方须写回槽）。
+/// 份额：元素入集合时接管一份；重复元素不落槽，那一份由本入口就地归还（调用方仍须自带一份）。
 @_cdecl("bk_set_add")
-public func bk_set_add(
+public func bk_set_add_unsafe(
     _ set: UnsafeMutableRawPointer?, _ elem: UnsafeRawPointer,
     _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer? {
@@ -815,15 +835,18 @@ public func bk_set_add(
     let target = _bkEnsureUnique(set)
     let box = Unmanaged<_BkSetBox>.fromOpaque(target).takeUnretainedValue()
     let n = Int(elemBytes); guard n > 0 else { return target }
-    if !box.elems.contains(where: { stored in
+    if box.elems.contains(where: { stored in
         _bkBoxesEqual(elem, elemTag, stored.ptr, stored.tag)
     }) {
+        // 重复元素不落槽：调用方为它带来的那一份在这里归还。
+        _bkReleaseIfHandle(elem, elemTag)
+    } else {
         box.elems.append((ptr: _bkAllocBox(elem, n), tag: elemTag, bytes: n))
     }
     return target
 }
 
-/// 释放集合句柄的一份 share（归零才回收；D4.2.3 将按作用域注入）。
+/// 释放集合句柄的一份 share；归零才回收，并逐元素归还（各按自己的 tag）。
 @_cdecl("bk_set_destroy")
 public func bk_set_destroy(_ set: UnsafeMutableRawPointer?) {
     _bkReleaseShare(set)
@@ -1733,8 +1756,9 @@ public func bk_string_split(
     }
     var handle = bk_array_create(Int32(parts.count))
     for (index, part) in parts.enumerated() {
+        // 每个 part 是新串（计数 1），`bk_array_set` 消费那一份，故这里不再 retain。
         var box: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(_bkStrDup(part))
-        handle = bk_array_set(handle, Int32(index), &box, 8, 3) ?? handle
+        handle = bk_array_set_unsafe(handle, Int32(index), &box, 8, 3) ?? handle
     }
     return handle
 }
@@ -2409,7 +2433,7 @@ private func _bkJoinAll(
     let arr = bk_array_create(Int32(okWords.count))
     for (i, w) in okWords.enumerated() {
         var word = w
-        _ = withUnsafePointer(to: &word) { bk_array_set(arr, Int32(i), $0, 8, _BkTag.i64.rawValue) }
+        _ = withUnsafePointer(to: &word) { bk_array_set_unsafe(arr, Int32(i), $0, 8, _BkTag.i64.rawValue) }
     }
     _bkWriteResult(out, tag: 0, ok: _bkWord(arr), err: 0)
     return 0

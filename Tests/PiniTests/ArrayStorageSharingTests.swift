@@ -11,7 +11,7 @@ struct ArrayStorageSharingTests: Sendable {
     // MARK: - 工具
 
     /// 元素标签的字面量。 注意  `_BkTag`（运行时段）是 `private`，测试读不到 ⇒ 在此照抄权威表：
-    /// `i32 = 0` · `double = 1` · `bool = 2` · `str = 3` · `handle = 4` · `i64 = 5`；
+    /// `i32 = 0` · `double = 1` · `bool = 2` · `str = 3` · `handle = 4` · `i64 = 5` · `rawPtr = 6`；
     /// 与发射层 `IREmitter.arrayElementABI` 用的是同一张表。
     private enum Tag {
         static let i32: Int32 = 0
@@ -21,7 +21,7 @@ struct ArrayStorageSharingTests: Sendable {
     /// 追加一个 `I32` 元素（照发射层的元素 ABI：宽 4 · tag 0）。
     private func appendI32(_ arr: UnsafeMutableRawPointer?, _ value: Int32) -> UnsafeMutableRawPointer {
         var v = value
-        return withUnsafePointer(to: &v) { bk_array_append(arr, $0, 4, Tag.i32) }
+        return withUnsafePointer(to: &v) { bk_array_append_unsafe(arr, $0, 4, Tag.i32) }
     }
 
     /// 读第 `i` 个 `I32` 元素。
@@ -93,13 +93,13 @@ struct ArrayStorageSharingTests: Sendable {
         defer { bk_array_destroy(b) }
 
         var nine: Int32 = 9
-        withUnsafePointer(to: &nine) { b = bk_array_set(b, 0, $0, 4, Tag.i32) ?? b }
+        withUnsafePointer(to: &nine) { b = bk_array_set_unsafe(b, 0, $0, 4, Tag.i32) ?? b }
         #expect(loadI32(b, 0) == 9, "写进新数组的必须生效")
         #expect(loadI32(a, 0) == 1, " 行不通  输入侧不许看到新数组的写")
         #expect(bk_array_len(a) == 2, "输入侧长度不变")
 
         var seven: Int32 = 7
-        _ = withUnsafePointer(to: &seven) { bk_array_set(a, 1, $0, 4, Tag.i32) }
+        _ = withUnsafePointer(to: &seven) { bk_array_set_unsafe(a, 1, $0, 4, Tag.i32) }
         #expect(loadI32(a, 1) == 7, "写进输入侧的必须生效")
         #expect(loadI32(b, 1) == 2, " 行不通  新数组不许看到输入侧的写")
         #expect(bk_array_len(b) == 3, "新数组长度不变")
@@ -124,9 +124,9 @@ struct ArrayStorageSharingTests: Sendable {
         //  注意  中间那个空数组句柄**必须释放**（与发射形态同序）：不释放则它仍持有那块存储
         // ⇒ 下一次追加看到「存储被共享」而走深拷路 —— 本用例第一版正是这么写错的，红在下面那条前置断言。
         let empty = bk_array_create(0)
-        let o1 = withUnsafePointer(to: &innerPtr) { bk_array_append(empty, $0, 8, Tag.handle) }
+        let o1 = withUnsafePointer(to: &innerPtr) { bk_array_append_unsafe(empty, $0, 8, Tag.handle) }
         bk_array_destroy(empty)
-        var o2 = withUnsafePointer(to: &otherPtr) { bk_array_append(o1, $0, 8, Tag.handle) }
+        var o2 = withUnsafePointer(to: &otherPtr) { bk_array_append_unsafe(o1, $0, 8, Tag.handle) }
         defer { bk_array_destroy(o1); bk_array_destroy(o2) }
         #expect(bk_array_get(o1, 0) == bk_array_get(o2, 0), "前置：两侧此时共享存储")
 
@@ -134,7 +134,7 @@ struct ArrayStorageSharingTests: Sendable {
         /// 写入也是一次「把句柄放进容器」⇒ 与发射层同规补一次 adopt.retain。少了这一笔，`o2` 的槽
         /// 会在销毁时多减一份份额，`defer` 再释放它就成了 UAF（分配器是否立刻复用决定崩不崩）。
         bk_handle_retain(other)
-        withUnsafePointer(to: &otherPtr) { o2 = bk_array_set(o2, 0, $0, 8, Tag.handle) ?? o2 }
+        withUnsafePointer(to: &otherPtr) { o2 = bk_array_set_unsafe(o2, 0, $0, 8, Tag.handle) ?? o2 }
         let after = bk_handle_shares(inner)
         #expect(after == base, " 行不通  内层份额必须回到基线（深拷 +1 与新框释放 −1 配对）：base=\(base) after=\(after)")
         #expect(bk_array_get(o1, 0) != bk_array_get(o2, 0), "写后必须已分裂（各自私有元素框）")
@@ -184,7 +184,7 @@ struct ArrayStorageSharingTests: Sendable {
         #expect(bk_array_len(b) == 3, "源侧长度不变")
 
         var nine: Int32 = 9
-        _ = withUnsafePointer(to: &nine) { bk_array_set(copy, 2, $0, 4, Tag.i32) }
+        _ = withUnsafePointer(to: &nine) { bk_array_set_unsafe(copy, 2, $0, 4, Tag.i32) }
         #expect(loadI32(copy, 2) == 9, "写副本必须生效")
         #expect(loadI32(b, 2) == 3, " 行不通  源侧不许看到副本的写")
     }

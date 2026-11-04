@@ -1818,6 +1818,8 @@ public final class IREmitter {
             let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
             let keyBox = boxValue(indexValue, spelling: keySpelling)
             let valueBox = boxValue(storedValue, spelling: valueSpelling)
+            /// 键与值同规：别名在这里 retain、临时值在这里销账；`bk_dict_set` 只搬字节。
+            adoptElement(index, indexValue, type: keyType)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_dict* \(containerValue.ssaName) to ptr\n"
             let newRaw = builder.freshTemp()
@@ -1832,8 +1834,6 @@ public final class IREmitter {
             }
             //  重要  字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `bk_dict_set` 之后。
             emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
-            /// 键被 `bk_dict_set` 拷进自己的箱：临时的键串读到这里就用完了。
-            releaseOperand(index, indexValue)
             return
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
@@ -3997,7 +3997,7 @@ public final class IREmitter {
 
     /// `container.slice(start, end)`: a missing bound takes its default (start → 0, end → len), an
     /// integer bound is tail-counted when negative, both clamp to [0, len], and hi < lo yields empty.
-    /// Arrays build a new handle (nested handle elements retain); strings copy bytes into a fresh buffer.
+    /// Arrays build a new handle (counted elements retain); strings copy bytes into a fresh buffer.
     private func emitSliceCall(container: IRExpr, start: IRExpr, end: IRExpr, type: IRType) -> IRValue {
         let containerValue = emitExpr(container)
 
@@ -4046,14 +4046,9 @@ public final class IREmitter {
             bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
             let boxPtr = builder.freshTemp()
             bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(srcIndex))\n"
-            if elementType.llvmSpelling == "%bk_array*" {
-                // Nested handle element: the source array still holds its
-                // share, so the copy retains one (resource contract 3).
-                let inner = builder.freshTemp()
-                bodyIR += builder.fmtLoad(name: inner, type: "%bk_array*", ptr: boxPtr) + "\n"
-                let innerRaw = builder.freshTemp()
-                bodyIR += " \(innerRaw) = bitcast %bk_array* \(inner) to ptr\n"
-                bodyIR += " call void @bk_handle_retain(ptr \(innerRaw))\n"
+            if let family = boxFamily(of: elementType) {
+                /// 元素按箱共享：源数组仍握着那一份，新数组必须自带一份，否则两个持有者只付一次。
+                emitElementRetain(boxPtr: boxPtr, elementType: elementType, family: family)
             }
             let newRaw = builder.freshTemp()
             bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
@@ -4093,6 +4088,24 @@ public final class IREmitter {
 
         default:
             fatalError("IREmitter: slice on non-array/string type '\(type)' (IRLowerer gates)")
+        }
+    }
+
+    /// 从 `bk_array_get` 交出的元素箱里读出计数族值并留一份（箱仍归源数组，这里只加计数）。
+    private func emitElementRetain(boxPtr: String, elementType: IRType, family: BoxFamily) {
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast \(elementType.llvmSpelling) \(value) to ptr\n"
+        switch family {
+        case .container:
+            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+        case .nominal:
+            usesNominalBoxes = true
+            bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+        case .string:
+            usesStringRefcount = true
+            bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
         }
     }
 
@@ -4254,13 +4267,13 @@ public final class IREmitter {
         case .array: return ("%bk_array*", 8, 4)
         case .dict: return ("%bk_dict*", 8, 4)
         case .set: return ("%bk_set*", 8, 4)
-        //  重要  `*T` 原始指针走**裸指针 tag**（与 String / Char 同格），不是容器句柄那一格：
-        // 它不参与引用计数，而运行时那两条钩子（retain / release）只在 handle tag 上动手。
+        //  重要  `*T` 走裸指针 tag（6），不是串那一格：它不参与计数，销毁时也就没有 release。
+        //  注意  与 `String` 共用 tag 3 会让数组销毁把指针当串释放，指针恰好指向在册串时就是悬垂。
         //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
-        case .pointer: return ("i8*", 8, 3)
+        case .pointer: return ("i8*", 8, 6)
         case .future:
             /// 任务句柄是指针字，生命周期由 join / detach 管，数组只暂存 ⇒ 裸指针 tag，不计数。
-            return ("ptr", 8, 3)
+            return ("ptr", 8, 6)
         default:
             /// 占位 ABI 只为了让发射走完：产物随即因 `refusals` 非空被丢掉，不会有人读到它。
             refuse(
@@ -4272,6 +4285,7 @@ public final class IREmitter {
 
     /// 容器元素落槽：元素按箱共享 ⇒ 结构体也保留而不拷；临时元素移交，账本随之清掉。
     /// 与语句级存储点同一条规则（`IRType.adoption`），差别只在 `sharingStructs`。
+    /// 运行时的写入口只搬字节：别名在这里 retain，临时值在这里销账，两半合起来才是槽里的那一份。
     private func adoptElement(_ node: IRExpr, _ value: IRValue, type: IRType) {
         _ = applyAdopt(type.adoption(of: node, sharingStructs: true), value, type: type)
     }

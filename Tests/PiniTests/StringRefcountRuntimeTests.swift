@@ -88,7 +88,7 @@ struct StringRefcountRuntimeTests: Sendable {
         // tag 3 = `.str`、宽度 8 —— 与发射器 `arrayElementABI` 钉的那一格一致。
         //  注意  `bk_array_set` 对元素内容是**移动语义**（不 retain）：那一份由槽接管。
         withUnsafeBytes(of: &payload) { raw in
-            _ = bk_array_set(arr, 0, raw.baseAddress!, 8, 3)
+            _ = bk_array_set_unsafe(arr, 0, raw.baseAddress!, 8, 3)
         }
         #expect(bk_str_refcount(s) == 1, "写入是移动语义 ⇒ 计数不该涨")
         bk_array_destroy(arr)
