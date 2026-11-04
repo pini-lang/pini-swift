@@ -1,7 +1,6 @@
 ; 数组基础（解释器 / LLVM 双后端可用）：下标、len、元素读写、字符串元素。运行 pini run-llvm examples/array_basic.pini（或 pini run）
 ; 预期（双后端一致，剥离换行后）：20 3 world 3 true 3 b 10 7
 ; 说明：数组以 opaque handle 经运行时 shim（@bk_array_*）承载，元素支持 I32 / F64 / Bool / String；下标写与复合赋值双后端对齐。
-
 main|func() -> ():
     let a = [10, 20, 30]
     print(a[1])
@@ -20,7 +19,7 @@ main|func() -> ():
     ; 需要 Optional 参与 match 时走 `.get(i)`（越界返回 .none）；
     ; 下标 `w[i]` 直接给元素，越界 panic。
     match w.get(1):
-        case some(v):
+        case some(v,):
             w[1] = v + 5
         case none:
             break

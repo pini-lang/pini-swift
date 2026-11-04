@@ -3,25 +3,25 @@
 ; 预期：15 / 12 / 24 / 6 / 2 / 8 / 9 / 10 / 40 / 20
 main|func() -> ():
     var x = 10
-    x += 5
+    x = x + 5
     print(x)
-    x -= 3
+    x = x - 3
     print(x)
-    x *= 2
+    x = x * 2
     print(x)
-    x /= 4
+    x = x / 4
     print(x)
-    x %= 4
+    x = x % 4
     print(x)
     var b = 12
-    b &= 10
+    b = b & 10
     print(b)
-    b |= 1
+    b = b | 1
     print(b)
-    b ^= 3
+    b = b ^ 3
     print(b)
-    b <<= 2
+    b = b << 2
     print(b)
-    b >>= 1
+    b = b >> 1
     print(b)
     return

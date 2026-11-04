@@ -1,12 +1,12 @@
 main|func() -> ():
-    let a: {String: I32,} = {"x" = 1,}
-    let b: {String: ?I32,} = {"x" = nil,}
-    let c: {I32: [String,],} = {1 = ["a",],}
-    let n: {String: {I32: String,},} = {"x" = {1 = "v",},}
-    let s: {I32,} = {1, 2,}
-    print(len(a),)
-    print(len(b),)
-    print(len(c),)
-    print(len(n),)
-    print(len(s),)
+    let a: Dictionary<String, I32> = {"x" = 1}
+    let b: Dictionary<String, Optional<I32> > = {"x" = Optional.none}
+    let c: Dictionary<I32, Array<String> > = {1 = ["a"]}
+    let n: Dictionary<String, Dictionary<I32, String> > = {"x" = {1 = "v"}}
+    let s: Set<I32> = {1, 2}
+    print(len(a))
+    print(len(b))
+    print(len(c))
+    print(len(n))
+    print(len(s))
     return

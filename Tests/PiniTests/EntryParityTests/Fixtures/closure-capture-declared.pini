@@ -5,5 +5,5 @@ main|func() -> ():
     var f = func (x,) -> (I32,):
         capture k
         return x + k
-    print(f(1,))
+    print(f(1))
     return

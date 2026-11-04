@@ -2,7 +2,6 @@
 ; 运行：pini run examples/lambda.pini
 ; 预期：42
 main|func() -> ():
-    var f = func (x,) -> (I32,):
-        return x + 1
+    var f = func (x,) -> (I32,): return x + 1
     print(f(41))
     return

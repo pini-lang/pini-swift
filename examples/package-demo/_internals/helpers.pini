@@ -12,7 +12,7 @@
 _owner: I32 = 1
 
 {{账户}}
-存|self(额: I32) -> ():
+存|self(额: I32,) -> ():
     self.余额 = self.余额 + 额
     return
 取|self() -> (I32,):

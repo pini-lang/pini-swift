@@ -3,7 +3,6 @@
 ; 语法点：defer 后跟一个块，块体在执行流程离开当前作用域时按登记逆序运行。
 main|func() -> ():
     var result = ""
-
     var i = 0
     while i < 1:
         defer result = result + "last"
@@ -12,9 +11,7 @@ main|func() -> ():
         result = result + "body"
         i = i + 1
     print(result)
-
     result = ""
-
     var j = 0
     while j < 1:
         defer result = result + "outer"
@@ -25,5 +22,4 @@ main|func() -> ():
             k = k + 1
         j = j + 1
     print(result)
-
     return

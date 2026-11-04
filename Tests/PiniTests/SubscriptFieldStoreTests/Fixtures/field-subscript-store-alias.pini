@@ -2,7 +2,7 @@
 ;   若把分裂出的新句柄写回字段 ⇒ `h.xs[1]` 变 7、`snapshot[1]` 保持 20；若不回写 ⇒ 字段仍指着旧句柄，
 ;   `h.xs[1]` 会是 20（那次写静默丢失）。故它是「回写」这条契约的唯一见证。
 (Holder)
-xs: [I32] = [10, 20, 30]
+xs: Array<I32> = [10, 20, 30]
 
 ((Holder))
 put|self(i: I32, v: I32,) -> ():
@@ -11,8 +11,8 @@ put|self(i: I32, v: I32,) -> ():
 
 main|func() -> ():
     var h = Holder()
-    let snapshot: [I32] = h.xs
-    h.put(1, 7,)
+    let snapshot: Array<I32> = h.xs
+    h.put(1, 7)
     print(h.xs[1])
     print(snapshot[1])
     return

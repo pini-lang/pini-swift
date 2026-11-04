@@ -1,7 +1,6 @@
 ; 并发取消与超时：cancel / joinWithin / isCancel。运行 pini run examples/concurrency-cancel.pini，预期「已超时取消」「已手动取消」
 ; `=>` 声明 = 调用即派发到 worker 线程，返回运行中的 Future；`joinWithin(t, ms)` = 带超时阻塞 join，
 ; 超时归约为取消、返回 err(CancelError)；`isCancel(e)` 判取消类（两种取消同为 true）；`t.cancel()` 取消该 Future 及其派生任务。
-
 慢任务|func() => (I32,):
     sleep(3000)
     return ok(1)
@@ -15,22 +14,21 @@ main|func() -> ():
     var t = 慢任务()
     var r = joinWithin(t, 100)
     match r:
-        case ok(v):
+        case ok(v,):
             print(v)
-        case err(e):
+        case err(e,):
             if isCancel(e):
                 print("已超时取消")
             else:
                 print(e)
-
     ; 手动取消：cancel 后 join → err(CancelError)
     var u = 手动任务()
     u.cancel()
     var r2 = wait u
     match r2:
-        case ok(v):
+        case ok(v,):
             print(v)
-        case err(e):
+        case err(e,):
             if isCancel(e):
                 print("已手动取消")
             else:

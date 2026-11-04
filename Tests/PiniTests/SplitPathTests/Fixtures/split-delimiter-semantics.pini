@@ -1,11 +1,11 @@
 ; 判据：`split` 的定界符语义两路一致。LLVM 侧若把定界符当字符集、且空定界符不匹配任何字符，
 ;   `"ab\ncd".split("")` 只给 1 个元素（整串），解释器给 5（逐字素）—— 自举 `textAtoms` 正是 `text.split("")`。
 ; 权威 = 解释器：空定界符逐字素 · 非空按子串 · 省略空子序列；第 10 项是强阳性对照（组合序列应为 1）。
-show|func(tag: String, parts: [String],) -> ():
-    print("\(tag)|len=\(len(parts,),)")
+show|func(tag: String, parts: Array<String>,) -> ():
+    print("\(tag)|len=\(len(parts))")
     var i = 0
     while i < len(parts):
-        print("\(tag)|[\(i,)]=\(parts[i])")
+        print("\(tag)|[\(i)]=\(parts[i])")
         i = i + 1
     return
 
@@ -19,6 +19,6 @@ main|func() -> ():
     show("7-trailing", "a\n".split("\n"))
     show("8-blank-line", "a\n\nb".split("\n"))
     show("9-cjk", "色彩".split(""))
-    show("10-grapheme", ("e" + chr(769,)).split(""))
+    show("10-grapheme", ("e" + chr(769)).split(""))
     show("11-tab", "a\tb".split("\t"))
     return

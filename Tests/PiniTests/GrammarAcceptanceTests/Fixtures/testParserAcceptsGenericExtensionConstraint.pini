@@ -1,6 +1,6 @@
 <显示>
 描述|self() -> (String,)
 
-((取值<T>:显示))
-取|self() -> (?T,):
+((取值<T>: 显示))
+取|self() -> (Optional<T>,):
     return self.值
