@@ -75,6 +75,10 @@ python3 tools/capability-census.py --check
 step "构建"
 swift build --disable-sandbox
 
+step "格式门禁"
+# 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
+PINI_BIN="$PWD/.build/debug/pini" python3 tools/fmt-gate.py
+
 step "示例门禁"
 # 三腿：check / run / run-llvm。已知失败在 examples/gate-baseline.tsv，只许缩小。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py

@@ -1,0 +1,3 @@
+# 格式洗牌：只改排版，不承载语义。blame 跳过这些提交。
+# 本仓启用：git config blame.ignoreRevsFile .git-blame-ignore-revs
+8c53b80af0f0ffa0a128edb1b02df8e14fb20404
