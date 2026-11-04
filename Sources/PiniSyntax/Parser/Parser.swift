@@ -414,11 +414,11 @@ public class Parser {
                 location: location
             )
         }
-        var items: [(alias: String, path: String)] = []
+        var items: [(alias: String, path: String, location: SourceLocation)] = []
         skipNewlines()
         while !isEOF() {
             // 项行形态：IDENT = STRING
-            guard case .identifier(let alias, _) = currentToken else { break }
+            guard case .identifier(let alias, let itemLocation) = currentToken else { break }
             guard case .assign(_) = peek() else { break }
             advance()  // 别名
             advance()  // =
@@ -427,7 +427,7 @@ public class Parser {
                     reason: "import 项须为 `别名 = 包路径字符串`", location: currentLocation)
             }
             advance()
-            items.append((alias: alias, path: path))
+            items.append((alias: alias, path: path, location: itemLocation))
             skipNewlines()
         }
         guard let first = items.first else {
@@ -437,9 +437,9 @@ public class Parser {
         /// 缓冲，由 parseModuleImpl 在本声明位排干（保持声明顺序）。
         pendingImportDecls.append(
             contentsOf: items.dropFirst().map {
-                ImportDecl(alias: $0.alias, packagePath: $0.path, location: location)
+                ImportDecl(alias: $0.alias, packagePath: $0.path, location: $0.location)
             })
-        return ImportDecl(alias: first.alias, packagePath: first.path, location: location)
+        return ImportDecl(alias: first.alias, packagePath: first.path, location: first.location)
     }
 
     /// 解析 `[当前文件名|export]` 块：条目写 `名 = 原符号` 或 `名|目标 = 原符号`。
@@ -731,9 +731,10 @@ public class Parser {
 
         let target = try parseIdentifier()
 
-        // 可选泛型参数（`((盒<T>))` 泛型扩展）：只消费并校验，合并按 targetType 名称匹配
+        // 可选泛型参数（`((盒<T>))` 泛型扩展）：存进节点供打印器还原，合并仍按 targetType 名称匹配。
+        var genericParams: [GenericParam] = []
         if case .lessThan(_) = currentToken {
-            _ = try parseGenericParams()
+            genericParams = try parseGenericParams()
         }
 
         // 可选的 `: type-annotation`（泛型特化扩展限定，暂只解析存储，合并按 targetType 名称匹配）
@@ -797,7 +798,9 @@ public class Parser {
                 )
             }
         }
-        return ExtensionDecl(kind: kind, targetType: target, targetTypeAnnotation: targetAnnotation, methods: methods, location: loc)
+        return ExtensionDecl(
+            kind: kind, targetType: target, genericParams: genericParams,
+            targetTypeAnnotation: targetAnnotation, methods: methods, location: loc)
     }
 
     /// 当前是否为 `方法名|self(...)` / `方法名|own(...)` 的方法声明头（扩展块方法预判；G50：Self 更名 own）。
@@ -1948,6 +1951,8 @@ public class Parser {
             return try parseWhile()
         case .keyword(.for, _):
             return try parseFor()
+        case .keyword(.unroll, _):
+            return try parseUnroll()
         case .keyword(.match, _):
             return try parseMatch()
         case .keyword(.try, _):
@@ -2266,6 +2271,25 @@ public class Parser {
         }
 
         return Statement.forStatement(pattern: pattern, iterable: iterable, body: body, step: step, label: label, location: loc)
+    }
+
+    /// `unroll (模式元组,) in 表:` + 体内缩进块。
+    /// 表在语法位只当普通表达式：字面量校验归展开器，报错才能指到作者写的那一处。
+    private func parseUnroll() throws -> Statement {
+        let loc = currentLocation
+        advance()  // 跳过 unroll
+
+        let pattern = try parsePatternTuple()
+
+        guard checkKeyword(.in) else {
+            throw ParserError.invalidExpression(reason: "unroll 模式元组后应为 in", location: currentLocation)
+        }
+        advance()
+
+        let table = try parseExpression()
+        let body = try parseControlBlock()
+
+        return Statement.unrollStatement(pattern: pattern, table: table, body: body, location: loc)
     }
 
     /// `scope` 不是关键字：带标签控制流写作 `标签|控制流关键字`（规则 3.13）。

@@ -1,7 +1,6 @@
 ; 点号用例构造：`.caseName` / `.caseName(args)` = 成员意图标记（与 Swift UnresolvedMemberExpr 同构）
 ; 运行 pini run examples/enum-dot-case.pini；预期：开 / none / some(7) / 轮子(4)
 ; 注：歧义名 + 期望类型标注的静态决议须类型层参与（`pini check` / package 通道），单文件 run 类型层宽松，歧义名在运行期报错。
-
 [形状]
 圆(F64,)
 矩形(F64, F64,)
@@ -17,28 +16,25 @@
     match s:
         case 圆(r,):
             return r
-        case 矩形(w, h):
+        case 矩形(w, h,):
             return w
     return 0.0
 
 main|func() -> ():
     ; 唯一名点号构造：期望类型下直接构造
     let s: 形状 = .矩形(2.0, 5.0)
-    print(取半径(s),)
-
+    print(取半径(s))
     ; 无实参形态：零关联值用例直接构造
     let st: 状态 = .开
-    print(st,)
-
+    print(st)
     ; 内建 Optional 直达
     let x: Optional<I32> = .none
     let y: Optional<I32> = .some(7)
-    print(x,)
-    print(y,)
-
+    print(x)
+    print(y)
     ; 成员意图不受本地位遮蔽影响（裸名 轮子(4) 在此会被局部变量劫持）
     let 轮子 = 99
     let v: 车 = .轮子(4)
-    print(轮子,)
-    print(v,)
+    print(轮子)
+    print(v)
     return

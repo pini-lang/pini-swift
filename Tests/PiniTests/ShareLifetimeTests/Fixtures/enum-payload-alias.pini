@@ -13,25 +13,23 @@ lLen|func(list: L,) -> (I32,):
         match cur:
             case e:
                 go = false
-            case c(_, tail):
+            case c(_, tail,):
                 k = k + 1
                 cur = tail
     return k
 
 main|func() -> ():
     ; 对照一：单次构造（不重赋值）—— 改动前后都应当对（证明判据不是「凡构造必红」）
-    let one = c(n = 0, t = e,)
-    print("CTL \(lLen(one,),)")
-
+    let one = c(n = 0, t = e)
+    print("CTL \(lLen(one))")
     ; 组一：循环累积（每轮把旧 acc 存进新箱的载荷，再重赋值 acc）
     var acc = e
     var i = 0
     while i < 3:
-        acc = c(n = i, t = acc,)
+        acc = c(n = i, t = acc)
         i = i + 1
-    print("ACC \(lLen(acc,),)")
-
+    print("ACC \(lLen(acc))")
     ; 组二：嵌套构造（载荷是另一个新箱）
-    let two = c(n = 7, t = c(n = 8, t = e,),)
-    print("TWO \(lLen(two,),)")
+    let two = c(n = 7, t = c(n = 8, t = e))
+    print("TWO \(lLen(two))")
     return

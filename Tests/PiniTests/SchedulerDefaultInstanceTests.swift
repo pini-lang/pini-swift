@@ -18,7 +18,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         let result = Parser(tokens: try lexer.tokenize(), fileName: "inline.pini")
             .parseModuleCollectingErrors()
         guard result.errors.isEmpty else { throw result.errors[0] }
-        return ConstantFolder.foldConstants(in: result.module)
+        return try FrontEnd.passes(module: result.module)
     }
 
     /// 过语义层与类型层，返回类型错误（空数组 = 两侧都通过）。

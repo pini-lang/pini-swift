@@ -16,7 +16,7 @@ struct CrossFileScopeIsolationTests: Sendable {
             .parseModuleCollectingErrors()
         guard parsed.errors.isEmpty else { throw parsed.errors[0] }
         return FileUnit(
-            fileName: name, module: ConstantFolder.foldConstants(in: parsed.module))
+            fileName: name, module: try FrontEnd.passes(module: parsed.module))
     }
 
     /// 甲文件：一个带同名字段的类型。

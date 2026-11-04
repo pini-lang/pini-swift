@@ -186,23 +186,30 @@ public final class LSPServer {
     private func publishDiagnostics(uri: String, text: String) {
         let fileName = Self.fileNameFromURI(uri)
 
-        // Step 1: Parser
-        let lexer = Lexer(source: text, fileName: fileName)
-        let tokens: [Token]
-        do {
-            tokens = try lexer.tokenize()
-        } catch {
+        // Step 1: 词法 + 语法 —— 与其余五个入口共用 FrontEnd，pass 清单不在本文件分叉。
+        let module: Module
+        let parserErrors: [ParserError]
+        switch FrontEnd.collect(source: text, fileName: fileName) {
+        case .lexFailed:
             // 词法错误直接发布（无 ParserError 结构体 → 暂用空数组）
             publishDiagnostics(
                 uri: uri, parserErrors: [],
                 semanticErrors: [], typeErrors: [], source: text)
             return
+        case .parsed(let parsed):
+            module = parsed
+            parserErrors = []
+        case .parseFailed(let partial, let errors):
+            module = partial
+            parserErrors = errors
+        case .expandFailed(let errors):
+            // 展开失败时没有可用模块：直接发布这批诊断，不再往下走语义与类型。
+            publishDiagnostics(
+                uri: uri, parserErrors: [], semanticErrors: [], typeErrors: [],
+                unrollErrors: errors, source: text)
+            return
         }
 
-        let parser = Parser(tokens: tokens, fileName: fileName)
-        let parseResult = parser.parseModuleCollectingErrors()
-
-        let parserErrors = parseResult.errors
         var semanticErrors: [SemanticError] = []
         var typeErrors: [TypeError] = []
         var semanticWarnings: [SemanticWarning] = []
@@ -217,7 +224,6 @@ public final class LSPServer {
 
         if !hasStructuralError {
             // Step 3: Semantic + Type check
-            let module = parseResult.module
             let analyzer = SemanticAnalyzer()
             semanticErrors = analyzer.analyzeCollecting(module: module)
             semanticWarnings = analyzer.warnings  // B2：warning 随诊断一起发布（severity: .warning）
@@ -245,6 +251,7 @@ public final class LSPServer {
         semanticErrors: [SemanticError],
         typeErrors: [TypeError],
         semanticWarnings: [SemanticWarning] = [],
+        unrollErrors: [UnrollError] = [],
         source: String = ""
     ) {
         let publisher = DiagnosticPublisher()
@@ -253,6 +260,7 @@ public final class LSPServer {
             semanticErrors: semanticErrors,
             typeErrors: typeErrors,
             semanticWarnings: semanticWarnings,
+            unrollErrors: unrollErrors,
             uri: uri,
             source: source,
             language: diagnosticLanguage

@@ -1,7 +1,6 @@
 ; 并发聚合 joinAll（变量数组形态）：先把一组 Future 存进数组，再整体聚合。预期 [2, 4]
 ; 与 concurrency-joinall.pini 只差实参形态：那条用字面量，这条的数组先绑定到变量。
 ; 两条路都得给同样的结果 —— 字面量由发射器排成连续句柄区，变量由运行时逐槽取。
-
 任务|func(n: I32,) => (I32,):
     sleep(20)
     return ok(n * 2)
@@ -13,8 +12,8 @@ main|func() -> ():
     var all = joinAll(xs)
     var r = wait all
     match r:
-        case ok(v):
+        case ok(v,):
             print(v)
-        case err(e):
+        case err(e,):
             print(e)
     return

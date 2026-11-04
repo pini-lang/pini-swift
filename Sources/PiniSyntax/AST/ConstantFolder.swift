@@ -48,6 +48,7 @@ public enum ConstantFolder {
             return .extensionDecl(
                 ExtensionDecl(
                     kind: x.kind, targetType: x.targetType,
+                    genericParams: x.genericParams,
                     targetTypeAnnotation: x.targetTypeAnnotation,
                     methods: x.methods.map(fold), location: x.location))
         case .foreignDecl(let fd):
@@ -100,6 +101,9 @@ public enum ConstantFolder {
             return .whileStatement(condition: fold(cond), body: fold(body), step: stepBlk.map(fold), label: lbl, location: loc)
         case .forStatement(let pattern, let iterable, let body, let stepBlk, let lbl, let loc):
             return .forStatement(pattern: pattern, iterable: fold(iterable), body: fold(body), step: stepBlk.map(fold), label: lbl, location: loc)
+        case .unrollStatement(let pattern, let table, let body, let loc):
+            // 表折一次就够：展开器只认字面量，折过的 `1 + 1` 会变成 `2`，正好能当表元素。
+            return .unrollStatement(pattern: pattern, table: fold(table), body: fold(body), location: loc)
         case .matchStatement(let val, let cases, let loc):
             // match 的通配兜底以 `case _:` 进入 cases，无独立字段。
             return .matchStatement(

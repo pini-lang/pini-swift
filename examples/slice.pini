@@ -1,23 +1,21 @@
 ; 切片与负索引：负索引从尾部计数、越界读返回 none、切片半开区间 [i, j)。运行 pini run examples/slice.pini
 ; 预期（逐行）：a[1:3]→[20, 30]、a[:2]→[10, 20]、a[3:]→[40, 50]、a[:]→[10, 20, 30, 40, 50]、a[-2:]→[40, 50]
 ; a[:-1]→[10, 20, 30, 40]、a[1:100] 越界夹紧、a[100:]→[]、a[-1]→50、a[100]→none；字符串切片 s[1:4]→ell、s[-3:]→llo、s[:-1]→hell
-
 main|func() -> ():
     var a = [10, 20, 30, 40, 50]
-    print(a[1:3])
-    print(a[:2])
-    print(a[3:])
-    print(a[:])
-    print(a[-2:])
-    print(a[:-1])
-    print(a[1:100])
-    print(a[100:])
+    print(a.slice(1, 3))
+    print(a.slice(Optional.none, 2))
+    print(a.slice(3, Optional.none))
+    print(a.slice(Optional.none, Optional.none))
+    print(a.slice(-2, Optional.none))
+    print(a.slice(Optional.none, -1))
+    print(a.slice(1, 100))
+    print(a.slice(100, Optional.none))
     print(a[-1])
     print(a.get(100))
-
     var s = "hello"
-    print(s[1:4])
-    print(s[-3:])
-    print(s[:-1])
+    print(s.slice(1, 4))
+    print(s.slice(-3, Optional.none))
+    print(s.slice(Optional.none, -1))
     print(s.get(100))
     return

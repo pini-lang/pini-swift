@@ -1,19 +1,15 @@
 ; package-demo：Pini 可见性 / 模块化「边缘情况活文档」，本目录含 pini.toml ⇒ 同一模块 packagedemo。
 ; 模块内顶层符号共享命名空间，跨文件按 4 级可见性解析、无需 import（模块内 import 非法且概念错误）。
 ; 标注约定：（合法）表示当前引擎允许并真实执行；（非法）以注释形式演示违规访问，取消注释将报错。
-
 main|func() -> ():
-
     ; ── ① 声明级 public（无 `_` 前缀，非 `_` 文件/目录）── 引擎已 enforce ──
     ; （合法）公开API 定义在 api.pini，跨文件（main.pini）可调用
     let a = 公开API()
     print(a)
-
     ; ── ② 声明级 package（`_` 目录前缀 _internals/）── 引擎已 enforce ──
     ; （合法）包内辅助 定义在 _internals/helpers.pini，跨文件（main.pini）可见
     let b = 包内辅助()
     print(b)
-
     ; ── ③ 声明级 package 类型 + 公开字段（跨文件）── 引擎已 enforce ──
     ; （合法）{账户} 定义在 _internals/helpers.pini（目录 `_` 前缀 ⇒ package 级），跨文件可实例化
     ;       余额 为公开字段（无 `_` 前缀），跨文件可访问
@@ -21,14 +17,12 @@ main|func() -> ():
     print(acc.余额)
     ; （合法）{账户} 自身方法 查主人 访问其 `_owner` 字段（type-private：仅类型自身方法合法）
     print(acc.查主人())
-
     ; ── ④ 声明级 public 类型 + 自身方法访问 `_` 字段（type-private）── 引擎已 enforce（方法内）──
     ; （合法）{金库} 定义在 api.pini（无 `_` 前缀 ⇒ public），跨文件可见其类型名
     ;       查余额 访问公开字段；验证 访问 `_密码` 字段（仅类型自身方法合法）
     let 库 = 金库()
     print(库.查余额())
     print(库.验证())
-
     ; ⑤ 声明级 hard-private（符号名 `_` 前缀）：跨文件调用本文件的 _私有助手（定义在 api.pini）不可见，
     ; 引擎报 inaccessibleSymbol。
 
@@ -44,5 +38,4 @@ main|func() -> ():
     ; ── ⑨ 字段级 type-private：跨文件访问 `_` 字段 ── P4.5 已 enforce ──
     ; （非法）acc._owner / 库._密码 跨文件均不可见；取消注释将触发 静态类型错误 inaccessibleField
     ; print(acc._owner)
-
     return

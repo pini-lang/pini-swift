@@ -1,5 +1,5 @@
 main|func() -> ():
-    let d = {"a": I32 = 1, "b" = 2,}
-    print(d["a"],)
-    print(d["b"],)
+    let d = {"a": I32 = 1, "b" = 2}
+    print(d["a"])
+    print(d["b"])
     return

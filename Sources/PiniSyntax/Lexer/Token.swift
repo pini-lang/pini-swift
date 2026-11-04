@@ -312,4 +312,7 @@ public enum Keyword: String, CaseIterable {
     /// `using` **入**关键字表 —— 它占**参数位前缀**（`using 名: 类型`）。
     /// 与 `given` 分工不同：后者只出现在 `|` 右侧的修饰符位、走既有标识符白名单，故**不入**表。
     case `using` = "using"
+    /// `unroll` 是语句位关键字：`unroll (名, …) in <表>:` 由展开器在类型检查前消掉。
+    /// 入表后它不能再作裸标识符；反引号转义照常可用。
+    case `unroll` = "unroll"
 }

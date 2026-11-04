@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/pre-commit — 提交前门禁：① 身份须成对登记在 GIT_WORKFLOW 注册表 ② 注释判据。
+# hooks/pre-commit — 提交前门禁：① 身份须成对登记在 GIT_WORKFLOW 注册表 ② 注释判据 ③ 格式判据。
 # 启用：git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
 set -uo pipefail
 
@@ -18,4 +18,13 @@ if ! grep -Fq "| $name | $email |" GIT_WORKFLOW.md 2>/dev/null; then
     exit 1
 fi
 
-exec bash hooks/comment-lint.sh
+bash hooks/comment-lint.sh || exit 1
+
+# 格式门禁：产物须与源码同批，旧产物会把新打印器的判据读成绿。
+if [ ! -x "$root/.build/debug/pini" ]; then
+    echo " 行不通  [格式] 缺 .build/debug/pini；先 swift build 再提交" >&2
+    exit 1
+fi
+PINI_BIN="$root/.build/debug/pini" python3 tools/fmt-gate.py || exit 1
+
+exit 0

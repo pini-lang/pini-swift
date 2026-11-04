@@ -2,18 +2,18 @@
 ; 归因：插值在本帧的栈缓冲上拼串，而结果会离开本帧（自举词法层把 `"\(parseDecimal(wholeText))"` 存进 Token 的
 ;   `text` 字段）⇒ 帧一退就是悬垂栈地址。`burn` 把那片栈压掉，否则判据会碰运气变绿。权威 = 解释器（`v7v`）。
 mk|func(n: I32,) -> (String,):
-    return "v\(n,)v"
+    return "v\(n)v"
 
 burn|func(n: I32,) -> (I32,):
     if n <= 0:
         return 0
-    let dirty = "\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)"
-    return burn(n - 1,) + len(dirty,)
+    let dirty = "\(n)-\(n)-\(n)-\(n)-\(n)-\(n)-\(n)-\(n)"
+    return burn(n - 1) + len(dirty)
 
 main|func() -> ():
-    let s = mk(7,)
+    let s = mk(7)
     print("BEFORE \(s)")
-    let noise = burn(64,)
+    let noise = burn(64)
     print("AFTER \(s)")
-    print("NOISE \(noise > 0,)")
+    print("NOISE \(noise > 0)")
     return

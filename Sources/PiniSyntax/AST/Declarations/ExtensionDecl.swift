@@ -17,6 +17,8 @@ public struct ExtensionDecl: Equatable, ASTNode, Sendable {
 
     public let kind: Kind
     public let targetType: String
+    /// `((盒<T>))` 的形参。合并按 `targetType` 名称匹配，不按形参分派；打印器要靠它保住 `<T>`。
+    public let genericParams: [GenericParam]
     public let targetTypeAnnotation: TypeAnnotation?
     public let methods: [FuncDecl]
     public let location: SourceLocation
@@ -24,12 +26,14 @@ public struct ExtensionDecl: Equatable, ASTNode, Sendable {
     public init(
         kind: Kind,
         targetType: String,
+        genericParams: [GenericParam] = [],
         targetTypeAnnotation: TypeAnnotation? = nil,
         methods: [FuncDecl],
         location: SourceLocation
     ) {
         self.kind = kind
         self.targetType = targetType
+        self.genericParams = genericParams
         self.targetTypeAnnotation = targetTypeAnnotation
         self.methods = methods
         self.location = location

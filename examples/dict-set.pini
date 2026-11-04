@@ -1,14 +1,13 @@
 ; 字典 / 集合（双后端可用）：下标、len、嵌套、print 格式化。运行 pini run-llvm examples/dict_set_d2.pini（或 pini run）
 ; 预期（双后端一致，剥离换行后）：25 3 26 99 5 3
 ; 说明：字典经 opaque handle（%bk_dict*）+ 运行时 shim 承载，键按 tag+字节内容比较，故字符串键跨构造/读取稳定；集合同理。
-
 main|func() -> ():
     ; 字典：构造 / 键读 / len
-    let ages = {"Alice"= 30, "Bob"= 25, "Carol"= 41}
+    let ages = {"Alice" = 30, "Bob" = 25, "Carol" = 41}
     print(ages["Bob"])
     print(len(ages))
     ; 字典键写：既有键替换 + 新增键
-    var scores = {"x"= 1, "y"= 2}
+    var scores = {"x" = 1, "y" = 2}
     scores["y"] = 26
     scores["z"] = 99
     print(scores["y"])

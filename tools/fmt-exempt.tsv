@@ -1,0 +1,18 @@
+﻿# 格式门禁豁免：两类。unparseable = 解析拒绝态夹具，没有规范形可打印；
+# variant = 以非规范写法为被测对象的语法标本，规范化会删掉被测量的写法。
+# 判据：每行「路径<TAB>类别<TAB>原因」。两类都受检——unparseable 须仍解析失败，
+# variant 须仍可解析且仍不是规范形；文件不存在或条件不再成立即过期，门禁会红。
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserRejectsColonCallArgumentLabel.pini	unparseable	解析拒绝：冒号调用实参标签
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserRejectsConstraintOnStructBody.pini	unparseable	解析拒绝：结构体体上的约束
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserRejectsDestructureWithoutInitializer.pini	unparseable	解析拒绝：解构缺初始化器
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserRejectsQualifiedCasePattern.pini	unparseable	解析拒绝：带限定的 case 模式
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserRejectsSingleTypeReturnSugar.pini	unparseable	解析拒绝：单类型返回糖
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserRejectsUnknownForeignFlag.pini	unparseable	解析拒绝：未知 foreign 标志
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInArrayLiteral.pini	variant	语法标本：数组字面量尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInCallArguments.pini	variant	语法标本：调用实参尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInDictionaryLiteral.pini	variant	语法标本：字典字面量尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInFunctionType.pini	variant	语法标本：函数类型尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInGenericCall.pini	variant	语法标本：泛型调用尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInSetLiteral.pini	variant	语法标本：集合字面量尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInTypeAnnotationTuple.pini	variant	语法标本：类型注解元组尾逗号，规范形不带尾逗号
+Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsMultilineBraceDictionary.pini	variant	语法标本：多行花括号字典，规范形一律单行

@@ -168,14 +168,17 @@ try return break continue
 self own defer import export
 nil capture await wait
 unsafe test foreign detach
-scope pass using
+scope pass using unroll
 ```
 
-共 34 个。
+共 35 个。
 
 **反引号转义**：关键字可用反引号包裹作标识符。
 
 **`scope`**：保留但不再使用。
+
+**`unroll`**：语句位关键字。`unroll (名, …) in <表>:` 按表的行克隆体内语句，模式名在表达式位
+替换成该行的字面量；展开发生在类型检查之前，产物里没有这个构造。
 
 **`using`**：参数位前缀，标该参数由给定块的默认实例填充，调用方可省略。只在有 Pini 调用方的
 声明位合法 —— `main`、`|test`、`|foreign`、特征抽象签名均拒绝，那里没有调用点可插默认实例。
@@ -4058,10 +4061,10 @@ KEYWORD      ::= 'var' | 'let' | 'func' | 'enum' | 'object'
                | 'self' | 'own' | 'defer' | 'import' | 'export'
                | 'nil' | 'capture' | 'await' | 'wait'
                | 'unsafe' | 'test' | 'foreign' | 'detach'
-               | 'scope' | 'pass' | 'using';
+               | 'scope' | 'pass' | 'using' | 'unroll';
 ```
 
-共 34 个。
+共 35 个。
 
 #### 字面量
 

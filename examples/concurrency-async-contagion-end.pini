@@ -5,25 +5,25 @@
 ; —— 真正并发的末端服务（标 `=>`）——
 fetchPrice|func(id: I32,) => (I32,):
     sleep(100)
-    return ok(id * 10)              ; => 体必须 ok/err 包裹（errors-as-data）
+    return ok(id * 10) ; => 体必须 ok/err 包裹（errors-as-data）
 
 ; —— 中间编排层：自身 `=>`，内部 `await`/`wait` 等待子任务 ——
 aggregate|func() => (I32,):
-    var a = await fetchPrice(1)        ; 在此 await，得到 Result
+    var a = await fetchPrice(1) ; 在此 await，得到 Result
     match a:
-        case ok(v):
+        case ok(v,):
             return ok(v)
-        case err(e):
+        case err(e,):
             return ok(0)
 
 ; —— 终点：一个「普通同步」函数，没有 `=>` ——
 ; 它用 `wait` 把上面的异步链落地。传染到此为止，
 ; 不需要把 main 也写成 `main|func() => ()`。
 main|func() -> ():
-    var r = wait aggregate()          ; 异步传染的终点：非 async 函数也能等待
+    var r = wait aggregate() ; 异步传染的终点：非 async 函数也能等待
     match r:
-        case ok(v):
-            print(v)                    ; 预期打印 10
-        case err(e):
+        case ok(v,):
+            print(v) ; 预期打印 10
+        case err(e,):
             print("err")
     return

@@ -1,7 +1,7 @@
 ; 错误处理 try-else：Result 显式传播（见 spec『try-else 错误传播』节）
 ; `^String` = Result(String)（类型糖）；运行：pini run examples/try.pini
 ; 预期：读取失败
-读取文件|func(路径: String,) -> (^String,):
+读取文件|func(路径: String,) -> (Result<String>,):
     return err("模拟错误")
 
 main|func() -> ():

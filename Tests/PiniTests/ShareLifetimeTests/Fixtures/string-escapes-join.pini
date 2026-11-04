@@ -4,14 +4,14 @@
 burn|func(n: I32,) -> (I32,):
     if n <= 0:
         return 0
-    let dirty = "\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)-\(n,)"
-    return burn(n - 1,) + len(dirty,)
+    let dirty = "\(n)-\(n)-\(n)-\(n)-\(n)-\(n)-\(n)-\(n)"
+    return burn(n - 1) + len(dirty)
 
 main|func() -> ():
-    let xs: [String] = ["alpha", "beta", "gamma"]
+    let xs: Array<String> = ["alpha", "beta", "gamma"]
     let joined = xs.join(",")
     print("BEFORE \(joined)")
-    let noise = burn(64,)
+    let noise = burn(64)
     print("AFTER \(joined)")
-    print("NOISE \(noise > 0,)")
+    print("NOISE \(noise > 0)")
     return

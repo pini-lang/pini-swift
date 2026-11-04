@@ -128,18 +128,21 @@ public struct FileLoader {
     /// 非 private：`ModuleDependencyLoader` 复用它，使两条加载路径共享**一份**解析实现
     /// （两处各写一遍词法/语法解析，行为会随调用点漂移）。
     static func parseUnit(fileName: String, source: String) throws -> FileUnit {
-        let lexer = Lexer(source: source, fileName: fileName)
-        let tokens = try lexer.tokenize()
-        let parser = Parser(tokens: tokens, fileName: fileName)
-        let result = parser.parseModuleCollectingErrors()
-        if !result.errors.isEmpty {
+        switch FrontEnd.collect(source: source, fileName: fileName) {
+        case .parsed(let module):
+            return FileUnit(fileName: fileName, module: module)
+        case .lexFailed(let error):
+            throw error
+        case .parseFailed(_, let errors):
             // 聚合该文件的所有解析错误一次性抛出（而非只抛首个），避免错误被吞。
-            if result.errors.count == 1 {
-                throw result.errors.first!
+            if errors.count == 1 {
+                throw errors[0]
             }
-            throw LoaderError.parseErrors(file: fileName, errors: result.errors)
+            throw LoaderError.parseErrors(file: fileName, errors: errors)
+        case .expandFailed(let errors):
+            // 展开错误同样是整批：一条 unroll 里可能同时有表与体的两处问题。
+            throw UnrollExpander.Failure(errors: errors)
         }
-        return FileUnit(fileName: fileName, module: result.module)
     }
 }
 

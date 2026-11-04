@@ -1,45 +1,32 @@
 ; 集合：数组 / 字典 / 集合、下标、len、嵌套、print 格式化；运行 `pini run examples/collections.pini`
 ; 预期：[1, 2, 3, 4, 5] / 1 / 5 / [[1, 2], [3, 4], [5, 6]] / 5 / {Alice: 30, Bob: 25, Carol: 41}
 ; 预期续：{2, 3, 5, 7, 11} / 5 / 3 / 5 / 7；语法点：表达式位 [ ] = 数组，{ } = 集合或字典，字典条目用 =
-
 main|func() -> ():
-; 数组
+    ; 数组
     var nums = [1, 2, 3, 4, 5]
     print(nums)
     print(nums[0])
     print(nums[4])
-
-; 嵌套数组
+    ; 嵌套数组
     var matrix = [[1, 2], [3, 4], [5, 6]]
     print(matrix)
     ; 严格枚举语义下嵌套读须显式强制解包 `!`（须 unsafe 上下文）
     print(matrix[2][0])
-
-; 字典（key: value）
-    var ages = {"Alice"= 30, "Bob"= 25, "Carol"= 41}
+    ; 字典（key: value）
+    var ages = {"Alice" = 30, "Bob" = 25, "Carol" = 41}
     print(ages)
     print(ages["Bob"])
-
-; 跨行字面量：普通括号内换行等同空白，缩进不参与
-    var 跨行元组 = (
-        姓名 = "皮尼",
-        版本 = 1,
-    )
+    ; 跨行字面量：普通括号内换行等同空白，缩进不参与
+    var 跨行元组 = (姓名 = "皮尼", 版本 = 1,)
     print(跨行元组.姓名)
-    var 跨行数组 = [
-        10,
-        20,
-    ]
+    var 跨行数组 = [10, 20]
     print(跨行数组[0] + 跨行数组[1])
-
-; 集合（保序去重）
+    ; 集合（保序去重）
     var primes = {2, 3, 3, 5, 7, 7, 11}
     print(primes)
-
-; len 泛化到所有容器与字符串
+    ; len 泛化到所有容器与字符串
     print(len(nums))
     print(len(ages))
     print(len(primes))
     print(len("Pini"))
-
     return

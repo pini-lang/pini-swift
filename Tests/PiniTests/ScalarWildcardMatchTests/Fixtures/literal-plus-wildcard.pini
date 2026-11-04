@@ -4,6 +4,7 @@
 main|func() -> ():
     print(分级(5))
     print(分级(9))
+
 分级|func(x: I32,) -> (I32,):
     match x:
         case 5:

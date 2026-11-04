@@ -1,7 +1,6 @@
 ; FFI & unsafe 子系统示例：`[libc|foreign]` 声明外部 C 签名（块内函数自动 |unsafe）、
 ; `unsafe <expr>` 不安全消耗点、`&x` 取地址、load/store/addressof 指针原语、`|unsafe` 自由函数，
 ; `*T` 指针类型禁 object（ARC 隔离）。运行：pini run examples/ffi.pini
-
 [libc|foreign]
 malloc: (U64,) -> (*U8,)
 free: (*U8,) -> ()
@@ -19,26 +18,21 @@ puts: (*U8,) -> (I32,)
 main|func() -> ():
     ; 不安全消耗点：unsafe 前缀标记单次指针操作
     var buf = unsafe malloc(64)
-
     ; store/load 按指针元素类型写读
     unsafe store(buf, 42)
     print("buf = ", unsafe load(buf))
     unsafe store(buf, 100)
     print("buf = ", unsafe load(buf))
-
     ; & 取地址（快照） + load/store 自洽
     var x: I64 = 7
-    var px = unsafe &x
+    var px = unsafe (&x)
     print("x = ", unsafe load(px))
-
     ; |unsafe 函数 + foreign C 调用
     var len = 量长度("hello")
     print("len = ", len)
-
     ; C 字符串输出
     var s = unsafe cstr("hello, FFI")
     unsafe puts(s)
     unsafe free(s)
-
     unsafe free(buf)
     return

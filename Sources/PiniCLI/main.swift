@@ -393,6 +393,15 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
             result += describeStatement(s, indent: indent + " ") + "\n"
         }
         return String(result.dropLast())
+    case .unrollStatement(let pattern, let table, let body, _):
+        var result = "\(indent)unroll(\(pattern.joined(separator: ", "))):\n"
+        result += "\(indent) table:\n"
+        result += describeExpression(table, indent: indent + " ") + "\n"
+        result += "\(indent) body:\n"
+        for s in body.statements {
+            result += describeStatement(s, indent: indent + " ") + "\n"
+        }
+        return String(result.dropLast())
     case .passStatement(_):
         return "\(indent)pass"
     case .captureStatement(let name, _):
@@ -640,6 +649,8 @@ func printHelp() {
     print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
     print(" parse <file.pini> Parse and print the AST")
     print(" parse --sig <file.pini> Parse and print statement signature (SIG) lines")
+    print(" fmt <path>... Reformat sources; -w writes in place, --check lists files that need formatting")
+    print(" expand <file.pini> Print the source after constant folding and unroll expansion (comments dropped)")
     print(" tokens <file.pini> Print tokens from lexical analysis")
     print(" emit <file.pini> [-o <out>] [--backend <name>] Emit a target listing to stdout or the given file")
     print(" backends [--tsv] Print the backend capability matrix (family x channel)")
@@ -704,23 +715,25 @@ func readFile(_ path: String) throws -> String {
 /// P2-4.3：以收集模式解析；若有解析错误，格式化全部诊断并退出（不再『遇错即抛』只报第一个）。
 /// 仅在无任何解析错误时返回成功解析的 module。词法错误仍按原有方式渲染并退出。
 func parseOrReport(source: String, fileName: String) -> Module {
-    let lexer = Lexer(source: source, fileName: fileName)
-    let tokens: [Token]
-    do {
-        tokens = try lexer.tokenize()
-    } catch {
+    switch FrontEnd.collect(source: source, fileName: fileName) {
+    case .parsed(let module):
+        return module
+    case .lexFailed(let error):
         printError(formatCLIError(error: error, source: source))
         exit(1)
-    }
-    let parser = Parser(tokens: tokens, fileName: fileName)
-    let result = parser.parseModuleCollectingErrors()
-    if !result.errors.isEmpty {
-        for error in result.errors {
+    case .parseFailed(_, let errors):
+        for error in errors {
             FileHandle.standardError.write(Data((ErrorFormatter.formatParserError(error, source: source) + "\n").utf8))
         }
         exit(1)
+    case .expandFailed(let errors):
+        // 整批报出：一条 unroll 的表与体可能各错一处，只报首个会让作者改一轮跑一轮。
+        for error in errors {
+            FileHandle.standardError.write(
+                Data((ErrorFormatter.formatDiagnostic(error, source: source) + "\n").utf8))
+        }
+        exit(1)
     }
-    return ConstantFolder.foldConstants(in: result.module)
 }
 
 func runTokensCommand(source: String, fileName: String) throws {
@@ -1469,10 +1482,7 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
         FileHandle.standardError.write(Data((d + "\n").utf8))
     }
     if checkResult.hasBlockingDiagnostics { exit(1) }
-    let lexer = Lexer(source: source, fileName: path)
-    let tokens = try lexer.tokenize()
-    let parser = Parser(tokens: tokens, fileName: path)
-    let module = try parser.parseModule()
+    let module = try FrontEnd.parse(source: source, fileName: path)
     // Phase 2b（解释器 dlsym 加载）：单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，
     // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
     let dir = (path as NSString).deletingLastPathComponent
@@ -2254,6 +2264,10 @@ case "parse":
         printError(formatCLIError(error: error, source: source))
         exit(1)
     }
+case "fmt":
+    runFmtCommand(Array(args.dropFirst(2)))
+case "expand":
+    runExpandCommand(Array(args.dropFirst(2)))
 case "run":
     guard args.count >= 3 else {
         printError("Error: run command requires a file or directory path")

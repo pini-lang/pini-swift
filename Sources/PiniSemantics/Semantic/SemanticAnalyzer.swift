@@ -387,7 +387,8 @@ public final class SemanticAnalyzer {
         }
 
         appendErrorCodeWarnings(module)
-        return errors
+        warnings = DiagnosticDedupe.unique(warnings)
+        return DiagnosticDedupe.unique(errors)
     }
 
     /// 重声明导致 registerTopLevelDecl 中途失败时，尽力把该声明头登记进符号表，
@@ -696,6 +697,17 @@ public final class SemanticAnalyzer {
 
         case .scopedBlock(_, let body, _):
             try checkBlock(body)
+
+        case .unrollStatement(let pattern, let table, let body, let location):
+            // 正常路径上展开器已在类型检查前消掉本节点；走到这里说明是解析残模（有别的语法错），
+            // 模式名按不可变变量登记，体照常查 —— 否则体内引用会被连坐成「未定义」。
+            try checkExpression(table)
+            symbolTable.enterScope(name: "unroll")
+            for name in pattern where name != "_" {
+                symbolTable.define(Symbol(name: name, kind: .variable(isMutable: false), location: location))
+            }
+            try checkBlock(body)
+            symbolTable.exitScope()
 
         case .matchStatement(let value, let cases, let location):
             try checkExpression(value)

@@ -916,7 +916,7 @@ public final class TypeChecker {
         } catch {
             // 非 TypeError 不应发生；保持防御
         }
-        return diagnostics
+        return DiagnosticDedupe.unique(diagnostics)
     }
 
     /// 错误上报单点：收集态累积并静默，非收集态直接抛出。
@@ -2523,6 +2523,11 @@ public final class TypeChecker {
             if let step = step { for s in step.statements { try checkStatement(s) } }
 
         case .scopedBlock(_, let body, _):
+            for s in body.statements { try checkStatement(s) }
+
+        case .unrollStatement(_, let table, let body, _):
+            // 残模专用分支：正常路径上展开器已在类型检查前消掉本节点。
+            try checkExpression(table)
             for s in body.statements { try checkStatement(s) }
 
         case .matchStatement(let value, let cases, _):

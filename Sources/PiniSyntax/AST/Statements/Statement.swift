@@ -13,6 +13,10 @@ public indirect enum Statement: Equatable, Sendable {
     case ifStatement(condition: Expression, thenBlock: Block, elifs: [ElifBranch], elseBlock: Block?, label: String?, location: SourceLocation)
     case whileStatement(condition: Expression, body: Block, step: Block?, label: String?, location: SourceLocation)
     case forStatement(pattern: [String], iterable: Expression, body: Block, step: Block?, label: String?, location: SourceLocation)
+    /// 展开 `unroll (名, …) in <表>:`：表只认写在场上的字面量集合，模式名按行替换。
+    /// 展开器在类型检查前把本节点换成若干轮语句，故下游看不到它；`table` 刻意留成表达式，
+    /// 「不是字面量集合」才能报到作者写的那一处。
+    case unrollStatement(pattern: [String], table: Expression, body: Block, location: SourceLocation)
     /// match 子块结构：case 缩进进 match 子块，通配写作 `case _:`，没有独立的 default 或通配子块。
     case matchStatement(value: Expression, cases: [MatchCase], location: SourceLocation)
     case scopedBlock(label: String?, body: Block, location: SourceLocation)
