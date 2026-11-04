@@ -324,6 +324,8 @@ public final class IREmitter {
         let foreignDeclaredSymbols = Set(module.foreigns.flatMap { $0.funcs.map(\.name) })
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
+        header += Builtins.declaration(for: "bk_print_lock")
+        header += Builtins.declaration(for: "bk_print_unlock")
         header += Builtins.declaration(for: "bk_double_to_string")
         header += "declare void @free(ptr)\n"
         header += "declare double @sqrt(double)\n"
@@ -3081,17 +3083,23 @@ public final class IREmitter {
             terminated = false
             return IRValue(llvmType: "void", ssaName: "")
         }
-        for (index, argument) in arguments.enumerated() {
+        /// 实参先全部求值，再进独占门：门内只拼行，不跑用户代码，别人等他行的时间就是一次格式化。
+        var rendered: [(value: IRValue, type: IRType)] = []
+        for argument in arguments {
+            rendered.append((emitExpr(argument), irType(of: argument)))
+        }
+        bodyIR += " call void @bk_print_lock()\n"
+        for (index, item) in rendered.enumerated() {
             if index > 0 {
                 let space = emitStringConstant(" ")
                 bodyIR += " call i32 (ptr, ...) @printf(ptr \(space.ssaName))\n"
             }
-            let printed = emitExpr(argument)
-            emitValuePrint(value: printed, type: irType(of: argument))
+            emitValuePrint(value: item.value, type: item.type)
             /// 与单参打印同规：临时值印完即还。
-            releaseHeldTemporary(printed)
+            releaseHeldTemporary(item.value)
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        bodyIR += " call void @bk_print_unlock()\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -4722,10 +4730,13 @@ public final class IREmitter {
     private func emitPrint(_ argument: IRExpr) -> IRValue {
         let type = irType(of: argument)
         let value = emitExpr(argument)
+        /// 一行是一条记录：拼装期的多段 `printf` 由 `bk_print_lock` 连成一段，并发下不与他行交错。
+        bodyIR += " call void @bk_print_lock()\n"
         emitValuePrint(value: value, type: type)
         /// 打印是消费点：临时值印完即还，变量 / 字段的份额不在账上 ⇒ 那一条不动作。
         releaseHeldTemporary(value)
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
+        bodyIR += " call void @bk_print_unlock()\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 

@@ -182,6 +182,14 @@ public enum Builtins {
             signature: .init(result: "void", parameters: ["ptr"], attributes: " noreturn"),
             family: .display, lowerings: ["<panic>"]
         ),
+        BuiltinSpec(
+            symbol: "bk_print_lock", signature: .init(result: "void", parameters: []),
+            family: .display, lowerings: ["<print>"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_print_unlock", signature: .init(result: "void", parameters: []),
+            family: .display, lowerings: ["<print>"]
+        ),
 
         // MARK: character
         BuiltinSpec(

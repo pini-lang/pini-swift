@@ -237,6 +237,20 @@ private func _bkWriteStderr(_ text: String) {
     }
 }
 
+/// 打印语句的独占门：一次 `print` 的多段 `printf` 必须连成一段，否则并发下两行的字节会互相插进去。
+/// 可重入：聚合值打印是递归的，求值期间的用户代码也可能再打印。
+private let _bkPrintLock = NSRecursiveLock()
+
+@_cdecl("bk_print_lock")
+public func bk_print_lock() {
+    _bkPrintLock.lock()
+}
+
+@_cdecl("bk_print_unlock")
+public func bk_print_unlock() {
+    _bkPrintLock.unlock()
+}
+
 @_cdecl("bk_panic")
 public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
     if let msg { _bkWriteStderr(String(cString: msg)) }
