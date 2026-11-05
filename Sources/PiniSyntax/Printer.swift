@@ -99,18 +99,27 @@ public enum Printer {
 
 extension Printer {
 
-    /// 行缓冲 + 缩进深度。所有输出都经 `line` 一处落行，缩进才不会分叉。
+    /// 缩进的两套坐标：`column` 是输出列，`source` 是父块首行的源宽度。
+    /// 两者一起走，嵌套块才能只凭自己的首行算出该缩进多少。
+    struct Indent: Equatable {
+        var column: Int
+        var source: Int
+        static let zero = Indent(column: 0, source: 0)
+    }
+
+    /// 行缓冲 + 缩进坐标。所有输出都经 `line` 一处落行，缩进才不会分叉。
     /// 每行登记生成它的节点位置：注释锚回靠这份对照，不靠重新解析原文本。
     struct SourceWriter {
         /// 一条物理输出行。`anchor` 是写出该行的节点位置；续行与合成行（空行、`pass`、收尾括号）为 nil。
         struct Line: Equatable {
             var text: String
-            var depth: Int
+            var column: Int
             var anchor: SourceLocation?
         }
 
         private(set) var lines: [Line] = []
-        var depth = 0
+        var indent: Indent = .zero
+        private var savedIndents: [Indent] = []
         let fileName: String
         /// 位置旁路：字面量原文与行前导空格，供写出分支按锚点取用。
         let hints: PrintHints
@@ -127,16 +136,34 @@ extension Printer {
 
         /// `text` 内的换行就地拆成多行：首行带锚点，续行只保留已含缩进的原文。
         mutating func line(_ text: String) {
-            let head = String(repeating: "    ", count: depth) + text
+            let head = String(repeating: " ", count: indent.column) + text
             var isFirst = true
             for physical in head.split(separator: "\n", omittingEmptySubsequences: false) {
-                lines.append(Line(text: String(physical), depth: depth, anchor: isFirst ? anchor : nil))
+                lines.append(Line(text: String(physical), column: indent.column, anchor: isFirst ? anchor : nil))
                 isFirst = false
             }
         }
 
         mutating func blank() {
-            if lines.last?.text != "" { lines.append(Line(text: "", depth: 0, anchor: nil)) }
+            if lines.last?.text != "" { lines.append(Line(text: "", column: 0, anchor: nil)) }
+        }
+
+        /// 进入缩进块：增量取「本块首行源宽度 − 父块首行源宽度」，无源行或差值为零时取四格。
+        /// 差值为零会把体印成与块头同列，解析器读不回块，故不能按零走。
+        mutating func enterBlock(sourceLine: Int?) {
+            savedIndents.append(indent)
+            let childSource = sourceLine.flatMap { hints.indents[$0] }
+            let delta: Int
+            if let childSource, childSource > indent.source {
+                delta = childSource - indent.source
+            } else {
+                delta = 4
+            }
+            indent = Indent(column: indent.column + delta, source: childSource ?? indent.source)
+        }
+
+        mutating func exitBlock() {
+            indent = savedIndents.removeLast()
         }
 
         /// 块头名：文件名去目录、去 `.pini`。import / export 块头由它派生。
@@ -264,7 +291,7 @@ extension Printer.SourceWriter {
             anchor = field.location
             var text = "\(field.name): \(Printer.type(field.typeAnnotation))"
             if let initializer = field.initializer {
-                text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName, hints: hints))"
+                text += " = \(Printer.expr(initializer, indent: indent, fileName: fileName, hints: hints))"
             }
             line(text)
         }
@@ -277,14 +304,12 @@ extension Printer.SourceWriter {
     mutating func write(funcDecl node: FuncDecl) {
         anchor = node.location
         let signature = Printer.funcSignature(node)
-        guard node.body != nil else {
+        guard let body = node.body else {
             line(signature)
             return
         }
         line(signature + ":")
-        depth += 1
-        write(statements: node.body?.statements ?? [])
-        depth -= 1
+        write(nested: body)
     }
 
     mutating func write(statements list: [Statement]) {
@@ -302,22 +327,22 @@ extension Printer.SourceWriter {
         case .varDecl(let name, let type, let initializer, let isMutable, _):
             var text = "\(isMutable ? "var" : "let") \(name)"
             if let type { text += ": \(Printer.type(type))" }
-            if let initializer { text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName, hints: hints))" }
+            if let initializer { text += " = \(Printer.expr(initializer, indent: indent, fileName: fileName, hints: hints))" }
             line(text)
 
         case .varDestructure(let names, let type, let initializer, let isMutable, _):
             var text = "\(isMutable ? "var" : "let") (\(names.joined(separator: ", ")),)"
             if let type { text += ": \(Printer.type(type))" }
-            if let initializer { text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName, hints: hints))" }
+            if let initializer { text += " = \(Printer.expr(initializer, indent: indent, fileName: fileName, hints: hints))" }
             line(text)
 
         case .assign(let target, let value, _):
-            let right = Printer.expr(value, depth: depth, fileName: fileName, hints: hints)
-            line("\(Printer.assignTarget(target, depth: depth, fileName: fileName, hints: hints)) = \(right)")
+            let right = Printer.expr(value, indent: indent, fileName: fileName, hints: hints)
+            line("\(Printer.assignTarget(target, indent: indent, fileName: fileName, hints: hints)) = \(right)")
 
         case .returnStatement(let value, _):
             if let value {
-                line("return \(Printer.expr(value, depth: depth, fileName: fileName, hints: hints))")
+                line("return \(Printer.expr(value, indent: indent, fileName: fileName, hints: hints))")
             } else {
                 line("return")
             }
@@ -329,12 +354,12 @@ extension Printer.SourceWriter {
             line(label.map { "continue \($0)" } ?? "continue")
 
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, let label, _):
-            let head = Printer.labelPrefix(label) + "if " + Printer.expr(condition, depth: depth, fileName: fileName, hints: hints)
+            let head = Printer.labelPrefix(label) + "if " + Printer.expr(condition, indent: indent, fileName: fileName, hints: hints)
             line(head + ":")
             write(nested: thenBlock)
             for branch in elifs {
                 anchor = branch.block.location
-                line("elif \(Printer.expr(branch.condition, depth: depth, fileName: fileName, hints: hints)):")
+                line("elif \(Printer.expr(branch.condition, indent: indent, fileName: fileName, hints: hints)):")
                 write(nested: branch.block)
             }
             if let elseBlock {
@@ -344,14 +369,14 @@ extension Printer.SourceWriter {
             }
 
         case .whileStatement(let condition, let body, let step, let label, _):
-            let head = Printer.labelPrefix(label) + "while " + Printer.expr(condition, depth: depth, fileName: fileName, hints: hints)
+            let head = Printer.labelPrefix(label) + "while " + Printer.expr(condition, indent: indent, fileName: fileName, hints: hints)
             line(head + ":")
             write(nested: body)
             write(step: step)
 
         case .forStatement(let pattern, let iterable, let body, let step, let label, _):
             let head = Printer.labelPrefix(label) + "for (" + pattern.joined(separator: ", ") + ",) in "
-                + Printer.expr(iterable, depth: depth, fileName: fileName, hints: hints)
+                + Printer.expr(iterable, indent: indent, fileName: fileName, hints: hints)
             line(head + ":")
             write(nested: body)
             write(step: step)
@@ -359,37 +384,37 @@ extension Printer.SourceWriter {
         case .unrollStatement(let pattern, let table, let body, _):
             line(
                 "unroll (" + pattern.joined(separator: ", ") + ",) in "
-                    + Printer.expr(table, depth: depth, fileName: fileName, hints: hints) + ":")
+                    + Printer.expr(table, indent: indent, fileName: fileName, hints: hints) + ":")
             write(nested: body)
 
         case .matchStatement(let value, let cases, _):
-            line("match \(Printer.expr(value, depth: depth, fileName: fileName, hints: hints)):")
-            depth += 1
+            line("match \(Printer.expr(value, indent: indent, fileName: fileName, hints: hints)):")
+            enterBlock(sourceLine: cases.first?.location.line)
             for matchCase in cases {
                 anchor = matchCase.location
                 line(Printer.matchCaseHead(matchCase))
-                depth += 1
+                enterBlock(sourceLine: matchCase.block.statements.first?.location.line)
                 write(statements: matchCase.block.statements)
-                depth -= 1
+                exitBlock()
             }
-            depth -= 1
+            exitBlock()
 
         case .scopedBlock(_, let body, _):
             // 唯一来源是 `defer:` 的块形体，由 defer 分支拦下；走到这里只可能是手上构的树。
             write(statements: body.statements)
 
         case .detachStatement(let expression, _):
-            line("detach \(Printer.expr(expression, depth: depth, fileName: fileName, hints: hints))")
+            line("detach \(Printer.expr(expression, indent: indent, fileName: fileName, hints: hints))")
 
         case .expressionStmt(let expression, _):
-            line(Printer.expr(expression, depth: depth, fileName: fileName, hints: hints))
+            line(Printer.expr(expression, indent: indent, fileName: fileName, hints: hints))
 
         case .deferStatement(let inner, _):
             if case .scopedBlock(_, let body, _) = inner {
                 line("defer:")
                 write(nested: body)
             } else {
-                line("defer " + (Printer.inlineStatement(inner, depth: depth, fileName: fileName, hints: hints) ?? ""))
+                line("defer " + (Printer.inlineStatement(inner, indent: indent, fileName: fileName, hints: hints) ?? ""))
             }
 
         case .passStatement:
@@ -400,17 +425,17 @@ extension Printer.SourceWriter {
         }
     }
 
-    /// 缩进块：先下潜一级再逐句写。空块写 `pass`，否则重新解析时该块无体可依。
+    /// 缩进块：按本块首行宽度下潜，再逐句写。空块写 `pass`，否则重新解析时该块无体可依。
     /// 合成 `pass` 没有源位置，锚点置空：它不该被当成注释的落点。
     mutating func write(nested block: Block) {
-        depth += 1
+        enterBlock(sourceLine: block.statements.first?.location.line)
         if block.statements.isEmpty {
             anchor = nil
             line("pass")
         } else {
             write(statements: block.statements)
         }
-        depth -= 1
+        exitBlock()
     }
 
     mutating func write(step block: Block?) {
@@ -426,7 +451,7 @@ extension Printer.SourceWriter {
 extension Printer {
 
     /// 行内表达式文本。函数字面量的多语句体自带换行与缩进，故这里要带 `depth`。
-    static func expr(_ node: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func expr(_ node: Expression, indent: Indent, fileName: String, hints: PrintHints) -> String {
         switch node {
         case .identifier(let name, _):
             return name
@@ -437,7 +462,7 @@ extension Printer {
         case .stringLiteral(let value, _):
             return quote(value)
         case .stringInterpolation(let segments, _):
-            return interpolated(segments, depth: depth, fileName: fileName, hints: hints)
+            return interpolated(segments, indent: indent, fileName: fileName, hints: hints)
         case .boolLiteral(let value, _):
             return value ? "true" : "false"
         case .selfKeyword:
@@ -447,67 +472,67 @@ extension Printer {
         case .dotCaseRef(let name, _):
             return ".\(name)"
         case .binary(let left, let op, let right, _):
-            return binaryText(left: left, op: op, right: right, depth: depth, fileName: fileName, hints: hints)
+            return binaryText(left: left, op: op, right: right, indent: indent, fileName: fileName, hints: hints)
         case .unary(let op, let operand, _):
-            return unaryText(op: op, operand: operand, depth: depth, fileName: fileName, hints: hints)
+            return unaryText(op: op, operand: operand, indent: indent, fileName: fileName, hints: hints)
         case .call(let callee, let arguments, _):
             return wrapper(
-                atom(callee, depth: depth, fileName: fileName, hints: hints) + "(",
-                callArguments(arguments, depth: depth, fileName: fileName, hints: hints), ")", depth: depth)
+                atom(callee, indent: indent, fileName: fileName, hints: hints) + "(",
+                callArguments(arguments, indent: indent, fileName: fileName, hints: hints), ")", column: indent.column)
         case .member(let object, let name, _):
-            return atom(object, depth: depth, fileName: fileName, hints: hints) + "." + name
+            return atom(object, indent: indent, fileName: fileName, hints: hints) + "." + name
         case .tupleIndex(let object, let index, _):
-            return atom(object, depth: depth, fileName: fileName, hints: hints) + ".\(index)"
+            return atom(object, indent: indent, fileName: fileName, hints: hints) + ".\(index)"
         case .subscript(let target, let index, _):
             return wrapper(
-                atom(target, depth: depth, fileName: fileName, hints: hints) + "[",
-                expr(index, depth: depth, fileName: fileName, hints: hints), "]", depth: depth)
+                atom(target, indent: indent, fileName: fileName, hints: hints) + "[",
+                expr(index, indent: indent, fileName: fileName, hints: hints), "]", column: indent.column)
         case .tuple(let labels, let elements, _):
-            return tupleText(labels: labels, elements: elements, depth: depth, fileName: fileName, hints: hints)
+            return tupleText(labels: labels, elements: elements, indent: indent, fileName: fileName, hints: hints)
         case .arrayLiteral(let elements, _):
-            let body = elements.map { expr($0, depth: depth, fileName: fileName, hints: hints) }.joined(separator: ", ")
-            return wrapper("[", body, "]", depth: depth)
+            let body = elements.map { expr($0, indent: indent, fileName: fileName, hints: hints) }.joined(separator: ", ")
+            return wrapper("[", body, "]", column: indent.column)
         case .dictionaryLiteral(let entries, _):
-            let body = entries.map { dictionaryEntry($0, depth: depth, fileName: fileName, hints: hints) }.joined(separator: ", ")
-            return wrapper("{", body, "}", depth: depth)
+            let body = entries.map { dictionaryEntry($0, indent: indent, fileName: fileName, hints: hints) }.joined(separator: ", ")
+            return wrapper("{", body, "}", column: indent.column)
         case .setLiteral(let elements, _):
-            let body = elements.map { expr($0, depth: depth, fileName: fileName, hints: hints) }.joined(separator: ", ")
-            return wrapper("{", body, "}", depth: depth)
+            let body = elements.map { expr($0, indent: indent, fileName: fileName, hints: hints) }.joined(separator: ", ")
+            return wrapper("{", body, "}", column: indent.column)
         case .funcLiteral(let decl, _):
-            return funcLiteral(decl, depth: depth, fileName: fileName, hints: hints)
+            return funcLiteral(decl, indent: indent, fileName: fileName, hints: hints)
         case .genericConstruct(let typeName, let typeArgs, let arguments, _):
             let types = typeArgs.map { type($0) }.joined(separator: ", ")
             let tail = types.hasSuffix(">") ? " >" : ">"
             return wrapper(
                 "\(typeName)<\(types)\(tail)(",
-                callArguments(arguments, depth: depth, fileName: fileName, hints: hints), ")", depth: depth)
+                callArguments(arguments, indent: indent, fileName: fileName, hints: hints), ")", column: indent.column)
         case .join(let operand, _, let form):
-            return "\(form.keyword) " + atom(operand, depth: depth, fileName: fileName, hints: hints)
+            return "\(form.keyword) " + atom(operand, indent: indent, fileName: fileName, hints: hints)
         case .tryExpression(let operand, let errorVar, let handler, _):
-            return tryText(operand: operand, errorVar: errorVar, handler: handler, depth: depth, fileName: fileName, hints: hints)
+            return tryText(operand: operand, errorVar: errorVar, handler: handler, indent: indent, fileName: fileName, hints: hints)
         case .unsafe(let operand, _):
-            return "unsafe " + atom(operand, depth: depth, fileName: fileName, hints: hints)
+            return "unsafe " + atom(operand, indent: indent, fileName: fileName, hints: hints)
         case .addressOf(let operand, _):
-            return "&" + atom(operand, depth: depth, fileName: fileName, hints: hints)
+            return "&" + atom(operand, indent: indent, fileName: fileName, hints: hints)
         }
     }
 
     /// 基座位：不是原子节点就套括号，避免后缀落到子树里层去。
-    static func atom(_ node: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
-        isAtomic(node) ? expr(node, depth: depth, fileName: fileName, hints: hints) : "(" + expr(node, depth: depth, fileName: fileName, hints: hints) + ")"
+    static func atom(_ node: Expression, indent: Indent, fileName: String, hints: PrintHints) -> String {
+        isAtomic(node) ? expr(node, indent: indent, fileName: fileName, hints: hints) : "(" + expr(node, indent: indent, fileName: fileName, hints: hints) + ")"
     }
 
     /// 拼包围结构：体内出现换行时，收尾符号另起一行并回到语句缩进。
     /// 不然多语句函数字面量作实参时，`)` 会黏在最后一条语句尾巴上。
-    static func wrapper(_ head: String, _ body: String, _ tail: String, depth: Int) -> String {
+    static func wrapper(_ head: String, _ body: String, _ tail: String, column: Int) -> String {
         guard body.contains("\n") else { return head + body + tail }
-        return head + body + "\n" + String(repeating: "    ", count: depth) + tail
+        return head + body + "\n" + String(repeating: " ", count: column) + tail
     }
 
-    static func binaryText(left: Expression, op: BinaryOperator, right: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func binaryText(left: Expression, op: BinaryOperator, right: Expression, indent: Indent, fileName: String, hints: PrintHints) -> String {
         let level = precedence(op)
-        var leftText = expr(left, depth: depth, fileName: fileName, hints: hints)
-        var rightText = expr(right, depth: depth, fileName: fileName, hints: hints)
+        var leftText = expr(left, indent: indent, fileName: fileName, hints: hints)
+        var rightText = expr(right, indent: indent, fileName: fileName, hints: hints)
         if case .binary(_, let childOp, _, _) = left, precedence(childOp) < level {
             leftText = "(" + leftText + ")"
         }
@@ -517,62 +542,64 @@ extension Printer {
         return leftText + " " + spelling(op) + " " + rightText
     }
 
-    static func unaryText(op: UnaryOperator, operand: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func unaryText(op: UnaryOperator, operand: Expression, indent: Indent, fileName: String, hints: PrintHints) -> String {
         let form = spelling(op)
-        let text = atom(operand, depth: depth, fileName: fileName, hints: hints)
+        let text = atom(operand, indent: indent, fileName: fileName, hints: hints)
         return form.postfix ? text + form.text : form.text + text
     }
 
-    static func tupleText(labels: [String?], elements: [Expression], depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func tupleText(labels: [String?], elements: [Expression], indent: Indent, fileName: String, hints: PrintHints) -> String {
         if elements.isEmpty { return "()" }
         let parts = elements.enumerated().map { index, element -> String in
-            let text = expr(element, depth: depth, fileName: fileName, hints: hints)
+            let text = expr(element, indent: indent, fileName: fileName, hints: hints)
             if labels.indices.contains(index), let label = labels[index] {
                 return "\(label) = \(text)"
             }
             return text
         }
-        return wrapper("(", parts.joined(separator: ", "), ",)", depth: depth)
+        return wrapper("(", parts.joined(separator: ", "), ",)", column: indent.column)
     }
 
-    static func dictionaryEntry(_ entry: DictEntry, depth: Int, fileName: String, hints: PrintHints) -> String {
-        let key = expr(entry.key, depth: depth, fileName: fileName, hints: hints)
-        let value = expr(entry.value, depth: depth, fileName: fileName, hints: hints)
+    static func dictionaryEntry(_ entry: DictEntry, indent: Indent, fileName: String, hints: PrintHints) -> String {
+        let key = expr(entry.key, indent: indent, fileName: fileName, hints: hints)
+        let value = expr(entry.value, indent: indent, fileName: fileName, hints: hints)
         if let valueType = entry.valueType {
             return "\(key): \(type(valueType)) = \(value)"
         }
         return "\(key) = \(value)"
     }
 
-    static func callArguments(_ arguments: [CallArgument], depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func callArguments(_ arguments: [CallArgument], indent: Indent, fileName: String, hints: PrintHints) -> String {
         arguments.map { argument -> String in
-            let text = expr(argument.expression, depth: depth, fileName: fileName, hints: hints)
+            let text = expr(argument.expression, indent: indent, fileName: fileName, hints: hints)
             guard let label = argument.label else { return text }
             return "\(label) = \(text)"
         }.joined(separator: ", ")
     }
 
     /// 函数字面量：单语句体写成同一行，多语句体另起缩进块。
-    static func funcLiteral(_ decl: FuncDecl, depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func funcLiteral(_ decl: FuncDecl, indent: Indent, fileName: String, hints: PrintHints) -> String {
         var head = "func (" + parameters(decl.params) + ")"
         head += (decl.isAsync ? " => " : " -> ") + "(" + returnTypes(decl.returnTypes, labels: decl.returnLabels) + ")"
         guard let body = decl.body else { return head }
         if body.statements.count == 1,
             let inline = inlineStatement(
-                body.statements[0], depth: depth + 1, fileName: fileName, hints: hints)
+                body.statements[0], indent: indent, fileName: fileName, hints: hints)
         {
             return head + ": " + inline
         }
         var writer = SourceWriter(fileName: fileName, hints: hints)
-        writer.depth = depth + 1
+        writer.indent = indent
+        writer.enterBlock(sourceLine: body.statements.first?.location.line)
         writer.write(statements: body.statements)
         return head + ":\n" + writer.text
     }
 
-    static func tryText(operand: Expression, errorVar: String, handler: Block, depth: Int, fileName: String, hints: PrintHints) -> String {
-        let head = "try " + expr(operand, depth: depth, fileName: fileName, hints: hints) + " else " + errorVar + ":"
+    static func tryText(operand: Expression, errorVar: String, handler: Block, indent: Indent, fileName: String, hints: PrintHints) -> String {
+        let head = "try " + expr(operand, indent: indent, fileName: fileName, hints: hints) + " else " + errorVar + ":"
         var writer = SourceWriter(fileName: fileName, hints: hints)
-        writer.depth = depth + 1
+        writer.indent = indent
+        writer.enterBlock(sourceLine: handler.statements.first?.location.line)
         if handler.statements.isEmpty {
             writer.line("pass")
         } else {
@@ -582,16 +609,16 @@ extension Printer {
     }
 
     /// 单行语句的文本；写不成一行的返回 nil，由调用方改走缩进块。
-    static func inlineStatement(_ statement: Statement, depth: Int, fileName: String, hints: PrintHints) -> String? {
+    static func inlineStatement(_ statement: Statement, indent: Indent, fileName: String, hints: PrintHints) -> String? {
         switch statement {
         case .expressionStmt(let expression, _):
-            return expr(expression, depth: depth, fileName: fileName, hints: hints)
+            return expr(expression, indent: indent, fileName: fileName, hints: hints)
         case .returnStatement(let value, _):
             guard let value else { return "return" }
-            return "return " + expr(value, depth: depth, fileName: fileName, hints: hints)
+            return "return " + expr(value, indent: indent, fileName: fileName, hints: hints)
         case .assign(let target, let value, _):
-            return assignTarget(target, depth: depth, fileName: fileName, hints: hints) + " = "
-                + expr(value, depth: depth, fileName: fileName, hints: hints)
+            return assignTarget(target, indent: indent, fileName: fileName, hints: hints) + " = "
+                + expr(value, indent: indent, fileName: fileName, hints: hints)
         case .passStatement:
             return "pass"
         case .breakStatement(let label, _):
@@ -601,26 +628,26 @@ extension Printer {
         case .captureStatement(let name, _):
             return "capture \(name)"
         case .detachStatement(let expression, _):
-            return "detach " + expr(expression, depth: depth, fileName: fileName, hints: hints)
+            return "detach " + expr(expression, indent: indent, fileName: fileName, hints: hints)
         case .varDecl(let name, let annotation, let initializer, let isMutable, _):
             var text = "\(isMutable ? "var" : "let") \(name)"
             if let annotation { text += ": \(type(annotation))" }
-            if let initializer { text += " = \(expr(initializer, depth: depth, fileName: fileName, hints: hints))" }
+            if let initializer { text += " = \(expr(initializer, indent: indent, fileName: fileName, hints: hints))" }
             return text
         default:
             return nil
         }
     }
 
-    static func assignTarget(_ target: AssignTarget, depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func assignTarget(_ target: AssignTarget, indent: Indent, fileName: String, hints: PrintHints) -> String {
         switch target {
         case .identifier(let name):
             return name
         case .member(let object, let name):
-            return atom(object, depth: depth, fileName: fileName, hints: hints) + "." + name
+            return atom(object, indent: indent, fileName: fileName, hints: hints) + "." + name
         case .subscript(let target, let index):
-            return atom(target, depth: depth, fileName: fileName, hints: hints) + "["
-                + expr(index, depth: depth, fileName: fileName, hints: hints) + "]"
+            return atom(target, indent: indent, fileName: fileName, hints: hints) + "["
+                + expr(index, indent: indent, fileName: fileName, hints: hints) + "]"
         }
     }
 }
@@ -818,14 +845,14 @@ extension Printer {
         return text + "\""
     }
 
-    static func interpolated(_ segments: [InterpolationSegment], depth: Int, fileName: String, hints: PrintHints) -> String {
+    static func interpolated(_ segments: [InterpolationSegment], indent: Indent, fileName: String, hints: PrintHints) -> String {
         var text = "\""
         for segment in segments {
             switch segment {
             case .literal(let value):
                 text += String(quote(value).dropFirst().dropLast())
             case .expression(let expression):
-                text += "\\(" + expr(expression, depth: depth, fileName: fileName, hints: hints) + ")"
+                text += "\\(" + expr(expression, indent: indent, fileName: fileName, hints: hints) + ")"
             }
         }
         return text + "\""
