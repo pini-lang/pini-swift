@@ -3,16 +3,16 @@
 ; 转义：\n \t \r \0 \\ \"；插值："x=\(expr)"
 main|func() -> ():
     ; 数值进制
-    var h = 255
-    var b = 10
-    var o = 15
+    var h = 0xFF
+    var b = 0b1010
+    var o = 0o17
     print(h)
     print(b)
     print(o)
     ; 科学计数
-    var s1 = 1500.0
-    var s2 = 0.02
-    var s3 = 300.0
+    var s1 = 1.5e3
+    var s2 = 2e-2
+    var s3 = 3.0E+2
     print(s1)
     print(s2)
     print(s3)
