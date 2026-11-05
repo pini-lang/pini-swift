@@ -72,15 +72,11 @@ struct TryIOBuiltinTests: Sendable {
         for candidate in PiniTestEnvironment.repositoryCLICandidates
         where FileManager.default.isExecutableFile(atPath: candidate) {
             if Self.cliUnderstandsTryIO(candidate) { return candidate }
-            withKnownIssue("仓内兜底产物早于 `try*` 三内建 ⇒ 两通道用例本次未取（PINI_CLI_BIN 可指定当前构建）")
-            {
-                Issue.record("可接住 IO 的两通道判据本次没有跑：\(candidate) 不认识新内建")
-            }
+            _ = PiniTestEnvironment.requireToolchain(
+                available: false, missing: "PINI_CLI_BIN（仓内产物早于 try* 内建）")
             return nil
         }
-        withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 两通道用例本次未取") {
-            Issue.record("可接住 IO 的两通道判据本次没有跑")
-        }
+        _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_CLI_BIN")
         return nil
     }
 

@@ -17,11 +17,10 @@ struct AppendFileTests: Sendable {
     }
 
     private func cliPath() -> String? {
-        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
-        withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 两通道用例本次未取") {
-            Issue.record("appendFile 的两通道判据本次没有跑")
-        }
-        return nil
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
+        return cli
     }
 
     private func launch(

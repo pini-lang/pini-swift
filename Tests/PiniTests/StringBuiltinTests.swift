@@ -124,13 +124,12 @@ struct StringBuiltinTests: Sendable {
     // MARK: - 命令行两腿
 
     /// 取被测命令行：优先环境变量，其次自寻构建产物。
-    /// 两者都取不到 ⇒ 响亮跳过（ 行不通  不静默通过）。
+    /// 两者都取不到 ⇒ 裸跑记已知问题、CI 记失败，不静默通过。
     private func cliPath() -> String? {
-        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
-        withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 命令行两腿本次未取（跳过）") {
-            Issue.record("字符串内建的命令行两腿本次没有跑")
-        }
-        return nil
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
+        return cli
     }
 
     /// 解析 LLVM 工具链**目录**（`PINI_LLVM_BIN` 是目录，不是可执行文件路径）；
@@ -202,9 +201,7 @@ struct StringBuiltinTests: Sendable {
     func cliLLVMLegMatchesExpectation() throws {
         guard let cli = cliPath() else { return }
         guard let llvmDir = llvmToolchainDir() else {
-            withKnownIssue("lli 取不到（PINI_LLVM_BIN 未设且 PATH 里没有）⇒ run-llvm 腿本次未跑") {
-                Issue.record("run-llvm 腿本次没有跑：LLVM 工具链不可用")
-            }
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
             return
         }
         let dir = try scratchDirectory()

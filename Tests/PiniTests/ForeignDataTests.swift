@@ -70,12 +70,8 @@ struct ForeignDataTests {
             print(after)
             return 0
         """#
-        guard cliPath() != nil else {
-            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 外部数据符号的两通道用例本次未取") {
-                Issue.record("没有命令行产物可跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(available: cliPath() != nil, missing: "PINI_CLI_BIN")
+        else { return }
         for channel in Channel.allCases {
             guard let result = try run(channel, source: source) else { continue }
             #expect(result.status == 0, "\(channel.label) 退出码 \(result.status)：\(result.stderr)")
@@ -94,12 +90,8 @@ struct ForeignDataTests {
             unsafe store(&optind, 5)
             return 0
         """#
-        guard cliPath() != nil else {
-            withKnownIssue("未提供 PINI_CLI_BIN ⇒ readonly 用例本次未取") {
-                Issue.record("没有命令行产物可跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(available: cliPath() != nil, missing: "PINI_CLI_BIN")
+        else { return }
         guard let result = try run(.interpreter, source: source) else { return }
         let output = result.stdout + result.stderr
         #expect(result.status != 0, "只读符号的写入应被拒，实际通过：\(output)")

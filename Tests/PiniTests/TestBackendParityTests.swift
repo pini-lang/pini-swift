@@ -237,15 +237,13 @@ struct TestBackendParityTests: Sendable {
 
     // MARK: - 装置
 
-    /// 取被测命令行，优先环境变量，其次仓内构建产物：常规跑法是裸 `swift test`（不设变量），
-    /// 若只在 `PINI_CLI_BIN` 存在时才跑，这一族判据在默认读数里会全部被跳过。
-    /// 仓根由 `PiniTestEnvironment` 向上找 `Package.swift` 确定；两者都取不到时记一条已知问题。
+    /// 取被测命令行，优先环境变量，其次仓内构建产物：常规跑法是裸 `swift test`（不设变量）。
+    /// 两者都取不到 ⇒ 裸跑记一条已知问题，CI（`PINI_REQUIRE_TOOLCHAIN=1`）记失败。
     private func cliPath() -> String? {
-        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
-        withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 本套件本次未取（跳过 +1）") {
-            Issue.record("测试两通道锁步未取：本批判据本次没有跑")
-        }
-        return nil
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
+        return cli
     }
 
     private func launch(

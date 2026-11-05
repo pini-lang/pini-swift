@@ -42,13 +42,12 @@ struct PanicExitCodeTests: Sendable {
         return base
     }
 
-    /// 定位命令行产物：先看环境变量，再按仓根兜底。
+    /// 定位命令行产物：先看环境变量，再按仓根兜底。都取不到 ⇒ 裸跑记已知问题、CI 记失败。
     private func cliPath() -> String? {
-        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
-        withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 两通道用例本次未取") {
-            Issue.record("陷阱退出码的两通道判据本次没有跑")
-        }
-        return nil
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
+        return cli
     }
 
     /// 把源码写成沙盒里的 `prog.pini`，在沙盒里跑**一条**通道。

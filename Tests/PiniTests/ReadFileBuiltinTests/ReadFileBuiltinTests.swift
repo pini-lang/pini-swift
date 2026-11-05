@@ -119,13 +119,10 @@ struct ReadFileBuiltinTests: Sendable {
         /// 期望值由用例自己写下的内容算出，两条腿用同一个 `expected`。
         let environment = ProcessInfo.processInfo.environment
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ LLVM 腿本次未取（跳过 +1）") {
-                Issue.record("LLVM 腿的 readFile 判据本次没有跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(
+            available: !cli.isEmpty && PiniTestEnvironment.llvmBinDirectory() != nil,
+            missing: cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN")
+        else { return }
 
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }

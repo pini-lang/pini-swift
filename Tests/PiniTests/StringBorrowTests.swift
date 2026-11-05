@@ -213,15 +213,11 @@ struct StringBorrowTests: Sendable, PiniSourceLowering {
 
     private func cliPathOrSkip(runtimeRequired: Bool = false) -> String? {
         guard let cli = PiniTestEnvironment.cliPath() else {
-            withKnownIssue("缺 PINI_CLI_BIN ⇒ 借出用例本次未取") {
-                Issue.record("没有命令行产物可跑")
-            }
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_CLI_BIN")
             return nil
         }
         if runtimeRequired, runtimePath(near: cli) == nil {
-            withKnownIssue("缺 libPiniRuntime ⇒ 共享库用例本次未取") {
-                Issue.record("没有运行时产物可跑")
-            }
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "libPiniRuntime")
             return nil
         }
         return cli
