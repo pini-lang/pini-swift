@@ -193,23 +193,36 @@ public enum Builtins {
 
         // MARK: character
         BuiltinSpec(
+            symbol: "bk_char_to_heap_string", signature: .init(result: "ptr", parameters: ["i64"]),
+            family: .character, lowerings: ["interpString"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_char_equal", signature: .init(result: "i32", parameters: ["i64", "i64"]),
+            family: .character, lowerings: ["binary"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_char_equal_string",
+            signature: .init(result: "i32", parameters: ["i64", "ptr"]),
+            family: .character, lowerings: ["binary"]
+        ),
+        BuiltinSpec(
             symbol: "bk_chars", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_chr", signature: .init(result: "ptr", parameters: ["i32"]),
+            symbol: "bk_chr", signature: .init(result: "i64", parameters: ["i32"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_is_letter", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "bk_is_letter", signature: .init(result: "i32", parameters: ["i64"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_is_number", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "bk_is_number", signature: .init(result: "i32", parameters: ["i64"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_ord", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "bk_ord", signature: .init(result: "i32", parameters: ["i64"]),
             family: .character, lowerings: ["call"]
         ),
 
@@ -248,7 +261,7 @@ public enum Builtins {
             family: .string, lowerings: ["<retain>"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_char_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
+            symbol: "bk_string_char_at", signature: .init(result: "i64", parameters: ["ptr", "i32"]),
             family: .string, lowerings: ["subscriptGet"]
         ),
         BuiltinSpec(
