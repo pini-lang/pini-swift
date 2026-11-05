@@ -214,9 +214,16 @@ public enum Builtins {
         ),
 
         // MARK: string
+        /// 拼接的两个入口：`concat` 的两边都带头，`append_cstr` 的右边是裸 C 串（栈缓冲 / 格式化产物）。
+        /// `ownsLhs` 为真时左操作数那份引用被消耗 —— 「唯一持有就地长」的全部开关都在这个参数上。
         BuiltinSpec(
-            symbol: "bk_str_alloc", signature: .init(result: "ptr", parameters: ["i64"]),
+            symbol: "bk_str_concat", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32"]),
             family: .string, lowerings: ["stringConcat"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_str_append_cstr",
+            signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32"]),
+            family: .string, lowerings: ["interpString", "arrayJoin"]
         ),
         BuiltinSpec(
             symbol: "bk_str_dup", signature: .init(result: "ptr", parameters: ["ptr"]),

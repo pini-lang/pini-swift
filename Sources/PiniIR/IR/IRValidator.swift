@@ -683,6 +683,14 @@ private struct Walker {
                             "字典下标读的结果类型是 \(type.display)，值类型是 \(value.display)",
                             at: location)
                     }
+                case .string, .char:
+                    /// 字符串的下标单位是字素簇，取出的元素不在容器的槽里而是新建的 `Char`。
+                    if type != .char, type != .string {
+                        report(
+                            .typeMismatch,
+                            "字符串下标读的结果类型是 \(type.display)，元素应是 Char",
+                            at: location)
+                    }
                 default:
                     report(
                         .nodeShape,

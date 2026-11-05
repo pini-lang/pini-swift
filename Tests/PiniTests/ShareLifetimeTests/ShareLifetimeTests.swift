@@ -83,8 +83,8 @@ struct ShareLifetimeTests: Sendable {
 
     ///  注意  重要  为什么还要这一条：行为级的 `string-escapes-*` 抓不住「撤掉堆复制」这个变异 —— 撤掉之后它们仍全绿，
     /// 因为夹具里那支 `burn` 没覆写到产出帧的那片栈（栈复用是碰运气的）⇒ 行为判据必要但不充分，
-    /// 补一条产物结构级判据：栈缓冲的交出点必须紧跟 `@bk_str_dup`。非退化锚点：夹具须真走 `alloca i8, i64 4096`。
-    @Test("栈上拼串（插值 / join）的产物必须经 @bk_str_dup 交出去")
+    /// 补一条产物结构级判据：插值与 `join` 必须累积到运行时串，**不许**再有固定栈缓冲。
+    @Test("插值与 join 累积到运行时串：产物里没有固定栈缓冲")
     func stackBuiltStringsAreCopiedToTheHeap() throws {
         guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         let scratch = FileManager.default.temporaryDirectory
@@ -100,15 +100,14 @@ struct ShareLifetimeTests: Sendable {
             let ir = try String(contentsOf: out, encoding: .utf8)
 
             #expect(
-                ir.contains("alloca i8, i64 4096"),
-                "\(fixture)：产物里没有栈上拼串缓冲 ⇒ 本判据会空转")
-            #expect(
-                ir.contains("call ptr @bk_str_dup(ptr"),
+                !ir.contains("alloca i8, i64 4096"),
                 """
-                \(fixture)：栈上拼出来的串在**交出之前**必须复制到堆。
-                没有 `@bk_str_dup` 调用 ⇒ 交出去的是**栈地址**，帧一退就是悬垂指针
-                （自举词法层 `self.emit("int", "\\(parseDecimal(wholeText))")` 正是这种形态）。
+                \(fixture)：固定 4096 字节栈缓冲必须已退役。
+                它拼接前不校验长度 ⇒ 超过 4 KiB 直接踩内存（4200 字节 SIGBUS、8192 字节 SIGSEGV 实测）。
                 """)
+            #expect(
+                ir.contains("call ptr @bk_str_append_cstr(ptr"),
+                "\(fixture)：插值与 join 应累积到运行时串（容量倍增），否则长度上限只是从 4096 挪到别处")
         }
     }
 }

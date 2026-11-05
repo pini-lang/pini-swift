@@ -19,13 +19,10 @@ struct ContainerElementOwnershipTests: PiniSourceLowering, Sendable {
         static let rawPtr: Int32 = 6
     }
 
-    /// 造一个带计数头的 C 串。载荷由调用方写，与 `bk_str_alloc` 的契约一致。
+    /// 造一个带头的串：走 `bk_str_dup`，长度与字素数由运行时一并写进头。
+    ///  行不通  手工 `bk_str_alloc` 后写载荷：那个入口只分配容量，头里的 `len` 会停在 0。
     private func makeString(_ text: String) -> UnsafeMutablePointer<CChar> {
-        let bytes = Array(text.utf8)
-        let p = bk_str_alloc(Int64(bytes.count + 1))
-        for (i, b) in bytes.enumerated() { p[i] = CChar(bitPattern: b) }
-        p[bytes.count] = 0
-        return p
+        return text.withCString { bk_str_dup($0) }
     }
 
     private func emitted(_ source: String) throws -> String {
