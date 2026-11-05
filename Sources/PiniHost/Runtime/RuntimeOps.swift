@@ -32,6 +32,13 @@ public enum RuntimeOps {
         return RuntimeOps.relabelled(value, with: labels)
     }
 
+    /// 字符串判等按 UTF-8 字节序列：与编译通道的「先比长度再 `memcmp`」同一条判据，不做规范等价。
+    /// NFD 的 `é`（`65 CC 81`）与预组合的 `é`（`C3 A9`）因此不等 —— 这是规定行为，不是缺陷。
+    @inline(__always)
+    private static func byteEqual(_ a: String, _ b: String) -> Bool {
+        a.utf8.elementsEqual(b.utf8)
+    }
+
     static func binaryValue(_ l: Value, _ op: BinaryOperator, _ r: Value) throws -> Value {
         switch (l, r, op) {
         case (.int(let a), .int(let b), .plus): return .int(a + b)
@@ -68,15 +75,15 @@ public enum RuntimeOps {
         case (.char(let a), .char(let b), .plus): return .string(a + b)
         case (.char(let a), .string(let b), .plus): return .string(a + b)
         case (.string(let a), .char(let b), .plus): return .string(a + b)
-        case (.string(let a), .string(let b), .equal): return .bool(a == b)
-        case (.char(let a), .char(let b), .equal): return .bool(a == b)
-        case (.char(let a), .string(let b), .equal): return .bool(a == b)
-        case (.string(let a), .char(let b), .equal): return .bool(a == b)
+        case (.string(let a), .string(let b), .equal): return .bool(byteEqual(a, b))
+        case (.char(let a), .char(let b), .equal): return .bool(byteEqual(a, b))
+        case (.char(let a), .string(let b), .equal): return .bool(byteEqual(a, b))
+        case (.string(let a), .char(let b), .equal): return .bool(byteEqual(a, b))
         // 内建双层结构 试点发现：String 缺 notEqual 分派（语言内 contains 需要）——补齐。
-        case (.string(let a), .string(let b), .notEqual): return .bool(a != b)
-        case (.char(let a), .char(let b), .notEqual): return .bool(a != b)
-        case (.char(let a), .string(let b), .notEqual): return .bool(a != b)
-        case (.string(let a), .char(let b), .notEqual): return .bool(a != b)
+        case (.string(let a), .string(let b), .notEqual): return .bool(!byteEqual(a, b))
+        case (.char(let a), .char(let b), .notEqual): return .bool(!byteEqual(a, b))
+        case (.char(let a), .string(let b), .notEqual): return .bool(!byteEqual(a, b))
+        case (.string(let a), .char(let b), .notEqual): return .bool(!byteEqual(a, b))
         case (.bool(let a), .bool(let b), .equal): return .bool(a == b)
         case (.bool(let a), .bool(let b), .notEqual): return .bool(a != b)
         case (.bool(let a), .bool(let b), .and): return .bool(a && b)

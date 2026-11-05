@@ -496,13 +496,13 @@ extension Value: Equatable {
         switch (lhs, rhs) {
         case (.int(let l), .int(let r)): return l == r
         case (.float(let l), .float(let r)): return l == r
-        case (.string(let l), .string(let r)): return l == r
-        // G68（P0d-D）：`Char` 与 `String` 是**相容对**（同表示，Char 表示与 String 同构 方案 A），
-        // 比较按字素内容进行 ⇒ 三种组合都写出来。 注意  不写就会落到下面的
-        // `default: return false` —— 那样 `Char` 与**自身**比较恒为假，而编译器不报。
-        case (.char(let l), .char(let r)): return l == r
-        case (.char(let l), .string(let r)): return l == r
-        case (.string(let l), .char(let r)): return l == r
+        case (.string(let l), .string(let r)): return l.utf8.elementsEqual(r.utf8)
+        /// `Char` 与 `String` 是相容对（同表示），比较一律按 UTF-8 字节序列 —— 与编译通道的
+        /// 「先比长度再 `memcmp`」同一条判据，不做规范等价。 行不通  用 Swift 的 `==`：它按规范等价，
+        /// NFD 的 `é` 与预组合的 `é` 相等，而编译产物上那两个字节不等。
+        case (.char(let l), .char(let r)): return l.utf8.elementsEqual(r.utf8)
+        case (.char(let l), .string(let r)): return l.utf8.elementsEqual(r.utf8)
+        case (.string(let l), .char(let r)): return l.utf8.elementsEqual(r.utf8)
         case (.bool(let l), .bool(let r)): return l == r
         case (.tuple(_, let l), .tuple(_, let r)): return l == r
         case (.structInstance(let l), .structInstance(let r)):

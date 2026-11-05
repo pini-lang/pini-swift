@@ -7,8 +7,8 @@ enum StdlibPini {
     static let source = """
         ((String))
         ; contains -- language-level default impl (内建双层结构 pilot).
-        ; Semantics mirror the host native impl: empty needle -> true;
-        ; grapheme-cluster substring match via len + subscript.
+        ; 注意  本文件当前未被接线（仓内没有代码读 StdlibPini.source）。判据已改为按 UTF-8 字节序列
+        ; 比较，下面的字素下标写法不再等价；接线前必须改成字节扫描，否则两通道会分叉。
         contains|self(needle: String,) -> (Bool,):
             if len(needle) == 0:
                 return true

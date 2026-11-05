@@ -970,24 +970,16 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             return .string(isUpper ? text.uppercased() : text.lowercased())
 
         case .stringContains(let receiver, let needle):
-            // `contains` is served on the AST channel from `StdlibPini` (内建双层结构 sank it), so that source is the authority.
-            // The loop below is the same algorithm: empty needle is true, otherwise scan for a grapheme-wise match.
-            // A sunk method costs this second copy, which cannot call Pini from here; both-channel fixtures catch it drifting.
-            let haystack = Array(try requireString(try evaluate(receiver), for: "contains"))
-            let needleChars = Array(try requireString(try evaluate(needle), for: "contains"))
-            if needleChars.isEmpty { return .bool(true) }
+            // 判据与编译通道同一条：按 UTF-8 字节序列查找，不做规范等价（NFD 的 é 不含预组合的 é）。
+            // 空 needle 为真。这里逐字节比对而非建 `[Character]`：后者要为整串做一次字素分段。
+            let haystack = Array(try requireString(try evaluate(receiver), for: "contains").utf8)
+            let needleBytes = Array(try requireString(try evaluate(needle), for: "contains").utf8)
+            if needleBytes.isEmpty { return .bool(true) }
             var i = 0
-            while i + needleChars.count <= haystack.count {
-                var j = 0
-                var matched = true
-                while j < needleChars.count {
-                    if haystack[i + j] != needleChars[j] {
-                        matched = false
-                        break
-                    }
-                    j += 1
+            while i + needleBytes.count <= haystack.count {
+                if haystack[i..<(i + needleBytes.count)].elementsEqual(needleBytes) {
+                    return .bool(true)
                 }
-                if matched { return .bool(true) }
                 i += 1
             }
             return .bool(false)
@@ -1014,34 +1006,30 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             // The interpreter keeps them; aligning that is the `stringSplit` grid's job, so this node follows the contract.
             // An empty separator yields one element per grapheme, as `StdlibPini`'s explicit `m == 0` branch does.
             let text = try requireString(try evaluate(receiver), for: "split")
-            let characters = Array(text)
-            let delimChars = Array(try requireString(try evaluate(delim), for: "split"))
+            let delimText = try requireString(try evaluate(delim), for: "split")
+            let bytes = Array(text.utf8)
+            let delimBytes = Array(delimText.utf8)
             var parts: [Value] = []
-            if delimChars.isEmpty {
-                return .array(characters.map { .string(String($0)) })
+            if delimBytes.isEmpty {
+                // 空定界符 ⇒ 一个元素恰一字素（自举 textAtoms 靠它建原子数组）。
+                return .array(text.map { .string(String($0)) })
             }
-            var current = ""
+            var start = 0
             var i = 0
-            while i < characters.count {
-                var j = 0
-                var hit = true
-                while j < delimChars.count {
-                    if i + j >= characters.count || characters[i + j] != delimChars[j] {
-                        hit = false
-                        break
+            while i + delimBytes.count <= bytes.count {
+                if bytes[i..<(i + delimBytes.count)].elementsEqual(delimBytes) {
+                    if i > start {
+                        parts.append(.string(String(decoding: bytes[start..<i], as: UTF8.self)))
                     }
-                    j += 1
-                }
-                if hit {
-                    if !current.isEmpty { parts.append(.string(current)) }
-                    current = ""
-                    i += delimChars.count
+                    i += delimBytes.count
+                    start = i
                 } else {
-                    current.append(characters[i])
                     i += 1
                 }
             }
-            if !current.isEmpty { parts.append(.string(current)) }
+            if start < bytes.count {
+                parts.append(.string(String(decoding: bytes[start..<bytes.count], as: UTF8.self)))
+            }
             return .array(parts)
 
         case .stringTrimLeft(let receiver):
@@ -1062,28 +1050,20 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             return .string(String(text[..<end]))
 
         case .stringIndexOf(let receiver, let needle):
-            // Grapheme-indexed first occurrence — same scan as
-            // `.stringContains`, reporting position instead of existence.
-            // Empty needle yields 0; absent yields -1.
+            // 位置单位是**字素**（与 `s[i]` 一致）；查找本身按字节做，命中后只数一次前缀字素。
+            // 空 needle 得 0；未找到得 -1。判据与 `.stringContains` 同一条。
             let text = try requireString(try evaluate(receiver), for: "indexOf")
             let needleText = try requireString(try evaluate(needle), for: "indexOf")
             if needleText.isEmpty { return .int(0) }
-            let chars = Array(text)
-            let needleChars = Array(needleText)
-            let n = chars.count
-            let m = needleChars.count
+            let haystack = Array(text.utf8)
+            let needleBytes = Array(needleText.utf8)
+            guard needleBytes.count <= haystack.count else { return .int(-1) }
             var i = 0
-            while i + m <= n {
-                var j = 0
-                var matched = true
-                while j < m {
-                    if chars[i + j] != needleChars[j] {
-                        matched = false
-                        break
-                    }
-                    j += 1
+            while i + needleBytes.count <= haystack.count {
+                if haystack[i..<(i + needleBytes.count)].elementsEqual(needleBytes) {
+                    let prefix = String(decoding: haystack[0..<i], as: UTF8.self)
+                    return .int(prefix.count)
                 }
-                if matched { return .int(i) }
                 i += 1
             }
             return .int(-1)
