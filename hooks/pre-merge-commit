@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # hooks/pre-merge-commit — git merge 不跑 pre-commit，合并提交由这里转交，门禁只留一份。
-# 启用：git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
+# 此钩子运行时 MERGE_HEAD 尚未写入，故用 PINI_MERGE_GATE 告诉 pre-commit「这是合并提交」。
 # 失败时合并停在未完成状态：先 git merge --abort，修好再合；直接 git commit 也会再过一遍门禁。
 set -uo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$root" || exit 1
 
+export PINI_MERGE_GATE=1
 exec bash hooks/pre-commit
