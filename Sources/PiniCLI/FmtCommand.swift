@@ -106,7 +106,7 @@ private func formattedText(source: String, path: String) -> String? {
     let scan = FrontEnd.syntaxOnly(source: source, fileName: path)
     switch scan.outcome {
     case .parsed(let module):
-        return Printer.print(module: module, comments: scan.comments)
+        return Printer.print(module: module, comments: scan.comments, hints: scan.hints)
     case .lexFailed(let error):
         printError(formatCLIError(error: error, source: source))
         return nil

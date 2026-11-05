@@ -12,7 +12,12 @@ public enum Printer {
 
     /// 带注释表打印。`comments` 为空即无源文本模式（`pini expand` 走这条）。
     public static func print(module: Module, comments: CommentTable) -> String {
-        var writer = SourceWriter(fileName: module.location.fileName)
+        print(module: module, comments: comments, hints: .empty)
+    }
+
+    /// 带位置旁路打印：字面量原文与行前导空格从 `hints` 取。空表等同于无源模式。
+    public static func print(module: Module, comments: CommentTable, hints: PrintHints) -> String {
+        var writer = SourceWriter(fileName: module.location.fileName, hints: hints)
         writer.write(module: module)
         return writer.finish(comments: comments)
     }
@@ -107,10 +112,15 @@ extension Printer {
         private(set) var lines: [Line] = []
         var depth = 0
         let fileName: String
+        /// 位置旁路：字面量原文与行前导空格，供写出分支按锚点取用。
+        let hints: PrintHints
         /// 当前锚点。写语句 / 声明 / 块头之前设置，`line` 据此登记；续行不继承。
         var anchor: SourceLocation?
 
-        init(fileName: String) { self.fileName = fileName }
+        init(fileName: String, hints: PrintHints = .empty) {
+            self.fileName = fileName
+            self.hints = hints
+        }
 
         /// 全部行按换行拼接。内联函数字面量与 try 处理器要把自己的行塞回调用方的字符串。
         var text: String { lines.map(\.text).joined(separator: "\n") }
