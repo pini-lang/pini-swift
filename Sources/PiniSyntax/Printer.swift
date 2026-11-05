@@ -355,12 +355,11 @@ extension Printer.SourceWriter {
 
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, let label, _):
             let head = Printer.labelPrefix(label) + "if " + Printer.expr(condition, indent: indent, fileName: fileName, hints: hints)
-            line(head + ":")
-            write(nested: thenBlock)
+            write(branchHead: head, body: thenBlock)
             for branch in elifs {
                 anchor = branch.block.location
-                line("elif \(Printer.expr(branch.condition, indent: indent, fileName: fileName, hints: hints)):")
-                write(nested: branch.block)
+                let elifHead = "elif " + Printer.expr(branch.condition, indent: indent, fileName: fileName, hints: hints)
+                write(branchHead: elifHead, body: branch.block)
             }
             if let elseBlock {
                 anchor = elseBlock.location
@@ -423,6 +422,27 @@ extension Printer.SourceWriter {
         case .captureStatement(let name, _):
             line("capture \(name)")
         }
+    }
+
+    /// 分支体：能写成一行就与块头同行，否则换行下潜。判据只在 `inlineBranch` 一处。
+    mutating func write(branchHead head: String, body: Block) {
+        if let inline = inlineBranch(body) {
+            line(head + ": " + inline)
+        } else {
+            line(head + ":")
+            write(nested: body)
+        }
+    }
+
+    /// 单行体判据：恰一条表达式语句，且与块头同源行。块的 `location` 就是块头冒号的位置，
+    /// 故两种写法都拿它当基准。解析器的单行分支只调 `parseExpression`，声明与 `return`
+    /// 写在同一行读不回来，所以只认表达式语句。
+    private func inlineBranch(_ block: Block) -> String? {
+        guard block.statements.count == 1,
+            case .expressionStmt(let expression, let location) = block.statements[0],
+            location.line == block.location.line
+        else { return nil }
+        return Printer.expr(expression, indent: indent, fileName: fileName, hints: hints)
     }
 
     /// 缩进块：按本块首行宽度下潜，再逐句写。空块写 `pass`，否则重新解析时该块无体可依。
