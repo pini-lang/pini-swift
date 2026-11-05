@@ -107,11 +107,7 @@ struct FmtCommandCLITests {
     }
 
     private func requireCLI() -> Bool {
-        guard cliPath() == nil else { return true }
-        withKnownIssue("未提供 PINI_CLI_BIN ⇒ 本批判据本次未取（跳过 +1）") {
-            Issue.record("没有命令行产物可跑")
-        }
-        return false
+        PiniTestEnvironment.requireToolchain(available: cliPath() != nil, missing: "PINI_CLI_BIN")
     }
 
     private func makeDirectory(_ tag: String) throws -> URL {

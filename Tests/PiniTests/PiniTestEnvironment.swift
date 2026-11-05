@@ -62,7 +62,13 @@ enum PiniTestEnvironment {
             default: return (ProcessInfo.processInfo.environment[key] ?? "").isEmpty
             }
         }
-        guard let missing else { return true }
+        return requireToolchain(available: missing == nil, missing: missing ?? "")
+    }
+
+    /// 自备解析结果的入口：调用方只认定环境变量时用它，免得把「缺了怎么记」再抄一份。
+    /// 两种记法只在这里定义；抄出去的那份迟早只留 known issue，CI 上继续绿。
+    static func requireToolchain(available: Bool, missing: String) -> Bool {
+        guard !available else { return true }
         if ProcessInfo.processInfo.environment["PINI_REQUIRE_TOOLCHAIN"] == "1" {
             Issue.record("工具链缺 \(missing)：本批判据本次未取，而 PINI_REQUIRE_TOOLCHAIN=1 不允许跳过")
             return false

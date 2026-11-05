@@ -56,13 +56,9 @@ struct CLIEmitArgumentsTests {
         FileManager.default.fileExists(atPath: url.path)
     }
 
-    /// 没有 PINI_CLI_BIN 时记一条 known issue 并让用例退出，不拿旧产物判红。
+    /// 没有 PINI_CLI_BIN 时裸跑记 known issue、CI 记失败：不拿旧产物判红，也不许静默少测。
     private func requireCLI() -> Bool {
-        guard cliPath() == nil else { return true }
-        withKnownIssue("未提供 PINI_CLI_BIN ⇒ 本批判据本次未取（跳过 +1）") {
-            Issue.record("没有命令行产物可跑")
-        }
-        return false
+        PiniTestEnvironment.requireToolchain(available: cliPath() != nil, missing: "PINI_CLI_BIN")
     }
 
     @Test("emit -o 写到指定路径，不生成名为 -o 的文件")
