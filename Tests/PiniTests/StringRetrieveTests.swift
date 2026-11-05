@@ -111,12 +111,9 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
     // MARK: - 命令行
 
     private func cliPathOrSkip() -> String? {
-        guard let cli = PiniTestEnvironment.cliPath() else {
-            withKnownIssue("缺 PINI_CLI_BIN ⇒ 取回用例本次未取") {
-                Issue.record("没有命令行产物可跑")
-            }
-            return nil
-        }
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
         return cli
     }
 

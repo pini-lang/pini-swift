@@ -184,12 +184,7 @@ struct UnrollExpanderTests {
     @Test("解释器与 LLVM 两条通道输出一致")
     func bothChannelsAgree() throws {
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            withKnownIssue("未提供 PINI_CLI_BIN / PINI_LLVM_BIN ⇒ 双通道读数本次未取（跳过 +1）") {
-                Issue.record("双通道判据未取")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
         let source = """
             登记|func(码: I32, 名: String,) -> ():
                 print(码)

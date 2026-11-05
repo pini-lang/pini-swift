@@ -37,13 +37,10 @@ struct ContractReferenceTests: Sendable {
         /// 跑，读数必须不同；相同则通道只是打了一行字，「可观测差异」那条判据就成了空话。
         /// 负控程序刻意内联：它最小到只剩「有任务、没 `await`」，落进语料面只会多一份要维护的文件。
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ 让出读数本次未取（跳过 +1）") {
-                Issue.record("让出读数未取：本批的 L1 判据本次没有跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(
+            available: !cli.isEmpty && PiniTestEnvironment.llvmBinDirectory() != nil,
+            missing: cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN")
+        else { return }
         let underTest = "\(cli)（构建于 \(buildTime(of: cli))）"
         let gate = ["PINI_YIELD_REPORT": "1"]
 
@@ -95,12 +92,8 @@ struct ContractReferenceTests: Sendable {
         /// 挂点不同（对侧进程退出钩子，本后端运行入口返回）。判据三档、一律逐字节比：有让出 ⇒ `1`；
         /// 有派发无 `await` ⇒ `0`（证明读数有区分力）；闸门未置位 ⇒ 零输出（不许污染 stderr）。
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty else {
-            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 解释器后端读数本次未取（跳过 +1）") {
-                Issue.record("解释器后端读数未取：这一条判据本次没有跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(available: !cli.isEmpty, missing: "PINI_CLI_BIN")
+        else { return }
         let underTest = "\(cli)（构建于 \(buildTime(of: cli))）"
         let gate = ["PINI_YIELD_REPORT": "1"]
 
@@ -136,12 +129,8 @@ struct ContractReferenceTests: Sendable {
         /// 嵌在 `if` / `case` / 循环体里的 `await` 若照旧发射成阻塞等待，程序照样跑出结果，只是让出承诺打了折。
         /// 故钉「响亮拒绝」而非「能编译」：非零退出 + 降载层诊断码 `E6-010` —— 码只有诊断产生，abort 不产生。
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty else {
-            withKnownIssue("未提供 PINI_CLI_BIN ⇒ 嵌套位置拒绝本次未验（跳过 +1）") {
-                Issue.record("嵌套位置拒绝未验：本段的边界判据本次没有跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(available: !cli.isEmpty, missing: "PINI_CLI_BIN")
+        else { return }
         for (label, program) in [
             ("嵌在 `if` 里的语句", Self.nestedIfStatementAwaitProgram),
             ("嵌在 `match` 的 case 体里", Self.nestedMatchCaseAwaitProgram),
@@ -223,13 +212,10 @@ struct ContractReferenceTests: Sendable {
         _ program: String, expecting expected: String, label: String
     ) throws {
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ \(label) 的让出读数本次未取（跳过 +1）") {
-                Issue.record("\(label) 的让出读数未取：本段的形态判据本次没有跑")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(
+            available: !cli.isEmpty && PiniTestEnvironment.llvmBinDirectory() != nil,
+            missing: cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN")
+        else { return }
         let file = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("de6c-yield-form-\(UUID().uuidString).pini")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -366,13 +352,10 @@ struct ContractReferenceTests: Sendable {
         let cli = PiniTestEnvironment.cliPath() ?? ""
         // 两条前置缺任一都算「LLVM 后端未参与」：既要找得到命令行，又要找得到 lli。后端一零环境依赖、
         // 已在上方判完 ⇒ 此处跳过只抹掉 LLVM 那一维。跳过要可见：静默通过会把「只有一腿在守」读成守住了。
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ LLVM 后端的输出与让出两维本次未验（跳过 +1）") {
-                Issue.record("LLVM 后端未参与：这一格本次只有解释器后端在守")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(
+            available: !cli.isEmpty && PiniTestEnvironment.llvmBinDirectory() != nil,
+            missing: cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN")
+        else { return }
         #expect(FileManager.default.isExecutableFile(atPath: cli), "PINI_CLI_BIN 不可执行：\(cli)")
 
         // 失败报文里带上二进制的**构建时间**：解析出来的路径仍可能指向改动之前的构建，
@@ -472,13 +455,10 @@ struct ContractReferenceTests: Sendable {
         let expected = "1\n0\n"
 
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ 给定实例取用这一格本批未验（跳过 +1）") {
-                Issue.record("给定实例取用：这一格本次没有 LLVM 后端在守")
-            }
-            return
-        }
+        guard PiniTestEnvironment.requireToolchain(
+            available: !cli.isEmpty && PiniTestEnvironment.llvmBinDirectory() != nil,
+            missing: cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN")
+        else { return }
 
         let file = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("given-instance-\(UUID().uuidString).pini")
@@ -623,13 +603,10 @@ struct ContractReferenceTests: Sendable {
         _ program: String, expecting expected: [String], label: String
     ) throws -> String {
         let cli = PiniTestEnvironment.cliPath() ?? ""
-        guard !cli.isEmpty, PiniTestEnvironment.llvmBinDirectory() != nil else {
-            let missing = cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN"
-            withKnownIssue("未提供 \(missing) ⇒ \(label) 各后端本次未验（跳过 +1）") {
-                Issue.record("\(label)：这一格本次没有后端在守")
-            }
-            return ""
-        }
+        guard PiniTestEnvironment.requireToolchain(
+            available: !cli.isEmpty && PiniTestEnvironment.llvmBinDirectory() != nil,
+            missing: cli.isEmpty ? "PINI_CLI_BIN" : "PINI_LLVM_BIN")
+        else { return "" }
         let file = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("both-legs-\(UUID().uuidString).pini")
         defer { try? FileManager.default.removeItem(at: file) }

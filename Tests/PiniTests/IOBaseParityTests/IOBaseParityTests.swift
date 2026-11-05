@@ -58,13 +58,12 @@ struct IOBaseParityTests: Sendable {
         return (scripts, cwd)
     }
 
-    /// 定位命令行产物：先看环境变量，再按仓根兜底。
+    /// 定位命令行产物：先看环境变量，再按仓根兜底。都取不到 ⇒ 裸跑记已知问题、CI 记失败。
     private func cliPath() -> String? {
-        if let fromRepository = PiniTestEnvironment.cliPath() { return fromRepository }
-        withKnownIssue("既未提供 PINI_CLI_BIN，也未找到命令行构建产物 ⇒ 两通道用例本次未取") {
-            Issue.record("IO 基准面的两通道判据本次没有跑")
-        }
-        return nil
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
+        return cli
     }
 
     /// 把脚本写进 `scripts/`，在 `cwd/` 里跑**一条**通道。两条通道各跑一次、各自比期望，

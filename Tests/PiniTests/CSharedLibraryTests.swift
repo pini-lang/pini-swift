@@ -312,10 +312,12 @@ struct CSharedLibraryTests {
     /// 命令行与运行时缺一份就记一条 known issue：本用例要的是「真能出一份 C 能加载的库」，
     /// 缺构建产物时跳过，不让「绿了」与「根本没跑」在读数上长得一样。
     private func cliPathOrSkip() -> String? {
-        guard let cli = PiniTestEnvironment.cliPath(), runtimePath(near: cli) != nil else {
-            withKnownIssue("缺 PINI_CLI_BIN 或其同目录的 libPiniRuntime ⇒ 共享库用例本次未取") {
-                Issue.record("没有命令行产物可跑")
-            }
+        guard let cli = PiniTestEnvironment.cliPath() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_CLI_BIN")
+            return nil
+        }
+        guard runtimePath(near: cli) != nil else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "libPiniRuntime")
             return nil
         }
         return cli
