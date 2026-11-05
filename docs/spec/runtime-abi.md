@@ -113,11 +113,11 @@
 | `bk_ptr_*` | 6 | 保留。LLVM FFI 的预留面，删掉后接 FFI 时无处接线 |
 | `bk_dict_contains` | 1 | 保留。`collection.contains` 已在类型层声明为 trait 方法，降载未实现，本符号是接线点 |
 | `bk_task_is_cancelled` `bk_capabilities` `bk_task_yield` `bk_task_state` | 4 | 解释器与宿主观测面，发射器不产出 |
-| `bk_str_refcount` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 4 | 只被 ABI 测试或宿主直接调用 |
+| `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 6 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 90 条，本表列出其余 19 条，
-两者合计即第 2 节的 109。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 91 条，本表列出其余 21 条，
+两者合计即第 2 节的 112。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 

@@ -1095,6 +1095,14 @@ private func _bkStrSwiftString(_ p: UnsafePointer<CChar>) -> String {
     return String(decoding: UnsafeRawBufferPointer(start: p, count: length), as: UTF8.self)
 }
 
+/// 造一条 `rc == 0` 的带头串：进程期常量，`retain` / `release` 都空转，永不归还。
+/// 用途是把「无头的 C 串」换成「带头的只读串」，让值域里每一条串读头都是安全的。
+private func _bkStrConstant(_ text: String) -> UnsafeMutablePointer<CChar> {
+    let made = _bkStrDup(text)
+    _bkStrRC(made).pointee = 0
+    return made
+}
+
 /// 释放一条**已知带头**的串：计数递减，归零即归还整块。`rc == 0`（只读段常量）空转。
 private func _bkStrReleaseRaw(_ p: UnsafeRawPointer) {
     let rc = _bkStrRC(p)
@@ -2056,8 +2064,10 @@ private final class _BkErrorBox {
     /// C 边界的码：`Error`/`CancelError` 固定 `1`/`2`，枚举错误由基址与用例 tag 组合。
     let code: Int32
 
+    /// 消息存成**只读带头串**（`rc == 0`）：它会离开本对象进到 Pini 值域，被归还时必须是空转。
+    ///  行不通  裸 `strdup`：值域里每一条串都带头，归还时读 `p - 16` 就会减掉 malloc 块头，间歇写坏堆。
     init(_ text: String, isCancel: Bool, code: Int32) {
-        self.message = strdup(text) ?? UnsafeMutablePointer<CChar>.allocate(capacity: 1)
+        self.message = _bkStrConstant(text)
         self.isCancel = isCancel
         self.code = code
     }
@@ -2176,12 +2186,8 @@ public func bk_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
     return box.message
 }
 
-/// 无载荷 err 槽的空消息（进程期常量，同样不归调用方释放）。
-nonisolated(unsafe) private let _bkEmptyCString: UnsafeMutablePointer<CChar> = {
-    let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 1)
-    buffer[0] = 0
-    return buffer
-}()
+/// 无载荷 err 槽的空消息（进程期只读带头串，同样不归调用方释放）。
+nonisolated(unsafe) private let _bkEmptyCString: UnsafeMutablePointer<CChar> = _bkStrConstant("")
 
 /// 阻塞等待任务决出（或被取消）。
 ///
