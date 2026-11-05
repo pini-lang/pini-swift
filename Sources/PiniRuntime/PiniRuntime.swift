@@ -1,4 +1,7 @@
 import Foundation
+// 字符串引用计数走裸内存上的原子格（`Atomic<Int32>` 的布局与 `Int32` 同宽），
+// 故不再需要保护登记表的锁；`Synchronization` 在 Apple 平台与 Linux 工具链上都有。
+import Synchronization
 
 // POSIX 线程本地存储（`pthread_key_t`）的取用口。与 `Sources/PiniHost/Common/ThreadLocal.swift`
 // 用同一套系统头，理由相同：`Thread.current.threadDictionary` 只在 Apple 平台存在，
@@ -962,130 +965,278 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
     memcpy(p.advanced(by: Int(offsetBytes)), src, n)
 }
 
-// 原生字符串的引用计数：分配时多要 `MemoryLayout<Int>.size` 字节做计数头，用户指针 = 基址 + 头长，
-// 仍是 NUL 结尾 C 串（既有消费点与 IR 的 `i8*` 表示都不变）；释放不在登记表里的指针是无操作， 行不通  不读头里
-// 的魔数（全局常量会读到紧邻字节）⇒ 常量串与堆串同路安全。本段只管分配/计数/回收，retain/release 由发射器定。
+// 字符串表示：`i8*` 指向载荷首字节，载荷前 16 字节是冻结头 {rc, len, cap, graphemes}，四个 i32。
+// 载荷恒 NUL 结尾且 `cap >= len + 1` ⇒ `const char*` 零拷贝借出、`printf("%s")`、`strcmp` 照旧成立。
+// 布局随 profile 而定，不是语言属性：嵌入式通道不装这个头，因为它不需要长度与容量。
 
-/// 计数头长度（字节）。分配块 = 头 + 载荷，用户指针指在头之后。
-private let _bkStrHeaderBytes = MemoryLayout<Int>.size
+/// 计数头长度（字节）。发射器以同一常数写常量的头，改这里必须同步 `IREmitter` 与 `registerStringConstant`。
+private let _bkStrHeaderBytes = 16
 
-/// 本运行时段分配过、且**尚未归零**的字符串（键 = 用户指针）。
-/// 判据见件头：**不在表里 = 无操作** —— 这条同时兜住全局常量与已释放指针。
-nonisolated(unsafe) private var _bkStrLive: Set<UnsafeMutableRawPointer> = []
+/// 头长对外的读取口：发射器与测试用它自检「IR 里的常量布局」与运行时段一致，防两处各写一份而漂移。
+@_cdecl("bk_str_header_bytes")
+public func bk_str_header_bytes() -> Int32 { Int32(_bkStrHeaderBytes) }
 
-/// 保护 `_bkStrLive` 的锁。
-/// 与容器族的 `_liveHandles`（无锁）刻意不同：本表是新引入的数据结构，分配/释放串在多线程（任务族）
-/// 路径上 ⇒ 让新表自带锁；临界区只含表的读写与头格加减，`deallocate` 故意放在锁外。
-private let _bkStrLock = NSLock()
+/// 用户指针 → 头基址。
+@inline(__always) private func _bkStrHead(_ p: UnsafeRawPointer) -> UnsafeMutableRawPointer {
+    UnsafeMutableRawPointer(mutating: p).advanced(by: -_bkStrHeaderBytes)
+}
 
-/// 分配一个带计数头的 C 串，计数 = 1，返回**用户指针**（基址 + 头长）。
-private func _bkStrAlloc(_ byteCount: Int) -> UnsafeMutableRawPointer {
-    let payload = max(byteCount, 1)
+/// 头字段的取址：偏移 0 = rc、4 = len、8 = cap、12 = graphemes。
+@inline(__always) private func _bkStrField(_ p: UnsafeRawPointer, _ offset: Int) -> UnsafeMutablePointer<Int32> {
+    _bkStrHead(p).advanced(by: offset).assumingMemoryBound(to: Int32.self)
+}
+
+/// 引用计数字段的原子读：`Synchronization.Atomic` 要 macOS 15，而部署目标是 12 ⇒ Darwin 走普通读。
+///  行不通  这里不能借 `OSAtomicAdd32Barrier(0, p)` 当读：它是读-改-写，会把零增量写回只读段而崩。
+/// 对齐的 4 字节读在 arm64 / x86_64 上本身就是单指令，故普通读即为原子读。
+@inline(__always) private func _bkStrAtomicLoad(_ p: UnsafeMutablePointer<Int32>) -> Int32 {
+    #if canImport(Darwin)
+    return p.pointee
+    #else
+    let cell = UnsafeMutableRawPointer(p).assumingMemoryBound(to: Atomic<Int32>.self)
+    return cell.pointee.load(ordering: .acquiring)
+    #endif
+}
+
+/// 引用计数字段的原子加减，返回**加完之后**的值。归零判断靠它，故不能是「读-改-写」三步。
+///  注意  `OSAtomicAdd32Barrier` 返回的是新值而非旧值（实测；头文件只写 result），别再往上加一次 delta。
+@inline(__always) private func _bkStrAtomicAdd(_ p: UnsafeMutablePointer<Int32>, _ delta: Int32) -> Int32 {
+    #if canImport(Darwin)
+    return OSAtomicAdd32Barrier(delta, p)
+    #else
+    let cell = UnsafeMutableRawPointer(p).assumingMemoryBound(to: Atomic<Int32>.self)
+    return cell.pointee.adding(delta, ordering: .acquiringAndReleasing)
+    #endif
+}
+
+/// 引用计数格：`0` = 只读段的不可变常量（字面量），`> 0` = 堆上分配、可增容。
+@inline(__always) private func _bkStrRC(_ p: UnsafeRawPointer) -> UnsafeMutablePointer<Int32> {
+    _bkStrField(p, 0)
+}
+
+/// 当前计数（原子读）。
+@inline(__always) private func _bkStrRefCount(_ p: UnsafeRawPointer) -> Int32 {
+    _bkStrAtomicLoad(_bkStrRC(p))
+}
+
+/// 字节数格（不含 NUL）。
+@inline(__always) private func _bkStrLen(_ p: UnsafeRawPointer) -> UnsafeMutablePointer<Int32> {
+    _bkStrField(p, 4)
+}
+
+/// 载荷容量格（不含 NUL）：就地追加的边界。
+@inline(__always) private func _bkStrCap(_ p: UnsafeRawPointer) -> UnsafeMutablePointer<Int32> {
+    _bkStrField(p, 8)
+}
+
+/// 字素数格：`-1` = 未算；与 `len` 相等当且仅当纯 ASCII（非 ASCII 一字素至少两字节）。
+@inline(__always) private func _bkStrGraphemes(_ p: UnsafeRawPointer) -> UnsafeMutablePointer<Int32> {
+    _bkStrField(p, 12)
+}
+
+/// 分配一条空串：容量 `capacity` 字节（不含 NUL），长度 0，计数 1。载荷不置零，只写首字节 NUL。
+private func _bkStrAlloc(_ capacity: Int) -> UnsafeMutableRawPointer {
+    let cap = max(capacity, 0)
     let base = UnsafeMutableRawPointer.allocate(
-        byteCount: payload + _bkStrHeaderBytes, alignment: MemoryLayout<Int>.alignment)
-    base.storeBytes(of: 1, as: Int.self)
+        byteCount: _bkStrHeaderBytes + cap + 1, alignment: 8)
+    base.storeBytes(of: Int32(1), toByteOffset: 0, as: Int32.self)
+    base.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
+    base.storeBytes(of: Int32(cap), toByteOffset: 8, as: Int32.self)
+    base.storeBytes(of: Int32(0), toByteOffset: 12, as: Int32.self)
     let user = base.advanced(by: _bkStrHeaderBytes)
-    _bkStrLock.lock()
-    _bkStrLive.insert(user)
-    _bkStrLock.unlock()
+    user.storeBytes(of: 0, as: CChar.self)
     return user
 }
 
-/// 把 Swift `String` 的 UTF-8 字节装成带计数头的 C 串（`strdup` 的替代）。
+/// 纯 ASCII 判定：8 字节块取高位掩码，块外逐字节补扫。纯 ASCII 串的 `graphemes` 直接等于 `len`。
+private func _bkStrUtf8IsASCII(_ bytes: UnsafeRawPointer, _ count: Int) -> Bool {
+    var index = 0
+    while index + 8 <= count {
+        if bytes.loadUnaligned(fromByteOffset: index, as: UInt64.self) & 0x8080_8080_8080_8080 != 0 {
+            return false
+        }
+        index += 8
+    }
+    while index < count {
+        if bytes.load(fromByteOffset: index, as: UInt8.self) >= 0x80 { return false }
+        index += 1
+    }
+    return true
+}
+
+/// 把 Swift `String` 的 UTF-8 字节装成带头串（`strdup` 的替代）：字素数已知，一并写进头。
 private func _bkStrDup(_ text: String) -> UnsafeMutablePointer<CChar> {
     let bytes = Array(text.utf8)
-    let user = _bkStrAlloc(bytes.count + 1)
+    let user = _bkStrAlloc(bytes.count)
     let out = user.assumingMemoryBound(to: CChar.self)
-    for (index, byte) in bytes.enumerated() { out[index] = CChar(bitPattern: byte) }
+    bytes.withUnsafeBufferPointer { buffer in
+        if let base = buffer.baseAddress, buffer.count > 0 { memcpy(out, base, buffer.count) }
+    }
     out[bytes.count] = 0
+    _bkStrLen(out).pointee = Int32(bytes.count)
+    _bkStrGraphemes(out).pointee = Int32(text.count)
     return out
 }
 
-/// 把一条既有 C 串复制成带计数头的 C 串（`strdup` 的替代 · 指针形态）。
+/// 把一条既有 C 串复制成带头串（`strdup` 的替代 · 指针形态）；字素惰性 —— 纯 ASCII 直接等于字节数。
 private func _bkStrDup(_ source: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar> {
-    let length = strlen(source)
-    let user = _bkStrAlloc(Int(length) + 1)
-    memcpy(user, source, Int(length) + 1)
-    return user.assumingMemoryBound(to: CChar.self)
+    let length = Int(strlen(source))
+    let user = _bkStrAlloc(length)
+    let out = user.assumingMemoryBound(to: CChar.self)
+    memcpy(out, source, length + 1)
+    _bkStrLen(out).pointee = Int32(length)
+    _bkStrGraphemes(out).pointee = _bkStrUtf8IsASCII(out, length) ? Int32(length) : -1
+    return out
 }
 
-/// 用户指针 → 计数头基址。
-private func _bkStrBase(_ user: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-    return user.advanced(by: -_bkStrHeaderBytes)
+/// 用头里的长度构造 Swift `String`：省掉 `strlen`，非法字节由 `String(decoding:)` 折成替换符。
+private func _bkStrSwiftString(_ p: UnsafePointer<CChar>) -> String {
+    let length = Int(_bkStrLen(p).pointee)
+    return String(decoding: UnsafeRawBufferPointer(start: p, count: length), as: UTF8.self)
+}
+
+/// 造一条 `rc == 0` 的带头串：进程期常量，`retain` / `release` 都空转，永不归还。
+/// 用途是把「无头的 C 串」换成「带头的只读串」，让值域里每一条串读头都是安全的。
+private func _bkStrConstant(_ text: String) -> UnsafeMutablePointer<CChar> {
+    let made = _bkStrDup(text)
+    _bkStrRC(made).pointee = 0
+    return made
+}
+
+/// 释放一条**已知带头**的串：计数递减，归零即归还整块。`rc == 0`（只读段常量）空转。
+private func _bkStrReleaseRaw(_ p: UnsafeRawPointer) {
+    let rc = _bkStrRC(p)
+    guard _bkStrAtomicLoad(rc) > 0 else { return }
+    if _bkStrAtomicAdd(rc, -1) == 0 { _bkStrHead(p).deallocate() }
+}
+
+/// 拼接后的字素数：两半都已知且右半以 ASCII 起头时直接相加（边界不可能并成新簇），否则置 -1。
+private func _bkStrMergedGraphemes(
+    _ lhsCount: Int32, _ rhsCount: Int32, rhsLength: Int, rhs: UnsafeRawPointer?
+) -> Int32 {
+    guard lhsCount >= 0, rhsCount >= 0 else { return -1 }
+    guard rhsLength > 0, let rhs else { return lhsCount }
+    guard rhs.load(as: UInt8.self) < 0x80 else { return -1 }
+    let sum = Int64(lhsCount) + Int64(rhsCount)
+    return sum <= Int64(Int32.max) ? Int32(sum) : -1
+}
+
+/// 拼接内核：两半的长度与字素数由调用方读出；`ownsLhs` 为真时消耗左操作数那份引用。
+/// 唯一持有且有容量就地追加，否则按倍增新分配 —— 前者是累加式建串做到摊还 O(1) 的全部机制。
+private func _bkStrJoin(
+    _ lhs: UnsafeRawPointer?, _ lhsLength: Int, _ lhsGraphemes: Int32,
+    _ rhs: UnsafeRawPointer?, _ rhsLength: Int, _ rhsGraphemes: Int32,
+    ownsLhs: Bool
+) -> UnsafeMutableRawPointer {
+    let need = lhsLength + rhsLength
+    guard need < Int(Int32.max) else {
+        bk_panic("Pini runtime error: string exceeds 2 GiB")
+    }
+    if ownsLhs, let lhs {
+        let rc = _bkStrRefCount(lhs)
+        if rc == 1, Int(_bkStrCap(lhs).pointee) >= need {
+            let base = UnsafeMutableRawPointer(mutating: lhs)
+            /// 用 `memmove` 而非 `memcpy`：`s = s + s` 时右操作数就是这块载荷本身，两者重叠。
+            if rhsLength > 0, let rhs { memmove(base.advanced(by: lhsLength), rhs, rhsLength) }
+            base.advanced(by: need).storeBytes(of: 0, as: CChar.self)
+            _bkStrLen(lhs).pointee = Int32(need)
+            _bkStrGraphemes(lhs).pointee = _bkStrMergedGraphemes(
+                lhsGraphemes, rhsGraphemes, rhsLength: rhsLength, rhs: rhs)
+            return base
+        }
+    }
+    /// 新分配按倍增：容量至少两倍左半，保证「每次重分配后能容纳若干次追加」，累加总代价 O(n)。
+    let capacity = max(16, max(need, lhsLength * 2))
+    let out = _bkStrAlloc(capacity)
+    if lhsLength > 0, let lhs { memcpy(out, lhs, lhsLength) }
+    if rhsLength > 0, let rhs { memcpy(out.advanced(by: lhsLength), rhs, rhsLength) }
+    out.advanced(by: need).storeBytes(of: 0, as: CChar.self)
+    _bkStrLen(out).pointee = Int32(need)
+    _bkStrGraphemes(out).pointee = _bkStrMergedGraphemes(
+        lhsGraphemes, rhsGraphemes, rhsLength: rhsLength, rhs: rhs)
+    if ownsLhs, let lhs { _bkStrReleaseRaw(lhs) }
+    return out
 }
 
 /// 字符串的**别名点 retain**（与 `bk_handle_retain` 同一条归还规则的不同族）。
-/// 非本运行时段分配的指针（全局常量 · 外呼 C 串）⇒ 无操作。
+/// `rc == 0` 的只读段常量空转 —— 这条替代了旧的全局登记表，锁随之消失。
 @_cdecl("bk_str_retain")
 public func bk_str_retain(_ p: UnsafeMutablePointer<CChar>?) {
     guard let p else { return }
-    let user = UnsafeMutableRawPointer(p)
-    _bkStrLock.lock()
-    guard _bkStrLive.contains(user) else {
-        _bkStrLock.unlock()
-        return
-    }
-    let base = _bkStrBase(user)
-    base.storeBytes(of: base.load(as: Int.self) + 1, as: Int.self)
-    _bkStrLock.unlock()
+    let rc = _bkStrRC(p)
+    guard _bkStrAtomicLoad(rc) > 0 else { return }
+    _ = _bkStrAtomicAdd(rc, 1)
 }
 
-/// 字符串的**释放**：计数递减，归零则摘出登记表并归还内存。
-/// 非本运行时段分配的指针、以及**已归零**的指针 ⇒ 无操作（见件头那两条性质）。
+/// 字符串的**释放**：计数递减，归零则归还内存。只读段常量与已归零指针 ⇒ 无操作。
 @_cdecl("bk_str_release")
 public func bk_str_release(_ p: UnsafeMutablePointer<CChar>?) {
     guard let p else { return }
-    let user = UnsafeMutableRawPointer(p)
-    _bkStrLock.lock()
-    guard _bkStrLive.contains(user) else {
-        _bkStrLock.unlock()
-        return
-    }
-    let base = _bkStrBase(user)
-    let next = base.load(as: Int.self) - 1
-    if next > 0 {
-        base.storeBytes(of: next, as: Int.self)
-        _bkStrLock.unlock()
-        return
-    }
-    _bkStrLive.remove(user)
-    _bkStrLock.unlock()
-    base.deallocate()
+    _bkStrReleaseRaw(p)
 }
 
-/// 分配一个 `byteCount` 字节（含 NUL 位）的带计数头 C 串，计数 = 1，返回用户指针。
-/// 发射器的字符串拼接用它替代裸 `malloc`：拼接形状不变，但产出的串进入登记表、可被 `bk_str_release`
-/// 回收。 行不通  载荷由调用方写（本入口不置零、也不写 NUL）—— 与 `malloc` 同契约。
+/// 分配一条空串（容量 `byteCount` 字节，不含 NUL），供发射层累积拼接用。
+/// 旧契约「载荷由调用方写、不置零」已退役：长度与容量必须经本文件维护，绕过它的写入会让头不可信。
 @_cdecl("bk_str_alloc")
 public func bk_str_alloc(_ byteCount: Int64) -> UnsafeMutablePointer<CChar> {
-    return _bkStrAlloc(Int(byteCount)).assumingMemoryBound(to: CChar.self)
+    return _bkStrAlloc(Int(max(byteCount, 0))).assumingMemoryBound(to: CChar.self)
 }
 
-/// 把一条既有 C 串（通常是栈上拼出来的缓冲）复制成带计数头的新串，计数 = 1。
-/// 发射器的 `heapCopyOfStackString` 用它替代裸 `strdup`（插值与 `join` 那条路）：复制语义不变，
-/// 但结果进入登记表 ⇒ 可被 `bk_str_release` 回收。
+/// `lhs + rhs`：两边都是带头串，读头的长度而非 `strlen`。`ownsLhs` 为真时消耗左操作数那份引用。
+@_cdecl("bk_str_concat")
+public func bk_str_concat(
+    _ lhs: UnsafeMutablePointer<CChar>?, _ rhs: UnsafeMutablePointer<CChar>?, _ ownsLhs: Int32
+) -> UnsafeMutablePointer<CChar> {
+    let left = lhs.map { UnsafeRawPointer($0) }
+    let right = rhs.map { UnsafeRawPointer($0) }
+    let leftLength = left.map { Int(_bkStrLen($0).pointee) } ?? 0
+    let rightLength = right.map { Int(_bkStrLen($0).pointee) } ?? 0
+    let joined = _bkStrJoin(
+        left, leftLength, left.map { _bkStrGraphemes($0).pointee } ?? 0,
+        right, rightLength, right.map { _bkStrGraphemes($0).pointee } ?? 0,
+        ownsLhs: ownsLhs != 0)
+    return joined.assumingMemoryBound(to: CChar.self)
+}
+
+/// 追加一条裸 C 串（无头的栈缓冲 / 格式化产物）：长度现算，其余同 `bk_str_concat`。
+@_cdecl("bk_str_append_cstr")
+public func bk_str_append_cstr(
+    _ lhs: UnsafeMutablePointer<CChar>?, _ rhs: UnsafePointer<CChar>?, _ ownsLhs: Int32
+) -> UnsafeMutablePointer<CChar> {
+    let left = lhs.map { UnsafeRawPointer($0) }
+    let leftLength = left.map { Int(_bkStrLen($0).pointee) } ?? 0
+    let right = rhs.map { UnsafeRawPointer($0) }
+    let rightLength = right.map { Int(strlen($0)) } ?? 0
+    let rightGraphemes: Int32 = right.map {
+        _bkStrUtf8IsASCII($0, rightLength) ? Int32(rightLength) : -1
+    } ?? 0
+    let joined = _bkStrJoin(
+        left, leftLength, left.map { _bkStrGraphemes($0).pointee } ?? 0,
+        right, rightLength, rightGraphemes,
+        ownsLhs: ownsLhs != 0)
+    return joined.assumingMemoryBound(to: CChar.self)
+}
+
+/// 把一条既有 C 串（无头的栈缓冲或外部输入）复制成带头串，计数 = 1。
+/// 发射器的 `heapCopyOfStackString` 与 FFI 取回都走这里：复制语义不变，结果可被 `bk_str_release` 回收。
 @_cdecl("bk_str_dup")
 public func bk_str_dup(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
     guard let source else { return _bkStrDup("") }
     return _bkStrDup(source)
 }
 
-/// 当前引用计数（仅供测试 / 诊断，IR 不发射）。非本运行时段分配的指针返回 0。
+/// 当前引用计数（仅供测试 / 诊断，IR 不发射）：`rc == 0` 读成 0，即不可变常量。
 @_cdecl("bk_str_refcount")
 public func bk_str_refcount(_ p: UnsafeMutablePointer<CChar>?) -> Int32 {
     guard let p else { return 0 }
-    let user = UnsafeMutableRawPointer(p)
-    _bkStrLock.lock()
-    defer { _bkStrLock.unlock() }
-    guard _bkStrLive.contains(user) else { return 0 }
-    return Int32(_bkStrBase(user).load(as: Int.self))
+    return max(_bkStrRefCount(p), 0)
 }
 
 // MARK: - F64 最短往返展示（spec「值展示语义」节）
 
 /// `print(F64)` 的文本展示：委托 `String(Double)`，即最短往返表示（往返恒等、定点/指数切换阈值、
 /// 定点恒带小数点、`e±NN` 两位指数由标准库保证）。解释器 stringify 同样走它 ⇒ 两后端同一语义。
-/// 返回 malloc 分配的 NUL 结尾 C 串，调用方负责 free（发射的 IR 在 printf 消费后调 `@free`；无别名）。
+/// 返回带头串（计数 1），由持有位置按 `bk_str_release` 归还。
 @_cdecl("bk_double_to_string")
 public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
     return _bkStrDup(String(v))
@@ -1113,7 +1264,7 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
 @_cdecl("bk_cstr")
 public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return nil }
-    let length = strlen(s)
+    let length = Int(_bkStrLen(s).pointee)
     guard let raw = malloc(length + 1) else { return nil }
     memcpy(raw, s, length + 1)
     return raw.assumingMemoryBound(to: CChar.self)
@@ -1573,30 +1724,43 @@ public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
 /// （组合序列、ZWJ 表情、区域旗标…），字节循环复现不了——切点会落进多字节序列内部。
 /// ⇒ 这一族一律下沉到运行时段，用 `String` / `Character`，与解释器同一模型。分配同 `bk_substring`。
 
-/// `len(s)`：数的是字素簇。
-/// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）。 注意  数「非续字节」得到的是
-/// Unicode 标量，两者只在组合序列上分歧（分解式变音符、ZWJ 表情、区域旗标），纯 ASCII 与 CJK 同值。
+/// `len(s)`：数的是字素簇。读头的 `graphemes`；为 `-1` 时算一次并回填（只读段常量不回填）。
+/// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）。纯 ASCII 串 `graphemes == len`。
 @_cdecl("bk_string_count")
 public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
     guard let s else { return 0 }
-    return Int32(String(cString: s).count)
+    let cached = _bkStrGraphemes(s).pointee
+    if cached >= 0 { return cached }
+    let count = Int32(_bkStrSwiftString(s).count)
+    if _bkStrRefCount(s) > 0 {
+        _bkStrGraphemes(s).pointee = count
+    }
+    return count
 }
 
 /// `s[i]` 读一个字符：负值尾计数，越界走安全断言通道 ⇒ `bk_panic`（与数组下标同规）；返回单字符
-/// （`strdup`，调用方释放）。 注意  代价下界是 O(len)：C 串无长度 ⇒ 先 `String(cString:)` 找 NUL 并校验
-/// UTF-8，故逐字符扫描必然 O(n²)——表示问题，不是实现问题；实现走到目标下标即停（空间 O(1)）。
+/// （带头新串，计数 1）。纯 ASCII 串按字节直取 O(1)；非 ASCII 走 UTF-8 分段，走到目标即停。
 @_cdecl("bk_string_char_at")
 public func bk_string_char_at(
     _ s: UnsafePointer<CChar>?, _ index: Int32
 ) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
-    let text = String(cString: s)
-    let n = text.count
+    let count = Int(bk_string_count(s))
     var idx = Int(index)
-    if idx < 0 { idx += n }
-    guard idx >= 0, idx < n else {
+    if idx < 0 { idx += count }
+    guard idx >= 0, idx < count else {
         bk_panic("Pini runtime error: string index out of range")
     }
+    if Int(_bkStrLen(s).pointee) == count {
+        let user = _bkStrAlloc(1)
+        let out = user.assumingMemoryBound(to: CChar.self)
+        out[0] = s[idx]
+        out[1] = 0
+        _bkStrLen(out).pointee = 1
+        _bkStrGraphemes(out).pointee = 1
+        return out
+    }
+    let text = _bkStrSwiftString(s)
     var p = text.startIndex
     var k = 0
     while k < idx {
@@ -1615,7 +1779,7 @@ public func bk_string_slice(
     _ hasEnd: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
-    let text = String(cString: s)
+    let text = _bkStrSwiftString(s)
     let count = text.count
     var lo = hasStart != 0 ? Int(start) : 0
     var hi = hasEnd != 0 ? Int(end) : count
@@ -1900,8 +2064,10 @@ private final class _BkErrorBox {
     /// C 边界的码：`Error`/`CancelError` 固定 `1`/`2`，枚举错误由基址与用例 tag 组合。
     let code: Int32
 
+    /// 消息存成**只读带头串**（`rc == 0`）：它会离开本对象进到 Pini 值域，被归还时必须是空转。
+    ///  行不通  裸 `strdup`：值域里每一条串都带头，归还时读 `p - 16` 就会减掉 malloc 块头，间歇写坏堆。
     init(_ text: String, isCancel: Bool, code: Int32) {
-        self.message = strdup(text) ?? UnsafeMutablePointer<CChar>.allocate(capacity: 1)
+        self.message = _bkStrConstant(text)
         self.isCancel = isCancel
         self.code = code
     }
@@ -2020,12 +2186,8 @@ public func bk_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
     return box.message
 }
 
-/// 无载荷 err 槽的空消息（进程期常量，同样不归调用方释放）。
-nonisolated(unsafe) private let _bkEmptyCString: UnsafeMutablePointer<CChar> = {
-    let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 1)
-    buffer[0] = 0
-    return buffer
-}()
+/// 无载荷 err 槽的空消息（进程期只读带头串，同样不归调用方释放）。
+nonisolated(unsafe) private let _bkEmptyCString: UnsafeMutablePointer<CChar> = _bkStrConstant("")
 
 /// 阻塞等待任务决出（或被取消）。
 ///

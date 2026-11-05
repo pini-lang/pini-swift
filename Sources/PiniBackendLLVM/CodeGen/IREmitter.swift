@@ -103,6 +103,8 @@ public final class IREmitter {
     /// 匿名常量（`@.str<序号>`）已发出几个 —— 具名常量不计入，故不影响它们的编号。
     private var anonymousStringConstantCount = 0
     private var usesStrCmp = false
+    /// 是否发过 `bk_str_concat` / `bk_str_append_cstr`：拼接与插值都走这两个入口，声明随之条件出现。
+    private var usesStringBuilders = false
 
     // MARK: G6 closure / higher-order state
 
@@ -438,6 +440,7 @@ public final class IREmitter {
         errorCodeTableNames = [:]
         anonymousStringConstantCount = 0
         usesStrCmp = false
+        usesStringBuilders = false
         usesLazyRef = false
         usesFileWrite = false
         usesFileAppend = false
@@ -696,10 +699,13 @@ public final class IREmitter {
         // N76：字符串的引用计数。与上一条同规 —— 只有真发过 retain / release 的模块才带，
         // 故「不碰计数字符串」的程序 IR 逐字节不变。
         if usesStringRefcount {
-            tail += Builtins.declaration(for: "bk_str_alloc")
             tail += Builtins.declaration(for: "bk_str_dup")
             tail += Builtins.declaration(for: "bk_str_retain")
             tail += Builtins.declaration(for: "bk_str_release")
+        }
+        if usesStringBuilders {
+            tail += Builtins.declaration(for: "bk_str_concat")
+            tail += Builtins.declaration(for: "bk_str_append_cstr")
         }
         if usesStringShims {
             tail += Builtins.declaration(for: "bk_substring")
@@ -906,7 +912,7 @@ public final class IREmitter {
         guard let base = programBase else { return "" }
         usesProgramBase = true
         let entry = registerStringConstant(base, named: "@.pini_program_base")
-        return " call void @bk_set_program_base(ptr \(entry.name))\n"
+        return " call void @bk_set_program_base(ptr \(Self.stringPayloadExpression(entry)))\n"
     }
 
     /// 合成测试驱动器与进程入口。
@@ -938,7 +944,7 @@ public final class IREmitter {
             let temp = builder.freshTemp()
             d += " " + builder.fmtGEP(
                 name: temp, aggregate: "[\(entry.length) x i8]", base: entry.name,
-                indices: [0, 0]) + "\n"
+                indices: [0, Self.stringHeaderBytes]) + "\n"
             return temp
         }
 
@@ -1090,7 +1096,7 @@ public final class IREmitter {
             let temp = builder.freshTemp()
             output += " " + builder.fmtGEP(
                 name: temp, aggregate: "[\(entry.length) x i8]", base: entry.name,
-                indices: [0, 0]) + "\n"
+                indices: [0, Self.stringHeaderBytes]) + "\n"
             return temp
         default:
             let spelling = type.llvmSpelling
@@ -1151,7 +1157,7 @@ public final class IREmitter {
             " "
             + builder.fmtGEP(
                 name: "%de6b.panic.msg", aggregate: "[\(message.length) x i8]", base: message.name,
-                indices: [0, 0]) + "\n"
+                indices: [0, Self.stringHeaderBytes]) + "\n"
         ir += " call void @bk_panic(ptr %de6b.panic.msg)\n"
         ir += " unreachable\n"
         ir += "de6b.alloc:\n"
@@ -1344,6 +1350,22 @@ public final class IREmitter {
         case .storeVar(let name, let type, let value, let adopt, let releaseOld):
             guard let slot = lookupSlot(name) else {
                 fatalError("IREmitter: store to undeclared variable '\(name)' (IRLowerer guarantees declarations)")
+            }
+            /// `s = s + x`：左操作数就是本槽 ⇒ 把槽里那份引用交给运行时消耗，唯一持有且有容量时就地追加。
+            /// 这是「循环里累加字符串」从每轮重分配掉到摊还 O(1) 的唯一入口；释放旧值那一步由消耗代替。
+            if releaseOld, case .string = type, case .stringConcat(let lhsExpr, let rhsExpr) = value,
+               case .load(let source, _) = lhsExpr, source == name {
+                let current = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: current, type: "i8*", ptr: slot) + "\n"
+                let rhsValue = emitExpr(rhsExpr)
+                let next = builder.freshTemp()
+                usesStringBuilders = true
+                bodyIR +=
+                    " \(next) = call ptr @bk_str_concat(ptr \(current), ptr \(rhsValue.ssaName), i32 1)\n"
+                releaseHeldString(rhsValue)
+                let stored = applyAdopt(adopt, IRValue(llvmType: "i8*", ssaName: next), type: type)
+                bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
+                return
             }
             let lowered = emitExpr(value)
             /// 三行的顺序就是语义：先让新值站住（注解说的移交 / 拷贝 / 保留），
@@ -2723,26 +2745,18 @@ public final class IREmitter {
         case .stringConcat(let lhs, let rhs):
             let lhsValue = emitExpr(lhs)
             let rhsValue = emitExpr(rhs)
-            let llen = builder.freshTemp()
-            bodyIR += " \(llen) = call i64 @strlen(ptr \(lhsValue.ssaName))\n"
-            let rlen = builder.freshTemp()
-            bodyIR += " \(rlen) = call i64 @strlen(ptr \(rhsValue.ssaName))\n"
-            let total = builder.freshTemp()
-            bodyIR += " \(total) = add i64 \(llen), \(rlen)\n"
-            let sz1 = builder.freshTemp()
-            bodyIR += " \(sz1) = add i64 \(total), 1\n"
-            let buf = builder.freshTemp()
-            /// 分配入口走运行时段 `bk_str_alloc`，拼接形状逐字不变（`strlen` ×2 → `add` → `add 1` →
-            /// 分配 → `strcpy` → `strcat`），差别只在产出的串带引用计数头、进了运行时段登记表。
-            ///  行不通  退回裸 `malloc` 会让后续 release 静默变成无操作 —— 看起来发了释放，实际一个字节没回收。
-            bodyIR += " \(buf) = call ptr @bk_str_alloc(i64 \(sz1))\n"
-            bodyIR += " call ptr @strcpy(ptr \(buf), ptr \(lhsValue.ssaName))\n"
-            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(rhsValue.ssaName))\n"
-            /// 两个操作数到此用完：只被 `strlen` / `strcpy` / `strcat` 读过，没有持有者接管 ⇒ 就地还掉。
+            let joined = builder.freshTemp()
+            /// 长度从两边的头里读，不再 `strlen` —— 这是 `a + b + c` 从 O(n²) 掉到 O(n) 的前提。
+            ///  行不通  退回 `strlen` + 精确分配：每级临时串都要重扫全长，且没有增容余量留给下次追加。
+            usesStringBuilders = true
+            bodyIR +=
+                " \(joined) = call ptr @bk_str_concat(ptr \(lhsValue.ssaName), "
+                + "ptr \(rhsValue.ssaName), i32 0)\n"
+            /// 两个操作数到此用完：只被读字节，没有持有者接管 ⇒ 就地还掉。
             /// 这一步就是二次方项的处置：`a + b + c` 的中间串既不落槽也不是最终值，除这里没有别的回收点。
             releaseHeldString(lhsValue)
             releaseHeldString(rhsValue)
-            return IRValue(llvmType: "i8*", ssaName: buf)
+            return IRValue(llvmType: "i8*", ssaName: joined)
 
         case .interpString(let parts):
             return emitInterpString(parts: parts)
@@ -3512,8 +3526,9 @@ public final class IREmitter {
             let codes = entries.map { "i32 \($0.code)" }.joined(separator: ", ")
             errorCodeConstantDefs.append(
                 "\(codeName) = private constant [\(entries.count) x i32] [\(codes)]")
-            let names = entries.map { "ptr \(registerStringConstant($0.display).name)" }
-                .joined(separator: ", ")
+            let names = entries.map {
+                "ptr \(Self.stringPayloadExpression(registerStringConstant($0.display)))"
+            }.joined(separator: ", ")
             errorCodeConstantDefs.append(
                 "\(nameName) = private constant [\(entries.count) x ptr] [\(names)]")
             codePointer = codeName
@@ -5148,9 +5163,9 @@ public final class IREmitter {
         }
     }
 
-    /// 登记一个字符串常量（去重），返回它的全局名与字节长度。与 `emitStringConstant` 只差一点：
-    /// 取串的 GEP 由谁发 —— 那个函数写进 `bodyIR`，而帧序要一条能排在任何块之前的取串指令，由调用方发。
-    ///  行不通  常量登记与去重仍只有这一份实现。`named` 给定时用该名，且不占匿名序号。
+    /// 登记一个字符串常量（去重），返回它的全局名与字节长度。与 `emitStringConstant` 只差「取串的 GEP 由谁发」：
+    /// 那个函数写进 `bodyIR`，而帧序要一条能排在任何块之前的取串指令，由调用方发。
+    ///  注意  载荷前 16 字节是字符串头（`rc = 0` = 只读段常量），与运行时段的 `_bkStrHeaderBytes` 同宽。
     private func registerStringConstant(
         _ value: String, named: String? = nil
     ) -> (name: String, length: Int) {
@@ -5163,15 +5178,41 @@ public final class IREmitter {
             anonymousStringConstantCount += 1
         }
         let bytes = Array(value.utf8)
-        let length = bytes.count + 1
-        var hex = ""
+        var hex = String(repeating: "\\00", count: 4)
+        hex += Self.littleEndianHex(Int32(bytes.count))
+        hex += Self.littleEndianHex(Int32(bytes.count))
+        hex += Self.littleEndianHex(Int32(value.count))
         for byte in bytes {
             hex += String(format: "\\%02X", byte)
         }
-        stringConstantDefs.append("\(name) = private constant [\(length) x i8] c\"\(hex)\\00\"")
+        hex += "\\00"
+        let length = bytes.count + 1 + Self.stringHeaderBytes
+        /// 对齐是硬要求：头里的计数用原子加减，未对齐的 4 字节原子操作在 arm64 上是 SIGBUS。
+        stringConstantDefs.append(
+            "\(name) = private constant [\(length) x i8] c\"\(hex)\", align 16")
         let entry = (name: name, length: length)
         stringConstants[value] = entry
         return entry
+    }
+
+    /// 字符串头长度（字节）：`rc` / `len` / `cap` / `graphemes` 四个 i32。
+    ///  注意  运行时段的 `bk_str_header_bytes()` 是同一事实源，`StringHeaderLayoutTests` 断言两边相等。
+    static let stringHeaderBytes = 16
+
+    /// 一个 i32 在 IR 常量数组里的小端字节写法。目标平台（arm64 / x86_64）都是小端。
+    private static func littleEndianHex(_ value: Int32) -> String {
+        let bits = UInt32(bitPattern: value)
+        var out = ""
+        for shift in stride(from: 0, to: 32, by: 8) {
+            out += String(format: "\\%02X", UInt8(truncatingIfNeeded: bits >> UInt32(shift)))
+        }
+        return out
+    }
+
+    /// 常量数组里指向**载荷**（跳过 16 字节头）的常量表达式：不占 SSA 名，可放进 `ptr` 实参位或全局初始化器。
+    private static func stringPayloadExpression(_ entry: (name: String, length: Int)) -> String {
+        "getelementptr inbounds ([\(entry.length) x i8], ptr \(entry.name), "
+            + "i64 0, i64 \(stringHeaderBytes))"
     }
 
     /// 登记一张错误码表（按用例 tag 索引），返回全局符号名。同内容的表只发一次：
@@ -5190,7 +5231,9 @@ public final class IREmitter {
     private func emitStringConstant(_ value: String) -> IRValue {
         let entry = registerStringConstant(value)
         let temp = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: temp, aggregate: "[\(entry.length) x i8]", base: entry.name, indices: [0, 0]) + "\n"
+        bodyIR += builder.fmtGEP(
+            name: temp, aggregate: "[\(entry.length) x i8]", base: entry.name,
+            indices: [0, Self.stringHeaderBytes]) + "\n"
         return IRValue(llvmType: "i8*", ssaName: temp)
     }
 
@@ -5903,12 +5946,12 @@ public final class IREmitter {
         return IRValue(llvmType: "%bk_array*", ssaName: handle)
     }
 
-    /// `arr.join(sep)`：字符串数组的元素用 sep 逐个 strcat 进一块栈缓冲
-    /// （元素是裸 C 指针）。
+    /// `arr.join(sep)`：字符串数组的元素用 sep 逐个追加进一条运行时串（元素是裸 C 指针）。
+    /// 追加走 `bk_str_append_cstr` 的容量倍增，结果长度不再有 4096 字节上限，总代价 O(总长)。
     private func emitArrayJoin(array: IRValue, sep: String) -> IRValue {
-        let buf = builder.freshTemp()
-        bodyIR += " \(buf) = alloca i8, i64 4096\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
+        let bufSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
+        bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast %bk_array* \(array.ssaName) to ptr\n"
         let count = builder.freshTemp()
@@ -5935,14 +5978,14 @@ public final class IREmitter {
         bodyIR += " \(isFirst) = icmp eq i32 \(idx), 0\n"
         bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
         bodyIR += "\(sepLabel):\n"
-        bodyIR += " call ptr @strcat(ptr \(buf), ptr \(sep))\n"
+        appendToBuffer(sep, bufferSlot: bufSlot)
         bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
         bodyIR += "\(elemLabel):\n"
         let box = builder.freshTemp()
         bodyIR += " \(box) = call ptr @bk_array_get(ptr \(raw), i32 \(idx))\n"
         let element = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: element, type: "i8*", ptr: box) + "\n"
-        bodyIR += " call ptr @strcat(ptr \(buf), ptr \(element))\n"
+        appendToBuffer(element, bufferSlot: bufSlot)
         bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
         bodyIR += "\(incLabel):\n"
         let idxNext = builder.freshTemp()
@@ -5950,13 +5993,24 @@ public final class IREmitter {
         bodyIR += builder.fmtStore(value: idxNext, type: "i32", ptr: idxSlot) + "\n"
         bodyIR += builder.fmtBr(labelName: header) + "\n"
         bodyIR += "\(endLabel):\n"
-        //  注意  结果会**离开本帧**（`let s = xs.join(",")` 之后 s 进变量槽 / 进箱 / 被返回）
-        // ⇒ 交出前必须复制到堆，理由见 `heapCopyOfStackString`。
-        return heapCopyOfStackString(buf)
+        /// 结果已在堆上（运行时串），不再需要「交出前复制到堆」那一步。
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: "i8*", ptr: bufSlot) + "\n"
+        return IRValue(llvmType: "i8*", ssaName: result)
     }
 
-    /// 把栈上拼出来的串交出去之前复制到堆（返回堆指针）：插值与 `join` 都在本帧栈缓冲上拼串，
-    /// 而结果会离开本帧（如存进 Token 的 `text` 字段）⇒ 不复制就留下悬垂的栈地址。
+    /// 把一条 C 串追加进 `bufferSlot` 指向的运行时串（槽里 `null` 表示还没开始），并写回槽。
+    /// 追加可能搬家，故每次都读回槽里的最新指针 —— 这就是「就地增长」在发射层的全部形状。
+    private func appendToBuffer(_ value: String, bufferSlot: String) {
+        usesStringBuilders = true
+        let current = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: current, type: "i8*", ptr: bufferSlot) + "\n"
+        let next = builder.freshTemp()
+        bodyIR += " \(next) = call ptr @bk_str_append_cstr(ptr \(current), ptr \(value), i32 1)\n"
+        bodyIR += builder.fmtStore(value: next, type: "i8*", ptr: bufferSlot) + "\n"
+    }
+
+    /// 把栈上拼出来的串交出去之前复制到堆（返回堆指针）：还剩的调用点只有「必须先在本帧栈上成形」的那几处。
     /// 复制走 `bk_str_dup`（带计数头）。入账不在本函数：求值出口按效果表统一记。
     private func heapCopyOfStackString(_ buf: String) -> IRValue {
         let dup = builder.freshTemp()
@@ -5964,17 +6018,22 @@ public final class IREmitter {
         return IRValue(llvmType: "i8*", ssaName: dup)
     }
 
-    /// String interpolation: pieces converted to C strings, strcat'd into a
-    /// stack buffer. Uses stringifyValue (same display pipeline as print).
+    /// String interpolation: pieces converted to C strings and appended into a runtime string.
+    /// Uses stringifyValue (same display pipeline as print).
     private func emitInterpString(parts: [IRExpr]) -> IRValue {
-        let buf = builder.freshTemp()
-        bodyIR += " \(buf) = alloca i8, i64 4096\n"
-        bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
+        guard !parts.isEmpty else { return emitStringConstant("") }
+        let bufSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
+        bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
         for part in parts {
             let piece = emitStringPiece(part)
-            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(piece.ssaName))\n"
+            appendToBuffer(piece.ssaName, bufferSlot: bufSlot)
+            /// 标量片段是本帧栈缓冲（不在账上 ⇒ 无操作）；容器片段是刚造的堆串，用完即还。
+            releaseHeldString(piece)
         }
-        return heapCopyOfStackString(buf)
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: "i8*", ptr: bufSlot) + "\n"
+        return IRValue(llvmType: "i8*", ssaName: result)
     }
 
     /// One interpolation piece as a C string pointer. Buffers for scalars
@@ -6003,6 +6062,8 @@ public final class IREmitter {
         case .f64:
             let rendered = builder.freshTemp()
             bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
+            /// 堆串：入账后由调用方（插值 / 数组渲染）用完归还。
+            holdString(rendered)
             return IRValue(llvmType: "i8*", ssaName: rendered)
         case .boolean:
             let sel = builder.freshTemp()
@@ -6011,11 +6072,11 @@ public final class IREmitter {
         case .string, .char:
             return value
         case .array(let elementType):
-            let buf = builder.freshTemp()
-            bodyIR += " \(buf) = alloca i8, i64 4096\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i8", ptr: buf) + "\n"
+            let bufSlot = builder.freshTemp()
+            bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
+            bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
             let open = emitStringConstant("[")
-            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(open.ssaName))\n"
+            appendToBuffer(open.ssaName, bufferSlot: bufSlot)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
@@ -6043,7 +6104,7 @@ public final class IREmitter {
             bodyIR += builder.fmtCondBr(cond: isFirst, thenLabelName: elemLabel, elseLabelName: sepLabel) + "\n"
             bodyIR += "\(sepLabel):\n"
             let separator = emitStringConstant(", ")
-            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(separator.ssaName))\n"
+            appendToBuffer(separator.ssaName, bufferSlot: bufSlot)
             bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
             bodyIR += "\(elemLabel):\n"
             let box = builder.freshTemp()
@@ -6054,7 +6115,8 @@ public final class IREmitter {
                 value: IRValue(llvmType: elementType.llvmSpelling, ssaName: element),
                 type: elementType
             )
-            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(piece.ssaName))\n"
+            appendToBuffer(piece.ssaName, bufferSlot: bufSlot)
+            releaseHeldString(piece)
             bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
             bodyIR += "\(incLabel):\n"
             let idxNext = builder.freshTemp()
@@ -6063,8 +6125,11 @@ public final class IREmitter {
             bodyIR += builder.fmtBr(labelName: header) + "\n"
             bodyIR += "\(endLabel):\n"
             let close = emitStringConstant("]")
-            bodyIR += " call ptr @strcat(ptr \(buf), ptr \(close.ssaName))\n"
-            return IRValue(llvmType: "i8*", ssaName: buf)
+            appendToBuffer(close.ssaName, bufferSlot: bufSlot)
+            let rendered = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: rendered, type: "i8*", ptr: bufSlot) + "\n"
+            holdString(rendered)
+            return IRValue(llvmType: "i8*", ssaName: rendered)
         default:
             refuse(
                 node: "interpString", family: .strings,

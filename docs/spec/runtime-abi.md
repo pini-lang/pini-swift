@@ -46,7 +46,7 @@
 | 展示 / 陷阱 | `bk_cstr` `bk_double_to_string` `bk_panic` `bk_print_lock` `bk_print_unlock` | 5 |
 | 运行时 | `bk_runtime_cleanup` | 1 |
 | 字符 | `bk_chars` `bk_chr` `bk_is_letter` `bk_is_number` `bk_ord` | 5 |
-| 字符串面 | `bk_str_alloc` `bk_str_dup` `bk_str_from_cstr` `bk_str_refcount` `bk_str_release` `bk_str_retain` `bk_string_char_at` `bk_string_contains` `bk_string_count` `bk_string_index_of` `bk_string_lower` `bk_string_slice` `bk_string_split` `bk_string_trim_left` `bk_string_trim_right` `bk_string_upper` `bk_substring` | 17 |
+| 字符串面 | `bk_str_alloc` `bk_str_append_cstr` `bk_str_concat` `bk_str_dup` `bk_str_from_cstr` `bk_str_header_bytes` `bk_str_refcount` `bk_str_release` `bk_str_retain` `bk_string_char_at` `bk_string_contains` `bk_string_count` `bk_string_index_of` `bk_string_lower` `bk_string_slice` `bk_string_split` `bk_string_trim_left` `bk_string_trim_right` `bk_string_upper` `bk_substring` | 20 |
 | 字符串句柄 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_new` `bk_str_handle_release` `bk_str_handle_retain` | 5 |
 | 闭包 / 结构体胶水 | `bk_nominal_alloc` `bk_nominal_release` `bk_nominal_retain` `bk_slot_alloc` | 4 |
 | IO / 宿主查询 | `bk_append_file` `bk_argv` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_try_append_file` `bk_try_read_file` `bk_try_write_file` `bk_write_file` | 12 |
@@ -55,7 +55,7 @@
 | 让出族 | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | 调度驱动面 | `bk_task_bind_sched` `bk_task_state` | 2 |
 | 错误载荷 | `bk_cancel_error_create` `bk_error_code` `bk_error_create` `bk_error_from_enum` `bk_error_is_cancel` `bk_error_lookup` `bk_error_message` `bk_error_with_code` | 8 |
-| **合计** | | **109** |
+| **合计** | | **112** |
 
 ## 3. 语义约束
 
@@ -113,11 +113,11 @@
 | `bk_ptr_*` | 6 | 保留。LLVM FFI 的预留面，删掉后接 FFI 时无处接线 |
 | `bk_dict_contains` | 1 | 保留。`collection.contains` 已在类型层声明为 trait 方法，降载未实现，本符号是接线点 |
 | `bk_task_is_cancelled` `bk_capabilities` `bk_task_yield` `bk_task_state` | 4 | 解释器与宿主观测面，发射器不产出 |
-| `bk_str_refcount` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 4 | 只被 ABI 测试或宿主直接调用 |
+| `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 6 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 90 条，本表列出其余 19 条，
-两者合计即第 2 节的 109。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 91 条，本表列出其余 21 条，
+两者合计即第 2 节的 112。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 
