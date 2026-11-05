@@ -2333,12 +2333,12 @@ public class Parser {
             if case .identifier("_", _) = currentToken {
                 advance()
                 pattern = .wildcard
-            } else if case .integerLiteral(let n, _) = currentToken {
+            } else if case .integerLiteral(let n, let literalLocation) = currentToken {
                 advance()
-                pattern = .intLiteral(n)
-            } else if case .floatLiteral(let f, _) = currentToken {
+                pattern = .intLiteral(n, literalLocation)
+            } else if case .floatLiteral(let f, let literalLocation) = currentToken {
                 advance()
-                pattern = .floatLiteral(f)
+                pattern = .floatLiteral(f, literalLocation)
             } else if case .stringLiteral(let s, _) = currentToken {
                 advance()
                 pattern = .stringLiteral(s)

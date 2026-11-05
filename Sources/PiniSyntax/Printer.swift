@@ -100,10 +100,11 @@ public enum Printer {
 extension Printer {
 
     /// 缩进的两套坐标：`column` 是输出列，`source` 是父块首行的源宽度。
-    /// 两者一起走，嵌套块才能只凭自己的首行算出该缩进多少。
+    /// `step` 是本块进入时的增量，无源行的子块沿用它——二格文件里合成的体才不会跳回四格。
     struct Indent: Equatable {
         var column: Int
         var source: Int
+        var step: Int = 4
         static let zero = Indent(column: 0, source: 0)
     }
 
@@ -148,7 +149,7 @@ extension Printer {
             if lines.last?.text != "" { lines.append(Line(text: "", column: 0, anchor: nil)) }
         }
 
-        /// 进入缩进块：增量取「本块首行源宽度 − 父块首行源宽度」，无源行或差值为零时取四格。
+        /// 进入缩进块：增量取「本块首行源宽度 − 父块首行源宽度」，无源行或差值为零时跟随父块步长。
         /// 差值为零会把体印成与块头同列，解析器读不回块，故不能按零走。
         mutating func enterBlock(sourceLine: Int?) {
             savedIndents.append(indent)
@@ -157,9 +158,10 @@ extension Printer {
             if let childSource, childSource > indent.source {
                 delta = childSource - indent.source
             } else {
-                delta = 4
+                delta = indent.step
             }
-            indent = Indent(column: indent.column + delta, source: childSource ?? indent.source)
+            indent = Indent(
+                column: indent.column + delta, source: childSource ?? indent.source, step: delta)
         }
 
         mutating func exitBlock() {
@@ -391,7 +393,7 @@ extension Printer.SourceWriter {
             enterBlock(sourceLine: cases.first?.location.line)
             for matchCase in cases {
                 anchor = matchCase.location
-                line(Printer.matchCaseHead(matchCase))
+                line(Printer.matchCaseHead(matchCase, hints: hints))
                 enterBlock(sourceLine: matchCase.block.statements.first?.location.line)
                 write(statements: matchCase.block.statements)
                 exitBlock()
@@ -605,14 +607,14 @@ extension Printer {
     }
 
     /// 跨行字面量里元素的落位：首个不在字面量首行的元素定步长，取其源缩进减父块源缩进。
-    /// 差值非正或源缩进未知时取四格；内层字面量按这个落位再算，收尾括号才不会退回语句列。
+    /// 差值非正或源缩进未知时跟随父块步长；内层字面量按这个落位再算，收尾括号才不会退回语句列。
     static func lineBreakIndent(
         _ starts: [SourceLocation], literal: SourceLocation, indent: Indent, hints: PrintHints
     ) -> Indent? {
         guard let first = starts.first(where: { $0.line != literal.line }) else { return nil }
-        let delta = (hints.indents[first.line] ?? (indent.source + 4)) - indent.source
-        let step = delta > 0 ? delta : 4
-        return Indent(column: indent.column + step, source: indent.source + step)
+        let delta = (hints.indents[first.line] ?? (indent.source + indent.step)) - indent.source
+        let step = delta > 0 ? delta : indent.step
+        return Indent(column: indent.column + step, source: indent.source + step, step: step)
     }
 
     /// 拼集合字面量。单行沿用原拼接；作者断过行则一行一元素、末元素带逗号，收尾回父列。
@@ -799,8 +801,8 @@ extension Printer {
         return text + delimiters.1
     }
 
-    static func matchCaseHead(_ node: MatchCase) -> String {
-        let pattern = matchPattern(node.pattern)
+    static func matchCaseHead(_ node: MatchCase, hints: PrintHints) -> String {
+        let pattern = matchPattern(node.pattern, hints: hints)
         guard !node.bindings.isEmpty else { return "case \(pattern):" }
         let parts = node.bindings.map { binding -> String in
             guard let param = binding.paramName else { return binding.varName }
@@ -809,12 +811,14 @@ extension Printer {
         return "case \(pattern)(" + parts.joined(separator: ", ") + ",):"
     }
 
-    static func matchPattern(_ pattern: MatchPattern) -> String {
+    static func matchPattern(_ pattern: MatchPattern, hints: PrintHints) -> String {
         switch pattern {
         case .wildcard: return "_"
         case .enumCase(let name): return name
-        case .intLiteral(let value): return "\(value)"
-        case .floatLiteral(let value): return float(value)
+        case .intLiteral(let value, let location):
+            return hints.spelling(at: location) ?? "\(value)"
+        case .floatLiteral(let value, let location):
+            return hints.spelling(at: location) ?? float(value)
         case .stringLiteral(let value): return quote(value)
         case .boolLiteral(let value): return value ? "true" : "false"
         }

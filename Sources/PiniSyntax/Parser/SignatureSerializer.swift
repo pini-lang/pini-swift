@@ -227,9 +227,9 @@ public enum SignatureSerializer {
             emit("_", depth: depth, into: &into)
         case .enumCase(let name):
             emit("caseName: \(name)", depth: depth, into: &into)
-        case .intLiteral(let n):
+        case .intLiteral(let n, _):
             emit("intPattern: \(n)", depth: depth, into: &into)
-        case .floatLiteral(let f):
+        case .floatLiteral(let f, _):
             emit("floatPattern: \(f)", depth: depth, into: &into)
         case .stringLiteral(let s):
             emit("stringPattern: \"\(s)\"", depth: depth, into: &into)
