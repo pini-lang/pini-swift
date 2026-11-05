@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/pre-commit — 提交前门禁：① 身份须成对登记在 GIT_WORKFLOW 注册表 ② 注释判据 ③ 格式判据。
+# hooks/pre-commit — 提交前门禁：① 身份登记 ② 注释判据 ③ 格式判据 ④ 合并提交再跑整条本地 CI。
 # 启用：git config core.hooksPath "$(git rev-parse --show-toplevel)/hooks"
 set -uo pipefail
 
@@ -26,5 +26,11 @@ if [ ! -x "$root/.build/debug/pini" ]; then
     exit 1
 fi
 PINI_BIN="$root/.build/debug/pini" python3 tools/fmt-gate.py || exit 1
+
+# 合并提交要把整棵树验一遍：并回主干就是待推送状态，等推送再验已经晚了。
+# 判据看 MERGE_HEAD 而不是分支名：合并失败后补 `git commit` 时它仍在，CI 会再跑一遍。
+if [ -e "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+    bash ci/entrypoint.sh || exit 1
+fi
 
 exit 0
