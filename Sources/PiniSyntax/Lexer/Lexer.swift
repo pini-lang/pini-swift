@@ -58,11 +58,11 @@ public class Lexer {
                 break
             }
 
-            // 栈顶为普通括号 → 布局抑制：前导空白仅消费、不触缩进栈（不发 INDENT/DEDENT）
+            // 栈顶为普通括号 → 布局抑制：前导空白仅消费、不触缩进栈（不发 INDENT/DEDENT）。
+            // 缩进仍要登记：跨行字面量的元素落位靠它，不登记就只能退回四格。
             if suppressesLayout {
-                while let c = currentChar, c == " " || c == "\t" {
-                    _ = advance()
-                }
+                let loc = currentLocation
+                indents[loc.line] = countLeadingWhitespace()
             } else {
                 let loc = currentLocation
                 let indentCount = countLeadingWhitespace()

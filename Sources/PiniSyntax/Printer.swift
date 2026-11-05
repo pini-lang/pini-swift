@@ -507,17 +507,33 @@ extension Printer {
             return wrapper(
                 atom(target, indent: indent, fileName: fileName, hints: hints) + "[",
                 expr(index, indent: indent, fileName: fileName, hints: hints), "]", column: indent.column)
-        case .tuple(let labels, let elements, _):
-            return tupleText(labels: labels, elements: elements, indent: indent, fileName: fileName, hints: hints)
-        case .arrayLiteral(let elements, _):
-            let body = elements.map { expr($0, indent: indent, fileName: fileName, hints: hints) }.joined(separator: ", ")
-            return wrapper("[", body, "]", column: indent.column)
-        case .dictionaryLiteral(let entries, _):
-            let body = entries.map { dictionaryEntry($0, indent: indent, fileName: fileName, hints: hints) }.joined(separator: ", ")
-            return wrapper("{", body, "}", column: indent.column)
-        case .setLiteral(let elements, _):
-            let body = elements.map { expr($0, indent: indent, fileName: fileName, hints: hints) }.joined(separator: ", ")
-            return wrapper("{", body, "}", column: indent.column)
+        case .tuple(let labels, let elements, let location):
+            return tupleText(
+                labels: labels, elements: elements, literal: location,
+                indent: indent, fileName: fileName, hints: hints)
+        case .arrayLiteral(let elements, let location):
+            let inner = lineBreakIndent(
+                elements.map(\.location), literal: location, indent: indent, hints: hints)
+            return collectionLiteral(
+                head: "[", tail: "]",
+                texts: elements.map { expr($0, indent: inner ?? indent, fileName: fileName, hints: hints) },
+                inner: inner, column: indent.column, trailing: false)
+        case .dictionaryLiteral(let entries, let location):
+            let inner = lineBreakIndent(
+                entries.map(\.key.location), literal: location, indent: indent, hints: hints)
+            return collectionLiteral(
+                head: "{", tail: "}",
+                texts: entries.map {
+                    dictionaryEntry($0, indent: inner ?? indent, fileName: fileName, hints: hints)
+                },
+                inner: inner, column: indent.column, trailing: false)
+        case .setLiteral(let elements, let location):
+            let inner = lineBreakIndent(
+                elements.map(\.location), literal: location, indent: indent, hints: hints)
+            return collectionLiteral(
+                head: "{", tail: "}",
+                texts: elements.map { expr($0, indent: inner ?? indent, fileName: fileName, hints: hints) },
+                inner: inner, column: indent.column, trailing: false)
         case .funcLiteral(let decl, _):
             return funcLiteral(decl, indent: indent, fileName: fileName, hints: hints)
         case .genericConstruct(let typeName, let typeArgs, let arguments, _):
@@ -568,7 +584,10 @@ extension Printer {
         return form.postfix ? text + form.text : form.text + text
     }
 
-    static func tupleText(labels: [String?], elements: [Expression], indent: Indent, fileName: String, hints: PrintHints) -> String {
+    static func tupleText(
+        labels: [String?], elements: [Expression], literal: SourceLocation,
+        indent: Indent, fileName: String, hints: PrintHints
+    ) -> String {
         if elements.isEmpty { return "()" }
         let parts = elements.enumerated().map { index, element -> String in
             let text = expr(element, indent: indent, fileName: fileName, hints: hints)
@@ -577,7 +596,37 @@ extension Printer {
             }
             return text
         }
-        return wrapper("(", parts.joined(separator: ", "), ",)", column: indent.column)
+        return collectionLiteral(
+            head: "(", tail: ")",
+            texts: parts,
+            inner: lineBreakIndent(
+                elements.map(\.location), literal: literal, indent: indent, hints: hints),
+            column: indent.column, trailing: true)
+    }
+
+    /// 跨行字面量里元素的落位：首个不在字面量首行的元素定步长，取其源缩进减父块源缩进。
+    /// 差值非正或源缩进未知时取四格；内层字面量按这个落位再算，收尾括号才不会退回语句列。
+    static func lineBreakIndent(
+        _ starts: [SourceLocation], literal: SourceLocation, indent: Indent, hints: PrintHints
+    ) -> Indent? {
+        guard let first = starts.first(where: { $0.line != literal.line }) else { return nil }
+        let delta = (hints.indents[first.line] ?? (indent.source + 4)) - indent.source
+        let step = delta > 0 ? delta : 4
+        return Indent(column: indent.column + step, source: indent.source + step)
+    }
+
+    /// 拼集合字面量。单行沿用原拼接；作者断过行则一行一元素、末元素带逗号，收尾回父列。
+    /// 多行是规范形，只保留「断不断」，不还原元素原本挤在第几行。
+    static func collectionLiteral(
+        head: String, tail: String, texts: [String], inner: Indent?, column: Int, trailing: Bool
+    ) -> String {
+        let singleLine = texts.joined(separator: ", ") + (trailing ? "," : "")
+        guard let inner, !texts.isEmpty else {
+            return wrapper(head, singleLine, tail, column: column)
+        }
+        let pad = String(repeating: " ", count: inner.column)
+        let body = texts.map { pad + $0 + "," }.joined(separator: "\n")
+        return head + "\n" + body + "\n" + String(repeating: " ", count: column) + tail
     }
 
     static func dictionaryEntry(_ entry: DictEntry, indent: Indent, fileName: String, hints: PrintHints) -> String {

@@ -3,5 +3,5 @@ main|func() -> ():
         "a" = 1,
         "b" = 2,
     }
-    print(len(d),)
+    print(len(d))
     return
