@@ -149,7 +149,7 @@ struct FmtCommandCLITests {
             stderr: String(decoding: errData, as: UTF8.self))
     }
 
-    /// 故意不合规范形：缩进两格、行尾注释列对齐、连续空行。
+    /// 故意不合规范形：行尾注释列对齐、连续空行。缩进宽度是作者的选择，打印器不碰它。
     private var unformatted: String {
         """
         main|func() -> ():
@@ -161,12 +161,13 @@ struct FmtCommandCLITests {
         """ + "\n"
     }
 
+    /// 规范形只改注释间距与空行：二格缩进原样留下，故期望值也是二格。
     private var formatted: String {
         """
         main|func() -> ():
-            let a = 1 ; 行尾
-            print(a)
-            return
+          let a = 1 ; 行尾
+          print(a)
+          return
         """ + "\n"
     }
 
