@@ -25,10 +25,18 @@ public enum FrontEnd {
         scan(source: source, fileName: fileName).outcome
     }
 
-    /// 一次扫描的完整结果。注释不在 AST 里，只能由词法旁路带回；打印器要保住注释就得拿这份表。
+    /// 一次扫描的完整结果。注释与位置旁路都不在 AST 里，只能由词法带回；打印器要保住原写法就得拿这两份。
     public struct Scan {
         public let outcome: Outcome
         public let comments: CommentTable
+        /// 字面量原文与行前导空格。无源模式传 `PrintHints.empty`。
+        public let hints: PrintHints
+
+        public init(outcome: Outcome, comments: CommentTable, hints: PrintHints) {
+            self.outcome = outcome
+            self.comments = comments
+            self.hints = hints
+        }
     }
 
     /// 与 `collect` 同一条路径，额外带回注释表。词法失败时表里是失败点之前的注释。
@@ -36,9 +44,9 @@ public enum FrontEnd {
         let scan = syntaxOnly(source: source, fileName: fileName)
         guard case .parsed(let module) = scan.outcome else { return scan }
         do {
-            return Scan(outcome: .parsed(try passes(module: module)), comments: scan.comments)
+            return Scan(outcome: .parsed(try passes(module: module)), comments: scan.comments, hints: scan.hints)
         } catch {
-            return Scan(outcome: .expandFailed(error.errors), comments: scan.comments)
+            return Scan(outcome: .expandFailed(error.errors), comments: scan.comments, hints: scan.hints)
         }
     }
 
@@ -50,13 +58,13 @@ public enum FrontEnd {
         do {
             tokens = try lexer.tokenize()
         } catch {
-            return Scan(outcome: .lexFailed(error), comments: lexer.comments)
+            return Scan(outcome: .lexFailed(error), comments: lexer.comments, hints: lexer.hints)
         }
         let result = Parser(tokens: tokens, fileName: fileName).parseModuleCollectingErrors()
         guard result.errors.isEmpty else {
-            return Scan(outcome: .parseFailed(result.module, result.errors), comments: lexer.comments)
+            return Scan(outcome: .parseFailed(result.module, result.errors), comments: lexer.comments, hints: lexer.hints)
         }
-        return Scan(outcome: .parsed(result.module), comments: lexer.comments)
+        return Scan(outcome: .parsed(result.module), comments: lexer.comments, hints: lexer.hints)
     }
 
     /// 抛出模式：词法错误原样抛，语法错误抛首条，展开失败抛整批。适用于「有错即中止」的调用点。

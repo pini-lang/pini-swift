@@ -25,6 +25,17 @@ public class Lexer {
     /// 顺序即出现顺序；一次 `tokenize()` 之内只增不改。
     public private(set) var comments: [CommentEntry] = []
 
+    /// 字面量原拼写：AST 只存值，打印器要原文只能在这里取。
+    public private(set) var spellings: [PrintHints.Spelling] = []
+
+    /// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
+    public private(set) var indents: [Int: Int] = [:]
+
+    /// 本次扫描的位置旁路。词法失败时只含失败点之前的部分。
+    public var hints: PrintHints {
+        PrintHints(spellings: spellings, indents: indents)
+    }
+
     public init(source: String, fileName: String) {
         self.source = source
         self.chars = Array(source)
@@ -55,6 +66,7 @@ public class Lexer {
             } else {
                 let loc = currentLocation
                 let indentCount = countLeadingWhitespace()
+                indents[loc.line] = indentCount
                 let indentTokens = try indentTracker.processLineStart(whitespaceCount: indentCount, location: loc)
                 tokens.append(contentsOf: indentTokens)
             }
@@ -454,6 +466,7 @@ public class Lexer {
 
     private func numberLiteral() throws -> Token {
         let loc = currentLocation
+        let start = position
 
         // 进制前缀：0x / 0b / 0o
         if let first = currentChar, first == "0", let second = peek(offset: 1) {
@@ -468,30 +481,30 @@ public class Lexer {
                     _ = advance()
                     let rest = readRadixDigits("0123456789abcdefABCDEF")
                     if let value = Int(rest, radix: 16) {
-                        return .integerLiteral(value, loc)
+                        return spelled(.integerLiteral(value, loc), from: start, at: loc)
                     }
                 }
-                return .integerLiteral(0, loc)
+                return spelled(.integerLiteral(0, loc), from: start, at: loc)
             case "b":
                 _ = advance()
                 if let d3 = currentChar, d3 == "b", let d4 = peek(offset: 1), "01".contains(d4) {
                     _ = advance()
                     let rest = readRadixDigits("01")
                     if let value = Int(rest, radix: 2) {
-                        return .integerLiteral(value, loc)
+                        return spelled(.integerLiteral(value, loc), from: start, at: loc)
                     }
                 }
-                return .integerLiteral(0, loc)
+                return spelled(.integerLiteral(0, loc), from: start, at: loc)
             case "o":
                 _ = advance()
                 if let d3 = currentChar, d3 == "o", let d4 = peek(offset: 1), "01234567".contains(d4) {
                     _ = advance()
                     let rest = readRadixDigits("01234567")
                     if let value = Int(rest, radix: 8) {
-                        return .integerLiteral(value, loc)
+                        return spelled(.integerLiteral(value, loc), from: start, at: loc)
                     }
                 }
-                return .integerLiteral(0, loc)
+                return spelled(.integerLiteral(0, loc), from: start, at: loc)
             default:
                 break
             }
@@ -544,15 +557,23 @@ public class Lexer {
 
         if isFloat {
             if let value = Double(digits) {
-                return .floatLiteral(value, loc)
+                return spelled(.floatLiteral(value, loc), from: start, at: loc)
             }
             throw LexerError.invalidCharacter("Invalid float literal: \(digits)", loc)
         }
 
         if let value = Int(digits) {
-            return .integerLiteral(value, loc)
+            return spelled(.integerLiteral(value, loc), from: start, at: loc)
         }
         throw LexerError.invalidCharacter("Invalid integer literal: \(digits)", loc)
+    }
+
+    /// 交出记号的同时登记原文。原文取扫描前后的字符区间，故前缀大小写与指数写法原样保留。
+    private func spelled(_ token: Token, from start: Int, at loc: SourceLocation) -> Token {
+        guard start < position else { return token }
+        spellings.append(
+            PrintHints.Spelling(line: loc.line, column: loc.column, text: String(chars[start..<position])))
+        return token
     }
 
     private func readRadixDigits(_ allowed: String) -> String {
