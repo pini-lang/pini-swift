@@ -27,4 +27,12 @@ public struct PrintHints: Equatable, Sendable {
         self.spellings = spellings
         self.indents = indents
     }
+
+    /// 按位置取原文。查不到说明该节点没有源行——折叠产物与合成节点都走调用方的值输出。
+    public func spelling(at location: SourceLocation) -> String? {
+        for entry in spellings where entry.line == location.line && entry.column == location.column {
+            return entry.text
+        }
+        return nil
+    }
 }

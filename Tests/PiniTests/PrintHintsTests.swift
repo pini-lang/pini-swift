@@ -2,8 +2,8 @@ import Foundation
 import PiniSyntax
 import Testing
 
-/// 位置旁路判据：字面量原文与行前导空格必须被词法原样登记，且打印结果不因旁路而变。
-/// 本阶段只验登记与接线；取用方的判据在拼写与缩进两段。
+/// 位置旁路判据：字面量原文与行前导空格必须被词法原样登记，取用时只改写法不改树。
+/// 拼写保留与缩进还原的取用判据各见其套件。
 @Suite("位置旁路")
 struct PrintHintsTests {
 
@@ -74,8 +74,8 @@ struct PrintHintsTests {
         #expect(hints.indents[4] == 2)
     }
 
-    @Test("接线：带旁路打印与不带旁路逐字节相同")
-    func printingIsUnchanged() throws {
+    @Test("接线：旁路只改字面量写法，不改树")
+    func printingKeepsTree() throws {
         let source = """
             main|func() -> ():
                 let a = 0xFF
@@ -86,6 +86,14 @@ struct PrintHintsTests {
         let parsed = try #require(module(scanned))
         let plain = Printer.print(module: parsed, comments: scanned.comments)
         let withHints = Printer.print(module: parsed, comments: scanned.comments, hints: scanned.hints)
-        #expect(plain == withHints)
+        #expect(plain != withHints)
+        #expect(withHints.contains("0xFF"))
+
+        let reparsed = FrontEnd.syntaxOnly(source: withHints, fileName: "/tmp/hints.pini")
+        guard case .parsed(let again) = reparsed.outcome else {
+            Issue.record("保留拼写后的源码应可解析")
+            return
+        }
+        #expect(Printer.print(module: again) == Printer.print(module: parsed))
     }
 }
