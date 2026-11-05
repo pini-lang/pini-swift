@@ -28,8 +28,8 @@ fi
 PINI_BIN="$root/.build/debug/pini" python3 tools/fmt-gate.py || exit 1
 
 # 合并提交要把整棵树验一遍：并回主干就是待推送状态，等推送再验已经晚了。
-# 判据看 MERGE_HEAD 而不是分支名：合并失败后补 `git commit` 时它仍在，CI 会再跑一遍。
-if [ -e "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+# PINI_MERGE_GATE 由 pre-merge-commit 置位（那时 MERGE_HEAD 还没写），MERGE_HEAD 覆盖拦下后补的 git commit。
+if [ -n "${PINI_MERGE_GATE:-}" ] || [ -e "$(git rev-parse --git-path MERGE_HEAD)" ]; then
     bash ci/entrypoint.sh || exit 1
 fi
 
