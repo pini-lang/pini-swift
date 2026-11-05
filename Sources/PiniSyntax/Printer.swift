@@ -264,7 +264,7 @@ extension Printer.SourceWriter {
             anchor = field.location
             var text = "\(field.name): \(Printer.type(field.typeAnnotation))"
             if let initializer = field.initializer {
-                text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName))"
+                text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName, hints: hints))"
             }
             line(text)
         }
@@ -302,22 +302,22 @@ extension Printer.SourceWriter {
         case .varDecl(let name, let type, let initializer, let isMutable, _):
             var text = "\(isMutable ? "var" : "let") \(name)"
             if let type { text += ": \(Printer.type(type))" }
-            if let initializer { text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName))" }
+            if let initializer { text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName, hints: hints))" }
             line(text)
 
         case .varDestructure(let names, let type, let initializer, let isMutable, _):
             var text = "\(isMutable ? "var" : "let") (\(names.joined(separator: ", ")),)"
             if let type { text += ": \(Printer.type(type))" }
-            if let initializer { text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName))" }
+            if let initializer { text += " = \(Printer.expr(initializer, depth: depth, fileName: fileName, hints: hints))" }
             line(text)
 
         case .assign(let target, let value, _):
-            let right = Printer.expr(value, depth: depth, fileName: fileName)
-            line("\(Printer.assignTarget(target, depth: depth, fileName: fileName)) = \(right)")
+            let right = Printer.expr(value, depth: depth, fileName: fileName, hints: hints)
+            line("\(Printer.assignTarget(target, depth: depth, fileName: fileName, hints: hints)) = \(right)")
 
         case .returnStatement(let value, _):
             if let value {
-                line("return \(Printer.expr(value, depth: depth, fileName: fileName))")
+                line("return \(Printer.expr(value, depth: depth, fileName: fileName, hints: hints))")
             } else {
                 line("return")
             }
@@ -329,12 +329,12 @@ extension Printer.SourceWriter {
             line(label.map { "continue \($0)" } ?? "continue")
 
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, let label, _):
-            let head = Printer.labelPrefix(label) + "if " + Printer.expr(condition, depth: depth, fileName: fileName)
+            let head = Printer.labelPrefix(label) + "if " + Printer.expr(condition, depth: depth, fileName: fileName, hints: hints)
             line(head + ":")
             write(nested: thenBlock)
             for branch in elifs {
                 anchor = branch.block.location
-                line("elif \(Printer.expr(branch.condition, depth: depth, fileName: fileName)):")
+                line("elif \(Printer.expr(branch.condition, depth: depth, fileName: fileName, hints: hints)):")
                 write(nested: branch.block)
             }
             if let elseBlock {
@@ -344,14 +344,14 @@ extension Printer.SourceWriter {
             }
 
         case .whileStatement(let condition, let body, let step, let label, _):
-            let head = Printer.labelPrefix(label) + "while " + Printer.expr(condition, depth: depth, fileName: fileName)
+            let head = Printer.labelPrefix(label) + "while " + Printer.expr(condition, depth: depth, fileName: fileName, hints: hints)
             line(head + ":")
             write(nested: body)
             write(step: step)
 
         case .forStatement(let pattern, let iterable, let body, let step, let label, _):
             let head = Printer.labelPrefix(label) + "for (" + pattern.joined(separator: ", ") + ",) in "
-                + Printer.expr(iterable, depth: depth, fileName: fileName)
+                + Printer.expr(iterable, depth: depth, fileName: fileName, hints: hints)
             line(head + ":")
             write(nested: body)
             write(step: step)
@@ -359,11 +359,11 @@ extension Printer.SourceWriter {
         case .unrollStatement(let pattern, let table, let body, _):
             line(
                 "unroll (" + pattern.joined(separator: ", ") + ",) in "
-                    + Printer.expr(table, depth: depth, fileName: fileName) + ":")
+                    + Printer.expr(table, depth: depth, fileName: fileName, hints: hints) + ":")
             write(nested: body)
 
         case .matchStatement(let value, let cases, _):
-            line("match \(Printer.expr(value, depth: depth, fileName: fileName)):")
+            line("match \(Printer.expr(value, depth: depth, fileName: fileName, hints: hints)):")
             depth += 1
             for matchCase in cases {
                 anchor = matchCase.location
@@ -379,17 +379,17 @@ extension Printer.SourceWriter {
             write(statements: body.statements)
 
         case .detachStatement(let expression, _):
-            line("detach \(Printer.expr(expression, depth: depth, fileName: fileName))")
+            line("detach \(Printer.expr(expression, depth: depth, fileName: fileName, hints: hints))")
 
         case .expressionStmt(let expression, _):
-            line(Printer.expr(expression, depth: depth, fileName: fileName))
+            line(Printer.expr(expression, depth: depth, fileName: fileName, hints: hints))
 
         case .deferStatement(let inner, _):
             if case .scopedBlock(_, let body, _) = inner {
                 line("defer:")
                 write(nested: body)
             } else {
-                line("defer " + (Printer.inlineStatement(inner, depth: depth, fileName: fileName) ?? ""))
+                line("defer " + (Printer.inlineStatement(inner, depth: depth, fileName: fileName, hints: hints) ?? ""))
             }
 
         case .passStatement:
@@ -426,18 +426,18 @@ extension Printer.SourceWriter {
 extension Printer {
 
     /// 行内表达式文本。函数字面量的多语句体自带换行与缩进，故这里要带 `depth`。
-    static func expr(_ node: Expression, depth: Int, fileName: String) -> String {
+    static func expr(_ node: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
         switch node {
         case .identifier(let name, _):
             return name
-        case .integerLiteral(let value, _):
-            return "\(value)"
-        case .floatLiteral(let value, _):
-            return float(value)
+        case .integerLiteral(let value, let location):
+            return hints.spelling(at: location) ?? "\(value)"
+        case .floatLiteral(let value, let location):
+            return hints.spelling(at: location) ?? float(value)
         case .stringLiteral(let value, _):
             return quote(value)
         case .stringInterpolation(let segments, _):
-            return interpolated(segments, depth: depth, fileName: fileName)
+            return interpolated(segments, depth: depth, fileName: fileName, hints: hints)
         case .boolLiteral(let value, _):
             return value ? "true" : "false"
         case .selfKeyword:
@@ -447,54 +447,54 @@ extension Printer {
         case .dotCaseRef(let name, _):
             return ".\(name)"
         case .binary(let left, let op, let right, _):
-            return binaryText(left: left, op: op, right: right, depth: depth, fileName: fileName)
+            return binaryText(left: left, op: op, right: right, depth: depth, fileName: fileName, hints: hints)
         case .unary(let op, let operand, _):
-            return unaryText(op: op, operand: operand, depth: depth, fileName: fileName)
+            return unaryText(op: op, operand: operand, depth: depth, fileName: fileName, hints: hints)
         case .call(let callee, let arguments, _):
             return wrapper(
-                atom(callee, depth: depth, fileName: fileName) + "(",
-                callArguments(arguments, depth: depth, fileName: fileName), ")", depth: depth)
+                atom(callee, depth: depth, fileName: fileName, hints: hints) + "(",
+                callArguments(arguments, depth: depth, fileName: fileName, hints: hints), ")", depth: depth)
         case .member(let object, let name, _):
-            return atom(object, depth: depth, fileName: fileName) + "." + name
+            return atom(object, depth: depth, fileName: fileName, hints: hints) + "." + name
         case .tupleIndex(let object, let index, _):
-            return atom(object, depth: depth, fileName: fileName) + ".\(index)"
+            return atom(object, depth: depth, fileName: fileName, hints: hints) + ".\(index)"
         case .subscript(let target, let index, _):
             return wrapper(
-                atom(target, depth: depth, fileName: fileName) + "[",
-                expr(index, depth: depth, fileName: fileName), "]", depth: depth)
+                atom(target, depth: depth, fileName: fileName, hints: hints) + "[",
+                expr(index, depth: depth, fileName: fileName, hints: hints), "]", depth: depth)
         case .tuple(let labels, let elements, _):
-            return tupleText(labels: labels, elements: elements, depth: depth, fileName: fileName)
+            return tupleText(labels: labels, elements: elements, depth: depth, fileName: fileName, hints: hints)
         case .arrayLiteral(let elements, _):
-            let body = elements.map { expr($0, depth: depth, fileName: fileName) }.joined(separator: ", ")
+            let body = elements.map { expr($0, depth: depth, fileName: fileName, hints: hints) }.joined(separator: ", ")
             return wrapper("[", body, "]", depth: depth)
         case .dictionaryLiteral(let entries, _):
-            let body = entries.map { dictionaryEntry($0, depth: depth, fileName: fileName) }.joined(separator: ", ")
+            let body = entries.map { dictionaryEntry($0, depth: depth, fileName: fileName, hints: hints) }.joined(separator: ", ")
             return wrapper("{", body, "}", depth: depth)
         case .setLiteral(let elements, _):
-            let body = elements.map { expr($0, depth: depth, fileName: fileName) }.joined(separator: ", ")
+            let body = elements.map { expr($0, depth: depth, fileName: fileName, hints: hints) }.joined(separator: ", ")
             return wrapper("{", body, "}", depth: depth)
         case .funcLiteral(let decl, _):
-            return funcLiteral(decl, depth: depth, fileName: fileName)
+            return funcLiteral(decl, depth: depth, fileName: fileName, hints: hints)
         case .genericConstruct(let typeName, let typeArgs, let arguments, _):
             let types = typeArgs.map { type($0) }.joined(separator: ", ")
             let tail = types.hasSuffix(">") ? " >" : ">"
             return wrapper(
                 "\(typeName)<\(types)\(tail)(",
-                callArguments(arguments, depth: depth, fileName: fileName), ")", depth: depth)
+                callArguments(arguments, depth: depth, fileName: fileName, hints: hints), ")", depth: depth)
         case .join(let operand, _, let form):
-            return "\(form.keyword) " + atom(operand, depth: depth, fileName: fileName)
+            return "\(form.keyword) " + atom(operand, depth: depth, fileName: fileName, hints: hints)
         case .tryExpression(let operand, let errorVar, let handler, _):
-            return tryText(operand: operand, errorVar: errorVar, handler: handler, depth: depth, fileName: fileName)
+            return tryText(operand: operand, errorVar: errorVar, handler: handler, depth: depth, fileName: fileName, hints: hints)
         case .unsafe(let operand, _):
-            return "unsafe " + atom(operand, depth: depth, fileName: fileName)
+            return "unsafe " + atom(operand, depth: depth, fileName: fileName, hints: hints)
         case .addressOf(let operand, _):
-            return "&" + atom(operand, depth: depth, fileName: fileName)
+            return "&" + atom(operand, depth: depth, fileName: fileName, hints: hints)
         }
     }
 
     /// 基座位：不是原子节点就套括号，避免后缀落到子树里层去。
-    static func atom(_ node: Expression, depth: Int, fileName: String) -> String {
-        isAtomic(node) ? expr(node, depth: depth, fileName: fileName) : "(" + expr(node, depth: depth, fileName: fileName) + ")"
+    static func atom(_ node: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
+        isAtomic(node) ? expr(node, depth: depth, fileName: fileName, hints: hints) : "(" + expr(node, depth: depth, fileName: fileName, hints: hints) + ")"
     }
 
     /// 拼包围结构：体内出现换行时，收尾符号另起一行并回到语句缩进。
@@ -504,10 +504,10 @@ extension Printer {
         return head + body + "\n" + String(repeating: "    ", count: depth) + tail
     }
 
-    static func binaryText(left: Expression, op: BinaryOperator, right: Expression, depth: Int, fileName: String) -> String {
+    static func binaryText(left: Expression, op: BinaryOperator, right: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
         let level = precedence(op)
-        var leftText = expr(left, depth: depth, fileName: fileName)
-        var rightText = expr(right, depth: depth, fileName: fileName)
+        var leftText = expr(left, depth: depth, fileName: fileName, hints: hints)
+        var rightText = expr(right, depth: depth, fileName: fileName, hints: hints)
         if case .binary(_, let childOp, _, _) = left, precedence(childOp) < level {
             leftText = "(" + leftText + ")"
         }
@@ -517,16 +517,16 @@ extension Printer {
         return leftText + " " + spelling(op) + " " + rightText
     }
 
-    static func unaryText(op: UnaryOperator, operand: Expression, depth: Int, fileName: String) -> String {
+    static func unaryText(op: UnaryOperator, operand: Expression, depth: Int, fileName: String, hints: PrintHints) -> String {
         let form = spelling(op)
-        let text = atom(operand, depth: depth, fileName: fileName)
+        let text = atom(operand, depth: depth, fileName: fileName, hints: hints)
         return form.postfix ? text + form.text : form.text + text
     }
 
-    static func tupleText(labels: [String?], elements: [Expression], depth: Int, fileName: String) -> String {
+    static func tupleText(labels: [String?], elements: [Expression], depth: Int, fileName: String, hints: PrintHints) -> String {
         if elements.isEmpty { return "()" }
         let parts = elements.enumerated().map { index, element -> String in
-            let text = expr(element, depth: depth, fileName: fileName)
+            let text = expr(element, depth: depth, fileName: fileName, hints: hints)
             if labels.indices.contains(index), let label = labels[index] {
                 return "\(label) = \(text)"
             }
@@ -535,42 +535,43 @@ extension Printer {
         return wrapper("(", parts.joined(separator: ", "), ",)", depth: depth)
     }
 
-    static func dictionaryEntry(_ entry: DictEntry, depth: Int, fileName: String) -> String {
-        let key = expr(entry.key, depth: depth, fileName: fileName)
-        let value = expr(entry.value, depth: depth, fileName: fileName)
+    static func dictionaryEntry(_ entry: DictEntry, depth: Int, fileName: String, hints: PrintHints) -> String {
+        let key = expr(entry.key, depth: depth, fileName: fileName, hints: hints)
+        let value = expr(entry.value, depth: depth, fileName: fileName, hints: hints)
         if let valueType = entry.valueType {
             return "\(key): \(type(valueType)) = \(value)"
         }
         return "\(key) = \(value)"
     }
 
-    static func callArguments(_ arguments: [CallArgument], depth: Int, fileName: String) -> String {
+    static func callArguments(_ arguments: [CallArgument], depth: Int, fileName: String, hints: PrintHints) -> String {
         arguments.map { argument -> String in
-            let text = expr(argument.expression, depth: depth, fileName: fileName)
+            let text = expr(argument.expression, depth: depth, fileName: fileName, hints: hints)
             guard let label = argument.label else { return text }
             return "\(label) = \(text)"
         }.joined(separator: ", ")
     }
 
     /// 函数字面量：单语句体写成同一行，多语句体另起缩进块。
-    static func funcLiteral(_ decl: FuncDecl, depth: Int, fileName: String) -> String {
+    static func funcLiteral(_ decl: FuncDecl, depth: Int, fileName: String, hints: PrintHints) -> String {
         var head = "func (" + parameters(decl.params) + ")"
         head += (decl.isAsync ? " => " : " -> ") + "(" + returnTypes(decl.returnTypes, labels: decl.returnLabels) + ")"
         guard let body = decl.body else { return head }
         if body.statements.count == 1,
-            let inline = inlineStatement(body.statements[0], depth: depth + 1, fileName: fileName)
+            let inline = inlineStatement(
+                body.statements[0], depth: depth + 1, fileName: fileName, hints: hints)
         {
             return head + ": " + inline
         }
-        var writer = SourceWriter(fileName: fileName)
+        var writer = SourceWriter(fileName: fileName, hints: hints)
         writer.depth = depth + 1
         writer.write(statements: body.statements)
         return head + ":\n" + writer.text
     }
 
-    static func tryText(operand: Expression, errorVar: String, handler: Block, depth: Int, fileName: String) -> String {
-        let head = "try " + expr(operand, depth: depth, fileName: fileName) + " else " + errorVar + ":"
-        var writer = SourceWriter(fileName: fileName)
+    static func tryText(operand: Expression, errorVar: String, handler: Block, depth: Int, fileName: String, hints: PrintHints) -> String {
+        let head = "try " + expr(operand, depth: depth, fileName: fileName, hints: hints) + " else " + errorVar + ":"
+        var writer = SourceWriter(fileName: fileName, hints: hints)
         writer.depth = depth + 1
         if handler.statements.isEmpty {
             writer.line("pass")
@@ -581,16 +582,16 @@ extension Printer {
     }
 
     /// 单行语句的文本；写不成一行的返回 nil，由调用方改走缩进块。
-    static func inlineStatement(_ statement: Statement, depth: Int, fileName: String) -> String? {
+    static func inlineStatement(_ statement: Statement, depth: Int, fileName: String, hints: PrintHints) -> String? {
         switch statement {
         case .expressionStmt(let expression, _):
-            return expr(expression, depth: depth, fileName: fileName)
+            return expr(expression, depth: depth, fileName: fileName, hints: hints)
         case .returnStatement(let value, _):
             guard let value else { return "return" }
-            return "return " + expr(value, depth: depth, fileName: fileName)
+            return "return " + expr(value, depth: depth, fileName: fileName, hints: hints)
         case .assign(let target, let value, _):
-            return assignTarget(target, depth: depth, fileName: fileName) + " = "
-                + expr(value, depth: depth, fileName: fileName)
+            return assignTarget(target, depth: depth, fileName: fileName, hints: hints) + " = "
+                + expr(value, depth: depth, fileName: fileName, hints: hints)
         case .passStatement:
             return "pass"
         case .breakStatement(let label, _):
@@ -600,26 +601,26 @@ extension Printer {
         case .captureStatement(let name, _):
             return "capture \(name)"
         case .detachStatement(let expression, _):
-            return "detach " + expr(expression, depth: depth, fileName: fileName)
+            return "detach " + expr(expression, depth: depth, fileName: fileName, hints: hints)
         case .varDecl(let name, let annotation, let initializer, let isMutable, _):
             var text = "\(isMutable ? "var" : "let") \(name)"
             if let annotation { text += ": \(type(annotation))" }
-            if let initializer { text += " = \(expr(initializer, depth: depth, fileName: fileName))" }
+            if let initializer { text += " = \(expr(initializer, depth: depth, fileName: fileName, hints: hints))" }
             return text
         default:
             return nil
         }
     }
 
-    static func assignTarget(_ target: AssignTarget, depth: Int, fileName: String) -> String {
+    static func assignTarget(_ target: AssignTarget, depth: Int, fileName: String, hints: PrintHints) -> String {
         switch target {
         case .identifier(let name):
             return name
         case .member(let object, let name):
-            return atom(object, depth: depth, fileName: fileName) + "." + name
+            return atom(object, depth: depth, fileName: fileName, hints: hints) + "." + name
         case .subscript(let target, let index):
-            return atom(target, depth: depth, fileName: fileName) + "["
-                + expr(index, depth: depth, fileName: fileName) + "]"
+            return atom(target, depth: depth, fileName: fileName, hints: hints) + "["
+                + expr(index, depth: depth, fileName: fileName, hints: hints) + "]"
         }
     }
 }
@@ -817,14 +818,14 @@ extension Printer {
         return text + "\""
     }
 
-    static func interpolated(_ segments: [InterpolationSegment], depth: Int, fileName: String) -> String {
+    static func interpolated(_ segments: [InterpolationSegment], depth: Int, fileName: String, hints: PrintHints) -> String {
         var text = "\""
         for segment in segments {
             switch segment {
             case .literal(let value):
                 text += String(quote(value).dropFirst().dropLast())
             case .expression(let expression):
-                text += "\\(" + expr(expression, depth: depth, fileName: fileName) + ")"
+                text += "\\(" + expr(expression, depth: depth, fileName: fileName, hints: hints) + ")"
             }
         }
         return text + "\""
