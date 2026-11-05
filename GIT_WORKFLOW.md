@@ -71,9 +71,12 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 
 ## 5. 防弹跳强制（可选启用，推荐）
 
-仓库提供 `hooks/pre-commit`，每次提交依次执行：① 校验 author / committer 身份是否已在 §2 注册；② 注释门禁；③ 格式门禁（含「产物不旧于源码」）。
+仓库提供两个钩子：
 
-**合并提交额外跑整条本地 CI**（`ci/entrypoint.sh`：构建、全部门禁、带 `PINI_CLI_BIN` 的测试）。判据看 `MERGE_HEAD` 而不是分支名——并回主干就是待推送状态，等推送再验已经晚了；合并被拦下后补 `git commit` 时它仍在，CI 会再跑一遍。
+- `hooks/pre-merge-commit`：`git merge` 不跑 `pre-commit`，合并提交由它转交，判据只有一份。
+- `hooks/pre-commit`：① 校验 author / committer 身份是否已在 §2 注册；② 注释门禁；③ 格式门禁（含「产物不旧于源码」）；④ 检测到 `MERGE_HEAD` 时追加整条 `ci/entrypoint.sh`（构建、全部门禁、带 `PINI_CLI_BIN` 的测试）。
+
+判据看 `MERGE_HEAD` 而不是分支名——并回主干就是待推送状态，等推送再验已经晚了；合并被拦下后补 `git commit` 时它仍在，CI 会再跑一遍。
 
 启用（一次性，仅本地）：
 
