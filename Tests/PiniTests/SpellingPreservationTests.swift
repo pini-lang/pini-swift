@@ -81,6 +81,42 @@ struct SpellingPreservationTests {
         #expect(text.contains("0x10"))
     }
 
+    @Test("case 模式的字面量同样保留")
+    func keepsCasePattern() throws {
+        let source = """
+            main|func() -> ():
+                var x = 255
+                match x:
+                    case 0xFF:
+                        print(1)
+                    case 0b1010:
+                        print(2)
+                    case _:
+                        print(0)
+                return
+            """
+        let text = try #require(printed(source))
+        #expect(text.contains("case 0xFF:"))
+        #expect(text.contains("case 0b1010:"))
+        #expect(!text.contains("case 255:"))
+    }
+
+    @Test("case 模式的指数写法同样保留")
+    func keepsFloatCasePattern() throws {
+        let source = """
+            main|func() -> ():
+                var x = 3.0
+                match x:
+                    case 1.5e3:
+                        print(1)
+                    case _:
+                        print(0)
+                return
+            """
+        let text = try #require(printed(source))
+        #expect(text.contains("case 1.5e3:"))
+    }
+
     @Test("折叠产物不继承字面量原文")
     func foldedLiteralFallsBack() throws {
         let text = try #require(printed("main|func() -> ():\n    print(0xFF + 1)\n    return\n", folding: true))

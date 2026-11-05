@@ -5201,8 +5201,8 @@ public enum IRLowerer {
     /// wildcard patterns, whose dispatch is not value-based.
     private static func literalOperand(of pattern: MatchPattern) -> IRMatchLiteral? {
         switch pattern {
-        case .intLiteral(let n): return .int(n)
-        case .floatLiteral(let f): return .float(f)
+        case .intLiteral(let n, _): return .int(n)
+        case .floatLiteral(let f, _): return .float(f)
         case .stringLiteral(let s): return .string(s)
         case .boolLiteral(let b): return .boolean(b)
         case .enumCase, .wildcard: return nil

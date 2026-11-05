@@ -47,6 +47,17 @@ struct InlineFormTests {
         #expect(try #require(printed(source)) == expected)
     }
 
+    @Test("退回块形的体跟随父块步长")
+    func fallbackFollowsParentStep() throws {
+        let two = "main|func() -> ():\n  while true: print(2)\n  return\n"
+        let twoExpected = "main|func() -> ():\n  while true:\n    print(2)\n  return\n"
+        #expect(try #require(printed(two)) == twoExpected)
+
+        let three = "main|func() -> ():\n   while true: print(2)\n   return\n"
+        let threeExpected = "main|func() -> ():\n   while true:\n      print(2)\n   return\n"
+        #expect(try #require(printed(three)) == threeExpected)
+    }
+
     @Test("二次打印逐字节相同")
     func idempotent() throws {
         let source = "main|func() -> ():\n    if true: print(1)\n    return\n"
