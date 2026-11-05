@@ -38,7 +38,9 @@ extension IRType {
     public var shareClass: IRShareClass {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean: return .inert
-        case .string, .char: return .retained(.string)
+        case .string: return .retained(.string)
+        /// `Char` 是值：内联在 i64 里，或者是一个**不计数**的堆缓冲区 ⇒ 既不 retain 也不 release。
+        case .char: return .inert
         case .array: return .retained(.array)
         case .dict: return .retained(.dict)
         case .set: return .retained(.set)

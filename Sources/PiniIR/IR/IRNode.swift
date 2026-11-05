@@ -83,7 +83,9 @@ public indirect enum IRType: Equatable {
         case .f64: return "double"
         case .boolean: return "i1"
         case .string: return "i8*"
-        case .char: return "i8*"
+        /// `Char` 是**八字节内联值**：七字节 UTF-8 载荷加一字节长度，超长才退化成带头堆指针。
+        /// 槽宽与指针相同，且不经过分配器 —— `s[i]` 是一次整字读。
+        case .char: return "i64"
         case .result(let ok):
             return "{ i64, \(ok.llvmSpelling), i64 }"
         case .future:

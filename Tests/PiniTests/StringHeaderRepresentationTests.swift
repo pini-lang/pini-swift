@@ -85,12 +85,19 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
     @Test("下标按字素取：纯 ASCII 走字节直取，多字节仍按字素簇")
     func 下标按字素() {
         let ascii = dup("abc")
-        #expect(String(cString: bk_string_char_at(ascii, 1)!) == "b")
-        #expect(String(cString: bk_string_char_at(ascii, -1)!) == "c")
+        #expect(解包(bk_string_char_at(ascii, 1)) == "b")
+        #expect(解包(bk_string_char_at(ascii, -1)) == "c")
         let cjk = dup("汉字")
-        #expect(String(cString: bk_string_char_at(cjk, 1)!) == "字")
+        #expect(解包(bk_string_char_at(cjk, 1)) == "字")
         bk_str_release(ascii)
         bk_str_release(cjk)
+    }
+
+    /// 把一个 `Char`（八字节内联值）解成 Swift `String`：走与发射层同一条 `bk_char_to_string`。
+    private func 解包(_ value: Int64) -> String {
+        let text = bk_char_to_heap_string(value)
+        defer { bk_str_release(text) }
+        return String(cString: text)
     }
 
     @Test("追加不受固定栈缓冲限制：两万字节的串长度与内容都对")

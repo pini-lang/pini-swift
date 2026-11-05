@@ -103,6 +103,8 @@ public final class IREmitter {
     /// 匿名常量（`@.str<序号>`）已发出几个 —— 具名常量不计入，故不影响它们的编号。
     private var anonymousStringConstantCount = 0
     private var usesStrCmp = false
+    /// 是否发过「先比长度再 `memcmp`」的等值比较：`==` / `!=` 走这条路，声明随之条件出现。
+    private var usesMemCmp = false
     /// 是否发过 `bk_str_concat` / `bk_str_append_cstr`：拼接与插值都走这两个入口，声明随之条件出现。
     private var usesStringBuilders = false
 
@@ -440,6 +442,7 @@ public final class IREmitter {
         errorCodeTableNames = [:]
         anonymousStringConstantCount = 0
         usesStrCmp = false
+        usesMemCmp = false
         usesStringBuilders = false
         usesLazyRef = false
         usesFileWrite = false
@@ -576,6 +579,9 @@ public final class IREmitter {
         if usesStrCmp {
             tail += "declare i32 @strcmp(ptr, ptr)\n"
         }
+        if usesMemCmp {
+            tail += "declare i32 @memcmp(ptr, ptr, i64)\n"
+        }
         /// LazyRef 句柄类型 + C ABI 声明：只在模块真的创建 / 读取惰性引用时才追加。
         if usesLazyRef {
             tail += "%bk_lazyref = type { ptr }\n"
@@ -651,6 +657,9 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_ord")
             tail += Builtins.declaration(for: "bk_is_letter")
             tail += Builtins.declaration(for: "bk_is_number")
+            tail += Builtins.declaration(for: "bk_char_to_heap_string")
+            tail += Builtins.declaration(for: "bk_char_equal")
+            tail += Builtins.declaration(for: "bk_char_equal_string")
         }
         if usesProcessShims {
             tail += Builtins.declaration(for: "bk_argv")
@@ -1307,7 +1316,7 @@ public final class IREmitter {
     /// `*T` 指针不算：它是外部内存，与计数头无关；本条按 `IRType` 判，`.pointer` 天然排除。
     private func isRefcountedString(_ type: IRType) -> Bool {
         switch type {
-        case .string, .char: return true
+        case .string: return true
         default: return false
         }
     }
@@ -1357,7 +1366,8 @@ public final class IREmitter {
                case .load(let source, _) = lhsExpr, source == name {
                 let current = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: current, type: "i8*", ptr: slot) + "\n"
-                let rhsValue = emitExpr(rhsExpr)
+                let rhsRaw = emitExpr(rhsExpr)
+                let rhsValue = irType(of: rhsExpr) == .char ? charToCString(rhsRaw) : rhsRaw
                 let next = builder.freshTemp()
                 usesStringBuilders = true
                 bodyIR +=
@@ -1704,12 +1714,29 @@ public final class IREmitter {
     private func emitLiteralComparison(_ literal: IRMatchLiteral, scrutinee: IRValue) -> String? {
         switch (scrutinee.llvmType, literal) {
         case ("i8*", .string(let value)):
-            usesStrCmp = true
+            /// 字面量的长度编译期已知，只需读被测值头里的长度：不等即不匹配，等才 `memcmp`。
+            /// 语义与 `==` 同一条（长度加字节），故 `match` 与 `==` 不会给出相反答案。
+            usesMemCmp = true
             let literalValue = emitStringConstant(value)
+            let literalLength = Int32(value.utf8.count)
+            let slot = builder.freshTemp()
+            bodyIR +=
+                " \(slot) = getelementptr inbounds i8, ptr \(scrutinee.ssaName), i64 \(Self.stringLenOffset)\n"
+            let length = builder.freshTemp()
+            bodyIR += " \(length) = load i32, ptr \(slot)\n"
+            let sameLength = builder.freshTemp()
+            bodyIR += " \(sameLength) = icmp eq i32 \(length), \(literalLength)\n"
+            let compareLength = builder.freshTemp()
+            bodyIR += " \(compareLength) = select i1 \(sameLength), i32 \(length), i32 0\n"
+            let compareLength64 = builder.freshTemp()
+            bodyIR += " \(compareLength64) = zext i32 \(compareLength) to i64\n"
             let ordering = builder.freshTemp()
-            bodyIR += " \(ordering) = call i32 @strcmp(ptr \(scrutinee.ssaName), ptr \(literalValue.ssaName))\n"
+            bodyIR +=
+                " \(ordering) = call i32 @memcmp(ptr \(scrutinee.ssaName), ptr \(literalValue.ssaName), i64 \(compareLength64))\n"
+            let payloadEqual = builder.freshTemp()
+            bodyIR += " \(payloadEqual) = icmp eq i32 \(ordering), 0\n"
             let result = builder.freshTemp()
-            bodyIR += " \(result) = icmp eq i32 \(ordering), 0\n"
+            bodyIR += " \(result) = and i1 \(sameLength), \(payloadEqual)\n"
             return result
         case (let spelling, .int(let value))
         where spelling == "i8" || spelling == "i32" || spelling == "i64":
@@ -2383,8 +2410,8 @@ public final class IREmitter {
                     result = IRValue(llvmType: "%bk_array*", ssaName: temp)
                 case "chr":
                     let temp = builder.freshTemp()
-                    bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
-                    result = IRValue(llvmType: "i8*", ssaName: temp)
+                    bodyIR += " \(temp) = call i64 @\(symbol)(\(argList))\n"
+                    result = IRValue(llvmType: "i64", ssaName: temp)
                 case "ord":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call i32 @\(symbol)(\(argList))\n"
@@ -2743,8 +2770,11 @@ public final class IREmitter {
             return joined
 
         case .stringConcat(let lhs, let rhs):
-            let lhsValue = emitExpr(lhs)
-            let rhsValue = emitExpr(rhs)
+            let lhsRaw = emitExpr(lhs)
+            let rhsRaw = emitExpr(rhs)
+            /// `Char` 参与拼接时先落成 C 串：它是八字节内联值，不能当指针传给 `bk_str_concat`。
+            let lhsValue = irType(of: lhs) == .char ? charToCString(lhsRaw) : lhsRaw
+            let rhsValue = irType(of: rhs) == .char ? charToCString(rhsRaw) : rhsRaw
             let joined = builder.freshTemp()
             /// 长度从两边的头里读，不再 `strlen` —— 这是 `a + b + c` 从 O(n²) 掉到 O(n) 的前提。
             ///  行不通  退回 `strlen` + 精确分配：每级临时串都要重扫全长，且没有增容余量留给下次追加。
@@ -3182,9 +3212,8 @@ public final class IREmitter {
         case .f64: return ("double", 8, 1)
         case .boolean: return ("i1", 1, 2)
         case .string: return ("i8*", 8, 4)
-        /// `Char`, declared rather than left to the default: it rides on `string` because the representation
-        /// is the same, so the raw-ptr tag applies for the reason above — a grapheme has no share count.
-        case .char: return ("i8*", 8, 4)
+        /// `Char` 是八字节内联值，按 i32 族那一格走按值 tag：它不是指针，装箱既不留也不还。
+        case .char: return ("i64", 8, 0)
         default:
             refuse(
                 node: "lazyRefConstruct", family: .lazyRef,
@@ -3203,9 +3232,8 @@ public final class IREmitter {
         case .f64: suffix = "f64"
         case .boolean: suffix = "i1"
         case .string: suffix = "ptr"
-        /// Same spelling as `string` on purpose — identical ABI means one
-        /// wrapper, and the dedup guard below then shares it.
-        case .char: suffix = "ptr"
+        /// `Char` 是八字节内联值，与 `string` 的指针 ABI 不同 ⇒ 各自一份包装，不能共用。
+        case .char: suffix = "i64"
         default: suffix = elemSpelling.replacingOccurrences(of: " ", with: "_")
         }
         guard !lazyrefWrapperNames.contains(suffix) else { return "__lazyref_wrapper_\(suffix)" }
@@ -4234,7 +4262,7 @@ public final class IREmitter {
             // 到此 `effective` 必在 `[0, count)` ⇒ 运行时段不会 panic（容错通道）。
             let charAt = builder.freshTemp()
             bodyIR +=
-                " \(charAt) = call ptr @bk_string_char_at(ptr \(containerValue.ssaName), "
+                " \(charAt) = call i64 @bk_string_char_at(ptr \(containerValue.ssaName), "
                 + "i32 \(effective))\n"
             value = charAt
         } else {
@@ -4286,7 +4314,8 @@ public final class IREmitter {
         case .f64: return ("double", 8, 1)
         case .boolean: return ("i1", 1, 2)
         case .string: return ("i8*", 8, 3)
-        case .char: return ("i8*", 8, 3)
+        /// `Char` 按值装箱（tag 0）：它不是指针，容器销毁时不发 release。
+        case .char: return ("i64", 8, 0)
         case .array: return ("%bk_array*", 8, 4)
         case .dict: return ("%bk_dict*", 8, 4)
         case .set: return ("%bk_set*", 8, 4)
@@ -4481,9 +4510,9 @@ public final class IREmitter {
             usesStringShims = true
             let charAt = builder.freshTemp()
             bodyIR +=
-                " \(charAt) = call ptr @bk_string_char_at(ptr \(containerValue.ssaName), "
+                " \(charAt) = call i64 @bk_string_char_at(ptr \(containerValue.ssaName), "
                 + "i32 \(indexValue.ssaName))\n"
-            return IRValue(llvmType: "i8*", ssaName: charAt)
+            return IRValue(llvmType: "i64", ssaName: charAt)
         }
 
         let raw = builder.freshTemp()
@@ -4645,6 +4674,15 @@ public final class IREmitter {
         let temp = builder.freshTemp()
 
         if op.isComparison {
+            let lhsType = irType(of: lhs)
+            let rhsType = irType(of: rhs)
+            /// `Char` 是八字节内联值：它参与的比较不能落到 `icmp` / `strcmp` 的通用路径上，
+            /// 内联字比的是内容、指针形态比的是地址，只有运行时那条说得清。
+            if lhsType == .char || rhsType == .char {
+                return emitCharComparison(
+                    op: op, lhsValue: lhsValue, rhsValue: rhsValue,
+                    lhsType: lhsType, rhsType: rhsType)
+            }
             let predicate = comparePredicate(
                 op: op, operandType: lhsValue.llvmType, temp: temp,
                 lhs: lhsValue, rhs: rhsValue)
@@ -4692,20 +4730,93 @@ public final class IREmitter {
         return IRValue(llvmType: type.llvmSpelling, ssaName: temp)
     }
 
-    /// Comparison line body for the operand kind. Strings compare via strcmp
+    /// `Char` 参与的比较：两侧都是 `Char` 走整字比较，一侧是 `String` 走「长度加字节」。
+    ///  行不通  按 `icmp` 直接比：指针形态比的是地址，不是内容 —— 两个相等的长字素会判不等。
+    private func emitCharComparison(
+        op: IRBinaryOp, lhsValue: IRValue, rhsValue: IRValue,
+        lhsType: IRType, rhsType: IRType
+    ) -> IRValue {
+        usesCharacterShims = true
+        if op == .equal || op == .notEqual {
+            let raw = builder.freshTemp()
+            if lhsType == .char, rhsType == .char {
+                bodyIR +=
+                    " \(raw) = call i32 @bk_char_equal(i64 \(lhsValue.ssaName), i64 \(rhsValue.ssaName))\n"
+            } else if lhsType == .char {
+                bodyIR +=
+                    " \(raw) = call i32 @bk_char_equal_string(i64 \(lhsValue.ssaName), ptr \(rhsValue.ssaName))\n"
+            } else {
+                bodyIR +=
+                    " \(raw) = call i32 @bk_char_equal_string(i64 \(rhsValue.ssaName), ptr \(lhsValue.ssaName))\n"
+            }
+            let flag = builder.freshTemp()
+            bodyIR += " \(flag) = icmp \(op == .notEqual ? "eq" : "ne") i32 \(raw), 0\n"
+            return IRValue(llvmType: "i1", ssaName: flag)
+        }
+        /// 大小比较在 `Char` 上没有单独定义：两侧各自落成 C 串，再走字符串那条字典序。
+        let left = lhsType == .char ? charToCString(lhsValue) : lhsValue
+        let right = rhsType == .char ? charToCString(rhsValue) : rhsValue
+        usesStrCmp = true
+        let ordering = builder.freshTemp()
+        bodyIR += " \(ordering) = call i32 @strcmp(ptr \(left.ssaName), ptr \(right.ssaName))\n"
+        let predicate: String
+        switch op {
+        case .lessThan: predicate = "slt"
+        case .lessThanOrEqual: predicate = "sle"
+        case .greaterThan: predicate = "sgt"
+        case .greaterThanOrEqual: predicate = "sge"
+        default: predicate = "eq"
+        }
+        let flag = builder.freshTemp()
+        bodyIR += " \(flag) = icmp \(predicate) i32 \(ordering), 0\n"
+        return IRValue(llvmType: "i1", ssaName: flag)
+    }
+
+    /// Comparison line body for the operand kind. Strings compare by length first and then `memcmp`
     /// against zero; floats use ordered fcmp; integers/bools use icmp.
     private func comparePredicate(
         op: IRBinaryOp, operandType: String, temp: String,
         lhs: IRValue, rhs: IRValue
     ) -> String {
         if operandType == "i8*" {
+            /// 等值比较先用头里的长度挡一道：长度不等时 `==` 直接假、`!=` 直接真，一个载荷字节都不读。
+            /// 长度相等才 `memcmp`，故代价是 O(1) 或 O(n)，不会为长度明显不同的一对白扫全串。
+            ///  行不通  退成裸 `strcmp`：它对长度不等也要一路读到 NUL，每次比较都付一次全串扫描。
+            if op == .equal || op == .notEqual {
+                usesMemCmp = true
+                var lengths: [String] = []
+                for side in [lhs, rhs] {
+                    let slot = builder.freshTemp()
+                    bodyIR +=
+                        " \(slot) = getelementptr inbounds i8, ptr \(side.ssaName), i64 \(Self.stringLenOffset)\n"
+                    let value = builder.freshTemp()
+                    bodyIR += " \(value) = load i32, ptr \(slot)\n"
+                    lengths.append(value)
+                }
+                let sameLength = builder.freshTemp()
+                bodyIR += " \(sameLength) = icmp eq i32 \(lengths[0]), \(lengths[1])\n"
+                /// 不等长时把 `memcmp` 的长度压成 0：读零字节恒等，结论由 `sameLength` 那一支说了算。
+                let compareLength = builder.freshTemp()
+                bodyIR += " \(compareLength) = select i1 \(sameLength), i32 \(lengths[0]), i32 0\n"
+                let compareLength64 = builder.freshTemp()
+                bodyIR += " \(compareLength64) = zext i32 \(compareLength) to i64\n"
+                let ordering = builder.freshTemp()
+                bodyIR +=
+                    " \(ordering) = call i32 @memcmp(ptr \(lhs.ssaName), ptr \(rhs.ssaName), i64 \(compareLength64))\n"
+                let payloadEqual = builder.freshTemp()
+                bodyIR += " \(payloadEqual) = icmp eq i32 \(ordering), 0\n"
+                guard op == .notEqual else {
+                    return "and i1 \(sameLength), \(payloadEqual)"
+                }
+                let equal = builder.freshTemp()
+                bodyIR += " \(equal) = and i1 \(sameLength), \(payloadEqual)\n"
+                return "xor i1 \(equal), true"
+            }
             usesStrCmp = true
             let cmpTemp = builder.freshTemp()
             bodyIR += " \(cmpTemp) = call i32 @strcmp(ptr \(lhs.ssaName), ptr \(rhs.ssaName))\n"
             let intPredicate: String
             switch op {
-            case .equal: intPredicate = "eq"
-            case .notEqual: intPredicate = "ne"
             case .lessThan: intPredicate = "slt"
             case .lessThanOrEqual: intPredicate = "sle"
             case .greaterThan: intPredicate = "sgt"
@@ -5158,6 +5269,12 @@ public final class IREmitter {
             let close = emitStringConstant("}")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
+        case .char:
+            /// `Char` 是八字节内联值，标量打印会把它当整数打出来；先落成 C 串再走 `%s`。
+            let text = charToCString(value)
+            bodyIR += " call i32 (ptr, ...) @printf(ptr \(text.ssaName))\n"
+            releaseHeldString(text)
+
         default:
             emitScalarPrint(value)
         }
@@ -5198,6 +5315,11 @@ public final class IREmitter {
     /// 字符串头长度（字节）：`rc` / `len` / `cap` / `graphemes` 四个 i32。
     ///  注意  运行时段的 `bk_str_header_bytes()` 是同一事实源，`StringHeaderLayoutTests` 断言两边相等。
     static let stringHeaderBytes = 16
+
+    /// 头里 `len` 字段相对**载荷首字节**的偏移：头在载荷之前，故为负值（`-16 + 4`）。
+    /// 等值比较直接从这里取长度，省掉一次运行时段调用。
+    ///  注意  与运行时段的 `_bkStrLen` 同源，`StringHeaderLayoutTests` 一并断言。
+    static let stringLenOffset = -12
 
     /// 一个 i32 在 IR 常量数组里的小端字节写法。目标平台（arm64 / x86_64）都是小端。
     private static func littleEndianHex(_ value: Int32) -> String {
@@ -6036,13 +6158,26 @@ public final class IREmitter {
         return IRValue(llvmType: "i8*", ssaName: result)
     }
 
+    /// `Char` 落成带头串（计数 1）：消费点按串的规矩归还，故这里入账。
+    ///  注意  不能给栈缓冲 —— `bk_str_concat` 与 `bk_str_release` 都读载荷前的头。
+    private func charToCString(_ value: IRValue) -> IRValue {
+        usesCharacterShims = true
+        let rendered = builder.freshTemp()
+        bodyIR +=
+            " \(rendered) = call ptr @bk_char_to_heap_string(i64 \(value.ssaName))\n"
+        holdString(rendered)
+        return IRValue(llvmType: "i8*", ssaName: rendered)
+    }
+
     /// One interpolation piece as a C string pointer. Buffers for scalars
     /// are stack allocas; container pieces recurse through stringifyValue.
     private func emitStringPiece(_ part: IRExpr) -> IRValue {
         let type = irType(of: part)
         switch type {
-        case .string, .char:
+        case .string:
             return emitExpr(part)
+        case .char:
+            return charToCString(emitExpr(part))
         default:
             let value = emitExpr(part)
             return stringifyValue(value: value, type: type)
@@ -6069,8 +6204,10 @@ public final class IREmitter {
             let sel = builder.freshTemp()
             bodyIR += " \(sel) = select i1 \(value.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false\n"
             return IRValue(llvmType: "i8*", ssaName: sel)
-        case .string, .char:
+        case .string:
             return value
+        case .char:
+            return charToCString(value)
         case .array(let elementType):
             let bufSlot = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"

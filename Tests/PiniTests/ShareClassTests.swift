@@ -20,7 +20,7 @@ struct ShareClassTests: Sendable {
             ("F64", .f64, .inert),
             ("Bool", .boolean, .inert),
             ("String", .string, .retained(.string)),
-            ("Char", .char, .retained(.string)),
+            ("Char", .char, .inert),
             ("Result", .result(ok: .i32), .aggregate),
             ("Future", .future(ok: .i32), .inert),
             ("Array", .array(element: .i32), .retained(.array)),
@@ -62,7 +62,7 @@ struct ShareClassTests: Sendable {
     @Test("计数族只分符号不分规则 —— 七种都在 retained 里")
     func everyShareKindIsRetained() {
         let counted: [IRType] = [
-            .string, .char, .array(element: .i32), .dict(key: .string, value: .i32),
+            .string, .array(element: .i32), .dict(key: .string, value: .i32),
             .set(element: .i32), .lazyRef(element: .i32),
             .nominal(name: "P", isObject: true), .enumeration(name: "E"),
         ]
