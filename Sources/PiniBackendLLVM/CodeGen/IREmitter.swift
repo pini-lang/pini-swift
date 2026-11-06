@@ -2475,6 +2475,24 @@ public final class IREmitter {
                     elementType: elementType)
             }
 
+            /// `last` / `pop` 同走这条命名调用通道：返回值是接收者里的元素，而运行时只有
+            /// `bk_array_get` 能读它 —— 空数组的终止就落在那条负下标判定上。
+            /// 接收者只借一次：临时数组在读完元素后当场还，元素自己那一份已由发射层留住。
+            if function == "Array.last", args.count == 1, let elementType = returnType {
+                defer { releaseOperand(arguments[0], args[0]) }
+                return emitArrayLast(receiver: args[0], elementType: elementType)
+            }
+            if function == "Array.pop", args.count == 1, let resultType = returnType {
+                guard case .tuple(_, let fields) = resultType, fields.count == 2 else {
+                    fatalError(
+                        "IREmitter: the builtin array pop needs a two-field tuple result (IRLowerer guarantees)"
+                    )
+                }
+                defer { releaseOperand(arguments[0], args[0]) }
+                return emitArrayPop(
+                    receiver: args[0], elementType: fields[1], resultType: resultType)
+            }
+
             /// `joinWithin(future, ms)` 是三槽 join 的带时限形态：超时归约为取消在运行时做，
             /// 调用点只多传一个毫秒值。
             if function == "joinWithin", args.count == 2 {
@@ -4242,77 +4260,13 @@ public final class IREmitter {
 
         switch type {
         case .array(let elementType):
-            let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
             let count = builder.freshTemp()
             bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
             let lo = resolveSliceBound(start, count: count, defaultValue: "0")
             let hi = resolveSliceBound(end, count: count, defaultValue: count)
-            let length = builder.freshTemp()
-            bodyIR += " \(length) = sub i32 \(hi), \(lo)\n"
-
-            let create = builder.freshTemp()
-            bodyIR += " \(create) = call ptr @bk_array_create(i32 \(length))\n"
-            emitAggregateElementHooks(create, elementType: elementType)
-            let handleSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
-            let createHandle = builder.freshTemp()
-            bodyIR += " \(createHandle) = bitcast ptr \(create) to %bk_array*\n"
-            bodyIR += builder.fmtStore(value: createHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
-
-            let kSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
-            bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
-            let id = builder.freshLabel()
-            let condLabel = "slice.cond.\(id)"
-            let bodyLabel = "slice.body.\(id)"
-            let incLabel = "slice.inc.\(id)"
-            let endLabel = "slice.end.\(id)"
-            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
-            bodyIR += "\(condLabel):\n"
-            let k = builder.freshTemp()
-            bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
-            let inBounds = builder.freshTemp()
-            bodyIR += " \(inBounds) = icmp slt i32 \(k), \(length)\n"
-            bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
-
-            bodyIR += "\(bodyLabel):\n"
-            let current = builder.freshTemp()
-            bodyIR += builder.fmtLoad(name: current, type: "%bk_array*", ptr: handleSlot) + "\n"
-            let currentRaw = builder.freshTemp()
-            bodyIR += " \(currentRaw) = bitcast %bk_array* \(current) to ptr\n"
-            let srcIndex = builder.freshTemp()
-            bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
-            let boxPtr = builder.freshTemp()
-            bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(srcIndex))\n"
-            if let family = boxFamily(of: elementType) {
-                /// 元素按箱共享：源数组仍握着那一份，新数组必须自带一份，否则两个持有者只付一次。
-                emitElementRetain(boxPtr: boxPtr, elementType: elementType, family: family)
-            } else if case .aggregate = elementType.shareClass, elementType.holdsAShare {
-                /// 聚合按字节复制：成员份额不在字节里，得逐成员再留一份。
-                let hooks = ensureAggregateHooks(for: elementType)
-                bodyIR += " call void @\(hooks.retain)(ptr \(boxPtr))\n"
-            }
-            let newRaw = builder.freshTemp()
-            bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
-            let newHandle = builder.freshTemp()
-            bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %bk_array*\n"
-            bodyIR += builder.fmtStore(value: newHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
-            bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
-
-            bodyIR += "\(incLabel):\n"
-            let kValue = builder.freshTemp()
-            bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
-            let kNext = builder.freshTemp()
-            bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
-            bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
-            bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
-
-            bodyIR += "\(endLabel):\n"
-            let result = builder.freshTemp()
-            bodyIR += builder.fmtLoad(name: result, type: "%bk_array*", ptr: handleSlot) + "\n"
-            return IRValue(llvmType: "%bk_array*", ssaName: result)
+            return emitArraySliceBody(raw: raw, elementType: elementType, lo: lo, hi: hi)
 
         case .string:
             /// 契约 §2.9 第 23 条：String 切片按字素簇，语义与分配一起交给运行时段，与 `IRExecutor.sliceValue`
@@ -4333,6 +4287,78 @@ public final class IREmitter {
         default:
             fatalError("IREmitter: slice on non-array/string type '\(type)' (IRLowerer gates)")
         }
+    }
+
+    /// 把源数组的 `[lo, hi)` 复制进一个新句柄；两界已解析、已夹紧，`hi <= lo` 得空数组。
+    /// 计数元素逐份留：源数组仍握着它那一份，新数组不能白拿 —— 少留即悬垂。
+    private func emitArraySliceBody(
+        raw: String, elementType: IRType, lo: String, hi: String
+    ) -> IRValue {
+        let (_, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
+        let length = builder.freshTemp()
+        bodyIR += " \(length) = sub i32 \(hi), \(lo)\n"
+
+        let create = builder.freshTemp()
+        bodyIR += " \(create) = call ptr @bk_array_create(i32 \(length))\n"
+        emitAggregateElementHooks(create, elementType: elementType)
+        let handleSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
+        let createHandle = builder.freshTemp()
+        bodyIR += " \(createHandle) = bitcast ptr \(create) to %bk_array*\n"
+        bodyIR += builder.fmtStore(value: createHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+
+        let kSlot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+        bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
+        let id = builder.freshLabel()
+        let condLabel = "slice.cond.\(id)"
+        let bodyLabel = "slice.body.\(id)"
+        let incLabel = "slice.inc.\(id)"
+        let endLabel = "slice.end.\(id)"
+        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+        bodyIR += "\(condLabel):\n"
+        let k = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: k, type: "i32", ptr: kSlot) + "\n"
+        let inBounds = builder.freshTemp()
+        bodyIR += " \(inBounds) = icmp slt i32 \(k), \(length)\n"
+        bodyIR += builder.fmtCondBr(cond: inBounds, thenLabelName: bodyLabel, elseLabelName: endLabel) + "\n"
+
+        bodyIR += "\(bodyLabel):\n"
+        let current = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: current, type: "%bk_array*", ptr: handleSlot) + "\n"
+        let currentRaw = builder.freshTemp()
+        bodyIR += " \(currentRaw) = bitcast %bk_array* \(current) to ptr\n"
+        let srcIndex = builder.freshTemp()
+        bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(srcIndex))\n"
+        if let family = boxFamily(of: elementType) {
+            /// 元素按箱共享：源数组仍握着那一份，新数组必须自带一份，否则两个持有者只付一次。
+            emitElementRetain(boxPtr: boxPtr, elementType: elementType, family: family)
+        } else if case .aggregate = elementType.shareClass, elementType.holdsAShare {
+            /// 聚合按字节复制：成员份额不在字节里，得逐成员再留一份。
+            let hooks = ensureAggregateHooks(for: elementType)
+            bodyIR += " call void @\(hooks.retain)(ptr \(boxPtr))\n"
+        }
+        let newRaw = builder.freshTemp()
+        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        let newHandle = builder.freshTemp()
+        bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %bk_array*\n"
+        bodyIR += builder.fmtStore(value: newHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
+
+        bodyIR += "\(incLabel):\n"
+        let kValue = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: kValue, type: "i32", ptr: kSlot) + "\n"
+        let kNext = builder.freshTemp()
+        bodyIR += " \(kNext) = add i32 \(kValue), 1\n"
+        bodyIR += builder.fmtStore(value: kNext, type: "i32", ptr: kSlot) + "\n"
+        bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
+
+        bodyIR += "\(endLabel):\n"
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: "%bk_array*", ptr: handleSlot) + "\n"
+        return IRValue(llvmType: "%bk_array*", ssaName: result)
     }
 
     /// 从 `bk_array_get` 交出的元素箱里读出计数族值并留一份（箱仍归源数组，这里只加计数）。
@@ -4371,6 +4397,55 @@ public final class IREmitter {
         let typed = builder.freshTemp()
         bodyIR += " \(typed) = bitcast ptr \(appended) to %bk_array*\n"
         return IRValue(llvmType: "%bk_array*", ssaName: typed)
+    }
+
+    /// `xs.last()`：末元素。空数组由 `bk_array_get` 的负下标判定终止，与 `xs[len(xs) - 1]`
+    /// 同一条断言通道。 注意  调用节点的返回值按新份额记账，计数元素得在这里留一份再交出。
+    private func emitArrayLast(receiver: IRValue, elementType: IRType) -> IRValue {
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(receiver.ssaName) to ptr\n"
+        let lastIndex = emitLastIndex(raw: raw)
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(lastIndex))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
+        return retainCounted(
+            IRValue(llvmType: elementType.llvmSpelling, ssaName: value), type: elementType)
+    }
+
+    /// `xs.pop()`：`(去掉末元素的数组, 末元素)`。两个字段都是新份额 —— 数组是刚建的，
+    /// 元素在这里留一份。空数组的终止同 `last`：先读末元素，负下标即 panic。
+    private func emitArrayPop(
+        receiver: IRValue, elementType: IRType, resultType: IRType
+    ) -> IRValue {
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_array* \(receiver.ssaName) to ptr\n"
+        let lastIndex = emitLastIndex(raw: raw)
+        let boxPtr = builder.freshTemp()
+        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(lastIndex))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
+        let keptLast = retainCounted(
+            IRValue(llvmType: elementType.llvmSpelling, ssaName: value), type: elementType)
+        let withoutLast = emitArraySliceBody(
+            raw: raw, elementType: elementType, lo: "0", hi: lastIndex)
+        let aggregate = resultType.llvmSpelling
+        let head = builder.freshTemp()
+        bodyIR += " \(head) = insertvalue \(aggregate) undef, %bk_array* \(withoutLast.ssaName), 0\n"
+        let pair = builder.freshTemp()
+        bodyIR +=
+            " \(pair) = insertvalue \(aggregate) \(head), "
+            + "\(elementType.llvmSpelling) \(keptLast.ssaName), 1\n"
+        return IRValue(llvmType: aggregate, ssaName: pair)
+    }
+
+    /// 末元素下标 `count - 1`：`count == 0` 时是 `-1`，由 `bk_array_get` 的边界判定终止。
+    private func emitLastIndex(raw: String) -> String {
+        let count = builder.freshTemp()
+        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        let index = builder.freshTemp()
+        bodyIR += " \(index) = sub i32 \(count), 1\n"
+        return index
     }
 
     /// 切片的界是否是开界（`s[lo...]` / `s[...hi]` / `s[...]`）。判据是语法节点
