@@ -672,6 +672,8 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_is_letter")
             tail += Builtins.declaration(for: "bk_is_number")
             tail += Builtins.declaration(for: "bk_char_to_heap_string")
+            tail += Builtins.declaration(for: "bk_char_retain")
+            tail += Builtins.declaration(for: "bk_char_release")
             tail += Builtins.declaration(for: "bk_char_equal")
             tail += Builtins.declaration(for: "bk_char_equal_string")
         }
@@ -1255,7 +1257,8 @@ public final class IREmitter {
                         builder.fmtLoad(
                             name: loaded, type: handle.typeSpelling, ptr: handle.slot
                         ) + "\n"
-                    bodyIR += " call void @\(handle.destroySymbol)(ptr \(loaded))\n"
+                    releaseCounted(
+                        IRValue(llvmType: handle.typeSpelling, ssaName: loaded), type: handle.type)
                 case .releaseAggregate(let handle):
                     let loaded = builder.freshTemp()
                     bodyIR +=
@@ -1291,7 +1294,7 @@ public final class IREmitter {
     private struct ReleasedHandle {
         let slot: String
         let typeSpelling: String
-        let destroySymbol: String
+        let type: IRType
     }
 
     /// 一个持有聚合份额的槽：退出时按成员名单逐个归还，`Optional` / `Result` 只看选中那一格。
@@ -1320,9 +1323,9 @@ public final class IREmitter {
                     ReleasedAggregate(slot: slot, typeSpelling: type.llvmSpelling, type: type)))
             return
         }
-        guard let symbol = releaseSymbol(for: type) else { return }
+        guard releaseSymbol(for: type) != nil else { return }
         pendingCleanup[frame].append(
-            .release(ReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling, destroySymbol: symbol))
+            .release(ReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling, type: type))
         )
     }
 
@@ -1335,7 +1338,7 @@ public final class IREmitter {
         case .retained(.dict): return "bk_dict_destroy"
         case .retained(.set): return "bk_set_destroy"
         case .retained(.lazyRef): return "bk_lazyref_destroy"
-        case .retained(.string), .retained(.object), .retained(.enumeration),
+        case .retained(.string), .retained(.char), .retained(.object), .retained(.enumeration),
             .valueBox, .aggregate, .inert:
             return nil
         }
@@ -1350,12 +1353,15 @@ public final class IREmitter {
             usesStringRefcount = true
             return "bk_str_release"
         }
+        if case .retained(.char) = type.shareClass {
+            usesCharacterShims = true
+            return "bk_char_release"
+        }
         return Self.collectionDestroySymbol(for: type)
     }
 
-    /// 该类型在发射层是否按字符串参与引用计数：判据是 IR 类型为 `string` 或 `char`。
-    /// `Char` 与 `String` 同构（运行时段都是带计数头的 C 串，元素 tag 都钉在 3）⇒ 同一条释放通道。
-    /// `*T` 指针不算：它是外部内存，与计数头无关；本条按 `IRType` 判，`.pointer` 天然排除。
+    /// 该类型在发射层是否按字符串参与引用计数：只有 `string`。
+    /// `Char` 的指针形态虽然也指向带头串，但值宽是 `i64`、释放走自己的符号 ⇒ 不在本通道。
     private func isRefcountedString(_ type: IRType) -> Bool {
         switch type {
         case .string: return true
@@ -1421,10 +1427,10 @@ public final class IREmitter {
             let stored = applyAdopt(adopt, lowered, type: type)
             /// 覆盖点：旧值先还掉。要不要还由中端填的 `releaseOld` 说（借来的槽不会被标成持有者）；
             /// 旧份额若已被拼接消耗，这里就不能再发一次释放。
-            if releaseOld, !consumedOld, let symbol = releaseSymbol(for: type) {
+            if releaseOld, !consumedOld, type.holdsAShare {
                 let old = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: old, type: type.llvmSpelling, ptr: slot) + "\n"
-                bodyIR += " call void @\(symbol)(ptr \(old))\n"
+                releaseCounted(IRValue(llvmType: type.llvmSpelling, ssaName: old), type: type)
             }
             bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
 
@@ -1851,11 +1857,11 @@ public final class IREmitter {
                             .releaseAggregate(
                                 ReleasedAggregate(
                                     slot: slotName, typeSpelling: spelling, type: bindingType)))
-                    } else if let symbol = releaseSymbol(for: bindingType) {
+                    } else if releaseSymbol(for: bindingType) != nil {
                         bindingCleanup.append(
                             .release(
                                 ReleasedHandle(
-                                    slot: slotName, typeSpelling: spelling, destroySymbol: symbol)))
+                                    slot: slotName, typeSpelling: spelling, type: bindingType)))
                     }
                 }
                 bodyIR += builder.fmtStore(value: value.ssaName, type: spelling, ptr: slotName) + "\n"
@@ -2270,9 +2276,9 @@ public final class IREmitter {
             bodyIR += " \(slot) = alloca \(spelling)\n"
             bodyIR += builder.fmtStore(value: loaded, type: spelling, ptr: slot) + "\n"
             scopes[scopes.count - 1][name] = slot
-            if let symbol = Self.collectionDestroySymbol(for: elementType) {
+            if Self.collectionDestroySymbol(for: elementType) != nil {
                 patternReleases.append(
-                    .release(ReleasedHandle(slot: slot, typeSpelling: spelling, destroySymbol: symbol))
+                    .release(ReleasedHandle(slot: slot, typeSpelling: spelling, type: elementType))
                 )
             }
         }
@@ -2720,7 +2726,7 @@ public final class IREmitter {
         case .setLiteral(let elements, let type):
             return emitSetLiteral(elements: elements, type: type)
 
-        case .tupleConstruct(let labels, let elements, let type):
+        case .tupleConstruct(_, let elements, let type):
             let aggregate = type.llvmSpelling
             var assembled = "undef"
             for (index, element) in elements.enumerated() {
@@ -2859,6 +2865,9 @@ public final class IREmitter {
             /// `Char` 参与拼接时先落成 C 串：它是八字节内联值，不能当指针传给 `bk_str_concat`。
             let lhsValue = irType(of: lhs) == .char ? charToCString(lhsRaw) : lhsRaw
             let rhsValue = irType(of: rhs) == .char ? charToCString(rhsRaw) : rhsRaw
+            /// 落成串之后，`Char` 自己那份份额就用完了：临时值当场归还，变量 / 字段的借用不动。
+            if irType(of: lhs) == .char { releaseOperand(lhs, lhsRaw) }
+            if irType(of: rhs) == .char { releaseOperand(rhs, rhsRaw) }
             let joined = builder.freshTemp()
             var takesLhs = lhsValue.llvmType == "i8*" && heldStrings.contains(lhsValue.ssaName)
             /// 自赋值链的最左叶：`s = s + a + b` 里那次 `load s` 的份额也可以直接交出去。
@@ -3989,6 +3998,12 @@ public final class IREmitter {
             retainAggregateMembers(value, type: type)
             return value
         }
+        if case .retained(.char) = type.shareClass {
+            usesCharacterShims = true
+            let kept = builder.freshTemp()
+            bodyIR += " \(kept) = call i64 @bk_char_retain(i64 \(value.ssaName))\n"
+            return IRValue(llvmType: "i64", ssaName: kept)
+        }
         guard let family = boxFamily(of: type) else { return value }
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
@@ -4419,8 +4434,8 @@ public final class IREmitter {
         case .f64: return ("double", 8, 1)
         case .boolean: return ("i1", 1, 2)
         case .string: return ("i8*", 8, 3)
-        /// `Char` 按值装箱（tag 0）：它不是指针，容器销毁时不发 release。
-        case .char: return ("i64", 8, 0)
+        /// `Char` 按值装箱（tag 7）：指针形态持一份带头串，容器销毁时按它归还。
+        case .char: return ("i64", 8, 7)
         case .array: return ("%bk_array*", 8, 4)
         case .dict: return ("%bk_dict*", 8, 4)
         case .set: return ("%bk_set*", 8, 4)
@@ -4533,7 +4548,7 @@ public final class IREmitter {
     /// 计数类型的零值：指针族 `null`，标量与 `Char` 是 `0`，嵌套聚合是 `zeroinitializer`。
     private static func zeroLiteral(for type: IRType) -> String {
         switch type.shareClass {
-        case .inert: return "0"
+        case .retained(.char), .inert: return "0"
         case .aggregate: return "zeroinitializer"
         case .retained, .valueBox: return "null"
         }
@@ -4549,6 +4564,9 @@ public final class IREmitter {
         case .retained(.string):
             usesStringRefcount = true
             bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
+        case .retained(.char):
+            usesCharacterShims = true
+            bodyIR += " call void @bk_char_release(i64 \(value.ssaName))\n"
         case .retained, .valueBox:
             guard let symbol = releaseSymbol(for: type) else { return }
             let raw = builder.freshTemp()
@@ -4580,8 +4598,7 @@ public final class IREmitter {
             return
         }
         guard let type = heldBoxes.removeValue(forKey: value.ssaName) else { return }
-        guard let symbol = releaseSymbol(for: type) else { return }
-        bodyIR += " call void @\(symbol)(ptr \(value.ssaName))\n"
+        releaseCounted(value, type: type)
     }
 
     /// 一个只读操作数用完了：它若是本层新造的份额，就地归还；借用值不在账上 ⇒ 无操作。
@@ -4642,6 +4659,8 @@ public final class IREmitter {
     private func boxFamily(of type: IRType) -> BoxFamily? {
         switch type.shareClass {
         case .retained(.string): return .string
+        /// `Char` 的指针形态虽也是带头串，但值宽与释放符号都不同 ⇒ 不走箱族，由 `releaseCounted` 直接分派。
+        case .retained(.char): return nil
         case .retained(.array), .retained(.dict), .retained(.set): return .container
         case .retained(.object), .retained(.enumeration), .valueBox: return .nominal
         /// `LazyRef` 的句柄与他族同一个 `_BkBox` 计数头 ⇒ 保留走通用入口，释放走自己的符号。
@@ -4870,9 +4889,12 @@ public final class IREmitter {
             /// `Char` 是八字节内联值：它参与的比较不能落到 `icmp` / `strcmp` 的通用路径上，
             /// 内联字比的是内容、指针形态比的是地址，只有运行时那条说得清。
             if lhsType == .char || rhsType == .char {
-                return emitCharComparison(
+                let comparison = emitCharComparison(
                     op: op, lhsValue: lhsValue, rhsValue: rhsValue,
                     lhsType: lhsType, rhsType: rhsType)
+                releaseOperand(lhs, lhsValue)
+                releaseOperand(rhs, rhsValue)
+                return comparison
             }
             let predicate = comparePredicate(
                 op: op, operandType: lhsValue.llvmType, temp: temp,
@@ -6382,7 +6404,10 @@ public final class IREmitter {
         case .string:
             return emitExpr(part)
         case .char:
-            return charToCString(emitExpr(part))
+            let value = emitExpr(part)
+            let rendered = charToCString(value)
+            releaseOperand(part, value)
+            return rendered
         default:
             let value = emitExpr(part)
             return stringifyValue(value: value, type: type)

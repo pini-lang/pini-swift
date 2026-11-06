@@ -152,8 +152,8 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         #expect(bk_char_equal(a, b) == 1, "两个指针形态按字节判等")
     }
 
-    @Test("长字素驻留：同一内容在不同源串里取出，得到同一块")
-    func 长字素驻留() {
+    @Test("长字素每次取出各自持有一份，归还后内容仍对")
+    func 长字素各自的份额() {
         let flag = "🇨🇳"
         let other = "🇺🇸"
         let left = dup(flag + "x")
@@ -165,14 +165,18 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         bk_str_release(left)
         bk_str_release(right)
         bk_str_release(third)
-        #expect(a == b, "同内容应命中同一块")
-        #expect(a != c, "不同内容不该命中同一块")
-        #expect(解包(a) == flag, "驻留不改变内容")
+        #expect(a != b, "两次取出是两份独立份额")
+        #expect(bk_char_equal(a, b) == 1, "内容相同")
+        #expect(a != c, "不同内容不同份额")
+        #expect(解包(a) == flag, "份额独立不影响内容")
         #expect(解包(c) == other)
+        bk_char_release(a)
+        bk_char_release(b)
+        bk_char_release(c)
     }
 
-    @Test("驻留表在并发下仍只留一块")
-    func 长字素驻留并发() async {
+    @Test("并发取出与归还不串账")
+    func 长字素并发份额() async {
         let flag = "🇨🇳"
         let words = await withTaskGroup(of: Int64.self) { group in
             for _ in 0..<32 {
@@ -187,8 +191,9 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
             for await word in group { seen.append(word) }
             return seen
         }
-        #expect(Set(words).count == 1, "同一内容并发取出应只有一块，实得 \(Set(words).count) 块")
+        #expect(Set(words).count == 32, "每个任务各持一份，互不共享")
         #expect(解包(words[0]) == flag, "源串全部归还后仍答原文")
+        for word in words { bk_char_release(word) }
     }
 
     @Test("追加不受固定栈缓冲限制：两万字节的串长度与内容都对")

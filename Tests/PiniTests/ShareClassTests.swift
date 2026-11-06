@@ -20,7 +20,7 @@ struct ShareClassTests: Sendable {
             ("F64", .f64, .inert),
             ("Bool", .boolean, .inert),
             ("String", .string, .retained(.string)),
-            ("Char", .char, .inert),
+            ("Char", .char, .retained(.char)),
             ("Result", .result(ok: .i32), .aggregate),
             ("Future", .future(ok: .i32), .inert),
             ("Array", .array(element: .i32), .retained(.array)),

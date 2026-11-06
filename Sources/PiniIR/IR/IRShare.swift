@@ -16,8 +16,10 @@ public enum IRShareClass: Equatable, Sendable {
 
 /// 计数族的细分。七种都按「保留 / 释放」计数，只是符号不同 —— 故它不改变归还规则。
 public enum IRShareKind: Equatable, Sendable {
-    /// `String` · `Char`：带计数头的 C 串，两者同构。
+    /// `String`：带计数头的 C 串。
     case string
+    /// `Char`：八字节按值，指针形态的载荷同样是一条带头串，保留 / 释放走自己的符号。
+    case char
     /// `Array<T>`：不透明句柄，写入前唯一化。
     case array
     /// `Dictionary<K, V>`：键值有序的不透明句柄。
@@ -39,8 +41,8 @@ extension IRType {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean: return .inert
         case .string: return .retained(.string)
-        /// `Char` 是值：内联在 i64 里，或者是一个**不计数**的堆缓冲区 ⇒ 既不 retain 也不 release。
-        case .char: return .inert
+        /// `Char` 是值：内联形态没有堆，指针形态持有一条带头串的份额 ⇒ 与 `String` 同规计数。
+        case .char: return .retained(.char)
         case .array: return .retained(.array)
         case .dict: return .retained(.dict)
         case .set: return .retained(.set)
@@ -148,9 +150,13 @@ extension IRExpr {
             .printCall, .printMulti, .assertCall, .fileWrite, .fileAppend:
             return .inert
         // 全局常量与变量 / 字段 / 元素槽：份额在别处。
-        case .stringConst, .load, .subscriptGet, .fieldGet,
+        case .stringConst, .load, .fieldGet,
             .lazyRefValue, .functionValue, .cFunctionAddress, .givenInstance:
             return .borrowed
+        /// `Array<Char>` 的元素由数组持有（借用）；`String` 下标当场构造一个 `Char`，那是新份额。
+        case .subscriptGet(let container, _, let type):
+            guard type.shareClass == .retained(.char) else { return .borrowed }
+            return container.staticType == .string ? .fresh : .borrowed
         /// 下标读出的 `Optional` 是本层新造的聚合：成员计数时它自己持有一份，按新份额记账。
         case .optionalGet(_, _, let type):
             return type.holdsAShare ? .fresh : .inert
