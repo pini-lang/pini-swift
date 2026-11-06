@@ -213,6 +213,13 @@ public final class IREmitter {
     /// 与 `heldStringsStack` 同规：函数体 / 闭包体 / 给定初始化器各持一份，`IRBuilder` 重新编号 ⇒ 不能串。
     private var heldBoxesStack: [[String: IRType]] = []
 
+    /// 自赋值追加的待用目标：`s = s + …` 的最左叶是本槽时记下变量名，那一次读槽可以把份额直接交给拼接。
+    /// 只在本条赋值求值期间有效；一旦被某个拼接取走就清空，并由 `selfAppendTaken` 告诉覆盖点别再释放旧值。
+    private var pendingSelfAppend: String?
+
+    /// 本层最近一条赋值是否真的把旧份额交给了拼接（`pendingSelfAppend` 被取走）。
+    private var selfAppendTaken = false
+
     /// 本函数（或闭包体）中被闭包捕获的变量名。必须在进体前算出：捕获槽要在分配那一刻
     /// 就知道会被带走，而 `allocVar` 总在闭包字面量之前，事后补不了。
     private var capturedNamesInFunction: Set<String> = []
@@ -1360,29 +1367,26 @@ public final class IREmitter {
             guard let slot = lookupSlot(name) else {
                 fatalError("IREmitter: store to undeclared variable '\(name)' (IRLowerer guarantees declarations)")
             }
-            /// `s = s + x`：左操作数就是本槽 ⇒ 把槽里那份引用交给运行时消耗，唯一持有且有容量时就地追加。
-            /// 这是「循环里累加字符串」从每轮重分配掉到摊还 O(1) 的唯一入口；释放旧值那一步由消耗代替。
-            if releaseOld, case .string = type, case .stringConcat(let lhsExpr, let rhsExpr) = value,
-               case .load(let source, _) = lhsExpr, source == name {
-                let current = builder.freshTemp()
-                bodyIR += builder.fmtLoad(name: current, type: "i8*", ptr: slot) + "\n"
-                let rhsRaw = emitExpr(rhsExpr)
-                let rhsValue = irType(of: rhsExpr) == .char ? charToCString(rhsRaw) : rhsRaw
-                let next = builder.freshTemp()
-                usesStringBuilders = true
-                bodyIR +=
-                    " \(next) = call ptr @bk_str_concat(ptr \(current), ptr \(rhsValue.ssaName), i32 1)\n"
-                releaseHeldString(rhsValue)
-                let stored = applyAdopt(adopt, IRValue(llvmType: "i8*", ssaName: next), type: type)
-                bodyIR += builder.fmtStore(value: stored.ssaName, type: type.llvmSpelling, ptr: slot) + "\n"
-                return
+            /// `s = s + a + b`：最左叶就是本槽 ⇒ 把槽里那份引用交给最内层拼接消耗。
+            /// 这是「循环里累加字符串」从每轮重分配掉到摊还 O(1) 的入口；释放旧值那一步由消耗代替。
+            ///  注意  待用目标只对本条赋值有效，求值前设、求值后恢复 —— 嵌套赋值不许互相串。
+            let outerTarget = pendingSelfAppend
+            let outerTaken = selfAppendTaken
+            pendingSelfAppend = nil
+            selfAppendTaken = false
+            if releaseOld, case .string = type, Self.leftmostStringSource(of: value) == name {
+                pendingSelfAppend = name
             }
             let lowered = emitExpr(value)
+            let consumedOld = selfAppendTaken
+            pendingSelfAppend = outerTarget
+            selfAppendTaken = outerTaken
             /// 三行的顺序就是语义：先让新值站住（注解说的移交 / 拷贝 / 保留），
             /// 再释放旧值，最后才写槽。顺序颠倒则 `a = a` 这类自赋值先回收掉新值要读的箱，读已释放内存。
             let stored = applyAdopt(adopt, lowered, type: type)
-            /// 覆盖点：旧值先还掉。要不要还由中端填的 `releaseOld` 说（借来的槽不会被标成持有者）。
-            if releaseOld, let symbol = releaseSymbol(for: type) {
+            /// 覆盖点：旧值先还掉。要不要还由中端填的 `releaseOld` 说（借来的槽不会被标成持有者）；
+            /// 旧份额若已被拼接消耗，这里就不能再发一次释放。
+            if releaseOld, !consumedOld, let symbol = releaseSymbol(for: type) {
                 let old = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: old, type: type.llvmSpelling, ptr: slot) + "\n"
                 bodyIR += " call void @\(symbol)(ptr \(old))\n"
@@ -2770,21 +2774,36 @@ public final class IREmitter {
             return joined
 
         case .stringConcat(let lhs, let rhs):
+            /// 临时值链复用：左操作数若是本层刚造出来的串（`a + b + c` 的中间串），把那份引用交给运行时，
+            /// 它据此就地追加 —— 链式拼接只付最后一次拷贝，中间串不再走「分配 + 整串复制」。
             let lhsRaw = emitExpr(lhs)
             let rhsRaw = emitExpr(rhs)
             /// `Char` 参与拼接时先落成 C 串：它是八字节内联值，不能当指针传给 `bk_str_concat`。
             let lhsValue = irType(of: lhs) == .char ? charToCString(lhsRaw) : lhsRaw
             let rhsValue = irType(of: rhs) == .char ? charToCString(rhsRaw) : rhsRaw
             let joined = builder.freshTemp()
+            var takesLhs = lhsValue.llvmType == "i8*" && heldStrings.contains(lhsValue.ssaName)
+            /// 自赋值链的最左叶：`s = s + a + b` 里那次 `load s` 的份额也可以直接交出去。
+            ///  注意  只有最左叶能消耗 —— 右侧的读仍是借用，消耗它会把还活着的变量清空。
+            if irType(of: lhs) == .string, case .load(let source, _) = lhs,
+               let pending = pendingSelfAppend, pending == source
+            {
+                takesLhs = true
+                pendingSelfAppend = nil
+                selfAppendTaken = true
+            }
             /// 长度从两边的头里读，不再 `strlen` —— 这是 `a + b + c` 从 O(n²) 掉到 O(n) 的前提。
             ///  行不通  退回 `strlen` + 精确分配：每级临时串都要重扫全长，且没有增容余量留给下次追加。
             usesStringBuilders = true
             bodyIR +=
                 " \(joined) = call ptr @bk_str_concat(ptr \(lhsValue.ssaName), "
-                + "ptr \(rhsValue.ssaName), i32 0)\n"
-            /// 两个操作数到此用完：只被读字节，没有持有者接管 ⇒ 就地还掉。
-            /// 这一步就是二次方项的处置：`a + b + c` 的中间串既不落槽也不是最终值，除这里没有别的回收点。
-            releaseHeldString(lhsValue)
+                + "ptr \(rhsValue.ssaName), i32 \(takesLhs ? 1 : 0))\n"
+            /// 两个操作数到此用完：左操作数是临时串时份额已随调用交出，否则就地还掉。
+            if takesLhs {
+                claimHeldString(lhsValue)
+            } else {
+                releaseHeldString(lhsValue)
+            }
             releaseHeldString(rhsValue)
             return IRValue(llvmType: "i8*", ssaName: joined)
 
@@ -4368,6 +4387,14 @@ public final class IREmitter {
         guard heldStrings.remove(value.ssaName) != nil else { return false }
         bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
         return true
+    }
+
+    /// 拼接链最左端的变量读：`s + a + b` 给出 `s`，其它形状给出 nil。
+    /// 只有最左叶的份额可被消耗 —— 它读的是槽里那一份，消耗之后覆盖点就不再单独释放旧值。
+    private static func leftmostStringSource(of expr: IRExpr) -> String? {
+        guard case .stringConcat(let lhs, _) = expr else { return nil }
+        if case .load(let source, let type) = lhs, case .string = type { return source }
+        return leftmostStringSource(of: lhs)
     }
 
     // MARK: - 临时箱的账本（名义箱 / 容器句柄）

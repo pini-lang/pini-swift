@@ -57,6 +57,17 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         bk_str_release(second)
     }
 
+    @Test("自赋值链复用：`s = s + a + b` 的每一级拼接都带走左操作数")
+    func 自赋值链复用() throws {
+        let ir = try emitted(
+            "main|func() -> ():\n    var s = \"a\"\n    s = s + \"b\" + \"c\"\n    return\n")
+        let concats = ir.split(separator: "\n").filter { $0.contains("= call ptr @bk_str_concat") }
+        #expect(concats.count == 2, "该形状应有两次拼接，实际：\(concats)")
+        #expect(
+            concats.allSatisfy { $0.hasSuffix("i32 1)") },
+            "链上每一级都应把左操作数的份额交出去（否则每级都要整串复制）：\(concats)")
+    }
+
     @Test("有别名时分裂：计数大于一就不写那块载荷")
     func 有别名时分裂() {
         let source = dup("x")
