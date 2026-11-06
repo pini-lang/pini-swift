@@ -303,6 +303,33 @@ public final class TypeEnvironment {
         return nil
     }
 
+    /// 统一成员查询：泛型模板特化优先，其后是内建容器的元素回填。
+    /// 内建容器（`Array<I32>`）没有泛型声明，模板查不到；这条只把接收者元素填进签名里的 `T`，
+    /// 对不含 `T` 的方法（`join` / `get`）是恒等。两个类型检查消费方都走这里，判据不会分叉。
+    public func lookupAnyMethod(
+        typeName: String,
+        typeArgs: [TypeAnnotation]?,
+        methodName: String
+    ) -> FunctionSignature? {
+        guard let typeArgs else {
+            return lookupMethod(typeName: typeName, methodName: methodName)
+        }
+        if let specialized = lookupSpecializedMethod(
+            typeName: typeName, typeArgs: typeArgs, methodName: methodName)
+        {
+            return specialized
+        }
+        guard typeName == "Array", typeArgs.count == 1,
+            let template = typeMethods[typeName]?[methodName]
+        else { return nil }
+        let substitutor = TypeSubstitutor(bindings: ["T": typeArgs[0]])
+        return FunctionSignature(
+            params: template.params.map { substitutor.substitute(type: $0) },
+            returns: template.returns.map { substitutor.substitute(type: $0) },
+            returnLabels: template.returnLabels,
+            usingParamIndices: template.usingParamIndices)
+    }
+
     // MARK: - Generic functions
 
     private struct GenericFunctionTemplate {

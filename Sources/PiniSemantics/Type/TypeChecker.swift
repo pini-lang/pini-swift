@@ -2805,25 +2805,6 @@ public final class TypeChecker {
                         try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
                     }
                 }
-                /// Array.append 的实参按接收者声明元素类型检查：内建签名契约不动（仍返回新数组、`[any]` 不
-                /// 特化），此处是纯检查通道，不改推断与运行时行为。通配元素类型（`_` / `Any`）放行；
-                /// `xs.append` 未应用形态不在此校验。
-                if memberName == "append",
-                    case .generic(let recvName, let typeArgs, _) = inference.infer(expression: object),
-                    recvName == "Array", typeArgs.count == 1,
-                    case .simple(let elemName, _) = typeArgs[0],
-                    elemName != "_", elemName != "Any",
-                    arguments.count == 1,
-                    let argType = inference.infer(expression: arguments[0].expression, expected: typeArgs[0]),
-                    !isAssignable(actual: argType, expected: typeArgs[0])
-                {
-                    try report(
-                        TypeError.mismatch(
-                            expected: typeArgs[0].describe(),
-                            got: argType.describe(),
-                            location: location
-                        ))
-                }
             case .dotCaseRef(let caseName, _):
                 // 点号用例构造（成员意图）：期望类型无关的 arity 校验与裸名同轨
                 //（内建 some/none 经 parentEnum 反查为 nil 自然跳过）；期望类型决议
@@ -3258,14 +3239,14 @@ public final class TypeChecker {
         }
     }
 
-    /// 经接收者表达式推断对象类型，分派 lookupMethod / lookupSpecializedMethod（P2-1.4）。
+    /// 经接收者表达式推断对象类型，交 `lookupAnyMethod` 分派（泛型模板特化 + 内建容器元素回填）。
     private func lookupMethodSignature(for object: Expression, memberName: String) -> TypeEnvironment.FunctionSignature? {
         guard let objType = inference.infer(expression: object) else { return nil }
         switch objType {
         case .simple(let typeName, _):
-            return typeEnv.lookupMethod(typeName: typeName, methodName: memberName)
+            return typeEnv.lookupAnyMethod(typeName: typeName, typeArgs: nil, methodName: memberName)
         case .generic(let typeName, let typeArgs, _):
-            return typeEnv.lookupSpecializedMethod(typeName: typeName, typeArgs: typeArgs, methodName: memberName)
+            return typeEnv.lookupAnyMethod(typeName: typeName, typeArgs: typeArgs, methodName: memberName)
         default:
             return nil
         }
