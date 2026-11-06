@@ -12,6 +12,31 @@ struct AggregateShareTests: PiniSourceLowering, Sendable {
         try IREmitter().emit(module: try lowered(source))
     }
 
+    /// 截取两个标签之间的产物片段：份额动作落在哪条路径上，只有位置能说明。
+    private func slice(_ ir: String, from start: String, to end: String) -> String {
+        guard let head = ir.range(of: start),
+            let tail = ir.range(of: end, range: head.upperBound..<ir.endIndex)
+        else { return "" }
+        return String(ir[head.lowerBound..<tail.lowerBound])
+    }
+
+    @Test("try 的成功载荷：写槽前保留一份，临时聚合在两条路径各归还一次")
+    func try载荷份额() throws {
+        let ir = try emitted(
+            """
+            main|func() -> ():
+                let v = try tryReadFile("/nope") else e: return
+                print(v)
+                return
+            """)
+        let ok = slice(ir, from: "try.ok.", to: "try.join.")
+        #expect(!ok.isEmpty, "产物里该有 try 的成功标签")
+        #expect(ok.contains("@bk_str_retain"), "借用的载荷要靠这一步才有独立份额")
+        #expect(ok.contains("@bk_str_release"), "临时聚合那份要在收尾归还")
+        let err = slice(ir, from: "try.err.", to: "try.ok.")
+        #expect(err.contains("@bk_str_release"), "错误路径也要归还聚合，否则漏一份")
+    }
+
     @Test("Optional<String>：构造保留一份，槽退出归还一份")
     func 可选串() throws {
         let ir = try emitted(

@@ -2035,6 +2035,8 @@ public final class IREmitter {
         emitYieldPoint(awaited: awaited, type: type, produce: .frameSlot(slot))
         let loaded = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: slot) + "\n"
+        /// 读回的聚合来自任务体的移交，没有别的持有者 ⇒ 在这里入账，`try` 收尾才还得掉它。
+        if type.holdsAShare { holdAggregate(name: loaded, type: type) }
         return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
     }
 
@@ -2047,6 +2049,9 @@ public final class IREmitter {
 
         ///  重要  `try` 位若是可让出的 `await` ⇒ 走让出序列，结果落帧槽再读回。
         let resultValue = emitTryOperand(operand, type: type)
+        /// 聚合那份的归属在这里定死：新份额由本层还，借用的不碰。
+        ///  注意  账本条目要在分派前摘下 —— handler 里的 `return` 会 flush 整层账本，摘下才是各路径各还一次。
+        let ownsResult = heldAggregates.removeValue(forKey: resultValue.ssaName) != nil
         let aggregate = resultValue.llvmType
         let tag = builder.freshTemp()
         bodyIR += " \(tag) = extractvalue \(aggregate) \(resultValue.ssaName), 0\n"
@@ -2055,6 +2060,7 @@ public final class IREmitter {
         let id = builder.freshLabel()
         let okLabel = "try.ok.\(id)"
         let errLabel = "try.err.\(id)"
+        let joinLabel = "try.join.\(id)"
         bodyIR += builder.fmtCondBr(cond: isOk, thenLabelName: okLabel, elseLabelName: errLabel) + "\n"
 
         bodyIR += "\(errLabel):\n"
@@ -2063,14 +2069,16 @@ public final class IREmitter {
         let errWord = builder.freshTemp()
         bodyIR += " \(errWord) = extractvalue \(aggregate) \(resultValue.ssaName), 2\n"
         bodyIR += builder.fmtStore(value: errWord, type: "i64", ptr: errSlot) + "\n"
+        /// 两条路径各还一次临时聚合：错误侧的 ok 槽未选中，逐成员归还时被 `select` 换成零值 ⇒ 空转。
+        if ownsResult { releaseAggregateMembers(resultValue, type: type) }
         emitBlock(handler)
-        let handlerTerminated = terminated
-        if !handlerTerminated {
-            bodyIR += builder.fmtBr(labelName: okLabel) + "\n"
+        if !terminated {
+            bodyIR += builder.fmtBr(labelName: joinLabel) + "\n"
         }
         scopes.removeLast()
 
         bodyIR += "\(okLabel):\n"
+        terminated = false
         if let okTarget = okTarget {
             guard let okSlot = lookupSlot(okTarget) else {
                 fatalError("IREmitter: try ok target '\(okTarget)' undeclared (IRLowerer guarantees the allocation)")
@@ -2078,13 +2086,22 @@ public final class IREmitter {
             guard case .result(let okType) = type else {
                 fatalError("IREmitter: tryStmt type is not a Result (IRLowerer guarantees)")
             }
-            terminated = false
             let payload = builder.freshTemp()
             bodyIR += " \(payload) = extractvalue \(aggregate) \(resultValue.ssaName), 1\n"
-            bodyIR += builder.fmtStore(value: payload, type: okType.llvmSpelling, ptr: okSlot) + "\n"
-        } else {
-            terminated = false
+            /// 槽持有一份独立份额：先保留再写。借用的聚合靠这一步才有份额，fresh 的那份由下面归还抵掉。
+            let stored =
+                okType.holdsAShare
+                ? retainCounted(
+                    IRValue(llvmType: okType.llvmSpelling, ssaName: payload), type: okType)
+                : IRValue(llvmType: okType.llvmSpelling, ssaName: payload)
+            bodyIR +=
+                builder.fmtStore(value: stored.ssaName, type: okType.llvmSpelling, ptr: okSlot) + "\n"
         }
+        if ownsResult { releaseAggregateMembers(resultValue, type: type) }
+        bodyIR += builder.fmtBr(labelName: joinLabel) + "\n"
+
+        bodyIR += "\(joinLabel):\n"
+        terminated = false
     }
 
     private func emitIf(label: String?, condition: IRExpr, thenBody: IRBlock, elseBody: IRBlock?) {
