@@ -86,6 +86,11 @@ public enum Builtins {
             family: .dictionary, lowerings: ["dictLiteral"]
         ),
         BuiltinSpec(
+            symbol: "bk_dict_contains",
+            signature: .init(result: "i32", parameters: ["ptr", "ptr", "i32", "i32"]),
+            family: .dictionary, lowerings: ["optionalGet"]
+        ),
+        BuiltinSpec(
             symbol: "bk_dict_destroy", signature: .init(result: "void", parameters: ["ptr"]),
             family: .dictionary, lowerings: ["<cleanup>"]
         ),
