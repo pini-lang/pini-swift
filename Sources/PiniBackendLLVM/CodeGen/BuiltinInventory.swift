@@ -74,6 +74,11 @@ public enum Builtins {
             signature: .init(result: "ptr", parameters: ["ptr", "i32", "ptr", "i32", "i32"]),
             family: .array, lowerings: ["arrayLiteral", "subscriptStore"]
         ),
+        BuiltinSpec(
+            symbol: "bk_array_set_element_hooks",
+            signature: .init(result: "void", parameters: ["ptr", "ptr", "ptr"]),
+            family: .array, lowerings: ["arrayLiteral", "sliceCall"]
+        ),
 
         // MARK: dictionary
         BuiltinSpec(

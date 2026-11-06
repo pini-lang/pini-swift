@@ -36,7 +36,7 @@
 
 | 族 | 符号 | 数 |
 |---|---|---|
-| 数组 | `bk_array_append` `bk_array_create` `bk_array_destroy` `bk_array_ensure_unique_at` `bk_array_get` `bk_array_len` `bk_array_set` | 7 |
+| 数组 | `bk_array_append` `bk_array_create` `bk_array_destroy` `bk_array_ensure_unique_at` `bk_array_get` `bk_array_len` `bk_array_set` `bk_array_set_element_hooks` | 8 |
 | 字典 | `bk_dict_contains` `bk_dict_create` `bk_dict_destroy` `bk_dict_ensure_unique_at` `bk_dict_get` `bk_dict_key_at` `bk_dict_len` `bk_dict_set` `bk_dict_val_at` | 9 |
 | 集合 | `bk_set_add` `bk_set_at` `bk_set_create` `bk_set_destroy` `bk_set_len` | 5 |
 | 句柄 / COW | `bk_handle_ensure_unique` `bk_handle_release` `bk_handle_retain` `bk_handle_shares` | 4 |
@@ -55,7 +55,7 @@
 | 让出族 | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | 调度驱动面 | `bk_task_bind_sched` `bk_task_state` | 2 |
 | 错误载荷 | `bk_cancel_error_create` `bk_error_code` `bk_error_create` `bk_error_from_enum` `bk_error_is_cancel` `bk_error_lookup` `bk_error_message` `bk_error_with_code` | 8 |
-| **合计** | | **118** |
+| **合计** | | **119** |
 
 ## 3. 语义约束
 
@@ -117,7 +117,7 @@
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 
 本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 91 条，本表列出其余 22 条，
-两者合计即第 2 节的 118。互补关系由 `tools/builtin-inventory-check.py` 校验。
+两者合计即第 2 节的 119。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 
