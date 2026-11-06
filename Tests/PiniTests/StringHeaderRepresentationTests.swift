@@ -118,11 +118,38 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         bk_str_release(cjk)
     }
 
-    /// 把一个 `Char`（八字节内联值）解成 Swift `String`：走与发射层同一条 `bk_char_to_string`。
+    /// 把一个 `Char`（八字节按值）解成 Swift `String`：走与发射层同一条 `bk_char_to_heap_string`。
     private func 解包(_ value: Int64) -> String {
         let text = bk_char_to_heap_string(value)
         defer { bk_str_release(text) }
         return String(cString: text)
+    }
+
+    @Test("八字节字素：取出后源串归还，Char 仍答原文")
+    func 超长字素自持() {
+        let flag = "🇨🇳"
+        #expect(flag.utf8.count == 8, "前提：该字素是单簇八字节")
+        let source = dup(flag + "x")
+        let viaString = dup(flag)
+        let inside = bk_string_char_at(source, 0)
+        bk_str_release(source)
+        #expect(解包(inside) == flag, "源串已归还，Char 该读自己那份")
+        #expect(bk_char_equal_string(inside, viaString) == 1, "与串判等走同一份字节")
+        bk_str_release(viaString)
+    }
+
+    @Test("长字素不设限：二百六十一字节的单簇原样取出")
+    func 长字素不设限() {
+        let long = "a" + String(repeating: "\u{0301}", count: 130)
+        #expect(long.count == 1 && long.utf8.count == 261, "前提：单簇、261 字节")
+        let left = dup(long)
+        let right = dup(long)
+        let a = bk_string_char_at(left, 0)
+        let b = bk_string_char_at(right, 0)
+        bk_str_release(left)
+        bk_str_release(right)
+        #expect(解包(a) == long, "长字素不该被长度拒绝")
+        #expect(bk_char_equal(a, b) == 1, "两个指针形态按字节判等")
     }
 
     @Test("追加不受固定栈缓冲限制：两万字节的串长度与内容都对")
@@ -170,5 +197,66 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         #expect(解包(bk_string_char_at(appended, 129)) == "字")
         #expect(解包(bk_string_char_at(appended, 0)) == "汉")
         bk_str_release(appended)
+    }
+
+    @Test("跨函数取出的字素离开源串后两通道同答")
+    func 字素逃逸对齐() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        let dir = try makeTemporaryDirectory(tag: "char-escape")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try """
+            取首|func(s: String,) -> (Char,):
+                return s[1]
+
+            main|func() -> ():
+                let c = 取首("A🇨🇳B")
+                print(c)
+                print(c == c)
+                return
+            """.write(
+            to: dir.appendingPathComponent("char.pini"), atomically: true, encoding: .utf8)
+        for channel in ["run", "run-llvm"] {
+            let result = try runCLI(cli, arguments: [channel, "char.pini"], cwd: dir)
+            #expect(result.status == 0, "\(channel) 失败：\(result.stderr)")
+            #expect(result.stdout == "🇨🇳\ntrue\n", "\(channel) 读数：\(result.stdout)")
+        }
+    }
+
+    // MARK: - 命令行
+
+    private func cliPathOrSkip() -> String? {
+        let cli = PiniTestEnvironment.cliPath()
+        guard PiniTestEnvironment.requireToolchain(available: cli != nil, missing: "PINI_CLI_BIN")
+        else { return nil }
+        return cli
+    }
+
+    private func makeTemporaryDirectory(tag: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pini-\(tag)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func runCLI(
+        _ cli: String, arguments: [String], cwd: URL
+    ) throws -> (status: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: cli)
+        process.arguments = arguments
+        process.currentDirectoryURL = cwd
+        process.environment = PiniTestEnvironment.childEnvironment()
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        try process.run()
+        let outData = out.fileHandleForReading.readAllData()
+        let errData = err.fileHandleForReading.readAllData()
+        process.waitUntilExit()
+        return (
+            process.terminationStatus,
+            String(decoding: outData, as: UTF8.self),
+            String(decoding: errData, as: UTF8.self)
+        )
     }
 }
