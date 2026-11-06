@@ -5303,10 +5303,14 @@ public final class IREmitter {
             hex += String(format: "\\%02X", byte)
         }
         hex += "\\00"
-        let length = bytes.count + 1 + Self.stringHeaderBytes
+        /// 容量够一个 64 字素块的串要留索引表的槽：运行时按 `载荷 + cap + 8` 向下对齐定位。
+        let hasSlot = bytes.count >= Self.stringTableMinCap
+        if hasSlot { hex += String(repeating: "\\00", count: Self.stringSlotReserve) }
+        let length = bytes.count + 1 + Self.stringHeaderBytes + (hasSlot ? Self.stringSlotReserve : 0)
+        /// 写`global` 而非 `constant`：头里的字素数缓存与表的槽都要写一次，只读段一写就是 SIGBUS。
         /// 对齐是硬要求：头里的计数用原子加减，未对齐的 4 字节原子操作在 arm64 上是 SIGBUS。
         stringConstantDefs.append(
-            "\(name) = private constant [\(length) x i8] c\"\(hex)\", align 16")
+            "\(name) = private global [\(length) x i8] c\"\(hex)\", align 16")
         let entry = (name: name, length: length)
         stringConstants[value] = entry
         return entry
@@ -5315,6 +5319,13 @@ public final class IREmitter {
     /// 字符串头长度（字节）：`rc` / `len` / `cap` / `graphemes` 四个 i32。
     ///  注意  运行时段的 `bk_str_header_bytes()` 是同一事实源，`StringHeaderLayoutTests` 断言两边相等。
     static let stringHeaderBytes = 16
+
+    /// 带索引表槽的最小容量：更短的串连一个 64 字素块都填不满，建表不划算。
+    ///  注意  运行时段的 `bk_str_table_min_cap()` 是同一事实源，测试断言两边相等。
+    static let stringTableMinCap = 128
+
+    /// 载荷之后为索引表槽预留的字节数：槽地址向下对齐后占 8 字节，最多用到 `cap + 15`。
+    static let stringSlotReserve = 16
 
     /// 头里 `len` 字段相对**载荷首字节**的偏移：头在载荷之前，故为负值（`-16 + 4`）。
     /// 等值比较直接从这里取长度，省掉一次运行时段调用。
