@@ -152,6 +152,45 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         #expect(bk_char_equal(a, b) == 1, "两个指针形态按字节判等")
     }
 
+    @Test("长字素驻留：同一内容在不同源串里取出，得到同一块")
+    func 长字素驻留() {
+        let flag = "🇨🇳"
+        let other = "🇺🇸"
+        let left = dup(flag + "x")
+        let right = dup("y" + flag)
+        let third = dup(other)
+        let a = bk_string_char_at(left, 0)
+        let b = bk_string_char_at(right, 1)
+        let c = bk_string_char_at(third, 0)
+        bk_str_release(left)
+        bk_str_release(right)
+        bk_str_release(third)
+        #expect(a == b, "同内容应命中同一块")
+        #expect(a != c, "不同内容不该命中同一块")
+        #expect(解包(a) == flag, "驻留不改变内容")
+        #expect(解包(c) == other)
+    }
+
+    @Test("驻留表在并发下仍只留一块")
+    func 长字素驻留并发() async {
+        let flag = "🇨🇳"
+        let words = await withTaskGroup(of: Int64.self) { group in
+            for _ in 0..<32 {
+                group.addTask {
+                    let source = (flag + "x").withCString { bk_str_dup($0) }
+                    let word = bk_string_char_at(source, 0)
+                    bk_str_release(source)
+                    return word
+                }
+            }
+            var seen: [Int64] = []
+            for await word in group { seen.append(word) }
+            return seen
+        }
+        #expect(Set(words).count == 1, "同一内容并发取出应只有一块，实得 \(Set(words).count) 块")
+        #expect(解包(words[0]) == flag, "源串全部归还后仍答原文")
+    }
+
     @Test("追加不受固定栈缓冲限制：两万字节的串长度与内容都对")
     func 追加大串() {
         let payload = String(repeating: "a", count: 10000)

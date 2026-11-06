@@ -1595,7 +1595,58 @@ private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     UnsafePointer<CChar>(bitPattern: Int(UInt64(bitPattern: value) & 0x00FF_FFFF_FFFF_FFFF))!
 }
 
-/// 打包一个字节序列成 `Char`。七字节以内内联；更长的复制成 `rc == 0` 的带头串，与源串脱钩。
+/// 长字素的驻留表：内容摘要 → 同内容的块。只服务八字节以上的打包路径。
+///  注意  块是 `rc == 0` 的进程期常量，同一内容只该有一块；表把「每次取用一块」压成「每种一块」。
+nonisolated(unsafe) private var _bkCharPool: [UInt64: [UnsafeMutablePointer<CChar>]] = [:]
+private let _bkCharPoolLock = NSLock()
+
+/// FNV-1a：键是字节内容而不是指针，故两个不同源串里的同一字素落进同一个桶。
+@inline(__always) private func _bkCharDigest(
+    _ bytes: UnsafePointer<CChar>, _ count: Int
+) -> UInt64 {
+    var digest: UInt64 = 0xcbf2_9ce4_8422_2325
+    for index in 0..<count {
+        digest = (digest ^ UInt64(UInt8(bitPattern: bytes[index]))) &* 0x0000_0100_0000_01b3
+    }
+    return digest
+}
+
+/// 造一块只承载一个长字素的带头串：`rc == 0`、长度按字节写、字素数恒为 1。
+///  注意  块不参与字符串的拼接与索引，`graphemes` 只为让头结构保持同规；它不是可归还的份额。
+private func _bkCharBlock(
+    _ bytes: UnsafePointer<CChar>, _ count: Int
+) -> UnsafeMutablePointer<CChar> {
+    let user = _bkStrAlloc(count)
+    let out = user.assumingMemoryBound(to: CChar.self)
+    if count > 0 { memcpy(out, bytes, count) }
+    out[count] = 0
+    _bkStrLen(out).pointee = Int32(count)
+    _bkStrGraphemes(out).pointee = 1
+    _bkStrRC(out).pointee = 0
+    return out
+}
+
+/// 取一个长字素的驻留块：命中返回既有块，未命中才分配。长度参与比较，前缀相同不算命中。
+private func _bkCharInterned(
+    _ bytes: UnsafePointer<CChar>, _ count: Int
+) -> UnsafeMutablePointer<CChar> {
+    let digest = _bkCharDigest(bytes, count)
+    _bkCharPoolLock.lock()
+    defer { _bkCharPoolLock.unlock() }
+    if let bucket = _bkCharPool[digest] {
+        for candidate in bucket
+        where Int(_bkStrLen(candidate).pointee) == count
+            && memcmp(candidate, bytes, count) == 0
+        {
+            return candidate
+        }
+    }
+    let made = _bkCharBlock(bytes, count)
+    _bkCharPool[digest, default: []].append(made)
+    return made
+}
+
+/// 打包一个字节序列成 `Char`。七字节以内内联；更长的取驻留块，与源串脱钩。
 ///  注意  复制这一步实现「值即自持」：`Char` 离开产生它的表达式后，源串随时可以归还；
 /// 长度格写 `127` 表示真长在头里 —— 与内联形态的七字节上限分开，任意长的字素簇都装得下。
 private func _bkCharPack(_ bytes: UnsafePointer<CChar>, _ count: Int) -> Int64 {
@@ -1606,8 +1657,7 @@ private func _bkCharPack(_ bytes: UnsafePointer<CChar>, _ count: Int) -> Int64 {
         }
         return Int64(bitPattern: packed | (UInt64(count) << 56))
     }
-    let made = _bkStrFromBytes(bytes, Swift.max(count, 0))
-    _bkStrRC(made).pointee = 0
+    let made = _bkCharInterned(bytes, Swift.max(count, 0))
     let address = UInt64(UInt(bitPattern: UnsafeRawPointer(made)))
     let field = UInt64(Swift.min(count, 127))
     return Int64(bitPattern: address | (field << 56) | 0x8000_0000_0000_0000)
