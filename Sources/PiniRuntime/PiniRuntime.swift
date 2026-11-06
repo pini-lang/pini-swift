@@ -126,6 +126,11 @@ private final class _BkArrayStorage {
     var tags: [Int32]
     /// 每槽字节宽度（深拷需要，且与 `elemBytes` 一致）。
     var widths: [Int]
+    /// 聚合元素的成员钩子：`tag == .aggregate` 的槽里是一个内联结构体，逐成员的保留与归还
+    /// 需要布局知识，而布局只在发射层 ⇒ 由它合成的两个函数在这里登记。
+    ///  注意  其它 tag 的槽不看这两个字段；`nil` 表示「这个数组没有聚合元素」。
+    var elementRetain: (@convention(c) (UnsafeMutableRawPointer) -> Void)?
+    var elementRelease: (@convention(c) (UnsafeMutableRawPointer) -> Void)?
     /// 持有本存储的 **box 数**（由 `_BkArrayBox` 的初始化器与反初始化器成对增减）。
     ///  行不通  不借 ARC / `isKnownUniquelyReferenced` 判定 —— 与 box 的 `shares` 同源（见件头那条
     /// 「LLVM 层的复制不经过 ARC」）：要的是一个能被判据数出来的计数，不是运行时的猜测。
@@ -157,14 +162,35 @@ private final class _BkArrayStorage {
     func deepCopy(count: Int) -> _BkArrayStorage {
         let n = max(count, 0)
         let copy = _BkArrayStorage(capacity: n)
+        copy.elementRetain = elementRetain
+        copy.elementRelease = elementRelease
         for i in 0..<n {
             copy.tags[i] = tags[i]
             copy.widths[i] = widths[i]
             guard let src = elements[i], widths[i] > 0 else { continue }
             copy.elements[i] = _bkAllocBox(src, widths[i])
-            _bkRetainIfHandle(src, tags[i])
+            copy.retainElement(src, tag: tags[i])
         }
         return copy
+    }
+
+    /// 归还一格元素的份额：聚合按登记的钩子逐成员归还，其余按 tag 分派。
+    ///  注意  与 `retainElement` 成对 —— 两侧都走这一对入口，才不会一边逐成员保留、一边按标量释放。
+    func releaseElement(_ box: UnsafeMutableRawPointer, tag: Int32) {
+        if _BkTag(rawValue: tag) == .aggregate {
+            elementRelease?(box)
+        } else {
+            _bkReleaseIfHandle(box, tag)
+        }
+    }
+
+    /// 保留一格元素的份额：聚合逐成员保留，其余按 tag 分派（深拷复制字节时要靠这一步）。
+    func retainElement(_ box: UnsafeMutableRawPointer, tag: Int32) {
+        if _BkTag(rawValue: tag) == .aggregate {
+            elementRetain?(box)
+        } else {
+            _bkRetainIfHandle(box, tag)
+        }
     }
 
     /// 释放本存储拥有的全部元素 box（**最后一个**持有者离开时调用）。
@@ -173,7 +199,7 @@ private final class _BkArrayStorage {
     func releaseAllElements() {
         for i in elements.indices {
             guard let b = elements[i] else { continue }
-            _bkReleaseIfHandle(b, tags[i])
+            releaseElement(b, tag: tags[i])
             b.deallocate()
         }
     }
@@ -335,6 +361,21 @@ public func bk_array_create(_ len: Int32) -> UnsafeMutableRawPointer {
     return _bkRegister(_BkArrayBox(count: Int(len)))
 }
 
+/// 给数组登记聚合元素的成员钩子：深拷时逐成员保留、销毁时逐成员归还。
+///  注意  必须在第一次写入之前调用（创建后立刻）；存储已被共享时登记只落在当前 box 上，
+/// 兄弟 box 各自带自己的那一份 —— 而元素类型相同的数组本就该有同一对函数。
+@_cdecl("bk_array_set_element_hooks")
+public func bk_array_set_element_hooks(
+    _ arr: UnsafeMutableRawPointer?,
+    _ retain: (@convention(c) (UnsafeMutableRawPointer) -> Void)?,
+    _ release: (@convention(c) (UnsafeMutableRawPointer) -> Void)?
+) {
+    guard let arr else { return }
+    let box = Unmanaged<_BkArrayBox>.fromOpaque(arr).takeUnretainedValue()
+    box.storage.elementRetain = retain
+    box.storage.elementRelease = release
+}
+
 /// 数组长度（元素个数）。
 @_cdecl("bk_array_len")
 public func bk_array_len(_ arr: UnsafeMutableRawPointer?) -> Int32 {
@@ -383,7 +424,7 @@ public func bk_array_set_unsafe(
     let n = Int(elemBytes)
     guard n > 0 else { return target }
     if let old = box.storage.elements[idx] {
-        _bkReleaseIfHandle(old, box.storage.tags[idx])
+        box.storage.releaseElement(old, tag: box.storage.tags[idx])
         old.deallocate()
     }
     box.storage.elements[idx] = _bkAllocBox(src, n)
@@ -414,7 +455,7 @@ public func bk_array_append_unsafe(
         let storage = source.storage
         storage.grow(to: count + 1)
         if let old = storage.elements[count] {
-            _bkReleaseIfHandle(old, storage.tags[count])
+            storage.releaseElement(old, tag: storage.tags[count])
             old.deallocate()
         }
         storage.elements[count] = _bkAllocBox(src, width)
@@ -426,12 +467,14 @@ public func bk_array_append_unsafe(
     // 与输入侧互不相干（语义与改动前逐字相同；重复此路也不构成二次方，因为每次只增一格）。
     let grown = _BkArrayBox(count: count + 1)
     if let source {
+        grown.storage.elementRetain = source.storage.elementRetain
+        grown.storage.elementRelease = source.storage.elementRelease
         for i in 0..<count {
             grown.storage.tags[i] = source.storage.tags[i]
             grown.storage.widths[i] = source.storage.widths[i]
             guard let elem = source.storage.elements[i], source.storage.widths[i] > 0 else { continue }
             grown.storage.elements[i] = _bkAllocBox(elem, source.storage.widths[i])
-            _bkRetainIfHandle(elem, source.storage.tags[i])
+            grown.storage.retainElement(elem, tag: source.storage.tags[i])
         }
     }
     grown.storage.elements[count] = _bkAllocBox(src, width)
@@ -631,6 +674,9 @@ private enum _BkTag: Int32 {
     case rawPtr = 6
     /// `Char`：八字节按值，指针形态指向一条带头串；销毁时按它的计数归还。
     case char = 7
+    /// 内联结构体（`Optional` / `Result` / 元组）：元素字节就是聚合本身，宽度由发射层给出。
+    ///  注意  成员份额不按 tag 猜 —— 布局在发射层，故深拷与销毁都经该数组登记的两个回调。
+    case aggregate = 8
 }
 
 /// 两个 box 的内容相等性（按 tag 解释字节）。字符串按 C 串内容比较，与指针身份无关。
@@ -656,6 +702,9 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
         /// `Char` 按值比较：内联形态整字相等，指针形态要按字节内容判，不能比地址。
         return a.load(as: Int64.self) == b.load(as: Int64.self)
             || bk_char_equal(a.load(as: Int64.self), b.load(as: Int64.self)) == 1
+    case .aggregate:
+        /// 聚合按字节判等要宽度，而这里只有 tag ⇒ 字典 / 集合的键不收聚合（发射层已拒绝）。
+        return false
     }
 }
 

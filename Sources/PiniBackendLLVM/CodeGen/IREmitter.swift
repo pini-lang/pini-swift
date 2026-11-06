@@ -238,6 +238,11 @@ public final class IREmitter {
     private var releaseFunctionDefs: [String] = []
     private var releaseFunctionNames: Set<String> = []
 
+    /// 聚合元素的成员钩子（`__bk_agg_<n>_retain` / `_release`）：数组按字节内联存聚合，
+    /// 深拷与销毁时的成员动作只有发射层知道布局 ⇒ 合成一对函数交给运行时登记。
+    private var aggregateHookDefs: [String] = []
+    private var aggregateHooks: [String: (retain: String, release: String)] = [:]
+
     /// 逐类型合成的**值语义拷贝胶水**（`__copy_struct_*`，只为结构体存在）—— 同上。
     private var copyFunctionDefs: [String] = []
     private var copyFunctionNames: Set<String> = []
@@ -360,6 +365,7 @@ public final class IREmitter {
         header += Builtins.declaration(for: "bk_array_get")
         header += Builtins.declaration(for: "bk_array_set")
         header += Builtins.declaration(for: "bk_array_append")
+        header += Builtins.declaration(for: "bk_array_set_element_hooks")
         header += Builtins.declaration(for: "bk_handle_retain")
         header += Builtins.declaration(for: "bk_handle_ensure_unique")
         header += Builtins.declaration(for: "bk_array_ensure_unique_at")
@@ -486,6 +492,8 @@ public final class IREmitter {
         capturedNamesInFunction = []
         releaseFunctionDefs = []
         releaseFunctionNames = []
+        aggregateHookDefs = []
+        aggregateHooks = [:]
         copyFunctionDefs = []
         copyFunctionNames = []
         taskBodyDefs = []
@@ -772,6 +780,10 @@ public final class IREmitter {
         }
         /// 名义箱的释放胶水：按类型合成、按名去重，只在真用到时才有内容。
         for def in releaseFunctionDefs {
+            closureTail += def
+        }
+        /// 聚合元素的成员钩子：与释放胶水同一套「按类型合成、按名去重」。
+        for def in aggregateHookDefs {
             closureTail += def
         }
         // 值语义的拷贝胶水（片 C）：同上，只为结构体合成。
@@ -1953,7 +1965,7 @@ public final class IREmitter {
             emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
             return
         }
-        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
         //  重要  容器求值走统一的 helper —— 它同时交出**字段容器**的写回钩子（`obj.field[i] = v`）。
         let (containerValue, fieldWriteBack) = emitSubscriptContainer(container)
         let indexValue = emitExpr(index)
@@ -4149,6 +4161,36 @@ public final class IREmitter {
         return symbol
     }
 
+    /// 聚合元素的成员钩子：`__bk_agg_<n>_retain` / `__bk_agg_<n>_release`，入参是元素字节的地址。
+    ///  注意  数组里存的是**内联结构体**，运行时不知道布局 ⇒ 深拷与销毁都调这两个函数；
+    /// 名字按 `llvmSpelling` 去重，同一形状只合成一对。
+    private func ensureAggregateHooks(for type: IRType) -> (retain: String, release: String) {
+        if let existing = aggregateHooks[type.llvmSpelling] { return existing }
+        let stem = "__bk_agg_\(aggregateHooks.count)"
+        let pair = (retain: "\(stem)_retain", release: "\(stem)_release")
+        aggregateHooks[type.llvmSpelling] = pair
+
+        for (symbol, isRetain) in [(pair.retain, true), (pair.release, false)] {
+            let savedBodyIR = bodyIR
+            let savedBuilder = builder
+            builder = IRBuilder()
+            bodyIR = ""
+            let loaded = builder.freshTemp()
+            bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: "%slot") + "\n"
+            let value = IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
+            if isRetain {
+                retainAggregateMembers(value, type: type)
+            } else {
+                releaseAggregateMembers(value, type: type)
+            }
+            bodyIR += " ret void\n"
+            aggregateHookDefs.append("define void @\(symbol)(ptr %slot) {\nentry:\n" + bodyIR + "}\n\n")
+            bodyIR = savedBodyIR
+            builder = savedBuilder
+        }
+        return pair
+    }
+
     private func emitConstruct(type: IRType) -> IRValue {
         guard case .nominal(let name, _) = type,
             let aggregate = type.nominalAggregateSpelling,
@@ -4191,7 +4233,7 @@ public final class IREmitter {
 
         switch type {
         case .array(let elementType):
-            let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+            let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
             let count = builder.freshTemp()
@@ -4203,6 +4245,7 @@ public final class IREmitter {
 
             let create = builder.freshTemp()
             bodyIR += " \(create) = call ptr @bk_array_create(i32 \(length))\n"
+            emitAggregateElementHooks(create, elementType: elementType)
             let handleSlot = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
             let createHandle = builder.freshTemp()
@@ -4237,6 +4280,10 @@ public final class IREmitter {
             if let family = boxFamily(of: elementType) {
                 /// 元素按箱共享：源数组仍握着那一份，新数组必须自带一份，否则两个持有者只付一次。
                 emitElementRetain(boxPtr: boxPtr, elementType: elementType, family: family)
+            } else if case .aggregate = elementType.shareClass, elementType.holdsAShare {
+                /// 聚合按字节复制：成员份额不在字节里，得逐成员再留一份。
+                let hooks = ensureAggregateHooks(for: elementType)
+                bodyIR += " call void @\(hooks.retain)(ptr \(boxPtr))\n"
             }
             let newRaw = builder.freshTemp()
             bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
@@ -4303,7 +4350,7 @@ public final class IREmitter {
     private func emitArrayAppend(
         receiver: IRValue, elementNode: IRExpr, elementValue: IRValue, elementType: IRType
     ) -> IRValue {
-        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
         adoptElement(elementNode, elementValue, type: elementType)
         let boxPtr = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
@@ -4445,31 +4492,49 @@ public final class IREmitter {
     /// Element boxing ABI against the runtime `_BkTag` values: the tag separates raw scalars from nested
     /// container handles (release / COW). Strings use the raw ptr tag, NOT the handle tag — immutable C
     /// strings have no share count, and the handle tag makes dict cowCopy retain constant bytes.
-    private func arrayElementABI(_ type: IRType) -> (spelling: String, width: Int, tag: Int32) {
+    private func arrayElementABI(
+        _ type: IRType, allowAggregate: Bool = false
+    ) -> (spelling: String, width: String, tag: Int32) {
         switch type {
-        case .i32: return ("i32", 4, 0)
-        case .f64: return ("double", 8, 1)
-        case .boolean: return ("i1", 1, 2)
-        case .string: return ("i8*", 8, 3)
+        case .i32: return ("i32", "4", 0)
+        case .f64: return ("double", "8", 1)
+        case .boolean: return ("i1", "1", 2)
+        case .string: return ("i8*", "8", 3)
         /// `Char` 按值装箱（tag 7）：指针形态持一份带头串，容器销毁时按它归还。
-        case .char: return ("i64", 8, 7)
-        case .array: return ("%bk_array*", 8, 4)
-        case .dict: return ("%bk_dict*", 8, 4)
-        case .set: return ("%bk_set*", 8, 4)
+        case .char: return ("i64", "8", 7)
+        case .array: return ("%bk_array*", "8", 4)
+        case .dict: return ("%bk_dict*", "8", 4)
+        case .set: return ("%bk_set*", "8", 4)
+        /// 聚合按字节内联（tag 8）：宽度是这个结构体的 ABI 尺寸，成员动作交给合成钩子。
+        ///  注意  尺寸只能写成 LLVM 常量表达式 —— 发射层没有 DataLayout，算不了布局。
+        ///  行不通  字典 / 集合还不带成员钩子，聚合键值会只搬字节不还成员 ⇒ 那两族仍拒绝（`allowAggregate`）。
+        case .optional, .result, .tuple:
+            guard allowAggregate else {
+                refuse(
+                    node: "containerElement", family: .collections,
+                    reason: "元素类型 \(type.llvmSpelling) 还没有成员钩子（聚合目前只装进数组）")
+                return ("i32", "4", 0)
+            }
+            return (type.llvmSpelling, Self.byteSize(of: type), 8)
         //  重要  `*T` 走裸指针 tag（6），不是串那一格：它不参与计数，销毁时也就没有 release。
         //  注意  与 `String` 共用 tag 3 会让数组销毁把指针当串释放，指针恰好指向在册串时就是悬垂。
         //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
-        case .pointer: return ("i8*", 8, 6)
+        case .pointer: return ("i8*", "8", 6)
         case .future:
             /// 任务句柄是指针字，生命周期由 join / detach 管，数组只暂存 ⇒ 裸指针 tag，不计数。
-            return ("ptr", 8, 6)
+            return ("ptr", "8", 6)
         default:
             /// 占位 ABI 只为了让发射走完：产物随即因 `refusals` 非空被丢掉，不会有人读到它。
             refuse(
                 node: "arrayLiteral", family: .collections,
-                reason: "元素类型 \(type.llvmSpelling) 没有装箱 ABI（本通道能装的是整数字 / F64 / Bool / String / 容器句柄 / 指针）")
-            return ("i32", 4, 0)
+                reason: "元素类型 \(type.llvmSpelling) 没有装箱 ABI（本通道能装的是整数字 / F64 / Bool / String / Char / 聚合 / 容器句柄 / 指针）")
+            return ("i32", "4", 0)
         }
+    }
+
+    /// 一个类型的 ABI 字节数，写成 LLVM 常量表达式 —— 让后端按自己的 DataLayout 求值。
+    private static func byteSize(of type: IRType) -> String {
+        "trunc (i64 ptrtoint (ptr getelementptr (\(type.llvmSpelling), ptr null, i32 1) to i64) to i32)"
     }
 
     /// 容器元素落槽：元素按箱共享 ⇒ 结构体也保留而不拷；临时元素移交，账本随之清掉。
@@ -4686,13 +4751,25 @@ public final class IREmitter {
         }
     }
 
+    /// 聚合元素的数组要在首次写入前登记成员钩子：深拷时逐成员保留、销毁时逐成员归还。
+    ///  注意  其它元素类型零动作 —— 它们的 tag 已在运行时分派表里，不需要布局知识；
+    /// 成员全是标量的聚合也不登记，销毁时按空动作跳过。
+    private func emitAggregateElementHooks(_ handle: String, elementType: IRType) {
+        guard case .aggregate = elementType.shareClass, elementType.holdsAShare else { return }
+        let hooks = ensureAggregateHooks(for: elementType)
+        bodyIR +=
+            " call void @bk_array_set_element_hooks(ptr \(handle), ptr @\(hooks.retain),"
+            + " ptr @\(hooks.release))\n"
+    }
+
     private func emitArrayLiteral(elements: [IRExpr], type: IRType) -> IRValue {
         guard case .array(let elementType) = type else {
             fatalError("IREmitter: arrayLiteral type is not an array (IRLowerer guarantees)")
         }
-        let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
+        let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
         let createTemp = builder.freshTemp()
         bodyIR += " \(createTemp) = call ptr @bk_array_create(i32 \(elements.count))\n"
+        emitAggregateElementHooks(createTemp, elementType: elementType)
         /// 构造句柄本就唯一（create 起始 shares==1），但 set 调用仍按同一形状串联，
         /// 好让构造路径与写回路径共用一套代码。
         var curRaw = createTemp
