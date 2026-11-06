@@ -78,7 +78,7 @@ struct ShareEffectTests: Sendable {
         ("fileRead", .fileRead(path: text), .fresh),
         ("fileTryWrite", .fileTryWrite(path: text, content: text), .inert),
         ("fileTryAppend", .fileTryAppend(path: text, content: text), .inert),
-        ("fileTryRead", .fileTryRead(path: text), .inert),
+        ("fileTryRead", .fileTryRead(path: text), .fresh),
         ("readLine", .readLine, .borrowed),
         ("isAsciiDigit", .isAsciiDigit(argument: text), .inert),
         ("stringCase", .stringCase(isUpper: true, receiver: text), .fresh),
@@ -145,6 +145,23 @@ struct ShareEffectTests: Sendable {
         #expect(
             IRExpr.optionalConstruct(isSome: true, payload: Self.text, type: optionalString)
                 .shareEffect == .fresh)
+        /// 同一个 `join` 节点按载荷分派：串载荷是新份额，标量载荷仍是零动作。
+        #expect(
+            IRExpr.join(
+                future: .load(name: "h", type: .future(ok: .string)), type: .result(ok: .string),
+                form: .waits
+            ).shareEffect == .fresh)
+        #expect(
+            IRExpr.join(
+                future: .load(name: "h", type: .future(ok: .i32)), type: .result(ok: .i32),
+                form: .waits
+            ).shareEffect == .inert)
+        /// 已结算值上的 `wait` 是原样透传：读到的是那个 `Result` 的槽，只能是借用。
+        #expect(
+            IRExpr.join(
+                future: .load(name: "r", type: .result(ok: .string)), type: .result(ok: .string),
+                form: .waits
+            ).shareEffect == .borrowed)
     }
 
     @Test("聚合的份额名单只列计数成员，空名单就是零动作")

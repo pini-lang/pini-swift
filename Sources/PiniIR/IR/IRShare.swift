@@ -177,9 +177,18 @@ extension IRExpr {
             .arrayJoin, .stringConcat, .interpString, .fileRead, .lazyRefConstruct,
             .closureLiteral:
             return .fresh
-        // 整块聚合里没有计数成员（函数值、纯标量元组）：整块不记账。
-        case .fileTryWrite, .fileTryAppend, .fileTryRead, .join:
+        // 整块聚合里没有计数成员（`Result<I64>` 的写盘家族）：整块不记账。
+        case .fileTryWrite, .fileTryAppend:
             return .inert
+        /// `tryReadFile` 的 ok 载荷是刚读出来的串 ⇒ 新份额。
+        case .fileTryRead:
+            return .fresh
+        /// `join` 的载荷由任务体交出 ⇒ 新份额；但 `wait` 也可作用在已结算的 `Result` 上，
+        /// 那时发射层原样透传，读到的是别处的持有位置 —— 判据先看操作数是不是任务句柄。
+        ///  注意  透传当新份额会让「两个槽指向同一条串」各释放一次，是双重释放而不是泄漏。
+        case .join(let future, let type, _):
+            guard case .future = future.staticType else { return .borrowed }
+            return type.holdsAShare ? .fresh : .inert
         /// `readLine` 返回 `fgets` 填的栈缓冲：既不是新份额，也不会在帧外存活。
         /// 这是一条独立缺口（契约第 4 节），不在这里假装它是 `fresh`。
         case .readLine:
