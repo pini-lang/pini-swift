@@ -16,12 +16,18 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$cache_dir"
 printf '镜像: %s\n工作副本: %s\n构建缓存: %s\n' "$image" "$work" "$cache_dir"
 
-if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    docker buildx build --load \
-        --cache-from type=gha --cache-to type=gha,mode=min \
-        -f "$repo_root/ci/Dockerfile" -t "$image" "$repo_root"
+# 重复验证只跑容器、不重建镜像：`PINI_CI_SKIP_BUILD=1` 且镜像已在时跳过构建。
+#  注意  跳过意味着镜像可能落后于 `ci/Dockerfile`；镜像缺失时仍会建，不会拿空壳跑出假绿。
+if [ "${PINI_CI_SKIP_BUILD:-}" = "1" ] && docker image inspect "$image" >/dev/null 2>&1; then
+    printf '跳过构建：%s 已在（PINI_CI_SKIP_BUILD=1）\n' "$image"
 else
-    docker build -f "$repo_root/ci/Dockerfile" -t "$image" "$repo_root"
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+        docker buildx build --load \
+            --cache-from type=gha --cache-to type=gha,mode=min \
+            -f "$repo_root/ci/Dockerfile" -t "$image" "$repo_root"
+    else
+        docker build -f "$repo_root/ci/Dockerfile" -t "$image" "$repo_root"
+    fi
 fi
 
 # 排除构建产物与编辑器状态；.git 要带上，文档链接门禁靠它判「引用空缺载体」。
