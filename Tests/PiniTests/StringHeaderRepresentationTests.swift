@@ -24,11 +24,25 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         let ir = try emitted("main|func() -> ():\n    print(\"hi\")\n    return\n")
         #expect(
             ir.contains(
-                "private constant [19 x i8] "
-                    + "c\"\\00\\00\\00\\00\\02\\00\\00\\00\\02\\00\\00\\00\\02\\00\\00\\00\\68\\69\\00\"")
-                || ir.contains("private constant [19 x i8]"),
+                "private global [19 x i8] "
+                    + "c\"\\00\\00\\00\\00\\02\\00\\00\\00\\02\\00\\00\\00\\02\\00\\00\\00\\68\\69\\00\""),
             "字面量常量应为 16 字节头 + 2 字节载荷 + NUL，实际：\(ir.prefix(400))")
         #expect(ir.contains("i32 0, i32 16"), "取串的 GEP 必须跳过 16 字节头")
+    }
+
+    @Test("容量够一个块的串留索引表槽：常量长度多出预留的 16 字节")
+    func 大串留槽() throws {
+        let payload = String(repeating: "a", count: 200)
+        let ir = try emitted("main|func() -> ():\n    print(\"\(payload)\")\n    return\n")
+        let expected = 200 + 1 + IREmitter.stringHeaderBytes + IREmitter.stringSlotReserve
+        #expect(
+            ir.contains("private global [\(expected) x i8]"),
+            "200 字节的字面量要带槽（容量 ≥ \(IREmitter.stringTableMinCap)），实际：\(ir.prefix(400))")
+    }
+
+    @Test("槽的阈值两边同源：发射器常数与运行时导出值相等")
+    func 槽阈值同源() {
+        #expect(IREmitter.stringTableMinCap == Int(bk_str_table_min_cap()))
     }
 
     @Test("拼接就地追加：唯一持有且容量够时返回同一指针")
@@ -111,5 +125,39 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         #expect(bk_string_count(doubled) == 20000)
         #expect(bk_str_refcount(doubled) == 1)
         bk_str_release(doubled)
+    }
+
+    @Test("稀疏索引表：块边界两侧都取对，尾块不满 64 字素也不越界")
+    func 索引表块边界() {
+        // 200 个汉字 = 600 字节，四个块（64/64/64/8）。
+        let source = dup(String(repeating: "汉字", count: 100))
+        #expect(bk_string_count(source) == 200)
+        let cases: [(Int32, String)] = [
+            (0, "汉"), (1, "字"), (63, "字"), (64, "汉"), (65, "字"),
+            (127, "字"), (128, "汉"), (199, "字"), (-1, "字"),
+        ]
+        for (index, expected) in cases {
+            #expect(解包(bk_string_char_at(source, index)) == expected, "下标 \(index)")
+        }
+        bk_str_release(source)
+    }
+
+    @Test("就地追加让索引表作废：换内容后下标仍按新串答")
+    func 追加后表作废() {
+        let head = dup(String(repeating: "汉", count: 128))
+        let tail = dup("x")
+        let grown = bk_str_concat(head, tail, 1)
+        bk_str_release(tail)
+        #expect(bk_string_count(grown) == 129)
+        #expect(解包(bk_string_char_at(grown, 128)) == "x", "建表后再取值")
+        let piece = dup("字")
+        let appended = bk_str_concat(grown, piece, 1)
+        bk_str_release(piece)
+        #expect(UnsafeRawPointer(appended) == UnsafeRawPointer(grown), "容量够，应就地追加")
+        #expect(bk_string_count(appended) == 130)
+        #expect(解包(bk_string_char_at(appended, 128)) == "x")
+        #expect(解包(bk_string_char_at(appended, 129)) == "字")
+        #expect(解包(bk_string_char_at(appended, 0)) == "汉")
+        bk_str_release(appended)
     }
 }

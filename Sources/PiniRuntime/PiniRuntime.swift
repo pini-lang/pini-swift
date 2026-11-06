@@ -976,6 +976,10 @@ private let _bkStrHeaderBytes = 16
 @_cdecl("bk_str_header_bytes")
 public func bk_str_header_bytes() -> Int32 { Int32(_bkStrHeaderBytes) }
 
+/// 带索引表槽的最小容量对外的读取口：发射器据此决定字面量要不要留槽，测试据此钉住两边相等。
+@_cdecl("bk_str_table_min_cap")
+public func bk_str_table_min_cap() -> Int32 { Int32(_bkStrTableMinCap) }
+
 /// 用户指针 → 头基址。
 @inline(__always) private func _bkStrHead(_ p: UnsafeRawPointer) -> UnsafeMutableRawPointer {
     UnsafeMutableRawPointer(mutating: p).advanced(by: -_bkStrHeaderBytes)
@@ -1035,17 +1039,41 @@ public func bk_str_header_bytes() -> Int32 { Int32(_bkStrHeaderBytes) }
 }
 
 /// 分配一条空串：容量 `capacity` 字节（不含 NUL），长度 0，计数 1。载荷不置零，只写首字节 NUL。
+/// 容量达到 `_bkStrTableMinCap` 时，块尾多留索引表的槽 —— 表要惰性建，而串一旦交出去就不能搬家。
 private func _bkStrAlloc(_ capacity: Int) -> UnsafeMutableRawPointer {
     let cap = max(capacity, 0)
+    let extra = cap >= _bkStrTableMinCap ? _bkStrSlotReserve : 0
     let base = UnsafeMutableRawPointer.allocate(
-        byteCount: _bkStrHeaderBytes + cap + 1, alignment: 8)
+        byteCount: _bkStrHeaderBytes + cap + 1 + extra, alignment: 8)
     base.storeBytes(of: Int32(1), toByteOffset: 0, as: Int32.self)
     base.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
     base.storeBytes(of: Int32(cap), toByteOffset: 8, as: Int32.self)
     base.storeBytes(of: Int32(0), toByteOffset: 12, as: Int32.self)
     let user = base.advanced(by: _bkStrHeaderBytes)
     user.storeBytes(of: 0, as: CChar.self)
+    _bkStrTableSlot(user)?.pointee = nil
     return user
+}
+
+/// 索引表只在「容量足够装下 64 个字素块」的串上才有槽：更短的串连一个块都填不满，
+/// 建表比直接走一遍还贵。这条阈值同时决定分配大小与槽的地址，故必须是同一个数。
+private let _bkStrTableMinCap = 128
+
+/// 槽区预留：槽地址落在 `p + cap + 1` 到 `p + cap + 8`（向下对齐），占 8 字节 ⇒ 载荷之后最多到 `cap + 15`。
+private let _bkStrSlotReserve = 16
+
+/// 索引表的槽：载荷末尾（NUL 之后）的 8 字节，值是 `u32` 偏移表基址或空。
+/// 容量不足 `_bkStrTableMinCap` 的串没有槽 ⇒ 返回 nil，调用方按「无表」处理。
+///  注意  槽按 8 字节对齐且随 `cap` 定位 —— 扩容是整块重分配，槽跟着换地方；就地追加则让表作废。
+@inline(__always) private func _bkStrTableSlot(
+    _ p: UnsafeRawPointer
+) -> UnsafeMutablePointer<UnsafeMutableRawPointer?>? {
+    let cap = Int(_bkStrCap(p).pointee)
+    guard cap >= _bkStrTableMinCap else { return nil }
+    /// 载荷长度任意，`p + cap + 8` 不保证对齐；未对齐的 8 字节写会崩在 arm64 上。
+    let address = (UInt(bitPattern: p) + UInt(cap) + 8) & ~UInt(7)
+    return UnsafeMutableRawPointer(bitPattern: address)!
+        .assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
 }
 
 /// 纯 ASCII 判定：8 字节块取高位掩码，块外逐字节补扫。纯 ASCII 串的 `graphemes` 直接等于 `len`。
@@ -1062,6 +1090,176 @@ private func _bkStrUtf8IsASCII(_ bytes: UnsafeRawPointer, _ count: Int) -> Bool 
         index += 1
     }
     return true
+}
+
+/// 保护索引表的建表临界区。建一次、读无数次，故只在首次构建时争锁。
+private let _bkStrTableLock = NSLock()
+
+/// 取（必要时建）稀疏字素索引表：每 64 个字素一条 `u32` 字节偏移，尾项是总长。
+/// 纯 ASCII 与容量不足一个块的短串不建表，直接走整串物化那条退路。
+///  注意  建表前先验「Swift 视角的字节数等于头里的长度」：串里有非法 UTF-8 时 `String(decoding:)` 会折成替换符，偏移就对不上。
+private func _bkStrGraphemeTable(_ p: UnsafeMutablePointer<CChar>) -> UnsafePointer<UInt32>? {
+    guard let slot = _bkStrTableSlot(p) else { return nil }
+    if let existing = slot.pointee {
+        return UnsafePointer(existing.assumingMemoryBound(to: UInt32.self))
+    }
+    let length = Int(_bkStrLen(p).pointee)
+    guard _bkStrUtf8IsASCII(p, length) == false else { return nil }
+    var count = Int(_bkStrGraphemes(p).pointee)
+    if count < 0 {
+        let text = _bkStrSwiftString(p)
+        guard text.utf8.count == length else { return nil }
+        count = text.count
+        _bkStrGraphemes(p).pointee = Int32(count)
+    }
+    guard count >= 128 else { return nil }
+    _bkStrTableLock.lock()
+    defer { _bkStrTableLock.unlock() }
+    if let raced = slot.pointee {
+        return UnsafePointer(raced.assumingMemoryBound(to: UInt32.self))
+    }
+    let text = _bkStrSwiftString(p)
+    guard text.utf8.count == length else { return nil }
+    let entries = count / 64 + 2
+    let table = UnsafeMutablePointer<UInt32>.allocate(capacity: entries)
+    table[0] = 0
+    var block = 0
+    var index = 0
+    var offset = 0
+    for character in text {
+        if index > 0, index % 64 == 0 {
+            block += 1
+            table[block] = UInt32(offset)
+        }
+        offset += String(character).utf8.count
+        index += 1
+    }
+    table[block + 1] = UInt32(offset)
+    slot.pointee = UnsafeMutableRawPointer(table)
+    return UnsafePointer(table)
+}
+
+/// 丢掉索引表：内容变了（就地追加），表里的偏移全部作废。
+private func _bkStrDropTable(_ p: UnsafeRawPointer) {
+    guard let slot = _bkStrTableSlot(p), let table = slot.pointee else { return }
+    UnsafeMutablePointer<UInt32>(table.assumingMemoryBound(to: UInt32.self)).deallocate()
+    slot.pointee = nil
+}
+
+/// 线程本地的块缓存：记住上一次物化的 64 字素块及其块内字节偏移表，块内任意下标都是两次数组读。
+///  注意  缓存**不保留**源串：保留会让 `rc` 从 1 变 2，就地追加随即退化成每次重分配。
+/// 换来的风险是「串释放后同地址被新串复用」，故命中判据里必须比对块内字节 —— 字节相同则偏移必然成立。
+private final class _BkStrCursor {
+    var owner: UnsafeMutableRawPointer?
+    var length = -1
+    var block = -1
+    /// 块首的整串字节偏移。
+    var lo = 0
+    /// 块内字素数：块尾可能不满 64。
+    var count = 0
+    /// 块内容副本，用于和当前载荷比对。
+    var span = ""
+    /// 块内字节偏移，`count + 1` 条；第 `k` 个字素占 `offsets[k] ..< offsets[k + 1]`。
+    let offsets: UnsafeMutablePointer<UInt32>
+
+    init() {
+        offsets = UnsafeMutablePointer<UInt32>.allocate(capacity: 65)
+    }
+
+    deinit {
+        offsets.deallocate()
+    }
+}
+
+/// 每线程一份游标的键：`pthread_getspecific` 是一条约两纳秒的取址，不经过任何全局锁。
+private let _bkStrCursorKey: pthread_key_t = {
+    var key = pthread_key_t()
+    #if canImport(Glibc)
+    let destructor: @convention(c) (UnsafeMutableRawPointer?) -> Void = { raw in
+        guard let raw else { return }
+        Unmanaged<_BkStrCursor>.fromOpaque(raw).release()
+    }
+    #else
+    let destructor: @convention(c) (UnsafeMutableRawPointer) -> Void = { raw in
+        Unmanaged<_BkStrCursor>.fromOpaque(raw).release()
+    }
+    #endif
+    pthread_key_create(&key, destructor)
+    return key
+}()
+
+/// 取当前线程的游标，没有就装一个。
+private func _bkStrCursor() -> _BkStrCursor {
+    if let raw = pthread_getspecific(_bkStrCursorKey) {
+        return Unmanaged<_BkStrCursor>.fromOpaque(raw).takeUnretainedValue()
+    }
+    let cursor = _BkStrCursor()
+    pthread_setspecific(_bkStrCursorKey, Unmanaged.passRetained(cursor).toOpaque())
+    return cursor
+}
+
+/// 游标换块：记下持有者、长度与块号；不碰引用计数（见 `_BkStrCursor` 的注记）。
+private func _bkStrCursorAdopt(
+    _ cursor: _BkStrCursor, _ s: UnsafeMutablePointer<CChar>, length: Int, block: Int, lo: Int
+) {
+    cursor.owner = UnsafeMutableRawPointer(s)
+    cursor.length = length
+    cursor.block = block
+    cursor.lo = lo
+    cursor.count = 0
+}
+
+/// 缓存内容与当前载荷是否逐字节相同：不同就说明这一块已经换了（或被复用的地址），不能拿旧偏移去切。
+private func _bkStrCursorMatches(
+    _ cursor: _BkStrCursor, _ s: UnsafeMutablePointer<CChar>, _ count: Int
+) -> Bool {
+    guard cursor.span.utf8.count == count else { return false }
+    return cursor.span.withUTF8 { buffer in
+        guard let base = buffer.baseAddress else { return count == 0 }
+        return memcmp(base, s + cursor.lo, count) == 0
+    }
+}
+
+/// 在索引表定位的块里取第 `idx` 个字素：命中缓存时块内任意下标都是两次数组读。
+/// 未命中才物化那一块（最多 64 个字素）并把块内偏移一次算好。
+///  注意  表的尾项是总长哨兵，故 `block + 1` 恒可读；块内最多 64 个字素。
+private func _bkStrCharAtBlocked(
+    _ s: UnsafeMutablePointer<CChar>, _ idx: Int, table: UnsafePointer<UInt32>
+) -> Int64 {
+    let block = idx / 64
+    let lo = Int(table[block])
+    let length = Int(_bkStrLen(s).pointee)
+    let cursor = _bkStrCursor()
+    if cursor.owner == UnsafeMutableRawPointer(s), cursor.length == length,
+        cursor.block == block, cursor.lo == lo, idx - block * 64 < cursor.count,
+        _bkStrCursorMatches(cursor, s, Int(table[block + 1]) - lo)
+    {
+        let k = idx - block * 64
+        let start = Int(cursor.offsets[k])
+        let end = Int(cursor.offsets[k + 1])
+        return _bkCharPack(s + lo + start, end - start)
+    }
+    _bkStrCursorAdopt(cursor, s, length: length, block: block, lo: lo)
+    let hi = Int(table[block + 1])
+    let span = String(
+        decoding: UnsafeRawBufferPointer(start: s + lo, count: hi - lo), as: UTF8.self)
+    var offset: UInt32 = 0
+    var count = 0
+    cursor.offsets[0] = 0
+    for character in span {
+        offset += UInt32(String(character).utf8.count)
+        count += 1
+        cursor.offsets[count] = offset
+    }
+    cursor.span = span
+    cursor.count = count
+    let k = idx - block * 64
+    guard k < count else {
+        bk_panic("Pini runtime error: string index out of range")
+    }
+    let start = Int(cursor.offsets[k])
+    let end = Int(cursor.offsets[k + 1])
+    return _bkCharPack(s + lo + start, end - start)
 }
 
 /// 把 Swift `String` 的 UTF-8 字节装成带头串（`strdup` 的替代）：字素数已知，一并写进头。
@@ -1122,7 +1320,9 @@ private func _bkStrConstant(_ text: String) -> UnsafeMutablePointer<CChar> {
 private func _bkStrReleaseRaw(_ p: UnsafeRawPointer) {
     let rc = _bkStrRC(p)
     guard _bkStrAtomicLoad(rc) > 0 else { return }
-    if _bkStrAtomicAdd(rc, -1) == 0 { _bkStrHead(p).deallocate() }
+    guard _bkStrAtomicAdd(rc, -1) == 0 else { return }
+    _bkStrDropTable(p)
+    _bkStrHead(p).deallocate()
 }
 
 /// 拼接后的字素数：两半都已知且右半以 ASCII 起头时直接相加（边界不可能并成新簇），否则置 -1。
@@ -1157,6 +1357,8 @@ private func _bkStrJoin(
             _bkStrLen(lhs).pointee = Int32(need)
             _bkStrGraphemes(lhs).pointee = _bkStrMergedGraphemes(
                 lhsGraphemes, rhsGraphemes, rhsLength: rhsLength, rhs: rhs)
+            /// 内容变了，索引表里的偏移全部作废 —— 不丢就是拿旧块去切新载荷。
+            _bkStrDropTable(lhs)
             return base
         }
     }
@@ -1887,22 +2089,21 @@ public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
 /// （组合序列、ZWJ 表情、区域旗标…），字节循环复现不了——切点会落进多字节序列内部。
 /// ⇒ 这一族一律下沉到运行时段，用 `String` / `Character`，与解释器同一模型。分配同 `bk_substring`。
 
-/// `len(s)`：数的是字素簇。读头的 `graphemes`；为 `-1` 时算一次并回填（只读段常量不回填）。
+/// `len(s)`：数的是字素簇。读头的 `graphemes`；为 `-1` 时算一次并回填。
 /// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）。纯 ASCII 串 `graphemes == len`。
+///  注意  值域里的每条串都带头且存储可写（字面量放可写全局），故回填不设条件。
 @_cdecl("bk_string_count")
 public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
     guard let s else { return 0 }
     let cached = _bkStrGraphemes(s).pointee
     if cached >= 0 { return cached }
     let count = Int32(_bkStrSwiftString(s).count)
-    if _bkStrRefCount(s) > 0 {
-        _bkStrGraphemes(s).pointee = count
-    }
+    _bkStrGraphemes(s).pointee = count
     return count
 }
 
 /// `s[i]` 读一个字符：负值尾计数，越界走安全断言通道 ⇒ `bk_panic`（与数组下标同规）。
-/// 纯 ASCII 串按字节直取 O(1)；非 ASCII 走 UTF-8 分段，走到目标即停。
+/// 纯 ASCII 串按字节直取 O(1)；非 ASCII 走稀疏索引表，只物化目标所在的那一块（≤64 字素）。
 ///  注意  返回值是八字节内联的 `Char`，**不进分配器**；七字节以内的字素直接装在整字里。
 @_cdecl("bk_string_char_at")
 public func bk_string_char_at(
@@ -1917,6 +2118,10 @@ public func bk_string_char_at(
     }
     if Int(_bkStrLen(s).pointee) == count {
         return _bkCharPack(s + idx, 1)
+    }
+    /// 有索引表时只在目标所在的那一块里走：顺序访问命中游标，每步前进一个字素。
+    if let table = _bkStrGraphemeTable(UnsafeMutablePointer(mutating: s)) {
+        return _bkStrCharAtBlocked(UnsafeMutablePointer(mutating: s), idx, table: table)
     }
     let text = _bkStrSwiftString(s)
     var p = text.startIndex
