@@ -213,6 +213,13 @@ public final class IREmitter {
     /// 与 `heldStringsStack` 同规：函数体 / 闭包体 / 给定初始化器各持一份，`IRBuilder` 重新编号 ⇒ 不能串。
     private var heldBoxesStack: [[String: IRType]] = []
 
+    /// 本层新造、尚无持有者的聚合值：SSA 名 → 聚合类型。退出 / 消费时逐成员归还。
+    /// 聚合是寄存器值，不能像箱那样整块减一个头，故与 `heldBoxes` 分账。
+    private var heldAggregates: [String: IRType] = [:]
+
+    /// 与 `heldBoxesStack` 同规：聚合的 SSA 名同样按函数重新编号。
+    private var heldAggregatesStack: [[String: IRType]] = []
+
     /// 自赋值追加的待用目标：`s = s + …` 的最左叶是本槽时记下变量名，那一次读槽可以把份额直接交给拼接。
     /// 只在本条赋值求值期间有效；一旦被某个拼接取走就清空，并由 `selfAppendTaken` 告诉覆盖点别再释放旧值。
     private var pendingSelfAppend: String?
@@ -808,6 +815,8 @@ public final class IREmitter {
         heldStrings = []
         heldBoxesStack.append(heldBoxes)
         heldBoxes = [:]
+        heldAggregatesStack.append(heldAggregates)
+        heldAggregates = [:]
         // Frame 0 of this function is its body block, pushed by the `emitBlock` call below;
         // that block runs its own cleanup at the tail, so nothing is left for `exit_block`.
         pendingCleanup.removeAll()
@@ -906,6 +915,7 @@ public final class IREmitter {
         // N76：还原上一个函数的字符串账本（与函数头的压栈配对）。
         heldStrings = heldStringsStack.popLast() ?? []
         heldBoxes = heldBoxesStack.popLast() ?? [:]
+        heldAggregates = heldAggregatesStack.popLast() ?? [:]
     }
 
     /// 该函数会不会被 `emitTaskSpawn` 接住（`isAsync` 且返回 `Result`）。
@@ -1246,6 +1256,14 @@ public final class IREmitter {
                             name: loaded, type: handle.typeSpelling, ptr: handle.slot
                         ) + "\n"
                     bodyIR += " call void @\(handle.destroySymbol)(ptr \(loaded))\n"
+                case .releaseAggregate(let handle):
+                    let loaded = builder.freshTemp()
+                    bodyIR +=
+                        builder.fmtLoad(
+                            name: loaded, type: handle.typeSpelling, ptr: handle.slot
+                        ) + "\n"
+                    releaseAggregateMembers(
+                        IRValue(llvmType: handle.typeSpelling, ssaName: loaded), type: handle.type)
                 case .deferBody(let body):
                     for statement in body {
                         if terminated { break }
@@ -1257,9 +1275,10 @@ public final class IREmitter {
         terminated = wasTerminated
     }
 
-    /// 一条退出时要执行的动作：还一份份额，或跑一段 `defer` 体。
+    /// 一条退出时要执行的动作：还一份份额、逐成员还一个聚合，或跑一段 `defer` 体。
     private enum CleanupEntry {
         case release(ReleasedHandle)
+        case releaseAggregate(ReleasedAggregate)
         case deferBody(IRBlock)
     }
 
@@ -1275,17 +1294,33 @@ public final class IREmitter {
         let destroySymbol: String
     }
 
+    /// 一个持有聚合份额的槽：退出时按成员名单逐个归还，`Optional` / `Result` 只看选中那一格。
+    private struct ReleasedAggregate {
+        let slot: String
+        let typeSpelling: String
+        let type: IRType
+    }
+
     /// 把一个新声明的本地推进当前清理帧：退出时还掉它那一份。
     ///  注意  这是翻译，不是决策 —— 「这个槽持有份额」由 `allocVar` 的类型与 `IRType.shareClass` 给出。
     /// 同帧同槽只登记一次：遮蔽后的重声明会让名字重复，双释放会多扣一份（use-after-free）。
     private func ownSlot(_ slot: String, type: IRType) {
-        guard let symbol = releaseSymbol(for: type) else { return }
         guard !pendingCleanup.isEmpty else { return }
         let frame = pendingCleanup.count - 1
         guard !pendingCleanup[frame].contains(where: { entry in
-            if case .release(let handle) = entry { return handle.slot == slot }
-            return false
+            switch entry {
+            case .release(let handle): return handle.slot == slot
+            case .releaseAggregate(let handle): return handle.slot == slot
+            case .deferBody: return false
+            }
         }) else { return }
+        if case .aggregate = type.shareClass, type.holdsAShare {
+            pendingCleanup[frame].append(
+                .releaseAggregate(
+                    ReleasedAggregate(slot: slot, typeSpelling: type.llvmSpelling, type: type)))
+            return
+        }
+        guard let symbol = releaseSymbol(for: type) else { return }
         pendingCleanup[frame].append(
             .release(ReleasedHandle(slot: slot, typeSpelling: type.llvmSpelling, destroySymbol: symbol))
         )
@@ -1571,6 +1606,7 @@ public final class IREmitter {
                 scrutineeValue: subject, cases: cases, aggregate: aggregate, tagType: "i64",
                 tagFor: { $0.caseName == "some" ? "0" : "1" },
                 payloadSpelling: { _, _ in wrapped.llvmSpelling },
+                payloadType: { _, _ in wrapped },
                 loadTag: { [self] base in
                     let value = builder.freshTemp()
                     bodyIR += " \(value) = extractvalue \(aggregate) \(base), 0\n"
@@ -1634,6 +1670,7 @@ public final class IREmitter {
                 scrutineeValue: subject, cases: cases, aggregate: aggregate, tagType: "i64",
                 tagFor: { $0.caseName == "ok" ? "0" : "1" },
                 payloadSpelling: { arm, _ in arm.caseName == "ok" ? okType.llvmSpelling : "i64" },
+                payloadType: { arm, _ in arm.caseName == "ok" ? okType : .i64 },
                 loadTag: { [self] base in
                     let value = builder.freshTemp()
                     bodyIR += " \(value) = extractvalue \(aggregate) \(base), 0\n"
@@ -1653,6 +1690,8 @@ public final class IREmitter {
                 emitScalarMatch(scrutineeValue: subject, cases: cases)
             }
         }
+        /// 判别式若是本层新造的聚合（`some(x)` 之类），分派结束后逐成员归还；绑定变量已各自保留一份。
+        releaseHeldTemporary(subject)
     }
 
     /// Bare-scrutinee match: source-ordered value comparisons, first match wins (strcmp / fcmp / icmp);
@@ -1770,6 +1809,7 @@ public final class IREmitter {
         tagType: String,
         tagFor: (IRMatchCase) -> String,
         payloadSpelling: (IRMatchCase, Int) -> String,
+        payloadType: (IRMatchCase, Int) -> IRType? = { _, _ in nil },
         loadTag: (String) -> IRValue,
         loadPayload: (IRMatchCase, String, Int, String) -> IRValue
     ) {
@@ -1796,16 +1836,32 @@ public final class IREmitter {
             bodyIR += "\(armLabel):\n"
             scopes.append([:])
             terminated = false
+            var bindingCleanup: [CleanupEntry] = []
             for (slot, bindingName) in matchCase.bindings.enumerated() {
                 guard let bindingName = bindingName else { continue }
                 let spelling = payloadSpelling(matchCase, slot)
                 let value = loadPayload(matchCase, scrutineeValue.ssaName, slot, spelling)
                 let slotName = freshSlot(for: bindingName)
                 bodyIR += builder.fmtAlloca(name: slotName, type: spelling) + "\n"
+                /// 绑定变量持有一份独立份额：载荷仍属于聚合，聚合（含临时值）在分派结束后归还。
+                if let bindingType = payloadType(matchCase, slot), bindingType.holdsAShare {
+                    _ = retainCounted(value, type: bindingType)
+                    if case .aggregate = bindingType.shareClass {
+                        bindingCleanup.append(
+                            .releaseAggregate(
+                                ReleasedAggregate(
+                                    slot: slotName, typeSpelling: spelling, type: bindingType)))
+                    } else if let symbol = releaseSymbol(for: bindingType) {
+                        bindingCleanup.append(
+                            .release(
+                                ReleasedHandle(
+                                    slot: slotName, typeSpelling: spelling, destroySymbol: symbol)))
+                    }
+                }
                 bodyIR += builder.fmtStore(value: value.ssaName, type: spelling, ptr: slotName) + "\n"
                 scopes[scopes.count - 1][bindingName] = slotName
             }
-            emitBlock(matchCase.body)
+            emitBlock(matchCase.body, seeding: bindingCleanup)
             if !terminated {
                 bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
             }
@@ -2278,7 +2334,9 @@ public final class IREmitter {
         switch type.shareClass {
         case .retained(.string): holdString(value.ssaName)
         case .valueBox, .retained: holdBox(name: value.ssaName, type: type)
-        case .inert, .aggregate: break
+        case .aggregate:
+            if type.holdsAShare { holdAggregate(name: value.ssaName, type: type) }
+        case .inert: break
         }
     }
 
@@ -2547,7 +2605,7 @@ public final class IREmitter {
         case .resultConstruct(
             let isOk, let payload, let errorBaseCode, let errorTagged, let errorCodes, let type
         ):
-            guard case .result = type else {
+            guard case .result(let okType) = type else {
                 fatalError("IREmitter: resultConstruct type is not a Result (IRLowerer guarantees)")
             }
             let p = emitExpr(payload)
@@ -2556,6 +2614,11 @@ public final class IREmitter {
             bodyIR += " \(withTag) = insertvalue \(aggregate) undef, i64 \(isOk ? 0 : 1), 0\n"
             let filled = builder.freshTemp()
             if isOk {
+                /// 与 `Optional` 同规：聚合持有一份，临时值那份当场还掉。
+                if okType.holdsAShare {
+                    _ = retainCounted(p, type: okType)
+                    releaseHeldTemporary(p)
+                }
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
             } else {
                 var word = widenToWord(p)
@@ -2595,7 +2658,7 @@ public final class IREmitter {
             return emitOptionalGet(container: container, index: index, type: type)
 
         case .optionalConstruct(let isSome, let payload, let type):
-            guard case .optional = type else {
+            guard case .optional(let wrapped) = type else {
                 fatalError("IREmitter: optionalConstruct type is not Optional (IRLowerer guarantees)")
             }
             let aggregate = type.llvmSpelling
@@ -2605,6 +2668,11 @@ public final class IREmitter {
                 return IRValue(llvmType: aggregate, ssaName: withTag)
             }
             let p = emitExpr(payload)
+            /// 聚合持有一份独立份额：先保留，再还掉临时值那一份；借用值不在账上，净效果都是 +1。
+            if wrapped.holdsAShare {
+                _ = retainCounted(p, type: wrapped)
+                releaseHeldTemporary(p)
+            }
             let filled = builder.freshTemp()
             bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
             return IRValue(llvmType: aggregate, ssaName: filled)
@@ -2657,6 +2725,11 @@ public final class IREmitter {
             var assembled = "undef"
             for (index, element) in elements.enumerated() {
                 let value = emitExpr(element)
+                let elementType = irType(of: element)
+                if elementType.holdsAShare {
+                    _ = retainCounted(value, type: elementType)
+                    releaseHeldTemporary(value)
+                }
                 let next = builder.freshTemp()
                 bodyIR += " \(next) = insertvalue \(aggregate) \(assembled), \(value.llvmType) \(value.ssaName), \(index)\n"
                 assembled = next
@@ -2667,7 +2740,12 @@ public final class IREmitter {
             let baseValue = emitExpr(base)
             let value = builder.freshTemp()
             bodyIR += " \(value) = extractvalue \(baseValue.llvmType) \(baseValue.ssaName), \(index)\n"
-            return IRValue(llvmType: type.llvmSpelling, ssaName: value)
+            let extracted = IRValue(llvmType: type.llvmSpelling, ssaName: value)
+            guard type.holdsAShare else { return extracted }
+            /// 解构替调用方保留一份，故结果是新份额；聚合本身若是临时值，用完即还。
+            _ = retainCounted(extracted, type: type)
+            releaseHeldTemporary(baseValue)
+            return extracted
 
         case .fieldGet(let base, let field, let type):
             let baseValue = emitExpr(base)
@@ -3646,6 +3724,8 @@ public final class IREmitter {
         /// 给定初始化器也是独立体（新 `IRBuilder`）⇒ 临时箱账本同样换一份。
         heldBoxesStack.append(heldBoxes)
         heldBoxes = [:]
+        heldAggregatesStack.append(heldAggregates)
+        heldAggregates = [:]
 
         // 引用计数头（第 0 格）：`%out` 是运行时给的**程序级单例盒**，头格写 1；
         //  注意  它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
@@ -3682,6 +3762,7 @@ public final class IREmitter {
         captureSlots = savedCaptureSlots
         pendingCleanup = savedPendingCleanup
         heldBoxes = heldBoxesStack.popLast() ?? [:]
+        heldAggregates = heldAggregatesStack.popLast() ?? [:]
         return symbol
     }
 
@@ -3883,9 +3964,10 @@ public final class IREmitter {
         case .none:
             return value
         case .take:
-            /// 临时值被持有位置接管 ⇒ 份额转移，本层不再负责释放它：字符串与箱各出一笔账。
+            /// 临时值被持有位置接管 ⇒ 份额转移，本层不再负责释放它：字符串、箱、聚合各出一笔账。
             claimHeldString(value)
             claimHeldBox(value)
+            claimHeldAggregate(value)
             return value
         case .copyStruct:
             guard let symbol = ensureCopyFunction(for: type) else {
@@ -3901,8 +3983,12 @@ public final class IREmitter {
         }
     }
 
-    /// 计数族留一份；不在计数族的（标量 · 聚合 · `LazyRef` 缺口）零动作。
+    /// 计数族留一份；聚合按成员递归；不在计数族的（标量 · 空名单聚合）零动作。
     private func retainCounted(_ value: IRValue, type: IRType) -> IRValue {
+        if case .aggregate = type.shareClass {
+            retainAggregateMembers(value, type: type)
+            return value
+        }
         guard let family = boxFamily(of: type) else { return value }
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
@@ -4397,6 +4483,80 @@ public final class IREmitter {
         return leftmostStringSource(of: lhs)
     }
 
+    // MARK: - 聚合的成员账（Optional · Result · 元组）
+
+    /// 记下一个本层新造、尚无持有者的聚合值。与 `heldBoxes` 分账：聚合是寄存器值，整块没有头可减。
+    private func holdAggregate(name: String, type: IRType) {
+        heldAggregates[name] = type
+    }
+
+    /// 交出聚合份额：它已被槽 / 返回位 / 字段接管，此后由那里逐成员归还。
+    private func claimHeldAggregate(_ value: IRValue) {
+        heldAggregates.removeValue(forKey: value.ssaName)
+    }
+
+    /// 逐成员保留一份。`Optional` / `Result` 的未选中槽是 `undef`，先按 tag `select` 成零值：
+    /// 零值上的保留是空操作，故不需要分支。
+    private func retainAggregateMembers(_ value: IRValue, type: IRType) {
+        for member in type.ownedAggregateMembers {
+            _ = retainCounted(aggregateMember(value, member), type: member.type)
+        }
+    }
+
+    /// 逐成员归还。与 `retainAggregateMembers` 同一份名单、同一个 `select` 口径，故两侧恒对称。
+    private func releaseAggregateMembers(_ value: IRValue, type: IRType) {
+        for member in type.ownedAggregateMembers {
+            releaseCounted(aggregateMember(value, member), type: member.type)
+        }
+    }
+
+    /// 取出一个成员，受 tag 保护的先与零值 `select`。返回值的 LLVM 类型是成员拼写。
+    private func aggregateMember(
+        _ value: IRValue, _ member: (slot: Int, type: IRType, tagSlot: Int, tagValue: Int)
+    ) -> IRValue {
+        let extracted = builder.freshTemp()
+        bodyIR += " \(extracted) = extractvalue \(value.llvmType) \(value.ssaName), \(member.slot)\n"
+        guard member.tagSlot >= 0 else {
+            return IRValue(llvmType: member.type.llvmSpelling, ssaName: extracted)
+        }
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = extractvalue \(value.llvmType) \(value.ssaName), \(member.tagSlot)\n"
+        let selected = builder.freshTemp()
+        bodyIR += " \(selected) = icmp eq i64 \(tag), \(member.tagValue)\n"
+        let chosen = builder.freshTemp()
+        bodyIR +=
+            " \(chosen) = select i1 \(selected), \(member.type.llvmSpelling) \(extracted),"
+            + " \(member.type.llvmSpelling) \(Self.zeroLiteral(for: member.type))\n"
+        return IRValue(llvmType: member.type.llvmSpelling, ssaName: chosen)
+    }
+
+    /// 计数类型的零值：指针族 `null`，标量与 `Char` 是 `0`，嵌套聚合是 `zeroinitializer`。
+    private static func zeroLiteral(for type: IRType) -> String {
+        switch type.shareClass {
+        case .inert: return "0"
+        case .aggregate: return "zeroinitializer"
+        case .retained, .valueBox: return "null"
+        }
+    }
+
+    /// 就地归还一份份额：聚合递归，字符串直接传指针，其余先 `bitcast` 到 `ptr`。
+    private func releaseCounted(_ value: IRValue, type: IRType) {
+        switch type.shareClass {
+        case .aggregate:
+            releaseAggregateMembers(value, type: type)
+        case .inert:
+            break
+        case .retained(.string):
+            usesStringRefcount = true
+            bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
+        case .retained, .valueBox:
+            guard let symbol = releaseSymbol(for: type) else { return }
+            let raw = builder.freshTemp()
+            bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
+            bodyIR += " call void @\(symbol)(ptr \(raw))\n"
+        }
+    }
+
     // MARK: - 临时箱的账本（名义箱 / 容器句柄）
 
     /// 记下一个本层亲手分配、当前持有 +1 的临时箱。它还没有持有位置 ⇒ 调用点 / 打印点用完即还。
@@ -4415,6 +4575,10 @@ public final class IREmitter {
     /// 判据是账本而不是节点形状：只有确实由本层分配、且没被持有位置接管的那些才在账上。
     private func releaseHeldTemporary(_ value: IRValue) {
         if releaseHeldString(value) { return }
+        if let aggregateType = heldAggregates.removeValue(forKey: value.ssaName) {
+            releaseAggregateMembers(value, type: aggregateType)
+            return
+        }
         guard let type = heldBoxes.removeValue(forKey: value.ssaName) else { return }
         guard let symbol = releaseSymbol(for: type) else { return }
         bodyIR += " call void @\(symbol)(ptr \(value.ssaName))\n"
@@ -6015,6 +6179,8 @@ public final class IREmitter {
         /// 闭包体重建 `IRBuilder` ⇒ SSA 名从 `%t1` 重新编号，账本必须换新的，否则同名条目指向外层的值。
         heldBoxesStack.append(heldBoxes)
         heldBoxes = [:]
+        heldAggregatesStack.append(heldAggregates)
+        heldAggregates = [:]
         // 片 D：闭包体是**自己的**函数上下文 —— 它自己的嵌套闭包捕获的名字要在进体前算好
         // （同 `emitFunction` 的理由：声明点在捕获点之前）。
         capturedNamesInFunction = capturedNames(in: body)
@@ -6077,6 +6243,7 @@ public final class IREmitter {
         captureSlots = savedCaptureSlots
         pendingCleanup = savedPendingCleanup
         heldBoxes = heldBoxesStack.popLast() ?? [:]
+        heldAggregates = heldAggregatesStack.popLast() ?? [:]
         capturedNamesInFunction = savedCapturedNames
         frameMode = savedFrameMode
         blockDepth = savedBlockDepth
