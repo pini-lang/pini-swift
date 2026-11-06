@@ -1576,29 +1576,29 @@ private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     return _bkRegister(box)
 }
 
-// MARK: - Char：八字节内联值
+// MARK: - Char：八字节按值
 
-/// `Char` 的机器表示。最高位为 1 ⇒ 低 55 位是指针、bit 56..62 是字节数；为 0 ⇒ 长度在 bit 56..58、
-/// 字节在 bit 0..55。 注意  七字节上限不是随手挑：ASCII 一、CJK 三、带变音符四、常见 emoji 四都在内，
-/// 只有区域旗标与 ZWJ 序列（八字节以上）落到指针形态，那种形态也不分配内存。
+/// `Char` 的机器表示。最高位为 1 ⇒ 低 55 位是指向**带头串载荷**的指针、bit 56..62 是字节数；
+/// 为 0 ⇒ 长度在 bit 56..58、字节在 bit 0..55。七字节以内内联：ASCII 一、CJK 三、emoji 四都在内。
+///  注意  更长的在打包时就复制到堆上，长度格写 127 表示真长在头里 —— 字节数因此没有上限。
 @inline(__always) private func _bkCharIsPointer(_ value: Int64) -> Bool {
     UInt64(bitPattern: value) & 0x8000_0000_0000_0000 != 0
 }
 
 @inline(__always) private func _bkCharLength(_ value: Int64) -> Int {
-    Int((UInt64(bitPattern: value) >> 56) & 0x7F)
+    let field = Int((UInt64(bitPattern: value) >> 56) & 0x7F)
+    guard field == 127, _bkCharIsPointer(value) else { return field }
+    return Int(_bkStrLen(UnsafeRawPointer(_bkCharPointer(value))).pointee)
 }
 
 @inline(__always) private func _bkCharPointer(_ value: Int64) -> UnsafePointer<CChar> {
     UnsafePointer<CChar>(bitPattern: Int(UInt64(bitPattern: value) & 0x00FF_FFFF_FFFF_FFFF))!
 }
 
-/// 打包一个字节序列成 `Char`。七字节以内内联；更长的**指向 `bytes` 本身**，不复制。
-///  注意  指针形态的寿命由宿主决定：`bk_string_char_at` 指向源串，`bk_chars` 指向只读常量。
-/// `detached` 为真时超长序列复制成一条 `rc == 0` 的带头串，供结果离开源串作用域的场合用。
-private func _bkCharPack(
-    _ bytes: UnsafePointer<CChar>, _ count: Int, detached: Bool = false
-) -> Int64 {
+/// 打包一个字节序列成 `Char`。七字节以内内联；更长的复制成 `rc == 0` 的带头串，与源串脱钩。
+///  注意  复制这一步实现「值即自持」：`Char` 离开产生它的表达式后，源串随时可以归还；
+/// 长度格写 `127` 表示真长在头里 —— 与内联形态的七字节上限分开，任意长的字素簇都装得下。
+private func _bkCharPack(_ bytes: UnsafePointer<CChar>, _ count: Int) -> Int64 {
     if count >= 1, count <= 7 {
         var packed: UInt64 = 0
         for index in 0..<count {
@@ -1606,21 +1606,15 @@ private func _bkCharPack(
         }
         return Int64(bitPattern: packed | (UInt64(count) << 56))
     }
-    guard count <= 127 else {
-        bk_panic("Pini runtime error: 单个字素超过 127 字节")
-    }
-    let address: UInt64
-    if detached {
-        let made = _bkStrFromBytes(bytes, count)
-        _bkStrRC(made).pointee = 0
-        address = UInt64(UInt(bitPattern: UnsafeRawPointer(made)))
-    } else {
-        address = UInt64(UInt(bitPattern: UnsafeRawPointer(bytes)))
-    }
-    return Int64(bitPattern: address | (UInt64(count) << 56) | 0x8000_0000_0000_0000)
+    let made = _bkStrFromBytes(bytes, Swift.max(count, 0))
+    _bkStrRC(made).pointee = 0
+    let address = UInt64(UInt(bitPattern: UnsafeRawPointer(made)))
+    let field = UInt64(Swift.min(count, 127))
+    return Int64(bitPattern: address | (field << 56) | 0x8000_0000_0000_0000)
 }
 
 /// 把 `Char` 的字节复制到调用方缓冲，返回字节数（不含 NUL）。
+///  注意  缓冲须容得下真长（`_bkCharLength`）：内联形态最多七字节，指针形态可到任意长。
 @discardableResult
 private func _bkCharCopyTo(_ value: Int64, _ buffer: UnsafeMutablePointer<CChar>) -> Int {
     let count = _bkCharLength(value)
@@ -1661,7 +1655,7 @@ public func bk_char_equal(_ lhs: Int64, _ rhs: Int64) -> Int32 {
     if leftIsPointer, rightIsPointer {
         return memcmp(_bkCharPointer(lhs), _bkCharPointer(rhs), count) == 0 ? 1 : 0
     }
-    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: 128) { buffer in
+    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: Swift.max(count, 8)) { buffer in
         let base = buffer.baseAddress!
         if rightIsPointer {
             _bkCharCopyTo(lhs, base)
@@ -1681,14 +1675,14 @@ public func bk_char_equal_string(_ value: Int64, _ text: UnsafePointer<CChar>?) 
     if _bkCharIsPointer(value) {
         return memcmp(_bkCharPointer(value), text, count) == 0 ? 1 : 0
     }
-    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: 128) { buffer in
+    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: Swift.max(count, 8)) { buffer in
         _bkCharCopyTo(value, buffer.baseAddress!)
         return memcmp(buffer.baseAddress!, text, count) == 0 ? 1 : 0
     }
 }
 
 /// `chars(String) -> Array<Char>` —— 按**字素簇**切分。元素是八字节按值槽（不计数、不释放）。
-///  注意  超长字素复制成只读常量，故结果不依赖源串的寿命；七字节以内直接内联，零分配。
+///  注意  元素在取出时已复制到堆上，故结果不依赖源串的寿命；七字节以内直接内联，零分配。
 @_cdecl("bk_chars")
 public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
     guard let s else { return bk_array_create(0) }
@@ -1701,7 +1695,7 @@ public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
         let lo = text.utf8.distance(from: text.utf8.startIndex, to: cursor)
         let hi = text.utf8.distance(from: text.utf8.startIndex, to: next)
         let start = UnsafeRawPointer(s).advanced(by: lo).assumingMemoryBound(to: CChar.self)
-        var word = _bkCharPack(start, hi - lo, detached: true)
+        var word = _bkCharPack(start, hi - lo)
         handle = bk_array_set_unsafe(handle, index, &word, 8, 0) ?? handle
         index += 1
         cursor = next
@@ -1730,7 +1724,9 @@ public func bk_chr(_ code: Int32) -> Int64 {
 /// `ord(Char) -> I32` —— **首个 Unicode 标量**的值；空字素回 -1（同解释器）。
 @_cdecl("bk_ord")
 public func bk_ord(_ c: Int64) -> Int32 {
-    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: 128) { buffer in
+    return withUnsafeTemporaryAllocation(
+        of: CChar.self, capacity: Swift.max(_bkCharLength(c), 8)
+    ) { buffer in
         let count = _bkCharCopyTo(c, buffer.baseAddress!)
         guard count > 0 else { return -1 }
         let text = String(
@@ -1744,7 +1740,9 @@ public func bk_ord(_ c: Int64) -> Int32 {
 ///  行不通  返回值是 `i32` 而非 C 的 `_Bool`：后者在 C ABI 里是零扩展的 i8，而语言的 Bool 是 i1。
 @_cdecl("bk_is_letter")
 public func bk_is_letter(_ c: Int64) -> Int32 {
-    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: 128) { buffer in
+    return withUnsafeTemporaryAllocation(
+        of: CChar.self, capacity: Swift.max(_bkCharLength(c), 8)
+    ) { buffer in
         let count = _bkCharCopyTo(c, buffer.baseAddress!)
         guard count > 0 else { return 0 }
         let text = String(
@@ -1756,7 +1754,9 @@ public func bk_is_letter(_ c: Int64) -> Int32 {
 /// `is_number(Char) -> Bool` —— 同解释器 `first.isNumber`。
 @_cdecl("bk_is_number")
 public func bk_is_number(_ c: Int64) -> Int32 {
-    return withUnsafeTemporaryAllocation(of: CChar.self, capacity: 128) { buffer in
+    return withUnsafeTemporaryAllocation(
+        of: CChar.self, capacity: Swift.max(_bkCharLength(c), 8)
+    ) { buffer in
         let count = _bkCharCopyTo(c, buffer.baseAddress!)
         guard count > 0 else { return 0 }
         let text = String(
@@ -2104,7 +2104,7 @@ public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
 
 /// `s[i]` 读一个字符：负值尾计数，越界走安全断言通道 ⇒ `bk_panic`（与数组下标同规）。
 /// 纯 ASCII 串按字节直取 O(1)；非 ASCII 走稀疏索引表，只物化目标所在的那一块（≤64 字素）。
-///  注意  返回值是八字节内联的 `Char`，**不进分配器**；七字节以内的字素直接装在整字里。
+///  注意  七字节以内的字素装在整字里、不进分配器；更长的复制成自持块，故返回值不欠源串任何东西。
 @_cdecl("bk_string_char_at")
 public func bk_string_char_at(
     _ s: UnsafePointer<CChar>?, _ index: Int32
