@@ -49,7 +49,7 @@ struct ShareEffectTests: Sendable {
         (
             "optionalGet",
             .optionalGet(container: array, index: scalar, type: .optional(wrapped: .i32)),
-            .borrowed
+            .inert
         ),
         ("optionalConstruct", optional, .inert),
         ("sliceCall", .sliceCall(container: array, start: scalar, end: scalar, type: .array(element: .i32)), .fresh),
@@ -116,19 +116,45 @@ struct ShareEffectTests: Sendable {
         }
     }
 
-    /// 结构不变式：别名点必然是借用 —— 反过来说，任何被判成「新份额」的节点都不能是别名点，
-    /// 否则存储点会边 retain 边当成临时值接管。
+    /// 结构不变式：不计数成员的别名点必然是借用 —— 任何被判成「新份额」的节点都不能是别名点，
+    /// 否则存储点会边 retain 边当成临时值接管。计数成员是唯一的例外：解构时先保留一份。
     @Test("别名点与借用同边界")
     func aliasPointsImplyBorrowed() {
         let aliases: [IRExpr] = [
             .load(name: "s", type: .string),
             .subscriptGet(container: Self.array, index: Self.scalar, type: .i32),
             .fieldGet(base: Self.construct, field: "s", type: .string),
-            .optionalGet(container: Self.array, index: Self.scalar, type: .optional(wrapped: .i32)),
+            .tupleIndexGet(base: Self.tuple, index: 0, type: .i32),
         ]
         for node in aliases {
             #expect(node.yieldsAlias, "\(node) 应判为别名点")
             #expect(node.shareEffect == .borrowed, "\(node) 的来源在别处，只能是借用")
         }
+    }
+
+    @Test("解构计数成员：先保留一份，故结果是新份额")
+    func destructuringCountedMemberIsFresh() {
+        let optionalString = IRType.optional(wrapped: .string)
+        let tupleString = IRExpr.tupleConstruct(
+            labels: [nil], elements: [Self.text], type: .tuple(labels: [nil], fieldTypes: [.string]))
+        #expect(
+            IRExpr.optionalGet(container: Self.array, index: Self.scalar, type: optionalString)
+                .shareEffect == .fresh)
+        #expect(
+            IRExpr.tupleIndexGet(base: tupleString, index: 0, type: .string).shareEffect == .fresh)
+        #expect(
+            IRExpr.optionalConstruct(isSome: true, payload: Self.text, type: optionalString)
+                .shareEffect == .fresh)
+    }
+
+    @Test("聚合的份额名单只列计数成员，空名单就是零动作")
+    func aggregateMemberRoster() {
+        #expect(IRType.optional(wrapped: .string).holdsAShare)
+        #expect(!IRType.optional(wrapped: .i32).holdsAShare)
+        #expect(
+            IRType.tuple(labels: [nil, nil], fieldTypes: [.i32, .string])
+                .ownedAggregateMembers.map(\.slot) == [1])
+        #expect(IRType.optional(wrapped: .string).ownedAggregateMembers.first?.tagSlot == 0)
+        #expect(!Self.functionType.holdsAShare)
     }
 }

@@ -4,8 +4,8 @@
 public enum IRShareClass: Equatable, Sendable {
     /// 不握份额：标量 · 外部指针 · 任务句柄。落槽零动作，退出不释放。
     case inert
-    /// 寄存器聚合：`Result` · `Optional` · 元组 · 函数值。整块按值搬移。
-    ///  注意  聚合内部的计数成员尚未单独保留，是契约第 4 节登记的缺口，不是「它们可以不要份额」。
+    /// 寄存器聚合：`Result` · `Optional` · 元组 · 函数值。整块按值搬移；其中计数成员逐成员保留与归还，
+    /// 由 `ownedAggregateMembers` 给出名单 —— 名单为空（函数值、纯标量元组）才是真正的零动作。
     case aggregate
     /// 名义结构体：堆上带计数头的箱，但值语义 —— 变量 / 字段 / 返回落槽要拷出独立的一份；
     /// 装进容器元素时按箱共享，保留一份。对象与枚举不属此类：它们按引用共享。
@@ -16,8 +16,10 @@ public enum IRShareClass: Equatable, Sendable {
 
 /// 计数族的细分。七种都按「保留 / 释放」计数，只是符号不同 —— 故它不改变归还规则。
 public enum IRShareKind: Equatable, Sendable {
-    /// `String` · `Char`：带计数头的 C 串，两者同构。
+    /// `String`：带计数头的 C 串。
     case string
+    /// `Char`：八字节按值，指针形态的载荷同样是一条带头串，保留 / 释放走自己的符号。
+    case char
     /// `Array<T>`：不透明句柄，写入前唯一化。
     case array
     /// `Dictionary<K, V>`：键值有序的不透明句柄。
@@ -39,8 +41,8 @@ extension IRType {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64, .boolean: return .inert
         case .string: return .retained(.string)
-        /// `Char` 是值：内联在 i64 里，或者是一个**不计数**的堆缓冲区 ⇒ 既不 retain 也不 release。
-        case .char: return .inert
+        /// `Char` 是值：内联形态没有堆，指针形态持有一条带头串的份额 ⇒ 与 `String` 同规计数。
+        case .char: return .retained(.char)
         case .array: return .retained(.array)
         case .dict: return .retained(.dict)
         case .set: return .retained(.set)
@@ -59,11 +61,33 @@ extension IRType {
     public func adoption(of source: IRExpr?, sharingStructs: Bool = false) -> IRAdopt {
         guard let source else { return .none }
         switch shareClass {
-        case .inert, .aggregate: return .none
+        case .inert: return .none
+        /// 聚合按成员记账：名单非空才接份额，空名单（函数值、纯标量元组）仍是零动作。
+        case .aggregate:
+            guard holdsAShare else { return .none }
+            return source.shareEffect == .fresh ? .take : .retain
         case .valueBox:
             return source.shareEffect == .fresh ? .take : (sharingStructs ? .retain : .copyStruct)
         case .retained:
             return source.shareEffect == .fresh ? .take : .retain
+        }
+    }
+
+    /// 聚合里要逐成员保留 / 归还的槽：`(槽位, 成员类型, 保护槽, 保护值)`。
+    ///  注意  保护槽为 `-1` 表示无条件；`Optional` / `Result` 的未选中槽是 `undef`，
+    /// 直接读它就是读未初始化值，故发射层用 `select` 把未选中一侧换成零值再动作。
+    public var ownedAggregateMembers: [(slot: Int, type: IRType, tagSlot: Int, tagValue: Int)] {
+        switch self {
+        case .optional(let wrapped):
+            return wrapped.holdsAShare ? [(1, wrapped, 0, 0)] : []
+        case .result(let ok):
+            return ok.holdsAShare ? [(1, ok, 0, 0)] : []
+        case .tuple(_, let fieldTypes):
+            return fieldTypes.enumerated().compactMap { index, fieldType in
+                fieldType.holdsAShare ? (index, fieldType, -1, 0) : nil
+            }
+        default:
+            return []
         }
     }
 
@@ -72,7 +96,8 @@ extension IRType {
     public var holdsAShare: Bool {
         switch shareClass {
         case .valueBox, .retained: return true
-        case .inert, .aggregate: return false
+        case .inert: return false
+        case .aggregate: return !ownedAggregateMembers.isEmpty
         }
     }
 }
@@ -90,11 +115,12 @@ public enum IRAdopt: Equatable, Sendable {
 }
 
 extension IRExpr {
-    /// 这个表达式读的是别处的持有位置（别名点）：变量读 · 下标读 · 字段读 · 可空读。
+    /// 这个表达式读的是别处的持有位置（别名点）：变量读 · 下标读 · 字段读 · 元组成员读。
     /// 它的补集是「本次求值新造出来的值」，那类值可以把份额直接交出去。
+    ///  注意  `optionalGet` 不在列内：下标读出的 `Optional` 是当场构造的聚合，不是别名。
     public var yieldsAlias: Bool {
         switch self {
-        case .load, .subscriptGet, .fieldGet, .optionalGet: return true
+        case .load, .subscriptGet, .fieldGet, .tupleIndexGet: return true
         default: return false
         }
     }
@@ -124,9 +150,23 @@ extension IRExpr {
             .printCall, .printMulti, .assertCall, .fileWrite, .fileAppend:
             return .inert
         // 全局常量与变量 / 字段 / 元素槽：份额在别处。
-        case .stringConst, .load, .subscriptGet, .optionalGet, .fieldGet, .tupleIndexGet,
+        case .stringConst, .load, .fieldGet,
             .lazyRefValue, .functionValue, .cFunctionAddress, .givenInstance:
             return .borrowed
+        /// `Array<Char>` 的元素由数组持有（借用）；`String` 下标当场构造一个 `Char`，那是新份额。
+        case .subscriptGet(let container, _, let type):
+            guard type.shareClass == .retained(.char) else { return .borrowed }
+            return container.staticType == .string ? .fresh : .borrowed
+        /// 下标读出的 `Optional` 是本层新造的聚合：成员计数时它自己持有一份，按新份额记账。
+        case .optionalGet(_, _, let type):
+            return type.holdsAShare ? .fresh : .inert
+        /// 解构会替成员保留一份 ⇒ 结果是新份额；成员不计数时仍是借用。
+        case .tupleIndexGet(_, _, let type):
+            return type.holdsAShare ? .fresh : .borrowed
+        /// 构造出的聚合按成员持有份额：有计数成员就是新份额，否则整块不记账。
+        case .resultConstruct(_, _, _, _, _, let type), .optionalConstruct(_, _, let type),
+            .tupleConstruct(_, _, let type):
+            return type.holdsAShare ? .fresh : .inert
         /// `call` 与 `indirectCall` 的返回一律按新份额：`returnStmt` 的 `adopt` 已在被调方
         /// 安排好 —— 交临时值就是移交，交别名就先保留。故调用方接手的一定是干净的一份。
         case .call, .indirectCall:
@@ -137,9 +177,8 @@ extension IRExpr {
             .arrayJoin, .stringConcat, .interpString, .fileRead, .lazyRefConstruct,
             .closureLiteral:
             return .fresh
-        // 整块聚合：成员份额尚未单独保留（契约第 4 节的缺口），故整块不记账。
-        case .resultConstruct, .optionalConstruct, .tupleConstruct, .fileTryWrite,
-            .fileTryAppend, .fileTryRead, .join:
+        // 整块聚合里没有计数成员（函数值、纯标量元组）：整块不记账。
+        case .fileTryWrite, .fileTryAppend, .fileTryRead, .join:
             return .inert
         /// `readLine` 返回 `fgets` 填的栈缓冲：既不是新份额，也不会在帧外存活。
         /// 这是一条独立缺口（契约第 4 节），不在这里假装它是 `fresh`。

@@ -20,7 +20,7 @@ struct ShareClassTests: Sendable {
             ("F64", .f64, .inert),
             ("Bool", .boolean, .inert),
             ("String", .string, .retained(.string)),
-            ("Char", .char, .inert),
+            ("Char", .char, .retained(.char)),
             ("Result", .result(ok: .i32), .aggregate),
             ("Future", .future(ok: .i32), .inert),
             ("Array", .array(element: .i32), .retained(.array)),
@@ -82,12 +82,13 @@ struct ShareClassTests: Sendable {
         #expect(IRType.future(ok: .i32).shareClass == .inert)
     }
 
-    @Test("聚合按整块搬移 —— 内部的计数成员尚未单独保留，是缺口而不是可以不要份额")
-    func aggregatesDoNotInheritTheirMembers() {
+    @Test("聚合的类别是整块，但成员份额按名单逐项保留与归还")
+    func aggregatesCarryMemberShares() {
         #expect(IRType.optional(wrapped: .string).shareClass == .aggregate)
         #expect(IRType.result(ok: .array(element: .i32)).shareClass == .aggregate)
-        // 这一条钉的是现状：聚合里的字符串 / 句柄不单独进账。若日后实现递归保留，这里会红，
-        // 而它就是「缺口是否已被补上」的读数点。
-        #expect(IRType.tuple(labels: ["s"], fieldTypes: [.string]).shareClass == .aggregate)
+        // 类别仍是整块（寄存器搬移），份额有无由成员名单决定：空名单才是零动作。
+        #expect(IRType.optional(wrapped: .string).holdsAShare)
+        #expect(!IRType.optional(wrapped: .i32).holdsAShare)
+        #expect(IRType.tuple(labels: ["s"], fieldTypes: [.string]).holdsAShare)
     }
 }

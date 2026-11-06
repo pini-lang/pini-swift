@@ -193,6 +193,14 @@ public enum Builtins {
 
         // MARK: character
         BuiltinSpec(
+            symbol: "bk_char_retain", signature: .init(result: "i64", parameters: ["i64"]),
+            family: .character, lowerings: ["<retain>"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_char_release", signature: .init(result: "void", parameters: ["i64"]),
+            family: .character, lowerings: ["<cleanup>"]
+        ),
+        BuiltinSpec(
             symbol: "bk_char_to_heap_string", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .character, lowerings: ["interpString"]
         ),

@@ -87,6 +87,10 @@ private func _bkReleaseIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
         bk_str_release(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
         return
     }
+    if _BkTag(rawValue: tag) == .char {
+        bk_char_release(elemBox.load(as: Int64.self))
+        return
+    }
     guard _BkTag(rawValue: tag) == .handle else { return }
     _bkReleaseShare(elemBox.load(as: UnsafeMutableRawPointer?.self))
 }
@@ -625,6 +629,8 @@ private enum _BkTag: Int32 {
     case i64 = 5
     /// 裸指针（`*T` / 任务句柄）：不参与计数，比较按指针值；与 `str` 分开，销毁时才不会把指针当串释放。
     case rawPtr = 6
+    /// `Char`：八字节按值，指针形态指向一条带头串；销毁时按它的计数归还。
+    case char = 7
 }
 
 /// 两个 box 的内容相等性（按 tag 解释字节）。字符串按 C 串内容比较，与指针身份无关。
@@ -646,6 +652,10 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
         return a.load(as: Int64.self) == b.load(as: Int64.self)
     case .rawPtr:
         return a.load(as: UnsafeRawPointer.self) == b.load(as: UnsafeRawPointer.self)
+    case .char:
+        /// `Char` 按值比较：内联形态整字相等，指针形态要按字节内容判，不能比地址。
+        return a.load(as: Int64.self) == b.load(as: Int64.self)
+            || bk_char_equal(a.load(as: Int64.self), b.load(as: Int64.self)) == 1
     }
 }
 
@@ -1595,24 +1605,8 @@ private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     UnsafePointer<CChar>(bitPattern: Int(UInt64(bitPattern: value) & 0x00FF_FFFF_FFFF_FFFF))!
 }
 
-/// 长字素的驻留表：内容摘要 → 同内容的块。只服务八字节以上的打包路径。
-///  注意  块是 `rc == 0` 的进程期常量，同一内容只该有一块；表把「每次取用一块」压成「每种一块」。
-nonisolated(unsafe) private var _bkCharPool: [UInt64: [UnsafeMutablePointer<CChar>]] = [:]
-private let _bkCharPoolLock = NSLock()
-
-/// FNV-1a：键是字节内容而不是指针，故两个不同源串里的同一字素落进同一个桶。
-@inline(__always) private func _bkCharDigest(
-    _ bytes: UnsafePointer<CChar>, _ count: Int
-) -> UInt64 {
-    var digest: UInt64 = 0xcbf2_9ce4_8422_2325
-    for index in 0..<count {
-        digest = (digest ^ UInt64(UInt8(bitPattern: bytes[index]))) &* 0x0000_0100_0000_01b3
-    }
-    return digest
-}
-
-/// 造一块只承载一个长字素的带头串：`rc == 0`、长度按字节写、字素数恒为 1。
-///  注意  块不参与字符串的拼接与索引，`graphemes` 只为让头结构保持同规；它不是可归还的份额。
+/// 造一块承载一个长字素的带头串：计数 1、长度按字节写、字素数恒为 1。
+///  注意  块与普通串同构（`bk_char_to_heap_string` 的产物也是这一形），故它的份额由串的计数规则管。
 private func _bkCharBlock(
     _ bytes: UnsafePointer<CChar>, _ count: Int
 ) -> UnsafeMutablePointer<CChar> {
@@ -1622,31 +1616,10 @@ private func _bkCharBlock(
     out[count] = 0
     _bkStrLen(out).pointee = Int32(count)
     _bkStrGraphemes(out).pointee = 1
-    _bkStrRC(out).pointee = 0
     return out
 }
 
-/// 取一个长字素的驻留块：命中返回既有块，未命中才分配。长度参与比较，前缀相同不算命中。
-private func _bkCharInterned(
-    _ bytes: UnsafePointer<CChar>, _ count: Int
-) -> UnsafeMutablePointer<CChar> {
-    let digest = _bkCharDigest(bytes, count)
-    _bkCharPoolLock.lock()
-    defer { _bkCharPoolLock.unlock() }
-    if let bucket = _bkCharPool[digest] {
-        for candidate in bucket
-        where Int(_bkStrLen(candidate).pointee) == count
-            && memcmp(candidate, bytes, count) == 0
-        {
-            return candidate
-        }
-    }
-    let made = _bkCharBlock(bytes, count)
-    _bkCharPool[digest, default: []].append(made)
-    return made
-}
-
-/// 打包一个字节序列成 `Char`。七字节以内内联；更长的取驻留块，与源串脱钩。
+/// 打包一个字节序列成 `Char`。七字节以内内联；更长的复制成一块计数为 1 的带头串。
 ///  注意  复制这一步实现「值即自持」：`Char` 离开产生它的表达式后，源串随时可以归还；
 /// 长度格写 `127` 表示真长在头里 —— 与内联形态的七字节上限分开，任意长的字素簇都装得下。
 private func _bkCharPack(_ bytes: UnsafePointer<CChar>, _ count: Int) -> Int64 {
@@ -1657,7 +1630,7 @@ private func _bkCharPack(_ bytes: UnsafePointer<CChar>, _ count: Int) -> Int64 {
         }
         return Int64(bitPattern: packed | (UInt64(count) << 56))
     }
-    let made = _bkCharInterned(bytes, Swift.max(count, 0))
+    let made = _bkCharBlock(bytes, Swift.max(count, 0))
     let address = UInt64(UInt(bitPattern: UnsafeRawPointer(made)))
     let field = UInt64(Swift.min(count, 127))
     return Int64(bitPattern: address | (field << 56) | 0x8000_0000_0000_0000)
@@ -1691,6 +1664,22 @@ public func bk_char_to_heap_string(_ value: Int64) -> UnsafeMutablePointer<CChar
         let count = _bkCharCopyTo(value, buffer.baseAddress!)
         return _bkStrFromBytes(buffer.baseAddress!, count)
     }
+}
+
+/// `Char` 的保留：只有指针形态进堆，内联形态是纯值 ⇒ 原样返回。
+///  注意  指针形态指向一条带头串（与 `bk_char_to_heap_string` 的产物同构），故计数就是那条串的计数。
+@_cdecl("bk_char_retain")
+public func bk_char_retain(_ value: Int64) -> Int64 {
+    guard _bkCharIsPointer(value) else { return value }
+    bk_str_retain(UnsafeMutablePointer(mutating: _bkCharPointer(value)))
+    return value
+}
+
+/// `Char` 的归还：内联形态零动作；指针形态减那份串的计数，归零即归还整块。
+@_cdecl("bk_char_release")
+public func bk_char_release(_ value: Int64) {
+    guard _bkCharIsPointer(value) else { return }
+    bk_str_release(UnsafeMutablePointer(mutating: _bkCharPointer(value)))
 }
 
 /// 两个 `Char` 判等：内联值先比整字，只有一侧是指针形态时才落回字节比较。
