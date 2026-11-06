@@ -1160,6 +1160,8 @@ private let _bkStrTableLock = NSLock()
 ///  注意  建表前先验「Swift 视角的字节数等于头里的长度」：串里有非法 UTF-8 时 `String(decoding:)` 会折成替换符，偏移就对不上。
 private func _bkStrGraphemeTable(_ p: UnsafeMutablePointer<CChar>) -> UnsafePointer<UInt32>? {
     guard let slot = _bkStrTableSlot(p) else { return nil }
+    /// 快速路径不取锁：槽只在锁内从 nil 写成一块表，之后不再变；对齐 8 字节读在目标平台上不可撕裂。
+    ///  注意  这是刻意的无锁读，TSan 会报 data race；换 CAS 前不要移除这条注记。
     if let existing = slot.pointee {
         return UnsafePointer(existing.assumingMemoryBound(to: UInt32.self))
     }
@@ -1385,15 +1387,28 @@ private func _bkStrReleaseRaw(_ p: UnsafeRawPointer) {
     _bkStrHead(p).deallocate()
 }
 
-/// 拼接后的字素数：两半都已知且右半以 ASCII 起头时直接相加（边界不可能并成新簇），否则置 -1。
+/// 拼接后的字素数：两半都已知且边界不可能并簇时直接相加，否则置 -1 交给惰性计算。
+///  注意  能跨边界并簇的两条规则都取决于左半末字节：CR × LF（GB3）与 Prepend × Any（GB9b）。
 private func _bkStrMergedGraphemes(
-    _ lhsCount: Int32, _ rhsCount: Int32, rhsLength: Int, rhs: UnsafeRawPointer?
+    _ lhs: UnsafeRawPointer?, _ lhsLength: Int, _ lhsCount: Int32,
+    _ rhs: UnsafeRawPointer?, _ rhsLength: Int, _ rhsCount: Int32
 ) -> Int32 {
     guard lhsCount >= 0, rhsCount >= 0 else { return -1 }
     guard rhsLength > 0, let rhs else { return lhsCount }
     guard rhs.load(as: UInt8.self) < 0x80 else { return -1 }
+    guard lhsLength > 0 else { return rhsCount }
+    guard let lhs else { return -1 }
+    let tail = lhs.load(fromByteOffset: lhsLength - 1, as: UInt8.self)
+    guard tail < 0x80, tail != 0x0D else { return -1 }
     let sum = Int64(lhsCount) + Int64(rhsCount)
     return sum <= Int64(Int32.max) ? Int32(sum) : -1
+}
+
+/// 拼接的目标容量：至少 16、至少装下结果、按左半倍增；倍增夹在 i32 头的上限内。
+///  注意  不夹会让 `Int32(cap)` 在左半超过 1 GiB 时触发 Swift 前置条件崩溃，而不是 2 GiB 的 panic。
+@inline(__always) func _bkStrGrowthCapacity(lhsLength: Int, need: Int) -> Int {
+    let doubled = lhsLength <= Int(Int32.max) / 2 ? lhsLength * 2 : Int(Int32.max)
+    return min(Int(Int32.max), max(16, max(need, doubled)))
 }
 
 /// 拼接内核：两半的长度与字素数由调用方读出；`ownsLhs` 为真时消耗左操作数那份引用。
@@ -1416,21 +1431,21 @@ private func _bkStrJoin(
             base.advanced(by: need).storeBytes(of: 0, as: CChar.self)
             _bkStrLen(lhs).pointee = Int32(need)
             _bkStrGraphemes(lhs).pointee = _bkStrMergedGraphemes(
-                lhsGraphemes, rhsGraphemes, rhsLength: rhsLength, rhs: rhs)
+                lhs, lhsLength, lhsGraphemes, rhs, rhsLength, rhsGraphemes)
             /// 内容变了，索引表里的偏移全部作废 —— 不丢就是拿旧块去切新载荷。
             _bkStrDropTable(lhs)
             return base
         }
     }
     /// 新分配按倍增：容量至少两倍左半，保证「每次重分配后能容纳若干次追加」，累加总代价 O(n)。
-    let capacity = max(16, max(need, lhsLength * 2))
+    let capacity = _bkStrGrowthCapacity(lhsLength: lhsLength, need: need)
     let out = _bkStrAlloc(capacity)
     if lhsLength > 0, let lhs { memcpy(out, lhs, lhsLength) }
     if rhsLength > 0, let rhs { memcpy(out.advanced(by: lhsLength), rhs, rhsLength) }
     out.advanced(by: need).storeBytes(of: 0, as: CChar.self)
     _bkStrLen(out).pointee = Int32(need)
     _bkStrGraphemes(out).pointee = _bkStrMergedGraphemes(
-        lhsGraphemes, rhsGraphemes, rhsLength: rhsLength, rhs: rhs)
+        lhs, lhsLength, lhsGraphemes, rhs, rhsLength, rhsGraphemes)
     if ownsLhs, let lhs { _bkStrReleaseRaw(lhs) }
     return out
 }
@@ -1651,6 +1666,8 @@ private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     return Int(_bkStrLen(UnsafeRawPointer(_bkCharPointer(value))).pointee)
 }
 
+///  注意  地址只保留 48 位（bit 0..47）：当前两个目标的用户态指针满足；
+///  Linux arm64 开 52 位虚拟地址时会截断，届时要换掉这套 tag。
 @inline(__always) private func _bkCharPointer(_ value: Int64) -> UnsafePointer<CChar> {
     UnsafePointer<CChar>(bitPattern: Int(UInt64(bitPattern: value) & 0x00FF_FFFF_FFFF_FFFF))!
 }
@@ -2259,17 +2276,17 @@ public func bk_string_slice(
 
 /// `s.upper()` / `s.lower()`：Unicode 感知，接收者不变。权威 = `IRExecutor` 的 `.stringCase` 分支
 /// （`String.uppercased()` / `.lowercased()`）。
-///  注意  逐字节 `toupper`/`tolower` 是 ASCII-only：`"café".upper()` 得 `CAFé`，带变音符的整词错。
+///  注意  长度以头为准（`String(cString:)` 会在载荷内 NUL 处截断）；逐字节 `toupper` 又是 ASCII-only。
 @_cdecl("bk_string_upper")
 public func bk_string_upper(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
-    return _bkStrDup(String(cString: s).uppercased())
+    return _bkStrDup(_bkStrSwiftString(s).uppercased())
 }
 
 @_cdecl("bk_string_lower")
 public func bk_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
-    return _bkStrDup(String(cString: s).lowercased())
+    return _bkStrDup(_bkStrSwiftString(s).lowercased())
 }
 
 /// `s.contains(needle)`：按**字节**子串查找。判据是「比较一律按码点序列，不做规范等价」，
