@@ -266,6 +266,69 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         }
     }
 
+    @Test("跨边界并簇：CR × LF 与 Prepend × Any 都不该按两半相加")
+    func 拼接边界不并簇() {
+        let newline = dup("\n")
+        let crlf = bk_str_concat(dup("a\r"), newline, 1)
+        bk_str_release(newline)
+        #expect(bk_string_count(crlf) == 2, "CRLF 是一个字素")
+        #expect(解包(bk_string_char_at(crlf, 1)) == "\r\n", "下标 1 该拿到整个 CRLF")
+        bk_str_release(crlf)
+
+        // U+0600（ARABIC NUMBER SIGN）属 Prepend 类，会和后随字符并成一簇。
+        let letter = dup("A")
+        let prepend = bk_str_concat(dup("\u{0600}"), letter, 1)
+        bk_str_release(letter)
+        #expect(bk_string_count(prepend) == 1, "Prepend 与后随字符同属一簇")
+        #expect(解包(bk_string_char_at(prepend, 0)) == "\u{0600}A")
+        bk_str_release(prepend)
+    }
+
+    @Test("拼接边界两通道同答：CRLF 与 Prepend 的 len 一致")
+    func 拼接边界两通道() throws {
+        guard let cli = cliPathOrSkip() else { return }
+        let dir = try makeTemporaryDirectory(tag: "concat-boundary")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try """
+            main|func() -> ():
+                var crlf = "a\\r"
+                crlf = crlf + "\\n"
+                print(len(crlf))
+                var prepend = chr(1536) + "A"
+                print(len(prepend))
+                return
+            """.write(
+            to: dir.appendingPathComponent("boundary.pini"), atomically: true, encoding: .utf8)
+        for channel in ["run", "run-llvm"] {
+            let result = try runCLI(cli, arguments: [channel, "boundary.pini"], cwd: dir)
+            #expect(result.status == 0, "\(channel) 失败：\(result.stderr)")
+            #expect(result.stdout == "2\n1\n", "\(channel) 读数：\(result.stdout)")
+        }
+    }
+
+    @Test("倍增不越过 i32 上限：左半超过 1 GiB 时容量夹到上限")
+    func 倍增夹上限() {
+        let limit = Int(Int32.max)
+        #expect(_bkStrGrowthCapacity(lhsLength: 5, need: 6) == 16)
+        #expect(_bkStrGrowthCapacity(lhsLength: 100, need: 120) == 200)
+        #expect(_bkStrGrowthCapacity(lhsLength: limit / 2, need: limit / 2 + 1) == limit - 1)
+        #expect(_bkStrGrowthCapacity(lhsLength: limit / 2 + 1, need: limit / 2 + 2) == limit)
+    }
+
+    @Test("大小写按头里的长度走：载荷中的 NUL 不截断")
+    func 大小写不截断() {
+        let zero = bk_char_to_heap_string(bk_chr(0))
+        let tail = dup("b")
+        let text = bk_str_concat(bk_str_concat(dup("a"), zero, 1), tail, 1)
+        bk_str_release(zero)
+        bk_str_release(tail)
+        let upper = bk_string_upper(text)!
+        #expect(bk_string_count(upper) == 3, "A\\0B 是三个字素")
+        #expect("A\0B".withCString { memcmp(upper, $0, 3) == 0 }, "NUL 之后的 b 必须保留")
+        bk_str_release(text)
+        bk_str_release(upper)
+    }
+
     // MARK: - 命令行
 
     private func cliPathOrSkip() -> String? {
