@@ -351,23 +351,37 @@ public enum BuiltinRegistry {
             params: [t("Any"), t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("T")], location: builtinLocation)], inTrait: true),
         MemberDecl(
             typeName: "Array", name: "last", paramNames: [],
-            params: [], returns: [t("Any")], inTrait: false),
+            params: [], returns: [t("T")], inTrait: false),
         MemberDecl(
             typeName: "Array", name: "pop", paramNames: [],
-            params: [], returns: [t("Any")], inTrait: true),
+            params: [],
+            returns: [
+                .tuple(
+                    labels: [nil, nil],
+                    elements: [TypeAnnotation.generic(name: "Array", params: [t("T")], location: builtinLocation), t("T")],
+                    location: builtinLocation)
+            ], inTrait: true),
         MemberDecl(
             typeName: "Array", name: "get", paramNames: ["index"],
-            params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Any")], location: builtinLocation)], inTrait: false),
+            params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("T")], location: builtinLocation)], inTrait: false),
         MemberDecl(
             typeName: "Array", name: "getUnchecked", paramNames: ["index"],
-            params: [t("I32")], returns: [t("Any")], inTrait: false),
+            params: [t("I32")], returns: [t("T")], inTrait: false),
         // Dictionary 的成员面只有 `get`/`getUnchecked`（下标是语法级的）——缺失键与越界同义。
         MemberDecl(
             typeName: "Dictionary", name: "get", paramNames: ["key"],
-            params: [t("Any")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Any")], location: builtinLocation)], inTrait: false),
+            params: [t("K")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("V")], location: builtinLocation)], inTrait: false),
         MemberDecl(
             typeName: "Dictionary", name: "getUnchecked", paramNames: ["key"],
-            params: [t("Any")], returns: [t("Any")], inTrait: false),
+            params: [t("K")], returns: [t("V")], inTrait: false),
+    ]
+
+    /// 内建容器的类型参数占位名，按位置对应类型实参：`Array<T>` 一个、`Dictionary<K, V>` 两个。
+    /// `memberMethods` 的签名用这些名字写占位，查询时按接收者实参回填 —— 两张表必须同名同序，
+    /// 否则回填落空，签名会把占位名当普通类型名带进调用点。
+    public static let containerPlaceholders: [String: [String]] = [
+        "Array": ["T"],
+        "Dictionary": ["K", "V"],
     ]
 
     public static func member(typeName: String, name: String) -> MemberDecl? {

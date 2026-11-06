@@ -5077,6 +5077,37 @@ public enum IRLowerer {
             )
         }
 
+        /// `.getUnchecked(i)` 与下标读同物：安全断言通道，越界与缺失键都在运行时段终止。
+        /// 元素类型推导也共用一套 —— 分开写会让三条容器路径各自漂。
+        if memberName == "getUnchecked" {
+            guard arguments.count == 1 else {
+                throw unsupported("getUnchecked expects exactly one argument", at: location)
+            }
+            let elementType: IRType
+            let indexExpectation: IRType?
+            var requireI32Index = false
+            switch objectType {
+            case .array(let element): elementType = element; indexExpectation = .i32; requireI32Index = true
+            case .dict(let key, let value): elementType = value; indexExpectation = key
+            case .string: elementType = .char; indexExpectation = .i32; requireI32Index = true
+            default:
+                throw unsupported(
+                    ".getUnchecked on type '\(objectType)' outside this grid (Array/String/Dict)",
+                    at: location
+                )
+            }
+            let loweredIndex = try lowerExpr(
+                arguments[0].expression, expected: indexExpectation, into: &context)
+            if requireI32Index, loweredIndex.type != .i32 {
+                throw unsupported("getUnchecked index must be I32", at: location)
+            }
+            return LoweredExpr(
+                node: .subscriptGet(
+                    container: loweredObject.node, index: loweredIndex.node, type: elementType),
+                type: elementType
+            )
+        }
+
         if memberName == "slice" {
             guard arguments.count == 2 else {
                 throw unsupported("slice expects exactly two arguments", at: location)
@@ -5110,9 +5141,9 @@ public enum IRLowerer {
             )
         }
 
-        // The rest of the Array member face: `append` / `pop` and `last`, lowered to a named `call` the executor
-        // answers rather than to new nodes, so the node set stays frozen. The types are the runtime's: append
-        // yields a new array, last the element or null, pop the pair (arrayWithoutLast, lastOrNull).
+        // The rest of the Array member face: append / pop / last, lowered to named `call`s the executor answers
+        // rather than to new nodes. Static types follow the element: last yields the element, pop the pair
+        // (arrayWithoutLast, last). An empty receiver answers null at runtime — a value no type names.
         if case .array(let element) = objectType,
             memberName == "append" || memberName == "last" || memberName == "pop"
         {
@@ -5138,12 +5169,11 @@ public enum IRLowerer {
                 guard arguments.isEmpty else {
                     throw unsupported("last takes no arguments", at: location)
                 }
-                let found = IRType.optional(wrapped: element)
                 return LoweredExpr(
                     node: .call(
                         function: callName, arguments: [loweredObject.node],
-                        returnType: found),
-                    type: found
+                        returnType: element),
+                    type: element
                 )
             default:
                 guard arguments.isEmpty else {
@@ -5153,7 +5183,7 @@ public enum IRLowerer {
                     labels: [nil, nil],
                     fieldTypes: [
                         .array(element: element),
-                        .optional(wrapped: element),
+                        element,
                     ])
                 return LoweredExpr(
                     node: .call(

@@ -722,6 +722,15 @@ private struct Walker {
                             "字符串宽松下标读的 type 是 \(type.display)，元素应是 Char",
                             at: location)
                     }
+                case .dict(_, let value):
+                    /// 字典的宽容读与数组同形：命中得 some，缺失键得 none。`get` 走的是先问存在性再取值，
+                    /// 故这里与数组共用同一个节点，没有单独的字典节点。
+                    if type.optionalWrapped.map({ !value.isAssignable(to: $0) }) ?? true {
+                        report(
+                            .typeMismatch,
+                            "字典宽松下标读的 type 是 \(type.display)，值类型是 \(value.display)",
+                            at: location)
+                    }
                 default:
                     report(
                         .nodeShape,

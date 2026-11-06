@@ -303,9 +303,9 @@ public final class TypeEnvironment {
         return nil
     }
 
-    /// 统一成员查询：泛型模板特化优先，其后是内建容器的元素回填。
-    /// 内建容器（`Array<I32>`）没有泛型声明，模板查不到；这条只把接收者元素填进签名里的 `T`，
-    /// 对不含 `T` 的方法（`join` / `get`）是恒等。两个类型检查消费方都走这里，判据不会分叉。
+    /// 统一成员查询：泛型模板特化优先，其后是内建容器的类型实参回填。
+    /// 内建容器（`Array<I32>` / `Dictionary<String, I32>`）没有泛型声明，模板查不到；这条按占位表
+    /// 把接收者实参填进签名，对不含占位的成员（`join`）是恒等。两个类型检查消费方都走这里。
     public func lookupAnyMethod(
         typeName: String,
         typeArgs: [TypeAnnotation]?,
@@ -319,10 +319,12 @@ public final class TypeEnvironment {
         {
             return specialized
         }
-        guard typeName == "Array", typeArgs.count == 1,
+        guard let placeholders = BuiltinRegistry.containerPlaceholders[typeName],
+            placeholders.count == typeArgs.count,
             let template = typeMethods[typeName]?[methodName]
         else { return nil }
-        let substitutor = TypeSubstitutor(bindings: ["T": typeArgs[0]])
+        let substitutor = TypeSubstitutor(
+            bindings: Swift.Dictionary(uniqueKeysWithValues: zip(placeholders, typeArgs)))
         return FunctionSignature(
             params: template.params.map { substitutor.substitute(type: $0) },
             returns: template.returns.map { substitutor.substitute(type: $0) },

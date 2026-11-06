@@ -155,16 +155,21 @@ public enum RuntimeOps {
     }
 
     /// `xs.last()` -- the final element, or `null` when the array is empty.
+    /// `xs.last()` -- 末元素。空数组走安全断言通道，与 `xs[len(xs) - 1]` 同一条退出。
+    ///  注意  返回的是元素本身而非 `Optional`：静态类型是元素类型，用 null 兜底会让类型与值脱钩。
     static func builtinArrayLast(_ args: [Value]) throws -> Value {
-        return try arrayMemberReceiver(args).last ?? .null
+        let arr = try arrayMemberReceiver(args)
+        guard let last = arr.last else {
+            throw RuntimeError.indexOutOfRange(location: SourceLocation(line: 0, column: 0, fileName: ""))
+        }
+        return last
     }
 
-    /// `xs.pop()` -- the pair `(arrayWithoutLast, lastOrNull)`. An empty array
-    /// yields `([], null)` rather than failing, matching the AST side.
+    /// `xs.pop()` -- 一对 `(去掉末元素的数组, 末元素)`。空数组同上，走断言通道。
     static func builtinArrayPop(_ args: [Value]) throws -> Value {
         let arr = try arrayMemberReceiver(args)
         guard let last = arr.last else {
-            return .tuple(labels: [nil, nil], elements: [.array([]), .null])
+            throw RuntimeError.indexOutOfRange(location: SourceLocation(line: 0, column: 0, fileName: ""))
         }
         return .tuple(labels: [nil, nil], elements: [.array(Array(arr.dropLast())), last])
     }

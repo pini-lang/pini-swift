@@ -379,6 +379,8 @@ public final class IREmitter {
         header += Builtins.declaration(for: "bk_dict_create")
         header += Builtins.declaration(for: "bk_dict_len")
         header += Builtins.declaration(for: "bk_dict_get")
+        /// 字典的宽容读靠它先问存在性：`bk_dict_get` 对缺失键 panic，不能靠「读回空再看」。
+        header += Builtins.declaration(for: "bk_dict_contains")
         header += Builtins.declaration(for: "bk_dict_set")
         header += Builtins.declaration(for: "bk_dict_ensure_unique_at")
         header += Builtins.declaration(for: "bk_dict_key_at")
@@ -4416,6 +4418,14 @@ public final class IREmitter {
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
 
+        /// 字典的宽容读：先问存在性再取值。`bk_dict_get` 对缺失键 panic，
+        /// 故「读回空再看」在这里不成立 —— 缺失键会直接终止进程。
+        if case .dict(let keyType, _) = irType(of: container) {
+            return emitDictOptionalGet(
+                dict: containerValue, key: indexValue, keyType: keyType,
+                wrapped: wrapped, aggregate: aggregate)
+        }
+
         let isStringReceiver = irType(of: container) == .string
         let count: String
         var arrayRaw: String? = nil
@@ -4463,6 +4473,56 @@ public final class IREmitter {
             bodyIR += builder.fmtLoad(name: loaded, type: wrapped.llvmSpelling, ptr: boxPtr) + "\n"
             value = loaded
         }
+        let some0 = builder.freshTemp()
+        bodyIR += " \(some0) = insertvalue \(aggregate) undef, i64 0, 0\n"
+        let some1 = builder.freshTemp()
+        bodyIR += " \(some1) = insertvalue \(aggregate) \(some0), \(wrapped.llvmSpelling) \(value), 1\n"
+        bodyIR += builder.fmtStore(value: some1, type: aggregate, ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+        bodyIR += "\(noneLabel):\n"
+        let none0 = builder.freshTemp()
+        bodyIR += " \(none0) = insertvalue \(aggregate) undef, i64 1, 0\n"
+        bodyIR += builder.fmtStore(value: none0, type: aggregate, ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+
+        bodyIR += "\(endLabel):\n"
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: aggregate, ptr: slot) + "\n"
+        return IRValue(llvmType: aggregate, ssaName: result)
+    }
+
+    /// 字典的宽容读：`contains` 先行，命中才走 `get`（后者对缺失键 panic）。
+    /// 两条路径共用同一个 boxed key，判断与取值之间没有中间写，故不需要二次校验。
+    private func emitDictOptionalGet(
+        dict: IRValue, key: IRValue, keyType: IRType,
+        wrapped: IRType, aggregate: String
+    ) -> IRValue {
+        let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
+        let keyBox = boxValue(key, spelling: keySpelling)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast %bk_dict* \(dict.ssaName) to ptr\n"
+        let present = builder.freshTemp()
+        bodyIR +=
+            " \(present) = call i32 @bk_dict_contains(ptr \(raw), ptr \(keyBox), "
+            + "i32 \(keyWidth), i32 \(keyTag))\n"
+        let slot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
+        let id = builder.freshLabel()
+        let someLabel = "dget.some.\(id)"
+        let noneLabel = "dget.none.\(id)"
+        let endLabel = "dget.end.\(id)"
+        let hit = builder.freshTemp()
+        bodyIR += " \(hit) = icmp ne i32 \(present), 0\n"
+        bodyIR += builder.fmtCondBr(cond: hit, thenLabelName: someLabel, elseLabelName: noneLabel) + "\n"
+
+        bodyIR += "\(someLabel):\n"
+        let valueBox = builder.freshTemp()
+        bodyIR +=
+            " \(valueBox) = call ptr @bk_dict_get(ptr \(raw), ptr \(keyBox), "
+            + "i32 \(keyWidth), i32 \(keyTag))\n"
+        let value = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: value, type: wrapped.llvmSpelling, ptr: valueBox) + "\n"
         let some0 = builder.freshTemp()
         bodyIR += " \(some0) = insertvalue \(aggregate) undef, i64 0, 0\n"
         let some1 = builder.freshTemp()
