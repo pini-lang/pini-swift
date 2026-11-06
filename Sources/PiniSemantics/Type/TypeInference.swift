@@ -182,11 +182,11 @@ public final class TypeInference {
                 let objType = infer(expression: object)
                 switch objType {
                 case .simple(let typeName, _):
-                    if let sig = env.lookupMethod(typeName: typeName, methodName: memberName) {
+                    if let sig = env.lookupAnyMethod(typeName: typeName, typeArgs: nil, methodName: memberName) {
                         return methodReturn(for: sig, loc: loc)
                     }
                 case .generic(let typeName, let typeArgs, _):
-                    if let sig = env.lookupSpecializedMethod(typeName: typeName, typeArgs: typeArgs, methodName: memberName) {
+                    if let sig = env.lookupAnyMethod(typeName: typeName, typeArgs: typeArgs, methodName: memberName) {
                         return methodReturn(for: sig, loc: loc)
                     }
                 default:

@@ -2881,7 +2881,14 @@ public final class IREmitter {
         case .arrayJoin(let receiver, let separator):
             let receiverValue = emitExpr(receiver)
             let separatorValue = emitExpr(separator)
-            let joined = emitArrayJoin(array: receiverValue, sep: separatorValue.ssaName)
+            guard case .array(let elementType) = irType(of: receiver) else {
+                refuse(
+                    node: "arrayJoin", family: .strings,
+                    reason: "join 的接收者不是数组，元素类型无从确定")
+                return emitStringConstant("")
+            }
+            let joined = emitArrayJoin(
+                array: receiverValue, sep: separatorValue.ssaName, elementType: elementType)
             releaseOperand(receiver, receiverValue)
             releaseOperand(separator, separatorValue)
             return joined
@@ -6391,7 +6398,7 @@ public final class IREmitter {
 
     /// `arr.join(sep)`：字符串数组的元素用 sep 逐个追加进一条运行时串（元素是裸 C 指针）。
     /// 追加走 `bk_str_append_cstr` 的容量倍增，结果长度不再有 4096 字节上限，总代价 O(总长)。
-    private func emitArrayJoin(array: IRValue, sep: String) -> IRValue {
+    private func emitArrayJoin(array: IRValue, sep: String, elementType: IRType) -> IRValue {
         let bufSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
         bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
@@ -6427,8 +6434,14 @@ public final class IREmitter {
         let box = builder.freshTemp()
         bodyIR += " \(box) = call ptr @bk_array_get(ptr \(raw), i32 \(idx))\n"
         let element = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: element, type: "i8*", ptr: box) + "\n"
-        appendToBuffer(element, bufferSlot: bufSlot)
+        bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: box) + "\n"
+        /// 元素先按自身类型渲染成 C 串：整型走 `snprintf`、F64 走运行时、布尔取常量。
+        /// 直接按 `i8*` 读只对 String 元素成立，其余形态把整数当指针传下去 —— 那是崩溃而非错值。
+        let piece = stringifyValue(
+            value: IRValue(llvmType: elementType.llvmSpelling, ssaName: element),
+            type: elementType)
+        appendToBuffer(piece.ssaName, bufferSlot: bufSlot)
+        releaseHeldString(piece)
         bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
         bodyIR += "\(incLabel):\n"
         let idxNext = builder.freshTemp()
@@ -6437,9 +6450,15 @@ public final class IREmitter {
         bodyIR += builder.fmtBr(labelName: header) + "\n"
         bodyIR += "\(endLabel):\n"
         /// 结果已在堆上（运行时串），不再需要「交出前复制到堆」那一步。
+        /// 空数组一个字节都没追加，槽里仍是 null；此处换成空串 —— 调用方按串消费它。
         let result = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: result, type: "i8*", ptr: bufSlot) + "\n"
-        return IRValue(llvmType: "i8*", ssaName: result)
+        let empty = emitStringConstant("")
+        let isEmpty = builder.freshTemp()
+        bodyIR += " \(isEmpty) = icmp eq ptr \(result), null\n"
+        let picked = builder.freshTemp()
+        bodyIR += " \(picked) = select i1 \(isEmpty), ptr \(empty.ssaName), ptr \(result)\n"
+        return IRValue(llvmType: "i8*", ssaName: picked)
     }
 
     /// 把一条 C 串追加进 `bufferSlot` 指向的运行时串（槽里 `null` 表示还没开始），并写回槽。

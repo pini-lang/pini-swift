@@ -338,15 +338,17 @@ public enum BuiltinRegistry {
             typeName: "String", name: "getUnchecked", paramNames: ["index"],
             params: [t("I32")], returns: [t("Char")], inTrait: false),
         // Array（collection 子集：append/pop/slice/join；扩展面：last）
+        /// `T` 是内建容器的元素类型占位：查询时按接收者的类型实参回填，故 `Array<I32>.append` 收 I32、
+        /// 回 `Array<I32>`。它不是 `genericTypes` 里的类型参数 —— Array 没有泛型声明，别处看不见这个名。
         MemberDecl(
             typeName: "Array", name: "join", paramNames: ["sep"],
             params: [t("String")], returns: [t("String")], inTrait: true),
         MemberDecl(
             typeName: "Array", name: "append", paramNames: ["value"],
-            params: [t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("Any")], location: builtinLocation)], inTrait: true),
+            params: [t("T")], returns: [TypeAnnotation.generic(name: "Array", params: [t("T")], location: builtinLocation)], inTrait: true),
         MemberDecl(
             typeName: "Array", name: "slice", paramNames: ["start", "end"],
-            params: [t("Any"), t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("Any")], location: builtinLocation)], inTrait: true),
+            params: [t("Any"), t("Any")], returns: [TypeAnnotation.generic(name: "Array", params: [t("T")], location: builtinLocation)], inTrait: true),
         MemberDecl(
             typeName: "Array", name: "last", paramNames: [],
             params: [], returns: [t("Any")], inTrait: false),
