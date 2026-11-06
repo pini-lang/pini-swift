@@ -1063,12 +1063,13 @@ public func bk_str_table_min_cap() -> Int32 { Int32(_bkStrTableMinCap) }
 
 /// 引用计数字段的原子加减，返回**加完之后**的值。归零判断靠它，故不能是「读-改-写」三步。
 ///  注意  `OSAtomicAdd32Barrier` 返回的是新值而非旧值（实测；头文件只写 result），别再往上加一次 delta。
+///  `Synchronization` 的对应方法叫 `add`，返回 `(oldValue, newValue)`，取后一半才是同一语义。
 @inline(__always) private func _bkStrAtomicAdd(_ p: UnsafeMutablePointer<Int32>, _ delta: Int32) -> Int32 {
     #if canImport(Darwin)
     return OSAtomicAdd32Barrier(delta, p)
     #else
     let cell = UnsafeMutableRawPointer(p).assumingMemoryBound(to: Atomic<Int32>.self)
-    return cell.pointee.adding(delta, ordering: .acquiringAndReleasing)
+    return cell.pointee.add(delta, ordering: .acquiringAndReleasing).newValue
     #endif
 }
 
