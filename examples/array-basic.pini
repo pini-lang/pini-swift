@@ -1,5 +1,5 @@
 ; 数组基础（解释器 / LLVM 双后端可用）：下标、len、元素读写、字符串元素。运行 pini run-llvm examples/array_basic.pini（或 pini run）
-; 预期（双后端一致，剥离换行后）：20 3 world 3 true 3 b 10 7
+; 预期（双后端一致，剥离换行后）：20 3 world 3 true 3 b 10 7 3 [10, 7] 3
 ; 说明：数组以 opaque handle 经运行时 shim（@bk_array_*）承载，元素支持 I32 / F64 / Bool / String；下标写与复合赋值双后端对齐。
 main|func() -> ():
     let a = [10, 20, 30]
@@ -25,4 +25,9 @@ main|func() -> ():
             break
     print(w[0])
     print(w[1])
+    ; last 给末元素，pop 给 (去掉末元素的数组, 末元素)；空数组两者都终止。
+    print(w.last())
+    var t = w.pop()
+    print(t.0)
+    print(t.1)
     return

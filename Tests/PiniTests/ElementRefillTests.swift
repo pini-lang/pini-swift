@@ -41,8 +41,7 @@ struct ElementRefillTests: Sendable {
     14
     """#
 
-    /// `last` / `pop` 的元素类型语料。只有解释器腿：LLVM 那边这两个名字还发不出符号
-    /// （`@Array.last` 未定义），属于发射层缺口，不是类型层能补的。
+    /// `last` / `pop` 的元素类型语料。末两行取字符串元素，让双通道都走一遍「元素份额跟着元组走」。
     private static let tailCorpus = #"""
     main|func() -> ():
         var a = [10, 20, 30]
@@ -50,6 +49,11 @@ struct ElementRefillTests: Sendable {
         var p = a.pop()
         print(p.0)
         print(p.1 + 1)
+        var words = ["x", "yy"]
+        print(words.last() + "!")
+        var w = words.pop()
+        print(w.0)
+        print(w.1)
         return
     """#
 
@@ -57,6 +61,9 @@ struct ElementRefillTests: Sendable {
     31
     [10, 20]
     31
+    yy!
+    [x]
+    yy
     """#
 
     // MARK: - 进程内装置
@@ -108,6 +115,32 @@ struct ElementRefillTests: Sendable {
             return
         }
         #expect(lines.joined(separator: "\n") == Self.tailExpected)
+    }
+
+    /// 意图：空数组上 `last` / `pop` 走断言通道 —— 与 `xs[len(xs) - 1]` 同一条退出，
+    ///  行不通  交出 null：静态类型是元素类型，null 会让类型与值脱钩。
+    @Test("解释器腿：空数组的 last / pop 终止")
+    func emptyTailTerminates() throws {
+        let empty = #"""
+        main|func() -> ():
+            var e = [1, 2].slice(0, 0)
+            print(e.last())
+            return
+        """#
+        guard case .refused = Self.attempt(empty) else {
+            Issue.record("空数组的 last 应在运行时段终止，实际跑出了读数")
+            return
+        }
+        let popped = #"""
+        main|func() -> ():
+            var e = [1, 2].slice(0, 0)
+            print(e.pop())
+            return
+        """#
+        guard case .refused = Self.attempt(popped) else {
+            Issue.record("空数组的 pop 应在运行时段终止，实际跑出了读数")
+            return
+        }
     }
 
     /// 意图：`get` 的越界答案与 `getUnchecked` 的断言职责分开， 行不通  混成一条通道。
@@ -224,5 +257,59 @@ struct ElementRefillTests: Sendable {
             cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
         #expect(result.status == 0, "stderr: \(result.stderr)")
         #expect(result.stdout == Self.expected + "\n")
+    }
+
+    /// 把一段语料写进临时文件后交给命令行；`run-llvm` 需要调用方先备好工具链目录。
+    private func runCLI(
+        _ source: String, subcommand: String, llvmDir: String? = nil
+    ) throws -> (status: Int32, stdout: String, stderr: String) {
+        let cli = cliPath()!
+        let dir = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("tail-members.pini")
+        try source.write(to: file, atomically: true, encoding: .utf8)
+        let environment = llvmDir.map { ["PINI_LLVM_BIN": $0] } ?? [:]
+        return try launch(cli, [subcommand, file.path], environment: environment)
+    }
+
+    /// 意图：末元素语料经命令行 `run` 与进程内解释器逐行一致。
+    @Test("命令行 run 腿：last / pop 语料逐行等于手写期望")
+    func cliRunTailLeg() throws {
+        guard cliPath() != nil else { return }
+        let result = try runCLI(Self.tailCorpus, subcommand: "run")
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.tailExpected + "\n")
+    }
+
+    /// 意图：`run-llvm` 里 `last` / `pop` 不再是未定义符号 —— 元素按接收者类型读回，计数元素各留一份。
+    @Test("命令行 run-llvm 腿：last / pop 语料逐行等于手写期望")
+    func cliLLVMTailLeg() throws {
+        guard cliPath() != nil else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let result = try runCLI(Self.tailCorpus, subcommand: "run-llvm", llvmDir: llvmDir)
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.tailExpected + "\n")
+    }
+
+    /// 意图：`run-llvm` 上空数组的 `pop` 也终止（非零退出、无读数），与解释器同一条判据。
+    @Test("命令行 run-llvm 腿：空数组的 pop 终止")
+    func cliLLVMEmptyPopTerminates() throws {
+        guard cliPath() != nil else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let source = #"""
+        main|func() -> ():
+            var e = [1, 2].slice(0, 0)
+            print(e.pop())
+            return
+        """#
+        let result = try runCLI(source, subcommand: "run-llvm", llvmDir: llvmDir)
+        #expect(result.status != 0)
+        #expect(result.stdout.isEmpty)
     }
 }
