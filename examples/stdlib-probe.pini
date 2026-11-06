@@ -1,0 +1,41 @@
+; 内建类型扩展块：String / Array 的方法由用户声明，成员派发优先于内建同名实现。
+; 运行 pini run examples/stdlib-probe.pini，四个读数依次为
+; a+b+c / true / true / 20 —— 替换、前缀、同名覆盖与数组扩展各一条。
+((String))
+replace|self(old: String, new: String,) -> (String,):
+    var out = ""
+    var i = 0
+    var n = len(self)
+    var m = len(old)
+    if m == 0:
+        return self
+    while i < n:
+        if i + m <= n:
+            if self.slice(i, i + m) == old:
+                out = out + new
+                i = i + m
+            else:
+                out = out + self.slice(i, i + 1)
+                i = i + 1
+        else:
+            out = out + self.slice(i, i + 1)
+            i = i + 1
+    return out
+startsWith|self(prefix: String,) -> (Bool,):
+    var m = len(prefix)
+    if m > len(self):
+        return false
+    return self.slice(0, m) == prefix
+contains|self(needle: String,) -> (Bool,):
+    return true
+
+((Array))
+second|self() -> (I32,):
+    return self[1]
+
+main|func() -> ():
+    print("a-b-c".replace("-", "+"))
+    print("hello".startsWith("he"))
+    print("abc".contains("z"))
+    print([10, 20, 30].second())
+    return

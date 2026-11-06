@@ -336,8 +336,9 @@ public enum IRLowerer {
         let genericEnums = IRGenericEnumIndex(
             templates: genericEnumTemplates, caseOwners: genericEnumCaseOwners
         )
-        // 三形扩展的目标按实际注册类别分三类处置。放过但不归并的名单 = 已声明、却不在 `nominals` 里的
+        // 三形扩展的目标按实际注册类别分四类处置。放过但不归并的名单 = 已声明、却不在 `nominals` 里的
         // 类型名：枚举（含泛型枚举）无归并路径；泛型结构模板在特化段落按 `盒_<实参>` 另行归并。
+        // 内建类型（`String` / `Array`）同样不归并 —— 它们的扩展体由下方 `builtinExtensionMethods` 通道降载。
         var toleratedExtensionTargets: Set<String> = []
         for decl in module.declarations {
             switch decl {
@@ -349,14 +350,16 @@ public enum IRLowerer {
         }
         for decl in module.declarations {
             // `.bracketExt`（方括号）与 `((` / `{{` 两形同权：归并条件只看「目标是否注册为名义类型」，不看
-            // kind 本身。三类处置：在 `nominals` 里 ⇒ 归并；在 `toleratedExtensionTargets` 里（枚举 / 泛型
-            // 模板）⇒ 放过；其余（未知名，或指向特征）⇒ 响亮拒绝 —— 静默丢弃会让写对却没效果无从定位。
+            // kind 本身。四类处置：在 `nominals` 里 ⇒ 归并；内建类型 ⇒ 放过（另有降载通道）；在
+            // `toleratedExtensionTargets` 里（枚举 / 泛型模板）⇒ 放过；其余 ⇒ 响亮拒绝 —— 静默丢弃无从定位。
             if case .extensionDecl(let ext) = decl,
                 ext.kind == .structExt || ext.kind == .objectExt || ext.kind == .bracketExt
             {
                 if nominals[ext.targetType] != nil {
                     nominals[ext.targetType]!.extensionMethods.append(contentsOf: ext.methods)
-                } else if !toleratedExtensionTargets.contains(ext.targetType) {
+                } else if !toleratedExtensionTargets.contains(ext.targetType),
+                    builtinReceiverType(named: ext.targetType) == nil
+                {
                     let spelling =
                         ext.kind == .structExt ? "((\(ext.targetType)))"
                         : ext.kind == .objectExt ? "{{\(ext.targetType)}}" : "[[\(ext.targetType)]]"
@@ -1215,6 +1218,38 @@ public enum IRLowerer {
         }
     }
 
+    /// 单态化时的类型实参替换：把类型参数名换成实参，递归进元组 / 泛型 / 函数 / 指针的组成位。
+    /// 只换 `.simple` 且名字命中替换表的位置，其余原样返回；深度不限，故 `Array<T>` 与 `(T,) -> (T,)`
+    /// 一次替换到位，调用方不必逐形处理。不做此递归时容器形参停在 `Array<T>`，降载层无从解析元素类型。
+    private static func substituting(
+        _ annotation: TypeAnnotation,
+        _ substitution: [String: TypeAnnotation]
+    ) -> TypeAnnotation {
+        switch annotation {
+        case .simple(let name, _):
+            return substitution[name] ?? annotation
+        case .tuple(let labels, let elements, let location):
+            return .tuple(
+                labels: labels,
+                elements: elements.map { substituting($0, substitution) },
+                location: location)
+        case .generic(let name, let params, let location):
+            return .generic(
+                name: name,
+                params: params.map { substituting($0, substitution) },
+                location: location)
+        case .function(let params, let returns, let captured, let usingIndices, let location):
+            return .function(
+                params: params.map { substituting($0, substitution) },
+                returns: returns.map { substituting($0, substitution) },
+                captured: captured.map { substituting($0, substitution) },
+                usingIndices: usingIndices,
+                location: location)
+        case .pointer(let element, let location):
+            return .pointer(element: substituting(element, substitution), location: location)
+        }
+    }
+
     /// Register a specialized function decl (`身份<I32>` -> `身份_I32`)
     /// with type parameters substituted in params/returns. Idempotent.
     private static func registerFuncSpecialization(
@@ -1230,10 +1265,7 @@ public enum IRLowerer {
         }
         let resolveType: (TypeAnnotation?) -> TypeAnnotation? = { annotation in
             guard let annotation = annotation else { return nil }
-            if case .simple(let name, _) = annotation, let sub = substitution[name] {
-                return sub
-            }
-            return annotation
+            return substituting(annotation, substitution)
         }
         let newParams = template.params.map { param in
             Parameter(name: param.name, typeAnnotation: resolveType(param.typeAnnotation))
