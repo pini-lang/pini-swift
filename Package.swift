@@ -16,7 +16,10 @@ let package = Package(
         // 依赖方向由此处强制：谁能 import 谁由 `dependencies` 决定，写不出越界引用。
         .target(
             name: "PiniSyntax",
-            path: "Sources/PiniSyntax"
+            path: "Sources/PiniSyntax",
+            // 语言内标准库源码随 `Bundle.module` 分发，故资源归属语法层：前端装配期读它，
+            // 与用户源码同一条解析路径；放语义层会让装配点跨层取文件。
+            resources: [.process("Resources")]
         ),
         // 语义层：诊断 · 内建声明 · 符号表 · 类型检查 · 包清单与源码装载。往上是 IR 与执行，
         // 往下只有语法层；它不认识任何后端。

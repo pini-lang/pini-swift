@@ -1,0 +1,9 @@
+; 语言内标准库：前端装配期并入每个模块，声明位置排在用户源码之前，用户同名扩展因此压过它。
+; 注意  只收宿主原生尚未提供的成员方法；与原生同名的条目会经 body-first 通道压过原生实现，不写在这里。
+((String))
+; 前缀判定：长度不足即假，否则按 slice 逐字素比较；空前缀恒真（slice(0, 0) 得空串）。
+startsWith|self(prefix: String,) -> (Bool,):
+    var m = len(prefix)
+    if m > len(self):
+        return false
+    return self.slice(0, m) == prefix

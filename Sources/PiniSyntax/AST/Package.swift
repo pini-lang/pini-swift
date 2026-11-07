@@ -40,4 +40,13 @@ public struct Package: Equatable, ASTNode, Sendable {
             name: name,
             fileUnits: [FileUnit(fileName: fileName, module: module)])
     }
+
+    /// 只在第一个单元并入标准库：标准库是模块级声明，逐单元各带一份会在整包摊平时重复。
+    /// 幂等——已装配过的单元原样保留。
+    public func assemblingStdlib() -> Package {
+        guard let first = fileUnits.first else { return self }
+        var assembled = fileUnits
+        assembled[0] = FileUnit(fileName: first.fileName, module: FrontEnd.assemble(module: first.module))
+        return Package(name: name, fileUnits: assembled)
+    }
 }
