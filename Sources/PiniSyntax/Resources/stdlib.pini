@@ -366,3 +366,105 @@ removeAt|func<T>(arr: Array<T>, index: I32,) -> (Array<T>,):
             out = out.append(arr[i])
         i = i + 1
     return out
+
+; 成员判定：按 T 的相等逐元素比对；空数组得假。
+contains|func<T>(arr: Array<T>, target: T,) -> (Bool,):
+    var i = 0
+    while i < len(arr):
+        if arr[i] == target:
+            return true
+        i = i + 1
+    return false
+
+; 成员下标：首次相等即返下标；缺席答 -1，与 indexOf 同口径。
+indexOfElement|func<T>(arr: Array<T>, target: T,) -> (I32,):
+    var i = 0
+    while i < len(arr):
+        if arr[i] == target:
+            return i
+        i = i + 1
+    return -1
+
+; 去重：只保留首次出现的元素，维持原序；接收者不动。
+unique|func<T>(arr: Array<T>,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        var seen = false
+        var j = 0
+        while j < len(out):
+            if out[j] == arr[i]:
+                seen = true
+            j = j + 1
+        if seen:
+            i = i + 1
+        else:
+            out = out.append(arr[i])
+            i = i + 1
+    return out
+
+; 最小元素：按 T 的小于比对；空数组取首元素，落到越界断言。
+minElement|func<T>(arr: Array<T>,) -> (T,):
+    var best = arr[0]
+    var i = 1
+    while i < len(arr):
+        if arr[i] < best:
+            best = arr[i]
+        i = i + 1
+    return best
+
+; 最大元素：按 T 的大于比对；空数组取首元素，落到越界断言。
+maxElement|func<T>(arr: Array<T>,) -> (T,):
+    var best = arr[0]
+    var i = 1
+    while i < len(arr):
+        if best < arr[i]:
+            best = arr[i]
+        i = i + 1
+    return best
+
+; 升序排序：稳定插入，相等元素保持原序；产出副本，接收者不动。
+sorted|func<T>(arr: Array<T>,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        var pos = len(out)
+        var j = 0
+        while j < len(out):
+            if arr[i] < out[j]:
+                if j < pos:
+                    pos = j
+            j = j + 1
+        var built = out.slice(0, 0)
+        var k = 0
+        while k < len(out):
+            if k == pos:
+                built = built.append(arr[i])
+            built = built.append(out[k])
+            k = k + 1
+        if pos == len(out):
+            built = built.append(arr[i])
+        out = built
+        i = i + 1
+    return out
+
+; 有序判定：相邻元素不降即有序；空数组与单元素得真。
+isSorted|func<T>(arr: Array<T>,) -> (Bool,):
+    var i = 1
+    while i < len(arr):
+        if arr[i] < arr[i - 1]:
+            return false
+        i = i + 1
+    return true
+
+; 逐位相等：长度不同即假；元素按 T 的相等比对。
+equalArrays|func<T>(a: Array<T>, b: Array<T>,) -> (Bool,):
+    if len(a) != len(b):
+        return false
+    var i = 0
+    while i < len(a):
+        if a[i] == b[i]:
+            i = i + 1
+        else:
+            return false
+    return true

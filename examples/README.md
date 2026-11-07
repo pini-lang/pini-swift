@@ -68,6 +68,7 @@
 | `stdlib-strings.pini` | 标准库字符串成员（isEmpty / count / stripPrefix / stripSuffix / ensurePrefix / ensureSuffix / reversed / capitalized / center / truncate） | `true` / `false` / `2` / `文中` / `--7---` / `axab` | Provisional |
 | `stdlib-container.pini` | 标准库容器算法（成员形态之外的自由函数 map / filter / reduce / forEach / reverse / concat / take / drop，须写显式类型实参） | `[2, 4, 6]` / `10` / `[3, 2, 1]` / `[3]` | Provisional |
 | `stdlib-container-ops.pini` | 标准库容器操作（谓词 any / all / countWhere / findIndex，末段 takeLast / dropLast，repeatElements / rotate / insertAt / removeAt，须写显式类型实参） | `true` / `2` / `[2, 3]` / `[2, 3, 1]` / `[1, 9, 2, 3]` | Provisional |
+| `stdlib-equality.pini` | 标准库比较算法（contains / indexOfElement / unique / minElement / maxElement / sorted / isSorted / equalArrays，须写显式类型实参） | `true` / `1` / `[3, 1, 2]` / `[1, 1, 2, 3]` | Provisional |
 | `stdlib-probe.pini` | 用户扩展块压过标准库与原生（同签名的 replace / startsWith / contains + 新增 Array 成员 second） | `a+b+c` / `true` / `true` / `20` | Experimental |
 | `access.pini` | 字段访问 vs 方法访问 | `秒表 / 60 / 60` | Stable |
 | `try.pini` | 错误处理 `try`-`else`（`Result` 显式传播） | `读取失败` | Stable |

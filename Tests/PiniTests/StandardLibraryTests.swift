@@ -245,6 +245,42 @@ struct StandardLibraryTests: Sendable {
     [b]
     """#
 
+    /// 比较算法边界：String 元素 · 空数组 · 缺席 · 长度不同 · 降序 · 重复元素。
+    private static let equalityCorpus = #"""
+    main|func() -> ():
+        print(contains<String>(["a", "b"], "b"))
+        print(contains<I32>([], 1))
+        print(indexOfElement<String>(["a", "b"], "z"))
+        print(unique<String>(["b", "a", "b"]))
+        print(unique<I32>([]))
+        print(minElement<I32>([3, 1, 2]))
+        print(maxElement<I32>([3, 1, 2]))
+        print(sorted<I32>([]))
+        print(isSorted<I32>([2, 1]))
+        print(isSorted<I32>([]))
+        print(equalArrays<I32>([1, 2], [1, 3]))
+        print(equalArrays<I32>([1], [1, 2]))
+        print(equalArrays<String>(["a"], ["a"]))
+        return
+    """#
+
+    /// 手写期望。缺席答 -1，长度不同即不相等，空数组的有序判定为真。
+    private static let equalityExpected = #"""
+    true
+    false
+    -1
+    [b, a]
+    []
+    1
+    3
+    []
+    false
+    true
+    false
+    false
+    true
+    """#
+
     // MARK: - 进程内装置
 
     private enum Outcome: Equatable {
@@ -333,6 +369,17 @@ struct StandardLibraryTests: Sendable {
             return
         }
         #expect(lines.joined(separator: "\n") == Self.containerOpsExpected)
+    }
+
+    /// 意图：比较算法边界在解释器腿逐行成立，两种元素类型与空数组都覆盖。
+    @Test("解释器腿：比较算法边界逐行等于手写期望")
+    func interpreterLegCoversEquality() throws {
+        let outcome = Self.attempt(Self.equalityCorpus)
+        guard case .ran(let lines) = outcome else {
+            Issue.record("比较语料应可跑，实际被拒：\(outcome)")
+            return
+        }
+        #expect(lines.joined(separator: "\n") == Self.equalityExpected)
     }
 
     /// 意图：用户自己写的 `map` 把标准库那份摘掉——标准库不永久占用通用名。
@@ -567,5 +614,21 @@ struct StandardLibraryTests: Sendable {
             cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
         #expect(result.status == 0, "stderr: \(result.stderr)")
         #expect(result.stdout == Self.containerOpsExpected + "\n")
+    }
+
+    /// 意图：比较算法边界在发射腿逐行相同——泛型元素的相等与小于经单态化后两通道一致。
+    @Test("命令行 run-llvm 腿：比较算法边界逐行等于手写期望")
+    func cliLLVMLegCoversEquality() throws {
+        guard let cli = cliPath() else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let file = try scratchFile(named: "stdlib-equality.pini", contents: Self.equalityCorpus)
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let result = try launch(
+            cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.equalityExpected + "\n")
     }
 }
