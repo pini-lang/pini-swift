@@ -65,6 +65,7 @@
 | `cow.pini` | 集合 COW 写时复制值语义（数组 / 字典 / 集合 / 嵌套写） | `[1, 2, 3] [99, 2, 3] {a: 1} {a: 9}` | Provisional |
 | `dict-set.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
 | `stdlib.pini` | 标准库字符串成员（语言内 trim / startsWith / endsWith / replace / repeat / pad 一族 / lastIndexOf + 原生 upper / split 等）+ 数学函数 | `HELLO, WORLD` / `pad\|` / `a+b+c` / `007` / `8` / `42 / 3 / 9 / 5.0` | Stable |
+| `stdlib-strings.pini` | 标准库字符串成员（isEmpty / count / stripPrefix / stripSuffix / ensurePrefix / ensureSuffix / reversed / capitalized / center / truncate） | `true` / `false` / `2` / `文中` / `--7---` / `axab` | Provisional |
 | `stdlib-container.pini` | 标准库容器算法（成员形态之外的自由函数 map / filter / reduce / forEach / reverse / concat / take / drop，须写显式类型实参） | `[2, 4, 6]` / `10` / `[3, 2, 1]` / `[3]` | Provisional |
 | `stdlib-probe.pini` | 用户扩展块压过标准库与原生（同签名的 replace / startsWith / contains + 新增 Array 成员 second） | `a+b+c` / `true` / `true` / `20` | Experimental |
 | `access.pini` | 字段访问 vs 方法访问 | `秒表 / 60 / 60` | Stable |

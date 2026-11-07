@@ -141,6 +141,62 @@ struct StandardLibraryTests: Sendable {
     7
     """#
 
+    /// 字串成员边界：空接收者 · 空模板 · 非重叠计数 · 非正宽度 · 多字符填充 · 前后缀未命中。
+    private static let stringsCorpus = #"""
+    main|func() -> ():
+        print("".isEmpty())
+        print(" ".isEmpty())
+        print("aaaa".count("aa"))
+        print("abc".count(""))
+        print("abc".count("abcd"))
+        print("abc".stripPrefix(""))
+        print("rest".stripPrefix("prefix-"))
+        print("abc".stripSuffix(""))
+        print("file.txt".stripSuffix(".md"))
+        print("abc".ensurePrefix(""))
+        print("world".ensurePrefix("hello-"))
+        print("abc".ensureSuffix(""))
+        print("中文".reversed() + "|")
+        print("".reversed() + "|")
+        print("a".capitalized() + "|")
+        print("".capitalized() + "|")
+        print("x".center(4, "ab") + "|")
+        print("x".center(4, "") + "|")
+        print("7".center(6, "-") + "|")
+        print("abcdef".truncate(2) + "|")
+        print("abcdef".truncate(9) + "|")
+        print("abcdef".truncate(0) + "|")
+        print("abcdef".truncate(-2) + "|")
+        return
+    """#
+
+    /// 手写期望。空前后缀剥出空段仍是原串；居中奇数余量给右侧，非正宽度得空串。
+    private static let stringsExpected = #"""
+    true
+    false
+    2
+    0
+    0
+    abc
+    rest
+    abc
+    file.txt
+    abc
+    hello-world
+    abc
+    文中|
+    |
+    A|
+    |
+    axab|
+    x|
+    --7---|
+    ab|
+    abcdef|
+    |
+    |
+    """#
+
     // MARK: - 进程内装置
 
     private enum Outcome: Equatable {
@@ -207,6 +263,17 @@ struct StandardLibraryTests: Sendable {
             return
         }
         #expect(lines.joined(separator: "\n") == Self.containerExpected)
+    }
+
+    /// 意图：字串成员边界在解释器腿逐行成立，不靠示例覆盖。
+    @Test("解释器腿：字串成员边界逐行等于手写期望")
+    func interpreterLegCoversStringMembers() throws {
+        let outcome = Self.attempt(Self.stringsCorpus)
+        guard case .ran(let lines) = outcome else {
+            Issue.record("字串语料应可跑，实际被拒：\(outcome)")
+            return
+        }
+        #expect(lines.joined(separator: "\n") == Self.stringsExpected)
     }
 
     /// 意图：用户自己写的 `map` 把标准库那份摘掉——标准库不永久占用通用名。
@@ -409,5 +476,21 @@ struct StandardLibraryTests: Sendable {
             cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
         #expect(result.status == 0, "stderr: \(result.stderr)")
         #expect(result.stdout == Self.containerExpected + "\n")
+    }
+
+    /// 意图：字串成员边界在发射腿逐行相同——字素切片与填充走同一条 Pini 实现。
+    @Test("命令行 run-llvm 腿：字串成员边界逐行等于手写期望")
+    func cliLLVMLegCoversStringMembers() throws {
+        guard let cli = cliPath() else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let file = try scratchFile(named: "stdlib-strings.pini", contents: Self.stringsCorpus)
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let result = try launch(
+            cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.stringsExpected + "\n")
     }
 }
