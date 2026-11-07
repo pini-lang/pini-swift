@@ -40,6 +40,52 @@ struct StandardLibraryTests: Sendable {
 
     private static let overrideExpected = "false"
 
+    /// 文本方法的边界读数：空模板 · 空后缀 · 超长后缀 · 多字素匹配 · 非正次数 · 多字符与空填充。
+    private static let textCorpus = #"""
+    main|func() -> ():
+        print("  pad  ".trim() + "|")
+        print("abc".endsWith(""))
+        print("abc".endsWith("abcd"))
+        print("中文".endsWith("文"))
+        print("abc".replace("", "x"))
+        print("abc".replace("z", "x"))
+        print("aaaa".replace("aa", "b"))
+        print("ab".repeat(0))
+        print("ab".repeat(-2))
+        print("7".padLeft(3, "0"))
+        print("7".padLeft(1, "0"))
+        print("7".padLeft(4, "ab"))
+        print("7".padLeft(3, ""))
+        print("7".padRight(3, "0"))
+        print("7".padRight(4, "ab"))
+        print("abcabc".lastIndexOf("bc"))
+        print("abc".lastIndexOf("z"))
+        print("abc".lastIndexOf(""))
+        return
+    """#
+
+    /// 手写期望。两处空行分别来自 `repeat(0)` 与 `repeat(-2)`；`aa` 换 `b` 得 `bb` 钉非重叠匹配。
+    private static let textExpected = #"""
+    pad|
+    true
+    false
+    true
+    abc
+    abc
+    bb
+
+
+    007
+    7
+    aba7
+    7
+    700
+    7aba
+    4
+    -1
+    3
+    """#
+
     // MARK: - 进程内装置
 
     private enum Outcome: Equatable {
@@ -84,6 +130,17 @@ struct StandardLibraryTests: Sendable {
             return
         }
         #expect(lines.joined(separator: "\n") == Self.overrideExpected)
+    }
+
+    /// 意图：文本方法的边界语义在解释器腿逐行成立，不靠示例覆盖。
+    @Test("解释器腿：文本方法边界逐行等于手写期望")
+    func interpreterLegCoversTextBoundaries() throws {
+        let outcome = Self.attempt(Self.textCorpus)
+        guard case .ran(let lines) = outcome else {
+            Issue.record("文本语料应可跑，实际被拒：\(outcome)")
+            return
+        }
+        #expect(lines.joined(separator: "\n") == Self.textExpected)
     }
 
     /// 意图：多文件包只在第一个单元并入标准库，跨文件检查同样看得见它。
@@ -235,5 +292,21 @@ struct StandardLibraryTests: Sendable {
             cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
         #expect(result.status == 0, "stderr: \(result.stderr)")
         #expect(result.stdout == Self.overrideExpected + "\n")
+    }
+
+    /// 意图：同一份文本边界语料在发射腿逐行相同——两端填充与末次查找都走同一条 Pini 实现。
+    @Test("命令行 run-llvm 腿：文本方法边界逐行等于手写期望")
+    func cliLLVMLegCoversTextBoundaries() throws {
+        guard let cli = cliPath() else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let file = try scratchFile(named: "stdlib-text.pini", contents: Self.textCorpus)
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let result = try launch(
+            cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.textExpected + "\n")
     }
 }

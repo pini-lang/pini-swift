@@ -1,5 +1,6 @@
-; P1-4 标准库补全演示：字符串成员方法 + 数学自由函数
+; 标准库演示：语言内标准库（Pini 源码）与宿主原生成员方法、数学自由函数并存
 ; 字符串方法以成员形式提供（s.upper()），数学库以自由函数形式提供（abs(x)）
+; trim 起的八条来自 stdlib.pini 的 Pini 实现，其余走宿主原生
 main|func() -> ():
     var s = "Hello, World"
     print(s.upper())
@@ -7,6 +8,14 @@ main|func() -> ():
     print(s.contains("World"))
     print(s.substring(0, 5))
     print(s.split(","))
+    print("  pad  ".trim() + "|")
+    print(s.startsWith("Hello"))
+    print(s.endsWith("World"))
+    print("a-b-c".replace("-", "+"))
+    print("ab".repeat(3))
+    print("7".padLeft(3, "0"))
+    print("7".padRight(3, "0"))
+    print(s.lastIndexOf("o"))
     var words = ["a", "b", "c"]
     print(words.join("-"))
     print(abs(-42))

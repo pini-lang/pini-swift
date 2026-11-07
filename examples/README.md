@@ -64,7 +64,7 @@
 | `multidim.pini` | 多维数组（`.get` 取 `Optional` + `match` 解构、嵌套下标读写、`unsafe` 消耗点） | 见文件 | Provisional |
 | `cow.pini` | 集合 COW 写时复制值语义（数组 / 字典 / 集合 / 嵌套写） | `[1, 2, 3] [99, 2, 3] {a: 1} {a: 9}` | Provisional |
 | `dict-set.pini` | 字典 / 集合（构造 / 键读 / 键写 / `len`） | `25 3 26 99 5 3` | Provisional |
-| `stdlib.pini` | 标准库 字符串方法 + 数学函数 | `HELLO, WORLD` / `42 / 3 / 9 / 5.0` | Stable |
+| `stdlib.pini` | 标准库 字符串方法（原生 + 语言内标准库 trim/replace/pad 一族）+ 数学函数 | `HELLO, WORLD` / `a+b+c` / `007` / `42 / 3 / 9 / 5.0` | Stable |
 | `stdlib-probe.pini` | 内建类型扩展块（String / Array 新方法 + 同名覆盖压过内建） | `a+b+c` / `true` / `true` / `20` | Experimental |
 | `access.pini` | 字段访问 vs 方法访问 | `秒表 / 60 / 60` | Stable |
 | `try.pini` | 错误处理 `try`-`else`（`Result` 显式传播） | `读取失败` | Stable |
