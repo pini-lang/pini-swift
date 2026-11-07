@@ -197,6 +197,54 @@ struct StandardLibraryTests: Sendable {
     |
     """#
 
+    /// 容器操作边界：空数组 · 非正与越界下标 · 负轮转 · String 元素 · 首尾插删。
+    private static let containerOpsCorpus = #"""
+    isEven|func(x: I32,) -> (Bool,):
+        return x % 2 == 0
+
+    isA|func(s: String,) -> (Bool,):
+        return s == "a"
+
+    main|func() -> ():
+        print(any<I32>([], isEven))
+        print(all<I32>([], isEven))
+        print(countWhere<I32>([1, 3], isEven))
+        print(findIndex<I32>([1, 3], isEven))
+        print(findIndex<String>(["a", "b"], isA))
+        print(takeLast<I32>([1, 2, 3], 0))
+        print(takeLast<I32>([1, 2, 3], 9))
+        print(dropLast<I32>([1, 2, 3], 9))
+        print(repeatElements<I32>([1, 2], 0))
+        print(rotate<I32>([1, 2, 3], -1))
+        print(rotate<I32>([1, 2, 3], 3))
+        print(rotate<I32>([], 2))
+        print(insertAt<I32>([1, 2, 3], -1, 9))
+        print(insertAt<I32>([1, 2, 3], 9, 9))
+        print(removeAt<I32>([1, 2, 3], -1))
+        print(removeAt<String>(["a", "b"], 0))
+        return
+    """#
+
+    /// 手写期望。空数组的全称判定为真、存在判定为假；负轮转等价于左移一位。
+    private static let containerOpsExpected = #"""
+    false
+    true
+    0
+    -1
+    0
+    []
+    [1, 2, 3]
+    []
+    []
+    [3, 1, 2]
+    [1, 2, 3]
+    []
+    [9, 1, 2, 3]
+    [1, 2, 3, 9]
+    [1, 2, 3]
+    [b]
+    """#
+
     // MARK: - 进程内装置
 
     private enum Outcome: Equatable {
@@ -274,6 +322,17 @@ struct StandardLibraryTests: Sendable {
             return
         }
         #expect(lines.joined(separator: "\n") == Self.stringsExpected)
+    }
+
+    /// 意图：容器操作边界在解释器腿逐行成立，空数组与越界下标都覆盖。
+    @Test("解释器腿：容器操作边界逐行等于手写期望")
+    func interpreterLegCoversContainerOps() throws {
+        let outcome = Self.attempt(Self.containerOpsCorpus)
+        guard case .ran(let lines) = outcome else {
+            Issue.record("容器操作语料应可跑，实际被拒：\(outcome)")
+            return
+        }
+        #expect(lines.joined(separator: "\n") == Self.containerOpsExpected)
     }
 
     /// 意图：用户自己写的 `map` 把标准库那份摘掉——标准库不永久占用通用名。
@@ -492,5 +551,21 @@ struct StandardLibraryTests: Sendable {
             cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
         #expect(result.status == 0, "stderr: \(result.stderr)")
         #expect(result.stdout == Self.stringsExpected + "\n")
+    }
+
+    /// 意图：容器操作边界在发射腿逐行相同——单态化后的副本与追加在两条通道一致。
+    @Test("命令行 run-llvm 腿：容器操作边界逐行等于手写期望")
+    func cliLLVMLegCoversContainerOps() throws {
+        guard let cli = cliPath() else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let file = try scratchFile(named: "stdlib-container-ops.pini", contents: Self.containerOpsCorpus)
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let result = try launch(
+            cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.containerOpsExpected + "\n")
     }
 }
