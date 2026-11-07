@@ -1,9 +1,89 @@
 ; 语言内标准库：前端装配期并入每个模块，声明位置排在用户源码之前，用户同名扩展因此压过它。
 ; 注意  只收宿主原生尚未提供的成员方法；与原生同名的条目会经 body-first 通道压过原生实现，不写在这里。
 ((String))
+; 两端去空格：只剥 U+0020，与 trimLeft / trimRight 同口径；制表符不算空白。
+trim|self() -> (String,):
+    return self.trimLeft().trimRight()
 ; 前缀判定：长度不足即假，否则按 slice 逐字素比较；空前缀恒真（slice(0, 0) 得空串）。
 startsWith|self(prefix: String,) -> (Bool,):
     var m = len(prefix)
     if m > len(self):
         return false
     return self.slice(0, m) == prefix
+; 后缀判定：与前缀同规，比较尾部切片；空后缀恒真。
+endsWith|self(suffix: String,) -> (Bool,):
+    var n = len(self)
+    var m = len(suffix)
+    if m > n:
+        return false
+    return self.slice(n - m, n) == suffix
+; 全部替换：按子串匹配，不做字符集解释；空模板原样返回，不插入也不删除。
+replace|self(old: String, new: String,) -> (String,):
+    var n = len(self)
+    var m = len(old)
+    if m == 0:
+        return self
+    var out = ""
+    var i = 0
+    while i < n:
+        if i + m <= n:
+            if self.slice(i, i + m) == old:
+                out = out + new
+                i = i + m
+            else:
+                out = out + self.slice(i, i + 1)
+                i = i + 1
+        else:
+            out = out + self.slice(i, i + 1)
+            i = i + 1
+    return out
+; 重复拼接：次数非正得空串；次数按入参原样消费，不夹取上限。
+repeat|self(times: I32,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < times:
+        out = out + self
+        i = i + 1
+    return out
+; 左填充：目标宽度按字素计，填充串整体重复到够宽再截断；空填充串原样返回。
+padLeft|self(width: I32, fill: String,) -> (String,):
+    var n = len(self)
+    var m = len(fill)
+    if m == 0:
+        return self
+    if n >= width:
+        return self
+    var out = ""
+    var need = width - n
+    while len(out) < need:
+        out = out + fill
+    if len(out) > need:
+        out = out.slice(0, need)
+    return out + self
+; 右填充：与左填充同规，填充串接在接收者之后。
+padRight|self(width: I32, fill: String,) -> (String,):
+    var n = len(self)
+    var m = len(fill)
+    if m == 0:
+        return self
+    if n >= width:
+        return self
+    var out = ""
+    var need = width - n
+    while len(out) < need:
+        out = out + fill
+    if len(out) > need:
+        out = out.slice(0, need)
+    return self + out
+; 末次出现：与 indexOf 同规取字素下标；空模板答 len(self)，缺席答 -1。
+lastIndexOf|self(needle: String,) -> (I32,):
+    var n = len(self)
+    var m = len(needle)
+    if m == 0:
+        return n
+    var i: I32 = n - m
+    while i >= 0:
+        if self.slice(i, i + m) == needle:
+            return i
+        i = i - 1
+    return -1
