@@ -397,6 +397,8 @@ private struct Builder {
             emitLine("\(passLabel):")
             return loadConstant(.integer(0), into: freshRegister())
 
+        case .shortCircuit:
+            throw unsupported("shortCircuit", .variablesAndOperators, "短路要在表达式内造分支，本 profile 只在语句层跳转")
         case .resultConstruct:
             throw unsupported("resultConstruct", .resultAndOptional, "Result 三槽布局不在本 profile")
         case .optionalGet, .optionalConstruct:

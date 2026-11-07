@@ -636,6 +636,19 @@ private struct Walker {
             walk(lhs, at: location)
             walk(rhs, at: location)
 
+        /// 短路节点带控制流：发射层据左值决定是否走右分支，故两侧与结果都必须是 Bool。
+        /// 判据只看静态类型，不看值 —— 类型不对时发射出的 `br i1` 会拿到非 i1 值。
+        case .shortCircuit(_, let lhs, let rhs, let type):
+            walk(lhs, at: location)
+            walk(rhs, at: location)
+            if type != .boolean {
+                report(.nodeShape, "短路运算的结果类型写成 \(type.display)，应为 Bool", at: location)
+            }
+            for (side, operand) in [("左", lhs), ("右", rhs)] {
+                guard let operandType = effectiveType(of: operand), operandType != .boolean else { continue }
+                report(.typeMismatch, "短路运算的\(side)操作数类型是 \(operandType.display)，应为 Bool", at: location)
+            }
+
         case .unary(_, let operand, _):
             walk(operand, at: location)
 

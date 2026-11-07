@@ -60,6 +60,11 @@ public final class TypeEnvironment {
     /// 外部数据符号的声明类型：模块级常量，不进作用域栈，也不参与遮蔽裁决（同名冲突在语义期已拒）。
     private var foreignDataTypes: [String: TypeAnnotation] = [:]
 
+    /// codegen 重推的局部变量覆盖：降载一个函数体时，调用方把**该函数**已定型的变量放进来。
+    /// 作用域栈在检查结束后已收敛，持久表按裸名共享、跨函数同名会互相顶替；这一层让本函数的
+    /// 声明先于那张表被查到。非降载期恒为空，不参与类型检查。
+    public var codegenLocals: [String: TypeAnnotation] = [:]
+
     // 持久表兜底开关。**默认 false**——保持「作用域弹出后变量不可见」语义
     // （`TypeCheckerTests.testTypeEnvVariableDefineAndLookup` 等单测依赖），不污染类型检查。
     // 仅在 LLVM codegen 重推阶段由 CLI / run-llvm 测试显式置 true（check 结束后作用域栈已收敛）。
@@ -104,6 +109,8 @@ public final class TypeEnvironment {
         // 检查进行中（count>1）或开关关闭时不启用，避免屏蔽「变量未声明/越作用域」错误、
         // 也不破坏「作用域弹出后变量不可见」的既有单测语义。
         if scopes.count == 1, persistAcrossScopesForCodegen {
+            // 本函数的局部先于那张全局表：持久表按裸名索引，同名变量跨函数互相顶替。
+            if let local = codegenLocals[name] { return local }
             return persistentVarTypes[name]
         }
         return nil

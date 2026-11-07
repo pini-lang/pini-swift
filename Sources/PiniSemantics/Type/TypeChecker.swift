@@ -3015,17 +3015,31 @@ public final class TypeChecker {
         right: Expression,
         location: SourceLocation
     ) throws {
-        // 逻辑运算符 && || 要求 Bool 操作数，此处仅做左右一致性检查
+        // 逻辑运算两侧都必须是 Bool：结果由运算本身定，不随操作数类型变。
+        // 只看能推断成简单类型名的一侧；复杂类型与推不出的留给降载层兜底。
+        if op == .and || op == .or {
+            for (side, operand) in [("左", left), ("右", right)] {
+                guard case .some(.simple(let name, _)) = inference.infer(expression: operand),
+                    name != "Bool"
+                else { continue }
+                try report(
+                    TypeError.mismatch(expected: "Bool（\(side)操作数）", got: name, location: location))
+            }
+            return
+        }
+        // 算术与比较按左右一致判断
         let needsConsistency: Bool
         switch op {
         case .plus, .minus, .multiply, .divide, .modulo,
             .bitwiseAnd, .bitwiseOr, .bitwiseXor, .leftShift, .rightShift,
             .equal, .notEqual, .lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual:
             needsConsistency = true
-        case .and, .or,
-            .assign, .plusAssign, .minusAssign, .multiplyAssign, .divideAssign,
+        case .assign, .plusAssign, .minusAssign, .multiplyAssign, .divideAssign,
             .moduloAssign, .andAssign, .orAssign, .xorAssign,
             .leftShiftAssign, .rightShiftAssign:
+            needsConsistency = false
+        // 逻辑运算已在上方按 Bool 判过，一致性这条对它们不适用。
+        case .and, .or:
             needsConsistency = false
         }
 

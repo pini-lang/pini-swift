@@ -131,7 +131,7 @@ public struct JSONBackend: PiniBackend {
     /// 节点表，而它正是本文件要防的东西。
     private func exprKind(_ expr: IRExpr) -> String {
         switch expr {
-        case .intConst, .floatConst, .boolConst, .stringConst, .load, .binary, .unary,
+        case .intConst, .floatConst, .boolConst, .stringConst, .load, .binary, .shortCircuit, .unary,
             .call, .printCall, .resultConstruct, .arrayLiteral, .subscriptGet, .lenCall,
             .optionalGet, .optionalConstruct, .sliceCall, .construct, .enumConstruct,
             .fieldGet, .dictLiteral, .setLiteral, .tupleConstruct, .tupleIndexGet,
