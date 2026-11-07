@@ -986,7 +986,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
         case .stringSubstring(let receiver, let start, let end):
             // Contract §2.38: the second argument is an **end**, not a length, though the emitter still reads a length.
-            // Authority is `StdlibPini.substring`: negative bounds tail-count, both bounds clamp into `[0, len]`.
+            // Contract §2.38 is the authority: negative bounds tail-count, both bounds clamp into `[0, len]`.
             // `hi < lo` yields the empty string; counting and slicing go through `GraphemeCursor`, so slicing is O(n), not O(n²).
             let receiverText = try requireString(try evaluate(receiver), for: "substring")
             let n = GraphemeCursor.count(of: receiverText)
@@ -1004,7 +1004,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .stringSplit(let receiver, let delim, _):
             // Contract §2.39: a **real `Array<String>`** with empty tokens skipped, as the LLVM `strtok` loop does.
             // The interpreter keeps them; aligning that is the `stringSplit` grid's job, so this node follows the contract.
-            // An empty separator yields one element per grapheme, as `StdlibPini`'s explicit `m == 0` branch does.
+            // An empty separator yields one element per grapheme; the LLVM arm carries no guard for that case.
             let text = try requireString(try evaluate(receiver), for: "split")
             let delimText = try requireString(try evaluate(delim), for: "split")
             let bytes = Array(text.utf8)
@@ -1468,7 +1468,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     }
 
     /// `container.slice(start, end)` — the slice-sugar semantics.
-    /// `slice` sank to `StdlibPini`, whose Pini source this engine cannot call, so the bodies below mirror it.
+    /// `slice` is a host member whose body this engine owns: the switch below is its only definition.
     /// Open bound = whole, negative = tail-count, clamp to `[0, len]`, `hi < lo` empty; `String` slices graphemes.
     private func sliceValue(container: Value, start: Value, end: Value) throws -> Value {
         switch container {
@@ -1498,8 +1498,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     }
 
     /// One slice bound: `none` / `.null` is the open form; an integer is
-    /// tail-counted when negative; anything else is rejected. Mirrors
-    /// `StdlibPini`'s per-bound `match` and the interpreter's `sliceBound`.
+    /// tail-counted when negative; anything else is rejected. The rule is
+    /// the one `sliceValue` above applies to both bounds.
     private func sliceBound(_ bound: Value, count: Int, defaultWhenOpen: Int) throws -> Int {
         if case .enumValue(let optional) = bound, optional.caseName == "none" {
             return defaultWhenOpen
