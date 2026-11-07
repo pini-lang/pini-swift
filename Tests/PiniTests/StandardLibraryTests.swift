@@ -86,6 +86,61 @@ struct StandardLibraryTests: Sendable {
     3
     """#
 
+    /// 容器算法语料：I32 与 String 两种元素 · 空数组 · 零与越界的取放 · 跨类型归约。
+    private static let containerCorpus = #"""
+    double|func(x: I32,) -> (I32,):
+        return x * 2
+
+    upper|func(s: String,) -> (String,):
+        return s.upper()
+
+    isEven|func(x: I32,) -> (Bool,):
+        return x % 2 == 0
+
+    add|func(acc: I32, x: I32,) -> (I32,):
+        return acc + x
+
+    bang|func(acc: String, x: I32,) -> (String,):
+        return acc + "!"
+
+    show|func(x: I32,) -> ():
+        print(x)
+        return
+
+    main|func() -> ():
+        print(map<I32>([1, 2, 3], double))
+        print(map<String>(["a", "b"], upper))
+        print(filter<I32>([1, 2, 3, 4], isEven))
+        print(filter<I32>([], isEven))
+        print(reduce<I32, I32>([1, 2, 3], 0, add))
+        print(reduce<I32, String>([1, 2], "x", bang))
+        print(reverse<String>(["a", "b"]))
+        print(concat<String>(["a"], ["b"]))
+        print(take<I32>([1, 2, 3], 2))
+        print(drop<I32>([1, 2, 3], 2))
+        print(take<I32>([1, 2, 3], 0))
+        print(drop<I32>([1, 2, 3], 9))
+        forEach<I32>([7], show)
+        return
+    """#
+
+    /// 手写期望。空数组筛选与零/越界取放都答空数组；归约的初值类型决定结果类型（`x!!`）。
+    private static let containerExpected = #"""
+    [2, 4, 6]
+    [A, B]
+    [2, 4]
+    []
+    6
+    x!!
+    [b, a]
+    [a, b]
+    [1, 2]
+    [3]
+    []
+    []
+    7
+    """#
+
     // MARK: - 进程内装置
 
     private enum Outcome: Equatable {
@@ -141,6 +196,36 @@ struct StandardLibraryTests: Sendable {
             return
         }
         #expect(lines.joined(separator: "\n") == Self.textExpected)
+    }
+
+    /// 意图：容器算法在解释器腿逐行成立，两种元素类型与空数组都覆盖。
+    @Test("解释器腿：容器算法逐行等于手写期望")
+    func interpreterLegCoversContainers() throws {
+        let outcome = Self.attempt(Self.containerCorpus)
+        guard case .ran(let lines) = outcome else {
+            Issue.record("容器语料应可跑，实际被拒：\(outcome)")
+            return
+        }
+        #expect(lines.joined(separator: "\n") == Self.containerExpected)
+    }
+
+    /// 意图：用户自己写的 `map` 把标准库那份摘掉——标准库不永久占用通用名。
+    @Test("解释器腿：用户同名函数压过标准库")
+    func userFunctionOverridesPrelude() throws {
+        let source = #"""
+        map|func(x: I32,) -> (I32,):
+            return x + 100
+
+        main|func() -> ():
+            print(map(5))
+            return
+        """#
+        let outcome = Self.attempt(source)
+        guard case .ran(let lines) = outcome else {
+            Issue.record("覆盖语料应可跑，实际被拒：\(outcome)")
+            return
+        }
+        #expect(lines.joined(separator: "\n") == "105")
     }
 
     /// 意图：多文件包只在第一个单元并入标准库，跨文件检查同样看得见它。
@@ -308,5 +393,21 @@ struct StandardLibraryTests: Sendable {
             cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
         #expect(result.status == 0, "stderr: \(result.stderr)")
         #expect(result.stdout == Self.textExpected + "\n")
+    }
+
+    /// 意图：容器算法在发射腿逐行相同——单态化后的特化函数在两条通道上语义一致。
+    @Test("命令行 run-llvm 腿：容器算法逐行等于手写期望")
+    func cliLLVMLegCoversContainers() throws {
+        guard let cli = cliPath() else { return }
+        guard let llvmDir = llvmToolchainDir() else {
+            _ = PiniTestEnvironment.requireToolchain(available: false, missing: "PINI_LLVM_BIN")
+            return
+        }
+        let file = try scratchFile(named: "stdlib-container.pini", contents: Self.containerCorpus)
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let result = try launch(
+            cli, ["run-llvm", file.path], environment: ["PINI_LLVM_BIN": llvmDir])
+        #expect(result.status == 0, "stderr: \(result.stderr)")
+        #expect(result.stdout == Self.containerExpected + "\n")
     }
 }

@@ -1,0 +1,26 @@
+; 标准库容器算法：泛型自由函数，首个参数是容器，调用点写显式类型实参
+; 运行：pini run examples/stdlib-container.pini
+; 预期：八个读数依次为 映射 / 筛选 / 归约 / 遍历两行 / 逆序 / 拼接 / 取前 / 跳过
+double|func(x: I32,) -> (I32,):
+    return x * 2
+
+isEven|func(x: I32,) -> (Bool,):
+    return x % 2 == 0
+
+show|func(x: I32,) -> ():
+    print(x)
+    return
+
+add|func(acc: I32, x: I32,) -> (I32,):
+    return acc + x
+
+main|func() -> ():
+    print(map<I32>([1, 2, 3], double))
+    print(filter<I32>([1, 2, 3, 4], isEven))
+    print(reduce<I32, I32>([1, 2, 3, 4], 0, add))
+    forEach<I32>([5, 6], show)
+    print(reverse<I32>([1, 2, 3]))
+    print(concat<I32>([1, 2], [3, 4]))
+    print(take<I32>([1, 2, 3], 2))
+    print(drop<I32>([1, 2, 3], 2))
+    return
