@@ -15,21 +15,28 @@ public enum FrontEnd {
         try UnrollExpander.expand(ConstantFolder.foldConstants(in: module))
     }
 
-    /// 装配：标准库并入模块并排在用户声明之前；用户同名扩展摘掉标准库那份——两份同名会在 LLVM 通道重定义。
-    /// 幂等：模块已含 `<stdlib>` 声明时原样返回，调用方不必关心自己是不是第一个装配的。
-    /// 装配不属于 `passes`：语法与后端测试拿的是给定片段，不是完整程序。
+    /// 装配：标准库并入模块并排在用户声明之前；用户同名的方法与函数把标准库那份摘掉，同名只留一份。
+    /// 摘而不只靠「后声明者覆盖」：扩展方法按 `名__类型` 出符号，两份同名会在 LLVM 通道重定义。
+    /// 幂等，且不属于 `passes`：语法与后端测试拿的是给定片段，不是完整程序。
     public static func assemble(module: Module) -> Module {
         guard let prelude = stdlibModule, !prelude.declarations.isEmpty else { return module }
         guard !containsStdlibDeclaration(module) else { return module }
-        let claimed = extensionMethodKeys(in: module)
+        let claimedMethods = extensionMethodKeys(in: module)
+        let claimedNames = Set(module.declarations.compactMap { topLevelName(of: $0) })
         var declarations: [TopLevelDecl] = []
         for decl in prelude.declarations {
+            // 自由函数按名让位：`map` / `filter` 这类名字用户迟早要自己写一份，
+            // 标准库占住它们等于永久剥夺该名字；摘掉后用户的定义照常生效。
+            if let name = topLevelName(of: decl) {
+                if !claimedNames.contains(name) { declarations.append(decl) }
+                continue
+            }
             guard case .extensionDecl(let ext) = decl else {
                 declarations.append(decl)
                 continue
             }
             let kept = ext.methods.filter {
-                !claimed.contains(methodKey(target: ext.targetType, name: $0.name))
+                !claimedMethods.contains(methodKey(target: ext.targetType, name: $0.name))
             }
             guard !kept.isEmpty else { continue }
             declarations.append(
@@ -47,7 +54,20 @@ public enum FrontEnd {
         )
     }
 
-    /// 模块是否已含标准库声明。标准库当前只提供扩展块方法，故按扩展块的位置判定。
+    /// 顶层声明的名字；扩展块、foreign 块与语句没有可被用户占用的名字，返回 nil。
+    private static func topLevelName(of decl: TopLevelDecl) -> String? {
+        switch decl {
+        case .funcDecl(let value): return value.name
+        case .structDecl(let value): return value.name
+        case .objectDecl(let value): return value.name
+        case .enumDecl(let value): return value.name
+        case .givenDecl(let value): return value.name
+        case .traitDecl(let value): return value.name
+        case .extensionDecl, .foreignDecl, .varDecl, .statement, .importDecl, .exportDecl: return nil
+        }
+    }
+
+    /// 模块是否已含标准库声明。标准库恒含至少一个扩展块，故按扩展块的位置判定。
     private static func containsStdlibDeclaration(_ module: Module) -> Bool {
         for decl in module.declarations {
             guard case .extensionDecl(let ext) = decl else { continue }

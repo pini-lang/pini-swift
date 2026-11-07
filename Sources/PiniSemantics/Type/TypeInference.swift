@@ -203,6 +203,17 @@ public final class TypeInference {
                 {
                     return element
                 }
+                // 高阶函数：被调者是函数类型参数/变量（f(x)）——局部作用域优先于同名顶层函数，
+                // 返回其声明返回类型；退化为 .simple(name) 会把 return f(x) 的类型误判成「类型 f」。
+                if case .function(_, let returns, _, _, _)? = env.lookupVariable(name: name) {
+                    if returns.count == 1 {
+                        return returns[0]
+                    } else if returns.isEmpty {
+                        return nil
+                    } else {
+                        return .tuple(labels: [], elements: returns, location: loc)
+                    }
+                }
                 if let sig = env.lookupFunction(name: name) {
                     if sig.returns.count == 1 {
                         return sig.returns[0]
@@ -210,17 +221,6 @@ public final class TypeInference {
                         return nil
                     } else {
                         return .tuple(labels: sig.returnLabels, elements: sig.returns, location: loc)
-                    }
-                }
-                // 高阶函数：被调者是函数类型参数/变量（f(x)）——返回其声明返回类型。
-                //  行不通  退化为 .simple(name) 会把 return f(x) 的类型误判成「类型 f」。
-                if case .function(_, let returns, _, _, _) = env.lookupVariable(name: name) {
-                    if returns.count == 1 {
-                        return returns[0]
-                    } else if returns.isEmpty {
-                        return nil
-                    } else {
-                        return .tuple(labels: [], elements: returns, location: loc)
                     }
                 }
                 // case 值类型身份（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，

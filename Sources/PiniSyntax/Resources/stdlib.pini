@@ -87,3 +87,67 @@ lastIndexOf|self(needle: String,) -> (I32,):
             return i
         i = i - 1
     return -1
+
+; 容器算法：泛型自由函数，首参是容器，调用点须写显式类型实参（`map<I32>(...)`）。
+; 注意  不提供同名成员：扩展块写不出泛型成员，两套入口会让调用点无从选择。
+; 映射：元素类型不变——空 `Array<U>` 在当前语言里构造不出，故不做跨类型映射。
+map|func<T>(arr: Array<T>, f: (T,) -> (T,),) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        out = out.append(f(arr[i]))
+        i = i + 1
+    return out
+
+; 筛选：保持原序，谓词为真才保留；空数组得空数组。
+filter|func<T>(arr: Array<T>, keep: (T,) -> (Bool,),) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        if keep(arr[i]):
+            out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 归约：初值类型即结果类型，逐元素折叠；空数组答初值。
+reduce|func<T, R>(arr: Array<T>, initial: R, combine: (R, T,) -> (R,),) -> (R,):
+    var acc = initial
+    var i = 0
+    while i < len(arr):
+        acc = combine(acc, arr[i])
+        i = i + 1
+    return acc
+
+; 遍历：只按序读一遍，返回值是空元组；副作用全在回调里。
+forEach|func<T>(arr: Array<T>, visit: (T,) -> (),) -> ():
+    var i = 0
+    while i < len(arr):
+        visit(arr[i])
+        i = i + 1
+    return
+
+; 逆序：产出副本，接收者不动；空数组得空数组。
+reverse|func<T>(arr: Array<T>,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = len(arr) - 1
+    while i >= 0:
+        out = out.append(arr[i])
+        i = i - 1
+    return out
+
+; 拼接：先左后右，两份都保留；副本语义与 `slice` 一致，接收者不动。
+concat|func<T>(a: Array<T>, b: Array<T>,) -> (Array<T>,):
+    var out = a
+    var i = 0
+    while i < len(b):
+        out = out.append(b[i])
+        i = i + 1
+    return out
+
+; 取前 n 个：边界语义与 `slice(0, n)` 相同，负索引从尾部计，越界夹紧。
+take|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    return arr.slice(0, n)
+
+; 跳过前 n 个：边界语义与 `slice(n, len(arr))` 相同，负索引从尾部计。
+drop|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    return arr.slice(n, len(arr))

@@ -2705,7 +2705,19 @@ public final class TypeChecker {
                             location: location))
                     return
                 }
-                if let sig = typeEnv.lookupFunction(name: calleeName) {
+                // 词法作用域优先：形参与顶层函数同名时，调用点的答案在局部那份；标准库的形参
+                // 因此不会被用户的同名函数顶替。
+                if let varType = typeEnv.lookupVariable(name: calleeName),
+                    case .function(let params, let returns, _, let usingIndices, _) = varType
+                {
+                    try validateCallArguments(
+                        arguments: arguments,
+                        signature: TypeEnvironment.FunctionSignature(
+                            params: params, returns: returns, usingParamIndices: usingIndices
+                        ),
+                        location: location
+                    )
+                } else if let sig = typeEnv.lookupFunction(name: calleeName) {
                     // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
                     // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
                     // `|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 |unsafe 放行。
@@ -2745,18 +2757,6 @@ public final class TypeChecker {
                                 name: calleeName, definedIn: entry.fileName, level: entry.visibility, location: location
                             ))
                     }
-                } else if let varType = typeEnv.lookupVariable(name: calleeName),
-                    case .function(let params, let returns, _, let usingIndices, _) = varType
-                {
-                    // 函数类型变量调用（f(...)：高阶函数形参 / 匿名函数绑定变量）——
-                    // 按变量函数类型校验实参（闭合 L1：匿名函数参数标注 + 函数类型实参校验）。
-                    try validateCallArguments(
-                        arguments: arguments,
-                        signature: TypeEnvironment.FunctionSignature(
-                            params: params, returns: returns, usingParamIndices: usingIndices
-                        ),
-                        location: location
-                    )
                 }
             case .member(let object, let memberName, _):
                 // P5-5 B3：限定枚举构造 形状.圆(...) → 按 (父, case) 校验 arity/类型
