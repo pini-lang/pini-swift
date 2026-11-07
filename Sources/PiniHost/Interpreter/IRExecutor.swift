@@ -393,6 +393,23 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .load(let name, _):
             return try currentEnv.get(name: name)
 
+        case .shortCircuit(let op, let lhs, let rhs, _):
+            // 左值定下结果就不再求值右侧：这是短路，右操作数的副作用与陷阱随之不发生。
+            guard case .bool(let decided) = try evaluate(lhs) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "logical '\(op)' needs a Bool left operand", location: IRExecutor.noLocation)
+            }
+            switch op {
+            case .and where !decided: return .bool(false)
+            case .or where decided: return .bool(true)
+            case .and, .or: break
+            }
+            guard case .bool(let value) = try evaluate(rhs) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "logical '\(op)' needs a Bool right operand", location: IRExecutor.noLocation)
+            }
+            return .bool(value)
+
         case .binary(let op, let lhs, let rhs, _):
             let left = try evaluate(lhs)
             let right = try evaluate(rhs)

@@ -74,6 +74,65 @@ public indirect enum IRType: Equatable {
     /// 与 `pointer` 分开 —— 它不是可 load / store 的字节地址，也不是计数串（计数在 C 那一侧）。
     case stringHandle
 
+    /// 注解层形态：`IRType(from:)` 的反向那一支。codegen 重推表达式类型时把它交回类型环境，
+    /// 使本函数的局部变量按本函数的声明解析。
+    /// 转不回去的形态返回 nil —— 字典 / 集合 / 名义类型在注解层本就没有对应名字。
+    var typeAnnotation: TypeAnnotation? {
+        let at = SourceLocation(line: 0, column: 0, fileName: "")
+        switch self {
+        case .i8: return .simple(name: "I8", location: at)
+        case .u8: return .simple(name: "U8", location: at)
+        case .i32: return .simple(name: "I32", location: at)
+        case .i64: return .simple(name: "I64", location: at)
+        case .u64: return .simple(name: "U64", location: at)
+        case .f64: return .simple(name: "F64", location: at)
+        case .boolean: return .simple(name: "Bool", location: at)
+        case .string: return .simple(name: "String", location: at)
+        case .char: return .simple(name: "Char", location: at)
+        case .stringHandle: return .simple(name: "StringHandle", location: at)
+        case .result(let ok):
+            guard let payload = ok.typeAnnotation else { return nil }
+            return .generic(name: "Result", params: [payload], location: at)
+        case .optional(let wrapped):
+            guard let payload = wrapped.typeAnnotation else { return nil }
+            return .generic(name: "Optional", params: [payload], location: at)
+        case .array(let element):
+            guard let payload = element.typeAnnotation else { return nil }
+            return .generic(name: "Array", params: [payload], location: at)
+        case .lazyRef(let element):
+            guard let payload = element.typeAnnotation else { return nil }
+            return .generic(name: "LazyRef", params: [payload], location: at)
+        case .pointer(let element):
+            guard let target = element.typeAnnotation else { return nil }
+            return .pointer(element: target, location: at)
+        case .tuple(let labels, let fieldTypes):
+            var elements: [TypeAnnotation] = []
+            for field in fieldTypes {
+                guard let annotation = field.typeAnnotation else { return nil }
+                elements.append(annotation)
+            }
+            return .tuple(labels: labels, elements: elements, location: at)
+        case .function(let params, let returnType, let usingIndices):
+            var annotations: [TypeAnnotation] = []
+            for param in params {
+                guard let annotation = param.typeAnnotation else { return nil }
+                annotations.append(annotation)
+            }
+            let returns: [TypeAnnotation]
+            if let returnType = returnType {
+                guard let annotation = returnType.typeAnnotation else { return nil }
+                returns = [annotation]
+            } else {
+                returns = []
+            }
+            return .function(
+                params: annotations, returns: returns, captured: [],
+                usingIndices: usingIndices, location: at)
+        case .nominal, .enumeration, .dict, .cFunction, .future, .set:
+            return nil
+        }
+    }
+
     /// LLVM type spelling used by the emitters.
     public var llvmSpelling: String {
         switch self {
@@ -315,6 +374,12 @@ public enum IRBinaryOp: Equatable {
     }
 }
 
+/// 短路逻辑运算：`&&` / `||`。左操作数定下结果时，右操作数不求值。
+/// 与 `IRBinaryOp` 分开，因为带控制流：发射层要按左值分流，而不是算一个二元指令。
+public enum IRLogicalOp: Equatable {
+    case and, or
+}
+
 /// Unary operators in the slice set.
 public enum IRUnaryOp: Equatable {
     case negate
@@ -334,6 +399,9 @@ public indirect enum IRExpr: Equatable {
     /// Load a variable's value; `type` is the declared type of the variable.
     case load(name: String, type: IRType)
     case binary(op: IRBinaryOp, lhs: IRExpr, rhs: IRExpr, type: IRType)
+    /// 逻辑短路的求值形态：左侧已能定下结果时，右侧不求值。`.binary` 是两侧都求值的按值运算，
+    /// 二者不可互换 —— 换过去会丢掉右操作数的求值与否，副作用与陷阱随之改变。
+    case shortCircuit(op: IRLogicalOp, lhs: IRExpr, rhs: IRExpr, type: IRType)
     case unary(op: IRUnaryOp, operand: IRExpr, type: IRType)
     /// Call to a module-level function; `returnType` is nil for void calls.
     case call(function: String, arguments: [IRExpr], returnType: IRType?)
@@ -536,6 +604,7 @@ extension IRExpr {
         case .stringConst: return .string
         case .load(_, let type): return type
         case .binary(_, _, _, let type): return type
+        case .shortCircuit(_, _, _, let type): return type
         case .unary(_, _, let type): return type
         case .call(_, _, let returnType): return returnType
         case .printCall: return nil

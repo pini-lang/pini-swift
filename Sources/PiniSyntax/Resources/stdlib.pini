@@ -82,7 +82,7 @@ lastIndexOf|self(needle: String,) -> (I32,):
     var m = len(needle)
     if m == 0:
         return n
-    var i: I32 = n - m
+    var i = n - m
     while i >= 0:
         if self.slice(i, i + m) == needle:
             return i

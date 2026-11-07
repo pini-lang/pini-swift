@@ -123,6 +123,8 @@ public enum IRPrinter {
         case .load(let name, let type): return "\(name)@\(type.llvmSpelling)"
         case .binary(let op, let lhs, let rhs, _):
             return "(\(exprText(lhs)) \(symbol(of: op)) \(exprText(rhs)))"
+        case .shortCircuit(let op, let lhs, let rhs, _):
+            return "(\(exprText(lhs)) \(op == .and ? "&&" : "||") \(exprText(rhs)))"
         case .unary(let op, let operand, _):
             return "(\(op == .negate ? "-" : "!")\(exprText(operand)))"
         case .call(let function, let arguments, _):

@@ -2408,6 +2408,9 @@ public final class IREmitter {
         case .binary(let op, let lhs, let rhs, let type):
             return emitBinary(op: op, lhs: lhs, rhs: rhs, type: type)
 
+        case .shortCircuit(let op, let lhs, let rhs, _):
+            return emitShortCircuit(op: op, lhs: lhs, rhs: rhs)
+
         case .unary(let op, let operand, let type):
             let lowered = emitExpr(operand)
             let temp = builder.freshTemp()
@@ -5112,6 +5115,33 @@ public final class IREmitter {
                 reason: "载荷 \(value.llvmType) 装不进三槽任务 ABI 的一个字（聚合载荷没有搬运通道）")
             return IRValue(llvmType: "i64", ssaName: "0")
         }
+    }
+
+    /// 短路逻辑：先算左值，它已定下结果时跳过右分支。两侧的值都写进同一块栈槽，
+    /// 汇合点只读槽 —— 不为一个 i1 造 phi，槽在优化期被提升回寄存器。
+    /// 右分支的标签必须在 `emitExpr(rhs)` 之前落下：右侧可以再套一层短路，其指令要落在本层块内。
+    private func emitShortCircuit(op: IRLogicalOp, lhs: IRExpr, rhs: IRExpr) -> IRValue {
+        let left = emitExpr(lhs)
+        let slot = builder.freshTemp()
+        bodyIR += builder.fmtAlloca(name: slot, type: "i1") + "\n"
+        bodyIR += builder.fmtStore(value: left.ssaName, type: "i1", ptr: slot) + "\n"
+        let id = builder.freshLabel()
+        let rhsLabel = "logic.rhs.\(id)"
+        let endLabel = "logic.end.\(id)"
+        switch op {
+        case .and:
+            bodyIR += builder.fmtCondBr(cond: left.ssaName, thenLabelName: rhsLabel, elseLabelName: endLabel) + "\n"
+        case .or:
+            bodyIR += builder.fmtCondBr(cond: left.ssaName, thenLabelName: endLabel, elseLabelName: rhsLabel) + "\n"
+        }
+        bodyIR += builder.fmtLabelDef(rhsLabel) + "\n"
+        let right = emitExpr(rhs)
+        bodyIR += builder.fmtStore(value: right.ssaName, type: "i1", ptr: slot) + "\n"
+        bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
+        bodyIR += builder.fmtLabelDef(endLabel) + "\n"
+        let result = builder.freshTemp()
+        bodyIR += builder.fmtLoad(name: result, type: "i1", ptr: slot) + "\n"
+        return IRValue(llvmType: "i1", ssaName: result)
     }
 
     private func emitBinary(op: IRBinaryOp, lhs: IRExpr, rhs: IRExpr, type: IRType) -> IRValue {

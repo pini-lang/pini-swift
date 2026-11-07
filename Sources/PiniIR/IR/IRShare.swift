@@ -144,7 +144,7 @@ extension IRExpr {
     public var shareEffect: IRShareEffect {
         switch self {
         // 常量与标量运算：值不是份额。
-        case .intConst, .floatConst, .boolConst, .binary, .unary, .lenCall, .isAsciiDigit,
+        case .intConst, .floatConst, .boolConst, .binary, .shortCircuit, .unary, .lenCall, .isAsciiDigit,
             .stringContains, .stringIndexOf, .pointerLoad, .pointerStore, .addressOfVar,
             .foreignDataAddress,
             .printCall, .printMulti, .assertCall, .fileWrite, .fileAppend:

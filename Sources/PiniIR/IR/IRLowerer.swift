@@ -3119,6 +3119,23 @@ public enum IRLowerer {
             throw unsupported("reference to undeclared variable '\(name)'", at: location)
 
         case .binary(let left, let op, let right, let location):
+            // 逻辑与 / 逻辑或短路求值：左值定下结果时右操作数整个不求值，故不能落成二元节点。
+            // 两侧都要求 Bool —— 类型检查只查了操作数彼此一致，没查它们是不是 Bool。
+            if op == .and || op == .or {
+                let lhs = try lowerExpr(left, expected: .boolean, into: &context)
+                let rhs = try lowerExpr(right, expected: .boolean, into: &context)
+                guard lhs.type == .boolean, rhs.type == .boolean else {
+                    throw unsupported(
+                        "logical '\(op)' needs Bool operands, got \(lhs.type) and \(rhs.type)",
+                        at: location
+                    )
+                }
+                let logicalOp: IRLogicalOp = (op == .and) ? .and : .or
+                return LoweredExpr(
+                    node: .shortCircuit(op: logicalOp, lhs: lhs.node, rhs: rhs.node, type: .boolean),
+                    type: .boolean
+                )
+            }
             guard let irOp = IRBinaryOp(from: op) else {
                 throw unsupported(
                     "binary operator '\(op)' is not yet lowered to IR",
@@ -6445,6 +6462,15 @@ private struct FunctionContext {
     }
 
     func inferType(of expression: Expression) -> TypeAnnotation? {
-        typeInference?.infer(expression: expression)
+        guard let knowledge = typeInference else { return nil }
+        // 重推前把本函数已定型的变量交给类型环境：持久表按裸名共享，另一个函数的同名局部
+        // 会顶替这里的类型。降载按语句推进，故表里是「此刻已声明」的那一批 —— 与词法位置一致。
+        let environment = knowledge.environment
+        let previous = environment?.codegenLocals
+        environment?.codegenLocals = variableTypes.compactMapValues { $0.typeAnnotation }
+        defer {
+            if let environment = environment { environment.codegenLocals = previous ?? [:] }
+        }
+        return knowledge.infer(expression: expression)
     }
 }
