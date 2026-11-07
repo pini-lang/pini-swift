@@ -1,0 +1,20 @@
+; 标准库字符串成员：判空 · 非重叠计数 · 前后缀剥补 · 逆序 · 首字母大写 · 居中 · 截断
+; 运行：pini run examples/stdlib-strings.pini
+; 预期：十条成员各一组读数，空串与空模板用竖线标出边界
+main|func() -> ():
+    print("".isEmpty())
+    print("  ".isEmpty())
+    print("banana".count("na"))
+    print("aaaa".count("aa"))
+    print("abc".count(""))
+    print("prefix-rest".stripPrefix("prefix-"))
+    print("file.txt".stripSuffix(".txt"))
+    print("world".ensurePrefix("hello-"))
+    print("hello".ensureSuffix("!"))
+    print("中文".reversed())
+    print("hello".capitalized())
+    print("7".center(6, "-"))
+    print("x".center(4, "ab"))
+    print("abcdef".truncate(3))
+    print("abcdef".truncate(0) + "|")
+    return

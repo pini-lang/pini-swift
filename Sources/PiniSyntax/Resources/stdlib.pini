@@ -88,6 +88,100 @@ lastIndexOf|self(needle: String,) -> (I32,):
             return i
         i = i - 1
     return -1
+; 判空：按字素数判定，空白不算空；口径与 len 一致。
+isEmpty|self() -> (Bool,):
+    return len(self) == 0
+; 计数：按子串非重叠匹配；空模板答零，与 replace 的空模板口径一致。
+count|self(sub: String,) -> (I32,):
+    var n = len(self)
+    var m = len(sub)
+    if m == 0:
+        return 0
+    var total = 0
+    var i = 0
+    while i + m <= n:
+        if self.slice(i, i + m) == sub:
+            total = total + 1
+            i = i + m
+        else:
+            i = i + 1
+    return total
+; 去前缀：首段相等才剥，未命中原样返回；空前缀剥出空段，结果仍是原串。
+stripPrefix|self(prefix: String,) -> (String,):
+    var m = len(prefix)
+    if m > len(self):
+        return self
+    if self.slice(0, m) == prefix:
+        return self.slice(m, len(self))
+    return self
+; 去后缀：尾段相等才剥，未命中原样返回；尾部切片按字素下标。
+stripSuffix|self(suffix: String,) -> (String,):
+    var n = len(self)
+    var m = len(suffix)
+    if m > n:
+        return self
+    if self.slice(n - m, n) == suffix:
+        return self.slice(0, n - m)
+    return self
+; 补前缀：已带前缀则原样返回，否则拼在前面；空前缀恒判为已带。
+ensurePrefix|self(prefix: String,) -> (String,):
+    var m = len(prefix)
+    if m > len(self):
+        return prefix + self
+    if self.slice(0, m) == prefix:
+        return self
+    return prefix + self
+; 补后缀：已带后缀则原样返回，否则拼在后面；空后缀恒判为已带。
+ensureSuffix|self(suffix: String,) -> (String,):
+    var n = len(self)
+    var m = len(suffix)
+    if m > n:
+        return self + suffix
+    if self.slice(n - m, n) == suffix:
+        return self
+    return self + suffix
+; 逆序：按字素倒拼成新串，接收者不动；空串得空串。
+reversed|self() -> (String,):
+    var out = ""
+    var i = len(self) - 1
+    while i >= 0:
+        out = out + self.slice(i, i + 1)
+        i = i - 1
+    return out
+; 首字母大写：只抬首字素，其余原样；空串得空串。
+capitalized|self() -> (String,):
+    if len(self) == 0:
+        return self
+    return self.slice(0, 1).upper() + self.slice(1, len(self))
+; 居中：左右均分填充，奇数余量给右侧；空填充或已够宽原样返回。
+center|self(width: I32, fill: String,) -> (String,):
+    var n = len(self)
+    var m = len(fill)
+    if m == 0:
+        return self
+    if n >= width:
+        return self
+    var need = width - n
+    var left = need / 2
+    var right = need - left
+    var lpad = ""
+    while len(lpad) < left:
+        lpad = lpad + fill
+    if len(lpad) > left:
+        lpad = lpad.slice(0, left)
+    var rpad = ""
+    while len(rpad) < right:
+        rpad = rpad + fill
+    if len(rpad) > right:
+        rpad = rpad.slice(0, right)
+    return lpad + self + rpad
+; 截断：取前 width 个字素；非正宽度得空串，越界得原串。
+truncate|self(width: I32,) -> (String,):
+    if width <= 0:
+        return ""
+    if width >= len(self):
+        return self
+    return self.slice(0, width)
 
 ; 容器算法：泛型自由函数，首参是容器，调用点须写显式类型实参（`map<I32>(...)`）。
 ; 注意  不提供同名成员：扩展块写不出泛型成员，两套入口会让调用点无从选择。
