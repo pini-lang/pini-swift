@@ -1,6 +1,6 @@
-; 内建类型扩展块：String / Array 的方法由用户声明，成员派发优先于内建同名实现。
-; 运行 pini run examples/stdlib-probe.pini，四个读数依次为
-; a+b+c / true / true / 20 —— 替换、前缀、同名覆盖与数组扩展各一条。
+; 用户扩展块压过内建与标准库：replace / startsWith 标准库已有同签名实现，生效的是本文件这两份。
+; contains 压过宿主原生实现，second 是纯新增的 Array 成员。
+; 运行 pini run examples/stdlib-probe.pini，四个读数依次为 a+b+c / true / true / 20。
 ((String))
 replace|self(old: String, new: String,) -> (String,):
     var out = ""
