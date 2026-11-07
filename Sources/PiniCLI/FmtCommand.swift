@@ -97,7 +97,7 @@ func runExpandCommand(_ rest: [String]) {
         printError("Error: \(error.localizedDescription)")
         exit(1)
     }
-    let module = parseOrReport(source: source, fileName: path)
+    let module = parseOrReport(source: source, fileName: path, withStdlib: false)
     FileHandle.standardOutput.write(Data(Printer.print(module: module).utf8))
 }
 

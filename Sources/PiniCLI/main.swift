@@ -714,10 +714,11 @@ func readFile(_ path: String) throws -> String {
 
 /// P2-4.3：以收集模式解析；若有解析错误，格式化全部诊断并退出（不再『遇错即抛』只报第一个）。
 /// 仅在无任何解析错误时返回成功解析的 module。词法错误仍按原有方式渲染并退出。
-func parseOrReport(source: String, fileName: String) -> Module {
+/// `withStdlib` 关闭时只交出用户源码的树——`parse` / `fmt` 要看的就是那一份，标准库会污染它们的输出。
+func parseOrReport(source: String, fileName: String, withStdlib: Bool = true) -> Module {
     switch FrontEnd.collect(source: source, fileName: fileName) {
     case .parsed(let module):
-        return module
+        return withStdlib ? FrontEnd.assemble(module: module) : module
     case .lexFailed(let error):
         printError(formatCLIError(error: error, source: source))
         exit(1)
@@ -746,7 +747,7 @@ func runTokensCommand(source: String, fileName: String) throws {
 }
 
 func runParseCommand(source: String, fileName: String, signaturesOnly: Bool = false) throws {
-    let module = parseOrReport(source: source, fileName: fileName)
+    let module = parseOrReport(source: source, fileName: fileName, withStdlib: false)
     if signaturesOnly {
         for line in SignatureSerializer.signatureLines(module: module) {
             print(line)
@@ -1482,7 +1483,7 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
         FileHandle.standardError.write(Data((d + "\n").utf8))
     }
     if checkResult.hasBlockingDiagnostics { exit(1) }
-    let module = try FrontEnd.parse(source: source, fileName: path)
+    let module = FrontEnd.assemble(module: try FrontEnd.parse(source: source, fileName: path))
     // Phase 2b（解释器 dlsym 加载）：单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，
     // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
     let dir = (path as NSString).deletingLastPathComponent

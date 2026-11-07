@@ -78,7 +78,7 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
         let units: [FileUnit] =
             try Self.isRemoteLanding(canonical)
             ? Self.scanRootLevel(at: canonical)
-            : FileLoader.loadDirectory(path: canonical).fileUnits
+            : FileLoader.loadDirectory(path: canonical, withStdlib: false).fileUnits
         guard !units.isEmpty else {
             throw SemanticError.moduleRootMissing(path: canonical)
         }

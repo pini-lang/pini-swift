@@ -19,7 +19,9 @@ public struct FileLoader {
     /// 解析目录为 `Package`：递归扫描 `LangConfig.sourceSuffix` 源文件。模块名优先取目录内 `pini.toml`
     /// 的 `[package] name`，无清单时取目录名。无清单的目录在 CLI 层被视为一组独立程序，
     /// 此处仅负责物理聚合。
-    public static func loadDirectory(path: String, manifest: ModuleManifest? = nil) throws -> Package {
+    public static func loadDirectory(
+        path: String, manifest: ModuleManifest? = nil, withStdlib: Bool = true
+    ) throws -> Package {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(atPath: path) else {
             throw LoaderError.cannotReadDirectory(path: path)
@@ -59,7 +61,8 @@ public struct FileLoader {
         // 显式排序，使跨文件注册 / 检查顺序确定（避免 enumerator 顺序不确定导致的偶发行为）。
         units.sort { $0.fileName < $1.fileName }
         let name = manifest?.name ?? (path as NSString).lastPathComponent
-        return Package(name: name, fileUnits: units)
+        let package = Package(name: name, fileUnits: units)
+        return withStdlib ? package.assemblingStdlib() : package
     }
 
     /// 模块清单文件名。模块边界以「目录内是否存在此文件」作哨兵判定，故文件名必须语言级特异：

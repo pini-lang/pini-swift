@@ -36,10 +36,12 @@ public final class ProgramRunner: DebugHookHost {
     // MARK: - Running
 
     /// Runs one module.
+    /// 装配在入口做一次：CLI 已装配过的模块原样返回，进程内直接构造模块的调用方（测试、嵌入）也拿得到标准库。
     public func run(module: Module) throws {
-        try checkEntryConsistency(module)
+        let assembled = FrontEnd.assemble(module: module)
+        try checkEntryConsistency(assembled)
         let checker = TypeChecker()
-        let errors = checker.checkCollecting(module: module)
+        let errors = checker.checkCollecting(module: assembled)
         guard errors.isEmpty else {
             throw ProgramRunError.typeCheck(
                 errors.map { ErrorFormatter.formatTypeError($0, source: "") }
@@ -48,14 +50,14 @@ public final class ProgramRunner: DebugHookHost {
         // After the type check on purpose: the AST path reaches `mainNotFound`
         // last (declaration registration, then `executeMain`), so asking first
         // here would let "no main" mask a program's real type errors.
-        try requireMain(module)
+        try requireMain(assembled)
         // Same as every other lowering path: lowering re-infers match
         // scrutinees after the checker popped its scopes, so the table that
         // inference built has to outlive them.
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         // 单文件也能跨模块调用：import 声明在模块内，别名需在降载前并入模块。
         // 与包路径共用同一合并入口，故两条路径对「import 带进来什么」不会给出不同答案。
-        let (merged, aliasMap) = try IRLowerer.mergedWithImports(module)
+        let (merged, aliasMap) = try IRLowerer.mergedWithImports(assembled)
         let lowered = try IRLowerer.lower(
             module: merged, typeInference: checker.typeInference, moduleAliases: aliasMap
         )
@@ -74,14 +76,15 @@ public final class ProgramRunner: DebugHookHost {
             try run(module: module)
             return
         }
+        let assembled = package.assemblingStdlib()
         let checker = TypeChecker()
-        try checkEntryConsistency(in: package)
-        try checker.check(package: package)
+        try checkEntryConsistency(in: assembled)
+        try checker.check(package: assembled)
         // Same ordering rule as the module path: type errors first, "no main"
         // last, so the latter cannot mask the former.
-        try requireMain(in: package)
+        try requireMain(in: assembled)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-        let lowered = try IRLowerer.lower(package: package, typeInference: checker.typeInference)
+        let lowered = try IRLowerer.lower(package: assembled, typeInference: checker.typeInference)
         try execute(lowered)
     }
 

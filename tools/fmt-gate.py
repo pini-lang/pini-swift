@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCAN_ROOTS = ("examples", "Tests", "bench")
+SCAN_ROOTS = ("examples", "Tests", "bench", "Sources")
 EXEMPT = os.path.join(ROOT, "tools/fmt-exempt.tsv")
 DEFAULT_BIN = os.path.join(ROOT, ".build/debug/pini")
 KINDS = {"unparseable", "variant"}
