@@ -246,3 +246,123 @@ take|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
 ; 跳过前 n 个：边界语义与 `slice(n, len(arr))` 相同，负索引从尾部计。
 drop|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
     return arr.slice(n, len(arr))
+
+; 存在判定：谓词首次为真即真；空数组得假。
+any|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (Bool,):
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            return true
+        i = i + 1
+    return false
+
+; 全称判定：谓词首次为假即假；空数组得真。
+all|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (Bool,):
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            i = i + 1
+        else:
+            return false
+    return true
+
+; 条件计数：逐元素读谓词，只累加真值；空数组得零。
+countWhere|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            total = total + 1
+        i = i + 1
+    return total
+
+; 首命中下标：谓词为真即返数组下标；缺席答 -1，与 indexOf 同口径。
+findIndex|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (I32,):
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            return i
+        i = i + 1
+    return -1
+
+; 取末 n 个：n 非正得空副本，越界夹紧为整份；接收者不动。
+takeLast|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    if n <= 0:
+        return arr.slice(0, 0)
+    if n >= len(arr):
+        return arr
+    return arr.slice(len(arr) - n, len(arr))
+
+; 弃末 n 个：n 非正得整份，越界得空副本；接收者不动。
+dropLast|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    if n <= 0:
+        return arr
+    if n >= len(arr):
+        return arr.slice(0, 0)
+    return arr.slice(0, len(arr) - n)
+
+; 整份重复：次数非正得空副本，逐次追加整份；接收者不动。
+repeatElements|func<T>(arr: Array<T>, times: I32,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var k = 0
+    var i = 0
+    while k < times:
+        i = 0
+        while i < len(arr):
+            out = out.append(arr[i])
+            i = i + 1
+        k = k + 1
+    return out
+
+; 轮转：把前 n 个移到末尾，n 按长度取模；空数组得空副本。
+rotate|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    var count = len(arr)
+    if count == 0:
+        return arr.slice(0, 0)
+    var shift = n % count
+    if shift < 0:
+        shift = shift + count
+    var out = arr.slice(0, 0)
+    var i = shift
+    while i < count:
+        out = out.append(arr[i])
+        i = i + 1
+    i = 0
+    while i < shift:
+        out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 插位：下标夹紧到两端，在该位之前插入；接收者不动。
+insertAt|func<T>(arr: Array<T>, index: I32, value: T,) -> (Array<T>,):
+    var count = len(arr)
+    var at = index
+    if at < 0:
+        at = 0
+    if at > count:
+        at = count
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < at:
+        out = out.append(arr[i])
+        i = i + 1
+    out = out.append(value)
+    while i < count:
+        out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 删位：下标越界原样返回；否则跳过该位复制一份，接收者不动。
+removeAt|func<T>(arr: Array<T>, index: I32,) -> (Array<T>,):
+    var count = len(arr)
+    if index < 0:
+        return arr
+    if index >= count:
+        return arr
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < count:
+        if i != index:
+            out = out.append(arr[i])
+        i = i + 1
+    return out

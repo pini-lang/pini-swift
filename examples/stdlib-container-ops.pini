@@ -1,0 +1,18 @@
+; 标准库容器操作：谓词判定与计数、末段取放、整份重复、轮转、插位与删位
+; 运行：pini run examples/stdlib-container-ops.pini
+; 预期：十组读数依次为 存在 / 全称 / 条件计数 / 首命中 / 末段 / 弃末 / 重复 / 轮转 / 插位 / 删位
+isEven|func(x: I32,) -> (Bool,):
+    return x % 2 == 0
+
+main|func() -> ():
+    print(any<I32>([1, 2, 3], isEven))
+    print(all<I32>([2, 4], isEven))
+    print(countWhere<I32>([1, 2, 3, 4], isEven))
+    print(findIndex<I32>([2, 4], isEven))
+    print(takeLast<I32>([1, 2, 3], 2))
+    print(dropLast<I32>([1, 2, 3], 1))
+    print(repeatElements<I32>([1, 2], 2))
+    print(rotate<I32>([1, 2, 3], 1))
+    print(insertAt<I32>([1, 2, 3], 1, 9))
+    print(removeAt<I32>([1, 2, 3], 1))
+    return
