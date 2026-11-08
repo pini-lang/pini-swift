@@ -773,16 +773,16 @@ public class Parser {
             let isTraitExt = (kind == .traitExt)
             if case .identifier = currentToken, isBareFunctionDeclStart() {
                 if !isTraitExt && !isSelfMethodStart() {
-                    // 类型扩展：顶格非 `|self`/`|own`（如 `main|func`、字段）→ 扩展块结束
+                    // 类型扩展：顶格非 `|self`/`|type`（如 `main|func`、字段）→ 扩展块结束
                     break
                 }
                 let funcDecl = try parseBareFuncDecl(position: .typeBodyMethod, allowEmptyBody: isTraitExt)
-                // 规则 3.14：类型扩展内只允许 |self/|own 方法（G50：Self 更名 own）；特征扩展保持 trait-body 宽松
+                // 规则 3.14：类型扩展内只允许 |self/|type 方法；特征扩展保持 trait-body 宽松
                 if !isTraitExt {
-                    let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("own")
+                    let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("type")
                     if !hasSelfModifier {
                         throw ParserError.invalidStatement(
-                            reason: "扩展块内只允许 `|self`/`|own` 方法（规则 3.14）：`\(funcDecl.name)` 缺少 self 修饰符，自由函数应移至模块顶层",
+                            reason: "扩展块内只允许 `|self`/`|type` 方法（规则 3.14）：`\(funcDecl.name)` 缺少方法修饰符，自由函数应移至模块顶层",
                             location: funcDecl.location
                         )
                     }
@@ -803,12 +803,12 @@ public class Parser {
             targetTypeAnnotation: targetAnnotation, methods: methods, location: loc)
     }
 
-    /// 当前是否为 `方法名|self(...)` / `方法名|own(...)` 的方法声明头（扩展块方法预判；G50：Self 更名 own）。
+    /// 当前是否为 `方法名|self(...)` / `方法名|type(...)` 的方法声明头（扩展块方法预判）。
     private func isSelfMethodStart() -> Bool {
         guard case .identifier = currentToken else { return false }
         guard case .pipe(_) = peek(offset: 1) else { return false }
         if case .keyword(.self, _) = peek(offset: 2) { return true }
-        if case .keyword(.own, _) = peek(offset: 2) { return true }
+        if case .identifier(let name, _) = peek(offset: 2), name == "type" { return true }
         return false
     }
 
@@ -1502,6 +1502,12 @@ public class Parser {
             if modifier == "unsafe" && !allowUnsafeModifier {
                 throw ParserError.invalidStatement(
                     reason: "`|unsafe` 仅限自由函数（顶层函数或 `[名称|foreign]` 块签名）：`\(name)` 不在此列",
+                    location: loc
+                )
+            }
+            if modifier == "own" {
+                throw ParserError.invalidStatement(
+                    reason: "本型方法修饰符写作 `|type`：`own` 只作类型内自指",
                     location: loc
                 )
             }
@@ -2709,17 +2715,17 @@ public class Parser {
                 operand: operand, errorVar: errorVar, handler: handler, location: loc)
         }
 
-        /// `await`/`wait` 前缀：让出式 / 占用式 join。两个关键字产出的节点相同、`form` 不同，
+        /// `await`/`join` 前缀：让出式 / 占用式 join。两个关键字产出的节点相同、`form` 不同，
         /// 那一位是下游唯一需要的区别信息。二者仅作表达式起始位的前缀，中缀 `<=` 是纯比较运算符。
         if case .keyword(.await, _) = currentToken {
             advance()
             let operand = try parseUnary()
             return .join(operand, loc, .awaits)
         }
-        if case .keyword(.wait, _) = currentToken {
+        if case .keyword(.join, _) = currentToken {
             advance()
             let operand = try parseUnary()
-            return .join(operand, loc, .waits)
+            return .join(operand, loc, .joins)
         }
 
         if case .logicalNot(_) = currentToken {
@@ -3178,7 +3184,14 @@ public class Parser {
                     result = Expression.tupleIndex(object: result, index: idx, location: loc)
                     continue
                 }
-                let name = try parseIdentifier()
+                let name: String
+                if case .keyword(.join, _) = currentToken {
+                    // 成员位保留 `arr.join(sep)`：`join` 是关键字，点号之后按名字读。
+                    advance()
+                    name = "join"
+                } else {
+                    name = try parseIdentifier()
+                }
                 result = Expression.member(object: result, name: name, location: loc)
                 continue
             }
@@ -3480,7 +3493,7 @@ public class Parser {
     enum UsingParamPosition {
         /// 顶层普通函数：Pini 调用方存在。
         case freeFunction
-        /// 类型体内 / 扩展块方法（`|self` / `|own`）：同上。
+        /// 类型体内 / 扩展块方法（`|self` / `|type`）：同上。
         case typeBodyMethod
         /// 匿名函数：同上。
         case anonymousFunction

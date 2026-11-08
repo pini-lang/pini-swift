@@ -183,7 +183,7 @@ extension IRExpr {
         /// `tryReadFile` 的 ok 载荷是刚读出来的串 ⇒ 新份额。
         case .fileTryRead:
             return .fresh
-        /// `join` 的载荷由任务体交出 ⇒ 新份额；但 `wait` 也可作用在已结算的 `Result` 上，
+        /// `join` 的载荷由任务体交出 ⇒ 新份额；但 `join` 也可作用在已结算的 `Result` 上，
         /// 那时发射层原样透传，读到的是别处的持有位置 —— 判据先看操作数是不是任务句柄。
         ///  注意  透传当新份额会让「两个槽指向同一条串」各释放一次，是双重释放而不是泄漏。
         case .join(let future, let type, _):

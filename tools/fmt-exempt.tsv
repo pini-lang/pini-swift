@@ -15,3 +15,4 @@ Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaIn
 Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInGenericCall.pini	variant	语法标本：泛型调用尾逗号，规范形不带尾逗号
 Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInSetLiteral.pini	variant	语法标本：集合字面量尾逗号，规范形不带尾逗号
 Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInTypeAnnotationTuple.pini	variant	语法标本：类型注解元组尾逗号，规范形不带尾逗号
+examples/optional-sugar.pini	variant	语法标本：nil 与 ?T 糖，规范形归一为 Optional.none / Optional<T>

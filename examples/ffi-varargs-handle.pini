@@ -1,5 +1,5 @@
-; FFI 第二版（二）：C 变参调用与字符串句柄。两者都要 C 的变参 ABI / 运行时段符号，
-; 只在 LLVM 通道与 build --shared 上成立：pini run-llvm examples/ffi-v2-llvm.pini
+; FFI 边界：C 变参调用与字符串句柄。两者都要 C 的变参 ABI / 运行时段符号，
+; 只在 LLVM 通道与 build --shared 上成立：pini run-llvm examples/ffi-varargs-handle.pini
 ; 注意 `pini run` 在调用点报 E5-019（变参）与 E5-020（句柄），声明处另有 E7-006 / E7-007 提醒。
 [libc|foreign]
 printf|varargs: (String,) -> (I32,) ; 冒号前的 |varargs 放开 arity：固定部分之后可多传

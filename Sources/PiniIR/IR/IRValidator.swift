@@ -1022,7 +1022,7 @@ private struct Walker {
                             at: location)
                     }
                 case .result(let ok):
-                    /// 已在结算值上等待（`wait joinAll(...)` 这类）：发射层原样透传，故站点类型要与它一致。
+                    /// 已在结算值上等待（`join joinAll(...)` 这类）：发射层原样透传，故站点类型要与它一致。
                     if form == .awaits {
                         report(
                             .joinShape,

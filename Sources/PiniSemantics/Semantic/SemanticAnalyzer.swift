@@ -35,7 +35,7 @@ public final class SemanticAnalyzer {
     private var deferredInjectConflict: SemanticError? = nil
 
     /// B2：已被读取引用的符号名集合（`requireDefined` 解析命中时记录）。
-    /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——首版接受，待符号表结构化（唯一 id）后升级。
+    /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——当前接受，待符号表结构化（唯一 id）后升级。
     private var usedSymbols: Set<String> = []
 
     /// import 别名登记表：别名 → (publicSymbols 跨模块可引入集, allSymbols 全部顶级符号)。

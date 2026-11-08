@@ -265,7 +265,7 @@ public enum Builtins {
             family: .string, lowerings: ["call"]
         ),
         /// 句柄形参位上的 Pini 串：复制一份并记 +1，指针交给 C。降载层产出 `pini.str.handle`，
-        /// 发射层把它接到这里（`call` 是它的降级点，与 `c字符串` 同形）。
+        /// 发射层把它接到这里（`call` 是它的降级点，与 `fromCString` 同形）。
         BuiltinSpec(
             symbol: "bk_str_handle_new", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .stringHandle, lowerings: ["call"]

@@ -1,13 +1,13 @@
 import Foundation
 
 /// 一次 join 站点由哪个关键字引入，是语法对两种形态所作的唯一区分。
-/// `await` 出现在异步函数体内、可让出当前任务；`wait` 在任意上下文占用当前线程直至 `Future` 决。
+/// `await` 出现在异步函数体内、可让出当前任务；`join` 在任意上下文占用当前线程直至 `Future` 决。
 /// 关键字必须在 AST 上留住：丢掉它，运行时就没有任何东西能分辨这两种形态。
 public enum JoinForm: String, Sendable, Equatable {
     /// `await` —— 异步函数体内，允许挂起等待。
     case awaits = "await"
-    /// `wait` —— 任意上下文，阻塞直至决。
-    case waits = "wait"
+    /// `join` —— 任意上下文，阻塞直至决。
+    case joins = "join"
 
     /// 关键字字面量（诊断与打印用）。
     public var keyword: String { rawValue }
@@ -74,7 +74,7 @@ public indirect enum Expression: Equatable, Sendable {
     case selfKeyword(location: SourceLocation)
     case selfTypeKeyword(location: SourceLocation)
     case genericConstruct(typeName: String, typeArgs: [TypeAnnotation], arguments: [CallArgument], location: SourceLocation)
-    /// `join` 运算符：由 `await`/`wait` 关键字前缀产生；`<=` 前缀写法不被接受。
+    /// `join` 运算符：由 `await`/`join` 关键字前缀产生；`<=` 前缀写法不被接受。
     /// 阻塞当前线程直至操作数 Future 完成，求值为 `Result<T, Error>`（错误即数据，不抛出）。
     /// `form` 记录**是哪个关键字写的** —— 它决定该站点可否让出（见 `JoinForm`）。
     case join(Expression, SourceLocation, JoinForm)

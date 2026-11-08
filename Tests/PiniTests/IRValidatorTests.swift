@@ -61,7 +61,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
                 box.v = 1
                 print(box.读())
                 var h = 任务()
-                var r = wait h
+                var r = join h
                 match r:
                     case ok(v):
                         print(v)
@@ -257,14 +257,14 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
         #expect(rules(module) == [.asyncBody])
     }
 
-    @Test("wait 一个既非句柄也非 Result 的值 ⇒ join-shape")
+    @Test("join 一个既非句柄也非 Result 的值 ⇒ join-shape")
     func joinShape() {
         let module = handBuilt([
             .allocVar(
                 name: "x", type: .i32, mutable: true, initializer: .intConst(value: 1, type: .i32),
                 adopt: .none),
             .returnStmt(
-                value: .join(future: .load(name: "x", type: .i32), type: .result(ok: .i32), form: .waits),
+                value: .join(future: .load(name: "x", type: .i32), type: .result(ok: .i32), form: .joins),
                 adopt: .none),
         ], returnType: .result(ok: .i32))
         #expect(rules(module) == [.joinShape])

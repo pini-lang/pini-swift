@@ -284,10 +284,10 @@ public final class IREmitter {
     /// 是否发射过变量数组形态的 `joinAll` —— 它让运行时逐槽取句柄，符号与上一条不同。
     private var usesTaskJoinAllBox = false
 
-    /// 是否调用过 `cstr` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
+    /// 是否调用过 `toCString` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
-    /// 是否调用过 `c字符串` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
+    /// 是否调用过 `fromCString` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
     private var usesCStrRetrieval = false
 
     /// 是否在句柄形参位包过 Pini 串 —— 创建走 `bk_str_handle_new`，声明随它条件出现。
@@ -411,7 +411,7 @@ public final class IREmitter {
         /// the process image, dlopened libraries via `--dlopen`). Symbols declared elsewhere are skipped:
         /// libc ones by the fixed header above, runtime shims by the conditional tail below.
         let predeclared: Set<String> = ["printf", "malloc", "free", "strlen", "memcpy"]
-        let runtimeShims: Set<String> = ["cstr"]
+        let runtimeShims: Set<String> = ["toCString"]
         /// 外部声明是文件级的，两个文件各写一遍是常态，重复 `declare` 在 clang 眼里是重定义。
         /// 去重按整条声明：同名同签名只发一次，同名不同签名两条都留，交给 clang 报错 ——
         /// 那是配置错，不能由「先到先得」吞掉。
@@ -2571,10 +2571,10 @@ public final class IREmitter {
             }
 
             let symbolName: String
-            if function == "cstr" {
+            if function == "toCString" {
                 usesCStrShim = true
                 symbolName = "bk_cstr"
-            } else if function == "c字符串" {
+            } else if function == "fromCString" {
                 usesCStrRetrieval = true
                 symbolName = "bk_str_from_cstr"
             } else if function == IRLowerer.stringHandleMakeName {
@@ -6258,9 +6258,9 @@ public final class IREmitter {
         taskBodyDefs.append("define i32 @\(name)(ptr %code, ptr %env, ptr %out) {\n" + body + "}\n\n")
     }
 
-    /// `await` / `wait` 的落点（`bk_task_join`）。可恢复体顶层的 `await` 走让出路径，不经过本函数；
+    /// `await` / `join` 的落点（`bk_task_join`）。可恢复体顶层的 `await` 走让出路径，不经过本函数；
     /// 到达这里的只剩拿不到帧的体 —— 无声明返回类型的异步体与闭包体 —— 本段对它们响亮拒绝：
-    /// 静默按阻塞处理就是把「让出」的承诺打折而不出声。`wait` 一类的承诺本就是阻塞，不受影响。
+    /// 静默按阻塞处理就是把「让出」的承诺打折而不出声。`join` 一类的承诺本就是阻塞，不受影响。
     private func emitJoin(future: IRExpr, type: IRType, form: JoinForm) -> IRValue {
         if form == .awaits {
             fatalError(
@@ -6279,7 +6279,7 @@ public final class IREmitter {
                 "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
         }
         let handle = emitExpr(future)
-        /// 已在结算值上 `wait`（`wait joinAll(...)` 这类）：没有句柄可等，原样透传。
+        /// 已在结算值上 `join`（`join joinAll(...)` 这类）：没有句柄可等，原样透传。
         if handle.llvmType != "ptr" { return handle }
         usesTaskRuntime = true
         let out = builder.freshTemp()

@@ -579,7 +579,7 @@ public indirect enum IRExpr: Equatable {
 
     // MARK: G3c — join
 
-    /// `await f` / `wait f`: the node the suspension semantics hang off. `future` evaluates to a `Future`;
+    /// `await f` / `join f`: the node the suspension semantics hang off. `future` evaluates to a `Future`;
     /// once it resolves the join site deconstructs the carried ok / err, so `type` is the Result it yields.
     /// `form` is which keyword was written — the only thing telling the two apart, and back ends must read it.
     case join(future: IRExpr, type: IRType, form: JoinForm)

@@ -101,7 +101,7 @@ struct StringBorrowTests: Sendable, PiniSourceLowering {
         #expect(RuntimeOps.libcShim(named: "strlen", params: [.pointer(.u8)]) != nil)
         #expect(RuntimeOps.libcShim(named: "strlen", params: [.cString]) == nil, "借出的串与 *T 不是一个形状")
         #expect(RuntimeOps.libcShim(named: "strlen", params: []) == nil, "元数不同不算相容")
-        #expect(RuntimeOps.libcShim(named: "cstr", params: [.cString]) != nil, "cstr 自己的声明就是借出")
+        #expect(RuntimeOps.libcShim(named: "toCString", params: [.cString]) != nil, "toCString 自己的声明就是借出")
         #expect(RuntimeOps.libcShim(named: "malloc", params: [.u64]) != nil)
         #expect(RuntimeOps.libcShim(named: "malloc", params: [.cString]) == nil)
     }

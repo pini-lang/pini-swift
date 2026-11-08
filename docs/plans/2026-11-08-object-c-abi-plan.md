@@ -3,7 +3,7 @@
 - 状态：方向暂缓（2026-11-08），未开工。三项裁决见「结论」，未定项见「尚未定」。
 - 状态补充：对象解读成指针需附加一层 ARC 语义，成本过重；当前工作转到 `2026-11-08-raw-pointer-hardening-plan.md`。本件保留为将来真要做对象 C-ABI 时的路线，裁决与分片不废止。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
-- 上承：`docs/spec/c-interop-design.md`。语言语义以 `docs/spec/pini-reference-v0.md` 为准，IR 节点语义以 `docs/spec/ir-contract.md` 为准，运行时符号台账以 `docs/spec/runtime-abi.md` 为准。
+- 上承：`docs/spec/c-interop-design.md`。语言语义以 `docs/spec/pini-reference.md` 为准，IR 节点语义以 `docs/spec/ir-contract.md` 为准，运行时符号台账以 `docs/spec/runtime-abi.md` 为准。
 - 性质：实现计划。不改 `*T` 语义，不把对象布局交给 C，不新增语言级类型标注。
 - 范围：仅对象块（`[名|object]`）、仅导出面的 `|c` 条目、C 侧只搬不透明指针。结构块、给定块、枚举、集合与元组不动。
 - 取证口径：本轮是源码与规范原文的静态取证，未跑编译器探针。运行期读数由「分片」里的**证据**片补齐，开工后先做。
@@ -27,7 +27,7 @@
 | 事实 | 位置 | 对计划的约束 |
 |---|---|---|
 | 对象在 IR 里已经是指针：`nominal(name:isObject:)` 发成 `%object.<名字>*`，头四格是强计数、弱计数、类型标识、弱引用旁表，字段从第四槽起，无虚表 | `Sources/PiniIR/IR/IRNode.swift:44-49`、`Sources/PiniIR/IR/IRNode.swift:589`、`Sources/PiniIR/IR/IRLayout.swift:5-24`、`docs/spec/ir-contract.md`:349-371 | 不需要新的降载形态，缺的只是 C 面的契约 |
-| C 面明确拒绝对象 | `docs/spec/c-interop-design.md`:472、`docs/spec/c-interop-design.md`:474、`docs/spec/c-interop-design.md`:530、`docs/spec/pini-reference-v0.md`:404-406、`docs/spec/pini-reference-v0.md`:2712-2713、`Sources/PiniSyntax/AST/Types/Type.swift:43-45` | 拒绝理由是生命周期与三通道一致，不是缺指针；放行要连理由一起处理 |
+| C 面明确拒绝对象 | `docs/spec/c-interop-design.md`:472、`docs/spec/c-interop-design.md`:474、`docs/spec/c-interop-design.md`:530、`docs/spec/pini-reference.md`:404-406、`docs/spec/pini-reference.md`:2712-2713、`Sources/PiniSyntax/AST/Types/Type.swift:43-45` | 拒绝理由是生命周期与三通道一致，不是缺指针；放行要连理由一起处理 |
 | 导出面与导入面各有一张类型判据，不是同一份 | 导入面 `Sources/PiniSemantics/Common/FFIType.swift:36-71`；导出面 `Sources/PiniSemantics/Type/TypeChecker.swift:613-661` | 新增形状要决定各加一支还是收口，不能只改一处 |
 | 导出的函数签名原样落到 `IRExportFunction`，头文件把认不出的类型一律写成 `void*` | `Sources/PiniIR/IR/IRLowerer.swift:904-952`、`Sources/PiniIR/IR/IRModule.swift:212-235`、`Sources/PiniBackends/CHeaderBackend.swift:181-205` | C 侧拼写几乎不用改；要改的是准入与份额 |
 | 导出转发体只做搬运，返回位直接 `ret` | `Sources/PiniBackendLLVM/CodeGen/IREmitter.swift:3581-3670` | 返回对象时没有 retain，C 拿到的是悬空风险 |
@@ -45,7 +45,7 @@
 
 C 侧只有一个不透明指针，头文件写 `typedef struct bk_object_handle bk_object_handle;`，不给结构体定义、不写 `sizeof` 或 `offsetof` 断言。理由与 `docs/spec/runtime-abi.md`:64 一致：调用方只搬指针，不解读布局。对象字段可以是任意 Pini 类型——串、集合、其他对象、元组都不设限，因为 C 根本看不到字段区；这与给定块「字段须全部 C 兼容」（`docs/spec/c-interop-design.md`:424）形成明确分工。
 
-不改 `*T`：`docs/spec/pini-reference-v0.md`:404-406 的「与 ARC 完全隔离」是原始指针的语义，放宽它会同时破掉指针算术与 `unsafe 加载` 的前提。也不新增 `StringHandle` 那样的语言级类型名——导出条目的右端本来就是本模块符号，作者写对象块名即可，不要求他记一个边界专用拼写。
+不改 `*T`：`docs/spec/pini-reference.md`:404-406 的「与 ARC 完全隔离」是原始指针的语义，放宽它会同时破掉指针算术与 `unsafe 加载` 的前提。也不新增 `StringHandle` 那样的语言级类型名——导出条目的右端本来就是本模块符号，作者写对象块名即可，不要求他记一个边界专用拼写。
 
 ### 载体
 
@@ -96,7 +96,7 @@ C 侧只有一个不透明指针，头文件写 `typedef struct bk_object_handle
 | `docs/spec/runtime-abi.md` | 新增一族、订正 109 与 119 的读数、更新零调用点登记与互补表 |
 | `tools/runtime-abi-check.py`、`tools/builtin-inventory-check.py` | 前者只按正则数 `@_cdecl("bk_…")`，逻辑不用改，只改说明串的旧读数；后者的 92 与 21 互补关系要跟着新族重算 |
 | `Sources/PiniSemantics/Resources/Diagnostics.zh.toml`、`Sources/PiniSemantics/Resources/Diagnostics.en.toml` | 新增负例码位，两份同批改 |
-| `docs/spec/c-interop-design.md`、`docs/spec/pini-reference-v0.md` | 前者补「对象句柄」一节与类型映射表的那一行；后者补 C 面句柄的所有权约定，不动第 3 章的 `*T` 约束 |
+| `docs/spec/c-interop-design.md`、`docs/spec/pini-reference.md` | 前者补「对象句柄」一节与类型映射表的那一行；后者补 C 面句柄的所有权约定，不动第 3 章的 `*T` 约束 |
 
 ## 分片
 
@@ -110,7 +110,7 @@ C 侧只有一个不透明指针，头文件写 `typedef struct bk_object_handle
 | 诊断 | 对象写进给定块字段、写进 `[..|foreign]`、以及解释器通道碰到句柄的提醒 | 码值取落地时 `Sources/PiniSemantics/Resources/Diagnostics.zh.toml` 的下一个空位，两份语言件同号 |
 | 台账 | 订正 109 与 119、更新零调用点登记与互补关系，补冻结条款 | `tools/runtime-abi-check.py` 与 `tools/builtin-inventory-check.py` 双绿；`tools/check-doc-links.sh` 绿 |
 | 回归 | C 调用方 `cc caller.c -l<库>` 端到端；`examples/golden` 与全量测试 | 全量测试数以**证据**片留档的基线为准，只许不减；`build --shared` 在 Darwin 与 Linux 各跑一条 |
-| 收口 | 补 `docs/spec/c-interop-design.md` 与 `docs/spec/pini-reference-v0.md`；按 `GIT_WORKFLOW.md` 走特性分支与提交类型 | `hooks/pre-commit` 的注释门禁、格式门禁、文档链接门禁三条都过 |
+| 收口 | 补 `docs/spec/c-interop-design.md` 与 `docs/spec/pini-reference.md`；按 `GIT_WORKFLOW.md` 走特性分支与提交类型 | `hooks/pre-commit` 的注释门禁、格式门禁、文档链接门禁三条都过 |
 
 判据先落：载体、归位、头文件三片都要读同一个句柄形状，形状没定就各自猜。证据片与判据片互不依赖，可并行。回归片最后收。
 
@@ -129,9 +129,9 @@ C 侧只有一个不透明指针，头文件写 `typedef struct bk_object_handle
 
 | 风险 | 说明 | 处置 |
 |---|---|---|
-| 计数的原子性 | `bk_nominal_retain` 是非原子的 `+= 1`（`Sources/PiniRuntime/PiniRuntime.swift:2178`），C 多线程同时 retain 会数据竞争；`docs/spec/pini-reference-v0.md`:2057-2062 只承诺单任务非原子、跨任务原子 | 句柄箱自己的计数用原子操作；名义箱那一次 retain 落在转发桩内单线程路径。C 跨线程共享句柄前须自己 retain 一次，头文件注释写清 |
+| 计数的原子性 | `bk_nominal_retain` 是非原子的 `+= 1`（`Sources/PiniRuntime/PiniRuntime.swift:2178`），C 多线程同时 retain 会数据竞争；`docs/spec/pini-reference.md`:2057-2062 只承诺单任务非原子、跨任务原子 | 句柄箱自己的计数用原子操作；名义箱那一次 retain 落在转发桩内单线程路径。C 跨线程共享句柄前须自己 retain 一次，头文件注释写清 |
 | 跨库句柄误用 | C 把甲库的句柄交给乙库的归还入口，释放胶水地址来自甲库，乙库无从校验 | 句柄箱记生成它的库的标识，归还入口不匹配即 `bk_panic`；不静默忽略，静默会让泄漏变成难查的悬空 |
-| 延迟释放队列 | `docs/spec/pini-reference-v0.md`:2055 要求计数归零时入队迭代释放，避免析构风暴；发射层胶水当前是同步逐字段 sweep（`Sources/PiniBackendLLVM/CodeGen/IREmitter.swift:4104-4123`） | 开工前先核这一条是否已有队列接线；若没有，列为**证据**片的探针，不擅自改变既有释放时序 |
+| 延迟释放队列 | `docs/spec/pini-reference.md`:2055 要求计数归零时入队迭代释放，避免析构风暴；发射层胶水当前是同步逐字段 sweep（`Sources/PiniBackendLLVM/CodeGen/IREmitter.swift:4104-4123`） | 开工前先核这一条是否已有队列接线；若没有，列为**证据**片的探针，不擅自改变既有释放时序 |
 | 弱引用与旁表 | C 只持强份额，不参与弱引用；旁表由最后一个弱引用撤销时释放 | C 侧不提供弱句柄，头文件写明句柄是强份额；不把旁表指针外借 |
 | 泄漏 | C 不调归还入口就泄漏，编译器查不到 | 与字符串句柄同规，头文件注释与 `docs/spec/c-interop-design.md` 的生命周期节并列写 |
 | 符号撞名 | 无隐式前缀，短名字与别的库撞 | 句柄入口带 `bk_` 前缀走运行时台账，`<块>_*` 沿用 `docs/spec/c-interop-design.md`:616 的命名建议 |
@@ -140,7 +140,7 @@ C 侧只有一个不透明指针，头文件写 `typedef struct bk_object_handle
 
 ## 尚未定
 
-**载体选型**（唯一需要点头的一项）。建议形状是句柄箱：不碰 `docs/spec/c-interop-design.md`:530 的禁令，C 拿不到名义箱地址，代价是新增一族 `bk_*` 符号、`docs/spec/runtime-abi.md` 台账与冻结流程、`tools/builtin-inventory-check.py` 的互补表，涉及四个文件加两份文档。备选是箱指针直出：C 直接拿 `%object.<名字>*`，省掉整族符号，但要把 `docs/spec/c-interop-design.md`:530 与 `docs/spec/pini-reference-v0.md`:2712-2713 一起修订为「不得交出未经 retain 的地址」，并把归还做成库级 `<块>_release` 按类型分派，语言级变更流程与符号冻结两样都躲不掉。两版都不破三通道一致性；建议取句柄箱，理由是它把「对象布局」与「C 面契约」彻底解耦，正是**稳定边界**要的东西。若改选箱指针直出，**载体**与**归位**两片要重写，**台账**片反而变轻。
+**载体选型**（唯一需要点头的一项）。建议形状是句柄箱：不碰 `docs/spec/c-interop-design.md`:530 的禁令，C 拿不到名义箱地址，代价是新增一族 `bk_*` 符号、`docs/spec/runtime-abi.md` 台账与冻结流程、`tools/builtin-inventory-check.py` 的互补表，涉及四个文件加两份文档。备选是箱指针直出：C 直接拿 `%object.<名字>*`，省掉整族符号，但要把 `docs/spec/c-interop-design.md`:530 与 `docs/spec/pini-reference.md`:2712-2713 一起修订为「不得交出未经 retain 的地址」，并把归还做成库级 `<块>_release` 按类型分派，语言级变更流程与符号冻结两样都躲不掉。两版都不破三通道一致性；建议取句柄箱，理由是它把「对象布局」与「C 面契约」彻底解耦，正是**稳定边界**要的东西。若改选箱指针直出，**载体**与**归位**两片要重写，**台账**片反而变轻。
 
 **导入面是否放行**。本计划按上承文档的单向假设定稿：`[..|foreign]` 里不认对象类型，C 只能把句柄传回 `|c` 导出函数。要放开就得在 `Sources/PiniSemantics/Common/FFIType.swift` 补一支，并处理解释器通道缺 `bk_*` 符号的限制——那是一片独立工作，不是本计划的收尾。
 

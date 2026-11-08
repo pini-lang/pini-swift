@@ -1,9 +1,9 @@
-; FFI 第二版（一）：`String` 形参借出成 `const char*`、内建 `c字符串` 取回、Pini 顶层函数当 C 回调。
-; 三件事两条通道都成立：pini run examples/ffi-v2.pini / pini run-llvm examples/ffi-v2.pini
-; 变参与字符串句柄另见 examples/ffi-v2-llvm.pini（只在 LLVM 通道成立）。
+; FFI 边界：`String` 形参借出成 `const char*`、内建 `fromCString` 取回、Pini 顶层函数当 C 回调。
+; 运行：pini run examples/ffi-string-callback.pini / pini run-llvm examples/ffi-string-callback.pini
+; 变参与字符串句柄另见 examples/ffi-varargs-handle.pini（只在 LLVM 通道成立）。
 [libc|foreign]
 strlen: (String,) -> (U64,) ; 形参位写 String：边界上借出 const char*，只在本次调用期有效
-cstr: (String,) -> (*U8,) ; shim 白名单：复制一份 C 串归调用方，用完 free
+toCString: (String,) -> (*U8,) ; shim 白名单：复制一份 C 串归调用方，用完 free
 free: (*U8,) -> ()
 qsort: (*U8, U64, U64, (*U8, *U8,) -> (I32,),) -> () ; 末位形参是 C 函数指针
 
@@ -19,12 +19,12 @@ qsort: (*U8, U64, U64, (*U8, *U8,) -> (I32,),) -> () ; 末位形参是 C 函数�
 main|func() -> ():
     ; 借出：String 直接进 String 形参，边界上临时编码，调用结束即失效
     print("长度 =", unsafe strlen("héllo"))
-    ; cstr 造一个可写的 C 缓冲（内容 "ba"），归调用方持有
-    var p = unsafe cstr("ba")
-    print("排序前 =", c字符串(p))
+    ; toCString 造一个可写的 C 缓冲（内容 "ba"），归调用方持有
+    var p = unsafe toCString("ba")
+    print("排序前 =", fromCString(p))
     ; 回调：自由函数名直接填进函数指针位，不包适配器
     unsafe qsort(p, 2, 1, 比较字节)
     ; 取回：C 指针读成 Pini 串，复制一份归 Pini，随后可释放 C 的缓冲
-    print("排序后 =", c字符串(p))
+    print("排序后 =", fromCString(p))
     unsafe free(p)
     return

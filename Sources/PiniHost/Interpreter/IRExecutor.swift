@@ -40,7 +40,7 @@ private struct IRCallableBody {
 
 /// What one run of a body produced: two outcomes and no third.
 /// A body either reached its end, or it stopped at a join and gave the task up.
-/// A caller that cannot tell them apart cannot leave the worker thread — that is `await` versus `wait`.
+/// A caller that cannot tell them apart cannot leave the worker thread — that is `await` versus `join`.
 private enum IRBodyStep {
     case finished(Value)
     case givenUp(IRYieldFrame)
@@ -510,11 +510,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 }
             }
             // 取回：`*U8 → String`。与 LLVM 的 `bk_str_from_cstr` 同一条语义，实现留在 `RuntimeOps`。
-            if name == "c字符串" {
+            if name == "fromCString" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
                     throw RuntimeError.invalidOperation(
-                        reason: "IR executor: c字符串 expects exactly one argument",
+                        reason: "IR executor: fromCString expects exactly one argument",
                         location: IRExecutor.noLocation
                     )
                 }
@@ -612,7 +612,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 let milliseconds = try requireInt(args[1], for: "joinWithin timeout")
                 // A builtin, not a keyword site: `joinWithin` has no `await` form,
                 // so it takes the occupying stance by construction.
-                return RuntimeOps.joinFuture(fut, timeoutMs: milliseconds, form: .waits)
+                return RuntimeOps.joinFuture(fut, timeoutMs: milliseconds, form: .joins)
             }
             if name == "cancel" {
                 let args = try arguments.map { try evaluate($0) }
@@ -1284,11 +1284,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
         // MARK: join
 
-        // `await f` / `wait f`: the suspension engine is the CPS evaluator, which this engine does not have.
+        // `await f` / `join f`: the suspension engine is the CPS evaluator, which this engine does not have.
         // The arm exists because the node set and the contract entry move together — the coverage check reads both directions.
         // It fails loud rather than returning a silent `.null`, so a lowerer rule without an engine shows up as an error.
         case .join(let futureExpr, _, let form):
-            // `await f` / `wait f`: evaluate the operand, wait for it to resolve, then deconstruct the carried ok / err.
+            // `await f` / `join f`: evaluate the operand, wait for it to resolve, then deconstruct the carried ok / err.
             // `form` records which keyword the site used; both forms wait the same way — giving the task up needs a resumable body.
             // A `join` that is not given a future is a run-time type mismatch.
             let operand = try evaluate(futureExpr)
@@ -2392,7 +2392,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
     /// Run a body's statements, reporting a suspension; `lastValue` travels in the frame, since it is where the body was.
     /// `pending` rejoins a resumed run: the statement at `from` is finished with the awaited value, then the loop carries on.
-    /// - Parameter yieldable: only an async body may give the task up; a sync body keeps the thread, exactly as `wait` does.
+    /// - Parameter yieldable: only an async body may give the task up; a sync body keeps the thread, exactly as `join` does.
     private func driveStatements(
         _ callable: IRCallableBody,
         previousEnv: Environment,
@@ -2427,7 +2427,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     )
                 }
 
-                // A settled future is no reason to give the task up: taking the value keeps `await` on `wait`'s path, with no task switch.
+                // A settled future is no reason to give the task up: taking the value keeps `await` on `join`'s path, with no task switch.
                 // The third case is the back end saying "not this time": compliant, not broken, so the wait occupies the thread silently.
                 // Suspending there would deadlock, which is not a reduced reading of `await` but a program that stops.
                 if fut.isFinished {
