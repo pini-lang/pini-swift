@@ -2101,6 +2101,14 @@ public final class TypeChecker {
         }
     }
 
+    /// Control-flow subblocks own a type scope: an inner declaration cannot replace the outer binding of the same name.
+    /// Mirrors the semantic analyzer, IR validator and LLVM emitter, which each open a scope per block.
+    private func checkInBlockScope(_ statements: [Statement]) throws {
+        typeEnv.pushScope()
+        defer { typeEnv.popScope() }
+        for stmt in statements { try checkStatement(stmt) }
+    }
+
     private func checkFuncBody(_ funcDecl: FuncDecl, fields: [(name: String, type: TypeAnnotation)] = [], typeName: String? = nil) throws {
         guard let body = funcDecl.body else { return }
         // Phase 2a（FFI 子系统）：`|unsafe` 函数体自动处于不安全上下文。
@@ -2503,27 +2511,27 @@ public final class TypeChecker {
 
         case .ifStatement(let condition, let thenBlock, let elifs, let elseBlock, _, _):
             try checkExpression(condition)
-            for s in thenBlock.statements { try checkStatement(s) }
+            try checkInBlockScope(thenBlock.statements)
             for elif in elifs {
                 try checkExpression(elif.condition)
-                for s in elif.block.statements { try checkStatement(s) }
+                try checkInBlockScope(elif.block.statements)
             }
             if let els = elseBlock {
-                for s in els.statements { try checkStatement(s) }
+                try checkInBlockScope(els.statements)
             }
 
         case .whileStatement(let condition, let body, let step, _, _):
             try checkExpression(condition)
-            for s in body.statements { try checkStatement(s) }
-            if let step = step { for s in step.statements { try checkStatement(s) } }
+            try checkInBlockScope(body.statements)
+            if let step = step { try checkInBlockScope(step.statements) }
 
         case .forStatement(_, let iterable, let body, let step, _, _):
             try checkExpression(iterable)
-            for s in body.statements { try checkStatement(s) }
-            if let step = step { for s in step.statements { try checkStatement(s) } }
+            try checkInBlockScope(body.statements)
+            if let step = step { try checkInBlockScope(step.statements) }
 
         case .scopedBlock(_, let body, _):
-            for s in body.statements { try checkStatement(s) }
+            try checkInBlockScope(body.statements)
 
         case .unrollStatement(_, let table, let body, _):
             // 残模专用分支：正常路径上展开器已在类型检查前消掉本节点。
