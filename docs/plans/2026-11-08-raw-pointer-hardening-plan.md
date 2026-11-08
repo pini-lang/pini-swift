@@ -1,6 +1,6 @@
 # 原始指针加固：*T 的 C 面不透明通道
 
-- 状态：方向与形状已定（2026-11-08）；补校验、收口判据、开退路、差分补测、门禁已落，仅文档收口未做。分片见「分片」，提交序见「细化」，未定项见「尚未定」，放宽的承接见「后续方向」。
+- 状态：方向与形状已定（2026-11-08）；全片已落。分片见「分片」，提交序见「细化」，未定项见「尚未定」，放宽的承接见「后续方向」。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
 - 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference-v0.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：`2026-11-08-object-c-abi-plan.md`（对象 C-ABI 路线，暂缓，见该件状态补充）。
@@ -114,7 +114,7 @@
 | 开退路 | 按已裁的正名收窄 `void*` 死分支，给 C 面不透明指针唯一形状 | 头文件里非标量目标不再有拼写；未用不透明目标的库头文件与基线逐字相同；`CInteropExportTests.swift`:264-284 的既有负例按裁决更新或保留 |
 | 差分补测 | `**T` 嵌套与 `addressOfVar` 两条差分；`RawPointerValue` 宽度由收口片的单测覆盖；指针算术四种形式不在本片（「首版不做」），声明级负例已由补校验覆盖；基线扩成四列 | 每条差分用例在 `run` 与 `run-llvm` 上同值或登记为通道差异；登记必须写清处置（`declared` / `debt`）与理由；全量测试数只许不减 |
 | 门禁 | 诊断表 key 集合与占位符、标量集合、空族、台账读数四项判据 | `tools/diagnostics-parity-check.py`、`tools/scalar-set-check.py`、`tools/builtin-inventory-check.py`、`tools/runtime-abi-check.py` 各自带自检且全绿 |
-| 文档收口 | 订正三份权威文档的矛盾条目与台账读数：纯值 struct 写成「未兑现、已有方向」、四种指针算术标未实现、`*U8` 定名、`addressOfVar` 记为 `debt`；按 `GIT_WORKFLOW.md` 走特性分支 | `hooks/pre-commit` 的注释、格式、文档链接门禁三条都过；文档里每个指针形状都能指回一处源码判据 |
+| 文档收口 | 订正三份权威文档的事实错误，未实现处加 `TODO` 标记：纯值 struct 与四种指针算术、`*U8` 定名、`addressOfVar` 记为 `debt`；按 `GIT_WORKFLOW.md` 走特性分支 | `hooks/pre-commit` 的注释、格式、文档链接门禁三条都过；文档里每个指针形状都能指回一处源码判据 |
 
 补校验先落：收口判据、开退路、差分补测三片都读同一张判据，判据没定就各自猜。门禁片与文档收口片最后收，不分散到各片顺手改。
 
@@ -122,9 +122,11 @@
 
 八个提交单元，按依赖排。`补校验` 拆三个，其余一片一提交。分支 `dev-agent-pini-raw-pointer-hardening`，身份 `Pini Dev <dev@pini.local>`（注册表在册）；每笔提交前过注释与格式门禁，并回前过容器 CI。
 
-已落七笔：立表、补局部、收未知名、收口判据、开退路、差分补测、门禁；余下文档收口一片。收未知名删掉 `isCScalarType` 的十四名表，收口判据又删掉 `cExportScalars` 与两处运行时宽度 switch，只余「表 + `FFIType` 取名 + 运行时编解码」三处，这三处由 `tools/scalar-set-check.py` 对账。开退路只删掉头文件里那条 `void*` 死分支，合法模块的产物逐字不变。差分补测把基线扩成四列，新增的差距从此必须写明处置与理由。门禁片补了两份一致性脚本与 `family-empty`，并把台账三处旧读数订正。
+已落八笔：立表、补局部、收未知名、收口判据、开退路、差分补测、门禁、文档收口。收未知名删掉 `isCScalarType` 的十四名表，收口判据又删掉 `cExportScalars` 与两处运行时宽度 switch，只余「表 + `FFIType` 取名 + 运行时编解码」三处，这三处由 `tools/scalar-set-check.py` 对账。开退路只删掉头文件里那条 `void*` 死分支，合法模块的产物逐字不变。差分补测把基线扩成四列，新增的差距从此必须写明处置与理由。门禁片补了两份一致性脚本与 `family-empty`，并把台账三处旧读数订正。
 
-注意 「纯值结构体可作 `*T` 目标」在本计划期不成立：声明级不再顺字段递归，三面一律拒绝。这不是取消承诺，是把兑现推迟到「后续方向」；当下作者得先把值搬进 `*U8` 缓冲。文档收口要写「未兑现、已有方向」，不写「已取消」。
+文档收口没有按本表原写的「按实现订正」执行：删掉承诺会把「未兑现」写成「已取消」。实际做法是**保留原文、加 TODO 标记**——`TODO(聚合值指针)` 八处，分别标在 §3.2 的纯值 struct 与算术、§3.2 示例、§9.2 与 §9.6 的示例、§9.3 的允许表与算术、§9.7 的 `Raw` 表前。标量范围这类**事实错误**直接订正（I16 / U16 / U32 / F32 没有 IR 对应类型），不归 TODO。
+
+注意 「纯值结构体可作 `*T` 目标」在本计划期不成立：声明级不再顺字段递归，三面一律拒绝。这不是取消承诺，是把兑现推迟到「后续方向」；当下作者得先把值搬进 `*U8` 缓冲。文档已按这一口径落：原文保留，未实现处标 `TODO(聚合值指针)`，不写「已取消」。
 
 | 提交单元 | 改哪里 | 判据（现读数 → 期望读数） |
 |---|---|---|
@@ -135,9 +137,9 @@
 | 开退路 | `CHeaderBackend.cType` 的 `.pointer` 只认标量目标，非标量 `preconditionFailure`；`cSizeAndAlign` 的指针宽度改取 `MemoryLayout` | 七个标量目标各写出自己的 C 拼写（`int8_t*` 到 `bool*`），头文件里不出现 `void*`；既有头文件断言零改动通过 |
 | 差分补测 | 新建 `Tests/PiniTests/PointerSurfaceTests.swift`（CLI 两条通道）；`examples/pointer-address.pini` 作探针语料；基线改四列 | `&x` 钉 7 / 9、`**I64` 钉 `E5-006` / 7；探针输出 `baseline: 1 known gap(s)（debt 1）` 且退出 0 |
 | 门禁 | 新建 `tools/diagnostics-parity-check.py`（key / 字段 / 占位符）与 `tools/scalar-set-check.py`（表 vs 导入面 vs 运行时编解码）；`builtin-inventory-check.py` 加 `family-empty`；`docs/spec/runtime-abi.md` 的 109 两处改 119、92 改 98；CI 加两步 | 两侧各带 `--self-test`；空族只在有零调用点登记时放行；台账 119 / 119 / 98+21，四条一致 |
-| 文档收口 | `docs/spec/pini-reference-v0.md`:2697-2720、`:2705-2724`、`:2896-2910`（纯值 struct 改为未兑现并指向「后续方向」）；`docs/spec/c-interop-design.md`:464-477；`docs/spec/ir-contract.md`:152 | `tools/check-doc-links.sh` 通过；文档里每个形状能指回一处源码判据；承诺段不出现「已取消」一类措辞 |
+| 文档收口 | `docs/spec/pini-reference-v0.md` 的术语表与 §3.2、§9.1、§9.2、§9.3、§9.6、§9.7；`docs/spec/c-interop-design.md` 的取址注意；`docs/spec/ir-contract.md` §2.7 与已知偏离表 | `tools/check-doc-links.sh` 通过；八处 `TODO(聚合值指针)` 可 grep；承诺段不出现「已取消」一类措辞 |
 
-注意 差分补测的裁定已落：**改基线规矩**。基线由两列扩成四列（fixture / verdict / 处置 / 理由），处置只收 `declared`（文档规定两通道本就不同）与 `debt`（实现待修）；缺列、错处置、空理由各自判红，由 `--self-test` 覆盖。`&x` 登记为 `debt`，理由沿用 `docs/spec/ir-contract.md`:152 已裁的「统一到真引用」，本轮不动 `snapshotPointer`。`**T` 不进 examples（`run` 会失败），改由 `PointerSurfaceTests` 钉住 `E5-006` 与 7。
+注意 差分补测的裁定已落：**改基线规矩**。基线由两列扩成四列（fixture / verdict / 处置 / 理由），处置只收 `declared`（文档规定两通道本就不同）与 `debt`（实现待修）；缺列、错处置、空理由各自判红，由 `--self-test` 覆盖。`&x` 登记为 `debt`，理由沿用 `docs/spec/ir-contract.md` §2.7 已裁的「统一到真引用」，本轮不动 `snapshotPointer`。`**T` 不进 examples（`run` 会失败），改由 `PointerSurfaceTests` 钉住 `E5-006` 与 7。
 
 注意 补校验三笔各自可回滚：立表不改行为，补局部只碰函数体，收未知名只碰一个分支。挤成一笔时，语料变红分不清是哪条判据放的。
 
