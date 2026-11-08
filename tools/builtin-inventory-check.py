@@ -195,6 +195,17 @@ def check(contract_names, exports, entries, mentions, cases, zero_sites):
             elif tag not in cases:
                 failures.append("lowering-name-unknown: %s -> %s (no IR case)" % (symbol, tag))
 
+    for family, label in sorted(FAMILY.items()):
+        if any(entry_family == family for _, entry_family, _ in entries):
+            continue
+        if label not in contract_names.values():
+            # 契约里根本没有这一族：那是族名的死代码，不是「声明了却没人接线」。
+            continue
+        registered = [symbol for symbol in zero_sites if contract_names.get(symbol) == label]
+        if not registered:
+            failures.append(
+                "family-empty: .%s（%s）既没有清单条目，也没有零调用点登记" % (family, label))
+
     for symbol in sorted(mentions - set(inventory)):
         failures.append("lowering-without-inventory: %s" % symbol)
     for symbol in sorted(set(inventory) & zero_sites):
@@ -229,6 +240,18 @@ def self_test():
         ok = False
     if not any(f.startswith("zero-site-missing") for f in failures):
         print("self-test FAIL: an unregistered contract symbol was not caught")
+        ok = False
+
+    parked = {"bk_a": "数组", "bk_b": "指针"}
+    failures = check(parked, {"bk_a", "bk_b"}, [("bk_a", "array", ["call"])],
+                     {"bk_a"}, cases, set())
+    if not any(f.startswith("family-empty") for f in failures):
+        print("self-test FAIL: an emptied family was not caught")
+        ok = False
+    failures = check(parked, {"bk_a", "bk_b"}, [("bk_a", "array", ["call"])],
+                     {"bk_a"}, cases, {"bk_b"})
+    if any(f.startswith("family-empty") for f in failures):
+        print("self-test FAIL: a family parked on zero-site was reported empty")
         ok = False
 
     print("self-test %s" % ("PASS" if ok else "FAIL"))

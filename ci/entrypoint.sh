@@ -53,6 +53,12 @@ bash hooks/comment-lint.sh
 step "文档链接门禁"
 bash tools/check-doc-links.sh
 
+step "诊断表一致性门禁"
+# zh / en 共用一次查找：一边缺码、字段或占位符，只会在另一门语言里显出乱码。
+# 自检先证明两条判据会开火，再读真表。
+python3 tools/diagnostics-parity-check.py --self-test
+python3 tools/diagnostics-parity-check.py
+
 step "IR 契约门禁"
 python3 tools/ir-contract-check.py
 
@@ -61,7 +67,13 @@ python3 tools/runtime-abi-check.py
 
 step "内建清单门禁"
 # 三方对照：运行时 ABI 契约 · 编译器清单 · CodeGen 的降级点。任一处不等即失败。
+python3 tools/builtin-inventory-check.py --self-test
 python3 tools/builtin-inventory-check.py
+
+step "标量集合门禁"
+# `*T` 的白名单只有一份，导入面与运行时各取一次名；单边增删在构建期与测试里都可能漏过。
+python3 tools/scalar-set-check.py --self-test
+python3 tools/scalar-set-check.py
 
 step "后端义务门禁（警告级）"
 # 只报不拦：决策族归零之后，这个脚本用来盯「旧的判断有没有长回来」。

@@ -21,7 +21,7 @@
 
 ### 0.3 量具口径
 
-**109 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
+**119 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
 两者相差 2：正文有两处注释提到 `@_cdecl` 却不导出符号。数出来差 1 或 2 时，先分清数的是哪一个。
 器械是 `tools/runtime-abi-check.py`。
 
@@ -32,7 +32,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（109 个）
+## 2. 符号清单（119 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -115,7 +115,7 @@
 | `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 7 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 92 条，本表列出其余 21 条，
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 98 条，本表列出其余 21 条，
 两者合计即第 2 节的 119。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
