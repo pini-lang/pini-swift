@@ -315,6 +315,10 @@ DECLARED_LIMITS = {
     "E5-019": "变参调用要 C 变参 ABI，解释器只转发固定签名",
     "E5-020": "字符串句柄由运行时段持有，pini 进程里没有这些符号",
 }
+# 基线条目的处置。两个词回答的不是「要不要拦」，而是「这条差异该谁改」：
+# declared = 语言按文档如此，两通道本就不该相同；debt = 实现欠着，登记只为让门禁能跑。
+# 只写 fixture 与 verdict 时，读者分不清这两种，门禁上它们长得一样。
+DISPOSITIONS = ("declared", "debt")
 # 这次运行为什么停下，看 `Error:` 行 —— 它前面可能已经排着若干警告码。
 ERROR_CODE = re.compile(r"^Error: .*?\[([A-Z]\d-\d+)\]", re.MULTILINE)
 
@@ -708,9 +712,13 @@ def classify(rel, l_rc, l_out, l_err, h_rc, h_out, h_err, c_rc, c_err):
 def compare_with(path, open_gaps):
     """基线与本次读数对撞：新缺口红，转绿的旧条目也红（棘轮只许缩小）。
 
-    返回 (已知条目集合, 问题行)。问题行非空即判失败。
+    每条登记必须写清处置与理由。四列格式是这一版的判据：只写「哪个 fixture、
+    什么判定」时，读者无从区分「文档规定两通道就该不同」与「实现欠着没修」，
+    而这两件事在门禁上长得完全一样。
+
+    返回 ({(fixture, verdict): 处置}, 问题行)。问题行非空即判失败。
     """
-    known, problems = set(), []
+    known, problems = {}, []
     if not os.path.isfile(path):
         return known, ["基线缺失：%s（新增 --baseline 时先落一份）" % path]
     with open(path, encoding="utf-8-sig") as handle:
@@ -719,16 +727,70 @@ def compare_with(path, open_gaps):
             if not body.strip() or body.lstrip().startswith("#"):
                 continue
             cells = body.split("\t")
-            if len(cells) < 2:
-                problems.append("基线第 %d 行字段不足：%r" % (number, body))
+            if len(cells) != 4:
+                problems.append(
+                    "基线第 %d 行不是四列（fixture / verdict / 处置 / 理由）：%r"
+                    % (number, body))
                 continue
-            known.add((cells[0].strip(), cells[1].strip()))
+            fixture, verdict, disposition, reason = (cell.strip() for cell in cells)
+            if disposition not in DISPOSITIONS:
+                problems.append(
+                    "基线第 %d 行的处置不认识：%r（只能写 %s）"
+                    % (number, disposition, " / ".join(DISPOSITIONS)))
+            if not reason:
+                problems.append(
+                    "基线第 %d 行没有理由：登记差异要写清是文档规定还是实现待修"
+                    % number)
+            if (fixture, verdict) in known:
+                problems.append(
+                    "基线第 %d 行重复登记：%s / %s" % (number, fixture, verdict))
+            known[(fixture, verdict)] = disposition
     seen = {(r["fixture"], r["verdict"]) for r in open_gaps}
-    for fixture, verdict in sorted(seen - known):
+    for fixture, verdict in sorted(seen - set(known)):
         problems.append("新增缺口 %-14s %s" % (verdict, fixture))
-    for fixture, verdict in sorted(known - seen):
+    for fixture, verdict in sorted(set(known) - seen):
         problems.append("基线已过期（该条转绿或消失，删掉它）%-14s %s" % (verdict, fixture))
     return known, problems
+
+
+def baseline_self_test():
+    """四列基线的阳性与阴性对照：合法条目通过，缺列 / 错处置 / 空理由各判红。
+
+    与 classify 的自检分开：这一组不打任何子进程，读的是一份临时基线。
+    """
+    bad = []
+
+    def gap(fixture):
+        return {"fixture": fixture, "verdict": "GAP_BEHAVIOR"}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "baseline.tsv")
+
+        def probe(name, body, open_gaps, want):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            known, problems = compare_with(path, open_gaps)
+            joined = " | ".join(problems)
+            if want is None:
+                if problems:
+                    bad.append("%s：应通过，实际 %s" % (name, joined))
+            elif want not in joined:
+                bad.append("%s：应报 %r，实际 %r" % (name, want, joined))
+            return known
+
+        row = "examples/a.pini\tGAP_BEHAVIOR\tdebt\t解释器待修\n"
+        known = probe("合法四列", "# 头\n" + row, [gap("examples/a.pini")], None)
+        if known.get(("examples/a.pini", "GAP_BEHAVIOR")) != "debt":
+            bad.append("合法四列：处置没读出来")
+        probe("缺理由", "examples/a.pini\tGAP_BEHAVIOR\tdebt\t\n",
+              [gap("examples/a.pini")], "没有理由")
+        probe("错处置", "examples/a.pini\tGAP_BEHAVIOR\tsomeday\t待修\n",
+              [gap("examples/a.pini")], "处置不认识")
+        probe("三列", "examples/a.pini\tGAP_BEHAVIOR\tdebt\n",
+              [gap("examples/a.pini")], "不是四列")
+        probe("新增缺口", "", [gap("examples/a.pini")], "新增缺口")
+        probe("过期条目", "examples/b.pini\tGAP_BEHAVIOR\tdebt\t待修\n", [], "基线已过期")
+    return bad
 
 
 def self_test():
@@ -754,6 +816,7 @@ def self_test():
     got, _ = classify("t.pini", 0, "", "boom", 1, "", shape % "E5-020", 0, "")
     if got != "WARN_LLVM_RC_UNPROPAGATED":
         bad.append("llvm 臂也报错 -> %s（应为 WARN_LLVM_RC_UNPROPAGATED）" % got)
+    bad += baseline_self_test()
     for line in bad:
         print("self-test FAIL: %s" % line)
     print("self-test %s" % ("PASS" if not bad else "FAIL"))
@@ -954,7 +1017,12 @@ def main():
     if args.baseline:
         known, problems = compare_with(args.baseline, blockers + unknown)
         status = 1 if problems else status
-        print("\n=== baseline: %d known gap(s) ===" % len(known))
+        counts = {kind: sum(1 for d in known.values() if d == kind)
+                  for kind in DISPOSITIONS}
+        detail = "，".join("%s %d" % (kind, counts[kind])
+                          for kind in DISPOSITIONS if counts[kind])
+        print("\n=== baseline: %d known gap(s)%s ==="
+              % (len(known), "（%s）" % detail if detail else ""))
         for line in problems:
             print("  " + line)
         if not problems:

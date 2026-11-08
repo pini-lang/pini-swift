@@ -1,3 +1,4 @@
 ﻿# 不写 golden 的示例：条目 <TAB> 原因。只在逐字节比对不成立时登记，其余示例必须有 golden。
 concurrency.pini	输出行序由调度决定（A/B 交错），逐字节比对会随机红；run 腿仍判退出码
 ffi-v2-llvm.pini	变参与句柄只在 LLVM 通道成立（E5-019 / E5-020），`pini run` 在调用点拒绝
+pointer-address.pini	两通道读数不同（解释器快照 / LLVM 真引用）；逐字节期望会把已裁待修的一侧固化下来

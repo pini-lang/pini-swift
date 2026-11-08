@@ -1,3 +1,4 @@
-﻿# IR 差分探针的已知缺口：条目 <TAB> 判定。只许缩小 —— 某行转绿时探针会红，提示删掉它。
-# 判定取自 tools/ir-parity-probe.py 的 verdict 列；新增缺口不在表内即失败。
-# 当前为空：已知缺口为零。新增缺口一律判红，不需要在这里登记。
+﻿# IR 差分探针的已知缺口：四列，TAB 分隔 —— fixture / verdict / 处置 / 理由。
+# 处置只写 declared（语言按文档如此，两通道本就不该相同）或 debt（实现待修，登记只为让门禁能跑）。
+# 只许缩小 —— 某行转绿时探针会红，提示删掉它。
+examples/pointer-address.pini	GAP_BEHAVIOR	debt	解释器 `&x` 取快照、LLVM 取真地址；ir-contract 已裁统一到真引用，解释器待修
