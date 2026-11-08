@@ -321,6 +321,31 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
             fileName: "calc.pini")
         let header = try CHeaderBackend().emit(module: module)
         #expect(header.contains("int32_t calc_f(uint8_t*);"))
+        #expect(!header.contains("void*"), "指针目标不退回不透明指针")
+    }
+
+    @Test("七个标量目标各有自己的 C 拼写，没有一个落到 void*")
+    func testEveryScalarTargetHasItsOwnSpelling() throws {
+        let spellings = [
+            ("I8", "int8_t*"), ("U8", "uint8_t*"), ("I32", "int32_t*"),
+            ("I64", "int64_t*"), ("U64", "uint64_t*"), ("F64", "double*"), ("Bool", "bool*"),
+        ]
+        for (target, spelling) in spellings {
+            let module = try lowered(
+                """
+                f(p: *\(target),) -> (I32,):
+                    return 0
+
+                [calc|export]
+                calc_f|c = f
+
+                main|func() -> (I32,):
+                    return 0
+                """,
+                fileName: "calc.pini")
+            let header = try CHeaderBackend().emit(module: module)
+            #expect(header.contains("int32_t calc_f(\(spelling));"), "\(target) 实际：\(header)")
+        }
     }
 
     // MARK: - 降载

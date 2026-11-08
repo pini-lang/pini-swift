@@ -150,7 +150,10 @@ public struct CHeaderBackend: PiniBackend {
         case .i8, .u8, .boolean: return (1, 1)
         case .i32: return (4, 4)
         case .i64, .u64, .f64: return (8, 8)
-        case .pointer, .nominal, .enumeration: return (8, 8)
+        /// 指针宽度取自运行时：C 侧的布局断言与 `RawPointerValue` 的步长必须同源。
+        case .pointer:
+            return (MemoryLayout<UnsafeMutableRawPointer>.size, MemoryLayout<UnsafeMutableRawPointer>.alignment)
+        case .nominal, .enumeration: return (8, 8)
         default: return nil
         }
     }
@@ -197,9 +200,12 @@ public struct CHeaderBackend: PiniBackend {
             let inner = params.map { cType($0) }.joined(separator: ", ")
             return "\(returned) (*)(\(inner.isEmpty ? "void" : inner))"
         case .pointer(let element):
-            /// 目标不透明时给 `void*`：C 侧不需要 Pini 的结构体定义，也不该依赖它。
-            if let spelling = cScalar(element) { return "\(spelling)*" }
-            return "void*"
+            /// 指针目标只能是标量：导出面在检查期已拒掉其余形状，能走到这里说明两层判据对不上。
+            /// 不退回 `void*` —— 那会让 C 侧看到的类型与 Pini 写的类型静默分叉。
+            guard let spelling = cScalar(element) else {
+                preconditionFailure("C 头文件的指针目标只能是标量，实际 `\(element.describe())`")
+            }
+            return "\(spelling)*"
         default: return "void*"
         }
     }
