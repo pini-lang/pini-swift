@@ -1,6 +1,6 @@
 # 原始指针加固：*T 的 C 面不透明通道
 
-- 状态：方向与形状已定（2026-11-08）；补校验已开工，进度以仓库提交为准。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
+- 状态：方向与形状已定（2026-11-08）；补校验已落，收口判据起未做。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
 - 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference-v0.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：`2026-11-08-object-c-abi-plan.md`（对象 C-ABI 路线，暂缓，见该件状态补充）。
@@ -75,6 +75,8 @@
 
 导入面 `FFIType.resolve`、导出面 `cExportRejection`、声明级 `validateDeclPointerTypes` 各自回答「这个 `*T` 能不能成立」。归一不是合并成一个函数，而是**一张共享的白名单加三处位置规则**：形状判定只有一份，形参位、返回位、字段位各自的额外约束留在各处。标量集合同样收成一份，`RawPointerValue.stride` 与 `RuntimeOps` 的解码宽度是运行时事实，按同一张表生成或加一致性断言。
 
+注意 声明级现在只判 struct / object / enum / func / trait / extension / given 这七类，foreign 声明归导入面独占。归一后要保持这条分工：两个判据抢同一个标注时，先跑的那个会盖掉更精确的码。
+
 ### C 面形状
 
 形状已裁：取**正名**。不放宽 `*T` 的目标集合，`*U8` 就是 C 面不透明字节指针，`void*` 收窄为内部 IR 类型的兜底，文档写清「C 面不透明指针不用 `void*`」。
@@ -119,6 +121,8 @@
 ## 细化
 
 八个提交单元，按依赖排。`补校验` 拆三个，其余一片一提交。分支 `dev-agent-pini-raw-pointer-hardening`，身份 `Pini Dev <dev@pini.local>`（注册表在册）；每笔提交前过注释与格式门禁，并回前过容器 CI。
+
+已落三笔：立表、补局部、收未知名；余下五片未动。收未知名顺带做掉两件事——`isCScalarType` 的十四名标量表删除（五份集合少一份），导入面的 foreign 声明不再被声明级重复判（`FFIType` 的码更精确）。
 
 | 提交单元 | 改哪里 | 判据（现读数 → 期望读数） |
 |---|---|---|
