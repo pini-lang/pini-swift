@@ -1588,10 +1588,13 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         }
     }
 
-    /// Run a statement list as a **block**: open a defer scope, run, close it on every exit path.
-    /// Called at `executeBlock`'s boundaries — `if` / `else`, `while`, `for-in`; a function body opens its own scope inline.
-    /// The `try?` on the close is deliberate: a deferred signal is discarded and the error already unwinding keeps unwinding.
+    /// Run a statement list as a **block**: open a defer scope and a child variable scope, close both on every exit path.
+    /// Called at `if` / `else`, `while`, `for-in` boundaries; a function body opens its own scope inline.
+    /// Restoring the parent is registered first so defers run under the child and still see block bindings.
     private func executeBlock(_ block: IRBlock) throws {
+        let parentEnv = currentEnv
+        currentEnv = parentEnv.pushScope()
+        defer { currentEnv = parentEnv }
         pushDeferScope()
         defer { try? popDeferScope() }
         try executeStatements(block)

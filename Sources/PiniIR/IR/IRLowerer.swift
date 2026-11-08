@@ -2200,6 +2200,9 @@ public enum IRLowerer {
         defer { context.bodyDepth -= 1 }
         context.heldScopes.append([])
         defer { context.heldScopes.removeLast() }
+        // 块内声明的类型只在块内可见：退出时还原快照，避免同名局部把外层类型带进后续重推。
+        let outerVariableTypes = context.variableTypes
+        defer { context.variableTypes = outerVariableTypes }
         var statements: [IRStmt] = []
         var positions: [SourceLocation] = []
         for statement in block.statements {
