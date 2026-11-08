@@ -1,6 +1,6 @@
 # 原始指针加固：*T 的 C 面不透明通道
 
-- 状态：方向与形状已定（2026-11-08），未开工。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
+- 状态：方向与形状已定（2026-11-08）；补校验已开工，进度以仓库提交为准。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
 - 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference-v0.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：`2026-11-08-object-c-abi-plan.md`（对象 C-ABI 路线，暂缓，见该件状态补充）。
@@ -92,7 +92,7 @@
 | 文件 | 改什么 |
 |---|---|
 | `Sources/PiniSemantics/Common/CPointerTarget.swift`（新建） | 白名单本体：IR 可构造的标量集、`*U8` 定名、`reason(for:)` 给拒绝理由。三处判据与两处运行时宽度都读它 |
-| `Sources/PiniSemantics/Type/TypeChecker.swift`:1671-1736, 2112, 2360 | `checkFuncBody` 入口收一次函数体标注并复用 `validatePointerAnnotations`，覆盖 `:2360` 的局部声明路径与匿名函数形参；`cCompatibilityFailure` 的未登记名分支从放行改为拒绝；`visiting` 只 insert 不 remove 的写法按标准 DFS 收口 |
+| `Sources/PiniSemantics/Type/TypeChecker.swift`:1671-1736, 2360, 2945 | 局部声明 `:2360` 与匿名函数签名 `:2945` 各挂一次 `validatePointerAnnotations`——标注只有这两个可写位置，泛型实参位解析器已拒 `*T`；`cCompatibilityFailure` 的未登记名分支从放行改为拒绝；`visiting` 只 insert 不 remove 的写法按标准 DFS 收口 |
 | `Sources/PiniSemantics/Type/TypeChecker.swift`:613-661, 1769-1780, 2345-2354 | 导出面与 `isCScalarType` 改吃归一后的白名单，`.pointer` 分支保留位置规则；`typeName(from:)` 的 `.pointer` 返回拼写而不是空串 |
 | `Sources/PiniSemantics/Common/FFIType.swift`:36-71, 118-148 | 导入面改吃同一张白名单；`widthsOutsideIR` 与标量集合的边界写清，不靠两处硬编码对齐 |
 | `Sources/PiniBackends/CHeaderBackend.swift`:181-218 | 按已裁的正名收窄 `.pointer` 的非标量分支，`default: void*` 留给其它 IR 类型；`cSizeAndAlign` 的指针宽度与运行时事实对齐 |
@@ -123,7 +123,7 @@
 | 提交单元 | 改哪里 | 判据（现读数 → 期望读数） |
 |---|---|---|
 | 补校验·立表 | 新建 `Sources/PiniSemantics/Common/CPointerTarget.swift`：IR 可构造的标量集、`*U8` 定名、拒绝理由。纯新增，不改行为 | 单测断言表等于 `IRType(from:)` 可构造集；`swift test` 总数不减；六支补充探针读数一律不动 |
-| 补校验·补局部 | `TypeChecker.swift`:2112 `checkFuncBody` 入口收一次函数体标注，复用 `:1713`；`:2345-2354` 的 `.pointer` 返回拼写而不是空串 | 局部 `*计数对象`、匿名函数形参 `*计数对象`、`[*计数对象]` 三处由通过改为拒；`p + 1` 的 `expected` 不再是空串；签名位读数不变 |
+| 补校验·补局部 | `TypeChecker.swift`:2360 的 `.varDecl` 与 `:2945` 的 `.funcLiteral` 各挂一次 `validatePointerAnnotations`（标注只有这两个可写位置；泛型实参位解析器已拒 `*T`）；`:2345-2354` 的 `.pointer` 返回拼写而不是空串 | 局部 `*计数对象`、匿名函数形参 `*计数对象`、`[*计数对象]` 三处由通过改为拒；`p + 1` 的 `expected` 不再是空串；签名位读数不变 |
 | 补校验·收未知名 | `TypeChecker.swift`:1745 的 `else { return nil }` 改为点名返回 | `*Foo`、`*String`、`*I16`、`*CChar` 由「通过、执行期报 `E6-004`」改为检查期即拒；结论与 `ForeignTypeSurfaceTests.swift`:91 的导入面一致 |
 | 收口判据 | `cExportRejection`:626-632、`FFIType.pointerTarget`:119-131、`cCompatibilityFailure`:1740-1767 读同一张表；`isCScalarType`:1769 只被 `:1744` 调用，可删；`cExportScalars`:414 并表；`Value.stride`:329 与 `RuntimeOps.swift`:320, 388 按同表生成 | 同一个 `*纯值struct` 三面同一句话；五份集合由一条门禁对账；`CInteropExportTests.swift`:264-284、`:286-306` 随统一措辞更新 |
 | 开退路 | `CHeaderBackend.swift`:199-203 的 `.pointer` 只认标量目标，不变式用一句 `precondition` 钉住；守卫照 `usesStringHandle`:49 的写法 | 非标量目标在头文件里不再有拼写；未用不透明目标的库头文件与基线逐字相同 |
