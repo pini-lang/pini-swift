@@ -2349,7 +2349,8 @@ public final class TypeChecker {
         case .tuple, .generic, .function:
             return ""  // 复杂类型暂不深入比较
         case .pointer:
-            return ""  // 指针类型暂不参与类型名比较（C 兼容性校验在别处）
+            // 指针参与比较用完整拼写：空串会让诊断印出「expected , got I32」。
+            return annotation.describe()
         }
     }
 
@@ -2358,6 +2359,8 @@ public final class TypeChecker {
     private func checkStatement(_ stmt: Statement) throws {
         switch stmt {
         case .varDecl(let name, let annot, let initializer, let isMutable, let location):
+            /// 局部声明与签名位同一道 `*T` 判据：同一份标注换个位置不该换结论。
+            if let annot { try validatePointerAnnotations(annot) }
             // 裸名 case 消歧（静态收敛版）：显式标注作为期望类型下推——枚举用例构造走 refine
             // （跨枚举同名 case 按标注消歧），其余按标注比对；绑定类型 = 标注（与宿主声明类型语义对齐）。
             let declaredType: TypeAnnotation
@@ -2946,6 +2949,7 @@ public final class TypeChecker {
             // 匿名函数体内部类型检查：复用 checkFuncBody——标注参数定义 + body 语句检查 +
             // 返回类型一致性（闭合缺口①）。无标注参数保持推断（checkFuncBody 跳过无标注参数，
             // body 里无类型信息时不误报）。
+            try validateFuncDeclPointerTypes(decl)  // 匿名函数不是顶层声明，签名位不在那条遍历上
             try checkFuncBody(decl)
 
         case .integerLiteral, .floatLiteral, .stringLiteral, .boolLiteral, .stringInterpolation,
