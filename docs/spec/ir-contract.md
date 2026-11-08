@@ -149,7 +149,7 @@
 |---|---|---|---|
 | 29 | `pointerLoad(pointer:type:)` | 经 `*T` 读元素值，按元素类型解码 | 窄元素的扩展规则属约定，尚未上提为语义 |
 | 30 | `pointerStore(pointer:value:type:)` | 经 `*T` 写值，按元素类型编码 | 窄元素为截断写 |
-| 31 | `addressOfVar(name:type:)` | `&x`：变量存储槽的地址，真指针语义 | 解释器通道为快照语义，属已知偏离 |
+| 31 | `addressOfVar(name:type:)` | `&x`：变量存储槽的地址，真指针语义 | 解释器通道为快照语义；登记为 `debt`，已裁统一到真引用 |
 
 ### 2.8 文件 IO
 
@@ -243,7 +243,7 @@
 | 项 | 状态 | 类型 |
 |---|---|---|
 | `whileStmt` / `forInStmt` 的深层 `continue` 跳过 `step` | 未修 | 偏离，后端与解释器相反 |
-| `addressOfVar` 的解释器快照语义 | 未修 | 偏离，已裁「统一到真引用」 |
+| `addressOfVar` 的解释器快照语义 | 未修 | 偏离，已裁「统一到真引用」；差分基线登记为 `debt` |
 | `deferStmt` 与 `break` / `return` 的交互 | 未门控 | 覆盖缺口 |
 | `pointerLoad` 窄元素的扩展规则 | 未裁 | 半语义，须上提为语义或标为约定 |
 | `optionalGet` 的边界检查方式 | 未裁 | 半语义，同上 |
