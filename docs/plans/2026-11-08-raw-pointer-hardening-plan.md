@@ -1,6 +1,6 @@
 # 原始指针加固：*T 的 C 面不透明通道
 
-- 状态：方向与形状已定（2026-11-08）；补校验已落，收口判据起未做。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
+- 状态：方向与形状已定（2026-11-08）；补校验与收口判据已落，开退路起未做。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
 - 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference-v0.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：`2026-11-08-object-c-abi-plan.md`（对象 C-ABI 路线，暂缓，见该件状态补充）。
@@ -110,7 +110,7 @@
 | 分片 | 内容 | 验收 |
 |---|---|---|
 | 补校验 | **立表**（不改行为）→ **补局部**（函数体标注收集）→ **收未知名**（点名拒绝）三个提交；`visiting` 收口 | 立表后探针读数一律不动；补局部后局部声明、匿名函数形参、泛型嵌套三处翻红；收未知名后 `*Foo`、`*String`、`*I16`、`*CChar` 检查期即拒；签名位 `*计数对象` 仍被拒；`examples/` 全量 `check` 不新增红 |
-| 收口判据 | 三张判据归一到一张白名单，标量集合归一；拼写留各层 | 同一个 `*纯值struct` 在导入面、导出面、声明级得到同一结论，各一条用例；五份标量集合由一条门禁对账 |
+| 收口判据 | 三张判据归一到一张白名单，标量集合归一；拼写留各层 | 同一个 `*纯值struct` 在导入面、导出面、声明级得到同一结论，各一条用例；标量表与两处取名由单测对账 |
 | 开退路 | 按已裁的正名收窄 `void*` 死分支，给 C 面不透明指针唯一形状 | 头文件里非标量目标不再有拼写；未用不透明目标的库头文件与基线逐字相同；`CInteropExportTests.swift`:264-284 的既有负例按裁决更新或保留 |
 | 差分补测 | 补 `**T` 嵌套、四种指针算术、`RawPointerValue` 内部、声明级负例、`objectReference` 与 `rawPointer` 无互转、三通道 `addressOfVar` parity | 每条差分用例在 `run` 与 `run-llvm` 上同值或明确登记为通道差异；全量测试数以开工时留档的基线为准，只许不减 |
 | 门禁 | 诊断表 key 集合、标量集合、空族、台账读数四项判据 | `tools/runtime-abi-check.py`、`tools/ir-contract-check.py`、`tools/builtin-inventory-check.py`、`tools/check-doc-links.sh` 四条全绿 |
@@ -122,14 +122,16 @@
 
 八个提交单元，按依赖排。`补校验` 拆三个，其余一片一提交。分支 `dev-agent-pini-raw-pointer-hardening`，身份 `Pini Dev <dev@pini.local>`（注册表在册）；每笔提交前过注释与格式门禁，并回前过容器 CI。
 
-已落三笔：立表、补局部、收未知名；余下五片未动。收未知名顺带做掉两件事——`isCScalarType` 的十四名标量表删除（五份集合少一份），导入面的 foreign 声明不再被声明级重复判（`FFIType` 的码更精确）。
+已落四笔：立表、补局部、收未知名、收口判据；余下四片未动。收未知名删掉 `isCScalarType` 的十四名表（五份集合少一份），收口判据又删掉 `cExportScalars` 与两处运行时宽度 switch（再少两份），只余「表 + `FFIType` 取名 + 运行时编解码」三处，且后两处由单测对账。
+
+注意 「纯值结构体可作 `*T` 目标」这条承诺已在实现层撤回：声明级不再顺字段递归，三面一律拒绝。经验行为是作者得先把值搬进 `*U8` 缓冲；文档仍写着旧承诺，订正归「文档收口」片。
 
 | 提交单元 | 改哪里 | 判据（现读数 → 期望读数） |
 |---|---|---|
 | 补校验·立表 | 新建 `Sources/PiniSemantics/Common/CPointerTarget.swift`：IR 可构造的标量集、`*U8` 定名、拒绝理由。纯新增，不改行为 | 单测断言表等于 `IRType(from:)` 可构造集；`swift test` 总数不减；六支补充探针读数一律不动 |
 | 补校验·补局部 | `TypeChecker.swift`:2360 的 `.varDecl` 与 `:2945` 的 `.funcLiteral` 各挂一次 `validatePointerAnnotations`（标注只有这两个可写位置；泛型实参位解析器已拒 `*T`）；`:2345-2354` 的 `.pointer` 返回拼写而不是空串 | 局部 `*计数对象`、匿名函数形参 `*计数对象`、`[*计数对象]` 三处由通过改为拒；`p + 1` 的 `expected` 不再是空串；签名位读数不变 |
 | 补校验·收未知名 | `TypeChecker.swift`:1745 的 `else { return nil }` 改为点名返回 | `*Foo`、`*String`、`*I16`、`*CChar` 由「通过、执行期报 `E6-004`」改为检查期即拒；结论与 `ForeignTypeSurfaceTests.swift`:91 的导入面一致 |
-| 收口判据 | `cExportRejection`:626-632、`FFIType.pointerTarget`:119-131、`cCompatibilityFailure`:1740-1767 读同一张表；`isCScalarType`:1769 只被 `:1744` 调用，可删；`cExportScalars`:414 并表；`Value.stride`:329 与 `RuntimeOps.swift`:320, 388 按同表生成 | 同一个 `*纯值struct` 三面同一句话；五份集合由一条门禁对账；`CInteropExportTests.swift`:264-284、`:286-306` 随统一措辞更新 |
+| 收口判据 | `CPointerTarget` 收成一份标量表加一张宽度表；`cExportRejection`、`FFIType.pointerTarget`、`pointerTargetFailure` 读同一份；`cExportScalars` 删除；`RawPointerValue.stride` 与 `RuntimeOps.encode/decode` 改读宽度表；`pointerTargetFailure` 不再顺结构体字段递归 | 同一个 `*纯值struct` 三面同一句；表里七个标量在运行时编解码同值、表外名字被运行时拒绝；`CInteropExportTests` 两处断言随措辞更新；全量测试只增不减 |
 | 开退路 | `CHeaderBackend.swift`:199-203 的 `.pointer` 只认标量目标，不变式用一句 `precondition` 钉住；守卫照 `usesStringHandle`:49 的写法 | 非标量目标在头文件里不再有拼写；未用不透明目标的库头文件与基线逐字相同 |
 | 差分补测 | 新建 `Tests/PiniTests/PointerSurfaceTests.swift`，套 `PiniSourceLowering`；语料同时进 `examples/` | 先钉三条现状：`&x` 的 7 与 9、`**I64` 的 `E5-006` 与 7、`p + 1` 的空 `expected`；每条选「修」或「登记」 |
 | 门禁 | `tools/` 三条一致性判据（诊断表 key 集合、标量集合、空族）；`docs/spec/runtime-abi.md`:35 的 109、`:58` 的 119、`:118` 的 92 | `ci/entrypoint.sh` 九步全绿 |
