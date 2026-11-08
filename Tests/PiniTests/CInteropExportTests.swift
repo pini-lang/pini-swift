@@ -279,8 +279,8 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
                 """,
                 fileName: "calc.pini")
         }
-        #expect(failed?.message.contains("指针目标") == true)
-        #expect(failed?.message.contains("void*") == true, "诊断要说明为什么不能过")
+        #expect(failed?.message.contains("不能作 `*T` 的目标") == true)
+        #expect(failed?.message.contains("不在 C 兼容白名单里") == true, "诊断要说明为什么不能过")
     }
 
     @Test("给定块的指针字段同样按指针目标判")
@@ -302,7 +302,7 @@ struct CInteropExportTests: Sendable, PiniSourceLowering {
                 """,
                 fileName: "calc.pini")
         }
-        #expect(failed?.message.contains("指针目标") == true)
+        #expect(failed?.message.contains("不能作 `*T` 的目标") == true)
     }
 
     @Test("标量指针过检查，头文件写成具体指针")

@@ -39,6 +39,24 @@ struct CPointerTargetTests: Sendable {
         }
     }
 
+    @Test("宽度表与标量名同源：每个名字都有正的字节宽度，表外的没有")
+    func widthsCoverEveryScalar() {
+        #expect(Set(CPointerTarget.scalarWidths.keys) == CPointerTarget.scalarNames)
+        for (name, width) in CPointerTarget.scalarWidths {
+            #expect(CPointerTarget.width(of: name) == width, "\(name) 实际：\(String(describing: CPointerTarget.width(of: name)))")
+            #expect(width > 0, "\(name) 的宽度须为正")
+        }
+        #expect(CPointerTarget.width(of: "I16") == nil)
+    }
+
+    @Test("整句与理由同源：句子只是把名字与理由拼起来，标量没有句子")
+    func sentenceWrapsTheReason() throws {
+        let sentence = try #require(CPointerTarget.sentence(for: "Foo"))
+        let reason = try #require(CPointerTarget.rejection(for: "Foo"))
+        #expect(sentence == "`Foo` 不能作 `*T` 的目标：\(reason)")
+        #expect(CPointerTarget.sentence(for: "U8") == nil)
+    }
+
     @Test("拒绝理由按类别分开：未知、宽度、单字节字符、运行时表示、句柄")
     func rejectionTellsTheCategoriesApart() throws {
         let unknown = try #require(CPointerTarget.rejection(for: "Foo"))

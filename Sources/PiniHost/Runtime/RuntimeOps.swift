@@ -318,19 +318,20 @@ public enum RuntimeOps {
         }
         switch elem {
         case .simple(let name, _):
+            /// 元素类型只能来自 `CPointerTarget` 的标量表：检查期已挡住表外名字，
+            /// 这里再挡一次，好让「表里有、解码没写」在运行时立刻显形，而不是按错宽度读。
+            guard CPointerTarget.width(of: name) != nil else {
+                throw RuntimeError.invalidOperation(reason: "load：不支持的指针元素类型 `\(name)`", location: loc)
+            }
             switch name {
             case "I8", "U8": return .int(Int(rp.pointer.load(as: Int8.self)))
-            case "I16", "U16": return .int(Int(rp.pointer.load(as: Int16.self)))
-            case "I32", "U32": return .int(Int(rp.pointer.load(as: Int32.self)))
+            case "I32": return .int(Int(rp.pointer.load(as: Int32.self)))
             case "I64", "U64": return .int(rp.pointer.load(as: Int.self))
-            case "F32": return .float(Double(rp.pointer.load(as: Float.self)))
             case "F64": return .float(rp.pointer.load(as: Double.self))
             case "Bool": return .bool(rp.pointer.load(as: Bool.self))
-            /// `CChar` = the C single byte character.
-            /// Unreachable today: the checker accepts `*CChar`, but no engine resolves the element type to reach this decode.
-            case "CChar": return .int(Int(rp.pointer.load(as: UInt8.self)))
             default:
-                throw RuntimeError.invalidOperation(reason: "load：不支持的指针元素类型 `\(name)`", location: loc)
+                throw RuntimeError.invalidOperation(
+                    reason: "load：`\(name)` 在标量表里，但解码分支没写", location: loc)
             }
         case .pointer:
             let p = rp.pointer.load(as: UnsafeMutableRawPointer.self)
@@ -386,33 +387,30 @@ public enum RuntimeOps {
         }
         switch elem {
         case .simple(let name, _):
+            /// 与 `decodePointer` 同一道表检查：写进去的宽度必须是表里登记的那个，
+            /// 表外名字在检查期就该被拒，走到这里说明判据漏了。
+            guard CPointerTarget.width(of: name) != nil else {
+                throw RuntimeError.invalidOperation(reason: "store：不支持的指针元素类型 `\(name)`", location: loc)
+            }
             switch name {
             case "I8", "U8":
                 guard case .int(let i) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
                 ptr.storeBytes(of: Int8(truncatingIfNeeded: i), as: Int8.self)
-            case "I16", "U16":
-                guard case .int(let i) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
-                ptr.storeBytes(of: Int16(truncatingIfNeeded: i), as: Int16.self)
-            case "I32", "U32":
+            case "I32":
                 guard case .int(let i) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
                 ptr.storeBytes(of: Int32(truncatingIfNeeded: i), as: Int32.self)
             case "I64", "U64":
                 guard case .int(let i) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
                 ptr.storeBytes(of: i, as: Int.self)
-            case "F32":
-                guard case .float(let f) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
-                ptr.storeBytes(of: Float(f), as: Float.self)
             case "F64":
                 guard case .float(let f) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
                 ptr.storeBytes(of: f, as: Double.self)
             case "Bool":
                 guard case .bool(let b) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
                 ptr.storeBytes(of: b, as: Bool.self)
-            case "CChar":
-                guard case .int(let i) = value else { throw Self.typeMismatch(name: name, value: value, loc: loc) }
-                ptr.storeBytes(of: UInt8(truncatingIfNeeded: i), as: UInt8.self)
             default:
-                throw RuntimeError.invalidOperation(reason: "store：不支持的指针元素类型 `\(name)`", location: loc)
+                throw RuntimeError.invalidOperation(
+                    reason: "store：`\(name)` 在标量表里，但编码分支没写", location: loc)
             }
         case .pointer:
             guard case .rawPointer(let rp) = value else { throw Self.typeMismatch(name: "*\(elem.describe())", value: value, loc: loc) }

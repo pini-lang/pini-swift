@@ -1,4 +1,5 @@
 import Foundation
+import PiniSemantics
 import PiniSyntax
 
 /// 并发工作节点同时是取消节点：取消沿 `Future` 树传播，不另立 `CancelScope`。
@@ -326,17 +327,12 @@ public final class RawPointerValue {
     }
 
     /// `*T` 元素类型的字节宽度。nil = 未知（按 1 字节）。
+    /// 标量宽度取自 `CPointerTarget`：`p + n` 的步长与 `load` / `store` 的编解码宽度必须是同一个数。
     public static func stride(of type: TypeAnnotation?) -> Int? {
         guard let t = type else { return nil }
         switch t {
         case .simple(let name, _):
-            switch name {
-            case "I8", "U8", "Bool": return 1
-            case "I16", "U16": return 2
-            case "I32", "U32", "F32": return 4
-            case "I64", "U64", "F64": return 8
-            default: return nil
-            }
+            return CPointerTarget.width(of: name)
         case .pointer: return MemoryLayout<UnsafeMutableRawPointer>.size
         default: return nil
         }

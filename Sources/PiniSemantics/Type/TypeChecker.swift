@@ -410,9 +410,6 @@ public final class TypeChecker {
         if traits.contains(Self.errorTraitName) { errorTypes.insert(name) }
     }
 
-    /// 跨 C 边界的标量白名单。名字即头文件里的 C 类型来源，也是语义期的准入表。
-    private static let cExportScalars: Set<String> = ["I8", "U8", "I32", "I64", "U64", "F64", "Bool"]
-
     /// 内置错误特征的名字。标记式：没有成员，`实现:` 即入错误集。
     public static let errorTraitName = "错误"
     /// 稳定码特征的名字。标记式：只有它出现在 enum 的 `实现:` 里，用例码才走名字散列。
@@ -622,14 +619,17 @@ public final class TypeChecker {
                 return position == .parameter
                     ? nil : "`String` 只在导出函数的形参位成立，C 侧是借出的 `const char*`"
             }
-            return Self.cExportScalars.contains(name) ? nil : "`\(name)` 不是 C 兼容标量"
+            return CPointerTarget.scalarNames.contains(name) ? nil : "`\(name)` 不是 C 兼容标量"
         case .pointer(let element, _):
-            /// 指针目标必须是 C 标量。给定块之类的目标在头文件里只能退化成 `void*`，而 IR 也搬不动
-            /// 它（形参解析不出标量类型）—— 放行只会把失败从检查期推到发射期。
-            if case .simple(let name, _) = element, Self.cExportScalars.contains(name) {
+            /// 指针目标必须是白名单里的标量：头文件只写得出标量指针，IR 也只按标量解析元素。
+            /// 其余形状在这里拒绝，理由取 `CPointerTarget` —— 与导入面、声明级同一句。
+            if case .simple(let name, _) = element, CPointerTarget.scalarNames.contains(name) {
                 return nil
             }
-            return "指针目标 `\(element.describe())` 不是 C 标量；非标量目标在 C 侧只能写成 `void*`"
+            if case .simple(let name, _) = element, let sentence = CPointerTarget.sentence(for: name) {
+                return sentence
+            }
+            return "指针目标 `\(element.describe())` 不是 C 标量；导出头文件只写得出标量指针"
         case .generic(let name, let params, _)
         where name == "Result" && (params.count == 1 || params.count == 2):
             guard position == .result else { return "`^T` 只能作返回类型" }
@@ -640,7 +640,7 @@ public final class TypeChecker {
                     return "`Result` 的错误位须是实现 `错误` 特征的类型"
                 }
             }
-            if case .simple(let scalar, _) = payload, Self.cExportScalars.contains(scalar) { return nil }
+            if case .simple(let scalar, _) = payload, CPointerTarget.scalarNames.contains(scalar) { return nil }
             return "`^T` 的载荷须是 C 兼容标量"
         case .tuple(_, let elements, _) where elements.isEmpty:
             return nil
@@ -681,9 +681,9 @@ public final class TypeChecker {
         switch t {
         case .simple(let name, _):
             if name == "Bool" { return "不能是 Bool：`i1` 与 `_Bool` 的约定不同，改用 I32" }
-            return Self.cExportScalars.contains(name) ? nil : " `\(name)` 不是 C 兼容标量"
+            return CPointerTarget.scalarNames.contains(name) ? nil : " `\(name)` 不是 C 兼容标量"
         case .pointer(let element, _):
-            if case .simple(let name, _) = element, Self.cExportScalars.contains(name) { return nil }
+            if case .simple(let name, _) = element, CPointerTarget.scalarNames.contains(name) { return nil }
             return "的指针目标 `\(element.describe())` 不是 C 标量"
         default:
             return " `\(t.describe())` 不是 C 标量或指针"
@@ -1706,17 +1706,16 @@ public final class TypeChecker {
         for r in f.returnTypes { try validatePointerAnnotations(r) }
     }
 
-    /// 递归校验一个类型注解内的所有 `*T`：元素须 C 兼容（标量/纯值结构体/另一指针），
-    /// 禁 object 及含 object 字段的复合类型（ ARC 隔离）。
+    /// 递归校验一个类型注解内的所有 `*T`：元素须是白名单标量或另一层指针，
+    /// 禁 object（ARC 隔离）。
     private func validatePointerAnnotations(_ annotation: TypeAnnotation) throws {
         switch annotation {
         case .pointer(let element, let loc):
             try validatePointerAnnotations(element)
-            var visiting: Set<String> = []
-            if let failure = cCompatibilityFailure(in: element, visiting: &visiting) {
+            if let failure = pointerTargetFailure(in: element) {
                 try report(
                     TypeError.mismatch(
-                        expected: "C 兼容类型（标量 / 纯值结构体 / 另一指针）",
+                        expected: "C 兼容的 `*T` 目标（标量 / 另一层指针）",
                         got: pointerTargetMessage(element: element, failure: failure),
                         location: loc
                     ))
@@ -1735,46 +1734,28 @@ public final class TypeChecker {
 
     /// `*T` 目标不合格的两种情形。分开是因为作者要做的事不同：换目标（ARC 对象）、还是认名字。
     private enum PointerTargetFailure {
-        /// 目标是 object，或含 object 字段的复合类型。
+        /// 目标是 object。
         case arcObject(name: String)
         /// 名字本身作不了目标：未登记、宽度不在 IR、有运行时表示、已是句柄。
         case notRepresentable(name: String, reason: String)
     }
 
-    /// 返回类型中首个不合格的 `*T` 目标，否则 nil。
-    /// `visiting` 防自引用结构体（如链表节点 `next: Node`）无限递归，进出各记一次。
-    private func cCompatibilityFailure(
-        in type: TypeAnnotation, visiting: inout Set<String>
-    ) -> PointerTargetFailure? {
+    /// `*T` 目标成立当且仅当它是白名单里的标量、或另一层指针；其余形状一律不合格。
+    /// 不顺着结构体字段递归：目标集已收成标量，「纯值结构体」不在承诺里，字段遍历只会放过它。
+    private func pointerTargetFailure(in type: TypeAnnotation) -> PointerTargetFailure? {
         switch type {
         case .simple(let name, _):
-            if referenceTypeNames.contains(name) { return .arcObject(name: name) }
             if CPointerTarget.scalarNames.contains(name) { return nil }
-            guard let fields = typeFieldsByName[name] else {
-                return .notRepresentable(
-                    name: name, reason: CPointerTarget.rejection(for: name) ?? "不在 C 兼容白名单里")
-            }
-            guard !visiting.contains(name) else { return nil }
-            visiting.insert(name)
-            defer { visiting.remove(name) }
-            for (_, ftype) in fields {
-                if let hit = cCompatibilityFailure(in: ftype, visiting: &visiting) { return hit }
-            }
-            return nil
+            if referenceTypeNames.contains(name) { return .arcObject(name: name) }
+            return .notRepresentable(
+                name: name, reason: CPointerTarget.rejection(for: name) ?? "不在 C 兼容白名单里")
         case .pointer:
-            return nil  // 指针本身 C 兼容
-        case .tuple(_, let elements, _):
-            for e in elements {
-                if let hit = cCompatibilityFailure(in: e, visiting: &visiting) { return hit }
-            }
-            return nil
-        case .generic(_, let params, _):
-            for p in params {
-                if let hit = cCompatibilityFailure(in: p, visiting: &visiting) { return hit }
-            }
             return nil
         case .function:
             return .notRepresentable(name: "函数类型", reason: "C 边界没有可承载它的值布局")
+        case .tuple, .generic:
+            return .notRepresentable(
+                name: type.describe(), reason: "不是标量名；`*T` 的目标只能是标量或另一层指针")
         }
     }
 
@@ -1785,10 +1766,10 @@ public final class TypeChecker {
         let target = element.describe()
         switch failure {
         case .arcObject(let name):
-            return "`\(target)` 含非 C 兼容类型 \(name)（`*T` 不得指向 object 或含 object 的复合类型，ARC 隔离）"
+            return "`\(name)` 不能作 `*T` 的目标：它是 object，受 ARC 隔离"
         case .notRepresentable(let name, let reason):
-            let subject = target == name ? "`\(name)`" : "`\(target)` 里的 `\(name)`"
-            return "\(subject) 不能作 `*T` 的目标：\(reason)"
+            if target == name, let sentence = CPointerTarget.sentence(for: name) { return sentence }
+            return "`\(target)` 里的 `\(name)` 不能作 `*T` 的目标：\(reason)"
         }
     }
 

@@ -53,7 +53,7 @@ public enum FFIType: Equatable, Sendable {
                 }
                 return .stringHandle
             }
-            if Self.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
+            if CPointerTarget.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
             throw FFITypeError.notRepresentable(type: name, reason: "不是 C 兼容标量或指针")
         case .pointer(let element, _):
             return .pointer(try pointerTarget(element))
@@ -105,7 +105,7 @@ public enum FFIType: Equatable, Sendable {
                     reason: "回调\(position)写 StringHandle 不行：计数要落在 C 与 Pini 说定的那一侧，回调没有这条约定")
             }
             if let scalar = scalar(named: name) { return scalar }
-            if Self.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
+            if CPointerTarget.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
             throw FFITypeError.notRepresentable(type: name, reason: "回调\(position)只能是 C 标量或指针")
         case .pointer(let element, _):
             return .pointer(try pointerTarget(element))
@@ -116,12 +116,16 @@ public enum FFIType: Equatable, Sendable {
     }
 
     /// 指针目标：标量继续递归，指针再套一层；其余（含 `String`）都不行。
+    /// 拒绝理由取自 `CPointerTarget`，与声明级、导出面同一句；宽度例外出专用的码。
     private static func pointerTarget(_ annotation: TypeAnnotation) throws -> FFIType {
         switch annotation {
         case .simple(let name, _):
             if let scalar = scalar(named: name) { return scalar }
-            if Self.widthsOutsideIR.contains(name) { throw FFITypeError.widthNotInIR(type: name) }
-            throw FFITypeError.notRepresentable(type: name, reason: "指针目标只能是 C 标量或指针")
+            if CPointerTarget.widthsOutsideIR.contains(name) {
+                throw FFITypeError.widthNotInIR(type: name)
+            }
+            throw FFITypeError.notRepresentable(
+                type: name, reason: CPointerTarget.sentence(for: name) ?? "不能作 `*T` 的目标")
         case .pointer(let element, _):
             return .pointer(try pointerTarget(element))
         default:
@@ -130,8 +134,9 @@ public enum FFIType: Equatable, Sendable {
         }
     }
 
-    /// 标量表。IR 只有这几个宽度，语义层不再多认。
+    /// 标量表。IR 只有这几个宽度，语义层不再多认；表外名字在这里先被挡掉，switch 只负责取枚举值。
     private static func scalar(named name: String) -> FFIType? {
+        guard CPointerTarget.scalarNames.contains(name) else { return nil }
         switch name {
         case "I8": return .i8
         case "U8": return .u8
@@ -143,9 +148,6 @@ public enum FFIType: Equatable, Sendable {
         default: return nil
         }
     }
-
-    /// 语言层有这几个宽度，IR 没有对应类型。留一张表是为了报「宽度」而不是「不认识」。
-    private static let widthsOutsideIR: Set<String> = ["I16", "U16", "U32", "F32"]
 
     /// Pini 面拼写，用于诊断。
     public func describe() -> String {
