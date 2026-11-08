@@ -156,7 +156,7 @@ public final class TypeChecker {
     }
 
     /// 并发内建类型：`Future<T, E>` 是 `=>` 函数的返回类型（运行中的并发进程句柄）；
-    /// `Result<T, E>` 是错误即数据的和类型，`await`/`wait` join 的结果，用例 `ok(v)` / `err(e)`；
+    /// `Result<T, E>` 是错误即数据的和类型，`await` / `join` 的结果，用例 `ok(v)` / `err(e)`；
     /// `Error` 是内建错误特征的默认实现类型，`Error("msg")` 快速构造。
     private func registerConcurrencyBuiltins(loc: SourceLocation, string: TypeAnnotation) {
         let t = TypeAnnotation.simple(name: "T", location: loc)
@@ -218,7 +218,7 @@ public final class TypeChecker {
         typeEnv.markConformance(typeName: "Error", traits: [Self.errorTraitName])
         typeEnv.markConformance(typeName: cancelErrorTypeName, traits: [Self.errorTraitName])
 
-        // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await`/`wait` joinAll([...])` 得 Result<[T], Error>。
+        // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await` / `join` 接 `joinAll([...])` 得 Result<[T], Error>。
         // 形参锚定 `Array<Future<_, _>>`：元素类型由数组字面量按元素推断给出，`_` 只定住
         // Future 的构造子与元数。写成裸 `Array` 会把推断出的 `Array<Future<...>>` 判成不匹配。
         let wildcard = TypeAnnotation.simple(name: "_", location: loc)
@@ -581,7 +581,7 @@ public final class TypeChecker {
         if !given.genericParams.isEmpty {
             try report(
                 TypeError.exportCInvalid(
-                    reason: "泛型给定块 `\(typeName)` 要按实参特化，v1 不进 C 面", location: location))
+                    reason: "泛型给定块 `\(typeName)` 要按实参特化，当前不进 C 面", location: location))
         }
         var seenFields: [String: String] = [:]
         for field in given.fields {
@@ -1959,7 +1959,7 @@ public final class TypeChecker {
                 try report(
                     TypeError.foreignTypeNotRepresentable(
                         type: "函数",
-                        reason: "函数指针只作形参：返回位需要一个可持有、可比较的一等值，第二版没有这种值；"
+                        reason: "函数指针只作形参：返回位需要一个可持有、可比较的一等值，当前没有这种值；"
                             + "要动态取符号走 `build --shared` 的静态导出",
                         location: symbol.location))
             case .booleanInCallback:
@@ -2965,7 +2965,7 @@ public final class TypeChecker {
 
         case .join(let inner, let location, _):
             try checkExpression(inner)
-            // （G12）：`await`/`wait` 的操作数必须是 Future<_,_>（或后续的 Chan<_>）；
+            // （G12）：`await`/`join` 的操作数必须是 Future<_,_>（或后续的 Chan<_>）；
             // 对普通值 join 是类型错误（收紧了早期 await 的「非 Future 透传」行为）。
             // 操作数类型不可推断时跳过（沿用类型层既有容忍策略，避免误报）。
             if let operandType = inference.infer(expression: inner) {

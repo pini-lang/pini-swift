@@ -7,7 +7,7 @@
 ffi_malloc: (U64,) -> (*U8,)
 ffi_free: (*U8,) -> ()
 ffi_strlen: (*U8,) -> (U64,)
-cstr: (String,) -> (*U8,) ; shim 白名单：Pini String → 调用方拥有的 C 字符串
+toCString: (String,) -> (*U8,) ; shim 白名单：Pini String → 调用方拥有的 C 字符串
 ffi_puts: (*U8,) -> (I32,)
 ffi_memcpy: (*U8, *U8, U64,) -> (*U8,)
 ffi_memset: (*U8, I32, U64,) -> (*U8,)
@@ -17,18 +17,18 @@ ffi_strcmp: (*U8, *U8,) -> (I32,) ; 裸 C 绑定：经 dlsym 从 libffilib 解�
 ; ── ② 安全封装层：unsafe 内核（|unsafe 自由函数，函数体自动不安全上下文）──
 ; 把 Pini String 转 C 串量长度后立即释放，调用方无需触碰指针（返回 U64，由 strlen 提供）。
 c串长度|unsafe(源: String,) -> (U64,):
-    var p = cstr(源)
+    var p = toCString(源)
     var n = ffi_strlen(p)
     ffi_free(p)
     return n
 
 ; 分配 owned C 字符串副本并返回指针（调用方负责 free）。
 c串复制|unsafe(源: String,) -> (*U8,):
-    return cstr(源)
+    return toCString(源)
 
 ; 经 dlsym 裸 C 绑定把字符串解析为整数（返回 I32，调用方拿到的已是强类型值）。
 c整型|unsafe(源: String,) -> (I32,):
-    var p = cstr(源)
+    var p = toCString(源)
     var n = ffi_atoi(p)
     ffi_free(p)
     return n
@@ -52,15 +52,15 @@ c整型|unsafe(源: String,) -> (I32,):
 
 ; ④ 语言级测试块（由 `pini test` 收集）：测试块本身非 unsafe 上下文，故经 unsafe 消耗点调用 unsafe 内核 / foreign 函数。
 ; 解释器 `==` 仅对 I32 可靠（U64 / U8 结果无法参与 `==`），故 |test 断言聚焦 I32 返回的 dlsym 裸绑定 atoi、strcmp；
-; 其余路径（shim cstr/strlen、store/load、memcpy/memset）在 ⑤ main 经 golden 输出端到端验证。
+; 其余路径（shim toCString/strlen、store/load、memcpy/memset）在 ⑤ main 经 golden 输出端到端验证。
 裸绑定测试|test() -> ():
     var n: I32 = c整型("123")
     assert(n == 123, "dlsym atoi(\"123\") 应为 123")
     return
 
 比较测试|test() -> ():
-    var a = unsafe cstr("abc")
-    var b = unsafe cstr("abc")
+    var a = unsafe toCString("abc")
+    var b = unsafe toCString("abc")
     var c: I32 = unsafe ffi_strcmp(a, b)
     assert(c == 0, "ffi_strcmp 相等应返回 0")
     unsafe ffi_free(a)
@@ -89,7 +89,7 @@ main|func() -> ():
     print("拷贝字节 =", unsafe load(b))
     unsafe ffi_free(a)
     unsafe ffi_free(b)
-    var raw = unsafe cstr("hello, FFI")
+    var raw = unsafe toCString("hello, FFI")
     unsafe ffi_puts(raw) ; ffi_puts 直写真实 stdout（绕过 outputSink；pini run 可见，进程内测试捕获不含此行）
     unsafe ffi_free(raw)
     return

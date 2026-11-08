@@ -24,7 +24,7 @@ main|func() -> ():
     ; 手动取消：cancel 后 join → err(CancelError)
     var u = 手动任务()
     u.cancel()
-    var r2 = wait u
+    var r2 = join u
     match r2:
         case ok(v,):
             print(v)

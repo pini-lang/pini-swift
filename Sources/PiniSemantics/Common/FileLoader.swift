@@ -300,7 +300,7 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
     let buildExclude = MiniTOML.parseArray(doc.plain("build")["exclude"] ?? "[]")
 
     // Def-3：入口文件。`[[bin]]` 是数组表（可多个可执行目标），`[lib]` 是平表（至多一个）。
-    // 只取 `entry`，按出现顺序去重；`[[bin]]` 的 `name` 目前无消费者（v1 入口函数名恒为 `main`），
+    // 只取 `entry`，按出现顺序去重；`[[bin]]` 的 `name` 目前无消费者（入口函数名恒为 `main`），
     // 不因解析而默认它有意义。
     var entryPoints: [String] = []
     for entry in doc.arrayTables["bin"] ?? [] {

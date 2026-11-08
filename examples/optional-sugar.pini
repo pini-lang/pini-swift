@@ -12,20 +12,20 @@ main|func() -> ():
     match b:
         case none:
             print("none")
-    ; 带类型注解的 nil
-    var c: Optional<I32> = Optional.none
+    ; 带类型注解的 nil：值位需要标注，否则推不出 Optional<T> 的 T
+    var c: Optional<I32> = nil
     match c:
-        case none:
+        case nil:
             print("matched-nil")
     ; nil 与 Optional.none 同值（同一解释器路径）
     var d: Optional<I32> = Optional.none
     match d:
         case none:
             print("none")
-    ; Phase 3：前缀 ?T 可选类型糖（= Optional<T>）
-    var e: Optional<I32> = Optional.none
+    ; 前缀 ?T 可选类型糖（= Optional<T>），值位同样吃 nil
+    var e: ?I32 = nil
     match e:
-        case none:
+        case nil:
             print("q-none")
     ; ?T 与 Optional<T> 同类型，可互相赋值
     var f: Optional<I32> = e

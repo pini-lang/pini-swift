@@ -6,8 +6,8 @@ import PiniSyntax
 @testable import PiniIR
 @testable import PiniHost
 
-/// `await` / `wait` 的形态载体判据：语法把一次 join 分成两种形态 —— `await`（异步体内等待、可以让出当前任务）
-/// 与 `wait`（任意上下文等待、占用当前线程）。载体是 `form` 字段，从 `Parser` 一路带到 IR 节点。
+/// `await` / `join` 的形态载体判据：语法把一次 join 分成两种形态 —— `await`（异步体内等待、可以让出当前任务）
+/// 与 `join`（任意上下文等待、占用当前线程）。载体是 `form` 字段，从 `Parser` 一路带到 IR 节点。
 /// 本件钉载体不丢：`form` 必须到得了 IR（否则下游无从分辨），且两种形态各自落在自己的上下文里、结果一致。
 struct ConcurrencyJoinFormTests: Sendable, PiniSourceLowering {
 
@@ -23,15 +23,15 @@ struct ConcurrencyJoinFormTests: Sendable, PiniSourceLowering {
     }
 
     /// 同一段程序里两种形态各写一次，各自写在自己的上下文里 —— 这是判据的最小语料。
-    /// `await` 只在异步体内、`wait` 只在同步体内，故语料按此分工；判据的意图是两种形态都得给出正确结果。
+    /// `await` 只在异步体内、`join` 只在同步体内，故语料按此分工；判据的意图是两种形态都得给出正确结果。
     private static let bothForms = #"""
     取|func(n: I32,) => (I32,):
         return ok(n)
 
-    ; 同步体：只能写 wait
+    ; 同步体：只能写 join
     经等待|func(n: I32,) -> (I32,):
         let a = 取(n)
-        let x = try wait a else e:
+        let x = try join a else e:
             return 0
         return x
 
@@ -45,7 +45,7 @@ struct ConcurrencyJoinFormTests: Sendable, PiniSourceLowering {
     main|func() -> ():
         print(经等待(1))
         let f = 经让出(2)
-        let r = try wait f else g:
+        let r = try join f else g:
             print("err")
             return
         print(r)
@@ -60,7 +60,7 @@ struct ConcurrencyJoinFormTests: Sendable, PiniSourceLowering {
         /// 能被读出。若载体在中途被丢掉，两者都会退化成同一个词 —— 那正是补载体之前的
         /// 状态，也正是本判据要挡住的东西。
         let dump = IRPrinter.dump(module: try lowered(Self.bothForms))
-        #expect(dump.contains("wait("), "occupying form missing from the lowered dump")
+        #expect(dump.contains("join("), "occupying form missing from the lowered dump")
         #expect(dump.contains("await("), "yielding form missing from the lowered dump")
     }
 

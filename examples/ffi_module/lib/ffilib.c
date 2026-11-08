@@ -13,7 +13,7 @@
 // 构建（Linux）：  cc -shared -fPIC -o libffilib.so ffilib.c
 //
 // 注：本库仅作示例依赖 vendoring 演示，二进制体积小（约十几 KB），随仓库提交；
-// 上层 Pini 源码经 `cstr` shim 把 String 转为 *U8 后传入此处符号。
+// 上层 Pini 源码经 `toCString` shim 把 String 转为 *U8 后传入此处符号。
 
 #include <stdlib.h>
 #include <string.h>

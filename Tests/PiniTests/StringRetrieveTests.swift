@@ -7,7 +7,7 @@ import PiniSyntax
 @testable import PiniBackendLLVM
 import PiniHost
 
-/// 取回的判据：`c字符串(*U8)` 读到 NUL 为止，复制成 Pini 串；C 的缓冲此后可以释放。
+/// 取回的判据：`fromCString(*U8)` 读到 NUL 为止，复制成 Pini 串；C 的缓冲此后可以释放。
 /// 两通道同一语义，空指针读成空串；份额由 Pini 侧持有，作用域退出时归还。
 @Suite("取回的字符串")
 struct StringRetrieveTests: Sendable, PiniSourceLowering {
@@ -19,7 +19,7 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
             main|func() -> (I32,):
                 return 0
             """)
-        let signature = checker.typeInference.environment?.lookupFunction(name: "c字符串")
+        let signature = checker.typeInference.environment?.lookupFunction(name: "fromCString")
         #expect(signature != nil, "取回内建未登记签名")
         #expect(signature?.params.count == 1, "取回只收一个实参")
 
@@ -27,7 +27,7 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
             _ = try typeChecked(
                 """
                 main|func() -> (I32,):
-                    var s = c字符串(1)
+                    var s = fromCString(1)
                     return 0
                 """)
         }
@@ -42,12 +42,12 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
         defer { try? FileManager.default.removeItem(at: dir) }
         try """
             [libc|foreign]
-            cstr: (String,) -> (*U8,)
+            toCString: (String,) -> (*U8,)
             free: (*U8,) -> ()
 
             main|func() -> (I32,):
-                var p = unsafe cstr("héllo")
-                var s = c字符串(p)
+                var p = unsafe toCString("héllo")
+                var s = fromCString(p)
                 unsafe free(p)
                 print(s)
                 print(len(s))
@@ -68,15 +68,15 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
         defer { try? FileManager.default.removeItem(at: dir) }
         try """
             [libc|foreign]
-            cstr: (String,) -> (*U8,)
+            toCString: (String,) -> (*U8,)
             free: (*U8,) -> ()
             getenv: (*U8,) -> (*U8,)
 
             main|func() -> (I32,):
-                var name = unsafe cstr("PINI_NO_SUCH_VAR_12345")
+                var name = unsafe toCString("PINI_NO_SUCH_VAR_12345")
                 var p = unsafe getenv(name)
                 unsafe free(name)
-                var s = c字符串(p)
+                var s = fromCString(p)
                 print(len(s))
                 print(s == "")
                 return 0
@@ -94,11 +94,11 @@ struct StringRetrieveTests: Sendable, PiniSourceLowering {
         let ir = try lowered(
             """
             [libc|foreign]
-            cstr: (String,) -> (*U8,)
+            toCString: (String,) -> (*U8,)
 
             main|func() -> (I32,):
-                var p = unsafe cstr("abc")
-                var s = c字符串(p)
+                var p = unsafe toCString("abc")
+                var s = fromCString(p)
                 print(s)
                 return 0
             """)

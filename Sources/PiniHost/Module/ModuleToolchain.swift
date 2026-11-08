@@ -10,7 +10,7 @@ public enum ModuleToolchain {
     // MARK: - 错误
 
     public enum ToolchainError: Error, Equatable {
-        /// 依赖目录缺失（deps/<name>/ 无 pini.toml）——v1 无下载，须先 submodule/手工落地。
+        /// 依赖目录缺失（deps/<name>/ 无 pini.toml）——当前无下载，须先 submodule/手工落地。
         case missingDependency(name: String, requirer: String, expectedPath: String)
         /// 远程 tap 的依赖尚未落地，且本次解析不抓取（抓取只发生在 refresh）。
         /// 「远程不支持」因此收窄为这一种情形：依赖还没抓下来。

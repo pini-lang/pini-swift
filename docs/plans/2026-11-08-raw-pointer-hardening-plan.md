@@ -2,7 +2,7 @@
 
 - 状态：方向与形状已定（2026-11-08）；全片已落。分片见「分片」，提交序见「细化」，未定项见「尚未定」，放宽的承接见「后续方向」。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
-- 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference-v0.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
+- 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：`2026-11-08-object-c-abi-plan.md`（对象 C-ABI 路线，暂缓，见该件状态补充）。
 - 性质：实施计划。现状判定收在「现状取证」章，不另立审计报告；本件不修源码、不跑加固。
 - 范围：只加固 `*T` 及其 C 面形状。不做对象 C-ABI、不新增 `bk_*` 符号族、不改 `docs/spec/runtime-abi.md` 冻结台账、不放宽 `*T` 的 ARC 隔离语义——本计划要修的正是这道隔离。
@@ -41,9 +41,9 @@
 
 | 探针 | `pini check` 读数 | 结论 |
 |---|---|---|
-| `*String` 作函数形参 | 检查通过 | `TypeChecker.swift`:1745 对未登记 simple 名保守放行；`docs/spec/pini-reference-v0.md`:2708-2718 明确禁 String |
+| `*String` 作函数形参 | 检查通过 | `TypeChecker.swift`:1745 对未登记 simple 名保守放行；`docs/spec/pini-reference.md`:2708-2718 明确禁 String |
 | `*计数对象` 作函数形参 | `E4-001` 拒绝（通用 mismatch，非指针专用码） | 声明级 ARC 隔离在签名位生效 |
-| `*计数对象` 写在函数体 `var p: *计数对象` | 检查通过，仅 `E7-001` 未使用变量警告 | 同一文件同一类型换位置即放行；`docs/spec/pini-reference-v0.md`:2902 的承诺在局部声明失守 |
+| `*计数对象` 写在函数体 `var p: *计数对象` | 检查通过，仅 `E7-001` 未使用变量警告 | 同一文件同一类型换位置即放行；`docs/spec/pini-reference.md`:2902 的承诺在局部声明失守 |
 | 三项门禁 | ABI 台账 119 / 119、IR 契约 73 节点三锚全覆盖、内建清单 98 加零调用点 21 等于 119，全绿 | 门禁只校验存在性与计数，挡不住语义漏洞 |
 
 注意 这四行是读数基线：**补校验**落地后，第一行（`*String`）与第三行（函数体局部 `*计数对象`）要由通过变为拒绝，第二行保持拒绝，门禁那一行是环境的体检读数、不是探针。
@@ -101,7 +101,7 @@
 | `Sources/PiniHost/Interpreter/Value.swift`:328-343、`Sources/PiniHost/Runtime/RuntimeOps.swift`:320-334, 387-416, 634-636 | 解码宽度与 `CChar` 不可达按归一表处理；`snapshotPointer` 已裁不修（`&x` 登记为 `debt`）；不改 `RawPointerValue` 的所有权语义 |
 | `Sources/PiniSemantics/Resources/Diagnostics.zh.toml`、`Sources/PiniSemantics/Resources/Diagnostics.en.toml` | 指针专用码位与文案，两份同批改；码位从 `E4-036` 起取空位 |
 | `Tests/PiniTests/PointerSurfaceTests.swift`（新建） | 差分语料与负例：`**T`、指针上的 `&`、`p + 1`、未知名、局部声明各一组 |
-| `docs/spec/pini-reference-v0.md`、`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md` | 按实现订正文档：纯值 struct、禁止表、四种指针算术、内建名、`addressOfVar` 偏离、`*U8` 定名 |
+| `docs/spec/pini-reference.md`、`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md` | 按实现订正文档：纯值 struct、禁止表、四种指针算术、内建名、`addressOfVar` 偏离、`*U8` 定名 |
 | `docs/spec/runtime-abi.md`、`tools/runtime-abi-check.py` | 只订正 109 / 119 / 92 的读数，不动符号清单 |
 | `tools/` 下门禁 | 补两份诊断表的 key 集合一致性判据、标量集合一致性判据、内建清单空族判据 |
 
@@ -137,7 +137,7 @@
 | 开退路 | `CHeaderBackend.cType` 的 `.pointer` 只认标量目标，非标量 `preconditionFailure`；`cSizeAndAlign` 的指针宽度改取 `MemoryLayout` | 七个标量目标各写出自己的 C 拼写（`int8_t*` 到 `bool*`），头文件里不出现 `void*`；既有头文件断言零改动通过 |
 | 差分补测 | 新建 `Tests/PiniTests/PointerSurfaceTests.swift`（CLI 两条通道）；`examples/pointer-address.pini` 作探针语料；基线改四列 | `&x` 钉 7 / 9、`**I64` 钉 `E5-006` / 7；探针输出 `baseline: 1 known gap(s)（debt 1）` 且退出 0 |
 | 门禁 | 新建 `tools/diagnostics-parity-check.py`（key / 字段 / 占位符）与 `tools/scalar-set-check.py`（表 vs 导入面 vs 运行时编解码）；`builtin-inventory-check.py` 加 `family-empty`；`docs/spec/runtime-abi.md` 的 109 两处改 119、92 改 98；CI 加两步 | 两侧各带 `--self-test`；空族只在有零调用点登记时放行；台账 119 / 119 / 98+21，四条一致 |
-| 文档收口 | `docs/spec/pini-reference-v0.md` 的术语表与 §3.2、§9.1、§9.2、§9.3、§9.6、§9.7；`docs/spec/c-interop-design.md` 的取址注意；`docs/spec/ir-contract.md` §2.7 与已知偏离表 | `tools/check-doc-links.sh` 通过；八处 `TODO(聚合值指针)` 可 grep；承诺段不出现「已取消」一类措辞 |
+| 文档收口 | `docs/spec/pini-reference.md` 的术语表与 §3.2、§9.1、§9.2、§9.3、§9.6、§9.7；`docs/spec/c-interop-design.md` 的取址注意；`docs/spec/ir-contract.md` §2.7 与已知偏离表 | `tools/check-doc-links.sh` 通过；八处 `TODO(聚合值指针)` 可 grep；承诺段不出现「已取消」一类措辞 |
 
 注意 差分补测的裁定已落：**改基线规矩**。基线由两列扩成四列（fixture / verdict / 处置 / 理由），处置只收 `declared`（文档规定两通道本就不同）与 `debt`（实现待修）；缺列、错处置、空理由各自判红，由 `--self-test` 覆盖。`&x` 登记为 `debt`，理由沿用 `docs/spec/ir-contract.md` §2.7 已裁的「统一到真引用」，本轮不动 `snapshotPointer`。`**T` 不进 examples（`run` 会失败），改由 `PointerSurfaceTests` 钉住 `E5-006` 与 7。
 

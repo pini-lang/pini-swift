@@ -5,12 +5,12 @@
 malloc: (U64,) -> (*U8,)
 free: (*U8,) -> ()
 strlen: (*U8,) -> (U64,)
-cstr: (String,) -> (*U8,)
+toCString: (String,) -> (*U8,)
 puts: (*U8,) -> (I32,)
 
 ; |unsafe 自由函数：函数体自动处于不安全上下文，内部无需 unsafe 前缀
 量长度|unsafe(s: String,) -> (U64,):
-    var p = cstr(s)
+    var p = toCString(s)
     var n = strlen(p)
     free(p)
     return n
@@ -31,7 +31,7 @@ main|func() -> ():
     var len = 量长度("hello")
     print("len = ", len)
     ; C 字符串输出
-    var s = unsafe cstr("hello, FFI")
+    var s = unsafe toCString("hello, FFI")
     unsafe puts(s)
     unsafe free(s)
     unsafe free(buf)

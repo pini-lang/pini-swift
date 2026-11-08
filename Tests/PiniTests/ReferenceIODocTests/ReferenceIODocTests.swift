@@ -33,7 +33,7 @@ struct ReferenceIODocTests: Sendable {
     func sectionListsExactlyTheRegistryIOBuiltins() throws {
         ///  注意  只取以 ``| ` `` 开头的表格行：本节另有一张「路径解析」表，其首列不是内建名。
         let text = try String(
-            contentsOf: repoRoot().appendingPathComponent("docs/spec/pini-reference-v0.md"),
+            contentsOf: repoRoot().appendingPathComponent("docs/spec/pini-reference.md"),
             encoding: .utf8)
         let section = section128(text)
         #expect(!section.isEmpty, "没有找到 §12.8 —— 章节标题被改名或删除时本判据必须红")

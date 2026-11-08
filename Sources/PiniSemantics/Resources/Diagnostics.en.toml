@@ -155,7 +155,7 @@ suggestion = "use one of I8 / I32 / I64 / U8 / U64 / F64; widths such as U32 and
 
 [E4-030]
 message = "a foreign function cannot return String: the pointer's ownership is unknowable"
-suggestion = "declare it as `*U8` and copy with `c字符串(pointer)` after the call"
+suggestion = "declare it as `*U8` and copy with `fromCString(pointer)` after the call"
 
 [E4-031]
 message = "the callback argument is not usable: {reason}"
@@ -254,12 +254,12 @@ message = "the default instance dependencies of a given block form a cycle (rese
 suggestion = "split the shared state into a smaller layer, or pass it explicitly"
 
 [E6-009]
-message = "`await`/`wait` does not match its enclosing body: `await` needs an async body (`=>`), `wait` needs a synchronous one (`->`)"
+message = "`await`/`join` does not match its enclosing body: `await` needs an async body (`=>`), `join` needs a synchronous one (`->`)"
 suggestion = "use the keyword that matches the body, or change the function's async declaration"
 
 [E6-010]
 message = "`await` sits where there is no resumable point: it gives the task up, and nothing here can pick the body back up"
-suggestion = "move the wait to a statement root at the top level of the body: a bare `await f()` · `var x = await f()` · `try await f() else …` · `match await f():`. The same four forms nested inside `if`, a loop body or a `match` case do not qualify either -- the resume jump cannot reach into a nested block"
+suggestion = "move the join to a statement root at the top level of the body: a bare `await f()` · `var x = await f()` · `try await f() else …` · `match await f():`. The same four forms nested inside `if`, a loop body or a `match` case do not qualify either -- the resume jump cannot reach into a nested block"
 
 [E6-011]
 message = "IR structure invariant broken: {feature}"
@@ -267,7 +267,7 @@ suggestion = "this is a compiler defect, not a program error: report it together
 
 [E3-014]
 message = "the unroll table must be a literal collection written in place: an array whose elements are scalar literals or tuple literals"
-suggestion = "write the table inline as `[(1, \"a\"), (2, \"b\")]`; a table bound to a variable is left for the second version"
+suggestion = "write the table inline as `[(1, \"a\"), (2, \"b\")]`; a table bound to a variable is not supported yet"
 
 [E3-015]
 message = "row {row} of the unroll table has {actual} components, the pattern wants {expected}"

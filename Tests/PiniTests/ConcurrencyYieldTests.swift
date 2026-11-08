@@ -36,7 +36,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     main|func() -> ():
         let t = 父(7)
-        let r = wait t
+        let r = join t
         match r:
             case ok(v):
                 print(v)
@@ -66,7 +66,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     main|func() -> ():
         let t = 父(7)
-        let r = wait t
+        let r = join t
         match r:
             case ok(v):
                 print(v)
@@ -93,7 +93,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     main|func() -> ():
         let t = 父(7)
-        let r = wait t
+        let r = join t
         match r:
             case ok(v):
                 print(v)
@@ -112,7 +112,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: scheduler)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: module)
-        // 读在运行之后：`main` 的 `wait` 把整条链等到决 ⇒ 此刻所有让出都已发生。
+        // 读在运行之后：`main` 的 `join` 把整条链等到决 ⇒ 此刻所有让出都已发生。
         return (scheduler.yieldedTaskCount, lines)
     }
 
@@ -128,22 +128,22 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
             programBase: NSTemporaryDirectory(), ffiConfig: .default, scheduler: counting)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: module)
-        // 读在运行**之后**：`main` 的那一处 `wait` 会把整条链等到决 ⇒ 此刻所有让出都已发生。
+        // 读在运行**之后**：`main` 的那一处 `join` 会把整条链等到决 ⇒ 此刻所有让出都已发生。
         return (counting.yieldCount, lines)
     }
 
-    // MARK: - 判据 1：让出真的发生（推进性），且 `wait` 不占用同一格（驳回性）
+    // MARK: - 判据 1：让出真的发生（推进性），且 `join` 不占用同一格（驳回性）
 
     @Test("await 未决子任务时父任务把线程让出去 —— 子任务已决则不让出")
     func awaitingGivesTheTaskUp() throws {
         /// 意图：核心判据，一次测两面，因为「让出」这个概念就是那个差异。推进性：`await` 版必须观测到
-        /// 至少一次让出（子任务还没决，父体就该把线程还回池子，等它决了再续跑）。驳回性：`wait` 版不许
+        /// 至少一次让出（子任务还没决，父体就该把线程还回池子，等它决了再续跑）。驳回性：`join` 版不许
         /// 观测到任何让出（阻塞的父任务从头占到子任务决，体一刻也没提前退出）。两面同语料、只差一个关键字。
         let yielding = try runYieldProbe(Self.yieldProbe("await"))
         let occupying = try runYieldProbe(Self.yieldProbe("settled"))
 
         #expect(yielding.yields >= 1, "await never gave its task up (yields: \(yielding.yields))")
-        #expect(occupying.yields == 0, "wait gave its task up \(occupying.yields) time(s), so the two forms are not distinct")
+        #expect(occupying.yields == 0, "join gave its task up \(occupying.yields) time(s), so the two forms are not distinct")
     }
 
     // MARK: - 判据 2：让出后从精确恢复点续跑，值正确（推进性）
@@ -253,7 +253,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
         main|func() -> ():
             var t = 父()
-            var q = wait t
+            var q = join t
             return
         """
     }
@@ -299,7 +299,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     main|func() -> ():
         let t = 父()
-        let r = wait t
+        let r = join t
         match r:
             case ok(v):
                 print(v)
@@ -320,7 +320,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     main|func() -> ():
         let t = 父()
-        let r = wait t
+        let r = join t
         match r:
             case ok(v):
                 print(v)

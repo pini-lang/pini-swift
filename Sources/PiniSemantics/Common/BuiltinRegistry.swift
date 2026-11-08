@@ -12,8 +12,8 @@ public enum BuiltinGroup: String, CaseIterable, Sendable {
     case math
     case concurrency
     case value
-    /// C 边界的字符串转换：出去那侧 `cstr` 是 shim 名（调用方在 foreign 块里声明），
-    /// 回来那侧 `c字符串` 是这里的条目。
+    /// C 边界的字符串转换：出去那侧 `toCString` 是 shim 名（调用方在 foreign 块里声明），
+    /// 回来那侧 `fromCString` 是这里的条目。
     case ffi
 }
 
@@ -252,10 +252,10 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "joinWithin", group: .concurrency, paramNames: ["future", "ms"], definesRuntimeValue: false),
 
         // ---- ffi ----
-        /// 取回：C 串复制成 Pini 串。与 `cstr` 反向；`cstr` 是 shim 名（由调用方在 foreign 块里声明），
+        /// 取回：C 串复制成 Pini 串。与 `toCString` 反向；`toCString` 是 shim 名，由调用方在 foreign 块里声明。
         /// 本条目是语言内建，不需要声明。读 NUL 为止，空指针按空串处理。
         BuiltinDecl(
-            name: "c字符串", group: .ffi, paramNames: ["p"],
+            name: "fromCString", group: .ffi, paramNames: ["p"],
             params: [.pointer(element: t("U8"), location: builtinLocation)],
             returns: [t("String")], definesRuntimeValue: false),
     ]

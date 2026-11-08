@@ -539,15 +539,15 @@ public enum RuntimeOps {
                 return .int(Int(r))
             }
 
-            // cstr(s: String) -> *U8：把 Pini 字符串转成 null 结尾的 C 字符串（malloc 分配，用户 free）。
-            shims["cstr"] = LibcShim(shape: [.string]) { args in
-                guard args.count >= 1 else { throw RuntimeError.argumentCountMismatch(name: "cstr", expected: 1, got: args.count, location: loc) }
+            // toCString(s: String) -> *U8：把 Pini 字符串转成 null 结尾的 C 字符串（malloc 分配，用户 free）。
+            shims["toCString"] = LibcShim(shape: [.string]) { args in
+                guard args.count >= 1 else { throw RuntimeError.argumentCountMismatch(name: "toCString", expected: 1, got: args.count, location: loc) }
                 guard case .string(let s) = args[0] else {
-                    throw RuntimeError.invalidOperation(reason: "cstr：第 1 个参数须为 String", location: loc)
+                    throw RuntimeError.invalidOperation(reason: "toCString：第 1 个参数须为 String", location: loc)
                 }
                 let bytes = Array(s.utf8)
                 guard let ptr = malloc(bytes.count + 1) else {
-                    throw RuntimeError.invalidOperation(reason: "cstr：malloc 失败", location: loc)
+                    throw RuntimeError.invalidOperation(reason: "toCString：malloc 失败", location: loc)
                 }
                 if bytes.count > 0 { memcpy(ptr, bytes, bytes.count) }
                 ptr.advanced(by: bytes.count).storeBytes(of: 0, as: UInt8.self)  // null terminator
@@ -1021,7 +1021,7 @@ public enum RuntimeOps {
     /// Block until `fut` resolves and normalise the outcome to a `Result` value — errors as data, never thrown across the join.
     /// An existing `Result` passes through, an ordinary value is boxed as `ok(v)`, and a throw or timeout becomes `err`.
     /// `form` records the keyword; both forms block, because yielding needs a resumable body and a tree-walker has none.
-    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .waits) -> Value {
+    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .joins) -> Value {
         // A joined child leaves its parent: its lifetime has been consumed
         // explicitly, so the parent's return must stop cancelling it.
         defer { fut.detachFromParent() }

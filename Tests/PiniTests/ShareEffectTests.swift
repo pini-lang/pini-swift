@@ -101,7 +101,7 @@ struct ShareEffectTests: Sendable {
             "join",
             .join(
                 future: .load(name: "h", type: .future(ok: .i32)), type: .result(ok: .i32),
-                form: .waits), .inert
+                form: .joins), .inert
         ),
         ("givenInstance", .givenInstance(type: .nominal(name: "P", isObject: false)), .borrowed),
     ] }
@@ -149,18 +149,18 @@ struct ShareEffectTests: Sendable {
         #expect(
             IRExpr.join(
                 future: .load(name: "h", type: .future(ok: .string)), type: .result(ok: .string),
-                form: .waits
+                form: .joins
             ).shareEffect == .fresh)
         #expect(
             IRExpr.join(
                 future: .load(name: "h", type: .future(ok: .i32)), type: .result(ok: .i32),
-                form: .waits
+                form: .joins
             ).shareEffect == .inert)
-        /// 已结算值上的 `wait` 是原样透传：读到的是那个 `Result` 的槽，只能是借用。
+        /// 已结算值上的 `join` 是原样透传：读到的是那个 `Result` 的槽，只能是借用。
         #expect(
             IRExpr.join(
                 future: .load(name: "r", type: .result(ok: .string)), type: .result(ok: .string),
-                form: .waits
+                form: .joins
             ).shareEffect == .borrowed)
     }
 

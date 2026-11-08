@@ -1548,10 +1548,10 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
     return _bkStrDup(text)
 }
 
-// MARK: - G14 FFI: Pini String -> C string (interpreter "cstr" shim parity)
+// MARK: - G14 FFI: Pini String -> C string (interpreter "toCString" shim parity)
 
 /// Materializes a Swift String as a NUL-terminated, malloc-allocated UTF-8 C string: the caller
-/// frees it, same as the interpreter's `cstr` shim. A counted `_bkStrAlloc` block would return an
+/// frees it, same as the interpreter's `toCString` shim. A counted `_bkStrAlloc` block would return an
 /// interior pointer, which libc `free` rejects.
 @_cdecl("bk_cstr")
 public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {

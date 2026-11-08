@@ -10,7 +10,7 @@ main|func() -> ():
     var b = 任务(2)
     var xs = [a, b]
     var all = joinAll(xs)
-    var r = wait all
+    var r = join all
     match r:
         case ok(v,):
             print(v)

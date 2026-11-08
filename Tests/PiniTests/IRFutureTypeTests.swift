@@ -23,7 +23,7 @@ struct IRFutureTypeTests: Sendable, PiniSourceLowering {
     main|func() -> ():
         let t = 慢(1)
         let s = 同步取(2)
-        let r = try wait t else e:
+        let r = try join t else e:
             return
         print(r)
         print(s)

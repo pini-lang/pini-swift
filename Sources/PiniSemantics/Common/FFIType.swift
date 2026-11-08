@@ -59,7 +59,7 @@ public enum FFIType: Equatable, Sendable {
             return .pointer(try pointerTarget(element))
         case .function(let params, let returns, let captured, let usingIndices, _):
             /// 函数类型只在形参位成立：返回位需要一个可持有、可比较、可空的一等函数指针值，
-            /// 而第二版没有这样的值类型 —— 放行只会把「指针存进变量」的坑留给用户。
+            /// 而当前没有这样的值类型 —— 放行只会把「指针存进变量」的坑留给用户。
             guard position == .parameter else {
                 throw FFITypeError.callbackOutsideParameter
             }
