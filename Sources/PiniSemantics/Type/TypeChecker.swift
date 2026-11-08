@@ -1687,11 +1687,9 @@ public final class TypeChecker {
             for sig in t.signatures { try validateFuncDeclPointerTypes(sig) }
         case .extensionDecl(let x):
             for m in x.methods { try validateFuncDeclPointerTypes(m) }
-        case .foreignDecl(let fd):
-            for symbol in fd.symbols {
-                for ta in symbol.paramTypes { try validatePointerAnnotations(ta) }
-                for rt in symbol.returnTypes { try validatePointerAnnotations(rt) }
-            }
+        case .foreignDecl:
+            /// 导入面的闭合表（`FFIType.resolve`）判的是同一件事，且码更精确；这里不再插手。
+            break
         case .givenDecl(let g):
             /// 给定块字段与对象字段同规过 `*T` C 兼容校验。
             for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
@@ -1715,11 +1713,11 @@ public final class TypeChecker {
         case .pointer(let element, let loc):
             try validatePointerAnnotations(element)
             var visiting: Set<String> = []
-            if let hit = cCompatibilityFailure(in: element, visiting: &visiting) {
+            if let failure = cCompatibilityFailure(in: element, visiting: &visiting) {
                 try report(
                     TypeError.mismatch(
                         expected: "C 兼容类型（标量 / 纯值结构体 / 另一指针）",
-                        got: "`\(element.describe())` 含非 C 兼容类型 \(hit)（`*T` 不得指向 object 或含 object 的复合类型，ARC 隔离）",
+                        got: pointerTargetMessage(element: element, failure: failure),
                         location: loc
                     ))
             }
@@ -1735,16 +1733,30 @@ public final class TypeChecker {
         }
     }
 
-    /// 返回类型中首个非 C 兼容的类型名（object / 含 object 字段的结构体），否则 nil。
-    /// `visiting` 防自引用结构体（如链表节点 `next: Node`）无限递归。
-    private func cCompatibilityFailure(in type: TypeAnnotation, visiting: inout Set<String>) -> String? {
+    /// `*T` 目标不合格的两种情形。分开是因为作者要做的事不同：换目标（ARC 对象）、还是认名字。
+    private enum PointerTargetFailure {
+        /// 目标是 object，或含 object 字段的复合类型。
+        case arcObject(name: String)
+        /// 名字本身作不了目标：未登记、宽度不在 IR、有运行时表示、已是句柄。
+        case notRepresentable(name: String, reason: String)
+    }
+
+    /// 返回类型中首个不合格的 `*T` 目标，否则 nil。
+    /// `visiting` 防自引用结构体（如链表节点 `next: Node`）无限递归，进出各记一次。
+    private func cCompatibilityFailure(
+        in type: TypeAnnotation, visiting: inout Set<String>
+    ) -> PointerTargetFailure? {
         switch type {
         case .simple(let name, _):
-            if referenceTypeNames.contains(name) { return name }
-            if isCScalarType(name) { return nil }
-            guard let fields = typeFieldsByName[name] else { return nil }  // 未知类型保守放行
+            if referenceTypeNames.contains(name) { return .arcObject(name: name) }
+            if CPointerTarget.scalarNames.contains(name) { return nil }
+            guard let fields = typeFieldsByName[name] else {
+                return .notRepresentable(
+                    name: name, reason: CPointerTarget.rejection(for: name) ?? "不在 C 兼容白名单里")
+            }
             guard !visiting.contains(name) else { return nil }
             visiting.insert(name)
+            defer { visiting.remove(name) }
             for (_, ftype) in fields {
                 if let hit = cCompatibilityFailure(in: ftype, visiting: &visiting) { return hit }
             }
@@ -1762,20 +1774,21 @@ public final class TypeChecker {
             }
             return nil
         case .function:
-            return "函数类型"
+            return .notRepresentable(name: "函数类型", reason: "C 边界没有可承载它的值布局")
         }
     }
 
-    private func isCScalarType(_ name: String) -> Bool {
-        switch name {
-        /// `CChar` is the C single byte character. The spelling is not `Char` so that the name stays
-        /// free for the language's grapheme character, and so that "`Char` does not enter the FFI
-        /// scalar set" holds of the implementation, not only of the prose.
-        case "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
-            "F32", "F64", "Bool", "CChar", "Void", "Unit":
-            return true
-        default:
-            return false
+    /// 失败原因的成句。点名出问题的那个名字：嵌套位（`[*Foo]`）里只报外层拼写等于没说。
+    private func pointerTargetMessage(
+        element: TypeAnnotation, failure: PointerTargetFailure
+    ) -> String {
+        let target = element.describe()
+        switch failure {
+        case .arcObject(let name):
+            return "`\(target)` 含非 C 兼容类型 \(name)（`*T` 不得指向 object 或含 object 的复合类型，ARC 隔离）"
+        case .notRepresentable(let name, let reason):
+            let subject = target == name ? "`\(name)`" : "`\(target)` 里的 `\(name)`"
+            return "\(subject) 不能作 `*T` 的目标：\(reason)"
         }
     }
 

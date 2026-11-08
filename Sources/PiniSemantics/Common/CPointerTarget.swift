@@ -13,19 +13,22 @@ public enum CPointerTarget {
     /// 语言层有宽度、IR 没有对应类型的名字：拒绝理由说「宽度」，不说「不认识」。
     public static let widthsOutsideIR: Set<String> = ["I16", "U16", "U32", "F32"]
 
-    /// 名字能作 `*T` 目标时返回 `nil`，否则返回一句自成句子的理由。
-    /// 理由点名那个名字：只答「不兼容」会让作者分不清是拼错还是形状不对。
+    /// 名字能作 `*T` 目标时返回 `nil`，否则返回一句理由片段。
+    /// 片段不带主语：调用方补上「`Foo` 不能作 `*T` 目标：」这半句，嵌套位才点得准是哪个名字。
     public static func rejection(for name: String) -> String? {
         if scalarNames.contains(name) { return nil }
         if widthsOutsideIR.contains(name) {
-            return "`\(name)` 有语言层宽度，IR 没有对应类型"
+            return "语言层有这个宽度，IR 没有对应类型"
+        }
+        if name == "CChar" {
+            return "单字节字符没有独立的 IR 表示，用 `U8` 代替"
         }
         if name == "String" || name == "Char" {
-            return "`\(name)` 有运行时表示，不能作 `*T` 的目标；传字节缓冲用 `*U8`"
+            return "有运行时表示，C 侧没有对应布局；传字节缓冲用 `*U8`"
         }
         if name == "StringHandle" {
-            return "`StringHandle` 本身已是不透明句柄，指针目标不许再套一层"
+            return "本身已是不透明句柄，不许再套一层"
         }
-        return "`\(name)` 不在 C 兼容白名单里"
+        return "不在 C 兼容白名单里"
     }
 }

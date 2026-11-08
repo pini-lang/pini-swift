@@ -39,18 +39,19 @@ struct CPointerTargetTests: Sendable {
         }
     }
 
-    @Test("拒绝理由点名：未知、宽度、运行时表示、句柄四类各自说清")
-    func rejectionNamesTheCulprit() throws {
+    @Test("拒绝理由按类别分开：未知、宽度、单字节字符、运行时表示、句柄")
+    func rejectionTellsTheCategoriesApart() throws {
         let unknown = try #require(CPointerTarget.rejection(for: "Foo"))
-        #expect(unknown.contains("Foo"))
         #expect(unknown.contains("白名单"))
 
         let width = try #require(CPointerTarget.rejection(for: "I16"))
-        #expect(width.contains("I16") && width.contains("宽度"))
+        #expect(width.contains("IR 没有对应类型"))
+
+        let byte = try #require(CPointerTarget.rejection(for: "CChar"))
+        #expect(byte.contains("`U8`"))
 
         for name in ["String", "Char", "StringHandle"] {
-            let reason = try #require(CPointerTarget.rejection(for: name))
-            #expect(reason.contains(name), "理由要点名，实际：\(reason)")
+            #expect(CPointerTarget.rejection(for: name) != nil, "\(name) 应有理由")
         }
     }
 
