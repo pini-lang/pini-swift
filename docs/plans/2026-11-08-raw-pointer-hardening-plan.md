@@ -1,6 +1,6 @@
 # 原始指针加固：*T 的 C 面不透明通道
 
-- 状态：方向与形状已定（2026-11-08）；补校验、收口判据、开退路、差分补测已落，门禁与文档收口未做。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
+- 状态：方向与形状已定（2026-11-08）；补校验、收口判据、开退路、差分补测、门禁已落，仅文档收口未做。分片见「分片」，提交序见「细化」，未定项见「尚未定」。
 - 基线：`33739b1`（`main`，与 `origin/main` 一致）。
 - 上承：`docs/spec/c-interop-design.md`、`docs/spec/ir-contract.md`、`docs/spec/pini-reference-v0.md`；运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：`2026-11-08-object-c-abi-plan.md`（对象 C-ABI 路线，暂缓，见该件状态补充）。
@@ -113,7 +113,7 @@
 | 收口判据 | 三张判据归一到一张白名单，标量集合归一；拼写留各层 | 同一个 `*纯值struct` 在导入面、导出面、声明级得到同一结论，各一条用例；标量表与两处取名由单测对账 |
 | 开退路 | 按已裁的正名收窄 `void*` 死分支，给 C 面不透明指针唯一形状 | 头文件里非标量目标不再有拼写；未用不透明目标的库头文件与基线逐字相同；`CInteropExportTests.swift`:264-284 的既有负例按裁决更新或保留 |
 | 差分补测 | `**T` 嵌套与 `addressOfVar` 两条差分；`RawPointerValue` 宽度由收口片的单测覆盖；指针算术四种形式不在本片（「首版不做」），声明级负例已由补校验覆盖；基线扩成四列 | 每条差分用例在 `run` 与 `run-llvm` 上同值或登记为通道差异；登记必须写清处置（`declared` / `debt`）与理由；全量测试数只许不减 |
-| 门禁 | 诊断表 key 集合、标量集合、空族、台账读数四项判据 | `tools/runtime-abi-check.py`、`tools/ir-contract-check.py`、`tools/builtin-inventory-check.py`、`tools/check-doc-links.sh` 四条全绿 |
+| 门禁 | 诊断表 key 集合与占位符、标量集合、空族、台账读数四项判据 | `tools/diagnostics-parity-check.py`、`tools/scalar-set-check.py`、`tools/builtin-inventory-check.py`、`tools/runtime-abi-check.py` 各自带自检且全绿 |
 | 文档收口 | 订正三份权威文档的矛盾条目与台账读数；按 `GIT_WORKFLOW.md` 走特性分支 | `hooks/pre-commit` 的注释、格式、文档链接门禁三条都过；文档里每个指针形状都能指回一处源码判据 |
 
 补校验先落：收口判据、开退路、差分补测三片都读同一张判据，判据没定就各自猜。门禁片与文档收口片最后收，不分散到各片顺手改。
@@ -122,7 +122,7 @@
 
 八个提交单元，按依赖排。`补校验` 拆三个，其余一片一提交。分支 `dev-agent-pini-raw-pointer-hardening`，身份 `Pini Dev <dev@pini.local>`（注册表在册）；每笔提交前过注释与格式门禁，并回前过容器 CI。
 
-已落六笔：立表、补局部、收未知名、收口判据、开退路、差分补测；余下门禁与文档收口两片。收未知名删掉 `isCScalarType` 的十四名表（五份集合少一份），收口判据又删掉 `cExportScalars` 与两处运行时宽度 switch（再少两份），只余「表 + `FFIType` 取名 + 运行时编解码」三处，且后两处由单测对账。开退路只删掉头文件里那条 `void*` 死分支，合法模块的产物逐字不变。差分补测把基线扩成四列，新增的差距从此必须写明处置与理由。
+已落七笔：立表、补局部、收未知名、收口判据、开退路、差分补测、门禁；余下文档收口一片。收未知名删掉 `isCScalarType` 的十四名表，收口判据又删掉 `cExportScalars` 与两处运行时宽度 switch，只余「表 + `FFIType` 取名 + 运行时编解码」三处，这三处由 `tools/scalar-set-check.py` 对账。开退路只删掉头文件里那条 `void*` 死分支，合法模块的产物逐字不变。差分补测把基线扩成四列，新增的差距从此必须写明处置与理由。门禁片补了两份一致性脚本与 `family-empty`，并把台账三处旧读数订正。
 
 注意 「纯值结构体可作 `*T` 目标」这条承诺已在实现层撤回：声明级不再顺字段递归，三面一律拒绝。经验行为是作者得先把值搬进 `*U8` 缓冲；文档仍写着旧承诺，订正归「文档收口」片。
 
@@ -134,7 +134,7 @@
 | 收口判据 | `CPointerTarget` 收成一份标量表加一张宽度表；`cExportRejection`、`FFIType.pointerTarget`、`pointerTargetFailure` 读同一份；`cExportScalars` 删除；`RawPointerValue.stride` 与 `RuntimeOps.encode/decode` 改读宽度表；`pointerTargetFailure` 不再顺结构体字段递归 | 同一个 `*纯值struct` 三面同一句；表里七个标量在运行时编解码同值、表外名字被运行时拒绝；`CInteropExportTests` 两处断言随措辞更新；全量测试只增不减 |
 | 开退路 | `CHeaderBackend.cType` 的 `.pointer` 只认标量目标，非标量 `preconditionFailure`；`cSizeAndAlign` 的指针宽度改取 `MemoryLayout` | 七个标量目标各写出自己的 C 拼写（`int8_t*` 到 `bool*`），头文件里不出现 `void*`；既有头文件断言零改动通过 |
 | 差分补测 | 新建 `Tests/PiniTests/PointerSurfaceTests.swift`（CLI 两条通道）；`examples/pointer-address.pini` 作探针语料；基线改四列 | `&x` 钉 7 / 9、`**I64` 钉 `E5-006` / 7；探针输出 `baseline: 1 known gap(s)（debt 1）` 且退出 0 |
-| 门禁 | `tools/` 三条一致性判据（诊断表 key 集合、标量集合、空族）；`docs/spec/runtime-abi.md`:35 的 109、`:58` 的 119、`:118` 的 92 | `ci/entrypoint.sh` 九步全绿 |
+| 门禁 | 新建 `tools/diagnostics-parity-check.py`（key / 字段 / 占位符）与 `tools/scalar-set-check.py`（表 vs 导入面 vs 运行时编解码）；`builtin-inventory-check.py` 加 `family-empty`；`docs/spec/runtime-abi.md` 的 109 两处改 119、92 改 98；CI 加两步 | 两侧各带 `--self-test`；空族只在有零调用点登记时放行；台账 119 / 119 / 98+21，四条一致 |
 | 文档收口 | `docs/spec/pini-reference-v0.md`:2697-2720、`:2705-2724`、`:2896-2910`；`docs/spec/c-interop-design.md`:464-477；`docs/spec/ir-contract.md`:152 | `tools/check-doc-links.sh` 通过；文档里每个形状能指回一处源码判据 |
 
 注意 差分补测的裁定已落：**改基线规矩**。基线由两列扩成四列（fixture / verdict / 处置 / 理由），处置只收 `declared`（文档规定两通道本就不同）与 `debt`（实现待修）；缺列、错处置、空理由各自判红，由 `--self-test` 覆盖。`&x` 登记为 `debt`，理由沿用 `docs/spec/ir-contract.md`:152 已裁的「统一到真引用」，本轮不动 `snapshotPointer`。`**T` 不进 examples（`run` 会失败），改由 `PointerSurfaceTests` 钉住 `E5-006` 与 7。
@@ -161,7 +161,7 @@
 | 文档与实现二选一 | 纯值 struct、禁止表、四种指针算术、内建名四处矛盾。纯值 struct 这一条实测确认不可执行，按文档补实现要开一条 `IRType` 到用户类型的管线 | 本计划按实现订正，理由是先让描述追上代码；要恢复承诺另立分片，不混进**文档收口** |
 | 类型名比较漏项 | `typeName(from:)` 的 `.pointer` 返回 `""`（`Sources/PiniSemantics/Type/TypeChecker.swift`:2345-2354），`p + 1` 实测报出「expected , got I32」 | **补校验·补局部**同批修，返回类型拼写 |
 | 台账读数漂移 | 109 / 119 / 92（实测 98）并存，会让新增判据失去基准 | **门禁**片一次订正，不改符号清单本身 |
-| 两份诊断表静默回退 | `Sources/PiniSemantics/Common/DiagnosticResources.swift`:59, 66 缺 en 项时回退 zh，无门禁 | **门禁**片补 key 集合一致性判据 |
+| 两份诊断表静默回退 | `Sources/PiniSemantics/Common/DiagnosticResources.swift`:59, 66 缺 en 项时回退 zh，无门禁 | 已补：`tools/diagnostics-parity-check.py` 对 key / 字段 / 占位符三条 |
 
 ## 尚未定
 
