@@ -112,7 +112,7 @@
 | 补校验 | **立表**（不改行为）→ **补局部**（函数体标注收集）→ **收未知名**（点名拒绝）三个提交；`visiting` 收口 | 立表后探针读数一律不动；补局部后局部声明、匿名函数形参、泛型嵌套三处翻红；收未知名后 `*Foo`、`*String`、`*I16`、`*CChar` 检查期即拒；签名位 `*计数对象` 仍被拒；`examples/` 全量 `check` 不新增红 |
 | 收口判据 | 三张判据归一到一张白名单，标量集合归一；拼写留各层 | 同一个 `*纯值struct` 在导入面、导出面、声明级得到同一结论，各一条用例；标量表与两处取名由单测对账 |
 | 开退路 | 按已裁的正名收窄 `void*` 死分支，给 C 面不透明指针唯一形状 | 头文件里非标量目标不再有拼写；未用不透明目标的库头文件与基线逐字相同；`CInteropExportTests.swift`:264-284 的既有负例按裁决更新或保留 |
-| 差分补测 | 补 `**T` 嵌套、声明级负例、`objectReference` 与 `rawPointer` 无互转、三通道 `addressOfVar` parity | 每条差分用例在 `run` 与 `run-llvm` 上同值或登记为通道差异；登记必须写清处置（`declared` / `debt`）与理由；全量测试数只许不减 |
+| 差分补测 | `**T` 嵌套与 `addressOfVar` 两条差分；`RawPointerValue` 宽度由收口片的单测覆盖；指针算术四种形式不在本片（「首版不做」），声明级负例已由补校验覆盖；基线扩成四列 | 每条差分用例在 `run` 与 `run-llvm` 上同值或登记为通道差异；登记必须写清处置（`declared` / `debt`）与理由；全量测试数只许不减 |
 | 门禁 | 诊断表 key 集合、标量集合、空族、台账读数四项判据 | `tools/runtime-abi-check.py`、`tools/ir-contract-check.py`、`tools/builtin-inventory-check.py`、`tools/check-doc-links.sh` 四条全绿 |
 | 文档收口 | 订正三份权威文档的矛盾条目与台账读数；按 `GIT_WORKFLOW.md` 走特性分支 | `hooks/pre-commit` 的注释、格式、文档链接门禁三条都过；文档里每个指针形状都能指回一处源码判据 |
 
