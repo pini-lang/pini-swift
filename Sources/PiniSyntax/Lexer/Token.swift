@@ -282,7 +282,7 @@ public enum Keyword: String, CaseIterable {
     case `break` = "break"
     case `continue` = "continue"
     case `self` = "self"
-    // `own`：类型内自指（`own` 作类型名）；扩展块方法修饰符是 `|type`，与 `|self` 配对。
+    // `own`：类型内自指 + 扩展块方法修饰符 `|own`（与 `|self` 配对）。
     case `own` = "own"
     case `defer` = "defer"
     // join 表层由 `await` / `join` 关键字承载：前者用于异步函数体内的挂起等待，后者用于同步上下文的阻塞 join，
