@@ -5,7 +5,7 @@ import PiniSyntax
 @testable import PiniSemantics
 @testable import PiniIR
 
-/// `await` / `join` 的上下文与位置判定：`await` 只许在异步函数体（`=>`）内、`join` 只许在同步体（`->`）内，
+/// `await` / `wait` 的上下文与位置判定：`await` 只许在异步函数体（`=>`）内、`wait` 只许在同步体（`->`）内，
 /// 且 `await` 还须落在语句根位置。上下文不符报 `E6-009`（改签名或关键字），位置越界报 `E6-010`（改写写法）。
 /// 位置也要拒：语句根之外没有续跑点，同一个 `await` 会在一处让出、另一处静默阻塞。驳回与推进两组互为对照。
 struct ConcurrentAwaitContextTests: Sendable {
@@ -54,15 +54,15 @@ struct ConcurrentAwaitContextTests: Sendable {
         #expect(try loweringCode(source) == "E6-009")
     }
 
-    @Test("`join` 写在异步体里报 E6-009 —— 这条规则的另一面")
+    @Test("`wait` 写在异步体里报 E6-009 —— 这条规则的另一面")
     func waitInsideAsyncBodyIsRejected() throws {
-        /// 意图：`join` 占住线程直到子任务结束。异步体内这样写，池里的槽位会各等各自的
+        /// 意图：`wait` 占住线程直到子任务结束。异步体内这样写，池里的槽位会各等各自的
         /// 子任务、子任务排不到线程（池饥饿）。驳回的是**上下文**，与位置无关 ——
-        /// 同一个 `join` 写在同步体里就是对的（见本件推进性那组）。
+        /// 同一个 `wait` 写在同步体里就是对的（见本件推进性那组）。
         let source = Self.子任务 + """
         父|func() => (I32,):
             let t = 慢(1)
-            let r = try join t else e:
+            let r = try wait t else e:
                 return ok(0)
             return ok(0)
         """
@@ -144,14 +144,14 @@ struct ConcurrentAwaitContextTests: Sendable {
         #expect(try loweringCode(source) == "E6-010")
     }
 
-    @Test("同步体的表达式位 `join` 不受影响 —— 既有语料照旧")
+    @Test("同步体的表达式位 `wait` 不受影响 —— 既有语料照旧")
     func waitInSyncExpressionPositionStillWorks() throws {
-        /// 意图：驳回性测量。规则收紧的是 `await` 的位置，不能顺手把 `join` 也限位 ——
-        /// `join` 是该位置的阻塞值，随处可用是它的语义（既有语料 `match join a:` 就靠这一点）。
+        /// 意图：驳回性测量。规则收紧的是 `await` 的位置，不能顺手把 `wait` 也限位 ——
+        /// `wait` 是该位置的阻塞值，随处可用是它的语义（既有语料 `match wait a:` 就靠这一点）。
         let source = Self.子任务 + """
         main|func() -> ():
             let t = 慢(1)
-            match join t:
+            match wait t:
                 case ok(v):
                     print(v)
                 case err(e):

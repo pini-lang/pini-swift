@@ -1021,7 +1021,7 @@ public enum RuntimeOps {
     /// Block until `fut` resolves and normalise the outcome to a `Result` value — errors as data, never thrown across the join.
     /// An existing `Result` passes through, an ordinary value is boxed as `ok(v)`, and a throw or timeout becomes `err`.
     /// `form` records the keyword; both forms block, because yielding needs a resumable body and a tree-walker has none.
-    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .joins) -> Value {
+    static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .waits) -> Value {
         // A joined child leaves its parent: its lifetime has been consumed
         // explicitly, so the parent's return must stop cancelling it.
         defer { fut.detachFromParent() }

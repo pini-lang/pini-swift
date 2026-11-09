@@ -4202,7 +4202,7 @@ public enum IRLowerer {
             )
 
         case .join(let inner, let joinLocation, let form):
-            // `await` / `join` 的上下文与位置判定。两个关键字各自绑定自己的上下文，`await` 还额外要求可让出位置：
+            // `await` / `wait` 的上下文与位置判定。两个关键字各自绑定自己的上下文，`await` 还额外要求可让出位置：
             // 它承诺让出，只有在能兑现的地方才诚实。位置越界必须拒 —— 让出需要可恢复的体，语句根之外没有续跑点，
             // 同一个 `await` 就会有的让出、有的静默按阻塞处理。两种拒绝理由修法不同，故用两个码分开。
             switch form {
@@ -4210,7 +4210,7 @@ public enum IRLowerer {
                 guard context.isAsync else {
                     throw rejected(
                         "`await` 只能写在异步函数体（`=>`）里：这里不在异步体内。"
-                            + "同步上下文里等待请写 `join`",
+                            + "同步上下文里等待请写 `wait`",
                         code: Self.awaitOutsideAsyncBodyCode, at: joinLocation
                     )
                 }
@@ -4224,10 +4224,10 @@ public enum IRLowerer {
                         code: Self.awaitUnrecoverablePositionCode, at: joinLocation
                     )
                 }
-            case .joins:
+            case .waits:
                 guard !context.isAsync else {
                     throw rejected(
-                        "`join` 只能写在同步函数体（`->`）里：它会占住当前线程直到子任务结束，"
+                        "`wait` 只能写在同步函数体（`->`）里：它会占住当前线程直到子任务结束，"
                             + "而异步体内这样写会让任务池里的槽位各等各自的子任务、"
                             + "子任务排不到线程。异步体里等待请写 `await`",
                         code: Self.awaitOutsideAsyncBodyCode, at: joinLocation
@@ -4235,7 +4235,7 @@ public enum IRLowerer {
                 }
             }
 
-            // `await f` / `join f`: the operand evaluates to a handle and the site yields the `Result<T>` its join
+            // `await f` / `wait f`: the operand evaluates to a handle and the site yields the `Result<T>` its join
             // deconstructs — handle in, settled value out, two distinct IR types on purpose so a backend can tell an
             // async call from an ordinary Result one. The operand takes no expectation: a non-future fails at run time.
             let future = try lowerExpr(inner, expected: nil, into: &context)
@@ -5886,7 +5886,7 @@ public enum IRLowerer {
     /// 有了、编译器还没做」，这里说的是「程序写错了」；混在一个码里，CLI 上就分不开「该改程序」与「等它做完」。
     private static let noDefaultInstanceCode = "\(DiagnosticDomain.irgen.rawValue)-007"
 
-    /// `await` / `join` 与所在体不匹配。与下面那条位置码分开是刻意的：两者修法不同 —— 上下文不符要改函数
+    /// `await` / `wait` 与所在体不匹配。与下面那条位置码分开是刻意的：两者修法不同 —— 上下文不符要改函数
     /// 签名或换关键字，位置越界要改写法。
     private static let awaitOutsideAsyncBodyCode = "\(DiagnosticDomain.irgen.rawValue)-009"
 
@@ -6407,7 +6407,7 @@ private struct FunctionContext {
     /// angle brackets it is legal in an unquoted LLVM local name.
     var tempCounter: Int = 0
 
-    /// `await` / `join` 的上下文判定：最近的体是否异步。「最近的体」而非整条链是刻意的 —— 同步闭包嵌在
+    /// `await` / `wait` 的上下文判定：最近的体是否异步。「最近的体」而非整条链是刻意的 —— 同步闭包嵌在
     /// `=>` 体里时，闭包体自己没有可让出的任务，`await` 写在那里兑现不了（帧栈是一个任务一个，穿透闭包挂起
     /// 会打破这个前提）。故每个体各判各的，闭包体用自己的 `isAsync` 覆盖。
     var isAsync: Bool = false

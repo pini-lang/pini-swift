@@ -1,13 +1,13 @@
 ; 语法点：异步「传染性」的终点。Rust / JS / Kotlin 里 async 是病毒式的：体内 await 了异步调用，
 ; 函数自身也必须声明 async，链条一路向上传染到运行时（main）兜底。
-; Pini 的 `await` 只许写在异步体（=>）内、`join` 只许写在同步体（->）内；本例 main 是同步函数，用 join 就地截断整条链。
+; Pini 的 `await` 只许写在异步体（=>）内、`wait` 只许写在同步体（->）内；本例 main 是同步函数，用 wait 就地截断整条链。
 
 ; —— 真正并发的末端服务（标 `=>`）——
 fetchPrice|func(id: I32,) => (I32,):
     sleep(100)
     return ok(id * 10) ; => 体必须 ok/err 包裹（errors-as-data）
 
-; —— 中间编排层：自身 `=>`，内部 `await`/`join` 等待子任务 ——
+; —— 中间编排层：自身 `=>`，内部 `await`/`wait` 等待子任务 ——
 aggregate|func() => (I32,):
     var a = await fetchPrice(1) ; 在此 await，得到 Result
     match a:
@@ -17,10 +17,10 @@ aggregate|func() => (I32,):
             return ok(0)
 
 ; —— 终点：一个「普通同步」函数，没有 `=>` ——
-; 它用 `join` 把上面的异步链落地。传染到此为止，
+; 它用 `wait` 把上面的异步链落地。传染到此为止，
 ; 不需要把 main 也写成 `main|func() => ()`。
 main|func() -> ():
-    var r = join aggregate() ; 异步传染的终点：非 async 函数也能等待
+    var r = wait aggregate() ; 异步传染的终点：非 async 函数也能等待
     match r:
         case ok(v,):
             print(v) ; 预期打印 10

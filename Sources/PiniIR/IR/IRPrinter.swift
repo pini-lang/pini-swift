@@ -240,7 +240,7 @@ public enum IRPrinter {
         case .isAsciiDigit(let argument):
             return "is_ascii_digit(\(exprText(argument)))"
         case .join(let future, _, let form):
-            // 打关键字本身，而不是笼统的 `join` —— 语料里写下的是哪个词，
+            // 打关键字本身，而不是笼统的 `join` 节点 —— 语料里写下的是哪个词，
             // dump 就得回显哪个词，否则两种形态在唯一能看见降载结果的地方又混成一样。
             return "\(form.keyword)(\(exprText(future)))"
         case .givenInstance(let type):

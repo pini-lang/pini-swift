@@ -22,7 +22,7 @@ struct WorkHandoff: @unchecked Sendable {
 
 /// 派发任务的唯一契约边界：调用方只依赖 `spawn`，不感知底层是 GCD、pthread 还是别的执行器。
 /// 不含 GCD 专有类型，便于跨平台后端接入；让出与否由 `TaskRunOutcome` 加能力位表达。
-/// 各后端须在「能不能让出」这一位上一致，否则 `await`/`join` 的可观测差异跨后端就没有共同基准。
+/// 各后端须在「能不能让出」这一位上一致，否则 `await`/`wait` 的可观测差异跨后端就没有共同基准。
 protocol Scheduler {
     /// 派发 `work` 执行。`work` 返回 `.finished` 时由**调度器**把它送到 `future`；
     /// 返回 `.suspended` 时 `future` 仍待决、由续跑方送值。
@@ -53,7 +53,7 @@ extension Scheduler {
 }
 
 /// GCD 后端：异步体派发到有界并发池，防线程爆炸与池饥饿；池满时派发方阻塞形成背压。
-/// `join` 占用当前线程直至决，`await` 让出并即刻归还池子——池子有界，让出才有意义。
+/// `wait` 占用当前线程直至决，`await` 让出并即刻归还池子——池子有界，让出才有意义。
 /// 池大小 = max(4, 核数×2)，上限 = 池×4；唯一实例跨线程共享，可变量都在 `countLock` 内读写。
 final class GCDScheduler: Scheduler, @unchecked Sendable {
     static let shared = GCDScheduler()
@@ -133,7 +133,7 @@ final class GCDScheduler: Scheduler, @unchecked Sendable {
         countLock.unlock()
     }
 
-    /// 让出发生的累计次数：「`await` 让出 / `join` 占用」这条差异的可观测面，只由让出动作驱动。
+    /// 让出发生的累计次数：「`await` 让出 / `wait` 占用」这条差异的可观测面，只由让出动作驱动。
     /// 与 `activeTaskCount` 不同性质——那个读整台机器现在的任务数，任何并行程序都会挪动它，故判定要看本计数的增量。
     /// 契约侧对应 `bk_task_yield` 的 `1`/`0`：同一个位，一个在 C ABI 上，一个在调度器上。
     var yieldedTaskCount: Int {
