@@ -19,7 +19,7 @@ main|func() -> ():
                 print("已被取消") ; isCancel 是对错误值的判断
             else:
                 print(e)
-    ; 3) 带超时的 join：超时归约为取消（仍是一个对句柄的函数调用）
+    ; 3) 带超时的等待：超时归约为取消（仍是一个对句柄的函数调用）
     var g = slow()
     var r2 = joinWithin(g, 10)
     match r2:
