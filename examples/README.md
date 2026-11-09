@@ -77,14 +77,14 @@
 | `optional.pini` | `Optional.some`/`none`（裸 `none` 字面量）+ `match` 解构 | `42 / none` | Experimental |
 | `optional-sugar.pini` | `nil` 关键字（= `Optional.none` 等效常量）、`?T` 可选类型糖（= `Optional<T>`）与 `Optional` 双向互通 + `match case nil:` | `none / none / matched-nil / none / q-none / q-assign` | Provisional |
 | `io.pini` | 文件 IO `writeFile`/`readFile` | `name: ...` / `hello from pini` | Provisional |
-| `concurrency.pini` | 真并发 `=>` / `join`（同步阻塞等待 / 错误传播） | A/B 交错，`done` | Provisional |
+| `concurrency.pini` | 真并发 `=>` / `wait`（同步阻塞等待 / 错误传播） | A/B 交错，`done` | Provisional |
 | `concurrency-cancel.pini` | `cancel` / `joinWithin` / `isCancel` | `已超时取消 / 已手动取消` | Provisional |
 | `concurrency-joinall.pini` | `joinAll` 聚合多 Future | `[2, 4]` | Provisional |
 | `concurrency-async-decl.pini` | 语法点：`=>` 声明处标记异步、体内同步写法、`ok`/`err` 承载 | `42` | Provisional |
-| `concurrency-await.pini` | 语法点：`join` 值级等待（前缀） | `1 / 2` | Provisional |
-| `concurrency-arrow-dual.pini` | 语法点：`=>`（异步声明）、`join`（等待）与 `<=`（纯比较） | `true / 7` | Provisional |
+| `concurrency-await.pini` | 语法点：`wait` 值级等待（前缀） | `1 / 2` | Provisional |
+| `concurrency-arrow-dual.pini` | 语法点：`=>`（异步声明）、`wait`（等待）与 `<=`（纯比较） | `true / 7` | Provisional |
 | `concurrency-future-handle.pini` | 语法点：Future 句柄即普通值（cancel / joinWithin / detach / isCancel） | `已被取消 / 已超时` | Provisional |
-| `concurrency-async-contagion-end.pini` | 语法点：异步传染性终点（同步函数也可 `join` 落地） | `10` | Provisional |
+| `concurrency-async-contagion-end.pini` | 语法点：异步传染性终点（同步函数也可 `wait` 落地） | `10` | Provisional |
 | `enum-namespacing.pini` | 跨枚举同名 case（命名空间化） | 见文件 | Stable |
 | `validated-match.pini` | match 穷尽性（D3①：case 缩进子块、`case _:` 通配兜底） | 见文件 | Stable |
 | `test.pini` | `|test` 测试块 + `assert` 内建（G41） | `全部测试通过` | Stable |
@@ -124,7 +124,7 @@
 - **匿名函数类型推断**：匿名函数绑定变量传强类型函数参数，`TypeInference.inferFuncLiteral`
   做双向推断：参数优先读标注 `p.typeAnnotation`、否则体运算符自底向上、再否则调用点期望自顶向下；
   返回优先读 `decl.returnTypes`（见 `lambda-typed.pini` / `FuncLiteralTests`）。
-- **匿名函数形态**：匿名函数用 `func` 关键字 + 块体，与具名函数一致，含 async（`=>`/`join`/`await`）
+- **匿名函数形态**：匿名函数用 `func` 关键字 + 块体，与具名函数一致，含 async（`=>`/`wait`/`await`）
   与参数标注（`(n: I32,)`，`inferFuncLiteral` 消费标注、调用点校验实参）。
 - **match 子块结构**：`case` 缩进进 `match` 子块，通配兜底为 `case _:`；穷尽性检查内建（R1）：
   枚举 match 缺变体且无 `case _:` → `nonExhaustiveMatch`。

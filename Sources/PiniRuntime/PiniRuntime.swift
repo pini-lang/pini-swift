@@ -3361,7 +3361,7 @@ public func bk_task_state(_ h: UnsafeMutableRawPointer?) -> Int32 {
     let suspended = box.suspended
     let started = box.bodyStarted
     box.cond.unlock()
-    // ① 取消按既有的归一读作**已决**（`join` 那一侧就是把它归约成 `err(CancelError)`）。
+    // ① 取消按既有的归一读作**已决**（`wait` 那一侧就是把它归约成 `err(CancelError)`）。
     //  注意  四态表里没有「已取消」这一格 —— 如实登记， 行不通  不自行扩表。
     if resolved || cancelled { return 3 }
     if queued { return 1 }

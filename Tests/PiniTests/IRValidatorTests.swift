@@ -61,7 +61,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
                 box.v = 1
                 print(box.读())
                 var h = 任务()
-                var r = join h
+                var r = wait h
                 match r:
                     case ok(v):
                         print(v)
@@ -264,7 +264,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
                 name: "x", type: .i32, mutable: true, initializer: .intConst(value: 1, type: .i32),
                 adopt: .none),
             .returnStmt(
-                value: .join(future: .load(name: "x", type: .i32), type: .result(ok: .i32), form: .joins),
+                value: .join(future: .load(name: "x", type: .i32), type: .result(ok: .i32), form: .waits),
                 adopt: .none),
         ], returnType: .result(ok: .i32))
         #expect(rules(module) == [.joinShape])

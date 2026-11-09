@@ -1,6 +1,6 @@
 ; 真并发：两个 `=>` 进程交错执行（真实并发，非「末尾才并行」）。运行 pini run examples/concurrency.pini
 ; 预期：A / B 标记交错出现（如 A B A B …），证明两个 worker 同时推进；若某任务独占线程则不会交错，末尾 done 表示全部 join 完成。
-; 语义要点：`=>` 调用即派发到 worker 线程并返回 Future；`join` 前缀 = 同步阻塞 join，`await` 用于异步体内挂起等待，均返回 Result。
+; 语义要点：`=>` 调用即派发到 worker 线程并返回 Future；`wait` 前缀 = 同步阻塞等待，`await` 用于异步体内挂起等待，均返回 Result。
 workerA|func() => ():
     var i = 0
     while i < 4:
@@ -26,15 +26,15 @@ compute|func(n: I32,) => (I32,):
 main|func() -> ():
     var a = workerA()
     var b = workerB()
-    join a
-    join b
-    var r = join compute(21)
+    wait a
+    wait b
+    var r = wait compute(21)
     match r:
         case ok(v,):
             print(v)
         case err(e,):
             print(e)
-    var bad = join compute(0 - 1)
+    var bad = wait compute(0 - 1)
     match bad:
         case ok(v,):
             print(v)

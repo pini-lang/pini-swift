@@ -275,7 +275,7 @@ public final class IREmitter {
     /// 是否发射过 `cancel` —— 落点是运行时的取消入口，声明与派发族分开：不取消的模块不多一行。
     private var usesTaskCancel = false
 
-    /// 是否发射过 `joinWithin` —— 三槽装配与 `join` 同形，只是多一个时限参数，声明也分开。
+    /// 是否发射过 `joinWithin` —— 三槽装配与 `wait` 同形，只是多一个时限参数，声明也分开。
     private var usesTaskJoinWithin = false
 
     /// 是否发射过 `joinAll` —— 聚合 join 另走一条入口，声明同样只在用时出现。
@@ -6258,9 +6258,9 @@ public final class IREmitter {
         taskBodyDefs.append("define i32 @\(name)(ptr %code, ptr %env, ptr %out) {\n" + body + "}\n\n")
     }
 
-    /// `await` / `join` 的落点（`bk_task_join`）。可恢复体顶层的 `await` 走让出路径，不经过本函数；
+    /// `await` / `wait` 的落点（`bk_task_join`）。可恢复体顶层的 `await` 走让出路径，不经过本函数；
     /// 到达这里的只剩拿不到帧的体 —— 无声明返回类型的异步体与闭包体 —— 本段对它们响亮拒绝：
-    /// 静默按阻塞处理就是把「让出」的承诺打折而不出声。`join` 一类的承诺本就是阻塞，不受影响。
+    /// 静默按阻塞处理就是把「让出」的承诺打折而不出声。`wait` 一类的承诺本就是阻塞，不受影响。
     private func emitJoin(future: IRExpr, type: IRType, form: JoinForm) -> IRValue {
         if form == .awaits {
             fatalError(
@@ -6279,7 +6279,7 @@ public final class IREmitter {
                 "IREmitter: task ok payload '\(okType.llvmSpelling)' is an aggregate — the three-slot task ABI carries one word")
         }
         let handle = emitExpr(future)
-        /// 已在结算值上 `join`（`join joinAll(...)` 这类）：没有句柄可等，原样透传。
+        /// 已在结算值上 `wait`（`wait joinAll(...)` 这类）：没有句柄可等，原样透传。
         if handle.llvmType != "ptr" { return handle }
         usesTaskRuntime = true
         let out = builder.freshTemp()

@@ -316,7 +316,7 @@ struct ConcurrencyRuntimeABITests: Sendable {
 
     @Test("yield 的答案取自 L1 位 —— 与解释器后端同一条规则，且本后端自 DE-6b 起真的回 1")
     func yieldAnswersFromTheCapabilityBit() throws {
-        /// 意图：各后端在这一位上必须一致，否则「`await` 让出 / `join` 占用」的可观测差异跨后端没有共同基准。
+        /// 意图：各后端在这一位上必须一致，否则「`await` 让出 / `wait` 占用」的可观测差异跨后端没有共同基准。
         /// 解释器后端的对应物是 `capabilities.supports(.yield) ? 1 : 0`，本后端照同一条规则取答案。
         /// 第一条断言写成关系式（位图变了仍成立）；第二条刻意固化 `1`：L1 位在场而让出路径缺席时它该红。
         let expected: Int32 = (bk_capabilities() & 2) != 0 ? 1 : 0

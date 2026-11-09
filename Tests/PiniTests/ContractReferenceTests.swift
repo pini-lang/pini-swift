@@ -31,9 +31,9 @@ struct ContractReferenceTests: Sendable {
         try assertBothLegsProduceTheExpectation(of: "concurrency-async-contagion-end")
     }
 
-    @Test(" 重要  让出可观测：同一台机器上 `await` 版计数 > 0、`join` 版 = 0 —— 有区分力才算判据")
+    @Test(" 重要  让出可观测：同一台机器上 `await` 版计数 > 0、`wait` 版 = 0 —— 有区分力才算判据")
     func theYieldChannelTellsTheTwoAwaitFormsApart() throws {
-        /// 意图：观测通道有形状不等于有区分力。`await`（承诺让出）与 `join`（承诺占用）在同一个体上
+        /// 意图：观测通道有形状不等于有区分力。`await`（承诺让出）与 `wait`（承诺占用）在同一个体上
         /// 跑，读数必须不同；相同则通道只是打了一行字，「可观测差异」那条判据就成了空话。
         /// 负控程序刻意内联：它最小到只剩「有任务、没 `await`」，落进语料面只会多一份要维护的文件。
         let cli = PiniTestEnvironment.cliPath() ?? ""
@@ -52,7 +52,7 @@ struct ContractReferenceTests: Sendable {
             awaited.stderr == Self.yieldReportPrefix + "1\n",
             "`await` 版应当**真的让出过**（读数还兼作闸门是否生效的证据）：\(awaited.stderr)")
 
-        // ② `join` 版 —— 有派发、但一处 `await` 也没有。
+        // ② `wait` 版 —— 有派发、但一处 `await` 也没有。
         let negativeControl = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("de6b-yield-negative-\(UUID().uuidString).pini")
         defer { try? FileManager.default.removeItem(at: negativeControl) }
@@ -62,7 +62,7 @@ struct ContractReferenceTests: Sendable {
         #expect(waited.stdout == Self.expectedOutput, "负控程序的输出应与 await 版一致：\(waited.stdout)")
         #expect(
             waited.stderr == Self.yieldReportPrefix + "0\n",
-            "`join` 版不该让出（它的承诺就是占用）：\(waited.stderr)")
+            "`wait` 版不该让出（它的承诺就是占用）：\(waited.stderr)")
 
         // ③ 闸门未置位 ⇒ **零输出**：不得污染任何正常程序的 stderr。
         let ungated = try launch(cli, ["run-llvm", fixtureFile("concurrency-async-contagion-end").path])
@@ -77,7 +77,7 @@ struct ContractReferenceTests: Sendable {
             return ok(10)
 
         main|func() -> ():
-            var r = join f()
+            var r = wait f()
             match r:
                 case ok(v):
                     print(v)
@@ -115,7 +115,7 @@ struct ContractReferenceTests: Sendable {
         #expect(waited.stdout == Self.expectedOutput, "负控程序的输出应与 ① 一致：\(waited.stdout)")
         #expect(
             waited.stderr == Self.yieldReportPrefix + "0\n",
-            "`join` 版不该让出（它的承诺就是占用）：\(waited.stderr)")
+            "`wait` 版不该让出（它的承诺就是占用）：\(waited.stderr)")
 
         // ③ 闸门未置位 ⇒ **零输出**：不得污染任何正常程序的 stderr。
         let ungated = try launch(cli, ["run", fixtureFile("concurrency-async-contagion-end").path])
@@ -160,7 +160,7 @@ struct ContractReferenceTests: Sendable {
             return ok(0)
 
         main|func() -> ():
-            var r = join g()
+            var r = wait g()
             print(0)
             return
         """
@@ -180,7 +180,7 @@ struct ContractReferenceTests: Sendable {
             return ok(0)
 
         main|func() -> ():
-            var r = join g()
+            var r = wait g()
             print(0)
             return
         """
@@ -198,7 +198,7 @@ struct ContractReferenceTests: Sendable {
             return ok(0)
 
         main|func() -> ():
-            var r = join g()
+            var r = wait g()
             print(0)
             return
         """
@@ -275,7 +275,7 @@ struct ContractReferenceTests: Sendable {
             return ok(7)
 
         main|func() -> ():
-            var r = join g()
+            var r = wait g()
             match r:
                 case ok(v):
                     print(v)
@@ -298,7 +298,7 @@ struct ContractReferenceTests: Sendable {
                     return ok(0)
 
         main|func() -> ():
-            var r = join g()
+            var r = wait g()
             match r:
                 case ok(v):
                     print(v)
@@ -319,7 +319,7 @@ struct ContractReferenceTests: Sendable {
             return ok(5)
 
         main|func() -> ():
-            var r = join g()
+            var r = wait g()
             match r:
                 case ok(v):
                     print(v)
@@ -400,7 +400,7 @@ struct ContractReferenceTests: Sendable {
             programBase: Self.fixtureDirectory.path, ffiConfig: .default, scheduler: scheduler)
         executor.outputSink = { lines.append($0) }
         try executor.run(module: lowered)
-        // 读在运行**之后**：`main` 的那一处 `join` 会把整条链等到决，故此刻所有让出都已发生。
+        // 读在运行**之后**：`main` 的那一处 `wait` 会把整条链等到决，故此刻所有让出都已发生。
         return (lines, scheduler.yieldCount)
     }
 
@@ -578,7 +578,7 @@ struct ContractReferenceTests: Sendable {
 
         main|func() -> ():
             var t = 父()
-            var q = join t
+            var q = wait t
             return
         """
     }

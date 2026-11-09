@@ -377,7 +377,7 @@ public final class TypeInference {
             }
 
         case .join(let inner, _, _):
-            // `await`/`join` fut 归约为 `Result<T, E>`（fut : Future<T, E>）。
+            // `await`/`wait` fut 归约为 `Result<T, E>`（fut : Future<T, E>）。
             // 操作数类型不可解析或非 Future 时返回 nil，交由 TypeChecker 报错（此处仅做推断）。
             guard let operand = infer(expression: inner) else { return nil }
             if case .generic(let name, let params, let loc) = operand,

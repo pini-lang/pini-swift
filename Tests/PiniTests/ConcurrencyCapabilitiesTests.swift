@@ -94,7 +94,7 @@ struct ConcurrencyCapabilitiesTests: Sendable, PiniSourceLowering {
 
     main|func() -> ():
         let t = 父(7)
-        let r = join t
+        let r = wait t
         match r:
             case ok(v):
                 print(v)
@@ -139,7 +139,7 @@ struct ConcurrencyCapabilitiesTests: Sendable, PiniSourceLowering {
     @Test("让出原语在主后端回 1、在兑现不了的后端回 0 —— 两个后端各答各的")
     func yieldTaskReportsPerBackEnd() throws {
         // 意图：`1` / `0` 是契约 §3.2 定下的同一位。各后端若在这一位上不一致，
-        // 「`await` 让出 / `join` 占用」这条可观测差异跨后端就没有共同基准。
+        // 「`await` 让出 / `wait` 占用」这条可观测差异跨后端就没有共同基准。
         //  行不通  断言的是 `0` 不是错误 —— 它是纪律 3 的合规答案。
         #expect(GCDScheduler.shared.yieldTask() == 1)
         #expect(DispatchOnlyScheduler().yieldTask() == 0)

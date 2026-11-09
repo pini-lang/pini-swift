@@ -10,7 +10,7 @@ main|func() -> ():
     var f = slow()
     ; 2) 对句柄调用取消（含其派生子任务）
     f.cancel()
-    var r = join f
+    var r = wait f
     match r:
         case ok(v,):
             print(v)

@@ -285,8 +285,8 @@ public enum Keyword: String, CaseIterable {
     // `own`：类型内自指 + 扩展块方法修饰符 `|own`（与 `|self` 配对）。
     case `own` = "own"
     case `defer` = "defer"
-    // join 表层由 `await` / `join` 关键字承载：前者用于异步函数体内的挂起等待，后者用于同步上下文的阻塞 join，
-    // 二者都映射到既有 `.join` AST 节点，运行时按上下文区分。
+    // `await` / `wait` 两个关键字都映射到 `.join` AST 节点：前者在异步体内让出，后者在同步上下文阻塞。
+    // `form` 字段留住写的是哪个词，运行时据此决定能否让出。
     case `import` = "import"
     case `export` = "export"
     case `pass` = "pass"
@@ -296,7 +296,7 @@ public enum Keyword: String, CaseIterable {
     case `nil` = "nil"
     case `capture` = "capture"
     case `await` = "await"
-    case `join` = "join"
+    case `wait` = "wait"
     /// detach 语句形式 `detach <expr>`（detach-expr-stmt）——保留关键字，
     /// fire-and-forget 的唯一合法出口。
     case `detach` = "detach"

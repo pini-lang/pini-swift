@@ -2709,17 +2709,17 @@ public class Parser {
                 operand: operand, errorVar: errorVar, handler: handler, location: loc)
         }
 
-        /// `await`/`join` 前缀：让出式 / 占用式 join。两个关键字产出的节点相同、`form` 不同，
+        /// `await`/`wait` 前缀：让出式 / 占用式 join。两个关键字产出的节点相同、`form` 不同，
         /// 那一位是下游唯一需要的区别信息。二者仅作表达式起始位的前缀，中缀 `<=` 是纯比较运算符。
         if case .keyword(.await, _) = currentToken {
             advance()
             let operand = try parseUnary()
             return .join(operand, loc, .awaits)
         }
-        if case .keyword(.join, _) = currentToken {
+        if case .keyword(.wait, _) = currentToken {
             advance()
             let operand = try parseUnary()
-            return .join(operand, loc, .joins)
+            return .join(operand, loc, .waits)
         }
 
         if case .logicalNot(_) = currentToken {
@@ -3178,14 +3178,7 @@ public class Parser {
                     result = Expression.tupleIndex(object: result, index: idx, location: loc)
                     continue
                 }
-                let name: String
-                if case .keyword(.join, _) = currentToken {
-                    // 成员位保留 `arr.join(sep)`：`join` 是关键字，点号之后按名字读。
-                    advance()
-                    name = "join"
-                } else {
-                    name = try parseIdentifier()
-                }
+                let name = try parseIdentifier()
                 result = Expression.member(object: result, name: name, location: loc)
                 continue
             }
