@@ -106,6 +106,8 @@ public final class SemanticAnalyzer {
             try registerTopLevelDecl(decl)
         }
 
+        try checkTypeNameConflicts(module.declarations)
+
         // 第二遍：检查函数体
         for decl in module.declarations {
             try checkTopLevelDecl(decl)
@@ -147,6 +149,7 @@ public final class SemanticAnalyzer {
             for decl in unit.module.declarations {
                 try registerTopLevelDecl(decl)
             }
+            try checkTypeNameConflicts(unit.module.declarations)
             // 第二遍：检查当前文件函数体（引用点经索引做跨文件可见性 enforce）
             for decl in unit.module.declarations {
                 try checkTopLevelDecl(decl)
@@ -376,6 +379,13 @@ public final class SemanticAnalyzer {
             }
         }
 
+        // 名字空间冲突并入收集模式诊断，与其余语义错误同批返回。
+        do {
+            try checkTypeNameConflicts(module.declarations)
+        } catch let error as SemanticError {
+            errors.append(error)
+        } catch {}
+
         for decl in module.declarations {
             do {
                 try checkTopLevelDecl(decl)
@@ -511,6 +521,61 @@ public final class SemanticAnalyzer {
                 throw SemanticError.redeclaredSymbol(name: method.name, location: method.location)
             }
             seen[method.name] = method.location
+        }
+    }
+
+    /// 声明期禁重名：本型方法参与的同一目标类型同名报 E3-004，纯实例方法之间沿用按名合并。
+    /// 先收类型成员再收扩展块方法，与书写顺序无关；字段与用例名同处一张名字空间表。
+    private func checkTypeNameConflicts(_ declarations: [TopLevelDecl]) throws {
+        var names: [String: [String: Bool]] = [:]
+        func reserve(_ target: String, _ name: String, _ isOwn: Bool, _ location: SourceLocation) throws {
+            if let occupied = names[target]?[name] {
+                if occupied || isOwn {
+                    throw SemanticError.redeclaredSymbol(name: name, location: location)
+                }
+                return
+            }
+            names[target, default: [:]][name] = isOwn
+        }
+        for decl in declarations {
+            switch decl {
+            case .structDecl(let s):
+                for field in s.fields {
+                    try reserve(s.name, field.name, false, field.location)
+                }
+                for method in s.methods {
+                    try reserve(s.name, method.name, method.modifiers.contains("own"), method.location)
+                }
+            case .objectDecl(let o):
+                for field in o.fields {
+                    try reserve(o.name, field.name, false, field.location)
+                }
+                for method in o.methods {
+                    try reserve(o.name, method.name, method.modifiers.contains("own"), method.location)
+                }
+            case .givenDecl(let g):
+                for field in g.fields {
+                    try reserve(g.name, field.name, false, field.location)
+                }
+                for method in g.methods {
+                    try reserve(g.name, method.name, method.modifiers.contains("own"), method.location)
+                }
+            case .enumDecl(let e):
+                for enumCase in e.cases {
+                    try reserve(e.name, enumCase.name, false, enumCase.location)
+                }
+                for method in e.methods {
+                    try reserve(e.name, method.name, method.modifiers.contains("own"), method.location)
+                }
+            default:
+                break
+            }
+        }
+        for decl in declarations {
+            guard case .extensionDecl(let x) = decl, x.kind != .traitExt else { continue }
+            for method in x.methods {
+                try reserve(x.targetType, method.name, method.modifiers.contains("own"), method.location)
+            }
         }
     }
 

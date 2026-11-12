@@ -107,4 +107,70 @@ struct OwnMethodTests: Sendable, PiniSourceLowering {
         #expect(result?.code == "E4-009")
         #expect(result?.message.contains("点") == true)
     }
+
+    /// 本型方法参与的同名在类型检查之前拒掉：错误落在声明期，不留给后端重定义。
+    @Test("同一类型两处扩展块同名本型方法在声明期被拒")
+    func duplicateOwnMethodRejectedAtDeclaration() throws {
+        let source = #"""
+        (点)
+        x: I32 = 0
+
+        ((点))
+        取数|own() -> (I32,):
+            return 7
+
+        ((点))
+        取数|own() -> (I32,):
+            return 8
+
+        main|func() -> ():
+            print(点.取数())
+            return
+        """#
+        let result = failure { _ = try typeChecked(source) }
+        #expect(result?.code == "E3-004")
+        #expect(result?.message.contains("取数") == true)
+    }
+
+    @Test("本型方法与实例方法同名在声明期被拒")
+    func ownAndInstanceMethodSameNameRejected() throws {
+        let source = #"""
+        (点)
+        x: I32 = 0
+
+        ((点))
+        取数|self() -> (I32,):
+            return 1
+
+        ((点))
+        取数|own() -> (I32,):
+            return 7
+
+        main|func() -> ():
+            print(点.取数())
+            return
+        """#
+        let result = failure { _ = try typeChecked(source) }
+        #expect(result?.code == "E3-004")
+    }
+
+    @Test("本型方法名与枚举用例名相同在声明期被拒")
+    func ownMethodNameClashingWithEnumCaseRejected() throws {
+        let source = #"""
+        [形状]
+        圆(I32,)
+        方(I32,)
+
+        ((形状))
+        圆|own() -> (I32,):
+            return 3
+
+        main|func() -> ():
+            print(形状.圆())
+            return
+        """#
+        let result = failure { _ = try typeChecked(source) }
+        #expect(result?.code == "E3-004")
+        #expect(result?.message.contains("圆") == true)
+    }
 }
