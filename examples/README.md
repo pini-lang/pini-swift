@@ -93,6 +93,7 @@
 | `ffi-varargs-handle.pini` | FFI 边界（二）：C 变参调用与字符串句柄；只在 LLVM 通道与 `build --shared` 上成立，`run` 腿按 E5-019 / E5-020 登记为已知失败 | `句柄 的字节数 = 6` | Provisional |
 | `multifile/`（目录） | 多文件模块（跨文件共享命名空间） | `5 / 25 / 0` | Provisional |
 | `package-demo/`（目录） | 可见性 / 模块化（4 级约定制） | 见目录 | Provisional |
+| `own-method.pini` | `|own` 本型方法：类型名作接收者，覆盖结构体 / 对象体 / 给定体 / 枚举体 | `7 / 2 / 9 / 3` | Provisional |
 
 ## 进阶语法参考（非独立示例文件）
 

@@ -52,6 +52,7 @@ public final class TypeEnvironment {
     private var scopes: [Scope] = [Scope()]
     private var typeFields: [String: [String: TypeAnnotation]] = [:]
     private var typeMethods: [String: [String: FunctionSignature]] = [:]
+    private var ownMethodSignatures: [String: [String: FunctionSignature]] = [:]
 
     /// 持久变量类型表：供 codegen 事后 re-infer 使用。`defineVariable` 写入且作用域 pop 不清除——
     /// `TypeChecker.check` 退出函数体时 pop 子作用域，局部变量离开作用域栈，codegen 重推就取不到。
@@ -204,6 +205,28 @@ public final class TypeEnvironment {
 
     public func lookupMethod(typeName: String, methodName: String) -> FunctionSignature? {
         return typeMethods[typeName]?[methodName]
+    }
+
+    public func defineOwnMethod(
+        typeName: String,
+        methodName: String,
+        params: [TypeAnnotation],
+        returns: [TypeAnnotation],
+        returnLabels: [String?] = [],
+        usingParamIndices: Set<Int> = []
+    ) {
+        let sig = FunctionSignature(
+            params: params, returns: returns, returnLabels: returnLabels,
+            usingParamIndices: usingParamIndices
+        )
+        if ownMethodSignatures[typeName] == nil {
+            ownMethodSignatures[typeName] = [:]
+        }
+        ownMethodSignatures[typeName]?[methodName] = sig
+    }
+
+    public func lookupOwnMethod(typeName: String, methodName: String) -> FunctionSignature? {
+        return ownMethodSignatures[typeName]?[methodName]
     }
 
     // MARK: - Traits

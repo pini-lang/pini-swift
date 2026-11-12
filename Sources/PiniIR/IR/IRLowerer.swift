@@ -101,7 +101,8 @@ public enum IRLowerer {
             case .givenDecl(let gd): own = gd.methods
             default: own = []
             }
-            return Self.merging(own: own, extensions: extensionMethods)
+            let instanceMethods = (own + extensionMethods).filter { !$0.modifiers.contains("own") }
+            return Self.merging(own: instanceMethods, extensions: [])
         }
 
         /// 合并一个名义类型的两处方法来源：类型自身带的方法，与各扩展块按声明顺序归并进来的方法。
@@ -630,6 +631,23 @@ public enum IRLowerer {
                 functions.append(lowered)
                 builtinExtensionMethods[ext.targetType, default: [:]][method.name] =
                     (irName: lowered.name, returnType: lowered.returnType ?? .i32)
+            }
+        }
+
+        // 本型方法以类型名为接收者：不带 self，降载成顶层函数，调用点按 IR 名直发。
+        // 只认扩展块写法，故枚举目标也在这里落地，不经名义类型归并。
+        for decl in module.declarations {
+            guard case .extensionDecl(let ext) = decl else { continue }
+            for method in ext.methods where method.modifiers.contains("own") {
+                functions.append(
+                    try lowerMethod(
+                        method, typeName: ext.targetType, selfType: .i32, isOwn: true,
+                        typeInference: typeInference, moduleSignatures: signatures,
+                        nominalTypes: nominals, userTypes: userTypes, enums: enums,
+                        genericEnums: genericEnums, genericFuncTemplates: genericFuncTemplates,
+                        closureIds: closureIds, traitRegistry: traitRegistry,
+                        traitDefaultsCollector: traitDefaultsCollector
+                    ))
             }
         }
 
@@ -2103,6 +2121,7 @@ public enum IRLowerer {
         _ decl: FuncDecl,
         typeName: String,
         selfType: IRType,
+        isOwn: Bool = false,
         typeInference: TypeInference?,
         moduleSignatures: [String: IRLowererSignatureInfo],
         nominalTypes: [String: NominalInfo],
@@ -2120,6 +2139,9 @@ public enum IRLowerer {
         guard decl.genericParams.isEmpty else {
             throw unsupported("generic method '\(decl.name)'", at: decl.location)
         }
+        if isOwn, decl.params.first?.name == "self" {
+            throw unsupported("own method '\(decl.name)' cannot declare self", at: decl.location)
+        }
         // Multiple return slots collapse into a tuple value (D7) — same
         // contract as a top-level function.
         let returnType = try resolveReturnType(
@@ -2132,7 +2154,7 @@ public enum IRLowerer {
                 decl: decl, userTypes: userTypes, nominals: nominalTypes,
                 selfTypeName: typeName
             ) ?? returnType
-        var params = [IRFunction.IRParam(name: "self", type: selfType)]
+        var params: [IRFunction.IRParam] = isOwn ? [] : [IRFunction.IRParam(name: "self", type: selfType)]
         // The receiver may also be written as an explicit leading `self` parameter (trait default bodies are).
         // It is the receiver marker, not a parameter: the interpreter, the checker and the trait signature
         // pre-pass all drop it, and lowering it as an ordinary one would make it look unannotated.
@@ -2150,7 +2172,9 @@ public enum IRLowerer {
             }
             params.append(IRFunction.IRParam(name: param.name, type: type, isUsing: param.isUsing))
         }
-        let irName = "\(IRName.mangle(decl.name))__\(IRName.mangle(typeName))"
+        let irName = isOwn
+            ? IRName.ownMethod(decl.name, on: typeName)
+            : "\(IRName.mangle(decl.name))__\(IRName.mangle(typeName))"
         var context = FunctionContext(
             functionName: irName,
             returnType: effectiveReturn,
@@ -2170,7 +2194,7 @@ public enum IRLowerer {
         // Bare field names resolve against the receiver's fields inside method bodies (trait default bodies read
         // `名字` without a `self.` prefix). Emission goes through an explicit self load + fieldGet at the
         // identifier site.
-        if case .nominal(let selfTypeName, let selfIsObject) = selfType,
+        if !isOwn, case .nominal(let selfTypeName, let selfIsObject) = selfType,
             let info = nominalTypes[selfTypeName]
         {
             var fieldTypes: [String: IRType] = [:]
@@ -4886,6 +4910,30 @@ public enum IRLowerer {
             return try lowerModuleQualifiedCall(
                 functionName: memberName, signature: signature,
                 arguments: arguments, at: location, into: &context
+            )
+        }
+
+        // 本型方法以类型名为接收者：先于枚举用例构造决议，receiver 不是值故不降载。
+        if case .identifier(let typeName, _) = object,
+            let sig = context.typeInference?.environment?.lookupOwnMethod(
+                typeName: typeName, methodName: memberName)
+        {
+            guard sig.returns.count <= 1 else {
+                throw unsupported(
+                    "own method '\(memberName)' with multiple return slots is not supported",
+                    at: location)
+            }
+            let returnType = sig.returns.first.flatMap {
+                resolveAnnotationType($0, userTypes: context.userTypes)
+            }
+            let loweredArgs = try arguments.map {
+                try lowerExpr($0.expression, expected: nil, into: &context)
+            }
+            let irName = IRName.ownMethod(memberName, on: typeName)
+            context.recordCall(irName)
+            return LoweredExpr(
+                node: .call(function: irName, arguments: loweredArgs.map(\.node), returnType: returnType),
+                type: returnType ?? .i32
             )
         }
 

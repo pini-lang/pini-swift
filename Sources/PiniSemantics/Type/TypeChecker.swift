@@ -1538,11 +1538,7 @@ public final class TypeChecker {
                 typeEnv.defineStruct(name: s.name, fields: fieldInfos)
                 for method in s.methods {
                     let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
-                    typeEnv.defineMethod(
-                        typeName: s.name, methodName: method.name, params: paramTypes,
-                        returns: method.returnTypes, returnLabels: method.returnLabels,
-                        usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
-                    )
+                    registerMethodSignature(method, typeName: s.name, paramTypes: paramTypes)
                     if method.isAsync { asyncMethodParamNames["\(s.name).\(method.name)"] = method.params.map { $0.name } }
                 }
                 registerTraitMethods(for: s.name, traits: s.traits, location: loc)
@@ -1570,11 +1566,7 @@ public final class TypeChecker {
                 typeEnv.defineStruct(name: o.name, fields: fieldInfos)
                 for method in o.methods {
                     let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
-                    typeEnv.defineMethod(
-                        typeName: o.name, methodName: method.name, params: paramTypes,
-                        returns: method.returnTypes, returnLabels: method.returnLabels,
-                        usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
-                    )
+                    registerMethodSignature(method, typeName: o.name, paramTypes: paramTypes)
                     if method.isAsync { asyncMethodParamNames["\(o.name).\(method.name)"] = method.params.map { $0.name } }
                 }
                 registerTraitMethods(for: o.name, traits: o.traits, location: loc)
@@ -1604,11 +1596,7 @@ public final class TypeChecker {
                 typeEnv.defineStruct(name: g.name, fields: fieldInfos)
                 for method in g.methods {
                     let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) }
-                    typeEnv.defineMethod(
-                        typeName: g.name, methodName: method.name, params: paramTypes,
-                        returns: method.returnTypes, returnLabels: method.returnLabels,
-                        usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
-                    )
+                    registerMethodSignature(method, typeName: g.name, paramTypes: paramTypes)
                     if method.isAsync { asyncMethodParamNames["\(g.name).\(method.name)"] = method.params.map { $0.name } }
                 }
                 registerTraitMethods(for: g.name, traits: g.traits, location: loc)
@@ -1773,16 +1761,33 @@ public final class TypeChecker {
         }
     }
 
+    private func registerMethodSignature(
+        _ method: FuncDecl,
+        typeName: String,
+        paramTypes: [TypeAnnotation]
+    ) {
+        let usingIndices = TypeChecker.usingParamIndices(of: method.params)
+        if method.modifiers.contains("own") {
+            typeEnv.defineOwnMethod(
+                typeName: typeName, methodName: method.name, params: paramTypes,
+                returns: method.returnTypes, returnLabels: method.returnLabels,
+                usingParamIndices: usingIndices
+            )
+        } else {
+            typeEnv.defineMethod(
+                typeName: typeName, methodName: method.name, params: paramTypes,
+                returns: method.returnTypes, returnLabels: method.returnLabels,
+                usingParamIndices: usingIndices
+            )
+        }
+    }
+
     /// 把扩展块方法注册进目标类型的方法表（struct/object/enum 统一走 defineMethod）。
     /// 目标类型必须已注册（扩展块与其类型同文件、声明顺序由「数据与逻辑分离」保证类型在前）。
     private func registerExtensionMethods(_ x: ExtensionDecl) {
         for method in x.methods {
             let paramTypes = method.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: method.location) }
-            typeEnv.defineMethod(
-                typeName: x.targetType, methodName: method.name, params: paramTypes,
-                returns: method.returnTypes, returnLabels: method.returnLabels,
-                usingParamIndices: TypeChecker.usingParamIndices(of: method.params)
-            )
+            registerMethodSignature(method, typeName: x.targetType, paramTypes: paramTypes)
             if method.isAsync { asyncMethodParamNames["\(x.targetType).\(method.name)"] = method.params.map { $0.name } }
         }
         // trait 扩展（<<T>>）：方法追加进 trait 签名，供后续 conformance 校验可见。
@@ -2764,10 +2769,11 @@ public final class TypeChecker {
                     }
                 }
             case .member(let object, let memberName, _):
-                // P5-5 B3：限定枚举构造 形状.圆(...) → 按 (父, case) 校验 arity/类型
-                // （支持跨枚举同名 case，不依赖全局唯一反查）。Optional.some/none 内建不在
-                // 用户枚举注册表，lookupEnumCase 返回 nil，自然落到下方成员方法校验分支。
-                if case .identifier(let parentName, _) = object,
+                if case .identifier(let typeName, _) = object,
+                    let sig = typeEnv.lookupOwnMethod(typeName: typeName, methodName: memberName)
+                {
+                    try validateCallArguments(arguments: arguments, signature: sig, location: location)
+                } else if case .identifier(let parentName, _) = object,
                     typeEnv.lookupEnumCase(enumName: parentName, caseName: memberName) != nil
                 {
                     try checkEnumCaseConstruction(parent: parentName, caseName: memberName, args: arguments, location: location)
@@ -2809,6 +2815,11 @@ public final class TypeChecker {
                     {
                         try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
                     }
+                } else if case .identifier(let typeName, _) = object,
+                    typeEnv.lookupFieldTypes(typeName: typeName) != nil
+                {
+                    // 类型名不是值，推断为空；已登记类型上的未知成员在这里点名，不落到降载期。
+                    try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
                 }
             case .dotCaseRef(let caseName, _):
                 // 点号用例构造（成员意图）：期望类型无关的 arity 校验与裸名同轨
@@ -2832,6 +2843,12 @@ public final class TypeChecker {
             }
 
         case .member(let object, let name, let location):
+            // 类型名作接收者且成员已登记为本型方法时，接收者不是值，跳过值位检查。
+            if case .identifier(let receiverName, _) = object,
+                typeEnv.lookupOwnMethod(typeName: receiverName, methodName: name) != nil
+            {
+                break
+            }
             try checkExpression(object)
             // 草稿 A2（批次 1.3，D1）：命名元组 `.名称` 标签访问——object 为元组类型时，
             // name 必须在 labels 中存在，未知标签报 unknownMember；命中则跳过字段可见性检查。
