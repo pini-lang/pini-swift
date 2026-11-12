@@ -1,0 +1,9 @@
+[main|import]
+support = "../../../support"
+package = "../../../package"
+
+main|func() -> ():
+    let width = support.nonNegativeWidth(3)
+    let workspace = package.hasWorkspace(".")
+    print("workspace-ok", width, workspace)
+    return

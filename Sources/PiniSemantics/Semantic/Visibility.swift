@@ -39,10 +39,9 @@ extension VisibilityLevel {
         let basename = ns.lastPathComponent
         // 文件名 `_` 前缀 → internal
         if basename.hasPrefix("_") { return .internal }
-        // 父目录名 `_` 前缀 → package
-        let dir = ns.deletingLastPathComponent
-        let dirBasename = (dir as NSString).lastPathComponent
-        if !dirBasename.isEmpty, dirBasename.hasPrefix("_") { return .package }
+        // 任一包内祖先目录带 `_` 前缀都收敛到 package，深层实现目录不能意外变成公开面。
+        let directories = ns.deletingLastPathComponent.components(separatedBy: "/")
+        if directories.contains(where: { $0.hasPrefix("_") }) { return .package }
         return .public
     }
 }
@@ -91,7 +90,7 @@ public struct PackageSymbolIndex: Equatable, Sendable {
         for unit in package.fileUnits {
             for decl in unit.module.declarations {
                 guard let info = topLevelSymbolInfo(decl) else { continue }
-                let vis = VisibilityLevel.forSymbol(name: info.name, fileName: unit.fileName)
+                let vis = VisibilityLevel.forSymbol(name: info.name, fileName: package.relativeFileName(unit.fileName))
                 if byName[info.name] != nil {
                     throw SemanticError.redeclaredSymbol(name: info.name, location: info.location)
                 }
@@ -103,9 +102,9 @@ public struct PackageSymbolIndex: Equatable, Sendable {
                 // 枚举 case 名同样进入包级索引：跨文件未限定构造（圆(5.0)）据此解析。
                 // 同名跨枚举合法（各属其枚举命名空间），故只累积 parents，不抛重声明。
                 if case .enumDecl(let e) = decl {
-                    let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: unit.fileName)
+                    let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: package.relativeFileName(unit.fileName))
                     for ec in e.cases {
-                        let ownVis = VisibilityLevel.forSymbol(name: ec.name, fileName: unit.fileName)
+                        let ownVis = VisibilityLevel.forSymbol(name: ec.name, fileName: package.relativeFileName(unit.fileName))
                         // 可见性取父枚举与 case 名的较严者（private=0 最低）
                         let caseVis = min(parentVis, ownVis)
                         if byName[ec.name] == nil {
@@ -131,7 +130,7 @@ public struct PackageSymbolIndex: Equatable, Sendable {
         for unit in package.fileUnits {
             for decl in unit.module.declarations {
                 guard let info = topLevelSymbolInfo(decl) else { continue }
-                let vis = VisibilityLevel.forSymbol(name: info.name, fileName: unit.fileName)
+                let vis = VisibilityLevel.forSymbol(name: info.name, fileName: package.relativeFileName(unit.fileName))
                 if byName[info.name] == nil {
                     byName[info.name] = PackageSymbol(
                         name: info.name, fileName: unit.fileName,
@@ -140,9 +139,9 @@ public struct PackageSymbolIndex: Equatable, Sendable {
                     )
                 }
                 if case .enumDecl(let e) = decl {
-                    let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: unit.fileName)
+                    let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: package.relativeFileName(unit.fileName))
                     for ec in e.cases {
-                        let ownVis = VisibilityLevel.forSymbol(name: ec.name, fileName: unit.fileName)
+                        let ownVis = VisibilityLevel.forSymbol(name: ec.name, fileName: package.relativeFileName(unit.fileName))
                         let caseVis = min(parentVis, ownVis)
                         if byName[ec.name] == nil {
                             byName[ec.name] = PackageSymbol(
@@ -163,6 +162,11 @@ public struct PackageSymbolIndex: Equatable, Sendable {
     /// 按名字查找包级符号（含定义文件与可见性）。
     public func lookup(_ name: String) -> PackageSymbol? {
         byName[name]
+    }
+
+    /// 工作区接口文件只读取公开符号，顺序与声明和文件系统顺序无关。
+    public var publicSymbols: [String] {
+        byName.values.filter { $0.visibility == .public }.map(\.name).sorted()
     }
 
     /// 该 case 名是否歧义（包内多个枚举声明了同名 case）。歧义时未限定构造不可用，

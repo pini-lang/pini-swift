@@ -75,7 +75,8 @@ public final class SemanticAnalyzer {
         /// 本层各自取用。本层不登记则示例或用户代码调用这些自由函数会被误报 undefinedFunction；
         /// 字符串成员方法走成员调用路径、不经符号表，无需登记。表里除函数还有值，按值类型分流登记。
         for decl in BuiltinRegistry.decls where decl.definesSymbol {
-            let kind: SymbolKind = decl.valueType == nil
+            let kind: SymbolKind =
+                decl.valueType == nil
                 ? .function
                 : .variable(isMutable: false)
             symbolTable.define(Symbol(name: decl.name, kind: kind, location: dummyLoc))
@@ -87,6 +88,7 @@ public final class SemanticAnalyzer {
         warnings = []  // B2：每次分析重置（实例可复用）
         usedSymbols = []
         // 登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
+        importAliasInfos = [:]
         for imp in module.imports {
             let dir = (imp.location.fileName as NSString).deletingLastPathComponent
             let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
@@ -137,6 +139,12 @@ public final class SemanticAnalyzer {
             resetSymbolTable()
             packageContext = (index: index, currentFileName: unit.fileName)
             defer { packageContext = nil }
+            importAliasInfos = [:]
+            for imp in unit.module.imports {
+                let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+                let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
+                importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
+            }
             try setupInjections(for: unit.module)
             defer { teardownInjections() }
 

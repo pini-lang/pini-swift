@@ -740,6 +740,7 @@ public final class TypeChecker {
         for unit in package.fileUnits {
             packageContext = (index: index, currentFileName: unit.fileName)
             defer { packageContext = nil }
+            importAliasNames = Set(unit.module.imports.map(\.alias))
             for decl in unit.module.declarations {
                 try enforceDeclTypeVisibility(decl)
                 try checkTopLevelDecl(decl)
@@ -1979,7 +1980,10 @@ public final class TypeChecker {
         callee: String, arguments: [CallArgument],
         signature: TypeEnvironment.FunctionSignature, location: SourceLocation
     ) throws {
-        guard signature.params.contains(where: { if case .function = $0 { return true }; return false })
+        guard
+            signature.params.contains(where: {
+                if case .function = $0 { return true }; return false
+            })
         else { return }
         /// 个数与 `using` 的错配已由 `validateCallArguments` 报过；这里只按位置对齐，
         /// 再报一次同样是错配的二次噪声。
@@ -2021,7 +2025,8 @@ public final class TypeChecker {
                 && candidate.returns.count == callbackReturns.count
                 && zip(candidate.returns, callbackReturns).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
             guard signatureMatches else {
-                let declared = "(" + callbackParams.map { $0.describe() }.joined(separator: ", ") + ") -> "
+                let declared =
+                    "(" + callbackParams.map { $0.describe() }.joined(separator: ", ") + ") -> "
                     + "(" + callbackReturns.map { $0.describe() }.joined(separator: ", ") + ")"
                 try report(
                     TypeError.foreignCallbackNotFreeFunction(
@@ -3203,7 +3208,8 @@ public final class TypeChecker {
     ) throws {
         // 与 `validateCallArguments` 用**同一个**映射 —— 否则省略式调用下
         // 「越界的是哪个形参」会指错，隔离判定随之失真。
-        let effectiveIndices = sig.argumentToParamIndices(argumentCount: arguments.count)
+        let effectiveIndices =
+            sig.argumentToParamIndices(argumentCount: arguments.count)
             ?? Array(sig.params.indices)
         for (index, arg) in arguments.enumerated() {
             var candidate: TypeAnnotation? = nil

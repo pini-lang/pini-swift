@@ -1,0 +1,3 @@
+[workspace]
+members = ["packages/driver", "packages/package", "packages/support"]
+profile = "debug"

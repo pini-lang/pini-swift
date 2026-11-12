@@ -1,0 +1,2 @@
+containsWorkspaceMarker|func(text: String,) -> (Bool,):
+    return text.contains("[workspace]")

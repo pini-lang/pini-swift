@@ -1,0 +1,10 @@
+[package]
+name = "support"
+
+[lib]
+name = "support"
+entry = "src/api/offsets.pini"
+
+[[test]]
+name = "support-tests"
+entry = "tests"

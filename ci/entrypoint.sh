@@ -87,6 +87,18 @@ python3 tools/capability-census.py --check
 step "构建"
 swift build --disable-sandbox
 
+step "工作区奠基门禁"
+.build/debug/pini build bootstrap
+workspace_output="$(cd bootstrap && ./.build/debug/bin/pini-bootstrap)"
+if [ "$workspace_output" != "workspace-ok 3 true" ]; then
+    echo "工作区产物输出不符：$workspace_output" >&2
+    exit 1
+fi
+
+step "工作区测试门禁"
+# 初始工作区的 |test 由同一条测试链执行：空 target、筛选失配与失败断言都必须红。
+.build/debug/pini test bootstrap
+
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/fmt-gate.py

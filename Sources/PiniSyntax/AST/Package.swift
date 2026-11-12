@@ -24,14 +24,26 @@ public struct Package: Equatable, ASTNode, Sendable {
     public let name: String
     /// 包内所有源文件单元（递归扫描所得，含嵌套 `_` 目录以支持后续包级可见性）。
     public let fileUnits: [FileUnit]
+    /// 包根的规范路径；可见性用它把绝对文件名换成包根相对路径。
+    public let rootPath: String?
 
     public var location: SourceLocation {
         fileUnits.first?.location ?? SourceLocation(line: 0, column: 0, fileName: name)
     }
 
-    public init(name: String, fileUnits: [FileUnit]) {
+    public init(name: String, fileUnits: [FileUnit], rootPath: String? = nil) {
         self.name = name
         self.fileUnits = fileUnits
+        self.rootPath = rootPath
+    }
+
+    /// 可见性只消费包内路径；无包根的内存包退到文件名，保持既有行为。
+    public func relativeFileName(_ fileName: String) -> String {
+        guard let rootPath else { return (fileName as NSString).lastPathComponent }
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        return fileName.hasPrefix(prefix)
+            ? String(fileName.dropFirst(prefix.count))
+            : (fileName as NSString).lastPathComponent
     }
 
     /// 向后兼容：单文件世界等价于一个只含 1 个 `FileUnit` 的包。
@@ -47,6 +59,6 @@ public struct Package: Equatable, ASTNode, Sendable {
         guard let first = fileUnits.first else { return self }
         var assembled = fileUnits
         assembled[0] = FileUnit(fileName: first.fileName, module: FrontEnd.assemble(module: first.module))
-        return Package(name: name, fileUnits: assembled)
+        return Package(name: name, fileUnits: assembled, rootPath: rootPath)
     }
 }

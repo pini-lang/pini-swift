@@ -1,0 +1,14 @@
+[package]
+name = "driver"
+
+[require]
+support = "*"
+package = "*"
+
+[[bin]]
+name = "pini-bootstrap"
+entry = "src/api/main.pini"
+
+[[test]]
+name = "driver-tests"
+entry = "tests"
