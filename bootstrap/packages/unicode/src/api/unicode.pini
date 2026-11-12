@@ -9,42 +9,42 @@ length: I32 = 0
 
 ; 解码错误类别；首字节非法含游离续字节与 F8..FF，过长编码含 C0/C1 与低于下界的序列。
 [Utf8Error]
-无
-截断
-首字节非法
-续字节非法
-过长编码
-代理区
-超出上限
+utf8None
+utf8Truncated
+utf8BadLead
+utf8BadContinuation
+utf8Overlong
+utf8Surrogate
+utf8TooLarge
 
 ; 解码结果：错误前的标量仍然保留，出错后不再消费后续字节。
 (Utf8Text)
 scalars: Array<Scalar> = []
-error: Utf8Error = .无
+error: Utf8Error = .utf8None
 errorAt: I32 = -1
 
 ; 单步结果：失败时长度为 0、码点为 0，类别给出原因；成功时长度即消费字节数。
 (Utf8Step)
 code: I32 = 0
 length: I32 = 0
-error: Utf8Error = .无
+error: Utf8Error = .utf8None
 
 ; 错误类别的稳定名称；合法时答「无」。
 utf8ErrorName|func(error: Utf8Error,) -> (String,):
     match error:
-        case 无:
+        case utf8None:
             return "无"
-        case 截断:
+        case utf8Truncated:
             return "截断"
-        case 首字节非法:
+        case utf8BadLead:
             return "首字节非法"
-        case 续字节非法:
+        case utf8BadContinuation:
             return "续字节非法"
-        case 过长编码:
+        case utf8Overlong:
             return "过长编码"
-        case 代理区:
+        case utf8Surrogate:
             return "代理区"
-        case 超出上限:
+        case utf8TooLarge:
             return "超出上限"
     return "未知"
 

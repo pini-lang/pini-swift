@@ -5,6 +5,7 @@ _unicode = "../../../unicode"
 (LexState)
 bytes: Array<U8> = []
 pos: I32 = 0
+language: KeywordLanguage = .langEnglish
 indents: Array<I32> = []
 brackets: Array<Bool> = []
 tokens: Array<Token> = []
@@ -12,10 +13,11 @@ issues: Array<LexIssue> = []
 atLineStart: Bool = true
 
 ; 扫描整段字节：行结构、缩进、括号与记号在同一条循环里推进，收尾补布局记号。
-scanAll|func(bytes: Array<U8>, start: I32, issues: Array<LexIssue>,) -> (LexResult,):
+scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Array<LexIssue>,) -> (LexResult,):
     var state = LexState()
     state.bytes = bytes
     state.pos = start
+    state.language = language
     state.issues = issues
     state.indents = state.indents.append(0)
     let total = len(bytes)
@@ -28,10 +30,10 @@ scanAll|func(bytes: Array<U8>, start: I32, issues: Array<LexIssue>,) -> (LexResu
             else:
                 state = scanInline(state)
     if !state.atLineStart:
-        state = emitToken(state, 换行, state.pos, state.pos)
+        state = emitToken(state, newline, state.pos, state.pos)
     while len(state.indents) > 1:
         state = popIndent(state, state.pos)
-    state = emitToken(state, 结束, state.pos, state.pos)
+    state = emitToken(state, eof, state.pos, state.pos)
     var out = LexResult()
     out.tokens = state.tokens
     out.issues = state.issues
@@ -64,7 +66,7 @@ scanLineStart|func(state: LexState,) -> (LexState,):
                 width = width + 1
                 out.pos = out.pos + 1
             elif c == 9:
-                out.issues = out.issues.append(makeIssue(制表符缩进, out.pos, out.pos + 1))
+                out.issues = out.issues.append(makeIssue(issueTabIndent, out.pos, out.pos + 1))
                 width = width + 1
                 out.pos = out.pos + 1
             else:
@@ -90,7 +92,7 @@ openIndent|func(state: LexState, width: I32,) -> (LexState,):
     let top = out.indents[len(out.indents) - 1]
     if width > top:
         out.indents = out.indents.append(width)
-        return emitToken(out, 缩进, out.pos, out.pos)
+        return emitToken(out, indent, out.pos, out.pos)
     while len(out.indents) > 1 && out.indents[len(out.indents) - 1] > width:
         out = popIndent(out, out.pos)
     return out
@@ -106,7 +108,7 @@ popIndent|func(state: LexState, at: I32,) -> (LexState,):
         kept = kept.append(out.indents[i])
         i = i + 1
     out.indents = kept
-    return emitToken(out, 反缩进, at, at)
+    return emitToken(out, dedent, at, at)
 
 ; 行内：空白与注释跳过；换行发记号并把游标交给行首逻辑。
 scanInline|func(state: LexState,) -> (LexState,):
@@ -116,7 +118,7 @@ scanInline|func(state: LexState,) -> (LexState,):
         out.pos = out.pos + 1
         return out
     if c == 10:
-        out = emitToken(out, 换行, out.pos, out.pos + 1)
+        out = emitToken(out, newline, out.pos, out.pos + 1)
         out.pos = out.pos + 1
         out.atLineStart = true
         return out
@@ -181,36 +183,48 @@ isIdentifierContinueByte|func(c: I32,) -> (Bool,):
 ; 标识符：首标量按 Unicode 字母判据，续写按字母、数字与下划线；词面命中关键字表则改判关键字。
 scanIdentifier|func(state: LexState,) -> (LexState,):
     var out = state
-    let total = len(out.bytes)
     let start = out.pos
-    let first = byteAt(out.bytes, start)
+    let end = identifierEnd(out.bytes, start)
+    if end == start:
+        return scanWideByte(out)
+    out.pos = end
+    let kind = keywordKind(out.language, out.bytes, start, end)
+    return emitToken(out, kind, start, end)
+
+; 标识符词界：起点不是标识符首字节时答原位置；否则按 ASCII 快路与标量分类推进到词尾。
+identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
+    let total = len(bytes)
+    if start < 0 || start >= total:
+        return start
+    let first = byteAt(bytes, start)
+    var pos = start
     if first < 128:
-        out.pos = start + 1
+        if !isIdentifierStartByte(first):
+            return start
+        pos = start + 1
     else:
-        let unit = decodeScalarAt(out.bytes, start)
-        if unit.length == 0 || !startsIdentifier(unit.code):
-            return scanWideByte(out)
-        out.pos = start + unit.length
+        let head = decodeScalarAt(bytes, start)
+        if head.length == 0 || !startsIdentifier(head.code):
+            return start
+        pos = start + head.length
     var scanning = true
     while scanning:
-        if out.pos >= total:
+        if pos >= total:
             scanning = false
         else:
-            let c = byteAt(out.bytes, out.pos)
+            let c = byteAt(bytes, pos)
             if c < 128:
                 if isIdentifierContinueByte(c):
-                    out.pos = out.pos + 1
+                    pos = pos + 1
                 else:
                     scanning = false
             else:
-                let unit = decodeScalarAt(out.bytes, out.pos)
+                let unit = decodeScalarAt(bytes, pos)
                 if unit.length == 0 || !continuesIdentifier(unit.code):
                     scanning = false
                 else:
-                    out.pos = out.pos + unit.length
-    let end = out.pos
-    let kind = keywordKind(out.bytes, start, end)
-    return emitToken(out, kind, start, end)
+                    pos = pos + unit.length
+    return pos
 
 ; 非 ASCII 且不构成标识符的字节序列：按整条标量记问题并消费，保证游标不离字界。
 scanWideByte|func(state: LexState,) -> (LexState,):
@@ -220,8 +234,8 @@ scanWideByte|func(state: LexState,) -> (LexState,):
     var width = unit.length
     if width == 0:
         width = 1
-    out.issues = out.issues.append(makeIssue(未知字节, start, start + width))
-    out = emitToken(out, 未知, start, start + width)
+    out.issues = out.issues.append(makeIssue(issueUnknownByte, start, start + width))
+    out = emitToken(out, unknown, start, start + width)
     out.pos = start + width
     return out
 
@@ -238,10 +252,10 @@ scanBacktick|func(state: LexState,) -> (LexState,):
             break
         i = i + 1
     if close > start + 1:
-        out = emitNamed(out, 标识符, start, close + 1, start + 1, close)
+        out = emitNamed(out, identifier, start, close + 1, start + 1, close)
         out.pos = close + 1
         return out
-    out = emitToken(out, 标识符, start, start + 1)
+    out = emitToken(out, identifier, start, start + 1)
     out.pos = start + 1
     return out
 
@@ -251,7 +265,7 @@ scanNumber|func(state: LexState,) -> (LexState,):
     let total = len(out.bytes)
     let start = out.pos
     var pos = start
-    var kind: TokenKind = 整数
+    var kind: TokenKind = integer
     var radix = 10
     if byteAt(out.bytes, pos) == 48 && pos + 1 < total:
         let prefix = byteAt(out.bytes, pos + 1)
@@ -268,13 +282,13 @@ scanNumber|func(state: LexState,) -> (LexState,):
         let digitsStart = pos
         pos = scanRadixDigits(out.bytes, pos, radix)
         if pos == digitsStart:
-            out.issues = out.issues.append(makeIssue(数字格式, start, pos))
+            out.issues = out.issues.append(makeIssue(issueNumberFormat, start, pos))
         if pos < total && isAsciiWordByte(byteAt(out.bytes, pos)):
             let badStart = pos
             while pos < total && isAsciiWordByte(byteAt(out.bytes, pos)):
                 pos = pos + 1
-            out.issues = out.issues.append(makeIssue(数字格式, badStart, pos))
-        kind = 整数
+            out.issues = out.issues.append(makeIssue(issueNumberFormat, badStart, pos))
+        kind = integer
     else:
         pos = scanRadixDigits(out.bytes, pos, 10)
         var floating = false
@@ -294,10 +308,10 @@ scanNumber|func(state: LexState,) -> (LexState,):
                     floating = true
                     pos = scanRadixDigits(out.bytes, probe, 10)
                 else:
-                    out.issues = out.issues.append(makeIssue(数字格式, pos, probe))
+                    out.issues = out.issues.append(makeIssue(issueNumberFormat, pos, probe))
                     pos = probe
         if floating:
-            kind = 浮点
+            kind = float
     out = emitToken(out, kind, start, pos)
     out.pos = pos
     return out
@@ -350,7 +364,7 @@ scanString|func(state: LexState,) -> (LexState,):
         let c = byteAt(out.bytes, pos)
         if c == 34:
             if !dropping && pos > segStart:
-                segments = segments.append(makeSegment(字面, segStart, pos))
+                segments = segments.append(makeSegment(segmentLiteral, segStart, pos))
             pos = pos + 1
             terminated = true
             break
@@ -362,15 +376,15 @@ scanString|func(state: LexState,) -> (LexState,):
             let escape = byteAt(out.bytes, pos + 1)
             if escape == 40:
                 if !dropping && pos > segStart:
-                    segments = segments.append(makeSegment(字面, segStart, pos))
+                    segments = segments.append(makeSegment(segmentLiteral, segStart, pos))
                 let inner = pos + 2
                 let close = interpolationEnd(out.bytes, inner)
                 if close < 0:
-                    out.issues = out.issues.append(makeIssue(插值未闭合, pos, pos + 2))
+                    out.issues = out.issues.append(makeIssue(issueUnterminatedInterpolation, pos, pos + 2))
                     pos = total
                     break
                 if !dropping:
-                    segments = segments.append(makeSegment(插值, inner, close))
+                    segments = segments.append(makeSegment(segmentInterpolation, inner, close))
                     interpolated = true
                 pos = close + 1
                 segStart = pos
@@ -378,20 +392,20 @@ scanString|func(state: LexState,) -> (LexState,):
                 pos = pos + 2
             elif escape == 48:
                 if !dropping:
-                    segments = segments.append(makeSegment(字面, segStart, pos + 2))
+                    segments = segments.append(makeSegment(segmentLiteral, segStart, pos + 2))
                 dropping = true
                 pos = pos + 2
             else:
-                out.issues = out.issues.append(makeIssue(转义非法, pos, pos + 2))
+                out.issues = out.issues.append(makeIssue(issueBadEscape, pos, pos + 2))
                 pos = pos + 2
         else:
             pos = pos + 1
     if !terminated:
-        out.issues = out.issues.append(makeIssue(字符串未闭合, start, pos))
+        out.issues = out.issues.append(makeIssue(issueUnterminatedString, start, pos))
     if interpolated:
-        out = emitString(out, 插值字符串, start, pos, segments)
+        out = emitString(out, interpolatedString, start, pos, segments)
     else:
-        out = emitString(out, 字符串, start, pos, segments)
+        out = emitString(out, string, start, pos, segments)
     out.pos = pos
     return out
 
@@ -459,118 +473,116 @@ scanPunctuation|func(state: LexState,) -> (LexState,):
     let start = out.pos
     if c == 43:
         if c1 == 43:
-            return emitAscii(out, 自增, 2)
+            return emitAscii(out, opInc, 2)
         if c1 == 61:
-            return emitAscii(out, 加赋值, 2)
-        return emitAscii(out, 加, 1)
+            return emitAscii(out, opAssignAdd, 2)
+        return emitAscii(out, opAdd, 1)
     if c == 45:
         if c1 == 45:
-            return emitAscii(out, 自减, 2)
+            return emitAscii(out, opDec, 2)
         if c1 == 61:
-            return emitAscii(out, 减赋值, 2)
+            return emitAscii(out, opAssignSub, 2)
         if c1 == 62:
-            return emitAscii(out, 箭头, 2)
-        return emitAscii(out, 减, 1)
+            return emitAscii(out, arrow, 2)
+        return emitAscii(out, opSub, 1)
     if c == 42:
         if c1 == 61:
-            return emitAscii(out, 乘赋值, 2)
-        return emitAscii(out, 星号, 1)
+            return emitAscii(out, opAssignMul, 2)
+        return emitAscii(out, opMul, 1)
     if c == 47:
         if c1 == 61:
-            return emitAscii(out, 除赋值, 2)
-        return emitAscii(out, 除, 1)
+            return emitAscii(out, opAssignDiv, 2)
+        return emitAscii(out, opDiv, 1)
     if c == 37:
         if c1 == 61:
-            return emitAscii(out, 取余赋值, 2)
-        return emitAscii(out, 取余, 1)
+            return emitAscii(out, opAssignMod, 2)
+        return emitAscii(out, opMod, 1)
     if c == 38:
         if c1 == 38:
-            return emitAscii(out, 逻辑与, 2)
+            return emitAscii(out, opAnd, 2)
         if c1 == 61:
-            return emitAscii(out, 位与赋值, 2)
-        return emitAscii(out, 位与, 1)
+            return emitAscii(out, opAssignBitAnd, 2)
+        return emitAscii(out, opBitAnd, 1)
     if c == 124:
         if c1 == 124:
-            return emitAscii(out, 逻辑或, 2)
+            return emitAscii(out, opOr, 2)
         if c1 == 61:
-            return emitAscii(out, 竖线赋值, 2)
-        return emitAscii(out, 竖线, 1)
+            return emitAscii(out, opAssignBitOr, 2)
+        return emitAscii(out, opBitOr, 1)
     if c == 94:
         if c1 == 61:
-            return emitAscii(out, 位异或赋值, 2)
-        return emitAscii(out, 位异或, 1)
+            return emitAscii(out, opAssignBitXor, 2)
+        return emitAscii(out, opBitXor, 1)
     if c == 33:
         if c1 == 61:
-            return emitAscii(out, 不等, 2)
-        return emitAscii(out, 逻辑非, 1)
+            return emitAscii(out, opNe, 2)
+        return emitAscii(out, opNot, 1)
     if c == 61:
         if c1 == 61:
-            return emitAscii(out, 等于, 2)
+            return emitAscii(out, opEq, 2)
         if c1 == 62:
-            return emitAscii(out, 双箭头, 2)
-        return emitAscii(out, 赋值, 1)
+            return emitAscii(out, fatArrow, 2)
+        return emitAscii(out, opAssign, 1)
     if c == 60:
         if c1 == 60 && c2 == 61:
-            return emitAscii(out, 左移赋值, 3)
+            return emitAscii(out, opAssignShl, 3)
         if c1 == 60:
-            return emitAscii(out, 左移, 2)
+            return emitAscii(out, opShl, 2)
         if c1 == 61:
-            return emitAscii(out, 小于等于, 2)
-        return emitAscii(out, 小于, 1)
+            return emitAscii(out, opLe, 2)
+        return emitAscii(out, opLt, 1)
     if c == 62:
         if c1 == 62 && c2 == 61:
-            return emitAscii(out, 右移赋值, 3)
+            return emitAscii(out, opAssignShr, 3)
         if c1 == 62:
-            return emitAscii(out, 右移, 2)
+            return emitAscii(out, opShr, 2)
         if c1 == 61:
-            return emitAscii(out, 大于等于, 2)
-        return emitAscii(out, 大于, 1)
+            return emitAscii(out, opGe, 2)
+        return emitAscii(out, opGt, 1)
     if c == 126:
-        return emitAscii(out, 位取反, 1)
+        return emitAscii(out, opBitNot, 1)
     if c == 40:
-        out = pushBracket(out, isBlockCarryingParen(out.bytes, start))
-        return emitAscii(out, 左圆, 1)
+        out = pushBracket(out, isBlockCarryingParen(out.language, out.bytes, start))
+        return emitAscii(out, leftParen, 1)
     if c == 91:
         out = pushBracket(out, false)
-        return emitAscii(out, 左方, 1)
+        return emitAscii(out, leftBracket, 1)
     if c == 123:
         out = pushBracket(out, false)
-        return emitAscii(out, 左花, 1)
+        return emitAscii(out, leftBrace, 1)
     if c == 41:
         out = popBracket(out)
-        return emitAscii(out, 右圆, 1)
+        return emitAscii(out, rightParen, 1)
     if c == 93:
         out = popBracket(out)
-        return emitAscii(out, 右方, 1)
+        return emitAscii(out, rightBracket, 1)
     if c == 125:
         out = popBracket(out)
-        return emitAscii(out, 右花, 1)
+        return emitAscii(out, rightBrace, 1)
     if c == 58:
-        return emitAscii(out, 冒号, 1)
+        return emitAscii(out, colon, 1)
     if c == 44:
-        return emitAscii(out, 逗号, 1)
+        return emitAscii(out, comma, 1)
     if c == 46:
-        return emitAscii(out, 点, 1)
+        return emitAscii(out, dot, 1)
     if c == 63:
-        return emitAscii(out, 问号, 1)
+        return emitAscii(out, question, 1)
     if c == 64:
-        return emitAscii(out, 艾特, 1)
-    out.issues = out.issues.append(makeIssue(未知字节, start, start + 1))
-    out = emitToken(out, 未知, start, start + 1)
+        return emitAscii(out, atSign, 1)
+    out.issues = out.issues.append(makeIssue(issueUnknownByte, start, start + 1))
+    out = emitToken(out, unknown, start, start + 1)
     out.pos = start + 1
     return out
 
-; 块携带判定：`(` 后同行紧跟 `func` 且其后不是标识符续字节。
-isBlockCarryingParen|func(bytes: Array<U8>, openAt: I32,) -> (Bool,):
+; 块携带判定：`(` 后同行紧跟函数关键字且其后不是标识符续字节；关键字拼写按词表取。
+isBlockCarryingParen|func(language: KeywordLanguage, bytes: Array<U8>, openAt: I32,) -> (Bool,):
     var i = openAt + 1
     while i < len(bytes) && byteAt(bytes, i) == 32:
         i = i + 1
-    if !matchesAscii(bytes, i, "func"):
+    let end = identifierEnd(bytes, i)
+    if end == i:
         return false
-    let after = i + 4
-    if after >= len(bytes):
-        return true
-    return !isIdentifierContinueByte(byteAt(bytes, after))
+    return kindTag(keywordKind(language, bytes, i, end)) == kindTag(kwFunc)
 
 ; 压括号栈：块携带括号记为真，其内部布局不被抑制。
 pushBracket|func(state: LexState, carrying: Bool,) -> (LexState,):

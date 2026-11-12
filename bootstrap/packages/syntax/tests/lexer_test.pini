@@ -27,18 +27,18 @@ _support = "../../support"
 简单行|test() -> ():
     let lexed = lexText("let x = 42\n")
     assert(lexed.tokenCount() == 6, "记号数")
-    断言记号(lexed.tokenAt(0), .常量, 0, 3)
-    断言记号(lexed.tokenAt(1), .标识符, 4, 5)
-    断言记号(lexed.tokenAt(2), .赋值, 6, 7)
-    断言记号(lexed.tokenAt(3), .整数, 8, 10)
-    断言记号(lexed.tokenAt(4), .换行, 10, 11)
-    断言记号(lexed.tokenAt(5), .结束, 11, 11)
+    断言记号(lexed.tokenAt(0), .kwLet, 0, 3)
+    断言记号(lexed.tokenAt(1), .identifier, 4, 5)
+    断言记号(lexed.tokenAt(2), .opAssign, 6, 7)
+    断言记号(lexed.tokenAt(3), .integer, 8, 10)
+    断言记号(lexed.tokenAt(4), .newline, 10, 11)
+    断言记号(lexed.tokenAt(5), .eof, 11, 11)
     return
 
 ; 34 个关键字全表：词长即消费数，位置逐条接续，错一条就错位。
 关键字全表|test() -> ():
     let lexed = lexText("var let func enum object if elif else match case while step for in try return break continue self own defer import export nil capture await wait unsafe test foreign detach pass using unroll")
-    let kinds: Array<TokenKind> = [.变量, .常量, .函数, .枚举, .对象, .如果, .否则如果, .否则, .匹配, .分支, .循环, .步, .遍历, .在, .尝试, .返回, .跳出, .继续, .自身, .自有, .延迟, .导入, .导出, .空, .捕获, .异步等, .等待, .不安全, .测试, .外部, .分离, .通过, .使用, .展开]
+    let kinds: Array<TokenKind> = [.kwVar, .kwLet, .kwFunc, .kwEnum, .kwObject, .kwIf, .kwElif, .kwElse, .kwMatch, .kwCase, .kwWhile, .kwStep, .kwFor, .kwIn, .kwTry, .kwReturn, .kwBreak, .kwContinue, .kwSelf, .kwOwn, .kwDefer, .kwImport, .kwExport, .kwNil, .kwCapture, .kwAwait, .kwWait, .kwUnsafe, .kwTest, .kwForeign, .kwDetach, .kwPass, .kwUsing, .kwUnroll]
     let widths: Array<I32> = [3, 3, 4, 4, 6, 2, 4, 4, 5, 4, 5, 4, 3, 2, 3, 6, 5, 8, 4, 3, 5, 6, 6, 3, 7, 5, 4, 6, 4, 7, 6, 4, 5, 6]
     assert(len(kinds) == 34, "关键字表应含 34 项")
     断言连续(lexed, kinds, widths)
@@ -48,89 +48,89 @@ _support = "../../support"
 缩进与反缩进|test() -> ():
     let lexed = lexText("if x:\n    y\n")
     assert(lexed.tokenCount() == 9, "记号数")
-    断言记号(lexed.tokenAt(0), .如果, 0, 2)
-    断言记号(lexed.tokenAt(1), .标识符, 3, 4)
-    断言记号(lexed.tokenAt(2), .冒号, 4, 5)
-    断言记号(lexed.tokenAt(3), .换行, 5, 6)
-    断言记号(lexed.tokenAt(4), .缩进, 10, 10)
-    断言记号(lexed.tokenAt(5), .标识符, 10, 11)
-    断言记号(lexed.tokenAt(6), .换行, 11, 12)
-    断言记号(lexed.tokenAt(7), .反缩进, 12, 12)
-    断言记号(lexed.tokenAt(8), .结束, 12, 12)
+    断言记号(lexed.tokenAt(0), .kwIf, 0, 2)
+    断言记号(lexed.tokenAt(1), .identifier, 3, 4)
+    断言记号(lexed.tokenAt(2), .colon, 4, 5)
+    断言记号(lexed.tokenAt(3), .newline, 5, 6)
+    断言记号(lexed.tokenAt(4), .indent, 10, 10)
+    断言记号(lexed.tokenAt(5), .identifier, 10, 11)
+    断言记号(lexed.tokenAt(6), .newline, 11, 12)
+    断言记号(lexed.tokenAt(7), .dedent, 12, 12)
+    断言记号(lexed.tokenAt(8), .eof, 12, 12)
     return
 
 ; 两层缩进各弹一次：反缩进都落在下一行首个记号的位置，跨度为零。
 嵌套反缩进|test() -> ():
     let lexed = lexText("if a:\n    if b:\n        c\nd\n")
     assert(lexed.tokenCount() == 17, "记号数")
-    断言记号(lexed.tokenAt(4), .缩进, 10, 10)
-    断言记号(lexed.tokenAt(9), .缩进, 24, 24)
-    断言记号(lexed.tokenAt(11), .换行, 25, 26)
-    断言记号(lexed.tokenAt(12), .反缩进, 26, 26)
-    断言记号(lexed.tokenAt(13), .反缩进, 26, 26)
-    断言记号(lexed.tokenAt(14), .标识符, 26, 27)
-    断言记号(lexed.tokenAt(15), .换行, 27, 28)
-    断言记号(lexed.tokenAt(16), .结束, 28, 28)
+    断言记号(lexed.tokenAt(4), .indent, 10, 10)
+    断言记号(lexed.tokenAt(9), .indent, 24, 24)
+    断言记号(lexed.tokenAt(11), .newline, 25, 26)
+    断言记号(lexed.tokenAt(12), .dedent, 26, 26)
+    断言记号(lexed.tokenAt(13), .dedent, 26, 26)
+    断言记号(lexed.tokenAt(14), .identifier, 26, 27)
+    断言记号(lexed.tokenAt(15), .newline, 27, 28)
+    断言记号(lexed.tokenAt(16), .eof, 28, 28)
     return
 
 ; 空行与注释行透明：不产换行、不改缩进，块靠后续有内容的行判定。
 空行与注释透明|test() -> ():
     let lexed = lexText("if a:\n\n    ; c\n    b\n")
     assert(lexed.tokenCount() == 9, "记号数")
-    断言记号(lexed.tokenAt(3), .换行, 5, 6)
-    断言记号(lexed.tokenAt(4), .缩进, 19, 19)
-    断言记号(lexed.tokenAt(5), .标识符, 19, 20)
-    断言记号(lexed.tokenAt(6), .换行, 20, 21)
-    断言记号(lexed.tokenAt(7), .反缩进, 21, 21)
-    断言记号(lexed.tokenAt(8), .结束, 21, 21)
+    断言记号(lexed.tokenAt(3), .newline, 5, 6)
+    断言记号(lexed.tokenAt(4), .indent, 19, 19)
+    断言记号(lexed.tokenAt(5), .identifier, 19, 20)
+    断言记号(lexed.tokenAt(6), .newline, 20, 21)
+    断言记号(lexed.tokenAt(7), .dedent, 21, 21)
+    断言记号(lexed.tokenAt(8), .eof, 21, 21)
     return
 
 ; 普通括号内换行等同空白：括号内不产换行与缩进，闭括号后才恢复行结构。
 括号内抑制布局|test() -> ():
     let lexed = lexText("f(\n    1,\n)\nx\n")
     assert(lexed.tokenCount() == 9, "记号数")
-    断言记号(lexed.tokenAt(0), .标识符, 0, 1)
-    断言记号(lexed.tokenAt(1), .左圆, 1, 2)
-    断言记号(lexed.tokenAt(2), .整数, 7, 8)
-    断言记号(lexed.tokenAt(3), .逗号, 8, 9)
-    断言记号(lexed.tokenAt(4), .右圆, 10, 11)
-    断言记号(lexed.tokenAt(5), .换行, 11, 12)
-    断言记号(lexed.tokenAt(6), .标识符, 12, 13)
-    断言记号(lexed.tokenAt(7), .换行, 13, 14)
-    断言记号(lexed.tokenAt(8), .结束, 14, 14)
+    断言记号(lexed.tokenAt(0), .identifier, 0, 1)
+    断言记号(lexed.tokenAt(1), .leftParen, 1, 2)
+    断言记号(lexed.tokenAt(2), .integer, 7, 8)
+    断言记号(lexed.tokenAt(3), .comma, 8, 9)
+    断言记号(lexed.tokenAt(4), .rightParen, 10, 11)
+    断言记号(lexed.tokenAt(5), .newline, 11, 12)
+    断言记号(lexed.tokenAt(6), .identifier, 12, 13)
+    断言记号(lexed.tokenAt(7), .newline, 13, 14)
+    断言记号(lexed.tokenAt(8), .eof, 14, 14)
     return
 
 ; 块携带括号：`(` 后同行紧跟 `func` 时内部布局照常，参数括号仍按普通括号抑制。
 块携带括号|test() -> ():
     let lexed = lexText("f = (func (n: I32,) -> (I32,):\n    return n\n)\n")
     assert(lexed.tokenCount() == 25, "记号数")
-    断言记号(lexed.tokenAt(2), .左圆, 4, 5)
-    断言记号(lexed.tokenAt(3), .函数, 5, 9)
-    断言记号(lexed.tokenAt(4), .左圆, 10, 11)
-    断言记号(lexed.tokenAt(16), .换行, 30, 31)
-    断言记号(lexed.tokenAt(17), .缩进, 35, 35)
-    断言记号(lexed.tokenAt(18), .返回, 35, 41)
-    断言记号(lexed.tokenAt(20), .换行, 43, 44)
-    断言记号(lexed.tokenAt(21), .反缩进, 44, 44)
-    断言记号(lexed.tokenAt(22), .右圆, 44, 45)
+    断言记号(lexed.tokenAt(2), .leftParen, 4, 5)
+    断言记号(lexed.tokenAt(3), .kwFunc, 5, 9)
+    断言记号(lexed.tokenAt(4), .leftParen, 10, 11)
+    断言记号(lexed.tokenAt(16), .newline, 30, 31)
+    断言记号(lexed.tokenAt(17), .indent, 35, 35)
+    断言记号(lexed.tokenAt(18), .kwReturn, 35, 41)
+    断言记号(lexed.tokenAt(20), .newline, 43, 44)
+    断言记号(lexed.tokenAt(21), .dedent, 44, 44)
+    断言记号(lexed.tokenAt(22), .rightParen, 44, 45)
     return
 
 ; 数值字面量：进制前缀与小数点按最长匹配消费，`1.foo` 拆成整数、点与标识符。
 数值扫描|test() -> ():
     let lexed = lexText("0xFF 0b1010 0o777 3.14 1.0e-5 2E10 42")
-    let kinds: Array<TokenKind> = [.整数, .整数, .整数, .浮点, .浮点, .浮点, .整数]
+    let kinds: Array<TokenKind> = [.integer, .integer, .integer, .float, .float, .float, .integer]
     let widths: Array<I32> = [4, 6, 5, 4, 6, 4, 2]
     断言连续(lexed, kinds, widths)
     let tail = lexText("1.foo")
-    断言记号(tail.tokenAt(0), .整数, 0, 1)
-    断言记号(tail.tokenAt(1), .点, 1, 2)
-    断言记号(tail.tokenAt(2), .标识符, 2, 5)
+    断言记号(tail.tokenAt(0), .integer, 0, 1)
+    断言记号(tail.tokenAt(1), .dot, 1, 2)
+    断言记号(tail.tokenAt(2), .identifier, 2, 5)
     return
 
 ; 运算符最长匹配：先试三字节，再两字节，最后一字节；错一步就劈成两条记号。
 运算符最长匹配|test() -> ():
     let lexed = lexText("<<= << <= < >>= >> >= > == = != ! && & || | ++ + -- -")
-    let kinds: Array<TokenKind> = [.左移赋值, .左移, .小于等于, .小于, .右移赋值, .右移, .大于等于, .大于, .等于, .赋值, .不等, .逻辑非, .逻辑与, .位与, .逻辑或, .竖线, .自增, .加, .自减, .减]
+    let kinds: Array<TokenKind> = [.opAssignShl, .opShl, .opLe, .opLt, .opAssignShr, .opShr, .opGe, .opGt, .opEq, .opAssign, .opNe, .opNot, .opAnd, .opBitAnd, .opOr, .opBitOr, .opInc, .opAdd, .opDec, .opSub]
     let widths: Array<I32> = [3, 2, 2, 1, 3, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1]
     断言连续(lexed, kinds, widths)
     return
@@ -138,13 +138,13 @@ _support = "../../support"
 ; 字符串：整条跨度含两侧引号，字面段记原文区间；无插值答字符串，有插值答插值字符串。
 字符串分段|test() -> ():
     let plain = lexText("\"a\\nb\"")
-    assert(isKind(plain.tokenAt(0), .字符串), "转义不产生插值")
+    assert(isKind(plain.tokenAt(0), .string), "转义不产生插值")
     assert(plain.tokenAt(0).consumed() == 6, "整条字符串消费六字节")
     assert(plain.tokenAt(0).segmentCount() == 1, "字面段数")
     assert(plain.tokenAt(0).segmentAt(0).start == 1, "字面段起点")
     assert(plain.tokenAt(0).segmentAt(0).end == 5, "字面段终点")
     let mixed = lexText("\"v=\\(x)\"")
-    assert(isKind(mixed.tokenAt(0), .插值字符串), "含插值")
+    assert(isKind(mixed.tokenAt(0), .interpolatedString), "含插值")
     assert(mixed.tokenAt(0).consumed() == 8, "整条消费八字节")
     assert(mixed.tokenAt(0).segmentCount() == 2, "字面段加插值段")
     assert(mixed.tokenAt(0).segmentAt(0).start == 1, "字面段起点")
@@ -157,7 +157,7 @@ _support = "../../support"
 插值配平|test() -> ():
     let lexed = lexText("\"\\(f(\"x\"))\"")
     let token = lexed.tokenAt(0)
-    assert(isKind(token, .插值字符串), "含插值")
+    assert(isKind(token, .interpolatedString), "含插值")
     assert(token.consumed() == 11, "整条消费十一字节")
     assert(token.segmentCount() == 1, "只有一段插值")
     assert(token.segmentAt(0).start == 3, "插值段起点")
@@ -178,71 +178,110 @@ _support = "../../support"
 反引号标识符|test() -> ():
     let lexed = lexText("`if`")
     let token = lexed.tokenAt(0)
-    assert(isKind(token, .标识符), "关键字作名字")
+    assert(isKind(token, .identifier), "关键字作名字")
     assert(token.consumed() == 4, "整条消费四字节")
     assert(token.nameStart == 1, "名字起点")
     assert(token.nameEnd == 3, "名字终点")
     let broken = lexText("`ab")
-    assert(isKind(broken.tokenAt(0), .标识符), "未闭合回退为单字符标识符")
+    assert(isKind(broken.tokenAt(0), .identifier), "未闭合回退为单字符标识符")
     assert(broken.tokenAt(0).consumed() == 1, "回退只消费一个反引号")
-    assert(isKind(broken.tokenAt(1), .标识符), "其余仍是标识符")
+    assert(isKind(broken.tokenAt(1), .identifier), "其余仍是标识符")
     assert(broken.tokenAt(1).consumed() == 2, "余下两字节")
     return
 
 ; 注释在词法层跳过：只留行尾换行，注释字节不计入任何记号。
 注释跳过|test() -> ():
     let lexed = lexText("x ; note\ny\n")
-    断言记号(lexed.tokenAt(0), .标识符, 0, 1)
-    断言记号(lexed.tokenAt(1), .换行, 8, 9)
-    断言记号(lexed.tokenAt(2), .标识符, 9, 10)
-    断言记号(lexed.tokenAt(3), .换行, 10, 11)
-    断言记号(lexed.tokenAt(4), .结束, 11, 11)
+    断言记号(lexed.tokenAt(0), .identifier, 0, 1)
+    断言记号(lexed.tokenAt(1), .newline, 8, 9)
+    断言记号(lexed.tokenAt(2), .identifier, 9, 10)
+    断言记号(lexed.tokenAt(3), .newline, 10, 11)
+    断言记号(lexed.tokenAt(4), .eof, 11, 11)
     return
 
 ; 制表符缩进拒绝：记一条缩进类的词法问题，扫描继续且制表符只占一列。
 制表符缩进报错|test() -> ():
     let lexed = lexText("if a:\n\tb\n")
     assert(lexed.issueCount() == 1, "一条问题")
-    assert(isIssue(lexed.issueAt(0), .制表符缩进), "问题类别")
+    assert(isIssue(lexed.issueAt(0), .issueTabIndent), "问题类别")
     assert(lexed.issueAt(0).start == 6, "问题起点")
     assert(lexed.issueAt(0).end == 7, "问题终点")
     assert(lexed.tokenCount() == 9, "记号数")
-    断言记号(lexed.tokenAt(4), .缩进, 7, 7)
-    断言记号(lexed.tokenAt(5), .标识符, 7, 8)
+    断言记号(lexed.tokenAt(4), .indent, 7, 7)
+    断言记号(lexed.tokenAt(5), .identifier, 7, 8)
     return
 
 ; 未识别字节与未闭合字符串都记问题，并各自消费到能恢复的位置。
 坏字节与未闭合字符串|test() -> ():
     let bad = lexText("a $ b\n")
     assert(bad.issueCount() == 1, "一条问题")
-    assert(isIssue(bad.issueAt(0), .未知字节), "未知字节")
-    断言记号(bad.tokenAt(1), .未知, 2, 3)
+    assert(isIssue(bad.issueAt(0), .issueUnknownByte), "未知字节")
+    断言记号(bad.tokenAt(1), .unknown, 2, 3)
     let open = lexText("\"abc\nx\n")
     assert(open.issueCount() == 1, "一条问题")
-    assert(isIssue(open.issueAt(0), .字符串未闭合), "字符串未闭合")
+    assert(isIssue(open.issueAt(0), .issueUnterminatedString), "字符串未闭合")
     assert(open.tokenAt(0).consumed() == 4, "扫到行尾为止")
-    断言记号(open.tokenAt(1), .换行, 4, 5)
+    断言记号(open.tokenAt(1), .newline, 4, 5)
     return
 
 ; CRLF 在进入词法前归一化：偏移一律指向归一化文本，行尾只剩一个换行字节。
 CRLF归一化|test() -> ():
     let lexed = lexText("x\r\ny\r\n")
     assert(lexed.tokenCount() == 5, "记号数")
-    断言记号(lexed.tokenAt(0), .标识符, 0, 1)
-    断言记号(lexed.tokenAt(1), .换行, 1, 2)
-    断言记号(lexed.tokenAt(2), .标识符, 2, 3)
-    断言记号(lexed.tokenAt(3), .换行, 3, 4)
-    断言记号(lexed.tokenAt(4), .结束, 4, 4)
+    断言记号(lexed.tokenAt(0), .identifier, 0, 1)
+    断言记号(lexed.tokenAt(1), .newline, 1, 2)
+    断言记号(lexed.tokenAt(2), .identifier, 2, 3)
+    断言记号(lexed.tokenAt(3), .newline, 3, 4)
+    断言记号(lexed.tokenAt(4), .eof, 4, 4)
     return
 
 ; 末尾没有换行也要收尾：补一条零宽换行，再逐层反缩进，最后答结束。
 文件末尾|test() -> ():
     let lexed = lexText("x")
     assert(lexed.tokenCount() == 3, "记号数")
-    断言记号(lexed.tokenAt(0), .标识符, 0, 1)
-    断言记号(lexed.tokenAt(1), .换行, 1, 1)
-    断言记号(lexed.tokenAt(2), .结束, 1, 1)
+    断言记号(lexed.tokenAt(0), .identifier, 0, 1)
+    断言记号(lexed.tokenAt(1), .newline, 1, 1)
+    断言记号(lexed.tokenAt(2), .eof, 1, 1)
     let empty = lexText("")
     assert(empty.tokenCount() == 1, "空输入只有结束")
-    断言记号(empty.tokenAt(0), .结束, 0, 0)
+    断言记号(empty.tokenAt(0), .eof, 0, 0)
+    return
+
+; 默认词表是英文：中文拼写在默认入口下只是标识符，整词之外的英文也不算关键字。
+关键字默认英文|test() -> ():
+    let 中文 = lexText("变量")
+    assert(isKind(中文.tokenAt(0), .identifier), "中文拼写在默认表里是标识符")
+    let 近形 = lexText("variable")
+    assert(isKind(近形.tokenAt(0), .identifier), "前缀相同的长词不是关键字")
+    let 英文 = lexText("var")
+    assert(isKind(英文.tokenAt(0), .kwVar), "英文词表命中")
+    return
+
+; 中文词表：显式指定语言后中文拼写才是关键字，英文拼写同时退为标识符。
+关键字中文表|test() -> ():
+    let 词 = lexTextIn(.langChinese, "变量 let")
+    assert(isKind(词.tokenAt(0), .kwVar), "变量")
+    assert(isKind(词.tokenAt(1), .identifier), "英文 let 在中文表里是标识符")
+    return
+
+; 词表自洽：两张表项数相同，每一项按序号还原成同一个关键字类别。
+关键字词表同序|test() -> ():
+    let 英 = keywordWords(.langEnglish)
+    let 中 = keywordWords(.langChinese)
+    assert(len(英) == 34, "英文表应含 34 项")
+    assert(len(中) == 34, "中文表应含 34 项")
+    var i = 0
+    while i < len(英):
+        let 英字节 = tempUtf8Bytes(英[i])
+        assert(kindTag(keywordKind(.langEnglish, 英字节, 0, len(英字节))) == 8 + i, "英文第 " + "\(i)" + " 项")
+        let 中字节 = tempUtf8Bytes(中[i])
+        assert(kindTag(keywordKind(.langChinese, 中字节, 0, len(中字节))) == 8 + i, "中文第 " + "\(i)" + " 项")
+        i = i + 1
+    return
+
+; 中文关键字按整词消费：记号宽度等于该词的 UTF-8 字节数，不按字数算。
+中文关键字宽度|test() -> ():
+    let 词 = lexTextIn(.langChinese, "否则如果 变量")
+    断言记号(词.tokenAt(0), .kwElif, 0, 12)
+    断言记号(词.tokenAt(1), .kwVar, 13, 19)
     return

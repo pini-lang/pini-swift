@@ -5,20 +5,20 @@
     let ast = result.ast
     assert(ast.itemCount() == 1, "一条顶层声明")
     let decl = ast.declAt(ast.itemAt(0))
-    assert(ast.isDecl(ast.itemAt(0), 项函数), "函数声明")
+    assert(ast.isDecl(ast.itemAt(0), declFunction), "函数声明")
     assert(decl.nameStart == 0, "函数名起点")
     assert(decl.nameEnd == 1, "函数名终点")
     assert(len(decl.kids) == 1, "一个参数")
     let param = ast.declAt(decl.kids[0])
-    assert(ast.isDecl(decl.kids[0], 项参数), "参数节点")
+    assert(ast.isDecl(decl.kids[0], declParam), "参数节点")
     assert(param.nameStart == 7, "参数名起点")
     assert(param.nameEnd == 8, "参数名终点")
     assert(param.typeId >= 0, "参数有类型")
-    assert(ast.isType(param.typeId, 型具名), "具名类型")
+    assert(ast.isType(param.typeId, typeNamed), "具名类型")
     assert(ast.typeAt(param.typeId).nameStart == 10, "类型名起点")
     assert(ast.typeAt(param.typeId).nameEnd == 13, "类型名终点")
     assert(decl.body >= 0, "有函数体")
-    assert(ast.isStmt(decl.body, 句块), "体是块")
+    assert(ast.isStmt(decl.body, stmtBlock), "体是块")
     return
 
 ; 优先级：乘法先于加法，左结合；括号组不产生额外节点。
@@ -26,16 +26,16 @@
     let result = parseText("f|func() -> ():\n    x = a + b * c\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, 句赋值), "赋值语句")
+    assert(ast.isStmt(0, stmtAssign), "赋值语句")
     let value = ast.stmtChild(0, 1)
-    assert(ast.isExpr(value, 式二元), "顶层是二元")
-    assert(ast.exprAt(value).op == kindTag(加), "顶层运算符是加")
+    assert(ast.isExpr(value, exprBinary), "顶层是二元")
+    assert(ast.exprAt(value).op == kindTag(opAdd), "顶层运算符是加")
     let right = ast.childOf(value, 1)
-    assert(ast.exprAt(right).op == kindTag(星号), "右侧先结合乘法")
+    assert(ast.exprAt(right).op == kindTag(opMul), "右侧先结合乘法")
     let paren = parseText("f|func() -> ():\n    x = (a + b) * c\n")
     assert(len(paren.diagnostics) == 0, "括号组不报错")
     let outer = paren.ast.stmtChild(0, 1)
-    assert(paren.ast.exprAt(outer).op == kindTag(星号), "括号改变了结合")
+    assert(paren.ast.exprAt(outer).op == kindTag(opMul), "括号改变了结合")
     return
 
 ; 后缀链：调用、成员与下标按出现顺序叠加，接收者始终是前一节点。
@@ -43,14 +43,14 @@
     let result = parseText("f|func() -> ():\n    f(a).b[0]\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, 句表达式), "表达式语句")
+    assert(ast.isStmt(0, stmtExpression), "表达式语句")
     let index = ast.stmtChild(0, 0)
-    assert(ast.isExpr(index, 式下标), "最外层是下标")
+    assert(ast.isExpr(index, exprSubscript), "最外层是下标")
     let member = ast.childOf(index, 0)
-    assert(ast.isExpr(member, 式成员), "接收者是成员")
+    assert(ast.isExpr(member, exprMember), "接收者是成员")
     assert(ast.exprAt(member).nameEnd - ast.exprAt(member).nameStart == 1, "成员名宽一字节")
     let call = ast.childOf(member, 0)
-    assert(ast.isExpr(call, 式调用), "接收者是调用")
+    assert(ast.isExpr(call, exprCall), "接收者是调用")
     assert(len(ast.exprAt(call).kids) == 2, "调用含被调与一个实参")
     return
 
@@ -59,7 +59,7 @@
     let result = parseText("f|func() -> ():\n    if a:\n        b\n    elif c:\n        d\n    else:\n        e\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, 句如果), "如果语句")
+    assert(ast.isStmt(0, stmtIf), "如果语句")
     let stmt = ast.stmtAt(0)
     assert(len(stmt.kids) == 5, "条件、体、否则如果条件、否则如果体、否则体")
     assert(ast.stmtChild(0, 1) >= 0, "体存在")
@@ -72,12 +72,12 @@
 循环与遍历|test() -> ():
     let loop = parseText("f|func() -> ():\n    while a < b:\n        f()\n    step:\n        g()\n")
     assert(len(loop.diagnostics) == 0, "循环不应有语法诊断")
-    assert(loop.ast.isStmt(0, 句循环), "循环语句")
+    assert(loop.ast.isStmt(0, stmtWhile), "循环语句")
     assert(loop.ast.stmtChild(0, 2) >= 0, "step 块存在")
     let each = parseText("f|func() -> ():\n    for (v,) in xs:\n        f(v)\n")
     assert(len(each.diagnostics) == 0, "遍历不应有语法诊断")
-    assert(each.ast.isStmt(0, 句遍历), "遍历语句")
-    assert(each.ast.isExpr(each.ast.stmtChild(0, 0), 式元组), "遍历模式是元组")
+    assert(each.ast.isStmt(0, stmtFor), "遍历语句")
+    assert(each.ast.isExpr(each.ast.stmtChild(0, 0), exprTuple), "遍历模式是元组")
     assert(each.ast.stmtChild(0, 3) == -1, "缺省 step 答 -1")
     return
 
@@ -86,10 +86,10 @@
     let result = parseText("f|func() -> ():\n    match x:\n        case 甲:\n            f()\n        case 乙(v: y):\n            g(y)\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, 句匹配), "匹配语句")
+    assert(ast.isStmt(0, stmtMatch), "匹配语句")
     assert(len(ast.stmtAt(0).kids) == 5, "主题加两组模式与块")
     let pattern = ast.stmtChild(0, 3)
-    assert(ast.isExpr(pattern, 式枚举项), "第二组模式是枚举项")
+    assert(ast.isExpr(pattern, exprCase), "第二组模式是枚举项")
     assert(len(ast.exprAt(pattern).kids) == 1, "带一个绑定")
     return
 
@@ -98,20 +98,20 @@
     let result = parseText("[方向]\n东\n西\n")
     assert(len(result.diagnostics) == 0, "枚举不应有语法诊断")
     let ast = result.ast
-    assert(ast.isDecl(0, 项枚举), "枚举声明")
+    assert(ast.isDecl(0, declEnum), "枚举声明")
     assert(len(ast.declAt(0).kids) == 2, "两个变体")
-    assert(ast.isDecl(ast.declChild(0, 0), 项变体), "变体节点")
+    assert(ast.isDecl(ast.declChild(0, 0), declVariant), "变体节点")
     let imported = parseText("[m|import]\n_p = \"../x\"\n")
     assert(len(imported.diagnostics) == 0, "导入不应有语法诊断")
     let importedAst = imported.ast
-    assert(importedAst.isDecl(0, 项导入块), "导入块")
+    assert(importedAst.isDecl(0, declImportBlock), "导入块")
     assert(importedAst.declAt(0).nameStart == 1, "块名起点")
     assert(importedAst.declAt(0).nameEnd == 2, "块名终点")
     assert(len(importedAst.declAt(0).kids) == 1, "一个导入项")
     let entry = importedAst.declChild(0, 0)
     assert(importedAst.declAt(entry).nameStart == 11, "别名起点")
     assert(importedAst.declAt(entry).nameEnd == 13, "别名终点")
-    assert(importedAst.isExpr(importedAst.declChild(entry, 0), 式字符串), "路径是字符串字面量")
+    assert(importedAst.isExpr(importedAst.declChild(entry, 0), exprString), "路径是字符串字面量")
     return
 
 ; 函数字面量：参数与体同处一个表达式节点，体是单条语句块。
@@ -120,10 +120,10 @@
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
     let value = ast.stmtChild(0, 1)
-    assert(ast.isExpr(value, 式函数), "函数字面量")
+    assert(ast.isExpr(value, exprFunction), "函数字面量")
     assert(len(ast.exprAt(value).kids) == 2, "一个参数加体")
-    assert(ast.isDecl(ast.exprAt(value).kids[0], 项参数), "参数节点")
-    assert(ast.isStmt(ast.exprAt(value).kids[1], 句块), "体是块")
+    assert(ast.isDecl(ast.exprAt(value).kids[0], declParam), "参数节点")
+    assert(ast.isStmt(ast.exprAt(value).kids[1], stmtBlock), "体是块")
     return
 
 ; 非法输入：给稳定码与至少一字节宽的标签，并且必须终止。
@@ -145,4 +145,12 @@
     let result = parseText("\"abc\n")
     assert(len(result.issues) > 0, "问题序列非空")
     assert(len(result.ast.items) == 0, "未闭合字符串不产声明")
+    return
+
+; 中文关键字解析：声明、参数、返回与缩进块走同一套类别，诊断数为零。
+中文关键字解析|test() -> ():
+    let result = parseTextIn(.langChinese, "加|函数(甲: I32, 乙: I32,) -> (I32,):\n    返回 甲 + 乙\n")
+    assert(len(result.diagnostics) == 0, "不应有语法诊断")
+    assert(result.ast.itemCount() == 1, "一条顶层声明")
+    assert(result.ast.isDecl(result.ast.itemAt(0), declFunction), "函数声明")
     return

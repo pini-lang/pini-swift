@@ -2,7 +2,7 @@
 (Step)
 code: I32 = 0
 length: I32 = 0
-error: Utf8Error = .无
+error: Utf8Error = .utf8None
 
 ; 从 `start` 解一个标量，只读首字节与其后的续字节；调用方保证 `start` 在界内。
 stepScalar|func(bytes: Array<U8>, start: I32,) -> (Step,):
@@ -13,10 +13,10 @@ stepScalar|func(bytes: Array<U8>, start: I32,) -> (Step,):
         out.length = 1
         return out
     if b0 < 192:
-        out.error = 首字节非法
+        out.error = utf8BadLead
         return out
     if b0 < 194:
-        out.error = 过长编码
+        out.error = utf8Overlong
         return out
     var need = 0
     var code = 0
@@ -34,34 +34,34 @@ stepScalar|func(bytes: Array<U8>, start: I32,) -> (Step,):
         code = b0 & 7
         lower = 65536
     elif b0 < 248:
-        out.error = 超出上限
+        out.error = utf8TooLarge
         return out
     else:
-        out.error = 首字节非法
+        out.error = utf8BadLead
         return out
     var k = 1
     while k <= need:
         if start + k >= len(bytes):
-            out.error = 截断
+            out.error = utf8Truncated
             return out
         let next = tempByteToInt(bytes[start + k])
         if next < 128:
-            out.error = 续字节非法
+            out.error = utf8BadContinuation
             return out
         if next >= 192:
-            out.error = 续字节非法
+            out.error = utf8BadContinuation
             return out
         code = code * 64 + (next & 63)
         k = k + 1
     if code < lower:
-        out.error = 过长编码
+        out.error = utf8Overlong
         return out
     if code >= 55296:
         if code <= 57343:
-            out.error = 代理区
+            out.error = utf8Surrogate
             return out
     if code > 1114111:
-        out.error = 超出上限
+        out.error = utf8TooLarge
         return out
     out.code = code
     out.length = need + 1

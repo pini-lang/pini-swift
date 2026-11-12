@@ -221,7 +221,7 @@ struct WorkspaceTestTests {
                  ✓ 单步解码消费字节数
                  ✓ 单步解码失败类别
                  ✓ 版本与特殊标量
-                包 syntax / syntax-tests（32 个测试）
+                包 syntax / syntax-tests（37 个测试）
                  ✓ 节点池
                  ✓ 分池计数
                  ✓ 缺省子节点
@@ -243,6 +243,10 @@ struct WorkspaceTestTests {
                  ✓ 坏字节与未闭合字符串
                  ✓ CRLF归一化
                  ✓ 文件末尾
+                 ✓ 关键字默认英文
+                 ✓ 关键字中文表
+                 ✓ 关键字词表同序
+                 ✓ 中文关键字宽度
                  ✓ 函数声明形状
                  ✓ 优先级与结合
                  ✓ 后缀链
@@ -253,8 +257,9 @@ struct WorkspaceTestTests {
                  ✓ 函数字面量
                  ✓ 错误诊断
                  ✓ 词法问题透传
+                 ✓ 中文关键字解析
                  ✓ 自解析
-                结果: 96 通过, 0 失败
+                结果: 101 通过, 0 失败
 
                 """
         #expect(result.stdout == expected)

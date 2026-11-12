@@ -1,21 +1,21 @@
 ; 池只追加：同类别节点依次得到连续下标，旧的仍可按原下标读回。
 节点池|test() -> ():
     var ast = Ast()
-    let first = ast.pushExpr(式整数, 0, 3)
-    let second = ast.pushExpr(式标识符, 4, 5)
+    let first = ast.pushExpr(exprInteger, 0, 3)
+    let second = ast.pushExpr(exprIdentifier, 4, 5)
     assert(first == 0, "首个表达式下标为零")
     assert(second == 1, "第二个表达式下标为一")
     assert(ast.exprCount() == 2, "池长度随追加增长")
-    assert(ast.isExpr(second, 式标识符), "类别判定")
+    assert(ast.isExpr(second, exprIdentifier), "类别判定")
     assert(ast.exprAt(first).end == 3, "旧节点跨度不变")
     return
 
 ; 跨池不串号：类型、表达式、语句与声明各自计数，互不影响。
 分池计数|test() -> ():
     var ast = Ast()
-    let typeId = ast.pushType(型具名, 0, 3)
-    let stmtId = ast.pushStmt(句返回, 0, 6)
-    let declId = ast.pushDecl(项函数, 0, 10)
+    let typeId = ast.pushType(typeNamed, 0, 3)
+    let stmtId = ast.pushStmt(stmtReturn, 0, 6)
+    let declId = ast.pushDecl(declFunction, 0, 10)
     assert(typeId == 0, "类型池下标")
     assert(stmtId == 0, "语句池下标")
     assert(declId == 0, "声明池下标")
@@ -28,7 +28,7 @@
 ; 缺省子节点：越界或负下标一律答 -1，调用方据此判缺省而不判崩溃。
 缺省子节点|test() -> ():
     var ast = Ast()
-    let id = ast.pushExpr(式二元, 0, 5)
+    let id = ast.pushExpr(exprBinary, 0, 5)
     assert(ast.childOf(id, 0) == -1, "空子表越界答 -1")
     assert(ast.childOf(id, -1) == -1, "负下标答 -1")
     return

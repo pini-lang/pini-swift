@@ -3,21 +3,21 @@ _support = "../../../support"
 
 ; 严重度：错误阻断编译，警告提示风险，备注补充背景；次序见 `severityRank`。
 [Severity]
-错误
-警告
-备注
+severityError
+severityWarning
+severityNote
 
 ; 类别：与宿主诊断表的标签组同名，决定输出前缀。
 [Category]
-词法
-语法
-语义
-类型
-运行时
-IR生成
-IR结构
-输入输出
-通用
+categoryLexical
+categorySyntax
+categorySemantic
+categoryType
+categoryRuntime
+categoryIrGen
+categoryIrShape
+categoryIO
+categoryGeneral
 
 ; 标签：一条诊断指向的源码字节跨度与说明；主标签至多一个。
 (Label)
@@ -29,8 +29,8 @@ primary: Bool = false
 ; 诊断：文件、类别、严重度、稳定码、消息、标签与备注。
 (Diagnostic)
 file: String = ""
-category: Category = .通用
-severity: Severity = .错误
+category: Category = .categoryGeneral
+severity: Severity = .severityError
 code: String = ""
 message: String = ""
 labels: Array<Label> = []
@@ -42,82 +42,82 @@ line: I32 = 1
 column: I32 = 1
 
 ; 错误严重度：阻断编译的诊断一律取它；跨包调用方借此取值。
-severityError|func() -> (Severity,):
-    return .错误
+errorSeverity|func() -> (Severity,):
+    return .severityError
 
 ; 语法类别：解析阶段的诊断取它。
-categorySyntax|func() -> (Category,):
-    return .语法
+syntaxCategory|func() -> (Category,):
+    return .categorySyntax
 
 ; 词法类别：扫描阶段的诊断取它。
-categoryLexical|func() -> (Category,):
-    return .词法
+lexicalCategory|func() -> (Category,):
+    return .categoryLexical
 
 ; 严重度名：与宿主诊断标签的后缀一致。
 severityName|func(severity: Severity,) -> (String,):
     match severity:
-        case 错误:
+        case severityError:
             return "错误"
-        case 警告:
+        case severityWarning:
             return "警告"
-        case 备注:
+        case severityNote:
             return "备注"
     return "错误"
 
 ; 严重度次序：错误 0、警告 1、备注 2。
 severityRank|func(severity: Severity,) -> (I32,):
     match severity:
-        case 错误:
+        case severityError:
             return 0
-        case 警告:
+        case severityWarning:
             return 1
-        case 备注:
+        case severityNote:
             return 2
     return 3
 
 ; 类别名：不带严重度后缀。
 categoryName|func(category: Category,) -> (String,):
     match category:
-        case 词法:
+        case categoryLexical:
             return "词法"
-        case 语法:
+        case categorySyntax:
             return "语法"
-        case 语义:
+        case categorySemantic:
             return "语义"
-        case 类型:
+        case categoryType:
             return "类型"
-        case 运行时:
+        case categoryRuntime:
             return "运行时"
-        case IR生成:
+        case categoryIrGen:
             return "IR 生成"
-        case IR结构:
+        case categoryIrShape:
             return "IR 结构"
-        case 输入输出:
+        case categoryIO:
             return "输入输出"
-        case 通用:
+        case categoryGeneral:
             return "通用"
     return "通用"
 
 ; 标签名：类别加严重度；通用类别只用严重度，与宿主的通用标签一致。
 labelOf|func(category: Category, severity: Severity,) -> (String,):
     match category:
-        case 通用:
+        case categoryGeneral:
             return severityName(severity)
-        case 词法:
+        case categoryLexical:
             return "词法" + severityName(severity)
-        case 语法:
+        case categorySyntax:
             return "语法" + severityName(severity)
-        case 语义:
+        case categorySemantic:
             return "语义" + severityName(severity)
-        case 类型:
+        case categoryType:
             return "类型" + severityName(severity)
-        case 运行时:
+        case categoryRuntime:
             return "运行时" + severityName(severity)
-        case IR生成:
+        case categoryIrGen:
             return "IR 生成" + severityName(severity)
-        case IR结构:
+        case categoryIrShape:
             return "IR 结构" + severityName(severity)
-        case 输入输出:
+        case categoryIO:
             return "输入输出" + severityName(severity)
     return severityName(severity)
 

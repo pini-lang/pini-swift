@@ -4,17 +4,17 @@ _unicode = "../../../unicode"
 
 ; 词法问题类别：扫描不中断，恢复位置由各类别的消费规则决定。
 [LexIssueKind]
-制表符缩进
-起始BOM
-未知字节
-字符串未闭合
-转义非法
-数字格式
-插值未闭合
+issueTabIndent
+issueBom
+issueUnknownByte
+issueUnterminatedString
+issueBadEscape
+issueNumberFormat
+issueUnterminatedInterpolation
 
 ; 词法问题：出错字节区间；同一条输入上的问题按出现顺序登记。
 (LexIssue)
-kind: LexIssueKind = .未知字节
+kind: LexIssueKind = .issueUnknownByte
 start: I32 = 0
 end: I32 = 0
 
@@ -26,19 +26,19 @@ issues: Array<LexIssue> = []
 ; 问题类别名：用于诊断消息与测试断言。
 issueName|func(kind: LexIssueKind,) -> (String,):
     match kind:
-        case 制表符缩进:
+        case issueTabIndent:
             return "制表符缩进"
-        case 起始BOM:
+        case issueBom:
             return "起始BOM"
-        case 未知字节:
+        case issueUnknownByte:
             return "未知字节"
-        case 字符串未闭合:
+        case issueUnterminatedString:
             return "字符串未闭合"
-        case 转义非法:
+        case issueBadEscape:
             return "转义非法"
-        case 数字格式:
+        case issueNumberFormat:
             return "数字格式"
-        case 插值未闭合:
+        case issueUnterminatedInterpolation:
             return "插值未闭合"
     return "未知字节"
 
@@ -46,19 +46,27 @@ issueName|func(kind: LexIssueKind,) -> (String,):
 isIssue|func(issue: LexIssue, kind: LexIssueKind,) -> (Bool,):
     return issueName(issue.kind) == issueName(kind)
 
-; 扫描文本：先把 CRLF 归一化为 LF，再建源文本；此后所有区间都指向归一化文本。
+; 扫描文本：默认按英文关键字；先把 CRLF 归一化为 LF，此后所有区间都指向归一化文本。
 lexText|func(text: String,) -> (LexResult,):
+    return lexTextIn(.langEnglish, text)
+
+; 按指定关键字语言扫描文本：词表只影响整词分类，标识符与字面量的扫描规则不变。
+lexTextIn|func(language: KeywordLanguage, text: String,) -> (LexResult,):
     let normalized = text.replace("\r\n", "\n")
-    return lexSource(makeSourceText(normalized))
+    return lexSourceIn(language, makeSourceText(normalized))
 
 ; 扫描源文本：调用方保证行尾已归一化；起始 BOM 记问题并跳过三字节，偏移仍指向原文本。
 lexSource|func(source: SourceText,) -> (LexResult,):
+    return lexSourceIn(.langEnglish, source)
+
+; 按指定关键字语言扫描源文本；BOM 的处理与默认入口同规。
+lexSourceIn|func(language: KeywordLanguage, source: SourceText,) -> (LexResult,):
     var issues: Array<LexIssue> = []
     var start = 0
     if hasBom(source.bytes):
-        issues = issues.append(makeIssue(.起始BOM, 0, 3))
+        issues = issues.append(makeIssue(.issueBom, 0, 3))
         start = 3
-    return scanAll(source.bytes, start, issues)
+    return scanAll(language, source.bytes, start, issues)
 
 ; 造问题：区间是源内字节半开区间。
 makeIssue|func(kind: LexIssueKind, start: I32, end: I32,) -> (LexIssue,):

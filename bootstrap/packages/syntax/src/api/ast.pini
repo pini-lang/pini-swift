@@ -54,195 +54,195 @@ kids: Array<I32> = []
 
 ; 表达式类别：前缀避开记号类别名，包内枚举项名不得重名。
 [ExprKind]
-式未定
-式整数
-式浮点
-式字符串
-式插值
-式真
-式假
-式空
-式标识符
-式枚举项
-式成员
-式下标
-式切片
-式调用
-式一元
-式二元
-式元组
-式数组
-式字典
-式集合
-式函数
+exprUnknown
+exprInteger
+exprFloat
+exprString
+exprInterpolated
+exprTrue
+exprFalse
+exprNil
+exprIdentifier
+exprCase
+exprMember
+exprSubscript
+exprSlice
+exprCall
+exprUnary
+exprBinary
+exprTuple
+exprArray
+exprDictionary
+exprSet
+exprFunction
 
-; 语句类别：`句如果` 的 `kids` 是条件、体、否则如果对与否则体，缺省体答 -1。
+; 语句类别：`stmtIf` 的 `kids` 是条件、体、否则如果对与否则体，缺省体答 -1。
 [StmtKind]
-句未定
-句块
-句变量
-句赋值
-句表达式
-句如果
-句循环
-句遍历
-句匹配
-句返回
-句跳出
-句继续
-句通过
-句延迟
+stmtUnknown
+stmtBlock
+stmtVariable
+stmtAssign
+stmtExpression
+stmtIf
+stmtWhile
+stmtFor
+stmtMatch
+stmtReturn
+stmtBreak
+stmtContinue
+stmtPass
+stmtDefer
 
 ; 声明类别：函数、测试与方法同形，差别在 `isTest` 与 `isSelf`。
 [DeclKind]
-项未定
-项结构
-项对象
-项枚举
-项扩展
-项函数
-项变量
-项导入块
-项导入项
-项字段
-项参数
-项变体
+declUnknown
+declStruct
+declObject
+declEnum
+declExtension
+declFunction
+declVariable
+declImportBlock
+declImportEntry
+declField
+declParam
+declVariant
 
-; 类型类别：`型泛型` 的 `kids` 是实参，`型函数` 的 `kids` 是形参、`ret` 是返回。
+; 类型类别：`typeGeneric` 的 `kids` 是实参，`typeFunction` 的 `kids` 是形参、`ret` 是返回。
 [TypeKind]
-型未定
-型具名
-型泛型
-型可选
-型指针
-型元组
-型函数
+typeUnknown
+typeNamed
+typeGeneric
+typeOptional
+typePointer
+typeTuple
+typeFunction
 
 ; 表达式类别码：只用于比较与索引，不参与枚举相等。
 exprKindTag|func(kind: ExprKind,) -> (I32,):
     match kind:
-        case 式未定:
+        case exprUnknown:
             return 0
-        case 式整数:
+        case exprInteger:
             return 1
-        case 式浮点:
+        case exprFloat:
             return 2
-        case 式字符串:
+        case exprString:
             return 3
-        case 式插值:
+        case exprInterpolated:
             return 4
-        case 式真:
+        case exprTrue:
             return 5
-        case 式假:
+        case exprFalse:
             return 6
-        case 式空:
+        case exprNil:
             return 7
-        case 式标识符:
+        case exprIdentifier:
             return 8
-        case 式枚举项:
+        case exprCase:
             return 9
-        case 式成员:
+        case exprMember:
             return 10
-        case 式下标:
+        case exprSubscript:
             return 11
-        case 式切片:
+        case exprSlice:
             return 12
-        case 式调用:
+        case exprCall:
             return 13
-        case 式一元:
+        case exprUnary:
             return 14
-        case 式二元:
+        case exprBinary:
             return 15
-        case 式元组:
+        case exprTuple:
             return 16
-        case 式数组:
+        case exprArray:
             return 17
-        case 式字典:
+        case exprDictionary:
             return 18
-        case 式集合:
+        case exprSet:
             return 19
-        case 式函数:
+        case exprFunction:
             return 20
     return 0
 
 ; 语句类别码。
 stmtKindTag|func(kind: StmtKind,) -> (I32,):
     match kind:
-        case 句未定:
+        case stmtUnknown:
             return 0
-        case 句块:
+        case stmtBlock:
             return 1
-        case 句变量:
+        case stmtVariable:
             return 2
-        case 句赋值:
+        case stmtAssign:
             return 3
-        case 句表达式:
+        case stmtExpression:
             return 4
-        case 句如果:
+        case stmtIf:
             return 5
-        case 句循环:
+        case stmtWhile:
             return 6
-        case 句遍历:
+        case stmtFor:
             return 7
-        case 句匹配:
+        case stmtMatch:
             return 8
-        case 句返回:
+        case stmtReturn:
             return 9
-        case 句跳出:
+        case stmtBreak:
             return 10
-        case 句继续:
+        case stmtContinue:
             return 11
-        case 句通过:
+        case stmtPass:
             return 12
-        case 句延迟:
+        case stmtDefer:
             return 13
     return 0
 
 ; 声明类别码。
 declKindTag|func(kind: DeclKind,) -> (I32,):
     match kind:
-        case 项未定:
+        case declUnknown:
             return 0
-        case 项结构:
+        case declStruct:
             return 1
-        case 项对象:
+        case declObject:
             return 2
-        case 项枚举:
+        case declEnum:
             return 3
-        case 项扩展:
+        case declExtension:
             return 4
-        case 项函数:
+        case declFunction:
             return 5
-        case 项变量:
+        case declVariable:
             return 6
-        case 项导入块:
+        case declImportBlock:
             return 7
-        case 项导入项:
+        case declImportEntry:
             return 8
-        case 项字段:
+        case declField:
             return 9
-        case 项参数:
+        case declParam:
             return 10
-        case 项变体:
+        case declVariant:
             return 11
     return 0
 
 ; 类型类别码。
 typeKindTag|func(kind: TypeKind,) -> (I32,):
     match kind:
-        case 型未定:
+        case typeUnknown:
             return 0
-        case 型具名:
+        case typeNamed:
             return 1
-        case 型泛型:
+        case typeGeneric:
             return 2
-        case 型可选:
+        case typeOptional:
             return 3
-        case 型指针:
+        case typePointer:
             return 4
-        case 型元组:
+        case typeTuple:
             return 5
-        case 型函数:
+        case typeFunction:
             return 6
     return 0
 
