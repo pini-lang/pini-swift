@@ -1,0 +1,31 @@
+[scalars|import]
+_support = "../../../support"
+
+; 标量序列与 UTF-8 字节互转；调用方保证标量来自已验证的解码结果。
+scalarCodes|func(text: Utf8Text,) -> (Array<I32>,):
+    var codes: Array<I32> = []
+    var i = 0
+    while i < text.scalarCount():
+        codes = codes.append(text.scalarAt(i).code)
+        i = i + 1
+    return codes
+
+; 按 Unicode 标量编码为 UTF-8；越界与代理区由构建器拒绝。
+encodeScalars|func(codes: Array<I32>,) -> (Array<U8>,):
+    var builder = ByteBuilder()
+    var i = 0
+    while i < len(codes):
+        builder = builder.appendScalar(codes[i])
+        i = i + 1
+    return builder.takeBuffer().bytes
+
+; 把池中 [start, start+length) 的 UTF-8 字节解成标量追加到末尾；池内容由生成器保证合法。
+appendPoolScalars|func(codes: Array<I32>, pool: Array<U8>, start: I32, length: I32,) -> (Array<I32>,):
+    var out = codes
+    var at = start
+    let end = start + length
+    while at < end:
+        let unit = stepScalar(pool, at)
+        out = out.append(unit.code)
+        at = at + unit.length
+    return out

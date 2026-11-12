@@ -1,0 +1,77 @@
+; 规范重排：组合类非零的连续段按类值升序稳定插入，段首的起始字符不移动。
+reorderCanonical|func(codes: Array<I32>,) -> (Array<I32>,):
+    var out = codes
+    var i = 1
+    while i < len(out):
+        let cc = combiningClassOf(out[i])
+        var j = i
+        while j > 0:
+            if cc == 0:
+                j = 0
+            else:
+                let previous = combiningClassOf(out[j - 1])
+                if previous <= cc:
+                    j = 0
+                else:
+                    let moved = out[j - 1]
+                    out[j - 1] = out[j]
+                    out[j] = moved
+                    j = j - 1
+        i = i + 1
+    return out
+
+; 全量规范分解（NFD）：逐标量查表展开，韩文按算术拆成字母，最后按组合类重排。
+nfdOfCodes|func(codes: Array<I32>,) -> (Array<I32>,):
+    let pool = tempUtf8Bytes(decompositionPool())
+    var out: Array<I32> = []
+    var i = 0
+    while i < len(codes):
+        let code = codes[i]
+        if code >= 0xAC00 && code <= 0xD7A3:
+            let offset = code - 0xAC00
+            out = out.append(0x1100 + offset / 588)
+            out = out.append(0x1161 + offset % 588 / 28)
+            if offset % 28 != 0:
+                out = out.append(0x11A7 + offset % 28)
+        else:
+            let packed = decompositionPacked(code)
+            if packed < 0:
+                out = out.append(code)
+            else:
+                out = appendPoolScalars(out, pool, packed >> 4, packed & 15)
+        i = i + 1
+    return reorderCanonical(out)
+
+; 单步合成：先试韩文的字母与音节两种组合，再查规范组合表；-1 表示不可合成。
+composePair|func(first: I32, second: I32,) -> (I32,):
+    if first >= 0x1100 && first <= 0x1112 && second >= 0x1161 && second <= 0x1175:
+        return 0xAC00 + ((first - 0x1100) * 21 + (second - 0x1161)) * 28
+    if first >= 0xAC00 && first <= 0xD7A3 && second >= 0x11A8 && second <= 0x11C2:
+        if (first - 0xAC00) % 28 == 0:
+            return first + (second - 0x11A7)
+    return compositionOf(first, second)
+
+; 规范组合（NFC）：在 NFD 结果上按 UAX15 逐字符尝试合成，被阻止的对保持分解形式。
+nfcOfCodes|func(codes: Array<I32>,) -> (Array<I32>,):
+    let decomposed = nfdOfCodes(codes)
+    var out: Array<I32> = []
+    var starter = -1
+    var lastClass = 0
+    var i = 0
+    while i < len(decomposed):
+        let code = decomposed[i]
+        let cc = combiningClassOf(code)
+        var merged = false
+        if starter >= 0:
+            if lastClass < cc || lastClass == 0:
+                let composite = composePair(out[starter], code)
+                if composite >= 0:
+                    out[starter] = composite
+                    merged = true
+        if !merged:
+            if cc == 0:
+                starter = len(out)
+            lastClass = cc
+            out = out.append(code)
+        i = i + 1
+    return out
