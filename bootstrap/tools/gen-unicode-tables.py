@@ -14,6 +14,9 @@ import os
 import sys
 import unicodedata
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pini_source import pini_string  # noqa: E402
+
 UNICODE_VERSION = "15.1.0"
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 INTERNAL = os.path.join(ROOT, "bootstrap", "packages", "unicode", "src", "_internal")
@@ -188,27 +191,6 @@ def confusables():
         raise SystemExit(
             "生成器：混淆数据版本是 %s，脚本钉定 %s。" % (version, UNICODE_VERSION))
     return table
-
-
-def pini_string(data):
-    """把 UTF-8 字节写成单行 Pini 字符串字面量；控制字符无法内联时直接拒绝。"""
-    out = []
-    for ch in data.decode("utf-8"):
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif ch == "\n":
-            out.append("\\n")
-        elif ch == "\r":
-            out.append("\\r")
-        elif ch == "\t":
-            out.append("\\t")
-        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
-            raise SystemExit("生成器：目标串含无法内联的控制字符 U+%04X" % ord(ch))
-        else:
-            out.append(ch)
-    return "".join(out)
 
 
 def pool_of(table):

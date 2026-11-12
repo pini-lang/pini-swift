@@ -1067,10 +1067,12 @@ public final class SemanticAnalyzer {
             }
 
         case .member(let object, _, _):
-            // 别名 base 不走本地 requireDefined（限定访问只走跨模块通道）
-            if case .identifier(let aliasName, _) = object, importAliasInfos[aliasName] == nil {
-                try checkExpression(object)
+            // 别名 base 走跨模块通道；其余接收者一律递归。只对 identifier 递归会漏掉
+            // `f(x).字段` 这类接收者，实参 x 不会被记为已使用，误报未使用变量。
+            if case .identifier(let aliasName, _) = object, importAliasInfos[aliasName] != nil {
+                break
             }
+            try checkExpression(object)
 
         case .tupleIndex(let object, _, _):
             // 草稿 A2（批次 1）：`.0` 位置访问——递归检查 object 内的标识符定义。

@@ -153,9 +153,7 @@ struct WorkspaceTestTests {
         #expect(
             result.stdout
                 == """
-                测试目标: 工作区 .（4 个测试 target）
-                包 package / package-tests（1 个测试）
-                 ✓ 工作区标记可识别
+                测试目标: 工作区 .（5 个测试 target）
                 包 support / support-tests（7 个测试）
                  ✓ 字节缓冲按UTF8计数
                  ✓ 切片共享存储
@@ -164,6 +162,29 @@ struct WorkspaceTestTests {
                  ✓ 符号表按首次出现驻留
                  ✓ 负宽度归零
                  ✓ 位移使用归一宽度
+                包 diagnostics / diagnostics-tests（20 个测试）
+                 ✓ 行首与行内
+                 ✓ 多字节按标量计列
+                 ✓ 标量中间回退
+                 ✓ 回车计入列
+                 ✓ 偏移夹紧
+                 ✓ 空文本
+                 ✓ 合规诊断无问题
+                 ✓ 未知诊断码
+                 ✓ 空消息与空文件名
+                 ✓ 跨度与主标签
+                 ✓ 缺少主标签
+                 ✓ 标签与备注保序
+                 ✓ 严重度与标签名
+                 ✓ 渲染基本形状
+                 ✓ 主标签在前
+                 ✓ 无标签只渲染头行
+                 ✓ 空标签说明
+                 ✓ 顺序不影响结果
+                 ✓ 重复渲染相同
+                 ✓ 未知文件不借位置
+                包 package / package-tests（1 个测试）
+                 ✓ 工作区标记可识别
                 包 driver / driver-tests（1 个测试）
                  ✓ 公开调用可用
                 包 unicode / unicode-tests（33 个测试）
@@ -200,7 +221,7 @@ struct WorkspaceTestTests {
                  ✓ 分类空白
                  ✓ 标识符判据
                  ✓ 版本与特殊标量
-                结果: 42 通过, 0 失败
+                结果: 62 通过, 0 失败
 
                 """)
     }

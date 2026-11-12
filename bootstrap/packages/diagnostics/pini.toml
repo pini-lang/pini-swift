@@ -1,0 +1,13 @@
+[package]
+name = "diagnostics"
+
+[require]
+support = "*"
+
+[lib]
+name = "diagnostics"
+entry = "src/api/diagnostics.pini"
+
+[[test]]
+name = "diagnostics-tests"
+entry = "tests"

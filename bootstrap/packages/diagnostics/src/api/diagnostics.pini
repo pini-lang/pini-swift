@@ -1,0 +1,343 @@
+[diagnostics|import]
+_support = "../../../support"
+
+; 严重度：错误阻断编译，警告提示风险，备注补充背景；次序见 `severityRank`。
+[Severity]
+错误
+警告
+备注
+
+; 类别：与宿主诊断表的标签组同名，决定输出前缀。
+[Category]
+词法
+语法
+语义
+类型
+运行时
+IR生成
+IR结构
+输入输出
+通用
+
+; 标签：一条诊断指向的源码字节跨度与说明；主标签至多一个。
+(Label)
+start: I32 = 0
+end: I32 = 0
+message: String = ""
+primary: Bool = false
+
+; 诊断：文件、类别、严重度、稳定码、消息、标签与备注。
+(Diagnostic)
+file: String = ""
+category: Category = .通用
+severity: Severity = .错误
+code: String = ""
+message: String = ""
+labels: Array<Label> = []
+notes: Array<String> = []
+
+; 位置：行列都从 1 起；列按 Unicode 标量计。
+(Location)
+line: I32 = 1
+column: I32 = 1
+
+; 严重度名：与宿主诊断标签的后缀一致。
+severityName|func(severity: Severity,) -> (String,):
+    match severity:
+        case 错误:
+            return "错误"
+        case 警告:
+            return "警告"
+        case 备注:
+            return "备注"
+    return "错误"
+
+; 严重度次序：错误 0、警告 1、备注 2。
+severityRank|func(severity: Severity,) -> (I32,):
+    match severity:
+        case 错误:
+            return 0
+        case 警告:
+            return 1
+        case 备注:
+            return 2
+    return 3
+
+; 类别名：不带严重度后缀。
+categoryName|func(category: Category,) -> (String,):
+    match category:
+        case 词法:
+            return "词法"
+        case 语法:
+            return "语法"
+        case 语义:
+            return "语义"
+        case 类型:
+            return "类型"
+        case 运行时:
+            return "运行时"
+        case IR生成:
+            return "IR 生成"
+        case IR结构:
+            return "IR 结构"
+        case 输入输出:
+            return "输入输出"
+        case 通用:
+            return "通用"
+    return "通用"
+
+; 标签名：类别加严重度；通用类别只用严重度，与宿主的通用标签一致。
+labelOf|func(category: Category, severity: Severity,) -> (String,):
+    match category:
+        case 通用:
+            return severityName(severity)
+        case 词法:
+            return "词法" + severityName(severity)
+        case 语法:
+            return "语法" + severityName(severity)
+        case 语义:
+            return "语义" + severityName(severity)
+        case 类型:
+            return "类型" + severityName(severity)
+        case 运行时:
+            return "运行时" + severityName(severity)
+        case IR生成:
+            return "IR 生成" + severityName(severity)
+        case IR结构:
+            return "IR 结构" + severityName(severity)
+        case 输入输出:
+            return "输入输出" + severityName(severity)
+    return severityName(severity)
+
+; 造标签：跨度是源内字节偏移的半开区间，说明可为空。
+makeLabel|func(start: I32, end: I32, message: String, primary: Bool,) -> (Label,):
+    var out = Label()
+    out.start = start
+    out.end = end
+    out.message = message
+    out.primary = primary
+    return out
+
+; 造诊断：初始没有标签与备注，由 `addLabel` / `addNote` 追加。
+makeDiagnostic|func(file: String, category: Category, severity: Severity, code: String, message: String,) -> (Diagnostic,):
+    var out = Diagnostic()
+    out.file = file
+    out.category = category
+    out.severity = severity
+    out.code = code
+    out.message = message
+    return out
+
+; 字节偏移转行列：负值按 0、超出按末尾夹紧；落在多字节序列中间时回退到标量起点。
+locationOf|func(text: SourceText, offset: I32,) -> (Location,):
+    let length = text.byteLength()
+    var at = offset
+    if at < 0:
+        at = 0
+    if at > length:
+        at = length
+    var settled = false
+    while !settled:
+        if at <= 0 || at >= length:
+            settled = true
+        else:
+            if isContinuationByte(text.byteAt(at)):
+                at = at - 1
+            else:
+                settled = true
+    let line = text.lineOf(at)
+    let start = text.lineStart(line)
+    var column = 1
+    var i = start
+    while i < at:
+        if !isContinuationByte(text.byteAt(i)):
+            column = column + 1
+        i = i + 1
+    var out = Location()
+    out.line = line + 1
+    out.column = column
+    return out
+
+; 按固定次序比较：文件、锚点起点、锚点终点、码、消息。次序全序，不依赖登记顺序。
+compareDiagnostics|func(left: Diagnostic, right: Diagnostic,) -> (I32,):
+    let byFile = compareText(left.file, right.file)
+    if byFile != 0:
+        return byFile
+    let byStart = compareInt(left.anchorStart(), right.anchorStart())
+    if byStart != 0:
+        return byStart
+    let byEnd = compareInt(left.anchorEnd(), right.anchorEnd())
+    if byEnd != 0:
+        return byEnd
+    let byCode = compareText(left.code, right.code)
+    if byCode != 0:
+        return byCode
+    return compareText(left.message, right.message)
+
+; 稳定排序：同一批诊断无论登记顺序如何，都得到同一序列。
+sortDiagnostics|func(items: Array<Diagnostic>,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(items):
+        var at = len(out)
+        var placing = true
+        while placing:
+            if at == 0:
+                placing = false
+            else:
+                if compareDiagnostics(items[i], out[at - 1]) < 0:
+                    at = at - 1
+                else:
+                    placing = false
+        out = insertDiagnostic(out, at, items[i])
+        i = i + 1
+    return out
+
+; 在指定下标插入，其后元素顺移；下标等于长度即追加。
+insertDiagnostic|func(items: Array<Diagnostic>, index: I32, item: Diagnostic,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var at = index
+    if at < 0:
+        at = 0
+    if at > len(items):
+        at = len(items)
+    var i = 0
+    while i < len(items):
+        if i == at:
+            out = out.append(item)
+        out = out.append(items[i])
+        i = i + 1
+    if at >= len(items):
+        out = out.append(item)
+    return out
+
+; 标签行：主/次、跨度、说明；说明为空时不留下行尾空格。
+labelLine|func(label: Label, text: SourceText,) -> (String,):
+    let from = locationOf(text, label.start)
+    let to = locationOf(text, label.end)
+    var kind = "次标签 "
+    if label.primary:
+        kind = "主标签 "
+    var out = "  " + kind + "\(from.line)" + ":" + "\(from.column)"
+    out = out + "-" + "\(to.line)" + ":" + "\(to.column)"
+    if len(label.message) > 0:
+        out = out + " " + label.message
+    return out + "\n"
+
+; 单条诊断渲染成文本：头行、标签行、备注行，每条以换行结尾。
+renderDiagnostic|func(d: Diagnostic, text: SourceText,) -> (String,):
+    let anchor = d.anchorStart()
+    var out = ""
+    if anchor >= 0:
+        let at = locationOf(text, anchor)
+        out = d.file + ":" + "\(at.line)" + ":" + "\(at.column)" + ": "
+    else:
+        out = d.file + ": "
+    out = out + labelOf(d.category, d.severity) + " [" + d.code + "] " + d.message + "\n"
+    let main = d.primaryIndex()
+    var i = 0
+    while i < len(d.labels):
+        var pick = i
+        if main >= 0:
+            if i == 0:
+                pick = main
+            else:
+                if i <= main:
+                    pick = i - 1
+        out = out + labelLine(d.labels[pick], text)
+        i = i + 1
+    var n = 0
+    while n < len(d.notes):
+        out = out + "  备注 " + d.notes[n] + "\n"
+        n = n + 1
+    return out
+
+; 没有源文本时只渲染头行与备注：标签要靠源文本才能定位。
+renderHeadless|func(d: Diagnostic,) -> (String,):
+    var out = d.file + ": " + labelOf(d.category, d.severity) + " [" + d.code + "] " + d.message + "\n"
+    var n = 0
+    while n < len(d.notes):
+        out = out + "  备注 " + d.notes[n] + "\n"
+        n = n + 1
+    return out
+
+; 按文件名找源文本下标；找不到答 -1。
+indexOfFile|func(files: Array<String>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(files):
+        if files[i] == name:
+            return i
+        i = i + 1
+    return -1
+
+; 批量渲染：内部先排序，找不到源文本的文件退化为无位置头行。
+renderAll|func(items: Array<Diagnostic>, files: Array<String>, texts: Array<SourceText>,) -> (String,):
+    let ordered = sortDiagnostics(items)
+    var out = ""
+    var i = 0
+    while i < len(ordered):
+        let index = indexOfFile(files, ordered[i].file)
+        if index < 0:
+            out = out + renderHeadless(ordered[i])
+        else:
+            out = out + renderDiagnostic(ordered[i], texts[index])
+        i = i + 1
+    return out
+
+((Diagnostic))
+; 模型不变量：文件名、消息、码、跨度、主标签数量；返回全部问题，顺序固定。
+issues|self() -> (Array<String>,):
+    var found: Array<String> = []
+    if len(self.file) == 0:
+        found = found.append("文件名为空")
+    if len(self.message) == 0:
+        found = found.append("消息为空")
+    if len(diagnosticMessage(self.code)) == 0:
+        found = found.append("未知诊断码 " + self.code)
+    var primaries = 0
+    var i = 0
+    while i < len(self.labels):
+        if self.labels[i].end < self.labels[i].start:
+            found = found.append("标签跨度倒挂")
+        if self.labels[i].primary:
+            primaries = primaries + 1
+        i = i + 1
+    if primaries > 1:
+        found = found.append("主标签多于一个")
+    if len(self.labels) > 1 && primaries == 0:
+        found = found.append("多标签缺少主标签")
+    return found
+; 追加标签；顺序即渲染顺序（主标签会被提到最前）。
+addLabel|self(label: Label,) -> (Diagnostic,):
+    var out = self
+    out.labels = out.labels.append(label)
+    return out
+; 追加备注；顺序即渲染顺序。
+addNote|self(note: String,) -> (Diagnostic,):
+    var out = self
+    out.notes = out.notes.append(note)
+    return out
+; 主标签下标；没有主标签答 -1。
+primaryIndex|self() -> (I32,):
+    var i = 0
+    while i < len(self.labels):
+        if self.labels[i].primary:
+            return i
+        i = i + 1
+    return -1
+; 锚点起点：主标签优先，其次首个标签；没有标签答 -1。
+anchorStart|self() -> (I32,):
+    let index = self.primaryIndex()
+    if index >= 0:
+        return self.labels[index].start
+    if len(self.labels) > 0:
+        return self.labels[0].start
+    return -1
+; 锚点终点：与 `anchorStart` 取同一个标签。
+anchorEnd|self() -> (I32,):
+    let index = self.primaryIndex()
+    if index >= 0:
+        return self.labels[index].end
+    if len(self.labels) > 0:
+        return self.labels[0].end
+    return -1

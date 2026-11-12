@@ -58,6 +58,8 @@ step "诊断表一致性门禁"
 # 自检先证明两条判据会开火，再读真表。
 python3 tools/diagnostics-parity-check.py --self-test
 python3 tools/diagnostics-parity-check.py
+# 自举侧码表从同一份 zh 资源生成：两边码集漂移时这里先红，运行时不读 TOML。
+python3 bootstrap/tools/gen-diagnostics-table.py --check
 
 step "IR 契约门禁"
 python3 tools/ir-contract-check.py
@@ -110,6 +112,10 @@ step "support 原生测试门禁"
 step "unicode 原生测试门禁"
 # 解码与分类在两条通道上同规：解释器全绿不等于 LLVM 全绿。
 .build/debug/pini test-llvm bootstrap/packages/unicode
+
+step "diagnostics 原生测试门禁"
+# 行列映射与排序在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/diagnostics
 
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
