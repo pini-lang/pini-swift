@@ -902,17 +902,18 @@ extension TopLevelDecl {
 extension Printer {
 
     /// 字符串字面量：反斜杠先转义，否则后面的 `\(` 会被重新读成插值。
+    /// 按标量遍历而非字素：CRLF 是一个字素簇，按簇比对会把 `\r\n` 原样写进字面量。
     static func quote(_ value: String) -> String {
         var text = "\""
-        for character in value {
-            switch character {
+        for scalar in value.unicodeScalars {
+            switch scalar {
             case "\\": text += "\\\\"
             case "\"": text += "\\\""
             case "\n": text += "\\n"
             case "\t": text += "\\t"
             case "\r": text += "\\r"
             case "\0": text += "\\0"
-            default: text.append(character)
+            default: text.unicodeScalars.append(scalar)
             }
         }
         return text + "\""

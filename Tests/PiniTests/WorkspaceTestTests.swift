@@ -150,10 +150,8 @@ struct WorkspaceTestTests {
             cli, ["test", "."], cwd: WorkspaceTestSupport.bootstrapRoot)
         #expect(result.status == 0, "工作区测试失败：\(result.stderr)")
         #expect(result.stderr.isEmpty)
-        #expect(
-            result.stdout
-                == """
-                测试目标: 工作区 .（5 个测试 target）
+        let expected = """
+                测试目标: 工作区 .（6 个测试 target）
                 包 support / support-tests（7 个测试）
                  ✓ 字节缓冲按UTF8计数
                  ✓ 切片共享存储
@@ -187,7 +185,7 @@ struct WorkspaceTestTests {
                  ✓ 工作区标记可识别
                 包 driver / driver-tests（1 个测试）
                  ✓ 公开调用可用
-                包 unicode / unicode-tests（33 个测试）
+                包 unicode / unicode-tests（35 个测试）
                  ✓ 骨架折叠形近字母
                  ✓ 骨架跨脚本折叠
                  ✓ 骨架多标量目标
@@ -220,10 +218,46 @@ struct WorkspaceTestTests {
                  ✓ 分类字母数字
                  ✓ 分类空白
                  ✓ 标识符判据
+                 ✓ 单步解码消费字节数
+                 ✓ 单步解码失败类别
                  ✓ 版本与特殊标量
-                结果: 62 通过, 0 失败
+                包 syntax / syntax-tests（32 个测试）
+                 ✓ 节点池
+                 ✓ 分池计数
+                 ✓ 缺省子节点
+                 ✓ 简单行
+                 ✓ 关键字全表
+                 ✓ 缩进与反缩进
+                 ✓ 嵌套反缩进
+                 ✓ 空行与注释透明
+                 ✓ 括号内抑制布局
+                 ✓ 块携带括号
+                 ✓ 数值扫描
+                 ✓ 运算符最长匹配
+                 ✓ 字符串分段
+                 ✓ 插值配平
+                 ✓ 字符串终止符
+                 ✓ 反引号标识符
+                 ✓ 注释跳过
+                 ✓ 制表符缩进报错
+                 ✓ 坏字节与未闭合字符串
+                 ✓ CRLF归一化
+                 ✓ 文件末尾
+                 ✓ 函数声明形状
+                 ✓ 优先级与结合
+                 ✓ 后缀链
+                 ✓ 如果分派
+                 ✓ 循环与遍历
+                 ✓ 匹配分派
+                 ✓ 枚举与导入
+                 ✓ 函数字面量
+                 ✓ 错误诊断
+                 ✓ 词法问题透传
+                 ✓ 自解析
+                结果: 96 通过, 0 失败
 
-                """)
+                """
+        #expect(result.stdout == expected)
     }
 
     @Test("测试 target 按包依赖拓扑序展开")

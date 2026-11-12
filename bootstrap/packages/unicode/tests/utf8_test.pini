@@ -166,6 +166,44 @@ _support = "../../support"
     assert(!continuesIdentifier(8203), "零宽空格不续写")
     return
 
+; 单步解码只消费该标量自身的字节：长度即消费数，起点之后的内容一律不读。
+单步解码消费字节数|test() -> ():
+    let bytes: Array<U8> = [65, 195, 169, 228, 184, 173, 240, 144, 141, 136]
+    let a = decodeScalarAt(bytes, 0)
+    assert(a.length == 1, "ASCII 消费一字节")
+    assert(a.code == 65, "ASCII 码点")
+    assert(utf8ErrorName(a.error) == "无", "ASCII 无错误")
+    let e = decodeScalarAt(bytes, 1)
+    assert(e.length == 2, "é 消费两字节")
+    assert(e.code == 233, "é 码点")
+    let z = decodeScalarAt(bytes, 3)
+    assert(z.length == 3, "中 消费三字节")
+    assert(z.code == 20013, "中 码点")
+    let s = decodeScalarAt(bytes, 6)
+    assert(s.length == 4, "U+10348 消费四字节")
+    assert(s.code == 66376, "U+10348 码点")
+    return
+
+; 单步失败答长度零，类别与整段解码一致；不改动输入也不越过出错序列起点。
+单步解码失败类别|test() -> ():
+    let cut: Array<U8> = [228, 184]
+    let truncated = decodeScalarAt(cut, 0)
+    assert(truncated.length == 0, "截断不消费")
+    assert(utf8ErrorName(truncated.error) == "截断", "截断类别")
+    let stray: Array<U8> = [128]
+    let lead = decodeScalarAt(stray, 0)
+    assert(lead.length == 0, "游离续字节不消费")
+    assert(utf8ErrorName(lead.error) == "首字节非法", "游离续字节类别")
+    let overlong: Array<U8> = [192, 128]
+    assert(utf8ErrorName(decodeScalarAt(overlong, 0).error) == "过长编码", "过长编码类别")
+    let surrogate: Array<U8> = [237, 160, 128]
+    assert(utf8ErrorName(decodeScalarAt(surrogate, 0).error) == "代理区", "代理区类别")
+    let high: Array<U8> = [244, 144, 128, 128]
+    assert(utf8ErrorName(decodeScalarAt(high, 0).error) == "超出上限", "超出上限类别")
+    let broken: Array<U8> = [228, 65]
+    assert(utf8ErrorName(decodeScalarAt(broken, 0).error) == "续字节非法", "续字节错位类别")
+    return
+
 ; 数据版本由生成表固定；BOM、NUL 与非法码点边界都按普通标量解码。
 版本与特殊标量|test() -> ():
     assert(unicodeVersion() == "15.1.0", "数据版本")

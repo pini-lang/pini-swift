@@ -1,0 +1,623 @@
+; 记号：类别、源内字节区间与名字区间；`end - start` 即扫描消费的字节数。
+(Token)
+kind: TokenKind = .未知
+start: I32 = 0
+end: I32 = 0
+nameStart: I32 = 0
+nameEnd: I32 = 0
+segments: Array<Segment> = []
+
+; 字符串段：字面段的范围含转义原文，插值段的范围是括号内的表达式，都不含两侧定界。
+(Segment)
+kind: SegmentKind = .字面
+start: I32 = 0
+end: I32 = 0
+
+[SegmentKind]
+字面
+插值
+
+; 记号类别：字面量、关键字、运算符、定界符、布局五段，码按此顺序分配。
+[TokenKind]
+未知
+标识符
+整数
+浮点
+字符串
+插值字符串
+真
+假
+; 关键字，识别时按长度分流再逐字节比对。
+变量
+常量
+函数
+枚举
+对象
+如果
+否则如果
+否则
+匹配
+分支
+循环
+步
+遍历
+在
+尝试
+返回
+跳出
+继续
+自身
+自有
+延迟
+导入
+导出
+空
+捕获
+异步等
+等待
+不安全
+测试
+外部
+分离
+通过
+使用
+展开
+; 运算符；`星号` 与 `竖线` 同时承担指针前缀与声明分隔，按位置区分角色。
+加
+减
+星号
+除
+取余
+自增
+自减
+逻辑与
+逻辑或
+逻辑非
+等于
+不等
+小于等于
+大于等于
+小于
+大于
+位与
+竖线
+位异或
+位取反
+左移
+右移
+赋值
+加赋值
+减赋值
+乘赋值
+除赋值
+取余赋值
+位与赋值
+竖线赋值
+位异或赋值
+左移赋值
+右移赋值
+; 定界符。
+左圆
+右圆
+左方
+右方
+左花
+右花
+冒号
+逗号
+箭头
+双箭头
+点
+问号
+艾特
+; 布局记号，由缩进栈与行尾扫描合成，跨度可为零。
+换行
+缩进
+反缩进
+结束
+
+; 类别码：区间边界即类别边界，字面量 0..7、关键字 8..41、运算符 42..74、定界符 75..87、布局 88..91。
+kindTag|func(kind: TokenKind,) -> (I32,):
+    match kind:
+        case 未知:
+            return 0
+        case 标识符:
+            return 1
+        case 整数:
+            return 2
+        case 浮点:
+            return 3
+        case 字符串:
+            return 4
+        case 插值字符串:
+            return 5
+        case 真:
+            return 6
+        case 假:
+            return 7
+        case 变量:
+            return 8
+        case 常量:
+            return 9
+        case 函数:
+            return 10
+        case 枚举:
+            return 11
+        case 对象:
+            return 12
+        case 如果:
+            return 13
+        case 否则如果:
+            return 14
+        case 否则:
+            return 15
+        case 匹配:
+            return 16
+        case 分支:
+            return 17
+        case 循环:
+            return 18
+        case 步:
+            return 19
+        case 遍历:
+            return 20
+        case 在:
+            return 21
+        case 尝试:
+            return 22
+        case 返回:
+            return 23
+        case 跳出:
+            return 24
+        case 继续:
+            return 25
+        case 自身:
+            return 26
+        case 自有:
+            return 27
+        case 延迟:
+            return 28
+        case 导入:
+            return 29
+        case 导出:
+            return 30
+        case 空:
+            return 31
+        case 捕获:
+            return 32
+        case 异步等:
+            return 33
+        case 等待:
+            return 34
+        case 不安全:
+            return 35
+        case 测试:
+            return 36
+        case 外部:
+            return 37
+        case 分离:
+            return 38
+        case 通过:
+            return 39
+        case 使用:
+            return 40
+        case 展开:
+            return 41
+        case 加:
+            return 42
+        case 减:
+            return 43
+        case 星号:
+            return 44
+        case 除:
+            return 45
+        case 取余:
+            return 46
+        case 自增:
+            return 47
+        case 自减:
+            return 48
+        case 逻辑与:
+            return 49
+        case 逻辑或:
+            return 50
+        case 逻辑非:
+            return 51
+        case 等于:
+            return 52
+        case 不等:
+            return 53
+        case 小于等于:
+            return 54
+        case 大于等于:
+            return 55
+        case 小于:
+            return 56
+        case 大于:
+            return 57
+        case 位与:
+            return 58
+        case 竖线:
+            return 59
+        case 位异或:
+            return 60
+        case 位取反:
+            return 61
+        case 左移:
+            return 62
+        case 右移:
+            return 63
+        case 赋值:
+            return 64
+        case 加赋值:
+            return 65
+        case 减赋值:
+            return 66
+        case 乘赋值:
+            return 67
+        case 除赋值:
+            return 68
+        case 取余赋值:
+            return 69
+        case 位与赋值:
+            return 70
+        case 竖线赋值:
+            return 71
+        case 位异或赋值:
+            return 72
+        case 左移赋值:
+            return 73
+        case 右移赋值:
+            return 74
+        case 左圆:
+            return 75
+        case 右圆:
+            return 76
+        case 左方:
+            return 77
+        case 右方:
+            return 78
+        case 左花:
+            return 79
+        case 右花:
+            return 80
+        case 冒号:
+            return 81
+        case 逗号:
+            return 82
+        case 箭头:
+            return 83
+        case 双箭头:
+            return 84
+        case 点:
+            return 85
+        case 问号:
+            return 86
+        case 艾特:
+            return 87
+        case 换行:
+            return 88
+        case 缩进:
+            return 89
+        case 反缩进:
+            return 90
+        case 结束:
+            return 91
+    return 0
+
+; 类别名：用于诊断消息与测试断言，与枚举名同字。
+kindName|func(kind: TokenKind,) -> (String,):
+    match kind:
+        case 未知:
+            return "未知"
+        case 标识符:
+            return "标识符"
+        case 整数:
+            return "整数"
+        case 浮点:
+            return "浮点"
+        case 字符串:
+            return "字符串"
+        case 插值字符串:
+            return "插值字符串"
+        case 真:
+            return "真"
+        case 假:
+            return "假"
+        case 变量:
+            return "变量"
+        case 常量:
+            return "常量"
+        case 函数:
+            return "函数"
+        case 枚举:
+            return "枚举"
+        case 对象:
+            return "对象"
+        case 如果:
+            return "如果"
+        case 否则如果:
+            return "否则如果"
+        case 否则:
+            return "否则"
+        case 匹配:
+            return "匹配"
+        case 分支:
+            return "分支"
+        case 循环:
+            return "循环"
+        case 步:
+            return "步"
+        case 遍历:
+            return "遍历"
+        case 在:
+            return "在"
+        case 尝试:
+            return "尝试"
+        case 返回:
+            return "返回"
+        case 跳出:
+            return "跳出"
+        case 继续:
+            return "继续"
+        case 自身:
+            return "自身"
+        case 自有:
+            return "自有"
+        case 延迟:
+            return "延迟"
+        case 导入:
+            return "导入"
+        case 导出:
+            return "导出"
+        case 空:
+            return "空"
+        case 捕获:
+            return "捕获"
+        case 异步等:
+            return "异步等"
+        case 等待:
+            return "等待"
+        case 不安全:
+            return "不安全"
+        case 测试:
+            return "测试"
+        case 外部:
+            return "外部"
+        case 分离:
+            return "分离"
+        case 通过:
+            return "通过"
+        case 使用:
+            return "使用"
+        case 展开:
+            return "展开"
+        case 加:
+            return "加"
+        case 减:
+            return "减"
+        case 星号:
+            return "星号"
+        case 除:
+            return "除"
+        case 取余:
+            return "取余"
+        case 自增:
+            return "自增"
+        case 自减:
+            return "自减"
+        case 逻辑与:
+            return "逻辑与"
+        case 逻辑或:
+            return "逻辑或"
+        case 逻辑非:
+            return "逻辑非"
+        case 等于:
+            return "等于"
+        case 不等:
+            return "不等"
+        case 小于等于:
+            return "小于等于"
+        case 大于等于:
+            return "大于等于"
+        case 小于:
+            return "小于"
+        case 大于:
+            return "大于"
+        case 位与:
+            return "位与"
+        case 竖线:
+            return "竖线"
+        case 位异或:
+            return "位异或"
+        case 位取反:
+            return "位取反"
+        case 左移:
+            return "左移"
+        case 右移:
+            return "右移"
+        case 赋值:
+            return "赋值"
+        case 加赋值:
+            return "加赋值"
+        case 减赋值:
+            return "减赋值"
+        case 乘赋值:
+            return "乘赋值"
+        case 除赋值:
+            return "除赋值"
+        case 取余赋值:
+            return "取余赋值"
+        case 位与赋值:
+            return "位与赋值"
+        case 竖线赋值:
+            return "竖线赋值"
+        case 位异或赋值:
+            return "位异或赋值"
+        case 左移赋值:
+            return "左移赋值"
+        case 右移赋值:
+            return "右移赋值"
+        case 左圆:
+            return "左圆"
+        case 右圆:
+            return "右圆"
+        case 左方:
+            return "左方"
+        case 右方:
+            return "右方"
+        case 左花:
+            return "左花"
+        case 右花:
+            return "右花"
+        case 冒号:
+            return "冒号"
+        case 逗号:
+            return "逗号"
+        case 箭头:
+            return "箭头"
+        case 双箭头:
+            return "双箭头"
+        case 点:
+            return "点"
+        case 问号:
+            return "问号"
+        case 艾特:
+            return "艾特"
+        case 换行:
+            return "换行"
+        case 缩进:
+            return "缩进"
+        case 反缩进:
+            return "反缩进"
+        case 结束:
+            return "结束"
+    return "未知"
+
+; 同一类别判定：两通道都不支持枚举相等比较，因此一律比类别码。
+isKind|func(token: Token, kind: TokenKind,) -> (Bool,):
+    return kindTag(token.kind) == kindTag(kind)
+
+; 字面量区间不含 `未知`：未识别字节不算字面量。
+isLiteralKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 1 && tag <= 7
+
+isKeywordKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 8 && tag <= 41
+
+isOperatorKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 42 && tag <= 74
+
+isDelimiterKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 75 && tag <= 87
+
+; 布局记号：解析器靠它切分块边界，普通表达式扫描里一律跳过。
+isLayoutKind|func(kind: TokenKind,) -> (Bool,):
+    return kindTag(kind) >= 88
+
+; 关键字词表：按词长分流再逐字节比对，非关键字答 `.标识符`。
+keywordKind|func(bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
+    let n = end - start
+    if n == 2:
+        if matchesAscii(bytes, start, "if"):
+            return .如果
+        if matchesAscii(bytes, start, "in"):
+            return .在
+    if n == 3:
+        if matchesAscii(bytes, start, "var"):
+            return .变量
+        if matchesAscii(bytes, start, "let"):
+            return .常量
+        if matchesAscii(bytes, start, "for"):
+            return .遍历
+        if matchesAscii(bytes, start, "try"):
+            return .尝试
+        if matchesAscii(bytes, start, "nil"):
+            return .空
+        if matchesAscii(bytes, start, "own"):
+            return .自有
+    if n == 4:
+        if matchesAscii(bytes, start, "func"):
+            return .函数
+        if matchesAscii(bytes, start, "enum"):
+            return .枚举
+        if matchesAscii(bytes, start, "case"):
+            return .分支
+        if matchesAscii(bytes, start, "else"):
+            return .否则
+        if matchesAscii(bytes, start, "step"):
+            return .步
+        if matchesAscii(bytes, start, "wait"):
+            return .等待
+        if matchesAscii(bytes, start, "test"):
+            return .测试
+        if matchesAscii(bytes, start, "self"):
+            return .自身
+        if matchesAscii(bytes, start, "pass"):
+            return .通过
+        if matchesAscii(bytes, start, "elif"):
+            return .否则如果
+    if n == 5:
+        if matchesAscii(bytes, start, "match"):
+            return .匹配
+        if matchesAscii(bytes, start, "while"):
+            return .循环
+        if matchesAscii(bytes, start, "break"):
+            return .跳出
+        if matchesAscii(bytes, start, "await"):
+            return .异步等
+        if matchesAscii(bytes, start, "using"):
+            return .使用
+        if matchesAscii(bytes, start, "defer"):
+            return .延迟
+    if n == 6:
+        if matchesAscii(bytes, start, "object"):
+            return .对象
+        if matchesAscii(bytes, start, "return"):
+            return .返回
+        if matchesAscii(bytes, start, "import"):
+            return .导入
+        if matchesAscii(bytes, start, "export"):
+            return .导出
+        if matchesAscii(bytes, start, "unsafe"):
+            return .不安全
+        if matchesAscii(bytes, start, "detach"):
+            return .分离
+        if matchesAscii(bytes, start, "unroll"):
+            return .展开
+    if n == 7:
+        if matchesAscii(bytes, start, "capture"):
+            return .捕获
+        if matchesAscii(bytes, start, "foreign"):
+            return .外部
+    if n == 8:
+        if matchesAscii(bytes, start, "continue"):
+            return .继续
+    return .标识符
+
+matchesAscii|func(bytes: Array<U8>, start: I32, word: String,) -> (Bool,):
+    let want = tempUtf8Bytes(word)
+    if start + len(want) > len(bytes):
+        return false
+    var i = 0
+    while i < len(want):
+        if bytes[start + i] != want[i]:
+            return false
+        i = i + 1
+    return true
+
+((Token))
+; 扫描消费的字节数：区间长度，布局记号可为零。
+consumed|self() -> (I32,):
+    return self.end - self.start
+; 名字跨度是否非空：反引号名去掉引号后才是名字。
+hasName|self() -> (Bool,):
+    return self.nameEnd > self.nameStart
+segmentCount|self() -> (I32,):
+    return len(self.segments)
+segmentAt|self(index: I32,) -> (Segment,):
+    return self.segments[index]

@@ -16,6 +16,19 @@ struct SpellingPreservationTests {
         return Printer.print(module: module, comments: scan.comments, hints: scan.hints)
     }
 
+    /// 行尾转义必须按标量输出：CRLF 是一个字素簇，按簇比对会把它原样写回字面量。
+    @Test("CRLF 转义：格式化后仍是两个转义序列")
+    func keepsCarriageReturnEscape() throws {
+        let source = """
+            main|func() -> ():
+                let s = "a\\r\\nb"
+                return
+            """
+        let text = try #require(printed(source))
+        #expect(text.contains("\\r\\n"))
+        #expect(!text.contains("\r"))
+    }
+
     @Test("六种写法：进制与指数原样保留")
     func keepsSpellings() throws {
         let source = """

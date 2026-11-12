@@ -44,8 +44,7 @@
 
 ; 行表按 LF 建界：CRLF 的 CR 留在上一行，末尾换行另起空行。
 源文本行表|test() -> ():
-    let src = makeSourceText("ab\ncd
- e")
+    let src = makeSourceText("ab\ncd\r\n e")
     assert(src.lineCount() == 3, "三行")
     assert(src.lineStart(0) == 0, "首行从 0")
     assert(src.lineStart(1) == 3, "第二行")

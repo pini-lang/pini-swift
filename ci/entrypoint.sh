@@ -117,6 +117,10 @@ step "diagnostics 原生测试门禁"
 # 行列映射与排序在两条通道上同规：解释器全绿不等于 LLVM 全绿。
 .build/debug/pini test-llvm bootstrap/packages/diagnostics
 
+step "syntax 原生测试门禁"
+# 词法与解析在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/syntax
+
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/fmt-gate.py

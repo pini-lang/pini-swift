@@ -34,8 +34,7 @@ _support = "../../support"
 
 ; CRLF：回车属于行内容，行表只按 LF 换行。
 回车计入列|test() -> ():
-    let text = makeSourceText("a
-b")
+    let text = makeSourceText("a\r\nb")
     assert(locationOf(text, 1).column == 2, "回车在列 2")
     let next = locationOf(text, 3)
     assert(next.line == 2, "b 在第二行")

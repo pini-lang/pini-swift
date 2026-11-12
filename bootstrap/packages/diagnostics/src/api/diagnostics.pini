@@ -41,6 +41,18 @@ notes: Array<String> = []
 line: I32 = 1
 column: I32 = 1
 
+; 错误严重度：阻断编译的诊断一律取它；跨包调用方借此取值。
+severityError|func() -> (Severity,):
+    return .错误
+
+; 语法类别：解析阶段的诊断取它。
+categorySyntax|func() -> (Category,):
+    return .语法
+
+; 词法类别：扫描阶段的诊断取它。
+categoryLexical|func() -> (Category,):
+    return .词法
+
 ; 严重度名：与宿主诊断标签的后缀一致。
 severityName|func(severity: Severity,) -> (String,):
     match severity:

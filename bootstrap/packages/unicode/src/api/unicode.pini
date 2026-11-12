@@ -23,6 +23,40 @@ scalars: Array<Scalar> = []
 error: Utf8Error = .无
 errorAt: I32 = -1
 
+; 单步结果：失败时长度为 0、码点为 0，类别给出原因；成功时长度即消费字节数。
+(Utf8Step)
+code: I32 = 0
+length: I32 = 0
+error: Utf8Error = .无
+
+; 错误类别的稳定名称；合法时答「无」。
+utf8ErrorName|func(error: Utf8Error,) -> (String,):
+    match error:
+        case 无:
+            return "无"
+        case 截断:
+            return "截断"
+        case 首字节非法:
+            return "首字节非法"
+        case 续字节非法:
+            return "续字节非法"
+        case 过长编码:
+            return "过长编码"
+        case 代理区:
+            return "代理区"
+        case 超出上限:
+            return "超出上限"
+    return "未知"
+
+; 从 `offset` 解一个标量：只读该标量的首字节与续字节，不扫描其后文本；调用方保证偏移在界内。
+decodeScalarAt|func(bytes: Array<U8>, offset: I32,) -> (Utf8Step,):
+    let unit = stepScalar(bytes, offset)
+    var out = Utf8Step()
+    out.code = unit.code
+    out.length = unit.length
+    out.error = unit.error
+    return out
+
 ; 解码字节数组；标量区间以数组下标为基准，与输入共用同一份存储。
 decodeUtf8|func(bytes: Array<U8>,) -> (Utf8Text,):
     var buffer = ByteBuffer()
@@ -126,19 +160,4 @@ errorOffset|self() -> (I32,):
     return self.errorAt
 ; 错误类别的稳定名称；合法时答「无」。
 errorName|self() -> (String,):
-    match self.error:
-        case 无:
-            return "无"
-        case 截断:
-            return "截断"
-        case 首字节非法:
-            return "首字节非法"
-        case 续字节非法:
-            return "续字节非法"
-        case 过长编码:
-            return "过长编码"
-        case 代理区:
-            return "代理区"
-        case 超出上限:
-            return "超出上限"
-    return "未知"
+    return utf8ErrorName(self.error)
