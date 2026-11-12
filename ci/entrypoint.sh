@@ -75,6 +75,10 @@ step "标量集合门禁"
 python3 tools/scalar-set-check.py --self-test
 python3 tools/scalar-set-check.py
 
+step "Unicode 数据门禁"
+# 生成物与钉定的数据版本逐字一致：宿主 Unicode 版本漂移时这里先红，构建与运行不读宿主数据。
+python3 bootstrap/tools/gen-unicode-tables.py --check
+
 step "后端义务门禁（警告级）"
 # 只报不拦：决策族归零之后，这个脚本用来盯「旧的判断有没有长回来」。
 # 读数稳定一段再转硬拦截，好过在门禁上先红一次。
@@ -102,6 +106,10 @@ step "工作区测试门禁"
 step "support 原生测试门禁"
 # 同一批字节缓冲测试再走原生通道：解释器全绿不等于 LLVM 全绿。
 .build/debug/pini test-llvm bootstrap/packages/support
+
+step "unicode 原生测试门禁"
+# 解码与分类在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/unicode
 
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。

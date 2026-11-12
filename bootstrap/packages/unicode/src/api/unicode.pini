@@ -1,0 +1,123 @@
+[unicode|import]
+_support = "../../../support"
+
+; 标量：一个 Unicode 码点及其在输入中的字节区间；`start` 相对解码起点，`length` 为 1..4。
+(Scalar)
+code: I32 = 0
+start: I32 = 0
+length: I32 = 0
+
+; 解码错误类别；首字节非法含游离续字节与 F8..FF，过长编码含 C0/C1 与低于下界的序列。
+[Utf8Error]
+无
+截断
+首字节非法
+续字节非法
+过长编码
+代理区
+超出上限
+
+; 解码结果：错误前的标量仍然保留，出错后不再消费后续字节。
+(Utf8Text)
+scalars: Array<Scalar> = []
+error: Utf8Error = .无
+errorAt: I32 = -1
+
+; 解码字节数组；标量区间以数组下标为基准，与输入共用同一份存储。
+decodeUtf8|func(bytes: Array<U8>,) -> (Utf8Text,):
+    var buffer = ByteBuffer()
+    buffer.bytes = bytes
+    return decodeUtf8Slice(buffer.slice(0, len(bytes)))
+
+; 解码切片；不复制字节，`start` 相对切片起点，调用方加上切片起点即得源内偏移。
+decodeUtf8Slice|func(part: ByteSlice,) -> (Utf8Text,):
+    var out = Utf8Text()
+    let count = part.end - part.start
+    var i = 0
+    while i < count:
+        let unit = stepScalar(part.bytes, part.start + i)
+        if unit.length == 0:
+            out.error = unit.error
+            out.errorAt = i
+            i = count
+        else:
+            var scalar = Scalar()
+            scalar.code = unit.code
+            scalar.start = i
+            scalar.length = unit.length
+            out.scalars = out.scalars.append(scalar)
+            i = i + unit.length
+    return out
+
+; 按 Unicode 标量编码为 UTF-8；负值、超上限与代理区由构建器的前置检查拒绝。
+utf8Encode|func(code: I32,) -> (Array<U8>,):
+    var builder = ByteBuilder()
+    builder = builder.appendScalar(code)
+    return builder.takeBuffer().bytes
+
+; 数据版本由生成表提供，上层据此核对表与规范声明同版。
+unicodeVersion|func() -> (String,):
+    return unicodeDataVersion()
+
+; 是否为 ASCII 码点；负值与大于 U+007F 均答假。
+isAsciiScalar|func(code: I32,) -> (Bool,):
+    if code < 0:
+        return false
+    return code < 128
+
+; 是否为 Unicode 字母（通用类别 L*）。
+isLetterScalar|func(code: I32,) -> (Bool,):
+    return unicodeClassOf(code) == 1
+
+; 是否为 Unicode 数字（通用类别 N*）。
+isNumberScalar|func(code: I32,) -> (Bool,):
+    return unicodeClassOf(code) == 2
+
+; 是否为 White_Space 属性字符；零宽空格与 BOM 不在其中。
+isWhitespaceScalar|func(code: I32,) -> (Bool,):
+    return unicodeClassOf(code) == 3
+
+; 标识符首字符：下划线或字母；数字不得起始。
+startsIdentifier|func(code: I32,) -> (Bool,):
+    if code == 95:
+        return true
+    return unicodeClassOf(code) == 1
+
+; 标识符后续字符：下划线、字母或数字；组合附加符号不进入标识符。
+continuesIdentifier|func(code: I32,) -> (Bool,):
+    if code == 95:
+        return true
+    let kind = unicodeClassOf(code)
+    if kind == 1:
+        return true
+    return kind == 2
+
+((Utf8Text))
+; 整段合法：出错位置为 -1。
+isValid|self() -> (Bool,):
+    return self.errorAt < 0
+scalarCount|self() -> (I32,):
+    return len(self.scalars)
+scalarAt|self(index: I32,) -> (Scalar,):
+    return self.scalars[index]
+; 出错序列的起始字节偏移；合法时答 -1。
+errorOffset|self() -> (I32,):
+    return self.errorAt
+; 错误类别的稳定名称；合法时答「无」。
+errorName|self() -> (String,):
+    match self.error:
+        case 无:
+            return "无"
+        case 截断:
+            return "截断"
+        case 首字节非法:
+            return "首字节非法"
+        case 续字节非法:
+            return "续字节非法"
+        case 过长编码:
+            return "过长编码"
+        case 代理区:
+            return "代理区"
+        case 超出上限:
+            return "超出上限"
+    return "未知"

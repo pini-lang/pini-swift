@@ -205,6 +205,61 @@ struct WorkspaceBuildTests {
             !FileManager.default.fileExists(
                 atPath: root.appendingPathComponent(".build/debug/bin/pini-bootstrap").path))
     }
+
+    @Test("隐式导入的公开类型可按字段与方法使用")
+    func usesImplicitlyImportedTypeMembers() throws {
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
+        let cli = try #require(PiniTestEnvironment.cliPath())
+        let root = try WorkspaceTestSupport.temporaryDirectory(tag: "implicit-types")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try WorkspaceTestSupport.write(
+            root, "pini.toml", "[workspace]\nmembers = [\"app\", \"base\"]\n")
+        try WorkspaceTestSupport.writePackage(root, name: "base")
+        try WorkspaceTestSupport.write(
+            root, "base/src/api/base.pini",
+            """
+            (点)
+            x: I32 = 0
+            y: I32 = 0
+
+            ((点))
+            合计|self() -> (I32,):
+                return self.x + self.y
+            """)
+        try WorkspaceTestSupport.write(
+            root, "app/pini.toml",
+            """
+            [package]
+            name = "app"
+
+            [require]
+            base = "*"
+
+            [[bin]]
+            name = "app"
+            entry = "src/api/app.pini"
+            """)
+        try WorkspaceTestSupport.write(
+            root, "app/src/api/app.pini",
+            """
+            [app|import]
+            _base = "../../../base"
+
+            main|func() -> ():
+                var p = 点()
+                p.x = 2
+                p.y = 3
+                print(p.合计())
+                return
+            """)
+
+        let build = try WorkspaceTestSupport.run(cli, ["build", root.path], cwd: root)
+        #expect(build.status == 0, "工作区构建失败：\(build.stderr)")
+        let binary = root.appendingPathComponent(".build/debug/bin/app")
+        let run = try WorkspaceTestSupport.run(binary.path, [], cwd: root)
+        #expect(run.status == 0, "执行失败：\(run.stderr)")
+        #expect(run.stdout == "5\n")
+    }
 }
 
 struct WorkspaceProcessResult {

@@ -124,10 +124,10 @@ struct BackendSeamTests: Sendable, PiniSourceLowering {
         }
     }
 
-    /// 搬不动的元素类型必须是**拒绝**，不是崩溃：结构体数组的解释器臂跑得通，
-    /// LLVM 臂没有名义类型的装箱 ABI —— 这条判据盯的是「用户拿到诊断还是拿到一个进程信号」。
-    @Test("元素类型没有装箱 ABI 时抛 BackendError")
-    func unboxableElementRefuses() throws {
+    /// 名义箱按指针装箱并登记聚合钩子：数组销毁与深拷要经 `__release_*` 归还箱。
+    /// 判据在文本面 —— 行为面由两通道语料「结构体数组」承担。
+    @Test("结构体数组按指针装箱并登记释放钩子")
+    func structArrayUsesAggregateHooks() throws {
         let module = try lowered(
             #"""
             (点)
@@ -135,8 +135,29 @@ struct BackendSeamTests: Sendable, PiniSourceLowering {
 
             main|func() -> ():
                 var p = 点()
-                var a = [p, p]
+                p.x = 7
+                var a = [p]
                 print(a[0].x)
+                return
+            """#)
+        let text = try IREmitter().emit(module: module)
+        #expect(text.contains("__bk_agg_"), "结构体数组没有登记聚合钩子")
+        #expect(text.contains("bk_nominal_retain"), "聚合钩子没有保留名义箱")
+        #expect(text.contains("__release_struct"), "聚合钩子没有走逐类型释放胶水")
+    }
+
+    /// 搬不动的元素类型必须是**拒绝**，不是崩溃：LazyRef 至今没有元素级装箱 ABI，
+    /// 这条判据盯的是「用户拿到诊断还是拿到一个进程信号」。
+    @Test("元素类型没有装箱 ABI 时抛 BackendError")
+    func unboxableElementRefuses() throws {
+        let module = try lowered(
+            #"""
+            main|func() -> ():
+                var r = LazyRef<I32>(func () -> (I32,):
+                    return 42
+                )
+                var a = [r]
+                print(len(a))
                 return
             """#)
         do {
@@ -145,7 +166,7 @@ struct BackendSeamTests: Sendable, PiniSourceLowering {
         } catch let refusal as BackendError {
             #expect(refusal.family == .collections)
             #expect(refusal.node == "arrayLiteral")
-            #expect(refusal.reason.contains("%struct"), "实际原因：\(refusal.reason)")
+            #expect(refusal.reason.contains("%bk_lazyref"), "实际原因：\(refusal.reason)")
         } catch {
             #expect(Bool(false), "抛的不是 BackendError：\(error)")
         }

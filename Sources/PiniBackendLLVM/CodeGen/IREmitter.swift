@@ -4218,6 +4218,31 @@ public final class IREmitter {
         let pair = (retain: "\(stem)_retain", release: "\(stem)_release")
         aggregateHooks[type.llvmSpelling] = pair
 
+        /// 名义箱与枚举箱：槽里存的是箱指针，保留加头格，归还交给逐类型合成的 `__release_*`。
+        ///  行不通  走下面那套逐成员钩子：`ownedAggregateMembers` 对名义类型是空表，会生成一对空函数，
+        /// 数组销毁只搬走指针、箱永远不还。
+        if let family = boxFamily(of: type), family == .nominal {
+            let releaseSymbol = ensureReleaseFunction(for: type)
+            for (symbol, isRetain) in [(pair.retain, true), (pair.release, false)] {
+                let savedBodyIR = bodyIR
+                let savedBuilder = builder
+                builder = IRBuilder()
+                bodyIR = ""
+                let loaded = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: "%slot") + "\n"
+                if isRetain {
+                    bodyIR += " call void @bk_nominal_retain(ptr \(loaded))\n"
+                } else {
+                    bodyIR += " call void @\(releaseSymbol)(ptr \(loaded))\n"
+                }
+                bodyIR += " ret void\n"
+                aggregateHookDefs.append("define void @\(symbol)(ptr %slot) {\nentry:\n" + bodyIR + "}\n\n")
+                bodyIR = savedBodyIR
+                builder = savedBuilder
+            }
+            return pair
+        }
+
         for (symbol, isRetain) in [(pair.retain, true), (pair.release, false)] {
             let savedBodyIR = bodyIR
             let savedBuilder = builder
@@ -4683,6 +4708,16 @@ public final class IREmitter {
                 return ("i32", "4", 0)
             }
             return (type.llvmSpelling, Self.byteSize(of: type), 8)
+        /// 名义箱按指针内联进槽（宽度即指针），保留 / 归还由聚合钩子转给 `__release_*` 胶水 ——
+        /// 箱头与字段归还是发射层的事，运行时只认登记的钩子。
+        case .nominal, .enumeration:
+            guard allowAggregate else {
+                refuse(
+                    node: "containerElement", family: .collections,
+                    reason: "元素类型 \(type.llvmSpelling) 还没有成员钩子（聚合目前只装进数组）")
+                return ("i32", "4", 0)
+            }
+            return (type.llvmSpelling, "8", 8)
         //  重要  `*T` 走裸指针 tag（6），不是串那一格：它不参与计数，销毁时也就没有 release。
         //  注意  与 `String` 共用 tag 3 会让数组销毁把指针当串释放，指针恰好指向在册串时就是悬垂。
         //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
@@ -4922,7 +4957,14 @@ public final class IREmitter {
     ///  注意  其它元素类型零动作 —— 它们的 tag 已在运行时分派表里，不需要布局知识；
     /// 成员全是标量的聚合也不登记，销毁时按空动作跳过。
     private func emitAggregateElementHooks(_ handle: String, elementType: IRType) {
-        guard case .aggregate = elementType.shareClass, elementType.holdsAShare else { return }
+        let needsHooks: Bool
+        switch elementType.shareClass {
+        case .aggregate: needsHooks = elementType.holdsAShare
+        case .valueBox: needsHooks = true
+        case .retained(.enumeration), .retained(.object): needsHooks = true
+        default: needsHooks = false
+        }
+        guard needsHooks else { return }
         let hooks = ensureAggregateHooks(for: elementType)
         bodyIR +=
             " call void @bk_array_set_element_hooks(ptr \(handle), ptr @\(hooks.retain),"

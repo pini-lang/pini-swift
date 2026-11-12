@@ -153,7 +153,7 @@ struct WorkspaceTestTests {
         #expect(
             result.stdout
                 == """
-                测试目标: 工作区 .（3 个测试 target）
+                测试目标: 工作区 .（4 个测试 target）
                 包 package / package-tests（1 个测试）
                  ✓ 工作区标记可识别
                 包 support / support-tests（7 个测试）
@@ -166,7 +166,22 @@ struct WorkspaceTestTests {
                  ✓ 位移使用归一宽度
                 包 driver / driver-tests（1 个测试）
                  ✓ 公开调用可用
-                结果: 9 通过, 0 失败
+                包 unicode / unicode-tests（14 个测试）
+                 ✓ 宽度与偏移
+                 ✓ 拒绝截断
+                 ✓ 拒绝游离续字节
+                 ✓ 拒绝续字节错位
+                 ✓ 拒绝过长编码
+                 ✓ 拒绝代理区
+                 ✓ 拒绝超出上限
+                 ✓ 错误前保留标量
+                 ✓ 编码往返
+                 ✓ 编码宽度边界
+                 ✓ 分类字母数字
+                 ✓ 分类空白
+                 ✓ 标识符判据
+                 ✓ 版本与特殊标量
+                结果: 23 通过, 0 失败
 
                 """)
     }

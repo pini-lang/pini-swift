@@ -270,6 +270,46 @@ struct TestBackendParityTests: Sendable {
             """#,
             forbidden: ["✗"]
         ),
+        Corpus(
+            label: "结构体数组",
+            source: #"""
+            (项目)
+            编号: I32 = 0
+            名称: String = ""
+
+            (箱)
+            清单: Array<项目> = []
+            标签: String = ""
+
+            装满|func(n: I32,) -> (箱,):
+                var out = 箱()
+                var i = 0
+                while i < n:
+                    var item = 项目()
+                    item.编号 = i
+                    item.名称 = "条目"
+                    out.清单 = out.清单.append(item)
+                    i = i + 1
+                out.标签 = "就绪"
+                return out
+
+            结构体数组|test() -> ():
+                let b = 装满(3)
+                assert(len(b.清单) == 3, "三个元素")
+                assert(b.清单[1].编号 == 1, "下标读字段")
+                assert(b.清单[2].名称 == "条目", "元素内字符串")
+                assert(b.标签 == "就绪", "字段字符串")
+                print("structs-ok", len(b.清单))
+                return
+            """#,
+            expectedStatus: 0,
+            expectedBody: #"""
+            structs-ok 3
+             ✓ 结构体数组
+            结果: 1 通过, 0 失败
+            """#,
+            forbidden: ["✗"]
+        ),
     ]
 
     // MARK: - 装置
