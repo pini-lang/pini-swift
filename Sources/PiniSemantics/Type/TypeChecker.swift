@@ -2769,10 +2769,11 @@ public final class TypeChecker {
                     }
                 }
             case .member(let object, let memberName, _):
-                // P5-5 B3：限定枚举构造 形状.圆(...) → 按 (父, case) 校验 arity/类型
-                // （支持跨枚举同名 case，不依赖全局唯一反查）。Optional.some/none 内建不在
-                // 用户枚举注册表，lookupEnumCase 返回 nil，自然落到下方成员方法校验分支。
-                if case .identifier(let parentName, _) = object,
+                if case .identifier(let typeName, _) = object,
+                    let sig = typeEnv.lookupOwnMethod(typeName: typeName, methodName: memberName)
+                {
+                    try validateCallArguments(arguments: arguments, signature: sig, location: location)
+                } else if case .identifier(let parentName, _) = object,
                     typeEnv.lookupEnumCase(enumName: parentName, caseName: memberName) != nil
                 {
                     try checkEnumCaseConstruction(parent: parentName, caseName: memberName, args: arguments, location: location)
@@ -2814,6 +2815,11 @@ public final class TypeChecker {
                     {
                         try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
                     }
+                } else if case .identifier(let typeName, _) = object,
+                    typeEnv.lookupFieldTypes(typeName: typeName) != nil
+                {
+                    // 类型名不是值，推断为空；已登记类型上的未知成员在这里点名，不落到降载期。
+                    try report(TypeError.unknownMember(typeName: typeName, memberName: memberName, location: location))
                 }
             case .dotCaseRef(let caseName, _):
                 // 点号用例构造（成员意图）：期望类型无关的 arity 校验与裸名同轨

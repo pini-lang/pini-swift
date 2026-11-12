@@ -22,4 +22,9 @@ public enum IRName {
         }
         return result
     }
+
+    /// 本型方法的 IR 名。与实例方法 `方法__类型` 分道，顶层函数表里一名一义。
+    public static func ownMethod(_ method: String, on type: String) -> String {
+        "own__\(mangle(method))__\(mangle(type))"
+    }
 }
