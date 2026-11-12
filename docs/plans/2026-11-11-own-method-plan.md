@@ -1,6 +1,6 @@
 # 本型方法：|own 的调用面与静态派发
 
-- 状态：三项裁定已定，细化已排，源码改动从**定契约**片起；进度以「细化」章的提交单元为准。
+- 状态：主链路已落，四类载体在两后端同值；余项与读数见「执行记录」。
 - 基线：`bfbdee07`（`main`，与 `origin/main` 一致）。
 - 上承：`docs/spec/pini-reference.md` 的 §4.6 与 §5.2；IR 节点语义以 `docs/spec/ir-contract.md` 为准，运行时符号以 `docs/spec/runtime-abi.md` 为准。
 - 旁证：分片与细化写法、「尚未定」写法沿用本仓既有实施计划的体例；两份原计划文档不在本仓，本件不指向具体计划文件。
@@ -51,9 +51,11 @@
 
 ## 裁决
 
-### 双表分派
+### 命名与落位
 
-`TypeEnvironment` 并行一张**本型方法表**（字段 `ownMethodSignatures`），`IRTypeDecl` 新增 `ownMethods` 字段与独立改名段，调用点不传 receiver。理由：既有 `methods` 的源码注释契约写明每个方法都带 self，`displayNames` 按 IR 名还原源码写法，两个后端按数组遍历并按名注册；混放会让参数表与展示名同时失准。不用 `typeMethods` 作新字段名：语义层的 `typeMethods` 装的是实例方法，同名会让两层语义相反。代价是 `IRTypeDecl` 的 2 个构造点、相等性、`examples/golden/` 的比对产物，以及两张分发表、`displayNames`、`IRValidator` 共五处遍历点要同步；`.call` 形态不变。
+`TypeEnvironment` 并行一张**本型方法表**（字段 `ownMethodSignatures`）；IR 名由 `Sources/PiniIR/IR/IRName.swift` 的 `ownMethod(_:on:)` 统一给出 `own__方法__类型`，与实例方法 `方法__类型` 分道。本型方法降载成**顶层 `IRFunction`**，不是 `IRTypeDecl` 的新数组：`IRModule.functions` 本就被两个后端、`IRValidator` 与 `displayNames` 遍历，挂上去即自动发射、验证、还原展示名，调用点不传 receiver、方法体不带 `self`。
+
+决策理由：枚举无名义类型归并路径（`Sources/PiniIR/IR/IRLowerer.swift`:340），若按原案给 `IRTypeDecl` 加字段，四类载体里的枚举得另建一条 IR 通道；顶层函数与内建类型扩展方法是同一条既有通道（`builtinExtensionMethods`），一处覆盖四类载体，后端零改动。代价是「落点」表中 `IRNode.swift`、`IRModule.swift`、`IRValidator.swift` 与两个后端的行不再需要改，计划据此收口。
 
 ### 语言面契约
 
@@ -173,3 +175,18 @@
 **提交粒度**与**声明位置**两项补充裁定见「细化」章。
 
 注意 三项互不等价：**调用面**定方向，**首版范围**定量级，**码位配额**定不可逆编号。三项都已裁定，但裁定解除的是本件的写作约束，不等于授权把未实现项按裁定改写进规范，也不等于把实现状态、排期与内部结构写进规范。
+
+## 执行记录
+
+分支 `dev-agent-pini-own-method`，自 `bfbdee07` 起。
+
+| 提交 | 内容 |
+|---|---|
+| `7cceb97` | 收工作区现状：两份 11-08 文档删除、spec 引用修订、计划文档 |
+| `750e6cc` | 契约归位：易腐实现内容撤出 spec，语言面契约写进本件 |
+| `70b0824` | 立表片：本型方法签名表、四处登记分流、给定块接收者门禁放行 |
+| `5662f25` | 主链路：命名与降载、调用点决议、四类载体示例与负例覆盖 |
+
+读数：`swift build` 增量通过；`swift test --disable-sandbox` 673 个测试 / 100 套件全绿（11 个已知问题，较基线多 3 个新测试）；`tools/examples-gate.py` 四条腿无回归；注释、格式、文档链接三条门禁通过。`docs/spec/pini-reference.md` 只在实现到位后按事实订正 §4.6 的 TODO 与规则表，未实现项与既有承诺段保留原文。
+
+注意 `own` 作表达式值（`selfTypeKeyword`）仍按 §5.2 的承诺悬空，推断返回空、降载主体无分支；本型方法多返回槽暂不支持，调用点明确报错。两项都单独立项，不塞进首版。
