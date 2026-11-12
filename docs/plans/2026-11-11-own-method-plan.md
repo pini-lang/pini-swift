@@ -55,6 +55,14 @@
 
 `TypeEnvironment` 并行一张**本型方法表**（字段 `ownMethodSignatures`），`IRTypeDecl` 新增 `ownMethods` 字段与独立改名段，调用点不传 receiver。理由：既有 `methods` 的源码注释契约写明每个方法都带 self，`displayNames` 按 IR 名还原源码写法，两个后端按数组遍历并按名注册；混放会让参数表与展示名同时失准。不用 `typeMethods` 作新字段名：语义层的 `typeMethods` 装的是实例方法，同名会让两层语义相反。代价是 `IRTypeDecl` 的 2 个构造点、相等性、`examples/golden/` 的比对产物，以及两张分发表、`displayNames`、`IRValidator` 共五处遍历点要同步；`.call` 形态不变。
 
+### 语言面契约
+
+本型方法是给类型的方法。调用写作 `类型.名字()`，接收者是类型名，编译期按类型名静态派发；方法体不带隐式 `self`，`self` 只属于本身方法，`own` 作类型标注仍按既有规则。`类型.名字` 与枚举用例构造撞形时，先按本型方法解析，未命中再按用例名反查父枚举，最后落到字段与本身方法；本型方法与本身方法同名时各按各的写法解析，互不遮蔽。
+
+声明位置是扩展块，与 `|self` 并列；首版载体为结构体、对象块、给定块、枚举块，非泛型。泛型特化、trait 默认实现、继承与组合展平、`own` 作表达式值、跨模块可见性不进首版。
+
+注意 本节的「首版」是计划口径，只写在本件；`docs/spec/pini-reference.md` 是权威规范，不收实现状态、排期与内部结构，实现到位后由**文档收口**片按事实订正。
+
 ### 调用消歧
 
 裁定优先级：接收者是已登记类型名时先查**本型方法表**，未命中再按用例名反查父枚举，最后落到字段与实例方法。这条会反转降载期「先查枚举表、再看变量」的既有次序，故判据写在**定契约**片，**收调用**片先钉住 `Optional.none`、`色彩.绿` 与 `形状.圆(...)` 的既有读数再改分支，逐条对比，不静默加例外。若实测出现期望类型也不足以收敛的同名冲突，**调用面**的裁定要重新过一遍。
@@ -63,7 +71,7 @@
 
 **首版范围**含结构体、对象块、给定块、枚举块，四类载体统一由扩展块 `registerExtensionMethods`（`Sources/PiniSemantics/Type/TypeChecker.swift`:1781）按 `x.targetType` 登记，一处覆盖四类。类型体内若写了带 `own` 的方法，:1541、:1573、:1607 三处同样按修饰符分流。枚举体 `e.methods` 的登记缺口与「方法须移扩展块」的既有承诺冲突，首版不补，也不在 `enumDecl` 分支另开路径。
 
-注意 三项已裁定，**定契约**片可以动笔；但 `docs/spec/pini-reference.md` 的 `TODO(本型方法)` 与 :1309 属未实现项与既有承诺，按权威规范改动原则保留原文、就地加标记，不按裁定改写。
+注意 三项已裁定，**定契约**片可以动笔；但 `docs/spec/pini-reference.md` 的 `TODO(本型方法)` 与 :1309 属未实现项与既有承诺，按权威规范改动原则保留原文，实现到位前零改动，不按裁定改写，也不把实现状态写进规范。
 
 ## 落点
 
@@ -78,7 +86,7 @@
 | `Sources/PiniBackendLLVM/CodeGen/IREmitter.swift`、`Sources/PiniHost/Interpreter/IRExecutor.swift` | 发射、展平并把新名字注册进 `moduleFunctions` 与 `methods` |
 | `Tests/PiniTests/OwnMethodTests.swift`（拟新建） | 声明、调用、四类载体、同名两类方法共存、负例各一组 |
 | `examples/own-method.pini`、`examples/golden/own-method.pini.out`、`examples/README.md`（拟新建或改） | 一条能过 check / run / run-llvm / golden 四条腿的可运行示例，头部三要素与映射表登记照 `examples/README.md` 约定 |
-| `docs/spec/pini-reference.md` | 实现到位后按事实订正 §4.6、§5.2 与 `TODO(本型方法)`；未实现项与 :1309 既有承诺保留原文，就地加 `TODO(本型方法)` 标记，不删段、不按裁定改写 |
+| `docs/spec/pini-reference.md` | **定契约**片不碰；实现到位后由**文档收口**片按事实订正 §4.6、§5.2 与 `TODO(本型方法)`，未实现项保留原文、就地加标记，不删段、不按裁定改写 |
 | `docs/spec/ir-contract.md` | `IRTypeDecl` 结构契约不在本件条目内；**改降载**片核 §5.8 结构不变量的适用性，需要立条目则按「先改本件再改代码」办 |
 | `Sources/PiniSemantics/Resources/Diagnostics.zh.toml`、`Sources/PiniSemantics/Resources/Diagnostics.en.toml` | 零占号，两份表都不改；负例复用 `E4-009`，见「诊断」章 |
 
@@ -86,7 +94,7 @@
 
 | 分片 | 内容 | 验收 |
 |---|---|---|
-| 定契约 | 补写调用语法、消歧优先级、`self` / `own` 可用范围；`TODO(本型方法)` 与 :1309 既有承诺保留原文并就地加标记 | 每条写法都能指回一处源码判据；既有承诺段不删不改 |
+| 定契约 | 在计划文档写定语言面契约；`docs/spec/pini-reference.md` 原文一律不动，实现到位后由**文档收口**片按事实订正 | 每条写法都能指回一处源码判据；权威规范 diff 为空 |
 | 立表 | 本型方法表与两处登记入口的 `modifiers` 分流；给定块类型名门禁放行 | 四类载体同名实例方法与本型方法各查各表，互不遮蔽；`swift test` 全绿且 `swift test list` 条目数不减 |
 | 收调用 | `.member` 识别类型名接收者，既有枚举表决议次序改写 | `Optional.none`、`色彩.绿` 与 `形状.圆(...)` 读数逐字不变 |
 | 改降载 | `lowerMethod` 分叉、独立改名段、调用点不传 receiver | 同名两类方法 IR 名不撞，参数表逐位可对 |
@@ -112,7 +120,7 @@
 
 | 分片 | 提交单元 | 具体动作 | 验收 |
 |---|---|---|---|
-| 定契约 | 契约落笔 | `docs/spec/pini-reference.md`：§4.6 的 `TODO(本型方法)` 保留原文，就地补 `类型.名字()`、消歧优先级、方法体不带 `self`、`own` 可用范围；:1309 既有承诺不删不改，就地加标记写「类型名仅在静态派发调用位例外」；§5.2 :1340 保留并标首版不接 `own` 作表达式值 | 每条写法指回一处源码判据；既有承诺段零删改；文档链接门禁过 |
+| 定契约 | 契约落笔 | 在计划文档「裁决」章写定语言面契约（调用写法、消歧优先级、`self` / `own` 可用范围、四类载体与边界）；`docs/spec/pini-reference.md` 一字不动 | 每条写法指回一处源码判据；权威规范 diff 为空；文档链接门禁过 |
 | 立表 | 签名分表 | `Sources/PiniSemantics/Type/TypeEnvironment.swift`:54 旁新增 `ownMethodSignatures` 与定义／查询；`typeMethods` 不动。`Sources/PiniSemantics/Type/TypeChecker.swift`:1781 与 :1541 / :1573 / :1607 按 `modifiers.contains("own")` 分流 | `swift test` 全绿且 `swift test list` 条目数不减；同名两类方法各查各表 |
 | 立表 | 门禁放行 | `Sources/PiniSemantics/Type/TypeChecker.swift`:2572-2577 的 `givenBlockTypeInValuePosition` 在 `.member` 接收者位按「成员已登记为本型方法」放行；:2665-2673 的 callee 豁免不动 | 给定块上 `类型.方法()` 能过 `check`；把给定块名当实参仍报 `E4-015` |
 | 收调用 | 接收者识别 | `Sources/PiniSemantics/Type/TypeInference.swift`:249-276 的 `.member`：:251 的 `Optional.none` 特判不动，前面加「接收者是已登记类型名 → 查本型方法表」 | 三条既有读数逐字不变 |
@@ -146,7 +154,7 @@
 |---|---|---|
 | 消歧优先级改变既有语义 | `类型.名字` 同时可能是枚举用例构造；降载期既有次序是「先查枚举表、再看变量」，改成先查本型方法表会让 `形状.圆(...)` 静默换义 | **收调用**片先钉三条既有读数，逐条对比后再改分支，不静默加例外 |
 | 给定块类型名被拦在语义层 | `checkExpression` 的 `givenBlockTypeInValuePosition`（`E4-015`）把 `配置.方法()` 当类型名进值位拒绝；`.call` 的显式构造豁免只覆盖 callee 位 | **立表**片按「成员已登记为本型方法」放行这一支，其它值位一律不放宽；负例覆盖把给定块名当实参 |
-| 语言面既有承诺撞形 | `docs/spec/pini-reference.md`:1309 写「类型名不进值位，裸写作接收者被拒」 | **定契约**片就地加 `TODO(本型方法)` 细分，原句不删不改；不按点号复用的实现反推规范 |
+| 语言面既有承诺撞形 | `docs/spec/pini-reference.md`:1309 写「类型名不进值位，裸写作接收者被拒」 | **定契约**片不碰原文；语言面契约收在计划文档，实现到位后由**文档收口**片按事实订正，不按裁定反推规范 |
 | 枚举体自带 `methods` 的登记缺口 | `Sources/PiniSyntax/AST/Declarations/EnumDecl.swift`:8 允许写方法、:1826 也会检查方法体，但 `enumDecl` 登记分支只有 `defineEnum` 加 trait 方法；补登记会与「方法须移扩展块」的既有承诺冲突 | 首版只认扩展块写法，缺口不补、不删；要接则单独立项并先改规范 |
 | `own` 作表达式值未接线 | 推断返回空、降载主体无分支；若首版不接，§5.2 的承诺继续悬空 | **定契约**片写进边界；要接则单独立项，不塞进本计划 |
 | `using` 形参位置 | `Sources/PiniSyntax/Parser/Parser.swift`:3480-3498 的 `UsingParamPosition` 定义里，:3483 只是 `.typeBodyMethod` 的文档注释；拒绝逻辑在 `rejectionReason`，本型方法没有 receiver 可插默认实例 | **立表**片复核位置规则，必要时在解析期明确拒绝并给文案 |
@@ -164,4 +172,4 @@
 
 **提交粒度**与**声明位置**两项补充裁定见「细化」章。
 
-注意 三项互不等价：**调用面**定方向，**首版范围**定量级，**码位配额**定不可逆编号。三项都已裁定，但裁定解除的是本件的写作约束，不等于授权把未实现项按裁定改写进规范。
+注意 三项互不等价：**调用面**定方向，**首版范围**定量级，**码位配额**定不可逆编号。三项都已裁定，但裁定解除的是本件的写作约束，不等于授权把未实现项按裁定改写进规范，也不等于把实现状态、排期与内部结构写进规范。
