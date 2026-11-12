@@ -78,7 +78,7 @@ python3 tools/scalar-set-check.py --self-test
 python3 tools/scalar-set-check.py
 
 step "Unicode 数据门禁"
-# 生成物与钉定的数据版本逐字一致：宿主 Unicode 版本漂移时这里先红，构建与运行不读宿主数据。
+# 生成物与登记的摘要逐字一致，头部声明的版本必须是钉定版本；判据不读宿主 Unicode 数据。
 python3 bootstrap/tools/gen-unicode-tables.py --check
 
 step "后端义务门禁（警告级）"

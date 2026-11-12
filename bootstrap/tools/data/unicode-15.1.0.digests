@@ -1,0 +1,4 @@
+7006633a58e417f11d30bdcbb7bfea0839cd500b68d4b720ccc84b67aebcc1f4  bootstrap/packages/unicode/src/_internal/confusable_tables.pini
+73fc9cabe7e82b0c10b10bf10d1a674f4e9c17779cd017d7754607e509e2ed9a  bootstrap/packages/unicode/src/_internal/nfc_tables.pini
+f130776e1e9b3ae592b1191876fe2afd4b14fe616af422e27d191ab28cd3cb77  bootstrap/packages/unicode/src/_internal/tables.pini
+8289f833e4cf78fde56b2080dc0e42934ef5182c9c3f4dd1fbdf2bced69fd5ed  bootstrap/tools/data/confusables-15.1.0.txt

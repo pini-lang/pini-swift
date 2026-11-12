@@ -2,14 +2,19 @@
 """生成 unicode 包的码点分类表、规范化表与混淆映射表。
 
 数据来源有两处：分类与规范化取自本机 Python 的 unicodedata，混淆映射取自随仓库提交的
-UTS #39 数据文件。两者的版本都钉在 Unicode 15.1.0，不匹配即拒绝生成，避免同一脚本在
-不同解释器或不同数据上产出不同的表。产物是 Pini 源码，构建与运行不读宿主 Unicode 数据。
+UTS #39 数据文件。重新生成要求宿主数据正好是钉定版本，否则同一脚本会在不同解释器上产出
+不同的表。产物是 Pini 源码，构建与运行不读宿主 Unicode 数据。
+
+校验只看登记摘要与生成物头部的版本，不读宿主数据：门禁的判据是「提交的产物与登记的摘要
+一致」，因此宿主 Python 的 Unicode 版本漂移不影响校验结果。
 
 用法：
-  python3 bootstrap/tools/gen-unicode-tables.py            # 写入生成物
-  python3 bootstrap/tools/gen-unicode-tables.py --check    # 只校验生成物是否最新
+  python3 bootstrap/tools/gen-unicode-tables.py            # 重新生成并重写摘要清单
+  python3 bootstrap/tools/gen-unicode-tables.py --check    # 按登记摘要校验生成物
+  python3 bootstrap/tools/gen-unicode-tables.py --seal     # 只为现有产物登记摘要
 """
 
+import hashlib
 import os
 import sys
 import unicodedata
@@ -25,6 +30,8 @@ OUT_NFC = os.path.join(INTERNAL, "nfc_tables.pini")
 OUT_CONFUSABLE = os.path.join(INTERNAL, "confusable_tables.pini")
 CONFUSABLE_DATA = os.path.join(
     ROOT, "bootstrap", "tools", "data", "confusables-15.1.0.txt")
+DIGEST_MANIFEST = os.path.join(
+    ROOT, "bootstrap", "tools", "data", "unicode-%s.digests" % UNICODE_VERSION)
 MAX_CODE = 0x10FFFF
 HANGUL_FIRST = 0xAC00
 HANGUL_LAST = 0xD7A3
@@ -290,32 +297,115 @@ def build_confusable(table):
     return "\n".join(lines)
 
 
-def write(path, text, check):
-    if check:
-        try:
-            with open(path, encoding="utf-8") as handle:
-                current = handle.read()
-        except FileNotFoundError:
-            print("生成器：缺少生成物 %s，先不带 --check 跑一次。" % path, file=sys.stderr)
-            return False
-        if current != text:
-            print("生成器：%s 与数据源不一致，重新生成并提交。" % path, file=sys.stderr)
-            return False
-        return True
+def relative(path):
+    """清单里记仓库相对路径：换机器、换工作区都不影响摘要。"""
+    return os.path.relpath(path, ROOT)
+
+
+def digest_of(path):
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
     return True
 
 
+def write_manifest(paths):
+    """重写摘要清单：生成物与数据源各一条，按路径排序。"""
+    lines = ["%s  %s" % (digest_of(path), relative(path)) for path in sorted(paths)]
+    os.makedirs(os.path.dirname(DIGEST_MANIFEST), exist_ok=True)
+    with open(DIGEST_MANIFEST, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    return DIGEST_MANIFEST
+
+
+def read_manifest():
+    """读出登记的摘要；缺文件或格式坏都答 None，由调用方报错。"""
+    try:
+        with open(DIGEST_MANIFEST, encoding="utf-8") as handle:
+            rows = [line.split() for line in handle if line.strip()]
+    except FileNotFoundError:
+        return None
+    if not rows or any(len(row) != 2 or len(row[0]) != 64 for row in rows):
+        return None
+    return rows
+
+
+def verify(paths):
+    """按登记摘要校验：产物与数据源逐字节一致，且生成物头部声明的版本是钉定版本。"""
+    rows = read_manifest()
+    if rows is None:
+        print("生成器：缺少或读不懂摘要清单 %s，先不带 --check 跑一次。"
+              % relative(DIGEST_MANIFEST), file=sys.stderr)
+        return 1
+    ok = True
+    recorded = {}
+    for hexdigest, rel in rows:
+        recorded[rel] = hexdigest
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            print("生成器：清单登记的 %s 不存在。" % rel, file=sys.stderr)
+            ok = False
+            continue
+        if digest_of(path) != hexdigest:
+            print("生成器：%s 与登记摘要不符，重新生成并提交。" % rel, file=sys.stderr)
+            ok = False
+    for path in paths:
+        rel = relative(path)
+        if rel not in recorded:
+            print("生成器：%s 未登记摘要，重新生成并提交。" % rel, file=sys.stderr)
+            ok = False
+    if not declared_version_ok(paths):
+        ok = False
+    if not ok:
+        return 1
+    print("生成器：%d 份文件与登记摘要一致（Unicode %s），校验不读宿主数据。"
+          % (len(rows), UNICODE_VERSION))
+    return 0
+
+
+def declared_version_ok(paths):
+    """生成物头部声明的版本必须是钉定版本：用错版本重建时摘要可能对得上，头部对不上。"""
+    ok = True
+    for path, label in [(OUT_CLASS, "Unicode"), (OUT_NFC, "Unicode"),
+                        (OUT_CONFUSABLE, "UTS39")]:
+        marker = "%s %s" % (label, UNICODE_VERSION)
+        with open(path, encoding="utf-8") as handle:
+            header = handle.readline() + handle.readline()
+        if marker not in header:
+            print("生成器：%s 头部未声明 %s。" % (relative(path), marker), file=sys.stderr)
+            ok = False
+    return ok
+
+
+def seal(paths):
+    """只为现有产物登记摘要：复制别的机器上的生成物后，不必重跑数据源。"""
+    if not declared_version_ok(paths):
+        return 1
+    manifest = write_manifest(paths)
+    print("生成器：已为 %d 份文件登记摘要（%s）。" % (len(paths), relative(manifest)))
+    return 0
+
+
 def main():
+    check = "--check" in sys.argv[1:]
+    if check:
+        return verify([OUT_CLASS, OUT_NFC, OUT_CONFUSABLE, CONFUSABLE_DATA])
+    if "--seal" in sys.argv[1:]:
+        return seal([OUT_CLASS, OUT_NFC, OUT_CONFUSABLE, CONFUSABLE_DATA])
     if unicodedata.unidata_version != UNICODE_VERSION:
         print(
             "生成器：本机 Unicode 数据是 %s，脚本钉定 %s。换用匹配版本的 Python 再生成。"
             % (unicodedata.unidata_version, UNICODE_VERSION),
             file=sys.stderr)
         return 2
-    check = "--check" in sys.argv[1:]
     ranges = segments()
     table = decompositions()
     ccc = combining_ranges()
@@ -329,18 +419,12 @@ def main():
         (OUT_CONFUSABLE, build_confusable(confusable),
          "%d 条混淆映射" % len(confusable)),
     ]
-    ok = True
-    for path, text, summary in outputs:
-        if not write(path, text, check):
-            ok = False
-    if not ok:
-        return 1
-    if check:
-        print("生成器：三份生成物与 Unicode %s 数据一致（%s）。"
-              % (UNICODE_VERSION, "；".join(item[2] for item in outputs)))
-        return 0
+    for path, text, _ in outputs:
+        write(path, text)
+    manifest = write_manifest([out[0] for out in outputs] + [CONFUSABLE_DATA])
     for path, _, summary in outputs:
         print("生成器：写入 %s（%s）。" % (path, summary))
+    print("生成器：摘要清单 %s 已重写。" % relative(manifest))
     return 0
 
 
