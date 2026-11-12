@@ -99,6 +99,10 @@ step "工作区测试门禁"
 # 初始工作区的 |test 由同一条测试链执行：空 target、筛选失配与失败断言都必须红。
 .build/debug/pini test bootstrap
 
+step "support 原生测试门禁"
+# 同一批字节缓冲测试再走原生通道：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/support
+
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
 PINI_BIN="$PWD/.build/debug/pini" python3 tools/fmt-gate.py

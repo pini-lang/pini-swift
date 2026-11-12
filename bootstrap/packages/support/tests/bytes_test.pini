@@ -1,0 +1,68 @@
+; 字节缓冲按 UTF-8 计数，并逐字节核对首段与扩展段。
+字节缓冲按UTF8计数|test() -> ():
+    let buf = makeByteBuffer("Aé中")
+    assert(buf.byteLength() == 6, "A=1 é=2 中=3")
+    let a: U8 = 65
+    let e1: U8 = 195
+    let e2: U8 = 169
+    let c1: U8 = 228
+    assert(buf.byteAt(0) == a, "A")
+    assert(buf.byteAt(1) == e1, "é 首字节")
+    assert(buf.byteAt(2) == e2, "é 次字节")
+    assert(buf.byteAt(3) == c1, "中 首字节")
+    return
+
+; 切片与缓冲共享存储：后续追加不改切片内容，原缓冲也不被写动。
+切片共享存储|test() -> ():
+    var buf = makeByteBuffer("Aé中")
+    let part = buf.slice(1, 3)
+    assert(part.byteLength() == 2, "é 两字节")
+    let e1: U8 = 195
+    assert(part.byteAt(0) == e1, "切片首字节")
+    let zero: U8 = 0
+    let grown = buf.append(zero)
+    assert(grown.byteLength() == 7, "新缓冲长一格")
+    assert(buf.byteLength() == 6, "原缓冲不变")
+    assert(part.byteLength() == 2, "切片不受追加影响")
+    return
+
+; 构建器写 UTF-8：三字节标量与 ASCII 都要落在预期字节上。
+构建器写UTF8|test() -> ():
+    var builder = ByteBuilder()
+    builder = builder.appendScalar(20013)
+    assert(builder.byteLength() == 3, "中 三字节")
+    let b1: U8 = 228
+    let b2: U8 = 184
+    let b3: U8 = 173
+    assert(builder.bytes[0] == b1, "首字节")
+    assert(builder.bytes[1] == b2, "次字节")
+    assert(builder.bytes[2] == b3, "末字节")
+    var ascii = ByteBuilder()
+    ascii = ascii.appendAscii("Az")
+    assert(ascii.byteLength() == 2, "ASCII 两字节")
+    return
+
+; 行表按 LF 建界：CRLF 的 CR 留在上一行，末尾换行另起空行。
+源文本行表|test() -> ():
+    let src = makeSourceText("ab\ncd
+ e")
+    assert(src.lineCount() == 3, "三行")
+    assert(src.lineStart(0) == 0, "首行从 0")
+    assert(src.lineStart(1) == 3, "第二行")
+    assert(src.lineStart(2) == 7, "第三行")
+    assert(src.lineOf(4) == 1, "偏移 4 在第二行")
+    assert(src.lineOf(7) == 2, "偏移 7 在第三行")
+    assert(src.lineOf(999) == 2, "越界夹到末行")
+    return
+
+; 符号驻留按首次出现定序：重复名不新增，id 与插入次序一致。
+符号表按首次出现驻留|test() -> ():
+    var table = StringTable()
+    table = table.withName("alpha")
+    table = table.withName("beta")
+    table = table.withName("alpha")
+    assert(table.count() == 2, "重复不新增")
+    assert(table.idOf("alpha") == 0, "alpha 序号")
+    assert(table.idOf("beta") == 1, "beta 序号")
+    assert(table.idOf("gamma") == -1, "缺席答 -1")
+    return

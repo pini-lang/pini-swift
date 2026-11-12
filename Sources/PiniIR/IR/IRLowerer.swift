@@ -3721,6 +3721,9 @@ public enum IRLowerer {
                 // G67（P0d）：`chars` 的**元素**与 `chr` 的**结果**都是 `Char`
                 // （窄化的三个构造点之二）；`ord` 仍是 `I32`、其余三个谓词仍是 `Bool`。
                 case "chars": resultType = .array(element: .char)
+                case "tempUtf8Bytes": resultType = .array(element: .u8)
+                case "tempByteToInt": resultType = .i32
+                case "tempIntToByte": resultType = .u8
                 case "chr": resultType = .char
                 case "ord": resultType = .i32
                 default: resultType = .boolean

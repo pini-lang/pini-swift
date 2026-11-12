@@ -233,6 +233,43 @@ struct TestBackendParityTests: Sendable {
             """#,
             forbidden: ["✓"]
         ),
+        Corpus(
+            label: "临时字节视图",
+            source: #"""
+            字节视图|test() -> ():
+                let ascii = tempUtf8Bytes("A")
+                let accented = tempUtf8Bytes("é")
+                let cjk = tempUtf8Bytes("中")
+                let joined = tempUtf8Bytes("👨‍👩‍👧‍👦")
+                assert(len(ascii) == 1, "A")
+                assert(len(accented) == 2, "é")
+                assert(len(cjk) == 3, "中")
+                assert(len(joined) == 25, "家庭 emoji 25 字节")
+                let a: U8 = 65
+                let e1: U8 = 195
+                let e2: U8 = 169
+                assert(ascii[0] == a, "A 字节")
+                assert(accented[0] == e1, "é 首字节")
+                assert(accented[1] == e2, "é 次字节")
+                assert(tempByteToInt(accented[0]) == 195, "U8 零扩展")
+                let wrapped: U8 = tempIntToByte(300)
+                let b44: U8 = 44
+                assert(wrapped == b44, "取低 8 位")
+                let shift: U8 = 4
+                let shr: U8 = accented[1] >> shift
+                let b10: U8 = 10
+                assert(shr == b10, "169 >> 4 == 10")
+                print("bytes-ok", len(joined))
+                return
+            """#,
+            expectedStatus: 0,
+            expectedBody: #"""
+            bytes-ok 25
+             ✓ 字节视图
+            结果: 1 通过, 0 失败
+            """#,
+            forbidden: ["✗"]
+        ),
     ]
 
     // MARK: - 装置

@@ -383,7 +383,9 @@ false
 
 **字素簇单位**：`s[i]`、`chars(s)`、`len(s)` 与逐字素遍历都以字素簇为计数单位。
 字母加组合重音的串，`len` 答 1 而不是 2；换掉这个单位属于破坏性变更。
-需要标量或字节粒度时走显式的字节视图，不要指望 `Char` 退化。
+需要标量或字节粒度时走显式的字节视图，不要指望 `Char` 退化。字节视图的入口是
+`tempUtf8Bytes(s) -> Array<U8>`：按 UTF-8 编码返回字节副本，下标从 0 起，越界与数组同规。
+字节与整数之间用 `tempByteToInt` / `tempIntToByte` 显式转换：前者零扩展取 0..255，后者取低 8 位。
 
 **值即自持**：`Char` 是值类型，可以存进变量、数组、结构字段，也可以跨函数返回。
 它的字节由自己持有：源串在取出之后立刻归还，`Char` 的内容不变，判等与转串照常。
@@ -3853,7 +3855,7 @@ IR 经 `call @bk_*` 调用运行时 shim。
 | 指针 | `bk_ptr_*` | 指针原语 —— LLVM FFI 的预留面，当前零调用点；语言层 `load` / `store` 不经此处 |
 | 展示 / 陷阱 | `bk_cstr` · `bk_double_to_string` · `bk_panic` | 值展示与运行时陷阱 |
 | 运行时 | `bk_runtime_cleanup` | 进程退出清扫活动句柄 |
-| 字符 | `bk_chars` · `bk_chr` · `bk_ord` · `bk_is_*` | 字符切分、码位与谓词 |
+| 字符 | `bk_chars` · `bk_chr` · `bk_ord` · `bk_is_*` · `bk_temp_utf8_bytes` · `bk_temp_byte_to_int` · `bk_temp_int_to_byte` | 字符切分、码位、谓词与临时字节桥 |
 | 字符串面 | `bk_str_*` · `bk_string_*` · `bk_substring` | 原生字符串的分配、计数与切片 |
 | 闭包 / 结构体胶水 | `bk_nominal_*` · `bk_slot_alloc` | 具名类型与槽位分配 |
 | IO / 宿主查询 | `bk_read_file` · `bk_write_file` · `bk_list_dir` · `bk_exists` · `bk_is_dir` · `bk_module_root` · `bk_set_program_base` · `bk_argv` | 文件读写、目录枚举、路径探测、程序基准与命令行参数 |

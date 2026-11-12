@@ -228,6 +228,18 @@ public enum Builtins {
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
+            symbol: "bk_temp_utf8_bytes", signature: .init(result: "ptr", parameters: ["ptr"]),
+            family: .character, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_temp_byte_to_int", signature: .init(result: "i32", parameters: ["i8"]),
+            family: .character, lowerings: ["call"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_temp_int_to_byte", signature: .init(result: "i8", parameters: ["i32"]),
+            family: .character, lowerings: ["call"]
+        ),
+        BuiltinSpec(
             symbol: "bk_chr", signature: .init(result: "i64", parameters: ["i32"]),
             family: .character, lowerings: ["call"]
         ),

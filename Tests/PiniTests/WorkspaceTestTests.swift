@@ -156,12 +156,17 @@ struct WorkspaceTestTests {
                 测试目标: 工作区 .（3 个测试 target）
                 包 package / package-tests（1 个测试）
                  ✓ 工作区标记可识别
-                包 support / support-tests（2 个测试）
+                包 support / support-tests（7 个测试）
+                 ✓ 字节缓冲按UTF8计数
+                 ✓ 切片共享存储
+                 ✓ 构建器写UTF8
+                 ✓ 源文本行表
+                 ✓ 符号表按首次出现驻留
                  ✓ 负宽度归零
                  ✓ 位移使用归一宽度
                 包 driver / driver-tests（1 个测试）
                  ✓ 公开调用可用
-                结果: 4 通过, 0 失败
+                结果: 9 通过, 0 失败
 
                 """)
     }

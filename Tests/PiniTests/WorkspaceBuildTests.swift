@@ -78,8 +78,10 @@ struct WorkspaceBuildTests {
 
         let production = try WorkspaceBuilder.load(package: support, target: library)
         let testTarget = try WorkspaceBuilder.load(package: support, target: tests)
+        let testNames = WorkspaceTestSupport.testNames(in: testTarget.package)
         #expect(WorkspaceTestSupport.testNames(in: production.package).isEmpty)
-        #expect(WorkspaceTestSupport.testNames(in: testTarget.package).count == 2)
+        #expect(testNames.contains("负宽度归零"))
+        #expect(testNames.contains("字节缓冲按UTF8计数"))
         #expect(production.publicInterface.contains("advance"))
         #expect(production.publicInterface.contains("nonNegativeWidth"))
         #expect(!production.publicInterface.contains("widthFloor"))

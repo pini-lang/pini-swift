@@ -124,16 +124,19 @@ struct BackendSeamTests: Sendable, PiniSourceLowering {
         }
     }
 
-    /// 搬不动的元素类型必须是**拒绝**，不是崩溃：`Array<I64>` 的解释器臂跑得通，
-    /// LLVM 臂没有 I64 的装箱 ABI —— 这条判据盯的是「用户拿到诊断还是拿到一个进程信号」。
+    /// 搬不动的元素类型必须是**拒绝**，不是崩溃：结构体数组的解释器臂跑得通，
+    /// LLVM 臂没有名义类型的装箱 ABI —— 这条判据盯的是「用户拿到诊断还是拿到一个进程信号」。
     @Test("元素类型没有装箱 ABI 时抛 BackendError")
     func unboxableElementRefuses() throws {
         let module = try lowered(
             #"""
+            (点)
+            x: I32 = 0
+
             main|func() -> ():
-                var x: I64 = 7
-                var a = [x, x]
-                print(a[0])
+                var p = 点()
+                var a = [p, p]
+                print(a[0].x)
                 return
             """#)
         do {
@@ -142,7 +145,7 @@ struct BackendSeamTests: Sendable, PiniSourceLowering {
         } catch let refusal as BackendError {
             #expect(refusal.family == .collections)
             #expect(refusal.node == "arrayLiteral")
-            #expect(refusal.reason.contains("i64"))
+            #expect(refusal.reason.contains("%struct"), "实际原因：\(refusal.reason)")
         } catch {
             #expect(Bool(false), "抛的不是 BackendError：\(error)")
         }
