@@ -677,6 +677,9 @@ public final class IREmitter {
         ///  行不通  谓词与 `ord` 一律 `i32` 返回（收敛到 i1 由调用点做，见 `.call` 那条注释）。
         if usesCharacterShims {
             tail += Builtins.declaration(for: "bk_chars")
+            tail += Builtins.declaration(for: "bk_temp_utf8_bytes")
+            tail += Builtins.declaration(for: "bk_temp_byte_to_int")
+            tail += Builtins.declaration(for: "bk_temp_int_to_byte")
             tail += Builtins.declaration(for: "bk_chr")
             tail += Builtins.declaration(for: "bk_ord")
             tail += Builtins.declaration(for: "bk_is_letter")
@@ -2521,13 +2524,28 @@ public final class IREmitter {
             ///  行不通  谓词不用 C 的 `_Bool`（零扩展的 i8）而回 `i32`：本层 Bool 是 i1，收敛在这里显式做掉。
             if BuiltinSurface.character.contains(function) {
                 usesCharacterShims = true
-                let symbol = "bk_\(function)"
+                // 临时入口的 C 符号保持下划线命名；其余字符内建由语言名直出 `bk_<名字>`。
+                let symbol: String
+                switch function {
+                case "tempUtf8Bytes": symbol = "bk_temp_utf8_bytes"
+                case "tempByteToInt": symbol = "bk_temp_byte_to_int"
+                case "tempIntToByte": symbol = "bk_temp_int_to_byte"
+                default: symbol = "bk_\(function)"
+                }
                 let result: IRValue
                 switch function {
-                case "chars":
+                case "chars", "tempUtf8Bytes":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
                     result = IRValue(llvmType: "%bk_array*", ssaName: temp)
+                case "tempByteToInt":
+                    let temp = builder.freshTemp()
+                    bodyIR += " \(temp) = call i32 @\(symbol)(\(argList))\n"
+                    result = IRValue(llvmType: "i32", ssaName: temp)
+                case "tempIntToByte":
+                    let temp = builder.freshTemp()
+                    bodyIR += " \(temp) = call i8 @\(symbol)(\(argList))\n"
+                    result = IRValue(llvmType: "i8", ssaName: temp)
                 case "chr":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call i64 @\(symbol)(\(argList))\n"
@@ -4200,6 +4218,31 @@ public final class IREmitter {
         let pair = (retain: "\(stem)_retain", release: "\(stem)_release")
         aggregateHooks[type.llvmSpelling] = pair
 
+        /// 名义箱与枚举箱：槽里存的是箱指针，保留加头格，归还交给逐类型合成的 `__release_*`。
+        ///  行不通  走下面那套逐成员钩子：`ownedAggregateMembers` 对名义类型是空表，会生成一对空函数，
+        /// 数组销毁只搬走指针、箱永远不还。
+        if let family = boxFamily(of: type), family == .nominal {
+            let releaseSymbol = ensureReleaseFunction(for: type)
+            for (symbol, isRetain) in [(pair.retain, true), (pair.release, false)] {
+                let savedBodyIR = bodyIR
+                let savedBuilder = builder
+                builder = IRBuilder()
+                bodyIR = ""
+                let loaded = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: "%slot") + "\n"
+                if isRetain {
+                    bodyIR += " call void @bk_nominal_retain(ptr \(loaded))\n"
+                } else {
+                    bodyIR += " call void @\(releaseSymbol)(ptr \(loaded))\n"
+                }
+                bodyIR += " ret void\n"
+                aggregateHookDefs.append("define void @\(symbol)(ptr %slot) {\nentry:\n" + bodyIR + "}\n\n")
+                bodyIR = savedBodyIR
+                builder = savedBuilder
+            }
+            return pair
+        }
+
         for (symbol, isRetain) in [(pair.retain, true), (pair.release, false)] {
             let savedBodyIR = bodyIR
             let savedBuilder = builder
@@ -4642,6 +4685,10 @@ public final class IREmitter {
     ) -> (spelling: String, width: String, tag: Int32) {
         switch type {
         case .i32: return ("i32", "4", 0)
+        /// 其余整数宽度按自身宽度装箱（tag 0 = 纯标量，无成员份额）：字节缓冲与定长整数表
+        /// 都靠这一格；缺了它，`Array<U8>` 只有解释器能跑，编译器源码上不了原生通道。
+        case .i8, .u8: return ("i8", "1", 0)
+        case .i64, .u64: return ("i64", "8", 0)
         case .f64: return ("double", "8", 1)
         case .boolean: return ("i1", "1", 2)
         case .string: return ("i8*", "8", 3)
@@ -4661,6 +4708,16 @@ public final class IREmitter {
                 return ("i32", "4", 0)
             }
             return (type.llvmSpelling, Self.byteSize(of: type), 8)
+        /// 名义箱按指针内联进槽（宽度即指针），保留 / 归还由聚合钩子转给 `__release_*` 胶水 ——
+        /// 箱头与字段归还是发射层的事，运行时只认登记的钩子。
+        case .nominal, .enumeration:
+            guard allowAggregate else {
+                refuse(
+                    node: "containerElement", family: .collections,
+                    reason: "元素类型 \(type.llvmSpelling) 还没有成员钩子（聚合目前只装进数组）")
+                return ("i32", "4", 0)
+            }
+            return (type.llvmSpelling, "8", 8)
         //  重要  `*T` 走裸指针 tag（6），不是串那一格：它不参与计数，销毁时也就没有 release。
         //  注意  与 `String` 共用 tag 3 会让数组销毁把指针当串释放，指针恰好指向在册串时就是悬垂。
         //  注意  装箱搬的是**指针值本身** —— 它指向什么，不归本层管（它是不透明句柄）。
@@ -4900,7 +4957,14 @@ public final class IREmitter {
     ///  注意  其它元素类型零动作 —— 它们的 tag 已在运行时分派表里，不需要布局知识；
     /// 成员全是标量的聚合也不登记，销毁时按空动作跳过。
     private func emitAggregateElementHooks(_ handle: String, elementType: IRType) {
-        guard case .aggregate = elementType.shareClass, elementType.holdsAShare else { return }
+        let needsHooks: Bool
+        switch elementType.shareClass {
+        case .aggregate: needsHooks = elementType.holdsAShare
+        case .valueBox: needsHooks = true
+        case .retained(.enumeration), .retained(.object): needsHooks = true
+        default: needsHooks = false
+        }
+        guard needsHooks else { return }
         let hooks = ensureAggregateHooks(for: elementType)
         bodyIR +=
             " call void @bk_array_set_element_hooks(ptr \(handle), ptr @\(hooks.retain),"
@@ -5163,7 +5227,7 @@ public final class IREmitter {
                 return comparison
             }
             let predicate = comparePredicate(
-                op: op, operandType: lhsValue.llvmType, temp: temp,
+                op: op, operandType: lhsValue.llvmType, operandIRType: lhsType, temp: temp,
                 lhs: lhsValue, rhs: rhsValue)
             bodyIR += " \(temp) = \(predicate)\n"
             return IRValue(llvmType: "i1", ssaName: temp)
@@ -5189,19 +5253,21 @@ public final class IREmitter {
             default: instruction = "add"
             }
         } else {
+            /// 符号性由左操作数的 IR 类型决定：`U8`/`U64` 的除、模与右移走无符号指令。
+            let unsignedOperand = isUnsignedInteger(irType(of: lhs))
             switch op {
             case .add: instruction = "add"
             case .subtract: instruction = "sub"
             case .multiply: instruction = "mul"
-            case .divide: instruction = "sdiv"
-            case .modulo: instruction = "srem"
+            case .divide: instruction = unsignedOperand ? "udiv" : "sdiv"
+            case .modulo: instruction = unsignedOperand ? "urem" : "srem"
             /// Bitwise family: LLVM integer instructions, 1:1 with the interpreter's int×int eval table. Shifts
-            /// are arithmetic (ashr), matching Swift's `>>` on signed ints; `shl`/`shr` keep the operand type.
+            /// are arithmetic for signed ints (`ashr`) and logical for unsigned (`lshr`).
             case .bitwiseAnd: instruction = "and"
             case .bitwiseOr: instruction = "or"
             case .bitwiseXor: instruction = "xor"
             case .leftShift: instruction = "shl"
-            case .rightShift: instruction = "ashr"
+            case .rightShift: instruction = unsignedOperand ? "lshr" : "ashr"
             default: instruction = "add"
             }
         }
@@ -5254,7 +5320,7 @@ public final class IREmitter {
     /// Comparison line body for the operand kind. Strings compare by length first and then `memcmp`
     /// against zero; floats use ordered fcmp; integers/bools use icmp.
     private func comparePredicate(
-        op: IRBinaryOp, operandType: String, temp: String,
+        op: IRBinaryOp, operandType: String, operandIRType: IRType? = nil, temp: String,
         lhs: IRValue, rhs: IRValue
     ) -> String {
         if operandType == "i8*" {
@@ -5317,16 +5383,25 @@ public final class IREmitter {
             }
             return "fcmp \(predicate) \(operandType) \(lhs.ssaName), \(rhs.ssaName)"
         }
+        let unsigned = operandIRType.map(isUnsignedInteger) ?? false
         switch op {
         case .equal: predicate = "eq"
         case .notEqual: predicate = "ne"
-        case .lessThan: predicate = "slt"
-        case .lessThanOrEqual: predicate = "sle"
-        case .greaterThan: predicate = "sgt"
-        case .greaterThanOrEqual: predicate = "sge"
+        case .lessThan: predicate = unsigned ? "ult" : "slt"
+        case .lessThanOrEqual: predicate = unsigned ? "ule" : "sle"
+        case .greaterThan: predicate = unsigned ? "ugt" : "sgt"
+        case .greaterThanOrEqual: predicate = unsigned ? "uge" : "sge"
         default: predicate = "eq"
         }
         return "icmp \(predicate) \(operandType) \(lhs.ssaName), \(rhs.ssaName)"
+    }
+
+    /// 无符号整数类型：LLVM 的 `i8` / `i64` 同形，符号性只能由运算指令带出来。
+    private func isUnsignedInteger(_ type: IRType) -> Bool {
+        switch type {
+        case .u8, .u64: return true
+        default: return false
+        }
     }
 
     /// Intrinsic print: value + newline. Aggregates print recursively with the interpreter's rendering
@@ -5351,19 +5426,20 @@ public final class IREmitter {
         expr.staticType ?? .i32
     }
 
-    /// Print one scalar value by its IR spelling (no newline).
-    private func emitScalarPrint(_ value: IRValue) {
+    /// Print one scalar value by its IR spelling (no newline). `type` decides the widening
+    /// direction for 8-bit integers: `U8` zero-extends, `I8` sign-extends.
+    private func emitScalarPrint(_ value: IRValue, type: IRType) {
         switch value.llvmType {
         case "i1":
             let sel = builder.freshTemp()
             bodyIR += " \(sel) = select i1 \(value.ssaName), ptr @fmt_bool_true, ptr @fmt_bool_false\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(sel))\n"
         case "i8":
-            // Narrow integers widen to i32 for %d — varargs demand it, and
-            // the interpreter models every integer as one signed value (the
-            // same sign-extending read emitPointerLoad uses for U8).
+            // Narrow integers widen to i32 for %d — varargs demand it.
             let extended = builder.freshTemp()
-            bodyIR += " \(extended) = sext i8 \(value.ssaName) to i32\n"
+            var widen = "sext"
+            if case .u8 = type { widen = "zext" }
+            bodyIR += " \(extended) = \(widen) i8 \(value.ssaName) to i32\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_int, i32 \(extended))\n"
         case "i64":
             /// 为 `%d` 收窄到 i32：`sext i64 -> i32` 是非法 cast，故走 `trunc` 截断。
@@ -5755,7 +5831,7 @@ public final class IREmitter {
             releaseHeldString(text)
 
         default:
-            emitScalarPrint(value)
+            emitScalarPrint(value, type: type)
         }
     }
 

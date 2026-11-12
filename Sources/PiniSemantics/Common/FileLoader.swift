@@ -61,7 +61,7 @@ public struct FileLoader {
         // 显式排序，使跨文件注册 / 检查顺序确定（避免 enumerator 顺序不确定导致的偶发行为）。
         units.sort { $0.fileName < $1.fileName }
         let name = manifest?.name ?? (path as NSString).lastPathComponent
-        let package = Package(name: name, fileUnits: units)
+        let package = Package(name: name, fileUnits: units, rootPath: path)
         return withStdlib ? package.assemblingStdlib() : package
     }
 
@@ -96,7 +96,7 @@ public struct FileLoader {
         // Phase 2b（解释器 dlsym 加载）：将 `[ffi].search_paths` 的非绝对项规一为「相对本模块目录」
         // 的绝对路径，使 FFI 搜索与调用 cwd 解耦（示例可在任意检出位置独立运行）。
         // 绝对路径（如系统库 /usr/lib）原样保留；无 `[ffi]` 表时此步为空操作。
-        guard var ffi = manifest.ffi, !ffi.searchPaths.isEmpty else { return manifest }
+        guard let ffi = manifest.ffi, !ffi.searchPaths.isEmpty else { return manifest }
         let resolved = ffi.searchPaths.map { (sp: String) -> String in
             (sp as NSString).isAbsolutePath
                 ? sp
@@ -105,7 +105,12 @@ public struct FileLoader {
         let normalized = FFIConfig(abi: ffi.abi, searchPaths: resolved, libs: ffi.libs)
         return ModuleManifest(
             name: manifest.name, version: manifest.version,
-            ffi: normalized, buildExclude: manifest.buildExclude)
+            taps: manifest.taps,
+            require: manifest.require, requireTaps: manifest.requireTaps,
+            resources: manifest.resources, resourcesTaps: manifest.resourcesTaps,
+            replaces: manifest.replaces,
+            ffi: normalized, buildExclude: manifest.buildExclude,
+            entryPoints: manifest.entryPoints, targets: manifest.targets)
     }
 
     /// 自 `path`（文件或目录）向上定位所属模块根：逐级找含合法 `pini.toml` 的目录，抵达文件系统根
@@ -209,9 +214,10 @@ public struct ModuleManifest: Equatable {
     /// `[build] exclude`：模块包加载排除路径（相对模块根，目录前缀匹配，`loadDirectory` 统一生效；
     /// `pini test` 显式路径可加回）。
     public let buildExclude: [String]
-    /// `[[bin]].entry` / `[lib].entry` 声明的入口文件（相对模块根）：声明后 `main` 必须定义在其中
-    /// 之一。空数组 = 未声明，沿用「全局找 `main`」——本字段只收窄，不替换默认入口。
+    /// 入口文件的兼容视图，完整 target 身份保存在 `targets`。
     public let entryPoints: [String]
+    /// `[lib]`、`[[bin]]` 与 `[[test]]` 声明的构建目标。
+    public let targets: [ModuleTarget]
 
     public init(
         name: String, version: String? = nil,
@@ -219,7 +225,8 @@ public struct ModuleManifest: Equatable {
         require: [String: String] = [:], requireTaps: [String: [String: String]] = [:],
         resources: [String: String] = [:], resourcesTaps: [String: [String: String]] = [:],
         replaces: [String: String] = [:],
-        ffi: FFIConfig? = nil, buildExclude: [String] = [], entryPoints: [String] = []
+        ffi: FFIConfig? = nil, buildExclude: [String] = [], entryPoints: [String] = [],
+        targets: [ModuleTarget] = []
     ) {
         self.name = name
         self.version = version
@@ -232,6 +239,7 @@ public struct ModuleManifest: Equatable {
         self.ffi = ffi
         self.buildExclude = buildExclude
         self.entryPoints = entryPoints
+        self.targets = targets
     }
 }
 
@@ -246,6 +254,8 @@ public enum LoaderError: Error, Equatable {
     case unsupportedDependenciesSection(path: String)
     /// 单文件解析产生的多个错误（聚合一次性抛出，避免只报首个而吞没其余）。
     case parseErrors(file: String, errors: [ParserError])
+    /// 工作区根清单存在，但成员或共享配置形状非法。
+    case invalidWorkspace(path: String, reason: String)
 }
 
 extension LoaderError: LocalizedError {
@@ -263,6 +273,8 @@ extension LoaderError: LocalizedError {
         case .parseErrors(let file, let errors):
             let details = errors.map { " - \(String(describing: $0))" }.joined(separator: "\n")
             return "解析错误（\(file)）：\n\(details)"
+        case .invalidWorkspace(let path, let reason):
+            return "非法的工作区清单（\(path)）：\(reason)"
         }
     }
 }
@@ -299,14 +311,22 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
     }
     let buildExclude = MiniTOML.parseArray(doc.plain("build")["exclude"] ?? "[]")
 
-    // Def-3：入口文件。`[[bin]]` 是数组表（可多个可执行目标），`[lib]` 是平表（至多一个）。
-    // 只取 `entry`，按出现顺序去重；`[[bin]]` 的 `name` 目前无消费者（入口函数名恒为 `main`），
-    // 不因解析而默认它有意义。
-    var entryPoints: [String] = []
-    for entry in doc.arrayTables["bin"] ?? [] {
-        if let e = entry["entry"], !e.isEmpty, !entryPoints.contains(e) { entryPoints.append(e) }
+    // 每个 target 保留名字、类别和入口；入口仍同步进旧视图，避免旧调用方被迫同批迁移。
+    var targets: [ModuleTarget] = []
+    for table in doc.arrayTables["bin"] ?? [] {
+        guard let entry = table["entry"], !entry.isEmpty else { throw LoaderError.invalidManifest(path: path) }
+        targets.append(ModuleTarget(name: table["name"] ?? n, kind: .executable, entry: entry))
     }
-    if let e = doc.plain("lib")["entry"], !e.isEmpty, !entryPoints.contains(e) { entryPoints.append(e) }
+    let library = doc.plain("lib")
+    if !library.isEmpty {
+        guard let entry = library["entry"], !entry.isEmpty else { throw LoaderError.invalidManifest(path: path) }
+        targets.append(ModuleTarget(name: library["name"] ?? n, kind: .library, entry: entry))
+    }
+    for table in doc.arrayTables["test"] ?? [] {
+        guard let entry = table["entry"], !entry.isEmpty else { throw LoaderError.invalidManifest(path: path) }
+        targets.append(ModuleTarget(name: table["name"] ?? "\(n)-tests", kind: .test, entry: entry))
+    }
+    let entryPoints = targets.map(\.entry)
 
     return ModuleManifest(
         name: n, version: pkg["version"],
@@ -314,7 +334,7 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
         require: doc.plain("require"), requireTaps: doc.subTables("require"),
         resources: doc.plain("resources"), resourcesTaps: doc.subTables("resources"),
         replaces: doc.plain("replace"),
-        ffi: ffi, buildExclude: buildExclude, entryPoints: entryPoints)
+        ffi: ffi, buildExclude: buildExclude, entryPoints: entryPoints, targets: targets)
 }
 
 /// 解析 TOML 内联数组字面量 `["a", "b"]` / `[ "a" ]` → 字符串数组；非数组原样返回单元素。

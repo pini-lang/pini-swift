@@ -1688,6 +1688,34 @@ public enum IRLowerer {
             return .function(params: paramTypes, returnType: resolvedReturn, usingIndices: usingIndices)
         }
         if let builtin = IRType(from: annotation) { return builtin }
+        /// 内建容器只在元素也是内建时才被 `IRType(from:)` 接住；`Array<用户类型>` 这类字段要逐层
+        /// 走用户类型表，否则字段查得到却解析不出类型，报出来像是「字段不存在」。
+        if case .generic(let container, let params, _) = annotation {
+            switch container {
+            case "Array" where params.count == 1:
+                guard let element = resolveAnnotationType(params[0], userTypes: userTypes) else {
+                    return nil
+                }
+                return .array(element: element)
+            case "Optional" where params.count == 1:
+                guard let wrapped = resolveAnnotationType(params[0], userTypes: userTypes) else {
+                    return nil
+                }
+                return .optional(wrapped: wrapped)
+            case "Set" where params.count == 1:
+                guard let element = resolveAnnotationType(params[0], userTypes: userTypes) else {
+                    return nil
+                }
+                return .set(element: element)
+            case "Dict" where params.count == 2:
+                guard let key = resolveAnnotationType(params[0], userTypes: userTypes),
+                    let value = resolveAnnotationType(params[1], userTypes: userTypes)
+                else { return nil }
+                return .dict(key: key, value: value)
+            default:
+                break
+            }
+        }
         if case .simple(let name, _) = annotation {
             return userTypes[name]
         }
@@ -3721,6 +3749,9 @@ public enum IRLowerer {
                 // G67（P0d）：`chars` 的**元素**与 `chr` 的**结果**都是 `Char`
                 // （窄化的三个构造点之二）；`ord` 仍是 `I32`、其余三个谓词仍是 `Bool`。
                 case "chars": resultType = .array(element: .char)
+                case "tempUtf8Bytes": resultType = .array(element: .u8)
+                case "tempByteToInt": resultType = .i32
+                case "tempIntToByte": resultType = .u8
                 case "chr": resultType = .char
                 case "ord": resultType = .i32
                 default: resultType = .boolean

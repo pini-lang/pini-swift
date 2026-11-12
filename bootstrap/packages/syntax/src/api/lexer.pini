@@ -1,0 +1,97 @@
+[lexer|import]
+_support = "../../../support"
+_unicode = "../../../unicode"
+
+; 词法问题类别：扫描不中断，恢复位置由各类别的消费规则决定。
+[LexIssueKind]
+issueTabIndent
+issueBom
+issueUnknownByte
+issueUnterminatedString
+issueBadEscape
+issueNumberFormat
+issueUnterminatedInterpolation
+
+; 词法问题：出错字节区间；同一条输入上的问题按出现顺序登记。
+(LexIssue)
+kind: LexIssueKind = .issueUnknownByte
+start: I32 = 0
+end: I32 = 0
+
+; 词法结果：记号序列含布局记号与末尾的结束记号；问题序列不参与记号流。
+(LexResult)
+tokens: Array<Token> = []
+issues: Array<LexIssue> = []
+
+; 问题类别名：用于诊断消息与测试断言。
+issueName|func(kind: LexIssueKind,) -> (String,):
+    match kind:
+        case issueTabIndent:
+            return "制表符缩进"
+        case issueBom:
+            return "起始BOM"
+        case issueUnknownByte:
+            return "未知字节"
+        case issueUnterminatedString:
+            return "字符串未闭合"
+        case issueBadEscape:
+            return "转义非法"
+        case issueNumberFormat:
+            return "数字格式"
+        case issueUnterminatedInterpolation:
+            return "插值未闭合"
+    return "未知字节"
+
+; 同一问题类别判定：枚举相等比较不可用，按名称比。
+isIssue|func(issue: LexIssue, kind: LexIssueKind,) -> (Bool,):
+    return issueName(issue.kind) == issueName(kind)
+
+; 扫描文本：默认按英文关键字；先把 CRLF 归一化为 LF，此后所有区间都指向归一化文本。
+lexText|func(text: String,) -> (LexResult,):
+    return lexTextIn(.langEnglish, text)
+
+; 按指定关键字语言扫描文本：词表只影响整词分类，标识符与字面量的扫描规则不变。
+lexTextIn|func(language: KeywordLanguage, text: String,) -> (LexResult,):
+    let normalized = text.replace("\r\n", "\n")
+    return lexSourceIn(language, makeSourceText(normalized))
+
+; 扫描源文本：调用方保证行尾已归一化；起始 BOM 记问题并跳过三字节，偏移仍指向原文本。
+lexSource|func(source: SourceText,) -> (LexResult,):
+    return lexSourceIn(.langEnglish, source)
+
+; 按指定关键字语言扫描源文本；BOM 的处理与默认入口同规。
+lexSourceIn|func(language: KeywordLanguage, source: SourceText,) -> (LexResult,):
+    var issues: Array<LexIssue> = []
+    var start = 0
+    if hasBom(source.bytes):
+        issues = issues.append(makeIssue(.issueBom, 0, 3))
+        start = 3
+    return scanAll(language, source.bytes, start, issues)
+
+; 造问题：区间是源内字节半开区间。
+makeIssue|func(kind: LexIssueKind, start: I32, end: I32,) -> (LexIssue,):
+    var out = LexIssue()
+    out.kind = kind
+    out.start = start
+    out.end = end
+    return out
+
+; 起始 BOM：EF BB BF 三字节。
+hasBom|func(bytes: Array<U8>,) -> (Bool,):
+    if len(bytes) < 3:
+        return false
+    if tempByteToInt(bytes[0]) != 239:
+        return false
+    if tempByteToInt(bytes[1]) != 187:
+        return false
+    return tempByteToInt(bytes[2]) == 191
+
+((LexResult))
+tokenCount|self() -> (I32,):
+    return len(self.tokens)
+tokenAt|self(index: I32,) -> (Token,):
+    return self.tokens[index]
+issueCount|self() -> (I32,):
+    return len(self.issues)
+issueAt|self(index: I32,) -> (LexIssue,):
+    return self.issues[index]

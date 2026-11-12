@@ -117,6 +117,19 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "chars", group: .char, paramNames: ["value"],
             params: [t("String")], returns: [.generic(name: "Array", params: [t("Char")], location: builtinLocation)]),
+        /// 临时字节视图：字节文本模型落地前的最小入口，返回 UTF-8 字节副本，不改字符串语义。
+        /// 名字带 `temp` 前缀即为过渡标识；正式字节缓冲接入后整条入口移除。
+        BuiltinDecl(
+            name: "tempUtf8Bytes", group: .char, paramNames: ["value"],
+            params: [t("String")], returns: [.generic(name: "Array", params: [t("U8")], location: builtinLocation)]),
+        /// 临时数值桥：`as` 尚未落地前，字节与整数之间唯一的显式转换入口。
+        /// 两者都按低位截断 / 零扩展，与字节缓冲的 0..255 不变量一致。
+        BuiltinDecl(
+            name: "tempByteToInt", group: .char, paramNames: ["value"],
+            params: [t("U8")], returns: [t("I32")]),
+        BuiltinDecl(
+            name: "tempIntToByte", group: .char, paramNames: ["value"],
+            params: [t("I32")], returns: [t("U8")]),
         /// 码点原语：解锁字符范围判定（hex 判定等）与 upper/lower 下沉；ord 取首 Unicode scalar，
         /// 对齐 grapheme 模型。`Char` 参数恒为 1 个字素，故 ord 的「空串」哨兵不可表达；
         /// `chr` 越界 / 代理区 panic（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。

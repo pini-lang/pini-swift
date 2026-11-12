@@ -1,6 +1,7 @@
 public class Lexer {
     private let source: String
-    private let chars: [Character]
+    /// 可写：转义符与其后组合附加符号同属一个字素簇时，只吃掉簇里的首个标量，余下写回原位。
+    private var chars: [Character]
     private let fileName: String
     private var position: Int
     private var line: Int
@@ -610,21 +611,30 @@ public class Lexer {
             }
             if char == "\\" {
                 _ = advance()
-                guard let esc = currentChar else {
+                guard let cluster = currentChar else {
                     throw LexerError.unterminatedString(loc)
                 }
+                // 转义只认簇的首个标量：`\t` 后紧跟组合附加符号时两者会粘成一个字素簇，
+                // 整簇比对认不出转义字母，反斜杠会被原样写进值里。
+                let scalars = cluster.unicodeScalars
+                let esc = Character(String(scalars.first!))
                 if esc == "(" {
                     let exprSource = try scanInterpolationExpression()
                     if !truncated {
                         flushLiteral()
                         segments.append(.expression(exprSource))
                     }
-                } else if esc == "0" {
-                    flushLiteral()
-                    truncated = true
-                    _ = advance()
                 } else {
-                    if !truncated {
+                    if scalars.count > 1 {
+                        chars.replaceSubrange(
+                            position...position, with: Array(String(scalars.dropFirst())))
+                    } else {
+                        _ = advance()
+                    }
+                    if esc == "0" {
+                        flushLiteral()
+                        truncated = true
+                    } else if !truncated {
                         switch esc {
                         case "n": literal.append("\n")
                         case "t": literal.append("\t")
@@ -637,7 +647,6 @@ public class Lexer {
                             literal.append(esc)
                         }
                     }
-                    _ = advance()
                 }
             } else {
                 if !truncated {

@@ -1,0 +1,2 @@
+工作区标记可识别|test() -> ():
+    assert(hasWorkspace("."), "工作区根必须能被识别")

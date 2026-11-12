@@ -1,0 +1,332 @@
+; 语法树：四类节点分池存放，子节点用池下标引用；池只追加，节点身份即下标。
+(Ast)
+types: Array<TypeNode> = []
+exprs: Array<ExprNode> = []
+stmts: Array<StmtNode> = []
+decls: Array<DeclNode> = []
+items: Array<I32> = []
+
+; 类型节点：`kids` 是元素或实参，函数类型另用 `ret` 指向返回类型。
+(TypeNode)
+kind: I32 = 0
+start: I32 = 0
+end: I32 = 0
+nameStart: I32 = -1
+nameEnd: I32 = -1
+kids: Array<I32> = []
+ret: I32 = -1
+
+; 表达式节点：`op` 是运算符记号码；调用与元组的 `kids` 按源序排列。
+(ExprNode)
+kind: I32 = 0
+start: I32 = 0
+end: I32 = 0
+nameStart: I32 = -1
+nameEnd: I32 = -1
+op: I32 = 0
+kids: Array<I32> = []
+
+; 语句节点：块与分支体都是语句池下标，`kids` 的排布由类别码决定。
+(StmtNode)
+kind: I32 = 0
+start: I32 = 0
+end: I32 = 0
+op: I32 = 0
+typeId: I32 = -1
+kids: Array<I32> = []
+
+; 声明节点：参数、字段、变体与导入项同池，`typeId` 与 `body` 按需填写。
+(DeclNode)
+kind: I32 = 0
+start: I32 = 0
+end: I32 = 0
+nameStart: I32 = -1
+nameEnd: I32 = -1
+typeId: I32 = -1
+body: I32 = -1
+mutable: Bool = false
+isTest: Bool = false
+isForeign: Bool = false
+isOwn: Bool = false
+isUsing: Bool = false
+isSelf: Bool = false
+kids: Array<I32> = []
+
+; 表达式类别：前缀避开记号类别名，包内枚举项名不得重名。
+[ExprKind]
+exprUnknown
+exprInteger
+exprFloat
+exprString
+exprInterpolated
+exprTrue
+exprFalse
+exprNil
+exprIdentifier
+exprCase
+exprMember
+exprSubscript
+exprSlice
+exprCall
+exprUnary
+exprBinary
+exprTuple
+exprArray
+exprDictionary
+exprSet
+exprFunction
+
+; 语句类别：`stmtIf` 的 `kids` 是条件、体、否则如果对与否则体，缺省体答 -1。
+[StmtKind]
+stmtUnknown
+stmtBlock
+stmtVariable
+stmtAssign
+stmtExpression
+stmtIf
+stmtWhile
+stmtFor
+stmtMatch
+stmtReturn
+stmtBreak
+stmtContinue
+stmtPass
+stmtDefer
+
+; 声明类别：函数、测试与方法同形，差别在 `isTest` 与 `isSelf`。
+[DeclKind]
+declUnknown
+declStruct
+declObject
+declEnum
+declExtension
+declFunction
+declVariable
+declImportBlock
+declImportEntry
+declField
+declParam
+declVariant
+
+; 类型类别：`typeGeneric` 的 `kids` 是实参，`typeFunction` 的 `kids` 是形参、`ret` 是返回。
+[TypeKind]
+typeUnknown
+typeNamed
+typeGeneric
+typeOptional
+typePointer
+typeTuple
+typeFunction
+
+; 表达式类别码：只用于比较与索引，不参与枚举相等。
+exprKindTag|func(kind: ExprKind,) -> (I32,):
+    match kind:
+        case exprUnknown:
+            return 0
+        case exprInteger:
+            return 1
+        case exprFloat:
+            return 2
+        case exprString:
+            return 3
+        case exprInterpolated:
+            return 4
+        case exprTrue:
+            return 5
+        case exprFalse:
+            return 6
+        case exprNil:
+            return 7
+        case exprIdentifier:
+            return 8
+        case exprCase:
+            return 9
+        case exprMember:
+            return 10
+        case exprSubscript:
+            return 11
+        case exprSlice:
+            return 12
+        case exprCall:
+            return 13
+        case exprUnary:
+            return 14
+        case exprBinary:
+            return 15
+        case exprTuple:
+            return 16
+        case exprArray:
+            return 17
+        case exprDictionary:
+            return 18
+        case exprSet:
+            return 19
+        case exprFunction:
+            return 20
+    return 0
+
+; 语句类别码。
+stmtKindTag|func(kind: StmtKind,) -> (I32,):
+    match kind:
+        case stmtUnknown:
+            return 0
+        case stmtBlock:
+            return 1
+        case stmtVariable:
+            return 2
+        case stmtAssign:
+            return 3
+        case stmtExpression:
+            return 4
+        case stmtIf:
+            return 5
+        case stmtWhile:
+            return 6
+        case stmtFor:
+            return 7
+        case stmtMatch:
+            return 8
+        case stmtReturn:
+            return 9
+        case stmtBreak:
+            return 10
+        case stmtContinue:
+            return 11
+        case stmtPass:
+            return 12
+        case stmtDefer:
+            return 13
+    return 0
+
+; 声明类别码。
+declKindTag|func(kind: DeclKind,) -> (I32,):
+    match kind:
+        case declUnknown:
+            return 0
+        case declStruct:
+            return 1
+        case declObject:
+            return 2
+        case declEnum:
+            return 3
+        case declExtension:
+            return 4
+        case declFunction:
+            return 5
+        case declVariable:
+            return 6
+        case declImportBlock:
+            return 7
+        case declImportEntry:
+            return 8
+        case declField:
+            return 9
+        case declParam:
+            return 10
+        case declVariant:
+            return 11
+    return 0
+
+; 类型类别码。
+typeKindTag|func(kind: TypeKind,) -> (I32,):
+    match kind:
+        case typeUnknown:
+            return 0
+        case typeNamed:
+            return 1
+        case typeGeneric:
+            return 2
+        case typeOptional:
+            return 3
+        case typePointer:
+            return 4
+        case typeTuple:
+            return 5
+        case typeFunction:
+            return 6
+    return 0
+
+((Ast))
+; 追加类型节点：返回新节点下标；池只增不减，既有下标保持有效。
+pushType|self(kind: TypeKind, start: I32, end: I32,) -> (I32,):
+    var node = TypeNode()
+    node.kind = typeKindTag(kind)
+    node.start = start
+    node.end = end
+    self.types = self.types.append(node)
+    return len(self.types) - 1
+; 追加表达式节点：跨度是源内字节区间，名字区间由调用方另填。
+pushExpr|self(kind: ExprKind, start: I32, end: I32,) -> (I32,):
+    var node = ExprNode()
+    node.kind = exprKindTag(kind)
+    node.start = start
+    node.end = end
+    self.exprs = self.exprs.append(node)
+    return len(self.exprs) - 1
+pushStmt|self(kind: StmtKind, start: I32, end: I32,) -> (I32,):
+    var node = StmtNode()
+    node.kind = stmtKindTag(kind)
+    node.start = start
+    node.end = end
+    self.stmts = self.stmts.append(node)
+    return len(self.stmts) - 1
+pushDecl|self(kind: DeclKind, start: I32, end: I32,) -> (I32,):
+    var node = DeclNode()
+    node.kind = declKindTag(kind)
+    node.start = start
+    node.end = end
+    self.decls = self.decls.append(node)
+    return len(self.decls) - 1
+; 顶层登记：模块按源序保存声明下标。
+addItem|self(id: I32,) -> ():
+    self.items = self.items.append(id)
+    return
+typeCount|self() -> (I32,):
+    return len(self.types)
+exprCount|self() -> (I32,):
+    return len(self.exprs)
+stmtCount|self() -> (I32,):
+    return len(self.stmts)
+declCount|self() -> (I32,):
+    return len(self.decls)
+itemCount|self() -> (I32,):
+    return len(self.items)
+typeAt|self(id: I32,) -> (TypeNode,):
+    return self.types[id]
+exprAt|self(id: I32,) -> (ExprNode,):
+    return self.exprs[id]
+stmtAt|self(id: I32,) -> (StmtNode,):
+    return self.stmts[id]
+declAt|self(id: I32,) -> (DeclNode,):
+    return self.decls[id]
+itemAt|self(index: I32,) -> (I32,):
+    return self.items[index]
+; 节点身份判定：类别码是唯一判据。
+isType|self(id: I32, kind: TypeKind,) -> (Bool,):
+    return self.types[id].kind == typeKindTag(kind)
+isExpr|self(id: I32, kind: ExprKind,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(kind)
+isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(kind)
+isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
+    return self.decls[id].kind == declKindTag(kind)
+; 子节点读取：越界答 -1，调用方按 -1 表示缺省。
+childOf|self(id: I32, index: I32,) -> (I32,):
+    if id < 0 || index < 0 || index >= len(self.exprs[id].kids):
+        return -1
+    return self.exprs[id].kids[index]
+; 语句子节点：与表达式子节点同规。
+stmtChild|self(id: I32, index: I32,) -> (I32,):
+    if id < 0 || index < 0 || index >= len(self.stmts[id].kids):
+        return -1
+    return self.stmts[id].kids[index]
+; 声明子节点：与表达式子节点同规。
+declChild|self(id: I32, index: I32,) -> (I32,):
+    if id < 0 || index < 0 || index >= len(self.decls[id].kids):
+        return -1
+    return self.decls[id].kids[index]
+; 类型子节点：与表达式子节点同规。
+typeChild|self(id: I32, index: I32,) -> (I32,):
+    if id < 0 || index < 0 || index >= len(self.types[id].kids):
+        return -1
+    return self.types[id].kids[index]

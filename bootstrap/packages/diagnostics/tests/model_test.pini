@@ -1,0 +1,80 @@
+[model_test|import]
+_support = "../../support"
+
+; 字段齐备、码已登记、单主标签的诊断没有问题。
+合规诊断无问题|test() -> ():
+    var d = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "未定义函数")
+    d = d.addLabel(makeLabel(0, 4, "此处使用", true))
+    assert(len(d.issues()) == 0, "不应报出问题")
+    return
+
+; 码表是封闭集合：未登记的码直接判问题，不静默通过。
+未知诊断码|test() -> ():
+    var d = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E9-999", "示例")
+    d = d.addLabel(makeLabel(0, 1, "", true))
+    let found = d.issues()
+    assert(len(found) == 1, "只应报未知码一项")
+    assert(found[0] == "未知诊断码 E9-999", found[0])
+    return
+
+; 空消息与空文件名都要报：渲染出来会是一行没有内容的诊断。
+空消息与空文件名|test() -> ():
+    var blank = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "")
+    blank = blank.addLabel(makeLabel(0, 1, "", true))
+    assert(len(blank.issues()) == 1, "空消息应报一项")
+    assert(blank.issues()[0] == "消息为空", blank.issues()[0])
+    var nameless = makeDiagnostic("", .categorySemantic, .severityError, "E3-002", "示例")
+    nameless = nameless.addLabel(makeLabel(0, 1, "", true))
+    assert(len(nameless.issues()) == 1, "空文件名应报一项")
+    assert(nameless.issues()[0] == "文件名为空", nameless.issues()[0])
+    return
+
+; 跨度倒挂与多主标签都违反模型不变量。
+跨度与主标签|test() -> ():
+    var reversed = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "示例")
+    reversed = reversed.addLabel(makeLabel(5, 3, "", true))
+    assert(len(reversed.issues()) == 1, "倒挂应报一项")
+    assert(reversed.issues()[0] == "标签跨度倒挂", reversed.issues()[0])
+    var dual = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "示例")
+    dual = dual.addLabel(makeLabel(0, 1, "", true))
+    dual = dual.addLabel(makeLabel(2, 3, "", true))
+    assert(len(dual.issues()) == 1, "双主标签应报一项")
+    assert(dual.issues()[0] == "主标签多于一个", dual.issues()[0])
+    return
+
+; 多标签必须指定一个主标签；只有一个标签时不强制。
+缺少主标签|test() -> ():
+    var many = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "示例")
+    many = many.addLabel(makeLabel(0, 1, "", false))
+    many = many.addLabel(makeLabel(2, 3, "", false))
+    assert(len(many.issues()) == 1, "缺主标签应报一项")
+    assert(many.issues()[0] == "多标签缺少主标签", many.issues()[0])
+    var single = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "示例")
+    single = single.addLabel(makeLabel(0, 1, "", false))
+    assert(len(single.issues()) == 0, "单标签不强制主标签")
+    return
+
+; 标签与备注按登记顺序保留，不归并、不重排。
+标签与备注保序|test() -> ():
+    var d = makeDiagnostic("a.pini", .categorySemantic, .severityError, "E3-002", "示例")
+    d = d.addLabel(makeLabel(0, 1, "甲", true))
+    d = d.addLabel(makeLabel(2, 3, "乙", false))
+    d = d.addNote("注一")
+    d = d.addNote("注二")
+    assert(len(d.labels) == 2, "两个标签")
+    assert(d.labels[0].message == "甲", "首个标签")
+    assert(d.labels[1].message == "乙", "次个标签")
+    assert(len(d.notes) == 2, "两条备注")
+    assert(d.notes[1] == "注二", "备注保序")
+    return
+
+; 严重度有固定次序；类别与严重度拼成与宿主同名的标签。
+严重度与标签名|test() -> ():
+    assert(severityRank(.severityError) < severityRank(.severityWarning), "错误在警告之前")
+    assert(severityRank(.severityWarning) < severityRank(.severityNote), "警告在备注之前")
+    assert(labelOf(.categorySemantic, .severityError) == "语义错误", labelOf(.categorySemantic, .severityError))
+    assert(labelOf(.categorySyntax, .severityWarning) == "语法警告", labelOf(.categorySyntax, .severityWarning))
+    assert(labelOf(.categoryIrGen, .severityError) == "IR 生成错误", labelOf(.categoryIrGen, .severityError))
+    assert(labelOf(.categoryGeneral, .severityError) == "错误", labelOf(.categoryGeneral, .severityError))
+    assert(labelOf(.categoryGeneral, .severityNote) == "备注", labelOf(.categoryGeneral, .severityNote))
+    return

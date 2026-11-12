@@ -1,0 +1,68 @@
+; 单步解码结果：`length` 为零表示失败，`error` 给出类别；成功时长度为 1..4。
+(Step)
+code: I32 = 0
+length: I32 = 0
+error: Utf8Error = .utf8None
+
+; 从 `start` 解一个标量，只读首字节与其后的续字节；调用方保证 `start` 在界内。
+stepScalar|func(bytes: Array<U8>, start: I32,) -> (Step,):
+    var out = Step()
+    let b0 = tempByteToInt(bytes[start])
+    if b0 < 128:
+        out.code = b0
+        out.length = 1
+        return out
+    if b0 < 192:
+        out.error = utf8BadLead
+        return out
+    if b0 < 194:
+        out.error = utf8Overlong
+        return out
+    var need = 0
+    var code = 0
+    var lower = 0
+    if b0 < 224:
+        need = 1
+        code = b0 & 31
+        lower = 128
+    elif b0 < 240:
+        need = 2
+        code = b0 & 15
+        lower = 2048
+    elif b0 < 245:
+        need = 3
+        code = b0 & 7
+        lower = 65536
+    elif b0 < 248:
+        out.error = utf8TooLarge
+        return out
+    else:
+        out.error = utf8BadLead
+        return out
+    var k = 1
+    while k <= need:
+        if start + k >= len(bytes):
+            out.error = utf8Truncated
+            return out
+        let next = tempByteToInt(bytes[start + k])
+        if next < 128:
+            out.error = utf8BadContinuation
+            return out
+        if next >= 192:
+            out.error = utf8BadContinuation
+            return out
+        code = code * 64 + (next & 63)
+        k = k + 1
+    if code < lower:
+        out.error = utf8Overlong
+        return out
+    if code >= 55296:
+        if code <= 57343:
+            out.error = utf8Surrogate
+            return out
+    if code > 1114111:
+        out.error = utf8TooLarge
+        return out
+    out.code = code
+    out.length = need + 1
+    return out

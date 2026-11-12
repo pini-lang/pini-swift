@@ -1,0 +1,24 @@
+; 符号表：按首次出现顺序驻留字符串，id 即下标；顺序由插入决定，产物可复现。
+(StringTable)
+names: Array<String> = []
+
+((StringTable))
+count|self() -> (I32,):
+    return len(self.names)
+; 已驻留时回答下标，缺席答 -1；比较走字符串内容。
+idOf|self(name: String,) -> (I32,):
+    var i = 0
+    while i < len(self.names):
+        if self.names[i] == name:
+            return i
+        i = i + 1
+    return -1
+nameAt|self(id: I32,) -> (String,):
+    return self.names[id]
+; 首次出现才追加，重复名返回原表；id 与追加次序一致。
+withName|self(name: String,) -> (StringTable,):
+    if self.idOf(name) >= 0:
+        return self
+    var out = StringTable()
+    out.names = self.names.append(name)
+    return out

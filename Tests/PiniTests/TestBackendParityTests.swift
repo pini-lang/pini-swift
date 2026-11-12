@@ -233,6 +233,83 @@ struct TestBackendParityTests: Sendable {
             """#,
             forbidden: ["✓"]
         ),
+        Corpus(
+            label: "临时字节视图",
+            source: #"""
+            字节视图|test() -> ():
+                let ascii = tempUtf8Bytes("A")
+                let accented = tempUtf8Bytes("é")
+                let cjk = tempUtf8Bytes("中")
+                let joined = tempUtf8Bytes("👨‍👩‍👧‍👦")
+                assert(len(ascii) == 1, "A")
+                assert(len(accented) == 2, "é")
+                assert(len(cjk) == 3, "中")
+                assert(len(joined) == 25, "家庭 emoji 25 字节")
+                let a: U8 = 65
+                let e1: U8 = 195
+                let e2: U8 = 169
+                assert(ascii[0] == a, "A 字节")
+                assert(accented[0] == e1, "é 首字节")
+                assert(accented[1] == e2, "é 次字节")
+                assert(tempByteToInt(accented[0]) == 195, "U8 零扩展")
+                let wrapped: U8 = tempIntToByte(300)
+                let b44: U8 = 44
+                assert(wrapped == b44, "取低 8 位")
+                let shift: U8 = 4
+                let shr: U8 = accented[1] >> shift
+                let b10: U8 = 10
+                assert(shr == b10, "169 >> 4 == 10")
+                print("bytes-ok", len(joined))
+                return
+            """#,
+            expectedStatus: 0,
+            expectedBody: #"""
+            bytes-ok 25
+             ✓ 字节视图
+            结果: 1 通过, 0 失败
+            """#,
+            forbidden: ["✗"]
+        ),
+        Corpus(
+            label: "结构体数组",
+            source: #"""
+            (项目)
+            编号: I32 = 0
+            名称: String = ""
+
+            (箱)
+            清单: Array<项目> = []
+            标签: String = ""
+
+            装满|func(n: I32,) -> (箱,):
+                var out = 箱()
+                var i = 0
+                while i < n:
+                    var item = 项目()
+                    item.编号 = i
+                    item.名称 = "条目"
+                    out.清单 = out.清单.append(item)
+                    i = i + 1
+                out.标签 = "就绪"
+                return out
+
+            结构体数组|test() -> ():
+                let b = 装满(3)
+                assert(len(b.清单) == 3, "三个元素")
+                assert(b.清单[1].编号 == 1, "下标读字段")
+                assert(b.清单[2].名称 == "条目", "元素内字符串")
+                assert(b.标签 == "就绪", "字段字符串")
+                print("structs-ok", len(b.清单))
+                return
+            """#,
+            expectedStatus: 0,
+            expectedBody: #"""
+            structs-ok 3
+             ✓ 结构体数组
+            结果: 1 通过, 0 失败
+            """#,
+            forbidden: ["✗"]
+        ),
     ]
 
     // MARK: - 装置

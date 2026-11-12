@@ -1,0 +1,117 @@
+; 关键字语言：词法入口按它选词表。英文是默认语言，中文只在调用处显式指定时生效。
+[KeywordLanguage]
+langEnglish
+langChinese
+
+; 语言码：只用于比较与分流，不依赖枚举相等。
+languageTag|func(language: KeywordLanguage,) -> (I32,):
+    match language:
+        case langEnglish:
+            return 0
+        case langChinese:
+            return 1
+    return 0
+
+; 语言名：诊断与测试用的可读名。
+languageName|func(language: KeywordLanguage,) -> (String,):
+    if languageTag(language) == 1:
+        return "中文"
+    return "英文"
+
+; 关键字词表：下标即关键字类别区的序号，两种语言同序，靠 `kindFromTag(8 + 下标)` 得类别。
+keywordWords|func(language: KeywordLanguage,) -> (Array<String>,):
+    if languageTag(language) == 1:
+        return [
+            "变量",
+            "常量",
+            "函数",
+            "枚举",
+            "对象",
+            "如果",
+            "否则如果",
+            "否则",
+            "匹配",
+            "分支",
+            "循环",
+            "步",
+            "遍历",
+            "在",
+            "尝试",
+            "返回",
+            "跳出",
+            "继续",
+            "自身",
+            "自有",
+            "延迟",
+            "导入",
+            "导出",
+            "空",
+            "捕获",
+            "等待",
+            "稍候",
+            "不安全",
+            "测试",
+            "外部",
+            "分离",
+            "通过",
+            "使用",
+            "展开",
+        ]
+    return [
+        "var",
+        "let",
+        "func",
+        "enum",
+        "object",
+        "if",
+        "elif",
+        "else",
+        "match",
+        "case",
+        "while",
+        "step",
+        "for",
+        "in",
+        "try",
+        "return",
+        "break",
+        "continue",
+        "self",
+        "own",
+        "defer",
+        "import",
+        "export",
+        "nil",
+        "capture",
+        "await",
+        "wait",
+        "unsafe",
+        "test",
+        "foreign",
+        "detach",
+        "pass",
+        "using",
+        "unroll",
+    ]
+
+; 关键字匹配：与词表逐条比整词，未命中答 `.identifier`；词表顺序即关键字类别区顺序。
+keywordKind|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
+    let words = keywordWords(language)
+    var index = 0
+    while index < len(words):
+        if matchesWord(bytes, start, end, words[index]):
+            return kindFromTag(8 + index)
+        index = index + 1
+    return identifier
+
+; 整词比对：先比字节宽度再逐字节比；词表里的词都是字面量，宽度即其 UTF-8 字节数。
+matchesWord|func(bytes: Array<U8>, start: I32, end: I32, word: String,) -> (Bool,):
+    let want = tempUtf8Bytes(word)
+    if len(want) != end - start:
+        return false
+    var i = 0
+    while i < len(want):
+        if bytes[start + i] != want[i]:
+            return false
+        i = i + 1
+    return true

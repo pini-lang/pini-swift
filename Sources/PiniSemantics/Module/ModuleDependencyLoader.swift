@@ -72,13 +72,24 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
             throw SemanticError.moduleRootMissing(path: canonical)
         }
 
-        // 双策略按来源划分：远程落地（`deps/<name>/`）只扫根级，只为拿到声明与 public 符号集——
-        // 为一个只用其接口的依赖递归整棵子树是白付的解析代价；本地目录则递归扫描，
-        // 与 `FileLoader.loadDirectory` 共用同一套嵌套剔除：自带 `pini.toml` 的子目录是独立模块，不进本模块。
-        let units: [FileUnit] =
-            try Self.isRemoteLanding(canonical)
-            ? Self.scanRootLevel(at: canonical)
-            : FileLoader.loadDirectory(path: canonical, withStdlib: false).fileUnits
+        // 本地与落地依赖共用包扫描：src 子目录、嵌套模块和 build.exclude 不再因来源而不同。
+        let dependencyManifest = try FileLoader.loadManifest(directory: canonical)
+        let scanned = try FileLoader.loadDirectory(
+            path: canonical, manifest: dependencyManifest, withStdlib: false
+        ).fileUnits
+        // 依赖的测试 target 不属于导入面：把它们并进调用方会让调用方的测试收集多出别人的用例。
+        let testRoots = (dependencyManifest?.targets ?? [])
+            .filter { $0.kind == .test }
+            .map { $0.entry.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+        func relativePath(_ fileName: String) -> String {
+            fileName.hasPrefix(canonical + "/")
+                ? String(fileName.dropFirst(canonical.count + 1))
+                : (fileName as NSString).lastPathComponent
+        }
+        let units = scanned.filter { unit in
+            let rel = relativePath(unit.fileName)
+            return !testRoots.contains { rel == $0 || rel.hasPrefix($0 + "/") }
+        }
         guard !units.isEmpty else {
             throw SemanticError.moduleRootMissing(path: canonical)
         }
@@ -92,10 +103,7 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
             // 可见性按**相对模块根**的路径判定（`VisibilityLevel.forSymbol` 看的是
             // 文件名与其父目录名）：递归扫描后路径可能带子目录，须剥掉模块根前缀，
             // 否则 `_pkg/foo.pini` 的 package 可见性会被误判为 public。
-            let rel =
-                unit.fileName.hasPrefix(canonical + "/")
-                ? String(unit.fileName.dropFirst(canonical.count + 1))
-                : (unit.fileName as NSString).lastPathComponent
+            let rel = relativePath(unit.fileName)
             moduleImports.append(contentsOf: module.imports)
             for decl in module.declarations {
                 declarations.append(decl)
@@ -120,29 +128,6 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
         }
         cacheModule(loaded, at: canonical)
         return loaded
-    }
-
-    // MARK: - 扫描策略（G52 §9 Def-11）
-
-    /// 是否位于远程依赖的落地根（`<模块根>/deps/<name>/`）。判据取「父目录名 == `deps`」，
-    /// 而非「路径里出现过 `deps` 分量」：后者会误伤自身目录树里恰好有 `deps/` 的本地模块，
-    /// 而落地位置是精确的一层。
-    private static func isRemoteLanding(_ canonical: String) -> Bool {
-        (canonical as NSString).deletingLastPathComponent
-            .components(separatedBy: "/").last == "deps"
-    }
-
-    /// 根级扫描（远程清单策略）：只读模块根一层，不递归。
-    private static func scanRootLevel(at canonical: String) throws -> [FileUnit] {
-        let fm = FileManager.default
-        let entries = (try? fm.contentsOfDirectory(atPath: canonical)) ?? []
-        return try entries.filter { $0.hasSuffix(LangConfig.sourceSuffix) }.sorted()
-            .map { name in
-                let path = canonical + "/" + name
-                return try FileLoader.parseUnit(
-                    fileName: path,
-                    source: String(contentsOfFile: path, encoding: .utf8))
-            }
     }
 
     /// 顶级声明的符号名（extension 无名——方法随宿主类型派发，不跨模块携带）。

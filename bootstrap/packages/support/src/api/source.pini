@@ -1,0 +1,37 @@
+; 源文本：UTF-8 字节加行首表；行号与字节偏移互查都从这里取，不按字素重扫。
+(SourceText)
+bytes: Array<U8> = []
+lineStarts: Array<I32> = []
+
+; 从文本建源：一次 UTF-8 复制，再扫一遍 LF 建行表。
+makeSourceText|func(text: String,) -> (SourceText,):
+    var out = SourceText()
+    out.bytes = tempUtf8Bytes(text)
+    out.lineStarts = lineStartsOf(out.bytes)
+    return out
+
+((SourceText))
+byteLength|self() -> (I32,):
+    return len(self.bytes)
+; 行数含末尾空行：以 LF 结尾的文本多一行空行。
+lineCount|self() -> (I32,):
+    return len(self.lineStarts)
+; 行首字节偏移；行号越界落到数组下标的运行时陷阱。
+lineStart|self(line: I32,) -> (I32,):
+    return self.lineStarts[line]
+; 偏移所在行：二分查找最后一个行首不大于偏移的行，负偏移按 0 处理。
+lineOf|self(offset: I32,) -> (I32,):
+    var target = offset
+    if target < 0:
+        target = 0
+    var lo = 0
+    var hi = len(self.lineStarts) - 1
+    while lo < hi:
+        let mid = (lo + hi + 1) / 2
+        if self.lineStarts[mid] <= target:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+byteAt|self(index: I32,) -> (U8,):
+    return self.bytes[index]

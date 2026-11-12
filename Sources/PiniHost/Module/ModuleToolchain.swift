@@ -1001,17 +1001,11 @@ extension ModuleToolchain {
         public var hasDrift: Bool { !missingInRequire.isEmpty || !extraInRequire.isEmpty }
     }
 
-    // require ↔ import 集合一致性（**只读**；不符由调用方报错并提示 `pini mod tidy`）。
-    // 仅对采用依赖通道的清单生效（[tap]/[require]/[replace] 任一存在）——
-    // 未采用通道的模块没有 drift 概念，静默跳过。
+    // require ↔ import 集合一致性（只读）。空 require 也检查，否则磁盘可见会被误当成依赖许可。
     public static func checkRequireImportAlignment(
         rootDir: String, manifest: ModuleManifest,
         package: Package
     ) throws -> Drift? {
-        let adopted =
-            !manifest.taps.isEmpty || !manifest.require.isEmpty
-            || !manifest.requireTaps.isEmpty || !manifest.replaces.isEmpty
-        guard adopted else { return nil }
         let imported = Set(try collectImports(package: package).map(\.depName))
         var required = Set(manifest.require.keys)
         for kv in manifest.requireTaps.values { required.formUnion(kv.keys) }

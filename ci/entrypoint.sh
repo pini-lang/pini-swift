@@ -58,6 +58,8 @@ step "诊断表一致性门禁"
 # 自检先证明两条判据会开火，再读真表。
 python3 tools/diagnostics-parity-check.py --self-test
 python3 tools/diagnostics-parity-check.py
+# 自举侧码表从同一份 zh 资源生成：两边码集漂移时这里先红，运行时不读 TOML。
+python3 bootstrap/tools/gen-diagnostics-table.py --check
 
 step "IR 契约门禁"
 python3 tools/ir-contract-check.py
@@ -75,6 +77,10 @@ step "标量集合门禁"
 python3 tools/scalar-set-check.py --self-test
 python3 tools/scalar-set-check.py
 
+step "Unicode 数据门禁"
+# 生成物与登记的摘要逐字一致，头部声明的版本必须是钉定版本；判据不读宿主 Unicode 数据。
+python3 bootstrap/tools/gen-unicode-tables.py --check
+
 step "后端义务门禁（警告级）"
 # 只报不拦：决策族归零之后，这个脚本用来盯「旧的判断有没有长回来」。
 # 读数稳定一段再转硬拦截，好过在门禁上先红一次。
@@ -86,6 +92,34 @@ python3 tools/capability-census.py --check
 
 step "构建"
 swift build --disable-sandbox
+
+step "工作区奠基门禁"
+.build/debug/pini build bootstrap
+workspace_output="$(cd bootstrap && ./.build/debug/bin/pini-bootstrap)"
+if [ "$workspace_output" != "workspace-ok 3 true" ]; then
+    echo "工作区产物输出不符：$workspace_output" >&2
+    exit 1
+fi
+
+step "工作区测试门禁"
+# 初始工作区的 |test 由同一条测试链执行：空 target、筛选失配与失败断言都必须红。
+.build/debug/pini test bootstrap
+
+step "support 原生测试门禁"
+# 同一批字节缓冲测试再走原生通道：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/support
+
+step "unicode 原生测试门禁"
+# 解码与分类在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/unicode
+
+step "diagnostics 原生测试门禁"
+# 行列映射与排序在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/diagnostics
+
+step "syntax 原生测试门禁"
+# 词法与解析在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/syntax
 
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。

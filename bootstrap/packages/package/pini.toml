@@ -1,0 +1,10 @@
+[package]
+name = "package"
+
+[lib]
+name = "package"
+entry = "src/api/workspace.pini"
+
+[[test]]
+name = "package-tests"
+entry = "tests"

@@ -362,6 +362,8 @@ public final class TypeChecker {
     /// import 别名集——`别名.符号` 限定调用在类型层暂作不透明处理
     /// （跨模块签名校验待类型系统深化；运行时由解释器限定派发保证）。
     private var importAliasNames: Set<String> = []
+    /// 已登记声明的隐式导入根：同一依赖被多文件导入时只注册一次，避免方法表重复。
+    private var loadedImportRoots: Set<String> = []
     /// **给定块**的类型名集合。用于把「给定块类型名出现在值位」报成一条
     /// 可行动的静态诊断（否则落到 IRGen 层报「未声明的变量」，读起来像拼错了变量名）。
     private var givenBlockTypeNames: Set<String> = []
@@ -698,6 +700,7 @@ public final class TypeChecker {
         BareCaseResolutionRegistry.reset()
         // 预注册所有 trait 声明，确保后续类型声明（无论出现先后）都能解析其 `traits` 引用
         preregisterTraits(module)
+        registerImplicitImports([module])
         for decl in module.declarations {
             registerTopLevelDeclSignature(decl)
         }
@@ -731,6 +734,7 @@ public final class TypeChecker {
         for unit in package.fileUnits {
             preregisterTraits(unit.module)
         }
+        registerImplicitImports(package.fileUnits.map(\.module))
         for unit in package.fileUnits {
             for decl in unit.module.declarations {
                 registerTopLevelDeclSignature(decl)
@@ -740,6 +744,7 @@ public final class TypeChecker {
         for unit in package.fileUnits {
             packageContext = (index: index, currentFileName: unit.fileName)
             defer { packageContext = nil }
+            importAliasNames = Set(unit.module.imports.map(\.alias))
             for decl in unit.module.declarations {
                 try enforceDeclTypeVisibility(decl)
                 try checkTopLevelDecl(decl)
@@ -888,6 +893,7 @@ public final class TypeChecker {
         collecting = true
         defer { collecting = false }
         preregisterTraits(module)
+        registerImplicitImports([module])
         for decl in module.declarations {
             registerTopLevelDeclSignature(decl)
         }
@@ -1481,6 +1487,35 @@ public final class TypeChecker {
         Set(params.enumerated().filter { $0.element.isUsing }.map { $0.offset })
     }
 
+    /// 隐式导入（`_别名`）把被引入模块的 public 声明带进裸名空间：语义层只注入名字，
+    /// 类型层若不登记结构、方法与签名，导入类型的字段访问与构造会静默退化成 Any。
+    private func registerImplicitImports(_ modules: [Module]) {
+        for module in modules {
+            for imp in module.imports where imp.alias.hasPrefix("_") {
+                let dir = (imp.location.fileName as NSString).deletingLastPathComponent
+                guard
+                    let loaded = try? ModuleDependencyLoader.shared.load(
+                        packagePath: imp.packagePath, relativeTo: dir)
+                else { continue }
+                guard loadedImportRoots.insert(loaded.rootPath).inserted else { continue }
+                var extensions: [TopLevelDecl] = []
+                for decl in loaded.declarations {
+                    if case .extensionDecl(let ext) = decl {
+                        if loaded.publicSymbols.contains(ext.targetType) {
+                            extensions.append(decl)
+                        }
+                        continue
+                    }
+                    guard let name = ModuleDependencyLoader.declName(decl),
+                        loaded.publicSymbols.contains(name), name != "main"
+                    else { continue }
+                    registerTopLevelDeclSignature(decl)
+                }
+                for decl in extensions { registerTopLevelDeclSignature(decl) }
+            }
+        }
+    }
+
     private func registerTopLevelDeclSignature(_ decl: TopLevelDecl) {
         let loc = SourceLocation(line: 0, column: 0, fileName: "")
         switch decl {
@@ -1979,7 +2014,10 @@ public final class TypeChecker {
         callee: String, arguments: [CallArgument],
         signature: TypeEnvironment.FunctionSignature, location: SourceLocation
     ) throws {
-        guard signature.params.contains(where: { if case .function = $0 { return true }; return false })
+        guard
+            signature.params.contains(where: {
+                if case .function = $0 { return true }; return false
+            })
         else { return }
         /// 个数与 `using` 的错配已由 `validateCallArguments` 报过；这里只按位置对齐，
         /// 再报一次同样是错配的二次噪声。
@@ -2021,7 +2059,8 @@ public final class TypeChecker {
                 && candidate.returns.count == callbackReturns.count
                 && zip(candidate.returns, callbackReturns).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
             guard signatureMatches else {
-                let declared = "(" + callbackParams.map { $0.describe() }.joined(separator: ", ") + ") -> "
+                let declared =
+                    "(" + callbackParams.map { $0.describe() }.joined(separator: ", ") + ") -> "
                     + "(" + callbackReturns.map { $0.describe() }.joined(separator: ", ") + ")"
                 try report(
                     TypeError.foreignCallbackNotFreeFunction(
@@ -3203,7 +3242,8 @@ public final class TypeChecker {
     ) throws {
         // 与 `validateCallArguments` 用**同一个**映射 —— 否则省略式调用下
         // 「越界的是哪个形参」会指错，隔离判定随之失真。
-        let effectiveIndices = sig.argumentToParamIndices(argumentCount: arguments.count)
+        let effectiveIndices =
+            sig.argumentToParamIndices(argumentCount: arguments.count)
             ?? Array(sig.params.indices)
         for (index, arg) in arguments.enumerated() {
             var candidate: TypeAnnotation? = nil

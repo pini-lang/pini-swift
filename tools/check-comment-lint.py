@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 EXTS = {".swift": "swift", ".pini": "pini", ".toml": "toml", ".py": "hash", ".sh": "hash"}
-DEFAULT_ROOTS = ["Sources", "Tests", "examples", "bench", "tools", "hooks"]
+DEFAULT_ROOTS = ["Sources", "Tests", "examples", "bench", "tools", "hooks", "bootstrap"]
 EXTENSIONLESS = {"pre-commit", "commit-msg", "pre-push"}
 
 MAX_LINES = 3

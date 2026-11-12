@@ -775,6 +775,39 @@ public enum RuntimeOps {
         return .array(s.map { .char(String($0)) })
     }
 
+    /// `tempUtf8Bytes` — UTF-8 字节副本，供字节缓冲读取源码文本；不改动字符串本身。
+    static func builtinTempUtf8Bytes(_ args: [Value]) throws -> Value {
+        guard case .string(let s) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "tempUtf8Bytes 的参数必须是字符串",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        return .array(s.utf8.map { .int(Int($0)) })
+    }
+
+    /// `tempByteToInt` — U8 的数值（0..255）转 I32；不做符号扩展。
+    static func builtinTempByteToInt(_ args: [Value]) throws -> Value {
+        guard case .int(let value) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "tempByteToInt 的参数必须是 U8",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        return .int(value & 0xFF)
+    }
+
+    /// `tempIntToByte` — 取低 8 位；负值同样按补码截断。
+    static func builtinTempIntToByte(_ args: [Value]) throws -> Value {
+        guard case .int(let value) = args[0] else {
+            throw RuntimeError.invalidOperation(
+                reason: "tempIntToByte 的参数必须是 I32",
+                location: SourceLocation(line: 0, column: 0, fileName: "")
+            )
+        }
+        return .int(value & 0xFF)
+    }
+
     /// `chr` — code point to a `Char`.
     /// Out of range — negative, past the scalar maximum, or a surrogate — panics as an out-of-range `s[i]` does.
     /// A `Char` always holds exactly one grapheme, so there is no sentinel value meaning "nothing".
@@ -891,6 +924,9 @@ public enum RuntimeOps {
     /// A name therefore cannot be half-supported, with a lowering rule on one side and no answer on the other.
     nonisolated(unsafe) static let characterBuiltins: [String: ([Value]) throws -> Value] = [
         "chars": builtinChars,
+        "tempUtf8Bytes": builtinTempUtf8Bytes,
+        "tempByteToInt": builtinTempByteToInt,
+        "tempIntToByte": builtinTempIntToByte,
         "chr": builtinChr,
         "ord": builtinOrd,
         "is_letter": builtinIsLetter,

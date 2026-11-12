@@ -1,0 +1,721 @@
+; 记号：类别、源内字节区间与名字区间；`end - start` 即扫描消费的字节数。
+(Token)
+kind: TokenKind = .unknown
+start: I32 = 0
+end: I32 = 0
+nameStart: I32 = 0
+nameEnd: I32 = 0
+segments: Array<Segment> = []
+
+; 字符串段：字面段的范围含转义原文，插值段的范围是括号内的表达式，都不含两侧定界。
+(Segment)
+kind: SegmentKind = .segmentLiteral
+start: I32 = 0
+end: I32 = 0
+
+[SegmentKind]
+segmentLiteral
+segmentInterpolation
+
+; 记号类别：字面量、关键字、运算符、定界符、布局五段，码按此顺序分配。
+[TokenKind]
+unknown
+identifier
+integer
+float
+string
+interpolatedString
+trueLiteral
+falseLiteral
+; 关键字，识别时按长度分流再逐字节比对。
+kwVar
+kwLet
+kwFunc
+kwEnum
+kwObject
+kwIf
+kwElif
+kwElse
+kwMatch
+kwCase
+kwWhile
+kwStep
+kwFor
+kwIn
+kwTry
+kwReturn
+kwBreak
+kwContinue
+kwSelf
+kwOwn
+kwDefer
+kwImport
+kwExport
+kwNil
+kwCapture
+kwAwait
+kwWait
+kwUnsafe
+kwTest
+kwForeign
+kwDetach
+kwPass
+kwUsing
+kwUnroll
+; 运算符；`opMul` 与 `opBitOr` 同时承担指针前缀与声明分隔，按位置区分角色。
+opAdd
+opSub
+opMul
+opDiv
+opMod
+opInc
+opDec
+opAnd
+opOr
+opNot
+opEq
+opNe
+opLe
+opGe
+opLt
+opGt
+opBitAnd
+opBitOr
+opBitXor
+opBitNot
+opShl
+opShr
+opAssign
+opAssignAdd
+opAssignSub
+opAssignMul
+opAssignDiv
+opAssignMod
+opAssignBitAnd
+opAssignBitOr
+opAssignBitXor
+opAssignShl
+opAssignShr
+; 定界符。
+leftParen
+rightParen
+leftBracket
+rightBracket
+leftBrace
+rightBrace
+colon
+comma
+arrow
+fatArrow
+dot
+question
+atSign
+; 布局记号，由缩进栈与行尾扫描合成，跨度可为零。
+newline
+indent
+dedent
+eof
+
+; 类别码：区间边界即类别边界，字面量 0..7、关键字 8..41、运算符 42..74、定界符 75..87、布局 88..91。
+kindTag|func(kind: TokenKind,) -> (I32,):
+    match kind:
+        case unknown:
+            return 0
+        case identifier:
+            return 1
+        case integer:
+            return 2
+        case float:
+            return 3
+        case string:
+            return 4
+        case interpolatedString:
+            return 5
+        case trueLiteral:
+            return 6
+        case falseLiteral:
+            return 7
+        case kwVar:
+            return 8
+        case kwLet:
+            return 9
+        case kwFunc:
+            return 10
+        case kwEnum:
+            return 11
+        case kwObject:
+            return 12
+        case kwIf:
+            return 13
+        case kwElif:
+            return 14
+        case kwElse:
+            return 15
+        case kwMatch:
+            return 16
+        case kwCase:
+            return 17
+        case kwWhile:
+            return 18
+        case kwStep:
+            return 19
+        case kwFor:
+            return 20
+        case kwIn:
+            return 21
+        case kwTry:
+            return 22
+        case kwReturn:
+            return 23
+        case kwBreak:
+            return 24
+        case kwContinue:
+            return 25
+        case kwSelf:
+            return 26
+        case kwOwn:
+            return 27
+        case kwDefer:
+            return 28
+        case kwImport:
+            return 29
+        case kwExport:
+            return 30
+        case kwNil:
+            return 31
+        case kwCapture:
+            return 32
+        case kwAwait:
+            return 33
+        case kwWait:
+            return 34
+        case kwUnsafe:
+            return 35
+        case kwTest:
+            return 36
+        case kwForeign:
+            return 37
+        case kwDetach:
+            return 38
+        case kwPass:
+            return 39
+        case kwUsing:
+            return 40
+        case kwUnroll:
+            return 41
+        case opAdd:
+            return 42
+        case opSub:
+            return 43
+        case opMul:
+            return 44
+        case opDiv:
+            return 45
+        case opMod:
+            return 46
+        case opInc:
+            return 47
+        case opDec:
+            return 48
+        case opAnd:
+            return 49
+        case opOr:
+            return 50
+        case opNot:
+            return 51
+        case opEq:
+            return 52
+        case opNe:
+            return 53
+        case opLe:
+            return 54
+        case opGe:
+            return 55
+        case opLt:
+            return 56
+        case opGt:
+            return 57
+        case opBitAnd:
+            return 58
+        case opBitOr:
+            return 59
+        case opBitXor:
+            return 60
+        case opBitNot:
+            return 61
+        case opShl:
+            return 62
+        case opShr:
+            return 63
+        case opAssign:
+            return 64
+        case opAssignAdd:
+            return 65
+        case opAssignSub:
+            return 66
+        case opAssignMul:
+            return 67
+        case opAssignDiv:
+            return 68
+        case opAssignMod:
+            return 69
+        case opAssignBitAnd:
+            return 70
+        case opAssignBitOr:
+            return 71
+        case opAssignBitXor:
+            return 72
+        case opAssignShl:
+            return 73
+        case opAssignShr:
+            return 74
+        case leftParen:
+            return 75
+        case rightParen:
+            return 76
+        case leftBracket:
+            return 77
+        case rightBracket:
+            return 78
+        case leftBrace:
+            return 79
+        case rightBrace:
+            return 80
+        case colon:
+            return 81
+        case comma:
+            return 82
+        case arrow:
+            return 83
+        case fatArrow:
+            return 84
+        case dot:
+            return 85
+        case question:
+            return 86
+        case atSign:
+            return 87
+        case newline:
+            return 88
+        case indent:
+            return 89
+        case dedent:
+            return 90
+        case eof:
+            return 91
+    return 0
+
+; 类别名：诊断与测试用的可读拼写，取该类别的默认语言写法。
+kindName|func(kind: TokenKind,) -> (String,):
+    match kind:
+        case unknown:
+            return "unknown"
+        case identifier:
+            return "identifier"
+        case integer:
+            return "integer"
+        case float:
+            return "float"
+        case string:
+            return "string"
+        case interpolatedString:
+            return "interpolated string"
+        case trueLiteral:
+            return "true"
+        case falseLiteral:
+            return "false"
+        case kwVar:
+            return "var"
+        case kwLet:
+            return "let"
+        case kwFunc:
+            return "func"
+        case kwEnum:
+            return "enum"
+        case kwObject:
+            return "object"
+        case kwIf:
+            return "if"
+        case kwElif:
+            return "elif"
+        case kwElse:
+            return "else"
+        case kwMatch:
+            return "match"
+        case kwCase:
+            return "case"
+        case kwWhile:
+            return "while"
+        case kwStep:
+            return "step"
+        case kwFor:
+            return "for"
+        case kwIn:
+            return "in"
+        case kwTry:
+            return "try"
+        case kwReturn:
+            return "return"
+        case kwBreak:
+            return "break"
+        case kwContinue:
+            return "continue"
+        case kwSelf:
+            return "self"
+        case kwOwn:
+            return "own"
+        case kwDefer:
+            return "defer"
+        case kwImport:
+            return "import"
+        case kwExport:
+            return "export"
+        case kwNil:
+            return "nil"
+        case kwCapture:
+            return "capture"
+        case kwAwait:
+            return "await"
+        case kwWait:
+            return "wait"
+        case kwUnsafe:
+            return "unsafe"
+        case kwTest:
+            return "test"
+        case kwForeign:
+            return "foreign"
+        case kwDetach:
+            return "detach"
+        case kwPass:
+            return "pass"
+        case kwUsing:
+            return "using"
+        case kwUnroll:
+            return "unroll"
+        case opAdd:
+            return "+"
+        case opSub:
+            return "-"
+        case opMul:
+            return "*"
+        case opDiv:
+            return "/"
+        case opMod:
+            return "%"
+        case opInc:
+            return "++"
+        case opDec:
+            return "--"
+        case opAnd:
+            return "&&"
+        case opOr:
+            return "||"
+        case opNot:
+            return "!"
+        case opEq:
+            return "=="
+        case opNe:
+            return "!="
+        case opLe:
+            return "<="
+        case opGe:
+            return ">="
+        case opLt:
+            return "<"
+        case opGt:
+            return ">"
+        case opBitAnd:
+            return "&"
+        case opBitOr:
+            return "|"
+        case opBitXor:
+            return "^"
+        case opBitNot:
+            return "~"
+        case opShl:
+            return "<<"
+        case opShr:
+            return ">>"
+        case opAssign:
+            return "="
+        case opAssignAdd:
+            return "+="
+        case opAssignSub:
+            return "-="
+        case opAssignMul:
+            return "*="
+        case opAssignDiv:
+            return "/="
+        case opAssignMod:
+            return "%="
+        case opAssignBitAnd:
+            return "&="
+        case opAssignBitOr:
+            return "|="
+        case opAssignBitXor:
+            return "^="
+        case opAssignShl:
+            return "<<="
+        case opAssignShr:
+            return ">>="
+        case leftParen:
+            return "("
+        case rightParen:
+            return ")"
+        case leftBracket:
+            return "["
+        case rightBracket:
+            return "]"
+        case leftBrace:
+            return "{"
+        case rightBrace:
+            return "}"
+        case colon:
+            return ":"
+        case comma:
+            return ","
+        case arrow:
+            return "->"
+        case fatArrow:
+            return "=>"
+        case dot:
+            return "."
+        case question:
+            return "?"
+        case atSign:
+            return "@"
+        case newline:
+            return "newline"
+        case indent:
+            return "indent"
+        case dedent:
+            return "dedent"
+        case eof:
+            return "end of file"
+    return "unknown"
+
+; 类别码反查：关键字词表靠区间起点与下标合成类别，不做第二份顺序表。
+kindFromTag|func(tag: I32,) -> (TokenKind,):
+    match tag:
+        case 0:
+            return .unknown
+        case 1:
+            return .identifier
+        case 2:
+            return .integer
+        case 3:
+            return .float
+        case 4:
+            return .string
+        case 5:
+            return .interpolatedString
+        case 6:
+            return .trueLiteral
+        case 7:
+            return .falseLiteral
+        case 8:
+            return .kwVar
+        case 9:
+            return .kwLet
+        case 10:
+            return .kwFunc
+        case 11:
+            return .kwEnum
+        case 12:
+            return .kwObject
+        case 13:
+            return .kwIf
+        case 14:
+            return .kwElif
+        case 15:
+            return .kwElse
+        case 16:
+            return .kwMatch
+        case 17:
+            return .kwCase
+        case 18:
+            return .kwWhile
+        case 19:
+            return .kwStep
+        case 20:
+            return .kwFor
+        case 21:
+            return .kwIn
+        case 22:
+            return .kwTry
+        case 23:
+            return .kwReturn
+        case 24:
+            return .kwBreak
+        case 25:
+            return .kwContinue
+        case 26:
+            return .kwSelf
+        case 27:
+            return .kwOwn
+        case 28:
+            return .kwDefer
+        case 29:
+            return .kwImport
+        case 30:
+            return .kwExport
+        case 31:
+            return .kwNil
+        case 32:
+            return .kwCapture
+        case 33:
+            return .kwAwait
+        case 34:
+            return .kwWait
+        case 35:
+            return .kwUnsafe
+        case 36:
+            return .kwTest
+        case 37:
+            return .kwForeign
+        case 38:
+            return .kwDetach
+        case 39:
+            return .kwPass
+        case 40:
+            return .kwUsing
+        case 41:
+            return .kwUnroll
+        case 42:
+            return .opAdd
+        case 43:
+            return .opSub
+        case 44:
+            return .opMul
+        case 45:
+            return .opDiv
+        case 46:
+            return .opMod
+        case 47:
+            return .opInc
+        case 48:
+            return .opDec
+        case 49:
+            return .opAnd
+        case 50:
+            return .opOr
+        case 51:
+            return .opNot
+        case 52:
+            return .opEq
+        case 53:
+            return .opNe
+        case 54:
+            return .opLe
+        case 55:
+            return .opGe
+        case 56:
+            return .opLt
+        case 57:
+            return .opGt
+        case 58:
+            return .opBitAnd
+        case 59:
+            return .opBitOr
+        case 60:
+            return .opBitXor
+        case 61:
+            return .opBitNot
+        case 62:
+            return .opShl
+        case 63:
+            return .opShr
+        case 64:
+            return .opAssign
+        case 65:
+            return .opAssignAdd
+        case 66:
+            return .opAssignSub
+        case 67:
+            return .opAssignMul
+        case 68:
+            return .opAssignDiv
+        case 69:
+            return .opAssignMod
+        case 70:
+            return .opAssignBitAnd
+        case 71:
+            return .opAssignBitOr
+        case 72:
+            return .opAssignBitXor
+        case 73:
+            return .opAssignShl
+        case 74:
+            return .opAssignShr
+        case 75:
+            return .leftParen
+        case 76:
+            return .rightParen
+        case 77:
+            return .leftBracket
+        case 78:
+            return .rightBracket
+        case 79:
+            return .leftBrace
+        case 80:
+            return .rightBrace
+        case 81:
+            return .colon
+        case 82:
+            return .comma
+        case 83:
+            return .arrow
+        case 84:
+            return .fatArrow
+        case 85:
+            return .dot
+        case 86:
+            return .question
+        case 87:
+            return .atSign
+        case 88:
+            return .newline
+        case 89:
+            return .indent
+        case 90:
+            return .dedent
+        case 91:
+            return .eof
+    return .unknown
+
+; 同一类别判定：两通道都不支持枚举相等比较，因此一律比类别码。
+isKind|func(token: Token, kind: TokenKind,) -> (Bool,):
+    return kindTag(token.kind) == kindTag(kind)
+
+; 字面量区间不含 `unknown`：未识别字节不算字面量。
+isLiteralKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 1 && tag <= 7
+
+isKeywordKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 8 && tag <= 41
+
+isOperatorKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 42 && tag <= 74
+
+isDelimiterKind|func(kind: TokenKind,) -> (Bool,):
+    let tag = kindTag(kind)
+    return tag >= 75 && tag <= 87
+
+; 布局记号：解析器靠它切分块边界，普通表达式扫描里一律跳过。
+isLayoutKind|func(kind: TokenKind,) -> (Bool,):
+    return kindTag(kind) >= 88
+
+((Token))
+; 扫描消费的字节数：区间长度，布局记号可为零。
+consumed|self() -> (I32,):
+    return self.end - self.start
+; 名字跨度是否非空：反引号名去掉引号后才是名字。
+hasName|self() -> (Bool,):
+    return self.nameEnd > self.nameStart
+segmentCount|self() -> (I32,):
+    return len(self.segments)
+segmentAt|self(index: I32,) -> (Segment,):
+    return self.segments[index]

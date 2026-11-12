@@ -1,0 +1,13 @@
+[package]
+name = "unicode"
+
+[require]
+support = "*"
+
+[lib]
+name = "unicode"
+entry = "src/api/unicode.pini"
+
+[[test]]
+name = "unicode-tests"
+entry = "tests"

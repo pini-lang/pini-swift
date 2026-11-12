@@ -1,0 +1,16 @@
+[self_parse_test|import]
+_diagnostics = "../../diagnostics"
+
+; 自解析：语法包自己的每个源文件都必须零诊断通过自己的解析器。
+自解析|test() -> ():
+    let files: Array<String> = ["/src/api/token.pini", "/src/api/lexer.pini", "/src/api/ast.pini", "/src/api/parser.pini", "/src/_internal/scan.pini"]
+    var i = 0
+    while i < len(files):
+        let text = readFile(moduleRoot() + files[i])
+        let result = parseText(text)
+        if len(result.diagnostics) > 0:
+            let d = result.diagnostics[0]
+            assert(false, files[i] + " " + d.code + " @" + "\(d.anchorStart()) " + d.message + " 共 " + "\(len(result.diagnostics))")
+        assert(result.ast.itemCount() > 0, files[i] + " 应产出顶层声明")
+        i = i + 1
+    return

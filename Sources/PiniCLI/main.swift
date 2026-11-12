@@ -643,10 +643,10 @@ func printHelp() {
     print("Commands:")
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
-    print(" build <path> Type check (alias of check) a file or directory/module")
+    print(" build <path> Check a package, or build a workspace's targets in dependency order")
     print(" build --shared <path> [-o out] Link the export block's |c entries into lib<file>.{dylib,so}")
-    print(" test [path] Collect and run |test blocks; no path = whole module, file/dir narrows scope (G41/G49; assert-based)")
-    print(" test-llvm [path] Same collection, gates and report as `test`; runs through the LLVM backend (native binary)")
+    print(" test [path] [--filter <text>] Run |test blocks; a workspace root runs every [[test]] target")
+    print(" test-llvm [path] [--filter <text>] Same collection and report as `test`, emitted as a native binary (single module)")
     print(" parse <file.pini> Parse and print the AST")
     print(" parse --sig <file.pini> Parse and print statement signature (SIG) lines")
     print(" fmt <path>... Reformat sources; -w writes in place, --check lists files that need formatting")
@@ -1329,11 +1329,61 @@ enum TestChannel {
     }
 }
 
-// `pini test [path]`：收集顶级 `|test` 函数块逐一执行并汇总报告，收集单位 = 模块（向上定位清单）。
-// 无 path → 模块全量；目录 / 文件 → 限定范围（显式 path 可加回 `[build] exclude`）；模块外单文件保持单文件行为。
-// 模块模式整包语义/类型门禁，失败退出 1；全通过 0、有失败测试 1、文件/解析/框架错误 2。
-func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
+// 测试执行的收窄选项：位置参数至多一个（文件 / 目录 / 工作区根），`--filter` 按测试名子串收窄。
+struct TestInvocation {
+    let path: String?
+    let filter: String?
+}
+
+func parseTestInvocation(_ args: [String]) -> TestInvocation {
+    var path: String?
+    var filter: String?
+    var cursor = 2
+    while cursor < args.count {
+        let argument = args[cursor]
+        if argument == "--filter" {
+            guard cursor + 1 < args.count else {
+                printError("Error: --filter 需要一个参数")
+                exit(2)
+            }
+            filter = args[cursor + 1]
+            cursor += 2
+            continue
+        }
+        if argument.hasPrefix("--filter=") {
+            filter = String(argument.dropFirst("--filter=".count))
+            cursor += 1
+            continue
+        }
+        guard !argument.hasPrefix("-") else {
+            printError("Error: 未知选项 \(argument)")
+            exit(2)
+        }
+        guard path == nil else {
+            printError("Error: 多余的参数 \(argument)")
+            exit(2)
+        }
+        path = argument
+        cursor += 1
+    }
+    let normalized = (filter?.isEmpty ?? true) ? nil : filter
+    return TestInvocation(path: path, filter: normalized)
+}
+
+// `pini test [path]`：收集顶级 `|test` 逐条执行并汇总；path 可为工作区根、模块、目录或文件。
+// 工作区根按 `[[test]]` target 的拓扑序执行；模块内可再用路径收窄（显式路径可加回 `[build] exclude`）。
+// 全通过 0、有失败测试 1、文件/解析/框架/收集错误 2。
+func runTestPath(_ path: String?, filter: String? = nil, channel: TestChannel = .interpreter) {
     do {
+        // 工作区根先于模块根判定：根清单本身就是测试收集单位，不按单模块装载。
+        if let plan = try WorkspaceBuilder.plan(
+            rootDirectory: path ?? FileManager.default.currentDirectoryPath)
+        {
+            try runWorkspaceTests(
+                plan: plan, rootLabel: path ?? ".", filter: filter, channel: channel)
+            return
+        }
+
         // 无参：收集当前目录所属模块根
         guard let path = path else {
             let cwd = FileManager.default.currentDirectoryPath
@@ -1341,7 +1391,7 @@ func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
                 printError("Error: \(cwd) 不属于任何模块（向上未找到清单）；请在模块内运行 `pini \(channel.commandName)`，或显式指定路径")
                 exit(1)
             }
-            try runModuleTests(moduleRoot: root, scopePath: nil, channel: channel)
+            try runModuleTests(moduleRoot: root, scopePath: nil, filter: filter, channel: channel)
             return
         }
 
@@ -1354,7 +1404,8 @@ func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
 
         // 模块内（文件或目录）：模块模式
         if let root = try FileLoader.locateModuleRoot(for: abs) {
-            try runModuleTests(moduleRoot: root, scopePath: abs, channel: channel)
+            try runModuleTests(
+                moduleRoot: root, scopePath: abs, filter: filter, channel: channel)
             return
         }
 
@@ -1363,12 +1414,12 @@ func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
             let pkg = try FileLoader.loadDirectory(path: abs)
             try gateAndRunTests(
                 pkg: pkg, scope: nil, scopeLabel: nil, ffiConfig: .default,
-                programBase: absoluteProgramBase(abs), channel: channel)
+                programBase: absoluteProgramBase(abs), filter: filter, channel: channel)
             return
         }
 
         // 模块外单文件：单文件行为（G41 原语义，向后兼容）
-        try runSingleFileTests(path: abs, channel: channel)
+        try runSingleFileTests(path: abs, filter: filter, channel: channel)
     } catch let err as SemanticError {
         handleSemanticError(err); exit(1)
     } catch let err as TypeError {
@@ -1379,8 +1430,26 @@ func runTestPath(_ path: String?, channel: TestChannel = .interpreter) {
     }
 }
 
+/// 工作区测试入口：发现与执行在 `WorkspaceTestRunner`，这里只呈现报告并落退出码。
+private func runWorkspaceTests(
+    plan: WorkspaceBuildPlan, rootLabel: String, filter: String?, channel: TestChannel
+) throws {
+    guard channel == .interpreter else {
+        throw SharedBuildError(
+            message: "工作区测试聚合走解释器通道；单模块原生测试请用 `pini test-llvm <path>`")
+    }
+    let report = try WorkspaceTestRunner.run(plan: plan, filter: filter)
+    for suite in report.suites {
+        for warning in suite.warnings { emitSemanticWarning(warning) }
+    }
+    print(report.rendered(rootLabel: rootLabel))
+    if report.failed > 0 { exit(1) }
+}
+
 /// G49：模块模式测试——整包加载（`[build] exclude` 生效）+ 显式路径加回 + 收集范围限定。
-private func runModuleTests(moduleRoot: String, scopePath: String?, channel: TestChannel) throws {
+private func runModuleTests(
+    moduleRoot: String, scopePath: String?, filter: String?, channel: TestChannel
+) throws {
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
     var pkg = try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
 
@@ -1413,7 +1482,7 @@ private func runModuleTests(moduleRoot: String, scopePath: String?, channel: Tes
     try gateAndRunTests(
         pkg: pkg, scope: scope, scopeLabel: scopeLabel,
         ffiConfig: manifest?.ffi ?? .default,
-        programBase: absoluteProgramBase(moduleRoot), channel: channel)
+        programBase: absoluteProgramBase(moduleRoot), filter: filter, channel: channel)
 }
 
 /// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级测试 → 汇总报告。
@@ -1422,7 +1491,7 @@ private func runModuleTests(moduleRoot: String, scopePath: String?, channel: Tes
 private func gateAndRunTests(
     pkg: Package, scope: ((String) -> Bool)?, scopeLabel: String?,
     ffiConfig: FFIConfig, programBase: String? = nil,
-    channel: TestChannel = .interpreter
+    filter: String? = nil, channel: TestChannel = .interpreter
 ) throws {
     do {
         let analyzer = SemanticAnalyzer()
@@ -1450,7 +1519,8 @@ private func gateAndRunTests(
 
     switch channel {
     case .interpreter:
-        let results = try runner.runTests(package: pkg, fileScope: scope)
+        let results = try runner.runTests(package: pkg, fileScope: scope, nameFilter: filter)
+        if let filter, results.isEmpty { reportEmptyFilter(filter) }
         print(header)
         var passed = 0, failed = 0
         for r in results {
@@ -1471,12 +1541,20 @@ private func gateAndRunTests(
         let lowered = try runner.lowerTests(package: pkg)
         try emitAndRunLLVMTests(
             module: lowered, fileScope: scope, header: header, programBase: programBase,
-            ffiConfig: ffiConfig)
+            ffiConfig: ffiConfig, nameFilter: filter)
     }
 }
 
+/// 筛选后一条测试都不剩：按框架错落码，不能让空跑读成通过。
+private func reportEmptyFilter(_ filter: String) -> Never {
+    printError("Error: 没有测试名匹配筛选条件 '\(filter)'")
+    exit(2)
+}
+
 /// G41 原单文件语义（模块外单文件向后兼容路径）。
-private func runSingleFileTests(path: String, channel: TestChannel = .interpreter) throws {
+private func runSingleFileTests(
+    path: String, filter: String? = nil, channel: TestChannel = .interpreter
+) throws {
     let source = try readFile(path)
     let checkResult = checkSingleFileDiagnostics(source: source, fileName: path)
     for d in checkResult.diagnostics {
@@ -1498,7 +1576,8 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
 
     switch channel {
     case .interpreter:
-        let results = try runner.runTests(module: module)
+        let results = try runner.runTests(module: module, nameFilter: filter)
+        if let filter, results.isEmpty { reportEmptyFilter(filter) }
         var passed = 0, failed = 0
         print(header)
         for r in results {
@@ -1519,7 +1598,7 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
         try emitAndRunLLVMTests(
             module: lowered, fileScope: nil, header: header,
             programBase: absoluteProgramBase(path),
-            ffiConfig: manifest?.ffi)
+            ffiConfig: manifest?.ffi, nameFilter: filter)
     }
 }
 
@@ -1528,15 +1607,24 @@ private func runSingleFileTests(path: String, channel: TestChannel = .interprete
 // 退出码必须透传（丢掉会让 abort 被读成 rc=0、判据恒绿）；测试模式允许模块无 `main`，入口由发射器合成。
 func emitAndRunLLVMTests(
     module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?,
-    ffiConfig: FFIConfig? = nil
+    ffiConfig: FFIConfig? = nil, nameFilter: String? = nil
 ) throws {
     // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
     //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
     try IRValidator.check(module)
-    let selection: [String]? = fileScope.map { scope in
+    let scoped: [String]? = fileScope.map { scope in
         module.functions.filter { $0.isTest && scope($0.sourceFile) }.map { $0.name }
     }
-
+    // 名字筛选在这个清单上二次收窄；筛选后为空必须落成框架错，不能发射一个空跑驱动器。
+    let selection: [String]?
+    if let nameFilter {
+        let names = (scoped ?? module.functions.filter(\.isTest).map(\.name))
+            .filter { $0.contains(nameFilter) }
+        if names.isEmpty { reportEmptyFilter(nameFilter) }
+        selection = names
+    } else {
+        selection = scoped
+    }
     let emitter = IREmitter()
     emitter.programBase = programBase
     emitter.testReportHeader = header
@@ -1869,6 +1957,88 @@ private func lowerPackage(
     return irModule
 }
 
+/// 普通单包沿用 check；工作区根则按计划产出接口、IR 和可执行文件。
+func runBuildPath(_ path: String) {
+    do {
+        guard let plan = try WorkspaceBuilder.plan(rootDirectory: path) else {
+            runCheckPath(path)
+            return
+        }
+        try buildWorkspace(plan)
+        CommentStyleHint.emit()
+    } catch {
+        printError(formatCLIError(error: error, source: nil))
+        exit(1)
+    }
+}
+
+/// 整图校验先于逐 target 发射；任何上游失败都阻止下游产物，避免留下半张构建图。
+private func buildWorkspace(_ plan: WorkspaceBuildPlan) throws {
+    var writtenInterfaces: Set<String> = []
+    for package in plan.packages {
+        for target in package.targets where target.isBuiltByDefault {
+            let loaded = try WorkspaceBuilder.load(package: package, target: target)
+            let policy: EntryPolicy = target.kind == .executable ? .required : .notRequired
+            let module = try lowerPackage(
+                package: loaded.package, moduleRoot: package.rootPath, policy: policy)
+            let emitter = IREmitter()
+            emitter.setProgramBase(absoluteProgramBase(package.rootPath))
+            let ir = try emitter.emit(module: module)
+            try writeWorkspaceArtifact(ir, at: target.irPath)
+            if !writtenInterfaces.contains(target.interfacePath) {
+                try writeWorkspaceArtifact(loaded.publicInterface, at: target.interfacePath)
+                writtenInterfaces.insert(target.interfacePath)
+            }
+            if let executablePath = target.executablePath {
+                try linkWorkspaceExecutable(
+                    irPath: target.irPath, outputPath: executablePath,
+                    ffiConfig: package.manifest.ffi)
+                print("已生成 \(executablePath)")
+            }
+            print("已生成 \(target.irPath)")
+        }
+    }
+}
+
+private func writeWorkspaceArtifact(_ text: String, at path: String) throws {
+    let parent = (path as NSString).deletingLastPathComponent
+    try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
+    try text.write(toFile: path, atomically: true, encoding: .utf8)
+}
+
+/// 工作区可执行文件必须显式带运行时；缺工具链时不能留下一个无法启动的产物。
+private func linkWorkspaceExecutable(
+    irPath: String, outputPath: String, ffiConfig: FFIConfig?
+) throws {
+    guard let clang = LLVMToolchain.clangPath else {
+        throw SharedBuildError(message: "clang not found. Install LLVM or set PINI_LLVM_BIN.")
+    }
+    guard let runtime = runtimeLibraryPath() else {
+        throw SharedBuildError(message: "找不到 libPiniRuntime：请与 pini 同目录放置或用 PINI_RUNTIME_LIB 指定")
+    }
+    let parent = (outputPath as NSString).deletingLastPathComponent
+    try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
+    let runtimeDir = (runtime as NSString).deletingLastPathComponent
+    var arguments = [
+        "-o", outputPath, irPath,
+        "-L\(runtimeDir)", "-lPiniRuntime", "-Wl,-rpath,\(runtimeDir)",
+    ]
+    arguments.insert(contentsOf: foreignLinkArguments(ffiConfig), at: 0)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: clang)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardError = pipe
+    try process.run()
+    let errorData = pipe.fileHandleForReading.readAllData()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw SharedBuildError(
+            message: "clang 链接失败（rc=\(process.terminationStatus)）："
+                + String(decoding: errorData, as: UTF8.self))
+    }
+}
+
 // 定位集合运行时动态库：优先 env `PINI_RUNTIME_LIB`，否则取 CLI 可执行文件
 // 同级目录的 `libPiniRuntime.{dylib,so}`；找不到返回 nil，调用方据此 best-effort 跳过加载。
 private func runtimeLibraryPath() -> String? {
@@ -1877,8 +2047,12 @@ private func runtimeLibraryPath() -> String? {
     {
         return override
     }
-    let exe = CommandLine.arguments[0]
-    let dir = (exe as NSString).deletingLastPathComponent
+    let executable = CommandLine.arguments[0]
+    let executableURL = URL(
+        fileURLWithPath: executable,
+        relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    ).standardized
+    let dir = executableURL.deletingLastPathComponent().path
     for ext in ["dylib", "so"] {
         let cand = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
         if FileManager.default.fileExists(atPath: cand) { return cand }
@@ -2329,15 +2503,17 @@ case "build":
             printError("Error: -o 只跟 --shared 一起用")
             exit(1)
         }
-        runCheckPath(path)
+        runBuildPath(path)
     }
 case "test":
-    // 测试子命令：path 可选；无参 = 收集当前目录所属模块根。
-    runTestPath(args.count >= 3 ? args[2] : nil)
+    // 测试子命令：path 可选；无参 = 收集当前目录所属模块或工作区。
+    let invocation = parseTestInvocation(args)
+    runTestPath(invocation.path, filter: invocation.filter)
 case "test-llvm":
     // 与 `test` **同一套**收集范围、门禁与报告；差别只在最后一步跑在 LLVM 通道上
     // （发射成原生程序再运行）。命名照 `run` / `run-llvm` 的既有惯例。
-    runTestPath(args.count >= 3 ? args[2] : nil, channel: .llvm)
+    let invocation = parseTestInvocation(args)
+    runTestPath(invocation.path, filter: invocation.filter, channel: .llvm)
 case "backends":
     printBackendMatrix(tsv: args.contains("--tsv"))
 case "emit":

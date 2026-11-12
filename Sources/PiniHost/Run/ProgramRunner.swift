@@ -114,8 +114,8 @@ public final class ProgramRunner: DebugHookHost {
 
     /// 降载传 `requiresMain: false`：只有测试的文件是合法模块，强求入口会砍掉一种可用程序形状。
     /// 类型检查先行，因为 IR 是带类型的树——没有检查器的推断就无法降载。
-    public func runTests(module: Module) throws -> [TestRunResult] {
-        try runCollectedTests(lowerTests(module: module))
+    public func runTests(module: Module, nameFilter: String? = nil) throws -> [TestRunResult] {
+        try runCollectedTests(lowerTests(module: module), nameFilter: nameFilter)
     }
 
     /// 测试模式的降载（不执行）：两条通道的「跑哪些测试、什么顺序」都出自这一步。
@@ -137,10 +137,20 @@ public final class ProgramRunner: DebugHookHost {
         )
     }
 
-    /// 跑一个包里被 `fileScope` 选中的 `|test`。筛选只决定跑哪些，不缩小可见范围：
+    /// 跑一个包里被 `fileScope` 与 `nameFilter` 选中的 `|test`。收窄只决定跑哪些，不缩小可见范围：
     /// 整包降载为一个模块，跨文件符号仍可达，故每个降载函数都带着它的来源文件。
-    public func runTests(package: Package, fileScope: ((String) -> Bool)? = nil) throws -> [TestRunResult] {
-        try runCollectedTests(lowerTests(package: package), fileScope: fileScope)
+    public func runTests(
+        package: Package, fileScope: ((String) -> Bool)? = nil, nameFilter: String? = nil
+    ) throws -> [TestRunResult] {
+        try runCollectedTests(
+            lowerTests(package: package), fileScope: fileScope, nameFilter: nameFilter)
+    }
+
+    /// 执行一份已降载的测试模块。调用方已按声明做一致性校验时，用它避免重复降载与重复校验。
+    public func runLoweredTests(
+        _ module: IRModule, nameFilter: String? = nil
+    ) throws -> [TestRunResult] {
+        try runCollectedTests(module, nameFilter: nameFilter)
     }
 
     /// 测试模式的**降载**（不执行），包级版。理由与 `lowerTests(module:)` 逐字相同
@@ -155,9 +165,11 @@ public final class ProgramRunner: DebugHookHost {
     }
 
     /// 在已降载的模块上只跑 `|test`：用 `prepare` 而非 `run`，后者会去找 `main`。
+    /// 名字筛选在这里生效，故未匹配的用例不会被执行，其失败也不会被筛选掩盖。
     private func runCollectedTests(
         _ module: IRModule,
-        fileScope: ((String) -> Bool)? = nil
+        fileScope: ((String) -> Bool)? = nil,
+        nameFilter: String? = nil
     ) throws -> [TestRunResult] {
         let executor = IRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
@@ -166,6 +178,7 @@ public final class ProgramRunner: DebugHookHost {
         var results: [TestRunResult] = []
         for function in module.functions where function.isTest {
             if let scope = fileScope, !scope(function.sourceFile) { continue }
+            if let nameFilter, !function.name.contains(nameFilter) { continue }
             results.append(runOneTest(function, on: executor))
         }
         return results

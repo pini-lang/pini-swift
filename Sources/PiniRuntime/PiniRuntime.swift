@@ -1809,6 +1809,32 @@ public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
     return handle
 }
 
+/// `tempUtf8Bytes(String) -> Array<U8>` —— UTF-8 字节副本；元素宽度 1、tag 0（纯标量）。
+/// 临时桥：字节文本模型直接持有缓冲区后，这个名字随之移除。
+@_cdecl("bk_temp_utf8_bytes")
+public func bk_temp_utf8_bytes(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
+    guard let s else { return bk_array_create(0) }
+    let bytes = Array(_bkStrSwiftString(s).utf8)
+    var handle = bk_array_create(Int32(bytes.count))
+    for (index, byte) in bytes.enumerated() {
+        var value = byte
+        handle = bk_array_set_unsafe(handle, Int32(index), &value, 1, 0) ?? handle
+    }
+    return handle
+}
+
+/// `tempByteToInt(U8) -> I32` —— 零扩展取 0..255；临时数值桥的一半。
+@_cdecl("bk_temp_byte_to_int")
+public func bk_temp_byte_to_int(_ b: Int8) -> Int32 {
+    return Int32(UInt8(bitPattern: b))
+}
+
+/// `tempIntToByte(I32) -> U8` —— 取低 8 位，负值按补码截断；临时数值桥的另一半。
+@_cdecl("bk_temp_int_to_byte")
+public func bk_temp_int_to_byte(_ value: Int32) -> Int8 {
+    return Int8(truncatingIfNeeded: value)
+}
+
 /// `chr(I32) -> Char` —— 码点到单字符。越界（负数 / 超标量上界 / 代理区）**panic**，
 /// 与解释器 `builtinChr` 同口径（G67：不再回空串哨兵）。单标量最多四字节，故必定内联。
 @_cdecl("bk_chr")
