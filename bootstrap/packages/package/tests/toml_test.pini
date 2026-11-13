@@ -1,0 +1,47 @@
+; 平表与点分子表：表名原样保留，点分不拆层级。
+平表与点分|test() -> ():
+    let doc = parseToml("[package]\nname = \"demo\"\n\n[require.core]\npath = \"../x\"\n", "p.toml")
+    assert(len(doc.errors) == 0, "不应有形状错误")
+    assert(tomlHasTable(doc, "package"), "package 表应存在")
+    assert(tomlValue(doc, "package", "name") == "demo", "name 取值")
+    assert(tomlHasTable(doc, "require.core"), "点分子表按原名保留")
+    assert(tomlValue(doc, "require.core", "path") == "../x", "子表取值")
+    return
+
+; 数组表分行：同名表的两行各自成条目，行号从 0 递增。
+数组表分行|test() -> ():
+    let doc = parseToml("[[bin]]\nname = \"a\"\nentry = \"src/a.pini\"\n\n[[bin]]\nname = \"b\"\nentry = \"src/b.pini\"\n", "p.toml")
+    assert(len(doc.errors) == 0, "不应有形状错误")
+    assert(tomlRowCount(doc, "bin") == 2, "两行")
+    assert(tomlRowValue(doc, "bin", 0, "name") == "a", "首行")
+    assert(tomlRowValue(doc, "bin", 1, "entry") == "src/b.pini", "次行")
+    return
+
+; 内联数组与引号内井号：数组拆成元素，引号里的 # 属于值。
+数组与注释|test() -> ():
+    let doc = parseToml("[workspace]\nmembers = [\"a\", \"b/c\"] # 两成员\nnote = \"x # y\"\n", "p.toml")
+    assert(len(doc.errors) == 0, "不应有形状错误")
+    let members = tomlArray(doc, "workspace", "members")
+    assert(len(members) == 2, "两个元素")
+    assert(members[1] == "b/c", "元素取值")
+    assert(tomlValue(doc, "workspace", "note") == "x # y", "引号里的 # 不截断")
+    return
+
+; 形状错误各自记账：表外键、缺等号、重复键。
+形状错误|test() -> ():
+    let 外 = parseToml("name = \"x\"\n", "p.toml")
+    assert(len(外.errors) == 1, "表外键记一条")
+    assert(isErrorKind(外.errors[0], .errorKeyOutsideTable), "类别应为表外键")
+    let 坏 = parseToml("[a]\nbad line\n", "p.toml")
+    assert(isErrorKind(坏.errors[0], .errorTomlShape), "缺等号")
+    let 重 = parseToml("[a]\nk = 1\nk = 2\n", "p.toml")
+    assert(isErrorKind(重.errors[0], .errorDuplicateKey), "重复键")
+    return
+
+; 整行注释与空行不产条目。
+注释与空行|test() -> ():
+    let doc = parseToml("# 说明\n\n  \n[a]\nk = \"v\" # 尾注\n", "p.toml")
+    assert(len(doc.errors) == 0, "不应有形状错误")
+    assert(len(tomlKeys(doc, "a")) == 1, "只剩一个键")
+    assert(tomlValue(doc, "a", "k") == "v", "尾注不影响取值")
+    return

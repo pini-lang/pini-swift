@@ -1,0 +1,150 @@
+; 目标类别：库、可执行与测试；测试目标不进普通构建产物。
+[TargetKind]
+targetLibrary
+targetExecutable
+targetTest
+
+; 目标声明：名字、类别与包根相对入口；入口是文件或目录。
+(TargetSpec)
+name: String = ""
+kind: TargetKind = .targetLibrary
+entry: String = ""
+
+; 包清单：包名、包根相对路径、声明依赖与全部目标。
+(PackageManifest)
+name: String = ""
+rootPath: String = ""
+requires: Array<String> = []
+targets: Array<TargetSpec> = []
+
+; 工作区清单：根路径、成员相对路径与构建 profile。
+(WorkspaceManifest)
+rootPath: String = ""
+members: Array<String> = []
+profile: String = "debug"
+
+; 解析结果：清单与错误并列；错误非空时清单不参与建计划。
+(PackageParse)
+manifest: PackageManifest = PackageManifest()
+errors: Array<ManifestError> = []
+
+(WorkspaceParse)
+manifest: WorkspaceManifest = WorkspaceManifest()
+errors: Array<ManifestError> = []
+
+; 解析工作区清单：只认 [workspace] 的 members 与 profile；形状错误在 TOML 层已记账。
+parseWorkspaceManifest|func(text: String, rootPath: String, path: String,) -> (WorkspaceParse,):
+    var out = WorkspaceParse()
+    let doc = parseToml(text, path)
+    out.errors = doc.errors
+    var manifest = WorkspaceManifest()
+    manifest.rootPath = rootPath
+    if !tomlHasTable(doc, "workspace"):
+        out.errors = out.errors.append(manifestError(errorTableMissing, path, "workspace"))
+        out.manifest = manifest
+        return out
+    manifest.members = tomlArray(doc, "workspace", "members")
+    if len(manifest.members) == 0:
+        out.errors = out.errors.append(manifestError(errorMembersEmpty, path, "members"))
+    let profile = tomlValue(doc, "workspace", "profile")
+    if len(profile) == 0:
+        manifest.profile = "debug"
+    elif isPathComponent(profile):
+        manifest.profile = profile
+    else:
+        out.errors = out.errors.append(manifestError(errorProfileInvalid, path, profile))
+    out.manifest = manifest
+    return out
+
+; 解析包清单：包名、依赖键与三类 target；名字与入口的规则在这里一次判完。
+parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (PackageParse,):
+    var out = PackageParse()
+    let doc = parseToml(text, path)
+    out.errors = doc.errors
+    var manifest = PackageManifest()
+    manifest.rootPath = rootPath
+    if !tomlHasTable(doc, "package"):
+        out.errors = out.errors.append(manifestError(errorTableMissing, path, "package"))
+        out.manifest = manifest
+        return out
+    manifest.name = tomlValue(doc, "package", "name")
+    if len(manifest.name) == 0:
+        out.errors = out.errors.append(manifestError(errorPackageName, path, "缺 name"))
+    elif !isPathComponent(manifest.name):
+        out.errors = out.errors.append(manifestError(errorPackageName, path, manifest.name))
+    manifest.requires = tomlKeys(doc, "require")
+    manifest.targets = collectTargets(doc)
+    out.errors = checkTargets(manifest, path, out.errors)
+    out.manifest = manifest
+    return out
+
+; 收集三类 target：[lib] 至多一个，[[bin]] 与 [[test]] 按行展开。
+collectTargets|func(doc: TomlDocument,) -> (Array<TargetSpec>,):
+    var out: Array<TargetSpec> = []
+    if tomlHasTable(doc, "lib"):
+        var target = TargetSpec()
+        target.kind = .targetLibrary
+        target.name = tomlValue(doc, "lib", "name")
+        target.entry = tomlValue(doc, "lib", "entry")
+        out = out.append(target)
+    out = appendRows(doc, "bin", targetExecutable, out)
+    out = appendRows(doc, "test", targetTest, out)
+    return out
+
+; 数组表按行展开成 target，行序即清单里的出现顺序。
+appendRows|func(doc: TomlDocument, table: String, kind: TargetKind, out: Array<TargetSpec>,) -> (Array<TargetSpec>,):
+    var result = out
+    let rows = tomlRowCount(doc, table)
+    var row = 0
+    while row < rows:
+        var target = TargetSpec()
+        target.kind = kind
+        target.name = tomlRowValue(doc, table, row, "name")
+        target.entry = tomlRowValue(doc, table, row, "entry")
+        result = result.append(target)
+        row = row + 1
+    return result
+
+; 目标校验：至少一个 target，逐个查名字、入口与重名；一条 target 只报首个问题。
+checkTargets|func(manifest: PackageManifest, path: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
+    var out = errors
+    if len(manifest.targets) == 0:
+        out = out.append(manifestError(errorMissingTargets, path, manifest.name))
+        return out
+    var i = 0
+    while i < len(manifest.targets):
+        let target = manifest.targets[i]
+        if len(target.name) == 0:
+            out = out.append(manifestError(errorTargetName, path, manifest.name + "：" + targetKindName(target.kind) + " 缺 name"))
+        elif !isPathComponent(target.name):
+            out = out.append(manifestError(errorTargetName, path, target.name))
+        elif !isCleanEntry(target.entry):
+            out = out.append(manifestError(errorEntryPath, path, target.name + "：" + target.entry))
+        elif hasEarlierTarget(manifest.targets, i, target.name):
+            out = out.append(manifestError(errorDuplicateTarget, path, manifest.name + "/" + target.name))
+        i = i + 1
+    return out
+
+; 重名判定只看名字：同一包内 lib 与 bin 同名同样会撞产物。
+hasEarlierTarget|func(targets: Array<TargetSpec>, at: I32, name: String,) -> (Bool,):
+    var i = 0
+    while i < at:
+        if targets[i].name == name:
+            return true
+        i = i + 1
+    return false
+
+; 目标类别的清单拼写：诊断与计划文本共用。
+targetKindName|func(kind: TargetKind,) -> (String,):
+    match kind:
+        case targetLibrary:
+            return "lib"
+        case targetExecutable:
+            return "bin"
+        case targetTest:
+            return "test"
+    return "lib"
+
+; 同类别判定：枚举相等比较不可用，按名称比。
+isTargetKind|func(kind: TargetKind, expected: TargetKind,) -> (Bool,):
+    return targetKindName(kind) == targetKindName(expected)

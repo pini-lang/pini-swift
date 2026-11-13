@@ -181,8 +181,26 @@ struct WorkspaceTestTests {
                  ✓ 顺序不影响结果
                  ✓ 重复渲染相同
                  ✓ 未知文件不借位置
-                包 package / package-tests（1 个测试）
+                包 package / package-tests（19 个测试）
+                 ✓ 工作区清单
+                 ✓ 包清单
+                 ✓ 错误用例
+                 ✓ 缺表
+                 ✓ 拓扑序固定
+                 ✓ 成员顺序无关
+                 ✓ 产物路径
+                 ✓ 重复包名
+                 ✓ 成环
+                 ✓ 可执行重名
+                 ✓ 成员路径
+                 ✓ 成员缺清单
+                 ✓ 平表与点分
+                 ✓ 数组表分行
+                 ✓ 数组与注释
+                 ✓ 形状错误
+                 ✓ 注释与空行
                  ✓ 工作区标记可识别
+                 ✓ 根计划可装配
                 包 driver / driver-tests（1 个测试）
                  ✓ 公开调用可用
                 包 unicode / unicode-tests（41 个测试）
@@ -270,7 +288,7 @@ struct WorkspaceTestTests {
                  ✓ 词法问题透传
                  ✓ 中文关键字解析
                  ✓ 自解析
-                结果: 112 通过, 0 失败
+                结果: 130 通过, 0 失败
 
                 """
         #expect(result.stdout == expected)

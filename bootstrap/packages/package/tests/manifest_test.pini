@@ -1,0 +1,43 @@
+; 工作区清单：members 与 profile 取值；profile 缺省为 debug。
+工作区清单|test() -> ():
+    let 解析 = parseWorkspaceManifest("[workspace]\nmembers = [\"a\", \"b\"]\n", ".", "pini.toml")
+    assert(len(解析.errors) == 0, "不应有错误")
+    assert(len(解析.manifest.members) == 2, "两个成员")
+    assert(解析.manifest.profile == "debug", "profile 缺省")
+    return
+
+; 包清单：三类 target 按清单顺序展开，require 的键是依赖名。
+包清单|test() -> ():
+    let 文本 = "[package]\nname = \"demo\"\n\n[require]\nsupport = \"*\"\n\n[lib]\nname = \"demo\"\nentry = \"src/api/lit.pini\"\n\n[[bin]]\nname = \"tool\"\nentry = \"src/api/main.pini\"\n\n[[test]]\nname = \"demo-tests\"\nentry = \"tests\"\n"
+    let 解析 = parsePackageManifest(文本, "pkg", "pkg/pini.toml")
+    assert(len(解析.errors) == 0, "不应有错误")
+    assert(解析.manifest.name == "demo", "包名")
+    assert(len(解析.manifest.requires) == 1, "一条依赖")
+    assert(解析.manifest.requires[0] == "support", "依赖名")
+    assert(len(解析.manifest.targets) == 3, "三类 target")
+    assert(isTargetKind(解析.manifest.targets[0].kind, targetLibrary), "首个是库")
+    assert(解析.manifest.targets[1].name == "tool", "可执行名")
+    assert(isTargetKind(解析.manifest.targets[2].kind, targetTest), "末个是测试")
+    return
+
+; 成员缺失、profile 带斜杠、包缺 target、入口含 ..、target 重名各有专用错误。
+错误用例|test() -> ():
+    let 空 = parseWorkspaceManifest("[workspace]\nprofile = \"debug\"\n", ".", "pini.toml")
+    assert(isErrorKind(空.errors[0], .errorMembersEmpty), "缺 members")
+    let 斜 = parseWorkspaceManifest("[workspace]\nmembers = [\"a\"]\nprofile = \"x/y\"\n", ".", "pini.toml")
+    assert(isErrorKind(斜.errors[0], .errorProfileInvalid), "profile 带斜杠")
+    let 无目标 = parsePackageManifest("[package]\nname = \"p\"\n", "p", "p/pini.toml")
+    assert(isErrorKind(无目标.errors[0], .errorMissingTargets), "缺 target")
+    let 坏入口 = parsePackageManifest("[package]\nname = \"p\"\n[lib]\nname = \"p\"\nentry = \"../x.pini\"\n", "p", "p/pini.toml")
+    assert(isErrorKind(坏入口.errors[0], .errorEntryPath), "入口越界")
+    let 重名 = parsePackageManifest("[package]\nname = \"p\"\n[lib]\nname = \"p\"\nentry = \"src/a.pini\"\n[[bin]]\nname = \"p\"\nentry = \"src/main.pini\"\n", "p", "p/pini.toml")
+    assert(isErrorKind(重名.errors[0], .errorDuplicateTarget), "target 重名")
+    return
+
+; 缺 [package] 表与缺 [workspace] 表都按缺表报，不退化成默认值。
+缺表|test() -> ():
+    let 包 = parsePackageManifest("[lib]\nname = \"p\"\nentry = \"src/a.pini\"\n", "p", "p/pini.toml")
+    assert(isErrorKind(包.errors[0], .errorTableMissing), "缺 [package]")
+    let 工作区 = parseWorkspaceManifest("[package]\nname = \"p\"\n", ".", "pini.toml")
+    assert(isErrorKind(工作区.errors[0], .errorTableMissing), "缺 [workspace]")
+    return

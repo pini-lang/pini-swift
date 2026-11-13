@@ -1,0 +1,222 @@
+; 清单条目：表名、[[...]] 条目序号（平表为 -1）、键、标量值与内联数组元素。
+; 数组表的相邻条目共享同一个 row，调用方据此把同一个 [[...]] 下的键聚在一起。
+(TomlEntry)
+table: String = ""
+row: I32 = -1
+key: String = ""
+value: String = ""
+elements: Array<String> = []
+isArray: Bool = false
+
+; 清单文档：表头按出现顺序保留；entries 只含键值对，errors 非空即形状不可用。
+(TomlDocument)
+tables: Array<String> = []
+entries: Array<TomlEntry> = []
+errors: Array<ManifestError> = []
+
+; 解析清单：只认 [表]、[[表]] 与键 = 值；形状非法处记错误并跳过该行，其余行照常解析。
+parseToml|func(text: String, path: String,) -> (TomlDocument,):
+    var doc = TomlDocument()
+    let lines = text.split("\n")
+    var table = ""
+    var row = -1
+    var i = 0
+    while i < len(lines):
+        let line = trimSpace(stripComment(lines[i]))
+        i = i + 1
+        if len(line) == 0:
+            continue
+        if isArrayHeader(line):
+            table = trimSpace(line.substring(2, len(line) - 2))
+            if len(table) == 0:
+                doc.errors = doc.errors.append(manifestError(errorTomlShape, path, line))
+                continue
+            row = nextRow(doc, table)
+            doc.tables = doc.tables.append(table)
+            continue
+        if isTableHeader(line):
+            table = trimSpace(line.substring(1, len(line) - 1))
+            if len(table) == 0:
+                doc.errors = doc.errors.append(manifestError(errorTomlShape, path, line))
+                continue
+            row = -1
+            doc.tables = doc.tables.append(table)
+            continue
+        if len(table) == 0:
+            doc.errors = doc.errors.append(manifestError(errorKeyOutsideTable, path, line))
+            continue
+        let eq = line.indexOf("=")
+        if eq < 0:
+            doc.errors = doc.errors.append(manifestError(errorTomlShape, path, line))
+            continue
+        let key = trimSpace(line.substring(0, eq))
+        if len(key) == 0:
+            doc.errors = doc.errors.append(manifestError(errorMissingKey, path, line))
+            continue
+        if findEntry(doc, table, row, key) >= 0:
+            doc.errors = doc.errors.append(manifestError(errorDuplicateKey, path, table + "." + key))
+            continue
+        var entry = TomlEntry()
+        entry.table = table
+        entry.row = row
+        entry.key = key
+        let raw = trimSpace(line.substring(eq + 1, len(line)))
+        if isInlineArray(raw):
+            entry.isArray = true
+            entry.elements = splitElements(raw)
+        else:
+            entry.value = unquote(raw)
+        doc.entries = doc.entries.append(entry)
+    return doc
+
+; 表头是否存在：只认解析出的表头，注释里的同名字样不算。
+tomlHasTable|func(doc: TomlDocument, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(doc.tables):
+        if doc.tables[i] == name:
+            return true
+        i = i + 1
+    return false
+
+; 平表标量；缺失答空串，调用方按必需字段判断。
+tomlValue|func(doc: TomlDocument, table: String, key: String,) -> (String,):
+    let at = findEntry(doc, table, -1, key)
+    if at < 0:
+        return ""
+    return doc.entries[at].value
+
+; 平表内联数组元素；缺失或不是数组答空数组。
+tomlArray|func(doc: TomlDocument, table: String, key: String,) -> (Array<String>,):
+    var empty: Array<String> = []
+    let at = findEntry(doc, table, -1, key)
+    if at < 0:
+        return empty
+    return doc.entries[at].elements
+
+; 平表的键按出现顺序；[require] 的键就是依赖名。
+tomlKeys|func(doc: TomlDocument, table: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(doc.entries):
+        let entry = doc.entries[i]
+        if entry.table == table && entry.row == -1:
+            out = out.append(entry.key)
+        i = i + 1
+    return out
+
+; 数组表条目数：没有条目答 0。
+tomlRowCount|func(doc: TomlDocument, table: String,) -> (I32,):
+    var maxRow = -1
+    var i = 0
+    while i < len(doc.entries):
+        let entry = doc.entries[i]
+        if entry.table == table && entry.row > maxRow:
+            maxRow = entry.row
+        i = i + 1
+    return maxRow + 1
+
+; 数组表某一行的标量；缺键答空串。
+tomlRowValue|func(doc: TomlDocument, table: String, row: I32, key: String,) -> (String,):
+    let at = findEntry(doc, table, row, key)
+    if at < 0:
+        return ""
+    return doc.entries[at].value
+
+; 查条目下标：表名、行号与键三者全等才算命中，未命中答 -1。
+findEntry|func(doc: TomlDocument, table: String, row: I32, key: String,) -> (I32,):
+    var i = 0
+    while i < len(doc.entries):
+        let entry = doc.entries[i]
+        if entry.table == table && entry.row == row && entry.key == key:
+            return i
+        i = i + 1
+    return -1
+
+; 下一个数组表行号：同名表已有条目的最大行加一。
+nextRow|func(doc: TomlDocument, table: String,) -> (I32,):
+    var maxRow = -1
+    var i = 0
+    while i < len(doc.entries):
+        let entry = doc.entries[i]
+        if entry.table == table && entry.row > maxRow:
+            maxRow = entry.row
+        i = i + 1
+    return maxRow + 1
+
+; 行内注释剥离：引号内的 # 是值的一部分，不截断；引号不成对时按未闭合处理。
+stripComment|func(line: String,) -> (String,):
+    let chars = line.split("")
+    var quoted = false
+    var i = 0
+    while i < len(chars):
+        let c = chars[i]
+        if c == "\"":
+            quoted = !quoted
+        elif c == "#" && !quoted:
+            return line.substring(0, i)
+        i = i + 1
+    return line
+
+; 去两端空白：只认空格与制表符，与清单书写习惯一致。
+trimSpace|func(s: String,) -> (String,):
+    let chars = s.split("")
+    var lo = 0
+    while lo < len(chars):
+        let c = chars[lo]
+        if c == " " || c == "\t":
+            lo = lo + 1
+        else:
+            break
+    var hi = len(chars)
+    while hi > lo:
+        let c = chars[hi - 1]
+        if c == " " || c == "\t":
+            hi = hi - 1
+        else:
+            break
+    return s.substring(lo, hi)
+
+; 去引号：两端都是引号才剥，单边引号原样保留。
+unquote|func(raw: String,) -> (String,):
+    if len(raw) >= 2 && startsWith(raw, "\"") && endsWith(raw, "\""):
+        return raw.substring(1, len(raw) - 1)
+    return raw
+
+; 表头判定：[[...]] 先判，避免被 [ ... ] 抢先。
+isArrayHeader|func(line: String,) -> (Bool,):
+    return len(line) >= 4 && startsWith(line, "[[") && endsWith(line, "]]")
+
+; 平表头判定：方括号包住整行，且不是数组表。
+isTableHeader|func(line: String,) -> (Bool,):
+    if isArrayHeader(line):
+        return false
+    return len(line) >= 2 && startsWith(line, "[") && endsWith(line, "]")
+
+; 内联数组判定：整值被方括号包住。
+isInlineArray|func(raw: String,) -> (Bool,):
+    return len(raw) >= 2 && startsWith(raw, "[") && endsWith(raw, "]")
+
+; 内联数组拆元素：逗号分隔，逐项去空白与引号，空项跳过。
+splitElements|func(raw: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    let inner = raw.substring(1, len(raw) - 1)
+    let parts = inner.split(",")
+    var i = 0
+    while i < len(parts):
+        let value = unquote(trimSpace(parts[i]))
+        if len(value) > 0:
+            out = out.append(value)
+        i = i + 1
+    return out
+
+; 前缀判定：按字素比较，长度不足直接答假。
+startsWith|func(text: String, prefix: String,) -> (Bool,):
+    if len(prefix) > len(text):
+        return false
+    return text.substring(0, len(prefix)) == prefix
+
+; 后缀判定：同上，从尾部取同长切片。
+endsWith|func(text: String, suffix: String,) -> (Bool,):
+    if len(suffix) > len(text):
+        return false
+    return text.substring(len(text) - len(suffix), len(text)) == suffix

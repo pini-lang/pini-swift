@@ -1,0 +1,360 @@
+; 目标计划：名字、类别、入口、源码根与三类产物路径；测试目标不进默认构建。
+(TargetPlan)
+name: String = ""
+kind: TargetKind = .targetLibrary
+entry: String = ""
+sourceRoot: String = ""
+irPath: String = ""
+interfacePath: String = ""
+executablePath: String = ""
+isBuiltByDefault: Bool = true
+
+; 包计划：包名、包根相对路径与按清单顺序排好的 target。
+(PackagePlan)
+name: String = ""
+rootPath: String = ""
+targets: Array<TargetPlan> = []
+
+; 构建计划：根、profile、拓扑序上的包与全部错误；错误非空时 packages 为空。
+(BuildPlan)
+rootPath: String = ""
+profile: String = "debug"
+packages: Array<PackagePlan> = []
+errors: Array<ManifestError> = []
+
+; 计划是否可用：有错即不可用，调用方不得拿它去建产物。
+((BuildPlan))
+isOK|self() -> (Bool,):
+    return len(self.errors) == 0
+errorCount|self() -> (I32,):
+    return len(self.errors)
+errorAt|self(index: I32,) -> (ManifestError,):
+    return self.errors[index]
+packageCount|self() -> (I32,):
+    return len(self.packages)
+packageAt|self(index: I32,) -> (PackagePlan,):
+    return self.packages[index]
+
+; 计划文本：包与 target 按拓扑序逐行铺开，错误在前；同一计划两次渲染逐字相同。
+planText|func(plan: BuildPlan,) -> (String,):
+    var text = "root=" + plan.rootPath + " profile=" + plan.profile + "\n"
+    var i = 0
+    while i < len(plan.errors):
+        text = text + "error " + manifestErrorText(plan.errors[i]) + "\n"
+        i = i + 1
+    i = 0
+    while i < len(plan.packages):
+        let pkg = plan.packages[i]
+        text = text + "package " + pkg.name + " @ " + pkg.rootPath + "\n"
+        var t = 0
+        while t < len(pkg.targets):
+            let target = pkg.targets[t]
+            text = text + "  " + targetKindName(target.kind) + " " + target.name
+            text = text + " src=" + target.sourceRoot + " entry=" + target.entry
+            text = text + " ir=" + target.irPath + "\n"
+            if len(target.executablePath) > 0:
+                text = text + "  exe " + target.executablePath + "\n"
+            t = t + 1
+        i = i + 1
+    return text
+
+; 装配计划：先规范化成员，再查重名与产物冲突，最后按依赖排序并生成路径。
+; 任一错误都让计划不带包返回——半张计划比报错更危险。
+assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (BuildPlan,):
+    var plan = BuildPlan()
+    plan.rootPath = workspace.manifest.rootPath
+    plan.profile = workspace.manifest.profile
+    plan.errors = workspace.errors
+    var packages: Array<PackageManifest> = []
+    var members: Array<String> = []
+    var i = 0
+    while i < len(workspace.manifest.members):
+        let raw = workspace.manifest.members[i]
+        i = i + 1
+        let norm = normalizeMemberPath(raw)
+        if !norm.ok:
+            plan.errors = plan.errors.append(manifestError(errorMemberPath, plan.rootPath, raw + "：" + norm.reason))
+            continue
+        if containsText(members, norm.value):
+            plan.errors = plan.errors.append(manifestError(errorMemberDuplicated, plan.rootPath, norm.value))
+            continue
+        members = members.append(norm.value)
+        let at = findParse(parses, norm.value)
+        if at < 0:
+            plan.errors = plan.errors.append(manifestError(errorManifestMissing, plan.rootPath, norm.value))
+            continue
+        plan.errors = appendErrors(plan.errors, parses[at].errors)
+        packages = packages.append(parses[at].manifest)
+    i = 0
+    while i < len(packages):
+        if hasEarlierPackage(packages, i, packages[i].name):
+            plan.errors = plan.errors.append(manifestError(errorDuplicatePackage, plan.rootPath, packages[i].name))
+        i = i + 1
+    plan.errors = checkExecutableNames(packages, plan.rootPath, plan.errors)
+    let topo = topoOrder(packages, plan.rootPath, plan.errors)
+    plan.errors = topo.errors
+    if len(plan.errors) > 0:
+        return plan
+    i = 0
+    while i < len(topo.order):
+        let at = findPackage(packages, topo.order[i])
+        plan.packages = plan.packages.append(packagePlan(packages[at], plan.rootPath, plan.profile))
+        i = i + 1
+    return plan
+
+; 读盘入口：根清单与每个成员的清单各读一次，随后交给纯装配。
+; 成员路径先规范化再拼路径，越界成员在读盘之前就被挡下。
+planWorkspace|func(root: String,) -> (BuildPlan,):
+    let rootManifest = root + "/pini.toml"
+    if !exists(rootManifest):
+        var plan = BuildPlan()
+        plan.rootPath = root
+        plan.errors = plan.errors.append(manifestError(errorManifestMissing, rootManifest, "pini.toml"))
+        return plan
+    let workspace = parseWorkspaceManifest(readFile(rootManifest), root, rootManifest)
+    var parses: Array<PackageParse> = []
+    var i = 0
+    while i < len(workspace.manifest.members):
+        let norm = normalizeMemberPath(workspace.manifest.members[i])
+        i = i + 1
+        if !norm.ok:
+            continue
+        let memberManifest = root + "/" + norm.value + "/pini.toml"
+        if !exists(memberManifest):
+            var missing = PackageParse()
+            missing.manifest.rootPath = norm.value
+            missing.errors = missing.errors.append(manifestError(errorManifestMissing, memberManifest, norm.value))
+            parses = parses.append(missing)
+            continue
+        parses = parses.append(parsePackageManifest(readFile(memberManifest), norm.value, memberManifest))
+    return assemblePlan(workspace, parses)
+
+; 单包计划：产物目录按 profile 定；可执行另给 bin 路径，测试目标不默认构建。
+packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (PackagePlan,):
+    var out = PackagePlan()
+    out.name = pkg.name
+    out.rootPath = pkg.rootPath
+    let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
+    var i = 0
+    while i < len(pkg.targets):
+        let target = pkg.targets[i]
+        var plan = TargetPlan()
+        plan.name = target.name
+        plan.kind = target.kind
+        plan.entry = target.entry
+        plan.sourceRoot = sourceRootOf(target)
+        plan.irPath = buildDir + "/" + target.name + ".ll"
+        plan.interfacePath = buildDir + "/interface.txt"
+        if isTargetKind(target.kind, targetExecutable):
+            plan.executablePath = root + "/.build/" + profile + "/bin/" + target.name
+        plan.isBuiltByDefault = !isTargetKind(target.kind, targetTest)
+        out.targets = out.targets.append(plan)
+        i = i + 1
+    return out
+
+; 源码根：库与可执行从 src 取生产源码，测试目标从入口目录取；扫描规则归装载面。
+sourceRootOf|func(target: TargetSpec,) -> (String,):
+    if isTargetKind(target.kind, targetTest):
+        return target.entry
+    return "src"
+
+; 可执行产物名在工作区内唯一：跨包同名会让两份产物落到同一个 bin 路径。
+checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
+    var out = errors
+    var seen: Array<String> = []
+    var i = 0
+    while i < len(packages):
+        let pkg = packages[i]
+        var t = 0
+        while t < len(pkg.targets):
+            let target = pkg.targets[t]
+            if isTargetKind(target.kind, targetExecutable):
+                if containsText(seen, target.name):
+                    out = out.append(manifestError(errorExecutableCollision, rootPath, target.name + " @ " + pkg.name))
+                else:
+                    seen = seen.append(target.name)
+            t = t + 1
+        i = i + 1
+    return out
+
+; 拓扑序：根按包名升序深度优先，依赖同样升序；后序追加即依赖先于使用方。
+(TopoFrame)
+name: String = ""
+deps: Array<String> = []
+next: I32 = 0
+
+(TopoResult)
+order: Array<String> = []
+errors: Array<ManifestError> = []
+
+; 深度优先用具名帧而不是递归调用：帧里带依赖表与游标，回溯时不必重算。
+topoOrder|func(packages: Array<PackageManifest>, rootPath: String, errors: Array<ManifestError>,) -> (TopoResult,):
+    var out = TopoResult()
+    out.errors = errors
+    let names = sortedPackageNames(packages)
+    var state: Array<I32> = []
+    var i = 0
+    while i < len(packages):
+        state = state.append(0)
+        i = i + 1
+    var frames: Array<TopoFrame> = []
+    var depth = 0
+    var n = 0
+    while n < len(names):
+        let start = findPackage(packages, names[n])
+        n = n + 1
+        if state[start] == 2:
+            continue
+        state[start] = 1
+        var frame = TopoFrame()
+        frame.name = names[n - 1]
+        frame.deps = sortedRequires(packages, packages[start].requires)
+        frames = pushFrame(frames, depth, frame)
+        depth = depth + 1
+        while depth > 0:
+            let at = depth - 1
+            var top = frames[at]
+            if top.next < len(top.deps):
+                let dep = top.deps[top.next]
+                top.next = top.next + 1
+                frames[at] = top
+                let found = findPackage(packages, dep)
+                if found < 0:
+                    continue
+                if state[found] == 2:
+                    continue
+                if state[found] == 1:
+                    out.errors = out.errors.append(manifestError(errorDependencyCycle, rootPath, cycleChain(frames, depth, dep)))
+                    return out
+                state[found] = 1
+                var child = TopoFrame()
+                child.name = dep
+                child.deps = sortedRequires(packages, packages[found].requires)
+                frames = pushFrame(frames, depth, child)
+                depth = depth + 1
+            else:
+                let done = findPackage(packages, top.name)
+                state[done] = 2
+                out.order = out.order.append(top.name)
+                depth = depth - 1
+    return out
+
+; 压帧：槽位复用，避免弹出后数组无限增长。
+pushFrame|func(frames: Array<TopoFrame>, depth: I32, frame: TopoFrame,) -> (Array<TopoFrame>,):
+    if depth < len(frames):
+        frames[depth] = frame
+        return frames
+    return frames.append(frame)
+
+; 环链：从栈里首次出现的重复名为起点，按栈序拼到当前依赖。
+cycleChain|func(frames: Array<TopoFrame>, depth: I32, dep: String,) -> (String,):
+    var start = 0
+    var i = 0
+    while i < depth:
+        if frames[i].name == dep:
+            start = i
+            break
+        i = i + 1
+    var text = ""
+    i = start
+    while i < depth:
+        text = text + frames[i].name + " -> "
+        i = i + 1
+    return text + dep
+
+; 依赖表：只留工作区内的包名，去重后升序；外部依赖不进本地图。
+sortedRequires|func(packages: Array<PackageManifest>, requires: Array<String>,) -> (Array<String>,):
+    var kept: Array<String> = []
+    var i = 0
+    while i < len(requires):
+        if findPackage(packages, requires[i]) >= 0 && !containsText(kept, requires[i]):
+            kept = kept.append(requires[i])
+        i = i + 1
+    return sortedTexts(kept)
+
+; 包名升序：深度优先的根顺序由它定，重复执行结果不变。
+sortedPackageNames|func(packages: Array<PackageManifest>,) -> (Array<String>,):
+    var names: Array<String> = []
+    var i = 0
+    while i < len(packages):
+        names = names.append(packages[i].name)
+        i = i + 1
+    return sortedTexts(names)
+
+; 字符串升序：按 UTF-8 字节比较，与平台 locale 无关。
+sortedTexts|func(items: Array<String>,) -> (Array<String>,):
+    var out = items
+    var i = 1
+    while i < len(out):
+        let value = out[i]
+        var j = i - 1
+        while j >= 0 && compareText(out[j], value) > 0:
+            out[j + 1] = out[j]
+            j = j - 1
+        out[j + 1] = value
+        i = i + 1
+    return out
+
+; 字节序比较：先比公共前缀，再比长度；返回 -1 / 0 / 1。
+compareText|func(a: String, b: String,) -> (I32,):
+    let left = tempUtf8Bytes(a)
+    let right = tempUtf8Bytes(b)
+    var i = 0
+    while i < len(left) && i < len(right):
+        let x = tempByteToInt(left[i])
+        let y = tempByteToInt(right[i])
+        if x < y:
+            return -1
+        if x > y:
+            return 1
+        i = i + 1
+    if len(left) < len(right):
+        return -1
+    if len(left) > len(right):
+        return 1
+    return 0
+
+; 按名查包：未命中答 -1，依赖表与成员表共用这一处。
+findPackage|func(packages: Array<PackageManifest>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(packages):
+        if packages[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 按包根查解析结果：成员路径与清单根路径必须逐字相同。
+findParse|func(parses: Array<PackageParse>, rootPath: String,) -> (I32,):
+    var i = 0
+    while i < len(parses):
+        if parses[i].manifest.rootPath == rootPath:
+            return i
+        i = i + 1
+    return -1
+
+; 同名包判定：只看更早的条目，重复名报一次即可。
+hasEarlierPackage|func(packages: Array<PackageManifest>, at: I32, name: String,) -> (Bool,):
+    var i = 0
+    while i < at:
+        if packages[i].name == name:
+            return true
+        i = i + 1
+    return false
+
+; 串表查找：名字与路径去重共用。
+containsText|func(items: Array<String>, value: String,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == value:
+            return true
+        i = i + 1
+    return false
+
+; 错误表拼接：解析阶段的错误按成员顺序并入计划。
+appendErrors|func(errors: Array<ManifestError>, extra: Array<ManifestError>,) -> (Array<ManifestError>,):
+    var out = errors
+    var i = 0
+    while i < len(extra):
+        out = out.append(extra[i])
+        i = i + 1
+    return out

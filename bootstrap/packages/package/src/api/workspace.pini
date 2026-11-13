@@ -1,4 +1,5 @@
-; 最小清单探测只回答根是不是工作区，后续成员图与构建计划复用同一入口扩展。
+; 工作区识别：根清单出现 [workspace] 表头即为工作区；注释里的同名字样不算。
 hasWorkspace|func(root: String,) -> (Bool,):
-    let text = readFile(root + "/pini.toml")
-    return containsWorkspaceMarker(text)
+    let path = root + "/pini.toml"
+    let doc = parseToml(readFile(path), path)
+    return tomlHasTable(doc, "workspace")
