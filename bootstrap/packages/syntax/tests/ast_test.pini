@@ -46,3 +46,25 @@
     assert(ast.isCallExpr(call), "调用应命中")
     assert(!ast.isCallExpr(ident), "标识符不得判作调用")
     return
+
+; 字面量谓词：六类各自命中，布尔覆盖真与假两种拼写。
+字面量谓词|test() -> ():
+    var ast = Ast()
+    let integer = ast.pushExpr(exprInteger, 0, 1)
+    let float = ast.pushExpr(exprFloat, 0, 3)
+    let string = ast.pushExpr(exprString, 0, 5)
+    let yes = ast.pushExpr(exprTrue, 0, 4)
+    let no = ast.pushExpr(exprFalse, 0, 5)
+    let none = ast.pushExpr(exprNil, 0, 3)
+    let interp = ast.pushExpr(exprInterpolated, 0, 8)
+    assert(ast.isIntegerExpr(integer), "整数应命中")
+    assert(!ast.isIntegerExpr(float), "浮点不得判作整数")
+    assert(ast.isFloatExpr(float), "浮点应命中")
+    assert(ast.isStringExpr(string), "字符串应命中")
+    assert(ast.isBoolExpr(yes), "true 应判作布尔")
+    assert(ast.isBoolExpr(no), "false 应判作布尔")
+    assert(!ast.isBoolExpr(integer), "整数不得判作布尔")
+    assert(ast.isNilExpr(none), "空值应命中")
+    assert(ast.isInterpolatedExpr(interp), "插值应命中")
+    assert(!ast.isInterpolatedExpr(string), "普通字符串不得判作插值")
+    return

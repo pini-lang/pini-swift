@@ -313,6 +313,20 @@ isMemberExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprMember)
 isCallExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprCall)
+isIntegerExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprInteger)
+isFloatExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprFloat)
+isStringExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprString)
+isBoolExpr|self(id: I32,) -> (Bool,):
+    if self.exprs[id].kind == exprKindTag(exprTrue):
+        return true
+    return self.exprs[id].kind == exprKindTag(exprFalse)
+isNilExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprNil)
+isInterpolatedExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprInterpolated)
 isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(kind)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
