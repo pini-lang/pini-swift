@@ -128,7 +128,11 @@ public indirect enum IRType: Equatable {
             return .function(
                 params: annotations, returns: returns, captured: [],
                 usingIndices: usingIndices, location: at)
-        case .nominal, .enumeration, .dict, .cFunction, .future, .set:
+        case .nominal(let name, _), .enumeration(let name):
+            // 名义类型回到源码里的名字。注解层只为「本函数的局部叫什么类型」服务，
+            // 反向的 `IRType(from:)` 认不出用户类型，仍走按表达式降载那条路。
+            return .simple(name: name, location: at)
+        case .dict, .cFunction, .future, .set:
             return nil
         }
     }
