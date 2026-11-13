@@ -4,6 +4,7 @@
 
 [labels]
 lexer = "词法错误"
+lexerWarning = "词法警告"
 parser = "语法错误"
 semantic = "语义错误"
 semanticWarning = "语义警告"
@@ -41,6 +42,26 @@ suggestion = "换 `run-llvm`，或在 C 侧写一个固定参数的 shim 再声�
 [E7-007]
 message = "外部函数 '{name}' 用了字符串句柄：只有 LLVM 通道与 `build --shared` 提供这些符号"
 suggestion = "换 `run-llvm` 或 `build --shared`；解释器会在调用点拒绝"
+
+[E7-008]
+message = "标识符 '{name}' 与 '{existing}' 看起来一样"
+suggestion = "两者的 UTS #39 骨架相同而编码不同；若是有意为之可忽略，否则改名以示区别"
+
+[E7-009]
+message = "注释或字符串里出现双向控制字符 '{label}'"
+suggestion = "它会改变这段文字的显示顺序；注释里删掉，字符串里确实要输出该码点时用 chr() 拼接"
+
+[E1-004]
+message = "源码含不可见字符 '{label}'"
+suggestion = "删除它；标识符只用字母、数字、下划线与组合附加符号"
+
+[E1-005]
+message = "组合附加符号 '{label}' 不能作标识符首字符"
+suggestion = "把组合附加符号并到前一个字符上；它可以续写，不能作首字符"
+
+[E1-006]
+message = "标识符 '{name}' 混用多个高风险脚本"
+suggestion = "改用单一脚本；中文与拉丁的组合不受此限"
 
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"

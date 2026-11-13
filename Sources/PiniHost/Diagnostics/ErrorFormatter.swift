@@ -105,6 +105,8 @@ public enum ErrorFormatter {
         let fallback: String
         switch error {
         case is LexerError: key = "lexer"; fallback = "词法错误"
+        // 词法警告与词法错误分属两个类型：前者不阻断编译，标签也随之分开。
+        case is LexerWarning: key = "lexerWarning"; fallback = "词法警告"
         case is ParserError: key = "parser"; fallback = "语法错误"
         // 展开诊断借语义域报出（检查点在类型检查之前，归属同一次静态检查）。
         case is UnrollError: key = "semantic"; fallback = "语义错误"
@@ -181,6 +183,11 @@ public enum ErrorFormatter {
             case .invalidCharacter(let ch, _): return "invalid character '\(ch)'"
             case .unterminatedString: return "unterminated string literal"
             case .indentationError: return "indentation error"
+            case .invisibleCharacter(let label, _): return "源码含不可见字符 '\(label)'"
+            case .misplacedCombiningMark(let label, _):
+                return "组合附加符号 '\(label)' 不能作标识符首字符"
+            case .mixedScriptIdentifier(let name, _):
+                return "标识符 '\(name)' 混用多个高风险脚本"
             }
         case let e as ParserError:
             return parserMessage(e)
@@ -194,6 +201,11 @@ public enum ErrorFormatter {
             return typeMessage(e)
         case let e as RuntimeError:
             return runtimeMessage(e)
+        case let e as LexerWarning:
+            switch e {
+            case .bidirectionalControl(let label, _, _):
+                return "注释或字符串里出现双向控制字符 '\(label)'"
+            }
         case let e as SemanticWarning:
             switch e {
             case .givenCycle(let path, _):
@@ -209,6 +221,8 @@ public enum ErrorFormatter {
                 return "foreign function '\(name)' is variadic: only the LLVM channel can call it"
             case .stringHandleForeignSymbol(let name, _):
                 return "foreign function '\(name)' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
+            case .confusableIdentifier(let name, let existing, _):
+                return "identifier '\(name)' looks the same as '\(existing)'"
             }
         case let e as IRValidator.Failure:
             return e.report

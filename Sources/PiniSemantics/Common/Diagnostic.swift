@@ -99,13 +99,43 @@ extension LexerError: DiagnosticProviding {
         case .invalidCharacter: return "\(DiagnosticDomain.lexer.rawValue)-001"
         case .unterminatedString: return "\(DiagnosticDomain.lexer.rawValue)-002"
         case .indentationError: return "\(DiagnosticDomain.lexer.rawValue)-003"
+        case .invisibleCharacter: return "\(DiagnosticDomain.lexer.rawValue)-004"
+        case .misplacedCombiningMark: return "\(DiagnosticDomain.lexer.rawValue)-005"
+        case .mixedScriptIdentifier: return "\(DiagnosticDomain.lexer.rawValue)-006"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
+    public var suggestion: String? {
+        switch self {
+        case .invisibleCharacter:
+            return "删除它；标识符只用字母、数字、下划线与组合附加符号"
+        case .misplacedCombiningMark:
+            return "把组合附加符号并到前一个字符上；它可以续写，不能作首字符"
+        case .mixedScriptIdentifier:
+            return "改用单一脚本；中文与拉丁的组合不受此限"
+        default:
+            return nil
+        }
+    }
+    public var diagnosticLocation: SourceLocation {
+        switch self {
+        case .invalidCharacter(_, let loc), .unterminatedString(let loc), .indentationError(let loc),
+            .invisibleCharacter(_, let loc), .misplacedCombiningMark(_, let loc),
+            .mixedScriptIdentifier(_, let loc):
+            return loc
+        }
+    }
+}
+
+/// 词法警告借 E7 段报出：E1 段登记的是「拒绝编译」的词法错误，警告不阻断，归警告域。
+/// 消息与建议由资源表给出，代码内不写第二份文案。
+extension LexerWarning: DiagnosticProviding {
+    public var diagnosticCode: String { "\(DiagnosticDomain.warning.rawValue)-009" }
+    public var diagnosticSeverity: DiagnosticSeverity { .warning }
     public var suggestion: String? { nil }
     public var diagnosticLocation: SourceLocation {
         switch self {
-        case .invalidCharacter(_, let loc), .unterminatedString(let loc), .indentationError(let loc):
+        case .bidirectionalControl(_, _, let loc):
             return loc
         }
     }

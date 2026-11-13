@@ -716,8 +716,11 @@ func readFile(_ path: String) throws -> String {
 /// 仅在无任何解析错误时返回成功解析的 module。词法错误仍按原有方式渲染并退出。
 /// `withStdlib` 关闭时只交出用户源码的树——`parse` / `fmt` 要看的就是那一份，标准库会污染它们的输出。
 func parseOrReport(source: String, fileName: String, withStdlib: Bool = true) -> Module {
-    switch FrontEnd.collect(source: source, fileName: fileName) {
+    let scan = FrontEnd.scan(source: source, fileName: fileName)
+    switch scan.outcome {
     case .parsed(let module):
+        // 警告只在编译继续时呈现：有错就只报错，别让同一份源码的提示与错误抢注意力。
+        emitLexerWarnings(scan.warnings)
         return withStdlib ? FrontEnd.assemble(module: module) : module
     case .lexFailed(let error):
         printError(formatCLIError(error: error, source: source))
@@ -859,6 +862,10 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return
             "外部函数 '\(name)' 用了字符串句柄：句柄由运行时段持有，只在 `run-llvm` 与 "
             + "`build --shared` 上成立，解释器会在调用点拒绝"
+    case .confusableIdentifier(let name, let existing, _):
+        return
+            "标识符 '\(name)' 与 '\(existing)' 看起来一样：两者的 UTS #39 骨架相同而编码不同。"
+            + "若是有意为之可忽略，否则改名以示区别"
     }
 }
 
@@ -878,6 +885,16 @@ func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
 
 func emitSemanticWarning(_ warning: SemanticWarning) {
     FileHandle.standardError.write(Data((renderedWarning(warning, source: sourceFor(warning)) + "\n").utf8))
+}
+
+/// 词法警告：不阻断编译，走 stderr 与语义警告同一出口。文案由资源表给出，这里只补源码片段。
+/// 包级调用在语义与类型检查之前 —— 它只依赖源码文本，与检查结果无关。
+func emitLexerWarnings(_ warnings: [LexerWarning]) {
+    for warning in warnings {
+        let source = (try? readFile(warning.diagnosticLocation.fileName)) ?? ""
+        FileHandle.standardError.write(
+            Data((ErrorFormatter.formatDiagnostic(warning, source: source) + "\n").utf8))
+    }
 }
 
 /// 诊断所在文件的源码。模块检查没有单一 source，但位置自带文件名 —— 回读一次比传一份全文省事。
@@ -1056,6 +1073,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
     do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
+    emitLexerWarnings(pkg.warnings)
     // build 时校验 require ↔ import 一致性（与 verify 的防篡改是两个检查）。
     // 仅对采用依赖通道的清单生效；不符报错并提示 `pini mod tidy`。
     let driftResult = Result {
@@ -1493,6 +1511,7 @@ private func gateAndRunTests(
     ffiConfig: FFIConfig, programBase: String? = nil,
     filter: String? = nil, channel: TestChannel = .interpreter
 ) throws {
+    emitLexerWarnings(pkg.warnings)
     do {
         let analyzer = SemanticAnalyzer()
         try analyzer.analyze(package: pkg)
@@ -1730,6 +1749,7 @@ func runCheckPath(_ path: String) {
             printError("Error: 依赖清单与代码漂移——\(parts.joined(separator: "；"))。请运行 `pini mod tidy`")
             exit(1)
         }
+        emitLexerWarnings(pkg.warnings)
         do {
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(package: pkg)
@@ -1975,9 +1995,14 @@ func runBuildPath(_ path: String) {
 /// 整图校验先于逐 target 发射；任何上游失败都阻止下游产物，避免留下半张构建图。
 private func buildWorkspace(_ plan: WorkspaceBuildPlan) throws {
     var writtenInterfaces: Set<String> = []
+    // 同一包按 target 反复装载；警告属于源码，一个包只报一次。
+    var reportedWarnings: Set<String> = []
     for package in plan.packages {
         for target in package.targets where target.isBuiltByDefault {
             let loaded = try WorkspaceBuilder.load(package: package, target: target)
+            if reportedWarnings.insert(package.name).inserted {
+                emitLexerWarnings(loaded.package.warnings)
+            }
             let policy: EntryPolicy = target.kind == .executable ? .required : .notRequired
             let module = try lowerPackage(
                 package: loaded.package, moduleRoot: package.rootPath, policy: policy)

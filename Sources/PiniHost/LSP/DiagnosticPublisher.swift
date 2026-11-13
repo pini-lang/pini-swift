@@ -14,6 +14,7 @@ public struct DiagnosticPublisher {
         semanticErrors: [SemanticError],
         typeErrors: [TypeError],
         semanticWarnings: [SemanticWarning] = [],
+        lexerWarnings: [LexerWarning] = [],
         unrollErrors: [UnrollError] = [],
         uri: String,
         source: String = "",
@@ -21,6 +22,9 @@ public struct DiagnosticPublisher {
     ) -> PublishDiagnosticsParams {
         var diagnostics: [Diagnostic] = []
 
+        for warning in lexerWarnings {
+            diagnostics.append(mapLexerWarning(warning, source: source, language: language))
+        }
         for err in parserErrors {
             diagnostics.append(mapParserError(err, source: source, language: language))
         }
@@ -41,6 +45,15 @@ public struct DiagnosticPublisher {
     }
 
     // MARK: - Mapping
+
+    private func mapLexerWarning(_ warning: LexerWarning, source: String, language: DiagnosticLanguage?) -> Diagnostic {
+        Diagnostic(
+            range: toLSPRange(warning.diagnosticLocation),
+            severity: .warning,
+            source: "pini-lexer",
+            message: ErrorFormatter.formatDiagnostic(warning, source: source, language: language)
+        )
+    }
 
     private func mapSemanticWarning(_ warning: SemanticWarning, source: String, language: DiagnosticLanguage?) -> Diagnostic {
         Diagnostic(

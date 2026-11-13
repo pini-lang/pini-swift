@@ -4,6 +4,7 @@
 
 [labels]
 lexer = "Lexer Error"
+lexerWarning = "Lexer Warning"
 parser = "Parse Error"
 semantic = "Semantic Error"
 semanticWarning = "Semantic Warning"
@@ -41,6 +42,26 @@ suggestion = "use `run-llvm`, or write a fixed-arity shim on the C side and decl
 [E7-007]
 message = "foreign function '{name}' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
 suggestion = "use `run-llvm` or `build --shared`; the interpreter rejects the call site"
+
+[E7-008]
+message = "identifier '{name}' looks the same as '{existing}'"
+suggestion = "their UTS #39 skeletons match while the encodings differ; ignore if intentional, otherwise rename one"
+
+[E7-009]
+message = "bidirectional control character '{label}' in a comment or string"
+suggestion = "it changes how that text displays; remove it from comments, or build the code point with chr() when a string really must emit it"
+
+[E1-004]
+message = "source contains an invisible character '{label}'"
+suggestion = "remove it; identifiers may only use letters, numbers, underscores, and combining marks"
+
+[E1-005]
+message = "combining mark '{label}' cannot begin an identifier"
+suggestion = "attach the combining mark to the preceding character; it may continue an identifier but cannot start one"
+
+[E1-006]
+message = "identifier '{name}' mixes multiple high-risk scripts"
+suggestion = "use a single script; combining Chinese with Latin is not affected"
 
 [E2-001]
 message = "expected {expected}, got {actual}"

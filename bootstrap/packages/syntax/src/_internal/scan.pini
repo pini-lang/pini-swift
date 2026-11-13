@@ -10,6 +10,7 @@ indents: Array<I32> = []
 brackets: Array<Bool> = []
 tokens: Array<Token> = []
 issues: Array<LexIssue> = []
+warnings: Array<LexWarning> = []
 atLineStart: Bool = true
 
 ; 扫描整段字节：行结构、缩进、括号与记号在同一条循环里推进，收尾补布局记号。
@@ -37,6 +38,7 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     var out = LexResult()
     out.tokens = state.tokens
     out.issues = state.issues
+    out.warnings = state.warnings
     return out
 
 ; 取字节：越界答 0，调用方先判界；负值不参与读取。
@@ -139,12 +141,28 @@ scanInsideBrackets|func(state: LexState,) -> (LexState,):
     out.atLineStart = false
     return scanToken(out)
 
-; 注释跳过：从当前字节到行尾，不消费换行本身。
+; 注释跳过：从当前字节到行尾，不消费换行本身；内容里的双向控制字符记警告。
 skipComment|func(state: LexState,) -> (LexState,):
     var out = state
     let total = len(out.bytes)
+    let start = out.pos
     while out.pos < total && byteAt(out.bytes, out.pos) != 10:
         out.pos = out.pos + 1
+    return scanBidiWarnings(out, start, out.pos, textComment)
+
+; 区间内的双向控制字符：逐个标量查，命中一条记一条；游标按标量宽度推进，不落在字节中间。
+; 只记警告、不改游标 —— 注释与字符串的消费由各自的扫描器决定。
+scanBidiWarnings|func(state: LexState, from: I32, to: I32, role: LexTextRole,) -> (LexState,):
+    var out = state
+    var pos = from
+    while pos < to:
+        let unit = decodeScalarAt(out.bytes, pos)
+        if unit.length <= 0:
+            pos = pos + 1
+        else:
+            if isBidiControlScalar(unit.code):
+                out.warnings = out.warnings.append(makeWarning(warningBidiControlInText, role, pos, pos + unit.length))
+            pos = pos + unit.length
     return out
 
 ; 记号分派：按首字节选专用扫描，互不重叠。
@@ -227,6 +245,7 @@ identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
     return pos
 
 ; 非 ASCII 且不构成标识符的字节序列：按整条标量记问题并消费，保证游标不离字界。
+; 组合附加符号单独出现在标识符首字符位时单列问题类别，与宿主的专用诊断同源。
 scanWideByte|func(state: LexState,) -> (LexState,):
     var out = state
     let start = out.pos
@@ -234,7 +253,10 @@ scanWideByte|func(state: LexState,) -> (LexState,):
     var width = unit.length
     if width == 0:
         width = 1
-    out.issues = out.issues.append(makeIssue(issueUnknownByte, start, start + width))
+    var issue = issueUnknownByte
+    if isCombiningMarkScalar(unit.code):
+        issue = issueMisplacedCombiningMark
+    out.issues = out.issues.append(makeIssue(issue, start, start + width))
     out = emitToken(out, unknown, start, start + width)
     out.pos = start + width
     return out
@@ -402,6 +424,12 @@ scanString|func(state: LexState,) -> (LexState,):
             pos = pos + 1
     if !terminated:
         out.issues = out.issues.append(makeIssue(issueUnterminatedString, start, pos))
+    ; 只查字面段：插值段是代码，其中的双向控制字符按代码规则处理，不按文字记警告。
+    var segIndex = 0
+    while segIndex < len(segments):
+        if isLiteralSegment(segments[segIndex]):
+            out = scanBidiWarnings(out, segments[segIndex].start, segments[segIndex].end, textString)
+        segIndex = segIndex + 1
     if interpolated:
         out = emitString(out, interpolatedString, start, pos, segments)
     else:
@@ -463,6 +491,15 @@ makeSegment|func(kind: SegmentKind, start: I32, end: I32,) -> (Segment,):
     out.start = start
     out.end = end
     return out
+
+; 段是否为字面内容：枚举相等比较不可用，按模式分派。
+isLiteralSegment|func(seg: Segment,) -> (Bool,):
+    match seg.kind:
+        case segmentLiteral:
+            return true
+        case segmentInterpolation:
+            return false
+    return false
 
 ; 运算符与定界符：先试三字节、再两字节、最后一字节；括号同步维护括号栈。
 scanPunctuation|func(state: LexState,) -> (LexState,):

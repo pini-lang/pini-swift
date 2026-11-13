@@ -189,7 +189,9 @@ public final class LSPServer {
         // Step 1: 词法 + 语法 —— 与其余五个入口共用 FrontEnd，pass 清单不在本文件分叉。
         let module: Module
         let parserErrors: [ParserError]
-        switch FrontEnd.collect(source: text, fileName: fileName) {
+        // 用 `scan` 而非 `collect`：两者跑同一条路径，前者额外带回词法警告。
+        let scan = FrontEnd.scan(source: text, fileName: fileName)
+        switch scan.outcome {
         case .lexFailed:
             // 词法错误直接发布（无 ParserError 结构体 → 暂用空数组）
             publishDiagnostics(
@@ -242,7 +244,7 @@ public final class LSPServer {
         publishDiagnostics(
             uri: uri, parserErrors: parserErrors,
             semanticErrors: semanticErrors, typeErrors: typeErrors,
-            semanticWarnings: semanticWarnings)
+            semanticWarnings: semanticWarnings, lexerWarnings: scan.warnings)
     }
 
     private func publishDiagnostics(
@@ -251,6 +253,7 @@ public final class LSPServer {
         semanticErrors: [SemanticError],
         typeErrors: [TypeError],
         semanticWarnings: [SemanticWarning] = [],
+        lexerWarnings: [LexerWarning] = [],
         unrollErrors: [UnrollError] = [],
         source: String = ""
     ) {
@@ -260,6 +263,7 @@ public final class LSPServer {
             semanticErrors: semanticErrors,
             typeErrors: typeErrors,
             semanticWarnings: semanticWarnings,
+            lexerWarnings: lexerWarnings,
             unrollErrors: unrollErrors,
             uri: uri,
             source: source,

@@ -3,10 +3,16 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 99
+    return 104
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(code: String,) -> (String,):
+    if code == "E1-004":
+        return "源码含不可见字符 '{label}'"
+    if code == "E1-005":
+        return "组合附加符号 '{label}' 不能作标识符首字符"
+    if code == "E1-006":
+        return "标识符 '{name}' 混用多个高风险脚本"
     if code == "E2-001":
         return "期望 {expected}，实际得到 {actual}"
     if code == "E2-003":
@@ -205,10 +211,20 @@ diagnosticMessage|func(code: String,) -> (String,):
         return "外部函数 '{name}' 声明为变参：只有 LLVM 通道能调用它"
     if code == "E7-007":
         return "外部函数 '{name}' 用了字符串句柄：只有 LLVM 通道与 `build --shared` 提供这些符号"
+    if code == "E7-008":
+        return "标识符 '{name}' 与 '{existing}' 看起来一样"
+    if code == "E7-009":
+        return "注释或字符串里出现双向控制字符 '{label}'"
     return ""
 
 ; 码的修复建议模板；没有建议答空串。
 diagnosticSuggestion|func(code: String,) -> (String,):
+    if code == "E1-004":
+        return "删除它；标识符只用字母、数字、下划线与组合附加符号"
+    if code == "E1-005":
+        return "把组合附加符号并到前一个字符上；它可以续写，不能作首字符"
+    if code == "E1-006":
+        return "改用单一脚本；中文与拉丁的组合不受此限"
     if code == "E3-001":
         return "你是想说 '{closest}' 吗？"
     if code == "E3-002":
@@ -271,4 +287,8 @@ diagnosticSuggestion|func(code: String,) -> (String,):
         return "换 `run-llvm`，或在 C 侧写一个固定参数的 shim 再声明它"
     if code == "E7-007":
         return "换 `run-llvm` 或 `build --shared`；解释器会在调用点拒绝"
+    if code == "E7-008":
+        return "两者的 UTS #39 骨架相同而编码不同；若是有意为之可忽略，否则改名以示区别"
+    if code == "E7-009":
+        return "它会改变这段文字的显示顺序；注释里删掉，字符串里确实要输出该码点时用 chr() 拼接"
     return ""

@@ -185,7 +185,7 @@ struct WorkspaceTestTests {
                  ✓ 工作区标记可识别
                 包 driver / driver-tests（1 个测试）
                  ✓ 公开调用可用
-                包 unicode / unicode-tests（35 个测试）
+                包 unicode / unicode-tests（41 个测试）
                  ✓ 骨架折叠形近字母
                  ✓ 骨架跨脚本折叠
                  ✓ 骨架多标量目标
@@ -195,6 +195,10 @@ struct WorkspaceTestTests {
                  ✓ 骨架未映射保持
                  ✓ 骨架幂等
                  ✓ 骨架非法输入原样
+                 ✓ 等价拼写同键
+                 ✓ 中文键不变
+                 ✓ 区间限定
+                 ✓ 越界夹紧
                  ✓ 分解预组合字符
                  ✓ 组合基字与附标
                  ✓ 已组合保持
@@ -205,6 +209,8 @@ struct WorkspaceTestTests {
                  ✓ 不做兼容等价
                  ✓ 等价写法归一
                  ✓ 非法输入原样
+                 ✓ 脚本归属
+                 ✓ 混写判定
                  ✓ 宽度与偏移
                  ✓ 拒绝截断
                  ✓ 拒绝游离续字节
@@ -221,7 +227,7 @@ struct WorkspaceTestTests {
                  ✓ 单步解码消费字节数
                  ✓ 单步解码失败类别
                  ✓ 版本与特殊标量
-                包 syntax / syntax-tests（37 个测试）
+                包 syntax / syntax-tests（42 个测试）
                  ✓ 节点池
                  ✓ 分池计数
                  ✓ 缺省子节点
@@ -247,6 +253,11 @@ struct WorkspaceTestTests {
                  ✓ 关键字中文表
                  ✓ 关键字词表同序
                  ✓ 中文关键字宽度
+                 ✓ 组合附标续写
+                 ✓ 组合附标不得起始
+                 ✓ 注释双向控制记警告
+                 ✓ 字符串双向控制记警告
+                 ✓ 代码位双向控制仍报问题
                  ✓ 函数声明形状
                  ✓ 优先级与结合
                  ✓ 后缀链
@@ -259,7 +270,7 @@ struct WorkspaceTestTests {
                  ✓ 词法问题透传
                  ✓ 中文关键字解析
                  ✓ 自解析
-                结果: 101 通过, 0 失败
+                结果: 112 通过, 0 失败
 
                 """
         #expect(result.stdout == expected)

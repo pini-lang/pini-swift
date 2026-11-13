@@ -7,12 +7,15 @@ public struct FileUnit: Equatable, ASTNode, Sendable {
     public let fileName: String
     /// 该文件经 `Parser.parseModule` 解析出的单文件 `Module`。
     public let module: Module
+    /// 该文件的词法警告：不阻断编译，随单元一起交给调用方决定怎么呈现。
+    public let warnings: [LexerWarning]
 
     public var location: SourceLocation { module.location }
 
-    public init(fileName: String, module: Module) {
+    public init(fileName: String, module: Module, warnings: [LexerWarning] = []) {
         self.fileName = fileName
         self.module = module
+        self.warnings = warnings
     }
 }
 
@@ -29,6 +32,11 @@ public struct Package: Equatable, ASTNode, Sendable {
 
     public var location: SourceLocation {
         fileUnits.first?.location ?? SourceLocation(line: 0, column: 0, fileName: name)
+    }
+
+    /// 包内全部词法警告，按文件单元顺序拼接。跨文件去重没有意义：每条警告都属于各自文件的位置。
+    public var warnings: [LexerWarning] {
+        fileUnits.flatMap { $0.warnings }
     }
 
     public init(name: String, fileUnits: [FileUnit], rootPath: String? = nil) {
@@ -54,11 +62,13 @@ public struct Package: Equatable, ASTNode, Sendable {
     }
 
     /// 只在第一个单元并入标准库：标准库是模块级声明，逐单元各带一份会在整包摊平时重复。
-    /// 幂等——已装配过的单元原样保留。
+    /// 幂等——已装配过的单元原样保留。警告随单元保留：装配不改动该文件的词法结果。
     public func assemblingStdlib() -> Package {
         guard let first = fileUnits.first else { return self }
         var assembled = fileUnits
-        assembled[0] = FileUnit(fileName: first.fileName, module: FrontEnd.assemble(module: first.module))
+        assembled[0] = FileUnit(
+            fileName: first.fileName, module: FrontEnd.assemble(module: first.module),
+            warnings: first.warnings)
         return Package(name: name, fileUnits: assembled, rootPath: rootPath)
     }
 }

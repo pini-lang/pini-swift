@@ -285,3 +285,42 @@ CRLF归一化|test() -> ():
     断言记号(词.tokenAt(0), .kwElif, 0, 12)
     断言记号(词.tokenAt(1), .kwVar, 13, 19)
     return
+
+; 组合附加符号可续写：NFD 拼写的名字是一个标识符，消费六个字节。
+组合附标续写|test() -> ():
+    let 词 = lexText("cafe\(chr(769)) x\n")
+    assert(词.tokenCount() >= 2, "至少两个记号")
+    断言记号(词.tokenAt(0), .identifier, 0, 6)
+    return
+
+; 组合附加符号不得起始：单独出现时记专用词法问题，不并进标识符。
+组合附标不得起始|test() -> ():
+    let 词 = lexText("\(chr(769))abc\n")
+    assert(词.issueCount() >= 1, "应记一条词法问题")
+    assert(isIssue(词.issueAt(0), .issueMisplacedCombiningMark), "问题类别应为组合附标错位")
+    return
+
+; 注释里的双向控制字符只记警告：扫描不中断，记号照常产出，区间指向该字符本身。
+注释双向控制记警告|test() -> ():
+    let 词 = lexText("; a\(chr(8238))b\nx\n")
+    assert(词.warningCount() == 1, "应记一条警告")
+    assert(isWarning(词.warningAt(0), .warningBidiControlInText), "警告类别应为双向控制字符")
+    assert(isTextRole(词.warningAt(0), .textComment), "角色应为注释")
+    assert(词.warningAt(0).start == 3, "警告起点应指向该字符")
+    return
+
+; 字符串字面量里的双向控制字符同样记警告，记号仍是完整字符串。
+字符串双向控制记警告|test() -> ():
+    let 词 = lexText("let x = \"a\(chr(8238))b\"\n")
+    assert(词.warningCount() == 1, "应记一条警告")
+    assert(isTextRole(词.warningAt(0), .textString), "角色应为字符串")
+    assert(词.warningAt(0).start == 10, "警告起点应指向该字符")
+    assert(词.tokenAt(3).end == 15, "字符串记号应覆盖整段字面量")
+    return
+
+; 代码位的同一字符仍是问题，不进警告通道。
+代码位双向控制仍报问题|test() -> ():
+    let 词 = lexText("a\(chr(8238))b\n")
+    assert(词.issueCount() >= 1, "代码位应记问题")
+    assert(词.warningCount() == 0, "代码位不应记警告")
+    return

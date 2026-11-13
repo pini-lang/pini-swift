@@ -32,6 +32,10 @@ public class Lexer {
     /// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
     public private(set) var indents: [Int: Int] = [:]
 
+    /// 词法警告：扫描不中断。与 `comments` 同生命周期，一次 `tokenize()` 之内只增不改。
+    /// 只承载「看见了但继续编译」的事实；是否阻断由调用方按严重度决定。
+    public private(set) var warnings: [LexerWarning] = []
+
     /// 本次扫描的位置旁路。词法失败时只含失败点之前的部分。
     public var hints: PrintHints {
         PrintHints(spellings: spellings, indents: indents)
@@ -49,6 +53,14 @@ public class Lexer {
 
     public func tokenize() throws -> [Token] {
         var tokens: [Token] = []
+
+        // 起始 BOM 不属于任何词法类。规范不接受 BOM，且它不可见，落到解析期只会变成
+        // 一句指向空白的语法错误，故在入口处按位置 1:1 直接拒绝。
+        if let first = chars.first, first == "\u{FEFF}" {
+            throw LexerError.invisibleCharacter(
+                InvisibleScalars.label(0xFEFF),
+                SourceLocation(line: 1, column: 1, fileName: fileName))
+        }
 
         while !isAtEnd {
             if skipBlankOrCommentLine() {
@@ -230,6 +242,7 @@ public class Lexer {
     private func recordComment(column: Int, ownLine: Bool) {
         let start = position
         skipToEndOfLine()
+        recordBidiWarnings(in: start, until: position, role: .comment, firstColumn: column)
         var text = String(chars[start..<min(position, chars.count)])
         while let last = text.last, last == " " || last == "\t" {
             text.removeLast()
@@ -261,6 +274,34 @@ public class Lexer {
         line = savedLine
         column = savedCol
         return false
+    }
+
+    /// 登记区间内的双向控制字符：一个字符一条，位置按起始列号推算。
+    /// 注释不跨行，故列号可以直接累加；区间端点先夹紧，越界只可能是调用方算错。
+    private func recordBidiWarnings(
+        in start: Int, until end: Int, role: LexerWarning.TextRole, firstColumn: Int
+    ) {
+        let limit = min(end, chars.count)
+        guard start < limit else { return }
+        for index in start..<limit {
+            for scalar in chars[index].unicodeScalars where InvisibleScalars.isBidiControl(scalar) {
+                warnings.append(
+                    .bidirectionalControl(
+                        label: InvisibleScalars.label(scalar), role: role,
+                        location: SourceLocation(
+                            line: line, column: firstColumn + (index - start), fileName: fileName)))
+            }
+        }
+    }
+
+    /// 单个字符里的双向控制字符：注释与字符串都允许承载任意文字，故只提醒、不拒绝。
+    /// 位置取字符自身，不取所在字面量的开头——多字节字符按字素簇计一列。
+    private func recordBidiWarning(in char: Character, role: LexerWarning.TextRole) {
+        for scalar in char.unicodeScalars where InvisibleScalars.isBidiControl(scalar) {
+            warnings.append(
+                .bidirectionalControl(
+                    label: InvisibleScalars.label(scalar), role: role, location: currentLocation))
+        }
     }
 
     private func nextToken() throws -> Token {
@@ -323,10 +364,17 @@ public class Lexer {
                     break
                 }
                 if c == "\n" { break }
+                // 反引号内的字符同样是标识符内容：零宽与双向控制字符不因转义而放行。
+                if let forbidden = InvisibleScalars.firstForbidden(in: c) {
+                    throw LexerError.invisibleCharacter(
+                        InvisibleScalars.label(forbidden), currentLocation)
+                }
                 escaped.append(c)
                 _ = advance()
             }
             if closed && !escaped.isEmpty {
+                // 转义只跳过关键字分类，不豁免标识符规则。
+                try rejectMixedScript(escaped, loc)
                 return .identifier(escaped, loc)
             }
             return .identifier("`", loc)
@@ -342,6 +390,14 @@ public class Lexer {
         default:
             if char.isLetter {
                 return try identifierOrKeyword()
+            }
+            // 宽松词法对不可见字符不适用：它没有可读拼写，推迟到解析期只会得到一句无关的语法错误。
+            if let forbidden = InvisibleScalars.firstForbidden(in: char) {
+                throw LexerError.invisibleCharacter(InvisibleScalars.label(forbidden), loc)
+            }
+            // 组合附加符号可以续写但不能起头：单独出现时给出专用错误，不退化成杂散标识符。
+            if let mark = CombiningMarks.leading(char), CombiningMarks.isCombiningMark(mark) {
+                throw LexerError.misplacedCombiningMark(InvisibleScalars.label(mark), loc)
             }
             // 宽松词法：宽松词法——未匹配任何词法类的字符产出单字符标识符，
             // 错误报告后移到解析/语义阶段（标识符落在不合适的位置被拒）。
@@ -431,28 +487,33 @@ public class Lexer {
         // 先消费开头的 `_`，再以其为前缀续读，避免把 `_密钥` 误读成 `__密钥`
         // （readIdentifier 的循环会把起始字符再扫一遍，导致前导下划线被重复）。
         _ = advance()
-        let name = readIdentifier(startingWith: "_")
-        return makeIdentifierOrKeyword(name, loc)
+        let name = try readIdentifier(startingWith: "_")
+        return try makeIdentifierOrKeyword(name, loc)
     }
 
     private func identifierOrKeyword() throws -> Token {
         let loc = currentLocation
-        let name = readIdentifier(startingWith: "")
-        return makeIdentifierOrKeyword(name, loc)
+        let name = try readIdentifier(startingWith: "")
+        return try makeIdentifierOrKeyword(name, loc)
     }
 
-    private func readIdentifier(startingWith prefix: String) -> String {
+    private func readIdentifier(startingWith prefix: String) throws -> String {
         // IDENT 续字符放宽：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——spec 已按
         // numeric property（isNumber 语义，严格超集 \p{N}）放宽对齐本实现（见 spec「词法类」主题）；INT 字面量仍限 [0-9]。
         var name = prefix
         while let char = currentChar, char.isLetter || char.isNumber || char == "_" {
+            // 变体选择符与零宽字符能与基字合成同一个字素簇，只看簇属性会漏掉，故逐标量查。
+            if let forbidden = InvisibleScalars.firstForbidden(in: char) {
+                throw LexerError.invisibleCharacter(
+                    InvisibleScalars.label(forbidden), currentLocation)
+            }
             name.append(char)
             _ = advance()
         }
         return name
     }
 
-    private func makeIdentifierOrKeyword(_ name: String, _ loc: SourceLocation) -> Token {
+    private func makeIdentifierOrKeyword(_ name: String, _ loc: SourceLocation) throws -> Token {
         if let keyword = Keyword(rawValue: name) {
             return .keyword(keyword, loc)
         }
@@ -462,7 +523,15 @@ public class Lexer {
         if name == "false" {
             return .boolLiteral(false, loc)
         }
+        try rejectMixedScript(name, loc)
         return .identifier(name, loc)
+    }
+
+    /// 混写判定只对标识符做：关键字与字面量都是纯 ASCII，不参与。
+    private func rejectMixedScript(_ name: String, _ loc: SourceLocation) throws {
+        if IdentifierScripts.isMixed(name) {
+            throw LexerError.mixedScriptIdentifier(name, loc)
+        }
     }
 
     private func numberLiteral() throws -> Token {
@@ -649,6 +718,7 @@ public class Lexer {
                     }
                 }
             } else {
+                recordBidiWarning(in: char, role: .string)
                 if !truncated {
                     literal.append(char)
                 }
@@ -686,12 +756,14 @@ public class Lexer {
                         text.append(c)
                         _ = advance()
                         if let n = currentChar {
+                            recordBidiWarning(in: n, role: .string)
                             text.append(n)
                             _ = advance()
                         } else {
                             throw LexerError.unterminatedString(currentLocation)
                         }
                     } else {
+                        recordBidiWarning(in: c, role: .string)
                         text.append(c)
                         _ = advance()
                     }

@@ -57,12 +57,22 @@ public final class SemanticAnalyzer {
 
     public init() {
         self.symbolTable = SymbolTable()
+        installIdentityHooks()
         registerBuiltins()
+    }
+
+    /// 混淆告警挂在符号表上：同作用域的每次定义都判一次，分析器只负责收结果。
+    private func installIdentityHooks() {
+        symbolTable.onConfusableIdentifier = { [weak self] name, existing, location in
+            self?.warnings.append(
+                .confusableIdentifier(name: name, existing: existing, location: location))
+        }
     }
 
     /// 重置符号表为干净全局作用域并重新登记内建（多文件模式下每个文件独立分析用）。
     private func resetSymbolTable() {
         symbolTable = SymbolTable()
+        installIdentityHooks()
         enumCaseParents = [:]
         enumAllCases = [:]
         usedSymbols = []  // B2：每文件独立的读取引用集（跨文件同名不互相洗白）

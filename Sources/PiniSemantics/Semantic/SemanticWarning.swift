@@ -21,6 +21,9 @@ public enum SemanticWarning: Error, Equatable {
     /// 声明里用了字符串句柄：句柄由运行时段持有，`pini` 进程里没有这些符号。
     /// 与变参同一条理由 —— 通道缺口写在声明处，不留给调用点去发现。
     case stringHandleForeignSymbol(name: String, location: SourceLocation)
+    /// 同作用域内两个名字的形近骨架（UTS 39）相同而 NFC 不同：看着一样，其实是两个符号。
+    /// 只警告不改写——两者可能都是有意写的，安全提示到此为止。
+    case confusableIdentifier(name: String, existing: String, location: SourceLocation)
 }
 
 extension SemanticWarning {
@@ -41,10 +44,18 @@ extension SemanticWarning: DiagnosticProviding {
         case .duplicateErrorCode: return "\(DiagnosticDomain.warning.rawValue)-005"
         case .variadicForeignSymbol: return "\(DiagnosticDomain.warning.rawValue)-006"
         case .stringHandleForeignSymbol: return "\(DiagnosticDomain.warning.rawValue)-007"
+        case .confusableIdentifier: return "\(DiagnosticDomain.warning.rawValue)-008"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .warning }
-    public var suggestion: String? { nil }
+    public var suggestion: String? {
+        switch self {
+        case .confusableIdentifier:
+            return "两个名字看起来一样；若是有意为之可忽略，否则改名以示区别"
+        default:
+            return nil
+        }
+    }
     public var diagnosticLocation: SourceLocation {
         switch self {
         case .unusedVariable(_, let loc): return loc
@@ -54,6 +65,7 @@ extension SemanticWarning: DiagnosticProviding {
         case .duplicateErrorCode(_, _, _, let loc): return loc
         case .variadicForeignSymbol(_, let loc): return loc
         case .stringHandleForeignSymbol(_, let loc): return loc
+        case .confusableIdentifier(_, _, let loc): return loc
         }
     }
 }

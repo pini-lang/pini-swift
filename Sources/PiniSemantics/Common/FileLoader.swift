@@ -136,9 +136,10 @@ public struct FileLoader {
     /// 非 private：`ModuleDependencyLoader` 复用它，使两条加载路径共享**一份**解析实现
     /// （两处各写一遍词法/语法解析，行为会随调用点漂移）。
     static func parseUnit(fileName: String, source: String) throws -> FileUnit {
-        switch FrontEnd.collect(source: source, fileName: fileName) {
+        let scan = FrontEnd.scan(source: source, fileName: fileName)
+        switch scan.outcome {
         case .parsed(let module):
-            return FileUnit(fileName: fileName, module: module)
+            return FileUnit(fileName: fileName, module: module, warnings: scan.warnings)
         case .lexFailed(let error):
             throw error
         case .parseFailed(_, let errors):

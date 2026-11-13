@@ -154,7 +154,7 @@ _support = "../../support"
     assert(!isLetterScalar(8203), "零宽空格不是字母")
     return
 
-; 标识符判据只认字母、数字与下划线；组合附加符号不进入标识符。
+; 标识符判据：字母、数字、下划线与组合附加符号续写；组合附加符号不得起始。
 标识符判据|test() -> ():
     assert(startsIdentifier(95), "下划线可起始")
     assert(continuesIdentifier(95), "下划线可续写")
@@ -162,7 +162,10 @@ _support = "../../support"
     assert(continuesIdentifier(48), "数字可续写")
     assert(startsIdentifier(20013), "中文可起始")
     assert(continuesIdentifier(20013), "中文可续写")
-    assert(!continuesIdentifier(769), "组合附加符号不续写")
+    assert(continuesIdentifier(769), "组合附加符号可续写")
+    assert(!startsIdentifier(769), "组合附加符号不得起始")
+    assert(continuesIdentifier(8400), "组合附加符号区块二可续写")
+    assert(continuesIdentifier(65056), "组合附加符号半宽区块可续写")
     assert(!continuesIdentifier(8203), "零宽空格不续写")
     return
 
