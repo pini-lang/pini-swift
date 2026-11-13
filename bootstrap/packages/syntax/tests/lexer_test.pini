@@ -324,3 +324,12 @@ CRLF归一化|test() -> ():
     assert(词.issueCount() >= 1, "代码位应记问题")
     assert(词.warningCount() == 0, "代码位不应记警告")
     return
+
+; 真值字面量：true / false 各成一条记号，不按标识符扫描。
+真值字面量|test() -> ():
+    let lexed = lexText("true false\n")
+    assert(lexed.tokenCount() == 4, "记号数应为四")
+    断言记号(lexed.tokenAt(0), .trueLiteral, 0, 4)
+    断言记号(lexed.tokenAt(1), .falseLiteral, 5, 10)
+    断言记号(lexed.tokenAt(2), .newline, 10, 11)
+    return

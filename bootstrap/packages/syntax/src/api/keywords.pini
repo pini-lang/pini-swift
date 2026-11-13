@@ -94,8 +94,12 @@ keywordWords|func(language: KeywordLanguage,) -> (Array<String>,):
         "unroll",
     ]
 
-; 关键字匹配：与词表逐条比整词，未命中答 `.identifier`；词表顺序即关键字类别区顺序。
+; 关键字匹配：先认真假字面量（不属关键字表），再与词表逐条比整词。
 keywordKind|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
+    if matchesWord(bytes, start, end, "true"):
+        return trueLiteral
+    if matchesWord(bytes, start, end, "false"):
+        return falseLiteral
     let words = keywordWords(language)
     var index = 0
     while index < len(words):
