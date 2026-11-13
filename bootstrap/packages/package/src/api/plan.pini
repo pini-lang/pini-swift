@@ -9,11 +9,12 @@ interfacePath: String = ""
 executablePath: String = ""
 isBuiltByDefault: Bool = true
 
-; 包计划：包名、包根相对路径与按清单顺序排好的 target。
+; 包计划：包名、包根相对路径、构建排除项与按清单顺序排好的 target。
 (PackagePlan)
 name: String = ""
 rootPath: String = ""
 targets: Array<TargetPlan> = []
+excludes: Array<String> = []
 
 ; 构建计划：根、profile、拓扑序上的包与全部错误；错误非空时 packages 为空。
 (BuildPlan)
@@ -134,6 +135,7 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (Packa
     var out = PackagePlan()
     out.name = pkg.name
     out.rootPath = pkg.rootPath
+    out.excludes = pkg.excludes
     let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
     var i = 0
     while i < len(pkg.targets):
@@ -157,6 +159,10 @@ sourceRootOf|func(target: TargetSpec,) -> (String,):
     if isTargetKind(target.kind, targetTest):
         return target.entry
     return "src"
+
+; 测试目标判定：测试目标不进普通构建产物，装载面据此决定是否并入测试源码。
+isTestTarget|func(target: TargetPlan,) -> (Bool,):
+    return isTargetKind(target.kind, targetTest)
 
 ; 可执行产物名在工作区内唯一：跨包同名会让两份产物落到同一个 bin 路径。
 checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
@@ -288,7 +294,7 @@ sortedTexts|func(items: Array<String>,) -> (Array<String>,):
     while i < len(out):
         let value = out[i]
         var j = i - 1
-        while j >= 0 && compareText(out[j], value) > 0:
+        while j >= 0 && comparePlanText(out[j], value) > 0:
             out[j + 1] = out[j]
             j = j - 1
         out[j + 1] = value
@@ -296,7 +302,7 @@ sortedTexts|func(items: Array<String>,) -> (Array<String>,):
     return out
 
 ; 字节序比较：先比公共前缀，再比长度；返回 -1 / 0 / 1。
-compareText|func(a: String, b: String,) -> (I32,):
+comparePlanText|func(a: String, b: String,) -> (I32,):
     let left = tempUtf8Bytes(a)
     let right = tempUtf8Bytes(b)
     var i = 0

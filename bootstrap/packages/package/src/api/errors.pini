@@ -34,7 +34,7 @@ manifestError|func(kind: ManifestErrorKind, path: String, detail: String,) -> (M
     return out
 
 ; 类别名：诊断消息与测试断言共用一份拼写。
-kindName|func(kind: ManifestErrorKind,) -> (String,):
+manifestErrorKindName|func(kind: ManifestErrorKind,) -> (String,):
     match kind:
         case errorTomlShape:
             return "行不是表头也不是键值对"
@@ -76,10 +76,10 @@ kindName|func(kind: ManifestErrorKind,) -> (String,):
 
 ; 同类别判定：枚举相等比较不可用，按名称比。
 isErrorKind|func(e: ManifestError, kind: ManifestErrorKind,) -> (Bool,):
-    return kindName(e.kind) == kindName(kind)
+    return manifestErrorKindName(e.kind) == manifestErrorKindName(kind)
 
 ; 错误文本：路径 + 类别名 + 细节；细节为空时不印空括号。
 manifestErrorText|func(e: ManifestError,) -> (String,):
     if len(e.detail) == 0:
-        return e.path + "：" + kindName(e.kind)
-    return e.path + "：" + kindName(e.kind) + "（" + e.detail + "）"
+        return e.path + "：" + manifestErrorKindName(e.kind)
+    return e.path + "：" + manifestErrorKindName(e.kind) + "（" + e.detail + "）"

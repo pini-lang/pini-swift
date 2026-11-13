@@ -10,12 +10,13 @@ name: String = ""
 kind: TargetKind = .targetLibrary
 entry: String = ""
 
-; 包清单：包名、包根相对路径、声明依赖与全部目标。
+; 包清单：包名、包根相对路径、声明依赖、全部目标与构建排除项。
 (PackageManifest)
 name: String = ""
 rootPath: String = ""
 requires: Array<String> = []
 targets: Array<TargetSpec> = []
+excludes: Array<String> = []
 
 ; 工作区清单：根路径、成员相对路径与构建 profile。
 (WorkspaceManifest)
@@ -74,6 +75,7 @@ parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (Pac
         out.errors = out.errors.append(manifestError(errorPackageName, path, manifest.name))
     manifest.requires = tomlKeys(doc, "require")
     manifest.targets = collectTargets(doc)
+    manifest.excludes = tomlArray(doc, "build", "exclude")
     out.errors = checkTargets(manifest, path, out.errors)
     out.manifest = manifest
     return out
