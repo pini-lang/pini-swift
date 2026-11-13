@@ -1,0 +1,157 @@
+[resolve_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 造解析单元：从源码字符串装载；装载失败即断言。
+造解析单元|func(path: String, src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path, src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    return loaded.unit
+
+; 单名字源码：函数体只有一个标识符表达式。
+单名字源码|func() -> (String,):
+    return "f|func() -> ():\n    return y\n"
+
+; 成员调用源码：接收者标识符、成员节点与调用节点各一个。
+成员调用源码|func() -> (String,):
+    return "f|func() -> ():\n    return a.b()\n"
+
+; 首个标识符：按表达式池序找第一个 identifier 节点，找不到答 -1。
+首个标识符|func(unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isIdentifierExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 首个成员：按表达式池序找第一个 member 节点。
+首个成员|func(unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isMemberExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 首个调用：按表达式池序找第一个 call 节点。
+首个调用|func(unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isCallExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 表长对齐：每单元的解析表与表达式池同长，初值全为未解析。
+表长对齐|test() -> ():
+    let unit = 造解析单元("packages/p/src/api/a.pini", 单名字源码())
+    let table = makeResolveTable([unit])
+    assert(unitResolveCount(table, 0) == unit.ast.exprCount(), "表长应等于表达式数")
+    assert(resolvedCount(table, 0) == 0, "初值应全为未解析")
+    assert(isResolveForm(resolveAt(table, 0, 首个标识符(unit)).form, resolveNone), "初值形态应为空")
+    return
+
+; 写入与读取：原地写入目标节点；新建的表不带旧写入。
+写入读取|test() -> ():
+    let unit = 造解析单元("packages/p/src/api/a.pini", 单名字源码())
+    let table = makeResolveTable([unit])
+    let at = 首个标识符(unit)
+    var entry = ResolveEntry()
+    entry.form = resolveLocal
+    entry.symbol = 3
+    entry.decl = 4
+    let changed = writeResolve(table, 0, at, entry)
+    assert(isResolveForm(resolveAt(changed, 0, at).form, resolveLocal), "目标节点应写入")
+    assert(resolveAt(changed, 0, at).symbol == 3, "符号下标应原样保留")
+    let fresh = makeResolveTable([unit])
+    assert(isResolveForm(resolveAt(fresh, 0, at).form, resolveNone), "新建表不得带旧写入")
+    return
+
+; 越界：单元或节点越界时写入无效，读取答空记录。
+越界|test() -> ():
+    let unit = 造解析单元("packages/p/src/api/a.pini", 单名字源码())
+    let table = makeResolveTable([unit])
+    var entry = ResolveEntry()
+    entry.form = resolveTop
+    let same = writeResolve(table, 99, 0, entry)
+    assert(unitResolveCount(same, 99) == 0, "越界单元不应有表")
+    assert(isResolveForm(resolveAt(same, 99, 0).form, resolveNone), "越界读取应答空")
+    let also = writeResolve(table, 0, 999999, entry)
+    assert(isResolveForm(resolveAt(also, 0, 999999).form, resolveNone), "越界节点不应写入")
+    return
+
+; 标识符覆盖：未写时首个缺失指向该节点，写入后覆盖完整。
+标识符覆盖|test() -> ():
+    let unit = 造解析单元("packages/p/src/api/a.pini", 单名字源码())
+    let table = makeResolveTable([unit])
+    let at = 首个标识符(unit)
+    let before = resolveCoverage(table, unit, 0)
+    assert(before.required == 1, "应有一个必填节点")
+    assert(before.covered == 0, "初值不应覆盖")
+    assert(before.firstMissing == at, "首个缺失应指向标识符")
+    var entry = ResolveEntry()
+    entry.form = resolveLocal
+    let after = resolveCoverage(writeResolve(table, 0, at, entry), unit, 0)
+    assert(after.covered == 1, "写入后应覆盖")
+    assert(after.firstMissing < 0, "不应再有缺失")
+    return
+
+; 成员调用覆盖：标识符、成员与调用各一条，逐个写入才完整。
+成员调用覆盖|test() -> ():
+    let unit = 造解析单元("packages/p/src/api/a.pini", 成员调用源码())
+    let table = makeResolveTable([unit])
+    let ident = 首个标识符(unit)
+    let member = 首个成员(unit)
+    let call = 首个调用(unit)
+    assert(ident >= 0 && member >= 0 && call >= 0, "三个节点都应存在")
+    let before = resolveCoverage(table, unit, 0)
+    assert(before.required == 3, "应有三条必填")
+    var callEntry = ResolveEntry()
+    callEntry.form = resolveTop
+    let partial = resolveCoverage(writeResolve(table, 0, call, callEntry), unit, 0)
+    assert(partial.covered == 1, "只写调用应覆盖一条")
+    assert(partial.firstMissing == ident, "首个缺失应按池序指向标识符")
+    var memberEntry = ResolveEntry()
+    memberEntry.form = resolveMember
+    var identEntry = ResolveEntry()
+    identEntry.form = resolveLocal
+    let 中间 = writeResolve(table, 0, member, memberEntry)
+    let full = writeResolve(中间, 0, ident, identEntry)
+    let after = resolveCoverage(full, unit, 0)
+    assert(after.covered == 3, "三条都应覆盖")
+    assert(after.firstMissing < 0, "不应再有缺失")
+    return
+
+; 形式名：同一形态按名称判等，空形态不与其他形态混同。
+形式名|test() -> ():
+    assert(isResolveForm(resolveNone, resolveNone), "空形态应自等")
+    assert(!isResolveForm(resolveNone, resolveTop), "空形态不得等于顶层")
+    assert(resolveFormName(resolveLocal) == "局部", "局部形态名应固定")
+    return
+
+; 单元分表：按路径排序后单元下标固定，写一个单元不碰另一个。
+单元分表|test() -> ():
+    let 甲 = 造解析单元("packages/p/src/api/b.pini", 单名字源码())
+    let 乙 = 造解析单元("packages/p/src/api/a.pini", 单名字源码())
+    let units = sortedUnits([甲, 乙])
+    let table = makeResolveTable(units)
+    assert(units[0].path == "packages/p/src/api/a.pini", "排序后首单元应为 a.pini")
+    assert(unitResolveCount(table, 0) == units[0].ast.exprCount(), "首单元表长应相等")
+    assert(unitResolveCount(table, 1) == units[1].ast.exprCount(), "次单元表长应相等")
+    let at = 首个标识符(units[0])
+    var entry = ResolveEntry()
+    entry.form = resolveTop
+    let changed = writeResolve(table, 0, at, entry)
+    assert(isResolved(resolveAt(changed, 0, at)), "首单元应写入")
+    assert(isResolveForm(resolveAt(changed, 1, at).form, resolveNone), "次单元不得被写")
+    return
+
+; 表确定：同一单元建两次，表长与已解析数相同。
+表确定|test() -> ():
+    let unit = 造解析单元("packages/p/src/api/a.pini", 单名字源码())
+    let first = makeResolveTable([unit])
+    let second = makeResolveTable([unit])
+    assert(unitResolveCount(first, 0) == unitResolveCount(second, 0), "表长应相同")
+    assert(resolvedCount(first, 0) == resolvedCount(second, 0), "已解析数应相同")
+    return
