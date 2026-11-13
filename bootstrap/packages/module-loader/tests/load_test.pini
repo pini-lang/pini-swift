@@ -62,7 +62,7 @@ packageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
 抽样零诊断|test() -> ():
     let root = moduleRoot() + "/../.."
     let plan: BuildPlan = package.planWorkspace(root)
-    let names: Array<String> = ["support", "module-loader"]
+    let names: Array<String> = ["support", "module_loader"]
     var i = 0
     while i < len(names):
         let at = packageIndex(plan, names[i])
@@ -78,7 +78,7 @@ packageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
 测试目标含两份源码|test() -> ():
     let root = moduleRoot() + "/../.."
     let plan: BuildPlan = package.planWorkspace(root)
-    let at = packageIndex(plan, "module-loader")
+    let at = packageIndex(plan, "module_loader")
     assert(at >= 0, "计划里应有 module-loader")
     let pkg: PackagePlan = plan.packages[at]
     var targetAt = -1
