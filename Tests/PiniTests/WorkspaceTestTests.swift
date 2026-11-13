@@ -303,7 +303,7 @@ struct WorkspaceTestTests {
                  ✓ 排除项判定
                  ✓ 路径排序
                  ✓ 排序与输入顺序无关
-                包 semantics / semantics-tests（15 个测试）
+                包 semantics / semantics-tests（34 个测试）
                  ✓ 顶层重声明
                  ✓ 成员同名
                  ✓ 扩展块内同名
@@ -319,7 +319,26 @@ struct WorkspaceTestTests {
                  ✓ 导出判定
                  ✓ 键按NFC判等
                  ✓ 键不覆盖原文
-                结果: 159 通过, 0 失败
+                 ✓ 标量文本
+                 ✓ 容器文本
+                 ✓ 容器正例
+                 ✓ 可选指针文本
+                 ✓ 元组函数文本
+                 ✓ 嵌套文本
+                 ✓ 等价正例
+                 ✓ 等价反例
+                 ✓ 可赋值正例
+                 ✓ 可赋值反例
+                 ✓ 泛型个数
+                 ✓ 结果约束
+                 ✓ 未声明类型
+                 ✓ 名字非类型
+                 ✓ 直接自引用
+                 ✓ 间接成环
+                 ✓ 容器断开环
+                 ✓ 类型顺序无关
+                 ✓ 真实包类型
+                结果: 178 通过, 0 失败
 
                 """
         #expect(result.stdout == expected)

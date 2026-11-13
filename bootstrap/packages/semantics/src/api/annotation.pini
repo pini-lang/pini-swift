@@ -1,0 +1,551 @@
+[annotation|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 类型世界：全部编译单元与符号表；具名类型查声明、字段环查成员体都从这里取。
+(TypeWorld)
+units: Array<CompilationUnit> = []
+table: SymbolTable = SymbolTable()
+
+; 类型绑定：单元下标与声明下标对上类型池下标，供后续检查与降载消费。
+(TypeBinding)
+unit: I32 = -1
+decl: I32 = -1
+typeId: I32 = -1
+
+; 类型成员：名义类型的字段或载荷类型，连同声明位置；环检测沿这张表走值语义链。
+(TypeMember)
+owner: String = ""
+ownerKey: Array<U8> = []
+form: I32 = 0
+file: String = ""
+offset: I32 = 0
+types: Array<I32> = []
+
+; 解析上下文：源文本、语法树与文件路径在一次单元解析内固定。
+(TypeCursor)
+world: TypeWorld = TypeWorld()
+file: String = ""
+ast: Ast = Ast()
+bytes: Array<U8> = []
+
+; 单次解析结果：池与根下标；根为 -1 表示这次解析失败。
+(TypeResolution)
+pool: TypePool = TypePool()
+root: I32 = -1
+
+; 解析过程：池、绑定与成员表随遍历累积；last 是本轮最后一个根下标。
+(TypePass)
+pool: TypePool = TypePool()
+bindings: Array<TypeBinding> = []
+members: Array<TypeMember> = []
+last: I32 = -1
+
+; 环遍历状态：state 按池下标记 0 白、1 灰、2 黑。
+(TypeWalk)
+state: Array<I32> = []
+cycle: Bool = false
+
+; 类型表：池、按路径与声明序排好的绑定、聚合成员；错误统一挂在池上。
+(TypeTable)
+pool: TypePool = TypePool()
+bindings: Array<TypeBinding> = []
+members: Array<TypeMember> = []
+
+((TypeTable))
+; 可用：池没有类型错误。
+isOK|self() -> (Bool,):
+    return self.pool.isOK()
+errorCount|self() -> (I32,):
+    return self.pool.errorCount()
+errorAt|self(index: I32,) -> (TypeError,):
+    return self.pool.errorAt(index)
+bindingCount|self() -> (I32,):
+    return len(self.bindings)
+; 声明查类型：同一单元内同一声明只留一条绑定；找不到答 -1。
+typeOf|self(unit: I32, decl: I32,) -> (I32,):
+    var i = 0
+    while i < len(self.bindings):
+        if self.bindings[i].unit == unit && self.bindings[i].decl == decl:
+            return self.bindings[i].typeId
+        i = i + 1
+    return -1
+; 声明查文本：先查绑定再出规范化文本，诊断与接口产物共用这一条路径。
+textOf|self(unit: I32, decl: I32,) -> (String,):
+    let at = self.typeOf(unit, decl)
+    if at < 0:
+        return "<无效>"
+    return typeText(self.pool, at)
+
+; 内建值类型：数值、布尔、字符、字符串与内建错误类型；具名解析先查这张表。
+isBuiltinType|func(name: String,) -> (Bool,):
+    if name == "I8" || name == "I16":
+        return true
+    if name == "I32" || name == "I64":
+        return true
+    if name == "U8" || name == "U16":
+        return true
+    if name == "U32" || name == "U64":
+        return true
+    if name == "F32" || name == "F64":
+        return true
+    if name == "Bool" || name == "Char" || name == "String":
+        return true
+    if name == "Error" || name == "CancelError":
+        return true
+    return false
+
+; 容器实参个数：可接受的最小个数，非容器答 -1。
+containerMinArity|func(name: String,) -> (I32,):
+    if name == "Array" || name == "Set" || name == "Optional":
+        return 1
+    if name == "Dictionary":
+        return 2
+    if name == "Result":
+        return 1
+    return -1
+
+; 容器实参判定：结果类型允许省略错误实参，其余只认一个数。
+containerAccepts|func(name: String, count: I32,) -> (Bool,):
+    if name == "Array" || name == "Set" || name == "Optional":
+        return count == 1
+    if name == "Dictionary":
+        return count == 2
+    if name == "Result":
+        return count == 1 || count == 2
+    return false
+
+; 容器类别：数组、字典与集合同归集合类，其余各自成类。
+containerClass|func(name: String,) -> (TypeClass,):
+    if name == "Array" || name == "Set" || name == "Dictionary":
+        return typeClassCollection
+    if name == "Optional":
+        return typeClassOptional
+    return typeClassResult
+
+; 声明查类别码：按文件与源内偏移在单元里找顶层声明；找不到答 -1。
+declKindOf|func(world: TypeWorld, file: String, offset: I32,) -> (I32,):
+    var i = 0
+    while i < len(world.units):
+        if world.units[i].path == file:
+            let ast = world.units[i].ast
+            var j = 0
+            while j < len(ast.items):
+                let decl = ast.decls[ast.items[j]]
+                if decl.start == offset:
+                    return decl.kind
+                j = j + 1
+        i = i + 1
+    return -1
+
+; 解析一个类型节点：失败时根为 -1，错误已记在池上。
+resolveNode|func(cursor: TypeCursor, pool: TypePool, typeId: I32,) -> (TypeResolution,):
+    var out = TypeResolution()
+    out.pool = pool
+    if typeId < 0 || typeId >= len(cursor.ast.types):
+        return out
+    let node = cursor.ast.typeAt(typeId)
+    if isOptionalTypeCode(node.kind):
+        return wrapResolved(cursor, pool, typeClassOptional, "", cursor.ast.typeChild(typeId, 0))
+    if isPointerTypeCode(node.kind):
+        return wrapResolved(cursor, pool, typeClassPointer, "", cursor.ast.typeChild(typeId, 0))
+    if isTupleTypeCode(node.kind):
+        return resolveTuple(cursor, pool, node)
+    if isFunctionTypeCode(node.kind):
+        return resolveFunction(cursor, pool, node)
+    let name = decodeRange(cursor.bytes, node.nameStart, node.nameEnd)
+    if isGenericTypeCode(node.kind):
+        return resolveGeneric(cursor, pool, node, name)
+    if isNamedTypeCode(node.kind):
+        return resolveNamed(cursor, pool, node, name)
+    return out
+
+; 单层包装：可选与指针共用一条路径，子类型失败则整条失败。
+wrapResolved|func(cursor: TypeCursor, pool: TypePool, kind: TypeClass, name: String, child: I32,) -> (TypeResolution,):
+    var out = TypeResolution()
+    let inner = resolveNode(cursor, pool, child)
+    if inner.root < 0:
+        out.pool = inner.pool
+        return out
+    var kids: Array<I32> = []
+    kids = kids.append(inner.root)
+    let inserted = intern(inner.pool, kind, name, kids, -1)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out
+
+; 元组：逐个解析分量，空表即 `()`。
+resolveTuple|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (TypeResolution,):
+    var out = TypeResolution()
+    var ids: Array<I32> = []
+    var failed = false
+    var working = pool
+    var i = 0
+    while i < len(node.kids):
+        let item = resolveNode(cursor, working, node.kids[i])
+        working = item.pool
+        if item.root < 0:
+            failed = true
+        else:
+            ids = ids.append(item.root)
+        i = i + 1
+    out.pool = working
+    if failed:
+        return out
+    let inserted = intern(working, typeClassTuple, "", ids, -1)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out
+
+; 函数类型：形参逐个解析，返回类型单独解析；返回缺失按失败收尾。
+resolveFunction|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (TypeResolution,):
+    var out = TypeResolution()
+    var ids: Array<I32> = []
+    var failed = false
+    var working = pool
+    var i = 0
+    while i < len(node.kids):
+        let item = resolveNode(cursor, working, node.kids[i])
+        working = item.pool
+        if item.root < 0:
+            failed = true
+        else:
+            ids = ids.append(item.root)
+        i = i + 1
+    let ret = resolveNode(cursor, working, node.ret)
+    working = ret.pool
+    if ret.root < 0:
+        failed = true
+    out.pool = working
+    if failed:
+        return out
+    let inserted = intern(working, typeClassFunction, "", ids, ret.root)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out
+
+; 具名类型：内建表、容器名、符号表依次判；容器不带实参即报个数不符。
+resolveNamed|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String,) -> (TypeResolution,):
+    var out = TypeResolution()
+    out.pool = pool
+    if isBuiltinType(name):
+        let inserted = intern(pool, typeClassScalar, name, [], -1)
+        out.pool = inserted.pool
+        out.root = inserted.id
+        return out
+    if containerMinArity(name) >= 0:
+        out.pool = addTypeError(pool, makeTypeError(typeErrorArityMismatch, cursor.file, node.start, name))
+        return out
+    let at = cursor.world.table.topIndex(keyOfText(name))
+    if at < 0:
+        out.pool = addTypeError(pool, makeTypeError(typeErrorUnknownName, cursor.file, node.start, name))
+        return out
+    let symbol = cursor.world.table.symbolAt(at)
+    let code = declKindOf(cursor.world, symbol.file, symbol.offset)
+    if isStructDeclCode(code):
+        return internNamed(pool, typeClassStruct, name)
+    if isObjectDeclCode(code):
+        return internNamed(pool, typeClassObject, name)
+    if isEnumDeclCode(code):
+        return internNamed(pool, typeClassEnum, name)
+    out.pool = addTypeError(pool, makeTypeError(typeErrorNotTypeName, cursor.file, node.start, name))
+    return out
+
+; 具名条目驻留：结构、对象与枚举共用一条。
+internNamed|func(pool: TypePool, kind: TypeClass, name: String,) -> (TypeResolution,):
+    var out = TypeResolution()
+    let inserted = intern(pool, kind, name, [], -1)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out
+
+; 泛型实例：容器按实参个数与约束判定，内建与用户类型在本批都不带实参。
+resolveGeneric|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String,) -> (TypeResolution,):
+    var out = TypeResolution()
+    var ids: Array<I32> = []
+    var failed = false
+    var working = pool
+    var i = 0
+    while i < len(node.kids):
+        let item = resolveNode(cursor, working, node.kids[i])
+        working = item.pool
+        if item.root < 0:
+            failed = true
+        else:
+            ids = ids.append(item.root)
+        i = i + 1
+    out.pool = working
+    if failed:
+        return out
+    if containerMinArity(name) < 0:
+        if isBuiltinType(name) || cursor.world.table.topIndex(keyOfText(name)) >= 0:
+            out.pool = addTypeError(working, makeTypeError(typeErrorArityMismatch, cursor.file, node.start, name))
+            return out
+        out.pool = addTypeError(working, makeTypeError(typeErrorUnknownName, cursor.file, node.start, name))
+        return out
+    if !containerAccepts(name, len(ids)):
+        out.pool = addTypeError(working, makeTypeError(typeErrorArityMismatch, cursor.file, node.start, name))
+        return out
+    if name == "Result" && len(ids) == 2 && !isBuiltinError(ids[1], working):
+        out.pool = addTypeError(working, makeTypeError(typeErrorConstraint, cursor.file, node.start, name))
+        return out
+    let inserted = intern(working, containerClass(name), name, ids, -1)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out
+
+; 结果类型的错误实参：只认内建 Error；其余在约束处报错。
+isBuiltinError|func(id: I32, pool: TypePool,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    return isTypeClass(entry.kind, typeClassScalar) && entry.name == "Error"
+
+; 解析一个单元：按顶层序走，声明上的全部标注各留一条绑定。
+resolveUnit|func(stage: TypePass, world: TypeWorld, unitIndex: I32,) -> (TypePass,):
+    let unit = world.units[unitIndex]
+    var cursor = TypeCursor()
+    cursor.world = world
+    cursor.file = unit.path
+    cursor.ast = unit.ast
+    cursor.bytes = tempUtf8Bytes(unit.text)
+    var out = stage
+    var i = 0
+    while i < len(unit.ast.items):
+        out = resolveDecl(out, cursor, unitIndex, unit.ast.items[i])
+        i = i + 1
+    return out
+
+; 顶层声明分派：类型连带成员，函数连带签名，变量单条，扩展块只走签名。
+resolveDecl|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I32,) -> (TypePass,):
+    let decl = cursor.ast.decls[declId]
+    var out = stage
+    if isTypeDecl(decl):
+        let owner = decodeRange(cursor.bytes, decl.nameStart, decl.nameEnd)
+        out = openMember(out, owner, decl.kind, cursor.file, decl.start)
+        return resolveNominalMembers(out, cursor, unitIndex, decl, owner)
+    if isFunctionDeclCode(decl.kind):
+        out = resolveOne(out, cursor, unitIndex, declId, decl.typeId)
+        return resolveSignature(out, cursor, unitIndex, decl)
+    if isVariableDeclCode(decl.kind):
+        return resolveOne(out, cursor, unitIndex, declId, decl.typeId)
+    if isExtensionDeclCode(decl.kind):
+        var i = 0
+        while i < len(decl.kids):
+            let member = cursor.ast.decls[decl.kids[i]]
+            if isFunctionDeclCode(member.kind):
+                out = resolveOne(out, cursor, unitIndex, decl.kids[i], member.typeId)
+                out = resolveSignature(out, cursor, unitIndex, member)
+            i = i + 1
+        return out
+    return out
+
+; 开一条成员记录：类型声明每出现一次建一条，字段与载荷随后往里追加。
+openMember|func(stage: TypePass, owner: String, form: I32, file: String, offset: I32,) -> (TypePass,):
+    var out = stage
+    var member = TypeMember()
+    member.owner = owner
+    member.ownerKey = keyOfText(owner)
+    member.form = form
+    member.file = file
+    member.offset = offset
+    out.members = out.members.append(member)
+    return out
+
+; 名义类型的成员：字段与枚举载荷进成员表，方法只走签名。
+resolveNominalMembers|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, decl: DeclNode, owner: String,) -> (TypePass,):
+    var out = stage
+    var i = 0
+    while i < len(decl.kids):
+        let member = cursor.ast.decls[decl.kids[i]]
+        if isFieldDeclCode(member.kind):
+            out = resolveOne(out, cursor, unitIndex, decl.kids[i], member.typeId)
+            out = appendMemberType(out, owner, out.last)
+        if isVariantDeclCode(member.kind):
+            out = resolveVariantTypes(out, cursor, unitIndex, member, owner)
+        if isFunctionDeclCode(member.kind):
+            out = resolveOne(out, cursor, unitIndex, decl.kids[i], member.typeId)
+            out = resolveSignature(out, cursor, unitIndex, member)
+        i = i + 1
+    return out
+
+; 枚举载荷：每个参数的类型都算存储成员，参与环检测。
+resolveVariantTypes|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, variant: DeclNode, owner: String,) -> (TypePass,):
+    var out = stage
+    var i = 0
+    while i < len(variant.kids):
+        let param = cursor.ast.decls[variant.kids[i]]
+        if isParamDeclCode(param.kind):
+            out = resolveOne(out, cursor, unitIndex, variant.kids[i], param.typeId)
+            out = appendMemberType(out, owner, out.last)
+        i = i + 1
+    return out
+
+; 函数签名：返回类型与各参数类型各留一条绑定。
+resolveSignature|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, decl: DeclNode,) -> (TypePass,):
+    var out = stage
+    var i = 0
+    while i < len(decl.kids):
+        let param = cursor.ast.decls[decl.kids[i]]
+        if isParamDeclCode(param.kind):
+            out = resolveOne(out, cursor, unitIndex, decl.kids[i], param.typeId)
+        i = i + 1
+    return out
+
+; 追加成员类型：根无效时跳过，成员表只收成功解析的下标。
+appendMemberType|func(stage: TypePass, owner: String, typeId: I32,) -> (TypePass,):
+    if typeId < 0:
+        return stage
+    let key = keyOfText(owner)
+    var out = stage
+    var i = 0
+    while i < len(out.members):
+        if sameKey(out.members[i].ownerKey, key):
+            out.members[i].types = out.members[i].types.append(typeId)
+            return out
+        i = i + 1
+    return out
+
+; 解析一条声明上的标注：成功则登记绑定，失败只留下池里的错误。
+resolveOne|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I32, typeId: I32,) -> (TypePass,):
+    var out = stage
+    out.last = -1
+    if typeId < 0:
+        return out
+    let resolved = resolveNode(cursor, out.pool, typeId)
+    out.pool = resolved.pool
+    if resolved.root < 0:
+        return out
+    var binding = TypeBinding()
+    binding.unit = unitIndex
+    binding.decl = declId
+    binding.typeId = resolved.root
+    out.bindings = out.bindings.append(binding)
+    out.last = resolved.root
+    return out
+
+; 解析一个包：单元按路径排序后逐条解析，最后判字段环。
+resolvePackage|func(units: Array<CompilationUnit>, table: SymbolTable,) -> (TypeTable,):
+    var world = TypeWorld()
+    world.units = sortedUnits(units)
+    world.table = table
+    var stage = TypePass()
+    var i = 0
+    while i < len(world.units):
+        stage = resolveUnit(stage, world, i)
+        i = i + 1
+    stage = checkTypeCycles(stage)
+    var out = TypeTable()
+    out.pool = stage.pool
+    out.bindings = stage.bindings
+    out.members = stage.members
+    return out
+
+; 字段环：先判直接自引用，再沿值语义链走一遍间接环；对象与堆容器到此为止。
+checkTypeCycles|func(stage: TypePass,) -> (TypePass,):
+    var out = stage
+    var i = 0
+    while i < len(out.members):
+        let member = out.members[i]
+        if isStructDeclCode(member.form) || isEnumDeclCode(member.form):
+            out = checkDirectCycle(out, member)
+        i = i + 1
+    if !out.pool.isOK():
+        return out
+    var state: Array<I32> = []
+    var n = 0
+    while n < out.pool.count():
+        state = state.append(0)
+        n = n + 1
+    var j = 0
+    while j < len(out.members):
+        let member = out.members[j]
+        if isStructDeclCode(member.form) || isEnumDeclCode(member.form):
+            var k = 0
+            while k < len(member.types):
+                let walked = walkAggregate(out.pool, out.members, member.types[k], state)
+                state = walked.state
+                if walked.cycle:
+                    out.pool = addTypeError(out.pool, makeTypeError(typeErrorRecursiveCycle, member.file, member.offset, member.owner))
+                    k = len(member.types)
+                k = k + 1
+        j = j + 1
+    return out
+
+; 直接自引用：成员类型经元组、可选与结果展开后立即回到所有者。
+checkDirectCycle|func(stage: TypePass, member: TypeMember,) -> (TypePass,):
+    var out = stage
+    var i = 0
+    while i < len(member.types):
+        if unfoldsToOrigin(out.pool, member.types[i], member.ownerKey):
+            out.pool = addTypeError(out.pool, makeTypeError(typeErrorSelfReference, member.file, member.offset, member.owner))
+            return out
+        i = i + 1
+    return out
+
+; 值语义展开：只有元组、可选与结果把大小传给分量；集合、指针与对象在此终止。
+unfoldsToOrigin|func(pool: TypePool, id: I32, originKey: Array<U8>,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if isTypeClass(entry.kind, typeClassStruct) || isTypeClass(entry.kind, typeClassEnum):
+        return sameKey(entry.key, originKey)
+    if isTypeClass(entry.kind, typeClassTuple) || isTypeClass(entry.kind, typeClassOptional) || isTypeClass(entry.kind, typeClassResult):
+        var i = 0
+        while i < len(entry.kids):
+            if unfoldsToOrigin(pool, entry.kids[i], originKey):
+                return true
+            i = i + 1
+    return false
+
+; 环遍历：灰节点被再次走到即成环；集合、指针、对象与函数不传大小，直接标黑。
+walkAggregate|func(pool: TypePool, members: Array<TypeMember>, id: I32, state: Array<I32>,) -> (TypeWalk,):
+    var out = TypeWalk()
+    out.state = state
+    if id < 0 || id >= len(pool.entries) || id >= len(state):
+        return out
+    if state[id] == 1:
+        out.cycle = true
+        return out
+    if state[id] == 2:
+        return out
+    let entry = pool.entries[id]
+    if isTypeClass(entry.kind, typeClassScalar) || isTypeClass(entry.kind, typeClassPointer):
+        out.state[id] = 2
+        return out
+    if isTypeClass(entry.kind, typeClassObject) || isTypeClass(entry.kind, typeClassCollection):
+        out.state[id] = 2
+        return out
+    if isTypeClass(entry.kind, typeClassFunction) || isTypeClass(entry.kind, typeClassGeneric):
+        out.state[id] = 2
+        return out
+    out.state[id] = 1
+    if isTypeClass(entry.kind, typeClassStruct) || isTypeClass(entry.kind, typeClassEnum):
+        let at = memberIndexOf(members, entry.key)
+        if at >= 0:
+            var i = 0
+            while i < len(members[at].types):
+                let walked = walkAggregate(pool, members, members[at].types[i], out.state)
+                out.state = walked.state
+                if walked.cycle:
+                    out.cycle = true
+                i = i + 1
+    else:
+        var i = 0
+        while i < len(entry.kids):
+            let walked = walkAggregate(pool, members, entry.kids[i], out.state)
+            out.state = walked.state
+            if walked.cycle:
+                out.cycle = true
+            i = i + 1
+    out.state[id] = 2
+    return out
+
+; 成员表按所有者键找：找不到答 -1，说明该名义类型没有记录在案的存储成员。
+memberIndexOf|func(members: Array<TypeMember>, key: Array<U8>,) -> (I32,):
+    var i = 0
+    while i < len(members):
+        if sameKey(members[i].ownerKey, key):
+            return i
+        i = i + 1
+    return -1

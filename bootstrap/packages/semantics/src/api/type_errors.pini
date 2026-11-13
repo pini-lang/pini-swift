@@ -1,0 +1,46 @@
+; 类型错误类别：未知名字、非类型名、实参个数、约束、直接自引用与间接成环各一类。
+[TypeErrorKind]
+typeErrorUnknownName
+typeErrorNotTypeName
+typeErrorArityMismatch
+typeErrorConstraint
+typeErrorSelfReference
+typeErrorRecursiveCycle
+
+; 类型错误：类别、文件、源内字节偏移、相关名字与细节；位置指向标注起点。
+(TypeError)
+kind: TypeErrorKind = .typeErrorUnknownName
+file: String = ""
+offset: I32 = 0
+name: String = ""
+detail: String = ""
+
+; 类别名：诊断、测试与交付回执共用一份拼写。
+typeErrorName|func(kind: TypeErrorKind,) -> (String,):
+    match kind:
+        case typeErrorUnknownName:
+            return "类型未声明"
+        case typeErrorNotTypeName:
+            return "名字不是类型"
+        case typeErrorArityMismatch:
+            return "泛型实参个数不符"
+        case typeErrorConstraint:
+            return "泛型约束不满足"
+        case typeErrorSelfReference:
+            return "类型直接包含自身"
+        case typeErrorRecursiveCycle:
+            return "类型经字段成环"
+    return "类型错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isTypeError|func(error: TypeError, kind: TypeErrorKind,) -> (Bool,):
+    return typeErrorName(error.kind) == typeErrorName(kind)
+
+; 造错误：位置取标注起点，细节留空由调用方补。
+makeTypeError|func(kind: TypeErrorKind, file: String, offset: I32, name: String,) -> (TypeError,):
+    var out = TypeError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    return out

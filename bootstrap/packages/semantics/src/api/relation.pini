@@ -1,0 +1,111 @@
+; 类型关系：等价按结构逐位比，可赋值在等价之外只放行标量拓宽、字符到串与两类包装。
+; 名义类型比查找键，拼写不参与；泛型实参一律不变，容器不因实参拓宽而互赋。
+
+; 等价：同类同形即等价，名义名按 NFC 键比，函数另比返回。
+sameType|func(pool: TypePool, first: I32, second: I32,) -> (Bool,):
+    if first == second:
+        return true
+    if first < 0 || second < 0:
+        return false
+    if first >= len(pool.entries) || second >= len(pool.entries):
+        return false
+    let a = pool.entries[first]
+    let b = pool.entries[second]
+    if typeClassName(a.kind) != typeClassName(b.kind):
+        return false
+    if isTypeClass(a.kind, typeClassScalar):
+        return sameKey(a.key, b.key)
+    if isTypeClass(a.kind, typeClassStruct) || isTypeClass(a.kind, typeClassObject) || isTypeClass(a.kind, typeClassEnum):
+        return sameKey(a.key, b.key)
+    if isTypeClass(a.kind, typeClassGeneric) || isTypeClass(a.kind, typeClassCollection):
+        return sameKey(a.key, b.key) && sameTypeList(pool, a.kids, b.kids)
+    if isTypeClass(a.kind, typeClassPointer) || isTypeClass(a.kind, typeClassOptional):
+        return sameType(pool, a.kids[0], b.kids[0])
+    if isTypeClass(a.kind, typeClassResult) || isTypeClass(a.kind, typeClassTuple):
+        return sameTypeList(pool, a.kids, b.kids)
+    if isTypeClass(a.kind, typeClassFunction):
+        return sameTypeList(pool, a.kids, b.kids) && sameType(pool, a.ret, b.ret)
+    return false
+
+; 分量逐位等价：长度不同直接假。
+sameTypeList|func(pool: TypePool, first: Array<I32>, second: Array<I32>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if !sameType(pool, first[i], second[i]):
+            return false
+        i = i + 1
+    return true
+
+; 有符号名次：I8 到 I64 递增，非有符号答 -1。
+signedRankOf|func(name: String,) -> (I32,):
+    if name == "I8":
+        return 1
+    if name == "I16":
+        return 2
+    if name == "I32":
+        return 3
+    if name == "I64":
+        return 4
+    return -1
+
+; 无符号名次：U8 到 U64 递增，非无符号答 -1。
+unsignedRankOf|func(name: String,) -> (I32,):
+    if name == "U8":
+        return 1
+    if name == "U16":
+        return 2
+    if name == "U32":
+        return 3
+    if name == "U64":
+        return 4
+    return -1
+
+; 浮点名次：F32 到 F64 递增，非浮点答 -1。
+floatRankOf|func(name: String,) -> (I32,):
+    if name == "F32":
+        return 1
+    if name == "F64":
+        return 2
+    return -1
+
+; 标量拓宽：同族内由窄到宽，跨族一律不成立。
+widensScalar|func(fromName: String, toName: String,) -> (Bool,):
+    let fromSigned = signedRankOf(fromName)
+    let toSigned = signedRankOf(toName)
+    if fromSigned > 0 && toSigned > 0:
+        return fromSigned < toSigned
+    let fromUnsigned = unsignedRankOf(fromName)
+    let toUnsigned = unsignedRankOf(toName)
+    if fromUnsigned > 0 && toUnsigned > 0:
+        return fromUnsigned < toUnsigned
+    let fromFloat = floatRankOf(fromName)
+    let toFloat = floatRankOf(toName)
+    if fromFloat > 0 && toFloat > 0:
+        return fromFloat < toFloat
+    return false
+
+; 可赋值：等价、标量拓宽、字符到串、可选与结果的单向包装；容器实参不变。
+isAssignable|func(pool: TypePool, from: I32, to: I32,) -> (Bool,):
+    if sameType(pool, from, to):
+        return true
+    if from < 0 || to < 0:
+        return false
+    if from >= len(pool.entries) || to >= len(pool.entries):
+        return false
+    let source = pool.entries[from]
+    let target = pool.entries[to]
+    if isTypeClass(source.kind, typeClassScalar) && isTypeClass(target.kind, typeClassScalar):
+        if widensScalar(source.name, target.name):
+            return true
+        return source.name == "Char" && target.name == "String"
+    if isTypeClass(target.kind, typeClassOptional):
+        if isTypeClass(source.kind, typeClassOptional):
+            return isAssignable(pool, source.kids[0], target.kids[0])
+        return isAssignable(pool, from, target.kids[0])
+    if isTypeClass(target.kind, typeClassResult):
+        if isTypeClass(source.kind, typeClassResult):
+            return isAssignable(pool, source.kids[0], target.kids[0])
+        return isAssignable(pool, from, target.kids[0])
+    return false

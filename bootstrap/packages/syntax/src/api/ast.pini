@@ -364,3 +364,22 @@ isParamDeclCode|func(code: I32,) -> (Bool,):
 
 isVariantDeclCode|func(code: I32,) -> (Bool,):
     return code == declKindTag(declVariant)
+
+; 类型类别判定：语义层按同一组入口分流，不自己认识类别码。
+isNamedTypeCode|func(code: I32,) -> (Bool,):
+    return code == typeKindTag(typeNamed)
+
+isGenericTypeCode|func(code: I32,) -> (Bool,):
+    return code == typeKindTag(typeGeneric)
+
+isOptionalTypeCode|func(code: I32,) -> (Bool,):
+    return code == typeKindTag(typeOptional)
+
+isPointerTypeCode|func(code: I32,) -> (Bool,):
+    return code == typeKindTag(typePointer)
+
+isTupleTypeCode|func(code: I32,) -> (Bool,):
+    return code == typeKindTag(typeTuple)
+
+isFunctionTypeCode|func(code: I32,) -> (Bool,):
+    return code == typeKindTag(typeFunction)
