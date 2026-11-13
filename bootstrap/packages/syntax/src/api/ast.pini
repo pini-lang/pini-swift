@@ -330,3 +330,37 @@ typeChild|self(id: I32, index: I32,) -> (I32,):
     if id < 0 || index < 0 || index >= len(self.types[id].kids):
         return -1
     return self.types[id].kids[index]
+
+; 类别判定：下游只问「是不是某类声明」，不自己比较类别码，也不依赖码值。
+isStructDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declStruct)
+
+isObjectDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declObject)
+
+isEnumDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declEnum)
+
+isFunctionDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declFunction)
+
+isVariableDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declVariable)
+
+isExtensionDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declExtension)
+
+isImportBlockCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declImportBlock)
+
+isImportEntryCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declImportEntry)
+
+isFieldDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declField)
+
+isParamDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declParam)
+
+isVariantDeclCode|func(code: I32,) -> (Bool,):
+    return code == declKindTag(declVariant)

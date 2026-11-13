@@ -145,16 +145,28 @@ parseModule|self() -> ():
             self.advance()
         self.skipNewlines()
     return
+; 顶层登记：块状声明解析完才知顶层是谁，按「第一个新增」补进 items；
+; 成员与参数在它之后入池，因此 first-new 恒为顶层那一个。
+addNewTop|self(before: I32,) -> ():
+    if len(self.ast.decls) > before:
+        self.ast.addItem(before)
+    return
 ; 顶级分派：行首记号决定声明种类，其余按名字后的竖线区分函数与变量。
 parseTopLevel|self() -> ():
     if self.at(leftBracket):
+        let before = len(self.ast.decls)
         self.parseBracketDecl()
+        self.addNewTop(before)
         return
     if self.at(leftParen):
+        let before = len(self.ast.decls)
         self.parseParenDecl()
+        self.addNewTop(before)
         return
     if self.at(leftBrace):
+        let before = len(self.ast.decls)
         self.parseBraceDecl()
+        self.addNewTop(before)
         return
     if self.at(identifier) && self.isKindAt(1, opBitOr):
         let id = self.parseFunctionDecl()
@@ -212,7 +224,6 @@ parseImportBlock|self(start: I32,) -> ():
     self.expect(kwImport, "`import`")
     self.expect(rightBracket, "`]`")
     let id: I32 = self.newDecl(declImportBlock, start, self.previousEnd())
-    self.ast.addItem(id)
     self.setDeclName(id, nameStart, nameEnd)
     var entries: Array<I32> = []
     self.skipNewlines()
