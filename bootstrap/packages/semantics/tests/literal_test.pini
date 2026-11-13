@@ -1,0 +1,190 @@
+[literal_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 字面样例：单元、字面量节点与判定结果一起带回，便于查类型表。
+(字面样例)
+unit: CompilationUnit = CompilationUnit()
+node: I32 = -1
+result: LiteralResult = LiteralResult()
+
+; 造字面单元：从源码字符串装载；失败即断言。
+造字面单元|func(src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit("packages/p/src/api/a.pini", src)
+    assert(!loaded.failed, "样例应可加载")
+    return loaded.unit
+
+; 取字面量：按类别名找第一个节点，找不到答 -1。
+取字面量|func(unit: CompilationUnit, kind: String,) -> (I32,):
+    var i = 0
+    while i < unit.ast.exprCount():
+        if kind == "整数" && unit.ast.isIntegerExpr(i):
+            return i
+        if kind == "浮点" && unit.ast.isFloatExpr(i):
+            return i
+        if kind == "字符串" && unit.ast.isStringExpr(i):
+            return i
+        if kind == "布尔" && unit.ast.isBoolExpr(i):
+            return i
+        if kind == "空值" && unit.ast.isNilExpr(i):
+            return i
+        if kind == "插值" && unit.ast.isInterpolatedExpr(i):
+            return i
+        if kind == "标识符" && unit.ast.isIdentifierExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 判样例：可选标量期望；期望名为空串即无期望。
+判样例|func(src: String, kind: String, expectedName: String,) -> (字面样例,):
+    let unit = 造字面单元(src)
+    let node = 取字面量(unit, kind)
+    assert(node >= 0, "样例应有字面量：" + kind)
+    var pool = TypePool()
+    var expectation = noExpectation()
+    if len(expectedName) > 0:
+        let inserted = intern(pool, typeClassScalar, expectedName, [], -1)
+        pool = inserted.pool
+        expectation = expectType(inserted.id)
+    var out = 字面样例()
+    out.unit = unit
+    out.node = node
+    out.result = checkLiteral(unit, 0, node, expectation, pool, makeExprTypes([unit]))
+    return out
+
+; 可选样例：期望 Optional<I32>，用于空值。
+可选样例|func(src: String,) -> (字面样例,):
+    let unit = 造字面单元(src)
+    let node = 取字面量(unit, "空值")
+    let i32 = intern(TypePool(), typeClassScalar, "I32", [], -1)
+    let opt = intern(i32.pool, typeClassOptional, "", [i32.id], -1)
+    var out = 字面样例()
+    out.unit = unit
+    out.node = node
+    out.result = checkLiteral(unit, 0, node, expectType(opt.id), opt.pool, makeExprTypes([unit]))
+    return out
+
+; 指针样例：期望 *I32，用于空值。
+指针样例|func(src: String,) -> (字面样例,):
+    let unit = 造字面单元(src)
+    let node = 取字面量(unit, "空值")
+    let i32 = intern(TypePool(), typeClassScalar, "I32", [], -1)
+    let ptr = intern(i32.pool, typeClassPointer, "", [i32.id], -1)
+    var out = 字面样例()
+    out.unit = unit
+    out.node = node
+    out.result = checkLiteral(unit, 0, node, expectType(ptr.id), ptr.pool, makeExprTypes([unit]))
+    return out
+
+; 整数缺省：无期望答 I32，类型表同槽落位。
+整数缺省|test() -> ():
+    let sample = 判样例("f|func() -> ():\n    return 1\n", "整数", "")
+    assert(!sample.result.failed, "整数应判定成功")
+    assert(typeText(sample.result.pool, sample.result.typeId) == "I32", "缺省应为 I32")
+    assert(exprTypeAt(sample.result.types, 0, sample.node) == sample.result.typeId, "类型表应落位")
+    return
+
+; 浮点缺省：无期望答 F64。
+浮点缺省|test() -> ():
+    let sample = 判样例("f|func() -> ():\n    return 1.5\n", "浮点", "")
+    assert(!sample.result.failed, "浮点应判定成功")
+    assert(typeText(sample.result.pool, sample.result.typeId) == "F64", "缺省应为 F64")
+    return
+
+; 字符串与布尔缺省：各取内建标量名。
+字符串布尔缺省|test() -> ():
+    let string = 判样例("f|func() -> ():\n    return \"a\"\n", "字符串", "")
+    let yes = 判样例("f|func() -> ():\n    return true\n", "布尔", "")
+    assert(!string.result.failed && !yes.result.failed, "两者都应成功")
+    assert(typeText(string.result.pool, string.result.typeId) == "String", "字符串缺省应为 String")
+    assert(typeText(yes.result.pool, yes.result.typeId) == "Bool", "布尔缺省应为 Bool")
+    return
+
+; 整数标注：标注类型优先，窄整型与宽整型都照写。
+整数标注|test() -> ():
+    let wide = 判样例("f|func() -> ():\n    return 1\n", "整数", "I64")
+    let float = 判样例("f|func() -> ():\n    return 1\n", "整数", "F64")
+    assert(typeText(wide.result.pool, wide.result.typeId) == "I64", "整数应取 I64")
+    assert(typeText(float.result.pool, float.result.typeId) == "F64", "整数应取 F64")
+    return
+
+; 浮点标注：F32 与 F64 照写，整数标注拒绝。
+浮点标注|test() -> ():
+    let narrow = 判样例("f|func() -> ():\n    return 1.5\n", "浮点", "F32")
+    let wrong = 判样例("f|func() -> ():\n    return 1.5\n", "浮点", "I32")
+    assert(!narrow.result.failed, "浮点应接受 F32")
+    assert(typeText(narrow.result.pool, narrow.result.typeId) == "F32", "应取 F32")
+    assert(wrong.result.failed, "浮点不得落进整型")
+    assert(isLiteralError(wrong.result.error, literalExpectedMismatch), "应报类型不匹配")
+    assert(wrong.result.error.expected == "I32", "期望名应为 I32")
+    assert(wrong.result.error.got == "F64", "实得名应为 F64")
+    return
+
+; 非数值期望：整数、字符串、布尔与插值各自拒绝。
+非数值期望|test() -> ():
+    let integer = 判样例("f|func() -> ():\n    return 1\n", "整数", "String")
+    let string = 判样例("f|func() -> ():\n    return \"a\"\n", "字符串", "Char")
+    let yes = 判样例("f|func() -> ():\n    return true\n", "布尔", "I32")
+    assert(integer.result.failed, "整数不得落进 String")
+    assert(string.result.failed, "字符串不得落进 Char")
+    assert(yes.result.failed, "布尔不得落进 I32")
+    assert(isLiteralError(integer.result.error, literalExpectedMismatch), "整数应报不匹配")
+    assert(isLiteralError(string.result.error, literalExpectedMismatch), "字符串应报不匹配")
+    assert(isLiteralError(yes.result.error, literalExpectedMismatch), "布尔应报不匹配")
+    return
+
+; 空值：无望报无法推断；可选与指针各自接受；普通标量拒绝。
+空值期望|test() -> ():
+    let none = 判样例("f|func() -> ():\n    return nil\n", "空值", "")
+    let opt = 可选样例("f|func() -> ():\n    return nil\n")
+    let ptr = 指针样例("f|func() -> ():\n    return nil\n")
+    let wrong = 判样例("f|func() -> ():\n    return nil\n", "空值", "I32")
+    assert(none.result.failed, "无望空值应失败")
+    assert(isLiteralError(none.result.error, literalNeedsExpectation), "应报缺少期望")
+    assert(none.result.error.got == "nil", "实得名应为 nil")
+    assert(!opt.result.failed, "空值应接受可选")
+    assert(typeText(opt.result.pool, opt.result.typeId) == "I32?", "可选文本应为 I32?")
+    assert(!ptr.result.failed, "空值应接受指针")
+    assert(typeText(ptr.result.pool, ptr.result.typeId) == "*I32", "指针文本应为 *I32")
+    assert(wrong.result.failed, "空值不得落进 I32")
+    assert(isLiteralError(wrong.result.error, literalExpectedMismatch), "应报不匹配")
+    return
+
+; 插值：整体答 String；段内表达式尚未进语法树，本批判定不涉及段。
+插值判定|test() -> ():
+    let ok = 判样例("f|func() -> ():\n    return \"值=\\(x)\"\n", "插值", "")
+    let wrong = 判样例("f|func() -> ():\n    return \"值=\\(x)\"\n", "插值", "Char")
+    assert(!ok.result.failed, "插值应判定成功")
+    assert(typeText(ok.result.pool, ok.result.typeId) == "String", "插值应为 String")
+    assert(wrong.result.failed, "插值不得落进 Char")
+    return
+
+; 非字面量：标识符不归本判定，报专用错误并落错误标记。
+非字面量|test() -> ():
+    let sample = 判样例("f|func() -> ():\n    return x\n", "标识符", "")
+    assert(sample.result.failed, "标识符应被拒")
+    assert(isLiteralError(sample.result.error, literalNotLiteral), "应报非字面量")
+    assert(exprTypeAt(sample.result.types, 0, sample.node) == errorTypeId(), "错误应落表")
+    return
+
+; 错误落表：类型不匹配也写错误标记，有效类型不计它。
+错误落表|test() -> ():
+    let sample = 判样例("f|func() -> ():\n    return 1\n", "整数", "String")
+    assert(sample.result.failed, "样例应失败")
+    assert(exprTypeAt(sample.result.types, 0, sample.node) == errorTypeId(), "应写错误标记")
+    assert(validCount(sample.result.types, 0) == 0, "错误标记不计有效类型")
+    return
+
+; 判定确定：同一输入判两次，类型文本相同。
+判定确定|test() -> ():
+    let first = 判样例("f|func() -> ():\n    return 1\n", "整数", "I64")
+    let second = 判样例("f|func() -> ():\n    return 1\n", "整数", "I64")
+    assert(typeText(first.result.pool, first.result.typeId) == typeText(second.result.pool, second.result.typeId), "两次判定应同文本")
+    return
+
+; 码表：三类错误各映射到已有诊断码。
+码表|test() -> ():
+    assert(literalErrorCode(literalExpectedMismatch) == "E4-001", "不匹配应为 E4-001")
+    assert(literalErrorCode(literalNeedsExpectation) == "E4-003", "缺少期望应为 E4-003")
+    assert(literalErrorCode(literalNotLiteral) == "E6-002", "非字面量应为 E6-002")
+    return

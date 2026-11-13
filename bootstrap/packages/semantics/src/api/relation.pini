@@ -109,3 +109,49 @@ isAssignable|func(pool: TypePool, from: I32, to: I32,) -> (Bool,):
             return isAssignable(pool, source.kids[0], target.kids[0])
         return isAssignable(pool, from, target.kids[0])
     return false
+
+; 标量名：只有标量有名字，其余答空串。
+scalarNameOf|func(pool: TypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return ""
+    let entry = pool.entries[id]
+    if !isTypeClass(entry.kind, typeClassScalar):
+        return ""
+    return entry.name
+
+; 整型：八种有符号与无符号标量。
+isIntegerType|func(pool: TypePool, id: I32,) -> (Bool,):
+    let name = scalarNameOf(pool, id)
+    if name == "I8" || name == "I16":
+        return true
+    if name == "I32" || name == "I64":
+        return true
+    if name == "U8" || name == "U16":
+        return true
+    return name == "U32" || name == "U64"
+
+; 浮点：F32 与 F64。
+isFloatType|func(pool: TypePool, id: I32,) -> (Bool,):
+    let name = scalarNameOf(pool, id)
+    return name == "F32" || name == "F64"
+
+; 数值：整型与浮点合起来，供字面量期望与运算判定共用。
+isNumericType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return isIntegerType(pool, id) || isFloatType(pool, id)
+
+; 字符串：只有内建 String 标量。
+isStringType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return scalarNameOf(pool, id) == "String"
+
+; 布尔：只有内建 Bool 标量。
+isBoolType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return scalarNameOf(pool, id) == "Bool"
+
+; 可空：可选与指针能接 nil；结果不是可空类型。
+isNullableType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if isTypeClass(entry.kind, typeClassOptional):
+        return true
+    return isTypeClass(entry.kind, typeClassPointer)
