@@ -1,0 +1,7 @@
+; 相对路径拼接：父为空时直接取子，不产生前导斜杠；子为空时保留父。
+joinRel|func(parent: String, child: String,) -> (String,):
+    if len(parent) == 0:
+        return child
+    if len(child) == 0:
+        return parent
+    return parent + "/" + child

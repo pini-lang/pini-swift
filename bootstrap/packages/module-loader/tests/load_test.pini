@@ -1,0 +1,105 @@
+[load_test|import]
+package = "../../package"
+
+; 在计划里按包名定位：找不到答 -1，调用方据此报出可读的失败。
+packageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
+    var i = 0
+    while i < len(plan.packages):
+        if plan.packages[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 单目标装载：driver 的可执行目标只有一个源文件，单元路径是工作区相对形式。
+单目标装载|test() -> ():
+    let root = moduleRoot() + "/../.."
+    let plan: BuildPlan = package.planWorkspace(root)
+    assert(plan.isOK(), "自举工作区计划应可用")
+    let at = packageIndex(plan, "driver")
+    assert(at >= 0, "计划里应有 driver")
+    let pkg: PackagePlan = plan.packages[at]
+    var binAt = 0
+    var i = 0
+    while i < len(pkg.targets):
+        if !package.isTestTarget(pkg.targets[i]):
+            binAt = i
+        i = i + 1
+    let loaded = loadTarget(root + "/" + pkg.rootPath, pkg.rootPath, pkg.targets[binAt], pkg.excludes)
+    assert(loaded.isOK(), "driver 装载应无错")
+    assert(loaded.unitCount() == 1, "driver 可执行目标只有一个源文件")
+    assert(loaded.units[0].path == "packages/driver/src/api/main.pini", "单元路径应是工作区相对")
+    return
+
+; 全量收集：自举工作区全部 target 的源码都进源集，无收集错误、路径唯一且升序。
+全量收集|test() -> ():
+    let root = moduleRoot() + "/../.."
+    let plan: BuildPlan = package.planWorkspace(root)
+    assert(plan.isOK(), "自举工作区计划应可用")
+    let set = collectWorkspace(plan)
+    assert(set.isOK(), "收集应无错，实得 " + "\(set.errorCount())")
+    assert(set.fileCount() >= 60, "源集应覆盖全部包，实得 " + "\(set.fileCount())")
+    let paths = set.paths()
+    var i = 1
+    while i < len(paths):
+        assert(comparePaths(paths[i - 1], paths[i]) < 0, "路径应严格升序且唯一：" + paths[i])
+        i = i + 1
+    return
+
+; 收集与文件系统返回顺序无关：同一计划连收两次，路径序列逐字相同。
+两次收集一致|test() -> ():
+    let root = moduleRoot() + "/../.."
+    let plan: BuildPlan = package.planWorkspace(root)
+    let first = collectWorkspace(plan).paths()
+    let second = collectWorkspace(plan).paths()
+    assert(len(first) == len(second), "文件数应相同")
+    var i = 0
+    while i < len(first):
+        assert(first[i] == second[i], "路径序列应相同")
+        i = i + 1
+    return
+
+; 抽样装载零诊断：support 与装载器自身都是人工编写的源码，解析后诊断集合为空。
+抽样零诊断|test() -> ():
+    let root = moduleRoot() + "/../.."
+    let plan: BuildPlan = package.planWorkspace(root)
+    let names: Array<String> = ["support", "module-loader"]
+    var i = 0
+    while i < len(names):
+        let at = packageIndex(plan, names[i])
+        assert(at >= 0, "计划里应有 " + names[i])
+        let pkg: PackagePlan = plan.packages[at]
+        let loaded = loadPackage(root + "/" + pkg.rootPath, pkg)
+        assert(loaded.isOK(), names[i] + " 装载应无错")
+        assert(loaded.diagnosticCount() == 0, names[i] + " 应零诊断，实得 " + "\(loaded.diagnosticCount())")
+        i = i + 1
+    return
+
+; 测试目标：公共生产源码与入口目录都在源集里，两者路径分段可辨。
+测试目标含两份源码|test() -> ():
+    let root = moduleRoot() + "/../.."
+    let plan: BuildPlan = package.planWorkspace(root)
+    let at = packageIndex(plan, "module-loader")
+    assert(at >= 0, "计划里应有 module-loader")
+    let pkg: PackagePlan = plan.packages[at]
+    var targetAt = -1
+    var i = 0
+    while i < len(pkg.targets):
+        if package.isTestTarget(pkg.targets[i]):
+            targetAt = i
+        i = i + 1
+    assert(targetAt >= 0, "包内应有测试 target")
+    let set = collectTarget(root + "/" + pkg.rootPath, pkg.rootPath, pkg.targets[targetAt], pkg.excludes)
+    assert(set.isOK(), "测试目标收集应无错")
+    var hasSource = false
+    var hasTest = false
+    let paths = set.paths()
+    var j = 0
+    while j < len(paths):
+        if paths[j].indexOf("/src/") >= 0:
+            hasSource = true
+        if paths[j].indexOf("/tests/") >= 0:
+            hasTest = true
+        j = j + 1
+    assert(hasSource, "应包含生产源码")
+    assert(hasTest, "应包含测试源码")
+    return

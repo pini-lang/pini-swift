@@ -1,0 +1,57 @@
+; 装载错误类别：文件系统侧四类，源文本侧三类；每一类对应一种可判定的失效。
+[LoadErrorKind]
+errorRootMissing
+errorDirectoryUnreadable
+errorFileMissing
+errorFileUnreadable
+errorSourceBom
+errorSourceNul
+errorSourceNotUtf8
+
+; 装载错误：类别、相对工作区根的路径与补充细节；偏移是源内字节位置，不适用时为 -1。
+(LoadError)
+kind: LoadErrorKind = .errorRootMissing
+path: String = ""
+detail: String = ""
+offset: I32 = -1
+
+; 类别名：与宿主诊断表的消息组同名，回执、测试与诊断共用一份拼写。
+loadErrorName|func(kind: LoadErrorKind,) -> (String,):
+    match kind:
+        case errorRootMissing:
+            return "源码根不存在"
+        case errorDirectoryUnreadable:
+            return "目录无法枚举"
+        case errorFileMissing:
+            return "源文件不存在"
+        case errorFileUnreadable:
+            return "源文件无法读取"
+        case errorSourceBom:
+            return "源文件以 BOM 起始"
+        case errorSourceNul:
+            return "源文件含 NUL 字节"
+        case errorSourceNotUtf8:
+            return "源文件不是合法 UTF-8"
+    return "装载失败"
+
+; 造错误：路径取工作区相对形式，偏移缺省为 -1。
+makeLoadError|func(kind: LoadErrorKind, path: String, detail: String,) -> (LoadError,):
+    var out = LoadError()
+    out.kind = kind
+    out.path = path
+    out.detail = detail
+    return out
+
+; 造带偏移的源文本错误：偏移指向首个出问题的字节。
+makeSourceError|func(kind: LoadErrorKind, path: String, offset: I32,) -> (LoadError,):
+    var out = makeLoadError(kind, path, "")
+    out.offset = offset
+    return out
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isLoadErrorKind|func(kind: LoadErrorKind, expected: LoadErrorKind,) -> (Bool,):
+    return loadErrorName(kind) == loadErrorName(expected)
+
+; 错误对象的类别判定：调用方手里是整条错误时走这个。
+isLoadError|func(error: LoadError, kind: LoadErrorKind,) -> (Bool,):
+    return isLoadErrorKind(error.kind, kind)

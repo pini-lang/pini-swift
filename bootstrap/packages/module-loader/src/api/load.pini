@@ -1,0 +1,189 @@
+[load|import]
+package = "../../../package"
+
+; 待读单元：绝对路径用于读取，工作区相对路径用于排序与诊断。
+(PendingUnit)
+absPath: String = ""
+unitPath: String = ""
+
+; 源集：一个 target 收集到的待读单元与收集期错误；单元已按路径升序。
+(SourceSet)
+files: Array<PendingUnit> = []
+errors: Array<LoadError> = []
+
+((SourceSet))
+; 可用：收集期没有任何错误。
+isOK|self() -> (Bool,):
+    return len(self.errors) == 0
+errorCount|self() -> (I32,):
+    return len(self.errors)
+fileCount|self() -> (I32,):
+    return len(self.files)
+fileAt|self(index: I32,) -> (PendingUnit,):
+    return self.files[index]
+paths|self() -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(self.files):
+        out = out.append(self.files[i].unitPath)
+        i = i + 1
+    return out
+
+; 按路径插入：保持升序；同路径已在集内时原样返回，同一文件不因多个 target 收两遍。
+insertPending|func(items: Array<PendingUnit>, value: PendingUnit,) -> (Array<PendingUnit>,):
+    var out: Array<PendingUnit> = []
+    var placed = false
+    var i = 0
+    while i < len(items):
+        if !placed:
+            let order = comparePaths(value.unitPath, items[i].unitPath)
+            if order == 0:
+                return items
+            if order < 0:
+                out = out.append(value)
+                placed = true
+        out = out.append(items[i])
+        i = i + 1
+    if !placed:
+        out = out.append(value)
+    return out
+
+; 目标源码根：测试目标由公共生产源码与入口目录组成，其余只取计划给的源码根。
+targetRoots|func(target: TargetPlan,) -> (Array<String>,):
+    var out: Array<String> = []
+    if package.isTestTarget(target):
+        out = out.append("src")
+        if target.sourceRoot != "src":
+            out = out.append(target.sourceRoot)
+        return out
+    out = out.append(target.sourceRoot)
+    return out
+
+; 收集源码集：按源码根扫描、去重排序；只碰文件系统，不解析。
+collectTarget|func(packageAbs: String, packageRel: String, target: TargetPlan, excludes: Array<String>,) -> (SourceSet,):
+    var out = SourceSet()
+    let roots = targetRoots(target)
+    var i = 0
+    while i < len(roots):
+        let rootRel = roots[i]
+        let rootAbs = packageAbs + "/" + rootRel
+        if !isDir(rootAbs):
+            out.errors = out.errors.append(makeLoadError(errorRootMissing, joinRel(packageRel, rootRel), ""))
+        else:
+            let state = scan(rootAbs, rootRel, "", excludes, ScanState())
+            var e = 0
+            while e < len(state.errors):
+                out.errors = out.errors.append(state.errors[e])
+                e = e + 1
+            var j = 0
+            while j < len(state.files):
+                var item = PendingUnit()
+                item.absPath = rootAbs + "/" + state.files[j]
+                item.unitPath = joinRel(packageRel, joinRel(rootRel, state.files[j]))
+                out.files = insertPending(out.files, item)
+                j = j + 1
+        i = i + 1
+    return out
+
+; 读单个源文件：不存在与读不出分开判，读出的文本交给单元构造。
+loadUnitFile|func(absPath: String, unitPath: String,) -> (UnitLoad,):
+    var out = UnitLoad()
+    if !exists(absPath):
+        out.failed = true
+        out.error = makeLoadError(errorFileMissing, unitPath, "")
+        return out
+    let read = tryReadFile(absPath)
+    match read:
+        case ok(text,):
+            return loadUnit(unitPath, text)
+        case err(reason,):
+            out.failed = true
+            out.error = makeLoadError(errorFileUnreadable, unitPath, "读取内建拒绝该文件")
+            return out
+
+; 装载单个 target：先收集再逐个建单元；单个文件失败不中断其余。
+loadTarget|func(packageAbs: String, packageRel: String, target: TargetPlan, excludes: Array<String>,) -> (LoadResult,):
+    var out = LoadResult()
+    let set = collectTarget(packageAbs, packageRel, target, excludes)
+    out.errors = set.errors
+    var i = 0
+    while i < len(set.files):
+        let loaded = loadUnitFile(set.files[i].absPath, set.files[i].unitPath)
+        if loaded.failed:
+            out.errors = out.errors.append(loaded.error)
+        else:
+            out.units = out.units.append(loaded.unit)
+        i = i + 1
+    return out
+
+; 收集一个包的全部 target：文件按路径升序合并，重复路径只留一份。
+collectPackage|func(packageAbs: String, plan: PackagePlan,) -> (SourceSet,):
+    var out = SourceSet()
+    var i = 0
+    while i < len(plan.targets):
+        let set = collectTarget(packageAbs, plan.rootPath, plan.targets[i], plan.excludes)
+        var e = 0
+        while e < len(set.errors):
+            out.errors = out.errors.append(set.errors[e])
+            e = e + 1
+        var j = 0
+        while j < len(set.files):
+            out.files = insertPending(out.files, set.files[j])
+            j = j + 1
+        i = i + 1
+    return out
+
+; 装载一个包的全部 target：单元与错误按 target 顺序合并。
+loadPackage|func(packageAbs: String, plan: PackagePlan,) -> (LoadResult,):
+    var out = LoadResult()
+    var i = 0
+    while i < len(plan.targets):
+        let loaded = loadTarget(packageAbs, plan.rootPath, plan.targets[i], plan.excludes)
+        var u = 0
+        while u < len(loaded.units):
+            out.units = out.units.append(loaded.units[u])
+            u = u + 1
+        var e = 0
+        while e < len(loaded.errors):
+            out.errors = out.errors.append(loaded.errors[e])
+            e = e + 1
+        i = i + 1
+    return out
+
+; 收集整个工作区：按计划的拓扑序逐包收集，不解析；装载规则的全量判据读这里。
+collectWorkspace|func(plan: BuildPlan,) -> (SourceSet,):
+    var out = SourceSet()
+    if !plan.isOK():
+        return out
+    var i = 0
+    while i < len(plan.packages):
+        let set = collectPackage(plan.rootPath + "/" + plan.packages[i].rootPath, plan.packages[i])
+        var e = 0
+        while e < len(set.errors):
+            out.errors = out.errors.append(set.errors[e])
+            e = e + 1
+        var j = 0
+        while j < len(set.files):
+            out.files = insertPending(out.files, set.files[j])
+            j = j + 1
+        i = i + 1
+    return out
+
+; 装载整个工作区：按计划的拓扑序逐包装载。
+loadWorkspace|func(plan: BuildPlan,) -> (LoadResult,):
+    var out = LoadResult()
+    if !plan.isOK():
+        return out
+    var i = 0
+    while i < len(plan.packages):
+        let loaded = loadPackage(plan.rootPath + "/" + plan.packages[i].rootPath, plan.packages[i])
+        var u = 0
+        while u < len(loaded.units):
+            out.units = out.units.append(loaded.units[u])
+            u = u + 1
+        var e = 0
+        while e < len(loaded.errors):
+            out.errors = out.errors.append(loaded.errors[e])
+            e = e + 1
+        i = i + 1
+    return out
