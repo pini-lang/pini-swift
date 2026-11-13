@@ -1,6 +1,7 @@
-; 记号：类别、源内字节区间与名字区间；`end - start` 即扫描消费的字节数。
+; 记号：类别、类别码、源内字节区间与名字区间；码在构造点算好，判定不再重算。
 (Token)
 kind: TokenKind = .unknown
+tag: I32 = 0
 start: I32 = 0
 end: I32 = 0
 nameStart: I32 = 0
@@ -117,24 +118,125 @@ dedent
 eof
 
 ; 类别码：区间边界即类别边界，字面量 0..7、关键字 8..41、运算符 42..74、定界符 75..87、布局 88..91。
+; 分支按解析期的命中频率排序，返回值仍按区间分配；顺序只影响匹配快慢，不参与语义。
 kindTag|func(kind: TokenKind,) -> (I32,):
     match kind:
-        case unknown:
-            return 0
         case identifier:
             return 1
+        case newline:
+            return 88
+        case colon:
+            return 81
+        case comma:
+            return 82
+        case leftParen:
+            return 75
+        case rightParen:
+            return 76
+        case eof:
+            return 91
+        case opAssign:
+            return 64
+        case arrow:
+            return 83
+        case dot:
+            return 85
+        case question:
+            return 86
+        case opLt:
+            return 56
+        case opGt:
+            return 57
+        case opSub:
+            return 43
+        case opAdd:
+            return 42
+        case opMul:
+            return 44
+        case leftBracket:
+            return 77
+        case rightBracket:
+            return 78
+        case string:
+            return 4
         case integer:
             return 2
         case float:
             return 3
-        case string:
-            return 4
-        case interpolatedString:
-            return 5
+        case unknown:
+            return 0
+        case indent:
+            return 89
+        case dedent:
+            return 90
+        case opEq:
+            return 52
+        case opNe:
+            return 53
+        case opLe:
+            return 54
+        case opGe:
+            return 55
+        case opDiv:
+            return 45
+        case opMod:
+            return 46
+        case opAnd:
+            return 49
+        case opOr:
+            return 50
+        case opNot:
+            return 51
+        case opBitAnd:
+            return 58
+        case opBitOr:
+            return 59
+        case opBitXor:
+            return 60
+        case opShl:
+            return 62
+        case opShr:
+            return 63
+        case opBitNot:
+            return 61
+        case opInc:
+            return 47
+        case opDec:
+            return 48
+        case opAssignAdd:
+            return 65
+        case opAssignSub:
+            return 66
+        case opAssignMul:
+            return 67
+        case opAssignDiv:
+            return 68
+        case opAssignMod:
+            return 69
+        case opAssignBitAnd:
+            return 70
+        case opAssignBitOr:
+            return 71
+        case opAssignBitXor:
+            return 72
+        case opAssignShl:
+            return 73
+        case opAssignShr:
+            return 74
+        case fatArrow:
+            return 84
+        case atSign:
+            return 87
+        case leftBrace:
+            return 79
+        case rightBrace:
+            return 80
         case trueLiteral:
             return 6
         case falseLiteral:
             return 7
+        case interpolatedString:
+            return 5
         case kwVar:
             return 8
         case kwLet:
@@ -203,106 +305,6 @@ kindTag|func(kind: TokenKind,) -> (I32,):
             return 40
         case kwUnroll:
             return 41
-        case opAdd:
-            return 42
-        case opSub:
-            return 43
-        case opMul:
-            return 44
-        case opDiv:
-            return 45
-        case opMod:
-            return 46
-        case opInc:
-            return 47
-        case opDec:
-            return 48
-        case opAnd:
-            return 49
-        case opOr:
-            return 50
-        case opNot:
-            return 51
-        case opEq:
-            return 52
-        case opNe:
-            return 53
-        case opLe:
-            return 54
-        case opGe:
-            return 55
-        case opLt:
-            return 56
-        case opGt:
-            return 57
-        case opBitAnd:
-            return 58
-        case opBitOr:
-            return 59
-        case opBitXor:
-            return 60
-        case opBitNot:
-            return 61
-        case opShl:
-            return 62
-        case opShr:
-            return 63
-        case opAssign:
-            return 64
-        case opAssignAdd:
-            return 65
-        case opAssignSub:
-            return 66
-        case opAssignMul:
-            return 67
-        case opAssignDiv:
-            return 68
-        case opAssignMod:
-            return 69
-        case opAssignBitAnd:
-            return 70
-        case opAssignBitOr:
-            return 71
-        case opAssignBitXor:
-            return 72
-        case opAssignShl:
-            return 73
-        case opAssignShr:
-            return 74
-        case leftParen:
-            return 75
-        case rightParen:
-            return 76
-        case leftBracket:
-            return 77
-        case rightBracket:
-            return 78
-        case leftBrace:
-            return 79
-        case rightBrace:
-            return 80
-        case colon:
-            return 81
-        case comma:
-            return 82
-        case arrow:
-            return 83
-        case fatArrow:
-            return 84
-        case dot:
-            return 85
-        case question:
-            return 86
-        case atSign:
-            return 87
-        case newline:
-            return 88
-        case indent:
-            return 89
-        case dedent:
-            return 90
-        case eof:
-            return 91
     return 0
 
 ; 类别名：诊断与测试用的可读拼写，取该类别的默认语言写法。
@@ -683,9 +685,9 @@ kindFromTag|func(tag: I32,) -> (TokenKind,):
             return .eof
     return .unknown
 
-; 同一类别判定：两通道都不支持枚举相等比较，因此一律比类别码。
+; 同一类别判定：只比构造点算好的类别码，省掉每处重算。
 isKind|func(token: Token, kind: TokenKind,) -> (Bool,):
-    return kindTag(token.kind) == kindTag(kind)
+    return token.tag == kindTag(kind)
 
 ; 字面量区间不含 `unknown`：未识别字节不算字面量。
 isLiteralKind|func(kind: TokenKind,) -> (Bool,):

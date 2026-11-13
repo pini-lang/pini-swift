@@ -657,6 +657,7 @@ emitNamed|func(state: LexState, kind: TokenKind, start: I32, end: I32, nameStart
     var out = state
     var token = Token()
     token.kind = kind
+    token.tag = kindTag(kind)
     token.start = start
     token.end = end
     token.nameStart = nameStart
@@ -669,6 +670,7 @@ emitString|func(state: LexState, kind: TokenKind, start: I32, end: I32, segments
     var out = state
     var token = Token()
     token.kind = kind
+    token.tag = kindTag(kind)
     token.start = start
     token.end = end
     token.nameStart = start

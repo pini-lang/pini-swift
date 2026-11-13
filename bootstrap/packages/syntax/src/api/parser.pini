@@ -82,6 +82,7 @@ current|self() -> (Token,):
     if self.pos >= self.total:
         var token = Token()
         token.kind = eof
+        token.tag = kindTag(eof)
         return token
     return self.tokens[self.pos]
 ; 前瞻第 n 条记号：越界一律答结束，调用方无需重复判界。
@@ -93,19 +94,24 @@ kindAt|self(offset: I32,) -> (TokenKind,):
 atEnd|self() -> (Bool,):
     if self.pos >= self.total:
         return true
-    return isKind(self.current(), eof)
+    return self.tokens[self.pos].tag == kindTag(eof)
 at|self(kind: TokenKind,) -> (Bool,):
-    return isKind(self.current(), kind)
+    if self.pos >= self.total:
+        return kindTag(eof) == kindTag(kind)
+    return self.tokens[self.pos].tag == kindTag(kind)
 isKindAt|self(offset: I32, kind: TokenKind,) -> (Bool,):
-    return kindTag(self.kindAt(offset)) == kindTag(kind)
+    let index = self.pos + offset
+    if index < 0 || index >= self.total:
+        return kindTag(eof) == kindTag(kind)
+    return self.tokens[index].tag == kindTag(kind)
 advance|self() -> ():
     if self.pos < self.total:
         self.pos = self.pos + 1
     return
 ; 跳过行尾：块内语句之间只允许换行。
 skipNewlines|self() -> ():
-    while self.at(newline):
-        self.advance()
+    while self.pos < self.total && self.tokens[self.pos].tag == kindTag(newline):
+        self.pos = self.pos + 1
     return
 ; 报一条语法诊断：跨度为当前记号；到达文件末尾时改用上一条记号的终点。
 report|self(code: String, message: String,) -> ():
