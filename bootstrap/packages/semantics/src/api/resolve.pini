@@ -71,7 +71,7 @@ isResolveForm|func(form: ResolveForm, expected: ResolveForm,) -> (Bool,):
 isResolved|func(entry: ResolveEntry,) -> (Bool,):
     return !isResolveForm(entry.form, resolveNone)
 
-; 建表：逐单元按表达式池长度铺空条目；单元次序即调用方给的次序。
+; 建表：逐单元按表达式池长度铺空条目；调用方先 sortedUnits，类型面与解析表共用同一序。
 makeResolveTable|func(units: Array<CompilationUnit>,) -> (ResolveTable,):
     var out = ResolveTable()
     var u = 0
