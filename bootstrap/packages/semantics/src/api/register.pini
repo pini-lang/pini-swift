@@ -1,0 +1,193 @@
+[register|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+package = "../../../package"
+
+; 注册一个包：文件先按路径排序，结果与文件系统给出的顺序无关。
+registerPackage|func(units: Array<CompilationUnit>,) -> (SymbolTable,):
+    return registerInto(SymbolTable(), units)
+
+; 在已有表上追加一个包的单元：跨包注册靠它累积，顶层同名照样判重。
+registerInto|func(table: SymbolTable, units: Array<CompilationUnit>,) -> (SymbolTable,):
+    var out = table
+    let ordered = sortedUnits(units)
+    var i = 0
+    while i < len(ordered):
+        out = registerFile(out, ordered[i])
+        i = i + 1
+    return out
+
+; 注册整个工作区：按计划的拓扑序逐包装载并追加，顶层名字全局唯一。
+registerWorkspace|func(plan: BuildPlan, root: String,) -> (SymbolTable,):
+    var out = SymbolTable()
+    if !plan.isOK():
+        return out
+    var i = 0
+    while i < len(plan.packages):
+        let pkg: PackagePlan = plan.packages[i]
+        let loaded = loadPackage(root + "/" + pkg.rootPath, pkg)
+        var e = 0
+        while e < len(loaded.errors):
+            out.errors = out.errors.append(makeSymbolError(symbolExtensionUnknown, plan.packages[i].rootPath, 0, "装载失败"))
+            e = e + 1
+        out = registerInto(out, loaded.units)
+        i = i + 1
+    return out
+
+; 文件排序：按工作区相对路径的字节序，与装载层同一口径。
+sortedUnits|func(units: Array<CompilationUnit>,) -> (Array<CompilationUnit>,):
+    var out: Array<CompilationUnit> = []
+    var i = 0
+    while i < len(units):
+        out = insertUnit(out, units[i])
+        i = i + 1
+    return out
+
+insertUnit|func(units: Array<CompilationUnit>, value: CompilationUnit,) -> (Array<CompilationUnit>,):
+    var out: Array<CompilationUnit> = []
+    var placed = false
+    var i = 0
+    while i < len(units):
+        if !placed && compareSourcePaths(value.path, units[i].path) < 0:
+            out = out.append(value)
+            placed = true
+        out = out.append(units[i])
+        i = i + 1
+    if !placed:
+        out = out.append(value)
+    return out
+
+; 键是否已在登记块内：块内重名判定用，逐字节比。
+containsKey|func(seen: Array<Symbol>, key: Array<U8>,) -> (Bool,):
+    var i = 0
+    while i < len(seen):
+        if sameKey(seen[i].key, key):
+            return true
+        i = i + 1
+    return false
+
+; 造符号：键取 NFC，拼写取原文，可见性按符号名与文件路径推出，位置取声明头。
+makeSymbol|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, kind: SymbolKind,) -> (Symbol,):
+    var out = Symbol()
+    out.key = keyOf(bytes, decl.nameStart, decl.nameEnd)
+    out.spelling = decodeRange(bytes, decl.nameStart, decl.nameEnd)
+    out.kind = kind
+    out.visibility = visibilityOf(out.spelling, unit.path)
+    out.file = unit.path
+    out.offset = decl.start
+    return out
+
+; 注册一个文件：先注册顶层声明，再注册导入块，别名因此能看见本文件的顶层名字。
+registerFile|func(table: SymbolTable, unit: CompilationUnit,) -> (SymbolTable,):
+    let bytes = tempUtf8Bytes(unit.text)
+    var out = table
+    var i = 0
+    while i < len(unit.ast.items):
+        let decl = unit.ast.decls[unit.ast.items[i]]
+        if !isImportBlockCode(decl.kind):
+            out = registerTopDecl(out, unit, bytes, decl)
+        i = i + 1
+    var j = 0
+    while j < len(unit.ast.items):
+        let decl = unit.ast.decls[unit.ast.items[j]]
+        if isImportBlockCode(decl.kind):
+            out = registerImportBlock(out, unit, bytes, decl)
+        j = j + 1
+    return out
+
+; 类型声明：结构、对象与枚举同属「带成员的顶层声明」。
+isTypeDecl|func(decl: DeclNode,) -> (Bool,):
+    if isStructDeclCode(decl.kind):
+        return true
+    if isObjectDeclCode(decl.kind):
+        return true
+    return isEnumDeclCode(decl.kind)
+
+; 顶层声明按类别分派：类型连带成员，函数连带参数，扩展挂到目标类型名下。
+registerTopDecl|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):
+    var out = table
+    if isTypeDecl(decl):
+        let symbol = makeSymbol(unit, bytes, decl, symbolType)
+        out = defineTop(out, symbol)
+        out = registerTypeMembers(out, unit, bytes, decl, symbol.spelling)
+        return out
+    if isFunctionDeclCode(decl.kind):
+        let symbol = makeSymbol(unit, bytes, decl, symbolFunction)
+        out = defineTop(out, symbol)
+        out = registerParams(out, unit, bytes, decl, symbol.spelling)
+        return out
+    if isVariableDeclCode(decl.kind):
+        out = defineTop(out, makeSymbol(unit, bytes, decl, symbolVariable))
+        return out
+    if isExtensionDeclCode(decl.kind):
+        out = registerExtension(out, unit, bytes, decl)
+        return out
+    return out
+
+; 类型成员：字段与类型自身的方法报同名，参数归到所属方法名下。
+registerTypeMembers|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, owner: String,) -> (SymbolTable,):
+    var out = table
+    var i = 0
+    while i < len(decl.kids):
+        let member = unit.ast.decls[decl.kids[i]]
+        if isFieldDeclCode(member.kind):
+            var symbol = makeSymbol(unit, bytes, member, symbolField)
+            symbol.owner = owner
+            out = defineMember(out, symbol)
+        if isFunctionDeclCode(member.kind):
+            var method = makeSymbol(unit, bytes, member, symbolFunction)
+            method.owner = owner
+            out = defineMember(out, method)
+            out = registerParams(out, unit, bytes, member, owner + "." + method.spelling)
+        if isVariantDeclCode(member.kind):
+            var variant = makeSymbol(unit, bytes, member, symbolVariant)
+            variant.owner = owner
+            out = defineMember(out, variant)
+            out = registerParams(out, unit, bytes, member, owner + "." + variant.spelling)
+        i = i + 1
+    return out
+
+; 参数注册：所有者取函数限定名，参数名只在该函数内解析。
+registerParams|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, owner: String,) -> (SymbolTable,):
+    var out = table
+    var i = 0
+    while i < len(decl.kids):
+        let param = unit.ast.decls[decl.kids[i]]
+        if isParamDeclCode(param.kind):
+            var symbol = makeSymbol(unit, bytes, param, symbolParam)
+            symbol.owner = owner
+            out = defineMember(out, symbol)
+        i = i + 1
+    return out
+
+; 扩展块：成员挂到目标类型名下；块内同名报错，跨块同名按「后声明者覆盖」替换原位。
+registerExtension|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):
+    let target = decodeRange(bytes, decl.nameStart, decl.nameEnd)
+    var out = table
+    var seen: Array<Symbol> = []
+    var i = 0
+    while i < len(decl.kids):
+        let member = unit.ast.decls[decl.kids[i]]
+        if isFunctionDeclCode(member.kind):
+            var symbol = makeSymbol(unit, bytes, member, symbolFunction)
+            symbol.owner = target
+            if containsKey(seen, symbol.key):
+                out = addError(out, makeSymbolError(symbolMemberDuplicated, symbol.file, symbol.offset, symbol.spelling))
+            else:
+                seen = seen.append(symbol)
+                out = redefineMember(out, symbol)
+            out = registerParams(out, unit, bytes, member, target + "." + symbol.spelling)
+        i = i + 1
+    return out
+
+; 导入块：别名只属本文件，与本文件顶层名字或同文件别名相撞都报歧义。
+registerImportBlock|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):
+    var out = table
+    var i = 0
+    while i < len(decl.kids):
+        let entry = unit.ast.decls[decl.kids[i]]
+        if isImportEntryCode(entry.kind):
+            var symbol = makeSymbol(unit, bytes, entry, symbolImport)
+            out = defineImport(out, symbol)
+        i = i + 1
+    return out

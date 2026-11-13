@@ -1,0 +1,135 @@
+[register_test|import]
+_module_loader = "../../module-loader"
+package = "../../package"
+
+; 造单元：从源码字符串建；路径决定可见性推导的输入。
+造单元|func(path: String, text: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path, text)
+    assert(!loaded.failed, "样例应可解析：" + path)
+    return loaded.unit
+
+; 顶层重声明：同一个文件里两个同名函数，后到者不覆盖先到者，只记一条重复。
+顶层重声明|test() -> ():
+    let 单元 = 造单元("packages/p/src/api/a.pini", "foo|func() -> ():\n    return\n\nfoo|func() -> ():\n    return\n")
+    let 表 = registerPackage([单元])
+    assert(!表.isOK(), "同名顶层应报错")
+    assert(isSymbolError(表.errorAt(0), symbolRedeclared), "类别应为顶层重复")
+    assert(表.errorAt(0).name == "foo", "错误应带名字")
+    assert(表.symbolCount() == 1, "只保留先声明的那一个")
+    return
+
+; 类型成员同名：结构里两个同名字段，成员级报错而不是顶层报错。
+成员同名|test() -> ():
+    let 单元 = 造单元("packages/p/src/api/a.pini", "(Point)\nx: I32 = 0\nx: I32 = 0\n")
+    let 表 = registerPackage([单元])
+    assert(!表.isOK(), "同名字段应报错")
+    assert(isSymbolError(表.errorAt(0), symbolMemberDuplicated), "类别应为成员同名")
+    return
+
+; 扩展块内同名：同一块里两个同名方法按成员同名报错。
+扩展块内同名|test() -> ():
+    let 单元 = 造单元("packages/p/src/api/a.pini", "(Point)\nx: I32 = 0\n\n((Point))\ndup|func() -> ():\n    return\ndup|func() -> ():\n    return\n")
+    let 表 = registerPackage([单元])
+    assert(!表.isOK(), "块内同名应报错")
+    assert(isSymbolError(表.errorAt(0), symbolMemberDuplicated), "类别应为成员同名")
+    return
+
+; 扩展跨块同名：按「后声明者覆盖」，不报错，符号数不增。
+扩展跨块覆盖|test() -> ():
+    let 单元 = 造单元("packages/p/src/api/a.pini", "(Point)\nx: I32 = 0\n\n((Point))\ndup|func() -> ():\n    return\n\n((Point))\ndup|func() -> ():\n    return\n")
+    let 表 = registerPackage([单元])
+    assert(表.isOK(), "跨块同名不报错")
+    var 方法数 = 0
+    var i = 0
+    while i < 表.symbolCount():
+        if 表.symbolAt(i).owner == "Point" && 表.symbolAt(i).spelling == "dup":
+            方法数 = 方法数 + 1
+        i = i + 1
+    assert(方法数 == 1, "覆盖后只留一份，实得 " + "\(方法数)")
+    return
+
+; 导入别名撞名：别名与本文件顶层函数同名即报歧义。
+导入撞名|test() -> ():
+    let 单元 = 造单元("packages/p/src/api/a.pini", "[a|import]\n工具 = \"../x\"\n\n工具|func() -> ():\n    return\n")
+    let 表 = registerPackage([单元])
+    assert(!表.isOK(), "别名与本地名字相撞应报错")
+    assert(isSymbolError(表.errorAt(0), symbolImportAmbiguous), "类别应为导入歧义")
+    return
+
+; 导入别名跨文件同名：不同文件用同一个别名互不影响，只在各自文件内判重。
+导入别名按文件隔离|test() -> ():
+    let 甲 = 造单元("packages/p/src/api/a.pini", "[a|import]\n工具 = \"../x\"\n")
+    let 乙 = 造单元("packages/p/src/api/b.pini", "[b|import]\n工具 = \"../y\"\n")
+    let 表 = registerPackage([甲, 乙])
+    assert(表.isOK(), "不同文件同名别名不算冲突")
+    assert(表.importCount() == 2, "两个文件各登记一个别名")
+    return
+
+; 跨文件重名：两个文件各声明一个同名顶层函数，包级判重。
+跨文件重名|test() -> ():
+    let 甲 = 造单元("packages/p/src/api/a.pini", "foo|func() -> ():\n    return\n")
+    let 乙 = 造单元("packages/p/src/api/b.pini", "foo|func() -> ():\n    return\n")
+    let 表 = registerPackage([甲, 乙])
+    assert(!表.isOK(), "跨文件同名应报错")
+    assert(isSymbolError(表.errorAt(0), symbolRedeclared), "类别应为顶层重复")
+    assert(表.symbolCount() == 1, "只保留先声明的那一个")
+    return
+
+; 文件顺序无关：同一批单元正序与逆序注册，符号与错误的排列逐字相同。
+顺序无关|test() -> ():
+    let 甲 = 造单元("packages/p/src/api/a.pini", "foo|func() -> ():\n    return\n")
+    let 乙 = 造单元("packages/p/src/api/b.pini", "foo|func() -> ():\n    return\n")
+    let 正序 = registerPackage([甲, 乙])
+    let 逆序 = registerPackage([乙, 甲])
+    assert(正序.symbolCount() == 逆序.symbolCount(), "符号数应相同")
+    assert(正序.errorCount() == 逆序.errorCount(), "错误数应相同")
+    var i = 0
+    while i < 正序.symbolCount():
+        assert(正序.symbolAt(i).spelling == 逆序.symbolAt(i).spelling, "符号序列应相同")
+        i = i + 1
+    assert(正序.errorAt(0).file == 逆序.errorAt(0).file, "错误来源应相同")
+    return
+
+; 可见性进表：符号表按声明所在路径推导可见性，包级索引据此回答跨文件可见性。
+可见性进表|test() -> ():
+    let 单元 = 造单元("packages/p/src/_internal/a.pini", "foo|func() -> ():\n    return\n\n_私|func() -> ():\n    return\n")
+    let 表 = registerPackage([单元])
+    assert(表.isOK(), "注册应无错")
+    var 公开项 = ""
+    var 私有项 = ""
+    var i = 0
+    while i < 表.symbolCount():
+        if 表.symbolAt(i).spelling == "foo":
+            公开项 = visibilityName(表.symbolAt(i).visibility)
+        if 表.symbolAt(i).spelling == "_私":
+            私有项 = visibilityName(表.symbolAt(i).visibility)
+        i = i + 1
+    assert(公开项 == "package", "目录下划线应把无前缀名压到包级")
+    assert(私有项 == "private", "符号下划线最严")
+    return
+
+; 在计划里按包名定位：找不到答 -1。
+包索引|func(plan: BuildPlan, name: String,) -> (I32,):
+    var i = 0
+    while i < len(plan.packages):
+        if plan.packages[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 真实包零错误：support 的全部单元注册后没有任何冲突，符号数不为零。
+真实包注册|test() -> ():
+    let root = moduleRoot() + "/../.."
+    let plan: BuildPlan = package.planWorkspace(root)
+    assert(plan.isOK(), "计划应可用")
+    let at = 包索引(plan, "support")
+    assert(at >= 0, "计划里应有 support")
+    let pkg: PackagePlan = plan.packages[at]
+    let loaded = loadPackage(root + "/" + pkg.rootPath, pkg)
+    assert(loaded.isOK(), "support 装载应无错")
+    let 表 = registerPackage(loaded.units)
+    if !表.isOK():
+        let 首 = 表.errorAt(0)
+        assert(false, "注册应零错误，实得 " + 首.file + " " + symbolErrorName(首.kind) + " " + 首.name)
+    assert(表.symbolCount() > 0, "应注册出符号")
+    return

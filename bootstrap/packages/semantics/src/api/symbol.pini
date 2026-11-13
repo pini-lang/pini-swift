@@ -1,0 +1,96 @@
+; 符号种类：类型、函数、变量、字段、变体、参数与导入别名各成一类。
+[SymbolKind]
+symbolType
+symbolFunction
+symbolVariable
+symbolField
+symbolVariant
+symbolParam
+symbolImport
+
+; 可见性：符号、文件、目录三级收紧，次序见 visibilityRank。
+[Visibility]
+visibilityPrivate
+visibilityInternal
+visibilityPackage
+visibilityPublic
+
+; 符号：NFC 键用于判等与查找，原始拼写只服务诊断；owner 是成员符号的宿主类型名。
+(Symbol)
+key: Array<U8> = []
+spelling: String = ""
+kind: SymbolKind = .symbolType
+visibility: Visibility = .visibilityPublic
+file: String = ""
+offset: I32 = 0
+owner: String = ""
+
+; 种类名：诊断与测试共用一份拼写。
+symbolKindName|func(kind: SymbolKind,) -> (String,):
+    match kind:
+        case symbolType:
+            return "类型"
+        case symbolFunction:
+            return "函数"
+        case symbolVariable:
+            return "变量"
+        case symbolField:
+            return "字段"
+        case symbolVariant:
+            return "变体"
+        case symbolParam:
+            return "参数"
+        case symbolImport:
+            return "导入别名"
+    return "符号"
+
+; 同一种类判定：枚举相等比较不可用，按名称比。
+isSymbolKind|func(kind: SymbolKind, expected: SymbolKind,) -> (Bool,):
+    return symbolKindName(kind) == symbolKindName(expected)
+
+; 可见性名：与语言参考的四级同名。
+visibilityName|func(level: Visibility,) -> (String,):
+    match level:
+        case visibilityPrivate:
+            return "private"
+        case visibilityInternal:
+            return "internal"
+        case visibilityPackage:
+            return "package"
+        case visibilityPublic:
+            return "public"
+    return "public"
+
+; 可见性次序：private 最严 0，public 最宽 3；收紧时取小值。
+visibilityRank|func(level: Visibility,) -> (I32,):
+    match level:
+        case visibilityPrivate:
+            return 0
+        case visibilityInternal:
+            return 1
+        case visibilityPackage:
+            return 2
+        case visibilityPublic:
+            return 3
+    return 3
+
+; 两级取严：层级收紧时调用方只需给出候选，结果总是更窄的那个。
+stricter|func(first: Visibility, second: Visibility,) -> (Visibility,):
+    if visibilityRank(first) <= visibilityRank(second):
+        return first
+    return second
+
+; 键相等：逐字节比，长度不同直接假。
+sameKey|func(first: Array<U8>, second: Array<U8>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if tempByteToInt(first[i]) != tempByteToInt(second[i]):
+            return false
+        i = i + 1
+    return true
+
+; 跨模块可见：只有 public 能被别的模块引入。
+isExported|func(level: Visibility,) -> (Bool,):
+    return visibilityRank(level) == visibilityRank(visibilityPublic)

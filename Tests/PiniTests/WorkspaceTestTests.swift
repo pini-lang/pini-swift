@@ -151,7 +151,7 @@ struct WorkspaceTestTests {
         #expect(result.status == 0, "工作区测试失败：\(result.stderr)")
         #expect(result.stderr.isEmpty)
         let expected = """
-                测试目标: 工作区 .（7 个测试 target）
+                测试目标: 工作区 .（8 个测试 target）
                 包 support / support-tests（7 个测试）
                  ✓ 字节缓冲按UTF8计数
                  ✓ 切片共享存储
@@ -288,7 +288,7 @@ struct WorkspaceTestTests {
                  ✓ 词法问题透传
                  ✓ 中文关键字解析
                  ✓ 自解析
-                包 module-loader / module-loader-tests（14 个测试）
+                包 module_loader / module-loader-tests（14 个测试）
                  ✓ 单目标装载
                  ✓ 全量收集
                  ✓ 两次收集一致
@@ -303,7 +303,23 @@ struct WorkspaceTestTests {
                  ✓ 排除项判定
                  ✓ 路径排序
                  ✓ 排序与输入顺序无关
-                结果: 144 通过, 0 失败
+                包 semantics / semantics-tests（15 个测试）
+                 ✓ 顶层重声明
+                 ✓ 成员同名
+                 ✓ 扩展块内同名
+                 ✓ 扩展跨块覆盖
+                 ✓ 导入撞名
+                 ✓ 导入别名按文件隔离
+                 ✓ 跨文件重名
+                 ✓ 顺序无关
+                 ✓ 可见性进表
+                 ✓ 真实包注册
+                 ✓ 四级收紧
+                 ✓ 次序与取严
+                 ✓ 导出判定
+                 ✓ 键按NFC判等
+                 ✓ 键不覆盖原文
+                结果: 159 通过, 0 失败
 
                 """
         #expect(result.stdout == expected)

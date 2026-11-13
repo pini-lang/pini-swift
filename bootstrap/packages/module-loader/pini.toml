@@ -1,5 +1,5 @@
 [package]
-name = "module-loader"
+name = "module_loader"
 
 [require]
 unicode = "*"
