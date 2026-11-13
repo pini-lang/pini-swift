@@ -306,6 +306,13 @@ isType|self(id: I32, kind: TypeKind,) -> (Bool,):
     return self.types[id].kind == typeKindTag(kind)
 isExpr|self(id: I32, kind: ExprKind,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(kind)
+; 跨包谓词：枚举值不能跨包引用，表达式类别只经这里分流。
+isIdentifierExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprIdentifier)
+isMemberExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprMember)
+isCallExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprCall)
 isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(kind)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):

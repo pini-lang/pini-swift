@@ -32,3 +32,17 @@
     assert(ast.childOf(id, 0) == -1, "空子表越界答 -1")
     assert(ast.childOf(id, -1) == -1, "负下标答 -1")
     return
+
+; 跨包谓词：三类表达式各自判定，互不串类。
+跨包谓词|test() -> ():
+    var ast = Ast()
+    let ident = ast.pushExpr(exprIdentifier, 0, 1)
+    let member = ast.pushExpr(exprMember, 0, 3)
+    let call = ast.pushExpr(exprCall, 0, 5)
+    assert(ast.isIdentifierExpr(ident), "标识符应命中")
+    assert(!ast.isIdentifierExpr(member), "成员不得判作标识符")
+    assert(ast.isMemberExpr(member), "成员应命中")
+    assert(!ast.isMemberExpr(call), "调用不得判作成员")
+    assert(ast.isCallExpr(call), "调用应命中")
+    assert(!ast.isCallExpr(ident), "标识符不得判作调用")
+    return
