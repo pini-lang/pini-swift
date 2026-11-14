@@ -154,3 +154,43 @@
     assert(result.ast.itemCount() == 1, "一条顶层声明")
     assert(result.ast.isDecl(result.ast.itemAt(0), declFunction), "函数声明")
     return
+
+; 元组序号：点后接整数按成员访问记录，名字区间覆盖数字本身。
+元组序号成员|test() -> ():
+    let src = "f|func() -> ():\n    x = t.0\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "元组序号不应报诊断")
+    let value = result.ast.stmtChild(0, 1)
+    assert(result.ast.isMemberExpr(value), "应记为成员访问")
+    let node = result.ast.exprAt(value)
+    assert(src.substring(node.nameStart, node.nameEnd) == "0", "名字区间应覆盖数字")
+    return
+
+; 本型方法：`|own` 记为 isOwn，`|self` 仍只记 isSelf，两者互斥。
+本型方法标记|test() -> ():
+    let src = "((P))\n造|own() -> ():\n    return\n取|self() -> ():\n    return\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "本型方法不应报诊断")
+    let ast = result.ast
+    assert(ast.isDecl(ast.itemAt(0), declExtension), "扩展块")
+    let ext = ast.declAt(ast.itemAt(0))
+    assert(len(ext.kids) == 2, "两个方法")
+    assert(ast.declAt(ext.kids[0]).isOwn, "首个记为 |own")
+    assert(!ast.declAt(ext.kids[0]).isSelf, "首个不记 |self")
+    assert(ast.declAt(ext.kids[1]).isSelf, "次个记为 |self")
+    assert(!ast.declAt(ext.kids[1]).isOwn, "次个不记 |own")
+    return
+
+; 返回列表：单元素即该类型本身，多元素仍是元组，空表是空元组。
+返回列表|test() -> ():
+    let single = parseText("f|func() -> (I32,):\n    return 1\n")
+    let decl = single.ast.declAt(single.ast.itemAt(0))
+    assert(single.ast.isType(decl.typeId, typeNamed), "单元素返回应是具名类型")
+    let multi = parseText("f|func() -> (I32, Bool,):\n    return (1, true,)\n")
+    let mdecl = multi.ast.declAt(multi.ast.itemAt(0))
+    assert(multi.ast.isType(mdecl.typeId, typeTuple), "多元素返回应是元组")
+    assert(len(multi.ast.typeAt(mdecl.typeId).kids) == 2, "两个分量")
+    let empty = parseText("f|func() -> ():\n    return\n")
+    let edecl = empty.ast.declAt(empty.ast.itemAt(0))
+    assert(empty.ast.isType(edecl.typeId, typeTuple), "空返回仍是空元组")
+    return

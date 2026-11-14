@@ -79,7 +79,7 @@ firstField: I32 = -1
     let 空 = 采样("packages/p/src/api/b.pini", "(P)\nx: ()\n")
     assert(标注文本(空) == "()", "空元组实得 " + 标注文本(空))
     let 函数 = 采样("packages/p/src/api/c.pini", "(P)\nx: (I32,) -> (String,)\n")
-    assert(标注文本(函数) == "(I32,) -> (String,)", "函数实得 " + 标注文本(函数))
+    assert(标注文本(函数) == "(I32,) -> String", "函数实得 " + 标注文本(函数))
     return
 
 ; 嵌套：容器实参里的可选与指针照常展开。

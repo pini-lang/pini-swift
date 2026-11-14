@@ -370,12 +370,16 @@ parseFunctionDecl|self() -> (I32,):
         return -1
     var isTest = false
     var isSelf = false
+    var isOwn = false
     var isForeign = false
     if self.at(kwTest):
         isTest = true
         self.advance()
     elif self.at(kwSelf):
         isSelf = true
+        self.advance()
+    elif self.at(kwOwn):
+        isOwn = true
         self.advance()
     elif self.at(kwForeign):
         isForeign = true
@@ -394,7 +398,7 @@ parseFunctionDecl|self() -> (I32,):
     var returnType = -1
     if self.at(arrow):
         self.advance()
-        returnType = self.parseType()
+        returnType = self.collapseReturn(self.parseType())
     if !self.expect(colon, "`:`"):
         self.recover()
         return -1
@@ -408,7 +412,7 @@ parseFunctionDecl|self() -> (I32,):
     self.setDeclKids(id, params)
     self.setDeclType(id, returnType)
     self.setDeclBody(id, body)
-    self.setFunctionMarks(id, isTest, isSelf, isForeign)
+    self.setFunctionMarks(id, isTest, isSelf, isOwn, isForeign)
     return id
 ; 参数表：`(` 到 `)`，每项可带 own / using / self 前缀与默认值。
 parseParams|self() -> (Array<I32>,):
@@ -494,6 +498,16 @@ parseType|self() -> (I32,):
     let id: I32 = self.newType(typeNamed, start, self.previousEnd())
     self.setTypeName(id, nameStart, nameEnd)
     return self.maybeOptional(id)
+; 返回列表：括号内单元素即该元素本身，空表与多元素保持元组形状。
+collapseReturn|self(id: I32,) -> (I32,):
+    if id < 0:
+        return id
+    let node = self.ast.typeAt(id)
+    if !isTupleTypeCode(node.kind):
+        return id
+    if len(node.kids) != 1:
+        return id
+    return node.kids[0]
 ; 后缀问号：包成可选类型；`T??` 逐层包裹。
 maybeOptional|self(id: I32,) -> (I32,):
     var out = id
@@ -519,7 +533,7 @@ parseParenType|self() -> (I32,):
     self.expect(rightParen, "`)`")
     if self.at(arrow):
         self.advance()
-        let ret: I32 = self.parseType()
+        let ret: I32 = self.collapseReturn(self.parseType())
         let id: I32 = self.newType(typeFunction, start, self.previousEnd())
         self.setTypeKids(id, items)
         self.setTypeRet(id, ret)
@@ -566,19 +580,27 @@ parsePostfix|self() -> (I32,):
         elif self.at(leftBracket):
             expr = self.finishIndex(expr)
         elif self.at(dot):
-            let start = self.ast.exprAt(expr).start
-            self.advance()
-            let nameStart: I32 = self.current().nameStart
-            let nameEnd: I32 = self.current().nameEnd
-            if !self.expect(identifier, "成员名"):
-                return expr
-            let id: I32 = self.newExpr(exprMember, start, self.previousEnd())
-            self.setExprName(id, nameStart, nameEnd)
-            self.pushExprKid(id, expr)
-            expr = id
+            expr = self.finishMember(expr)
         else:
             chaining = false
     return expr
+; 成员访问：点后接名字或元组序号；序号取整数记号的名字区间，与名字共用成员节点。
+finishMember|self(expr: I32,) -> (I32,):
+    let start = self.ast.exprAt(expr).start
+    self.advance()
+    var nameStart = -1
+    var nameEnd = -1
+    if self.at(identifier) || self.at(integer):
+        nameStart = self.current().nameStart
+        nameEnd = self.current().nameEnd
+        self.advance()
+    else:
+        self.report("E2-001", "期望成员名或元组序号")
+        return expr
+    let id: I32 = self.newExpr(exprMember, start, self.previousEnd())
+    self.setExprName(id, nameStart, nameEnd)
+    self.pushExprKid(id, expr)
+    return id
 ; 调用：实参可带 `名字 = 值` 标签，尾随逗号合法。
 finishCall|self(callee: I32,) -> (I32,):
     let start = self.ast.exprAt(callee).start
@@ -783,7 +805,7 @@ parseLambda|self() -> (I32,):
     var returnType = -1
     if self.at(arrow):
         self.advance()
-        returnType = self.parseType()
+        returnType = self.collapseReturn(self.parseType())
     if !self.expect(colon, "`:`"):
         return -1
     var body = -1
@@ -1196,11 +1218,12 @@ pushDeclKid|self(id: I32, kid: I32,) -> ():
     node.kids = node.kids.append(kid)
     self.ast.decls[id] = node
     return
-; 函数修饰写回：测试、方法与外部声明各自一位。
-setFunctionMarks|self(id: I32, isTest: Bool, isSelf: Bool, isForeign: Bool,) -> ():
+; 函数修饰写回：测试、自身、本型与外部声明各一位，自身与本型互斥。
+setFunctionMarks|self(id: I32, isTest: Bool, isSelf: Bool, isOwn: Bool, isForeign: Bool,) -> ():
     var node = self.ast.decls[id]
     node.isTest = isTest
     node.isSelf = isSelf
+    node.isOwn = isOwn
     node.isForeign = isForeign
     self.ast.decls[id] = node
     return
