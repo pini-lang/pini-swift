@@ -1,0 +1,161 @@
+[shape|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 形态表：把结构、对象、枚举的字段名、类型与声明序从语法树搬进可查的表。
+; 成员表按名字答「有没有、什么类型」，这里按位置答「第几格、叫什么、什么类型」；布局只读这张表。
+; 枚举用例连同载荷类型与声明序一并留下，载荷槽序由它决定。
+
+; 形态类别：结构、对象、枚举、可选、结果与未知六类。
+[ShapeKind]
+shapeStruct
+shapeObject
+shapeEnum
+shapeOptional
+shapeResult
+shapeUnknown
+
+; 形态字段：名字与类型下标；在表里的位置即声明序。
+(ShapeField)
+name: String = ""
+typeId: I32 = -1
+
+; 形态用例：名字与逐位载荷类型；载荷声明序即槽序。
+(ShapeCase)
+name: String = ""
+payload: Array<I32> = []
+
+; 形态条目：类型下标、类别、字段表与用例表；结构只填字段，枚举只填用例。
+(ShapeEntry)
+typeId: I32 = -1
+kind: ShapeKind = .shapeUnknown
+fields: Array<ShapeField> = []
+cases: Array<ShapeCase> = []
+
+; 形态表：按类型下标升序，条目只读；同一份世界建两次得到同一串条目。
+(ShapeTable)
+entries: Array<ShapeEntry> = []
+
+; 类别名：诊断、测试与回执共用一份拼写。
+shapeKindName|func(kind: ShapeKind,) -> (String,):
+    match kind:
+        case shapeStruct:
+            return "结构"
+        case shapeObject:
+            return "对象"
+        case shapeEnum:
+            return "枚举"
+        case shapeOptional:
+            return "可选"
+        case shapeResult:
+            return "结果"
+        case shapeUnknown:
+            return "未知形态"
+    return "未知形态"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isShapeKind|func(kind: ShapeKind, expected: ShapeKind,) -> (Bool,):
+    return shapeKindName(kind) == shapeKindName(expected)
+
+; 名义声明：结构、对象与枚举三类，其余不算。
+isNominalDeclCode|func(code: I32,) -> (Bool,):
+    if isStructDeclCode(code) || isObjectDeclCode(code):
+        return true
+    return isEnumDeclCode(code)
+
+; 名义声明查找：按名字在全部单元里找顶层声明；未命中答空引用。
+findNominalDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
+    var out = DeclRef()
+    var u = 0
+    while u < len(world.units):
+        let unit = world.units[u]
+        let bytes = tempUtf8Bytes(unit.text)
+        var i = 0
+        while i < len(unit.ast.items):
+            let id = unit.ast.items[i]
+            let decl = unit.ast.decls[id]
+            if isNominalDeclCode(decl.kind) && decodeRange(bytes, decl.nameStart, decl.nameEnd) == name:
+                out.unit = u
+                out.decl = id
+                return out
+            i = i + 1
+        u = u + 1
+    return out
+
+; 用例载荷：形参按声明序回类型表，缺项留 -1 占位。
+variantPayload|func(world: MemberWorld, unitIndex: I32, decl: DeclNode,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < len(decl.kids):
+        let kid = decl.kids[i]
+        if isParamDeclCode(world.units[unitIndex].ast.decls[kid].kind):
+            out = out.append(world.types.typeOf(unitIndex, kid))
+        i = i + 1
+    return out
+
+; 单条形态：结构取字段表，枚举取用例表，两者都按声明序；类型一律回类型表的绑定。
+shapeOfDecl|func(world: MemberWorld, ref: DeclRef, typeId: I32,) -> (ShapeEntry,):
+    var out = ShapeEntry()
+    out.typeId = typeId
+    let unit = world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    let bytes = tempUtf8Bytes(unit.text)
+    if isStructDeclCode(decl.kind):
+        out.kind = shapeStruct
+    elif isObjectDeclCode(decl.kind):
+        out.kind = shapeObject
+    else:
+        out.kind = shapeEnum
+    var i = 0
+    while i < len(decl.kids):
+        let kid = decl.kids[i]
+        let child = unit.ast.decls[kid]
+        if isFieldDeclCode(child.kind):
+            var field = ShapeField()
+            field.name = decodeRange(bytes, child.nameStart, child.nameEnd)
+            field.typeId = world.types.typeOf(ref.unit, kid)
+            out.fields = out.fields.append(field)
+        elif isVariantDeclCode(child.kind):
+            var variant = ShapeCase()
+            variant.name = decodeRange(bytes, child.nameStart, child.nameEnd)
+            variant.payload = variantPayload(world, ref.unit, child)
+            out.cases = out.cases.append(variant)
+        i = i + 1
+    return out
+
+; 建表：按池序取全部名义类型，逐个找声明成形；条目因此恒按类型下标升序。
+makeShapeTable|func(world: MemberWorld,) -> (ShapeTable,):
+    var out = ShapeTable()
+    var i = 0
+    while i < len(world.types.pool.entries):
+        let entry = world.types.pool.entries[i]
+        if isNominalClass(entry.kind):
+            let ref = findNominalDecl(world, entry.name)
+            if ref.unit >= 0:
+                out.entries = out.entries.append(shapeOfDecl(world, ref, i))
+        i = i + 1
+    return out
+
+((ShapeTable))
+; 条目数：下标合法区间是 0 到 count() - 1。
+count|self() -> (I32,):
+    return len(self.entries)
+; 条目读：下标越界是运行时陷阱，调用方先经 findShape 取下标。
+entryAt|self(index: I32,) -> (ShapeEntry,):
+    return self.entries[index]
+
+; 按类型下标查条目：升序表线性扫，未命中答 -1。
+findShape|func(table: ShapeTable, typeId: I32,) -> (I32,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].typeId == typeId:
+            return i
+        i = i + 1
+    return -1
+
+; 取条目：未命中答空条目，调用方不必先判下标。
+shapeAt|func(table: ShapeTable, typeId: I32,) -> (ShapeEntry,):
+    let at = findShape(table, typeId)
+    if at < 0:
+        return ShapeEntry()
+    return table.entries[at]

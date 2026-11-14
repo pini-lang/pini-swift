@@ -1,0 +1,224 @@
+[layout|import]
+_syntax = "../../../syntax"
+
+; 槽布局：把形态表与类型池折成槽表。槽是布局单位，不是字节。
+; 头四格三族共用，字段从第 4 槽起按声明序，枚举标签在第 4 槽、载荷从第 5 槽起，Result 三槽、Optional 两槽。
+; 契约未列出的类别答槽数 -1：尺寸、对齐与偏移归后端的目标描述，本层不猜。
+
+; 槽角色：头四格、字段、用例标签、载荷、结果的标签与两载荷、可选的标签与载荷。
+[SlotRole]
+slotStrongCount
+slotWeakCount
+slotTypeIdentity
+slotWeakTable
+slotField
+slotCaseTag
+slotPayload
+slotResultTag
+slotResultOk
+slotResultError
+slotOptionalTag
+slotOptionalPayload
+
+; 槽：序号、角色、名字与类型；载荷窗口的类型留 -1，逐用例的类型在用例表里。
+(Slot)
+index: I32 = 0
+role: SlotRole = .slotField
+name: String = ""
+typeId: I32 = -1
+
+; 用例布局：用例名与逐位载荷类型；载荷起始槽恒为 5，长度即用例实参个数。
+(CaseLayout)
+name: String = ""
+payload: Array<I32> = []
+
+; 布局条目：类型、形态、槽数、槽表与用例表；槽数 -1 表示契约未约定该类别。
+(LayoutEntry)
+typeId: I32 = -1
+shape: ShapeKind = .shapeUnknown
+slotCount: I32 = -1
+slots: Array<Slot> = []
+cases: Array<CaseLayout> = []
+
+; 布局表：按类型下标升序，只收契约约定过槽数的类别。
+(LayoutTable)
+entries: Array<LayoutEntry> = []
+
+; 角色名：诊断、测试与回执共用一份拼写。
+slotRoleName|func(role: SlotRole,) -> (String,):
+    match role:
+        case slotStrongCount:
+            return "强计数"
+        case slotWeakCount:
+            return "弱计数"
+        case slotTypeIdentity:
+            return "类型标识"
+        case slotWeakTable:
+            return "弱引用旁表"
+        case slotField:
+            return "字段"
+        case slotCaseTag:
+            return "用例标签"
+        case slotPayload:
+            return "载荷"
+        case slotResultTag:
+            return "结果标签"
+        case slotResultOk:
+            return "结果载荷"
+        case slotResultError:
+            return "错误字"
+        case slotOptionalTag:
+            return "可选标签"
+        case slotOptionalPayload:
+            return "可选载荷"
+    return "槽"
+
+; 同一角色判定：枚举相等比较不可用，按名称比。
+isSlotRole|func(role: SlotRole, expected: SlotRole,) -> (Bool,):
+    return slotRoleName(role) == slotRoleName(expected)
+
+; 头槽数：结构、对象、枚举三族共用，字段与标签的槽位基准只有这一处。
+headSlotCount|func() -> (I32,):
+    return 4
+
+; 载荷起始槽：枚举标签占第 4 槽，载荷从下一格起。
+payloadFirstSlot|func() -> (I32,):
+    return 5
+
+; 造一个槽：序号、角色、名字与类型由调用方给。
+makeSlot|func(index: I32, role: SlotRole, name: String, typeId: I32,) -> (Slot,):
+    var out = Slot()
+    out.index = index
+    out.role = role
+    out.name = name
+    out.typeId = typeId
+    return out
+
+; 头四格：强计数、弱计数、类型标识、弱引用旁表；三族共用同一串名字。
+headSlots|func() -> (Array<Slot>,):
+    var out: Array<Slot> = []
+    out = out.append(makeSlot(0, slotStrongCount, "强计数", -1))
+    out = out.append(makeSlot(1, slotWeakCount, "弱计数", -1))
+    out = out.append(makeSlot(2, slotTypeIdentity, "类型标识", -1))
+    out = out.append(makeSlot(3, slotWeakTable, "弱引用旁表", -1))
+    return out
+
+; 结构、对象的布局：头四格后按声明序每字段一格，字段类型照抄形态表。
+layoutFields|func(shape: ShapeEntry,) -> (LayoutEntry,):
+    var out = LayoutEntry()
+    out.typeId = shape.typeId
+    out.shape = shape.kind
+    out.slots = headSlots()
+    var i = 0
+    while i < len(shape.fields):
+        let field = shape.fields[i]
+        out.slots = out.slots.append(makeSlot(headSlotCount() + i, slotField, field.name, field.typeId))
+        i = i + 1
+    out.slotCount = len(out.slots)
+    return out
+
+; 枚举的布局：头四格后是标签槽，载荷窗口按最宽用例占位；逐用例的载荷类型另表。
+layoutEnum|func(shape: ShapeEntry,) -> (LayoutEntry,):
+    var out = LayoutEntry()
+    out.typeId = shape.typeId
+    out.shape = shape.kind
+    out.slots = headSlots()
+    out.slots = out.slots.append(makeSlot(headSlotCount(), slotCaseTag, "用例标签", -1))
+    var width = 0
+    var i = 0
+    while i < len(shape.cases):
+        let item = shape.cases[i]
+        var row = CaseLayout()
+        row.name = item.name
+        row.payload = item.payload
+        out.cases = out.cases.append(row)
+        if len(item.payload) > width:
+            width = len(item.payload)
+        i = i + 1
+    var slot = 0
+    while slot < width:
+        out.slots = out.slots.append(makeSlot(payloadFirstSlot() + slot, slotPayload, "", -1))
+        slot = slot + 1
+    out.slotCount = len(out.slots)
+    return out
+
+; 可选的布局：标签一格、载荷一格；载荷类型取实参，缺项留 -1。
+layoutOptional|func(entry: TypeEntry, typeId: I32,) -> (LayoutEntry,):
+    var out = LayoutEntry()
+    out.typeId = typeId
+    out.shape = shapeOptional
+    var payload = -1
+    if len(entry.kids) > 0:
+        payload = entry.kids[0]
+    out.slots = out.slots.append(makeSlot(0, slotOptionalTag, "标签", -1))
+    out.slots = out.slots.append(makeSlot(1, slotOptionalPayload, "载荷", payload))
+    out.slotCount = len(out.slots)
+    return out
+
+; 结果的布局：标签、ok 载荷与错误字三格；错误槽类型擦除，留 -1。
+layoutResult|func(entry: TypeEntry, typeId: I32,) -> (LayoutEntry,):
+    var out = LayoutEntry()
+    out.typeId = typeId
+    out.shape = shapeResult
+    var ok = -1
+    if len(entry.kids) > 0:
+        ok = entry.kids[0]
+    out.slots = out.slots.append(makeSlot(0, slotResultTag, "标签", -1))
+    out.slots = out.slots.append(makeSlot(1, slotResultOk, "ok 载荷", ok))
+    out.slots = out.slots.append(makeSlot(2, slotResultError, "错误字", -1))
+    out.slotCount = len(out.slots)
+    return out
+
+; 单条布局：先认形态，再按族折槽；形态缺失且类别未约定时答槽数 -1。
+layoutOf|func(shapes: ShapeTable, pool: TypePool, typeId: I32,) -> (LayoutEntry,):
+    var out = LayoutEntry()
+    out.typeId = typeId
+    if typeId < 0 || typeId >= len(pool.entries):
+        return out
+    let at = findShape(shapes, typeId)
+    if at >= 0:
+        let shape = shapes.entries[at]
+        if isShapeKind(shape.kind, shapeEnum):
+            return layoutEnum(shape)
+        return layoutFields(shape)
+    let entry = pool.entries[typeId]
+    if isTypeClass(entry.kind, typeClassOptional):
+        return layoutOptional(entry, typeId)
+    if isTypeClass(entry.kind, typeClassResult):
+        return layoutResult(entry, typeId)
+    return out
+
+; 全表：按池序逐类型布局，未约定槽数的类别不进表；同一输入两次布局逐项相同。
+layoutAll|func(shapes: ShapeTable, pool: TypePool,) -> (LayoutTable,):
+    var out = LayoutTable()
+    var i = 0
+    while i < len(pool.entries):
+        let entry = layoutOf(shapes, pool, i)
+        if entry.slotCount >= 0:
+            out.entries = out.entries.append(entry)
+        i = i + 1
+    return out
+
+((LayoutTable))
+; 条目数：下标合法区间是 0 到 count() - 1。
+count|self() -> (I32,):
+    return len(self.entries)
+; 条目读：下标越界是运行时陷阱，调用方先经 findLayout 取下标。
+entryAt|self(index: I32,) -> (LayoutEntry,):
+    return self.entries[index]
+
+; 按类型下标查条目：升序表线性扫，未命中答 -1。
+findLayout|func(table: LayoutTable, typeId: I32,) -> (I32,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].typeId == typeId:
+            return i
+        i = i + 1
+    return -1
+
+; 取条目：未命中答空条目（槽数 -1），调用方不必先判下标。
+layoutAt|func(table: LayoutTable, typeId: I32,) -> (LayoutEntry,):
+    let at = findLayout(table, typeId)
+    if at < 0:
+        return LayoutEntry()
+    return table.entries[at]
