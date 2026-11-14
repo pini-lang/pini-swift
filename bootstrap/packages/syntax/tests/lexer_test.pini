@@ -342,3 +342,18 @@ CRLF归一化|test() -> ():
     assert(opSymbol(kindTag(opEq)) == "==", "相等")
     assert(opSymbol(kindTag(identifier)) == "", "非运算符答空串")
     return
+
+; 复合赋值映射：十类复合赋值各自映射到对应二元运算，普通赋值答零。
+复合赋值映射|test() -> ():
+    assert(compoundBinaryTag(kindTag(opAssignAdd)) == kindTag(opAdd), "加赋")
+    assert(compoundBinaryTag(kindTag(opAssignSub)) == kindTag(opSub), "减赋")
+    assert(compoundBinaryTag(kindTag(opAssignMul)) == kindTag(opMul), "乘赋")
+    assert(compoundBinaryTag(kindTag(opAssignDiv)) == kindTag(opDiv), "除赋")
+    assert(compoundBinaryTag(kindTag(opAssignMod)) == kindTag(opMod), "取余赋")
+    assert(compoundBinaryTag(kindTag(opAssignBitAnd)) == kindTag(opBitAnd), "位与赋")
+    assert(compoundBinaryTag(kindTag(opAssignBitOr)) == kindTag(opBitOr), "位或赋")
+    assert(compoundBinaryTag(kindTag(opAssignBitXor)) == kindTag(opBitXor), "位异或赋")
+    assert(compoundBinaryTag(kindTag(opAssignShl)) == kindTag(opShl), "左移赋")
+    assert(compoundBinaryTag(kindTag(opAssignShr)) == kindTag(opShr), "右移赋")
+    assert(compoundBinaryTag(kindTag(opAssign)) == 0, "普通赋值不映射")
+    return

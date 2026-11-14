@@ -159,3 +159,31 @@
     assert(!ast.isReturnStmt(block), "块不得判作 return")
     assert(!ast.isIfStmt(loop), "while 不得判作 if")
     return
+
+; 变量语句可变性：var 记可变，let 记不可变，非变量语句一律不可变。
+变量可变性|test() -> ():
+    var ast = Ast()
+    let mutable = ast.pushStmt(stmtVariable, 0, 3)
+    let immutable = ast.pushStmt(stmtVariable, 4, 7)
+    let other = ast.pushStmt(stmtPass, 8, 11)
+    var first = ast.stmtAt(mutable)
+    first.op = kindTag(kwVar)
+    ast.stmts[mutable] = first
+    var second = ast.stmtAt(immutable)
+    second.op = kindTag(kwLet)
+    ast.stmts[immutable] = second
+    assert(ast.isMutableVariableStmt(mutable), "var 应判可变")
+    assert(!ast.isMutableVariableStmt(immutable), "let 应判不可变")
+    assert(!ast.isMutableVariableStmt(other), "非变量语句不得判可变")
+    return
+
+; 元组谓词：元组表达式命中，数组与标识符不命中。
+元组谓词|test() -> ():
+    var ast = Ast()
+    let tuple = ast.pushExpr(exprTuple, 0, 5)
+    let array = ast.pushExpr(exprArray, 6, 9)
+    let ident = ast.pushExpr(exprIdentifier, 10, 11)
+    assert(ast.isTupleExpr(tuple), "元组应命中")
+    assert(!ast.isTupleExpr(array), "数组不得判作元组")
+    assert(!ast.isTupleExpr(ident), "标识符不得判作元组")
+    return

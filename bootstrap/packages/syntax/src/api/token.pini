@@ -791,3 +791,27 @@ opSymbol|func(tag: I32,) -> (String,):
     if tag == kindTag(opAssignShr):
         return ">>="
     return ""
+
+; 复合赋值对应的二元运算：`+=` 到 `>>=` 逐个映射；普通赋值与非赋值答 0。
+compoundBinaryTag|func(tag: I32,) -> (I32,):
+    if tag == kindTag(opAssignAdd):
+        return kindTag(opAdd)
+    if tag == kindTag(opAssignSub):
+        return kindTag(opSub)
+    if tag == kindTag(opAssignMul):
+        return kindTag(opMul)
+    if tag == kindTag(opAssignDiv):
+        return kindTag(opDiv)
+    if tag == kindTag(opAssignMod):
+        return kindTag(opMod)
+    if tag == kindTag(opAssignBitAnd):
+        return kindTag(opBitAnd)
+    if tag == kindTag(opAssignBitOr):
+        return kindTag(opBitOr)
+    if tag == kindTag(opAssignBitXor):
+        return kindTag(opBitXor)
+    if tag == kindTag(opAssignShl):
+        return kindTag(opShl)
+    if tag == kindTag(opAssignShr):
+        return kindTag(opShr)
+    return 0
