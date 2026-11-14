@@ -1,0 +1,326 @@
+[call_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 调用样例：单元、世界与文件路径；实参类型由调用方另行驻留。
+(调用样例)
+world: MemberWorld = MemberWorld()
+unit: CompilationUnit = CompilationUnit()
+file: String = ""
+
+; 造调用样例：装载、注册、解析类型、建世界四步，顺序不能反。
+造调用样例|func(path: String, src: String,) -> (调用样例,):
+    let loaded = loadUnit(path, src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    let units = [loaded.unit]
+    let table = registerPackage(units)
+    let types = resolvePackage(units, table)
+    var out = 调用样例()
+    out.world = makeMemberWorld(units, table, types)
+    out.unit = loaded.unit
+    out.file = path
+    return out
+
+; 类型号：驻留结果连同更新后的样例一起带回。
+(类型号)
+sample: 调用样例 = 调用样例()
+id: I32 = -1
+
+; 加标量：按名字驻留标量类型。
+加标量|func(sample: 调用样例, name: String,) -> (类型号,):
+    let inserted = intern(sample.world.types.pool, typeClassScalar, name, [], -1)
+    var out = 类型号()
+    out.sample = sample
+    out.sample.world.types.pool = inserted.pool
+    out.id = inserted.id
+    return out
+
+; 加数组：按元素标量名驻留数组类型。
+加数组|func(sample: 调用样例, elem: String,) -> (类型号,):
+    let scalar = intern(sample.world.types.pool, typeClassScalar, elem, [], -1)
+    var grown = sample
+    grown.world.types.pool = scalar.pool
+    var kids: Array<I32> = []
+    kids = kids.append(scalar.id)
+    let array = intern(grown.world.types.pool, typeClassCollection, "Array", kids, -1)
+    var out = 类型号()
+    out.sample = grown
+    out.sample.world.types.pool = array.pool
+    out.id = array.id
+    return out
+
+; 组函数：按形参与返回的类型下标驻留函数类型。
+组函数|func(sample: 调用样例, params: Array<I32>, ret: I32,) -> (类型号,):
+    let inserted = intern(sample.world.types.pool, typeClassFunction, "", params, ret)
+    var out = 类型号()
+    out.sample = sample
+    out.sample.world.types.pool = inserted.pool
+    out.id = inserted.id
+    return out
+
+; 实参：标签为空即位置实参。
+实参|func(label: String, typeId: I32,) -> (CallArg,):
+    var out = CallArg()
+    out.label = label
+    out.typeId = typeId
+    return out
+
+; 调用点：按名字取顶层函数符号，实参与文件按样例填。
+调用点|func(sample: 调用样例, name: String, args: Array<CallArg>,) -> (CallSite,):
+    var out = CallSite()
+    out.symbol = sample.world.table.topIndex(keyOfText(name))
+    out.name = name
+    out.file = sample.file
+    out.args = args
+    return out
+
+; 位置调用：两个位置实参对上两个形参，返回类型取声明。
+位置调用|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    args = args.append(实参("", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(!hit.failed, "位置调用应通过")
+    assert(typeText(hit.pool, hit.typeId) == "I32", "实得 " + typeText(hit.pool, hit.typeId))
+    return
+
+; 标签调用：标签按名字对齐，顺序颠倒也命中。
+标签调用|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("b", 数.id))
+    args = args.append(实参("a", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(!hit.failed, "标签调用应通过")
+    return
+
+; 混合调用：位置实参填首个未占位形参，标签实参按名字填其余。
+混合调用|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: Bool,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    let 旗 = 加标量(样例, "Bool")
+    样例 = 旗.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    args = args.append(实参("b", 旗.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(!hit.failed, "混合调用应通过")
+    return
+
+; 未知标签：标签对不上形参名即报错，码取 E4-009。
+未知标签|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("x", 数.id))
+    args = args.append(实参("b", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(hit.failed, "未知标签应报错")
+    assert(callErrorCode(hit.error.kind) == "E4-009", "实得 " + callErrorCode(hit.error.kind))
+    return
+
+; 个数不足：必填形参没给实参报 E4-005。
+个数不足|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(hit.failed, "缺实参应报错")
+    assert(callErrorCode(hit.error.kind) == "E4-005", "实得 " + callErrorCode(hit.error.kind))
+    return
+
+; 个数过多：超出形参数报 E4-005。
+个数过多|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    args = args.append(实参("", 数.id))
+    args = args.append(实参("", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(hit.failed, "多给实参应报错")
+    assert(callErrorCode(hit.error.kind) == "E4-005", "实得 " + callErrorCode(hit.error.kind))
+    return
+
+; 默认值省略：带默认值的形参可不给实参，其余必填仍需对上。
+默认值省略|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "f|func(a: I32, b: I32 = 0,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "f", args))
+    assert(!hit.failed, "省略默认值应通过")
+    return
+
+; 实参类型不匹配：类型不可赋值即报 E4-001。
+实参类型不匹配|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    let 串 = 加标量(样例, "String")
+    样例 = 串.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 串.id))
+    args = args.append(实参("", 数.id))
+    let hit = checkCall(样例.world, 调用点(样例, "g", args))
+    assert(hit.failed, "类型不匹配应报错")
+    assert(callErrorCode(hit.error.kind) == "E4-001", "实得 " + callErrorCode(hit.error.kind))
+    return
+
+; 函数值调用：只有函数类型可调用，实参个数按类型逐位对。
+函数值调用|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "(点)\nx: I32 = 0\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    let 旗 = 加标量(样例, "Bool")
+    样例 = 旗.sample
+    var kids: Array<I32> = []
+    kids = kids.append(数.id)
+    let fn = 组函数(样例, kids, 旗.id)
+    样例 = fn.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    var site = CallSite()
+    site.calleeType = fn.id
+    site.name = "值"
+    site.file = 样例.file
+    site.args = args
+    let hit = checkCall(样例.world, site)
+    assert(!hit.failed, "函数值调用应通过")
+    assert(typeText(hit.pool, hit.typeId) == "Bool", "实得 " + typeText(hit.pool, hit.typeId))
+    var missing = CallSite()
+    missing.calleeType = fn.id
+    missing.name = "值"
+    missing.file = 样例.file
+    let short = checkCall(样例.world, missing)
+    assert(short.failed, "少给实参应报错")
+    assert(callErrorCode(short.error.kind) == "E4-005", "实得 " + callErrorCode(short.error.kind))
+    return
+
+; 不可调用：非函数类型的值没有调用点，报 E4-004。
+不可调用|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "(点)\nx: I32 = 0\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var site = CallSite()
+    site.calleeType = 数.id
+    site.name = "数"
+    site.file = 样例.file
+    let hit = checkCall(样例.world, site)
+    assert(hit.failed, "整数不可调用")
+    assert(callErrorCode(hit.error.kind) == "E4-004", "实得 " + callErrorCode(hit.error.kind))
+    return
+
+; 内建函数：长度取任意实参回 I32，断言按变参放过缺省消息，类型仍要查。
+内建函数|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "(点)\nx: I32 = 0\n")
+    let 串 = 加标量(样例, "String")
+    样例 = 串.sample
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    let 旗 = 加标量(样例, "Bool")
+    样例 = 旗.sample
+    var 长度 = CallSite()
+    长度.builtin = findBuiltinFunction(样例.world.functions, "len")
+    长度.name = "len"
+    长度.file = 样例.file
+    var one: Array<CallArg> = []
+    one = one.append(实参("", 串.id))
+    长度.args = one
+    let measured = checkCall(样例.world, 长度)
+    assert(!measured.failed, "len 应通过")
+    assert(typeText(measured.pool, measured.typeId) == "I32", "实得 " + typeText(measured.pool, measured.typeId))
+    var 断言 = CallSite()
+    断言.builtin = findBuiltinFunction(样例.world.functions, "assert")
+    断言.name = "assert"
+    断言.file = 样例.file
+    var onlyCondition: Array<CallArg> = []
+    onlyCondition = onlyCondition.append(实参("", 旗.id))
+    断言.args = onlyCondition
+    let short = checkCall(样例.world, 断言)
+    assert(!short.failed, "变参应放过缺少的消息")
+    assert(typeText(short.pool, short.typeId) == "()", "实得 " + typeText(short.pool, short.typeId))
+    var wrongType: Array<CallArg> = []
+    wrongType = wrongType.append(实参("", 数.id))
+    断言.args = wrongType
+    let bad = checkCall(样例.world, 断言)
+    assert(bad.failed, "条件位收整数应报错")
+    assert(callErrorCode(bad.error.kind) == "E4-001", "实得 " + callErrorCode(bad.error.kind))
+    return
+
+; 内建成员调用：数组追加按函数值形态对上元素位，返回数组。
+内建成员调用|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "(点)\nx: I32 = 0\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    let 数组 = 加数组(样例, "I32")
+    样例 = 数组.sample
+    var kids: Array<I32> = []
+    kids = kids.append(数.id)
+    let fn = 组函数(样例, kids, 数组.id)
+    样例 = fn.sample
+    var site = CallSite()
+    site.calleeType = fn.id
+    site.name = "append"
+    site.file = 样例.file
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    site.args = args
+    let hit = checkCall(样例.world, site)
+    assert(!hit.failed, "内建成员调用应通过")
+    assert(typeText(hit.pool, hit.typeId) == "Array<I32>", "实得 " + typeText(hit.pool, hit.typeId))
+    return
+
+; 实参提取：标签实参按父节点识别，值节点取类型；位置实参保持空标签。
+实参提取|test() -> ():
+    let 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n\nm|func() -> ():\n    let x = g(a = 1, 2)\n    return\n")
+    var node = -1
+    var i = 0
+    while i < 样例.unit.ast.exprCount():
+        if 样例.unit.ast.isCallExpr(i) && node < 0:
+            node = i
+        i = i + 1
+    assert(node >= 0, "应有一个调用节点")
+    let callee = calleeNode(样例.unit, node)
+    assert(样例.unit.ast.isIdentifierExpr(callee), "被调方应是标识符")
+    let args = callArguments(样例.unit, 0, node, makeExprTypes([样例.unit]))
+    assert(len(args) == 2, "两个实参")
+    assert(args[0].label == "a", "首个应带标签 a")
+    assert(args[1].label == "", "次个应是位置实参")
+    return
+
+; 待定：被调方尚未定型时不报错，交给调用方补判。
+待定调用|test() -> ():
+    let 样例 = 造调用样例("packages/p/src/api/a.pini", "(点)\nx: I32 = 0\n")
+    var site = CallSite()
+    site.name = "未知"
+    site.file = 样例.file
+    let hit = checkCall(样例.world, site)
+    assert(!hit.failed, "待定不应报错")
+    assert(hit.deferred, "应记为待定")
+    return
+
+; 两次判定一致：同一调用点两次检查得到同一类型与错误类别。
+调用两次一致|test() -> ():
+    var 样例 = 造调用样例("packages/p/src/api/a.pini", "g|func(a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let 数 = 加标量(样例, "I32")
+    样例 = 数.sample
+    var args: Array<CallArg> = []
+    args = args.append(实参("", 数.id))
+    let site = 调用点(样例, "g", args)
+    let first = checkCall(样例.world, site)
+    let second = checkCall(样例.world, site)
+    assert(callErrorName(first.error.kind) == callErrorName(second.error.kind), "错误类别应相同")
+    assert(first.typeId == second.typeId, "类型下标应相同")
+    return

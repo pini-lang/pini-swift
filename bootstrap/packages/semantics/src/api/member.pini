@@ -54,7 +54,7 @@ deferred: Bool = false
 typeId: I32 = -1
 labels: Array<String> = []
 
-; 成员世界：单元、符号表、类型表、两张索引与内建成员表；池内含全部名义类型。
+; 成员世界：单元、符号表、类型表、两张索引、内建成员与函数表；池内含全部名义类型。
 (MemberWorld)
 units: Array<CompilationUnit> = []
 table: SymbolTable = SymbolTable()
@@ -62,6 +62,7 @@ types: TypeTable = TypeTable()
 symbols: SymbolIndex = SymbolIndex()
 decls: DeclIndex = DeclIndex()
 builtins: Array<BuiltinMember> = []
+functions: Array<BuiltinFunction> = []
 labels: Array<TypeLabels> = []
 
 ; 成员类别名：诊断、测试与回执共用一份拼写。
@@ -180,6 +181,7 @@ makeMemberWorld|func(units: Array<CompilationUnit>, table: SymbolTable, types: T
     out.symbols = makeSymbolIndex(table)
     out.decls = makeDeclIndex(units)
     out.builtins = builtinMemberTable()
+    out.functions = builtinFunctionTable()
     out.types.pool = internNominalTypes(units, types.pool)
     return out
 
@@ -310,7 +312,7 @@ checkBuiltinMember|func(world: MemberWorld, out: MemberResult, owner: String, ki
     let at = findBuiltin(world.builtins, owner, access.spelling)
     if at < 0:
         return failMember(out, access, memberUnknown, typeText(out.pool, access.receiver))
-    let typed = builtinMemberType(out.pool, world.builtins[at], kids)
+    let typed = builtinShapeType(out.pool, world.builtins[at].ret, kids)
     if typed.id < 0:
         return deferMember(out, access.receiver)
     var done = out
