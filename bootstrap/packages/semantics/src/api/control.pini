@@ -1,0 +1,137 @@
+[control|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 分支与循环：条件定型、遍历元素绑定与循环深度；错误与声明赋值共用同一条语句通道。
+; 条件或遍历目标判不出时只放过该项，模式本身照查：名字解析归解析表，本层不越界报未定义。
+; 循环变量落在循环帧里，体内与 step 块可见，出循环随帧截断；循环深度只数外层 while 与 for。
+
+; 条件定型：先读类型表，未写且是基本字面量时按无期望补判；全为 Bool 才放行。
+checkCondition|func(unit: CompilationUnit, unitIndex: I32, node: I32, out: StoreCheck,) -> (StoreCheck,):
+    var working = out
+    if node < 0 || node >= unit.ast.exprCount():
+        return working
+    let typed = checkInitializer(unit, unitIndex, node, -1, "", working)
+    working = typed.check
+    if typed.typeId < 0 || typed.typeId >= len(working.pool.entries):
+        return working
+    if isBoolType(working.pool, typed.typeId):
+        return working
+    let got = storeTypeText(working.pool, typed.typeId)
+    let offset = unit.ast.exprAt(node).start
+    return appendStoreError(working, unit, offset, storeConditionNotBool, "", "", "Bool", got)
+
+; 遍历元素：字典按键、值两字段，数组与集合按一个元素字段；其余形态答空表。
+loopComponents|func(pool: TypePool, id: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    if id < 0 || id >= len(pool.entries):
+        return out
+    let name = containerNameOf(pool, id)
+    if name == "Dictionary":
+        out = out.append(keyTypeOf(pool, id))
+        out = out.append(valueTypeOf(pool, id))
+        return out
+    if name == "Array" || name == "Set":
+        out = out.append(elementTypeOf(pool, id))
+        return out
+    return out
+
+; 模式字段：元组模式逐位取子节点，单名模式自成一位；越界答空表。
+loopPatternFields|func(unit: CompilationUnit, pattern: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    if pattern < 0 || pattern >= unit.ast.exprCount():
+        return out
+    if unit.ast.isTupleExpr(pattern):
+        return unit.ast.exprAt(pattern).kids
+    return out.append(pattern)
+
+; 声明一个遍历字段：只收名字与 `_`，占位不占局部；名字按元素类型入循环帧。
+declareLoopField|func(out: StoreCheck, unit: CompilationUnit, kid: I32, typeId: I32,) -> (StoreCheck,):
+    if !unit.ast.isIdentifierExpr(kid):
+        let offset = unit.ast.exprAt(kid).start
+        return appendStoreError(out, unit, offset, storeBadLoopPattern, "", "", "名字或占位", "其他形态")
+    let expr = unit.ast.exprAt(kid)
+    let name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
+    if name == "_":
+        return out
+    return declareStoreAs(out, unit, localLoopVar, name, typeId, true, expr.start)
+
+; 条件语句：逐个分支查条件再走块；末位落单的是 else 块，没有条件可查。
+walkIfStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    let count = len(kids)
+    var done = out
+    if count > 0:
+        done = checkCondition(unit, unitIndex, kids[0], done)
+    if count > 1:
+        done = walkStoreStmt(world, unit, unitIndex, kids[1], done)
+    var i = 2
+    while i < count:
+        if i + 1 < count:
+            done = checkCondition(unit, unitIndex, kids[i], done)
+            done = walkStoreStmt(world, unit, unitIndex, kids[i + 1], done)
+            i = i + 2
+        else:
+            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
+            i = i + 1
+    return done
+
+; 循环语句：条件在循环外判，体与 step 块都在循环帧内走。
+walkWhileStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    var done = checkCondition(unit, unitIndex, kids[0], out)
+    done.scope = enterScope(done.scope, scopeLoop, unit.path, unit.ast.stmtAt(stmtId).start)
+    done.loopDepth = out.loopDepth + 1
+    if len(kids) > 1:
+        done = walkStoreStmt(world, unit, unitIndex, kids[1], done)
+    if len(kids) > 2:
+        done = walkStoreStmt(world, unit, unitIndex, kids[2], done)
+    done.scope = leaveScope(done.scope)
+    done.loopDepth = out.loopDepth
+    return done
+
+; 遍历语句：集合定型后按字段个数绑定循环变量，体与 step 块共用同一个循环帧。
+walkForStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    if len(kids) < 2:
+        return out
+    let pattern = kids[0]
+    let iter = kids[1]
+    var done = out
+    let typed = checkInitializer(unit, unitIndex, iter, -1, "", done)
+    done = typed.check
+    var components: Array<I32> = []
+    if typed.typeId >= 0 && typed.typeId < len(done.pool.entries):
+        components = loopComponents(done.pool, typed.typeId)
+        if len(components) == 0:
+            let got = storeTypeText(done.pool, typed.typeId)
+            let offset = unit.ast.exprAt(iter).start
+            done = appendStoreError(done, unit, offset, storeNotIterable, "", "", "数组、字典或集合", got)
+    let fields = loopPatternFields(unit, pattern)
+    if len(components) > 0 && len(fields) != len(components):
+        let expected = countText(len(components))
+        let got = countText(len(fields))
+        let offset = unit.ast.exprAt(pattern).start
+        done = appendStoreError(done, unit, offset, storeIterableArity, "", "", expected, got)
+    done.scope = enterScope(done.scope, scopeLoop, unit.path, unit.ast.stmtAt(stmtId).start)
+    done.loopDepth = out.loopDepth + 1
+    var i = 0
+    while i < len(fields):
+        var typeId = -1
+        if i < len(components):
+            typeId = components[i]
+        done = declareLoopField(done, unit, fields[i], typeId)
+        i = i + 1
+    if len(kids) > 2:
+        done = walkStoreStmt(world, unit, unitIndex, kids[2], done)
+    if len(kids) > 3:
+        done = walkStoreStmt(world, unit, unitIndex, kids[3], done)
+    done.scope = leaveScope(done.scope)
+    done.loopDepth = out.loopDepth
+    return done
+
+; 跳出与继续：只在循环内成立；带标签的形态随语法补面接入，判据不变。
+checkLoopControl|func(unit: CompilationUnit, stmtId: I32, keyword: String, out: StoreCheck,) -> (StoreCheck,):
+    if out.loopDepth > 0:
+        return out
+    return appendStoreError(out, unit, unit.ast.stmtAt(stmtId).start, storeLoopControlOutside, "", keyword, "循环内", "循环外")

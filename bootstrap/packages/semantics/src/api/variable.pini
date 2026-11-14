@@ -6,7 +6,8 @@ _module_loader = "../../../module-loader"
 ; 标注是期望的起点：字面量初值按标注定型（`let x: F64 = 1` 取 F64），再判可赋值。
 ; 未在作用域登记的名字不在此层报错，名字解析归解析表；成员与下标目标的类型由调用方写入类型表。
 
-; 存储错误：值类型不符、初值无解、let 不可变、目标非左值、解构个数、坏模式、复合运算与重名八类。
+; 语句错误：声明、赋值与分支循环共用一条通道，按类别给码。
+; 前八类是声明与赋值，后五类是条件、遍历与跳出；位置一律指向语句或表达式起点。
 [StoreErrorKind]
 storeValueMismatch
 storeValueUnknown
@@ -16,6 +17,11 @@ storeDestructureArity
 storeBadPattern
 storeCompoundOperand
 storeDuplicateName
+storeConditionNotBool
+storeLoopControlOutside
+storeNotIterable
+storeIterableArity
+storeBadLoopPattern
 
 ; 存储错误：类别、文件、源内偏移、相关名字、运算符与期望/实得文本。
 (StoreError)
@@ -27,13 +33,15 @@ op: String = ""
 expected: String = ""
 got: String = ""
 
-; 存储检查结果：池、表达式类型表、走到末尾的作用域、错误与本轮声明清单。
+; 语句检查结果：池、表达式类型表、走到末尾的作用域、错误、声明清单与循环深度。
+; 循环深度只数外层 while 与 for：进循环体加一，出循环还原；break 与 continue 靠它判位置。
 (StoreCheck)
 pool: TypePool = TypePool()
 types: ExprTypes = ExprTypes()
 scope: ScopeStack = ScopeStack()
 errors: Array<StoreError> = []
 declared: Array<LocalSymbol> = []
+loopDepth: I32 = 0
 failed: Bool = false
 
 ; 初值定型结果：检查状态与类型下标；-2 表示已判错。
@@ -60,7 +68,17 @@ storeErrorName|func(kind: StoreErrorKind,) -> (String,):
             return "复合赋值操作数不合"
         case storeDuplicateName:
             return "同块名字重复"
-    return "存储错误"
+        case storeConditionNotBool:
+            return "条件不是布尔"
+        case storeLoopControlOutside:
+            return "跳出或继续不在循环内"
+        case storeNotIterable:
+            return "遍历目标不是集合"
+        case storeIterableArity:
+            return "遍历元素个数不符"
+        case storeBadLoopPattern:
+            return "遍历模式不合法"
+    return "语句错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。
 isStoreError|func(error: StoreError, kind: StoreErrorKind,) -> (Bool,):
@@ -85,6 +103,16 @@ storeErrorCode|func(kind: StoreErrorKind,) -> (String,):
             return "E4-004"
         case storeDuplicateName:
             return "E3-004"
+        case storeConditionNotBool:
+            return "E4-001"
+        case storeLoopControlOutside:
+            return "E4-004"
+        case storeNotIterable:
+            return "E4-004"
+        case storeIterableArity:
+            return "E4-005"
+        case storeBadLoopPattern:
+            return "E4-001"
     return "E4-001"
 
 ; 造错误：位置取语句或初值起点，运算符只对赋值类错误填。
@@ -153,7 +181,11 @@ checkInitializer|func(unit: CompilationUnit, unitIndex: I32, node: I32, expected
 
 ; 声明一个局部：同块重名照原样报错，成功则记入声明清单。
 declareStore|func(out: StoreCheck, unit: CompilationUnit, name: String, typeId: I32, mutable: Bool, offset: I32,) -> (StoreCheck,):
-    let declared = declareLocal(out.scope, localVariable, name, typeId, mutable, unit.path, offset, -1)
+    return declareStoreAs(out, unit, localVariable, name, typeId, mutable, offset)
+
+; 按种类声明一个局部：循环变量与普通局部共用一条，只有种类与初始可变性不同。
+declareStoreAs|func(out: StoreCheck, unit: CompilationUnit, kind: LocalKind, name: String, typeId: I32, mutable: Bool, offset: I32,) -> (StoreCheck,):
+    let declared = declareLocal(out.scope, kind, name, typeId, mutable, unit.path, offset, -1)
     if declared.failed:
         return appendStoreError(out, unit, declared.error.offset, storeDuplicateName, name, "", "", "")
     var done = out
@@ -310,36 +342,15 @@ walkStoreStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, st
     if ast.isBlockStmt(stmtId):
         return walkStoreBlock(world, unit, unitIndex, stmtId, out)
     if ast.isIfStmt(stmtId):
-        var done = out
-        let kids = ast.stmtAt(stmtId).kids
-        let count = len(kids)
-        if count > 1:
-            done = walkStoreStmt(world, unit, unitIndex, kids[1], done)
-        var i = 2
-        while i < count:
-            if i + 1 < count:
-                done = walkStoreStmt(world, unit, unitIndex, kids[i + 1], done)
-                i = i + 2
-            else:
-                done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
-                i = i + 1
-        return done
+        return walkIfStmt(world, unit, unitIndex, stmtId, out)
     if ast.isWhileStmt(stmtId):
-        var done = out
-        let kids = ast.stmtAt(stmtId).kids
-        var i = 1
-        while i < len(kids):
-            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
-            i = i + 1
-        return done
+        return walkWhileStmt(world, unit, unitIndex, stmtId, out)
     if ast.isForStmt(stmtId):
-        var done = out
-        let kids = ast.stmtAt(stmtId).kids
-        var i = 2
-        while i < len(kids):
-            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
-            i = i + 1
-        return done
+        return walkForStmt(world, unit, unitIndex, stmtId, out)
+    if ast.isBreakStmt(stmtId):
+        return checkLoopControl(unit, stmtId, "break", out)
+    if ast.isContinueStmt(stmtId):
+        return checkLoopControl(unit, stmtId, "continue", out)
     if ast.isMatchStmt(stmtId):
         var done = out
         let kids = ast.stmtAt(stmtId).kids
