@@ -1055,7 +1055,7 @@ parseMatch|self() -> (I32,):
         self.advance()
     self.setStmtEnd(id, self.previousEnd())
     return id
-; 模式：枚举项可带具名绑定 `case 甲(x: v):`，其余按普通表达式读。
+; 模式：裸枚举项可带绑定，`名字: 变量` 记具名绑定，裸名字与 `_` 各占一位。
 parsePattern|self() -> (I32,):
     if self.at(identifier) && self.isKindAt(1, leftParen):
         let token: Token = self.current()
@@ -1073,6 +1073,12 @@ parsePattern|self() -> (I32,):
                     let binding: I32 = self.newExpr(exprIdentifier, bind.start, bind.end)
                     self.setExprName(binding, bind.nameStart, bind.nameEnd)
                     self.pushExprKid(id, binding)
+            elif self.at(identifier):
+                let bind = self.current()
+                self.advance()
+                let binding: I32 = self.newExpr(exprIdentifier, bind.start, bind.end)
+                self.setExprName(binding, bind.nameStart, bind.nameEnd)
+                self.pushExprKid(id, binding)
             else:
                 self.advance()
             if self.at(comma):

@@ -106,3 +106,23 @@
     assert(ast.isLiteralExpr(integer), "整数字面量应命中")
     assert(!ast.isLiteralExpr(array), "容器字面量不是基本字面量")
     return
+
+; 匹配语句谓词：match 命中，其余语句不命中。
+匹配语句谓词|test() -> ():
+    var ast = Ast()
+    let matched = ast.pushStmt(stmtMatch, 0, 6)
+    let other = ast.pushStmt(stmtReturn, 7, 13)
+    assert(ast.isMatchStmt(matched), "match 应命中")
+    assert(!ast.isMatchStmt(other), "return 不得判作 match")
+    return
+
+; 枚举项谓词：点前缀的枚举项命中，标识符与成员不命中。
+枚举项谓词|test() -> ():
+    var ast = Ast()
+    let cased = ast.pushExpr(exprCase, 0, 3)
+    let ident = ast.pushExpr(exprIdentifier, 4, 7)
+    let member = ast.pushExpr(exprMember, 8, 12)
+    assert(ast.isCaseExpr(cased), "枚举项应命中")
+    assert(!ast.isCaseExpr(ident), "标识符不得判作枚举项")
+    assert(!ast.isCaseExpr(member), "成员不得判作枚举项")
+    return

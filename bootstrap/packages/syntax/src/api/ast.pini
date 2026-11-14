@@ -309,6 +309,8 @@ isExpr|self(id: I32, kind: ExprKind,) -> (Bool,):
 ; 跨包谓词：枚举值不能跨包引用，表达式类别只经这里分流。
 isIdentifierExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprIdentifier)
+isCaseExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprCase)
 isMemberExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprMember)
 isCallExpr|self(id: I32,) -> (Bool,):
@@ -358,6 +360,9 @@ isLiteralExpr|self(id: I32,) -> (Bool,):
     return false
 isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(kind)
+; 跨包谓词：枚举值不能跨包引用，语句类别只经这里分流。
+isMatchStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtMatch)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
     return self.decls[id].kind == declKindTag(kind)
 ; 子节点读取：越界答 -1，调用方按 -1 表示缺省。

@@ -203,3 +203,44 @@
     assert(result.ast.isSetExpr(value), "应解析成集合")
     assert(len(result.ast.exprAt(value).kids) == 0, "元素数应为零")
     return
+
+; 首个匹配语句：返回第一个 match 语句的下标，没有答 -1。
+首个匹配|func(ast: Ast,) -> (I32,):
+    var i = 0
+    while i < ast.stmtCount():
+        if ast.isStmt(i, stmtMatch):
+            return i
+        i = i + 1
+    return -1
+
+; 匹配模式：限定枚举项按成员加调用成形，无载荷项按成员成形，裸枚举项按枚举项节点成形。
+匹配模式|test() -> ():
+    let src = "[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 0.0\n        case 形状.点:\n            return 0.0\n    return 0.0\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "模式不应报诊断")
+    let ast = result.ast
+    let id = 首个匹配(ast)
+    assert(id >= 0, "应有 match 语句")
+    let qualified = ast.stmtChild(id, 1)
+    assert(ast.isCallExpr(qualified), "限定枚举项应是调用")
+    assert(len(ast.exprAt(qualified).kids) == 3, "一个被调方加两个绑定位")
+    assert(ast.isMemberExpr(ast.exprAt(qualified).kids[0]), "被调方应是成员访问")
+    assert(ast.isIdentifierExpr(ast.exprAt(qualified).kids[1]), "占位应是标识符")
+    let bare = ast.stmtChild(id, 3)
+    assert(ast.isMemberExpr(bare), "无载荷枚举项应是成员访问")
+    return
+
+; 位置绑定：裸枚举项的每个绑定位都留下，`_` 同样占位；具名绑定只留绑定变量。
+位置绑定|test() -> ():
+    let src = "[形状]\n圆(半径: F64, 高: F64,)\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 圆(_, 半径):\n            return 半径\n        case 圆(半径: r):\n            return r\n    return 0.0\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "位置绑定不应报诊断")
+    let ast = result.ast
+    let id = 首个匹配(ast)
+    let positional = ast.stmtChild(id, 1)
+    assert(ast.isExpr(positional, exprCase), "裸枚举项应是枚举项节点")
+    assert(len(ast.exprAt(positional).kids) == 2, "两个绑定位都应留下")
+    assert(ast.isIdentifierExpr(ast.exprAt(positional).kids[1]), "次位应是标识符")
+    let named = ast.stmtChild(id, 3)
+    assert(len(ast.exprAt(named).kids) == 1, "具名绑定只留变量名")
+    return
