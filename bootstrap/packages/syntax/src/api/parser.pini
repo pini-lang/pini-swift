@@ -753,14 +753,14 @@ parseArrayLiteral|self() -> (I32,):
     let id: I32 = self.newExpr(exprArray, start, self.previousEnd())
     self.setExprKids(id, items)
     return id
-; 花括号字面量：首项后跟 `=` 即字典，否则是集合；空括号答空字典。
+; 花括号字面量：首项后跟 `=` 即字典，否则是集合；空括号恒为空集合，字典没有空字面量形态。
 parseBraceLiteral|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
     self.skipNewlines()
     if self.at(rightBrace):
         self.advance()
-        return self.newExpr(exprDictionary, start, self.previousEnd())
+        return self.newExpr(exprSet, start, self.previousEnd())
     let first: I32 = self.parseExpression(1)
     if self.at(opAssign):
         self.advance()

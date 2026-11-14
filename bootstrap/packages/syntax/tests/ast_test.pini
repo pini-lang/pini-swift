@@ -86,3 +86,23 @@
     assert(ast.isLabeledArgument(labeled), "带名字的赋值二元应命中")
     assert(!ast.isLabeledArgument(plain), "普通二元不得判作标签实参")
     return
+
+; 容器谓词：五类各自命中，互不串类；六类字面量合判只认基本字面量。
+容器谓词|test() -> ():
+    var ast = Ast()
+    let array = ast.pushExpr(exprArray, 0, 2)
+    let dict = ast.pushExpr(exprDictionary, 3, 8)
+    let set = ast.pushExpr(exprSet, 9, 12)
+    let sub = ast.pushExpr(exprSubscript, 13, 17)
+    let slice = ast.pushExpr(exprSlice, 18, 23)
+    let integer = ast.pushExpr(exprInteger, 24, 25)
+    assert(ast.isArrayExpr(array), "数组应命中")
+    assert(!ast.isArrayExpr(set), "集合不得判作数组")
+    assert(ast.isDictionaryExpr(dict), "字典应命中")
+    assert(ast.isSetExpr(set), "集合应命中")
+    assert(ast.isSubscriptExpr(sub), "下标应命中")
+    assert(!ast.isSliceExpr(sub), "下标不得判作切片")
+    assert(ast.isSliceExpr(slice), "切片应命中")
+    assert(ast.isLiteralExpr(integer), "整数字面量应命中")
+    assert(!ast.isLiteralExpr(array), "容器字面量不是基本字面量")
+    return

@@ -194,3 +194,12 @@
     let edecl = empty.ast.declAt(empty.ast.itemAt(0))
     assert(empty.ast.isType(edecl.typeId, typeTuple), "空返回仍是空元组")
     return
+
+; 空花括号：`{}` 解析为空集合，不是空字典；字典没有空字面量形态。
+空花括号|test() -> ():
+    let result = parseText("main|func() -> ():\n    let s = {}\n    return\n")
+    assert(len(result.diagnostics) == 0, "空花括号不应报诊断")
+    let value = result.ast.stmtChild(0, 1)
+    assert(result.ast.isSetExpr(value), "应解析成集合")
+    assert(len(result.ast.exprAt(value).kids) == 0, "元素数应为零")
+    return

@@ -337,6 +337,25 @@ isNilExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprNil)
 isInterpolatedExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprInterpolated)
+isArrayExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprArray)
+isDictionaryExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprDictionary)
+isSetExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprSet)
+isSubscriptExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprSubscript)
+isSliceExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprSlice)
+; 字面量：六类基本字面量合判，容器补判元素类型时用来分流。
+isLiteralExpr|self(id: I32,) -> (Bool,):
+    if self.isIntegerExpr(id) || self.isFloatExpr(id):
+        return true
+    if self.isStringExpr(id) || self.isInterpolatedExpr(id):
+        return true
+    if self.isBoolExpr(id) || self.isNilExpr(id):
+        return true
+    return false
 isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(kind)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
