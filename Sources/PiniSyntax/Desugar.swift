@@ -315,6 +315,8 @@ public enum Desugar {
             return .unsafe(operand: desugar(operand), location: loc)
         case .addressOf(let operand, let loc):
             return .addressOf(operand: desugar(operand), location: loc)
+        case .cast(let operand, let target, let loc):
+            return .cast(operand: desugar(operand), target: target, location: loc)
         }
     }
 }

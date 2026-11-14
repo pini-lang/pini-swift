@@ -1313,6 +1313,18 @@ public final class TypeChecker {
         }
     }
 
+    /// `as` 的可转类型面：整数与浮点标量。与 `isNumericPrimitive` 分开 —— 后者是整数字面量
+    /// 的贴合判定，含浮点会放宽别处既有规则。指针与整数互转只在 unsafe 内成立，本版未接入。
+    private func isCastableAnnotation(_ annotation: TypeAnnotation) -> Bool {
+        guard case .simple(let name, _) = annotation else { return false }
+        switch name {
+        case "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F32", "F64":
+            return true
+        default:
+            return false
+        }
+    }
+
     /// `Char → String` 的单向加宽判定（`actual` 是实参侧、`expected` 是期望侧）。
     /// 只认这一个方向：反向由调用方判为窄化并拒绝，判据见 `isAssignable` 内的说明。
     private func isCharWideningTo(_ actual: TypeAnnotation, _ expected: TypeAnnotation) -> Bool {
@@ -3174,6 +3186,28 @@ public final class TypeChecker {
                     TypeError.mismatch(
                         expected: "有存储的外部符号",
                         got: "`\(macroName)` 是 |macro 宏常量，没有地址可取",
+                        location: location))
+            }
+
+        case .cast(let operand, let target, let location):
+            try checkExpression(operand)
+            // 显式转换：源与目标都必须是数值标量。指针与整数互转只在 unsafe 上下文成立，
+            // 本版未接入，故落在这里的类型面判定之外，一律报错而不是静默放行。
+            guard isCastableAnnotation(target) else {
+                try report(
+                    TypeError.mismatch(
+                        expected: "数值标量类型（`as` 的目标）",
+                        got: target.describe(),
+                        location: location))
+                return
+            }
+            if let operandType = inference.infer(expression: operand),
+                !isCastableAnnotation(operandType)
+            {
+                try report(
+                    TypeError.mismatch(
+                        expected: "数值标量（`as` 的操作数）",
+                        got: operandType.describe(),
                         location: location))
             }
         }

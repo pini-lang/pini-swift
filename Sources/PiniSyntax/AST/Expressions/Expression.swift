@@ -96,6 +96,9 @@ public indirect enum Expression: Equatable, Sendable {
     /// 解析期只携带名字，决议在类型检查按期望类型完成（命中则该枚举；唯一父枚举则回退；歧义或缺期望则报错）。
     /// `.caseName(args)` 解为 `.call(.dotCaseRef, args)`，无实参解为裸 `dotCaseRef`（零关联值即直接构造）。
     case dotCaseRef(name: String, location: SourceLocation)
+    /// `as` 显式转换：`操作数 as 目标类型`。`as` 是上下文关键字，只在操作数完整之后按转换解释。
+    /// 可转类型对与结果语义见参考件类型系统的显式转换一节；连写左结合。
+    case cast(operand: Expression, target: TypeAnnotation, location: SourceLocation)
 }
 
 extension Expression {
@@ -110,7 +113,7 @@ extension Expression {
             .subscript(_, _, let loc), .funcLiteral(_, let loc), .selfKeyword(let loc),
             .selfTypeKeyword(let loc), .genericConstruct(_, _, _, let loc), .join(_, let loc, _),
             .tryExpression(_, _, _, let loc), .unsafe(_, let loc), .addressOf(_, let loc),
-            .dotCaseRef(_, let loc):
+            .dotCaseRef(_, let loc), .cast(_, _, let loc):
             return loc
         }
     }

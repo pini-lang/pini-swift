@@ -430,7 +430,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             }
             return try RuntimeOps.binaryValue(left, mapped, right)
 
-        case .unary(let op, let operand, _):
+        case .unary(let op, let operand, let type):
+            // 显式转换：解释器把整数建模为单一 `Int`，窄化按目标宽度截断、加宽恒等。
+            if case .cast = op {
+                return IRExecutor.castValue(try evaluate(operand), to: type)
+            }
             // same reason as min/max above -- abs lowers to an IR unary
             // operator but is a builtin call on the interpreter channel.
             if case .abs = op {
@@ -1531,6 +1535,39 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         return offset < 0 ? count + offset : offset
     }
 
+    /// 数值显式转换。解释器把整数建模为单一 `Int`：窄化按目标宽度截断、加宽恒等，
+    /// 故 I8/I32/U8 的截断与 U64 的回绕都在这一层完成。浮点与整数之间按参考件的显式转换条款：
+    /// 整数列浮点按最近可表示值，浮点列整数向零截断；越界与 NaN 规范标为待定，此处落 0。
+    static func castValue(_ value: Value, to target: IRType) -> Value {
+        switch target {
+        case .i8:
+            if case .int(let i) = value { return .int(Int(Int8(truncatingIfNeeded: i))) }
+            return value
+        case .u8:
+            if case .int(let i) = value { return .int(Int(UInt8(truncatingIfNeeded: i))) }
+            return value
+        case .i32:
+            if case .int(let i) = value { return .int(Int(Int32(truncatingIfNeeded: i))) }
+            if case .float(let d) = value { return IRExecutor.integer(from: d) }
+            return value
+        case .i64, .u64:
+            if case .float(let d) = value { return IRExecutor.integer(from: d) }
+            return value
+        case .f64:
+            if case .int(let i) = value { return .float(Double(i)) }
+            return value
+        default:
+            return value
+        }
+    }
+
+    /// 浮点列整数：向零截断；越界与 NaN 不在规范定义域内，统一落 0 而不 trap。
+    private static func integer(from d: Double) -> Value {
+        let truncated = d.rounded(.towardZero)
+        if let exact = Int(exactly: truncated) { return .int(exact) }
+        return .int(0)
+    }
+
     /// `IRBinaryOp` → `BinaryOperator`, or nil when the AST channel serves the operation through a builtin call instead.
     /// The mapping is IR vocabulary; each operator's meaning lives in `Interpreter.binaryValue`, so the channels cannot drift.
     static func operatorFor(_ op: IRBinaryOp) -> BinaryOperator? {
@@ -1567,6 +1604,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .bitwiseNot: return .bitwiseNot
         // `abs` is a builtin call on the AST channel, not a unary operator.
         case .abs: return nil
+        // 转换不走 `RuntimeOps` 的一元入口：它要目标类型，由 `castValue` 单独承担。
+        case .cast: return nil
         }
     }
 

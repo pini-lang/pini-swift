@@ -2668,8 +2668,24 @@ public class Parser {
         return left
     }
 
-    private func parseFactor() throws -> Expression {
+    /// `as` 显式转换：`操作数 as 目标类型`。比任何二元运算符紧、比前缀一元松，故挂在
+    /// `*` `/` `%` 的操作数位；连写左结合。`as` 不在关键字表内，仅当左侧操作数已完整、
+    /// 且当前记号是标识符 `as` 时按转换解释，其余位置它是普通标识符（可作变量名）。
+    private func parseCast() throws -> Expression {
         var left = try parseUnary()
+
+        while case .identifier("as", _) = currentToken {
+            let loc = currentLocation
+            advance()
+            let target = try parseTypeAnnotation()
+            left = Expression.cast(operand: left, target: target, location: loc)
+        }
+
+        return left
+    }
+
+    private func parseFactor() throws -> Expression {
+        var left = try parseCast()
 
         while true {
             let op: BinaryOperator?
@@ -2687,7 +2703,7 @@ public class Parser {
 
             let loc = currentLocation
             advance()
-            let right = try parseUnary()
+            let right = try parseCast()
             left = Expression.binary(left: left, op: binaryOp, right: right, location: loc)
         }
 

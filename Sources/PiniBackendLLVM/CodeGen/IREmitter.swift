@@ -2435,6 +2435,24 @@ public final class IREmitter {
                 let cond = builder.freshTemp()
                 bodyIR += " \(cond) = icmp slt \(lowered.llvmType) \(lowered.ssaName), 0\n"
                 bodyIR += " \(temp) = select i1 \(cond), \(lowered.llvmType) \(neg), \(lowered.llvmType) \(lowered.ssaName)\n"
+            case .cast:
+                // 源类型取自操作数的 IR 类型，不能只比 llvmType 串：`i8` 同时是 I8 与 U8 的拼写，
+                // 靠字符串分不出符号性，会让零扩展误发成符号扩展。
+                let source = irType(of: operand)
+                let target = type
+                if source.llvmSpelling == target.llvmSpelling { return lowered }
+                let opcode: String
+                if source.llvmSpelling == "double" {
+                    opcode = target.isUnsignedIRType ? "fptoui" : "fptosi"
+                } else if target.llvmSpelling == "double" {
+                    opcode = source.isUnsignedIRType ? "uitofp" : "sitofp"
+                } else if target.integerBitWidth > source.integerBitWidth {
+                    opcode = source.isUnsignedIRType ? "zext" : "sext"
+                } else {
+                    opcode = "trunc"
+                }
+                bodyIR +=
+                    " \(temp) = \(opcode) \(source.llvmSpelling) \(lowered.ssaName) to \(target.llvmSpelling)\n"
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: temp)
 
@@ -6856,6 +6874,25 @@ public final class IREmitter {
                 node: "interpString", family: .strings,
                 reason: "\(type.llvmSpelling) 不在字符串化网格里（标量 / String / Char / 数组 / Optional 之外没有渲染通道）")
             return emitStringConstant("")
+        }
+    }
+}
+
+extension IRType {
+    /// 无符号整数面：`U8` 与 `U64` 在 LLVM 上与同宽有符号类型同拼写，符号性只在运算与扩展上体现。
+    var isUnsignedIRType: Bool {
+        if case .u8 = self { return true }
+        if case .u64 = self { return true }
+        return false
+    }
+
+    /// 整数位宽；非整数类型答 0 —— 浮点不参与位宽比较，走另一条分支。
+    var integerBitWidth: Int {
+        switch self {
+        case .i8, .u8: return 8
+        case .i32: return 32
+        case .i64, .u64: return 64
+        default: return 0
         }
     }
 }

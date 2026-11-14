@@ -457,8 +457,8 @@ private struct Builder {
         switch op {
         case .negate: return .negate
         case .logicalNot: return .logicalNot
-        case .bitwiseNot, .abs:
-            throw unsupported("unary(\(op))", .variablesAndOperators, "取反与绝对值不在本 profile")
+        case .bitwiseNot, .abs, .cast:
+            throw unsupported("unary(\(op))", .variablesAndOperators, "取反、绝对值与显式转换不在本 profile")
         }
     }
 

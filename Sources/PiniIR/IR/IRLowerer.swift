@@ -3298,6 +3298,9 @@ public enum IRLowerer {
                 // Constructed only by the abs intrinsic handler (G9); the
                 // AST unary-operator path never produces it.
                 fatalError("IRLowerer: .abs outside the abs intrinsic handler")
+            case .cast:
+                // 转换由 `.cast` 表达式分支直接构造，不经一元运算符路径。
+                fatalError("IRLowerer: .cast outside the cast handler")
             }
 
         case .selfKeyword(let location):
@@ -4222,6 +4225,17 @@ public enum IRLowerer {
 
         case .funcLiteral(let decl, let location):
             return try lowerFuncLiteral(decl: decl, expected: expected, at: location, into: &context)
+
+        case .cast(let operand, let target, let location):
+            // `v as T`：结果类型取标注，源类型由操作数自身的 IR 类型给出。这里不把外层期望
+            // 传给操作数 —— 那是转换**之后**的类型，传下去会把源侧的字面量定型带偏。
+            guard let targetType = IRType(from: target) else {
+                throw unsupported("`as` 的目标类型不在 IR 类型面", at: location)
+            }
+            let lowered = try lowerExpr(operand, expected: nil, into: &context)
+            return LoweredExpr(
+                node: .unary(op: .cast, operand: lowered.node, type: targetType),
+                type: targetType)
 
         case .unsafe(let operand, _):
             // `unsafe (...)` is a parse/check-level marker only: the wrapped expression lowers identically, since the

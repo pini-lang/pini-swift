@@ -181,6 +181,9 @@ public enum ConstantFolder {
         case .unsafe(let operand, let loc):
             // Phase 2a（FFI 子系统）：不安全消耗点——递归折叠操作数。
             return .unsafe(operand: fold(operand), location: loc)
+        case .cast(let operand, let target, let loc):
+            // 显式转换：折叠操作数；数值变换留给语义层按目标类型定型，此处不改类型。
+            return .cast(operand: fold(operand), target: target, location: loc)
         case .addressOf(let operand, let loc):
             // Phase 2a（FFI 子系统）：取地址——递归折叠操作数（折叠只做常量归约，地址不变）。
             return .addressOf(operand: fold(operand), location: loc)

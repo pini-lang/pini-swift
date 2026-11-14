@@ -552,6 +552,9 @@ extension Printer {
             return "unsafe " + atom(operand, indent: indent, fileName: fileName, hints: hints)
         case .addressOf(let operand, _):
             return "&" + atom(operand, indent: indent, fileName: fileName, hints: hints)
+        case .cast(let operand, let target, _):
+            return atom(operand, indent: indent, fileName: fileName, hints: hints)
+                + " as " + type(target)
         }
     }
 

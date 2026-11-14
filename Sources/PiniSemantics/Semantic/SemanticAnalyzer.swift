@@ -1146,6 +1146,9 @@ public final class SemanticAnalyzer {
         case .addressOf(let operand, _):
             // Phase 2a（FFI 子系统）：取地址——递归检查操作数。
             try checkExpression(operand)
+        case .cast(let operand, _, _):
+            // 显式转换：递归检查操作数；可转类型对由类型检查阶段判。
+            try checkExpression(operand)
         }
     }
 

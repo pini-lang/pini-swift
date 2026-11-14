@@ -125,7 +125,9 @@ public enum IRPrinter {
             return "(\(exprText(lhs)) \(symbol(of: op)) \(exprText(rhs)))"
         case .shortCircuit(let op, let lhs, let rhs, _):
             return "(\(exprText(lhs)) \(op == .and ? "&&" : "||") \(exprText(rhs)))"
-        case .unary(let op, let operand, _):
+        case .unary(let op, let operand, let type):
+            // 转换的目标类型必须打出来：`i8` 与 `u8` 同拼写，丢掉 IRType 就看不出转成了哪个。
+            if case .cast = op { return "(\(exprText(operand)) as \(type.llvmSpelling))" }
             return "(\(op == .negate ? "-" : "!")\(exprText(operand)))"
         case .call(let function, let arguments, _):
             let args = arguments.map(exprText).joined(separator: ", ")

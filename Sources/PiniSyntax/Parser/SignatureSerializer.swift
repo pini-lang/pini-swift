@@ -40,6 +40,7 @@ public enum SignatureSerializer {
         "binary", "unary", "call", "member", "subscript", "join", "tupleIndex", "tuple",
         "arrayLiteral", "dictionaryLiteral", "setLiteral", "genericConstruct", "try",
         "unsafe", "addressOf", "funcLiteral", "stringInterpolation", "exprStmt", "assign",
+        "cast",
     ]
 
     private static let fieldNames: Set<String> = [
@@ -338,6 +339,9 @@ public enum SignatureSerializer {
             renderExpression(operand, depth: depth + 1, into: &into)
         case .addressOf(let operand, _):
             emit("addressOf:", depth: depth, into: &into)
+            renderExpression(operand, depth: depth + 1, into: &into)
+        case .cast(let operand, let target, _):
+            emit("cast: \(Printer.type(target))", depth: depth, into: &into)
             renderExpression(operand, depth: depth + 1, into: &into)
         case .dotCaseRef(let name, _):
             emit("dotCaseRef: \(name)", depth: depth, into: &into)

@@ -292,6 +292,8 @@ extension UnrollExpander {
                 return .unsafe(operand: expression(operand, map: map), location: loc)
             case .addressOf(let operand, let loc):
                 return .addressOf(operand: expression(operand, map: map), location: loc)
+            case .cast(let operand, let target, let loc):
+                return .cast(operand: expression(operand, map: map), target: target, location: loc)
             }
         }
 
@@ -512,6 +514,8 @@ extension UnrollExpander.Worker {
             for item in arguments { scan(item.expression, names: names) }
         case .join(let inner, _, _), .unsafe(let inner, _), .addressOf(let inner, _):
             scan(inner, names: names)
+        case .cast(let operand, _, _):
+            scan(operand, names: names)
         case .funcLiteral(let decl, _):
             for param in decl.params { conflict(param.name, names: names, topLevel: false, decl.location) }
             for item in decl.body?.statements ?? [] { check(item, names: names, topLevel: false) }

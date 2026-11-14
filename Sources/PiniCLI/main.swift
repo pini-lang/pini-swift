@@ -222,6 +222,8 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
         return "\(indent)addressOf(&):\n" + describeExpression(operand, indent: indent + " ")
     case .dotCaseRef(let name, _):
         return "\(indent)dotCaseRef(.): \(name)"
+    case .cast(let operand, _, _):
+        return "\(indent)cast(as):\n" + describeExpression(operand, indent: indent + " ")
     }
 }
 
