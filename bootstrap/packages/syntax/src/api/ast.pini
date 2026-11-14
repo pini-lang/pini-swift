@@ -313,6 +313,16 @@ isMemberExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprMember)
 isCallExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprCall)
+isBinaryExpr|self(id: I32,) -> (Bool,):
+    return self.exprs[id].kind == exprKindTag(exprBinary)
+; 标签实参：二元节点、名字区间非空且运算符为赋值，三者同时成立。
+isLabeledArgument|self(id: I32,) -> (Bool,):
+    if !self.isBinaryExpr(id):
+        return false
+    let node = self.exprs[id]
+    if node.nameEnd <= node.nameStart:
+        return false
+    return node.op == kindTag(opAssign)
 isIntegerExpr|self(id: I32,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(exprInteger)
 isFloatExpr|self(id: I32,) -> (Bool,):

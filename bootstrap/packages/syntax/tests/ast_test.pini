@@ -68,3 +68,21 @@
     assert(ast.isInterpolatedExpr(interp), "插值应命中")
     assert(!ast.isInterpolatedExpr(string), "普通字符串不得判作插值")
     return
+
+; 标签实参：带名字区间的赋值二元节点命中，普通二元与括号组不命中。
+标签实参谓词|test() -> ():
+    var ast = Ast()
+    let labeled = ast.pushExpr(exprBinary, 0, 5)
+    let node = ast.exprAt(labeled)
+    var named = node
+    named.nameStart = 0
+    named.nameEnd = 1
+    named.op = kindTag(opAssign)
+    ast.exprs[labeled] = named
+    let plain = ast.pushExpr(exprBinary, 6, 9)
+    var plainNode = ast.exprAt(plain)
+    plainNode.op = kindTag(opAdd)
+    ast.exprs[plain] = plainNode
+    assert(ast.isLabeledArgument(labeled), "带名字的赋值二元应命中")
+    assert(!ast.isLabeledArgument(plain), "普通二元不得判作标签实参")
+    return
