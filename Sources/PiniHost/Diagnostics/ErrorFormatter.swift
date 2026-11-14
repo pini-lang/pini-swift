@@ -303,6 +303,8 @@ public enum ErrorFormatter {
         case .moduleRootMissing(let path): return "模块根 '\(path)' 缺少 pini.toml 或 .pini 源文件（R1 物理边界）"
         case .crossModuleAccessDenied(let symbol, _): return "符号 '\(symbol)' 非 public，不可跨模块引入（G52 D8：门槛 = 仅 public）"
         case .injectedSymbolConflict(let symbol, let holder, _): return "注入符号 '\(symbol)' 与 \(holder) 冲突（D-4：裸名必须无歧义）；请改用显式别名并以 `别名.符号` 限定调用"
+        case .foreignSignatureConflict(let name, let firstFile, _): return "外部符号 '\(name)' 的声明与 '\(firstFile)' 中的那份不一致（签名或标志不同）"
+        case .foreignSymbolNotCIdentifier(let name, _): return "外部符号名 '\(name)' 不是合法 C 标识符"
         }
     }
 
@@ -362,7 +364,7 @@ public enum ErrorFormatter {
         case .argumentCountMismatch(let name, let expected, let got, _): return "原生函数 \(name) 参数数量不匹配：期望 \(expected) 个，实际 \(got) 个"
         case .undefinedNativeFunction(let name, let available, _): return "未注册的原生函数 '\(name)'（`[名称|foreign]` 声明的 C 函数须在原生函数表内）；可用：\(available.isEmpty ? "（无）" : available.joined(separator: ", "))"
         case .libraryNotFound(let library, let searched, _): return "FFI 库 '\(library)' 未找到（已搜索：\(searched.isEmpty ? "（无搜索路径）" : searched.joined(separator: ", "))）"
-        case .symbolNotFound(let library, let symbol, _): return "FFI 库 '\(library)' 中未找到符号 '\(symbol)'"
+        case .symbolNotFound(let symbol, let searched, _): return "未找到外部符号 '\(symbol)'（已查：\(searched.isEmpty ? "（无）" : searched.joined(separator: ", "))）"
         case .entryMainMismatch(let entries, let declaredIn, _): return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，但 main 定义在 \(declaredIn)"
         case .variadicCallUnsupported(let name, _):
             return "变参调用 '\(name)' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"

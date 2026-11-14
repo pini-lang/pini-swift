@@ -113,14 +113,14 @@ struct VariadicTests: Sendable, PiniSourceLowering {
             _ = try typeChecked(
                 """
                 [libc|foreign]
-                版本|varargs: I32
+                version|varargs: I32
 
                 main|func() -> (I32,):
                     return 0
                 """)
         }
         #expect(failed?.code == "E4-033", "实际：\(String(describing: failed))")
-        #expect(failed?.message.contains("版本") == true, "实际：\(String(describing: failed))")
+        #expect(failed?.message.contains("version") == true, "实际：\(String(describing: failed))")
     }
 
     @Test("对象作变参被拒：没有 C 布局")

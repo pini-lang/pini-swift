@@ -241,7 +241,7 @@ message = "断言失败：{message}"
 [E5-016]
 message = "FFI 库 '{library}' 未找到（已搜索：{searched}）"
 [E5-017]
-message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
+message = "外部符号 '{symbol}' 未找到（已查：{searched}）"
 
 [E5-019]
 message = "变参调用 '{name}' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
@@ -316,3 +316,11 @@ suggestion = "删掉这条 unroll，或往表里补至少一行"
 [E3-018]
 message = "unroll 展开 {count} 轮，超过上限 {limit}"
 suggestion = "把表拆成几条 unroll，或改用普通循环"
+
+[E3-019]
+message = "外部符号 '{name}' 的声明与 '{firstFile}' 中的那份不一致（签名或标志不同）"
+suggestion = "两处只留一处；生成模块与手写块同名时，签名必须逐位一致"
+
+[E3-020]
+message = "外部符号名 '{name}' 不是合法 C 标识符"
+suggestion = "名字就是 C 符号名，只能用 ASCII 字母、数字与下划线，且不以数字开头"

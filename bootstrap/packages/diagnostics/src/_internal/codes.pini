@@ -3,7 +3,7 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 107
+    return 109
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(_code: String,) -> (String,):
@@ -93,6 +93,10 @@ diagnosticMessage|func(_code: String,) -> (String,):
         return "unroll 的表是空的，展开零轮"
     if _code == "E3-018":
         return "unroll 展开 {count} 轮，超过上限 {limit}"
+    if _code == "E3-019":
+        return "外部符号 '{name}' 的声明与 '{firstFile}' 中的那份不一致（签名或标志不同）"
+    if _code == "E3-020":
+        return "外部符号名 '{name}' 不是合法 C 标识符"
     if _code == "E4-001":
         return "类型不匹配：期望 {expected}，实际得到 {got}"
     if _code == "E4-002":
@@ -176,7 +180,7 @@ diagnosticMessage|func(_code: String,) -> (String,):
     if _code == "E5-016":
         return "FFI 库 '{library}' 未找到（已搜索：{searched}）"
     if _code == "E5-017":
-        return "FFI 库 '{library}' 中未找到符号 '{symbol}'"
+        return "外部符号 '{symbol}' 未找到（已查：{searched}）"
     if _code == "E5-019":
         return "变参调用 '{name}' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
     if _code == "E5-020":
@@ -249,6 +253,10 @@ diagnosticSuggestion|func(_code: String,) -> (String,):
         return "删掉这条 unroll，或往表里补至少一行"
     if _code == "E3-018":
         return "把表拆成几条 unroll，或改用普通循环"
+    if _code == "E3-019":
+        return "两处只留一处；生成模块与手写块同名时，签名必须逐位一致"
+    if _code == "E3-020":
+        return "名字就是 C 符号名，只能用 ASCII 字母、数字与下划线，且不以数字开头"
     if _code == "E4-028":
         return "C 边界只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T，以及形参位的 String"
     if _code == "E4-029":

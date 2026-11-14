@@ -89,16 +89,20 @@ public struct PackageSymbolIndex: Equatable, Sendable {
         var caseParents: [String: Set<String>] = [:]
         for unit in package.fileUnits {
             for decl in unit.module.declarations {
-                guard let info = topLevelSymbolInfo(decl) else { continue }
-                let vis = VisibilityLevel.forSymbol(name: info.name, fileName: package.relativeFileName(unit.fileName))
-                if byName[info.name] != nil {
-                    throw SemanticError.redeclaredSymbol(name: info.name, location: info.location)
+                for info in topLevelSymbolInfos(decl) {
+                    let vis = visibility(of: info, fileName: package.relativeFileName(unit.fileName))
+                    if let existing = byName[info.name] {
+                        // 同名同型合并只对外部符号成立，签名是否一致由语义层 `ForeignSymbolTable` 预检；
+                        // 索引这里只留首份，其余组合一律按重声明拒绝。
+                        if existing.kind == .foreignSymbol, info.kind == .foreignSymbol { continue }
+                        throw SemanticError.redeclaredSymbol(name: info.name, location: info.location)
+                    }
+                    byName[info.name] = PackageSymbol(
+                        name: info.name, fileName: unit.fileName,
+                        visibility: vis, kind: info.kind,
+                        location: info.location
+                    )
                 }
-                byName[info.name] = PackageSymbol(
-                    name: info.name, fileName: unit.fileName,
-                    visibility: vis, kind: info.kind,
-                    location: info.location
-                )
                 // 枚举 case 名同样进入包级索引：跨文件未限定构造（圆(5.0)）据此解析。
                 // 同名跨枚举合法（各属其枚举命名空间），故只累积 parents，不抛重声明。
                 if case .enumDecl(let e) = decl {
@@ -129,14 +133,15 @@ public struct PackageSymbolIndex: Equatable, Sendable {
         var caseParents: [String: Set<String>] = [:]
         for unit in package.fileUnits {
             for decl in unit.module.declarations {
-                guard let info = topLevelSymbolInfo(decl) else { continue }
-                let vis = VisibilityLevel.forSymbol(name: info.name, fileName: package.relativeFileName(unit.fileName))
-                if byName[info.name] == nil {
-                    byName[info.name] = PackageSymbol(
-                        name: info.name, fileName: unit.fileName,
-                        visibility: vis, kind: info.kind,
-                        location: info.location
-                    )
+                for info in topLevelSymbolInfos(decl) {
+                    let vis = visibility(of: info, fileName: package.relativeFileName(unit.fileName))
+                    if byName[info.name] == nil {
+                        byName[info.name] = PackageSymbol(
+                            name: info.name, fileName: unit.fileName,
+                            visibility: vis, kind: info.kind,
+                            location: info.location
+                        )
+                    }
                 }
                 if case .enumDecl(let e) = decl {
                     let parentVis = VisibilityLevel.forSymbol(name: e.name, fileName: package.relativeFileName(unit.fileName))
@@ -176,32 +181,46 @@ public struct PackageSymbolIndex: Equatable, Sendable {
     }
 }
 
-/// 从顶级声明抽取（名字, 种类, 位置）；非具名声明（顶层 statement / import / export）返回 nil。
-private func topLevelSymbolInfo(_ decl: TopLevelDecl) -> (name: String, kind: SymbolKind, location: SourceLocation)? {
+/// 包级索引的一条候选符号。一条声明可带出多条（foreign 块是一张符号表），故以数组为单位。
+typealias TopLevelSymbolInfo = (name: String, kind: SymbolKind, location: SourceLocation)
+
+/// 从一个顶级声明抽取（名字, 种类, 位置）。一条声明可带出多个符号：foreign 块是一张符号表，
+/// 块名只是标签。扩展块与 import / export 不引入包级名字，空数组返回。
+func topLevelSymbolInfos(_ decl: TopLevelDecl) -> [TopLevelSymbolInfo] {
     switch decl {
-    case .structDecl(let s): return (s.name, .struct, s.location)
-    case .objectDecl(let o): return (o.name, .object, o.location)
+    case .structDecl(let s): return [(s.name, .struct, s.location)]
+    case .objectDecl(let o): return [(o.name, .object, o.location)]
     // 给定块是**具名复合类型** ⇒ 与对象同族纳入包级符号表（可见性规则保持一致）。
     // 细分种类（值 / 引用语义）尚未裁定 ⇒ 暂按 `.object` 归类。
-    case .givenDecl(let g): return (g.name, .object, g.location)
-    case .enumDecl(let e): return (e.name, .enum, e.location)
-    case .funcDecl(let f): return (f.name, .function, f.location)
-    case .traitDecl(let t): return (t.name, .trait, t.location)
-    case .extensionDecl: return nil  // 扩展块不引入新符号（方法归并到目标类型）
-    case .foreignDecl: return nil  // foreign 块不引入包级符号（外部 C 符号经原生函数表解析）
+    case .givenDecl(let g): return [(g.name, .object, g.location)]
+    case .enumDecl(let e): return [(e.name, .enum, e.location)]
+    case .funcDecl(let f): return [(f.name, .function, f.location)]
+    case .traitDecl(let t): return [(t.name, .trait, t.location)]
+    case .extensionDecl: return []  // 扩展块不引入新符号（方法归并到目标类型）
+    // 外部符号是模块的公共资源：声明一次、全包可用，故每条都进索引。
+    case .foreignDecl(let block):
+        return block.symbols.map { ($0.name, .foreignSymbol, $0.location) }
     case .varDecl(let statement):
         if case .varDecl(let name, _, _, _, let loc) = statement {
-            return (name, .variable(isMutable: true), loc)
+            return [(name, .variable(isMutable: true), loc)]
         }
-        return nil
+        return []
     case .statement(let statement):
         // 顶层 `let`/`var` 经 parseStatement 落到 `.statement(.varDecl(...))`，须同样纳入索引
         //顶层非成员符号同样受 4 级可见性约束。
         if case .varDecl(let name, _, _, _, let loc) = statement {
-            return (name, .variable(isMutable: true), loc)
+            return [(name, .variable(isMutable: true), loc)]
         }
-        return nil
+        return []
     case .importDecl, .exportDecl:
-        return nil
+        return []
     }
+}
+
+/// 外部符号的可见性只由「模块级」这一条给定：名字里的 `_` 属于 C 符号本身（`_exit`），
+/// 按 Pini 的 `_` 前缀规则会把它判成 private，跨文件即不可见。其余符号照旧按文件名与目录判。
+private func visibility(of info: TopLevelSymbolInfo, fileName: String) -> VisibilityLevel {
+    info.kind == .foreignSymbol
+        ? .package
+        : VisibilityLevel.forSymbol(name: info.name, fileName: fileName)
 }

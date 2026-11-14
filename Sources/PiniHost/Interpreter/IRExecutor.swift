@@ -136,11 +136,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
     /// The foreign callees this module declared, from `[名称|foreign]` blocks, keyed by callee name.
     /// The gate matters: otherwise a program that never declared `malloc` could call it here, and the AST channel refuses that.
-    /// A map, not a set: a shim miss falls to a raw C binding, and the thunk needs the declared library and signature.
-    private var foreignDecls: [String: (library: String, function: IRForeignFunction)] = [:]
+    /// A map, not a set: a shim miss falls to a raw C binding, and the thunk needs the declared signature.
+    private var foreignDecls: [String: IRForeignFunction] = [:]
 
-    /// 外部数据符号的声明：库名、类型、只读。地址在装载期解析一次，与函数同一时机。
-    private var foreignDataDecls: [String: (library: String, type: IRType, isReadonly: Bool)] = [:]
+    /// 外部数据符号的声明：类型与只读。地址在装载期解析一次，与函数同一时机。
+    private var foreignDataDecls: [String: (type: IRType, isReadonly: Bool)] = [:]
     /// 已解析的符号地址。与声明分开：装载期只填这张表，求值只读它，两者生命周期不同。
     private var foreignDataAddresses: [String: RawPointerValue] = [:]
 
@@ -267,11 +267,10 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         foreignDataDecls = [:]
         for block in module.foreigns {
             for function in block.funcs {
-                foreignDecls[function.name] = (library: block.name, function: function)
+                foreignDecls[function.name] = function
             }
             for entry in block.data {
-                foreignDataDecls[entry.name] = (
-                    library: block.name, type: entry.type, isReadonly: entry.isReadonly)
+                foreignDataDecls[entry.name] = (type: entry.type, isReadonly: entry.isReadonly)
             }
         }
         try resolveForeignsEagerly()
@@ -283,33 +282,31 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         }
     }
 
-    /// Resolves every declared foreign symbol now: libc shim table first, then a raw `dlsym`, as the interpreter does.
-    /// The interpreter fails at registration with `symbolNotFound`; resolving only at call sites would defer that failure.
-    /// `FFILoader` caches handles, so the call sites do not repeat the work.
+    /// Resolves every declared foreign symbol now: libc shim table first, then a raw lookup over `[ffi].libs`
+    /// and the process image. Failing at registration beats failing at the first call site; `FFILoader` caches
+    /// handles, so the call sites do not repeat the work.
     private func resolveForeignsEagerly() throws {
+        /// `[ffi].libs` 在这里一次加载：块名不再是库键，库从清单来。
+        try ffiLoader.preload(
+            libraries: ffiConfig.libs, searchPaths: ffiConfig.searchPaths,
+            location: IRExecutor.noLocation)
         for (name, foreign) in foreignDecls
-        where RuntimeOps.libcShim(named: name, params: foreign.function.params) == nil {
+        where RuntimeOps.libcShim(named: name, params: foreign.params) == nil {
             do {
-                _ = try ffiLoader.resolve(
-                    library: foreign.library, symbol: name,
-                    searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
-                )
+                _ = try ffiLoader.resolve(symbol: name, location: IRExecutor.noLocation)
             } catch let error as RuntimeError {
                 /// 句柄符号只活在运行时段里，`pini` 进程解析不到是**预期**而非配置错。
                 /// 让它过：真被调用时，调用点报 E5-020（换通道），比这里报「库里没有这个符号」准确。
                 let mentionsHandle =
-                    foreign.function.params.contains(.stringHandle)
-                    || foreign.function.returnType == .stringHandle
+                    foreign.params.contains(.stringHandle)
+                    || foreign.returnType == .stringHandle
                 guard case .symbolNotFound = error, mentionsHandle else { throw error }
             }
         }
         /// 数据符号没有 shim 表可让位：声明了就必须解析得到，否则读到的地址无处可来。
         foreignDataAddresses = [:]
         for (name, entry) in foreignDataDecls {
-            let symbol = try ffiLoader.resolve(
-                library: entry.library, symbol: name,
-                searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
-            )
+            let symbol = try ffiLoader.resolve(symbol: name, location: IRExecutor.noLocation)
             foreignDataAddresses[name] = RawPointerValue(
                 pointer: symbol, elemType: annotation(for: entry.type), freesMemory: false)
         }
@@ -456,36 +453,33 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             if let target = functions[name] ?? methods[name] {
                 return try call(target, args: try arguments.map { try evaluate($0) })
             }
-            // A callee declared in a `[名称|foreign]` block resolves in two stages, in the interpreter's order.
-            // The libc shim table comes first — shared with the AST channel, one definition for two engines.
-            // Otherwise it is a raw C binding: `dlsym` against the block name, then a per-signature thunk over the address.
+            // A callee declared in a `[名称|foreign]` block resolves in two stages: the libc shim table first
+            // (shared with the AST channel), otherwise a raw C binding looked up in `[ffi].libs` and the
+            // process image, wrapped in a per-signature thunk. The block name is a label only.
             if let foreign = foreignDecls[name] {
                 /// 变参在解释器上没有实现路径：转发靠把地址位转成固定槽位，
                 /// 而 Apple arm64 把变参放在栈上，位转调用读到的是垃圾。拒绝要早于求值实参。
-                if foreign.function.isVariadic {
+                if foreign.isVariadic {
                     throw RuntimeError.variadicCallUnsupported(
                         name: name, location: IRExecutor.noLocation)
                 }
                 /// 句柄的符号只活在运行时段里，`pini` 进程装载不到它 —— 与变参同规，
                 /// 拒绝早于求值实参：要么换通道，要么把句柄留在 C 侧。
-                if foreign.function.params.contains(.stringHandle)
-                    || foreign.function.returnType == .stringHandle
+                if foreign.params.contains(.stringHandle)
+                    || foreign.returnType == .stringHandle
                 {
                     throw RuntimeError.stringHandleCallUnsupported(
                         name: name, location: IRExecutor.noLocation)
                 }
                 let args = try arguments.map { try evaluate($0) }
-                if let shim = RuntimeOps.libcShim(named: name, params: foreign.function.params) {
+                if let shim = RuntimeOps.libcShim(named: name, params: foreign.params) {
                     return try shim(args)
                 }
-                let symbol = try ffiLoader.resolve(
-                    library: foreign.library, symbol: name,
-                    searchPaths: ffiConfig.searchPaths, location: IRExecutor.noLocation
-                )
+                let symbol = try ffiLoader.resolve(symbol: name, location: IRExecutor.noLocation)
                 let thunk = try ForeignThunk.make(
                     symbol: symbol, name: name,
-                    params: foreign.function.params,
-                    returnType: foreign.function.returnType,
+                    params: foreign.params,
+                    returnType: foreign.returnType,
                     location: IRExecutor.noLocation,
                     invokeCallback: { [unowned self] function, values in
                         try self.callFunctionValue(function, args: values)

@@ -25,4 +25,7 @@ public enum SymbolKind: Equatable, Sendable {
     case `enumCase`
     case trait
     case parameter
+    /// 外部 C 符号：名字即符号名，跨文件可见。种类单列是为了让包级索引区分
+    /// 「同型合并」与「重声明」——前者只对外部符号成立。
+    case foreignSymbol
 }

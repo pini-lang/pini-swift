@@ -162,6 +162,8 @@ public struct DiagnosticPublisher {
         case .invalidCaptureTarget(_, _, let loc): return loc
         case .crossModuleAccessDenied(_, let loc): return loc
         case .injectedSymbolConflict(_, _, let loc): return loc
+        case .foreignSignatureConflict(_, _, let loc): return loc
+        case .foreignSymbolNotCIdentifier(_, let loc): return loc
         case .moduleDependencyCycle, .moduleRootMissing:
             return SourceLocation(line: 0, column: 0, endLine: 0, endColumn: 0, fileName: "未知文件")
         }

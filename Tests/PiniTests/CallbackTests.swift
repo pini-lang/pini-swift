@@ -251,7 +251,7 @@ struct CallbackTests: Sendable, PiniSourceLowering {
             _ = try typeChecked(
                 """
                 [libc|foreign]
-                取函数: (I32,) -> ((I32,) -> (I32,),)
+                get_func: (I32,) -> ((I32,) -> (I32,),)
 
                 main|func() -> (I32,):
                     return 0

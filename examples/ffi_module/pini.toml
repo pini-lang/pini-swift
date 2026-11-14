@@ -6,7 +6,7 @@ version = "0.1.0"
 
 # FFI 配置：演示可配的三个点。
 # abi：全局唯一 ABI，默认 "C"，子模块不可覆盖；search_paths：库搜索路径，相对「本模块目录」解析、
-# 与调用 cwd 解耦（这里指向 vendored 依赖 lib/）；libs：需链接的库，解释器经 dlsym 按块名解析 libffilib。
+# 与调用 cwd 解耦（这里指向 vendored 依赖 lib/）；libs：要加载的库，块名只是标签。
 [ffi]
 abi = "C"
 search_paths = ["lib"]

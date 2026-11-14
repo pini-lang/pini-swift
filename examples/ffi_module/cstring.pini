@@ -1,5 +1,5 @@
 ; ffi_module — FFI & unsafe 完整模块示例。运行 pini run examples/ffi_module/；pini check 同目录；pini test cstring.pini
-; ① [ffilib|foreign] 声明外部 C 签名（块内自动 |unsafe，块名决定加载 lib/libffilib.{dylib,so}，raw 调用须与声明同文件）。
+; ① [ffilib|foreign] 声明外部 C 签名（块内自动 |unsafe；库由 [ffi].libs 决定，块名只是标签）。
 ; ② *T + load/store/addressof（须不安全上下文）；③ |unsafe 内核 + 安全封装（消费方零 unsafe）；④ |test 块；⑤ main 演示两种调用。
 
 ; ── ① 外部接口声明（配置点：哪些 C 符号可用，签名即契约；均来自项目内 lib/ffilib）──
@@ -47,7 +47,7 @@ c整型|unsafe(_源: String,) -> (I32,):
         print("分配并写: 负值被钳为 0")
         _值 = 0
     var buf = unsafe ffi_malloc(8) ; unsafe 消耗点：单次不安全调用
-    unsafe store(buf, _值) ; unsafe 消耗点：单次指针写（*U8 ⇒ 低字节）
+    unsafe store(buf, _值 as U8) ; unsafe 消耗点：单次指针写（*U8 收 U8，I32 须显式收窄）
     return buf
 
 ; ④ 语言级测试块（由 `pini test` 收集）：测试块本身非 unsafe 上下文，故经 unsafe 消耗点调用 unsafe 内核 / foreign 函数。

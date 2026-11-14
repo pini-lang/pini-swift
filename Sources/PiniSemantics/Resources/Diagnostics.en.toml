@@ -241,7 +241,7 @@ message = "assertion failed: {message}"
 [E5-016]
 message = "FFI library '{library}' not found (searched: {searched})"
 [E5-017]
-message = "symbol '{symbol}' not found in FFI library '{library}'"
+message = "foreign symbol '{symbol}' not found (searched: {searched})"
 
 [E5-019]
 message = "variadic call '{name}' needs the C variadic ABI; the interpreter can only forward a fixed signature, so this works on `run-llvm` only"
@@ -317,3 +317,11 @@ suggestion = "drop this unroll, or put at least one row in the table"
 [E3-018]
 message = "unroll expands to {count} rounds, over the limit of {limit}"
 suggestion = "split the table across several unroll statements, or use an ordinary loop"
+
+[E3-019]
+message = "foreign symbol '{name}' is declared differently from the declaration in '{firstFile}' (signature or flags differ)"
+suggestion = "keep only one of the two; when a generated module and a hand-written block share a name, the signatures must match exactly"
+
+[E3-020]
+message = "foreign symbol name '{name}' is not a valid C identifier"
+suggestion = "the name is the C symbol name: use ASCII letters, digits and underscores only, and do not start with a digit"
